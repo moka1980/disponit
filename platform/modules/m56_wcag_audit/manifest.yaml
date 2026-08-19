@@ -1,10 +1,15 @@
 # Modulmanifest — registeret leser KUN denne filen, aldri koden.
-# MAPPENAVNET er bevisst uten mNN_-prefiks: modulen har ikke fått
-# katalognummer ennå — det tildeles ved frontsidetekst-steget etter
-# aksept, og DA skal mNN_-vakten (test_ui_kontrakt) tvinge frem den
-# bevisste UI-oppdateringen. Databasens modul_id er `m_wcag_audit`
-# (vedtatt i 014c §1, etablert i 014b-materialet) og endres ikke av
-# registernavnet her.
+# MAPPENAVNET bærer katalognummeret M-56 (tildelt i frontsidetekst-steget,
+# INNHOLD-wcag-katalog-og-frontside 2026-08-19), slik hodet her alltid har
+# sagt at det skulle: mNN_-vakten (test_ui_kontrakt) tvinger dermed frem
+# den bevisste UI-oppdateringen i MODULSTATUS. Databasens modul_id er
+# fortsatt `m_wcag_audit` (vedtatt i 014c §1) og endres ikke av
+# registernavnet. Statusflippet (status/driftstilstand) er IKKE en del av
+# nummer-tildelingen — det står bak akseptporten under (rollback-punktet),
+# som før. Forsidekortets «I drift»-etikett kommer fra KATALOGENS eget
+# statusfelt i spesifikasjonen, ikke herfra: katalogen sier hva produktet
+# tilbyr i dag (manuell bestilling kjører), manifestaksene sier hvor
+# koden står i akseptløpet. To akser, to kilder — med vilje.
 # Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
 id: wcag_audit
 navn: Automatisk WCAG-kontroll (controller)
@@ -43,7 +48,7 @@ driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
 avhengigheter:
   - m01_policy                 # bestilling og frekvens går gjennom policyporten
   - m02_revisjonslogg          # én skrivevei til evidenskjeden
-kjerne: platform/modules/wcag_audit
+kjerne: platform/modules/m56_wcag_audit
 i18n_prefiks: wcagaudit
 
 # GRENSEN (klarsignalet §2): modulen er KUNDE av kontrollmotoren, ikke en

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generer modulkatalogen for forsiden fra spesifikasjonen — én kilde, ikke avskrift.
 
-Katalogen (55 moduler, 11 områder, 4 faser) lever i
+Katalogen (56 moduler, 11 områder, 4 faser) lever i
 `docs/spesifikasjon/disponit-prototype-v8.html`. Å taste den inn på nytt ville
 gitt to sannheter som driver fra hverandre; dette skriptet leser spesifikasjonen
 og skriver ut både datafila og locale-nøklene, så en endring i katalogen bare
@@ -47,7 +47,7 @@ KILDE_NAVN = "docs/spesifikasjon/disponit-prototype-v8.html"
 # Produktomfanget slik det står i spesifikasjonen. Tallet står ett sted og
 # brukes både til nummerporten under og til overskriften i den genererte fila,
 # så en utvidelse ikke kan gi en katalog som teller seg selv feil.
-ANTALL_MODULER = 55
+ANTALL_MODULER = 56
 
 # Områdenavn på engelsk.
 OMRADE_EN = {
@@ -187,6 +187,8 @@ MODUL_EN = {
         "EHF and Peppol rejection handler"),
     55: ("Merkevare- og IP-overvåker",
         "Brand and IP monitor"),
+    56: ("Automatisk WCAG-kontroll",
+        "Automatic WCAG check"),
 }
 
 
@@ -210,6 +212,15 @@ POST_RE = re.compile(
     r"""\s*,\s*["']?p["']?\s*:\s*(\d+)""",
     re.S)
 
+# Katalogens EGET statusfelt (valgfritt, lukket vokabular). Det sier hva
+# produktet TILBYR i dag — «i drift» betyr at modulen faktisk kjører for
+# kunder i sin nåværende form. Det er en annen akse enn manifestets
+# status/driftstilstand (akseptløpet), med vilje: se
+# m56_wcag_audit/manifest.yaml sitt hode. Ukjent verdi stopper
+# genereringen — en skrivefeil skal ikke bli en usynlig etikett.
+STATUS_RE = re.compile(r"""["']?status["']?\s*:\s*(['"])(.*?)\1""")
+KATALOGSTATUS = {"i drift": "i_drift"}
+
 
 def slug(navn: str) -> str:
     tegn = {"æ": "ae", "ø": "o", "å": "a", " ": "_"}
@@ -223,11 +234,23 @@ def les_katalog() -> list[dict]:
     skript = "\n".join(re.findall(r"<script[^>]*>(.*?)</script>",
                                   KILDE.read_text(encoding="utf-8",
                                                   errors="replace"), re.S))
-    poster = [
-        {"n": int(m.group(1)), "navn": m.group(3), "omrade": m.group(5),
-         "fase": int(m.group(6))}
-        for m in POST_RE.finditer(skript)
-    ]
+    poster = []
+    for m in POST_RE.finditer(skript):
+        post = {"n": int(m.group(1)), "navn": m.group(3),
+                "omrade": m.group(5), "fase": int(m.group(6))}
+        # Statusfeltet leses fra POSTENS egen tekst (frem til neste
+        # klamme-grense, samme postavgrensning som POST_RE selv).
+        slutt = skript.find("}", m.end())
+        stat = STATUS_RE.search(skript[m.start():slutt if slutt > 0
+                                       else m.end()])
+        if stat:
+            if stat.group(2) not in KATALOGSTATUS:
+                raise SystemExit(
+                    f"ukjent katalogstatus {stat.group(2)!r} på modul "
+                    f"{post['n']} i {KILDE_NAVN} — lovlige verdier: "
+                    f"{sorted(KATALOGSTATUS)}")
+            post["status"] = KATALOGSTATUS[stat.group(2)]
+        poster.append(post)
     # Antallet alene er ikke en kontroll (Codex P2): en duplisert `n` sammen
     # med en manglende modul gir også riktig antall poster, og da hadde
     # katalogen sett komplett ut mens én modul var borte og en annen sto to
@@ -293,8 +316,10 @@ def main() -> None:
         "export const KATALOG = [",
     ]
     for p in katalog:
+        status = f', status: "{p["status"]}"' if "status" in p else ""
         linjer.append(
-            f'  {{ n: {p["n"]}, omrade: "{slug(p["omrade"])}", fase: {p["fase"]} }},')
+            f'  {{ n: {p["n"]}, omrade: "{slug(p["omrade"])}",'
+            f' fase: {p["fase"]}{status} }},')
     linjer += [
         "];",
         "",

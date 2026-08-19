@@ -112,9 +112,9 @@
   "site.fase": "Phase",
   "site.hero.kicker": "AI business agent",
   "site.hero.tittel": "Disponit does the work in your business — within authority you set yourself.",
-  "site.hero.tilbud": "The offer is one AI business agent for the entire organisation — from finance, sales and customer follow-up to procurement, HR, document work, IT operations, compliance, analytics and management. The remit is the same in every area: carry out tasks, follow up exceptions, coordinate work across systems and show you what has been done and what needs attention. Everything is governed by the policies and authority you set: if an action is within its limits, it is carried out; if it is outside them, it stops and is sent to the right person.",
+  "site.hero.tilbud": "Disponit is being built to handle the routine work of your business: payments within approval limits, invoicing and reminders, reconciliation and settlement, deadlines and renewals, follow-up with customers and suppliers, recurring reports, automatic checks against regulations, and key figures computed from actual decisions. The principle is fixed: every action is measured against your policy before it happens — if it is within bounds it is carried out; if not, it is stopped and placed with you.",
   "site.hero.tekst": "Every area below is live with customers today.",
-  "site.hero.tekst_bygges": "None of the areas below are live with customers yet — they stay marked “Coming” until they are.",
+  "site.hero.tekst_bygges": "The control layer runs today — policy engine, audit log, exception queue and policy administration with four eyes. The first module doing real work is also live: automatic WCAG checks of websites you have confirmed that you control. The remaining areas are specified and under construction.",
   "site.hero.tekst_delvis": "The areas below marked “Available” are live with customers today; the rest are being built.",
   "site.argument.presisjon": "Control",
   "site.argument.presisjon_tittel": "You decide what the agent may do",
@@ -986,5 +986,8 @@
   "ui.plan.utfall.hoppet_over": "Skipped",
   "ui.plan.utfall.avvist_av_menneske": "Rejected manually",
   "varsel.plan_pauset": "Your recurring check plan has been paused ({aarsak}). Resume it in the portal once the cause is handled — missed windows are not made up.",
-  "varsel.plan_gjentatt_brudd": "Your recurring check plan has hit the quota limit {antall} times in a row — the checks are ordered, but the policy's frequency limit stops them. Review the rhythm or the quota. The plan keeps running."
+  "varsel.plan_gjentatt_brudd": "Your recurring check plan has hit the quota limit {antall} times in a row — the checks are ordered, but the policy's frequency limit stops them. Review the rhythm or the quota. The plan keeps running.",
+  "site.katalog.m56.navn": "Automatic WCAG check",
+  "site.modul.m56.navn": "Automatic WCAG check",
+  "site.modul.m56.tekst": "Checks websites you have confirmed that you control, and stores the report as evidence."
 }

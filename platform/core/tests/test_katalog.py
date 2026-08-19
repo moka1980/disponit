@@ -11,7 +11,7 @@ Testene her er derfor sju porter (Codex P2 på PR #43, P2 på PR #99):
   2. FERSKHET  — regenerering i en temp-rot gir NØYAKTIG det som ligger i repoet.
   3. OMDØPING  — nytt navn i kilden stopper genereringen til oversettelsen er
                  vurdert på nytt, så nb og en ikke kan drive fra hverandre.
-  4. FORM      — 55 moduler, elleve områder, faser 1–4, alle representert.
+  4. FORM      — 56 moduler, elleve områder, faser 1–4, alle representert.
   5. TEKST     — hvert modul- og områdenavn har nøkkel i BEGGE locale-sett.
   6. MERKEVARE — sannhetskilden bærer produktnavnet resten av repoet bruker.
   7. FASEORDEN — ingen modul avhenger av en modul i en senere fase, så den
@@ -38,7 +38,7 @@ KILDE = ROT.joinpath(*KILDE_REL)
 ARKIV = ROT / "prototype"
 LOCALER = {s: ROT / "locales" / f"{s}.json" for s in ("nb", "en")}
 
-MODULER = 55
+MODULER = 56
 OMRADER = 11
 FASER = {1, 2, 3, 4}
 
@@ -50,10 +50,14 @@ def _katalog_js() -> tuple[list[dict], list[dict]]:
     JS-motor, slik at porten ikke trenger node for å kjøre.
     """
     tekst = KATALOG_JS.read_text(encoding="utf-8")
+    # `status` er valgfritt (katalogens eget felt, generatoren bærer det
+    # fra spesifikasjonen — i dag kun M-56 «i drift»).
     katalog = [
-        {"n": int(n), "omrade": o, "fase": int(f)}
-        for n, o, f in re.findall(
-            r"\{\s*n:\s*(\d+),\s*omrade:\s*\"([^\"]+)\",\s*fase:\s*(\d+)\s*\}",
+        {"n": int(n), "omrade": o, "fase": int(f),
+         **({"status": st} if st else {})}
+        for n, o, f, st in re.findall(
+            r"\{\s*n:\s*(\d+),\s*omrade:\s*\"([^\"]+)\",\s*fase:\s*(\d+)"
+            r"(?:,\s*status:\s*\"([^\"]+)\")?\s*\}",
             tekst)
     ]
     omrader = [

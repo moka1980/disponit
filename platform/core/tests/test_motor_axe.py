@@ -8,7 +8,7 @@ import urllib.parse
 from pathlib import Path
 
 ROT = Path(__file__).resolve().parents[3]
-MOTOR = ROT / "platform/modules/wcag_audit/motor_axe"
+MOTOR = ROT / "platform/modules/m56_wcag_audit/motor_axe"
 
 
 def _last(navn: str):
@@ -594,7 +594,7 @@ def test_eksempeltaket_slaar_avkortet_paa():
     Takene må dessuten være IDENTISKE med byggerens: kappet motoren
     hardere, ville byggeren aldri fått se at noe ble kappet."""
     sys.path.insert(0, str(ROT / "platform"))
-    from modules.wcag_audit import rapport
+    from modules.m56_wcag_audit import rapport
     assert kjor.MAKS_EKSEMPLER == rapport.MAKS_EKSEMPLER
     assert kjor.MAKS_SELEKTOR == rapport.MAKS_SELEKTOR
 
@@ -1273,7 +1273,7 @@ def test_blokkert_vert_blir_alltid_baerbar_for_rapporten():
     # PORTEN: hver form over må passere rapportbyggerens EGET mønster.
     # Driver de to fra hverandre, er saneringen her uten virkning.
     sys.path.insert(0, str(ROT / "platform"))
-    from modules.wcag_audit import rapport
+    from modules.m56_wcag_audit import rapport
     assert rapport._VERT.pattern == kjor.VERT_MONSTER.pattern
     for raa in ("localhost", "[::1]", "[2001:db8::1]", "", "169.254.169.254",
                 "under_strek.example", "ekstern-cdn.example"):
@@ -1398,7 +1398,7 @@ def test_lenker_loeses_mot_dokumentets_base():
     # ikke unntaket — som `motor_avbrutt` uten promotert rapport.
     assert 'post["bestilt_url"] = url' in kilde
     assert "if faktisk != url:" in kilde
-    modul = ROT / "platform/modules/wcag_audit"
+    modul = ROT / "platform/modules/m56_wcag_audit"
     rapportkilde = (modul / "rapport.py").read_text(encoding="utf-8")
     assert 's.get("bestilt_url")' in rapportkilde
     assert "bestilt not in (identiteter[0], fra_url[0])" in rapportkilde
@@ -1655,7 +1655,7 @@ def test_axe_pinnen_er_ekte_hex():
 
 def test_fasitkontroll_finner_hver_avviksklasse():
     fasit = json.loads(
-        (ROT / "platform/modules/wcag_audit/testnettsted/fasit.json")
+        (ROT / "platform/modules/m56_wcag_audit/testnettsted/fasit.json")
         .read_text(encoding="utf-8"))
     s = fasit["scenarier"]["enkeltside"]
     # Perfekt motorutdata konstruert FRA fasiten → null avvik.
@@ -1697,7 +1697,7 @@ def test_fasitkontroll_godtar_ikke_duplikatrader():
     kartleggingen. Fasiten er selv nøklet og kan ikke ha duplikater, så
     en gjentatt rad kan bare bety avvik."""
     fasit = json.loads(
-        (ROT / "platform/modules/wcag_audit/testnettsted/fasit.json")
+        (ROT / "platform/modules/m56_wcag_audit/testnettsted/fasit.json")
         .read_text(encoding="utf-8"))
     s = fasit["scenarier"]["enkeltside"]
     motor = {
@@ -1741,14 +1741,14 @@ def test_fasiten_er_konsistent_med_seg_selv():
     """Avkortingsregnskapet i fasiten: 14 = 4 besøkte + 9 i kø + 1
     query-lenke, og robots-siden er aldri en del av regnskapet."""
     fasit = json.loads(
-        (ROT / "platform/modules/wcag_audit/testnettsted/fasit.json")
+        (ROT / "platform/modules/m56_wcag_audit/testnettsted/fasit.json")
         .read_text(encoding="utf-8"))
     s = fasit["scenarier"]["nettsted_maks4"]
     truffet, tak, verdi = s["avkortet"]
     assert truffet is True and tak == s["payload"]["maks_sider"]
     assert verdi == 14
     assert "/privat/hemmelig.html" not in s["_crawlrekkefolge"]
-    sider = ROT / "platform/modules/wcag_audit/testnettsted/sider"
+    sider = ROT / "platform/modules/m56_wcag_audit/testnettsted/sider"
     assert (sider / "privat/hemmelig.html").exists()
     assert "Disallow: /privat/" in (sider / "robots.txt").read_text(
         encoding="utf-8")
@@ -1846,7 +1846,7 @@ def test_kontraktsdokumentets_hasher_matcher_skjemafilene():
     """KONTRAKT.md navngir payload-/kvitteringsskjemaets sha256 — driver
     dokument og fil fra hverandre, registreres feil proveniens immutabelt."""
     import hashlib
-    kdir = ROT / "platform/modules/wcag_audit/kontrakt"
+    kdir = ROT / "platform/modules/m56_wcag_audit/kontrakt"
     md = (kdir / "KONTRAKT.md").read_text(encoding="utf-8")
     for fil, felt in (("payload-skjema.json", "payload_schema_hash"),
                       ("kvittering-skjema.json", "kvittering_schema_hash")):
@@ -1856,12 +1856,12 @@ def test_kontraktsdokumentets_hasher_matcher_skjemafilene():
 
 
 def test_kvitteringsskjemaet_speiler_controllerens_feilkoder():
-    kdir = ROT / "platform/modules/wcag_audit/kontrakt"
+    kdir = ROT / "platform/modules/m56_wcag_audit/kontrakt"
     skjema = json.loads((kdir / "kvittering-skjema.json")
                         .read_text(encoding="utf-8"))
     i_skjema = set(skjema["properties"]["feilkode"]["enum"])
     import re
-    kode = (ROT / "platform/modules/wcag_audit/controller.py") \
+    kode = (ROT / "platform/modules/m56_wcag_audit/controller.py") \
         .read_text(encoding="utf-8")
     i_koden = set(re.findall(r'"feilkode": "([a-z_]+)"', kode))
     assert i_skjema == i_koden, (i_skjema ^ i_koden)
@@ -1869,7 +1869,7 @@ def test_kvitteringsskjemaet_speiler_controllerens_feilkoder():
 
 def test_payloadskjemaet_speiler_oppdragskontrakten():
     import oppdragskontrakt
-    kdir = ROT / "platform/modules/wcag_audit/kontrakt"
+    kdir = ROT / "platform/modules/m56_wcag_audit/kontrakt"
     skjema = json.loads((kdir / "payload-skjema.json")
                         .read_text(encoding="utf-8"))
     t = oppdragskontrakt.OPPDRAGSTYPER["kontroll.wcag.nettsted"]

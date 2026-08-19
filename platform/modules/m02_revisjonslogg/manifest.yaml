@@ -37,7 +37,7 @@ status: under_utvikling        # aktiv | inaktiv | under_utvikling
 #     er ikke en glipp — invarianten er pinnet i
 #     `test_drift_uten_aktiv_status_er_en_registerfeil`, og den finnes
 #     nettopp for tilstanden «kjører uten å ha bestått sin egen
-#     sjekkliste». Samme doktrine står i wcag_audit/manifest.yaml: de to
+#     sjekkliste». Samme doktrine står i m56_wcag_audit/manifest.yaml: de to
 #     feltene flyttes SAMMEN, når porten faktisk er bestått.
 #
 # Feltet står derfor på `ikke_i_drift`, som er den verdien m02 hadde fra

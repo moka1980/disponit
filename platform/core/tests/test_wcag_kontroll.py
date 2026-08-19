@@ -957,7 +957,7 @@ def test_maalet_leses_som_nettleseren_leser_det():
     `evil.example` godtatt igjen og første seksjon blir rød.
     """
     import oppdragskontrakt as ok
-    from modules.wcag_audit.controller import _ressursbinding
+    from modules.m56_wcag_audit.controller import _ressursbinding
 
     def brudd(**ev):
         return ok.malbindingsbrudd(ev.get("handling"), ev)
@@ -1415,7 +1415,7 @@ def _payload(**over):
 
 
 def _motorresultat(**over):
-    from modules.wcag_audit.motor import Motorresultat
+    from modules.m56_wcag_audit.motor import Motorresultat
     basis = dict(
         regelsett_versjon="axe-4.10", varighet_ms=1234,
         # Fragmentet blir stående: det redigeres bort av rapporten, og
@@ -1436,8 +1436,8 @@ def test_rapporten_saneres_og_validerer():
     kappet til 200 tegn, maks 10 eksempler, miljø fra SERVERKONTEKSTEN —
     og resultatet validerer mot det innholdsadresserte skjemaet."""
     import jsonschema
-    from modules.wcag_audit import rapportskjema
-    from modules.wcag_audit.rapport import bygg
+    from modules.m56_wcag_audit import rapportskjema
+    from modules.m56_wcag_audit.rapport import bygg
     r = bygg(_motorresultat(),
              payload=_payload(),
              kontekst=_kontekst())
@@ -1454,7 +1454,7 @@ def test_rapporten_kutter_aerlig_over_500_funn():
     """Port 11: over 500 funn kappes — og `avkortet` SIER det (aldri mer
     fullstendighet enn innholdet bærer). Kontroll: fjern
     truffet-oppdateringen i `bygg`, så blir denne rød."""
-    from modules.wcag_audit.rapport import bygg
+    from modules.m56_wcag_audit.rapport import bygg
     mange = tuple({"regel_id": f"r{i}", "alvorlighet": "lav", "antall": 1,
                    "eksempler": []} for i in range(600))
     r = bygg(_motorresultat(funn=mange),
@@ -1473,8 +1473,8 @@ def test_kappet_eksempelliste_sier_fra_i_avkortet():
     Kontroll: fjern `maks_eksempler_sett`-blokka i `bygg`, så blir denne
     rød."""
     import jsonschema
-    from modules.wcag_audit import rapportskjema
-    from modules.wcag_audit.rapport import MAKS_EKSEMPLER, bygg
+    from modules.m56_wcag_audit import rapportskjema
+    from modules.m56_wcag_audit.rapport import MAKS_EKSEMPLER, bygg
 
     ett = ({"regel_id": "r1", "alvorlighet": "alvorlig", "antall": 25,
             "eksempler": [f"#node-{i}" for i in range(25)]},)
@@ -1500,8 +1500,8 @@ def test_dekningsbegrensninger_slaas_sammen_og_kappet_sier_fra():
     (vert, art) sammen først, og treffer taket likevel, sier `avkortet`
     fra. Kontroll: fjern taksjekken, så blir denne rød."""
     import jsonschema
-    from modules.wcag_audit import rapportskjema
-    from modules.wcag_audit.rapport import MAKS_BEGRENSNINGER, bygg
+    from modules.m56_wcag_audit import rapportskjema
+    from modules.m56_wcag_audit.rapport import MAKS_BEGRENSNINGER, bygg
 
     # Samme vert to ganger → én post med summert antall, ikke to.
     r = bygg(_motorresultat(blokkert=(
@@ -1543,8 +1543,8 @@ def test_uleselig_dekningsbegrensning_feiler_i_stedet_for_aa_forsvinne():
     denne rød — og den siste påstanden («ingen kjente begrensninger») blir
     en rapport ingen kan skille fra sannheten.
     """
-    from modules.wcag_audit.motor import Motorfeil
-    from modules.wcag_audit.rapport import bygg
+    from modules.m56_wcag_audit.motor import Motorfeil
+    from modules.m56_wcag_audit.rapport import bygg
 
     for daarlig in ("ikke-en-dict", None, 42,
                     {"vert": None, "antall": 5, "art": "font"},
@@ -1577,8 +1577,8 @@ def test_rapporterte_sider_bindes_til_det_autoriserte_maalet():
     Kontroll: fjern `normaliser_vertsnavn`-sammenligningen i `_ren_url`,
     så blir denne rød — `evil.example` går rett inn i rapporten.
     """
-    from modules.wcag_audit.motor import Motorfeil
-    from modules.wcag_audit.rapport import bygg
+    from modules.m56_wcag_audit.motor import Motorfeil
+    from modules.m56_wcag_audit.rapport import bygg
     # Feil vert, subdomene av målet, og målet som subdomene hos angriperen:
     # ingen av dem er verten `web_hostname` autoriserte.
     for url in ("https://evil.example/x",
@@ -1633,8 +1633,8 @@ def test_rapporten_holder_seg_innenfor_det_bestilte_omfanget():
     Kontroll: fjern `_sidebudsjett`-blokka i `bygg`, så blir denne rød på
     hver eneste av påstandene under.
     """
-    from modules.wcag_audit.motor import Motorfeil
-    from modules.wcag_audit.rapport import bygg
+    from modules.m56_wcag_audit.motor import Motorfeil
+    from modules.m56_wcag_audit.rapport import bygg
     to_sider = ({"url": "https://kunde.example/side", "status": "ok"},
                 {"url": "https://kunde.example/annet", "status": "ok"})
 
@@ -1700,8 +1700,8 @@ def test_enkeltsideporten_godtar_en_attestert_omdirigering():
 
     Kontroll: fjern `fra_url` fra porten i `bygg`, så blir motsatsen rød.
     """
-    from modules.wcag_audit.motor import Motorfeil
-    from modules.wcag_audit.rapport import bygg
+    from modules.m56_wcag_audit.motor import Motorfeil
+    from modules.m56_wcag_audit.rapport import bygg
 
     # Landet et annet sted, MED attestasjon om hvor den ble sendt fra:
     # rapporten navngir landingen, og porten godtar den.
@@ -1772,8 +1772,8 @@ def test_enkeltsideporten_leser_query_som_del_av_siden():
     Kontroll: la `_bestilt_url` og sideloopen bruke rapportformen igjen
     (`_delt_url(...)[0]`), så blir avvisningen under grønn — altså rød her.
     """
-    from modules.wcag_audit.motor import Motorfeil
-    from modules.wcag_audit.rapport import bygg
+    from modules.m56_wcag_audit.motor import Motorfeil
+    from modules.m56_wcag_audit.rapport import bygg
 
     def _kjor(bestilt, levert):
         return bygg(_motorresultat(sider=({"url": levert, "status": "ok"},)),
@@ -1816,8 +1816,8 @@ def test_standardporten_er_ikke_en_del_av_sideidentiteten():
     Kontroll: fjern `and port != 443` i `_delt_url`, så blir de fire
     første tilfellene røde.
     """
-    from modules.wcag_audit.motor import Motorfeil
-    from modules.wcag_audit.rapport import bygg
+    from modules.m56_wcag_audit.motor import Motorfeil
+    from modules.m56_wcag_audit.rapport import bygg
 
     def _kjor(bestilt, levert):
         return bygg(_motorresultat(sider=({"url": levert, "status": "ok"},)),
@@ -1855,8 +1855,8 @@ def test_punktsegmenter_er_ikke_en_annen_side():
     Kontroll: la `_delt_url` kopiere `d.path` rått igjen, så blir alle
     tilfellene under røde.
     """
-    from modules.wcag_audit.motor import Motorfeil
-    from modules.wcag_audit.rapport import bygg
+    from modules.m56_wcag_audit.motor import Motorfeil
+    from modules.m56_wcag_audit.rapport import bygg
 
     def _kjor(bestilt, levert):
         return bygg(_motorresultat(sider=({"url": levert, "status": "ok"},)),
@@ -1915,8 +1915,8 @@ def test_prosentkoding_er_ikke_en_annen_side():
     Kontroll: fjern `_nettleserkodet(...)` fra `_delt_url`, så blir hvert
     par under rødt.
     """
-    from modules.wcag_audit.motor import Motorfeil
-    from modules.wcag_audit.rapport import bygg
+    from modules.m56_wcag_audit.motor import Motorfeil
+    from modules.m56_wcag_audit.rapport import bygg
 
     def _kjor(bestilt, levert):
         return bygg(_motorresultat(sider=({"url": levert, "status": "ok"},)),
@@ -1974,7 +1974,7 @@ def test_kodesettet_er_rfc_ens_og_ikke_en_nettlesers_bordoppslag():
     Kontroll: sett `_STI_KODES` tilbake til `'\"<>`{}'`, så blir hvert par
     under rødt.
     """
-    from modules.wcag_audit.rapport import bygg
+    from modules.m56_wcag_audit.rapport import bygg
 
     def _kjor(bestilt, levert):
         return bygg(_motorresultat(sider=({"url": levert, "status": "ok"},)),
@@ -2014,8 +2014,8 @@ def test_query_baerer_nettleserens_prosentkoding():
     Kontroll: bytt `nettleserlest_query(d.query)` mot `d.query` i
     `_delt_url`, så blir det første paret rødt.
     """
-    from modules.wcag_audit.motor import Motorfeil
-    from modules.wcag_audit.rapport import bygg
+    from modules.m56_wcag_audit.motor import Motorfeil
+    from modules.m56_wcag_audit.rapport import bygg
 
     def _kjor(bestilt, levert):
         return bygg(_motorresultat(sider=({"url": levert, "status": "ok"},)),
@@ -2057,8 +2057,8 @@ def test_ulovlig_sidestatus_avvises_i_stedet_for_aa_skrives_om():
     `s.get("status") if s.get("status") in ("ok", "feilet") else "feilet"`,
     så blir denne rød — hver eneste variant passerer da som `feilet`.
     """
-    from modules.wcag_audit.motor import Motorfeil
-    from modules.wcag_audit.rapport import bygg
+    from modules.m56_wcag_audit.motor import Motorfeil
+    from modules.m56_wcag_audit.rapport import bygg
     for side in ({"url": "https://kunde.example/side"},          # mangler
                  {"url": "https://kunde.example/side", "status": None},
                  {"url": "https://kunde.example/side", "status": "OK"},
@@ -2089,9 +2089,9 @@ def test_kvittering_og_rapport_binder_til_samme_vert():
     evidensen — og da er bindingen pynt.
     """
     from oppdragskontrakt import malvert
-    from modules.wcag_audit import OPPDRAGSTYPE
-    from modules.wcag_audit.controller import _ressursbinding
-    from modules.wcag_audit.rapport import _autorisert_vert
+    from modules.m56_wcag_audit import OPPDRAGSTYPE
+    from modules.m56_wcag_audit.controller import _ressursbinding
+    from modules.m56_wcag_audit.rapport import _autorisert_vert
     p = _payload(mal_url="https://KUNDE.example.:443/x?y=1")
     assert _ressursbinding(p) == _autorisert_vert(p) == "kunde.example"
     assert malvert(OPPDRAGSTYPE, p) == "kunde.example"
@@ -2122,8 +2122,8 @@ def test_vertsmoensteret_slipper_aldri_forbi_skjemaet():
     Kontroll: gjør `_VERT` slappere enn `_HOSTNAME` (f.eks. tillat `_`), så
     blir denne rød."""
     import re
-    from modules.wcag_audit import rapportskjema
-    from modules.wcag_audit.rapport import _VERT
+    from modules.m56_wcag_audit import rapportskjema
+    from modules.m56_wcag_audit.rapport import _VERT
     skjemaets = re.compile(rapportskjema._HOSTNAME)
     for v in ("fonts.example", "a.b.c.example", "x1-2.example", "e.xn--p1ai",
               "ikke_en_vert", "-a.example", "a-.example", "enkeltledd",
@@ -2139,8 +2139,8 @@ def test_motorutdata_er_ubetrodd():
     """Port 12/§2: ikke-https-URL og uleselige poster er Motorfeil — aldri
     en rapport. Digester fra motoren finnes ikke som begrep: miljøblokka
     tar KUN serverkontekstens nøkler (port 10)."""
-    from modules.wcag_audit.motor import Motorfeil
-    from modules.wcag_audit.rapport import bygg
+    from modules.m56_wcag_audit.motor import Motorfeil
+    from modules.m56_wcag_audit.rapport import bygg
     with pytest.raises(Motorfeil):
         bygg(_motorresultat(sider=({"url": "http://klartekst.example/",
                                     "status": "ok"},)),
@@ -2202,7 +2202,7 @@ class FakeMotor:
         self.frister = []
 
     def kjor(self, payload, *, frist_s=None):
-        from modules.wcag_audit.motor import Motorfeil
+        from modules.m56_wcag_audit.motor import Motorfeil
         self.payloads.append(payload)
         self.frister.append(frist_s)
         if self.feil:
@@ -2215,7 +2215,7 @@ def _wcag_kjede(migrator_, monkeypatch):
     kjøring — den delte testbasen tåler ikke det globale navnet; den EKTE
     registreringen gjøres av deploy-skriptet og prøves på staging)."""
     import oppdragskontrakt as ok
-    from modules.wcag_audit import rapportskjema
+    from modules.m56_wcag_audit import rapportskjema
     u = secrets.token_hex(4)
     typenavn = f"kontroll.w{u}.nettsted"
     at = f"kontroll.w{u}.rapport"
@@ -2312,7 +2312,7 @@ def test_controlleren_hele_veien_med_fakemotor(migrator, miljo, monkeypatch):
     from starlette.testclient import TestClient
     from api.app import lag_app
     from db import kryptering
-    from modules.wcag_audit import controller
+    from modules.m56_wcag_audit import controller
     from .test_m37 import _signer_kvittering
     from .test_modul_onboarding_http import _onboard_token
 
@@ -2352,7 +2352,7 @@ def test_motorfeil_gir_avbrutt_uten_artefakt(migrator, miljo, monkeypatch):
     artefakt — og plattformen får en kvittering som sier det."""
     from starlette.testclient import TestClient
     from api.app import lag_app
-    from modules.wcag_audit import controller
+    from modules.m56_wcag_audit import controller
     from .test_m37 import _signer_kvittering
     from .test_modul_onboarding_http import _onboard_token
 
@@ -2700,7 +2700,7 @@ def test_avvist_kvittering_er_ikke_utfort():
     plattformen. Meldte controlleren `utfort` uansett, ville en planlegger
     tro at kjøringen var i havn — modulens ord mot plattformens tilstand.
     Kontroll: fjern _kvittert-sjekken i controlleren, så blir denne rød."""
-    from modules.wcag_audit import controller
+    from modules.m56_wcag_audit import controller
     motor = FakeMotor(resultat=_motorresultat())
     for status in (409, 500):
         res = controller.kjor_en(_Stubklient(status), "tk", motor,
@@ -2731,7 +2731,7 @@ def test_sen_evidens_202_er_ikke_utfort():
     Kontroll: sett `_kvittert` tilbake til `200 <= status < 300`, så blir
     202-en `utfort` igjen.
     """
-    from modules.wcag_audit import controller
+    from modules.m56_wcag_audit import controller
     motor = FakeMotor(resultat=_motorresultat())
 
     sen = _Stubklient(202, kvitteringskropp={
@@ -2781,7 +2781,7 @@ def test_kvitteringen_gjentas_ved_forbigaaende_feil(monkeypatch):
     Kontroll: send kvitteringen én gang igjen i `kvitter`, så blir hver
     gren under rød.
     """
-    from modules.wcag_audit import controller
+    from modules.m56_wcag_audit import controller
     monkeypatch.setattr(controller, "_sov", lambda s: None)
     motor = FakeMotor(resultat=_motorresultat())
 
@@ -2888,7 +2888,7 @@ def test_gjentatt_kvittering_leses_som_det_den_forrige_gjorde():
     suksessdelen rød; legg `idempotent_uten_statusendring` til, så blir
     sen-delen rød.
     """
-    from modules.wcag_audit import controller
+    from modules.m56_wcag_audit import controller
     motor = FakeMotor(resultat=_motorresultat())
 
     gjentatt = _Stubklient(200, kvitteringskropp={
@@ -2922,7 +2922,7 @@ def test_avvist_opplasting_gir_feilkvittering(monkeypatch):
     fencing, 5xx). Da fikk plattformen ALDRI vite noe, og oppdraget stod
     claimet til fristen. Kontroll: bytt statussjekken i controlleren
     tilbake til `raise_for_status()`, så blir denne rød."""
-    from modules.wcag_audit import controller
+    from modules.m56_wcag_audit import controller
     # 5xx på opplastingen retryes nå (Codex P2), som på kvitteringen.
     monkeypatch.setattr(controller, "_sov", lambda s: None)
     motor = FakeMotor(resultat=_motorresultat())
@@ -2964,7 +2964,7 @@ def test_opplastingen_gjentas_som_kvitteringen(monkeypatch):
     Kontroll: bytt `lever("/v1/artefakt", ...)` tilbake til et enkelt
     `klient.post(...)`, så blir hver gren under rød.
     """
-    from modules.wcag_audit import controller
+    from modules.m56_wcag_audit import controller
     monkeypatch.setattr(controller, "_sov", lambda s: None)
     motor = FakeMotor(resultat=_motorresultat())
 
@@ -3066,7 +3066,7 @@ def test_opplastingsretryen_stanser_ikke_ved_nominelt_utlop(monkeypatch):
     `/v1/artefakt`, så blir gren 1 rød; fjern `gjenlosbar_etter_utlop`
     fra guarden i `lever`, så blir gren 3 rød.
     """
-    from modules.wcag_audit import controller
+    from modules.m56_wcag_audit import controller
     monkeypatch.setattr(controller, "_sov", lambda s: None)
     motor = FakeMotor(resultat=_motorresultat())
 
@@ -3175,7 +3175,7 @@ def test_hele_bestillingen_leses_for_motoren_startes():
     FakeMotor på hver av payloadene under, og `motor.payloads` blir
     ikke-tom — altså rød.
     """
-    from modules.wcag_audit import controller
+    from modules.m56_wcag_audit import controller
     for payload in ({"mal_url": "https://kunde.example/side",
                      "kravsett": "wcag21_aa", "omfang": "alt"},
                     {"mal_url": "https://kunde.example/side",
@@ -3289,7 +3289,7 @@ def test_bestillingsveien_oppretter_ikke_et_ugyldig_oppdrag():
 
     # Modulens egen `_OMFANG` er SAMME lukkede sett som plattformens.
     # Divergerer de, er den ene porten en annen port enn den andre.
-    from modules.wcag_audit import rapport
+    from modules.m56_wcag_audit import rapport
     assert set(rapport._OMFANG) == set(
         ok.FELTVERDIER["kontroll.wcag.nettsted"]["omfang"])
 
@@ -3334,7 +3334,7 @@ def test_kvitteringen_bindes_til_verten_som_ble_kontrollert():
     `payload.get("ressurs_id", "")`, så blir denne rød med tom binding.
     """
     import oppdragskontrakt as ok
-    from modules.wcag_audit import controller
+    from modules.m56_wcag_audit import controller
 
     klient = _Stubklient(200)
     motor = FakeMotor(resultat=_motorresultat())
@@ -3391,7 +3391,7 @@ def test_manglende_opplastingskapabilitet_stopper_for_skanningen():
     Kontroll: flytt `opplasting`-blokka i `kjor_en` tilbake under
     `try`-blokka, så kjører FakeMotor og `motor.payloads` blir ikke-tom.
     """
-    from modules.wcag_audit import controller
+    from modules.m56_wcag_audit import controller
     for uten in (None, {}):
         motor = FakeMotor(resultat=_motorresultat())
         klient = _Stubklient(200, opplasting=uten)
@@ -3422,7 +3422,7 @@ def test_ugyldig_serverkontekst_stopper_for_skanningen():
     tilfelle en KeyError ut av `kjor_en` og andre tilfelle grønt med
     `motor.payloads != []`.
     """
-    from modules.wcag_audit import controller
+    from modules.m56_wcag_audit import controller
 
     uten_digest = {k: v for k, v in _kontekst().items()
                    if k != "container_image_digest"}
@@ -3472,7 +3472,7 @@ def test_avvist_feilkvittering_er_heller_ikke_ferdig(monkeypatch):
     Kontroll: sett feilgrenene tilbake til `{"utfall": "avbrutt", ...}`, så
     blir denne rød — `ukvittert` blir `avbrutt` igjen på alle tre veier.
     """
-    from modules.wcag_audit import controller
+    from modules.m56_wcag_audit import controller
     # 5xx retryes nå (Codex P2). Testen skal bevise UTFALLET, ikke vente
     # på pausene mellom forsøkene.
     monkeypatch.setattr(controller, "_sov", lambda s: None)
@@ -3533,8 +3533,8 @@ def test_rapporten_holdes_under_1_mib():
     kappes ærlig før opplasting. Kontroll: fjern `_under_taket`-kallet i
     `bygg`, så blir denne rød."""
     import jsonschema
-    from modules.wcag_audit import rapportskjema
-    from modules.wcag_audit.rapport import (MAKS_BYTES, _kanoniske_bytes,
+    from modules.m56_wcag_audit import rapportskjema
+    from modules.m56_wcag_audit.rapport import (MAKS_BYTES, _kanoniske_bytes,
                                             bygg)
 
     # Verstefallsrapporten: maks funn, maks eksempler, maks selektorlengde.
@@ -3571,8 +3571,8 @@ def test_formatsjekk_avviser_ugyldig_kjort_ts():
     format_checker-argumentet i `valider`, så slipper alle de ugyldige
     gjennom."""
     from api.artefaktskjema import valider
-    from modules.wcag_audit import rapportskjema
-    from modules.wcag_audit.rapport import bygg
+    from modules.m56_wcag_audit import rapportskjema
+    from modules.m56_wcag_audit.rapport import bygg
     rapport = bygg(_motorresultat(), payload=_payload(),
                    kontekst=_kontekst())
     assert not valider(rapportskjema.SKJEMA, rapport)
@@ -3623,7 +3623,7 @@ def test_odelagt_skjema_avvises_i_stedet_for_aa_kaste():
     assert not skjemafeil({"type": "object"})
     # Registreringsveien kjører NØYAKTIG denne sjekken på det skjemaet den
     # er i ferd med å gjøre udødelig.
-    from modules.wcag_audit import rapportskjema
+    from modules.m56_wcag_audit import rapportskjema
     assert not skjemafeil(rapportskjema.SKJEMA)
     # ... og kom et ødelagt skjema likevel inn, er svaret en feilliste.
     feil = valider({"type": "strng"}, {"a": 1})
@@ -4010,7 +4010,7 @@ def test_uloselig_referanse_er_en_avvisning_ikke_en_500():
 
     # Registreringsveien kjører nøyaktig denne sjekken, så det plattformen
     # allerede har gjort udødelig må fortsatt passere.
-    from modules.wcag_audit import rapportskjema
+    from modules.m56_wcag_audit import rapportskjema
     assert not skjemafeil(rapportskjema.SKJEMA)
 
 
@@ -4237,7 +4237,7 @@ def test_skjemaregistreringen_bevarer_hvem_som_publiserte(migrator):
 def _rapportskjema_kopi() -> dict:
     """Det EKTE rapportskjemaet — den strengeste prøven på at vakten ikke
     gir falske treff: går den rød her, ville PR-014c ikke kunnet deployes."""
-    from modules.wcag_audit import rapportskjema
+    from modules.m56_wcag_audit import rapportskjema
     return dict(rapportskjema.SKJEMA)
 
 
@@ -4256,7 +4256,7 @@ def test_motorutdata_er_bundet_i_minnet():
     motor som spyr ut data skal møte Motorfeil, ikke spise
     controllerhosten. Kontroll: bytt tilbake til subprocess.run med
     capture_output, så henger denne testen på minne i stedet for å bestå."""
-    from modules.wcag_audit.motor import (Kommandomotor, Motorfeil,
+    from modules.m56_wcag_audit.motor import (Kommandomotor, Motorfeil,
                                           MAKS_STDOUT)
     god = json.dumps({"regelsett_versjon": "axe-4.10", "varighet_ms": 5,
                       "sider": [{"url": "https://a.example/",
@@ -4310,7 +4310,7 @@ def test_regelsettversjon_fra_motoren_ma_vaere_en_streng():
     Kontroll: bytt tilbake til `str(d["regelsett_versjon"])[:64]`, så
     består motoren under med `"None"` i stedet for å gi Motorfeil.
     """
-    from modules.wcag_audit.motor import (Kommandomotor, Motorfeil,
+    from modules.m56_wcag_audit.motor import (Kommandomotor, Motorfeil,
                                           regelsettversjon)
 
     for daarlig in (None, 4.10, {"a": 1}, ["axe"], True, "", "   "):
@@ -4347,7 +4347,7 @@ def test_falsy_samling_fra_motoren_er_ikke_en_tom_liste():
     Kontroll: bytt `samling(...)` tilbake til `tuple(d.get(navn) or ())` i
     `motor._kjor`, så blir `{}` til en tom rapport i stedet for Motorfeil.
     """
-    from modules.wcag_audit.motor import Kommandomotor, Motorfeil, samling
+    from modules.m56_wcag_audit.motor import Kommandomotor, Motorfeil, samling
 
     for daarlig in ({}, 0, "", False, {"a": 1}, "abc", 5, ("#a",)):
         with pytest.raises(Motorfeil, match="funn"):
@@ -4385,8 +4385,8 @@ def test_leveringens_verstefall_holder_seg_i_lukkevinduet():
     Testen regner VERSTEFALLET av de samme konstantene koden bruker, og
     binder det til marginen. Skrus `LEVERINGSFORSOK` opp eller marginen
     ned uten at fristen følger med, blir denne rød."""
-    from modules.wcag_audit import controller
-    from modules.wcag_audit.motor import AVSLUTNINGSMARGIN_S
+    from modules.m56_wcag_audit import controller
+    from modules.m56_wcag_audit.motor import AVSLUTNINGSMARGIN_S
 
     frist = controller.http_frist_s()
     kall = controller.LEVERINGSFORSOK * controller.LEVERINGSRUNDER
@@ -4428,7 +4428,7 @@ def test_motorfristen_lar_det_bli_tid_igjen_til_opplastingen():
     Kontroll: sett `STANDARD_TIDSAVBRUDD_S` tilbake til 3600, så blir
     denne rød — marginen forsvinner.
     """
-    from modules.wcag_audit.motor import (AVSLUTNINGSMARGIN_S, Kommandomotor,
+    from modules.m56_wcag_audit.motor import (AVSLUTNINGSMARGIN_S, Kommandomotor,
                                           STANDARD_TIDSAVBRUDD_S)
     #: Claimets tak: migrasjon 017 (kapabilitet) og 037 (lease).
     tak = 3600
@@ -4465,8 +4465,8 @@ def test_den_annonserte_fristen_er_fristen_som_gjelder():
     denne rød på hver sin halvdel.
     """
     import oppdragskontrakt as ok
-    from modules.wcag_audit import controller
-    from modules.wcag_audit.motor import AVSLUTNINGSMARGIN_S
+    from modules.m56_wcag_audit import controller
+    from modules.m56_wcag_audit.motor import AVSLUTNINGSMARGIN_S
 
     # 1) Kontrakten navngir fristen manifestet annonserer.
     assert ok.utforelsesfrist_s("kontroll.wcag.nettsted",
@@ -4515,7 +4515,7 @@ def test_den_annonserte_fristen_er_fristen_som_gjelder():
 
     # 5) Motoren kan bare KLEMMES av oppdragets frist, aldri skrus opp:
     #    taket er dens egen grense.
-    from modules.wcag_audit.motor import Kommandomotor, Motorfeil
+    from modules.m56_wcag_audit.motor import Kommandomotor, Motorfeil
     m = Kommandomotor(["/bin/false"], tidsavbrudd_s=5)
     with pytest.raises(Motorfeil):
         m.kjor({}, frist_s=0)
@@ -4542,7 +4542,7 @@ def test_dypt_nostet_motorutdata_er_motorfeil():
     Kontroll: fjern `_for_dypt`-sjekken i `kjor` OG `RecursionError` fra
     except-tuppelen, så bobler RecursionError ut av `m.kjor` igjen.
     """
-    from modules.wcag_audit.motor import Kommandomotor, MAKS_DYBDE, Motorfeil
+    from modules.m56_wcag_audit.motor import Kommandomotor, MAKS_DYBDE, Motorfeil
 
     dypt = "[" * 20000 + "]" * 20000
     m = Kommandomotor(_motorkommando("import sys;sys.stdout.write(%r)" % dypt))
@@ -4584,7 +4584,7 @@ def test_motoren_arver_aldri_controllerens_hemmeligheter(tmp_path,
     Kontroll: ta bort `env=_motormiljo()` i `Kommandomotor.kjor`, så finner
     løkka under tokenet igjen i motorens miljø.
     """
-    from modules.wcag_audit.motor import Kommandomotor
+    from modules.m56_wcag_audit.motor import Kommandomotor
 
     miljofil = tmp_path / "miljo.json"
     monkeypatch.setenv("DISPONIT_MODUL_TOKEN", "hemmelig-token-abc123")
@@ -4629,9 +4629,9 @@ def test_numerisk_overflyt_fra_motoren_er_motorfeil():
     `Ikkekanoniserbar` videre — hver av de tre gjør denne rød med et annet
     unntak enn Motorfeil.
     """
-    from modules.wcag_audit.motor import (Kommandomotor, MAKS_HELTALL,
+    from modules.m56_wcag_audit.motor import (Kommandomotor, MAKS_HELTALL,
                                           Motorfeil, heltall)
-    from modules.wcag_audit.rapport import bygg
+    from modules.m56_wcag_audit.rapport import bygg
 
     # Porten selv, på alle tre kantene.
     for raa in ("ukjent", {"a": 1}, None, True, float("inf"), float("nan"),
@@ -4684,8 +4684,8 @@ def test_brokdel_fra_motoren_er_motorfeil_ikke_trunkering():
     `bygg(...)` grønn igjen med et funn som mangler og et sammendrag som
     er for lavt.
     """
-    from modules.wcag_audit.motor import Kommandomotor, Motorfeil, heltall
-    from modules.wcag_audit.rapport import bygg
+    from modules.m56_wcag_audit.motor import Kommandomotor, Motorfeil, heltall
+    from modules.m56_wcag_audit.rapport import bygg
 
     for raa in (0.9, 1.9, -0.5, 2.5, 1e-3):
         with pytest.raises(Motorfeil):
@@ -4737,8 +4737,8 @@ def test_telling_under_en_avvises_ikke_repareres():
     Kontroll: sett `< 1`-vakten i `_antall` tilbake til `return`, så blir
     første blokk grønn med et funn borte og et sammendrag som er 0.
     """
-    from modules.wcag_audit.motor import Motorfeil
-    from modules.wcag_audit.rapport import bygg
+    from modules.m56_wcag_audit.motor import Motorfeil
+    from modules.m56_wcag_audit.rapport import bygg
 
     for ugyldig in (-3, 0, -1):
         with pytest.raises(Motorfeil):
@@ -4789,8 +4789,8 @@ def test_negativt_motortall_avvises_ikke_nullstilles():
     `max(0, ...)` rundt kallene igjen, så blir motorkjøringen grønn med
     `varighet_ms == 0` og `avkortet.verdi == 0`.
     """
-    from modules.wcag_audit.motor import Kommandomotor, Motorfeil, heltall
-    from modules.wcag_audit.rapport import bygg
+    from modules.m56_wcag_audit.motor import Kommandomotor, Motorfeil, heltall
+    from modules.m56_wcag_audit.rapport import bygg
 
     for raa in (-1, -7, -7.0, "-42"):
         with pytest.raises(Motorfeil):
@@ -4845,8 +4845,8 @@ def test_eksempellisten_maa_vaere_en_liste():
     `list(f.get("eksempler") or [])`, så gir strengen ti enkelttegn i
     stedet for Motorfeil, og tallet gir TypeError i stedet for Motorfeil.
     """
-    from modules.wcag_audit.motor import Motorfeil
-    from modules.wcag_audit.rapport import bygg
+    from modules.m56_wcag_audit.motor import Motorfeil
+    from modules.m56_wcag_audit.rapport import bygg
 
     def _med(eksempler):
         return _motorresultat(funn=({"regel_id": "color-contrast",
@@ -4881,8 +4881,8 @@ def test_dekningssignalet_avvises_i_stedet_for_aa_tvangskonverteres():
     isinstance-sjekken i `bygg` tilbake til `bool(truffet)`, så blir
     `[0, null, null]` til `truffet: false`.
     """
-    from modules.wcag_audit.motor import Motorfeil, avkortet
-    from modules.wcag_audit.rapport import bygg
+    from modules.m56_wcag_audit.motor import Motorfeil, avkortet
+    from modules.m56_wcag_audit.rapport import bygg
 
     # Formen, der den ble ødelagt: motoravlesningen.
     for raa in ("false", "", {"truffet": False}, {"a": 1},
@@ -4929,8 +4929,8 @@ def test_tekstfeltene_fra_motoren_ma_vaere_ekte_strenger():
     Kontroll: bytt `_tekst(...)` tilbake til `str(...)` i `bygg`, så blir
     `regel_id` `"None"` i stedet for Motorfeil, og eksempelet `"5"`.
     """
-    from modules.wcag_audit.motor import Motorfeil
-    from modules.wcag_audit.rapport import bygg
+    from modules.m56_wcag_audit.motor import Motorfeil
+    from modules.m56_wcag_audit.rapport import bygg
 
     def _bygg(**over):
         f = {"regel_id": "color-contrast", "alvorlighet": "alvorlig",
@@ -4975,8 +4975,8 @@ def test_ensom_surrogat_fra_motoren_er_motorfeil():
     det ved å kreve Motorfeil, ikke bare «et unntak».
     """
     from policy_validator import jcs
-    from modules.wcag_audit.motor import Motorfeil
-    from modules.wcag_audit.rapport import bygg
+    from modules.m56_wcag_audit.motor import Motorfeil
+    from modules.m56_wcag_audit.rapport import bygg
 
     # Premisset: dette ER en streng etter parsing, og det ER
     # kanoniseringen som feiler — med UnicodeEncodeError, ikke
@@ -5051,7 +5051,7 @@ def test_tidsavbruddet_dreper_hele_prosesstreet(tmp_path):
     `_tidsavbrudd` kalle `p.kill()`, så bruker `m.kjor` 20 sekunder i
     stedet for 1 — og barnebarnet lever fortsatt når den endelig gir opp.
     """
-    from modules.wcag_audit.motor import Kommandomotor, Motorfeil
+    from modules.m56_wcag_audit.motor import Kommandomotor, Motorfeil
 
     pidfil = tmp_path / "barnebarn.pid"
     barn = ("import os, pathlib, time; "
@@ -5125,8 +5125,8 @@ def test_skjemafeil_lekker_aldri_artefaktverdien():
     assert "fritt/<felt>" in samlet, samlet
 
     # Samme port på det EKTE rapportskjemaet, på veien som faktisk logges.
-    from modules.wcag_audit import rapportskjema
-    from modules.wcag_audit.rapport import bygg
+    from modules.m56_wcag_audit import rapportskjema
+    from modules.m56_wcag_audit.rapport import bygg
     rapport = bygg(_motorresultat(), payload=_payload(),
                    kontekst=_kontekst())
     feil = valider(rapportskjema.SKJEMA, {**rapport, "kjort_ts": hemmelig})

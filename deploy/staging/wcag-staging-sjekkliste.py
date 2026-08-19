@@ -98,9 +98,9 @@ TENANT_FREKVENS = "t-wcagfrekvens"
 VERT_FREKVENS = "fasit-frekvens.test"
 VERT = "fasit.test"
 PORT = 8443
-KONTRAKT = REPO / "platform/modules/wcag_audit/kontrakt"
-TESTNETT = REPO / "platform/modules/wcag_audit/testnettsted"
-MOTOR_AXE = REPO / "platform/modules/wcag_audit/motor_axe"
+KONTRAKT = REPO / "platform/modules/m56_wcag_audit/kontrakt"
+TESTNETT = REPO / "platform/modules/m56_wcag_audit/testnettsted"
+MOTOR_AXE = REPO / "platform/modules/m56_wcag_audit/motor_axe"
 
 RUNDE = Path(os.environ.get("WCAG_RUNDE_DIR", "/root/wcag-runde"))
 #: Modultokenet MED RELEASEN det ble utstedt for (Codex P1, runde 12).
@@ -973,8 +973,8 @@ def _bestill(http, cookie, csrf, kropp, nokkel=None):
 
 
 def _kontroller_kjor(mtk, motorkmd, digest):
-    from modules.wcag_audit import controller
-    from modules.wcag_audit.motor import Kommandomotor
+    from modules.m56_wcag_audit import controller
+    from modules.m56_wcag_audit.motor import Kommandomotor
     from policy_validator import attestering
     reg = json.loads(ATT_FIL.read_text())
     nid = sorted(reg["v_wcag_audit"])[0]

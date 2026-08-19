@@ -29,6 +29,13 @@ export const MODULSTATUS = {
   2: "bygges",      // m02_revisjonslogg: under_utvikling, ikke_i_drift
   37: "bygges",     // m37_unntak: under_utvikling, ikke_i_drift
   38: "planlagt",   // ingen manifest i platform/modules/ ennå
+  // m56_wcag_audit: manifestaksene sier under_utvikling/ikke_i_drift til
+  // akseptporten (rollback-punktet) er bestått — «bygges» ER manifestets
+  // sannhet her. Forsidekatalogens «I drift»-etikett for M-56 kommer fra
+  // KATALOGENS eget statusfelt i spesifikasjonen (hva produktet tilbyr i
+  // dag: manuell bestilling kjører), ikke fra denne tabellen. To akser,
+  // to kilder — se manifesthodet.
+  56: "bygges",
 };
 
 // Status står IKKE her: modulene beskriver navn, fase og tekst, mens
@@ -59,6 +66,12 @@ const MODULER = [
     navn_nokkel: "site.modul.m38.navn",
     fase_nokkel: "site.fase.fundament",
     tekst_nokkel: "site.modul.m38.tekst",
+  },
+  {
+    id: 56,
+    navn_nokkel: "site.modul.m56.navn",
+    fase_nokkel: "site.fase.autopiloter",
+    tekst_nokkel: "site.modul.m56.tekst",
   },
 ];
 
