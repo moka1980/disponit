@@ -2616,16 +2616,24 @@ def test_P1_sakslasen_dekker_beslutningsopphavet(migrator, miljo, token):
     from api.app import lag_app
     from db.pg import koble
 
+    # Oppdraget legges ut under en REPARASJONSsak (fixturen bygger den ekte
+    # kjeden), men saken som skal peke TILBAKE er en EGEN, fersk sak. Det er
+    # ikke kosmetikk: `reparasjonsoperasjoner` peker på reparasjonssaken, og
+    # 038 holder de to saksfamiliene fra hverandre — en oppdragssak står
+    # aldri i `oppdrag.unntak_id`, og en reparasjonsoperasjon peker aldri på
+    # en oppdragssak. Å gjøre reparasjonssaken om til en oppdragssak ville
+    # laget en rad ingen produksjonsvei kan lage.
     sak, logg = _lag_sak(migrator, TENANT)
     opp, _ = _lag_oppdrag(migrator, TENANT, sak, logg)
+    sak_b, _ = _lag_sak(migrator, TENANT)
     cid_sak = secrets.token_hex(16)
     _sett_kontekst(migrator, TENANT, "m37-arbeider", cid_sak)
     migrator.execute(
         "UPDATE unntak SET status='under_behandling', claim_id=%s,"
         " claim_generation=1, claim_utloper=now()+interval '600 s'"
-        " WHERE tenant=%s AND id=%s", (cid_sak, TENANT, sak))
+        " WHERE tenant=%s AND id=%s", (cid_sak, TENANT, sak_b))
     migrator.execute("UPDATE unntak SET status='venter_utførelse'"
-                     " WHERE tenant=%s AND id=%s", (TENANT, sak))
+                     " WHERE tenant=%s AND id=%s", (TENANT, sak_b))
     migrator.commit()
 
     app = lag_app(DSN)
@@ -2664,7 +2672,7 @@ def test_P1_sakslasen_dekker_beslutningsopphavet(migrator, miljo, token):
             migrator.execute(
                 "UPDATE unntak SET oppdrag_id=%s, arsak='evidensfrist',"
                 " sakskilde='oppdrag' WHERE tenant=%s AND id=%s",
-                (opp, TENANT, sak))
+                (opp, TENANT, sak_b))
             migrator.execute("SET CONSTRAINTS ALL IMMEDIATE")
             migrator.execute("ALTER TABLE unntak ENABLE TRIGGER USER")
             migrator.commit()
@@ -2673,7 +2681,7 @@ def test_P1_sakslasen_dekker_beslutningsopphavet(migrator, miljo, token):
             holder = koble(MIGRATOR_DSN)
             _sett_kontekst(holder, TENANT, "menneske", "r-avvis-b")
             holder.execute("SELECT 1 FROM unntak WHERE tenant=%s AND id=%s"
-                           "   FOR UPDATE", (TENANT, sak))
+                           "   FOR UPDATE", (TENANT, sak_b))
 
             # (2) Kvitteringen postes og skal blokkere PÅ SAKEN — den som
             #     bare finnes gjennom `unntak.oppdrag_id`.
@@ -2701,7 +2709,7 @@ def test_P1_sakslasen_dekker_beslutningsopphavet(migrator, miljo, token):
             holder.execute("SET ROLE disponit_m37_claimer")
             res = holder.execute(
                 "SELECT utfall FROM avvis_med_opplosning(%s,%s,%s,"
-                "'menneske','r-avvis-b')", (TENANT, sak, [opp])).fetchall()
+                "'menneske','r-avvis-b')", (TENANT, sak_b, [opp])).fetchall()
             holder.execute("RESET ROLE")
             assert res == [("kansellert",)], res
             holder.commit(); holder.close(); holder = None
@@ -2723,7 +2731,7 @@ def test_P1_sakslasen_dekker_beslutningsopphavet(migrator, miljo, token):
     hendelser = dict(migrator.execute(
         "SELECT hendelse, count(*) FROM unntak_historikk"
         " WHERE tenant=%s AND unntak_id=%s GROUP BY hendelse",
-        (TENANT, sak)).fetchall())
+        (TENANT, sak_b)).fetchall())
     oppdragsrad = migrator.execute(
         "SELECT status, kansellert_aarsak FROM oppdrag WHERE tenant=%s"
         " AND id=%s", (TENANT, opp)).fetchone()
