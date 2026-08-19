@@ -129,6 +129,21 @@ CREATE TRIGGER policyaktivering_immutabel
   BEFORE UPDATE OR DELETE ON policyaktivering
   FOR EACH ROW EXECUTE FUNCTION avvis_endring();
 
+-- TRUNCATE fyrer ALDRI rad-triggere (Codex P2). Rad-vakten over sier
+-- ingenting om `TRUNCATE policyaktivering CASCADE`, og den setningen står
+-- åpen for tabelleieren — migratoren, altså den rollen enhver senere
+-- migrasjon og ethvert vedlikeholdsskript kjører som. Hele
+-- aktiveringslinjen kunne dermed forsvinne i én setning, tross at tabellen
+-- er erklært evig: attestasjonene ville stått igjen uten hendelsen de
+-- beviser, og `policyer.aktivert_av_operasjon` uten noe å peke på.
+-- `revisjonslogg` (001) har hatt nøyaktig denne setnings-nivå-vakten siden
+-- første migrasjon; den er ikke valgfri for en append-only-tabell.
+-- (`avvis_endring` leser bare TG_TABLE_NAME/TG_OP og virker derfor like
+-- godt på setningsnivå.)
+CREATE TRIGGER policyaktivering_ingen_truncate
+  BEFORE TRUNCATE ON policyaktivering
+  FOR EACH STATEMENT EXECUTE FUNCTION avvis_endring();
+
 -- Indeksen den frafalte `hendelse_en_per_versjon` ga oss gratis. Både
 -- vakten under og historikkens versjonsoppslag går denne veien.
 CREATE INDEX policyaktivering_versjon_idx

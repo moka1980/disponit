@@ -201,6 +201,48 @@ def test_hendelsen_er_immutabel_ogsaa_for_eieren():
 
 
 @pg
+def test_hendelsesloggen_kan_ikke_truncates():
+    """Codex P2: TRUNCATE fyrer aldri rad-triggere.
+
+    `policyaktivering_immutabel` er en RAD-trigger og sier derfor
+    ingenting om `TRUNCATE policyaktivering CASCADE` — en setning
+    tabelleieren (migratoren, altså enhver senere migrasjon og ethvert
+    vedlikeholdsskript) kan kjøre. Hele aktiveringslinjen kunne dermed
+    forsvinne i én setning, tross at tabellen er erklært evig.
+    `revisjonslogg` har hatt setnings-vakten siden 001; denne manglet.
+
+    Måles på VAKTENS egen stemme: `avvis_endring` gir check_violation med
+    tabellnavnet i meldingen. Kaskaden treffer også `policyer`, som har
+    sin egen TRUNCATE-vakt med en annen feilkode — en test som bare
+    krevde «en feil» ville vært grønn på den alene.
+    """
+    uid, pid, v = _full_aktivering(pakrevd=1)
+    m = _c()
+    try:
+        # Vakten står som en SETNINGS-trigger for TRUNCATE (tgtype: bit 0
+        # = rad-nivå, bit 5 = TRUNCATE).
+        assert m.execute(
+            "SELECT count(*) FROM pg_trigger WHERE tgrelid="
+            "'policyaktivering'::regclass AND NOT tgisinternal"
+            " AND (tgtype & 32) <> 0 AND (tgtype & 1) = 0"
+        ).fetchone()[0] == 1, "policyaktivering mangler TRUNCATE-vakt"
+        m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        with pytest.raises(psycopg.errors.CheckViolation) as ei:
+            m.execute("TRUNCATE policyaktivering CASCADE")
+        assert "policyaktivering" in str(ei.value), str(ei.value)
+        m.rollback()
+        # Hendelsen står — og med den attestasjonene den beviser.
+        m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        assert m.execute(
+            "SELECT count(*) FROM policyaktivering WHERE tenant=%s"
+            " AND policy_id=%s AND versjon=%s",
+            (TEN, pid, v)).fetchone()[0] == 1
+        m.rollback()
+    finally:
+        m.close()
+
+
+@pg
 def test_lineage_fk_ene_avviser_konstruerte_hendelser():
     """Portene 4–9: hendelser som lyver om attestant, diff, innhold eller
     forfatterskap finner ingen rad å referere. Konstruert som migrator
