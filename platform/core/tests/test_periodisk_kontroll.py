@@ -2332,6 +2332,71 @@ def test_tre_brudd_varsles_men_pauser_aldri(migrator):
     assert varsler == 1, "dempingen holdt ikke"
 
 
+def _bruddvarsler(m, pid):
+    _sett_kontekst(m, TENANT)
+    n = m.execute("SELECT count(*) FROM varsel WHERE tenant=%s AND"
+                  " art='plan_gjentatt_brudd' AND ressurs_id=%s",
+                  (TENANT, str(pid))).fetchone()[0]
+    m.rollback()
+    return n
+
+
+@pg
+def test_dempingen_holder_hele_bruddstripen(migrator):
+    """Codex P2: dempingen skal gjelde HELE det ubrutte løpet.
+
+    Grensen var `min(registrert)` av de tre SISTE tickene — altså et
+    vindu som VANDRER. Etter at tick 1–3 ga det første varselet, ble tick
+    4–6 alle registrert ETTER hendelsen, grensen skjøv seg forbi den, og
+    det sjette bruddet varslet på nytt. Det gjentok seg for hvert tredje
+    brudd i et løp som aldri ble brutt av et annet utfall — stikk i strid
+    med løftet om ETT varsel per stripe, og verst nettopp for planen som
+    har det verst.
+
+    Fire brudd fanget det ikke: de tre siste var da fortsatt DELVIS de
+    som lå bak varselet. Seks er det minste som viser det."""
+    from plan.materialiser import pausesveip
+    bid = _ekte_bruker("p21c-eier")
+    rt = _rt()
+    try:
+        pid = _plan_forfalt(rt, migrator, host="p21c.example",
+                            aktiver_dager=12, aktor=f"bruker:{bid}")
+        # Tick 1–3: stripen begynner, ett varsel går ut.
+        for i in range(3):
+            vs = _syntetisk_vindu(migrator, pid, start_h=-200 + 4 * i,
+                                  slutt_h=-198 + 4 * i)
+            _syntetisk_tick(migrator, pid, vs, "brudd")
+        pausesveip(rt)
+        assert _bruddvarsler(migrator, pid) == 1, \
+            "tre brudd på rad ga ikke nøyaktig ett varsel"
+        # Tick 4–6: registrert ETTER varselet — men stripen er den samme.
+        for i in range(3):
+            vs = _syntetisk_vindu(migrator, pid, start_h=-188 + 4 * i,
+                                  slutt_h=-186 + 4 * i)
+            _syntetisk_tick(migrator, pid, vs, "brudd")
+        pausesveip(rt)
+        assert _bruddvarsler(migrator, pid) == 1, \
+            "dempingen vandret med de tre siste tickene"
+        # ... og et annet utfall BRYTER løpet: neste tre varsler igjen.
+        vs = _syntetisk_vindu(migrator, pid, start_h=-176, slutt_h=-174)
+        _syntetisk_tick(migrator, pid, vs, "tillat")
+        for i in range(3):
+            vs = _syntetisk_vindu(migrator, pid, start_h=-172 + 4 * i,
+                                  slutt_h=-170 + 4 * i)
+            _syntetisk_tick(migrator, pid, vs, "brudd")
+        pausesveip(rt)
+        assert _bruddvarsler(migrator, pid) == 2, \
+            "en brutt stripe armerte ikke dempingen på nytt"
+        _sett_kontekst(migrator, TENANT)
+        status = migrator.execute(
+            "SELECT status FROM bestillingsplan WHERE plan_id=%s",
+            (pid,)).fetchone()[0]
+        migrator.rollback()
+        assert status == "aktiv", "brudd pauset planen"
+    finally:
+        rt.close()
+
+
 @pg
 def test_dempingen_leses_under_planlaasen(migrator):
     """Codex P2: to samtidige sveip på samme bruddstripe gir ETT varsel.

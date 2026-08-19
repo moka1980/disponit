@@ -1233,29 +1233,47 @@ REVOKE ALL ON FUNCTION planer_med_ubehandlet_stopp() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION planer_med_ubehandlet_stopp() TO disponit;
 
 -- §7: `brudd` pauser ALDRI — kvoten er ikke brukt og vinduet åpner igjen
--- — men TRE brudd på rad skal varsles. Kandidaten: de tre SISTE tickene
--- i gjeldende åpne periode er alle `brudd`. Dempingen er hendelsen selv:
--- ett `varslet`-spor (grunn=gjentatt_brudd) etter stripens første tick
--- demper gjentak til stripen brytes av et annet utfall.
+-- — men TRE brudd på rad skal varsles, ÉN gang per stripe. Dempingen er
+-- hendelsen selv: ett `varslet`-spor (grunn=gjentatt_brudd) etter
+-- stripens begynnelse demper gjentak til stripen brytes av et annet
+-- utfall.
+--
+-- STRIPEN, IKKE VINDUET (Codex P2). Grensen var `min(registrert)` av de
+-- tre SISTE tickene, og den grensen VANDRER: etter at tick 1–3 ga det
+-- første varselet, ble tick 4–6 alle registrert ETTER hendelsen, så
+-- grensen skjøv seg forbi den og det sjette bruddet varslet på nytt.
+-- Det gjentok seg for hvert tredje brudd i et løp som aldri ble brutt —
+-- stikk i strid med løftet om ETT varsel per stripe, og verst nettopp
+-- for planen som har det verst.
+--
+-- Grensen er nå stripens EGEN begynnelse: alle tick etter det siste
+-- ikke-`brudd`-utfallet i perioden (eller hele perioden, hvis intet
+-- slikt utfall finnes). `min(registrert)` over DEN mengden kan ikke
+-- flytte seg av at stripen vokser — bare et brutt løp flytter den, og
+-- det er nøyaktig når varselet skal armeres igjen. «Tre på rad» blir da
+-- lengden på løpet, ikke en egenskap ved et vindu av tre.
 CREATE OR REPLACE FUNCTION planer_med_gjentatt_brudd()
 RETURNS TABLE(plan_id UUID, tenant TEXT)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
-    WITH siste AS (
-        SELECT t.plan_id, t.tenant, t.utfall, t.registrert,
-               row_number() OVER (PARTITION BY t.plan_id
-                                  ORDER BY t.vindu_start DESC) AS rn
+    WITH periode AS (
+        SELECT t.plan_id, t.tenant, t.utfall, t.registrert, t.vindu_start,
+               max(t.vindu_start) FILTER (WHERE t.utfall <> 'brudd')
+                   OVER (PARTITION BY t.plan_id) AS siste_ikke_brudd
           FROM public.bestillingsplan_tick t
           JOIN public.bestillingsplan p
             ON p.plan_id = t.plan_id AND p.status = 'aktiv'
          WHERE public.tick_i_apen_periode(t.plan_id, t.vindu_start)
     ), striper AS (
-        SELECT s.plan_id, s.tenant, min(s.registrert) AS stripe_fra
-          FROM siste s WHERE s.rn <= 3
+        SELECT s.plan_id, s.tenant, count(*) AS lengde,
+               min(s.registrert) AS stripe_fra
+          FROM periode s
+         WHERE s.siste_ikke_brudd IS NULL
+            OR s.vindu_start > s.siste_ikke_brudd
          GROUP BY s.plan_id, s.tenant
-        HAVING count(*) = 3 AND bool_and(s.utfall = 'brudd')
     )
     SELECT st.plan_id, st.tenant FROM striper st
-     WHERE NOT EXISTS (
+     WHERE st.lengde >= 3
+       AND NOT EXISTS (
         SELECT 1 FROM public.bestillingsplan_hendelse h
          WHERE h.plan_id = st.plan_id AND h.hendelse = 'varslet'
            AND h.detalj->>'grunn' = 'gjentatt_brudd'
