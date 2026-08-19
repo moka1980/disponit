@@ -643,7 +643,10 @@ def test_to_materialiserere_en_claim(migrator):
     `aktivt` — aldri et claim til."""
     rt = _rt()
     try:
-        pid = _plan(rt, host="p48.example")
+        # Aktiveringen legges i går: claimet revaliderer kvalifiseringen
+        # (forfallet i en aktiv periode), og en plan aktivert NÅ dekker
+        # ikke et vindu som forfalt for en time siden.
+        pid = _plan_forfalt(rt, migrator, host="p48.example")
         vs = _syntetisk_vindu(migrator, pid, start_h=-1, slutt_h=1,
                               tilstand="ledig")
         _sett_kontekst(rt, TENANT)
@@ -698,6 +701,84 @@ def test_claimet_nekter_et_utlopt_vindu(migrator, app, monkeypatch):
             " WHERE plan_id=%s AND vindu_start=%s", (pid, vs)).fetchone()
         migrator.rollback()
         assert vindu == ("ledig", None), vindu
+    finally:
+        rt.close()
+
+
+@pg
+def test_claimet_nekter_en_stanset_plan(migrator, app, monkeypatch):
+    """Codex P1: planens tilstand må revalideres ATOMISK med claimet.
+
+    Plukket kvalifiserer en BATCH i sin egen, committede transaksjon, og
+    radene arbeides ned sekvensielt med et HTTP-kall hver. Stanser en
+    administrator planen i mellomtiden, sto bare vindusraden imot — og en
+    stanset plan kunne fortsatt konsumere en kvoteplass og starte en
+    ekstern skanning. Ordren skal gjelde fra den committes."""
+    from plan import materialiser
+    rt = _rt()
+    try:
+        pid = _plan_forfalt(rt, migrator, host="p-stanset.example")
+        rad = _mine_forfalte(rt, pid)[0]
+        vs = rad[2]
+        # Administratoren stanser planen ETTER at batchen er plukket.
+        _sett_kontekst(rt, TENANT)
+        rt.execute("SELECT stans_plan(%s,%s,'test:admin','r-stans')",
+                   (TENANT, pid))
+        rt.commit()
+
+        _sett_kontekst(rt, TENANT)
+        assert rt.execute("SELECT utfall FROM claim_planvindu(%s,%s,%s,120)",
+                          (TENANT, pid, vs)).fetchone()[0] == "ikke_aktiv"
+        rt.commit()
+
+        def aldri(*a, **k):
+            raise AssertionError("en stanset plan nådde bestillingsveien")
+        import api.bestilling
+        monkeypatch.setattr(api.bestilling, "utfor_bestilling", aldri)
+        res = materialiser.materialiser_en(app.tjeneste, rt, rad)
+        assert res.get("hoppet") == "ikke_aktiv", res
+        # Vinduet er urørt: ingen bestilling, intet tick, ingen kvote.
+        _sett_kontekst(migrator, TENANT)
+        vindu = migrator.execute(
+            "SELECT tilstand, claim_id FROM bestillingsplan_vindu"
+            " WHERE plan_id=%s AND vindu_start=%s", (pid, vs)).fetchone()
+        tick = migrator.execute(
+            "SELECT count(*) FROM bestillingsplan_tick WHERE plan_id=%s",
+            (pid,)).fetchone()[0]
+        migrator.rollback()
+        assert (vindu, tick) == (("ledig", None), 0), (vindu, tick)
+    finally:
+        rt.close()
+
+
+@pg
+def test_claimet_nekter_en_pauset_plan(migrator):
+    """Samme port, den andre veien inn: en PAUSE lukker den åpne perioden
+    ved `now()`, og forfallet — som per definisjon ligger bak oss når
+    vinduet er plukket — er da ikke lenger dekket. Et gjenopptak åpner en
+    NY periode som heller ikke dekker det: planen kjører igjen, men tar
+    ikke igjen det den var pauset gjennom (§5)."""
+    rt = _rt()
+    try:
+        pid = _plan_forfalt(rt, migrator, host="p-pauset-claim.example")
+        vs = _mine_forfalte(rt, pid)[0][2]
+        _sett_kontekst(rt, TENANT)
+        rt.execute("SELECT pause_plan(%s,%s,'policy_stopper','test:admin',"
+                   "'r-pause',NULL)", (TENANT, pid))
+        rt.commit()
+        _sett_kontekst(rt, TENANT)
+        assert rt.execute("SELECT utfall FROM claim_planvindu(%s,%s,%s,120)",
+                          (TENANT, pid, vs)).fetchone()[0] == "ikke_aktiv"
+        rt.commit()
+        # Gjenopptatt: status er `aktiv`, men den nye perioden begynner NÅ.
+        _sett_kontekst(rt, TENANT)
+        rt.execute("SELECT gjenoppta_plan(%s,%s,'test:admin','r-gjen')",
+                   (TENANT, pid))
+        rt.commit()
+        _sett_kontekst(rt, TENANT)
+        assert rt.execute("SELECT utfall FROM claim_planvindu(%s,%s,%s,120)",
+                          (TENANT, pid, vs)).fetchone()[0] == "ikke_aktiv"
+        rt.commit()
     finally:
         rt.close()
 

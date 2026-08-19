@@ -582,7 +582,7 @@ CREATE OR REPLACE FUNCTION claim_planvindu(
     p_tenant TEXT, p_plan UUID, p_vindu TIMESTAMPTZ, p_lease_s INT)
 RETURNS TABLE(utfall TEXT, claim_id UUID)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
-DECLARE v RECORD; v_claim UUID;
+DECLARE v RECORD; v_claim UUID; v_status TEXT; v_forfall TIMESTAMPTZ;
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant, 'claim_planvindu');
     SELECT * INTO v FROM public.bestillingsplan_vindu w
@@ -607,6 +607,40 @@ BEGIN
     END IF;
     IF v.tilstand = 'aktivt' AND v.lease_utloper > now() THEN
         RETURN QUERY SELECT 'aktivt'::text, NULL::uuid; RETURN;
+    END IF;
+    -- PLANENS TILSTAND REVALIDERES HER OGSÅ (Codex P1). Plukket
+    -- kvalifiserte batchen i sin egen, committede transaksjon; radene
+    -- arbeides ned sekvensielt med et HTTP-kall hver. Pauser eller stanser
+    -- en administrator planen i mellomtiden, var det bare vindusraden som
+    -- sto imot — og en STANSET plan kunne fortsatt konsumere en kvoteplass
+    -- og starte en ekstern skanning. En stans er en menneskelig ordre om at
+    -- planen ikke skal bestille mer; da må den gjelde fra det øyeblikket
+    -- den committes, ikke fra neste sveip.
+    --
+    -- Planraden låses FOR SHARE, ikke bare leses: `pause_plan`,
+    -- `stans_plan` og `gjenoppta_plan` tar alle FOR UPDATE på nettopp den
+    -- raden først. Låsen er det som gjør revalideringen ATOMISK med
+    -- claimet — uten den ville en pause som committer mellom lesningen og
+    -- UPDATE-en under sluppet forbi. Låserekkefølgen er vindu → plan
+    -- overalt her; ingen vei går motsatt vei.
+    --
+    -- Regelen er plukkets egen, ikke en ny: FORFALLET skal ligge i en
+    -- aktiv periode. Et gjenopptak ETTER forfallet åpner en ny periode som
+    -- ikke dekker dette vinduet — planen kjører igjen, men tar ikke igjen
+    -- det den var pauset gjennom (§5).
+    SELECT b.status INTO v_status FROM public.bestillingsplan b
+     WHERE b.plan_id = p_plan AND b.tenant = p_tenant FOR SHARE;
+    v_forfall := p_vindu + public.plan_forfallsminutt(p_plan)
+                           * interval '1 minute';
+    IF v_status IS DISTINCT FROM 'aktiv'
+       OR NOT EXISTS (SELECT 1 FROM public.bestillingsplan_aktiv_periode pr
+                       WHERE pr.plan_id = p_plan
+                         AND pr.fra_ts <= v_forfall
+                         AND (pr.til_ts IS NULL OR pr.til_ts > v_forfall))
+    THEN
+        -- Vinduet står `ledig`; klassifisereren feller `hoppet_over` når
+        -- det utløper. Ingen tick her — intet forsøk ble gjort.
+        RETURN QUERY SELECT 'ikke_aktiv'::text, NULL::uuid; RETURN;
     END IF;
     v_claim := gen_random_uuid();
     UPDATE public.bestillingsplan_vindu w
