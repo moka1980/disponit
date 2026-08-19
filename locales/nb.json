@@ -912,7 +912,6 @@
   "ui.unntak.saksarsak.kompensasjon_kreves": "Oppdraget ble utført. Kvitteringen kom inn etter at du avviste saken — når selve utførelsen skjedde, vet systemet ikke; den kan ha vært i gang før nei-et nådde modulen. Modulkontrakten sier at virkningen kan kompenseres. Noen må gjøre det manuelt.",
   "ui.unntak.saksarsak.irreversibel_utfort": "Oppdraget ble utført. Kvitteringen kom inn etter at du avviste saken — når selve utførelsen skjedde, vet systemet ikke; den kan ha vært i gang før nei-et nådde modulen. Modulkontrakten sier at virkningen IKKE kan reverseres.",
   "ui.unntak.saksarsak.reversibilitet_ukjent": "Oppdraget ble utført. Kvitteringen kom inn etter at du avviste saken — når selve utførelsen skjedde, vet systemet ikke; den kan ha vært i gang før nei-et nådde modulen. Oppgaven kjørte uten registrert modulkontrakt, så systemet har ingen dekning for å si om virkningen kan reverseres. Noen må undersøke hva som faktisk skjedde.",
-  "ui.nav.plan": "Periodisk kontroll",
   "ui.plan.tittel": "Periodisk kontroll",
   "ui.plan.under": "Sett opp faste, gjentakende WCAG-kontroller av dine verifiserte nettsteder. Planen bestiller — hver kjøring vurderes av policyen som en vanlig bestilling, og et misset vindu tas aldri igjen.",
   "ui.plan.ny": "Ny plan",
@@ -989,5 +988,6 @@
   "varsel.plan_gjentatt_brudd": "Planen din for periodisk kontroll har fått {antall} kvoteavslag på rad — kontrollene bestilles, men frekvensgrensen i policyen stopper dem. Vurder rytmen eller kvoten. Planen kjører videre.",
   "site.katalog.m56.navn": "Automatisk WCAG-kontroll",
   "site.modul.m56.navn": "Automatisk WCAG-kontroll",
-  "site.modul.m56.tekst": "Kontrollerer nettsteder du har bekreftet at du kontrollerer, og lagrer rapporten som evidens."
+  "site.modul.m56.tekst": "Kontrollerer nettsteder du har bekreftet at du kontrollerer, og lagrer rapporten som evidens.",
+  "ui.wcag.fane.plan": "Periodisk kontroll"
 }

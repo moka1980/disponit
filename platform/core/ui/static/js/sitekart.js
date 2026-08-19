@@ -91,11 +91,43 @@ const BASISRUTER = [
   // 041: adjudikatorkøen viser sakenes PARTER på tvers av tenanter — den
   // finnes derfor KUN for adjudikasjonsscopet, aldri for en leserolle.
   { nokkel: "adjudikator", scope: "domains:adjudicate" },
-  // 044: planflaten. LESING bak decisions:read (alle kunderoller ser sine
-  // planer); mutasjonene gates inne på flaten (plan:opprett osv.) — en
-  // rute kan bare være der eller ikke, som wcagkontroll over.
-  { nokkel: "plan", scope: "decisions:read" },
+  // 044-planflaten har INGEN egen rute lenger: periodisk kontroll er en
+  // fane under wcagkontroll (eier 19/8 — samme arbeidsflyt, én
+  // menyoppføring), og wcagkontroll-ruten bærer alt planfanen trenger
+  // (decisions:read). Den gamle adressen lever videre som alias under.
 ];
+
+// ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som
+// fjernes herfra finnes fortsatt i bokmerker og i lenker kolleger har delt seg
+// imellom, og verken ruteren eller dyplenken har noe å si om saken: `lagRuter`
+// leser en ukjent rute som ingenting og tegner REServeflaten (som regel
+// Oversikt), og `visningFraSok` forkaster en `?visning=` den ikke finner i
+// menyen. Den som hadde bokmerket den periodiske kontrollen landet altså på en
+// helt annen flate, uten et ord om hvorfor — og fant ingen «Plan» i menyen å
+// klikke seg videre på heller, for den oppføringen er nettopp den som ble
+// borte.
+//
+// Aliaset peker på FANEN, ikke bare flaten: `#/plan` → `#/wcagkontroll/plan`.
+// Uten målet ville lenken landet på flatens startfane (Domener, eller
+// Rapporter for en leseøkt), altså fortsatt ikke der brukeren skulle.
+//
+// En `Map`, ikke et objekt-oppslag: `{}[..]` svarer på `constructor` og
+// `__proto__` med noe arvet og sant, og et alias-treff på en rute ingen har
+// definert er ikke et treff.
+const ARVEDE_RUTER = new Map([
+  ["plan", { rute: "wcagkontroll", mal: "plan" }],
+]);
+
+// Den kanoniske `{ rute, mal }` for en arvet adresse, eller null når ruten
+// ikke er arvet. Et mål fra den GAMLE adressen bæres videre urørt og vinner
+// over aliasets standardmål: `#/plan/<plan_id>` blir `#/wcagkontroll/<plan_id>`,
+// og samleflaten leser en nøkkel den ikke kjenner som en plan-id og åpner
+// planfanen på den — nøyaktig det planvarslene gjør i dag.
+export function arvetMaal(rute, mal) {
+  const arvet = ARVEDE_RUTER.get(rute);
+  if (!arvet) return null;
+  return { rute: arvet.rute, mal: mal || arvet.mal };
+}
 
 export function byggRuter(sesjon) {
   const ruter = BASISRUTER
@@ -142,5 +174,15 @@ export function visningFraSok(sok, ruter) {
 export function hashForDypLenke(sok, hash, ruter) {
   if (hash) return null;
   const visning = visningFraSok(sok, ruter);
-  return visning ? `#/${visning}` : null;
+  if (visning) return `#/${visning}`;
+  // `?visning=` er den ANDRE inngangen til en arvet adresse, og den slipper
+  // ikke gjennom `visningFraSok`: den svarer bare på ruter økten HAR, og en
+  // fjernet rute har ingen. Aliaset løses derfor opp her, mot menyen økten
+  // faktisk fikk — en `?visning=plan` uten `decisions:read` er like lite en
+  // dyplenke som før, og faller til ruterens reserve.
+  const raa = new URLSearchParams(sok || "").get("visning");
+  const arvet = raa ? arvetMaal(raa, null) : null;
+  if (!arvet || !ruter.some((r) => r.nokkel === arvet.rute)) return null;
+  // Skrivemåten er `hashDeler`s omvendte: ett ledd, prosent-kodet.
+  return `#/${arvet.rute}/${encodeURIComponent(arvet.mal)}`;
 }

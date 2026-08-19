@@ -370,7 +370,10 @@ test("Varsler: planvarselet fører til planflaten, ikke til en blindvei",
     assert.ok(gaa, "planvarselet fikk ingen vei til handlingen");
     gaa.dispatchEvent(new window.Event("click"));
     await vent(() => window.location.hash !== "#/varsler");
-    assert.equal(window.location.hash, `#/plan/${planvarsel.ressurs_id}`);
+    // Planen bor under WCAG kontroll (eier 19/8): samleflaten åpner
+    // planfanen for et mål den ikke kjenner som fanenøkkel.
+    assert.equal(window.location.hash,
+      `#/wcagkontroll/${planvarsel.ressurs_id}`);
     // Teksten er mottakerens, med pausegrunnen i seg.
     assert.ok(h.querySelector(".varseltekst").textContent
       .includes("policy_stopper"));

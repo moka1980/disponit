@@ -31,7 +31,7 @@ test("byggRuter: hver rute krever scopet API-et bak flaten krever", () => {
   // hadde før den.
   assert.deepEqual(alle,
     ["oversikt", "policy", "beslutninger", "unntak", "kundeadmin",
-      "wcagkontroll", "plan"]);
+      "wcagkontroll"]);
   const medBestilling = byggRuter({ scopes: ["decisions:read",
     "bestilling:opprett"] }).map((r) => r.nokkel);
   assert.ok(medBestilling.includes("wcagkontroll"));
@@ -133,7 +133,10 @@ test("byggRuter: mottakeren av et planvarsel når innboksen sin", () => {
   // og portalspor.
   const admin = byggRuter({ scopes: ADMINSCOPES }).map((r) => r.nokkel);
   assert.ok(admin.includes("varsler"), admin);
-  assert.ok(admin.includes("plan"), "veien varselet peker på må finnes");
+  // Planen er en fane under wcagkontroll (eier 19/8) — veien varselet
+  // peker på er samleflatens rute.
+  assert.ok(admin.includes("wcagkontroll"),
+    "veien planvarselet peker på må finnes");
   // Policyforvalteren står uendret.
   assert.ok(byggRuter({ scopes: ["policy:read", "policy:write"] })
     .map((r) => r.nokkel).includes("varsler"));
@@ -164,6 +167,26 @@ test("hashForDypLenke: hash settes én gang, ellers navigerer ruteren selv", () 
   assert.equal(hashForDypLenke("", "", ruter), null);
   assert.equal(hashForDypLenke("?visning=admin", "", byggRuter({ scopes: [] })),
     null);
+});
+
+// Codex P2: dyplenken er den andre veien inn i en fjernet rute. `?visning=plan`
+// sto i lagrede lenker fra da planen var sin egen flate, og `visningFraSok`
+// svarer bare på ruter økten HAR — en fjernet rute har ingen, så lenken falt
+// tvers gjennom til ruterens reserve (Oversikt).
+test("hashForDypLenke: den arvede planvisningen peker på fanen", () => {
+  const kunde = byggRuter({ scopes: ["decisions:read"] });
+  assert.equal(hashForDypLenke("?visning=plan", "", kunde),
+    "#/wcagkontroll/plan");
+  // Hash-en er fortsatt sannheten når den finnes: ÉN av delene skal skje.
+  assert.equal(hashForDypLenke("?visning=plan", "#/unntak", kunde), null);
+  // Aliaset er ingen vei rundt scopet: uten `decisions:read` finnes ikke
+  // flaten det peker på, og da settes ingen hash.
+  assert.equal(hashForDypLenke("?visning=plan", "", byggRuter({ scopes: [] })),
+    null);
+  // Og det er BARE de arvede nøklene: et arvet oppslag skal ikke svare på det
+  // et objektoppslag ville arvet fra prototypen.
+  assert.equal(hashForDypLenke("?visning=constructor", "", kunde), null);
+  assert.equal(hashForDypLenke("?visning=__proto__", "", kunde), null);
 });
 
 // En rute uten etikett er ikke en kosmetisk mangel: `AppShell` slår opp

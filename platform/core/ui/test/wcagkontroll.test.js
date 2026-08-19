@@ -58,23 +58,108 @@ function fane(h, nokkel) {
 
 const TOMME_DOMENER = { "/v1/domener": { domener: [] } };
 
-test("WCAG kontroll: én flate, tre faner, riktig ARIA-mønster, axe rent", async () => {
+test("WCAG kontroll: én flate, fire faner, riktig ARIA-mønster, axe rent", async () => {
   KALL = []; SVAR = TOMME_DOMENER;
   const h = nyHoved();
   visWcagKontroll(h, ctx());
   assert.equal(h.querySelectorAll("h1").length, 1, "nøyaktig én h1");
   const faner = h.querySelectorAll('[role="tab"]');
-  assert.equal(faner.length, 3);
+  assert.equal(faner.length, 4);
   assert.ok(h.querySelector('[role="tablist"]'));
   // Domener-fanen er først OG startfane (flytens rekkefølge: verifiser
   // domenet før bestillingen) — den bærer domeneskjemaet.
   assert.ok(h.querySelector("#dm-host"));
   const titler = [...h.querySelectorAll('[role="tab"]')].map((f) => f.textContent);
   assert.deepEqual(titler, [t("ui.wcag.fane.domener"), t("ui.wcag.fane.bestill"),
-                            t("ui.wcag.fane.rapporter")],
-    "rekkefølgen er flyten: Domener → Bestill → Rapporter");
+                            t("ui.wcag.fane.rapporter"), t("ui.wcag.fane.plan")],
+    "rekkefølgen er flyten: Domener → Bestill → Rapporter → Periodisk");
   const brudd = await alvorligeBrudd(h, { fragment: true });
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
+test("WCAG kontroll: planfanen bor her, og planvarselets mål åpner den",
+  async () => {
+    // Eier 19/8: periodisk kontroll under WCAG kontroll — samme
+    // arbeidsflyt, én menyoppføring. Varsler bærer plan_id som mål
+    // (#/wcagkontroll/<uuid>): et mål som ikke er en fanenøkkel skal
+    // lande på planfanen, der handlingen bor.
+    KALL = []; SVAR = (sti) => sti === "/v1/plan" ? { planer: [] }
+      : TOMME_DOMENER[sti];
+    const h = nyHoved();
+    visWcagKontroll(h, ctx(), "11111111-2222-4333-8444-555555555555");
+    await vent(() => h.textContent.includes(t("ui.plan.tom_tittel")));
+    const aktiv = h.querySelector('[role="tab"][aria-selected="true"]');
+    assert.equal(aktiv.textContent, t("ui.wcag.fane.plan"));
+    // Codex P2: planfanen hadde med seg sin egen h1 fra tiden med egen
+    // rute, så dyplenken hit ga TO sidetitler på samme skjerm — og et
+    // hopp fra h1 rett til plan-h3-ene. Samleflaten eier h1; delene er
+    // h2, som Domener og Bestill.
+    //
+    // MUTASJONEN SOM DREPER DENNE: sett `flateHode` tilbake i `visPlan`.
+    assert.equal(h.querySelectorAll("h1").length, 1,
+      "nøyaktig én h1 også når planfanen er valgt");
+    assert.ok([...h.querySelectorAll("h2")]
+      .some((e) => e.textContent === t("ui.plan.tittel")),
+    "plantittelen er en h2 inne i samleflaten");
+    const bruddPlan = await alvorligeBrudd(h, { fragment: true });
+    assert.equal(bruddPlan.length, 0, beskrivBrudd(bruddPlan));
+    // ... og en eksplisitt fanenøkkel virker også.
+    const h2 = nyHoved();
+    SVAR = (sti) => sti === "/v1/plan" ? { planer: [] } : TOMME_DOMENER[sti];
+    visWcagKontroll(h2, ctx(), "plan");
+    const aktiv2 = h2.querySelector('[role="tab"][aria-selected="true"]');
+    assert.equal(aktiv2.textContent, t("ui.wcag.fane.plan"));
+  });
+
+test("WCAG kontroll: planfanen friskes opp når den åpnes igjen", async () => {
+  // Codex P2: `del()` gjenbruker den cachede DOM-en, og friskerer bare opp
+  // fanen som RETURNERER en krok fra byggingen. `visPlan` returnerte
+  // ingenting, så statusene sto med tallene fra første gang fanen ble åpnet
+  // — og planene er nettopp det som endrer seg uten at brukeren rører dem:
+  // pausesveipen stanser en aktiv plan når et oppdrag avvises, og en
+  // kollega kan stanse en plan i en annen økt. Bare en full sidelasting
+  // fikset det før.
+  //
+  // MUTASJONEN SOM DREPER DENNE: fjern `return last` fra `visPlan`.
+  KALL = [];
+  let status = "aktiv";
+  SVAR = (sti) => sti === "/v1/plan"
+    ? { planer: [{ plan_id: "p1", status,
+      pause_aarsak: status === "pauset" ? "menneskelig_avvis" : null,
+      rytme: "daglig", time_lokal: 8, tidssone: "Europe/Oslo",
+      parametre: { hostname: "dittfirma.no", sti: "/" } }] }
+    : TOMME_DOMENER[sti];
+  const h = nyHoved();
+  // `plan:opprett` gir skjemaet: oppfriskningen skal la det stå.
+  visWcagKontroll(h, { ...ctx(),
+    scopes: ["bestilling:opprett", "plan:opprett"] });
+  fane(h, "plan");
+  await vent(() => h.querySelector(".planliste table"));
+  const foer = KALL.filter((k) => k.sti === "/v1/plan").length;
+  assert.equal(foer, 1, "første aktivering henter planene");
+  assert.ok(h.querySelector(".planliste table").textContent
+    .includes(t("ui.plan.status.aktiv")));
+
+  // Skjemaet skal overleve oppfriskningen: den henter LISTEN, ikke delen.
+  const host = h.querySelector("#plan-hostname");
+  host.value = "underarbeid.no";
+  host.dispatchEvent(new window.Event("input"));
+
+  // Pausesveipen stanser planen mens brukeren er på en annen fane.
+  status = "pauset";
+  fane(h, "rapporter");
+  fane(h, "plan");
+  await vent(() => KALL.filter((k) => k.sti === "/v1/plan").length > foer);
+  assert.equal(KALL.filter((k) => k.sti === "/v1/plan").length, foer + 1,
+    "gjenåpning av fanen hentet ikke planene på nytt");
+  await vent(() => h.querySelector(".planliste table").textContent
+    .includes(t("ui.plan.status.pauset")));
+  const tekst = h.querySelector(".planliste table").textContent;
+  assert.ok(tekst.includes(t("ui.plan.status.pauset")), "ny status vises");
+  assert.ok(tekst.includes(t("ui.plan.pause.menneskelig_avvis")),
+    "pausegrunnen følger med den ferske statusen");
+  assert.equal(h.querySelector("#plan-hostname").value, "underarbeid.no",
+    "oppfriskningen river ikke det utfylte skjemaet");
 });
 
 test("WCAG kontroll: leseøkt beholder rapportene, mister mutasjonsfanene", async () => {
@@ -91,8 +176,10 @@ test("WCAG kontroll: leseøkt beholder rapportene, mister mutasjonsfanene", asyn
   visWcagKontroll(h, { ...ctx(), scopes: ["decisions:read"] });
   const faner = [...h.querySelectorAll('[role="tab"]')]
     .map((k) => k.textContent);
-  assert.deepEqual(faner, [t("ui.wcag.fane.rapporter")],
-    "leseøkten skal se rapportfanen, og bare den");
+  // Planfanen følger rapportene: lesing av egne planer krever bare
+  // `decisions:read`, mutasjonene gates inne i selve flaten.
+  assert.deepEqual(faner, [t("ui.wcag.fane.rapporter"), t("ui.wcag.fane.plan")],
+    "leseøkten skal se rapport- og planfanen, og bare dem");
   assert.ok(h.querySelector("#rp-oppdrag"), "rapportfanen er aktiv");
   assert.equal(h.querySelector("#bf-hostname"), null,
     "bestillingsskjemaet tegnes for en økt som bare kan få 403");
@@ -436,3 +523,150 @@ test("WCAG kontroll: rapportens bolker ligger UNDER fanens overskrift", async ()
   const brudd = await alvorligeBrudd(h, { fragment: true });
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
 });
+
+// --- Fanevalget i adressen (Codex P2 til PR #110) --------------------------
+//
+// Før sammenslåingen bevarte den frittstående `#/plan`-ruten visningen over en
+// oppfriskning. `Faner` byttet bare intern tilstand, så adressen ble stående
+// på `#/wcagkontroll` — reload og deling landet på startfanen i stedet.
+// `hashchange` leveres i en kø-oppgave, i jsdom som i nettleseren. Tømmes køen
+// ikke her, arver neste test naboens hendelse — og tellingen under lyver.
+async function settHash(h) {
+  window.location.hash = h;
+  await vent(() => false, 3);
+}
+
+test("WCAG kontroll: fanevalget skrives til adressen", async () => {
+  // MUTASJONEN SOM DREPER DENNE: fjern `paaBytte` fra Faner-kallet.
+  KALL = []; SVAR = TOMME_DOMENER;
+  await settHash("#/wcagkontroll");
+  const h = nyHoved();
+  visWcagKontroll(h, ctx());
+  // Startfanen uten mål: adressen løser alt opp i den, og skrives ikke om.
+  assert.equal(window.location.hash, "#/wcagkontroll");
+  fane(h, "bestill");
+  assert.equal(window.location.hash, "#/wcagkontroll/bestill");
+  fane(h, "plan");
+  assert.equal(window.location.hash, "#/wcagkontroll/plan");
+});
+
+test("WCAG kontroll: adressen fra fanebyttet tegner IKKE flaten på nytt",
+  async () => {
+    // Hele poenget med fanene er at delens tilstand overlever et bytte. En
+    // `location.hash`-tilordning ville fyrt `hashchange` → ruteren kaller
+    // flaten på nytt → nye `del()`-lukninger, og det utfylte skjemaet er
+    // borte. Det er samme fella som `hashForDypLenke` finnes for å unngå.
+    //
+    // MUTASJONEN SOM DREPER DENNE: bytt `history.replaceState` mot
+    // `window.location.hash = ...`.
+    KALL = []; SVAR = TOMME_DOMENER;
+    await settHash("#/wcagkontroll");
+    const h = nyHoved();
+    let hashendringer = 0;
+    const teller = () => { hashendringer++; };
+    window.addEventListener("hashchange", teller);
+    try {
+      visWcagKontroll(h, ctx());
+      fane(h, "bestill");
+      const inp = h.querySelector("#bf-hostname");
+      inp.value = "eksempel.no";
+      inp.dispatchEvent(new window.Event("input"));
+      fane(h, "rapporter");
+      fane(h, "bestill");
+      assert.equal(window.location.hash, "#/wcagkontroll/bestill");
+      assert.equal(h.querySelector("#bf-hostname").value, "eksempel.no",
+        "skjematilstanden skal overleve fanebyttet");
+      // `hashchange` er asynkron i jsdom som i nettleseren: vent på den, og
+      // slå fast at den aldri kom.
+      await vent(() => hashendringer > 0, 5);
+      assert.equal(hashendringer, 0,
+        "replaceState fyrer ikke hashchange — ruteren skal ikke tegne på nytt");
+    } finally {
+      window.removeEventListener("hashchange", teller);
+    }
+  });
+
+test("WCAG kontroll: planvarselets ressurs-id blir stående i adressen",
+  async () => {
+    // `#/wcagkontroll/<ressurs_id>` løser alt opp i planfanen, så det er
+    // ingenting å rette — og id-en er varselets henvisning til planen.
+    //
+    // MUTASJONEN SOM DREPER DENNE: skriv hashen ved hvert fanebytte uten å
+    // sjekke hva adressen alt løser opp i.
+    KALL = []; SVAR = (sti) => sti === "/v1/plan" ? { planer: [] }
+      : TOMME_DOMENER[sti];
+    const id = "11111111-2222-4333-8444-555555555555";
+    await settHash(`#/wcagkontroll/${id}`);
+    const h = nyHoved();
+    visWcagKontroll(h, ctx(), id);
+    await vent(() => h.textContent.includes(t("ui.plan.tom_tittel")));
+    assert.equal(window.location.hash, `#/wcagkontroll/${id}`);
+    // ... men et bytte VEKK fra planen retter adressen.
+    fane(h, "rapporter");
+    assert.equal(window.location.hash, "#/wcagkontroll/rapporter");
+  });
+
+test("WCAG kontroll: leseøkten får adressen på fanen hun faktisk ser",
+  async () => {
+    // Uten mål er startfanen Domener — men den finnes ikke for en leseøkt, og
+    // `Faner` faller tilbake til første trinn (Rapporter). Da skal adressen
+    // navngi DEN fanen: ellers gir `#/wcagkontroll` én visning for henne og en
+    // annen for kollegaen med `bestilling:opprett`, og lenken hun deler
+    // stemmer ikke med skjermen hun delte fra.
+    KALL = []; SVAR = TOMME_DOMENER;
+    await settHash("#/wcagkontroll");
+    const h = nyHoved();
+    visWcagKontroll(h, { ...ctx(), scopes: ["decisions:read"] });
+    assert.ok(h.querySelector("#rp-oppdrag"), "rapportfanen er aktiv");
+    assert.equal(window.location.hash, "#/wcagkontroll/rapporter");
+  });
+
+test("WCAG kontroll: et sent fanebytte kaprer ikke en annen rutes adresse",
+  async () => {
+    // Flaten kan ligge løsrevet i minnet etter at brukeren har navigert
+    // videre; da eier en annen rute adressen.
+    //
+    // MUTASJONEN SOM DREPER DENNE: fjern rutevakten i `synkroniserHash`.
+    KALL = []; SVAR = TOMME_DOMENER;
+    await settHash("#/wcagkontroll");
+    const h = nyHoved();
+    visWcagKontroll(h, ctx());
+    await settHash("#/oversikt");
+    fane(h, "bestill");
+    assert.equal(window.location.hash, "#/oversikt");
+  });
+
+test("WCAG kontroll: en skjult fanenøkkel er ikke en plan-id", async () => {
+  // Codex P2: `faneFor` slo opp i den SCOPE-FILTRERTE `trinn`, så nøkler som
+  // finnes globalt men ikke for denne økten falt utenfor settet — og alt
+  // utenfor settet leses her som en ressurs-id fra et planvarsel. Lenken
+  // `#/wcagkontroll/bestill`, delt av en admin, åpnet dermed PLANFANEN hos
+  // kollegaen med `decisions:read` i stedet for `Faner`s tilbakefall til
+  // første tillatte fane. Adressen ble liggende feil i tillegg, fordi
+  // `synkroniserHash` spør samme resolver og fikk «dette er alt planfanen».
+  //
+  // MUTASJONEN SOM DREPER DENNE: la `faneFor` slå opp i `trinn` igjen.
+  KALL = []; SVAR = TOMME_DOMENER;
+  await settHash("#/wcagkontroll/bestill");
+  const h = nyHoved();
+  visWcagKontroll(h, { ...ctx(), scopes: ["decisions:read"] }, "bestill");
+  assert.ok(h.querySelector("#rp-oppdrag"),
+    "rapportfanen — første tillatte fane — er aktiv, ikke planfanen");
+  assert.ok(!KALL.some((k) => k.sti === "/v1/plan"),
+    "planfanen skal ikke være bygget: " + JSON.stringify(KALL));
+  assert.equal(window.location.hash, "#/wcagkontroll/rapporter",
+    "adressen navngir fanen hun faktisk ser");
+});
+
+test("WCAG kontroll: en tillatt fanenøkkel i adressen åpner fortsatt sin fane",
+  async () => {
+    // Motprøven: skillet mellom nøkkel og id skal ikke gjøre dyplenken sløv.
+    KALL = []; SVAR = (sti) => sti === "/v1/plan" ? { planer: [] }
+      : TOMME_DOMENER[sti];
+    await settHash("#/wcagkontroll/plan");
+    const h = nyHoved();
+    visWcagKontroll(h, ctx(), "plan");
+    await vent(() => h.textContent.includes(t("ui.plan.tom_tittel")));
+    assert.equal(window.location.hash, "#/wcagkontroll/plan",
+      "adressen står som den var — den peker alt på den valgte fanen");
+  });
