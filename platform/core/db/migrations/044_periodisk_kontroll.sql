@@ -1242,8 +1242,25 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
                                 AND h.hendelse = 'nedetid_aggregert'),
                             '-infinity'::timestamptz)) AS dekket_til
           FROM public.bestillingsplan p, g
-         WHERE p.status <> 'stanset'
-           AND EXISTS (SELECT 1 FROM public.bestillingsplan_aktiv_periode a
+         -- STANSEDE PLANER ER MED (Codex P2). Statusfilteret som sto her
+         -- var en stille utelatelse: var planleggeren nede i mer enn 30
+         -- døgn og en administrator stanset planen før klassifiseringen
+         -- kom i gang igjen, falt planen ut av kandidatene for godt. Det
+         -- nære tilbakeblikket ble fortsatt klassifisert av
+         -- `utlopte_planvinduer` (som ikke har noe slikt filter), mens ALT
+         -- eldre forsvant — og en stanset plan kan ikke gjenopptas for å
+         -- bli kandidat igjen. Historikken, som er nettopp det som blir
+         -- igjen etter en stans, manglet da hendelsen §5 lover om
+         -- avbruddet.
+         --
+         -- Filteret var heller ikke det som holdt stansen ute: PERIODENE
+         -- gjør det. `stans_plan` lukker den åpne perioden ved `now()`, og
+         -- kvalifiseringen under krever at FORFALLET ligger i en periode —
+         -- så forekomster etter stansen faller bort av seg selv, mens de
+         -- som lå i den historiske aktive perioden fortsatt telles. Ett
+         -- avbrudd gir fortsatt ÉN hendelse: dempingen er `dekket_til`
+         -- fra forrige `nedetid_aggregert`, uendret.
+         WHERE EXISTS (SELECT 1 FROM public.bestillingsplan_aktiv_periode a
                         WHERE a.plan_id = p.plan_id)
     ), soek AS (
         SELECT pl.*,

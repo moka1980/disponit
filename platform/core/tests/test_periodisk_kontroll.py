@@ -1124,6 +1124,63 @@ def test_langt_avbrudd_telles_fra_rytmen(migrator):
         rt.close()
 
 
+@pg
+def test_stanset_plan_faar_ogsaa_sitt_nedetidsaggregat(migrator):
+    """Codex P2: et statusfilter gjorde stansen til en stille utelatelse.
+
+    Var planleggeren nede i mer enn 30 døgn og en administrator stanset
+    planen før klassifiseringen kom i gang igjen, falt planen ut av
+    kandidatene for godt: det nære tilbakeblikket ble fortsatt klassifisert
+    av `utlopte_planvinduer` (uten et slikt filter), mens alt eldre
+    forsvant — og en stanset plan kan ikke gjenopptas for å bli kandidat
+    igjen. Historikken, som er nettopp det som blir igjen etter en stans,
+    manglet da hendelsen §5 lover.
+
+    Stansen holdes fortsatt ute av PERIODENE, ikke av et statusfilter:
+    forekomster etter `til_ts` kvalifiserer ikke."""
+    from plan.klassifiser import klassifiser_vinduer
+    rt = _rt()
+    try:
+        pid = _plan(rt, host="p35c.example", aktiver=False)
+        _aktiver_i_fortid(migrator, pid, dager=90)
+        # Aktiv i 90→60 døgn, stanset for 60 døgn siden. Perioderaden
+        # lukkes der stansen skjedde; en lukket periode er endelig, så
+        # fortiden konstrueres ved lukkingen selv (som _aktiver_i_fortid).
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute(
+            "UPDATE bestillingsplan_aktiv_periode"
+            "   SET til_ts = now() - interval '60 days',"
+            "       aarsak_slutt = 'stanset'"
+            " WHERE plan_id=%s AND til_ts IS NULL", (pid,))
+        migrator.execute("UPDATE bestillingsplan SET status='stanset'"
+                         " WHERE plan_id=%s", (pid,))
+        migrator.commit()
+        klassifiser_vinduer(rt)
+        _sett_kontekst(migrator, TENANT)
+        agg = migrator.execute(
+            "SELECT detalj FROM bestillingsplan_hendelse WHERE plan_id=%s"
+            " AND hendelse='nedetid_aggregert'", (pid,)).fetchall()
+        migrator.rollback()
+        assert len(agg) == 1, agg
+        detalj = agg[0][0]
+        # Døgn 90→60 er ~30 daglige forekomster. Ikke ~60: forekomstene
+        # ETTER stansen ligger utenfor enhver aktiv periode og er ikke
+        # nedetid — det er PERIODENE som holder stansen ute, ikke et
+        # statusfilter.
+        assert 20 <= detalj["vinduer"] <= 40, detalj
+        assert detalj["avkortet"] is False, detalj
+        # ... og fortsatt ÉN: dempingen gjelder også for en stanset plan.
+        klassifiser_vinduer(rt)
+        _sett_kontekst(migrator, TENANT)
+        antall = migrator.execute(
+            "SELECT count(*) FROM bestillingsplan_hendelse WHERE plan_id=%s"
+            " AND hendelse='nedetid_aggregert'", (pid,)).fetchone()[0]
+        migrator.rollback()
+        assert antall == 1, "avbruddet ble meldt på nytt i neste sveip"
+    finally:
+        rt.close()
+
+
 def test_klassifisereren_har_ingen_bestillingsvei():
     """Port 34 (statisk AST): klassifisereren importerer verken
     HTTP-klienter eller bestillingsveien — heller ikke inne i funksjoner,
