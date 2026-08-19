@@ -135,6 +135,17 @@ function behandlingsHandlinger(detalj, id, ctx, paaFerdig) {
   return boks;
 }
 
+//: Saksgrunner som krever at operatøren gjør noe UTENFOR systemet, og som
+//  derfor får en forklarende note i tillegg til etiketten. Lukket mengde:
+//  en ukjent årsak vises som etikett alene, aldri med feil forklaring.
+const FORKLARTE_SAKSARSAKER = ["kompensasjon_kreves", "irreversibel_utfort"];
+
+function saksarsakForklaring(arsak) {
+  if (!FORKLARTE_SAKSARSAKER.includes(arsak)) return null;
+  return el("p", { class: "muted", role: "note",
+    text: t(`ui.unntak.saksarsak.${arsak}`) });
+}
+
 function detaljInnhold(detalj, historikk, id, ctx, paaFerdig) {
   const dl = el("dl", { class: "kv" });
   kvRad(dl, t("ui.kol.handling"), detalj.handling);
@@ -144,9 +155,20 @@ function detaljInnhold(detalj, historikk, id, ctx, paaFerdig) {
     detalj.prioritet));
   kvRad(dl, t("ui.unntak.sakstype"), t(`sakstype.${detalj.sakstype}`,
     detalj.sakstype));
+  // 043 (Gate 14b, Codex P2): saker FØDT av et oppdrag bærer grunnen sin i
+  // `arsak`, og fra 043 er to av verdiene `kompensasjon_kreves` og
+  // `irreversibel_utfort` — «noen må kompensere manuelt» og «en
+  // irreversibel handling ble rapportert utført etter nei-et». Uten denne
+  // raden var de ikke til å skille fra en hvilken som helst arvet sak, og
+  // da er saken født uten å si det den ble født for å si.
+  if (detalj.arsak) {
+    kvRad(dl, t("ui.kol.saksarsak"),
+      t(`saksarsak.${detalj.arsak}`, detalj.arsak));
+  }
   const rot = el("div", {}, dl,
     el("h3", { text: t("ui.detalj.begrunnelse") }),
     BegrunnelseKjede(detalj.begrunnelse),
+    saksarsakForklaring(detalj.arsak),
     behandlingsHandlinger(detalj, id, ctx, paaFerdig),
     el("h3", { text: t("ui.unntak.historikk") }));
   rot.append((historikk.rader && historikk.rader.length)
@@ -184,6 +206,10 @@ export function visUnntak(hoved, ctx) {
         kategori: KategoriTag(r.kategori),
         status: t(`status.${r.status}`, r.status),
         prioritet: t(`prioritet.${r.prioritet}`, r.prioritet),
+        // 043: en sak født av et oppdrag skal være til å skille fra en
+        // arvet sak i LISTEN — det er der operatøren leter.
+        saksarsak: r.arsak ? t(`saksarsak.${r.arsak}`, r.arsak)
+          : t("saksarsak.ingen"),
       },
       sortverdi: { ts: r.ts, handling: r.handling },
       handling: { tekst: t("ui.aapne"), paaKlikk: () => aapneDetalj(r.id, ctx) },
@@ -216,6 +242,7 @@ export function visUnntak(hoved, ctx) {
             { nokkel: "kategori", tittel: t("ui.kol.kategori") },
             { nokkel: "status", tittel: t("ui.kol.status") },
             { nokkel: "prioritet", tittel: t("ui.kol.prioritet") },
+            { nokkel: "saksarsak", tittel: t("ui.kol.saksarsak") },
           ],
           rader: st.rader.map(rad),
           sort: st.sort,

@@ -789,3 +789,58 @@ def test_port18_rettighetene_er_parameterisert_pa_rollenavnet():
         foran = sql[max(0, treff.start() - 600):treff.start()]
         assert "rolname = 'disponit'" in foran, \
             "ubetinget grant til lokalnavnet " + repr(foran[-120:])
+
+
+# ---------------------------------------------------------------------------
+# Port 20: saksgrunnen når faktisk operatøren (Codex P2)
+# ---------------------------------------------------------------------------
+
+@pg
+def test_port20_saksarsaken_naar_operatoren_over_http(conn, klient,
+                                                      monkeypatch):
+    """§5 føder en sak for at et MENNESKE skal handle: `kompensasjon_kreves`
+    betyr «noen må kompensere manuelt», `irreversibel_utfort` «det som skjedde
+    kan ikke gjøres om». Verken listen (`GET /v1/unntak`) eller detaljen
+    (`GET /v1/unntak/{id}`) hentet `u.arsak`, så sakene var ikke til å skille
+    fra en hvilken som helst arvet sak — saken ble altså født uten å kunne si
+    det den ble født for å si.
+
+    Målt ende-til-ende over HTTP med en ekte browserøkt, ikke statisk.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `arsak` fra DTO-en i `lesing.py`
+    eller `app.py`."""
+    from api import sesjon as sesjonmodul
+    from db.pg import sett_kontekst
+    from .test_pr012_behandle import POL, POL_HASH
+    from .test_pr012_gate14a import _browsersesjon
+    monkeypatch.setattr("api.policyregister.hent_aktiv",
+                        lambda conn, tenant, pid: (POL, POL_HASH))
+    uid = _oppsett(conn)
+    bid = _medlem(conn, "les20")
+    cookie, _csrf = _browsersesjon(bid)
+    rop = _oppdrag(uid, "plukket")
+    oid = _oppdrag_id(uid, rop)
+
+    m = _mig()
+    sett_kontekst(m, TEN, "sen", "r20")
+    m.execute("SET ROLE disponit_m37_claimer")
+    sak = m.execute("SELECT sikre_sak_for_oppdrag(%s,%s,"
+                    "'kompensasjon_kreves','sen','r20')",
+                    (TEN, oid)).fetchone()[0]
+    m.commit(); m.close()
+
+    kaker = {sesjonmodul.C_SESJON: cookie}
+    d = klient.get(f"/v1/unntak/{sak}", cookies=kaker)
+    assert d.status_code == 200, d.text
+    assert d.json()["arsak"] == "kompensasjon_kreves", d.json()
+    # ... og en ARVET sak bærer null, ikke en gjettet verdi.
+    d0 = klient.get(f"/v1/unntak/{uid}", cookies=kaker)
+    assert d0.status_code == 200, d0.text
+    assert d0.json()["arsak"] is None, d0.json()
+
+    # Listen er der operatøren LETER — grunnen må stå der også.
+    liste = klient.get("/v1/unntak", params={"limit": 20}, cookies=kaker)
+    assert liste.status_code == 200, liste.text
+    per_id = {s["id"]: s for s in liste.json()["saker"]}
+    assert per_id[sak]["arsak"] == "kompensasjon_kreves", per_id[sak]
+    assert per_id[uid]["arsak"] is None, per_id[uid]

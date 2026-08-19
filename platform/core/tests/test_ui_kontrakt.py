@@ -31,9 +31,15 @@ KONTRAKT = {
                               "sen_evidens", "konflikt_evidens",
                               "policy_versjon", "sikkerhet", "sak_finnes",
                               "feil_aarsak"],
-    "/v1/unntak": ["saker", "kategori", "prioritet", "status", "sakstype"],
+    # `arsak` (043): saker FØDT av et oppdrag bærer grunnen sin der —
+    # `kompensasjon_kreves` og `irreversibel_utfort` betyr at et menneske
+    # må rydde opp utenfor systemet. Flaten viser den i både listen
+    # (kolonne) og detaljen (rad + forklaring); faller feltet ut av
+    # backend, er de sakene igjen ikke til å skille fra en arvet sak.
+    "/v1/unntak": ["saker", "kategori", "prioritet", "status", "sakstype",
+                   "arsak"],
     "/v1/unntak/{id}": ["kategori", "sakstype", "status", "prioritet",
-                        "begrunnelse"],
+                        "begrunnelse", "arsak"],
     "/v1/unntak/{id}/historikk": ["rader", "hendelse", "fra_status",
                                   "til_status"],
     "/v1/policy/aktiv": ["versjon", "roller", "handlinger", "modus",

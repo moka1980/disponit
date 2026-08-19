@@ -1252,8 +1252,16 @@ def _unntak(tjeneste: Tjeneste, request: Request) -> Response:
                     tjeneste.logg.hendelse("cursor_ugyldig", rid, auth.tenant)
                     return _feilsvar("cursor_ugyldig", rid)
 
+            # `arsak` er MED (043, Codex P2): en sak født av
+            # `sikre_sak_for_oppdrag` bærer hele sin grunn der — og fra 043
+            # er to av verdiene `kompensasjon_kreves` og
+            # `irreversibel_utfort`, altså «et menneske må rydde opp etter
+            # en handling som rakk å skje» og «en irreversibel handling ble
+            # rapportert utført etter nei-et». Uten kolonnen så listen
+            # nøyaktig ut som en hvilken som helst arvet sak, og den
+            # forskjellen er hele poenget med å føde saken.
             sql = ("SELECT id, ts, handling, kategori, prioritet, status,"
-                   " sakstype FROM unntak"
+                   " sakstype, arsak FROM unntak"
                    " WHERE tenant=%s AND sakstype=%s")
             args: list = [auth.tenant, sakstype]
             if status == "apen":
@@ -1276,7 +1284,7 @@ def _unntak(tjeneste: Tjeneste, request: Request) -> Response:
 
         saker = [{"id": r[0], "ts": r[1].isoformat(), "handling": r[2],
                   "kategori": r[3], "prioritet": r[4], "status": r[5],
-                  "sakstype": r[6]} for r in rader]
+                  "sakstype": r[6], "arsak": r[7]} for r in rader]
         # Payload er IKKE med — og kan ikke bli det ved et uhell, fordi
         # kolonnen aldri hentes. `exceptions:manage` (PR-006) er veien dit.
         neste = (cursormodul.lag(auth.tenant, rader[-1][1], rader[-1][0],

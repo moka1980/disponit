@@ -484,7 +484,7 @@ def _hent_unntak(conn, auth, uid: int):
     rad = conn.execute(
         "SELECT u.id, u.ts, u.handling, u.kategori, u.sakstype, u.status,"
         " u.prioritet, r.begrunnelse, u.intensjon_pakrevd, u.saksversjon,"
-        " r.policy_id"
+        " r.policy_id, u.arsak"
         "  FROM unntak u JOIN revisjonslogg r"
         "    ON r.tenant = u.tenant AND r.id = u.loggpost_id"
         " WHERE u.tenant=%s AND u.id=%s", (auth.tenant, uid)).fetchone()
@@ -603,7 +603,8 @@ def unntak_detalj(tjeneste, request: Request) -> Response:
         kropp = {"id": rad[0], "ts": rad[1].isoformat(), "handling": rad[2],
                  "kategori": rad[3], "sakstype": rad[4], "status": rad[5],
                  "prioritet": rad[6], "begrunnelse": _koder(rad[7]),
-                 "saksversjon": rad[9], "tillatte_handlinger": handlinger,
+                 "saksversjon": rad[9], "arsak": rad[11],
+                 "tillatte_handlinger": handlinger,
                  "request_id": rid}
         if aarsak is not None:
             kropp["godkjenn_utilgjengelig"] = aarsak

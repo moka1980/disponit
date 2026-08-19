@@ -180,3 +180,87 @@ test("14b: oppdrag_utfort-409 annonseres med referansen", async () => {
   assert.ok(alert.textContent.includes("abc123"),
     "kvitteringsreferansen leses ikke opp");
 });
+
+// ---------------------------------------------------------------------------
+// 043 §5 (Codex P2, runde 3): saksgrunnen skal SES
+// ---------------------------------------------------------------------------
+
+async function aapneSakMedArsak(arsak) {
+  const { visUnntak } = await import("../static/js/flater/unntak.js");
+  const h = nyHoved();
+  const detalj = { ...DETALJ, arsak, avvis_kansellerer: undefined,
+                   tillatte_handlinger: [] };
+  KALL = [];
+  SVAR = (sti) => {
+    if (sti === "/v1/unntak") {
+      return { saker: [{ id: 7, ts: DETALJ.ts, handling: DETALJ.handling,
+        kategori: DETALJ.kategori, prioritet: DETALJ.prioritet,
+        status: DETALJ.status, sakstype: DETALJ.sakstype, arsak }],
+        neste_cursor: null };
+    }
+    if (sti === "/v1/unntak/7") return detalj;
+    if (sti === "/v1/unntak/7/historikk") {
+      return { rader: [], neste_cursor: null };
+    }
+    return undefined;
+  };
+  visUnntak(h, { sprak: "nb", scopes: ["exceptions:read"], tenant: "acme",
+    paaUautorisert: () => {} });
+  await vent(() => h.querySelector("tbody button"));
+  return h;
+}
+
+test("043: kompensasjonssaken er til å skille fra en arvet sak — liste + detalj",
+     async () => {
+  const h = await aapneSakMedArsak("kompensasjon_kreves");
+  // (1) LISTEN: kolonnen finnes og bærer den lokaliserte grunnen. Uten den
+  //     så saken ut som en hvilken som helst arvet sak — nøyaktig det
+  //     `sikre_sak_for_oppdrag` fødte den for å motvirke.
+  const hoder = [...h.querySelectorAll("thead th")].map((c) => c.textContent);
+  assert.ok(hoder.includes(t("ui.kol.saksarsak")),
+    `årsakskolonnen mangler i listen: ${hoder.join(", ")}`);
+  const kropp = h.querySelector("tbody").textContent;
+  assert.ok(kropp.includes(t("saksarsak.kompensasjon_kreves")),
+    "listen viser ikke saksgrunnen");
+  assert.ok(!kropp.includes("kompensasjon_kreves"),
+    "råkoden vises i stedet for teksten");
+
+  // (2) DETALJEN: etiketten OG forklaringen på hva operatøren må gjøre.
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => document.querySelector(".kv"));
+  const panel = document.querySelector(".kv").parentElement;
+  assert.ok(panel.textContent.includes(t("ui.kol.saksarsak")));
+  assert.ok(panel.textContent.includes(t("saksarsak.kompensasjon_kreves")));
+  assert.ok(panel.textContent.includes(
+    t("ui.unntak.saksarsak.kompensasjon_kreves")),
+    "forklaringen av hva som må gjøres mangler");
+  const brudd = await alvorligeBrudd(panel, { fragment: true });
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
+test("043: irreversibel_utfort får sin EGEN tekst, og en arvet sak ingen",
+     async () => {
+  const h = await aapneSakMedArsak("irreversibel_utfort");
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => document.querySelector(".kv"));
+  let panel = document.querySelector(".kv").parentElement;
+  assert.ok(panel.textContent.includes(
+    t("ui.unntak.saksarsak.irreversibel_utfort")));
+  // ... og ikke kompensasjonsteksten: de to betyr helt ulike ting for den
+  // som skal handle.
+  assert.ok(!panel.textContent.includes(
+    t("ui.unntak.saksarsak.kompensasjon_kreves")));
+
+  // En sak UTEN årsak (arvet sak) skal ikke få verken rad eller note —
+  // grunnen finnes ikke, og en tom etikett er støy.
+  document.querySelector(".overlegg")?.remove();
+  const h2 = await aapneSakMedArsak(null);
+  assert.ok(h2.querySelector("tbody").textContent
+    .includes(t("saksarsak.ingen")), "listen mangler tom-markøren");
+  h2.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => document.querySelector(".kv"));
+  panel = document.querySelector(".kv").parentElement;
+  assert.ok(!panel.textContent.includes(t("ui.kol.saksarsak")),
+    "en sak uten grunn fikk en tom årsaksrad");
+  assert.ok(!panel.querySelector('[role="note"]'));
+});
