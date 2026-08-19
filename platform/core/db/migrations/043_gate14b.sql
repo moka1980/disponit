@@ -828,3 +828,89 @@ BEGIN
     RETURN 'bevart';
 END $$;
 RESET ROLE;
+
+-- ------------------------------------------------------------
+-- 9. REAPEREN VENTER ALDRI (Codex P1, runde 6)
+--
+-- 043 innførte en NY låserekkefølge på nei-veien: `behandle_unntakshandling`
+-- tar SAKEN først og holder den gjennom hele operatørhandlingen, og §7
+-- pre-låser deretter kapabilitetene og oppdragene inne i den. Kvitterings-
+-- veien måtte følge etter (steg 3c i `app.py`), ellers var vranglåsen mot
+-- nei-et sikker. Dermed går begge de menneskestyrte veiene SAK → OPPDRAG.
+--
+-- Evidensfrist-reaperen går motsatt vei, og den er eldre: den plukker
+-- utløpte beslutningsoppdrag `FOR UPDATE`, og først DERETTER går den til
+-- saken gjennom `sikre_sak_for_oppdrag` (038 §5, som selv dokumenterer
+-- «oppdrag → unntak overalt»). Et oppdrag der begge kan møtes finnes:
+-- kvitteringen ankommer rett før evidensfristen og står i sakslåskø forbi
+-- den, mens reaperen tar oppdraget etter fristen og så venter på den samme
+-- saken. Sak→oppdrag mot oppdrag→sak er en 40P01 — og taperen kan bli
+-- kvitteringen, hvis retry da er forbi evidensfristen og den signerte
+-- evidensen dermed er tapt for godt.
+--
+-- Roten er ikke hvilken av de to rekkefølgene som er «riktig». Det er at
+-- den ene av partene er en BAKGRUNNSSVEIP, og en bakgrunnssveip skal ikke
+-- kunne felle en operatørhandling eller en signert kvittering — den har
+-- alltid et neste sveip. Reaperen valgte allerede nøyaktig det prinsippet
+-- for oppdragsraden (`FOR UPDATE ... SKIP LOCKED`, med begrunnelsen at
+-- overlappende kjøringer da er trygge). Den samme regelen mangler bare på
+-- den andre raden den tar.
+--
+-- Saken tas derfor med `SKIP LOCKED` FØR `sikre_sak_for_oppdrag` kalles:
+-- er den opptatt av en pågående transaksjon, hopper kandidaten over til
+-- neste sveip, akkurat som et opptatt oppdrag gjør. Da venter reaperen
+-- ikke på noen lås i det hele tatt, og kan ikke være ledd i en syklus.
+--
+-- Merk hvorfor to setninger: `SKIP LOCKED` alene kan ikke skille «saken er
+-- opptatt» fra «det finnes ingen sak ennå» — begge gir null rader, og den
+-- siste er den helt normale førstegangsveien. Kandidaten leses derfor
+-- ULÅST først; bare når den faktisk finnes, kreves låsen.
+--
+-- Kroppen er ellers ordrett 038 §5. CREATE OR REPLACE beholder eier og
+-- grants (timerrollen).
+-- ------------------------------------------------------------
+SET LOCAL ROLE disponit_m37_claimer;
+CREATE OR REPLACE FUNCTION reap_evidensfrister(p_grense INT DEFAULT 200)
+RETURNS TABLE (tenant TEXT, oppdrag_id BIGINT, unntak_id BIGINT)
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+DECLARE r RECORD; v_sak BIGINT; v_rid TEXT; v_kontekst TEXT;
+        v_kandidat BIGINT;
+BEGIN
+    v_rid := 'reap-' || replace(gen_random_uuid()::text, '-', '');
+    v_kontekst := current_setting('disponit.tenant', true);
+    FOR r IN
+        SELECT o.tenant AS t, o.id AS oid FROM public.oppdrag o
+         WHERE o.opprinnelse = 'beslutning'
+           AND o.status IN ('opprettet', 'plukket')
+           AND now() > o.evidensfrist
+         ORDER BY o.evidensfrist
+         LIMIT p_grense
+         FOR UPDATE OF o SKIP LOCKED
+    LOOP
+        PERFORM set_config('disponit.tenant', r.t, true);
+        -- SAKEN, MED SAMME REGEL SOM OPPDRAGET (043 §9): finnes den alt,
+        -- må låsen være ledig — ellers er dette sveipets kandidat, ikke
+        -- dette sveipets rad.
+        SELECT u.id INTO v_kandidat FROM public.unntak u
+         WHERE u.tenant = r.t AND u.oppdrag_id = r.oid
+           AND u.arsak = 'evidensfrist' AND NOT u.terminal;
+        IF v_kandidat IS NOT NULL THEN
+            PERFORM 1 FROM public.unntak u
+             WHERE u.tenant = r.t AND u.id = v_kandidat
+               FOR UPDATE SKIP LOCKED;
+            IF NOT FOUND THEN
+                CONTINUE;
+            END IF;
+        END IF;
+        v_sak := public.sikre_sak_for_oppdrag(
+            r.t, r.oid, 'evidensfrist', 'evidensreaper', v_rid);
+        UPDATE public.oppdrag o SET status = 'feilet'
+         WHERE o.tenant = r.t AND o.id = r.oid
+           AND o.status IN ('opprettet', 'plukket');
+        tenant := r.t; oppdrag_id := r.oid; unntak_id := v_sak;
+        RETURN NEXT;
+    END LOOP;
+    PERFORM set_config('disponit.tenant', coalesce(v_kontekst, ''), true);
+END $$;
+RESET ROLE;
