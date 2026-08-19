@@ -1219,7 +1219,7 @@ def test_gammelt_bestilt_vindu_velter_ikke_aggregatet(migrator):
     from plan.klassifiser import _nokkel, klassifiser_vinduer
     rt = _rt()
     try:
-        pid = _plan(rt, host="p35c.example", aktiver=False)
+        pid = _plan(rt, host="p35d.example", aktiver=False)
         _aktiver_i_fortid(migrator, pid, dager=40)
         # Vinduet arbeideren døde midt i: `aktivt`, men med DØD lease.
         vs = _syntetisk_vindu(migrator, pid, start_h=-24 * 35,
@@ -1369,6 +1369,32 @@ def test_klassifisereren_har_ingen_bestillingsvei():
             assert rot not in forbudt and n not in forbudt, \
                 f"klassifisereren importerer {n}"
             assert n != "materialiser", "transitiv bestillingsvei"
+
+
+def test_planenheten_har_apiets_pinnede_semantikkmiljo():
+    """Codex P1 (statisk): arbeideren kjører samme motor — og må derfor
+    kjøre under samme VERIFISERTE miljø.
+
+    `verifiser_oppstartsmiljo()` hopper over tzdata-sammenligningen når
+    `DISPONIT_SEMANTIKK_MILJO` MANGLER. Enheten lastet den ikke, og
+    `opp.sh` skrev den kun for API-et: en tzdata-drift på verten ville
+    dermed gitt nøyaktig utfallet porten finnes for å hindre — API-et
+    nekter å starte (riktig), mens den planlagte veien, den som beslutter
+    UTEN et menneske til stede, fortsetter i stillhet på en semantikk
+    ingen har verifisert.
+    """
+    enhet = (ROT / "deploy" / "staging" / "disponit-plan.service"
+             ).read_text(encoding="utf-8")
+    assert ("LoadCredential=DISPONIT_SEMANTIKK_MILJO:"
+            "/etc/disponit/plan/DISPONIT_SEMANTIKK_MILJO") in enhet
+    opp = (ROT / "deploy" / "staging" / "opp.sh").read_text(encoding="utf-8")
+    assert re.search(r"skriv_cred\s+plan\s+DISPONIT_SEMANTIKK_MILJO", opp), \
+        "opp.sh provisjonerer ikke signaturen for planenheten"
+    # ... og fra SAMME måling: to kall til miljosignatur() kunne i
+    # prinsippet gitt to verdier, og da ville de to enhetene startet på
+    # hver sin semantikk uten at noen sjekk fanget det.
+    assert opp.count("semantikk.miljosignatur()") == 1, \
+        "signaturen måles flere ganger — enhetene kan divergere"
 
 
 def test_planveien_skriver_aldri_oppdrag():

@@ -22,6 +22,12 @@ LoadCredential=DISPONIT_TOKEN_PEPPER:/etc/disponit/plan/DISPONIT_TOKEN_PEPPER
 LoadCredential=DISPONIT_ATT_NOKLER:/etc/disponit/plan/DISPONIT_ATT_NOKLER
 LoadCredential=DISPONIT_MAC_NOKLER:/etc/disponit/plan/DISPONIT_MAC_NOKLER
 LoadCredential=DISPONIT_MILJO:/etc/disponit/plan/DISPONIT_MILJO
+# PR-013 (V8/port 13): den pinnede miljøsignaturen. Uten den HOPPER
+# `verifiser_oppstartsmiljo()` over tzdata-sammenligningen — og da ville en
+# tzdata-drift på verten gitt nøyaktig det utfallet porten finnes for å
+# hindre: API-et nekter å starte, mens den planlagte veien fortsetter å
+# beslutte på en semantikk ingen har verifisert, uten et menneske til stede.
+LoadCredential=DISPONIT_SEMANTIKK_MILJO:/etc/disponit/plan/DISPONIT_SEMANTIKK_MILJO
 EnvironmentFile=-/etc/disponit/plan/konfig
 ExecStart=/opt/disponit/.venv/bin/python -m plan.materialiser
 TimeoutStartSec=10min

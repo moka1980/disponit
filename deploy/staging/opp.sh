@@ -435,8 +435,19 @@ skriv_cred plan DISPONIT_MILJO        "${DISPONIT_MILJO:-staging}"
 # med releasens EGEN kode. Bytter vertens tzdata etterpå, avviker boot-sjekken
 # og prosessen nekter start — motoren tolker aldri tidsvinduer annerledes enn
 # klassifikatoren beviste, uoppdaget.
-skriv_cred api DISPONIT_SEMANTIKK_MILJO "$(PYTHONPATH="$KILDE/platform/core" \
+#
+# BEGGE enhetene får den (Codex P1): plan-arbeideren konstruerer `Tjeneste` og
+# kjører NØYAKTIG samme motor som API-et, og `verifiser_oppstartsmiljo()`
+# hopper over tzdata-sammenligningen når variabelen MANGLER. Sto den bare hos
+# API-et, ville en tzdata-drift på verten gitt akkurat det utfallet porten
+# finnes for å hindre: API-et nekter å starte, mens den planlagte veien —
+# den som beslutter uten et menneske til stede — fortsetter i stillhet på
+# en semantikk ingen har verifisert. Signaturen måles ÉN gang, så de to
+# enhetene aldri kan få hver sin.
+SEMANTIKK_MILJO="$(PYTHONPATH="$KILDE/platform/core" \
     "$ROT/.venv/bin/python" -c 'from policy_validator import semantikk; print(semantikk.miljosignatur())')"
+skriv_cred api  DISPONIT_SEMANTIKK_MILJO "$SEMANTIKK_MILJO"
+skriv_cred plan DISPONIT_SEMANTIKK_MILJO "$SEMANTIKK_MILJO"
 # PR-011b: UI-deploy-config (provider-valg + IdP-origins). Ikke hemmeligheter,
 # men hydreres til os.environ via samme LoadCredential-vei. Tomme = default.
 skriv_cred api DISPONIT_UI_PROVIDER    "${DISPONIT_UI_PROVIDER:-}"
