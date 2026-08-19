@@ -362,7 +362,13 @@ def test_port8_ingen_vei_via_feilet(conn):
     rot = Path(__file__).resolve().parents[1]
     sql = (rot / "db" / "migrations" / "043_gate14b.sql").read_text(encoding="utf-8")
     import re
-    kropp = sql.split("avvis_med_opplosning", 1)[1]
+    # KUN funksjonskroppen: fra CREATE til REVOKE rett etter dens END $$.
+    # En skanning som løper til slutten av fila ville også truffet §9-
+    # reaperens `SET status='feilet'` — en helt annen, legitim vei
+    # (evidensfrist-timeout, ikke et menneskelig nei).
+    kropp = sql.split("CREATE OR REPLACE FUNCTION avvis_med_opplosning",
+                      1)[1]
+    kropp = kropp.split("REVOKE ALL ON FUNCTION avvis_med_opplosning", 1)[0]
     assert not re.search(r"SET\s+status\s*=\s*'feilet'", kropp), \
         "oppløsningen skriver feilet"
     py = (rot / "api" / "unntaksbehandling.py").read_text(encoding="utf-8")

@@ -791,10 +791,15 @@ def _menneskelig_kansellert(migrator, opp):
         "UPDATE oppdrag SET status='opprettet', owner_claim_id=NULL,"
         " owner_generation=owner_generation+1, owner_lease_utloper=NULL"
         " WHERE tenant=%s AND id=%s", (TENANT, opp))
+    # `kansellert_aarsak`-vakten (043 §1, runde 7) skriver kun når
+    # `current_user` ER oppløsningsveiens rolle — migrator konstruerer
+    # tilstanden direkte og må derfor gå utenom, som resten av suiten gjør.
+    migrator.execute("ALTER TABLE oppdrag DISABLE TRIGGER USER")
     migrator.execute(
         "UPDATE oppdrag SET status='kansellert',"
         " kansellert_aarsak='menneskelig_avvis' WHERE tenant=%s AND id=%s",
         (TENANT, opp))
+    migrator.execute("ALTER TABLE oppdrag ENABLE TRIGGER USER")
     migrator.commit()
 
 
