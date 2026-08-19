@@ -406,27 +406,38 @@ def test_listen_svarer_arsaken_bak_tilbakekallingen(migrator, klient):
     ordinaer = f"ord{secrets.token_hex(3)}.example"
     avklaring = f"avk{secrets.token_hex(3)}.example"
     forbigatt = f"fbg{secrets.token_hex(3)}.example"
+    # ÉN OVERGANG PER TRANSAKSJON, som resten av suiten: 041 §7-vakten er
+    # en DEFERRABLE constraint-trigger, altså commit-tidspunktet. Slås flere
+    # overganger for samme vertsnavn sammen, måles mellomtilstandene mot den
+    # siste sakstilstanden, og vakten feller et oppsett som er lovlig steg
+    # for steg.
     a = _admin()
     try:
         # 1) Ordinær tilbakekalling: TENANT eier navnet, operatøren trekker
         #    autorisasjonen. Ingen motpart, ingen konflikt.
         a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
                   (TENANT, ordinaer))
+        a.commit()
         a.execute("SELECT tilbakekall_domenekontroll(%s,%s,'opprydding','sys')",
                   (TENANT, ordinaer))
+        a.commit()
         # 2) Åpen konflikt: ANNEN_TENANT eier, TENANT utfordrer.
         a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
                   (ANNEN_TENANT, avklaring))
+        a.commit()
         a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
                   (TENANT, avklaring))
+        a.commit()
         # 3) Forbigått utfordrer: TENANT utfordrer, en TREDJE tar navnet, og
         #    degraderingen (019 §3.2) setter TENANT `tilbakekalt` — MED
         #    motparten i behold. Dette er den tilbakekallingen som FAKTISK
         #    er en overtakelse, og som skal beholde overtakelsesteksten.
         a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
                   (ANNEN_TENANT, forbigatt))
+        a.commit()
         a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
                   (TENANT, forbigatt))
+        a.commit()
         a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
                   (TREDJE_TENANT, forbigatt))
         a.commit()
