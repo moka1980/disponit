@@ -15,6 +15,8 @@ Portoversikt → test (numrene er klarsignalets):
            test_pre041_forbigatte_utfordrere_degraderes_ikke_syklet (Codex P1)
   §13      test_andre_overtakelse_varsler_pa_nytt (Codex P2)
   §2       test_kundeeid_overtakelsessak_avvises (Codex P2)
+  §7       test_konfliktidentiteten_kan_ikke_endres_uten_at_vakten_fyrer
+           (Codex P2)
   6        (test_pr015_operativt_lag::test_port20_abc — skiftet, samme id)
   7–9      test_port7_8_9_revisjonsbindingen
   §6/§11   test_avgjort_sak_har_frosset_lineage (Codex P2)
@@ -195,6 +197,47 @@ def test_apen_sak_med_feil_motpart_teller_ikke(migrator):
         " WHERE tenant=%s AND hostname=%s AND autorisasjonsgenerasjon=%s",
         (ANNEN_TENANT, h, gen))
     with pytest.raises(psycopg.errors.RaiseException, match="uten gjeldende sak"):
+        migrator.commit()
+    migrator.rollback()
+
+
+@pg
+def test_konfliktidentiteten_kan_ikke_endres_uten_at_vakten_fyrer(migrator):
+    """Codex P2: vakten het `AFTER INSERT OR UPDATE OF status`, men
+    predikatet hviler på fem kolonner.
+
+    En rad som ALT står i `avklaring_kreves` kunne derfor få byttet
+    motpart eller generasjon — uten at `status` ble nevnt — og committe en
+    tilstand som ikke lenger svarer til sin egen åpne sak. Vakten fyrte
+    ikke, og resultatet var den permanente låsen: attestasjonene avvises
+    som foreldet, §7 fyrer ikke retroaktivt, og vaktbikkja kan bare telle
+    den strandede konflikten.
+
+    Begge halvdelene her rører KUN identitetskolonnen. Med kolonnelisten
+    inne committet de stille.
+    """
+    h = _host()
+    _konflikt(migrator, h)          # åpen sak: utfordrer=ANNEN_TENANT, gen=1
+    gen = _dkrow(migrator, ANNEN_TENANT, h)[1]
+
+    # Motparten byttes på en rad som står i avklaring fra før.
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    migrator.execute(
+        "UPDATE domenekontroll SET konflikt_motpart='t-api-tredje'"
+        " WHERE tenant=%s AND hostname=%s", (ANNEN_TENANT, h))
+    with pytest.raises(psycopg.errors.RaiseException,
+                       match="uten gjeldende sak"):
+        migrator.commit()
+    migrator.rollback()
+
+    # Generasjonen flyttes fremover (monoton, så statemaskinen slipper den
+    # gjennom) — saken navngir fortsatt den gamle.
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    migrator.execute(
+        "UPDATE domenekontroll SET autorisasjonsgenerasjon=%s"
+        " WHERE tenant=%s AND hostname=%s", (int(gen) + 1, ANNEN_TENANT, h))
+    with pytest.raises(psycopg.errors.RaiseException,
+                       match="uten gjeldende sak"):
         migrator.commit()
     migrator.rollback()
 

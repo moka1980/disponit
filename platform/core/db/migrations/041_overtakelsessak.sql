@@ -437,8 +437,27 @@ BEGIN
 END $$;
 ALTER FUNCTION domenekontroll_krev_sak() OWNER TO disponit_m37_claimer;
 DROP TRIGGER IF EXISTS domenekontroll_avklaring_krever_sak ON domenekontroll;
+-- KOLONNELISTEN ER PREDIKATET (Codex P2). Vakten het `UPDATE OF status`
+-- alene, men predikatet over hviler på FEM kolonner: `status`, `tenant`,
+-- `hostname`, `konflikt_motpart` og `autorisasjonsgenerasjon`. En
+-- reparasjon eller en privilegert skriver kunne derfor bytte motpart
+-- eller generasjon på en rad som ALT sto i `avklaring_kreves` — uten å
+-- nevne `status` — og committe en tilstand som ikke lenger svarer til sin
+-- egen åpne sak, uten at vakten fyrte én gang.
+--
+-- Utfallet er den permanente låsen §20 måtte rydde opp i for
+-- pre-041-radene: attestasjonene avvises som foreldet (saken navngir en
+-- annen generasjon), §7 fyrer ikke retroaktivt, og vaktbikkja kan bare
+-- RAPPORTERE den strandede konflikten, syklus etter syklus.
+--
+-- Listen er UTTØMMENDE, ikke bare utvidet, og kan vises å være det:
+-- `tenant` og `hostname` er uforanderlige i `domenekontroll_laas` (016
+-- §7b) og kan per konstruksjon ikke bevege seg. De tre som KAN endres
+-- står her. Utvides predikatet med et nytt ledd, hører kolonnen hjemme i
+-- denne listen — det er samme sted, ikke to steder.
 CREATE CONSTRAINT TRIGGER domenekontroll_avklaring_krever_sak
-  AFTER INSERT OR UPDATE OF status ON domenekontroll
+  AFTER INSERT OR UPDATE OF status, konflikt_motpart, autorisasjonsgenerasjon
+  ON domenekontroll
   DEFERRABLE INITIALLY DEFERRED
   FOR EACH ROW EXECUTE FUNCTION domenekontroll_krev_sak();
 
