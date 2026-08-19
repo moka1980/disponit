@@ -242,6 +242,30 @@ def test_skjemagrensene_haandheves_i_begge_lag(migrator, klient):
 
 
 @pg
+def test_boolsk_ukedag_er_400_ikke_driftsalarm(migrator, klient, capsys):
+    """Codex P2: `bool` er en subklasse av `int` i Python.
+
+    `{"ukedag": true}` besto derfor både `isinstance(..., int)` og
+    `1 <= True <= 7`. Psycopg bandt så verdien som PostgreSQL `boolean`
+    mot en `SMALLINT`-parameter: funksjonsoppslaget feilet,
+    `_med_browserkontekst` leste det som en generisk databasefeil, og en
+    feilformet kropp ble til 503 `db_utilgjengelig` MED driftshendelse —
+    en falsk alarm en klient kan utløse på kommando. `time_lokal` har
+    utelukket bool hele tiden; disse to gjør det nå også."""
+    cookie, csrf = _adminsesjon(sub="boolsk-ukedag")
+    capsys.readouterr()
+    for kropp in (
+            _plan_kropp("pb1.example", rytme="ukentlig", ukedag=True),
+            _plan_kropp("pb2.example", rytme="ukentlig", ukedag=False),
+            _plan_kropp("pb3.example", rytme="manedlig", manedsdag=True)):
+        r = _post_plan(klient, cookie, csrf, "/v1/plan", kropp)
+        assert (r.status_code, r.json()["feil"]) == (
+            400, "request_feilformet"), r.text
+    assert "db_utilgjengelig" not in capsys.readouterr().out, \
+        "en feilformet kropp førte en driftshendelse"
+
+
+@pg
 def test_pause_aarsak_og_status_er_koblet(migrator):
     """Port 5: `pause_aarsak` finnes hvis og BARE hvis planen er pauset."""
     rt = _rt()

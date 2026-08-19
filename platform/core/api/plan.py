@@ -46,16 +46,23 @@ def _normaliser_plan(tenant: str, data: dict) -> dict:
     if not isinstance(tidssone, str) or not tidssone:
         raise Bestillingsfeil("request_feilformet")
     ukedag, manedsdag = data.get("ukedag"), data.get("manedsdag")
+    # `bool` er en subklasse av `int` i Python (Codex P2). `{"ukedag":
+    # true}` besto derfor `isinstance(..., int)` OG `1 <= True <= 7`, og
+    # psycopg bandt verdien som PostgreSQL `boolean` mot en `SMALLINT`-
+    # parameter: funksjonsoppslaget feilet, `_med_browserkontekst` leste
+    # det som en generisk databasefeil, og en feilformet kropp ble til 503
+    # `db_utilgjengelig` med en driftshendelse. `time_lokal` over har
+    # utelukket bool hele tiden; disse to må gjøre det samme.
+    _tall = (lambda v, lav, hoy: isinstance(v, int)
+             and not isinstance(v, bool) and lav <= v <= hoy)
     # Rytme-komplettheten speiles her for LESBAR feil; CHECK-en i basen
     # er porten (port 2/4).
     if rytme == "daglig" and (ukedag is not None or manedsdag is not None):
         raise Bestillingsfeil("request_feilformet")
-    if rytme == "ukentlig" and (not isinstance(ukedag, int)
-                                or not (1 <= ukedag <= 7)
+    if rytme == "ukentlig" and (not _tall(ukedag, 1, 7)
                                 or manedsdag is not None):
         raise Bestillingsfeil("request_feilformet")
-    if rytme == "manedlig" and (not isinstance(manedsdag, int)
-                                or not (1 <= manedsdag <= 28)
+    if rytme == "manedlig" and (not _tall(manedsdag, 1, 28)
                                 or ukedag is not None):
         raise Bestillingsfeil("request_feilformet")
     # Bestillingsparametrene gjennom bestillingsveiens EGEN normaliser:
