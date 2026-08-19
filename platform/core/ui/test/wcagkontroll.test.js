@@ -635,3 +635,38 @@ test("WCAG kontroll: et sent fanebytte kaprer ikke en annen rutes adresse",
     fane(h, "bestill");
     assert.equal(window.location.hash, "#/oversikt");
   });
+
+test("WCAG kontroll: en skjult fanenøkkel er ikke en plan-id", async () => {
+  // Codex P2: `faneFor` slo opp i den SCOPE-FILTRERTE `trinn`, så nøkler som
+  // finnes globalt men ikke for denne økten falt utenfor settet — og alt
+  // utenfor settet leses her som en ressurs-id fra et planvarsel. Lenken
+  // `#/wcagkontroll/bestill`, delt av en admin, åpnet dermed PLANFANEN hos
+  // kollegaen med `decisions:read` i stedet for `Faner`s tilbakefall til
+  // første tillatte fane. Adressen ble liggende feil i tillegg, fordi
+  // `synkroniserHash` spør samme resolver og fikk «dette er alt planfanen».
+  //
+  // MUTASJONEN SOM DREPER DENNE: la `faneFor` slå opp i `trinn` igjen.
+  KALL = []; SVAR = TOMME_DOMENER;
+  await settHash("#/wcagkontroll/bestill");
+  const h = nyHoved();
+  visWcagKontroll(h, { ...ctx(), scopes: ["decisions:read"] }, "bestill");
+  assert.ok(h.querySelector("#rp-oppdrag"),
+    "rapportfanen — første tillatte fane — er aktiv, ikke planfanen");
+  assert.ok(!KALL.some((k) => k.sti === "/v1/plan"),
+    "planfanen skal ikke være bygget: " + JSON.stringify(KALL));
+  assert.equal(window.location.hash, "#/wcagkontroll/rapporter",
+    "adressen navngir fanen hun faktisk ser");
+});
+
+test("WCAG kontroll: en tillatt fanenøkkel i adressen åpner fortsatt sin fane",
+  async () => {
+    // Motprøven: skillet mellom nøkkel og id skal ikke gjøre dyplenken sløv.
+    KALL = []; SVAR = (sti) => sti === "/v1/plan" ? { planer: [] }
+      : TOMME_DOMENER[sti];
+    await settHash("#/wcagkontroll/plan");
+    const h = nyHoved();
+    visWcagKontroll(h, ctx(), "plan");
+    await vent(() => h.textContent.includes(t("ui.plan.tom_tittel")));
+    assert.equal(window.location.hash, "#/wcagkontroll/plan",
+      "adressen står som den var — den peker alt på den valgte fanen");
+  });

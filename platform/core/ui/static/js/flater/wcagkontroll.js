@@ -65,7 +65,7 @@ export function visWcagKontroll(hoved, ctx, mal) {
   // REKKEFØLGEN ER FLYTEN (eier 18/8): et domene må verifiseres FØR en
   // bestilling kan gå gjennom, så Domener står først og er startfanen —
   // rekkefølgen i tablisten skal fortelle brukeren hvilken vei jobben går.
-  const trinn = [
+  const alleTrinn = [
     { nokkel: "domener", tittel: t("ui.wcag.fane.domener"),
       scope: "bestilling:opprett", bygg: del(visDomener) },
     { nokkel: "bestill", tittel: t("ui.wcag.fane.bestill"),
@@ -79,15 +79,31 @@ export function visWcagKontroll(hoved, ctx, mal) {
     // gjenoppta/stans) gates INNE i flaten på planscopene, som før.
     { nokkel: "plan", tittel: t("ui.wcag.fane.plan"),
       scope: null, bygg: del(visPlan) },
-  ].filter((s) => !s.scope || harScope(ctx, s.scope));
+  ];
+  const trinn = alleTrinn.filter((s) => !s.scope || harScope(ctx, s.scope));
 
   // Faner returnerer { rot, gaaTil, aktiv } — det er ROTEN som monteres.
   // Målet fra hashen (`#/wcagkontroll/<mål>`) kan være en fanenøkkel —
   // eller en ressurs-id fra et PLANVARSEL (varsler bærer `ressurs_id`
   // som mål, og planens varsler er de eneste som peker hit med id).
   // Begge skal lande der handlingen bor; alt annet starter på flyten.
+  //
+  // NØKKELSETTET ER GLOBALT, IKKE SCOPE-FILTRERT (Codex P2). Slo resolveren
+  // opp i `trinn`, forsvant `bestill` og `domener` ut av settet for en leseøkt
+  // — og en nøkkel utenfor settet er per definisjon en plan-id her. En admin
+  // som delte `#/wcagkontroll/bestill` sendte dermed kollegaen med
+  // `decisions:read` til PLANFANEN, ikke til `Faner`s dokumenterte tilbakefall
+  // (første tillatte fane, Rapporter). Adressen ble stående feil på kjøpet:
+  // `synkroniserHash` spør samme resolver, og den svarte at hashen alt
+  // betydde planfanen.
+  //
+  // Skillet som må gå er «kjent fanenøkkel» mot «plan-id» — og det er
+  // `alleTrinn` som vet det, uavhengig av øktens scoper. Er nøkkelen kjent men
+  // utilgjengelig, returneres den likevel: `Faner` faller tilbake til første
+  // trinn, og fordi svaret her da IKKE er fanen som faktisk ble valgt,
+  // normaliserer `synkroniserHash` adressen til den synlige fanen.
   const faneFor = (m) =>
-    trinn.some((s) => s.nokkel === m) ? m : (m ? "plan" : "domener");
+    alleTrinn.some((s) => s.nokkel === m) ? m : (m ? "plan" : "domener");
   const start = faneFor(mal);
 
   // FANEVALGET HØRER TIL ADRESSEN (Codex P2). `Faner` byttet bare sin egen
