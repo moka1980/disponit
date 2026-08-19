@@ -36,6 +36,7 @@ Portkart (klarsignalets §9):
   20  test_port20_saksarsaken_naar_operatoren_over_http
   21  test_port21_opplosningen_binder_malene_til_saken
   22  test_port22_kansellert_aarsak_kan_ikke_etterstemples
+  23  test_port23_verifikasjonsoppdrag_blokkerer_avvis
 """
 import json
 import secrets
@@ -1087,3 +1088,74 @@ def test_port22_kansellert_aarsak_kan_ikke_etterstemples(conn):
         m.rollback()
     finally:
         m.rollback(); m.close()
+
+
+# ---------------------------------------------------------------------------
+# Port 23: verifikasjonsoppdrag har ingen oppløsningsvei — nei-et blokkeres
+# ---------------------------------------------------------------------------
+
+@pg
+def test_port23_verifikasjonsoppdrag_blokkerer_avvis(conn):
+    """Codex P2 (runde 6): oppløsningsløkka var UTYPET.
+
+    Den brente kapabiliteten `avvist` og kansellerte raden uansett
+    oppdragstype. For et `verifikasjon`-oppdrag er det en halv oppløsning:
+    kvitteringsingesten forgrener seg til `_ingest_verifikasjon` FØR
+    sakslåsen og hele sen-evidensveien, og den veien bruker fortsatt den
+    ordinære toargsbrenningen. En korrekt signert verifikasjonskvittering
+    som kom fram etter nei-et ble derfor rullet tilbake som
+    `kapabilitet_ugyldig` i stedet for bevart som fencet evidens — det
+    stille tapet §5 finnes for å hindre, i den ene oppdragsfamilien §5 ikke
+    dekker.
+
+    Samme regel som for en levende ARBEIDSkapabilitet, av samme grunn: en
+    vakt uten utvei er bedre enn en stille avvisning av evidens.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `uloselige` fra vakten i
+    `unntaksbehandling`, eller verifikasjonsporten i 043 §7.
+    """
+    from db.pg import koble, sett_kontekst
+
+    uid = _oppsett(conn)
+    bid = _medlem(conn, "op23")
+    rop = _oppdrag(uid, "plukket")
+    oid = _oppdrag_id(uid, rop)
+    _kvittkap(oid)
+    m = _mig()
+    m.execute("ALTER TABLE oppdrag DISABLE TRIGGER USER")
+    # `oppdrag_kobling_konsistent` (008): et verifikasjonsoppdrag bærer
+    # koblingsstatus VERIFIKASJON og ingen beslutnings-FK.
+    m.execute("UPDATE oppdrag SET oppdragstype='verifikasjon',"
+              " koblingsstatus='VERIFIKASJON', beslutning_loggpost_id=NULL"
+              " WHERE tenant=%s AND id=%s", (TEN, oid))
+    m.execute("ALTER TABLE oppdrag ENABLE TRIGGER USER")
+    m.commit(); m.close()
+
+    # (a) HTTP-veien: nei-et blokkeres, ingenting røres.
+    res = _kall(conn, uid, "avvis", bid, _macreg())
+    assert res["utfall"] == "utestaaende_oppdrag", res
+    assert _status(conn, uid) != "avvist"
+    status, aarsak, _, _ = _oppdragsrad(oid)
+    assert (status, aarsak) == ("plukket", None), (status, aarsak)
+    assert not _hist(uid, "oppdrag_kansellert")
+    assert not _hist(uid, "oppdrag_fencet")
+
+    # (b) ... og basen håndhever den SAMME regelen, så en direkte kaller
+    #     ikke kan omgå API-vakten.
+    m = koble(MIGRATOR_DSN)
+    try:
+        sett_kontekst(m, TEN, "op23", "r-op23")
+        m.execute("SET ROLE disponit_m37_claimer")
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            m.execute("SELECT utfall FROM avvis_med_opplosning(%s,%s,%s,"
+                      "'op23','r-op23')", (TEN, uid, [oid]))
+    finally:
+        m.rollback(); m.close()
+
+    # Kvitteringskapabiliteten lever fortsatt — den er hele poenget.
+    m = _mig()
+    m.execute("SET ROLE disponit_m37_claimer")
+    assert m.execute("SELECT status FROM kvitteringskapabiliteter"
+                     " WHERE tenant=%s AND oppdrag_id=%s",
+                     (TEN, oid)).fetchall() == [("utstedt",)]
+    m.rollback(); m.close()

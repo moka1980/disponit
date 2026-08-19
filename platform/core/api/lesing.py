@@ -588,15 +588,23 @@ def unntak_detalj(tjeneste, request: Request) -> Response:
             # `avvis_kansellerer`-varsel som ALLTID endte i 409 og
             # kansellerte ingenting: et løfte serverkontrakten ikke holder.
             # Kapabiliteten avgjør derfor her også — nøyaktig som i vakten.
-            if lev_kap:
+            info = []
+            if lev_opp:
+                info = conn.execute(
+                    "SELECT id, status, COALESCE(modul_id, eiermodul),"
+                    " oppdragstype FROM oppdrag"
+                    " WHERE tenant=%s AND id = ANY(%s) ORDER BY id",
+                    (auth.tenant, lev_opp)).fetchall()
+            # Samme prioritering én gang til (Codex P2, runde 6): et levende
+            # VERIFIKASJONSoppdrag har ingen oppløsningsvei — POST-vakten
+            # blokkerer på det som på en levende arbeidskapabilitet. Tilbød
+            # flaten en `avvis` med kanselleringsvarsel her, ville den
+            # alltid endt i 409 og kansellert ingenting.
+            uloselige = [r for r in info if r[3] == "verifikasjon"]
+            if lev_kap or uloselige:
                 handlinger = [h for h in handlinger if h != "avvis"]
                 avvis_aarsak = "utestaaende_oppdrag"
             elif lev_opp:
-                info = conn.execute(
-                    "SELECT id, status, COALESCE(modul_id, eiermodul)"
-                    "  FROM oppdrag"
-                    " WHERE tenant=%s AND id = ANY(%s) ORDER BY id",
-                    (auth.tenant, lev_opp)).fetchall()
                 avvis_kansellerer = [
                     {"oppdrag_id": int(r[0]), "status": r[1],
                      "modul_id": r[2]} for r in info]

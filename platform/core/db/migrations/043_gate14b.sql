@@ -523,7 +523,7 @@ RETURNS TABLE(utfall TEXT, oppdrag_id BIGINT,
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE
     r RECORD; v_jti TEXT; v_brenning TEXT; v_status TEXT; v_hash TEXT;
-    v_fremmede BIGINT[];
+    v_fremmede BIGINT[]; v_verifikasjon BIGINT[];
 BEGIN
     -- TENANTPORTEN FØRST (Codex P1). Funksjonen er SECURITY DEFINER, eid av
     -- claimer-rollen, og gitt DIREKTE til runtime — akkurat som 038-veiene.
@@ -576,6 +576,37 @@ BEGIN
         RAISE EXCEPTION
             'avvis_med_opplosning: oppdrag % hører ikke til sak %',
             v_fremmede, p_unntak_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- ... OG VERIFIKASJONSOPPDRAG HAR INGEN OPPLØSNINGSVEI (Codex P2,
+    -- runde 6).
+    --
+    -- Løkka under er UTYPET: den brenner kapabiliteten `avvist` og
+    -- kansellerer raden uansett hva slags oppdrag det er. For et
+    -- `verifikasjon`-oppdrag er det en halv oppløsning. Kvitteringsingesten
+    -- forgrener seg til `_ingest_verifikasjon` FØR sakslåsen og hele
+    -- sen-evidensveien (`app.py`, steg 1), og den veien bruker fortsatt den
+    -- ordinære toargsbrenningen. En korrekt signert verifikasjonskvittering
+    -- som kom fram etter nei-et ville derfor blitt rullet tilbake som
+    -- `kapabilitet_ugyldig` i stedet for å bli bevart som fencet evidens —
+    -- altså nøyaktig det stille tapet §5 ble bygget for å hindre, i den ene
+    -- oppdragsfamilien §5 ikke dekker.
+    --
+    -- Prinsippet er alt uttalt for levende ARBEIDSkapabiliteter: en vakt
+    -- uten utvei er bedre enn en stille avvisning av evidens. 14a-svaret
+    -- (409 `utestaaende_oppdrag`) står derfor igjen for verifikasjon til
+    -- den veien finnes. API-laget blokkerer nei-et før det kommer hit;
+    -- dette er den samme regelen håndhevet i basen, så en direkte kaller
+    -- ikke kan omgå den. Hard feil, ikke stille frafall — av samme grunn
+    -- som porten over: et delvis nei er ikke det mennesket sa nei til.
+    SELECT array_agg(o.id ORDER BY o.id) INTO v_verifikasjon
+      FROM public.oppdrag o
+     WHERE o.tenant = p_tenant AND o.id = ANY(p_forventet)
+       AND o.oppdragstype = 'verifikasjon';
+    IF v_verifikasjon IS NOT NULL THEN
+        RAISE EXCEPTION
+            'avvis_med_opplosning: verifikasjonsoppdrag % har ingen'
+            ' oppløsningsvei', v_verifikasjon
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
     -- LÅSEORDEN: KAPABILITET FØR OPPDRAG (Codex P1).

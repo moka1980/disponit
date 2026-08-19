@@ -326,7 +326,24 @@ def behandle_unntakshandling(conn: psycopg.Connection, pool, mac_register, *,
         # avvis, også når det finnes oppdrag ved siden av; oppdragene er
         # da urørt, og det er riktig: en delvis oppløsning er ikke det
         # mennesket sa nei til.
-        if levende_kap:
+        # ... og VERIFIKASJONSOPPDRAG hører til samme familie (Codex P2,
+        # runde 6): de er levende oppdrag, men de har ingen oppløsningsvei.
+        # Kvitteringsingesten forgrener seg til `_ingest_verifikasjon` FØR
+        # sakslåsen og sen-evidensveien (`app.py`, steg 1), og den veien
+        # bruker fortsatt den ordinære toargsbrenningen — så en korrekt
+        # signert verifikasjonskvittering som kom fram etter nei-et ville
+        # blitt rullet tilbake som `kapabilitet_ugyldig` i stedet for
+        # bevart som fencet evidens. Samme regel som for kapabiliteten
+        # over, av nøyaktig samme grunn: en vakt uten utvei er bedre enn en
+        # stille avvisning av evidens. Basen håndhever den samme regelen
+        # (043 §7), så en direkte kaller ikke kan omgå den.
+        uloselige = []
+        if levende_opp:
+            uloselige = [int(r[0]) for r in conn.execute(
+                "SELECT id FROM oppdrag WHERE tenant=%s AND id = ANY(%s)"
+                "   AND oppdragstype='verifikasjon' ORDER BY id",
+                (tenant, levende_opp)).fetchall()]
+        if levende_kap or uloselige:
             utestaaende = _sjekk_utestaaende(conn, tenant, unntak_id)
             return _flagg_avklaring(conn, tenant, unntak_id, utestaaende,
                                     aktor, request_id, idempotency_key)
