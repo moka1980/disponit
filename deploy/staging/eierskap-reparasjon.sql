@@ -144,6 +144,10 @@ INSERT INTO _design VALUES
     -- 047: historikk-leseveiene (flaten leser aldri policyer direkte).
     ('FUNCTION', 'policyversjoner_for_tenant(text,text)',   'disponit_policy_eier'),
     ('FUNCTION', 'policyversjon_innhold(text,text,text)',   'disponit_policy_eier'),
+    -- Kilden for en rullbakk: innholdet OG generasjonens egen
+    -- `innholds_hash` i ett oppslag — opphavet lagres som identiteten,
+    -- ikke som versjonsnummeret, og de to må komme fra samme rad.
+    ('FUNCTION', 'policyversjon_kilde(text,text,text)',     'disponit_policy_eier'),
     -- 047: vakten «én hendelse per LEVENDE versjon». Den er SECURITY
     -- DEFINER og eid av policy_eier fordi en DEFERRED constraint-trigger
     -- fyrer ved COMMIT, utenfor `aktiver_policy` sin definer-kontekst —
