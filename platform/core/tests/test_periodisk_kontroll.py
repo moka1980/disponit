@@ -1582,6 +1582,86 @@ def test_tre_brudd_varsles_men_pauser_aldri(migrator):
 
 
 @pg
+def test_dempingen_leses_under_planlaasen(migrator):
+    """Codex P2: to samtidige sveip på samme bruddstripe gir ETT varsel.
+
+    Sto kandidatsjekken før planlåsen, kunne begge lese «ingen demping
+    ennå» før noen av dem hadde låst. Den andre ventet så pent på den
+    første — og fortsatte deretter uten å se etter om verden hadde endret
+    seg: en andre `varslet`-hendelse og et andre varsel. Varselnøkkelen
+    kan ikke fange det, for forekomsten ER hendelses-id-en, og de to
+    hendelsene har hver sin.
+
+    Kappløpet kjøres deterministisk: en tredje forbindelse holder
+    planlåsen, taperen settes i vente på den, og VINNERENS demping skrives
+    og committes mens taperen står der. Slipper låsen først etterpå, må
+    taperen lese predikatet på nytt for å oppdage den.
+
+    MUTASJONEN SOM DREPER DENNE: flytt `SELECT ... FOR UPDATE` tilbake
+    under kandidatsjekken i `varsle_plan_brudd`.
+    """
+    import threading
+    import time
+    from db.pg import koble
+    bid = _ekte_bruker("p-demping-eier")
+    rt = _rt()
+    blokk = koble(MIGRATOR_DSN)
+    svar = {}
+    try:
+        pid = _plan(rt, host="p-demping.example", aktor=f"bruker:{bid}")
+        for i in range(3):
+            vs = _syntetisk_vindu(migrator, pid, start_h=-30 - 24 * i,
+                                  slutt_h=-26 - 24 * i)
+            _syntetisk_tick(migrator, pid, vs, "brudd")
+
+        # Vinnerens transaksjon: tar planlåsen og holder den.
+        _sett_kontekst(blokk, TENANT)
+        blokk.execute("SELECT aktivert_av FROM bestillingsplan"
+                      " WHERE plan_id=%s FOR UPDATE", (pid,))
+
+        def taper():
+            c = _rt()
+            try:
+                _sett_kontekst(c, TENANT)
+                svar["taper"] = c.execute(
+                    "SELECT varsle_plan_brudd(%s,%s,'plansveip','r-taper')",
+                    (TENANT, pid)).fetchone()[0]
+                c.commit()
+            finally:
+                c.close()
+
+        t = threading.Thread(target=taper)
+        t.start()
+        time.sleep(1.5)          # taperen står i lås-køen
+        assert "taper" not in svar, "taperen tok aldri planlåsen"
+        # Vinneren skriver dempingen og committer — nøyaktig raden
+        # `varsle_plan_brudd` selv legger igjen.
+        blokk.execute(
+            "INSERT INTO bestillingsplan_hendelse (plan_id, tenant,"
+            " hendelse, aktor, request_id, detalj) VALUES"
+            " (%s,%s,'varslet','plansveip','r-vinner',"
+            " jsonb_build_object('grunn','gjentatt_brudd','bruker',%s))",
+            (pid, TENANT, bid))
+        blokk.commit()
+        t.join(timeout=20)
+        assert not t.is_alive(), "taperen kom aldri forbi låsen"
+    finally:
+        blokk.close()
+        rt.close()
+    assert svar.get("taper") is False, svar
+    _sett_kontekst(migrator, TENANT)
+    varslet = migrator.execute(
+        "SELECT count(*) FROM bestillingsplan_hendelse WHERE plan_id=%s"
+        " AND hendelse='varslet'", (pid,)).fetchone()[0]
+    varsler = migrator.execute(
+        "SELECT count(*) FROM varsel WHERE tenant=%s AND"
+        " art='plan_gjentatt_brudd' AND ressurs_id=%s",
+        (TENANT, str(pid))).fetchone()[0]
+    migrator.rollback()
+    assert (varslet, varsler) == (1, 0), (varslet, varsler)
+
+
+@pg
 def test_andre_bruddstripe_varsles_uten_a_velte_sveipen(migrator):
     """Codex P1: stripe nummer to har sin EGEN forekomst.
 

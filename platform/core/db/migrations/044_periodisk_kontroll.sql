@@ -1084,12 +1084,27 @@ DECLARE v_aktivert_av TEXT; v_bruker TEXT; v_hendelse BIGINT;
         v_varslet BOOLEAN := false; v_kanal TEXT;
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant, 'varsle_plan_brudd');
+    -- LÅSEN FØR PREDIKATET (Codex P2), ikke etter. Sto kandidatsjekken
+    -- først, kunne to samtidige sveip begge lese «ingen demping ennå» før
+    -- noen av dem hadde tatt planlåsen. Den andre ventet så pent på den
+    -- første — og fortsatte deretter uten å se etter om verden hadde
+    -- endret seg: den skrev en ANDRE `varslet`-hendelse og sendte et
+    -- andre varsel. Varselnøkkelen kunne ikke fange det, for forekomsten
+    -- er nettopp hendelses-id-en, og de to hendelsene har hver sin.
+    --
+    -- Med låsen først er dempingen serialisert: taperen leser predikatet
+    -- FØRST etter at vinneren har committet, og READ COMMITTED gir den da
+    -- et ferskt øyeblikksbilde der `varslet`-hendelsen står. Predikatet
+    -- er uendret — det er rekkefølgen som er invarianten.
+    SELECT b.aktivert_av INTO v_aktivert_av FROM public.bestillingsplan b
+     WHERE b.plan_id = p_plan AND b.tenant = p_tenant FOR UPDATE;
+    IF NOT FOUND THEN
+        RETURN false;
+    END IF;
     IF NOT EXISTS (SELECT 1 FROM public.planer_med_gjentatt_brudd() k
                     WHERE k.plan_id = p_plan AND k.tenant = p_tenant) THEN
         RETURN false;
     END IF;
-    SELECT b.aktivert_av INTO v_aktivert_av FROM public.bestillingsplan b
-     WHERE b.plan_id = p_plan AND b.tenant = p_tenant FOR UPDATE;
     -- Aktørstreng → bruker-id, som i pause_plan (FK mot brukeridentitet).
     v_bruker := CASE WHEN v_aktivert_av LIKE 'bruker:%'
                      THEN substring(v_aktivert_av FROM 8) END;
