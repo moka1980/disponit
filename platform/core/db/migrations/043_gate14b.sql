@@ -61,15 +61,53 @@ END $$;
 -- kansellert og NEW er det; alt annet — omskriving, fjerning,
 -- etterstempling på en alt terminal rad, eller en årsak uten
 -- statusskifte — avvises.
+--
+-- ... OG OVERGANGEN ALENE ER HELLER IKKE NOK (Codex P2, runde 7).
+--
+-- Å binde årsaken til overgangen fjernet etterstemplingen, men ikke
+-- FORFALSKNINGEN: runtime-rollen har fortsatt direkte UPDATE på `oppdrag`,
+-- og kolonnelåsen (005) tillater `opprettet -> kansellert`. Én setning fra
+-- en feilende eller kompromittert same-tenant-spørring kunne derfor gjøre
+-- begge deler samtidig — kansellere OG stemple `menneskelig_avvis` — og
+-- dermed skrive inn et menneskelig nei ingen har sagt. Konsekvensen er
+-- ikke bare et falskt revisjonsspor: §5 leser nøyaktig denne kolonnen for
+-- å avgjøre om en sen kvittering skal føde `kompensasjon_kreves` eller
+-- `irreversibel_utfort`, så forfalskningen forplanter seg til saker et
+-- menneske må svare på.
+--
+-- Autoriteten ligger i VEIEN, ikke bare i formen. Den ene veien som skal
+-- kunne skrive årsaken er `avvis_med_opplosning` (§7) — SECURITY DEFINER
+-- eid av `disponit_m37_claimer`, altså den ENESTE konteksten der
+-- `current_user` er claimer-rollen når denne raden endres. Runtime,
+-- arbeideren og migrator skriver alle som seg selv og stenges ute.
+-- Merk at medlemskap ikke er nok: migrator ER medlem av claimer-rollen
+-- (`WITH INHERIT FALSE`, for `OWNER TO`), så `pg_has_role` ville sluppet
+-- migrator inn — sammenligningen er derfor på den EFFEKTIVE rollen.
+CREATE OR REPLACE FUNCTION oppdrag_kansellert_aarsak_vakt()
+RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog AS $$
+BEGIN
+    IF OLD.kansellert_aarsak IS NOT NULL THEN
+        RAISE EXCEPTION 'oppdrag: kansellert_aarsak er uforanderlig når den'
+            ' først er satt (043)' USING ERRCODE = 'check_violation';
+    END IF;
+    IF OLD.status = 'kansellert' OR NEW.status <> 'kansellert' THEN
+        RAISE EXCEPTION 'oppdrag: kansellert_aarsak settes kun I overgangen'
+            ' til kansellert, aldri etterpå (043)'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF current_user <> 'disponit_m37_claimer' THEN
+        RAISE EXCEPTION 'oppdrag: kansellert_aarsak settes kun av'
+            ' oppløsningsveien (avvis_med_opplosning), ikke av % (043)',
+            current_user USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    RETURN NEW;
+END $$;
 DROP TRIGGER IF EXISTS oppdrag_kansellert_aarsak_immutable ON oppdrag;
 CREATE TRIGGER oppdrag_kansellert_aarsak_immutable
   BEFORE UPDATE ON oppdrag
   FOR EACH ROW WHEN (NEW.kansellert_aarsak
-                         IS DISTINCT FROM OLD.kansellert_aarsak
-                     AND (OLD.kansellert_aarsak IS NOT NULL
-                          OR OLD.status = 'kansellert'
-                          OR NEW.status <> 'kansellert'))
-  EXECUTE FUNCTION avvis_endring();
+                         IS DISTINCT FROM OLD.kansellert_aarsak)
+  EXECUTE FUNCTION oppdrag_kansellert_aarsak_vakt();
 
 -- Og den samme påstanden kan heller ikke FØDES ferdig. Kolonnelåsen er
 -- BEFORE UPDATE, og runtime har direkte INSERT på `oppdrag` (samme

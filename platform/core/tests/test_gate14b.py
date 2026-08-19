@@ -372,38 +372,61 @@ def test_port9_kansellert_aarsak_er_lukket_og_immutabel(conn):
     _medlem(conn, "op9")
     rop = _oppdrag(uid, "opprettet")
     oid = _oppdrag_id(uid, rop)
+    from db.pg import sett_kontekst
+
     m = _mig()
-    # (a) årsak uten kansellert status → CHECK.
+    # (a) årsak uten kansellert status → avvist. (Skjemaets CHECK sier det
+    #     samme; etter runde 7 er det overgangsvakten som rekker først, og
+    #     begge melder check_violation.)
     with pytest.raises(psycopg.errors.CheckViolation):
         m.execute("UPDATE oppdrag SET kansellert_aarsak='menneskelig_avvis'"
                   " WHERE tenant=%s AND id=%s", (TEN, oid))
     m.rollback()
-    from db.pg import sett_kontekst
     sett_kontekst(m, TEN, "sys", "r0")
     # (b) ukjent årsak → CHECK (lukket enum). Settes i SAMME setning som
-    #     overgangen: etter runde 5 er det den ENESTE lovlige formen, og
-    #     enum-CHECKen skal fortsatt være den som stopper verdien her.
+    #     overgangen og SOM OPPLØSNINGSVEIEN — det er den eneste formen
+    #     vakten slipper gjennom, og enum-CHECKen skal fortsatt være den
+    #     som stopper selve verdien her.
+    m.execute("SET ROLE disponit_m37_claimer")
     with pytest.raises(psycopg.errors.CheckViolation):
         m.execute("UPDATE oppdrag SET status='kansellert',"
                   " kansellert_aarsak='fordi'"
                   " WHERE tenant=%s AND id=%s", (TEN, oid))
     m.rollback()
     sett_kontekst(m, TEN, "sys", "r0")
-    # (c) immutabel når satt — også for skjemaeieren; og kan ikke fjernes.
+    # (c) immutabel når satt — også for oppløsningsveien selv, og den kan
+    #     ikke fjernes.
+    m.execute("SET ROLE disponit_m37_claimer")
     m.execute("UPDATE oppdrag SET status='kansellert',"
               " kansellert_aarsak='menneskelig_avvis'"
               " WHERE tenant=%s AND id=%s", (TEN, oid))
+    assert m.execute("SELECT kansellert_aarsak FROM oppdrag WHERE tenant=%s"
+                     " AND id=%s", (TEN, oid)).fetchone()[0] \
+        == "menneskelig_avvis", "den lovlige veien ble stengt"
     with pytest.raises(psycopg.errors.CheckViolation):
-        # `avvis_endring` melder 035-formens check_violation — det som
-        # måles er at endringen AVVISES, og at verdien består (under).
         m.execute("UPDATE oppdrag SET kansellert_aarsak=NULL"
                   " WHERE tenant=%s AND id=%s", (TEN, oid))
-    m.rollback()
-    from db.pg import sett_kontekst as _sk
-    _sk(m, TEN, "sys", "r0")
-    assert m.execute("SELECT kansellert_aarsak FROM oppdrag WHERE tenant=%s"
-                     " AND id=%s", (TEN, oid)).fetchone()[0] is None or True
     m.rollback(); m.close()
+
+    # (d) FORFALSKNINGEN (Codex P2, runde 7): runtime har direkte UPDATE og
+    #     kolonnelåsen tillater `opprettet -> kansellert`, så én setning
+    #     kunne skrevet inn et menneskelig nei ingen har sagt. Autoriteten
+    #     ligger i VEIEN: bare `avvis_med_opplosning` (definer, eid av
+    #     claimer-rollen) skal kunne sette årsaken.
+    uid2 = _oppsett(conn)          # egen sak: én aktiv reparasjon per sak
+    oid2 = _oppdrag_id(uid2, _oppdrag(uid2, "opprettet"))
+    sett_kontekst(conn, TEN, "sys", "r0")
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        conn.execute("UPDATE oppdrag SET status='kansellert',"
+                     " kansellert_aarsak='menneskelig_avvis'"
+                     " WHERE tenant=%s AND id=%s", (TEN, oid2))
+    conn.rollback()
+    m2 = _mig()
+    assert m2.execute("SELECT status, kansellert_aarsak FROM oppdrag"
+                      " WHERE tenant=%s AND id=%s",
+                      (TEN, oid2)).fetchone() == ("opprettet", None), \
+        "runtime fikk stemplet et menneskelig nei"
+    m2.rollback(); m2.close()
 
 
 # ---------------------------------------------------------------------------
@@ -991,8 +1014,11 @@ def test_port22_kansellert_aarsak_kan_ikke_etterstemples(conn):
 
     Årsaken er en påstand om en OVERGANG, ikke om en tilstand.
 
-    MUTASJONEN SOM DREPER DENNE: sett WHEN-klausulen tilbake til bare
-    `OLD.kansellert_aarsak IS NOT NULL AND ...`.
+    (Rollegjerdet — at bare oppløsningsveien kan sette verdien i det hele
+    tatt — måles i port 9(d), sammen med resten av kolonnekontrakten.)
+
+    MUTASJONEN SOM DREPER DENNE: la vakten slippe gjennom når OLD-verdien
+    er NULL, uansett status.
     """
     from db.pg import sett_kontekst
 
@@ -1047,8 +1073,10 @@ def test_port22_kansellert_aarsak_kan_ikke_etterstemples(conn):
         m.rollback()
 
         # (d) DEN LOVLIGE VEIEN STÅR: årsaken settes i samme setning som
-        #     overgangen — nøyaktig slik §7 gjør det.
+        #     overgangen, og av oppløsningsveiens rolle — nøyaktig slik §7
+        #     gjør det (SECURITY DEFINER, eid av claimer).
         sett_kontekst(m, TEN, "sys", "r0")
+        m.execute("SET ROLE disponit_m37_claimer")
         m.execute("UPDATE oppdrag SET status='kansellert',"
                   " kansellert_aarsak='menneskelig_avvis'"
                   " WHERE tenant=%s AND id=%s", (TEN, oid2))
