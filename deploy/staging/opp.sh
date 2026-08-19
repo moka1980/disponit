@@ -55,6 +55,7 @@ disponit-backup.service disponit-backup.timer
 disponit-domenerevalidering.service disponit-domenerevalidering.timer
 disponit-artefaktrydding.service disponit-artefaktrydding.timer
 disponit-evidensreaper.service disponit-evidensreaper.timer
+disponit-plan.service disponit-plan.timer
 disponit-wcag-audit.service
 disponit-domeneverifisering.service disponit-domeneverifisering.timer
 disponit-varselsender.service disponit-varselsender.timer"
@@ -294,6 +295,7 @@ getent group disponit-proxy >/dev/null || groupadd --system disponit-proxy
 # feiler uniten på oppstart uansett hvor riktig konfigurasjonen er skrevet
 # — identiteten er utrullingens ansvar, som for alle de andre tjenestene.
 for b in disponit-api disponit-m37 disponit-helse disponit-domener \
+         disponit-plan \
          disponit-wcag; do
   getent passwd "$b" >/dev/null || \
     useradd --system --no-create-home --shell /usr/sbin/nologin "$b"
@@ -390,7 +392,7 @@ fi
 # rullet ut før, ligger katalogen igjen fra forrige gang og hullet er usynlig;
 # det er den ferske verten som treffer det. `test_pr009` måler koblingen mot
 # kilden, så den neste credential-katalogen er dekket uten at noen husker det.
-install -d -m 700 /etc/disponit/api /etc/disponit/m37
+install -d -m 700 /etc/disponit/api /etc/disponit/m37 /etc/disponit/plan
 skriv_cred() {  # katalog navn verdi
   printf '%s' "$3" > "/etc/disponit/$1/$2"
   chmod 600 "/etc/disponit/$1/$2"
@@ -419,6 +421,16 @@ skriv_cred api DISPONIT_KEK          "$DISPONIT_KEK"
 skriv_cred api DISPONIT_TOKEN_PEPPER "$DISPONIT_TOKEN_PEPPER"
 skriv_cred api DISPONIT_ATT_NOKLER   "$DISPONIT_ATT_NOKLER"
 skriv_cred api DISPONIT_MAC_NOKLER   "$DISPONIT_MAC_NOKLER"   # PR-012 (boot-perre)
+# 044: plan-materialisereren kjører beslutningsveien i prosess (samme
+# tillitsnivå som API-et) — den trenger nøyaktig API-ets nøkkelsett, og
+# runtime-DSN-en (ikke claimerens): all DB-autoritet ligger i de
+# claimer-eide funksjonene den EXECUTEr.
+skriv_cred plan DISPONIT_DATABASE_URL "$DATABASE_URL"
+skriv_cred plan DISPONIT_KEK          "$DISPONIT_KEK"
+skriv_cred plan DISPONIT_TOKEN_PEPPER "$DISPONIT_TOKEN_PEPPER"
+skriv_cred plan DISPONIT_ATT_NOKLER   "$DISPONIT_ATT_NOKLER"
+skriv_cred plan DISPONIT_MAC_NOKLER   "$DISPONIT_MAC_NOKLER"
+skriv_cred plan DISPONIT_MILJO        "${DISPONIT_MILJO:-staging}"
 # PR-013 (V8/port 13): fest miljøsignaturen (tzdata) RELEASEN bygges med, målt
 # med releasens EGEN kode. Bytter vertens tzdata etterpå, avviker boot-sjekken
 # og prosessen nekter start — motoren tolker aldri tidsvinduer annerledes enn
@@ -489,6 +501,7 @@ systemctl stop disponit-varselsender.timer disponit-varselsender.service \
     2>/dev/null || true
 systemctl stop disponit-domenerevalidering.timer \
     disponit-artefaktrydding.timer disponit-evidensreaper.timer \
+    disponit-plan.service disponit-plan.timer \
     disponit-domenerevalidering.service \
     disponit-artefaktrydding.service \
     disponit-evidensreaper.service \
@@ -565,6 +578,8 @@ systemctl enable --now disponit-domenerevalidering.timer \
 # 038 §5: evidensfrist-reaperen — samme form (oneshot bak timer, kjøres
 # som disponit-domener; hele regelen ligger i reap_evidensfrister i basen).
 systemctl enable --now disponit-evidensreaper.timer
+# 044: plan-materialisereren — hvert 5. minutt.
+systemctl enable --now disponit-plan.timer
 # m_wcag_audit-arbeideren INSTALLERES men enables IKKE her: den skal
 # først i drift når modulen er AKSEPTERT (manifest-sjekklisten grønn,
 # status aktiv). Var den alt enablet av aksept-runden, startes den igjen.

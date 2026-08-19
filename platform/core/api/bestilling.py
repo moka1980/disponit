@@ -262,51 +262,33 @@ def _verifisert_hostname(conn, tenant: str, hostname: str):
     return rad[0] if rad else None
 
 
-def bestill_endepunkt(tjeneste, request: Request) -> Response:
+def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
+                     data, nokkel, rid: str):
+    """HELE bestillingsveien etter autentisering og parse — den ENE veien
+    (klarsignal periodisk kontroll §4): browserendepunktet og plan-
+    materialisereren kaller nøyaktig denne, så policyport, idempotens,
+    kvote og oppdragsopprettelse aldri kan gli fra hverandre mellom en
+    menneskelig og en planlagt bestilling.
+
+    -> ("feil", kode) eller ("ok", kropp, replay). Kalleren oversetter til
+    sitt eget svarformat; `aktor` er hele aktørstrengen ("bruker:<bid>"
+    eller "plan:<plan_id>").
+    """
     from . import kjerne
-    from .app import _feilsvar, _rid, kanonisk_json
-    from .policyadmin_http import _Avbrudd, _browserkontekst
-    rid = _rid(request)
-    try:
-        conn = tjeneste.pool.hent()
-    except (TimeoutError, psycopg.Error):
-        return _feilsvar("db_utilgjengelig", rid)
     #: Sesjonslåsen på klientens idempotensnøkkel, satt når den er tatt —
     #: se serialiseringen under og opprydningen i `finally`.
     laasenavn = None
     try:
         try:
-            tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
-                                           "bestilling:opprett")
-        except _Avbrudd as a:
-            return a.respons
-        raa = request.scope.get("state", {}).get("kropp", b"")
-        try:
-            data = json.loads(raa.decode("utf-8"))
-        except (ValueError, RecursionError):
-            # `json.loads` er REKURSIV (Codex P2). Et syntaktisk gyldig,
-            # dypt nøstet dokument på noen få kilobyte ligger godt under
-            # kroppsgrensen og treffer likevel rekursjonsgrensen —
-            # RecursionError er en RuntimeError, ikke en ValueError, så
-            # `except ValueError` alene slapp klientinput ut som generisk
-            # 500 i stedet for det dokumenterte `request_feilformet`.
-            # Dybde ER klientinput; de andre JSON-endepunktene (035,
-            # onboarding, artefakt) fanger den allerede, og denne
-            # parseren skal ikke være unntaket.
-            return _feilsvar("request_feilformet", rid)
-        try:
             norm = normaliser(tenant, data)
         except Bestillingsfeil as f:
             tjeneste.logg.hendelse(f.kode, rid, tenant, art="sikkerhet",
                                    flate="bestilling")
-            return _feilsvar(f.kode, rid)
+            return ("feil", f.kode)
         bt = BESTILLINGSTYPER[norm["bestillingstype"]]
         hostname = norm["mal_url"].split("://", 1)[1].split("/", 1)[0]
 
         hash_ = intensjonshash(norm)
-        raa_nokkel = request.headers.get("idempotency-key")
-        nokkel = raa_nokkel.strip() if raa_nokkel and raa_nokkel.strip() \
-            else None
         # LENGDEN VALIDERES FØR BESLUTNINGEN (Codex P2). Lagringen krever
         # 8–200 tegn, men enhver ikke-blank verdi slapp gjennom hit. Med en
         # for kort eller for lang nøkkel COMMITTET `kjerne.behandle`
@@ -321,7 +303,7 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
             tjeneste.logg.hendelse("request_feilformet", rid, tenant,
                                    art="sikkerhet", flate="bestilling",
                                    grunn="idempotensnokkel_lengde")
-            return _feilsvar("request_feilformet", rid)
+            return ("feil", "request_feilformet")
 
         # BESLUTNINGENE SERIALISERES PÅ KLIENTENS NØKKEL (Codex P1).
         # Kjernen serialiserer per KJERNEnøkkel, og den bærer intensjonen:
@@ -351,11 +333,11 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
                 (navn,)).fetchone()[0]
             conn.rollback()
             if not fikk:
-                return _feilsvar("idempotenskonflikt", rid)
+                return ("feil", "idempotenskonflikt")
             laasenavn = navn
 
         from db.pg import sett_kontekst
-        sett_kontekst(conn, tenant, f"bruker:{bid}", rid)
+        sett_kontekst(conn, tenant, aktor, rid)
         # GJENSPILL FØR HOSTNAME-PORTEN (Codex P2). Porten er en
         # OPPRETTELSES-regel: målet må være positivt autorisert i det
         # bestillingen tas imot. Et gjenspill oppretter ingenting — det
@@ -377,7 +359,7 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
                 if rad[0] != hash_:
                     # 21b/c: ULIK intensjon gjenbruker ALDRI et resultat —
                     # og tar ingen ny beslutning. Kvoten er urørt.
-                    return _feilsvar("idempotenskonflikt", rid)
+                    return ("feil", "idempotenskonflikt")
                 # HELE det opprinnelige svaret, ikke en redusert form:
                 # `begrunnelse` for STOPP/BRUDD og `unntak_id` for BRUDD
                 # er nettopp det klienten mistet da svaret forsvant.
@@ -386,16 +368,14 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
                 # alt som noen gang ble lagret om dem.
                 lagret = rad[1] or {"beslutning": rad[2],
                                     "oppdrag_id": rad[3]}
-                return kanonisk_json(
-                    {**lagret, "request_id": rid}, 200,
-                    {"x-request-id": rid, "idempotent-replay": "1"})
+                return ("ok", lagret, True)
         verifisert_ts = _verifisert_hostname(conn, tenant, hostname)
         if verifisert_ts is None:
             conn.rollback()
             tjeneste.logg.hendelse("bestilling_hostname_uverifisert", rid,
                                    tenant, art="sikkerhet",
                                    hostname=hostname)
-            return _feilsvar("bestilling_hostname_uverifisert", rid)
+            return ("feil", "bestilling_hostname_uverifisert")
         # Typen må kunne CLAIMES før noen beslutning tas: et TILLAT for et
         # oppdrag ingen modul kan plukke ser vellykket ut mens arbeidet dør
         # stille i køen — det utløper på `utforelsesfrist` uten at noen
@@ -449,7 +429,7 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
                        else "eiermodul_avvik" if registrert[0] != bt.eiermodul
                        else f"modulstatus:{registrert[1]}"
                        if registrert[1] != "aktiv" else "ingen_claiming"))
-            return _feilsvar("bestillingstype_utilgjengelig", rid)
+            return ("feil", "bestillingstype_utilgjengelig")
         conn.rollback()
 
         kjernenokkel = kjernenokkel_for(nokkel, hash_) if nokkel \
@@ -525,7 +505,7 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
         # en ikke-C collation er punktum og kolon ikke nødvendigvis der
         # byte-rekkefølgen har dem — altså et oppslag som kan bomme på
         # raden det finnes for. Prefikssammenligningen er collation-fri.
-        sett_kontekst(conn, tenant, f"bruker:{bid}", rid)
+        sett_kontekst(conn, tenant, aktor, rid)
         prefiks = kjernenokkelprefiks(nokkel) if nokkel else None
         tidligere = conn.execute(
             "SELECT nokkel, respons FROM idempotens"
@@ -543,7 +523,7 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
             # Ingen loggpost: `idempotenskonflikt` er `avvis` i feiltabellen
             # — kun et HTTP-svar — og skal svare likt uansett hvilken av de
             # to radene som fant konflikten.
-            return _feilsvar("idempotenskonflikt", rid)
+            return ("feil", "idempotenskonflikt")
 
         if gjenopprettet is not None:
             # Beslutningen ER tatt og committet: svaret er kjernens eget,
@@ -558,13 +538,13 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
                                    art="drift",
                                    beslutning=respons.get("beslutning"))
         else:
-            sett_kontekst(conn, tenant, f"bruker:{bid}", rid)
+            sett_kontekst(conn, tenant, aktor, rid)
             prad = conn.execute(
                 "SELECT policy_id FROM policyer WHERE tenant=%s AND aktiv",
                 (tenant,)).fetchall()
             conn.rollback()
             if len(prad) != 1:
-                return _feilsvar("policy_ukjent", rid)
+                return ("feil", "policy_ukjent")
             policy_id = prad[0][0]
 
             # `ressurs_id` er MALBINDINGSFELT: `malbindingsbrudd` krever at
@@ -639,16 +619,16 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
                 svar = kjerne.behandle(
                     conn, ctx, policy_id=policy_id, event=event,
                     idempotency_key=kjernenokkel, request_id=rid,
-                    aktor=f"bruker:{bid}", nokler=tjeneste.nokler)
+                    aktor=aktor, nokler=tjeneste.nokler)
             except kjerne.Feilsvar as f:
                 tjeneste.logg.hendelse(f.kode, rid, tenant, art="sikkerhet")
-                return _feilsvar(f.kode, rid)
+                return ("feil", f.kode)
 
         beslutning = str(svar.kropp.get("beslutning") or "").upper()
         utfall = {"TILLAT": "tillat", "STOPP": "stopp"}.get(
             beslutning, "brudd")
         oppdrag_id = None
-        sett_kontekst(conn, tenant, f"bruker:{bid}", rid)
+        sett_kontekst(conn, tenant, aktor, rid)
         if utfall == "tillat":
             logg = conn.execute(
                 "SELECT id FROM revisjonslogg WHERE tenant=%s AND"
@@ -656,7 +636,7 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
                 (tenant, kjernenokkel)).fetchone()
             if logg is None:
                 conn.rollback()
-                return _feilsvar("logging_feilet", rid)
+                return ("feil", "logging_feilet")
             from db import kryptering
             key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(conn,
                                                                   tenant)
@@ -682,7 +662,7 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
                                        art="drift",
                                        grunn="utforelsesfrist_mangler",
                                        oppdragstype=bt.oppdragstype)
-                return _feilsvar("intern_feil", rid)
+                return ("feil", "intern_feil")
             naa = datetime.now(timezone.utc)
             try:
                 oppdrag_id = int(conn.execute(
@@ -697,7 +677,7 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
                 # svaret ETTER at oppdraget ble skrevet — vinnerens rad er
                 # svaret, aldri et oppdrag nummer to (21/21-lik).
                 conn.rollback()
-                sett_kontekst(conn, tenant, f"bruker:{bid}", rid)
+                sett_kontekst(conn, tenant, aktor, rid)
                 oppdrag_id = int(conn.execute(
                     "SELECT id FROM oppdrag WHERE tenant=%s AND"
                     " beslutning_loggpost_id=%s", (tenant,
@@ -725,16 +705,10 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
                 (tenant, nokkel, hash_, oppdrag_id, utfall,
                  json.dumps(kropp, ensure_ascii=False)))
         conn.commit()
-        return kanonisk_json({**kropp, "request_id": rid}, 200,
-                             {"x-request-id": rid})
+        return ("ok", kropp, False)
     finally:
-        # SESJONSLÅSEN SLIPPES HER, ELLER SÅ GÅR TILKOBLINGEN IKKE TILBAKE.
-        # `gi_tilbake` ruller tilbake før den legger tilkoblingen i poolen,
-        # men en sesjonslås overlever en rollback: ble den stående, ville
-        # neste forespørsel på SAMME tilkobling arvet en lås ingen holder,
-        # og klientnøkkelen vært blokkert til tilkoblingen døde. Går
-        # slippet galt, lukker vi heller tilkoblingen — poolen teller den
-        # ned selv, og en ny er billigere enn en foreldreløs lås.
+        # SESJONSLÅSEN SLIPPES HER, ELLER SÅ BÆRER TILKOBLINGEN EN
+        # FREMMED LÅS TILBAKE TIL KALLEREN — se endepunktets kommentar.
         if laasenavn is not None:
             try:
                 conn.rollback()
@@ -747,4 +721,41 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
                     conn.close()
                 except Exception:
                     pass
+
+
+def bestill_endepunkt(tjeneste, request: Request) -> Response:
+    from .app import _feilsvar, _rid, kanonisk_json
+    from .policyadmin_http import _Avbrudd, _browserkontekst
+    rid = _rid(request)
+    try:
+        conn = tjeneste.pool.hent()
+    except (TimeoutError, psycopg.Error):
+        return _feilsvar("db_utilgjengelig", rid)
+    try:
+        try:
+            tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
+                                           "bestilling:opprett")
+        except _Avbrudd as a:
+            return a.respons
+        raa = request.scope.get("state", {}).get("kropp", b"")
+        try:
+            data = json.loads(raa.decode("utf-8"))
+        except (ValueError, RecursionError):
+            # `json.loads` er REKURSIV (Codex P2) — se historikken i
+            # `utfor_bestilling`-æraens forgjenger: dyp nøsting er
+            # klientinput, og RecursionError er ingen ValueError.
+            return _feilsvar("request_feilformet", rid)
+        raa_nokkel = request.headers.get("idempotency-key")
+        nokkel = raa_nokkel.strip() if raa_nokkel and raa_nokkel.strip() \
+            else None
+        res = utfor_bestilling(tjeneste, conn, tenant, f"bruker:{bid}",
+                               data, nokkel, rid)
+        if res[0] == "feil":
+            return _feilsvar(res[1], rid)
+        _, kropp, replay = res
+        hoder = {"x-request-id": rid}
+        if replay:
+            hoder["idempotent-replay"] = "1"
+        return kanonisk_json({**kropp, "request_id": rid}, 200, hoder)
+    finally:
         tjeneste.pool.gi_tilbake(conn)

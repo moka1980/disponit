@@ -275,9 +275,12 @@ def test_rolle_scopes_er_kjente_og_leser_ikke_sikkerhet():
     # Kun leseroller er rene lese-roller; godkjenner er den muterende.
     for rolle in ("leser", "sikkerhet"):
         assert ROLLE_TIL_SCOPES[rolle] <= LESESCOPES
-    # 038 §6: admin BESTILLER kontroller på tenantens egne, verifiserte
-    # nettsteder — nøyaktig ett muterende scope, og bare det.
-    assert ROLLE_TIL_SCOPES["admin"] - LESESCOPES == {"bestilling:opprett"}
+    # 038 §6 + 044 §6: admin BESTILLER kontroller og forvalter PLANENE
+    # for dem — planen er stående intensjon, ikke stående fullmakt, så
+    # også plan-scopene fører bare til policyvurderte bestillinger.
+    assert ROLLE_TIL_SCOPES["admin"] - LESESCOPES == {
+        "bestilling:opprett", "plan:opprett", "plan:aktiver",
+        "plan:gjenoppta"}
     assert scopes_for_roller(["leser"]) == {"decisions:read",
                                             "exceptions:read", "policy:read"}
     assert "security:read" not in scopes_for_roller(["leser"])

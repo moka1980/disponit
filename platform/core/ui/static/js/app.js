@@ -18,6 +18,7 @@ import { visVarsler } from "./flater/varsler.js";
 import { visAdmin } from "./flater/admin.js";
 import { visWcagKontroll } from "./flater/wcagkontroll.js";
 import { visAdjudikator } from "./flater/adjudikator.js";
+import { visPlan } from "./flater/plan.js";
 import { byggRuter, hashForDypLenke, tillatteFlater } from "./sitekart.js";
 
 const FLATER = {
@@ -28,6 +29,7 @@ const FLATER = {
   admin: visAdmin,
   wcagkontroll: visWcagKontroll,
   adjudikator: visAdjudikator,
+  plan: visPlan,
 };
 
 // Lagre valget, men ikke LIT på at lagringen gikk (Codex P2 til PR #42).
