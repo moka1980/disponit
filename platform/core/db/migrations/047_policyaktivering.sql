@@ -213,12 +213,24 @@ GRANT INSERT ON policyaktivering TO disponit_policy_eier;
 -- ------------------------------------------------------------
 ALTER TABLE aktiveringsrunde ADD COLUMN aktivert_som_versjon TEXT;
 
--- NOT VALID med vilje: historiske `brukt`-runder fra før hendelsen fantes
--- kan stå ubundet der backfillen ikke fant et entydig match — de skal
--- ikke velte migrasjonen, og `brukt` er terminal så radene skrives aldri
--- igjen. Alle NYE skrivinger håndheves.
+-- NOT VALID med vilje, og det er NOT VALID ALENE som bærer historikk-
+-- unntaket: historiske `brukt`-runder fra før hendelsen fantes kan stå
+-- ubundet der backfillen ikke fant et entydig match, og de skal ikke velte
+-- migrasjonen. Postgres hopper over dem i skanningen, men håndhever
+-- constrainten på HVER INSERT og UPDATE etterpå — unntaket gjelder altså
+-- radene som alt fantes, ikke formen.
+--
+-- Derfor krever `brukt` også BINDINGEN (Codex P1). Uten den kunne en rad
+-- fødes terminal med `aktivert_som_versjon = NULL`: FK-en under er MATCH
+-- SIMPLE og SOVER så lenge én av de fem kolonnene er NULL, og
+-- tilstandsmaskin-triggeren er BEFORE UPDATE — en rad som fødes terminal
+-- får aldri den UPDATE-en. Runtime-rollen har fortsatt INSERT på tabellen,
+-- så det var en åpen dør rett til den hendelsesløse terminalrunden
+-- migrasjonen sier den forbyr. Med kravet her er alle fem FK-kolonnene
+-- NOT NULL i nøyaktig den formen som betyr noe, og FK-en biter.
 ALTER TABLE aktiveringsrunde ADD CONSTRAINT runde_versjon_krever_brukt CHECK (
-     (status = 'brukt'  AND decision_operation_id IS NOT NULL)
+     (status = 'brukt'  AND decision_operation_id IS NOT NULL
+                        AND aktivert_som_versjon IS NOT NULL)
   OR (status <> 'brukt' AND aktivert_som_versjon IS NULL)) NOT VALID;
 
 ALTER TABLE aktiveringsrunde ADD CONSTRAINT runde_terminal_krever_hendelse
@@ -246,9 +258,10 @@ BEGIN
   THEN
     RAISE EXCEPTION 'aktiveringsrunde: versjonsbindingen er immutabel';
   END IF;
-  -- Ny binding krever at raden er (eller blir) brukt i samme setning —
-  -- CHECK-en over er NOT VALID for historikkens skyld, så regelen for NYE
-  -- skrivinger står her og gjelder alle.
+  -- Ny binding krever at raden er (eller blir) brukt i samme setning.
+  -- CHECK-en over sier det samme for enhver skriving; her står den likevel,
+  -- fordi triggeren kjører FØR constrainten og gir eier en navngitt
+  -- forklaring i stedet for et anonymt CHECK-brudd.
   IF NEW.aktivert_som_versjon IS NOT NULL
      AND OLD.aktivert_som_versjon IS NULL
      AND NEW.status <> 'brukt' THEN

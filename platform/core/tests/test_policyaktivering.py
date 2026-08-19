@@ -821,6 +821,49 @@ def test_runde_brukt_krever_binding_og_hendelse():
 
 
 @pg
+def test_ny_runde_kan_ikke_fodes_terminal_uten_binding():
+    """Port 10c (Codex P1): den hendelsesløse terminalrunden INSERT-et rett
+    inn.
+
+    Tilstandsmaskin-triggeren er BEFORE UPDATE, så en rad som FØDES `brukt`
+    passerer den aldri. FK-en mot hendelsen er MATCH SIMPLE og sover så
+    lenge én av de fem kolonnene er NULL. Uten `aktivert_som_versjon` i
+    CHECK-en var det derfor en åpen dør: `status='brukt'` +
+    `decision_operation_id` + binding NULL committet fint, med runtime-
+    rollens eget INSERT-grant, og runden sto terminal uten hendelse —
+    nøyaktig formen migrasjonen sier den forbyr.
+
+    Historikkunntaket berøres ikke: det bæres av NOT VALID, som skåner
+    radene som ALT fantes, ikke formen."""
+    c = _c()
+    uid, pid = _ny()
+    _validert_utkast(c, uid, pid)
+    c.commit()
+    kolonner = ("tenant,utkast_id,runde,status,decision_operation_id,"
+                "aktivert_som_versjon,diff_hash,utkast_innholds_hash,"
+                "base_policy_hash,risikoklasse,klassifisering_hash,"
+                "klassifikatorversjon,policyskjema_versjon,"
+                "motor_semantikkversjon,deny_all_hash,deny_all_versjon,"
+                "pakrevd_antall_godkjennere,utloper")
+    verdier = ("%s,%s,7,'brukt','op-direkte',{binding},'d','u','b','UTVIDER',"
+               "'k','kv1','0.2','m1','da','1',2,now()+interval '1 hour'")
+    with pytest.raises(psycopg.errors.CheckViolation) as ei:
+        c.execute(f"INSERT INTO aktiveringsrunde ({kolonner}) VALUES ("
+                  + verdier.format(binding="NULL") + ")", (TEN, uid))
+    assert "runde_versjon_krever_brukt" in str(ei.value)
+    c.rollback()
+    # Med bindingen på plass er alle fem FK-kolonnene NOT NULL, og den
+    # utsatte FK-en feller den falske historien ved commit i stedet.
+    c.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+    c.execute(f"INSERT INTO aktiveringsrunde ({kolonner}) VALUES ("
+              + verdier.format(binding="'9'") + ")", (TEN, uid))
+    with pytest.raises(psycopg.errors.ForeignKeyViolation) as ei:
+        c.commit()
+    assert "runde_terminal_krever_hendelse" in str(ei.value)
+    c.close()
+
+
+@pg
 def test_runde_tilstandsmaskin_og_immutabel_binding():
     """Portene 11 og 15: `utlopt`/`kansellert` → `brukt` er ulovlig;
     `brukt` er terminal; en satt binding kan aldri flyttes."""
