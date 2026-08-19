@@ -1764,6 +1764,72 @@ def test_forbigaende_feil_frigir_vinduet(migrator, app, monkeypatch):
 
 
 @pg
+def test_avvist_terminalisering_pauser_ikke_planen(migrator, app,
+                                                   monkeypatch):
+    """Codex P2: en dom lagringen forkastet skal ikke bli plantilstand.
+
+    `terminaliser_planvindu` svarer `avvik:<kanonisk utfall>` når vinduet
+    ALT er terminalt med et annet utfall: den kanoniske raden står urørt,
+    og funksjonen fører sin egen sikkerhetshendelse. Materialisereren
+    pauset likevel planen på SITT lokale `stopp`. Et utgjerdet forsøk —
+    en nyere arbeider terminaliserte `tillat`, mens dette gamle forsøket
+    fikk et forbigående modulsvar — kunne dermed pause planen permanent,
+    og bare et menneske kan oppheve den pausen.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `and not avvist` fra
+    pausebetingelsen i `materialiser_en`.
+    """
+    from plan import materialiser
+    rt = _rt()
+    try:
+        pid = _plan_forfalt(rt, migrator, host="p-avvik-pause.example")
+        rad = _mine_forfalte(rt, pid)[0]
+        vindu_start = rad[2]
+
+        def nyere_arbeider(*a, **k):
+            # Mens dette forsøket står i modulen, rekker en NYERE arbeider
+            # å terminalisere vinduet med det kanoniske utfallet.
+            m = _mig()
+            _sett_kontekst(m, TENANT)
+            m.execute("UPDATE bestillingsplan_vindu SET tilstand='terminal',"
+                      " terminalisert_ts=now(), claim_id=NULL,"
+                      " lease_utloper=NULL WHERE plan_id=%s"
+                      " AND vindu_start=%s", (pid, vindu_start))
+            m.execute("INSERT INTO bestillingsplan_tick (plan_id, tenant,"
+                      " vindu_start, idempotensnokkel, utfall)"
+                      " VALUES (%s,%s,%s,%s,'tillat')",
+                      (pid, TENANT, vindu_start,
+                       materialiser.idempotensnokkel(pid, vindu_start)))
+            m.commit()
+            m.close()
+            # ... og DETTE forsøket ender i en moduldom.
+            return ("feil", "bestillingstype_utilgjengelig")
+
+        import api.bestilling
+        monkeypatch.setattr(api.bestilling, "utfor_bestilling",
+                            nyere_arbeider)
+        res = materialiser.materialiser_en(app.tjeneste, rt, rad)
+        assert res["dom"] == "avvik:tillat", res
+    finally:
+        rt.close()
+    _sett_kontekst(migrator, TENANT)
+    plan = migrator.execute(
+        "SELECT status, pause_aarsak FROM bestillingsplan WHERE plan_id=%s",
+        (pid,)).fetchone()
+    tick = migrator.execute(
+        "SELECT utfall FROM bestillingsplan_tick WHERE plan_id=%s",
+        (pid,)).fetchall()
+    avvik = migrator.execute(
+        "SELECT count(*) FROM bestillingsplan_hendelse WHERE plan_id=%s"
+        " AND hendelse='sikkerhetsavvik'", (pid,)).fetchone()[0]
+    migrator.rollback()
+    assert plan == ("aktiv", None), \
+        "et utgjerdet forsøk pauset planen på en forkastet dom"
+    assert tick == [("tillat",)], "den kanoniske raden ble rørt"
+    assert avvik == 1, "avviket ble ikke ført som sikkerhetshendelse"
+
+
+@pg
 def test_gjentatt_uten_resultat(migrator):
     """Port 22: tre `tillat`-tick på rad i gjeldende åpne periode uten
     promotert artefakt → pauset `gjentatt_uten_resultat`."""

@@ -156,7 +156,18 @@ def materialiser_en(tjeneste, conn, rad, *, naa=None) -> dict:
     # lease som dør, og klassifisereren gjenoppretter ticket fra
     # `bestilling_idempotens` — uten pausen. DEN veien tar
     # `planer_med_ubehandlet_stopp` i pausesveipen.
-    if utfall == "stopp":
+    #
+    # OG BARE ETTER EN GODTATT TERMINALISERING (Codex P2). `avvik:<utfall>`
+    # betyr at vinduet ALT er terminalt med et ANNET, kanonisk utfall:
+    # funksjonen lar den raden stå urørt og fører sin sikkerhetshendelse.
+    # Vårt lokale utfall ble altså AVVIST — men pausen ble likevel felt på
+    # det. Et utgjerdet forsøk (en nyere arbeider terminaliserte `tillat`,
+    # mens dette gamle forsøket fikk et forbigående modulsvar) kunne
+    # dermed pause planen permanent på en dom lagringen nettopp forkastet.
+    # En beslutning som ikke ble evidens, skal heller ikke bli tilstand.
+    avvist = dom.startswith("avvik:")
+    pauset, grunn = False, None
+    if utfall == "stopp" and not avvist:
         grunn = _PAUSE_FOR_FEIL.get(detalj.get("feil"), "policy_stopper")
         pauset = conn.execute(
             "SELECT pause_plan(%s,%s,%s,%s,%s,%s)",
@@ -164,12 +175,10 @@ def materialiser_en(tjeneste, conn, rad, *, naa=None) -> dict:
              json.dumps({"vindu": str(vindu_start),
                          "idempotensnokkel": nokkel} | detalj,
                         ensure_ascii=False))).fetchone()[0]
-        conn.commit()
-        if pauset:
-            print(json.dumps({"hendelse": "plan_pauset", "plan": str(plan_id),
-                              "grunn": grunn}), flush=True)
-    else:
-        conn.commit()
+    conn.commit()
+    if pauset:
+        print(json.dumps({"hendelse": "plan_pauset", "plan": str(plan_id),
+                          "grunn": grunn}), flush=True)
     return {"vindu": str(vindu_start), "plan": str(plan_id),
             "utfall": utfall, "dom": dom}
 
