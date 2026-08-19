@@ -760,6 +760,27 @@ def test_port13_18_referansepayloadens_lukkede_kontrakt(migrator):
     assert _gyldig(migrator, _payload(h, tapt="x", utf="x")) is False
     migrator.rollback()
 
+    # Codex P2: 19 sifre er ikke det samme som «innenfor BIGINT». Hele
+    # intervallet over taket er 19-sifret, og den gamle lengdegrensen
+    # slapp det gjennom — en loggpost med en generasjon eller en
+    # hendelses-id ingen `bigint`-kolonne kan bære, og dermed evidens som
+    # per konstruksjon aldri kan svare til en gyldig sak.
+    maks = 9223372036854775807
+    assert _gyldig(migrator, _payload(h, gen=maks)) is True
+    assert _gyldig(migrator, _payload(h, gen=maks + 1)) is False
+    assert _gyldig(migrator, _payload(h, gen=9999999999999999999)) is False
+    assert _gyldig(migrator, _payload(h, a=maks, b=maks - 1)) is True
+    assert _gyldig(migrator, _payload(h, a=maks + 1, b=1)) is False
+    assert _gyldig(migrator, _payload(h, a=1, b=maks + 1)) is False
+    # ...og grensen selv står der den skal, ikke ett siffer unna.
+    for tekst, ventet in (("9223372036854775807", True),
+                          ("9223372036854775808", False),
+                          ("1000000000000000000", True),
+                          ("999999999999999999", True)):
+        assert migrator.execute("SELECT er_bigint_tekst(%s)",
+                                (tekst,)).fetchone()[0] is ventet, tekst
+    migrator.rollback()
+
 
 @pg
 def test_port17_20_hostnameparitet_db_og_python(migrator):

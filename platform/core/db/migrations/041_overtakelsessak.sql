@@ -231,6 +231,30 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+-- 19 SIFRE ER IKKE EN BIGINT (Codex P2). Lengdegrensen under het «det som
+-- faktisk holder tallet innenfor BIGINT», men gjorde ikke det: hele
+-- intervallet 9223372036854775808–9999999999999999999 er 19 sifre og
+-- ligger OVER `bigint`-taket. En loggpost kunne dermed bære en generasjon
+-- eller en hendelses-id som ingen sak KAN bære, siden sakens kolonner er
+-- typet `bigint` — evidens som per konstruksjon aldri kan svare til en
+-- gyldig overtakelsessak, godkjent av den lukkede kontrakten.
+--
+-- Sammenligningen gjøres på TEKSTFORM, som resten av kontrakten, og av
+-- samme grunn: `AND` i SQL er ikke garantert å kortslutte, så en `::bigint`
+-- eller `::numeric` her kunne blitt evaluert FØR regexen som gjør den
+-- trygg — og en CHECK-brukt funksjon som kan kaste er en annen feil enn
+-- den vi retter. To sifferstrenger av samme lengde ordnes likt numerisk og
+-- leksikografisk; `COLLATE "C"` gjør den ordningen uavhengig av basens
+-- collation, som en IMMUTABLE funksjon skal være.
+CREATE OR REPLACE FUNCTION er_bigint_tekst(t TEXT)
+RETURNS boolean LANGUAGE sql IMMUTABLE
+SET search_path = pg_catalog AS $$
+  SELECT COALESCE(
+       length(t) < 19
+    OR (length(t) = 19 AND (t COLLATE "C") <= '9223372036854775807')
+  , false)
+$$;
+
 -- Formkontrakten: lukket nøkkelsett (LIKHET, ikke delmengde), versjonert,
 -- semantiske domener validert på TEKSTFORM — ingen cast som kan kaste,
 -- og COALESCE(..., false) ytterst: alltid TRUE/FALSE, aldri NULL.
@@ -250,12 +274,15 @@ SET search_path = pg_catalog, public AS $$
    AND jsonb_typeof(p->'hostname')          = 'string'
    AND jsonb_typeof(p->'tapt_tenant')       = 'string'
    AND jsonb_typeof(p->'utfordrer_tenant')  = 'string'
-   -- length <= 19 er det som faktisk holder tallet innenfor BIGINT:
-   -- mønsteret alene godtar vilkårlig lange sifferstrenger.
+   -- Mønsteret gir desimalformen, `er_bigint_tekst` gir TAKET: mønsteret
+   -- alene godtar vilkårlig lange sifferstrenger, og en ren lengdegrense
+   -- slipper gjennom 19-sifrede tall over `bigint`-maks (se funksjonen).
    AND (p->>'autorisasjonsgenerasjon') ~ '^(0|[1-9][0-9]*)$'
-   AND length(p->>'autorisasjonsgenerasjon') <= 19
-   AND (p->>'hendelse_a') ~ '^[1-9][0-9]*$' AND length(p->>'hendelse_a') <= 19
-   AND (p->>'hendelse_b') ~ '^[1-9][0-9]*$' AND length(p->>'hendelse_b') <= 19
+   AND public.er_bigint_tekst(p->>'autorisasjonsgenerasjon')
+   AND (p->>'hendelse_a') ~ '^[1-9][0-9]*$'
+   AND public.er_bigint_tekst(p->>'hendelse_a')
+   AND (p->>'hendelse_b') ~ '^[1-9][0-9]*$'
+   AND public.er_bigint_tekst(p->>'hendelse_b')
    AND p->>'hendelse_a' <> p->>'hendelse_b'
    AND p->>'tapt_tenant' <> p->>'utfordrer_tenant'
    AND length(p->>'tapt_tenant') > 0
