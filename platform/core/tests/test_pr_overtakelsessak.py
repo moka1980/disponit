@@ -35,6 +35,8 @@ Portoversikt → test (numrene er klarsignalets):
   37       test_port37_python_veien_er_stengt
   38       test_port38_payloadtyper_er_gjensidig_utelukkende
   41       test_port41_varselfeil_feller_ikke_saken
+  §13      test_varselet_tar_kanalvalgets_las_for_det_leser_kanalen
+           (Codex P2)
   40       (ui/test/adjudikator.test.js — axe på begge visninger)
 """
 import secrets
@@ -1521,6 +1523,92 @@ def test_port38_payloadtyper_er_gjensidig_utelukkende(migrator):
             " VALUES (%s,'h','p','STOPP','[]'::jsonb,'kryptert',%s::jsonb)",
             (TENANT, json.dumps(_payload("gyldig.example"))))
     migrator.rollback()
+
+
+@pg
+def test_varselet_tar_kanalvalgets_las_for_det_leser_kanalen(migrator):
+    """Codex P2: lesningen av `varselvalg` og innsettingen av varselraden var
+    to uavhengige øyeblikk, og `varsel.sett_kanal('kun_portal')` passer i
+    mellomrommet: den skriver valget, merker ALT den kan se i køen
+    `ikke_aktuelt` — og først etterpå setter overtakelsen inn en fersk
+    `koet`-rad på det valget som nettopp ble forlatt. E-posten går ut om en
+    overtakelse til en bruker som i samme øyeblikk slo den av, og ingen rydder
+    den: avmeldingen har alt kjørt.
+
+    Porten måler LÅSEN, ikke koden: en annen sesjon holder mottakerens
+    kanalvalg-lås — nøyaktig det `sett_kanal` gjør — og konflikten kjøres med
+    `lock_timeout`. Tar varslingen låsen, kommer den ikke forbi, og port 41
+    gjør resten: saken og overgangen står, varselet uteblir. Tar den den
+    ikke, skrives varselraden rett forbi avmeldingen som holder på.
+
+    Kontrollen etterpå (lås sluppet) viser at nullen kom fra låsen og ikke fra
+    noe annet, og måler samtidig at kanalvalget respekteres: `kun_portal` blir
+    `ikke_aktuelt`, et FRAVÆR av rad er ikke «av».
+
+    MUTASJONEN SOM DREPER DENNE: fjern `pg_advisory_xact_lock` fra
+    `varsle_overtakelse`, eller nøkle den med noe annet enn 615774026 +
+    hashen av tenant + bruker — da serialiserer de to veiene ikke mot
+    hverandre i det hele tatt.
+    """
+    from db.pg import koble
+    from api.varsel import KANALVALGNOKKEL
+    from .test_pr015_operativt_lag import _adjudikator
+    # Nøkkelen står som literal i migrasjonen (SQL kan ikke importere Python);
+    # denne asserten er det eneste som binder de to veiene til samme nøkkel.
+    assert KANALVALGNOKKEL == 615774026
+
+    bid = _adjudikator(ANNEN_TENANT, "kanallas-adj")
+    holder = koble(MIGRATOR_DSN)
+    adm = _admin()
+    try:
+        adm.execute("SET lock_timeout = '750ms'")
+        adm.commit()
+
+        # --- avmeldingen holder låsen ---------------------------------
+        holder.execute(
+            "SELECT pg_advisory_xact_lock(615774026, hashtext(%s))",
+            (f"{ANNEN_TENANT}\x1f{bid}",))
+        h = _host()
+        adm.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                    (TENANT, h))
+        adm.commit()
+        svar = adm.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                           (ANNEN_TENANT, h)).fetchone()[0]
+        adm.commit()
+        assert svar == f"konflikt:{TENANT}", svar
+        assert _sak_for(migrator, h) is not None, \
+            "saken skal stå — varselet er ikke evidens (port 41)"
+        assert _varsler(migrator, ANNEN_TENANT, bid, h) == 0, \
+            "varselet ble skrevet forbi en avmelding som holdt kanallåsen"
+
+        # --- kontroll: låsen sluppet, og kanalvalget respektert --------
+        holder.rollback()
+        _sett_kontekst(migrator, ANNEN_TENANT)
+        migrator.execute("INSERT INTO varselvalg (tenant,bruker_id,kanal)"
+                         " VALUES (%s,%s,'kun_portal')"
+                         " ON CONFLICT (tenant,bruker_id) DO UPDATE"
+                         " SET kanal='kun_portal'", (ANNEN_TENANT, bid))
+        migrator.commit()
+
+        h2 = _host()
+        adm.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                    (TENANT, h2))
+        adm.commit()
+        adm.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                    (ANNEN_TENANT, h2))
+        adm.commit()
+        assert _varsler(migrator, ANNEN_TENANT, bid, h2) == 1, \
+            "varselet uteble selv med låsen sluppet"
+        _sett_kontekst(migrator, ANNEN_TENANT)
+        status = migrator.execute(
+            "SELECT epost_status FROM varsel WHERE tenant=%s AND bruker_id=%s"
+            "   AND ressurs_id=%s", (ANNEN_TENANT, bid, h2)).fetchall()
+        migrator.rollback()
+        assert [r[0] for r in status] == ["ikke_aktuelt"], status
+    finally:
+        holder.rollback()
+        holder.close()
+        adm.close()
 
 
 @pg

@@ -1142,13 +1142,38 @@ DECLARE b RECORD; v_kanal TEXT;
 BEGIN
     -- 035-mønsteret: alle brukere i tenanten, kanalvalg respektert.
     -- To løkker — mottakerens EGEN tekstnøkkel, aldri kryssidentitet.
+    --
+    -- REKKEFØLGEN ER EN LÅSEREKKEFØLGE (Codex P2), ikke pynt: løkka tar
+    -- mottakerens kanalvalg-lås under, og `varsel.mottakere_for_runde`
+    -- sorterer stigende på `bruker_id` av nøyaktig samme grunn. Innenfor
+    -- én tenant går vi derfor samme vei som den; `tenant` først gir de to
+    -- tenantene denne funksjonen spenner over en fast rekkefølge, så to
+    -- konflikter på samme partspar ikke kan møtes fra hver sin ende.
     FOR b IN SELECT bm.tenant, bm.bruker_id,
                     CASE WHEN bm.tenant = p_tapt
                          THEN 'varsel.domene_tilbakekalt'
                          ELSE 'varsel.domene_avklaring' END AS nokkel
                FROM public.brukermedlemskap bm
               WHERE bm.tenant IN (p_tapt, p_utfordrer) AND bm.aktiv
+              ORDER BY bm.tenant, bm.bruker_id
     LOOP
+        -- KANALVALG-LÅSEN FØR LESNINGEN (Codex P2). Uten den er lesningen
+        -- av `varselvalg` og innsettingen under to uavhengige øyeblikk, og
+        -- en samtidig `varsel.sett_kanal('kun_portal')` passer i mellomrommet:
+        -- den skriver valget, merker ALT den kan se i køen `ikke_aktuelt` —
+        -- og først ETTERPÅ setter vi inn en fersk `koet`-rad på det valget
+        -- som nettopp ble forlatt. E-posten går da ut om en overtakelse til
+        -- en bruker som i samme øyeblikk slo den av, og ingen rydder den:
+        -- avmeldingen har alt kjørt.
+        --
+        -- Samme nøkkel som `varsel.KANALVALGNOKKEL` og som 035s
+        -- familievarsel (klasse 615774026, andre halvdel hashen av
+        -- tenant + bruker) — en annen nøkkel ville ikke serialisert mot
+        -- avmeldingsveien i det hele tatt. `xact`-varianten holder til
+        -- commit; at den tas inne i en blokk med EXCEPTION-håndterer er
+        -- trygt: en subtransaksjon som rulles tilbake slipper den ikke.
+        PERFORM pg_advisory_xact_lock(
+            615774026, hashtext(b.tenant || E'\x1f' || b.bruker_id));
         SELECT vv.kanal INTO v_kanal FROM public.varselvalg vv
          WHERE vv.tenant = b.tenant AND vv.bruker_id = b.bruker_id;
         INSERT INTO public.varsel (tenant, bruker_id, art, ressurs_type,
