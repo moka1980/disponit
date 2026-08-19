@@ -1005,7 +1005,13 @@ def test_rutescope_registeret_dekker_alle_ruter():
             assert sti in UAUTENTISERT_OK, \
                 f"{sti}: uventet uautentisert rute"
         elif sti.startswith("/v1/") and metode == "GET" \
-                and "oppdrag" not in sti:
+                and "oppdrag" not in sti \
+                and sti != "/v1/domeneovertakelse/saker":
+            # Adjudikatorkøen (041 §5.1) er IKKE en kundelese-flate: den
+            # navngir MOTPARTEN i tenantens egne overtakelsestvister, og
+            # skal derfor bære adjudikasjonsscopet — et lesescope her ville
+            # gitt enhver leserrolle en identitet flaten ellers aldri viser
+            # (domener-fanen forklarer avklaringen uten å nevne motparten).
             assert scope in LESESCOPES, f"{sti}: leserute med ikke-lese-scope"
 
 

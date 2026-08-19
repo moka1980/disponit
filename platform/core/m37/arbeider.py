@@ -287,44 +287,39 @@ def frigi_utlopte(conn: psycopg.Connection) -> int:
 
 
 def drener_domenekonflikter(conn: psycopg.Connection) -> dict:
-    """Domeneovertakelser som venter på sin M-37-sak (039, Codex P1).
+    """Vaktbikkja for domeneovertakelser (041): saken skal ALLEREDE finnes.
 
-    Overtakelsen skjer i basen, men SAKEN krever tenantens DEK og runtime-DML
-    — nøyaktig det denne prosessen har og verifiseringsarbeideren
-    (`disponit_domener`) med vilje ikke har. Uten dreneringen mistet den
-    forbigåtte tenanten autorisasjonen mens utfordreren sto uløselig i
-    `avklaring_kreves`: bare `avgjor_domeneovertakelse` kan løfte noen ut, og
-    den nås bare gjennom en sak.
+    Før 041 LAGDE denne veien sakene (039, Codex P1) — saken krevde
+    tenantens DEK og runtime-DML. Nå lages den av `sikre_overtakelsessak()`
+    i samme transaksjon som selve overtakelsen, og 041 §7 avviser enhver ny
+    `avklaring_kreves` uten gjeldende sak ved commit. Det som står igjen her
+    er kontrollen av at det faktisk er sant på DENNE basen: en konflikt uten
+    sak er en rad fra før 041 — den kan ikke repareres herfra (port 37:
+    python-veien er stengt), men den skal heller aldri bli usynlig. Den
+    navngis i journalen HVER syklus til en operatør har ryddet den.
 
-    Her, og ikke i en egen unit: dette ER unntakskøens prosess, og en sak som
-    skal behandles av M-37 hører hjemme der M-37 alt har både nøkkelen og
-    køen. `sikre_ventende_overtakelsessaker` er idempotent per (hostname,
-    generasjon), så et kall som finner alt gjort koster ett oppslag.
-
-    En UVENTET databasefeil (manglende grant, funksjon som ikke er utrullet,
-    skjemafeil) fanges ikke opp her (Codex P2): den navngis i journalen og
-    kastes videre. Ellers ville en feil som rammer HVER rad blitt liggende som
-    en `feilet`-oppføring i en utskrift ingen alarmerer på, mens løkken skrev
-    heartbeat `ok` og hver eneste overtakelse ble stående uten sak.
+    En UVENTET databasefeil (manglende grant, funksjon som ikke er utrullet)
+    kastes videre og feller prosessen — samme kontrakt som før: en feil som
+    rammer HVER rad skal bæres av systemd, ikke av en journalrad ingen
+    alarmerer på.
     """
-    from api.domeneovertakelse import sikre_ventende_overtakelsessaker
+    from api.domeneovertakelse import vokt_ventende_overtakelseskonflikter
     try:
-        res = sikre_ventende_overtakelsessaker(conn)
+        res = vokt_ventende_overtakelseskonflikter(conn)
     except psycopg.OperationalError:
         raise             # tapt forbindelse: hovedløkkens egen, kjente vei
     except psycopg.Error as e:
-        print(json.dumps({"hendelse": "domenekonflikt_drenering_svikt",
+        print(json.dumps({"hendelse": "domenekonflikt_vakt_svikt",
                           "feiltype": type(e).__name__}), flush=True)
         raise
-    # Bare når noe faktisk skjedde: en tom drenering er normaltilstanden og
-    # skal ikke fylle journalen hvert minutt. `foreldet` teller med — en rad
-    # som flyttet seg mellom plukket og saken er ikke en feil, men den er
-    # heller ikke ingenting: skjer det ofte for samme hostnavn, er det en
-    # overtakelseskarusell noen bør se på.
-    if res["saker"] or res["feilet"] or res.get("foreldet"):
-        print(json.dumps({"hendelse": "domenekonflikt_drenert", **res}),
+    # En tom runde er normaltilstanden. `uten_sak` er ALDRI ingenting: det
+    # er en overtakelse der utfordreren står uløselig i avklaring — den
+    # skal stå i journalen til den er borte.
+    if res["uten_sak"]:
+        print(json.dumps({"hendelse": "domenekonflikt_uten_sak", **res}),
               flush=True)
     return res
+
 
 
 # ---------------------------------------------------------------------------

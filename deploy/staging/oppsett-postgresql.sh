@@ -17,6 +17,7 @@ MODULESADMIN=disponit_modules_admin  # PR-014a: EXECUTE på overgangsfunksjonene
 EGRESS=disponit_egress           # PR-014b: egress-proxyens rolle, SELECT kun paa visningen
 DOMENEEIER=disponit_domene_eier  # PR-014b: eier domene/artefakt-funksjonene (BYPASSRLS: takeover er kryss-tenant)
 DOMAINSADMIN=disponit_domains_admin  # PR-014b: EXECUTE paa domenefunksjonene
+ADJUDIKATOR=disponit_domains_adjudicator  # 041: policy-avgrenset SELECT paa overtakelsessaker
 # PR-015 (Codex P1): EGEN, minst-privilegert rolle for driftstimerne
 # (revalidering + rydding). $DOMAINSADMIN baerer OGSAA direkte EXECUTE paa
 # avgjor_domeneovertakelse (016) — en holder av DEN credentialen kunne kalt
@@ -78,6 +79,13 @@ sudo -u postgres psql -qc "GRANT $POLICYEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $MODULEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $MODULESADMIN TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $DOMENEEIER TO $MIGRATOR WITH INHERIT FALSE"
+# 041: adjudikatorrollen — klyngeobjekt som rollene over. Runtime faar SET
+# (aldri arv) for de to lesningene i adjudikasjonsendepunktene; migrator
+# faar medlemskap for rebuilds/tester. Policyen i 041 avgrenser radene.
+sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$ADJUDIKATOR'" \
+  | grep -q 1 || sudo -u postgres psql -qc "CREATE ROLE $ADJUDIKATOR NOLOGIN"
+sudo -u postgres psql -qc "GRANT $ADJUDIKATOR TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $ADJUDIKATOR TO $BRUKER WITH INHERIT FALSE, SET TRUE"
 sudo -u postgres psql -qc "GRANT $DOMAINSADMIN TO $MIGRATOR WITH INHERIT FALSE"
 
 sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='$DB'" \

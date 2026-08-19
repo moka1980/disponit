@@ -214,6 +214,51 @@ export const hentDomener = () => hentJson("/v1/domener");
 export const leggTilDomene = (hostname) =>
   _muter("/v1/domener", "POST", { hostname });
 
+// 041 §5: adjudikasjonen — den ENESTE muterende veien i domenesakskøen.
+// CSRF (dobbel-innsending) som resten av browsermutasjonene. INGEN
+// Idempotency-Key: en gjentatt stemme fra samme aktør avvises av
+// primærnøkkelen i basen (`dobbel_attestasjon`), og det svaret skal VISES,
+// ikke skjules bak en replay.
+//
+// 409 KASTES IKKE, den RETURNERES. Endepunktet bruker den til å si noe
+// legibelt — «1 av 2 avgitt», «du har alt stemt», «saken er avgjort eller
+// foreldet» — og en flate som gjorde det om til «noe gikk galt» ville
+// gjenskapt nøyaktig den stillheten PR-015 §4 finnes for å fjerne.
+//
+// `saksrevisjon` ER EN DEL AV STEMMEN (Codex P1). Sak-id-en er stabil
+// gjennom A→B→C→B, så en fane som har stått åpen peker på samme sak, men
+// på en helt annen tvist — annen motpart, annen generasjon. Sendes ikke
+// revisjonen flaten VISTE, avgir knappen stemme i den konflikten som
+// tilfeldigvis står der nå, og to gamle faner kunne fullført en positiv
+// tildeling ingen av dem hadde sett. Basen håndhever den under
+// hostname-låsen; klienten er den eneste som kan si hva som ble lest.
+export async function avgiDomeneattestasjon(unntakId, utfall, vinnendeTenant,
+                                            saksrevisjon) {
+  const csrf = lesCookie("__Host-disponit_csrf");
+  let r;
+  try {
+    r = await fetch(`/v1/unntak/${unntakId}/domeneattestasjon`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+        ...(csrf ? { "X-Disponit-CSRF": csrf } : {}),
+      },
+      body: JSON.stringify({ utfall, vinnende_tenant: vinnendeTenant,
+                             saksrevisjon }),
+      redirect: "error",
+    });
+  } catch (e) {
+    throw new ApiFeil(0, "nettverk");
+  }
+  let kropp = null;
+  try { kropp = await r.json(); } catch { kropp = null; }
+  if (r.status === 409) return kropp || { feil: "krever_to_attestasjoner" };
+  if (!r.ok) _kast(r.status, kropp && kropp.feil);
+  return kropp;
+}
+
 // PR-012: menneskelig unntaksbehandling. Muterende → X-Disponit-CSRF
 // (dobbel-innsending). Klienten sender handlingen, `saksversjon` (den den
 // VISTE, for den optimistiske låsen) og en `Idempotency-Key`. Nøkkelen

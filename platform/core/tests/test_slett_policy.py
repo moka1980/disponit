@@ -214,8 +214,9 @@ def test_retensjonsvakten_avvises_som_vilkaarsbrudd_ikke_som_intern_feil():
     m.execute(
         "INSERT INTO unntak (tenant,loggpost_id,handling,kategori,"
         "payload_kryptert,key_id,nonce,maks_auto_forsok_snapshot,"
-        "policy_versjon,policy_content_hash,status) VALUES (%s,%s,"
-        "'faktura.bokfor','over_grense',%s,'k-slett',%s,3,'1.0.0',%s,'ny')",
+        "policy_versjon,policy_content_hash,status,sakskilde) VALUES (%s,%s,"
+        "'faktura.bokfor','over_grense',%s,'k-slett',%s,3,'1.0.0',%s,'ny',"
+        "'policybrudd')",
         (TEN, lid, b"\x00", b"\x00" * 12, _hash(pid, "1.0.0")))
     m.commit()
     rt = _rt()

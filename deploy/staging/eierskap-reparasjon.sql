@@ -182,10 +182,17 @@ INSERT INTO _design VALUES
     -- `rydd_staged_artefakter(integer)` er 016-regelen med en bunn, ikke en ny
     -- regel, så den hører hjemme hos samme rolle som 0-argumentsformen.
     -- 8. argument (`p_bruker_id`) kom med reautoriseringen av tellende
-    -- stemmer: signaturen her MÅ følge migrasjon 019, ellers finner
-    -- reparasjonsløkka ingen funksjon å eie og den reelle funksjonen blir
-    -- behandlet som en vanlig, eierløs funksjon ved neste kjøring.
-    ('FUNCTION', 'avgi_overtakelse_attestasjon(text,bigint,text,text,text,text,bigint,text)', 'disponit_domene_eier'),
+    -- stemmer, og 9. (`p_forventet_saksrevisjon`) med bindingen til
+    -- revisjonen attestanten SÅ (041 §21). INGEN semikolon i denne
+    -- kommentaren: både reparasjonen og porten deler filen på
+    -- setningsskilletegnet, så ett her ville kuttet VALUES-listen midt av.
+    -- Signaturen her MÅ følge den GJELDENDE
+    -- migrasjonen, ellers finner reparasjonsløkka ingen funksjon å eie og
+    -- den reelle funksjonen blir behandlet som en vanlig, eierløs funksjon
+    -- ved neste kjøring. 041 DROPPER åtte-arg utgaven, så den skal heller
+    -- ikke stå igjen her: en rad for en funksjon som ikke finnes, er en
+    -- rad reparasjonen aldri kan oppfylle.
+    ('FUNCTION', 'avgi_overtakelse_attestasjon(text,bigint,text,text,text,text,bigint,text,bigint)', 'disponit_domene_eier'),
     -- `lukk_overtakelsessak` kalles NESTET fra avgi_overtakelse_attestasjon og
     -- må derfor ha samme eier: utelatt herfra ville reparasjonssløyfa nedenfor
     -- behandlet den som en vanlig funksjon og flyttet den til
@@ -219,6 +226,31 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'ventende_domenechallenges(integer)',                 'disponit_domene_eier'),
     ('FUNCTION', 'bekreft_domenechallenge(text,text,text,text[])',     'disponit_domene_eier'),
     ('FUNCTION', 'bekreft_overtakelseskonflikt(text,text,text,bigint)',     'disponit_domene_eier'),
+    -- 041: overtakelsessaken. sikre_overtakelsessak er claimer-eid (én
+    -- skrivevei til unntak/revisjonslogg, som resten av M-37-flaten.
+    -- varsle_overtakelse er domene_eier-eid og kalles kun fra
+    -- verifiser_domenekontroll (EXCEPTION-svelgende, port 41).
+    ('FUNCTION', 'sikre_overtakelsessak(text,bigint,text,text,bigint,bigint,text,text)', 'disponit_m37_claimer'),
+    -- 041 (målt): FORCE RLS filtrerer også eierens definer-lesing — de to
+    -- vaktene bærer m37_dispatcher-policyen via claimer-eierskap.
+    ('FUNCTION', 'unntak_lineage_matcher_loggpost()',              'disponit_m37_claimer'),
+    ('FUNCTION', 'domenekontroll_krev_sak()',                      'disponit_m37_claimer'),
+    ('FUNCTION', 'varsle_overtakelse(text,text,text,bigint)',          'disponit_domene_eier'),
+    -- 041 (Codex P1): pre-041-konfliktene faar sin sak. BYPASSRLS-eid
+    -- fordi skannet over domenekontroll er kryss-tenant. Kalles av
+    -- migrasjonen og staar igjen som operatoerens reparasjonsvei.
+    -- INGEN semikolon i denne kommentaren heller (se raden over)
+    ('FUNCTION', 'migrer_pre041_overtakelseskonflikter(text)',         'disponit_domene_eier'),
+    -- ... og arkivmerkingen av de gamle python-sakene er claimerens:
+    -- den leser og skriver unntak_historikk, der domenelaget kun har
+    -- INSERT. Maalt i CI, ikke resonnert frem.
+    ('FUNCTION', 'arkivmerk_pre041_overtakelsessaker(text,text)',      'disponit_m37_claimer'),
+    -- 041 §9.2 (Codex P2): vaktbikkjas ene spoersmaal. Claimer-eid av samme
+    -- grunn som de to vaktene over — 9.1s RESTRICTIVE policy lukker den
+    -- reserverte tenanten for alle andre enn claimer, adjudikator og eier,
+    -- og en SECURITY DEFINER-funksjon ser radene som SIN EIER. Arbeideren
+    -- faar EXECUTE, ikke leseflate
+    ('FUNCTION', 'overtakelsessak_finnes(text,text,text,bigint)',      'disponit_m37_claimer'),
     -- 039 (Codex P1): konflikter som venter paa sin M-37-sak. Kryss-tenant
     -- LESING, ingen p_tenant a velge — M-37-arbeideren drenerer dem.
     ('FUNCTION', 'ventende_overtakelseskonflikter(integer)',            'disponit_domene_eier'),

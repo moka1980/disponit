@@ -43,8 +43,12 @@ def _admin():
 
 
 def _overtakelsessak(hostname, taper="taper-tenant-pr015"):
-    """Kjør taper→TEN-overtakelsen og opprett M-37-saken. -> unntak_id."""
-    from api import domeneovertakelse as dov
+    """Kjør taper→TEN-overtakelsen. -> unntak_id.
+
+    041: saken lages av `sikre_overtakelsessak()` i SAMME transaksjon som
+    konflikten — fixturen skal ikke (og kan ikke, port 37) lage den selv.
+    Den slås opp der den bor: på plattformtenanten, som kolonner.
+    """
     a = _admin()
     try:
         a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
@@ -58,22 +62,26 @@ def _overtakelsessak(hostname, taper="taper-tenant-pr015"):
     assert svar.startswith("konflikt:"), svar
     m = _mig()
     try:
-        _sett_kontekst(m, TEN)
-        gen = int(m.execute(
-            "SELECT autorisasjonsgenerasjon FROM domenekontroll"
-            " WHERE tenant=%s AND hostname=%s", (TEN, hostname)).fetchone()[0])
-        sak = dov.opprett_overtakelsessak(
-            m, tenant_ny=TEN, hostname=hostname,
-            tenant_tapt=svar.split(":", 1)[1], generasjon=gen, aktor="sys")
-        m.commit()
+        _sett_kontekst(m, "__plattform_domener")
+        sak = int(m.execute(
+            "SELECT id FROM unntak WHERE hostname_ref=%s"
+            "  AND sakskilde='domeneovertakelse' AND NOT terminal",
+            (hostname,)).fetchone()[0])
+        m.rollback()
         return sak
     finally:
         m.close()
 
 
 def _post(klient, sak, cookie, csrf, **over):
+    """`saksrevisjon` er 0 fordi `_overtakelsessak` lager en FERSK sak.
+
+    En sak fødes på revisjon 0 og flyttes kun av et utfordrer-/generasjons-
+    skifte (041 §6); ingen av testene her skifter utfordrer. Overstyres med
+    `_post(..., saksrevisjon=...)` av den som måler gjerdet.
+    """
     from api import sesjon as sesjonmodul
-    body = {"utfall": "godkjenn", "vinnende_tenant": TEN}
+    body = {"utfall": "godkjenn", "vinnende_tenant": TEN, "saksrevisjon": 0}
     body.update(over)
     return klient.post(f"/v1/unntak/{sak}/domeneattestasjon", json=body,
                        headers={"X-Disponit-CSRF": csrf},
@@ -83,7 +91,8 @@ def _post(klient, sak, cookie, csrf, **over):
 @pg
 def test_uautentisert_attestasjon_avvises(klient):
     r = klient.post("/v1/unntak/1/domeneattestasjon",
-                    json={"utfall": "godkjenn", "vinnende_tenant": "t"})
+                    json={"utfall": "godkjenn", "vinnende_tenant": "t",
+                          "saksrevisjon": 0})
     assert r.status_code == 401
     assert r.json()["feil"] == "token_ugyldig"
 
@@ -179,8 +188,9 @@ def test_attestasjon_pa_avgjort_sak_avvises(klient):
     a = _admin()
     try:
         a.execute(
-            "SELECT avgi_overtakelse_attestasjon(%s,%s,%s,'avvis',%s,%s,%s,%s)",
-            (TEN, sak, h, TEN, "aktor-avvis", gen, avviser))
+            "SELECT avgi_overtakelse_attestasjon"
+            "(%s,%s,%s,'avvis',%s,%s,%s,%s,%s)",
+            (TEN, sak, h, TEN, "aktor-avvis", gen, avviser, 0))
         a.commit()
     finally:
         a.close()
@@ -190,6 +200,308 @@ def test_attestasjon_pa_avgjort_sak_avvises(klient):
     r = _post(klient, sak, cookie, csrf)
     assert r.status_code == 409, r.text
     assert r.json()["feil"] == "attestasjon_avvist"
+
+
+@pg
+def test_attestasjon_uten_saksrevisjon_er_feilformet(klient):
+    """Codex P1: revisjonen er ikke valgfri.
+
+    Var feltet valgfritt, kunne enhver klient velge bort gjerdet ved å la
+    være å sende det — og en gammel fane er nettopp en klient som ikke vet
+    hvilken revisjon saken står på. Fail-closed, og FØR autentisering:
+    formen er formen.
+    """
+    for kropp in ({"utfall": "godkjenn", "vinnende_tenant": "t"},
+                  {"utfall": "godkjenn", "vinnende_tenant": "t",
+                   "saksrevisjon": None},
+                  {"utfall": "godkjenn", "vinnende_tenant": "t",
+                   "saksrevisjon": "0"},
+                  # `True` er en `int` i Python — men ikke en revisjon.
+                  {"utfall": "godkjenn", "vinnende_tenant": "t",
+                   "saksrevisjon": True},
+                  {"utfall": "godkjenn", "vinnende_tenant": "t",
+                   "saksrevisjon": -1}):
+        r = klient.post("/v1/unntak/1/domeneattestasjon", json=kropp)
+        assert r.status_code == 400, (kropp, r.text)
+        assert r.json()["feil"] == "request_feilformet", kropp
+
+
+@pg
+def test_foreldet_saksrevisjon_avvises(klient):
+    """Codex P1: stemmen telles i konflikten attestanten SÅ.
+
+    Saken her står på revisjon 0. En fane som ble tegnet på en eldre
+    revisjon sender det tallet den viste — og skal avvises, selv om alt
+    annet ved raden (sakskilde, utfordrer, generasjon) stemmer. Det er
+    hele poenget: `unntak_id` overlever A→B→C→B, så id-en alene sier
+    ingenting om HVILKEN tvist stemmen gjelder.
+
+    Svaret er `attestasjon_avvist` — saken er avløst av en nyere
+    konflikt, som er nøyaktig det den feilveien beskriver. Køen lastes på
+    nytt av flaten, så neste stemme avgis på den gjeldende revisjonen.
+    """
+    h = _host()
+    sak = _overtakelsessak(h)
+    bid = _medlem(None, "pr015-foreldet", roller="ARRAY['domeneadjudikator']")
+    cookie, csrf = _browsersesjon(bid)
+    r = _post(klient, sak, cookie, csrf, saksrevisjon=99)
+    assert r.status_code == 409, r.text
+    assert r.json()["feil"] == "attestasjon_avvist"
+    # INGEN stemme ble avgitt: gjerdet står FØR motoren, ikke etter.
+    m = _mig()
+    try:
+        _sett_kontekst(m, TEN)
+        n = int(m.execute(
+            "SELECT count(*) FROM overtakelse_attestasjon WHERE sak_id=%s",
+            (sak,)).fetchone()[0])
+    finally:
+        m.close()
+    assert n == 0, "den foreldede stemmen ble avgitt likevel"
+    # ... og den ferske revisjonen slipper til på samme sak.
+    r2 = _post(klient, sak, cookie, csrf)
+    assert r2.status_code == 409, r2.text
+    assert r2.json()["feil"] == "krever_to_attestasjoner"
+
+
+# ===========================================================================
+# Adjudikatorkøen (041 §5) — omfanget, ikke bare synligheten (Codex P1).
+# ===========================================================================
+
+#: En FREMMED kundetenant med sin egen adjudikator. Poenget er nettopp at den
+#: er en helt vanlig kunde: `domeneadjudikator` er en kunde-lokal rolle enhver
+#: tenant kan gi sin egen bruker, så «har rollen» kan aldri bety «ser alt».
+FREMMED = "t-adj-fremmed"
+
+
+def _adjudikator_i(tenant, sub):
+    """Aktiv `domeneadjudikator` i `tenant`. -> (sesjonscookie, csrf).
+
+    Egen helper fordi `_medlem`/`_browsersesjon` er bundet til TEN — og det
+    er nettopp en ANNEN tenant enn utfordreren som måles her.
+    """
+    import secrets as _s
+    from db.pg import koble, sett_kontekst
+    from api import sesjon as sesjonmodul
+    from .test_pr010_db import _identitet
+    cookie, csrf = _s.token_urlsafe(24), _s.token_urlsafe(24)
+    m = _mig()
+    try:
+        sett_kontekst(m, tenant, "sys", "r0")
+        bid = _identitet(m, sub=f"{tenant}-{sub}")
+        ver = m.execute(
+            "INSERT INTO brukermedlemskap (tenant,bruker_id,roller)"
+            " VALUES (%s,%s,ARRAY['domeneadjudikator'])"
+            " ON CONFLICT (tenant,bruker_id) DO UPDATE SET"
+            " roller=EXCLUDED.roller, aktiv=true"
+            " RETURNING authz_version", (tenant, bid)).fetchone()[0]
+        m.execute(
+            "INSERT INTO brukersesjon (sesjon_id_hash, tenant, bruker_id,"
+            " authz_snapshot, csrf_hash, opprettet, siste_bruk, utloper,"
+            " tilbakekalt) VALUES (%s,%s,%s,%s,%s, now(), now(),"
+            " now()+interval '12 hour', false)",
+            (sesjonmodul._hash(cookie), tenant, bid, ver,
+             sesjonmodul._hash(csrf)))
+        m.commit()
+        return cookie, csrf
+    finally:
+        m.close()
+
+
+@pg
+def test_adjudikatorkoen_er_utfordrerens_ikke_klyngens(klient):
+    """Codex P1: rollen gir synligheten, tenanten gir omfanget.
+
+    Saken er TENs (TEN er utfordreren). En adjudikator hos en HELT ANNEN
+    kunde har det samme scopet og den samme databaserollen — og skal likevel
+    ikke se saken, for `avgi_overtakelse_attestasjon` (019) autoriserer bare
+    medlemmer av utfordrerens tenant. Uten filteret var køen klyngens: den
+    ga fremmede både vertsnavnet og BEGGE partsidentitetene for tvister de
+    aldri kunne røre.
+    """
+    h = _host()
+    sak = _overtakelsessak(h)
+
+    from api import sesjon as sesjonmodul
+    fremmed, _ = _adjudikator_i(FREMMED, "utenfor")
+    r = klient.get("/v1/domeneovertakelse/saker",
+                   cookies={sesjonmodul.C_SESJON: fremmed})
+    assert r.status_code == 200, r.text
+    verter = [s["hostname"] for s in r.json()["saker"]]
+    assert h not in verter, "fremmed adjudikator ser en annen tenants sak"
+
+    # ... og utfordrerens egen adjudikator ser den, med begge parter: køen
+    # er avgrenset, ikke avskrudd.
+    egen, _ = _adjudikator_i(TEN, "egen")
+    r = klient.get("/v1/domeneovertakelse/saker",
+                   cookies={sesjonmodul.C_SESJON: egen})
+    assert r.status_code == 200, r.text
+    mine = [s for s in r.json()["saker"] if s["hostname"] == h]
+    assert len(mine) == 1, r.text
+    assert mine[0]["unntak_id"] == sak
+    assert mine[0]["utfordrer_tenant"] == TEN
+    assert mine[0]["tapt_tenant"] == "taper-tenant-pr015"
+
+
+@pg
+def test_adjudikatorkoen_er_paginert_og_cursoren_er_tenantbundet(klient):
+    """Codex P2: køen er UBUNDET i tid — saker står åpne til et menneske
+    avgjør dem — så siden må være bundet.
+
+    Samme kontrakt som `/v1/unntak`: `limit` ≤ 100, signert v2-cursor
+    bundet til tenant/endepunkt/retning/filtre, ærlig keyset. Retningen er
+    `asc`: en adjudikatorkø tømmes fra bunnen.
+    """
+    from api import sesjon as sesjonmodul
+    h1, h2 = _host(), _host()
+    _overtakelsessak(h1)
+    _overtakelsessak(h2)
+    egen, _ = _adjudikator_i(TEN, "paginering")
+    kake = {sesjonmodul.C_SESJON: egen}
+
+    def side(cursor=None):
+        q = "?limit=1" + (f"&cursor={cursor}" if cursor else "")
+        r = klient.get("/v1/domeneovertakelse/saker" + q, cookies=kake)
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    sett, cursor, runder = [], None, 0
+    while True:
+        d = side(cursor)
+        assert len(d["saker"]) <= 1, d
+        sett += [s["hostname"] for s in d["saker"]]
+        cursor = d["neste_cursor"]
+        runder += 1
+        if cursor is None or runder > 50:
+            break
+    assert cursor is None, "køen tok aldri slutt — keysettet står stille"
+    assert h1 in sett and h2 in sett, sett
+    assert len(sett) == len(set(sett)), f"duplikat over sidene: {sett}"
+
+    # Cursoren er TENANTBUNDET: en fremmed sesjon kan ikke bruke den.
+    d = side()
+    if d["neste_cursor"]:
+        fremmed, _ = _adjudikator_i(FREMMED, "laant-cursor")
+        r = klient.get(
+            f"/v1/domeneovertakelse/saker?limit=1&cursor={d['neste_cursor']}",
+            cookies={sesjonmodul.C_SESJON: fremmed})
+        assert r.status_code == 400, r.text
+        assert r.json()["feil"] == "cursor_ugyldig"
+
+    # ... og taket er ekte: en `limit` utenfor kontrakten er en formfeil.
+    r = klient.get("/v1/domeneovertakelse/saker?limit=101", cookies=kake)
+    assert r.status_code == 400 and r.json()["feil"] == "request_feilformet"
+
+
+@pg
+def test_saken_som_skifter_til_meg_kommer_foran_cursoren(klient):
+    """Codex P2: en sak kommer inn i MIN kø på to måter — den opprettes,
+    eller A→B→C gir den meg.
+
+    Den andre veien lager ingen ny rad: `sikre_overtakelsessak` skifter
+    utfordrer på den EKSISTERENDE saken, og `ts` er kolonnelåst (§11) og
+    blir stående. Med `(ts, id)` som keyset la saken seg da BAK en cursor
+    jeg alt hadde fått utstedt — og forsvant fra hver gjenstående side, uten
+    noen gang å ha stått på en tidligere. En tvist om mitt eget vertsnavn,
+    usynlig i min egen kø, helt til noen tømte den og begynte forfra.
+
+    Nøkkelen er derfor `saksrevisjon_ts`, som går fram med skiftet (§6
+    håndhever det). «Eldste først» betyr «eldst som DENNE konflikten».
+
+    MUTASJONEN SOM DREPER DENNE: sett keysettet tilbake til `(ts, id)`, eller
+    la `sikre_overtakelsessak` beholde `saksrevisjon_ts` over et skifte.
+    """
+    from api import sesjon as sesjonmodul
+    h_gammel, h_ny = _host(), _host()
+
+    # 1) En ELDRE sak som tilhører en annen utfordrer enn meg.
+    a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  ("taper-tenant-pr015", h_gammel))
+        a.commit()
+        svar = a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                         (FREMMED, h_gammel)).fetchone()[0]
+        a.commit()
+        assert svar.startswith("konflikt:"), svar
+
+        # 2) ... og en FERSKERE sak som er min.
+        _overtakelsessak(h_ny)
+
+        egen, _ = _adjudikator_i(TEN, "skifte-cursor")
+        kake = {sesjonmodul.C_SESJON: egen}
+
+        def side(cursor=None):
+            q = "?limit=1" + (f"&cursor={cursor}" if cursor else "")
+            r = klient.get("/v1/domeneovertakelse/saker" + q, cookies=kake)
+            assert r.status_code == 200, r.text
+            return r.json()
+
+        # 3) Jeg blar til jeg har sett den ferske — cursoren står nå ETTER
+        #    den, altså etter alt som er eldre enn den.
+        cursor, funnet = None, False
+        for _ in range(60):
+            d = side(cursor)
+            cursor = d["neste_cursor"]
+            if h_ny in [s["hostname"] for s in d["saker"]]:
+                funnet = True
+                break
+            if cursor is None:
+                break
+        assert funnet and cursor, "fant aldri den ferske saken i egen kø"
+
+        # 4) NÅ tar jeg over det gamle vertsnavnet: A→B→C. Saken skifter
+        #    utfordrer — samme rad, samme `ts`, ny revisjon.
+        svar = a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                         (TEN, h_gammel)).fetchone()[0]
+        a.commit()
+        assert svar.startswith("konflikt:"), svar
+    finally:
+        a.close()
+
+    m = _mig()
+    try:
+        _sett_kontekst(m, "__plattform_domener")
+        rad = m.execute(
+            "SELECT utfordrer_tenant, saksrevisjon, ts < saksrevisjon_ts"
+            "  FROM unntak WHERE hostname_ref=%s"
+            "   AND sakskilde='domeneovertakelse' AND NOT terminal",
+            (h_gammel,)).fetchone()
+        m.rollback()
+    finally:
+        m.close()
+    assert rad is not None and rad[0] == TEN, rad
+    assert rad[1] >= 1, f"skiftet ga ingen ny revisjon: {rad}"
+    assert rad[2] is True, "saksrevisjon_ts fulgte ikke skiftet"
+
+    # 5) ... og den kommer FORAN cursoren jeg alt hadde fått.
+    sett, c = [], cursor
+    for _ in range(60):
+        d = side(c)
+        sett += [s["hostname"] for s in d["saker"]]
+        c = d["neste_cursor"]
+        if c is None:
+            break
+    assert h_gammel in sett, \
+        f"saken som skiftet til meg lå bak cursoren og ble aldri vist: {sett}"
+
+
+@pg
+def test_attestasjon_pa_fremmed_sak_er_ikke_funnet(klient):
+    """Samme rot i attestasjonsveien: sak-id-rommet er ikke et orakel.
+
+    En fremmed adjudikator kunne før skille «finnes ikke» fra «finnes, men
+    er ikke din» — og oppslaget ga hen vertsnavn og utfordrer for saken.
+    Nå er begge `ikke_funnet`.
+    """
+    h = _host()
+    sak = _overtakelsessak(h)
+    cookie, csrf = _adjudikator_i(FREMMED, "orakel")
+    r = _post(klient, sak, cookie, csrf)
+    assert r.status_code == 404, r.text
+    assert r.json()["feil"] == "ikke_funnet"
+    # Nøyaktig samme svar for en sak som ikke finnes i det hele tatt.
+    r2 = _post(klient, sak + 10_000_000, cookie, csrf)
+    assert r2.status_code == 404 and r2.json()["feil"] == "ikke_funnet"
 
 
 # ===========================================================================

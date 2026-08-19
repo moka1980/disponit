@@ -366,8 +366,10 @@ def _lag_sak(conn, tenant, *, kategori="manglende_data", handling="purring.send"
     sak = conn.execute(
         "INSERT INTO unntak (tenant, loggpost_id, handling, kategori, sakstype,"
         " payload_kryptert, key_id, nonce, maks_auto_forsok_snapshot,"
-        " policy_versjon, policy_content_hash, status)"
-        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+        # 041: sakskilde er defaultløs (port 12) — fixturen er en kjernesak.
+        " policy_versjon, policy_content_hash, status, sakskilde)"
+        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'policybrudd')"
+        " RETURNING id",
         (tenant, logg, handling, kategori, sakstype, ct, key_id, nonce,
          snapshot, versjon, hash_, status)).fetchone()[0]
     conn.commit()
@@ -782,6 +784,10 @@ def test_claim_prioriterer_hoy_for_normal(migrator):
     migrator.execute("ALTER TABLE unntak DISABLE TRIGGER unntak_laas")
     migrator.execute("UPDATE unntak SET prioritet='hoy' WHERE tenant=%s"
                      " AND id=%s", (TENANT, hoy))
+    # 041: unntak har utsatte constraint-triggere (lineage/loggpost) — de må
+    # fyre FØR en ALTER TABLE i samme transaksjon («pending trigger events»),
+    # samme håndgrep som _rydd bruker.
+    migrator.execute("SET CONSTRAINTS ALL IMMEDIATE")
     migrator.execute("ALTER TABLE unntak ENABLE TRIGGER unntak_laas")
     migrator.commit()
 
@@ -921,6 +927,11 @@ def test_vilkaar_V2_backfill_bruker_hele_policyidentiteten(migrator, malpolicy):
                      " maks_auto_forsok_snapshot DROP NOT NULL,"
                      " ALTER COLUMN policy_versjon DROP NOT NULL,"
                      " ALTER COLUMN policy_content_hash DROP NOT NULL")
+    # 041: totalitets-CHECKen krever trioen for policybrudd — pre-006-
+    # tilstanden fixturen gjenskaper er nettopp trio=NULL, så sperren
+    # løftes eksplisitt og settes tilbake nederst, som NOT NULL-ene.
+    migrator.execute(
+        "ALTER TABLE unntak DROP CONSTRAINT unntak_snapshot_komplett")
     migrator.execute("ALTER TABLE unntak DISABLE TRIGGER unntak_laas")
     _sett_kontekst(migrator, TENANT)
     migrator.execute(
@@ -940,19 +951,30 @@ def test_vilkaar_V2_backfill_bruker_hele_policyidentiteten(migrator, malpolicy):
         (_policyref("pbf", "2.0.0"), TENANT, TENANT, med_evidens))
     migrator.execute("ALTER TABLE revisjonslogg ENABLE TRIGGER"
                      " revisjonslogg_ingen_endring")
+    # 041: unntak har utsatte constraint-triggere (lineage/loggpost) — de må
+    # fyre FØR en ALTER TABLE i samme transaksjon («pending trigger events»),
+    # samme håndgrep som _rydd bruker.
+    migrator.execute("SET CONSTRAINTS ALL IMMEDIATE")
     migrator.execute("ALTER TABLE unntak ENABLE TRIGGER unntak_laas")
     migrator.commit()
 
     res = m37_backfill.backfill(migrator)
     assert res.fra_evidens >= 1 and res.legacy >= 1, res
 
-    # NOT NULL tilbake — og at den lar seg sette er selve beviset for at
-    # backfillen faktisk fylte alle radene. Feiler den her, har backfillen
-    # hoppet over noe, og migrasjon 006 ville stoppet deployet.
-    migrator.execute("ALTER TABLE unntak ALTER COLUMN"
-                     " maks_auto_forsok_snapshot SET NOT NULL,"
-                     " ALTER COLUMN policy_versjon SET NOT NULL,"
-                     " ALTER COLUMN policy_content_hash SET NOT NULL")
+    # 041 gjorde trioen nullable (overtakelsessaker HAR NULL-trio) — å sette
+    # NOT NULL tilbake ville gjeninnført pre-041-skjemaet og felt enhver
+    # senere overtakelsestest. Beviset for at backfillen fylte radene bæres
+    # nå av CHECK-en alene: ADD CONSTRAINT validerer HELE tabellen, så en
+    # policybrudd-rad backfillen hoppet over ville felt nettopp denne linjen.
+    migrator.execute(
+        "ALTER TABLE unntak ADD CONSTRAINT unntak_snapshot_komplett CHECK ("
+        " (sakskilde = 'domeneovertakelse'"
+        "    AND maks_auto_forsok_snapshot IS NULL"
+        "    AND policy_versjon IS NULL AND policy_content_hash IS NULL)"
+        " OR (sakskilde <> 'domeneovertakelse'"
+        "    AND maks_auto_forsok_snapshot IS NOT NULL"
+        "    AND policy_versjon IS NOT NULL"
+        "    AND policy_content_hash IS NOT NULL))")
     migrator.commit()
 
     _sett_kontekst(migrator, TENANT)
@@ -2252,19 +2274,38 @@ def test_backfill_finner_evidens_paa_produksjonsformet_loggpost(migrator,
                      " maks_auto_forsok_snapshot DROP NOT NULL,"
                      " ALTER COLUMN policy_versjon DROP NOT NULL,"
                      " ALTER COLUMN policy_content_hash DROP NOT NULL")
+    # 041: totalitets-CHECKen krever trioen for policybrudd — pre-006-
+    # tilstanden fixturen gjenskaper er nettopp trio=NULL, så sperren
+    # løftes eksplisitt og settes tilbake nederst, som NOT NULL-ene.
+    migrator.execute(
+        "ALTER TABLE unntak DROP CONSTRAINT unntak_snapshot_komplett")
     migrator.execute("ALTER TABLE unntak DISABLE TRIGGER unntak_laas")
     _sett_kontekst(migrator, TENANT)
     migrator.execute(
         "UPDATE unntak SET maks_auto_forsok_snapshot=NULL, policy_versjon=NULL,"
         " policy_content_hash=NULL WHERE tenant=%s AND id=%s", (TENANT, sak))
+    # 041: unntak har utsatte constraint-triggere (lineage/loggpost) — de må
+    # fyre FØR en ALTER TABLE i samme transaksjon («pending trigger events»),
+    # samme håndgrep som _rydd bruker.
+    migrator.execute("SET CONSTRAINTS ALL IMMEDIATE")
     migrator.execute("ALTER TABLE unntak ENABLE TRIGGER unntak_laas")
     migrator.commit()
 
     res = m37_backfill.backfill(migrator)
-    migrator.execute("ALTER TABLE unntak ALTER COLUMN"
-                     " maks_auto_forsok_snapshot SET NOT NULL,"
-                     " ALTER COLUMN policy_versjon SET NOT NULL,"
-                     " ALTER COLUMN policy_content_hash SET NOT NULL")
+    # 041 gjorde trioen nullable (overtakelsessaker HAR NULL-trio) — å sette
+    # NOT NULL tilbake ville gjeninnført pre-041-skjemaet og felt enhver
+    # senere overtakelsestest. Beviset for at backfillen fylte radene bæres
+    # nå av CHECK-en alene: ADD CONSTRAINT validerer HELE tabellen, så en
+    # policybrudd-rad backfillen hoppet over ville felt nettopp denne linjen.
+    migrator.execute(
+        "ALTER TABLE unntak ADD CONSTRAINT unntak_snapshot_komplett CHECK ("
+        " (sakskilde = 'domeneovertakelse'"
+        "    AND maks_auto_forsok_snapshot IS NULL"
+        "    AND policy_versjon IS NULL AND policy_content_hash IS NULL)"
+        " OR (sakskilde <> 'domeneovertakelse'"
+        "    AND maks_auto_forsok_snapshot IS NOT NULL"
+        "    AND policy_versjon IS NOT NULL"
+        "    AND policy_content_hash IS NOT NULL))")
     migrator.commit()
 
     assert res.fra_evidens >= 1, (

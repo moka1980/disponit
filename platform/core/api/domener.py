@@ -71,17 +71,34 @@ def _rader(conn, tenant: str) -> list[dict]:
     # de to andre, og en flate som lyver om autorisasjon er nettopp det denne
     # runden retter. `coalesce(..., false)` fordi predikatet er NULL for en
     # `verifisert` rad uten vindu — fail-closed, som i porten.
+    #
+    # `konflikt` er ÅRSAKEN, ikke motparten (Codex P2). `tilbakekalt` har to
+    # helt ulike opphav: en overtakelse (en annen konto beviste DNS-kontroll)
+    # og en ORDINÆR tilbakekalling — `tilbakekall_domenekontroll` (018), som
+    # operatøren kjører, og som ikke rører `konflikt_motpart`. Statusordet er
+    # det samme i begge, så en flate som velger forklaring på status alene må
+    # velge feil i det ene tilfellet. Uten dette feltet hadde klienten ingen
+    # annen opplysning å velge på.
+    #
+    # Skillet er basens eget fra før: `tilbakekalt` MED `konflikt_motpart` er
+    # gjennom hele 039 (§«avvist kandidat», gjenutstedelsen, plukket) merket
+    # som en konflikt, og `verifiser_domenekontroll` NULLER kolonnen når raden
+    # blir verifisert igjen. Her regnes den om til en BOOLEAN i basen:
+    # klienten skal vite AT det står en motpart bak, aldri HVEM — hele §6
+    # holder motpartens identitet ute av kundens flate.
     rader = conn.execute(
         "SELECT hostname, status, wildcard, verifisert_ts, utloper,"
         " siste_vellykkede_revalidering, challenge_utstedt,"
-        " challenge_utloper, coalesce(" + DOMENE_GYLDIG_SQL + ", false)"
+        " challenge_utloper, coalesce(" + DOMENE_GYLDIG_SQL + ", false),"
+        " (konflikt_motpart IS NOT NULL)"
         " FROM domenekontroll WHERE tenant=%s"
         " ORDER BY hostname", (tenant,)).fetchall()
     ut = []
-    for (host, status, wildcard, vts, utl, srv, cu, cul, gyldig) in rader:
+    for (host, status, wildcard, vts, utl, srv, cu, cul, gyldig,
+         konflikt) in rader:
         ut.append({
             "hostname": host, "status": status, "wildcard": wildcard,
-            "gyldig": bool(gyldig),
+            "gyldig": bool(gyldig), "konflikt": bool(konflikt),
             "verifisert_ts": vts.isoformat() if vts else None,
             "utloper": utl.isoformat() if utl else None,
             "siste_vellykkede_revalidering":

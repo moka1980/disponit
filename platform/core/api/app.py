@@ -873,6 +873,11 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def dm_utsted(request: Request) -> Response:
         return domenermodul.utsted_endepunkt(tjeneste, request)
 
+    def do_saker(request: Request) -> Response:
+        # 041: adjudikatorkøen — plattformens visning, aldri en kundesesjons.
+        from . import domeneovertakelse
+        return domeneovertakelse.saker_endepunkt(tjeneste, request)
+
     def bs_bestill(request: Request) -> Response:
         return bestillingsmodul.bestill_endepunkt(tjeneste, request)
 
@@ -904,6 +909,7 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         # med de andre maskinrutene.
         Route("/v1/bestilling", bs_bestill, methods=["POST"]),
         Route("/v1/domener", dm_liste, methods=["GET"]),
+        Route("/v1/domeneovertakelse/saker", do_saker, methods=["GET"]),
         Route("/v1/domener", dm_utsted, methods=["POST"]),
         Route("/v1/modul/onboarding", mo_utsted, methods=["POST"]),
         Route("/v1/modul/onboarding/innlos", mo_innlos, methods=["POST"]),
@@ -1361,6 +1367,7 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # å SE domenelisten er lesing av egen tilstand; å ENDRE den krever
     # bestilling:opprett. Flaten selv ligger uansett bak admin-ruten.
     ("GET",  "/v1/domener"):                 "decisions:read",
+    ("GET",  "/v1/domeneovertakelse/saker"): "domains:adjudicate",
     ("POST", "/v1/domener"):                 "bestilling:opprett",
     ("POST", "/v1/modul/onboarding"):        "modules:onboard",
     ("POST", "/v1/modul/onboarding/innlos"): "onboarding-hemmelighet",

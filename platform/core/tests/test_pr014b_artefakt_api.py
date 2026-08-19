@@ -55,8 +55,7 @@ def _domeneaktorsesjon(tenant: str, sub: str,
 
 
 def _domeneovertakelsessak(migrator):
-    from api.domeneovertakelse import opprett_overtakelsessak
-    from .test_pr014b_domene_artefakt import _admin, _dkrow, _host
+    from .test_pr014b_domene_artefakt import _admin, _host
 
     h = _host()
     a = _admin()
@@ -69,21 +68,30 @@ def _domeneovertakelsessak(migrator):
         assert res == "konflikt:" + TENANT
     finally:
         a.close()
-    tapt = res.split(":", 1)[1]
-    gen = _dkrow(migrator, ANNEN_TENANT, h)[1]
-    _sett_kontekst(migrator, ANNEN_TENANT)
-    uid = opprett_overtakelsessak(migrator, tenant_ny=ANNEN_TENANT, hostname=h,
-                                  tenant_tapt=tapt, generasjon=gen, aktor="sys")
-    migrator.commit()
+    # 041: saken ble laget av overtakelsen selv — slå den opp der den bor.
+    _sett_kontekst(migrator, "__plattform_domener")
+    uid = int(migrator.execute(
+        "SELECT id FROM unntak WHERE hostname_ref=%s"
+        "  AND sakskilde='domeneovertakelse' AND NOT terminal",
+        (h,)).fetchone()[0])
+    migrator.rollback()
     return uid
 
 
-def _post_domeneattestasjon(klient, uid, cookie, csrf, utfall, vinnende):
+def _post_domeneattestasjon(klient, uid, cookie, csrf, utfall, vinnende,
+                            rev=0):
+    """`rev` er revisjonen stemmen avgis PÅ (041 §21, Codex P1).
+
+    Standarden er 0 fordi `_domeneovertakelsessak` lager en FERSK sak, og en
+    sak fødes på revisjon 0 — den flyttes kun av et utfordrer-/generasjons-
+    skifte (§6). Ingen av testene her skifter utfordrer.
+    """
     from api import sesjon as sesjonmodul
 
     return klient.post(
         f"/v1/unntak/{uid}/domeneattestasjon",
-        json={"utfall": utfall, "vinnende_tenant": vinnende},
+        json={"utfall": utfall, "vinnende_tenant": vinnende,
+              "saksrevisjon": rev},
         headers={"X-Disponit-CSRF": csrf},
         cookies={sesjonmodul.C_SESJON: cookie})
 

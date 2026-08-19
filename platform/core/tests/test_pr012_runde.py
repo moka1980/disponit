@@ -46,8 +46,10 @@ def _sak(conn, *, begrunnelse, intensjon=True, status="manuell"):
     uid = conn.execute(
         "INSERT INTO unntak (tenant,loggpost_id,handling,kategori,"
         "payload_kryptert,key_id,nonce,maks_auto_forsok_snapshot,policy_versjon,"
-        "policy_content_hash,status" + felt + ") VALUES (%s,%s,'faktura.bokfor',"
-        "'over_grense',%s,'k1',%s,3,'0.2.0','ph',%s" + verdier + ") RETURNING id",
+        "policy_content_hash,status,sakskilde" + felt + ") VALUES (%s,%s,"
+        "'faktura.bokfor',"
+        "'over_grense',%s,'k1',%s,3,'0.2.0','ph',%s,'policybrudd'"
+        + verdier + ") RETURNING id",
         (TEN, lid, b"\x00", b"\x00" * 12, status, *args_ekstra)).fetchone()[0]
     return uid
 

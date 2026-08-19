@@ -174,6 +174,64 @@ if ! vurder_arbeiderskille "$ARBEIDER_DSN_SATT" "$ARBEIDERROLLE"; then
   echo "Systemet er urørt; forrige release kjører som før."
   exit 1
 fi
+# 041 (Codex P1): ADJUDIKATORPORTEN. Migrasjon 041 KREVER klyngerollen
+# `disponit_domains_adjudicator` (§0) — den bærer RLS-policyen og SELECT-en
+# adjudikatorkøen leser `unntak` gjennom. Rollen opprettes i
+# `oppsett-postgresql.sh`, og denne løypa kjører IKKE det skriptet: en
+# eksisterende installasjon som ikke har fått oppsettet på nytt, har ikke
+# rollen. Migrasjonen stopper da av seg selv — men den kjører i steg 6, ETTER
+# at tjenestene er stoppet, og etterlater et vedlikeholdsvindu som må ryddes
+# for hånd. Porten hører derfor hjemme her, lesende, i subshell, FØR første
+# mutasjon — samme form og samme grunn som arbeiderporten over.
+#
+# MEDLEMSKAPET MÅLES OGSÅ (Codex P1, runde 7): at rollen FINNES er ikke det
+# samme som at den kan BRUKES. Begge API-veiene gjør `SET LOCAL ROLE
+# disponit_domains_adjudicator`, og det krever at runtime-rollen `disponit`
+# er medlem MED SET. Oppsettet oppretter rollen og gir medlemskapet i to
+# separate psql-kall, så et avbrudd mellom dem etterlater en base der rollen
+# finnes og medlemskapet ikke gjør det — og der ville en port på `pg_roles`
+# alene sagt `ja`. Migrasjonens egen fallback svelger `insufficient_privilege`
+# på det grantet med vilje (klyngeobjekt), så 041 kunne blitt registrert mens
+# køen og attestasjonsveien feilet på hver eneste adjudikasjon.
+if ! ADJUDIKATORPORT=$( set -a; . "$MILJOFIL"; set +a
+      "$ROT/.venv/bin/python" -c '
+import os, psycopg
+with psycopg.connect(os.environ["DATABASE_URL"]) as c:
+    rolle = c.execute("SELECT 1 FROM pg_roles WHERE rolname = %s",
+                      ("disponit_domains_adjudicator",)).fetchone()
+    medlem = c.execute(
+        "SELECT m.set_option FROM pg_auth_members m"
+        "  JOIN pg_roles r ON r.oid = m.roleid"
+        "  JOIN pg_roles b ON b.oid = m.member"
+        " WHERE r.rolname = %s AND b.rolname = %s",
+        ("disponit_domains_adjudicator", "disponit")).fetchone()
+    print(("ja" if rolle else "nei") + ":"
+          + ("ja" if medlem and medlem[0] else "nei"))
+' 2>&1 ); then
+  echo "AVBRUTT: kunne ikke lese rolle- og medlemskapskatalogen i"
+  echo "runtime-basen (pg_roles / pg_auth_members)."
+  echo "$ADJUDIKATORPORT" | tail -3
+  echo "Porten avgjør om migrasjon 041 i det hele tatt kan kjøre, og den"
+  echo "gjetter ikke."
+  echo "Systemet er urørt; forrige release kjører som før."
+  exit 1
+fi
+if [ "$ADJUDIKATORPORT" != ja:ja ]; then
+  echo "AVBRUTT: adjudikatorrollen er ikke utrullet (rolle:medlemskap ="
+  echo "$ADJUDIKATORPORT)."
+  echo "Migrasjon 041 gir rollen disponit_domains_adjudicator RLS-policyen"
+  echo "og SELECT på unntak som adjudikatorkøen leser gjennom, og BEGGE"
+  echo "API-veiene gjør SET LOCAL ROLE til den — som krever at runtime-"
+  echo "rollen disponit er medlem MED SET. Mangler noe av dette, ville 041"
+  echo "blitt registrert som kjørt mens hver overtakelsessak sto"
+  echo "uavgjørbar, uten en eneste rød indikator."
+  echo "Roller og medlemskap er KLYNGEobjekter og settes i"
+  echo "deploy/staging/oppsett-postgresql.sh (idempotent), aldri i en"
+  echo "migrasjon — migratorrollen har verken eller skal ha CREATEROLE."
+  echo "Kjør oppsett-postgresql.sh først, og kjør så opp.sh igjen."
+  echo "Systemet er urørt; forrige release kjører som før."
+  exit 1
+fi
 # PR-015 (Codex P1): RESOLVERPORTEN kjøres FØR første mutasjon, ikke først ved
 # timeraktivering. `skriv_cred domener DISPONIT_RESOLVERE` skrev tidligere
 # hva som helst — også tom streng — og utrullingen rapporterte suksess fordi
