@@ -58,6 +58,18 @@ FELTDEKNING = {"bestillingstype": ("bestillingstype",),
 IDEMPOTENSNOKKEL_MIN = 8
 IDEMPOTENSNOKKEL_MAKS = 200
 
+#: RESERVERT NØKKELROM (Codex P1 på #106). `plan.materialiser` avleder
+#: vinduets idempotensnøkkel som `plan:<plan_id>:<vindu_start>`, og 045
+#: gjør nettopp den raden til BEVISET som lar et planvindu terminaliseres
+#: uten claim. `Idempotency-Key` er samtidig en header klienten velger
+#: fritt — så uten dette leddet kunne en helt vanlig bestilling legge
+#: fasiten for et fremmed vindu gjennom hoveddøra. Porten som teller står
+#: i basen (`registrer_bestilling_idempotens`); denne står her for å
+#: avvise nøkkelen FØR beslutningen tas, slik lengdegrensen over gjør:
+#: ellers ville kvoten vært brent og oppdraget skrevet når innsettingen
+#: felte transaksjonen.
+PLAN_NOKKELROM = "plan:"
+
 #: LOKAL kode for «nøkkelen er OPPTATT akkurat nå» (Codex P2). Mot
 #: klienten er den `idempotenskonflikt` som før — 409 på nøkkelen, ingen
 #: beslutning, ingen kvote — og `bestill_endepunkt` oversetter den
@@ -276,7 +288,7 @@ def _verifisert_hostname(conn, tenant: str, hostname: str):
 
 
 def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
-                     data, nokkel, rid: str):
+                     data, nokkel, rid: str, *, planvindu=None):
     """HELE bestillingsveien etter autentisering og parse — den ENE veien
     (klarsignal periodisk kontroll §4): browserendepunktet og plan-
     materialisereren kaller nøyaktig denne, så policyport, idempotens,
@@ -286,6 +298,13 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
     -> ("feil", kode) eller ("ok", kropp, replay). Kalleren oversetter til
     sitt eget svarformat; `aktor` er hele aktørstrengen ("bruker:<bid>"
     eller "plan:<plan_id>").
+
+    `planvindu` er OPPRINNELSEN til nøkkelen, ikke en variant av veien:
+    `(plan_id, vindu_start, claim_id)` fra materialisereren, `None` for
+    alle andre. Trippelen bæres helt ned i `registrer_bestilling_-
+    idempotens`, som er den eneste skriveveien inn i fasittabellen etter
+    045: raden i `plan:`-rommet er beviset et tick kan felles på, og den
+    skal bare kunne skrives av den som HOLDER vinduets claim.
     """
     from . import kjerne
     #: Sesjonslåsen på klientens idempotensnøkkel, satt når den er tatt —
@@ -316,6 +335,18 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
             tjeneste.logg.hendelse("request_feilformet", rid, tenant,
                                    art="sikkerhet", flate="bestilling",
                                    grunn="idempotensnokkel_lengde")
+            return ("feil", "request_feilformet")
+        # NØKKELROMMET VALIDERES SAMME STED OG AV SAMME GRUNN (Codex P1 på
+        # #106). `plan:`-rommet er planmaskineriets, og bare et kall som
+        # BÆRER vinduets claim får skrive i det. En klient som sender
+        # nøkkelen som header ville ellers kommet helt til innsettingen —
+        # etter at beslutningen var committet og kvoten brent — og fått en
+        # 500 der hver eneste retry ga nøyaktig det samme.
+        if nokkel is not None and planvindu is None and \
+                nokkel.startswith(PLAN_NOKKELROM):
+            tjeneste.logg.hendelse("request_feilformet", rid, tenant,
+                                   art="sikkerhet", flate="bestilling",
+                                   grunn="idempotensnokkel_reservert")
             return ("feil", "request_feilformet")
 
         # BESLUTNINGENE SERIALISERES PÅ KLIENTENS NØKKEL (Codex P1).
@@ -722,13 +753,22 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
             # timeout gir samme kode uten å brenne kvote; kvotevernet for
             # selve beslutningen bæres av kjernens egen idempotensnøkkel,
             # deterministisk avledet av bestillingsnøkkelen).
+            #
+            # GJENNOM DEN HERDEDE VEIEN, IKKE DIREKTE (Codex P1 på #106).
+            # Runtime mistet `INSERT` på tabellen i 045: raden i
+            # `plan:`-rommet ER beviset et planvindu kan terminaliseres på,
+            # og en tabell enhver kompromittert runtime-forbindelse kunne
+            # skrive i ga beviset et innhold uten et opphav. Funksjonen
+            # setter opphavet — nøkkelrommet, og for planveien at vinduets
+            # claim faktisk holdes. Castene er eksplisitte fordi hele
+            # trippelen er NULL på klientveien, og en utypet NULL gjør
+            # funksjonsoppslaget flertydig.
             conn.execute(
-                "INSERT INTO bestilling_idempotens (tenant,"
-                " idempotensnokkel, intensjonshash, oppdrag_id, beslutning,"
-                " svarkropp) VALUES (%s,%s,%s,%s,%s,%s)"
-                " ON CONFLICT (tenant, idempotensnokkel) DO NOTHING",
+                "SELECT registrer_bestilling_idempotens(%s,%s,%s,%s::bigint,"
+                "%s,%s::jsonb,%s::uuid,%s::timestamptz,%s::uuid)",
                 (tenant, nokkel, hash_, oppdrag_id, utfall,
-                 json.dumps(kropp, ensure_ascii=False)))
+                 json.dumps(kropp, ensure_ascii=False),
+                 *(planvindu if planvindu else (None, None, None))))
         conn.commit()
         return ("ok", kropp, False)
     finally:

@@ -129,8 +129,14 @@ def materialiser_en(tjeneste, conn, rad, *, naa=None) -> dict:
                 "hoppet": utfall_claim}
 
     data = {"bestillingstype": btype, **(parametre or {})}
+    # OPPRINNELSEN FØLGER MED NØKKELEN (Codex P1 på #106). Fasitraden
+    # `nokkel` peker på er det 045 lar et vindu terminaliseres på uten
+    # claim — så den skal bare kunne skrives av den som HOLDER claimet.
+    # Trippelen er beviset for det, og `claim` er en UUID basen ga bare
+    # til vinneren av `claim_planvindu` over.
     res = utfor_bestilling(tjeneste, conn, tenant, f"plan:{plan_id}",
-                           data, nokkel, rid)
+                           data, nokkel, rid,
+                           planvindu=(plan_id, vindu_start, claim))
     utfall, oppdrag_id, detalj = _tick_utfall(res)
 
     if utfall is None:

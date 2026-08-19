@@ -104,10 +104,14 @@ GRANT SELECT ON domenekontroll, artefakt, artefakttype_register TO {rolle};
 -- PR-014c: skjemavalidering ved opplasting/promotering og aktiveringsporten
 -- for `ekstern_lesing` leses i API-prosessen. Runtime skriver aldri.
 GRANT SELECT ON artefaktskjema, malautorisasjonsvilkar TO {rolle};
--- 038 §6.1: idempotensregisteret for bestillinger. Kun SELECT+INSERT
--- — radene er immutable (trigger avviser UPDATE og DELETE), og et
--- grant her ville bare skjult at triggeren er porten.
-GRANT SELECT, INSERT ON bestilling_idempotens TO {rolle};
+-- 038 §6.1: idempotensregisteret for bestillinger. KUN SELECT — gjenspillet
+-- leser raden, men skriveveien er `registrer_bestilling_idempotens` (045).
+-- INSERT sto her til 045: raden i `plan:`-rommet er beviset et planvindu
+-- kan terminaliseres på uten claim, og en tabell runtime selv kunne skrive
+-- i ga beviset et innhold uten et opphav. Radene er dessuten immutable
+-- (trigger avviser UPDATE og DELETE), og et grant der ville bare skjult at
+-- triggeren er porten.
+GRANT SELECT ON bestilling_idempotens TO {rolle};
 -- 017/035: artefaktkapabiliteten. Funksjonene eies av `disponit_domene_eier`
 -- (SECURITY DEFINER-veien inn i kapabilitetstabellen), så grantene MÅ gis
 -- som eieren — som migrator blir de en stille WARNING, samme felle som

@@ -140,6 +140,115 @@ REVOKE ALL ON FUNCTION plan_vindu_idempotensnokkel(UUID, TIMESTAMPTZ)
 GRANT EXECUTE ON FUNCTION plan_vindu_idempotensnokkel(UUID, TIMESTAMPTZ)
     TO disponit;
 
+-- ------------------------------------------------------------
+-- FASITEN MÅ HA ET OPPHAV, IKKE BARE ET INNHOLD
+-- (Codex P1 på #106, runde 2)
+--
+-- Forrige runde bandt beviset til VINDUET: `p_nokkel` må være den
+-- utledede nøkkelen for (plan, vindu). Det stengte gjenbruken av en
+-- fremmed nøkkel, men ikke selve rommet nøkkelen peker inn i. Runtime-
+-- rollen `disponit` har nemlig DIREKTE `INSERT` på `bestilling_idempotens`
+-- (038 §6.1), og radens eneste øvrige port er RLS-policyen, som bare
+-- krever at raden bærer kallerens egen tenant. Trusselmodellen 045 er
+-- skrevet mot — én SQL-injeksjon, én kompromittert runtime-forbindelse i
+-- sin EGEN lovlige tenantkontekst — kan altså regne ut vinduets kanoniske
+-- nøkkel selv, skrive en rad med `beslutning='tillat'` på den, og i neste
+-- setning kalle `terminaliser_planvindu` og få sitt forfalskede tick.
+--
+-- ROTEN. Fasitporten leser en rad og tror på INNHOLDET. Immutabilitet
+-- etter innsetting (triggeren i 038 §3) beviser at raden ikke er ENDRET;
+-- den sier ingenting om hvem som skrev den. Et bevis uten opphav er ikke
+-- et bevis — det er et innhold kalleren selv kan velge.
+--
+-- RETTINGEN følger 038 §4 sin egen presedens for `oppdrag`: runtime
+-- mister den direkte skriveveien, og får i stedet ÉN herdet funksjon som
+-- setter det kalleren ikke skal få velge. Her er det opphavet som settes:
+--
+--   * Nøkkelrommet «plan:» er planmaskineriets. En bestilling som ikke
+--     kommer fra et claimet vindu kan ikke skrive i det i det hele tatt.
+--     Dette leddet er ikke pynt: `Idempotency-Key` er en HTTP-header
+--     klienten velger fritt, så uten det kunne en helt vanlig,
+--     autentisert bestilling sende `plan:<plan_id>:<vindu_start>` som sin
+--     egen nøkkel og legge fasiten for et fremmed vindu gjennom
+--     hoveddøra — uten injeksjon, uten kompromittert forbindelse.
+--   * Kommer den fra et vindu, må kalleren HOLDE vinduets claim: nøkkelen
+--     må være den utledede for (p_plan, p_vindu), og vindusraden må stå
+--     `aktivt` med nøyaktig dette claimet. `claim_id` er en UUID basen
+--     genererte og bare ga til vinneren av `claim_planvindu` — den kan
+--     ikke gjettes, og den er dermed det opphavet raden manglet.
+--
+-- INVARIANTEN ETTERPÅ: fasitveien er ikke lenger SVAKERE enn claimveien.
+-- Å skrive en `plan:`-fasit krever nå nøyaktig den samme autoriteten som
+-- å terminalisere direkte med et levende claim — så gjenopprettingen i
+-- `terminaliser_planvindu` gir ingen makt claimveien ikke alt ga. Den er
+-- det den skulle være: en vei tilbake for et forsøk som ALT hadde
+-- autoriteten, og som mistet svaret sitt.
+--
+-- INGEN LÅS PÅ VINDUSRADEN HER. Oppslaget er en ren lesning med vilje.
+-- Funksjonen tar ingen BESLUTNING som må serialiseres — den beviser et
+-- OPPHAV — og eksklusjonen mot samtidige forsøk bæres av
+-- `terminaliser_planvindu` som før. Et `FOR UPDATE` her ville lagt en ny
+-- kant inn i låsegrafen (vindu tas midt i bestillingstransaksjonen, som
+-- alt holder rader på logg/oppdrag/kvote) uten å kjøpe noe: skulle en ny
+-- arbeider rekke å overta vinduet mens bestillingen pågår, er det gamle
+-- forsøket utgjerdet, og at fasiten da avvises er nøyaktig riktig.
+CREATE OR REPLACE FUNCTION registrer_bestilling_idempotens(
+    p_tenant TEXT, p_nokkel TEXT, p_intensjonshash TEXT, p_oppdrag BIGINT,
+    p_beslutning TEXT, p_svarkropp JSONB,
+    p_plan UUID, p_vindu TIMESTAMPTZ, p_claim UUID)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+DECLARE v RECORD;
+BEGIN
+    PERFORM public.krev_tenantkontekst(p_tenant,
+                                       'registrer_bestilling_idempotens');
+    IF p_plan IS NULL OR p_vindu IS NULL OR p_claim IS NULL THEN
+        -- Ingen vindusopprinnelse oppgitt: nøkkelen er klientens egen, og
+        -- da er planrommet stengt. Alle tre må være med — en delvis
+        -- oppgitt opprinnelse er ingen opprinnelse, og skal ikke kunne
+        -- forhandle seg forbi porten ved å utelate leddet som binder.
+        IF p_nokkel LIKE 'plan:%' THEN
+            RAISE EXCEPTION 'registrer_bestilling_idempotens: nøkkelrommet '
+                '«plan:» tilhører planmaskineriet — en bestilling uten et '
+                'claimet vindu kan ikke skrive i det'
+                USING ERRCODE = 'insufficient_privilege';
+        END IF;
+    ELSE
+        IF p_nokkel IS DISTINCT FROM
+           public.plan_vindu_idempotensnokkel(p_plan, p_vindu) THEN
+            RAISE EXCEPTION 'registrer_bestilling_idempotens: nøkkelen '
+                'hører ikke til vinduet'
+                USING ERRCODE = 'invalid_parameter_value';
+        END IF;
+        -- `w.tenant = p_tenant` av samme grunn som i `claim_planvindu` og
+        -- `terminaliser_planvindu`: definer-veien ser forbi RLS, så raden
+        -- må bindes til kalleren eksplisitt.
+        SELECT w.tilstand, w.claim_id INTO v
+          FROM public.bestillingsplan_vindu w
+         WHERE w.plan_id = p_plan AND w.tenant = p_tenant
+           AND w.vindu_start = p_vindu;
+        IF NOT FOUND OR v.tilstand IS DISTINCT FROM 'aktivt'
+           OR v.claim_id IS DISTINCT FROM p_claim THEN
+            RAISE EXCEPTION 'registrer_bestilling_idempotens: fasiten '
+                'krever at kalleren holder vinduets claim'
+                USING ERRCODE = 'insufficient_privilege';
+        END IF;
+    END IF;
+    -- `ON CONFLICT DO NOTHING` er bestillingsveiens egen semantikk, flyttet
+    -- hit uendret: taperen av et kappløp på nøkkelen leser vinnerens rad,
+    -- den overskriver den aldri (raden er uansett immutabel).
+    INSERT INTO public.bestilling_idempotens
+        (tenant, idempotensnokkel, intensjonshash, oppdrag_id, beslutning,
+         svarkropp)
+    VALUES (p_tenant, p_nokkel, p_intensjonshash, p_oppdrag, p_beslutning,
+            coalesce(p_svarkropp, '{}'::jsonb))
+    ON CONFLICT (tenant, idempotensnokkel) DO NOTHING;
+END $$;
+REVOKE ALL ON FUNCTION registrer_bestilling_idempotens(TEXT, TEXT, TEXT,
+    BIGINT, TEXT, JSONB, UUID, TIMESTAMPTZ, UUID) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION registrer_bestilling_idempotens(TEXT, TEXT, TEXT,
+    BIGINT, TEXT, JSONB, UUID, TIMESTAMPTZ, UUID) TO disponit;
+
 CREATE OR REPLACE FUNCTION terminaliser_planvindu(
     p_tenant TEXT, p_plan UUID, p_vindu TIMESTAMPTZ, p_claim UUID,
     p_nokkel TEXT, p_utfall TEXT, p_oppdrag BIGINT, p_detalj JSONB)
@@ -335,3 +444,17 @@ GRANT EXECUTE ON FUNCTION terminaliser_planvindu(TEXT, UUID, TIMESTAMPTZ,
     UUID, TEXT, TEXT, BIGINT, JSONB) TO disponit;
 
 RESET ROLE;
+
+-- ------------------------------------------------------------
+-- DEN DIREKTE SKRIVEVEIEN STENGES (Codex P1 på #106, runde 2)
+--
+-- Grantene under gis av TABELLEIEREN (migrator, 038 §3), derfor står de
+-- utenfor claimer-blokken over: et GRANT fra en ikke-eier er en stille
+-- WARNING og ingen rettighet.
+--
+-- `disponit` beholder SELECT — gjenspillet i `utfor_bestilling` leser
+-- raden — men mister INSERT. Etter dette finnes det nøyaktig ÉN vei inn i
+-- `bestilling_idempotens`, og den setter opphavet selv. Uten dette
+-- REVOKE-et er funksjonen over bare et alternativ, ikke en port.
+GRANT INSERT ON bestilling_idempotens TO disponit_m37_claimer;
+REVOKE INSERT ON bestilling_idempotens FROM disponit;

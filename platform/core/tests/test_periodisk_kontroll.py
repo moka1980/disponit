@@ -599,7 +599,7 @@ def test_krasj_og_gjenspill_brenner_ingen_kvote(migrator, app):
         nokkel = idempotensnokkel(pid, vs)
         # Krasj nr. 1: claim committes, prosessen dør før POST.
         sett_kontekst(rt, TENANT, f"plan:{pid}", "r-krasj")
-        utfall, _claim = rt.execute(
+        utfall, claim = rt.execute(
             "SELECT utfall, claim_id FROM claim_planvindu(%s,%s,%s,%s)",
             (TENANT, pid, vs, LEASE_S)).fetchone()
         rt.commit()
@@ -617,9 +617,16 @@ def test_krasj_og_gjenspill_brenner_ingen_kvote(migrator, app):
             " WHERE plan_id=%s AND vindu_start=%s", (pid, vs))
         migrator.commit()
         # Krasj nr. 2: bestillingen committer, prosessen dør før ticket.
+        # Opprinnelsen følger med (Codex P1 på #106): fasiten i
+        # `plan:`-rommet skrives bare av den som HOLDER claimet. Leasen er
+        # død her — det er nettopp krasjet som prøves — men vinduet står
+        # fortsatt `aktivt` med dette claimet, og det er claimet, ikke
+        # leasen, som er opphavet. Eksklusjonen bæres av
+        # `terminaliser_planvindu` som før.
         res1 = utfor_bestilling(app.tjeneste, rt, TENANT, f"plan:{pid}",
                                 {"bestillingstype": rad[5], **rad[6]},
-                                nokkel, "r-krasj2")
+                                nokkel, "r-krasj2",
+                                planvindu=(pid, vs, claim))
         assert res1[0] == "ok" and res1[1]["beslutning"] == "tillat", res1
         _sett_kontekst(migrator, TENANT)
         frek_foer = migrator.execute(
@@ -1024,6 +1031,149 @@ def test_fremmed_idempotensnokkel_terminaliserer_ikke(migrator):
         assert migrator.execute(
             "SELECT count(*) FROM bestillingsplan_tick WHERE plan_id=%s"
             " AND vindu_start=%s", (pid, vs2)).fetchone()[0] == 0
+        migrator.rollback()
+    finally:
+        rt.close()
+
+
+@pg
+def test_fasiten_kan_bare_skrives_av_den_som_holder_claimet(migrator):
+    """Codex P1 på #106 (runde 2): et bevis uten opphav er bare et innhold.
+
+    Forrige runde bandt beviset til VINDUET — `p_nokkel` må være den
+    utledede nøkkelen. Men runtime-rollen hadde DIREKTE `INSERT` på
+    `bestilling_idempotens` (038 §6.1), og radens eneste øvrige port var
+    RLS, som bare krever at raden bærer kallerens egen tenant. Nøyaktig den
+    trusselen 045 er skrevet mot — én SQL-injeksjon, én kompromittert
+    runtime-forbindelse i sin EGEN lovlige tenantkontekst — kunne altså
+    regne ut vinduets kanoniske nøkkel selv, skrive raden med
+    `beslutning='tillat'`, og i neste setning felle vinduet på sitt eget
+    «bevis». Immutabilitet etter innsetting sier at raden ikke er ENDRET;
+    den sier ingenting om hvem som skrev den.
+
+    Fire porter måles, og til slutt at den lovlige veien fortsatt går:
+
+      1. Runtime har ingen direkte skrivevei igjen.
+      2. `plan:`-rommet er stengt uten en vindusopprinnelse. Dette leddet
+         er ikke teoretisk: `Idempotency-Key` er en header klienten velger
+         fritt, så uten det kunne en helt vanlig, autentisert bestilling
+         legge fasiten for et fremmed vindu gjennom hoveddøra — ingen
+         injeksjon, ingen kompromittert forbindelse.
+      3. Et claim ingen holder slipper ikke inn.
+      4. Hele kjeden ender uten tick.
+    """
+    from plan.klassifiser import _nokkel
+    rt = _rt()
+    try:
+        pid = _plan_forfalt(rt, migrator, host="p106-opphav.example")
+        vs = _syntetisk_vindu(migrator, pid, start_h=-1, slutt_h=1,
+                              tilstand="ledig")
+        nokkel = _nokkel(pid, vs)
+
+        # 1. Den direkte skriveveien finnes ikke lenger.
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.execute(
+                "INSERT INTO bestilling_idempotens (tenant,"
+                " idempotensnokkel, intensjonshash, beslutning, svarkropp)"
+                " VALUES (%s,%s,%s,'tillat','{}')",
+                (TENANT, nokkel, "7" * 64))
+        rt.rollback()
+
+        # 2. Den herdede veien nekter `plan:`-rommet uten opprinnelse.
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.execute(
+                "SELECT registrer_bestilling_idempotens(%s,%s,%s,NULL,"
+                "'tillat','{}'::jsonb,NULL,NULL,NULL)",
+                (TENANT, nokkel, "7" * 64))
+        rt.rollback()
+
+        # 3. Vinduet står `ledig`, og `claim_id` er en UUID basen bare ga
+        #    til vinneren av `claim_planvindu` — den kan ikke gjettes.
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.execute(
+                "SELECT registrer_bestilling_idempotens(%s,%s,%s,NULL,"
+                "'tillat','{}'::jsonb,%s,%s,gen_random_uuid())",
+                (TENANT, nokkel, "7" * 64, pid, vs))
+        rt.rollback()
+
+        # 4. Ingen fasit ble skrevet, altså kan vinduet ikke felles.
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            rt.execute("SELECT terminaliser_planvindu(%s,%s,%s,NULL,%s,"
+                       "'tillat',NULL,NULL)", (TENANT, pid, vs, nokkel))
+        rt.rollback()
+        _sett_kontekst(migrator, TENANT)
+        assert migrator.execute(
+            "SELECT count(*) FROM bestilling_idempotens WHERE tenant=%s"
+            " AND idempotensnokkel=%s",
+            (TENANT, nokkel)).fetchone()[0] == 0, \
+            "fasit uten opphav ble skrevet"
+        assert migrator.execute(
+            "SELECT count(*) FROM bestillingsplan_tick WHERE plan_id=%s"
+            " AND vindu_start=%s", (pid, vs)).fetchone()[0] == 0, \
+            "fasit uten opphav ga et tick"
+        migrator.rollback()
+
+        # ... OG GJENOPPRETTINGEN ER IKKE STENGT, BARE BUNDET. Arbeideren
+        # som HOLDER claimet skriver fasiten på nøyaktig det claimet —
+        # altså krever fasitveien nå samme autoritet som claimveien, og gir
+        # ingen makt claimet ikke alt ga.
+        _sett_kontekst(rt, TENANT)
+        claim = rt.execute(
+            "SELECT claim_id FROM claim_planvindu(%s,%s,%s,120)",
+            (TENANT, pid, vs)).fetchone()[0]
+        rt.commit()
+        assert claim is not None, "claimet var en forutsetning for prøven"
+        _sett_kontekst(rt, TENANT)
+        rt.execute(
+            "SELECT registrer_bestilling_idempotens(%s,%s,%s,NULL,"
+            "'tillat','{}'::jsonb,%s,%s,%s)",
+            (TENANT, nokkel, "8" * 64, pid, vs, claim))
+        rt.commit()
+        _sett_kontekst(migrator, TENANT)
+        assert migrator.execute(
+            "SELECT beslutning FROM bestilling_idempotens WHERE tenant=%s"
+            " AND idempotensnokkel=%s",
+            (TENANT, nokkel)).fetchone()[0] == "tillat"
+        migrator.rollback()
+    finally:
+        rt.close()
+
+
+@pg
+def test_klientnokkel_kan_ikke_ta_planrommet(migrator, app):
+    """Codex P1 på #106 (runde 2), hoveddørs-varianten: `Idempotency-Key`
+    er klientens egen streng, og fasiten i `plan:`-rommet er det et
+    planvindu kan terminaliseres på uten claim.
+
+    Uten et reservert nøkkelrom kunne en helt vanlig bestilling sende
+    `plan:<plan_id>:<vindu_start>` som sin nøkkel og legge igjen fasiten
+    for et fremmed, åpent vindu — uten injeksjon og uten kompromittert
+    forbindelse. Nøkkelen avvises FØR beslutningen, av samme grunn som
+    lengdegrensen: ellers ville kvoten vært brent og oppdraget skrevet når
+    innsettingen felte transaksjonen, og hver retry ga det samme.
+    """
+    from api.bestilling import utfor_bestilling
+    from plan.klassifiser import _nokkel
+    rt = _rt()
+    try:
+        pid = _plan_forfalt(rt, migrator, host="p106-hoveddor.example")
+        vs = _syntetisk_vindu(migrator, pid, start_h=-1, slutt_h=1,
+                              tilstand="ledig")
+        nokkel = _nokkel(pid, vs)
+        res = utfor_bestilling(
+            app.tjeneste, rt, TENANT, "bruker:b1",
+            {"bestillingstype": "kontroll.wcag.nettsted",
+             **_param("p106-hoveddor.example")}, nokkel, "r-hoveddor")
+        rt.rollback()
+        assert res == ("feil", "request_feilformet"), res
+        _sett_kontekst(migrator, TENANT)
+        assert migrator.execute(
+            "SELECT count(*) FROM bestilling_idempotens WHERE tenant=%s"
+            " AND idempotensnokkel=%s", (TENANT, nokkel)).fetchone()[0] == 0
         migrator.rollback()
     finally:
         rt.close()
