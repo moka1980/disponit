@@ -37,8 +37,8 @@ MAKS_PER_KJORING = int(os.environ.get("DISPONIT_PLAN_MAKS", "50"))
 #: Leasen er forsøkets vern: 2 × HTTP-timeout (v1: 2 minutter).
 LEASE_S = 120
 
-#: Feilkoder fra bestillingsveien → planens pausegrunn (klarsignal §7).
-#: Alt annet er transient: vinduet står, neste kjøring prøver igjen.
+#: TERMINALE feilkoder fra bestillingsveien → planens pausegrunn
+#: (klarsignal §7). Disse er dommer over planen selv, ikke driftsuhell.
 _PAUSE_FOR_FEIL = {
     "bestilling_hostname_uverifisert": "policy_stopper",
     "bestillingstype_utilgjengelig": "modul_utilgjengelig",
@@ -49,9 +49,37 @@ def idempotensnokkel(plan_id, vindu_start: datetime) -> str:
     return f"plan:{plan_id}:{vindu_start.astimezone(timezone.utc).isoformat()}"
 
 
-def _tick_utfall(res) -> tuple[str, int | None, dict]:
-    """Bestillingsveiens svar → tick-utfallet (lukket enum)."""
+def er_forbigaende(kode) -> bool:
+    """Er feilkoden et driftsuhell, og ikke en dom over planen? (Codex P1)
+
+    Feilveitabellen er den ENE autoriteten for hva som er drift, og den
+    leses her i stedet for å gjentas: en kode rutet til `drift`
+    (`db_utilgjengelig`, `logging_feilet`, `intern_feil` …) er
+    infrastruktur som svikter. Terminaliserte vi den, ville et minutts
+    databasetrøbbel konsumert vinduet PERMANENT og dessuten pauset planen
+    som `policy_stopper` — en policy ingen har uttalt, og en pause bare et
+    menneske kan oppheve.
+
+    `_PAUSE_FOR_FEIL` går foran tabellen: `bestillingstype_utilgjengelig`
+    er drift-rutet for HTTP-klienten, men for planen er den nettopp en dom
+    (modulen finnes ikke lenger) med sin egen pausegrunn i §7.
+    """
+    if kode in _PAUSE_FOR_FEIL:
+        return False
+    from api.feil import FEIL
+    vei = FEIL.get(kode or "")
+    return vei is not None and "drift" in vei.routing
+
+
+def _tick_utfall(res) -> tuple[str | None, int | None, dict]:
+    """Bestillingsveiens svar → tick-utfallet (lukket enum).
+
+    `None` er ikke et utfall: det betyr FORBIGÅENDE — intet tick, ingen
+    terminalisering, claimet gis tilbake.
+    """
     if res[0] == "feil":
+        if er_forbigaende(res[1]):
+            return None, None, {"feil": res[1]}
         return "stopp", None, {"feil": res[1]}
     kropp = res[1]
     utfall = kropp.get("beslutning")
@@ -84,6 +112,20 @@ def materialiser_en(tjeneste, conn, rad, *, naa=None) -> dict:
     res = utfor_bestilling(tjeneste, conn, tenant, f"plan:{plan_id}",
                            data, nokkel, rid)
     utfall, oppdrag_id, detalj = _tick_utfall(res)
+
+    if utfall is None:
+        # FORBIGÅENDE (Codex P1): vinduet skal overleve driftsuhellet.
+        # Claimet gis tilbake i stedet for å vente ut leasen — vinduet kan
+        # ha sekunder igjen — og det skrives verken tick eller pause.
+        # Kvoten er urørt: kjernens egen idempotens gjør neste forsøk på
+        # samme vindusnøkkel til et gjenspill, ikke en ny beslutning.
+        sett_kontekst(conn, tenant, f"plan:{plan_id}", rid)
+        frigitt = conn.execute(
+            "SELECT frigi_planvindu(%s,%s,%s,%s)",
+            (tenant, plan_id, vindu_start, claim)).fetchone()[0]
+        conn.commit()
+        return {"vindu": str(vindu_start), "plan": str(plan_id),
+                "forbigaende": detalj.get("feil"), "frigitt": frigitt}
 
     sett_kontekst(conn, tenant, f"plan:{plan_id}", rid)
     dom = conn.execute(

@@ -1011,6 +1011,66 @@ def test_modul_utilgjengelig_har_sin_pausegrunn():
         "policy_stopper"
 
 
+def test_driftsfeil_er_forbigaende_ikke_dom():
+    """Codex P1: et driftsuhell er ingen dom over planen.
+
+    `db_utilgjengelig`, `logging_feilet` og `intern_feil` er rutet til
+    `drift` i feilveitabellen — de skal gi INTET tick og INGEN pause.
+    Ble de terminalisert som `stopp`, konsumerte et minutts
+    databasetrøbbel vinduet permanent og pauset planen som
+    `policy_stopper`. De to §7-kodene er unntaket: de ER dommer, og
+    beholder sin pausegrunn selv om den ene er drift-rutet i HTTP-laget.
+    """
+    from plan.materialiser import _tick_utfall, er_forbigaende
+    for kode in ("db_utilgjengelig", "logging_feilet", "intern_feil",
+                 "unntaksskriv_feilet", "tenantnokkel_mangler"):
+        assert er_forbigaende(kode), kode
+        assert _tick_utfall(("feil", kode))[0] is None, kode
+    for kode in ("bestilling_hostname_uverifisert",
+                 "bestillingstype_utilgjengelig", "request_feilformet",
+                 "idempotenskonflikt", "policy_ukjent"):
+        assert not er_forbigaende(kode), kode
+        assert _tick_utfall(("feil", kode))[0] == "stopp", kode
+
+
+@pg
+def test_forbigaende_feil_frigir_vinduet(migrator, app, monkeypatch):
+    """Codex P1, ende til ende: en drift-feil fra bestillingsveien gir
+    vinduet TILBAKE (`ledig`), uten tick og uten pause — og neste kjøring
+    plukker det samme vinduet igjen. Claimet gis tilbake i stedet for å
+    vente ut leasen: vinduet kan ha sekunder igjen."""
+    from plan import materialiser
+    rt = _rt()
+    try:
+        pid = _plan_forfalt(rt, migrator, host="p-drift.example")
+        rad = _mine_forfalte(rt, pid)[0]
+        import api.bestilling
+        monkeypatch.setattr(api.bestilling, "utfor_bestilling",
+                            lambda *a, **k: ("feil", "db_utilgjengelig"))
+        res = materialiser.materialiser_en(app.tjeneste, rt, rad)
+        assert res["forbigaende"] == "db_utilgjengelig", res
+        assert res["frigitt"] == "frigitt", res
+        _sett_kontekst(migrator, TENANT)
+        vindu = migrator.execute(
+            "SELECT tilstand, claim_id, lease_utloper, terminalisert_ts"
+            "  FROM bestillingsplan_vindu WHERE plan_id=%s", (pid,)
+        ).fetchall()
+        tick = migrator.execute(
+            "SELECT count(*) FROM bestillingsplan_tick WHERE plan_id=%s",
+            (pid,)).fetchone()[0]
+        plan = migrator.execute(
+            "SELECT status, pause_aarsak FROM bestillingsplan"
+            " WHERE plan_id=%s", (pid,)).fetchone()
+        migrator.rollback()
+        assert vindu == [("ledig", None, None, None)], vindu
+        assert tick == 0, "et driftsuhell skrev evidens"
+        assert plan == ("aktiv", None), plan
+        # Vinduet er fortsatt til å ta: retten til å forsøke er intakt.
+        assert _mine_forfalte(rt, pid), "det frigitte vinduet forsvant"
+    finally:
+        rt.close()
+
+
 @pg
 def test_gjentatt_uten_resultat(migrator):
     """Port 22: tre `tillat`-tick på rad i gjeldende åpne periode uten

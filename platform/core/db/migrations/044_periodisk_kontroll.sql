@@ -559,6 +559,36 @@ BEGIN
     RETURN QUERY SELECT 'claimet'::text, v_claim;
 END $$;
 
+-- Frigivelse: motstykket til claimet for et FORBIGÅENDE avbrudd (Codex
+-- P1). Et driftsuhell i bestillingsveien er ingen dom over planen, og
+-- vinduet skal derfor stå åpent — men å bare la leasen løpe ut ville
+-- kostet inntil to minutter av et vindu som kanskje har sekunder igjen.
+-- Fencing som i terminaliseringen: kun claimets eier kan frigi, og
+-- terminal er absorberende (en frigivelse etter terminalisering ville
+-- gjenåpnet et vindu evidensen alt har lukket).
+CREATE OR REPLACE FUNCTION frigi_planvindu(
+    p_tenant TEXT, p_plan UUID, p_vindu TIMESTAMPTZ, p_claim UUID)
+RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+DECLARE v RECORD;
+BEGIN
+    SELECT * INTO v FROM public.bestillingsplan_vindu w
+     WHERE w.plan_id = p_plan AND w.vindu_start = p_vindu FOR UPDATE;
+    IF NOT FOUND THEN
+        RETURN 'ukjent';
+    END IF;
+    IF v.tilstand = 'terminal' THEN
+        RETURN 'terminal';
+    END IF;
+    IF v.claim_id IS DISTINCT FROM p_claim THEN
+        RETURN 'ikke_ditt';
+    END IF;
+    UPDATE public.bestillingsplan_vindu w
+       SET tilstand = 'ledig', claim_id = NULL, lease_utloper = NULL
+     WHERE w.plan_id = p_plan AND w.vindu_start = p_vindu;
+    RETURN 'frigitt';
+END $$;
+
 -- Terminalisering + tick i ÉN transaksjon — eneste tick-skriver.
 -- `hoppet_over` krever utløpt vindu OG intet idempotenstreff: finnes en
 -- rad i bestilling_idempotens på vinduets nøkkel, BLE det bestilt, og
@@ -929,6 +959,8 @@ REVOKE ALL ON FUNCTION plan_forfallsminutt(UUID) FROM PUBLIC;
 REVOKE ALL ON FUNCTION forfalte_planvinduer(INT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION claim_planvindu(TEXT, UUID, TIMESTAMPTZ, INT)
     FROM PUBLIC;
+REVOKE ALL ON FUNCTION frigi_planvindu(TEXT, UUID, TIMESTAMPTZ, UUID)
+    FROM PUBLIC;
 REVOKE ALL ON FUNCTION terminaliser_planvindu(TEXT, UUID, TIMESTAMPTZ,
     UUID, TEXT, TEXT, BIGINT, JSONB) FROM PUBLIC;
 REVOKE ALL ON FUNCTION plan_nedetid_aggregert(TEXT, UUID, TIMESTAMPTZ,
@@ -949,6 +981,8 @@ GRANT EXECUTE ON FUNCTION stans_plan(TEXT, UUID, TEXT, TEXT) TO disponit;
 GRANT EXECUTE ON FUNCTION plan_forfallsminutt(UUID) TO disponit;
 GRANT EXECUTE ON FUNCTION forfalte_planvinduer(INT) TO disponit;
 GRANT EXECUTE ON FUNCTION claim_planvindu(TEXT, UUID, TIMESTAMPTZ, INT)
+    TO disponit;
+GRANT EXECUTE ON FUNCTION frigi_planvindu(TEXT, UUID, TIMESTAMPTZ, UUID)
     TO disponit;
 GRANT EXECUTE ON FUNCTION terminaliser_planvindu(TEXT, UUID, TIMESTAMPTZ,
     UUID, TEXT, TEXT, BIGINT, JSONB) TO disponit;
