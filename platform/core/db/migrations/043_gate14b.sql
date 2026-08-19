@@ -38,13 +38,57 @@ END $$;
 
 -- Immutabel når satt, og kan aldri fjernes — `avvis_endring` er samme
 -- vakt som oppdragsbindingen på unntak bruker.
+--
+-- ... MEN IMMUTABILITET ALENE ER FOR SENT (Codex P2, runde 5).
+--
+-- Første utgave fyrte bare når OLD-verdien ALT var satt. Da var det bare
+-- OMSKRIVING som var stengt — ikke ETTERSTEMPLING. En rad som lenge har
+-- stått terminal `kansellert` med NULL årsak (en tidsavbrutt eller
+-- systemkansellert jobb) kunne senere få `menneskelig_avvis` skrevet på
+-- seg: kolonnelåsen (005) tillater eksplisitt `OLD.status = NEW.status`,
+-- CHECKen over er fornøyd så lenge statusen ER `kansellert`, og
+-- runtime-rollen har direkte UPDATE på `oppdrag`. En feilende eller
+-- kompromittert same-tenant-spørring kunne dermed få en ordinær gammel
+-- kansellering til å se ut som resultatet av et menneskelig nei — og
+-- `kansellert_aarsak` er nettopp den raden revisjonen leser for å skille
+-- de to (§5 utleder kompensasjons-/irreversibilitetssaken av den).
+--
+-- Årsaken er en påstand om en OVERGANG, ikke om en tilstand, og kan
+-- derfor bare fødes i selve overgangen. Den ene lovlige veien inn i
+-- `kansellert` er `opprettet -> kansellert` (kolonnelåsen, 005) — som er
+-- nøyaktig den §7 komponerer (`plukket -> opprettet -> kansellert`).
+-- Vakten slipper derfor bare gjennom en setting der OLD ikke er
+-- kansellert og NEW er det; alt annet — omskriving, fjerning,
+-- etterstempling på en alt terminal rad, eller en årsak uten
+-- statusskifte — avvises.
 DROP TRIGGER IF EXISTS oppdrag_kansellert_aarsak_immutable ON oppdrag;
 CREATE TRIGGER oppdrag_kansellert_aarsak_immutable
   BEFORE UPDATE ON oppdrag
-  FOR EACH ROW WHEN (OLD.kansellert_aarsak IS NOT NULL
-                     AND NEW.kansellert_aarsak
-                         IS DISTINCT FROM OLD.kansellert_aarsak)
+  FOR EACH ROW WHEN (NEW.kansellert_aarsak
+                         IS DISTINCT FROM OLD.kansellert_aarsak
+                     AND (OLD.kansellert_aarsak IS NOT NULL
+                          OR OLD.status = 'kansellert'
+                          OR NEW.status <> 'kansellert'))
   EXECUTE FUNCTION avvis_endring();
+
+-- Og den samme påstanden kan heller ikke FØDES ferdig. Kolonnelåsen er
+-- BEFORE UPDATE, og runtime har direkte INSERT på `oppdrag` (samme
+-- utgangspunkt som bindingsvakten i 015): uten dette kunne en rad settes
+-- inn ferdig `kansellert` med `menneskelig_avvis` på seg — et nei ingen
+-- har sagt, uten en eneste overgang bak seg. Et oppdrag opprettes aldri
+-- allerede kansellert.
+CREATE OR REPLACE FUNCTION oppdrag_kansellert_aarsak_ved_insert()
+RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog AS $$
+BEGIN
+    RAISE EXCEPTION 'oppdrag: kansellert_aarsak kan ikke settes ved '
+        'opprettelse (settes kun i overgangen til kansellert, 043)'
+        USING ERRCODE = 'check_violation';
+END $$;
+DROP TRIGGER IF EXISTS oppdrag_kansellert_aarsak_insert ON oppdrag;
+CREATE TRIGGER oppdrag_kansellert_aarsak_insert
+  BEFORE INSERT ON oppdrag
+  FOR EACH ROW WHEN (NEW.kansellert_aarsak IS NOT NULL)
+  EXECUTE FUNCTION oppdrag_kansellert_aarsak_ved_insert();
 
 -- ------------------------------------------------------------
 -- 2. `unntak.arsak` utvides: kompensasjon og irreversibel utført

@@ -27,11 +27,13 @@ Portkart (klarsignalets §9):
   17  test_port17_lasorden_gir_avgjort_utfall_ikke_vranglas
       (+ den YTRE sakslåsen og den nye lesningen bak den, på INGEST-veien:
        test_m37.test_P1_kvitteringsveien_laser_saken_for_kapabiliteten og
-       test_m37.test_P1_kvitteringen_leser_tilstanden_paa_nytt_etter_sakslasen)
+       test_m37.test_P1_kvitteringen_leser_tilstanden_paa_nytt_etter_sakslasen
+       test_m37.test_P1_sakslasen_dekker_beslutningsopphavet)
   18  test_port18_rettighetene_er_parameterisert_pa_rollenavnet
   19  (unntaksbehandling: terminale statuser i avvis-revisjonen)
   20  test_port20_saksarsaken_naar_operatoren_over_http
   21  test_port21_opplosningen_binder_malene_til_saken
+  22  test_port22_kansellert_aarsak_kan_ikke_etterstemples
 """
 import json
 import secrets
@@ -377,11 +379,12 @@ def test_port9_kansellert_aarsak_er_lukket_og_immutabel(conn):
     m.rollback()
     from db.pg import sett_kontekst
     sett_kontekst(m, TEN, "sys", "r0")
-    # (b) ukjent årsak → CHECK (lukket enum).
-    m.execute("UPDATE oppdrag SET status='kansellert' WHERE tenant=%s"
-              " AND id=%s", (TEN, oid))
+    # (b) ukjent årsak → CHECK (lukket enum). Settes i SAMME setning som
+    #     overgangen: etter runde 5 er det den ENESTE lovlige formen, og
+    #     enum-CHECKen skal fortsatt være den som stopper verdien her.
     with pytest.raises(psycopg.errors.CheckViolation):
-        m.execute("UPDATE oppdrag SET kansellert_aarsak='fordi'"
+        m.execute("UPDATE oppdrag SET status='kansellert',"
+                  " kansellert_aarsak='fordi'"
                   " WHERE tenant=%s AND id=%s", (TEN, oid))
     m.rollback()
     sett_kontekst(m, TEN, "sys", "r0")
@@ -960,3 +963,78 @@ def test_port21_opplosningen_binder_malene_til_saken(conn):
     assert res == [("kansellert", oid_c)], (
         "porten stengte beslutningsopphavet — den andre lovlige"
         f" tilknytningen: {res}")
+
+
+# ---------------------------------------------------------------------------
+# Port 22: årsaken kan ikke ETTERSTEMPLES — den fødes i overgangen
+# ---------------------------------------------------------------------------
+
+@pg
+def test_port22_kansellert_aarsak_kan_ikke_etterstemples(conn):
+    """Codex P2 (runde 5): immutabilitet alene stengte bare OMSKRIVING.
+
+    Vakten fyrte bare når OLD-verdien alt var satt. En rad som lenge har
+    stått terminal `kansellert` med NULL årsak — en tidsavbrutt eller
+    systemkansellert jobb — kunne derfor senere få `menneskelig_avvis`
+    skrevet på seg: kolonnelåsen (005) tillater `OLD.status = NEW.status`,
+    CHECKen er fornøyd så lenge statusen ER `kansellert`, og runtime har
+    direkte UPDATE på `oppdrag`. Da ser en ordinær gammel kansellering ut
+    som resultatet av et menneskelig nei — og det er nøyaktig den raden
+    revisjonen (og §5-saken) leser for å skille de to.
+
+    Årsaken er en påstand om en OVERGANG, ikke om en tilstand.
+
+    MUTASJONEN SOM DREPER DENNE: sett WHEN-klausulen tilbake til bare
+    `OLD.kansellert_aarsak IS NOT NULL AND ...`.
+    """
+    from db.pg import sett_kontekst
+
+    uid = _oppsett(conn)
+    _medlem(conn, "op22")
+    oid = _oppdrag_id(uid, _oppdrag(uid, "opprettet"))
+    m = _mig()
+    # (a) en ordinær kansellering UTEN årsak — slik en tidsavbrutt jobb
+    #     ender. Lovlig overgang, ingen påstand om et menneskelig nei.
+    m.execute("UPDATE oppdrag SET status='kansellert' WHERE tenant=%s"
+              " AND id=%s", (TEN, oid))
+    m.commit()
+
+    # (b) ETTERSTEMPLINGEN: statusen røres ikke, bare årsaken settes.
+    sett_kontekst(m, TEN, "sys", "r0")
+    with pytest.raises(psycopg.errors.CheckViolation):
+        m.execute("UPDATE oppdrag SET kansellert_aarsak='menneskelig_avvis'"
+                  " WHERE tenant=%s AND id=%s", (TEN, oid))
+    m.rollback()
+    sett_kontekst(m, TEN, "sys", "r0")
+    assert m.execute("SELECT kansellert_aarsak FROM oppdrag WHERE tenant=%s"
+                     " AND id=%s", (TEN, oid)).fetchone()[0] is None, \
+        "årsaken ble etterstemplet på en alt terminal kansellering"
+    m.rollback()
+
+    # (c) ... og den kan heller ikke FØDES ferdig ved INSERT — et oppdrag
+    #     opprettes aldri allerede kansellert.
+    sett_kontekst(m, TEN, "sys", "r0")
+    lid, key_id = m.execute("SELECT loggpost_id, key_id FROM unntak WHERE"
+                            " tenant=%s AND id=%s", (TEN, uid)).fetchone()
+    with pytest.raises(psycopg.errors.CheckViolation):
+        m.execute(
+            "INSERT INTO oppdrag (opprinnelse,tenant,unntak_id,loggpost_id,"
+            "oppdragstype,handling,eiermodul,status,kansellert_aarsak,"
+            "payload_kryptert,key_id,nonce,utforelsesfrist,evidensfrist)"
+            " VALUES ('m37_reparasjon',%s,%s,%s,'reparasjon','faktura.bokfor',"
+            "'eier','kansellert','menneskelig_avvis',%s,%s,%s,"
+            "now()+interval '1 hour',now()+interval '2 hour')",
+            (TEN, uid, lid, b"\x00", key_id, b"\x00" * 12))
+    m.rollback()
+
+    # (d) DEN LOVLIGE VEIEN STÅR: årsaken settes i samme setning som
+    #     overgangen — nøyaktig slik §7 gjør det.
+    oid2 = _oppdrag_id(uid, _oppdrag(uid, "opprettet"))
+    sett_kontekst(m, TEN, "sys", "r0")
+    m.execute("UPDATE oppdrag SET status='kansellert',"
+              " kansellert_aarsak='menneskelig_avvis'"
+              " WHERE tenant=%s AND id=%s", (TEN, oid2))
+    assert m.execute("SELECT kansellert_aarsak FROM oppdrag WHERE tenant=%s"
+                     " AND id=%s", (TEN, oid2)).fetchone()[0] \
+        == "menneskelig_avvis", "vakten stengte den lovlige overgangen"
+    m.rollback(); m.close()
