@@ -210,10 +210,40 @@ def _skjemaporten(conn) -> list[str]:
 #: skjema-toleransen i preflight gjelder én port om gangen, så en port som
 #: ikke kan kjøres ennå ikke kan dra med seg de andre. Navnet vises i
 #: deploy-loggen når en port utsettes.
+def kontroller_planbestillingstyper(conn) -> list[str]:
+    """Planporten (044 port 1): typene i `bestillingsplan` vs koden.
+
+    Aldri rød (lærdommen fra 18/8 gjelder her med full tyngde: en plan
+    med en type dagens kode ikke kjenner kan oppstå ved en legitim
+    rollback, og et deploy-stopp ville kreve en tilstand bare senere
+    arbeid kan skape). Vakten bor der faren oppstår: materialisereren får
+    `request_feilformet`/`bestillingstype_utilgjengelig` fra
+    `utfor_bestilling` og PAUSER planen. Her varsles avviket bare,
+    synlig i deploy-loggen — med antall planer per ukjent type."""
+    from api.bestilling import BESTILLINGSTYPER
+    # Runtime har ingen bordtilgang til planene (044 port 7) — tellingen
+    # går gjennom claimerens definer. På en base før 044 finnes den ikke:
+    # da er porten selv-utsatt (migrasjonen kommer; hovedkjøringen etter
+    # migrasjonene har den).
+    if conn.execute("SELECT to_regprocedure("
+                    "'public.plan_bestillingstyper()')").fetchone()[0] is None:
+        return []
+    rader = conn.execute(
+        "SELECT bestillingstype, antall FROM plan_bestillingstyper()"
+        " ORDER BY bestillingstype").fetchall()
+    for btype, antall in rader:
+        if btype not in BESTILLINGSTYPER:
+            print(f"deployport-modultyper: MERK — {antall} plan(er) bærer"
+                  f" bestillingstypen '{btype}' som dagens kode ikke"
+                  " kjenner; materialisereren pauser dem ved neste vindu")
+    return []
+
+
 PORTER = (
     ("registerporten (1–3)", _registerporten),
     ("skjemaporten (4)", _skjemaporten),
     ("bestillingstypeporten (14)", kontroller_bestillingstyper),
+    ("planporten (044-1)", kontroller_planbestillingstyper),
 )
 
 

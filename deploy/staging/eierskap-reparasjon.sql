@@ -75,6 +75,35 @@ INSERT INTO _design VALUES
     -- tenantkontekst i definer-veiene over. Opprettes i det samme
     -- SET ROLE-vinduet og hoerer derfor til den samme eieren.
     ('FUNCTION', 'krev_tenantkontekst(text,text)',                    'disponit_m37_claimer'),
+    -- 044: periodisk kontroll — planens herdede funksjoner eies av claimer
+    -- (tabellene er migrator-eide med eksplisitte grants — runtime når dem
+    -- KUN gjennom funksjonene, og CURRENT_USER-policyen ser på tvers).
+    -- MERK: aldri semikolon i kommentarene her — parseren deler på det.
+    ('FUNCTION', 'opprett_plan(text,text,jsonb,text,smallint,smallint,smallint,text,text,text)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'aktiver_plan(text,uuid,text,text)',                 'disponit_m37_claimer'),
+    ('FUNCTION', 'pause_plan(text,uuid,text,text,text,jsonb)',        'disponit_m37_claimer'),
+    ('FUNCTION', 'gjenoppta_plan(text,uuid,text,text)',               'disponit_m37_claimer'),
+    ('FUNCTION', 'stans_plan(text,uuid,text,text)',                   'disponit_m37_claimer'),
+    ('FUNCTION', 'plan_forfallsminutt(uuid)',                         'disponit_m37_claimer'),
+    ('FUNCTION', 'tick_i_apen_periode(uuid,timestamp with time zone)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'forfalte_planvinduer(integer)',                     'disponit_m37_claimer'),
+    ('FUNCTION', 'utlopte_planvinduer(integer,integer)',              'disponit_m37_claimer'),
+    ('FUNCTION', 'claim_planvindu(text,uuid,timestamp with time zone,integer)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'frigi_planvindu(text,uuid,timestamp with time zone,uuid)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'terminaliser_planvindu(text,uuid,timestamp with time zone,uuid,text,text,bigint,jsonb)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'plan_nedetid_aggregert(text,uuid,timestamp with time zone,timestamp with time zone,integer,text,text,boolean)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'hent_planer(text)',                                 'disponit_m37_claimer'),
+    ('FUNCTION', 'hent_plan_tick(text,uuid,integer)',                 'disponit_m37_claimer'),
+    ('FUNCTION', 'hent_plan_hendelser(text,uuid,integer)',            'disponit_m37_claimer'),
+    ('FUNCTION', 'planer_med_menneskelig_avvis()',                    'disponit_m37_claimer'),
+    ('FUNCTION', 'planer_gjentatt_uten_resultat()',                   'disponit_m37_claimer'),
+    ('FUNCTION', 'planer_med_ubehandlet_stopp()',                     'disponit_m37_claimer'),
+    ('FUNCTION', 'pause_gjentatt_uten_resultat(text,uuid,text,text)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'planer_med_gjentatt_brudd()',                       'disponit_m37_claimer'),
+    ('FUNCTION', 'plan_bestillingstyper()',                           'disponit_m37_claimer'),
+    ('FUNCTION', 'planvinduer_til_klassifisering(integer,integer)',   'disponit_m37_claimer'),
+    ('FUNCTION', 'plan_nedetid_kandidater(integer,integer)',          'disponit_m37_claimer'),
+    ('FUNCTION', 'varsle_plan_brudd(text,uuid,text,text)',            'disponit_m37_claimer'),
     ('FUNCTION', 'forny_claim(text,bigint,text,integer,integer)',    'disponit_m37_claimer'),
     ('FUNCTION', 'frigi_hengende_kapabiliteter()',                   'disponit_m37_claimer'),
     ('FUNCTION', 'frigi_utlopte_claims()',                           'disponit_m37_claimer'),

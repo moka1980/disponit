@@ -31,7 +31,7 @@ test("byggRuter: hver rute krever scopet API-et bak flaten krever", () => {
   // hadde før den.
   assert.deepEqual(alle,
     ["oversikt", "policy", "beslutninger", "unntak", "kundeadmin",
-      "wcagkontroll"]);
+      "wcagkontroll", "plan"]);
   const medBestilling = byggRuter({ scopes: ["decisions:read",
     "bestilling:opprett"] }).map((r) => r.nokkel);
   assert.ok(medBestilling.includes("wcagkontroll"));
@@ -116,6 +116,33 @@ test("tillatteFlater: direkte hash kan ikke nå en flate uten scope", () => {
   const med = tillatteFlater(byggRuter({ scopes: ["security:read"] }), flater);
   assert.equal(typeof med.admin, "function");
   assert.equal(med.policyadmin, undefined);
+});
+
+// Rollen `admin` i `autorisasjon.py`: lesescopene + planforvaltningen. Den
+// har verken `policy:write` eller `policy:activate`.
+const ADMINSCOPES = ["decisions:read", "exceptions:read", "policy:read",
+  "security:read", "bestilling:opprett", "plan:opprett", "plan:aktiver",
+  "plan:gjenoppta"];
+
+test("byggRuter: mottakeren av et planvarsel når innboksen sin", () => {
+  // Codex P2: ruten sto bak `kanForvaltePolicy` alene. 044 sender pause- og
+  // bruddvarsler til administratoren som aktiverte planen — en rolle uten
+  // `policy:write`/`policy:activate` — så skallet pollet aldri `/v1/varsel`
+  // for henne. Varselet ble skrevet, men ingen kunne se det, og en
+  // administrator som hadde valgt `kun_portal` satt igjen uten både e-post
+  // og portalspor.
+  const admin = byggRuter({ scopes: ADMINSCOPES }).map((r) => r.nokkel);
+  assert.ok(admin.includes("varsler"), admin);
+  assert.ok(admin.includes("plan"), "veien varselet peker på må finnes");
+  // Policyforvalteren står uendret.
+  assert.ok(byggRuter({ scopes: ["policy:read", "policy:write"] })
+    .map((r) => r.nokkel).includes("varsler"));
+  // En ren leser blir ikke varslet og får ingen tom innboks i menyen.
+  assert.ok(!byggRuter({ scopes: ["decisions:read", "policy:read"] })
+    .map((r) => r.nokkel).includes("varsler"));
+  // ... og hver rolle som KAN motta bærer `policy:read`, som er scopet
+  // `GET /v1/varsel` krever — ellers ville menyen lovet en 403.
+  assert.ok(ADMINSCOPES.includes("policy:read"));
 });
 
 test("visningFraSok: returnerer kun tilgjengelig visning", () => {

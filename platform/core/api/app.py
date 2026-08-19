@@ -873,6 +873,27 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def dm_utsted(request: Request) -> Response:
         return domenermodul.utsted_endepunkt(tjeneste, request)
 
+    # 044: planflaten — CRUD over de herdede funksjonene.
+    from . import plan as planmodul
+
+    def pl_opprett(request: Request) -> Response:
+        return planmodul.opprett_endepunkt(tjeneste, request)
+
+    def pl_liste(request: Request) -> Response:
+        return planmodul.liste_endepunkt(tjeneste, request)
+
+    def pl_aktiver(request: Request) -> Response:
+        return planmodul.aktiver_endepunkt(tjeneste, request)
+
+    def pl_gjenoppta(request: Request) -> Response:
+        return planmodul.gjenoppta_endepunkt(tjeneste, request)
+
+    def pl_stans(request: Request) -> Response:
+        return planmodul.stans_endepunkt(tjeneste, request)
+
+    def pl_historikk(request: Request) -> Response:
+        return planmodul.historikk_endepunkt(tjeneste, request)
+
     def do_saker(request: Request) -> Response:
         # 041: adjudikatorkøen — plattformens visning, aldri en kundesesjons.
         from . import domeneovertakelse
@@ -910,6 +931,21 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/bestilling", bs_bestill, methods=["POST"]),
         Route("/v1/domener", dm_liste, methods=["GET"]),
         Route("/v1/domeneovertakelse/saker", do_saker, methods=["GET"]),
+        Route("/v1/plan", pl_liste, methods=["GET"]),
+        Route("/v1/plan", pl_opprett, methods=["POST"]),
+        # {id:uuid} og ikke {id:str} (Codex P2), av samme grunn som
+        # {id:int} på detaljrutene under: planfunksjonene tar UUID, så
+        # `/v1/plan/not-a-uuid/aktiver` reiste `InvalidTextRepresentation`,
+        # ble fanget som en generisk databasefeil og svarte 503
+        # `db_utilgjengelig` — med en drifthendelse — på helt ordinær
+        # klientinput. En ugyldig sti skal være 404 fra ROUTEREN, ikke en
+        # kodevei og aller minst en falsk alarm.
+        Route("/v1/plan/{id:uuid}/aktiver", pl_aktiver, methods=["POST"]),
+        Route("/v1/plan/{id:uuid}/gjenoppta", pl_gjenoppta,
+              methods=["POST"]),
+        Route("/v1/plan/{id:uuid}/stans", pl_stans, methods=["POST"]),
+        Route("/v1/plan/{id:uuid}/historikk", pl_historikk,
+              methods=["GET"]),
         Route("/v1/domener", dm_utsted, methods=["POST"]),
         Route("/v1/modul/onboarding", mo_utsted, methods=["POST"]),
         Route("/v1/modul/onboarding/innlos", mo_innlos, methods=["POST"]),
@@ -1036,7 +1072,13 @@ BROWSER_MUTASJONSSCOPES = frozenset({"exceptions:approve", "exceptions:reject",
                                      # 038 §6: bestillingen skjer i flaten
                                      # (OIDC + CSRF); autoriteten ligger i
                                      # domenekontroll + beslutningsveien.
-                                     "bestilling:opprett"})
+                                     "bestilling:opprett",
+                                     # 044 §6: planen er stående INTENSJON
+                                     # — hver kjøring policyvurderes som en
+                                     # vanlig bestilling, så scopene gir
+                                     # aldri stående utførelsesfullmakt.
+                                     "plan:opprett", "plan:aktiver",
+                                     "plan:gjenoppta"})
 
 
 def _autentiser(tjeneste: Tjeneste, request: Request, conn, rid: str,
@@ -1377,6 +1419,12 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # bestilling:opprett. Flaten selv ligger uansett bak admin-ruten.
     ("GET",  "/v1/domener"):                 "decisions:read",
     ("GET",  "/v1/domeneovertakelse/saker"): "domains:adjudicate",
+    ("GET",  "/v1/plan"):                    "decisions:read",
+    ("POST", "/v1/plan"):                    "plan:opprett",
+    ("POST", "/v1/plan/{id:uuid}/aktiver"):   "plan:aktiver",
+    ("POST", "/v1/plan/{id:uuid}/gjenoppta"): "plan:gjenoppta",
+    ("POST", "/v1/plan/{id:uuid}/stans"):     "plan:opprett",
+    ("GET",  "/v1/plan/{id:uuid}/historikk"): "decisions:read",
     ("POST", "/v1/domener"):                 "bestilling:opprett",
     ("POST", "/v1/modul/onboarding"):        "modules:onboard",
     ("POST", "/v1/modul/onboarding/innlos"): "onboarding-hemmelighet",
@@ -1385,9 +1433,18 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/policyutkast"):            "policy:write",
     ("GET",  "/v1/policyutkast"):            "policy:read",
     ("POST", "/v1/policyutkast/{utkast_id:str}/valider"): "policy:write",
+    # INNBOKSEN ER MOTTAKERENS, IKKE POLICYFORVALTNINGENS (Codex P2). Begge
+    # POST-ene rører KUN kallerens egne rader — bruker-id-en kommer fra
+    # økten, aldri fra kroppen — så `policy:write` var en fullmakt de ikke
+    # trenger. Kravet lot seg heller ikke forsvare etter 044: pause- og
+    # bruddvarslene går til administratoren som aktiverte planen, og den
+    # rollen har verken `policy:write` eller `policy:activate`. Hun kunne
+    # altså MOTTA et varsel hun ikke kunne kvittere ut — og hadde hun valgt
+    # `kun_portal`, kunne hun ikke engang endre valget tilbake.
+    # Å handle på et varsel skal aldri kreve mer enn å se det.
     ("GET",  "/v1/varsel"):                  "policy:read",
-    ("POST", "/v1/varsel/{varsel_id:str}/lest"): "policy:write",
-    ("POST", "/v1/varselvalg"):              "policy:write",
+    ("POST", "/v1/varsel/{varsel_id:str}/lest"): "policy:read",
+    ("POST", "/v1/varselvalg"):              "policy:read",
     ("POST", "/v1/policy/{policy_id:str}/slett"): "policy:write",
     ("POST", "/v1/policyutkast/{utkast_id:str}/forkast"): "policy:write",
     ("POST", "/v1/policyutkast/{utkast_id:str}/gjenapne"): "policy:write",

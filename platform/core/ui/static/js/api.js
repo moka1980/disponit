@@ -214,6 +214,16 @@ export const hentDomener = () => hentJson("/v1/domener");
 export const leggTilDomene = (hostname) =>
   _muter("/v1/domener", "POST", { hostname });
 
+// 044: planflaten — CSRF-vernede mutasjoner over de herdede funksjonene.
+// Opprettelsen KREVER `Idempotency-Key`: et tapt svar + nytt klikk skal
+// gjenspille planen, ikke lage plan nummer to med samme parametre og egen
+// kvotebruk. Kalleren holder nøkkelen (stabil så lenge kroppen er uendret).
+// Overgangene trenger den ikke — de er naturlig idempotente på plan-id-en.
+export const opprettPlan = (kropp, idem) =>
+  _muter("/v1/plan", "POST", kropp, idem);
+export const planHandling = (planId, hva) =>
+  _muter(`/v1/plan/${planId}/${hva}`, "POST", {});
+
 // 041 §5: adjudikasjonen — den ENESTE muterende veien i domenesakskøen.
 // CSRF (dobbel-innsending) som resten av browsermutasjonene. INGEN
 // Idempotency-Key: en gjentatt stemme fra samme aktør avvises av

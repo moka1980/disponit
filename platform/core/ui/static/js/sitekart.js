@@ -21,6 +21,29 @@ export function kanLeseUnntak(sesjon) {
   return harScope(sesjon, "exceptions:read");
 }
 
+// 044: planen forvaltes av administratoren — opprett/aktiver/gjenoppta.
+export function kanForvaltePlan(sesjon) {
+  return harScope(sesjon, "plan:opprett") || harScope(sesjon, "plan:aktiver")
+    || harScope(sesjon, "plan:gjenoppta");
+}
+
+// Varselinnboksen hører MOTTAKEREN til, og hvem som kan bli varslet er ikke
+// policyforvaltningen alene lenger (Codex P2): 044 sender pause- og
+// bruddvarsler til administratoren som aktiverte planen — en rolle uten
+// `policy:write` og `policy:activate`. Uten henne i denne testen fikk skallet
+// aldri ruten, pollet aldri `/v1/varsel`, og en administrator som hadde valgt
+// `kun_portal` satt igjen med verken e-post eller noe synlig spor av at planen
+// var pauset. Varselet ble skrevet, men ingen kunne se det.
+//
+// Predikatet er «kan bli varslet», ikke «har lesescopet»: hver rolle i
+// `ROLLE_TIL_SCOPES` som kan motta et varsel — `policyforvalter` og `admin` —
+// bærer `policy:read` uansett, så en ekstra betingelse ville bare vært en
+// gjentakelse. Skulle en fremtidig rolle få planscopene UTEN policylesing, er
+// det scopet på `GET /v1/varsel` som må endres med den; det er ett sted.
+export function kanMottaVarsel(sesjon) {
+  return kanForvaltePolicy(sesjon) || kanForvaltePlan(sesjon);
+}
+
 // Kontrollplanet på TVERS av tenanter er plattformdriftens, ikke kundens.
 // `security:read` er ikke den autoriteten: PR-008 §1 beskriver den som en
 // valgfri ops/compliance-scope på en TENANTBUNDET brukersesjon, og rollene
@@ -68,6 +91,10 @@ const BASISRUTER = [
   // 041: adjudikatorkøen viser sakenes PARTER på tvers av tenanter — den
   // finnes derfor KUN for adjudikasjonsscopet, aldri for en leserolle.
   { nokkel: "adjudikator", scope: "domains:adjudicate" },
+  // 044: planflaten. LESING bak decisions:read (alle kunderoller ser sine
+  // planer); mutasjonene gates inne på flaten (plan:opprett osv.) — en
+  // rute kan bare være der eller ikke, som wcagkontroll over.
+  { nokkel: "plan", scope: "decisions:read" },
 ];
 
 export function byggRuter(sesjon) {
@@ -76,8 +103,10 @@ export function byggRuter(sesjon) {
     .map((r) => ({ nokkel: r.nokkel }));
   if (kanForvaltePolicy(sesjon)) ruter.push({ nokkel: "policyadmin" });
   // Varsler krever ikke fullmakt til å ENDRE noe — å se at noe venter på deg
-  // er en leserettighet. Kan du forvalte policy, kan du også bli ventet på.
-  if (kanForvaltePolicy(sesjon)) ruter.push({ nokkel: "varsler" });
+  // er en leserettighet. Ruten hører derfor MOTTAKEREN til, og etter 044 er
+  // det ikke bare policyforvalteren: planadministratoren varsles om pauser og
+  // gjentatte brudd.
+  if (kanMottaVarsel(sesjon)) ruter.push({ nokkel: "varsler" });
   // Admin-flaten har TO lovlige innganger, og de er ikke den samme autoriteten:
   // `security:read` gir den tenantbundne ops-økten sin EGEN utrullingsrad, mens
   // `platform:admin` er plattformdriften som ser kontrollplanet. Krevde ruten

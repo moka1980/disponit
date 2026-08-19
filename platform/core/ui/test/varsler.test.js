@@ -347,6 +347,35 @@ test("Varsler: «Gå til» ber også skallet lese telleren på nytt", async () =
     "å åpne varselet merker det lest, men skallet fikk ikke vite det");
 });
 
+test("Varsler: planvarselet fører til planflaten, ikke til en blindvei",
+  async () => {
+    // Codex P2: `plan_pauset`/`plan_gjentatt_brudd` sto ikke i
+    // `RUTE_FOR_ART`, så mottakeren fikk teksten uten vei til handlingen —
+    // og pausen kan bare oppheves ETT sted: på planen.
+    const planvarsel = {
+      id: 7, art: "plan_pauset", ressurs_type: "plan",
+      ressurs_id: "11111111-2222-4333-8444-555555555555",
+      tekstnokkel: "varsel.plan_pauset",
+      parametre: { aarsak: "policy_stopper" },
+      opprettet: "2026-08-19T09:00:00+00:00", lest: false,
+    };
+    POSTET = [];
+    SVAR = { "/v1/varsel": { varsler: [planvarsel], uleste: 1,
+      kanal: "kun_portal" } };
+    const h = nyHoved();
+    window.location.hash = "#/varsler";
+    visVarsler(h, ctx());
+    await vent(() => h.querySelector(".varselrad"));
+    const gaa = finn(h, t("ui.varsler.gaa_til"));
+    assert.ok(gaa, "planvarselet fikk ingen vei til handlingen");
+    gaa.dispatchEvent(new window.Event("click"));
+    await vent(() => window.location.hash !== "#/varsler");
+    assert.equal(window.location.hash, `#/plan/${planvarsel.ressurs_id}`);
+    // Teksten er mottakerens, med pausegrunnen i seg.
+    assert.ok(h.querySelector(".varseltekst").textContent
+      .includes("policy_stopper"));
+  });
+
 test("Varsler: axe-ren, og radiogruppen har en legend", async () => {
   POSTET = [];
   SVAR = { "/v1/varsel": { varsler: [VARSEL], uleste: 1,

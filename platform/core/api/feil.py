@@ -41,6 +41,9 @@ FEILVEIER: tuple[Feilvei, ...] = (
     Feilvei("scope_mangler", 403, ("sikkerhet",), None),
     Feilvei("idempotensnokkel_mangler", 400, ("avvis",), None),
     Feilvei("idempotenskonflikt", 409, ("avvis",), None, aggregert=True),
+    # 044: planovergang i ulovlig tilstand (aktivere en aktiv, gjenoppta
+    # en stanset) — tilstandskonflikt, ikke valideringsfeil.
+    Feilvei("plan_ulovlig_tilstand", 409, ("avvis",), None),
     Feilvei("body_for_stor", 413, ("sikkerhet",), None, aggregert=True),
     Feilvei("body_lengde_ugyldig", 411, ("sikkerhet",), None, aggregert=True),
     Feilvei("request_feilformet", 400, ("sikkerhet",), None, aggregert=True,

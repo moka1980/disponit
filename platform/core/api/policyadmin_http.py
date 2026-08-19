@@ -353,8 +353,12 @@ def varsel_lest_endepunkt(tjeneste, request):
         return _feil("request_feilformet", _rid(request))
 
     def kjor(conn):
+        # `policy:read`, ikke `policy:write` (Codex P2): raden er MIN, og
+        # bruker-id-en kommer fra økten. Å kvittere ut sitt eget varsel er
+        # ikke en policyfullmakt — og etter 044 varsles administratoren som
+        # aktiverte planen, en rolle uten `policy:write`. CSRF-vernet står.
         tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
-                                       "policy:write")
+                                       "policy:read")
         from . import varsel as v
         return _ok_lagret(
             conn, {"lest": v.merk_lest(conn, tenant=tenant, bruker_id=bid,
@@ -369,8 +373,11 @@ def varselvalg_endepunkt(tjeneste, request):
     rid = _rid(request)
 
     def kjor(conn):
+        # Kanalvalget er MITT (Codex P2): samme scope som å se innboksen.
+        # Krevde det `policy:write`, kunne en mottaker uten den fullmakten
+        # — planadministratoren etter 044 — låses inne i `kun_portal`.
         tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
-                                       "policy:write")
+                                       "policy:read")
         from . import varsel as v
         kropp = _kropp(request) or {}
         try:

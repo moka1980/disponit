@@ -93,6 +93,18 @@ APPEND_ONLY_TRIGGERE = (
     # med FK til `unntak`. Tabellen er append-only — som den skal være — så
     # ryddingen må skru vakten av, akkurat som for de andre.
     ("menneskelig_attestasjon", "attestasjon_ingen_endring"),
+    # 044: hele planfamilien nekter DELETE — evidensen (tick), sporet
+    # (hendelse), perioden, vinduet og planen selv. Sto de ikke her, ble
+    # planradene ALDRI ryddet, mens `oppdrag` og `artefakt` under ble det:
+    # en plan med tre `tillat`-tick overlevde inn i neste test som
+    # kandidat for `gjentatt_uten_resultat`, fordi resultatene bak
+    # tickene var slettet. Sveipene leser på tvers av tenanter, så den
+    # ene planen forgiftet hver eneste senere sveipeassert i suiten.
+    ("bestillingsplan_tick", "tick_ingen_update"),
+    ("bestillingsplan_hendelse", "hendelse_ingen_update"),
+    ("bestillingsplan_aktiv_periode", "periode_ingen_delete"),
+    ("bestillingsplan_vindu", "vindu_ingen_delete"),
+    ("bestillingsplan", "plan_ingen_delete"),
 )
 
 #: Rekkefølgen er FREMMEDNØKKELREKKEFØLGE, ikke alfabetisk.
@@ -110,7 +122,16 @@ APPEND_ONLY_TRIGGERE = (
 #: PR-007-tabellene FØRST: `verifikasjonsgenerasjon` og
 #: `verifikasjonsbevis` har fremmednøkler til `unntak`, og generasjonen
 #: peker i tillegg på beviset.
-RYDDETABELLER = ("artefakt", "artefaktkapabilitet",   # PR-014b: FK → oppdrag → FØRST
+#: 044-familien står FØRST og i sin egen fremmednøkkelrekkefølge (tick →
+#: vindu → hendelse/periode → plan). Den peker ikke ut av seg selv:
+#: `bestillingsplan_tick.oppdrag_id` er med vilje UTEN fremmednøkkel, for
+#: evidensen skal overleve oppdraget. Nettopp derfor må den ryddes — et
+#: tick uten sitt oppdrag er en plan uten resultat, og sveipene ville
+#: felt en pausedom på det.
+RYDDETABELLER = ("bestillingsplan_tick", "bestillingsplan_vindu",
+                 "bestillingsplan_hendelse",
+                 "bestillingsplan_aktiv_periode", "bestillingsplan",
+                 "artefakt", "artefaktkapabilitet",   # PR-014b: FK → oppdrag → FØRST
                  "verifikasjonskonflikt", "verifikasjonsgenerasjon",
                  "verifikasjonsbevis",
                  # 038: FK-ene danner en SIRKEL — unntak.oppdrag_id →
