@@ -1619,9 +1619,13 @@ export function visPolicyadmin(hoved, ctx, mal) {
   function aapneHistorikk(policyId) {
     const min = nyVisning();
     const kanSkrive = harScope(ctx, "policy:write");
+    // Idempotensnøklene bor på VISNINGEN, én per versjon — ikke i dialogen
+    // (Codex P2). Se `bekreftRullbakk`.
+    const rullbakkNokler = new Map();
     medStatus(hoved, ctx,
       () => hentJson(`/v1/policy/${policyId}/versjoner`), (d) => {
-        tegnHistorikk(policyId, (d && d.versjoner) || [], kanSkrive, min);
+        tegnHistorikk(policyId, (d && d.versjoner) || [], kanSkrive, min,
+                      rullbakkNokler);
       }, () => eierSkjermen(min), true);
   }
 
@@ -1629,20 +1633,35 @@ export function visPolicyadmin(hoved, ctx, mal) {
   // LESENDE policy-flaten, der `policy:read` alene holder (Codex P2).
   // Herfra kommer bare det som er policyadmin sitt: skjermeierskapet og
   // rullbakken, som krever `policy:write`.
-  function tegnHistorikk(policyId, versjoner, kanSkrive, min) {
+  function tegnHistorikk(policyId, versjoner, kanSkrive, min, nokler) {
     tegnHistorikkflate(hoved, ctx, {
       policyId, versjoner,
       tilbake: tilbakeTilListe,
       paaRullbakk: kanSkrive
-        ? (v) => bekreftRullbakk(policyId, v, min) : null,
+        ? (v) => bekreftRullbakk(policyId, v, min, nokler) : null,
       erGyldig: () => eierSkjermen(min),
     });
   }
 
-  function bekreftRullbakk(policyId, v, min) {
-    // STABIL nøkkel per dialog (SP-2/port 23): et tapt svar + nytt forsøk
-    // skal REPLAYe utkastet, ikke lage to.
-    const nokkel = nyIdempotensnokkel();
+  function bekreftRullbakk(policyId, v, min, nokler) {
+    // STABIL nøkkel per VERSJON OG VISNING (SP-2/port 23), ikke per dialog
+    // (Codex P2). Samme idiom som `angreSeksjon` i policy.js, og av samme
+    // grunn: `Bekreftelsesdialog` lukker seg synkront når primærknappen
+    // klikkes, så et tvetydig nettverksavbrudd — svaret gikk tapt, men
+    // forespørselen kom fram og committet — etterlater brukeren med en
+    // lukket dialog og ingen kvittering. Den eneste veien videre er å åpne
+    // dialogen på nytt, og med nøkkelen laget HER inne var det en FERSK
+    // nøkkel: serveren så en ny operasjon og laget et rullbakk-utkast nummer
+    // to, i stedet for å replaye det første. Nøyaktig det replay-evnen
+    // finnes for.
+    //
+    // Kartet bor på historikkVISNINGEN og lever like lenge som den. Per
+    // versjon fordi to versjoner er to ulike operasjoner; per visning fordi
+    // en ny render er et nytt forsett. En avvisning ruller tilbake claimet
+    // server-side, så nøkkelen er ubrukt og kan prøves igjen; et vellykket
+    // kall navigerer til det nye utkastet.
+    if (!nokler.has(v.versjon)) nokler.set(v.versjon, nyIdempotensnokkel());
+    const nokkel = nokler.get(v.versjon);
     Bekreftelsesdialog({
       tittel: t("ui.historikk.rullbakk_tittel").replace("{n}", v.versjon),
       // Alertdialog (§7): konsekvensen leses opp FØR handlingen —

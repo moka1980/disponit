@@ -176,6 +176,49 @@ test("historikk: rullbakk er en alertdialog og POSTer uten innhold",
               || POSTET[0].headers["idempotency-key"]);
   });
 
+// Codex P2: `Bekreftelsesdialog` lukker seg synkront på primærklikk, så et
+// tvetydig avbrudd (forespørselen kom fram, svaret gikk tapt) etterlater
+// brukeren med lukket dialog og ingen kvittering. Eneste vei videre er å
+// åpne dialogen på nytt — og med nøkkelen laget i dialogen ble det andre
+// forsøket en NY operasjon som laget et rullbakk-utkast nummer to, i stedet
+// for å replaye det første. Nøkkelen bor derfor på visningen, per versjon.
+test("historikk: rullbakk-nokkelen overlever at dialogen aapnes paa nytt",
+  async () => {
+    POSTET = [];
+    SVAR = { "/v1/policyutkast": { utkast: [] },
+      "/v1/policy/aktive": AKTIVE,
+      "/v1/policy/faktura-no/versjoner": VERSJONER,
+      "/v1/policyutkast/u-ny": { utkast_id: "u-ny",
+        policy_id: "faktura-no", status: "utkast", utkastversjon: 1,
+        innholds_hash: null, diff: { endringer: [] },
+        klassifisering_endringer: [], opprettet_av: "meg" } };
+    const h = nyHoved();
+    await aapneHistorikk(h);
+    const bekreft = async (n) => {
+      const rb = [...h.querySelectorAll("button")]
+        .filter((k) => k.textContent === t("ui.historikk.rullbakk"));
+      rb[n].dispatchEvent(new window.Event("click"));
+      await vent(() => document.querySelector('[role="alertdialog"]'));
+      const dlg = document.querySelector('[role="alertdialog"]');
+      [...dlg.querySelectorAll("button")]
+        .find((k) => k.textContent === t("ui.historikk.rullbakk"))
+        .dispatchEvent(new window.Event("click"));
+    };
+    const nokkel = (i) => POSTET[i].headers["Idempotency-Key"]
+      || POSTET[i].headers["idempotency-key"];
+    await bekreft(2);                      // versjon 1
+    await vent(() => POSTET.length === 1);
+    // Dialogen er lukket; brukeren åpner den på nytt for SAMME versjon.
+    await bekreft(2);
+    await vent(() => POSTET.length === 2);
+    assert.equal(nokkel(0), nokkel(1),
+      "ny dialog gav ny nøkkel — retryen ville laget et utkast til");
+    // En ANNEN versjon er en annen operasjon og har sin egen nøkkel.
+    await bekreft(1);                      // versjon 2
+    await vent(() => POSTET.length === 3);
+    assert.notEqual(nokkel(2), nokkel(0));
+  });
+
 // 047, Codex P2: rutene bak historikken krever `policy:read`, ikke
 // `policy:write`. Inngangen lå likevel bare i policyadmin — bak
 // `kanForvaltePolicy` i sitekartet OG inne i `aktivePolicyerSeksjon`, som
