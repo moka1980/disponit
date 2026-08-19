@@ -319,6 +319,17 @@ def _overstyring_kan_anvendes(policy: dict) -> list[str]:
     grunnkoden krever måles samme sted og av samme grunn: et løft uten
     verdien å løfte TIL er like virkningsløst som en ikke-løftbar kode.
 
+    At verdien FINNES er heller ikke nok (Codex P1, runde 7): den må ligge
+    slik at det finnes et blokkert utfall løftet faktisk flytter. Et
+    `belop_maks` som ikke er HØYERE enn handlingens egen grense løfter
+    ingenting — hvert beløp som utløste `belop_over_grense` er per
+    definisjon over den grensen, altså også over overstyringens tak, og
+    steg 7 i `_anvend_menneskelig_godkjenning` stopper det. En `valuta`
+    handlingen ALT tillater er samme sak fra den andre siden: en hendelse
+    blokkert på `valuta_ikke_tillatt` bærer nødvendigvis en annen valuta,
+    og steg 7 krever likhet. Verdien måles derfor mot handlingen
+    oppføringen peker på, ikke bare mot sitt eget nærvær.
+
     Kravet bor i INNFØRINGSkontrakten, ikke i lastekontrakten: en policy
     som allerede er aktiv med en slik oppføring virker som før (den ene
     overstyringen har aldri gjort noe), og skal ikke bli `PolicyKorrupt`
@@ -330,6 +341,8 @@ def _overstyring_kan_anvendes(policy: dict) -> list[str]:
         return []
     feil: list[str] = []
     lovlige = ", ".join(sorted(LOFTBARE_GRUNNKODER))
+    handlinger = {h["id"]: h for h in policy.get("handlinger") or []
+                  if isinstance(h, dict) and isinstance(h.get("id"), str)}
     for i, e in enumerate(mo.get("godkjennbare") or []):
         if not isinstance(e, dict) or not isinstance(e.get("grunnkode"), str):
             continue                     # lastekontrakten har alt sagt fra
@@ -345,6 +358,75 @@ def _overstyring_kan_anvendes(policy: dict) -> list[str]:
                 f"menneskelig_overstyring[{i}]: grunnkode '{gk}' krever"
                 f" '{krav}' i oppføringen — uten en verdi å løfte til kan"
                 " motoren ikke bygge løftet, og godkjenningen ender i STOPP")
+        else:
+            feil += _loftet_flytter_noe(i, gk, e, handlinger.get(e.get("handling")))
+    return feil
+
+
+#: Grunnkodene `_loftet_flytter_noe` faktisk MÅLER mot handlingen. Skal til
+#: enhver tid være hele `engine.LOFTBARE_GRUNNKODER` — en ny løftbar kode uten
+#: en gren der er en stille fail-open, altså nøyaktig hullet runde 7 lukket.
+#: `test_hver_loftbar_grunnkode_maales_mot_handlingen` er vakten.
+ANVENDBARHET_MALT = frozenset({"belop_over_grense", "valuta_ikke_tillatt"})
+
+
+def _loftet_flytter_noe(i: int, gk: str, e: dict, h: dict | None) -> list[str]:
+    """Verdien i oppføringen målt mot handlingen den peker på.
+
+    Ukjent handling sier lastekontrakten (`_valider`) alt fra om; her ville
+    den bare blitt en andre stemme om det samme, så da måler vi ingenting.
+    Det samme gjelder en uleselig grense: `belop_ugyldig`/
+    `policy_belopsgrense_ugyldig` er andres dom, og en verdi vi ikke kan
+    lese kan vi ikke påstå noe om.
+    """
+    from .engine import parse_belop
+    if h is None:
+        return []
+    grenser = h.get("grenser") if isinstance(h.get("grenser"), dict) else {}
+    hid = h["id"]
+    feil: list[str] = []
+    if gk == "belop_over_grense":
+        hgrense = grenser.get("belop_maks")
+        if hgrense is None:
+            # Uten en beløpsgrense på handlingen kan `belop_over_grense`
+            # aldri oppstå for den — oppføringen venter på et utfall som
+            # ikke finnes.
+            return [f"menneskelig_overstyring[{i}]: handling '{hid}' har ingen"
+                    " 'grenser.belop_maks', så 'belop_over_grense' kan aldri"
+                    " oppstå for den og overstyringen kan aldri anvendes"]
+        hmaks, emaks = parse_belop(hgrense), parse_belop(e["belop_maks"])
+        if hmaks is not None and emaks is not None and emaks <= hmaks:
+            feil.append(
+                f"menneskelig_overstyring[{i}]: 'belop_maks' {emaks} er ikke"
+                f" høyere enn grensen {hmaks} på handling '{hid}' — hvert"
+                " beløp som utløser 'belop_over_grense' er over den grensen,"
+                " altså også over overstyringens tak, og godkjenningen ender"
+                " i STOPP")
+        # `belop_maks` drar `valuta` med seg (dependentRequired), og steg 7
+        # krever at hendelsens valuta ER den. Er ikke DEN valutaen tillatt
+        # for handlingen, stopper den gjenopptatte evalueringen på valuta i
+        # stedet — løftet hevet jo bare beløpet.
+        lovlige_v = grenser.get("valuta")
+        v = e.get("valuta")
+        if isinstance(lovlige_v, list) and lovlige_v and v is not None \
+                and v not in lovlige_v:
+            feil.append(
+                f"menneskelig_overstyring[{i}]: valutaen '{v}' er ikke tillatt"
+                f" for handling '{hid}' ({', '.join(map(str, lovlige_v))}) —"
+                " løftet hever beløpet, ikke valutaen, så evalueringen"
+                " stopper på 'valuta_ikke_tillatt' uansett")
+    elif gk == "valuta_ikke_tillatt":
+        lovlige_v = grenser.get("valuta")
+        if not isinstance(lovlige_v, list) or not lovlige_v:
+            return [f"menneskelig_overstyring[{i}]: handling '{hid}' har ingen"
+                    " 'grenser.valuta', så 'valuta_ikke_tillatt' kan aldri"
+                    " oppstå for den og overstyringen kan aldri anvendes"]
+        if e["valuta"] in lovlige_v:
+            feil.append(
+                f"menneskelig_overstyring[{i}]: valutaen '{e['valuta']}' er"
+                f" allerede tillatt for handling '{hid}' — en hendelse som"
+                " blokkeres på 'valuta_ikke_tillatt' bærer en ANNEN valuta,"
+                " og godkjenningen ender i STOPP")
     return feil
 
 

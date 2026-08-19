@@ -56,14 +56,18 @@ def _oppforing(grunnkode, **felt):
 
 # --- innføringskontrakten avviser det virkningsløse ------------------------
 
+#: En oppføring per løftbar grunnkode som FAKTISK kan virke for `_HANDLING`
+#: (grensene der er `belop_maks` 25000.00 og `valuta` ["NOK"]): taket må ligge
+#: OVER handlingens egen grense, og valutaen som løftes inn må være en
+#: handlingen ikke alt tillater.
+_VIRKSOMME = {"belop_maks": {"belop_maks": "50000.00", "valuta": "NOK"},
+              "valuta": {"valuta": "EUR"}}
+
+
 def test_loftbar_oppforing_med_verdien_sin_passerer():
     # Fanger at innstrammingen ikke avviser den formen som FAKTISK virker.
     for gk, felt in LOFTBARE_GRUNNKODER.items():
-        verdi = {"belop_maks": "50000.00", "valuta": "NOK"}[felt]
-        ekstra = {felt: verdi}
-        if felt == "belop_maks":
-            ekstra["valuta"] = "NOK"        # dependentRequired i skjemaet
-        p = _med_overstyring(_oppforing(gk, **ekstra))
+        p = _med_overstyring(_oppforing(gk, **_VIRKSOMME[felt]))
         assert valider_ny_policy(p) == [], gk
 
 
@@ -90,6 +94,123 @@ def test_loftbar_grunnkode_uten_verdien_sin_avvises():
     assert any("valuta" in f for f in feil), feil
 
 
+# --- verdien må ligge der den flytter noe (Codex P1, runde 7) -------------
+
+def test_belopstak_som_ikke_er_hoyere_enn_grensen_avvises():
+    """`belop_over_grense` oppstår KUN når beløpet er over handlingens egen
+    grense. Et overstyringstak på eller under den grensen kan derfor aldri
+    slippe noe gjennom: hvert beløp som utløste blokkeringen er også over
+    taket, og steg 7 i motoren stopper det."""
+    for tak in ("25000.00", "10000.00", "0"):
+        feil = valider_ny_policy(_med_overstyring(
+            _oppforing("belop_over_grense", belop_maks=tak, valuta="NOK")))
+        assert feil, f"tak {tak} kan aldri løfte noe og må avvises"
+        assert any("belop_maks" in f and "25000.00" in f for f in feil), feil
+    # Ett øre over grensen ER et løft — innstrammingen skal ikke ta det.
+    assert valider_ny_policy(_med_overstyring(
+        _oppforing("belop_over_grense", belop_maks="25000.01",
+                   valuta="NOK"))) == []
+
+
+def test_valuta_handlingen_alt_tillater_avvises():
+    """Den andre siden: en hendelse som blokkeres på `valuta_ikke_tillatt`
+    bærer nødvendigvis en valuta handlingen IKKE tillater, og steg 7 krever
+    at godkjenningens valuta er hendelsens. Peker oppføringen på en valuta
+    som alt er lov, kan den aldri matche."""
+    feil = valider_ny_policy(_med_overstyring(
+        _oppforing("valuta_ikke_tillatt", valuta="NOK")))
+    assert feil, "en alt tillatt valuta kan aldri løftes inn"
+    assert any("NOK" in f and _HANDLING in f for f in feil), feil
+    assert valider_ny_policy(_med_overstyring(
+        _oppforing("valuta_ikke_tillatt", valuta="EUR"))) == []
+
+
+def test_loftets_valuta_maa_vaere_tillatt_for_handlingen():
+    """Løftet hever BELØPET, ikke valutaen. Krever oppføringen en valuta
+    handlingen ikke tillater, stopper den gjenopptatte evalueringen på
+    `valuta_ikke_tillatt` uansett hvor høyt taket er."""
+    feil = valider_ny_policy(_med_overstyring(
+        _oppforing("belop_over_grense", belop_maks="50000.00", valuta="EUR")))
+    assert feil, "EUR er ikke tillatt for handlingen; løftet stopper der"
+    assert any("EUR" in f for f in feil), feil
+
+
+def test_grunnkode_handlingen_aldri_kan_gi_avvises():
+    """En handling uten den grensen grunnkoden kommer FRA vil aldri
+    produsere den — oppføringen venter på et utfall som ikke finnes.
+    `epost.send_kjent_mottaker` har ingen `grenser` i det hele tatt."""
+    uten = "epost.send_kjent_mottaker"
+    for oppf in ({"grunnkode": "belop_over_grense", "handling": uten,
+                  "belop_maks": "50000.00", "valuta": "NOK"},
+                 {"grunnkode": "valuta_ikke_tillatt", "handling": uten,
+                  "valuta": "EUR"}):
+        feil = valider_ny_policy(_med_overstyring(oppf))
+        assert feil, oppf
+        assert any(uten in f for f in feil), feil
+
+
+def test_motoren_stopper_faktisk_den_avviste_formen():
+    """Kontraktens påstand målt mot MOTOREN, ikke mot seg selv. Hadde en av
+    de avviste formene likevel gitt TILLAT for en hendelse, ville
+    innstrammingen tatt fra eier en overstyring som virket."""
+    from datetime import datetime, timedelta, timezone
+
+    from policy_validator.engine import (STOPP, EvaluationContext,
+                                         MenneskeligGodkjenning,
+                                         _policy_innholds_hash, evaluate,
+                                         parse_belop)
+    naa = datetime(2026, 8, 3, 10, 0, tzinfo=timezone.utc)
+    ctx = EvaluationContext(tenant_id="t1", aktor_rolle="agent",
+                            autentisert=True, kilde="api_token")
+    pol = {
+        "schema_version": "0.2.0",
+        "meta": {"policy_id": "test-mg", "versjon": "1.0.0"},
+        "tidssone": "Europe/Oslo",
+        "handlinger": [{"id": "faktura.bokfor", "modus": "auto",
+                        "ved_brudd": "unntakskø", "tillatt_for": ["agent"],
+                        "grenser": {"belop_maks": "25000.00",
+                                    "valuta": ["NOK"]}}],
+        "menneskelig_overstyring": {
+            "godkjennbare": [{"grunnkode": "belop_over_grense",
+                              "handling": "faktura.bokfor",
+                              "belop_maks": "25000.00", "valuta": "NOK"}],
+            "krever_rolle": "okonomi"},
+    }
+    hi = "a" * 64
+    # Hvert beløp som i det hele tatt utløser `belop_over_grense` — altså
+    # alt over 25000.00 — må ende i STOPP med taket satt likt grensen.
+    for belop in ("25000.01", "30000.00", "999999.00"):
+        ev = {"handling": "faktura.bokfor", "belop": belop, "valuta": "NOK",
+              "ressurs_id": "fak-1", "hi_integritet_hash": hi}
+        mg = MenneskeligGodkjenning(
+            tenant="t1", target_action=ev["handling"],
+            ressurs_id=ev["ressurs_id"], belop=parse_belop(belop),
+            valuta="NOK", hi_integritet_hash=hi,
+            bundet_grunnkode="belop_over_grense", unntak_id=7, runde=1,
+            godkjennere=(("bruker-a", "okonomi", 3),),
+            godkjennings_policy_hash=_policy_innholds_hash(pol),
+            utloper=naa + timedelta(hours=1))
+        d = evaluate(pol, ctx, ev, naa=naa, menneskelig_godkjenning=mg)
+        assert d.beslutning == STOPP, (belop, d.to_dict())
+
+
+def test_hver_loftbar_grunnkode_maales_mot_handlingen():
+    """Vakten mot stille fail-open. En ny kode i `LOFTBARE_GRUNNKODER` uten
+    en gren i `_loftet_flytter_noe` ville sluppet gjennom nøyaktig de
+    virkningsløse verdiene runde 7 stengte — bare for den nye koden."""
+    from policy_validator.schema import ANVENDBARHET_MALT
+    assert ANVENDBARHET_MALT == set(LOFTBARE_GRUNNKODER)
+
+
+def test_lastekontrakten_slipper_ogsaa_den_virkningslose_verdien():
+    """Framoverrettet, som resten: en alt aktiv policy med et for lavt tak
+    har aldri løftet noe, og skal ikke bli korrupt ved lasting."""
+    for oppf in (_oppforing("belop_over_grense", belop_maks="10000.00",
+                            valuta="NOK"),
+                 _oppforing("valuta_ikke_tillatt", valuta="NOK")):
+        assert valider_policy(_med_overstyring(oppf)) == [], oppf
+
+
 def test_feilmeldingen_navngir_de_loftbare_kodene():
     # Eier skal kunne rette uten å lese motorkoden.
     feil = valider_ny_policy(_med_overstyring(_oppforing("utenfor_tidsvindu")))
@@ -99,7 +220,7 @@ def test_feilmeldingen_navngir_de_loftbare_kodene():
 def test_oppforingens_indeks_star_i_feilen():
     # Med flere oppføringer må eier få vite HVILKEN som er ubrukelig.
     p = _med_overstyring(
-        _oppforing("belop_over_grense", belop_maks="50000.00", valuta="NOK"),
+        _oppforing("belop_over_grense", **_VIRKSOMME["belop_maks"]),
         _oppforing("utenfor_tidsvindu"))
     feil = valider_ny_policy(p)
     assert any("[1]" in f for f in feil), feil
