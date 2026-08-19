@@ -66,6 +66,10 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'opprett_reparasjonsoppdrag(text,bigint,bigint,text,text,text,text,bytea,text,bytea,timestamp with time zone,timestamp with time zone,bigint,text)', 'disponit_m37_claimer'),
     ('FUNCTION', 'opprett_beslutningsoppdrag(text,bigint,text,text,text,bytea,text,bytea,timestamp with time zone,timestamp with time zone)', 'disponit_m37_claimer'),
     ('FUNCTION', 'sikre_sak_for_oppdrag(text,bigint,text,text,text)', 'disponit_m37_claimer'),
+    -- 043 (Gate 14b): oppløsningsveien — kansellering med fencing.
+    ('FUNCTION', 'bruk_kvitteringskapabilitet(text,text,text)',        'disponit_m37_claimer'),
+    ('FUNCTION', 'avvis_med_opplosning(text,bigint,bigint[],text,text)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'reversibilitet_for_oppdrag(text,bigint)',            'disponit_m37_claimer'),
     ('FUNCTION', 'reap_evidensfrister(integer)',                      'disponit_m37_claimer'),
     -- 038 §4-porten (Codex P1): binder `p_tenant` til kallerens
     -- tenantkontekst i definer-veiene over. Opprettes i det samme
@@ -164,6 +168,12 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'rydd_staged_artefakter()',                          'disponit_domene_eier'),
     ('FUNCTION', 'karantenesett_artefakt(uuid,text,bigint)',         'disponit_domene_eier'),
     ('FUNCTION', 'bevar_artefakt(uuid,text,bigint,text)',                 'disponit_domene_eier'),
+    -- 043 §8: samme validering og samme lås som `bevar_artefakt`, uten
+    -- skrivingen — den sene kvitteringsveien må kunne avvise et fremmed
+    -- artefakt også når `direkte`-reversibiliteten sier at artefaktet skal
+    -- ryddes, ikke bevares. Samme eier, av samme grunn: låsen på `artefakt`
+    -- kan ikke tas av runtime (kun SELECT).
+    ('FUNCTION', 'verifiser_artefaktbinding(uuid,text,bigint,text)',      'disponit_domene_eier'),
     -- PR-014b CP5: artefakt-opplastingskapabilitet. Den frittstående brenneren
     -- `bruk_artefaktkapabilitet` er fjernet (forbruk skjer i staged-writen).
     ('FUNCTION', 'utsted_artefaktkapabilitet(text,bigint,text,text,integer,text,bigint,text,text,integer)', 'disponit_domene_eier'),

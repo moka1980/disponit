@@ -116,6 +116,11 @@ GRANT SELECT, INSERT ON bestilling_idempotens TO {rolle};
 SET LOCAL ROLE disponit_domene_eier;
 GRANT EXECUTE ON FUNCTION utsted_artefaktkapabilitet(TEXT, BIGINT, TEXT, TEXT, INT, TEXT, BIGINT, TEXT, TEXT, INT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION innlos_artefaktkapabilitet(TEXT, TEXT, TEXT, TEXT) TO {rolle};
+-- 043: valideringen UTEN bevaring — den sene kvitteringsveien må kunne
+-- avvise et fremmed/feil-hashet artefakt også når artefaktet IKKE skal
+-- bevares (`direkte`-reversibilitet: resultatet forkastes, artefaktet
+-- ryddes). Samme eier som resten av artefaktveien, derfor samme blokk.
+GRANT EXECUTE ON FUNCTION verifiser_artefaktbinding(UUID, TEXT, BIGINT, TEXT) TO {rolle};
 RESET ROLE;
 -- 035: modul-onboarding og modultokener. Hele denne veien er
 -- SECURITY DEFINER-funksjoner eid av `disponit_modul_eier`; runtime har
@@ -218,6 +223,53 @@ GRANT EXECUTE ON FUNCTION innlos_kvitteringskapabilitet(TEXT, TEXT, TEXT, TEXT) 
 GRANT EXECUTE ON FUNCTION bruk_kvitteringskapabilitet(TEXT, TEXT) TO {rolle};
 -- `arkiver_policyversjon` gis IKKE til runtime. Arkivering er en
 -- administrativ operasjon, ikke noe forespørselsveien skal kunne utløse.
+"""
+
+# 043 (Gate 14b): oppløsningsveien. EGEN blokk fordi den KUN gjelder
+# runtime-rollen — M37_RETTIGHETER over kjøres også for `disponit_arbeider`,
+# og arbeideren har ingenting med et menneskelig nei å gjøre. Samme
+# selektivitet som 038 gjorde for `opprett_beslutningsoppdrag`: autoriteten
+# gis der veien faktisk går, ikke der blokken tilfeldigvis bor.
+#
+# Migrasjon 043 grantet disse til rollenavnet `disponit` direkte. Det
+# fungerer lokalt og i test (der runtime HETER disponit), men denne kjøreren
+# tar runtime-rollens navn som argument — og på en installasjon med et annet
+# navn ville migrasjonens grant enten truffet feil rolle eller feilet på en
+# rolle som ikke finnes. Den parameteriserte blokken er den autoritative;
+# migrasjonens egen grant er betinget av at rollen finnes.
+M37_RETTIGHETER_API = """
+SET LOCAL ROLE disponit_m37_claimer;
+-- Treargsformen: samme atomiske kappløpsport som kvitteringsveien, med
+-- utfallet `avvist` (oppløsningen) og `sen_evidens` (sen kvittering på et
+-- kansellert oppdrag).
+GRANT EXECUTE ON FUNCTION bruk_kvitteringskapabilitet(TEXT, TEXT, TEXT) TO {rolle};
+-- Reversibiliteten fra modulkontrakten — lesejobben sen-kvitteringsveien
+-- utleder kompensasjons-/irreversibilitetssaken av.
+GRANT EXECUTE ON FUNCTION reversibilitet_for_oppdrag(TEXT, BIGINT) TO {rolle};
+-- Selve oppløsningen: kalles av avvis-veien i unntaksbehandlingen, som er
+-- scope-gatet (`exceptions:handle`) i app-laget og tenantbundet i
+-- funksjonen selv.
+--
+-- EXECUTE er ikke kanselleringsautoritet (Codex P1, runde 8). Scopeporten
+-- og saksversjonen bor i app-laget; en runtime-spørring som omgår dem har
+-- fortsatt denne granten. Derfor krever funksjonen SELV en attestert
+-- avvisning: en `avvis`-rad i `menneskelig_attestasjon` på saken, av
+-- kalleren, skrevet i SAMME transaksjon (043 §7). Beviset er den samme
+-- append-only raden `behandle_unntakshandling` skriver rett før kallet, så
+-- den lovlige veien merker ingenting — og en direkte kaller får
+-- `insufficient_privilege` i stedet for et fencet og kansellert oppdrag.
+--
+-- ... og raden må være AUTORISERT, ikke bare tilstede (Codex P1, runde 9).
+-- Runtime har INSERT på attestasjonstabellen — en port kalleren selv kan
+-- fylle er ingen port. Funksjonen krever derfor at attestasjonen navngir et
+-- AKTIVT medlemskap i tenanten, med medlemskapets gjeldende
+-- `authz_version`, en rolle brukeren faktisk har, og et rollesett som bærer
+-- `exceptions:reject` (043 §6b). `brukermedlemskap` er den ene
+-- autorisasjonsinngangen runtime IKKE kan skrive (010: OIDC-forvaltet, kun
+-- SELECT herfra), så granten under gir ikke lenger rett til å kansellere på
+-- vegne av hvem som helst — bare til å utføre et nei et navngitt,
+-- avvisningsberettiget menneske har sagt.
+GRANT EXECUTE ON FUNCTION avvis_med_opplosning(TEXT, BIGINT, BIGINT[], TEXT, TEXT) TO {rolle};
 """
 
 # Token-administrasjonen er en EGEN rolle som eier ingenting (korreksjon 2).
@@ -362,6 +414,9 @@ def main(argv: list[str] | None = None) -> int:
         conn.commit()
         conn.execute(M37_RETTIGHETER.format(rolle=rolle))
         conn.commit()      # avslutter SET LOCAL ROLE
+        # 043: oppløsningsveien — runtime ALENE (se blokken).
+        conn.execute(M37_RETTIGHETER_API.format(rolle=rolle))
+        conn.commit()
         # PR-013: policy_eier sitt skrivegrant på `policyer`/`policy_hode` bor
         # i migrasjon 013 sammen med funksjonen — der overlever det enhver
         # skjemagjenoppbygging (også testenes _nullstill + re-migrer), ikke

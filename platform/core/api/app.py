@@ -1252,8 +1252,17 @@ def _unntak(tjeneste: Tjeneste, request: Request) -> Response:
                     tjeneste.logg.hendelse("cursor_ugyldig", rid, auth.tenant)
                     return _feilsvar("cursor_ugyldig", rid)
 
+            # `arsak` er MED (043, Codex P2): en sak født av
+            # `sikre_sak_for_oppdrag` bærer hele sin grunn der — og fra 043
+            # er tre av verdiene `kompensasjon_kreves`,
+            # `irreversibel_utfort` og `reversibilitet_ukjent`, altså «et
+            # menneske må rydde opp etter en handling som rakk å skje», «en
+            # irreversibel handling ble rapportert utført» og «vi vet ikke
+            # om virkningen kan reverseres». Uten kolonnen så listen
+            # nøyaktig ut som en hvilken som helst arvet sak, og den
+            # forskjellen er hele poenget med å føde saken.
             sql = ("SELECT id, ts, handling, kategori, prioritet, status,"
-                   " sakstype FROM unntak"
+                   " sakstype, arsak FROM unntak"
                    " WHERE tenant=%s AND sakstype=%s")
             args: list = [auth.tenant, sakstype]
             if status == "apen":
@@ -1276,7 +1285,7 @@ def _unntak(tjeneste: Tjeneste, request: Request) -> Response:
 
         saker = [{"id": r[0], "ts": r[1].isoformat(), "handling": r[2],
                   "kategori": r[3], "prioritet": r[4], "status": r[5],
-                  "sakstype": r[6]} for r in rader]
+                  "sakstype": r[6], "arsak": r[7]} for r in rader]
         # Payload er IKKE med — og kan ikke bli det ved et uhell, fordi
         # kolonnen aldri hentes. `exceptions:manage` (PR-006) er veien dit.
         neste = (cursormodul.lag(auth.tenant, rader[-1][1], rader[-1][0],
@@ -2075,11 +2084,27 @@ def _idempotent_svar(conn, *, tenant: str, oppdrag_id: int, ny_hash: str,
 
 def _forbruk_kapabilitet(tjeneste: Tjeneste, conn, jti: str, ny_hash: str, *,
                          tenant: str, unntak_id: int, oppdrag_id: int,
-                         rid: str, artefakt_id=None) -> Response | None:
+                         rid: str, artefakt_id=None,
+                         sen: bool = False) -> Response | None:
     """Forbruker kapabiliteten, eller klassifiserer hvorfor vi ikke kunne.
 
     -> None betyr «kapabiliteten er VÅR, fortsett». Alt annet er et ferdig
     svar, og transaksjonen er avsluttet.
+
+    `sen=True` er sen-evidensveien (043, Codex P1). Der kan kapabiliteten
+    være brent `avvist` av et menneskelig nei, og toargsformen svarer
+    `ugyldig` på den — for evig, siden retryen bærer samme jti. Da rullet
+    denne funksjonen tilbake med `kapabilitet_ugyldig` FØR sen-evidens-
+    grenen ble nådd, og en gyldig sen kvittering kunne aldri skrive
+    `sen_kvittering` eller føde kompensasjons-/irreversibilitetssaken §5
+    lover. Treargsformens `sen_evidens` fester hashen på den avviste
+    kapabiliteten uten å røre statusen: `avvist` er fortsatt terminal,
+    oppdraget fortsatt kansellert — men evidensen kommer inn, og
+    idempotens/konflikt gjelder også her.
+
+    Den AVSLUTTENDE veien bruker bevisst ikke `sen_evidens`: taper den
+    kappløpet mot et nei, skal den fortsatt fail-close (`kapabilitet_
+    ugyldig`) og ikke fortsette til statusskiftet.
 
     Delt av BEGGE veiene — den avsluttende og sen-evidensveien. Det er ikke
     en stilsak: forrige runde viste hva som skjer når en regel bare er
@@ -2090,9 +2115,14 @@ def _forbruk_kapabilitet(tjeneste: Tjeneste, conn, jti: str, ny_hash: str, *,
     `bruk_kvitteringskapabilitet`). Å lese tilstanden herfra etterpå ville
     vært et nytt kappløp for å avgjøre utfallet av det første.
     """
-    utfall = conn.execute("SELECT bruk_kvitteringskapabilitet(%s,%s)",
-                          (jti, ny_hash)).fetchone()[0]
-    if utfall == "brukt":
+    if sen:
+        utfall = conn.execute(
+            "SELECT bruk_kvitteringskapabilitet(%s,%s,'sen_evidens')",
+            (jti, ny_hash)).fetchone()[0]
+    else:
+        utfall = conn.execute("SELECT bruk_kvitteringskapabilitet(%s,%s)",
+                              (jti, ny_hash)).fetchone()[0]
+    if utfall in ("brukt", "sen_evidens"):
         return None
 
     if utfall == "idempotent":
@@ -2169,6 +2199,13 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
     `oppdrag.kvittering`, ville kolonnelåsen (kvitteringen er uforanderlig)
     gjort det umulig for den NYE eieren å levere sin — altså ville en
     utdatert kvittering blokkert den gjeldende.
+
+    Med ÉN presis unntagelse (043 §5, Codex P2 runde 8): et oppdrag et
+    menneske har kansellert er TERMINALT. Det kan aldri claimes igjen, så
+    det finnes ingen ny eier å blokkere — og der er uforanderligheten
+    nettopp det evidensen skal ha. Den sene kvitteringen som utløser
+    kompensasjons-/irreversibilitetssaken lagres derfor signert på raden,
+    så saken kan legge fram grunnlaget sitt og ikke bare påstå det.
     """
     from policy_validator import attestering
 
@@ -2367,6 +2404,129 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
 
     ny_hash = _resultathash(kvittering)
 
+    # 3c. LÅSEORDEN: SAKEN FØRST (043, Codex P1 runde 3).
+    #
+    # Avvis-veien tar tre rader, i denne rekkefølgen:
+    #   sak (`unntak`)  →  kvitteringskapabilitet  →  oppdrag
+    # `behandle_unntakshandling` låser saken med `FOR UPDATE`
+    # (`unntaksbehandling.py`, steg 2) og HOLDER den gjennom hele
+    # operatørhandlingen; inne i den låsen pre-låser `avvis_med_opplosning`
+    # kapabilitetene og deretter oppdragene (043 §7).
+    #
+    # Kvitteringsveien tok de SAMME tre radene i motsatt ende: den brant
+    # kapabiliteten i `_forbruk_kapabilitet` og rørte saken først til slutt
+    # (historikkraden + `UPDATE unntak`). Da kan avvis-veien holde saken og
+    # vente på kapabiliteten mens kvitteringsveien holder kapabiliteten og
+    # venter på saken — PostgreSQL avbryter én med 40P01. Kappløpet skal
+    # avgjøres av hvem som brenner kapabiliteten først, og ende i et
+    # AVGJORT utfall (`oppdrag_utfort` eller gjennomført kansellering);
+    # en vranglåsfeil er ingen av delene. Pre-passet i 043 §7 rettet bare
+    # den indre halvparten (kapabilitet før oppdrag) — den ytre sakslåsen
+    # sto igjen, og det er nettopp den Codex fant.
+    #
+    # Saken låses derfor HER, før første kapabilitets- eller oppdragslås, og
+    # holdes til commit: begge veier tar radene i samme rekkefølge, og den
+    # ene venter på den andre i stedet for at begge dør. Punktet er valgt
+    # etter alle struktur-/signaturvaktene — en kvittering vi uansett
+    # avviser skal ikke stå i kø bak en operatørhandling.
+    #
+    # ... OG SAKEN HAR TO RELASJONSRETNINGER (Codex P1, runde 5).
+    #
+    # `o.unntak_id` er OPPHAV, ikke generell sakstilknytning (038): et
+    # BESLUTNINGSoppdrag har den NULL, og saken peker den andre veien
+    # (`unntak.oppdrag_id`). Denne låsen sto bak `unntak_id is not None` og
+    # så derfor bare reparasjonsopphavet — mens §4 i 043 gjorde nettopp den
+    # andre koblingen avvisbar: `sak_utestaaende` finner beslutningsoppdrag
+    # GJENNOM `unntak.oppdrag_id`, og `avvis_med_opplosning` godtar dem som
+    # oppløsningsmål (§7). For akkurat de oppdragene hoppet kvitteringsveien
+    # over både låsen og oppfriskningen under den, og tapet fra runde 4 var
+    # tilbake i sin helhet: nei-et rekker å committe kansellering og
+    # `avvist`, kvitteringen regner videre på `plukket`/`utstedt`, `bruk_
+    # kvitteringskapabilitet` (toargs) svarer `ugyldig`, og den signerte
+    # sene evidensen — med kompensasjons-/irreversibilitetssaken §5 skal
+    # føde — går tapt i stillhet.
+    #
+    # Saken finnes derfor gjennom BEGGE retningene, i ÉN setning og i
+    # stigende id: mengden er den samme autoriteten §7 krever av
+    # oppløsningsmålene, og en deterministisk rekkefølge holder to
+    # kvitteringsveier fra å ta flere saker i motsatt orden. `unntak_id`
+    # selv røres ikke — den betyr fortsatt OPPHAV nedenfor.
+    #
+    # Er det ingen sak i noen av retningene, er det ingen felles rad å
+    # ordne: avvis-veien kan ikke nå oppdraget (den finner oppdrag gjennom
+    # saken), og en sak som fødes lenger nede av `sikre_sak_for_oppdrag` er
+    # per definisjon ny — ingen annen transaksjon holder den.
+    laaste_saker = conn.execute(
+        "SELECT u.id FROM unntak u"
+        " WHERE u.tenant=%s AND (u.id=%s OR u.oppdrag_id=%s)"
+        " ORDER BY u.id FOR UPDATE",
+        (tenant, unntak_id, oppdrag_id)).fetchall()
+    if laaste_saker:
+
+        # ... OG DA MÅ TILSTANDEN LESES PÅ NYTT (Codex P1, runde 4).
+        #
+        # En lås som bare ordner rekkefølgen, uten at det som leses etterpå
+        # er lest UNDER den, gjør bare vranglåsen om til en stille feil.
+        # Kapabiliteten (steg 1) og oppdragsraden (steg 1b) ble lest FØR
+        # låsen. Kommer inntaket hit mens et menneskelig nei holder saken,
+        # venter vi her til det har committet — og fortsetter så å regne på
+        # verdier fra tiden før nei-et: `kap_status` er fortsatt `utstedt`,
+        # `status` fortsatt `plukket`, generasjonen fortsatt eierens.
+        #
+        # Utfallet var det motsatte av det 043 §5 er til for: `kan_avslutte`
+        # ble True, den ORDINÆRE toargsbrenningen kjørte mot en kapabilitet
+        # som nå står `avvist`, og `_forbruk_kapabilitet` rullet tilbake med
+        # `kapabilitet_ugyldig`. Den signerte kvitteringen ble aldri skrevet
+        # som `sen_kvittering`, og kompensasjons-/irreversibilitetssaken ble
+        # aldri født — nøyaktig det tapet sen-evidensveien ble bygget for å
+        # hindre, gjenåpnet av låsen som skulle beskytte den.
+        #
+        # Låsen er det eneste punktet som gir et STABILT bilde: fra her og
+        # ut kan ingen avvis-vei endre disse radene før vi committer.
+        # Leses de her, ser vi nei-et og velger sen-evidensveien; forsvant
+        # kapabiliteten helt (terminal `feilet`/utløpt) eller oppdraget,
+        # svarer vi som førstelesningen gjorde — fail-closed.
+        #
+        # `naa` er BEVISST ikke oppfrisket: den er kvitteringens ANKOMSTTID,
+        # målt før enhver låskø. Et oppdrag skal ikke miste fristen sin
+        # fordi vår transaksjon sto bak en operatørhandling.
+        #
+        # ... og DET SAMME GJELDER KAPABILITETENS UTLØP (Codex P2, runde 5).
+        # Innvendingen var at `innlos_kvitteringskapabilitet` filtrerer på
+        # `k.utloper > now()`, så en kvittering som ankom i tide, men sto i
+        # sakslåskø forbi utløpet, skulle miste kapabiliteten her. Den
+        # egenskapen HAR koden allerede, og den er ikke en tilfeldighet:
+        # `now()` er transaksjonstidsstempelet (`transaction_timestamp()`),
+        # ikke veggklokka, og hele ingesten kjører i ÉN transaksjon —
+        # `preauth` lukker sin egen, og forretningstransaksjonen begynner
+        # ved den første lesningen over. Låskøen kan derfor ikke flytte
+        # utløpsgrensen: begge innløsningene måler mot nøyaktig samme
+        # tidspunkt, og det ligger før ankomsten (`naa`). Ville vi i stedet
+        # ha friskepunktets veggklokke, måtte vi bedt om
+        # `statement_timestamp()` — og det er nettopp det vi IKKE gjør.
+        # Egenskapen er målt, ikke bare beskrevet: se
+        # `test_P1_sakslaskoen_tar_ikke_kapabilitetens_frist` (test_m37).
+        kap = conn.execute(
+            "SELECT owner_claim_id, owner_generation, status, resultathash"
+            "  FROM innlos_kvitteringskapabilitet(%s, %s, %s, %s)",
+            (jti, auth.rolle, d_miljo, d_release)).fetchone()
+        if kap is None:
+            conn.rollback()
+            tjeneste.logg.hendelse("kapabilitet_ugyldig", rid, tenant,
+                                   oppdrag_id=oppdrag_id, grunn="etter_sakslas")
+            return _feilsvar("kapabilitet_ugyldig", rid)
+        kap_claim, kap_gen, kap_status, kap_hash = kap
+
+        rad = conn.execute(
+            "SELECT o.status, o.owner_claim_id, o.owner_generation,"
+            " o.utforelsesfrist, o.resultathash"
+            "  FROM oppdrag o WHERE o.tenant=%s AND o.id=%s",
+            (tenant, oppdrag_id)).fetchone()
+        if rad is None:
+            conn.rollback()
+            return _feilsvar("kapabilitet_ugyldig", rid)
+        status, owner_claim, owner_gen, uf, lagret_hash = rad
+
     # 4. Idempotens og konflikt — målt mot BEGGE kilder. Kapabiliteten
     #    husker hva DEN ble brukt til; oppdraget husker hva som avsluttet
     #    det. En re-post treffer den første, en annen utfører den andre.
@@ -2432,10 +2592,15 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
         # Forbruket skjer i SAMME commit som evidensraden. Statusen på
         # oppdraget og saken røres ikke — en sen kvittering er evidens, og
         # skal aldri avslutte noe.
+        #
+        # `sen=True`: en kapabilitet brent `avvist` av et menneskelig nei
+        # skal slippe evidensen inn her (043, Codex P1) — ikke svare
+        # `kapabilitet_ugyldig` og dermed gjøre §5-saken uoppnåelig.
         svar = _forbruk_kapabilitet(tjeneste, conn, jti, ny_hash,
                                     tenant=tenant, unntak_id=unntak_id,
                                     oppdrag_id=oppdrag_id, rid=rid,
-                                    artefakt_id=kvittering.get("artefakt_id"))
+                                    artefakt_id=kvittering.get("artefakt_id"),
+                                    sen=True)
         if svar is not None:
             # Taperen av kappløpet skriver INGEN evidensrad. Den ville vært
             # den andre raden for samme jti — og om utfallet var idempotent
@@ -2451,14 +2616,36 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
         # oppryddingen: har rydd nettopp nullet raden i race-en rundt evidensfristen,
         # ser vi den ikke som gjenopprettbar og klassifiserer konflikt i stedet for
         # falsk aksept. `bevart` er retained/terminalt; idempotent hvis alt bevart.
+        #
+        # REVERSIBILITETEN AVGJØRES FØR BEVARINGEN (043, Codex P2 runde 2).
+        # `bevar_artefakt` setter artefaktet `bevart` = RETAINED og terminalt,
+        # og oppryddingen rører det aldri igjen. For et `direkte` oppdrag som
+        # mennesket kansellerte sier kontrakten — og avsnittet under — at
+        # resultatet FORKASTES og artefaktet skal ryddes; bevares det først,
+        # blir «ryddes» til «beholdes for alltid». Oppslaget er derfor flyttet
+        # hit opp: det avgjør OM artefaktet skal bevares, og gjenbrukes så av
+        # §5-saken lenger nede.
+        kans = conn.execute(
+            "SELECT kansellert_aarsak FROM oppdrag WHERE tenant=%s AND id=%s",
+            (tenant, oppdrag_id)).fetchone()
+        menneskelig_nei = kans is not None and kans[0] == "menneskelig_avvis"
+        reversibilitet = conn.execute(
+            "SELECT reversibilitet_for_oppdrag(%s,%s)",
+            (tenant, oppdrag_id)).fetchone()[0] if menneskelig_nei else None
+        bevar = not (menneskelig_nei and reversibilitet == "direkte")
         sen_artefakt = kvittering.get("artefakt_id")
         if sen_artefakt is not None:
             # bevar_artefakt validerer (tenant/oppdrag/signert hash), låser raden
             # (serialiserer mot oppryddingen) og bevarer den atomisk. 'ugyldig' =
             # fremmed/ikke-eksisterende/feil-hash/alt-nullet → sikkerhetskonflikt,
             # ikke falsk aksept. Runtime kan ikke låse artefakt selv (kun SELECT).
+            # Skal artefaktet IKKE bevares, gjøres NØYAKTIG samme validering og
+            # låsing av `verifiser_artefaktbinding` — bare uten skrivingen: en
+            # kvittering som navngir feil artefakt skal falle like hardt på
+            # `direkte`-veien, det er artefaktet som skal ryddes, ikke porten.
             utfall = conn.execute(
-                "SELECT bevar_artefakt(%s,%s,%s,%s)",
+                "SELECT bevar_artefakt(%s,%s,%s,%s)" if bevar else
+                "SELECT verifiser_artefaktbinding(%s,%s,%s,%s)",
                 (sen_artefakt, tenant, oppdrag_id,
                  kvittering.get("klartekst_sha256"))).fetchone()[0]
             if utfall == "ugyldig":
@@ -2472,6 +2659,41 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
                 tjeneste.logg.hendelse("artefakt_promotering_avvist", rid, tenant,
                                        oppdrag_id=oppdrag_id, art="sikkerhet")
                 return _feilsvar("kvittering_konflikt", rid)
+        if unntak_id is None and menneskelig_nei:
+            # SAKEN SOM SA NEI EIER DEN SENE EVIDENSEN (Codex P1, runde 7).
+            #
+            # For et BESLUTNINGSoppdrag er `unntak_id` NULL med vilje —
+            # saken peker tilbake gjennom `unntak.oppdrag_id`, og det er
+            # nettopp den koblingen §4 gjorde avvisbar. Falt vi rett ned i
+            # `sikre_sak_for_oppdrag(... 'evidensfrist' ...)` under, fikk vi
+            # ikke saken tilbake: mennesket har akkurat satt den `avvist`,
+            # altså TERMINAL, og gjenbruksveien (038) tar aldri en terminal
+            # sak. Resultatet var en helt ny, ÅPEN evidensfrist-sak — en
+            # påstand om at fristen løp ut, for en kvittering som kom i
+            # TIDE — og for `kompenserende`/`irreversibel` deretter enda en
+            # sak ved siden av. For `direkte`, der kontrakten sier at ingen
+            # oppfølging trengs, ble den falske saken den eneste.
+            #
+            # Den sene evidensen hører til saken mennesket faktisk avgjorde.
+            # Den er entydig identifiserbar: §7 fører `oppdrag_kansellert`
+            # med oppdragets id på nøyaktig den saken nei-et ble gitt på.
+            # Finner vi den ikke (en kansellering fra en vei uten spor),
+            # faller vi tilbake på selve tilbakekoblingen, og først om
+            # INGEN sak finnes gjelder 038 §5-veien under.
+            sak_nei = conn.execute(
+                "SELECT h.unntak_id FROM unntak_historikk h"
+                " WHERE h.tenant=%s AND h.hendelse='oppdrag_kansellert'"
+                "   AND (h.detalj->>'oppdrag_id')::bigint = %s"
+                " ORDER BY h.id DESC LIMIT 1",
+                (tenant, oppdrag_id)).fetchone()
+            if sak_nei is None:
+                sak_nei = conn.execute(
+                    "SELECT u.id FROM unntak u"
+                    " WHERE u.tenant=%s AND u.oppdrag_id=%s"
+                    " ORDER BY u.id LIMIT 1",
+                    (tenant, oppdrag_id)).fetchone()
+            if sak_nei is not None:
+                unntak_id = sak_nei[0]
         if unntak_id is None:
             # 038 §5: sen evidens på et beslutningsoppdrag hører til
             # evidensfrist-familien — samme sak reaperen fant/fødte da
@@ -2479,6 +2701,40 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
             unntak_id = conn.execute(
                 "SELECT sikre_sak_for_oppdrag(%s,%s,'evidensfrist',%s,%s)",
                 (tenant, oppdrag_id, auth.aktor, rid)).fetchone()[0]
+        # DEN SIGNERTE KVITTERINGEN SKAL OVERLEVE (Codex P2, runde 8).
+        #
+        # Under fødte §5-saken en påstand om at handlingen SKJEDDE — og
+        # kastet så beviset: evidensraden bærer bare en oppsummering
+        # (resultat + hash), kapabiliteten bare hashen, og selve den
+        # signerte kvitteringen fantes ingen steder etter dette kallet. Da
+        # ber saken et menneske kompensere for, eller granske, noe systemet
+        # ikke lenger kan legge fram grunnlaget for. En remedieringssak uten
+        # sin egen evidens er en påstand, ikke et spor.
+        #
+        # Raden HAR plassen for det (`kvittering`, `kvittering_signatur`,
+        # `resultathash`), og grunnen til at den sene veien lot den stå tom
+        # gjelder ikke her: den er at en utdatert kvittering ellers ville
+        # låst raden (kolonnelåsen: uforanderlig når satt) og hindret den
+        # NYE eieren i å levere sin. Det forutsetter at det KAN komme en ny
+        # eier. Etter et menneskelig nei er oppdraget terminalt
+        # `kansellert` — ingen kan claime det, og ingen kvittering kan
+        # avslutte det noen gang. Da blokkerer lagringen ingenting, og
+        # uforanderligheten er nettopp det evidensen skal ha.
+        #
+        # Derfor: bare på nei-grenen, og bare i det tomme feltet. Er det alt
+        # fylt (en tidligere sen kvittering på samme kansellerte oppdrag),
+        # rører vi det ikke — den første er den lagrede, og denne står
+        # fortsatt i historikken med sin egen hash. Statusen endres ikke;
+        # dette er lagring av evidens, ikke en fullføring.
+        kvittering_lagret = False
+        if menneskelig_nei:
+            kvittering_lagret = conn.execute(
+                "UPDATE oppdrag SET kvittering=%s, kvittering_signatur=%s,"
+                " resultathash=%s WHERE tenant=%s AND id=%s"
+                "   AND kvittering IS NULL RETURNING id",
+                (json.dumps(kvittering, ensure_ascii=False),
+                 (kvittering.get("signatur") or {}).get("verdi"), ny_hash,
+                 tenant, oppdrag_id)).fetchone() is not None
         conn.execute(
             "INSERT INTO unntak_historikk (tenant, unntak_id, hendelse, aktor,"
             " request_id, detalj) VALUES (%s,%s,'sen_kvittering',%s,%s,%s)",
@@ -2486,7 +2742,69 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
              json.dumps({"oppdrag_id": oppdrag_id,
                          "gjeldende_fencing": gjeldende,
                          "etter_utforelsesfrist": naa > uf,
+                         "resultat": kvittering.get("resultat"),
+                         # Sier HVOR beviset ligger: True = denne
+                         # kvitteringen står signert på oppdragsraden,
+                         # False = en tidligere sen kvittering har plassen
+                         # (eller oppdraget ble ikke kansellert av et
+                         # menneske, og da fødes ingen §5-sak heller).
+                         "kvittering_lagret": kvittering_lagret,
                          "resultathash": ny_hash}, ensure_ascii=False)))
+        # 043 (Gate 14b §5): fencingen hindrer FULLFØRING, ikke det som
+        # allerede skjedde. En gyldig sen kvittering på et oppdrag mennesket
+        # kansellerte betyr at modulen UTFØRTE — når, i forhold til
+        # operatørens klikk, vet vi ikke og påstår vi ikke (Codex P2, runde
+        # 8): det eneste målte er at kvitteringen ANKOM etter kanselleringen.
+        # Hva det krever av oss utledes av MODULKONTRAKTENS reversibilitet,
+        # aldri av gjetning: `direkte` → ingenting (resultatet forkastes,
+        # artefaktet forblir staged og ryddes av 038-reaperen);
+        # `kompenserende`/`irreversibel` → sak, gjennom samme
+        # `sikre_sak_for_oppdrag` som all annen sakskobling — ingen
+        # parallell sakskilde, idempotent per (oppdrag, arsak), terminal
+        # sak gjenbrukes aldri. Oppslaget selv er gjort FØR bevaringen (se
+        # over) — nettopp fordi `direkte` også avgjør at artefaktet ikke skal
+        # bevares; her brukes svaret bare til sakskoblingen.
+        #
+        # ... men FØRST må kvitteringen faktisk PÅSTÅ at handlingen skjedde
+        # (Codex P1). Hele §5-slutningen hviler på premisset «modulen
+        # utførte». En sen kvittering med
+        # `resultat: "feilet"` sier det motsatte: ingen sideeffekt inntraff.
+        # Den gikk likevel inn her og fødte `kompensasjon_kreves` eller
+        # `irreversibel_utfort` — altså en sak som ber et menneske
+        # kompensere for noe som aldri ble gjort, eller som fører i
+        # revisjonssporet at en irreversibel handling er utført når
+        # utføreren selv rapporterte at den ikke ble det. Evidensraden over
+        # skrives fortsatt (den sene kvitteringen ER evidens, uansett
+        # utfall, og bærer nå resultatet), men SLUTNINGEN krever premisset.
+        #
+        # ... og UKJENT REVERSIBILITET ER IKKE TRYGG (Codex P1, runde 8).
+        # Mappingen var et oppslag med stille frafall: alt som ikke var
+        # `kompenserende` eller `irreversibel` ga ingen sak. For `direkte`
+        # er det RIKTIG — kontrakten sier at virkningen reverserer seg
+        # selv. Men `reversibilitet_for_oppdrag` svarer også NULL, og det
+        # betyr noe helt annet: oppdraget ble aldri modulbundet. Claim-
+        # veien tillater bevisst uregistrerte oppgavetyper (037) og lar
+        # modul-/kontraktbindingen stå NULL, så en slik oppgave kan utføre
+        # og sende en gyldig signert `utfort`-kvittering etter nei-et —
+        # og falle rett gjennom. Da er utfallet det motsatte av det §5 ble
+        # bygget for: systemet har INGEN kontraktevidens for at virkningen
+        # er trygg eller reverserer seg selv, og lot likevel være å
+        # spørre et menneske. Fraværet av bevis er ikke bevis på fravær.
+        # Mengden er derfor LUKKET med et eksplisitt fall-through: `direkte`
+        # er den ene verdien som betyr «ingen oppfølging», alt annet vi ikke
+        # kjenner — NULL i dag, en fremtidig klasse i morgen — blir
+        # `reversibilitet_ukjent` og går til et menneske.
+        sen_utfort = kvittering.get("resultat") == "utfort"
+        if menneskelig_nei and sen_utfort:
+            kjent = {"kompenserende": "kompensasjon_kreves",
+                     "irreversibel": "irreversibel_utfort",
+                     "direkte": None}
+            ny_arsak = (kjent[reversibilitet] if reversibilitet in kjent
+                        else "reversibilitet_ukjent")
+            if ny_arsak is not None:
+                conn.execute(
+                    "SELECT sikre_sak_for_oppdrag(%s,%s,%s,%s,%s)",
+                    (tenant, oppdrag_id, ny_arsak, auth.aktor, rid))
         conn.commit()
         return kanonisk_json({"status": "lagret_uten_statusendring",
                               "oppdrag_id": oppdrag_id, "request_id": rid},

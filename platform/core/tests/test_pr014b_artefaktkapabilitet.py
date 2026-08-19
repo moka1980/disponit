@@ -31,16 +31,19 @@ def _mk_admin(rolle):
     return c
 
 
-def _plukket_oppdrag_med_binding(conn, modul, kh):
+def _plukket_oppdrag_med_binding(conn, modul, kh, rev="kompenserende"):
     """Et LEGITIMT claimet, kontraktbundet oppdrag: registrer kontrakt+release,
     aktiver modulen med en claiming-deployment, registrer oppdragstype+
     artefakttype, og claim via den herdede claim-veien (014a-final tillater kun
-    claim-funksjonen å stemple bindingen). Returnerer (oppdrag_id, artefakttype)."""
+    claim-funksjonen å stemple bindingen). Returnerer (oppdrag_id, artefakttype).
+
+    `rev` er kontraktens REVERSIBILITET — 043 utleder både §5-saken og (Codex
+    P2, runde 2) om et sent artefakt skal bevares av nettopp den."""
     from .test_pr014a_cp5_claim import _lag_oppdrag_type
     ma = _mk_admin("disponit_modules_admin")
     try:
         ma.execute("SELECT registrer_kontrakt(%s,1,%s,'p','k','krever_outbox',"
-                   "'kompenserende','sys')", (modul, kh))
+                   "%s,'sys')", (modul, kh, rev))
         ma.execute("SELECT registrer_release(%s,'r1',1,%s,'mh','ad','sys')",
                    (modul, kh))
         ma.execute("SELECT installer_modul(%s,'sys')", (modul,))

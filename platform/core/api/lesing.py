@@ -370,6 +370,15 @@ def beslutning_detalj(tjeneste, request: Request) -> Response:
                         " WHERE tenant=%s AND repair_operation_id=%s",
                         (auth.tenant, rep_id)).fetchone()
                     resultat["superseded"] = bool(sup and sup[0])
+                    # 043 (port 12): årsaken er NULLABLE — klienter som
+                    # antar at `kansellert` er uten årsak må tåle verdien
+                    # (samme kontraktstil som 038 port 28). `feil_aarsak`
+                    # er uendret.
+                    ka = conn.execute(
+                        "SELECT kansellert_aarsak FROM oppdrag"
+                        " WHERE tenant=%s AND id=%s",
+                        (auth.tenant, oid)).fetchone()
+                    resultat["kansellert_aarsak"] = ka[0] if ka else None
                 if ostatus in ("opprettet", "plukket"):
                     evidens = "MANGLER"
                 elif ostatus == "utfort":
@@ -475,7 +484,7 @@ def _hent_unntak(conn, auth, uid: int):
     rad = conn.execute(
         "SELECT u.id, u.ts, u.handling, u.kategori, u.sakstype, u.status,"
         " u.prioritet, r.begrunnelse, u.intensjon_pakrevd, u.saksversjon,"
-        " r.policy_id"
+        " r.policy_id, u.arsak"
         "  FROM unntak u JOIN revisjonslogg r"
         "    ON r.tenant = u.tenant AND r.id = u.loggpost_id"
         " WHERE u.tenant=%s AND u.id=%s", (auth.tenant, uid)).fetchone()
@@ -556,19 +565,61 @@ def unntak_detalj(tjeneste, request: Request) -> Response:
         # Gate 14a: er et oppdrag/kapabilitet utestående, er `avvis` utilgjengelig
         # (POST-vakten svarer 409 `utestaaende_oppdrag`) — skjul den her med den
         # lukkede årsaken, så UI-et forklarer det FØR brukeren prøver.
+        # 043 (Gate 14b): et levende OPPDRAG stenger ikke lenger avvis —
+        # veien løser opp (kansellering med fencing), og flaten skal
+        # varsle det FØR klikket (alertdialogen). En levende
+        # ARBEIDSKAPABILITET beholder 14a-svaret — med eller uten oppdrag
+        # ved siden av, for det er den POST-vakten står på.
         avvis_aarsak = None
-        if "avvis" in handlinger and _har_utestaaende(conn, auth.tenant, uid):
-            handlinger = [h for h in handlinger if h != "avvis"]
-            avvis_aarsak = "utestaaende_oppdrag"
+        avvis_kansellerer = None
+        if "avvis" in handlinger:
+            rader = conn.execute(
+                "SELECT kilde, ref, status FROM sak_utestaaende(%s,%s)",
+                (auth.tenant, uid)).fetchall()
+            lev_opp = [int(ref) for kilde, ref, st in rader
+                       if kilde == "oppdrag"
+                       and st in ("opprettet", "plukket")]
+            lev_kap = [ref for kilde, ref, st in rader
+                       if kilde == "kapabilitet"]
+            # Rekkefølgen er BAKVENDT av den naive (Codex P2, runde 2):
+            # POST-vakten blokkerer på `levende_kap` ALENE — også når det
+            # finnes kansellerbare oppdrag ved siden av. Prøvde lesingen
+            # oppdragene først, tilbød flaten en `avvis` med
+            # `avvis_kansellerer`-varsel som ALLTID endte i 409 og
+            # kansellerte ingenting: et løfte serverkontrakten ikke holder.
+            # Kapabiliteten avgjør derfor her også — nøyaktig som i vakten.
+            info = []
+            if lev_opp:
+                info = conn.execute(
+                    "SELECT id, status, COALESCE(modul_id, eiermodul),"
+                    " oppdragstype FROM oppdrag"
+                    " WHERE tenant=%s AND id = ANY(%s) ORDER BY id",
+                    (auth.tenant, lev_opp)).fetchall()
+            # Samme prioritering én gang til (Codex P2, runde 6): et levende
+            # VERIFIKASJONSoppdrag har ingen oppløsningsvei — POST-vakten
+            # blokkerer på det som på en levende arbeidskapabilitet. Tilbød
+            # flaten en `avvis` med kanselleringsvarsel her, ville den
+            # alltid endt i 409 og kansellert ingenting.
+            uloselige = [r for r in info if r[3] == "verifikasjon"]
+            if lev_kap or uloselige:
+                handlinger = [h for h in handlinger if h != "avvis"]
+                avvis_aarsak = "utestaaende_oppdrag"
+            elif lev_opp:
+                avvis_kansellerer = [
+                    {"oppdrag_id": int(r[0]), "status": r[1],
+                     "modul_id": r[2]} for r in info]
         kropp = {"id": rad[0], "ts": rad[1].isoformat(), "handling": rad[2],
                  "kategori": rad[3], "sakstype": rad[4], "status": rad[5],
                  "prioritet": rad[6], "begrunnelse": _koder(rad[7]),
-                 "saksversjon": rad[9], "tillatte_handlinger": handlinger,
+                 "saksversjon": rad[9], "arsak": rad[11],
+                 "tillatte_handlinger": handlinger,
                  "request_id": rid}
         if aarsak is not None:
             kropp["godkjenn_utilgjengelig"] = aarsak
         if avvis_aarsak is not None:
             kropp["avvis_utilgjengelig"] = avvis_aarsak
+        if avvis_kansellerer is not None:
+            kropp["avvis_kansellerer"] = avvis_kansellerer
         return kanonisk_json(kropp, 200, {"x-request-id": rid})
     return _les(tjeneste, request, "exceptions:read", _fn)
 

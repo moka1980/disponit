@@ -2003,3 +2003,75 @@ def test_rapport_lese_api(migrator, klient):
     r4 = klient.get(f"/v1/rapport/{oid2}",
                     headers={"authorization": f"Bearer {tok}"})
     assert r4.status_code == 404, r4.text
+
+
+@pg
+def test_reaperen_venter_aldri_paa_sakslasen(migrator):
+    """043 §9 (Codex P1, runde 6): bakgrunnssveipet feller ingen operatør.
+
+    043 innførte en ny låserekkefølge på nei-veien — SAK først, deretter
+    kapabilitet og oppdrag — og kvitteringsveien måtte følge etter. Begge de
+    menneskestyrte veiene går altså sak → oppdrag. Reaperen går motsatt vei:
+    den plukker utløpte beslutningsoppdrag `FOR UPDATE` og går DERETTER til
+    saken gjennom `sikre_sak_for_oppdrag`. Møtes de, er det en 40P01 — og
+    taperen kan bli den signerte kvitteringen, som ved retry er forbi
+    evidensfristen og dermed tapt for godt.
+
+    Reaperen valgte allerede prinsippet for oppdragsraden (`SKIP LOCKED`:
+    et opptatt oppdrag er neste sveips rad). Porten måler at den samme
+    regelen nå gjelder saken: med saken låst av en annen transaksjon skal
+    sveipet gå gjennom UTEN å vente og UTEN å ta kandidaten — og ta den
+    først når låsen er borte.
+
+    `lock_timeout` gjør fraværet av venting målbart: uten fiksen blokkerer
+    kallet på sakslåsen og faller som `LockNotAvailable` i stedet for å
+    henge testen.
+    """
+    from db.pg import koble
+
+    rt = _rt()
+    holder = None
+    try:
+        oid, _ = _utlopt_beslutningsoppdrag(rt, migrator)
+        # Saken finnes ALT — som etter en tidligere sen kvittering. Lages
+        # direkte, så oppdraget forblir en kandidat (reaperen ville satt
+        # det `feilet`).
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute("SET ROLE disponit_m37_claimer")
+        sak = migrator.execute(
+            "SELECT sikre_sak_for_oppdrag(%s,%s,'evidensfrist','test','r0')",
+            (TENANT, oid)).fetchone()[0]
+        migrator.execute("RESET ROLE")
+        migrator.commit()
+
+        # En pågående transaksjon holder saken — nei-veien eller
+        # kvitteringsveien, begge tar den først.
+        holder = koble(MIGRATOR_DSN)
+        _sett_kontekst(holder, TENANT)
+        holder.execute("SELECT 1 FROM unntak WHERE tenant=%s AND id=%s"
+                       "   FOR UPDATE", (TENANT, sak))
+
+        rt.execute("SET LOCAL lock_timeout='3s'")
+        rader = rt.execute("SELECT tenant, oppdrag_id"
+                           " FROM reap_evidensfrister(50)").fetchall()
+        rt.commit()
+        assert all(r[1] != oid for r in rader), (
+            "reaperen tok en kandidat den ikke hadde sakslåsen for")
+
+        _sett_kontekst(migrator, TENANT)
+        assert migrator.execute(
+            "SELECT status FROM oppdrag WHERE tenant=%s AND id=%s",
+            (TENANT, oid)).fetchone()[0] == "opprettet",             "oppdraget ble lukket uten at saken var tatt"
+        migrator.rollback()
+
+        # ... og når låsen slippes, tar NESTE sveip den.
+        holder.rollback(); holder.close(); holder = None
+        rader2 = rt.execute("SELECT tenant, oppdrag_id"
+                            " FROM reap_evidensfrister(50)").fetchall()
+        rt.commit()
+        assert any(r[1] == oid for r in rader2), (
+            f"kandidaten ble aldri tatt etter at låsen gikk: {rader2}")
+    finally:
+        if holder is not None:
+            holder.rollback(); holder.close()
+        rt.close()

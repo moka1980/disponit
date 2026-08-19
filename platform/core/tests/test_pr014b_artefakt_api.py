@@ -242,14 +242,15 @@ def _kvitteringskap(opp, owner_claim, gen):
     return jti
 
 
-def _last_opp_artefakt(migrator, klient, token):
+def _last_opp_artefakt(migrator, klient, token, rev="kompenserende"):
     """Bygg bundet, plukket oppdrag + last opp et staged artefakt. Returnerer
     (opp, modul, kh, artefakt_id, owner_claim, repair_operation_id, gen, hash).
 
     Hashen er den serveren selv beregnet ved opplasting — nøyaktig den verdien en
-    ekte controller får i opplastingssvaret og MÅ signere i kvitteringen."""
+    ekte controller får i opplastingssvaret og MÅ signere i kvitteringen.
+    `rev` er kontraktens reversibilitet (043)."""
     modul = "m-" + secrets.token_hex(4); kh = "k-" + secrets.token_hex(8)
-    opp, at = _plukket_oppdrag_med_binding(migrator, modul, kh)
+    opp, at = _plukket_oppdrag_med_binding(migrator, modul, kh, rev)
     oc, rep, gen = _oppdrag_owner(migrator, opp)
     ajti = _utsted_cap(opp, modul, kh, at)
     tok, _ = token(rolle=modul, scopes=("artifacts:upload",))
@@ -779,6 +780,92 @@ def test_sen_kvittering_fremmed_artefakt_avvises(migrator, klient, token):
     rk = klient.post("/v1/oppdrag/kvittering", json=kv,
                      headers={"authorization": f"Bearer {tok2}"})
     assert rk.status_code == 409, rk.text
+
+
+def _menneskelig_kansellert(migrator, opp):
+    """Nøyaktig de to hoppene `avvis_med_opplosning` gjør: fencing (plukket →
+    opprettet, generasjonsbump, eierbindingen fjernet) og så kanselleringen med
+    menneskets årsak. Etterpå er en kvittering fra den gamle eieren SEN."""
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute(
+        "UPDATE oppdrag SET status='opprettet', owner_claim_id=NULL,"
+        " owner_generation=owner_generation+1, owner_lease_utloper=NULL"
+        " WHERE tenant=%s AND id=%s", (TENANT, opp))
+    # `kansellert_aarsak`-vakten (043 §1, runde 7) skriver kun når
+    # `current_user` ER oppløsningsveiens rolle — migrator konstruerer
+    # tilstanden direkte og må derfor gå utenom, som resten av suiten gjør.
+    migrator.execute("ALTER TABLE oppdrag DISABLE TRIGGER USER")
+    migrator.execute(
+        "UPDATE oppdrag SET status='kansellert',"
+        " kansellert_aarsak='menneskelig_avvis' WHERE tenant=%s AND id=%s",
+        (TENANT, opp))
+    migrator.execute("ALTER TABLE oppdrag ENABLE TRIGGER USER")
+    migrator.commit()
+
+
+def _artefakttilstand(migrator, aid):
+    _sett_kontekst(migrator, TENANT)
+    st = migrator.execute("SELECT tilstand FROM artefakt WHERE artefakt_id=%s",
+                          (aid,)).fetchone()[0]
+    migrator.rollback()
+    return st
+
+
+@pg
+@pytest.mark.parametrize("rev,ventet", [("direkte", "staged"),
+                                        ("kompenserende", "bevart")])
+def test_sen_kvittering_bevarer_ikke_artefakt_for_direkte(migrator, klient,
+                                                          token, rev, ventet):
+    """043 §5 (Codex P2, runde 2): på et oppdrag mennesket kansellerte utleder
+    veien av MODULKONTRAKTENS reversibilitet hva den sene kvitteringen krever.
+    `direkte` betyr at resultatet forkastes og artefaktet ryddes av
+    038-reaperen — men `bevar_artefakt` ble kalt FØR oppslaget, og `bevart` er
+    retained og terminalt: oppryddingen rører det aldri igjen. Artefaktet ble
+    altså liggende for alltid på nøyaktig den veien som lovte det motsatte.
+
+    Kjøres gjennom INNTAKSVEIEN (signert kvittering over HTTP), ikke bare
+    DB-funksjonen — det var der forrige rundes port bommet.
+
+    MUTASJONEN SOM DREPER DENNE: flytt reversibilitetsoppslaget tilbake under
+    bevaringen, eller la `direkte` også kalle `bevar_artefakt`."""
+    from .test_m37 import _signer_kvittering
+    opp, modul, kh, aid, oc, rep, gen, kts = _last_opp_artefakt(
+        migrator, klient, token, rev)
+    kjti = _kvitteringskap(opp, oc, gen)   # utstedes FØR fencingen
+    _menneskelig_kansellert(migrator, opp)
+    kv = _signer_kvittering(_kvitteringskropp(opp, kjti, rep, oc, gen, aid, kts))
+    tok2, _ = token(rolle=modul, scopes=("orders:execute:purring.",))
+    rk = klient.post("/v1/oppdrag/kvittering", json=kv,
+                     headers={"authorization": f"Bearer {tok2}"})
+    assert rk.status_code == 202, rk.text
+    assert rk.json()["status"] == "lagret_uten_statusendring", rk.text
+    # Evidensen er lagret uansett; det er ARTEFAKTETS skjebne som skiller.
+    assert _artefakttilstand(migrator, aid) == ventet, rev
+
+
+@pg
+def test_sen_kvittering_direkte_validerer_fortsatt_artefaktet(migrator, klient,
+                                                              token):
+    """... og bevaringen som utelates er BARE skrivingen: en sen kvittering som
+    navngir et FREMMED artefakt skal falle like hardt på `direkte`-veien som på
+    den bevarende. Det er artefaktet som skal ryddes, ikke porten.
+
+    MUTASJONEN SOM DREPER DENNE: hopp over artefaktoppslaget helt når
+    reversibiliteten er `direkte` (fremmed artefakt → falsk 202)."""
+    from .test_m37 import _signer_kvittering
+    opp, modul, kh, aid, oc, rep, gen, kts = _last_opp_artefakt(
+        migrator, klient, token, "direkte")
+    _, _, _, fremmed, _, _, _, kts2 = _last_opp_artefakt(migrator, klient, token)
+    kjti = _kvitteringskap(opp, oc, gen)
+    _menneskelig_kansellert(migrator, opp)
+    kv = _signer_kvittering(_kvitteringskropp(opp, kjti, rep, oc, gen,
+                                              fremmed, kts2))
+    tok2, _ = token(rolle=modul, scopes=("orders:execute:purring.",))
+    rk = klient.post("/v1/oppdrag/kvittering", json=kv,
+                     headers={"authorization": f"Bearer {tok2}"})
+    assert rk.status_code == 409, rk.text
+    # Det fremmede artefaktet er hverken bevart eller rørt av dette oppdraget.
+    assert _artefakttilstand(migrator, fremmed) == "staged"
 
 
 def _vinner_avviser_og_holder_laasen(sak, opp, kjti, aid, vinnerhash):

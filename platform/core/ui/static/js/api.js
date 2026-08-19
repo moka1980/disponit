@@ -287,6 +287,13 @@ export async function postHandling(uid, operatorhandling, saksversjon,
   }
   let kropp = null;
   try { kropp = await r.json(); } catch { kropp = null; }
-  if (!r.ok) _kast(r.status, kropp && kropp.feil);
+  if (!r.ok) {
+    // 043: `oppdrag_utfort` bærer referansen mennesket skal beslutte på
+    // nytt med — den rir i `detaljer`, den lukkede feilens eneste bagasje.
+    _kast(r.status, kropp && kropp.feil,
+          kropp && kropp.feil === "oppdrag_utfort"
+            ? [String(kropp.oppdrag_id ?? ""),
+               String(kropp.kvitteringsref ?? "")] : undefined);
+  }
   return kropp;
 }
