@@ -282,6 +282,33 @@ test("historikk: tabell med caption, utfall som tekst — aldri kun farge",
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
 });
 
+test("historikk: manuelt avvist oppdrag vises som avvist, ikke som bestilt",
+     async () => {
+  // Codex P2: ticket er urørt evidens (`tillat` — det ER hva motoren
+  // svarte), men et oppdrag som SIDEN ble avvist av et menneske sto
+  // fortsatt som «Bestilt» i flaten. `vist_utfall` er hva som gjelder nå.
+  KALL = [];
+  SVAR = {
+    "/v1/plan": { planer: [PLAN] },
+    [`/v1/plan/${PLAN.plan_id}/historikk`]: {
+      tick: [{ vindu_start: "2026-08-18T06:00:00+00:00", utfall: "tillat",
+               vist_utfall: "avvist_av_menneske", oppdrag_id: 42, detalj: {},
+               registrert: "2026-08-18T06:03:00+00:00" }],
+      hendelser: [],
+    },
+  };
+  const h = nyHoved();
+  visPlan(h, ctx());
+  await vent(() => h.querySelector(".planliste table"));
+  [...h.querySelectorAll("button")]
+    .find((k) => k.textContent === t("ui.plan.vis_historikk")).click();
+  await vent(() => h.querySelector(".planhistorikk table"));
+  const tabell = h.querySelector(".planhistorikk table");
+  assert.ok(tabell.textContent.includes(
+    t("ui.plan.utfall.avvist_av_menneske")));
+  assert.ok(!tabell.textContent.includes(t("ui.plan.utfall.tillat")));
+});
+
 test("planliste: tom liste er en tilstand, ikke en tom tabell", async () => {
   KALL = []; SVAR = { "/v1/plan": { planer: [] } };
   const h = nyHoved();

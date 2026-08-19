@@ -107,8 +107,13 @@ CREATE TABLE bestillingsplan_tick (
   vindu_start TIMESTAMPTZ NOT NULL,
   idempotensnokkel TEXT NOT NULL
     CHECK (char_length(idempotensnokkel) BETWEEN 8 AND 200),
+  -- `avvist_av_menneske` står IKKE her (Codex P2): en kansellering skjer
+  -- ETTER at ticket er skrevet, og evidensen er append-only — å innføre
+  -- en verdi ingen skriver kan produsere ville vært et løfte skjemaet
+  -- ikke kan holde. Diskriminatoren avledes i lesingen i stedet, av
+  -- `hent_plan_tick`, uten å røre revisjonssporet.
   utfall TEXT NOT NULL CHECK (utfall IN
-    ('tillat','stopp','brudd','hoppet_over','avvist_av_menneske')),
+    ('tillat','stopp','brudd','hoppet_over')),
   oppdrag_id BIGINT,
   detalj JSONB,
   registrert TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -710,11 +715,27 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
      WHERE tenant = p_tenant ORDER BY opprettet DESC
 $$;
 
+-- Historikken viser den SENERE kanselleringen uten å røre evidensen
+-- (Codex P2). Ticket er immutabelt og forblir `tillat` — det ER hva
+-- motoren svarte da vinduet ble terminalisert. Men et oppdrag som siden
+-- ble avvist av et menneske sto fortsatt som «Bestilt» i flaten, mens
+-- pausesveipen oppdaget nøyaktig den kanselleringen og UI-et hadde en
+-- ferdig etikett for den. Diskriminatoren AVLEDES derfor i lesingen:
+-- `utfall` er revisjonssporet, `vist_utfall` er hva som gjelder nå.
 CREATE OR REPLACE FUNCTION hent_plan_tick(
     p_tenant TEXT, p_plan UUID, p_grense INT)
-RETURNS SETOF public.bestillingsplan_tick
+RETURNS TABLE(plan_id UUID, tenant TEXT, vindu_start TIMESTAMPTZ,
+              idempotensnokkel TEXT, utfall TEXT, oppdrag_id BIGINT,
+              detalj JSONB, registrert TIMESTAMPTZ, vist_utfall TEXT)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
-    SELECT t.* FROM public.bestillingsplan_tick t
+    SELECT t.plan_id, t.tenant, t.vindu_start, t.idempotensnokkel,
+           t.utfall, t.oppdrag_id, t.detalj, t.registrert,
+           CASE WHEN t.utfall = 'tillat' AND o.status = 'kansellert'
+                     AND o.kansellert_aarsak = 'menneskelig_avvis'
+                THEN 'avvist_av_menneske' ELSE t.utfall END
+      FROM public.bestillingsplan_tick t
+      LEFT JOIN public.oppdrag o
+        ON o.tenant = t.tenant AND o.id = t.oppdrag_id
      WHERE t.tenant = p_tenant AND t.plan_id = p_plan
      ORDER BY t.vindu_start DESC
      LIMIT greatest(least(coalesce(p_grense, 50), 200), 1)

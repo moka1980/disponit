@@ -245,9 +245,14 @@ def historikk_endepunkt(tjeneste, request: Request) -> Response:
     def _fn(conn, tenant, bid, rid, _feilsvar, kanonisk_json):
         from db.pg import sett_kontekst
         sett_kontekst(conn, tenant, f"bruker:{bid}", rid)
+        # `utfall` er revisjonssporet (immutabelt), `vist_utfall` er hva
+        # som gjelder NÅ: et oppdrag som senere ble avvist av et menneske
+        # skal ikke stå som «Bestilt» i flaten (Codex P2). Begge sendes —
+        # historikken skal kunne vise begge lag uten å slå opp selv.
         tick = conn.execute(
-            "SELECT vindu_start, utfall, oppdrag_id, detalj, registrert"
-            "  FROM hent_plan_tick(%s,%s,50)", (tenant, plan_id)).fetchall()
+            "SELECT vindu_start, utfall, oppdrag_id, detalj, registrert,"
+            " vist_utfall FROM hent_plan_tick(%s,%s,50)",
+            (tenant, plan_id)).fetchall()
         hendelser = conn.execute(
             "SELECT hendelse, aktor, detalj, ts"
             "  FROM hent_plan_hendelser(%s,%s,50)",
@@ -256,7 +261,8 @@ def historikk_endepunkt(tjeneste, request: Request) -> Response:
         return kanonisk_json({
             "tick": [{"vindu_start": r[0].isoformat(), "utfall": r[1],
                       "oppdrag_id": r[2], "detalj": r[3],
-                      "registrert": r[4].isoformat()} for r in tick],
+                      "registrert": r[4].isoformat(),
+                      "vist_utfall": r[5]} for r in tick],
             "hendelser": [{"hendelse": r[0], "aktor": r[1], "detalj": r[2],
                            "ts": r[3].isoformat()} for r in hendelser],
             "request_id": rid}, 200, {"x-request-id": rid})

@@ -1475,6 +1475,53 @@ def test_http_flaten_ende_til_ende(migrator, klient):
 
 
 @pg
+def test_historikken_viser_manuell_avvisning(migrator, klient):
+    """Codex P2: en senere kansellering skal SES, uten at evidensen røres.
+
+    Ticket er append-only og forblir `tillat` — det ER hva motoren svarte
+    da vinduet ble terminalisert. Men et oppdrag som siden ble avvist av
+    et menneske sto fortsatt som «Bestilt» i flaten, og
+    `avvist_av_menneske` hadde ingen skriver i det hele tatt. Nå avledes
+    diskriminatoren i lesingen: `utfall` er sporet, `vist_utfall` er nå."""
+    cookie, csrf = _adminsesjon(sub="hist-avvis")
+    rt = _rt()
+    try:
+        pid = _plan(rt, host="hist-avvis.example")
+        oid, _ = _beslutningsoppdrag(rt, migrator)
+        vs = _syntetisk_vindu(migrator, pid, start_h=-30, slutt_h=-26)
+        _syntetisk_tick(migrator, pid, vs, "tillat", oppdrag_id=oid)
+    finally:
+        rt.close()
+    from api import sesjon as sesjonmodul
+    r = klient.get(f"/v1/plan/{pid}/historikk",
+                   cookies={sesjonmodul.C_SESJON: cookie})
+    assert r.status_code == 200, r.text
+    t0 = r.json()["tick"][0]
+    assert (t0["utfall"], t0["vist_utfall"]) == ("tillat", "tillat"), t0
+    # ... og så sier et menneske nei.
+    m = _mig()
+    _sett_kontekst(m, TENANT)
+    m.execute("SET ROLE disponit_m37_claimer")
+    m.execute("UPDATE oppdrag SET status='kansellert',"
+              " kansellert_aarsak='menneskelig_avvis'"
+              " WHERE tenant=%s AND id=%s", (TENANT, oid))
+    m.commit()
+    m.close()
+    r = klient.get(f"/v1/plan/{pid}/historikk",
+                   cookies={sesjonmodul.C_SESJON: cookie})
+    t1 = r.json()["tick"][0]
+    assert t1["vist_utfall"] == "avvist_av_menneske", t1
+    # Evidensen er URØRT: revisjonssporet sier fortsatt hva motoren svarte.
+    assert t1["utfall"] == "tillat", t1
+    _sett_kontekst(migrator, TENANT)
+    lagret = migrator.execute(
+        "SELECT utfall FROM bestillingsplan_tick WHERE plan_id=%s",
+        (pid,)).fetchone()[0]
+    migrator.rollback()
+    assert lagret == "tillat", "historikken skrev om revisjonssporet"
+
+
+@pg
 def test_ugyldig_plan_id_er_404_ikke_driftsalarm(migrator, klient, capsys):
     """Codex P2: en ugyldig plan-ID er klientinput, ikke en driftshendelse.
 

@@ -258,8 +258,12 @@ export function visPlan(hoved, ctx) {
           el("th", { scope: "col", text: t("ui.plan.kol.oppdrag") }))),
         el("tbody", {}, ...rader.map((r) => el("tr", {},
           el("th", { scope: "row" }, Tidspunkt(r.vindu_start)),
-          // Utfall som TEKST — aldri kun farge (§9).
-          el("td", { text: t(`ui.plan.utfall.${r.utfall}`, r.utfall) }),
+          // Utfall som TEKST — aldri kun farge (§9). `vist_utfall` er hva
+          // som gjelder NÅ: et oppdrag som senere ble avvist manuelt sto
+          // ellers som «Bestilt» for alltid, selv om pausesveipen hadde
+          // sett nei-et. Ticket selv er urørt evidens.
+          el("td", { text: ((u) => t(`ui.plan.utfall.${u}`, u))(
+            r.vist_utfall || r.utfall) }),
           el("td", { text: r.oppdrag_id ? `#${r.oppdrag_id}` : "—" })))));
       sett(historikk,
         el("h3", { text: t("ui.plan.historikk") }),
