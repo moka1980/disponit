@@ -130,6 +130,24 @@ RESET ROLE;
 -- SAMME atomiske kappløpssemantikk som kvitteringsveien, for det ER
 -- samme kappløp: hvem som brenner først, vinner. Toargs-utgaven står
 -- uendret (alle eksisterende kallere er kvitteringer).
+--
+-- Det tredje utfallet, `sen_evidens`, er Codex' P1: en signert kvittering
+-- som kommer ETTER at nei-et brant kapabiliteten. Første utgave antok at
+-- «modulens retry ender i sen-evidens-stien via generasjonsgjerdet» — men
+-- retryen bærer SAMME jti, treffer den samme avviste kapabiliteten, og
+-- toargsformen svarer `ugyldig` for evig. `_forbruk_kapabilitet` rullet da
+-- tilbake med `kapabilitet_ugyldig` før sen-evidensgrenen i det hele tatt
+-- ble nådd: `sen_kvittering` ble aldri skrevet, og kompensasjons-/
+-- irreversibilitetssaken §5 lover ble aldri født. Fencingen skal hindre
+-- FULLFØRING, ikke gjøre systemet blindt for det som allerede skjedde.
+--
+-- `sen_evidens` fester derfor resultathashen på den avviste kapabiliteten
+-- uten å røre statusen: `avvist` forblir terminal, oppdraget forblir
+-- kansellert, og hashen er det sen-evidensveien trenger for at reglene
+-- «identisk kvittering => idempotent» og «to hasher => sikkerhetssak` skal
+-- gjelde HER OGSÅ. Uten den kunne samme jti postet ubegrenset mange
+-- motstridende sene kvitteringer — nøyaktig funnet forrige runde lukket
+-- for stale-generation-veien.
 DO $$ BEGIN
   IF to_regprocedure('public.bruk_kvitteringskapabilitet(text,text)')
        IS NOT NULL
@@ -151,27 +169,31 @@ DECLARE
     v_status TEXT;
     v_hash   TEXT;
 BEGIN
-    IF p_utfall NOT IN ('brukt', 'avvist') THEN
+    IF p_utfall NOT IN ('brukt', 'avvist', 'sen_evidens') THEN
         RAISE EXCEPTION 'bruk_kvitteringskapabilitet: ukjent utfall %',
             p_utfall USING ERRCODE = 'invalid_parameter_value';
     END IF;
-    IF p_utfall = 'brukt' AND p_resultathash IS NULL THEN
-        RAISE EXCEPTION 'bruk_kvitteringskapabilitet: brukt krever hash'
-            USING ERRCODE = 'invalid_parameter_value';
+    IF p_utfall <> 'avvist' AND p_resultathash IS NULL THEN
+        RAISE EXCEPTION 'bruk_kvitteringskapabilitet: % krever hash',
+            p_utfall USING ERRCODE = 'invalid_parameter_value';
     END IF;
+    -- Er kapabiliteten fortsatt LEVENDE, er dette det ordinære kappløpet, og
+    -- `sen_evidens` er nøyaktig en kvittering: den brenner som `brukt`.
+    -- Skillet oppstår først når nei-et alt har brent den (under).
     UPDATE public.kvitteringskapabiliteter k
-       SET status = p_utfall,
-           -- `avvist` bærer INGEN hash: det finnes intet resultat å
-           -- attestere — det er hele poenget.
-           resultathash = CASE WHEN p_utfall = 'brukt'
-                               THEN p_resultathash END,
+       SET status = CASE WHEN p_utfall = 'avvist' THEN 'avvist'
+                         ELSE 'brukt' END,
+           -- `avvist` bærer INGEN hash fra selve nei-et: det finnes intet
+           -- resultat å attestere — det er hele poenget.
+           resultathash = CASE WHEN p_utfall = 'avvist' THEN NULL
+                               ELSE p_resultathash END,
            brukt_ts = pg_catalog.now()
      WHERE k.jti = p_jti
        AND k.status = 'utstedt'
        AND k.utloper > pg_catalog.now();
     GET DIAGNOSTICS v_treff = ROW_COUNT;
     IF v_treff = 1 THEN
-        RETURN p_utfall;
+        RETURN CASE WHEN p_utfall = 'avvist' THEN 'avvist' ELSE 'brukt' END;
     END IF;
 
     -- Kappløpet tapt, eller kapabiliteten var alt terminal/utløpt.
@@ -195,12 +217,35 @@ BEGIN
     END IF;
     IF v_status = 'avvist' THEN
         -- To samtidige avvis: én oppløsning, resten idempotente (port 5).
-        -- En KVITTERING som treffer en avvist kapabilitet er derimot fra
-        -- et fencet claim: fail-closed `ugyldig`, og modulens retry ender
-        -- i sen-evidens-stien via generasjonsgjerdet.
         IF p_utfall = 'avvist' THEN
             RETURN 'idempotent';
         END IF;
+        -- En KVITTERING som treffer en avvist kapabilitet er fra et fencet
+        -- claim. Den skal aldri FULLFØRE noe — men den er evidens for at
+        -- modulen rakk å utføre før nei-et nådde den, og den veien må
+        -- finnes (Codex P1). Hashen festes uten å røre statusen; første
+        -- sene kvittering vinner, og fra da av gjelder de vanlige reglene.
+        IF p_utfall = 'sen_evidens' THEN
+            UPDATE public.kvitteringskapabiliteter k
+               SET resultathash = p_resultathash
+             WHERE k.jti = p_jti AND k.status = 'avvist'
+               AND k.resultathash IS NULL;
+            GET DIAGNOSTICS v_treff = ROW_COUNT;
+            IF v_treff = 1 THEN
+                RETURN 'sen_evidens';
+            END IF;
+            -- Kappløpet mellom to sene kvitteringer avgjøres her, atomisk,
+            -- av samme grunn som det ordinære: taperen blokkerte på
+            -- radlåsen og leser vinnerens committede hash.
+            SELECT k.resultathash INTO v_hash
+              FROM public.kvitteringskapabiliteter k
+             WHERE k.jti = p_jti;
+            IF v_hash IS NOT DISTINCT FROM p_resultathash THEN
+                RETURN 'idempotent';
+            END IF;
+            RETURN 'konflikt';
+        END IF;
+        -- Toargsformens semantikk (`brukt`): fail-closed.
     END IF;
     RETURN 'ugyldig';
 END $$;

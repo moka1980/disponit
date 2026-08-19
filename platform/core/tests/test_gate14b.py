@@ -7,6 +7,8 @@ Portkart (klarsignalets §9):
   1   test_port1_avvis_pa_levende_m37_oppdrag_kansellerer_i_en_tx
   2   test_port2_beslutningsopphavet_dekkes
   3   test_port3_sen_kvittering_fra_gammelt_claim_er_sen_evidens
+      (+ INGEST-veien: test_m37.
+       test_P1_sen_kvittering_etter_menneskelig_avvis_naar_evidensgrenen)
   4   test_port4_kvittering_vinner_409_oppdrag_utfort
   5   test_port5_to_samtidige_avvis_en_opplosning
   6   test_port6_stress_avvis_mot_kvittering_en_vinner
@@ -169,8 +171,8 @@ def test_port3_sen_kvittering_fra_gammelt_claim_er_sen_evidens(conn):
     res = _kall(conn, uid, "avvis", bid, _macreg())
     assert res["utfall"] == "avvist"
 
-    # Det gamle claimets kvittering prøver å fullføre: kapabiliteten er
-    # brent `avvist`, og treargs-porten klassifiserer fail-closed.
+    # Det gamle claimets kvittering kan ikke FULLFØRE: toargsformen (som
+    # den avsluttende veien bruker) klassifiserer fail-closed.
     m = _mig()
     m.execute("SET ROLE disponit_m37_claimer")
     utfall = m.execute("SELECT bruk_kvitteringskapabilitet(%s,%s)",
@@ -179,6 +181,27 @@ def test_port3_sen_kvittering_fra_gammelt_claim_er_sen_evidens(conn):
     assert utfall == "ugyldig", "en avvist kapabilitet lot kvitteringen inn"
     from db.pg import sett_kontekst
     sett_kontekst(m, TEN, "sys", "r0")   # rollbacken tok tenant-GUC-en
+
+    # ... men EVIDENSVEIEN må finnes (Codex P1): fencingen hindrer
+    # fullføring, ikke erkjennelsen av at modulen rakk å utføre. Retryen
+    # bærer samme jti, så uten `sen_evidens` var `ugyldig` svaret for evig.
+    m.execute("SET ROLE disponit_m37_claimer")
+    forste = m.execute("SELECT bruk_kvitteringskapabilitet(%s,%s,"
+                       "'sen_evidens')", (jti, "a" * 64)).fetchone()[0]
+    assert forste == "sen_evidens", forste
+    # Samme kvittering igjen: idempotent. Et ANNET resultat: konflikt —
+    # de samme to reglene som gjelder på den avsluttende veien.
+    assert m.execute("SELECT bruk_kvitteringskapabilitet(%s,%s,"
+                     "'sen_evidens')", (jti, "a" * 64)).fetchone()[0] \
+        == "idempotent"
+    assert m.execute("SELECT bruk_kvitteringskapabilitet(%s,%s,"
+                     "'sen_evidens')", (jti, "e" * 64)).fetchone()[0] \
+        == "konflikt"
+    # Statusen er URØRT: `avvist` er fortsatt terminal.
+    assert m.execute("SELECT status FROM kvitteringskapabiliteter WHERE"
+                     " jti=%s", (jti,)).fetchone()[0] == "avvist"
+    m.rollback()
+    sett_kontekst(m, TEN, "sys", "r0")
     status = m.execute("SELECT status FROM oppdrag WHERE tenant=%s AND id=%s",
                        (TEN, oid)).fetchone()[0]
     m.rollback(); m.close()

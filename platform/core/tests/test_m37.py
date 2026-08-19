@@ -1788,6 +1788,140 @@ def test_P1_sen_kvittering_forbruker_kapabiliteten(migrator, miljo, token):
 
 
 @pg
+def test_P1_sen_kvittering_etter_menneskelig_avvis_naar_evidensgrenen(
+        migrator, miljo, token):
+    """043 (Gate 14b) §5 målt på INGEST-VEIEN, ikke bare på DB-porten.
+
+    Etter en kansellering med fencing står kvitteringskapabiliteten `avvist`.
+    Toargsformen svarer `ugyldig` på den — og siden modulens retry bærer
+    SAMME jti, gjorde den det for evig: `_forbruk_kapabilitet` rullet
+    tilbake med `kapabilitet_ugyldig` FØR sen-evidensgrenen ble nådd. En
+    gyldig, signert sen kvittering kunne dermed aldri skrive
+    `sen_kvittering` og aldri føde kompensasjonssaken §5 lover — fencingen
+    gjorde systemet blindt for det som allerede hadde skjedd, i stedet for
+    bare å hindre fullføring.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `sen=True` fra
+    `_forbruk_kapabilitet`-kallet i `not kan_avslutte`-grenen. Da blir
+    202-en en 401 `kapabilitet_ugyldig`, og kompensasjonssaken uteblir.
+    """
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+
+    sak, logg = _lag_sak(migrator, TENANT)
+    opp, _ = _lag_oppdrag(migrator, TENANT, sak, logg)
+    cid_sak = secrets.token_hex(16)
+    _sett_kontekst(migrator, TENANT, "m37-arbeider", cid_sak)
+    migrator.execute(
+        "UPDATE unntak SET status='under_behandling', claim_id=%s,"
+        " claim_generation=1, claim_utloper=now()+interval '600 s'"
+        " WHERE tenant=%s AND id=%s", (cid_sak, TENANT, sak))
+    migrator.execute("UPDATE unntak SET status='venter_utførelse'"
+                     " WHERE tenant=%s AND id=%s", (TENANT, sak))
+    migrator.commit()
+
+    app = lag_app(DSN)
+    try:
+        with TestClient(app) as c:
+            tok, _ = token(rolle="eiermodul:reinnsending",
+                           scopes=("orders:execute:purring.",))
+            h = {"authorization": f"Bearer {tok}"}
+            a = c.post("/v1/oppdrag/claim", json={}, headers=h).json()
+            assert a["oppdrag_id"] == opp, a
+
+            # Modulkontrakten oppdraget kjørte under: `kompenserende`. §5
+            # utleder saken av KONTRAKTEN, aldri av gjetning.
+            modul = "m-" + secrets.token_hex(4)
+            kh = secrets.token_hex(16)
+            _sett_kontekst(migrator, TENANT)
+            migrator.execute("SET ROLE disponit_modul_eier")
+            migrator.execute(
+                "INSERT INTO modulkontrakt (modul_id, kontraktversjon,"
+                " kontrakt_hash, payload_schema_hash, kvittering_schema_hash,"
+                " sideeffektklasse, reversibilitet)"
+                " VALUES (%s,1,%s,'p','k','ekstern_lesing','kompenserende')",
+                (modul, kh))
+            migrator.execute("RESET ROLE")
+            migrator.execute("ALTER TABLE oppdrag DISABLE TRIGGER USER")
+            migrator.execute(
+                "UPDATE oppdrag SET modul_id=%s, kontraktversjon=1,"
+                " kontrakt_hash=%s WHERE tenant=%s AND id=%s",
+                (modul, kh, TENANT, opp))
+            migrator.execute("ALTER TABLE oppdrag ENABLE TRIGGER USER")
+            migrator.commit()
+
+            # Mennesket sier nei — den EKTE oppløsningsveien: kapabiliteten
+            # brennes `avvist`, claimet fences, oppdraget kanselleres.
+            _sett_kontekst(migrator, TENANT, "menneske", "r-avvis")
+            migrator.execute("SET ROLE disponit_m37_claimer")
+            res = migrator.execute(
+                "SELECT utfall FROM avvis_med_opplosning(%s,%s,%s,"
+                "'menneske','r-avvis')", (TENANT, sak, [opp])).fetchall()
+            migrator.execute("RESET ROLE")
+            migrator.commit()
+            assert res == [("kansellert",)], res
+
+            def kvittering(resultat):
+                return _signer_kvittering({
+                    "oppdrag_id": opp, "tenant": TENANT,
+                    "kvittering_jti": a["kvittering_jti"],
+                    "repair_operation_id": a["repair_operation_id"],
+                    "owner_claim_id": a["owner_claim_id"],
+                    "owner_generation": a["owner_generation"],
+                    "resultat": resultat, "ressurs_id": "fak-1"})
+
+            # --- Den sene kvitteringen: EVIDENS, aldri fullføring --------
+            r1 = c.post("/v1/oppdrag/kvittering", json=kvittering("utfort"),
+                        headers=h)
+            assert r1.status_code == 202, r1.text
+            assert r1.json()["status"] == "lagret_uten_statusendring"
+
+            # --- Re-post: idempotent, ingen ny evidensrad ---------------
+            r1b = c.post("/v1/oppdrag/kvittering", json=kvittering("utfort"),
+                         headers=h)
+            assert r1b.status_code == 200, r1b.text
+            assert r1b.json()["status"] == "idempotent_uten_statusendring"
+
+            # --- Motstridende sen kvittering: sikkerhetssak, ikke evidens
+            r2 = c.post("/v1/oppdrag/kvittering", json=kvittering("feilet"),
+                        headers=h)
+            assert r2.status_code == 409, r2.text
+            assert r2.json()["feil"] == "kvittering_konflikt"
+    finally:
+        app.tjeneste.pool.lukk()
+
+    _sett_kontekst(migrator, TENANT)
+    hendelser = dict(migrator.execute(
+        "SELECT hendelse, count(*) FROM unntak_historikk"
+        " WHERE tenant=%s AND unntak_id=%s GROUP BY hendelse",
+        (TENANT, sak)).fetchall())
+    oppdragsrad = migrator.execute(
+        "SELECT status, kansellert_aarsak FROM oppdrag WHERE tenant=%s"
+        " AND id=%s", (TENANT, opp)).fetchone()
+    migrator.execute("SET ROLE disponit_m37_claimer")
+    kap = migrator.execute(
+        "SELECT status, resultathash IS NOT NULL FROM"
+        " kvitteringskapabiliteter WHERE jti=%s",
+        (a["kvittering_jti"],)).fetchone()
+    migrator.execute("RESET ROLE")
+    kompensasjon = migrator.execute(
+        "SELECT count(*) FROM unntak WHERE tenant=%s AND oppdrag_id=%s"
+        " AND arsak='kompensasjon_kreves'", (TENANT, opp)).fetchone()[0]
+    migrator.rollback()
+
+    assert hendelser.get("sen_kvittering") == 1, (
+        f"den sene kvitteringen nådde aldri evidensgrenen: {hendelser}")
+    assert hendelser.get("motstridende_kvittering") == 1, (
+        f"motstridende sen kvittering ble ikke en sikkerhetssak: {hendelser}")
+    # Fencingen står: nei-et er fortsatt nei-et.
+    assert oppdragsrad == ("kansellert", "menneskelig_avvis"), oppdragsrad
+    assert kap == ("avvist", True), (
+        f"kapabiliteten skulle stått avvist MED sen hash: {kap}")
+    # ... og §5-saken finnes: kontrakten sa `kompenserende`.
+    assert kompensasjon == 1, "kompensasjonssaken ble aldri født"
+
+
+@pg
 def test_P1_brukt_kapabilitet_kan_ikke_gjenbrukes_paa_nytt_oppdrag(migrator,
                                                                    miljo, token):
     """En forbrukt kapabilitet er forbrukt — også for et annet oppdrag.

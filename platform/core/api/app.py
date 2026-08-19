@@ -2075,11 +2075,27 @@ def _idempotent_svar(conn, *, tenant: str, oppdrag_id: int, ny_hash: str,
 
 def _forbruk_kapabilitet(tjeneste: Tjeneste, conn, jti: str, ny_hash: str, *,
                          tenant: str, unntak_id: int, oppdrag_id: int,
-                         rid: str, artefakt_id=None) -> Response | None:
+                         rid: str, artefakt_id=None,
+                         sen: bool = False) -> Response | None:
     """Forbruker kapabiliteten, eller klassifiserer hvorfor vi ikke kunne.
 
     -> None betyr «kapabiliteten er VÅR, fortsett». Alt annet er et ferdig
     svar, og transaksjonen er avsluttet.
+
+    `sen=True` er sen-evidensveien (043, Codex P1). Der kan kapabiliteten
+    være brent `avvist` av et menneskelig nei, og toargsformen svarer
+    `ugyldig` på den — for evig, siden retryen bærer samme jti. Da rullet
+    denne funksjonen tilbake med `kapabilitet_ugyldig` FØR sen-evidens-
+    grenen ble nådd, og en gyldig sen kvittering kunne aldri skrive
+    `sen_kvittering` eller føde kompensasjons-/irreversibilitetssaken §5
+    lover. Treargsformens `sen_evidens` fester hashen på den avviste
+    kapabiliteten uten å røre statusen: `avvist` er fortsatt terminal,
+    oppdraget fortsatt kansellert — men evidensen kommer inn, og
+    idempotens/konflikt gjelder også her.
+
+    Den AVSLUTTENDE veien bruker bevisst ikke `sen_evidens`: taper den
+    kappløpet mot et nei, skal den fortsatt fail-close (`kapabilitet_
+    ugyldig`) og ikke fortsette til statusskiftet.
 
     Delt av BEGGE veiene — den avsluttende og sen-evidensveien. Det er ikke
     en stilsak: forrige runde viste hva som skjer når en regel bare er
@@ -2090,9 +2106,14 @@ def _forbruk_kapabilitet(tjeneste: Tjeneste, conn, jti: str, ny_hash: str, *,
     `bruk_kvitteringskapabilitet`). Å lese tilstanden herfra etterpå ville
     vært et nytt kappløp for å avgjøre utfallet av det første.
     """
-    utfall = conn.execute("SELECT bruk_kvitteringskapabilitet(%s,%s)",
-                          (jti, ny_hash)).fetchone()[0]
-    if utfall == "brukt":
+    if sen:
+        utfall = conn.execute(
+            "SELECT bruk_kvitteringskapabilitet(%s,%s,'sen_evidens')",
+            (jti, ny_hash)).fetchone()[0]
+    else:
+        utfall = conn.execute("SELECT bruk_kvitteringskapabilitet(%s,%s)",
+                              (jti, ny_hash)).fetchone()[0]
+    if utfall in ("brukt", "sen_evidens"):
         return None
 
     if utfall == "idempotent":
@@ -2432,10 +2453,15 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
         # Forbruket skjer i SAMME commit som evidensraden. Statusen på
         # oppdraget og saken røres ikke — en sen kvittering er evidens, og
         # skal aldri avslutte noe.
+        #
+        # `sen=True`: en kapabilitet brent `avvist` av et menneskelig nei
+        # skal slippe evidensen inn her (043, Codex P1) — ikke svare
+        # `kapabilitet_ugyldig` og dermed gjøre §5-saken uoppnåelig.
         svar = _forbruk_kapabilitet(tjeneste, conn, jti, ny_hash,
                                     tenant=tenant, unntak_id=unntak_id,
                                     oppdrag_id=oppdrag_id, rid=rid,
-                                    artefakt_id=kvittering.get("artefakt_id"))
+                                    artefakt_id=kvittering.get("artefakt_id"),
+                                    sen=True)
         if svar is not None:
             # Taperen av kappløpet skriver INGEN evidensrad. Den ville vært
             # den andre raden for samme jti — og om utfallet var idempotent
