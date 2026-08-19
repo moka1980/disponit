@@ -11,7 +11,8 @@ Portoversikt → test (numrene er klarsignalets):
   3        test_port3_apen_sak_feil_utfordrer_eller_generasjon
   5        test_port5_terminal_sak_ny_konflikt_ny_sak
   §20      test_pre041_konflikt_uten_sak_far_sak,
-           test_pre041_python_sak_arkivmerkes_med_plattformsaken (Codex P1)
+           test_pre041_python_sak_arkivmerkes_med_plattformsaken (Codex P1),
+           test_pre041_forbigatte_utfordrere_degraderes_ikke_syklet (Codex P1)
   §13      test_andre_overtakelse_varsler_pa_nytt (Codex P2)
   §2       test_kundeeid_overtakelsessak_avvises (Codex P2)
   6        (test_pr015_operativt_lag::test_port20_abc — skiftet, samme id)
@@ -480,6 +481,89 @@ def test_pre041_python_sak_arkivmerkes_med_plattformsaken(migrator):
         (ANNEN_TENANT, gammel)).fetchone()[0]
     migrator.rollback()
     assert antall == 1, antall
+
+
+@pg
+def test_pre041_forbigatte_utfordrere_degraderes_ikke_syklet(migrator):
+    """Codex P1: flere `avklaring_kreves`-rader for ETT vertsnavn.
+
+    Legacy-tilstanden 019 §3.2 ble laget for å stenge, men som gamle data
+    kan bære: B OG C står begge i avklaring for samme hostnavn, og ingen
+    av dem har en gjeldende sak. Den gamle migrasjonen gikk rad for rad og
+    skrev den ENE saken på nytt for hver — resultatet var én sak hos den
+    bindingen tilfeldigvis pekte på, og en B-rad som ble stående i
+    `avklaring_kreves` for alltid: §7-vakten fyrer ikke retroaktivt, og
+    `verifiser_domenekontroll` returnerer umiddelbart for den statusen.
+
+    Fikset degraderer de forbigåtte gjennom den etablerte veien før saken
+    lages. Porten måler BEGGE halvdeler: at B faktisk forlot avklaringen
+    (med `forbigatt`-hendelsen), og at C — den bindingen peker på — sitter
+    igjen med saken.
+    """
+    from .test_pr015_operativt_lag import TREDJE_TENANT
+    from db.pg import koble
+
+    h = _host()
+    # Bygg legacy-tilstanden: degraderingstriggeren er nettopp den som
+    # ikke fantes da radene ble til, så den legges ned mens de lages.
+    eier = koble(MIGRATOR_DSN)
+    try:
+        eier.execute("ALTER TABLE hostname_binding DISABLE TRIGGER"
+                     " hostname_binding_degrader_forbigatte")
+        eier.commit()
+        try:
+            sak, _ = _konflikt(migrator, h)          # A → B
+            adm = _admin()
+            try:
+                adm.execute(
+                    "SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                    (TREDJE_TENANT, h))              # B → C (skifte, §10)
+                adm.commit()
+            finally:
+                adm.close()
+        finally:
+            eier.execute("ALTER TABLE hostname_binding ENABLE TRIGGER"
+                         " hostname_binding_degrader_forbigatte")
+            eier.commit()
+    finally:
+        eier.close()
+
+    # Uten triggeren ble B stående — dette ER legacy-formen.
+    assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "avklaring_kreves"
+    assert _dkrow(migrator, TREDJE_TENANT, h)[0] == "avklaring_kreves"
+    _fjern_gjeldende_sak(migrator, sak)
+    assert _sak_for(migrator, h) is None, "saken skulle være ute av bildet"
+
+    adm = _admin()
+    try:
+        r = adm.execute(
+            "SELECT migrer_pre041_overtakelseskonflikter('test041')"
+        ).fetchone()[0]
+        adm.commit()
+    finally:
+        adm.close()
+
+    # Ingen rad ble hengende igjen som «kan ikke få sak».
+    assert not [u for u in r["uten_sak"] if u["hostname"] == h], r
+    assert r["forbigatte_degradert"] >= 1, r
+    # B forlot avklaringen — og gjorde det gjennom den etablerte veien,
+    # altså med hendelsen og generasjonsbumpen den skriver.
+    assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "tilbakekalt"
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    hend = migrator.execute(
+        "SELECT count(*) FROM domenekontroll_hendelse WHERE tenant=%s"
+        "   AND hostname=%s AND hendelse='forbigatt'"
+        "   AND til_status='tilbakekalt'", (ANNEN_TENANT, h)).fetchone()[0]
+    migrator.rollback()
+    assert hend == 1, hend
+    # C — den bindingen peker på — står igjen med avklaringen OG saken,
+    # og saken navngir C som utfordrer med B som tapt part.
+    assert _dkrow(migrator, TREDJE_TENANT, h)[0] == "avklaring_kreves"
+    ny = _sak_for(migrator, h)
+    assert ny is not None and ny != sak, (sak, ny)
+    rad = _sakrad(migrator, ny)
+    assert rad[1:3] == (TREDJE_TENANT, ANNEN_TENANT), rad
+    assert None not in _hendelser(migrator, ny)
 
 
 # ---------------------------------------------------------------------------
