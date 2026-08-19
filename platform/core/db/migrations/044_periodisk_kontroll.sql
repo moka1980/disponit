@@ -1088,6 +1088,48 @@ $$;
 REVOKE ALL ON FUNCTION planer_gjentatt_uten_resultat() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION planer_gjentatt_uten_resultat() TO disponit;
 
+-- GJENOPPRETTINGEN FOR EN STOPP UTEN PAUSE (Codex P1). §7 sier at et
+-- `stopp`-tick MÅ pause planen; materialisereren skriver nå begge i ÉN
+-- transaksjon, så den veien kan ikke gli fra hverandre. Men ticket kan
+-- oppstå på EN vei til: ruller den transaksjonen tilbake, står vinduet
+-- `aktivt` til leasen dør, og klassifisereren gjenoppretter ticket fra
+-- `bestilling_idempotens` — den skriver evidens, den feller ingen
+-- pausedom (og skal ikke: §5 gir den ingen slik autoritet). Uten denne
+-- sveipen ville planen da stått AKTIV etter en policy- eller moduldom og
+-- bestilt videre i hvert eneste vindu.
+--
+-- Dempingen er hendelsessporet, som overalt ellers her, og den er per
+-- TICK, ikke per plan: en pause som `status <> 'aktiv'` alene dempet
+-- ville slått til igjen i sekundet en administrator gjenopptok planen —
+-- nøyaktig feilen `planer_med_menneskelig_avvis` hadde. Nøkkelen er
+-- tickets `idempotensnokkel`, som pausehendelsen bærer: ren
+-- tekstlikhet, ingen tidsstempelformat å tolke likt i to språk.
+--
+-- Kun tick fra GJELDENDE åpne periode: et gammelt `stopp` fra en periode
+-- som alt er lukket er en dom som ER fullbyrdet, og skal ikke pause
+-- planen om igjen etter et gjenopptak.
+CREATE OR REPLACE FUNCTION planer_med_ubehandlet_stopp()
+RETURNS TABLE(plan_id UUID, tenant TEXT, vindu_start TIMESTAMPTZ,
+              idempotensnokkel TEXT, detalj JSONB)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
+    SELECT t.plan_id, t.tenant, t.vindu_start, t.idempotensnokkel, t.detalj
+      FROM public.bestillingsplan_tick t
+      JOIN public.bestillingsplan p
+        ON p.plan_id = t.plan_id AND p.tenant = t.tenant
+     WHERE t.utfall = 'stopp' AND p.status = 'aktiv'
+       AND t.registrert >= (SELECT max(ap.fra_ts)
+              FROM public.bestillingsplan_aktiv_periode ap
+             WHERE ap.plan_id = t.plan_id)
+       AND NOT EXISTS (
+             SELECT 1 FROM public.bestillingsplan_hendelse h
+              WHERE h.plan_id = t.plan_id AND h.tenant = t.tenant
+                AND h.hendelse = 'pauset'
+                AND h.detalj->>'idempotensnokkel' = t.idempotensnokkel)
+     ORDER BY t.registrert
+$$;
+REVOKE ALL ON FUNCTION planer_med_ubehandlet_stopp() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION planer_med_ubehandlet_stopp() TO disponit;
+
 -- §7: `brudd` pauser ALDRI — kvoten er ikke brukt og vinduet åpner igjen
 -- — men TRE brudd på rad skal varsles. Kandidaten: de tre SISTE tickene
 -- i gjeldende åpne periode er alle `brudd`. Dempingen er hendelsen selv:

@@ -135,26 +135,41 @@ def materialiser_en(tjeneste, conn, rad, *, naa=None) -> dict:
     # Et `avvik:`-svar har alt ført sin egen sikkerhetshendelse i samme
     # transaksjon (terminaliser_planvindu) — mutexen skal gjøre det
     # umulig, og kontrollen står fordi den beviser det.
-    conn.commit()
 
     # Pausereglene som følger DIREKTE av tick-utfallet (§7). `brudd`
     # pauser ALDRI — kvoten er ikke brukt, vinduet åpner igjen.
+    #
+    # INGEN COMMIT MELLOM TICKET OG PAUSEN (Codex P1). Den sto her, og
+    # gjorde det terminale `stopp`-ticket varig FØR overgangen det krever:
+    # døde prosessen i mellomrommet, ble vinduet aldri plukket igjen
+    # (terminal er absorberende), og INGEN sveip lette etter `stopp`-tick
+    # uten pause. Planen sto altså aktiv etter en policy- eller moduldom
+    # og bestilte videre i hvert eneste vindu — stikk i strid med §7.
+    # Ticket og overgangen er nå ÉN transaksjon: enten begge, eller ingen
+    # av dem. Låserekkefølgen holder — terminaliseringen tar vindusraden,
+    # pausen planraden, aldri motsatt vei.
+    #
+    # `sett_kontekst` er SET LOCAL og gjelder derfor fortsatt her; det var
+    # nettopp commiten som tok den med seg før.
+    #
+    # Ruller transaksjonen likevel tilbake, står vinduet `aktivt` med en
+    # lease som dør, og klassifisereren gjenoppretter ticket fra
+    # `bestilling_idempotens` — uten pausen. DEN veien tar
+    # `planer_med_ubehandlet_stopp` i pausesveipen.
     if utfall == "stopp":
         grunn = _PAUSE_FOR_FEIL.get(detalj.get("feil"), "policy_stopper")
-        # Konteksten settes PÅ NYTT: `sett_kontekst` er SET LOCAL, og
-        # commiten over tok den med seg. `pause_plan` binder `p_tenant` til
-        # nettopp denne GUC-en (Codex P1), så uten dette ville pausen blitt
-        # avvist fail-closed — planen ville stått aktiv etter en policy-dom.
-        sett_kontekst(conn, tenant, f"plan:{plan_id}", rid)
         pauset = conn.execute(
             "SELECT pause_plan(%s,%s,%s,%s,%s,%s)",
             (tenant, plan_id, grunn, f"plan:{plan_id}", rid,
-             json.dumps({"vindu": str(vindu_start)} | detalj,
+             json.dumps({"vindu": str(vindu_start),
+                         "idempotensnokkel": nokkel} | detalj,
                         ensure_ascii=False))).fetchone()[0]
         conn.commit()
         if pauset:
             print(json.dumps({"hendelse": "plan_pauset", "plan": str(plan_id),
                               "grunn": grunn}), flush=True)
+    else:
+        conn.commit()
     return {"vindu": str(vindu_start), "plan": str(plan_id),
             "utfall": utfall, "dom": dom}
 
@@ -168,9 +183,35 @@ def pausesveip(conn, *, naa=None) -> list:
        diskriminator som lese-API-et viser kunden.
     2. `gjentatt_uten_resultat`: tre `tillat`-tick på rad i GJELDENDE
        åpne periode uten promotert artefakt.
+    3. Gjenoppretting: et `stopp`-tick i gjeldende periode UTEN sin pause.
+       Materialisereren skriver de to i én transaksjon, men klassifisererens
+       gjenoppretting skriver evidens uten å felle pausedommer — og en
+       plan som står aktiv etter en policy- eller moduldom ville bestilt
+       videre i hvert eneste vindu.
     """
     from db.pg import sett_kontekst
     pausete = []
+    # Gjenopprettingen FØRST: en dom som alt er felt skal virke før
+    # tilbakeblikkene bruker et vindu til på den samme planen.
+    rader = conn.execute(
+        "SELECT plan_id, tenant, vindu_start, idempotensnokkel, detalj"
+        "  FROM planer_med_ubehandlet_stopp()").fetchall()
+    conn.rollback()
+    for plan_id, tenant, vindu_start, nokkel, detalj in rader:
+        rid = f"plansveip-{str(plan_id)[:8]}"
+        grunn = _PAUSE_FOR_FEIL.get((detalj or {}).get("feil"),
+                                    "policy_stopper")
+        sett_kontekst(conn, tenant, "plansveip", rid)
+        if conn.execute(
+                "SELECT pause_plan(%s,%s,%s,'plansveip',%s,%s)",
+                (tenant, plan_id, grunn, rid,
+                 json.dumps({"vindu": str(vindu_start),
+                             "idempotensnokkel": nokkel,
+                             "gjenopprettet": True} | (detalj or {}),
+                            ensure_ascii=False))).fetchone()[0]:
+            pausete.append((str(plan_id), grunn))
+        conn.commit()
+
     rader = conn.execute(
         "SELECT plan_id, tenant, oppdrag_id"
         "  FROM planer_med_menneskelig_avvis()").fetchall()

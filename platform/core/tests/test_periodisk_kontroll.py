@@ -1531,6 +1531,66 @@ def test_stopp_pauser_med_policy_stopper(migrator, app):
 
 
 @pg
+def test_stopp_uten_pause_gjenopprettes(migrator):
+    """Codex P1: et terminalt `stopp` uten sin pause er en dom som aldri
+    ble fullbyrdet.
+
+    Commiten mellom ticket og pausen gjorde ticket varig FØRST: døde
+    prosessen i mellomrommet, ble vinduet aldri plukket igjen (terminal er
+    absorberende) og ingen sveip lette etter `stopp`-tick uten pause —
+    planen sto aktiv etter en policy- eller moduldom og bestilte videre i
+    hvert eneste vindu. De to er nå én transaksjon, men den samme
+    tilstanden kan fortsatt oppstå via klassifisererens gjenoppretting,
+    som skriver evidens uten å felle pausedommer. Denne sveipen tar den.
+
+    Dempingen er per TICK (`idempotensnokkel`), ikke per plan: et
+    gjenopptak skal ikke straks pause planen om igjen på den samme,
+    fullbyrdede dommen.
+    """
+    from plan.materialiser import pausesveip
+    rt = _rt()
+    try:
+        pid = _plan(rt, host="p19b.example")
+        vs = _syntetisk_vindu(migrator, pid, start_h=-30, slutt_h=-26)
+        _sett_kontekst(migrator, TENANT)
+        nokkel = "t-" + secrets.token_hex(8)
+        migrator.execute(
+            "INSERT INTO bestillingsplan_tick (plan_id, tenant, vindu_start,"
+            " idempotensnokkel, utfall, detalj)"
+            " VALUES (%s,%s,%s,%s,'stopp',%s)",
+            (pid, TENANT, vs, nokkel,
+             json.dumps({"feil": "bestillingstype_utilgjengelig"})))
+        migrator.commit()
+
+        assert (str(pid), "modul_utilgjengelig") in pausesveip(rt), \
+            "stopp-ticket uten pause ble ikke gjenopprettet"
+        _sett_kontekst(migrator, TENANT)
+        assert migrator.execute(
+            "SELECT status, pause_aarsak FROM bestillingsplan"
+            " WHERE plan_id=%s", (pid,)).fetchone() == ("pauset",
+                                                        "modul_utilgjengelig")
+        migrator.rollback()
+
+        # Idempotent: en ny sveip pauser ikke om igjen ...
+        assert pausesveip(rt) == []
+        # ... og heller ikke ETTER et gjenopptak. Dommen er fullbyrdet;
+        # uten per-tick-demping ville planen blitt pauset i sekundet den
+        # ble gjenopptatt, og gjenopptaket vært virkningsløst.
+        _sett_kontekst(rt, TENANT)
+        rt.execute("SELECT gjenoppta_plan(%s,%s,'test:x','r-x')",
+                   (TENANT, pid))
+        rt.commit()
+        assert pausesveip(rt) == []
+        _sett_kontekst(migrator, TENANT)
+        assert migrator.execute(
+            "SELECT status FROM bestillingsplan WHERE plan_id=%s",
+            (pid,)).fetchone()[0] == "aktiv"
+        migrator.rollback()
+    finally:
+        rt.close()
+
+
+@pg
 def test_pause_nummer_to_varsles_ogsaa(migrator, klient):
     """Codex P2: hver pause har sin EGEN varselforekomst.
 
