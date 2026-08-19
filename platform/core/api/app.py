@@ -2431,6 +2431,54 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
         conn.execute("SELECT 1 FROM unntak WHERE tenant=%s AND id=%s"
                      " FOR UPDATE", (tenant, unntak_id))
 
+        # ... OG DA MÅ TILSTANDEN LESES PÅ NYTT (Codex P1, runde 4).
+        #
+        # En lås som bare ordner rekkefølgen, uten at det som leses etterpå
+        # er lest UNDER den, gjør bare vranglåsen om til en stille feil.
+        # Kapabiliteten (steg 1) og oppdragsraden (steg 1b) ble lest FØR
+        # låsen. Kommer inntaket hit mens et menneskelig nei holder saken,
+        # venter vi her til det har committet — og fortsetter så å regne på
+        # verdier fra tiden før nei-et: `kap_status` er fortsatt `utstedt`,
+        # `status` fortsatt `plukket`, generasjonen fortsatt eierens.
+        #
+        # Utfallet var det motsatte av det 043 §5 er til for: `kan_avslutte`
+        # ble True, den ORDINÆRE toargsbrenningen kjørte mot en kapabilitet
+        # som nå står `avvist`, og `_forbruk_kapabilitet` rullet tilbake med
+        # `kapabilitet_ugyldig`. Den signerte kvitteringen ble aldri skrevet
+        # som `sen_kvittering`, og kompensasjons-/irreversibilitetssaken ble
+        # aldri født — nøyaktig det tapet sen-evidensveien ble bygget for å
+        # hindre, gjenåpnet av låsen som skulle beskytte den.
+        #
+        # Låsen er det eneste punktet som gir et STABILT bilde: fra her og
+        # ut kan ingen avvis-vei endre disse radene før vi committer.
+        # Leses de her, ser vi nei-et og velger sen-evidensveien; forsvant
+        # kapabiliteten helt (terminal `feilet`/utløpt) eller oppdraget,
+        # svarer vi som førstelesningen gjorde — fail-closed.
+        #
+        # `naa` er BEVISST ikke oppfrisket: den er kvitteringens ANKOMSTTID,
+        # målt før enhver låskø. Et oppdrag skal ikke miste fristen sin
+        # fordi vår transaksjon sto bak en operatørhandling.
+        kap = conn.execute(
+            "SELECT owner_claim_id, owner_generation, status, resultathash"
+            "  FROM innlos_kvitteringskapabilitet(%s, %s, %s, %s)",
+            (jti, auth.rolle, d_miljo, d_release)).fetchone()
+        if kap is None:
+            conn.rollback()
+            tjeneste.logg.hendelse("kapabilitet_ugyldig", rid, tenant,
+                                   oppdrag_id=oppdrag_id, grunn="etter_sakslas")
+            return _feilsvar("kapabilitet_ugyldig", rid)
+        kap_claim, kap_gen, kap_status, kap_hash = kap
+
+        rad = conn.execute(
+            "SELECT o.status, o.owner_claim_id, o.owner_generation,"
+            " o.utforelsesfrist, o.resultathash"
+            "  FROM oppdrag o WHERE o.tenant=%s AND o.id=%s",
+            (tenant, oppdrag_id)).fetchone()
+        if rad is None:
+            conn.rollback()
+            return _feilsvar("kapabilitet_ugyldig", rid)
+        status, owner_claim, owner_gen, uf, lagret_hash = rad
+
     # 4. Idempotens og konflikt — målt mot BEGGE kilder. Kapabiliteten
     #    husker hva DEN ble brukt til; oppdraget husker hva som avsluttet
     #    det. En re-post treffer den første, en annen utfører den andre.
