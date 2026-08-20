@@ -1073,37 +1073,94 @@ def test_skanneren_skiller_kode_fra_prosa(js, prosa):
 def _modulposter() -> list[tuple[int, str]]:
     """[(modulnummer, posttekst)] for hver modulpost i sannhetskilden.
 
+    Bare `<script>`-innholdet leses — fnutter i HTML-prosa er ikke strenger.
+    """
+    return _poster_i_skript(
+        "\n".join(_SKRIPT_RE.findall(KILDE.read_text(encoding="utf-8"))))
+
+
+def _poster_i_skript(js: str) -> list[tuple[int, str]]:
+    """[(modulnummer, posttekst)] for hvert element i katalogen i `js`.
+
     Postene ble før funnet med et repo-bredt regex mot rå filtekst, og posten
     strakk seg til NESTE treff (Codex P2 på #118, sjuende runde). Da er enhver
     postformet tekst en modulgrense: et fritekstfelt som dokumenterer et
     API-svar — `input: "API-eksempel: {n:1}"` — ble lest som starten på en ny
     modul, den ekte modulen ble kuttet før `dep`, og faseporten og enumporten
-    mistet den stille. Generatoren godtar samme prosa siden `postslutt()` ble
-    strengbevisst, så porten ville falt på en kilde generatoren var fornøyd
-    med.
+    mistet den stille.
 
-    Skanneren her hopper derfor over strenger og kommentarer, og avgrenser
-    posten ved dybdetelling i stedet for ved neste treff. Den er skrevet på nytt
-    og ikke importert fra generatoren med vilje: to uavhengige lesninger av
-    samme kilde er det som gjør at en feil i den ene blir SETT. Bare
-    `<script>`-innholdet leses — fnutter i HTML-prosa er ikke strenger.
+    Men postene ble fortsatt LETT ETTER, nå i koden i stedet for i teksten
+    (Codex P2 på #118, sekstende runde). Siden er en levende prototype med egen
+    UI-kode, og en helt alminnelig linje som `const demo = {n:57, p:1,
+    dep:"M-56"};` er en postformet KODEKLAMME: den ble lest som en modul til,
+    og siden `_moduler_fra_kilden()` lagrer per modulnummer, overskrev en demo
+    etter katalogen den ekte M-57. Fase- og enumporten målte da UI-data mens
+    generatoren — som leser katalogen strukturelt — så den ekte posten.
+    Katalogen ville stått grønt på en modul ingen har skrevet.
+
+    Roten er den samme som generatoren fant i fjortende runde: postene skal
+    ikke letes etter i det hele tatt. Katalogen er en LISTE, `const M = [ … ]`,
+    og en liste har elementer. Vi leser elementene, og da kan en postformet
+    klamme et annet sted i skriptet ikke være en post.
+
+    Lesningen er skrevet på nytt og ikke importert fra generatoren med vilje:
+    to uavhengige lesninger av samme kilde er det som gjør at en feil i den ene
+    blir SETT. De skiller lag nettopp i hvordan de finner ANKERET — porten har
+    en JS-skanner og krever at erklæringen står i kode, generatoren har ingen
+    og krever at det som følger har formen til en katalog.
     """
-    js = "\n".join(_SKRIPT_RE.findall(KILDE.read_text(encoding="utf-8")))
-    spenn = _spennkart(js)
+    js_spenn = _spennkart(js)
     ut: list[tuple[int, str]] = []
-    i, n = 0, len(js)
+    for start, slutt in _katalogelementer(js, js_spenn):
+        treff = _START_RE.match(js, start)
+        assert treff, (
+            f"et element i modulkatalogen i {KILDE.name} er ikke en modulpost: "
+            f"«{js[start:start + 60]}» — katalogen er en liste av poster")
+        ut.append((int(treff.group(1)), js[start:slutt]))
+    return ut
+
+
+# Katalogens erklæring. `let` og `var` er med fordi de erklærer det samme.
+_ANKER_RE = re.compile(r"\b(?:const|let|var)\s+M\s*=\s*\[")
+
+
+def _katalogliste(js: str, spenn: dict[int, tuple]) -> int:
+    """Indeksen til `[`-en i katalogens erklæring i `js`.
+
+    Erklæringen må stå i KODE og nøyaktig én gang. Tegnene `const M = [` inne i
+    en streng eller en kommentar er prosa om katalogen, ikke katalogen — og
+    porten har skanneren som vet forskjellen. To ekte erklæringer er en
+    redeklarasjon nettleseren selv avviser, så kravet er det JS stiller.
+    """
+    ankre, i, n = [], 0, len(js)
     while i < n:
         if i in spenn:
             i = spenn[i][0]
             continue
-        if js[i] != "{":
-            i += 1
+        if (treff := _ANKER_RE.match(js, i)):
+            ankre.append(treff.end() - 1)
+            i = treff.end()
             continue
-        treff = _START_RE.match(js, i)
-        if not treff:
-            i += 1
-            continue
-        start, dybde, j = i, 0, i
+        i += 1
+    assert len(ankre) == 1, (
+        f"fant {len(ankre)} modulkataloger i {KILDE.name} — det skal stå "
+        f"nøyaktig én `const M = [ … ]` i skriptet")
+    return ankre[0]
+
+
+def _katalogelementer(js: str, spenn: dict[int, tuple]):
+    """(start, slutt) for hvert element i katalogen. Lista leses som en liste.
+
+    Element, komma, element, `]` — går det ikke i hop, er kilden ikke lenger
+    lesbar, og porten sier fra HØYT i stedet for å lete videre i skriptet.
+    """
+    n = len(js)
+    i = _tomrom(js, _katalogliste(js, spenn) + 1, spenn)
+    while i < n and js[i] != "]":
+        assert i not in spenn and js[i] == "{", (
+            f"et element i modulkatalogen i {KILDE.name} er ikke en modulpost: "
+            f"«{js[i:i + 60]}» — katalogen er en liste av poster, og bare det")
+        j, dybde = i, 0
         while j < n:
             if j in spenn:
                 j = spenn[j][0]
@@ -1118,11 +1175,81 @@ def _modulposter() -> list[tuple[int, str]]:
             j += 1
         else:
             raise AssertionError(
-                f"modulpost M-{treff.group(1)} i {KILDE.name} lukkes aldri — "
-                f"kilden har endret form, sjekk parseren")
-        ut.append((int(treff.group(1)), js[start:j]))
-        i = j
-    return ut
+                f"en modulpost i {KILDE.name} lukkes aldri — kilden har endret "
+                f"form, sjekk parseren")
+        yield i, j
+        i = _tomrom(js, j, spenn)
+        if i < n and js[i] == ",":
+            i = _tomrom(js, i + 1, spenn)
+        elif i < n and js[i] != "]":
+            raise AssertionError(
+                f"en modulpost i {KILDE.name} følges hverken av komma eller av "
+                f"listens slutt — kilden har endret form")
+    assert i < n, (
+        f"modulkatalogen i {KILDE.name} lukkes aldri — kilden har endret form")
+
+
+# En katalog med to poster, slik kilden skriver dem. Prøvene under legger
+# UI-kode rundt den og måler at porten fortsatt leser NØYAKTIG disse to.
+_PROEVEKATALOG = ("const M = [\n"
+                  "  {n:1,name:'En',area:'X',p:1,dep:'',kl:'sideeffektfri'},\n"
+                  "  {n:2,name:'To',area:'X',p:2,dep:'M-1',rev:'direkte'}\n"
+                  "];\n")
+
+
+@pytest.mark.parametrize("linje", [
+    # En postformet KODEKLAMME i UI-koden. Helt lovlig JS, og ingen modul.
+    'const demo = {n:2, p:4, dep:"M-56"};',
+    # Den farlige rekkefølgen: en demo ETTER katalogen overskrev den ekte
+    # posten, fordi `_moduler_fra_kilden()` lagrer per modulnummer.
+    _PROEVEKATALOG + 'const demo = {n:2, p:4, dep:"M-56"};',
+    # En postformet streng og en postformet kommentar er samme sak.
+    """const demo = "{n:2,name:'Demo',area:'X',p:4}";""",
+    "// {n:2,name:'Demo',area:'X',p:4}",
+    # Og tegnene `const M = [ … ]` i prosa er ikke en katalog — heller ikke
+    # når prosaen bærer en KOMPLETT tom liste (Codex P2 på #118, sekstende
+    # runde).
+    'const hjelp = "const M = []";',
+    "// const M = []",
+    "/* const M = [] */",
+    "const hjelp = `const M = []`;",
+])
+def test_porten_leser_bare_elementene_i_katalogen(linje):
+    """Postene er elementene i `M`, ikke enhver postformet klamme i skriptet.
+
+    Porten LETTE etter poster i koden (Codex P2 på #118, sekstende runde), og
+    da er en helt alminnelig demo eller testfiksur i UI-koden en modul til.
+    Står den etter katalogen, overskriver den den ekte posten med samme
+    nummer, og fase- og enumporten måler UI-data mens generatoren — som leser
+    katalogen strukturelt — ser den ekte. Porten ville stått grønn på en modul
+    ingen har skrevet.
+    """
+    js = linje + "\n" + _PROEVEKATALOG if not linje.startswith("const M") \
+        else linje
+    assert _poster_i_skript(js) == _poster_i_skript(_PROEVEKATALOG)
+
+
+def test_to_ekte_kataloger_stopper_porten():
+    """To erklæringer er en redeklarasjon, og da vet ingen hvilken som gjelder.
+
+    Motstykket til prøven over: en ERKLÆRING nummer to skal stoppe porten,
+    uansett hvor få poster den bærer. Skillet mellom de to prøvene er kode mot
+    tekst, ikke form mot form — porten har skanneren som vet forskjellen, og
+    det er den forskjellen nettleseren også ser.
+    """
+    with pytest.raises(AssertionError, match="modulkatalog"):
+        _poster_i_skript(_PROEVEKATALOG + "const M = [];\n")
+
+
+def test_et_element_som_ikke_er_en_post_stopper_porten():
+    """Katalogen er en liste av poster, og bare det.
+
+    Blir et element noe annet — et tall, en streng, en spredning — er kilden
+    ikke lenger den katalogen porten leser, og da skal den si fra HØYT i stedet
+    for å hoppe over elementet og måle en katalog som mangler en modul.
+    """
+    with pytest.raises(AssertionError, match="modulpost"):
+        _poster_i_skript("const M = [{n:1,name:'En',area:'X',p:1}, 'to'];\n")
 
 
 def _tomrom(js: str, i: int, spenn: dict[int, tuple]) -> int:
