@@ -297,7 +297,14 @@ CREATE TABLE ci_kjoringsattest (
     -- som ikke navngir bytene, binder ingenting.
     hode_sha     TEXT NOT NULL CHECK (hode_sha ~ '^[0-9a-f]{40}$'),
     attestert_ts TIMESTAMPTZ NOT NULL DEFAULT now(),
-    aktor        TEXT NOT NULL
+    aktor        TEXT NOT NULL,
+    -- …og HVEM som var innlogget da referatet ble skrevet (Codex P1,
+    -- #117 runde 19). `aktor` er en etikett kalleren velger fritt —
+    -- 'm56-aksept' er like billig å skrive som hva som helst annet. Den
+    -- autentiserte identiteten settes av funksjonen fra `session_user`
+    -- og kan ikke oppgis i kallet: en attest skal bære hvem som faktisk
+    -- sto der, ikke hvem kallet påsto å være.
+    attestert_av TEXT NOT NULL
 );
 -- En kjøring har ett utfall. Attesten er et referat, ikke en kladd.
 CREATE TRIGGER ci_attest_immutable BEFORE UPDATE OR DELETE
@@ -929,6 +936,31 @@ END $$;
 -- kjøringen, med verdiene svaret bar — ikke med det aksepten trenger.
 -- SP-2: samme løpenummer med annet innhold er ikke en replay, det er to
 -- motstridende referater av én kjøring, og det skal høres.
+--
+-- ATTESTANTEN ER EN ANNEN ENN AKSEPTØREN (Codex P1, #117 runde 19).
+-- Runde 16 flyttet invariantpunktene fra kallerens to strenger til en
+-- immutabel attestrad — men grantet lå på `disponit_modules_admin`,
+-- nøyaktig den rollen som også kaller `aksepter_moduldeployment`. Da var
+-- referatet fortsatt kallerens eget: én og samme fullmakt kunne finne på
+-- et løpenummer, skrive «ci.yml kjørte grønt på en push til main for
+-- commit X», og deretter la aksepten hvile på sin egen påstand — også
+-- for utslippspunktet `m56-aksept.py::UMAALTE` uttrykkelig nekter å
+-- måle. En attest som kan skrives av den som trenger den, er ingen
+-- attest; den er en gjentakelse.
+--
+-- Basen kan ikke autentisere GitHub. Det den KAN, er å kreve at
+-- referatet og aksepten kommer fra to FORSKJELLIGE fullmakter: attesten
+-- skrives av registerets egen eierrolle (`disponit_modul_eier`, NOLOGIN,
+-- kun tilgjengelig via eksplisitt, sporbar `SET ROLE` for migrator),
+-- mens aksepten skrives av deployfullmakten. Den som holder
+-- `disponit_modules_admin` — og bare den — kan fra nå ikke skrive noen
+-- attest, og dermed heller ingen aksept som hviler på et CI-punkt.
+-- Grantene under er hele porten; se GRANT-blokken ved funksjonseierne.
+--
+-- Og raden bærer den AUTENTISERTE identiteten: `attestert_av` settes fra
+-- `session_user` her inne, ikke fra en parameter. `aktor` er fortsatt
+-- kallerens etikett — den forteller hvilket skript som gikk, ikke hvem
+-- som var logget inn, og de to fakta har hver sin kolonne.
 CREATE OR REPLACE FUNCTION attester_ci_kjoring(
     p_ci_run TEXT, p_arbeidsflyt TEXT, p_hendelse TEXT, p_gren TEXT,
     p_konklusjon TEXT, p_hode_sha TEXT, p_aktor TEXT)
@@ -951,9 +983,9 @@ BEGIN
         RETURN;
     END IF;
     INSERT INTO public.ci_kjoringsattest (ci_run, arbeidsflyt, hendelse,
-        gren, konklusjon, hode_sha, aktor)
+        gren, konklusjon, hode_sha, aktor, attestert_av)
     VALUES (p_ci_run, p_arbeidsflyt, p_hendelse, p_gren, p_konklusjon,
-            lower(p_hode_sha), p_aktor);
+            lower(p_hode_sha), p_aktor, session_user);
 END $$;
 
 CREATE OR REPLACE FUNCTION aksepter_moduldeployment(
@@ -1296,8 +1328,18 @@ GRANT EXECUTE ON FUNCTION registrer_moduldrill(TEXT, TEXT, TEXT, TEXT,
 GRANT EXECUTE ON FUNCTION aksepter_moduldeployment(TEXT, TEXT, TEXT,
     BIGINT, TEXT, TEXT, UUID, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT, TEXT)
     TO disponit_modules_admin;
-GRANT EXECUTE ON FUNCTION attester_ci_kjoring(TEXT, TEXT, TEXT, TEXT,
-    TEXT, TEXT, TEXT) TO disponit_modules_admin;
+-- INGEN GRANT PÅ `attester_ci_kjoring` (Codex P1, #117 runde 19).
+-- Attestanten skal ikke være akseptøren. `disponit_modules_admin` er den
+-- brede deployfullmakten — registrer_release, bytt_release, onboarding,
+-- drillen OG aksepten — og med EXECUTE her kunne den skrevet sitt eget
+-- CI-referat og latt aksepten hvile på det. Attesten er derfor
+-- EIERROLLENS: `disponit_modul_eier` er funksjonseier og har EXECUTE i
+-- kraft av det, uten at noen annen rolle får det. Rollen er NOLOGIN, og
+-- migrator har den bare `WITH INHERIT FALSE` — veien dit er et
+-- eksplisitt, sporbart `SET ROLE`, ikke stille arv (samme skille som
+-- oppsettet gjør for m37_claimer og policy_eier).
+-- Å legge attesten på PUBLIC eller på admin igjen er å gjenåpne hullet;
+-- en ny fullmakt hører hjemme i en NY rolle i oppsett-skriptet.
 -- Målingen er LESING og gir ingen skrivevei: den svarer ja/nei om ett
 -- oppdrag i én tenant, og drillsonden og sjekklisten kaller den med
 -- nøyaktig den deployfullmakten de alt har.

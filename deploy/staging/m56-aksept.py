@@ -840,7 +840,6 @@ def main() -> int:
         manifestkilde = verifiser_registrert_manifest(
             conn, (o["drillet_release"], o["kandidat_release"]),
             manifest, manifest_sha, manifest_commit)
-        conn.execute("SET ROLE disponit_modules_admin")
         # REFERATET FRA VEIEN SOM SPURTE (Codex P1, #117 runde 16).
         # Basen sammenlignet `kilde_ref` med sine egne to parametre, og
         # to felter fra samme kaller som er enige, er ingen CI-kjøring.
@@ -850,11 +849,21 @@ def main() -> int:
         # mot kalleren. Verdiene her er svarets egne, ikke aksepterens:
         # `verifiser_ci_kjoring` har alt avvist alt annet enn en grønn
         # `ci.yml`-push på `main` for akseptcommiten.
+        #
+        # …og attesten skrives med EN ANNEN FULLMAKT enn aksepten (Codex
+        # P1, runde 19): `disponit_modules_admin` har ikke lenger EXECUTE
+        # på `attester_ci_kjoring`, nettopp fordi den er rollen som
+        # skriver aksepten som hviler på attesten. Referatet er
+        # registerets eget, og skrives som eierrollen — et eksplisitt,
+        # sporbart `SET ROLE`, lagt NED igjen før deployfullmakten tas.
+        conn.execute("SET ROLE disponit_modul_eier")
         conn.execute(
             "SELECT attester_ci_kjoring(%s,%s,%s,%s,%s,%s,'m56-aksept')",
             (str(ci_kjoring.get("id")), ci_kjoring.get("path"),
              ci_kjoring.get("event"), ci_kjoring.get("head_branch"),
              ci_kjoring.get("conclusion"), ci_kjoring.get("head_sha")))
+        conn.execute("RESET ROLE")
+        conn.execute("SET ROLE disponit_modules_admin")
         # Codex' P1 på PR #117 (runde 5): de tre kontrollpunktutfallene
         # ble regnet ut HER, av artefaktets egne tall, og sendt inn som
         # boolske verdier. Den som holdt `disponit_modules_admin` — den

@@ -292,12 +292,16 @@ def _ci_attest(m, ci_run="run-1", *, ci_commit=None, arbeidsflyt=None,
     mot kallerens egne `p_ci_run`/`p_ci_commit`. Uten en attest som sier
     at kravets workflow kjørte grønt på kravets hendelse og gren, for
     nøyaktig akseptcommiten, skrives ingen aksept.
+
+    Skrives som EIERROLLEN, ikke som deployfullmakten (Codex P1, runde
+    19): attestanten skal ikke være akseptøren, og `attester_ci_kjoring`
+    er derfor ikke grantet til `disponit_modules_admin` lenger.
     """
     if arbeidsflyt is None:
         arbeidsflyt = m.execute(
             "SELECT arbeidsflyt FROM akseptkrav_ci WHERE krav_id=%s",
             (KRAV,)).fetchone()[0]
-    m.execute("SET ROLE disponit_modules_admin")
+    m.execute("SET ROLE disponit_modul_eier")
     m.execute("SELECT attester_ci_kjoring(%s,%s,%s,%s,%s,%s,'test')",
               (ci_run, arbeidsflyt, hendelse, gren, konklusjon,
                ci_commit or CI_SHA))
@@ -619,7 +623,7 @@ def test_ci_punktene_krever_referatet_fra_veien_som_spurte(migrator):
 
     # Én kjøring har ETT utfall: samme løpenummer med et annet referat er
     # ikke en replay, det er to motstridende referater.
-    migrator.execute("SET ROLE disponit_modules_admin")
+    migrator.execute("SET ROLE disponit_modul_eier")
     with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
         migrator.execute(
             "SELECT attester_ci_kjoring('run-1','.github/workflows/ci.yml',"
@@ -702,9 +706,10 @@ def test_ci_attesten_er_ikke_runtimes_a_skrive(migrator):
         for sql in ("SELECT attester_ci_kjoring('r','w','push','main',"
                     "'success','" + "aa" * 20 + "','a')",
                     "INSERT INTO ci_kjoringsattest (ci_run, arbeidsflyt,"
-                    " hendelse, gren, konklusjon, hode_sha, aktor) VALUES"
+                    " hendelse, gren, konklusjon, hode_sha, aktor,"
+                    " attestert_av) VALUES"
                     " ('r','w','push','main','success','" + "aa" * 20
-                    + "','a')",
+                    + "','a','a')",
                     "UPDATE ci_kjoringsattest SET konklusjon='success'",
                     "DELETE FROM ci_kjoringsattest",
                     "INSERT INTO akseptkrav_ci (krav_id, arbeidsflyt,"
@@ -715,6 +720,47 @@ def test_ci_attesten_er_ikke_runtimes_a_skrive(migrator):
             rt.rollback()
     finally:
         rt.close()
+
+
+@pg
+def test_attestanten_er_ikke_akseptoren(migrator):
+    """Codex' P1 (runde 19): `attester_ci_kjoring` var grantet til
+    `disponit_modules_admin` — nøyaktig rollen som skriver aksepten som
+    hviler på attesten. Da kunne én fullmakt finne på et løpenummer,
+    skrive sitt eget «grønn ci.yml-push på main», og la de 16
+    invariantpunktene hvile på sin egen påstand. Deployfullmakten kan fra
+    nå ikke attestere; attesten er eierrollens, og aksepten avvises uten
+    den."""
+    k = _kjede(migrator)
+    did = _drill(migrator, k)
+
+    # 1. Deployfullmakten NÅR ikke attestfunksjonen i det hele tatt.
+    migrator.execute("SET ROLE disponit_modules_admin")
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        migrator.execute(
+            "SELECT attester_ci_kjoring('run-egen','.github/workflows/ci.yml',"
+            "'push','main','success',%s,'admin')", (CI_SHA,))
+    migrator.rollback()
+
+    # 2. …og uten attest skrives ingen aksept: hullet var at den samme
+    #    rollen kunne lage forutsetningen sin selv.
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, k, did, ci_run="run-egen", attest=False)
+    migrator.rollback()
+    assert "ingen attest" in str(ei.value)
+
+    # 3. Eierrollen attesterer, og raden bærer den AUTENTISERTE
+    #    identiteten — ikke etiketten kallet oppga.
+    _ci_attest(migrator, "run-egen")
+    _aksepter(migrator, k, did, ci_run="run-egen", attest=False)
+    migrator.commit()
+    migrator.execute("RESET ROLE")
+    aktor, av = migrator.execute(
+        "SELECT aktor, attestert_av FROM ci_kjoringsattest WHERE ci_run=%s",
+        ("run-egen",)).fetchone()
+    assert aktor == "test"          # etiketten kallet oppga
+    assert av == migrator.execute(  # …og den innloggede identiteten
+        "SELECT session_user").fetchone()[0]
 
 
 @pg
