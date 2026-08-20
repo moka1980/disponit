@@ -737,9 +737,19 @@ def _navn(rangevar) -> str:
     gjelder» sluttet å gjelde på tvers av de to skrivemåtene. Et ANNET skjema
     er derimot en del av identiteten og blir stående.
     """
-    if rangevar.schemaname and rangevar.schemaname != "public":
-        return f"{rangevar.schemaname}.{rangevar.relname}"
-    return rangevar.relname
+    return _tabellnavn(rangevar.schemaname, rangevar.relname)
+
+
+def _tabellnavn(skjema: str | None, relnavn: str) -> str:
+    """Regelen i `_navn()`, som den er: `public` er ikke del av identiteten.
+
+    Den står for seg fordi et `ALTER TABLE … RENAME TO` gir det nye navnet UTEN
+    skjema — tabellen blir liggende der den lå — og da må det nye navnet bygges
+    etter nøyaktig samme regel som det gamle ble lest med.
+    """
+    if skjema and skjema != "public":
+        return f"{skjema}.{relnavn}"
+    return relnavn
 
 
 def _samle(node, ut: set[str]) -> None:
@@ -863,6 +873,11 @@ def _snitt(a: set[str], b: set[str]) -> set[str]:
 # eller et vilkår av en annen type som bare OPPTAR navnet sitt. `betinget` er
 # sant når setningen står bak en gren i en `DO`-kropp.
 _LEGG_PA, _SLIPP, _NAVN = "legg på", "slipp", "navn"
+# Et `ALTER TABLE … RENAME …`. Et omdøp legger hverken til eller fjerner et
+# vilkår, men det flytter NØKKELEN vilkåret står under — og nøkkelen er det
+# eneste et senere slipp har å treffe med. Se `_lesomdop()`.
+_OMDOP_VILKAR, _OMDOP_TABELL, _OMDOP_KOLONNE = (
+    "omdøp vilkår", "omdøp tabell", "omdøp kolonne")
 # Slaget `_plpgsql_setninger()` gir en `EXECUTE` — en setning som først blir
 # til når migrasjonen kjører. Se `_lesdynamisk()`.
 _DYNAMISK = "dynamisk"
@@ -892,7 +907,11 @@ def _setningene(sql: str):
 
 
 def _hendelsene(sql: str) -> list[tuple]:
-    """[(slag, tabell, navn, uttrykk, betinget[, kolonne])] i kjørerekkefølge."""
+    """[(slag, tabell, navn, uttrykk, betinget[, kolonne])] i kjørerekkefølge.
+
+    Et omdøp fyller de to midterste plassene med navnet det flyttes FRA og
+    navnet det flyttes TIL, se `_lesomdop()`.
+    """
     ut: list[tuple] = []
     for stmt, tekst in _setningene(sql):
         _lesstatement(stmt, tekst, ut, False)
@@ -914,8 +933,71 @@ def _lesstatement(stmt, tekst: str, ut: list, betinget: bool) -> None:
             else:
                 _lesvilkar(cmd.def_, tabell, ut, betinget)
         return
+    if isinstance(stmt, pglast.ast.RenameStmt):
+        _lesomdop(stmt, ut, betinget)
+        return
     if isinstance(stmt, pglast.ast.DoStmt) and _kroppen(stmt)[1] == "plpgsql":
         _leskropp(tekst, ut, betinget)
+
+
+# Omdøpene som flytter en nøkkel porten fører tilstand under. Alt annet et
+# `RENAME` kan treffe — en indeks, en trigger, en sekvens, en rolle — har sitt
+# eget navnerom og kan hverken flytte et CHECK, oppta et vilkårsnavn eller
+# endre hvilken (tabell, kolonne) katalogen måles mot.
+_OMDOPSSLAG = {
+    pglast.enums.ObjectType.OBJECT_TABCONSTRAINT: _OMDOP_VILKAR,
+    pglast.enums.ObjectType.OBJECT_TABLE: _OMDOP_TABELL,
+    pglast.enums.ObjectType.OBJECT_COLUMN: _OMDOP_KOLONNE,
+}
+
+
+def _lesomdop(stmt, ut: list, betinget: bool) -> None:
+    """Hendelsen i et `ALTER TABLE … RENAME …`.
+
+    Codex P2 på #118, tjueandre runde: `RenameStmt` gikk rett forbi
+    dispatcheren. Et omdøp legger ingenting til og fjerner ingenting, så det så
+    ut som en setning porten trygt kunne overse — men den fører tilstand under
+    NØKLER, og et omdøp flytter en av dem. Frigjør en migrasjon navnet `c` og
+    legger et VIDERE vilkår på under det, håndhever PostgreSQL begge; modellen
+    skrev det videre vilkåret over det smale, og porten kunne slippe inn en
+    klasse databasen avviser.
+
+    De tre nøklene er vilkårsnavnet, tabellen og kolonnen, og hvert av
+    omdøpene som treffer dem leses for seg, se `_omdop()`.
+
+    ET BETINGET omdøp av TABELL eller KOLONNE gis fra seg som uvisst for alt.
+    Kjørte grenen ikke, står hele tilstanden under de gamle nøklene, og det
+    finnes ingen tolkning som bare snevrer inn: porten kan ikke vite hvilken
+    tabell katalogen skal måles mot. Det koster en rød port, ikke et hull. Et
+    betinget omdøp av et VILKÅR har derimot et slikt svar — vilkåret gjelder
+    uansett hvilket navn det bærer — se `_omdop()`.
+    """
+    slag = _OMDOPSSLAG.get(stmt.renameType)
+    if slag is None or stmt.relation is None:
+        return
+    if betinget and slag is not _OMDOP_VILKAR:
+        ut.append(_alt_uvisst(betinget))
+        return
+    tabell = _navn(stmt.relation)
+    if slag is _OMDOP_TABELL:
+        # `RENAME TO` gir navnet uten skjema; tabellen blir liggende der den lå.
+        nytt = _tabellnavn(stmt.relation.schemaname, stmt.newname)
+        ut.append((_OMDOP_TABELL, tabell, None, nytt, betinget))
+        return
+    ut.append((slag, tabell, stmt.subname, stmt.newname, betinget))
+
+
+def _alt_uvisst(betinget: bool) -> tuple:
+    """Hendelsen som sier at porten ikke vet noe om registeret lenger.
+
+    Den føres under `_UKJENT_TABELL`/`_UKJENT_KOLONNE`, som `_registerenum()`
+    snitter mot uansett hvilken kolonne den spør om — så svaret blir uvisst der
+    katalogen faktisk måles, og porten blir rød. Det er den ene retningen som
+    er trygg: en setning ingen kan lese, skal ikke kunne leses som «ingenting
+    skjedde».
+    """
+    return (_LEGG_PA, _UKJENT_TABELL, _DYN_NAVN,
+            {_UKJENT_KOLONNE: {ULESELIG_SQL}}, betinget, None)
 
 
 def _lesvilkar(node, tabell: str, ut: list, betinget: bool,
@@ -1065,8 +1147,7 @@ def _lesdynamisk(uttrykk: dict, ut: list, betinget: bool) -> None:
     skjelett = _skjelett(_uttrykket(uttrykk))
     lest = _dynamiske_hendelser(skjelett, betinget) if skjelett else None
     if lest is None:
-        ut.append((_LEGG_PA, _UKJENT_TABELL, _DYN_NAVN,
-                   {_UKJENT_KOLONNE: {ULESELIG_SQL}}, betinget, None))
+        ut.append(_alt_uvisst(betinget))
         return
     ut += lest
 
@@ -1108,8 +1189,18 @@ def _dynamiske_hendelser(skjelett: str, betinget: bool) -> list | None:
 
 
 def _ukjentgjort(hendelse: tuple) -> tuple:
-    """Hendelsen med hullene byttet mot nøklene for «porten vet ikke»."""
+    """Hendelsen med hullene byttet mot nøklene for «porten vet ikke».
+
+    ET OMDØP tåler ikke et hull. De andre hendelsene bærer uvissheten sin i en
+    nøkkel — et vilkår på en ukjent tabell snittes inn som ukjent — men et
+    omdøp FLYTTER en nøkkel, og et omdøp med ukjent avsender eller mottaker har
+    ingen slik form: `_UKJENT_TABELL` kan ikke være både navnet det flyttes fra
+    og navnet det ikke ble flyttet fra. Da er svaret uvisst for alt.
+    """
     slag, tabell, navn, uttrykk, betinget = hendelse[:5]
+    if slag in (_OMDOP_VILKAR, _OMDOP_TABELL, _OMDOP_KOLONNE):
+        return hendelse if _HULL not in f"{tabell}{navn}{uttrykk}" \
+            else _alt_uvisst(betinget)
     tabell = _UKJENT_TABELL if _HULL in tabell else tabell
     if slag is _NAVN:
         return (slag, tabell, navn, uttrykk, betinget)
@@ -1276,6 +1367,9 @@ def _registerets_enums(
             if slag is _NAVN:
                 opptatt.setdefault(tabell, set()).add(navn)
                 continue
+            if slag in (_OMDOP_VILKAR, _OMDOP_TABELL, _OMDOP_KOLONNE):
+                _omdop(vilkar, opptatt, hendelse)
+                continue
             if slag is _SLIPP:
                 if hendelse[4]:
                     # Et slipp bak en betingelse er ikke kjent kjørt, og et
@@ -1373,6 +1467,60 @@ def _sidestilt_navn(vilkar: dict, tabell: str, navn: str) -> str:
     while (tabell, f"{navn}\0{nr}") in vilkar:
         nr += 1
     return f"{navn}\0{nr}"
+
+
+def _omdop(vilkar: dict, opptatt: dict, hendelse: tuple) -> None:
+    """Flytt tilstanden et `RENAME` flytter nøkkelen for.
+
+    Codex P2 på #118, tjueandre runde. PostgreSQL omdøper INGENTING av seg
+    selv: et vilkår beholder navnet sitt når tabellen eller kolonnen skifter
+    navn, og en tabell beholder vilkårene sine når den skifter navn. De tre
+    omdøpene er derfor tre rene flyttinger, hver av sin nøkkel.
+
+    ET VILKÅR som får nytt navn tar tilstanden sin med seg, og det GAMLE navnet
+    blir ledig. Det er hele funnet: er navnet ledig, kan en senere migrasjon
+    legge et VIDERE vilkår på under det, og da håndhever databasen begge. Ble
+    omdøpet oversett, skrev det videre vilkåret seg over det smale i modellen,
+    og porten meldte en klasse databasen avviser som gyldig.
+
+    Er det nye navnet ALT i bruk av et vilkår som står, ville PostgreSQL
+    avvist omdøpet — men porten skal ikke miste et vilkår på en setning den
+    kanskje leser i feil rekkefølge, så den flyttede tilstanden legges
+    SIDESTILT og begge blir stående i snittet.
+
+    ET BETINGET omdøp av et vilkår har et svar som aldri utvider: vilkåret
+    gjelder uansett om grenen kjørte, bare under ett av to navn. Tilstanden
+    legges sidestilt — ingen `DROP CONSTRAINT` kan treffe den — og BEGGE
+    navnene regnes som opptatte, siden porten ikke vet hvilket som er i bruk.
+    Et betinget omdøp av tabell eller kolonne kommer aldri hit, se
+    `_lesomdop()`.
+    """
+    slag, tabell, fra, til, betinget = hendelse[:5]
+    if slag is _OMDOP_TABELL:
+        for nokkel in [n for n in vilkar if n[0] == tabell]:
+            navn = nokkel[1] if (til, nokkel[1]) not in vilkar \
+                else _sidestilt_navn(vilkar, til, nokkel[1])
+            vilkar[(til, navn)] = vilkar.pop(nokkel)
+        if tabell in opptatt:
+            opptatt.setdefault(til, set()).update(opptatt.pop(tabell))
+        return
+    if slag is _OMDOP_KOLONNE:
+        for nokkel, bindinger in vilkar.items():
+            if nokkel[0] == tabell and fra in bindinger:
+                bindinger[til] = bindinger.pop(fra)
+        return
+    opptatt.setdefault(tabell, set()).add(til)
+    if betinget:
+        opptatt[tabell].add(fra)
+    else:
+        opptatt[tabell].discard(fra)
+    if (tabell, fra) not in vilkar:
+        return
+    flyttet = vilkar.pop((tabell, fra))
+    if betinget or (tabell, til) in vilkar:
+        vilkar[(tabell, _sidestilt_navn(vilkar, tabell, til))] = flyttet
+    else:
+        vilkar[(tabell, til)] = flyttet
 
 
 def _registerenum(kolonne: str) -> set[str]:
@@ -2264,6 +2412,123 @@ def test_et_vilkaar_uten_bindinger_bruker_opp_navnet_sitt(tmp_path,
         "direkte", "kompenserende"}, (
         "slippet traff enumvilkåret — vilkåret uten bindinger ga aldri fra seg "
         "navnet sitt til modellen")
+
+
+def test_et_omdopt_vilkaar_frigjor_navnet_sitt(tmp_path):
+    """Omdøpet gjør navnet ledig, og det neste vilkåret der er et NYTT vilkår.
+
+    Codex P2 på #118, tjueandre runde. `ALTER TABLE … RENAME CONSTRAINT` gikk
+    rett forbi leseren. Et omdøp legger ingenting til og fjerner ingenting, så
+    setningen så ut som en porten trygt kunne overse — men den frigjør navnet,
+    og et videre vilkår lagt på under det gamle navnet er da et vilkår NUMMER
+    TO. PostgreSQL håndhever begge, og en verdi må stå i begge.
+
+    Uten omdøpet i modellen skrev det videre vilkåret seg over det smale på
+    samme nøkkel, og porten meldte `irreversibel` som gyldig mens databasen
+    avviser den.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE modulkontrakt (\n"
+        "    reversibilitet TEXT NOT NULL\n"
+        "        CONSTRAINT rev_chk\n"
+        "        CHECK (reversibilitet IN ('direkte', 'kompenserende')));\n",
+        "ALTER TABLE modulkontrakt RENAME CONSTRAINT rev_chk TO rev_chk_gml;\n"
+        "ALTER TABLE modulkontrakt ADD CONSTRAINT rev_chk\n"
+        "    CHECK (reversibilitet IN\n"
+        "           ('direkte', 'kompenserende', 'irreversibel'));\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende.get((MODULKONTRAKT, "reversibilitet")) == {
+        "direkte", "kompenserende"}, (
+        "det videre vilkåret erstattet det smale — omdøpet ble oversett, så "
+        "begge to sto på samme nøkkel")
+
+
+def test_et_omdopt_vilkaar_slippes_paa_det_nye_navnet(tmp_path):
+    """Og omdøpet FLYTTER vilkåret: slippet treffer det på det nye navnet.
+
+    Motstykket til `test_et_omdopt_vilkaar_frigjor_navnet_sitt`. Å bare
+    reservere det nye navnet ville holdt begge vilkårene stående her, og porten
+    ville avvist `irreversibel` — en verdi databasen godtar etter slippet.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE modulkontrakt (\n"
+        "    reversibilitet TEXT NOT NULL\n"
+        "        CONSTRAINT rev_chk\n"
+        "        CHECK (reversibilitet IN ('direkte', 'kompenserende')));\n",
+        "ALTER TABLE modulkontrakt RENAME CONSTRAINT rev_chk TO rev_chk_gml;\n"
+        "ALTER TABLE modulkontrakt ADD CONSTRAINT rev_chk\n"
+        "    CHECK (reversibilitet IN ('direkte', 'irreversibel'));\n"
+        "ALTER TABLE modulkontrakt DROP CONSTRAINT rev_chk_gml;\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende.get((MODULKONTRAKT, "reversibilitet")) == {
+        "direkte", "irreversibel"}, (
+        "slippet fant ikke det omdøpte vilkåret — omdøpet reserverte navnet "
+        "uten å flytte tilstanden med seg")
+
+
+def test_en_omdopt_tabell_tar_vilkaarene_sine_med_seg(tmp_path):
+    """PostgreSQL omdøper ingen vilkår når tabellen skifter navn.
+
+    Vilkårene følger relasjonen, og de heter det de het. Ble omdøpet oversett,
+    sto enumvilkåret under det GAMLE tabellnavnet i modellen, og oppslaget mot
+    `modulkontrakt` fant ingenting å måle katalogen mot.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE modulkontrakt_utkast (\n"
+        "    reversibilitet TEXT NOT NULL\n"
+        "        CHECK (reversibilitet IN ('direkte', 'kompenserende')));\n",
+        "ALTER TABLE modulkontrakt_utkast RENAME TO modulkontrakt;\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende.get((MODULKONTRAKT, "reversibilitet")) == {
+        "direkte", "kompenserende"}, (
+        "vilkåret ble liggende igjen under det gamle tabellnavnet")
+
+
+def test_en_omdopt_kolonne_tar_vilkaaret_sitt_med_seg(tmp_path):
+    """Et CHECK peker på KOLONNEN, ikke på navnet den hadde da det ble skrevet.
+
+    Skifter kolonnen navn, følger vilkåret med — uendret, og fortsatt
+    håndhevet. Sto modellen igjen med det gamle kolonnenavnet, ville katalogens
+    `rev` blitt målt mot ingenting.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE modulkontrakt (\n"
+        "    rev TEXT NOT NULL\n"
+        "        CHECK (rev IN ('direkte', 'kompenserende')));\n",
+        "ALTER TABLE modulkontrakt RENAME COLUMN rev TO reversibilitet;\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende.get((MODULKONTRAKT, "reversibilitet")) == {
+        "direkte", "kompenserende"}, (
+        "vilkåret ble liggende igjen under det gamle kolonnenavnet")
+
+
+@pytest.mark.parametrize("omdop", [
+    "ALTER TABLE modulkontrakt RENAME TO modulkontrakt_gml;",
+    "ALTER TABLE modulkontrakt RENAME COLUMN reversibilitet TO rev;",
+])
+def test_et_betinget_omdop_av_tabell_eller_kolonne_er_uvisst(tmp_path, omdop):
+    """Kjørte grenen ikke, står tilstanden under de gamle nøklene.
+
+    Det finnes ingen tolkning som bare snevrer inn: porten kan ikke vite
+    hvilken tabell eller kolonne katalogen skal måles mot. Da er svaret uvisst,
+    og porten blir rød — ikke stille videre enn databasen.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        _LAGER_VILKAR,
+        "DO $$ BEGIN\n"
+        "    IF EXISTS (SELECT 1 FROM pg_class) THEN\n"
+        f"        {omdop}\n"
+        "    END IF;\n"
+        "END $$;\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende.get((_UKJENT_TABELL, _UKJENT_KOLONNE)) == {
+        ULESELIG_SQL}, (
+        "det betingede omdøpet gikk gjennom som «ingenting skjedde»")
 
 
 @pytest.mark.parametrize("vilkar", [
