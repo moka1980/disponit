@@ -1074,10 +1074,20 @@ _DROPP_RE = re.compile(
     r"""DROP\s+CONSTRAINT(?:\s+IF\s+EXISTS)?\s+([\w."]+)""", re.I)
 
 
-# Dollarsitering: `$$…$$` og `$tagg$…$tagg$`. Innholdet er DATA — ingenting
-# escaper der inne, og formen brukes nettopp til tekst som bærer fnutter og
-# semikolon: kropper til `DO`-blokker og funksjoner.
+# Dollarsitering: `$$…$$` og `$tagg$…$tagg$`. Formen brukes til tekst som bærer
+# fnutter og semikolon, og ingenting escaper der inne.
 _DOLLARTAGG_RE = re.compile(r"\$(?:[A-Za-z_]\w*)?\$")
+
+# Men en dollarsitert tekst er ikke ett slag (Codex P2 på #118, fjortende
+# runde). ETT sted er den en KROPP som kjøres nå: `DO $$ … $$` utfører sine
+# egne setninger i det migrasjonen kjører, og repoets konvensjon er nettopp å
+# pakke betinget DDL slik — 035 §6 legger `varsel_art_chk` på `public.varsel`
+# inne i en `DO`-blokk. Overalt ellers er den DATA: `AS $$ … $$` definerer en
+# funksjonskropp uten å kjøre den, og `RAISE NOTICE $$ … $$` skriver en melding.
+#
+# Hvilket av de to det er, leses av det som står FORAN taggen, ikke av
+# innholdet. `DO` tar valgfritt `LANGUAGE <navn>` mellom seg og kroppen.
+_DOKROPP_RE = re.compile(r"\bDO\b(?:\s+LANGUAGE\s+[\w.\"]+)?\s*\Z", re.I)
 
 # Verdien en CHECK-liste får når porten ikke kan lese den. Backslash kan ikke
 # være en enumverdi skrevet rett fram, så den kan ikke kollidere med en ekte.
@@ -1177,15 +1187,30 @@ def _kjort_sql(sql: str) -> str:
     hoppes derfor over først — de er data, ikke kommentarer.
 
     Og DOLLARSITERT tekst ble lest som setninger (Codex P2 på #118, trettende
-    runde). `DO $body$ … RAISE NOTICE $$CHECK (reversibilitet IN ('oppfunnet'))$$
-    … $body$;` KJØRER ingen slik CHECK — PostgreSQL skriver en melding — men
-    porten leste vilkåret som gjeldende tilstand og ville sluppet klassen inn.
-    Formen er ikke eksotisk her: konvensjonen i repoets migrasjoner er nettopp å
-    pakke betinget DDL i en `DO`-blokk. Innholdet blankes derfor ut, slik at
-    tekst i en slik streng hverken kan legge til eller slette et vilkår.
+    runde). `RAISE NOTICE $$CHECK (reversibilitet IN ('oppfunnet'))$$` KJØRER
+    ingen slik CHECK — PostgreSQL skriver en melding — men porten leste vilkåret
+    som gjeldende tilstand og ville sluppet klassen inn.
+
+    Så ble ALT dollarsitert maskert, og det var å bytte hullet mot det motsatte
+    hullet (Codex P2 på #118, fjortende runde). `DO $$ BEGIN … END $$` er ikke
+    data: PostgreSQL KJØRER kroppen der og da, og repoets konvensjon er nettopp
+    å pakke betinget DDL slik — 035 §6 legger `varsel_art_chk` på
+    `public.varsel` inne i en `DO`-blokk, og 035 er også grunnen til at
+    tabellnavn må normaliseres over `public.`. Med hele kroppen maskert ble et
+    innpakket `DROP CONSTRAINT` usynlig, så et sluppet vilkår ble stående som
+    gjeldende, og en innpakket innstramming forsvant ut av snittet. Begge veier
+    kan katalogporten godta en klasse PostgreSQL avviser.
+
+    Slaget avgjøres av det som står FORAN taggen, ikke av innholdet: en kropp
+    etter `DO` leses videre som kjørt SQL — bare taggene blankes — og alt annet
+    dollarsitert er data og blankes helt. `AS $$ … $$` DEFINERER en funksjon
+    uten å kjøre den, og hører derfor til data sammen med meldingsteksten.
+    Lesningen av kroppen er den samme funksjonen om igjen, så en dollarsitert
+    tekst INNE i kroppen er data på nytt — `RAISE NOTICE $$…$$` binder
+    fortsatt ingenting.
 
     Dynamisk DDL som FAKTISK kjøres — `EXECUTE format(...)` med et vilkår i en
-    dollarsitert streng — blir dermed usynlig for porten. Det er med vilje: en
+    vanlig streng — blir dermed usynlig for porten. Det er med vilje: en
     setning som først blir til når migrasjonen kjører, kan ikke leses av en
     tekstlesning uansett, og et gjettet vilkår er verre enn ingen. `_registerenum()`
     sier fra hvis kolonnen katalogen måles mot ender opp uten vilkår.
@@ -1196,20 +1221,42 @@ def _kjort_sql(sql: str) -> str:
     linja slutter.
     """
     ut = list(sql)
-    i, n = 0, len(sql)
-    while i < n:
+    _mask_ikkekjort(sql, ut, 0, len(sql))
+    return "".join(ut)
+
+
+def _mask_ikkekjort(sql: str, ut: list, a: int, b: int) -> None:
+    """Blank ut alt i `sql[a:b]` som ikke er en kjørt setning. Se `_kjort_sql()`.
+
+    Egen funksjon fordi kroppen til en `DO`-blokk er nøyaktig samme spørsmål om
+    igjen på et mindre spenn: den kjøres, så kommentarer og strenger inne i den
+    skal maskeres på samme måte som utenfor.
+    """
+    i = a
+    while i < b:
         slutt = _sqlliteral(sql, i)
         if slutt >= 0:
+            slutt = min(slutt, b)
             if sql[i] == "$":
-                _blank(ut, i, slutt)
+                tagg = _DOLLARTAGG_RE.match(sql, i).group(0)
+                if _er_dokropp(ut, a, i):
+                    # Kroppen kjøres: taggene bort, innholdet leses videre.
+                    innen = min(i + len(tagg), slutt)
+                    lukk = sql.find(tagg, innen, slutt)
+                    lukk = slutt if lukk < 0 else lukk
+                    _blank(ut, i, innen)
+                    _blank(ut, lukk, slutt)
+                    _mask_ikkekjort(sql, ut, innen, lukk)
+                else:
+                    _blank(ut, i, slutt)
             i = slutt
             continue
         if sql.startswith("--", i):
-            j = sql.find("\n", i)
-            j = n if j < 0 else j
+            j = sql.find("\n", i, b)
+            j = b if j < 0 else j
         elif sql.startswith("/*", i):
             j, dybde = i + 2, 1
-            while j < n and dybde:
+            while j < b and dybde:
                 if sql.startswith("/*", j):
                     dybde, j = dybde + 1, j + 2
                 elif sql.startswith("*/", j):
@@ -1221,7 +1268,16 @@ def _kjort_sql(sql: str) -> str:
             continue
         _blank(ut, i, j)
         i = j
-    return "".join(ut)
+
+
+def _er_dokropp(ut: list, a: int, i: int) -> bool:
+    """Er den dollarsiterte teksten som åpner i `i` kroppen til en `DO`?
+
+    Spørsmålet stilles til den alt MASKERTE teksten foran: lesningen går
+    forfra, så kommentarer før `i` er allerede byttet mot mellomrom, og et
+    `-- DO` i en kommentar kan derfor ikke gjøre en meldingstekst til en kropp.
+    """
+    return bool(_DOKROPP_RE.search("".join(ut[max(a, i - 120):i])))
 
 
 def _blank(ut: list, i: int, j: int) -> None:
@@ -1606,6 +1662,83 @@ def test_dollarsitert_tekst_er_ikke_kjorte_setninger(tmp_path, senere):
     assert gjeldende[(MODULKONTRAKT, "reversibilitet")] == {
         "direkte", "kompenserende"}
     assert "oppfunnet" not in noen_gang
+
+
+@pytest.mark.parametrize("senere,gjelder", [
+    # Formen 035 §6 bruker: betinget DDL pakket i en `DO`-blokk. Vilkåret
+    # KJØRER, og strammer inn.
+    ("DO $$ BEGIN\n"
+     "    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'r') THEN\n"
+     "        ALTER TABLE public.modulkontrakt ADD CONSTRAINT r\n"
+     "            CHECK (reversibilitet IN ('direkte'));\n"
+     "    END IF;\n"
+     "END $$;\n", {"direkte"}),
+    # Og motsatt vei: et innpakket slipp FJERNER vilkåret det peker på.
+    ("DO $$ BEGIN\n"
+     "    ALTER TABLE modulkontrakt\n"
+     "        DROP CONSTRAINT modulkontrakt_reversibilitet_check;\n"
+     "END $$;\n", None),
+    # `DO` tar valgfritt `LANGUAGE` mellom seg og kroppen.
+    ("DO LANGUAGE plpgsql $krop$ BEGIN\n"
+     "    ALTER TABLE modulkontrakt ADD CONSTRAINT r\n"
+     "        CHECK (reversibilitet IN ('direkte'));\n"
+     "END $krop$;\n", {"direkte"}),
+    # En kommentar inne i kroppen er fortsatt en kommentar.
+    ("DO $$ BEGIN\n"
+     "    -- ALTER TABLE modulkontrakt ADD CONSTRAINT r\n"
+     "    --     CHECK (reversibilitet IN ('oppfunnet'));\n"
+     "    ALTER TABLE modulkontrakt ADD CONSTRAINT r\n"
+     "        CHECK (reversibilitet IN ('direkte'));\n"
+     "END $$;\n", {"direkte"}),
+    # Men en funksjonsKROPP defineres, den kjøres ikke — `AS $$…$$` er data.
+    ("CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $$ BEGIN\n"
+     "    ALTER TABLE modulkontrakt ADD CONSTRAINT r\n"
+     "        CHECK (reversibilitet IN ('oppfunnet'));\n"
+     "END $$;\n", {"direkte", "kompenserende"}),
+])
+def test_en_do_kropp_kjorer_sine_egne_setninger(tmp_path, senere, gjelder):
+    """`DO $$ … $$` er en kropp som KJØRES, ikke en tekst som bæres.
+
+    Forrige runde maskerte alt dollarsitert for å stoppe en `RAISE
+    NOTICE`-melding fra å bli lest som et vilkår, og byttet dermed hullet mot
+    det motsatte (Codex P2 på #118, fjortende runde). Repoets konvensjon er
+    nettopp å pakke betinget DDL i en `DO`-blokk — 035 §6 legger
+    `varsel_art_chk` på `public.varsel` slik — og med hele kroppen maskert ble
+    et innpakket slipp usynlig, så et fjernet vilkår ble stående som gjeldende,
+    mens en innpakket innstramming falt ut av snittet. Begge veier kan
+    katalogporten godta en `kl`- eller `rev`-klasse PostgreSQL avviser.
+
+    Slaget avgjøres av det som står FORAN taggen: etter `DO` er det en kropp,
+    ellers er det data. Derfor står funksjonsdefinisjonen med her — `AS $$…$$`
+    definerer uten å kjøre, og skal fortsatt ikke binde noe.
+    """
+    mappe = _migrasjoner(tmp_path, _LAGER_VILKAR, senere)
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende.get((MODULKONTRAKT, "reversibilitet")) == gjelder
+
+
+def test_repoets_do_blokker_leses_som_kjorte():
+    """035 §6 legger vilkår på `varsel` inne i en `DO`-blokk, og de må sees.
+
+    Prøven måler repoets egne migrasjoner og ikke en syntetisk fil: den er det
+    som viser at maskeringen forrige runde faktisk gjorde en KJØRT setning
+    usynlig her og nå, ikke bare i en tenkt migrasjon. `varsel` er dessuten den
+    tabellen `_tabellnavn()` normaliserer `public.`-prefikset for, og den
+    normaliseringen har ingen virkning hvis setningen som bærer prefikset er
+    maskert bort.
+    """
+    gjeldende, noen_gang = _registerets_enums()
+    # `tokenfamilie_utloper` og `modultoken` står BARE i de to vilkårene 035 §6
+    # legger på inne i `DO $$ … $$`. Verdiene 026 alt bandt sier ingenting —
+    # de står der uansett om kroppen leses eller maskeres.
+    assert {"tokenfamilie_utloper", "modultoken"} <= noen_gang, (
+        "vilkårene 035 §6 legger på inne i en DO-blokk er ikke lest")
+    assert ("varsel", "art") in gjeldende
+    # Og kolonnene katalogen faktisk måles mot står uendret.
+    assert gjeldende[(MODULKONTRAKT, "sideeffektklasse")] == {
+        "ekstern_lesing", "krever_outbox", "sideeffektfri"}
+    assert gjeldende[(MODULKONTRAKT, "reversibilitet")] == {
+        "direkte", "irreversibel", "kompenserende"}
 
 
 @pytest.mark.parametrize("senere,gjelder", [
