@@ -873,6 +873,9 @@ def _snitt(a: set[str], b: set[str]) -> set[str]:
 # eller et vilkår av en annen type som bare OPPTAR navnet sitt. `betinget` er
 # sant når setningen står bak en gren i en `DO`-kropp.
 _LEGG_PA, _SLIPP, _NAVN = "legg på", "slipp", "navn"
+# En TABELL som slippes. Den tar med seg alt porten fører om den: vilkårene,
+# navnene de opptar, og at porten har lest den. Se `_registerets_enums()`.
+_SLIPP_TABELL = "slipp tabell"
 # Et `ALTER TABLE … RENAME …`. Et omdøp legger hverken til eller fjerner et
 # vilkår, men det flytter NØKKELEN vilkåret står under — og nøkkelen er det
 # eneste et senere slipp har å treffe med. Se `_lesomdop()`.
@@ -942,6 +945,13 @@ def _lesstatement(stmt, tekst: str, ut: list, betinget: bool) -> None:
     oppføring alt foreldet — å fjerne den er å følge databasen, ikke å gjette.
     Det er `ALTER TABLE IF EXISTS` som gjør et slipp betinget, for der er det
     TABELLEN som kan mangle.
+
+    ET `DROP TABLE` er en hendelse som FJERNER (Codex P2 på #118, tjuefjerde
+    runde). Bare tabellslippet leses: alt annet et `DROP` kan treffe, kan i
+    verste fall etterlate modellen med et vilkår databasen ikke har lenger —
+    altså et smalere svar, en rød port — mens en tabell som slippes og
+    opprettes på nytt er den ene formen som gjør porten RØD på en gyldig
+    migrasjon. Se `_registerets_enums()`.
     """
     if isinstance(stmt, pglast.ast.CreateStmt):
         tabell = _navn(stmt.relation)
@@ -964,6 +974,15 @@ def _lesstatement(stmt, tekst: str, ut: list, betinget: bool) -> None:
         return
     if isinstance(stmt, pglast.ast.RenameStmt):
         _lesomdop(stmt, ut, betinget)
+        return
+    if isinstance(stmt, pglast.ast.DropStmt) \
+            and stmt.removeType == pglast.enums.ObjectType.OBJECT_TABLE:
+        for objekt in stmt.objects or ():
+            ledd = [d.sval for d in objekt if isinstance(d, pglast.ast.String)]
+            ut.append((_SLIPP_TABELL,
+                       _tabellnavn(ledd[-2] if len(ledd) > 1 else None,
+                                   ledd[-1]),
+                       None, None, betinget))
         return
     if isinstance(stmt, pglast.ast.DoStmt) and _kroppen(stmt)[1] == "plpgsql":
         _leskropp(tekst, ut, betinget)
@@ -1179,8 +1198,10 @@ def _lesdynamisk(uttrykk: dict, ut: list, betinget: bool) -> None:
     innstramming på en ukjent tabell gjør kolonnen uviss i stedet for å
     forsvinne.
 
-    Et dynamisk SLIPP gis fra seg: et vilkår som blir stående kan bare gjøre
-    snittet smalere, og det er den trygge retningen.
+    Et dynamisk SLIPP gis fra seg — også et slipp av en hel TABELL: det som
+    blir stående kan bare gjøre snittet smalere, og det er den trygge
+    retningen. Å fjerne tilstand på en setning porten bare gjetter formen på,
+    er derimot å gjøre svaret videre.
 
     Lar setningen seg ikke gjenskape i det hele tatt, er svaret uvisst for ALT
     — `(_UKJENT_TABELL, _UKJENT_KOLONNE)` — og porten blir rød. Det er meningen:
@@ -1226,7 +1247,8 @@ def _dynamiske_hendelser(skjelett: str, betinget: bool) -> list | None:
         ut: list = []
         for stmt, tekst in setninger:
             _lesstatement(stmt, tekst, ut, betinget)
-        return [_ukjentgjort(h) for h in ut if h[0] is not _SLIPP]
+        return [_ukjentgjort(h) for h in ut
+                if h[0] not in (_SLIPP, _SLIPP_TABELL)]
     return None
 
 
@@ -1436,6 +1458,23 @@ def _registerets_enums(
                 continue
             if slag in (_OMDOP_VILKAR, _OMDOP_TABELL, _OMDOP_KOLONNE):
                 _omdop(vilkar, opptatt, laget, hendelse)
+                continue
+            if slag is _SLIPP_TABELL:
+                # Tabellen finnes ikke lenger, og da finnes ingen av
+                # vilkårene på den heller (Codex P2 på #118, tjuefjerde
+                # runde). Uten dette ble en tabell som slippes og opprettes
+                # på nytt snittet mot vilkår fra tabellen som ER borte, og
+                # porten avviste verdier den nye tabellen godtar. Alle tre
+                # nøklene går: vilkårene, navnene de opptok, og at porten har
+                # lest tabellen — den nye er en annen tabell.
+                if hendelse[4]:
+                    # Et betinget slipp er ikke kjent utført, og et vilkår som
+                    # blir stående kan bare gjøre snittet smalere.
+                    continue
+                for nokkel in [n for n in vilkar if n[0] == tabell]:
+                    del vilkar[nokkel]
+                opptatt.pop(tabell, None)
+                laget.discard(tabell)
                 continue
             if slag is _SLIPP:
                 if hendelse[4]:
@@ -2610,6 +2649,99 @@ def test_en_erklaering_som_kan_hoppes_over_er_betinget(tmp_path, gjentakelsen):
         "direkte", "kompenserende"}, (
         "den gjentatte erklæringen ble lest som utført, og det videre "
         "vilkåret skrev seg over det smale som står")
+
+
+def test_en_sluppet_tabell_tar_vilkaarene_sine_med_seg(tmp_path):
+    """`DROP TABLE` fjerner tabellen, og da finnes ingen av vilkårene på den.
+
+    Codex P2 på #118, tjuefjerde runde. Leseren hadde ingen gren for `DROP`,
+    så vilkårene ble stående i modellen. Opprettes tabellen på nytt — med et
+    VIDERE vilkår under et annet navn — snittet porten det nye mot et vilkår
+    som ikke finnes noe sted, og avviste `irreversibel`, en verdi den nye
+    tabellen godtar.
+
+    Retningen er den samme som den omdøpte malen i forrige runde: ikke et
+    hull, men en rød port på en migrasjon som er i orden.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE modulkontrakt (\n"
+        "    reversibilitet TEXT NOT NULL\n"
+        "        CONSTRAINT rev_smal CHECK (reversibilitet IN\n"
+        "            ('direkte', 'kompenserende')));\n",
+        "DROP TABLE modulkontrakt;\n"
+        "CREATE TABLE modulkontrakt (\n"
+        "    reversibilitet TEXT NOT NULL\n"
+        "        CONSTRAINT rev_bred CHECK (reversibilitet IN\n"
+        "            ('direkte', 'kompenserende', 'irreversibel')));\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende.get((MODULKONTRAKT, "reversibilitet")) == {
+        "direkte", "kompenserende", "irreversibel"}, (
+        "vilkåret fra den sluppede tabellen ble stående og snevret inn den "
+        "nye")
+
+
+def test_en_sluppet_tabell_gir_fra_seg_navnene_sine(tmp_path):
+    """Med tabellen borte er vilkårsnavnene på den ledige igjen.
+
+    Den andre halvdelen av samme funn, og den gjør skade den motsatte veien.
+    `opptatt` sto igjen med navnene fra den sluppede tabellen, så det
+    unavngitte CHECK-et på den NYE tabellen ble skjøvet til
+    `…_check1` i modellen mens PostgreSQL ga det basisnavnet.
+
+    Slippet til slutt treffer da i databasen og bommer i modellen: databasen
+    står igjen uten det smale vilkåret, modellen med det, og porten avviser en
+    verdi registeret godtar.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE modulkontrakt (\n"
+        "    reversibilitet TEXT NOT NULL\n"
+        "        CHECK (reversibilitet IN ('direkte', 'kompenserende')));\n",
+        "DROP TABLE modulkontrakt;\n"
+        "CREATE TABLE modulkontrakt (\n"
+        "    reversibilitet TEXT NOT NULL\n"
+        "        CHECK (reversibilitet IN ('direkte', 'kompenserende')),\n"
+        "    CONSTRAINT rev_bred CHECK (reversibilitet IN\n"
+        "        ('direkte', 'kompenserende', 'irreversibel')));\n",
+        "ALTER TABLE modulkontrakt\n"
+        "    DROP CONSTRAINT modulkontrakt_reversibilitet_check;\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende.get((MODULKONTRAKT, "reversibilitet")) == {
+        "direkte", "kompenserende", "irreversibel"}, (
+        "slippet bommet — modellen holdt av et navn på en tabell som ikke "
+        "finnes, og skjøv det unavngitte vilkåret til en teller databasen "
+        "ikke har")
+
+
+def test_et_betinget_tabellslipp_fjerner_ingenting(tmp_path):
+    """Et `DROP TABLE` bak en gren er ikke kjent utført.
+
+    Samme regel som for et betinget vilkårsslipp: kjørte grenen ikke, står
+    tabellen der med vilkårene sine. Å fjerne dem ville vært å gjette, og
+    gjetningen går den ene veien som gjør skade — porten ville godtatt
+    `irreversibel`, som `rev_smal` avviser hvis grenen ikke kjørte.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE modulkontrakt (\n"
+        "    reversibilitet TEXT NOT NULL\n"
+        "        CONSTRAINT rev_smal CHECK (reversibilitet IN\n"
+        "            ('direkte', 'kompenserende')));\n",
+        "DO $$\n"
+        "BEGIN\n"
+        "    IF (SELECT count(*) FROM modulkontrakt) = 0 THEN\n"
+        "        DROP TABLE modulkontrakt;\n"
+        "    END IF;\n"
+        "END $$;\n"
+        "ALTER TABLE modulkontrakt ADD CONSTRAINT rev_bred\n"
+        "    CHECK (reversibilitet IN\n"
+        "           ('direkte', 'kompenserende', 'irreversibel'));\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende.get((MODULKONTRAKT, "reversibilitet")) == {
+        "direkte", "kompenserende"}, (
+        "det betingede slippet ble lest som utført, og vilkåret databasen "
+        "kanskje fortsatt håndhever forsvant ut av snittet")
 
 
 def test_en_betinget_opprettet_mal_er_ingen_mal_porten_kjenner(tmp_path):
