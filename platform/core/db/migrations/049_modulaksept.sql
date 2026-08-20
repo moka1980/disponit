@@ -51,7 +51,19 @@ CREATE TABLE moduldrill (
     tilbake_ok      BOOLEAN NOT NULL,  -- (c) kandidaten plukker og fullfører
     nokkel          TEXT NOT NULL,     -- SP-2: replay-nøkkel
     aktor           TEXT NOT NULL,
-    utfort_ts       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- Codex' P2 på PR #117 (runde 3): `utfort_ts` sto med DEFAULT now()
+    -- og ble aldri gitt en verdi, så en drill som ble kjørt timer eller
+    -- dager før aksepten ble innskrevet som om den kjørte i
+    -- akseptøyeblikket. Da kan ingen ferskhetskontroll skille UTFØRELSE
+    -- fra senere REGISTRERING, og det immutable sporet er feil om det
+    -- ene faktumet ingen kan rekonstruere i ettertid. De to
+    -- tidspunktene er ulike fakta og har derfor hver sin kolonne:
+    -- `utfort_ts` er drillartefaktets egen `ts` (målingen), og
+    -- `registrert_ts` er innskrivingen.
+    utfort_ts       TIMESTAMPTZ NOT NULL,
+    registrert_ts   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- En drill kan ikke ha kjørt etter at den ble registrert.
+    CHECK (utfort_ts <= registrert_ts),
     PRIMARY KEY (modul_id, drill_id),
     UNIQUE (nokkel),
     CHECK (drillet_release <> rullback_release),
@@ -207,7 +219,8 @@ CREATE TRIGGER akseptpunkt_ingen_truncate BEFORE TRUNCATE ON modulaksept_punkt
 CREATE OR REPLACE FUNCTION registrer_moduldrill(
     p_modul_id TEXT, p_miljo TEXT, p_drillet TEXT, p_rullback TEXT,
     p_kandidat TEXT, p_claim_stopp BOOLEAN, p_rene_utfall BOOLEAN,
-    p_tilbake BOOLEAN, p_nokkel TEXT, p_aktor TEXT)
+    p_tilbake BOOLEAN, p_nokkel TEXT, p_aktor TEXT,
+    p_utfort_ts TIMESTAMPTZ)
 RETURNS BIGINT LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE v_id BIGINT; v_drillet_digest TEXT; v_kandidat_digest TEXT;
@@ -225,7 +238,11 @@ BEGIN
            AND akseptkandidat_release = p_kandidat
            AND claim_stopp_ok = p_claim_stopp
            AND rene_utfall_ok = p_rene_utfall
-           AND tilbake_ok = p_tilbake;
+           AND tilbake_ok = p_tilbake
+           -- Måletidspunktet er like materielt som utfallene: samme
+           -- nøkkel med en ANNEN drillkjørings tidsstempel er to
+           -- kjøringer, ikke en replay.
+           AND utfort_ts = p_utfort_ts;
         IF NOT FOUND THEN
             RAISE EXCEPTION 'registrer_moduldrill: nøkkel % gjenbrukt med'
                 ' annet innhold', p_nokkel
@@ -271,13 +288,21 @@ BEGIN
         RAISE EXCEPTION 'registrer_moduldrill: ukjent modul %', p_modul_id
             USING ERRCODE = 'no_data_found';
     END IF;
+    -- Drillen ble utført FØR den ble registrert. Et tidsstempel fram i
+    -- tid er ikke en måling, det er en påstand om framtiden — og
+    -- CHECK-en under ville uansett stoppet raden; her får den et navn.
+    IF p_utfort_ts IS NULL OR p_utfort_ts > now() THEN
+        RAISE EXCEPTION 'registrer_moduldrill: utført-tidspunktet % er'
+            ' tomt eller fram i tid — drillen skal bære sin EGEN måletid',
+            p_utfort_ts USING ERRCODE = 'invalid_parameter_value';
+    END IF;
     INSERT INTO public.moduldrill (modul_id, miljo, drillet_release,
         rullback_release, akseptkandidat_release, epoch_snapshot,
         digest_snapshot, claim_stopp_ok, rene_utfall_ok, tilbake_ok,
-        nokkel, aktor)
+        nokkel, aktor, utfort_ts)
     VALUES (p_modul_id, p_miljo, p_drillet, p_rullback, p_kandidat,
             v_epoch, v_kandidat_digest, p_claim_stopp, p_rene_utfall,
-            p_tilbake, p_nokkel, p_aktor)
+            p_tilbake, p_nokkel, p_aktor, p_utfort_ts)
     RETURNING drill_id INTO v_id;
     INSERT INTO public.modulregister_hendelse (modul_id, hendelse,
         release_id, miljo, module_epoch, aktor, detalj)
@@ -287,7 +312,8 @@ BEGIN
                 'rullback', p_rullback,
                 'claim_stopp_ok', p_claim_stopp,
                 'rene_utfall_ok', p_rene_utfall,
-                'tilbake_ok', p_tilbake));
+                'tilbake_ok', p_tilbake,
+                'utfort_ts', p_utfort_ts));
     RETURN v_id;
 END $$;
 
@@ -415,7 +441,7 @@ BEGIN
 END $$;
 
 ALTER FUNCTION registrer_moduldrill(TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN,
-    BOOLEAN, BOOLEAN, TEXT, TEXT) OWNER TO disponit_modul_eier;
+    BOOLEAN, BOOLEAN, TEXT, TEXT, TIMESTAMPTZ) OWNER TO disponit_modul_eier;
 ALTER FUNCTION aksepter_moduldeployment(TEXT, TEXT, TEXT, BIGINT, TEXT,
     TEXT, UUID, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT, TEXT)
     OWNER TO disponit_modul_eier;
@@ -423,12 +449,13 @@ ALTER FUNCTION aksepter_moduldeployment(TEXT, TEXT, TEXT, BIGINT, TEXT,
 -- en stille no-op, og PUBLIC ville beholdt default-EXECUTE på begge.
 SET LOCAL ROLE disponit_modul_eier;
 REVOKE ALL ON FUNCTION registrer_moduldrill(TEXT, TEXT, TEXT, TEXT, TEXT,
-    BOOLEAN, BOOLEAN, BOOLEAN, TEXT, TEXT) FROM PUBLIC;
+    BOOLEAN, BOOLEAN, BOOLEAN, TEXT, TEXT, TIMESTAMPTZ) FROM PUBLIC;
 REVOKE ALL ON FUNCTION aksepter_moduldeployment(TEXT, TEXT, TEXT, BIGINT,
     TEXT, TEXT, UUID, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT, TEXT)
     FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION registrer_moduldrill(TEXT, TEXT, TEXT, TEXT,
-    TEXT, BOOLEAN, BOOLEAN, BOOLEAN, TEXT, TEXT) TO disponit_modules_admin;
+    TEXT, BOOLEAN, BOOLEAN, BOOLEAN, TEXT, TEXT, TIMESTAMPTZ)
+    TO disponit_modules_admin;
 GRANT EXECUTE ON FUNCTION aksepter_moduldeployment(TEXT, TEXT, TEXT,
     BIGINT, TEXT, TEXT, UUID, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT, TEXT)
     TO disponit_modules_admin;

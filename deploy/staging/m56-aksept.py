@@ -35,6 +35,7 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 
 HER = Path(__file__).resolve().parent
@@ -264,6 +265,33 @@ def les_bundet_artefakt(sti: Path, krav_id: str,
     return data, sha
 
 
+def drillens_maaletid(drill: dict) -> "datetime":
+    """Da drillen FAKTISK kjørte — artefaktets egen `ts`. -> datetime.
+
+    Codex' P2 på PR #117 (runde 3): `moduldrill.utfort_ts` sto med
+    `DEFAULT now()` og fikk aldri en verdi, så en drill kjørt timer eller
+    dager før aksepten ble skrevet inn som om den kjørte i
+    akseptøyeblikket. Måletiden er drillartefaktets, registreringstiden
+    er basens — to fakta, to kolonner. Her leses det første, med
+    tidssone: en naiv tidsstempelstreng er ikke et øyeblikk.
+    """
+    raa = drill.get("ts")
+    try:
+        ts = datetime.fromisoformat(str(raa))
+    except (TypeError, ValueError):
+        raise SystemExit(f"AVBRUTT: drillartefaktets ts {raa!r} er ingen"
+                         " ISO-8601-tid — måletiden kan ikke skrives")
+    if ts.tzinfo is None:
+        raise SystemExit(f"AVBRUTT: drillartefaktets ts {raa!r} mangler"
+                         " tidssone — et øyeblikk uten sone er ikke et"
+                         " øyeblikk")
+    if ts > datetime.now(timezone.utc):
+        raise SystemExit(f"AVBRUTT: drillartefaktets ts {raa!r} ligger fram"
+                         " i tid — det er en påstand om framtiden, ikke en"
+                         " måling")
+    return ts
+
+
 def verifiser_modul(art: dict, hva: str) -> None:
     """Artefaktet må navngi MODULEN som aksepteres, ikke en annen.
 
@@ -335,6 +363,7 @@ def main() -> int:
     runde, runde_sha = les_bundet_artefakt(a.runde, KRAV, manifest)
     verifiser_modul(drill, "drillartefaktet")
     verifiser_modul(runde, "runde-sammendraget")
+    drill_ts = drillens_maaletid(drill)
     evidens_sha = verifiser_kilde(runde)
     # …og hele den kjeden bindes til commiten raden faktisk skriver:
     # manifestet (tillitsroten), begge artefaktene og råfilen bakerst.
@@ -378,13 +407,13 @@ def main() -> int:
         o = drill["oppsett"]
         drill_id = conn.execute(
             "SELECT registrer_moduldrill(%s,%s,%s,%s,%s,%s,%s,%s,%s,"
-            "'m56-aksept')",
+            "'m56-aksept',%s)",
             (MODUL, MILJO, o["drillet_release"], o["rullback_release"],
              o["kandidat_release"],
              drill["maalt"]["nye_oppdrag_claimet_av_drillet_release"] == 0,
              drill["maalt"]["falske_verdikter"] == 0,
              drill["maalt"]["kandidat_promoterte_artefakter"] >= 1,
-             f"drill-{o['kandidat_release']}")).fetchone()[0]
+             f"drill-{o['kandidat_release']}", drill_ts)).fetchone()[0]
         conn.execute(
             "SELECT aksepter_moduldeployment(%s,%s,%s,%s,%s,%s,%s::uuid,"
             "%s,%s,%s,%s,%s::jsonb,%s,'m56-aksept')",

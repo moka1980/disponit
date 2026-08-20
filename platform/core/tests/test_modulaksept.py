@@ -20,6 +20,7 @@ import re
 import secrets
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import psycopg
@@ -33,6 +34,10 @@ ROT = Path(__file__).resolve().parents[3]
 M049 = ROT / "platform/core/db/migrations/049_modulaksept.sql"
 KRAV = "wcag-kontroll-v1"
 SHA0 = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+#: Drillens MÅLETID — artefaktets egen `ts`, ikke innskrivingstiden.
+#: Fast og i fortiden med vilje: en test som sender `now()` ville ikke
+#: kunne skille de to tidspunktene fra hverandre.
+DRILL_TS = datetime(2026, 8, 20, 13, 22, 6, tzinfo=timezone.utc)
 
 
 def _rt():
@@ -111,13 +116,14 @@ def _kjede(m, *, promoter_paa_drillet=False, staged_paa_kandidat=False):
 
 
 def _drill(m, mid, *, claim_stopp=True, rene=True, tilbake=True,
-           nokkel=None):
+           nokkel=None, utfort_ts=None):
     m.execute("SET ROLE disponit_modules_admin")
     did = m.execute(
         "SELECT registrer_moduldrill(%s,'staging','r-drillet','r-rullback',"
-        "'r-kandidat',%s,%s,%s,%s,'test')",
+        "'r-kandidat',%s,%s,%s,%s,'test',%s)",
         (mid, claim_stopp, rene, tilbake,
-         nokkel or "n-" + secrets.token_hex(6))).fetchone()[0]
+         nokkel or "n-" + secrets.token_hex(6),
+         utfort_ts or DRILL_TS)).fetchone()[0]
     # RESET FØR commit: en commit med SET ROLE stående gjør admin til
     # sesjonens «faste» rolle — enhver senere rollback faller da TILBAKE
     # til admin, og neste migrator-lesning dør på grants.
@@ -311,8 +317,8 @@ def test_replay_gir_en_hendelse_og_en_drill(migrator):
     with pytest.raises(psycopg.errors.InvalidParameterValue):
         migrator.execute(
             "SELECT registrer_moduldrill(%s,'staging','r-drillet',"
-            "'r-rullback','r-kandidat',true,true,true,%s,'test')",
-            (k2["mid"], nk))
+            "'r-rullback','r-kandidat',true,true,true,%s,'test',%s)",
+            (k2["mid"], nk, DRILL_TS))
     migrator.rollback()
 
 
@@ -371,8 +377,8 @@ def test_drillnokkel_med_andre_utfall_avvises(migrator):
     with pytest.raises(psycopg.errors.InvalidParameterValue):
         migrator.execute(
             "SELECT registrer_moduldrill(%s,'staging','r-drillet',"
-            "'r-annen-rullback','r-kandidat',true,true,true,%s,'test')",
-            (k["mid"], nk))
+            "'r-annen-rullback','r-kandidat',true,true,true,%s,'test',%s)",
+            (k["mid"], nk, DRILL_TS))
     migrator.rollback()
 
 
@@ -387,7 +393,8 @@ def test_ordinaere_roller_naar_ingenting(migrator):
                    (k["ten"],))
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             rt.execute("SELECT registrer_moduldrill(%s,'staging','a','b',"
-                       "'c',true,true,true,'n','x')", (k["mid"],))
+                       "'c',true,true,true,'n','x',%s)",
+                       (k["mid"], DRILL_TS))
         rt.rollback()
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             rt.execute("SELECT aksepter_moduldeployment(%s,'staging','r',"
@@ -437,8 +444,8 @@ def test_digestporten_feller_andre_bytes(migrator):
     with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
         migrator.execute(
             "SELECT registrer_moduldrill(%s,'staging','r-drillet',"
-            "'r-rullback','r-andre',true,true,true,%s,'test')",
-            (k["mid"], "n-" + secrets.token_hex(6)))
+            "'r-rullback','r-andre',true,true,true,%s,'test',%s)",
+            (k["mid"], "n-" + secrets.token_hex(6), DRILL_TS))
     migrator.rollback()
     assert "digest" in str(ei.value)
 
@@ -594,6 +601,61 @@ def test_falske_verdikter_er_en_motsigelse_begge_veier():
     assert _sjekk_grenser(drillkrav, _mutert(
         inflight_utfall="feilet", inflight_promoterte_artefakter=0,
         falske_verdikter=0)) == []
+
+
+@pg
+def test_drillen_baerer_sin_egen_maaletid(migrator):
+    """Codex' P2 (runde 3): `utfort_ts` sto med `DEFAULT now()` og fikk
+    aldri en verdi, så en drill kjørt timer eller dager før aksepten ble
+    registrert som om den kjørte i akseptøyeblikket — ingen
+    ferskhetskontroll kunne skille UTFØRELSE fra REGISTRERING. Måletiden
+    er artefaktets, registreringstiden er basens, og en drill kan ikke ha
+    kjørt fram i tid."""
+    k = _kjede(migrator)
+    did = _drill(migrator, k["mid"])
+    migrator.execute("RESET ROLE")
+    utfort, registrert = migrator.execute(
+        "SELECT utfort_ts, registrert_ts FROM moduldrill WHERE modul_id=%s"
+        " AND drill_id=%s", (k["mid"], did)).fetchone()
+    migrator.rollback()
+    assert utfort == DRILL_TS, "målingen ble overskrevet av innskrivingen"
+    assert registrert > utfort, "de to tidspunktene er ikke skilt"
+    # Fram i tid er en påstand om framtiden, ikke en måling.
+    migrator.execute("SET ROLE disponit_modules_admin")
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _drill(migrator, k["mid"], nokkel="n-" + secrets.token_hex(6),
+               utfort_ts=datetime.now(timezone.utc) + timedelta(hours=1))
+    migrator.rollback()
+    assert "fram i tid" in str(ei.value)
+    # Samme nøkkel med en ANNEN kjørings måletid er to kjøringer.
+    nk = "n-" + secrets.token_hex(6)
+    _drill(migrator, k["mid"], nokkel=nk)
+    migrator.commit()
+    migrator.execute("SET ROLE disponit_modules_admin")
+    with pytest.raises(psycopg.errors.InvalidParameterValue):
+        _drill(migrator, k["mid"], nokkel=nk,
+               utfort_ts=DRILL_TS - timedelta(days=1))
+    migrator.rollback()
+    migrator.execute("RESET ROLE")
+
+
+def test_akseptskriptet_leser_maaletiden_av_artefaktet():
+    """Måletiden skriptet sender, er drillartefaktets `ts` — lest med
+    tidssone, aldri klokka i akseptøyeblikket."""
+    m = _aksept_skript()
+    drill = json.loads((ROT / ("deploy/staging/artefakter/"
+                               "rollback-m56-v1-20260820T132200.json")
+                        ).read_text(encoding="utf-8"))
+    ts = m.drillens_maaletid(drill)
+    assert ts.tzinfo is not None and ts.isoformat() == drill["ts"]
+    for daarlig, ord_i_feil in (
+            ("i går", "ISO-8601"),
+            ("2026-08-20T13:22:06", "tidssone"),
+            ((datetime.now(timezone.utc) + timedelta(days=1)).isoformat(),
+             "fram i tid")):
+        with pytest.raises(SystemExit) as ei:
+            m.drillens_maaletid(dict(drill, ts=daarlig))
+        assert ord_i_feil in str(ei.value), daarlig
 
 
 def _aksept_skript():
