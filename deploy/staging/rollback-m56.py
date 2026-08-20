@@ -531,6 +531,61 @@ def reserver_artefaktmaal(ut: Path) -> Path:
     return delvis
 
 
+def den_ene_claimende(m) -> tuple[str, int, str, str]:
+    """Den claimende deploymenten drillen skal måle — eller ingen drill.
+
+    Codex' P2 på PR #117 (runde 9): oppslaget hadde verken kontraktvelger
+    eller `ORDER BY`, og `fetchone()` kastet stille resten. Formen leser
+    som «den claimende deploymenten», men `en_claiming_per_kontrakt`
+    håndhever én claiming PER (modul, miljø, kontraktversjon,
+    kontrakt_hash) — flere kontraktlinjer kan altså stå claiming
+    samtidig, og det er en TILLATT tilstand, ikke en umulig.
+
+    Da plukket drillen en vilkårlig av dem. Hele drillen henger på den
+    ene raden: `bytt_release` drenerer kun deploymenten som matcher den
+    VALGTE kontrakten, så den andre blir stående claiming gjennom hele
+    kjøringen — levende, og fri til å plukke drillens egne
+    probeoppdrag. `nye_oppdrag_claimet_av_drillet_release` måles på
+    oppdragets status, ikke på hvem som tok det, så claim-stoppet (a)
+    kunne stå rødt fordi en helt annen arbeider gjorde jobben — eller
+    (b2)/(c) grønt av arbeid ingen av drillens releaser utførte.
+    Ingenting i artefaktet ville vist hvilken av delene som skjedde.
+
+    Drillen tar ikke det valget. Alle radene hentes, og kan den ikke
+    peke ut nøyaktig én kontraktlinje, avbryter den — før låsen er brukt
+    til noe, og før noe er registrert eller rullet.
+
+    -> (release_id, kontraktversjon, kontrakt_hash, artifact_digest)
+    """
+    rader = m.execute(
+        "SELECT d.release_id, d.kontraktversjon, d.kontrakt_hash,"
+        "       r.artifact_digest"
+        "  FROM moduldeployment d JOIN modulrelease r"
+        "    ON r.modul_id = d.modul_id AND r.release_id = d.release_id"
+        "   AND r.kontraktversjon = d.kontraktversjon"
+        "   AND r.kontrakt_hash = d.kontrakt_hash"
+        " WHERE d.modul_id=%s AND d.miljo=%s AND d.livslop='claiming'"
+        " ORDER BY d.kontraktversjon, d.kontrakt_hash, d.release_id",
+        (MODUL, MILJO)).fetchall()
+    if not rader:
+        raise SystemExit("AVBRUTT: ingen claiming-deployment å drille")
+    if len(rader) > 1:
+        linjer = "\n".join(
+            f"  {rel} (kontrakt v{kv}/{kh[:12]}…, digest {dg[:12]}…)"
+            for rel, kv, kh, dg in rader)
+        raise SystemExit(
+            f"AVBRUTT: {MODUL} har {len(rader)} claimende deployments i"
+            f" {MILJO}:\n{linjer}\n"
+            "En flippedrill måler ÉN kontraktlinje: `bytt_release`"
+            " drenerer bare deploymenten som matcher den valgte"
+            " kontrakten, så de andre står claiming gjennom hele drillen"
+            " og kan plukke dens egne probeoppdrag. Da måler artefaktet"
+            " ikke lenger hvem som gjorde hva. Rull de øvrige"
+            " kontraktlinjene ut av claiming først, og kjør drillen mot"
+            " den ene som står igjen.")
+    return rader[0]
+
+
 def ta_drillereservasjonen(m) -> None:
     """Én flippedrill av gangen per modul+miljø — hele kjøringen igjennom.
 
@@ -635,16 +690,7 @@ def main() -> int:
     ta_drillereservasjonen(m)
 
     # Utgangspunktet: den claimende deploymenten er den som drilles.
-    rad = m.execute(
-        "SELECT d.release_id, d.kontraktversjon, d.kontrakt_hash,"
-        "       r.artifact_digest"
-        "  FROM moduldeployment d JOIN modulrelease r"
-        "    ON r.modul_id = d.modul_id AND r.release_id = d.release_id"
-        " WHERE d.modul_id=%s AND d.miljo=%s AND d.livslop='claiming'",
-        (MODUL, MILJO)).fetchone()
-    if rad is None:
-        raise SystemExit("AVBRUTT: ingen claiming-deployment å drille")
-    drillet, kver, khash, digest = rad
+    drillet, kver, khash, digest = den_ene_claimende(m)
     krev_ubrukte_drillreleaser(m, drillet, a.rullback_id, a.kandidat_id)
     # Rullbakken skal bære FORGJENGERENS bytes, ikke den drilledes
     # (Codex P1, #117 runde 6) — og bootveien må kunne kjøre dem.

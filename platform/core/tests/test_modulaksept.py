@@ -1677,9 +1677,66 @@ def test_bare_en_flippedrill_av_gangen(tmp_path):
     # 3) …og den tas FØR tilstanden leses. Tas den etterpå, har begge
     #    kjøringene alt lest samme claimende release, og taperen avbryter
     #    først når den har bestemt seg for hva den skal drille.
-    assert (tekst.index("ta_drillereservasjonen(m)")
-            < tekst.index("d.livslop='claiming'")), \
+    kropp = tekst[tekst.index("\ndef main()"):]
+    assert (kropp.index("ta_drillereservasjonen(m)")
+            < kropp.index("den_ene_claimende(m)")), \
         "låsen må stå foran oppslaget den beskytter"
+
+
+def test_drillen_nekter_flere_claimende_kontraktlinjer():
+    """Codex' P2 (runde 9): oppslaget så ut som «den claimende
+    deploymenten», men var «en av dem».
+
+    `en_claiming_per_kontrakt` er unik per (modul, miljø, kontraktversjon,
+    kontrakt_hash) — flere kontraktlinjer kan altså stå claiming
+    samtidig, helt lovlig. Uten kontraktvelger og uten `ORDER BY` kastet
+    `fetchone()` stille resten, og drillen plukket en vilkårlig. Hele
+    kjøringen henger på den raden: `bytt_release` drenerer bare
+    deploymenten som matcher den VALGTE kontrakten, så den andre står
+    levende og claimende gjennom drillen og kan plukke dens egne
+    probeoppdrag. Målingene teller status, ikke hvem som tok oppdraget."""
+    d = _drillskript()
+
+    class _Claimende:
+        def __init__(self, *rader):
+            self.rader, self.sql = list(rader), None
+
+        def execute(self, sql, params=None):
+            self.sql = sql
+            return self
+
+        def fetchall(self):
+            return self.rader
+
+    en = ("wcag-r11", 1, "kh-a", "aa" * 32)
+    base = _Claimende(en)
+    assert d.den_ene_claimende(base) == en
+    # Oppslaget må hente ALLE radene — `fetchone()` er nettopp feilen.
+    assert "ORDER BY" in base.sql, "uten ordning er «den første» vilkårlig"
+    assert "d.kontrakt_hash" in base.sql
+
+    with pytest.raises(SystemExit) as ei:
+        d.den_ene_claimende(_Claimende())
+    assert "ingen claiming-deployment" in str(ei.value)
+
+    # To lovlige kontraktlinjer: drillen velger ikke, den avbryter — og
+    # sier hvilke den så, så operatøren kan rulle de øvrige ut.
+    with pytest.raises(SystemExit) as ei:
+        d.den_ene_claimende(_Claimende(en, ("wcag-r9", 2, "kh-b", "bb" * 32)))
+    assert "2 claimende deployments" in str(ei.value)
+    assert "wcag-r11" in str(ei.value) and "wcag-r9" in str(ei.value)
+
+    # …og den står FØR alt som konsumerer noe: ingen rulling, ingen
+    # registrering, ingen bestilling er gjort når den avbryter.
+    tekst = (ROT / "deploy/staging/rollback-m56.py").read_text(
+        encoding="utf-8")
+    # (`_Claimende` har ingen `fetchone` — kalles den, ryker testen på
+    #  AttributeError, og det er nettopp den formen funnet gjaldt.)
+    kropp = tekst[tekst.index("\ndef main()"):]
+    assert (kropp.index("den_ene_claimende(m)")
+            < kropp.index("registrer_drillrelease(m")
+            < kropp.index("bytt_release")), \
+        "porten må stå foran registreringene og rullingen"
 
 
 def test_drillen_nekter_naar_forgjengerens_bytes_ikke_kan_bootes():
