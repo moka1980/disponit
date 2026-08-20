@@ -648,7 +648,14 @@ def test_kravet_kan_ikke_endres_under_en_skrevet_aksept(migrator):
     grensen: et revisjonsspor som forteller noe annet enn kallet som
     lagde det.
 
-    En endret grense er et NYTT krav, ikke en rettelse."""
+    En endret grense er et NYTT krav, ikke en rettelse.
+
+    Codex' P2 (runde 18): triggeren dekket bare UPDATE og DELETE, så et
+    nytt PUNKT kunne INSERT-es på et krav_id som alt hadde aksepter
+    skrevet mot seg. Det endrer hva «komplett» BETYR — akseptfunksjonen
+    krever hele punktsettet i registeret — så nye aksepter måles mot ett
+    sett mens de gamle bærer et annet, og begge står som «akseptert mot
+    wcag-kontroll-v1». Et nytt punkt er også en ny kravversjon."""
     k = _kjede(migrator)
     did = _drill(migrator, k)
     _aksepter(migrator, k, did)
@@ -660,16 +667,28 @@ def test_kravet_kan_ikke_endres_under_en_skrevet_aksept(migrator):
             " WHERE krav_id=%s",
             "DELETE FROM akseptkrav_punkt WHERE krav_id=%s",
             "UPDATE akseptkrav_ci SET gren='m56' WHERE krav_id=%s",
-            "DELETE FROM akseptkrav_ci WHERE krav_id=%s"):
+            "DELETE FROM akseptkrav_ci WHERE krav_id=%s",
+            # …og et TILLEGG til det etablerte kravet er samme endring.
+            "INSERT INTO akseptkrav_punkt (krav_id, punkt, kilde_type,"
+            " grenseverdi, maalt_krav) VALUES"
+            " (%s,'nytt.punkt','evidensfil','0','0')"):
         with pytest.raises(psycopg.errors.RaiseException):
             migrator.execute(sql, (KRAV,))
         migrator.rollback()
     # …men et NYTT krav kan registreres: porten er mot å endre historien,
-    # ikke mot å skrive en ny versjon.
+    # ikke mot å skrive en ny versjon. Hele kravet skrives i ÉN setning —
+    # det er nettopp «fantes kravet før setningen?» porten måler.
     nytt = "wcag-kontroll-test-" + secrets.token_hex(3)
     migrator.execute("INSERT INTO akseptkrav_punkt (krav_id, punkt,"
                      " kilde_type, grenseverdi, maalt_krav) VALUES"
-                     " (%s,'x','evidensfil','0','0')", (nytt,))
+                     " (%s,'x','evidensfil','0','0'),"
+                     " (%s,'y','ci_kjoring','0','0')", (nytt, nytt))
+    # …og et punkt nummer to i en SENERE setning er en ny versjon, også
+    # for et krav ingen har akseptert mot ennå: settet er kravet.
+    with pytest.raises(psycopg.errors.RaiseException):
+        migrator.execute("INSERT INTO akseptkrav_punkt (krav_id, punkt,"
+                         " kilde_type, grenseverdi, maalt_krav) VALUES"
+                         " (%s,'z','evidensfil','0','0')", (nytt,))
     migrator.rollback()
 
 

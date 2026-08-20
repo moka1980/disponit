@@ -199,15 +199,50 @@ CREATE TABLE akseptkrav_punkt (
 --
 -- En ENDRET grense er et nytt krav, ikke en rettelse: skriv
 -- `wcag-kontroll-v2` og la de gamle aksepene stå mot det de faktisk ble
--- målt mot. Nye PUNKTER i et eksisterende krav er også en endring av hva
--- «komplett» betyr, og hører derfor hjemme i en ny versjon — INSERT er
--- åpen for at et nytt krav skal kunne registreres i det hele tatt.
+-- målt mot.
 CREATE TRIGGER akseptkrav_punkt_immutable BEFORE UPDATE OR DELETE
     ON akseptkrav_punkt
     FOR EACH ROW EXECUTE FUNCTION modulregister_append_only();
 CREATE TRIGGER akseptkrav_punkt_ingen_truncate BEFORE TRUNCATE
     ON akseptkrav_punkt
     FOR EACH STATEMENT EXECUTE FUNCTION modulregister_append_only();
+
+-- …OG ET NYTT PUNKT ER OGSÅ EN ENDRING (Codex P2, #117 runde 18).
+-- Triggeren over dekket bare UPDATE og DELETE, så en senere migrasjon
+-- kunne INSERT-e et punkt på et `krav_id` som alt har immutable aksepter
+-- skrevet mot seg. Det endrer hva «komplett» BETYR: `aksepter_module-
+-- deployment` krever hele punktsettet i registeret, så nye aksepter måles
+-- mot ett sett mens de gamle bærer et annet — og de gamle står fortsatt
+-- som «akseptert mot wcag-kontroll-v1» i `modulaksept_status`. Ingen kan
+-- se på en akseptrad at kravet den ble målt mot, har vokst siden.
+--
+-- INSERT må likevel være åpen, ellers kan et NYTT krav ikke registreres i
+-- det hele tatt. Skillet er ikke raden, men om kravet fantes FØR
+-- setningen: en overgangstabell lar porten se nøyaktig det. Et krav
+-- registreres derfor i ÉN setning — og skal det ha flere punkter senere,
+-- er det `wcag-kontroll-v2`.
+CREATE OR REPLACE FUNCTION akseptkrav_punkt_hele_kravet_i_ett()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE
+    v_krav TEXT;
+BEGIN
+    SELECT k.krav_id INTO v_krav
+      FROM public.akseptkrav_punkt k
+     WHERE k.krav_id IN (SELECT n.krav_id FROM nye n)
+       AND NOT EXISTS (SELECT 1 FROM nye n
+                        WHERE n.krav_id = k.krav_id AND n.punkt = k.punkt)
+     LIMIT 1;
+    IF v_krav IS NOT NULL THEN
+        RAISE EXCEPTION 'akseptkrav_punkt: kravet % er alt registrert —'
+            ' et nytt punkt endrer hva «komplett» betyr for aksepter som'
+            ' alt er skrevet, og hører hjemme i en NY kravversjon', v_krav;
+    END IF;
+    RETURN NULL;
+END $$;
+CREATE TRIGGER akseptkrav_punkt_ingen_tillegg AFTER INSERT
+    ON akseptkrav_punkt
+    REFERENCING NEW TABLE AS nye
+    FOR EACH STATEMENT EXECUTE FUNCTION akseptkrav_punkt_hele_kravet_i_ett();
 -- ------------------------------------------------------------
 -- 3b. HVILKEN CI-kjøring invariantpunktene krever, og HVA veien som
 --     spurte GitHub faktisk så (Codex P1, #117 runde 16).
