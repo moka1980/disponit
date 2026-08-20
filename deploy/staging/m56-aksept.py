@@ -675,6 +675,27 @@ def verifiser_claim_spor(conn, o: dict, inflight: int, rullback: int,
                 " ville blitt rød på dette leddet. Er sporet tomt, ble"
                 " oppdraget claimet før migrasjon 049 la til kolonnen, og"
                 " drillen må kjøres på nytt etter 049")
+    # …og claim-stoppet er en VARIGHET (Codex P1, #117 runde 21).
+    # `registrer_moduldrill` krever at rullbakkoppdraget lå ubehandlet i
+    # minst `moduldrill_min_ventetid_s()` fra det ble bestilt til det
+    # FØRSTE claimet. Samme tall leses her, fra samme funksjon, så
+    # aksepten stopper med en setning om målingen i stedet for på FK-en
+    # mot et grønt utfall.
+    rad = conn.execute(
+        "SELECT EXTRACT(EPOCH FROM (forste_claim_ts - opprettet))::float8,"
+        " moduldrill_min_ventetid_s()::float8 FROM oppdrag"
+        " WHERE tenant=%s AND id=%s", (TENANT, rullback)).fetchone()
+    if rad[0] is None:
+        raise SystemExit(
+            f"AVBRUTT: rullbakkoppdraget {rullback} står uten"
+            " forste_claim_ts — stempelet kom med 049, så oppdraget ble"
+            " claimet før migrasjonen. Drillen må kjøres på nytt etter 049")
+    if rad[0] < rad[1]:
+        raise SystemExit(
+            f"AVBRUTT: claim-stoppet ble målt i {rad[0]:.3f} s, og porten"
+            f" krever minst {rad[1]:g} s. Den drenerte releasen lot ikke"
+            " oppdraget ligge lenge nok til at «den claimet ingenting» er"
+            " målt — drillraden ville blitt rød på claim_stopp_ok")
 
 
 def _manifestgenerasjoner(commit: str) -> dict[str, str]:

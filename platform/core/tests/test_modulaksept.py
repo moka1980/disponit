@@ -161,9 +161,15 @@ def _kjede(m, *, promoter_paa_drillet=False, staged_paa_kandidat=False,
     # `disponit_m37_claimer` for å bygge formen, akkurat som med
     # kvitteringskapabiliteten. None = aldri claimet (eller claimet før
     # 049), som er nøyaktig det NULL betyr i basen.
+    # `claim_ts` er claim-portens klokke (049 §0, Codex P1 runde 21):
+    # NÅR oppdraget første gang ble tatt. Claim-stoppet måles som
+    # `forste_claim_ts - opprettet`, så prøvene må kunne sette den fritt.
+    # None = ett minutt etter bestillingen (godt over terskelen, den
+    # formen den ekte drillen etterlater); "ingen" = ustemplet, altså
+    # claimet før 049.
     def oppdrag(*, status="utfort", kvittering=True, signatur=True,
                 eier=None, kapabilitet=True, claim_release=None,
-                claim_miljo="staging",
+                claim_miljo="staging", claim_ts=None,
                 opprettet=T_INFLIGHT_BESTILT, status_ts=T_INFLIGHT_SLUTT):
         sig = secrets.token_hex(16)
         # Samme form som API-veien lagrer: konvolutten står i `kvittering`,
@@ -213,11 +219,14 @@ def _kjede(m, *, promoter_paa_drillet=False, staged_paa_kandidat=False,
                  kap_status, kap_hash))
             m.execute("RESET ROLE")
         if claim_release is not None:
+            stempel = (None if claim_ts == "ingen" else
+                       (opprettet + timedelta(minutes=1)
+                        if claim_ts is None else claim_ts))
             m.execute("SET LOCAL ROLE disponit_m37_claimer")
             m.execute(
-                "UPDATE oppdrag SET claim_release_id=%s, claim_miljo=%s"
-                " WHERE tenant=%s AND id=%s",
-                (claim_release, claim_miljo, ten, oid))
+                "UPDATE oppdrag SET claim_release_id=%s, claim_miljo=%s,"
+                " forste_claim_ts=%s WHERE tenant=%s AND id=%s",
+                (claim_release, claim_miljo, stempel, ten, oid))
             m.execute("RESET ROLE")
         return oid
 
@@ -2225,6 +2234,138 @@ def test_claim_sporet_skrives_bare_av_claim_funksjonen(migrator):
         "SELECT claim_release_id FROM oppdrag WHERE tenant=%s AND id=%s",
         (k["ten"], k["opp"]["inflight"])).fetchone()[0] == "r-drillet", \
         "kjøretidsrollen skrev claim-sporet drillen hviler på"
+    migrator.rollback()
+
+
+@pg
+def test_claim_stoppet_maa_vaere_observert_lenge_nok(migrator):
+    """Codex' P1 (runde 21): claim-stoppet er en VARIGHET.
+
+    `claim_stopp_ok` krevde at rullbakkoppdraget lå MELLOM de to
+    registerovergangene — ikke hvor lenge. `min_ventetid_s` bodde bare i
+    `manifestskjema` og i drillskriptets egen løkke, altså i
+    filvalidatoren og hos den som skriver fila. En kaller med
+    `disponit_modules_admin` kunne derfor bytte til rullbakken, bestille
+    og fullføre et ekte oppdrag, og bytte videre til kandidaten på et par
+    sekunder: hvert tidspredikat passerte, og en uforanderlig grønn
+    drillrad — med aksepten som FK-refererer den — sto uten at den
+    drenerte releasen noen gang fikk anledning til å claime noe.
+
+    Porten regner nå på `forste_claim_ts - opprettet` mot
+    `moduldrill_min_ventetid_s()`.
+
+    MUTASJONEN SOM DREPER DENNE: fjern varighetsleddet fra
+    `v_claim_stopp`, eller bytt `>=` mot `IS NOT NULL`."""
+    k = _kjede(migrator)
+    terskel = float(migrator.execute(
+        "SELECT moduldrill_min_ventetid_s()").fetchone()[0])
+
+    # Positiv kontroll: NØYAKTIG terskelen holder — «i minst så lenge»,
+    # som i manifestskjema. Uten dette leddet kunne prøven under bestått
+    # av en port som avviste enhver ventetid.
+    akkurat = k["oppdrag"](
+        opprettet=T_RB_BESTILT, status_ts=T_RB_SLUTT,
+        claim_release="r-rullback",
+        claim_ts=T_RB_BESTILT + timedelta(seconds=terskel))
+    k["artefakt"]("r-rullback", "promotert", akkurat)
+    migrator.commit()
+    did = _drill(migrator, k, opp={**k["opp"], "rullback": akkurat})
+    migrator.execute("RESET ROLE")
+    assert migrator.execute(
+        "SELECT claim_stopp_ok FROM moduldrill WHERE drill_id=%s",
+        (did,)).fetchone()[0] is True, \
+        "et claim-stopp målt i akkurat terskelen er målt lenge nok"
+    migrator.rollback()
+
+    # Formen funnet peker på: alt annet er den ekte drillens form —
+    # riktig claim-spor, riktig artefakt, innenfor vinduet — men
+    # rullbakken tok oppdraget ett sekund under terskelen. Da fikk den
+    # drenerte releasen aldri anledningen «den claimet ingenting» påstår
+    # at den avsto fra.
+    for beskrivelse, stempel in (
+            ("ett sekund for kort",
+             T_RB_BESTILT + timedelta(seconds=terskel - 1)),
+            ("claimet umiddelbart", T_RB_BESTILT),
+            # Ventet ut, men først ETTER at kandidaten overtok: da er det
+            # ikke den drenerte releasens claim-stopp lenger.
+            ("ventet ut etter kandidatbyttet",
+             T_KAND_BYTTE + timedelta(seconds=1)),
+            # Ustemplet: claimet før 049. «Vi vet ikke» er ikke en måling.
+            ("ustemplet (pre-049)", "ingen")):
+        kort = k["oppdrag"](opprettet=T_RB_BESTILT, status_ts=T_RB_SLUTT,
+                            claim_release="r-rullback", claim_ts=stempel)
+        k["artefakt"]("r-rullback", "promotert", kort)
+        migrator.commit()
+        d = _drill(migrator, k, nokkel="n-" + secrets.token_hex(6),
+                   opp={**k["opp"], "rullback": kort})
+        migrator.execute("RESET ROLE")
+        assert migrator.execute(
+            "SELECT claim_stopp_ok FROM moduldrill WHERE drill_id=%s",
+            (d,)).fetchone()[0] is False, beskrivelse
+        migrator.rollback()
+
+
+@pg
+def test_forste_claim_ts_er_write_once(migrator):
+    """Ventetiden måles fra det FØRSTE claimet (Codex P1, runde 21).
+
+    `claim_release_id` er bevisst ikke write-once: en reclaim etter
+    utløpt lease skal peke på den releasen som tok oppdraget i mål.
+    Ventetidsstempelet har motsatt regel. Kunne det flyttes, ville et
+    oppdrag som ble tatt med én gang og reclaimet et halvt minutt senere
+    sett ut som et claim-stopp ingen hadde observert — og vakten er
+    derfor ubetinget, også for claim-rollen selv."""
+    k = _kjede(migrator)
+    migrator.commit()
+    oid = k["opp"]["rullback"]
+
+    # Aldri ved opprettelse, uansett rolle.
+    with pytest.raises(psycopg.errors.RaiseException):
+        migrator.execute(
+            "INSERT INTO oppdrag (opprinnelse, tenant, oppdragstype,"
+            " handling, eiermodul, status, payload_kryptert, key_id, nonce,"
+            " utforelsesfrist, evidensfrist, koblingsstatus,"
+            " forste_claim_ts) VALUES ('beslutning',%s,'t','t',%s,"
+            "'opprettet',%s,'k1',%s, now()+interval '1 hour',"
+            " now()+interval '2 hours','UKOBLET', now())",
+            (k["ten"], k["mid"], b"\x00" * 24, b"\x00" * 12))
+    migrator.rollback()
+
+    # Ikke av migrator, som eier tabellen og har all DML.
+    with pytest.raises(psycopg.errors.RaiseException):
+        migrator.execute(
+            "UPDATE oppdrag SET forste_claim_ts=now() WHERE tenant=%s"
+            " AND id=%s", (k["ten"], oid))
+    migrator.rollback()
+
+    # …og ikke av claim-rollen heller, når stempelet først står: write-once
+    # gjelder skriveren selv.
+    migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+    with pytest.raises(psycopg.errors.RaiseException):
+        migrator.execute(
+            "UPDATE oppdrag SET forste_claim_ts=%s WHERE tenant=%s AND id=%s",
+            (T_RB_BESTILT, k["ten"], oid))
+    migrator.rollback()
+    migrator.execute("RESET ROLE")
+    assert migrator.execute(
+        "SELECT forste_claim_ts FROM oppdrag WHERE tenant=%s AND id=%s",
+        (k["ten"], oid)).fetchone()[0] == T_RB_BESTILT + timedelta(minutes=1)
+    migrator.rollback()
+
+
+@pg
+def test_ventetidsterskelen_er_den_samme_i_base_og_manifestskjema(migrator):
+    """Én terskel, to steder som håndhever den (Codex P1, runde 21).
+
+    Filvalidatoren måler `ventetid_ubehandlet_s` i drillartefaktet mot
+    `min_ventetid_s`; porten måler `forste_claim_ts - opprettet` mot
+    `moduldrill_min_ventetid_s()`. Gled de fra hverandre, ville den ene
+    stille et krav den andre ikke stiller — og evidensen kunne bestå i
+    fila og falle i basen, eller motsatt."""
+    from manifestskjema import KRAVGRENSER
+    fra_basen = float(migrator.execute(
+        "SELECT moduldrill_min_ventetid_s()").fetchone()[0])
+    assert fra_basen == KRAVGRENSER["rollback-m56-v1"]["min_ventetid_s"]
     migrator.rollback()
 
 

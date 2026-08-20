@@ -58,10 +58,25 @@
 --    Drillen må kjøres på nytt etter 049. Alternativet — å la NULL
 --    passere som «vi vet ikke» — er nøyaktig hullet funnet peker på, og
 --    en uforanderlig aksept er feil sted å ta den snarveien.
+--
+--    …OG NÅR DET BLE TATT (Codex P1, #117 runde 21). Claim-stoppet er en
+--    VARIGHET: den drenerte releasen lot et claimbart oppdrag ligge i
+--    minst `min_ventetid_s`. Basen kjente ingen slik varighet —
+--    `oppdrag` bar `opprettet` og `status_ts`, og `status_ts` er den
+--    SISTE overgangen, ikke claimet. `forste_claim_ts` er tidspunktet
+--    oppdraget FØRSTE gang ble tatt; sammen med `opprettet` er det
+--    nøyaktig hvor lenge det lå ubehandlet mens en levende forgjenger
+--    ville tatt det. Første, ikke siste: en reclaim etter utløpt lease
+--    skal ikke kunne strekke et ventevindu som aldri ble observert.
+--    Derfor er DENNE kolonnen write-once, mens `claim_release_id`
+--    bevisst ikke er det — de måler ulike ting og har hver sin regel.
+--    Samme driftskonsekvens gjelder: et pre-049-claim står ustemplet, og
+--    `claim_stopp_ok` blir da false.
 -- ------------------------------------------------------------
 ALTER TABLE oppdrag
     ADD COLUMN IF NOT EXISTS claim_release_id TEXT,
-    ADD COLUMN IF NOT EXISTS claim_miljo      TEXT;
+    ADD COLUMN IF NOT EXISTS claim_miljo      TEXT,
+    ADD COLUMN IF NOT EXISTS forste_claim_ts  TIMESTAMPTZ;
 
 -- Samme vakt som kontraktbindingen har (015): kolonnene settes KUN av
 -- den herdede claim-funksjonen, og aldri ved opprettelse. Kjøretiden og
@@ -84,6 +99,7 @@ RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF TG_OP = 'INSERT' THEN
         IF NEW.claim_release_id IS NOT NULL OR NEW.claim_miljo IS NOT NULL
+           OR NEW.forste_claim_ts IS NOT NULL
         THEN
             RAISE EXCEPTION 'oppdrag: claim-releasen kan ikke settes ved'
                 ' opprettelse (stemples kun ved claim)';
@@ -92,9 +108,20 @@ BEGIN
     END IF;
     IF current_user <> 'disponit_m37_claimer' AND (
            NEW.claim_release_id IS DISTINCT FROM OLD.claim_release_id
-        OR NEW.claim_miljo      IS DISTINCT FROM OLD.claim_miljo) THEN
+        OR NEW.claim_miljo      IS DISTINCT FROM OLD.claim_miljo
+        OR NEW.forste_claim_ts  IS DISTINCT FROM OLD.forste_claim_ts) THEN
         RAISE EXCEPTION 'oppdrag: claim-releasen settes kun av'
             ' claim-funksjonen';
+    END IF;
+    -- Write-once, for ALLE — også claim-funksjonen selv (som skriver
+    -- gjennom `coalesce`, så en reclaim aldri havner her). Ventetiden
+    -- måles fra det FØRSTE claimet; kunne stempelet flyttes, ville et
+    -- oppdrag som ble tatt med én gang og reclaimet et halvt minutt
+    -- senere sett ut som et claim-stopp som aldri ble observert.
+    IF OLD.forste_claim_ts IS NOT NULL
+       AND NEW.forste_claim_ts IS DISTINCT FROM OLD.forste_claim_ts THEN
+        RAISE EXCEPTION 'oppdrag: forste_claim_ts er write-once — det'
+            ' første claimet er det som avslutter ventetiden';
     END IF;
     RETURN NEW;
 END $$;
@@ -264,7 +291,13 @@ BEGIN
                             o.utforelsesfrist)),
                modul_id = v_b_modul, kontraktversjon = v_b_ver,
                kontrakt_hash = v_b_hash, module_epoch = v_b_epoch,
-               claim_release_id = v_b_rel, claim_miljo = v_b_miljo
+               claim_release_id = v_b_rel, claim_miljo = v_b_miljo,
+               -- Portens egen klokke, ikke kallerens påstand — derfor
+               -- stemples den også på legacy-grenen, der release-sporet
+               -- står NULL: NÅR raden ble tatt er sant uansett om det
+               -- finnes en verifisert release å skrive ned.
+               -- `coalesce`: første claim vinner (se vakten over).
+               forste_claim_ts = coalesce(o.forste_claim_ts, now())
          WHERE o.id = v_id
         RETURNING o.id, o.tenant, o.unntak_id, o.oppdragstype, o.handling,
                   o.repair_operation_id, o.payload_kryptert, o.key_id, o.nonce,
@@ -791,6 +824,37 @@ CREATE POLICY modulaksept_punkt_eier ON modulaksept_punkt
     USING (CURRENT_USER = 'disponit_modul_eier');
 
 -- ------------------------------------------------------------
+-- 5b. Claim-stoppets MÅLETID (Codex P1, #117 runde 21).
+--
+-- `min_ventetid_s` bodde bare i `manifestskjema.py` og i drillskriptets
+-- egen løkke — altså i filvalidatoren og i den som skriver fila. Basen
+-- kjente ingen varighet, så `claim_stopp_ok` krevde bare at
+-- rullbakkoppdraget lå MELLOM de to registerovergangene. En kaller med
+-- `disponit_modules_admin` kunne derfor bytte til rullbakken, bestille
+-- og fullføre et ekte oppdrag, og bytte videre til kandidaten på et par
+-- sekunder: alle tidspredikatene passerte, og en uforanderlig grønn
+-- drillrad — og aksepten som FK-refererer den — sto uten at claim-
+-- stoppet noen gang var observert. Et claim-stopp er en VARIGHET; måles
+-- den ikke, er «den drenerte claimet ingenting» bare en setning om et
+-- øyeblikk der ingen rakk å claime noe uansett.
+--
+-- Terskelen bor her, i basen, fordi det er her den håndheves. Den er en
+-- funksjon og ikke et litteral i porten, slik at drillsonden og prøvene
+-- kan lese NØYAKTIG det tallet porten regner med — og
+-- `test_ventetidsterskelen_er_den_samme_i_base_og_manifestskjema`
+-- binder den til `manifestskjema.GRENSER['rollback-m56-v1']`, så de to
+-- ikke kan gli fra hverandre i stillhet.
+-- ------------------------------------------------------------
+--
+-- Denne ene står MED default-EXECUTE til PUBLIC, i motsetning til
+-- definerne nederst i fila som revokes i eiervinduet: den leser ingen
+-- rad, skriver ingenting og avslører intet annet enn terskelen porten
+-- offentlig håndhever. Å lese kravet er ikke en fullmakt — sonden,
+-- akseptskriptet og prøvene skal alle kunne se NØYAKTIG det tallet.
+CREATE OR REPLACE FUNCTION moduldrill_min_ventetid_s()
+RETURNS NUMERIC LANGUAGE sql IMMUTABLE AS $$ SELECT 20.0::NUMERIC $$;
+
+-- ------------------------------------------------------------
 -- 6. Funksjonene — modul_eier-eide definere, EXECUTE kun til
 --    disponit_modules_admin (014-mønsteret). INSERT på tabellene er
 --    eierens/migrators særrettighet; ingen andre roller får DML.
@@ -1110,7 +1174,28 @@ BEGIN
                        AND o.opprettet > v_rull_ts
                        AND o.opprettet < v_kand_ts
                        AND o.status_ts > o.opprettet
-                       AND o.status_ts < v_kand_ts);
+                       AND o.status_ts < v_kand_ts)
+        -- …OG DEN DRENERTE MÅ HA LATT DET LIGGE LENGE NOK (Codex P1,
+        -- runde 21). Vinduet over sier at oppdraget lå INNENFOR
+        -- rullingen, ikke hvor lenge. Måletiden er tiden fra oppdraget
+        -- ble bestilt (etter `v_rull_ts`, altså etter at den drillede
+        -- ble drenert) til det FØRSTE claimet — nøyaktig strekket der
+        -- en levende, claimende forgjenger ville tatt raden. Sporet er
+        -- claim-portens eget (§0), write-once, så verken kjøretiden
+        -- eller deployfullmakten kan strekke det.
+        --
+        -- `>=`, ikke `>`: terskelen er «i minst så lenge», som i
+        -- `manifestskjema`. Og claimet må ligge FØR kandidatbyttet:
+        -- ventes det ut etter at kandidaten overtok, er det ikke den
+        -- drenerte releasens claim-stopp lenger.
+        AND EXISTS (SELECT 1 FROM public.oppdrag o
+                     WHERE o.tenant = p_tenant
+                       AND o.id = p_rullback_oppdrag
+                       AND o.forste_claim_ts IS NOT NULL
+                       AND o.forste_claim_ts < v_kand_ts
+                       AND o.forste_claim_ts - o.opprettet >=
+                           (public.moduldrill_min_ventetid_s() || ' seconds')
+                               ::INTERVAL);
     -- (b) rent utfall (SP-3): terminalt, signert kvittering, og utfallet
     -- STEMMER med evidensen — et `utfort` uten promotert artefakt og et
     -- ikke-`utfort` MED er begge falske verdikter. Motsigelsen regnes
@@ -1842,9 +1927,12 @@ GRANT SELECT, INSERT ON ci_kjoringsattest, evidensfil_attest
 -- Uten dem er «arbeidet krysset rullingen» ikke målbart.
 -- `claim_release_id`/`claim_miljo` er sporet claim-porten setter (§0), og
 -- den ene identiteten drillens tre ledd hviler på (Codex P1, runde 20).
+-- `forste_claim_ts` er det samme sporets klokke (Codex P1, runde 21):
+-- claim-stoppet er en varighet, og uten kolonnen kan porten bare måle at
+-- oppdraget lå i vinduet — ikke at det lå der lenge nok.
 GRANT SELECT (tenant, id, status, kvittering, kvittering_signatur,
               resultathash, eiermodul, opprettet, status_ts,
-              claim_release_id, claim_miljo)
+              claim_release_id, claim_miljo, forste_claim_ts)
     ON oppdrag TO disponit_modul_eier;
 GRANT SELECT (tenant, artefakt_id, oppdrag_id, release_id, tilstand)
     ON artefakt TO disponit_modul_eier;

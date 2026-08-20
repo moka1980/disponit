@@ -366,6 +366,54 @@ def _claim_release(m, tenant, oid):
     return tuple(rad) if rad else (None, None)
 
 
+def _maalt_ventetid(m, tenant, oid):
+    """Hvor lenge oppdraget lå ubehandlet, slik BASEN måler det.
+
+    Skriptets `ventetid_ubehandlet_s` er en monoton klokke i denne
+    prosessen; porten regner på `forste_claim_ts - opprettet` i
+    `oppdrag`. Sonden må lese basens tall, ikke sitt eget, ellers er
+    «målt lenge nok» igjen en påstand fra den som skriver evidensen.
+    Returnerer (ventetid_s, terskel_s) — terskelen hentes fra
+    `moduldrill_min_ventetid_s()`, samme funksjon porten bruker.
+    """
+    m.execute("RESET ROLE")
+    m.execute("SELECT set_config('disponit.tenant', %s, true)", (tenant,))
+    rad = m.execute(
+        "SELECT EXTRACT(EPOCH FROM (forste_claim_ts - opprettet))::float8,"
+        " moduldrill_min_ventetid_s()::float8 FROM oppdrag"
+        " WHERE tenant=%s AND id=%s", (tenant, oid)).fetchone()
+    m.commit()
+    return (None, None) if rad is None else (rad[0], rad[1])
+
+
+def _krev_maalt_ventetid(m, tenant, oid):
+    """Avbryter drillen hvis claim-stoppet ikke er målt lenge nok.
+
+    Codex' P1 på PR #117 (runde 21): claim-stoppet er en VARIGHET, og
+    den bodde bare i skriptet og i filvalidatoren. `registrer_moduldrill`
+    krever den nå selv (`forste_claim_ts - opprettet >=
+    moduldrill_min_ventetid_s()`). Sonden stiller samme krav, av samme
+    grunn som runde 17 og 20: en drill som rapporterer bestått for
+    evidens porten avviser, kan ikke kjøres om igjen — release-IDene er
+    brukt opp.
+    """
+    ventetid, terskel = _maalt_ventetid(m, tenant, oid)
+    if ventetid is None:
+        raise SystemExit(
+            f"AVBRUTT: rullbakkoppdraget {oid} står uten forste_claim_ts —"
+            " claim-porten stempler den fra 049, så et tomt stempel betyr"
+            " at oppdraget ble claimet før migrasjonen. Kjør drillen på"
+            " nytt etter 049")
+    if ventetid < terskel:
+        raise SystemExit(
+            f"AVBRUTT: claim-stoppet ble målt i {ventetid:.3f} s, og porten"
+            f" krever minst {terskel:g} s. Den drenerte releasen fikk ikke"
+            " lang nok anledning til å ta oppdraget, så «den claimet"
+            " ingenting» er ikke målt — registrer_moduldrill ville skrevet"
+            " claim_stopp_ok = false")
+    return ventetid
+
+
 def _krev_claimet_av(m, tenant, oid, release, ledd):
     """Avbryter drillen hvis leddet ikke er claimet av sin egen release."""
     funnet = _claim_release(m, tenant, oid)
@@ -1406,9 +1454,12 @@ def main() -> int:
                          " ingen rullbakk")
     rullback_overtakelse = round(time.monotonic() - rullback_ts, 3)
     _krev_claimet_av(m, sj.TENANT, o2, a.rullback_id, "rullbakk")
+    # Varigheten porten regner på — basens tall, ikke skriptets klokke.
+    ventetid_maalt = _krev_maalt_ventetid(m, sj.TENANT, o2)
     rullback_artefakter = _promoterte(m, sj.TENANT, o2, a.rullback_id)
     print(f"  (b2) rullbakk: {o2} utført av {a.rullback_id}, artefakter"
-          f" {rullback_artefakter}, overtakelse {rullback_overtakelse} s")
+          f" {rullback_artefakter}, overtakelse {rullback_overtakelse} s,"
+          f" claim-stopp målt i basen {ventetid_maalt:.3f} s")
 
     # (c) — fram igjen: kandidaten registreres, byttes til, onboardes og
     # provisjoneres via NØYAKTIG sjekklisterundens egne faser (2 → 4 → 9);

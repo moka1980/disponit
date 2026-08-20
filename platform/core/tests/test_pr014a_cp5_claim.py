@@ -91,9 +91,15 @@ def _binding(conn, opp):
     # P1 på PR #117 runde 20): claimet skriver ned HVILKEN deployment som
     # tok raden. Drillens tre ledd i 049 måles mot nettopp det sporet, og
     # den porten er bare så god som stemplingen her.
+    #
+    # `forste_claim_ts` er samme spors klokke (Codex P1 runde 21):
+    # claim-stoppet i 049 måles som `forste_claim_ts - opprettet`, og
+    # stempelet er write-once nettopp fordi en reclaim ellers ville
+    # forlenget et ventevindu som aldri ble observert.
     rad = conn.execute("SELECT modul_id, kontraktversjon, kontrakt_hash,"
                        " module_epoch, status, owner_generation,"
-                       " claim_release_id, claim_miljo FROM oppdrag"
+                       " claim_release_id, claim_miljo, forste_claim_ts"
+                       " FROM oppdrag"
                        " WHERE tenant=%s AND id=%s", (TENANT, opp)).fetchone()
     conn.rollback()
     return rad
@@ -234,6 +240,12 @@ def test_port7_reclaim_bumper_generasjon_og_bevarer_binding(migrator):
     b2 = _binding(migrator, opp)
     assert (b2[0], b2[1], b2[2]) == (b1[0], b1[1], b1[2]), \
         "kontraktbindingen endret seg ved reclaim (skal være write-once)"
+    # Ventetidsstempelet står også (Codex P1 runde 21): flyttet det seg
+    # ved reclaim, kunne et oppdrag som ble tatt med én gang og reclaimet
+    # et halvt minutt senere målt seg som et claim-stopp ingen observerte.
+    assert b1[8] is not None, "claimet stemplet ikke forste_claim_ts"
+    assert b2[8] == b1[8], \
+        "forste_claim_ts flyttet seg ved reclaim (skal være write-once)"
 
 
 @pg
@@ -378,6 +390,10 @@ def test_legacy_uregistrert_oppdragstype_claimes_som_for(migrator):
     # en påstand hører ikke hjemme i et spor drillen måler på.
     assert b[6] is None and b[7] is None, \
         "uregistrert oppdragstype fikk et claim-spor ingen port hadde prøvd"
+    # Klokka er derimot portens EGEN (Codex P1 runde 21), ikke noe
+    # kalleren oppgir: når raden ble tatt er sant også når det ikke
+    # finnes en verifisert release å skrive ned.
+    assert b[8] is not None, "legacy-claimet stemplet ikke forste_claim_ts"
     # …også når kalleren OPPGIR en: legacy-grenen prøver den ikke mot
     # `moduldeployment`, så den skrives ikke ned.
     _sett_kontekst(migrator, TENANT)
@@ -390,6 +406,8 @@ def test_legacy_uregistrert_oppdragstype_claimes_som_for(migrator):
     b2 = _binding(migrator, opp)
     assert b2[6] is None and b2[7] is None, \
         "legacy-claimet skrev kallerens uprøvde release inn i sporet"
+    assert b2[8] == b[8], \
+        "det andre claimet flyttet forste_claim_ts (skal være write-once)"
 
 
 @pg
