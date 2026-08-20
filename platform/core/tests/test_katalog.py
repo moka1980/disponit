@@ -1041,8 +1041,25 @@ MODULKONTRAKT = "modulkontrakt"
 # fordi den la seg ved siden av den opprinnelige i stedet for oppå. `public` er
 # standardskjemaet og derfor ikke en del av identiteten; et ANNET skjema er det,
 # og blir stående.
+# Mellom verbet og NAVNET kan det stå nøkkelord, og lista over dem sto som en
+# åpen oppramsing: bare `IF [NOT] EXISTS` (Codex P2 på #118, fjortende runde).
+# `ALTER TABLE ONLY modulkontrakt …` er en helt alminnelig form — den er
+# nettopp måten man endrer bare arvetabellen på — og der ble `ONLY` fanget som
+# tabellNAVNET. En innstramming la seg da under nøkkelen `('only', kolonne)`
+# mens det forrige, videre vilkåret på `modulkontrakt` ble stående som
+# gjeldende, og katalogporten ville sluppet inn en klasse PostgreSQL avviser.
+#
+# Lista er derfor lukket mot grammatikken i stedet for mot tilfellene: ordene
+# som KAN stå mellom `TABLE` og navnet er `IF`, `NOT`, `EXISTS` og `ONLY`, og
+# det er hele mengden PostgreSQL tillater der. Alle fire er reserverte ord, så
+# ingen tabell kan hete noe av det uten anførselstegn — og med anførselstegn
+# begynner navnet med `"` og treffer ikke ordmengden. Modifikatorene FORAN
+# `TABLE` er samme sak fra samme rot: `CREATE TEMP TABLE t` og `CREATE UNLOGGED
+# TABLE t` traff ikke mønsteret i det hele tatt, så et vilkår i en slik tabell
+# ville festet seg til forrige tabell i filen.
 _TABELL_RE = re.compile(
-    r"\b(?:CREATE|ALTER)\s+TABLE(?:\s+IF\s+(?:NOT\s+)?EXISTS)?\s+([\w.\"]+)",
+    r"""\b(?:CREATE(?:\s+(?:GLOBAL|LOCAL|TEMPORARY|TEMP|UNLOGGED)\b)*"""
+    r"""|ALTER)\s+TABLE(?:\s+(?:IF|NOT|EXISTS|ONLY)\b)*\s+([\w.\"]+)""",
     re.I)
 _CHECK_RE = re.compile(
     r"""(?:CONSTRAINT\s+([\w."]+)\s+)?CHECK\s*\(\s*(\w+)\s+IN\s*\(([^)]*)\)""",
@@ -1489,6 +1506,43 @@ def test_enumtilstanden_leser_slipp_og_nytt_vilkaar_i_rekkefolge(tmp_path):
     gjeldende, _ = _registerets_enums(mappe)
     assert gjeldende[(MODULKONTRAKT, "reversibilitet")] == {
         "direkte", "irreversibel"}
+
+
+@pytest.mark.parametrize("lager,endrer", [
+    # `ONLY` er formen for «bare denne tabellen, ikke arvingene».
+    (_LAGER_VILKAR, "ALTER TABLE ONLY modulkontrakt\n"),
+    # Og den kan stå sammen med `IF EXISTS`, i den rekkefølgen PostgreSQL
+    # krever.
+    (_LAGER_VILKAR, "ALTER TABLE IF EXISTS ONLY modulkontrakt\n"),
+    # Modifikatorene FORAN `TABLE` er samme rot: uten dem fant mønsteret ingen
+    # tabell i det hele tatt, og vilkåret hadde festet seg til forrige tabell.
+    ("CREATE UNLOGGED TABLE modulkontrakt (reversibilitet TEXT NOT NULL\n"
+     "    CHECK (reversibilitet IN ('direkte', 'kompenserende')));\n",
+     "ALTER TABLE modulkontrakt\n"),
+])
+def test_tabellnavnet_leses_forbi_nokkelordene(tmp_path, lager, endrer):
+    """Nøkkelordene mellom verbet og navnet er ikke tabellnavnet.
+
+    Prefikset sto som en åpen oppramsing — bare `IF [NOT] EXISTS` (Codex P2 på
+    #118, fjortende runde). `ALTER TABLE ONLY modulkontrakt` ga derfor `only`
+    som tabell, innstrammingen la seg under en nøkkel ingen spør om, og det
+    forrige og videre vilkåret på `modulkontrakt` ble stående som gjeldende
+    tilstand. Katalogporten ville da sluppet inn en `rev`-verdi PostgreSQL
+    avviser ved registrering.
+
+    Formene finnes ikke i repoets migrasjoner i dag; det er nettopp derfor de
+    må stå her. En port som bare måler dagens filer, går grønn til noen skriver
+    linja.
+    """
+    mappe = _migrasjoner(
+        tmp_path, lager,
+        endrer + "    DROP CONSTRAINT modulkontrakt_reversibilitet_check;\n"
+        + endrer + "    ADD CONSTRAINT modulkontrakt_reversibilitet_check\n"
+        "    CHECK (reversibilitet IN ('direkte'));\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende[(MODULKONTRAKT, "reversibilitet")] == {"direkte"}
+    assert not [n for n in gjeldende if n[0] in ("only", "if", "exists")], (
+        f"et nøkkelord ble tabellnavn: {sorted(gjeldende)}")
 
 
 def test_escapestrengen_lukkes_ikke_av_en_escapet_fnutt(tmp_path):
