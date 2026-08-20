@@ -1748,6 +1748,15 @@ def _registerets_enums(
     feil som stopper CI og blir rettet, i motsetning til den motsatte, som
     slipper en umulig modul gjennom i stillhet.
 
+    De to reglene møtes når grenen slipper og legger på igjen under SAMME navn
+    (Codex P2 på #118, sekstende runde). Slippet ble gitt fra seg, så det gamle
+    vilkåret sto — men tillegget skrev seg på den samme nøkkelen og ERSTATTET
+    det likevel, og da falt den ene halvdelen av det konservative valget bort.
+    Kjørte grenen, gjelder erstatningen; kjørte den ikke, gjelder originalen —
+    porten vet ikke hvilken, så BEGGE må bli stående, og snittet er da det
+    eneste svaret som ikke utvider. Erstatningen legges derfor ved siden av,
+    under en nøkkel ingen `DROP CONSTRAINT` kan skrive.
+
     `noen_gang` er unionen av alt registeret har bundet, og er noe annet: den
     er historikken en pensjonert verdi kjennes igjen på.
     """
@@ -1784,6 +1793,8 @@ def _registerets_enums(
             kolonne = m.group(2)
             navn = _vilkarsnavn(m.group(1)) if m.group(1) \
                 else _tildelt_navn(vilkar, tabell, kolonne)
+            if _i_data(betinget, start) and (tabell, navn) in vilkar:
+                navn = _sidestilt_navn(vilkar, tabell, navn)
             vilkar[(tabell, navn)] = (kolonne, verdier)
             noen_gang |= verdier
     gjeldende: dict[tuple[str, str], set[str]] = {}
@@ -1813,6 +1824,26 @@ def _tildelt_navn(vilkar: dict, tabell: str, kolonne: str) -> str:
         nr += 1
         navn = f"{stamme}{nr}"
     return navn
+
+
+def _sidestilt_navn(vilkar: dict, tabell: str, navn: str) -> str:
+    """Nøkkelen et BETINGET vilkår får når navnet alt er i bruk.
+
+    Et betinget tillegg som gjenbruker navnet på et vilkår som står, er to
+    utfall porten ikke kan velge mellom: kjørte grenen, ble det gamle sluppet
+    og erstattet, kjørte den ikke, står originalen. Erstatningen legges derfor
+    SIDESTILT — begge blir stående, og `gjeldende` snitter dem per kolonne, som
+    er den tolkningen som aldri utvider.
+
+    Nøkkelen bærer et NUL-tegn. `_vilkarsnavn()` gir bare fra seg tegnene i en
+    SQL-identifikator, så ingen `DROP CONSTRAINT` kan navngi den sidestilte
+    oppføringen — og det er meningen: et senere slipp skal ikke kunne fjerne
+    den halvdelen av snittet som holder porten smal.
+    """
+    nr = 1
+    while (tabell, f"{navn}\0{nr}") in vilkar:
+        nr += 1
+    return f"{navn}\0{nr}"
 
 
 def _registerenum(kolonne: str) -> set[str]:
@@ -2227,6 +2258,54 @@ def test_en_sql_streng_er_data_og_ingen_setning(tmp_path, senere, gjelder):
      "            CHECK (reversibilitet IN ('direkte'));\n"
      "    END IF;\n"
      "END $$;\n", {"direkte"}),
+    # Slipp og tillegg under SAMME navn: erstatningen skrev seg oppå det
+    # vilkåret slippet nettopp ikke fikk fjerne, og `irreversibel` ble
+    # gjeldende selv om PostgreSQL kan sitte igjen med originalen. Begge
+    # utfallene står, og snittet er det de er enige om.
+    ("DO $$ BEGIN\n"
+     "    IF FALSE THEN\n"
+     "        ALTER TABLE modulkontrakt\n"
+     "            DROP CONSTRAINT modulkontrakt_reversibilitet_check;\n"
+     "        ALTER TABLE modulkontrakt\n"
+     "            ADD CONSTRAINT modulkontrakt_reversibilitet_check\n"
+     "            CHECK (reversibilitet IN ('direkte', 'irreversibel'));\n"
+     "    END IF;\n"
+     "END $$;\n", {"direkte"}),
+    # Samme form der erstatningen er VIDERE: originalen kan stå, så den
+    # nye verdien kan ikke bli gjeldende av seg selv.
+    ("DO $$ BEGIN\n"
+     "    IF FALSE THEN\n"
+     "        ALTER TABLE modulkontrakt DROP CONSTRAINT IF EXISTS\n"
+     "            modulkontrakt_reversibilitet_check;\n"
+     "        ALTER TABLE modulkontrakt\n"
+     "            ADD CONSTRAINT modulkontrakt_reversibilitet_check\n"
+     "            CHECK (reversibilitet IN\n"
+     "                ('direkte', 'kompenserende', 'oppfunnet'));\n"
+     "    END IF;\n"
+     "END $$;\n", {"direkte", "kompenserende"}),
+    # To betingede tillegg under samme navn står også side om side: hver av
+    # dem kan være den som kjørte, og ingen av dem kan utvide de andre.
+    ("DO $$ BEGIN\n"
+     "    IF FALSE THEN\n"
+     "        ALTER TABLE modulkontrakt\n"
+     "            ADD CONSTRAINT modulkontrakt_reversibilitet_check\n"
+     "            CHECK (reversibilitet IN ('direkte', 'kompenserende'));\n"
+     "    END IF;\n"
+     "    IF FALSE THEN\n"
+     "        ALTER TABLE modulkontrakt\n"
+     "            ADD CONSTRAINT modulkontrakt_reversibilitet_check\n"
+     "            CHECK (reversibilitet IN ('kompenserende'));\n"
+     "    END IF;\n"
+     "END $$;\n", {"kompenserende"}),
+    # Men et UBETINGET tillegg er ett kjent utfall, og erstatter som før: et
+    # navn kan bare bæres av ett vilkår, så slippet foran MÅ ha kjørt.
+    ("DO $$ BEGIN\n"
+     "    ALTER TABLE modulkontrakt DROP CONSTRAINT IF EXISTS\n"
+     "        modulkontrakt_reversibilitet_check;\n"
+     "    ALTER TABLE modulkontrakt\n"
+     "        ADD CONSTRAINT modulkontrakt_reversibilitet_check\n"
+     "        CHECK (reversibilitet IN ('direkte', 'irreversibel'));\n"
+     "END $$;\n", {"direkte", "irreversibel"}),
 ])
 def test_betinget_ddl_i_en_do_kropp_utvider_aldri(tmp_path, senere, gjelder):
     """En gren i en `DO`-kropp kan ikke leses, bare regnes konservativt.
