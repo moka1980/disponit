@@ -535,17 +535,33 @@ def er_en_modulliste(skript: str, i: int) -> bool:
     linjeskift eller hva som helst annet, og faller derfor på sin egen form,
     uten at generatoren trenger å vite hvor i skriptet de står.
 
-    Antallet spørres det IKKE om: en halv eller tom katalog nummer to er
-    fortsatt en erklæring, og en redeklarasjon nettleseren avviser. Den skal
-    stoppe generatoren, ikke velges bort i stillhet.
+    Men en TOM liste er ikke en katalog (Codex P2 på #118, sekstende runde).
+    Spørsmålet «lar hvert element seg lese som en post?» er sant uten videre
+    når det ikke finnes noen elementer, og en helt alminnelig hjelpetekst —
+    `const hjelp = "const M = []";` eller en kommentar med samme innhold — ble
+    derfor stående som en katalog nummer to. Generatoren stoppet på en
+    redeklarasjon nettleseren ikke ser, og ferskhetsporten ble rød av en
+    tekstendring som ikke rører katalogen. Den tomme sannheten er den samme
+    åpne enden som før, bare snudd: et krav ingenting kan bryte, kan heller
+    ikke skille.
+
+    Antallet spørres det fortsatt ikke om utover dette — en HALV katalog
+    nummer to er en erklæring og stopper generatoren som før. Og at en tom
+    andre-erklæring i KODEN ikke lenger stopper her, er ikke et hull som blir
+    stående: to `const M` er en redeklarasjon nettleseren avviser, siden er da
+    død i nettleseren, og porten i `test_katalog.py` krever nøyaktig ett anker
+    i KODE — den har JS-skanneren som skiller kode fra tekst, og det er den
+    lesningen som kan svare på spørsmålet generatoren her ikke kan stille.
     """
+    poster = 0
     try:
         for start in les_elementer(skript, i):
             if not POST_RE.match(skript, start):
                 return False
+            poster += 1
     except SystemExit:
         return False
-    return True
+    return poster > 0
 
 
 def les_katalog() -> list[dict]:
@@ -609,8 +625,14 @@ def les_katalog() -> list[dict]:
     # strukturelle gjelder ankeret. En erklæring er fulgt av en LISTE av
     # modulposter — så tegnene `const M = [` i en streng eller en kommentar
     # faller på sin egen form, uten at generatoren trenger å vite hvor de står.
-    # En halv eller tom katalog nummer to er derimot fortsatt en erklæring, og
-    # stopper generatoren som før.
+    # En HALV katalog nummer to er derimot fortsatt en erklæring, og stopper
+    # generatoren som før.
+    #
+    # Med ett unntak: en TOM liste (Codex P2 på #118, sekstende runde). Formen
+    # «hvert element er en post» er sann uten videre når det ikke står noen
+    # elementer der, så `const hjelp = "const M = []";` ble en katalog nummer
+    # to — enda en falsk stopp av samme slag som den forrige runde fjernet. Se
+    # `er_en_modulliste()` for hvorfor det hullet ikke blir stående ulukket.
     #
     # Bare når ankeret finnes flere ganger må formen avgjøre; med ett anker
     # leses det som før, så en ekte katalog som har endret form fortsatt gir

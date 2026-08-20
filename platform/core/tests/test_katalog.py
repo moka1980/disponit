@@ -307,6 +307,15 @@ def test_en_postformet_streng_i_ui_koden_er_ingen_modul(tmp_path, linje):
     "/* katalogen står som const M = [ … ] lenger nede */",
     # En malstreng er samme sak.
     "const hjelp = `katalogen står som const M = [ … ]`;",
+    # Og en KOMPLETT tom liste i prosa er fortsatt prosa (Codex P2 på #118,
+    # sekstende runde). Formen «hvert element er en post» er sann uten videre
+    # når det ikke står noen elementer der, så disse fire ble stående som en
+    # katalog nummer to og stoppet generatoren på en redeklarasjon
+    # nettleseren ikke ser.
+    'const hjelp = "const M = []";',
+    "// const M = []",
+    "/* const M = [] */",
+    "const hjelp = `const M = []`;",
 ])
 def test_et_ankerformet_ord_i_ui_koden_er_ingen_katalog(tmp_path, linje):
     """Bare en ERKLÆRING er en katalog, ikke tegnene som ser ut som en.
@@ -329,13 +338,15 @@ def test_to_modulkataloger_er_et_stopp(tmp_path):
     """Ankeret må finnes nøyaktig én gang, ellers vet ingen hvilken som gjelder.
 
     To `const M` er en redeklarasjon nettleseren selv avviser, så kravet er det
-    samme som JS stiller. Uten det ville en tom eller halv katalog nummer to
-    stilltiende avgjort hva generatoren leste.
+    samme som JS stiller. Uten det ville en halv katalog nummer to stilltiende
+    avgjort hva generatoren leste.
 
     Prøven står ved siden av den over, og de to måler hver sin side av det
     samme skillet: tegnene `const M = [` i en streng er ikke en erklæring, mens
     en HALV katalog er det — og skal fortsatt stoppe, uansett hvor få poster
-    den bærer.
+    den bærer. Den TOMME lista er den ene formen generatoren ikke kan svare på
+    fra formen alene; den vokter porten i stedet, se
+    `test_to_ekte_kataloger_stopper_porten()`.
     """
     r = _med_uikode(tmp_path, "const M = [{n:58,name:'D',area:'X',p:1}];")
     assert r.returncode != 0, "generatoren valgte én av to kataloger"
