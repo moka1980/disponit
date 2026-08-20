@@ -135,16 +135,17 @@ def _punkter(m, krav=KRAV):
 
 
 def _aksepter(m, k, did, *, release="r-kandidat", artefakt=None,
-              punkter=None, nokkel=None, miljo="staging"):
+              punkter=None, nokkel=None, miljo="staging",
+              evidens_sha="e-sha", ci_run="run-1"):
     m.execute("RESET ROLE")     # forrige _aksepter kan ha etterlatt admin
     if punkter is None:
         punkter = _punkter(m)   # leses som migrator — admin har ikke SELECT
     m.execute("SET ROLE disponit_modules_admin")
     m.execute(
-        "SELECT aksepter_moduldeployment(%s,%s,%s,%s,%s,%s,%s::uuid,'e-sha',"
-        "'m-commit','run-1','ci-sha',%s::jsonb,%s,'test')",
+        "SELECT aksepter_moduldeployment(%s,%s,%s,%s,%s,%s,%s::uuid,%s,"
+        "'m-commit',%s,'ci-sha',%s::jsonb,%s,'test')",
         (k["mid"], miljo, release, did, KRAV, k["ten"],
-         artefakt or k["e2e"],
+         artefakt or k["e2e"], evidens_sha, ci_run,
          json.dumps(punkter),
          nokkel or "a-" + secrets.token_hex(6)))
     m.execute("RESET ROLE")   # aldri la admin bli sesjonens faste rolle
@@ -312,6 +313,66 @@ def test_replay_gir_en_hendelse_og_en_drill(migrator):
             "SELECT registrer_moduldrill(%s,'staging','r-drillet',"
             "'r-rullback','r-kandidat',true,true,true,%s,'test')",
             (k2["mid"], nk))
+    migrator.rollback()
+
+
+@pg
+def test_replay_med_andre_bevis_avvises(migrator):
+    """Codex' P2 på PR #117: en akseptnøkkel gjenbrukt med RETTEDE bevis
+    (ny CI-kjøring, ny evidenshash, andre punktmålinger) returnerte
+    stille, og skriptet skrev AKSEPTERT mens den immutable raden fortsatt
+    bar de gamle bevisene. Rettelsen skal høres, ikke forsvinne —
+    uendret replay er fortsatt et no-op."""
+    k = _kjede(migrator)
+    did = _drill(migrator, k["mid"])
+    ak = "a-" + secrets.token_hex(6)
+    _aksepter(migrator, k, did, nokkel=ak)
+    migrator.commit()
+    for endring in ({"ci_run": "run-2"}, {"evidens_sha": "e-sha-rettet"}):
+        migrator.execute("RESET ROLE")
+        with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+            _aksepter(migrator, k, did, nokkel=ak, **endring)
+        assert "annet innhold" in str(ei.value)
+        migrator.rollback()
+    migrator.execute("RESET ROLE")
+    p = _punkter(migrator)
+    rettet = sorted(p)[0]
+    p[rettet] = dict(p[rettet], maalt_verdi="1")
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, k, did, nokkel=ak, punkter=p)
+    assert rettet in str(ei.value)
+    migrator.rollback()
+    _aksepter(migrator, k, did, nokkel=ak)      # identisk → no-op
+    migrator.commit()
+    migrator.execute("RESET ROLE")
+    n = migrator.execute("SELECT count(*) FROM modulaksept WHERE modul_id=%s",
+                         (k["mid"],)).fetchone()[0]
+    ci = migrator.execute("SELECT ci_run FROM modulaksept WHERE modul_id=%s",
+                          (k["mid"],)).fetchone()[0]
+    migrator.rollback()
+    assert (n, ci) == (1, "run-1")
+
+
+@pg
+def test_drillnokkel_med_andre_utfall_avvises(migrator):
+    """Samme klasse i drillen: nøkkelkontrollen leste bare modul, miljø,
+    drillet og kandidat — et replay med ANDRE kontrollpunktutfall eller
+    annen rullbakk-release fikk den grønne raden tilbake."""
+    k = _kjede(migrator)
+    nk = "n-" + secrets.token_hex(6)
+    _drill(migrator, k["mid"], nokkel=nk)
+    for felt in ("claim_stopp", "rene", "tilbake"):
+        migrator.execute("RESET ROLE")
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            _drill(migrator, k["mid"], nokkel=nk, **{felt: False})
+        migrator.rollback()
+    migrator.execute("RESET ROLE")
+    migrator.execute("SET ROLE disponit_modules_admin")
+    with pytest.raises(psycopg.errors.InvalidParameterValue):
+        migrator.execute(
+            "SELECT registrer_moduldrill(%s,'staging','r-drillet',"
+            "'r-annen-rullback','r-kandidat',true,true,true,%s,'test')",
+            (k["mid"], nk))
     migrator.rollback()
 
 

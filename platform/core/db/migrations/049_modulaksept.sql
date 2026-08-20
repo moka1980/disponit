@@ -221,7 +221,11 @@ BEGIN
         PERFORM 1 FROM public.moduldrill
          WHERE nokkel = p_nokkel AND modul_id = p_modul_id
            AND miljo = p_miljo AND drillet_release = p_drillet
-           AND akseptkandidat_release = p_kandidat;
+           AND rullback_release = p_rullback
+           AND akseptkandidat_release = p_kandidat
+           AND claim_stopp_ok = p_claim_stopp
+           AND rene_utfall_ok = p_rene_utfall
+           AND tilbake_ok = p_tilbake;
         IF NOT FOUND THEN
             RAISE EXCEPTION 'registrer_moduldrill: nøkkel % gjenbrukt med'
                 ' annet innhold', p_nokkel
@@ -295,12 +299,56 @@ CREATE OR REPLACE FUNCTION aksepter_moduldeployment(
 RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE v_livslop TEXT; v_mangler TEXT; v_punkt RECORD; v_verdi JSONB;
-        v_epoch BIGINT;
+        v_epoch BIGINT; v_avvik TEXT;
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended('modul:' || p_modul_id, 0));
-    -- SP-2: replay er et no-op, aldri en ny hendelse.
+    -- SP-2: replay er et no-op, aldri en ny hendelse — men BARE når hele
+    -- det materielle innholdet er det samme.
+    --
+    -- Codex' P2 på PR #117: den forrige formen returnerte på nøkkelen
+    -- alene. Kjørte operatøren akseptkommandoen på nytt etter å ha
+    -- rettet en CI-kjøring, evidenshash, drill eller E2E-artefakt, ble
+    -- rettelsen STILLE forkastet — raden er immutabel, så den bar
+    -- fortsatt de gamle bevisene — og skriptet skrev likevel AKSEPTERT.
+    -- Revisjonssporet fortalte da noe annet enn kallet som lagde det.
+    -- Avvikende gjenbruk av en nøkkel er en programfeil og skal høres,
+    -- akkurat som i `registrer_moduldrill`.
     PERFORM 1 FROM public.modulaksept WHERE nokkel = p_nokkel;
     IF FOUND THEN
+        PERFORM 1 FROM public.modulaksept
+         WHERE nokkel = p_nokkel AND modul_id = p_modul_id
+           AND miljo = p_miljo AND release_id = p_release_id
+           AND drill_id = p_drill_id AND krav_id = p_krav_id
+           AND e2e_tenant = p_e2e_tenant
+           AND e2e_artefakt_id = p_e2e_artefakt
+           AND evidens_jsonl_sha256 = p_evidens_sha
+           AND manifest_commit = p_manifest_commit
+           AND ci_run = p_ci_run AND ci_commit = p_ci_commit;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'aksepter_moduldeployment: nøkkel % gjenbrukt'
+                ' med annet innhold — den lagrede aksepten bærer andre'
+                ' bevis enn dette kallet', p_nokkel
+                USING ERRCODE = 'invalid_parameter_value';
+        END IF;
+        -- Punktobservasjonene er like materielle som radens egne felt:
+        -- en rettet måling på samme nøkkel er også en forkastet rettelse.
+        SELECT string_agg(pk.punkt, ', ' ORDER BY pk.punkt) INTO v_avvik
+          FROM public.modulaksept_punkt pk
+         WHERE pk.modul_id = p_modul_id AND pk.miljo = p_miljo
+           AND pk.release_id = p_release_id
+           AND ((p_punkter -> pk.punkt) ->> 'grenseverdi'
+                    IS DISTINCT FROM pk.grenseverdi
+             OR (p_punkter -> pk.punkt) ->> 'maalt_verdi'
+                    IS DISTINCT FROM pk.maalt_verdi
+             OR (p_punkter -> pk.punkt) ->> 'kilde_type'
+                    IS DISTINCT FROM pk.kilde_type
+             OR (p_punkter -> pk.punkt) ->> 'kilde_ref'
+                    IS DISTINCT FROM pk.kilde_ref);
+        IF v_avvik IS NOT NULL THEN
+            RAISE EXCEPTION 'aksepter_moduldeployment: nøkkel % gjenbrukt'
+                ' med andre punktobservasjoner: %', p_nokkel, v_avvik
+                USING ERRCODE = 'invalid_parameter_value';
+        END IF;
         RETURN;
     END IF;
     -- Aksepten gjelder raden slik den faktisk kjører.
