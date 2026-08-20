@@ -46,6 +46,31 @@ CREATE TABLE moduldrill (
     -- registertilstand, ikke FK-bar identitet — den snapshottes (A1)
     epoch_snapshot  BIGINT NOT NULL,
     digest_snapshot TEXT NOT NULL,
+    -- Codex' P1 på PR #117 (runde 5): de tre utfallene under var KALLERENS
+    -- påstander. `disponit_modules_admin` er den brede deployfullmakten
+    -- (registrer_release, bytt_release, onboarding …), og en som holdt
+    -- den kunne kalle `registrer_moduldrill` direkte med tre håndskrevne
+    -- `true` og få en immutabel, grønn drillrad uten å ha kjørt noen
+    -- drill — hvorpå `aksepter_moduldeployment` FK-refererte den og
+    -- aksepten var et faktum. HELE evidensapparatet lå i skriptet, og et
+    -- skript er ingen skranke for den som kan la være å bruke det.
+    --
+    -- Utfallene MÅLES nå av definerne selv, i `oppdrag` og `artefakt`.
+    -- Da må drillraden bære HVA den ble målt på: tenanten og de tre
+    -- oppdragene drillen faktisk kjørte. De er FK-bundet, så en drillrad
+    -- kan ikke peke på oppdrag som ikke finnes, og målingen kan regnes
+    -- ut på nytt av hvem som helst i ettertid.
+    tenant           TEXT NOT NULL,
+    -- (b) oppdraget som VAR claimet da rullingen traff
+    inflight_oppdrag BIGINT NOT NULL,
+    -- (a)+(b2) oppdraget den drenerte releasen lot ligge, og som
+    -- rullbakken plukket etter at den ble bootet
+    rullback_oppdrag BIGINT NOT NULL,
+    -- (c) kandidatens eget oppdrag — og kilden til akseptens E2E-bevis
+    kandidat_oppdrag BIGINT NOT NULL,
+    -- bytene raden hviler på: sha256 av drillartefaktet slik aksepten
+    -- leste det. Basen kan ikke lese fila, men raden skal NAVNGI den.
+    artefakt_sha256  TEXT NOT NULL CHECK (artefakt_sha256 ~ '^[0-9a-f]{64}$'),
     claim_stopp_ok  BOOLEAN NOT NULL,  -- (a) drenert release claimer ikke nye
     rene_utfall_ok  BOOLEAN NOT NULL,  -- (b) løpende oppdrag: rent utfall (SP-3)
     tilbake_ok      BOOLEAN NOT NULL,  -- (c) kandidaten plukker og fullfører
@@ -68,6 +93,14 @@ CREATE TABLE moduldrill (
     UNIQUE (nokkel),
     CHECK (drillet_release <> rullback_release),
     CHECK (akseptkandidat_release <> drillet_release),
+    -- Ett oppdrag kan ikke være tre ledd: leddene måler ulike faser, og
+    -- samme id tre steder er en drill som aldri fant sted.
+    CHECK (inflight_oppdrag <> rullback_oppdrag),
+    CHECK (inflight_oppdrag <> kandidat_oppdrag),
+    CHECK (rullback_oppdrag <> kandidat_oppdrag),
+    FOREIGN KEY (tenant, inflight_oppdrag) REFERENCES oppdrag (tenant, id),
+    FOREIGN KEY (tenant, rullback_oppdrag) REFERENCES oppdrag (tenant, id),
+    FOREIGN KEY (tenant, kandidat_oppdrag) REFERENCES oppdrag (tenant, id),
     FOREIGN KEY (modul_id, miljo, drillet_release)
         REFERENCES moduldeployment (modul_id, miljo, release_id),
     FOREIGN KEY (modul_id, miljo, akseptkandidat_release)
@@ -216,15 +249,23 @@ CREATE TRIGGER akseptpunkt_ingen_truncate BEFORE TRUNCATE ON modulaksept_punkt
 --    disponit_modules_admin (014-mønsteret). INSERT på tabellene er
 --    eierens/migrators særrettighet; ingen andre roller får DML.
 -- ------------------------------------------------------------
+-- Utfallene er IKKE parametre (Codex P1, #117 runde 5): kalleren oppgir
+-- HVA drillen ble målt på — tenanten og de tre oppdragene — og funksjonen
+-- måler selv i `oppdrag`/`artefakt`. En kaller med `disponit_modules_admin`
+-- kan derfor ikke lenger skrive en grønn drillrad; han må ha oppdrag som
+-- faktisk bærer utfallene, og dem lager bare arbeid.
 CREATE OR REPLACE FUNCTION registrer_moduldrill(
     p_modul_id TEXT, p_miljo TEXT, p_drillet TEXT, p_rullback TEXT,
-    p_kandidat TEXT, p_claim_stopp BOOLEAN, p_rene_utfall BOOLEAN,
-    p_tilbake BOOLEAN, p_nokkel TEXT, p_aktor TEXT,
+    p_kandidat TEXT, p_tenant TEXT, p_inflight_oppdrag BIGINT,
+    p_rullback_oppdrag BIGINT, p_kandidat_oppdrag BIGINT,
+    p_artefakt_sha TEXT, p_nokkel TEXT, p_aktor TEXT,
     p_utfort_ts TIMESTAMPTZ)
 RETURNS BIGINT LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE v_id BIGINT; v_drillet_digest TEXT; v_kandidat_digest TEXT;
-        v_epoch BIGINT; v_livslop TEXT;
+        v_epoch BIGINT; v_livslop TEXT; v_forrige_tenant TEXT;
+        v_status TEXT; v_kvittering BOOLEAN; v_funnet INT;
+        v_claim_stopp BOOLEAN; v_rene_utfall BOOLEAN; v_tilbake BOOLEAN;
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended('modul:' || p_modul_id, 0));
     -- SP-2: samme nøkkel → samme rad, aldri to. Avvikende innhold på
@@ -236,9 +277,15 @@ BEGIN
            AND miljo = p_miljo AND drillet_release = p_drillet
            AND rullback_release = p_rullback
            AND akseptkandidat_release = p_kandidat
-           AND claim_stopp_ok = p_claim_stopp
-           AND rene_utfall_ok = p_rene_utfall
-           AND tilbake_ok = p_tilbake
+           -- Utfallene måles nedenfor og er ikke lenger kallerens; det
+           -- MATERIELLE i et replay-kall er derfor hva drillen ble målt
+           -- på: tenanten, de tre oppdragene og bytene raden hviler på.
+           -- Samme nøkkel med andre oppdrag er en annen drill.
+           AND tenant = p_tenant
+           AND inflight_oppdrag = p_inflight_oppdrag
+           AND rullback_oppdrag = p_rullback_oppdrag
+           AND kandidat_oppdrag = p_kandidat_oppdrag
+           AND artefakt_sha256 = lower(p_artefakt_sha)
            -- Måletidspunktet er like materielt som utfallene: samme
            -- nøkkel med en ANNEN drillkjørings tidsstempel er to
            -- kjøringer, ikke en replay.
@@ -296,13 +343,86 @@ BEGIN
             ' tomt eller fram i tid — drillen skal bære sin EGEN måletid',
             p_utfort_ts USING ERRCODE = 'invalid_parameter_value';
     END IF;
+    -- ------------------------------------------------------------
+    -- UTFALLENE MÅLES (Codex P1, #117 runde 5).
+    --
+    -- `oppdrag` og `artefakt` står med FORCE ROW LEVEL SECURITY og
+    -- tenant-policy; definerens rolle er ikke tabelleier, så policyen
+    -- gjelder også her. Tenantkonteksten settes derfor eksplisitt til
+    -- den drillen ble målt i, og legges tilbake etterpå — funksjonen
+    -- skal ikke etterlate kallerens sesjon i et annet skop enn den fant
+    -- den i.
+    -- ------------------------------------------------------------
+    v_forrige_tenant := current_setting('disponit.tenant', true);
+    PERFORM set_config('disponit.tenant', p_tenant, true);
+    SELECT count(*) INTO v_funnet FROM public.oppdrag o
+     WHERE o.tenant = p_tenant
+       AND o.id IN (p_inflight_oppdrag, p_rullback_oppdrag,
+                    p_kandidat_oppdrag);
+    IF v_funnet <> 3 THEN
+        RAISE EXCEPTION 'registrer_moduldrill: fant % av 3 drilloppdrag'
+            ' for tenant % — utfallene måles på oppdragene, og oppdrag'
+            ' som ikke finnes har ingen utfall', v_funnet, p_tenant
+            USING ERRCODE = 'no_data_found';
+    END IF;
+    IF EXISTS (SELECT 1 FROM public.oppdrag o
+                WHERE o.tenant = p_tenant
+                  AND o.id IN (p_inflight_oppdrag, p_rullback_oppdrag,
+                               p_kandidat_oppdrag)
+                  AND o.eiermodul IS DISTINCT FROM p_modul_id) THEN
+        RAISE EXCEPTION 'registrer_moduldrill: minst ett drilloppdrag'
+            ' eies av en annen modul enn % — en annen moduls arbeid er'
+            ' ingen drill av denne', p_modul_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- (a)+(b2) claim-stopp: oppdraget som ble bestilt mens den drillede
+    -- releasen drenerte, ble IKKE tatt av den — og ble tatt av
+    -- rullbakken etter at hun ble bootet. Det andre leddet er det som
+    -- skiller «den gamle sluttet å claime» fra «det gikk an å rulle
+    -- tilbake»: uten det er claim-stoppet bare fravær av arbeid.
+    v_claim_stopp :=
+        NOT EXISTS (SELECT 1 FROM public.artefakt a
+                     WHERE a.tenant = p_tenant
+                       AND a.oppdrag_id = p_rullback_oppdrag
+                       AND a.release_id = p_drillet)
+        AND EXISTS (SELECT 1 FROM public.artefakt a
+                     WHERE a.tenant = p_tenant
+                       AND a.oppdrag_id = p_rullback_oppdrag
+                       AND a.release_id = p_rullback
+                       AND a.tilstand = 'promotert');
+    -- (b) rent utfall (SP-3): terminalt, signert kvittering, og utfallet
+    -- STEMMER med evidensen — et `utfort` uten promotert artefakt og et
+    -- ikke-`utfort` MED er begge falske verdikter. Motsigelsen regnes
+    -- her, av radene selv, ikke av et tall i et artefakt.
+    SELECT o.status, o.kvittering IS NOT NULL
+      INTO v_status, v_kvittering
+      FROM public.oppdrag o
+     WHERE o.tenant = p_tenant AND o.id = p_inflight_oppdrag;
+    v_rene_utfall := v_status IN ('utfort', 'feilet') AND v_kvittering
+        AND ((v_status = 'utfort') = EXISTS (
+                SELECT 1 FROM public.artefakt a
+                 WHERE a.tenant = p_tenant
+                   AND a.oppdrag_id = p_inflight_oppdrag
+                   AND a.release_id = p_drillet
+                   AND a.tilstand = 'promotert'));
+    -- (c) fram igjen: kandidaten plukket sitt eget oppdrag og promoterte.
+    v_tilbake := EXISTS (SELECT 1 FROM public.artefakt a
+                          WHERE a.tenant = p_tenant
+                            AND a.oppdrag_id = p_kandidat_oppdrag
+                            AND a.release_id = p_kandidat
+                            AND a.tilstand = 'promotert');
+    PERFORM set_config('disponit.tenant',
+                       coalesce(v_forrige_tenant, ''), true);
     INSERT INTO public.moduldrill (modul_id, miljo, drillet_release,
         rullback_release, akseptkandidat_release, epoch_snapshot,
-        digest_snapshot, claim_stopp_ok, rene_utfall_ok, tilbake_ok,
-        nokkel, aktor, utfort_ts)
+        digest_snapshot, tenant, inflight_oppdrag, rullback_oppdrag,
+        kandidat_oppdrag, artefakt_sha256, claim_stopp_ok, rene_utfall_ok,
+        tilbake_ok, nokkel, aktor, utfort_ts)
     VALUES (p_modul_id, p_miljo, p_drillet, p_rullback, p_kandidat,
-            v_epoch, v_kandidat_digest, p_claim_stopp, p_rene_utfall,
-            p_tilbake, p_nokkel, p_aktor, p_utfort_ts)
+            v_epoch, v_kandidat_digest, p_tenant, p_inflight_oppdrag,
+            p_rullback_oppdrag, p_kandidat_oppdrag, lower(p_artefakt_sha),
+            v_claim_stopp, v_rene_utfall, v_tilbake,
+            p_nokkel, p_aktor, p_utfort_ts)
     RETURNING drill_id INTO v_id;
     INSERT INTO public.modulregister_hendelse (modul_id, hendelse,
         release_id, miljo, module_epoch, aktor, detalj)
@@ -310,9 +430,10 @@ BEGIN
             p_aktor, jsonb_build_object(
                 'drill_id', v_id, 'drillet', p_drillet,
                 'rullback', p_rullback,
-                'claim_stopp_ok', p_claim_stopp,
-                'rene_utfall_ok', p_rene_utfall,
-                'tilbake_ok', p_tilbake,
+                'claim_stopp_ok', v_claim_stopp,
+                'rene_utfall_ok', v_rene_utfall,
+                'tilbake_ok', v_tilbake,
+                'artefakt_sha256', lower(p_artefakt_sha),
                 'utfort_ts', p_utfort_ts));
     RETURN v_id;
 END $$;
@@ -325,7 +446,8 @@ CREATE OR REPLACE FUNCTION aksepter_moduldeployment(
 RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE v_livslop TEXT; v_mangler TEXT; v_punkt RECORD; v_verdi JSONB;
-        v_epoch BIGINT; v_avvik TEXT;
+        v_epoch BIGINT; v_avvik TEXT; v_drill_tenant TEXT;
+        v_kandidat_oppdrag BIGINT; v_forrige_tenant TEXT;
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended('modul:' || p_modul_id, 0));
     -- SP-2: replay er et no-op, aldri en ny hendelse — men BARE når hele
@@ -388,6 +510,44 @@ BEGIN
             coalesce(v_livslop, '<mangler>')
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
+    -- A2, siste ledd (Codex P1, #117 runde 5): E2E-beviset må komme fra
+    -- DRILLENS KANDIDATOPPDRAG. FK-en på tabellen binder tenant, modul,
+    -- release og promotert tilstand — men ikke HVILKET arbeid artefaktet
+    -- kom av, så et hvilket som helst annet promotert artefakt fra samme
+    -- release passerte den. Kontrollen fantes bare i `m56-aksept.py`, og
+    -- et skript er ingen skranke for den som kaller funksjonen direkte.
+    -- Drillraden bærer nå kandidatoppdraget, så båndet kan måles her.
+    -- Kun DEN dimensjonen måles her; release og tilstand bæres fortsatt
+    -- av FK-en, som gjelder enhver skrivevei og ikke bare denne.
+    SELECT d.tenant, d.kandidat_oppdrag
+      INTO v_drill_tenant, v_kandidat_oppdrag
+      FROM public.moduldrill d
+     WHERE d.modul_id = p_modul_id AND d.drill_id = p_drill_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'aksepter_moduldeployment: ukjent drill %/%',
+            p_modul_id, p_drill_id USING ERRCODE = 'no_data_found';
+    END IF;
+    IF v_drill_tenant IS DISTINCT FROM p_e2e_tenant THEN
+        RAISE EXCEPTION 'aksepter_moduldeployment: drillen ble målt for'
+            ' tenant %, mens E2E-beviset er % — evidens fra én tenant'
+            ' aksepterer ingenting for en annen',
+            v_drill_tenant, p_e2e_tenant
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    v_forrige_tenant := current_setting('disponit.tenant', true);
+    PERFORM set_config('disponit.tenant', p_e2e_tenant, true);
+    IF NOT EXISTS (SELECT 1 FROM public.artefakt a
+                    WHERE a.tenant = p_e2e_tenant
+                      AND a.artefakt_id = p_e2e_artefakt
+                      AND a.oppdrag_id = v_kandidat_oppdrag) THEN
+        RAISE EXCEPTION 'aksepter_moduldeployment: E2E-artefaktet % kom'
+            ' ikke av drillens kandidatoppdrag % — aksepten skal binde'
+            ' beviset drillen SÅ, ikke et annet artefakt fra samme'
+            ' release', p_e2e_artefakt, v_kandidat_oppdrag
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    PERFORM set_config('disponit.tenant',
+                       coalesce(v_forrige_tenant, ''), true);
     -- Port 5: KOMPLETT punktsett, målt mot kravpunkt-registeret — ikke
     -- mot kallerens liste. Hvert punkt må bære alle fire feltene.
     SELECT string_agg(k.punkt, ', ') INTO v_mangler
@@ -440,8 +600,9 @@ BEGIN
                 'ci_run', p_ci_run, 'ci_commit', p_ci_commit));
 END $$;
 
-ALTER FUNCTION registrer_moduldrill(TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN,
-    BOOLEAN, BOOLEAN, TEXT, TEXT, TIMESTAMPTZ) OWNER TO disponit_modul_eier;
+ALTER FUNCTION registrer_moduldrill(TEXT, TEXT, TEXT, TEXT, TEXT, TEXT,
+    BIGINT, BIGINT, BIGINT, TEXT, TEXT, TEXT, TIMESTAMPTZ)
+    OWNER TO disponit_modul_eier;
 ALTER FUNCTION aksepter_moduldeployment(TEXT, TEXT, TEXT, BIGINT, TEXT,
     TEXT, UUID, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT, TEXT)
     OWNER TO disponit_modul_eier;
@@ -449,12 +610,13 @@ ALTER FUNCTION aksepter_moduldeployment(TEXT, TEXT, TEXT, BIGINT, TEXT,
 -- en stille no-op, og PUBLIC ville beholdt default-EXECUTE på begge.
 SET LOCAL ROLE disponit_modul_eier;
 REVOKE ALL ON FUNCTION registrer_moduldrill(TEXT, TEXT, TEXT, TEXT, TEXT,
-    BOOLEAN, BOOLEAN, BOOLEAN, TEXT, TEXT, TIMESTAMPTZ) FROM PUBLIC;
+    TEXT, BIGINT, BIGINT, BIGINT, TEXT, TEXT, TEXT, TIMESTAMPTZ)
+    FROM PUBLIC;
 REVOKE ALL ON FUNCTION aksepter_moduldeployment(TEXT, TEXT, TEXT, BIGINT,
     TEXT, TEXT, UUID, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT, TEXT)
     FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION registrer_moduldrill(TEXT, TEXT, TEXT, TEXT,
-    TEXT, BOOLEAN, BOOLEAN, BOOLEAN, TEXT, TEXT, TIMESTAMPTZ)
+    TEXT, TEXT, BIGINT, BIGINT, BIGINT, TEXT, TEXT, TEXT, TIMESTAMPTZ)
     TO disponit_modules_admin;
 GRANT EXECUTE ON FUNCTION aksepter_moduldeployment(TEXT, TEXT, TEXT,
     BIGINT, TEXT, TEXT, UUID, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT, TEXT)
@@ -467,6 +629,18 @@ RESET ROLE;
 GRANT SELECT, INSERT ON moduldrill, modulaksept, modulaksept_punkt
     TO disponit_modul_eier;
 GRANT SELECT ON akseptkrav_punkt TO disponit_modul_eier;
+-- Definerne MÅLER nå drillutfallene i `oppdrag`/`artefakt` i stedet for å
+-- motta dem (Codex P1, #117 runde 5), og trenger derfor lesetilgang dit.
+-- KOLONNENIVÅ, ikke tabellnivå: målingene leser status, kvitteringens
+-- eksistens, eierskap og artefaktenes tilhørighet — aldri
+-- `payload_kryptert`, `key_id`, `nonce` eller `ciphertext`. En fullmakt
+-- som gir mer enn målingen bruker, er en fullmakt som venter på et annet
+-- kall. Tenant-policyen (016/008, FORCE) gjelder uansett: definerne eier
+-- ikke tabellene og setter `disponit.tenant` eksplisitt.
+GRANT SELECT (tenant, id, status, kvittering, eiermodul)
+    ON oppdrag TO disponit_modul_eier;
+GRANT SELECT (tenant, artefakt_id, oppdrag_id, release_id, tilstand)
+    ON artefakt TO disponit_modul_eier;
 DO $$
 BEGIN  -- identity-sekvensen alene, aldri hele skjemaets (minste fullmakt)
     EXECUTE format('GRANT USAGE ON SEQUENCE %s TO disponit_modul_eier',

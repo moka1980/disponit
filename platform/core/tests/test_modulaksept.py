@@ -41,6 +41,9 @@ DRILL_TS = datetime(2026, 8, 20, 13, 22, 6, tzinfo=timezone.utc)
 #: E2E-artefaktet kandidaten promoterte i drillen — identiteten aksepten
 #: skal binde, ikke bare «ett promotert artefakt fra samme release».
 E2E_UUID = "ad1579e2-0000-4000-8000-000000000000"
+#: sha256 av drillartefaktets bytes — raden skal NAVNGI bevisfilen den
+#: hviler på, selv om basen aldri kan lese den (Codex P1, runde 5).
+DRILL_SHA = "11" * 32
 
 
 def _rt():
@@ -49,8 +52,26 @@ def _rt():
 
 
 def _kjede(m, *, promoter_paa_drillet=False, staged_paa_kandidat=False):
-    """Full modulkjede for én test: to deployments (drenert + claiming),
-    promotert artefakt på kandidaten. -> dict med identitetene."""
+    """Full modulkjede for én test. -> dict med identitetene.
+
+    Tre deployments (drenert, drenert, claiming) og de TRE drilloppdragene
+    med evidensen basen måler kontrollpunktutfallene på.
+
+    Codex' P1 på PR #117 (runde 5): `registrer_moduldrill` tok utfallene
+    som boolske parametre, så en kaller med `disponit_modules_admin` —
+    den brede deployfullmakten — kunne skrive en grønn, immutabel drillrad
+    uten å ha kjørt noe som helst. Funksjonen MÅLER dem nå i
+    `oppdrag`/`artefakt`, og fixturet bygger derfor formen en ekte drill
+    etterlater:
+
+      inflight  — utført MED signert kvittering, promotert artefakt på den
+                  DRILLEDE releasen (utfall og evidens stemmer: rent utfall)
+      rullback  — ingen artefakter på den drillede (claim-stoppet holdt),
+                  promotert på rullbakk-releasen (rullbakken ble bootet og
+                  gjorde arbeid)
+      kandidat  — promotert på kandidatreleasen; dét artefaktet er
+                  akseptens E2E-bevis
+    """
     mid = "m_aksept_" + secrets.token_hex(3)
     ten = "t-aksept-" + secrets.token_hex(3)
     m.execute("SELECT set_config('disponit.tenant', %s, false),"
@@ -82,21 +103,25 @@ def _kjede(m, *, promoter_paa_drillet=False, staged_paa_kandidat=False):
               " VALUES (%s,'k1','\\x00'::bytea) ON CONFLICT DO NOTHING",
               (ten,))
 
-    def artefakt(rel, tilstand):
+    def oppdrag(*, status="utfort", kvittering=True, eier=None):
         blid = m.execute(
             "INSERT INTO revisjonslogg (tenant, input_hash, policy_id,"
             " beslutning, begrunnelse, idempotency_key, kilde) VALUES"
             " (%s,'h','p','TILLAT','[]'::jsonb,%s,'arbeidskapabilitet')"
             " RETURNING id", (ten, secrets.token_hex(8))).fetchone()[0]
-        oid = m.execute(
+        return m.execute(
             "INSERT INTO oppdrag (opprinnelse, tenant, oppdragstype,"
             " handling, eiermodul, status, payload_kryptert, key_id, nonce,"
             " utforelsesfrist, evidensfrist, koblingsstatus,"
-            " beslutning_loggpost_id) VALUES ('beslutning',%s,"
-            "'kontroll.wcag.nettsted','kontroll.wcag.nettsted',%s,'utfort',"
+            " beslutning_loggpost_id, kvittering) VALUES ('beslutning',%s,"
+            "'kontroll.wcag.nettsted','kontroll.wcag.nettsted',%s,%s,"
             "%s,'k1',%s, now()+interval '1 hour', now()+interval '2 hours',"
-            "'KOBLET',%s) RETURNING id",
-            (ten, mid, b"\x00" * 24, b"\x00" * 12, blid)).fetchone()[0]
+            "'KOBLET',%s,%s::jsonb) RETURNING id",
+            (ten, eier or mid, status, b"\x00" * 24, b"\x00" * 12, blid,
+             '{"signatur":"s"}' if kvittering else None)).fetchone()[0]
+
+    def artefakt(rel, tilstand, oid=None):
+        oid = oppdrag() if oid is None else oid
         return m.execute(
             "INSERT INTO artefakt (tenant, oppdrag_id, artefakttype,"
             " modul_id, release_id, kontraktversjon, kontrakt_hash,"
@@ -108,24 +133,35 @@ def _kjede(m, *, promoter_paa_drillet=False, staged_paa_kandidat=False):
             (ten, oid, at, mid, rel, tilstand, "ab" * 32, b"\x01" * 40,
              b"\x02" * 12, secrets.token_hex(12), tilstand)).fetchone()[0]
 
-    ut = {"mid": mid, "ten": ten,
-          "e2e": artefakt("r-kandidat", "promotert")}
+    inflight, rullback, kandidat = oppdrag(), oppdrag(), oppdrag()
+    artefakt("r-drillet", "promotert", inflight)
+    artefakt("r-rullback", "promotert", rullback)
+    ut = {"mid": mid, "ten": ten, "at": at,
+          "opp": {"inflight": inflight, "rullback": rullback,
+                  "kandidat": kandidat},
+          "oppdrag": oppdrag, "artefakt": artefakt,
+          "e2e": artefakt("r-kandidat", "promotert", kandidat)}
     if promoter_paa_drillet:
-        ut["e2e_drillet"] = artefakt("r-drillet", "promotert")
+        ut["e2e_drillet"] = artefakt("r-drillet", "promotert", kandidat)
     if staged_paa_kandidat:
-        ut["staged"] = artefakt("r-kandidat", "staged")
+        ut["staged"] = artefakt("r-kandidat", "staged", kandidat)
     m.commit()
     return ut
 
 
-def _drill(m, mid, *, claim_stopp=True, rene=True, tilbake=True,
-           nokkel=None, utfort_ts=None):
+def _drill(m, k, *, nokkel=None, utfort_ts=None, opp=None, sha=None):
+    """Registrerer drillen for kjeden `k`. -> drill_id.
+
+    Utfallene er ikke parametre lenger (Codex P1, #117 runde 5): kallet
+    oppgir HVA drillen ble målt på, og funksjonen måler selv.
+    """
+    o = opp or k["opp"]
     m.execute("SET ROLE disponit_modules_admin")
     did = m.execute(
         "SELECT registrer_moduldrill(%s,'staging','r-drillet','r-rullback',"
-        "'r-kandidat',%s,%s,%s,%s,'test',%s)",
-        (mid, claim_stopp, rene, tilbake,
-         nokkel or "n-" + secrets.token_hex(6),
+        "'r-kandidat',%s,%s,%s,%s,%s,%s,'test',%s)",
+        (k["mid"], k["ten"], o["inflight"], o["rullback"], o["kandidat"],
+         sha or DRILL_SHA, nokkel or "n-" + secrets.token_hex(6),
          utfort_ts or DRILL_TS)).fetchone()[0]
     # RESET FØR commit: en commit med SET ROLE stående gjør admin til
     # sesjonens «faste» rolle — enhver senere rollback faller da TILBAKE
@@ -168,7 +204,7 @@ def test_akseptflyten_ende_til_ende(migrator):
     registerhendelse. Alt annet i fila er avvisninger av varianter av
     dette — uten den positive veien måler de ingenting."""
     k = _kjede(migrator)
-    did = _drill(migrator, k["mid"])
+    did = _drill(migrator, k)
     _aksepter(migrator, k, did)
     migrator.commit()
     migrator.execute("RESET ROLE")
@@ -202,7 +238,7 @@ def test_drill_for_annen_deploymentrad_avvises(migrator):
     r-drillet med samme drill → FK-avvist. Digestene er IDENTISKE på
     alle releasene — porten beviser at identiteten bærer, ikke bytene."""
     k = _kjede(migrator, promoter_paa_drillet=True)
-    did = _drill(migrator, k["mid"])
+    did = _drill(migrator, k)
     # r-drillet er draining → claiming-porten i funksjonen treffer først;
     # det er samme dom («aksepten binder raden som faktisk kjører»), og
     # FK-en står bak den for enhver annen skrivevei.
@@ -219,7 +255,7 @@ def test_e2e_artefakt_fra_annen_release_avvises(migrator):
     (prod-formen: 23 r1-artefakter mot 1 r5). Delt release_id i FK-en
     feller det."""
     k = _kjede(migrator, promoter_paa_drillet=True)
-    did = _drill(migrator, k["mid"])
+    did = _drill(migrator, k)
     with pytest.raises(psycopg.errors.ForeignKeyViolation):
         _aksepter(migrator, k, did, artefakt=k["e2e_drillet"])
     migrator.rollback()
@@ -231,7 +267,7 @@ def test_e2e_artefakt_som_ikke_er_promotert_avvises(migrator):
     staged artefakt kan ikke bære aksepten, og resultatlåsen gjør
     'promotert' varig."""
     k = _kjede(migrator, staged_paa_kandidat=True)
-    did = _drill(migrator, k["mid"])
+    did = _drill(migrator, k)
     with pytest.raises(psycopg.errors.ForeignKeyViolation):
         _aksepter(migrator, k, did, artefakt=k["staged"])
     migrator.rollback()
@@ -243,7 +279,7 @@ def test_ufullstendig_punktsett_gir_ingen_hendelse(migrator):
     punktene er én transaksjon, og kravregisteret i basen definerer
     «komplett», ikke kallerens liste."""
     k = _kjede(migrator)
-    did = _drill(migrator, k["mid"])
+    did = _drill(migrator, k)
     punkter = _punkter(migrator)
     fjernet = sorted(punkter)[0]
     del punkter[fjernet]
@@ -268,7 +304,7 @@ def test_hendelse_drill_og_punkt_er_append_only(migrator):
     """Port 6: UPDATE/DELETE avvises på alle tre tabellene — også for
     migrator."""
     k = _kjede(migrator)
-    did = _drill(migrator, k["mid"])
+    did = _drill(migrator, k)
     _aksepter(migrator, k, did)
     migrator.commit()
     migrator.execute("RESET ROLE")
@@ -290,9 +326,30 @@ def test_drill_med_roedt_kontrollpunkt_baerer_ingen_aksept(migrator):
     drill med ett rødt punkt kan REGISTRERES (ærlig historie) men aldri
     REFERERES av en aksept."""
     k = _kjede(migrator)
-    for felt in ("claim_stopp", "rene", "tilbake"):
-        did = _drill(migrator, k["mid"], **{felt: False})
-        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+    # Rødt punkt er nå EVIDENS som ikke bærer utfallet — funksjonen måler
+    # selv (Codex P1, runde 5), så en rød drill lages ved å gi den den
+    # formen en mislykket drill faktisk etterlater.
+    roedt_claim = k["oppdrag"]()          # den DRENERTE releasen tok det
+    k["artefakt"]("r-drillet", "promotert", roedt_claim)
+    varianter = (
+        # (a) claim-stoppet holdt ikke
+        ("claim_stopp", {**k["opp"], "rullback": roedt_claim},
+         psycopg.errors.ForeignKeyViolation),
+        # (b) `utfort` uten promotert evidens — falskt verdikt
+        ("rene", {**k["opp"], "inflight": k["oppdrag"]()},
+         psycopg.errors.ForeignKeyViolation),
+        # (c) kandidaten promoterte aldri. `tilbake_ok` og E2E-porten
+        # måler her SAMME faktum, så finnes det ingen gyldig drill finnes
+        # det heller ikke noe gyldig E2E-bevis: porten foran FK-en svarer
+        # først. Begge dommene er avvisning, og FK-en står bak uansett.
+        ("tilbake", {**k["opp"], "kandidat": k["oppdrag"]()},
+         (psycopg.errors.ForeignKeyViolation,
+          psycopg.errors.InvalidParameterValue)),
+    )
+    migrator.commit()
+    for _navn, opp, feil in varianter:
+        did = _drill(migrator, k, opp=opp)
+        with pytest.raises(feil):
             _aksepter(migrator, k, did)
         migrator.rollback()
 
@@ -303,8 +360,8 @@ def test_replay_gir_en_hendelse_og_en_drill(migrator):
     ANNET innhold → høylytt avvist."""
     k = _kjede(migrator)
     nk = "n-" + secrets.token_hex(6)
-    d1 = _drill(migrator, k["mid"], nokkel=nk)
-    d2 = _drill(migrator, k["mid"], nokkel=nk)
+    d1 = _drill(migrator, k, nokkel=nk)
+    d2 = _drill(migrator, k, nokkel=nk)
     assert d1 == d2
     ak = "a-" + secrets.token_hex(6)
     _aksepter(migrator, k, d1, nokkel=ak)
@@ -316,12 +373,8 @@ def test_replay_gir_en_hendelse_og_en_drill(migrator):
     migrator.rollback()
     assert n == 1
     k2 = _kjede(migrator)
-    migrator.execute("SET ROLE disponit_modules_admin")
     with pytest.raises(psycopg.errors.InvalidParameterValue):
-        migrator.execute(
-            "SELECT registrer_moduldrill(%s,'staging','r-drillet',"
-            "'r-rullback','r-kandidat',true,true,true,%s,'test',%s)",
-            (k2["mid"], nk, DRILL_TS))
+        _drill(migrator, k2, nokkel=nk)
     migrator.rollback()
 
 
@@ -333,7 +386,7 @@ def test_replay_med_andre_bevis_avvises(migrator):
     bar de gamle bevisene. Rettelsen skal høres, ikke forsvinne —
     uendret replay er fortsatt et no-op."""
     k = _kjede(migrator)
-    did = _drill(migrator, k["mid"])
+    did = _drill(migrator, k)
     ak = "a-" + secrets.token_hex(6)
     _aksepter(migrator, k, did, nokkel=ak)
     migrator.commit()
@@ -365,23 +418,36 @@ def test_replay_med_andre_bevis_avvises(migrator):
 @pg
 def test_drillnokkel_med_andre_utfall_avvises(migrator):
     """Samme klasse i drillen: nøkkelkontrollen leste bare modul, miljø,
-    drillet og kandidat — et replay med ANDRE kontrollpunktutfall eller
-    annen rullbakk-release fikk den grønne raden tilbake."""
+    drillet og kandidat — et replay med ANNET innhold fikk den grønne
+    raden tilbake.
+
+    Etter runde 5 er utfallene ikke lenger kallerens, så det MATERIELLE i
+    et drillkall er hva drillen ble målt på: tenanten, de tre oppdragene
+    og bytene i artefaktet. Et replay som bytter noen av dem er en annen
+    drill og skal høres."""
     k = _kjede(migrator)
     nk = "n-" + secrets.token_hex(6)
-    _drill(migrator, k["mid"], nokkel=nk)
-    for felt in ("claim_stopp", "rene", "tilbake"):
+    _drill(migrator, k, nokkel=nk)
+    andre = {ledd: {**k["opp"], ledd: k["oppdrag"]()}
+             for ledd in ("inflight", "rullback", "kandidat")}
+    migrator.commit()
+    for opp in andre.values():
         migrator.execute("RESET ROLE")
         with pytest.raises(psycopg.errors.InvalidParameterValue):
-            _drill(migrator, k["mid"], nokkel=nk, **{felt: False})
+            _drill(migrator, k, nokkel=nk, opp=opp)
         migrator.rollback()
+    migrator.execute("RESET ROLE")
+    with pytest.raises(psycopg.errors.InvalidParameterValue):
+        _drill(migrator, k, nokkel=nk, sha="22" * 32)
+    migrator.rollback()
     migrator.execute("RESET ROLE")
     migrator.execute("SET ROLE disponit_modules_admin")
     with pytest.raises(psycopg.errors.InvalidParameterValue):
         migrator.execute(
             "SELECT registrer_moduldrill(%s,'staging','r-drillet',"
-            "'r-annen-rullback','r-kandidat',true,true,true,%s,'test',%s)",
-            (k["mid"], nk, DRILL_TS))
+            "'r-annen-rullback','r-kandidat',%s,%s,%s,%s,%s,%s,'test',%s)",
+            (k["mid"], k["ten"], k["opp"]["inflight"], k["opp"]["rullback"],
+             k["opp"]["kandidat"], DRILL_SHA, nk, DRILL_TS))
     migrator.rollback()
 
 
@@ -396,8 +462,8 @@ def test_ordinaere_roller_naar_ingenting(migrator):
                    (k["ten"],))
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             rt.execute("SELECT registrer_moduldrill(%s,'staging','a','b',"
-                       "'c',true,true,true,'n','x',%s)",
-                       (k["mid"], DRILL_TS))
+                       "'c',%s,1,2,3,%s,'n','x',%s)",
+                       (k["mid"], k["ten"], DRILL_SHA, DRILL_TS))
         rt.rollback()
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             rt.execute("SELECT aksepter_moduldeployment(%s,'staging','r',"
@@ -408,10 +474,13 @@ def test_ordinaere_roller_naar_ingenting(migrator):
             rt.execute("INSERT INTO moduldrill (modul_id, miljo,"
                        " drillet_release, rullback_release,"
                        " akseptkandidat_release, epoch_snapshot,"
-                       " digest_snapshot, claim_stopp_ok, rene_utfall_ok,"
-                       " tilbake_ok, nokkel, aktor) VALUES (%s,'staging',"
-                       "'a','b','c',0,'d',true,true,true,'n','x')",
-                       (k["mid"],))
+                       " digest_snapshot, tenant, inflight_oppdrag,"
+                       " rullback_oppdrag, kandidat_oppdrag,"
+                       " artefakt_sha256, claim_stopp_ok, rene_utfall_ok,"
+                       " tilbake_ok, nokkel, aktor, utfort_ts) VALUES"
+                       " (%s,'staging','a','b','c',0,'d',%s,1,2,3,%s,"
+                       "true,true,true,'n','x',%s)",
+                       (k["mid"], k["ten"], DRILL_SHA, DRILL_TS))
         rt.rollback()
         # ... men SELECT virker (statusflater leser registeret).
         rt.execute("SELECT count(*) FROM modulaksept")
@@ -447,8 +516,10 @@ def test_digestporten_feller_andre_bytes(migrator):
     with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
         migrator.execute(
             "SELECT registrer_moduldrill(%s,'staging','r-drillet',"
-            "'r-rullback','r-andre',true,true,true,%s,'test',%s)",
-            (k["mid"], "n-" + secrets.token_hex(6), DRILL_TS))
+            "'r-rullback','r-andre',%s,%s,%s,%s,%s,%s,'test',%s)",
+            (k["mid"], k["ten"], k["opp"]["inflight"], k["opp"]["rullback"],
+             k["opp"]["kandidat"], DRILL_SHA,
+             "n-" + secrets.token_hex(6), DRILL_TS))
     migrator.rollback()
     assert "digest" in str(ei.value)
 
@@ -458,7 +529,7 @@ def test_aksept_gjelder_en_deploymentrad(migrator):
     """Port 14: hendelsen for (staging, X) autoriserer ikke
     (produksjon, X) — hver rad krever sin egen aksept med egen drill."""
     k = _kjede(migrator)
-    did = _drill(migrator, k["mid"])
+    did = _drill(migrator, k)
     _aksepter(migrator, k, did)
     migrator.commit()
     migrator.execute("RESET ROLE")
@@ -842,7 +913,7 @@ def test_drillen_baerer_sin_egen_maaletid(migrator):
     er artefaktets, registreringstiden er basens, og en drill kan ikke ha
     kjørt fram i tid."""
     k = _kjede(migrator)
-    did = _drill(migrator, k["mid"])
+    did = _drill(migrator, k)
     migrator.execute("RESET ROLE")
     utfort, registrert = migrator.execute(
         "SELECT utfort_ts, registrert_ts FROM moduldrill WHERE modul_id=%s"
@@ -853,20 +924,123 @@ def test_drillen_baerer_sin_egen_maaletid(migrator):
     # Fram i tid er en påstand om framtiden, ikke en måling.
     migrator.execute("SET ROLE disponit_modules_admin")
     with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
-        _drill(migrator, k["mid"], nokkel="n-" + secrets.token_hex(6),
+        _drill(migrator, k, nokkel="n-" + secrets.token_hex(6),
                utfort_ts=datetime.now(timezone.utc) + timedelta(hours=1))
     migrator.rollback()
     assert "fram i tid" in str(ei.value)
     # Samme nøkkel med en ANNEN kjørings måletid er to kjøringer.
     nk = "n-" + secrets.token_hex(6)
-    _drill(migrator, k["mid"], nokkel=nk)
+    _drill(migrator, k, nokkel=nk)
     migrator.commit()
     migrator.execute("SET ROLE disponit_modules_admin")
     with pytest.raises(psycopg.errors.InvalidParameterValue):
-        _drill(migrator, k["mid"], nokkel=nk,
+        _drill(migrator, k, nokkel=nk,
                utfort_ts=DRILL_TS - timedelta(days=1))
     migrator.rollback()
     migrator.execute("RESET ROLE")
+
+
+@pg
+def test_admin_kan_ikke_skrive_gronn_drill_uten_arbeid(migrator):
+    """Codex' P1 (runde 5): hele evidensapparatet lå i `m56-aksept.py`.
+
+    `disponit_modules_admin` er den BREDE deployfullmakten — den brukes
+    til `registrer_release`, `bytt_release`, onboarding og
+    provisjonering — og den hadde EXECUTE på begge akseptdefinerne. En
+    som holdt den kunne derfor la være å kjøre skriptet, kalle
+    `registrer_moduldrill` direkte med tre håndskrevne `true`, og få en
+    immutabel grønn drillrad uten å ha kjørt noen drill; deretter
+    FK-refererte `aksepter_moduldeployment` den, og aksepten var et
+    faktum. Et skript er ingen skranke for den som kan la være å bruke
+    det.
+
+    Utfallene MÅLES nå av definerne, i `oppdrag` og `artefakt`. Den som
+    holder fullmakten kan fortsatt KALLE — men han får det utfallet
+    radene bærer, og grønne rader lages bare av arbeid."""
+    k = _kjede(migrator)
+    # Tomme oppdrag: ingen artefakter, ingen kvittering — nøyaktig det en
+    # angriper har når han ikke har kjørt drillen.
+    tomme = {ledd: k["oppdrag"](status="opprettet", kvittering=False)
+             for ledd in ("inflight", "rullback", "kandidat")}
+    migrator.commit()
+    did = _drill(migrator, k, opp=tomme)
+    migrator.execute("RESET ROLE")
+    utfall = migrator.execute(
+        "SELECT claim_stopp_ok, rene_utfall_ok, tilbake_ok FROM moduldrill"
+        " WHERE modul_id=%s AND drill_id=%s", (k["mid"], did)).fetchone()
+    migrator.rollback()
+    assert utfall == (False, False, False), \
+        "funksjonen tror fortsatt på kalleren i stedet for å måle"
+    # …og den røde raden bærer ingen aksept.
+    with pytest.raises((psycopg.errors.ForeignKeyViolation,
+                        psycopg.errors.InvalidParameterValue)):
+        _aksepter(migrator, k, did)
+    migrator.rollback()
+    # Motprøven: den ekte drillformen gir grønt på alle tre.
+    migrator.execute("RESET ROLE")
+    ekte = _drill(migrator, k, nokkel="n-" + secrets.token_hex(6))
+    migrator.execute("RESET ROLE")
+    assert migrator.execute(
+        "SELECT claim_stopp_ok, rene_utfall_ok, tilbake_ok FROM moduldrill"
+        " WHERE modul_id=%s AND drill_id=%s",
+        (k["mid"], ekte)).fetchone() == (True, True, True)
+    migrator.rollback()
+
+
+@pg
+def test_drillraden_navngir_oppdragene_og_bevisfilen(migrator):
+    """Samme funn, andre halvdel: raden skal kunne etterprøves.
+
+    En drillrad uten referanse til arbeidet den målte, kan ingen regne
+    etter i ettertid. Raden bærer nå tenanten, de tre oppdragene (FK-et,
+    så de MÅ finnes) og sha256 av drillartefaktet — bytene raden hviler
+    på, selv om basen aldri kan lese fila."""
+    k = _kjede(migrator)
+    did = _drill(migrator, k)
+    migrator.execute("RESET ROLE")
+    rad = migrator.execute(
+        "SELECT tenant, inflight_oppdrag, rullback_oppdrag,"
+        " kandidat_oppdrag, artefakt_sha256 FROM moduldrill"
+        " WHERE modul_id=%s AND drill_id=%s", (k["mid"], did)).fetchone()
+    migrator.rollback()
+    assert rad == (k["ten"], k["opp"]["inflight"], k["opp"]["rullback"],
+                   k["opp"]["kandidat"], DRILL_SHA)
+    # Oppdrag som ikke finnes har ingen utfall — og da finnes ingen rad.
+    migrator.execute("RESET ROLE")
+    with pytest.raises((psycopg.errors.NoDataFound,
+                        psycopg.errors.ForeignKeyViolation)):
+        _drill(migrator, k, nokkel="n-" + secrets.token_hex(6),
+               opp={**k["opp"], "kandidat": 2 ** 40})
+    migrator.rollback()
+    migrator.execute("RESET ROLE")
+
+
+@pg
+def test_e2e_beviset_maa_komme_av_drillens_kandidatoppdrag(migrator):
+    """Codex' P1 (runde 5), A2-leddet: FK-en binder tenant, modul,
+    release og promotert tilstand — men ikke HVILKET arbeid artefaktet
+    kom av. Et hvilket som helst annet promotert artefakt fra
+    kandidatreleasen passerte den, og kontrollen fantes bare i skriptet.
+    Nå måler funksjonen båndet selv."""
+    k = _kjede(migrator)
+    # Et helt gyldig, promotert artefakt på kandidatreleasen — men fra et
+    # oppdrag drillen aldri så.
+    fremmed = k["artefakt"]("r-kandidat", "promotert")
+    migrator.commit()
+    did = _drill(migrator, k)
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, k, did, artefakt=fremmed)
+    migrator.rollback()
+    assert "kandidatoppdrag" in str(ei.value)
+    # …og drillens eget bevis går gjennom.
+    migrator.execute("RESET ROLE")
+    _aksepter(migrator, k, did)
+    migrator.commit()
+    migrator.execute("RESET ROLE")
+    n = migrator.execute("SELECT count(*) FROM modulaksept WHERE modul_id=%s",
+                         (k["mid"],)).fetchone()[0]
+    migrator.rollback()
+    assert n == 1
 
 
 def test_maalte_bytes_er_drillede_bytes_er_aksepterte_bytes():

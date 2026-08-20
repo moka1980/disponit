@@ -407,6 +407,31 @@ def verifiser_e2e_artefakt(drill: dict, oppgitt: str) -> str:
     return oppgitt.strip()
 
 
+def drillens_oppdrag(drill: dict) -> tuple[int, int, int]:
+    """De tre oppdragene drillen kjørte. -> (inflight, rullback, kandidat).
+
+    Codex' P1 på PR #117 (runde 5): drillutfallene ble regnet ut i dette
+    skriptet og sendt til `registrer_moduldrill` som tre boolske verdier,
+    så evidensapparatet lå HELT i skriptet. Basen måler dem nå selv, og
+    må da få vite hva den skal måle på. `oppdrag.id` er BIGINT; artefaktet
+    bærer id-ene som strenger, og en streng som ikke er et heltall er
+    ingen oppdragsidentitet — det skal høres her, ikke som en
+    typefeil i psycopg.
+    """
+    ident = drill.get("identiteter") or {}
+    ut = []
+    for felt in ("inflight_oppdrag_id", "rullback_oppdrag_id",
+                 "kandidat_oppdrag_id"):
+        raa = ident.get(felt)
+        try:
+            ut.append(int(str(raa)))
+        except (TypeError, ValueError):
+            raise SystemExit(f"AVBRUTT: drillartefaktets {felt} er {raa!r},"
+                             " ikke en oppdrags-id — utfallene måles på"
+                             " oppdragene, og da må de kunne slås opp")
+    return ut[0], ut[1], ut[2]
+
+
 def _digest(raa: object) -> str:
     """Digesten uten `sha256:`-prefiks — samme form uansett kilde."""
     return str(raa or "").removeprefix("sha256:").strip().lower()
@@ -495,6 +520,8 @@ def main() -> int:
     digest = verifiser_digestkjede(runde, drill)
     # …og E2E-beviset er ett av dem drillen selv observerte.
     e2e_artefakt = verifiser_e2e_artefakt(drill, a.e2e_artefakt)
+    # Oppdragene basen skal måle drillutfallene på (Codex P1, runde 5).
+    inflight_opp, rullback_opp, kandidat_opp = drillens_oppdrag(drill)
     evidens_sha = verifiser_kilde(runde)
     # …og hele den kjeden bindes til commiten raden faktisk skriver:
     # manifestet (tillitsroten), begge artefaktene og råfilen bakerst.
@@ -541,14 +568,23 @@ def main() -> int:
         verifiser_registrert_digest(
             conn, (o["drillet_release"], o["kandidat_release"]), digest)
         conn.execute("SET ROLE disponit_modules_admin")
+        # Codex' P1 på PR #117 (runde 5): de tre kontrollpunktutfallene
+        # ble regnet ut HER, av artefaktets egne tall, og sendt inn som
+        # boolske verdier. Den som holdt `disponit_modules_admin` — den
+        # brede deployfullmakten — kunne derfor hoppe over hele dette
+        # skriptet, kalle definerne direkte med tre håndskrevne `true`,
+        # og få en immutabel grønn aksept uten å ha kjørt noe. Nå sender
+        # kallet HVA drillen ble målt på (tenanten, de tre oppdragene og
+        # bytene artefaktet består av), og basen måler utfallene selv i
+        # `oppdrag`/`artefakt`. Artefaktets `maalt`-tall er fortsatt
+        # portet av `_sjekk_grenser` over; forskjellen er at raden ikke
+        # lenger HVILER på dem.
         drill_id = conn.execute(
-            "SELECT registrer_moduldrill(%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+            "SELECT registrer_moduldrill(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
             "'m56-aksept',%s)",
             (MODUL, MILJO, o["drillet_release"], o["rullback_release"],
-             o["kandidat_release"],
-             drill["maalt"]["nye_oppdrag_claimet_av_drillet_release"] == 0,
-             drill["maalt"]["falske_verdikter"] == 0,
-             drill["maalt"]["kandidat_promoterte_artefakter"] >= 1,
+             o["kandidat_release"], TENANT,
+             inflight_opp, rullback_opp, kandidat_opp, drill_sha,
              f"drill-{o['kandidat_release']}", drill_ts)).fetchone()[0]
         conn.execute(
             "SELECT aksepter_moduldeployment(%s,%s,%s,%s,%s,%s,%s::uuid,"
