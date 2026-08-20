@@ -1679,12 +1679,30 @@ def _uten_ytre_parentes(uttrykk: str) -> str:
     return s
 
 
-def _vilkarene(tekst: str) -> list[tuple[int, str | None, str, str]]:
-    """(posisjon, vilkårsnavn, kolonne, verdiliste) for hvert lesbart `CHECK`.
+def _vilkarene(tekst: str) -> list[tuple[int, str | None, str, set[str]]]:
+    """(posisjon, vilkårsnavn, kolonne, verdier) for hvert lesbart `CHECK`.
 
-    Lesbart betyr her `<kolonne> IN (…)`, eventuelt pakket i overflødige
-    parenteser. Et vilkår av en annen form — `CHECK (beløp > 0)` — hører ikke
-    til noe enum og gis fra seg, som før.
+    Lesbart betyr her at HELE vilkåret er `<kolonne> IN (…)`, eventuelt pakket
+    i overflødige parenteser. Et vilkår av en annen form — `CHECK (beløp > 0)`
+    — hører ikke til noe enum og gis fra seg, som før: der finnes ingen kolonne
+    å tilskrive noe.
+
+    Men et vilkår som BÅDE har en `IN`-liste og noe mer, er en tredje ting
+    (Codex P2 på #118, attende runde). `IN`-lista ble lest, og resten av
+    predikatet gitt fra seg i stillhet: `CHECK ((reversibilitet IN ('direkte',
+    'irreversibel') AND reversibilitet <> 'irreversibel'))` ble meldt som om
+    begge verdiene var lov, mens PostgreSQL avviser den ene. Da kan
+    katalogporten godta en umulig kontrakt — nøyaktig det den finnes for å
+    fange.
+
+    Et sammensatt predikat kan bare gjøre vilkåret SMALERE enn lista, aldri
+    videre, men hvor mye smalere står i den delen porten ikke leser. Kolonnen
+    kjenner vi likevel, og da er `ULESELIG_SQL` svaret som hverken gjetter
+    eller tier: verdien forplanter seg til enumet, og `_registerenum()` sier
+    fra på den kolonnen katalogen faktisk måles mot. Det gjelder også når
+    lista står SIST — `col <> 'x' AND col IN (…)` — derfor søkes det etter
+    `IN` i stedet for å kreve den fremst; kravet er at treffet fyller
+    uttrykket.
     """
     ut = []
     for m in _CHECK_RE.finditer(tekst):
@@ -1692,14 +1710,16 @@ def _vilkarene(tekst: str) -> list[tuple[int, str | None, str, str]]:
         if slutt < 0:
             continue
         uttrykk = _uten_ytre_parentes(tekst[m.end():slutt])
-        inn = _IN_RE.match(uttrykk)
+        inn = _IN_RE.search(uttrykk)
         if not inn:
             continue
         liste = _balansert(uttrykk, inn.end() - 1)
         if liste < 0:
             continue
-        ut.append((m.start(), m.group(1), inn.group(1),
-                   uttrykk[inn.end():liste]))
+        verdier = _sqlverdier(uttrykk[inn.end():liste])
+        if inn.start() or uttrykk[liste + 1:].strip():
+            verdier = verdier | {ULESELIG_SQL}
+        ut.append((m.start(), m.group(1), inn.group(1), verdier))
     return ut
 
 
@@ -2117,8 +2137,7 @@ def _registerets_enums(
                     continue
                 vilkar.pop((tabell, _vilkarsnavn(felt[0])), None)
                 continue
-            rått_navn, rå_kolonne, verdiliste = felt
-            verdier = _sqlverdier(verdiliste)
+            rått_navn, rå_kolonne, verdier = felt
             if not verdier:
                 continue
             kolonne = _kolonnenavn(rå_kolonne)
@@ -2131,8 +2150,16 @@ def _registerets_enums(
     gjeldende: dict[tuple[str, str], set[str]] = {}
     for (tabell, _), (kolonne, verdier) in vilkar.items():
         nokkel = (tabell, kolonne)
-        gjeldende[nokkel] = gjeldende[nokkel] & verdier \
-            if nokkel in gjeldende else set(verdier)
+        if nokkel not in gjeldende:
+            gjeldende[nokkel] = set(verdier)
+            continue
+        # Snittet fjerner det ett vilkår ikke godtar — men det ULESELIGE er
+        # ikke en verdi, det er en manglende opplysning, og et annet vilkår
+        # kan ikke opplyse den. Snittes den bort, blir et vilkår porten bare
+        # kjenner et OVERSETT av, meldt som lest, og da er svaret videre enn
+        # databasen. Uvissheten blir derfor stående til `_registerenum()`.
+        uvisst = {ULESELIG_SQL} & (gjeldende[nokkel] | verdier)
+        gjeldende[nokkel] = (gjeldende[nokkel] & verdier) | uvisst
     return gjeldende, noen_gang - {ULESELIG_SQL}
 
 
@@ -2214,10 +2241,12 @@ def _registerenum(kolonne: str) -> set[str]:
     assert ut, (f"fant ikke CHECK-vilkåret for {MODULKONTRAKT}.{kolonne} i "
                 f"migrasjonene")
     assert ULESELIG_SQL not in ut, (
-        f"CHECK-vilkåret for {MODULKONTRAKT}.{kolonne} bærer en verdi porten "
-        f"ikke kan lese — en escapestreng (`E'…'`) eller en dollarsitert "
-        f"streng. Skriv verdien som `'…'`, eller lær porten formen; et gjettet "
-        f"innhold ville vært verre enn ingen")
+        f"CHECK-vilkåret for {MODULKONTRAKT}.{kolonne} har noe porten ikke kan "
+        f"lese: enten en verdi skrevet som escapestreng (`E'…'`) eller "
+        f"dollarsitert, eller et sammensatt predikat der `IN`-lista bare er et "
+        f"oversett. Skriv vilkåret som `{kolonne} IN ('…', '…')` med enkle "
+        f"apostrofer, eller lær porten formen; et gjettet innhold ville vært "
+        f"verre enn ingen")
     return ut
 
 
@@ -2365,10 +2394,12 @@ def test_sitert_kolonne_i_et_vilkaar_er_samme_kolonne(tmp_path):
     ('CHECK (("reversibilitet" IN (\'direkte\')))', {"direkte"}),
     # Men et par som lukkes MIDTVEIS pakker ikke inn hele uttrykket. Å skrelle
     # det bort ville lest en disjunksjon som sitt første ledd, altså som et
-    # strengere vilkår enn det er — her er begge verdiene fortsatt lovlige.
+    # strengere vilkår enn det er. Uttrykket er sammensatt, og da er svaret
+    # `ULESELIG_SQL`: en disjunksjon UTVIDER — `X OR Y` godtar unionen — så
+    # både det første leddet og ingenting ville vært feil svar.
     ("CHECK ((reversibilitet IN ('direkte'))\n"
      "    OR (reversibilitet IN ('kompenserende')))",
-     {"direkte", "kompenserende"}),
+     {"direkte", ULESELIG_SQL}),
     # En parentes inne i en VERDI lukker ingen liste: `([^)]*)` stoppet ved
     # den, og resten av lista falt bort sammen med verdien den sto i.
     ("CHECK (reversibilitet IN ('a)b', 'kompenserende'))", {"kompenserende"}),
@@ -2384,7 +2415,9 @@ def test_overflodige_parenteser_er_samme_vilkaar(tmp_path, vilkar, gjelder):
     avviser.
 
     Grensen går ved HELE uttrykket: en disjunksjon begynner også med en
-    parentes, men den lukkes midtveis, og der er ingenting overflødig.
+    parentes, men den lukkes midtveis, og der er ingenting overflødig. Det som
+    blir stående etter skrellingen, må så FYLLE uttrykket for å være vilkåret;
+    ellers er lista bare en del av det, og porten sier fra.
     """
     mappe = _migrasjoner(
         tmp_path, _LAGER_VILKAR,
@@ -2792,6 +2825,48 @@ def test_to_unavngitte_vilkaar_er_to_vilkaar(tmp_path):
         "        CHECK (reversibilitet IN ('direkte', 'irreversibel')));\n")
     gjeldende, _ = _registerets_enums(mappe)
     assert gjeldende[(MODULKONTRAKT, "reversibilitet")] == {"direkte"}
+
+
+@pytest.mark.parametrize("vilkar", [
+    # Lista først, predikatet etter — formen Codex fant.
+    "CHECK ((reversibilitet IN ('direkte', 'irreversibel')\n"
+    "        AND reversibilitet <> 'irreversibel'))",
+    # Og motsatt vei: står lista sist, er hullet det samme.
+    "CHECK (reversibilitet <> 'irreversibel'\n"
+    "       AND reversibilitet IN ('direkte', 'irreversibel'))",
+])
+def test_et_sammensatt_vilkaar_leses_ikke_som_bare_lista(tmp_path, vilkar):
+    """`IN`-lista er et OVERSETT av et sammensatt vilkår, ikke svaret.
+
+    Leste porten bare lista, meldte den `irreversibel` som lov mens
+    PostgreSQL avviser den — altså en umulig kontrakt gjennom porten som
+    finnes for å fange den. Kolonnen er kjent, så uvissheten kan tilskrives
+    den og sies fra om; å gi hele vilkåret fra seg ville tiet om det.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        f"CREATE TABLE modulkontrakt (\n"
+        f"    reversibilitet TEXT NOT NULL {vilkar});\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert ULESELIG_SQL in gjeldende[(MODULKONTRAKT, "reversibilitet")]
+
+
+def test_uvissheten_snittes_ikke_bort_av_et_annet_vilkaar(tmp_path):
+    """Et lesbart vilkår ved siden av kan ikke opplyse det uleselige.
+
+    Snittet fjerner verdier vilkårene er uenige om, og `ULESELIG_SQL` ville
+    forsvunnet i den operasjonen — da sto et vilkår porten bare kjenner et
+    oversett av, igjen som lest, og svaret ble videre enn databasen.
+    """
+    mappe = _migrasjoner(
+        tmp_path, _LAGER_VILKAR,
+        "ALTER TABLE modulkontrakt\n"
+        "    ADD CONSTRAINT rev_smal CHECK (\n"
+        "        reversibilitet IN ('direkte', 'kompenserende')\n"
+        "        AND reversibilitet <> 'kompenserende');\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende[(MODULKONTRAKT, "reversibilitet")] == {
+        "direkte", "kompenserende", ULESELIG_SQL}
 
 
 def test_en_uleselig_verdi_stopper_enumoppslaget(tmp_path):
