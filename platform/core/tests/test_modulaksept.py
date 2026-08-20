@@ -646,6 +646,33 @@ def test_akseptporten_binder_raafilen():
     assert "utenfor repoet" in str(ei.value)
 
 
+def test_akseptcommiten_baerer_bytene_som_ble_validert(tmp_path):
+    """Codex' P1 (runde 2): hash-, skjema- og grensekontrollene hadde
+    ARBEIDSTREET som tillitsrot, mens `manifest_commit` var en
+    ukontrollert streng eller bare `HEAD`. En commit som ikke finnes,
+    og en fil hvis bytes ikke er commitens, skal begge stoppe FØR
+    transaksjonen — ellers peker den immutable raden på en commit uten
+    ett eneste av bevisene."""
+    m = _aksept_skript()
+    with pytest.raises(SystemExit) as ei:
+        m.loes_akseptcommit("finnes-ikke-i-dette-repoet")
+    assert "ingen commit" in str(ei.value)
+    hode = m.loes_akseptcommit(None)
+    assert len(hode) == 40
+    # Manifestet slik det står i HEAD er bundet; en byte til er ikke.
+    man_sha = m.les_manifest()[1]
+    r = subprocess.run(["git", "-C", str(ROT), "cat-file", "blob",
+                        f"{hode}:{m.MANIFEST_REL}"], capture_output=True)
+    if r.returncode == 0 and hashlib.sha256(r.stdout).hexdigest() == man_sha:
+        m.bind_til_commit(hode, m.MANIFEST_REL, man_sha)   # ingen SystemExit
+    with pytest.raises(SystemExit) as ei:
+        m.bind_til_commit(hode, m.MANIFEST_REL, SHA0)
+    assert "arbeidstreet" in str(ei.value)
+    with pytest.raises(SystemExit) as ei:
+        m.bind_til_commit(hode, "deploy/staging/finnes-ikke.json", SHA0)
+    assert "finnes ikke i" in str(ei.value)
+
+
 @pg
 def test_planlinjen_og_etiketten_fulgte_flippet():
     """Port 12: planlinjen står i M-56-flyten FØRST NÅ (048 leverte

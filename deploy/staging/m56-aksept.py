@@ -40,7 +40,8 @@ MILJO = "staging"
 KRAV = "wcag-kontroll-v1"
 DRILLKRAV = "rollback-m56-v1"
 TENANT = "t-wcagfasit"
-MANIFEST_STI = REPO / "platform/modules/m56_wcag_audit/manifest.yaml"
+MANIFEST_REL = "platform/modules/m56_wcag_audit/manifest.yaml"
+MANIFEST_STI = REPO / MANIFEST_REL
 
 #: grensepunkt → (kilde_type, hvordan verdien hentes). Måletallene peker
 #: på runde-sammendraget (selv sha-bundet i manifestet); de rene
@@ -77,9 +78,65 @@ CI_PUNKTER = (
 )
 
 
-def les_manifest() -> dict:
+def les_manifest() -> tuple[dict, str]:
+    """Manifestet og sha256 av de BYTENE som ble tolket. -> (innhold, sha)."""
     import yaml
-    return yaml.safe_load(MANIFEST_STI.read_text(encoding="utf-8"))
+    raa = MANIFEST_STI.read_bytes()
+    return (yaml.safe_load(raa.decode("utf-8")),
+            hashlib.sha256(raa).hexdigest())
+
+
+def _git(*argv: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", "-C", str(REPO), *argv], capture_output=True)
+
+
+def loes_akseptcommit(oppgitt: str | None) -> str:
+    """Commiten akseptraden skal peke på — full sha, og den må finnes.
+
+    `--manifest-commit` var før en helt ukontrollert streng: hva som helst
+    kunne skrives inn i den immutable raden. Nå må verdien peke på en
+    faktisk commit i dette repoet før noe måles mot den.
+    """
+    ref = oppgitt or "HEAD"
+    r = _git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+    sha = r.stdout.decode().strip()
+    if r.returncode != 0 or len(sha) != 40:
+        raise SystemExit(f"AVBRUTT: manifest-commit {ref!r} er ingen commit i"
+                         " dette repoet")
+    return sha
+
+
+def bind_til_commit(commit: str, rel: str, sha: str) -> None:
+    """De validerte bytene må VÆRE bytene commiten inneholder.
+
+    Codex' P1 på PR #117 (runde 2): hash-, skjema- og grensekontrollene
+    hadde ARBEIDSTREET som tillitsrot, mens `manifest_commit` var en
+    ukontrollert CLI-verdi eller bare `HEAD`. Endres manifestet og
+    artefaktene sammen før kommandoen kjøres, passerer alt — og
+    akseptraden peker på en commit som ikke inneholder én eneste av de
+    bytene den påstår å bevise. Her måles hvert ledd i kjeden
+    (manifest → artefakt → råfil) mot commitens egne blober.
+    """
+    r = _git("cat-file", "blob", f"{commit}:{rel}")
+    if r.returncode != 0:
+        raise SystemExit(f"AVBRUTT: {rel} finnes ikke i {commit[:12]}… —"
+                         " akseptraden ville pekt på en commit uten dette"
+                         " beviset")
+    i_commit = hashlib.sha256(r.stdout).hexdigest()
+    if i_commit != sha:
+        raise SystemExit(f"AVBRUTT: {rel} i arbeidstreet er ikke fila i"
+                         f" {commit[:12]}… — {sha[:12]}… mot"
+                         f" {i_commit[:12]}…; ucommitede bytes er ikke evidens")
+
+
+def repo_rel(sti: Path, hva: str = "artefaktet") -> str:
+    """Repo-relativ, POSIX-normalisert sti — eller avbrudd."""
+    try:
+        return sti.resolve().relative_to(REPO).as_posix()
+    except ValueError:
+        raise SystemExit(f"AVBRUTT: {hva} {sti} peker utenfor repoet — bare"
+                         " innsjekkede, manifestbundne artefakter aksepterer"
+                         " noe")
 
 
 def les_bundet_artefakt(sti: Path, krav_id: str,
@@ -104,12 +161,7 @@ def les_bundet_artefakt(sti: Path, krav_id: str,
        for å tro på `bestatt`, og som håndhever §12-grensene.
     """
     import manifestskjema as ms
-    try:
-        rel = sti.resolve().relative_to(REPO).as_posix()
-    except ValueError:
-        raise SystemExit(f"AVBRUTT: {sti} peker utenfor repoet — bare"
-                         " innsjekkede, manifestbundne artefakter aksepterer"
-                         " noe")
+    rel = repo_rel(sti)
     bundet = {p["artefakt_sha256"] for p in
               (manifest.get("staging_sjekkliste") or {}).values()
               if isinstance(p, dict) and p.get("status") == "ja"
@@ -175,17 +227,22 @@ def main() -> int:
     # Ingenting skrives før hele evidenskjeden er målt: manifestets egen
     # port (hash → skjema → grenser → hvilken måling punktet påberoper
     # seg), så de to artefaktene kalleren faktisk sendte inn, så råfilen.
-    manifest = les_manifest()
+    manifest_commit = loes_akseptcommit(a.manifest_commit)
+    manifest, manifest_sha = les_manifest()
     kjedefeil = ms.valider_artefakter(manifest)
     if kjedefeil:
         raise SystemExit("AVBRUTT: manifestets evidenskjede er rød:\n  "
                          + "\n  ".join(kjedefeil))
-    drill, _ = les_bundet_artefakt(a.drill, DRILLKRAV, manifest)
-    runde, _ = les_bundet_artefakt(a.runde, KRAV, manifest)
+    drill, drill_sha = les_bundet_artefakt(a.drill, DRILLKRAV, manifest)
+    runde, runde_sha = les_bundet_artefakt(a.runde, KRAV, manifest)
     evidens_sha = verifiser_kilde(runde)
-    manifest_commit = a.manifest_commit or subprocess.run(
-        ["git", "-C", str(REPO), "rev-parse", "HEAD"],
-        capture_output=True, text=True, check=True).stdout.strip()
+    # …og hele den kjeden bindes til commiten raden faktisk skriver:
+    # manifestet (tillitsroten), begge artefaktene og råfilen bakerst.
+    for rel, sha in ((MANIFEST_REL, manifest_sha),
+                     (repo_rel(a.drill), drill_sha),
+                     (repo_rel(a.runde), runde_sha),
+                     (runde["oppsett"]["kilde"], evidens_sha)):
+        bind_til_commit(manifest_commit, rel, sha)
 
     m = runde["maalt"]
     punkter = {}
