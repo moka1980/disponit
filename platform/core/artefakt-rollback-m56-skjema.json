@@ -10,6 +10,7 @@
     "ts",
     "bestatt",
     "oppsett",
+    "identiteter",
     "maalt",
     "etterkontroll"
   ],
@@ -165,6 +166,63 @@
         "rullback_livslop": {
           "type": "string",
           "comment": "Rullbakkens livsloep etter at kandidaten overtok - drenert, som den drillede."
+        }
+      }
+    },
+    "identiteter": {
+      "type": "object",
+      "additionalProperties": false,
+      "comment": "HVA drillen saa, ikke bare hvor mange: oppdrags- og artefaktidentitetene bak hvert ledd. Akseptens E2E-bevis maa vaere ett av kandidatens artefakter her - FK-en i 049 skiller ikke ett promotert artefakt fra et annet paa samme release (Codex P2, #117).",
+      "required": [
+        "inflight_oppdrag_id",
+        "inflight_artefakter",
+        "rullback_oppdrag_id",
+        "rullback_artefakter",
+        "kandidat_oppdrag_id",
+        "kandidat_artefakter"
+      ],
+      "properties": {
+        "inflight_oppdrag_id": {
+          "type": "string",
+          "minLength": 1,
+          "comment": "Oppdraget som var claimet da rullingen traff."
+        },
+        "inflight_artefakter": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+          },
+          "uniqueItems": true,
+          "comment": "Artefakter det loepende oppdraget promoterte - evidensen bak utfallet."
+        },
+        "rullback_oppdrag_id": {
+          "type": "string",
+          "minLength": 1,
+          "comment": "Oppdraget rullbakken plukket etter at den ble bootet (b2)."
+        },
+        "rullback_artefakter": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+          },
+          "uniqueItems": true,
+          "comment": "Artefakter rullbakken promoterte."
+        },
+        "kandidat_oppdrag_id": {
+          "type": "string",
+          "minLength": 1,
+          "comment": "Oppdraget akseptkandidaten plukket da hun overtok (c)."
+        },
+        "kandidat_artefakter": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+          },
+          "uniqueItems": true,
+          "comment": "Artefakter kandidaten promoterte. Akseptens E2E-bevis MAA vaere ett av disse."
         }
       }
     }

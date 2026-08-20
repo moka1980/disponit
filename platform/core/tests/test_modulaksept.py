@@ -38,6 +38,9 @@ SHA0 = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
 #: Fast og i fortiden med vilje: en test som sender `now()` ville ikke
 #: kunne skille de to tidspunktene fra hverandre.
 DRILL_TS = datetime(2026, 8, 20, 13, 22, 6, tzinfo=timezone.utc)
+#: E2E-artefaktet kandidaten promoterte i drillen — identiteten aksepten
+#: skal binde, ikke bare «ett promotert artefakt fra samme release».
+E2E_UUID = "ad1579e2-0000-4000-8000-000000000000"
 
 
 def _rt():
@@ -598,7 +601,23 @@ def _drillartefakt(**maalt):
                     rullback_promoterte_artefakter=1,
                     rullback_overtakelse_s=18.4)
     komplett.update(maalt)
-    return dict(ekte, maalt=komplett,
+    ident = {"inflight_oppdrag_id": "54",
+             "inflight_artefakter": [E2E_UUID.replace("ad", "aa", 1)],
+             "rullback_oppdrag_id": "55",
+             "rullback_artefakter": [E2E_UUID.replace("ad", "ab", 1)],
+             "kandidat_oppdrag_id": "56",
+             "kandidat_artefakter": [E2E_UUID]}
+    for felt, telling in (("inflight_artefakter",
+                           "inflight_promoterte_artefakter"),
+                          ("rullback_artefakter",
+                           "rullback_promoterte_artefakter"),
+                          ("kandidat_artefakter",
+                           "kandidat_promoterte_artefakter")):
+        # Identitetene FØLGER tallene: en test som muterer et antall skal
+        # ikke måtte huske å mutere listen for at porten skal se det.
+        ident[felt] = [f"{ident[felt][0][:-2]}{i:02x}"
+                       for i in range(komplett[telling])]
+    return dict(ekte, maalt=komplett, identiteter=ident,
                 etterkontroll=dict(ekte["etterkontroll"],
                                    rullback_livslop="draining"))
 
@@ -630,6 +649,48 @@ def test_rullbakken_maa_ha_bootet_og_gjort_arbeid():
         "drillen uten rullbakk-boot passerer fortsatt evidensporten"
     assert valider_artefaktformat(gammel, drillkrav), \
         "skjemaet krever fortsatt ikke (b2)-målingene"
+
+
+def test_e2e_beviset_maa_vaere_det_drillen_saa():
+    """Codex' P2 (runde 3): `--e2e-artefakt` gikk rett inn i den
+    immutable akseptraden, og FK-en i 049 sjekker bare tenant, modul,
+    release og promotert tilstand. Et hvilket som helst ANNET promotert
+    artefakt fra kandidatreleasen passerte derfor — en skrivefeil bandt
+    aksepten til noe drillen aldri så, fordi drillartefaktet bare bar et
+    antall og ingen identitet."""
+    from manifestskjema import _sjekk_grenser, valider_artefaktformat
+    m = _aksept_skript()
+    drill = _drillartefakt()
+    assert m.verifiser_e2e_artefakt(drill, E2E_UUID.upper()) == \
+        E2E_UUID.upper(), "uuid-skrivemåten er ikke en annen identitet"
+    for feil_uuid in ("ad1579e2-0000-4000-8000-0000000000ff",
+                      drill["identiteter"]["rullback_artefakter"][0]):
+        with pytest.raises(SystemExit) as ei:
+            m.verifiser_e2e_artefakt(drill, feil_uuid)
+        assert "ikke blant artefaktene" in str(ei.value)
+    tomt = dict(drill, identiteter=dict(drill["identiteter"],
+                                        kandidat_artefakter=[]))
+    with pytest.raises(SystemExit):
+        m.verifiser_e2e_artefakt(tomt, E2E_UUID)
+    # …og porten krever at tallet og listen er SAMME måling.
+    drillkrav = "rollback-m56-v1"
+    uenig = dict(drill, identiteter=dict(drill["identiteter"],
+                                         kandidat_artefakter=[]))
+    assert any("kandidat_artefakter" in f
+               for f in _sjekk_grenser(drillkrav, uenig))
+    dobbelt = _drillartefakt(kandidat_promoterte_artefakter=2)
+    dobbelt["identiteter"]["kandidat_artefakter"] = [E2E_UUID, E2E_UUID]
+    assert any("gjentakelser" in f
+               for f in _sjekk_grenser(drillkrav, dobbelt))
+    uten = dict(drill)
+    uten.pop("identiteter")
+    assert any("identiteter" in f for f in _sjekk_grenser(drillkrav, uten))
+    assert valider_artefaktformat(uten, drillkrav), \
+        "skjemaet krever fortsatt ikke identitetene"
+    assert valider_artefaktformat(
+        dict(drill, identiteter=dict(drill["identiteter"],
+                                     kandidat_artefakter=["ikke-en-uuid"])),
+        drillkrav), "skjemaet godtar en artefaktidentitet som ikke er uuid"
 
 
 def test_manifestet_binder_ikke_den_supersederte_drillen():

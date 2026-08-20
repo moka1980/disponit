@@ -405,6 +405,23 @@ def main() -> int:
             "kandidat_digest": kandidat_digest,
             "module_epoch": int(epoch),
         },
+        # HVA drillen faktisk så, ikke bare HVOR MANGE. Codex' P2 på PR
+        # #117 (runde 3): akseptens `--e2e-artefakt` gikk rett inn i den
+        # immutable raden, og FK-en i 049 sjekker bare tenant, modul,
+        # release og promotert tilstand. Et hvilket som helst annet
+        # promotert artefakt fra kandidatreleasen passerte derfor, mens
+        # drillartefaktet bare bar et ANTALL og ingen identitet — så
+        # aksepten kunne referere et artefakt drillen aldri så. Nå bærer
+        # artefaktet identitetene, og akseptporten krever at E2E-beviset
+        # er ett av dem drillen faktisk observerte.
+        "identiteter": {
+            "inflight_oppdrag_id": str(inflight["oppdrag"]),
+            "inflight_artefakter": sorted(inflight_artefakter),
+            "rullback_oppdrag_id": str(o2),
+            "rullback_artefakter": sorted(rullback_artefakter),
+            "kandidat_oppdrag_id": str(o3),
+            "kandidat_artefakter": sorted(kandidat_artefakter),
+        },
         "maalt": {
             "inflight_oppdrag": 1,
             "inflight_utfall": inflight["utfall"],

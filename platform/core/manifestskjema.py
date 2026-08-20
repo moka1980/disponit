@@ -751,6 +751,50 @@ def _grenser_rollback_m56(grense: dict, art: dict) -> list[str]:
                     " ventet 'claiming' (aksepten binder raden som kjører)")
     if k.get("modulstatus") != "aktiv":
         feil.append(f"modulstatus={k.get('modulstatus')!r} etter drillen")
+    feil += _identiteter_stemmer(art)
+    return feil
+
+
+def _identiteter_stemmer(art: dict) -> list[str]:
+    """Tellingene og identitetene må være samme observasjon.
+
+    Codex' P2 på PR #117 (runde 3): drillartefaktet bar bare ANTALL, så
+    aksepten kunne referere et E2E-artefakt drillen aldri så — FK-en i
+    049 skiller ikke ett promotert artefakt fra et annet på samme
+    release. Identitetene er nå med, og her måles at de er den SAMME
+    målingen som tallene: et antall som ikke stemmer med listen betyr at
+    minst én av dem er skrevet, ikke målt.
+    """
+    ident = art.get("identiteter")
+    m = art.get("maalt") or {}
+    if not isinstance(ident, dict):
+        return ["artefaktet mangler `identiteter` — et antall uten"
+                " identitet kan ikke bindes til aksepten"]
+    feil: list[str] = []
+    for felt, telling in (("inflight_artefakter",
+                           "inflight_promoterte_artefakter"),
+                          ("rullback_artefakter",
+                           "rullback_promoterte_artefakter"),
+                          ("kandidat_artefakter",
+                           "kandidat_promoterte_artefakter")):
+        liste = ident.get(felt)
+        if not isinstance(liste, list):
+            feil.append(f"identiteter.{felt} mangler")
+            continue
+        antall, melding = _teller(m, telling, telling)
+        if melding:
+            continue                    # alt rapportert av grensesløyfen
+        if len(set(liste)) != len(liste):
+            feil.append(f"identiteter.{felt} har gjentakelser — samme"
+                        " artefakt talt to ganger er ikke to artefakter")
+        elif len(liste) != antall:
+            feil.append(f"identiteter.{felt} har {len(liste)} artefakter,"
+                        f" men {telling}={antall} — tallet og listen er"
+                        " ikke samme måling")
+    for felt in ("inflight_oppdrag_id", "rullback_oppdrag_id",
+                 "kandidat_oppdrag_id"):
+        if not str(ident.get(felt) or "").strip():
+            feil.append(f"identiteter.{felt} mangler")
     return feil
 
 

@@ -354,6 +354,33 @@ def verifiser_kilde(runde: dict) -> str:
     return sha
 
 
+def verifiser_e2e_artefakt(drill: dict, oppgitt: str) -> str:
+    """E2E-beviset må være ett av dem DRILLEN faktisk så. -> uuid-en.
+
+    Codex' P2 på PR #117 (runde 3): `--e2e-artefakt` gikk rett inn i den
+    immutable akseptraden, og FK-en i 049 sjekker bare tenant, modul,
+    release og promotert tilstand. Et hvilket som helst ANNET promotert
+    artefakt fra kandidatreleasen passerte derfor like godt — en
+    skrivefeil bandt aksepten til et artefakt drillen aldri observerte,
+    mens drillartefaktet bare bar et antall og ingen identitet. Nå bærer
+    drillen identitetene, og aksepten må peke på en av dem.
+    """
+    sett = [str(u) for u in
+            ((drill.get("identiteter") or {}).get("kandidat_artefakter")
+             or [])]
+    if not sett:
+        raise SystemExit("AVBRUTT: drillartefaktet bærer ingen"
+                         " kandidat-artefakter — uten identitetene kan"
+                         " E2E-beviset ikke bindes til drillen")
+    if oppgitt.strip().lower() not in {u.strip().lower() for u in sett}:
+        raise SystemExit(
+            f"AVBRUTT: --e2e-artefakt {oppgitt} er ikke blant artefaktene"
+            f" drillens kandidat promoterte ({', '.join(sett)}) — aksepten"
+            " skal binde beviset drillen SÅ, ikke et annet promotert"
+            " artefakt fra samme release")
+    return oppgitt.strip()
+
+
 def _digest(raa: object) -> str:
     """Digesten uten `sha256:`-prefiks — samme form uansett kilde."""
     return str(raa or "").removeprefix("sha256:").strip().lower()
@@ -439,6 +466,8 @@ def main() -> int:
     drill_ts = drillens_maaletid(drill)
     # Målte bytes = drillede bytes = aksepterte bytes (A1, siste ledd).
     digest = verifiser_digestkjede(runde, drill)
+    # …og E2E-beviset er ett av dem drillen selv observerte.
+    e2e_artefakt = verifiser_e2e_artefakt(drill, a.e2e_artefakt)
     evidens_sha = verifiser_kilde(runde)
     # …og hele den kjeden bindes til commiten raden faktisk skriver:
     # manifestet (tillitsroten), begge artefaktene og råfilen bakerst.
@@ -498,7 +527,7 @@ def main() -> int:
             "SELECT aksepter_moduldeployment(%s,%s,%s,%s,%s,%s,%s::uuid,"
             "%s,%s,%s,%s,%s::jsonb,%s,'m56-aksept')",
             (MODUL, MILJO, o["kandidat_release"], drill_id, KRAV,
-             TENANT, a.e2e_artefakt, evidens_sha, manifest_commit,
+             TENANT, e2e_artefakt, evidens_sha, manifest_commit,
              a.ci_run, ci_commit, json.dumps(punkter),
              f"aksept-{o['kandidat_release']}"))
         conn.commit()
