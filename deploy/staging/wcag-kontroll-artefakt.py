@@ -149,6 +149,26 @@ def _tall(d: dict, felt: str):
     return v if math.isfinite(v) else None
 
 
+def _identitet(d: dict, felt: str) -> str | None:
+    """Oppdrags-IDen som en kanonisk tekst — ellers `None`.
+
+    `oppdrag_id` er et heltall fra basen, men en evidensfil som er
+    redigert eller halvskrevet kan bære hva som helst. Et `{}` eller
+    `[]` skal ikke kaste ut av genereringen (samme feiler-lukket-krav som
+    `_unike` i manifestskjema), og `True` er ikke oppdrag nummer 1 selv
+    om `bool` arver `int`. Kanonisk JSON skiller `1`, `"1"` og `true`
+    fra hverandre, så to ulike identiteter aldri kollapser til én.
+    """
+    v = d.get(felt)
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return json.dumps(v)
+    if isinstance(v, str) and v.strip():
+        return json.dumps(v)
+    return None
+
+
 def signert_innen_frist(linjer: list[dict], krav: int) -> int:
     """Teller kjøringene som FAKTISK ble målt signert innen fristen.
 
@@ -174,22 +194,35 @@ def signert_innen_frist(linjer: list[dict], krav: int) -> int:
     «10/10» uten at én eneste av de ti bestilte kjøringene var målt.
     Fase 5 bestiller `range(krav)`; alt utenfor er ikke en av dem, og en
     kjøring som ikke er bestilt kan ikke telle som en som er utført.
+
+    Og hver posisjon må bære SITT EGET oppdrag. Codex' P2 på PR #117
+    (runde 14): posisjonen ble avduplikert, men ikke identiteten bak den.
+    Ett eneste vellykket oppdrag kopiert inn på alle ti indekser — en
+    evidensfil som er redigert, flettet fra to runder eller halvskrevet —
+    ga et sett på ti posisjoner og dermed «10/10», selv om motoren bare
+    hadde kjørt én gang. Det er antallet DISTINKTE oppdrag som er antallet
+    kjøringer; en kjøring uten en egen oppdrags-ID er ikke målt som en
+    egen kjøring, og telles ikke.
     """
     bestilte = range(krav)
-    gronne = set()
+    gronne: dict[int, str] = {}
     for d in linjer:
         avvik = _tall(d, "avvik_mot_fasit")
         varighet, frist = _tall(d, "varighet_s"), _tall(d, "frist_s")
-        indeks = d.get("i")
+        indeks, oppdrag = d.get("i"), _identitet(d, "oppdrag")
         if (d.get("utfall") == "utfort"
                 and avvik == 0
                 and varighet is not None
                 and frist is not None
                 and varighet < frist
                 and isinstance(indeks, int) and not isinstance(indeks, bool)
-                and indeks in bestilte):
-            gronne.add(indeks)
-    return len(gronne)
+                and indeks in bestilte
+                and oppdrag is not None):
+            gronne[indeks] = oppdrag
+    # Ett oppdrag kan ikke ha kjørt to av de bestilte posisjonene. Går den
+    # samme IDen igjen, er det ikke to kjøringer, og antallet er antallet
+    # oppdrag — aldri antallet linjer som viser til dem.
+    return len(set(gronne.values()))
 
 
 def sammendrag(rader: list[dict], kilde: str, kilde_sha256: str) -> dict:
@@ -220,7 +253,8 @@ def sammendrag(rader: list[dict], kilde: str, kilde_sha256: str) -> dict:
                      str(fase5["ti_kjoringer_signert_innen_frist"]).split("/"))
     # TALLET REGNES UT AV LINJENE, ikke lest av summen (Codex P2, runde
     # 10) — og bare av linjene på de BESTILTE posisjonene `range(krav)`
-    # (Codex P2, runde 13). Og spriker de to, er evidensfila i strid med
+    # (Codex P2, runde 13), med ett DISTINKT oppdrag bak hver posisjon
+    # (Codex P2, runde 14). Og spriker de to, er evidensfila i strid med
     # seg selv: summen påstår flere målte kjøringer enn de bestilte
     # linjene bærer, og da skrives det ikke noe sammendrag i det hele
     # tatt.
@@ -231,12 +265,13 @@ def sammendrag(rader: list[dict], kilde: str, kilde_sha256: str) -> dict:
             f"AVBRUTT: `fase5_resultat` påstår {påstått}/{krav} signert"
             f" innen frist, men bare {signert} av de {krav} BESTILTE"
             " `kjoring`-linjene (i=0…"
-            f"{krav - 1}) i den runden bærer et rent utfall, null avvik OG"
-            " en målt varighet under sin egen frist. Et gjenspill setter"
-            " utfall=utfort og"
-            " varighet_s=null uten å måle fristen på nytt, så summen kan"
-            " ikke være kilden. Kjør fase 5 på nytt (nye"
-            " idempotensnøkler) og la kjøringene måle seg selv.")
+            f"{krav - 1}) i den runden bærer et rent utfall, null avvik,"
+            " en målt varighet under sin egen frist OG en egen"
+            " oppdrags-ID. Et gjenspill setter utfall=utfort og"
+            " varighet_s=null uten å måle fristen på nytt, og det samme"
+            " oppdraget gjentatt på flere posisjoner er én kjøring, ikke"
+            " flere — så summen kan ikke være kilden. Kjør fase 5 på nytt"
+            " (nye idempotensnøkler) og la kjøringene måle seg selv.")
     return {
         "krav_id": "wcag-kontroll-v1",
         "ts": max(d["ts"] for d in valgte),

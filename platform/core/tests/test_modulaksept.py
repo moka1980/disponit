@@ -847,6 +847,33 @@ def test_fristtellingen_regnes_ut_av_de_ti_kjoringene():
     # Og en generator som ble bestilt færre kjøringer, teller bare dem.
     assert m.signert_innen_frist(linjer, 4) == 4
 
+    # Codex' P2 (runde 14): posisjonen ble avduplikert, men ikke
+    # IDENTITETEN bak den. Ett vellykket oppdrag kopiert inn på alle ti
+    # bestilte posisjoner ga et sett på ti og dermed «10/10», selv om
+    # motoren hadde kjørt én eneste gang.
+    ett_oppdrag = [dict(d, oppdrag=linjer[0]["oppdrag"]) for d in linjer]
+    assert m.signert_innen_frist(ett_oppdrag, 10) == 1
+    # To ekte kjøringer gjentatt over ti posisjoner er fortsatt to.
+    to_oppdrag = [dict(d, oppdrag=linjer[d["i"] % 2]["oppdrag"])
+                  for d in linjer]
+    assert m.signert_innen_frist(to_oppdrag, 10) == 2
+    # En linje uten en egen oppdrags-ID har ikke målt en egen kjøring —
+    # og en uhashbar eller påstått identitet skal feile lukket, ikke
+    # kaste ut av genereringen.
+    assert m.signert_innen_frist(
+        [{k: v for k, v in d.items() if k != "oppdrag"} for d in linjer],
+        10) == 0
+    assert m.signert_innen_frist(
+        [dict(d, oppdrag={}) for d in linjer], 10) == 0
+    assert m.signert_innen_frist(
+        [dict(d, oppdrag=True) for d in linjer], 10) == 0
+    assert m.signert_innen_frist(
+        [dict(d, oppdrag="  ") for d in linjer], 10) == 0
+    # `1`, `"1"` og `true` er ikke det samme oppdraget.
+    assert m.signert_innen_frist(
+        [dict(d, oppdrag=1 if d["i"] % 2 else "1") for d in linjer],
+        10) == 2
+
     # Og generatoren nekter å skrive et sammendrag der summen påstår mer
     # enn linjene bærer: en ren gjenspilt runde stopper her.
     fase5 = rader[i_fase5]
@@ -870,6 +897,17 @@ def test_fristtellingen_regnes_ut_av_de_ti_kjoringene():
         m.sammendrag(forskjovet_runde, art["oppsett"]["kilde"],
                      art["oppsett"]["kilde_sha256"])
     assert "BESTILTE" in str(ei.value)
+
+    # …og heller ikke av ti linjer som alle viser til det SAMME oppdraget
+    # (Codex P2, runde 14).
+    ett_oppdrag_runde = (
+        rader[:i_fase5 - len(linjer)]
+        + [dict(d, oppdrag=linjer[0]["oppdrag"]) for d in linjer]
+        + rader[i_fase5:])
+    with pytest.raises(SystemExit) as ei:
+        m.sammendrag(ett_oppdrag_runde, art["oppsett"]["kilde"],
+                     art["oppsett"]["kilde_sha256"])
+    assert "oppdrags-ID" in str(ei.value)
 
 
 def test_wcag_grensene_maaler_at_portene_faktisk_kjorte():
