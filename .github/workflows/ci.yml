@@ -138,7 +138,9 @@ jobs:
         env:
           DISPONIT_SP10_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
           DISPONIT_SP10_MIGRATOR_URL: postgresql://disponit_migrator:mig@127.0.0.1:5432/disponit_sp10
-        run: python deploy/staging/sp10-provekjoring.py 48
+        run: |
+          python deploy/staging/sp10-provekjoring.py 48
+          python deploy/staging/sp10-provekjoring.py 49
       - name: Enhetstester + negative policytester
         run: python -m pytest platform/core/tests -q
       - name: "Port: ingen DB-tester ble hoppet over"

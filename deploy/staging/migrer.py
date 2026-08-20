@@ -106,6 +106,10 @@ GRANT SELECT, INSERT, UPDATE ON varselvalg TO {rolle};
 -- runtime skal gi `permission denied` (Codex-port 17).
 GRANT SELECT ON modulkontrakt, modulhode, modulrelease, moduldeployment,
     oppdragstype_register, modulregister_hendelse TO {rolle};
+-- 049: akseptflaten er leselig for runtime som resten av registeret —
+-- statusetiketter og evidensvisninger skal kunne peke på hendelsen.
+GRANT SELECT ON moduldrill, modulaksept, modulaksept_punkt,
+    akseptkrav_punkt TO {rolle};
 GRANT SELECT ON domenekontroll, artefakt, artefakttype_register TO {rolle};
 -- PR-014c: skjemavalidering ved opplasting/promotering og aktiveringsporten
 -- for `ekstern_lesing` leses i API-prosessen. Runtime skriver aldri.

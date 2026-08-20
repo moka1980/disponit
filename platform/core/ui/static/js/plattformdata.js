@@ -29,12 +29,13 @@ export const MODULSTATUS = {
   2: "bygges",      // m02_revisjonslogg: under_utvikling, ikke_i_drift
   37: "bygges",     // m37_unntak: under_utvikling, ikke_i_drift
   38: "planlagt",   // ingen manifest i platform/modules/ ennå
-  // m56_wcag_audit: manifestaksene sier under_utvikling/ikke_i_drift til
-  // akseptporten (rollback-punktet) er bestått — «bygges» ER manifestets
-  // sannhet her, og DEN gjelder hele flaten. Katalogen på forsiden bar en
-  // stund et eget «i drift»-felt for M-56; det er tatt ut igjen (Codex P1
-  // på #109), for en akse ved siden av manifestet kan bare love mer enn
-  // porten bærer.
+  // m56_wcag_audit: akseptporten ER bestått (049; alle seks punkter ja
+  // med bundet evidens, flippedrillen kjørt 2026-08-20, aksepthendelsen
+  // i basen) — men registerets konsistensregel holder flippet igjen til
+  // m02_revisjonslogg er akseptert (en aktiv modul kan ikke avhenge av
+  // en som ikke er det). Manifestet sier fortsatt
+  // under_utvikling/ikke_i_drift, og DEN aksen er denne flatens eneste
+  // kilde — «bygges» står til m02-aksept-arcen flipper begge.
   56: "bygges",
 };
 

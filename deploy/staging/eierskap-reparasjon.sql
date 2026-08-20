@@ -202,6 +202,8 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'sett_modulstatus(text,text,text,text)',             'disponit_modul_eier'),
     ('FUNCTION', 'registrer_kontrakt(text,integer,text,text,text,text,text,text)', 'disponit_modul_eier'),
     ('FUNCTION', 'registrer_release(text,text,integer,text,text,text,text)', 'disponit_modul_eier'),
+    ('FUNCTION', 'registrer_moduldrill(text,text,text,text,text,boolean,boolean,boolean,text,text)', 'disponit_modul_eier'),
+    ('FUNCTION', 'aksepter_moduldeployment(text,text,text,bigint,text,text,uuid,text,text,text,text,jsonb,text,text)', 'disponit_modul_eier'),
     ('FUNCTION', 'bytt_release(text,text,text,integer,text,text)',    'disponit_modul_eier'),
     ('FUNCTION', 'pensjoner_release(text,text,text,text)',            'disponit_modul_eier'),
     ('FUNCTION', 'noddeaktiver_modul(text,text,text)',               'disponit_modul_eier'),

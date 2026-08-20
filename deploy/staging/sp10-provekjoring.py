@@ -182,9 +182,93 @@ def _mal_048(conn) -> list[str]:
     return feil
 
 
+def _seed_049(conn):
+    """Bebodd 048-tilstand for 049: promoterte artefakter på TO releaser
+    (24 rader i prod, r1 + r5) — `artefakt_release_fk` og den
+    refererbare nøkkelen må validere mot dem, og det er nøyaktig
+    klassen tom base ikke kan se."""
+    from db.pg import sett_kontekst
+    sett_kontekst(conn, TEN, "sp10:seed", "r-sp10-49")
+    conn.execute(
+        "INSERT INTO modulhode (modul_id, status) VALUES ('m_sp10','aktiv')")
+    conn.execute(
+        "INSERT INTO modulkontrakt (modul_id, kontraktversjon,"
+        " kontrakt_hash, payload_schema_hash, kvittering_schema_hash,"
+        " sideeffektklasse, reversibilitet) VALUES"
+        " ('m_sp10',1,'kh-sp10','ph','qh','ekstern_lesing','direkte')")
+    for rel in ("sp10-r1", "sp10-r2"):
+        conn.execute(
+            "INSERT INTO modulrelease (modul_id, release_id,"
+            " kontraktversjon, kontrakt_hash, manifest_hash,"
+            " artifact_digest) VALUES ('m_sp10',%s,1,'kh-sp10','mh',"
+            "'digest-sp10')", (rel,))
+    conn.execute(
+        "INSERT INTO moduldeployment (modul_id, release_id,"
+        " kontraktversjon, kontrakt_hash, miljo, livslop) VALUES"
+        " ('m_sp10','sp10-r1',1,'kh-sp10','staging','draining')")
+    conn.execute(
+        "INSERT INTO moduldeployment (modul_id, release_id,"
+        " kontraktversjon, kontrakt_hash, miljo, livslop) VALUES"
+        " ('m_sp10','sp10-r2',1,'kh-sp10','staging','claiming')")
+    conn.execute(
+        "INSERT INTO artefaktskjema (skjema_hash, kanonisk) VALUES"
+        " ('44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{}') ON CONFLICT DO NOTHING")
+    conn.execute(
+        "INSERT INTO artefakttype_register (artefakttype, eiermodul,"
+        " kontraktversjon, kontrakt_hash, skjema_hash) VALUES"
+        " ('sp10.rapport','m_sp10',1,'kh-sp10','44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a')")
+    conn.execute(
+        "INSERT INTO tenant_nokler (tenant, key_id, wrapped_dek) VALUES"
+        " (%s,'k-sp10','\\x00'::bytea) ON CONFLICT DO NOTHING", (TEN,))
+    for i, rel in enumerate(("sp10-r1", "sp10-r2")):
+        blid = conn.execute(
+            "INSERT INTO revisjonslogg (tenant, input_hash, policy_id,"
+            " beslutning, begrunnelse, idempotency_key, kilde) VALUES"
+            " (%s,'h','p','TILLAT','[]'::jsonb,%s,'arbeidskapabilitet')"
+            " RETURNING id", (TEN, f"sp10-idem-{i}")).fetchone()[0]
+        oid = conn.execute(
+            "INSERT INTO oppdrag (opprinnelse, tenant, oppdragstype,"
+            " handling, eiermodul, status, payload_kryptert, key_id,"
+            " nonce, utforelsesfrist, evidensfrist, koblingsstatus,"
+            " beslutning_loggpost_id) VALUES"
+            " ('beslutning',%s,'kontroll.wcag.nettsted',"
+            "'kontroll.wcag.nettsted','m_sp10','utfort',%s,'k-sp10',%s,"
+            " now()+interval '1 hour', now()+interval '2 hours',"
+            "'KOBLET', %s)"
+            " RETURNING id",
+            (TEN, b"\x00" * 24, b"\x00" * 12, blid)).fetchone()[0]
+        conn.execute(
+            "INSERT INTO artefakt (tenant, oppdrag_id, artefakttype,"
+            " modul_id, release_id, kontraktversjon, kontrakt_hash,"
+            " module_epoch, tilstand, storrelse_bytes, klartekst_sha256,"
+            " ciphertext, nonce, dek_ref, kapabilitet_jti, promotert_ts)"
+            " VALUES (%s,%s,'sp10.rapport','m_sp10',%s,1,"
+            "'kh-sp10',0,'promotert',64,%s,%s,%s,'k-sp10',%s, now())",
+            (TEN, oid, rel, "ab" * 32, b"\x01" * 40, b"\x02" * 12,
+             f"sp10-jti-{i}-000000000000"))
+    conn.commit()
+
+
+def _mal_049(conn) -> list[str]:
+    feil = []
+    for navn in ("artefakt_release_fk", "artefakt_refererbar"):
+        n = conn.execute(
+            "SELECT count(*) FROM pg_constraint WHERE conname = %s"
+            "   AND conrelid = 'artefakt'::regclass", (navn,)).fetchone()[0]
+        if n != 1:
+            feil.append(f"constrainten {navn} mangler etter 049")
+    n = conn.execute(
+        "SELECT count(*) FROM akseptkrav_punkt"
+        " WHERE krav_id = 'wcag-kontroll-v1'").fetchone()[0]
+    if n < 20:
+        feil.append(f"kravpunktregisteret har {n} punkter, ventet >= 20")
+    conn.rollback()
+    return feil
+
+
 #: Migrasjonsnummer -> (seed før N, måling etter N). En backfill-migrasjon
 #: uten oppføring her kan ikke bestå port 17.
-SEEDS = {48: (_seed_048, _mal_048)}
+SEEDS = {48: (_seed_048, _mal_048), 49: (_seed_049, _mal_049)}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -268,7 +352,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"bebodd base: 1..{max(kjort)} bygget")
 
         seed(conn)
-        print(f"seedet 047-tilstand for {n:03d}")
+        print(f"seedet bebodd tilstand for {n:03d}")
 
         resten = migrer(conn)
         if n not in resten:

@@ -23,6 +23,35 @@ REPOROT = Path(__file__).resolve().parents[2]
 #: CI leser, og ikke bare i et manifestnotat: et tall i en kommentar kan
 #: ikke gjøre en kjøring rød.
 KRAVGRENSER: dict[str, dict] = {
+    "wcag-kontroll-v1": {
+        # 014c-klarsignalet §12: fasitrunden. 10/10 signert innen frist,
+        # null avvik mot fasit, og feilveiene beviste seg (kvittering
+        # uten evidens; reaper → sak). Frekvens: taket skal både slippe
+        # gjennom OG avvise — en port som aldri målte et avslag har ikke
+        # målt taket.
+        "min_kjoringer": 10,
+        "maks_avvik_mot_fasit": 0,
+        "maks_robots_private": 0,
+        "min_frekvens_tillat": 4,
+        "min_frekvens_avvist": 1,
+        "maks_egress_lekkasjer": 0,
+        "min_feilet_med_kvittering": 1,
+        "maks_promoterte_ved_feil": 0,
+        "min_evidensfrist_reapet": 1,
+        "min_evidensfrist_sak": 1,
+    },
+    "rollback-m56-v1": {
+        # 049-flippedrillen: den drillede releasen claimer INGENTING
+        # etter drenering (målt i minst 20 s), det løpende oppdraget får
+        # et rent, signert utfall, og kandidaten plukker og promoterer.
+        "maks_claims_etter_drenering": 0,
+        "maks_falske_verdikter": 0,
+        "min_inflight": 1,
+        "min_kandidat_claims": 1,
+        "min_kandidat_promoterte": 1,
+        "min_ventetid_s": 20.0,
+        "rene_utfall": ("utfort", "feilet", "avbrutt"),
+    },
     "perf-m01-v1": {
         "min_antall": 6000,
         "maks_feil": 0,
@@ -142,6 +171,8 @@ ARTEFAKTSKJEMAER: dict[str, str] = {
     "rollback-m01-v1": "artefakt-rollback-skjema.json",
     "behandling-m37-v1": "artefakt-behandling-skjema.json",
     "policyadmin-v1": "artefakt-policyadmin-skjema.json",
+    "wcag-kontroll-v1": "artefakt-wcag-kontroll-skjema.json",
+    "rollback-m56-v1": "artefakt-rollback-m56-skjema.json",
 }
 
 
@@ -339,6 +370,10 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _grenser_behandling(grense, art)
     if krav_id == "policyadmin-v1":
         return feil + _grenser_policyadmin(grense, art)
+    if krav_id == "wcag-kontroll-v1":
+        return feil + _grenser_wcag_kontroll(grense, art)
+    if krav_id == "rollback-m56-v1":
+        return feil + _grenser_rollback_m56(grense, art)
 
     m = art.get("maalt")
     if not isinstance(m, dict):
@@ -506,6 +541,142 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
                         f" — fordeling: {dict(sorted(per_sakstype.items()))}")
     if k.get("routing_stemmer") is not True:
         feil.append("etterkontroll: routing_stemmer er ikke true")
+    return feil
+
+
+def _grenser_wcag_kontroll(grense: dict, art: dict) -> list[str]:
+    """`wcag-kontroll-v1` — stagingsjekklisterunden for m56, 014c §12.
+
+    Tallene er runde-sammendraget avledet mekanisk av evidens.jsonl
+    (deploy/staging/wcag-kontroll-artefakt.py). Forholdene regnes ut på
+    nytt her: `bestatt: true` er produsentens påstand, ikke beviset —
+    samme regel som alle de andre kravene.
+    """
+    feil: list[str] = []
+    m = art.get("maalt")
+    if not isinstance(m, dict):
+        return ["artefaktet mangler `maalt`"]
+    kjort, m1 = _teller(m, "kjoringer_signert_innen_frist",
+                        "kjoringer_signert_innen_frist")
+    krav, m2 = _teller(m, "kjoringer_krav", "kjoringer_krav")
+    for melding in (m1, m2):
+        if melding:
+            feil.append(melding)
+    if not m1 and not m2:
+        if krav < grense["min_kjoringer"]:
+            feil.append(f"kjoringer_krav={krav}, krever >="
+                        f" {grense['min_kjoringer']}")
+        if kjort < krav:
+            feil.append(f"kjoringer_signert_innen_frist={kjort} av {krav}"
+                        " — alle skal være signert innen frist")
+    for felt, tak in (
+            ("avvik_mot_fasit", grense["maks_avvik_mot_fasit"]),
+            ("robots_private_forisporsler", grense["maks_robots_private"]),
+            ("egress_lekkasjer", grense["maks_egress_lekkasjer"]),
+            ("feilinjisering_promoterte_artefakter",
+             grense["maks_promoterte_ved_feil"])):
+        verdi, melding = _teller(m, felt, felt)
+        if melding:
+            feil.append(melding)
+        elif verdi > tak:
+            feil.append(f"{felt}={verdi}, krever <= {tak}")
+    # 5xx-siden: en 500-side som «ren» var nettopp dogfooding-fellen —
+    # antall kontrollerte sider må VÆRE kravet, ikke bare over null.
+    sider, m1 = _teller(m, "robots_5xx_sider_kontrollert",
+                        "robots_5xx_sider_kontrollert")
+    sider_krav, m2 = _teller(m, "robots_5xx_krav", "robots_5xx_krav")
+    for melding in (m1, m2):
+        if melding:
+            feil.append(melding)
+    if not m1 and not m2 and sider != sider_krav:
+        feil.append(f"robots_5xx: kontrollert {sider}, krav {sider_krav}")
+    # Frekvensporten: nøyaktig grensen tillates, ingenting over utføres.
+    tillat, m1 = _teller(m, "frekvens_tillat", "frekvens_tillat")
+    avvist, m2 = _teller(m, "frekvens_avvist_over_grense",
+                         "frekvens_avvist_over_grense")
+    for melding in (m1, m2):
+        if melding:
+            feil.append(melding)
+    if not m1 and not m2:
+        if avvist < grense["min_frekvens_avvist"]:
+            feil.append(f"frekvens_avvist_over_grense={avvist} — porten"
+                        " målte aldri at taket faktisk avviser")
+        if tillat < grense["min_frekvens_tillat"]:
+            feil.append(f"frekvens_tillat={tillat}, krever >="
+                        f" {grense['min_frekvens_tillat']}")
+    # Feilveien: en feilet kjøring har kvittering og INGEN evidens.
+    for felt, minst in (
+            ("feilinjisering_feilet_med_kvittering",
+             grense["min_feilet_med_kvittering"]),
+            ("evidensfrist_reapet", grense["min_evidensfrist_reapet"]),
+            ("evidensfrist_sak_opprettet", grense["min_evidensfrist_sak"])):
+        verdi, melding = _teller(m, felt, felt)
+        if melding:
+            feil.append(melding)
+        elif verdi < minst:
+            feil.append(f"{felt}={verdi}, krever >= {minst}")
+    return feil
+
+
+def _grenser_rollback_m56(grense: dict, art: dict) -> list[str]:
+    """`rollback-m56-v1` — flippedrillen for moduldeployment (049).
+
+    Den bindende delen er tre påstander som alle regnes ut fra råtall:
+    den drillede releasen claimet INGENTING etter dreneringen, det
+    løpende oppdraget fikk et rent, signert utfall (SP-3: aldri et
+    falskt verdikt), og kandidaten — byte-identisk med den drillede
+    (A1) — plukket og promoterte. Digestlikheten måles her OG av
+    `registrer_moduldrill` i basen; to porter, samme sannhet.
+    """
+    feil: list[str] = []
+    m, o, k = art.get("maalt"), art.get("oppsett"), art.get("etterkontroll")
+    if not isinstance(m, dict) or not isinstance(o, dict)             or not isinstance(k, dict):
+        return ["artefaktet mangler `maalt`/`oppsett`/`etterkontroll`"]
+    for felt, tak in (
+            ("nye_oppdrag_claimet_av_drillet_release",
+             grense["maks_claims_etter_drenering"]),
+            ("falske_verdikter", grense["maks_falske_verdikter"])):
+        verdi, melding = _teller(m, felt, felt)
+        if melding:
+            feil.append(melding)
+        elif verdi > tak:
+            feil.append(f"{felt}={verdi}, krever <= {tak}")
+    for felt, minst in (
+            ("inflight_oppdrag", grense["min_inflight"]),
+            ("kandidat_claimet_oppdrag", grense["min_kandidat_claims"]),
+            ("kandidat_promoterte_artefakter",
+             grense["min_kandidat_promoterte"])):
+        verdi, melding = _teller(m, felt, felt)
+        if melding:
+            feil.append(melding)
+        elif verdi < minst:
+            feil.append(f"{felt}={verdi}, krever >= {minst}")
+    if m.get("inflight_har_signert_kvittering") is not True:
+        feil.append("det løpende oppdraget mangler signert kvittering")
+    if m.get("inflight_utfall") not in grense["rene_utfall"]:
+        feil.append(f"inflight_utfall={m.get('inflight_utfall')!r} er ikke"
+                    f" et rent utfall ({sorted(grense['rene_utfall'])})")
+    vent, melding = _positiv(m, "ventetid_ubehandlet_s",
+                             "ventetid_ubehandlet_s")
+    if melding:
+        feil.append(melding)
+    elif vent < grense["min_ventetid_s"]:
+        feil.append(f"ventetid_ubehandlet_s={vent:g} — claim-stoppet må"
+                    f" observeres i minst {grense['min_ventetid_s']:g} s")
+    # A1: likheten regnes ut fra digestene, aldri fra flagget.
+    if o.get("drillet_digest") != o.get("kandidat_digest"):
+        feil.append("kandidatens digest er ikke den drillede — aksepterte"
+                    " bytes må være drillede bytes")
+    if k.get("digest_likhet") is not True:
+        feil.append("etterkontrollen bekrefter ikke digestlikheten")
+    if k.get("drillet_livslop") != "draining":
+        feil.append(f"drillet_livslop={k.get('drillet_livslop')!r},"
+                    " ventet 'draining' (drillen konsumerer den drillede)")
+    if k.get("kandidat_livslop") != "claiming":
+        feil.append(f"kandidat_livslop={k.get('kandidat_livslop')!r},"
+                    " ventet 'claiming' (aksepten binder raden som kjører)")
+    if k.get("modulstatus") != "aktiv":
+        feil.append(f"modulstatus={k.get('modulstatus')!r} etter drillen")
     return feil
 
 

@@ -2340,6 +2340,12 @@ def _promoter_artefakt(conn, key_id, oppdrag_id):
     kh = conn.execute(
         "SELECT kontrakt_hash FROM artefakttype_register"
         " WHERE artefakttype='test.onboarding.kvittering'").fetchone()[0]
+    # 049: releasesnapshotet er FK-bundet — registrer releasen raden bærer.
+    conn.execute(
+        "INSERT INTO modulrelease (modul_id, release_id, kontraktversjon,"
+        " kontrakt_hash, manifest_hash, artifact_digest) VALUES"
+        " ('m_test_onboarding','r1',1,%s,'mh','digest-fixtur')"
+        " ON CONFLICT DO NOTHING", (kh,))
     conn.execute(
         "INSERT INTO artefakt (tenant, oppdrag_id, artefakttype, modul_id,"
         " release_id, kontraktversjon, kontrakt_hash, module_epoch, tilstand,"

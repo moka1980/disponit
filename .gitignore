@@ -55,3 +55,8 @@ deploy/staging/artefakter/*.json
 !deploy/staging/artefakter/rollback-m01-v1-20260805T081921.json
 # PR-012: deploy-verifisert menneskelig-behandling-artefakt (onecom-staging).
 !deploy/staging/artefakter/behandling-m37-v1-20260810T172407.json
+# 049 (m56-akseptflippen): runde-sammendraget, flippedrillen og råfilen
+# de avledes av — manifestet sha256-binder sammendraget, sammendraget
+# binder råfilen (kilde_sha256), og CI regenererer og sammenligner.
+!deploy/staging/artefakter/wcag-kontroll-v1-20260818T200413.json
+!deploy/staging/artefakter/rollback-m56-v1-20260820T132200.json

@@ -25,35 +25,34 @@ id: wcag_audit
 navn: Automatisk WCAG-kontroll (controller)
 versjon: 0.1.0
 status: under_utvikling        # aktiv | inaktiv | under_utvikling
-# Aksept skjer FØRST når staging-sjekklisten under er grønn med målte
-# verdier (evidensgrensen `wcag-kontroll-v1`, klarsignalet §12) — status →
-# aktiv er 014c-NESTE-steget, aldri en del av kode-PR-en.
+# AKSEPTPORTEN ER BESTÅTT — OG FLIPPET VENTER PÅ AVHENGIGHETEN (049,
+# dokumentert avvik fra akseptflipp-klarsignalet §4):
 #
-# FLIPPET STO `aktiv` I DENNE PR-EN OG ER TATT TILBAKE (Codex P1 på #89).
-# Ikke fordi målerunden var dårlig — den var ekte — men fordi aksepten er
-# en PORT, og porten var ikke bestått da flagget ble satt:
+# Porten: alle seks sjekklistepunktene under står `ja` med krav_id +
+# innsjekket, sha256-bundet artefakt + strukturerte `bevismaalinger`
+# (`wcag-kontroll-v1` og `rollback-m56-v1` i manifestskjema.KRAVGRENSER,
+# så CI RE-MÅLER tallene ved hver kjøring), flippedrillen er KJØRT
+# 2026-08-20 (se `rollback_testet`), og i basen skrives aksepten som en
+# immutabel hendelse (`modulaksept`, migrasjon 049; deploy/staging/
+# m56-aksept.py) som FK-refererer drillraden, det promoterte
+# E2E-artefaktet fra NØYAKTIG den aksepterte deploymentraden
+# (m_wcag_audit, staging, wcag-r13), og én observasjon per grensepunkt.
+# #89-tilbaketrekkingens to mangler er dermed lukket.
 #
-#   1. `rollback_testet` er `nei`. Flippedrillen KAN ikke kjøres ennå
-#      (forrige release er før migrasjon 039 og nekter boot mot dagens
-#      base), så ingen kan lukke det punktet i dag. RUTINER.md pkt. 6 er
-#      kategorisk: «en modul settes ikke til `aktiv` i registeret før alle
-#      sjekklistepunkter er ja.» Regelen har ingen unntak å påberope seg —
-#      bootstrap-unntaket gjelder fase 1-plattformmodulene, ikke denne.
-#   2. De fem andre punktene er målt, men ikke BUNDET gjennom
-#      evidensporten (se blokken over `staging_sjekkliste`), så CI
-#      verifiserer ingen av tallene aksepten skulle hvile på.
+# Blokkeren er registerets EGEN konsistensregel (registry.valider): en
+# `aktiv` modul kan ikke avhenge av en som ikke er aktiv, og
+# `m02_revisjonslogg` står `under_utvikling` med tre ubundne
+# sjekklistepunkter. Regelen gjør nøyaktig jobben sin — å flippe her
+# ville gjort registeret rødt i CI. Flippet (status → aktiv,
+# driftstilstand → produksjon, katalogetiketten via MODULSTATUS) skjer i
+# m02-aksept-arcen, som en to-linjers endring UTEN nye porter: alle
+# portene for m56 er bestått og bundet HER.
 #
-# Et `aktiv` her ville dermed vært et flagg uten port bak seg — og
-# `driftstilstand` arver: settes den `staging` mens status ikke er `aktiv`,
-# gir `registry.valider` «drift krever aktiv». De to feltene flyttes
-# sammen, når porten faktisk er bestått.
-#
-# m02_revisjonslogg ble aktivert i samme runde, og DEN beslutningen er
-# også tatt tilbake (Codex P1, runde 2). Begrunnelsen her sa «alle punkter
-# `ja`, artefaktene bundet» — det gjaldt tre av seks. De tre første
-# punktene i m02s sjekkliste var ren fritekst, to av dem uttrykkelig lånt
-# fra m01-kjøringer, og delt evidens krever strukturert `bevismaalinger`.
-# Samme regel, samme utfall: se m02_revisjonslogg/manifest.yaml.
+# MILJØAKSEN (når flippet skjer): aksepthendelsen binder deploymentraden
+# SLIK DEN FAKTISK KJØRER — (staging, wcag-r13); det finnes ett miljø.
+# `driftstilstand: produksjon` er katalogens sannhet om BRUK, ikke om
+# miljøetiketten; et eget produksjonsmiljø krever egen aksept med egen
+# drill (port 14 i 049).
 driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
 avhengigheter:
   - m01_policy                 # bestilling og frekvens går gjennom policyporten
@@ -73,37 +72,29 @@ staging_sjekkliste:
   # fasit, egress/robots, bestillingsveien) føres som notater under de
   # punktene de faktisk beviser, med krav_id wcag-kontroll-v1 (§12).
   #
-  # MÅLINGEN ER GJORT, MEN IKKE BUNDET (Codex P1 på #89).
-  #
-  # Målerunden 2026-08-18 på disponit-srv er ekte, og tallene under er dens
-  # tall. Men de er FRITEKST: ingen av punktene har `krav_id`, det finnes
-  # ingen `artefakt`/`artefakt_sha256`/`bevismaalinger`, artefaktet ligger
-  # utenfor repoet (/root/wcag-runde/evidens.jsonl på serveren), og
-  # `wcag-kontroll-v1` er ikke registrert i `manifestskjema.KRAVGRENSER`.
-  #
-  # KONSEKVENSEN ER MÅLT, IKKE PÅSTÅTT: `valider_artefakter` hopper
-  # eksplisitt over hvert `ja` som mangler `krav_id` (linjen «ja uten
-  # krav_id krever ikke artefakt»). Sto punktene `ja`, ville CI verifisert
-  # NULL av målingene aksepten hviler på — evidensporten ville vært åpen,
-  # ikke bestått. Og RUTINER.md er kategorisk: «Et sjekklistepunkt uten
-  # definert, målbar grense regnes som `nei` — en port man ikke kan måle,
-  # er ingen port.» `wcag-kontroll-v1` har ingen definert grense ennå.
-  #
-  # DERFOR STÅR PUNKTENE `nei` MED MÅLINGEN BEVART. Notatene er ikke
-  # slettet — de dokumenterer hva runden faktisk viste, slik at den som
-  # binder evidensen slipper å måle på nytt. Veien til `ja` er den samme
-  # for alle fem: sjekk inn artefaktet under deploy/staging/artefakter/,
-  # registrer `wcag-kontroll-v1` i KRAVGRENSER med grensene fra §12, og
-  # bind hvert punkt med krav_id + artefakt + artefakt_sha256 +
-  # bevismaalinger. Da måler porten tallene på nytt ved hver CI-kjøring,
-  # og et `ja` betyr noe. (`rollback_testet` er en annen sak: der mangler
-  # selve drillen — se punktet nederst.)
+  # MÅLINGEN ER BUNDET (049): evidens.jsonl fra målerunden 2026-08-18 er
+  # sjekket inn (deploy/staging/artefakter/evidens-wcag-runde-20260818.
+  # jsonl), sammendraget avledes MEKANISK av den
+  # (deploy/staging/wcag-kontroll-artefakt.py — utvalgsreglene står i
+  # skriptets docstring og CI regenererer og sammenligner), og
+  # `wcag-kontroll-v1` er registrert i `manifestskjema.KRAVGRENSER` med
+  # grensene fra 014c §12. Den root-eide serverfilen er ikke lenger
+  # kilden: SP-11-byteporten gjelder de innsjekkede bytene.
+  # Punktene under deler dét artefaktet, og `bevismaalinger` per punkt
+  # sier hva NETTOPP det punktet henter ut — tredjelaget i
+  # `valider_artefakter`, som skiller legitim deling fra lånt konklusjon.
   tester_gronne_pa_staging:
-    status: nei
+    status: ja
+    krav_id: wcag-kontroll-v1
+    bevismaalinger:
+      - maalt.kjoringer_signert_innen_frist
+      - maalt.avvik_mot_fasit
+    artefakt: deploy/staging/artefakter/wcag-kontroll-v1-20260818T200413.json
+    artefakt_sha256: 3eaa69dff66c7015be30c8060aa0fdd2d2fd32f64c65d8ad4a79c63c8926d84f
     notat: >-
-      MÅLT 2026-08-18, IKKE BUNDET (mangler krav_id/artefakt i repoet).
-      På disponit-srv (release 8e7f397, evidens
-      /root/wcag-runde/evidens.jsonl, krav_id wcag-kontroll-v1): ekte motor
+      MÅLT 2026-08-18, BUNDET 2026-08-20 (049).
+      På disponit-srv (release wcag-r1 — byte-identisk med den aksepterte
+      wcag-r13, alle m56-releaser deler artifact_digest af92b705…): ekte motor
       (axe-core-4.10.3, Chromium 131.0.6778.33, docker, image
       sha256:af92b705…) gjennom hele produksjonskjeden bestilling→claim→
       motor→rapport→signert kvittering→promotert artefakt.
@@ -115,60 +106,85 @@ staging_sjekkliste:
       motormiljøet målt i containeren, 0 lekkasjer (kanari-DISPONIT_KEK og
       DATABASE_URL nådde aldri motoren).
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    status: ja
+    krav_id: wcag-kontroll-v1
+    bevismaalinger:
+      - maalt.avvik_mot_fasit
+    artefakt: deploy/staging/artefakter/wcag-kontroll-v1-20260818T200413.json
+    artefakt_sha256: 3eaa69dff66c7015be30c8060aa0fdd2d2fd32f64c65d8ad4a79c63c8926d84f
     notat: >-
-      MÅLT 2026-08-18, IKKE BUNDET (mangler krav_id/artefakt i repoet).
-      Testnettstedet (platform/modules/wcag_audit/testnettsted/, fasit
+      MÅLT 2026-08-18, BUNDET 2026-08-20 (049). Testnettstedet (platform/modules/wcag_audit/testnettsted/, fasit
       skrevet fra konstruksjonen) er identisk lokalt og på staging (samme
       commit); fasitkontrollen ga avvik=0 begge steder 2026-08-18.
   revisjonslogg_korrekt:
-    status: nei
+    status: ja
+    krav_id: wcag-kontroll-v1
+    bevismaalinger:
+      - maalt.kjoringer_signert_innen_frist
+    artefakt: deploy/staging/artefakter/wcag-kontroll-v1-20260818T200413.json
+    artefakt_sha256: 3eaa69dff66c7015be30c8060aa0fdd2d2fd32f64c65d8ad4a79c63c8926d84f
     notat: >-
-      MÅLT 2026-08-18, IKKE BUNDET (mangler krav_id/artefakt i repoet).
-      Verifisert i staging-kjøringen: kvitteringen attesterer release,
+      MÅLT 2026-08-18, BUNDET 2026-08-20 (049). Verifisert i
+      staging-kjøringen: kvitteringen attesterer release,
       regelsett, sider og artefakthash (PR-006-signert, verifikator
       v_wcag_audit mot nøkkelregisteret); rapport-lese-API-et leverer det
       promoterte artefaktet dekryptert.
   feilinjisering_til_unntakskø:
-    status: nei
+    status: ja
+    krav_id: wcag-kontroll-v1
+    bevismaalinger:
+      - maalt.feilinjisering_feilet_med_kvittering
+      - maalt.feilinjisering_promoterte_artefakter
+      - maalt.evidensfrist_reapet
+    artefakt: deploy/staging/artefakter/wcag-kontroll-v1-20260818T200413.json
+    artefakt_sha256: 3eaa69dff66c7015be30c8060aa0fdd2d2fd32f64c65d8ad4a79c63c8926d84f
     notat: >-
-      MÅLT 2026-08-18, IKKE BUNDET (mangler krav_id/artefakt i repoet).
-      Motorfeil (kommando exit 1) → kvittering 'avbrutt', oppdrag
+      MÅLT 2026-08-18, BUNDET 2026-08-20 (049). Motorfeil (kommando exit 1) → kvittering 'avbrutt', oppdrag
       feilet MED signert feilkvittering, 0 promoterte artefakter;
       evidensfrist overskredet → reap_evidensfrister → idempotent
       evidensfrist-sak + oppdrag feilet (evidens 2026-08-18).
   ytelse_bestatt:
-    status: nei
+    status: ja
+    krav_id: wcag-kontroll-v1
+    bevismaalinger:
+      - maalt.kjoringer_signert_innen_frist
+      - maalt.kjoringer_krav
+    artefakt: deploy/staging/artefakter/wcag-kontroll-v1-20260818T200413.json
+    artefakt_sha256: 3eaa69dff66c7015be30c8060aa0fdd2d2fd32f64c65d8ad4a79c63c8926d84f
     notat: >-
-      MÅLT 2026-08-18, IKKE BUNDET (mangler krav_id/artefakt i repoet).
-      10/10 kjøringer signert innen frist (verste 2.1 s mot 1800/3600 s
+      MÅLT 2026-08-18, BUNDET 2026-08-20 (049). 10/10 kjøringer signert innen frist (verste 2.1 s mot 1800/3600 s
       budsjett — det syntetiske nettstedet er lite; fristene deklarert i
       oppdragskontrakt.UTFORELSESFRIST_VALG og skrevet på radene, motoren
       fikk claimets restvindu minus avslutningsmarginen).
   rollback_testet:
-    # NEI, og det er en reell mangel — ikke en formalitet (samme form som
-    # M-37s eget rollback-punkt).
+    # DRILLEN ER KJØRT (2026-08-20, deploy/staging/rollback-m56.py) — den
+    # gamle noten om at den ikke KUNNE kjøres (forrige release før 039)
+    # var sann da den ble skrevet og er slettet fordi den ikke er det
+    # lenger: r11 og r13 deler migrasjonstilstand OG bytes.
     #
-    # Punktet sto `ja` fram til Codex' P1 på denne PR-en, med et notat som
-    # i samme åndedrag sa at drillen IKKE var mulig. Et punkt som beviser
-    # sin egen `nei` i fritekst mens feltet sier `ja`, er verre enn et
-    # ærlig `nei`: sjekklisten er 100 %-porten for aksept, og et slikt `ja`
-    # aktiverer en modul UTEN demonstrert gjenopprettingsvei.
-    #
-    # DET SOM FAKTISK ER BEVIST er MEKANISMEN, ikke rollbacken: deploy-
-    # portene kjører som preflight FØR noe stoppes (#84 — rød port = forrige
-    # release kjører urørt), og release-katalogene står side om side. Det er
-    # evidens for at en mislykket utrulling ikke river ned det som kjører —
-    # ikke for at WCAG-arbeideren kan flippes tilbake til forrige release
-    # mot en kompatibel base, som er nettopp det dette punktet måler.
-    #
-    # HVORFOR DRILLEN IKKE KUNNE KJØRES 2026-08-18: forrige release
-    # (ccf64ce) er før migrasjon 039 og nekter boot mot dagens base —
-    # BootNekt er selve vernet. Drillen kjøres første gang to releaser
-    # deler migrasjonstilstand, og FØRST da kan punktet bli `ja`.
-    status: nei
+    # LIVSLØPET ER ENVEIS (014): `bytt_release` nekter å re-claime en
+    # drenert deployment, så drillen KONSUMERER den drillede releasen og
+    # «fram igjen» lander på akseptkandidaten — en NY deploymentrad med de
+    # SAMME bytene (digestporten i `registrer_moduldrill` håndhever
+    # likheten). Aksepten binder kandidaten: raden som faktisk kjører, og
+    # hvis fødsel og claim-opptak drillen selv bevitnet. At alle m56-
+    # releasene deler digest er A1s levende bevis: digest kunne aldri
+    # skilt drillet fra udrillet — bare deployment-identiteten kan.
+    status: ja
+    krav_id: rollback-m56-v1
+    bevismaalinger:
+      - maalt.nye_oppdrag_claimet_av_drillet_release
+      - maalt.inflight_utfall
+      - maalt.kandidat_promoterte_artefakter
+    artefakt: deploy/staging/artefakter/rollback-m56-v1-20260820T132200.json
+    artefakt_sha256: 8d98e8d1889e77b632c04f92be32f2bbceb34498c3e2d22af5ca7b600fb3e3e0
     notat: >-
-      Flippedrillen (WCAG-arbeideren tilbake til forrige release mot
-      kompatibel base) er IKKE kjørt. Preflight-portene i #84 beviser
-      mekanismen rundt release-byttet, men er ikke en rollback av denne
-      modulen. Kjøres første gang to releaser deler migrasjonstilstand.
+      KJØRT 2026-08-20 mot (m_wcag_audit, staging): wcag-r11 rullet til
+      wcag-r12 MENS oppdrag 54 var claimet — oppdraget fullførte utfort
+      med signert kvittering og promotert artefakt 1,5 s etter rullingen
+      (SP-3: rent utfall, aldri falskt verdikt); den drenerte releasen
+      claimet INGENTING på 25 s med levende arbeider; kandidaten wcag-r13
+      (byte-identisk, digest af92b705…) plukket det ventende oppdraget og
+      promoterte E2E-artefaktet ad1579e2… 12,4 s etter fram-rullingen.
+      Basen bærer drillraden i `moduldrill` (049) og aksepthendelsen
+      FK-refererer den.

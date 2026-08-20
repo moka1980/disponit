@@ -1,0 +1,375 @@
+#!/usr/bin/env python3
+"""Flippedrillen for m56 — produserer `rollback-m56-v1`-artefaktet.
+
+Ruller moduldeployment tilbake MENS et oppdrag er underveis, og måler de
+tre kontrollpunktene akseptflippen (049) krever:
+
+  (a) claim-stopp: den drenerte releasen claimer INGENTING nytt —
+      claim-porten i 015 fencer på kallerens deployment-livsløp, og det
+      er nøyaktig den fencingen som måles her, med den levende arbeideren
+      som probe (ikke en syntetisk kall-kjede).
+  (b) rene utfall: oppdraget som VAR claimet da rullingen traff,
+      fullfører eller feiler rent — signert kvittering, aldri et falskt
+      verdikt (SP-3).
+  (c) fram igjen: akseptkandidaten — byte-identisk med den drillede
+      (A1) — plukker det ventende oppdraget og promoterer rapporten.
+      Kandidatens promoterte artefakt er samtidig akseptens E2E-bevis:
+      hvert bevis binder releasen som faktisk aksepteres.
+
+LIVSLØPET ER ENVEIS (014): `bytt_release` nekter å re-claime en drenert
+deployment, så drillen KONSUMERER den drillede releasen. Tilbake-
+rullingen skjer til en NY release med forgjengerens bytes
+(`--rullback-id`), og «fram igjen» lander på akseptkandidaten
+(`--kandidat-id`) — raden aksepten binder. Registreringen av
+kandidatleddet (fase 2/4/9 i sjekklisterunden) gjenbrukes uendret; alt
+drill-spesifikt bor her.
+
+Kjøres PÅ verten (disponit-srv), som root, med samme miljø som
+sjekklisterunden. Rekjøring er trygg: hvert steg måler tilstanden før
+det handler, og bestillingene bruker drill-egne idempotensnøkler.
+
+BRUK:
+    sudo -E python3 deploy/staging/rollback-m56.py \
+        --rullback-id wcag-r6 --kandidat-id wcag-r7 \
+        --ut deploy/staging/artefakter/rollback-m56-v1-<ts>.json
+"""
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+HER = Path(__file__).resolve().parent
+REPO = HER.parents[1]
+sys.path.insert(0, str(REPO / "platform/core"))
+
+MODUL = "m_wcag_audit"   # registernavnet (modulmappen heter m56_wcag_audit)
+MILJO = "staging"
+VENTETID_S = 25.0        # claim-stoppet observeres minst så lenge
+POLL_S = 0.1
+
+
+def _api_url() -> str:
+    """Samme kilde som arbeideren selv: unitens konfig. Miljøvariabelen
+    overlever ikke sudo, og API-et lytter kun på unix-socketen bak
+    nginx — 127.0.0.1-defaulten fra sjekklisterunden finnes ikke her."""
+    if os.environ.get("DISPONIT_API_URL"):
+        return os.environ["DISPONIT_API_URL"]
+    konfig = Path("/etc/disponit/wcag/konfig")
+    if konfig.exists():
+        for linje in konfig.read_text().splitlines():
+            if linje.startswith("DISPONIT_API_URL="):
+                return linje.split("=", 1)[1].strip()
+    raise SystemExit("AVBRUTT: fant ingen DISPONIT_API_URL (miljø eller"
+                     " /etc/disponit/wcag/konfig)")
+
+
+def _sjekkliste():
+    os.environ["DISPONIT_API_URL"] = _api_url()
+    spec = importlib.util.spec_from_file_location(
+        "wcag_sjekkliste", HER / "wcag-staging-sjekkliste.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _admin(m):
+    """migrator-cursoren som modules_admin — registerovergangene."""
+    m.execute("SET ROLE disponit_modules_admin")
+    return m
+
+
+def _kvittering(m, tenant, oid):
+    m.execute("RESET ROLE")
+    m.execute("SELECT set_config('disponit.tenant', %s, true)", (tenant,))
+    rad = m.execute("SELECT kvittering IS NOT NULL FROM oppdrag"
+                    " WHERE tenant=%s AND id=%s", (tenant, oid)).fetchone()
+    m.commit()
+    return bool(rad and rad[0])
+
+
+def _status(m, tenant, oid):
+    m.execute("RESET ROLE")
+    m.execute("SELECT set_config('disponit.tenant', %s, true)", (tenant,))
+    rad = m.execute("SELECT status FROM oppdrag WHERE tenant=%s AND id=%s",
+                    (tenant, oid)).fetchone()
+    m.commit()
+    return rad[0] if rad else None
+
+
+def _promoterte(m, tenant, oid, release):
+    m.execute("SELECT set_config('disponit.tenant', %s, true)", (tenant,))
+    rad = m.execute(
+        "SELECT artefakt_id::text FROM artefakt WHERE tenant=%s"
+        " AND oppdrag_id=%s AND release_id=%s AND tilstand='promotert'",
+        (tenant, oid, release)).fetchall()
+    m.commit()
+    return [r[0] for r in rad]
+
+
+def _deployment(m, release):
+    rad = m.execute(
+        "SELECT livslop FROM moduldeployment WHERE modul_id=%s AND miljo=%s"
+        " AND release_id=%s", (MODUL, MILJO, release)).fetchone()
+    return rad[0] if rad else None
+
+
+#: Drillen kjører mot det OFFENTLIGE, verifiserte målet — driftsmotoren
+#: (uten rundens fixture-brytere) avviser med rette ikke-offentlige
+#: adresser, så fasit.test (127.0.0.1) kan aldri være drillens mål.
+#: Samme mål som driftskjøringen 19/8 (oppdrag 34).
+DRILL_VERT = "disponit.com"
+
+
+RUNDE_ID = ""   # settes i main() fra kandidat-id — drillens replay-skop
+
+
+def _bestill_drill(sj, m, merkelapp):
+    """Én drift-bestilling med drill-egen idempotensnøkkel. -> oppdrag_id"""
+    kropp = {"bestillingstype": sj.OPPDRAGSTYPE, "hostname": DRILL_VERT,
+             "sti": "/index.html", "kravsett": "wcag21_aa",
+             "omfang": "enkeltside", "maks_sider": 1}
+    m.execute("RESET ROLE")
+    cookie, csrf = sj._adminokt(m, sj.TENANT)
+    m.commit()
+    http = sj.Http(sj.API)
+    r = sj._bestill(http, cookie, csrf, kropp,
+                    f"drill-{RUNDE_ID}-{merkelapp}")
+    if r.status_code != 200 or r.json().get("beslutning") != "tillat":
+        raise SystemExit(f"AVBRUTT: bestillingen ({merkelapp}) ble avvist:"
+                         f" {r.status_code} {r.text[:300]}")
+    return r.json()["oppdrag_id"]
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--rullback-id", required=True)
+    ap.add_argument("--kandidat-id", required=True)
+    ap.add_argument("--ut", type=Path, required=True)
+    ap.add_argument("--forsok", type=int, default=3,
+                    help="maks forsøk på å treffe rullingen midt i et"
+                         " løpende oppdrag")
+    a = ap.parse_args()
+
+    global RUNDE_ID
+    # Per-INVOKASJON, ikke per kandidat: en ny drillkjøring er en ny
+    # måling og skal aldri gjenspille en gammel kjørings terminale
+    # oppdrag som om de var dagens (idempotensnøklene er drill-skopet).
+    RUNDE_ID = f"{a.kandidat_id}-{int(time.time())}"
+    sj = _sjekkliste()
+    env = sj._miljo()
+    m = sj._pg(env["DISPONIT_MIGRATOR_URL"])
+
+    # Utgangspunktet: den claimende deploymenten er den som drilles.
+    rad = m.execute(
+        "SELECT d.release_id, d.kontraktversjon, d.kontrakt_hash,"
+        "       r.manifest_hash, r.artifact_digest"
+        "  FROM moduldeployment d JOIN modulrelease r"
+        "    ON r.modul_id = d.modul_id AND r.release_id = d.release_id"
+        " WHERE d.modul_id=%s AND d.miljo=%s AND d.livslop='claiming'",
+        (MODUL, MILJO)).fetchone()
+    if rad is None:
+        raise SystemExit("AVBRUTT: ingen claiming-deployment å drille")
+    drillet, kver, khash, mhash, digest = rad
+    epoch = m.execute("SELECT module_epoch FROM modulhode WHERE modul_id=%s",
+                      (MODUL,)).fetchone()[0]
+    print(f"driller {drillet} (epoch {epoch}, digest {digest[:12]}…)")
+
+    # Rullback-releasen registreres FØR racet — registreringen er passiv,
+    # selve rullingen er ett kall og fyres midt i det løpende oppdraget.
+    finnes = m.execute(
+        "SELECT 1 FROM modulrelease WHERE modul_id=%s AND release_id=%s",
+        (MODUL, a.rullback_id)).fetchone()
+    if finnes is None:
+        _admin(m)
+        m.execute("SELECT registrer_release(%s,%s,%s,%s,%s,%s,'m56-drill')",
+                  (MODUL, a.rullback_id, kver, khash, mhash, digest))
+    m.commit()
+    m.execute("RESET ROLE")
+
+    # (b) — det løpende oppdraget. Arbeideren stoppes så bestillingen
+    # beviselig ligger uclaimet, startes, og rullingen fyres i det claimet
+    # observeres. Treffer den etter fullføring, er målingen ikke gjort og
+    # forsøket gjentas — aldri pyntes.
+    inflight = None
+    # ARBEIDEREN RØRES IKKE: drillen måler den LEVENDE arbeideren, og en
+    # unit som stoppes/startes av drillen selv havner målt og gjentatt i
+    # en tilstand der rootless podman nekter proc-mounten på hver eneste
+    # container (`runc … mounting "proc" … operation not permitted`) —
+    # mens den fase 9-provisjonerte arbeideren kjører friskt. Racet
+    # trenger ingen restart: en frisk arbeider claimer bestillingen i
+    # løpet av sekunder, og rullingen fyres i det claimet observeres.
+    # Forutsetningen MÅLES først: én probe-kjøring skal gå hele veien.
+    for p_i in range(3):
+        probe = _bestill_drill(sj, m, f"probe{p_i}")
+        frist = time.monotonic() + 180
+        st_p = None
+        while time.monotonic() < frist:
+            st_p = _status(m, sj.TENANT, probe)
+            if st_p in ("utfort", "feilet"):
+                break
+            time.sleep(0.5)
+        print(f"  forutsetningsprobe {p_i}: {probe} = {st_p}")
+        if st_p == "utfort":
+            break
+        subprocess.run(["systemctl", "restart", sj.ARBEIDER],
+                       capture_output=True)
+        time.sleep(15)
+    else:
+        raise SystemExit("AVBRUTT: arbeideren fikk aldri en kjøring"
+                         " helskinnet gjennom — se worker-journalen")
+    for forsok in range(a.forsok):
+        oid = _bestill_drill(sj, m, f"b{forsok}")
+        st = _status(m, sj.TENANT, oid)
+        frist = time.monotonic() + 120
+        while st == "opprettet" and time.monotonic() < frist:
+            time.sleep(POLL_S)
+            st = _status(m, sj.TENANT, oid)
+        if st == "opprettet":
+            raise SystemExit(f"AVBRUTT: oppdrag {oid} ble aldri claimet —"
+                             " er arbeideren i drift?")
+        rulle_ts = time.monotonic()
+        if st in ("utfort", "feilet"):
+            print(f"  forsøk {forsok}: {oid} rakk å fullføre før rullingen"
+                  " — nytt forsøk")
+            continue
+        _admin(m)
+        m.execute("SELECT bytt_release(%s,%s,%s,%s,%s,'m56-drill')",
+                  (MODUL, MILJO, a.rullback_id, kver, khash))
+        m.commit()
+        # Oppdraget VAR claimet da rullingen traff — vent på terminalen.
+        frist = time.monotonic() + 600
+        while time.monotonic() < frist:
+            st = _status(m, sj.TENANT, oid)
+            if st in ("utfort", "feilet"):
+                break
+            time.sleep(0.5)
+        inflight = {"oppdrag": oid, "utfall": st,
+                    "fullfort_etter_rull_s":
+                        round(time.monotonic() - rulle_ts, 3)}
+        break
+    if inflight is None or inflight["utfall"] not in ("utfort", "feilet"):
+        raise SystemExit("AVBRUTT: fikk aldri målt et løpende oppdrag over"
+                         " rullingen — kjør drillen på nytt")
+    inflight_artefakter = _promoterte(m, sj.TENANT, inflight["oppdrag"],
+                                      drillet)
+    inflight_kvittering = _kvittering(m, sj.TENANT, inflight["oppdrag"])
+    print(f"  (b) inflight: {inflight} artefakter={inflight_artefakter}")
+
+    # (a) — claim-stoppet: nytt oppdrag, drenert release, levende arbeider.
+    o2 = _bestill_drill(sj, m, "claimstopp")
+    if _status(m, sj.TENANT, o2) != "opprettet":
+        raise SystemExit(f"AVBRUTT: {o2} var alt behandlet — idempotens-"
+                         "nøkkelen er brukt; kjør med ny runde-id")
+    t0 = time.monotonic()
+    claimet_under_drenering = 0
+    while time.monotonic() - t0 < VENTETID_S:
+        if _status(m, sj.TENANT, o2) != "opprettet":
+            claimet_under_drenering += 1
+            break
+        time.sleep(0.5)
+    ventetid = round(time.monotonic() - t0, 3)
+    print(f"  (a) claim-stopp: {claimet_under_drenering} claims på"
+          f" {ventetid} s (arbeider: {drillet}, drenert)")
+
+    # (c) — fram igjen: kandidaten registreres, byttes til, onboardes og
+    # provisjoneres via NØYAKTIG sjekklisterundens egne faser (2 → 4 → 9);
+    # drillen legger ingen egen vei inn i registeret.
+    fram_ts = time.monotonic()
+    for fase in ("2", "4", "9"):
+        r = subprocess.run(
+            [sys.executable, str(HER / "wcag-staging-sjekkliste.py"),
+             "--evidens", str(a.ut.parent / "drill-evidens.jsonl"),
+             "--fase", fase],
+            env={**os.environ, "WCAG_RELEASE": a.kandidat_id,
+                 "WCAG_RUNDE_ID": f"drill-{a.kandidat_id}"},
+            capture_output=True, text=True)
+        if r.returncode != 0:
+            raise SystemExit(f"AVBRUTT: sjekklistefase {fase} for"
+                             f" {a.kandidat_id} feilet:\n{r.stdout[-2000:]}"
+                             f"\n{r.stderr[-2000:]}")
+        print(f"  fase {fase} for {a.kandidat_id}: ok")
+    frist = time.monotonic() + 600
+    st2 = None
+    while time.monotonic() < frist:
+        st2 = _status(m, sj.TENANT, o2)
+        if st2 in ("utfort", "feilet"):
+            break
+        time.sleep(0.5)
+    if st2 != "utfort":
+        raise SystemExit(f"AVBRUTT: kandidaten fullførte ikke det ventende"
+                         f" oppdraget ({o2} = {st2})")
+    overtakelse = round(time.monotonic() - fram_ts, 3)
+    kandidat_artefakter = _promoterte(m, sj.TENANT, o2, a.kandidat_id)
+    print(f"  (c) kandidat: {o2} utført, artefakter {kandidat_artefakter},"
+          f" overtakelse {overtakelse} s")
+
+    # Etterkontrollen leses fra basen, aldri fra planen.
+    m.execute("RESET ROLE")
+    kandidat_digest = m.execute(
+        "SELECT artifact_digest FROM modulrelease WHERE modul_id=%s"
+        " AND release_id=%s", (MODUL, a.kandidat_id)).fetchone()[0]
+    etter = {
+        "drillet_livslop": _deployment(m, drillet),
+        "kandidat_livslop": _deployment(m, a.kandidat_id),
+        "digest_likhet": kandidat_digest == digest,
+        "modulstatus": m.execute(
+            "SELECT status FROM modulhode WHERE modul_id=%s",
+            (MODUL,)).fetchone()[0],
+    }
+    art = {
+        "krav_id": "rollback-m56-v1",
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "oppsett": {
+            "modul": MODUL, "miljo": MILJO,
+            "drillet_release": drillet,
+            "rullback_release": a.rullback_id,
+            "kandidat_release": a.kandidat_id,
+            "drillet_digest": digest,
+            "kandidat_digest": kandidat_digest,
+            "module_epoch": int(epoch),
+        },
+        "maalt": {
+            "inflight_oppdrag": 1,
+            "inflight_utfall": inflight["utfall"],
+            # MÅLT i basen (kvitteringskolonnen), aldri utledet av
+            # utfallet: et feilet oppdrag uten kvittering er nettopp
+            # formen SP-3 forbyr.
+            "inflight_har_signert_kvittering": inflight_kvittering,
+            "falske_verdikter": 0 if (
+                inflight["utfall"] != "utfort" or inflight_artefakter)
+                else 1,
+            "nye_oppdrag_claimet_av_drillet_release":
+                claimet_under_drenering,
+            "ventetid_ubehandlet_s": ventetid,
+            "kandidat_claimet_oppdrag": 1 if st2 == "utfort" else 0,
+            "kandidat_promoterte_artefakter": len(kandidat_artefakter),
+            "overtakelse_s": overtakelse,
+        },
+        "etterkontroll": etter,
+    }
+    art["bestatt"] = (
+        art["maalt"]["inflight_har_signert_kvittering"]
+        and art["maalt"]["nye_oppdrag_claimet_av_drillet_release"] == 0
+        and art["maalt"]["falske_verdikter"] == 0
+        and art["maalt"]["kandidat_promoterte_artefakter"] >= 1
+        and etter["digest_likhet"] and etter["drillet_livslop"] == "draining"
+        and etter["kandidat_livslop"] == "claiming"
+        and etter["modulstatus"] == "aktiv")
+    a.ut.write_text(json.dumps(art, indent=2, ensure_ascii=False,
+                               sort_keys=True) + "\n", encoding="utf-8")
+    print(("GRØNN" if art["bestatt"] else "RØD")
+          + f": artefaktet skrevet til {a.ut}")
+    print("kandidatens E2E-artefakt (akseptens A2-bevis): "
+          + ", ".join(kandidat_artefakter))
+    return 0 if art["bestatt"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

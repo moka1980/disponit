@@ -142,6 +142,14 @@ def _artefakttype(conn, modul, kh, at, ver=1):
         "INSERT INTO artefakttype_register (artefakttype, eiermodul,"
         " kontraktversjon, kontrakt_hash, skjema_hash) VALUES (%s,%s,%s,%s,%s)",
         (at, modul, ver, kh, PERMISSIV_SKJEMA_HASH))
+    # 049: artefaktets releasesnapshot er relasjonelt (`artefakt_release_fk`)
+    # — fixturen bygger den ekte formen og registrerer releasen radene
+    # peker på, aldri omgår FK-en.
+    conn.execute(
+        "INSERT INTO modulrelease (modul_id, release_id, kontraktversjon,"
+        " kontrakt_hash, manifest_hash, artifact_digest) VALUES"
+        " (%s,'r1',%s,%s,'mh','digest-fixtur') ON CONFLICT DO NOTHING",
+        (modul, ver, kh))
     conn.commit()
 
 

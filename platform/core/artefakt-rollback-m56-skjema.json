@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/rollbackm56artefakt-v1.json",
+  "title": "Moduldeployment-drillartefakt (rollback-m56-v1)",
+  "comment": "Flippedrillen for m56: rull moduldeployment tilbake, mal at den drillede releasen slutter aa claime, at loepende oppdrag faar rent utfall (SP-3), og at akseptkandidaten (byte-identisk med den drillede - A1) plukker og fullfoerer. Livsloepet er ENVEIS (014): drillen KONSUMERER den drillede deploymenten, og aksepten binder kandidaten - raden som faktisk kjoerer.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt",
+    "etterkontroll"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "rollback-m56-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "modul",
+        "miljo",
+        "drillet_release",
+        "rullback_release",
+        "kandidat_release",
+        "drillet_digest",
+        "kandidat_digest",
+        "module_epoch"
+      ],
+      "properties": {
+        "modul": {
+          "type": "string",
+          "minLength": 1
+        },
+        "miljo": {
+          "type": "string",
+          "minLength": 1
+        },
+        "drillet_release": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rullback_release": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kandidat_release": {
+          "type": "string",
+          "minLength": 1
+        },
+        "drillet_digest": {
+          "type": "string",
+          "minLength": 12
+        },
+        "kandidat_digest": {
+          "type": "string",
+          "minLength": 12
+        },
+        "module_epoch": {
+          "$ref": "#/$defs/telling"
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "inflight_oppdrag",
+        "inflight_utfall",
+        "inflight_har_signert_kvittering",
+        "falske_verdikter",
+        "nye_oppdrag_claimet_av_drillet_release",
+        "ventetid_ubehandlet_s",
+        "kandidat_claimet_oppdrag",
+        "kandidat_promoterte_artefakter",
+        "overtakelse_s"
+      ],
+      "properties": {
+        "inflight_oppdrag": {
+          "$ref": "#/$defs/telling"
+        },
+        "inflight_utfall": {
+          "type": "string",
+          "minLength": 1
+        },
+        "inflight_har_signert_kvittering": {
+          "type": "boolean"
+        },
+        "falske_verdikter": {
+          "$ref": "#/$defs/telling"
+        },
+        "nye_oppdrag_claimet_av_drillet_release": {
+          "$ref": "#/$defs/telling"
+        },
+        "ventetid_ubehandlet_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "kandidat_claimet_oppdrag": {
+          "$ref": "#/$defs/telling"
+        },
+        "kandidat_promoterte_artefakter": {
+          "$ref": "#/$defs/telling"
+        },
+        "overtakelse_s": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "etterkontroll": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "drillet_livslop",
+        "kandidat_livslop",
+        "digest_likhet",
+        "modulstatus"
+      ],
+      "properties": {
+        "drillet_livslop": {
+          "type": "string"
+        },
+        "kandidat_livslop": {
+          "type": "string"
+        },
+        "digest_likhet": {
+          "type": "boolean"
+        },
+        "modulstatus": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "telling": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}
