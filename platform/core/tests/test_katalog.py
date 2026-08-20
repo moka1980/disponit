@@ -1616,6 +1616,66 @@ def _sqlliteral(sql: str, i: int) -> int:
     return n
 
 
+def _strengkonstant(sql: str, i: int, b: int) -> tuple[str | None, int]:
+    """(verdien til strengkonstanten som åpner i `i`, indeksen etter den).
+
+    En strengkonstant i PostgreSQL kan være skrevet i FLERE fragmenter (Codex
+    P2 på #118, attende runde): står to `'…'` etter hverandre med bare tomrom
+    mellom seg, og tomrommet inneholder minst ett LINJESKIFT, skjøter serveren
+    dem til én verdi. Formen brukes gjennomgående i migrasjonene til å bryte
+    lange meldinger over flere linjer.
+
+    Porten leste hvert fragment som en verdi for seg, og begge lesningene tok
+    skade av det. `SELECT 'mangler '\\n'oppfunnet_klasse';` la navnet i lista
+    over kjente identifikatorer, enda databaseverdien er hele meldingen — samme
+    hull som kommentaren og den doblede fnutten. Og en `IN`-liste med en
+    brutt verdi i fikk verdier registeret aldri godtar, så porten ville avvist
+    en katalogmodul som bar den ekte.
+
+    Uten linjeskift er det ikke en skjøt, men en syntaksfeil i PostgreSQL, og
+    da skal porten heller ikke skjøte. Kommentarene mellom fragmentene er alt
+    byttet mot mellomrom av `_uten_sqlkommentar()`, som beholder linjeskiftene,
+    så en kommentar midt i skjøten teller som tomrommet den er.
+
+    `None` betyr uleselig, og det smitter: er ETT fragment en escapestreng
+    (`E'…'`) eller mangler sin lukkende fnutt, er hele den skjøtte verdien
+    ukjent. Å bruke resten ville vært et gjett.
+    """
+    deler: list[str] = []
+    lesbar = True
+    while True:
+        slutt = _sqlliteral(sql, i)
+        if slutt < 0:
+            break
+        slutt = min(slutt, b)
+        if sql[i] == "'" and slutt - i >= 2 and sql[slutt - 1] == "'":
+            deler.append(sql[i + 1:slutt - 1].replace("''", "'"))
+        else:
+            lesbar = False
+        i = slutt
+        neste = _skjot(sql, i, b)
+        if neste < 0:
+            break
+        i = neste
+    return ("".join(deler) if lesbar else None), i
+
+
+def _skjot(sql: str, i: int, b: int) -> int:
+    """Der neste fragment av samme strengkonstant åpner, ellers -1.
+
+    Kravet er PostgreSQLs eget: bare tomrom mellom fragmentene, og minst ett
+    linjeskift i det. Se `_strengkonstant()`.
+    """
+    j = i
+    while j < b and sql[j].isspace():
+        j += 1
+    if j >= b or "\n" not in sql[i:j]:
+        return -1
+    if sql[j] == "'" or (sql[j] in "Ee" and j + 1 < b and sql[j + 1] == "'"):
+        return j
+    return -1
+
+
 def _sqlverdier(liste: str) -> set[str]:
     """Strengverdiene i en `IN (…)`-liste.
 
@@ -1630,6 +1690,11 @@ def _sqlverdier(liste: str) -> set[str]:
     forplanter seg til enumet, og `_registerenum()` sier fra hvis kolonnen
     katalogen faktisk måles mot bærer den — ikke ved enhver migrasjon som
     tilfeldigvis skriver en slik verdi i en annen tabell.
+
+    Og én verdi kan være skrevet i FLERE fragmenter, se `_strengkonstant()`.
+    Ble de talt hver for seg, fikk lista verdier PostgreSQL aldri godtar, og
+    porten ville avvist en katalogmodul som bar den ekte, sammenskjøtte
+    verdien.
     """
     ut, i, n = set(), 0, len(liste)
     while i < n:
@@ -1637,11 +1702,16 @@ def _sqlverdier(liste: str) -> set[str]:
         if j < 0:
             i += 1
             continue
-        if liste[i] in "'\"":
-            ut.add(liste[i + 1:j - 1].replace(liste[i] * 2, liste[i]))
-        else:
+        if liste[i] == '"':
+            ut.add(liste[i + 1:j - 1].replace('""', '"'))
+            i = j
+            continue
+        if liste[i] == "$":
             ut.add(ULESELIG_SQL)
-        i = j
+            i = j
+            continue
+        verdi, i = _strengkonstant(liste, i, n)
+        ut.add(ULESELIG_SQL if verdi is None else verdi)
     return ut
 
 
@@ -1988,8 +2058,9 @@ def _skrevne_verdier(sql: str, a: int | None = None,
     sannhetskilden kunne presentere det som noe registeret har — porten under
     sa ingenting, fordi navnet «finnes».
 
-    Lesningen er `_sqlliteral()`, som ellers i porten, og bare en HEL literal
-    teller. Escapestrengen `E'…'` gis fra seg med vilje: innholdet der krever
+    Lesningen er `_strengkonstant()`, og bare en HEL konstant teller — også
+    når den er skrevet i flere fragmenter over like mange linjer.
+    Escapestrengen `E'…'` gis fra seg med vilje: innholdet der krever
     PostgreSQLs escaperegler for å bli en verdi, og et gjettet innhold er
     verre enn ingen når svaret brukes til å godta et navn.
 
@@ -2027,12 +2098,16 @@ def _skrevne_verdier(sql: str, a: int | None = None,
                 # Et spenn uten sin lukkende tagg er ikke helt, på samme måte
                 # som en literal uten sin lukkende fnutt.
                 ut.append(sql[innen:indre])
-        elif sql[i] == "'" and slutt - i >= 2 and sql[slutt - 1] == "'":
-            # En literal uten sin lukkende fnutt er ikke hel: `_sqlliteral()`
-            # gir da slutten av teksten, og innholdet er det som tilfeldigvis
-            # sto der.
-            ut.append(sql[i + 1:slutt - 1].replace("''", "'"))
-        i = slutt
+            i = slutt
+        elif sql[i] == '"':
+            # Et sitert NAVN er ikke en verdi registeret skriver.
+            i = slutt
+        else:
+            # En literal uten sin lukkende fnutt er ikke hel, og en `E'…'` er
+            # ikke lesbar: `_strengkonstant()` gir `None` for begge.
+            verdi, i = _strengkonstant(sql, i, b)
+            if verdi is not None:
+                ut.append(verdi)
     return ut
 
 
@@ -2914,6 +2989,25 @@ def test_uvissheten_snittes_ikke_bort_av_et_annet_vilkaar(tmp_path):
         "direkte", "kompenserende", ULESELIG_SQL}
 
 
+def test_en_verdi_brutt_over_to_linjer_er_en_verdi(tmp_path):
+    """PostgreSQL skjøter fragmentene; talt hver for seg blir de to verdier.
+
+    Da hadde enumet båret `kompen` og `serende` — verdier registeret aldri
+    godtar — mens den ekte, `kompenserende`, ikke sto der i det hele tatt: en
+    katalogmodul som bærer den, ville blitt avvist av porten og godtatt av
+    databasen.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE modulkontrakt (\n"
+        "    reversibilitet TEXT NOT NULL\n"
+        "        CHECK (reversibilitet IN ('direkte', 'kompen'\n"
+        "                                  'serende')));\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende[(MODULKONTRAKT, "reversibilitet")] == {
+        "direkte", "kompenserende"}
+
+
 def test_en_uleselig_verdi_stopper_enumoppslaget(tmp_path):
     """En verdi porten ikke kan lese skal si fra, ikke gjettes på.
 
@@ -3129,6 +3223,22 @@ def _kjente_identifikatorer() -> set[str]:
     ("DO $$ BEGIN\n"
      "    PERFORM 'oppfunnet_klasse';\n"
      "END $$;\n", True),
+    # To fragmenter med linjeskift mellom seg er ÉN verdi (Codex P2 på #118,
+    # attende runde), og formen brukes gjennomgående til lange meldinger.
+    ("SELECT 'mangler '\n"
+     "       'oppfunnet_klasse';\n", False),
+    ("    RAISE EXCEPTION 'mangler '\n"
+     "        -- brutt for lesbarhetens skyld\n"
+     "        'oppfunnet_klasse';\n", False),
+    # Er ETT fragment uleselig, er hele den skjøtte verdien det.
+    ("SELECT 'oppfunnet_klasse'\n"
+     "       E'\\\\n';\n", False),
+    # Uten linjeskift skjøter ikke PostgreSQL — det er en syntaksfeil der — så
+    # porten skal heller ikke gjøre det.
+    ("SELECT 'oppfunnet_klasse' 'og mer';\n", True),
+    # Og en verdi som står alene på linja, står fortsatt.
+    ("SELECT 'mangler',\n"
+     "       'oppfunnet_klasse';\n", True),
 ])
 def test_en_sqlkommentar_skriver_ingen_identifikator(sql, star_igjen):
     """Lista over kjente identifikatorer leses av det migrasjonen SKRIVER.
