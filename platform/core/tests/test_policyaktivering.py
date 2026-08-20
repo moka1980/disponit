@@ -1440,10 +1440,16 @@ def test_gjenskapt_generasjon_kan_ikke_arve_den_slettedes_hendelse():
             "hendelsen er immutabel og skal overleve slettingen"
         # Gjenskapt med NØYAKTIG samme nøkkel og innhold — altså alt FK-en
         # måler — men ubundet, og med en ny generasjon fra sekvensen.
+        #
+        # `aktiv=true`: `policy_hode` peker fortsatt på nummeret, og
+        # `policy_peker_konsistent` krever at pekeren har en aktiv rad å
+        # peke på. Gjenskapingen setter altså tilstanden tilbake til
+        # nøyaktig det den var — bortsett fra bindingen, som er hele
+        # poenget. `en_aktiv_per_policy` er fri: forgjengeren er slettet.
         m.execute(
             "INSERT INTO policyer (tenant, policy_id, versjon,"
             "  innholds_hash, status, innhold, aktiv) VALUES"
-            "  (%s,%s,%s,%s,'produksjon',%s::jsonb,false)",
+            "  (%s,%s,%s,%s,'produksjon',%s::jsonb,true)",
             (TEN, pid, v, rad[0], rad[1]))
         ny_gen = m.execute(
             "SELECT generasjon FROM policyer WHERE tenant=%s"
