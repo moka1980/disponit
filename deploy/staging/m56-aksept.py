@@ -69,8 +69,31 @@ MAALTE = {
     "frekvens.over_grense_utfort":
         ("0", lambda m: "0" if m["frekvens_avvist_over_grense"] >= 1
                         else "umålt (taket ga aldri avslag)"),
+}
+#: Punkter i `wcag-kontroll-v1` som INGEN kilde vi har faktisk måler.
+#: De skrives ikke — de BLOKKERER aksepten, og teksten sier hvorfor.
+#:
+#: Et grensepunkt er ikke et tall man finner et sted som ligner; det er en
+#: navngitt invariant, og kilden må ha stilt nettopp DENS spørsmål. Uten
+#: denne listen var alternativet til «finn en kilde» stilltiende å la et
+#: punkt hvile på nærmeste tall — og et nærmeste tall er ikke en måling.
+UMAALTE = {
     "egress.proxytoken_til_ikke_ekstern_lesing":
-        ("0", lambda m: str(m["egress_lekkasjer"])),
+        "punktet gjelder egress-proxyens TOKENUTSTEDELSE: at en modul som"
+        " ikke er klassifisert `ekstern_lesing` aldri får et proxytoken."
+        " Verdien ble hentet fra `maalt.egress_lekkasjer`, og det tallet er"
+        " `port24_motormiljo` — porten som måler om DISPONIT_KEK og"
+        " DATABASE_URL lekker inn i BROWSER-CONTAINERENS miljø. Den ber"
+        " aldri om et proxytoken, for noen modul, av noen klasse. Et rent"
+        " containermiljø ble dermed en immutabel grønn observasjon om en"
+        " helt annen invariant (Codex P1, #117 runde 5). Repoet har"
+        " egress-rollen (`disponit_egress`) og visningen den leser"
+        " (`v_domeneautorisasjon`), men ingen utstedende proxy, og"
+        " evidens.jsonl fra 18/8 har ingen hendelse som ber om et token —"
+        " så verken runden eller en CI-port måler dette i dag. Punktet"
+        " trenger en kilde som faktisk BER om et proxytoken for en"
+        " ikke-`ekstern_lesing`-modul og får nei; til da er «0» en påstand,"
+        " ikke en måling",
 }
 CI_PUNKTER = (
     "skjema.brudd_promotert", "skjema.hash_uten_rad_akseptert",
@@ -87,6 +110,37 @@ CI_PUNKTER = (
     "malautorisasjon.ikke_registrert_vilkar_talte",
     "malautorisasjon.feil_maldomene_godtatt",
 )
+
+
+def krev_maalbare_punkter() -> None:
+    """Ingen aksept så lenge et grensepunkt mangler en kilde som måler det.
+
+    Codex' P1 på PR #117 (runde 5):
+    `egress.proxytoken_til_ikke_ekstern_lesing` hentet verdien sin fra
+    `egress_lekkasjer` — `port24_motormiljo`, som måler
+    credential-lekkasje i browser-containeren og aldri ber om et
+    proxytoken. Punktet kunne derfor stå «0» i en immutabel akseptrad selv
+    om proxytoken-autorisasjonen var brutt for enhver ikke-`ekstern_lesing`
+    modul.
+
+    Feilen var ikke bare den ene tilordningen: kartet punkt→kilde var
+    håndlaget, og ingenting KREVDE at kilden hadde stilt punktets eget
+    spørsmål. Da er «finn et tall som passer» alltid den enkleste veien
+    videre. Denne porten gjør det umulige valget synlig i stedet: et punkt
+    uten ekte kilde står i `UMAALTE`, og da skrives ingen aksept i det hele
+    tatt. Fail-closed — akkurat som `rollback_testet` er blokkert framfor
+    å bli pyntet.
+    """
+    if not UMAALTE:
+        return
+    raise SystemExit(
+        "AVBRUTT: aksepten er blokkert — "
+        f"{len(UMAALTE)} grensepunkt i {KRAV} har ingen kilde som måler"
+        " dem:\n\n  "
+        + "\n\n  ".join(f"{p}:\n    " + s for p, s in sorted(UMAALTE.items()))
+        + "\n\nEt punkt uten måling er ikke et grønt punkt, det er et"
+          " umålt punkt, og en immutabel akseptrad skal ikke bære"
+          " forskjellen som om den ikke fantes.")
 
 
 def les_manifest() -> tuple[dict, str]:
@@ -500,6 +554,11 @@ def main() -> int:
     a = ap.parse_args()
 
     import manifestskjema as ms
+
+    # FØRST av alt: har hvert grensepunkt en kilde som faktisk måler det?
+    # Et punkt uten måling stopper aksepten her, ikke etter at halve
+    # kjeden er verifisert (Codex P1, runde 5).
+    krev_maalbare_punkter()
 
     # Ingenting skrives før hele evidenskjeden er målt: manifestets egen
     # port (hash → skjema → grenser → hvilken måling punktet påberoper

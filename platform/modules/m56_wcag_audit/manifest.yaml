@@ -44,6 +44,18 @@ status: under_utvikling        # aktiv | inaktiv | under_utvikling
 # lenger bundet. Aksepten kan ikke skrives før en ny, komplett
 # drillkjøring er bundet inn her.
 #
+# OG ETT GRENSEPUNKT MANGLER EN KILDE (Codex P1, PR #117 runde 5):
+# `egress.proxytoken_til_ikke_ekstern_lesing` hentet verdien sin fra
+# `maalt.egress_lekkasjer` — som er `port24_motormiljo`, porten som måler
+# om DISPONIT_KEK og DATABASE_URL lekker inn i browser-containerens
+# miljø. Den ber aldri om et proxytoken, for noen modul, av noen klasse,
+# så et rent containermiljø ble en grønn observasjon om en helt annen
+# invariant. Punktet står nå i `m56-aksept.py`s `UMAALTE` og BLOKKERER
+# aksepten til det får en kilde som faktisk ber om et proxytoken for en
+# ikke-`ekstern_lesing`-modul og får nei. Ingen av de seks
+# sjekklistepunktene under påberoper seg dette punktet; det er
+# akseptgrensen §12 som krever det.
+#
 # Blokkeren er registerets EGEN konsistensregel (registry.valider): en
 # `aktiv` modul kan ikke avhenge av en som ikke er aktiv, og
 # `m02_revisjonslogg` står `under_utvikling` med tre ubundne

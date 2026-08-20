@@ -114,7 +114,7 @@ OPPDRAGSTYPE = "kontroll.wcag.nettsted"
 # sammen — ellers oppdages det først i en staging-runde ingen ser før den
 # feiler. `LEGACY_RELEASE` under er uberørt: den navngir releasen de gamle
 # rundefilene tilhørte, ikke den vi kjører nå.
-RELEASE = os.environ.get("WCAG_RELEASE", "").strip() or "wcag-r15"
+RELEASE = os.environ.get("WCAG_RELEASE", "").strip() or "wcag-r16"
 TENANT = "t-wcagfasit"
 TENANT_FREKVENS = "t-wcagfrekvens"
 VERT_FREKVENS = "fasit-frekvens.test"

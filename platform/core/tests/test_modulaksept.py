@@ -1128,6 +1128,46 @@ def _aksept_skript():
     return mod
 
 
+def test_hvert_grensepunkt_har_en_kilde_som_maaler_nettopp_det():
+    """Codex' P1 (runde 5): `egress.proxytoken_til_ikke_ekstern_lesing`
+    hentet verdien sin fra `maalt.egress_lekkasjer`.
+
+    Det tallet er `port24_motormiljo` — porten som måler om DISPONIT_KEK
+    og DATABASE_URL lekker inn i BROWSER-CONTAINERENS miljø. Den ber aldri
+    om et proxytoken, for noen modul, av noen klasse. Var
+    proxytoken-autorisasjonen brutt for enhver ikke-`ekstern_lesing`
+    modul, sto punktet fortsatt «0» i en immutabel akseptrad, fordi
+    containermiljøet tilfeldigvis var rent.
+
+    To ting måles her: at kartet punkt→kilde er FULLSTENDIG og DISJUNKT
+    mot kravpunktregisteret (et nytt punkt kan ikke stille arve nærmeste
+    tall), og at et punkt uten ekte kilde BLOKKERER aksepten i stedet for
+    å bli pyntet."""
+    m = _aksept_skript()
+    punkter = set(re.findall(r"\('wcag-kontroll-v1',\s*'([^']+)'\)",
+                             M049.read_text(encoding="utf-8")))
+    assert len(punkter) == 21, punkter
+    kilder = (set(m.MAALTE), set(m.CI_PUNKTER), set(m.UMAALTE),
+              {"malautorisasjon.positiv_sti_virker"})
+    flat = [p for s in kilder for p in s]
+    assert len(flat) == len(set(flat)), "et punkt har to kilder"
+    assert set(flat) == punkter, (
+        f"kartet dekker ikke kravpunktregisteret: "
+        f"{punkter ^ set(flat)}")
+    # Selve feilen: det ene punktet skal ikke lenger hvile på
+    # containermiljø-tallet.
+    assert "egress.proxytoken_til_ikke_ekstern_lesing" not in m.MAALTE
+    skript = (ROT / "deploy/staging/m56-aksept.py").read_text(
+        encoding="utf-8")
+    assert 'm["egress_lekkasjer"]' not in skript, \
+        "punktet henter fortsatt containermiljø-tallet"
+    # …og så lenge det står umålt, skrives ingen aksept.
+    assert "egress.proxytoken_til_ikke_ekstern_lesing" in m.UMAALTE
+    with pytest.raises(SystemExit) as ei:
+        m.krev_maalbare_punkter()
+    assert "proxytoken" in str(ei.value)
+
+
 def test_akseptporten_avviser_artefakter_som_ikke_er_bevis():
     """Codex' P1 på PR #117: skriptet leste `bestatt` — kallerens EGEN
     påstand — og skrev deretter en immutabel grønn drill- og akseptrad.
