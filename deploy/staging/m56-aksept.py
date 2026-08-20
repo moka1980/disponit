@@ -564,6 +564,113 @@ def verifiser_registrert_digest(conn, releaser: tuple[str, ...],
                 " de målte")
 
 
+def _manifestgenerasjoner(commit: str) -> dict[str, str]:
+    """sha256 → commit for HVER innsjekkede generasjon av manifestet.
+
+    Bare commiter som faktisk endret fila, og bare de som er nåbare fra
+    `commit`: en generasjon som lever på en annen gren er ikke en
+    generasjon akseptcommiten står for.
+    """
+    r = _git("rev-list", commit, "--", MANIFEST_REL)
+    if r.returncode != 0:
+        raise SystemExit(f"AVBRUTT: finner ingen historikk for"
+                         f" {MANIFEST_REL} i {commit[:12]}…")
+    gen: dict[str, str] = {}
+    for c in r.stdout.decode().split():
+        b = _git("cat-file", "blob", f"{c}:{MANIFEST_REL}")
+        if b.returncode == 0:
+            gen.setdefault(hashlib.sha256(b.stdout).hexdigest(), c)
+    return gen
+
+
+def verifiser_registrert_manifest(conn, releaser: tuple[str, ...],
+                                  manifest: dict, manifest_sha: str,
+                                  manifest_commit: str) -> str:
+    """…og MANIFESTET raden ble registrert med, må være dette manifestet.
+
+    Codex' P1 på PR #117 (runde 7): digestkjeden ble bundet hele veien —
+    målt image = drillet image = registrert image — men manifestet gikk
+    fri. `modulrelease.manifest_hash` er sha256 av `manifest.yaml` slik
+    den så ut da releasen ble REGISTRERT (drillens fase 2), og
+    akseptraden peker på `manifest_commit`. Ingenting bandt de to. Og
+    de divergerer med nødvendighet: drillartefaktet bindes INN i
+    manifestet etter drillen, så akseptcommitens manifest er per
+    konstruksjon en annen generasjon enn den kandidatreleasen bærer.
+    Aksepten kunne dermed peke på en pen commit mens den aksepterte
+    deploymenten kjører en HELT annen modulkonfigurasjon — annen
+    `status`, `driftstilstand`, `kjerne`, andre avhengigheter — eller en
+    som aldri ble sjekket inn i det hele tatt. Like image-bytes
+    reparerer ikke det: manifestet er modulens identitet i registeret
+    (014 §port 1), imaget er bare bytene som kjører.
+
+    Det som måles her, er derfor proveniensen selv:
+
+      1. drillet og kandidat må bære SAMME `manifest_hash` — én drill er
+         én måling, i én manifestgenerasjon,
+      2. den generasjonen må FINNES som innsjekkede bytes i
+         akseptcommitens egen historikk (ellers er den registrert fra et
+         manifest ingen kan lese), og
+      3. den må være identisk med akseptcommitens manifest utenfor
+         `staging_sjekkliste` — evidensbindingen er den ENE endringen
+         flyten selv krever mellom drill og aksept. Alt annet (`status`,
+         `driftstilstand`, `kjerne`, `avhengigheter`, …) er modulens
+         kjørende identitet, og en aksept som påstår en annen enn den
+         drillede, må stoppe her.
+
+    -> commiten den registrerte generasjonen ble sjekket inn i.
+    """
+    import yaml
+    hasher = {}
+    for release in releaser:
+        rad = conn.execute(
+            "SELECT manifest_hash FROM modulrelease WHERE modul_id=%s"
+            " AND release_id=%s", (MODUL, release)).fetchone()
+        if rad is None:
+            raise SystemExit(f"AVBRUTT: release {release} finnes ikke i"
+                             " registeret")
+        hasher[release] = str(rad[0] or "").strip().lower()
+    if len(set(hasher.values())) != 1:
+        raise SystemExit(
+            "AVBRUTT: drillet og kandidat er registrert fra ULIKE"
+            " manifestgenerasjoner ("
+            + ", ".join(f"{r}={h[:12]}…" for r, h in sorted(hasher.items()))
+            + ") — en drill er én måling, og da kan ikke halvparten av"
+              " den ha kjørt en annen modulkonfigurasjon")
+    registrert = next(iter(hasher.values()))
+    if registrert == manifest_sha:
+        return manifest_commit
+    generasjoner = _manifestgenerasjoner(manifest_commit)
+    kilde = generasjoner.get(registrert)
+    if kilde is None:
+        grunn = ""
+        if _git("rev-parse", "--is-shallow-repository"
+                ).stdout.decode().strip() == "true":
+            grunn = (" Utsjekkingen er GRUNN, så historikken her er ikke"
+                     " modulens historikk — kjør aksepten fra et fullt"
+                     " klon.")
+        raise SystemExit(
+            f"AVBRUTT: releasene er registrert med manifest_hash"
+            f" {registrert[:12]}…, som ikke er NOEN innsjekket generasjon"
+            f" av {MANIFEST_REL} i historikken til"
+            f" {manifest_commit[:12]}… — aksepten ville bundet en"
+            f" deployment som kjører et manifest ingen kan lese.{grunn}")
+    b = _git("cat-file", "blob", f"{kilde}:{MANIFEST_REL}")
+    drillet_manifest = yaml.safe_load(b.stdout.decode("utf-8")) or {}
+    avvik = sorted(
+        felt for felt in set(manifest) | set(drillet_manifest)
+        if felt != "staging_sjekkliste"
+        and manifest.get(felt) != drillet_manifest.get(felt))
+    if avvik:
+        raise SystemExit(
+            f"AVBRUTT: manifestet releasene ble registrert fra"
+            f" ({registrert[:12]}…, commit {kilde[:12]}…) er ikke"
+            f" akseptcommitens manifest utenfor evidensbindingen —"
+            f" {', '.join(avvik)} er endret. Den aksepterte deploymenten"
+            " kjører den drillede generasjonen; en endring der er en NY"
+            " release, som må registreres og drilles for seg.")
+    return kilde
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--drill", type=Path, required=True)
@@ -647,6 +754,13 @@ def main() -> int:
         # image ingen av de levende radene bærer.
         verifiser_registrert_digest(
             conn, (o["drillet_release"], o["kandidat_release"]), digest)
+        # …og manifestet radene ble REGISTRERT fra, må være dette
+        # manifestet utenfor evidensbindingen (Codex P1, runde 7): like
+        # image-bytes sier ingenting om hvilken modulkonfigurasjon den
+        # aksepterte deploymenten faktisk kjører.
+        manifestkilde = verifiser_registrert_manifest(
+            conn, (o["drillet_release"], o["kandidat_release"]),
+            manifest, manifest_sha, manifest_commit)
         conn.execute("SET ROLE disponit_modules_admin")
         # Codex' P1 på PR #117 (runde 5): de tre kontrollpunktutfallene
         # ble regnet ut HER, av artefaktets egne tall, og sendt inn som
@@ -697,7 +811,8 @@ def main() -> int:
             " AND miljo=%s AND release_id=%s",
             (MODUL, MILJO, o["kandidat_release"])).fetchone()
         print(f"AKSEPTERT: ({MODUL}, {MILJO}, {o['kandidat_release']})"
-              f" drill_id={drill_id} ts={rad[0]}")
+              f" drill_id={drill_id} ts={rad[0]}"
+              f" manifestgenerasjon={manifestkilde[:12]}…")
     finally:
         conn.close()
     return 0

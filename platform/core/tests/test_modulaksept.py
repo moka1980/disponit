@@ -1237,6 +1237,102 @@ def test_registeret_maa_baere_den_maalte_digesten(migrator):
         migrator.rollback()
 
 
+class _Manifesthash:
+    """Bare det `verifiser_registrert_manifest` spør om: hash per release."""
+
+    def __init__(self, hash_per_release):
+        self.hasher, self._svar = hash_per_release, None
+
+    def execute(self, _sql, params=None):
+        self._svar = self.hasher.get(params[1]) if params else None
+        return self
+
+    def fetchone(self):
+        return (self._svar,) if self._svar is not None else None
+
+
+def _manifestgenerasjon(m, ikke: str):
+    """En ELDRE innsjekket generasjon av manifestet enn `ikke`, om den
+    finnes i utsjekkingen. En grunn CI-klone har bare én."""
+    for sha, commit in m._manifestgenerasjoner("HEAD").items():
+        if sha != ikke:
+            b = m._git("cat-file", "blob", f"{commit}:{m.MANIFEST_REL}")
+            import yaml
+            return sha, commit, yaml.safe_load(b.stdout.decode("utf-8"))
+    return None, None, None
+
+
+def test_akseptens_manifest_maa_vaere_det_releasene_ble_registrert_fra():
+    """Codex' P1 (runde 7): digestkjeden ble bundet, manifestet gikk fri.
+
+    `manifest_hash` er sha256 av manifestet slik det så ut da releasen
+    ble REGISTRERT i drillens fase 2, og akseptraden peker på
+    `manifest_commit`. De to divergerer med nødvendighet — drillartefaktet
+    bindes inn i manifestet ETTER drillen — så ingenting hindret en
+    aksept i å peke på en pen commit mens den aksepterte deploymenten
+    kjørte en helt annen modulkonfigurasjon. Like image-bytes reparerer
+    ikke det: manifestet er identiteten, imaget er bytene.
+    """
+    m = _aksept_skript()
+    manifest, sha = m.les_manifest()
+    hode = subprocess.run(["git", "-C", str(ROT), "rev-parse", "HEAD"],
+                          capture_output=True).stdout.decode().strip()
+    releaser = ("r-drillet", "r-kandidat")
+    # Samme generasjon som akseptcommiten: proveniensen er commiten selv.
+    assert m.verifiser_registrert_manifest(
+        _Manifesthash({r: sha for r in releaser}), releaser,
+        manifest, sha, hode) == hode
+    # Halve drillen i en annen generasjon er ingen drill.
+    with pytest.raises(SystemExit) as ei:
+        m.verifiser_registrert_manifest(
+            _Manifesthash({"r-drillet": sha, "r-kandidat": "b" * 64}),
+            releaser, manifest, sha, hode)
+    assert "ULIKE manifestgenerasjoner" in str(ei.value)
+    # En generasjon som ikke er sjekket inn, kan ingen lese.
+    with pytest.raises(SystemExit) as ei:
+        m.verifiser_registrert_manifest(
+            _Manifesthash({r: "d" * 64 for r in releaser}), releaser,
+            manifest, sha, hode)
+    assert "innsjekket generasjon" in str(ei.value)
+    # Raden må finnes i det hele tatt.
+    with pytest.raises(SystemExit) as ei:
+        m.verifiser_registrert_manifest(
+            _Manifesthash({"r-drillet": sha}), releaser, manifest, sha, hode)
+    assert "finnes ikke" in str(ei.value)
+
+
+def test_evidensbindingen_er_den_ene_tillatte_manifestendringen():
+    """…og drillen må ellers ha kjørt NØYAKTIG den aksepterte modulen.
+
+    Mellom drill og aksept endres manifestet én gang, av flyten selv:
+    drillartefaktet bindes inn i `staging_sjekkliste`. Den endringen skal
+    slippe gjennom. Alt annet — `status`, `driftstilstand`, `kjerne`,
+    avhengigheter — er modulens kjørende identitet, og en endring der er
+    en NY release som må registreres og drilles for seg.
+    """
+    m = _aksept_skript()
+    _, sha = m.les_manifest()
+    gammel_sha, gammel_commit, gammel = _manifestgenerasjon(m, sha)
+    if gammel is None:
+        pytest.skip("grunn utsjekking: bare én manifestgenerasjon")
+    hode = subprocess.run(["git", "-C", str(ROT), "rev-parse", "HEAD"],
+                          capture_output=True).stdout.decode().strip()
+    releaser = ("r-drillet", "r-kandidat")
+    conn = _Manifesthash({r: gammel_sha for r in releaser})
+    # Bare evidensbindingen skiller: aksepten bærer den generasjonen.
+    kun_evidens = dict(gammel, staging_sjekkliste={"drillet": "inn"})
+    assert m.verifiser_registrert_manifest(
+        conn, releaser, kun_evidens, sha, hode) == gammel_commit
+    # Identiteten er flyttet: da er dette en annen modul enn den drillede.
+    for felt, verdi in (("status", "aktiv"),
+                        ("driftstilstand", "produksjon"),
+                        ("kjerne", "platform/modules/en_annen")):
+        with pytest.raises(SystemExit) as ei:
+            m.verifiser_registrert_manifest(
+                conn, releaser, dict(kun_evidens, **{felt: verdi}), sha, hode)
+        assert felt in str(ei.value) and "NY release" in str(ei.value)
+
+
 def test_akseptskriptet_leser_maaletiden_av_artefaktet():
     """Måletiden skriptet sender, er drillartefaktets `ts` — lest med
     tidssone, aldri klokka i akseptøyeblikket."""
