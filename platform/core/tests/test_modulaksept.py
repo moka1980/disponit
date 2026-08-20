@@ -797,19 +797,19 @@ def test_fristtellingen_regnes_ut_av_de_ti_kjoringene():
     linjer = m.fase5_linjene(rader, kontekst, i_fase5)
     # Den innsjekkede runden BLE målt: ti linjer med egen varighet.
     assert len(linjer) == 10
-    assert m.signert_innen_frist(linjer) == 10
+    assert m.signert_innen_frist(linjer, 10) == 10
 
     # Gjenspill: samme ti rapporter, men ingen frist målt.
     gjenspilt = [dict(d, gjenspill=True, varighet_s=None) for d in linjer]
-    assert m.signert_innen_frist(gjenspilt) == 0
+    assert m.signert_innen_frist(gjenspilt, 10) == 0
     # En kjøring som brøt sin egen frist teller ikke, uansett `ok`.
     over = [dict(d, varighet_s=d["frist_s"] + 1, ok=True) for d in linjer]
-    assert m.signert_innen_frist(over) == 0
+    assert m.signert_innen_frist(over, 10) == 0
     # …og avvik mot fasiten er heller ikke et signert, rent utfall.
     avvik = [dict(d, avvik_mot_fasit=1) for d in linjer]
-    assert m.signert_innen_frist(avvik) == 0
+    assert m.signert_innen_frist(avvik, 10) == 0
     # Samme posisjon to ganger er én kjøring, ikke to.
-    assert m.signert_innen_frist(linjer + linjer) == 10
+    assert m.signert_innen_frist(linjer + linjer, 10) == 10
 
     # Codex' P2 (runde 15): en halvskrevet eller fabrikkert linje bærer
     # ingen måling. Et manglende `avvik_mot_fasit` ble null avvik av
@@ -817,20 +817,35 @@ def test_fristtellingen_regnes_ut_av_de_ti_kjoringene():
     # `int` — `varighet_s: False` var «0 sekunder, innenfor fristen».
     assert m.signert_innen_frist(
         [{k: v for k, v in d.items() if k != "avvik_mot_fasit"}
-         for d in linjer]) == 0
+         for d in linjer], 10) == 0
     assert m.signert_innen_frist(
-        [dict(d, avvik_mot_fasit=False) for d in linjer]) == 0
+        [dict(d, avvik_mot_fasit=False) for d in linjer], 10) == 0
     assert m.signert_innen_frist(
-        [dict(d, varighet_s=False) for d in linjer]) == 0
+        [dict(d, varighet_s=False) for d in linjer], 10) == 0
     assert m.signert_innen_frist(
-        [dict(d, varighet_s=float("nan")) for d in linjer]) == 0
+        [dict(d, varighet_s=float("nan")) for d in linjer], 10) == 0
     assert m.signert_innen_frist(
-        [dict(d, frist_s=float("inf")) for d in linjer]) == 0
+        [dict(d, frist_s=float("inf")) for d in linjer], 10) == 0
     assert m.signert_innen_frist(
-        [dict(d, avvik_mot_fasit="0") for d in linjer]) == 0
+        [dict(d, avvik_mot_fasit="0") for d in linjer], 10) == 0
     # …og uten en posisjon å avduplisere på er linja ikke en av de ti.
     assert m.signert_innen_frist(
-        [{k: v for k, v in d.items() if k != "i"} for d in linjer]) == 0
+        [{k: v for k, v in d.items() if k != "i"} for d in linjer], 10) == 0
+
+    # Codex' P2 (runde 13): posisjonen ble bare typesjekket. Ti ellers
+    # grønne linjer på posisjoner UTENFOR de bestilte — 10–19, fra en
+    # halvskrevet, sammenslått eller redigert evidensfil — ga et sett på
+    # ti og bekreftet «10/10» uten at én av de ti BESTILTE kjøringene var
+    # målt. Fase 5 bestiller `range(krav)`; alt annet er ikke en av dem.
+    forskjovet = [dict(d, i=d["i"] + 10) for d in linjer]
+    assert m.signert_innen_frist(forskjovet, 10) == 0
+    assert m.signert_innen_frist([dict(d, i=-1) for d in linjer], 10) == 0
+    # Ni bestilte + én utenfor er ni målte kjøringer, ikke ti.
+    assert m.signert_innen_frist(
+        [d for d in linjer if d["i"] != 9] + [dict(linjer[9], i=42)],
+        10) == 9
+    # Og en generator som ble bestilt færre kjøringer, teller bare dem.
+    assert m.signert_innen_frist(linjer, 4) == 4
 
     # Og generatoren nekter å skrive et sammendrag der summen påstår mer
     # enn linjene bærer: en ren gjenspilt runde stopper her.
@@ -844,6 +859,17 @@ def test_fristtellingen_regnes_ut_av_de_ti_kjoringene():
         m.sammendrag(gjenspilt_runde, art["oppsett"]["kilde"],
                      art["oppsett"]["kilde_sha256"])
     assert "gjenspill" in str(ei.value)
+
+    # …og like lite skriver den et sammendrag av ti grønne linjer som
+    # aldri sto på en bestilt posisjon (Codex P2, runde 13).
+    forskjovet_runde = (
+        rader[:i_fase5 - len(linjer)]
+        + [dict(d, i=d["i"] + 10) for d in linjer]
+        + rader[i_fase5:])
+    with pytest.raises(SystemExit) as ei:
+        m.sammendrag(forskjovet_runde, art["oppsett"]["kilde"],
+                     art["oppsett"]["kilde_sha256"])
+    assert "BESTILTE" in str(ei.value)
 
 
 def test_wcag_grensene_maaler_at_portene_faktisk_kjorte():

@@ -149,7 +149,7 @@ def _tall(d: dict, felt: str):
     return v if math.isfinite(v) else None
 
 
-def signert_innen_frist(linjer: list[dict]) -> int:
+def signert_innen_frist(linjer: list[dict], krav: int) -> int:
     """Teller kjøringene som FAKTISK ble målt signert innen fristen.
 
     Codex' P2 på PR #117 (runde 10): tallet ble kopiert ordrett fra
@@ -166,7 +166,16 @@ def signert_innen_frist(linjer: list[dict]) -> int:
     — ikke fordi kjøringen var dårlig, men fordi den linja ikke MÅLTE
     noe. `i` avduplikeres, så en delvis gjenkjøring aldri kan telle en
     posisjon to ganger.
+
+    Og posisjonen må være EN AV DE BESTILTE. Codex' P2 på PR #117 (runde
+    13): `i` ble bare typesjekket, så ti ellers grønne linjer med
+    indekser 10–19 — en evidensfil som er halvskrevet, satt sammen av to
+    runder eller redigert — ga et sett på ti og bekreftet en påstand om
+    «10/10» uten at én eneste av de ti bestilte kjøringene var målt.
+    Fase 5 bestiller `range(krav)`; alt utenfor er ikke en av dem, og en
+    kjøring som ikke er bestilt kan ikke telle som en som er utført.
     """
+    bestilte = range(krav)
     gronne = set()
     for d in linjer:
         avvik = _tall(d, "avvik_mot_fasit")
@@ -177,7 +186,8 @@ def signert_innen_frist(linjer: list[dict]) -> int:
                 and varighet is not None
                 and frist is not None
                 and varighet < frist
-                and isinstance(indeks, int) and not isinstance(indeks, bool)):
+                and isinstance(indeks, int) and not isinstance(indeks, bool)
+                and indeks in bestilte):
             gronne.add(indeks)
     return len(gronne)
 
@@ -209,16 +219,21 @@ def sammendrag(rader: list[dict], kilde: str, kilde_sha256: str) -> dict:
     påstått, krav = (int(x) for x in
                      str(fase5["ti_kjoringer_signert_innen_frist"]).split("/"))
     # TALLET REGNES UT AV LINJENE, ikke lest av summen (Codex P2, runde
-    # 10). Og spriker de to, er evidensfila i strid med seg selv: summen
-    # påstår flere målte kjøringer enn linjene bærer, og da skrives det
-    # ikke noe sammendrag i det hele tatt.
-    signert = signert_innen_frist(fase5_linjene(rader, kontekst, indekser[0]))
+    # 10) — og bare av linjene på de BESTILTE posisjonene `range(krav)`
+    # (Codex P2, runde 13). Og spriker de to, er evidensfila i strid med
+    # seg selv: summen påstår flere målte kjøringer enn de bestilte
+    # linjene bærer, og da skrives det ikke noe sammendrag i det hele
+    # tatt.
+    signert = signert_innen_frist(fase5_linjene(rader, kontekst, indekser[0]),
+                                  krav)
     if signert != påstått:
         raise SystemExit(
             f"AVBRUTT: `fase5_resultat` påstår {påstått}/{krav} signert"
-            f" innen frist, men bare {signert} av `kjoring`-linjene i den"
-            " runden bærer et rent utfall, null avvik OG en målt varighet"
-            " under sin egen frist. Et gjenspill setter utfall=utfort og"
+            f" innen frist, men bare {signert} av de {krav} BESTILTE"
+            " `kjoring`-linjene (i=0…"
+            f"{krav - 1}) i den runden bærer et rent utfall, null avvik OG"
+            " en målt varighet under sin egen frist. Et gjenspill setter"
+            " utfall=utfort og"
             " varighet_s=null uten å måle fristen på nytt, så summen kan"
             " ikke være kilden. Kjør fase 5 på nytt (nye"
             " idempotensnøkler) og la kjøringene måle seg selv.")
