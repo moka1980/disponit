@@ -286,6 +286,60 @@ def krev_bootbare_forgjengerbytes(forgjenger: str, forgjenger_digest: str,
         " for hånd.")
 
 
+def registrer_rullbakkreleasen(m, rullback: str, kver: int, khash: str,
+                               forgjenger_digest: str) -> None:
+    """Skriver rullback-releaseraden — UBETINGET, før den destruktive
+    rullingen (Codex P1, #117 runde 6).
+
+    Kallet lå før inne i en «finnes raden alt?»-test, og en eksisterende
+    `--rullback-id` slapp da forbi HELT umålt. Testen ga ingenting:
+    `registrer_release` (014) er selv idempotent — den tar advisory-låsen
+    på release-identiteten, returnerer stille på identisk innhold og
+    hever `release (…) er immutable` på avvikende. Innpakningen fjernet
+    altså bare den ENESTE sammenligningen mellom raden og bytene drillen
+    mener å rulle tilbake til.
+
+    Og det som slapp forbi var destruktivt, ikke bare slapt: `bytt_release`
+    validerer kun kontraktversjon og kontrakt-hash, så drillen ville
+    drenert den levende deploymenten og flyttet registeret til den
+    avvikende releasen. Først i fase 2 regner `registrer-m-wcag-audit.py`
+    manifesthashen ut av disken og treffer immutabilitetskonflikten — da
+    er rullingen gjort, modulen står uten claimende arbeider, og
+    drilltilstanden er brukt opp. Porten hører hjemme her.
+
+    MANIFESTHASHEN ER DENNE UTSJEKKINGENS, ikke den drillede radens:
+    rullback-releasen bootes senere gjennom sjekklistens egne faser, og
+    `registrer-m-wcag-audit.py` regner da hashen ut av manifest.yaml på
+    disk. Skrev vi den drillede radens hash her, ville den passive
+    registreringen og fase 2 vært to ULIKE påstander om samme immutable
+    rad — og fase 2 ville dødd på en konflikt drillen selv lagde.
+
+    DIGESTEN ER FORGJENGERENS, ikke den drilledes (Codex P1, runde 6).
+    Verdiene er like i dag — `krev_bootbare_forgjengerbytes` har alt målt
+    det — men KILDEN er poenget: en rullbakk som henter bytene sine fra
+    releasen den ruller VEKK fra, ruller ingen steder.
+    """
+    manifest = _manifest_hash()
+    _admin(m)
+    try:
+        m.execute("SELECT registrer_release(%s,%s,%s,%s,%s,%s,'m56-drill')",
+                  (MODUL, rullback, kver, khash, manifest,
+                   forgjenger_digest))
+        m.commit()
+    except Exception as e:
+        m.rollback()
+        raise SystemExit(
+            f"AVBRUTT: rullback-releasen {rullback} finnes alt i registeret"
+            " med et ANNET innhold enn drillen ville skrevet (kontrakt"
+            f" v{kver}, manifest {manifest[:12]}…, digest"
+            f" {str(forgjenger_digest)[:19]}…): {e}\nRaden er immutabel, så"
+            " den kan ikke rettes — og hadde drillen rullet dit likevel,"
+            " ville fase 2 dødd på nøyaktig denne konflikten ETTER at den"
+            " levende deploymenten var drenert. Kjør drillen med en ubrukt"
+            " --rullback-id.") from e
+    m.execute("RESET ROLE")
+
+
 def krev_ubrukte_drillreleaser(m, drillet: str, rullback: str,
                                kandidat: str) -> None:
     """Drill-id-ene må være UBRUKTE deployments, ellers er dette en rest.
@@ -381,51 +435,8 @@ def main() -> int:
 
     # Rullback-releasen registreres FØR racet — registreringen er passiv,
     # selve rullingen er ett kall og fyres midt i det løpende oppdraget.
-    #
-    # MANIFESTHASHEN ER DENNE UTSJEKKINGENS, ikke den drillede radens:
-    # rullback-releasen bootes senere gjennom sjekklistens egne faser, og
-    # `registrer-m-wcag-audit.py` regner da manifesthashen ut av
-    # manifest.yaml på disk. Skrev vi den drillede radens hash her, ville
-    # den passive registreringen og fase 2 vært to ULIKE påstander om
-    # samme immutable rad — og fase 2 ville dødd på en
-    # immutabilitetskonflikt midt i drillen.
-    #
-    # OG DEN KJØRES UANSETT OM RADEN FINNES (Codex P1, #117 runde 6):
-    # kallet var før pakket inn i en «finnes den alt?»-test, og en
-    # eksisterende `--rullback-id` slapp da forbi HELT umålt. `registrer_release`
-    # er selv idempotent — identisk innhold returnerer stille, avvikende
-    # innhold hever `release ... er immutable` — så testen ga ingenting,
-    # men den kastet bort den ENESTE sammenligningen mellom raden og
-    # forgjengerens bytes. En rullback-id fra et eldre forsøk (annet
-    # manifest, annen digest) ble derfor akseptert her, drillen drenerte
-    # den levende deploymenten i `bytt_release` under, og
-    # immutabilitetskonflikten dukket først opp i fase 2 — etter at
-    # rullingen var gjort, med modulen stående uten claimende arbeider og
-    # drilltilstanden oppbrukt. Porten hører hjemme FØR den destruktive
-    # rullingen, ikke etter.
-    _admin(m)
-    try:
-        # DIGESTEN ER FORGJENGERENS, ikke den drilledes (Codex P1, runde
-        # 6). Verdiene er like i dag — `krev_bootbare_forgjengerbytes`
-        # har alt målt det — men KILDEN er poenget: en rullbakk som
-        # henter bytene sine fra releasen den ruller VEKK fra, ruller
-        # ingen steder.
-        m.execute("SELECT registrer_release(%s,%s,%s,%s,%s,%s,'m56-drill')",
-                  (MODUL, a.rullback_id, kver, khash, _manifest_hash(),
-                   forgjenger_digest))
-        m.commit()
-    except Exception as e:
-        m.rollback()
-        raise SystemExit(
-            f"AVBRUTT: rullback-releasen {a.rullback_id} finnes alt i"
-            " registeret med et ANNET innhold enn drillen ville skrevet"
-            f" (kontrakt v{kver}, manifest {_manifest_hash()[:12]}…, digest"
-            f" {str(forgjenger_digest)[:19]}…): {e}\nRaden er immutabel, så"
-            " den kan ikke rettes — og hadde drillen rullet dit likevel,"
-            " ville fase 2 dødd på nøyaktig denne konflikten ETTER at den"
-            " levende deploymenten var drenert. Kjør drillen med en"
-            " ubrukt --rullback-id.") from e
-    m.execute("RESET ROLE")
+    registrer_rullbakkreleasen(m, a.rullback_id, kver, khash,
+                               forgjenger_digest)
 
     # (b) — det løpende oppdraget. Arbeideren stoppes så bestillingen
     # beviselig ligger uclaimet, startes, og rullingen fyres i det claimet

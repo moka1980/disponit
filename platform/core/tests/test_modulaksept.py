@@ -1365,6 +1365,70 @@ def test_drillen_nekter_naar_forgjengerens_bytes_ikke_kan_bootes():
     assert "forgjenger" in str(ei.value)
 
 
+def test_en_eksisterende_rullbakkrelease_maales_for_rullingen():
+    """Codex' P1 (runde 6): registreringen av `--rullback-id` lå inne i en
+    «finnes raden alt?»-test.
+
+    Fantes raden, hoppet drillen over `registrer_release` helt — og dermed
+    over den eneste sammenligningen mellom raden og bytene den mente å
+    rulle tilbake til. Testen ga heller ingenting: `registrer_release`
+    (014) er selv idempotent, og hever `release (…) er immutable` på
+    avvikende innhold. Innpakningen fjernet bare porten.
+
+    Og det som slapp forbi var destruktivt: `bytt_release` validerer kun
+    kontrakten, så drillen ville drenert den levende deploymenten og
+    flyttet registeret til den avvikende releasen — konflikten dukket
+    først opp i fase 2, etter rullingen, med modulen uten claimende
+    arbeider og drilltilstanden oppbrukt."""
+    d = _drillskript()
+
+    class _Base:
+        """Registrerer kallene; `sprekk` hever på registrer_release."""
+
+        def __init__(self, sprekk=None):
+            self.kall, self.sprekk = [], sprekk
+            self.rullet_tilbake = False
+
+        def execute(self, sql, params=None):
+            self.kall.append((sql, params))
+            if self.sprekk and "registrer_release" in sql:
+                raise RuntimeError(self.sprekk)
+            return self
+
+        def commit(self):
+            self.kall.append(("COMMIT", None))
+
+        def rollback(self):
+            self.rullet_tilbake = True
+
+    # Raden skrives UANSETT — ingen «finnes den?»-omvei foran.
+    ok = _Base()
+    d.registrer_rullbakkreleasen(ok, "wcag-r12", 1, "kh", "aa" * 32)
+    kall = [s for s, _ in ok.kall]
+    assert not any("SELECT 1 FROM modulrelease" in s for s in kall), \
+        "eksistenstesten er tilbake — da måles den eksisterende raden ikke"
+    (reg,) = [p for s, p in ok.kall if "registrer_release" in s]
+    assert reg[1] == "wcag-r12" and reg[5] == "aa" * 32, \
+        "digesten må være forgjengerens, ikke den drilledes"
+    assert reg[4] == d._manifest_hash(), \
+        "manifesthashen må være utsjekkingens, som fase 2 regner den ut"
+    assert "COMMIT" in kall and kall[-1] == "RESET ROLE"
+
+    # Avvikende rad: drillen stopper HER, før noen `bytt_release`.
+    sprakk = _Base(sprekk="release (m_wcag_audit,wcag-r12) er immutable")
+    with pytest.raises(SystemExit) as ei:
+        d.registrer_rullbakkreleasen(sprakk, "wcag-r12", 1, "kh", "aa" * 32)
+    assert "immutabel" in str(ei.value) and "wcag-r12" in str(ei.value)
+    assert sprakk.rullet_tilbake
+    assert not any("bytt_release" in s for s, _ in sprakk.kall)
+
+    # …og porten står før rullingen også i kilden.
+    tekst = (ROT / "deploy/staging/rollback-m56.py").read_text(
+        encoding="utf-8")
+    assert (tekst.index("registrer_rullbakkreleasen(m, a.rullback_id")
+            < tekst.index("SELECT bytt_release"))
+
+
 def test_kandidatens_oppdrag_bestilles_forst_naar_rullbakken_er_fenced(
         monkeypatch, tmp_path):
     """Codex' P2 (runde 6): `o3` ble bestilt FØR kandidatens fase 2.
