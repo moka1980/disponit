@@ -277,10 +277,38 @@ KONTRAKTFELT = {"kl": "sideeffektklasse", "rev": "reversibilitet"}
 # ville pensjonert nitten av dem. Tabellen er den siste CREATE/ALTER TABLE før
 # vilkåret. SQL-kommentarer fjernes først — 038 SITERER formen «CHECK (hendelse
 # IN (...))» i en kommentar, og den ville ellers slettet en tabells enum.
+#
+# Og navnet må NORMALISERES før det brukes som nøkkel (Codex P2 på #118, femte
+# runde). Migrasjonene skriver samme tabell på to måter: 026 oppretter `varsel`,
+# 035 endrer `public.varsel` — konvensjonen i repoet er å kvalifisere med skjema
+# når setningen står inne i en `DO`-blokk. Uten normalisering blir det to
+# nøkler, og «siste vilkår gjelder» slutter å gjelde på tvers av dem: en senere
+# innstramming skrevet `public.<tabell>` ville ikke pensjonert noe som helst,
+# fordi den la seg ved siden av den opprinnelige i stedet for oppå. `public` er
+# standardskjemaet og derfor ikke en del av identiteten; et ANNET skjema er det,
+# og blir stående.
 _TABELL_RE = re.compile(
-    r"\b(?:CREATE|ALTER)\s+TABLE(?:\s+IF\s+(?:NOT\s+)?EXISTS)?\s+([\w.]+)", re.I)
+    r"\b(?:CREATE|ALTER)\s+TABLE(?:\s+IF\s+(?:NOT\s+)?EXISTS)?\s+([\w.\"]+)",
+    re.I)
 _CHECK_RE = re.compile(r"CHECK\s*\(\s*(\w+)\s+IN\s*\(([^)]*)\)", re.S)
 _SQL_KOMMENTAR_RE = re.compile(r"--[^\n]*")
+
+
+def _tabellnavn(rå: str) -> str:
+    """Tabellidentiteten bak et navn slik migrasjonen skrev det.
+
+    Anførselstegn og bokstavstørrelse bort, og `public.`-prefikset bort fordi
+    det er standardskjemaet: `public.varsel` og `varsel` ER samme tabell.
+
+    Et navn som ikke lar seg løse opp — 018 gjør `ALTER TABLE public.%I` med
+    tabellen i en løkkevariabel — beholdes som det står. Det er med vilje: da
+    blir det sin egen nøkkel som aldri smelter sammen med en ekte tabell, i
+    stedet for å bli tom streng og dermed dele nøkkel med et vilkår vi ikke
+    fant noen tabell for i det hele tatt.
+    """
+    navn = rå.lower().replace('"', "")
+    skjema, _, rest = navn.partition(".")
+    return rest if rest and skjema == "public" else navn
 
 
 def _registerets_enums() -> tuple[dict[tuple[str, str], set[str]], set[str]]:
@@ -294,7 +322,8 @@ def _registerets_enums() -> tuple[dict[tuple[str, str], set[str]], set[str]]:
     noen_gang: set[str] = set()
     for sql in sorted(MIGRASJONER.glob("*.sql")):
         tekst = _SQL_KOMMENTAR_RE.sub("", sql.read_text(encoding="utf-8"))
-        tabeller = [(m.start(), m.group(1)) for m in _TABELL_RE.finditer(tekst)]
+        tabeller = [(m.start(), _tabellnavn(m.group(1)))
+                    for m in _TABELL_RE.finditer(tekst)]
         for m in _CHECK_RE.finditer(tekst):
             verdier = set(re.findall(r"'([^']*)'", m.group(2)))
             if not verdier:
