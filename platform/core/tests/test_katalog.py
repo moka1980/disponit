@@ -876,6 +876,10 @@ _LEGG_PA, _SLIPP, _NAVN = "legg på", "slipp", "navn"
 # En TABELL som slippes. Den tar med seg alt porten fører om den: vilkårene,
 # navnene de opptar, og at porten har lest den. Se `_registerets_enums()`.
 _SLIPP_TABELL = "slipp tabell"
+# Et ARVEFORHOLD som knyttes eller løses. Arven kopierer forelderens
+# CHECK-vilkår ned i barnet, og — i motsetning til `LIKE` — blir stående som
+# en BINDING: et vilkår forelderen får senere, får barnet også. Se `_arver()`.
+_ARVER, _INGEN_ARV = "arver", "ingen arv"
 # Et `ALTER TABLE … RENAME …`. Et omdøp legger hverken til eller fjerner et
 # vilkår, men det flytter NØKKELEN vilkåret står under — og nøkkelen er det
 # eneste et senere slipp har å treffe med. Se `_lesomdop()`.
@@ -959,6 +963,11 @@ def _lesstatement(stmt, tekst: str, ut: list, betinget: bool) -> None:
         ut.append((_LAGET, tabell, None, None, betinget))
         for element in stmt.tableElts or ():
             _lesvilkar(element, tabell, ut, betinget)
+        # ARVEN leses etter tabellens EGNE vilkår, som i teksten: PostgreSQL
+        # navngir det barnet selv erklærer ut fra barnets navn, og fletter
+        # arven inn etterpå.
+        for forelder in stmt.inhRelations or ():
+            ut.append((_ARVER, tabell, _navn(forelder), None, betinget))
         return
     if isinstance(stmt, pglast.ast.AlterTableStmt):
         tabell = _navn(stmt.relation)
@@ -966,6 +975,9 @@ def _lesstatement(stmt, tekst: str, ut: list, betinget: bool) -> None:
         for cmd in stmt.cmds or ():
             if cmd.subtype == pglast.enums.AlterTableType.AT_DropConstraint:
                 ut.append((_SLIPP, tabell, cmd.name, None, betinget))
+            elif cmd.subtype in _ARVESLAG:
+                ut.append((_ARVESLAG[cmd.subtype], tabell, _navn(cmd.def_),
+                           None, betinget))
             else:
                 # `ADD COLUMN IF NOT EXISTS` hopper over kolonnen — og
                 # vilkårene skrevet på den — når den alt finnes.
@@ -996,6 +1008,13 @@ _OMDOPSSLAG = {
     pglast.enums.ObjectType.OBJECT_TABCONSTRAINT: _OMDOP_VILKAR,
     pglast.enums.ObjectType.OBJECT_TABLE: _OMDOP_TABELL,
     pglast.enums.ObjectType.OBJECT_COLUMN: _OMDOP_KOLONNE,
+}
+# Kommandoene som knytter og løser et arveforhold etter at tabellen er
+# opprettet. `INHERIT` kopierer forelderens vilkår ned i barnet på stedet, som
+# `INHERITS` gjør i `CREATE TABLE`.
+_ARVESLAG = {
+    pglast.enums.AlterTableType.AT_AddInherit: _ARVER,
+    pglast.enums.AlterTableType.AT_DropInherit: _INGEN_ARV,
 }
 # Biten i `LIKE`-klausulen som sier at vilkårene skal kopieres. `INCLUDING ALL`
 # har den satt sammen med alle de andre, så bitene testes, ikke sammenlignes.
@@ -1255,7 +1274,7 @@ def _dynamiske_hendelser(skjelett: str, betinget: bool) -> list | None:
 def _ukjentgjort(hendelse: tuple) -> tuple:
     """Hendelsen med hullene byttet mot nøklene for «porten vet ikke».
 
-    ET OMDØP OG EN `LIKE` tåler ikke et hull. De andre hendelsene bærer
+    ET OMDØP, EN `LIKE` OG ET ARVEFORHOLD tåler ikke et hull. De andre hendelsene bærer
     uvissheten sin i en nøkkel — et vilkår på en ukjent tabell snittes inn som
     ukjent — men disse to FLYTTER eller KOPIERER mellom nøkler, og med ukjent
     avsender eller mottaker finnes ingen slik form: `_UKJENT_TABELL` kan ikke
@@ -1267,7 +1286,8 @@ def _ukjentgjort(hendelse: tuple) -> tuple:
     mal med NUL-tegn i navnet. Malen forblir altså ukjent, som den er.
     """
     slag, tabell, navn, uttrykk, betinget = hendelse[:5]
-    if slag in (_OMDOP_VILKAR, _OMDOP_TABELL, _OMDOP_KOLONNE, _LIKE):
+    if slag in (_OMDOP_VILKAR, _OMDOP_TABELL, _OMDOP_KOLONNE, _LIKE,
+                _ARVER, _INGEN_ARV):
         return hendelse if _HULL not in f"{tabell}{navn}{uttrykk}" \
             else _alt_uvisst(betinget)
     tabell = _UKJENT_TABELL if _HULL in tabell else tabell
@@ -1436,6 +1456,10 @@ def _registerets_enums(
     # Tabellene porten har LEST et `CREATE TABLE` for. En `LIKE` som kopierer
     # fra en tabell som ikke står her, kopierer noe porten ikke kjenner.
     laget: set[str] = set()
+    # {forelder: {barna som arver den}} — bindingen `INHERITS` setter opp. Den
+    # er levende: et vilkår forelderen får senere, får barna også. Se
+    # `_arver()`.
+    arv: dict[str, set[str]] = {}
     noen_gang: set[str] = set()
     for sql in sorted((mappe or MIGRASJONER).glob("*.sql")):
         for hendelse in _hendelsene(sql.read_text(encoding="utf-8")):
@@ -1456,6 +1480,15 @@ def _registerets_enums(
             if slag is _LIKE:
                 _liker(vilkar, opptatt, laget, tabell, navn)
                 continue
+            if slag is _ARVER:
+                _arver(vilkar, opptatt, laget, arv, tabell, navn)
+                continue
+            if slag is _INGEN_ARV:
+                # Et betinget `NO INHERIT` er ikke kjent utført, og en binding
+                # som blir stående kan bare gjøre snittet smalere.
+                if not hendelse[4]:
+                    arv.get(navn, set()).discard(tabell)
+                continue
             if slag in (_OMDOP_VILKAR, _OMDOP_TABELL, _OMDOP_KOLONNE):
                 _omdop(vilkar, opptatt, laget, hendelse)
                 continue
@@ -1475,14 +1508,19 @@ def _registerets_enums(
                     del vilkar[nokkel]
                 opptatt.pop(tabell, None)
                 laget.discard(tabell)
+                arv.pop(tabell, None)
                 continue
             if slag is _SLIPP:
                 if hendelse[4]:
                     # Et slipp bak en betingelse er ikke kjent kjørt, og et
                     # vilkår som blir stående kan bare gjøre snittet SMALERE.
                     continue
-                vilkar.pop((tabell, navn), None)
-                opptatt.get(tabell, {}).pop(navn, None)
+                # Slippet følger arven ned: PostgreSQL fjerner et arvet vilkår
+                # på barnet når det slippes på forelderen, og barnets kopi
+                # heter det samme.
+                for eier in [tabell] + _arvingene(arv, tabell):
+                    vilkar.pop((eier, navn), None)
+                    opptatt.get(eier, {}).pop(navn, None)
                 continue
             _, tabell, navn, uttrykk, betinget, kolonne = hendelse
             # NAVNET tildeles først, og uavhengig av om vilkåret binder noe
@@ -1504,6 +1542,14 @@ def _registerets_enums(
             if not bindinger:
                 continue
             vilkar[(tabell, navn)] = bindinger
+            # Og vilkåret følger arven ned. Et barn som alt fantes da vilkåret
+            # ble lagt på, får det av databasen — under samme navn — og uten
+            # det sto barnet igjen videre enn det er.
+            for barn in _arvingene(arv, tabell):
+                opptatt.setdefault(barn, {})[navn] = True
+                vilkar[(barn, navn if (barn, navn) not in vilkar
+                        else _sidestilt_navn(vilkar, barn, navn))] = \
+                    dict(bindinger)
             noen_gang |= set().union(*bindinger.values())
     gjeldende: dict[tuple[str, str], set[str]] = {}
     for (tabell, _), bindinger in vilkar.items():
@@ -1716,6 +1762,54 @@ def _liker(vilkar: dict, opptatt: dict, laget: set,
     for navn, er_check in opptatt.get(mal, {}).items():
         if er_check:
             opptatt.setdefault(tabell, {})[navn] = True
+
+
+def _arvingene(arv: dict, tabell: str) -> list[str]:
+    """Tabellene som arver `tabell` — og de som arver dem.
+
+    Arven går hele veien ned: et barnebarn håndhever besteforelderens vilkår
+    like fullt. Et navn tas bare med én gang, så en arvegraf porten leser i
+    feil rekkefølge ikke kan bli en evig løkke.
+    """
+    ut: list[str] = []
+    kø = [tabell]
+    while kø:
+        for barn in sorted(arv.get(kø.pop(), ())):
+            if barn not in ut:
+                ut.append(barn)
+                kø.append(barn)
+    return ut
+
+
+def _arver(vilkar: dict, opptatt: dict, laget: set, arv: dict,
+           barn: str, forelder: str) -> None:
+    """Vilkårene `INHERITS (forelder)` legger på barnet — nå og senere.
+
+    Codex P2 på #118, tjuefjerde runde. Bare `tableElts` ble gått gjennom, så
+    `INHERITS` gikk forbi i stillhet: PostgreSQL håndhever forelderens
+    CHECK-vilkår på barnet, og erklærte barnet selv et VIDERE vilkår på samme
+    kolonne, sto bare det videre igjen i modellen — porten godtok en klasse
+    databasen avviser.
+
+    KOPIEN VED OPPRETTELSEN er den samme som `LIKE … INCLUDING CONSTRAINTS`
+    gjør, med de samme svarene: vilkårene kommer inn under kildens navn, bare
+    CHECK-ene kopieres, og er forelderen en tabell porten aldri har lest, er
+    svaret uvisst for alt. `_liker()` eier den lesningen, og arven låner den.
+
+    MEN ARVEN ER LEVENDE, og det er forskjellen fra `LIKE`. Et vilkår
+    forelderen får ETTERPÅ, får barnet også, og et slipp på forelderen fjerner
+    barnets kopi. Bindingen føres derfor i `arv` og leses av
+    `_registerets_enums()` ved hvert tillegg og hvert slipp. Uten den ville et
+    vilkår lagt på forelderen i en senere migrasjon stått på barnet i
+    databasen og manglet i modellen — igjen den ene retningen som gjør skade.
+
+    GRENSEN: `CHECK … NO INHERIT` går ikke ned til barnet i databasen, men
+    gjør det her. Det gjør barnet SMALERE i modellen enn i registeret, altså
+    en rød port og ingen klasse gjennom — samme retning som porten ellers
+    velger når den ikke kan skille to former fra hverandre.
+    """
+    _liker(vilkar, opptatt, laget, barn, forelder)
+    arv.setdefault(forelder, set()).add(barn)
 
 
 def _registerenum(kolonne: str) -> set[str]:
@@ -3050,6 +3144,113 @@ def test_en_omdopt_mal_er_fortsatt_en_mal_porten_kjenner(tmp_path):
     assert gjeldende.get((MODULKONTRAKT, "reversibilitet")) == {
         "direkte", "kompenserende"}, (
         "det kopierte vilkåret fulgte ikke med malen gjennom omdøpet")
+
+
+@pytest.mark.parametrize("arven", [
+    # Arven satt opp i selve opprettelsen.
+    ("CREATE TABLE modulkontrakt (\n"
+     "    CONSTRAINT rev_bred CHECK (reversibilitet IN\n"
+     "        ('direkte', 'kompenserende', 'irreversibel')))\n"
+     "    INHERITS (kontraktmal);\n",),
+    # Og knyttet etterpå, som er den andre formen PostgreSQL har.
+    ("CREATE TABLE modulkontrakt (\n"
+     "    reversibilitet TEXT NOT NULL\n"
+     "        CONSTRAINT rev_bred CHECK (reversibilitet IN\n"
+     "            ('direkte', 'kompenserende', 'irreversibel')));\n",
+     "ALTER TABLE modulkontrakt INHERIT kontraktmal;\n"),
+])
+def test_et_barn_arver_forelderens_vilkaar(tmp_path, arven):
+    """`INHERITS` legger forelderens CHECK-vilkår på barnet.
+
+    Codex P2 på #118, tjuefjerde runde. Leseren gikk bare gjennom `tableElts`,
+    så arveklausulen sto igjen ulest — men PostgreSQL håndhever forelderens
+    vilkår på barnet, og en rad må stå i begge for å komme gjennom.
+
+    Barnet erklærer selv et VIDERE vilkår på samme kolonne. Uten arven i
+    modellen sto bare det videre igjen, og porten meldte `irreversibel` som
+    gyldig mens det arvede vilkåret avviser den.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE kontraktmal (\n"
+        "    reversibilitet TEXT NOT NULL\n"
+        "        CONSTRAINT rev_smal CHECK (reversibilitet IN\n"
+        "            ('direkte', 'kompenserende')));\n",
+        *arven)
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende.get((MODULKONTRAKT, "reversibilitet")) == {
+        "direkte", "kompenserende"}, (
+        "det arvede vilkåret ble aldri lest — bare barnets eget, videre "
+        "vilkår sto igjen")
+
+
+def test_arven_er_levende_og_ikke_en_kopi(tmp_path):
+    """Et vilkår forelderen får ETTERPÅ, får barnet også.
+
+    Det er forskjellen på arv og `LIKE`: `LIKE` kopierer én gang, mens
+    `INHERITS` blir stående som en binding. Uten den sto vilkåret databasen la
+    på barnet i tredje migrasjon bare på forelderen i modellen, og porten
+    godtok `irreversibel` — som barnet avviser.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE kontraktmal (reversibilitet TEXT NOT NULL);\n",
+        "CREATE TABLE modulkontrakt (\n"
+        "    CONSTRAINT rev_bred CHECK (reversibilitet IN\n"
+        "        ('direkte', 'kompenserende', 'irreversibel')))\n"
+        "    INHERITS (kontraktmal);\n",
+        "ALTER TABLE kontraktmal ADD CONSTRAINT rev_smal\n"
+        "    CHECK (reversibilitet IN ('direkte', 'kompenserende'));\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende.get((MODULKONTRAKT, "reversibilitet")) == {
+        "direkte", "kompenserende"}, (
+        "vilkåret forelderen fikk etter arven ble aldri lagt på barnet")
+
+
+def test_et_slipp_paa_forelderen_fjerner_barnets_kopi(tmp_path):
+    """Slippet går samme vei som arven — ned.
+
+    PostgreSQL fjerner det arvede vilkåret på barnet når det slippes på
+    forelderen; barnets kopi heter det samme og har ingen selvstendig
+    tilværelse. Ble kopien stående i modellen, snittet porten mot et vilkår
+    som ikke finnes, og avviste `irreversibel` — en verdi barnet godtar etter
+    slippet.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE kontraktmal (\n"
+        "    reversibilitet TEXT NOT NULL\n"
+        "        CONSTRAINT rev_smal CHECK (reversibilitet IN\n"
+        "            ('direkte', 'kompenserende')));\n",
+        "CREATE TABLE modulkontrakt (\n"
+        "    CONSTRAINT rev_bred CHECK (reversibilitet IN\n"
+        "        ('direkte', 'kompenserende', 'irreversibel')))\n"
+        "    INHERITS (kontraktmal);\n",
+        "ALTER TABLE kontraktmal DROP CONSTRAINT rev_smal;\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende.get((MODULKONTRAKT, "reversibilitet")) == {
+        "direkte", "kompenserende", "irreversibel"}, (
+        "barnets kopi ble stående etter at vilkåret var sluppet på "
+        "forelderen")
+
+
+def test_en_ukjent_forelder_er_uvisst(tmp_path):
+    """Arver tabellen noe porten aldri har lest, vet den ingenting.
+
+    Samme svar som en `LIKE` fra en ukjent mal: forelderen kan bære nøyaktig
+    det vilkåret katalogen måles mot, og «ingen arvede vilkår» ville vært en
+    gjetning som bare kan gjøre svaret videre.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE modulkontrakt (\n"
+        "    CONSTRAINT rev_bred CHECK (reversibilitet IN\n"
+        "        ('direkte', 'kompenserende', 'irreversibel')))\n"
+        "    INHERITS (ekstern_mal);\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende.get((_UKJENT_TABELL, _UKJENT_KOLONNE)) == {
+        ULESELIG_SQL}, (
+        "forelderen porten aldri har lest ble lest som om den var tom")
 
 
 @pytest.mark.parametrize("vilkar", [
