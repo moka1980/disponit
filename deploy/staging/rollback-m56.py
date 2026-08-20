@@ -83,11 +83,14 @@ import importlib.util
 import json
 import os
 import re
+import secrets
 import subprocess
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+
+import psycopg
 
 HER = Path(__file__).resolve().parent
 REPO = HER.parents[1]
@@ -101,10 +104,21 @@ POLL_S = 0.1
 #: (`sha256:…`) — settes av `lokalt_motorimage()` og bæres inn i hver
 #: sjekklistefase av `_kjor_faser`. Se der for hvorfor taggen ikke duger.
 PINNET_MOTORIMAGE = ""
-# Låserommet for flippedriller. Egen klasse, ikke delt med arbeiderens
-# eller migrasjonenes nøkler, så en drill aldri kolliderer med noe annet
-# enn en annen drill av samme modul+miljø.
+# Låserommet for drill-mot-drill. Egen klasse (to-heltallsrommet), ikke
+# delt med arbeiderens eller migrasjonenes nøkler, så denne ene nøkkelen
+# aldri kolliderer med noe annet enn en annen drill av samme modul+miljø.
+# Reservasjonen mot VANLIGE deployment-overganger er noe annet enn en
+# lås — se `ta_drillereservasjonen` for hvorfor den må være en rad.
 DRILLNOKKEL = 915_774_056
+#: Tokenet drillens sesjoner presenterer for `moduldeployment`-vakten
+#: (049). Settes av `ta_drillereservasjonen`, arves av sjekklistefasene
+#: gjennom miljøet.
+RESERVASJONSTOKEN = ""
+#: Sikkerhetsventilen bak reservasjonen: dør drillen så brått at heller
+#: ikke `finally` rekker å frigi, skal gjerdet falle av seg selv. Romslig
+#: nok til hele drillen (fasene har egne frister på minutter), kort nok
+#: til at en glemt reservasjon ikke er et driftsproblem over natten.
+RESERVASJONSVARIGHET = "2 hours"
 
 
 def _api_url() -> str:
@@ -732,6 +746,42 @@ def ta_drillereservasjonen(m) -> None:
     første er ferdig, ville målt en HELT annen tilstand enn den leste
     argumentene for — den drillede releasen er da drenert og
     drill-id-ene brukt opp. Riktig svar er å si ifra, ikke å vente.
+
+    OG DEN GJERDER BARE EN ANNEN DRILL (Codex' P1 på PR #117, runde 14).
+    Nøkkelen over står i advisory-låsens to-heltallsrom, mens registerets
+    egne overganger tar `pg_advisory_xact_lock(hashtextextended('modul:'
+    || modul_id, 0))` — et ANNET låserom. En vanlig `bytt_release`, et
+    `noddeaktiver_modul` eller en `sett_modulstatus` så altså aldri
+    drillens reservasjon, og kunne drenere rullbakk- eller
+    kandidatdeploymenten MELLOM to faser: målingene blir noe annet enn de
+    sier, de enveis drill-id-ene er brukt opp uansett, og miljøet står
+    halvt over i en tilstand ingen artefakt beskriver.
+
+    Den reservasjonen kan ikke være en advisory-lås i det rommet heller:
+
+      * eksklusivt ville den stengt claim-porten i 015, som tar den samme
+        modulnøkkelen DELT for hvert eneste claim — og drillen måler
+        nettopp claiming, så den ville ventet på seg selv;
+      * delt ville den stengt drillens EGNE overganger ute, for de går
+        gjennom sjekklistens faser 2/4/9 i EGNE prosesser med egne
+        sesjoner, og en advisory-lås gjelder én sesjon.
+
+    Derfor er reservasjonen en RAD (`moduldeployment_reservasjon`, 049)
+    med et token som innehaver, og porten står på `moduldeployment` som
+    en trigger — altså på enhver skrivevei inn i deploymentflaten, ikke
+    bare de funksjonene noen husket å endre. Tokenet settes i denne
+    sesjonens `disponit.deployreservasjon` OG i miljøet, så
+    sjekklistefasene under `_kjor_faser` arver det og slipper gjennom
+    sin egen drills gjerde.
+
+    En operatørs deployment eller nødstopp blir dermed AVVIST, ikke satt
+    i kø, så lenge drillen står. Det er valgt med åpne øyne: en overgang
+    midt i drillen ødelegger en destruktiv, uigjentakelig måling og
+    etterlater registeret et sted ingen av partene sikter mot. Haster
+    det virkelig, dør drillprosessen — og `frigi_drillereservasjonen`,
+    registrert med `atexit` i det reservasjonen tas, slipper gjerdet med
+    én gang. Skulle prosessen dø så brått at heller ikke det rekkes,
+    står utløpstiden igjen som sikkerhetsventil.
     """
     fikk = m.execute("SELECT pg_try_advisory_lock(%s, hashtext(%s))",
                      (DRILLNOKKEL, f"{MODUL}:{MILJO}")).fetchone()[0]
@@ -745,6 +795,57 @@ def ta_drillereservasjonen(m) -> None:
             " par drill-id-er er brukt opp uten at noen av artefaktene"
             " beskriver tilstanden staging står igjen i. Vent til den"
             " andre drillen er ferdig; låsen slippes når prosessen dør.")
+    # …og reservasjonen av deploymentflaten, som gjelder ALLE sesjoner:
+    # tokenet i miljøet arves av sjekklistefasenes egne prosesser.
+    token = f"drill-{MODUL}-{MILJO}-{secrets.token_hex(8)}"
+    _admin(m)
+    try:
+        m.execute("SELECT ta_deployreservasjon(%s,%s,%s,'m56-drill',%s)",
+                  (MODUL, MILJO, token, RESERVASJONSVARIGHET))
+    except psycopg.errors.LockNotAvailable as e:
+        m.rollback()
+        raise SystemExit(
+            f"AVBRUTT: deploymentflaten for ({MODUL}, {MILJO}) er alt"
+            f" reservert — {e}. En drill som starter oppå en annen"
+            " reservasjon, måler et register som flytter seg under den,"
+            " og drill-id-ene er brukt opp uansett hva målingen ender"
+            " med.")
+    # Tokenet settes FØRST når reservasjonen er tatt: et token vi ikke
+    # eier, er ingenting å frigi og ingenting å presentere.
+    global RESERVASJONSTOKEN
+    RESERVASJONSTOKEN = token
+    m.execute("RESET ROLE")
+    # Sesjonsnivå (`false`), ikke transaksjonsnivå: drillen committer
+    # mange ganger, og gjerdet skal stå for hver eneste av dem.
+    m.execute("SELECT set_config('disponit.deployreservasjon',%s,false)",
+              (token,))
+    m.commit()
+    os.environ["DISPONIT_DEPLOYRESERVASJON"] = token
+    atexit.register(frigi_drillereservasjonen, m)
+
+
+def frigi_drillereservasjonen(m) -> None:
+    """Slipper deploymentflaten igjen. Feiler ALDRI drillen.
+
+    Registrert med `atexit` i det reservasjonen tas: er drillen ferdig —
+    grønn, rød eller avbrutt — skal ikke gjerdet stå igjen og avvise
+    neste deployment helt til utløpstiden. En feilende frigivelse er
+    likevel ikke en feilende drill: målingen er gjort, artefaktet er
+    skrevet, og utløpet rydder uansett. Derfor bare en advarsel.
+    """
+    if not RESERVASJONSTOKEN:
+        return
+    try:
+        m.rollback()          # veien hit kan gå via en avbrutt transaksjon
+        _admin(m)
+        m.execute("SELECT frigi_deployreservasjon(%s,%s,%s)",
+                  (MODUL, MILJO, RESERVASJONSTOKEN))
+        m.execute("RESET ROLE")
+        m.commit()
+        print(f"  reservasjonen på ({MODUL}, {MILJO}) er frigitt")
+    except Exception as e:                                  # noqa: BLE001
+        print(f"  ADVARSEL: reservasjonen ble ikke frigitt ({e}) — den"
+              f" utløper av seg selv etter {RESERVASJONSVARIGHET}")
 
 
 def skriv_artefakt(delvis: Path, ut: Path, innhold: str) -> None:

@@ -208,6 +208,8 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'pensjoner_release(text,text,text,text)',            'disponit_modul_eier'),
     ('FUNCTION', 'noddeaktiver_modul(text,text,text)',               'disponit_modul_eier'),
     ('FUNCTION', 'reaktiver_modul(text,bigint,text)',                'disponit_modul_eier'),
+    ('FUNCTION', 'ta_deployreservasjon(text,text,text,text,interval)', 'disponit_modul_eier'),
+    ('FUNCTION', 'frigi_deployreservasjon(text,text,text)',          'disponit_modul_eier'),
     -- PR-014b: domene/artefakt-funksjonene, eid av disponit_domene_eier.
     ('FUNCTION', 'utsted_challenge(text,text,boolean,text,text)',     'disponit_domene_eier'),
     ('FUNCTION', 'verifiser_domenekontroll(text,text,boolean,text)',  'disponit_domene_eier'),

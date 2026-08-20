@@ -216,6 +216,19 @@ def _miljo() -> dict:
 
 def _pg(dsn: str):
     c = psycopg.connect(dsn)
+    # DRILLENS RESERVASJON ARVES (Codex P1, #117 runde 14). Flippedrillen
+    # reserverer deploymentflaten i `moduldeployment_reservasjon` (049) og
+    # `moduldeployment`-vakten avviser enhver overgang som ikke presenterer
+    # innehaver-tokenet. Fasene 2/4/9 er drillens EGNE overganger, men de
+    # kjøres som egne prosesser med egne sesjoner — uten tokenet ville
+    # drillen blitt stoppet av sitt eget gjerde. Er variabelen ikke satt
+    # (en vanlig sjekklisterunde), settes ingenting, og en runde som treffer
+    # en ANNENS reservasjon skal nettopp avvises.
+    token = os.environ.get("DISPONIT_DEPLOYRESERVASJON", "").strip()
+    if token:
+        c.execute("SELECT set_config('disponit.deployreservasjon',%s,false)",
+                  (token,))
+        c.commit()
     return c
 
 

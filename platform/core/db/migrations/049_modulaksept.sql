@@ -762,3 +762,149 @@ END $$;
 CREATE VIEW modulaksept_status AS
 SELECT modul_id, miljo, release_id, krav_id, drill_id, akseptert_ts
   FROM modulaksept;
+
+-- ------------------------------------------------------------
+-- 9. DRILLENS RESERVASJON AV DEPLOYMENTFLATEN (Codex P1, #117 runde 14).
+--
+--    Flippedrillen holdt en advisory-lås i sitt EGET nøkkelrom
+--    (to-heltallsrommet), mens registerets overganger tar
+--    `pg_advisory_xact_lock(hashtextextended('modul:' || modul_id, 0))`.
+--    To ulike låserom: en vanlig `bytt_release`, et `noddeaktiver_modul`
+--    eller en `sett_modulstatus` så aldri drillens reservasjon, og kunne
+--    drenere rullbakk- eller kandidatdeploymenten MELLOM to drillfaser.
+--    Målingene blir da noe annet enn de sier, de enveis drill-id-ene er
+--    brukt opp uansett, og miljøet står halvt over i en tilstand ingen
+--    artefakt beskriver. Drillåsen gjerdet bare en annen drill.
+--
+--    Reservasjonen kan ikke være en lås i det rommet heller, og det er
+--    poenget med at den er en RAD:
+--      * eksklusivt ville den stengt claim-porten i 015, som tar den
+--        samme modulnøkkelen DELT for hvert eneste claim — og drillen
+--        måler nettopp claiming, så den ville ventet på seg selv;
+--      * delt ville den stengt drillens EGNE overganger ute, for de går
+--        gjennom sjekklistens faser 2/4/9 i EGNE prosesser med egne
+--        sesjoner, og en advisory-lås gjelder én sesjon.
+--    Innehaveren er derfor et TOKEN som kan presenteres av alle drillens
+--    sesjoner (`disponit.deployreservasjon`), og porten står på tabellen
+--    — så den gjelder enhver skrivevei inn i `moduldeployment`, ikke bare
+--    de funksjonene noen husket å endre.
+--
+--    Utløpstiden er sikkerhetsventilen: en drill som dør uten å frigi,
+--    skal ikke stenge modulen for alltid. Frigivelsen ved normal slutt
+--    er den vanlige veien; utløpet er backstoppen.
+-- ------------------------------------------------------------
+CREATE TABLE moduldeployment_reservasjon (
+    modul_id   TEXT NOT NULL REFERENCES modulhode (modul_id),
+    miljo      TEXT NOT NULL,
+    innehaver  TEXT NOT NULL CHECK (btrim(innehaver) <> ''),
+    aktor      TEXT NOT NULL,
+    tatt_ts    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    utloper_ts TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (modul_id, miljo),
+    CHECK (utloper_ts > tatt_ts)
+);
+
+CREATE OR REPLACE FUNCTION moduldeployment_reservasjon_vakt()
+RETURNS TRIGGER LANGUAGE plpgsql SET search_path = pg_catalog AS $$
+DECLARE v_innehaver TEXT;
+BEGIN
+    SELECT r.innehaver INTO v_innehaver
+      FROM public.moduldeployment_reservasjon r
+     WHERE r.modul_id = NEW.modul_id AND r.miljo = NEW.miljo
+       AND r.utloper_ts > now();
+    -- Ingen reservasjon (det normale) → porten er ikke der. En modul uten
+    -- pågående drill merker ingenting til denne triggeren.
+    IF NOT FOUND THEN
+        RETURN NEW;
+    END IF;
+    IF v_innehaver IS DISTINCT FROM
+           current_setting('disponit.deployreservasjon', true) THEN
+        RAISE EXCEPTION 'moduldeployment: (%, %) er reservert av en pågående'
+            ' flippedrill (%). En overgang her ville drenert dens rullbakk-'
+            ' eller kandidatdeployment midt i en enveis, uigjentakelig'
+            ' måling — og drill-id-ene er brukt opp uansett hva målingen'
+            ' ender med. Vent til drillen er ferdig, eller presenter'
+            ' reservasjonen i disponit.deployreservasjon.',
+            NEW.modul_id, NEW.miljo, v_innehaver
+            USING ERRCODE = 'lock_not_available';
+    END IF;
+    RETURN NEW;
+END $$;
+-- DELETE er alt forbudt av `deployment_ingen_delete` (015), så INSERT og
+-- UPDATE er hele skriveflaten.
+DROP TRIGGER IF EXISTS deployment_reservasjon ON moduldeployment;
+CREATE TRIGGER deployment_reservasjon
+    BEFORE INSERT OR UPDATE ON moduldeployment
+    FOR EACH ROW EXECUTE FUNCTION moduldeployment_reservasjon_vakt();
+
+CREATE OR REPLACE FUNCTION ta_deployreservasjon(
+    p_modul_id TEXT, p_miljo TEXT, p_innehaver TEXT, p_aktor TEXT,
+    p_varighet INTERVAL)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+DECLARE v_annen TEXT;
+BEGIN
+    IF p_innehaver IS NULL OR btrim(p_innehaver) = '' THEN
+        RAISE EXCEPTION 'ta_deployreservasjon: innehaver er obligatorisk —'
+            ' en reservasjon uten innehaver kan ingen presentere'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF p_varighet IS NULL OR p_varighet <= interval '0 seconds' THEN
+        RAISE EXCEPTION 'ta_deployreservasjon: varigheten må være positiv —'
+            ' en reservasjon som er utløpt i det den tas, gjerder ingenting'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- Samme modul-lås overgangene tar: reservasjonen kan ikke tas midt i
+    -- et `bytt_release` som alt er i gang, og to samtidige forsøk på å ta
+    -- den kan ikke begge lese «ledig».
+    PERFORM pg_advisory_xact_lock(hashtextextended('modul:' || p_modul_id, 0));
+    SELECT r.innehaver INTO v_annen
+      FROM public.moduldeployment_reservasjon r
+     WHERE r.modul_id = p_modul_id AND r.miljo = p_miljo
+       AND r.utloper_ts > now() AND r.innehaver <> p_innehaver;
+    IF FOUND THEN
+        RAISE EXCEPTION 'ta_deployreservasjon: (%, %) er alt reservert av %',
+            p_modul_id, p_miljo, v_annen USING ERRCODE = 'lock_not_available';
+    END IF;
+    -- En utløpt rad, eller vår egen fra et tidligere forsøk, ryddes: å ta
+    -- den samme reservasjonen om igjen er idempotent, ikke en kollisjon.
+    DELETE FROM public.moduldeployment_reservasjon r
+     WHERE r.modul_id = p_modul_id AND r.miljo = p_miljo;
+    INSERT INTO public.moduldeployment_reservasjon
+        (modul_id, miljo, innehaver, aktor, utloper_ts)
+    VALUES (p_modul_id, p_miljo, p_innehaver, p_aktor, now() + p_varighet);
+END $$;
+
+CREATE OR REPLACE FUNCTION frigi_deployreservasjon(
+    p_modul_id TEXT, p_miljo TEXT, p_innehaver TEXT)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+BEGIN
+    -- Bare sin EGEN: en annens reservasjon frigis av utløpet, ikke av en
+    -- kaller som gjerne vil deploye.
+    DELETE FROM public.moduldeployment_reservasjon r
+     WHERE r.modul_id = p_modul_id AND r.miljo = p_miljo
+       AND r.innehaver = p_innehaver;
+END $$;
+
+-- Vakten er en INVOKER-funksjon som `moduldeployment_livslop` (014) og
+-- eies av migrator som den: den leser bare reservasjonsraden, og den skal
+-- ikke bære en fullmakt kalleren ikke har. Definerne under er noe annet —
+-- de SKRIVER reservasjonen, og eies av modul_eier som resten av CP2.
+ALTER FUNCTION ta_deployreservasjon(TEXT, TEXT, TEXT, TEXT, INTERVAL)
+    OWNER TO disponit_modul_eier;
+ALTER FUNCTION frigi_deployreservasjon(TEXT, TEXT, TEXT)
+    OWNER TO disponit_modul_eier;
+SET LOCAL ROLE disponit_modul_eier;
+REVOKE ALL ON FUNCTION ta_deployreservasjon(TEXT, TEXT, TEXT, TEXT, INTERVAL)
+    FROM PUBLIC;
+REVOKE ALL ON FUNCTION frigi_deployreservasjon(TEXT, TEXT, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION ta_deployreservasjon(TEXT, TEXT, TEXT, TEXT, INTERVAL)
+    TO disponit_modules_admin;
+GRANT EXECUTE ON FUNCTION frigi_deployreservasjon(TEXT, TEXT, TEXT)
+    TO disponit_modules_admin;
+RESET ROLE;
+-- Vakten leser tabellen som den rollen som skriver `moduldeployment` —
+-- definerne (`disponit_modul_eier`) og migrator, som eier begge.
+GRANT SELECT, INSERT, DELETE ON moduldeployment_reservasjon
+    TO disponit_modul_eier;

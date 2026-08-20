@@ -14,6 +14,7 @@ IDENTITETEN bærer, ikke bytene (alle m56-releaser i prod deler digest).
 
 Alle tester konstruerer egen tilstand. Ingen delt fixture.
 """
+import atexit
 import hashlib
 import json
 import os
@@ -1869,13 +1870,19 @@ def test_bare_en_flippedrill_av_gangen(tmp_path):
     assert delvis.exists(), "den førstes reservasjon skal stå urørt"
 
     class _Laas:
-        """Bare det låseporten spør om: fikk vi låsen, eller ikke."""
+        """Så mye av forbindelsen som reservasjonsporten rører.
 
-        def __init__(self, fikk):
-            self.fikk, self.kall = fikk, []
+        `fikk` er svaret på drillåsen; `sprekk` er unntaket
+        `ta_deployreservasjon` eventuelt kaster.
+        """
+
+        def __init__(self, fikk, sprekk=None):
+            self.fikk, self.sprekk, self.kall = fikk, sprekk, []
 
         def execute(self, sql, params=None):
             self.kall.append((sql, params))
+            if self.sprekk and "ta_deployreservasjon" in sql:
+                raise self.sprekk
             return self
 
         def fetchone(self):
@@ -1884,6 +1891,13 @@ def test_bare_en_flippedrill_av_gangen(tmp_path):
         def commit(self):
             self.kall.append(("COMMIT", None))
 
+        def rollback(self):
+            self.kall.append(("ROLLBACK", None))
+
+    def _sporringer(laas):
+        return [(s, p) for s, p in laas.kall
+                if s not in ("COMMIT", "ROLLBACK")]
+
     # 2) Låsen er den egentlige porten — og den avviser, den venter ikke:
     #    en drill som står i kø starter mot en helt annen tilstand enn
     #    den leste argumentene sine for.
@@ -1891,17 +1905,95 @@ def test_bare_en_flippedrill_av_gangen(tmp_path):
     with pytest.raises(SystemExit) as ei:
         d.ta_drillereservasjonen(holdt)
     assert "drillåsen" in str(ei.value)
-    (sql, params), = [(s, p) for s, p in holdt.kall if s != "COMMIT"]
+    (sql, params), = _sporringer(holdt)
     assert "pg_try_advisory_lock" in sql, \
         "blokkerende lås: drillen ville ventet og målt en annen tilstand"
     assert "_xact_" not in sql, \
         "transaksjonslåsen slippes ved første commit — drillen har mange"
     assert params == (d.DRILLNOKKEL, f"{d.MODUL}:{d.MILJO}")
 
-    # Ledig lås: porten slipper gjennom, og slipper den ALDRI igjen —
-    # den skal holdes av sesjonen til prosessen dør.
+    # 2b) DRILLÅSEN GJERDER BARE EN ANNEN DRILL (Codex P1, runde 14).
+    #     Nøkkelen over står i advisory-låsens to-heltallsrom; registerets
+    #     overganger — `bytt_release`, `noddeaktiver_modul`,
+    #     `reaktiver_modul`, `sett_modulstatus` — tar
+    #     `hashtextextended('modul:' || modul_id, 0)`, et annet rom. En
+    #     vanlig deployment så derfor aldri drillens reservasjon og kunne
+    #     drenere rullbakk- eller kandidatdeploymenten mellom to faser.
+    #
+    #     Reservasjonen kan ikke være en advisory-lås i DET rommet heller:
+    #     eksklusivt stenger den claim-porten i 015 (som tar den samme
+    #     nøkkelen delt for hvert claim, og drillen måler nettopp
+    #     claiming), delt stenger den drillens EGNE overganger, som går i
+    #     egne prosesser med egne sesjoner. Derfor: en rad med et token.
+    fjortende = (ROT / "platform/core/db/migrations/014_modulregister.sql"
+                 ).read_text(encoding="utf-8")
+    assert "pg_advisory_xact_lock(hashtextextended('modul:' || p_modul_id," \
+        " 0))" in fjortende, \
+        "014 har byttet modul-låsenøkkel — reservasjonen må vurderes på nytt"
+    femtende = (ROT / "platform/core/db/migrations/"
+                "015_modulregister_claim.sql").read_text(encoding="utf-8")
+    assert "hashtextextended('modul:' || r.eiermodul, 0)" in femtende, \
+        "claim-porten tar ikke lenger modulnøkkelen — reservasjonsformen" \
+        " må vurderes på nytt"
+
+    # Porten står på TABELLEN, ikke i de funksjonene noen husket å endre:
+    # en trigger på `moduldeployment` gjelder enhver skrivevei inn.
+    nittiende = (ROT / "platform/core/db/migrations/049_modulaksept.sql"
+                 ).read_text(encoding="utf-8")
+    assert "CREATE TABLE moduldeployment_reservasjon" in nittiende
+    assert "BEFORE INSERT OR UPDATE ON moduldeployment" in nittiende, \
+        "reservasjonsvakten dekker ikke hele skriveflaten"
+    assert "current_setting('disponit.deployreservasjon', true)" in nittiende
+    assert "utloper_ts" in nittiende, \
+        "uten utløp stenger en død drill modulen for alltid"
+
+    # …og drillen tar den, med et token den også legger i MILJØET, så
+    # sjekklistefasenes egne prosesser slipper gjennom sitt eget gjerde.
     ledig = _Laas(True)
-    d.ta_drillereservasjonen(ledig)
+    try:
+        d.ta_drillereservasjonen(ledig)
+        token = os.environ.get("DISPONIT_DEPLOYRESERVASJON", "")
+        assert token and token == d.RESERVASJONSTOKEN, \
+            "fasene arver ikke tokenet — drillen stoppes av sitt eget gjerde"
+        tatt = [(s, p) for s, p in _sporringer(ledig)
+                if "ta_deployreservasjon" in s]
+        assert len(tatt) == 1 and tatt[0][1] == (
+            d.MODUL, d.MILJO, token, d.RESERVASJONSVARIGHET)
+        assert any("set_config('disponit.deployreservasjon'" in s
+                   and p == (token,) for s, p in _sporringer(ledig)), \
+            "drillens egen sesjon presenterer ikke reservasjonen"
+        assert any(",false)" in s for s, p in _sporringer(ledig)
+                   if "disponit.deployreservasjon" in s), \
+            "transaksjonsskopet GUC-et faller ved første commit"
+    finally:
+        atexit.unregister(d.frigi_drillereservasjonen)
+        os.environ.pop("DISPONIT_DEPLOYRESERVASJON", None)
+        d.RESERVASJONSTOKEN = ""
+
+    # Er flaten alt reservert, avvises drillen — den skal ikke måle et
+    # register som flytter seg under den.
+    opptatt = _Laas(True, psycopg.errors.LockNotAvailable("holdt av en annen"))
+    try:
+        with pytest.raises(SystemExit) as ei:
+            d.ta_drillereservasjonen(opptatt)
+        assert "reservert" in str(ei.value)
+        assert "DISPONIT_DEPLOYRESERVASJON" not in os.environ, \
+            "tokenet ble eksportert selv om reservasjonen ikke ble tatt"
+    finally:
+        atexit.unregister(d.frigi_drillereservasjonen)
+        d.RESERVASJONSTOKEN = ""
+
+    # Sjekklisten presenterer tokenet på HVER forbindelse den åpner —
+    # ellers står drillens egne faser 2/4/9 utenfor sin egen reservasjon.
+    sjekk_kode = (ROT / "deploy/staging/wcag-staging-sjekkliste.py").read_text(
+        encoding="utf-8")
+    pg_kropp = sjekk_kode.split("def _pg(", 1)[1].split("\ndef ", 1)[0]
+    assert "DISPONIT_DEPLOYRESERVASJON" in pg_kropp \
+        and "set_config('disponit.deployreservasjon'" in pg_kropp, \
+        "fasene åpner forbindelser uten å presentere reservasjonen"
+
+    # Drillåsen slippes ALDRI underveis — den skal holdes av sesjonen til
+    # prosessen dør.
     assert not any("advisory_unlock" in s for s, _ in ledig.kall)
     tekst = (ROT / "deploy/staging/rollback-m56.py").read_text(
         encoding="utf-8")
@@ -1915,6 +2007,103 @@ def test_bare_en_flippedrill_av_gangen(tmp_path):
     assert (kropp.index("ta_drillereservasjonen(m)")
             < kropp.index("den_ene_claimende(m)")), \
         "låsen må stå foran oppslaget den beskytter"
+
+
+@pg
+def test_reservasjonen_gjerder_hele_deploymentflaten(migrator):
+    """Codex' P1 (runde 14): drillåsen lå i advisory-låsens
+    to-heltallsrom, mens registerets overganger tar
+    `hashtextextended('modul:' || modul_id, 0)`. To ulike låserom — en
+    vanlig `bytt_release` eller et `noddeaktiver_modul` så aldri
+    drillens reservasjon, og kunne drenere rullbakk- eller
+    kandidatdeploymenten MELLOM to drillfaser. Målingene blir da noe
+    annet enn de sier, og de enveis drill-id-ene er brukt opp uansett.
+
+    Porten står derfor på `moduldeployment` selv: den gjelder enhver
+    skrivevei inn i flaten, ikke bare de funksjonene noen husket å endre,
+    og innehaveren er et token drillens EGNE sesjoner kan presentere —
+    fasene 2/4/9 kjører i egne prosesser, så en sesjonslås ville stengt
+    drillen ute fra sitt eget gjerde."""
+    k = _kjede(migrator)
+    token = "drill-" + secrets.token_hex(6)
+
+    def _drener():
+        return migrator.execute(
+            "UPDATE moduldeployment SET livslop='draining'"
+            " WHERE modul_id=%s AND miljo='staging' AND livslop='claiming'",
+            (k["mid"],))
+
+    # Uten reservasjon merker ingen at triggeren finnes.
+    _drener()
+    migrator.rollback()
+
+    migrator.execute("SET ROLE disponit_modules_admin")
+    migrator.execute(
+        "SELECT ta_deployreservasjon(%s,'staging',%s,'test','2 hours')",
+        (k["mid"], token))
+    migrator.execute("RESET ROLE")
+    migrator.commit()
+    try:
+        # En overgang uten tokenet avvises — også for tabelleieren.
+        with pytest.raises(psycopg.errors.LockNotAvailable):
+            _drener()
+        migrator.rollback()
+        # …og en annen kan ikke ta reservasjonen fra innehaveren.
+        migrator.execute("SET ROLE disponit_modules_admin")
+        with pytest.raises(psycopg.errors.LockNotAvailable):
+            migrator.execute(
+                "SELECT ta_deployreservasjon(%s,'staging','en-annen',"
+                "'test','2 hours')", (k["mid"],))
+        migrator.rollback()
+        migrator.execute("RESET ROLE")
+        # Innehaveren selv slipper gjennom sitt eget gjerde.
+        migrator.execute(
+            "SELECT set_config('disponit.deployreservasjon',%s,true)",
+            (token,))
+        _drener()
+        migrator.rollback()
+        # En UTLØPT reservasjon gjerder ingenting: en drill som dør uten å
+        # frigi, skal ikke stenge modulen for alltid.
+        migrator.execute("UPDATE moduldeployment_reservasjon"
+                         " SET utloper_ts = now() - interval '1 minute',"
+                         "     tatt_ts = now() - interval '3 hours'"
+                         " WHERE modul_id=%s", (k["mid"],))
+        _drener()
+        migrator.rollback()
+    finally:
+        migrator.rollback()
+        migrator.execute("SET ROLE disponit_modules_admin")
+        migrator.execute("SELECT frigi_deployreservasjon(%s,'staging',%s)",
+                         (k["mid"], token))
+        migrator.execute("RESET ROLE")
+        migrator.commit()
+    # …og frigivelsen tok den faktisk bort.
+    assert migrator.execute(
+        "SELECT count(*) FROM moduldeployment_reservasjon WHERE modul_id=%s",
+        (k["mid"],)).fetchone()[0] == 0
+    _drener()
+    migrator.rollback()
+
+
+@pg
+def test_reservasjonen_er_ikke_runtimes_a_ta(migrator):
+    """Port 9 for reservasjonen: kjøretidsrollen har verken EXECUTE på
+    funksjonene eller DML på tabellen. Kunne den tatt en reservasjon,
+    kunne den også stengt enhver deployment av enhver modul."""
+    rt = _rt()
+    try:
+        for sql in ("SELECT ta_deployreservasjon('m','staging','t','a',"
+                    "'1 hour')",
+                    "SELECT frigi_deployreservasjon('m','staging','t')",
+                    "INSERT INTO moduldeployment_reservasjon (modul_id,"
+                    " miljo, innehaver, aktor, utloper_ts) VALUES"
+                    " ('m','staging','t','a', now()+interval '1 hour')",
+                    "DELETE FROM moduldeployment_reservasjon"):
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                rt.execute(sql)
+            rt.rollback()
+    finally:
+        rt.close()
 
 
 def test_drillen_nekter_flere_claimende_kontraktlinjer():
