@@ -207,12 +207,24 @@ MODUL_EN = {
 # ville med `.*?` latt treffet renne videre inn i NESTE post og gitt et
 # nummerpar som aldri sto sammen i kilden. Ingen `{`/`}` finnes inne i
 # feltverdiene, så klammeforbudet er en trygg postgrense.
+#
+# Mønsteret brukes bare til å hente VERDIENE ut av en post som alt er funnet
+# strukturelt, og det står forankret på postens egen begynnelse (Codex P2 på
+# #118, fjortende runde). Fritt søk gjennom skriptet var det som gjorde en
+# postformet STRENG i UI-koden til en modul til — se `les_katalog()`.
 POST_RE = re.compile(
     r"""\{\s*["']?n["']?\s*:\s*(\d+)\s*,"""
     r"""\s*["']?name["']?\s*:\s*(['"])(.*?)\2"""
     r"""[^{}]*?,\s*["']?area["']?\s*:\s*(['"])(.*?)\4"""
     r"""\s*,\s*["']?p["']?\s*:\s*(\d+)""",
     re.S)
+
+# Selve katalogen: `const M = [ … ]`. Den er ankeret postene leses ut av, og
+# den skal stå nøyaktig én gang — to `const M` er en redeklarasjon nettleseren
+# selv avviser. `let` og `var` er med fordi de erklærer det samme; endres
+# formen til noe annet enn en erklært liste, stopper generatoren HØYT i stedet
+# for å lete videre i skriptet.
+KATALOG_RE = re.compile(r"\b(?:const|let|var)\s+M\s*=\s*\[")
 
 # Katalogen bærer STRUKTUR (nummer, navn, område, fase) — ikke tilstand.
 # Et eget statusfelt her sto kort i #109 og er tatt ut igjen (Codex P1): to
@@ -407,6 +419,45 @@ def les_samling(post: str, i: int) -> int:
     return -1
 
 
+def les_elementer(tekst: str, i: int):
+    """Gi fra deg startindeksen til hvert element i lista som åpner i `i`.
+
+    Lista leses som en liste: element, komma, element, `]`. Går det ikke i hop,
+    stopper generatoren — en katalog som ikke lar seg lese som det den er, er
+    ikke en kilde.
+
+    Elementet gis fra seg FØR det leses ferdig, slik at `les_katalog()` rekker
+    å si hva som er galt med akkurat den posten. Meldingen «M-57 har en
+    egenskap generatoren ikke kan lese» er den som forteller hva som må rettes;
+    «element 57 lar seg ikke lese» sier bare hvor man skal se.
+    """
+    nr, n = 0, len(tekst)
+    j = hopp_over_tomrom(tekst, i + 1)
+    while j < n:
+        if tekst[j] == "]":
+            return
+        if tekst[j] != "{":
+            raise SystemExit(
+                f"element {nr + 1} i modulkatalogen i {KILDE_NAVN} er ikke en "
+                f"modulpost. Katalogen er en liste av poster, og bare det.")
+        nr += 1
+        yield j
+        _, j = les_post(tekst, j)
+        if j < 0:
+            raise SystemExit(
+                f"element {nr} i modulkatalogen i {KILDE_NAVN} lar seg ikke "
+                f"lese som en post.")
+        j = hopp_over_tomrom(tekst, j)
+        if j < n and tekst[j] == ",":
+            j = hopp_over_tomrom(tekst, j + 1)
+        elif j >= n or tekst[j] != "]":
+            raise SystemExit(
+                f"element {nr} i modulkatalogen i {KILDE_NAVN} følges hverken "
+                f"av komma eller av listens slutt.")
+    raise SystemExit(
+        f"modulkatalogen i {KILDE_NAVN} lukkes aldri — kilden har endret form.")
+
+
 def les_post(tekst: str, start: int) -> tuple[list[str], int]:
     """(feltnavnene på ØVERSTE nivå, indeksen etter posten som åpner i `start`).
 
@@ -496,9 +547,45 @@ def les_katalog() -> list[dict]:
     # Innenfor posten leses FELTNAVNENE, ikke teksten (Codex P2, sjette runde),
     # så et JSON-fragment i en fri feltverdi ikke kan se ut som en tilstandsakse.
     # Grense og feltnavn kommer fra SAMME lesning, se `les_post()`.
+    #
+    # Men HVOR postene står ble fortsatt funnet med et fritt søk gjennom hele
+    # skriptet (Codex P2 på #118, fjortende runde), og et regex mot rå tekst
+    # ser ikke forskjell på kode og streng. Siden er en levende prototype med
+    # egen UI-kode, og en helt lovlig linje som
+    # `const demo = "{n:58,name:'Demo',area:'X',p:1}";` ble lest som en modul
+    # til: nummerporten under stoppet genereringen med en melding om en modul
+    # ingen har skrevet. Motsatt vei kunne en post inne i en kommentar telle
+    # med på samme måte.
+    #
+    # Å skanne skriptet for hva som er kode og hva som er tekst ville betydd å
+    # skrive JS-leseren fra `test_katalog.py` en gang til her, med
+    # skråstrek-tvetydigheten og alt annet som fulgte med den. Roten er en
+    # annen: postene skal ikke LETES ETTER i det hele tatt. Katalogen er en
+    # liste, `const M = [ … ]`, og en liste har elementer. Vi leser listen som
+    # det den er, og da kan en tekst som ser ut som en post ikke være en post —
+    # den er en verdi inne i en av dem, eller den står et helt annet sted i
+    # skriptet.
+    #
+    # Ankeret må finnes NØYAKTIG én gang. To `const M` ville uansett vært en
+    # redeklarasjon nettleseren avviser, så kravet er det samme som JS stiller,
+    # og en «const M = [» skrevet inne i en streng blir dermed et tydelig
+    # stopp i stedet for en stille feillesning.
+    ankre = list(KATALOG_RE.finditer(skript))
+    if len(ankre) != 1:
+        raise SystemExit(
+            f"fant {len(ankre)} modulkataloger i {KILDE_NAVN} — det skal være "
+            f"nøyaktig én `const M = [ … ]`. Katalogen er kilden; finner ikke "
+            f"generatoren den, eller finner den to, kan den ikke si hvilken "
+            f"som gjelder.")
     poster = []
-    for m in POST_RE.finditer(skript):
-        feltnavn, _ = les_post(skript, m.start())
+    for i in les_elementer(skript, ankre[0].end() - 1):
+        m = POST_RE.match(skript, i)
+        if not m:
+            raise SystemExit(
+                f"en modulpost i {KILDE_NAVN} mangler formen katalogen bærer: "
+                f"`n`, `name`, `area` og `p` i den rekkefølgen. Posten "
+                f"begynner med «{skript[i:i + 60]}».")
+        feltnavn, _ = les_post(skript, i)
         if UKJENT_FELT in feltnavn:
             raise SystemExit(
                 f"M-{m.group(1)} «{m.group(3)}» i {KILDE_NAVN} har en egenskap "

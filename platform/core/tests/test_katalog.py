@@ -222,6 +222,64 @@ def test_statusforbudet_tar_ikke_en_verdiliste_for_en_nokkel(tmp_path):
     assert r.returncode == 0, r.stderr + r.stdout
 
 
+def _med_uikode(tmp_path: Path, linje: str) -> subprocess.CompletedProcess:
+    """Kjør generatoren mot en kopi der `linje` er satt inn i UI-koden.
+
+    Ankeret står UTENFOR modulkatalogen, i den vanlige skriptkoden på siden —
+    det er nettopp det som er poenget: dette er kode som ikke har noe med
+    katalogen å gjøre.
+    """
+    rot = _temprot(tmp_path)
+    spek = rot.joinpath(*KILDE_REL)
+    tekst = spek.read_text(encoding="utf-8")
+    anker = "const MERKEORD = "
+    assert anker in tekst, "fant ikke ankeret i UI-koden — kilden har endret form"
+    spek.write_text(tekst.replace(anker, linje + "\n" + anker, 1),
+                    encoding="utf-8")
+    return subprocess.run([sys.executable, str(GENERATOR), str(rot)],
+                          capture_output=True, text=True)
+
+
+@pytest.mark.parametrize("linje", [
+    # En postformet STRENG i UI-koden. Helt lovlig JS, og ingen modul.
+    """const demo = "{n:58,name:'Demo',area:'X',p:1}";""",
+    # Samme form i en linjekommentar, for eksempel som dokumentasjon av
+    # hvordan en post ser ut.
+    "// {n:58,name:'Demo',area:'X',p:1}",
+    # Og i en blokkommentar.
+    "/* {n:58,name:'Demo',area:'X',p:1} */",
+    # En malstreng er samme sak.
+    "const demo = `{n:58,name:'Demo',area:'X',p:1}`;",
+])
+def test_en_postformet_streng_i_ui_koden_er_ingen_modul(tmp_path, linje):
+    """Bare elementene i `const M = [ … ]` er moduler.
+
+    Generatoren fant postene med et fritt søk gjennom hele skriptet (Codex P2
+    på #118, fjortende runde), og et regex mot rå tekst ser ikke forskjell på
+    kode og tekst. Siden er en levende prototype med egen UI-kode, så en helt
+    lovlig linje ble lest som en modul til, og nummerporten stoppet
+    genereringen med en melding om en modul ingen har skrevet. Motsatt vei ville
+    en post satt ut av drift i en kommentar telt med på samme måte.
+
+    Roten var ikke hvilke tekstformer som ble husket, men at postene ble LETT
+    ETTER i det hele tatt. Katalogen er en liste, og en liste har elementer.
+    """
+    r = _med_uikode(tmp_path, linje)
+    assert r.returncode == 0, r.stderr + r.stdout
+
+
+def test_to_modulkataloger_er_et_stopp(tmp_path):
+    """Ankeret må finnes nøyaktig én gang, ellers vet ingen hvilken som gjelder.
+
+    To `const M` er en redeklarasjon nettleseren selv avviser, så kravet er det
+    samme som JS stiller. Uten det ville en tom eller halv katalog nummer to
+    stilltiende avgjort hva generatoren leste.
+    """
+    r = _med_uikode(tmp_path, "const M = [{n:58,name:'D',area:'X',p:1}];")
+    assert r.returncode != 0, "generatoren valgte én av to kataloger"
+    assert "modulkatalog" in (r.stderr + r.stdout)
+
+
 def test_navneendring_krever_ny_oversettelse(tmp_path):
     """Et omdøpt modulnavn i kilden skal stoppe genereringen (Codex P2 på #43).
 
