@@ -336,7 +336,18 @@ _KONTROLLORD = {"if", "for", "while", "with", "switch", "catch"}
 
 # Ord som en SETNING kan følge rett etter. En krøllparentes der er en blokk,
 # ikke et objektliteral — `else {` og `try {` åpner kropper.
-_SETNINGSORD = {"else", "do", "try", "finally"}
+#
+# Lista er lukket av regelen i `_kodespenn()`: et objektliteral kan bare stå
+# der et UTTRYKK kan begynne, og etter en VERDI kan ikke et uttrykk begynne.
+# Alt som avslutter en verdi — et navn, en streng, et tall, `]`, `}`, `)` —
+# setter derfor setningsposisjon av seg selv, og det som står igjen å ramse
+# opp er de reserverte ordene som ikke er en verdi. Blant dem er dette de som
+# tar en KROPP. `catch` sto ikke her (Codex P2 på #118, tolvte runde): den
+# valgfrie bindingen kan sløyfes, og `try {} catch {}` leste da kroppen som et
+# objektliteral — `}` avsluttet en «verdi», mønsteret etter ble en divisjon, og
+# fnutten inne i mønsteret åpnet en «streng» som svelget kjørende kode.
+# `static {}` er samme form inne i en klasse.
+_SETNINGSORD = {"else", "do", "try", "finally", "catch", "static"}
 
 _TALL_START_RE = re.compile(r"(?:\d[\w.]*|\.\d[\w.]*)")
 
@@ -412,16 +423,23 @@ def _kodespenn(js: str, a: int, b: int, avslutt: bool = False):
     divisjonen i `` `${{x: 1} / 2} sti / hale` `` ut som starten på et mønster —
     skanningen spiste seg forbi malstrengens slutt og etterlot kjørende kode som
     prosa. `blokker` husker derfor for hver åpne `{` hva den åpnet, og
-    `blokkposisjon` sier hvor vi står: en krøllparentes er en blokk der en
-    SETNING kan begynne (etter `;`, `)`, `=>`, en annen blokk, `else`/`do`/
-    `try`/`finally`), og et objektliteral der et UTTRYKK står. `${…}` starter i
-    uttrykksposisjon — det er derfor `avslutt` også setter startposisjonen.
+    `blokkposisjon` sier hvor vi står.
 
-    GRENSEN: en klassekropp (`class A {`) leses som et objektliteral, siden
-    navnet foran den er en verdi. Det betyr bare at en skråstrek RETT etter
-    `}` leses som divisjon, og en regex-literal rett etter en klasseerklæring
-    finnes ikke i praksis. Å skille dem ville krevd at skanneren fulgte
-    erklæringsformer, og det er å skrive en parser.
+    Den regelen sto først som en LISTE over hva en kropp kunne følge etter, og
+    en liste over former er åpen: `try {} catch {}` uten binding manglet, så
+    kroppen ble lest som et objektliteral og mønsteret etter den som divisjon
+    (Codex P2 på #118, tolvte runde). Nå står regelen som det den er: et
+    objektliteral kan bare stå der et UTTRYKK kan begynne, og etter en VERDI kan
+    ikke et uttrykk begynne — `x {`, `"s" {`, `1 {`, `] {` finnes ikke i JS.
+    Derfor setter ALT som avslutter en verdi setningsposisjon, sammen med `;`,
+    `)`, `=>` og `_SETNINGSORD`. Å ramse opp igjen står bare de reserverte
+    ordene som ikke er en verdi — en lukket mengde, ikke en liste over former.
+    `${…}` starter i uttrykksposisjon; det er derfor `avslutt` også setter
+    startposisjonen.
+
+    Sidegevinst: en klassekropp (`class A {`) leses nå som den blokka den er.
+    Den sto før som et objektliteral, fordi navnet foran den er en verdi, og en
+    skråstrek rett etter `}` ble derfor lest som divisjon.
     """
     verdi, siste_ord = False, ""
     parenteser: list[bool] = []
@@ -440,17 +458,17 @@ def _kodespenn(js: str, a: int, b: int, avslutt: bool = False):
         if c in "\"'":
             j = _strengslutt(js, i, b)
             yield i, j, "streng"
-            i, verdi, siste_ord, blokkposisjon = j, True, "", False
+            i, verdi, siste_ord, blokkposisjon = j, True, "", True
             continue
         if c == "`":
             i = yield from _malspenn(js, i, b)
-            verdi, siste_ord, blokkposisjon = True, "", False
+            verdi, siste_ord, blokkposisjon = True, "", True
             continue
         if c == "/":
             j = i if verdi else _regexslutt(js, i, b)
             if j > i:
                 yield i, j, "regex"
-                i, verdi, siste_ord, blokkposisjon = j, True, "", False
+                i, verdi, siste_ord, blokkposisjon = j, True, "", True
                 continue
             i, verdi, siste_ord, blokkposisjon = i + 1, False, "", False
             continue
@@ -466,10 +484,10 @@ def _kodespenn(js: str, a: int, b: int, avslutt: bool = False):
                 siste_ord = ordet
             i, verdi = treff.end(), (etter_punktum
                                      or ordet not in _ORD_UTEN_VERDI)
-            blokkposisjon = not etter_punktum and ordet in _SETNINGSORD
+            blokkposisjon = verdi or ordet in _SETNINGSORD
             continue
         if (treff := _TALL_START_RE.match(js, i, b)):
-            i, verdi, siste_ord, blokkposisjon = treff.end(), True, "", False
+            i, verdi, siste_ord, blokkposisjon = treff.end(), True, "", True
             continue
         if c == ".":
             i, verdi, siste_ord, blokkposisjon = i + 1, False, ".", False
@@ -486,16 +504,18 @@ def _kodespenn(js: str, a: int, b: int, avslutt: bool = False):
             i, verdi, siste_ord, blokkposisjon = i + 1, not betingelse, "", True
             continue
         if c == "]":
-            i, verdi, siste_ord, blokkposisjon = i + 1, True, "", False
+            i, verdi, siste_ord, blokkposisjon = i + 1, True, "", True
             continue
         if c == "}":
             if not blokker and avslutt:
                 return i
             # Lukker den et objektliteral, har den avsluttet en VERDI, og
             # skråstreken etter deler. Lukker den en blokk, kan et mønster følge.
+            # Uansett hva den lukket, kan et objektliteral ikke begynne rett
+            # etter en `}` — der står enten en ny setning eller en operator.
             objekt = blokker.pop() if blokker else False
             i, siste_ord = i + 1, ""
-            verdi, blokkposisjon = objekt, not objekt
+            verdi, blokkposisjon = objekt, True
             continue
         if c == "{":
             objekt = not blokkposisjon
@@ -605,6 +625,10 @@ _SKANNERPROEVER = [
     ('const o = {a: 1} / 2; const filter_state = {};', False),
     ('function f() {} /["\']/.test(v); const filter_state = {};', False),
     ('if (a) {} else /["\']/.test(v); const filter_state = {};', False),
+    ('try {} catch {} /["\']/.test(v); const filter_state = {};', False),
+    ('try {} catch (e) {} /["\']/.test(v); const filter_state = {};', False),
+    ('class A {} /["\']/.test(v); const filter_state = {};', False),
+    ('const o = {a: "nevner filter_state"} / 2; const x = 1;', True),
 ]
 
 
