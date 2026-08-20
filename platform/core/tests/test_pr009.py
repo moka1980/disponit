@@ -476,7 +476,7 @@ def test_p1_credentials_materialiseres_mot_en_fersk_rot(tmp_path):
         "DATABASE_URL", "DISPONIT_KEK", "DISPONIT_TOKEN_PEPPER",
         "DISPONIT_ATT_NOKLER", "DISPONIT_MAC_NOKLER",
         "DISPONIT_TOKEN_ADMIN_URL", "DISPONIT_DOMAINS_URL",
-        "DISPONIT_VARSEL_URL")})
+        "DISPONIT_VARSEL_URL", "DISPONIT_PLAN_URL")})
     import subprocess
     res = subprocess.run(["bash", "-c", "set -eu\n" + blokk],
                          capture_output=True, text=True, env=env)
@@ -487,6 +487,9 @@ def test_p1_credentials_materialiseres_mot_en_fersk_rot(tmp_path):
     # senderen fikk web-API-rollens DSN og dermed dens rettigheter.
     assert (rot / "varsel/DISPONIT_DATABASE_URL").read_text(
         encoding="utf-8") == "verdi-DISPONIT_VARSEL_URL"
+    # 048 (#108): plan-arbeiderens DSN, aldri API-ets — samme klasse.
+    assert (rot / "plan/DISPONIT_DATABASE_URL").read_text(
+        encoding="utf-8") == "verdi-DISPONIT_PLAN_URL"
 
 
 def test_hver_installert_timer_blir_ogsa_startet():

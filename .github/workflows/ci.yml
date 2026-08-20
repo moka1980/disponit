@@ -35,6 +35,7 @@ jobs:
       # verifiser_token.
       DISPONIT_TEST_TOKEN_ADMIN_DSN: postgresql://disponit_token_admin:tok@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_VARSEL_DSN: postgresql://disponit_varselsender:var@127.0.0.1:5432/disponit_test
+      DISPONIT_TEST_PLAN_DSN: postgresql://disponit_plan_arbeider:pla@127.0.0.1:5432/disponit_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -57,6 +58,7 @@ jobs:
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_authenticator NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_token_admin LOGIN PASSWORD 'tok'"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_varselsender LOGIN PASSWORD 'var'"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_plan_arbeider LOGIN PASSWORD 'pla'"
           # PR-006: NOLOGIN-eieren av arbeidskapabiliteter og claim-funksjonene.
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_m37_claimer NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_authenticator TO disponit_migrator"
@@ -127,6 +129,16 @@ jobs:
           # tester CI en annen vei enn den staging og produksjon bruker.
           DISPONIT_MIGRATOR_URL="postgresql://disponit_migrator:mig@127.0.0.1:5432/disponit_test" \
             python deploy/staging/migrer.py disponit
+      - name: "SP-10: backfill-migrasjonen prøvekjøres mot BEBODD base"
+        # Tom base er halvparten av porten: 047-prod-stoppet (utsatte
+        # DEFERRABLE-hendelser foran ALTER) er per konstruksjon usynlig
+        # her uten seed. Nummeret pekes på eksplisitt — en ny
+        # backfill-migrasjon registrerer sin egen seed i skriptet og
+        # oppdaterer pekeren.
+        env:
+          DISPONIT_SP10_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+          DISPONIT_SP10_MIGRATOR_URL: postgresql://disponit_migrator:mig@127.0.0.1:5432/disponit_sp10
+        run: python deploy/staging/sp10-provekjoring.py 48
       - name: Enhetstester + negative policytester
         run: python -m pytest platform/core/tests -q
       - name: "Port: ingen DB-tester ble hoppet over"

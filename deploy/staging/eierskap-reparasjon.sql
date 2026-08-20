@@ -150,6 +150,9 @@ INSERT INTO _design VALUES
     -- `innholds_hash` i ett oppslag — opphavet lagres som identiteten,
     -- ikke som versjonsnummeret, og de to må komme fra samme rad.
     ('FUNCTION', 'policyversjon_kilde(text,text,text)',     'disponit_policy_eier'),
+    -- 048 (R47-1): kvorumsgaten ved hendelses-etablering (SP-9s andre
+    -- form — trigger ved etablering pluss immutabilitet).
+    ('FUNCTION', 'hendelse_kvorum_gate()',                    'disponit_policy_eier'),
     -- 047: vakten «én hendelse per LEVENDE versjon». Den er SECURITY
     -- DEFINER og eid av policy_eier fordi en DEFERRED constraint-trigger
     -- fyrer ved COMMIT, utenfor `aktiver_policy` sin definer-kontekst —

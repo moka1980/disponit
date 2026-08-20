@@ -1,3 +1,11 @@
+# 048 (#108): credentialen under bærer PLAN-ARBEIDERENS egen DSN
+# (`disponit_plan_arbeider`), aldri runtime-DSN-en. Rollen er den eneste
+# med EXECUTE på claim_planvindu/terminaliser_planvindu/frigi_planvindu:
+# delte arbeideren DSN med API-et, ville EXECUTE måttet gis til
+# `disponit`, og da hadde et kompromittert web-API hatt planvindus-
+# mutexen — nøyaktig hullet #108 lukker. Samme modell og samme
+# begrunnelse som disponit-varselsender.service.
+#
 # 044 §4: plan-materialiseringen. Arbeideren har ingen egen autoritet —
 # den claimer vinduets mutexrad og kaller så NØYAKTIG samme
 # bestillingsfunksjon som browserendepunktet (`utfor_bestilling`), i

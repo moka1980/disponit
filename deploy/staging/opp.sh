@@ -117,6 +117,13 @@ if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_VARSEL_URL:-}" ] ); then
   echo "Systemet er urørt; forrige release kjører som før."
   exit 1
 fi
+# 048 (#108): plan-arbeiderens DSN — samme kontrakt som varselsenderens.
+if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_PLAN_URL:-}" ] ); then
+  echo "AVBRUTT: DISPONIT_PLAN_URL mangler i $MILJOFIL."
+  echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
+  echo "rollen disponit_plan_arbeider og skriver DSN-en til miljøfila."
+  exit 1
+fi
 
 if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_DOMAINS_URL:-}" ] ); then
   echo "AVBRUTT: DISPONIT_DOMAINS_URL mangler i $MILJOFIL."
@@ -425,7 +432,16 @@ skriv_cred api DISPONIT_MAC_NOKLER   "$DISPONIT_MAC_NOKLER"   # PR-012 (boot-per
 # tillitsnivå som API-et) — den trenger nøyaktig API-ets nøkkelsett, og
 # runtime-DSN-en (ikke claimerens): all DB-autoritet ligger i de
 # claimer-eide funksjonene den EXECUTEr.
-skriv_cred plan DISPONIT_DATABASE_URL "$DATABASE_URL"
+# 048 (#108): plan-arbeiderens EGEN DSN — aldri runtime-DSN-en. Delte
+# den DSN med API-et, ville claim-EXECUTE måttet gis til `disponit`, og
+# da hadde et kompromittert web-API hatt planvindus-mutexen (nøyaktig
+# begrunnelsen i disponit-varselsender.service, som er malen her).
+if [ -z "${DISPONIT_PLAN_URL:-}" ]; then
+  echo "AVBRUTT: DISPONIT_PLAN_URL forsvant fra ${MILJOFIL:-/etc/disponit/staging.env} mellom"
+  echo "preflight og credential-skrivingen."
+  exit 1
+fi
+skriv_cred plan DISPONIT_DATABASE_URL "$DISPONIT_PLAN_URL"
 skriv_cred plan DISPONIT_KEK          "$DISPONIT_KEK"
 skriv_cred plan DISPONIT_TOKEN_PEPPER "$DISPONIT_TOKEN_PEPPER"
 skriv_cred plan DISPONIT_ATT_NOKLER   "$DISPONIT_ATT_NOKLER"

@@ -109,10 +109,13 @@ def _brukt_runde(c, uid, pid, aktivert_versjon, base_hash, *, runde=1,
             " VALUES (%s,%s,%s,%s,'okonomi',1,false,%s,'k','UTVIDER',"
             "1,'h','m','mk1',%s,now()+interval '1 hour')",
             (TEN, uid, runde, bruker, diff_hash, secrets.token_hex(16)))
+    # 048: hendelsen bærer kilden og RUNDENS kvorumskrav; gaten teller
+    # attestasjonsradene over — fixturen består den, ikke omgår den.
     c.execute(
         "INSERT INTO policyaktivering (tenant,policy_id,utkast_id,runde,"
         "decision_operation_id,versjon,innholds_hash,diff_hash,attestant_a,"
-        "attestant_b) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'uavh','uavh2')",
+        "attestant_b,aktiveringskilde,pakrevd_antall) VALUES"
+        " (%s,%s,%s,%s,%s,%s,%s,%s,'uavh','uavh2','styrt',2)",
         (TEN, pid, uid, runde, opid, aktivert_versjon, utkast_hash, diff_hash))
     return opid
 

@@ -1,8 +1,9 @@
 # ARKITEKTURNOTAT — ratifisering og stående porter etter 044
 
-**Forfattet av Claude.ai (ratifisering etter 044) · tatt inn av Claude Code 2026-08-19.
-Grunnlag: debrief periodisk kontroll 2026-08-19 (PR #105, 5 runder,
-32 funn).**
+**Forfattet av Claude.ai · tatt inn av Claude Code 2026-08-19, utvidet
+med SP-9…SP-12 fra editor-ratifiseringen 2026-08-20. Grunnlag: debrief
+periodisk kontroll 2026-08-19 (PR #105, 5 runder, 32 funn) og
+ratifiseringen etter 047 (`docs/pr/RATIFISERING-EDITOR-047.md`).**
 
 Dette dokumentet har to formål: rette arkitekturmodellen der
 implementeringen viste at spesifikasjonen tok feil, og løfte funnklassene
@@ -38,7 +39,7 @@ angrepsflate for å oppnå det samme.
 Dette gjelder også neste scheduler, neste importvei og neste
 integrasjon. Ingen skal re-litigere det.
 
-## 2. Åtte stående porter
+## 2. Tolv stående porter
 
 Skal inn i hver spesifikasjon som rører DB-funksjoner, flate eller
 produsenter. Nummereringen er stabil så de kan refereres direkte.
@@ -113,6 +114,55 @@ tabellene.
 `RETURNS TABLE`-navn kolliderer med `ON CONFLICT`-kolonner. Rent
 mekanisk, men det koster en runde hver gang.
 
+### SP-9 Kvalifikasjon må gjelde både ved etablering og varig
+En egenskap som kvalifiserer en rad til å bli referert — «ikke
+forfatter», «aktiv», «verifisert» — må **både** håndheves når referansen
+etableres **og** forbli sann så lenge referansen eksisterer. Immutabilitet
+alene er ikke nok: en immutabel rad med feil verdi er permanent
+ukvalifisert. To former er gyldige: egenskapen inngår i den refererte
+unike nøkkelen (da beviser FK-en både tidspunkt og varighet i ett), eller
+en databasekontroll ved etablering kombineres med immutabilitet av
+egenskapen eller raden. En constraint-trigger ved commit kontrollerer
+**tidspunktet**; uten varighetsleddet er den halvveis.
+*Port:* etabler referansen, endre kvalifikasjonsegenskapen på den
+refererte raden → avvist.
+*Hvorfor den er stående:* E1f i editoren — `er_forfatter` var sann ved
+commit og kunne blitt usann etterpå mens alle FK-er holdt.
+
+### SP-10 Backfill prøvekjøres mot bebodd base
+«Kjørbar DDL fra tom base» er halvparten av en port. En migrasjon med
+backfill eller annen masse-skriving skal også prøvekjøres mot en
+**seedet** base: bygg 0..N−1, kjør flyttestene (som etterlater data),
+kjør N. CI på tom base kunne per konstruksjon ikke se prod-stoppet i
+047: masse-UPDATE køet utsatte DEFERRABLE-triggerhendelser, og
+ALTER-klasse-setninger nekter å passere dem.
+*Regel som følger:* `SET CONSTRAINTS ALL IMMEDIATE` etter hver
+masse-skriving i en migrasjon, før neste DDL-setning.
+*Port:* seedet prøvekjøring per backfill-migrasjon, i tillegg til
+tom-base-kjøringen.
+
+### SP-11 Hash-registrerte dokumenter trenger byteport
+En lagret hash beviser bare de bytene den ble regnet over. Enhver flate
+som senere viser, serverer eller eksporterer dokumentet må servere
+**nøyaktig de bytene** — ikke en re-rendring, re-koding eller
+«ekvivalent» fil.
+*Port:* byte-likhet mellom registrert artefakt og servert innhold, målt
+i testen med hash av det som faktisk gikk over grensesnittet.
+*(Fra M-56-arcen; gjentatt i editor-debriefen så den ikke faller mellom
+to arcer.)*
+
+### SP-12 Versjonsnummer er ikke identitet
+Et versjonsnummer kan gjenbrukes: slett + gjenskap gir samme nummer for
+annet innhold. Enhver referanse til en versjonert rad — diff, rullbakk,
+lineage, eksport — skal bære en gjenbrukssikker identitet i tillegg til
+nummeret: generasjon fra sekvens, eller tilsvarende.
+*Port:* slett versjon N, gjenskap N med annet innhold, følg en gammel
+referanse → den skal peke på den gamle generasjonen eller feile
+eksplisitt — aldri stille treffe den nye.
+*(047-reviewen innførte `aktiveringskilde` + generasjoner; regelen her
+er den generelle formen.)*
+
+
 ## 3. Hva jeg tar med meg som spesifikasjonsforfatter
 
 Fire runder på 044 og åtte på 040 fant samme klasse feil: **en invariant
@@ -125,11 +175,21 @@ Konkret endring i hvordan jeg skriver: når en setning inneholder
 trigger eller lås** — ikke på at to strukturer har samme form. Har jeg
 ikke et navn å peke på, er påstanden ikke sann ennå.
 
+**Skjerpet etter E1e (tredje forekomst av samme feil — N2c i 040, E1a og
+E1e i editoren), og snevret inn etter porten:** en kolonne som **påstår
+referensiell identitet eller lineage** til en rad i en annen tabell skal
+være databasebundet til den raden — normalt med FK — eller eksplisitt
+dokumenteres som et snapshot med annen semantikk. En kopi skal aldri
+brukes som erstatning for en referanse. Forskjellen ligger i ordet
+*påstår*: en auditkopi som sier «dette var verdien da» er en annen
+påstand og et legitimt snapshot; en hendelses-ID, operasjons-ID eller
+attestant som sier «dette er den» er lineage og må bindes.
+
 ---
 
 ```
-NÅ:    Ratifisering og SP-1…SP-8 gjennom porten som arkitekturendring
+NÅ:    Ratifisering og SP-1…SP-12 gjennom porten som arkitekturendring
        — ChatGPT (Eier relayer) — docs/ARKITEKTUR-STAENDE-PORTER.md
-NESTE: SP-1…SP-8 refereres fra hver senere spesifikasjon; avviket i §1
+NESTE: SP-1…SP-12 refereres fra hver senere spesifikasjon; avviket i §1
        gjør at «kun /v1/bestilling» ikke skrives igjen — Claude.ai
 ```
