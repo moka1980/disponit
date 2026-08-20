@@ -313,7 +313,14 @@ def test_kontraktklassene_i_katalogen_finnes_i_modulregisteret():
 # mønsteret treffer nettopp de ordene som utgir seg for å være noe systemet
 # kjenner. Sammensetninger med bindestrek (`axe-core`, `robots.txt`) er prosa
 # og faller utenfor med vilje.
-IDENT_RE = re.compile(r"\b[a-zæøå]+(?:_[a-zæøå]+)+\b")
+#
+# Siffer teller med etter første bokstav (Codex P2 på #118, fjerde runde). Kun
+# bokstaver i hvert ledd betydde at enhver maskinidentifikator med et tall i
+# seg gikk usett forbi: den avviste klassen kunne kommet tilbake som
+# `rådgivende_pluss_signert_utsendelse_v2`, og et oppfunnet `sha_256_digest`
+# leste porten som ingenting. Første tegn må fortsatt være en bokstav, slik at
+# `\b` har noe å feste seg i og tallgrupper i vanlig tekst ikke blir treff.
+IDENT_RE = re.compile(r"\b[a-zæøå][a-zæøå0-9]*(?:_[a-zæøå0-9]+)+\b")
 
 
 def _kjente_identifikatorer() -> set[str]:
