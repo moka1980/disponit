@@ -106,10 +106,22 @@ GRANT SELECT, INSERT, UPDATE ON varselvalg TO {rolle};
 -- runtime skal gi `permission denied` (Codex-port 17).
 GRANT SELECT ON modulkontrakt, modulhode, modulrelease, moduldeployment,
     oppdragstype_register, modulregister_hendelse TO {rolle};
--- 049: akseptflaten er leselig for runtime som resten av registeret —
--- statusetiketter og evidensvisninger skal kunne peke på hendelsen.
-GRANT SELECT ON moduldrill, modulaksept, modulaksept_punkt,
-    akseptkrav_punkt TO {rolle};
+-- 049: akseptflaten. Codex' P1 på PR #117 (runde 14): dette var ett
+-- ufiltrert `GRANT SELECT` på `moduldrill`, `modulaksept` og
+-- `modulaksept_punkt` — evidenstabeller som bærer tenantidentifikatorer,
+-- oppdrags-IDer, artefakt-UUIDer, aktører og evidensreferanser, og som
+-- den gang sto UTEN RLS. Nabotabellen `artefakt` er tenant-filtrert;
+-- disse var det ikke, så en kjøretidsrolle utenfor sin egen
+-- tenantkontekst — eller en kompromittert sådan — leste hver eneste
+-- tenants driftsbevis. Fullmakten er trukket tilbake (nullstillingen
+-- over REVOKEr den også på baser som fikk den av en tidligere kjøring),
+-- og 049 setter tenantpolicyene på radene i tillegg.
+--
+-- Det statusetiketten faktisk trenger — at (modul, miljø, release) er
+-- akseptert mot et krav, når, og hvilken drill den hviler på — står i
+-- den sanerte visningen `modulaksept_status`, som ikke bærer en eneste
+-- tenantidentifikator. Bevisradene leses av eier- og driftsveien.
+GRANT SELECT ON modulaksept_status, akseptkrav_punkt TO {rolle};
 GRANT SELECT ON domenekontroll, artefakt, artefakttype_register TO {rolle};
 -- PR-014c: skjemavalidering ved opplasting/promotering og aktiveringsporten
 -- for `ekstern_lesing` leses i API-prosessen. Runtime skriver aldri.

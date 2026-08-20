@@ -532,7 +532,8 @@ def test_drillnokkel_med_andre_utfall_avvises(migrator):
 @pg
 def test_ordinaere_roller_naar_ingenting(migrator):
     """Port 9: runtime har verken EXECUTE på funksjonene eller DML på
-    tabellene — lesing er alt."""
+    tabellene — og etter Codex' P1 (runde 14) heller ikke lesing av
+    evidensradene: den sanerte statusvisningen er alt."""
     k = _kjede(migrator)
     rt = _rt()
     try:
@@ -560,11 +561,59 @@ def test_ordinaere_roller_naar_ingenting(migrator):
                        "true,true,true,'n','x',%s)",
                        (k["mid"], k["ten"], DRILL_SHA, DRILL_TS))
         rt.rollback()
-        # ... men SELECT virker (statusflater leser registeret).
-        rt.execute("SELECT count(*) FROM modulaksept")
+        # …og evidensradene er ikke lenger lesbare for forespørselsveien
+        # (Codex P1, runde 14): de bærer tenantidentifikatorer,
+        # oppdrags-IDer, artefakt-UUIDer, aktører og evidensreferanser.
+        for tabell in ("moduldrill", "modulaksept", "modulaksept_punkt"):
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                rt.execute(f"SELECT count(*) FROM {tabell}")
+            rt.rollback()
+        # Det statusflaten trenger, står i den sanerte visningen — og
+        # kravpunktregisteret er en ren katalog uten tenantdata.
+        rt.execute("SELECT count(*) FROM modulaksept_status")
+        rt.rollback()
+        rt.execute("SELECT count(*) FROM akseptkrav_punkt")
         rt.rollback()
     finally:
         rt.close()
+
+
+@pg
+def test_evidensradene_er_tenantfiltrert(migrator):
+    """Codex' P1 (runde 14): `moduldrill` og `modulaksept` sto UTEN RLS
+    mens kjøretidsrollen hadde `SELECT` på dem. Nabotabellen `artefakt`
+    er tenant-filtrert; disse var det ikke, så én forespørselsvei utenfor
+    sin egen tenantkontekst leste hver eneste tenants driftsbevis.
+
+    Fullmakten er trukket tilbake, men porten skal stå på RADEN også: en
+    fullmakt kan gis igjen ved et uhell, en policy gjelder uansett hvem
+    som får `SELECT` senere. Her måles policyen direkte, med
+    admin-rollen som prober — den har ingen tabellfullmakt fra før, så
+    den får den midlertidig i transaksjonen og RLS er det eneste som
+    står igjen."""
+    k = _kjede(migrator)
+    drill = _drill(migrator, k)
+    migrator.execute("GRANT SELECT ON moduldrill TO disponit_modules_admin")
+    migrator.execute("SET ROLE disponit_modules_admin")
+    try:
+        # Uten tenantkontekst: ingen rader. `current_setting(...,true)` er
+        # NULL, og likheten blir NULL — porten feiler lukket.
+        assert migrator.execute(
+            "SELECT count(*) FROM moduldrill WHERE drill_id=%s",
+            (drill,)).fetchone()[0] == 0
+        migrator.execute("SELECT set_config('disponit.tenant','en-annen',true)")
+        assert migrator.execute(
+            "SELECT count(*) FROM moduldrill WHERE drill_id=%s",
+            (drill,)).fetchone()[0] == 0
+        # …og i sin EGEN tenant er raden der.
+        migrator.execute("SELECT set_config('disponit.tenant',%s,true)",
+                         (k["ten"],))
+        assert migrator.execute(
+            "SELECT count(*) FROM moduldrill WHERE drill_id=%s",
+            (drill,)).fetchone()[0] == 1
+    finally:
+        migrator.rollback()
+        migrator.execute("RESET ROLE")
 
 
 @pg

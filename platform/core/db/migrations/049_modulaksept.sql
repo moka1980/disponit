@@ -117,6 +117,31 @@ CREATE TRIGGER drill_immutable BEFORE UPDATE OR DELETE ON moduldrill
 CREATE TRIGGER drill_ingen_truncate BEFORE TRUNCATE ON moduldrill
     FOR EACH STATEMENT EXECUTE FUNCTION modulregister_append_only();
 
+-- Codex' P1 på PR #117 (runde 14): drillraden BÆRER tenant — den navngir
+-- tenanten, tre oppdrags-IDer, aktøren og bytene den ble målt på — men
+-- sto uten RLS, mens `migrer.py` ga kjøretidsrollen `SELECT` på hele
+-- tabellen. Nabotabellen `artefakt` er tenant-filtrert (008/016, FORCE);
+-- her var den ikke det, så én forespørselsvei utenfor sin egen
+-- tenantkontekst — eller en kompromittert kjøretidsrolle — leste hver
+-- eneste tenants driftsbevis. Tenantporten står nå PÅ RADEN, ikke i
+-- fullmakten: en fullmakt kan gis igjen ved et uhell, en policy gjelder
+-- uansett hvem som får `SELECT` senere.
+--
+-- Ikke FORCE: eieren er migrator, altså deployveien som LAGET tabellen
+-- og som når som helst kan skru av enhver policy. Porten finnes for
+-- forespørselsveien og for definerne, og en FORCE ville i tillegg
+-- blindet driftens egen etterkontroll (akseptskriptets kvitteringslesning
+-- og `modulaksept_punkt`, som ikke har noen tenantkolonne å filtrere på).
+ALTER TABLE moduldrill ENABLE ROW LEVEL SECURITY;
+CREATE POLICY moduldrill_tenant ON moduldrill
+    USING (tenant = current_setting('disponit.tenant', true));
+-- Definerne (`registrer_moduldrill` skriver raden, `aksepter_moduldeployment`
+-- leser kandidatoppdraget ut av den) kjører som `disponit_modul_eier` og
+-- måler tenanten EKSPLISITT i sine egne kontroller — de skal ikke også
+-- måtte bære kallerens GUC. Samme mønster som `policyaktivering_eier` (047).
+CREATE POLICY moduldrill_eier ON moduldrill
+    USING (CURRENT_USER = 'disponit_modul_eier');
+
 -- ------------------------------------------------------------
 -- 2. A2: artefaktets releasesnapshot blir relasjonelt. Snapshotten er
 --    alt kapabilitets-attestert ved skriving (017: verdiene kopieres fra
@@ -217,6 +242,16 @@ CREATE TRIGGER aksept_immutable BEFORE UPDATE OR DELETE ON modulaksept
 CREATE TRIGGER aksept_ingen_truncate BEFORE TRUNCATE ON modulaksept
     FOR EACH STATEMENT EXECUTE FUNCTION modulregister_append_only();
 
+-- Samme port som på drillen (Codex P1, runde 14). Aksepten navngir E2E-
+-- tenanten, artefakt-UUIDen, aktøren, evidensfilas hash og CI-kjøringen;
+-- tenanten den ble målt i, er `e2e_tenant` (registreringen krever alt at
+-- den er drillens tenant, så de to kan ikke sprike).
+ALTER TABLE modulaksept ENABLE ROW LEVEL SECURITY;
+CREATE POLICY modulaksept_tenant ON modulaksept
+    USING (e2e_tenant = current_setting('disponit.tenant', true));
+CREATE POLICY modulaksept_eier ON modulaksept
+    USING (CURRENT_USER = 'disponit_modul_eier');
+
 -- ------------------------------------------------------------
 -- 5. A3: én immutabel observasjon per grensepunkt — referansen til
 --    beviset, aldri en kopi av konklusjonen (SP-§3). FK-en mot
@@ -243,6 +278,16 @@ CREATE TRIGGER akseptpunkt_immutable
     FOR EACH ROW EXECUTE FUNCTION modulregister_append_only();
 CREATE TRIGGER akseptpunkt_ingen_truncate BEFORE TRUNCATE ON modulaksept_punkt
     FOR EACH STATEMENT EXECUTE FUNCTION modulregister_append_only();
+
+-- Punktradene bærer `kilde_ref` — artefakt-UUIDer, CI-kjøringer,
+-- evidensfilnavn — og har INGEN tenantkolonne å filtrere på. Da er det
+-- ingen tenantport å skrive; raden er evidens for eier- og driftsveien,
+-- og forespørselsveien leser aldri denne tabellen (Codex P1, runde 14).
+-- Uten en policy som treffer, ser ingen annen rolle noen rad: RLS er
+-- default-deny, og det er nøyaktig svaret her.
+ALTER TABLE modulaksept_punkt ENABLE ROW LEVEL SECURITY;
+CREATE POLICY modulaksept_punkt_eier ON modulaksept_punkt
+    USING (CURRENT_USER = 'disponit_modul_eier');
 
 -- ------------------------------------------------------------
 -- 6. Funksjonene — modul_eier-eide definere, EXECUTE kun til
@@ -697,3 +742,23 @@ BEGIN  -- identity-sekvensen alene, aldri hele skjemaets (minste fullmakt)
     EXECUTE format('GRANT USAGE ON SEQUENCE %s TO disponit_modul_eier',
                    pg_get_serial_sequence('moduldrill', 'drill_id'));
 END $$;
+
+-- ------------------------------------------------------------
+-- 8. Statusflaten: hva forespørselsveien SKAL kunne se (Codex P1, #117
+--    runde 14). Kjøretidsrollen ble gitt `SELECT` på hele akseptflaten
+--    «så statusetiketter og evidensvisninger skal kunne peke på
+--    hendelsen» — men en statusetikett trenger FAKTUMET, ikke bevisene:
+--    at (modul, miljø, release) er akseptert mot et krav, når, og hvilken
+--    drill den hviler på. Tenanten, artefakt-UUIDen, oppdrags-IDene,
+--    aktøren, evidenshashene og CI-referansene er driftens bevis og hører
+--    til eier- og migratorveien.
+--
+--    Visningen er derfor SANERT — den bærer ingen tenantidentifikator i
+--    det hele tatt, og har dermed ingenting å lekke på tvers av tenanter.
+--    Den eies av migrator (tabelleieren), så den leser gjennom RLS-porten
+--    over slik en visning skal; og fordi den ikke velger en eneste
+--    tenantkolonne, er den samme rad for alle som ser den.
+-- ------------------------------------------------------------
+CREATE VIEW modulaksept_status AS
+SELECT modul_id, miljo, release_id, krav_id, drill_id, akseptert_ts
+  FROM modulaksept;
