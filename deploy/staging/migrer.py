@@ -335,8 +335,27 @@ GRANT USAGE ON SCHEMA public TO {rolle};
 GRANT SELECT ON migrasjoner TO {rolle};
 GRANT SELECT, INSERT ON revisjonslogg, frekvens_hendelser TO {rolle};
 GRANT SELECT, INSERT ON unntak_historikk, attestasjon_jti TO {rolle};
-GRANT SELECT, INSERT, UPDATE ON unntak, idempotens TO {rolle};
-GRANT SELECT, INSERT, UPDATE ON tenant_nokler TO {rolle};
+-- SAKER: SELECT + INSERT, ALDRI UPDATE (Codex P1). Bestillingsveien
+-- SKRIVER en ny `unntak`-rad (`kjerne._skriv_unntak`) og LESER egne
+-- rader; den rører aldri en eksisterende sak. En tabell-UPDATE ville
+-- gått UTENOM saksbehandlingsfunksjonene: en kompromittert
+-- plan-credential kunne satt tenantkontekst, enumerert tenantens saker
+-- og selv gjort triggergyldige overganger (f.eks. `ny → manuell`) og
+-- dermed tatt saker ut av automatisk behandling — uten claim, uten
+-- kapabilitet og uten menneskelig autorisasjon. Det er nøyaktig
+-- «IKKE: saker»-grensen over.
+GRANT SELECT, INSERT ON unntak TO {rolle};
+GRANT SELECT, INSERT, UPDATE ON idempotens TO {rolle};
+-- TENANTNØKLER: SELECT + INSERT, ALDRI UPDATE (Codex P1).
+-- `hent_eller_opprett_aktiv_dek` leser den aktive DEK-en og oppretter
+-- den ved første behov — det er hele behovet. UPDATE er
+-- DESTRUKSJONSveien (`kryptering.destruer`: wrapped_dek = NULL,
+-- destruert_ts = now(), aktiv = false), og den overgangen er gyldig for
+-- enhver rad som er synlig under en valgt tenantkontekst. En
+-- kompromittert plan-credential kunne dermed crypto-shreddet en tenants
+-- nøkler og gjort alle dens krypterte saker permanent uleselige.
+-- Arbeideren verken roterer eller destruerer nøkler.
+GRANT SELECT, INSERT ON tenant_nokler TO {rolle};
 GRANT SELECT, INSERT ON bestilling_idempotens TO {rolle};
 GRANT SELECT ON policyer, policy_hode TO {rolle};
 GRANT SELECT ON oppdrag TO {rolle};

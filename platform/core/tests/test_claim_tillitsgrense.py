@@ -152,6 +152,41 @@ def test_planrollen_naar_ingenting_utenfor_settet(migrator):
         assert rader, f"{navn} finnes ikke lenger — oppdater porten"
         assert not any(r[0] for r in rader), \
             f"plan-arbeideren har EXECUTE på {navn}"
+    # TABELLNEKTEN (Codex P1). En funksjonsnekt er ikke en grense når det
+    # samme kan gjøres direkte på tabellen. To DESTRUKTIVE fullmakter lå
+    # igjen i settet, og begge er tilgjengelige for en kompromittert
+    # plan-credential som bare setter tenantkontekst:
+    #
+    #   unntak.UPDATE        — triggergyldige saksoverganger (ny → manuell)
+    #                          UTENOM saksbehandlingsfunksjonene: saker ut
+    #                          av automatisk behandling uten claim,
+    #                          kapabilitet eller menneskelig autorisasjon.
+    #   tenant_nokler.UPDATE — `kryptering.destruer`s egen overgang
+    #                          (wrapped_dek = NULL, destruert_ts, aktiv =
+    #                          false): permanent crypto-shredding av en
+    #                          tenants krypterte saker.
+    #
+    # Bestillingsveien trenger INSERT på begge (`kjerne._skriv_unntak`,
+    # `hent_eller_opprett_aktiv_dek`) og UPDATE på ingen av dem. Positiv
+    # kontroll står under, så porten ikke er grønn av en manglende rolle.
+    for tabell in ("unntak", "tenant_nokler"):
+        les, skriv, endre = migrator.execute(
+            "SELECT has_table_privilege(%s,%s,'SELECT'),"
+            "       has_table_privilege(%s,%s,'INSERT'),"
+            "       has_table_privilege(%s,%s,'UPDATE')",
+            (PLANROLLE, tabell, PLANROLLE, tabell,
+             PLANROLLE, tabell)).fetchone()
+        assert les and skriv, \
+            f"plan-arbeideren mangler SELECT/INSERT på {tabell}"
+        assert not endre, (
+            f"plan-arbeideren har UPDATE på {tabell} — en destruktiv "
+            f"fullmakt bestillingsveien aldri bruker")
+    # DELETE er utenfor settet på begge, som for runtime.
+    for tabell in ("unntak", "tenant_nokler", "idempotens"):
+        assert not migrator.execute(
+            "SELECT has_table_privilege(%s,%s,'DELETE')",
+            (PLANROLLE, tabell)).fetchone()[0], \
+            f"plan-arbeideren har DELETE på {tabell}"
     migrator.rollback()
     # Skrive policy: bordnekt, ikke bare funksjonsnekt.
     pa = _pa()
