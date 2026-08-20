@@ -306,6 +306,23 @@ def postslutt(tekst: str, start: int) -> int:
 _NAVNETEGN = re.compile(r"[A-Za-z_$][\w$]*")
 
 
+def hopp_over_tomrom(tekst: str, i: int) -> int:
+    """Indeksen til første tegn fra `i` som verken er blankt eller kommentar.
+
+    Mellom en nøkkel og kolonet den hører til kan det stå begge deler — JS
+    bryr seg ikke — og for spørsmålet «er dette et felt?» er de like mye
+    ingenting.
+    """
+    while i < len(tekst):
+        if tekst[i].isspace():
+            i += 1
+        elif tekst.startswith("//", i) or tekst.startswith("/*", i):
+            i = slutt_ikkekode(tekst, i)
+        else:
+            break
+    return i
+
+
 def toppnivafelt(post: str) -> list[str]:
     """Feltnavnene på ØVERSTE nivå i en modulpost, i den rekkefølgen de står.
 
@@ -330,6 +347,13 @@ def toppnivafelt(post: str) -> list[str]:
     `// status: kommer fra manifestet` sto på postens eget nivå og ble meldt som
     et forbudt felt — en merknad om at feltet nettopp IKKE finnes stoppet
     generatoren. De hoppes derfor over her på samme måte som i `postslutt()`.
+
+    Kommentarhoppet gjaldt først bare øverst i løkka (Codex P2 på #118, åttende
+    runde), mens lookaheaden fram til kolonet bare spiste blanke tegn. Da var
+    `status /* kommer fra manifestet */: "planlagt"` ikke et felt for porten,
+    men et helt vanlig felt for JS — og forbudet slapp gjennom nettopp den
+    aksen det er satt til å stoppe. `hopp_over_tomrom()` spiser derfor begge
+    deler, så nøkkelen finner kolonet sitt uansett hva som står imellom.
     """
     felt = []
     dybde = 0
@@ -368,9 +392,7 @@ def toppnivafelt(post: str) -> list[str]:
             continue
         # Et navn er et felt bare på postens eget nivå, og bare foran kolon.
         if dybde == 1 and klammer == 0:
-            etter = i
-            while etter < len(post) and post[etter].isspace():
-                etter += 1
+            etter = hopp_over_tomrom(post, i)
             if etter < len(post) and post[etter] == ":":
                 felt.append(navn)
     return felt
