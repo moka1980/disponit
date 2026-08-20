@@ -238,18 +238,12 @@ def slug(navn: str) -> str:
     return re.sub(r"[^a-z0-9_]", "", ut)
 
 
-def apner_ikkekode(tekst: str, i: int) -> bool:
-    """Om tegnet i `i` åpner en streng eller en kommentar."""
-    return (tekst[i] in "\"'`"
-            or tekst.startswith("//", i) or tekst.startswith("/*", i))
-
-
 def slutt_ikkekode(tekst: str, i: int) -> int:
     """Indeksen etter strengen eller kommentaren som åpner i `i`.
 
     Strenger: enkelt- og dobbeltfnutt og backtick, med `\\` som escape.
-    Kommentarer: `//` til linjeskift, `/* */` til lukkingen. Uterminert går til
-    tekstslutt — da sier `postslutt()` fra om at posten aldri lukkes.
+    Kommentarer: `//` til linjeskift, `/* */` til lukkingen. Uterminert går
+    til tekstslutt — da sier `les_post()` fra om at posten aldri lukkes.
     """
     if tekst.startswith("//", i):
         j = tekst.find("\n", i)
@@ -264,46 +258,11 @@ def slutt_ikkekode(tekst: str, i: int) -> int:
     return j + 1
 
 
-def postslutt(tekst: str, start: int) -> int:
-    """Indeksen rett ETTER krøllparentesen som lukker posten som åpner i `start`.
-
-    Å lete etter første `}` holder bare så lenge ingen feltverdi inneholder
-    en krøllparentes, og det er ingenting som sier at de ikke kan det: `guard`,
-    `input` og `accept` er fri prosa, og et JSON- eller malfragment i en av dem
-    ville flyttet postslutten inn i midten av en streng. Derfor teller vi dybde
-    og hopper over strenger — enkelt- og dobbeltfnutt og backtick, med `\\` som
-    escape. En `${...}` i en backtick-streng går opp i opp: åpnings- og
-    lukkeparentesen ligger begge inne i strengen og telles ingen av dem.
-
-    KOMMENTARER hoppes over på samme måte (Codex P2 på #118, sjuende runde).
-    En blokkommentar med en ubalansert `}` i seg — `/* TODO: } her */` — lukket
-    posten for tidlig, og alt etter den, inkludert et `status`-felt, falt
-    utenfor det statusforbudet fikk se. En kommentar er kildekode om koden, ikke
-    kode: den kan ikke telle med i dybden.
-
-    Uterminert post er ikke en tom mengde treff — det er en kilde som har
-    endret form, og da er katalogen ikke lenger lesbar. Da stopper vi.
-    """
-    dybde = 0
-    i = start
-    while i < len(tekst):
-        c = tekst[i]
-        if apner_ikkekode(tekst, i):
-            i = slutt_ikkekode(tekst, i)
-            continue
-        if c == "{":
-            dybde += 1
-        elif c == "}":
-            dybde -= 1
-            if dybde == 0:
-                return i + 1
-        i += 1
-    raise SystemExit(
-        f"modulpost i {KILDE_NAVN} lukkes aldri (fra tegn {start}) — "
-        f"kilden har endret form, sjekk parseren")
-
-
 _NAVNETEGN = re.compile(r"[A-Za-z_$][\w$]*")
+_TALL = re.compile(r"-?\d[\w.]*")
+# Ord som er en VERDI og ikke et navn. Katalogen bruker dem ikke i dag, men de
+# er literaler, og en literal kan generatoren hoppe trygt over.
+ORDVERDIER = ("true", "false", "null")
 
 
 def hopp_over_tomrom(tekst: str, i: int) -> int:
@@ -323,10 +282,9 @@ def hopp_over_tomrom(tekst: str, i: int) -> int:
     return i
 
 
-# Navnet et felt får når generatoren IKKE kan lese hva feltet heter. To former
-# gir det: en nøkkel som er beregnet av noe annet enn én streng — `[k]:` eller
-# `[('sta' + 'tus')]:` — og en nøkkel skrevet med escape-sekvenser, se
-# `nokkelnavn()`. Et navn generatoren ikke vet, kan den heller ikke forby.
+# Navnet et felt får når generatoren IKKE kan lese egenskapen. Et navn den ikke
+# vet, kan den heller ikke forby — og en verdi den ikke kan lese, kan den ikke
+# hoppe trygt OVER, så et `status`-felt bak den forsvinner like stille.
 # Tegnet kan ikke kollidere med et ekte feltnavn: `?` er ikke lovlig i en
 # JS-identifikator, og en strengnøkkel som inneholder det leses som seg selv.
 UKJENT_FELT = "?"
@@ -356,135 +314,161 @@ def nokkelnavn(innhold: str) -> str:
     return UKJENT_FELT if "\\" in innhold else innhold
 
 
-def beregnet_nokkel(post: str, i: int) -> tuple[str, int] | None:
-    """(feltnavn, indeksen etter `]`) for en beregnet nøkkel som åpner i `i`.
+def les_nokkel(post: str, i: int) -> tuple[str, int]:
+    """(feltnavn, indeksen etter nøkkelen) for nøkkelen som begynner i `i`.
 
-    `None` når klammen ikke bærer en NØKKEL i det hele tatt: `dep: ['M-6']` er
-    en verdi, og der følger ingen kolon etter `]`. Kolonet er derfor prøven.
+    `(UKJENT_FELT, -1)` når det som står der ikke er et navn generatoren kan
+    lese.
 
-    Feltnavnet er `UKJENT_FELT` når nøkkelen ikke er én streng — da er den
-    regnet ut, og hva egenskapen kommer til å hete vet bare nettleseren — og
-    når strengen bærer en escape-sekvens, se `nokkelnavn()`.
+    JS godtar langt flere former i nøkkelposisjon enn de to katalogen bruker, og
+    hver av dem gir nettleseren en helt alminnelig egenskap: beregnet nøkkel
+    (`[k]:`, `['status']:`, `[/]/.test("") ? "x" : "status"]:`), malstrengnøkkel,
+    escapet nøkkel (`\\u0073tatus:`, `'\\x73tatus':`), spredning (`...o`),
+    forkortelse (`{status}`), metode (`status() {}`) og accessor. Codex fant dem
+    én for én på #118, ellevte til trettende runde, og hullet var hver gang det
+    samme: et felt generatoren ikke SÅ, kunne den heller ikke forby.
+
+    Derfor står regelen nå som en LUKKET liste over det som går an, ikke som en
+    åpen liste over det som ikke gjør det — den forrige typen liste er nettopp
+    det som ga fem runder med nye former. Nøkkelen er ENTEN et navn skrevet med
+    bokstaver ELLER en fnuttstreng uten escape. Alt annet er uleselig, og en
+    uleselig nøkkel stopper generatoren. Prisen er null: katalogens feltnavn er
+    `n`, `name`, `area`, `p`, `kl`, `rev`, `dep`, `guard` — ingen av dem trenger
+    noen annen form for å skrives.
     """
-    j, dybde = i + 1, 0
-    while j < len(post):
-        if apner_ikkekode(post, j):
-            j = slutt_ikkekode(post, j)
-            continue
-        c = post[j]
-        if c in "[{(":
-            dybde += 1
-        elif c in "})":
-            dybde -= 1
-        elif c == "]":
-            if dybde == 0:
-                break
-            dybde -= 1
-        j += 1
-    if j >= len(post):
-        return None
-    etter = hopp_over_tomrom(post, j + 1)
-    if etter >= len(post) or post[etter] != ":":
-        return None
-    # Nøkkelen er statisk bare når klammen bærer NØYAKTIG én streng, og den
-    # strengen ikke selv regner ut noe: `` [`${felt}`] `` er en beregning.
-    k = hopp_over_tomrom(post, i + 1)
-    if k < len(post) and post[k] in "\"'`":
-        slutt = slutt_ikkekode(post, k)
-        innhold = post[k + 1:slutt - 1]
-        if hopp_over_tomrom(post, slutt) == j and "${" not in innhold:
-            return nokkelnavn(innhold), j + 1
-    return UKJENT_FELT, j + 1
+    if post[i] in "\"'":
+        j = slutt_ikkekode(post, i)
+        return (UKJENT_FELT, -1) if j > len(post) \
+            else (nokkelnavn(post[i + 1:j - 1]), j)
+    if (treff := _NAVNETEGN.match(post, i)):
+        return treff.group(0), treff.end()
+    return UKJENT_FELT, -1
 
 
-def toppnivafelt(post: str) -> list[str]:
-    """Feltnavnene på ØVERSTE nivå i en modulpost, i den rekkefølgen de står.
+def les_verdi(post: str, i: int) -> int:
+    """Indeksen etter LITERALEN som begynner i `i`, eller -1.
 
-    Skanner som `postslutt()`: teller dybde og hopper over strenger. Et navn
-    telles bare når det står rett inne i postens egen krøllparentes — ikke i en
-    liste, ikke i et nøstet objekt — og etterfølges av kolon.
+    Literal er fnuttstreng, tall, `true`/`false`/`null`, og lister og objekter
+    av slike — altså nøyaktig det katalogen bærer. Alt annet, som et mønster
+    (`/["']/`), en malstreng eller et regnestykke, er -1.
+
+    Hvorfor verdien i det hele tatt må LESES og ikke bare hoppes over med en
+    dybdeteller: skal generatoren finne neste felt, må den vite hvor denne
+    verdien slutter, og en teller som ikke kjenner mønstre gjetter feil på
+    `x: /["']/, status: 'planlagt'` — fnutten i mønsteret ser ut som starten på
+    en streng, strengen spiser kommaet, og `status` blir aldri et felt. En verdi
+    generatoren ikke kan lese, er derfor en post den ikke kan uttale seg om.
+    """
+    if i >= len(post):
+        return -1
+    c = post[i]
+    if c in "\"'":
+        j = slutt_ikkekode(post, i)
+        return -1 if j > len(post) else j
+    if (treff := _TALL.match(post, i)):
+        return treff.end()
+    if (treff := _NAVNETEGN.match(post, i)) and treff.group(0) in ORDVERDIER:
+        return treff.end()
+    if c in "[{":
+        return les_samling(post, i)
+    return -1
+
+
+def les_samling(post: str, i: int) -> int:
+    """Indeksen etter lista eller objektet som åpner i `i`, eller -1.
+
+    Feltene i et NØSTET objekt hører til det objektet og ikke til modulposten,
+    så navnene brukes ikke til noe her. De må likevel leses: uten dem vet vi
+    ikke hvor den nøstede verdien slutter, og da vet vi heller ikke hvor postens
+    neste felt begynner.
+    """
+    lukk = "]" if post[i] == "[" else "}"
+    n = len(post)
+    j = hopp_over_tomrom(post, i + 1)
+    while j < n:
+        if post[j] == lukk:
+            return j + 1
+        if lukk == "}":
+            _, j = les_nokkel(post, j)
+            if j < 0:
+                return -1
+            j = hopp_over_tomrom(post, j)
+            if j >= n or post[j] != ":":
+                return -1
+            j = hopp_over_tomrom(post, j + 1)
+        j = les_verdi(post, j)
+        if j < 0:
+            return -1
+        j = hopp_over_tomrom(post, j)
+        if j < n and post[j] == ",":
+            j = hopp_over_tomrom(post, j + 1)
+        elif j >= n or post[j] != lukk:
+            return -1
+    return -1
+
+
+def les_post(tekst: str, start: int) -> tuple[list[str], int]:
+    """(feltnavnene på ØVERSTE nivå, indeksen etter posten som åpner i `start`).
+
+    Sluttindeksen er -1 når posten ikke lar seg lese.
+
+    Posten leses som det den er: en følge av `nøkkel: verdi` skilt med komma.
+    Et navn telles bare når det står rett inne i postens egen krøllparentes —
+    ikke i en liste, ikke i et nøstet objekt — og bærer en verdi.
+
+    POSTGRENSEN og FELTNAVNENE leses av samme lesning. De var to skanninger med
+    hvert sitt regelsett: en dybdeteller fant `}`, og en feltskanner leste
+    navnene innenfor. To grammatikker over samme tekst er to steder å ta feil,
+    og de tar feil hver for seg — en verdi dybdetelleren leste galt flyttet
+    postgrensen, og da fikk feltskanneren aldri se resten av posten. Med én
+    lesning er en post enten lest i sin helhet eller avvist ved navn.
 
     Forbudet mot en parallell statusakse (Codex P2 på #118, sjette runde) leste
     før dette rått i posten med et mønster på «`{` eller komma, så navnet, så
     kolon». Nøkkelposisjon er riktig krav, men et regex ser ikke forskjell på
     kode og tekst: en feltverdi som dokumenterer et JSON- eller API-fragment —
-    `input: "Svar: {status: ok}"` — treffer mønsteret inne i fnuttene, og
+    `input: "Svar: {status: ok}"` — traff mønsteret inne i fnuttene, og
     generatoren stoppet med en modulfeilmelding om en tilstandsakse modulen
-    ikke har. Det er samme klasse feil som postgrensen hadde, og desto mer
-    sannsynlig nå som `postslutt()` med vilje tillater krøllparenteser i prosa.
+    ikke har. Motsatt vei holder posisjonskravet fortsatt: ordet «status» står
+    overalt i feltVERDIene — «samtykkestatus», «onboardingstatus» — og det er
+    prosa om hva en modul gjør. Bare et FELT er en tilstandsakse.
 
-    Motsatt vei holder posisjonskravet fortsatt: ordet «status» står overalt i
-    feltVERDIene — «samtykkestatus», «onboardingstatus», «resultatstatus» — og
-    det er prosa om hva en modul gjør. Bare et FELT er en tilstandsakse.
+    Deretter fulgte fem runder der Codex fant én ny SKRIVEMÅTE av gangen —
+    kommentar mellom nøkkel og kolon, `['status']:`, `['\\x73tatus']:`, et
+    mønster med `]` i en beregnet nøkkel, `\\u0073tatus:`, spredning og
+    forkortelse. Hver retting la til ett tilfelle i en skanner som ellers gikk
+    videre på alt den ikke kjente igjen, og en skanner som går videre på det
+    ukjente er åpen i feil ende: det neste tilfellet er alltid ett til.
 
-    KOMMENTARER er heller ikke felt (Codex P2, sjuende runde): en linje som
-    `// status: kommer fra manifestet` sto på postens eget nivå og ble meldt som
-    et forbudt felt — en merknad om at feltet nettopp IKKE finnes stoppet
-    generatoren. De hoppes derfor over her på samme måte som i `postslutt()`.
-
-    Kommentarhoppet gjaldt først bare øverst i løkka (Codex P2 på #118, åttende
-    runde), mens lookaheaden fram til kolonet bare spiste blanke tegn. Da var
-    `status /* kommer fra manifestet */: "planlagt"` ikke et felt for porten,
-    men et helt vanlig felt for JS — og forbudet slapp gjennom nettopp den
-    aksen det er satt til å stoppe. `hopp_over_tomrom()` spiser derfor begge
-    deler, så nøkkelen finner kolonet sitt uansett hva som står imellom.
+    Derfor er retningen snudd. `les_nokkel()` og `les_verdi()` sier hva som ER
+    lesbart, og alt utenfor blir `UKJENT_FELT` — en post generatoren stopper på.
+    Katalogen er en sannhetskilde som skal kunne leses av mer enn nettleseren;
+    en post som bare nettleseren forstår, er ikke en kilde.
     """
-    felt = []
-    dybde = 0
-    klammer = 0
-    i = 0
-    while i < len(post):
-        c = post[i]
-        if post.startswith("//", i) or post.startswith("/*", i):
-            i = slutt_ikkekode(post, i)
-            continue
-        if c in "\"'`":
-            j = slutt_ikkekode(post, i)
-            # Råteksten er navnet bare uten escape-sekvenser: `"\x73tatus":` er
-            # et helt vanlig `status`-felt for nettleseren. Se `nokkelnavn()`.
-            navn = nokkelnavn(post[i + 1:j - 1])
-            i = j
-        elif c == "{":
-            dybde += 1
-            i += 1
-            continue
-        elif c == "}":
-            dybde -= 1
-            i += 1
-            continue
-        elif c == "[":
-            # En STATISK beregnet nøkkel er et helt vanlig felt for nettleseren:
-            # `['status']: 'planlagt'` gir egenskapen `status`, og siden ville
-            # tegnet den (Codex P2 på #118, ellevte runde). Her løftet klammen
-            # bare `klammer`, så nøkkelen inne i den ble aldri talt som felt —
-            # og forbudet slapp gjennom nøyaktig den aksen det er satt til å
-            # stoppe. En klamme som IKKE bærer en nøkkel er en verdi, og telles
-            # som før.
-            nokkel = beregnet_nokkel(post, i) if dybde == 1 and not klammer \
-                else None
-            if nokkel is not None:
-                felt.append(nokkel[0])
-                i = nokkel[1]
-                continue
-            klammer += 1
-            i += 1
-            continue
-        elif c == "]":
-            klammer -= 1
-            i += 1
-            continue
-        elif (treff := _NAVNETEGN.match(post, i)):
-            navn = treff.group(0)
-            i = treff.end()
-        else:
-            i += 1
-            continue
-        # Et navn er et felt bare på postens eget nivå, og bare foran kolon.
-        if dybde == 1 and klammer == 0:
-            etter = hopp_over_tomrom(post, i)
-            if etter < len(post) and post[etter] == ":":
-                felt.append(navn)
-    return felt
+    felt: list[str] = []
+    n = len(tekst)
+    i = hopp_over_tomrom(tekst, start + 1)
+    while i < n:
+        if tekst[i] == "}":
+            return felt, i + 1
+        navn, j = les_nokkel(tekst, i)
+        j = hopp_over_tomrom(tekst, j) if j >= 0 else j
+        if j < 0 or j >= n or tekst[j] != ":":
+            # Ikke `nøkkel: verdi`: spredning, forkortelse, metode, accessor —
+            # eller en nøkkel bare nettleseren kan stave ut.
+            return felt + [UKJENT_FELT], -1
+        j = les_verdi(tekst, hopp_over_tomrom(tekst, j + 1))
+        if j < 0:
+            return felt + [UKJENT_FELT], -1
+        felt.append(navn)
+        i = hopp_over_tomrom(tekst, j)
+        if i < n and tekst[i] == ",":
+            i = hopp_over_tomrom(tekst, i + 1)
+        elif i < n and tekst[i] != "}":
+            return felt + [UKJENT_FELT], -1
+    # Uterminert post er ikke en tom mengde treff — det er en kilde som har
+    # endret form, og da er katalogen ikke lenger lesbar.
+    return felt + [UKJENT_FELT], -1
 
 
 def les_katalog() -> list[dict]:
@@ -500,30 +484,34 @@ def les_katalog() -> list[dict]:
     # modulen videre — ingenting knekker, kilden bare lyver. Nå stopper det her,
     # og kun der en modulpost faktisk står.
     #
-    # Postgrensen leses med `postslutt()`, som kjenner strenger (Codex P2 på
-    # #118, femte runde). Den var «første `}` etter treffet», med begrunnelsen
-    # at ingen krøllparentes finnes inne i feltverdiene. Det er sant i dag og
-    # ingen regel: `guard`, `input` og `accept` er fri prosa, og et JSON- eller
-    # malfragment i en av dem — `{}`, `${sak}` — hadde kuttet posten der, midt
-    # inne i en streng. Alt etter kuttet, inkludert et `status`-felt, falt
-    # utenfor det forbudet fikk se. Og nummerporten under fanger det ikke:
-    # POST_RE er ferdig med å matche ved `p`, så posten telles som normalt.
+    # Postgrensen var «første `}` etter treffet», med begrunnelsen at ingen
+    # krøllparentes finnes inne i feltverdiene (Codex P2 på #118, femte runde).
+    # Det er sant i dag og ingen regel: `guard`, `input` og `accept` er fri
+    # prosa, og et JSON- eller malfragment i en av dem — `{}`, `${sak}` — hadde
+    # kuttet posten der, midt inne i en streng. Alt etter kuttet, inkludert et
+    # `status`-felt, falt utenfor det forbudet fikk se. Og nummerporten under
+    # fanger det ikke: POST_RE er ferdig med å matche ved `p`, så posten telles
+    # som normalt.
     #
-    # Innenfor posten leses FELTNAVNENE, ikke teksten (Codex P2, sjette runde):
-    # `toppnivafelt()` hopper over strenger på samme måte, så et JSON-fragment
-    # i en fri feltverdi ikke lenger kan se ut som en tilstandsakse.
+    # Innenfor posten leses FELTNAVNENE, ikke teksten (Codex P2, sjette runde),
+    # så et JSON-fragment i en fri feltverdi ikke kan se ut som en tilstandsakse.
+    # Grense og feltnavn kommer fra SAMME lesning, se `les_post()`.
     poster = []
     for m in POST_RE.finditer(skript):
-        post = skript[m.start():postslutt(skript, m.start())]
-        feltnavn = toppnivafelt(post)
+        feltnavn, _ = les_post(skript, m.start())
         if UKJENT_FELT in feltnavn:
             raise SystemExit(
-                f"M-{m.group(1)} «{m.group(3)}» i {KILDE_NAVN} har et felt "
-                f"generatoren ikke kan lese navnet på — enten BEREGNET "
-                f"(`[k]:`) eller skrevet med escape (`'\\x73tatus'`). "
-                f"Katalogen er en kilde som skal kunne leses, og et navn som "
+                f"M-{m.group(1)} «{m.group(3)}» i {KILDE_NAVN} har en egenskap "
+                f"generatoren ikke kan lese. Lovlig er `navn: literal` — "
+                f"feltnavnet i bokstaver eller som fnuttstreng uten escape, og "
+                f"verdien en streng, et tall, `true`/`false`/`null` eller en "
+                f"liste eller et objekt av slike. Uleselig er blant annet en "
+                f"BEREGNET nøkkel (`['status']:`), en nøkkel skrevet med "
+                f"escape (`\\u0073tatus:`), spredning (`...o`), forkortelse "
+                f"(`{{status}}`), metode og accessor. Katalogen er en kilde som "
+                f"skal kunne leses av mer enn nettleseren; en egenskap som "
                 f"først blir til når siden kjører kan hverken leses eller "
-                f"forbys her. Skriv feltnavnet med bokstaver.")
+                f"forbys her.")
         forbudt = [f for f in feltnavn if f in FORBUDTE_FELT]
         if forbudt:
             raise SystemExit(

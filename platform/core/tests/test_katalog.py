@@ -157,32 +157,45 @@ def _med_felt_i_m57(tmp_path: Path, felt: str) -> subprocess.CompletedProcess:
 
 @pytest.mark.parametrize("felt,i_meldingen", [
     ('"status":"planlagt"', "status"),
-    ("['status']:'planlagt'", "status"),
+    ("['status']:'planlagt'", "BEREGNET"),
     ('["sta" + "tus"]:"planlagt"', "BEREGNET"),
     ("[nokkel]:'planlagt'", "BEREGNET"),
     (r"['\x73tatus']:'planlagt'", "escape"),
     (r'["\u0073tatus"]:"planlagt"', "escape"),
     (r'"\x73tatus":"planlagt"', "escape"),
+    # Trettende runde. Escapen trenger ikke fnutter rundt seg, og egenskapen
+    # trenger ikke være skrevet som `navn: verdi` i det hele tatt.
+    (r'\u0073tatus:"planlagt"', "egenskap"),
+    ('...{status:"planlagt"}', "spredning"),
+    ("status", "forkortelse"),
+    ('status(){return "planlagt"}', "metode"),
+    ('get status(){return "planlagt"}', "accessor"),
+    # Et MØNSTER med `]` i seg lukket den beregnede nøkkelen for tidlig, så
+    # `status` ble aldri lest som nøkkel.
+    ('[/]/.test("") ? "x" : "status"]:"planlagt"', "BEREGNET"),
+    # Og motsatt vei: et mønster i VERDI-posisjon er ingen literal katalogen
+    # bærer. Leser ikke generatoren verdien, vet den heller ikke hvor neste felt
+    # begynner — fnutten inne i mønsteret svelget kommaet og skjulte feltet bak.
+    ('x:/["\']/, "status":"planlagt"', "egenskap"),
 ])
 def test_statusforbudet_ser_alle_skrivemaater(tmp_path, felt, i_meldingen):
-    """En tilstandsakse er forbudt uansett HVORDAN nøkkelen er skrevet.
+    """En tilstandsakse er forbudt uansett HVORDAN egenskapen er skrevet.
 
-    Forbudet leste feltnavn som navn eller fnuttstreng, og klammen rundt en
-    beregnet nøkkel løftet bare klammetelleren: `['status']: 'planlagt'` ble
-    aldri talt som felt (Codex P2 på #118, ellevte runde). For nettleseren er
-    det den samme egenskapen som `status:` — den frittstående siden ville
+    Forbudet leste feltnavn som navn eller fnuttstreng og gikk videre på alt
+    annet. Det er åpent i feil ende, og Codex fant formene én for én over tre
+    runder på #118: `['status']:` (ellevte), `['\\x73tatus']:` (tolvte), og i
+    trettende runde `\\u0073tatus:`, spredning, forkortelse, metode, accessor
+    og en beregnet nøkkel med en `]` inne i et mønster. Alle gir nettleseren
+    den helt alminnelige egenskapen `status`: den frittstående siden ville
     tegnet den, mens generatoren kastet den stille, og da lyver kilden.
 
-    En nøkkel som er REGNET UT stoppes også, med sin egen beskjed: hva
-    egenskapen kommer til å hete vet bare nettleseren, og et navn generatoren
-    ikke kan lese kan den heller ikke forby.
+    Generatoren TOLKER ikke escape-sekvenser og GJETTER ikke hva en beregnet
+    nøkkel kommer til å hete — den avviser dem, se `les_nokkel()`. Prøvene her
+    krever derfor bare at den STOPPER og sier hva den ikke kunne lese.
 
-    Det samme gjelder en nøkkel skrevet med ESCAPE (Codex P2 på #118, tolvte
-    runde). `['\\x73tatus']` og `"\\u0073tatus":` gir begge den alminnelige
-    egenskapen `status`, mens en sammenligning mot råteksten ser noe annet og
-    slipper dem forbi. Generatoren tolker ikke sekvensene — den avviser dem, se
-    `nokkelnavn()` — så prøvene her krever bare at den STOPPER, ikke at den
-    gjettet hva nøkkelen skulle bety.
+    VERDIEN er med i det samme kravet, se `les_verdi()`: leses den ikke, vet
+    generatoren heller ikke hvor neste felt begynner, og et `status`-felt bak
+    en uleselig verdi forsvinner like stille som en uleselig nøkkel.
 
     Mutasjonen står i en KOPI av kilden — en port som retter fila den måler,
     kan ikke feile.
@@ -350,6 +363,12 @@ _KONTROLLORD = {"if", "for", "while", "with", "switch", "catch"}
 _SETNINGSORD = {"else", "do", "try", "finally", "catch", "static"}
 
 _TALL_START_RE = re.compile(r"(?:\d[\w.]*|\.\d[\w.]*)")
+# Tallet slik det står som VERDI i en modulpost. Fortegnet er med her og ikke i
+# `_TALL_START_RE`: skanneren over leser `-` som operatoren den er.
+_VERDITALL_RE = re.compile(r"(?:-?\d[\w.]*|-?\.\d[\w.]*)")
+# Ord som er en VERDI og ikke et navn. Katalogen bruker dem ikke i dag, men de
+# er literaler, og en literal kan porten hoppe trygt over.
+_ORDVERDIER = ("true", "false", "null")
 
 
 def _kommentarslutt(js: str, i: int, b: int) -> int:
@@ -735,117 +754,140 @@ def _nokkelnavn(innhold: str) -> str:
     return ULESELIG if "\\" in innhold else innhold
 
 
-def _beregnet_nokkel(post: str, i: int,
-                     spenn: dict[int, tuple]) -> tuple[str, int] | None:
-    """(feltnavn, indeksen etter `]`) for en beregnet nøkkel som åpner i `i`.
+def _les_nokkel(post: str, i: int,
+                spenn: dict[int, tuple]) -> tuple[str, int]:
+    """(feltnavn, indeksen etter nøkkelen). `(ULESELIG, -1)` når den ikke er et
+    navn porten kan lese.
 
-    `['kl']: "oppfunnet"` er et helt vanlig `kl`-felt for nettleseren (Codex P2
-    på #118, ellevte runde). Leste porten klammen som noe annet enn en nøkkel,
-    hadde posten manglet feltet — og enumporten sjekker bare de feltene som
-    finnes, så en klasse registeret avviser ville gått grønt gjennom CI.
+    Lista er LUKKET, som i generatoren: nøkkelen er enten et navn skrevet med
+    bokstaver eller en fnuttstreng uten escape. Alt annet JS godtar i
+    nøkkelposisjon — `['kl']:`, `['\\x6bl']:`, `\\u006bl:`, en malstrengnøkkel,
+    en beregnet nøkkel med en `]` inne i et mønster — gir nettleseren en helt
+    alminnelig egenskap, men gir porten et felt som heter noe annet eller ikke
+    finnes. Og et felt porten ikke ser, kontrollerer den ikke: enumporten
+    sjekker de feltene som FINNES, så en `kl`-verdi registeret avviser ville
+    gått grønt gjennom CI.
 
-    `None` når klammen ikke bærer en nøkkel: `dep: ['M-6']` er en verdi, og der
-    følger ingen kolon etter `]`. Kolonet er prøven.
-
-    En nøkkel som er REGNET UT — `[k]:` — gir også `None`. Hva den kommer til å
-    hete vet bare nettleseren, og generatoren stopper på den formen; her ville
-    et gjettet navn vært verre enn ingen.
+    Codex fant formene én for én på #118 (ellevte til trettende runde). Å legge
+    til én til for hver runde er å holde en åpen liste over det som ikke går an;
+    denne veien er lukket.
     """
-    j, dybde, n = i + 1, 0, len(post)
+    if i in spenn and spenn[i][1] == "streng":
+        j = spenn[i][0]
+        return _nokkelnavn(post[i + 1:j - 1]), j
+    if i not in spenn and (treff := _NAVN_RE.match(post, i)):
+        return treff.group(0), treff.end()
+    return ULESELIG, -1
+
+
+def _les_verdi(post: str, i: int,
+               spenn: dict[int, tuple]) -> tuple[str, int]:
+    """(verdien som tekst, indeksen etter den). `("", -1)` når den ikke er en
+    literal.
+
+    Literal er fnuttstreng, tall, `true`/`false`/`null`, og lister og objekter
+    av slike — det katalogen faktisk bærer. En verdi porten ikke kan lese, kan
+    den heller ikke hoppe trygt OVER, og da vet den ikke hvor neste felt
+    begynner: `x: /["']/, kl: "oppfunnet"` ville skjult `kl` helt.
+
+    Fnuttene faller bort av en streng; en liste og et objekt gir råteksten sin,
+    for `dep` leses som prosa av `_moduler_fra_kilden()`.
+    """
+    n = len(post)
+    if i >= n:
+        return "", -1
+    if i in spenn:
+        if spenn[i][1] != "streng":
+            return "", -1
+        j = spenn[i][0]
+        return post[i + 1:j - 1], j
+    if (treff := _VERDITALL_RE.match(post, i)):
+        return treff.group(0), treff.end()
+    if (treff := _NAVN_RE.match(post, i)) and treff.group(0) in _ORDVERDIER:
+        return treff.group(0), treff.end()
+    if post[i] in "[{":
+        j = _les_samling(post, i, spenn)
+        return (post[i:j], j) if j > 0 else ("", -1)
+    return "", -1
+
+
+def _les_samling(post: str, i: int, spenn: dict[int, tuple]) -> int:
+    """Indeksen etter lista eller objektet som åpner i `i`, eller -1.
+
+    Feltene i et NØSTET objekt hører til det objektet, ikke til modulposten, så
+    navnene brukes ikke. De må likevel leses: uten dem vet vi ikke hvor den
+    nøstede verdien slutter.
+    """
+    lukk = "]" if post[i] == "[" else "}"
+    n = len(post)
+    j = _tomrom(post, i + 1, spenn)
     while j < n:
-        if j in spenn:
-            j = spenn[j][0]
-            continue
-        c = post[j]
-        if c in "[{(":
-            dybde += 1
-        elif c in "})":
-            dybde -= 1
-        elif c == "]":
-            if dybde == 0:
-                break
-            dybde -= 1
-        j += 1
-    if j >= n:
-        return None
-    etter = _tomrom(post, j + 1, spenn)
-    if etter >= n or post[etter] != ":":
-        return None
-    # Statisk er nøkkelen bare når klammen bærer NØYAKTIG én fnuttstreng. En
-    # malstreng gir ikke noe spenn på selve backticken — den er alltid delvis
-    # kode — og faller derfor ut her, som seg hør og bør.
-    k = _tomrom(post, i + 1, spenn)
-    if k in spenn and spenn[k][1] == "streng":
-        slutt = spenn[k][0]
-        if _tomrom(post, slutt, spenn) == j:
-            return _nokkelnavn(post[k + 1:slutt - 1]), j + 1
-    return None
+        if j not in spenn and post[j] == lukk:
+            return j + 1
+        if lukk == "}":
+            _, j = _les_nokkel(post, j, spenn)
+            if j < 0:
+                return -1
+            j = _tomrom(post, j, spenn)
+            if j >= n or post[j] != ":":
+                return -1
+            j = _tomrom(post, j + 1, spenn)
+        _, j = _les_verdi(post, j, spenn)
+        if j < 0:
+            return -1
+        j = _tomrom(post, j, spenn)
+        if j < n and j not in spenn and post[j] == ",":
+            j = _tomrom(post, j + 1, spenn)
+        elif j >= n or j in spenn or post[j] != lukk:
+            return -1
+    return -1
 
 
 def _postfelt(post: str) -> dict[str, str]:
     """{feltnavn: verdi} for feltene på postens ØVERSTE nivå.
 
-    Verdien er råteksten fram til neste komma på samme nivå; er den en streng,
-    faller fnuttene bort. Felt i nøstede objekter og lister hører til dem, ikke
-    til posten, og telles ikke — og tekst inne i en feltverdi er tekst, ikke
-    felt. Kilden bærer to skrivemåter side om side: v7-arven er JS-literaler
-    (`n:38,…,p:1,…,dep:'…'`), v8-modulene er JSON (`"n": 53, …`). Begge leses —
-    leste porten bare den ene, ville halve katalogen vært uvoktet uten at noe
-    sa fra.
+    Posten leses som en følge av `nøkkel: literal` skilt med komma. Felt i
+    nøstede objekter og lister hører til dem, ikke til posten, og tekst inne i
+    en feltverdi er tekst og ikke felt. Kilden bærer to skrivemåter side om
+    side: v7-arven er JS-literaler (`n:38,…,p:1,…,dep:'…'`), v8-modulene er
+    JSON (`"n": 53, …`). Begge leses — leste porten bare den ene, ville halve
+    katalogen vært uvoktet uten at noe sa fra.
 
-    KOMMENTARER mellom nøkkel og kolon var før dette usynlige for parseren
-    (Codex P2 på #118, niende runde), som bare spiste blanke tegn. Da forlot
-    den nøkkelen: `"kl" /* begrunnelse */: "oppfunnet"` ga en post UTEN `kl`,
-    og enum-porten sjekker bare de feltene som faktisk finnes. En klasse
-    modulregisteret avviser hadde altså gått grønt gjennom CI — mens nettleseren
-    leste feltet som et helt vanlig felt. Å miste et felt er farligere enn å
-    misforstå det: det som ikke finnes, blir ikke kontrollert.
+    Parseren gikk før VIDERE på alt den ikke kjente igjen, og hver Codex-runde
+    på #118 fant én form til som slapp gjennom akkurat der: kommentar mellom
+    nøkkel og kolon (niende runde), `['kl']:` (ellevte), `['\\x6bl']:`
+    (tolvte), og i trettende `\\u006bl:`, spredning, forkortelse, metode og
+    accessor. Alle gir nettleseren et helt vanlig felt.
+
+    Å miste et felt er farligere enn å misforstå det: det som ikke finnes, blir
+    ikke kontrollert. Derfor sier `_les_nokkel()` og `_les_verdi()` nå hva som
+    ER lesbart, og en post med noe utenfor får `ULESELIG` — som er det
+    kontraktporten faller på, med modulnummeret.
     """
     ut: dict[str, str] = {}
     spenn = _spennkart(post)
-    i, n = 1, len(post)
+    n = len(post)
+    i = _tomrom(post, 1, spenn)
     while i < n:
-        c = post[i]
-        if c.isspace() or c == ",":
-            i += 1
-            continue
-        if i in spenn and spenn[i][1] == "kommentar":
-            i = spenn[i][0]
-            continue
-        if c == "}":
-            break
-        if c == "[" and (nokkel := _beregnet_nokkel(post, i, spenn)):
-            navn, i = nokkel
-        elif i in spenn and spenn[i][1] == "streng":
-            j = spenn[i][0]
-            navn, i = _nokkelnavn(post[i + 1:j - 1]), j
-        elif (treff := _NAVN_RE.match(post, i)):
-            navn, i = treff.group(0), treff.end()
-        else:
-            i += 1
-            continue
-        i = _tomrom(post, i, spenn)
-        if i >= n or post[i] != ":":
-            continue
-        i = _tomrom(post, i + 1, spenn)
-        start, dybde = i, 0
-        while i < n:
-            if i in spenn:
-                i = spenn[i][0]
-                continue
-            if post[i] in "{[":
-                dybde += 1
-            elif post[i] in "}]":
-                if dybde == 0:
-                    break
-                dybde -= 1
-            elif post[i] == "," and dybde == 0:
-                break
-            i += 1
-        verdi = post[start:i].strip()
-        if len(verdi) >= 2 and verdi[0] in "\"'`" and verdi[-1] == verdi[0]:
-            verdi = verdi[1:-1]
+        if i not in spenn and post[i] == "}":
+            return ut
+        navn, i = _les_nokkel(post, i, spenn)
+        i = _tomrom(post, i, spenn) if i >= 0 else i
+        if i < 0 or i >= n or post[i] != ":":
+            ut[ULESELIG] = ""
+            return ut
+        verdi, i = _les_verdi(post, _tomrom(post, i + 1, spenn), spenn)
+        if i < 0:
+            ut[ULESELIG] = ""
+            return ut
         ut[navn] = verdi
+        i = _tomrom(post, i, spenn)
+        if i < n and i not in spenn and post[i] == ",":
+            i = _tomrom(post, i + 1, spenn)
+        elif i < n and (i in spenn or post[i] != "}"):
+            ut[ULESELIG] = ""
+            return ut
+    ut[ULESELIG] = ""
     return ut
 
 
@@ -1235,6 +1277,42 @@ def test_enumtilstanden_leser_slipp_og_nytt_vilkaar_i_rekkefolge(tmp_path):
     gjeldende, _ = _registerets_enums(mappe)
     assert gjeldende[(MODULKONTRAKT, "reversibilitet")] == {
         "direkte", "irreversibel"}
+
+
+@pytest.mark.parametrize("post,lesbar", [
+    # Begge skrivemåtene kilden faktisk bærer, og en nøstet verdi.
+    ("""{n:1,name:'A',p:1,dep:'B',kl:"krever_outbox"}""", True),
+    ("""{"n":1,"name":"A","p":1,"dep":"B","kl":"krever_outbox"}""", True),
+    ("""{n:1,name:'A',p:1,dep:['M-6'],meta:{a:1,b:[2]}}""", True),
+    ("""{n:1,name:'A',p:1,kl /* begrunnelse */:"krever_outbox"}""", True),
+    # Nøkkelformer nettleseren leser som `kl`, men porten leste som noe annet
+    # — eller ikke i det hele tatt.
+    ("""{n:1,name:'A',p:1,['kl']:"oppfunnet"}""", False),
+    (r"""{n:1,name:'A',p:1,['\x6bl']:"oppfunnet"}""", False),
+    (r"""{n:1,name:'A',p:1,\u006bl:"oppfunnet"}""", False),
+    ("""{n:1,name:'A',p:1,[/]/.test("")?"x":"kl"]:"oppfunnet"}""", False),
+    # Egenskaper som ikke er skrevet som `nøkkel: verdi`.
+    ("""{n:1,name:'A',p:1,...{kl:"oppfunnet"}}""", False),
+    ("""{n:1,name:'A',p:1,kl}""", False),
+    ("""{n:1,name:'A',p:1,kl(){return "oppfunnet"}}""", False),
+    ("""{n:1,name:'A',p:1,get kl(){return "oppfunnet"}}""", False),
+    # Og verdier porten ikke kan lese, og derfor ikke kan hoppe over: et
+    # mønster med en fnutt i ville svelget kommaet og skjult `kl` bak seg.
+    ("""{n:1,name:'A',p:1,x:/["']/,kl:"oppfunnet"}""", False),
+    ("""{n:1,name:'A',p:1,kl:`oppfunnet`}""", False),
+])
+def test_kontraktparseren_leser_bare_navn_og_literal(post, lesbar):
+    """Porten må se HELE posten, ellers vokter den bare det den tilfeldigvis så.
+
+    Enumporten under sjekker de feltene som FINNES. Et `kl` porten ikke leser,
+    kontrollerer den ikke — og en klasse modulregisteret avviser går da grønt
+    gjennom CI mens nettleseren viser feltet som et helt vanlig felt.
+
+    Formene her sto ikke i kilden da de ble funnet, og gjør det ikke nå: en
+    port som bare måler dagens fil, går grønn helt til noen skriver linja. Det
+    var nettopp slik Codex fant dem én for én over tre runder på #118.
+    """
+    assert (ULESELIG not in _postfelt(post)) is lesbar, _postfelt(post)
 
 
 def test_kontraktklassene_i_katalogen_finnes_i_modulregisteret():
