@@ -140,6 +140,11 @@ def versjoner_endepunkt(tjeneste, request: Request) -> Response:
     return _med_conn(tjeneste, rid, kjor)
 
 
+# Kolonnens tak: `policyer.generasjon` er `BIGINT`, og sekvensen under den
+# kan ikke levere et større tall. Se `_generasjon`.
+_MAKS_GENERASJON = 2 ** 63 - 1
+
+
 def _generasjon(rå: str | None) -> int | None:
     """Query-parameteren som generasjonstall, eller None om den ikke ER et.
 
@@ -147,10 +152,32 @@ def _generasjon(rå: str | None) -> int | None:
     velformet generasjon er sifre og bare det: ingen fortegn, ingen
     mellomrom, ingen tom streng. Alt annet er en feilformet forespørsel —
     ikke en generasjon som tilfeldigvis ikke finnes.
+
+    OG DEN MÅ FÅ PLASS I KOLONNEN (Codex P2). «Er sifre» var ikke det
+    samme som «er et generasjonstall»: en sifferstreng over `BIGINT`
+    passerte prøven her og døde først NEDE i `policyversjon_innhold(...,
+    BIGINT)`, som en tilpasningsfeil utenfor de to avslagene ruta
+    håndterer — altså 500 på en forespørsel som bare var feilformet. En
+    streng lengre enn Pythons `int_max_str_digits` (4300 som standard)
+    felte til og med `int()` her, før noen SQL var skrevet. Begge er den
+    samme mangelen: prøven målte FORMEN og ikke VERDIOMRÅDET.
+
+    Lengdeprøven står foran `int()` nettopp for den andre: et tall som
+    ikke kan konverteres kan heller ikke sammenlignes med et tak. 19
+    sifre er `BIGINT`s bredde, og en generasjon skrives uten nullpadding
+    — flaten sender tallet den fikk fra `/versjoner`.
     """
     if not rå or not rå.isascii() or not rå.isdigit():
         return None
-    return int(rå)
+    if len(rå) > 19:
+        return None
+    verdi = int(rå)
+    # Sekvensen starter på 1, så `0` er ingen generasjon — den er et tall
+    # ingen rad kan bære, og en forespørsel om den er feilformet på samme
+    # måte som en om `-1` ville vært.
+    if verdi < 1 or verdi > _MAKS_GENERASJON:
+        return None
+    return verdi
 
 
 def diff_endepunkt(tjeneste, request: Request) -> Response:

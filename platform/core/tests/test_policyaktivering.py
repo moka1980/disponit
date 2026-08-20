@@ -2716,6 +2716,26 @@ def test_diffen_er_bundet_til_generasjonene_som_ble_vist(klient):
     # En generasjon som ikke ER et tall er en feilformet forespørsel, ikke
     # en konflikt: ingenting i basen kan gjøre det samme kallet gyldig.
     assert diff("x", gen).status_code == 400
+    # ... OG DET SAMME GJELDER ET TALL KOLONNEN IKKE KAN BÆRE (Codex P2).
+    # «Er sifre» var ikke «er en generasjon»: en sifferstreng over `BIGINT`
+    # kom forbi prøven i ruta og døde nede i `policyversjon_innhold(...,
+    # BIGINT)` som en tilpasningsfeil ingen `except` her fanger — 500 på en
+    # forespørsel som bare var feilformet. En streng lengre enn Pythons
+    # `int_max_str_digits` felte til og med konverteringen i ruta, før noen
+    # SQL var skrevet. Og `0` er ingen generasjon: sekvensen starter på 1.
+    for ugyldig in (str(2 ** 63), "9" * 25, "1" * 4400, "0"):
+        r = diff(ugyldig, gen)
+        assert r.status_code == 400, (ugyldig[:20], r.status_code, r.text)
+        assert r.json()["feil"] == "request_feilformet", ugyldig[:20]
+        r = diff(gen, ugyldig)
+        assert r.status_code == 400, (ugyldig[:20], r.status_code, r.text)
+    # Taket selv er derimot et lovlig tall å SPØRRE om — det finnes bare
+    # ingen rad der. Da er svaret konflikt (nummeret bæres av en annen
+    # generasjon), ikke feilformet: prøven måler verdiområdet, ikke om
+    # raden finnes.
+    r = diff(2 ** 63 - 1, gen)
+    assert r.status_code == 409, r.text
+    assert r.json()["feil"] == "diff_kilde_endret", r.text
 
     # …og porten står i DEFINEREN, ikke bare i ruta: en direkte kaller med
     # kjøretidsrollens EXECUTE møter den samme prøven.
