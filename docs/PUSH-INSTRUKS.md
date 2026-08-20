@@ -16,7 +16,7 @@
 Endringene i denne pakken (navnebytte til Disponit): `README.md`,
 `docs/STRUKTUR.md`, `docs/RUTINER.md`, `.github/CODEOWNERS` (@moka1980),
 `locales/nb.json`, `locales/en.json`, og `docs/spesifikasjon/` der filen nå
-heter `disponit-prototype-v8.html` (gammel fil slettet).
+heter `disponit-prototype-v9.html` (gammel fil slettet).
 
 I terminal (eller be Claude Code gjøre det ordrett):
 
