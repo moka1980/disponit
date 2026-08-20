@@ -79,12 +79,20 @@ def _backfill_historisk(m, sql, params):
     trenger en backfilt rad må derfor gjøre det migrasjonen gjorde: skru
     vakten av, skrive, skru den på igjen. At det KREVES, er porten.
     """
+    # `ALTER TABLE` tåler ingen VENTENDE trigger-hendelser på tabellen, og
+    # `policyer_aktivert_av_hendelse_fk` er DEFERRABLE INITIALLY DEFERRED:
+    # skrivingen vår legger igjen nettopp en slik. `SET CONSTRAINTS ALL
+    # IMMEDIATE` fyrer den her, mens vi fortsatt kan se resultatet, så
+    # gjeninnkoblingen slipper til. Kalleren må ha committet det den gjorde
+    # før — av samme grunn, for den FØRSTE ALTER-en.
+    #
+    # Ingen `finally`: feiler noe her, er transaksjonen avbrutt, og
+    # rollbacken tar `DISABLE`-en med seg. En `finally` ville bare kastet en
+    # ny feil oppå den ekte.
     m.execute("ALTER TABLE policyer DISABLE TRIGGER policyer_kilde_vakt_trg")
-    try:
-        m.execute(sql, params)
-    finally:
-        m.execute("ALTER TABLE policyer ENABLE TRIGGER"
-                  " policyer_kilde_vakt_trg")
+    m.execute(sql, params)
+    m.execute("SET CONSTRAINTS ALL IMMEDIATE")
+    m.execute("ALTER TABLE policyer ENABLE TRIGGER policyer_kilde_vakt_trg")
 
 
 def _hendelse(m, pid, versjon):
@@ -973,7 +981,12 @@ def test_historisk_merket_kan_ikke_settes_etter_migrasjonen():
                 " WHERE tenant=%s AND policy_id=%s AND versjon=%s",
                 (TEN, pid, versjon)).fetchone()[0]
 
-        assert _i_kraft("1") is False and _i_kraft("2") is False
+        # `bootstrap` er det ENESTE merket som gjør en rad «aldri i kraft»:
+        # en umerket rad sier ingenting vi kan bruke mot den, og
+        # `policyversjon_i_kraft` leser derfor fraværet som `historisk`.
+        # Det er nettopp bootstrap-raden funnet gjelder — den som går fra
+        # usann til sann om merket kan skrives.
+        assert _i_kraft("1") is False, "bootstrap-raden har aldri vært i kraft"
         m.commit()
 
         # Veien inn er stengt fra BEGGE utgangspunkt: et annet merke, og
@@ -998,7 +1011,10 @@ def test_historisk_merket_kan_ikke_settes_etter_migrasjonen():
         m.rollback()
 
         # …og en rad som ALT er backfilt kan fortsatt oppdateres: det er
-        # overgangen som er stengt, ikke raden.
+        # overgangen som er stengt, ikke raden. (Commit først: `ALTER TABLE`
+        # i hjelperen tåler ingen ventende trigger-hendelser, og
+        # tenantkonteksten er `SET LOCAL` og må settes på nytt etterpå.)
+        m.commit()
         m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
         _backfill_historisk(
             m, "UPDATE policyer SET aktiveringskilde='historisk'"
@@ -1981,11 +1997,19 @@ def test_rullbakkeopphavet_er_frosset_naar_historikken_leser_det(klient):
 
 
 def _overstyringsutkast(pid, overstyring, versjon="1.1.0"):
-    """Dokument med en `godkjennbare`-oppføring og handlingen den peker på."""
+    """Dokument med en `godkjennbare`-oppføring og handlingen den peker på.
+
+    `tillatt_for` er PÅKREVD i fiksturen (Codex P1, runde 9): gaten feller
+    nå en handling uten en eneste tillatt rolle i steg 3, før grensene i det
+    hele tatt vurderes. Uten rollen ville hver oppføring under blitt avvist
+    på DEN grunnen — også den positive kontrollen — og testen ville målt noe
+    annet enn den sier.
+    """
     return json.dumps({
         "meta": {"policy_id": pid, "versjon": versjon,
                  "status": "produksjon"},
         "handlinger": [{"id": "ordre.bekreft", "modus": "grense",
+                        "tillatt_for": ["agent"],
                         "grenser": {"belop_maks": 1000, "valuta": ["NOK"]}}],
         "menneskelig_overstyring": {"godkjennbare": [overstyring]}})
 

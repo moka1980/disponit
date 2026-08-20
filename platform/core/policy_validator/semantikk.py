@@ -129,7 +129,19 @@ def kildechecksum() -> str:
 #: motoren og påstanden i kontrakten ikke kan komme fra hverandre. Motorens
 #: dommer er uendret — konstanten har samme verdi som literalen den erstattet
 #: — men `engine.py` og `schema.py` er manifestfiler, så pinnen følger med.)
-MOTOR_SEMANTIKKVERSJON = "6c8380e4d7e8445687b0d9450caf12697471037e8a141e5bb1904746d11b5b3a"
+#: (Codex P1 på #111, runde 9: `_evaluer` feller rollen i STEG 3 —
+#: `aktor_rolle NOT IN tillatt_for` — før beløp og valuta. Er lista tom eller
+#: fraværende, er prøven sann for enhver rolle, og ingen løftbar grunnkode kan
+#: oppstå for handlingen. Innføringskontrakten avviser oppføringen deretter.
+#: Ingen beslutning skifter: motoren stoppet alt slike handlinger på
+#: `rolle_ikke_tillatt`.)
+#: (Codex P2 på #111, runde 10: et `belop_maks` må være et tall lagene under
+#: kan BÆRE — maks 18 sifre foran komma. En lengre sifferstreng passerte
+#: skjemaet og `Decimal`, men veltet `NUMERIC`-castet i aktiveringsgaten med
+#: en kode ingen håndterer, så en ferdig attestert runde endte i 500. Kravet
+#: står i INNFØRINGSkontrakten, så en alt aktiv policy leses som før; ingen
+#: beslutning skifter av det.)
+MOTOR_SEMANTIKKVERSJON = "f9ae91a18f68afd4fee9a8a9fd69634b542d7ce749265f28f3d1d146f436f856"
 
 
 # ---------------------------------------------------------------------------
