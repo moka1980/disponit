@@ -1003,13 +1003,35 @@ _KJORER = {
 }
 
 
+def _kjorende_felt(navn: str, innhold: dict) -> tuple:
+    """Feltene i denne noden som ALLTID kjører. Se `_KJORER`.
+
+    En blokk med `EXCEPTION`-håndterer er unntaket (Codex P2 på #118,
+    tjueførste runde). PostgreSQL kjører en slik blokk i sitt eget
+    underpunkt, og fanges en feil, RULLES ALT kroppen rakk å gjøre TILBAKE før
+    håndtereren kjører — også DDL. Kroppen ble regnet som ubetinget, så et
+    slipp inne i en slik blokk fjernet et vilkår databasen beholder: står et
+    videre vilkår igjen, kan katalogporten slippe inn en klasse PostgreSQL
+    avviser.
+
+    Om kroppen fullførte kan bare avgjøres når migrasjonen kjører, så svaret er
+    ukjent — og da er kroppen betinget, som alt annet vi ikke vet utfallet av.
+    En blokk UTEN håndterer ruller ikke tilbake noe: da stopper feilen hele
+    migrasjonen, og ingenting av den gjelder uansett.
+    """
+    if navn == "PLpgSQL_stmt_block" and innhold.get("exceptions"):
+        return ()
+    return _KJORER.get(navn, ())
+
+
 def _plpgsql_setninger(node, betinget: bool):
     """(SQL-tekst, betinget) for hver setning i PL/pgSQL-treet.
 
     En setning er BETINGET når den står bak en gren: `IF … THEN`, `ELSIF`,
-    `ELSE`, en løkke, en unntakshåndterer. Grammatikken skiller dem selv, så
-    porten trenger ingen ordliste over hvordan de skrives — bare å vite hvilke
-    felt som ALLTID kjører, se `_KJORER`.
+    `ELSE`, en løkke, en unntakshåndterer — eller i en blokk som kan rulles
+    tilbake av sin egen `EXCEPTION`. Grammatikken skiller dem selv, så porten
+    trenger ingen ordliste over hvordan de skrives — bare å vite hvilke felt
+    som ALLTID kjører, se `_kjorende_felt()`.
     """
     if isinstance(node, list):
         for x in node:
@@ -1026,7 +1048,7 @@ def _plpgsql_setninger(node, betinget: bool):
         if not isinstance(innhold, dict):
             yield from _plpgsql_setninger(innhold, betinget)
             continue
-        kjorer = _KJORER.get(navn, ())
+        kjorer = _kjorende_felt(navn, innhold)
         for felt, verdi in innhold.items():
             yield from _plpgsql_setninger(verdi, betinget or felt not in kjorer)
 
@@ -1798,6 +1820,43 @@ def test_betinget_ddl_i_en_do_kropp_utvider_aldri(tmp_path, senere, gjelder):
     gjennom i stillhet.
     """
     mappe = _migrasjoner(tmp_path, _LAGER_VILKAR, senere)
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende.get((MODULKONTRAKT, "reversibilitet")) == gjelder
+
+
+@pytest.mark.parametrize("kropp,gjelder", [
+    # En blokk med håndterer: kroppen kan rulles tilbake, så slippet er ikke
+    # kjent utført og det opprinnelige vilkåret blir stående.
+    ("BEGIN\n"
+     "    ALTER TABLE modulkontrakt\n"
+     "        DROP CONSTRAINT modulkontrakt_reversibilitet_check;\n"
+     "    PERFORM 1/0;\n"
+     "EXCEPTION WHEN division_by_zero THEN NULL;\n"
+     "END", {"direkte", "kompenserende"}),
+    # Uten håndterer ruller ingenting tilbake: feiler kroppen, stopper hele
+    # migrasjonen, og da gjelder ingenting av den uansett.
+    ("BEGIN\n"
+     "    ALTER TABLE modulkontrakt\n"
+     "        DROP CONSTRAINT modulkontrakt_reversibilitet_check;\n"
+     "END", None),
+])
+def test_en_blokk_med_unntakshaandterer_kan_rulles_tilbake(tmp_path, kropp,
+                                                           gjelder):
+    """`EXCEPTION` gjør kroppen om til noe som kanskje ikke ble stående.
+
+    Codex P2 på #118, tjueførste runde. PostgreSQL kjører en blokk med
+    håndterer i sitt eget underpunkt, og fanges en feil, RULLES ALT kroppen
+    rakk å gjøre TILBAKE — også DDL. Kroppen ble regnet som ubetinget, så et
+    slipp inne i en slik blokk fjernet et vilkår databasen beholder. Sto et
+    videre vilkår igjen ved siden av, ble snittet videre enn databasen, og
+    katalogporten kunne slippe inn en klasse registeret avviser.
+
+    Om kroppen fullførte, avgjøres først når migrasjonen kjører. Da er den
+    betinget, og de samme konservative reglene gjelder som for enhver annen
+    gren: slippet regnes som ikke utført.
+    """
+    mappe = _migrasjoner(tmp_path, _LAGER_VILKAR,
+                         f"DO $do$\n{kropp} $do$;\n")
     gjeldende, _ = _registerets_enums(mappe)
     assert gjeldende.get((MODULKONTRAKT, "reversibilitet")) == gjelder
 
