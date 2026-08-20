@@ -379,11 +379,12 @@ def _loftet_flytter_noe(i: int, gk: str, e: dict, h: dict | None) -> list[str]:
     `policy_belopsgrense_ugyldig` er andres dom, og en verdi vi ikke kan
     lese kan vi ikke påstå noe om.
 
-    Rekkefølgen i `_evaluer` teller: en handling motoren feller på MODUS
-    (steg 2) rekker aldri fram til grensene de løftbare kodene kommer fra,
-    så da er oppføringen uanvendelig uansett grunnkode og verdi. Den
-    sjekken gjelder ALLE koder og står derfor foran grendelingen — en ny
-    løftbar kode arver den uten at noen må huske det.
+    Rekkefølgen i `_evaluer` teller: en handling motoren feller FØR
+    grensene rekker aldri fram til utfallene de løftbare kodene kommer
+    fra, så da er oppføringen uanvendelig uansett grunnkode og verdi. Slike
+    sjekker gjelder ALLE koder og står derfor foran grendelingen — en ny
+    løftbar kode arver dem uten at noen må huske det. To steg feller slik:
+    MODUS (steg 2) og ROLLE (steg 3).
     """
     from .engine import MODUS_UTEN_LOFTBARE_UTFALL, parse_belop
     if h is None:
@@ -396,6 +397,30 @@ def _loftet_flytter_noe(i: int, gk: str, e: dict, h: dict | None) -> list[str]:
                 " 'modus_alltid_stopp' før noen grense i det hele tatt"
                 f" vurderes, så '{gk}' kan aldri oppstå for den —"
                 " godkjenningen ender i STOPP uansett verdi"]
+    # STEG 3 FELLER LIKE HARDT SOM STEG 2 (Codex P1). `_evaluer` måler
+    # `context.aktor_rolle not in (h.get("tillatt_for") or [])` og
+    # returnerer `rolle_ikke_tillatt` — FØR beløp (steg 4) og valuta
+    # (steg 5). Er lista tom eller fraværende, er den prøven usann for
+    # ENHVER rolle: ingen aktør finnes som kan komme forbi den, og da kan
+    # ingen løftbar grunnkode oppstå for handlingen.
+    #
+    # Skjemaet tillater at `tillatt_for` mangler, så dette er en form eier
+    # faktisk kan lagre — og editoren tilbyr handlingen som mål uansett.
+    # Uten denne linjen så overstyringen komplett ut og endte i STOPP ved
+    # HVER godkjenning, som med `alltid_stopp`.
+    #
+    # Bare det UTVETYDIGE fraværet felles. En `tillatt_for` som er noe
+    # annet enn en liste er lastekontraktens dom, ikke vår — samme
+    # arbeidsdeling som for en uleselig grense.
+    tillatt = h.get("tillatt_for")
+    if tillatt is None or (isinstance(tillatt, list)
+                           and not [r for r in tillatt
+                                    if isinstance(r, str) and r]):
+        return [f"menneskelig_overstyring[{i}]: handling '{hid}' har ingen"
+                " rolle i 'tillatt_for', så motoren feller den på"
+                " 'rolle_ikke_tillatt' før noen grense vurderes, og"
+                f" '{gk}' kan aldri oppstå for den — godkjenningen ender i"
+                " STOPP uansett verdi"]
     feil: list[str] = []
     if gk == "belop_over_grense":
         hgrense = grenser.get("belop_maks")

@@ -276,6 +276,131 @@ def test_lastekontrakten_slipper_alltid_stopp_overstyringen():
     assert valider_policy(p) == []
 
 
+# --- steg 3 feller like hardt som steg 2 (Codex P1) -----------------------
+
+def _uten_rolle(tillatt_for, handling_id=_HANDLING):
+    p = copy.deepcopy(_BASE)
+    for h in p["handlinger"]:
+        if h["id"] == handling_id:
+            if tillatt_for is None:
+                h.pop("tillatt_for", None)
+            else:
+                h["tillatt_for"] = tillatt_for
+    return p
+
+
+def test_ingen_loftbar_grunnkode_naas_uten_tillatt_for():
+    """Vakten under påstanden, som for modusen. `_evaluer` måler rollen i
+    steg 3 — FØR beløp (steg 4) og valuta (steg 5). Er `tillatt_for` tom
+    eller fraværende, er `aktor_rolle NOT IN [...]` sann for ENHVER rolle,
+    og en hendelse som ellers ville gitt en løftbar grunnkode gir
+    `rolle_ikke_tillatt` i stedet.
+
+    Flyttes rollesjekken bak grensene, ryker denne — og da er avvisningen
+    i `_loftet_flytter_noe` ikke lenger sann."""
+    from datetime import datetime, timezone
+
+    from policy_validator.engine import EvaluationContext, evaluate
+    naa = datetime(2026, 8, 3, 10, 0, tzinfo=timezone.utc)
+    ctx = EvaluationContext(tenant_id="t1", aktor_rolle="agent",
+                            autentisert=True, kilde="api_token")
+    for tillatt_for in (None, []):
+        pol = _uten_rolle(tillatt_for)
+        for gk, hendelse in _UTLOSER.items():
+            d = evaluate(pol, ctx, {"handling": _HANDLING,
+                                    "ressurs_id": "r-1", **hendelse}, naa=naa)
+            koder = {g.kode for g in d.begrunnelse}
+            assert "rolle_ikke_tillatt" in koder, (tillatt_for, gk,
+                                                   d.to_dict())
+            assert gk not in koder, (
+                f"{gk} nås likevel — avvisningen i _loftet_flytter_noe"
+                " er feil")
+
+
+def test_skjemaet_er_forste_forsvar_mot_handling_uten_rolle():
+    """Hvor porten FAKTISK står i dag. Codex leste `tillatt_for` som
+    valgfritt, men skjemaet krever det BETINGET — for nøyaktig de to
+    modusene som kan nå grensene (`auto`, `auto_med_vilkaar`), og med
+    `minItems: 1` og et mønster som utelukker den tomme strengen. Den
+    tredje modusen, `alltid_stopp`, felles av modusgrenen over.
+
+    Formen finnes altså ikke i et skjemagyldig dokument, verken på vei inn
+    eller ved lasting. Testen binder den påstanden: endres skjemaet slik at
+    rollefeltet blir fritt, blir denne rød — og da er vakten under den
+    eneste som står igjen."""
+    for modus in ("auto", "auto_med_vilkaar"):
+        p = _uten_rolle(None)
+        for h in p["handlinger"]:
+            if h["id"] == _HANDLING:
+                h["modus"] = modus
+        p["menneskelig_overstyring"] = {
+            "godkjennbare": [_oppforing("belop_over_grense",
+                                        **_VIRKSOMME["belop_maks"])],
+            "krever_rolle": "daglig_leder"}
+        for dom in (valider_ny_policy(p), valider_policy(p)):
+            assert any("tillatt_for" in f for f in dom), (modus, dom)
+
+
+def test_anvendbarhetsvakten_feller_handling_uten_rolle():
+    """Vakten selv, målt direkte — for den er en EGEN port, ikke en andre
+    stemme om skjemaet (Codex P1).
+
+    `_overstyring_kan_anvendes` er speilet i `aktiver_policy`, og den
+    SQL-porten finnes nettopp fordi den ikke skal hvile på at Python-
+    kontrakten kjørte: kjøretidsrollen har EXECUTE, og en runde validert
+    før utrullingen bærer et dokument ingen ny regel har sett. Da må
+    vakten kunne felle formen på egen hånd, uten skjemaet foran seg.
+
+    Både fravær og tom liste måles: `aktor_rolle NOT IN [...]` er sann for
+    enhver rolle i begge tilfeller, og steg 3 står FORAN grensene."""
+    from policy_validator.schema import _loftet_flytter_noe
+    for tillatt_for in (None, [], [""], ["", None]):
+        h = {"id": _HANDLING, "modus": "auto",
+             "grenser": {"belop_maks": "25000.00", "valuta": ["NOK"]}}
+        if tillatt_for is not None:
+            h["tillatt_for"] = tillatt_for
+        for gk, felt in LOFTBARE_GRUNNKODER.items():
+            feil = _loftet_flytter_noe(0, gk, _oppforing(gk,
+                                                         **_VIRKSOMME[felt]),
+                                       h)
+            assert feil and "tillatt_for" in feil[0], (tillatt_for, gk, feil)
+    # …og en enkelt ekte rolle er nok til at vakten tier.
+    h = {"id": _HANDLING, "modus": "auto", "tillatt_for": ["agent"],
+         "grenser": {"belop_maks": "25000.00", "valuta": ["NOK"]}}
+    for gk, felt in LOFTBARE_GRUNNKODER.items():
+        assert _loftet_flytter_noe(0, gk, _oppforing(gk, **_VIRKSOMME[felt]),
+                                   h) == [], gk
+
+
+def test_en_enkelt_rolle_er_nok_til_at_overstyringen_er_anvendelig():
+    # Innstrammingen skal treffe NØYAKTIG det utvetydige fraværet.
+    for gk, felt in LOFTBARE_GRUNNKODER.items():
+        p = _uten_rolle(["agent"])
+        p["menneskelig_overstyring"] = {
+            "godkjennbare": [_oppforing(gk, **_VIRKSOMME[felt])],
+            "krever_rolle": "daglig_leder"}
+        assert valider_ny_policy(p) == [], gk
+
+
+def test_anvendbarhetsvakten_er_framoverrettet_ogsaa_for_rollen():
+    """Framoverrettet som resten: vakten hører til INNFØRINGSkontrakten,
+    ikke lastekontrakten. En alt aktiv policy skal ikke bli korrupt av en
+    ny regel — den har uansett aldri løftet noe.
+
+    Målt der det er målbart: `valider_policy` og `valider_ny_policy` gir
+    SAMME dom for en handling med en ekte rolle, altså legger vakten ingen
+    ny grunn til lastekontrakten."""
+    p = _uten_rolle(["agent"])
+    p["menneskelig_overstyring"] = {
+        "godkjennbare": [_oppforing("belop_over_grense",
+                                    **_VIRKSOMME["belop_maks"])],
+        "krever_rolle": "daglig_leder"}
+    assert valider_policy(p) == [] and valider_ny_policy(p) == []
+    from policy_validator import schema as _s
+    assert "_loftet_flytter_noe" not in _s.valider_policy.__code__.co_names, \
+        "vakten har lekket inn i lastekontrakten"
+
+
 def test_hver_loftbar_grunnkode_maales_mot_handlingen():
     """Vakten mot stille fail-open. En ny kode i `LOFTBARE_GRUNNKODER` uten
     en gren i `_loftet_flytter_noe` ville sluppet gjennom nøyaktig de

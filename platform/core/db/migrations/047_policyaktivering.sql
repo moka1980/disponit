@@ -873,6 +873,23 @@ BEGIN
                  WHEN coalesce(o.handling ->> 'modus', 'alltid_stopp')
                       = 'alltid_stopp'
                    THEN 'handlingen har modus ''alltid_stopp'''
+                 -- ROLLEN FELLER I STEG 3, like foran grensene (Codex P1).
+                 -- `_evaluer` måler `aktor_rolle NOT IN tillatt_for`; er
+                 -- lista tom eller fraværende, er den prøven usann for
+                 -- ENHVER rolle, og ingen løftbar kode kan oppstå. Bare
+                 -- det utvetydige fraværet felles — en `tillatt_for` som
+                 -- ikke er en liste er lastekontraktens dom, som i Python.
+                 WHEN (o.handling -> 'tillatt_for' IS NULL
+                       OR jsonb_typeof(o.handling -> 'tillatt_for') = 'null'
+                       OR (jsonb_typeof(o.handling -> 'tillatt_for') = 'array'
+                           AND NOT EXISTS (
+                               SELECT 1 FROM jsonb_array_elements(
+                                          o.handling -> 'tillatt_for') AS r(el)
+                                -- `#>> '{}'` er teksten i en jsonb-SKALAR;
+                                -- `->> 0` ville vært en array-indeks.
+                                WHERE jsonb_typeof(r.el) = 'string'
+                                  AND (r.el #>> '{}') <> '')))
+                   THEN 'handlingen har ingen rolle i ''tillatt_for'''
                  WHEN o.gk = 'belop_over_grense'
                       AND o.handling -> 'grenser' -> 'belop_maks' IS NULL
                    THEN 'handlingen har ingen ''grenser.belop_maks'''
