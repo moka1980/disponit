@@ -418,6 +418,50 @@ def test_lastekontrakten_slipper_ogsaa_den_virkningslose_verdien():
         assert valider_policy(_med_overstyring(oppf)) == [], oppf
 
 
+def test_et_belop_lagene_ikke_kan_baere_avvises_framover():
+    """Codex P2: et ferdig attestert dokument endte i 500, ikke i en dom.
+
+    Skjemaets mønster sier bare at tegnene er sifre, og `Decimal` leser en
+    sifferstreng av hvilken som helst lengde. Men `aktiver_policy` caster
+    `belop_maks` til `NUMERIC` for å måle om overstyringen flytter noe, og
+    over `NUMERIC` sitt tak feiler castet med `numeric_value_out_of_range`
+    — en kode aktiveringsveien ikke håndterer. En fire-øyne-runde som var
+    validert, attestert og klar endte da i 500, på et DOKUMENT eier kunne
+    rettet hvis noen hadde sagt fra.
+
+    Kravet er framoverrettet, som resten av innføringskontrakten: en alt
+    aktiv policy med et slikt beløp leses og virker som før.
+
+    Kontroll: fjern `_belopene_kan_baeres` fra `_valider_innforing`, så
+    blir denne rød.
+    """
+    lang = "9" * 200000
+    p = _med_overstyring(_oppforing("belop_over_grense", belop_maks=lang,
+                                    valuta="NOK"))
+    feil = valider_ny_policy(p)
+    assert feil, "et beløp uten øvre grense slapp gjennom innføringen"
+    assert any("sifre" in f and "menneskelig_overstyring[0]" in f
+               for f in feil), feil
+    # Handlingens EGEN grense måles av samme krav — den castes samme sted.
+    p2 = copy.deepcopy(_BASE)
+    for h in p2["handlinger"]:
+        if h["id"] == _HANDLING:
+            h["grenser"]["belop_maks"] = lang
+    feil = valider_ny_policy(p2)
+    assert any("sifre" in f and "grenser" in f for f in feil), feil
+    # Grensen går ved 18 sifre, og et REELT beløp skal ikke tas av den.
+    assert valider_ny_policy(_med_overstyring(_oppforing(
+        "belop_over_grense", belop_maks="999999999999999999",
+        valuta="NOK"))) == []
+    assert valider_ny_policy(_med_overstyring(_oppforing(
+        "belop_over_grense", belop_maks="9999999999999999999",
+        valuta="NOK"))), "19 sifre skal felles"
+    # FRAMOVER, ikke bakover: lastekontrakten kjøres av `hent_aktiv` ved
+    # hver eneste forespørsel og rører ikke den alt aktive policyen.
+    assert valider_policy(p) == []
+    assert valider_policy(p2) == []
+
+
 def test_feilmeldingen_navngir_de_loftbare_kodene():
     # Eier skal kunne rette uten å lese motorkoden.
     feil = valider_ny_policy(_med_overstyring(_oppforing("utenfor_tidsvindu")))

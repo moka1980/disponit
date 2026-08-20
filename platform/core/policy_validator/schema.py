@@ -303,7 +303,65 @@ def _valider_innforing(policy: dict) -> list[str]:
                     f"{felt}: verifikator-id '{vid}' inneholder skilletegn fra"
                     " diffstien (. eller [) og gjør stien flertydig")
     feil += _overstyring_kan_anvendes(policy)
+    feil += _belopene_kan_baeres(policy)
     return sorted(feil)
+
+
+#: Flest sifre et beløp kan ha FORAN komma. Ikke en smakssak: et beløpstak
+#: over 10^18 finnes ikke i noen valuta noen bedrift fører, og tallet må
+#: kunne bæres av HVERT lag som måler det — jsonb, `NUMERIC` i
+#: aktiveringsgaten, diffen og flaten. Uten et tak var det siste leddet det
+#: som brast (Codex P2).
+BELOP_MAKS_SIFRE = 18
+
+
+def _belopene_kan_baeres(policy: dict) -> list[str]:
+    """Et beløp må være et tall lagene under kan BÆRE (Codex P2).
+
+    Skjemaets mønster (`^\\d+(\\.\\d{1,2})?$`) sier bare at tegnene er
+    sifre. En sifferstreng på hundretusen tegn passerer det fint — og
+    `Decimal` i Python leser den uten å blunke — men `aktiver_policy` caster
+    `belop_maks` til `NUMERIC` for å måle om overstyringen flytter noe.
+    `NUMERIC` har et tak, og over det feiler castet med
+    `numeric_value_out_of_range`. Den koden er ikke et av aktiveringens
+    håndterte utfall, så en FERDIG ATTESTERT fire-øyne-runde endte i 500 —
+    på et dokument, altså noe eier kunne rettet, hadde noen sagt fra.
+
+    Kravet bor i INNFØRINGSkontrakten, ikke i skjemaet: skjemaet er også
+    lastekontrakten, og `hent_aktiv` revaliderer hver lagret policy mot det
+    ved hver forespørsel. En innstramming der ville gjort en alt aktiv
+    policy `PolicyKorrupt` i det utrullingen lander. Framover må neste
+    versjon rette beløpet; bakover leses og virker den som før — og SQL-
+    gaten er uansett gjort ufølsom for verdier den ikke kan lese.
+
+    Bare den UTVETYDIGE formen måles: en `belop_maks` som ikke er tall
+    eller streng er lastekontraktens dom, ikke vår.
+    """
+    feil: list[str] = []
+
+    def _mal(sti: str, verdi: object) -> None:
+        if isinstance(verdi, bool) or not isinstance(verdi, (int, str)):
+            return
+        heltall = str(verdi).lstrip("-").split(".")[0]
+        if len(heltall) > BELOP_MAKS_SIFRE:
+            feil.append(
+                f"{sti}: 'belop_maks' har {len(heltall)} sifre foran komma —"
+                f" maks er {BELOP_MAKS_SIFRE}. Et større tall kan ikke bæres"
+                " av lagene som måler det, og aktiveringen ville feilet på et"
+                " sted som ikke kan si hva som er galt")
+
+    for i, h in enumerate(policy.get("handlinger") or []):
+        if not isinstance(h, dict):
+            continue
+        grenser = h.get("grenser")
+        if isinstance(grenser, dict) and grenser.get("belop_maks") is not None:
+            _mal(f"handlinger[{i}].grenser", grenser["belop_maks"])
+    mo = policy.get("menneskelig_overstyring")
+    for i, e in enumerate((mo or {}).get("godkjennbare") or []
+                          if isinstance(mo, dict) else []):
+        if isinstance(e, dict) and e.get("belop_maks") is not None:
+            _mal(f"menneskelig_overstyring[{i}]", e["belop_maks"])
+    return feil
 
 
 def _overstyring_kan_anvendes(policy: dict) -> list[str]:

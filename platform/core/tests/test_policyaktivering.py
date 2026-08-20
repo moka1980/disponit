@@ -2080,6 +2080,34 @@ def test_sql_gaten_kjenner_de_samme_loftbare_kodene():
         "4e kjenner ikke modusen som feller før grensene vurderes"
 
 
+def test_sql_gaten_caster_aldri_et_ubundet_sifferfelt():
+    """Codex P2 (statisk): et cast som kan velte, feller aktiveringen.
+
+    Mønsteret `^-?[0-9]+(\\.[0-9]+)?$` sier bare at tegnene er sifre. En
+    sifferstreng lengre enn `NUMERIC` kan bære passerte det, og castet
+    feilet da med `numeric_value_out_of_range` — en kode kalleren ikke
+    håndterer, så en ferdig attestert fire-øyne-runde endte i 500 i stedet
+    for i en dom. Hvert cast i gaten må derfor stå bak en LENGDEPRØVE, i
+    samme `CASE`, slik at det bare evalueres for noe basen kan lese.
+
+    Målt statisk fordi det er formen som er kravet: en ny sammenligning
+    som glemmer prøven er nøyaktig samme feil om igjen.
+
+    Kontroll: fjern `length(...) <= ` foran ett av castene, så blir denne
+    rød.
+    """
+    kilde = MIGRASJON.read_text(encoding="utf-8")
+    gate = kilde[kilde.index("-- 4e. OVERSTYRINGEN"):
+                 kilde.index("CONSTRAINT = 'overstyring_anvendbar'")]
+    foran = gate.split("::NUMERIC")[:-1]
+    assert foran, "4e har ingen NUMERIC-cast — er gaten flyttet?"
+    for bit in foran:
+        # Vakten til nettopp dette castet er `CASE WHEN`-en nærmest foran.
+        vakt = bit[bit.rindex("CASE WHEN"):]
+        assert re.search(r"length\([^)]*\)\s*<=\s*\d+", vakt), \
+            f"et NUMERIC-cast står uten lengdeprøve: {vakt.strip()[:120]}"
+
+
 def _rullbakkutkast(c, uid, pid, versjon, kilde_versjon, kilde_gen):
     """Et validert utkast som BÆRER et rullbakkeopphav. `_validert_utkast`
     kjenner ikke kolonnene; her settes de ved INNSETTINGEN, som i porten —

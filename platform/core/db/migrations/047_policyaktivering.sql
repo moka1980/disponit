@@ -856,12 +856,28 @@ BEGIN
     -- stedet for å bli hoppet over. `CASE` lover derimot at THEN-armen
     -- bare evalueres når WHEN holder, og `MATERIALIZED` hindrer at CTE-en
     -- flates inn i dommen under og mister nettopp den rekkefølgen.
+    -- OG LESBAR BETYR «ET TALL DENNE BASEN KAN BÆRE» (Codex P2). Mønsteret
+    -- alene sier bare at tegnene er sifre: en sifferstreng lengre enn
+    -- `NUMERIC` kan representere passerte det, og castet feilet da med
+    -- `numeric_value_out_of_range`. Den koden er ikke et av
+    -- aktiveringsutfallene kalleren håndterer, så en ferdig attestert
+    -- fire-øyne-runde endte i 500 — for et dokument, ikke for en tilstand.
+    -- Lengdeprøven står FORAN mønsteret og inne i samme CASE, så castet
+    -- fortsatt bare evalueres når begge holder.
+    --
+    -- Tallet er ingen gyldighetsregel; skjemaet eier den (og kapper nå
+    -- `belop_maks` på 18 sifre). Dette er punktet der «vi kan lese det»
+    -- slutter — langt over ethvert beløp og langt under `NUMERIC` sitt
+    -- eget tak, så castet ikke kan velte uansett hva som står der.
     maalt AS MATERIALIZED (
         SELECT o.i, o.gk, o.post, o.handling,
-               CASE WHEN (o.post ->> 'belop_maks')
+               CASE WHEN length(o.post ->> 'belop_maks') <= 1000
+                     AND (o.post ->> 'belop_maks')
                          ~ '^-?[0-9]+(\.[0-9]+)?$'
                     THEN (o.post ->> 'belop_maks')::NUMERIC END AS e_maks,
-               CASE WHEN (o.handling -> 'grenser' ->> 'belop_maks')
+               CASE WHEN length(o.handling -> 'grenser' ->> 'belop_maks')
+                          <= 1000
+                     AND (o.handling -> 'grenser' ->> 'belop_maks')
                          ~ '^-?[0-9]+(\.[0-9]+)?$'
                     THEN (o.handling -> 'grenser' ->> 'belop_maks')::NUMERIC
                     END AS h_maks,
