@@ -8,6 +8,7 @@ kvorum kan ikke fødes.
 
 Alle tester konstruerer egen tilstand. Ingen delt fixture.
 """
+import os
 import re
 import secrets
 from pathlib import Path
@@ -594,3 +595,49 @@ def test_begge_sp10_kjoringene_staar_i_ci():
             / "sp10-provekjoring.py").read_text(encoding="utf-8")
     assert "48: (_seed_048, _mal_048)" in sp10, \
         "048 har ingen registrert seed+måling"
+
+
+def test_sp10_dropper_bare_engangsbasen():
+    """Codex P1: `main` kjører `DROP DATABASE ... WITH (FORCE)` gjennom
+    en SUPERBRUKER-tilkobling. Navnesjekken foran spurte bare om navnet
+    var alfanumerisk, altså sa den ja til `disponit` — og SP-10-
+    kommandoen står i skriptets egen docstring, klar til å kjøres for
+    hånd. Én skrivefeil i DSN-en og staging- eller produksjonsbasen var
+    borte før noe hadde fastslått at målet var en engangsbase.
+
+    Porten er ekte kjøring, ikke tekstlesing: `main` kalles med de
+    farlige navnene og MÅ returnere 2 uten å ha åpnet en tilkobling.
+    Testen trenger ingen database — nettopp fordi den beviser at ingen
+    blir åpnet."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "sp10_c108", ROT / "deploy" / "staging" / "sp10-provekjoring.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    apnet = []
+    ekte_connect = mod.psycopg.connect
+    mod.psycopg.connect = lambda *a, **k: (
+        apnet.append(a) or ekte_connect(*a, **k))
+    gammel = {n: os.environ.get(n) for n in
+              ("DISPONIT_SP10_ADMIN_URL", "DISPONIT_SP10_MIGRATOR_URL")}
+    try:
+        os.environ["DISPONIT_SP10_ADMIN_URL"] = \
+            "postgresql://postgres@127.0.0.1:5432/postgres"
+        for base in ("disponit", "disponit_test", "postgres", "template1",
+                     "disponitsp10", "sp10", "disponit_sp10x",
+                     "min_egen_base"):
+            os.environ["DISPONIT_SP10_MIGRATOR_URL"] = \
+                f"postgresql://disponit_migrator@127.0.0.1:5432/{base}"
+            assert mod.main(["48"]) == 2, \
+                f"SP-10 aksepterte basenavnet {base!r} — DROP DATABASE står rett etter"
+        assert not apnet, (
+            "SP-10 åpnet en tilkobling før basenavnet var godkjent — "
+            "porten må stå FØR enhver DROP")
+    finally:
+        mod.psycopg.connect = ekte_connect
+        for n, v in gammel.items():
+            if v is None:
+                os.environ.pop(n, None)
+            else:
+                os.environ[n] = v

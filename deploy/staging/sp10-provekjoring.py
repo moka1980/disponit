@@ -16,8 +16,14 @@ backfill-migrasjon må registrere seg selv.
 BRUK:  DISPONIT_SP10_ADMIN_URL=...    (superbruker, mot basen `postgres`)
        DISPONIT_SP10_MIGRATOR_URL=... (migrator, mot engangsbasen)
        python3 deploy/staging/sp10-provekjoring.py <migrasjonsnummer>
+
+Engangsbasen MÅ hete `disponit_sp10`, eventuelt `disponit_sp10_<suffiks>`
+for parallelle kjøringer: skriptet dropper og gjenskaper målbasen sin med
+`DROP DATABASE ... WITH (FORCE)` gjennom superbrukertilkoblingen, og et
+fritt basenavn i DSN-en ville gjort en skrivefeil til et datatap.
 """
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -196,9 +202,35 @@ def main(argv: list[str] | None = None) -> int:
               " migrasjon uten masse-skriving skal ikke pekes på her.")
         return 2
     seed, mal = SEEDS[n]
-    base = psycopg.conninfo.conninfo_to_dict(mig_url)["dbname"]
-    if not base.replace("_", "").isalnum():
-        print(f"AVBRUTT: ugyldig basenavn {base!r}")
+    base = psycopg.conninfo.conninfo_to_dict(mig_url).get("dbname") or ""
+    # ENGANGSBASENAVNET ER EN PORT, IKKE EN FORMALITET (Codex P1).
+    # Neste setning i skriptet er `DROP DATABASE ... WITH (FORCE)`, og
+    # den kjøres gjennom en SUPERBRUKER-tilkobling. Den gamle sjekken
+    # spurte bare om navnet var alfanumerisk — altså sa den ja til
+    # `disponit` og `disponit_test`. Én slurvefeil i DSN-en når SP-10
+    # kjøres for hånd (kommandoen står i docstringen over) og staging-
+    # eller produksjonsbasen var borte FØR noe hadde fastslått at målet
+    # var en engangsbase.
+    #
+    # Navnerommet er derfor dedikert og lukket: nøyaktig `disponit_sp10`,
+    # eventuelt med et `_<suffiks>` for parallelle kjøringer. Alt annet
+    # avvises, og de operasjonelle navnene avvises for seg med sin egen
+    # melding — en «ugyldig basenavn»-linje forklarer ikke hvor nær det
+    # var.
+    OPERASJONELLE = {"disponit", "disponit_test", "postgres", "template0",
+                     "template1"}
+    if base in OPERASJONELLE:
+        print(f"AVBRUTT: {base!r} er en OPERASJONELL base. SP-10 dropper"
+              " og gjenskaper målbasen sin med DROP DATABASE ... WITH"
+              " (FORCE) — den kjøres aldri mot noe annet enn"
+              " engangsbasen `disponit_sp10[_<suffiks>]`. Ingenting er"
+              " droppet.")
+        return 2
+    if not re.fullmatch(r"disponit_sp10(_[a-z0-9]+)*", base):
+        print(f"AVBRUTT: {base!r} er ikke et SP-10-engangsbasenavn."
+              " DISPONIT_SP10_MIGRATOR_URL må peke på `disponit_sp10`,"
+              " eventuelt `disponit_sp10_<suffiks>` for parallelle"
+              " kjøringer. Ingenting er droppet.")
         return 2
 
     ac = psycopg.connect(admin, autocommit=True)
