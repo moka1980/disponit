@@ -61,6 +61,10 @@ E2E_UUID = "ad1579e2-0000-4000-8000-000000000000"
 #: sha256 av drillartefaktets bytes — raden skal NAVNGI bevisfilen den
 #: hviler på, selv om basen aldri kan lese den (Codex P1, runde 5).
 DRILL_SHA = "11" * 32
+#: Akseptcommiten CI-kjøringen testet. 40 hex, som en ekte commit-sha:
+#: `ci_kjoringsattest.hode_sha` krever formen, for en attest som ikke
+#: navngir bytene binder ingenting (Codex P1, runde 16).
+CI_SHA = "cc" * 20
 
 
 def _rt():
@@ -259,8 +263,28 @@ def _drill(m, k, *, nokkel=None, utfort_ts=None, opp=None, sha=None,
     return did
 
 
+def _ci_attest(m, ci_run="run-1", *, ci_commit=None, arbeidsflyt=None,
+               hendelse="push", gren="main", konklusjon="success"):
+    """Referatet fra veien som spurte GitHub (Codex P1, #117 runde 16).
+
+    Aksepten regner invariantpunktene mot kravet i `akseptkrav_ci`, ikke
+    mot kallerens egne `p_ci_run`/`p_ci_commit`. Uten en attest som sier
+    at kravets workflow kjørte grønt på kravets hendelse og gren, for
+    nøyaktig akseptcommiten, skrives ingen aksept.
+    """
+    if arbeidsflyt is None:
+        arbeidsflyt = m.execute(
+            "SELECT arbeidsflyt FROM akseptkrav_ci WHERE krav_id=%s",
+            (KRAV,)).fetchone()[0]
+    m.execute("SET ROLE disponit_modules_admin")
+    m.execute("SELECT attester_ci_kjoring(%s,%s,%s,%s,%s,%s,'test')",
+              (ci_run, arbeidsflyt, hendelse, gren, konklusjon,
+               ci_commit or CI_SHA))
+    m.execute("RESET ROLE")
+
+
 def _punkter(m, krav=KRAV, *, evidens_sha="e-sha", ci_run="run-1",
-             ci_commit="ci-sha"):
+             ci_commit=None):
     """Punktsettet slik REGISTERET krever det (Codex P1, #117 runde 15).
 
     Grensen, kildetypen og den grønne verdien er registerets, ikke
@@ -273,7 +297,7 @@ def _punkter(m, krav=KRAV, *, evidens_sha="e-sha", ci_run="run-1",
         "SELECT punkt, kilde_type, grenseverdi, maalt_krav"
         "  FROM akseptkrav_punkt WHERE krav_id=%s", (krav,)).fetchall()
     ref = {"evidensfil": f"evidens.jsonl@sha256:{evidens_sha}",
-           "ci_kjoring": f"run {ci_run} @ {ci_commit}"}
+           "ci_kjoring": f"run {ci_run} @ {ci_commit or CI_SHA}"}
     return {p: {"grenseverdi": g, "maalt_verdi": mk, "kilde_type": kt,
                 "kilde_ref": ref[kt]}
             for p, kt, g, mk in rader}
@@ -281,17 +305,21 @@ def _punkter(m, krav=KRAV, *, evidens_sha="e-sha", ci_run="run-1",
 
 def _aksepter(m, k, did, *, release="r-kandidat", artefakt=None,
               punkter=None, nokkel=None, miljo="staging",
-              evidens_sha="e-sha", ci_run="run-1"):
+              evidens_sha="e-sha", ci_run="run-1", attest=True):
     m.execute("RESET ROLE")     # forrige _aksepter kan ha etterlatt admin
     if punkter is None:
         # leses som migrator — admin har ikke SELECT
         punkter = _punkter(m, evidens_sha=evidens_sha, ci_run=ci_run)
+    if attest:
+        # Den ekte veien attesterer kjøringen rett etter at
+        # `verifiser_ci_kjoring` har godtatt den (Codex P1, runde 16).
+        _ci_attest(m, ci_run)
     m.execute("SET ROLE disponit_modules_admin")
     m.execute(
         "SELECT aksepter_moduldeployment(%s,%s,%s,%s,%s,%s,%s::uuid,%s,"
-        "'m-commit',%s,'ci-sha',%s::jsonb,%s,'test')",
+        "'m-commit',%s,%s,%s::jsonb,%s,'test')",
         (k["mid"], miljo, release, did, KRAV, k["ten"],
-         artefakt or k["e2e"], evidens_sha, ci_run,
+         artefakt or k["e2e"], evidens_sha, ci_run, CI_SHA,
          json.dumps(punkter),
          nokkel or "a-" + secrets.token_hex(6)))
     m.execute("RESET ROLE")   # aldri la admin bli sesjonens faste rolle
@@ -512,6 +540,103 @@ def test_punktobservasjonene_maales_ikke_bare_mottas(migrator):
         (k["mid"],)).fetchone()[0]
     migrator.rollback()
     assert avvik == 0, "en lagret observasjon bærer noe annet enn kravet"
+
+
+@pg
+def test_ci_punktene_krever_referatet_fra_veien_som_spurte(migrator):
+    """Codex' P1 (runde 16): CI-kjøringen ble målt mot kallerens egne
+    parametre.
+
+    `kilde_ref` ble sammenlignet med `'run ' || p_ci_run || ' @ ' ||
+    p_ci_commit` — to felter fra SAMME kall. En `disponit_modules_admin`-
+    kaller kunne velge et løpenummer og en commit fritt, gjenta dem i alle
+    invariantpunktene og få en immutabel aksept der ingen kjøring hadde
+    funnet sted. Likheten målte formen på en streng, ikke at noe var kjørt.
+
+    Basen kan ikke spørre GitHub. Det den kan kreve, er at veien som
+    spurte har skrevet ned HVA SVARET SA — workflow, hendelse, gren,
+    konklusjon og hode-sha — og så regne punktene mot kravet i
+    `akseptkrav_ci` i stedet for mot kalleren."""
+    k = _kjede(migrator)
+    did = _drill(migrator, k)
+
+    # Uten attest: punktsettet er registerets og `kilde_ref` navngir
+    # kjøringen — nøyaktig formen som holdt før. Nå holder den ikke.
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, k, did, ci_run="run-uattestert", attest=False)
+    migrator.rollback()
+    assert "ingen attest" in str(ei.value)
+
+    # …og en attest som sier noe ANNET enn kravet, bærer ingenting. Hver
+    # akse for seg, så en port som avviser alt ikke består testen.
+    for navn, endring in (
+            ("en annen workflow",
+             {"arbeidsflyt": ".github/workflows/claude.yml"}),
+            ("en PR-kjøring", {"hendelse": "pull_request"}),
+            ("en annen gren", {"gren": "m56-akseptflipp"}),
+            ("en rød kjøring", {"konklusjon": "failure"}),
+            ("en annen commit", {"ci_commit": "dd" * 20})):
+        migrator.execute("RESET ROLE")
+        run = "run-" + secrets.token_hex(4)
+        _ci_attest(migrator, run, **endring)
+        migrator.commit()
+        with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+            _aksepter(migrator, k, did, ci_run=run, attest=False,
+                      nokkel="a-" + secrets.token_hex(6))
+        migrator.rollback()
+        assert "ingen attest" in str(ei.value), navn
+
+    # Motprøven: referatet fra den ekte veien bærer punktene.
+    migrator.execute("RESET ROLE")
+    _aksepter(migrator, k, did)
+    migrator.commit()
+    migrator.execute("RESET ROLE")
+    assert migrator.execute(
+        "SELECT count(*) FROM modulaksept WHERE modul_id=%s",
+        (k["mid"],)).fetchone()[0] == 1
+    migrator.rollback()
+
+    # Én kjøring har ETT utfall: samme løpenummer med et annet referat er
+    # ikke en replay, det er to motstridende referater.
+    migrator.execute("SET ROLE disponit_modules_admin")
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        migrator.execute(
+            "SELECT attester_ci_kjoring('run-1','.github/workflows/ci.yml',"
+            "'push','main','failure',%s,'test')", (CI_SHA,))
+    migrator.rollback()
+    assert "ett utfall" in str(ei.value)
+    migrator.execute("RESET ROLE")
+
+    # …og attesten er et referat, ikke en kladd: den kan ikke endres.
+    with pytest.raises(psycopg.errors.RaiseException):
+        migrator.execute("UPDATE ci_kjoringsattest SET konklusjon='success'"
+                         " WHERE ci_run='run-1'")
+    migrator.rollback()
+
+
+@pg
+def test_ci_attesten_er_ikke_runtimes_a_skrive(migrator):
+    """Kjøretidsrollen kan verken attestere en kjøring eller skrive
+    referatet direkte. Kunne den det, ville attesten vært like fri som de
+    to parametrene den erstatter."""
+    rt = _rt()
+    try:
+        for sql in ("SELECT attester_ci_kjoring('r','w','push','main',"
+                    "'success','" + "aa" * 20 + "','a')",
+                    "INSERT INTO ci_kjoringsattest (ci_run, arbeidsflyt,"
+                    " hendelse, gren, konklusjon, hode_sha, aktor) VALUES"
+                    " ('r','w','push','main','success','" + "aa" * 20
+                    + "','a')",
+                    "UPDATE ci_kjoringsattest SET konklusjon='success'",
+                    "DELETE FROM ci_kjoringsattest",
+                    "INSERT INTO akseptkrav_ci (krav_id, arbeidsflyt,"
+                    " hendelse, gren, konklusjon) VALUES"
+                    " ('x','w','push','main','success')"):
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                rt.execute(sql)
+            rt.rollback()
+    finally:
+        rt.close()
 
 
 @pg
@@ -3290,11 +3415,16 @@ def test_hvert_grensepunkt_har_en_kilde_som_maaler_nettopp_det():
     staging), og at et punkt uten ekte kilde BLOKKERER aksepten i stedet
     for å bli pyntet."""
     m = _aksept_skript()
+    # NØYAKTIG punktregisterets INSERT: `akseptkrav_ci` (runde 16) bærer
+    # også en `wcag-kontroll-v1`-rad med fem strengfelt, og den er et krav
+    # til CI-KJØRINGEN, ikke et grensepunkt.
+    sql = M049.read_text(encoding="utf-8")
+    blokk = sql[sql.index("INSERT INTO akseptkrav_punkt"):]
+    blokk = blokk[:blokk.index(";")]
     register = {
         p: (kt, g, mk) for p, kt, g, mk in re.findall(
             r"\('wcag-kontroll-v1',\s*'([^']+)',\s*'([^']+)',"
-            r"\s*'([^']*)',\s*'([^']*)'\)",
-            M049.read_text(encoding="utf-8"))}
+            r"\s*'([^']*)',\s*'([^']*)'\)", blokk)}
     punkter = set(register)
     assert len(punkter) == 21, punkter
     kilder = (set(m.MAALTE), set(m.CI_PUNKTER), set(m.UMAALTE),

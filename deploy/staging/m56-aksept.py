@@ -801,7 +801,7 @@ def main() -> int:
                          f" akseptcommiten {manifest_commit[:12]}… — punktene"
                          " påberoper seg «grønn CI på akseptcommiten», og da"
                          " må det være den kjøringen som måles")
-    verifiser_ci_kjoring(a.ci_run, ci_commit)
+    ci_kjoring = verifiser_ci_kjoring(a.ci_run, ci_commit)
 
     m = runde["maalt"]
     krev_maalt_signatur(m)
@@ -841,6 +841,20 @@ def main() -> int:
             conn, (o["drillet_release"], o["kandidat_release"]),
             manifest, manifest_sha, manifest_commit)
         conn.execute("SET ROLE disponit_modules_admin")
+        # REFERATET FRA VEIEN SOM SPURTE (Codex P1, #117 runde 16).
+        # Basen sammenlignet `kilde_ref` med sine egne to parametre, og
+        # to felter fra samme kaller som er enige, er ingen CI-kjøring.
+        # Basen kan ikke spørre GitHub — men den kan kreve at den som
+        # gjorde det, skrev ned HVA SVARET SA, i en immutabel rad, og så
+        # regne invariantpunktene mot kravet i registeret i stedet for
+        # mot kalleren. Verdiene her er svarets egne, ikke aksepterens:
+        # `verifiser_ci_kjoring` har alt avvist alt annet enn en grønn
+        # `ci.yml`-push på `main` for akseptcommiten.
+        conn.execute(
+            "SELECT attester_ci_kjoring(%s,%s,%s,%s,%s,%s,'m56-aksept')",
+            (str(ci_kjoring.get("id")), ci_kjoring.get("path"),
+             ci_kjoring.get("event"), ci_kjoring.get("head_branch"),
+             ci_kjoring.get("conclusion"), ci_kjoring.get("head_sha")))
         # Codex' P1 på PR #117 (runde 5): de tre kontrollpunktutfallene
         # ble regnet ut HER, av artefaktets egne tall, og sendt inn som
         # boolske verdier. Den som holdt `disponit_modules_admin` — den

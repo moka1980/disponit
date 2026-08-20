@@ -189,6 +189,62 @@ CREATE TABLE akseptkrav_punkt (
     maalt_krav  TEXT NOT NULL,
     PRIMARY KEY (krav_id, punkt)
 );
+-- ------------------------------------------------------------
+-- 3b. HVILKEN CI-kjøring invariantpunktene krever, og HVA veien som
+--     spurte GitHub faktisk så (Codex P1, #117 runde 16).
+--
+--     `aksepter_moduldeployment` sammenlignet `kilde_ref` med sine egne
+--     to parametre — `p_ci_run` og `p_ci_commit`. To felter fra samme
+--     kaller som er enige, er ingen CI-kjøring: en `disponit_modules_
+--     admin`-kaller kunne velge et løpenummer og en commit fritt,
+--     gjenta dem i alle 15 invariantpunktene, og få en immutabel aksept
+--     der ingen kjøring hadde funnet sted. Likheten målte formen på en
+--     streng, ikke at noe var kjørt.
+--
+--     Basen kan ikke spørre GitHub — like lite som den kan verifisere en
+--     HMAC-signatur (jf. kvitteringsporten). Det den KAN kreve, er at
+--     veien som spør har vært her og skrevet ned HVA DEN SÅ: workflowen,
+--     hendelsen, grenen, konklusjonen og hode-SHA-en, i en immutabel
+--     rad. Da er en fabrikkering ikke lenger to like strenger i samme
+--     kall, men en attest som eksplisitt påstår at `ci.yml` kjørte grønt
+--     på en push til main for nøyaktig akseptcommiten — og aksepten
+--     REGNER punktet mot kravet i registeret, i stedet for mot kalleren.
+-- ------------------------------------------------------------
+CREATE TABLE akseptkrav_ci (
+    krav_id     TEXT PRIMARY KEY,
+    arbeidsflyt TEXT NOT NULL,
+    hendelse    TEXT NOT NULL,
+    gren        TEXT NOT NULL,
+    konklusjon  TEXT NOT NULL
+);
+-- Repoet har flere workflows, og en grønn kjøring av en ANNEN på samme
+-- commit beviser ingenting om portene her. `ci.yml` trigges dessuten av
+-- både `pull_request` og push til `main`, og bare den siste sier at
+-- bytene faktisk ble en del av historikken.
+INSERT INTO akseptkrav_ci (krav_id, arbeidsflyt, hendelse, gren,
+                           konklusjon) VALUES
+    ('wcag-kontroll-v1', '.github/workflows/ci.yml', 'push', 'main',
+     'success');
+
+CREATE TABLE ci_kjoringsattest (
+    ci_run       TEXT PRIMARY KEY CHECK (btrim(ci_run) <> ''),
+    arbeidsflyt  TEXT NOT NULL,
+    hendelse     TEXT NOT NULL,
+    gren         TEXT NOT NULL,
+    konklusjon   TEXT NOT NULL,
+    -- Commiten kjøringen faktisk kjørte på, i sin egen form: en attest
+    -- som ikke navngir bytene, binder ingenting.
+    hode_sha     TEXT NOT NULL CHECK (hode_sha ~ '^[0-9a-f]{40}$'),
+    attestert_ts TIMESTAMPTZ NOT NULL DEFAULT now(),
+    aktor        TEXT NOT NULL
+);
+-- En kjøring har ett utfall. Attesten er et referat, ikke en kladd.
+CREATE TRIGGER ci_attest_immutable BEFORE UPDATE OR DELETE
+    ON ci_kjoringsattest
+    FOR EACH ROW EXECUTE FUNCTION modulregister_append_only();
+CREATE TRIGGER ci_attest_ingen_truncate BEFORE TRUNCATE ON ci_kjoringsattest
+    FOR EACH STATEMENT EXECUTE FUNCTION modulregister_append_only();
+
 -- Grensene er 014c-klarsignalet §12s, ordrett, og de fire målte
 -- punktene bæres av runde-sammendraget (som selv er sha-bundet i
 -- manifestet). Invariantpunktene har ingen historiske rader — de hviler
@@ -712,6 +768,38 @@ BEGIN
     RETURN v_id;
 END $$;
 
+-- Attesten: hva veien som spurte GitHub SÅ. Den skrives av
+-- `m56-aksept.py` rett etter at `verifiser_ci_kjoring` har godtatt
+-- kjøringen, med verdiene svaret bar — ikke med det aksepten trenger.
+-- SP-2: samme løpenummer med annet innhold er ikke en replay, det er to
+-- motstridende referater av én kjøring, og det skal høres.
+CREATE OR REPLACE FUNCTION attester_ci_kjoring(
+    p_ci_run TEXT, p_arbeidsflyt TEXT, p_hendelse TEXT, p_gren TEXT,
+    p_konklusjon TEXT, p_hode_sha TEXT, p_aktor TEXT)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+BEGIN
+    PERFORM 1 FROM public.ci_kjoringsattest WHERE ci_run = p_ci_run;
+    IF FOUND THEN
+        PERFORM 1 FROM public.ci_kjoringsattest
+         WHERE ci_run = p_ci_run AND arbeidsflyt = p_arbeidsflyt
+           AND hendelse = p_hendelse AND gren = p_gren
+           AND konklusjon = p_konklusjon
+           AND hode_sha = lower(p_hode_sha);
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'attester_ci_kjoring: kjøring % er alt attestert'
+                ' med et annet utfall — én kjøring har ett utfall, og et'
+                ' referat som spriker fra det lagrede er en programfeil',
+                p_ci_run USING ERRCODE = 'invalid_parameter_value';
+        END IF;
+        RETURN;
+    END IF;
+    INSERT INTO public.ci_kjoringsattest (ci_run, arbeidsflyt, hendelse,
+        gren, konklusjon, hode_sha, aktor)
+    VALUES (p_ci_run, p_arbeidsflyt, p_hendelse, p_gren, p_konklusjon,
+            lower(p_hode_sha), p_aktor);
+END $$;
+
 CREATE OR REPLACE FUNCTION aksepter_moduldeployment(
     p_modul_id TEXT, p_miljo TEXT, p_release_id TEXT, p_drill_id BIGINT,
     p_krav_id TEXT, p_e2e_tenant TEXT, p_e2e_artefakt UUID,
@@ -722,7 +810,7 @@ SET search_path = pg_catalog AS $$
 DECLARE v_livslop TEXT; v_mangler TEXT; v_punkt RECORD; v_verdi JSONB;
         v_epoch BIGINT; v_avvik TEXT; v_drill_tenant TEXT;
         v_kandidat_oppdrag BIGINT; v_forrige_tenant TEXT; v_ref TEXT;
-        v_holder BOOLEAN;
+        v_holder BOOLEAN; v_ci RECORD; v_ci_attest BOOLEAN;
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended('modul:' || p_modul_id, 0));
     -- SP-2: replay er et no-op, aldri en ny hendelse — men BARE når hele
@@ -873,6 +961,21 @@ BEGIN
     --       denne modulen. Da kan `kilde_ref` ikke lenger være en
     --       fortelling; den er en peker som holder.
     -- ------------------------------------------------------------
+    -- CI-KJØRINGEN MÅLES MOT ATTESTEN, IKKE MOT KALLERENS EGNE PARAMETRE
+    -- (Codex P1, #117 runde 16). `p_ci_run` og `p_ci_commit` kommer fra
+    -- samme kall som `kilde_ref`; at de tre er enige, sier ingenting om
+    -- at noe er kjørt. Kravet står i `akseptkrav_ci`, og det som skal
+    -- oppfylle det er referatet veien som spurte GitHub skrev ned.
+    SELECT c.arbeidsflyt, c.hendelse, c.gren, c.konklusjon INTO v_ci
+      FROM public.akseptkrav_ci c WHERE c.krav_id = p_krav_id;
+    v_ci_attest := v_ci.arbeidsflyt IS NOT NULL AND EXISTS (
+        SELECT 1 FROM public.ci_kjoringsattest a
+         WHERE a.ci_run = p_ci_run
+           AND a.arbeidsflyt = v_ci.arbeidsflyt
+           AND a.hendelse = v_ci.hendelse
+           AND a.gren = v_ci.gren
+           AND a.konklusjon = v_ci.konklusjon
+           AND a.hode_sha = lower(p_ci_commit));
     v_forrige_tenant := current_setting('disponit.tenant', true);
     PERFORM set_config('disponit.tenant', p_e2e_tenant, true);
     FOR v_punkt IN SELECT k.punkt, k.kilde_type, k.grenseverdi, k.maalt_krav
@@ -929,6 +1032,24 @@ BEGIN
                     ' %» — invariantpunktene hviler HELT på den ene'
                     ' kjøringen raden navngir', v_punkt.punkt, v_ref,
                     p_ci_run, p_ci_commit
+                    USING ERRCODE = 'invalid_parameter_value';
+            END IF;
+            -- …og den kjøringen må være ATTESTERT (Codex P1, runde 16):
+            -- referatet fra veien som spurte GitHub må si at kravets
+            -- workflow kjørte grønt, på kravets hendelse og gren, for
+            -- nøyaktig akseptcommiten. Uten den er «run X @ Y» bare to
+            -- av kallerens egne strenger som ligner på hverandre.
+            IF NOT v_ci_attest THEN
+                RAISE EXCEPTION 'aksepter_moduldeployment: punkt % hviler'
+                    ' på CI-kjøring %, men ingen attest sier at kravets'
+                    ' workflow (%) kjørte % på %/% for commit % — en'
+                    ' kjøring aksepten selv navngir, beviser ingenting;'
+                    ' det gjør referatet fra veien som spurte',
+                    v_punkt.punkt, p_ci_run,
+                    coalesce(v_ci.arbeidsflyt, '<krav uten ci-krav>'),
+                    coalesce(v_ci.konklusjon, '?'),
+                    coalesce(v_ci.hendelse, '?'), coalesce(v_ci.gren, '?'),
+                    lower(p_ci_commit)
                     USING ERRCODE = 'invalid_parameter_value';
             END IF;
         ELSIF v_punkt.kilde_type = 'artefakt' THEN
@@ -998,6 +1119,8 @@ ALTER FUNCTION registrer_moduldrill(TEXT, TEXT, TEXT, TEXT, TEXT, TEXT,
 ALTER FUNCTION aksepter_moduldeployment(TEXT, TEXT, TEXT, BIGINT, TEXT,
     TEXT, UUID, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT, TEXT)
     OWNER TO disponit_modul_eier;
+ALTER FUNCTION attester_ci_kjoring(TEXT, TEXT, TEXT, TEXT, TEXT, TEXT,
+    TEXT) OWNER TO disponit_modul_eier;
 -- Grants i EIERVINDUET (048-disiplinen): en REVOKE fra en ikke-eier er
 -- en stille no-op, og PUBLIC ville beholdt default-EXECUTE på begge.
 SET LOCAL ROLE disponit_modul_eier;
@@ -1007,12 +1130,16 @@ REVOKE ALL ON FUNCTION registrer_moduldrill(TEXT, TEXT, TEXT, TEXT, TEXT,
 REVOKE ALL ON FUNCTION aksepter_moduldeployment(TEXT, TEXT, TEXT, BIGINT,
     TEXT, TEXT, UUID, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT, TEXT)
     FROM PUBLIC;
+REVOKE ALL ON FUNCTION attester_ci_kjoring(TEXT, TEXT, TEXT, TEXT, TEXT,
+    TEXT, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION registrer_moduldrill(TEXT, TEXT, TEXT, TEXT,
     TEXT, TEXT, BIGINT, BIGINT, BIGINT, BIGINT, TEXT, TEXT, TEXT,
     TIMESTAMPTZ) TO disponit_modules_admin;
 GRANT EXECUTE ON FUNCTION aksepter_moduldeployment(TEXT, TEXT, TEXT,
     BIGINT, TEXT, TEXT, UUID, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT, TEXT)
     TO disponit_modules_admin;
+GRANT EXECUTE ON FUNCTION attester_ci_kjoring(TEXT, TEXT, TEXT, TEXT,
+    TEXT, TEXT, TEXT) TO disponit_modules_admin;
 RESET ROLE;
 
 -- Definerne leser moduldeployment/modulrelease/modulhode som modul_eier
@@ -1020,7 +1147,10 @@ RESET ROLE;
 -- så modul_eier trenger DML-grant på nøyaktig dem.
 GRANT SELECT, INSERT ON moduldrill, modulaksept, modulaksept_punkt
     TO disponit_modul_eier;
-GRANT SELECT ON akseptkrav_punkt TO disponit_modul_eier;
+GRANT SELECT ON akseptkrav_punkt, akseptkrav_ci TO disponit_modul_eier;
+-- Attesten skrives av `attester_ci_kjoring` og LESES av aksepten. Ingen
+-- annen rolle rører tabellen: den er referatet, ikke en notatblokk.
+GRANT SELECT, INSERT ON ci_kjoringsattest TO disponit_modul_eier;
 -- Definerne MÅLER nå drillutfallene i `oppdrag`/`artefakt` i stedet for å
 -- motta dem (Codex P1, #117 runde 5), og trenger derfor lesetilgang dit.
 -- KOLONNENIVÅ, ikke tabellnivå: målingene leser status, kvitteringen med
