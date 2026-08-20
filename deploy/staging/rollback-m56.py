@@ -86,6 +86,7 @@ import re
 import secrets
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -115,10 +116,36 @@ DRILLNOKKEL = 915_774_056
 #: gjennom miljøet.
 RESERVASJONSTOKEN = ""
 #: Sikkerhetsventilen bak reservasjonen: dør drillen så brått at heller
-#: ikke `finally` rekker å frigi, skal gjerdet falle av seg selv. Romslig
-#: nok til hele drillen (fasene har egne frister på minutter), kort nok
-#: til at en glemt reservasjon ikke er et driftsproblem over natten.
-RESERVASJONSVARIGHET = "2 hours"
+#: ikke `finally` rekker å frigi, skal gjerdet falle av seg selv.
+#:
+#: RESERVASJONEN FORNYES (Codex P2, #117 runde 16). Et FAST utløp måtte
+#: gjette hvor lang drillen blir, og begge gjetningene er gale: for kort,
+#: og gjerdet faller mens drillen står midt i en enveis måling (`_kjor_faser`
+#: kjørte i tillegg uten frist, så en hengende fase kunne stå i det uendelige
+#: — en vanlig `bytt_release` drenerer da deploymenten, og den stoppede
+#: fasen fortsetter etterpå mot en tilstand ingen måling beskriver); for
+#: langt, og en drill som dør uten å frigi stenger modulen for deploy i
+#: timevis. Utløpet måler derfor «innehaveren er borte», ikke «drillen er
+#: lang»: kort levetid, fornyet av et hjerteslag så lenge prosessen lever.
+RESERVASJONSVARIGHET_S = 600
+RESERVASJONSVARIGHET = f"{RESERVASJONSVARIGHET_S} seconds"
+#: Hvor ofte hjerteslaget forlenger. Tett nok til at mange slag får feile
+#: før marginen er brukt opp.
+RESERVASJONSHJERTESLAG_S = 30
+#: Gjerdet erklæres tapt mens det ENNÅ STÅR: er det gått så lenge uten en
+#: vellykket fornyelse, avbryter drillen med denne marginen igjen av
+#: reservasjonen — før noen andre kan flytte registeret under den.
+RESERVASJONSMARGIN_S = 120
+#: Frist per sjekklistefase. En fase som henger er ikke en lang drill, den
+#: er en drill som aldri blir ferdig — og den skal si ifra, ikke stå.
+FASEFRIST_S = 1200
+#: Satt av hjerteslaget når gjerdet BEVISELIG er tapt (utløpt eller
+#: overtatt). Da hjelper ingen margin: en deployment kan ha gått.
+RESERVASJONEN_TAPT = ""
+#: Monoton tid for siste vellykkede fornyelse — marginen måles mot den.
+SISTE_FORNYELSE = 0.0
+#: Settes når drillen er ferdig, så hjerteslagstråden legger seg.
+HJERTESTOPP = threading.Event()
 
 
 def _api_url() -> str:
@@ -183,23 +210,47 @@ def _kjor_faser(release: str, evidens: Path, *, hva: str,
     rullbakk-ID-en brukt opp. `PINNET_MOTORIMAGE` er den immutable
     image-ID-en preflighten faktisk så, og den bæres inn i hver fase, så
     taggen kan flytte seg uten at drillen bytter bytes under seg selv.
+
+    OG HVER FASE HAR EN FRIST (Codex P2, #117 runde 16). `subprocess.run`
+    sto uten `timeout`: en fase som hang — en unit som aldri blir klar, et
+    API-kall uten svar — stoppet drillen for godt MENS reservasjonen
+    tikket mot utløpet. Etter utløpet ignorerer basens vakt raden, en
+    vanlig `bytt_release` kan drenere drillens deployment, og den hengende
+    fasen fortsetter etterpå mot en tilstand ingen måling beskriver.
+    `FASEFRIST_S` gjør henging til et avbrudd, og `krev_reservasjonen`
+    måler gjerdet både før og etter hver fase.
     """
     if not PINNET_MOTORIMAGE:
         raise SystemExit("AVBRUTT: motorimaget er ikke pinnet — fasene skal"
                          " ikke kjøres på en tag som kan ha flyttet seg"
                          " siden porten målte den")
     for fase in faser:
-        r = subprocess.run(
-            [sys.executable, str(HER / "wcag-staging-sjekkliste.py"),
-             "--evidens", str(evidens), "--fase", fase],
-            env={**os.environ, "WCAG_RELEASE": release,
-                 "WCAG_RUNDE_ID": f"drill-{release}",
-                 "WCAG_MOTORIMAGE": PINNET_MOTORIMAGE},
-            capture_output=True, text=True)
+        krev_reservasjonen(f"sjekklistefase {fase} for {hva} ({release})")
+        try:
+            r = subprocess.run(
+                [sys.executable, str(HER / "wcag-staging-sjekkliste.py"),
+                 "--evidens", str(evidens), "--fase", fase],
+                env={**os.environ, "WCAG_RELEASE": release,
+                     "WCAG_RUNDE_ID": f"drill-{release}",
+                     "WCAG_MOTORIMAGE": PINNET_MOTORIMAGE},
+                capture_output=True, text=True, timeout=FASEFRIST_S)
+        except subprocess.TimeoutExpired as e:
+            raise SystemExit(
+                f"AVBRUTT: sjekklistefase {fase} for {hva} ({release}) sto"
+                f" i {FASEFRIST_S} s uten å bli ferdig. En fase som henger"
+                " er ikke en lang drill — den holder drillen fanget mens"
+                " reservasjonen tikker mot utløpet, og etter utløpet kan"
+                " en vanlig deployment drenere deploymenten fasen står"
+                f" i.\n{(e.stdout or '')[-2000:]}"
+                f"\n{(e.stderr or '')[-2000:]}") from e
         if r.returncode != 0:
             raise SystemExit(f"AVBRUTT: sjekklistefase {fase} for {hva}"
                              f" ({release}) feilet:\n{r.stdout[-2000:]}"
                              f"\n{r.stderr[-2000:]}")
+        # …og gjerdet må fortsatt stå ETTER fasen: gikk det tapt underveis,
+        # skal ikke neste fase bygge videre på en tilstand som kan ha
+        # flyttet seg.
+        krev_reservasjonen(f"neste steg etter sjekklistefase {fase}")
         print(f"  fase {fase} for {release} ({hva}): ok")
 
 
@@ -768,7 +819,7 @@ def den_ene_claimende(m) -> tuple[str, int, str, str]:
     return rader[0]
 
 
-def ta_drillereservasjonen(m) -> None:
+def ta_drillereservasjonen(m, dsn: str = "") -> None:
     """Én flippedrill av gangen per modul+miljø — hele kjøringen igjennom.
 
     Codex' P1 på PR #117 (runde 9): kommentaren over `O_EXCL` påsto at
@@ -841,6 +892,12 @@ def ta_drillereservasjonen(m) -> None:
     registrert med `atexit` i det reservasjonen tas, slipper gjerdet med
     én gang. Skulle prosessen dø så brått at heller ikke det rekkes,
     står utløpstiden igjen som sikkerhetsventil.
+
+    OG DEN UTLØPSTIDEN ER KORT OG FORNYES (Codex P2, #117 runde 16). Med
+    `dsn` startes hjerteslagstråden som holder reservasjonen i live så
+    lenge prosessen lever; `krev_reservasjonen` er porten som måler at
+    den faktisk står. Uten `dsn` — tester og tørrkjøringer — tas
+    reservasjonen som før, uten hjerteslag.
     """
     fikk = m.execute("SELECT pg_try_advisory_lock(%s, hashtext(%s))",
                      (DRILLNOKKEL, f"{MODUL}:{MILJO}")).fetchone()[0]
@@ -871,8 +928,9 @@ def ta_drillereservasjonen(m) -> None:
             " med.")
     # Tokenet settes FØRST når reservasjonen er tatt: et token vi ikke
     # eier, er ingenting å frigi og ingenting å presentere.
-    global RESERVASJONSTOKEN
+    global RESERVASJONSTOKEN, SISTE_FORNYELSE
     RESERVASJONSTOKEN = token
+    SISTE_FORNYELSE = time.monotonic()
     m.execute("RESET ROLE")
     # Sesjonsnivå (`false`), ikke transaksjonsnivå: drillen committer
     # mange ganger, og gjerdet skal stå for hver eneste av dem.
@@ -881,6 +939,109 @@ def ta_drillereservasjonen(m) -> None:
     m.commit()
     os.environ["DISPONIT_DEPLOYRESERVASJON"] = token
     atexit.register(frigi_drillereservasjonen, m)
+    if dsn:
+        start_hjerteslaget(dsn)
+
+
+def start_hjerteslaget(dsn: str) -> threading.Thread:
+    """Fornyer reservasjonen så lenge drillprosessen lever.
+
+    EGEN FORBINDELSE, med vilje: drillens hovedsesjon står midt i sine
+    egne transaksjoner (og i `subprocess.run` mens fasene kjører), så et
+    hjerteslag på den ville enten måttet vente på hovedtråden — nettopp
+    når drillen henger og gjerdet trengs mest — eller skrevet inn i en
+    transaksjon drillen senere ruller tilbake.
+
+    Tråden er `daemon`: den skal aldri holde en ferdig drill i live.
+    """
+    tr = threading.Thread(target=_hjerteslag, args=(dsn,),
+                          name="drillreservasjon", daemon=True)
+    tr.start()
+    atexit.register(HJERTESTOPP.set)
+    return tr
+
+
+def _hjerteslag(dsn: str, kobler=None) -> None:
+    """Selve slaget. -> None; utfallet leses av `krev_reservasjonen`.
+
+    To slags feil, med hvert sitt svar:
+
+      * `lock_not_available` — reservasjonen er UTLØPT eller OVERTATT.
+        Da kan en vanlig deployment alt ha gått i vinduet, og ingen
+        margin hjelper: gjerdet er tapt, og drillen skal avbryte på
+        neste port.
+      * alt annet (nettverk, en base som starter på nytt) er kanskje
+        forbigående. Slaget prøver igjen; det er MARGINEN som avgjør,
+        ikke det ene mislykkede slaget. Slik dør ikke en gyldig drill av
+        et blaff, mens en drill som virkelig har mistet basen fortsatt
+        stoppes før utløpet.
+    """
+    global RESERVASJONEN_TAPT, SISTE_FORNYELSE
+    kobling = None
+    try:
+        while not HJERTESTOPP.wait(RESERVASJONSHJERTESLAG_S):
+            if not RESERVASJONSTOKEN:
+                return
+            try:
+                if kobling is None:
+                    kobling = (kobler or psycopg.connect)(dsn)
+                kobling.execute("SET ROLE disponit_modules_admin")
+                kobling.execute(
+                    "SELECT forleng_deployreservasjon(%s,%s,%s,%s)",
+                    (MODUL, MILJO, RESERVASJONSTOKEN, RESERVASJONSVARIGHET))
+                kobling.execute("RESET ROLE")
+                kobling.commit()
+                SISTE_FORNYELSE = time.monotonic()
+            except psycopg.errors.LockNotAvailable as e:
+                RESERVASJONEN_TAPT = str(e)
+                return
+            except Exception as e:                          # noqa: BLE001
+                print(f"  ADVARSEL: hjerteslaget nådde ikke basen ({e}) —"
+                      f" gjerdet står til {RESERVASJONSMARGIN_S} s før"
+                      " utløpet, så prøver drillen igjen")
+                try:
+                    kobling.close()
+                except Exception:                           # noqa: BLE001
+                    pass
+                kobling = None
+    finally:
+        if kobling is not None:
+            try:
+                kobling.close()
+            except Exception:                               # noqa: BLE001
+                pass
+
+
+def krev_reservasjonen(hva: str) -> None:
+    """Porten: gjerdet må STÅ før drillen gjør noe uigjenkallelig.
+
+    Codex' P2 på PR #117 (runde 16): reservasjonen ble tatt med et fast
+    utløp og aldri sett på igjen. En drill som brukte lengre tid enn
+    utløpet — og `_kjor_faser` kjørte uten frist, så en hengende fase
+    kunne stå i det uendelige — mistet gjerdet MENS den kjørte. Basens
+    vakt ignorerer med vilje utløpte rader, så en vanlig `bytt_release`
+    kunne da drenere drillens deployment, og den stoppede fasen fortsatte
+    etterpå mot en tilstand ingen måling beskriver.
+
+    Fornyelsen gjør gjerdet levende. Denne porten gjør det MÅLT: står den
+    ikke, avbryter drillen mens reservasjonen ennå har `RESERVASJONSMARGIN_S`
+    igjen — altså før noen andre kan flytte registeret under den.
+    """
+    if not RESERVASJONSTOKEN:
+        return                       # ingen reservasjon tatt (tørrkjøring)
+    grunn = RESERVASJONEN_TAPT
+    if not grunn:
+        stille = time.monotonic() - SISTE_FORNYELSE
+        if stille > RESERVASJONSVARIGHET_S - RESERVASJONSMARGIN_S:
+            grunn = (f"ingen vellykket fornyelse på {round(stille)} s av"
+                     f" en reservasjon som varer {RESERVASJONSVARIGHET_S} s")
+    if grunn:
+        raise SystemExit(
+            f"AVBRUTT foran {hva}: drillens reservasjon på ({MODUL},"
+            f" {MILJO}) står ikke lenger — {grunn}. Basens vakt ignorerer"
+            " en utløpt reservasjon, så en vanlig deployment kan flytte"
+            " registeret under drillen. Målingen som er gjort, er gjort;"
+            " resten kjøres på nytt med ubrukte drill-id-er.")
 
 
 def frigi_drillereservasjonen(m) -> None:
@@ -894,6 +1055,9 @@ def frigi_drillereservasjonen(m) -> None:
     """
     if not RESERVASJONSTOKEN:
         return
+    # Hjerteslaget legger seg FØRST: en tråd som fornyer et gjerde vi er i
+    # ferd med å slippe, kunne ellers skrevet det opp igjen etterpå.
+    HJERTESTOPP.set()
     try:
         m.rollback()          # veien hit kan gå via en avbrutt transaksjon
         _admin(m)
@@ -956,7 +1120,10 @@ def main() -> int:
     # …og FØR tilstanden i det hele tatt leses: én drill av gangen per
     # modul+miljø, holdt av sesjonen hele kjøringen (Codex P1, #117
     # runde 9). Alt under bygger på at ingen andre flytter registeret.
-    ta_drillereservasjonen(m)
+    # DSN-en er hjerteslagets: reservasjonen fornyes så lenge drillen
+    # lever, og `krev_reservasjonen` måler gjerdet foran hvert enveis
+    # steg (Codex P2, #117 runde 16).
+    ta_drillereservasjonen(m, env["DISPONIT_MIGRATOR_URL"])
 
     # Utgangspunktet: den claimende deploymenten er den som drilles.
     drillet, kver, khash, digest = den_ene_claimende(m)
@@ -980,6 +1147,7 @@ def main() -> int:
     # eksisterende, avvikende kandidatRAD ville ellers først blitt
     # oppdaget i kandidatens fase 2 — etter rullingen, og etter at fase 1
     # hadde stoppet rullbakk-arbeideren (Codex P2, #117 runde 7).
+    krev_reservasjonen("registreringen av drillreleasene")
     registrer_drillrelease(m, a.rullback_id, kver, khash, forgjenger_digest,
                            hva="rullback", flagg="--rullback-id")
     registrer_drillrelease(m, a.kandidat_id, kver, khash, digest,
@@ -1042,6 +1210,9 @@ def main() -> int:
                 f"AVBRUTT: oppdrag {oid} sto i {st!r} da rullingen skulle"
                 " fyres — bare 'plukket' er et løpende oppdrag å måle over"
                 " rullingen. Ingen release er rørt; kjør drillen på nytt.")
+        # Siste port foran det uigjenkallelige: gjerdet må stå NÅ, ikke
+        # ha stått da drillen startet.
+        krev_reservasjonen("rullingen")
         rulle_ts = time.monotonic()
         _admin(m)
         m.execute("SELECT bytt_release(%s,%s,%s,%s,%s,'m56-drill')",

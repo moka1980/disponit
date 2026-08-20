@@ -22,6 +22,7 @@ import re
 import secrets
 import subprocess
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -2296,9 +2297,139 @@ def test_bare_en_flippedrill_av_gangen(tmp_path):
     #    kjøringene alt lest samme claimende release, og taperen avbryter
     #    først når den har bestemt seg for hva den skal drille.
     kropp = tekst[tekst.index("\ndef main()"):]
-    assert (kropp.index("ta_drillereservasjonen(m)")
+    assert (kropp.index("ta_drillereservasjonen(m")
             < kropp.index("den_ene_claimende(m)")), \
         "låsen må stå foran oppslaget den beskytter"
+
+
+def test_reservasjonen_fornyes_og_maales_gjennom_hele_drillen(tmp_path,
+                                                              monkeypatch):
+    """Codex' P2 (runde 16): gjerdet ble tatt med et fast utløp på to timer
+    og aldri sett på igjen.
+
+    `_kjor_faser` kalte i tillegg `subprocess.run` UTEN frist, så en fase
+    som hang sto i det uendelige — og basens vakt ignorerer med vilje en
+    utløpt reservasjonsrad. En vanlig `bytt_release` kunne da drenere
+    drillens deployment, hvorpå den hengende fasen fortsatte i det enveis
+    løpet mot en tilstand ingen måling beskriver.
+
+    Tre ting må derfor stemme: hjerteslaget fornyer, porten MÅLER at
+    gjerdet står foran hvert enveis steg, og en fase som henger avbrytes
+    framfor å stå."""
+    d = _drillskript()
+
+    # 1) Tallene må henge sammen: flere slag skal rekke å feile før
+    #    marginen er brukt opp, og marginen skal være ekte tid igjen.
+    assert 0 < d.RESERVASJONSMARGIN_S < d.RESERVASJONSVARIGHET_S
+    assert d.RESERVASJONSHJERTESLAG_S * 3 < (d.RESERVASJONSVARIGHET_S
+                                             - d.RESERVASJONSMARGIN_S)
+    assert d.RESERVASJONSVARIGHET == f"{d.RESERVASJONSVARIGHET_S} seconds"
+
+    class _Hjerte:
+        """Så mye av en forbindelse som hjerteslaget rører."""
+
+        def __init__(self, *sprekker, stopp_etter=3):
+            self.sprekker = list(sprekker)
+            self.stopp_etter, self.forlengelser = stopp_etter, 0
+            self.aapnet = self.lukket = 0
+
+        def __call__(self, _dsn):
+            self.aapnet += 1
+            return self
+
+        def execute(self, sql, params=None):
+            if "forleng_deployreservasjon" in sql:
+                self.forlengelser += 1
+                if self.forlengelser >= self.stopp_etter:
+                    d.HJERTESTOPP.set()
+                if self.sprekker:
+                    sprekk = self.sprekker.pop(0)
+                    if sprekk is not None:
+                        raise sprekk
+            return self
+
+        def commit(self):
+            pass
+
+        def close(self):
+            self.lukket += 1
+
+    monkeypatch.setattr(d, "RESERVASJONSHJERTESLAG_S", 0.001)
+    monkeypatch.setattr(d, "RESERVASJONSTOKEN", "drill-token")
+
+    # 2) Den normale gangen: slagene fornyer, og gjerdet står.
+    d.SISTE_FORNYELSE = time.monotonic() - 10_000
+    hjerte = _Hjerte()
+    d._hjerteslag("dsn", kobler=hjerte)
+    assert hjerte.forlengelser == 3 and hjerte.lukket == 1
+    assert d.RESERVASJONEN_TAPT == ""
+    d.krev_reservasjonen("rullingen")        # fornyet nettopp → porten er åpen
+
+    # 3) Et forbigående blaff dreper ikke en gyldig drill: slaget prøver
+    #    igjen på en frisk forbindelse, og MARGINEN avgjør — ikke slaget.
+    d.HJERTESTOPP.clear()
+    d.RESERVASJONEN_TAPT = ""
+    blaff = _Hjerte(OSError("basen startet på nytt"), stopp_etter=3)
+    d._hjerteslag("dsn", kobler=blaff)
+    assert blaff.forlengelser == 3, "ett mislykket slag stoppet hjertet"
+    assert blaff.aapnet == 2, "forbindelsen ble ikke åpnet på nytt"
+    assert d.RESERVASJONEN_TAPT == ""
+    d.krev_reservasjonen("rullingen")
+
+    # 4) …men er reservasjonen UTLØPT eller OVERTATT, hjelper ingen
+    #    margin: en deployment kan alt ha gått i vinduet.
+    d.HJERTESTOPP.clear()
+    d.RESERVASJONEN_TAPT = ""
+    tapt = _Hjerte(psycopg.errors.LockNotAvailable("holdes ikke av deg"),
+                   stopp_etter=99)
+    d._hjerteslag("dsn", kobler=tapt)
+    assert tapt.forlengelser == 1, "hjertet slo videre på et tapt gjerde"
+    assert "holdes ikke av deg" in d.RESERVASJONEN_TAPT
+    with pytest.raises(SystemExit) as ei:
+        d.krev_reservasjonen("rullingen")
+    assert "rullingen" in str(ei.value) and "reservasjon" in str(ei.value)
+
+    # 5) Stillhet alene stopper også — mens gjerdet ENNÅ står, med
+    #    marginen igjen.
+    d.RESERVASJONEN_TAPT = ""
+    d.SISTE_FORNYELSE = time.monotonic() - (d.RESERVASJONSVARIGHET_S
+                                            - d.RESERVASJONSMARGIN_S + 1)
+    with pytest.raises(SystemExit) as ei:
+        d.krev_reservasjonen("rullingen")
+    assert "fornyelse" in str(ei.value)
+    # Ingen reservasjon tatt (tørrkjøring): porten er ikke der.
+    monkeypatch.setattr(d, "RESERVASJONSTOKEN", "")
+    d.krev_reservasjonen("rullingen")
+
+    # 6) En fase som HENGER avbrytes — den skal ikke stå og la
+    #    reservasjonen tikke mot utløpet. Målt på en ekte prosess.
+    (tmp_path / "wcag-staging-sjekkliste.py").write_text(
+        "import time\ntime.sleep(30)\n", encoding="utf-8")
+    monkeypatch.setattr(d, "HER", tmp_path)
+    monkeypatch.setattr(d, "PINNET_MOTORIMAGE", "sha256:" + "aa" * 32)
+    monkeypatch.setattr(d, "FASEFRIST_S", 1)
+    t0 = time.monotonic()
+    with pytest.raises(SystemExit) as ei:
+        d._kjor_faser("wcag-r99", tmp_path / "e.jsonl", hva="rullbakken")
+    assert time.monotonic() - t0 < 20, "fristen stoppet ikke den hengende fasen"
+    assert "uten å bli ferdig" in str(ei.value)
+
+    # 7) …og porten står foran hvert enveis steg i `main()`.
+    tekst = (ROT / "deploy/staging/rollback-m56.py").read_text(
+        encoding="utf-8")
+    kropp = tekst[tekst.index("\ndef main()"):]
+    assert (kropp.index("krev_reservasjonen(\"registreringen")
+            < kropp.index("registrer_drillrelease(m")), \
+        "registreringen av drill-id-ene står utenfor gjerdet"
+    assert (kropp.index("krev_reservasjonen(\"rullingen\")")
+            < kropp.index("SELECT bytt_release")), \
+        "rullingen er destruktiv og må måle gjerdet rett før den fyres"
+    fasekropp = tekst[tekst.index("\ndef _kjor_faser("):
+                      tekst.index("\ndef ", tekst.index("\ndef _kjor_faser(")
+                                  + 1)]
+    assert "timeout=FASEFRIST_S" in fasekropp
+    assert fasekropp.count("krev_reservasjonen(") == 2, \
+        "gjerdet må måles både før og etter hver fase"
 
 
 @pg
@@ -2386,16 +2517,100 @@ def test_reservasjonen_er_ikke_runtimes_a_ta(migrator):
     try:
         for sql in ("SELECT ta_deployreservasjon('m','staging','t','a',"
                     "'1 hour')",
+                    "SELECT forleng_deployreservasjon('m','staging','t',"
+                    "'1 hour')",
                     "SELECT frigi_deployreservasjon('m','staging','t')",
                     "INSERT INTO moduldeployment_reservasjon (modul_id,"
                     " miljo, innehaver, aktor, utloper_ts) VALUES"
                     " ('m','staging','t','a', now()+interval '1 hour')",
+                    "UPDATE moduldeployment_reservasjon SET utloper_ts ="
+                    " now()+interval '9 hours'",
                     "DELETE FROM moduldeployment_reservasjon"):
             with pytest.raises(psycopg.errors.InsufficientPrivilege):
                 rt.execute(sql)
             rt.rollback()
     finally:
         rt.close()
+
+
+@pg
+def test_reservasjonen_fornyes_og_kan_ikke_gjenopplives(migrator):
+    """Codex' P2 (runde 16): reservasjonen hadde et FAST utløp og ingen
+    fornyelse.
+
+    En drill som tok lengre tid enn utløpet mistet gjerdet MENS den kjørte
+    — og basens vakt ignorerer med vilje en utløpt rad, så en vanlig
+    `bytt_release` kunne da drenere drillens deployment mellom to faser.
+    Utløpet skal måle «innehaveren er borte», ikke «drillen er lang»:
+    kort levetid, fornyet så lenge prosessen lever.
+
+    Og fornyelsen er en UPDATE på en LEVENDE rad, aldri en ny INSERT: er
+    reservasjonen først utløpt, KAN en deployment ha gått i vinduet, og å
+    gjerde på nytt som om ingenting hadde skjedd ville skjult nettopp
+    det."""
+    k = _kjede(migrator)
+    token = "drill-" + secrets.token_hex(6)
+
+    def _utloper():
+        return migrator.execute(
+            "SELECT utloper_ts FROM moduldeployment_reservasjon"
+            " WHERE modul_id=%s", (k["mid"],)).fetchone()
+
+    migrator.execute("SET ROLE disponit_modules_admin")
+    migrator.execute("SELECT ta_deployreservasjon(%s,'staging',%s,'test',"
+                     "'60 seconds')", (k["mid"], token))
+    migrator.execute("RESET ROLE")
+    migrator.commit()
+    try:
+        kort = _utloper()[0]
+        # Fornyelsen flytter utløpet fram — det er hele poenget.
+        migrator.execute("SET ROLE disponit_modules_admin")
+        migrator.execute("SELECT forleng_deployreservasjon(%s,'staging',%s,"
+                         "'600 seconds')", (k["mid"], token))
+        migrator.execute("RESET ROLE")
+        migrator.commit()
+        assert _utloper()[0] > kort
+
+        # En annen innehaver forlenger ingenting.
+        migrator.execute("SET ROLE disponit_modules_admin")
+        with pytest.raises(psycopg.errors.LockNotAvailable):
+            migrator.execute("SELECT forleng_deployreservasjon(%s,'staging',"
+                             "'en-annen','600 seconds')", (k["mid"],))
+        migrator.rollback()
+        migrator.execute("RESET ROLE")
+        # …og en varighet som ikke er positiv, gjerder ingenting.
+        migrator.execute("SET ROLE disponit_modules_admin")
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            migrator.execute("SELECT forleng_deployreservasjon(%s,'staging',"
+                             "%s,'0 seconds')", (k["mid"], token))
+        migrator.rollback()
+        migrator.execute("RESET ROLE")
+
+        # UTLØPT: gjerdet er tapt, og fornyelsen skal si det — ikke ta det
+        # opp igjen. I det vinduet kan en deployment ha gått.
+        migrator.execute("UPDATE moduldeployment_reservasjon"
+                         " SET utloper_ts = now() - interval '1 minute',"
+                         "     tatt_ts = now() - interval '1 hour'"
+                         " WHERE modul_id=%s", (k["mid"],))
+        migrator.commit()
+        migrator.execute("SET ROLE disponit_modules_admin")
+        with pytest.raises(psycopg.errors.LockNotAvailable):
+            migrator.execute("SELECT forleng_deployreservasjon(%s,'staging',"
+                             "%s,'600 seconds')", (k["mid"], token))
+        migrator.rollback()
+        migrator.execute("RESET ROLE")
+        assert migrator.execute(
+            "SELECT count(*) FROM moduldeployment_reservasjon"
+            " WHERE modul_id=%s AND utloper_ts > now()",
+            (k["mid"],)).fetchone()[0] == 0, \
+            "en utløpt reservasjon ble gjenopplivet av fornyelsen"
+    finally:
+        migrator.rollback()
+        migrator.execute("SET ROLE disponit_modules_admin")
+        migrator.execute("SELECT frigi_deployreservasjon(%s,'staging',%s)",
+                         (k["mid"], token))
+        migrator.execute("RESET ROLE")
+        migrator.commit()
 
 
 def test_drillen_nekter_flere_claimende_kontraktlinjer():

@@ -1122,24 +1122,72 @@ BEGIN
        AND r.innehaver = p_innehaver;
 END $$;
 
+-- Reservasjonen FORNYES mens innehaveren lever (Codex P2, #117 runde 16).
+-- Et fast utløp alene er enten for kort (gjerdet faller mens drillen står
+-- midt i en enveis måling, og en vanlig `bytt_release` drenerer den
+-- drillede deploymenten) eller for langt (en drill som dør uten å frigi,
+-- stenger modulen for deploy i timevis). Med fornyelse kan utløpet være
+-- kort: det måler «innehaveren er borte», ikke «drillen er lang».
+--
+-- Bare en LEVENDE reservasjon kan forlenges, og bare av sin egen
+-- innehaver. Er den først utløpt, KAN en vanlig deployment ha gått i
+-- vinduet — å ta gjerdet opp igjen som om ingenting hadde skjedd ville
+-- skjult nettopp det. Feilen er `lock_not_available`, den samme kalleren
+-- ser når flaten er andres, og innehaveren skal avbryte på den.
+--
+-- Ingen modul-lås her, med vilje: fornyelsen rører bare sin egen rad, og
+-- et hjerteslag som stiller seg i kø bak en lang `bytt_release` ville
+-- mistet gjerdet mens det ventet på det.
+CREATE OR REPLACE FUNCTION forleng_deployreservasjon(
+    p_modul_id TEXT, p_miljo TEXT, p_innehaver TEXT, p_varighet INTERVAL)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+BEGIN
+    IF p_varighet IS NULL OR p_varighet <= interval '0 seconds' THEN
+        RAISE EXCEPTION 'forleng_deployreservasjon: varigheten må være'
+            ' positiv — en fornyelse som utløper i det den skrives,'
+            ' gjerder ingenting'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    UPDATE public.moduldeployment_reservasjon r
+       SET utloper_ts = now() + p_varighet
+     WHERE r.modul_id = p_modul_id AND r.miljo = p_miljo
+       AND r.innehaver = p_innehaver AND r.utloper_ts > now();
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'forleng_deployreservasjon: (%, %) holdes ikke av %'
+            ' — reservasjonen er utløpt eller overtatt, og en deployment'
+            ' kan ha gått i vinduet. Innehaveren må avbryte, ikke gjerde'
+            ' på nytt.', p_modul_id, p_miljo, p_innehaver
+            USING ERRCODE = 'lock_not_available';
+    END IF;
+END $$;
+
 -- Vakten er en INVOKER-funksjon som `moduldeployment_livslop` (014) og
 -- eies av migrator som den: den leser bare reservasjonsraden, og den skal
 -- ikke bære en fullmakt kalleren ikke har. Definerne under er noe annet —
 -- de SKRIVER reservasjonen, og eies av modul_eier som resten av CP2.
 ALTER FUNCTION ta_deployreservasjon(TEXT, TEXT, TEXT, TEXT, INTERVAL)
     OWNER TO disponit_modul_eier;
+ALTER FUNCTION forleng_deployreservasjon(TEXT, TEXT, TEXT, INTERVAL)
+    OWNER TO disponit_modul_eier;
 ALTER FUNCTION frigi_deployreservasjon(TEXT, TEXT, TEXT)
     OWNER TO disponit_modul_eier;
 SET LOCAL ROLE disponit_modul_eier;
 REVOKE ALL ON FUNCTION ta_deployreservasjon(TEXT, TEXT, TEXT, TEXT, INTERVAL)
     FROM PUBLIC;
+REVOKE ALL ON FUNCTION forleng_deployreservasjon(TEXT, TEXT, TEXT, INTERVAL)
+    FROM PUBLIC;
 REVOKE ALL ON FUNCTION frigi_deployreservasjon(TEXT, TEXT, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION ta_deployreservasjon(TEXT, TEXT, TEXT, TEXT, INTERVAL)
+    TO disponit_modules_admin;
+GRANT EXECUTE ON FUNCTION forleng_deployreservasjon(TEXT, TEXT, TEXT, INTERVAL)
     TO disponit_modules_admin;
 GRANT EXECUTE ON FUNCTION frigi_deployreservasjon(TEXT, TEXT, TEXT)
     TO disponit_modules_admin;
 RESET ROLE;
 -- Vakten leser tabellen som den rollen som skriver `moduldeployment` —
 -- definerne (`disponit_modul_eier`) og migrator, som eier begge.
-GRANT SELECT, INSERT, DELETE ON moduldeployment_reservasjon
+-- UPDATE er fornyelsens skrivevei (`forleng_deployreservasjon`); den er
+-- radbundet til innehaveren i funksjonen, ikke til rollen.
+GRANT SELECT, INSERT, UPDATE, DELETE ON moduldeployment_reservasjon
     TO disponit_modul_eier;
