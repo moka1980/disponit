@@ -703,7 +703,7 @@ _MODULMARKOR_RE = re.compile(
 _TALL_RE = re.compile(r"\d+(?:\s*[–-]\s*(\d+))?")
 
 
-def _modulreferanser(dep: str, kjente: set[int]) -> set[int]:
+def _modulreferanser(dep: str) -> set[int]:
     """Modulnumrene en dep-streng peker på — `M-14`, `modul 24` og intervaller
     som `1–2` eller `13–14`.
 
@@ -729,6 +729,16 @@ def _modulreferanser(dep: str, kjente: set[int]) -> set[int]:
     innføringen står først, så markøren SØKES nå fram hvor som helst i leddet.
     Den må stå fritt, ellers ville «ARM-16» og «GSM-2» blitt modulnumre.
 
+    Funksjonen SILER IKKE mot katalogen (Codex P2 på #118, niende runde). Den
+    returnerte før `ut & kjente`, og da forsvant en markert referanse til en
+    modul som ikke finnes — `M-58`, en tastefeil eller en modul noen planla
+    men aldri tok opp — stille ut av porten. Det er den verste formen for
+    grønn: dep peker på noe som ikke kan tildeles en fase, og porten sier
+    ingenting. Siling ga mening da markøren var valgfri og «PostgreSQL 16»
+    ville blitt meldt som M-16; nå er infrastrukturtall allerede ute, så det
+    som står igjen er referanser noen har MENT som moduler. Kalleren melder
+    dem som brudd.
+
     MUTASJONEN SOM DREPER DENNE: gjør markøren valgfri igjen. Da er «PostgreSQL
     16» en kant til M-16 på nytt, og porten faller på infrastruktur.
     """
@@ -752,7 +762,7 @@ def _modulreferanser(dep: str, kjente: set[int]) -> set[int]:
             forste = int(re.match(r"\d+", treff.group(0)).group(0))
             siste = int(treff.group(1)) if treff.group(1) else forste
             ut.update(range(forste, siste + 1))
-    return ut & kjente
+    return ut
 
 
 def test_ingen_modul_avhenger_av_en_senere_fase():
@@ -766,6 +776,11 @@ def test_ingen_modul_avhenger_av_en_senere_fase():
     Codex fant M-53 → M-43. To til lå i samme fil (M-48 → M-23, M-38 → M-31),
     usett, fordi ingen port leste dep-feltene. Denne gjør det.
 
+    En referanse til en modul som IKKE finnes meldes samme sted (Codex P2 på
+    #118, niende runde). `M-58` kan ikke tildeles en fase, så porten kan ikke
+    avgjøre om rekkefølgen holder — og «kan ikke avgjøres» er ikke det samme
+    som «i orden». Før ble den silt bort i stillhet.
+
     MUTASJONEN SOM DREPER DENNE: sett `>` til `>=`. Da ville en avhengighet
     innenfor samme fase blitt et brudd — og det er den ikke: fasen er
     rekkefølgens grovkorn, modulene i den bygges i en rekkefølge fasen ikke
@@ -774,11 +789,15 @@ def test_ingen_modul_avhenger_av_en_senere_fase():
     moduler = _moduler_fra_kilden()
     assert len(moduler) == MODULER, (
         f"leste {len(moduler)} moduler med fase og dep, forventet {MODULER}")
-    kjente = set(moduler)
+    ukjente = [f"M-{n} peker på M-{r}, som ikke finnes i katalogen"
+               for n, d in sorted(moduler.items())
+               for r in sorted(_modulreferanser(d["dep"]))
+               if r not in moduler]
+    assert not ukjente, "dep peker utenfor katalogen: " + "; ".join(ukjente)
     brudd = [f"M-{n} (fase {d['fase']}) avhenger av "
              f"M-{r} (fase {moduler[r]['fase']})"
              for n, d in sorted(moduler.items())
-             for r in sorted(_modulreferanser(d["dep"], kjente))
+             for r in sorted(_modulreferanser(d["dep"]))
              if moduler[r]["fase"] > d["fase"]]
     assert not brudd, "uoppfyllelig utrullingsrekkefølge: " + "; ".join(brudd)
 
