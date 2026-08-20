@@ -1285,15 +1285,24 @@ def _registerets_enums(
                 opptatt.get(tabell, set()).discard(navn)
                 continue
             _, tabell, navn, uttrykk, betinget, kolonne = hendelse
-            bindinger = _bindinger(uttrykk)
-            if not bindinger:
-                continue
+            # NAVNET tildeles først, og uavhengig av om vilkåret binder noe
+            # porten bryr seg om (Codex P2 på #118, tjueandre runde).
+            # PostgreSQL navngir HVERT CHECK det tar imot, og navnet er da
+            # opptatt for de neste — også når vilkåret er `CHECK (true)` eller
+            # står på en kolonne registeret ikke har. Ble et slikt vilkår
+            # forkastet før navnet ble ført, fikk neste unavngitte CHECK
+            # basisnavnet i modellen mens databasen ga det `…_check1`, og et
+            # senere slipp på basisnavnet tok da enumvilkåret ut av modellen
+            # mens databasen beholdt det.
             if navn is None:
                 navn = _tildelt_navn(opptatt.get(tabell, ()), tabell, kolonne)
             if navn == _DYN_NAVN or (betinget and (tabell, navn) in vilkar):
                 navn = _sidestilt_navn(vilkar, tabell, navn)
             else:
                 opptatt.setdefault(tabell, set()).add(navn)
+            bindinger = _bindinger(uttrykk)
+            if not bindinger:
+                continue
             vilkar[(tabell, navn)] = bindinger
             noen_gang |= set().union(*bindinger.values())
     gjeldende: dict[tuple[str, str], set[str]] = {}
@@ -1326,6 +1335,12 @@ def _tildelt_navn(opptatt, tabell: str, kolonne: str | None) -> str:
     var opptatt, og et senere `DROP CONSTRAINT modulkontrakt_check` slapp da
     enumvilkåret i modellen mens PostgreSQL slapp den andre. Sto et videre
     vilkår igjen, ble svaret videre enn databasen.
+
+    Og det teller CHECK-ene porten ikke leser noe ut av (Codex P2 på #118,
+    tjueandre runde). `CHECK (true)`, eller et vilkår på en kolonne registeret
+    ikke har, binder ingen enumverdi — men PostgreSQL navngir det likevel, og
+    navnet er brukt opp. Ble det forkastet før navnet ble ført, fikk neste
+    unavngitte CHECK basisnavnet i modellen og `…_check1` i databasen.
 
     GRENSEN: bare navngitte vilkår av andre typer telles. Et unavngitt vilkår
     av en annen type får en av PostgreSQLs egne endelser — `_pkey`, `_key`,
@@ -2212,6 +2227,43 @@ def test_et_opptatt_navn_skyver_det_unavngitte_vilkaaret_videre(tmp_path):
         "direkte", "kompenserende"}, (
         "slippet traff enumvilkåret — det unavngitte CHECK-et fikk et navn som "
         "alt var i bruk")
+
+
+@pytest.mark.parametrize("uten_binding", [
+    # Navngitt: navnet står i klartekst, og databasen tar det som det står.
+    "CONSTRAINT modulkontrakt_reversibilitet_check CHECK (true)",
+    # Unavngitt: PostgreSQL tildeler NØYAKTIG det samme navnet — og bruker det
+    # opp på samme vis.
+    "CHECK (true)",
+])
+def test_et_vilkaar_uten_bindinger_bruker_opp_navnet_sitt(tmp_path,
+                                                          uten_binding):
+    """Et CHECK porten ikke leser noe ut av, opptar likevel navnet sitt.
+
+    Codex P2 på #118, tjueandre runde. Porten forkastet et vilkår uten
+    enumbindinger — `CHECK (true)`, eller et vilkår på en kolonne registeret
+    ikke har — FØR navnet ble ført. PostgreSQL forkaster ingenting: den
+    navngir hvert CHECK den tar imot, og navnet er da opptatt for de neste.
+
+    Her er det første vilkåret uten bindinger, så det NESTE — enumvilkåret,
+    skrevet uten navn — heter `…_check1` i databasen. Modellen ga det
+    basisnavnet, og slippet på basisnavnet tok da enumvilkåret ut av modellen
+    mens databasen beholdt det: en `rev`-verdi databasen avviser sto igjen som
+    gyldig.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE modulkontrakt (\n"
+        "    reversibilitet TEXT NOT NULL\n"
+        f"        {uten_binding}\n"
+        "        CHECK (reversibilitet IN ('direkte', 'kompenserende')));\n",
+        "ALTER TABLE modulkontrakt\n"
+        "    DROP CONSTRAINT modulkontrakt_reversibilitet_check;\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende.get((MODULKONTRAKT, "reversibilitet")) == {
+        "direkte", "kompenserende"}, (
+        "slippet traff enumvilkåret — vilkåret uten bindinger ga aldri fra seg "
+        "navnet sitt til modellen")
 
 
 @pytest.mark.parametrize("vilkar", [
