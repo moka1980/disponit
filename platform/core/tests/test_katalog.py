@@ -6,7 +6,7 @@ anbefaling: den dagen noen redigerer `katalog.js` for hånd, eller endrer
 spesifikasjonen uten å kjøre generatoren, driver de to kildene fra hverandre —
 og forsiden viser da et produktomfang ingen har bestemt.
 
-Testene her er derfor sju porter (Codex P2 på PR #43, P2 på PR #99):
+Testene her er derfor åtte porter (Codex P2 på PR #43, #99 og #118):
   1. KILDE     — generatoren leser sannhetskilden, ikke arkivet i `prototype/`.
   2. FERSKHET  — regenerering i en temp-rot gir NØYAKTIG det som ligger i repoet.
   3. OMDØPING  — nytt navn i kilden stopper genereringen til oversettelsen er
@@ -16,6 +16,9 @@ Testene her er derfor sju porter (Codex P2 på PR #43, P2 på PR #99):
   6. MERKEVARE — sannhetskilden bærer produktnavnet resten av repoet bruker.
   7. FASEORDEN — ingen modul avhenger av en modul i en senere fase, så den
                  erklærte utrullingsrekkefølgen faktisk kan følges.
+  8. PEKERE    — ingen fil i repoet henviser til en spesifikasjonsutgave som
+                 er slettet; historikken i docs/pr/ og docs/beslutninger/ er
+                 med rette unntatt.
 """
 import json
 import re
@@ -278,6 +281,57 @@ def test_ingen_modul_avhenger_av_en_senere_fase():
              for r in sorted(_modulreferanser(d["dep"], kjente))
              if moduler[r]["fase"] > d["fase"]]
     assert not brudd, "uoppfyllelig utrullingsrekkefølge: " + "; ".join(brudd)
+
+
+# Filer som ikke skal måles mot dagens versjon: `docs/pr/` og
+# `docs/beslutninger/` ER historikk — en PR-beskrivelse eller en ADR skal si
+# hva som gjaldt DA, ikke skrives om når versjonen bumpes. Arkivet i
+# `prototype/` er gamle utgaver på disk. `.git` er ikke tekst.
+HISTORIKK = ("docs/pr/", "docs/beslutninger/", "prototype/", ".git/")
+SPEC_RE = re.compile(r"disponit-prototype-v(\d+)\.html")
+
+
+def test_ingen_peker_paa_en_slettet_spesifikasjon():
+    """Hver henvisning til spesifikasjonsfila må treffe fila som finnes.
+
+    Codex P2 på PR #118: v9 gjorde spesifikasjonen til eneste sannhetskilde og
+    slettet v8-fila, men den OBLIGATORISKE arbeidsflyten krevde fortsatt utkast
+    og tester mot v8 (`docs/README-arbeidsflyt.md`, `docs/RUTINER.md`), og
+    PR-malen krevde akseptansemapping mot v8. En implementasjons-PR for M-57
+    kunne umulig oppfylle det: kriteriene finnes bare i v9. Instruksen pekte
+    altså på en fil som ikke er der — og ingenting knakk, for prosa kompilerer
+    ikke.
+
+    Kuren i selve dokumentene er å slutte å bake versjonsnummeret inn i
+    instruksen: de peker nå på `docs/spesifikasjon/`, som alltid inneholder
+    gjeldende utgave. Denne porten dekker resten — stedene som med rett MÅ
+    navngi fila (README, STRUKTUR, generatoren, denne testen), og fanger neste
+    versjonsbump som glemmer ett av dem.
+
+    MUTASJONEN SOM DREPER DENNE: la porten godta et hvilket som helst
+    versjonsnummer. Da er den bare en stavekontroll for filnavnet, og det var
+    aldri feilen — feilen var at nummeret pekte forbi fila.
+    """
+    gjeldende = SPEC_RE.search(KILDE.name)
+    assert gjeldende, f"KILDE_REL navngir ikke en versjonert fil: {KILDE.name}"
+
+    spor = subprocess.run(["git", "ls-files", "-z"], cwd=ROT,
+                          capture_output=True, text=True, check=True)
+    avvik = []
+    for rel in spor.stdout.split("\0"):
+        if not rel or rel.startswith(HISTORIKK):
+            continue
+        sti = ROT / rel
+        if not sti.is_file():
+            continue
+        tekst = sti.read_text(encoding="utf-8", errors="ignore")
+        for treff in SPEC_RE.finditer(tekst):
+            if treff.group(0) != KILDE.name:
+                linje = tekst.count("\n", 0, treff.start()) + 1
+                avvik.append(f"{rel}:{linje} peker på {treff.group(0)}")
+    assert not avvik, (
+        f"henvisninger til en spesifikasjon som ikke finnes (gjeldende er "
+        f"{KILDE.name}): " + "; ".join(avvik))
 
 
 @pytest.mark.parametrize("sprak", sorted(LOCALER))
