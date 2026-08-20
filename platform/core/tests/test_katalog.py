@@ -6,7 +6,7 @@ anbefaling: den dagen noen redigerer `katalog.js` for hånd, eller endrer
 spesifikasjonen uten å kjøre generatoren, driver de to kildene fra hverandre —
 og forsiden viser da et produktomfang ingen har bestemt.
 
-Testene her er derfor ni porter (Codex P2 på PR #43, #99 og #118):
+Testene her er derfor ti porter (Codex P2 på PR #43, #99 og #118):
   1. KILDE     — generatoren leser sannhetskilden, ikke arkivet i `prototype/`.
   2. FERSKHET  — regenerering i en temp-rot gir NØYAKTIG det som ligger i repoet.
   3. OMDØPING  — nytt navn i kilden stopper genereringen til oversettelsen er
@@ -21,6 +21,9 @@ Testene her er derfor ni porter (Codex P2 på PR #43, #99 og #118):
                  med rette unntatt.
   9. KLASSER   — `kl` og `rev` i katalogen er verdier modulregisteret godtar,
                  lest ut av CHECK-vilkårene i migrasjonene.
+ 10. IDENTER   — også PROSAEN rundt postene: en identifikator skrevet i
+                 maskinform må finnes i en migrasjon eller som en fil, så
+                 forklaringen ikke kan finne opp klasser posten ikke har.
 """
 import json
 import re
@@ -296,6 +299,80 @@ def test_kontraktklassene_i_katalogen_finnes_i_modulregisteret():
     assert not avvik, (
         "kontraktklasser i katalogen som modulregisteret vil avvise: "
         + "; ".join(avvik))
+
+
+# Port 9 leser modulpostene. Den forklarende prosaen rundt dem leser den ikke —
+# og det var der de to oppfunne klassene ble stående etter at postene var
+# rettet (Codex P2 på #118, tredje runde): endringsloggen presenterte fortsatt
+# `dokumentbehandling` og `rådgivende_pluss_signert_utsendelse` som nye
+# katalogbegreper. Sannhetskilden sa da to ting samtidig, og den som
+# implementerer leser prosaen først.
+#
+# Regelen: skriver dokumentet en identifikator i maskinform, må maskinen ha
+# den. Ordskiller er understrek — vanlig norsk prosa skriver ikke sånn, så
+# mønsteret treffer nettopp de ordene som utgir seg for å være noe systemet
+# kjenner. Sammensetninger med bindestrek (`axe-core`, `robots.txt`) er prosa
+# og faller utenfor med vilje.
+IDENT_RE = re.compile(r"\b[a-zæøå]+(?:_[a-zæøå]+)+\b")
+
+
+def _kjente_identifikatorer() -> set[str]:
+    """Identifikatorer i maskinform som faktisk finnes i repoet.
+
+    To kilder, begge lest ut av repoet i stedet for skrevet av her: verdier
+    migrasjonene skriver i apostrofer (registerets egne klasser, moduser og
+    tilstander), og stammen i navnet på en sporet fil (spesifikasjonen navngir
+    porter og verktøy, som `test_ui_kontrakt`).
+    """
+    ut: set[str] = set()
+    for sql in MIGRASJONER.glob("*.sql"):
+        ut.update(t for t in re.findall(r"'([^']*)'",
+                                        sql.read_text(encoding="utf-8"))
+                  if IDENT_RE.fullmatch(t))
+    spor = subprocess.run(["git", "ls-files", "-z"], cwd=ROT,
+                          capture_output=True, text=True, check=True)
+    ut.update(Path(rel).stem for rel in spor.stdout.split("\0") if rel)
+    return ut
+
+
+def test_ingen_oppfunne_identifikatorer_i_sannhetskilden():
+    """Maskinform i spesifikasjonen må peke på noe som finnes.
+
+    Codex P2 på PR #118, tredje runde: modulposten for M-57 var rettet til
+    `krever_outbox`/`irreversibel`, men endringsloggen i samme fil forklarte
+    fortsatt `dokumentbehandling` og `rådgivende_pluss_signert_utsendelse` som
+    to nye katalogbegreper. Port 9 så det ikke — den leser postene, og dette
+    sto i prosaen. En oppfunnet klasse trenger ikke stå i et `kl`-felt for å
+    gjøre skade; den trenger bare å stå i dokumentet alle leser før de bygger.
+
+    Porten sier ikke at spesifikasjonen må slutte å forklare. Den sier at en
+    forklaring ikke får låne maskinens skrivemåte for noe maskinen ikke har:
+    prosa om hvorfor en klasse ble valgt skrives som prosa, og en identifikator
+    kommer inn ved å finnes — i en migrasjon eller som en fil i repoet.
+
+    GRENSEN, sagt rett ut: understreken er signalet, så en oppfunnet klasse som
+    er ETT ord (`dokumentbehandling` var det) går forbi her. Å skille den fra
+    vanlig norsk krever at porten leser hva setningen PÅSTÅR, og en slik
+    prosaregel ville enten avvist legitim dokumentasjon av en klasse som
+    faktisk kom (036 la `ekstern_lesing` til) eller vært lett å skrive seg
+    rundt. Det ettordstilfellet vokter port 9 der det gjør skade — i `kl`/`rev`
+    på selve posten.
+
+    MUTASJONEN SOM DREPER DENNE: la porten lese modulpostene i stedet for hele
+    fila. Da vokter den det port 9 allerede vokter, og prosaen — som er der
+    regresjonen faktisk sto — er igjen uten port.
+    """
+    kjente = _kjente_identifikatorer()
+    tekst = KILDE.read_text(encoding="utf-8")
+    avvik: dict[str, int] = {}
+    for treff in IDENT_RE.finditer(tekst):
+        if treff.group(0) not in kjente:
+            avvik.setdefault(treff.group(0),
+                             tekst.count("\n", 0, treff.start()) + 1)
+    assert not avvik, (
+        f"identifikatorer i {KILDE.name} som ikke finnes i registeret eller "
+        "som fil: " + "; ".join(f"«{ident}» (linje {linje})"
+                                for ident, linje in sorted(avvik.items())))
 
 
 def _modulreferanser(dep: str, kjente: set[int]) -> set[int]:
