@@ -35,8 +35,8 @@
       ],
       "properties": {
         "modul": {
-          "type": "string",
-          "minLength": 1
+          "const": "m_wcag_audit",
+          "comment": "REGISTERIDENTITETEN (modulhode.modul_id), ikke katalognavnet m56_wcag_audit. Kravet wcag-kontroll-v1 er m56s egen stagingrunde, saa modulen er kjent i skjemaet - en ikke-tom streng lot sammendraget navngi en annen modul enn den som aksepteres."
         },
         "release": {
           "type": "string",

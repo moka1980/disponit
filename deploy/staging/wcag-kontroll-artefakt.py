@@ -35,6 +35,15 @@ from pathlib import Path
 
 REPOROT = Path(__file__).resolve().parents[2]
 
+#: Modulens identitet er REGISTERETS (`modulhode.modul_id`), ikke
+#: katalognavnet. Codex' P2 på PR #117: artefaktet kalte seg
+#: `m56_wcag_audit` — mappen det ble kjørt fra — mens drillartefaktet,
+#: staging-runneren, akseptskriptet og 049-radene alle bruker
+#: `m_wcag_audit`. Et sammendrag som navngir en annen modul enn den som
+#: aksepteres, er evidens for feil ting, og skjemaets «ikke-tom streng»
+#: fanget det aldri.
+MODUL = "m_wcag_audit"
+
 
 def les(sti: Path) -> list[dict]:
     return [json.loads(l) for l in sti.read_text(encoding="utf-8").splitlines()
@@ -71,7 +80,7 @@ def sammendrag(rader: list[dict], kilde: str, kilde_sha256: str) -> dict:
         "ts": max(d["ts"] for d in valgte),
         "bestatt": all(d.get("ok") is True for d in valgte),
         "oppsett": {
-            "modul": "m56_wcag_audit",
+            "modul": MODUL,
             "release": fase2["release"],
             "image_digest": fase1["image_id"].removeprefix("sha256:"),
             "kilde": kilde,

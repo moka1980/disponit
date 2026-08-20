@@ -264,6 +264,24 @@ def les_bundet_artefakt(sti: Path, krav_id: str,
     return data, sha
 
 
+def verifiser_modul(art: dict, hva: str) -> None:
+    """Artefaktet må navngi MODULEN som aksepteres, ikke en annen.
+
+    Codex' P2 på PR #117 (runde 3): runde-sammendraget kalte modulen
+    `m56_wcag_audit` — KATALOGNAVNET — mens registeret, drillen, 049-radene
+    og dette skriptet bruker `m_wcag_audit`. Skjemaet krevde bare en
+    ikke-tom streng, og skriptet sammenlignet aldri feltet med `MODUL`, så
+    et sammendrag som navnga en helt annen modul ble evidens for en
+    immutabel `m_wcag_audit`-aksept. Feltet er nå bundet i skjemaet OG målt
+    her: to lag, samme sannhet.
+    """
+    navn = (art.get("oppsett") or {}).get("modul")
+    if navn != MODUL:
+        raise SystemExit(f"AVBRUTT: {hva} gjelder modul {navn!r}, ikke"
+                         f" {MODUL!r} — evidens for en annen modul aksepterer"
+                         " ingenting her")
+
+
 def verifiser_kilde(runde: dict) -> str:
     """Råfilen bak sammendraget. -> sha256 av de faktiske bytene.
 
@@ -315,6 +333,8 @@ def main() -> int:
                          + "\n  ".join(kjedefeil))
     drill, drill_sha = les_bundet_artefakt(a.drill, DRILLKRAV, manifest)
     runde, runde_sha = les_bundet_artefakt(a.runde, KRAV, manifest)
+    verifiser_modul(drill, "drillartefaktet")
+    verifiser_modul(runde, "runde-sammendraget")
     evidens_sha = verifiser_kilde(runde)
     # …og hele den kjeden bindes til commiten raden faktisk skriver:
     # manifestet (tillitsroten), begge artefaktene og råfilen bakerst.

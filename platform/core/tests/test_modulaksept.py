@@ -694,6 +694,34 @@ def test_akseptporten_binder_raafilen():
     assert "utenfor repoet" in str(ei.value)
 
 
+def test_artefaktene_maa_navngi_modulen_som_aksepteres():
+    """Codex' P2 (runde 3): sammendraget kalte modulen `m56_wcag_audit`
+    — KATALOGNAVNET — mens registeret, drillen og 049-radene bruker
+    `m_wcag_audit`. Skjemaet krevde bare en ikke-tom streng, og skriptet
+    sammenlignet aldri feltet, så evidens for en annen modul kunne bære
+    en immutabel `m_wcag_audit`-aksept."""
+    from manifestskjema import valider_artefaktformat
+    m = _aksept_skript()
+    assert m.MODUL == "m_wcag_audit"
+    for navn in ("wcag-kontroll-v1-20260818T200413.json",
+                 "rollback-m56-v1-20260820T132200.json"):
+        art = json.loads((ROT / "deploy/staging/artefakter" / navn
+                          ).read_text(encoding="utf-8"))
+        assert art["oppsett"]["modul"] == m.MODUL, navn
+        m.verifiser_modul(art, navn)                      # ingen SystemExit
+        feil = dict(art, oppsett=dict(art["oppsett"], modul="m56_wcag_audit"))
+        with pytest.raises(SystemExit) as ei:
+            m.verifiser_modul(feil, navn)
+        assert "m56_wcag_audit" in str(ei.value)
+    # …og skjemaet bærer det samme kravet, uavhengig av skriptet.
+    runde = json.loads((ROT / ("deploy/staging/artefakter/"
+                               "wcag-kontroll-v1-20260818T200413.json")
+                        ).read_text(encoding="utf-8"))
+    assert valider_artefaktformat(
+        dict(runde, oppsett=dict(runde["oppsett"], modul="m56_wcag_audit")),
+        KRAV), "skjemaet godtar fortsatt katalognavnet som modulidentitet"
+
+
 def test_akseptcommiten_baerer_bytene_som_ble_validert(tmp_path):
     """Codex' P1 (runde 2): hash-, skjema- og grensekontrollene hadde
     ARBEIDSTREET som tillitsrot, mens `manifest_commit` var en

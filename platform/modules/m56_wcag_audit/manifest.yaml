@@ -90,7 +90,7 @@ staging_sjekkliste:
       - maalt.kjoringer_signert_innen_frist
       - maalt.avvik_mot_fasit
     artefakt: deploy/staging/artefakter/wcag-kontroll-v1-20260818T200413.json
-    artefakt_sha256: 3eaa69dff66c7015be30c8060aa0fdd2d2fd32f64c65d8ad4a79c63c8926d84f
+    artefakt_sha256: 0a27526e024a9a91b52b26082a56940a66bb4d9148889808cf856ef8b35e3583
     notat: >-
       MÅLT 2026-08-18, BUNDET 2026-08-20 (049).
       På disponit-srv (release wcag-r1 — byte-identisk med den aksepterte
@@ -111,7 +111,7 @@ staging_sjekkliste:
     bevismaalinger:
       - maalt.avvik_mot_fasit
     artefakt: deploy/staging/artefakter/wcag-kontroll-v1-20260818T200413.json
-    artefakt_sha256: 3eaa69dff66c7015be30c8060aa0fdd2d2fd32f64c65d8ad4a79c63c8926d84f
+    artefakt_sha256: 0a27526e024a9a91b52b26082a56940a66bb4d9148889808cf856ef8b35e3583
     notat: >-
       MÅLT 2026-08-18, BUNDET 2026-08-20 (049). Testnettstedet (platform/modules/wcag_audit/testnettsted/, fasit
       skrevet fra konstruksjonen) er identisk lokalt og på staging (samme
@@ -122,7 +122,7 @@ staging_sjekkliste:
     bevismaalinger:
       - maalt.kjoringer_signert_innen_frist
     artefakt: deploy/staging/artefakter/wcag-kontroll-v1-20260818T200413.json
-    artefakt_sha256: 3eaa69dff66c7015be30c8060aa0fdd2d2fd32f64c65d8ad4a79c63c8926d84f
+    artefakt_sha256: 0a27526e024a9a91b52b26082a56940a66bb4d9148889808cf856ef8b35e3583
     notat: >-
       MÅLT 2026-08-18, BUNDET 2026-08-20 (049). Verifisert i
       staging-kjøringen: kvitteringen attesterer release,
@@ -137,7 +137,7 @@ staging_sjekkliste:
       - maalt.feilinjisering_promoterte_artefakter
       - maalt.evidensfrist_reapet
     artefakt: deploy/staging/artefakter/wcag-kontroll-v1-20260818T200413.json
-    artefakt_sha256: 3eaa69dff66c7015be30c8060aa0fdd2d2fd32f64c65d8ad4a79c63c8926d84f
+    artefakt_sha256: 0a27526e024a9a91b52b26082a56940a66bb4d9148889808cf856ef8b35e3583
     notat: >-
       MÅLT 2026-08-18, BUNDET 2026-08-20 (049). Motorfeil (kommando exit 1) → kvittering 'avbrutt', oppdrag
       feilet MED signert feilkvittering, 0 promoterte artefakter;
@@ -150,7 +150,7 @@ staging_sjekkliste:
       - maalt.kjoringer_signert_innen_frist
       - maalt.kjoringer_krav
     artefakt: deploy/staging/artefakter/wcag-kontroll-v1-20260818T200413.json
-    artefakt_sha256: 3eaa69dff66c7015be30c8060aa0fdd2d2fd32f64c65d8ad4a79c63c8926d84f
+    artefakt_sha256: 0a27526e024a9a91b52b26082a56940a66bb4d9148889808cf856ef8b35e3583
     notat: >-
       MÅLT 2026-08-18, BUNDET 2026-08-20 (049). 10/10 kjøringer signert innen frist (verste 2.1 s mot 1800/3600 s
       budsjett — det syntetiske nettstedet er lite; fristene deklarert i

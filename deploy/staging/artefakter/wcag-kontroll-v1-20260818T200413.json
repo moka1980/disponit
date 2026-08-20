@@ -20,7 +20,7 @@
     "image_digest": "af92b70542f18874ebab5807b1bdcca4f69a84b2cd6dd30066e7579ce1b88325",
     "kilde": "deploy/staging/artefakter/evidens-wcag-runde-20260818.jsonl",
     "kilde_sha256": "b2a11cf2396d0d91aba0fe7f6621d5fed8bbfb744a82d1a6556239f23f73e1e1",
-    "modul": "m56_wcag_audit",
+    "modul": "m_wcag_audit",
     "release": "wcag-r1"
   },
   "ts": "2026-08-18T20:05:32.426295+00:00"
