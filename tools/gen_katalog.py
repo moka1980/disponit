@@ -226,6 +226,14 @@ POST_RE = re.compile(
 # følges av kolon. Ordet «status» finnes overalt i feltVERDIene — «samtykke-
 # status», «onboardingstatus», «resultatstatus» — og de er prosa om hva en
 # modul gjør, ikke en tilstandsakse ved siden av manifestet.
+#
+# Og forbudet gjelder MODULPOSTENE, ikke alt som står i en `<script>`-tagg
+# (Codex P2 på #118). Siden er en levende prototype med egen UI-kode: et
+# tilstandsobjekt med `status:` i en filterrutine, et API-eksempel i en
+# hjelpetekst — alt sammen helt lovlig, og ingen av delene en tilstandsakse
+# ved siden av manifestet. Et forbud som stoppet dem ville stoppet
+# ferskhetsporten med en modulfeilmelding om noe som ikke er en modul, og et
+# forbud man må slå av for å skrive UI-kode blir slått av.
 STATUS_RE = re.compile(r"""[{,]\s*["']?(status|driftstilstand)["']?\s*:""")
 
 
@@ -245,19 +253,29 @@ def les_katalog() -> list[dict]:
     # kom tilbake i v9 for M-57 etter at det ble tatt ut for M-56 i #109 (Codex
     # P2 på #118). Generatoren KASTER feltet stille, så den siden som tegner det
     # rett fra kilden blir stående på gammel tilstand mens `MODULSTATUS` fører
-    # modulen videre — ingenting knekker, kilden bare lyver. Nå stopper det her.
-    forbudt = STATUS_RE.search(skript)
-    if forbudt:
-        raise SystemExit(
-            f"modulpost i {KILDE_NAVN} bærer `{forbudt.group(1)}` — katalogen "
-            f"bærer struktur (nummer, navn, område, fase), ikke tilstand. Hva "
-            f"en modul FAKTISK er, står i `MODULSTATUS` i plattformdata.js, "
-            f"avledet av manifestene. Fjern feltet.")
-    poster = [
-        {"n": int(m.group(1)), "navn": m.group(3), "omrade": m.group(5),
-         "fase": int(m.group(6))}
-        for m in POST_RE.finditer(skript)
-    ]
+    # modulen videre — ingenting knekker, kilden bare lyver. Nå stopper det her,
+    # og kun der en modulpost faktisk står.
+    #
+    # Postgrensen er den POST_RE allerede hviler på: posten åpner med `{` på
+    # treffets start, og siden ingen `{`/`}` finnes inne i feltverdiene er den
+    # første `}` etter treffet postens slutt. Skulle en post noen gang bryte
+    # den formen, går den ikke tapt i stillhet — da matcher ikke POST_RE, og
+    # nummerporten under faller på en modul som mangler.
+    poster = []
+    for m in POST_RE.finditer(skript):
+        slutt = skript.find("}", m.end())
+        post = skript[m.start():slutt + 1] if slutt != -1 else skript[m.start():]
+        forbudt = STATUS_RE.search(post)
+        if forbudt:
+            raise SystemExit(
+                f"M-{m.group(1)} «{m.group(3)}» i {KILDE_NAVN} bærer "
+                f"`{forbudt.group(1)}` — katalogen bærer struktur (nummer, "
+                f"navn, område, fase), ikke tilstand. Hva en modul FAKTISK er, "
+                f"står i `MODULSTATUS` i plattformdata.js, avledet av "
+                f"manifestene. Fjern feltet.")
+        poster.append(
+            {"n": int(m.group(1)), "navn": m.group(3), "omrade": m.group(5),
+             "fase": int(m.group(6))})
     # Antallet alene er ikke en kontroll (Codex P2): en duplisert `n` sammen
     # med en manglende modul gir også riktig antall poster, og da hadde
     # katalogen sett komplett ut mens én modul var borte og en annen sto to
