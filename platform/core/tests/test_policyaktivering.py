@@ -2419,6 +2419,84 @@ def test_rullbakkevakten_gir_domenesvar_ikke_driverfeil():
 
 
 @pg
+def test_rullbakk_av_kilde_med_annen_dokumentstatus(klient):
+    """Codex P2: statusen er ikke kopierbar, og kopiprøven må vite det.
+
+    `opprett_utkast` normaliserer `meta.status` til `produksjon` for ETHVERT
+    utkast — feltet er en konsekvens av å bli aktivert, ikke eiers valg, og
+    `aktiver_policy` steg 1c avviser alt annet. Men en KILDE kan stå med en
+    annen status: `policyregister.registrer` godtar `validert_pilot` i
+    staging og aktiverer raden med den.
+
+    Krevde kopiprøven at statusen var kopiert, felte den derfor hver
+    rullbakk av en slik kilde. Og siden vakten snakker `CheckViolation`, ble
+    det en 500 på en helt lovlig handling — ikke et avslag eier kunne lese.
+
+    Unntaket går bare ÉN vei: den nye statusen må være nøyaktig den
+    normaliseringen skriver.
+    """
+    import yaml as _yaml
+    from api import policyregister as pr
+
+    _, pid = _ny()
+    mal = _yaml.safe_load(
+        (ROT / "policies" / "bransjemal-tjenestebedrift.yaml")
+        .read_text(encoding="utf-8"))
+    mal["meta"]["policy_id"] = pid
+    mal["meta"]["versjon"] = "1.0.0"
+    mal["meta"]["status"] = "validert_pilot"
+    m = _c()
+    try:
+        pr.registrer(m, TEN, mal, "validert_pilot")
+        m.commit()
+    finally:
+        m.close()
+
+    cookie, csrf = _forvaltersesjon()
+    r = _post(klient, cookie, csrf, "/v1/policyutkast",
+              {"policy_id": pid, "rollback_av_versjon": "1.0.0",
+               "rollback_av_generasjon": _gen(pid, "1.0.0")})
+    assert r.status_code == 201, r.text
+    rb_uid = r.json()["utkast_id"]
+
+    m = _c()
+    try:
+        m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        lagret = m.execute(
+            "SELECT innhold FROM policyutkast WHERE tenant=%s AND"
+            " utkast_id=%s", (TEN, rb_uid)).fetchone()[0]
+        # Normalisert, ikke kopiert — og ALT annet enn de to feltene
+        # opprettelsen skriver er kildens.
+        assert lagret["meta"]["status"] == "produksjon"
+        assert lagret["meta"]["versjon"] != "1.0.0"
+        for felt, verdi in mal.items():
+            if felt != "meta":
+                assert lagret[felt] == verdi, felt
+        for felt, verdi in mal["meta"].items():
+            if felt not in ("status", "versjon"):
+                assert lagret["meta"][felt] == verdi, felt
+        m.rollback()
+
+        # Unntaket er ikke en åpning: en TREDJE status er fortsatt ingen
+        # kopi, uansett hvilken vei den avviker.
+        m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        smuglet = json.loads(json.dumps(mal))
+        smuglet["meta"]["status"] = "utkast"
+        with pytest.raises(psycopg.errors.CheckViolation) as ei:
+            m.execute(
+                "INSERT INTO policyutkast (tenant,utkast_id,policy_id,"
+                "innhold,status,opprettet_av,rollback_av_versjon,"
+                "rollback_av_generasjon) VALUES"
+                " (%s,%s,%s,%s::jsonb,'utkast','forf',%s,%s)",
+                (TEN, "u-" + secrets.token_hex(4), pid, json.dumps(smuglet),
+                 "1.0.0", _gen(pid, "1.0.0")))
+        assert ei.value.diag.constraint_name == "utkast_rullbakk_er_kopi"
+        m.rollback()
+    finally:
+        m.close()
+
+
+@pg
 def test_rullbakkeopphavet_binder_generasjonen_ikke_nummeret(klient):
     """Port 27 (Codex P2): opphavet peker på GENERASJONEN kopien kom fra,
     ikke bare på versjonsNUMMERET.

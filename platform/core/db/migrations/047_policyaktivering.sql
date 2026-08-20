@@ -1165,8 +1165,11 @@ ALTER FUNCTION public.policyversjon_i_kraft(
 --   2. Kilden FINNES, med nøyaktig den generasjonen, og har VÆRT I KRAFT.
 --      Samme prøve som `policyversjon_kilde` gjør for HTTP-veien, her for
 --      alle andre: en rullbakk til noe som aldri virket er ingen rullbakk.
---   3. Innholdet ER kopien. Bare `meta.versjon` får avvike — opprettelsen
---      bumper den, fordi den gamle versjonen aldri kan aktiveres om igjen.
+--   3. Innholdet ER kopien. Bare `meta.versjon` og `meta.status` får
+--      avvike, og bare fordi OPPRETTELSEN skriver dem: versjonen bumpes
+--      (den gamle kan aldri aktiveres om igjen), og statusen normaliseres
+--      til `produksjon` (den er en konsekvens av aktivering, ikke et valg).
+--      Alt eier selv kunne endret, må være kildens.
 --
 -- Prøve 3 binder OPPRETTELSEN, ikke utkastets videre liv: et rullbakk-
 -- utkast kan redigeres som ethvert annet utkast, og da er det eierens
@@ -1202,12 +1205,32 @@ BEGIN
             USING ERRCODE = 'check_violation',
                   CONSTRAINT = 'utkast_rullbakk_kilde_finnes';
     END IF;
-    -- `meta.versjon` er det ENESTE som får avvike. Sammenligningen tar
+    -- `meta.versjon` og `meta.status` er de eneste feltene som får avvike,
+    -- og BEGGE fordi opprettelsen skriver dem selv. Sammenligningen tar
     -- dokumentet i to deler i stedet for å `jsonb_set`-e: et utkast uten
     -- `meta` skal falle på prøven, ikke få et `meta` skrevet inn av den.
+    --
+    -- STATUSEN ER IKKE KOPIERBAR (Codex P2). `opprett_utkast` normaliserer
+    -- `meta.status` til `produksjon` for ETHVERT utkast — feltet er en
+    -- konsekvens av å bli aktivert, ikke eiers valg, og `aktiver_policy`
+    -- steg 1c avviser alt annet. En kilde kan likevel STÅ med en annen
+    -- status: `policyregister.registrer` godtar `utkast`/`validert_pilot` i
+    -- staging (`tillatte_statuser`), og aktiverer raden med den. Krevde
+    -- prøven at statusen var kopiert, felte den derfor HVER rullbakk av en
+    -- slik kilde — og siden `CheckViolation` er vaktens språk, ble det en
+    -- 500 på en helt lovlig handling.
+    --
+    -- Avviket er tillatt i ÉN retning: den nye statusen må være nøyaktig
+    -- den normaliseringen skriver. Er de to like, er det en ren kopi og
+    -- ingenting å tillate. Slik kan ingen skriver bruke unntaket til å
+    -- smugle en vilkårlig status inn under et opphav.
     IF (NEW.innhold - 'meta') IS DISTINCT FROM (v_innhold - 'meta')
-       OR ((NEW.innhold -> 'meta') - 'versjon')
-          IS DISTINCT FROM ((v_innhold -> 'meta') - 'versjon') THEN
+       OR ((NEW.innhold -> 'meta') - 'versjon' - 'status')
+          IS DISTINCT FROM ((v_innhold -> 'meta') - 'versjon' - 'status')
+       OR ((NEW.innhold -> 'meta' ->> 'status')
+           IS DISTINCT FROM (v_innhold -> 'meta' ->> 'status')
+           AND (NEW.innhold -> 'meta' ->> 'status')
+               IS DISTINCT FROM 'produksjon') THEN
         RAISE EXCEPTION 'policyutkast: en rullbakk er en KOPI av kilden '
             '(%/%)', NEW.policy_id, NEW.rollback_av_versjon
             USING ERRCODE = 'check_violation',
