@@ -1400,6 +1400,74 @@ def test_versjonsrad_kan_ikke_laane_en_annens_hendelse():
 
 
 @pg
+def test_gjenskapt_generasjon_kan_ikke_arve_den_slettedes_hendelse():
+    """Codex P2: overgangen NULL → hendelse sto åpen etter migrasjonen.
+
+    `policyer_operasjon_immutabel` vernet bare rader som ALT bar en
+    operasjon, og de to prøvene rundt den fanger ikke resten: FK-en binder
+    hendelsen til `(tenant, policy_id, versjon, innholds_hash)` og sier
+    ingenting om GENERASJONEN, mens `policyer_kilde_vakt` bare måler at
+    merket og operasjonen følges ad — `aktiveringskilde='styrt'` i samme
+    setning gjør den fornøyd.
+
+    Hullet er en tilskrivning ingen har gjort. `slett_ubrukt_policy`
+    sletter en aktivert, ubrukt versjon mens hendelsen blir stående
+    (immutabel), og det samme `(policy_id, versjon, innholds_hash)` kan
+    gjenskapes som en NY, ubundet generasjon. Bandt en vedlikeholds-
+    skriver erstatningen til den etterlatte hendelsen, leste historikken
+    attestantene GJENNOM `aktivert_av_operasjon` — og den gamle
+    aktiveringens tidspunkt og BEGGE attestantene sto under en generasjon
+    de aldri så. De to signerte én rad, og den er borte.
+
+    Kontroll: flytt trigger-definisjonen tilbake foran backfillen (eller
+    sett `OLD.aktivert_av_operasjon IS NOT NULL` tilbake i WHEN-leddet),
+    så blir denne rød.
+    """
+    uid, pid, v = _full_aktivering(pakrevd=1)
+    m = _c()
+    try:
+        h = _hendelse(m, pid, v)
+        opid = h[6]
+        rad = m.execute(
+            "SELECT innholds_hash, innhold::text, generasjon FROM policyer"
+            "  WHERE tenant=%s AND policy_id=%s AND versjon=%s",
+            (TEN, pid, v)).fetchone()
+        assert rad[0] == h[3], (rad[0], h[3])
+        # Den støttede slettingen: raden går, hendelsen blir stående.
+        m.execute("DELETE FROM policyer WHERE tenant=%s AND policy_id=%s"
+                  "  AND versjon=%s", (TEN, pid, v))
+        assert _hendelse(m, pid, v) is not None, \
+            "hendelsen er immutabel og skal overleve slettingen"
+        # Gjenskapt med NØYAKTIG samme nøkkel og innhold — altså alt FK-en
+        # måler — men ubundet, og med en ny generasjon fra sekvensen.
+        m.execute(
+            "INSERT INTO policyer (tenant, policy_id, versjon,"
+            "  innholds_hash, status, innhold, aktiv) VALUES"
+            "  (%s,%s,%s,%s,'produksjon',%s::jsonb,false)",
+            (TEN, pid, v, rad[0], rad[1]))
+        ny_gen = m.execute(
+            "SELECT generasjon FROM policyer WHERE tenant=%s"
+            "  AND policy_id=%s AND versjon=%s", (TEN, pid, v)).fetchone()[0]
+        assert ny_gen > rad[2], (ny_gen, rad[2])
+        # En UPDATE som ikke rører kolonnen slipper fortsatt gjennom —
+        # vakten er en immutabilitetsport, ikke en radlås.
+        m.execute("UPDATE policyer SET status='produksjon' WHERE tenant=%s"
+                  "  AND policy_id=%s AND versjon=%s", (TEN, pid, v))
+        # Porten: bindingen til den etterlatte hendelsen. Merket settes i
+        # SAMME setning, nettopp så `policyer_kilde_vakt` er fornøyd og
+        # avslaget må komme fra immutabilitetsvakten.
+        m.execute("SET CONSTRAINTS ALL IMMEDIATE")
+        with pytest.raises(psycopg.errors.CheckViolation):
+            m.execute(
+                "UPDATE policyer SET aktivert_av_operasjon=%s,"
+                "  aktiveringskilde='styrt' WHERE tenant=%s"
+                "  AND policy_id=%s AND versjon=%s", (opid, TEN, pid, v))
+        m.rollback()
+    finally:
+        m.close()
+
+
+@pg
 def test_gjenaktivert_innhold_binder_hver_sin_runde():
     """Port 16: to versjoner med identisk innhold → to hendelser, hver
     bundet til SIN runde via operasjonen — aldri via hash-likhet."""

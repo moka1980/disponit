@@ -371,7 +371,7 @@ ALTER TABLE policyer ADD CONSTRAINT policyer_generasjon_unik
 ALTER SEQUENCE policyer_generasjon_seq OWNED BY policyer.generasjon;
 
 -- Generasjonen er identiteten, og en identitet som kan skrives om er ingen.
--- Samme form som `policyer_operasjon_immutabel`.
+-- Samme form som `policyer_operasjon_immutabel` (nederst, etter backfillen).
 CREATE TRIGGER policyer_generasjon_immutabel
   BEFORE UPDATE ON policyer
   FOR EACH ROW WHEN (NEW.generasjon IS DISTINCT FROM OLD.generasjon)
@@ -452,12 +452,9 @@ ALTER TABLE policyer ADD CONSTRAINT policyer_aktivert_av_hendelse_fk
       (tenant, policy_id, versjon, innholds_hash, decision_operation_id)
   DEFERRABLE INITIALLY DEFERRED;
 
-CREATE TRIGGER policyer_operasjon_immutabel
-  BEFORE UPDATE ON policyer
-  FOR EACH ROW WHEN (OLD.aktivert_av_operasjon IS NOT NULL
-                     AND NEW.aktivert_av_operasjon
-                         IS DISTINCT FROM OLD.aktivert_av_operasjon)
-  EXECUTE FUNCTION avvis_endring();
+-- `policyer_operasjon_immutabel` sto HER, og vernet bare rader som ALT bar
+-- en operasjon. Den står nå nederst, etter backfillen, og verner også
+-- NULL-en — se begrunnelsen der (Codex P2).
 
 -- Vakten settes opp ETTER `UPDATE ... SET aktiveringskilde = 'historisk'`
 -- over: den setningen er den ENE som har lov til å skrive merket, og den
@@ -1065,7 +1062,8 @@ RESET ROLE;
 -- Kolonnen skrives KUN ved opprettelsen (`opprett_utkast`) og aldri
 -- oppdateres, så den fryses helt — ikke bare «når den er satt». NULL → N
 -- er nettopp fabrikasjonen: en ordinær versjon som i ettertid får et
--- opphav. Samme form som `policyer_operasjon_immutabel` over.
+-- opphav. Samme form som `policyer_operasjon_immutabel` (nederst, etter
+-- backfillen), og av nøyaktig samme grunn.
 
 -- OPPHAVET MÅ PEKE PÅ EN GENERASJON, IKKE PÅ ET NUMMER (Codex P2).
 -- `rollback_av_versjon` bærer bare tallet, og et versjonsnummer er ikke en
@@ -1681,3 +1679,37 @@ DROP POLICY backfill_047 ON policyer;
 DROP POLICY backfill_047 ON policyutkast;
 DROP POLICY backfill_047 ON aktiveringsrunde;
 DROP POLICY backfill_047 ON aktiveringsattestasjon;
+
+
+-- OGSÅ NULL-EN ER EN BINDING (Codex P2). Vakten sto lenger oppe og fyrte
+-- bare når raden ALT bar en operasjon, så overgangen NULL → hendelse sto
+-- åpen etter at migrasjonen var ferdig. Ingen av de to prøvene rundt den
+-- fanger den: FK-en binder hendelsen til `(tenant, policy_id, versjon,
+-- innholds_hash)` og sier ingenting om GENERASJONEN, og `policyer_kilde_
+-- vakt` måler bare at merket og operasjonen følges ad — setter man
+-- `aktiveringskilde='styrt'` i samme setning, er den fornøyd.
+--
+-- Følgen er en tilskrivning ingen har gjort. `slett_ubrukt_policy` sletter
+-- en aktivert, ubrukt versjon mens `policyaktivering` blir stående
+-- (immutabel), og det samme `(policy_id, versjon, innholds_hash)` kan
+-- senere gjenskapes som en NY, ubundet generasjon. En vedlikeholdsskriver
+-- kunne da binde erstatningen til den gamle, etterlatte hendelsen — og
+-- historikken leser attestantene GJENNOM `aktivert_av_operasjon` (se
+-- `policyversjon_lineage`), så den gamle aktiveringens tidspunkt og begge
+-- attestantene ble stående under en generasjon de aldri så. Attestasjonen
+-- er nettopp det som ikke kan flyttes: de to signerte ÉN rad.
+--
+-- Én skriver har lov til å gjøre overgangen, og den er ferdig når vakten
+-- settes opp: backfillen over. Samme mønster som `policyer_kilde_vakt_trg`
+-- og `UPDATE ... SET aktiveringskilde = 'historisk'` — engangsovergangen
+-- bevares ved at porten stenges ETTER den, ikke ved at porten får et
+-- unntak den ikke kan skille fra misbruk.
+--
+-- Ingen produksjonsvei taper noe: `aktiver_policy` SETTER INN raden med
+-- operasjonen sin (5b), og `policyregister.registrer` rører aldri kolonnen
+-- — den nekter tvert imot å skrive en rad som bærer den.
+CREATE TRIGGER policyer_operasjon_immutabel
+  BEFORE UPDATE ON policyer
+  FOR EACH ROW WHEN (NEW.aktivert_av_operasjon
+                     IS DISTINCT FROM OLD.aktivert_av_operasjon)
+  EXECUTE FUNCTION avvis_endring();
