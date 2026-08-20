@@ -125,6 +125,24 @@ def test_valuta_handlingen_alt_tillater_avvises():
         _oppforing("valuta_ikke_tillatt", valuta="EUR"))) == []
 
 
+def test_en_tom_valutaliste_er_ingen_valutaliste():
+    """Codex P2: `grenser.valuta: []` er ikke en begrensning.
+
+    `_evaluer` hopper over valutaprøven når lista er tom, så
+    `valuta_ikke_tillatt` kan aldri oppstå for handlingen — oppføringen
+    venter på et utfall som ikke finnes. Python målte det alt (en tom liste
+    er falsy); SQL-gaten spurte bare om TYPEN og slapp den gjennom. Denne
+    binder Python-siden av paret, så de to ikke kan komme fra hverandre.
+    """
+    from policy_validator.schema import _loftet_flytter_noe
+    h = {"id": _HANDLING, "modus": "auto", "tillatt_for": ["agent"],
+         "grenser": {"belop_maks": "25000.00", "valuta": []}}
+    feil = _loftet_flytter_noe(
+        0, "valuta_ikke_tillatt", _oppforing("valuta_ikke_tillatt",
+                                             valuta="EUR"), h)
+    assert feil and "grenser.valuta" in feil[0], feil
+
+
 def test_loftets_valuta_maa_vaere_tillatt_for_handlingen():
     """Løftet hever BELØPET, ikke valutaen. Krever oppføringen en valuta
     handlingen ikke tillater, stopper den gjenopptatte evalueringen på

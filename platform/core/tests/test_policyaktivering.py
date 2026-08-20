@@ -1996,7 +1996,7 @@ def test_rullbakkeopphavet_er_frosset_naar_historikken_leser_det(klient):
         m.close()
 
 
-def _overstyringsutkast(pid, overstyring, versjon="1.1.0"):
+def _overstyringsutkast(pid, overstyring, versjon="1.1.0", grenser=None):
     """Dokument med en `godkjennbare`-oppføring og handlingen den peker på.
 
     `tillatt_for` er PÅKREVD i fiksturen (Codex P1, runde 9): gaten feller
@@ -2010,7 +2010,8 @@ def _overstyringsutkast(pid, overstyring, versjon="1.1.0"):
                  "status": "produksjon"},
         "handlinger": [{"id": "ordre.bekreft", "modus": "grense",
                         "tillatt_for": ["agent"],
-                        "grenser": {"belop_maks": 1000, "valuta": ["NOK"]}}],
+                        "grenser": ({"belop_maks": 1000, "valuta": ["NOK"]}
+                                    if grenser is None else grenser)}],
         "menneskelig_overstyring": {"godkjennbare": [overstyring]}})
 
 
@@ -2056,6 +2057,30 @@ def test_aktiver_policy_avviser_uanvendelig_overstyring():
             r.rollback()
         finally:
             r.close()
+    # EN TOM LISTE ER INGEN LISTE (Codex P2). `grenser.valuta: []` er ingen
+    # valutabegrensning: Python måler `isinstance(v, list) and v`, og
+    # `_evaluer` hopper over valutaprøven for den, så `valuta_ikke_tillatt`
+    # kan aldri oppstå. SQL-gaten spurte bare om TYPEN og slapp derfor den
+    # uanvendelige overstyringen gjennom — for en direkte kaller, eller for
+    # en runde forberedt før gaten fantes.
+    c = _c()
+    uid, pid = _ny()
+    _validert_utkast(c, uid, pid, av="forf", innhold=_overstyringsutkast(
+        pid, {"grunnkode": "valuta_ikke_tillatt", "handling": "ordre.bekreft",
+              "valuta": "EUR"},
+        grenser={"belop_maks": 1000, "valuta": []}))
+    _runde(c, uid, pakrevd_antall_godkjennere=1, risikoklasse="INNSNEVRER")
+    _attest(c, uid, "uavh", False)
+    c.commit(); c.close()
+    r = _rt()
+    try:
+        with pytest.raises(psycopg.errors.CheckViolation) as ei:
+            _aktiver(r, uid)
+        assert "grenser.valuta" in str(ei.value), str(ei.value)
+        r.rollback()
+    finally:
+        r.close()
+
     # Positiv kontroll: en oppføring som FAKTISK kan anvendes aktiverer.
     c = _c()
     uid, pid = _ny()

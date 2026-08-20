@@ -881,9 +881,25 @@ BEGIN
                          ~ '^-?[0-9]+(\.[0-9]+)?$'
                     THEN (o.handling -> 'grenser' ->> 'belop_maks')::NUMERIC
                     END AS h_maks,
+               -- EN TOM LISTE ER INGEN LISTE (Codex P2). Python måler
+               -- `isinstance(v, list) and v` — en tom `grenser.valuta` er
+               -- falsy og teller som fravær, og `_evaluer` hopper over
+               -- valutaprøven for den, så `valuta_ikke_tillatt` kan aldri
+               -- oppstå. SQL-en spurte bare om typen, og slapp da den
+               -- uanvendelige overstyringen gjennom for `[]`. Tomheten
+               -- måles ÉN gang, her, så de tre bruksstedene under ikke kan
+               -- svare ulikt om samme rad.
+               --
+               -- Nestet CASE, ikke et AND-ledd: `jsonb_array_length` på
+               -- noe som ikke er en array kaster, og SQL lover ingen
+               -- venstre-mot-høyre-evaluering av AND. THEN-armen
+               -- evalueres derimot bare når WHEN holder.
                CASE WHEN jsonb_typeof(o.handling -> 'grenser' -> 'valuta')
                          = 'array'
-                    THEN o.handling -> 'grenser' -> 'valuta' END AS h_valuta
+                    THEN CASE WHEN jsonb_array_length(
+                                       o.handling -> 'grenser' -> 'valuta') > 0
+                              THEN o.handling -> 'grenser' -> 'valuta' END
+                    END AS h_valuta
           FROM oppf o
     ), dom AS (
         SELECT o.i, o.gk,
@@ -927,6 +943,9 @@ BEGIN
                  WHEN o.gk = 'belop_over_grense'
                       AND o.handling -> 'grenser' -> 'belop_maks' IS NULL
                    THEN 'handlingen har ingen ''grenser.belop_maks'''
+                 -- «Ingen» dekker både fraværet, en ikke-liste og den TOMME
+                 -- lista: `maalt` har alt slått dem sammen, og de betyr det
+                 -- samme for motoren.
                  WHEN o.gk = 'valuta_ikke_tillatt' AND o.h_valuta IS NULL
                    THEN 'handlingen har ingen ''grenser.valuta'''
                  -- Taket må ligge OVER handlingens egen grense; ellers er
@@ -939,7 +958,7 @@ BEGIN
                    THEN 'taket er ikke høyere enn handlingens egen grense'
                  -- Løftet hever beløpet, ikke valutaen.
                  WHEN o.gk = 'belop_over_grense'
-                      AND jsonb_array_length(o.h_valuta) > 0
+                      AND o.h_valuta IS NOT NULL
                       AND o.post -> 'valuta' IS NOT NULL
                       AND NOT (o.h_valuta
                                @> jsonb_build_array(o.post -> 'valuta'))
