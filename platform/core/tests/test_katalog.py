@@ -671,9 +671,13 @@ def test_ingen_oppfunne_identifikatorer_i_sannhetskilden():
                                 for ident, linje in sorted(avvik.items())))
 
 
-_MODULMARKOR_RE = re.compile(r"^(?:M-|[Mm]odul(?:ene)?\s+)(?=\d)")
-# Et tall eller et intervall, i starten av leddet. Et ledd som BARE er dette
-# (bortsett fra sluttpunktum) kan være neste ledd i en påbegynt oppramsing.
+# Markøren som innfører et tall som modulnummer, hvor som helst i leddet. Den
+# må stå fritt: uten det venstre gjerdet ville «ARM-16» og «GSM-2» båret hver
+# sin M- inne i et ord og laget kanter av maskinvarenavn.
+_MODULMARKOR_RE = re.compile(
+    r"(?<![0-9A-Za-zÆØÅæøå_-])(?:M-|[Mm]odul(?:ene)?\s+)(?=\d)")
+# Et tall eller et intervall. Et ledd som BARE er dette (bortsett fra
+# sluttpunktum) kan være neste ledd i en påbegynt oppramsing.
 _TALL_RE = re.compile(r"\d+(?:\s*[–-]\s*(\d+))?")
 
 
@@ -694,6 +698,17 @@ def _modulreferanser(dep: str, kjente: set[int]) -> set[int]:
     av det første leddet som ikke er rene tall, så «Modul 3, HRIS-connector og
     lønnssystem» ikke drar noe med seg videre. Alt annet (connectorer,
     infrastruktur, «landpakke») faller utenfor: de har ingen fase å bryte.
+
+    Markøren ble samtidig ANKRET i starten av leddet (Codex P2 på #118, åttende
+    runde), og da forsvant hele setningsformen: «Kjører via M-16» og «Avhenger
+    av modul 16» ga ingen kant i det hele tatt. En modul i fase 1 kunne dermed
+    navngi en modul i fase 3 i klartekst mens porten sto grønn — nøyaktig det
+    hullet porten finnes for. Kravet er at tallet er innført som modul, ikke at
+    innføringen står først, så markøren SØKES nå fram hvor som helst i leddet.
+    Den må stå fritt, ellers ville «ARM-16» og «GSM-2» blitt modulnumre.
+
+    MUTASJONEN SOM DREPER DENNE: gjør markøren valgfri igjen. Da er «PostgreSQL
+    16» en kant til M-16 på nytt, og porten faller på infrastruktur.
     """
     ut: set[int] = set()
     i_liste = False
@@ -701,17 +716,20 @@ def _modulreferanser(dep: str, kjente: set[int]) -> set[int]:
         ledd = ledd.strip()
         if not ledd:
             continue
-        markor = _MODULMARKOR_RE.match(ledd)
-        if markor:
-            treff, i_liste = _TALL_RE.match(ledd, markor.end()), True
+        markerte = [_TALL_RE.match(ledd, m.end())
+                    for m in _MODULMARKOR_RE.finditer(ledd)]
+        if markerte:
+            i_liste = True
         else:
             treff = _TALL_RE.fullmatch(ledd.rstrip("."))
             if not (i_liste and treff):
                 i_liste = False
                 continue
-        forste = int(re.match(r"\d+", treff.group(0)).group(0))
-        siste = int(treff.group(1)) if treff.group(1) else forste
-        ut.update(range(forste, siste + 1))
+            markerte = [treff]
+        for treff in markerte:
+            forste = int(re.match(r"\d+", treff.group(0)).group(0))
+            siste = int(treff.group(1)) if treff.group(1) else forste
+            ut.update(range(forste, siste + 1))
     return ut & kjente
 
 
