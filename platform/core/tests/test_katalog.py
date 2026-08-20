@@ -208,6 +208,35 @@ def test_statusforbudet_ser_alle_skrivemaater(tmp_path, felt, i_meldingen):
         f"feilmeldingen sier ikke hva som er galt: {melding}")
 
 
+@pytest.mark.parametrize("felt,doblet", [
+    # Fasen er den farligste: nettleseren tegner den siste, generatoren skrev
+    # den første, og ferskhetsporten hadde vært grønn mot sitt eget utdata.
+    ('"p":4', "p"),
+    ('"n":58', "n"),
+    ('"name":"Noe annet"', "name"),
+    ('"area":"Et annet område"', "area"),
+    # Og det gjelder ethvert felt, ikke bare de fire `POST_RE` henter.
+    ('"rev":"direkte"', "rev"),
+])
+def test_en_doblet_egenskap_i_en_modulpost_er_et_stopp(tmp_path, felt, doblet):
+    """En kilde kan ikke ha to svar på samme spørsmål.
+
+    `{n:57, …, p:3, p:4}` er lovlig JS: nettleseren bruker den SISTE verdien,
+    mens `POST_RE` henter den første (Codex P2 på #118, femtende runde). Den
+    frittstående siden ville tegnet M-57 i fase 4 mens `katalog.js` sa fase 3,
+    og ferskhetsporten hadde vært grønn hele veien — den måler regenerering mot
+    sitt eget utdata, og begge sider leste da den samme første verdien.
+
+    Å hente verdien strukturelt ville flyttet svaret fra det første til det
+    siste, og det er ikke bedre. Doblingen selv er feilen.
+    """
+    r = _med_felt_i_m57(tmp_path, felt)
+    assert r.returncode != 0, f"generatoren godtok en doblet «{doblet}»"
+    melding = r.stderr + r.stdout
+    assert "M-57" in melding and doblet in melding, (
+        f"feilmeldingen sier ikke hvilket felt som er doblet: {melding}")
+
+
 def test_statusforbudet_tar_ikke_en_verdiliste_for_en_nokkel(tmp_path):
     """En klamme i VERDI-posisjon er ikke en nøkkel.
 

@@ -646,6 +646,22 @@ def les_katalog() -> list[dict]:
                 f"skal kunne leses av mer enn nettleseren; en egenskap som "
                 f"først blir til når siden kjører kan hverken leses eller "
                 f"forbys her.")
+        # En egenskap skrevet TO ganger har to svar (Codex P2 på #118,
+        # femtende runde). `{n:57, …, p:3, p:4}` er lovlig JS, og nettleseren
+        # bruker den SISTE — mens `POST_RE` henter den første. Katalogen ville
+        # da tegnet M-57 i fase 4 mens `katalog.js` sa fase 3, og
+        # ferskhetsporten hadde vært grønn mot sitt eget utdata hele veien.
+        # Å hente verdien strukturelt ville flyttet svaret fra det første til
+        # det siste, og det er ikke bedre: en kilde skal ikke ha to svar å
+        # velge mellom. Derfor stopper doblingen her, uansett hvilket felt det
+        # gjelder — postene bærer få nok felt til at det aldri er en pris.
+        doblet = sorted({f for f in feltnavn if feltnavn.count(f) > 1})
+        if doblet:
+            raise SystemExit(
+                f"M-{m.group(1)} «{m.group(3)}» i {KILDE_NAVN} skriver "
+                f"`{doblet[0]}` mer enn én gang. Nettleseren bruker den siste "
+                f"verdien; en kilde kan ikke ha to svar på samme spørsmål. "
+                f"Fjern den ene.")
         forbudt = [f for f in feltnavn if f in FORBUDTE_FELT]
         if forbudt:
             raise SystemExit(
