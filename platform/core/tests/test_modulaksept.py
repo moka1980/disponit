@@ -546,6 +546,14 @@ def test_wcag_grensene_maaler_at_portene_faktisk_kjorte():
     # Under grensen er fortsatt umålt, og ulikhet i 5xx står ved lag.
     assert _sjekk_grenser(KRAV, _mutert(frekvens_tillat=3))
     assert _sjekk_grenser(KRAV, _mutert(robots_5xx_sider_kontrollert=0))
+    # Codex' P2 (runde 2): 11 signerte av 10 kjørte er ikke et strengere
+    # bevis, det er et tall som ikke stemmer med seg selv — og
+    # akseptraden ville båret «11/10» som om det var bestått.
+    umulig = _mutert(kjoringer_signert_innen_frist=11, kjoringer_krav=10)
+    assert any("kjoringer_signert_innen_frist" in f
+               for f in _sjekk_grenser(KRAV, umulig)), \
+        "flere signerte kjøringer enn kjørte slapp gjennom porten"
+    assert _sjekk_grenser(KRAV, _mutert(kjoringer_signert_innen_frist=9))
 
 
 def _aksept_skript():

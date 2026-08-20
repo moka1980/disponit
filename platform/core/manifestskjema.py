@@ -572,9 +572,14 @@ def _grenser_wcag_kontroll(grense: dict, art: dict) -> list[str]:
         if krav < grense["min_kjoringer"]:
             feil.append(f"kjoringer_krav={krav}, krever >="
                         f" {grense['min_kjoringer']}")
-        if kjort < krav:
+        # Nøyaktig kravet: under er runden ufullført, OVER er tallet
+        # internt umulig — flere signerte kjøringer enn det ble kjørt er
+        # ikke et strengere bevis, det er et bevis som ikke stemmer med
+        # seg selv (og akseptraden ville båret «11/10»).
+        if kjort != krav:
             feil.append(f"kjoringer_signert_innen_frist={kjort} av {krav}"
-                        " — alle skal være signert innen frist")
+                        " — alle skal være signert innen frist, og flere"
+                        " enn de kjørte finnes ikke")
     for felt, tak in (
             ("avvik_mot_fasit", grense["maks_avvik_mot_fasit"]),
             ("robots_private_forisporsler", grense["maks_robots_private"]),
