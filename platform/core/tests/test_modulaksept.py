@@ -490,6 +490,16 @@ def test_kravet_er_registrert_og_punktene_bundet(migrator):
     for navn, p in man["staging_sjekkliste"].items():
         if not isinstance(p, dict):
             continue
+        # Et punkt er enten BUNDET eller BLOKKERT med en grunn — aldri
+        # bare fjernet. `rollback_testet` er blokkert til drillen er
+        # kjørt på nytt (Codex P1, #117 runde 3): kjøringen 13:22 bootet
+        # aldri rullback-releasen, så artefaktet måler ikke det
+        # rullbakkbeviset skal måle.
+        if p.get("status") == "blokkert":
+            assert p.get("blokkert_av"), f"{navn} er blokkert av ingenting"
+            assert not p.get("artefakt"), \
+                f"{navn} er blokkert, men bærer fortsatt en binding"
+            continue
         assert p.get("status") == "ja", f"{navn} er ikke ja"
         for felt in ("krav_id", "artefakt", "artefakt_sha256",
                      "bevismaalinger"):
@@ -563,6 +573,83 @@ def test_wcag_grensene_maaler_at_portene_faktisk_kjorte():
     assert _sjekk_grenser(KRAV, _mutert(kjoringer_signert_innen_frist=9))
 
 
+def _superseder_drill():
+    """Drillkjøringen 2026-08-20 13:22, slik den ligger innsjekket.
+
+    Den bootet ALDRI rullback-releasen (Codex P1, runde 3), så den bærer
+    ingen (b2)-måling. Filen blir liggende som historikk; manifestet
+    binder den ikke lenger.
+    """
+    return json.loads((ROT / ("deploy/staging/artefakter/"
+                              "rollback-m56-v1-20260820T132200.json")
+                       ).read_text(encoding="utf-8"))
+
+
+def _drillartefakt(**maalt):
+    """Et KOMPLETT drillartefakt — formen det rettede skriptet skriver.
+
+    Den superseder kjøringens tall, pluss de målingene den manglet: at
+    rullbakken faktisk BOOTET og gjorde arbeid, og evidenstellingen bak
+    det løpende oppdragets utfall.
+    """
+    ekte = _superseder_drill()
+    komplett = dict(ekte["maalt"], inflight_promoterte_artefakter=1,
+                    rullback_claimet_oppdrag=1,
+                    rullback_promoterte_artefakter=1,
+                    rullback_overtakelse_s=18.4)
+    komplett.update(maalt)
+    return dict(ekte, maalt=komplett,
+                etterkontroll=dict(ekte["etterkontroll"],
+                                   rullback_livslop="draining"))
+
+
+def test_rullbakken_maa_ha_bootet_og_gjort_arbeid():
+    """Codex' P1 (runde 3): drillen oppdaterte bare `moduldeployment` og
+    startet så kandidaten, så `rullback_id` ble aldri bootet. En forrige
+    release som ikke lar seg kjøre på verten eller mot basen ga da et
+    grønt rullbakkbevis, målt utelukkende på at den gamle arbeideren
+    sluttet å claime. Porten krever nå (b2): rullbakken plukket og
+    fullførte det ventende oppdraget, promoterte, og ble selv drenert da
+    kandidaten overtok."""
+    from manifestskjema import _sjekk_grenser, valider_artefaktformat
+    drillkrav = "rollback-m56-v1"
+    assert _sjekk_grenser(drillkrav, _drillartefakt()) == []
+    for felt in ("rullback_claimet_oppdrag", "rullback_promoterte_artefakter"):
+        assert any(felt in f for f in
+                   _sjekk_grenser(drillkrav, _drillartefakt(**{felt: 0}))), \
+            f"{felt}=0 slapp gjennom — rullbakken gjorde ingenting"
+    uten_boot = _drillartefakt()
+    uten_boot["etterkontroll"] = dict(uten_boot["etterkontroll"],
+                                      rullback_livslop="claiming")
+    assert any("rullback_livslop" in f
+               for f in _sjekk_grenser(drillkrav, uten_boot))
+    # Den superseder kjøringen skal IKKE bestå porten: den målte aldri
+    # (b2), og fravær av en måling er ikke en bestått måling.
+    gammel = _superseder_drill()
+    assert _sjekk_grenser(drillkrav, gammel), \
+        "drillen uten rullbakk-boot passerer fortsatt evidensporten"
+    assert valider_artefaktformat(gammel, drillkrav), \
+        "skjemaet krever fortsatt ikke (b2)-målingene"
+
+
+def test_manifestet_binder_ikke_den_supersederte_drillen():
+    """…og den blokkerte bindingen er DOKUMENTERT, ikke bare fjernet: et
+    punkt som stilltiende forsvant, ville sett ut som om kravet aldri
+    fantes."""
+    import yaml
+    man = yaml.safe_load(
+        (ROT / "platform/modules/m56_wcag_audit/manifest.yaml").read_text(
+            encoding="utf-8"))
+    p = man["staging_sjekkliste"]["rollback_testet"]
+    assert p["status"] == "blokkert" and p.get("blokkert_av")
+    assert "kjøres på nytt" in p["blokkert_av"].lower()
+    assert "artefakt" not in p, \
+        "et blokkert punkt skal ikke bære en artefaktbinding"
+    assert (ROT / ("deploy/staging/artefakter/"
+                   "rollback-m56-v1-20260820T132200.json")).exists(), \
+        "historikken slettes ikke — den slutter å være bindende"
+
+
 def test_falske_verdikter_er_en_motsigelse_begge_veier():
     """Codex' P2 (runde 2): drillen ga alltid `falske_verdikter=0` så
     snart utfallet ikke var `utfort` — en `feilet` jobb som LIKEVEL
@@ -571,13 +658,10 @@ def test_falske_verdikter_er_en_motsigelse_begge_veier():
     evidensen bak utfallet, og motsigelsen regnes ut på nytt."""
     from manifestskjema import _sjekk_grenser
     drillkrav = "rollback-m56-v1"
-    ekte = json.loads((ROT / ("deploy/staging/artefakter/"
-                              "rollback-m56-v1-20260820T132200.json")
-                       ).read_text(encoding="utf-8"))
-    assert _sjekk_grenser(drillkrav, ekte) == []
+    assert _sjekk_grenser(drillkrav, _drillartefakt()) == []
 
     def _mutert(**felt):
-        return dict(ekte, maalt=dict(ekte["maalt"], **felt))
+        return _drillartefakt(**felt)
 
     # Selve hullet: feilet jobb, promotert artefakt, «ingen falske».
     feilet_med_evidens = _mutert(inflight_utfall="feilet",
@@ -592,9 +676,10 @@ def test_falske_verdikter_er_en_motsigelse_begge_veier():
     assert any("falske_verdikter" in f
                for f in _sjekk_grenser(drillkrav, utfort_uten_evidens))
     # Et ikke-`utfort` utfall UTEN telling er umålt, ikke rent.
+    utelatt = _mutert(inflight_utfall="feilet")
+    utelatt["maalt"].pop("inflight_promoterte_artefakter")
     assert any("inflight_promoterte_artefakter" in f
-               for f in _sjekk_grenser(drillkrav,
-                                       _mutert(inflight_utfall="feilet")))
+               for f in _sjekk_grenser(drillkrav, utelatt))
     # …og de to rene formene passerer.
     assert _sjekk_grenser(drillkrav,
                           _mutert(inflight_promoterte_artefakter=1)) == []
@@ -738,12 +823,17 @@ def test_akseptporten_avviser_artefakter_som_ikke_er_bevis():
                        "rollback-m56-v1-20260820T132200.json")
     runde_sti = ROT / ("deploy/staging/artefakter/"
                        "wcag-kontroll-v1-20260818T200413.json")
-    # De ekte artefaktene passerer — porten er ikke bare streng, den er riktig.
-    drill, drill_sha = m.les_bundet_artefakt(drill_sti, "rollback-m56-v1", man)
-    runde, _ = m.les_bundet_artefakt(runde_sti, KRAV, man)
-    assert drill["oppsett"]["kandidat_release"]
-    assert drill_sha == hashlib.sha256(drill_sti.read_bytes()).hexdigest()
+    # Det ekte artefaktet passerer — porten er ikke bare streng, den er
+    # riktig.
+    runde, runde_sha = m.les_bundet_artefakt(runde_sti, KRAV, man)
+    assert runde_sha == hashlib.sha256(runde_sti.read_bytes()).hexdigest()
     assert m.verifiser_kilde(runde) == runde["oppsett"]["kilde_sha256"]
+    # …og drillen fra 13:22 er ikke lenger bundet (blokkert punkt, Codex
+    # P1 runde 3): den stopper på FØRSTE lag, manifestbindingen, akkurat
+    # som en fremmed fil ville gjort.
+    with pytest.raises(SystemExit) as ei:
+        m.les_bundet_artefakt(drill_sti, "rollback-m56-v1", man)
+    assert "ikke artefaktet manifestet binder" in str(ei.value)
 
 
 def test_fabrikkert_artefakt_naar_ikke_de_priviligerte_funksjonene(tmp_path):

@@ -25,19 +25,24 @@ id: wcag_audit
 navn: Automatisk WCAG-kontroll (controller)
 versjon: 0.1.0
 status: under_utvikling        # aktiv | inaktiv | under_utvikling
-# AKSEPTPORTEN ER BESTÅTT — OG FLIPPET VENTER PÅ AVHENGIGHETEN (049,
-# dokumentert avvik fra akseptflipp-klarsignalet §4):
+# AKSEPTPORTEN: FEM AV SEKS PUNKTER ER BUNDET — FLIPPEDRILLEN MÅ KJØRES
+# PÅ NYTT (049, dokumentert avvik fra akseptflipp-klarsignalet §4):
 #
-# Porten: alle seks sjekklistepunktene under står `ja` med krav_id +
-# innsjekket, sha256-bundet artefakt + strukturerte `bevismaalinger`
-# (`wcag-kontroll-v1` og `rollback-m56-v1` i manifestskjema.KRAVGRENSER,
-# så CI RE-MÅLER tallene ved hver kjøring), flippedrillen er KJØRT
-# 2026-08-20 (se `rollback_testet`), og i basen skrives aksepten som en
-# immutabel hendelse (`modulaksept`, migrasjon 049; deploy/staging/
-# m56-aksept.py) som FK-refererer drillraden, det promoterte
-# E2E-artefaktet fra NØYAKTIG den aksepterte deploymentraden
-# (m_wcag_audit, staging, wcag-r13), og én observasjon per grensepunkt.
-# #89-tilbaketrekkingens to mangler er dermed lukket.
+# De fem `wcag-kontroll-v1`-punktene står `ja` med krav_id + innsjekket,
+# sha256-bundet artefakt + strukturerte `bevismaalinger` (kravet står i
+# manifestskjema.KRAVGRENSER, så CI RE-MÅLER tallene ved hver kjøring).
+# Apparatet er på plass: i basen skrives aksepten som en immutabel
+# hendelse (`modulaksept`, migrasjon 049; deploy/staging/m56-aksept.py)
+# som FK-refererer drillraden, det promoterte E2E-artefaktet fra
+# NØYAKTIG den aksepterte deploymentraden (m_wcag_audit, staging,
+# wcag-r13), og én observasjon per grensepunkt.
+#
+# `rollback_testet` er derimot BLOKKERT: drillkjøringen 2026-08-20 13:22
+# bootet aldri rullback-releasen, så den målte fencingen — ikke om det
+# gikk an å KJØRE på den forrige releasen (Codex P1, PR #117 runde 3).
+# Skriptet er rettet; artefaktet fra den kjøringen er superseder og ikke
+# lenger bundet. Aksepten kan ikke skrives før en ny, komplett
+# drillkjøring er bundet inn her.
 #
 # Blokkeren er registerets EGEN konsistensregel (registry.valider): en
 # `aktiv` modul kan ikke avhenge av en som ikke er aktiv, og
@@ -170,21 +175,28 @@ staging_sjekkliste:
     # hvis fødsel og claim-opptak drillen selv bevitnet. At alle m56-
     # releasene deler digest er A1s levende bevis: digest kunne aldri
     # skilt drillet fra udrillet — bare deployment-identiteten kan.
-    status: ja
-    krav_id: rollback-m56-v1
-    bevismaalinger:
-      - maalt.nye_oppdrag_claimet_av_drillet_release
-      - maalt.inflight_utfall
-      - maalt.kandidat_promoterte_artefakter
-    artefakt: deploy/staging/artefakter/rollback-m56-v1-20260820T132200.json
-    artefakt_sha256: 8d98e8d1889e77b632c04f92be32f2bbceb34498c3e2d22af5ca7b600fb3e3e0
+    status: blokkert
+    blokkert_av: >-
+      Drillen må KJØRES PÅ NYTT på verten med det rettede skriptet
+      (Codex P1 ×2 + P2, PR #117 runde 3). Kjøringen 2026-08-20 13:22
+      bootet aldri rullback-releasen — den oppdaterte bare
+      `moduldeployment` og gikk rett til kandidaten — så artefaktet
+      måler ikke det rullbakkbeviset skal måle, og det bærer verken
+      evidenstellingen bak det løpende oppdragets utfall eller
+      kandidatjobbens identitet. Artefaktet fra 13:22 ligger urørt i
+      `deploy/staging/artefakter/` som historikk; det er ikke lenger
+      bundet her, for evidens som ikke lar seg måle av porten er ikke
+      evidens. Aksepten (m56-aksept.py) er blokkert til en ny,
+      komplett drillkjøring er bundet inn.
     notat: >-
-      KJØRT 2026-08-20 mot (m_wcag_audit, staging): wcag-r11 rullet til
-      wcag-r12 MENS oppdrag 54 var claimet — oppdraget fullførte utfort
-      med signert kvittering og promotert artefakt 1,5 s etter rullingen
-      (SP-3: rent utfall, aldri falskt verdikt); den drenerte releasen
-      claimet INGENTING på 25 s med levende arbeider; kandidaten wcag-r13
-      (byte-identisk, digest af92b705…) plukket det ventende oppdraget og
-      promoterte E2E-artefaktet ad1579e2… 12,4 s etter fram-rullingen.
-      Basen bærer drillraden i `moduldrill` (049) og aksepthendelsen
-      FK-refererer den.
+      KJØRT 2026-08-20 13:22 mot (m_wcag_audit, staging), SUPERSEDERT:
+      wcag-r11 rullet til wcag-r12 MENS oppdrag 54 var claimet —
+      oppdraget fullførte utfort med signert kvittering og promotert
+      artefakt 1,5 s etter rullingen (SP-3: rent utfall); den drenerte
+      releasen claimet INGENTING på 25 s med levende arbeider;
+      kandidaten wcag-r13 (byte-identisk, digest af92b705…) plukket det
+      ventende oppdraget og promoterte E2E-artefaktet ad1579e2… 12,4 s
+      etter fram-rullingen. Det som ALDRI ble målt, er om wcag-r12
+      faktisk lot seg kjøre: releasen ble aldri startet på verten. Den
+      nye kjøringen booter rullbakken gjennom sjekklistens faser 2/4/9
+      og lar den fullføre det ventende oppdraget før kandidaten overtar.

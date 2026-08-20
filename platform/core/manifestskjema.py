@@ -53,6 +53,12 @@ KRAVGRENSER: dict[str, dict] = {
         "maks_claims_etter_drenering": 0,
         "maks_falske_verdikter": 0,
         "min_inflight": 1,
+        # (b2) SELVE RULLBAKKEN: den tilbakerullede releasen skal ha
+        # BOOTET og gjort arbeid. Uten disse to måler drillen bare at
+        # den gamle arbeideren sluttet å claime — en forrige release som
+        # ikke lar seg kjøre på verten ga grønt bevis (Codex, #117).
+        "min_rullback_claims": 1,
+        "min_rullback_promoterte": 1,
         "min_kandidat_claims": 1,
         "min_kandidat_promoterte": 1,
         "min_ventetid_s": 20.0,
@@ -676,10 +682,12 @@ def _falske_verdikter(m: dict) -> list[str]:
 def _grenser_rollback_m56(grense: dict, art: dict) -> list[str]:
     """`rollback-m56-v1` — flippedrillen for moduldeployment (049).
 
-    Den bindende delen er tre påstander som alle regnes ut fra råtall:
+    Den bindende delen er fire påstander som alle regnes ut fra råtall:
     den drillede releasen claimet INGENTING etter dreneringen, det
     løpende oppdraget fikk et rent, signert utfall (SP-3: aldri et
-    falskt verdikt), og kandidaten — byte-identisk med den drillede
+    falskt verdikt), RULLBAKKEN SELV bootet og gjorde arbeid (Codex P1,
+    #117: uten det måler drillen bare at den gamle arbeideren sluttet å
+    claime), og kandidaten — byte-identisk med den drillede
     (A1) — plukket og promoterte. Digestlikheten måles her OG av
     `registrer_moduldrill` i basen; to porter, samme sannhet.
     """
@@ -698,6 +706,10 @@ def _grenser_rollback_m56(grense: dict, art: dict) -> list[str]:
             feil.append(f"{felt}={verdi}, krever <= {tak}")
     for felt, minst in (
             ("inflight_oppdrag", grense["min_inflight"]),
+            # (b2): rullbakken skal ha BOOTET og gjort arbeid.
+            ("rullback_claimet_oppdrag", grense["min_rullback_claims"]),
+            ("rullback_promoterte_artefakter",
+             grense["min_rullback_promoterte"]),
             ("kandidat_claimet_oppdrag", grense["min_kandidat_claims"]),
             ("kandidat_promoterte_artefakter",
              grense["min_kandidat_promoterte"])):
@@ -728,6 +740,11 @@ def _grenser_rollback_m56(grense: dict, art: dict) -> list[str]:
     if k.get("drillet_livslop") != "draining":
         feil.append(f"drillet_livslop={k.get('drillet_livslop')!r},"
                     " ventet 'draining' (drillen konsumerer den drillede)")
+    # Rullbakken KJØRTE, og ble så konsumert av fram-rullingen — begge
+    # deler er en del av påstanden «det gikk an å rulle tilbake».
+    if k.get("rullback_livslop") != "draining":
+        feil.append(f"rullback_livslop={k.get('rullback_livslop')!r},"
+                    " ventet 'draining' (kandidaten overtok etter den)")
     if k.get("kandidat_livslop") != "claiming":
         feil.append(f"kandidat_livslop={k.get('kandidat_livslop')!r},"
                     " ventet 'claiming' (aksepten binder raden som kjører)")

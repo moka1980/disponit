@@ -11,6 +11,12 @@ tre kontrollpunktene akseptflippen (049) krever:
   (b) rene utfall: oppdraget som VAR claimet da rullingen traff,
       fullfører eller feiler rent — signert kvittering, aldri et falskt
       verdikt (SP-3).
+  (b2) rullbakken KJØRER: den tilbakerullede releasen bootes gjennom
+      sjekklistens egne faser (2/4/9) og plukker og fullfører det
+      ventende oppdraget claim-stoppet lot ligge. Uten dette leddet
+      måler drillen bare at den gamle arbeideren sluttet å claime, og
+      en forrige release som ikke lar seg kjøre på verten eller mot
+      basen ville gitt et grønt rullbakkbevis (Codex P1, #117).
   (c) fram igjen: akseptkandidaten — byte-identisk med den drillede
       (A1) — plukker det ventende oppdraget og promoterer rapporten.
       Kandidatens promoterte artefakt er samtidig akseptens E2E-bevis:
@@ -36,6 +42,7 @@ BRUK:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -83,6 +90,48 @@ def _admin(m):
     """migrator-cursoren som modules_admin — registerovergangene."""
     m.execute("SET ROLE disponit_modules_admin")
     return m
+
+
+def _manifest_hash() -> str:
+    """Manifestets hash slik `registrer-m-wcag-audit.py` regner den ut."""
+    return hashlib.sha256(
+        (REPO / "platform/modules/m56_wcag_audit/manifest.yaml").read_bytes()
+    ).hexdigest()
+
+
+def _kjor_faser(release: str, evidens: Path, *, hva: str) -> None:
+    """Booter `release` gjennom NØYAKTIG sjekklisterundens faser 2/4/9.
+
+    Registrering, release-bytte, modultoken og selve arbeiderunit-en —
+    drillen legger ingen egen vei inn i registeret eller på verten, den
+    bruker den som finnes. Fase 2 er idempotent på sluttilstanden: er
+    deploymenten alt `claiming` (rullbakken er rullet av drillen selv),
+    hoppes livsløpskallet og porten måler tilstanden i stedet.
+    """
+    for fase in ("2", "4", "9"):
+        r = subprocess.run(
+            [sys.executable, str(HER / "wcag-staging-sjekkliste.py"),
+             "--evidens", str(evidens), "--fase", fase],
+            env={**os.environ, "WCAG_RELEASE": release,
+                 "WCAG_RUNDE_ID": f"drill-{release}"},
+            capture_output=True, text=True)
+        if r.returncode != 0:
+            raise SystemExit(f"AVBRUTT: sjekklistefase {fase} for {hva}"
+                             f" ({release}) feilet:\n{r.stdout[-2000:]}"
+                             f"\n{r.stderr[-2000:]}")
+        print(f"  fase {fase} for {release} ({hva}): ok")
+
+
+def _vent_terminal(m, sj, oid: str, frist_s: float) -> str | None:
+    """Venter til oppdraget er terminalt. -> status (eller siste sette)."""
+    frist = time.monotonic() + frist_s
+    st = None
+    while time.monotonic() < frist:
+        st = _status(m, sj.TENANT, oid)
+        if st in ("utfort", "feilet"):
+            return st
+        time.sleep(0.5)
+    return st
 
 
 def _kvittering(m, tenant, oid):
@@ -169,27 +218,36 @@ def main() -> int:
     # Utgangspunktet: den claimende deploymenten er den som drilles.
     rad = m.execute(
         "SELECT d.release_id, d.kontraktversjon, d.kontrakt_hash,"
-        "       r.manifest_hash, r.artifact_digest"
+        "       r.artifact_digest"
         "  FROM moduldeployment d JOIN modulrelease r"
         "    ON r.modul_id = d.modul_id AND r.release_id = d.release_id"
         " WHERE d.modul_id=%s AND d.miljo=%s AND d.livslop='claiming'",
         (MODUL, MILJO)).fetchone()
     if rad is None:
         raise SystemExit("AVBRUTT: ingen claiming-deployment å drille")
-    drillet, kver, khash, mhash, digest = rad
+    drillet, kver, khash, digest = rad
     epoch = m.execute("SELECT module_epoch FROM modulhode WHERE modul_id=%s",
                       (MODUL,)).fetchone()[0]
     print(f"driller {drillet} (epoch {epoch}, digest {digest[:12]}…)")
 
     # Rullback-releasen registreres FØR racet — registreringen er passiv,
     # selve rullingen er ett kall og fyres midt i det løpende oppdraget.
+    #
+    # MANIFESTHASHEN ER DENNE UTSJEKKINGENS, ikke den drillede radens:
+    # rullback-releasen bootes senere gjennom sjekklistens egne faser, og
+    # `registrer-m-wcag-audit.py` regner da manifesthashen ut av
+    # manifest.yaml på disk. Skrev vi den drillede radens hash her, ville
+    # den passive registreringen og fase 2 vært to ULIKE påstander om
+    # samme immutable rad — og fase 2 ville dødd på en
+    # immutabilitetskonflikt midt i drillen.
     finnes = m.execute(
         "SELECT 1 FROM modulrelease WHERE modul_id=%s AND release_id=%s",
         (MODUL, a.rullback_id)).fetchone()
     if finnes is None:
         _admin(m)
         m.execute("SELECT registrer_release(%s,%s,%s,%s,%s,%s,'m56-drill')",
-                  (MODUL, a.rullback_id, kver, khash, mhash, digest))
+                  (MODUL, a.rullback_id, kver, khash, _manifest_hash(),
+                   digest))
     m.commit()
     m.execute("RESET ROLE")
 
@@ -278,36 +336,47 @@ def main() -> int:
     print(f"  (a) claim-stopp: {claimet_under_drenering} claims på"
           f" {ventetid} s (arbeider: {drillet}, drenert)")
 
+    evidensfil = a.ut.parent / "drill-evidens.jsonl"
+
+    # (b2) — SELVE RULLBAKKEN: den tilbakerullede releasen BOOTES og
+    # prøves. Codex' P1 på PR #117 (runde 3): drillen oppdaterte bare
+    # `moduldeployment` og gikk rett videre til kandidaten, så
+    # `rullback_id` ble aldri startet på verten. En forrige release som
+    # er inkompatibel med verten eller basen — feil imagekonfig, en
+    # migrasjon den ikke tåler, en unit som ikke starter — ga da et
+    # GRØNT rullbakkartefakt, målt utelukkende på at den gamle
+    # arbeideren sluttet å claime. Et rullbakkbevis må vise at det
+    # faktisk går an å kjøre på den releasen: den bootes gjennom
+    # sjekklistens egne faser og skal plukke og fullføre det ventende
+    # oppdraget claim-stoppet nettopp lot ligge.
+    rullback_ts = time.monotonic()
+    _kjor_faser(a.rullback_id, evidensfil, hva="rullbakken")
+    st_rb = _vent_terminal(m, sj, o2, 600)
+    if st_rb != "utfort":
+        raise SystemExit(f"AVBRUTT: rullback-releasen {a.rullback_id}"
+                         f" fullførte ikke det ventende oppdraget ({o2} ="
+                         f" {st_rb}) — en release som ikke kan kjøre, er"
+                         " ingen rullbakk")
+    rullback_overtakelse = round(time.monotonic() - rullback_ts, 3)
+    rullback_artefakter = _promoterte(m, sj.TENANT, o2, a.rullback_id)
+    print(f"  (b2) rullbakk: {o2} utført av {a.rullback_id}, artefakter"
+          f" {rullback_artefakter}, overtakelse {rullback_overtakelse} s")
+
     # (c) — fram igjen: kandidaten registreres, byttes til, onboardes og
     # provisjoneres via NØYAKTIG sjekklisterundens egne faser (2 → 4 → 9);
-    # drillen legger ingen egen vei inn i registeret.
+    # drillen legger ingen egen vei inn i registeret. Kandidaten får sitt
+    # EGET oppdrag: det forrige er rullbakkens bevis, og en overtakelse
+    # måles på arbeid som lå og ventet på nettopp den som overtar.
+    o3 = _bestill_drill(sj, m, "framigjen")
     fram_ts = time.monotonic()
-    for fase in ("2", "4", "9"):
-        r = subprocess.run(
-            [sys.executable, str(HER / "wcag-staging-sjekkliste.py"),
-             "--evidens", str(a.ut.parent / "drill-evidens.jsonl"),
-             "--fase", fase],
-            env={**os.environ, "WCAG_RELEASE": a.kandidat_id,
-                 "WCAG_RUNDE_ID": f"drill-{a.kandidat_id}"},
-            capture_output=True, text=True)
-        if r.returncode != 0:
-            raise SystemExit(f"AVBRUTT: sjekklistefase {fase} for"
-                             f" {a.kandidat_id} feilet:\n{r.stdout[-2000:]}"
-                             f"\n{r.stderr[-2000:]}")
-        print(f"  fase {fase} for {a.kandidat_id}: ok")
-    frist = time.monotonic() + 600
-    st2 = None
-    while time.monotonic() < frist:
-        st2 = _status(m, sj.TENANT, o2)
-        if st2 in ("utfort", "feilet"):
-            break
-        time.sleep(0.5)
+    _kjor_faser(a.kandidat_id, evidensfil, hva="akseptkandidaten")
+    st2 = _vent_terminal(m, sj, o3, 600)
     if st2 != "utfort":
         raise SystemExit(f"AVBRUTT: kandidaten fullførte ikke det ventende"
-                         f" oppdraget ({o2} = {st2})")
+                         f" oppdraget ({o3} = {st2})")
     overtakelse = round(time.monotonic() - fram_ts, 3)
-    kandidat_artefakter = _promoterte(m, sj.TENANT, o2, a.kandidat_id)
-    print(f"  (c) kandidat: {o2} utført, artefakter {kandidat_artefakter},"
+    kandidat_artefakter = _promoterte(m, sj.TENANT, o3, a.kandidat_id)
+    print(f"  (c) kandidat: {o3} utført, artefakter {kandidat_artefakter},"
           f" overtakelse {overtakelse} s")
 
     # Etterkontrollen leses fra basen, aldri fra planen.
@@ -317,6 +386,7 @@ def main() -> int:
         " AND release_id=%s", (MODUL, a.kandidat_id)).fetchone()[0]
     etter = {
         "drillet_livslop": _deployment(m, drillet),
+        "rullback_livslop": _deployment(m, a.rullback_id),
         "kandidat_livslop": _deployment(m, a.kandidat_id),
         "digest_likhet": kandidat_digest == digest,
         "modulstatus": m.execute(
@@ -357,6 +427,12 @@ def main() -> int:
             "nye_oppdrag_claimet_av_drillet_release":
                 claimet_under_drenering,
             "ventetid_ubehandlet_s": ventetid,
+            # (b2) rullbakken selv: releasen ble BOOTET og gjorde arbeid.
+            # Uten disse to måler artefaktet bare at den gamle arbeideren
+            # sluttet å claime — ikke at det gikk an å rulle tilbake.
+            "rullback_claimet_oppdrag": 1 if st_rb == "utfort" else 0,
+            "rullback_promoterte_artefakter": len(rullback_artefakter),
+            "rullback_overtakelse_s": rullback_overtakelse,
             "kandidat_claimet_oppdrag": 1 if st2 == "utfort" else 0,
             "kandidat_promoterte_artefakter": len(kandidat_artefakter),
             "overtakelse_s": overtakelse,
@@ -367,8 +443,11 @@ def main() -> int:
         art["maalt"]["inflight_har_signert_kvittering"]
         and art["maalt"]["nye_oppdrag_claimet_av_drillet_release"] == 0
         and art["maalt"]["falske_verdikter"] == 0
+        and art["maalt"]["rullback_claimet_oppdrag"] == 1
+        and art["maalt"]["rullback_promoterte_artefakter"] >= 1
         and art["maalt"]["kandidat_promoterte_artefakter"] >= 1
         and etter["digest_likhet"] and etter["drillet_livslop"] == "draining"
+        and etter["rullback_livslop"] == "draining"
         and etter["kandidat_livslop"] == "claiming"
         and etter["modulstatus"] == "aktiv")
     a.ut.write_text(json.dumps(art, indent=2, ensure_ascii=False,

@@ -81,6 +81,9 @@
         "falske_verdikter",
         "nye_oppdrag_claimet_av_drillet_release",
         "ventetid_ubehandlet_s",
+        "rullback_claimet_oppdrag",
+        "rullback_promoterte_artefakter",
+        "rullback_overtakelse_s",
         "kandidat_claimet_oppdrag",
         "kandidat_promoterte_artefakter",
         "overtakelse_s"
@@ -119,6 +122,19 @@
         "overtakelse_s": {
           "type": "number",
           "minimum": 0
+        },
+        "rullback_claimet_oppdrag": {
+          "$ref": "#/$defs/telling",
+          "comment": "1 naar den tilbakerullede releasen selv plukket og fullfoerte det ventende oppdraget. Rullbakken skal BOOTES og proeves, ikke bare skrives i moduldeployment (Codex P1, #117)."
+        },
+        "rullback_promoterte_artefakter": {
+          "$ref": "#/$defs/telling",
+          "comment": "Artefakter den tilbakerullede releasen promoterte - evidensen bak (b2)."
+        },
+        "rullback_overtakelse_s": {
+          "type": "number",
+          "minimum": 0,
+          "comment": "Sekunder fra rullbakken begynte aa bootes til det ventende oppdraget var fullfoert."
         }
       }
     },
@@ -127,6 +143,7 @@
       "additionalProperties": false,
       "required": [
         "drillet_livslop",
+        "rullback_livslop",
         "kandidat_livslop",
         "digest_likhet",
         "modulstatus"
@@ -143,6 +160,10 @@
         },
         "modulstatus": {
           "type": "string"
+        },
+        "rullback_livslop": {
+          "type": "string",
+          "comment": "Rullbakkens livsloep etter at kandidaten overtok - drenert, som den drillede."
         }
       }
     }
