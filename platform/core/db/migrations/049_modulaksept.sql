@@ -162,33 +162,100 @@ ALTER TABLE artefakt ADD CONSTRAINT artefakt_refererbar
 --    kallerens hode (port 5). Punktene er evidensgrensen
 --    `wcag-kontroll-v1` fra 014c-klarsignalet §12, ordrett.
 -- ------------------------------------------------------------
+-- REGISTERET EIER GRENSEN, KILDETYPEN OG DEN GRØNNE VERDIEN (Codex P1,
+-- #117 runde 15). Før bar det bare punktnavnene, og
+-- `aksepter_moduldeployment` tok `grenseverdi`, `maalt_verdi` og
+-- `kilde_ref` som frie strenger fra kalleren — den kontrollerte at de
+-- FANTES, aldri hva de sa. En kaller med `disponit_modules_admin` kunne
+-- derfor skrive 21 immutable observasjoner med hjemmelagde grenser og
+-- måletall og oppfylle A3 uten å ha vært innom `m56-aksept.py`. Porten
+-- mot nettopp det fantes bare i skriptet, og et skript er ingen skranke
+-- for den som kaller definern direkte — samme lærdom som runde 5.
+--
+-- Nå står grensen (§12) og hvilken KILDETYPE punktet skal bæres av i
+-- lagringen, sammen med den verdien en grønn måling MÅ ha. Kalleren kan
+-- bare gjenta dem; funksjonen regner målingen mot kravet og krever at
+-- `kilde_ref` peker på evidens transaksjonen selv kan se.
 CREATE TABLE akseptkrav_punkt (
     krav_id TEXT NOT NULL,
     punkt   TEXT NOT NULL,
+    -- Hva slags evidens punktet skal bæres av. Samme domene som
+    -- `modulaksept_punkt.kilde_type`, men her som KRAV, ikke som valg.
+    kilde_type TEXT NOT NULL CHECK (kilde_type IN
+        ('artefakt', 'registerhendelse', 'evidensfil', 'ci_kjoring')),
+    grenseverdi TEXT NOT NULL,
+    -- Verdien en GRØNN måling må ha. `maalt_verdi` sammenlignes med
+    -- denne — en observasjon som ikke oppfyller kravet skrives ikke.
+    maalt_krav  TEXT NOT NULL,
     PRIMARY KEY (krav_id, punkt)
 );
-INSERT INTO akseptkrav_punkt (krav_id, punkt) VALUES
-    ('wcag-kontroll-v1', 'kontroll.ti_kjoringer_signert_innen_frist'),
-    ('wcag-kontroll-v1', 'funn.avvik_mot_fasit'),
-    ('wcag-kontroll-v1', 'skjema.brudd_promotert'),
-    ('wcag-kontroll-v1', 'skjema.hash_uten_rad_akseptert'),
-    ('wcag-kontroll-v1', 'skjema.mutert_ureferert'),
-    ('wcag-kontroll-v1', 'skjema.slettet'),
-    ('wcag-kontroll-v1', 'rapport.uten_pakrevd_arlighetsfelt_akseptert'),
-    ('wcag-kontroll-v1', 'rapport.klartekst_i_logg_eller_dump'),
-    ('wcag-kontroll-v1', 'domene.kontroll_uten_verifisering'),
-    ('wcag-kontroll-v1', 'payload.felt_utover_skjema_utlevert'),
-    ('wcag-kontroll-v1', 'robots.brudd_i_mallogg'),
-    ('wcag-kontroll-v1', 'frekvens.over_grense_utfort'),
-    ('wcag-kontroll-v1', 'deploy.registerrad_uten_kodefestet_type'),
-    ('wcag-kontroll-v1', 'deploy.ekstern_lesing_uten_malautorisasjonsflagg'),
-    ('wcag-kontroll-v1', 'klasse.eksisterende_kontrakt_omklassifisert'),
-    ('wcag-kontroll-v1', 'klasse.aktivering_uten_frekvensgrense_lyktes'),
-    ('wcag-kontroll-v1', 'klasse.aktivering_uten_malautorisasjon_lyktes'),
-    ('wcag-kontroll-v1', 'egress.proxytoken_til_ikke_ekstern_lesing'),
-    ('wcag-kontroll-v1', 'malautorisasjon.ikke_registrert_vilkar_talte'),
-    ('wcag-kontroll-v1', 'malautorisasjon.feil_maldomene_godtatt'),
-    ('wcag-kontroll-v1', 'malautorisasjon.positiv_sti_virker');
+-- Grensene er 014c-klarsignalet §12s, ordrett, og de fire målte
+-- punktene bæres av runde-sammendraget (som selv er sha-bundet i
+-- manifestet). Invariantpunktene har ingen historiske rader — de hviler
+-- HELT på at CI-kjøringen finnes, er grønn og testet akseptcommiten.
+INSERT INTO akseptkrav_punkt (krav_id, punkt, kilde_type, grenseverdi,
+                              maalt_krav) VALUES
+    ('wcag-kontroll-v1', 'kontroll.ti_kjoringer_signert_innen_frist',
+     'evidensfil', '10/10', '10/10'),
+    ('wcag-kontroll-v1', 'funn.avvik_mot_fasit', 'evidensfil', '0', '0'),
+    ('wcag-kontroll-v1', 'robots.brudd_i_mallogg', 'evidensfil', '0', '0'),
+    ('wcag-kontroll-v1', 'frekvens.over_grense_utfort',
+     'evidensfil', '0', '0'),
+    ('wcag-kontroll-v1', 'skjema.brudd_promotert',
+     'ci_kjoring', '0 (porttest rød ved brudd)',
+     '0 (grønn CI på akseptcommiten)'),
+    ('wcag-kontroll-v1', 'skjema.hash_uten_rad_akseptert',
+     'ci_kjoring', '0 (porttest rød ved brudd)',
+     '0 (grønn CI på akseptcommiten)'),
+    ('wcag-kontroll-v1', 'skjema.mutert_ureferert',
+     'ci_kjoring', '0 (porttest rød ved brudd)',
+     '0 (grønn CI på akseptcommiten)'),
+    ('wcag-kontroll-v1', 'skjema.slettet',
+     'ci_kjoring', '0 (porttest rød ved brudd)',
+     '0 (grønn CI på akseptcommiten)'),
+    ('wcag-kontroll-v1', 'rapport.uten_pakrevd_arlighetsfelt_akseptert',
+     'ci_kjoring', '0 (porttest rød ved brudd)',
+     '0 (grønn CI på akseptcommiten)'),
+    ('wcag-kontroll-v1', 'rapport.klartekst_i_logg_eller_dump',
+     'ci_kjoring', '0 (porttest rød ved brudd)',
+     '0 (grønn CI på akseptcommiten)'),
+    ('wcag-kontroll-v1', 'domene.kontroll_uten_verifisering',
+     'ci_kjoring', '0 (porttest rød ved brudd)',
+     '0 (grønn CI på akseptcommiten)'),
+    ('wcag-kontroll-v1', 'payload.felt_utover_skjema_utlevert',
+     'ci_kjoring', '0 (porttest rød ved brudd)',
+     '0 (grønn CI på akseptcommiten)'),
+    ('wcag-kontroll-v1', 'deploy.registerrad_uten_kodefestet_type',
+     'ci_kjoring', '0 (porttest rød ved brudd)',
+     '0 (grønn CI på akseptcommiten)'),
+    ('wcag-kontroll-v1', 'deploy.ekstern_lesing_uten_malautorisasjonsflagg',
+     'ci_kjoring', '0 (porttest rød ved brudd)',
+     '0 (grønn CI på akseptcommiten)'),
+    ('wcag-kontroll-v1', 'klasse.eksisterende_kontrakt_omklassifisert',
+     'ci_kjoring', '0 (porttest rød ved brudd)',
+     '0 (grønn CI på akseptcommiten)'),
+    ('wcag-kontroll-v1', 'klasse.aktivering_uten_frekvensgrense_lyktes',
+     'ci_kjoring', '0 (porttest rød ved brudd)',
+     '0 (grønn CI på akseptcommiten)'),
+    ('wcag-kontroll-v1', 'klasse.aktivering_uten_malautorisasjon_lyktes',
+     'ci_kjoring', '0 (porttest rød ved brudd)',
+     '0 (grønn CI på akseptcommiten)'),
+    -- §2.5: egress-punktet SKAL bæres av CI-kjøringen. Ingen kilde vi
+    -- har stiller spørsmålet ennå (den utstedende proxyen finnes ikke),
+    -- og `m56-aksept.py::UMAALTE` blokkerer derfor hele aksepten framfor
+    -- å la punktet arve nærmeste tall. Raden her sier hva punktet KREVER
+    -- når porten skrives — den gjør det ikke målt.
+    ('wcag-kontroll-v1', 'egress.proxytoken_til_ikke_ekstern_lesing',
+     'ci_kjoring', '0 (porttest rød ved brudd)',
+     '0 (grønn CI på akseptcommiten)'),
+    ('wcag-kontroll-v1', 'malautorisasjon.ikke_registrert_vilkar_talte',
+     'ci_kjoring', '0 (porttest rød ved brudd)',
+     '0 (grønn CI på akseptcommiten)'),
+    ('wcag-kontroll-v1', 'malautorisasjon.feil_maldomene_godtatt',
+     'ci_kjoring', '0 (porttest rød ved brudd)',
+     '0 (grønn CI på akseptcommiten)'),
+    ('wcag-kontroll-v1', 'malautorisasjon.positiv_sti_virker',
+     'ci_kjoring', 'ja', 'ja');
 
 -- ------------------------------------------------------------
 -- 4. Aksepthendelsen. Én per deploymentrad (PK) — port 14: hendelsen
@@ -575,7 +642,8 @@ RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE v_livslop TEXT; v_mangler TEXT; v_punkt RECORD; v_verdi JSONB;
         v_epoch BIGINT; v_avvik TEXT; v_drill_tenant TEXT;
-        v_kandidat_oppdrag BIGINT; v_forrige_tenant TEXT;
+        v_kandidat_oppdrag BIGINT; v_forrige_tenant TEXT; v_ref TEXT;
+        v_holder BOOLEAN;
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended('modul:' || p_modul_id, 0));
     -- SP-2: replay er et no-op, aldri en ny hendelse — men BARE når hele
@@ -697,7 +765,39 @@ BEGIN
     VALUES (p_modul_id, p_miljo, p_release_id, p_drill_id, p_krav_id,
             p_e2e_tenant, p_e2e_artefakt, p_evidens_sha, p_manifest_commit,
             p_ci_run, p_ci_commit, p_nokkel, p_aktor);
-    FOR v_punkt IN SELECT k.punkt FROM public.akseptkrav_punkt k
+    -- ------------------------------------------------------------
+    -- A3: HVER OBSERVASJON MÅLES (Codex P1, #117 runde 15).
+    --
+    -- Løkka under kontrollerte at de fire feltene FANTES, aldri hva de
+    -- sa. En kaller med `disponit_modules_admin` kunne derfor sende
+    -- hjemmelagde grenser, måletall og kildereferanser for alle 21
+    -- punktene og oppfylle A3 uten å ha vært innom `m56-aksept.py` —
+    -- og observasjonene er uforanderlige når de først står der.
+    --
+    -- Tre ting måles nå, i denne rekkefølgen:
+    --   (1) GRENSEN OG KILDETYPEN er REGISTERETS, ikke kallerens.
+    --       Kalleren må gjenta dem ordrett; spriker de, er kallet en
+    --       annen påstand enn kravet og avvises. (Feltene sendes
+    --       fortsatt — SP-2-replaykontrollen over sammenligner dem med
+    --       de lagrede radene, og et kall som utelot dem ville gjort
+    --       den kontrollen innholdsløs.)
+    --   (2) MÅLINGEN REGNES MOT KRAVET. `maalt_verdi` må være den
+    --       verdien registeret sier en grønn observasjon har. Et punkt
+    --       som ikke oppfyller kravet skrives ikke — det er ikke et
+    --       punkt med en dårlig verdi, det er en aksept som ikke skal
+    --       finnes.
+    --   (3) KILDEN MÅ PEKE PÅ EVIDENS DENNE TRANSAKSJONEN SER.
+    --       `evidensfil` må ende på hashen aksepten selv binder,
+    --       `ci_kjoring` må navngi nøyaktig aksepradens egen kjøring og
+    --       commit, `artefakt` må være et promotert artefakt på den
+    --       aksepterte releasen, og `registerhendelse` en hendelse på
+    --       denne modulen. Da kan `kilde_ref` ikke lenger være en
+    --       fortelling; den er en peker som holder.
+    -- ------------------------------------------------------------
+    v_forrige_tenant := current_setting('disponit.tenant', true);
+    PERFORM set_config('disponit.tenant', p_e2e_tenant, true);
+    FOR v_punkt IN SELECT k.punkt, k.kilde_type, k.grenseverdi, k.maalt_krav
+                     FROM public.akseptkrav_punkt k
                     WHERE k.krav_id = p_krav_id LOOP
         v_verdi := p_punkter -> v_punkt.punkt;
         IF v_verdi IS NULL
@@ -709,13 +809,98 @@ BEGIN
                 ' grenseverdi/maalt_verdi/kilde_type/kilde_ref',
                 v_punkt.punkt USING ERRCODE = 'invalid_parameter_value';
         END IF;
+        IF v_verdi ->> 'grenseverdi' IS DISTINCT FROM v_punkt.grenseverdi
+           OR v_verdi ->> 'kilde_type' IS DISTINCT FROM v_punkt.kilde_type
+        THEN
+            RAISE EXCEPTION 'aksepter_moduldeployment: punkt % oppgir'
+                ' grense «%» av type «%», mens kravet er «%» av type'
+                ' «%» — grensen er registerets, ikke kallerens',
+                v_punkt.punkt, v_verdi ->> 'grenseverdi',
+                v_verdi ->> 'kilde_type', v_punkt.grenseverdi,
+                v_punkt.kilde_type
+                USING ERRCODE = 'invalid_parameter_value';
+        END IF;
+        IF v_verdi ->> 'maalt_verdi' IS DISTINCT FROM v_punkt.maalt_krav THEN
+            RAISE EXCEPTION 'aksepter_moduldeployment: punkt % målte «%»,'
+                ' men en grønn observasjon er «%» — en aksept skrives av'
+                ' målinger som oppfyller kravet, ikke av målinger som'
+                ' ikke gjør det', v_punkt.punkt, v_verdi ->> 'maalt_verdi',
+                v_punkt.maalt_krav
+                USING ERRCODE = 'invalid_parameter_value';
+        END IF;
+        v_ref := v_verdi ->> 'kilde_ref';
+        IF v_punkt.kilde_type = 'evidensfil' THEN
+            -- `right(...)`, ikke `LIKE '%…'`: en hash med `_` eller `%` i
+            -- seg ville vært et jokertegn i et LIKE-mønster, og
+            -- sammenligningen ville godtatt flere filer enn den ene.
+            IF right(v_ref, 8 + length(lower(p_evidens_sha)))
+               IS DISTINCT FROM ('@sha256:' || lower(p_evidens_sha)) THEN
+                RAISE EXCEPTION 'aksepter_moduldeployment: punkt % viser'
+                    ' til evidensfilen «%», men aksepten binder'
+                    ' sha256:% — en observasjon skal peke på DEN filen'
+                    ' raden bærer hashen av', v_punkt.punkt, v_ref,
+                    lower(p_evidens_sha)
+                    USING ERRCODE = 'invalid_parameter_value';
+            END IF;
+        ELSIF v_punkt.kilde_type = 'ci_kjoring' THEN
+            IF v_ref IS DISTINCT FROM
+               ('run ' || p_ci_run || ' @ ' || p_ci_commit) THEN
+                RAISE EXCEPTION 'aksepter_moduldeployment: punkt % viser'
+                    ' til CI-kjøringen «%», mens aksepten bærer «run % @'
+                    ' %» — invariantpunktene hviler HELT på den ene'
+                    ' kjøringen raden navngir', v_punkt.punkt, v_ref,
+                    p_ci_run, p_ci_commit
+                    USING ERRCODE = 'invalid_parameter_value';
+            END IF;
+        ELSIF v_punkt.kilde_type = 'artefakt' THEN
+            -- Formen FØRST, i sin egen IF: PostgreSQL lover ingen
+            -- kortslutning av `OR`, så en `v_ref::uuid` ved siden av
+            -- formkontrollen kunne blitt evaluert likevel og kastet
+            -- `invalid_text_representation` i stedet for feilen her.
+            v_holder := v_ref ~
+                ('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
+                 || '[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$');
+            IF v_holder THEN
+                v_holder := EXISTS (SELECT 1 FROM public.artefakt a
+                                     WHERE a.tenant = p_e2e_tenant
+                                       AND a.artefakt_id = v_ref::uuid
+                                       AND a.modul_id = p_modul_id
+                                       AND a.release_id = p_release_id
+                                       AND a.tilstand = 'promotert');
+            END IF;
+            IF NOT v_holder THEN
+                RAISE EXCEPTION 'aksepter_moduldeployment: punkt % viser'
+                    ' til artefaktet «%», som ikke er et promotert'
+                    ' artefakt fra %/% for tenant % — et bevis som ikke'
+                    ' finnes, beviser ingenting', v_punkt.punkt, v_ref,
+                    p_modul_id, p_release_id, p_e2e_tenant
+                    USING ERRCODE = 'invalid_parameter_value';
+            END IF;
+        ELSE   -- 'registerhendelse'
+            -- `^[0-9]{1,18}$`: sifre ALENE holder ikke, for en id som er
+            -- for stor for BIGINT kaster på castet (samme grunn som over).
+            v_holder := v_ref ~ '^[0-9]{1,18}$';
+            IF v_holder THEN
+                v_holder := EXISTS (
+                    SELECT 1 FROM public.modulregister_hendelse h
+                     WHERE h.id = v_ref::bigint
+                       AND h.modul_id = p_modul_id);
+            END IF;
+            IF NOT v_holder THEN
+                RAISE EXCEPTION 'aksepter_moduldeployment: punkt % viser'
+                    ' til registerhendelsen «%», som ikke er en hendelse'
+                    ' på %', v_punkt.punkt, v_ref, p_modul_id
+                    USING ERRCODE = 'invalid_parameter_value';
+            END IF;
+        END IF;
         INSERT INTO public.modulaksept_punkt (modul_id, miljo, release_id,
             krav_id, punkt, grenseverdi, maalt_verdi, kilde_type, kilde_ref)
         VALUES (p_modul_id, p_miljo, p_release_id, p_krav_id,
-                v_punkt.punkt, v_verdi ->> 'grenseverdi',
-                v_verdi ->> 'maalt_verdi', v_verdi ->> 'kilde_type',
-                v_verdi ->> 'kilde_ref');
+                v_punkt.punkt, v_punkt.grenseverdi,
+                v_punkt.maalt_krav, v_punkt.kilde_type, v_ref);
     END LOOP;
+    PERFORM set_config('disponit.tenant',
+                       coalesce(v_forrige_tenant, ''), true);
     SELECT module_epoch INTO v_epoch FROM public.modulhode
      WHERE modul_id = p_modul_id;
     INSERT INTO public.modulregister_hendelse (modul_id, hendelse,

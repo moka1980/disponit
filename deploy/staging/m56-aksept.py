@@ -806,8 +806,10 @@ def main() -> int:
     m = runde["maalt"]
     krev_maalt_signatur(m)
     punkter = {}
-    runde_ref = (f"{runde['oppsett']['kilde']}"
-                 f"@sha256:{evidens_sha[:16]}")
+    # HELE hashen, ikke et prefiks (Codex P1, #117 runde 15): basen måler
+    # nå at et `evidensfil`-punkt peker på nøyaktig den filen akseptraden
+    # bærer hashen av, og en avkortet referanse er ikke den hashen.
+    runde_ref = f"{runde['oppsett']['kilde']}@sha256:{evidens_sha}"
     for punkt, (grense, hent) in MAALTE.items():
         punkter[punkt] = {"grenseverdi": grense, "maalt_verdi": hent(m),
                           "kilde_type": "evidensfil",

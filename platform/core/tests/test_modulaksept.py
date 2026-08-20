@@ -220,12 +220,24 @@ def _drill(m, k, *, nokkel=None, utfort_ts=None, opp=None, sha=None,
     return did
 
 
-def _punkter(m, krav=KRAV):
-    rader = m.execute("SELECT punkt FROM akseptkrav_punkt WHERE krav_id=%s",
-                      (krav,)).fetchall()
-    return {r[0]: {"grenseverdi": "0", "maalt_verdi": "0",
-                   "kilde_type": "ci_kjoring", "kilde_ref": "run test"}
-            for r in rader}
+def _punkter(m, krav=KRAV, *, evidens_sha="e-sha", ci_run="run-1",
+             ci_commit="ci-sha"):
+    """Punktsettet slik REGISTERET krever det (Codex P1, #117 runde 15).
+
+    Grensen, kildetypen og den grønne verdien er registerets, ikke
+    kallerens — funksjonen avviser et kall som sier noe annet. Og
+    `kilde_ref` må peke på evidens transaksjonen ser: for `evidensfil`
+    hashen aksepten binder, for `ci_kjoring` nøyaktig radens egen
+    kjøring og commit.
+    """
+    rader = m.execute(
+        "SELECT punkt, kilde_type, grenseverdi, maalt_krav"
+        "  FROM akseptkrav_punkt WHERE krav_id=%s", (krav,)).fetchall()
+    ref = {"evidensfil": f"evidens.jsonl@sha256:{evidens_sha}",
+           "ci_kjoring": f"run {ci_run} @ {ci_commit}"}
+    return {p: {"grenseverdi": g, "maalt_verdi": mk, "kilde_type": kt,
+                "kilde_ref": ref[kt]}
+            for p, kt, g, mk in rader}
 
 
 def _aksepter(m, k, did, *, release="r-kandidat", artefakt=None,
@@ -233,7 +245,8 @@ def _aksepter(m, k, did, *, release="r-kandidat", artefakt=None,
               evidens_sha="e-sha", ci_run="run-1"):
     m.execute("RESET ROLE")     # forrige _aksepter kan ha etterlatt admin
     if punkter is None:
-        punkter = _punkter(m)   # leses som migrator — admin har ikke SELECT
+        # leses som migrator — admin har ikke SELECT
+        punkter = _punkter(m, evidens_sha=evidens_sha, ci_run=ci_run)
     m.execute("SET ROLE disponit_modules_admin")
     m.execute(
         "SELECT aksepter_moduldeployment(%s,%s,%s,%s,%s,%s,%s::uuid,%s,"
@@ -398,6 +411,68 @@ def test_ufullstendig_punktsett_gir_ingen_hendelse(migrator):
                          " modul_id=%s", (k["mid"],)).fetchone()[0]
     migrator.rollback()
     assert n == 0, "en ufullstendig aksept etterlot en hendelse"
+
+
+@pg
+def test_punktobservasjonene_maales_ikke_bare_mottas(migrator):
+    """Codex' P1 (runde 15): `grenseverdi`, `maalt_verdi` og `kilde_ref`
+    var frie strenger.
+
+    Funksjonen kontrollerte at de fire feltene FANTES, aldri hva de sa.
+    En kaller med `disponit_modules_admin` kunne derfor skrive 21
+    immutable observasjoner med hjemmelagde grenser, måletall og
+    kildereferanser og oppfylle A3 uten å ha vært innom `m56-aksept.py`.
+    Porten mot nettopp det fantes bare i skriptet, og et skript er ingen
+    skranke for den som kaller definern direkte.
+
+    Nå eier registeret grensen, kildetypen og den grønne verdien;
+    målingen regnes mot kravet, og `kilde_ref` må peke på evidens
+    transaksjonen selv ser."""
+    k = _kjede(migrator)
+    did = _drill(migrator, k)
+
+    def avvist(i_meldingen, *, type_=None, **endring):
+        """Muterer ETT punkt (av den gitte kildetypen) og krever avslag."""
+        migrator.execute("RESET ROLE")
+        p = _punkter(migrator)
+        punkt = sorted(pp for pp, v in p.items()
+                       if type_ is None or v["kilde_type"] == type_)[0]
+        p[punkt] = dict(p[punkt], **endring)
+        with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+            _aksepter(migrator, k, did, punkter=p,
+                      nokkel="a-" + secrets.token_hex(6))
+        migrator.rollback()
+        assert punkt in str(ei.value) and i_meldingen in str(ei.value), \
+            str(ei.value)
+
+    # (1) Grensen og kildetypen er registerets.
+    avvist("registerets", grenseverdi="999")
+    avvist("registerets", kilde_type="registerhendelse")
+    # (2) Målingen regnes mot kravet — et punkt som ikke oppfyller det,
+    #     skrives ikke i det hele tatt.
+    avvist("grønn observasjon", maalt_verdi="17")
+    # (3) Kilden må peke på evidens transaksjonen ser.
+    avvist("evidensfilen", type_="evidensfil",
+           kilde_ref="evidens.jsonl@sha256:juks")
+    avvist("CI-kjøringen", type_="ci_kjoring", kilde_ref="run 999 @ ci-sha")
+    avvist("CI-kjøringen", type_="ci_kjoring",
+           kilde_ref="run run-1 @ annen-sha")
+
+    # Motprøven: registerets eget sett går gjennom, og radene bærer
+    # REGISTERETS verdier — ikke kallerens.
+    migrator.execute("RESET ROLE")
+    _aksepter(migrator, k, did)
+    migrator.commit()
+    migrator.execute("RESET ROLE")
+    avvik = migrator.execute(
+        "SELECT count(*) FROM modulaksept_punkt p JOIN akseptkrav_punkt r"
+        "    ON r.krav_id = p.krav_id AND r.punkt = p.punkt"
+        " WHERE p.modul_id=%s AND (p.grenseverdi IS DISTINCT FROM"
+        " r.grenseverdi OR p.maalt_verdi IS DISTINCT FROM r.maalt_krav"
+        " OR p.kilde_type IS DISTINCT FROM r.kilde_type)",
+        (k["mid"],)).fetchone()[0]
+    migrator.rollback()
+    assert avvik == 0, "en lagret observasjon bærer noe annet enn kravet"
 
 
 @pg
@@ -2733,13 +2808,20 @@ def test_hvert_grensepunkt_har_en_kilde_som_maaler_nettopp_det():
     modul, sto punktet fortsatt «0» i en immutabel akseptrad, fordi
     containermiljøet tilfeldigvis var rent.
 
-    To ting måles her: at kartet punkt→kilde er FULLSTENDIG og DISJUNKT
+    Tre ting måles her: at kartet punkt→kilde er FULLSTENDIG og DISJUNKT
     mot kravpunktregisteret (et nytt punkt kan ikke stille arve nærmeste
-    tall), og at et punkt uten ekte kilde BLOKKERER aksepten i stedet for
-    å bli pyntet."""
+    tall), at skriptets grenser og kildetyper er REGISTERETS (Codex P1,
+    runde 15 — registeret eier dem nå, og et kall som sier noe annet
+    avvises av basen, så et avvik her er en aksept som ville dødd på
+    staging), og at et punkt uten ekte kilde BLOKKERER aksepten i stedet
+    for å bli pyntet."""
     m = _aksept_skript()
-    punkter = set(re.findall(r"\('wcag-kontroll-v1',\s*'([^']+)'\)",
-                             M049.read_text(encoding="utf-8")))
+    register = {
+        p: (kt, g, mk) for p, kt, g, mk in re.findall(
+            r"\('wcag-kontroll-v1',\s*'([^']+)',\s*'([^']+)',"
+            r"\s*'([^']*)',\s*'([^']*)'\)",
+            M049.read_text(encoding="utf-8"))}
+    punkter = set(register)
     assert len(punkter) == 21, punkter
     kilder = (set(m.MAALTE), set(m.CI_PUNKTER), set(m.UMAALTE),
               {"malautorisasjon.positiv_sti_virker"})
@@ -2748,6 +2830,19 @@ def test_hvert_grensepunkt_har_en_kilde_som_maaler_nettopp_det():
     assert set(flat) == punkter, (
         f"kartet dekker ikke kravpunktregisteret: "
         f"{punkter ^ set(flat)}")
+    # Grensene og kildetypene er registerets — skriptet gjentar dem.
+    for punkt, (grense, _) in m.MAALTE.items():
+        assert register[punkt][:2] == ("evidensfil", grense), \
+            (punkt, register[punkt], grense)
+    ci_grense, ci_maalt = "0 (porttest rød ved brudd)", \
+        "0 (grønn CI på akseptcommiten)"
+    for punkt in (*m.CI_PUNKTER, *m.UMAALTE):
+        assert register[punkt] == ("ci_kjoring", ci_grense, ci_maalt), \
+            (punkt, register[punkt])
+    assert ci_grense in (ROT / "deploy/staging/m56-aksept.py").read_text(
+        encoding="utf-8")
+    assert register["malautorisasjon.positiv_sti_virker"] == \
+        ("ci_kjoring", "ja", "ja")
     # Selve feilen: det ene punktet skal ikke lenger hvile på
     # containermiljø-tallet.
     assert "egress.proxytoken_til_ikke_ekstern_lesing" not in m.MAALTE
