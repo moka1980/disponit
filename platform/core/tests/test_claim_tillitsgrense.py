@@ -495,17 +495,29 @@ def test_aktiver_policy_skriver_kilde_og_kvorumskrav():
 
 
 @pg
-def test_backfillen_binder_via_versjonsbindingen():
-    """Port 16, statisk: backfill-UPDATEn i 048 binder via
-    tenant+policy_id+versjon mot policyer og runden — ikke gjetting — og
-    rapporten TELLER utfallet."""
+def test_backfillen_binder_via_operasjonsbindingen():
+    """Port 16, statisk: backfill-UPDATEn i 048 binder via OPERASJONEN
+    mot policyer — 047s egen lineage-FK — og kvorumskravet mot runden.
+    Ingen gjetting, og rapporten TELLER utfallet.
+
+    Codex P1: en versjonsbinding (tenant+policy_id+versjon) er IKKE
+    generasjonssikker. `slett_ubrukt_policy` sletter versjonsraden mens
+    hendelsen står igjen udødelig, og nummeret kan tas i bruk på nytt
+    (`test_slettet_versjon_kan_aktiveres_paa_nytt`). Da deler den
+    foreldreløse og den gjeldende hendelsen alle tre feltene, og
+    versjonsbindingen ville kopiert den nåværende generasjonens kilde
+    over på den gamle."""
     sql = M048.read_text(encoding="utf-8")
     assert re.search(
         r"UPDATE policyaktivering pa SET aktiveringskilde = p\.aktiveringskilde"
         r"\s+FROM policyer p\s+WHERE p\.tenant = pa\.tenant"
-        r"\s+AND p\.policy_id = pa\.policy_id"
-        r"\s+AND p\.versjon = pa\.versjon", sql), \
-        "kilde-backfillen bruker ikke versjonsbindingen"
+        r"\s+AND p\.aktivert_av_operasjon = pa\.decision_operation_id", sql), \
+        "kilde-backfillen bruker ikke operasjonsbindingen"
+    assert not re.search(
+        r"SET aktiveringskilde = p\.aktiveringskilde[\s\S]{0,200}?"
+        r"AND p\.versjon = pa\.versjon", sql), \
+        ("kilde-backfillen binder fortsatt på versjonsnummeret — det "
+         "nummeret er gjenbrukbart etter sletting")
     assert re.search(
         r"SET pakrevd_antall = ar\.pakrevd_antall_godkjennere", sql), \
         "kvorumskravet hentes ikke fra runden"

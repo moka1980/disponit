@@ -287,10 +287,27 @@ CREATE POLICY r471_bro ON policyer FOR SELECT
     TO disponit_migrator USING (true);
 CREATE POLICY r471_bro ON aktiveringsrunde FOR SELECT
     TO disponit_migrator USING (true);
+-- Bindingen er OPERASJONEN, ikke versjonsnummeret (Codex P1).
+-- `slett_ubrukt_policy` sletter `policyer`-raden, men hendelsen er
+-- immutabel og blir stående — og nummeret frigis: samme (tenant,
+-- policy_id, versjon) kan aktiveres på nytt
+-- (`test_slettet_versjon_kan_aktiveres_paa_nytt`). Etter en slik runde
+-- bærer BÅDE den foreldreløse og den gjeldende hendelsen de samme tre
+-- feltene, og en versjonsbinding ville kopiert DEN NÅVÆRENDE
+-- generasjonens kilde over på den gamle — altså påstått 'styrt' om en
+-- hendelse hvis kvorum ikke lenger kan bevises, stikk i strid med
+-- `historisk`-fallbacken rett under.
+--
+-- `policyer.aktivert_av_operasjon = pa.decision_operation_id` er den
+-- generasjonssikre bindingen: den er nøyaktig FK-en 047 la inn
+-- (`policyer_aktivert_av_hendelse_fk`), så en treffende rad deler ikke
+-- bare nummeret men hendelsen selv. Den foreldreløse har ingen levende
+-- versjonsrad som peker på seg, står igjen som NULL, og faller til
+-- 'historisk' der den hører hjemme.
 UPDATE policyaktivering pa SET aktiveringskilde = p.aktiveringskilde
   FROM policyer p
- WHERE p.tenant = pa.tenant AND p.policy_id = pa.policy_id
-   AND p.versjon = pa.versjon;
+ WHERE p.tenant = pa.tenant
+   AND p.aktivert_av_operasjon = pa.decision_operation_id;
 -- Kvorumskravet hentes fra RUNDEN — sannheten hendelsen alt er bundet
 -- til; ingen gjetting.
 UPDATE policyaktivering pa
@@ -306,7 +323,7 @@ UPDATE policyaktivering SET aktiveringskilde = 'historisk'
  WHERE aktiveringskilde IS NULL;
 DO $$
 DECLARE v_s INT; v_h INT; v_b INT; v_kv INT;
-BEGIN  -- rapporten teller: bundet via versjonsbindingen, ikke gjetting
+BEGIN  -- rapporten teller: bundet via operasjonsbindingen, ikke gjetting
     SELECT count(*) FILTER (WHERE aktiveringskilde = 'styrt'),
            count(*) FILTER (WHERE aktiveringskilde = 'historisk'),
            count(*) FILTER (WHERE aktiveringskilde = 'bootstrap'),

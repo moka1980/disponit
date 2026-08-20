@@ -44,7 +44,12 @@ def _seed_048(conn):
     - en BUNDET styrt hendelse (policyer bærer 'styrt' + operasjon, med
       den utsatte FK-en `policyer_aktivert_av_hendelse_fk` I KØ — 047-
       stoppets klasse) → skal få kilde 'styrt' og rundebundet kvorumskrav;
-    - en FORELDRELØS hendelse (versjonsraden slettet) → 'historisk'.
+    - en FORELDRELØS hendelse (versjonsraden slettet) → 'historisk';
+    - et GJENBRUKT versjonsnummer (Codex P1): den foreldreløse hendelsen
+      og den gjeldende deler tenant+policy_id+versjon, fordi
+      `slett_ubrukt_policy` frigir nummeret og det er aktivert på nytt.
+      Den gamle skal bli 'historisk', den nye 'styrt' — en versjonsbundet
+      backfill stemplet begge 'styrt'.
     """
     from db.pg import sett_kontekst
     sett_kontekst(conn, TEN, "sp10:seed", "r-sp10")
@@ -70,10 +75,13 @@ def _seed_048(conn):
 
     def _hendelse(ppid, versjon, ihash, *, runde=1):
         opid = f"sp10-{ppid}-{runde}"
+        # ON CONFLICT: utkastet deles av rundene på samme policy — det er
+        # nettopp slik en runde 2 på samme utkast ser ut i produksjon.
         conn.execute(
             "INSERT INTO policyutkast (tenant,utkast_id,policy_id,innhold,"
             "innholds_hash,status,opprettet_av) VALUES (%s,%s,%s,"
-            "'{}'::jsonb,%s,'aktivert','sp10:seed')",
+            "'{}'::jsonb,%s,'aktivert','sp10:seed')"
+            " ON CONFLICT DO NOTHING",
             (TEN, "u-" + ppid, ppid, ihash))
         conn.execute(
             "INSERT INTO aktiveringsrunde (tenant,utkast_id,runde,status,"
@@ -94,7 +102,7 @@ def _seed_048(conn):
                 "utloper) VALUES (%s,%s,%s,%s,'okonomi',1,false,'d-'||%s,"
                 "'k','UTVIDER',1,'h','m','mk1',%s,now()+interval '1 hour')",
                 (TEN, "u-" + ppid, runde, bruker, ppid,
-                 f"sp10-jti-{ppid}-{bruker}-000000"))
+                 f"sp10-jti-{ppid}-{bruker}-r{runde}-000000"))
         conn.execute(
             "INSERT INTO policyaktivering (tenant,policy_id,utkast_id,"
             "runde,decision_operation_id,versjon,innholds_hash,diff_hash,"
@@ -113,6 +121,26 @@ def _seed_048(conn):
         "'{}'::jsonb,false,'styrt',%s)", (TEN, opid))
     # Foreldreløs: hendelsen står igjen, versjonsraden finnes ikke.
     _hendelse("p-sp10-tapt", "2.0.0", "ih-tapt")
+    # GJENBRUKT VERSJONSNUMMER (Codex P1). Runde 1 aktiverte 1.0.0,
+    # versjonsraden ble siden slettet (`slett_ubrukt_policy`) og nummeret
+    # frigitt; runde 2 aktiverte NØYAKTIG samme (policy_id, versjon) på
+    # nytt. De to hendelsene er derfor umulige å skille på
+    # tenant+policy_id+versjon — bare operasjonen skiller dem.
+    #
+    # Rundene commites hver for seg fordi det er slik de oppsto:
+    # `hendelse_en_per_levende_versjon` er en DEFERRED constraint-trigger
+    # som fyrer for HVER rad innsatt i transaksjonen, og med begge
+    # hendelsene i samme tx ville runde 1 sett runde 2s levende
+    # versjonsrad og (med rette) nektet.
+    _hendelse("p-sp10-gjenbruk", "1.0.0", "ih-gjenbruk", runde=1)
+    conn.commit()
+    sett_kontekst(conn, TEN, "sp10:seed", "r-sp10")
+    opid_ny = _hendelse("p-sp10-gjenbruk", "1.0.0", "ih-gjenbruk", runde=2)
+    conn.execute(
+        "INSERT INTO policyer (tenant,policy_id,versjon,innholds_hash,"
+        "status,innhold,aktiv,aktiveringskilde,aktivert_av_operasjon)"
+        " VALUES (%s,'p-sp10-gjenbruk','1.0.0','ih-gjenbruk','produksjon',"
+        "'{}'::jsonb,true,'styrt',%s)", (TEN, opid_ny))
     conn.commit()
 
 
@@ -128,12 +156,20 @@ def _mal_048(conn) -> list[str]:
     if set(rader) != fasit_vindu or len(rader) != 3:
         feil.append(f"vinduer etter 048: {sorted(rader)!r},"
                     f" ventet {sorted(fasit_vindu)!r}")
+    # `decision_operation_id` er med i målingen fordi den er det ENESTE
+    # som skiller de to gjenbruks-hendelsene: de deler policy_id og
+    # versjon, og det er nettopp der en versjonsbundet backfill bommet.
     rader = conn.execute(
-        "SELECT policy_id, aktiveringskilde, pakrevd_antall"
+        "SELECT decision_operation_id, policy_id, aktiveringskilde,"
+        "       pakrevd_antall"
         "  FROM policyaktivering WHERE tenant = %s", (TEN,)).fetchall()
-    fasit_hend = {("p-sp10-bundet", "styrt", 2),
-                  ("p-sp10-tapt", "historisk", 2)}
-    if set(rader) != fasit_hend or len(rader) != 2:
+    fasit_hend = {("sp10-p-sp10-bundet-1", "p-sp10-bundet", "styrt", 2),
+                  ("sp10-p-sp10-tapt-1", "p-sp10-tapt", "historisk", 2),
+                  # Foreldreløs, samme versjonsnummer som den under.
+                  ("sp10-p-sp10-gjenbruk-1", "p-sp10-gjenbruk",
+                   "historisk", 2),
+                  ("sp10-p-sp10-gjenbruk-2", "p-sp10-gjenbruk", "styrt", 2)}
+    if set(rader) != fasit_hend or len(rader) != 4:
         feil.append(f"hendelser etter 048: {sorted(rader)!r},"
                     f" ventet {sorted(fasit_hend)!r}")
     conn.rollback()

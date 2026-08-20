@@ -130,6 +130,20 @@ ALTER TABLE policyaktivering
   via versjonsbindingen. **SP-10-prøvekjøringen mot bebodd base er
   obligatorisk** — dette er nøyaktig klassen som stoppet 047.
 
+> ⚠️ **Dokumentert avvik (Codex P1, review av #114).** Skissens
+> versjonsbinding over er ikke generasjonssikker.
+> `slett_ubrukt_policy` sletter versjonsraden mens hendelsen står igjen
+> udødelig, og frigir nummeret: samme `(tenant, policy_id, versjon)`
+> kan aktiveres på nytt (`test_slettet_versjon_kan_aktiveres_paa_nytt`,
+> og det er grunnen til at 047 med vilje IKKE la en UNIQUE på de tre
+> feltene). Etter en slik runde deler den foreldreløse og den gjeldende
+> hendelsen alle tre feltene, og UPDATE-en kopierte den nåværende
+> generasjonens kilde over på den gamle — altså `'styrt'` om en
+> hendelse hvis kvorum ikke lenger kan bevises, stikk i strid med
+> `historisk`-fallbacken. Implementasjonen binder derfor gjennom
+> `policyer.aktivert_av_operasjon = pa.decision_operation_id` — 047s
+> egen lineage-FK, og det eneste som skiller generasjonene.
+
 ## 5. Codex-porter
 
 **Rolle og grense (1–7).** 1 `disponit` (runtime): `claim_planvindu` →
@@ -155,7 +169,9 @@ fencer fortsatt på `claim_id` (regresjon fra 044 port 46).
 NULL` → avvist (negativ port fra ratifiseringen) · 14 Ukjent kildeverdi
 → avvist av `hendelse_kilde_gyldig` · 15 `aktiveringskilde` endret etter
 INSERT → avvist · 16 Backfill-UPDATE binder eksisterende hendelser via
-versjonsbindingen, ikke via gjetting; rapport teller.
+operasjonsbindingen (`aktivert_av_operasjon = decision_operation_id`),
+ikke via gjetting og ikke via det gjenbrukbare versjonsnummeret — se
+avviket i §4; rapport teller.
 
 **Deploy (17–18).** 17 **SP-10:** migrasjonen prøvekjøres mot seedet
 base (0..N−1 → flyttester → N); `SET CONSTRAINTS ALL IMMEDIATE` etter
