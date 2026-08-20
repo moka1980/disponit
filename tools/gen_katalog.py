@@ -243,6 +243,40 @@ def slug(navn: str) -> str:
     return re.sub(r"[^a-z0-9_]", "", ut)
 
 
+def postslutt(tekst: str, start: int) -> int:
+    """Indeksen rett ETTER krøllparentesen som lukker posten som åpner i `start`.
+
+    Å lete etter første `}` holder bare så lenge ingen feltverdi inneholder
+    en krøllparentes, og det er ingenting som sier at de ikke kan det: `guard`,
+    `input` og `accept` er fri prosa, og et JSON- eller malfragment i en av dem
+    ville flyttet postslutten inn i midten av en streng. Derfor teller vi dybde
+    og hopper over strenger — enkelt- og dobbeltfnutt og backtick, med `\\` som
+    escape. En `${...}` i en backtick-streng går opp i opp: åpnings- og
+    lukkeparentesen ligger begge inne i strengen og telles ingen av dem.
+
+    Uterminert post er ikke en tom mengde treff — det er en kilde som har
+    endret form, og da er katalogen ikke lenger lesbar. Da stopper vi.
+    """
+    dybde = 0
+    i = start
+    while i < len(tekst):
+        c = tekst[i]
+        if c in "\"'`":
+            i += 1
+            while i < len(tekst) and tekst[i] != c:
+                i += 2 if tekst[i] == "\\" else 1
+        elif c == "{":
+            dybde += 1
+        elif c == "}":
+            dybde -= 1
+            if dybde == 0:
+                return i + 1
+        i += 1
+    raise SystemExit(
+        f"modulpost i {KILDE_NAVN} lukkes aldri (fra tegn {start}) — "
+        f"kilden har endret form, sjekk parseren")
+
+
 def les_katalog() -> list[dict]:
     if not KILDE.exists():
         raise SystemExit(f"fant ikke sannhetskilden: {KILDE_NAVN}")
@@ -256,15 +290,17 @@ def les_katalog() -> list[dict]:
     # modulen videre — ingenting knekker, kilden bare lyver. Nå stopper det her,
     # og kun der en modulpost faktisk står.
     #
-    # Postgrensen er den POST_RE allerede hviler på: posten åpner med `{` på
-    # treffets start, og siden ingen `{`/`}` finnes inne i feltverdiene er den
-    # første `}` etter treffet postens slutt. Skulle en post noen gang bryte
-    # den formen, går den ikke tapt i stillhet — da matcher ikke POST_RE, og
-    # nummerporten under faller på en modul som mangler.
+    # Postgrensen leses med `postslutt()`, som kjenner strenger (Codex P2 på
+    # #118, femte runde). Den var «første `}` etter treffet», med begrunnelsen
+    # at ingen krøllparentes finnes inne i feltverdiene. Det er sant i dag og
+    # ingen regel: `guard`, `input` og `accept` er fri prosa, og et JSON- eller
+    # malfragment i en av dem — `{}`, `${sak}` — hadde kuttet posten der, midt
+    # inne i en streng. Alt etter kuttet, inkludert et `status`-felt, falt
+    # utenfor det forbudet fikk se. Og nummerporten under fanger det ikke:
+    # POST_RE er ferdig med å matche ved `p`, så posten telles som normalt.
     poster = []
     for m in POST_RE.finditer(skript):
-        slutt = skript.find("}", m.end())
-        post = skript[m.start():slutt + 1] if slutt != -1 else skript[m.start():]
+        post = skript[m.start():postslutt(skript, m.start())]
         forbudt = STATUS_RE.search(post)
         if forbudt:
             raise SystemExit(
