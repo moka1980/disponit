@@ -114,7 +114,7 @@ OPPDRAGSTYPE = "kontroll.wcag.nettsted"
 # sammen — ellers oppdages det først i en staging-runde ingen ser før den
 # feiler. `LEGACY_RELEASE` under er uberørt: den navngir releasen de gamle
 # rundefilene tilhørte, ikke den vi kjører nå.
-RELEASE = os.environ.get("WCAG_RELEASE", "").strip() or "wcag-r18"
+RELEASE = os.environ.get("WCAG_RELEASE", "").strip() or "wcag-r19"
 TENANT = "t-wcagfasit"
 TENANT_FREKVENS = "t-wcagfrekvens"
 VERT_FREKVENS = "fasit-frekvens.test"
@@ -1079,10 +1079,57 @@ def _rapport(http, lese_tok, oid):
                     headers={"authorization": f"Bearer {lese_tok}"})
 
 
+def _kvittering_signert(m, oid: int) -> bool:
+    """MÅLER at kvitteringen på `oid` kom av verifiseringsveien.
+
+    Codex' P2 på PR #117 (runde 15): fase 5 skrev «ti kjøringer signert
+    innen frist», og hverken linja eller sammendragets predikat inneholdt
+    én eneste måling av en signatur. Ti rapporter med usignerte eller
+    manglende kvitteringer ga et grønt `10/10` — ordet «signert» sto der
+    som en påstand om noe runden aldri spurte om.
+
+    Det som måles her, er AVTRYKKET kvitteringsveien setter igjen, ikke
+    at to felter samme skriver eier er enige:
+
+      * signaturen står i sin egen kolonne, ikke tom, og er identisk med
+        verdien i konvolutten som ligger lagret — `kvittering_signatur`
+        ER `kvittering->signatur->>verdi`, hentet ut av verifiseringen
+        selv (app.py), så spriker de, kommer raden ikke derfra;
+      * `resultathash` er satt, siden veien skriver alle tre i samme
+        `UPDATE`;
+      * og kvitteringskapabiliteten for oppdraget er BRENT med nøyaktig
+        den hashen. `kvitteringskapabiliteter` er `REVOKE ALL ... FROM
+        PUBLIC` (005): ingen rolle skriver den direkte, bare
+        definerne — og `bruk_kvitteringskapabilitet` kalles av API-et
+        FØRST etter at `attestering.verifiser` har godtatt signaturen.
+        Hashen er uforanderlig når den først er festet.
+
+    Nøklene er HMAC-hemmeligheter som bor i API-et; en SQL-spørring kan
+    ikke verifisere signaturen på nytt. Da er den brente kapabiliteten
+    med matchende resultathash det sterkeste sporet basen har av at
+    verifiseringen FAKTISK skjedde — og det er det denne målingen er.
+    """
+    rad = m.execute(
+        "SELECT o.kvittering IS NOT NULL"
+        "   AND o.kvittering_signatur IS NOT NULL"
+        "   AND btrim(o.kvittering_signatur) <> ''"
+        "   AND o.kvittering_signatur"
+        "       IS NOT DISTINCT FROM (o.kvittering -> 'signatur' ->> 'verdi')"
+        "   AND o.resultathash IS NOT NULL"
+        "   AND EXISTS (SELECT 1 FROM kvitteringskapabiliteter k"
+        "                WHERE k.tenant = o.tenant AND k.oppdrag_id = o.id"
+        "                  AND k.status = 'brukt'"
+        "                  AND k.resultathash IS NOT DISTINCT FROM"
+        "                      o.resultathash)"
+        "  FROM oppdrag o WHERE o.tenant=%s AND o.id=%s",
+        (TENANT, oid)).fetchone()
+    return bool(rad and rad[0])
+
+
 def fase5(m, http, mtk, motorkmd, digest):
     cookie, csrf = _adminokt(m, TENANT)
     lese_tok = _lesetoken(m, TENANT)
-    gronne = 0
+    gronne = signerte = 0
     for i in range(10):
         scenario = "nettsted_maks4" if i % 3 == 0 else "enkeltside"
         fasit = json.loads((TESTNETT / "fasit.json").read_text())
@@ -1127,26 +1174,47 @@ def fase5(m, http, mtk, motorkmd, digest):
         frist = 1800 if sp["omfang"] == "enkeltside" else 3600
         avvik = (_fasitkontroll(scenario, rr.json()["rapport"])
                  if rr.status_code == 200 else [f"rapport {rr.status_code}"])
+        # …og SIGNATUREN måles, den påstås ikke (Codex P2, runde 15).
+        # Aggregatet under het «ti kjøringer SIGNERT innen frist» mens
+        # ingen del av runden noensinne spurte om en signatur. Nå bærer
+        # hver linje sin egen måling — også en gjenspilt, for der ER
+        # kvitteringen alt levert og avtrykket ligger i basen.
+        _kontekst(m, TENANT)
+        signert = _kvittering_signert(m, oid)
+        m.rollback()
         # Fristen ble målt da kjøringen faktisk skjedde, og den målingen
         # står i evidensfila fra den runden. Et gjenspill kan ikke måle den
         # på nytt, og skal ikke late som.
-        ok = (res.get("utfall") == "utfort" and not avvik
-              and (alt_utfort or varighet < frist))
-        gronne += ok
+        rent = (res.get("utfall") == "utfort" and not avvik
+                and (alt_utfort or varighet < frist))
+        ok = rent and signert
+        gronne += rent
+        signerte += ok
         evidens("kjoring", i=i, scenario=scenario, oppdrag=oid,
                 utfall=res.get("utfall"), gjenspill=alt_utfort,
                 varighet_s=None if varighet is None else round(varighet, 1),
                 frist_s=frist, avvik_mot_fasit=len(avvik),
+                kvittering_signert=signert,
                 avvik=avvik[:5], ok=ok)
     # ... og SUMMEN bærer den samme påstanden (Codex P1). Fasitkravet er
     # 10/10; alt annet er en rød måling, uansett hvilken av de ti som
     # sviktet og på hvilken måte. Uten `ok` her kunne aggregatet stå
     # `9/10` i evidensfila mens `_ROEDE` var tom.
+    #
+    # De to tallene er TO målinger, ikke ett navn på to ting (Codex P2,
+    # runde 15). Aggregatet het `ti_kjoringer_signert_innen_frist`, men
+    # det det talte var RENE utfall innen egen frist — ingen del av
+    # runden spurte noen gang om en signatur, og navnet var hele beviset.
+    # Det heter nå det det teller, signaturen har fått sitt eget tall, og
+    # sammendragsgeneratoren regner begge ut av `kjoring`-linjene i
+    # stedet for å lese dem her. Så et navn kan ikke igjen bære en
+    # påstand ingen måling står bak.
     evidens("fase5_resultat",
-            ti_kjoringer_signert_innen_frist=f"{gronne}/10",
+            ti_kjoringer_rent_innen_frist=f"{gronne}/10",
+            kjoringer_med_maalt_signatur=f"{signerte}/10",
             funn_avvik_mot_fasit=0 if gronne == 10 else "SE kjoring-linjene",
-            ok=gronne == 10)
-    return gronne
+            ok=gronne == 10 and signerte == 10)
+    return signerte
 
 
 def _lesetoken(m, tenant):

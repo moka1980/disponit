@@ -61,7 +61,8 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "kjoringer_signert_innen_frist",
+        "kjoringer_rent_innen_frist",
+        "kjoringer_med_maalt_signatur",
         "kjoringer_krav",
         "avvik_mot_fasit",
         "robots_private_forisporsler",
@@ -76,8 +77,13 @@
         "evidensfrist_sak_opprettet"
       ],
       "properties": {
-        "kjoringer_signert_innen_frist": {
-          "$ref": "#/$defs/telling"
+        "kjoringer_rent_innen_frist": {
+          "$ref": "#/$defs/telling",
+          "comment": "Kjoringer med rent utfall, null avvik og en MAALT varighet under sin egen frist. Het `kjoringer_signert_innen_frist` til Codex' P2 paa #117 runde 15: navnet var det eneste `signert` ved det - ingen del av maalingen spurte om en kvitteringssignatur."
+        },
+        "kjoringer_med_maalt_signatur": {
+          "$ref": "#/$defs/telling",
+          "comment": "Av dem: de som i tillegg bar `kvittering_signert: true` - en EGEN maaling produsenten gjor i basen (signaturkolonnen identisk med konvoluttens, resultathash satt, og kvitteringskapabiliteten brent med nettopp den hashen). En runde som ikke maalte dette staar paa 0, og akseptpunktet `kontroll.ti_kjoringer_signert_innen_frist` blokkerer."
         },
         "kjoringer_krav": {
           "$ref": "#/$defs/telling"

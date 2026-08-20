@@ -70,8 +70,14 @@ HOVEDGREN = "main"
 #: på runde-sammendraget (selv sha-bundet i manifestet); de rene
 #: invariantpunktene bærer CI-kjøringen som kilde. Grensene er §12s.
 MAALTE = {
+    # SIGNERT måles på signaturtallet, ikke på fristtallet (Codex P2,
+    # #117 runde 15). Punktet heter «ti kjøringer SIGNERT innen frist»,
+    # og verdien ble hentet fra `kjoringer_signert_innen_frist` — et felt
+    # som målte frist og rent utfall, og aldri en signatur. Nå bærer
+    # sammendraget de to tallene hver for seg, og punktet krever begge:
+    # `krev_maalt_signatur` stopper aksepten hvis signaturen mangler.
     "kontroll.ti_kjoringer_signert_innen_frist":
-        ("10/10", lambda m: f"{m['kjoringer_signert_innen_frist']}"
+        ("10/10", lambda m: f"{m['kjoringer_med_maalt_signatur']}"
                             f"/{m['kjoringer_krav']}"),
     "funn.avvik_mot_fasit": ("0", lambda m: str(m["avvik_mot_fasit"])),
     "robots.brudd_i_mallogg":
@@ -153,6 +159,46 @@ def krev_maalbare_punkter() -> None:
         + "\n\nEt punkt uten måling er ikke et grønt punkt, det er et"
           " umålt punkt, og en immutabel akseptrad skal ikke bære"
           " forskjellen som om den ikke fantes.")
+
+
+def krev_maalt_signatur(m: dict) -> None:
+    """Ingen aksept før signaturen på hver av de ti kjøringene ER målt.
+
+    Codex' P2 på PR #117 (runde 15): grensepunktet
+    `kontroll.ti_kjoringer_signert_innen_frist` hvilte på et tall som
+    aldri hadde spurt om en signatur. Ti rapporter med usignerte eller
+    manglende kvitteringer ga «10/10», og ordet «signert» i punktnavnet
+    var hele beviset.
+
+    Sammendraget skiller nå de to målingene, og runden fra 18/8 målte
+    bare den ene: den kjørte før produsenten begynte å skrive
+    `kvittering_signert` på `kjoring`-linjene, så signaturtallet er null
+    — ikke fordi kvitteringene manglet signatur, men fordi ingen så
+    etter. Det er nøyaktig forskjellen en immutabel akseptrad ikke skal
+    bære som om den ikke fantes.
+
+    Fail-closed, samme form som `krev_maalbare_punkter`: en runde som
+    ikke har målt dette, aksepterer ingenting. Kjør sjekklisterunden på
+    nytt, så bærer linjene målingen.
+    """
+    maalt, krav = (m.get("kjoringer_med_maalt_signatur"),
+                   m.get("kjoringer_krav"))
+    if isinstance(maalt, int) and not isinstance(maalt, bool) \
+            and maalt == krav:
+        return
+    raise SystemExit(
+        "AVBRUTT: aksepten er blokkert —"
+        f" {KRAV}-punktet «kontroll.ti_kjoringer_signert_innen_frist»"
+        f" krever at signaturen er MÅLT på alle {krav} kjøringene, men"
+        f" sammendraget bærer {maalt!r}.\n\n  Fristtallet"
+        " (`kjoringer_rent_innen_frist`) måler rent utfall innen egen"
+        " frist og sier ingenting om noen kvittering. Signaturen er en"
+        " egen måling: `kvittering_signert` på hver `kjoring`-linje, som"
+        " sjekklisterunden gjør i basen — signaturen i sin egen kolonne,"
+        " identisk med konvoluttens, med resultathash, og"
+        " kvitteringskapabiliteten brent med nøyaktig den hashen.\n\n"
+        "  Et punkt som heter «signert» kan ikke hvile på et tall som"
+        " ikke er en signaturmåling. Kjør sjekklisterunden på nytt.")
 
 
 def les_manifest() -> tuple[dict, str]:
@@ -758,6 +804,7 @@ def main() -> int:
     verifiser_ci_kjoring(a.ci_run, ci_commit)
 
     m = runde["maalt"]
+    krev_maalt_signatur(m)
     punkter = {}
     runde_ref = (f"{runde['oppsett']['kilde']}"
                  f"@sha256:{evidens_sha[:16]}")

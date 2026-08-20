@@ -24,7 +24,7 @@ REPOROT = Path(__file__).resolve().parents[2]
 #: ikke gjøre en kjøring rød.
 KRAVGRENSER: dict[str, dict] = {
     "wcag-kontroll-v1": {
-        # 014c-klarsignalet §12: fasitrunden. 10/10 signert innen frist,
+        # 014c-klarsignalet §12: fasitrunden. 10/10 utført innen frist,
         # null avvik mot fasit, og feilveiene beviste seg (kvittering
         # uten evidens; reaper → sak). Frekvens: taket skal både slippe
         # gjennom OG avvise — en port som aldri målte et avslag har ikke
@@ -587,10 +587,18 @@ def _grenser_wcag_kontroll(grense: dict, art: dict) -> list[str]:
     m = art.get("maalt")
     if not isinstance(m, dict):
         return ["artefaktet mangler `maalt`"]
-    kjort, m1 = _teller(m, "kjoringer_signert_innen_frist",
-                        "kjoringer_signert_innen_frist")
+    # FRISTEN og SIGNATUREN er to målinger, ikke ett navn (Codex P2, #117
+    # runde 15). Feltet het `kjoringer_signert_innen_frist` og bar bare
+    # fristmålingen; her måles derfor det nye navnet, og signaturtallet
+    # står ved siden av — under samme «ikke over kravet»-regel, siden en
+    # signatur uten en kjøring bak seg er like umulig som en ellevte
+    # kjøring av ti.
+    kjort, m1 = _teller(m, "kjoringer_rent_innen_frist",
+                        "kjoringer_rent_innen_frist")
     krav, m2 = _teller(m, "kjoringer_krav", "kjoringer_krav")
-    for melding in (m1, m2):
+    signert, m3 = _teller(m, "kjoringer_med_maalt_signatur",
+                          "kjoringer_med_maalt_signatur")
+    for melding in (m1, m2, m3):
         if melding:
             feil.append(melding)
     if not m1 and not m2:
@@ -598,13 +606,16 @@ def _grenser_wcag_kontroll(grense: dict, art: dict) -> list[str]:
             feil.append(f"kjoringer_krav={krav}, krever >="
                         f" {grense['min_kjoringer']}")
         # Nøyaktig kravet: under er runden ufullført, OVER er tallet
-        # internt umulig — flere signerte kjøringer enn det ble kjørt er
+        # internt umulig — flere rene kjøringer enn det ble kjørt er
         # ikke et strengere bevis, det er et bevis som ikke stemmer med
         # seg selv (og akseptraden ville båret «11/10»).
         if kjort != krav:
-            feil.append(f"kjoringer_signert_innen_frist={kjort} av {krav}"
-                        " — alle skal være signert innen frist, og flere"
+            feil.append(f"kjoringer_rent_innen_frist={kjort} av {krav}"
+                        " — alle skal være utført innen frist, og flere"
                         " enn de kjørte finnes ikke")
+    if not m2 and not m3 and signert > krav:
+        feil.append(f"kjoringer_med_maalt_signatur={signert} av {krav}"
+                    " — flere målte signaturer enn kjøringer finnes ikke")
     for felt, tak in (
             ("avvik_mot_fasit", grense["maks_avvik_mot_fasit"]),
             ("robots_private_forisporsler", grense["maks_robots_private"]),

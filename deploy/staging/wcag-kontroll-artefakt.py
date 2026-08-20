@@ -26,6 +26,12 @@ utvalgsregler som kan leses, angripes og kjøres om igjen:
     fristen. Bare linjer med rent utfall, null avvik og en MÅLT varighet
     under sin egen frist telles — og spriker linjene fra summen, skrives
     det ikke noe sammendrag i det hele tatt.
+  * ET TALL HETER DET DET MÅLER. Fristtellingen het før
+    `kjoringer_signert_innen_frist`, og målte frist og rent utfall —
+    aldri en signatur. Navnet gjorde jobben til beviset. Nå heter den
+    `kjoringer_rent_innen_frist`, og signaturen har sitt eget tall,
+    `kjoringer_med_maalt_signatur`, avledet av `kvittering_signert` på
+    hver linje. En runde som ikke målte signaturen, står på null.
 
 Deterministisk med vilje: samme fil inn gir byte-identisk artefakt ut
 (ingen klokkelesing), så CI kan regenerere og sammenligne.
@@ -193,8 +199,8 @@ def _identitet(d: dict, felt: str) -> int | None:
     return None
 
 
-def signert_innen_frist(linjer: list[dict], krav: int) -> int:
-    """Teller kjøringene som FAKTISK ble målt signert innen fristen.
+def rent_innen_frist(linjer: list[dict], krav: int) -> int:
+    """Teller kjøringene som FAKTISK ble målt utført innen sin egen frist.
 
     Codex' P2 på PR #117 (runde 10): tallet ble kopiert ordrett fra
     `fase5_resultat`s summeringsstreng. Men fase 5 er idempotent, og på
@@ -229,6 +235,9 @@ def signert_innen_frist(linjer: list[dict], krav: int) -> int:
     egen kjøring, og telles ikke. Identiteten er TALLET (`_identitet`),
     ikke tegnene: `12` og `"12"` er samme oppdrag, og `"012"` er ingen
     oppdrags-id i det hele tatt (Codex P2, runde 15).
+
+    Det denne funksjonen IKKE måler, er signaturen: den har sitt eget
+    predikat (`signert_innen_frist`) og sitt eget tall. Se det.
     """
     bestilte = range(krav)
     gronne: dict[int, int] = {}
@@ -249,6 +258,34 @@ def signert_innen_frist(linjer: list[dict], krav: int) -> int:
     # samme IDen igjen, er det ikke to kjøringer, og antallet er antallet
     # oppdrag — aldri antallet linjer som viser til dem.
     return len(set(gronne.values()))
+
+
+def signert_innen_frist(linjer: list[dict], krav: int) -> int:
+    """Teller kjøringene som i tillegg ble målt SIGNERT.
+
+    Codex' P2 på PR #117 (runde 15): predikatet het «signert innen
+    frist» og inneholdt ikke én måling av en signatur. Et rent utfall,
+    null avvik, en varighet under fristen og en egen oppdrags-ID — alt
+    sammen ekte målinger — men om kvitteringen bak rapporten var
+    signert, usignert eller manglet helt, sto det ingen steder: verken
+    på `kjoring`-linja eller i betingelsen. Ti usignerte kvitteringer ga
+    et grønt `10/10`, og ordet «signert» var det eneste beviset.
+
+    Signaturen er nå en EGEN måling produsenten gjør i basen
+    (`_kvittering_signert` i `wcag-staging-sjekkliste.py`: signaturen i
+    sin egen kolonne, identisk med konvoluttens, med resultathash, og
+    kvitteringskapabiliteten brent med nøyaktig den hashen). Den står på
+    linja som `kvittering_signert`, og bare en linje som BÆRER den
+    målingen, og bærer den grønn, telles her.
+
+    `is True`, ikke sannhetsverdi: et manglende felt, en `null`, en
+    streng eller et tall er ikke en måling som sier ja — det er en linje
+    fra en runde som ikke målte dette. Fail-closed, samme form som
+    `_tall`. Runden fra 18/8 målte det aldri, og teller derfor null her;
+    det er ikke en feil i fila, det er det fila faktisk viser.
+    """
+    signerte = [d for d in linjer if d.get("kvittering_signert") is True]
+    return rent_innen_frist(signerte, krav)
 
 
 def sammendrag(rader: list[dict], kilde: str, kilde_sha256: str) -> dict:
@@ -275,8 +312,18 @@ def sammendrag(rader: list[dict], kilde: str, kilde_sha256: str) -> dict:
     valgte = tuple(rader[i] for i in indekser)
     (fase5, robots, robots5, frekv, motor, injeksjon, frist) = valgte
 
-    påstått, krav = (int(x) for x in
-                     str(fase5["ti_kjoringer_signert_innen_frist"]).split("/"))
+    # Aggregatets navn: fase 5 het før «ti_kjoringer_SIGNERT_innen_frist»,
+    # men det den summerte var rene utfall innen frist — signaturen ble
+    # aldri spurt om (Codex P2, runde 15). Produsenten skriver nå det
+    # navnet den faktisk teller; den innsjekkede runden fra 18/8 bærer det
+    # gamle. Begge leses, det nye først, og fins ingen av dem er det ingen
+    # sum å krysspeile mot.
+    sum_streng = fase5.get("ti_kjoringer_rent_innen_frist",
+                           fase5.get("ti_kjoringer_signert_innen_frist"))
+    if sum_streng is None:
+        raise SystemExit("AVBRUTT: `fase5_resultat` bærer ingen sum å"
+                         " krysspeile de bestilte kjøringene mot")
+    påstått, krav = (int(x) for x in str(sum_streng).split("/"))
     # TALLET REGNES UT AV LINJENE, ikke lest av summen (Codex P2, runde
     # 10) — og bare av linjene på de BESTILTE posisjonene `range(krav)`
     # (Codex P2, runde 13), med ett DISTINKT oppdrag bak hver posisjon
@@ -284,12 +331,21 @@ def sammendrag(rader: list[dict], kilde: str, kilde_sha256: str) -> dict:
     # seg selv: summen påstår flere målte kjøringer enn de bestilte
     # linjene bærer, og da skrives det ikke noe sammendrag i det hele
     # tatt.
-    signert = signert_innen_frist(fase5_linjene(rader, kontekst, indekser[0]),
-                                  krav)
-    if signert != påstått:
+    fase5_linjer = fase5_linjene(rader, kontekst, indekser[0])
+    rent = rent_innen_frist(fase5_linjer, krav)
+    # …og SIGNATUREN er en EGEN måling med sitt eget tall (Codex P2,
+    # runde 15). Sammendraget bar før ett tall under navnet
+    # `kjoringer_signert_innen_frist`, og det tallet målte frist og rent
+    # utfall — aldri en signatur. Navnet gjorde altså jobben til beviset.
+    # Nå heter det som måles `kjoringer_rent_innen_frist`, og signaturen
+    # har sitt eget: `kjoringer_med_maalt_signatur`. Runden fra 18/8
+    # målte den aldri, og står derfor på null — synlig, i stedet for
+    # skjult bak et ord.
+    signert = signert_innen_frist(fase5_linjer, krav)
+    if rent != påstått:
         raise SystemExit(
-            f"AVBRUTT: `fase5_resultat` påstår {påstått}/{krav} signert"
-            f" innen frist, men bare {signert} av de {krav} BESTILTE"
+            f"AVBRUTT: `fase5_resultat` påstår {påstått}/{krav} utført"
+            f" innen frist, men bare {rent} av de {krav} BESTILTE"
             " `kjoring`-linjene (i=0…"
             f"{krav - 1}) i den runden bærer et rent utfall, null avvik,"
             " en målt varighet under sin egen frist OG en egen"
@@ -315,7 +371,8 @@ def sammendrag(rader: list[dict], kilde: str, kilde_sha256: str) -> dict:
             "kilde_sha256": kilde_sha256,
         },
         "maalt": {
-            "kjoringer_signert_innen_frist": signert,
+            "kjoringer_rent_innen_frist": rent,
+            "kjoringer_med_maalt_signatur": signert,
             "kjoringer_krav": krav,
             "avvik_mot_fasit": int(fase5["funn_avvik_mot_fasit"]),
             "robots_private_forisporsler": int(robots["privat_forisporsler"]),

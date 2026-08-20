@@ -849,39 +849,39 @@ def test_fristtellingen_regnes_ut_av_de_ti_kjoringene():
     linjer = m.fase5_linjene(rader, kontekst, i_fase5)
     # Den innsjekkede runden BLE målt: ti linjer med egen varighet.
     assert len(linjer) == 10
-    assert m.signert_innen_frist(linjer, 10) == 10
+    assert m.rent_innen_frist(linjer, 10) == 10
 
     # Gjenspill: samme ti rapporter, men ingen frist målt.
     gjenspilt = [dict(d, gjenspill=True, varighet_s=None) for d in linjer]
-    assert m.signert_innen_frist(gjenspilt, 10) == 0
+    assert m.rent_innen_frist(gjenspilt, 10) == 0
     # En kjøring som brøt sin egen frist teller ikke, uansett `ok`.
     over = [dict(d, varighet_s=d["frist_s"] + 1, ok=True) for d in linjer]
-    assert m.signert_innen_frist(over, 10) == 0
+    assert m.rent_innen_frist(over, 10) == 0
     # …og avvik mot fasiten er heller ikke et signert, rent utfall.
     avvik = [dict(d, avvik_mot_fasit=1) for d in linjer]
-    assert m.signert_innen_frist(avvik, 10) == 0
+    assert m.rent_innen_frist(avvik, 10) == 0
     # Samme posisjon to ganger er én kjøring, ikke to.
-    assert m.signert_innen_frist(linjer + linjer, 10) == 10
+    assert m.rent_innen_frist(linjer + linjer, 10) == 10
 
     # Codex' P2 (runde 15): en halvskrevet eller fabrikkert linje bærer
     # ingen måling. Et manglende `avvik_mot_fasit` ble null avvik av
     # `int(x or 0)`, og `bool` slapp gjennom talltesten fordi den arver
     # `int` — `varighet_s: False` var «0 sekunder, innenfor fristen».
-    assert m.signert_innen_frist(
+    assert m.rent_innen_frist(
         [{k: v for k, v in d.items() if k != "avvik_mot_fasit"}
          for d in linjer], 10) == 0
-    assert m.signert_innen_frist(
+    assert m.rent_innen_frist(
         [dict(d, avvik_mot_fasit=False) for d in linjer], 10) == 0
-    assert m.signert_innen_frist(
+    assert m.rent_innen_frist(
         [dict(d, varighet_s=False) for d in linjer], 10) == 0
-    assert m.signert_innen_frist(
+    assert m.rent_innen_frist(
         [dict(d, varighet_s=float("nan")) for d in linjer], 10) == 0
-    assert m.signert_innen_frist(
+    assert m.rent_innen_frist(
         [dict(d, frist_s=float("inf")) for d in linjer], 10) == 0
-    assert m.signert_innen_frist(
+    assert m.rent_innen_frist(
         [dict(d, avvik_mot_fasit="0") for d in linjer], 10) == 0
     # …og uten en posisjon å avduplisere på er linja ikke en av de ti.
-    assert m.signert_innen_frist(
+    assert m.rent_innen_frist(
         [{k: v for k, v in d.items() if k != "i"} for d in linjer], 10) == 0
 
     # Codex' P2 (runde 13): posisjonen ble bare typesjekket. Ti ellers
@@ -890,36 +890,36 @@ def test_fristtellingen_regnes_ut_av_de_ti_kjoringene():
     # ti og bekreftet «10/10» uten at én av de ti BESTILTE kjøringene var
     # målt. Fase 5 bestiller `range(krav)`; alt annet er ikke en av dem.
     forskjovet = [dict(d, i=d["i"] + 10) for d in linjer]
-    assert m.signert_innen_frist(forskjovet, 10) == 0
-    assert m.signert_innen_frist([dict(d, i=-1) for d in linjer], 10) == 0
+    assert m.rent_innen_frist(forskjovet, 10) == 0
+    assert m.rent_innen_frist([dict(d, i=-1) for d in linjer], 10) == 0
     # Ni bestilte + én utenfor er ni målte kjøringer, ikke ti.
-    assert m.signert_innen_frist(
+    assert m.rent_innen_frist(
         [d for d in linjer if d["i"] != 9] + [dict(linjer[9], i=42)],
         10) == 9
     # Og en generator som ble bestilt færre kjøringer, teller bare dem.
-    assert m.signert_innen_frist(linjer, 4) == 4
+    assert m.rent_innen_frist(linjer, 4) == 4
 
     # Codex' P2 (runde 14): posisjonen ble avduplikert, men ikke
     # IDENTITETEN bak den. Ett vellykket oppdrag kopiert inn på alle ti
     # bestilte posisjoner ga et sett på ti og dermed «10/10», selv om
     # motoren hadde kjørt én eneste gang.
     ett_oppdrag = [dict(d, oppdrag=linjer[0]["oppdrag"]) for d in linjer]
-    assert m.signert_innen_frist(ett_oppdrag, 10) == 1
+    assert m.rent_innen_frist(ett_oppdrag, 10) == 1
     # To ekte kjøringer gjentatt over ti posisjoner er fortsatt to.
     to_oppdrag = [dict(d, oppdrag=linjer[d["i"] % 2]["oppdrag"])
                   for d in linjer]
-    assert m.signert_innen_frist(to_oppdrag, 10) == 2
+    assert m.rent_innen_frist(to_oppdrag, 10) == 2
     # En linje uten en egen oppdrags-ID har ikke målt en egen kjøring —
     # og en uhashbar eller påstått identitet skal feile lukket, ikke
     # kaste ut av genereringen.
-    assert m.signert_innen_frist(
+    assert m.rent_innen_frist(
         [{k: v for k, v in d.items() if k != "oppdrag"} for d in linjer],
         10) == 0
-    assert m.signert_innen_frist(
+    assert m.rent_innen_frist(
         [dict(d, oppdrag={}) for d in linjer], 10) == 0
-    assert m.signert_innen_frist(
+    assert m.rent_innen_frist(
         [dict(d, oppdrag=True) for d in linjer], 10) == 0
-    assert m.signert_innen_frist(
+    assert m.rent_innen_frist(
         [dict(d, oppdrag="  ") for d in linjer], 10) == 0
 
     # Codex' P2 (runde 15): identiteten var TEGNENE (`json.dumps` av hva
@@ -930,14 +930,14 @@ def test_fristtellingen_regnes_ut_av_de_ti_kjoringene():
     # `12` og `"12"` ER samme oppdrag: ti posisjoner, annenhver
     # skrivemåte, én kjøring.
     ett_id = linjer[0]["oppdrag"]
-    assert m.signert_innen_frist(
+    assert m.rent_innen_frist(
         [dict(d, oppdrag=ett_id if d["i"] % 2 else str(ett_id))
          for d in linjer], 10) == 1
     # …og skrivemåter som ikke kommer fra basen er ingen oppdrags-id:
     # ledende null, fortegn, mellomrom, tomt, null og negativt.
     for ikke_id in (f"0{ett_id}", f"+{ett_id}", f" {ett_id}", f"{ett_id} ",
                     "", "0", -ett_id, f"{ett_id}.0", f"{ett_id}\n"):
-        assert m.signert_innen_frist(
+        assert m.rent_innen_frist(
             [dict(d, oppdrag=ikke_id) for d in linjer], 10) == 0, ikke_id
     # `true` er fortsatt ikke oppdrag nummer 1 (bool arver int).
     assert m._identitet({"oppdrag": True}, "oppdrag") is None
@@ -980,6 +980,79 @@ def test_fristtellingen_regnes_ut_av_de_ti_kjoringene():
     assert "oppdrags-ID" in str(ei.value)
 
 
+def test_signert_er_en_egen_maaling_ikke_et_navn_paa_fristtallet():
+    """Codex' P2 (runde 15): predikatet het «signert innen frist» og
+    inneholdt ikke én måling av en signatur.
+
+    Rent utfall, null avvik, målt varighet under egen frist og en egen
+    oppdrags-ID — alt sammen ekte målinger, men ingen av dem sier noe om
+    kvitteringen bak rapporten. Ti usignerte eller manglende kvitteringer
+    ga et grønt «10/10», og ordet «signert» i navnet var hele beviset.
+
+    Nå er signaturen produsentens egen måling (`kvittering_signert` på
+    hver `kjoring`-linje, målt i basen), fristtallet heter det det måler,
+    og de to har hvert sitt tall i sammendraget."""
+    m = _runde_skript()
+    art = json.loads((ROT / ("deploy/staging/artefakter/"
+                             "wcag-kontroll-v1-20260818T200413.json")
+                      ).read_text(encoding="utf-8"))
+    rader = m.les(ROT / art["oppsett"]["kilde"])
+    kontekst = m.kontekster(rader)
+    i_fase5 = max(i for i, d in enumerate(rader)
+                  if d["hendelse"] == "fase5_resultat")
+    linjer = m.fase5_linjene(rader, kontekst, i_fase5)
+
+    # Runden fra 18/8 målte fristen på alle ti — og signaturen på ingen.
+    assert m.rent_innen_frist(linjer, 10) == 10
+    assert m.signert_innen_frist(linjer, 10) == 0
+    assert art["maalt"]["kjoringer_rent_innen_frist"] == 10
+    assert art["maalt"]["kjoringer_med_maalt_signatur"] == 0
+
+    # Med målingen på plass teller de.
+    signerte = [dict(d, kvittering_signert=True) for d in linjer]
+    assert m.signert_innen_frist(signerte, 10) == 10
+    # `is True`, ikke sannhetsverdi: alt annet er en linje fra en runde
+    # som ikke målte dette, og fail-closed er å ikke telle den.
+    for ikke_maalt in (False, None, "ja", 1, "true", [], {}):
+        assert m.signert_innen_frist(
+            [dict(d, kvittering_signert=ikke_maalt) for d in linjer],
+            10) == 0, ikke_maalt
+    # Signaturen frikjenner ikke en kjøring som brøt fristen sin.
+    assert m.signert_innen_frist(
+        [dict(d, kvittering_signert=True, varighet_s=d["frist_s"] + 1)
+         for d in linjer], 10) == 0
+    # …og en delvis signert runde teller bare de signerte.
+    delvis = [dict(d, kvittering_signert=d["i"] < 4) for d in linjer]
+    assert m.signert_innen_frist(delvis, 10) == 4
+    assert m.rent_innen_frist(delvis, 10) == 10
+
+    # Akseptskriptet BLOKKERER så lenge signaturen ikke er målt: punktet
+    # heter «signert», og et punkt kan ikke hvile på et tall som ikke er
+    # en signaturmåling.
+    a = _aksept_skript()
+    assert a.MAALTE["kontroll.ti_kjoringer_signert_innen_frist"][1](
+        {"kjoringer_med_maalt_signatur": 10, "kjoringer_krav": 10}) == "10/10"
+    with pytest.raises(SystemExit) as ei:
+        a.krev_maalt_signatur(art["maalt"])
+    assert "signert" in str(ei.value)
+    a.krev_maalt_signatur({"kjoringer_med_maalt_signatur": 10,
+                           "kjoringer_krav": 10})
+    # `True == 1` i Python: en bool er ikke en måling av ti kjøringer.
+    for falsk in ({"kjoringer_med_maalt_signatur": True, "kjoringer_krav": 1},
+                  {"kjoringer_med_maalt_signatur": "10", "kjoringer_krav": 10},
+                  {"kjoringer_krav": 10}):
+        with pytest.raises(SystemExit):
+            a.krev_maalt_signatur(falsk)
+
+    # Og produsenten MÅLER den — den påstår den ikke.
+    sjekk = (ROT / "deploy/staging/wcag-staging-sjekkliste.py").read_text(
+        encoding="utf-8")
+    assert "kvittering_signert=signert" in sjekk
+    assert "kvitteringskapabiliteter k" in sjekk, (
+        "signaturmålingen krever avtrykket verifiseringsveien setter"
+        " igjen — ikke at to felter samme skriver eier er enige")
+
+
 def test_wcag_grensene_maaler_at_portene_faktisk_kjorte():
     """Codex' to P2 på PR #117: en port som ikke ble prøvd, og et tak som
     ble brutt, passerte begge. `robots_5xx: 0 av 0` er fravær av en
@@ -1005,14 +1078,24 @@ def test_wcag_grensene_maaler_at_portene_faktisk_kjorte():
     # Under grensen er fortsatt umålt, og ulikhet i 5xx står ved lag.
     assert _sjekk_grenser(KRAV, _mutert(frekvens_tillat=3))
     assert _sjekk_grenser(KRAV, _mutert(robots_5xx_sider_kontrollert=0))
-    # Codex' P2 (runde 2): 11 signerte av 10 kjørte er ikke et strengere
+    # Codex' P2 (runde 2): 11 rene av 10 kjørte er ikke et strengere
     # bevis, det er et tall som ikke stemmer med seg selv — og
     # akseptraden ville båret «11/10» som om det var bestått.
-    umulig = _mutert(kjoringer_signert_innen_frist=11, kjoringer_krav=10)
-    assert any("kjoringer_signert_innen_frist" in f
+    umulig = _mutert(kjoringer_rent_innen_frist=11, kjoringer_krav=10)
+    assert any("kjoringer_rent_innen_frist" in f
                for f in _sjekk_grenser(KRAV, umulig)), \
-        "flere signerte kjøringer enn kjørte slapp gjennom porten"
-    assert _sjekk_grenser(KRAV, _mutert(kjoringer_signert_innen_frist=9))
+        "flere rene kjøringer enn kjørte slapp gjennom porten"
+    # …og det samme gjelder signaturtallet, som er sin egen måling
+    # (Codex P2, runde 15): flere målte signaturer enn kjøringer finnes
+    # ikke. Under kravet er derimot lovlig HER — det blokkerer i
+    # akseptskriptet, ikke i evidensporten, fordi runden fra 18/8 aldri
+    # målte signaturen og artefaktet skal kunne si nettopp det.
+    umulig_sig = _mutert(kjoringer_med_maalt_signatur=11, kjoringer_krav=10)
+    assert any("kjoringer_med_maalt_signatur" in f
+               for f in _sjekk_grenser(KRAV, umulig_sig)), \
+        "flere målte signaturer enn kjøringer slapp gjennom porten"
+    assert not _sjekk_grenser(KRAV, _mutert(kjoringer_med_maalt_signatur=0))
+    assert _sjekk_grenser(KRAV, _mutert(kjoringer_rent_innen_frist=9))
 
 
 def _superseder_drill():

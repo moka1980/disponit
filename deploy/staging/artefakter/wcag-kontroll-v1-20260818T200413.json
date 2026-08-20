@@ -11,7 +11,8 @@
     "frekvens_avvist_over_grense": 1,
     "frekvens_tillat": 4,
     "kjoringer_krav": 10,
-    "kjoringer_signert_innen_frist": 10,
+    "kjoringer_med_maalt_signatur": 0,
+    "kjoringer_rent_innen_frist": 10,
     "robots_5xx_krav": 1,
     "robots_5xx_sider_kontrollert": 1,
     "robots_private_forisporsler": 0

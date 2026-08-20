@@ -113,18 +113,22 @@ staging_sjekkliste:
     status: ja
     krav_id: wcag-kontroll-v1
     bevismaalinger:
-      - maalt.kjoringer_signert_innen_frist
+      - maalt.kjoringer_rent_innen_frist
       - maalt.avvik_mot_fasit
     artefakt: deploy/staging/artefakter/wcag-kontroll-v1-20260818T200413.json
-    artefakt_sha256: 0a27526e024a9a91b52b26082a56940a66bb4d9148889808cf856ef8b35e3583
+    artefakt_sha256: 37b08686c6d32cfbad19978789231182494f6ed313517becaf96d3cde60d674b
     notat: >-
       MÅLT 2026-08-18, BUNDET 2026-08-20 (049).
       På disponit-srv (release wcag-r1 — byte-identisk med den aksepterte
       wcag-r13, alle m56-releaser deler artifact_digest af92b705…): ekte motor
       (axe-core-4.10.3, Chromium 131.0.6778.33, docker, image
       sha256:af92b705…) gjennom hele produksjonskjeden bestilling→claim→
-      motor→rapport→signert kvittering→promotert artefakt.
-      kontroll.ti_kjoringer_signert_innen_frist = 10/10 ·
+      motor→rapport→kvittering→promotert artefakt.
+      maalt.kjoringer_rent_innen_frist = 10/10 — RENT UTFALL INNEN EGEN
+      FRIST, ikke en signaturmåling (Codex P2, #117 runde 15: tallet het
+      `kjoringer_signert_innen_frist` og hadde aldri spurt om en
+      signatur; runden fra 18/8 målte den ikke, og
+      `maalt.kjoringer_med_maalt_signatur` står derfor på 0) ·
       funn.avvik_mot_fasit = 0 (begge scenarier) · port 18/19: blokkerte
       subressurser og avkorting ([true,4,13]) i rapporten · port 20:
       0 /privat/-forespørsler i målets logg, robots-5xx ga nøyaktig 1 side ·
@@ -171,8 +175,11 @@ staging_sjekkliste:
       siden er tilgjengelig for måling; den er bare ikke målt ennå.
   revisjonslogg_korrekt:
     # PUNKTET HAR IKKE MÅLINGEN SIN (Codex P2, PR #117 runde 14).
-    # Det sto `ja` med én bevismåling, `maalt.kjoringer_signert_innen_frist`
-    # — et AGGREGAT av fullføring og frist. Noten påsto noe helt annet:
+    # Det sto `ja` med én bevismåling, fristtellingen (som den gang het
+    # `maalt.kjoringer_signert_innen_frist`, nå
+    # `maalt.kjoringer_rent_innen_frist` — Codex P2 runde 15: navnet var
+    # det eneste «signert» ved den) — et AGGREGAT av fullføring og
+    # frist. Noten påsto noe helt annet:
     # at kvitteringen attesterer release, regelsett, sider og artefakthash,
     # og at revisjonsradene er korrekte. Ingen av de påstandene finnes i
     # tallet: `kjoring`-linjene evidensen avleder det av bærer utfall,
@@ -218,7 +225,7 @@ staging_sjekkliste:
       - maalt.feilinjisering_promoterte_artefakter
       - maalt.evidensfrist_reapet
     artefakt: deploy/staging/artefakter/wcag-kontroll-v1-20260818T200413.json
-    artefakt_sha256: 0a27526e024a9a91b52b26082a56940a66bb4d9148889808cf856ef8b35e3583
+    artefakt_sha256: 37b08686c6d32cfbad19978789231182494f6ed313517becaf96d3cde60d674b
     notat: >-
       MÅLT 2026-08-18, BUNDET 2026-08-20 (049). Motorfeil (kommando exit 1) → kvittering 'avbrutt', oppdrag
       feilet MED signert feilkvittering, 0 promoterte artefakter;
@@ -228,12 +235,12 @@ staging_sjekkliste:
     status: ja
     krav_id: wcag-kontroll-v1
     bevismaalinger:
-      - maalt.kjoringer_signert_innen_frist
+      - maalt.kjoringer_rent_innen_frist
       - maalt.kjoringer_krav
     artefakt: deploy/staging/artefakter/wcag-kontroll-v1-20260818T200413.json
-    artefakt_sha256: 0a27526e024a9a91b52b26082a56940a66bb4d9148889808cf856ef8b35e3583
+    artefakt_sha256: 37b08686c6d32cfbad19978789231182494f6ed313517becaf96d3cde60d674b
     notat: >-
-      MÅLT 2026-08-18, BUNDET 2026-08-20 (049). 10/10 kjøringer signert innen frist (verste 2.1 s mot 1800/3600 s
+      MÅLT 2026-08-18, BUNDET 2026-08-20 (049). 10/10 kjøringer utført innen frist (verste 2.1 s mot 1800/3600 s
       budsjett — det syntetiske nettstedet er lite; fristene deklarert i
       oppdragskontrakt.UTFORELSESFRIST_VALG og skrevet på radene, motoren
       fikk claimets restvindu minus avslutningsmarginen).
