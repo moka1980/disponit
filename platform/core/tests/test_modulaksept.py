@@ -596,22 +596,24 @@ def test_evidensradene_er_tenantfiltrert(migrator):
     drill = _drill(migrator, k)
     migrator.execute("GRANT SELECT ON moduldrill TO disponit_modules_admin")
     migrator.execute("SET ROLE disponit_modules_admin")
+    def _synlige():
+        return migrator.execute(
+            "SELECT count(*) FROM moduldrill WHERE drill_id=%s",
+            (drill,)).fetchone()[0]
+
     try:
-        # Uten tenantkontekst: ingen rader. `current_setting(...,true)` er
-        # NULL, og likheten blir NULL — porten feiler lukket.
-        assert migrator.execute(
-            "SELECT count(*) FROM moduldrill WHERE drill_id=%s",
-            (drill,)).fetchone()[0] == 0
+        # UTEN tenantkontekst: ingen rader. `_kjede` setter GUC-en på
+        # SESJONEN, så den må nullstilles her — ellers måler prøven at
+        # raden er synlig i sin egen tenant, som den skal være.
+        migrator.execute("SELECT set_config('disponit.tenant','',true)")
+        assert _synlige() == 0
+        # …og i en ANNEN tenants kontekst er den like usynlig.
         migrator.execute("SELECT set_config('disponit.tenant','en-annen',true)")
-        assert migrator.execute(
-            "SELECT count(*) FROM moduldrill WHERE drill_id=%s",
-            (drill,)).fetchone()[0] == 0
-        # …og i sin EGEN tenant er raden der.
+        assert _synlige() == 0
+        # …men i sin EGEN tenant er raden der.
         migrator.execute("SELECT set_config('disponit.tenant',%s,true)",
                          (k["ten"],))
-        assert migrator.execute(
-            "SELECT count(*) FROM moduldrill WHERE drill_id=%s",
-            (drill,)).fetchone()[0] == 1
+        assert _synlige() == 1
     finally:
         migrator.rollback()
         migrator.execute("RESET ROLE")
