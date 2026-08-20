@@ -155,29 +155,34 @@ def _med_felt_i_m57(tmp_path: Path, felt: str) -> subprocess.CompletedProcess:
                           capture_output=True, text=True)
 
 
-@pytest.mark.parametrize("felt,i_meldingen", [
+# Egenskapen `status` skrevet på tolv måter. Alle gir nettleseren den helt
+# alminnelige egenskapen `status` — og det er nettopp poenget: leseren er en
+# JavaScript-motor, så skrivemåten er ikke lenger et spørsmål den kan svare
+# feil på. Andre kolonne er hva feilmeldingen må si.
+_STATUSFORMER = [
     ('"status":"planlagt"', "status"),
-    ("['status']:'planlagt'", "BEREGNET"),
-    ('["sta" + "tus"]:"planlagt"', "BEREGNET"),
-    ("[nokkel]:'planlagt'", "BEREGNET"),
-    (r"['\x73tatus']:'planlagt'", "escape"),
-    (r'["\u0073tatus"]:"planlagt"', "escape"),
-    (r'"\x73tatus":"planlagt"', "escape"),
-    # Trettende runde. Escapen trenger ikke fnutter rundt seg, og egenskapen
-    # trenger ikke være skrevet som `navn: verdi` i det hele tatt.
-    (r'\u0073tatus:"planlagt"', "egenskap"),
-    ('...{status:"planlagt"}', "spredning"),
-    ("status", "forkortelse"),
-    ('status(){return "planlagt"}', "metode"),
-    ('get status(){return "planlagt"}', "accessor"),
-    # Et MØNSTER med `]` i seg lukket den beregnede nøkkelen for tidlig, så
-    # `status` ble aldri lest som nøkkel.
-    ('[/]/.test("") ? "x" : "status"]:"planlagt"', "BEREGNET"),
-    # Og motsatt vei: et mønster i VERDI-posisjon er ingen literal katalogen
-    # bærer. Leser ikke generatoren verdien, vet den heller ikke hvor neste felt
-    # begynner — fnutten inne i mønsteret svelget kommaet og skjulte feltet bak.
-    ('x:/["\']/, "status":"planlagt"', "egenskap"),
-])
+    ("['status']:'planlagt'", "status"),
+    ('["sta" + "tus"]:"planlagt"', "status"),
+    (r"['\x73tatus']:'planlagt'", "status"),
+    (r'["\u0073tatus"]:"planlagt"', "status"),
+    (r'"\x73tatus":"planlagt"', "status"),
+    (r'\u0073tatus:"planlagt"', "status"),
+    ('...{status:"planlagt"}', "status"),
+    ('status(){return "planlagt"}', "status"),
+    ('get status(){return "planlagt"}', "status"),
+    ('[/]/.test("") ? "x" : "status"]:"planlagt"', "status"),
+    ('x:/["\']/, "status":"planlagt"', "status"),
+    # To former navngir noe som ikke finnes: forkortelsen `status` og den
+    # beregnede nøkkelen `[nokkel]` leser begge en variabel ingen har erklært.
+    # Nettleseren kaster `ReferenceError` der, og da er det ingen katalog å
+    # tegne i det hele tatt — siden er død. Leseren sier det samme, og det er
+    # høyere enn det gamle svaret: generatoren kastet feltet i stillhet.
+    ("status", "fant ingen modulkatalog"),
+    ("[nokkel]:'planlagt'", "fant ingen modulkatalog"),
+]
+
+
+@pytest.mark.parametrize("felt,i_meldingen", _STATUSFORMER)
 def test_statusforbudet_ser_alle_skrivemaater(tmp_path, felt, i_meldingen):
     """En tilstandsakse er forbudt uansett HVORDAN egenskapen er skrevet.
 
@@ -189,13 +194,12 @@ def test_statusforbudet_ser_alle_skrivemaater(tmp_path, felt, i_meldingen):
     den helt alminnelige egenskapen `status`: den frittstående siden ville
     tegnet den, mens generatoren kastet den stille, og da lyver kilden.
 
-    Generatoren TOLKER ikke escape-sekvenser og GJETTER ikke hva en beregnet
-    nøkkel kommer til å hete — den avviser dem, se `les_nokkel()`. Prøvene her
-    krever derfor bare at den STOPPER og sier hva den ikke kunne lese.
-
-    VERDIEN er med i det samme kravet, se `les_verdi()`: leses den ikke, vet
-    generatoren heller ikke hvor neste felt begynner, og et `status`-felt bak
-    en uleselig verdi forsvinner like stille som en uleselig nøkkel.
+    Svaret var å AVVISE hver form generatoren ikke kunne lese, og lista over
+    dem vokste med én for hver runde. Nå leses katalogen av `les_katalog.mjs`,
+    altså av en JavaScript-motor: skrivemåten forsvinner i lesningen, og
+    egenskapen HETER `status` når forbudet spør. Derfor krever prøvene her at
+    meldingen navngir AKSEN og ikke formen — formen er ikke lenger noe
+    generatoren har en mening om.
 
     Mutasjonen står i en KOPI av kilden — en port som retter fila den måler,
     kan ikke feile.
@@ -204,37 +208,40 @@ def test_statusforbudet_ser_alle_skrivemaater(tmp_path, felt, i_meldingen):
     assert r.returncode != 0, (
         f"generatoren godtok «{felt}» i modulposten")
     melding = r.stderr + r.stdout
-    assert "M-57" in melding and i_meldingen in melding, (
+    assert i_meldingen in melding, (
         f"feilmeldingen sier ikke hva som er galt: {melding}")
 
 
-@pytest.mark.parametrize("felt,doblet", [
-    # Fasen er den farligste: nettleseren tegner den siste, generatoren skrev
-    # den første, og ferskhetsporten hadde vært grønn mot sitt eget utdata.
-    ('"p":4', "p"),
-    ('"n":58', "n"),
-    ('"name":"Noe annet"', "name"),
-    ('"area":"Et annet område"', "area"),
-    # Og det gjelder ethvert felt, ikke bare de fire `POST_RE` henter.
-    ('"rev":"direkte"', "rev"),
-])
-def test_en_doblet_egenskap_i_en_modulpost_er_et_stopp(tmp_path, felt, doblet):
-    """En kilde kan ikke ha to svar på samme spørsmål.
+def test_en_doblet_egenskap_leses_som_nettleseren_leser_den(tmp_path):
+    """`{…, p:3, p:4}` er fase 4 — for generatoren som for nettleseren.
 
-    `{n:57, …, p:3, p:4}` er lovlig JS: nettleseren bruker den SISTE verdien,
-    mens `POST_RE` henter den første (Codex P2 på #118, femtende runde). Den
-    frittstående siden ville tegnet M-57 i fase 4 mens `katalog.js` sa fase 3,
-    og ferskhetsporten hadde vært grønn hele veien — den måler regenerering mot
-    sitt eget utdata, og begge sider leste da den samme første verdien.
+    Doblingen var et STOPP før (Codex P2 på #118, femtende runde), og med god
+    grunn: `POST_RE` hentet den FØRSTE verdien mens nettleseren bruker den
+    siste. Den frittstående siden ville tegnet M-57 i fase 4 mens `katalog.js`
+    sa fase 3, og ferskhetsporten hadde vært grønn hele veien — den måler
+    regenerering mot sitt eget utdata, og begge sider leste da den samme
+    første verdien.
 
-    Å hente verdien strukturelt ville flyttet svaret fra det første til det
-    siste, og det er ikke bedre. Doblingen selv er feilen.
+    Det avviket kan ikke oppstå lenger. `les_katalog.mjs` ER en JavaScript-
+    motor, så generatoren og nettleseren leser ikke to verdier de kan velge
+    ulikt mellom; de leser den samme. Da er doblingen slurv og ikke en
+    tvetydighet, og porten måler det som faktisk sto på spill: at katalogen
+    får verdien siden viser. Går denne i stykker, har lesningen sluttet å være
+    nettleserens.
     """
-    r = _med_felt_i_m57(tmp_path, felt)
-    assert r.returncode != 0, f"generatoren godtok en doblet «{doblet}»"
-    melding = r.stderr + r.stdout
-    assert "M-57" in melding and doblet in melding, (
-        f"feilmeldingen sier ikke hvilket felt som er doblet: {melding}")
+    rot = _temprot(tmp_path)
+    spek = rot.joinpath(*KILDE_REL)
+    tekst = spek.read_text(encoding="utf-8")
+    anker = '"kl":"krever_outbox"'
+    assert anker in tekst, "fant ikke ankeret i M-57 — kilden har endret form"
+    spek.write_text(tekst.replace(anker, '"p":4,' + anker, 1), encoding="utf-8")
+    r = subprocess.run([sys.executable, str(GENERATOR), str(rot)],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr + r.stdout
+    katalog = (rot / "platform/core/ui/static/js/katalog.js").read_text(
+        encoding="utf-8")
+    assert "{ n: 57, omrade: \"samarbeid_og_hr\", fase: 4 }" in katalog, (
+        "generatoren leste ikke den siste verdien, slik nettleseren gjør")
 
 
 def test_statusforbudet_tar_ikke_en_verdiliste_for_en_nokkel(tmp_path):
