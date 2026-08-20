@@ -382,11 +382,22 @@ def main() -> int:
     # den passive registreringen og fase 2 vært to ULIKE påstander om
     # samme immutable rad — og fase 2 ville dødd på en
     # immutabilitetskonflikt midt i drillen.
-    finnes = m.execute(
-        "SELECT 1 FROM modulrelease WHERE modul_id=%s AND release_id=%s",
-        (MODUL, a.rullback_id)).fetchone()
-    if finnes is None:
-        _admin(m)
+    #
+    # OG DEN KJØRES UANSETT OM RADEN FINNES (Codex P1, #117 runde 6):
+    # kallet var før pakket inn i en «finnes den alt?»-test, og en
+    # eksisterende `--rullback-id` slapp da forbi HELT umålt. `registrer_release`
+    # er selv idempotent — identisk innhold returnerer stille, avvikende
+    # innhold hever `release ... er immutable` — så testen ga ingenting,
+    # men den kastet bort den ENESTE sammenligningen mellom raden og
+    # forgjengerens bytes. En rullback-id fra et eldre forsøk (annet
+    # manifest, annen digest) ble derfor akseptert her, drillen drenerte
+    # den levende deploymenten i `bytt_release` under, og
+    # immutabilitetskonflikten dukket først opp i fase 2 — etter at
+    # rullingen var gjort, med modulen stående uten claimende arbeider og
+    # drilltilstanden oppbrukt. Porten hører hjemme FØR den destruktive
+    # rullingen, ikke etter.
+    _admin(m)
+    try:
         # DIGESTEN ER FORGJENGERENS, ikke den drilledes (Codex P1, runde
         # 6). Verdiene er like i dag — `krev_bootbare_forgjengerbytes`
         # har alt målt det — men KILDEN er poenget: en rullbakk som
@@ -395,7 +406,18 @@ def main() -> int:
         m.execute("SELECT registrer_release(%s,%s,%s,%s,%s,%s,'m56-drill')",
                   (MODUL, a.rullback_id, kver, khash, _manifest_hash(),
                    forgjenger_digest))
-    m.commit()
+        m.commit()
+    except Exception as e:
+        m.rollback()
+        raise SystemExit(
+            f"AVBRUTT: rullback-releasen {a.rullback_id} finnes alt i"
+            " registeret med et ANNET innhold enn drillen ville skrevet"
+            f" (kontrakt v{kver}, manifest {_manifest_hash()[:12]}…, digest"
+            f" {str(forgjenger_digest)[:19]}…): {e}\nRaden er immutabel, så"
+            " den kan ikke rettes — og hadde drillen rullet dit likevel,"
+            " ville fase 2 dødd på nøyaktig denne konflikten ETTER at den"
+            " levende deploymenten var drenert. Kjør drillen med en"
+            " ubrukt --rullback-id.") from e
     m.execute("RESET ROLE")
 
     # (b) — det løpende oppdraget. Arbeideren stoppes så bestillingen
