@@ -60,7 +60,14 @@ reserveres som aller første handling, før noe er registrert eller rullet
 (Codex P2, #117 runde 8). En drill som ikke kan legge fra seg målingen
 sin, er en ødeleggelse uten evidens — og et mål som alt finnes, er en
 tidligere drills evidens som ikke skal overskrives. Den ene fila et
-avbrutt forsøk kan etterlate seg, er en tom `.<navn>.<pid>.delvis`.
+avbrutt forsøk kan etterlate seg, er en tom `.<navn>.delvis`.
+
+ÉN DRILL AV GANGEN. Filreservasjonen gjelder bare ett filnavn, så den
+kan ikke være gjerdet mot parallelle kjøringer (Codex P1, #117 runde 9):
+drillen tar en sesjonsvarig advisory-lås på `modul:miljø` før tilstanden
+leses, og holder den til prosessen dør. To driller som overlapper leser
+samme claimende release og drenerer hverandres deployments midt i
+målingen — og livsløpet er enveis, så det er ikke noe å angre på.
 
 BRUK:
     sudo -E python3 deploy/staging/rollback-m56.py \
@@ -89,6 +96,10 @@ MODUL = "m_wcag_audit"   # registernavnet (modulmappen heter m56_wcag_audit)
 MILJO = "staging"
 VENTETID_S = 25.0        # claim-stoppet observeres minst så lenge
 POLL_S = 0.1
+# Låserommet for flippedriller. Egen klasse, ikke delt med arbeiderens
+# eller migrasjonenes nøkler, så en drill aldri kolliderer med noe annet
+# enn en annen drill av samme modul+miljø.
+DRILLNOKKEL = 915_774_056
 
 
 def _api_url() -> str:
@@ -485,12 +496,22 @@ def reserver_artefaktmaal(ut: Path) -> Path:
         raise SystemExit(
             f"AVBRUTT: {ut} finnes alt. Det er en tidligere drills"
             " evidens, og den overskrives ikke. Velg et nytt filnavn.")
-    delvis = ut.parent / f".{ut.name}.{os.getpid()}.delvis"
+    delvis = ut.parent / f".{ut.name}.delvis"
     try:
-        # O_EXCL: reservasjonen er vår, eller så finnes det en parallell
-        # kjøring — og to samtidige driller av samme modul er i seg selv
-        # noe som skal stoppes her.
+        # O_EXCL: reservasjonen er vår, eller så finnes den fra før.
+        # Codex' P1 (runde 9): navnet bar PID-en, og da reserverte det
+        # ingenting — hver prosess fikk sin egen sti, og O_EXCL kunne per
+        # konstruksjon aldri kollidere. Uten PID-en er stien en funksjon
+        # av `--ut` alene, og reservasjonen betyr det den sier.
         os.close(os.open(delvis, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+    except FileExistsError:
+        raise SystemExit(
+            f"AVBRUTT: {delvis} er alt reservert. Enten kjører en annen"
+            f" drill mot {ut} akkurat nå — to samtidige driller av samme"
+            " modul måler hverandres halve tilstand — eller så er den en"
+            " avbrutt drills reservasjon. Er den TOM kan den fjernes; har"
+            " den innhold, er den en måling som aldri ble flyttet på plass,"
+            " og den skal tas vare på.")
     except OSError as e:
         raise SystemExit(
             f"AVBRUTT: kan ikke skrive i {ut.parent} ({e}). Uten et sted å"
@@ -508,6 +529,58 @@ def reserver_artefaktmaal(ut: Path) -> Path:
 
     atexit.register(rydd)
     return delvis
+
+
+def ta_drillereservasjonen(m) -> None:
+    """Én flippedrill av gangen per modul+miljø — hele kjøringen igjennom.
+
+    Codex' P1 på PR #117 (runde 9): kommentaren over `O_EXCL` påsto at
+    reservasjonen stoppet parallelle driller. Den gjorde ikke det. PID-en
+    i navnet ga hver prosess sin egen sti (rettet over), og selv uten den
+    hjalp filen bare mot samme `--ut` — to driller med hvert sitt filnavn
+    passerte uansett. Noen modulbred lås fantes ikke: `bytt_release` tar
+    sin lås per overgang og slipper den, så mellom overgangene er det
+    ingenting som holder.
+
+    Og det er nettopp mellom overgangene drillen bor. To kjøringer som
+    overlapper leser den SAMME claimende releasen, og begge går inn i et
+    enveisløp bygget på at ingen andre flytter registeret under dem:
+
+      * begge registrerer sine drill-releaser og ruller. Den andre
+        rullingen drenerer den førstes rullbakk-deployment — som den
+        første i (b2) nettopp bootet og venter på skal fullføre et
+        oppdrag. Claim-porten fencer arbeideren midt i målingen, og den
+        førstes drill dør rødt på noe den ikke gjorde.
+      * `krev_ubrukte_drillreleaser` fanger det ikke: den måler
+        tilstanden FØR sin egen kjøring, og de to id-parene er ubrukte i
+        hvert sitt oppslag. Porten er sann i det den leses, og usann et
+        øyeblikk senere.
+      * begge id-parene er da konsumert, livsløpet er enveis, og staging
+        står igjen i en tilstand ingen av de to artefaktene beskriver.
+
+    Låsen er derfor på SESJONEN, ikke på transaksjonen: den tas her, før
+    den claimende deploymenten i det hele tatt leses, og holdes til
+    prosessen dør. `m.commit()` underveis rører den ikke, og en drill som
+    krasjer slipper den i det forbindelsen lukkes — så en henger som er
+    borte, blokkerer ikke neste kjøring.
+
+    `try`, ikke blokkerende: en drill som står i kø og starter når den
+    første er ferdig, ville målt en HELT annen tilstand enn den leste
+    argumentene for — den drillede releasen er da drenert og
+    drill-id-ene brukt opp. Riktig svar er å si ifra, ikke å vente.
+    """
+    fikk = m.execute("SELECT pg_try_advisory_lock(%s, hashtext(%s))",
+                     (DRILLNOKKEL, f"{MODUL}:{MILJO}")).fetchone()[0]
+    m.commit()
+    if not fikk:
+        raise SystemExit(
+            f"AVBRUTT: en annen flippedrill av {MODUL} i {MILJO} holder"
+            " drillåsen. To samtidige driller leser samme claimende"
+            " release og går inn i hvert sitt enveisløp — den ene drenerer"
+            " den andres rullbakk-deployment midt i målingen, og begge"
+            " par drill-id-er er brukt opp uten at noen av artefaktene"
+            " beskriver tilstanden staging står igjen i. Vent til den"
+            " andre drillen er ferdig; låsen slippes når prosessen dør.")
 
 
 def skriv_artefakt(delvis: Path, ut: Path, innhold: str) -> None:
@@ -556,6 +629,10 @@ def main() -> int:
     sj = _sjekkliste()
     env = sj._miljo()
     m = sj._pg(env["DISPONIT_MIGRATOR_URL"])
+    # …og FØR tilstanden i det hele tatt leses: én drill av gangen per
+    # modul+miljø, holdt av sesjonen hele kjøringen (Codex P1, #117
+    # runde 9). Alt under bygger på at ingen andre flytter registeret.
+    ta_drillereservasjonen(m)
 
     # Utgangspunktet: den claimende deploymenten er den som drilles.
     rad = m.execute(

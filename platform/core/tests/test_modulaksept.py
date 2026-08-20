@@ -16,6 +16,7 @@ Alle tester konstruerer egen tilstand. Ingen delt fixture.
 """
 import hashlib
 import json
+import os
 import re
 import secrets
 import subprocess
@@ -1607,6 +1608,78 @@ def test_drillen_apner_artefaktmaalet_for_den_odelegger_noe(tmp_path):
     assert delvis2.read_text(encoding="utf-8") == '{"m": 1}\n'
     assert (tmp_path / "art2.json").read_text(
         encoding="utf-8") == "annen evidens\n"
+
+
+def test_bare_en_flippedrill_av_gangen(tmp_path):
+    """Codex' P1 (runde 9): reservasjonen gjerdet ikke parallelle driller.
+
+    Runde 8 la inn `O_EXCL` på en delvisfil og kalte den et vern mot to
+    samtidige kjøringer. Navnet bar PID-en, så hver prosess fikk sin egen
+    sti og kollisjonen kunne per konstruksjon aldri skje — og selv uten
+    PID-en dekker en fil bare ett `--ut`. Ingen modulbred lås fantes:
+    `bytt_release` låser hver overgang og slipper, og drillen bor mellom
+    overgangene. To kjøringer leser da samme claimende release, og den
+    andres rulling drenerer den førstes rullbakk-deployment midt i (b2).
+    Livsløpet er enveis, så begge id-parene er brukt opp etterpå."""
+    d = _drillskript()
+
+    # 1) Filreservasjonen betyr nå det den sier: stien er en funksjon av
+    #    `--ut` alene, og andre forsøk på samme mål kolliderer.
+    ut = tmp_path / "art.json"
+    delvis = d.reserver_artefaktmaal(ut)
+    assert str(os.getpid()) not in delvis.name, \
+        "PID-en i navnet gjør O_EXCL til en reservasjon uten motpart"
+    with pytest.raises(SystemExit) as ei:
+        d.reserver_artefaktmaal(ut)
+    assert "alt reservert" in str(ei.value)
+    assert delvis.exists(), "den førstes reservasjon skal stå urørt"
+
+    class _Laas:
+        """Bare det låseporten spør om: fikk vi låsen, eller ikke."""
+
+        def __init__(self, fikk):
+            self.fikk, self.kall = fikk, []
+
+        def execute(self, sql, params=None):
+            self.kall.append((sql, params))
+            return self
+
+        def fetchone(self):
+            return (self.fikk,)
+
+        def commit(self):
+            self.kall.append(("COMMIT", None))
+
+    # 2) Låsen er den egentlige porten — og den avviser, den venter ikke:
+    #    en drill som står i kø starter mot en helt annen tilstand enn
+    #    den leste argumentene sine for.
+    holdt = _Laas(False)
+    with pytest.raises(SystemExit) as ei:
+        d.ta_drillereservasjonen(holdt)
+    assert "drillåsen" in str(ei.value)
+    (sql, params), = [(s, p) for s, p in holdt.kall if s != "COMMIT"]
+    assert "pg_try_advisory_lock" in sql, \
+        "blokkerende lås: drillen ville ventet og målt en annen tilstand"
+    assert "_xact_" not in sql, \
+        "transaksjonslåsen slippes ved første commit — drillen har mange"
+    assert params == (d.DRILLNOKKEL, f"{d.MODUL}:{d.MILJO}")
+
+    # Ledig lås: porten slipper gjennom, og slipper den ALDRI igjen —
+    # den skal holdes av sesjonen til prosessen dør.
+    ledig = _Laas(True)
+    d.ta_drillereservasjonen(ledig)
+    assert not any("advisory_unlock" in s for s, _ in ledig.kall)
+    tekst = (ROT / "deploy/staging/rollback-m56.py").read_text(
+        encoding="utf-8")
+    assert "advisory_unlock" not in tekst, \
+        "slippes låsen underveis, er resten av drillen ugjerdet"
+
+    # 3) …og den tas FØR tilstanden leses. Tas den etterpå, har begge
+    #    kjøringene alt lest samme claimende release, og taperen avbryter
+    #    først når den har bestemt seg for hva den skal drille.
+    assert (tekst.index("ta_drillereservasjonen(m)")
+            < tekst.index("d.livslop='claiming'")), \
+        "låsen må stå foran oppslaget den beskytter"
 
 
 def test_drillen_nekter_naar_forgjengerens_bytes_ikke_kan_bootes():
