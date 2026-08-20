@@ -238,13 +238,55 @@ _NAVN_RE = re.compile(r"[A-Za-z_$][\w$]*")
 _START_RE = re.compile(r"""\{\s*["']?n["']?\s*:\s*(\d+)\s*[,}]""")
 
 
+# Ord som kan stå rett foran en regex-literal. Etter dem venter JS en VERDI,
+# så skråstreken åpner et mønster — `return /\d+/` er ikke en divisjon.
+_NOKKELORD_FOR_VERDI = {
+    "return", "typeof", "instanceof", "in", "of", "new", "delete", "void",
+    "do", "else", "case", "yield", "await",
+}
+
+
+def _er_regex(js: str, i: int) -> bool:
+    """Om skråstreken i `i` åpner en regex-literal og ikke en divisjon.
+
+    JS avgjør dette på det som står FORAN: kommer skråstreken der en verdi kan
+    stå, er den et mønster; kommer den etter en verdi, er den deling. Vi leser
+    derfor bakover forbi blanke tegn. Et navn foran er en verdi — med mindre
+    det er et nøkkelord som selv venter en verdi.
+    """
+    if js[i] != "/" or js.startswith("//", i) or js.startswith("/*", i):
+        return False
+    j = i - 1
+    while j >= 0 and js[j].isspace():
+        j -= 1
+    if j < 0:
+        return True
+    if js[j] in ")]":
+        return False
+    if js[j].isalnum() or js[j] in "_$":
+        k = j
+        while k >= 0 and (js[k].isalnum() or js[k] in "_$"):
+            k -= 1
+        return js[k + 1:j + 1] in _NOKKELORD_FOR_VERDI
+    return True
+
+
 def _hopp(js: str, i: int) -> int:
-    """Indeksen etter tegnet i `i` når det åpner en streng eller en kommentar.
+    """Indeksen etter tegnet i `i` når det åpner en streng, en kommentar eller
+    en regex-literal.
 
     Strenger: enkelt- og dobbeltfnutt og backtick, `\\` som escape. Kommentarer:
     `//` til linjeskift, `/* */` til lukkingen. En uterminert streng eller
     blokkommentar går til filslutt — da er kilden uansett ikke lesbar, og
     postskanneren sier fra med modulnummeret som mangler.
+
+    REGEX-LITERALER kom til i niende runde (Codex P2 på #118). En skråstrek var
+    ikke noe skanneren kjente, så `/["']/` i UI-koden ble lest tegn for tegn —
+    og fnutten INNE i mønsteret ble starten på en streng. Alt fram til neste
+    fnutt, kjørende kode inkludert, lå da inne i det skanneren trodde var tekst.
+    Et mønster er kode: `\\` escaper, og en tegnklasse `[...]` kan bære en `/`
+    uten å avslutte. Et linjeskift kan den ikke: står det ett, var skråstreken
+    en divisjon likevel, og vi går ett tegn videre som før.
     """
     n = len(js)
     if js.startswith("//", i):
@@ -253,6 +295,23 @@ def _hopp(js: str, i: int) -> int:
     if js.startswith("/*", i):
         j = js.find("*/", i + 2)
         return n if j < 0 else j + 2
+    if js[i] == "/":
+        j, i_klasse = i + 1, False
+        while j < n and js[j] != "\n":
+            if js[j] == "\\":
+                j += 2
+                continue
+            if i_klasse:
+                i_klasse = js[j] != "]"
+            elif js[j] == "[":
+                i_klasse = True
+            elif js[j] == "/":
+                j += 1
+                while j < n and js[j].isalpha():
+                    j += 1
+                return j
+            j += 1
+        return i + 1
     sitat = js[i]
     j = i + 1
     while j < n and js[j] != sitat:
@@ -261,7 +320,9 @@ def _hopp(js: str, i: int) -> int:
 
 
 def _apner(js: str, i: int) -> bool:
-    return js[i] in "\"'`" or js.startswith("//", i) or js.startswith("/*", i)
+    """Om tegnet i `i` åpner noe skanneren ikke skal lese som kode."""
+    return (js[i] in "\"'`" or js.startswith("//", i)
+            or js.startswith("/*", i) or _er_regex(js, i))
 
 
 def _modulposter() -> list[tuple[int, str]]:
@@ -622,6 +683,11 @@ def _prosetekst() -> str:
     dør i denne fila. `filter_state` i en `const` sier ingenting om registeret;
     `krever_outbox` i et `kl`-felt gjør det.
 
+    Et MØNSTER er kode, ikke prosa: `_apner()` spenner over regex-literaler
+    for at en fnutt inne i dem ikke skal se ut som en streng (niende runde),
+    men det som står der er tegnklasser og kvantorer — ingen påstand om
+    registeret. De hoppes derfor over uten å beholdes.
+
     Maskeringen bytter tegn mot mellomrom i stedet for å klippe dem ut, og
     lar linjeskift stå: linjenummeret porten melder skal peke på linja i fila,
     ikke i et utsnitt.
@@ -635,7 +701,8 @@ def _prosetekst() -> str:
         while i < b:
             if _apner(tekst, i):
                 j = min(_hopp(tekst, i), b)
-                behold.update(range(i, j))
+                if not _er_regex(tekst, i):
+                    behold.update(range(i, j))
                 i = j
                 continue
             i += 1
