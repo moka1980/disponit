@@ -1473,19 +1473,68 @@ def _mask_ikkekjort(sql: str, ut: list, a: int, b: int,
                 data.append((i, slutt))
             i = slutt
             continue
-        if sql.startswith("--", i):
-            j = sql.find("\n", i, b)
-            j = b if j < 0 else j
-        elif sql.startswith("/*", i):
-            j, dybde = i + 2, 1
-            while j < b and dybde:
-                if sql.startswith("/*", j):
-                    dybde, j = dybde + 1, j + 2
-                elif sql.startswith("*/", j):
-                    dybde, j = dybde - 1, j + 2
-                else:
-                    j += 1
+        j = _sqlkommentar(sql, i, b)
+        if j < 0:
+            i += 1
+            continue
+        _blank(ut, i, j)
+        i = j
+
+
+def _sqlkommentar(sql: str, i: int, b: int) -> int:
+    """Indeksen etter kommentaren som åpner i `i`, eller -1 om ingen gjør.
+
+    `--` slutter der linja slutter. `/* … */` NØSTES i PostgreSQL, så dybden
+    telles — den ytre lukkes av den siste `*/`, ikke av den første.
+    """
+    if sql.startswith("--", i):
+        j = sql.find("\n", i, b)
+        return b if j < 0 else j
+    if not sql.startswith("/*", i):
+        return -1
+    j, dybde = i + 2, 1
+    while j < b and dybde:
+        if sql.startswith("/*", j):
+            dybde, j = dybde + 1, j + 2
+        elif sql.startswith("*/", j):
+            dybde, j = dybde - 1, j + 2
         else:
+            j += 1
+    return j
+
+
+def _uten_sqlkommentar(sql: str) -> str:
+    """SQL-en med kommentarene byttet mot mellomrom, alt annet urørt.
+
+    Et ANNET spørsmål enn `_kjort_sql()`, og derfor en annen lesning. Der
+    spør vi hva migrasjonen håndhever nå; her spør vi hva den SKRIVER. En
+    verdi i en funksjonskropp er skrevet av registeret selv om `AS $$…$$` bare
+    definerer kroppen uten å kjøre den, mens en verdi i en kommentar ikke er
+    skrevet noe sted — den er en merknad.
+
+    Dollarsiterte spenn leses derfor VIDERE i stedet for å blankes, og
+    kommentarene inne i dem er kommentarer på samme måte som utenfor.
+    """
+    ut = list(sql)
+    _mask_kommentar(sql, ut, 0, len(sql))
+    return "".join(ut)
+
+
+def _mask_kommentar(sql: str, ut: list, a: int, b: int) -> None:
+    """Blank kommentarene i `sql[a:b]`. Se `_uten_sqlkommentar()`."""
+    i = a
+    while i < b:
+        slutt = _sqlliteral(sql, i)
+        if slutt >= 0:
+            slutt = min(slutt, b)
+            if sql[i] == "$":
+                tagg = _DOLLARTAGG_RE.match(sql, i).group(0)
+                innen = min(i + len(tagg), slutt)
+                _mask_kommentar(sql, ut, innen, max(innen, slutt - len(tagg)))
+            i = slutt
+            continue
+        j = _sqlkommentar(sql, i, b)
+        if j < 0:
             i += 1
             continue
         _blank(ut, i, j)
@@ -2287,19 +2336,61 @@ def _kjente_identifikatorer() -> set[str]:
     CHECK (`alltid_stopp` er en modus, håndhevet i kode) berøres ikke — den har
     ingen registertilstand å falle ut av, og filstammene er gjeldende tilstand
     i seg selv, siden en slettet fil forsvinner fra `git ls-files`.
+
+    Og verdiene leses ut av det migrasjonen SKRIVER, ikke ut av råteksten
+    (Codex P2 på #118, femtende runde). En KOMMENTAR skriver ingenting: en
+    merknad som nevner `'oppfunnet_klasse'` i forbifarten la ordet i lista, og
+    prosaen i sannhetskilden kunne så presentere en klasse ingen tabell har
+    hørt om — porten under sa ingenting, fordi navnet «finnes». Merk at
+    lesningen her er en annen enn i `_registerets_enums()`: en verdi i en
+    funksjonskropp ER skrevet av registeret, selv om `AS $$…$$` bare definerer
+    kroppen uten å kjøre den. Se `_uten_sqlkommentar()`.
     """
     gjeldende, noen_gang = _registerets_enums()
     pensjonert = noen_gang - set().union(*gjeldende.values(), set())
     ut: set[str] = set()
     for sql in sorted(MIGRASJONER.glob("*.sql")):
-        ut.update(t for t in re.findall(r"'([^']*)'",
-                                        sql.read_text(encoding="utf-8"))
+        tekst = _uten_sqlkommentar(sql.read_text(encoding="utf-8"))
+        ut.update(t for t in re.findall(r"'([^']*)'", tekst)
                   if IDENT_RE.fullmatch(t))
     ut -= pensjonert
     spor = subprocess.run(["git", "ls-files", "-z"], cwd=ROT,
                           capture_output=True, text=True, check=True)
     ut.update(Path(rel).stem for rel in spor.stdout.split("\0") if rel)
     return ut
+
+
+@pytest.mark.parametrize("sql,star_igjen", [
+    # En merknad skriver ingenting, og navnet i den finnes ikke av den grunn.
+    ("-- en gang het den 'oppfunnet_klasse'\n", False),
+    ("/* en gang het den 'oppfunnet_klasse' */\n", False),
+    # Men en verdi i en funksjonsKROPP er skrevet av registeret, selv om
+    # `AS $$…$$` bare definerer kroppen uten å kjøre den.
+    ("CREATE FUNCTION f() RETURNS text LANGUAGE sql AS $$\n"
+     "    SELECT 'oppfunnet_klasse';\n"
+     "$$;\n", True),
+    # Og en kommentar INNE i en slik kropp er fortsatt en kommentar.
+    ("CREATE FUNCTION f() RETURNS text LANGUAGE sql AS $$\n"
+     "    -- het 'oppfunnet_klasse' før\n"
+     "    SELECT 'noe';\n"
+     "$$;\n", False),
+    # Kommentartegn inne i en STRENG er data, ikke starten på en kommentar.
+    ("INSERT INTO t (a, b) VALUES ('a--b', 'oppfunnet_klasse');\n", True),
+])
+def test_en_sqlkommentar_skriver_ingen_identifikator(sql, star_igjen):
+    """Lista over kjente identifikatorer leses av det migrasjonen SKRIVER.
+
+    Verdiene ble hentet ut av råteksten (Codex P2 på #118, femtende runde), og
+    et maskinformet navn nevnt i en merknad havnet dermed i lista uten å finnes
+    noe sted. Prosaen i sannhetskilden kunne så presentere en klasse ingen
+    tabell har hørt om, og porten sa ingenting fordi navnet «finnes».
+
+    Lesningen er en annen enn den `_registerets_enums()` bruker, og det er
+    med vilje: der spør vi hva registeret HÅNDHEVER nå, her hva det SKRIVER.
+    En funksjonskropp er skrevet selv om `AS $$…$$` ikke kjører den.
+    """
+    verdier = re.findall(r"'([^']*)'", _uten_sqlkommentar(sql))
+    assert ("oppfunnet_klasse" in verdier) is star_igjen
 
 
 _SKRIPTDEL_RE = re.compile(r"<script[^>]*>(.*?)</script>", re.S)
