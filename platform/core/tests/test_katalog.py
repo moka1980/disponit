@@ -1947,6 +1947,47 @@ def _mask_kommentar(sql: str, ut: list, a: int, b: int) -> None:
         i = j
 
 
+def _skrevne_verdier(sql: str, a: int | None = None,
+                     b: int | None = None) -> list[str]:
+    """Innholdet i hver HELE `'…'`-literal i `sql[a:b]`, escapene løst opp.
+
+    Verdiene ble hentet med `'([^']*)'` (Codex P2 på #118, syttende runde), og
+    et regex kan ikke se at SQL escaper ved å DOBLE fnutten: i `'mangler
+    ''oppfunnet_klasse'''` er det ÉN literal med en melding i, men mønsteret
+    leste den midterste biten som en literal for seg. Et oppfunnet navn nevnt i
+    en feilmelding ble dermed en «kjent identifikator», og prosaen i
+    sannhetskilden kunne presentere det som noe registeret har — porten under
+    sa ingenting, fordi navnet «finnes».
+
+    Lesningen er `_sqlliteral()`, som ellers i porten, og bare en HEL literal
+    teller. Dollarsiterte spenn leses videre inn i, siden en verdi i en
+    funksjonskropp er skrevet av registeret — se `_uten_sqlkommentar()`.
+    Escapestrengen `E'…'` gis fra seg med vilje: innholdet der krever
+    PostgreSQLs escaperegler for å bli en verdi, og et gjettet innhold er
+    verre enn ingen når svaret brukes til å godta et navn.
+    """
+    a, b = a or 0, len(sql) if b is None else b
+    ut: list[str] = []
+    i = a
+    while i < b:
+        slutt = _sqlliteral(sql, i)
+        if slutt < 0:
+            i += 1
+            continue
+        slutt = min(slutt, b)
+        if sql[i] == "$":
+            tagg = _DOLLARTAGG_RE.match(sql, i).group(0)
+            innen = min(i + len(tagg), slutt)
+            ut += _skrevne_verdier(sql, innen, max(innen, slutt - len(tagg)))
+        elif sql[i] == "'" and slutt - i >= 2 and sql[slutt - 1] == "'":
+            # En literal uten sin lukkende fnutt er ikke hel: `_sqlliteral()`
+            # gir da slutten av teksten, og innholdet er det som tilfeldigvis
+            # sto der.
+            ut.append(sql[i + 1:slutt - 1].replace("''", "'"))
+        i = slutt
+    return ut
+
+
 def _er_dokropp(ut: list, a: int, i: int) -> bool:
     """Er den dollarsiterte teksten som åpner i `i` kroppen til en `DO`?
 
@@ -2899,14 +2940,20 @@ def _kjente_identifikatorer() -> set[str]:
     lesningen her er en annen enn i `_registerets_enums()`: en verdi i en
     funksjonskropp ER skrevet av registeret, selv om `AS $$…$$` bare definerer
     kroppen uten å kjøre den. Se `_uten_sqlkommentar()`.
+
+    Og en VERDI er en hel literal (Codex P2 på #118, syttende runde). Det som
+    ble igjen av råtekstlesningen var mønsteret `'([^']*)'`, og det kan ikke
+    se at SQL escaper ved å doble fnutten: en melding som `'mangler
+    ''oppfunnet_klasse'''` ga navnet inni som om det sto for seg selv — samme
+    utfall som kommentaren, en klasse ingen tabell har hørt om. Verdiene leses
+    nå med `_skrevne_verdier()`.
     """
     gjeldende, noen_gang = _registerets_enums()
     pensjonert = noen_gang - set().union(*gjeldende.values(), set())
     ut: set[str] = set()
     for sql in sorted(MIGRASJONER.glob("*.sql")):
         tekst = _uten_sqlkommentar(sql.read_text(encoding="utf-8"))
-        ut.update(t for t in re.findall(r"'([^']*)'", tekst)
-                  if IDENT_RE.fullmatch(t))
+        ut.update(t for t in _skrevne_verdier(tekst) if IDENT_RE.fullmatch(t))
     ut -= pensjonert
     spor = subprocess.run(["git", "ls-files", "-z"], cwd=ROT,
                           capture_output=True, text=True, check=True)
@@ -2930,6 +2977,16 @@ def _kjente_identifikatorer() -> set[str]:
      "$$;\n", False),
     # Kommentartegn inne i en STRENG er data, ikke starten på en kommentar.
     ("INSERT INTO t (a, b) VALUES ('a--b', 'oppfunnet_klasse');\n", True),
+    # En doblet fnutt er en ESCAPE, ikke slutten på én verdi og starten på en
+    # ny (Codex P2 på #118, syttende runde): meldingen her er ÉN literal, og
+    # navnet i den står ikke for seg selv noe sted.
+    ("    RAISE EXCEPTION 'mangler ''oppfunnet_klasse''';\n", False),
+    ("SELECT 'det''s ''oppfunnet_klasse'' som mangler';\n", False),
+    # Men en verdi som ER navnet, med en escapet nabo, står fortsatt.
+    ("INSERT INTO t (a, b) VALUES ('det''s', 'oppfunnet_klasse');\n", True),
+    # En escapestreng gis fra seg: innholdet krever escapereglene for å bli en
+    # verdi, og et gjettet innhold er verre enn ingen når svaret godtar navn.
+    ("SELECT E'oppfunnet_klasse';\n", False),
 ])
 def test_en_sqlkommentar_skriver_ingen_identifikator(sql, star_igjen):
     """Lista over kjente identifikatorer leses av det migrasjonen SKRIVER.
@@ -2942,8 +2999,14 @@ def test_en_sqlkommentar_skriver_ingen_identifikator(sql, star_igjen):
     Lesningen er en annen enn den `_registerets_enums()` bruker, og det er
     med vilje: der spør vi hva registeret HÅNDHEVER nå, her hva det SKRIVER.
     En funksjonskropp er skrevet selv om `AS $$…$$` ikke kjører den.
+
+    Og en verdi er en HEL literal (Codex P2 på #118, syttende runde). Prøven
+    her målte lesningen med et regex skrevet av ved siden av den funksjonen
+    bruker, så den kunne ikke se at de to sa forskjellige ting: `'mangler
+    ''oppfunnet_klasse'''` er én melding, ikke et navn. Nå måler den den samme
+    lesningen som lista faktisk gjøres med.
     """
-    verdier = re.findall(r"'([^']*)'", _uten_sqlkommentar(sql))
+    verdier = _skrevne_verdier(_uten_sqlkommentar(sql))
     assert ("oppfunnet_klasse" in verdier) is star_igjen
 
 
