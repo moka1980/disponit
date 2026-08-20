@@ -405,20 +405,32 @@ _ORD_UTEN_VERDI = {
 # leses i `_kodespenn()`, som lar `for` bli stående som konteksten.
 _KONTROLLORD = {"if", "for", "while", "with", "switch", "catch"}
 
-# Ord som en SETNING kan følge rett etter. En krøllparentes der er en blokk,
-# ikke et objektliteral — `else {` og `try {` åpner kropper.
+# Ord som et UTTRYKK følger rett etter. Alt annet lar setningsposisjonen stå.
 #
-# Lista er lukket av regelen i `_kodespenn()`: et objektliteral kan bare stå
-# der et UTTRYKK kan begynne, og etter en VERDI kan ikke et uttrykk begynne.
-# Alt som avslutter en verdi — et navn, en streng, et tall, `]`, `}`, `)` —
-# setter derfor setningsposisjon av seg selv, og det som står igjen å ramse
-# opp er de reserverte ordene som ikke er en verdi. Blant dem er dette de som
-# tar en KROPP. `catch` sto ikke her (Codex P2 på #118, tolvte runde): den
-# valgfrie bindingen kan sløyfes, og `try {} catch {}` leste da kroppen som et
-# objektliteral — `}` avsluttet en «verdi», mønsteret etter ble en divisjon, og
-# fnutten inne i mønsteret åpnet en «streng» som svelget kjørende kode.
-# `static {}` er samme form inne i en klasse.
-_SETNINGSORD = {"else", "do", "try", "finally", "catch", "static"}
+# Lista sto motsatt vei og ramset opp ordene en SETNING kunne følge — `else`,
+# `do`, `try`, `finally`, `catch`, `static` — og alt utenfor den falt til
+# uttrykksposisjon. Det er den åpne enden om igjen (Codex P2 på #118, femtende
+# runde): `export function f() {}` og `export default class {}` er
+# ERKLÆRINGER, men `export` sto ikke i lista, så `function` ble lest som et
+# uttrykk. Kroppen ga da en verdi, skråstreken etter ble en divisjon, og
+# fnutten i mønsteret etter den åpnet en «streng» som svelget kjørende kode.
+# Å legge til `export` ville løst det tilfellet og latt `default`, `const`,
+# `import` og resten stå.
+#
+# Snudd er lista lukket, på samme måte som `_ORD_UTEN_VERDI`: mengden er de
+# reserverte ordene i JS, og for hvert av dem er det gitt av grammatikken om
+# det som følger er et uttrykk eller en setning. Erklæringsordene — `export`,
+# `default`, `const`, `let`, `var`, `import`, `class`, `function` — hører til
+# setningssiden, og et ord som ikke er reservert er en verdi og setter
+# setningsposisjon av seg selv.
+#
+# Regelen bak begge sider er den samme: et objektliteral kan bare stå der et
+# UTTRYKK kan begynne, og etter en VERDI kan ikke et uttrykk begynne — `x {`,
+# `"s" {`, `1 {`, `] {` finnes ikke i JS.
+_UTTRYKKSORD = {
+    "await", "case", "delete", "extends", "in", "instanceof", "new",
+    "return", "throw", "typeof", "void", "yield",
+}
 
 # Ord som åpner en KROPP, og som i UTTRYKKSposisjon gjør hele konstruksjonen til
 # en verdi. Kroppen er en blokk begge veier — den er ikke et objektliteral — men
@@ -520,8 +532,11 @@ def _kodespenn(js: str, a: int, b: int, avslutt: bool = False):
     objektliteral kan bare stå der et UTTRYKK kan begynne, og etter en VERDI kan
     ikke et uttrykk begynne — `x {`, `"s" {`, `1 {`, `] {` finnes ikke i JS.
     Derfor setter ALT som avslutter en verdi setningsposisjon, sammen med `;`,
-    `)`, `=>` og `_SETNINGSORD`. Å ramse opp igjen står bare de reserverte
-    ordene som ikke er en verdi — en lukket mengde, ikke en liste over former.
+    `)` og `=>`. Å ramse opp står bare de reserverte ordene som et UTTRYKK
+    følger etter, `_UTTRYKKSORD` — en lukket mengde, ikke en liste over former.
+    Den listen sto først motsatt vei, som ordene en SETNING kunne følge etter,
+    og var da åpen i feil ende: `export function f() {}` falt utenfor og ble
+    lest som et funksjonsUTTRYKK (Codex P2 på #118, femtende runde).
     `${…}` starter i uttrykksposisjon; det er derfor `avslutt` også setter
     startposisjonen.
 
@@ -610,7 +625,7 @@ def _kodespenn(js: str, a: int, b: int, avslutt: bool = False):
             i, verdi = treff.end(), (etter_punktum
                                      or ordet not in _ORD_UTEN_VERDI)
             if etter_punktum or ordet != _MODIFIKATOR:
-                blokkposisjon = verdi or ordet in _SETNINGSORD
+                blokkposisjon = verdi or ordet not in _UTTRYKKSORD
             continue
         if (treff := _TALL_START_RE.match(js, i, b)):
             i, verdi, siste_ord, blokkposisjon = treff.end(), True, "", True
@@ -874,6 +889,18 @@ _SKANNERPROEVER = [
      False),
     ('const o = {class: 1}; if (a) {} /["\']/.test(v); '
      'const filter_state = {};', False),
+    # Femtende runde: en EKSPORTERT erklæring står fortsatt i setningsposisjon.
+    # `export` er ikke et ord et uttrykk følger etter, så kroppen er en kropp
+    # og mønsteret etter den er et mønster.
+    ('export function f() {} /["\']/.test(v); const filter_state = {};',
+     False),
+    ('export default class {} /["\']/.test(v); const filter_state = {};',
+     False),
+    ('export default function () {} /["\']/.test(v); '
+     'const filter_state = {};', False),
+    ('export async function f() {} /["\']/.test(v); const filter_state = {};',
+     False),
+    ('export class A {} /["\']/.test(v); const filter_state = {};', False),
 ]
 
 
