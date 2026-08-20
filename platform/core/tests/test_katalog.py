@@ -876,6 +876,9 @@ _LEGG_PA, _SLIPP, _NAVN = "legg på", "slipp", "navn"
 # En TABELL som slippes. Den tar med seg alt porten fører om den: vilkårene,
 # navnene de opptar, og at porten har lest den. Se `_registerets_enums()`.
 _SLIPP_TABELL = "slipp tabell"
+# En KOLONNE som slippes. PostgreSQL fjerner da hvert vilkår som nevner den —
+# vilkåret har ingenting igjen å binde. Se `_registerets_enums()`.
+_SLIPP_KOLONNE = "slipp kolonne"
 # Et ARVEFORHOLD som knyttes eller løses. Arven kopierer forelderens
 # CHECK-vilkår ned i barnet, og — i motsetning til `LIKE` — blir stående som
 # en BINDING: et vilkår forelderen får senere, får barnet også. Se `_arver()`.
@@ -950,12 +953,14 @@ def _lesstatement(stmt, tekst: str, ut: list, betinget: bool) -> None:
     Det er `ALTER TABLE IF EXISTS` som gjør et slipp betinget, for der er det
     TABELLEN som kan mangle.
 
-    ET `DROP TABLE` er en hendelse som FJERNER (Codex P2 på #118, tjuefjerde
-    runde). Bare tabellslippet leses: alt annet et `DROP` kan treffe, kan i
-    verste fall etterlate modellen med et vilkår databasen ikke har lenger —
-    altså et smalere svar, en rød port — mens en tabell som slippes og
-    opprettes på nytt er den ene formen som gjør porten RØD på en gyldig
-    migrasjon. Se `_registerets_enums()`.
+    ET `DROP TABLE` OG ET `DROP COLUMN` er hendelser som FJERNER (Codex P2 på
+    #118, tjuefjerde runde). Begge tar vilkår med seg i databasen — tabellen
+    alle sine, kolonnen dem som nevner den — mens modellen beholdt dem og
+    snittet en gjenopprettet tabell eller kolonne mot vilkår som ikke finnes
+    noe sted. Av `DROP`-formene er det bare tabellslippet som leses: alt annet
+    et `DROP` kan treffe, kan i verste fall etterlate modellen med et vilkår
+    databasen ikke har lenger, altså et smalere svar og en rød port. Se
+    `_registerets_enums()`.
     """
     if isinstance(stmt, pglast.ast.CreateStmt):
         tabell = _navn(stmt.relation)
@@ -975,6 +980,8 @@ def _lesstatement(stmt, tekst: str, ut: list, betinget: bool) -> None:
         for cmd in stmt.cmds or ():
             if cmd.subtype == pglast.enums.AlterTableType.AT_DropConstraint:
                 ut.append((_SLIPP, tabell, cmd.name, None, betinget))
+            elif cmd.subtype == pglast.enums.AlterTableType.AT_DropColumn:
+                ut.append((_SLIPP_KOLONNE, tabell, cmd.name, None, betinget))
             elif cmd.subtype in _ARVESLAG:
                 ut.append((_ARVESLAG[cmd.subtype], tabell, _navn(cmd.def_),
                            None, betinget))
@@ -1267,7 +1274,7 @@ def _dynamiske_hendelser(skjelett: str, betinget: bool) -> list | None:
         for stmt, tekst in setninger:
             _lesstatement(stmt, tekst, ut, betinget)
         return [_ukjentgjort(h) for h in ut
-                if h[0] not in (_SLIPP, _SLIPP_TABELL)]
+                if h[0] not in (_SLIPP, _SLIPP_TABELL, _SLIPP_KOLONNE)]
     return None
 
 
@@ -1509,6 +1516,23 @@ def _registerets_enums(
                 opptatt.pop(tabell, None)
                 laget.discard(tabell)
                 arv.pop(tabell, None)
+                continue
+            if slag is _SLIPP_KOLONNE:
+                # Med kolonnen går vilkårene som nevner den (Codex P2 på #118,
+                # tjuefjerde runde). PostgreSQL kan ikke håndheve et CHECK på
+                # en kolonne som ikke finnes, og fjerner det uten å bli bedt om
+                # det. Modellen beholdt det, og en kolonne som slippes og
+                # legges til igjen med et VIDERE vilkår ble da snittet mot det
+                # gamle, smale — porten avviste verdier registeret godtar.
+                # Navnet blir ledig på samme vis, og et vilkår på FLERE
+                # kolonner går også: det er nok at kolonnen nevnes.
+                if hendelse[4]:
+                    continue
+                for eier in [tabell] + _arvingene(arv, tabell):
+                    for nokkel in [n for n in vilkar
+                                   if n[0] == eier and navn in vilkar[n]]:
+                        del vilkar[nokkel]
+                        opptatt.get(eier, {}).pop(nokkel[1], None)
                 continue
             if slag is _SLIPP:
                 if hendelse[4]:
@@ -2806,6 +2830,94 @@ def test_en_sluppet_tabell_gir_fra_seg_navnene_sine(tmp_path):
         "slippet bommet — modellen holdt av et navn på en tabell som ikke "
         "finnes, og skjøv det unavngitte vilkåret til en teller databasen "
         "ikke har")
+
+
+def test_en_sluppet_kolonne_tar_vilkaarene_som_nevner_den(tmp_path):
+    """`DROP COLUMN` fjerner vilkårene på kolonnen — den har ingenting igjen.
+
+    Codex P2 på #118, tjuefjerde runde. `AT_DropColumn` falt gjennom til
+    `_lesvilkar()` med et tomt `def_` og endret ingen tilstand. PostgreSQL
+    fjerner hvert vilkår som nevner kolonnen, uten å bli bedt om det: et CHECK
+    kan ikke håndheves på noe som ikke finnes.
+
+    Legges kolonnen til igjen med et VIDERE vilkår, snittet porten det nye mot
+    det gamle, smale — og avviste `irreversibel`, en verdi registeret godtar
+    etterpå.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE modulkontrakt (\n"
+        "    reversibilitet TEXT NOT NULL\n"
+        "        CONSTRAINT rev_smal CHECK (reversibilitet IN\n"
+        "            ('direkte', 'kompenserende')));\n",
+        "ALTER TABLE modulkontrakt DROP COLUMN reversibilitet;\n"
+        "ALTER TABLE modulkontrakt\n"
+        "    ADD COLUMN reversibilitet TEXT\n"
+        "        CONSTRAINT rev_bred CHECK (reversibilitet IN\n"
+        "            ('direkte', 'kompenserende', 'irreversibel'));\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende.get((MODULKONTRAKT, "reversibilitet")) == {
+        "direkte", "kompenserende", "irreversibel"}, (
+        "vilkåret på den sluppede kolonnen ble stående og snevret inn det nye")
+
+
+def test_en_sluppet_kolonne_gir_fra_seg_vilkaarsnavnet(tmp_path):
+    """Vilkåret som gikk med kolonnen, gir også fra seg navnet sitt.
+
+    Den andre halvdelen av samme funn. Sto navnet igjen som opptatt, fikk det
+    unavngitte CHECK-et på den nye kolonnen `…_check1` i modellen mens
+    PostgreSQL ga det basisnavnet — og slippet til slutt traff da i databasen
+    og bommet i modellen, som ble stående med en innskrenkning som ikke lenger
+    finnes.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE modulkontrakt (\n"
+        "    reversibilitet TEXT NOT NULL\n"
+        "        CHECK (reversibilitet IN ('direkte', 'kompenserende')));\n",
+        "ALTER TABLE modulkontrakt DROP COLUMN reversibilitet;\n"
+        "ALTER TABLE modulkontrakt\n"
+        "    ADD COLUMN reversibilitet TEXT\n"
+        "        CHECK (reversibilitet IN ('direkte', 'kompenserende')),\n"
+        "    ADD CONSTRAINT rev_bred CHECK (reversibilitet IN\n"
+        "        ('direkte', 'kompenserende', 'irreversibel'));\n",
+        "ALTER TABLE modulkontrakt\n"
+        "    DROP CONSTRAINT modulkontrakt_reversibilitet_check;\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende.get((MODULKONTRAKT, "reversibilitet")) == {
+        "direkte", "kompenserende", "irreversibel"}, (
+        "slippet bommet — modellen holdt av navnet til et vilkår som gikk med "
+        "kolonnen")
+
+
+def test_et_betinget_kolonneslipp_fjerner_ingenting(tmp_path):
+    """Et `DROP COLUMN` bak en gren er ikke kjent utført.
+
+    Kjørte grenen ikke, står kolonnen der med vilkåret sitt. Å fjerne det
+    ville vært å gjette, og gjetningen går den ene veien som gjør skade:
+    porten ville godtatt `irreversibel`, som `rev_smal` avviser hvis grenen
+    ikke kjørte.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE modulkontrakt (\n"
+        "    reversibilitet TEXT NOT NULL\n"
+        "        CONSTRAINT rev_smal CHECK (reversibilitet IN\n"
+        "            ('direkte', 'kompenserende')));\n",
+        "DO $$\n"
+        "BEGIN\n"
+        "    IF (SELECT count(*) FROM modulkontrakt) = 0 THEN\n"
+        "        ALTER TABLE modulkontrakt DROP COLUMN reversibilitet;\n"
+        "    END IF;\n"
+        "END $$;\n"
+        "ALTER TABLE modulkontrakt ADD CONSTRAINT rev_bred\n"
+        "    CHECK (reversibilitet IN\n"
+        "           ('direkte', 'kompenserende', 'irreversibel'));\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende.get((MODULKONTRAKT, "reversibilitet")) == {
+        "direkte", "kompenserende"}, (
+        "det betingede kolonneslippet ble lest som utført, og vilkåret "
+        "databasen kanskje fortsatt håndhever forsvant ut av snittet")
 
 
 def test_et_betinget_tabellslipp_fjerner_ingenting(tmp_path):
