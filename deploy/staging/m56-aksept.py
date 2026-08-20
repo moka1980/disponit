@@ -354,6 +354,63 @@ def verifiser_kilde(runde: dict) -> str:
     return sha
 
 
+def _digest(raa: object) -> str:
+    """Digesten uten `sha256:`-prefiks — samme form uansett kilde."""
+    return str(raa or "").removeprefix("sha256:").strip().lower()
+
+
+def verifiser_digestkjede(runde: dict, drill: dict) -> str:
+    """Bytene rundens tall gjelder, MÅ være bytene som aksepteres.
+
+    Codex' P1 på PR #117 (runde 3): de to artefaktene ble validert hver
+    for seg, og `registrer_moduldrill` sammenlignet bare de to
+    DATABASE-releasene med hverandre. Ingenting bandt
+    `runde['oppsett']['image_digest']` — imaget WCAG-runden faktisk
+    målte — til drillens digest. Deler drillet og kandidat en digest
+    som er en ANNEN enn den historiske rundens, passerer alt: en deploy
+    med helt andre bytes får immutabel aksept på en gammel måling.
+    A1 sier aksepterte bytes er drillede bytes; her legges det siste
+    leddet til: målte bytes.
+    """
+    o = drill.get("oppsett") or {}
+    runde_digest = _digest((runde.get("oppsett") or {}).get("image_digest"))
+    drillet, kandidat = _digest(o.get("drillet_digest")), \
+        _digest(o.get("kandidat_digest"))
+    if not runde_digest or not drillet or not kandidat:
+        raise SystemExit("AVBRUTT: en av digestene mangler — kjeden"
+                         " målt→drillet→akseptert kan ikke lukkes")
+    for navn, digest in (("drillet", drillet), ("kandidat", kandidat)):
+        if digest != runde_digest:
+            raise SystemExit(
+                f"AVBRUTT: WCAG-runden målte image {runde_digest[:12]}…,"
+                f" men {navn} release bærer {digest[:12]}… — tallene"
+                " gjelder andre bytes enn de som aksepteres")
+    return runde_digest
+
+
+def verifiser_registrert_digest(conn, releaser: tuple[str, ...],
+                                digest: str) -> None:
+    """…og BASEN må bære den samme digesten for de samme releasene.
+
+    Artefaktene er innsjekkede bytes; registeret er den levende
+    sannheten om hva som kjører. Uten dette leddet kunne to artefakter
+    være enige med hverandre om et image ingen av deploymentradene har.
+    """
+    for release in releaser:
+        rad = conn.execute(
+            "SELECT artifact_digest FROM modulrelease WHERE modul_id=%s"
+            " AND release_id=%s", (MODUL, release)).fetchone()
+        if rad is None:
+            raise SystemExit(f"AVBRUTT: release {release} finnes ikke i"
+                             " registeret")
+        if _digest(rad[0]) != digest:
+            raise SystemExit(
+                f"AVBRUTT: registeret gir {release} digest"
+                f" {_digest(rad[0])[:12]}…, mens evidensen gjelder"
+                f" {digest[:12]}… — aksepten ville bundet andre bytes enn"
+                " de målte")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--drill", type=Path, required=True)
@@ -380,6 +437,8 @@ def main() -> int:
     verifiser_modul(drill, "drillartefaktet")
     verifiser_modul(runde, "runde-sammendraget")
     drill_ts = drillens_maaletid(drill)
+    # Målte bytes = drillede bytes = aksepterte bytes (A1, siste ledd).
+    digest = verifiser_digestkjede(runde, drill)
     evidens_sha = verifiser_kilde(runde)
     # …og hele den kjeden bindes til commiten raden faktisk skriver:
     # manifestet (tillitsroten), begge artefaktene og råfilen bakerst.
@@ -419,8 +478,13 @@ def main() -> int:
     from db.pg import koble
     conn = koble(os.environ["DISPONIT_MIGRATOR_URL"])
     try:
-        conn.execute("SET ROLE disponit_modules_admin")
         o = drill["oppsett"]
+        # Siste ledd i A1-kjeden, målt i registeret FØR fullmakten tas:
+        # de innsjekkede artefaktene kan være enige med hverandre om et
+        # image ingen av de levende radene bærer.
+        verifiser_registrert_digest(
+            conn, (o["drillet_release"], o["kandidat_release"]), digest)
+        conn.execute("SET ROLE disponit_modules_admin")
         drill_id = conn.execute(
             "SELECT registrer_moduldrill(%s,%s,%s,%s,%s,%s,%s,%s,%s,"
             "'m56-aksept',%s)",

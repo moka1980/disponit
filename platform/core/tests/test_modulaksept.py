@@ -639,6 +639,62 @@ def test_drillen_baerer_sin_egen_maaletid(migrator):
     migrator.execute("RESET ROLE")
 
 
+def test_maalte_bytes_er_drillede_bytes_er_aksepterte_bytes():
+    """Codex' P1 (runde 3): de to artefaktene ble validert hver for seg,
+    og digestporten i `registrer_moduldrill` sammenlignet bare de to
+    DATABASE-releasene med hverandre. Ingenting bandt imaget WCAG-runden
+    faktisk MÅLTE til drillens digest, så en deploy med helt andre bytes
+    kunne få immutabel aksept på en gammel måling."""
+    m = _aksept_skript()
+    art = ROT / "deploy/staging/artefakter"
+    runde = json.loads((art / "wcag-kontroll-v1-20260818T200413.json"
+                        ).read_text(encoding="utf-8"))
+    drill = json.loads((art / "rollback-m56-v1-20260820T132200.json"
+                        ).read_text(encoding="utf-8"))
+    digest = m.verifiser_digestkjede(runde, drill)
+    assert digest == drill["oppsett"]["kandidat_digest"]
+    # `sha256:`-prefikset er notasjon, ikke en annen digest.
+    assert m.verifiser_digestkjede(
+        dict(runde, oppsett=dict(runde["oppsett"],
+                                 image_digest="sha256:" + digest)),
+        drill) == digest
+    # Drillet OG kandidat på andre bytes enn de målte: begge skal høres.
+    for felt in ("drillet_digest", "kandidat_digest"):
+        with pytest.raises(SystemExit) as ei:
+            m.verifiser_digestkjede(
+                runde, dict(drill, oppsett=dict(drill["oppsett"],
+                                                **{felt: "c" * 64})))
+        assert "andre bytes" in str(ei.value)
+    with pytest.raises(SystemExit):
+        m.verifiser_digestkjede(
+            dict(runde, oppsett=dict(runde["oppsett"], image_digest="")),
+            drill)
+
+
+@pg
+def test_registeret_maa_baere_den_maalte_digesten(migrator):
+    """…og den levende sannheten måles med: to innsjekkede artefakter kan
+    være enige med hverandre om et image ingen deploymentrad bærer."""
+    m = _aksept_skript()
+    k = _kjede(migrator)
+    migrator.execute("RESET ROLE")
+    try:
+        m.MODUL = k["mid"]
+        m.verifiser_registrert_digest(migrator, ("r-drillet", "r-kandidat"),
+                                      "digest-x")
+        with pytest.raises(SystemExit) as ei:
+            m.verifiser_registrert_digest(
+                migrator, ("r-drillet", "finnes-ikke"), "digest-x")
+        assert "finnes ikke" in str(ei.value)
+        with pytest.raises(SystemExit) as ei:
+            m.verifiser_registrert_digest(migrator, ("r-drillet",),
+                                          "digest-y")
+        assert "andre bytes enn" in str(ei.value)
+    finally:
+        m.MODUL = "m_wcag_audit"
+        migrator.rollback()
+
+
 def test_akseptskriptet_leser_maaletiden_av_artefaktet():
     """Måletiden skriptet sender, er drillartefaktets `ts` — lest med
     tidssone, aldri klokka i akseptøyeblikket."""
