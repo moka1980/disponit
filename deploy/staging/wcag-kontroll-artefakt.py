@@ -11,10 +11,12 @@ utvalgsregler som kan leses, angripes og kjøres om igjen:
     `feilinjisering_motorfeil` med `utfall: "tomt"`: et claim som ikke
     fant noe å feilinjisere målte ingenting, og velges aldri — den siste
     FAKTISKE injeksjonen gjelder.
-  * Release og image-digest er de som gjaldt DA sluttmålingen skjedde
-    (siste `fase2_ok`/`fase1_ok` før siste `fase5_resultat`), ikke de
-    nyeste i fila. Fasitrunden gikk på wcag-r1; alle m56-releasene deler
-    digest, så tallene gjelder nøyaktig de aksepterte bytene (A1).
+  * Hver hendelse bærer KONTEKSTEN den ble målt i: release og
+    image-digest fra siste `fase2_ok`/`fase1_ok` FØR den i den
+    append-only fila. Alle de valgte hendelsene må dele den konteksten —
+    ellers er sammendraget ikke ett sett tall fra én kjøring, og
+    genereringen stopper. Fasitrunden gikk på wcag-r1; alle m56-releasene
+    deler digest, så tallene gjelder nøyaktig de aksepterte bytene (A1).
   * `bestatt` regnes ut av de VALGTE hendelsenes egne `ok`-felter —
     aldri påstått.
 
@@ -50,39 +52,95 @@ def les(sti: Path) -> list[dict]:
             if l.strip()]
 
 
+def kontekster(rader: list[dict]) -> list[tuple[str | None, str | None]]:
+    """Per hendelse: (image_digest, release) som gjaldt DA den ble målt.
+
+    Fila er append-only, så konteksten til hendelse nr. i er den siste
+    `fase1_ok`/`fase2_ok` FØR i. Posisjon, ikke `ts`: rekkefølgen i fila
+    ER rekkefølgen hendelsene ble skrevet, og to hendelser kan dele
+    tidsstempel.
+    """
+    ut: list[tuple[str | None, str | None]] = []
+    image = release = None
+    for d in rader:
+        if d.get("hendelse") == "fase1_ok":
+            image = str(d.get("image_id") or "").removeprefix("sha256:")
+        elif d.get("hendelse") == "fase2_ok":
+            release = d.get("release")
+        ut.append((image, release))
+    return ut
+
+
+def en_kjoring(rader: list[dict], kontekst: list, valgte: list[int]) -> tuple:
+    """Alle de valgte målingene må dele kontekst. -> (digest, release).
+
+    Codex' P1 på PR #117 (runde 4): hver `siste()` plukket sin hendelse
+    UAVHENGIG, mens release og image ble hentet fra konteksten før siste
+    `fase5_resultat`. En delvis gjenkjøring av bare robots, frekvens,
+    motor eller feilinjisering — eventuelt etter et release-/imagebytte —
+    ble derfor satt sammen med et eldre fase 5-resultat og TILSKREVET den
+    eldre digesten. Alle `ok`-feltene kunne stå grønne uten at noen
+    enkelt kjøring hadde produsert det tallsettet.
+
+    Sammendraget er evidens for ETT image: da må hver måling i det være
+    gjort på nettopp de bytene, i den releasen. Fail-closed — et
+    sammendrag som ikke kan avledes fra én sammenhengende kontekst,
+    skrives ikke.
+    """
+    sett = {kontekst[i] for i in valgte}
+    if len(sett) != 1:
+        linjer = sorted(
+            f"{rader[i].get('hendelse')}: release={kontekst[i][1]!r}"
+            f" image={(kontekst[i][0] or '')[:12]}…" for i in valgte)
+        raise SystemExit(
+            "AVBRUTT: de valgte målingene er gjort i ULIKE kjøringer —\n  "
+            + "\n  ".join(linjer)
+            + "\nsammendraget ville tilskrevet ett image tall som er målt"
+              " på et annet")
+    digest, release = sett.pop()
+    if not digest or not release:
+        raise SystemExit("AVBRUTT: målingene mangler kontekst (fase1_ok/"
+                         "fase2_ok før seg) — uten release og image er"
+                         " tallene ikke evidens for noe")
+    return digest, release
+
+
 def sammendrag(rader: list[dict], kilde: str, kilde_sha256: str) -> dict:
-    def siste(navn: str, kandidat=lambda d: True) -> dict:
-        valgte = [d for d in rader if d.get("hendelse") == navn
+    kontekst = kontekster(rader)
+
+    def siste(navn: str, kandidat=lambda d: True) -> int:
+        valgte = [i for i, d in enumerate(rader) if d.get("hendelse") == navn
                   and kandidat(d)]
         if not valgte:
             raise SystemExit(f"AVBRUTT: ingen {navn!r} i evidensfila — "
                              "runden er ufullstendig, ikke grønn")
         return valgte[-1]
 
-    fase5 = siste("fase5_resultat")
-    for5 = [d for d in rader if d.get("hendelse") in ("fase1_ok", "fase2_ok")
-            and d["ts"] <= fase5["ts"]]
-    fase1 = [d for d in for5 if d["hendelse"] == "fase1_ok"][-1]
-    fase2 = [d for d in for5 if d["hendelse"] == "fase2_ok"][-1]
-    robots = siste("port20_robots")
-    robots5 = siste("port20_robots_5xx")
-    frekv = siste("port21_frekvens")
-    motor = siste("port24_motormiljo")
-    injeksjon = siste("feilinjisering_motorfeil",
-                      lambda d: d.get("utfall") != "tomt")
-    frist = siste("feilinjisering_evidensfrist")
+    indekser = [
+        siste("fase5_resultat"),
+        siste("port20_robots"),
+        siste("port20_robots_5xx"),
+        siste("port21_frekvens"),
+        siste("port24_motormiljo"),
+        siste("feilinjisering_motorfeil", lambda d: d.get("utfall") != "tomt"),
+        siste("feilinjisering_evidensfrist"),
+    ]
+    image_digest, release = en_kjoring(rader, kontekst, indekser)
+    valgte = tuple(rader[i] for i in indekser)
+    (fase5, robots, robots5, frekv, motor, injeksjon, frist) = valgte
 
     signert, krav = (int(x) for x in
                      str(fase5["ti_kjoringer_signert_innen_frist"]).split("/"))
-    valgte = (fase5, robots, robots5, frekv, motor, injeksjon, frist)
     return {
         "krav_id": "wcag-kontroll-v1",
         "ts": max(d["ts"] for d in valgte),
         "bestatt": all(d.get("ok") is True for d in valgte),
         "oppsett": {
             "modul": MODUL,
-            "release": fase2["release"],
-            "image_digest": fase1["image_id"].removeprefix("sha256:"),
+            # Konteksten ALLE de valgte målingene deler — ikke den som
+            # tilfeldigvis gjaldt ved én av dem (Codex P1, runde 4).
+            "release": release,
+            "image_digest": image_digest,
             "kilde": kilde,
             # SP-11 hele veien: manifestet hash-binder DETTE artefaktet,
             # og artefaktet hash-binder råfilen det er avledet av — et

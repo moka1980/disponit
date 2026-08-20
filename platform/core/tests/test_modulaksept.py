@@ -541,6 +541,83 @@ def test_evidenskjeden_er_bytebundet_hele_veien():
         " og artefaktet har glidd fra hverandre"
 
 
+def _runde_skript():
+    """Sammendragsgeneratoren lastet som modul (filnavnet har bindestrek)."""
+    import importlib.util
+    sti = ROT / "deploy/staging/wcag-kontroll-artefakt.py"
+    spec = importlib.util.spec_from_file_location("wcag_artefakt", sti)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_sammendraget_maa_komme_fra_en_sammenhengende_kjoring():
+    """Codex' P1 (runde 4): hver måling ble plukket UAVHENGIG som «siste
+    av sin type», mens release og image ble hentet fra konteksten før
+    siste `fase5_resultat`. En delvis gjenkjøring av bare robots — etter
+    et image- eller releasebytte — ble derfor satt sammen med et eldre
+    fase 5-resultat og tilskrevet den GAMLE digesten. Alle `ok`-feltene
+    kunne stå grønne uten at én kjøring hadde produsert tallsettet."""
+    m = _runde_skript()
+    art = json.loads((ROT / ("deploy/staging/artefakter/"
+                             "wcag-kontroll-v1-20260818T200413.json")
+                      ).read_text(encoding="utf-8"))
+    kilde = ROT / art["oppsett"]["kilde"]
+    rader = m.les(kilde)
+    # Den innsjekkede fila ER én sammenhengende kontekst — porten er
+    # ikke bare streng, den er riktig.
+    assert m.sammendrag(rader, art["oppsett"]["kilde"],
+                        art["oppsett"]["kilde_sha256"]) == art
+
+    robots = [d for d in rader if d["hendelse"] == "port20_robots"][-1]
+    fremmed = "c" * 64
+    assert art["oppsett"]["image_digest"] != fremmed
+
+    def _sammendrag(ekstra):
+        return m.sammendrag(rader + ekstra, art["oppsett"]["kilde"],
+                            art["oppsett"]["kilde_sha256"])
+
+    # Selve angrepet: nytt image rullet ut, så BARE robots kjørt om
+    # igjen. Fase 5, frekvens, motor og feilinjisering er de gamle.
+    paa_nytt_image = [
+        {"ts": "2026-08-19T09:00:00+00:00", "hendelse": "fase1_ok",
+         "image_id": f"sha256:{fremmed}"},
+        dict(robots, ts="2026-08-19T09:00:01+00:00"),
+    ]
+    with pytest.raises(SystemExit) as ei:
+        _sammendrag(paa_nytt_image)
+    assert "ULIKE kjøringer" in str(ei.value)
+
+    # Samme image, ny release: konteksten er like fullt en annen.
+    paa_ny_release = [
+        {"ts": "2026-08-19T09:00:00+00:00", "hendelse": "fase2_ok",
+         "release": "wcag-r99", "artifact_digest": art["oppsett"][
+             "image_digest"], "claiming": True, "kontrakt_hash": SHA0,
+         "kvittering_hash": SHA0, "payload_hash": SHA0},
+        dict(robots, ts="2026-08-19T09:00:01+00:00"),
+    ]
+    with pytest.raises(SystemExit) as ei:
+        _sammendrag(paa_ny_release)
+    assert "ULIKE kjøringer" in str(ei.value)
+
+    # …men en HEL gjenkjøring på det nye imaget er en gyldig runde, og
+    # da er det den nye digesten som skrives — ikke den gamle.
+    typer = ("fase5_resultat", "port20_robots", "port20_robots_5xx",
+             "port21_frekvens", "port24_motormiljo",
+             "feilinjisering_motorfeil", "feilinjisering_evidensfrist")
+    hel = [{"ts": "2026-08-19T09:00:00+00:00", "hendelse": "fase1_ok",
+            "image_id": f"sha256:{fremmed}"}]
+    for n, navn in enumerate(typer):
+        siste = [d for d in rader if d["hendelse"] == navn
+                 and d.get("utfall") != "tomt"][-1]
+        hel.append(dict(siste, ts=f"2026-08-19T09:00:{n + 1:02d}+00:00"))
+    ny = _sammendrag(hel)
+    assert ny["oppsett"]["image_digest"] == fremmed
+    assert ny["oppsett"]["release"] == \
+        [d for d in rader if d["hendelse"] == "fase2_ok"][-1]["release"]
+    assert ny["maalt"] == art["maalt"] and ny["bestatt"] is True
+
+
 def test_wcag_grensene_maaler_at_portene_faktisk_kjorte():
     """Codex' to P2 på PR #117: en port som ikke ble prøvd, og et tak som
     ble brutt, passerte begge. `robots_5xx: 0 av 0` er fravær av en
