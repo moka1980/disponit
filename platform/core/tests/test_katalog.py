@@ -6,7 +6,7 @@ anbefaling: den dagen noen redigerer `katalog.js` for hånd, eller endrer
 spesifikasjonen uten å kjøre generatoren, driver de to kildene fra hverandre —
 og forsiden viser da et produktomfang ingen har bestemt.
 
-Testene her er derfor åtte porter (Codex P2 på PR #43, #99 og #118):
+Testene her er derfor ni porter (Codex P2 på PR #43, #99 og #118):
   1. KILDE     — generatoren leser sannhetskilden, ikke arkivet i `prototype/`.
   2. FERSKHET  — regenerering i en temp-rot gir NØYAKTIG det som ligger i repoet.
   3. OMDØPING  — nytt navn i kilden stopper genereringen til oversettelsen er
@@ -19,6 +19,8 @@ Testene her er derfor åtte porter (Codex P2 på PR #43, #99 og #118):
   8. PEKERE    — ingen fil i repoet henviser til en spesifikasjonsutgave som
                  er slettet; historikken i docs/pr/ og docs/beslutninger/ er
                  med rette unntatt.
+  9. KLASSER   — `kl` og `rev` i katalogen er verdier modulregisteret godtar,
+                 lest ut av CHECK-vilkårene i migrasjonene.
 """
 import json
 import re
@@ -240,7 +242,60 @@ def _moduler_fra_kilden() -> dict[int, dict[str, str]]:
         if fase and dep:
             ut[n] = {"fase": int(fase.group(1)),
                      "dep": dep.group(1) or dep.group(2)}
+            for felt in ("kl", "rev"):
+                verdi = re.search(
+                    rf"(?:\b{felt}:'([^']*)'|\"{felt}\":\s*\"([^\"]*)\")", seg)
+                if verdi:
+                    ut[n][felt] = verdi.group(1) or verdi.group(2)
     return ut
+
+
+# Kontraktklassene katalogen bruker er de SAMME feltene modulregisteret lagrer,
+# og registeret håndhever dem med CHECK-vilkår. Enumene leses derfor ut av
+# migrasjonene, ikke skrevet av her: en kopi i testen ville vært nok en kilde
+# som kan drive fra databasen — akkurat feilen porten finnes for å hindre.
+# Migrasjonene kjøres i nummerrekkefølge, og en senere kan UTVIDE et vilkår
+# (036 la `ekstern_lesing` til `sideeffektklasse`), så det siste treffet gjelder.
+MIGRASJONER = ROT / "platform" / "core" / "db" / "migrations"
+KONTRAKTFELT = {"kl": "sideeffektklasse", "rev": "reversibilitet"}
+
+
+def _registerenum(kolonne: str) -> set[str]:
+    gjeldende: set[str] | None = None
+    for sql in sorted(MIGRASJONER.glob("*.sql")):
+        for m in re.finditer(
+                rf"CHECK\s*\(\s*{kolonne}\s+IN\s*\(([^)]*)\)",
+                sql.read_text(encoding="utf-8"), re.S):
+            gjeldende = set(re.findall(r"'([^']*)'", m.group(1)))
+    assert gjeldende, f"fant ikke CHECK-vilkåret for {kolonne} i migrasjonene"
+    return gjeldende
+
+
+def test_kontraktklassene_i_katalogen_finnes_i_modulregisteret():
+    """`kl` og `rev` i katalogen må være verdier registeret godtar.
+
+    Codex P2 på PR #118: M-57 kom inn med `kl: "dokumentbehandling"` og
+    `rev: "rådgivende_pluss_signert_utsendelse"`. Begge er utenfor CHECK-
+    vilkårene i migrasjon 014 og 036, og de står i nøyaktig de feltene hver
+    annen modul bruker til maskinlesbare klasser. En modul beskrevet slik kan
+    ikke registreres når den skal bygges: kontrakten avvises av databasen, og
+    den som implementerer må enten se bort fra sannhetskilden eller endre den.
+
+    Prosa om hvorfor en klasse ble valgt hører hjemme i `merknad` og `guard` —
+    de feltene har ingen enum og ingen maskin leser dem.
+
+    MUTASJONEN SOM DREPER DENNE: hardkod enumene i testen. Da vokter porten en
+    kopi, og en migrasjon som strammer inn et vilkår går rett forbi den.
+    """
+    tillatt = {felt: _registerenum(kol) for felt, kol in KONTRAKTFELT.items()}
+    avvik = [f"M-{n}.{felt}={d[felt]!r} (godtatt: "
+             f"{', '.join(sorted(tillatt[felt]))})"
+             for n, d in sorted(_moduler_fra_kilden().items())
+             for felt in KONTRAKTFELT
+             if felt in d and d[felt] not in tillatt[felt]]
+    assert not avvik, (
+        "kontraktklasser i katalogen som modulregisteret vil avvise: "
+        + "; ".join(avvik))
 
 
 def _modulreferanser(dep: str, kjente: set[int]) -> set[int]:
