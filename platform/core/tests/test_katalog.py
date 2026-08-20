@@ -500,6 +500,23 @@ _UTTRYKKSORD = {
 # det. Skillet er posisjonen ordet står i, ikke formen på kroppen (Codex P2 på
 # #118, fjortende runde).
 _KROPPSORD = {"function", "class"}
+
+# Ord der et LINJESKIFT avslutter setningen (Codex P2 på #118, sekstende
+# runde). JS er ikke frittstående av linjeskift overalt, men i disse formene er
+# det: grammatikken forbyr et linjeskift mellom ordet og det som følger, og
+# tolken setter inn semikolonet i stedet. `return` etterfulgt av linjeskift
+# RETURNERER, og `{}` på linja under er en BLOKK — ikke verdien som returneres.
+# Skanneren bar tilstanden uendret gjennom mellomrommet, så krøllparentesen ble
+# lest som et objektliteral, `}` avsluttet en «verdi», skråstreken etter ble en
+# divisjon, og fnutten i mønsteret åpnet en «streng» som svelget kjørende kode.
+#
+# Mengden er de RESTRIKTIVE produksjonene i grammatikken, ikke en oppramsing av
+# tilfeller: `return`, `throw`, `break`, `continue` og `yield` er stedene
+# spesifikasjonen skriver «[no LineTerminator here]» etter selve ordet.
+_ASI_ORD = {"break", "continue", "return", "throw", "yield"}
+# Linjeskiftene JS regner som linjeskift. `\v` og `\f` er mellomrom for JS, og
+# utløser ikke semikolon.
+_LINJESKIFT = "\n\r\u2028\u2029"
 # `async` er en MODIFIKATOR foran dem, ikke et ord med egen posisjon: i
 # `const f = async function(){}` skal `function` fortsatt leses som det
 # uttrykket det er. Ordet bærer derfor posisjonen sin uendret videre.
@@ -647,6 +664,14 @@ def _kodespenn(js: str, a: int, b: int, avslutt: bool = False):
     flagget ligger PÅ rammen, forsvinner det av seg selv med rammen: en `class`
     brukt som nøkkel i `{class: 1}` kan ikke lekke ut og gjøre neste blokk til
     en verdi.
+
+    LINJESKIFTET er den ene formen der mellomrom ikke er mellomrom (Codex P2 på
+    #118, sekstende runde). Skanneren bar tilstanden uendret gjennom det, men i
+    de restriktive produksjonene — `_ASI_ORD` — avslutter et linjeskift
+    setningen, og tolken setter inn semikolonet selv. `return` etterfulgt av
+    linjeskift RETURNERER, så `{}` på linja under er en blokk og ikke verdien
+    som returneres; vi leste den som et objektliteral, `}` avsluttet en «verdi»,
+    og skråstreken etter ble en divisjon som slapp en fnutt løs.
     """
     verdi, siste_ord = False, ""
     rammer: list[list] = [["", False, 0, False, False]]
@@ -654,11 +679,18 @@ def _kodespenn(js: str, a: int, b: int, avslutt: bool = False):
     while i < b:
         c = js[i]
         if c.isspace():
+            if c in _LINJESKIFT and siste_ord in _ASI_ORD:
+                # Semikolonet tolken selv setter inn. Se `_ASI_ORD`.
+                verdi, siste_ord, blokkposisjon = False, "", True
             i += 1
             continue
         if js.startswith("//", i) or js.startswith("/*", i):
             j = _kommentarslutt(js, i, b)
             yield i, j, "kommentar"
+            # En kommentar som SPENNER over linjer bærer linjeskiftet videre:
+            # `return /*\n*/ {}` returnerer, akkurat som uten kommentaren.
+            if siste_ord in _ASI_ORD and any(t in js[i:j] for t in _LINJESKIFT):
+                verdi, siste_ord, blokkposisjon = False, "", True
             i = j
             continue
         if c in "\"'":
@@ -686,7 +718,12 @@ def _kodespenn(js: str, a: int, b: int, avslutt: bool = False):
             # `for await (…)` er ÉN kontrollform: `await` hører til løkka og
             # ikke til et uttrykk, så `for` blir stående som den konteksten
             # parentesen skal leses i.
-            if not (ordet == "await" and siste_ord == "for"):
+            if etter_punktum:
+                # En EGENSKAP er ikke et nøkkelord, og blir derfor ikke stående
+                # som `siste_ord`: `o.return` avslutter ingen setning i et
+                # linjeskift, og `o.if (x)` åpner ingen betingelsesparentes.
+                siste_ord = ""
+            elif not (ordet == "await" and siste_ord == "for"):
                 siste_ord = ordet
             if ordet in _KROPPSORD and not etter_punktum and not blokkposisjon:
                 # Et funksjons- eller klasseUTTRYKK. Kroppen er en blokk, men
@@ -992,6 +1029,30 @@ _SKANNERPROEVER = [
     ('const of = 4; const y = of / 2; const filter_state = {};', False),
     ('const y = f(of / 2); const filter_state = {};', False),
     ('const y = o.of / 2; const filter_state = {};', False),
+    # Sekstende runde: et linjeskift etter `return` avslutter setningen, så
+    # `{}` under er en BLOKK og mønsteret etter den er et mønster.
+    ('function f() { return\n{} /["\']/.test(v); } const filter_state = {};',
+     False),
+    ('function* g() { yield\n{} /["\']/.test(v); } const filter_state = {};',
+     False),
+    ('while (a) { continue\n{} /["\']/.test(v); } const filter_state = {};',
+     False),
+    ('while (a) { break\n{} /["\']/.test(v); } const filter_state = {};',
+     False),
+    # Også når linjeskiftet står inne i en kommentar mellom de to.
+    ('function f() { return /*\n*/ {} /["\']/.test(v); } '
+     'const filter_state = {};', False),
+    ('function f() { return // slutt\n{} /["\']/.test(v); } '
+     'const filter_state = {};', False),
+    # Men UTEN linjeskift returnerer `return {}` et objektliteral, og
+    # skråstreken etter det deler.
+    ('function f() { return {} / /["\']/.test(v); } const filter_state = {};',
+     False),
+    # Og ordet må stå ALENE: `o.return` er en egenskap, ikke en setning som et
+    # linjeskift kan avslutte, så skråstreken etter deler. Da åpner fnutten i
+    # `["']` en ekte streng, og resten av linja ER prosa — det er den riktige
+    # lesningen av JS-en, ikke en skanner som mister koden.
+    ('const y = o.return\n/["\']/.test(v); const filter_state = {};', True),
 ]
 
 
