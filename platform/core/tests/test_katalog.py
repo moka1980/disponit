@@ -878,6 +878,11 @@ _LEGG_PA, _SLIPP, _NAVN = "legg på", "slipp", "navn"
 # eneste et senere slipp har å treffe med. Se `_lesomdop()`.
 _OMDOP_VILKAR, _OMDOP_TABELL, _OMDOP_KOLONNE = (
     "omdøp vilkår", "omdøp tabell", "omdøp kolonne")
+# En tabell som ble OPPRETTET, og en `LIKE … INCLUDING CONSTRAINTS` som
+# kopierer vilkårene fra en annen. Opprettelsen føres fordi kopieringen må vite
+# om malen er en tabell porten har lest, eller en den ikke kjenner. Se
+# `_liker()`.
+_LAGET, _LIKE = "laget", "like"
 # Slaget `_plpgsql_setninger()` gir en `EXECUTE` — en setning som først blir
 # til når migrasjonen kjører. Se `_lesdynamisk()`.
 _DYNAMISK = "dynamisk"
@@ -922,6 +927,7 @@ def _lesstatement(stmt, tekst: str, ut: list, betinget: bool) -> None:
     """Legg hendelsene i `stmt` til i `ut`, i rekkefølge."""
     if isinstance(stmt, pglast.ast.CreateStmt):
         tabell = _navn(stmt.relation)
+        ut.append((_LAGET, tabell, None, None, betinget))
         for element in stmt.tableElts or ():
             _lesvilkar(element, tabell, ut, betinget)
         return
@@ -949,6 +955,9 @@ _OMDOPSSLAG = {
     pglast.enums.ObjectType.OBJECT_TABLE: _OMDOP_TABELL,
     pglast.enums.ObjectType.OBJECT_COLUMN: _OMDOP_KOLONNE,
 }
+# Biten i `LIKE`-klausulen som sier at vilkårene skal kopieres. `INCLUDING ALL`
+# har den satt sammen med alle de andre, så bitene testes, ikke sammenlignes.
+_LIKE_VILKAR = pglast.enums.TableLikeOption.CREATE_TABLE_LIKE_CONSTRAINTS
 
 
 def _lesomdop(stmt, ut: list, betinget: bool) -> None:
@@ -1006,10 +1015,20 @@ def _lesvilkar(node, tabell: str, ut: list, betinget: bool,
 
     `kolonne` er satt når vilkåret står PÅ en kolonne. Det avgjør navnet
     PostgreSQL gir et vilkår ingen har navngitt, se `_tildelt_navn()`.
+
+    ET VILKÅR KAN OGSÅ KOMME UTENFRA. `LIKE mal INCLUDING CONSTRAINTS` skriver
+    ingen CHECK i teksten, men PostgreSQL kopierer malens inn i den nye
+    tabellen (Codex P2 på #118, tjueandre runde). `TableLikeClause` ble
+    ignorert i stillhet, så et smalt kopiert vilkår forsvant ut av snittet, og
+    porten kunne godta en klasse databasen avviser. Se `_liker()`.
     """
     if isinstance(node, pglast.ast.ColumnDef):
         for c in node.constraints or ():
             _lesvilkar(c, tabell, ut, betinget, node.colname)
+        return
+    if isinstance(node, pglast.ast.TableLikeClause):
+        if node.options & _LIKE_VILKAR:
+            ut.append((_LIKE, tabell, _navn(node.relation), None, betinget))
         return
     if not isinstance(node, pglast.ast.Constraint):
         return
@@ -1191,17 +1210,24 @@ def _dynamiske_hendelser(skjelett: str, betinget: bool) -> list | None:
 def _ukjentgjort(hendelse: tuple) -> tuple:
     """Hendelsen med hullene byttet mot nøklene for «porten vet ikke».
 
-    ET OMDØP tåler ikke et hull. De andre hendelsene bærer uvissheten sin i en
-    nøkkel — et vilkår på en ukjent tabell snittes inn som ukjent — men et
-    omdøp FLYTTER en nøkkel, og et omdøp med ukjent avsender eller mottaker har
-    ingen slik form: `_UKJENT_TABELL` kan ikke være både navnet det flyttes fra
-    og navnet det ikke ble flyttet fra. Da er svaret uvisst for alt.
+    ET OMDØP OG EN `LIKE` tåler ikke et hull. De andre hendelsene bærer
+    uvissheten sin i en nøkkel — et vilkår på en ukjent tabell snittes inn som
+    ukjent — men disse to FLYTTER eller KOPIERER mellom nøkler, og med ukjent
+    avsender eller mottaker finnes ingen slik form: `_UKJENT_TABELL` kan ikke
+    være både tabellen det gjelder og tabellen det ikke gjelder. Da er svaret
+    uvisst for alt.
+
+    EN OPPRETTELSE med ukjent navn føres på `_UKJENT_TABELL`, og det er nok:
+    den sier bare at porten HAR lest tabellen, og en `LIKE` kan ikke navngi en
+    mal med NUL-tegn i navnet. Malen forblir altså ukjent, som den er.
     """
     slag, tabell, navn, uttrykk, betinget = hendelse[:5]
-    if slag in (_OMDOP_VILKAR, _OMDOP_TABELL, _OMDOP_KOLONNE):
+    if slag in (_OMDOP_VILKAR, _OMDOP_TABELL, _OMDOP_KOLONNE, _LIKE):
         return hendelse if _HULL not in f"{tabell}{navn}{uttrykk}" \
             else _alt_uvisst(betinget)
     tabell = _UKJENT_TABELL if _HULL in tabell else tabell
+    if slag is _LAGET:
+        return (slag, tabell, navn, uttrykk, betinget)
     if slag is _NAVN:
         return (slag, tabell, navn, uttrykk, betinget)
     bindinger = {(_UKJENT_KOLONNE if kol == _HULL else kol): verdier
@@ -1360,12 +1386,21 @@ def _registerets_enums(
     # {tabell: navnene som er i bruk} — ALLE vilkårstyper, ikke bare CHECK. Se
     # `_tildelt_navn()`.
     opptatt: dict[str, set[str]] = {}
+    # Tabellene porten har LEST et `CREATE TABLE` for. En `LIKE` som kopierer
+    # fra en tabell som ikke står her, kopierer noe porten ikke kjenner.
+    laget: set[str] = set()
     noen_gang: set[str] = set()
     for sql in sorted((mappe or MIGRASJONER).glob("*.sql")):
         for hendelse in _hendelsene(sql.read_text(encoding="utf-8")):
             slag, tabell, navn = hendelse[:3]
             if slag is _NAVN:
                 opptatt.setdefault(tabell, set()).add(navn)
+                continue
+            if slag is _LAGET:
+                laget.add(tabell)
+                continue
+            if slag is _LIKE:
+                _liker(vilkar, opptatt, laget, tabell, navn)
                 continue
             if slag in (_OMDOP_VILKAR, _OMDOP_TABELL, _OMDOP_KOLONNE):
                 _omdop(vilkar, opptatt, hendelse)
@@ -1521,6 +1556,51 @@ def _omdop(vilkar: dict, opptatt: dict, hendelse: tuple) -> None:
         vilkar[(tabell, _sidestilt_navn(vilkar, tabell, til))] = flyttet
     else:
         vilkar[(tabell, til)] = flyttet
+
+
+def _uvisst_inn(vilkar: dict) -> None:
+    """Skriv «porten vet ingenting» rett inn i modellen.
+
+    Samme svar som `_alt_uvisst()` gir som HENDELSE, for de stedene uvissheten
+    først oppstår når tilstanden bygges og det ikke lenger finnes en hendelse å
+    legge den i. Nøkkelen er sidestilt, så ingen `DROP CONSTRAINT` kan fjerne
+    den igjen.
+    """
+    vilkar[(_UKJENT_TABELL,
+            _sidestilt_navn(vilkar, _UKJENT_TABELL, _DYN_NAVN))] = {
+        _UKJENT_KOLONNE: {ULESELIG_SQL}}
+
+
+def _liker(vilkar: dict, opptatt: dict, laget: set,
+           tabell: str, mal: str) -> None:
+    """Vilkårene `LIKE mal INCLUDING CONSTRAINTS` kopierer inn i tabellen.
+
+    Codex P2 på #118, tjueandre runde. Klausulen skriver ingen CHECK i teksten,
+    så `TableLikeClause` gikk gjennom `_lesvilkar()` uten et ord — men
+    PostgreSQL kopierer malens CHECK-vilkår inn i den nye tabellen, og de
+    håndheves der som alle andre. Erklærte den nye tabellen selv et VIDERE
+    vilkår på samme kolonne, sto bare det videre igjen i modellen, og porten
+    kunne godta en klasse det kopierte avviser.
+
+    KJENNER porten malen, kopieres vilkårene som de er. De legges under
+    sidestilte nøkler, for porten vet ikke hva PostgreSQL kaller kopiene på den
+    nye tabellen — og et navn den ikke vet, skal ikke kunne treffes av et
+    slipp. Det holder snittet smalt, som er den trygge retningen. Malens
+    navn regnes som opptatte på den nye tabellen av samme grunn som i
+    `_tildelt_navn()`: kopiene tar plass i navnerommet.
+
+    KJENNER den ikke malen — ingen migrasjon har opprettet den — er svaret
+    uvisst for alt. Malen kan bære nøyaktig det vilkåret katalogen måles mot,
+    og «ingen kopierte vilkår» ville vært en gjetning, ikke en lesning.
+    """
+    if mal not in laget:
+        _uvisst_inn(vilkar)
+        return
+    for (kilde, navn), bindinger in list(vilkar.items()):
+        if kilde == mal:
+            vilkar[(tabell, _sidestilt_navn(vilkar, tabell, navn))] = \
+                dict(bindinger)
+    opptatt.setdefault(tabell, set()).update(opptatt.get(mal, ()))
 
 
 def _registerenum(kolonne: str) -> set[str]:
@@ -2529,6 +2609,75 @@ def test_et_betinget_omdop_av_tabell_eller_kolonne_er_uvisst(tmp_path, omdop):
     assert gjeldende.get((_UKJENT_TABELL, _UKJENT_KOLONNE)) == {
         ULESELIG_SQL}, (
         "det betingede omdøpet gikk gjennom som «ingenting skjedde»")
+
+
+@pytest.mark.parametrize("inkluderer", ["INCLUDING CONSTRAINTS",
+                                        "INCLUDING ALL"])
+def test_en_like_klausul_kopierer_malens_vilkaar(tmp_path, inkluderer):
+    """`LIKE mal INCLUDING CONSTRAINTS` skriver malens CHECK inn i tabellen.
+
+    Codex P2 på #118, tjueandre runde. Klausulen skriver ingen CHECK i teksten,
+    så den gikk gjennom leseren uten et ord — men PostgreSQL kopierer malens
+    vilkår inn, og de håndheves der som alle andre.
+
+    Her erklærer den nye tabellen selv et VIDERE vilkår på samme kolonne. Uten
+    kopien i modellen sto bare det videre igjen, og porten meldte
+    `irreversibel` som gyldig mens det kopierte vilkåret avviser den.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE kontraktmal (\n"
+        "    reversibilitet TEXT NOT NULL\n"
+        "        CHECK (reversibilitet IN ('direkte', 'kompenserende')));\n",
+        "CREATE TABLE modulkontrakt (\n"
+        f"    LIKE kontraktmal {inkluderer},\n"
+        "    CHECK (reversibilitet IN\n"
+        "           ('direkte', 'kompenserende', 'irreversibel')));\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende.get((MODULKONTRAKT, "reversibilitet")) == {
+        "direkte", "kompenserende"}, (
+        "det kopierte vilkåret ble aldri lest — bare tabellens eget, videre "
+        "vilkår sto igjen")
+
+
+def test_en_like_klausul_uten_vilkaar_kopierer_ingen(tmp_path):
+    """Uten `INCLUDING CONSTRAINTS` kopieres kolonnene, ikke vilkårene.
+
+    Grensen den andre veien: porten skal ikke legge på et vilkår databasen
+    ikke har. Gjorde den det, ville den avvist `irreversibel` — en verdi
+    registeret her faktisk godtar.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE kontraktmal (\n"
+        "    reversibilitet TEXT NOT NULL\n"
+        "        CHECK (reversibilitet IN ('direkte', 'kompenserende')));\n",
+        "CREATE TABLE modulkontrakt (\n"
+        "    LIKE kontraktmal,\n"
+        "    CHECK (reversibilitet IN ('direkte', 'irreversibel')));\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende.get((MODULKONTRAKT, "reversibilitet")) == {
+        "direkte", "irreversibel"}, (
+        "porten kopierte vilkår fra en mal `LIKE` ikke tar med seg")
+
+
+def test_en_like_fra_en_ukjent_mal_er_uvisst(tmp_path):
+    """Har ingen migrasjon opprettet malen, vet porten ikke hva den bærer.
+
+    Malen kan ha nøyaktig det vilkåret katalogen måles mot. «Ingen kopierte
+    vilkår» ville da vært en gjetning, ikke en lesning — og gjetningen går den
+    ene veien som gjør skade: videre enn databasen.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE modulkontrakt (\n"
+        "    LIKE ekstern_mal INCLUDING CONSTRAINTS,\n"
+        "    reversibilitet TEXT NOT NULL\n"
+        "        CHECK (reversibilitet IN ('direkte', 'kompenserende')));\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende.get((_UKJENT_TABELL, _UKJENT_KOLONNE)) == {
+        ULESELIG_SQL}, (
+        "malen porten aldri har lest ble lest som om den var tom")
 
 
 @pytest.mark.parametrize("vilkar", [
