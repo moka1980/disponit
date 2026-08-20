@@ -184,8 +184,8 @@
       "properties": {
         "inflight_oppdrag_id": {
           "type": "string",
-          "minLength": 1,
-          "comment": "Oppdraget som var claimet da rullingen traff."
+          "pattern": "^[0-9]+$",
+          "comment": "Oppdraget som var claimet da rullingen traff. Registreringen i 049 FK-er den mot `oppdrag` og maaler utfallet paa den, saa den maa vaere en oppdrags-id - ikke bare en ikke-tom streng (Codex P1, #117 runde 5)."
         },
         "inflight_artefakter": {
           "type": "array",
@@ -198,8 +198,8 @@
         },
         "rullback_oppdrag_id": {
           "type": "string",
-          "minLength": 1,
-          "comment": "Oppdraget rullbakken plukket etter at den ble bootet (b2)."
+          "pattern": "^[0-9]+$",
+          "comment": "Oppdraget rullbakken plukket etter at den ble bootet (b2). Registreringen i 049 FK-er den mot `oppdrag` og maaler utfallet paa den, saa den maa vaere en oppdrags-id - ikke bare en ikke-tom streng (Codex P1, #117 runde 5)."
         },
         "rullback_artefakter": {
           "type": "array",
@@ -212,8 +212,8 @@
         },
         "kandidat_oppdrag_id": {
           "type": "string",
-          "minLength": 1,
-          "comment": "Oppdraget akseptkandidaten plukket da hun overtok (c)."
+          "pattern": "^[0-9]+$",
+          "comment": "Oppdraget akseptkandidaten plukket da hun overtok (c). Registreringen i 049 FK-er den mot `oppdrag` og maaler utfallet paa den, saa den maa vaere en oppdrags-id - ikke bare en ikke-tom streng (Codex P1, #117 runde 5)."
         },
         "kandidat_artefakter": {
           "type": "array",
