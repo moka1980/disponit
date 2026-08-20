@@ -1560,6 +1560,55 @@ def test_drillen_nekter_samme_id_for_rullback_og_kandidat():
     assert "ULIKE id-er" in str(ei.value)
 
 
+def test_drillen_apner_artefaktmaalet_for_den_odelegger_noe(tmp_path):
+    """Codex' P2 (runde 8): `--ut` ble først rørt på siste linje.
+
+    Da hadde begge `bytt_release`-ene gått og alle drilljobbene brukt opp
+    sine engangs-deploymentIDer. Livsløpet er enveis, så en manglende
+    eller uskrivbar foreldermappe ga en FULLFØRT destruktiv drill og
+    ingen måling — og pekte stien på en eksisterende evidensfil, ble en
+    tidligere drills artefakt stille overskrevet. Begge avgjøres nå før
+    noe er registrert eller rullet."""
+    d = _drillskript()
+
+    # Manglende foreldermappe: stoppes, og mappen lages IKKE — en drill
+    # som ikke kan gjentas skal stoppe på en feilskrevet sti.
+    borte = tmp_path / "finnes-ikke" / "art.json"
+    with pytest.raises(SystemExit) as ei:
+        d.reserver_artefaktmaal(borte)
+    assert "finnes ikke" in str(ei.value)
+    assert not borte.parent.exists()
+
+    # Eksisterende evidens: stoppes, og filen er urørt etterpå.
+    fantes = tmp_path / "tidligere.json"
+    fantes.write_text('{"bestatt": true}\n', encoding="utf-8")
+    with pytest.raises(SystemExit) as ei:
+        d.reserver_artefaktmaal(fantes)
+    assert "finnes alt" in str(ei.value)
+    assert fantes.read_text(encoding="utf-8") == '{"bestatt": true}\n'
+
+    # Den gyldige veien: reservasjonen er en EGEN, tom fil — målet er
+    # fortsatt ledig — og artefaktet havner der til slutt.
+    ut = tmp_path / "art.json"
+    delvis = d.reserver_artefaktmaal(ut)
+    assert delvis.exists() and delvis.read_bytes() == b"" and delvis != ut
+    assert not ut.exists()
+    d.skriv_artefakt(delvis, ut, '{"bestatt": false}\n')
+    assert ut.read_text(encoding="utf-8") == '{"bestatt": false}\n'
+    assert not delvis.exists()
+
+    # Og dukker det opp evidens på målet MENS drillen kjører, kastes ikke
+    # målingen: flyttingen nekter, og delvisfilen blir liggende med den.
+    delvis2 = d.reserver_artefaktmaal(tmp_path / "art2.json")
+    (tmp_path / "art2.json").write_text("annen evidens\n", encoding="utf-8")
+    with pytest.raises(SystemExit) as ei:
+        d.skriv_artefakt(delvis2, tmp_path / "art2.json", '{"m": 1}\n')
+    assert str(delvis2) in str(ei.value)
+    assert delvis2.read_text(encoding="utf-8") == '{"m": 1}\n'
+    assert (tmp_path / "art2.json").read_text(
+        encoding="utf-8") == "annen evidens\n"
+
+
 def test_drillen_nekter_naar_forgjengerens_bytes_ikke_kan_bootes():
     """Codex' P1 (runde 6), skriptsiden.
 

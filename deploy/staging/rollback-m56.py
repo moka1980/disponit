@@ -55,6 +55,13 @@ måler dette FØR noe bestilles, og sier hvilke id-er som er brukt opp.
 Neste forsøk er da en ny, hel drill fra tilstanden som står, med to
 ubrukte id-er (Codex P2, #117 runde 5).
 
+`--ut` MÅ peke på en ledig plass i en mappe som finnes: målet åpnes og
+reserveres som aller første handling, før noe er registrert eller rullet
+(Codex P2, #117 runde 8). En drill som ikke kan legge fra seg målingen
+sin, er en ødeleggelse uten evidens — og et mål som alt finnes, er en
+tidligere drills evidens som ikke skal overskrives. Den ene fila et
+avbrutt forsøk kan etterlate seg, er en tom `.<navn>.<pid>.delvis`.
+
 BRUK:
     sudo -E python3 deploy/staging/rollback-m56.py \
         --rullback-id wcag-r6 --kandidat-id wcag-r7 \
@@ -63,6 +70,7 @@ BRUK:
 from __future__ import annotations
 
 import argparse
+import atexit
 import hashlib
 import importlib.util
 import json
@@ -439,6 +447,92 @@ def krev_ubrukte_drillreleaser(m, drillet: str, rullback: str,
                 " ubrukte id-er.")
 
 
+def reserver_artefaktmaal(ut: Path) -> Path:
+    """Åpner målet FØR drillen, og reserverer plassen den skal skrives til.
+
+    Codex' P2 på PR #117 (runde 8): `--ut` ble først rørt på aller siste
+    linje — etter begge `bytt_release`-ene, etter at alle drilljobbene
+    hadde brukt opp sine engangs-deploymentIDer. Livsløpet er ENVEIS: en
+    drenert release kan ikke claimes igjen, og id-ene er brukt opp i det
+    de er kjørt. En uskrivbar eller ikke-eksisterende foreldermappe ga
+    derfor en FULLFØRT destruktiv drill og ingen måling — den eneste
+    kopien av evidensen forsvant i en `FileNotFoundError`, og drillen kan
+    ikke gjøres om igjen. Pekte stien på en eksisterende evidensfil, var
+    utfallet motsatt og verre: en tidligere drills artefakt ble stille
+    overskrevet av denne.
+
+    Tre ting avgjøres her, mens ingenting ennå er ødelagt:
+
+      * foreldermappen må FINNES. Vi lager den ikke — en feilskrevet sti
+        er den vanligste grunnen til at den mangler, og en drill som er
+        enveis skal stoppe på den, ikke lage mappen og kjøre videre.
+      * målet må IKKE finnes. Evidens overskrives ikke.
+      * mappen må være skrivbar — bevist ved å SKRIVE, ikke ved å spørre
+        `os.access` (som svarer for uid-en, ikke for monteringen, og
+        uansett bare om fortiden). Den reserverte filen er den samme som
+        artefaktet senere skrives i, så det som lykkes her er nøyaktig
+        det som må lykkes til slutt.
+
+    -> stien til den reserverte, tomme delvisfilen.
+    """
+    ut = ut.expanduser()
+    if not ut.parent.is_dir():
+        raise SystemExit(
+            f"AVBRUTT: {ut.parent} finnes ikke (eller er ingen mappe), så"
+            f" artefaktet kunne ikke vært skrevet. Drillen er destruktiv og"
+            " enveis — den stoppes FØR den kjøres, ikke etterpå.")
+    if ut.exists():
+        raise SystemExit(
+            f"AVBRUTT: {ut} finnes alt. Det er en tidligere drills"
+            " evidens, og den overskrives ikke. Velg et nytt filnavn.")
+    delvis = ut.parent / f".{ut.name}.{os.getpid()}.delvis"
+    try:
+        # O_EXCL: reservasjonen er vår, eller så finnes det en parallell
+        # kjøring — og to samtidige driller av samme modul er i seg selv
+        # noe som skal stoppes her.
+        os.close(os.open(delvis, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+    except OSError as e:
+        raise SystemExit(
+            f"AVBRUTT: kan ikke skrive i {ut.parent} ({e}). Uten et sted å"
+            " legge artefaktet er drillen en ødeleggelse uten måling.")
+
+    def rydd():
+        # Bare den TOMME reservasjonen ryddes. Er det skrevet noe i den,
+        # er det en måling som ikke rakk å bli flyttet, og den skal bli
+        # liggende — det er hele poenget med å reservere.
+        try:
+            if delvis.stat().st_size == 0:
+                delvis.unlink()
+        except OSError:
+            pass
+
+    atexit.register(rydd)
+    return delvis
+
+
+def skriv_artefakt(delvis: Path, ut: Path, innhold: str) -> None:
+    """Flytter det ferdige artefaktet på plass uten å kunne overskrive.
+
+    `os.link` er atomisk OG feiler hvis målet finnes — i motsetning til
+    `os.replace`, som ville overskrevet en evidensfil som dukket opp mens
+    drillen kjørte. Skulle flyttingen likevel ryke, blir delvisfilen
+    liggende og stien skrevet ut: en destruktiv, uigjentakelig drill skal
+    aldri ende med at målingen kastes.
+    """
+    with open(delvis, "w", encoding="utf-8") as f:
+        f.write(innhold)
+        f.flush()
+        os.fsync(f.fileno())
+    try:
+        os.link(delvis, ut)
+    except OSError as e:
+        raise SystemExit(
+            f"ARTEFAKTET ER SKREVET, MEN IKKE FLYTTET: {e}\n"
+            f"  målingen ligger i {delvis} — ta vare på den, drillen kan"
+            " ikke kjøres om igjen.")
+    os.unlink(delvis)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--rullback-id", required=True)
@@ -448,6 +542,11 @@ def main() -> int:
                     help="maks forsøk på å treffe rullingen midt i et"
                          " løpende oppdrag")
     a = ap.parse_args()
+
+    # FØRST AV ALT: målet for artefaktet åpnes og reserveres, før noe som
+    # helst er registrert, rullet eller brukt opp (Codex P2, #117 runde 8).
+    a.ut = a.ut.expanduser()
+    delvis = reserver_artefaktmaal(a.ut)
 
     global RUNDE_ID
     # Per-INVOKASJON, ikke per kandidat: en ny drillkjøring er en ny
@@ -756,8 +855,9 @@ def main() -> int:
         and etter["rullback_livslop"] == "draining"
         and etter["kandidat_livslop"] == "claiming"
         and etter["modulstatus"] == "aktiv")
-    a.ut.write_text(json.dumps(art, indent=2, ensure_ascii=False,
-                               sort_keys=True) + "\n", encoding="utf-8")
+    skriv_artefakt(delvis, a.ut,
+                   json.dumps(art, indent=2, ensure_ascii=False,
+                              sort_keys=True) + "\n")
     print(("GRØNN" if art["bestatt"] else "RØD")
           + f": artefaktet skrevet til {a.ut}")
     print("kandidatens E2E-artefakt (akseptens A2-bevis): "
