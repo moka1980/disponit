@@ -1041,9 +1041,10 @@ CREATE TABLE moduldeployment_reservasjon (
 
 CREATE OR REPLACE FUNCTION moduldeployment_reservasjon_vakt()
 RETURNS TRIGGER LANGUAGE plpgsql SET search_path = pg_catalog AS $$
-DECLARE v_innehaver TEXT;
+DECLARE v_innehaver TEXT; v_aktor TEXT; v_utloper TIMESTAMPTZ;
 BEGIN
-    SELECT r.innehaver INTO v_innehaver
+    SELECT r.innehaver, r.aktor, r.utloper_ts
+      INTO v_innehaver, v_aktor, v_utloper
       FROM public.moduldeployment_reservasjon r
      WHERE r.modul_id = NEW.modul_id AND r.miljo = NEW.miljo
        AND r.utloper_ts > now();
@@ -1054,13 +1055,22 @@ BEGIN
     END IF;
     IF v_innehaver IS DISTINCT FROM
            current_setting('disponit.deployreservasjon', true) THEN
+        -- TOKENET NAVNGIS IKKE (Codex P2, #117 runde 16). Å HOLDE
+        -- innehaver-tokenet ER hele autorisasjonen her, og en GUC kan
+        -- enhver kaller sette selv. Sa feilmeldingen hvilket token som
+        -- gjelder, kunne den avviste overgangen bare settes på nytt med
+        -- verdien den nettopp fikk utlevert — og porten var borte. Rollen
+        -- som avvises har ingen lesetilgang til `innehaver`; da skal
+        -- heller ikke feilen gi den bort. Det operatøren TRENGER er hvem
+        -- som holder flaten og hvor lenge, ikke tokenet.
         RAISE EXCEPTION 'moduldeployment: (%, %) er reservert av en pågående'
-            ' flippedrill (%). En overgang her ville drenert dens rullbakk-'
-            ' eller kandidatdeployment midt i en enveis, uigjentakelig'
-            ' måling — og drill-id-ene er brukt opp uansett hva målingen'
-            ' ender med. Vent til drillen er ferdig, eller presenter'
-            ' reservasjonen i disponit.deployreservasjon.',
-            NEW.modul_id, NEW.miljo, v_innehaver
+            ' flippedrill (aktør %, utløper %). En overgang her ville'
+            ' drenert dens rullbakk- eller kandidatdeployment midt i en'
+            ' enveis, uigjentakelig måling — og drill-id-ene er brukt opp'
+            ' uansett hva målingen ender med. Vent til drillen er ferdig,'
+            ' eller presenter drillens eget token i'
+            ' disponit.deployreservasjon.',
+            NEW.modul_id, NEW.miljo, v_aktor, v_utloper
             USING ERRCODE = 'lock_not_available';
     END IF;
     RETURN NEW;
@@ -1077,7 +1087,7 @@ CREATE OR REPLACE FUNCTION ta_deployreservasjon(
     p_varighet INTERVAL)
 RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
-DECLARE v_annen TEXT;
+DECLARE v_annen TEXT; v_utloper TIMESTAMPTZ;
 BEGIN
     IF p_innehaver IS NULL OR btrim(p_innehaver) = '' THEN
         RAISE EXCEPTION 'ta_deployreservasjon: innehaver er obligatorisk —'
@@ -1093,13 +1103,18 @@ BEGIN
     -- et `bytt_release` som alt er i gang, og to samtidige forsøk på å ta
     -- den kan ikke begge lese «ledig».
     PERFORM pg_advisory_xact_lock(hashtextextended('modul:' || p_modul_id, 0));
-    SELECT r.innehaver INTO v_annen
+    -- AKTØREN, ikke tokenet (Codex P2, #117 runde 16): den som avvises her
+    -- holder ikke reservasjonen, og skal ikke få utlevert verdien som ER
+    -- adgangen til å gå forbi vakten på `moduldeployment`.
+    SELECT r.aktor, r.utloper_ts INTO v_annen, v_utloper
       FROM public.moduldeployment_reservasjon r
      WHERE r.modul_id = p_modul_id AND r.miljo = p_miljo
        AND r.utloper_ts > now() AND r.innehaver <> p_innehaver;
     IF FOUND THEN
-        RAISE EXCEPTION 'ta_deployreservasjon: (%, %) er alt reservert av %',
-            p_modul_id, p_miljo, v_annen USING ERRCODE = 'lock_not_available';
+        RAISE EXCEPTION 'ta_deployreservasjon: (%, %) er alt reservert'
+            ' (aktør %, utløper %)',
+            p_modul_id, p_miljo, v_annen, v_utloper
+            USING ERRCODE = 'lock_not_available';
     END IF;
     -- En utløpt rad, eller vår egen fra et tidligere forsøk, ryddes: å ta
     -- den samme reservasjonen om igjen er idempotent, ikke en kollisjon.

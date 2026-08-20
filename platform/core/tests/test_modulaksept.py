@@ -2509,6 +2509,58 @@ def test_reservasjonen_gjerder_hele_deploymentflaten(migrator):
 
 
 @pg
+def test_reservasjonsfeilene_lekker_ikke_innehaver_tokenet(migrator):
+    """Codex' P2 (runde 16): vakten navnga innehaver-tokenet i feilen.
+
+    Å HOLDE tokenet er hele autorisasjonen: vakten slipper gjennom den som
+    presenterer det i `disponit.deployreservasjon`, og en GUC kan enhver
+    kaller sette selv. Sa avvisningen hvilket token som gjelder, kunne den
+    avviste overgangen bare settes på nytt med verdien den nettopp fikk
+    utlevert — og gjerdet var borte for nøyaktig den som prøvde å gå forbi
+    det. Rollen som avvises har ingen lesetilgang til `innehaver`; da skal
+    heller ikke feilen gi den bort.
+
+    Det operatøren trenger — hvem som holder flaten og hvor lenge — står
+    fortsatt i meldingen."""
+    k = _kjede(migrator)
+    token = "hemmelig-" + secrets.token_hex(12)
+    migrator.execute("SET ROLE disponit_modules_admin")
+    migrator.execute("SELECT ta_deployreservasjon(%s,'staging',%s,"
+                     "'m56-drill','2 hours')", (k["mid"], token))
+    migrator.execute("RESET ROLE")
+    migrator.commit()
+    try:
+        # 1) Vakten på deploymentflaten.
+        with pytest.raises(psycopg.errors.LockNotAvailable) as ei:
+            migrator.execute(
+                "UPDATE moduldeployment SET livslop='draining'"
+                " WHERE modul_id=%s AND miljo='staging' AND livslop='claiming'",
+                (k["mid"],))
+        assert token not in str(ei.value), \
+            "tokenet er adgangen — feilen deler den ut"
+        assert "m56-drill" in str(ei.value), \
+            "operatøren må fortsatt få vite hvem som holder flaten"
+        migrator.rollback()
+
+        # 2) …og porten mot å ta en annens reservasjon.
+        migrator.execute("SET ROLE disponit_modules_admin")
+        with pytest.raises(psycopg.errors.LockNotAvailable) as ei:
+            migrator.execute("SELECT ta_deployreservasjon(%s,'staging',"
+                             "'en-annen','ops','2 hours')", (k["mid"],))
+        assert token not in str(ei.value)
+        assert "m56-drill" in str(ei.value)
+        migrator.rollback()
+        migrator.execute("RESET ROLE")
+    finally:
+        migrator.rollback()
+        migrator.execute("SET ROLE disponit_modules_admin")
+        migrator.execute("SELECT frigi_deployreservasjon(%s,'staging',%s)",
+                         (k["mid"], token))
+        migrator.execute("RESET ROLE")
+        migrator.commit()
+
+
+@pg
 def test_reservasjonen_er_ikke_runtimes_a_ta(migrator):
     """Port 9 for reservasjonen: kjøretidsrollen har verken EXECUTE på
     funksjonene eller DML på tabellen. Kunne den tatt en reservasjon,
