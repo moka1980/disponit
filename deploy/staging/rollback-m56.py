@@ -260,7 +260,8 @@ def _bestill_drill(sj, m, merkelapp):
     return r.json()["oppdrag_id"]
 
 
-def forgjengerens_bytes(m, drillet: str) -> tuple[str, str]:
+def forgjengerens_bytes(m, drillet: str, kver: int,
+                        khash: str) -> tuple[str, str]:
     """Releasen den drillede overtok fra, og HENNES digest.
     -> (release_id, artifact_digest).
 
@@ -273,22 +274,42 @@ def forgjengerens_bytes(m, drillet: str) -> tuple[str, str]:
 
     Forgjengeren er deploymentraden med det seneste `fra_ts` før den
     drillede — registerets egen historie, ikke en antakelse.
+
+    OG DEN HISTORIEN ER KONTRAKTLINJENS, ikke modulens (Codex P1, #117
+    runde 10). Oppslaget filtrerte på modul, miljø, release-id og tid,
+    men `en_claiming_per_kontrakt` fører én linje PER (modul, miljø,
+    kontraktversjon, kontrakt_hash), og `den_ene_claimende` har alt valgt
+    NØYAKTIG én av dem. Den seneste raden før den drillede kunne derfor
+    tilhøre en helt annen kontraktslekt: `bytt_release` opererer innen
+    den valgte kontrakten, så digesten derfra enten avbrøt en gyldig
+    drill, eller — når digestene tilfeldigvis er like — lot artefaktet
+    navngi en rad som ikke er denne linjens forgjenger. Både historikk-
+    oppslaget, tidspunktet det måles mot og release-joinen bindes derfor
+    til kontrakten som drilles.
     """
     rad = m.execute(
         "SELECT d.release_id, r.artifact_digest"
         "  FROM moduldeployment d JOIN modulrelease r"
         "    ON r.modul_id = d.modul_id AND r.release_id = d.release_id"
+        "   AND r.kontraktversjon = d.kontraktversjon"
+        "   AND r.kontrakt_hash = d.kontrakt_hash"
         " WHERE d.modul_id=%s AND d.miljo=%s AND d.release_id <> %s"
+        "   AND d.kontraktversjon=%s AND d.kontrakt_hash=%s"
         "   AND d.fra_ts <= (SELECT fra_ts FROM moduldeployment"
         "                     WHERE modul_id=%s AND miljo=%s"
-        "                       AND release_id=%s)"
+        "                       AND release_id=%s"
+        "                       AND kontraktversjon=%s"
+        "                       AND kontrakt_hash=%s)"
         " ORDER BY d.fra_ts DESC, d.release_id DESC LIMIT 1",
-        (MODUL, MILJO, drillet, MODUL, MILJO, drillet)).fetchone()
+        (MODUL, MILJO, drillet, kver, khash,
+         MODUL, MILJO, drillet, kver, khash)).fetchone()
     if rad is None:
         raise SystemExit(
-            f"AVBRUTT: {drillet} har ingen forgjenger i {MILJO} — det"
-            " finnes ingenting å rulle tilbake TIL, og en drill som"
-            " ruller tilbake til seg selv måler ingen rullbakk")
+            f"AVBRUTT: {drillet} har ingen forgjenger på kontrakt"
+            f" v{kver}/{str(khash)[:12]}… i {MILJO} — det finnes"
+            " ingenting å rulle tilbake TIL på linjen som drilles, og en"
+            " drill som ruller tilbake til seg selv (eller til en annen"
+            " kontraktslekt) måler ingen rullbakk")
     return rad[0], rad[1]
 
 
@@ -750,7 +771,8 @@ def main() -> int:
     krev_ubrukte_drillreleaser(m, drillet, a.rullback_id, a.kandidat_id)
     # Rullbakken skal bære FORGJENGERENS bytes, ikke den drilledes
     # (Codex P1, #117 runde 6) — og bootveien må kunne kjøre dem.
-    forgjenger, forgjenger_digest = forgjengerens_bytes(m, drillet)
+    forgjenger, forgjenger_digest = forgjengerens_bytes(m, drillet,
+                                                        kver, khash)
     krev_bootbare_forgjengerbytes(forgjenger, forgjenger_digest, digest,
                                   lokalt_motorimage())
     epoch = m.execute("SELECT module_epoch FROM modulhode WHERE modul_id=%s",

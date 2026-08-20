@@ -1759,24 +1759,52 @@ def test_drillen_nekter_naar_forgjengerens_bytes_ikke_kan_bootes():
                                         "aa" * 32)
     assert "wcag-r10" in str(ei.value)
 
-    class _Historie:
-        """Bare det `forgjengerens_bytes` spør om: én rad, eller ingen."""
-
-        def __init__(self, rad):
-            self.rad = rad
-
-        def execute(self, _sql, _params=None):
-            return self
-
-        def fetchone(self):
-            return self.rad
-
     assert d.forgjengerens_bytes(_Historie(("wcag-r10", "aa" * 32)),
-                                 "wcag-r11") == ("wcag-r10", "aa" * 32)
+                                 "wcag-r11", 1, "kh") == ("wcag-r10",
+                                                          "aa" * 32)
     # Ingen forgjenger: det finnes ingenting å rulle tilbake til.
     with pytest.raises(SystemExit) as ei:
-        d.forgjengerens_bytes(_Historie(None), "wcag-r11")
+        d.forgjengerens_bytes(_Historie(None), "wcag-r11", 1, "kh")
     assert "forgjenger" in str(ei.value)
+
+
+class _Historie:
+    """Bare det `forgjengerens_bytes` spør om: én rad, eller ingen —
+    men den HUSKER spørsmålet, så kontraktbindingen kan måles."""
+
+    def __init__(self, rad):
+        self.rad = rad
+        self.sql = ""
+        self.params = ()
+
+    def execute(self, sql, params=None):
+        self.sql, self.params = sql, params or ()
+        return self
+
+    def fetchone(self):
+        return self.rad
+
+
+def test_forgjengeren_hentes_fra_den_drillede_kontraktlinjen():
+    """Codex' P1 (runde 10): forgjengeroppslaget så hele modulens historie.
+
+    `en_claiming_per_kontrakt` fører én linje per (modul, miljø,
+    kontraktversjon, kontrakt_hash), og `den_ene_claimende` har alt valgt
+    nøyaktig én av dem. Filtrerte oppslaget bare på modul, miljø,
+    release-id og tid, kunne den seneste raden før den drillede tilhøre en
+    annen kontraktslekt — og `bytt_release` opererer innen den valgte
+    kontrakten. Da avbrøt drillen enten en gyldig kjøring, eller navnga
+    (ved tilfeldig like digester) en forgjenger som ikke er linjens.
+    """
+    d = _drillskript()
+    hist = _Historie(("wcag-r10", "aa" * 32))
+    d.forgjengerens_bytes(hist, "wcag-r11", 3, "kh" * 32)
+    # Kontrakten er med i BEGGE leddene: raden som velges, og tidspunktet
+    # den måles mot — og i joinen mot releaseraden.
+    assert hist.sql.count("kontraktversjon=%s") == 2
+    assert hist.sql.count("kontrakt_hash=%s") == 2
+    assert "r.kontraktversjon = d.kontraktversjon" in hist.sql
+    assert hist.params.count(3) == 2 and hist.params.count("kh" * 32) == 2
 
 
 def test_drillen_maaler_vertens_image_for_den_drenerer(monkeypatch):
