@@ -1403,7 +1403,7 @@ def _registerets_enums(
                 _liker(vilkar, opptatt, laget, tabell, navn)
                 continue
             if slag in (_OMDOP_VILKAR, _OMDOP_TABELL, _OMDOP_KOLONNE):
-                _omdop(vilkar, opptatt, hendelse)
+                _omdop(vilkar, opptatt, laget, hendelse)
                 continue
             if slag is _SLIPP:
                 if hendelse[4]:
@@ -1504,7 +1504,7 @@ def _sidestilt_navn(vilkar: dict, tabell: str, navn: str) -> str:
     return f"{navn}\0{nr}"
 
 
-def _omdop(vilkar: dict, opptatt: dict, hendelse: tuple) -> None:
+def _omdop(vilkar: dict, opptatt: dict, laget: set, hendelse: tuple) -> None:
     """Flytt tilstanden et `RENAME` flytter nøkkelen for.
 
     Codex P2 på #118, tjueandre runde. PostgreSQL omdøper INGENTING av seg
@@ -1529,6 +1529,15 @@ def _omdop(vilkar: dict, opptatt: dict, hendelse: tuple) -> None:
     navnene regnes som opptatte, siden porten ikke vet hvilket som er i bruk.
     Et betinget omdøp av tabell eller kolonne kommer aldri hit, se
     `_lesomdop()`.
+
+    EN TABELL flytter en nøkkel til: den porten har LEST et `CREATE TABLE` for
+    (Codex P2 på #118, tjuetredje runde). `laget` ble stående med det gamle
+    navnet, så en mal som var omdøpt så EKSTERN ut for `_liker()` — porten
+    kjente vilkårene den bar, men ikke tabellen de sto på, og skrev uvisst for
+    alt. Det er den motsatte feilen av de andre i denne leseren: ikke et hull,
+    men en rød port på en gyldig migrasjon. Det gamle navnet gis fra seg, for
+    etter omdøpet finnes ingen tabell som heter det — oppretter en senere
+    migrasjon en ny med samme navn, fører `_LAGET` den inn igjen.
     """
     slag, tabell, fra, til, betinget = hendelse[:5]
     if slag is _OMDOP_TABELL:
@@ -1538,6 +1547,9 @@ def _omdop(vilkar: dict, opptatt: dict, hendelse: tuple) -> None:
             vilkar[(til, navn)] = vilkar.pop(nokkel)
         if tabell in opptatt:
             opptatt.setdefault(til, set()).update(opptatt.pop(tabell))
+        if tabell in laget:
+            laget.discard(tabell)
+            laget.add(til)
         return
     if slag is _OMDOP_KOLONNE:
         for nokkel, bindinger in vilkar.items():
@@ -2678,6 +2690,38 @@ def test_en_like_fra_en_ukjent_mal_er_uvisst(tmp_path):
     assert gjeldende.get((_UKJENT_TABELL, _UKJENT_KOLONNE)) == {
         ULESELIG_SQL}, (
         "malen porten aldri har lest ble lest som om den var tom")
+
+
+def test_en_omdopt_mal_er_fortsatt_en_mal_porten_kjenner(tmp_path):
+    """Omdøpet flytter også nøkkelen «denne tabellen har porten lest».
+
+    Codex P2 på #118, tjuetredje runde. `_omdop()` flyttet vilkårene og de
+    opptatte navnene, men lot `laget` stå med det gamle tabellnavnet. En
+    `LIKE` mot den omdøpte malen så da ut som en `LIKE` mot noe utenfra, og
+    `_liker()` skrev uvisst for alt.
+
+    Retningen er verdt å merke seg: dette hullet gjør ikke porten videre enn
+    databasen, det gjør den rød på en migrasjon som er helt i orden. Porten
+    kjente vilkårene malen bar hele tiden — den mistet bare navnet de sto
+    under.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE kontraktmal_utkast (\n"
+        "    reversibilitet TEXT NOT NULL\n"
+        "        CHECK (reversibilitet IN ('direkte', 'kompenserende')));\n",
+        "ALTER TABLE kontraktmal_utkast RENAME TO kontraktmal;\n",
+        "CREATE TABLE modulkontrakt (\n"
+        "    LIKE kontraktmal INCLUDING CONSTRAINTS,\n"
+        "    CHECK (reversibilitet IN\n"
+        "           ('direkte', 'kompenserende', 'irreversibel')));\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert (_UKJENT_TABELL, _UKJENT_KOLONNE) not in gjeldende, (
+        "den omdøpte malen ble lest som ekstern — `laget` sto igjen med det "
+        "gamle tabellnavnet")
+    assert gjeldende.get((MODULKONTRAKT, "reversibilitet")) == {
+        "direkte", "kompenserende"}, (
+        "det kopierte vilkåret fulgte ikke med malen gjennom omdøpet")
 
 
 @pytest.mark.parametrize("vilkar", [
