@@ -372,7 +372,24 @@ def krev_ubrukte_drillreleaser(m, drillet: str, rullback: str,
     `bytt_release` har ingen deployment å vise til, og kjøres om igjen
     med de samme id-ene uten videre. Den passivt registrerte
     rullbakk-RELEASEN er ikke en deployment og teller ikke.
+
+    Codex' P2 (runde 7): de to drill-id-ene måtte også være FORSKJELLIGE
+    fra hverandre. Var de like — og ubrukte — passerte alt her, mens
+    drillen målte en umulighet: første `bytt_release` drenerer den
+    levende releasen og gjør den delte id-en claiming, kandidatbyttet blir
+    en no-op på en deployment som alt er der, og etterkontrollen leser
+    SAMME rad som både rullback og kandidat. Den kan ikke være `draining`
+    og `claiming` samtidig, så artefaktet er garantert rødt — etter at
+    originaldeploymenten er brukt opp og staging kjører rullbakk-bytene.
     """
+    if rullback == kandidat:
+        raise SystemExit(
+            f"AVBRUTT: --rullback-id og --kandidat-id er samme release"
+            f" ({rullback}). Drillen måler at rullbakken DRENERES og at"
+            " kandidaten OVERTAR, og én deployment kan ikke være begge:"
+            " rullingen ville drenert den levende releasen, kandidatbyttet"
+            " blitt en no-op, og drillen endt rødt på en umulighet den"
+            " selv laget. Kjør med to ubrukte, ULIKE id-er.")
     if drillet in (rullback, kandidat):
         raise SystemExit(
             f"AVBRUTT: den claimende releasen ER {drillet} — en av"

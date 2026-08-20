@@ -1423,6 +1423,27 @@ def test_drillen_nekter_a_gjenoppta_en_avbrutt_kjoring():
     assert "Rekjøring er trygg" not in tekst
 
 
+def test_drillen_nekter_samme_id_for_rullback_og_kandidat():
+    """Codex' P2 (runde 7): to UBRUKTE, men LIKE id-er passerte porten.
+
+    Drillen måler at rullbakken drenerES og at kandidaten OVERTAR, og én
+    deployment kan ikke være begge. Med samme id drenerer første
+    `bytt_release` den levende releasen og gjør den delte id-en claiming;
+    kandidatbyttet blir en no-op, og etterkontrollen leser samme rad som
+    både `draining` og `claiming`. Artefaktet er da garantert rødt — men
+    først etter at originaldeploymenten er brukt opp og staging kjører
+    rullbakk-bytene. Porten står før rullingen, ikke etter."""
+    d = _drillskript()
+    tom = _Livslop()
+    with pytest.raises(SystemExit) as ei:
+        d.krev_ubrukte_drillreleaser(tom, "r-drillet", "r-samme", "r-samme")
+    assert "samme release" in str(ei.value)
+    # …og den må stoppe FØR deploymentoppslaget, som ikke ser noe galt.
+    with pytest.raises(SystemExit) as ei:
+        d.krev_ubrukte_drillreleaser(_Livslop(), "r-drillet", "r-x", "r-x")
+    assert "ULIKE id-er" in str(ei.value)
+
+
 def test_drillen_nekter_naar_forgjengerens_bytes_ikke_kan_bootes():
     """Codex' P1 (runde 6), skriptsiden.
 
