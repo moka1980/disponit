@@ -921,10 +921,28 @@ def test_fristtellingen_regnes_ut_av_de_ti_kjoringene():
         [dict(d, oppdrag=True) for d in linjer], 10) == 0
     assert m.signert_innen_frist(
         [dict(d, oppdrag="  ") for d in linjer], 10) == 0
-    # `1`, `"1"` og `true` er ikke det samme oppdraget.
+
+    # Codex' P2 (runde 15): identiteten var TEGNENE (`json.dumps` av hva
+    # linja bar), ikke tallet. Da var `12`, `"12"`, `"012"`, `"+12"` og
+    # `" 12"` fem oppdrag — og ETT oppdrag kunne igjen fylle alle ti
+    # bestilte posisjoner, som avdupliseringen fantes for å hindre.
+    #
+    # `12` og `"12"` ER samme oppdrag: ti posisjoner, annenhver
+    # skrivemåte, én kjøring.
+    ett_id = linjer[0]["oppdrag"]
     assert m.signert_innen_frist(
-        [dict(d, oppdrag=1 if d["i"] % 2 else "1") for d in linjer],
-        10) == 2
+        [dict(d, oppdrag=ett_id if d["i"] % 2 else str(ett_id))
+         for d in linjer], 10) == 1
+    # …og skrivemåter som ikke kommer fra basen er ingen oppdrags-id:
+    # ledende null, fortegn, mellomrom, tomt, null og negativt.
+    for ikke_id in (f"0{ett_id}", f"+{ett_id}", f" {ett_id}", f"{ett_id} ",
+                    "", "0", -ett_id, f"{ett_id}.0", f"{ett_id}\n"):
+        assert m.signert_innen_frist(
+            [dict(d, oppdrag=ikke_id) for d in linjer], 10) == 0, ikke_id
+    # `true` er fortsatt ikke oppdrag nummer 1 (bool arver int).
+    assert m._identitet({"oppdrag": True}, "oppdrag") is None
+    assert m._identitet({"oppdrag": 12}, "oppdrag") \
+        == m._identitet({"oppdrag": "12"}, "oppdrag") == 12
 
     # Og generatoren nekter å skrive et sammendrag der summen påstår mer
     # enn linjene bærer: en ren gjenspilt runde stopper her.

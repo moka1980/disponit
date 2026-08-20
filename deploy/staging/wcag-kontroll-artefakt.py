@@ -40,6 +40,7 @@ import argparse
 import hashlib
 import json
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -149,23 +150,46 @@ def _tall(d: dict, felt: str):
     return v if math.isfinite(v) else None
 
 
-def _identitet(d: dict, felt: str) -> str | None:
-    """Oppdrags-IDen som en kanonisk tekst — ellers `None`.
+#: `oppdrag.id` er en `BIGSERIAL` — et POSITIVT heltall. Skrevet som
+#: tekst har det nøyaktig én form: sifre, uten fortegn, uten
+#: mellomrom, uten ledende null. Alt annet er en annen skrivemåte av
+#: noe som skal være én identitet.
+#:
+#: `\A`/`\Z`, ikke `^`/`$`: `$` matcher også RETT FØR en avsluttende
+#: linjeskift, så `"14\n"` ville passert som en kanonisk id.
+_KANONISK_ID = re.compile(r"\A[1-9][0-9]*\Z")
+
+
+def _identitet(d: dict, felt: str) -> int | None:
+    """Oppdrags-IDen som DEN IDENTITETEN `oppdrag.id` er — ellers `None`.
 
     `oppdrag_id` er et heltall fra basen, men en evidensfil som er
     redigert eller halvskrevet kan bære hva som helst. Et `{}` eller
     `[]` skal ikke kaste ut av genereringen (samme feiler-lukket-krav som
     `_unike` i manifestskjema), og `True` er ikke oppdrag nummer 1 selv
-    om `bool` arver `int`. Kanonisk JSON skiller `1`, `"1"` og `true`
-    fra hverandre, så to ulike identiteter aldri kollapser til én.
+    om `bool` arver `int`.
+
+    Codex' P2 på PR #117 (runde 15): forrige form kanoniserte ikke, den
+    KODET — `json.dumps` av hva enn linja bar. Da er `12`, `"12"`,
+    `"012"`, `"+12"` og `" 12"` fem forskjellige identiteter for ett og
+    samme oppdrag, og avdupliseringen under teller dem som fem
+    kjøringer. Nettopp det den skulle hindre: ETT oppdrag som fyller
+    flere av de ti bestilte posisjonene.
+
+    Identiteten er derfor tallet, ikke tegnene: et heltall er seg selv,
+    og en streng må være den kanoniske skrivemåten av et positivt
+    heltall (`^[1-9][0-9]*$`) før den er en oppdrags-id. `"012"` og
+    `" 12"` avvises framfor å normaliseres — de kommer ikke fra basen,
+    og en evidenslinje vi ikke kjenner opphavet til skal ikke telles.
+    Da kan to skrivemåter aldri stå igjen som to kjøringer.
     """
     v = d.get(felt)
     if isinstance(v, bool):
         return None
     if isinstance(v, int):
-        return json.dumps(v)
-    if isinstance(v, str) and v.strip():
-        return json.dumps(v)
+        return v if v > 0 else None
+    if isinstance(v, str) and _KANONISK_ID.match(v):
+        return int(v)
     return None
 
 
@@ -202,10 +226,12 @@ def signert_innen_frist(linjer: list[dict], krav: int) -> int:
     ga et sett på ti posisjoner og dermed «10/10», selv om motoren bare
     hadde kjørt én gang. Det er antallet DISTINKTE oppdrag som er antallet
     kjøringer; en kjøring uten en egen oppdrags-ID er ikke målt som en
-    egen kjøring, og telles ikke.
+    egen kjøring, og telles ikke. Identiteten er TALLET (`_identitet`),
+    ikke tegnene: `12` og `"12"` er samme oppdrag, og `"012"` er ingen
+    oppdrags-id i det hele tatt (Codex P2, runde 15).
     """
     bestilte = range(krav)
-    gronne: dict[int, str] = {}
+    gronne: dict[int, int] = {}
     for d in linjer:
         avvik = _tall(d, "avvik_mot_fasit")
         varighet, frist = _tall(d, "varighet_s"), _tall(d, "frist_s")
