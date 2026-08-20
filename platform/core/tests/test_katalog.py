@@ -362,6 +362,17 @@ _KONTROLLORD = {"if", "for", "while", "with", "switch", "catch"}
 # `static {}` er samme form inne i en klasse.
 _SETNINGSORD = {"else", "do", "try", "finally", "catch", "static"}
 
+# Ord som åpner en KROPP, og som i UTTRYKKSposisjon gjør hele konstruksjonen til
+# en verdi. Kroppen er en blokk begge veier — den er ikke et objektliteral — men
+# `const y = function(){} / 2` DELER, mens `function f() {} /mønster/` ikke gjør
+# det. Skillet er posisjonen ordet står i, ikke formen på kroppen (Codex P2 på
+# #118, fjortende runde).
+_KROPPSORD = {"function", "class"}
+# `async` er en MODIFIKATOR foran dem, ikke et ord med egen posisjon: i
+# `const f = async function(){}` skal `function` fortsatt leses som det
+# uttrykket det er. Ordet bærer derfor posisjonen sin uendret videre.
+_MODIFIKATOR = "async"
+
 _TALL_START_RE = re.compile(r"(?:\d[\w.]*|\.\d[\w.]*)")
 # Tallet slik det står som VERDI i en modulpost. Fortegnet er med her og ikke i
 # `_TALL_START_RE`: skanneren over leser `-` som operatoren den er.
@@ -473,11 +484,28 @@ def _kodespenn(js: str, a: int, b: int, avslutt: bool = False):
     Derfor er stakkene slått sammen til én. De var tre — en for parenteser, en
     for krøllparenteser, ingen for klammer — og tre stakker over samme nøsting
     er tre steder å komme i utakt. `rammer` har én post per åpen `(`, `[` eller
-    `{`: hva den åpnet, hva den betyr, og hvor mange `?` som venter på kolonet
-    sitt inne i den. Nederst ligger rammen for teksten selv, som aldri lukkes.
+    `{`: hva den åpnet, hva den betyr, hvor mange `?` som venter på kolonet sitt
+    inne i den, HVA EN LUKKING GIR, og om en uttrykkskropp venter på `{`-en sin.
+    Nederst ligger rammen for teksten selv, som aldri lukkes.
+
+    «Hva en lukking gir» er ett felt fordi det er ett spørsmål: `)`, `]` og `}`
+    svarte hver for seg, med hver sin regel, og et FUNKSJONS- eller
+    KLASSEUTTRYKK falt mellom dem (Codex P2 på #118, fjortende runde). Kroppen
+    til `const y = function(){} / 2` er riktig lest som en blokk, men blokka er
+    kroppen til et UTTRYKK, og et uttrykk gir en verdi: skråstreken etter deler.
+    Vi leste `}` som «blokk, altså ingen verdi», så divisjonen ble til starten
+    på et mønster og fnutten inne i det neste mønsteret svelget kjørende kode.
+
+    Hva kroppen gir, avgjøres av POSISJONEN ordet står i, ikke av formen på
+    kroppen: `function f() {}` i setningsposisjon er en erklæring og gir ingen
+    verdi, `= function(){}` i uttrykksposisjon er et uttrykk og gir en. Rammen
+    som står åpen når ordet leses, husker derfor at kroppen venter — og siden
+    flagget ligger PÅ rammen, forsvinner det av seg selv med rammen: en `class`
+    brukt som nøkkel i `{class: 1}` kan ikke lekke ut og gjøre neste blokk til
+    en verdi.
     """
     verdi, siste_ord = False, ""
-    rammer: list[list] = [["", False, 0]]
+    rammer: list[list] = [["", False, 0, False, False]]
     blokkposisjon, i = not avslutt, a
     while i < b:
         c = js[i]
@@ -516,9 +544,15 @@ def _kodespenn(js: str, a: int, b: int, avslutt: bool = False):
             # parentesen skal leses i.
             if not (ordet == "await" and siste_ord == "for"):
                 siste_ord = ordet
+            if ordet in _KROPPSORD and not etter_punktum and not blokkposisjon:
+                # Et funksjons- eller klasseUTTRYKK. Kroppen er en blokk, men
+                # hele uttrykket gir en verdi når den lukkes. Flagget står på
+                # rammen som er åpen NÅ, så det følger nøstingen.
+                rammer[-1][4] = True
             i, verdi = treff.end(), (etter_punktum
                                      or ordet not in _ORD_UTEN_VERDI)
-            blokkposisjon = verdi or ordet in _SETNINGSORD
+            if etter_punktum or ordet != _MODIFIKATOR:
+                blokkposisjon = verdi or ordet in _SETNINGSORD
             continue
         if (treff := _TALL_START_RE.match(js, i, b)):
             i, verdi, siste_ord, blokkposisjon = treff.end(), True, "", True
@@ -527,38 +561,46 @@ def _kodespenn(js: str, a: int, b: int, avslutt: bool = False):
             i, verdi, siste_ord, blokkposisjon = i + 1, False, ".", False
             continue
         if c == "(":
-            rammer.append(["(", siste_ord in _KONTROLLORD, 0])
+            # En betingelsesparentes lukker en setningsdel; alle andre
+            # parenteser gir en verdi.
+            betingelse = siste_ord in _KONTROLLORD
+            rammer.append(["(", betingelse, 0, not betingelse, False])
             i, verdi, siste_ord, blokkposisjon = i + 1, False, "", False
             continue
         if c == ")":
-            betingelse = _lukk(rammer)[1]
             # Står det en krøllparentes etter en `)`, er den en KROPP: `if (…)
             # {`, `function f() {`, `m() {`. Et objektliteral står aldri rett
             # etter en parentes — det står etter `=`, `(`, `,`, `:` eller `${`.
-            i, verdi, siste_ord, blokkposisjon = i + 1, not betingelse, "", True
+            verdi = _lukk(rammer)[3]
+            i, siste_ord, blokkposisjon = i + 1, "", True
             continue
         if c == "[":
-            rammer.append(["[", False, 0])
+            rammer.append(["[", False, 0, True, False])
             i, verdi, siste_ord, blokkposisjon = i + 1, False, "", False
             continue
         if c == "]":
-            _lukk(rammer)
-            i, verdi, siste_ord, blokkposisjon = i + 1, True, "", True
+            verdi = _lukk(rammer)[3]
+            i, siste_ord, blokkposisjon = i + 1, "", True
             continue
         if c == "}":
             if len(rammer) == 1 and avslutt:
                 return i
-            # Lukker den et objektliteral, har den avsluttet en VERDI, og
-            # skråstreken etter deler. Lukker den en blokk, kan et mønster følge.
-            # Uansett hva den lukket, kan et objektliteral ikke begynne rett
-            # etter en `}` — der står enten en ny setning eller en operator.
-            objekt = _lukk(rammer)[1]
-            i, siste_ord = i + 1, ""
-            verdi, blokkposisjon = objekt, True
+            # Lukker den et objektliteral eller kroppen til et funksjons- eller
+            # klasseUTTRYKK, har den avsluttet en VERDI, og skråstreken etter
+            # deler. Lukker den en vanlig blokk, kan et mønster følge. Uansett
+            # hva den lukket, kan et objektliteral ikke begynne rett etter en
+            # `}` — der står enten en ny setning eller en operator.
+            verdi = _lukk(rammer)[3]
+            i, siste_ord, blokkposisjon = i + 1, "", True
             continue
         if c == "{":
             objekt = not blokkposisjon
-            rammer.append(["{", objekt, 0])
+            # Kroppen et `function`- eller `class`-uttrykk ventet på. Flagget
+            # tas ut av rammen her, så bare den FØRSTE krøllparentesen på det
+            # nivået kan være kroppen.
+            kropp = rammer[-1][4]
+            rammer[-1][4] = False
+            rammer.append(["{", objekt, 0, objekt or kropp, False])
             i, verdi, siste_ord = i + 1, False, ""
             blokkposisjon = not objekt
             continue
@@ -616,9 +658,13 @@ def _kodespenn(js: str, a: int, b: int, avslutt: bool = False):
 def _lukk(rammer: list[list]) -> list:
     """Lukk innerste ramme og gi den fra deg. Bunnrammen lukkes aldri.
 
-    En lukking uten åpning er kode som ikke går i hop; da er bunnrammen svaret,
-    og den betyr «ingen betingelse, ingen objektverdi» — det samme skanneren
-    antok før stakkene ble slått sammen.
+    En lukking uten åpning er kode som ikke går i hop, og da er bunnrammen
+    svaret: «ingen betingelse, ingen verdi». Å svare «ingen verdi» er det
+    trygge valget i en tekst skanneren ikke klarer å lese — da leses en
+    skråstrek etter som starten på et mønster, og et mønster er kode. Svarte vi
+    «verdi», ble skråstreken en divisjon, og neste fnutt åpnet en «streng» som
+    svelger kjørende kode som prosa. Det er nettopp den feilveien de fleste
+    funnene på #118 har hatt.
     """
     return rammer.pop() if len(rammer) > 1 else rammer[0]
 
@@ -746,6 +792,30 @@ _SKANNERPROEVER = [
     # En etikett i prosa er fortsatt prosa: kolonet inne i en streng er ikke
     # skannerens bord.
     ('const s = "case 1: filter_state"; const x = 1;', True),
+    # Fjortende runde: et funksjons- eller klasseUTTRYKK gir en verdi når
+    # kroppen lukkes, så skråstreken etter deler.
+    ('const y = function(){} / /["\']/.test(v); const filter_state = {};',
+     False),
+    ('const y = function navn(){} / /["\']/.test(v); const filter_state = {};',
+     False),
+    ('const y = class {} / /["\']/.test(v); const filter_state = {};', False),
+    ('const y = class A extends B {} / /["\']/.test(v); '
+     'const filter_state = {};', False),
+    ('const y = async function(){} / /["\']/.test(v); '
+     'const filter_state = {};', False),
+    ('const y = f(function(){} / 2); const filter_state = {};', False),
+    # Men i SETNINGSposisjon er de erklæringer og gir ingen verdi — der er
+    # skråstreken etter starten på et mønster. (Prøvene over på `function f()
+    # {}` og `class A {}` står fortsatt, og må gjøre det: regelen skiller på
+    # posisjon, så begge sider av skillet må måles.)
+    ('async function f() {} /["\']/.test(v); const filter_state = {};', False),
+    # Og et ord som BARE ser ut som et kroppsord er ikke ett: `class` etter
+    # punktum er en egenskap, og `class` foran et kolon er en nøkkel. Blokka
+    # etter dem er en blokk, og mønsteret etter den er et mønster.
+    ('const y = o.class; if (a) {} /["\']/.test(v); const filter_state = {};',
+     False),
+    ('const o = {class: 1}; if (a) {} /["\']/.test(v); '
+     'const filter_state = {};', False),
 ]
 
 
