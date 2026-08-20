@@ -17,6 +17,7 @@ Alle tester konstruerer egen tilstand. Ingen delt fixture.
 """
 import ast
 import json
+import os
 import re
 import secrets
 from pathlib import Path
@@ -47,6 +48,17 @@ def _rt():
     return koble(DSN)
 
 
+#: 048 (#108): claim/terminaliser/frigi er PLAN-ARBEIDERENS — runtime
+#: mistet EXECUTE. Flytene her kjører derfor som plan-rollen, nøyaktig
+#: som produksjonens disponit-plan-unit gjør.
+PLAN_DSN = os.environ.get("DISPONIT_TEST_PLAN_DSN")
+
+
+def _pa():
+    from db.pg import koble
+    return koble(PLAN_DSN)
+
+
 def _mig():
     from db.pg import koble
     return koble(MIGRATOR_DSN)
@@ -65,8 +77,17 @@ def _oslo_forfalt_time(conn, delta=-1):
     return (h + delta) % 24
 
 
-def _plan(rt, *, host, rytme="daglig", time_lokal=None, ukedag=None,
-          manedsdag=None, aktiver=True, aktor="test:plan"):
+def _plan(_konn_ubrukt, *, host, rytme="daglig", time_lokal=None,
+          ukedag=None, manedsdag=None, aktiver=True, aktor="test:plan"):
+    """Oppretter (og evt. aktiverer) en plan — ALLTID som runtime.
+
+    048 (#108): flyttestene kjører nå som plan-arbeideren (kallerens
+    `rt` er plan-rollens), men flate-CRUD-en (opprett/aktiver) er
+    fortsatt RUNTIMES — nøyaktig som i produksjonen, der planen lages i
+    portalen og arbeides av arbeideren. Egen tilkobling her, kallerens
+    ignoreres med vilje."""
+    from db.pg import koble
+    rt = koble(DSN)
     _sett_kontekst(rt, TENANT)
     if time_lokal is None:
         time_lokal = _oslo_forfalt_time(rt)
@@ -79,6 +100,7 @@ def _plan(rt, *, host, rytme="daglig", time_lokal=None, ukedag=None,
         rt.execute("SELECT aktiver_plan(%s,%s,%s,'r-plan')",
                    (TENANT, pid, aktor))
     rt.commit()
+    rt.close()
     return pid
 
 
@@ -141,20 +163,36 @@ def _mine_forfalte(conn, pid, maks=500):
     return [r for r in rader if r[0] == pid]
 
 
+def _kjor_som_runtime(sql, params):
+    # 048 (#108): flate-CRUD (gjenoppta m.m.) er fortsatt RUNTIMES —
+    # plan-arbeideren har den ikke, og skal ikke ha den (port 4).
+    c = _rt()
+    try:
+        _sett_kontekst(c, TENANT)
+        c.execute(sql, params)
+        c.commit()
+    finally:
+        c.close()
+
+
 def _syntetisk_vindu(m, pid, *, start_h, slutt_h, tilstand="terminal",
                      lease_h=None):
     _sett_kontekst(m, TENANT)
     start = m.execute(
         "INSERT INTO bestillingsplan_vindu (plan_id, tenant, vindu_start,"
-        " vindu_slutt, tilstand, terminalisert_ts, claim_id, lease_utloper)"
+        " vindu_slutt, tilstand, terminalisert_ts, claim_id, lease_utloper,"
+        " claimet_av)"
         " VALUES (%s,%s, now()+make_interval(hours=>%s),"
         " now()+make_interval(hours=>%s), %s,"
         " CASE WHEN %s='terminal' THEN now() END,"
         " CASE WHEN %s='aktivt' THEN gen_random_uuid() END,"
-        " CASE WHEN %s='aktivt' THEN now()+make_interval(hours=>%s) END)"
+        " CASE WHEN %s='aktivt' THEN now()+make_interval(hours=>%s) END,"
+        # 048: `aktivt` krever systemattestert holder; session_user er
+        # den som faktisk skriver den syntetiske raden.
+        " CASE WHEN %s='aktivt' THEN session_user END)"
         " RETURNING vindu_start",
         (pid, TENANT, start_h, slutt_h, tilstand, tilstand, tilstand,
-         tilstand, lease_h or 1)).fetchone()[0]
+         tilstand, lease_h or 1, tilstand)).fetchone()[0]
     m.commit()
     return start
 
@@ -216,7 +254,7 @@ def test_ugyldig_bestillingstype_avvises(migrator, klient, capsys):
         ROT / "deploy" / "staging" / "deployport-modultyper.py")
     dp = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(dp)
-    rt = _rt()
+    rt = _rt()  # deploy-porten kjører med runtime-DSN, ikke plan-rollens
     try:
         assert dp.kontroller_planbestillingstyper(rt) == []
     finally:
@@ -277,7 +315,7 @@ def test_boolsk_ukedag_er_400_ikke_driftsalarm(migrator, klient, capsys):
 @pg
 def test_pause_aarsak_og_status_er_koblet(migrator):
     """Port 5: `pause_aarsak` finnes hvis og BARE hvis planen er pauset."""
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan(rt, host="p5.example")
     finally:
@@ -363,12 +401,24 @@ def test_definerne_binder_tenanten_til_konteksten(migrator):
                  (annen, json.dumps(_param("fremmed.example")))),
                 ("SELECT aktiver_plan(%s,%s,'test:x','r-x')", (annen, pid)),
                 ("SELECT stans_plan(%s,%s,'test:x','r-x')", (annen, pid)),
-                ("SELECT claim_planvindu(%s,%s,now(),120)", (annen, pid)),
         ):
             _sett_kontekst(rt, TENANT)
             with pytest.raises(psycopg.errors.InsufficientPrivilege):
                 rt.execute(sql, arg)
             rt.rollback()
+
+        # Claim-veien måles fra PLAN-ARBEIDEREN (048): runtime har mistet
+        # EXECUTE, så derfra ville feilen vært GRANT-nekt, ikke
+        # tenantbinding — og porten hadde målt feil ting.
+        pa = _pa()
+        try:
+            _sett_kontekst(pa, TENANT)
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                pa.execute("SELECT claim_planvindu(%s,%s,now(),120)",
+                           (annen, pid))
+            pa.rollback()
+        finally:
+            pa.close()
 
         # 2. INGEN kontekst i det hele tatt → avvist (fail-closed), selv
         #    med planens EGEN tenant i parameteret.
@@ -404,7 +454,7 @@ def test_vindusfunksjonene_binder_raden_til_tenanten(migrator):
     """
     offer = f"{TENANT}-offer"
     m = _mig()
-    rt = _rt()
+    rt = _pa()
     try:
         # Offerets plan og et ÅPENT vindu (ledig, forfalt, ikke utløpt).
         _sett_kontekst(m, offer)
@@ -470,7 +520,7 @@ def test_evidensen_er_append_only(migrator):
     """Portene 8, 50, 52, 53: tick/hendelse tåler ingen UPDATE/DELETE,
     terminal er endelig for HELE raden, tick krever terminalt vindu, og
     tilstandskombinasjonene er komplette."""
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan(rt, host="p8.example")
     finally:
@@ -550,7 +600,7 @@ def test_ett_tick_per_vindu_hele_veien(migrator, app):
     from plan.materialiser import materialiser_en
     _wcag_policy(migrator)
     _verifiser_domene(migrator, "p9.example")
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan_forfalt(rt, migrator, host="p9.example")
         rader = _mine_forfalte(rt, pid)
@@ -591,7 +641,7 @@ def test_krasj_og_gjenspill_brenner_ingen_kvote(migrator, app):
     from db.pg import sett_kontekst
     _wcag_policy(migrator)
     _verifiser_domene(migrator, "p11.example")
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan_forfalt(rt, migrator, host="p11.example")
         rad = _mine_forfalte(rt, pid)[0]
@@ -650,7 +700,7 @@ def test_terminalisering_vinner_gir_null_http(migrator, app, monkeypatch):
     """Port 45: er vinduet alt terminalt, avbryter materialiseringen FØR
     bestillingsveien — målt som null kall, ikke som fravær av rad."""
     from plan import materialiser
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan(rt, host="p45.example")
         vs = _syntetisk_vindu(migrator, pid, start_h=-30, slutt_h=-26)
@@ -674,7 +724,7 @@ def test_hoppet_over_portene(migrator):
     """Portene 37, 51 og §5-nekten: `hoppet_over` krever utløpt vindu,
     intet levende forsøk og INTET idempotenstreff."""
     from plan.klassifiser import _nokkel
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan(rt, host="p37.example")
         # 37: før vindu_slutt.
@@ -722,7 +772,7 @@ def test_avvik_er_sikkerhetssak(migrator):
     sikkerhetshendelse skrevet ATOMISK av funksjonen selv; samme utfall
     → `idempotent`, ingen hendelse."""
     from plan.klassifiser import _nokkel
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan(rt, host="p49.example")
         vs = _syntetisk_vindu(migrator, pid, start_h=-30, slutt_h=-26,
@@ -761,7 +811,7 @@ def test_avvik_er_sikkerhetssak(migrator):
 def test_to_materialiserere_en_claim(migrator):
     """Port 48 (mutexen isolert): andre claim på samme vindu får
     `aktivt` — aldri et claim til."""
-    rt = _rt()
+    rt = _pa()
     try:
         # Aktiveringen legges i går: claimet revaliderer kvalifiseringen
         # (forfallet i en aktiv periode), og en plan aktivert NÅ dekker
@@ -793,7 +843,7 @@ def test_claimet_nekter_et_utlopt_vindu(migrator, app, monkeypatch):
     kontrollen her ble et misset vindu til en INNHENTING, stikk i strid
     med §5s aldri-ta-igjen."""
     from plan import materialiser
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan(rt, host="p-utlopt.example")
         # Vinduet er lukket: batchen var fersk, turen kom for sent.
@@ -835,16 +885,15 @@ def test_claimet_nekter_en_stanset_plan(migrator, app, monkeypatch):
     stanset plan kunne fortsatt konsumere en kvoteplass og starte en
     ekstern skanning. Ordren skal gjelde fra den committes."""
     from plan import materialiser
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan_forfalt(rt, migrator, host="p-stanset.example")
         rad = _mine_forfalte(rt, pid)[0]
         vs = rad[2]
         # Administratoren stanser planen ETTER at batchen er plukket.
-        _sett_kontekst(rt, TENANT)
-        rt.execute("SELECT stans_plan(%s,%s,'test:admin','r-stans')",
-                   (TENANT, pid))
-        rt.commit()
+        _kjor_som_runtime(
+            "SELECT stans_plan(%s,%s,'test:admin','r-stans')",
+            (TENANT, pid))
 
         _sett_kontekst(rt, TENANT)
         assert rt.execute("SELECT utfall FROM claim_planvindu(%s,%s,%s,120)",
@@ -882,7 +931,7 @@ def test_claimet_nekter_en_pauset_plan(migrator):
     ville delt raden ut på nytt — da skal claimet også gi den. Ellers
     ville et pause/gjenoppta-par inne i et åpent vindu stille konsumert
     det, uten tick og uten at noen ba om det."""
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan_forfalt(rt, migrator, host="p-pauset-claim.example")
         vs = _mine_forfalte(rt, pid)[0][2]
@@ -898,10 +947,9 @@ def test_claimet_nekter_en_pauset_plan(migrator):
         # perioden planen VAR aktiv i (lukket ved pausen, altså etter
         # forfallet), så plukket ville delt raden ut igjen — og claimet
         # måler nøyaktig samme regel.
-        _sett_kontekst(rt, TENANT)
-        rt.execute("SELECT gjenoppta_plan(%s,%s,'test:admin','r-gjen')",
-                   (TENANT, pid))
-        rt.commit()
+        _kjor_som_runtime(
+            "SELECT gjenoppta_plan(%s,%s,'test:admin','r-gjen')",
+            (TENANT, pid))
         assert len(_mine_forfalte(rt, pid)) == 1, "plukket ga ingen rad"
         _sett_kontekst(rt, TENANT)
         assert rt.execute("SELECT utfall FROM claim_planvindu(%s,%s,%s,120)",
@@ -971,7 +1019,7 @@ def test_fremmed_idempotensnokkel_terminaliserer_ikke(migrator):
     vindu som VAR bestilt kunne dermed felles som `hoppet_over` likevel.
     """
     from plan.klassifiser import _nokkel
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan_forfalt(rt, migrator, host="p106-p1.example")
         vs = _syntetisk_vindu(migrator, pid, start_h=-1, slutt_h=1,
@@ -1050,7 +1098,7 @@ def test_gjenoppretting_henter_oppdraget_fra_fasiten(migrator):
     for kalleren og så dyrt for evidensen.
     """
     from plan.klassifiser import _nokkel
-    rt = _rt()
+    rt = _pa()
     try:
         ekte, _logg = _beslutningsoppdrag(rt, migrator)
         pid = _plan_forfalt(rt, migrator, host="p106-p2.example")
@@ -1105,7 +1153,7 @@ def test_spredning_og_tak(migrator):
     """Portene 13 og 36: forfallsminuttet sprer jevnt (maks-andel ≤ 0,10,
     jf. evidensgrensen), og taket FORSINKER overskuddet — det
     materialiseres i neste kjøring, aldri konsumeres."""
-    rt0 = _rt()
+    rt0 = _rt()  # plan_forfallsminutt er runtimes
     try:
         _sett_kontekst(rt0, TENANT)
         minutter = [r[0] for r in rt0.execute(
@@ -1119,7 +1167,7 @@ def test_spredning_og_tak(migrator):
     verste = max(minutter.count(m) for m in set(minutter))
     assert verste <= 20, f"spredningen klumper ({verste}/200 på ett minutt)"
     # Taket: tre forfalte planer, plukk 2 — den tredje har INGEN rad ennå.
-    rt = _rt()
+    rt = _pa()
     try:
         pids = [_plan_forfalt(rt, migrator, host=f"tak{i}.example")
                 for i in range(3)]
@@ -1158,7 +1206,7 @@ def _rt_forfalte(rt):
 def test_kvalifisering_folger_forfallet(migrator):
     """Portene 32 og 38: aktivert ETTER forfall → ingen rad; aktivert
     etter vindu_start men FØR forfall → kjører."""
-    rt = _rt()
+    rt = _pa()
     try:
         # Aktivert nå, vinduet forfalt for en time siden → fra_ts > forfall.
         pid = _plan(rt, host="p32.example")
@@ -1180,7 +1228,7 @@ def test_klassifisereren_feller_hoppet_over(migrator, app):
     `hoppet_over` etter vindu_slutt, ingen innhenting, ingen bestilling
     — og kjøringen er idempotent."""
     from plan.klassifiser import klassifiser_vinduer
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan(rt, host="p33.example", aktiver=False)
         _aktiver_i_fortid(migrator, pid, dager=3)
@@ -1219,7 +1267,7 @@ def test_klassifisereren_leser_fasiten_fra_idempotens(migrator):
     """§5: finnes en rad i `bestilling_idempotens` på vinduets nøkkel,
     BLE det bestilt — utfallet hentes derfra, aldri `hoppet_over`."""
     from plan.klassifiser import _nokkel, klassifiser_vinduer
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan(rt, host="p5b.example", aktiver=False)
         _aktiver_i_fortid(migrator, pid, dager=2)
@@ -1255,7 +1303,7 @@ def test_klassifisereren_venter_paa_levende_forsok(migrator):
     """Port 44: klokken passerte vindu_slutt mens et forsøk lever —
     klassifisereren skriver INGENTING; vinduet ender med faktisk utfall."""
     from plan.klassifiser import _nokkel, klassifiser_vinduer
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan(rt, host="p44.example")
         vs = _syntetisk_vindu(migrator, pid, start_h=-8, slutt_h=-4,
@@ -1299,7 +1347,7 @@ def test_fullfort_forsok_gjenopprettes_etter_utlopt_claim(migrator):
     Klassifisereren gjetter aldri — den skriver ned det bestillingsveien
     alt har besluttet."""
     from plan.klassifiser import _nokkel, klassifiser_vinduer
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan(rt, host="p-gjenoppr.example")
         # Arbeideren claimet, bestilte og døde: vinduet står `aktivt` med
@@ -1370,7 +1418,7 @@ def test_ledig_vindu_kan_ikke_terminaliseres_uten_claim_eller_fasit(migrator):
     `frigi_planvindu` etter et driftsuhell KAN etterlate et ledig vindu
     med idempotensrad — der er fasiten like bindende)."""
     from plan.klassifiser import _nokkel
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan_forfalt(rt, migrator, host="p105-p1.example")
         # Et ÅPENT, ledig vindu — nøyaktig det plukket ville delt ut.
@@ -1450,7 +1498,7 @@ def test_nedetid_over_30_dogn_aggregeres(migrator):
     én aggregert hendelse per plan, og radene som alt finnes
     terminaliseres uten enkelthendelser. Ingen rad før tidligste fra_ts."""
     from plan.klassifiser import klassifiser_vinduer
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan(rt, host="p35.example", aktiver=False)
         _aktiver_i_fortid(migrator, pid, dager=40)
@@ -1501,7 +1549,7 @@ def test_gammelt_bestilt_vindu_velter_ikke_aggregatet(migrator):
     savepoint.
     """
     from plan.klassifiser import _nokkel, klassifiser_vinduer
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan(rt, host="p35d.example", aktiver=False)
         _aktiver_i_fortid(migrator, pid, dager=40)
@@ -1559,7 +1607,7 @@ def test_bestilte_vinduer_telles_ikke_som_nedetid(migrator):
     foran løkken og send `antall` uendret.
     """
     from plan.klassifiser import _nokkel, klassifiser_vinduer
-    rt = _rt()
+    rt = _pa()
     vs = {}
     try:
         pid_a = _plan(rt, host="p35e-a.example", aktiver=False)
@@ -1607,7 +1655,7 @@ def test_langt_avbrudd_telles_fra_rytmen(migrator):
     kun grenseraden — og §5s løfte om ÉN hendelse som forteller sant om
     avbruddet var ikke innfridd. Og fortsatt ÉN: ikke én per sveip."""
     from plan.klassifiser import klassifiser_vinduer
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan(rt, host="p35b.example", aktiver=False)
         _aktiver_i_fortid(migrator, pid, dager=90)
@@ -1649,7 +1697,7 @@ def test_stanset_plan_faar_ogsaa_sitt_nedetidsaggregat(migrator):
     Stansen holdes fortsatt ute av PERIODENE, ikke av et statusfilter:
     forekomster etter `til_ts` kvalifiserer ikke."""
     from plan.klassifiser import klassifiser_vinduer
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan(rt, host="p35c.example", aktiver=False)
         _aktiver_i_fortid(migrator, pid, dager=90)
@@ -1787,7 +1835,7 @@ def test_menneskelig_avvis_pauser_forste_gang(migrator, app):
     pauser ikke."""
     from plan.materialiser import pausesveip
     bid = _ekte_bruker("p17-eier")
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan(rt, host="p17.example", aktor=f"bruker:{bid}")
         oid, _logg = _beslutningsoppdrag(rt, migrator)
@@ -1844,7 +1892,7 @@ def test_stopp_pauser_med_policy_stopper(migrator, app):
     reserverer INGENTING."""
     from plan.materialiser import materialiser_en
     _wcag_policy(migrator)   # policy finnes; domenet er IKKE verifisert
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan_forfalt(rt, migrator,
                             host="p19-uverifisert.example")
@@ -1890,7 +1938,7 @@ def test_stopp_uten_pause_gjenopprettes(migrator):
     fullbyrdede dommen.
     """
     from plan.materialiser import pausesveip
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan_forfalt(rt, migrator, host="p19b.example",
                             aktiver_dager=3)
@@ -1919,10 +1967,8 @@ def test_stopp_uten_pause_gjenopprettes(migrator):
         # ... og heller ikke ETTER et gjenopptak. Dommen er fullbyrdet;
         # uten per-tick-demping ville planen blitt pauset i sekundet den
         # ble gjenopptatt, og gjenopptaket vært virkningsløst.
-        _sett_kontekst(rt, TENANT)
-        rt.execute("SELECT gjenoppta_plan(%s,%s,'test:x','r-x')",
-                   (TENANT, pid))
-        rt.commit()
+        _kjor_som_runtime("SELECT gjenoppta_plan(%s,%s,'test:x','r-x')",
+                          (TENANT, pid))
         assert pausesveip(rt) == []
         _sett_kontekst(migrator, TENANT)
         assert migrator.execute(
@@ -1944,7 +1990,7 @@ def test_pause_nummer_to_varsles_ogsaa(migrator, klient):
     slukt av `WHEN OTHERS`: overgangen sto, men eieren fikk verken
     varselet eller `varslet`-sporet."""
     bid = _ekte_bruker("p-pause2-eier")
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan(rt, host="p-pause2.example", aktor=f"bruker:{bid}")
         _sett_kontekst(rt, TENANT)
@@ -2051,7 +2097,7 @@ def test_opptatt_nokkel_frigir_vinduet(migrator, app):
     from db.pg import koble
     from plan import materialiser
     from api import bestilling as bm
-    rt = _rt()
+    rt = _pa()
     laas = koble(DSN)
     try:
         pid = _plan_forfalt(rt, migrator, host="p-opptatt.example")
@@ -2090,7 +2136,7 @@ def test_forbigaende_feil_frigir_vinduet(migrator, app, monkeypatch):
     plukker det samme vinduet igjen. Claimet gis tilbake i stedet for å
     vente ut leasen: vinduet kan ha sekunder igjen."""
     from plan import materialiser
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan_forfalt(rt, migrator, host="p-drift.example")
         rad = _mine_forfalte(rt, pid)[0]
@@ -2138,7 +2184,7 @@ def test_avvist_terminalisering_pauser_ikke_planen(migrator, app,
     pausebetingelsen i `materialiser_en`.
     """
     from plan import materialiser
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan_forfalt(rt, migrator, host="p-avvik-pause.example")
         rad = _mine_forfalte(rt, pid)[0]
@@ -2192,7 +2238,7 @@ def test_gjentatt_uten_resultat(migrator):
     """Port 22: tre `tillat`-tick på rad i gjeldende åpne periode uten
     promotert artefakt → pauset `gjentatt_uten_resultat`."""
     from plan.materialiser import pausesveip
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan_forfalt(rt, migrator, host="p22.example",
                             aktiver_dager=5)
@@ -2229,7 +2275,7 @@ def test_uten_resultat_revalideres_under_planlaasen(migrator):
     import threading
     import time
     from db.pg import koble
-    rt = _rt()
+    rt = _pa()
     blokk = koble(MIGRATOR_DSN)
     svar = {}
     try:
@@ -2249,7 +2295,7 @@ def test_uten_resultat_revalideres_under_planlaasen(migrator):
                       " FOR UPDATE", (pid,))
 
         def sveip():
-            c = _rt()
+            c = _pa()
             try:
                 _sett_kontekst(c, TENANT)
                 svar["pauset"] = c.execute(
@@ -2330,7 +2376,7 @@ def test_promoteringen_og_predikatet_deler_laasen(migrator, app):
     import threading
     import time
     from db import kryptering
-    rt = _rt()
+    rt = _pa()
     blokk = _mig()
     svar = {}
     try:
@@ -2359,7 +2405,7 @@ def test_promoteringen_og_predikatet_deler_laasen(migrator, app):
         _promoter_artefakt(blokk, key_id, oids[0])   # åpen: ingen commit
 
         def sveip():
-            c = _rt()
+            c = _pa()
             try:
                 _sett_kontekst(c, TENANT)
                 svar["pauset"] = c.execute(
@@ -2392,7 +2438,7 @@ def test_promoteringen_og_predikatet_deler_laasen(migrator, app):
     # utvalget i sin EGEN transaksjon, og et promotert resultat skal
     # holde planen ute av begge.
     from plan.materialiser import pausesveip
-    sveipet = _rt()
+    sveipet = _pa()
     try:
         rest = pausesveip(sveipet)
         _sett_kontekst(sveipet, TENANT)
@@ -2441,8 +2487,8 @@ def test_tickskriveren_deler_planlaasen_med_pausen(migrator):
     import threading
     import time
     from plan.klassifiser import _nokkel
-    rt = _rt()
-    blokk = _rt()
+    rt = _pa()
+    blokk = _pa()
     svar = {}
     try:
         pid = _plan_forfalt(rt, migrator, host="p105-p2.example",
@@ -2477,7 +2523,7 @@ def test_tickskriveren_deler_planlaasen_med_pausen(migrator):
             == "terminalisert"
 
         def sveip():
-            c = _rt()
+            c = _pa()
             try:
                 _sett_kontekst(c, TENANT)
                 svar["pauset"] = c.execute(
@@ -2522,7 +2568,7 @@ def test_et_brudd_bryter_stripen_uten_resultat(migrator):
     tillat, tillat` lest som tre sammenhengende `tillat` og pauset planen
     — enda `brudd`-et imellom nettopp bryter stripen."""
     from plan.materialiser import pausesveip
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan_forfalt(rt, migrator, host="p22b.example",
                             aktiver_dager=3)
@@ -2597,7 +2643,7 @@ def test_planvarslene_respekterer_kun_portal(migrator):
 
     bid = _ekte_bruker("p-kanal-eier")
     _velg_kanal(migrator, bid, "kun_portal")
-    rt = _rt()
+    rt = _pa()
     try:
         # 1. Pausevarselet: `kun_portal` → `ikke_aktuelt`, ikke `koet`.
         pid = _plan(rt, host="p-kanal.example", aktor=f"bruker:{bid}")
@@ -2668,7 +2714,7 @@ def test_tre_brudd_varsles_men_pauser_aldri(migrator):
     dempet til stripen brytes."""
     from plan.materialiser import pausesveip
     bid = _ekte_bruker("p21-eier")
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan_forfalt(rt, migrator, host="p21.example",
                             aktiver_dager=5, aktor=f"bruker:{bid}")
@@ -2729,7 +2775,7 @@ def test_dempingen_holder_hele_bruddstripen(migrator):
     som lå bak varselet. Seks er det minste som viser det."""
     from plan.materialiser import pausesveip
     bid = _ekte_bruker("p21c-eier")
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan_forfalt(rt, migrator, host="p21c.example",
                             aktiver_dager=12, aktor=f"bruker:{bid}")
@@ -2792,7 +2838,7 @@ def test_dempingen_leses_under_planlaasen(migrator):
     import time
     from db.pg import koble
     bid = _ekte_bruker("p-demping-eier")
-    rt = _rt()
+    rt = _pa()
     blokk = koble(MIGRATOR_DSN)
     svar = {}
     try:
@@ -2809,7 +2855,7 @@ def test_dempingen_leses_under_planlaasen(migrator):
                       " WHERE plan_id=%s FOR UPDATE", (pid,))
 
         def taper():
-            c = _rt()
+            c = _pa()
             try:
                 _sett_kontekst(c, TENANT)
                 svar["taper"] = c.execute(
@@ -2862,7 +2908,7 @@ def test_andre_bruddstripe_varsles_uten_a_velte_sveipen(migrator):
     med den, og hvert påfølgende sveip feilet likt."""
     from plan.materialiser import pausesveip
     bid = _ekte_bruker("p21b-eier")
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan_forfalt(rt, migrator, host="p21b.example",
                             aktiver_dager=5, aktor=f"bruker:{bid}")
@@ -2904,7 +2950,7 @@ def test_gjenopptak_krever_scope_og_nullstiller(migrator, klient):
     """Port 23: gjenopptak uten scope → nektet; med scope → ny periode og
     tellerne nullstilt (gamle tick teller ikke i den nye perioden)."""
     from plan.materialiser import pausesveip
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan_forfalt(rt, migrator, host="p23.example",
                             aktiver_dager=5)
@@ -2964,7 +3010,7 @@ def test_sen_gjenoppretting_hoerer_til_forfallets_periode(migrator):
     identiske vinduer og tick, den ene gjenopptatt etter at vinduene
     forfalt, den andre ikke. Bare gjenopptaket skiller dem."""
     from plan.materialiser import pausesveip
-    rt = _rt()
+    rt = _pa()
     try:
         sen = _plan_forfalt(rt, migrator, host="p44-sen.example",
                             aktiver_dager=5)
@@ -2981,9 +3027,9 @@ def test_sen_gjenoppretting_hoerer_til_forfallets_periode(migrator):
         assert rt.execute(
             "SELECT pause_plan(%s,%s,'policy_stopper','test','r-sen',NULL)",
             (TENANT, sen)).fetchone()[0]
-        rt.execute("SELECT gjenoppta_plan(%s,%s,'test:x','r-sen2')",
-                   (TENANT, sen))
         rt.commit()
+        _kjor_som_runtime("SELECT gjenoppta_plan(%s,%s,'test:x','r-sen2')",
+                          (TENANT, sen))
         # ... og FØRST NÅ skrives evidensen, med fersk `registrert`.
         for p, vs_er in vinduer.items():
             for i, vs in enumerate(vs_er):
@@ -3009,7 +3055,7 @@ def test_gjenopptak_etter_menneskelig_avvis_virker(migrator, klient):
     brukes mot. Hver avvisning skal pause ÉN gang — dempet av
     `pauset`-hendelsen som bærer oppdraget."""
     from plan.materialiser import pausesveip
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan(rt, host="p-avvis-gjenoppta.example")
         oid, _ = _beslutningsoppdrag(rt, migrator)
@@ -3063,7 +3109,7 @@ def test_kvoten_deles_med_manuelle_bestillinger(migrator, app, klient):
     for i in range(4):
         r = _bestill(klient, cookie, csrf, _gyldig_kropp("p25.example"))
         assert r.json()["beslutning"] == "tillat", (i, r.text)
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan_forfalt(rt, migrator, host="p25.example")
         rad = _mine_forfalte(rt, pid)[0]
@@ -3160,7 +3206,7 @@ def test_planvarselet_naar_mottakeren_sin_innboks(migrator, klient):
     from api import sesjon as sesjonmodul
     bid = _ekte_bruker("varselvei")
     cookie, csrf = _adminsesjon(sub="varselvei")
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan(rt, host="varselvei.example", aktor=f"bruker:{bid}")
         _sett_kontekst(rt, TENANT)
@@ -3200,7 +3246,7 @@ def test_historikken_viser_manuell_avvisning(migrator, klient):
     `avvist_av_menneske` hadde ingen skriver i det hele tatt. Nå avledes
     diskriminatoren i lesingen: `utfall` er sporet, `vist_utfall` er nå."""
     cookie, csrf = _adminsesjon(sub="hist-avvis")
-    rt = _rt()
+    rt = _pa()
     try:
         pid = _plan(rt, host="hist-avvis.example")
         oid, _ = _beslutningsoppdrag(rt, migrator)

@@ -50,7 +50,13 @@ ARBEIDER=disponit_arbeider
 # kompromittert sender skal ikke ha API-ets DML. Rollen får KUN EXECUTE på de
 # tre senderfunksjonene (migrer.py) — ingen tabellrettigheter i det hele tatt.
 VARSLER=disponit_varselsender
-for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER" "$EGRESS" "$DOMENER" "$VARSLER"; do
+# 048 (#108): plan-arbeideren har EGEN DB-rolle — varselsender-modellen,
+# ordrett: et kompromittert web-API skal ikke kunne claime/terminalisere
+# planvinduer, og en kompromittert plan-arbeider skal ikke ha API-ets
+# fulle DML. Rollen får bestillingsveiens delmengde + claim-funksjonene
+# (migrer.py PLAN_RETTIGHETER); runtime MISTER claim-EXECUTE i 048.
+PLANARB=disponit_plan_arbeider
+for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER" "$EGRESS" "$DOMENER" "$VARSLER" "$PLANARB"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
     | grep -q 1 || sudo -u postgres psql -c \
     "CREATE ROLE $r LOGIN PASSWORD '$(openssl rand -hex 24)'"
@@ -131,6 +137,7 @@ EGRESS_DSN=("DISPONIT_EGRESS_URL=$DB" "DISPONIT_TEST_EGRESS_DSN=${DB}_test")
 # autentisere paa en fersk install.
 DOMENER_DSN=("DISPONIT_DOMAINS_URL=$DB" "DISPONIT_TEST_DOMAINS_DSN=${DB}_test")
 VARSLER_DSN=("DISPONIT_VARSEL_URL=$DB" "DISPONIT_TEST_VARSEL_DSN=${DB}_test")
+PLANARB_DSN=("DISPONIT_PLAN_URL=$DB" "DISPONIT_TEST_PLAN_DSN=${DB}_test")
 
 sikre_rolle_dsn "$BRUKER"     "${RUNTIME_DSN[@]}"
 sikre_rolle_dsn "$MIGRATOR"   "${MIGRATOR_DSN[@]}"
@@ -139,6 +146,7 @@ sikre_rolle_dsn "$ARBEIDER"   "${ARBEIDER_DSN[@]}"
 sikre_rolle_dsn "$EGRESS"     "${EGRESS_DSN[@]}"
 sikre_rolle_dsn "$DOMENER"    "${DOMENER_DSN[@]}"
 sikre_rolle_dsn "$VARSLER"    "${VARSLER_DSN[@]}"
+sikre_rolle_dsn "$PLANARB"    "${PLANARB_DSN[@]}"
 sikre_attestasjonsnokler
 sikre_mac_nokler          # PR-012: MAC-register (oppstartsperre for API-et)
 # KEK og token-pepper (PR-005b). KEK manglet helt etter PR-005a: krypteringen
@@ -161,6 +169,7 @@ verifiser_og_reparer "$ARBEIDER"   "${ARBEIDER_DSN[@]}"
 verifiser_og_reparer "$EGRESS"     "${EGRESS_DSN[@]}"
 verifiser_og_reparer "$DOMENER"    "${DOMENER_DSN[@]}"
 verifiser_og_reparer "$VARSLER"    "${VARSLER_DSN[@]}"
+verifiser_og_reparer "$PLANARB"    "${PLANARB_DSN[@]}"
 
 # ------------------------------------------------------------
 # Migrasjoner kjøres av MIGRATOR-rollen — verken av postgres eller av
@@ -320,6 +329,7 @@ verifiser_og_reparer "$TOKENADMIN" "${TOKENADMIN_DSN[@]}"
 verifiser_og_reparer "$EGRESS"     "${EGRESS_DSN[@]}"
 verifiser_og_reparer "$DOMENER"    "${DOMENER_DSN[@]}"
 verifiser_og_reparer "$VARSLER"    "${VARSLER_DSN[@]}"
+verifiser_og_reparer "$PLANARB"    "${PLANARB_DSN[@]}"
 
 echo "OK. Kilde miljøet med: set -a; . $MILJOFIL; set +a"
 echo "Verifiser: python3 -m pytest platform/core/tests -q"

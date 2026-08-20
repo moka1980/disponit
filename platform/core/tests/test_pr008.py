@@ -79,6 +79,9 @@ def _gjenopprett_rettigheter(migrator):
                        # 043: oppløsningsveien — runtime alene, egen blokk.
                        (modul.M37_RETTIGHETER_API, "disponit"),
                        (modul.VARSLER_RETTIGHETER, "disponit_varselsender"),
+                       # 048 (#108): plan-arbeideren — samme lærdom som
+                       # varsler-linjen over, samme dag den ble aktuell.
+                       (modul.PLAN_RETTIGHETER, "disponit_plan_arbeider"),
                        (modul.TOKEN_ADMIN_RETTIGHETER,
                         "disponit_token_admin")):
         migrator.execute(sql.format(rolle=rolle))

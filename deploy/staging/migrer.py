@@ -325,6 +325,50 @@ GRANT EXECUTE ON FUNCTION varsle_tokenfamilie_utlop(text) TO {rolle};
 RESET ROLE;
 """
 
+PLAN_RETTIGHETER = """
+GRANT USAGE ON SCHEMA public TO {rolle};
+-- 048 (#108): plan-arbeiderens rolle — varselsender-modellen. Rollen
+-- kjører HELE bestillingsveien in-prosess (044-avviket, ratifisert), så
+-- den trenger runtime-DELMENGDEN bestillingsveien faktisk bruker — og
+-- claim-funksjonene runtime nettopp mistet. IKKE: saker, varsel-sending,
+-- policy-skriving, tokener, domener (negativ port 3 måler).
+GRANT SELECT ON migrasjoner TO {rolle};
+GRANT SELECT, INSERT ON revisjonslogg, frekvens_hendelser TO {rolle};
+GRANT SELECT, INSERT ON unntak_historikk, attestasjon_jti TO {rolle};
+GRANT SELECT, INSERT, UPDATE ON unntak, idempotens TO {rolle};
+GRANT SELECT, INSERT, UPDATE ON tenant_nokler TO {rolle};
+GRANT SELECT, INSERT ON bestilling_idempotens TO {rolle};
+GRANT SELECT ON policyer, policy_hode TO {rolle};
+GRANT SELECT ON oppdrag TO {rolle};
+GRANT SELECT ON domenekontroll TO {rolle};
+GRANT SELECT ON oppdragstype_register, modulkontrakt, modulhode,
+                moduldeployment, modulregister_hendelse TO {rolle};
+GRANT SELECT ON malautorisasjonsvilkar TO {rolle};
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {rolle};
+-- Plan-familiens definere (claimer-eide) — nøyaktig kallsettet fra
+-- plan/materialiser.py + plan/klassifiser.py + utfor_bestilling-stien;
+-- den statiske porten i test_claim_tillitsgrense måler at settet her og
+-- kallsettet er samme mengde, så listen ikke kan drifte.
+SET LOCAL ROLE disponit_m37_claimer;
+GRANT EXECUTE ON FUNCTION claim_planvindu(TEXT, UUID, TIMESTAMPTZ, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION terminaliser_planvindu(TEXT, UUID, TIMESTAMPTZ, UUID, TEXT, TEXT, BIGINT, JSONB) TO {rolle};
+GRANT EXECUTE ON FUNCTION frigi_planvindu(TEXT, UUID, TIMESTAMPTZ, UUID) TO {rolle};
+GRANT EXECUTE ON FUNCTION forfalte_planvinduer(INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION utlopte_planvinduer(INT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION planvinduer_til_klassifisering(INT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION plan_nedetid_kandidater(INT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION plan_nedetid_aggregert(TEXT, UUID, TIMESTAMPTZ, TIMESTAMPTZ, INT, TEXT, TEXT, BOOLEAN) TO {rolle};
+GRANT EXECUTE ON FUNCTION pause_plan(TEXT, UUID, TEXT, TEXT, TEXT, JSONB) TO {rolle};
+GRANT EXECUTE ON FUNCTION planer_med_menneskelig_avvis() TO {rolle};
+GRANT EXECUTE ON FUNCTION planer_gjentatt_uten_resultat() TO {rolle};
+GRANT EXECUTE ON FUNCTION planer_med_gjentatt_brudd() TO {rolle};
+GRANT EXECUTE ON FUNCTION planer_med_ubehandlet_stopp() TO {rolle};
+GRANT EXECUTE ON FUNCTION pause_gjentatt_uten_resultat(TEXT, UUID, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION varsle_plan_brudd(TEXT, UUID, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION opprett_beslutningsoppdrag(TEXT, BIGINT, TEXT, TEXT, TEXT, BYTEA, TEXT, BYTEA, TIMESTAMPTZ, TIMESTAMPTZ) TO {rolle};
+RESET ROLE;
+"""
+
 TOKEN_ADMIN_RETTIGHETER = """
 REVOKE ALL ON FUNCTION verifiser_token(TEXT, TEXT) FROM {rolle};
 GRANT USAGE ON SCHEMA public TO {rolle};
@@ -474,6 +518,20 @@ def main(argv: list[str] | None = None) -> int:
         else:
             conn.rollback()
             print(f"hopper over {varsler}: rollen finnes ikke"
+                  " (opprettes av oppsett-postgresql.sh)")
+        # 048 (#108): plan-arbeiderens rolle — betinget som de andre.
+        # Rollen bærer bestillingsveiens delmengde + claim-funksjonene
+        # runtime mistet; se PLAN_RETTIGHETER for grensen og porten.
+        planarb = "disponit_plan_arbeider"
+        if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
+                        (planarb,)).fetchone():
+            conn.execute(NULLSTILL_TABELLER.format(rolle=planarb))
+            conn.execute(PLAN_RETTIGHETER.format(rolle=planarb))
+            conn.commit()
+            print(f"rettigheter satt for {planarb}")
+        else:
+            conn.rollback()
+            print(f"hopper over {planarb}: rollen finnes ikke"
                   " (opprettes av oppsett-postgresql.sh)")
         # Sluttkontroll. En advarsel med exit 0 er ingen port: klarer vi
         # ikke å bevise at historikken er låst, skal oppsettet feile.

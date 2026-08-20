@@ -286,9 +286,12 @@ def test_lineage_fk_ene_avviser_konstruerte_hendelser():
               " WHERE tenant=%s AND utkast_id=%s", (TEN, uid))
     c.commit()
 
+    # 048: kilden er NOT NULL og 'styrt' har INSERT-gate; probene her
+    # måler lineage-FK-ene, og 'historisk' bærer de samme forpliktelsene.
     basis = ("INSERT INTO policyaktivering (tenant, policy_id, utkast_id,"
              " runde, decision_operation_id, versjon, innholds_hash,"
-             " diff_hash, attestant_a, attestant_b) VALUES ")
+             " diff_hash, aktiveringskilde, attestant_a, attestant_b)"
+             " VALUES ")
 
     def avvist(verdier, params, feiltype=psycopg.errors.ForeignKeyViolation):
         c.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
@@ -298,25 +301,25 @@ def test_lineage_fk_ene_avviser_konstruerte_hendelser():
         c.rollback()
 
     # 4: to like attestanter → CHECK.
-    avvist("(%s,%s,%s,1,'op-a','9',%s,'d','uavh','uavh')",
+    avvist("(%s,%s,%s,1,'op-a','9',%s,'d','historisk','uavh','uavh')",
            (TEN, pid, uid, ih), psycopg.errors.CheckViolation)
     # 5: attestant som aldri attesterte runden.
-    avvist("(%s,%s,%s,1,'op-b','9',%s,'d','finnes-ikke',NULL)",
+    avvist("(%s,%s,%s,1,'op-b','9',%s,'d','historisk','finnes-ikke',NULL)",
            (TEN, pid, uid, ih))
     # 6: annen diff_hash enn attestasjonens.
-    avvist("(%s,%s,%s,1,'op-c','9',%s,'annen-diff','uavh',NULL)",
+    avvist("(%s,%s,%s,1,'op-c','9',%s,'annen-diff','historisk','uavh',NULL)",
            (TEN, pid, uid, ih))
     # 7: hendelsen oppgir en ANDRE attestant uten attestasjonsrad.
-    avvist("(%s,%s,%s,1,'op-d','9',%s,'d','uavh','spokelse')",
+    avvist("(%s,%s,%s,1,'op-d','9',%s,'d','historisk','uavh','spokelse')",
            (TEN, pid, uid, ih))
     # 8: innholds_hash ≠ rundens utkast_innholds_hash.
-    avvist("(%s,%s,%s,1,'op-e','9','feil-innhold','d','uavh',NULL)",
+    avvist("(%s,%s,%s,1,'op-e','9','feil-innhold','d','historisk','uavh',NULL)",
            (TEN, pid, uid))
     # 9: forfatterens rad kan ikke refereres (er_forfatter i FK-nøkkelen)…
     c.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
     _attest(c, uid, "forf", True)
     c.commit()
-    avvist("(%s,%s,%s,1,'op-f','9',%s,'d','forf',NULL)",
+    avvist("(%s,%s,%s,1,'op-f','9',%s,'d','historisk','forf',NULL)",
            (TEN, pid, uid, ih))
     # …og hendelsens eget flagg kan aldri bli sant (CHECK).
     c.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
@@ -325,8 +328,9 @@ def test_lineage_fk_ene_avviser_konstruerte_hendelser():
         c.execute(
             "INSERT INTO policyaktivering (tenant, policy_id, utkast_id,"
             " runde, decision_operation_id, versjon, innholds_hash,"
-            " diff_hash, attestant_a, attestant_er_forfatter) VALUES"
-            " (%s,%s,%s,1,'op-g','9',%s,'d','uavh',true)",
+            " diff_hash, aktiveringskilde, attestant_a,"
+            " attestant_er_forfatter) VALUES"
+            " (%s,%s,%s,1,'op-g','9',%s,'d','historisk','uavh',true)",
             (TEN, pid, uid, ih))
     c.rollback()
     c.close()
