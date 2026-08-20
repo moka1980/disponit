@@ -313,6 +313,60 @@ CREATE TRIGGER ci_attest_immutable BEFORE UPDATE OR DELETE
 CREATE TRIGGER ci_attest_ingen_truncate BEFORE TRUNCATE ON ci_kjoringsattest
     FOR EACH STATEMENT EXECUTE FUNCTION modulregister_append_only();
 
+-- ------------------------------------------------------------
+-- 3c. …og HVA EVIDENSFILEN SA (Codex P1, #117 runde 19).
+--
+--     De fire målte punktene sto igjen med nøyaktig hullet runde 16
+--     lukket for CI-punktene: `p_evidens_sha` og punktenes `kilde_ref`
+--     kom BEGGE fra samme kall, og porten sammenlignet dem med hverandre.
+--     To felter fra én kaller som er enige, er ingen evidensfil. Verre:
+--     `p_evidens_sha` hadde ingen formkrav, så en tom hash og en
+--     `kilde_ref` som endte på `@sha256:` var «enige» — og siden basen
+--     dessuten KREVER at `maalt_verdi` er registerets egen grønne
+--     `maalt_krav`, kunne en `disponit_modules_admin`-kaller lese de fire
+--     fasitverdiene rett ut av `akseptkrav_punkt`, gjenta dem, og skrive
+--     en immutabel aksept der ingen fil fantes og ingenting var målt.
+--
+--     Basen kan ikke hashe en fil, like lite som den kan spørre GitHub.
+--     Den kan kreve det samme her som der: at veien som LESTE filen har
+--     vært her og skrevet ned hva den så — stien, sha-en og verdien
+--     filen bar FOR HVERT PUNKT — i en immutabel rad, skrevet med en
+--     ANNEN fullmakt enn den som skriver aksepten. Da måles punktet mot
+--     referatet, ikke mot kalleren, og «fire grønne observasjoner» er en
+--     påstand noen har signert med sin egen identitet.
+--
+--     Nøkkelen er (sha256, punkt): attesten hører til BYTENE, ikke til
+--     stien. Samme fil lest to ganger gir samme rad; en endret fil er en
+--     annen sha og dermed en annen attest.
+-- ------------------------------------------------------------
+CREATE TABLE evidensfil_attest (
+    sha256      TEXT NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+    punkt       TEXT NOT NULL,
+    krav_id     TEXT NOT NULL,
+    -- stien filen ble lest fra, slik `kilde_ref` navngir den. Uten den
+    -- ville aksepten kunnet peke på en hvilken som helst sti med riktig
+    -- hale — og en observasjon skal navngi filen, ikke bare hashen.
+    sti         TEXT NOT NULL CHECK (btrim(sti) <> ''),
+    -- verdien FILEN bar for dette punktet. Det er DENNE aksepten regner
+    -- mot kravet; kallerens egen `maalt_verdi` er bare en gjentakelse.
+    maalt_verdi TEXT NOT NULL,
+    attestert_ts TIMESTAMPTZ NOT NULL DEFAULT now(),
+    aktor        TEXT NOT NULL,
+    -- samme skille som i CI-attesten: etiketten kallet oppga, og den
+    -- autentiserte identiteten funksjonen selv skriver.
+    attestert_av TEXT NOT NULL,
+    PRIMARY KEY (sha256, punkt),
+    FOREIGN KEY (krav_id, punkt)
+        REFERENCES akseptkrav_punkt (krav_id, punkt)
+);
+-- Én fil har ett innhold, og ett innhold har én måling per punkt.
+CREATE TRIGGER evidensfil_attest_immutable BEFORE UPDATE OR DELETE
+    ON evidensfil_attest
+    FOR EACH ROW EXECUTE FUNCTION modulregister_append_only();
+CREATE TRIGGER evidensfil_attest_ingen_truncate BEFORE TRUNCATE
+    ON evidensfil_attest
+    FOR EACH STATEMENT EXECUTE FUNCTION modulregister_append_only();
+
 -- Grensene er 014c-klarsignalet §12s, ordrett, og de fire målte
 -- punktene bæres av runde-sammendraget (som selv er sha-bundet i
 -- manifestet). Invariantpunktene har ingen historiske rader — de hviler
@@ -402,7 +456,12 @@ CREATE TABLE modulaksept (
     e2e_artefakt_id UUID NOT NULL,
     e2e_tilstand TEXT NOT NULL DEFAULT 'promotert'
         CHECK (e2e_tilstand = 'promotert'),
-    evidens_jsonl_sha256 TEXT NOT NULL,  -- SP-11: den INNSJEKKEDE filen
+    -- SP-11: den INNSJEKKEDE filen — og den navngis av bytene sine
+    -- (Codex P1, runde 19): uten formkravet var en tom streng en gyldig
+    -- «hash», og porten mot `kilde_ref` sammenlignet den med en
+    -- `kilde_ref` som endte på `@sha256:`.
+    evidens_jsonl_sha256 TEXT NOT NULL
+        CHECK (evidens_jsonl_sha256 ~ '^[0-9a-f]{64}$'),
     manifest_commit TEXT NOT NULL,
     ci_run     TEXT NOT NULL,
     ci_commit  TEXT NOT NULL,
@@ -988,6 +1047,65 @@ BEGIN
             lower(p_hode_sha), p_aktor, session_user);
 END $$;
 
+-- Referatet fra veien som LESTE evidensfilen (Codex P1, #117 runde 19).
+-- Skrives av `m56-aksept.py` etter at `verifiser_kilde` har hashet
+-- råfilen og `les_bundet_artefakt` har regnet ut invariantene på nytt —
+-- med de verdiene FILEN bar, ikke med de verdiene aksepten trenger.
+-- `p_punkter` er {punkt: målt verdi}; alle punktene for én lesning
+-- skrives i ETT kall, av samme grunn som kravet registreres i én
+-- setning: en attest som kan vokse etterpå, er ingen attest på hva
+-- filen sa.
+--
+-- Samme replay-regel som CI-attesten (SP-2): samme bytes lest to ganger
+-- gir samme rader og er en no-op; samme bytes med et ANNET måletall er
+-- to motstridende referater av én fil, og det skal høres.
+CREATE OR REPLACE FUNCTION attester_evidensfil(
+    p_krav_id TEXT, p_sti TEXT, p_sha256 TEXT, p_punkter JSONB,
+    p_aktor TEXT)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+DECLARE v_sha TEXT; v_punkt TEXT; v_verdi TEXT; v_lagret RECORD;
+BEGIN
+    v_sha := lower(p_sha256);
+    IF v_sha !~ '^[0-9a-f]{64}$' THEN
+        RAISE EXCEPTION 'attester_evidensfil: «%» er ingen sha256 — en'
+            ' attest som ikke navngir bytene, binder ingenting', p_sha256
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF p_punkter IS NULL OR jsonb_typeof(p_punkter) <> 'object'
+       OR p_punkter = '{}'::jsonb THEN
+        RAISE EXCEPTION 'attester_evidensfil: ingen punkter — en lesning'
+            ' uten måletall er ikke et referat'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    FOR v_punkt, v_verdi IN
+        SELECT j.k, j.v #>> '{}' FROM jsonb_each(p_punkter) AS j(k, v)
+         ORDER BY j.k LOOP
+        IF v_verdi IS NULL THEN
+            RAISE EXCEPTION 'attester_evidensfil: punkt % mangler måletall',
+                v_punkt USING ERRCODE = 'invalid_parameter_value';
+        END IF;
+        SELECT * INTO v_lagret FROM public.evidensfil_attest e
+         WHERE e.sha256 = v_sha AND e.punkt = v_punkt;
+        IF FOUND THEN
+            IF v_lagret.krav_id IS DISTINCT FROM p_krav_id
+               OR v_lagret.sti IS DISTINCT FROM p_sti
+               OR v_lagret.maalt_verdi IS DISTINCT FROM v_verdi THEN
+                RAISE EXCEPTION 'attester_evidensfil: sha256:% er alt'
+                    ' attestert for punkt % med et annet innhold — én fil'
+                    ' har ett innhold, og et referat som spriker fra det'
+                    ' lagrede er en programfeil', v_sha, v_punkt
+                    USING ERRCODE = 'invalid_parameter_value';
+            END IF;
+        ELSE
+            INSERT INTO public.evidensfil_attest (sha256, punkt, krav_id,
+                sti, maalt_verdi, aktor, attestert_av)
+            VALUES (v_sha, v_punkt, p_krav_id, p_sti, v_verdi, p_aktor,
+                    session_user);
+        END IF;
+    END LOOP;
+END $$;
+
 CREATE OR REPLACE FUNCTION aksepter_moduldeployment(
     p_modul_id TEXT, p_miljo TEXT, p_release_id TEXT, p_drill_id BIGINT,
     p_krav_id TEXT, p_e2e_tenant TEXT, p_e2e_artefakt UUID,
@@ -999,8 +1117,22 @@ DECLARE v_livslop TEXT; v_mangler TEXT; v_punkt RECORD; v_verdi JSONB;
         v_epoch BIGINT; v_avvik TEXT; v_drill_tenant TEXT;
         v_kandidat_oppdrag BIGINT; v_forrige_tenant TEXT; v_ref TEXT;
         v_holder BOOLEAN; v_ci RECORD; v_ci_attest BOOLEAN;
+        v_evidens RECORD;
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended('modul:' || p_modul_id, 0));
+    -- FORMEN FØRST (Codex P1, #117 runde 19). `p_evidens_sha` gikk rett
+    -- inn i den immutable raden og inn i sammenligningen mot `kilde_ref`
+    -- uten noe formkrav. En TOM streng var derfor en gyldig «hash», og
+    -- en `kilde_ref` som endte på `@sha256:` var «enig» med den. En sha
+    -- måles på formen sin før den brukes til noe som helst — samme
+    -- disiplin som `hode_sha` i CI-attesten. Små bokstaver kreves, ikke
+    -- normaliseres: raden og attesten skal ikke kunne stå med to
+    -- skrivemåter av samme bytes.
+    IF p_evidens_sha !~ '^[0-9a-f]{64}$' THEN
+        RAISE EXCEPTION 'aksepter_moduldeployment: «%» er ingen sha256 —'
+            ' evidensfilen skal navngis av bytene sine', p_evidens_sha
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
     -- SP-2: replay er et no-op, aldri en ny hendelse — men BARE når hele
     -- det materielle innholdet er det samme.
     --
@@ -1200,16 +1332,48 @@ BEGIN
         END IF;
         v_ref := v_verdi ->> 'kilde_ref';
         IF v_punkt.kilde_type = 'evidensfil' THEN
-            -- `right(...)`, ikke `LIKE '%…'`: en hash med `_` eller `%` i
-            -- seg ville vært et jokertegn i et LIKE-mønster, og
-            -- sammenligningen ville godtatt flere filer enn den ene.
-            IF right(v_ref, 8 + length(lower(p_evidens_sha)))
-               IS DISTINCT FROM ('@sha256:' || lower(p_evidens_sha)) THEN
+            -- REFERATET FRA VEIEN SOM LESTE FILEN (Codex P1, runde 19).
+            -- Den forrige formen sammenlignet `kilde_ref` med aksepten
+            -- sin egen `p_evidens_sha` — to felter fra samme kall — og
+            -- godtok hele halen av strengen uten å se på stien. Med en
+            -- tom `p_evidens_sha` holdt en `kilde_ref` som endte på
+            -- `@sha256:`, og siden `maalt_verdi` uansett må være
+            -- registerets grønne fasit, kunne fire observasjoner om en
+            -- fil som ikke fantes bli en immutabel aksept.
+            --
+            -- Punktet måles nå mot ATTESTEN: en immutabel rad, skrevet
+            -- med eierrollens fullmakt av veien som faktisk hashet fila,
+            -- som sier hvilken sti bytene lå på og hva filen bar for
+            -- NØYAKTIG dette punktet. Kalleren kan bare gjenta den.
+            SELECT * INTO v_evidens FROM public.evidensfil_attest e
+             WHERE e.sha256 = lower(p_evidens_sha)
+               AND e.punkt = v_punkt.punkt AND e.krav_id = p_krav_id;
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'aksepter_moduldeployment: punkt % hviler'
+                    ' på evidensfilen sha256:%, men ingen attest sier at'
+                    ' den filen er lest og hva den bar for punktet — en'
+                    ' hash aksepten selv oppgir, beviser ingenting; det'
+                    ' gjør referatet fra veien som leste',
+                    v_punkt.punkt, lower(p_evidens_sha)
+                    USING ERRCODE = 'invalid_parameter_value';
+            END IF;
+            -- Stien er attestens, ikke kallerens: LIKHET, ikke hale.
+            IF v_ref IS DISTINCT FROM
+               (v_evidens.sti || '@sha256:' || lower(p_evidens_sha)) THEN
                 RAISE EXCEPTION 'aksepter_moduldeployment: punkt % viser'
-                    ' til evidensfilen «%», men aksepten binder'
-                    ' sha256:% — en observasjon skal peke på DEN filen'
-                    ' raden bærer hashen av', v_punkt.punkt, v_ref,
-                    lower(p_evidens_sha)
+                    ' til evidensfilen «%», mens attesten leste «%@sha256:%»'
+                    ' — en observasjon skal navngi DEN filen som ble lest,'
+                    ' ikke en sti med riktig hale', v_punkt.punkt, v_ref,
+                    v_evidens.sti, lower(p_evidens_sha)
+                    USING ERRCODE = 'invalid_parameter_value';
+            END IF;
+            -- …og det er FILENS måletall som skal oppfylle kravet.
+            IF v_evidens.maalt_verdi IS DISTINCT FROM v_punkt.maalt_krav THEN
+                RAISE EXCEPTION 'aksepter_moduldeployment: punkt % — filen'
+                    ' sha256:% bar «%», men en grønn observasjon er «%».'
+                    ' Aksepten regner mot det filen SA, ikke mot det'
+                    ' kallet gjentar', v_punkt.punkt, lower(p_evidens_sha),
+                    v_evidens.maalt_verdi, v_punkt.maalt_krav
                     USING ERRCODE = 'invalid_parameter_value';
             END IF;
         ELSIF v_punkt.kilde_type = 'ci_kjoring' THEN
@@ -1309,6 +1473,8 @@ ALTER FUNCTION aksepter_moduldeployment(TEXT, TEXT, TEXT, BIGINT, TEXT,
     OWNER TO disponit_modul_eier;
 ALTER FUNCTION attester_ci_kjoring(TEXT, TEXT, TEXT, TEXT, TEXT, TEXT,
     TEXT) OWNER TO disponit_modul_eier;
+ALTER FUNCTION attester_evidensfil(TEXT, TEXT, TEXT, JSONB, TEXT)
+    OWNER TO disponit_modul_eier;
 ALTER FUNCTION maal_rent_utfall(TEXT, BIGINT) OWNER TO disponit_modul_eier;
 -- Grants i EIERVINDUET (048-disiplinen): en REVOKE fra en ikke-eier er
 -- en stille no-op, og PUBLIC ville beholdt default-EXECUTE på begge.
@@ -1321,6 +1487,8 @@ REVOKE ALL ON FUNCTION aksepter_moduldeployment(TEXT, TEXT, TEXT, BIGINT,
     FROM PUBLIC;
 REVOKE ALL ON FUNCTION attester_ci_kjoring(TEXT, TEXT, TEXT, TEXT, TEXT,
     TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION attester_evidensfil(TEXT, TEXT, TEXT, JSONB, TEXT)
+    FROM PUBLIC;
 REVOKE ALL ON FUNCTION maal_rent_utfall(TEXT, BIGINT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION registrer_moduldrill(TEXT, TEXT, TEXT, TEXT,
     TEXT, TEXT, BIGINT, BIGINT, BIGINT, BIGINT, TEXT, TEXT, TEXT,
@@ -1328,7 +1496,7 @@ GRANT EXECUTE ON FUNCTION registrer_moduldrill(TEXT, TEXT, TEXT, TEXT,
 GRANT EXECUTE ON FUNCTION aksepter_moduldeployment(TEXT, TEXT, TEXT,
     BIGINT, TEXT, TEXT, UUID, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT, TEXT)
     TO disponit_modules_admin;
--- INGEN GRANT PÅ `attester_ci_kjoring` (Codex P1, #117 runde 19).
+-- INGEN GRANT PÅ DE TO ATTESTFUNKSJONENE (Codex P1, #117 runde 19).
 -- Attestanten skal ikke være akseptøren. `disponit_modules_admin` er den
 -- brede deployfullmakten — registrer_release, bytt_release, onboarding,
 -- drillen OG aksepten — og med EXECUTE her kunne den skrevet sitt eget
@@ -1353,9 +1521,11 @@ RESET ROLE;
 GRANT SELECT, INSERT ON moduldrill, modulaksept, modulaksept_punkt
     TO disponit_modul_eier;
 GRANT SELECT ON akseptkrav_punkt, akseptkrav_ci TO disponit_modul_eier;
--- Attesten skrives av `attester_ci_kjoring` og LESES av aksepten. Ingen
--- annen rolle rører tabellen: den er referatet, ikke en notatblokk.
-GRANT SELECT, INSERT ON ci_kjoringsattest TO disponit_modul_eier;
+-- Attestene skrives av `attester_ci_kjoring`/`attester_evidensfil` og
+-- LESES av aksepten. Ingen annen rolle rører tabellene: de er referatet,
+-- ikke en notatblokk.
+GRANT SELECT, INSERT ON ci_kjoringsattest, evidensfil_attest
+    TO disponit_modul_eier;
 -- Definerne MÅLER nå drillutfallene i `oppdrag`/`artefakt` i stedet for å
 -- motta dem (Codex P1, #117 runde 5), og trenger derfor lesetilgang dit.
 -- KOLONNENIVÅ, ikke tabellnivå: målingene leser status, kvitteringen med

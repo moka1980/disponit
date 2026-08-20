@@ -810,8 +810,13 @@ def main() -> int:
     # nå at et `evidensfil`-punkt peker på nøyaktig den filen akseptraden
     # bærer hashen av, og en avkortet referanse er ikke den hashen.
     runde_ref = f"{runde['oppsett']['kilde']}@sha256:{evidens_sha}"
-    for punkt, (grense, hent) in MAALTE.items():
-        punkter[punkt] = {"grenseverdi": grense, "maalt_verdi": hent(m),
+    # Måletallene FILEN bar, som de leses her — de samme som attesteres
+    # under (Codex P1, runde 19). Basen regner punktet mot attesten, ikke
+    # mot dette kallet; at de er like er poenget, ikke tilfeldig.
+    evidens_maalt = {punkt: hent(m) for punkt, (_, hent) in MAALTE.items()}
+    for punkt, (grense, _) in MAALTE.items():
+        punkter[punkt] = {"grenseverdi": grense,
+                          "maalt_verdi": evidens_maalt[punkt],
                           "kilde_type": "evidensfil",
                           "kilde_ref": runde_ref}
     for punkt in CI_PUNKTER:
@@ -862,6 +867,17 @@ def main() -> int:
             (str(ci_kjoring.get("id")), ci_kjoring.get("path"),
              ci_kjoring.get("event"), ci_kjoring.get("head_branch"),
              ci_kjoring.get("conclusion"), ci_kjoring.get("head_sha")))
+        # …og det SAMME referatet for evidensfilen (Codex P1, runde 19).
+        # De fire målte punktene hvilte på at `p_evidens_sha` og
+        # punktenes `kilde_ref` — to felter fra samme kall — var enige om
+        # en hale. Nå skriver veien som faktisk hashet råfilen ned hvilken
+        # sti bytene lå på og hva filen bar for hvert punkt, og aksepten
+        # regner punktet mot DEN raden. Verdiene er `verifiser_kilde`- og
+        # `_sjekk_grenser`-portenes egne; kallet under kan bare gjenta dem.
+        conn.execute(
+            "SELECT attester_evidensfil(%s,%s,%s,%s::jsonb,'m56-aksept')",
+            (KRAV, runde["oppsett"]["kilde"], evidens_sha,
+             json.dumps(evidens_maalt)))
         conn.execute("RESET ROLE")
         conn.execute("SET ROLE disponit_modules_admin")
         # Codex' P1 på PR #117 (runde 5): de tre kontrollpunktutfallene

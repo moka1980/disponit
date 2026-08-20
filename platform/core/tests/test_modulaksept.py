@@ -66,6 +66,12 @@ DRILL_SHA = "11" * 32
 #: `ci_kjoringsattest.hode_sha` krever formen, for en attest som ikke
 #: navngir bytene binder ingenting (Codex P1, runde 16).
 CI_SHA = "cc" * 20
+#: Evidensfilen de fire målte punktene hviler på — stien den ble lest
+#: fra og sha256 av bytene. Begge er attestens (Codex P1, runde 19):
+#: aksepten regner punktet mot hva veien som LESTE filen skrev ned, ikke
+#: mot to felter fra sitt eget kall.
+EVIDENS_STI = "evidens.jsonl"
+EVIDENS_SHA = "ee" * 32
 
 
 def _rt():
@@ -308,8 +314,30 @@ def _ci_attest(m, ci_run="run-1", *, ci_commit=None, arbeidsflyt=None,
     m.execute("RESET ROLE")
 
 
-def _punkter(m, krav=KRAV, *, evidens_sha="e-sha", ci_run="run-1",
-             ci_commit=None):
+def _evidens_attest(m, sha=EVIDENS_SHA, *, sti=EVIDENS_STI, krav=KRAV,
+                    maalt=None):
+    """Referatet fra veien som LESTE evidensfilen (Codex P1, runde 19).
+
+    Verdiene er de FILEN bar. Standard er registerets grønne fasit, som i
+    en ekte grønn runde — testene som skal se en rød måling sender sin
+    egen `maalt`.
+
+    Skrives som eierrollen: deployfullmakten kan ikke attestere, nettopp
+    fordi den skriver aksepten som hviler på attesten.
+    """
+    if maalt is None:
+        maalt = {p: v for p, v in m.execute(
+            "SELECT punkt, maalt_krav FROM akseptkrav_punkt"
+            "  WHERE krav_id=%s AND kilde_type='evidensfil'",
+            (krav,)).fetchall()}
+    m.execute("SET ROLE disponit_modul_eier")
+    m.execute("SELECT attester_evidensfil(%s,%s,%s,%s::jsonb,'test')",
+              (krav, sti, sha, json.dumps(maalt)))
+    m.execute("RESET ROLE")
+
+
+def _punkter(m, krav=KRAV, *, evidens_sha=EVIDENS_SHA, ci_run="run-1",
+             ci_commit=None, evidens_sti=EVIDENS_STI):
     """Punktsettet slik REGISTERET krever det (Codex P1, #117 runde 15).
 
     Grensen, kildetypen og den grønne verdien er registerets, ikke
@@ -321,7 +349,7 @@ def _punkter(m, krav=KRAV, *, evidens_sha="e-sha", ci_run="run-1",
     rader = m.execute(
         "SELECT punkt, kilde_type, grenseverdi, maalt_krav"
         "  FROM akseptkrav_punkt WHERE krav_id=%s", (krav,)).fetchall()
-    ref = {"evidensfil": f"evidens.jsonl@sha256:{evidens_sha}",
+    ref = {"evidensfil": f"{evidens_sti}@sha256:{evidens_sha}",
            "ci_kjoring": f"run {ci_run} @ {ci_commit or CI_SHA}"}
     return {p: {"grenseverdi": g, "maalt_verdi": mk, "kilde_type": kt,
                 "kilde_ref": ref[kt]}
@@ -330,7 +358,8 @@ def _punkter(m, krav=KRAV, *, evidens_sha="e-sha", ci_run="run-1",
 
 def _aksepter(m, k, did, *, release="r-kandidat", artefakt=None,
               punkter=None, nokkel=None, miljo="staging",
-              evidens_sha="e-sha", ci_run="run-1", attest=True):
+              evidens_sha=EVIDENS_SHA, ci_run="run-1", attest=True,
+              ev_attest=True):
     m.execute("RESET ROLE")     # forrige _aksepter kan ha etterlatt admin
     if punkter is None:
         # leses som migrator — admin har ikke SELECT
@@ -339,6 +368,10 @@ def _aksepter(m, k, did, *, release="r-kandidat", artefakt=None,
         # Den ekte veien attesterer kjøringen rett etter at
         # `verifiser_ci_kjoring` har godtatt den (Codex P1, runde 16).
         _ci_attest(m, ci_run)
+    if ev_attest:
+        # …og evidensfilen rett etter at `verifiser_kilde` har hashet den
+        # og grenseporten har regnet invariantene på nytt (runde 19).
+        _evidens_attest(m, evidens_sha)
     m.execute("SET ROLE disponit_modules_admin")
     m.execute(
         "SELECT aksepter_moduldeployment(%s,%s,%s,%s,%s,%s,%s::uuid,%s,"
@@ -698,9 +731,10 @@ def test_kravet_kan_ikke_endres_under_en_skrevet_aksept(migrator):
 
 @pg
 def test_ci_attesten_er_ikke_runtimes_a_skrive(migrator):
-    """Kjøretidsrollen kan verken attestere en kjøring eller skrive
-    referatet direkte. Kunne den det, ville attesten vært like fri som de
-    to parametrene den erstatter."""
+    """Kjøretidsrollen kan verken attestere en kjøring eller en
+    evidensfil, og heller ikke skrive eller lese referatene direkte.
+    Kunne den det, ville attestene vært like frie som parametrene de
+    erstatter."""
     rt = _rt()
     try:
         for sql in ("SELECT attester_ci_kjoring('r','w','push','main',"
@@ -712,6 +746,14 @@ def test_ci_attesten_er_ikke_runtimes_a_skrive(migrator):
                     + "','a','a')",
                     "UPDATE ci_kjoringsattest SET konklusjon='success'",
                     "DELETE FROM ci_kjoringsattest",
+                    "SELECT attester_evidensfil('" + KRAV + "','e','"
+                    + "ee" * 32 + "','{\"x\":\"0\"}'::jsonb,'a')",
+                    "SELECT sha256 FROM evidensfil_attest",
+                    "INSERT INTO evidensfil_attest (sha256, punkt, krav_id,"
+                    " sti, maalt_verdi, aktor, attestert_av) VALUES ('"
+                    + "ee" * 32 + "','x','" + KRAV + "','e','0','a','a')",
+                    "UPDATE evidensfil_attest SET maalt_verdi='0'",
+                    "DELETE FROM evidensfil_attest",
                     "INSERT INTO akseptkrav_ci (krav_id, arbeidsflyt,"
                     " hendelse, gren, konklusjon) VALUES"
                     " ('x','w','push','main','success')"):
@@ -761,6 +803,117 @@ def test_attestanten_er_ikke_akseptoren(migrator):
     assert aktor == "test"          # etiketten kallet oppga
     assert av == migrator.execute(  # …og den innloggede identiteten
         "SELECT session_user").fetchone()[0]
+
+
+@pg
+def test_evidenshashen_bindes_til_lagret_evidens(migrator):
+    """Codex' P1 (runde 19): de fire målte punktene hvilte på at
+    `p_evidens_sha` og punktenes `kilde_ref` — to felter fra SAMME kall —
+    var enige om en hale. `p_evidens_sha` hadde ingen formkrav, så en tom
+    hash og en `kilde_ref` som endte på `@sha256:` var «enige»; og siden
+    `maalt_verdi` uansett må være registerets grønne fasit, kunne en
+    `disponit_modules_admin`-kaller lese fasiten rett ut av
+    `akseptkrav_punkt` og skrive fire immutable observasjoner om en fil
+    som ikke fantes."""
+    k = _kjede(migrator)
+    did = _drill(migrator, k)
+
+    # (1) FORMEN: Codex' eget eksempel — tom hash mot `@sha256:`.
+    migrator.execute("RESET ROLE")
+    p = _punkter(migrator, evidens_sha="", evidens_sti="")
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, k, did, punkter=p, evidens_sha="",
+                  ev_attest=False)
+    migrator.rollback()
+    assert "ingen sha256" in str(ei.value)
+
+    # (2) …og en velformet hash ingen har lest, er fortsatt ingen fil.
+    migrator.execute("RESET ROLE")
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, k, did, ev_attest=False)
+    migrator.rollback()
+    assert "er lest og hva den bar" in str(ei.value)
+
+    # (3) Attesten er ikke deployfullmaktens å skrive — ellers kunne den
+    #     som trenger den, lage den selv (samme skille som CI-attesten).
+    migrator.execute("SET ROLE disponit_modules_admin")
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        migrator.execute(
+            "SELECT attester_evidensfil(%s,%s,%s,'{\"x\":\"0\"}'::jsonb,'a')",
+            (KRAV, EVIDENS_STI, EVIDENS_SHA))
+    migrator.rollback()
+
+    # (4) STIEN er attestens, ikke kallerens: riktig hale holder ikke.
+    migrator.execute("RESET ROLE")
+    _evidens_attest(migrator, EVIDENS_SHA, sti="annet/sted/evidens.jsonl")
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, k, did, ev_attest=False)
+    migrator.rollback()
+    assert "attesten leste" in str(ei.value)
+
+    # (5) …og det er FILENS måletall som må oppfylle kravet. Kallet
+    #     gjentar fasiten som før — attesten sier at filen bar noe annet.
+    migrator.execute("RESET ROLE")
+    maalt = dict(migrator.execute(
+        "SELECT punkt, maalt_krav FROM akseptkrav_punkt"
+        "  WHERE krav_id=%s AND kilde_type='evidensfil'", (KRAV,)).fetchall())
+    rodt = sorted(maalt)[0]
+    maalt[rodt] = "17"
+    _evidens_attest(migrator, EVIDENS_SHA, maalt=maalt)
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, k, did, ev_attest=False)
+    migrator.rollback()
+    assert rodt in str(ei.value) and "bar «17»" in str(ei.value)
+
+    # Motprøven: lest fil, riktig sti, grønne måletall → aksept.
+    migrator.execute("RESET ROLE")
+    _aksepter(migrator, k, did)
+    migrator.commit()
+    migrator.execute("RESET ROLE")
+    assert migrator.execute(
+        "SELECT evidens_jsonl_sha256 FROM modulaksept WHERE modul_id=%s",
+        (k["mid"],)).fetchone()[0] == EVIDENS_SHA
+    # …og attesten bærer den autentiserte identiteten, ikke etiketten.
+    aktor, av = migrator.execute(
+        "SELECT aktor, attestert_av FROM evidensfil_attest"
+        "  WHERE sha256=%s LIMIT 1", (EVIDENS_SHA,)).fetchone()
+    assert aktor == "test"
+    assert av == migrator.execute(
+        "SELECT session_user").fetchone()[0]
+
+
+@pg
+def test_evidensattesten_er_ett_referat_per_fil(migrator):
+    """SP-2 for evidensattesten: samme bytes lest to ganger er en no-op,
+    samme bytes med et ANNET måletall er to motstridende referater av én
+    fil — og det skal høres. Uten dette kunne en attest «rettes» under en
+    aksept som alt hviler på den."""
+    migrator.execute("RESET ROLE")
+    sha = "1a" * 32
+    _evidens_attest(migrator, sha)
+    _evidens_attest(migrator, sha)          # identisk → no-op
+    migrator.commit()
+    migrator.execute("RESET ROLE")
+    maalt = dict(migrator.execute(
+        "SELECT punkt, maalt_krav FROM akseptkrav_punkt"
+        "  WHERE krav_id=%s AND kilde_type='evidensfil'", (KRAV,)).fetchall())
+    n = len(maalt)
+    endret = sorted(maalt)[0]
+    maalt[endret] = "17"
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _evidens_attest(migrator, sha, maalt=maalt)
+    migrator.rollback()
+    assert "annet innhold" in str(ei.value)
+    # …og en attest er et referat, ikke en kladd: den kan ikke endres.
+    migrator.execute("RESET ROLE")
+    with pytest.raises(psycopg.errors.RaiseException):
+        migrator.execute("UPDATE evidensfil_attest SET maalt_verdi='17'"
+                         " WHERE sha256=%s", (sha,))
+    migrator.rollback()
+    migrator.execute("RESET ROLE")
+    assert migrator.execute(
+        "SELECT count(*) FROM evidensfil_attest WHERE sha256=%s",
+        (sha,)).fetchone()[0] == n
 
 
 @pg
@@ -854,7 +1007,7 @@ def test_replay_med_andre_bevis_avvises(migrator):
     ak = "a-" + secrets.token_hex(6)
     _aksepter(migrator, k, did, nokkel=ak)
     migrator.commit()
-    for endring in ({"ci_run": "run-2"}, {"evidens_sha": "e-sha-rettet"}):
+    for endring in ({"ci_run": "run-2"}, {"evidens_sha": "ab" * 32}):
         migrator.execute("RESET ROLE")
         with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
             _aksepter(migrator, k, did, nokkel=ak, **endring)
