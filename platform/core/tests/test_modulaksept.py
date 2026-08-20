@@ -1051,6 +1051,19 @@ def test_e2e_beviset_maa_vaere_det_drillen_saa():
                                      kandidat_artefakter=["ikke-en-uuid"])),
         drillkrav), "skjemaet godtar en artefaktidentitet som ikke er uuid"
 
+    # Codex' P2 (runde 15): domenesjekkene kjører BEVISST videre etter en
+    # skjemafeil, så en uhashbar identitet som `{}`/`[]` nådde `set(...)`
+    # og valideringen slapp ut med en `TypeError`-traceback i stedet for
+    # de akkumulerte feilene. Denne veien skal feile LUKKET.
+    for ugyldig in ({}, [], 7, None, "", "   "):
+        skakk = dict(drill, identiteter=dict(drill["identiteter"],
+                                             kandidat_artefakter=[ugyldig]))
+        assert valider_artefaktformat(skakk, drillkrav), \
+            f"skjemaet skulle rapportert {ugyldig!r} som formatfeil"
+        feil = _sjekk_grenser(drillkrav, skakk)
+        assert any("kandidat_artefakter" in f for f in feil), \
+            f"{ugyldig!r} ga ingen akkumulert domenefeil: {feil}"
+
 
 def test_manifestet_binder_ikke_den_supersederte_drillen():
     """…og den blokkerte bindingen er DOKUMENTERT, ikke bare fjernet: et

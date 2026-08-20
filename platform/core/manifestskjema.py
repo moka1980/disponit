@@ -285,6 +285,25 @@ def _teller(kilde: object, navn: str, felt: str) -> tuple[int | None, str]:
     return verdi, ""
 
 
+def _unike(verdier) -> set[str]:
+    """Avduplikering som IKKE kan kaste på uhashbare JSON-verdier.
+
+    Codex' P2 på PR #117: `valider_artefakter` går BEVISST videre inn i
+    domenesjekkene etter en skjemafeil — formatet skal ikke maskere
+    måletallene. Derfor kan listene her inneholde `{}` eller `[]` selv om
+    skjemaet har rapportert dem som formatfeil, og `set(liste)` kastet da
+    `TypeError`. Valideringen slapp ut med en traceback i stedet for de
+    akkumulerte feilene, altså ÅPENT, mens hele denne veien skal feile
+    lukket.
+
+    En kanonisk JSON-tekst per oppføring kan ikke kaste, og skiller
+    verdier like presist som `set` gjorde for de hashbare: `1`, `"1"` og
+    `true` får hver sin tekst.
+    """
+    return {json.dumps(v, sort_keys=True, ensure_ascii=False)
+            for v in verdier}
+
+
 def _positiv(kilde: object, navn: str, felt: str) -> tuple[float | None, str]:
     """En STØRRELSE som må være strengt positiv: tid, rate, svartid.
 
@@ -799,10 +818,18 @@ def _identiteter_stemmer(art: dict) -> list[str]:
         if not isinstance(liste, list):
             feil.append(f"identiteter.{felt} mangler")
             continue
+        # En identitet er en artefakt-UUID. Bærer listen noe annet, er den
+        # ikke en måling å binde aksepten til — og den skal si det som en
+        # akkumulert feil, ikke som en traceback ut av valideringen.
+        if any(not isinstance(x, str) or not x.strip() for x in liste):
+            feil.append(f"identiteter.{felt} har oppføringer som ikke er en"
+                        " artefakt-identitet — hver oppføring må være en"
+                        " ikke-tom streng")
+            continue
         antall, melding = _teller(m, telling, telling)
         if melding:
             continue                    # alt rapportert av grensesløyfen
-        if len(set(liste)) != len(liste):
+        if len(_unike(liste)) != len(liste):
             feil.append(f"identiteter.{felt} har gjentakelser — samme"
                         " artefakt talt to ganger er ikke to artefakter")
         elif len(liste) != antall:
@@ -843,7 +870,7 @@ def _grenser_behandling(grense: dict, art: dict) -> list[str]:
     KONTRAKT = {"avvis", "godkjenn", "sideeffekt", "fire_oyne"}
     for navn, verdi in (("oppsett.kategorier", oppsett.get("kategorier")),
                         ("kategorier_dekket", m.get("kategorier_dekket"))):
-        if not isinstance(verdi, list) or set(verdi) != KONTRAKT \
+        if not isinstance(verdi, list) or _unike(verdi) != _unike(KONTRAKT) \
                 or len(verdi) != len(KONTRAKT):
             feil.append(f"{navn}={verdi!r}, krever NØYAKTIG {sorted(KONTRAKT)}")
 
@@ -999,7 +1026,7 @@ def _grenser_policyadmin(grense: dict, art: dict) -> list[str]:
     KONTRAKT = {"utvider", "forfatter_alene", "innsnevrer", "rebasering"}
     for navn, verdi in (("oppsett.kategorier", oppsett.get("kategorier")),
                         ("kategorier_dekket", m.get("kategorier_dekket"))):
-        if not isinstance(verdi, list) or set(verdi) != KONTRAKT \
+        if not isinstance(verdi, list) or _unike(verdi) != _unike(KONTRAKT) \
                 or len(verdi) != len(KONTRAKT):
             feil.append(f"{navn}={verdi!r}, krever NØYAKTIG {sorted(KONTRAKT)}")
 
@@ -1090,8 +1117,8 @@ def _grenser_feilinjisering(grense: dict, art: dict) -> list[str]:
     kategorier = m.get("kategorier_dekket")
     if not isinstance(kategorier, list):
         feil.append(f"kategorier_dekket={kategorier!r} er ikke en liste")
-    elif len(set(kategorier)) < grense["min_kategorier"]:
-        feil.append(f"kategorier_dekket har {len(set(kategorier))} unike,"
+    elif len(_unike(kategorier)) < grense["min_kategorier"]:
+        feil.append(f"kategorier_dekket har {len(_unike(kategorier))} unike,"
                     f" krever >= {grense['min_kategorier']}")
 
     # Andelene mot tellingene. En andel oppgitt som 1.0 mens tellingene
