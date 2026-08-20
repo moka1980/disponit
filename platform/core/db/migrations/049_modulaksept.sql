@@ -435,6 +435,7 @@ DECLARE v_id BIGINT; v_drillet_digest TEXT; v_kandidat_digest TEXT;
         v_status TEXT; v_kvittering BOOLEAN; v_funnet INT;
         v_claim_stopp BOOLEAN; v_rene_utfall BOOLEAN; v_tilbake BOOLEAN;
         v_rull_ts TIMESTAMPTZ; v_kand_ts TIMESTAMPTZ; v_vindu BOOLEAN;
+        v_kver INT; v_khash TEXT;
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended('modul:' || p_modul_id, 0));
     -- SP-2: samme nøkkel → samme rad, aldri to. Avvikende innhold på
@@ -479,13 +480,36 @@ BEGIN
             p_modul_id, p_drillet, coalesce(v_livslop, '<mangler>')
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
-    SELECT livslop INTO v_livslop FROM public.moduldeployment
+    -- Kandidatens kontraktlinje er DRILLENS linje (Codex P1, #117 runde
+    -- 17). `en_claiming_per_kontrakt` fører én linje per (modul, miljø,
+    -- kontraktversjon, kontrakt_hash), så flere kan stå claiming
+    -- samtidig, helt lovlig — og da må målingene under bindes til én av
+    -- dem, ellers kan overganger fra én slekt pares med oppdrag fra en
+    -- annen.
+    SELECT livslop, kontraktversjon, kontrakt_hash
+      INTO v_livslop, v_kver, v_khash
+      FROM public.moduldeployment
      WHERE modul_id = p_modul_id AND miljo = p_miljo
        AND release_id = p_kandidat;
     IF v_livslop IS DISTINCT FROM 'claiming' THEN
         RAISE EXCEPTION 'registrer_moduldrill: kandidat %/% er %, ventet'
             ' claiming (aksepten binder raden som faktisk kjører)',
             p_modul_id, p_kandidat, coalesce(v_livslop, '<mangler>')
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- …og den drillede og rullbakken må stå på SAMME linje. En drill som
+    -- ruller mellom kontraktslekter er ingen rullbakk av det som ble
+    -- drillet.
+    IF NOT EXISTS (SELECT 1 FROM public.moduldeployment d
+                    WHERE d.modul_id = p_modul_id AND d.miljo = p_miljo
+                      AND d.release_id IN (p_drillet, p_rullback)
+                      AND d.kontraktversjon = v_kver
+                      AND d.kontrakt_hash = v_khash
+                    HAVING count(*) = 2) THEN
+        RAISE EXCEPTION 'registrer_moduldrill: %, % og % står ikke på samme'
+            ' kontraktlinje (v%/%…) — en drill måler ÉN linje, og'
+            ' overganger fra en annen slekt hører ikke til denne',
+            p_drillet, p_rullback, p_kandidat, v_kver, left(v_khash, 12)
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
     -- A1-digestporten: kandidatens bytes SKAL være de drillede bytene.
@@ -566,12 +590,45 @@ BEGIN
     -- rød drillrad er nettopp det riktige svaret: aksepten står på FK-en
     -- mot de tre grønne utfallene.
     -- ------------------------------------------------------------
-    SELECT max(h.ts) INTO v_rull_ts FROM public.modulregister_hendelse h
-     WHERE h.modul_id = p_modul_id AND h.miljo = p_miljo
-       AND h.hendelse = 'releasebytte' AND h.release_id = p_rullback;
-    SELECT max(h.ts) INTO v_kand_ts FROM public.modulregister_hendelse h
-     WHERE h.modul_id = p_modul_id AND h.miljo = p_miljo
-       AND h.hendelse = 'releasebytte' AND h.release_id = p_kandidat;
+    --
+    -- OG OVERGANGEN MÅ VÆRE DEN SOM DRENERTE FORGJENGEREN (Codex P1,
+    -- #117 runde 17). De to oppslagene fant sine `releasebytte`-
+    -- hendelser hver for seg, og beviste aldri at byttet INN på
+    -- rullbakken var det som drenerte den drillede. En modul med flere
+    -- kontraktslekter — eller en eldre draining-release med overlappende
+    -- arbeid — kunne derfor pare den drillede releasen og dens
+    -- inflight-oppdrag fra én slekt med rullbakk- og kandidatoverganger
+    -- fra en annen: alle tidspredikatene under kunne passere uten at
+    -- noen rullbakk FRA den claimede drillede releasen hadde skjedd.
+    --
+    -- `bytt_release` skriver de to hendelsene i SAMME transaksjon:
+    -- `drainet_ved_bytte` for den gamle, så `releasebytte` for den nye.
+    -- `now()` er transaksjonsstabil, så de deler `ts` eksakt, og
+    -- identiteten er stigende per INSERT, så dreneringen står FØR byttet.
+    -- Paret er derfor selve overgangen — ikke to hendelser som tilfeldig
+    -- fantes — og begge leddene bindes til drillens kontraktlinje.
+    SELECT max(b.ts) INTO v_rull_ts
+      FROM public.modulregister_hendelse b
+      JOIN public.modulregister_hendelse d
+        ON d.modul_id = b.modul_id AND d.miljo = b.miljo
+       AND d.kontraktversjon = b.kontraktversjon
+       AND d.kontrakt_hash = b.kontrakt_hash
+       AND d.hendelse = 'drainet_ved_bytte' AND d.release_id = p_drillet
+       AND d.ts = b.ts AND d.id < b.id
+     WHERE b.modul_id = p_modul_id AND b.miljo = p_miljo
+       AND b.hendelse = 'releasebytte' AND b.release_id = p_rullback
+       AND b.kontraktversjon = v_kver AND b.kontrakt_hash = v_khash;
+    SELECT max(b.ts) INTO v_kand_ts
+      FROM public.modulregister_hendelse b
+      JOIN public.modulregister_hendelse d
+        ON d.modul_id = b.modul_id AND d.miljo = b.miljo
+       AND d.kontraktversjon = b.kontraktversjon
+       AND d.kontrakt_hash = b.kontrakt_hash
+       AND d.hendelse = 'drainet_ved_bytte' AND d.release_id = p_rullback
+       AND d.ts = b.ts AND d.id < b.id
+     WHERE b.modul_id = p_modul_id AND b.miljo = p_miljo
+       AND b.hendelse = 'releasebytte' AND b.release_id = p_kandidat
+       AND b.kontraktversjon = v_kver AND b.kontrakt_hash = v_khash;
     v_vindu := v_rull_ts IS NOT NULL AND v_kand_ts IS NOT NULL
                AND v_rull_ts < v_kand_ts AND v_kand_ts <= p_utfort_ts;
     -- ------------------------------------------------------------

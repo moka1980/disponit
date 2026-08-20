@@ -72,7 +72,8 @@ def _rt():
     return koble(DSN)
 
 
-def _kjede(m, *, promoter_paa_drillet=False, staged_paa_kandidat=False):
+def _kjede(m, *, promoter_paa_drillet=False, staged_paa_kandidat=False,
+           drenerer="par"):
     """Full modulkjede for én test. -> dict med identitetene.
 
     Tre deployments (drenert, drenert, claiming) og de TRE drilloppdragene
@@ -214,12 +215,31 @@ def _kjede(m, *, promoter_paa_drillet=False, staged_paa_kandidat=False):
     # Drillens to registerovergagner — rullingen og kandidatbyttet. Uten
     # dem har registeret ingen drill å måle oppdragene mot, og alle tre
     # utfallene er FALSE (Codex P1, runde 16).
-    for rel, ts in (("r-rullback", T_RULL), ("r-kandidat", T_KAND_BYTTE)):
+    #
+    # HVER OVERGANG ER ET PAR (Codex P1, runde 17): `bytt_release` skriver
+    # `drainet_ved_bytte` for den gamle og `releasebytte` for den nye i
+    # SAMME transaksjon, altså med samme `ts` og stigende id. Fixturet
+    # bygger den formen — en løs `releasebytte` er ingen overgang.
+    for drenert, ny, ts in (("r-drillet", "r-rullback", T_RULL),
+                            ("r-rullback", "r-kandidat", T_KAND_BYTTE)):
+        # `drenerer` finnes for målingen av nettopp paringen: "annen" lar
+        # byttet drenere en HELT annen release (formen der overganger fra
+        # en annen slekt lånes inn), "ingen" utelater dreneringen (en løs
+        # `releasebytte` uten en overgang bak seg).
+        if drenerer != "ingen":
+            m.execute(
+                "INSERT INTO modulregister_hendelse (modul_id, hendelse,"
+                " fra_livslop, til_livslop, release_id, miljo,"
+                " kontraktversjon, kontrakt_hash, aktor, ts) VALUES"
+                " (%s,'drainet_ved_bytte','claiming','draining',%s,"
+                "'staging',1,'kh','test',%s)",
+                (mid, drenert if drenerer == "par" else "r-annen-slekt",
+                 ts))
         m.execute("INSERT INTO modulregister_hendelse (modul_id, hendelse,"
                   " til_livslop, release_id, miljo, kontraktversjon,"
                   " kontrakt_hash, aktor, ts) VALUES"
                   " (%s,'releasebytte','claiming',%s,'staging',1,'kh',"
-                  "'test',%s)", (mid, rel, ts))
+                  "'test',%s)", (mid, ny, ts))
     inflight = oppdrag()
     rullback = oppdrag(opprettet=T_RB_BESTILT, status_ts=T_RB_SLUTT)
     kandidat = oppdrag(opprettet=T_KAND_BESTILT, status_ts=T_KAND_SLUTT)
@@ -1726,15 +1746,35 @@ def test_drilloppdragene_maa_ligge_i_det_maalte_rullbakkvinduet(migrator):
         "lånt arbeid utenfor rullbakkvinduet teller fortsatt som drill"
     migrator.rollback()
 
+    # OVERGANGEN MÅ VÆRE DEN SOM DRENERTE FORGJENGEREN (Codex P1, runde
+    # 17). En løs `releasebytte`, eller en som drenerte en HELT annen
+    # release, er ingen rullbakk FRA det som ble drillet — og da er det
+    # ingen drill å måle oppdragene mot, uansett hvor riktig de ligger.
+    for form in ("ingen", "annen"):
+        k2 = _kjede(migrator, drenerer=form)
+        d2 = _drill(migrator, k2, nokkel="n-" + secrets.token_hex(6))
+        migrator.execute("RESET ROLE")
+        assert migrator.execute(
+            "SELECT claim_stopp_ok, rene_utfall_ok, tilbake_ok"
+            "  FROM moduldrill WHERE drill_id=%s",
+            (d2,)).fetchone() == (False, False, False), form
+        migrator.rollback()
+
     # …og et vindu som ikke lukkes FØR målingen, er heller ingen drill: en
     # senere overgang inn på kandidaten flytter skillelinjen forbi
     # drillens egen `utfort_ts`, og da er ingenting målt i det vinduet.
+    senere = DRILL_TS + timedelta(hours=1)
+    migrator.execute(
+        "INSERT INTO modulregister_hendelse (modul_id, hendelse,"
+        " fra_livslop, til_livslop, release_id, miljo, kontraktversjon,"
+        " kontrakt_hash, aktor, ts) VALUES (%s,'drainet_ved_bytte',"
+        "'claiming','draining','r-rullback','staging',1,'kh','test',%s)",
+        (k["mid"], senere))
     migrator.execute(
         "INSERT INTO modulregister_hendelse (modul_id, hendelse,"
         " til_livslop, release_id, miljo, kontraktversjon, kontrakt_hash,"
         " aktor, ts) VALUES (%s,'releasebytte','claiming','r-kandidat',"
-        "'staging',1,'kh','test',%s)",
-        (k["mid"], DRILL_TS + timedelta(hours=1)))
+        "'staging',1,'kh','test',%s)", (k["mid"], senere))
     migrator.commit()
     did3 = _drill(migrator, k, nokkel="n-" + secrets.token_hex(6))
     migrator.execute("RESET ROLE")
