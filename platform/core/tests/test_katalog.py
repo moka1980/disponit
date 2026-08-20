@@ -245,84 +245,223 @@ _NOKKELORD_FOR_VERDI = {
     "do", "else", "case", "yield", "await",
 }
 
+# Ord som tar en parentes med en BETINGELSE, ikke en verdi. Parentesen deres
+# lukker en setningsdel, så etter den venter JS igjen en verdi.
+_KONTROLLORD = {"if", "for", "while", "with", "switch", "catch"}
 
-def _er_regex(js: str, i: int) -> bool:
-    """Om skråstreken i `i` åpner en regex-literal og ikke en divisjon.
-
-    JS avgjør dette på det som står FORAN: kommer skråstreken der en verdi kan
-    stå, er den et mønster; kommer den etter en verdi, er den deling. Vi leser
-    derfor bakover forbi blanke tegn. Et navn foran er en verdi — med mindre
-    det er et nøkkelord som selv venter en verdi.
-    """
-    if js[i] != "/" or js.startswith("//", i) or js.startswith("/*", i):
-        return False
-    j = i - 1
-    while j >= 0 and js[j].isspace():
-        j -= 1
-    if j < 0:
-        return True
-    if js[j] in ")]":
-        return False
-    if js[j].isalnum() or js[j] in "_$":
-        k = j
-        while k >= 0 and (js[k].isalnum() or js[k] in "_$"):
-            k -= 1
-        return js[k + 1:j + 1] in _NOKKELORD_FOR_VERDI
-    return True
+_TALL_START_RE = re.compile(r"(?:\d[\w.]*|\.\d[\w.]*)")
 
 
-def _hopp(js: str, i: int) -> int:
-    """Indeksen etter tegnet i `i` når det åpner en streng, en kommentar eller
-    en regex-literal.
-
-    Strenger: enkelt- og dobbeltfnutt og backtick, `\\` som escape. Kommentarer:
-    `//` til linjeskift, `/* */` til lukkingen. En uterminert streng eller
-    blokkommentar går til filslutt — da er kilden uansett ikke lesbar, og
-    postskanneren sier fra med modulnummeret som mangler.
-
-    REGEX-LITERALER kom til i niende runde (Codex P2 på #118). En skråstrek var
-    ikke noe skanneren kjente, så `/["']/` i UI-koden ble lest tegn for tegn —
-    og fnutten INNE i mønsteret ble starten på en streng. Alt fram til neste
-    fnutt, kjørende kode inkludert, lå da inne i det skanneren trodde var tekst.
-    Et mønster er kode: `\\` escaper, og en tegnklasse `[...]` kan bære en `/`
-    uten å avslutte. Et linjeskift kan den ikke: står det ett, var skråstreken
-    en divisjon likevel, og vi går ett tegn videre som før.
-    """
-    n = len(js)
+def _kommentarslutt(js: str, i: int, b: int) -> int:
+    """Indeksen etter kommentaren som åpner i `i`."""
     if js.startswith("//", i):
-        j = js.find("\n", i)
-        return n if j < 0 else j + 1
-    if js.startswith("/*", i):
-        j = js.find("*/", i + 2)
-        return n if j < 0 else j + 2
-    if js[i] == "/":
-        j, i_klasse = i + 1, False
-        while j < n and js[j] != "\n":
-            if js[j] == "\\":
-                j += 2
-                continue
-            if i_klasse:
-                i_klasse = js[j] != "]"
-            elif js[j] == "[":
-                i_klasse = True
-            elif js[j] == "/":
-                j += 1
-                while j < n and js[j].isalpha():
-                    j += 1
-                return j
-            j += 1
-        return i + 1
-    sitat = js[i]
-    j = i + 1
-    while j < n and js[j] != sitat:
+        j = js.find("\n", i, b)
+        return b if j < 0 else j + 1
+    j = js.find("*/", i + 2, b)
+    return b if j < 0 else j + 2
+
+
+def _strengslutt(js: str, i: int, b: int) -> int:
+    """Indeksen etter fnuttstrengen som åpner i `i`. `\\` escaper."""
+    sitat, j = js[i], i + 1
+    while j < b and js[j] != sitat:
         j += 2 if js[j] == "\\" else 1
-    return j + 1
+    return min(j + 1, b)
 
 
-def _apner(js: str, i: int) -> bool:
-    """Om tegnet i `i` åpner noe skanneren ikke skal lese som kode."""
-    return (js[i] in "\"'`" or js.startswith("//", i)
-            or js.startswith("/*", i) or _er_regex(js, i))
+def _regexslutt(js: str, i: int, b: int) -> int:
+    """Indeksen etter mønsteret som åpner i `i`, eller `i` om det ikke lukkes.
+
+    Et mønster er kode: `\\` escaper, og en tegnklasse `[…]` kan bære en `/`
+    uten å avslutte. Et linjeskift kan den ikke — står det ett før lukkingen,
+    var skråstreken en divisjon likevel.
+    """
+    j, i_klasse = i + 1, False
+    while j < b and js[j] != "\n":
+        if js[j] == "\\":
+            j += 2
+            continue
+        if i_klasse:
+            i_klasse = js[j] != "]"
+        elif js[j] == "[":
+            i_klasse = True
+        elif js[j] == "/":
+            j += 1
+            while j < b and js[j].isalpha():
+                j += 1
+            return j
+        j += 1
+    return i
+
+
+def _kodespenn(js: str, a: int, b: int, avslutt: bool = False):
+    """Les js[a:b] som kode og gi fra deg hvert spenn som IKKE er kode.
+
+    Gir `(start, slutt, slag)` med slag «streng», «kommentar» eller «regex».
+    Alt mellom spennene er kjørende kode. Returverdien er indeksen der lesingen
+    stoppet. Med `avslutt` stopper vi ved den `}` som lukker uttrykket vi står
+    i — det er slik `${…}` i en malstreng leses.
+
+    SKRÅSTREKEN er det vanskelige: `/` er både divisjon og starten på et
+    mønster, og JS skiller dem på hva som står foran. Tidligere leste vi bakover
+    fra hver skråstrek (Codex P2 på #118, niende og tiende runde). Bakover er
+    feil vei: `)` så ut som slutten på en verdi uansett hva parentesen åpnet, så
+    `if (klar) /["']/.test(x)` ble lest som divisjon, fnutten i mønsteret ble
+    starten på en «streng», og kjørende kode ble stående igjen som prosa.
+
+    Derfor leser vi nå FOROVER, med det JS selv holder rede på: `verdi` sier om
+    forrige betydningsbærende tegn avsluttet en verdi (da deler skråstreken) og
+    `parenteser` husker for hver åpne `(` om den bar en BETINGELSE — `if (…)`
+    lukker en setningsdel og et mønster kan følge, `f(…)` gir en verdi og
+    skråstreken etter er deling. Retningen er poenget: forover VET vi hva vi har
+    passert, bakover må vi gjette.
+    """
+    verdi, siste_ord = False, ""
+    parenteser: list[bool] = []
+    dybde, i = 0, a
+    while i < b:
+        c = js[i]
+        if c.isspace():
+            i += 1
+            continue
+        if js.startswith("//", i) or js.startswith("/*", i):
+            j = _kommentarslutt(js, i, b)
+            yield i, j, "kommentar"
+            i = j
+            continue
+        if c in "\"'":
+            j = _strengslutt(js, i, b)
+            yield i, j, "streng"
+            i, verdi, siste_ord = j, True, ""
+            continue
+        if c == "`":
+            i = yield from _malspenn(js, i, b)
+            verdi, siste_ord = True, ""
+            continue
+        if c == "/":
+            j = i if verdi else _regexslutt(js, i, b)
+            if j > i:
+                yield i, j, "regex"
+                i, verdi, siste_ord = j, True, ""
+                continue
+            i, verdi, siste_ord = i + 1, False, ""
+            continue
+        if (treff := _NAVN_RE.match(js, i, b)):
+            siste_ord = treff.group(0)
+            i, verdi = treff.end(), siste_ord not in _NOKKELORD_FOR_VERDI
+            continue
+        if (treff := _TALL_START_RE.match(js, i, b)):
+            i, verdi, siste_ord = treff.end(), True, ""
+            continue
+        if c == "(":
+            parenteser.append(siste_ord in _KONTROLLORD)
+            i, verdi, siste_ord = i + 1, False, ""
+            continue
+        if c == ")":
+            betingelse = parenteser.pop() if parenteser else False
+            i, verdi, siste_ord = i + 1, not betingelse, ""
+            continue
+        if c == "]":
+            i, verdi, siste_ord = i + 1, True, ""
+            continue
+        if c == "}":
+            if dybde == 0 and avslutt:
+                return i
+            dybde = max(dybde - 1, 0)
+            i, verdi, siste_ord = i + 1, False, ""
+            continue
+        if c == "{":
+            dybde += 1
+        i, verdi, siste_ord = i + 1, False, ""
+    return b
+
+
+def _malspenn(js: str, i: int, b: int):
+    """Les malstrengen som åpner i `i`. Returner indeksen etter den.
+
+    Malstrengen leses her og ikke som en vanlig streng fordi den kan bære
+    NØSTEDE malstrenger inne i `${…}`; en råskanning til neste backtick ville
+    lukket på feil sted.
+    """
+    j = i + 1
+    while j < b:
+        c = js[j]
+        if c == "\\":
+            j += 2
+            continue
+        if c == "`":
+            j += 1
+            break
+        if js.startswith("${", j):
+            j = yield from _kodespenn(js, j + 2, b, avslutt=True)
+            j = min(j + 1, b)
+            continue
+        j += 1
+    else:
+        j = b
+    yield i, j, "streng"
+    return j
+
+
+def _spennkart(js: str, a: int = 0, b: int | None = None) -> dict[int, tuple]:
+    """{startindeks: (sluttindeks, slag)} for ikke-kode-spennene i js[a:b].
+
+    Skannerne under går tegn for tegn gjennom KODEN og slår opp her for å hoppe
+    over det som ikke er kode.
+    """
+    b = len(js) if b is None else b
+    return {s: (e, slag) for s, e, slag in _kodespenn(js, a, b) if e > s}
+
+
+def _prosaindekser(js: str, a: int, b: int) -> set[int]:
+    """Indeksene i js[a:b] som er prosa og ikke kjørende kode.
+
+    Fnutter og kommentarer er tekst noen har SKREVET. Et MØNSTER er kode, ikke
+    prosa: skanneren spenner over regex-literaler for at en fnutt inne i dem
+    ikke skal se ut som en streng (Codex P2 på #118, niende runde), men det som
+    står der er tegnklasser og kvantorer — ingen påstand om registeret.
+    """
+    ut: set[int] = set()
+    for start, slutt, slag in _kodespenn(js, a, b):
+        if slag != "regex":
+            ut.update(range(start, slutt))
+    return ut
+
+
+def _prosa_av(js: str) -> str:
+    """Skriptet med kjørende kode byttet mot mellomrom. Se `_prosetekst()`."""
+    prosa = _prosaindekser(js, 0, len(js))
+    return "".join(c if i in prosa else " " for i, c in enumerate(js))
+
+
+# (skriptbit, om `filter_state` er PROSA etterpå). Navnet er valgt fordi det er
+# et helt vanlig JS-navn som ser ut som en registerklasse: står det igjen som
+# prosa, melder identifikatorporten det som oppfunnet og blokkerer UI-arbeid
+# som ikke har noe med registeret å gjøre.
+_SKANNERPROEVER = [
+    ('if (klar) /["\']/.test(v); const filter_state = {};', False),
+    ('for (const x of xs) /["\']/.test(x); const filter_state = {};', False),
+    ('const m = /["\']/; const filter_state = {};', False),
+    ('const a = (b + c) / d; const filter_state = {};', False),
+    ('const a = f(b) / 2; const filter_state = {};', False),
+    ('const a = arr[0] / 2; const filter_state = {};', False),
+    ('const s = "en streng med filter_state i", filter_state = 1;', True),
+    ('// en kommentar om filter_state\nconst filter_state = {};', True),
+]
+
+
+@pytest.mark.parametrize("js,prosa", _SKANNERPROEVER)
+def test_skanneren_skiller_kode_fra_prosa(js, prosa):
+    """Skanneren må lese JS som JS — ellers stopper porten uskyldig UI-arbeid.
+
+    Prøvene her står fordi sannhetskilden ikke inneholder dem: `if (klar) /…/`
+    finnes ikke i prototypen i dag, så en skanner som leser den feil går grønt
+    gjennom hele suiten fram til noen skriver linja. Tre runder med Codex-funn
+    på #118 handlet om nettopp slike former (mønster etter `=`, mønster etter
+    en betingelse, uttrykk i malstreng), og hver gang var det kilden som måtte
+    endre seg for at feilen skulle vises. Nå viser prøvene den.
+    """
+    assert ("filter_state" in _prosa_av(js)) is prosa
 
 
 def _modulposter() -> list[tuple[int, str]]:
@@ -344,11 +483,12 @@ def _modulposter() -> list[tuple[int, str]]:
     `<script>`-innholdet leses — fnutter i HTML-prosa er ikke strenger.
     """
     js = "\n".join(_SKRIPT_RE.findall(KILDE.read_text(encoding="utf-8")))
+    spenn = _spennkart(js)
     ut: list[tuple[int, str]] = []
     i, n = 0, len(js)
     while i < n:
-        if _apner(js, i):
-            i = _hopp(js, i)
+        if i in spenn:
+            i = spenn[i][0]
             continue
         if js[i] != "{":
             i += 1
@@ -359,8 +499,8 @@ def _modulposter() -> list[tuple[int, str]]:
             continue
         start, dybde, j = i, 0, i
         while j < n:
-            if _apner(js, j):
-                j = _hopp(js, j)
+            if j in spenn:
+                j = spenn[j][0]
                 continue
             if js[j] == "{":
                 dybde += 1
@@ -379,7 +519,7 @@ def _modulposter() -> list[tuple[int, str]]:
     return ut
 
 
-def _tomrom(js: str, i: int) -> int:
+def _tomrom(js: str, i: int, spenn: dict[int, tuple]) -> int:
     """Indeksen til første tegn fra `i` som verken er blankt eller kommentar.
 
     Mellom en nøkkel og kolonet den hører til, og mellom kolonet og verdien,
@@ -389,8 +529,8 @@ def _tomrom(js: str, i: int) -> int:
     while i < len(js):
         if js[i].isspace():
             i += 1
-        elif js.startswith("//", i) or js.startswith("/*", i):
-            i = _hopp(js, i)
+        elif i in spenn and spenn[i][1] == "kommentar":
+            i = spenn[i][0]
         else:
             break
     return i
@@ -416,33 +556,34 @@ def _postfelt(post: str) -> dict[str, str]:
     misforstå det: det som ikke finnes, blir ikke kontrollert.
     """
     ut: dict[str, str] = {}
+    spenn = _spennkart(post)
     i, n = 1, len(post)
     while i < n:
         c = post[i]
         if c.isspace() or c == ",":
             i += 1
             continue
-        if post.startswith("//", i) or post.startswith("/*", i):
-            i = _hopp(post, i)
+        if i in spenn and spenn[i][1] == "kommentar":
+            i = spenn[i][0]
             continue
         if c == "}":
             break
-        if c in "\"'`":
-            j = _hopp(post, i)
+        if i in spenn and spenn[i][1] == "streng":
+            j = spenn[i][0]
             navn, i = post[i + 1:j - 1], j
         elif (treff := _NAVN_RE.match(post, i)):
             navn, i = treff.group(0), treff.end()
         else:
             i += 1
             continue
-        i = _tomrom(post, i)
+        i = _tomrom(post, i, spenn)
         if i >= n or post[i] != ":":
             continue
-        i = _tomrom(post, i + 1)
+        i = _tomrom(post, i + 1, spenn)
         start, dybde = i, 0
         while i < n:
-            if _apner(post, i):
-                i = _hopp(post, i)
+            if i in spenn:
+                i = spenn[i][0]
                 continue
             if post[i] in "{[":
                 dybde += 1
@@ -683,10 +824,8 @@ def _prosetekst() -> str:
     dør i denne fila. `filter_state` i en `const` sier ingenting om registeret;
     `krever_outbox` i et `kl`-felt gjør det.
 
-    Et MØNSTER er kode, ikke prosa: `_apner()` spenner over regex-literaler
-    for at en fnutt inne i dem ikke skal se ut som en streng (niende runde),
-    men det som står der er tegnklasser og kvantorer — ingen påstand om
-    registeret. De hoppes derfor over uten å beholdes.
+    Hva som er prosa inne i skriptet avgjør `_prosaindekser()`, den samme
+    regelen prøvene i `test_skanneren_skiller_kode_fra_prosa()` måler.
 
     Maskeringen bytter tegn mot mellomrom i stedet for å klippe dem ut, og
     lar linjeskift stå: linjenummeret porten melder skal peke på linja i fila,
@@ -696,18 +835,9 @@ def _prosetekst() -> str:
     ut = list(tekst)
     for del_ in _SKRIPTDEL_RE.finditer(tekst):
         a, b = del_.start(1), del_.end(1)
-        behold: set[int] = set()
-        i = a
-        while i < b:
-            if _apner(tekst, i):
-                j = min(_hopp(tekst, i), b)
-                if not _er_regex(tekst, i):
-                    behold.update(range(i, j))
-                i = j
-                continue
-            i += 1
+        prosa = _prosaindekser(tekst, a, b)
         for k in range(a, b):
-            if k not in behold and ut[k] != "\n":
+            if k not in prosa and ut[k] != "\n":
                 ut[k] = " "
     return "".join(ut)
 
