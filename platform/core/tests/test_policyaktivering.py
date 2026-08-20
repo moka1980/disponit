@@ -2350,6 +2350,75 @@ def test_rullbakk_avvises_naar_kilden_er_en_annen_generasjon(klient):
 
 
 @pg
+def test_rullbakkevakten_gir_domenesvar_ikke_driverfeil():
+    """Codex P2: kilden kan flytte seg ETTER forkontrollen.
+
+    HTTP-veien slår opp kilden i én transaksjon og skriver utkastet i en
+    annen — det er `policyversjon_kilde` som definer, og rollbacken imellom
+    er tilsiktet. Rekker `slett_ubrukt_policy` å slette eller gjenskape
+    raden i mellomtiden, er det VAKTEN i 047 som feller innsettingen, i
+    skrivingens egen transaksjon. Den samtidigheten er støttet.
+
+    Uten oversettelsen nådde `psycopg.errors.CheckViolation` helt ut til
+    `_med_conn`, som bare kjenner `Aktiveringsfeil` — og eier fikk 500 på
+    nøyaktig den tilstanden forkontrollen svarer 409 på. Målt her på
+    `opprett_utkast`, ikke gjennom klienten: det er der kappløpet lander,
+    og porten skal gjelde enhver kaller, ikke bare forespørselsveien.
+
+    Alle tre navngitte constraints måles — en kode som ikke er kjent skal
+    fortsatt komme urørt ut, men ingen av vaktens egne er det.
+    """
+    from api import policyadmin
+
+    uid, pid, v = _full_aktivering(pakrevd=1)
+    gen = _gen(pid, v)
+    c = _c()
+    try:
+        innhold = c.execute(
+            "SELECT innhold FROM policyer WHERE tenant=%s AND policy_id=%s"
+            "  AND versjon=%s", (TEN, pid, v)).fetchone()[0]
+        c.rollback()
+
+        def _opprett(**kw):
+            return policyadmin.opprett_utkast(
+                c, tenant=TEN, aktor="forf", request_id="r-" + secrets.token_hex(4),
+                policy_id=pid, idempotency_key="i-" + secrets.token_hex(8),
+                input_hash="h-" + secrets.token_hex(8), **kw)
+
+        # 1. Kilden er en ANNEN generasjon nå: samme kode og samme klasse
+        #    som forkontrollens egen prøve, ikke en 500.
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e1:
+            _opprett(innhold=json.loads(json.dumps(innhold)),
+                     rollback_av_versjon=v, rollback_av_generasjon=gen + 1000)
+        assert e1.value.kode == "rullbakk_kilde_endret"
+
+        # 2. En rullbakk uten generasjon — HTTP krever feltet, andre kallere
+        #    kan utelate det. Feilformet forespørsel (400), ikke 500.
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e2:
+            _opprett(innhold=json.loads(json.dumps(innhold)),
+                     rollback_av_versjon=v)
+        assert e2.value.kode == "utkast_feilformet"
+
+        # 3. Innholdet er ikke kildens kopi. Samme klasse.
+        forfalsket = json.loads(json.dumps(innhold))
+        forfalsket["meta"]["eier"] = "en-annen"
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e3:
+            _opprett(innhold=forfalsket, rollback_av_versjon=v,
+                     rollback_av_generasjon=gen)
+        assert e3.value.kode == "utkast_feilformet"
+
+        # Og den ekte kopien går fortsatt gjennom — porten stenger formen,
+        # ikke handlingen.
+        assert _opprett(innhold=json.loads(json.dumps(innhold)),
+                        rollback_av_versjon=v,
+                        rollback_av_generasjon=gen)["utkast_id"]
+        c.rollback()
+    finally:
+        c.close()
+    assert uid
+
+
+@pg
 def test_rullbakkeopphavet_binder_generasjonen_ikke_nummeret(klient):
     """Port 27 (Codex P2): opphavet peker på GENERASJONEN kopien kom fra,
     ikke bare på versjonsNUMMERET.

@@ -448,12 +448,25 @@ def opprett_utkast_endepunkt(tjeneste, request):
         if ih is None:
             ih = opprett_input_hash(tenant, bid, policy_id, innhold,
                                     rollback_av, idem)
-        res = policyadmin.opprett_utkast(
-            conn, tenant=tenant, aktor=bid, request_id=rid,
-            policy_id=policy_id, innhold=innhold,
-            idempotency_key=idem, input_hash=ih,
-            rollback_av_versjon=rollback_av,
-            rollback_av_generasjon=kilde_gen)
+        try:
+            res = policyadmin.opprett_utkast(
+                conn, tenant=tenant, aktor=bid, request_id=rid,
+                policy_id=policy_id, innhold=innhold,
+                idempotency_key=idem, input_hash=ih,
+                rollback_av_versjon=rollback_av,
+                rollback_av_generasjon=kilde_gen)
+        except policyadmin.Aktiveringsfeil as g:
+            # 047-vaktens verdikt om kilden, målt i SKRIVINGENS transaksjon:
+            # forkontrollen over slapp sin lesetransaksjon, og
+            # `slett_ubrukt_policy` kan ha slettet eller gjenskapt raden
+            # imens (Codex P2). Da er dette samme kildeavhengige avslag som
+            # de fire over — og det skal gjennom den samme etterprøven, ellers
+            # kan en overlappende retry få 409 på en nøkkel som alt bærer et
+            # lagret 201.
+            if g.kode != "rullbakk_kilde_endret":
+                raise
+            return _replay_foer_avslag(conn, tenant, bid, rid, idem, ih,
+                                       g.kode)
         return _ok(res, rid, 201)
 
     return _med_conn(tjeneste, rid, kjor)

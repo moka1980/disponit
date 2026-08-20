@@ -64,6 +64,33 @@ KONVOLUTTVERSJON = 1
 #: Aktiverte policyer settes i produksjonsstatus (den blir den aktive raden).
 _AKTIV_STATUS = "produksjon"
 
+#: Rullbakkevaktens navngitte constraints (047) → feilkode (Codex P2).
+#:
+#: `policyutkast_rullbakkeopphav_vakt` er den AUTORITATIVE prøven på et
+#: opphav, og den kjører i SKRIVINGENS transaksjon — etter at HTTP-veien har
+#: sluppet sin lesetransaksjon. Rekker `slett_ubrukt_policy` å slette eller
+#: gjenskape kilden i mellomtiden, feller triggeren innsettingen. Det er en
+#: STØTTET samtidighet, ikke en driverfeil, men uten navnene her nådde
+#: `psycopg.errors.CheckViolation` helt ut til `_med_conn` — som bare kjenner
+#: `Aktiveringsfeil` — og eier fikk 500 i stedet for det 409-et forkontrollen
+#: gir for nøyaktig samme tilstand.
+#:
+#: Oversettelsen bor HER, ikke i HTTP-laget: triggeren vokter tabellen mot
+#: enhver skriver, og en kaller utenfor forespørselsveien skal møte det samme
+#: domenesvaret. Navnet er kontrakten — en constraint vi ikke kjenner kastes
+#: videre urørt, for da er det virkelig noe uventet.
+_RULLBAKKVAKT_FEIL = {
+    # Kilden er borte, eller bærer nå en annen generasjon: raden er ikke den
+    # klienten så. Samme kode og samme 409 som forkontrollens egen prøve
+    # (`kilde_gen != rollback_gen`) — flaten laster historikken på nytt.
+    "utkast_rullbakk_kilde_finnes": "rullbakk_kilde_endret",
+    # En rullbakk uten kildegenerasjon. HTTP-veien krever feltet, så dette er
+    # en kaller utenfor den: 400, ikke 500 — forespørselen er feilformet.
+    "utkast_rullbakk_krever_generasjon": "utkast_feilformet",
+    # Innholdet er ikke kildens. Samme klasse, samme svar.
+    "utkast_rullbakk_er_kopi": "utkast_feilformet",
+}
+
 _AKTIVER_SCOPE = "policy:activate"
 
 #: Feltene konvolutten binder til de LÅSTE dataene (defense-in-depth: server
@@ -248,13 +275,24 @@ def opprett_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
     # historikken sier da «kilden er ikke bundet» i stedet for å påstå noe.
     rb_gen = (rollback_av_generasjon if rollback_av_versjon is not None
               and isinstance(rollback_av_generasjon, int) else None)
-    conn.execute(
-        "INSERT INTO policyutkast (tenant, utkast_id, policy_id,"
-        " basert_pa_versjon, basert_pa_hash, rollback_av_versjon,"
-        " rollback_av_generasjon, innhold, opprettet_av)"
-        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)",
-        (tenant, utkast_id, policy_id, aktiv, base_hash, rollback_av_versjon,
-         rb_gen, json.dumps(innhold), aktor))
+    # Vakten i 047 måler opphavet HER, i vår egen transaksjon. Kilden kan ha
+    # flyttet seg siden kalleren leste den, og da er avslaget et domenesvar —
+    # se `_RULLBAKKVAKT_FEIL`. `rollback()` først: transaksjonen er avbrutt av
+    # feilen, og `Aktiveringsfeil` reises ellers på en død forbindelse.
+    try:
+        conn.execute(
+            "INSERT INTO policyutkast (tenant, utkast_id, policy_id,"
+            " basert_pa_versjon, basert_pa_hash, rollback_av_versjon,"
+            " rollback_av_generasjon, innhold, opprettet_av)"
+            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)",
+            (tenant, utkast_id, policy_id, aktiv, base_hash,
+             rollback_av_versjon, rb_gen, json.dumps(innhold), aktor))
+    except psycopg.errors.CheckViolation as e:
+        kode = _RULLBAKKVAKT_FEIL.get(e.diag.constraint_name or "")
+        conn.rollback()
+        if kode is None:
+            raise
+        raise Aktiveringsfeil(kode) from e
     return _fullfor(conn, tenant, idempotency_key, {
         "utkast_id": utkast_id, "policy_id": policy_id,
         "utkastversjon": 1, "status": "utkast", "base_versjon": aktiv})
