@@ -270,6 +270,37 @@ fi
 "$VENV/bin/pip" install -q "psycopg[binary]" cryptography pyyaml jsonschema pytest \
   starlette uvicorn httpx "authlib>=1.6,<2" joserfc dnspython
 
+# ------------------------------------------------------------
+# 048 (#108), Codex P1: VEDLIKEHOLDSVINDU FOR PLAN-ARBEIDEREN.
+#
+# Migrasjon 048 REVOKER claim/terminaliser/frigi_planvindu fra `disponit`
+# og gir dem til `disponit_plan_arbeider`. Paa en vert som alt har rullet
+# ut, kjoerer `disponit-plan.timer` hvert 5. minutt med credentialen fra
+# FORRIGE opp.sh — altsaa runtime-DSN-en. Migrasjonen her og
+# credential-byttet i opp.sh er to separate kommandoer, og i gapet mellom
+# dem feiler HVER planaktivering paa `claim_planvindu`. Planvinduer hentes
+# aldri inn igjen (SKIP-semantikken er bevisst), saa gapet skriver bort
+# kontroller permanent — ogsaa naar de to kommandoene kjoeres etter
+# hverandre slik rutinen sier.
+#
+# Revoken og credential-byttet hoerer derfor til SAMME operasjon:
+# arbeideren stoppes FOER migrasjonene, credentialen dens skrives om til
+# plan-arbeiderrollens DSN etterpaa, og foerst da startes timeren igjen.
+# Vi starter kun det VI stoppet — er timeren ikke aktivert paa denne
+# verten (fersk install), er det opp.sh som aktiverer den.
+PLAN_TIMER_VAR_AKTIV=0
+if command -v systemctl >/dev/null 2>&1 \
+   && systemctl is-active --quiet disponit-plan.timer 2>/dev/null; then
+  PLAN_TIMER_VAR_AKTIV=1
+fi
+# Timeren OG den aktive oneshot-tjenesten (opp.sh steg 5, samme grunn): aa
+# stoppe timeren alene avbryter ikke en kjoering som alt er i gang, og
+# `systemctl stop` paa en oneshot venter til prosessen er ute — vinduet
+# aapnes foerst naar arbeideren faktisk er stille.
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl stop disponit-plan.timer disponit-plan.service 2>/dev/null || true
+fi
+
 for _dsn in "$DISPONIT_MIGRATOR_URL" "$DISPONIT_TEST_MIGRATOR_DSN"; do
   DISPONIT_MIGRATOR_URL="$_dsn" "$VENV/bin/python" \
     "$(dirname "$0")/migrer.py" "$BRUKER"
@@ -330,6 +361,37 @@ verifiser_og_reparer "$EGRESS"     "${EGRESS_DSN[@]}"
 verifiser_og_reparer "$DOMENER"    "${DOMENER_DSN[@]}"
 verifiser_og_reparer "$VARSLER"    "${VARSLER_DSN[@]}"
 verifiser_og_reparer "$PLANARB"    "${PLANARB_DSN[@]}"
+
+# ------------------------------------------------------------
+# 048 (#108), Codex P1: LUKK VEDLIKEHOLDSVINDUET.
+#
+# Credentialen byttes HER, i samme operasjon som revoken — ikke foerst ved
+# neste opp.sh. Miljoefila leses paa nytt: reparasjonene rett over kan ha
+# rotert plan-rollens passord, og da er verdien vi leste foer
+# migrasjonene utdatert. En tom verdi skrives aldri (samme kontrakt som
+# opp.sh: en tom credential ville foerst vist seg som en feilende
+# timerkjoering).
+#
+# Katalogen opprettes ikke her — den eies av opp.sh (`install -d -m 700
+# /etc/disponit/plan`). Finnes den ikke, har verten aldri rullet ut, og da
+# finnes det heller ingen levende timer som kan feile i gapet.
+set -a; . "$MILJOFIL"; set +a
+if [ -d /etc/disponit/plan ]; then
+  if [ -z "${DISPONIT_PLAN_URL:-}" ]; then
+    echo "AVBRUTT: DISPONIT_PLAN_URL mangler i $MILJOFIL etter oppsettet."
+    echo "Migrasjonene har alt fjernet claim-EXECUTE fra runtime-rollen, og"
+    echo "disponit-plan.timer er STOPPET. Rett miljøfila og kjør skriptet"
+    echo "på nytt — timeren startes først når credentialen er byttet."
+    exit 1
+  fi
+  printf '%s' "$DISPONIT_PLAN_URL" > /etc/disponit/plan/DISPONIT_DATABASE_URL
+  chmod 600 /etc/disponit/plan/DISPONIT_DATABASE_URL
+  echo "  skrev plan-arbeiderens DSN til /etc/disponit/plan/DISPONIT_DATABASE_URL"
+fi
+if [ "$PLAN_TIMER_VAR_AKTIV" -eq 1 ]; then
+  systemctl start disponit-plan.timer
+  echo "  startet disponit-plan.timer igjen (credentialen er byttet)"
+fi
 
 echo "OK. Kilde miljøet med: set -a; . $MILJOFIL; set +a"
 echo "Verifiser: python3 -m pytest platform/core/tests -q"
