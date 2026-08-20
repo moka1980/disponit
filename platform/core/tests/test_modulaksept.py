@@ -1158,6 +1158,67 @@ def _aksept_skript():
     return mod
 
 
+def _drillskript():
+    """Drillskriptet lastet som modul (filnavnet har bindestrek)."""
+    import importlib.util
+    sti = ROT / "deploy/staging/rollback-m56.py"
+    spec = importlib.util.spec_from_file_location("rollback_m56", sti)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class _Livslop:
+    """Bare det `_deployment` spør om: livsløp per release, eller ingen rad."""
+
+    def __init__(self, **livslop):
+        self.livslop, self._svar = livslop, None
+
+    def execute(self, _sql, params=None):
+        self._svar = self.livslop.get(params[2]) if params else None
+        return self
+
+    def fetchone(self):
+        return (self._svar,) if self._svar is not None else None
+
+
+def test_drillen_nekter_a_gjenoppta_en_avbrutt_kjoring():
+    """Codex' P2 (runde 5): docstringen lovet trygg rekjøring, og det
+    holdt bare fram til første `bytt_release`.
+
+    Etter rullingen er en ANNEN release claiming, og et nytt forsøk med
+    de samme argumentene leser den som «den drillede»: er rullbakken
+    claiming blir `drillet == rullback` (CHECK-en i 049 avviser raden —
+    etter at hele drillen er kjørt om igjen), er kandidaten claiming
+    prøver forsøket å rulle til en release drillen alt drenerte. Begge
+    tilstandene etterlates av en unit som ikke starter.
+
+    En drill er ÉN måling og kan ikke gjenopptas — den kan bare kjøres på
+    nytt, hel, med ubrukte id-er. Porten sier det FØR noe bestilles."""
+    d = _drillskript()
+    tom = _Livslop()
+    # Det som faktisk er trygt: forsøket døde før første `bytt_release`,
+    # ingen av id-ene har en deployment. Da er rekjøring uendret lov.
+    d.krev_ubrukte_drillreleaser(tom, "r-drillet", "r-rull", "r-kand")
+    # Rullbakken ble claiming — forsøket kom forbi rullingen.
+    with pytest.raises(SystemExit) as ei:
+        d.krev_ubrukte_drillreleaser(tom, "r-rull", "r-rull", "r-kand")
+    assert "ny drill" in str(ei.value).lower()
+    # Kandidaten ble claiming — forsøket kom helt fram og døde etterpå.
+    with pytest.raises(SystemExit):
+        d.krev_ubrukte_drillreleaser(tom, "r-kand", "r-rull", "r-kand")
+    # …og en drill-id som alt har en (drenert) deployment er brukt opp.
+    for brukt in ({"r-rull": "draining"}, {"r-kand": "retired"}):
+        with pytest.raises(SystemExit) as ei:
+            d.krev_ubrukte_drillreleaser(_Livslop(**brukt), "r-drillet",
+                                         "r-rull", "r-kand")
+        assert "brukt opp" in str(ei.value)
+    # Løftet i docstringen skal være det porten faktisk holder.
+    tekst = (ROT / "deploy/staging/rollback-m56.py").read_text(
+        encoding="utf-8")
+    assert "Rekjøring er trygg" not in tekst
+
+
 def test_drillartefaktet_maa_navngi_sin_fencing_generasjon():
     """Samme P2, skriptsiden: `oppsett.module_epoch` ble aldri LEST — den
     sto i artefaktet og gikk ingen steder. Nå plukkes den opp, og en

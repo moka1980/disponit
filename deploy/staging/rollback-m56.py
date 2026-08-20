@@ -31,8 +31,18 @@ kandidatleddet (fase 2/4/9 i sjekklisterunden) gjenbrukes uendret; alt
 drill-spesifikt bor her.
 
 Kjøres PÅ verten (disponit-srv), som root, med samme miljø som
-sjekklisterunden. Rekjøring er trygg: hvert steg måler tilstanden før
-det handler, og bestillingene bruker drill-egne idempotensnøkler.
+sjekklisterunden.
+
+REKJØRING: et forsøk som dør FØR første `bytt_release` kjøres om igjen
+med de samme argumentene — hvert steg måler tilstanden før det handler,
+og bestillingene bruker drill-egne idempotensnøkler. Etter rullingen er
+det noe annet: drillen har da konsumert `--rullback-id` (og kanskje
+`--kandidat-id`), livsløpet er enveis, og en drill er ÉN måling — de
+fire leddene hører til samme kjøring, og et artefakt sydd av to
+kjøringer er ikke evidens for noen av dem. `krev_ubrukte_drillreleaser`
+måler dette FØR noe bestilles, og sier hvilke id-er som er brukt opp.
+Neste forsøk er da en ny, hel drill fra tilstanden som står, med to
+ubrukte id-er (Codex P2, #117 runde 5).
 
 BRUK:
     sudo -E python3 deploy/staging/rollback-m56.py \
@@ -196,6 +206,58 @@ def _bestill_drill(sj, m, merkelapp):
     return r.json()["oppdrag_id"]
 
 
+def krev_ubrukte_drillreleaser(m, drillet: str, rullback: str,
+                               kandidat: str) -> None:
+    """Drill-id-ene må være UBRUKTE deployments, ellers er dette en rest.
+
+    Codex' P2 på PR #117 (runde 5): docstringen lovet at rekjøring var
+    trygg, og det holdt bare fram til første `bytt_release`. Etter den er
+    den claimende deploymenten en ANNEN release enn den drillen startet
+    på, og et nytt forsøk med de samme argumentene leser den som «den
+    drillede»:
+
+      * er rullbakken claiming, blir `drillet == rullback` — CHECK-en i
+        049 avviser raden, men først ETTER at hele drillen er kjørt om
+        igjen,
+      * er kandidaten claiming, prøver forsøket å rulle til rullbakken,
+        som drillen alt drenerte — og livsløpet er enveis, så det feiler
+        midt i målingen.
+
+    Begge tilstandene er vanlige: drillen booter to releaser på verten,
+    og en unit som ikke starter etterlater nøyaktig dem.
+
+    Og resten kan ikke gjenopptas. En drill er ÉN måling: claim-stoppet,
+    det løpende oppdragets utfall, rullbakkens overtakelse og kandidatens
+    overtakelse hører til samme kjøring, og et artefakt sydd av to
+    kjøringer er nettopp formen runde 4 forbød for runde-sammendraget.
+    Det som KAN gjøres, er å starte en ny, hel drill fra tilstanden som
+    nå står — og den trenger sine egne release-id-er.
+
+    Porten står her, FØR noe bestilles eller rulles, og den slipper
+    gjennom det som faktisk er trygt: et forsøk som døde før første
+    `bytt_release` har ingen deployment å vise til, og kjøres om igjen
+    med de samme id-ene uten videre. Den passivt registrerte
+    rullbakk-RELEASEN er ikke en deployment og teller ikke.
+    """
+    if drillet in (rullback, kandidat):
+        raise SystemExit(
+            f"AVBRUTT: den claimende releasen ER {drillet} — en av"
+            " drill-id-ene fra dette kallet. Et tidligere forsøk kom da"
+            " forbi rullingen og etterlot resten av drillen ukjørt. En"
+            " drill er én måling og kan ikke gjenopptas; start en NY drill"
+            f" fra {drillet} med to ubrukte id-er:\n"
+            f"  --rullback-id <ny> --kandidat-id <ny>")
+    for merkelapp, rel in (("rullback", rullback), ("kandidat", kandidat)):
+        livslop = _deployment(m, rel)
+        if livslop is not None:
+            raise SystemExit(
+                f"AVBRUTT: {merkelapp}-releasen {rel} har alt en"
+                f" deployment ({livslop}) i {MILJO}. Livsløpet er enveis,"
+                " så den kan ikke claimes på nytt — id-en er brukt opp av"
+                " et tidligere drillforsøk. Kjør en ny drill med to"
+                " ubrukte id-er.")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--rullback-id", required=True)
@@ -226,6 +288,7 @@ def main() -> int:
     if rad is None:
         raise SystemExit("AVBRUTT: ingen claiming-deployment å drille")
     drillet, kver, khash, digest = rad
+    krev_ubrukte_drillreleaser(m, drillet, a.rullback_id, a.kandidat_id)
     epoch = m.execute("SELECT module_epoch FROM modulhode WHERE modul_id=%s",
                       (MODUL,)).fetchone()[0]
     print(f"driller {drillet} (epoch {epoch}, digest {digest[:12]}…)")
