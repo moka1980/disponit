@@ -494,9 +494,32 @@ const esc=t=>String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;');
 const NY_I = 'v9';
 const erNy = m => m[NY_I] === 'ny';
 
+// Og MERKETEKSTEN avledes av NY_I, ikke skrevet av (Codex P2 på #118, sjette
+// runde). Linjen som tegnet merket var en kjede av literaler: `NY I V9` for
+// den nye, og en fallback som bare kjente v8 og v7. Ved `NY_I = 'v10'` ville
+// den ene linjen over sagt v10 mens kortet fortsatt sto på «NY I V9», og
+// M-57 ville mistet sitt historiske merke helt — det er ingen gren for v9 i
+// fallbacken. Versjonsbumpet var lovet som én linje; da må merket følge den.
+//
+// Modulen bærer selv merkene sine som felt (`v7`, `v8`, `v9`), så det nyeste
+// feltet modulen har ER merket. Ingen liste over versjoner å vedlikeholde:
+// neste utgave legger til `v10: 'ny'` på de nye kortene, og resten står.
+const VERSJONSFELT = /^v(\d+)$/;
+const MERKEORD = {ny: 'Ny', utvidet: 'Utvidet', endret: 'Utvidet'};
+function versjonsmerke(m){
+  const nyeste = Object.keys(m)
+    .filter(k => VERSJONSFELT.test(k) && MERKEORD[m[k]])
+    .sort((a,b) => Number(b.slice(1)) - Number(a.slice(1)))[0];
+  if(!nyeste) return '';
+  const tekst = `${MERKEORD[m[nyeste]]} i ${nyeste}`;
+  return nyeste === NY_I
+    ? `<span class="chip ny">${tekst.toUpperCase()}</span>`
+    : `<span class="chip v7">${tekst}</span>`;
+}
+
 function card(m){
   const id='M-'+String(m.n).padStart(2,'0');
-  const tag=erNy(m)?'<span class="chip ny">NY I V9</span>':m.v8==='ny'?'<span class="chip v7">Ny i v8</span>':m.v8==='utvidet'?'<span class="chip v7">Utvidet i v8</span>':m.v7==='ny'?'<span class="chip v7">Ny i v7</span>':m.v7==='endret'?'<span class="chip v7">Utvidet i v7</span>':'';
+  const tag=versjonsmerke(m);
   // Ingen statusbrikke her. Katalogen bærer STRUKTUR — nummer, navn, område,
   // fase — ikke tilstand; hva en modul FAKTISK er, står i `MODULSTATUS` i
   // plattformdata.js, avledet av manifestene og pinnet av test_ui_kontrakt.py.
