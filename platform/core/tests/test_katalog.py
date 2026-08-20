@@ -561,6 +561,15 @@ def _kodespenn(js: str, a: int, b: int, avslutt: bool = False):
     inne i den, HVA EN LUKKING GIR, og om en uttrykkskropp venter på `{`-en sin.
     Nederst ligger rammen for teksten selv, som aldri lukkes.
 
+    «Hva den betyr» er for en parentes hvilket KONTROLLORD som åpnet den, og
+    ikke bare at det sto ett der (Codex P2 på #118, femtende runde). `of` er
+    kontekstuelt: ordet er ikke reservert, så det er en helt alminnelig
+    binding — og en verdi — overalt unntatt i `for (… of …)`, der det hører
+    til løkkeformen og et UTTRYKK følger. `for (const x of /["\']/)` ble derfor
+    lest som en divisjon, og fnutten i mønsteret åpnet en «streng» som svelget
+    kjørende kode. Konteksten ligger i rammen fordi den følger nøstingen: et
+    `of` inne i `f(of)` inne i en `for`-parentes er en binding igjen.
+
     «Hva en lukking gir» er ett felt fordi det er ett spørsmål: `)`, `]` og `}`
     svarte hver for seg, med hver sin regel, og et FUNKSJONS- eller
     KLASSEUTTRYKK falt mellom dem (Codex P2 på #118, fjortende runde). Kroppen
@@ -622,10 +631,18 @@ def _kodespenn(js: str, a: int, b: int, avslutt: bool = False):
                 # hele uttrykket gir en verdi når den lukkes. Flagget står på
                 # rammen som er åpen NÅ, så det følger nøstingen.
                 rammer[-1][4] = True
+            # `of` er KONTEKSTUELT: som ord er det en helt alminnelig binding,
+            # men i `for (… of …)` er det en del av løkkeformen, og etter det
+            # følger et uttrykk. Konteksten er rammen parentesen åpnet, som
+            # husker hvilket kontrollord som åpnet den.
+            lokkeord = (ordet == "of" and not etter_punktum
+                        and rammer[-1][0] == "(" and rammer[-1][1] == "for")
             i, verdi = treff.end(), (etter_punktum
-                                     or ordet not in _ORD_UTEN_VERDI)
+                                     or (ordet not in _ORD_UTEN_VERDI
+                                         and not lokkeord))
             if etter_punktum or ordet != _MODIFIKATOR:
-                blokkposisjon = verdi or ordet not in _UTTRYKKSORD
+                blokkposisjon = verdi or (ordet not in _UTTRYKKSORD
+                                          and not lokkeord)
             continue
         if (treff := _TALL_START_RE.match(js, i, b)):
             i, verdi, siste_ord, blokkposisjon = treff.end(), True, "", True
@@ -635,9 +652,11 @@ def _kodespenn(js: str, a: int, b: int, avslutt: bool = False):
             continue
         if c == "(":
             # En betingelsesparentes lukker en setningsdel; alle andre
-            # parenteser gir en verdi.
-            betingelse = siste_ord in _KONTROLLORD
-            rammer.append(["(", betingelse, 0, not betingelse, False])
+            # parenteser gir en verdi. Rammen husker HVILKET kontrollord som
+            # åpnet den, ikke bare at det var ett: `of` betyr noe eget inne i
+            # en `for`, og ingenting inne i en `if`.
+            kontroll = siste_ord if siste_ord in _KONTROLLORD else ""
+            rammer.append(["(", kontroll, 0, not kontroll, False])
             i, verdi, siste_ord, blokkposisjon = i + 1, False, "", False
             continue
         if c == ")":
@@ -901,6 +920,16 @@ _SKANNERPROEVER = [
     ('export async function f() {} /["\']/.test(v); const filter_state = {};',
      False),
     ('export class A {} /["\']/.test(v); const filter_state = {};', False),
+    # Femtende runde: `of` i en `for`-parentes hører til løkken, og et uttrykk
+    # følger — også når det uttrykket begynner med et mønster.
+    ('for (const x of /["\']/.exec(v)) {} const filter_state = {};', False),
+    ('for await (const x of /["\']/.exec(v)) {} const filter_state = {};',
+     False),
+    # Men `of` er ikke reservert: utenfor løkkeformen er det en binding, og
+    # skråstreken etter deler.
+    ('const of = 4; const y = of / 2; const filter_state = {};', False),
+    ('const y = f(of / 2); const filter_state = {};', False),
+    ('const y = o.of / 2; const filter_state = {};', False),
 ]
 
 
