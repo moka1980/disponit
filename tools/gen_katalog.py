@@ -221,20 +221,15 @@ POST_RE = re.compile(
 # Hva en modul FAKTISK er, står ett sted: `MODULSTATUS` i plattformdata.js,
 # avledet av manifestene og pinnet av test_ui_kontrakt.py.
 #
-# Forbudet håndheves av `les_katalog()` gjennom mønsteret under. Nøkkelposisjon
-# er hele presisjonen: feltnavnet må stå rett etter en `{` eller et komma og
-# følges av kolon. Ordet «status» finnes overalt i feltVERDIene — «samtykke-
-# status», «onboardingstatus», «resultatstatus» — og de er prosa om hva en
-# modul gjør, ikke en tilstandsakse ved siden av manifestet.
-#
-# Og forbudet gjelder MODULPOSTENE, ikke alt som står i en `<script>`-tagg
-# (Codex P2 på #118). Siden er en levende prototype med egen UI-kode: et
-# tilstandsobjekt med `status:` i en filterrutine, et API-eksempel i en
-# hjelpetekst — alt sammen helt lovlig, og ingen av delene en tilstandsakse
-# ved siden av manifestet. Et forbud som stoppet dem ville stoppet
-# ferskhetsporten med en modulfeilmelding om noe som ikke er en modul, og et
-# forbud man må slå av for å skrive UI-kode blir slått av.
-STATUS_RE = re.compile(r"""[{,]\s*["']?(status|driftstilstand)["']?\s*:""")
+# Forbudet håndheves av `les_katalog()`, og det gjelder MODULPOSTENE — ikke alt
+# som står i en `<script>`-tagg (Codex P2 på #118). Siden er en levende
+# prototype med egen UI-kode: et tilstandsobjekt med `status:` i en
+# filterrutine, et API-eksempel i en hjelpetekst — alt sammen helt lovlig, og
+# ingen av delene en tilstandsakse ved siden av manifestet. Et forbud som
+# stoppet dem ville stoppet ferskhetsporten med en modulfeilmelding om noe som
+# ikke er en modul, og et forbud man må slå av for å skrive UI-kode blir slått
+# av.
+FORBUDTE_FELT = ("status", "driftstilstand")
 
 
 def slug(navn: str) -> str:
@@ -277,6 +272,73 @@ def postslutt(tekst: str, start: int) -> int:
         f"kilden har endret form, sjekk parseren")
 
 
+_NAVNETEGN = re.compile(r"[A-Za-z_$][\w$]*")
+
+
+def toppnivafelt(post: str) -> list[str]:
+    """Feltnavnene på ØVERSTE nivå i en modulpost, i den rekkefølgen de står.
+
+    Skanner som `postslutt()`: teller dybde og hopper over strenger. Et navn
+    telles bare når det står rett inne i postens egen krøllparentes — ikke i en
+    liste, ikke i et nøstet objekt — og etterfølges av kolon.
+
+    Forbudet mot en parallell statusakse (Codex P2 på #118, sjette runde) leste
+    før dette rått i posten med et mønster på «`{` eller komma, så navnet, så
+    kolon». Nøkkelposisjon er riktig krav, men et regex ser ikke forskjell på
+    kode og tekst: en feltverdi som dokumenterer et JSON- eller API-fragment —
+    `input: "Svar: {status: ok}"` — treffer mønsteret inne i fnuttene, og
+    generatoren stoppet med en modulfeilmelding om en tilstandsakse modulen
+    ikke har. Det er samme klasse feil som postgrensen hadde, og desto mer
+    sannsynlig nå som `postslutt()` med vilje tillater krøllparenteser i prosa.
+
+    Motsatt vei holder posisjonskravet fortsatt: ordet «status» står overalt i
+    feltVERDIene — «samtykkestatus», «onboardingstatus», «resultatstatus» — og
+    det er prosa om hva en modul gjør. Bare et FELT er en tilstandsakse.
+    """
+    felt = []
+    dybde = 0
+    klammer = 0
+    i = 0
+    while i < len(post):
+        c = post[i]
+        if c in "\"'`":
+            j = i + 1
+            while j < len(post) and post[j] != c:
+                j += 2 if post[j] == "\\" else 1
+            navn = post[i + 1:j]
+            i = j + 1
+        elif c == "{":
+            dybde += 1
+            i += 1
+            continue
+        elif c == "}":
+            dybde -= 1
+            i += 1
+            continue
+        elif c == "[":
+            klammer += 1
+            i += 1
+            continue
+        elif c == "]":
+            klammer -= 1
+            i += 1
+            continue
+        elif (treff := _NAVNETEGN.match(post, i)):
+            navn = treff.group(0)
+            i = treff.end()
+        else:
+            i += 1
+            continue
+        # Et navn er et felt bare på postens eget nivå, og bare foran kolon.
+        if dybde == 1 and klammer == 0:
+            etter = i
+            while etter < len(post) and post[etter].isspace():
+                etter += 1
+            if etter < len(post) and post[etter] == ":":
+                felt.append(navn)
+    return felt
+
+
 def les_katalog() -> list[dict]:
     if not KILDE.exists():
         raise SystemExit(f"fant ikke sannhetskilden: {KILDE_NAVN}")
@@ -298,14 +360,18 @@ def les_katalog() -> list[dict]:
     # inne i en streng. Alt etter kuttet, inkludert et `status`-felt, falt
     # utenfor det forbudet fikk se. Og nummerporten under fanger det ikke:
     # POST_RE er ferdig med å matche ved `p`, så posten telles som normalt.
+    #
+    # Innenfor posten leses FELTNAVNENE, ikke teksten (Codex P2, sjette runde):
+    # `toppnivafelt()` hopper over strenger på samme måte, så et JSON-fragment
+    # i en fri feltverdi ikke lenger kan se ut som en tilstandsakse.
     poster = []
     for m in POST_RE.finditer(skript):
         post = skript[m.start():postslutt(skript, m.start())]
-        forbudt = STATUS_RE.search(post)
+        forbudt = [f for f in toppnivafelt(post) if f in FORBUDTE_FELT]
         if forbudt:
             raise SystemExit(
                 f"M-{m.group(1)} «{m.group(3)}» i {KILDE_NAVN} bærer "
-                f"`{forbudt.group(1)}` — katalogen bærer struktur (nummer, "
+                f"`{forbudt[0]}` — katalogen bærer struktur (nummer, "
                 f"navn, område, fase), ikke tilstand. Hva en modul FAKTISK er, "
                 f"står i `MODULSTATUS` i plattformdata.js, avledet av "
                 f"manifestene. Fjern feltet.")
