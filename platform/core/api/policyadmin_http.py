@@ -49,6 +49,10 @@ _FEIL_HTTP = {
     # en annen. Optimistisk lås, som `policy_endret` — 409, og flaten
     # laster historikken på nytt.
     "rullbakk_kilde_endret": 409,
+    # Samme lås, på diffens to operander: nummeret finnes, men bæres nå av
+    # en annen generasjon enn den historikken viste da valget ble gjort.
+    # 409, og flaten laster historikken på nytt.
+    "diff_kilde_endret": 409,
     # Den aktive policyen er ikke lenger den klienten så da den ba om
     # slettingen (optimistisk lås, som `utkastversjon_utdatert`): 409, og
     # flaten laster på nytt.

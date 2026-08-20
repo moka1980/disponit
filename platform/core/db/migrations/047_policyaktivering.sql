@@ -1270,12 +1270,30 @@ BEGIN
               l.versjon DESC, l.innhold_finnes DESC;
 END $$;
 
+-- Innholdet i EN NAVNGITT GENERASJON (Codex P2). Versjonsnummeret er en
+-- PEKER, ikke en identitet: `slett_ubrukt_policy` frigjør det med vilje,
+-- og det samme `(policy_id, versjon)` kan senere navngi en helt annen
+-- generasjon. Uten `p_generasjon` leste diffen da erstatningen mens flaten
+-- fortsatt merket den med den valgte versjonens etikett — og en diff er
+-- nettopp en påstand om HVA som skiller de to dokumentene eier så.
+--
+-- Generasjonen er et ARGUMENT, ikke noe kalleren kan sammenligne etterpå:
+-- er porten valgfri, er hullet der fortsatt for enhver kaller som utelater
+-- den, og da er den ingen port. NULL faller derfor på samme prøve som en
+-- foreldet verdi.
+--
+-- Avslaget er `invalid_parameter_value`, ikke `no_data_found`, av samme
+-- grunn som i `policyversjon_kilde`: raden FINNES og er lesbar — det er
+-- bare ikke den generasjonen som ble bedt om. HTTP-laget svarer 409, og
+-- flaten laster historikken på nytt.
 CREATE OR REPLACE FUNCTION policyversjon_innhold(
-    p_tenant TEXT, p_policy_id TEXT, p_versjon TEXT)
+    p_tenant TEXT, p_policy_id TEXT, p_versjon TEXT, p_generasjon BIGINT)
 RETURNS JSONB
 LANGUAGE plpgsql STABLE SECURITY DEFINER
 SET search_path = pg_catalog AS $$
-DECLARE v JSONB;
+DECLARE
+    v            JSONB;
+    v_generasjon BIGINT;
 BEGIN
     IF current_setting('disponit.tenant', true) IS DISTINCT FROM p_tenant
     THEN
@@ -1283,12 +1301,21 @@ BEGIN
             'ikke %', current_setting('disponit.tenant', true), p_tenant
             USING ERRCODE = 'insufficient_privilege';
     END IF;
-    SELECT p.innhold INTO v FROM public.policyer p
+    -- Innholdet OG identiteten i ETT oppslag, som i `policyversjon_kilde`:
+    -- måles de i hvert sitt kall, kan raden ha blitt slettet og gjenskapt
+    -- mellom prøven og lesingen.
+    SELECT p.innhold, p.generasjon INTO v, v_generasjon
+      FROM public.policyer p
      WHERE p.tenant = p_tenant AND p.policy_id = p_policy_id
        AND p.versjon = p_versjon;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'policyversjon_innhold: ukjent versjon %',
             p_versjon USING ERRCODE = 'no_data_found';
+    END IF;
+    IF v_generasjon IS DISTINCT FROM p_generasjon THEN
+        RAISE EXCEPTION 'policyversjon_innhold: versjon % bæres nå av '
+            'generasjon %, ikke %', p_versjon, v_generasjon, p_generasjon
+            USING ERRCODE = 'invalid_parameter_value';
     END IF;
     RETURN v;
 END $$;
@@ -1353,17 +1380,18 @@ END $$;
 
 ALTER FUNCTION policyversjoner_for_tenant(TEXT, TEXT)
     OWNER TO disponit_policy_eier;
-ALTER FUNCTION policyversjon_innhold(TEXT, TEXT, TEXT)
+ALTER FUNCTION policyversjon_innhold(TEXT, TEXT, TEXT, BIGINT)
     OWNER TO disponit_policy_eier;
 ALTER FUNCTION policyversjon_kilde(TEXT, TEXT, TEXT)
     OWNER TO disponit_policy_eier;
 SET LOCAL ROLE disponit_policy_eier;
 REVOKE ALL ON FUNCTION policyversjoner_for_tenant(TEXT, TEXT) FROM PUBLIC;
-REVOKE ALL ON FUNCTION policyversjon_innhold(TEXT, TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION policyversjon_innhold(TEXT, TEXT, TEXT, BIGINT)
+    FROM PUBLIC;
 REVOKE ALL ON FUNCTION policyversjon_kilde(TEXT, TEXT, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION policyversjoner_for_tenant(TEXT, TEXT)
     TO disponit;
-GRANT EXECUTE ON FUNCTION policyversjon_innhold(TEXT, TEXT, TEXT)
+GRANT EXECUTE ON FUNCTION policyversjon_innhold(TEXT, TEXT, TEXT, BIGINT)
     TO disponit;
 GRANT EXECUTE ON FUNCTION policyversjon_kilde(TEXT, TEXT, TEXT)
     TO disponit;

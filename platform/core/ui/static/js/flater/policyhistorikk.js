@@ -35,9 +35,17 @@ export function versjonerUrl(policyId) {
   return `/v1/policy/${encodeURIComponent(policyId)}/versjoner`;
 }
 
-export function diffUrl(policyId, fra, til) {
+// GENERASJONENE FØLGER MED (Codex P2). Versjonsnummeret er en peker
+// `slett_ubrukt_policy` frigjør, ikke en varig identitet: er en versjon
+// slettet og gjenskapt mellom lastingen av historikken og klikket, ville
+// serveren diffet erstatningen under den valgtes etikett. Flaten sender
+// derfor generasjonen den VISTE, som rullbakken gjør, og serveren avviser
+// et par som har skiftet under føttene på visningen.
+export function diffUrl(policyId, fra, til, fraGenerasjon, tilGenerasjon) {
   return `/v1/policy/${encodeURIComponent(policyId)}/diff`
-    + `?fra=${encodeURIComponent(fra)}&til=${encodeURIComponent(til)}`;
+    + `?fra=${encodeURIComponent(fra)}&til=${encodeURIComponent(til)}`
+    + `&fra_generasjon=${encodeURIComponent(fraGenerasjon)}`
+    + `&til_generasjon=${encodeURIComponent(tilGenerasjon)}`;
 }
 
 // «Ingen attestanter» har mer enn én grunn, og de betyr ulike ting (047,
@@ -184,6 +192,9 @@ function diffSeksjonFor(policyId, versjoner, ctx, erGyldig) {
   // verdi, ulikt dokument.
   const diffbare = versjoner.filter(harInnhold);
   if (diffbare.length < 2) return null;
+  // Valget er et NUMMER i <select>-en, men bestillingen er en generasjon:
+  // her ligger broen mellom de to, bygd av den lista som ble VIST.
+  const generasjonFor = new Map(diffbare.map((v) => [v.versjon, v.generasjon]));
   const diffUt = el("div", { class: "historikk-diff" });
   // DEFAULT-RETNINGEN LESES AV AKTIVERINGENE (Codex P2). Lista er sortert
   // nyest aktivert først, med de aldri aktiverte bakerst — men å ta indeks
@@ -219,7 +230,9 @@ function diffSeksjonFor(policyId, versjoner, ctx, erGyldig) {
       return;
     }
     sett(diffUt, el("p", { class: "muted", text: t("ui.laster") }));
-    hentJson(diffUrl(policyId, fra.value, til.value)).then((d) => {
+    hentJson(diffUrl(policyId, fra.value, til.value,
+                     generasjonFor.get(fra.value),
+                     generasjonFor.get(til.value))).then((d) => {
       if (!erGyldig()) return;
       tegnDiff(diffUt, d);
     }).catch((e) => {

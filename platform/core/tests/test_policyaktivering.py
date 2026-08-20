@@ -460,7 +460,9 @@ def test_historikken_beholder_aktiveringen_naar_versjonen_er_slettet():
         # …og merket lyver ikke: innholdet er faktisk borte.
         r.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
         with pytest.raises(psycopg.errors.NoDataFound):
-            r.execute("SELECT policyversjon_innhold(%s,%s,%s)",
+            # Generasjonen er likegyldig her: fraværet måles FØRST, så
+            # avslaget er «borte», ikke «en annen generasjon».
+            r.execute("SELECT policyversjon_innhold(%s,%s,%s,1)",
                       (TEN, pid, v)).fetchone()
         r.rollback()
     finally:
@@ -901,8 +903,11 @@ def test_rullbakk_kilde_krever_at_versjonen_har_vart_i_kraft():
         # Avslaget er ikke «borte»: den samme raden leses fortsatt av
         # diff-veien, som er hele grunnen til at den står i historikken.
         r.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
-        assert r.execute("SELECT policyversjon_innhold(%s,%s,%s)",
-                         (TEN, pid, "9.0.0")).fetchone()[0]
+        uaktivert_gen = r.execute(
+            "SELECT generasjon FROM policyer WHERE tenant=%s AND"
+            "  policy_id=%s AND versjon=%s", (TEN, pid, "9.0.0")).fetchone()[0]
+        assert r.execute("SELECT policyversjon_innhold(%s,%s,%s,%s)",
+                         (TEN, pid, "9.0.0", uaktivert_gen)).fetchone()[0]
         r.rollback()
     finally:
         r.close()
@@ -1473,7 +1478,7 @@ def test_definerne_er_tenantbundet():
         r.rollback()
         r.execute("SELECT set_config('disponit.tenant','t-annen',true)")
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
-            r.execute("SELECT policyversjon_innhold(%s,'p','1')", (TEN,))
+            r.execute("SELECT policyversjon_innhold(%s,'p','1',1)", (TEN,))
         r.rollback()
     finally:
         r.close()
@@ -2237,6 +2242,8 @@ def test_historikkrutene_bak_policy_read(klient):
     assert rader and rader[0]["versjon"] == v1
     assert rader[0]["attestanter"] == ["uavh"]
     assert rader[0]["aktivert_ts"], "aktiveringstidspunktet fra hendelsen"
+    g1 = rader[0]["generasjon"]
+    assert isinstance(g1, int), rader[0]
     # 37: diff mellom to vilkårlige versjoner == strukturert_diff direkte.
     uid2, pid2, v2 = _full_aktivering(pakrevd=1)
     m = _c()
@@ -2253,11 +2260,92 @@ def test_historikkrutene_bak_policy_read(klient):
         m.close()
     # Sammenlign PÅ TVERS av policyer er meningsløst — diff-ruten er per
     # policy; her måles formen med to versjoner av samme policy i stedet.
-    r = klient.get(f"/v1/policy/{pid}/diff?fra={v1}&til={v1}",
-                   cookies={sesjonmodul.C_SESJON: cookie})
+    diffsti = (f"/v1/policy/{pid}/diff?fra={v1}&til={v1}"
+               f"&fra_generasjon={g1}&til_generasjon={g1}")
+    r = klient.get(diffsti, cookies={sesjonmodul.C_SESJON: cookie})
     assert r.status_code == 200, r.text
     assert r.json()["diff"] == policydiff.strukturert_diff(i1, i1)
     assert r.json()["diff"]["endringer"] == []
+    # GENERASJONEN ER PÅKREVD (Codex P2): et versjonsnummer er en peker
+    # `slett_ubrukt_policy` frigjør, så en forespørsel som bare navngir
+    # nummeret er ikke en bestilling ruta kan oppfylle.
+    r = klient.get(f"/v1/policy/{pid}/diff?fra={v1}&til={v1}",
+                   cookies={sesjonmodul.C_SESJON: cookie})
+    assert r.status_code == 400, r.text
+    assert r.json()["feil"] == "request_feilformet"
+
+
+@pg
+def test_diffen_er_bundet_til_generasjonene_som_ble_vist(klient):
+    """Codex P2: diffen navnga bare versjonsNUMRENE.
+
+    Et nummer er en PEKER, ikke en identitet — `slett_ubrukt_policy`
+    frigjør det med vilje, og det samme `(policy_id, versjon)` kan senere
+    bæres av en helt annen generasjon (se
+    `test_gjenbrukt_policy_id_gjenoppliver_ikke_slettet_generasjon`). Var
+    en versjon slettet og gjenskapt mellom lastingen av historikken og
+    klikket, leste diffen erstatningen mens flaten fortsatt merket
+    resultatet med den valgte versjonens etikett: strukturdiffen og
+    risikoretningen beskrev da et annet dokumentpar enn det eier så.
+
+    Porten er `policyversjon_innhold` selv, ikke ruta: generasjonen er et
+    ARGUMENT, så ingen kaller kan lese et nummer uten å si hvilken
+    generasjon som bar det. Og operandene hentes i ETT statement — to kall
+    er to READ COMMITTED-snapshots, og et par som aldri fantes samtidig er
+    ingen diff.
+
+    Kontroll: gjør `p_generasjon` valgfri (eller drop prøven), så blir
+    denne rød.
+    """
+    from api import sesjon as sesjonmodul
+    from .test_outbox_bestilling import _adminsesjon
+    uid, pid, v = _full_aktivering(pakrevd=1)
+    cookie, _csrf = _adminsesjon(tenant=TEN, roller="leser")
+    rader = klient.get(f"/v1/policy/{pid}/versjoner",
+                       cookies={sesjonmodul.C_SESJON: cookie}).json()
+    gen = rader["versjoner"][0]["generasjon"]
+    assert isinstance(gen, int) and gen > 0, rader
+
+    def diff(fg, tg):
+        return klient.get(
+            f"/v1/policy/{pid}/diff?fra={v}&til={v}"
+            f"&fra_generasjon={fg}&til_generasjon={tg}",
+            cookies={sesjonmodul.C_SESJON: cookie})
+
+    assert diff(gen, gen).status_code == 200
+    # Generasjonen historikken viste er borte — nummeret bæres nå av en
+    # annen rad. Optimistisk lås: 409 med egen kode, ikke 404 (raden
+    # finnes) og ikke 200 på feil dokument.
+    for fg, tg in ((gen + 1, gen), (gen, gen + 1)):
+        r = diff(fg, tg)
+        assert r.status_code == 409, r.text
+        assert r.json()["feil"] == "diff_kilde_endret", r.text
+    # En generasjon som ikke ER et tall er en feilformet forespørsel, ikke
+    # en konflikt: ingenting i basen kan gjøre det samme kallet gyldig.
+    assert diff("x", gen).status_code == 400
+
+    # …og porten står i DEFINEREN, ikke bare i ruta: en direkte kaller med
+    # kjøretidsrollens EXECUTE møter den samme prøven.
+    r = _rt()
+    try:
+        r.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        assert r.execute("SELECT policyversjon_innhold(%s,%s,%s,%s)",
+                         (TEN, pid, v, gen)).fetchone()[0]
+        r.rollback()
+        r.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            r.execute("SELECT policyversjon_innhold(%s,%s,%s,%s)",
+                      (TEN, pid, v, gen + 1)).fetchone()
+        r.rollback()
+        # NULL er ikke «hopp over prøven»: en utelatt generasjon faller på
+        # samme vakt, ellers er porten valgfri og dermed ingen port.
+        r.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            r.execute("SELECT policyversjon_innhold(%s,%s,%s,NULL)",
+                      (TEN, pid, v)).fetchone()
+        r.rollback()
+    finally:
+        r.close()
 
 
 @pg

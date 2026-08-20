@@ -46,8 +46,12 @@ const AKTIVE = { policyer: [
 
 let SVAR;
 let POSTET;
+// GET-URL-ene, for prøvene på at diffen navngir GENERASJONENE og ikke bare
+// versjonsnumrene. Aldri udefinert: mocken skriver til den fra hver test.
+let HENTET = [];
 globalThis.fetch = async (url, opts) => {
   const sti = url.split("?")[0];
+  if (!opts || !opts.method || opts.method === "GET") HENTET.push(url);
   if (opts && opts.method && opts.method !== "GET") {
     POSTET.push({ sti, headers: opts.headers || {},
       kropp: opts.body ? JSON.parse(opts.body) : null });
@@ -136,7 +140,7 @@ test("historikk: tabell med caption, aktiv som TEKST, ubundet som tekst,"
 
 test("historikk: diffen er en TEKSTLISTE med retningen i ord først",
   async () => {
-    POSTET = [];
+    POSTET = []; HENTET = [];
     SVAR = { "/v1/policyutkast": { utkast: [] },
       "/v1/policy/aktive": AKTIVE,
       "/v1/policy/faktura-no/versjoner": VERSJONER,
@@ -150,6 +154,18 @@ test("historikk: diffen er en TEKSTLISTE med retningen i ord først",
     assert.ok(h.querySelector('label[for="hist-til"]'));
     vis.dispatchEvent(new window.Event("click"));
     await vent(() => h.querySelector(".diffliste"));
+    // DIFFEN NAVNGIR GENERASJONENE (Codex P2). Versjonsnummeret er en
+    // peker `slett_ubrukt_policy` frigjør: er en versjon slettet og
+    // gjenskapt mellom lastingen og klikket, ville serveren ellers diffet
+    // erstatningen under den valgtes etikett. Flaten sender generasjonen
+    // den VISTE — den fra samme rad som nummeret i velgeren.
+    const diffUrlSendt = HENTET.find((u) => u.includes("/diff?"));
+    assert.ok(diffUrlSendt, "diffen ble aldri hentet");
+    const q = new URLSearchParams(diffUrlSendt.split("?")[1]);
+    assert.equal(q.get("fra"), "2");
+    assert.equal(q.get("til"), "3");
+    assert.equal(q.get("fra_generasjon"), "20");
+    assert.equal(q.get("til_generasjon"), "30");
     // Retningen i ord FØRST (port 40) — overskriften bærer den.
     const overskrift = h.querySelector(".historikk-diff h4").textContent;
     assert.ok(overskrift.startsWith(t("ui.historikk.retning.UTVIDER")),

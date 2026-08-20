@@ -140,6 +140,19 @@ def versjoner_endepunkt(tjeneste, request: Request) -> Response:
     return _med_conn(tjeneste, rid, kjor)
 
 
+def _generasjon(rå: str | None) -> int | None:
+    """Query-parameteren som generasjonstall, eller None om den ikke ER et.
+
+    `policyer_generasjon_seq` er en sekvens som starter på 1, så en
+    velformet generasjon er sifre og bare det: ingen fortegn, ingen
+    mellomrom, ingen tom streng. Alt annet er en feilformet forespørsel —
+    ikke en generasjon som tilfeldigvis ikke finnes.
+    """
+    if not rå or not rå.isascii() or not rå.isdigit():
+        return None
+    return int(rå)
+
+
 def diff_endepunkt(tjeneste, request: Request) -> Response:
     from policy_validator import klassifikator, policydiff
     from .app import _rid
@@ -151,14 +164,30 @@ def diff_endepunkt(tjeneste, request: Request) -> Response:
         tenant, _bid = _leseauth(tjeneste, request, conn, rid)
         fra = request.query_params.get("fra")
         til = request.query_params.get("til")
-        if not fra or not til:
+        # GENERASJONENE ER PÅKREVD (047, Codex P2). Versjonsnummeret peker,
+        # generasjonen IDENTIFISERER: `slett_ubrukt_policy` frigjør
+        # nummeret med vilje, så det samme `(policy_id, versjon)` kan
+        # navngi en annen rad enn den historikken viste. Uten dem diffet
+        # ruta erstatningen under den valgtes etikett — og en diff er
+        # nettopp påstanden om hva som skiller de to dokumentene eier så.
+        # Samme lås som rullbakkens `rollback_av_generasjon`, og påkrevd av
+        # samme grunn: er den valgfri, er hullet der for enhver kaller som
+        # utelater den.
+        fra_gen = _generasjon(request.query_params.get("fra_generasjon"))
+        til_gen = _generasjon(request.query_params.get("til_generasjon"))
+        if not fra or not til or fra_gen is None or til_gen is None:
             return _feil("request_feilformet", rid)
         try:
-            innhold = {}
-            for navn, versjon in (("fra", fra), ("til", til)):
-                innhold[navn] = conn.execute(
-                    "SELECT policyversjon_innhold(%s, %s, %s)",
-                    (tenant, policy_id, versjon)).fetchone()[0]
+            # BEGGE OPERANDENE I ÉTT STATEMENT (Codex P2). To kall er to
+            # READ COMMITTED-snapshots, og mellom dem kan en versjon bli
+            # slettet, gjenskapt eller avløst: diffen ville da beskrevet et
+            # par som aldri fantes samtidig. Ett statement er ett snapshot,
+            # og `policyversjon_innhold` er STABLE.
+            rad = conn.execute(
+                "SELECT policyversjon_innhold(%s, %s, %s, %s),"
+                "       policyversjon_innhold(%s, %s, %s, %s)",
+                (tenant, policy_id, fra, fra_gen,
+                 tenant, policy_id, til, til_gen)).fetchone()
         except psycopg.errors.NoDataFound:
             conn.rollback()
             # 404 eksplisitt, som rullbakkruta gjør for det SAMME
@@ -168,10 +197,18 @@ def diff_endepunkt(tjeneste, request: Request) -> Response:
             # 409 — en konflikt, på en tilstand det ikke finnes noen
             # konflikt i: ressursen er bare borte.
             return _feil("ikke_funnet", rid, 404)
+        except psycopg.errors.InvalidParameterValue:
+            # Nummeret finnes, men bæres nå av en ANNEN generasjon enn den
+            # visningen bygde valget på. Optimistisk lås, som
+            # `rullbakk_kilde_endret`: 409, og flaten laster på nytt.
+            conn.rollback()
+            return _feil("diff_kilde_endret", rid)
         conn.rollback()
+        innhold = {"fra": rad[0], "til": rad[1]}
         kl = klassifikator.klassifiser(innhold["fra"], innhold["til"])
         return _ok({
             "policy_id": policy_id, "fra": fra, "til": til,
+            "fra_generasjon": fra_gen, "til_generasjon": til_gen,
             "diff": policydiff.strukturert_diff(innhold["fra"],
                                                 innhold["til"]),
             "risikoklasse": kl["klasse"],
