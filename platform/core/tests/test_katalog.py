@@ -1498,8 +1498,17 @@ def _er_dokropp(ut: list, a: int, i: int) -> bool:
     Spørsmålet stilles til den alt MASKERTE teksten foran: lesningen går
     forfra, så kommentarer før `i` er allerede byttet mot mellomrom, og et
     `-- DO` i en kommentar kan derfor ikke gjøre en meldingstekst til en kropp.
+
+    HELE teksten foran leses, ikke de siste 120 tegnene (Codex P2 på #118,
+    femtende runde). Grensen var et tall uten hjemmel i grammatikken: en lang
+    kommentar eller bare rikelig med luft mellom `DO` og taggen skjøv `DO` ut
+    av utsnittet, kroppen ble lest som data, og en innstramming inne i den
+    falt ut av snittet — da kan katalogporten godta en verdi PostgreSQL
+    avviser. Et lengre utsnitt kan ikke gi FLERE treff, bare slutte å miste
+    det ene som finnes: mønsteret er forankret i slutten og krever at det bare
+    står tomrom mellom `DO` og taggen.
     """
-    return bool(_DOKROPP_RE.search("".join(ut[max(a, i - 120):i])))
+    return bool(_DOKROPP_RE.search("".join(ut[a:i])))
 
 
 def _blank(ut: list, i: int, j: int) -> None:
@@ -1930,6 +1939,13 @@ def test_dollarsitert_tekst_er_ikke_kjorte_setninger(tmp_path, senere):
     ("DO $$ BEGIN\n"
      "    -- ALTER TABLE modulkontrakt ADD CONSTRAINT r\n"
      "    --     CHECK (reversibilitet IN ('oppfunnet'));\n"
+     "    ALTER TABLE modulkontrakt ADD CONSTRAINT r\n"
+     "        CHECK (reversibilitet IN ('direkte'));\n"
+     "END $$;\n", {"direkte"}),
+    # Avstanden mellom `DO` og taggen er ikke begrenset av noe: en lang
+    # kommentar eller bare luft skal ikke gjøre kroppen til data.
+    ("DO\n" + "-- en lang merknad om hvorfor dette står i en blokk\n" * 4
+     + "$$ BEGIN\n"
      "    ALTER TABLE modulkontrakt ADD CONSTRAINT r\n"
      "        CHECK (reversibilitet IN ('direkte'));\n"
      "END $$;\n", {"direkte"}),
