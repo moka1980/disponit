@@ -326,8 +326,8 @@ def forgjengerens_bytes(m, drillet: str, kver: int,
     rullbakkbevis som aldri rørte det man ruller tilbake TIL, er ikke et
     rullbakkbevis.
 
-    Forgjengeren er deploymentraden med det seneste `fra_ts` før den
-    drillede — registerets egen historie, ikke en antakelse.
+    Forgjengeren er den releasen registerets EGEN historie sier den
+    drillede overtok fra — ikke en antakelse.
 
     OG DEN HISTORIEN ER KONTRAKTLINJENS, ikke modulens (Codex P1, #117
     runde 10). Oppslaget filtrerte på modul, miljø, release-id og tid,
@@ -340,23 +340,61 @@ def forgjengerens_bytes(m, drillet: str, kver: int,
     navngi en rad som ikke er denne linjens forgjenger. Både historikk-
     oppslaget, tidspunktet det måles mot og release-joinen bindes derfor
     til kontrakten som drilles.
+
+    OG REKKEFØLGEN ER OVERGANGENES, ikke tidsstemplets (Codex P2, #117
+    runde 16). Innen linjen sto forgjengeren igjen på `ORDER BY fra_ts
+    DESC, release_id DESC`, og BEGGE leddene er ubrukelige som
+    rekkefølge: `moduldeployment.fra_ts` er `now()`, som er
+    TRANSAKSJONSSTABIL i PostgreSQL, så to overganger i samme transaksjon
+    — onboardingskript, migrasjoner, en `bytt_release` fulgt av
+    kompensasjon i samme blokk — får nøyaktig samme `fra_ts`. Da avgjør
+    tie-brekket, og `release_id` er en TEKST: «wcag-r9» sorterer etter
+    «wcag-r10». Forgjengeren kunne dermed bli en vilkårlig eldre release i
+    linjen, og rullbakken ville båret HENNES bytes — en drill som ruller
+    tilbake til feil sted og kaller det et rullbakkbevis.
+
+    `modulregister_hendelse.id` er derimot en `GENERATED ALWAYS AS
+    IDENTITY` som tikker per INSERT, ikke per transaksjon. `bytt_release`
+    skriver én `releasebytte`-hendelse per overgang, med kontrakten på
+    raden, så id-ene gir overgangene deres faktiske rekkefølge også når
+    tidsstemplene er like. Forgjengeren er releasen i den nest siste
+    `releasebytte`-hendelsen før den drilledes egen.
+
+    Har den drillede releasen ingen slik hendelse, er den ikke kommet inn
+    gjennom registerets vei (bare `bytt_release` skriver både raden og
+    hendelsen). Da avbrytes drillen: rekkefølgen kan ikke måles, og en
+    gjetning her ruller staging tilbake til feil bytes.
     """
+    egen = m.execute(
+        "SELECT max(id) FROM modulregister_hendelse"
+        " WHERE modul_id=%s AND miljo=%s AND hendelse='releasebytte'"
+        "   AND kontraktversjon=%s AND kontrakt_hash=%s AND release_id=%s",
+        (MODUL, MILJO, kver, khash, drillet)).fetchone()[0]
+    if egen is None:
+        raise SystemExit(
+            f"AVBRUTT: {drillet} har ingen `releasebytte`-hendelse på"
+            f" kontrakt v{kver}/{str(khash)[:12]}… i {MILJO}. Uten den"
+            " finnes ingen overgangsrekkefølge å lese forgjengeren av —"
+            " og `fra_ts` duger ikke alene (`now()` er transaksjons-"
+            "stabil). Deploymenten er lagt inn utenom `bytt_release`;"
+            " en drill kan ikke gjette hva den overtok fra.")
     rad = m.execute(
-        "SELECT d.release_id, r.artifact_digest"
-        "  FROM moduldeployment d JOIN modulrelease r"
+        "SELECT h.release_id, r.artifact_digest"
+        "  FROM modulregister_hendelse h"
+        "  JOIN moduldeployment d"
+        "    ON d.modul_id = h.modul_id AND d.miljo = h.miljo"
+        "   AND d.release_id = h.release_id"
+        "   AND d.kontraktversjon = h.kontraktversjon"
+        "   AND d.kontrakt_hash = h.kontrakt_hash"
+        "  JOIN modulrelease r"
         "    ON r.modul_id = d.modul_id AND r.release_id = d.release_id"
         "   AND r.kontraktversjon = d.kontraktversjon"
         "   AND r.kontrakt_hash = d.kontrakt_hash"
-        " WHERE d.modul_id=%s AND d.miljo=%s AND d.release_id <> %s"
-        "   AND d.kontraktversjon=%s AND d.kontrakt_hash=%s"
-        "   AND d.fra_ts <= (SELECT fra_ts FROM moduldeployment"
-        "                     WHERE modul_id=%s AND miljo=%s"
-        "                       AND release_id=%s"
-        "                       AND kontraktversjon=%s"
-        "                       AND kontrakt_hash=%s)"
-        " ORDER BY d.fra_ts DESC, d.release_id DESC LIMIT 1",
-        (MODUL, MILJO, drillet, kver, khash,
-         MODUL, MILJO, drillet, kver, khash)).fetchone()
+        " WHERE h.modul_id=%s AND h.miljo=%s AND h.hendelse='releasebytte'"
+        "   AND h.kontraktversjon=%s AND h.kontrakt_hash=%s"
+        "   AND h.release_id <> %s AND h.id < %s"
+        " ORDER BY h.id DESC LIMIT 1",
+        (MODUL, MILJO, kver, khash, drillet, egen)).fetchone()
     if rad is None:
         raise SystemExit(
             f"AVBRUTT: {drillet} har ingen forgjenger på kontrakt"

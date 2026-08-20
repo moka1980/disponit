@@ -2484,20 +2484,30 @@ def test_drillen_nekter_naar_forgjengerens_bytes_ikke_kan_bootes():
 
 
 class _Historie:
-    """Bare det `forgjengerens_bytes` spør om: én rad, eller ingen —
-    men den HUSKER spørsmålet, så kontraktbindingen kan måles."""
+    """Bare det `forgjengerens_bytes` spør om: hendelses-IDen den drilledes
+    egen `releasebytte` fikk, og forgjengerraden (eller ingen av dem) — men
+    den HUSKER alle spørsmålene, så kontraktbindingen kan måles."""
 
-    def __init__(self, rad):
-        self.rad = rad
-        self.sql = ""
-        self.params = ()
+    def __init__(self, rad, egen_id=42):
+        self.rad, self.egen_id = rad, egen_id
+        self.spor = []                       # [(sql, params), …]
+        self._svar = None
 
     def execute(self, sql, params=None):
-        self.sql, self.params = sql, params or ()
+        self.spor.append((sql, params or ()))
+        self._svar = ((self.egen_id,) if "max(id)" in sql else self.rad)
         return self
 
     def fetchone(self):
-        return self.rad
+        return self._svar
+
+    @property
+    def sql(self):
+        return self.spor[-1][0]
+
+    @property
+    def params(self):
+        return self.spor[-1][1]
 
 
 def test_forgjengeren_hentes_fra_den_drillede_kontraktlinjen():
@@ -2514,12 +2524,91 @@ def test_forgjengeren_hentes_fra_den_drillede_kontraktlinjen():
     d = _drillskript()
     hist = _Historie(("wcag-r10", "aa" * 32))
     d.forgjengerens_bytes(hist, "wcag-r11", 3, "kh" * 32)
-    # Kontrakten er med i BEGGE leddene: raden som velges, og tidspunktet
-    # den måles mot — og i joinen mot releaseraden.
-    assert hist.sql.count("kontraktversjon=%s") == 2
-    assert hist.sql.count("kontrakt_hash=%s") == 2
+    # Kontrakten er med i BEGGE oppslagene: den drilledes egen overgang og
+    # forgjengerens — ingen av dem får se en annen kontraktslekt.
+    assert len(hist.spor) == 2
+    for sql, params in hist.spor:
+        assert "kontraktversjon=%s" in sql and "kontrakt_hash=%s" in sql
+        assert 3 in params and "kh" * 32 in params
+    # …og joinene mot deployment- og releaseraden bærer den videre.
+    assert "d.kontraktversjon = h.kontraktversjon" in hist.sql
     assert "r.kontraktversjon = d.kontraktversjon" in hist.sql
-    assert hist.params.count(3) == 2 and hist.params.count("kh" * 32) == 2
+
+
+@pg
+def test_forgjengeren_leses_av_overgangsrekkefolgen(migrator, monkeypatch):
+    """Codex' P2 (runde 16): innen kontraktlinjen sto forgjengeren igjen på
+    `ORDER BY fra_ts DESC, release_id DESC`, og ingen av de to leddene er
+    en rekkefølge.
+
+    `moduldeployment.fra_ts` er `now()`, som er TRANSAKSJONSSTABIL: alle
+    overganger i samme transaksjon får identisk tidsstempel. Da avgjør
+    tie-brekket, og `release_id` er en TEKST — «wcag-r9» sorterer etter
+    «wcag-r10». Forgjengeren ble dermed en vilkårlig eldre release i
+    linjen, og rullbakken hadde båret HENNES bytes.
+
+    `modulregister_hendelse.id` tikker per INSERT, ikke per transaksjon.
+    Målingen her er derfor den ekte formen: tre `bytt_release` i ÉN
+    transaksjon, med navn valgt slik at det gamle tie-brekket peker på feil
+    release."""
+    d = _drillskript()
+    mid = "m_forgj_" + secrets.token_hex(3)
+    kh = "kh-" + secrets.token_hex(6)
+    migrator.execute("INSERT INTO modulhode (modul_id, status) VALUES"
+                     " (%s,'aktiv')", (mid,))
+    migrator.execute("INSERT INTO modulkontrakt (modul_id, kontraktversjon,"
+                     " kontrakt_hash, payload_schema_hash,"
+                     " kvittering_schema_hash, sideeffektklasse,"
+                     " reversibilitet) VALUES"
+                     " (%s,1,%s,'ph','qh','ekstern_lesing','direkte')",
+                     (mid, kh))
+    digest = {"wcag-r9": "99" * 32, "wcag-r10": "10" * 32,
+              "wcag-r11": "11" * 32, "wcag-r12": "12" * 32}
+    for rel, dig in digest.items():
+        migrator.execute("INSERT INTO modulrelease (modul_id, release_id,"
+                         " kontraktversjon, kontrakt_hash, manifest_hash,"
+                         " artifact_digest) VALUES (%s,%s,1,%s,'mh',%s)",
+                         (mid, rel, kh, dig))
+    # ALLE tre overgangene i SAMME transaksjon — det er nettopp der
+    # tidsstemplene faller sammen.
+    migrator.execute("SET ROLE disponit_modules_admin")
+    for rel in ("wcag-r9", "wcag-r10", "wcag-r11"):
+        migrator.execute("SELECT bytt_release(%s,'staging',%s,1,%s,'test')",
+                         (mid, rel, kh))
+    migrator.execute("RESET ROLE")
+    # Forutsetningen MÅLES, ikke antas: ett eneste `fra_ts` på alle tre.
+    assert migrator.execute(
+        "SELECT count(DISTINCT fra_ts) FROM moduldeployment"
+        " WHERE modul_id=%s AND miljo='staging'", (mid,)).fetchone()[0] == 1
+
+    monkeypatch.setattr(d, "MODUL", mid)
+    monkeypatch.setattr(d, "MILJO", "staging")
+    # Overgangsrekkefølgen sier wcag-r10. Det gamle tie-brekket ville sagt
+    # wcag-r9 — den sorterer sist på tekst, og fra_ts skiller ikke.
+    assert d.forgjengerens_bytes(migrator, "wcag-r11", 1, kh) == (
+        "wcag-r10", "10" * 32)
+    assert migrator.execute(
+        "SELECT release_id FROM moduldeployment WHERE modul_id=%s"
+        "   AND miljo='staging' AND release_id <> 'wcag-r11'"
+        " ORDER BY fra_ts DESC, release_id DESC LIMIT 1",
+        (mid,)).fetchone()[0] == "wcag-r9", \
+        "målingen mister sin kraft hvis det gamle tie-brekket traff riktig"
+
+    # En deployment lagt inn UTENOM `bytt_release` har ingen overgang å
+    # lese rekkefølgen av — da gjetter drillen ikke, den avbryter.
+    migrator.execute("INSERT INTO moduldeployment (modul_id, release_id,"
+                     " kontraktversjon, kontrakt_hash, miljo, livslop)"
+                     " VALUES (%s,'wcag-r12',1,%s,'staging','draining')",
+                     (mid, kh))
+    with pytest.raises(SystemExit) as ei:
+        d.forgjengerens_bytes(migrator, "wcag-r12", 1, kh)
+    assert "releasebytte" in str(ei.value)
+
+    # …og den FØRSTE releasen i linjen har ingen forgjenger.
+    with pytest.raises(SystemExit) as ei:
+        d.forgjengerens_bytes(migrator, "wcag-r9", 1, kh)
+    assert "forgjenger" in str(ei.value)
+    migrator.rollback()
 
 
 def test_drillen_maaler_vertens_image_for_den_drenerer(monkeypatch):
