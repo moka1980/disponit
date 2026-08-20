@@ -120,7 +120,8 @@ def _manifest_hash() -> str:
     ).hexdigest()
 
 
-def _kjor_faser(release: str, evidens: Path, *, hva: str) -> None:
+def _kjor_faser(release: str, evidens: Path, *, hva: str,
+                faser: tuple[str, ...] = ("2", "4", "9")) -> None:
     """Booter `release` gjennom NØYAKTIG sjekklisterundens faser 2/4/9.
 
     Registrering, release-bytte, modultoken og selve arbeiderunit-en —
@@ -128,8 +129,14 @@ def _kjor_faser(release: str, evidens: Path, *, hva: str) -> None:
     bruker den som finnes. Fase 2 er idempotent på sluttilstanden: er
     deploymenten alt `claiming` (rullbakken er rullet av drillen selv),
     hoppes livsløpskallet og porten måler tilstanden i stedet.
+
+    `faser` finnes for (c): der må registerbyttet (fase 2, som fencer den
+    forrige deploymenten) skje FØR kandidatens oppdrag bestilles, mens
+    arbeideren (fase 4/9) først startes ETTERPÅ. Rekkefølgen er ellers
+    uendret — dette er samme kjede, delt på nøyaktig det ene punktet der
+    fencingen og bestillingen møtes (Codex P2, #117 runde 6).
     """
-    for fase in ("2", "4", "9"):
+    for fase in faser:
         r = subprocess.run(
             [sys.executable, str(HER / "wcag-staging-sjekkliste.py"),
              "--evidens", str(evidens), "--fase", fase],
@@ -536,9 +543,40 @@ def main() -> int:
     # drillen legger ingen egen vei inn i registeret. Kandidaten får sitt
     # EGET oppdrag: det forrige er rullbakkens bevis, og en overtakelse
     # måles på arbeid som lå og ventet på nettopp den som overtar.
+    #
+    # FENCINGEN FØRST, SÅ BESTILLINGEN (Codex P2, #117 runde 6). Oppdraget
+    # ble før lagt inn FØR fase 2, mens rullbakk-arbeideren fra (b2) sto
+    # levende og claimende. Den kunne da plukke og fullføre kandidatens
+    # oppdrag i vinduet før registerbyttet — og drillen kunne ikke se
+    # forskjell på det og en ekte overtakelse: `_vent_terminal` ble
+    # `utfort`, mens `_promoterte(o3, kandidat)` var tom. Resultatet var en
+    # rød drill, oppdaget først her, etter at BEGGE drill-id-ene var
+    # konsumert og livsløpet er enveis — altså en tapt kjøring på en ren
+    # kappløpstilfeldighet.
+    #
+    # Fase 2 kjøres derfor alene først: den fencer rullbakk-deploymenten
+    # (`bytt_release` setter den `draining`, og claim-porten i 015 fencer
+    # på kallerens livsløp) uten å starte kandidatens arbeider. Oppdraget
+    # legges inn i vinduet DER: fenced rullbakk, ingen kandidatarbeider
+    # ennå — det ligger og venter på nøyaktig den som skal overta, slik
+    # (b2) også målte det. Fase 4/9 booter kandidaten etterpå.
+    _kjor_faser(a.kandidat_id, evidensfil, hva="akseptkandidaten",
+                faser=("2",))
+    # MÅLT, ikke antatt: at rullbakken faktisk er ute av claiming er hele
+    # forutsetningen for at det neste oppdraget venter på kandidaten.
+    m.execute("RESET ROLE")
+    rb_livslop = _deployment(m, a.rullback_id)
+    m.commit()
+    if rb_livslop == "claiming":
+        raise SystemExit(
+            f"AVBRUTT: rullback-releasen {a.rullback_id} er fortsatt"
+            " claiming etter kandidatens fase 2 — registerbyttet tok ikke,"
+            " og et oppdrag bestilt nå kunne blitt plukket av"
+            " rullbakk-arbeideren i stedet for kandidaten")
     o3 = _bestill_drill(sj, m, "framigjen")
     fram_ts = time.monotonic()
-    _kjor_faser(a.kandidat_id, evidensfil, hva="akseptkandidaten")
+    _kjor_faser(a.kandidat_id, evidensfil, hva="akseptkandidaten",
+                faser=("4", "9"))
     st2 = _vent_terminal(m, sj, o3, 600)
     if st2 != "utfort":
         raise SystemExit(f"AVBRUTT: kandidaten fullførte ikke det ventende"

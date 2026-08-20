@@ -1365,6 +1365,58 @@ def test_drillen_nekter_naar_forgjengerens_bytes_ikke_kan_bootes():
     assert "forgjenger" in str(ei.value)
 
 
+def test_kandidatens_oppdrag_bestilles_forst_naar_rullbakken_er_fenced(
+        monkeypatch, tmp_path):
+    """Codex' P2 (runde 6): `o3` ble bestilt FØR kandidatens fase 2.
+
+    Rullbakk-arbeideren fra (b2) sto da levende og claimende, og kunne
+    plukke og fullføre kandidatens oppdrag i vinduet før registerbyttet.
+    Drillen kunne ikke se forskjell på det og en ekte overtakelse:
+    `_vent_terminal` ble `utfort`, mens `_promoterte(o3, kandidat)` var
+    tom. Utfallet var en rød drill, oppdaget først etter at BEGGE
+    drill-id-ene var konsumert — livsløpet er enveis, så kjøringen var
+    tapt på en ren kappløpstilfeldighet.
+
+    Rekkefølgen ER fiksen, og den måles her: fase 2 (som fencer
+    rullbakken) → bestillingen → fase 4/9 (som booter kandidaten).
+    Oppdraget skal ligge og vente på nøyaktig den som overtar."""
+    d = _drillskript()
+    tekst = (ROT / "deploy/staging/rollback-m56.py").read_text(
+        encoding="utf-8")
+    fase2 = tekst.index('faser=("2",)')
+    bestilling = tekst.index('_bestill_drill(sj, m, "framigjen")')
+    fase49 = tekst.index('faser=("4", "9")')
+    assert fase2 < bestilling < fase49, (
+        "kandidatens oppdrag må bestilles ETTER registerbyttet og FØR"
+        " arbeideren startes")
+    # …og at rullbakken faktisk er ute av claiming MÅLES før bestillingen,
+    # den antas ikke av at fase 2 returnerte 0.
+    assert tekst.index("rb_livslop = _deployment") < bestilling
+    assert 'if rb_livslop == "claiming"' in tekst
+
+    # Utvalget må være ekte: `_kjor_faser` skal kjøre nøyaktig de fasene
+    # den får, i rekkefølge — ellers er delingen over bare kosmetikk.
+    kjorte = []
+
+    class _Ok:
+        returncode, stdout, stderr = 0, "", ""
+
+    def _fanget(cmd, **_kw):
+        kjorte.append(cmd[cmd.index("--fase") + 1])
+        return _Ok()
+
+    monkeypatch.setattr(d.subprocess, "run", _fanget)
+    evidens = tmp_path / "drill-evidens.jsonl"
+    d._kjor_faser("r-kand", evidens, hva="kandidaten", faser=("2",))
+    assert kjorte == ["2"]
+    d._kjor_faser("r-kand", evidens, hva="kandidaten", faser=("4", "9"))
+    assert kjorte == ["2", "4", "9"]
+    # Rullbakken (b2) bootes fortsatt hel, i uendret rekkefølge.
+    kjorte.clear()
+    d._kjor_faser("r-rull", evidens, hva="rullbakken")
+    assert kjorte == ["2", "4", "9"]
+
+
 def test_drillartefaktet_maa_navngi_sin_fencing_generasjon():
     """Samme P2, skriptsiden: `oppsett.module_epoch` ble aldri LEST — den
     sto i artefaktet og gikk ingen steder. Nå plukkes den opp, og en
