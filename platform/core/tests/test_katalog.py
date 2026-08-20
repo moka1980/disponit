@@ -16,9 +16,10 @@ Testene her er derfor ti porter (Codex P2 på PR #43, #99 og #118):
   6. MERKEVARE — sannhetskilden bærer produktnavnet resten av repoet bruker.
   7. FASEORDEN — ingen modul avhenger av en modul i en senere fase, så den
                  erklærte utrullingsrekkefølgen faktisk kan følges.
-  8. PEKERE    — ingen fil i repoet henviser til en spesifikasjonsutgave som
-                 er slettet; historikken i docs/pr/ og docs/beslutninger/ er
-                 med rette unntatt.
+  8. PEKERE    — spesifikasjonsmappa inneholder nøyaktig én utgave, og ingen
+                 fil i repoet henviser til en annen; historikken i docs/pr/ og
+                 docs/beslutninger/ og arkivet i prototype/ er med rette
+                 unntatt.
   9. KLASSER   — `kl` og `rev` i katalogen er verdier modulregisteret godtar,
                  lest ut av CHECK-vilkårene i migrasjonene.
  10. IDENTER   — også PROSAEN rundt postene: en identifikator skrevet i
@@ -45,6 +46,10 @@ KATALOG_JS = ROT / "platform" / "core" / "ui" / "static" / "js" / "katalog.js"
 # bytte til.
 KILDE_REL = ("docs", "spesifikasjon", "disponit-prototype-v9.html")
 KILDE = ROT.joinpath(*KILDE_REL)
+# Mappa instruksene i README-arbeidsflyt.md og RUTINER.md peker på i stedet for
+# å bake versjonsnummeret inn i teksten. Den er avledet av KILDE_REL, ikke
+# skrevet av: to literaler for samme mappe ville kunnet drive fra hverandre.
+SPEKMAPPE = "/".join(KILDE_REL[:-1]) + "/"
 ARKIV = ROT / "prototype"
 LOCALER = {s: ROT / "locales" / f"{s}.json" for s in ("nb", "en")}
 
@@ -572,6 +577,16 @@ def test_ingen_peker_paa_en_slettet_spesifikasjon():
     runde). Et mønster som bare kjente filnavnet ville latt den gamle
     obligatoriske formuleringen komme rett tilbake, grønt.
 
+    Og den måler MAPPA før den måler teksten (Codex P2, sjette runde). Alt over
+    leser innholdet i sporede filer; ingenting leste filNAVNENE i
+    `docs/spesifikasjon/`. Legges v10 til uten at v9 slettes, blir porten
+    stående grønn — en gammel spesifikasjon trenger ikke nevne sitt eget
+    filnavn i teksten sin, så ingen henvisning peker feil. Men instruksene
+    peker nå på MAPPA nettopp fordi den skal inneholde gjeldende utgave og bare
+    den; med to filer der er «gjeldende utgave» ikke lenger et entydig svar, og
+    kuren i dokumentene slutter å virke. Arkivet i `prototype/` er unntatt: der
+    er flere utgaver hele poenget.
+
     MUTASJONEN SOM DREPER DENNE: la porten godta et hvilket som helst
     versjonsnummer. Da er den bare en stavekontroll for filnavnet, og det var
     aldri feilen — feilen var at nummeret pekte forbi fila.
@@ -582,9 +597,19 @@ def test_ingen_peker_paa_en_slettet_spesifikasjon():
 
     spor = subprocess.run(["git", "ls-files", "-z"], cwd=ROT,
                           capture_output=True, text=True, check=True)
+    sporede = [r for r in spor.stdout.split("\0") if r]
+
+    utgaver = sorted(r for r in sporede
+                     if r.startswith(SPEKMAPPE) and SPEC_RE.search(Path(r).name))
+    assert utgaver == ["/".join(KILDE_REL)], (
+        f"{SPEKMAPPE} skal inneholde NØYAKTIG én spesifikasjonsutgave, og den "
+        f"skal være sannhetskilden {'/'.join(KILDE_REL)} — fant: "
+        f"{utgaver or 'ingen'}. Er en ny utgave lagt til, skal den gamle "
+        f"slettes; skal den bevares, hører den hjemme i arkivet {ARKIV.name}/.")
+
     avvik = []
-    for rel in spor.stdout.split("\0"):
-        if not rel or rel.startswith(HISTORIKK):
+    for rel in sporede:
+        if rel.startswith(HISTORIKK):
             continue
         sti = ROT / rel
         if not sti.is_file():
