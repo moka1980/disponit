@@ -752,6 +752,73 @@ def _tabellnavn(skjema: str | None, relnavn: str) -> str:
     return relnavn
 
 
+# Skjemaene en søkesti kan peke på uten at et ukvalifisert navn slutter å være
+# tabellen i `public`. `pg_catalog` kan ikke holde en tabell en migrasjon
+# oppretter eller endrer, så den skygger ingenting. Alt annet kan — også
+# `"$user"`, som er et skjema oppkalt etter den som kjører migrasjonen.
+_TRYGGE_SKJEMA = {"public", "pg_catalog"}
+
+
+def _flytter_sokestien(stmt) -> bool:
+    """Kan `stmt` gjøre et ukvalifisert navn til en annen tabell?
+
+    Codex P2 på #118, tjuefjerde runde. `_tabellnavn()` leser et ukvalifisert
+    navn som tabellen i `public`, og det er riktig SÅ LENGE søkestien er den
+    migrasjonene kjører med. Setter en migrasjon `search_path = staging,
+    public`, treffer et påfølgende `ALTER TABLE modulkontrakt` en HELT annen
+    tabell — og et videre vilkår der skrev seg over det smale i modellen, som
+    fortsatt målte `public.modulkontrakt`. Porten godtok da en klasse
+    registeret avviser.
+
+    Svaret er å gi opp: en flyttet søkesti gjør registeret uvisst, altså rød
+    port. Å FØLGE stien ville krevd at porten visste hvilke skjemaer som har
+    hvilke tabeller — PostgreSQL velger det FØRSTE skjemaet som har tabellen,
+    ikke bare det første i lista — og en slik modell ville gjettet der den
+    ikke visste. Ingen migrasjon i repoet flytter stien: de 48 filene setter
+    `search_path` bare som EGENSKAP på en funksjon (`SET search_path =
+    pg_catalog AS $$ … $$`), og det er ikke en setning som kjører.
+
+    TRYGT er `RESET` og `SET … TO DEFAULT`, som setter stien tilbake til den
+    porten alt regner med, og en sti som bare navngir skjemaer som ikke kan
+    skygge `public`. Alt annet — også `set_config('search_path', …)`, som er
+    den samme setningen skrevet som et funksjonskall — er en flytting.
+    """
+    if isinstance(stmt, pglast.ast.VariableSetStmt):
+        if (stmt.name or "").lower() != "search_path":
+            return False
+        if stmt.kind != pglast.enums.VariableSetKind.VAR_SET_VALUE:
+            return False
+        ledd = [a.val.sval if isinstance(a, pglast.ast.A_Const)
+                and isinstance(a.val, pglast.ast.String) else None
+                for a in stmt.args or ()]
+        return not ledd or any(s not in _TRYGGE_SKJEMA for s in ledd)
+    return _setter_sokesti(stmt)
+
+
+def _setter_sokesti(node) -> bool:
+    """Står det et `set_config()` i `node` som kan treffe søkestien?
+
+    En GUC kan settes med en funksjon i stedet for en setning, og
+    `set_config('search_path', 'staging', false)` gjør nøyaktig det samme som
+    `SET`. Et navn porten ikke kan lese som en konstant regnes med: da vet den
+    ikke hvilken GUC det er, og «sikkert ikke søkestien» ville vært en
+    gjetning. Repoets egne kall navngir sine egne GUC-er som konstanter —
+    `disponit.tenant`, `disponit.aktor` — og går forbi her.
+    """
+    if isinstance(node, (list, tuple)):
+        return any(_setter_sokesti(x) for x in node)
+    if isinstance(node, pglast.ast.FuncCall) \
+            and [s.sval for s in node.funcname][-1] == "set_config":
+        arg = (node.args or (None,))[0]
+        guc = arg.val.sval if isinstance(arg, pglast.ast.A_Const) \
+            and isinstance(arg.val, pglast.ast.String) else None
+        if guc is None or guc.lower() == "search_path":
+            return True
+    if isinstance(node, pglast.ast.Node):
+        return any(_setter_sokesti(getattr(node, navn)) for navn in node)
+    return False
+
+
 def _samle(node, ut: set[str]) -> None:
     """Legg kolonnenavnene i `node` i `ut`. Går gjennom hele undertreet."""
     if isinstance(node, (list, tuple)):
@@ -953,6 +1020,9 @@ def _lesstatement(stmt, tekst: str, ut: list, betinget: bool) -> None:
     Det er `ALTER TABLE IF EXISTS` som gjør et slipp betinget, for der er det
     TABELLEN som kan mangle.
 
+    SØKESTIEN avgjør hvilken tabell et ukvalifisert navn ER, og en setning som
+    flytter den gjør porten uvisst, se `_flytter_sokestien()`.
+
     ET `DROP TABLE` OG ET `DROP COLUMN` er hendelser som FJERNER (Codex P2 på
     #118, tjuefjerde runde). Begge tar vilkår med seg i databasen — tabellen
     alle sine, kolonnen dem som nevner den — mens modellen beholdt dem og
@@ -962,6 +1032,9 @@ def _lesstatement(stmt, tekst: str, ut: list, betinget: bool) -> None:
     databasen ikke har lenger, altså et smalere svar og en rød port. Se
     `_registerets_enums()`.
     """
+    if _flytter_sokestien(stmt):
+        ut.append(_alt_uvisst(betinget))
+        return
     if isinstance(stmt, pglast.ast.CreateStmt):
         tabell = _navn(stmt.relation)
         betinget = betinget or bool(stmt.if_not_exists)
@@ -2767,6 +2840,79 @@ def test_en_erklaering_som_kan_hoppes_over_er_betinget(tmp_path, gjentakelsen):
         "direkte", "kompenserende"}, (
         "den gjentatte erklæringen ble lest som utført, og det videre "
         "vilkåret skrev seg over det smale som står")
+
+
+@pytest.mark.parametrize("flyttingen", [
+    # Et skjema foran `public`: det ukvalifiserte navnet treffer der først.
+    "SET search_path = staging, public;",
+    # `LOCAL` gjelder ut transaksjonen — altså resten av migrasjonen.
+    "SET LOCAL search_path = staging;",
+    # `\"$user\"` er et skjema oppkalt etter den som kjører migrasjonen, og
+    # porten vet ikke om det finnes eller hva som ligger der.
+    'SET search_path = "$user", public;',
+    # Samme setning skrevet som et funksjonskall.
+    "SELECT set_config('search_path', 'staging', false);",
+])
+def test_en_flyttet_sokesti_gjor_registeret_uvisst(tmp_path, flyttingen):
+    """Et ukvalifisert navn er bare `public` så lenge søkestien er det.
+
+    Codex P2 på #118, tjuefjerde runde. `_tabellnavn()` leste hvert
+    ukvalifisert navn som tabellen i `public`, og `SET` gikk forbi
+    dispatcheren. Etter en flytting treffer `ALTER TABLE modulkontrakt` en
+    HELT annen tabell, og det videre vilkåret der skrev seg over det smale i
+    modellen — som fortsatt målte `public.modulkontrakt`. Porten godtok da
+    `irreversibel`, en klasse registeret avviser.
+
+    Å følge stien ville krevd at porten visste hvilke skjemaer som har hvilke
+    tabeller. Den gir i stedet opp: uvisst for alt, altså rød port.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE modulkontrakt (\n"
+        "    reversibilitet TEXT NOT NULL\n"
+        "        CONSTRAINT rev_chk CHECK (reversibilitet IN\n"
+        "            ('direkte', 'kompenserende')));\n",
+        f"{flyttingen}\n"
+        "ALTER TABLE modulkontrakt DROP CONSTRAINT rev_chk;\n"
+        "ALTER TABLE modulkontrakt ADD CONSTRAINT rev_chk\n"
+        "    CHECK (reversibilitet IN\n"
+        "           ('direkte', 'kompenserende', 'irreversibel'));\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende.get((_UKJENT_TABELL, _UKJENT_KOLONNE)) == {
+        ULESELIG_SQL}, (
+        "søkestien ble flyttet, og porten leste likevel de ukvalifiserte "
+        "navnene som tabellen i public")
+
+
+@pytest.mark.parametrize("setningen", [
+    # Stien porten alt regner med, skrevet ut.
+    "SET search_path = public;",
+    # Og de to måtene å sette den tilbake på.
+    "RESET search_path;",
+    "SET search_path TO DEFAULT;",
+    # En annen GUC er ikke søkestien — hverken som setning eller funksjonskall.
+    "SET row_security = on;",
+    "SELECT set_config('disponit.tenant', 'ukjent', true);",
+])
+def test_en_sti_som_ikke_flyttes_er_ingen_uvisshet(tmp_path, setningen):
+    """Grensen den andre veien: porten skal ikke bli rød på ingenting.
+
+    Repoets migrasjoner setter GUC-er hele veien — `row_security`,
+    `disponit.tenant` — og navngir `search_path` som EGENSKAP på funksjoner.
+    Ble alt dette lest som en flytting, ville porten vært rød på 48
+    migrasjoner som er i orden, og uvissheten hadde sluttet å bety noe.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        f"{setningen}\n"
+        "CREATE TABLE modulkontrakt (\n"
+        "    reversibilitet TEXT NOT NULL\n"
+        "        CHECK (reversibilitet IN ('direkte', 'kompenserende')));\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert (_UKJENT_TABELL, _UKJENT_KOLONNE) not in gjeldende, (
+        "en setning som ikke flytter søkestien ble lest som om den gjorde det")
+    assert gjeldende.get((MODULKONTRAKT, "reversibilitet")) == {
+        "direkte", "kompenserende"}
 
 
 def test_en_sluppet_tabell_tar_vilkaarene_sine_med_seg(tmp_path):
