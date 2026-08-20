@@ -262,7 +262,9 @@ _ORD_UTEN_VERDI = {
 }
 
 # Ord som tar en parentes med en BETINGELSE, ikke en verdi. Parentesen deres
-# lukker en setningsdel, så etter den venter JS igjen en verdi.
+# lukker en setningsdel, så etter den venter JS igjen en verdi. `for await (…)`
+# er den ene formen der kontrollordet ikke står rett foran parentesen — den
+# leses i `_kodespenn()`, som lar `for` bli stående som konteksten.
 _KONTROLLORD = {"if", "for", "while", "with", "switch", "catch"}
 
 _TALL_START_RE = re.compile(r"(?:\d[\w.]*|\.\d[\w.]*)")
@@ -367,9 +369,14 @@ def _kodespenn(js: str, a: int, b: int, avslutt: bool = False):
             # Etter et punktum er ordet en EGENSKAP, ikke et nøkkelord: `x.in`
             # og `x.default` er verdier selv om ordene er reserverte.
             etter_punktum = siste_ord == "."
-            siste_ord = treff.group(0)
+            ordet = treff.group(0)
+            # `for await (…)` er ÉN kontrollform: `await` hører til løkka og
+            # ikke til et uttrykk, så `for` blir stående som den konteksten
+            # parentesen skal leses i.
+            if not (ordet == "await" and siste_ord == "for"):
+                siste_ord = ordet
             i, verdi = treff.end(), (etter_punktum
-                                     or siste_ord not in _ORD_UTEN_VERDI)
+                                     or ordet not in _ORD_UTEN_VERDI)
             continue
         if (treff := _TALL_START_RE.match(js, i, b)):
             i, verdi, siste_ord = treff.end(), True, ""
@@ -472,6 +479,8 @@ def _prosa_av(js: str) -> str:
 _SKANNERPROEVER = [
     ('if (klar) /["\']/.test(v); const filter_state = {};', False),
     ('for (const x of xs) /["\']/.test(x); const filter_state = {};', False),
+    ('for await (const x of xs) /["\']/.test(x); const filter_state = {};',
+     False),
     ('const m = /["\']/; const filter_state = {};', False),
     ('throw /["\']/.test(v); const filter_state = {};', False),
     ('const a = x.in / 2; const filter_state = {};', False),
