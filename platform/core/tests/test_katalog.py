@@ -268,12 +268,45 @@ def test_en_postformet_streng_i_ui_koden_er_ingen_modul(tmp_path, linje):
     assert r.returncode == 0, r.stderr + r.stdout
 
 
+@pytest.mark.parametrize("linje", [
+    # Tegnene `const M = [` i en helt alminnelig streng — for eksempel en
+    # feilmelding eller en hjelpetekst som forklarer hva katalogen heter.
+    '''const hjelp = "katalogen står som const M = [ … ] i skriptet";''',
+    # Samme tegn i en linjekommentar.
+    "// katalogen står som const M = [ … ] lenger nede",
+    # Og i en blokkommentar.
+    "/* katalogen står som const M = [ … ] lenger nede */",
+    # En malstreng er samme sak.
+    "const hjelp = `katalogen står som const M = [ … ]`;",
+])
+def test_et_ankerformet_ord_i_ui_koden_er_ingen_katalog(tmp_path, linje):
+    """Bare en ERKLÆRING er en katalog, ikke tegnene som ser ut som en.
+
+    Postene ble gjort strukturelle forrige runde, men ANKERET ble fortsatt lett
+    etter i rå skripttekst (Codex P2 på #118, femtende runde), og et regex mot
+    rå tekst ser ikke forskjell på kode og streng. En helt lovlig hjelpetekst
+    ga da et treff til, og generatoren stoppet på en redeklarasjon nettleseren
+    ikke ser — altså rød ferskhetsport av en tekstendring som ikke rører
+    katalogen.
+
+    Samme regel som gjorde postene strukturelle gjelder ankeret: en erklæring
+    er fulgt av en LISTE av modulposter, og tegnene i en streng er det ikke.
+    """
+    r = _med_uikode(tmp_path, linje)
+    assert r.returncode == 0, r.stderr + r.stdout
+
+
 def test_to_modulkataloger_er_et_stopp(tmp_path):
     """Ankeret må finnes nøyaktig én gang, ellers vet ingen hvilken som gjelder.
 
     To `const M` er en redeklarasjon nettleseren selv avviser, så kravet er det
     samme som JS stiller. Uten det ville en tom eller halv katalog nummer to
     stilltiende avgjort hva generatoren leste.
+
+    Prøven står ved siden av den over, og de to måler hver sin side av det
+    samme skillet: tegnene `const M = [` i en streng er ikke en erklæring, mens
+    en HALV katalog er det — og skal fortsatt stoppe, uansett hvor få poster
+    den bærer.
     """
     r = _med_uikode(tmp_path, "const M = [{n:58,name:'D',area:'X',p:1}];")
     assert r.returncode != 0, "generatoren valgte én av to kataloger"

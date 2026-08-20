@@ -522,6 +522,32 @@ def les_post(tekst: str, start: int) -> tuple[list[str], int]:
     return felt + [UKJENT_FELT], -1
 
 
+def er_en_modulliste(skript: str, i: int) -> bool:
+    """Lar lista som åpner i `i` seg lese som en liste av modulposter?
+
+    Spørsmålet stilles bare når ankeret `const M = [` finnes mer enn én gang,
+    og skiller da en ERKLÆRING fra tegnene som bare ser ut som en. Se
+    `les_katalog()`.
+
+    Formen er svaret, ikke plasseringen. En liste er en liste — element,
+    komma, element, `]` — og hvert element er en modulpost. Tegnene `const M =
+    [` skrevet inne i en streng eller en kommentar er fulgt av en fnutt, et
+    linjeskift eller hva som helst annet, og faller derfor på sin egen form,
+    uten at generatoren trenger å vite hvor i skriptet de står.
+
+    Antallet spørres det IKKE om: en halv eller tom katalog nummer to er
+    fortsatt en erklæring, og en redeklarasjon nettleseren avviser. Den skal
+    stoppe generatoren, ikke velges bort i stillhet.
+    """
+    try:
+        for start in les_elementer(skript, i):
+            if not POST_RE.match(skript, start):
+                return False
+    except SystemExit:
+        return False
+    return True
+
+
 def les_katalog() -> list[dict]:
     if not KILDE.exists():
         raise SystemExit(f"fant ikke sannhetskilden: {KILDE_NAVN}")
@@ -567,10 +593,31 @@ def les_katalog() -> list[dict]:
     # skriptet.
     #
     # Ankeret må finnes NØYAKTIG én gang. To `const M` ville uansett vært en
-    # redeklarasjon nettleseren avviser, så kravet er det samme som JS stiller,
-    # og en «const M = [» skrevet inne i en streng blir dermed et tydelig
-    # stopp i stedet for en stille feillesning.
+    # redeklarasjon nettleseren avviser, så kravet er det samme som JS stiller.
+    #
+    # Men ANKERET ble fortsatt lett etter i rå skripttekst (Codex P2 på #118,
+    # femtende runde), og et regex mot rå tekst ser ikke forskjell på kode og
+    # streng. En helt lovlig linje i UI-koden eller i dokumentasjonen —
+    # `const feil = "const M = [ … ] må stå én gang";` — ga et treff til, og
+    # generatoren stoppet på en redeklarasjon nettleseren ikke ser. Det er en
+    # falsk stopp, men en stopp: ferskhetsporten hadde blitt rød av en
+    # tekstendring som ikke rører katalogen.
+    #
+    # Å skanne skriptet for hva som er kode ville betydd å skrive JS-leseren
+    # fra `test_katalog.py` en gang til her, med skråstrek-tvetydigheten og alt
+    # som fulgte med den. Det trengs ikke: samme regel som gjorde postene
+    # strukturelle gjelder ankeret. En erklæring er fulgt av en LISTE av
+    # modulposter — så tegnene `const M = [` i en streng eller en kommentar
+    # faller på sin egen form, uten at generatoren trenger å vite hvor de står.
+    # En halv eller tom katalog nummer to er derimot fortsatt en erklæring, og
+    # stopper generatoren som før.
+    #
+    # Bare når ankeret finnes flere ganger må formen avgjøre; med ett anker
+    # leses det som før, så en ekte katalog som har endret form fortsatt gir
+    # den presise meldingen om HVA som er galt med den.
     ankre = list(KATALOG_RE.finditer(skript))
+    if len(ankre) > 1:
+        ankre = [m for m in ankre if er_en_modulliste(skript, m.end() - 1)]
     if len(ankre) != 1:
         raise SystemExit(
             f"fant {len(ankre)} modulkataloger i {KILDE_NAVN} — det skal være "
