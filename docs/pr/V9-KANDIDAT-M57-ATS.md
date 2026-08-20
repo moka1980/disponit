@@ -42,10 +42,18 @@ skrives først ved prioritering. Ingen bygging nå.**
  "dep":"M-1, M-2, M-37, M-54 (signert utsendelse), artefaktlager, outbox."}
 ```
 
-**Tellinger ved opptak:** 56 → 57 moduler; fase 3: 19 → 20. Nytt
-`rev`-nivå og `kl`-verdi (`dokumentbehandling`) må inn i
-katalogforklaringen — modulen leser opplastede dokumenter, ikke eksterne
-domener, så den er *ikke* `ekstern_lesing` i M-56-forstand.
+**Tellinger ved opptak:** 56 → 57 moduler; fase 3: 19 → 20.
+
+Her sto det opprinnelig at det nye `rev`-nivået og `kl`-verdien
+(`dokumentbehandling`) måtte inn i katalogforklaringen. Den linjen ble fulgt:
+endringsloggen i v9 fikk en seksjon som presenterte begge som nye
+katalogbegreper — før noen målte verdiene mot modulregisteret. De er ikke
+registerverdier, og feltene de sto i er registerets egne. Ved opptak ble de
+derfor erstattet med `krever_outbox` / `irreversibel`, og endringsloggen
+skrevet om. Det som var riktig i observasjonen, står nå som prosa i `merknad`
+og `guard`: modulen leser opplastede dokumenter, ikke eksterne domener, så
+den er *ikke* `ekstern_lesing` i M-56-forstand — men det er en egenskap ved
+flyten, ikke en klasse katalogen kan finne opp.
 
 ## 2. Hva som er endret fra eiers dokument, og hvorfor
 

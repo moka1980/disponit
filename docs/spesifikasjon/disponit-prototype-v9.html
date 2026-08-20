@@ -252,8 +252,8 @@ table.chg caption{text-align:left}
       </tbody>
     </table>
 
-    <h3 class="subh" id="h-v9-begreper">To nye katalogbegreper</h3>
-    <p class="intro"><b>dokumentbehandling</b> er en ny sikkerhetsklasse: modulen leser kundeleverte filer i isolert container — ikke eksterne domener, så den er ikke ekstern lesing i M-56-forstand, og trenger ingen målautorisasjon utover kundens egen opplasting. <b>rådgivende pluss signert utsendelse</b> (merket "rådgivende_pluss_signert_utsendelse" — med å: merket er beskrivende prosa, ikke en registeridentifikator) er et beskrivende revisjonsnivå, ikke en ferdig sikkerhetsklasse i modulregisteret: spesifikasjonen avgjør senere hvilke mekaniske klasser det komponeres av (rådgivende analyse pluss signert outbox-handling). Katalogen beskriver; kontrakten i registeret binder.</p>
+    <h3 class="subh" id="h-v9-begreper">Ingen nye katalogbegreper</h3>
+    <p class="intro">Kandidaten ble lagt fram med to oppfunne verdier — en sikkerhetsklasse for dokumentbehandling og et revisjonsnivå for rådgivende analyse pluss signert utsendelse. Ingen av dem er tatt inn. <b>kl</b> og <b>rev</b> er nettopp de feltene modulregisteret binder, og en modul med verdier utenfor CHECK-vilkårene i migrasjon 014 og 036 kan ikke registreres den dagen den skal bygges: den som implementerer måtte enten se bort fra sannhetskilden eller endre den. M-57 står derfor med <b>krever_outbox</b> og <b>irreversibel</b>, samme par som M-53. Klassen gjelder utsendelsen, ikke rangeringen: evalueringen er rådgivende og skriver bare artefakter, men modulen finnes ikke uten utsendelsen, og en sendt invitasjon eller et sendt avslag kan ikke kalles tilbake. At søknadsfilene leses i isolert container og ikke fra eksterne domener — så modulen ikke er <b>ekstern_lesing</b> i M-56-forstand — er en egenskap ved flyten og står beskrevet der, ikke som en klasse. Katalogen beskriver; registeret binder. En beskrivelse som låner registerets felt, slutter å være beskrivelse.</p>
 
     <h3 class="subh" id="h-v9-beslutninger">Portens produktbeslutninger</h3>
     <table class="chg">
