@@ -318,6 +318,23 @@ def _modulposter() -> list[tuple[int, str]]:
     return ut
 
 
+def _tomrom(js: str, i: int) -> int:
+    """Indeksen til første tegn fra `i` som verken er blankt eller kommentar.
+
+    Mellom en nøkkel og kolonet den hører til, og mellom kolonet og verdien,
+    kan begge deler stå. JS bryr seg ikke, og for spørsmålet «hvilket felt er
+    dette, og hva står i det?» er de like mye ingenting.
+    """
+    while i < len(js):
+        if js[i].isspace():
+            i += 1
+        elif js.startswith("//", i) or js.startswith("/*", i):
+            i = _hopp(js, i)
+        else:
+            break
+    return i
+
+
 def _postfelt(post: str) -> dict[str, str]:
     """{feltnavn: verdi} for feltene på postens ØVERSTE nivå.
 
@@ -328,6 +345,14 @@ def _postfelt(post: str) -> dict[str, str]:
     (`n:38,…,p:1,…,dep:'…'`), v8-modulene er JSON (`"n": 53, …`). Begge leses —
     leste porten bare den ene, ville halve katalogen vært uvoktet uten at noe
     sa fra.
+
+    KOMMENTARER mellom nøkkel og kolon var før dette usynlige for parseren
+    (Codex P2 på #118, niende runde), som bare spiste blanke tegn. Da forlot
+    den nøkkelen: `"kl" /* begrunnelse */: "oppfunnet"` ga en post UTEN `kl`,
+    og enum-porten sjekker bare de feltene som faktisk finnes. En klasse
+    modulregisteret avviser hadde altså gått grønt gjennom CI — mens nettleseren
+    leste feltet som et helt vanlig felt. Å miste et felt er farligere enn å
+    misforstå det: det som ikke finnes, blir ikke kontrollert.
     """
     ut: dict[str, str] = {}
     i, n = 1, len(post)
@@ -349,13 +374,10 @@ def _postfelt(post: str) -> dict[str, str]:
         else:
             i += 1
             continue
-        while i < n and post[i].isspace():
-            i += 1
+        i = _tomrom(post, i)
         if i >= n or post[i] != ":":
             continue
-        i += 1
-        while i < n and post[i].isspace():
-            i += 1
+        i = _tomrom(post, i + 1)
         start, dybde = i, 0
         while i < n:
             if _apner(post, i):
