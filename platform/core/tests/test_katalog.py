@@ -459,10 +459,25 @@ def _kodespenn(js: str, a: int, b: int, avslutt: bool = False):
     Sidegevinst: en klassekropp (`class A {`) leses nå som den blokka den er.
     Den sto før som et objektliteral, fordi navnet foran den er en verdi, og en
     skråstrek rett etter `}` ble derfor lest som divisjon.
+
+    KOLONET er den tredje formen for samme tvetydighet (Codex P2 på #118,
+    trettende runde). Det falt før ut i den siste linja, som setter
+    uttrykksposisjon — riktig for et objektfelt (`{a: 1}`) og for et spørsmål
+    (`a ? b : c`), men galt for en etikett og for `case`: der følger en SETNING,
+    og `switch (x) { case 1: {} /["']/.test(v); }` leste derfor `{}` som et
+    objektliteral. `}` avsluttet da en «verdi», mønsteret etter ble en divisjon,
+    og fnutten inne i mønsteret åpnet en «streng» som svelget kjørende kode.
+    Hvilket av de tre kolonene det er, avgjøres av RAMMEN det står i, og av om
+    et `?` venter på svar inne i den.
+
+    Derfor er stakkene slått sammen til én. De var tre — en for parenteser, en
+    for krøllparenteser, ingen for klammer — og tre stakker over samme nøsting
+    er tre steder å komme i utakt. `rammer` har én post per åpen `(`, `[` eller
+    `{`: hva den åpnet, hva den betyr, og hvor mange `?` som venter på kolonet
+    sitt inne i den. Nederst ligger rammen for teksten selv, som aldri lukkes.
     """
     verdi, siste_ord = False, ""
-    parenteser: list[bool] = []
-    blokker: list[bool] = []
+    rammer: list[list] = [["", False, 0]]
     blokkposisjon, i = not avslutt, a
     while i < b:
         c = js[i]
@@ -512,33 +527,38 @@ def _kodespenn(js: str, a: int, b: int, avslutt: bool = False):
             i, verdi, siste_ord, blokkposisjon = i + 1, False, ".", False
             continue
         if c == "(":
-            parenteser.append(siste_ord in _KONTROLLORD)
+            rammer.append(["(", siste_ord in _KONTROLLORD, 0])
             i, verdi, siste_ord, blokkposisjon = i + 1, False, "", False
             continue
         if c == ")":
-            betingelse = parenteser.pop() if parenteser else False
+            betingelse = _lukk(rammer)[1]
             # Står det en krøllparentes etter en `)`, er den en KROPP: `if (…)
             # {`, `function f() {`, `m() {`. Et objektliteral står aldri rett
             # etter en parentes — det står etter `=`, `(`, `,`, `:` eller `${`.
             i, verdi, siste_ord, blokkposisjon = i + 1, not betingelse, "", True
             continue
+        if c == "[":
+            rammer.append(["[", False, 0])
+            i, verdi, siste_ord, blokkposisjon = i + 1, False, "", False
+            continue
         if c == "]":
+            _lukk(rammer)
             i, verdi, siste_ord, blokkposisjon = i + 1, True, "", True
             continue
         if c == "}":
-            if not blokker and avslutt:
+            if len(rammer) == 1 and avslutt:
                 return i
             # Lukker den et objektliteral, har den avsluttet en VERDI, og
             # skråstreken etter deler. Lukker den en blokk, kan et mønster følge.
             # Uansett hva den lukket, kan et objektliteral ikke begynne rett
             # etter en `}` — der står enten en ny setning eller en operator.
-            objekt = blokker.pop() if blokker else False
+            objekt = _lukk(rammer)[1]
             i, siste_ord = i + 1, ""
             verdi, blokkposisjon = objekt, True
             continue
         if c == "{":
             objekt = not blokkposisjon
-            blokker.append(objekt)
+            rammer.append(["{", objekt, 0])
             i, verdi, siste_ord = i + 1, False, ""
             blokkposisjon = not objekt
             continue
@@ -548,11 +568,59 @@ def _kodespenn(js: str, a: int, b: int, avslutt: bool = False):
             # det må skrives `=> ({…})`.
             i, verdi, siste_ord, blokkposisjon = i + 2, False, "", True
             continue
+        if js.startswith("?.", i):
+            # Valgfri kjeding: ordet etter er en EGENSKAP, som etter et punktum.
+            i, verdi, siste_ord, blokkposisjon = i + 2, False, ".", False
+            continue
+        if js.startswith("??", i):
+            # Nullslusing er en operator, ikke et spørsmål — den venter ikke på
+            # noe kolon.
+            i, verdi, siste_ord, blokkposisjon = i + 2, False, "", False
+            continue
+        if c == "?":
+            # Et spørsmål venter på kolonet sitt, og det kolonet hører til
+            # UTTRYKKET — ikke til en etikett. Telleren står i rammen, for
+            # `f(a ? b : c)` og `{a: x ? y : z}` nøster hver for seg.
+            rammer[-1][2] += 1
+            i, verdi, siste_ord, blokkposisjon = i + 1, False, "", False
+            continue
+        if c == ":":
+            ramme = rammer[-1]
+            if ramme[2]:
+                # Svaret på et `?`: et uttrykk følger.
+                ramme[2] -= 1
+                setning = False
+            else:
+                # Ellers avgjør rammen. Inne i et objektliteral er kolonet en
+                # nøkkels, og en verdi følger. Inne i en BLOKK — eller i
+                # teksten selv — finnes ingen nøkler: da er det en etikett
+                # eller en `case`, og en SETNING følger.
+                setning = ramme[0] in ("", "{") and not ramme[1]
+            i, verdi, siste_ord, blokkposisjon = i + 1, False, "", setning
+            continue
+        if js.startswith("++", i) or js.startswith("--", i):
+            # Postfiks `x++` avsluttet en verdi, og skråstreken etter deler;
+            # prefiks `++x` gjør ikke det. `verdi` bæres derfor uendret
+            # gjennom operatoren i stedet for å nullstilles av siste linje
+            # (Codex P2 på #118, trettende runde). Et objektliteral kan uansett
+            # ikke begynne rett etter den.
+            i, siste_ord, blokkposisjon = i + 2, "", True
+            continue
         if c == ";":
             i, verdi, siste_ord, blokkposisjon = i + 1, False, "", True
             continue
         i, verdi, siste_ord, blokkposisjon = i + 1, False, "", False
     return b
+
+
+def _lukk(rammer: list[list]) -> list:
+    """Lukk innerste ramme og gi den fra deg. Bunnrammen lukkes aldri.
+
+    En lukking uten åpning er kode som ikke går i hop; da er bunnrammen svaret,
+    og den betyr «ingen betingelse, ingen objektverdi» — det samme skanneren
+    antok før stakkene ble slått sammen.
+    """
+    return rammer.pop() if len(rammer) > 1 else rammer[0]
 
 
 def _malspenn(js: str, i: int, b: int):
@@ -648,6 +716,36 @@ _SKANNERPROEVER = [
     ('try {} catch (e) {} /["\']/.test(v); const filter_state = {};', False),
     ('class A {} /["\']/.test(v); const filter_state = {};', False),
     ('const o = {a: "nevner filter_state"} / 2; const x = 1;', True),
+    # Trettende runde: kolonet. Etter `case` og en etikett følger en SETNING,
+    # så `{}` der er en blokk og mønsteret etter den er et mønster.
+    ('switch (x) { case 1: {} /["\']/.test(v); } const filter_state = {};',
+     False),
+    ('switch (x) { default: {} /["\']/.test(v); } const filter_state = {};',
+     False),
+    ('ute: {} /["\']/.test(v); const filter_state = {};', False),
+    # Men objektnøkkelens kolon og spørsmålets kolon følges av en VERDI, og
+    # krøllparentesen etter dem er et objektliteral.
+    ('const o = {a: {b: 1} / 2}; const filter_state = {};', False),
+    ('const o = p ? {a: 1} / 2 : 0; const filter_state = {};', False),
+    ('const o = p ? 0 : {a: 1} / /["\']/.test(v); const filter_state = {};',
+     False),
+    ('const o = f(p ? 1 : 2) / 2; const filter_state = {};', False),
+    # Nullslusing og valgfri kjeding bærer et `?` som IKKE venter på et kolon.
+    # Ble det talt som et spørsmål, spiste det kolonet til neste `case`, og
+    # kroppen etter ble lest som et objektliteral.
+    ('switch (x) { case a ?? b: {} /["\']/.test(v); } const filter_state = {};',
+     False),
+    ('switch (x) { case a?.b: {} /["\']/.test(v); } const filter_state = {};',
+     False),
+    # Trettende runde: postfiks `++`/`--` avslutter en verdi, så skråstreken
+    # etter dem deler.
+    ('const y = x++ / /["\']/.test(v); const filter_state = {};', False),
+    ('const y = x-- / /["\']/.test(v); const filter_state = {};', False),
+    # Prefiks gjør ikke det — der kan et mønster fortsatt følge.
+    ('++x; /["\']/.test(v); const filter_state = {};', False),
+    # En etikett i prosa er fortsatt prosa: kolonet inne i en streng er ikke
+    # skannerens bord.
+    ('const s = "case 1: filter_state"; const x = 1;', True),
 ]
 
 
