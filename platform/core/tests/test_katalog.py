@@ -1027,9 +1027,10 @@ MODULKONTRAKT = "modulkontrakt"
 # Nøkkelen er (tabell, kolonne), ikke kolonnenavnet alene: `status` er CHECK-et
 # i tjue tabeller med hver sine verdier, og siste-treff-vinner på bare navnet
 # ville pensjonert nitten av dem. Tabellen er den siste CREATE/ALTER TABLE før
-# vilkåret. SQL-kommentarer fjernes først — 038 SITERER formen «CHECK (hendelse
-# IN (...))» i en kommentar, og den ville ellers slettet en tabells enum. BEGGE
-# kommentarformene, og ikke inne i strenger: se `_uten_sqlkommentar()`.
+# vilkåret. Alt som ikke er en KJØRT setning blankes ut først — 038 SITERER
+# formen «CHECK (hendelse IN (...))» i en kommentar, og den ville ellers slettet
+# en tabells enum. Begge kommentarformene, og dollarsitert tekst, og ingen av
+# delene inne i en streng: se `_kjort_sql()`.
 #
 # Og navnet må NORMALISERES før det brukes som nøkkel (Codex P2 på #118, femte
 # runde). Migrasjonene skriver samme tabell på to måter: 026 oppretter `varsel`,
@@ -1056,20 +1057,56 @@ _DROPP_RE = re.compile(
     r"""DROP\s+CONSTRAINT(?:\s+IF\s+EXISTS)?\s+([\w."]+)""", re.I)
 
 
-def _sqlstrengslutt(sql: str, i: int) -> int:
-    """Indeksen etter strengen eller det siterte navnet som åpner i `i`.
+# Dollarsitering: `$$…$$` og `$tagg$…$tagg$`. Innholdet er DATA — ingenting
+# escaper der inne, og formen brukes nettopp til tekst som bærer fnutter og
+# semikolon: kropper til `DO`-blokker og funksjoner.
+_DOLLARTAGG_RE = re.compile(r"\$(?:[A-Za-z_]\w*)?\$")
 
-    SQL escaper ikke med omvendt skråstrek, men ved å DOBLE sitattegnet:
-    `'det''s'` er én streng. `E'…'` er unntaket der `\\` også escaper, men den
-    formen bruker migrasjonene bare til tegn som `\\n` og `\\x1f` — aldri til et
-    sitattegn — og en regel om at `\\'` ikke lukker ville brutt `E'\\\\_\\\\_%'`
-    i 041, der skråstrekene er escapet og fnutten lukker som vanlig.
+# Verdien en CHECK-liste får når porten ikke kan lese den. Backslash kan ikke
+# være en enumverdi skrevet rett fram, så den kan ikke kollidere med en ekte.
+ULESELIG_SQL = "\\"
+
+
+def _sqlliteral(sql: str, i: int) -> int:
+    """Indeksen etter strengliteralen som åpner i `i`, eller -1 om ingen gjør.
+
+    PostgreSQL har tre former, og porten leste bare den ene:
+
+      * `'…'` og `"…"` (sitert navn) — sitattegnet DOBLES for å escapes, så
+        `'det''s'` er ÉN streng.
+      * `E'…'` — der escaper `\\` også, og `\\'` lukker IKKE strengen (Codex P2
+        på #118, trettende runde). Porten leste den escapede fnutten som
+        slutten, og resten av `E'a\\'--b'` ble til en linjekommentar som spiste
+        vilkåret linja bar. Merk at `E'\\\\_\\\\_%'` i 041 fortsatt lukker der den
+        skal: `\\\\` er en escapet backslash og spises som ett par, så fnutten
+        etter den er den ekte.
+      * `$tagg$…$tagg$` — dollarsitering, som porten ikke kjente i det hele
+        tatt. Der escaper ingenting; strengen slutter ved den samme taggen.
+
+    `E` er bare et prefiks når det står alene: `case'x'` er et ord etterfulgt
+    av en streng, ikke en escapestreng.
     """
-    sitat, j, n = sql[i], i + 1, len(sql)
+    n = len(sql)
+    c = sql[i]
+    if c == "$":
+        treff = _DOLLARTAGG_RE.match(sql, i)
+        if not treff:
+            return -1
+        j = sql.find(treff.group(0), treff.end())
+        return n if j < 0 else j + len(treff.group(0))
+    bakstrek = False
+    if c in "Ee" and i + 1 < n and sql[i + 1] == "'" \
+            and not (i and (sql[i - 1].isalnum() or sql[i - 1] == "_")):
+        i, c, bakstrek = i + 1, "'", True
+    if c not in "'\"":
+        return -1
+    j = i + 1
     while j < n:
-        if sql[j] != sitat:
+        if bakstrek and sql[j] == "\\":
+            j += 2
+        elif sql[j] != c:
             j += 1
-        elif j + 1 < n and sql[j + 1] == sitat:
+        elif j + 1 < n and sql[j + 1] == c:
             j += 2
         else:
             return j + 1
@@ -1079,26 +1116,37 @@ def _sqlstrengslutt(sql: str, i: int) -> int:
 def _sqlverdier(liste: str) -> set[str]:
     """Strengverdiene i en `IN (…)`-liste.
 
-    Leses med `_sqlstrengslutt()` og ikke med et regex på «alt mellom to
-    fnutter»: SQL escaper ved å DOBLE sitattegnet, så `'det''s'` er ÉN verdi.
-    Et regex delte den i to og fikk en verdi til ut av lista.
+    Leses med `_sqlliteral()` og ikke med et regex på «alt mellom to fnutter»:
+    SQL escaper ved å DOBLE sitattegnet, så `'det''s'` er ÉN verdi. Et regex
+    delte den i to og fikk en verdi til ut av lista.
+
+    En verdi skrevet med escape — `E'…'` — eller dollarsitert gir
+    `ULESELIG_SQL`. Å tolke ville betydd å skrive PostgreSQLs escaperegler av
+    i Python (`\\n`, `\\xHH`, `\\uXXXX`, oktalt), og hver glemt form er et nytt
+    smutthull; her ville et gjettet innhold vært verre enn ingen. Verdien
+    forplanter seg til enumet, og `_registerenum()` sier fra hvis kolonnen
+    katalogen faktisk måles mot bærer den — ikke ved enhver migrasjon som
+    tilfeldigvis skriver en slik verdi i en annen tabell.
     """
     ut, i, n = set(), 0, len(liste)
     while i < n:
-        if liste[i] == "'":
-            j = _sqlstrengslutt(liste, i)
-            ut.add(liste[i + 1:j - 1].replace("''", "'"))
-            i = j
-        else:
+        j = _sqlliteral(liste, i)
+        if j < 0:
             i += 1
+            continue
+        if liste[i] in "'\"":
+            ut.add(liste[i + 1:j - 1].replace(liste[i] * 2, liste[i]))
+        else:
+            ut.add(ULESELIG_SQL)
+        i = j
     return ut
 
 
-def _uten_sqlkommentar(sql: str) -> str:
-    """SQL-en med kommentarene byttet mot mellomrom.
+def _kjort_sql(sql: str) -> str:
+    """SQL-en med alt som IKKE er en kjørt setning byttet mot mellomrom.
 
     Bare `--` ble fjernet før, med et regex per linje (Codex P2 på #118, tolvte
-    runde). To hull fulgte av det.
+    runde). Tre hull fulgte av det.
 
     BLOKKOMMENTAREN sto igjen som kode. En migrasjon som setter en setning ut av
     drift eller viser et eksempel — `/* … CHECK (reversibilitet IN ('oppfunnet'))
@@ -1107,11 +1155,25 @@ def _uten_sqlkommentar(sql: str) -> str:
     gikk motsatt vei og slettet et vilkår som fortsatt gjelder. Blokkommentarer
     NØSTES i PostgreSQL, så dybden telles.
 
-    Og kommentartegnene ble lest også inne i STRENGER: en verdi som `'a--b'`
-    kappet resten av linja, og med den et vilkår som sto der. Strenger og
-    siterte navn hoppes derfor over først — de er data, ikke kommentarer.
+    Kommentartegnene ble lest også inne i STRENGER: en verdi som `'a--b'` kappet
+    resten av linja, og med den et vilkår som sto der. Strenger og siterte navn
+    hoppes derfor over først — de er data, ikke kommentarer.
 
-    Lengden holdes, for hver kommentar byttes tegn for tegn mot mellomrom.
+    Og DOLLARSITERT tekst ble lest som setninger (Codex P2 på #118, trettende
+    runde). `DO $body$ … RAISE NOTICE $$CHECK (reversibilitet IN ('oppfunnet'))$$
+    … $body$;` KJØRER ingen slik CHECK — PostgreSQL skriver en melding — men
+    porten leste vilkåret som gjeldende tilstand og ville sluppet klassen inn.
+    Formen er ikke eksotisk her: konvensjonen i repoets migrasjoner er nettopp å
+    pakke betinget DDL i en `DO`-blokk. Innholdet blankes derfor ut, slik at
+    tekst i en slik streng hverken kan legge til eller slette et vilkår.
+
+    Dynamisk DDL som FAKTISK kjøres — `EXECUTE format(...)` med et vilkår i en
+    dollarsitert streng — blir dermed usynlig for porten. Det er med vilje: en
+    setning som først blir til når migrasjonen kjører, kan ikke leses av en
+    tekstlesning uansett, og et gjettet vilkår er verre enn ingen. `_registerenum()`
+    sier fra hvis kolonnen katalogen måles mot ender opp uten vilkår.
+
+    Lengden holdes, for hver maskering byttes tegn for tegn mot mellomrom.
     Rekkefølgen mellom `CREATE TABLE`, `CHECK` og `DROP CONSTRAINT` leses av
     posisjonene i teksten, og linjeskift beholdes så `--` fortsatt slutter der
     linja slutter.
@@ -1119,8 +1181,11 @@ def _uten_sqlkommentar(sql: str) -> str:
     ut = list(sql)
     i, n = 0, len(sql)
     while i < n:
-        if sql[i] in "'\"":
-            i = _sqlstrengslutt(sql, i)
+        slutt = _sqlliteral(sql, i)
+        if slutt >= 0:
+            if sql[i] == "$":
+                _blank(ut, i, slutt)
+            i = slutt
             continue
         if sql.startswith("--", i):
             j = sql.find("\n", i)
@@ -1137,11 +1202,17 @@ def _uten_sqlkommentar(sql: str) -> str:
         else:
             i += 1
             continue
-        for k in range(i, j):
-            if ut[k] != "\n":
-                ut[k] = " "
+        _blank(ut, i, j)
         i = j
     return "".join(ut)
+
+
+def _blank(ut: list, i: int, j: int) -> None:
+    """Bytt ut[i:j] mot mellomrom. Linjeskift står, så `--` slutter der linja
+    slutter og posisjonene ellers holder seg."""
+    for k in range(i, j):
+        if ut[k] != "\n":
+            ut[k] = " "
 
 
 def _tabellnavn(rå: str) -> str:
@@ -1166,27 +1237,40 @@ def _registerets_enums(
 ) -> tuple[dict[tuple[str, str], set[str]], set[str]]:
     """(gjeldende verdier per (tabell, kolonne), verdier bundet noen gang).
 
-    Migrasjonene leses i nummerrekkefølge; siste vilkår for samme kolonne i
-    samme tabell er det som gjelder — en senere kan både UTVIDE (036 la
-    `ekstern_lesing` til `sideeffektklasse`) og STRAMME INN.
+    Migrasjonene leses i nummerrekkefølge, og hvert `CHECK` og `DROP
+    CONSTRAINT` er en HENDELSE som endrer hvilke vilkår som står igjen. Et
+    vilkår kan både UTVIDE (036 la `ekstern_lesing` til `sideeffektklasse`) og
+    stramme inn, og det kan FJERNES (Codex P2 på #118, ellevte runde): et slipp
+    uten et nytt vilkår etter seg lot verdiene fra forrige migrasjon bli stående
+    som gjeldende, og katalogporten ville avvist verdier databasen ikke lenger
+    begrenser. Vilkår og slipp leses derfor i STILLINGSREKKEFØLGE i hver fil —
+    036 slipper og legger på igjen i samme setningspar, og rekkefølgen er det
+    eneste som skiller dem.
 
-    Og FJERNE (Codex P2 på #118, ellevte runde). Et `DROP CONSTRAINT` uten et
-    nytt vilkår etter seg lot verdiene fra forrige migrasjon bli stående som
-    gjeldende, fordi bare CHECK-treff ble regnet med. Da ville katalogporten
-    fortsatt avvist verdier databasen ikke lenger begrenser. Vilkår og slipp
-    leses derfor i STILLINGSREKKEFØLGE i hver fil — 036 slipper og legger på
-    igjen i samme setningspar, og rekkefølgen er det eneste som skiller dem.
-
-    Hvilket vilkår et slipp treffer, avgjøres av navnet: et navngitt vilkår
+    Hvilket vilkår et slipp treffer, avgjøres av NAVNET: et navngitt vilkår
     huskes som det heter, og et vilkår skrevet rett på kolonnen får navnet
-    PostgreSQL selv gir det — `<tabell>_<kolonne>_check`. Det er den formen 036
-    slipper, og den formen 014 la inn uten å navngi.
+    PostgreSQL selv gir det — `<tabell>_<kolonne>_check`, og `_check1`,
+    `_check2` … hvis navnet er opptatt. Det er den formen 036 slipper, og den
+    formen 014 la inn uten å navngi.
+
+    Og navnet er IDENTITETEN til vilkåret, ikke (tabell, kolonne) (Codex P2 på
+    #118, trettende runde). Tilstanden ble ført per kolonne, så et nytt vilkår
+    på samme kolonne ERSTATTET det forrige. Det er ikke det databasen gjør:
+    legger en migrasjon til en CHECK uten å slippe den gamle, håndhever
+    PostgreSQL BEGGE, og en verdi må stå i begge for å slippe gjennom. Med
+    erstatning kunne en modul bære en `rev`-verdi det nyeste vilkåret godtar og
+    det eldste avviser — altså nøyaktig den umulige modulen porten finnes for å
+    fange. Gjeldende verdier for en kolonne er derfor SNITTET av vilkårene som
+    står igjen.
+
+    `noen_gang` er unionen av alt registeret har bundet, og er noe annet: den
+    er historikken en pensjonert verdi kjennes igjen på.
     """
-    gjeldende: dict[tuple[str, str], set[str]] = {}
-    vilkarsnavn: dict[tuple[str, str], str] = {}
+    # {(tabell, vilkårsnavn): (kolonne, verdier)} — vilkårene som står igjen.
+    vilkar: dict[tuple[str, str], tuple[str, set[str]]] = {}
     noen_gang: set[str] = set()
     for sql in sorted((mappe or MIGRASJONER).glob("*.sql")):
-        tekst = _uten_sqlkommentar(sql.read_text(encoding="utf-8"))
+        tekst = _kjort_sql(sql.read_text(encoding="utf-8"))
         tabeller = [(m.start(), _tabellnavn(m.group(1)))
                     for m in _TABELL_RE.finditer(tekst)]
         hendelser = sorted(
@@ -1200,22 +1284,43 @@ def _registerets_enums(
                     break
                 tabell = navn
             if not er_vilkar:
-                sluppet = m.group(1).lower().replace('"', "")
-                for nokkel, navn in list(vilkarsnavn.items()):
-                    if nokkel[0] == tabell and navn == sluppet:
-                        del gjeldende[nokkel]
-                        del vilkarsnavn[nokkel]
+                vilkar.pop((tabell, _vilkarsnavn(m.group(1))), None)
                 continue
             verdier = _sqlverdier(m.group(3))
             if not verdier:
                 continue
             kolonne = m.group(2)
-            gjeldende[(tabell, kolonne)] = verdier
-            vilkarsnavn[(tabell, kolonne)] = (
-                m.group(1).lower().replace('"', "") if m.group(1)
-                else f"{tabell}_{kolonne}_check")
+            navn = _vilkarsnavn(m.group(1)) if m.group(1) \
+                else _tildelt_navn(vilkar, tabell, kolonne)
+            vilkar[(tabell, navn)] = (kolonne, verdier)
             noen_gang |= verdier
-    return gjeldende, noen_gang
+    gjeldende: dict[tuple[str, str], set[str]] = {}
+    for (tabell, _), (kolonne, verdier) in vilkar.items():
+        nokkel = (tabell, kolonne)
+        gjeldende[nokkel] = gjeldende[nokkel] & verdier \
+            if nokkel in gjeldende else set(verdier)
+    return gjeldende, noen_gang - {ULESELIG_SQL}
+
+
+def _vilkarsnavn(rå: str) -> str:
+    """Vilkårsnavnet normalisert, slik `_tabellnavn()` gjør med tabellen."""
+    return rå.lower().replace('"', "")
+
+
+def _tildelt_navn(vilkar: dict, tabell: str, kolonne: str) -> str:
+    """Navnet PostgreSQL gir et vilkår ingen har navngitt.
+
+    `<tabell>_<kolonne>_check`, og `_check1`, `_check2` … når navnet er opptatt
+    — det er den formen serveren selv bruker. To vilkår uten navn på samme
+    kolonne er derfor to vilkår, ikke ett som overskriver det andre, og begge
+    teller med i snittet.
+    """
+    stamme = f"{tabell}_{kolonne}_check"
+    navn, nr = stamme, 0
+    while (tabell, navn) in vilkar:
+        nr += 1
+        navn = f"{stamme}{nr}"
+    return navn
 
 
 def _registerenum(kolonne: str) -> set[str]:
@@ -1233,11 +1338,20 @@ def _registerenum(kolonne: str) -> set[str]:
     `_registerets_enums()` har alt tabellidentiteten i nøkkelen sin; her brukes
     den. Feiler oppslaget, er det fordi kolonnen ikke lenger CHECK-es på
     `modulkontrakt` — og da er det porten som skal rettes, ikke katalogen.
+
+    En verdi porten ikke kunne lese, se `ULESELIG_SQL`, sier fra HER og ikke
+    ved enhver migrasjon som skriver en slik verdi et annet sted. Det er
+    kolonnen katalogen faktisk måles mot som må være lest riktig.
     """
     gjeldende, _ = _registerets_enums()
     ut = gjeldende.get((MODULKONTRAKT, kolonne), set())
     assert ut, (f"fant ikke CHECK-vilkåret for {MODULKONTRAKT}.{kolonne} i "
                 f"migrasjonene")
+    assert ULESELIG_SQL not in ut, (
+        f"CHECK-vilkåret for {MODULKONTRAKT}.{kolonne} bærer en verdi porten "
+        f"ikke kan lese — en escapestreng (`E'…'`) eller en dollarsitert "
+        f"streng. Skriv verdien som `'…'`, eller lær porten formen; et gjettet "
+        f"innhold ville vært verre enn ingen")
     return ut
 
 
@@ -1375,6 +1489,132 @@ def test_enumtilstanden_leser_slipp_og_nytt_vilkaar_i_rekkefolge(tmp_path):
     gjeldende, _ = _registerets_enums(mappe)
     assert gjeldende[(MODULKONTRAKT, "reversibilitet")] == {
         "direkte", "irreversibel"}
+
+
+def test_escapestrengen_lukkes_ikke_av_en_escapet_fnutt(tmp_path):
+    """`E'…'` escaper med `\\`, og `\\'` er da ikke slutten på strengen.
+
+    Porten leste den escapede fnutten som slutten (Codex P2 på #118, trettende
+    runde). Resten av verdien — `--b'` — ble da lest som en linjekommentar, og
+    kommentaren spiste vilkåret som sto på linja. Kolonnen sto igjen uten
+    vilkår uten at noe sa fra.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE modulkontrakt (reversibilitet TEXT NOT NULL);\n"
+        "INSERT INTO notat (tekst) VALUES (E'a\\'--b'); "
+        "ALTER TABLE modulkontrakt ADD CONSTRAINT r "
+        "CHECK (reversibilitet IN ('direkte', 'kompenserende'));\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende[(MODULKONTRAKT, "reversibilitet")] == {
+        "direkte", "kompenserende"}
+
+
+def test_en_escapet_bakstrek_lukker_strengen_som_vanlig(tmp_path):
+    """Motsatt vei: `E'\\\\_\\\\_%'` i 041 lukkes av fnutten etter parene.
+
+    En regel om at `\\'` aldri lukker ville tatt strengen forbi sin egen slutt,
+    og med den alt som står etter — inkludert et vilkår.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE modulkontrakt (reversibilitet TEXT NOT NULL);\n"
+        "SELECT x FROM y WHERE z LIKE E'\\\\_\\\\_%';\n"
+        "ALTER TABLE modulkontrakt ADD CONSTRAINT "
+        "modulkontrakt_reversibilitet_check\n"
+        "    CHECK (reversibilitet IN ('direkte'));\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende[(MODULKONTRAKT, "reversibilitet")] == {"direkte"}
+
+
+@pytest.mark.parametrize("senere", [
+    # `RAISE NOTICE` skriver en melding; den kjører ingen CHECK.
+    "DO $body$ BEGIN RAISE NOTICE $$CHECK (reversibilitet IN "
+    "('oppfunnet'))$$; END $body$;\n",
+    # Og motsatt vei: et dollarsitert slipp fjerner ikke et levende vilkår.
+    "DO $body$ BEGIN RAISE NOTICE $$ALTER TABLE modulkontrakt DROP CONSTRAINT "
+    "modulkontrakt_reversibilitet_check$$; END $body$;\n",
+    # Fnutter og semikolon inne i en dollarsitert streng er data, og skal ikke
+    # forskyve lesningen av det som står etter.
+    "DO $$ BEGIN RAISE NOTICE 'det''s -- her'; END $$;\n",
+])
+def test_dollarsitert_tekst_er_ikke_kjorte_setninger(tmp_path, senere):
+    """En CHECK-formet streng er tekst, ikke et vilkår databasen håndhever.
+
+    Porten kjente ikke dollarsitering i det hele tatt (Codex P2 på #118,
+    trettende runde), og formen er ikke eksotisk her: konvensjonen i repoets
+    migrasjoner er nettopp å pakke betinget DDL i en `DO`-blokk. En melding med
+    et vilkår i seg ble derfor lest som gjeldende tilstand, og katalogporten
+    ville sluppet inn en klasse PostgreSQL avviser ved registrering.
+    """
+    mappe = _migrasjoner(tmp_path, _LAGER_VILKAR, senere)
+    gjeldende, noen_gang = _registerets_enums(mappe)
+    assert gjeldende[(MODULKONTRAKT, "reversibilitet")] == {
+        "direkte", "kompenserende"}
+    assert "oppfunnet" not in noen_gang
+
+
+@pytest.mark.parametrize("senere,gjelder", [
+    # To vilkår med hvert sitt navn står SAMMEN, og PostgreSQL håndhever begge.
+    ("ALTER TABLE modulkontrakt ADD CONSTRAINT modulkontrakt_rev_smal\n"
+     "    CHECK (reversibilitet IN ('direkte', 'irreversibel'));\n",
+     {"direkte"}),
+    # Slippes det ene, står det andre igjen alene.
+    ("ALTER TABLE modulkontrakt ADD CONSTRAINT modulkontrakt_rev_smal\n"
+     "    CHECK (reversibilitet IN ('direkte', 'irreversibel'));\n"
+     "ALTER TABLE modulkontrakt\n"
+     "    DROP CONSTRAINT modulkontrakt_reversibilitet_check;\n",
+     {"direkte", "irreversibel"}),
+])
+def test_to_samtidige_vilkaar_gjelder_begge(tmp_path, senere, gjelder):
+    """Legges et vilkår til uten at det gamle slippes, håndheves BEGGE.
+
+    Tilstanden ble ført per (tabell, kolonne), så et nytt vilkår ERSTATTET det
+    forrige (Codex P2 på #118, trettende runde). Det er ikke det databasen
+    gjør: en verdi må stå i hvert eneste vilkår som gjelder for å komme
+    gjennom. Med erstatning kunne katalogen bære en `rev`-verdi det nyeste
+    vilkåret godtar og det eldste avviser — den umulige modulen porten finnes
+    for å fange. Identiteten til et vilkår er NAVNET, og gjeldende verdier er
+    snittet av dem som står igjen.
+    """
+    mappe = _migrasjoner(tmp_path, _LAGER_VILKAR, senere)
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende[(MODULKONTRAKT, "reversibilitet")] == gjelder
+
+
+def test_to_unavngitte_vilkaar_er_to_vilkaar(tmp_path):
+    """PostgreSQL navngir det andre `…_check1`, og begge håndheves.
+
+    Fikk de samme navn her, ville det andre overskrevet det første i porten,
+    og en verdi bare det ene godtar hadde sett gyldig ut.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE modulkontrakt (\n"
+        "    reversibilitet TEXT NOT NULL\n"
+        "        CHECK (reversibilitet IN ('direkte', 'kompenserende'))\n"
+        "        CHECK (reversibilitet IN ('direkte', 'irreversibel')));\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende[(MODULKONTRAKT, "reversibilitet")] == {"direkte"}
+
+
+def test_en_uleselig_verdi_stopper_enumoppslaget(tmp_path):
+    """En verdi porten ikke kan lese skal si fra, ikke gjettes på.
+
+    `E'…'` og dollarsitering krever PostgreSQLs escaperegler for å tolkes, og
+    den lista er åpen i feil ende. Verdien merkes derfor som uleselig og følger
+    med til `_registerenum()`, som er stedet der det faktisk betyr noe.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE modulkontrakt (\n"
+        "    reversibilitet TEXT NOT NULL\n"
+        "        CHECK (reversibilitet IN ('direkte', E'irre\\\\versibel')));\n")
+    gjeldende, noen_gang = _registerets_enums(mappe)
+    assert ULESELIG_SQL in gjeldende[(MODULKONTRAKT, "reversibilitet")]
+    # Historikken bærer den ikke videre — `pensjonert` skal ikke bygges på et
+    # innhold porten ikke leste.
+    assert ULESELIG_SQL not in noen_gang
 
 
 @pytest.mark.parametrize("post,lesbar", [
