@@ -1559,6 +1559,12 @@ _DOLLARTAGG_RE = re.compile(r"\$(?:[A-Za-z_]\w*)?\$")
 # innholdet. `DO` tar valgfritt `LANGUAGE <navn>` mellom seg og kroppen.
 _DOKROPP_RE = re.compile(r"\bDO\b(?:\s+LANGUAGE\s+[\w.\"]+)?\s*\Z", re.I)
 
+# Lesningen av hva registeret SKRIVER teller også funksjonskroppen som kropp:
+# `CREATE FUNCTION … AS $$ … $$` definerer den uten å kjøre den, men verdiene
+# den bærer er skrevet av registeret. Se `_er_kropp()` mot `_er_dokropp()`.
+_KROPP_RE = re.compile(
+    r"\b(?:DO\b(?:\s+LANGUAGE\s+[\w.\"]+)?|AS)\s*\Z", re.I)
+
 # Verdien en CHECK-liste får når porten ikke kan lese den. Backslash kan ikke
 # være en enumverdi skrevet rett fram, så den kan ikke kollidere med en ekte.
 ULESELIG_SQL = "\\"
@@ -1938,8 +1944,11 @@ def _uten_sqlkommentar(sql: str) -> str:
     definerer kroppen uten å kjøre den, mens en verdi i en kommentar ikke er
     skrevet noe sted — den er en merknad.
 
-    Dollarsiterte spenn leses derfor VIDERE i stedet for å blankes, og
-    kommentarene inne i dem er kommentarer på samme måte som utenfor.
+    Dollarsiterte KROPPER leses derfor videre i stedet for å blankes, og
+    kommentarene inne i dem er kommentarer på samme måte som utenfor. En
+    dollarsitert VERDI leses ikke inn i: der er `--` fire tegn i en tekst, ikke
+    starten på en kommentar, og å blanke dem ville endret verdien registeret
+    skriver. Se `_er_kropp()`.
     """
     ut = list(sql)
     _mask_kommentar(sql, ut, 0, len(sql))
@@ -1953,7 +1962,7 @@ def _mask_kommentar(sql: str, ut: list, a: int, b: int) -> None:
         slutt = _sqlliteral(sql, i)
         if slutt >= 0:
             slutt = min(slutt, b)
-            if sql[i] == "$":
+            if sql[i] == "$" and _er_kropp(sql, i):
                 tagg = _DOLLARTAGG_RE.match(sql, i).group(0)
                 innen = min(i + len(tagg), slutt)
                 _mask_kommentar(sql, ut, innen, max(innen, slutt - len(tagg)))
@@ -1980,11 +1989,24 @@ def _skrevne_verdier(sql: str, a: int | None = None,
     sa ingenting, fordi navnet «finnes».
 
     Lesningen er `_sqlliteral()`, som ellers i porten, og bare en HEL literal
-    teller. Dollarsiterte spenn leses videre inn i, siden en verdi i en
-    funksjonskropp er skrevet av registeret — se `_uten_sqlkommentar()`.
-    Escapestrengen `E'…'` gis fra seg med vilje: innholdet der krever
+    teller. Escapestrengen `E'…'` gis fra seg med vilje: innholdet der krever
     PostgreSQLs escaperegler for å bli en verdi, og et gjettet innhold er
     verre enn ingen når svaret brukes til å godta et navn.
+
+    Et dollarsitert spenn er ikke ett slag (Codex P2 på #118, attende runde).
+    Alle ble lest VIDERE inn i, som om innholdet var setninger med literaler i,
+    og begge utfall var gale. En melding — `RAISE EXCEPTION $$mangler
+    'oppfunnet_klasse'$$` — ga navnet inni som en verdi for seg, selv om hele
+    spennet er ÉN tekst; det er samme hull som kommentaren og den doblede
+    fnutten, en klasse ingen tabell har hørt om. Og motsatt: en verdi skrevet
+    dollarsitert — `VALUES ($$virkelig_klasse$$)` — ga ingenting, fordi det
+    ikke står en apostrof i den. Ordet finnes da ikke i lista og kan ikke
+    brukes i prosaen, enda registeret skriver det.
+
+    Skillet er det samme som i `_kjort_sql()`, og det står FORAN taggen: en
+    kropp leses videre inn i, alt annet er én verdi. Se `_er_kropp()`. Her er
+    `AS $$…$$` med blant kroppene, i motsetning til der: en funksjonskropp er
+    SKREVET av registeret selv om den ikke kjøres når migrasjonen går.
     """
     a, b = a or 0, len(sql) if b is None else b
     ut: list[str] = []
@@ -1998,7 +2020,13 @@ def _skrevne_verdier(sql: str, a: int | None = None,
         if sql[i] == "$":
             tagg = _DOLLARTAGG_RE.match(sql, i).group(0)
             innen = min(i + len(tagg), slutt)
-            ut += _skrevne_verdier(sql, innen, max(innen, slutt - len(tagg)))
+            indre = max(innen, slutt - len(tagg))
+            if _er_kropp(sql, i):
+                ut += _skrevne_verdier(sql, innen, indre)
+            elif sql[indre:slutt] == tagg:
+                # Et spenn uten sin lukkende tagg er ikke helt, på samme måte
+                # som en literal uten sin lukkende fnutt.
+                ut.append(sql[innen:indre])
         elif sql[i] == "'" and slutt - i >= 2 and sql[slutt - 1] == "'":
             # En literal uten sin lukkende fnutt er ikke hel: `_sqlliteral()`
             # gir da slutten av teksten, og innholdet er det som tilfeldigvis
@@ -2006,6 +2034,23 @@ def _skrevne_verdier(sql: str, a: int | None = None,
             ut.append(sql[i + 1:slutt - 1].replace("''", "'"))
         i = slutt
     return ut
+
+
+def _er_kropp(sql: str, i: int) -> bool:
+    """Er det dollarsiterte spennet som åpner i `i` en KROPP og ikke en verdi?
+
+    Samme spørsmål som `_er_dokropp()` stiller, og det avgjøres på samme sted:
+    av det som står FORAN taggen. Forskjellen er hva de to lesningene teller
+    som kropp. `_kjort_sql()` spør hva migrasjonen HÅNDHEVER, og der er bare
+    `DO $$…$$` en kropp — den kjører i det migrasjonen går, mens `AS $$…$$`
+    bare definerer. Her spør vi hva registeret SKRIVER, og da er
+    funksjonskroppen med: verdiene i den er skrevet av registeret uansett når
+    den kalles. Se `_uten_sqlkommentar()`.
+
+    Alt annet er en verdi og leses ikke inn i — der escaper ingenting, og hele
+    spennet er én tekst.
+    """
+    return bool(_KROPP_RE.search(sql[:i]))
 
 
 def _er_dokropp(ut: list, a: int, i: int) -> bool:
@@ -3022,6 +3067,11 @@ def _kjente_identifikatorer() -> set[str]:
     ''oppfunnet_klasse'''` ga navnet inni som om det sto for seg selv — samme
     utfall som kommentaren, en klasse ingen tabell har hørt om. Verdiene leses
     nå med `_skrevne_verdier()`.
+
+    Det samme gjelder en DOLLARSITERT tekst (Codex P2 på #118, attende runde):
+    `RAISE EXCEPTION $$mangler 'oppfunnet_klasse'$$` er én melding, ikke et
+    navn. Motsatt vei var hullet at en verdi skrevet dollarsitert ikke ble
+    lest i det hele tatt. Se `_er_kropp()`.
     """
     gjeldende, noen_gang = _registerets_enums()
     pensjonert = noen_gang - set().union(*gjeldende.values(), set())
@@ -3062,6 +3112,23 @@ def _kjente_identifikatorer() -> set[str]:
     # En escapestreng gis fra seg: innholdet krever escapereglene for å bli en
     # verdi, og et gjettet innhold er verre enn ingen når svaret godtar navn.
     ("SELECT E'oppfunnet_klasse';\n", False),
+    # Et dollarsitert spenn som ikke er en kropp, er ÉN tekst (Codex P2 på
+    # #118, attende runde). Meldingen her nevner navnet, den skriver det ikke.
+    ("    RAISE EXCEPTION $$mangler 'oppfunnet_klasse'$$;\n", False),
+    ("    RAISE EXCEPTION $melding$mangler 'oppfunnet_klasse'$melding$;\n",
+     False),
+    # Og kommentartegn inne i en slik tekst er data: blankes de, blir en annen
+    # verdi enn den registeret skriver stående igjen.
+    ("INSERT INTO t (a) VALUES ($$oppfunnet_klasse -- ikke en kommentar$$);\n",
+     False),
+    # Men motsatt vei: en VERDI skrevet dollarsitert er skrevet, selv om det
+    # ikke står en apostrof i den.
+    ("INSERT INTO t (a) VALUES ($$oppfunnet_klasse$$);\n", True),
+    ("INSERT INTO t (a) VALUES ($tagg$oppfunnet_klasse$tagg$);\n", True),
+    # En `DO`-kropp er en kropp her på samme måte som i `_kjort_sql()`.
+    ("DO $$ BEGIN\n"
+     "    PERFORM 'oppfunnet_klasse';\n"
+     "END $$;\n", True),
 ])
 def test_en_sqlkommentar_skriver_ingen_identifikator(sql, star_igjen):
     """Lista over kjente identifikatorer leses av det migrasjonen SKRIVER.
