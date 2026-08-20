@@ -1,14 +1,26 @@
 # M-57 REKRUTTERINGSAGENT (ATS) — MODULKANDIDAT TIL PORTEN
 
 **Draft: Claude.ai · Full sti: `docs/pr/V9-KANDIDAT-M57-ATS.md`.
-Grunnlag: eiers ATS-kravspesifikasjon 2026-08-20 + vurderingen i
-`V9-KANDIDAT-ATS-VURDERING.md` (§3-kontraktene innarbeidet).
+Grunnlag: eiers ATS-kravspesifikasjon 2026-08-20, og ChatGPT-portens
+vurdering i V9-1-runden — et **eksternt artefakt** (samtale relayet av
+Eier), ikke en fil i repoet. Utfallet av den vurderingen er derfor ikke å
+finne noe annet sted enn her: kontraktene den satte er skrevet ut i §2b, og
+det er den teksten senere endringer skal måles mot. Finnes samtalen fortsatt
+hos Eier, hører den hjemme i `docs/beslutninger/` med full sti.
 Dette er en **produktbeslutning** (som v8-runden) — full spesifikasjon
 skrives først ved prioritering. Ingen bygging nå.**
 
 ---
 
 ## 1. Katalogoppføringen, i v8-skjemaet
+
+> **Dette er kandidaten slik den ble lagt fram for porten, ikke oppføringen
+> slik den står.** Ved opptak i PR #118 falt `status` bort (katalogen bærer
+> struktur, ikke tilstand — tilstanden står i `MODULSTATUS`), og `kl`/`rev`
+> ble satt til verdier modulregisteret faktisk godtar (`krever_outbox` /
+> `irreversibel`, jf. migrasjon 014 og 036) i stedet for de beskrivende
+> verdiene under. Gjeldende oppføring står i
+> `docs/spesifikasjon/`. Denne fila er historikk over beslutningen.
 
 ```json
 {"n":57,"name":"Rekrutteringsagent (ATS)","area":"Samarbeid og HR",
