@@ -1251,15 +1251,32 @@ class _Manifesthash:
         return (self._svar,) if self._svar is not None else None
 
 
-def _manifestgenerasjon(m, ikke: str):
-    """En ELDRE innsjekket generasjon av manifestet enn `ikke`, om den
-    finnes i utsjekkingen. En grunn CI-klone har bare én."""
-    for sha, commit in m._manifestgenerasjoner("HEAD").items():
-        if sha != ikke:
-            b = m._git("cat-file", "blob", f"{commit}:{m.MANIFEST_REL}")
-            import yaml
-            return sha, commit, yaml.safe_load(b.stdout.decode("utf-8"))
-    return None, None, None
+def _manifesthistorikk(m, tmp_path, generasjoner):
+    """Et lite repo med én commit per manifestgenerasjon. -> commit-shaer.
+
+    Historikken bygges, den lånes ikke: CI sjekker ut grunt (én commit),
+    og en test som leter etter en ELDRE generasjon i utsjekkingens egen
+    historikk ville da måttet hoppe over seg selv — og et hopp er ikke en
+    port. `_git` kjører mot modulens `REPO`, så den peker hit.
+    """
+    (tmp_path / m.MANIFEST_REL).parent.mkdir(parents=True, exist_ok=True)
+
+    def kjor(*argv):
+        r = subprocess.run(["git", "-C", str(tmp_path), *argv],
+                           capture_output=True)
+        assert r.returncode == 0, r.stderr.decode()
+        return r.stdout.decode().strip()
+
+    kjor("init", "-q", "-b", "hoved")
+    kjor("config", "user.email", "drill@disponit.test")
+    kjor("config", "user.name", "drill")
+    shaer = []
+    for i, raa in enumerate(generasjoner):
+        (tmp_path / m.MANIFEST_REL).write_bytes(raa)
+        kjor("add", m.MANIFEST_REL)
+        kjor("commit", "-q", "-m", f"generasjon {i}")
+        shaer.append(kjor("rev-parse", "HEAD"))
+    return shaer
 
 
 def test_akseptens_manifest_maa_vaere_det_releasene_ble_registrert_fra():
@@ -1301,36 +1318,56 @@ def test_akseptens_manifest_maa_vaere_det_releasene_ble_registrert_fra():
     assert "finnes ikke" in str(ei.value)
 
 
-def test_evidensbindingen_er_den_ene_tillatte_manifestendringen():
+def test_evidensbindingen_er_den_ene_tillatte_manifestendringen(
+        monkeypatch, tmp_path):
     """…og drillen må ellers ha kjørt NØYAKTIG den aksepterte modulen.
 
     Mellom drill og aksept endres manifestet én gang, av flyten selv:
-    drillartefaktet bindes inn i `staging_sjekkliste`. Den endringen skal
-    slippe gjennom. Alt annet — `status`, `driftstilstand`, `kjerne`,
-    avhengigheter — er modulens kjørende identitet, og en endring der er
-    en NY release som må registreres og drilles for seg.
+    drillartefaktet bindes inn i `staging_sjekkliste`, og akseptcommitens
+    manifest er derfor en annen generasjon enn kandidatreleasens. Den ene
+    endringen skal slippe gjennom. Alt annet — `status`,
+    `driftstilstand`, `kjerne`, avhengigheter — er modulens kjørende
+    identitet, og en endring der er en NY release som må registreres og
+    drilles for seg.
     """
+    import yaml
     m = _aksept_skript()
-    _, sha = m.les_manifest()
-    gammel_sha, gammel_commit, gammel = _manifestgenerasjon(m, sha)
-    if gammel is None:
-        pytest.skip("grunn utsjekking: bare én manifestgenerasjon")
-    hode = subprocess.run(["git", "-C", str(ROT), "rev-parse", "HEAD"],
-                          capture_output=True).stdout.decode().strip()
+    drillet = {"id": "wcag_audit", "navn": "WCAG", "versjon": "0.1.0",
+               "status": "under_utvikling", "driftstilstand": "ikke_i_drift",
+               "avhengigheter": ["m01_policy"], "kjerne": "platform/modules/m",
+               "i18n_prefiks": "wcagaudit",
+               "staging_sjekkliste": {"rollback_testet": {"status": "nei"}}}
+    # Akseptcommitens manifest: samme modul, med drillartefaktet bundet inn.
+    akseptert = dict(drillet, staging_sjekkliste={
+        "rollback_testet": {"status": "ja", "artefakt_sha256": "ab" * 32}})
+    raa = [yaml.safe_dump(g, sort_keys=True).encode("utf-8")
+           for g in (drillet, akseptert)]
+    gammel_commit, hode = _manifesthistorikk(m, tmp_path, raa)
+    monkeypatch.setattr(m, "REPO", tmp_path)
+    gammel_sha = hashlib.sha256(raa[0]).hexdigest()
+    ny_sha = hashlib.sha256(raa[1]).hexdigest()
     releaser = ("r-drillet", "r-kandidat")
     conn = _Manifesthash({r: gammel_sha for r in releaser})
-    # Bare evidensbindingen skiller: aksepten bærer den generasjonen.
-    kun_evidens = dict(gammel, staging_sjekkliste={"drillet": "inn"})
+    # Bare evidensbindingen skiller: aksepten bærer den generasjonen, og
+    # sier hvilken commit den ble sjekket inn i.
     assert m.verifiser_registrert_manifest(
-        conn, releaser, kun_evidens, sha, hode) == gammel_commit
+        conn, releaser, akseptert, ny_sha, hode) == gammel_commit
     # Identiteten er flyttet: da er dette en annen modul enn den drillede.
     for felt, verdi in (("status", "aktiv"),
                         ("driftstilstand", "produksjon"),
-                        ("kjerne", "platform/modules/en_annen")):
+                        ("kjerne", "platform/modules/en_annen"),
+                        ("avhengigheter", [])):
         with pytest.raises(SystemExit) as ei:
             m.verifiser_registrert_manifest(
-                conn, releaser, dict(kun_evidens, **{felt: verdi}), sha, hode)
+                conn, releaser, dict(akseptert, **{felt: verdi}), ny_sha,
+                hode)
         assert felt in str(ei.value) and "NY release" in str(ei.value)
+    # …og en generasjon som ikke er sjekket inn, finnes ikke å lese.
+    with pytest.raises(SystemExit) as ei:
+        m.verifiser_registrert_manifest(
+            _Manifesthash({r: "e" * 64 for r in releaser}), releaser,
+            akseptert, ny_sha, hode)
+    assert "innsjekket generasjon" in str(ei.value)
 
 
 def test_akseptskriptet_leser_maaletiden_av_artefaktet():
