@@ -1310,7 +1310,11 @@ def test_signert_er_en_egen_maaling_ikke_et_navn_paa_fristtallet():
     sjekk = (ROT / "deploy/staging/wcag-staging-sjekkliste.py").read_text(
         encoding="utf-8")
     assert "kvittering_signert=signert" in sjekk
-    assert "kvitteringskapabiliteter k" in sjekk, (
+    # …gjennom den DELTE porten (Codex P1, runde 17): predikatet bor i
+    # `maal_rent_utfall`, bak fullmakten det trenger — en kopi her ville
+    # kjørt som migrator, og `kvitteringskapabiliteter` er
+    # `REVOKE ALL … FROM PUBLIC` med kolonnegrant bare til modul_eier.
+    assert "maal_rent_utfall" in sjekk, (
         "signaturmålingen krever avtrykket verifiseringsveien setter"
         " igjen — ikke at to felter samme skriver eier er enige")
 
@@ -1923,11 +1927,28 @@ def test_rent_utfall_krever_avtrykket_verifiseringsveien_setter_igjen(
     # av en drill som alt har konsumert release-IDene — og aksepten
     # avviser samme utfall etterpå. En drill som rapporterer bestått for
     # evidens som ikke kan aksepteres, måler noe annet enn aksepten.
+    #
+    # …og den stiller det gjennom SAMME FUNKSJON (Codex P1, runde 17).
+    # Sonden spurte basen direkte som `disponit_migrator`, og tabellen er
+    # `REVOKE ALL … FROM PUBLIC` med kolonnegrant bare til modul_eier —
+    # spørringen dør på «permission denied», ETTER at rullingen har
+    # drenert den levende deploymenten. Predikatet bor i basen nå.
     drill = (ROT / "deploy/staging/rollback-m56.py").read_text(
         encoding="utf-8")
-    assert "kvitteringskapabiliteter k" in drill and \
-        "k.status = 'brukt'" in drill, \
-        "drillsonden måler fortsatt bare feltene skriveren selv eier"
+    assert "maal_rent_utfall" in drill, \
+        "drillsonden måler ikke gjennom den delte porten"
+    assert "kvitteringskapabiliteter k" not in drill, \
+        "sonden har fortsatt sin egen kopi av predikatet"
+    sjekkliste = (ROT / "deploy/staging/wcag-staging-sjekkliste.py").read_text(
+        encoding="utf-8")
+    assert "maal_rent_utfall" in sjekkliste, \
+        "sjekklistens signaturmåling går utenom den delte porten"
+    m049 = M049.read_text(encoding="utf-8")
+    kropp = m049[m049.index("FUNCTION maal_rent_utfall"):]
+    kropp = kropp[:kropp.index("END $$;")]
+    assert "kvitteringskapabiliteter k" in kropp and \
+        "k.status = 'brukt'" in kropp, \
+        "den delte målingen krever ikke avtrykket lenger"
 
 
 @pg
@@ -3639,6 +3660,57 @@ def test_akseptcommiten_baerer_bytene_som_ble_validert(tmp_path):
     with pytest.raises(SystemExit) as ei:
         m.bind_til_commit(hode, "deploy/staging/finnes-ikke.json", SHA0)
     assert "finnes ikke i" in str(ei.value)
+
+
+@pg
+def test_drillsonden_maaler_gjennom_porten_ikke_forbi_den(migrator):
+    """Codex' P1 (runde 17): sonden og sjekklisten spurte basen DIREKTE.
+
+    `kvitteringskapabiliteter` (005) er `REVOKE ALL … FROM PUBLIC` med
+    kolonnegrant bare til `disponit_modul_eier`, og migrators medlemskap
+    i eierrollen er `WITH INHERIT FALSE`. Spørringen dør derfor på
+    «permission denied» — og i drillen dør den ETTER at rullingen har
+    drenert den levende deploymenten og brukt opp rullbakk-ID-en, altså
+    midt i en enveis måling som ikke kan gjentas.
+
+    Målingen bor nå i `maal_rent_utfall`, bak fullmakten den trenger, og
+    er den SAMME som `registrer_moduldrill` regner aksepten av."""
+    k = _kjede(migrator)
+    migrator.execute("RESET ROLE")
+    # Formen som feilet: migrator når ikke tabellen selv.
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        migrator.execute("SELECT count(*) FROM kvitteringskapabiliteter")
+    migrator.rollback()
+
+    # …og formen sonden bruker: deployfullmakten, gjennom porten.
+    migrator.execute("SET ROLE disponit_modules_admin")
+    assert migrator.execute("SELECT maal_rent_utfall(%s,%s)",
+                            (k["ten"], k["opp"]["inflight"])).fetchone()[0] \
+        is True
+    migrator.execute("RESET ROLE")
+    migrator.rollback()
+
+    # Samme svar som drillraden bærer — én måling, ett sted.
+    uten = k["oppdrag"](kapabilitet=False)
+    migrator.commit()
+    migrator.execute("SET ROLE disponit_modules_admin")
+    assert migrator.execute("SELECT maal_rent_utfall(%s,%s)",
+                            (k["ten"], uten)).fetchone()[0] is False
+    # …og et oppdrag som ikke finnes er ikke NULL, det er nei.
+    assert migrator.execute("SELECT maal_rent_utfall(%s, 0)",
+                            (k["ten"],)).fetchone()[0] is False
+    migrator.execute("RESET ROLE")
+    migrator.rollback()
+
+    # Fullmakten er lesing, ikke en skrivevei: kjøretidsrollen har den
+    # ikke, og porten gir ingen vei inn i kapabilitetstabellen.
+    rt = _rt()
+    try:
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.execute("SELECT maal_rent_utfall('t',1)")
+    finally:
+        rt.rollback()
+        rt.close()
 
 
 @pg

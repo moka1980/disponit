@@ -290,24 +290,23 @@ def _kvittering(m, tenant, oid):
     som allerede har konsumert release-IDene — og aksepten ville avvist
     samme utfall etterpå. En drill som rapporterer bestått for evidens
     som ikke kan aksepteres, måler ikke aksepten; den måler noe annet.
+
+    OG DEN STILLER DET GJENNOM SAMME FUNKSJON (Codex P1, #117 runde 17).
+    Sonden spurte basen direkte, som `disponit_migrator` — og
+    `kvitteringskapabiliteter` (005) er `REVOKE ALL … FROM PUBLIC` med
+    kolonnegrant bare til `disponit_modul_eier`. Migrators medlemskap i
+    eierrollen er `WITH INHERIT FALSE`, så spørringen dør på «permission
+    denied», og den dør ETTER rullingen: den levende deploymenten er
+    drenert, rullbakk-ID-en brukt opp, og drillen kan ikke kjøres om
+    igjen. Målingen bor derfor i `maal_rent_utfall` (049), bak fullmakten
+    den trenger, og både sonden, sjekklisten og `registrer_moduldrill`
+    kaller nøyaktig den — samme predikat, ett sted.
     """
     m.execute("RESET ROLE")
-    m.execute("SELECT set_config('disponit.tenant', %s, true)", (tenant,))
-    rad = m.execute(
-        "SELECT o.kvittering IS NOT NULL"
-        "   AND o.kvittering_signatur IS NOT NULL"
-        "   AND btrim(o.kvittering_signatur) <> ''"
-        "   AND o.kvittering_signatur"
-        "       IS NOT DISTINCT FROM (o.kvittering->'signatur'->>'verdi')"
-        "   AND o.resultathash IS NOT NULL"
-        "   AND EXISTS (SELECT 1 FROM kvitteringskapabiliteter k"
-        "                WHERE k.tenant = o.tenant AND k.oppdrag_id = o.id"
-        "                  AND k.status = 'brukt'"
-        "                  AND k.resultathash IS NOT NULL"
-        "                  AND k.resultathash IS NOT DISTINCT FROM"
-        "                      o.resultathash)"
-        "  FROM oppdrag o WHERE o.tenant=%s AND o.id=%s",
-        (tenant, oid)).fetchone()
+    _admin(m)
+    rad = m.execute("SELECT maal_rent_utfall(%s,%s)",
+                    (tenant, oid)).fetchone()
+    m.execute("RESET ROLE")
     m.commit()
     return bool(rad and rad[0])
 

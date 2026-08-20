@@ -1108,21 +1108,20 @@ def _kvittering_signert(m, oid: int) -> bool:
     ikke verifisere signaturen på nytt. Da er den brente kapabiliteten
     med matchende resultathash det sterkeste sporet basen har av at
     verifiseringen FAKTISK skjedde — og det er det denne målingen er.
+
+    MÅLINGEN BOR I BASEN (Codex P1, #117 runde 17). Spørringen sto her,
+    og den kjørte som `disponit_migrator` — men `kvitteringskapabiliteter`
+    er `REVOKE ALL … FROM PUBLIC` med kolonnegrant bare til
+    `disponit_modul_eier`, og migrators medlemskap i eierrollen er `WITH
+    INHERIT FALSE`. Den ville derfor dødd på «permission denied» første
+    gang den faktisk ble kjørt. `maal_rent_utfall` (049) er samme
+    predikat bak fullmakten det trenger, og `registrer_moduldrill` og
+    drillsonden kaller nøyaktig den: én måling, ett sted.
     """
-    rad = m.execute(
-        "SELECT o.kvittering IS NOT NULL"
-        "   AND o.kvittering_signatur IS NOT NULL"
-        "   AND btrim(o.kvittering_signatur) <> ''"
-        "   AND o.kvittering_signatur"
-        "       IS NOT DISTINCT FROM (o.kvittering -> 'signatur' ->> 'verdi')"
-        "   AND o.resultathash IS NOT NULL"
-        "   AND EXISTS (SELECT 1 FROM kvitteringskapabiliteter k"
-        "                WHERE k.tenant = o.tenant AND k.oppdrag_id = o.id"
-        "                  AND k.status = 'brukt'"
-        "                  AND k.resultathash IS NOT DISTINCT FROM"
-        "                      o.resultathash)"
-        "  FROM oppdrag o WHERE o.tenant=%s AND o.id=%s",
-        (TENANT, oid)).fetchone()
+    m.execute("SET ROLE disponit_modules_admin")
+    rad = m.execute("SELECT maal_rent_utfall(%s,%s)",
+                    (TENANT, oid)).fetchone()
+    m.execute("RESET ROLE")
     return bool(rad and rad[0])
 
 

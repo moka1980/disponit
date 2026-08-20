@@ -690,24 +690,14 @@ BEGIN
     -- kravet fra «tre felter er enige» til «verifiseringsveien har
     -- FAKTISK vært her, på dette oppdraget, med denne hashen», og det er
     -- det sterkeste sporet den veien etterlater i basen.
-    SELECT o.status,
-           o.kvittering IS NOT NULL
-           AND o.kvittering_signatur IS NOT NULL
-           AND pg_catalog.btrim(o.kvittering_signatur) <> ''
-           AND o.kvittering_signatur
-               IS NOT DISTINCT FROM (o.kvittering -> 'signatur' ->> 'verdi')
-           AND o.resultathash IS NOT NULL
-           AND EXISTS (SELECT 1
-                         FROM public.kvitteringskapabiliteter k
-                        WHERE k.tenant = o.tenant
-                          AND k.oppdrag_id = o.id
-                          AND k.status = 'brukt'
-                          AND k.resultathash IS NOT NULL
-                          AND k.resultathash
-                              IS NOT DISTINCT FROM o.resultathash)
-      INTO v_status, v_kvittering
+    --
+    -- Selve predikatet bor i `maal_rent_utfall` (Codex P1, runde 17):
+    -- drillsonden og sjekklisten måler mot NØYAKTIG denne, i stedet for
+    -- hver sin kopi bak en fullmakt de ikke har.
+    SELECT o.status INTO v_status
       FROM public.oppdrag o
      WHERE o.tenant = p_tenant AND o.id = p_inflight_oppdrag;
+    v_kvittering := public.maal_rent_utfall(p_tenant, p_inflight_oppdrag);
     v_rene_utfall := v_status IN ('utfort', 'feilet') AND v_kvittering
         AND ((v_status = 'utfort') = EXISTS (
                 SELECT 1 FROM public.artefakt a
@@ -766,6 +756,54 @@ BEGIN
                 'artefakt_sha256', lower(p_artefakt_sha),
                 'utfort_ts', p_utfort_ts));
     RETURN v_id;
+END $$;
+
+-- ÉN MÅLING, ETT STED (Codex P1, #117 runde 17).
+--
+-- «Rent utfall» — avtrykket kvitteringsveien setter igjen — ble regnet
+-- ut tre steder: her i `registrer_moduldrill`, i drillsondens
+-- `_kvittering` og i sjekklistens `_kvittering_signert`. De to siste
+-- spurte basen DIREKTE, som `disponit_migrator`, og
+-- `kvitteringskapabiliteter` (005) er `REVOKE ALL ... FROM PUBLIC` med
+-- kolonnegrant bare til `disponit_modul_eier`. Migrators medlemskap i
+-- eierrollen er `WITH INHERIT FALSE`, så spørringen dør på «permission
+-- denied» — og i drillen skjer det ETTER at rullingen har drenert den
+-- levende deploymenten og brukt opp rullbakk-ID-en, altså i en enveis
+-- måling som ikke kan kjøres om igjen.
+--
+-- Tre kopier av samme predikat er dessuten tre steder å drifte fra
+-- hverandre. Målingen bor derfor HER, bak den fullmakten den trenger, og
+-- alle tre kaller den samme funksjonen: sonden måler nøyaktig det
+-- aksepten senere regner med.
+CREATE OR REPLACE FUNCTION maal_rent_utfall(p_tenant TEXT,
+                                            p_oppdrag BIGINT)
+RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+DECLARE v_forrige TEXT; v_svar BOOLEAN;
+BEGIN
+    -- `oppdrag`/`kvitteringskapabiliteter` står med FORCE RLS og
+    -- tenantpolicy; definerens rolle eier dem ikke, så konteksten settes
+    -- eksplisitt og legges tilbake — funksjonen skal ikke etterlate
+    -- kallerens sesjon i et annet skop enn den fant den i.
+    v_forrige := current_setting('disponit.tenant', true);
+    PERFORM set_config('disponit.tenant', p_tenant, true);
+    SELECT o.kvittering IS NOT NULL
+       AND o.kvittering_signatur IS NOT NULL
+       AND pg_catalog.btrim(o.kvittering_signatur) <> ''
+       AND o.kvittering_signatur
+           IS NOT DISTINCT FROM (o.kvittering -> 'signatur' ->> 'verdi')
+       AND o.resultathash IS NOT NULL
+       AND EXISTS (SELECT 1 FROM public.kvitteringskapabiliteter k
+                    WHERE k.tenant = o.tenant
+                      AND k.oppdrag_id = o.id
+                      AND k.status = 'brukt'
+                      AND k.resultathash IS NOT NULL
+                      AND k.resultathash IS NOT DISTINCT FROM o.resultathash)
+      INTO v_svar
+      FROM public.oppdrag o
+     WHERE o.tenant = p_tenant AND o.id = p_oppdrag;
+    PERFORM set_config('disponit.tenant', coalesce(v_forrige, ''), true);
+    RETURN coalesce(v_svar, false);
 END $$;
 
 -- Attesten: hva veien som spurte GitHub SÅ. Den skrives av
@@ -1121,6 +1159,7 @@ ALTER FUNCTION aksepter_moduldeployment(TEXT, TEXT, TEXT, BIGINT, TEXT,
     OWNER TO disponit_modul_eier;
 ALTER FUNCTION attester_ci_kjoring(TEXT, TEXT, TEXT, TEXT, TEXT, TEXT,
     TEXT) OWNER TO disponit_modul_eier;
+ALTER FUNCTION maal_rent_utfall(TEXT, BIGINT) OWNER TO disponit_modul_eier;
 -- Grants i EIERVINDUET (048-disiplinen): en REVOKE fra en ikke-eier er
 -- en stille no-op, og PUBLIC ville beholdt default-EXECUTE på begge.
 SET LOCAL ROLE disponit_modul_eier;
@@ -1132,6 +1171,7 @@ REVOKE ALL ON FUNCTION aksepter_moduldeployment(TEXT, TEXT, TEXT, BIGINT,
     FROM PUBLIC;
 REVOKE ALL ON FUNCTION attester_ci_kjoring(TEXT, TEXT, TEXT, TEXT, TEXT,
     TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION maal_rent_utfall(TEXT, BIGINT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION registrer_moduldrill(TEXT, TEXT, TEXT, TEXT,
     TEXT, TEXT, BIGINT, BIGINT, BIGINT, BIGINT, TEXT, TEXT, TEXT,
     TIMESTAMPTZ) TO disponit_modules_admin;
@@ -1140,6 +1180,11 @@ GRANT EXECUTE ON FUNCTION aksepter_moduldeployment(TEXT, TEXT, TEXT,
     TO disponit_modules_admin;
 GRANT EXECUTE ON FUNCTION attester_ci_kjoring(TEXT, TEXT, TEXT, TEXT,
     TEXT, TEXT, TEXT) TO disponit_modules_admin;
+-- Målingen er LESING og gir ingen skrivevei: den svarer ja/nei om ett
+-- oppdrag i én tenant, og drillsonden og sjekklisten kaller den med
+-- nøyaktig den deployfullmakten de alt har.
+GRANT EXECUTE ON FUNCTION maal_rent_utfall(TEXT, BIGINT)
+    TO disponit_modules_admin;
 RESET ROLE;
 
 -- Definerne leser moduldeployment/modulrelease/modulhode som modul_eier
