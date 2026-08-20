@@ -82,6 +82,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -291,8 +292,39 @@ def forgjengerens_bytes(m, drillet: str) -> tuple[str, str]:
     return rad[0], rad[1]
 
 
+def lokalt_motorimage() -> str:
+    """Digesten bootveien FAKTISK vil bære — lest her, av samme kilde.
+
+    Sjekklistens fase 1 kjører `docker image inspect --format {{.Id}}
+    disponit-wcag-motor`, og fase 2 registrerer nøyaktig den verdien som
+    releaseradens `artifact_digest`. Drillen leser samme tag, med samme
+    kommando, og får dermed forhånds-svaret på det fase 2 senere vil
+    kreve.
+
+    -> `artifact_digest`-formen (64 hex, uten `sha256:`-forstavelsen).
+    """
+    ut = subprocess.run(["docker", "image", "inspect", "--format",
+                         "{{.Id}}", "disponit-wcag-motor"],
+                        capture_output=True, text=True)
+    if ut.returncode != 0:
+        raise SystemExit(
+            "AVBRUTT: fant ikke motorimaget `disponit-wcag-motor` på"
+            " verten. Bootveien (sjekklistens fase 1) dør på det samme —"
+            " men da etter at rullingen har drenert den levende"
+            " deploymenten. Bygg imaget først:\n  bash"
+            f" {REPO}/platform/modules/m56_wcag_audit/motor_axe/bygg.sh")
+    digest = ut.stdout.strip().split(":")[-1]
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise SystemExit(
+            f"AVBRUTT: `docker image inspect` ga {ut.stdout.strip()!r},"
+            " ikke en sha256-digest — fase 2 ville avvist den samme"
+            " verdien når releaseraden skulle skrives")
+    return digest
+
+
 def krev_bootbare_forgjengerbytes(forgjenger: str, forgjenger_digest: str,
-                                  drillet_digest: str) -> None:
+                                  drillet_digest: str,
+                                  lokal_digest: str) -> None:
     """Bootveien kan bare kjøre ÉN image — og det må være forgjengerens.
 
     Sjekklistens fase 1 leser det lokalt bygde `disponit-wcag-motor`, og
@@ -307,18 +339,42 @@ def krev_bootbare_forgjengerbytes(forgjenger: str, forgjenger_digest: str,
     #117 runde 6). At m56-releasene i dag deler digest er A1s levende
     bevis, og nettopp derfor må likheten MÅLES her: den er en tilstand
     som kan endre seg, ikke en garanti.
+
+    OG IMAGET PÅ VERTEN MÅLES MED (Codex P1, #117 runde 10). Sammen-
+    ligningen sto før mellom to digester lest ut av REGISTERET, mens
+    påstanden den bar handlet om et image på disken. «Den drillede
+    releasen ble registrert fra samme lokale bygg» er en historisk
+    kjensgjerning, ikke en nåværende: `disponit-wcag-motor` er en
+    flyttbar tag, og et nytt `bygg.sh` mellom registreringen og drillen
+    flytter den. Første gang bytene ble sett på, var i fase 1/2 — ETTER
+    at `bytt_release` hadde drenert den levende deploymenten, og da dør
+    fase 2 på immutabilitetskonflikten med den gamle arbeideren fenset
+    og rullbakk-id-en brukt opp. Verten spørres derfor her, før racet og
+    før rullingen: bærer taggen andre bytes enn forgjengeren, er det
+    ikke forgjengerens rullbakk drillen ville kjørt.
     """
-    if forgjenger_digest == drillet_digest:
+    if forgjenger_digest != drillet_digest:
+        raise SystemExit(
+            f"AVBRUTT: forgjengeren {forgjenger} bærer digest"
+            f" {str(forgjenger_digest)[:19]}…, mens den drillede releasen"
+            f" bærer {str(drillet_digest)[:19]}…. Sjekklistens fase 1/2"
+            " pinner det LOKALT BYGDE motorimaget, så drillen kan ikke"
+            " boote forgjengerens bytes — og en rullbakk til de drillede"
+            " bytene prøver ikke det man ruller tilbake til. Bygg"
+            " forgjengerens image på verten først, eller kjør rullbakken"
+            " manuelt og bind beviset for hånd.")
+    if lokal_digest == forgjenger_digest:
         return
     raise SystemExit(
-        f"AVBRUTT: forgjengeren {forgjenger} bærer digest"
-        f" {str(forgjenger_digest)[:19]}…, mens den drillede releasen"
-        f" bærer {str(drillet_digest)[:19]}…. Sjekklistens fase 1/2 pinner"
-        " det LOKALT BYGDE motorimaget, så drillen kan ikke boote"
-        " forgjengerens bytes — og en rullbakk til de drillede bytene"
-        " prøver ikke det man ruller tilbake til. Bygg forgjengerens image"
-        " på verten først, eller kjør rullbakken manuelt og bind beviset"
-        " for hånd.")
+        f"AVBRUTT: motorimaget `disponit-wcag-motor` på verten bærer"
+        f" digest {lokal_digest[:12]}…, mens forgjengeren {forgjenger}"
+        f" (og den drillede releasen) bærer {str(forgjenger_digest)[:12]}…."
+        " Det er vertens image sjekklistens fase 1/2 pinner og registrerer,"
+        " så drillen ville rullet tilbake til andre bytes enn de den sier"
+        " — og fase 2 ville dødd på immutabilitetskonflikten FØRST etter"
+        " at rullingen hadde drenert den levende deploymenten. Bygg"
+        " forgjengerens image på verten (eller kjør drillen fra det"
+        " utsjekket releasene ble bygget fra) før du driller.")
 
 
 def registrer_drillrelease(m, release: str, kver: int, khash: str,
@@ -695,7 +751,8 @@ def main() -> int:
     # Rullbakken skal bære FORGJENGERENS bytes, ikke den drilledes
     # (Codex P1, #117 runde 6) — og bootveien må kunne kjøre dem.
     forgjenger, forgjenger_digest = forgjengerens_bytes(m, drillet)
-    krev_bootbare_forgjengerbytes(forgjenger, forgjenger_digest, digest)
+    krev_bootbare_forgjengerbytes(forgjenger, forgjenger_digest, digest,
+                                  lokalt_motorimage())
     epoch = m.execute("SELECT module_epoch FROM modulhode WHERE modul_id=%s",
                       (MODUL,)).fetchone()[0]
     print(f"driller {drillet} (epoch {epoch}, digest {digest[:12]}…),"

@@ -1752,9 +1752,11 @@ def test_drillen_nekter_naar_forgjengerens_bytes_ikke_kan_bootes():
     og nettopp derfor må likheten måles: den er en tilstand, ikke en
     garanti."""
     d = _drillskript()
-    d.krev_bootbare_forgjengerbytes("wcag-r10", "aa" * 32, "aa" * 32)
+    d.krev_bootbare_forgjengerbytes("wcag-r10", "aa" * 32, "aa" * 32,
+                                    "aa" * 32)
     with pytest.raises(SystemExit) as ei:
-        d.krev_bootbare_forgjengerbytes("wcag-r10", "bb" * 32, "aa" * 32)
+        d.krev_bootbare_forgjengerbytes("wcag-r10", "bb" * 32, "aa" * 32,
+                                        "aa" * 32)
     assert "wcag-r10" in str(ei.value)
 
     class _Historie:
@@ -1775,6 +1777,55 @@ def test_drillen_nekter_naar_forgjengerens_bytes_ikke_kan_bootes():
     with pytest.raises(SystemExit) as ei:
         d.forgjengerens_bytes(_Historie(None), "wcag-r11")
     assert "forgjenger" in str(ei.value)
+
+
+def test_drillen_maaler_vertens_image_for_den_drenerer(monkeypatch):
+    """Codex' P1 (runde 10): imaget bootveien faktisk bærer, ble aldri sett
+    på før rullingen.
+
+    `krev_bootbare_forgjengerbytes` sammenlignet to digester lest ut av
+    REGISTERET, mens påstanden handlet om bytene på disken.
+    `disponit-wcag-motor` er en flyttbar tag: et nytt `bygg.sh` mellom
+    registreringen og drillen flytter den, og første inspeksjon skjedde da
+    i sjekklistens fase 1/2 — etter at `bytt_release` hadde drenert den
+    levende deploymenten. Fase 2 døde på immutabilitetskonflikten med den
+    gamle arbeideren fenset og rullbakk-id-en brukt opp.
+    """
+    d = _drillskript()
+    # Verten bærer forgjengerens bytes: drillen kan boote det den lover.
+    d.krev_bootbare_forgjengerbytes("wcag-r10", "aa" * 32, "aa" * 32,
+                                    "aa" * 32)
+    # Taggen har flyttet seg — porten skal stoppe FØR rullingen.
+    with pytest.raises(SystemExit) as ei:
+        d.krev_bootbare_forgjengerbytes("wcag-r10", "aa" * 32, "aa" * 32,
+                                        "cc" * 32)
+    assert "disponit-wcag-motor" in str(ei.value)
+
+    # …og porten kalles med vertens digest før noe registreres eller rulles.
+    tekst = (ROT / "deploy/staging/rollback-m56.py").read_text(
+        encoding="utf-8")
+    kropp = tekst[tekst.index("\ndef main()"):]
+    assert (kropp.index("lokalt_motorimage()")
+            < kropp.index("registrer_drillrelease(m")
+            < kropp.index("bytt_release")), \
+        "vertens image må måles foran registreringene og rullingen"
+
+    # Digesten leses av samme kilde som fase 1: `docker image inspect`.
+    class _Ut:
+        returncode = 0
+        stdout = "sha256:" + "ab" * 32
+
+    monkeypatch.setattr(d.subprocess, "run", lambda *a, **k: _Ut())
+    assert d.lokalt_motorimage() == "ab" * 32
+
+    class _Mangler:
+        returncode = 1
+        stdout = ""
+
+    monkeypatch.setattr(d.subprocess, "run", lambda *a, **k: _Mangler())
+    with pytest.raises(SystemExit) as ei:
+        d.lokalt_motorimage()
+    assert "bygg.sh" in str(ei.value)
 
 
 def test_en_eksisterende_rullbakkrelease_maales_for_rullingen():
