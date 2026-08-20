@@ -154,6 +154,13 @@ INSERT INTO _design VALUES
     -- altså som runtime-rollen, som verken har SELECT på `policyaktivering`
     -- eller eierens RLS-policy.
     ('FUNCTION', 'hendelse_en_per_levende_versjon()',       'disponit_policy_eier'),
+    -- 047: prøven «har denne versjonen vært i kraft». Ren funksjon av fire
+    -- skalarer, så EXECUTE står til PUBLIC som normalt — men EIEREN er
+    -- policy_eier, som for de andre 047-definerne, og da må den stå her.
+    -- Uten raden klassifiserer reparasjonen den som strøgods og flytter
+    -- eierskapet til migrator, og definerne som kaller den er ikke lenger
+    -- det designet sier de er.
+    ('FUNCTION', 'policyversjon_i_kraft(boolean,timestamp with time zone,text,timestamp with time zone)', 'disponit_policy_eier'),
     -- 014 (PR-014a): modulregisterets herdede overgangsfunksjoner. Eid av
     -- disponit_modul_eier fordi registertabellene er off-limits for runtime
     -- (runtime får KUN SELECT). Paritetstesten dekker dem.
