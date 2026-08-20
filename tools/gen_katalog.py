@@ -220,6 +220,13 @@ POST_RE = re.compile(
 # ikke er forankret i et manifest kan love drift ingen port har bestått.
 # Hva en modul FAKTISK er, står ett sted: `MODULSTATUS` i plattformdata.js,
 # avledet av manifestene og pinnet av test_ui_kontrakt.py.
+#
+# Forbudet håndheves av `les_katalog()` gjennom mønsteret under. Nøkkelposisjon
+# er hele presisjonen: feltnavnet må stå rett etter en `{` eller et komma og
+# følges av kolon. Ordet «status» finnes overalt i feltVERDIene — «samtykke-
+# status», «onboardingstatus», «resultatstatus» — og de er prosa om hva en
+# modul gjør, ikke en tilstandsakse ved siden av manifestet.
+STATUS_RE = re.compile(r"""[{,]\s*["']?(status|driftstilstand)["']?\s*:""")
 
 
 def slug(navn: str) -> str:
@@ -234,6 +241,18 @@ def les_katalog() -> list[dict]:
     skript = "\n".join(re.findall(r"<script[^>]*>(.*?)</script>",
                                   KILDE.read_text(encoding="utf-8",
                                                   errors="replace"), re.S))
+    # Statusforbudet over sto bare som prosa, og prosa er ikke en port: feltet
+    # kom tilbake i v9 for M-57 etter at det ble tatt ut for M-56 i #109 (Codex
+    # P2 på #118). Generatoren KASTER feltet stille, så den siden som tegner det
+    # rett fra kilden blir stående på gammel tilstand mens `MODULSTATUS` fører
+    # modulen videre — ingenting knekker, kilden bare lyver. Nå stopper det her.
+    forbudt = STATUS_RE.search(skript)
+    if forbudt:
+        raise SystemExit(
+            f"modulpost i {KILDE_NAVN} bærer `{forbudt.group(1)}` — katalogen "
+            f"bærer struktur (nummer, navn, område, fase), ikke tilstand. Hva "
+            f"en modul FAKTISK er, står i `MODULSTATUS` i plattformdata.js, "
+            f"avledet av manifestene. Fjern feltet.")
     poster = [
         {"n": int(m.group(1)), "navn": m.group(3), "omrade": m.group(5),
          "fase": int(m.group(6))}
