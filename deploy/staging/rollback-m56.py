@@ -99,6 +99,9 @@ sys.path.insert(0, str(REPO / "platform/core"))
 
 MODUL = "m_wcag_audit"   # registernavnet (modulmappen heter m56_wcag_audit)
 MILJO = "staging"
+#: Manifestet registeret regner modulens identitet ut av — samme sti som
+#: `registrer-m-wcag-audit.py` og `m56-aksept.py` bruker.
+MANIFEST_REL = "platform/modules/m56_wcag_audit/manifest.yaml"
 VENTETID_S = 25.0        # claim-stoppet observeres minst så lenge
 POLL_S = 0.1
 #: Motorimaget drillen MÅLTE i preflighten, som immutabel image-referanse
@@ -188,8 +191,7 @@ def _admin(m):
 def _manifest_hash() -> str:
     """Manifestets hash slik `registrer-m-wcag-audit.py` regner den ut."""
     return hashlib.sha256(
-        (REPO / "platform/modules/m56_wcag_audit/manifest.yaml").read_bytes()
-    ).hexdigest()
+        (REPO / MANIFEST_REL).read_bytes()).hexdigest()
 
 
 def _kjor_faser(release: str, evidens: Path, *, hva: str,
@@ -710,6 +712,62 @@ def krev_ubrukte_drillreleaser(m, drillet: str, rullback: str,
                 " ubrukte id-er.")
 
 
+def krev_akseptbar_manifestgenerasjon(m, drillet: str) -> None:
+    """Den DRILLEDE releasens manifestgenerasjon må være denne
+    utsjekkingens — ellers er aksepten umulig før drillen er kjørt
+    (Codex P1, #117 runde 18).
+
+    `registrer_drillrelease` skriver rullbakk- og kandidatraden med
+    manifesthashen den regner ut av `manifest.yaml` på disk her og nå (og
+    må gjøre det: sjekklistens fase 2 booter dem fra samme disk, så en
+    annen hash ville vært to ulike påstander om samme immutable rad). Den
+    DRILLEDE releasen er derimot registrert for lenge siden, med den
+    generasjonen som lå på disk DA.
+
+    Er de to ulike, er drillen bortkastet før den starter:
+    `verifiser_registrert_manifest` i `m56-aksept.py` krever at drillet og
+    kandidat bærer NØYAKTIG samme `manifest_hash` — «en drill er én
+    måling, i én manifestgenerasjon» — og først DERETTER regner den den
+    ene tillatte `staging_sjekkliste`-deltaen, mellom den registrerte
+    generasjonen og akseptcommiten. Den deltaen hjelper altså ikke her:
+    likheten mellom de to registrerte radene er absolutt.
+
+    Og drillen er enveis. Uten denne porten ville den rullet, drenert den
+    levende deploymenten, brukt opp begge drill-id-ene og skrevet et
+    grønt artefakt — hvorpå aksepten stoppet på en divergens ingen kan
+    rette, fordi `modulrelease` er immutabel. Da må HELE flippen kjøres
+    om igjen med nye id-er.
+
+    Porten står derfor foran alt: før registreringen, før bestillingen og
+    lenge før rullingen.
+    """
+    rad = m.execute(
+        "SELECT manifest_hash FROM modulrelease WHERE modul_id=%s"
+        " AND release_id=%s", (MODUL, drillet)).fetchone()
+    if rad is None:
+        raise SystemExit(
+            f"AVBRUTT: den claimende releasen {drillet} har ingen rad i"
+            " `modulrelease` — registeret er inkonsistent, og drillen kan"
+            " ikke måle en deployment uten release.")
+    registrert = str(rad[0] or "").strip().lower()
+    lokal = _manifest_hash()
+    if registrert == lokal:
+        return
+    raise SystemExit(
+        f"AVBRUTT: den drillede releasen {drillet} er registrert fra"
+        f" manifestgenerasjon {registrert[:12]}…, mens {MANIFEST_REL} i"
+        f" dette utsjekket er {lokal[:12]}…. Drillreleasene ville blitt"
+        " registrert med DENNE generasjonen, og aksepten krever at"
+        " drillet og kandidat bærer nøyaktig samme `manifest_hash` — én"
+        " drill er én måling, i én manifestgenerasjon. Drillen er enveis,"
+        " så hadde den kjørt, ville den drenert den levende deploymenten"
+        " og brukt opp begge drill-id-ene for en aksept som aldri kunne"
+        " skrives; radene er immutable og kan ikke rettes etterpå."
+        " Kjør drillen fra utsjekket den claimende releasen ble"
+        " registrert fra, eller rull ut en ny release fra dette"
+        " manifestet først — og drill den.")
+
+
 def reserver_artefaktmaal(ut: Path) -> Path:
     """Åpner målet FØR drillen, og reserverer plassen den skal skrives til.
 
@@ -1158,6 +1216,10 @@ def main() -> int:
     # Utgangspunktet: den claimende deploymenten er den som drilles.
     drillet, kver, khash, digest = den_ene_claimende(m)
     krev_ubrukte_drillreleaser(m, drillet, a.rullback_id, a.kandidat_id)
+    # …og drillen må kunne ENDE i en aksept: drillreleasene registreres
+    # med dette utsjekkets manifestgenerasjon, og aksepten krever at den
+    # drillede releasen bærer nøyaktig samme (Codex P1, #117 runde 18).
+    krev_akseptbar_manifestgenerasjon(m, drillet)
     # Rullbakken skal bære FORGJENGERENS bytes, ikke den drilledes
     # (Codex P1, #117 runde 6) — og bootveien må kunne kjøre dem.
     forgjenger, forgjenger_digest = forgjengerens_bytes(m, drillet,

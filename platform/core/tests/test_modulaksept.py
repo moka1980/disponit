@@ -3947,3 +3947,61 @@ def test_sp10_daekker_049():
         encoding="utf-8")
     assert "49: (_seed_049, _mal_049)" in sp10
     assert M049.exists()
+
+
+class _Manifestrad:
+    """Bare det `krev_akseptbar_manifestgenerasjon` spør om: den drillede
+    releasens registrerte `manifest_hash`, eller ingen rad."""
+
+    def __init__(self, manifest_hash=None):
+        self._hash = manifest_hash
+
+    def execute(self, _sql, _params=None):
+        return self
+
+    def fetchone(self):
+        return (self._hash,) if self._hash is not None else None
+
+
+def test_drillen_nekter_en_annen_manifestgenerasjon_enn_den_drillede():
+    """Codex' P1 (runde 18): drillen kunne kjøres ferdig for en aksept som
+    var umulig FØR den startet.
+
+    `registrer_drillrelease` skriver rullbakk- og kandidatraden med
+    manifesthashen den regner ut av `manifest.yaml` på disk — og må gjøre
+    det, siden sjekklistens fase 2 booter dem fra samme disk. Den DRILLEDE
+    releasen bærer derimot generasjonen som lå på disk da DEN ble
+    registrert. `verifiser_registrert_manifest` krever at drillet og
+    kandidat er registrert fra NØYAKTIG samme generasjon — den ene
+    tillatte `staging_sjekkliste`-deltaen regnes først etterpå, mellom den
+    registrerte generasjonen og akseptcommiten, så den hjelper ikke her.
+
+    Divergerte de, rullet drillen likevel: den drenerte den levende
+    deploymenten, brukte opp begge drill-id-ene og skrev et grønt
+    artefakt — hvorpå aksepten stoppet på en divergens `modulrelease`s
+    immutabilitet gjør umulig å rette. Porten hører hjemme foran
+    rullingen."""
+    d = _drillskript()
+    lokal = d._manifest_hash()
+    # Samme generasjon: drillen går videre (og hashen normaliseres, slik
+    # `verifiser_registrert_manifest` også leser den).
+    d.krev_akseptbar_manifestgenerasjon(_Manifestrad(f"  {lokal.upper()} "),
+                                        "r-drillet")
+    # En ANNEN generasjon stoppes — før noe er registrert eller rullet.
+    with pytest.raises(SystemExit) as ei:
+        d.krev_akseptbar_manifestgenerasjon(_Manifestrad("ab" * 32),
+                                            "r-drillet")
+    assert "manifestgenerasjon" in str(ei.value)
+    assert lokal[:12] in str(ei.value)
+    # …og en claimende release uten releaserad er et inkonsistent register,
+    # ikke en grønn drill.
+    with pytest.raises(SystemExit) as ei:
+        d.krev_akseptbar_manifestgenerasjon(_Manifestrad(), "r-drillet")
+    assert "modulrelease" in str(ei.value)
+
+    # Porten står FØR den passive registreringen (som selv er immutabel)
+    # og dermed lenge før rullingen.
+    tekst = (ROT / "deploy/staging/rollback-m56.py").read_text(
+        encoding="utf-8")
+    assert (tekst.index("krev_akseptbar_manifestgenerasjon(m, drillet)")
+            < tekst.index("registrer_drillrelease(m, a.rullback_id"))
