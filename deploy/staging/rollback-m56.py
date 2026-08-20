@@ -139,6 +139,13 @@ RESERVASJONSMARGIN_S = 120
 #: Frist per sjekklistefase. En fase som henger er ikke en lang drill, den
 #: er en drill som aldri blir ferdig — og den skal si ifra, ikke stå.
 FASEFRIST_S = 1200
+#: …og gjerdet måles så ofte MENS fasen kjører (Codex P2, #117 runde 17).
+#: En frist på 1200 s er lengre enn reservasjonen på 600, så en port bare
+#: FØR og ETTER fasen kommer for sent: hjerteslaget kan miste basen rett
+#: etter forrige port, reservasjonen utløpe, og en vanlig `bytt_release`
+#: gå — mens fasen fortsatt kjører og siden gjør sin egen enveis
+#: overgang. Fasen drepes derfor i det gjerdet faller.
+FASEPOLL_S = 5
 #: Satt av hjerteslaget når gjerdet BEVISELIG er tapt (utløpt eller
 #: overtatt). Da hjelper ingen margin: en deployment kan ha gått.
 RESERVASJONEN_TAPT = ""
@@ -226,27 +233,40 @@ def _kjor_faser(release: str, evidens: Path, *, hva: str,
                          " siden porten målte den")
     for fase in faser:
         krev_reservasjonen(f"sjekklistefase {fase} for {hva} ({release})")
-        try:
-            r = subprocess.run(
-                [sys.executable, str(HER / "wcag-staging-sjekkliste.py"),
-                 "--evidens", str(evidens), "--fase", fase],
-                env={**os.environ, "WCAG_RELEASE": release,
-                     "WCAG_RUNDE_ID": f"drill-{release}",
-                     "WCAG_MOTORIMAGE": PINNET_MOTORIMAGE},
-                capture_output=True, text=True, timeout=FASEFRIST_S)
-        except subprocess.TimeoutExpired as e:
-            raise SystemExit(
-                f"AVBRUTT: sjekklistefase {fase} for {hva} ({release}) sto"
-                f" i {FASEFRIST_S} s uten å bli ferdig. En fase som henger"
-                " er ikke en lang drill — den holder drillen fanget mens"
-                " reservasjonen tikker mot utløpet, og etter utløpet kan"
-                " en vanlig deployment drenere deploymenten fasen står"
-                f" i.\n{(e.stdout or '')[-2000:]}"
-                f"\n{(e.stderr or '')[-2000:]}") from e
-        if r.returncode != 0:
+        barn = subprocess.Popen(
+            [sys.executable, str(HER / "wcag-staging-sjekkliste.py"),
+             "--evidens", str(evidens), "--fase", fase],
+            env={**os.environ, "WCAG_RELEASE": release,
+                 "WCAG_RUNDE_ID": f"drill-{release}",
+                 "WCAG_MOTORIMAGE": PINNET_MOTORIMAGE},
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        frist = time.monotonic() + FASEFRIST_S
+        while True:
+            try:
+                ut, feil = barn.communicate(timeout=FASEPOLL_S)
+                break
+            except subprocess.TimeoutExpired:
+                pass
+            # Gjerdet måles MENS fasen kjører, ikke bare rundt den, og
+            # fasen drepes i det det faller: en hengende fase som får
+            # fortsette forbi utløpet, gjør sin egen enveis fase 2 mot en
+            # deployment en vanlig `bytt_release` kan ha drenert.
+            grunn = _reservasjonssvikt()
+            if not grunn and time.monotonic() > frist:
+                grunn = f"fasen sto i {FASEFRIST_S} s uten å bli ferdig"
+            if grunn:
+                barn.kill()
+                ut, feil = barn.communicate()
+                raise SystemExit(
+                    f"AVBRUTT: sjekklistefase {fase} for {hva} ({release})"
+                    f" ble stoppet — {grunn}. En fase som får fortsette"
+                    " uten gjerde, kjører sin egen enveis overgang mot en"
+                    " deployment noen andre kan ha flyttet i mellomtiden."
+                    f"\n{(ut or '')[-2000:]}\n{(feil or '')[-2000:]}")
+        if barn.returncode != 0:
             raise SystemExit(f"AVBRUTT: sjekklistefase {fase} for {hva}"
-                             f" ({release}) feilet:\n{r.stdout[-2000:]}"
-                             f"\n{r.stderr[-2000:]}")
+                             f" ({release}) feilet:\n{(ut or '')[-2000:]}"
+                             f"\n{(feil or '')[-2000:]}")
         # …og gjerdet må fortsatt stå ETTER fasen: gikk det tapt underveis,
         # skal ikke neste fase bygge videre på en tilstand som kan ha
         # flyttet seg.
@@ -1011,6 +1031,24 @@ def _hjerteslag(dsn: str, kobler=None) -> None:
                 pass
 
 
+def _reservasjonssvikt() -> str:
+    """Står gjerdet? -> "" hvis ja, ellers grunnen til at det ikke gjør det.
+
+    Skilt fra `krev_reservasjonen` fordi den samme målingen må kunne
+    gjøres MENS en fase kjører, uten å kaste (Codex P2, #117 runde 17):
+    da er svaret et signal om å drepe barnet, ikke et avbrudd i seg selv.
+    """
+    if not RESERVASJONSTOKEN:
+        return ""                    # ingen reservasjon tatt (tørrkjøring)
+    if RESERVASJONEN_TAPT:
+        return RESERVASJONEN_TAPT
+    stille = time.monotonic() - SISTE_FORNYELSE
+    if stille > RESERVASJONSVARIGHET_S - RESERVASJONSMARGIN_S:
+        return (f"ingen vellykket fornyelse på {round(stille)} s av en"
+                f" reservasjon som varer {RESERVASJONSVARIGHET_S} s")
+    return ""
+
+
 def krev_reservasjonen(hva: str) -> None:
     """Porten: gjerdet må STÅ før drillen gjør noe uigjenkallelig.
 
@@ -1026,14 +1064,7 @@ def krev_reservasjonen(hva: str) -> None:
     ikke, avbryter drillen mens reservasjonen ennå har `RESERVASJONSMARGIN_S`
     igjen — altså før noen andre kan flytte registeret under den.
     """
-    if not RESERVASJONSTOKEN:
-        return                       # ingen reservasjon tatt (tørrkjøring)
-    grunn = RESERVASJONEN_TAPT
-    if not grunn:
-        stille = time.monotonic() - SISTE_FORNYELSE
-        if stille > RESERVASJONSVARIGHET_S - RESERVASJONSMARGIN_S:
-            grunn = (f"ingen vellykket fornyelse på {round(stille)} s av"
-                     f" en reservasjon som varer {RESERVASJONSVARIGHET_S} s")
+    grunn = _reservasjonssvikt()
     if grunn:
         raise SystemExit(
             f"AVBRUTT foran {hva}: drillens reservasjon på ({MODUL},"

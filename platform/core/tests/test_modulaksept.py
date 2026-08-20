@@ -22,6 +22,7 @@ import re
 import secrets
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -2293,6 +2294,20 @@ def _aksept_skript():
     return mod
 
 
+class _Barn:
+    """Så mye av en `Popen` som `_kjor_faser` rører: den svarer med én
+    gang, så pollesløyfa går én runde."""
+
+    def __init__(self, returncode=0, ut="", feil=""):
+        self.returncode, self._ut, self._feil = returncode, ut, feil
+
+    def communicate(self, timeout=None):
+        return self._ut, self._feil
+
+    def kill(self):
+        self.returncode = -9
+
+
 def _drillskript():
     """Drillskriptet lastet som modul (filnavnet har bindestrek)."""
     import importlib.util
@@ -2690,15 +2705,40 @@ def test_reservasjonen_fornyes_og_maales_gjennom_hele_drillen(tmp_path,
     # 6) En fase som HENGER avbrytes — den skal ikke stå og la
     #    reservasjonen tikke mot utløpet. Målt på en ekte prosess.
     (tmp_path / "wcag-staging-sjekkliste.py").write_text(
-        "import time\ntime.sleep(30)\n", encoding="utf-8")
+        "import time\ntime.sleep(120)\n", encoding="utf-8")
     monkeypatch.setattr(d, "HER", tmp_path)
     monkeypatch.setattr(d, "PINNET_MOTORIMAGE", "sha256:" + "aa" * 32)
     monkeypatch.setattr(d, "FASEFRIST_S", 1)
+    monkeypatch.setattr(d, "FASEPOLL_S", 0.2)
     t0 = time.monotonic()
     with pytest.raises(SystemExit) as ei:
         d._kjor_faser("wcag-r99", tmp_path / "e.jsonl", hva="rullbakken")
-    assert time.monotonic() - t0 < 20, "fristen stoppet ikke den hengende fasen"
+    assert time.monotonic() - t0 < 30, "fristen stoppet ikke den hengende fasen"
     assert "uten å bli ferdig" in str(ei.value)
+
+    # 6b) …og et GJERDE SOM FALLER MENS fasen kjører dreper den med én
+    #     gang (Codex P2, runde 17). `FASEFRIST_S` er lengre enn
+    #     reservasjonen, så en port bare før og etter fasen kommer for
+    #     sent: hjerteslaget kan miste basen rett etter forrige port, og
+    #     en vanlig `bytt_release` gå mens fasen fortsatt kjører.
+    monkeypatch.setattr(d, "FASEFRIST_S", 600)
+    monkeypatch.setattr(d, "RESERVASJONSTOKEN", "drill-token")
+    d.RESERVASJONEN_TAPT = ""
+    d.SISTE_FORNYELSE = time.monotonic()
+
+    def _mist_gjerdet(_delay=0.6):
+        time.sleep(_delay)
+        d.RESERVASJONEN_TAPT = "reservasjonen ble overtatt"
+
+    tapt = threading.Thread(target=_mist_gjerdet, daemon=True)
+    t0 = time.monotonic()
+    tapt.start()
+    with pytest.raises(SystemExit) as ei:
+        d._kjor_faser("wcag-r99", tmp_path / "e.jsonl", hva="rullbakken")
+    assert time.monotonic() - t0 < 30, \
+        "fasen fikk fortsette etter at gjerdet falt"
+    assert "overtatt" in str(ei.value) and "uten gjerde" in str(ei.value)
+    d.RESERVASJONEN_TAPT = ""
 
     # 7) …og porten står foran hvert enveis steg i `main()`.
     tekst = (ROT / "deploy/staging/rollback-m56.py").read_text(
@@ -2713,9 +2753,13 @@ def test_reservasjonen_fornyes_og_maales_gjennom_hele_drillen(tmp_path,
     fasekropp = tekst[tekst.index("\ndef _kjor_faser("):
                       tekst.index("\ndef ", tekst.index("\ndef _kjor_faser(")
                                   + 1)]
-    assert "timeout=FASEFRIST_S" in fasekropp
+    assert "communicate(timeout=FASEPOLL_S)" in fasekropp \
+        and "barn.kill()" in fasekropp, \
+        "fasen kan ikke avbrytes mens den kjører — porten kommer for sent"
     assert fasekropp.count("krev_reservasjonen(") == 2, \
         "gjerdet må måles både før og etter hver fase"
+    assert "_reservasjonssvikt()" in fasekropp, \
+        "gjerdet måles ikke MENS fasen kjører"
 
 
 @pg
@@ -3240,14 +3284,13 @@ def test_drillen_pinner_motorimaget_for_hele_kjoringen(monkeypatch, tmp_path):
     # slår opp i stedet for taggen.
     miljoer = []
 
-    class _Ok:
-        returncode, stdout, stderr = 0, "", ""
-
     def _fanget(_cmd, **kw):
         miljoer.append(kw["env"]["WCAG_MOTORIMAGE"])
-        return _Ok()
+        return _Barn()
 
-    monkeypatch.setattr(d.subprocess, "run", _fanget)
+    # Fasene kjøres nå som `Popen` og pollet, så gjerdet kan måles MENS de
+    # kjører (Codex P2, runde 17).
+    monkeypatch.setattr(d.subprocess, "Popen", _fanget)
     d._kjor_faser("r-kand", tmp_path / "e.jsonl", hva="kandidaten")
     assert miljoer == ["sha256:" + "ab" * 32] * 3
 
@@ -3423,14 +3466,11 @@ def test_kandidatens_oppdrag_bestilles_forst_naar_rullbakken_er_fenced(
     # den får, i rekkefølge — ellers er delingen over bare kosmetikk.
     kjorte = []
 
-    class _Ok:
-        returncode, stdout, stderr = 0, "", ""
-
     def _fanget(cmd, **_kw):
         kjorte.append(cmd[cmd.index("--fase") + 1])
-        return _Ok()
+        return _Barn()
 
-    monkeypatch.setattr(d.subprocess, "run", _fanget)
+    monkeypatch.setattr(d.subprocess, "Popen", _fanget)
     monkeypatch.setattr(d, "PINNET_MOTORIMAGE", "sha256:" + "ab" * 32)
     evidens = tmp_path / "drill-evidens.jsonl"
     d._kjor_faser("r-kand", evidens, hva="kandidaten", faser=("2",))
