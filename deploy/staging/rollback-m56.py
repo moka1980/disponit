@@ -866,11 +866,23 @@ def main() -> int:
         if st == "opprettet":
             raise SystemExit(f"AVBRUTT: oppdrag {oid} ble aldri claimet —"
                              " er arbeideren i drift?")
-        rulle_ts = time.monotonic()
         if st in ("utfort", "feilet"):
             print(f"  forsøk {forsok}: {oid} rakk å fullføre før rullingen"
                   " — nytt forsøk")
             continue
+        # Rullingen er destruktiv: den drenerer den levende deploymenten og
+        # bruker opp rullbakk-release-IDen. Den skal bare fyres når det
+        # beviselig ER et løpende oppdrag å måle over den, altså nøyaktig
+        # `plukket`. Alt annet — `kansellert`, en rad som er borte (None),
+        # eller en status denne drillen ikke kjenner — er IKKE et løpende
+        # oppdrag, og å falle gjennom hit ville brukt opp drilltilstanden
+        # på en måling som aldri kunne gjøres (Codex P1, #117).
+        if st != "plukket":
+            raise SystemExit(
+                f"AVBRUTT: oppdrag {oid} sto i {st!r} da rullingen skulle"
+                " fyres — bare 'plukket' er et løpende oppdrag å måle over"
+                " rullingen. Ingen release er rørt; kjør drillen på nytt.")
+        rulle_ts = time.monotonic()
         _admin(m)
         m.execute("SELECT bytt_release(%s,%s,%s,%s,%s,'m56-drill')",
                   (MODUL, MILJO, a.rullback_id, kver, khash))
