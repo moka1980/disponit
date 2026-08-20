@@ -29,6 +29,7 @@ Testene her er derfor ti porter (Codex P2 på PR #43, #99 og #118):
                  med. Prosa er dokumentteksten pluss fnutter og kommentarer i
                  skriptet; prototypens egne variabelnavn er kode, ikke påstand.
 """
+import functools
 import json
 import re
 import shutil
@@ -451,1008 +452,194 @@ def test_spesifikasjonen_baerer_produktnavnet():
         f"bunnteksten navngir ikke «{navn}»")
 
 
-_SKRIPT_RE = re.compile(r"<script[^>]*>(.*?)</script>", re.S)
-_NAVN_RE = re.compile(r"[A-Za-z_$][\w$]*")
-_START_RE = re.compile(r"""\{\s*["']?n["']?\s*:\s*(\d+)\s*[,}]""")
-
-
-# Ord som IKKE er en verdi i seg selv. Etter dem venter JS noe mer, så
-# skråstreken som følger åpner et mønster — `return /\d+/` er ikke en divisjon.
+# ---------------------------------------------------------------------------
+# MODULKATALOGEN, LEST AV EN JAVASCRIPT-MOTOR
 #
-# Lista er snudd (Codex P2 på #118, ellevte runde). Før sto den motsatt vei og
-# ramset opp de ordene et mønster kunne følge etter — `return`, `typeof`, `of`
-# … — og da er ethvert ord som IKKE ble husket en verdi: `throw /["']/.test(v)`
-# ble lest som divisjon, fnutten i mønsteret åpnet en «streng», og kjørende kode
-# ble stående igjen som prosa. Å legge til `throw` ville løst det tilfellet og
-# latt neste glemte ord stå. Snudd er lista lukket: den ER de reserverte ordene
-# i JS, og et ord som ikke er reservert er per definisjon en binding eller en
-# egenskap — altså en verdi.
+# Katalogen står i JavaScript i sannhetskilden, og porten leste den med en
+# håndskrevet skanner i Python — tusen linjer som skulle avgjøre hva som er
+# kode og hva som er tekst: strenger, malstrenger, mønstre mot divisjon,
+# kommentarer, ASI, `for await`, `catch` uten binding, beregnede nøkler,
+# escapede nøkler, accessorer. Generatoren hadde sin egen, litt annerledes.
 #
-# `this`, `super`, `true`, `false` og `null` er reserverte, men mangler her med
-# vilje: de ER verdier, og skråstreken etter dem deler.
-_ORD_UTEN_VERDI = {
-    "await", "break", "case", "catch", "class", "const", "continue",
-    "debugger", "default", "delete", "do", "else", "enum", "export",
-    "extends", "finally", "for", "function", "if", "implements", "import",
-    "in", "instanceof", "interface", "let", "new", "package", "private",
-    "protected", "public", "return", "static", "switch", "throw", "try",
-    "typeof", "var", "void", "while", "with", "yield",
-}
-
-# Ord som tar en parentes med en BETINGELSE, ikke en verdi. Parentesen deres
-# lukker en setningsdel, så etter den venter JS igjen en verdi. `for await (…)`
-# er den ene formen der kontrollordet ikke står rett foran parentesen — den
-# leses i `_kodespenn()`, som lar `for` bli stående som konteksten.
-_KONTROLLORD = {"if", "for", "while", "with", "switch", "catch"}
-
-# Ord som et UTTRYKK følger rett etter. Alt annet lar setningsposisjonen stå.
+# Nitten runder med Codex-review på #118 var nitten former skannerne ikke
+# hadde. Formene tar aldri slutt, for mengden er hele grammatikken, og en
+# skanner som ikke kjenner en form gjør ikke noe høylytt: den leser noe annet
+# enn nettleseren og sier ingenting. Eier avgjorde saken 20/8: bytt lesning,
+# ikke legg til former.
 #
-# Lista sto motsatt vei og ramset opp ordene en SETNING kunne følge — `else`,
-# `do`, `try`, `finally`, `catch`, `static` — og alt utenfor den falt til
-# uttrykksposisjon. Det er den åpne enden om igjen (Codex P2 på #118, femtende
-# runde): `export function f() {}` og `export default class {}` er
-# ERKLÆRINGER, men `export` sto ikke i lista, så `function` ble lest som et
-# uttrykk. Kroppen ga da en verdi, skråstreken etter ble en divisjon, og
-# fnutten i mønsteret etter den åpnet en «streng» som svelget kjørende kode.
-# Å legge til `export` ville løst det tilfellet og latt `default`, `const`,
-# `import` og resten stå.
-#
-# Snudd er lista lukket, på samme måte som `_ORD_UTEN_VERDI`: mengden er de
-# reserverte ordene i JS, og for hvert av dem er det gitt av grammatikken om
-# det som følger er et uttrykk eller en setning. Erklæringsordene — `export`,
-# `default`, `const`, `let`, `var`, `import`, `class`, `function` — hører til
-# setningssiden, og et ord som ikke er reservert er en verdi og setter
-# setningsposisjon av seg selv.
-#
-# Regelen bak begge sider er den samme: et objektliteral kan bare stå der et
-# UTTRYKK kan begynne, og etter en VERDI kan ikke et uttrykk begynne — `x {`,
-# `"s" {`, `1 {`, `] {` finnes ikke i JS.
-_UTTRYKKSORD = {
-    "await", "case", "delete", "extends", "in", "instanceof", "new",
-    "return", "throw", "typeof", "void", "yield",
-}
-
-# Ord som åpner en KROPP, og som i UTTRYKKSposisjon gjør hele konstruksjonen til
-# en verdi. Kroppen er en blokk begge veier — den er ikke et objektliteral — men
-# `const y = function(){} / 2` DELER, mens `function f() {} /mønster/` ikke gjør
-# det. Skillet er posisjonen ordet står i, ikke formen på kroppen (Codex P2 på
-# #118, fjortende runde).
-_KROPPSORD = {"function", "class"}
-
-# Ord der et LINJESKIFT avslutter setningen (Codex P2 på #118, sekstende
-# runde). JS er ikke frittstående av linjeskift overalt, men i disse formene er
-# det: grammatikken forbyr et linjeskift mellom ordet og det som følger, og
-# tolken setter inn semikolonet i stedet. `return` etterfulgt av linjeskift
-# RETURNERER, og `{}` på linja under er en BLOKK — ikke verdien som returneres.
-# Skanneren bar tilstanden uendret gjennom mellomrommet, så krøllparentesen ble
-# lest som et objektliteral, `}` avsluttet en «verdi», skråstreken etter ble en
-# divisjon, og fnutten i mønsteret åpnet en «streng» som svelget kjørende kode.
-#
-# Mengden er de RESTRIKTIVE produksjonene i grammatikken, ikke en oppramsing av
-# tilfeller: `return`, `throw`, `break`, `continue` og `yield` er stedene
-# spesifikasjonen skriver «[no LineTerminator here]» etter selve ordet.
-_ASI_ORD = {"break", "continue", "return", "throw", "yield"}
-# Linjeskiftene JS regner som linjeskift. `\v` og `\f` er mellomrom for JS, og
-# utløser ikke semikolon.
-_LINJESKIFT = "\n\r\u2028\u2029"
-# `async` er en MODIFIKATOR foran dem, ikke et ord med egen posisjon: i
-# `const f = async function(){}` skal `function` fortsatt leses som det
-# uttrykket det er. Ordet bærer derfor posisjonen sin uendret videre.
-_MODIFIKATOR = "async"
-
-_TALL_START_RE = re.compile(r"(?:\d[\w.]*|\.\d[\w.]*)")
-# Tallet slik det står som VERDI i en modulpost. Fortegnet er med her og ikke i
-# `_TALL_START_RE`: skanneren over leser `-` som operatoren den er.
-_VERDITALL_RE = re.compile(r"(?:-?\d[\w.]*|-?\.\d[\w.]*)")
-# Ord som er en VERDI og ikke et navn. Katalogen bruker dem ikke i dag, men de
-# er literaler, og en literal kan porten hoppe trygt over.
-_ORDVERDIER = ("true", "false", "null")
+# `tools/les_katalog.mjs` er nå det ENESTE lesersteget, og både porten og
+# generatoren går gjennom det. Det var før et POENG at de to leste hver for
+# seg — to lesninger av samme kilde gjør en feil i den ene synlig. I praksis
+# ga det to skannere som drev fra hverandre og måtte lappes hver for seg,
+# nitten ganger. Én leser kan ikke drive fra seg selv, og den leseren er en
+# JavaScript-motor: den kan per konstruksjon ikke ha en annen forestilling om
+# JavaScript enn nettleseren har.
+LESER = ROT / "tools" / "les_katalog.mjs"
 
 
-def _kommentarslutt(js: str, i: int, b: int) -> int:
-    """Indeksen etter kommentaren som åpner i `i`."""
-    if js.startswith("//", i):
-        j = js.find("\n", i, b)
-        return b if j < 0 else j + 1
-    j = js.find("*/", i + 2, b)
-    return b if j < 0 else j + 2
+@functools.lru_cache(maxsize=None)
+def _katalogposter(kilde: Path = None) -> tuple[dict, ...]:
+    """Modulpostene i sannhetskilden, slik nettleseren ser dem.
 
-
-def _strengslutt(js: str, i: int, b: int) -> int:
-    """Indeksen etter fnuttstrengen som åpner i `i`. `\\` escaper."""
-    sitat, j = js[i], i + 1
-    while j < b and js[j] != sitat:
-        j += 2 if js[j] == "\\" else 1
-    return min(j + 1, b)
-
-
-def _regexslutt(js: str, i: int, b: int) -> int:
-    """Indeksen etter mønsteret som åpner i `i`, eller `i` om det ikke lukkes.
-
-    Et mønster er kode: `\\` escaper, og en tegnklasse `[…]` kan bære en `/`
-    uten å avslutte. Et linjeskift kan den ikke — står det ett før lukkingen,
-    var skråstreken en divisjon likevel.
+    FAIL-CLOSED. Uten node er katalogen ulest, og en port som da hoppet over
+    seg selv ville vært grønn på en kilde ingen har lest. Ubuntu-runneren har
+    node preinstallert, og UI-jobben krever den alt.
     """
-    j, i_klasse = i + 1, False
-    while j < b and js[j] != "\n":
-        if js[j] == "\\":
-            j += 2
-            continue
-        if i_klasse:
-            i_klasse = js[j] != "]"
-        elif js[j] == "[":
-            i_klasse = True
-        elif js[j] == "/":
-            j += 1
-            while j < b and js[j].isalpha():
-                j += 1
-            return j
-        j += 1
-    return i
-
-
-def _kodespenn(js: str, a: int, b: int, avslutt: bool = False):
-    """Les js[a:b] som kode og gi fra deg hvert spenn som IKKE er kode.
-
-    Gir `(start, slutt, slag)` med slag «streng», «mal» (tekstbiten i en
-    malstreng), «kommentar» eller «regex». Alt mellom spennene er kjørende
-    kode — også uttrykkene i `${…}`. Returverdien er indeksen der lesingen
-    stoppet. Med `avslutt` stopper vi ved den `}` som lukker uttrykket vi står
-    i — det er slik `${…}` i en malstreng leses.
-
-    SKRÅSTREKEN er det vanskelige: `/` er både divisjon og starten på et
-    mønster, og JS skiller dem på hva som står foran. Tidligere leste vi bakover
-    fra hver skråstrek (Codex P2 på #118, niende og tiende runde). Bakover er
-    feil vei: `)` så ut som slutten på en verdi uansett hva parentesen åpnet, så
-    `if (klar) /["']/.test(x)` ble lest som divisjon, fnutten i mønsteret ble
-    starten på en «streng», og kjørende kode ble stående igjen som prosa.
-
-    Derfor leser vi nå FOROVER, med det JS selv holder rede på: `verdi` sier om
-    forrige betydningsbærende tegn avsluttet en verdi (da deler skråstreken) og
-    `parenteser` husker for hver åpne `(` om den bar en BETINGELSE — `if (…)`
-    lukker en setningsdel og et mønster kan følge, `f(…)` gir en verdi og
-    skråstreken etter er deling. Retningen er poenget: forover VET vi hva vi har
-    passert, bakover må vi gjette.
-
-    KRØLLPARENTESEN har samme tvetydighet som parentesen (Codex P2 på #118,
-    ellevte runde): `}` lukker enten et OBJEKTLITERAL, som er en verdi, eller en
-    BLOKK, som ikke er det. Vi leste den alltid som en blokk, og da så
-    divisjonen i `` `${{x: 1} / 2} sti / hale` `` ut som starten på et mønster —
-    skanningen spiste seg forbi malstrengens slutt og etterlot kjørende kode som
-    prosa. `blokker` husker derfor for hver åpne `{` hva den åpnet, og
-    `blokkposisjon` sier hvor vi står.
-
-    Den regelen sto først som en LISTE over hva en kropp kunne følge etter, og
-    en liste over former er åpen: `try {} catch {}` uten binding manglet, så
-    kroppen ble lest som et objektliteral og mønsteret etter den som divisjon
-    (Codex P2 på #118, tolvte runde). Nå står regelen som det den er: et
-    objektliteral kan bare stå der et UTTRYKK kan begynne, og etter en VERDI kan
-    ikke et uttrykk begynne — `x {`, `"s" {`, `1 {`, `] {` finnes ikke i JS.
-    Derfor setter ALT som avslutter en verdi setningsposisjon, sammen med `;`,
-    `)` og `=>`. Å ramse opp står bare de reserverte ordene som et UTTRYKK
-    følger etter, `_UTTRYKKSORD` — en lukket mengde, ikke en liste over former.
-    Den listen sto først motsatt vei, som ordene en SETNING kunne følge etter,
-    og var da åpen i feil ende: `export function f() {}` falt utenfor og ble
-    lest som et funksjonsUTTRYKK (Codex P2 på #118, femtende runde).
-    `${…}` starter i uttrykksposisjon; det er derfor `avslutt` også setter
-    startposisjonen.
-
-    Sidegevinst: en klassekropp (`class A {`) leses nå som den blokka den er.
-    Den sto før som et objektliteral, fordi navnet foran den er en verdi, og en
-    skråstrek rett etter `}` ble derfor lest som divisjon.
-
-    KOLONET er den tredje formen for samme tvetydighet (Codex P2 på #118,
-    trettende runde). Det falt før ut i den siste linja, som setter
-    uttrykksposisjon — riktig for et objektfelt (`{a: 1}`) og for et spørsmål
-    (`a ? b : c`), men galt for en etikett og for `case`: der følger en SETNING,
-    og `switch (x) { case 1: {} /["']/.test(v); }` leste derfor `{}` som et
-    objektliteral. `}` avsluttet da en «verdi», mønsteret etter ble en divisjon,
-    og fnutten inne i mønsteret åpnet en «streng» som svelget kjørende kode.
-    Hvilket av de tre kolonene det er, avgjøres av RAMMEN det står i, og av om
-    et `?` venter på svar inne i den.
-
-    Derfor er stakkene slått sammen til én. De var tre — en for parenteser, en
-    for krøllparenteser, ingen for klammer — og tre stakker over samme nøsting
-    er tre steder å komme i utakt. `rammer` har én post per åpen `(`, `[` eller
-    `{`: hva den åpnet, hva den betyr, hvor mange `?` som venter på kolonet sitt
-    inne i den, HVA EN LUKKING GIR, og om en uttrykkskropp venter på `{`-en sin.
-    Nederst ligger rammen for teksten selv, som aldri lukkes.
-
-    «Hva den betyr» er for en parentes hvilket KONTROLLORD som åpnet den, og
-    ikke bare at det sto ett der (Codex P2 på #118, femtende runde). `of` er
-    kontekstuelt: ordet er ikke reservert, så det er en helt alminnelig
-    binding — og en verdi — overalt unntatt i `for (… of …)`, der det hører
-    til løkkeformen og et UTTRYKK følger. `for (const x of /["\']/)` ble derfor
-    lest som en divisjon, og fnutten i mønsteret åpnet en «streng» som svelget
-    kjørende kode. Konteksten ligger i rammen fordi den følger nøstingen: et
-    `of` inne i `f(of)` inne i en `for`-parentes er en binding igjen.
-
-    «Hva en lukking gir» er ett felt fordi det er ett spørsmål: `)`, `]` og `}`
-    svarte hver for seg, med hver sin regel, og et FUNKSJONS- eller
-    KLASSEUTTRYKK falt mellom dem (Codex P2 på #118, fjortende runde). Kroppen
-    til `const y = function(){} / 2` er riktig lest som en blokk, men blokka er
-    kroppen til et UTTRYKK, og et uttrykk gir en verdi: skråstreken etter deler.
-    Vi leste `}` som «blokk, altså ingen verdi», så divisjonen ble til starten
-    på et mønster og fnutten inne i det neste mønsteret svelget kjørende kode.
-
-    Hva kroppen gir, avgjøres av POSISJONEN ordet står i, ikke av formen på
-    kroppen: `function f() {}` i setningsposisjon er en erklæring og gir ingen
-    verdi, `= function(){}` i uttrykksposisjon er et uttrykk og gir en. Rammen
-    som står åpen når ordet leses, husker derfor at kroppen venter — og siden
-    flagget ligger PÅ rammen, forsvinner det av seg selv med rammen: en `class`
-    brukt som nøkkel i `{class: 1}` kan ikke lekke ut og gjøre neste blokk til
-    en verdi.
-
-    LINJESKIFTET er den ene formen der mellomrom ikke er mellomrom (Codex P2 på
-    #118, sekstende runde). Skanneren bar tilstanden uendret gjennom det, men i
-    de restriktive produksjonene — `_ASI_ORD` — avslutter et linjeskift
-    setningen, og tolken setter inn semikolonet selv. `return` etterfulgt av
-    linjeskift RETURNERER, så `{}` på linja under er en blokk og ikke verdien
-    som returneres; vi leste den som et objektliteral, `}` avsluttet en «verdi»,
-    og skråstreken etter ble en divisjon som slapp en fnutt løs.
-    """
-    verdi, siste_ord = False, ""
-    rammer: list[list] = [["", False, 0, False, False]]
-    blokkposisjon, i = not avslutt, a
-    while i < b:
-        c = js[i]
-        if c.isspace():
-            if c in _LINJESKIFT and siste_ord in _ASI_ORD:
-                # Semikolonet tolken selv setter inn. Se `_ASI_ORD`.
-                verdi, siste_ord, blokkposisjon = False, "", True
-            i += 1
-            continue
-        if js.startswith("//", i) or js.startswith("/*", i):
-            j = _kommentarslutt(js, i, b)
-            yield i, j, "kommentar"
-            # En kommentar som SPENNER over linjer bærer linjeskiftet videre:
-            # `return /*\n*/ {}` returnerer, akkurat som uten kommentaren.
-            if siste_ord in _ASI_ORD and any(t in js[i:j] for t in _LINJESKIFT):
-                verdi, siste_ord, blokkposisjon = False, "", True
-            i = j
-            continue
-        if c in "\"'":
-            j = _strengslutt(js, i, b)
-            yield i, j, "streng"
-            i, verdi, siste_ord, blokkposisjon = j, True, "", True
-            continue
-        if c == "`":
-            i = yield from _malspenn(js, i, b)
-            verdi, siste_ord, blokkposisjon = True, "", True
-            continue
-        if c == "/":
-            j = i if verdi else _regexslutt(js, i, b)
-            if j > i:
-                yield i, j, "regex"
-                i, verdi, siste_ord, blokkposisjon = j, True, "", True
-                continue
-            i, verdi, siste_ord, blokkposisjon = i + 1, False, "", False
-            continue
-        if (treff := _NAVN_RE.match(js, i, b)):
-            # Etter et punktum er ordet en EGENSKAP, ikke et nøkkelord: `x.in`
-            # og `x.default` er verdier selv om ordene er reserverte.
-            etter_punktum = siste_ord == "."
-            ordet = treff.group(0)
-            # `for await (…)` er ÉN kontrollform: `await` hører til løkka og
-            # ikke til et uttrykk, så `for` blir stående som den konteksten
-            # parentesen skal leses i.
-            if etter_punktum:
-                # En EGENSKAP er ikke et nøkkelord, og blir derfor ikke stående
-                # som `siste_ord`: `o.return` avslutter ingen setning i et
-                # linjeskift, og `o.if (x)` åpner ingen betingelsesparentes.
-                siste_ord = ""
-            elif not (ordet == "await" and siste_ord == "for"):
-                siste_ord = ordet
-            if ordet in _KROPPSORD and not etter_punktum and not blokkposisjon:
-                # Et funksjons- eller klasseUTTRYKK. Kroppen er en blokk, men
-                # hele uttrykket gir en verdi når den lukkes. Flagget står på
-                # rammen som er åpen NÅ, så det følger nøstingen.
-                rammer[-1][4] = True
-            # `of` er KONTEKSTUELT: som ord er det en helt alminnelig binding,
-            # men i `for (… of …)` er det en del av løkkeformen, og etter det
-            # følger et uttrykk. Konteksten er rammen parentesen åpnet, som
-            # husker hvilket kontrollord som åpnet den.
-            lokkeord = (ordet == "of" and not etter_punktum
-                        and rammer[-1][0] == "(" and rammer[-1][1] == "for")
-            i, verdi = treff.end(), (etter_punktum
-                                     or (ordet not in _ORD_UTEN_VERDI
-                                         and not lokkeord))
-            if etter_punktum or ordet != _MODIFIKATOR:
-                blokkposisjon = verdi or (ordet not in _UTTRYKKSORD
-                                          and not lokkeord)
-            continue
-        if (treff := _TALL_START_RE.match(js, i, b)):
-            i, verdi, siste_ord, blokkposisjon = treff.end(), True, "", True
-            continue
-        if c == ".":
-            i, verdi, siste_ord, blokkposisjon = i + 1, False, ".", False
-            continue
-        if c == "(":
-            # En betingelsesparentes lukker en setningsdel; alle andre
-            # parenteser gir en verdi. Rammen husker HVILKET kontrollord som
-            # åpnet den, ikke bare at det var ett: `of` betyr noe eget inne i
-            # en `for`, og ingenting inne i en `if`.
-            kontroll = siste_ord if siste_ord in _KONTROLLORD else ""
-            rammer.append(["(", kontroll, 0, not kontroll, False])
-            i, verdi, siste_ord, blokkposisjon = i + 1, False, "", False
-            continue
-        if c == ")":
-            # Står det en krøllparentes etter en `)`, er den en KROPP: `if (…)
-            # {`, `function f() {`, `m() {`. Et objektliteral står aldri rett
-            # etter en parentes — det står etter `=`, `(`, `,`, `:` eller `${`.
-            verdi = _lukk(rammer)[3]
-            i, siste_ord, blokkposisjon = i + 1, "", True
-            continue
-        if c == "[":
-            rammer.append(["[", False, 0, True, False])
-            i, verdi, siste_ord, blokkposisjon = i + 1, False, "", False
-            continue
-        if c == "]":
-            verdi = _lukk(rammer)[3]
-            i, siste_ord, blokkposisjon = i + 1, "", True
-            continue
-        if c == "}":
-            if len(rammer) == 1 and avslutt:
-                return i
-            # Lukker den et objektliteral eller kroppen til et funksjons- eller
-            # klasseUTTRYKK, har den avsluttet en VERDI, og skråstreken etter
-            # deler. Lukker den en vanlig blokk, kan et mønster følge. Uansett
-            # hva den lukket, kan et objektliteral ikke begynne rett etter en
-            # `}` — der står enten en ny setning eller en operator.
-            verdi = _lukk(rammer)[3]
-            i, siste_ord, blokkposisjon = i + 1, "", True
-            continue
-        if c == "{":
-            objekt = not blokkposisjon
-            # Kroppen et `function`- eller `class`-uttrykk ventet på. Flagget
-            # tas ut av rammen her, så bare den FØRSTE krøllparentesen på det
-            # nivået kan være kroppen.
-            kropp = rammer[-1][4]
-            rammer[-1][4] = False
-            rammer.append(["{", objekt, 0, objekt or kropp, False])
-            i, verdi, siste_ord = i + 1, False, ""
-            blokkposisjon = not objekt
-            continue
-        if js.startswith("=>", i):
-            # Etter en pilfunksjon kommer enten en kropp (`=> {`) eller et
-            # uttrykk (`=> /mønster/`). Begge deler, aldri et objektliteral —
-            # det må skrives `=> ({…})`.
-            i, verdi, siste_ord, blokkposisjon = i + 2, False, "", True
-            continue
-        if js.startswith("?.", i):
-            # Valgfri kjeding: ordet etter er en EGENSKAP, som etter et punktum.
-            i, verdi, siste_ord, blokkposisjon = i + 2, False, ".", False
-            continue
-        if js.startswith("??", i):
-            # Nullslusing er en operator, ikke et spørsmål — den venter ikke på
-            # noe kolon.
-            i, verdi, siste_ord, blokkposisjon = i + 2, False, "", False
-            continue
-        if c == "?":
-            # Et spørsmål venter på kolonet sitt, og det kolonet hører til
-            # UTTRYKKET — ikke til en etikett. Telleren står i rammen, for
-            # `f(a ? b : c)` og `{a: x ? y : z}` nøster hver for seg.
-            rammer[-1][2] += 1
-            i, verdi, siste_ord, blokkposisjon = i + 1, False, "", False
-            continue
-        if c == ":":
-            ramme = rammer[-1]
-            if ramme[2]:
-                # Svaret på et `?`: et uttrykk følger.
-                ramme[2] -= 1
-                setning = False
-            else:
-                # Ellers avgjør rammen. Inne i et objektliteral er kolonet en
-                # nøkkels, og en verdi følger. Inne i en BLOKK — eller i
-                # teksten selv — finnes ingen nøkler: da er det en etikett
-                # eller en `case`, og en SETNING følger.
-                setning = ramme[0] in ("", "{") and not ramme[1]
-            i, verdi, siste_ord, blokkposisjon = i + 1, False, "", setning
-            continue
-        if js.startswith("++", i) or js.startswith("--", i):
-            # Postfiks `x++` avsluttet en verdi, og skråstreken etter deler;
-            # prefiks `++x` gjør ikke det. `verdi` bæres derfor uendret
-            # gjennom operatoren i stedet for å nullstilles av siste linje
-            # (Codex P2 på #118, trettende runde). Et objektliteral kan uansett
-            # ikke begynne rett etter den.
-            i, siste_ord, blokkposisjon = i + 2, "", True
-            continue
-        if c == ";":
-            i, verdi, siste_ord, blokkposisjon = i + 1, False, "", True
-            continue
-        i, verdi, siste_ord, blokkposisjon = i + 1, False, "", False
-    return b
-
-
-def _lukk(rammer: list[list]) -> list:
-    """Lukk innerste ramme og gi den fra deg. Bunnrammen lukkes aldri.
-
-    En lukking uten åpning er kode som ikke går i hop, og da er bunnrammen
-    svaret: «ingen betingelse, ingen verdi». Å svare «ingen verdi» er det
-    trygge valget i en tekst skanneren ikke klarer å lese — da leses en
-    skråstrek etter som starten på et mønster, og et mønster er kode. Svarte vi
-    «verdi», ble skråstreken en divisjon, og neste fnutt åpnet en «streng» som
-    svelger kjørende kode som prosa. Det er nettopp den feilveien de fleste
-    funnene på #118 har hatt.
-    """
-    return rammer.pop() if len(rammer) > 1 else rammer[0]
-
-
-def _malspenn(js: str, i: int, b: int):
-    """Les malstrengen som åpner i `i`. Returner indeksen etter den.
-
-    En malstreng er ikke ett spenn, men vekselvis TEKST og KODE: `${…}` bærer
-    et uttrykk, ikke noe noen har skrevet til en leser. Vi gir derfor fra oss
-    tekstbitene hver for seg og leser uttrykkene som kode, slik at
-    `` `Tilstand: ${filter_state}` `` etterlater «Tilstand: » som prosa og
-    `filter_state` som det navnet på en binding det er (Codex P2 på #118,
-    tiende runde). Ble hele spennet gitt som tekst, meldte identifikatorporten
-    uttrykket som en oppfunnet registerklasse.
-
-    Uttrykkene leses av `_kodespenn()` og ikke ved en råskanning til neste
-    backtick, fordi de kan bære NØSTEDE malstrenger — da ville skanningen
-    lukket på feil sted.
-    """
-    j = tekst = i + 1
-    while j < b:
-        c = js[j]
-        if c == "\\":
-            j += 2
-            continue
-        if c == "`":
-            yield tekst, j, "mal"
-            return j + 1
-        if js.startswith("${", j):
-            yield tekst, j, "mal"
-            j = yield from _kodespenn(js, j + 2, b, avslutt=True)
-            tekst = j = min(j + 1, b)
-            continue
-        j += 1
-    yield tekst, b, "mal"
-    return b
-
-
-def _spennkart(js: str, a: int = 0, b: int | None = None) -> dict[int, tuple]:
-    """{startindeks: (sluttindeks, slag)} for ikke-kode-spennene i js[a:b].
-
-    Skannerne under går tegn for tegn gjennom KODEN og slår opp her for å hoppe
-    over det som ikke er kode.
-    """
-    b = len(js) if b is None else b
-    return {s: (e, slag) for s, e, slag in _kodespenn(js, a, b) if e > s}
-
-
-def _prosaindekser(js: str, a: int, b: int) -> set[int]:
-    """Indeksene i js[a:b] som er prosa og ikke kjørende kode.
-
-    Fnutter og kommentarer er tekst noen har SKREVET. Et MØNSTER er kode, ikke
-    prosa: skanneren spenner over regex-literaler for at en fnutt inne i dem
-    ikke skal se ut som en streng (Codex P2 på #118, niende runde), men det som
-    står der er tegnklasser og kvantorer — ingen påstand om registeret.
-    """
-    ut: set[int] = set()
-    for start, slutt, slag in _kodespenn(js, a, b):
-        if slag != "regex":
-            ut.update(range(start, slutt))
-    return ut
-
-
-def _prosa_av(js: str) -> str:
-    """Skriptet med kjørende kode byttet mot mellomrom. Se `_prosetekst()`."""
-    prosa = _prosaindekser(js, 0, len(js))
-    return "".join(c if i in prosa else " " for i, c in enumerate(js))
-
-
-# (skriptbit, om `filter_state` er PROSA etterpå). Navnet er valgt fordi det er
-# et helt vanlig JS-navn som ser ut som en registerklasse: står det igjen som
-# prosa, melder identifikatorporten det som oppfunnet og blokkerer UI-arbeid
-# som ikke har noe med registeret å gjøre.
-_SKANNERPROEVER = [
-    ('if (klar) /["\']/.test(v); const filter_state = {};', False),
-    ('for (const x of xs) /["\']/.test(x); const filter_state = {};', False),
-    ('for await (const x of xs) /["\']/.test(x); const filter_state = {};',
-     False),
-    ('const m = /["\']/; const filter_state = {};', False),
-    ('throw /["\']/.test(v); const filter_state = {};', False),
-    ('const a = x.in / 2; const filter_state = {};', False),
-    ('const a = (b + c) / d; const filter_state = {};', False),
-    ('const a = f(b) / 2; const filter_state = {};', False),
-    ('const a = arr[0] / 2; const filter_state = {};', False),
-    ('const s = "en streng med filter_state i", filter_state = 1;', True),
-    ('// en kommentar om filter_state\nconst filter_state = {};', True),
-    ('const t = `Tilstand: ${filter_state}`;', False),
-    ('const t = `ytre ${p ? `indre ${filter_state}` : ""} slutt`;', False),
-    ('const t = `en mal som nevner filter_state i teksten`;', True),
-    ('const t = `${{x: 1} / 2} sti / hale`; const filter_state = {};', False),
-    ('const o = {a: 1} / 2; const filter_state = {};', False),
-    ('function f() {} /["\']/.test(v); const filter_state = {};', False),
-    ('if (a) {} else /["\']/.test(v); const filter_state = {};', False),
-    ('try {} catch {} /["\']/.test(v); const filter_state = {};', False),
-    ('try {} catch (e) {} /["\']/.test(v); const filter_state = {};', False),
-    ('class A {} /["\']/.test(v); const filter_state = {};', False),
-    ('const o = {a: "nevner filter_state"} / 2; const x = 1;', True),
-    # Trettende runde: kolonet. Etter `case` og en etikett følger en SETNING,
-    # så `{}` der er en blokk og mønsteret etter den er et mønster.
-    ('switch (x) { case 1: {} /["\']/.test(v); } const filter_state = {};',
-     False),
-    ('switch (x) { default: {} /["\']/.test(v); } const filter_state = {};',
-     False),
-    ('ute: {} /["\']/.test(v); const filter_state = {};', False),
-    # Men objektnøkkelens kolon og spørsmålets kolon følges av en VERDI, og
-    # krøllparentesen etter dem er et objektliteral.
-    ('const o = {a: {b: 1} / 2}; const filter_state = {};', False),
-    ('const o = p ? {a: 1} / 2 : 0; const filter_state = {};', False),
-    ('const o = p ? 0 : {a: 1} / /["\']/.test(v); const filter_state = {};',
-     False),
-    ('const o = f(p ? 1 : 2) / 2; const filter_state = {};', False),
-    # Nullslusing og valgfri kjeding bærer et `?` som IKKE venter på et kolon.
-    # Ble det talt som et spørsmål, spiste det kolonet til neste `case`, og
-    # kroppen etter ble lest som et objektliteral.
-    ('switch (x) { case a ?? b: {} /["\']/.test(v); } const filter_state = {};',
-     False),
-    ('switch (x) { case a?.b: {} /["\']/.test(v); } const filter_state = {};',
-     False),
-    # Trettende runde: postfiks `++`/`--` avslutter en verdi, så skråstreken
-    # etter dem deler.
-    ('const y = x++ / /["\']/.test(v); const filter_state = {};', False),
-    ('const y = x-- / /["\']/.test(v); const filter_state = {};', False),
-    # Prefiks gjør ikke det — der kan et mønster fortsatt følge.
-    ('++x; /["\']/.test(v); const filter_state = {};', False),
-    # En etikett i prosa er fortsatt prosa: kolonet inne i en streng er ikke
-    # skannerens bord.
-    ('const s = "case 1: filter_state"; const x = 1;', True),
-    # Fjortende runde: et funksjons- eller klasseUTTRYKK gir en verdi når
-    # kroppen lukkes, så skråstreken etter deler.
-    ('const y = function(){} / /["\']/.test(v); const filter_state = {};',
-     False),
-    ('const y = function navn(){} / /["\']/.test(v); const filter_state = {};',
-     False),
-    ('const y = class {} / /["\']/.test(v); const filter_state = {};', False),
-    ('const y = class A extends B {} / /["\']/.test(v); '
-     'const filter_state = {};', False),
-    ('const y = async function(){} / /["\']/.test(v); '
-     'const filter_state = {};', False),
-    ('const y = f(function(){} / 2); const filter_state = {};', False),
-    # Men i SETNINGSposisjon er de erklæringer og gir ingen verdi — der er
-    # skråstreken etter starten på et mønster. (Prøvene over på `function f()
-    # {}` og `class A {}` står fortsatt, og må gjøre det: regelen skiller på
-    # posisjon, så begge sider av skillet må måles.)
-    ('async function f() {} /["\']/.test(v); const filter_state = {};', False),
-    # Og et ord som BARE ser ut som et kroppsord er ikke ett: `class` etter
-    # punktum er en egenskap, og `class` foran et kolon er en nøkkel. Blokka
-    # etter dem er en blokk, og mønsteret etter den er et mønster.
-    ('const y = o.class; if (a) {} /["\']/.test(v); const filter_state = {};',
-     False),
-    ('const o = {class: 1}; if (a) {} /["\']/.test(v); '
-     'const filter_state = {};', False),
-    # Femtende runde: en EKSPORTERT erklæring står fortsatt i setningsposisjon.
-    # `export` er ikke et ord et uttrykk følger etter, så kroppen er en kropp
-    # og mønsteret etter den er et mønster.
-    ('export function f() {} /["\']/.test(v); const filter_state = {};',
-     False),
-    ('export default class {} /["\']/.test(v); const filter_state = {};',
-     False),
-    ('export default function () {} /["\']/.test(v); '
-     'const filter_state = {};', False),
-    ('export async function f() {} /["\']/.test(v); const filter_state = {};',
-     False),
-    ('export class A {} /["\']/.test(v); const filter_state = {};', False),
-    # Femtende runde: `of` i en `for`-parentes hører til løkken, og et uttrykk
-    # følger — også når det uttrykket begynner med et mønster.
-    ('for (const x of /["\']/.exec(v)) {} const filter_state = {};', False),
-    ('for await (const x of /["\']/.exec(v)) {} const filter_state = {};',
-     False),
-    # Men `of` er ikke reservert: utenfor løkkeformen er det en binding, og
-    # skråstreken etter deler.
-    ('const of = 4; const y = of / 2; const filter_state = {};', False),
-    ('const y = f(of / 2); const filter_state = {};', False),
-    ('const y = o.of / 2; const filter_state = {};', False),
-    # Sekstende runde: et linjeskift etter `return` avslutter setningen, så
-    # `{}` under er en BLOKK og mønsteret etter den er et mønster.
-    ('function f() { return\n{} /["\']/.test(v); } const filter_state = {};',
-     False),
-    ('function* g() { yield\n{} /["\']/.test(v); } const filter_state = {};',
-     False),
-    ('while (a) { continue\n{} /["\']/.test(v); } const filter_state = {};',
-     False),
-    ('while (a) { break\n{} /["\']/.test(v); } const filter_state = {};',
-     False),
-    # Også når linjeskiftet står inne i en kommentar mellom de to.
-    ('function f() { return /*\n*/ {} /["\']/.test(v); } '
-     'const filter_state = {};', False),
-    ('function f() { return // slutt\n{} /["\']/.test(v); } '
-     'const filter_state = {};', False),
-    # Men UTEN linjeskift returnerer `return {}` et objektliteral, og
-    # skråstreken etter det deler.
-    ('function f() { return {} / /["\']/.test(v); } const filter_state = {};',
-     False),
-    # Og ordet må stå ALENE: `o.return` er en egenskap, ikke en setning som et
-    # linjeskift kan avslutte, så skråstreken etter deler. Da åpner fnutten i
-    # `["']` en ekte streng, og resten av linja ER prosa — det er den riktige
-    # lesningen av JS-en, ikke en skanner som mister koden.
-    ('const y = o.return\n/["\']/.test(v); const filter_state = {};', True),
-]
-
-
-@pytest.mark.parametrize("js,prosa", _SKANNERPROEVER)
-def test_skanneren_skiller_kode_fra_prosa(js, prosa):
-    """Skanneren må lese JS som JS — ellers stopper porten uskyldig UI-arbeid.
-
-    Prøvene her står fordi sannhetskilden ikke inneholder dem: `if (klar) /…/`
-    finnes ikke i prototypen i dag, så en skanner som leser den feil går grønt
-    gjennom hele suiten fram til noen skriver linja. Tre runder med Codex-funn
-    på #118 handlet om nettopp slike former (mønster etter `=`, mønster etter
-    en betingelse, uttrykk i malstreng), og hver gang var det kilden som måtte
-    endre seg for at feilen skulle vises. Nå viser prøvene den.
-    """
-    assert ("filter_state" in _prosa_av(js)) is prosa
-
-
-def _modulposter() -> list[tuple[int, str]]:
-    """[(modulnummer, posttekst)] for hver modulpost i sannhetskilden.
-
-    Bare `<script>`-innholdet leses — fnutter i HTML-prosa er ikke strenger.
-    """
-    return _poster_i_skript(
-        "\n".join(_SKRIPT_RE.findall(KILDE.read_text(encoding="utf-8"))))
-
-
-def _poster_i_skript(js: str) -> list[tuple[int, str]]:
-    """[(modulnummer, posttekst)] for hvert element i katalogen i `js`.
-
-    Postene ble før funnet med et repo-bredt regex mot rå filtekst, og posten
-    strakk seg til NESTE treff (Codex P2 på #118, sjuende runde). Da er enhver
-    postformet tekst en modulgrense: et fritekstfelt som dokumenterer et
-    API-svar — `input: "API-eksempel: {n:1}"` — ble lest som starten på en ny
-    modul, den ekte modulen ble kuttet før `dep`, og faseporten og enumporten
-    mistet den stille.
-
-    Men postene ble fortsatt LETT ETTER, nå i koden i stedet for i teksten
-    (Codex P2 på #118, sekstende runde). Siden er en levende prototype med egen
-    UI-kode, og en helt alminnelig linje som `const demo = {n:57, p:1,
-    dep:"M-56"};` er en postformet KODEKLAMME: den ble lest som en modul til,
-    og siden `_moduler_fra_kilden()` lagrer per modulnummer, overskrev en demo
-    etter katalogen den ekte M-57. Fase- og enumporten målte da UI-data mens
-    generatoren — som leser katalogen strukturelt — så den ekte posten.
-    Katalogen ville stått grønt på en modul ingen har skrevet.
-
-    Roten er den samme som generatoren fant i fjortende runde: postene skal
-    ikke letes etter i det hele tatt. Katalogen er en LISTE, `const M = [ … ]`,
-    og en liste har elementer. Vi leser elementene, og da kan en postformet
-    klamme et annet sted i skriptet ikke være en post.
-
-    Lesningen er skrevet på nytt og ikke importert fra generatoren med vilje:
-    to uavhengige lesninger av samme kilde er det som gjør at en feil i den ene
-    blir SETT. De skiller lag nettopp i hvordan de finner ANKERET — porten har
-    en JS-skanner og krever at erklæringen står i kode, generatoren har ingen
-    og krever at det som følger har formen til en katalog.
-    """
-    js_spenn = _spennkart(js)
-    ut: list[tuple[int, str]] = []
-    for start, slutt in _katalogelementer(js, js_spenn):
-        treff = _START_RE.match(js, start)
-        assert treff, (
-            f"et element i modulkatalogen i {KILDE.name} er ikke en modulpost: "
-            f"«{js[start:start + 60]}» — katalogen er en liste av poster")
-        ut.append((int(treff.group(1)), js[start:slutt]))
-    return ut
-
-
-# Katalogens erklæring. `let` og `var` er med fordi de erklærer det samme.
-_ANKER_RE = re.compile(r"\b(?:const|let|var)\s+M\s*=\s*\[")
-
-
-def _katalogliste(js: str, spenn: dict[int, tuple]) -> int:
-    """Indeksen til `[`-en i katalogens erklæring i `js`.
-
-    Erklæringen må stå i KODE og nøyaktig én gang. Tegnene `const M = [` inne i
-    en streng eller en kommentar er prosa om katalogen, ikke katalogen — og
-    porten har skanneren som vet forskjellen. To ekte erklæringer er en
-    redeklarasjon nettleseren selv avviser, så kravet er det JS stiller.
-    """
-    ankre, i, n = [], 0, len(js)
-    while i < n:
-        if i in spenn:
-            i = spenn[i][0]
-            continue
-        if (treff := _ANKER_RE.match(js, i)):
-            ankre.append(treff.end() - 1)
-            i = treff.end()
-            continue
-        i += 1
-    assert len(ankre) == 1, (
-        f"fant {len(ankre)} modulkataloger i {KILDE.name} — det skal stå "
-        f"nøyaktig én `const M = [ … ]` i skriptet")
-    return ankre[0]
-
-
-def _katalogelementer(js: str, spenn: dict[int, tuple]):
-    """(start, slutt) for hvert element i katalogen. Lista leses som en liste.
-
-    Element, komma, element, `]` — går det ikke i hop, er kilden ikke lenger
-    lesbar, og porten sier fra HØYT i stedet for å lete videre i skriptet.
-    """
-    n = len(js)
-    i = _tomrom(js, _katalogliste(js, spenn) + 1, spenn)
-    while i < n and js[i] != "]":
-        assert i not in spenn and js[i] == "{", (
-            f"et element i modulkatalogen i {KILDE.name} er ikke en modulpost: "
-            f"«{js[i:i + 60]}» — katalogen er en liste av poster, og bare det")
-        j, dybde = i, 0
-        while j < n:
-            if j in spenn:
-                j = spenn[j][0]
-                continue
-            if js[j] == "{":
-                dybde += 1
-            elif js[j] == "}":
-                dybde -= 1
-                if dybde == 0:
-                    j += 1
-                    break
-            j += 1
-        else:
-            raise AssertionError(
-                f"en modulpost i {KILDE.name} lukkes aldri — kilden har endret "
-                f"form, sjekk parseren")
-        yield i, j
-        i = _tomrom(js, j, spenn)
-        if i < n and js[i] == ",":
-            i = _tomrom(js, i + 1, spenn)
-        elif i < n and js[i] != "]":
-            raise AssertionError(
-                f"en modulpost i {KILDE.name} følges hverken av komma eller av "
-                f"listens slutt — kilden har endret form")
-    assert i < n, (
-        f"modulkatalogen i {KILDE.name} lukkes aldri — kilden har endret form")
-
-
-# En katalog med to poster, slik kilden skriver dem. Prøvene under legger
-# UI-kode rundt den og måler at porten fortsatt leser NØYAKTIG disse to.
-_PROEVEKATALOG = ("const M = [\n"
-                  "  {n:1,name:'En',area:'X',p:1,dep:'',kl:'sideeffektfri'},\n"
-                  "  {n:2,name:'To',area:'X',p:2,dep:'M-1',rev:'direkte'}\n"
-                  "];\n")
-
-
-@pytest.mark.parametrize("linje", [
-    # En postformet KODEKLAMME i UI-koden. Helt lovlig JS, og ingen modul.
-    'const demo = {n:2, p:4, dep:"M-56"};',
-    # Den farlige rekkefølgen: en demo ETTER katalogen overskrev den ekte
-    # posten, fordi `_moduler_fra_kilden()` lagrer per modulnummer.
-    _PROEVEKATALOG + 'const demo = {n:2, p:4, dep:"M-56"};',
-    # En postformet streng og en postformet kommentar er samme sak.
-    """const demo = "{n:2,name:'Demo',area:'X',p:4}";""",
-    "// {n:2,name:'Demo',area:'X',p:4}",
-    # Og tegnene `const M = [ … ]` i prosa er ikke en katalog — heller ikke
-    # når prosaen bærer en KOMPLETT tom liste (Codex P2 på #118, sekstende
-    # runde).
-    'const hjelp = "const M = []";',
-    "// const M = []",
-    "/* const M = [] */",
-    "const hjelp = `const M = []`;",
-])
-def test_porten_leser_bare_elementene_i_katalogen(linje):
-    """Postene er elementene i `M`, ikke enhver postformet klamme i skriptet.
-
-    Porten LETTE etter poster i koden (Codex P2 på #118, sekstende runde), og
-    da er en helt alminnelig demo eller testfiksur i UI-koden en modul til.
-    Står den etter katalogen, overskriver den den ekte posten med samme
-    nummer, og fase- og enumporten måler UI-data mens generatoren — som leser
-    katalogen strukturelt — ser den ekte. Porten ville stått grønn på en modul
-    ingen har skrevet.
-    """
-    js = linje + "\n" + _PROEVEKATALOG if not linje.startswith("const M") \
-        else linje
-    assert _poster_i_skript(js) == _poster_i_skript(_PROEVEKATALOG)
-
-
-def test_to_ekte_kataloger_stopper_porten():
-    """To erklæringer er en redeklarasjon, og da vet ingen hvilken som gjelder.
-
-    Motstykket til prøven over: en ERKLÆRING nummer to skal stoppe porten,
-    uansett hvor få poster den bærer. Skillet mellom de to prøvene er kode mot
-    tekst, ikke form mot form — porten har skanneren som vet forskjellen, og
-    det er den forskjellen nettleseren også ser.
-    """
-    with pytest.raises(AssertionError, match="modulkatalog"):
-        _poster_i_skript(_PROEVEKATALOG + "const M = [];\n")
-
-
-def test_et_element_som_ikke_er_en_post_stopper_porten():
-    """Katalogen er en liste av poster, og bare det.
-
-    Blir et element noe annet — et tall, en streng, en spredning — er kilden
-    ikke lenger den katalogen porten leser, og da skal den si fra HØYT i stedet
-    for å hoppe over elementet og måle en katalog som mangler en modul.
-    """
-    with pytest.raises(AssertionError, match="modulpost"):
-        _poster_i_skript("const M = [{n:1,name:'En',area:'X',p:1}, 'to'];\n")
-
-
-def _tomrom(js: str, i: int, spenn: dict[int, tuple]) -> int:
-    """Indeksen til første tegn fra `i` som verken er blankt eller kommentar.
-
-    Mellom en nøkkel og kolonet den hører til, og mellom kolonet og verdien,
-    kan begge deler stå. JS bryr seg ikke, og for spørsmålet «hvilket felt er
-    dette, og hva står i det?» er de like mye ingenting.
-    """
-    while i < len(js):
-        if js[i].isspace():
-            i += 1
-        elif i in spenn and spenn[i][1] == "kommentar":
-            i = spenn[i][0]
-        else:
-            break
-    return i
-
-
-# Navnet en strengnøkkel får når råteksten mellom fnuttene IKKE er navnet:
-# `['\x6bl']` og `"kl":` gir begge den alminnelige egenskapen `kl` i
-# nettleseren (Codex P2 på #118, tolvte runde). Leste porten råteksten, fikk
-# posten et felt som heter noe annet — og et felt som ikke finnes, sjekker
-# enumporten ikke. Escapene TOLKES ikke: å skrive JS-strengregler i Python
-# (`\xHH`, `\uHHHH`, `\u{…}`, oktalt utenfor «use strict») er en åpen liste der
-# hver glemt form er et nytt smutthull. De avvises, og navnet blir dette —
-# en omvendt skråstrek er ikke et lovlig feltnavn, så det kan ikke kollidere
-# med et ekte felt.
-ULESELIG = "\\"
-
-
-def _nokkelnavn(innhold: str) -> str:
-    """Feltnavnet en strengnøkkel med dette innholdet gir. Se `ULESELIG`."""
-    return ULESELIG if "\\" in innhold else innhold
-
-
-def _les_nokkel(post: str, i: int,
-                spenn: dict[int, tuple]) -> tuple[str, int]:
-    """(feltnavn, indeksen etter nøkkelen). `(ULESELIG, -1)` når den ikke er et
-    navn porten kan lese.
-
-    Lista er LUKKET, som i generatoren: nøkkelen er enten et navn skrevet med
-    bokstaver eller en fnuttstreng uten escape. Alt annet JS godtar i
-    nøkkelposisjon — `['kl']:`, `['\\x6bl']:`, `\\u006bl:`, en malstrengnøkkel,
-    en beregnet nøkkel med en `]` inne i et mønster — gir nettleseren en helt
-    alminnelig egenskap, men gir porten et felt som heter noe annet eller ikke
-    finnes. Og et felt porten ikke ser, kontrollerer den ikke: enumporten
-    sjekker de feltene som FINNES, så en `kl`-verdi registeret avviser ville
-    gått grønt gjennom CI.
-
-    Codex fant formene én for én på #118 (ellevte til trettende runde). Å legge
-    til én til for hver runde er å holde en åpen liste over det som ikke går an;
-    denne veien er lukket.
-    """
-    if i in spenn and spenn[i][1] == "streng":
-        j = spenn[i][0]
-        return _nokkelnavn(post[i + 1:j - 1]), j
-    if i not in spenn and (treff := _NAVN_RE.match(post, i)):
-        return treff.group(0), treff.end()
-    return ULESELIG, -1
-
-
-def _les_verdi(post: str, i: int,
-               spenn: dict[int, tuple]) -> tuple[str, int]:
-    """(verdien som tekst, indeksen etter den). `("", -1)` når den ikke er en
-    literal.
-
-    Literal er fnuttstreng, tall, `true`/`false`/`null`, og lister og objekter
-    av slike — det katalogen faktisk bærer. En verdi porten ikke kan lese, kan
-    den heller ikke hoppe trygt OVER, og da vet den ikke hvor neste felt
-    begynner: `x: /["']/, kl: "oppfunnet"` ville skjult `kl` helt.
-
-    Fnuttene faller bort av en streng; en liste og et objekt gir råteksten sin,
-    for `dep` leses som prosa av `_moduler_fra_kilden()`.
-    """
-    n = len(post)
-    if i >= n:
-        return "", -1
-    if i in spenn:
-        if spenn[i][1] != "streng":
-            return "", -1
-        j = spenn[i][0]
-        return post[i + 1:j - 1], j
-    if (treff := _VERDITALL_RE.match(post, i)):
-        return treff.group(0), treff.end()
-    if (treff := _NAVN_RE.match(post, i)) and treff.group(0) in _ORDVERDIER:
-        return treff.group(0), treff.end()
-    if post[i] in "[{":
-        j = _les_samling(post, i, spenn)
-        return (post[i:j], j) if j > 0 else ("", -1)
-    return "", -1
-
-
-def _les_samling(post: str, i: int, spenn: dict[int, tuple]) -> int:
-    """Indeksen etter lista eller objektet som åpner i `i`, eller -1.
-
-    Feltene i et NØSTET objekt hører til det objektet, ikke til modulposten, så
-    navnene brukes ikke. De må likevel leses: uten dem vet vi ikke hvor den
-    nøstede verdien slutter.
-    """
-    lukk = "]" if post[i] == "[" else "}"
-    n = len(post)
-    j = _tomrom(post, i + 1, spenn)
-    while j < n:
-        if j not in spenn and post[j] == lukk:
-            return j + 1
-        if lukk == "}":
-            _, j = _les_nokkel(post, j, spenn)
-            if j < 0:
-                return -1
-            j = _tomrom(post, j, spenn)
-            if j >= n or post[j] != ":":
-                return -1
-            j = _tomrom(post, j + 1, spenn)
-        _, j = _les_verdi(post, j, spenn)
-        if j < 0:
-            return -1
-        j = _tomrom(post, j, spenn)
-        if j < n and j not in spenn and post[j] == ",":
-            j = _tomrom(post, j + 1, spenn)
-        elif j >= n or j in spenn or post[j] != lukk:
-            return -1
-    return -1
-
-
-def _postfelt(post: str) -> dict[str, str]:
-    """{feltnavn: verdi} for feltene på postens ØVERSTE nivå.
-
-    Posten leses som en følge av `nøkkel: literal` skilt med komma. Felt i
-    nøstede objekter og lister hører til dem, ikke til posten, og tekst inne i
-    en feltverdi er tekst og ikke felt. Kilden bærer to skrivemåter side om
-    side: v7-arven er JS-literaler (`n:38,…,p:1,…,dep:'…'`), v8-modulene er
-    JSON (`"n": 53, …`). Begge leses — leste porten bare den ene, ville halve
-    katalogen vært uvoktet uten at noe sa fra.
-
-    Parseren gikk før VIDERE på alt den ikke kjente igjen, og hver Codex-runde
-    på #118 fant én form til som slapp gjennom akkurat der: kommentar mellom
-    nøkkel og kolon (niende runde), `['kl']:` (ellevte), `['\\x6bl']:`
-    (tolvte), og i trettende `\\u006bl:`, spredning, forkortelse, metode og
-    accessor. Alle gir nettleseren et helt vanlig felt.
-
-    Å miste et felt er farligere enn å misforstå det: det som ikke finnes, blir
-    ikke kontrollert. Derfor sier `_les_nokkel()` og `_les_verdi()` nå hva som
-    ER lesbart, og en post med noe utenfor får `ULESELIG` — som er det
-    kontraktporten faller på, med modulnummeret.
-    """
-    ut: dict[str, str] = {}
-    spenn = _spennkart(post)
-    n = len(post)
-    i = _tomrom(post, 1, spenn)
-    while i < n:
-        if i not in spenn and post[i] == "}":
-            return ut
-        navn, i = _les_nokkel(post, i, spenn)
-        i = _tomrom(post, i, spenn) if i >= 0 else i
-        if i < 0 or i >= n or post[i] != ":":
-            ut[ULESELIG] = ""
-            return ut
-        verdi, i = _les_verdi(post, _tomrom(post, i + 1, spenn), spenn)
-        if i < 0:
-            ut[ULESELIG] = ""
-            return ut
-        ut[navn] = verdi
-        i = _tomrom(post, i, spenn)
-        if i < n and i not in spenn and post[i] == ",":
-            i = _tomrom(post, i + 1, spenn)
-        elif i < n and (i in spenn or post[i] != "}"):
-            ut[ULESELIG] = ""
-            return ut
-    ut[ULESELIG] = ""
-    return ut
+    kilde = kilde or KILDE
+    try:
+        r = subprocess.run(["node", str(LESER), str(kilde)],
+                           capture_output=True, text=True)
+    except FileNotFoundError:
+        raise AssertionError(
+            "fant ikke `node` — modulkatalogen leses av tools/les_katalog.mjs, "
+            "og uten en JavaScript-motor kan den ikke leses i det hele tatt. "
+            "En port som hopper over seg selv her er grønn på en ulest kilde.")
+    assert r.returncode == 0, (
+        f"kunne ikke lese modulkatalogen i {kilde.name}:\n{r.stderr.strip()}")
+    return tuple(json.loads(r.stdout)["moduler"])
+
+
+# Merkelappen `les_katalog.mjs` setter på en feltverdi som ikke er DATA — en
+# funksjon, et mønster, en dato. Katalogen er en kilde som skal kunne leses av
+# mer enn nettleseren, og en egenskap som først blir til når siden kjører kan
+# hverken leses eller måles.
+IKKE_DATA = "__ikke_data__"
+
+
+def _uleselige_felt(post: dict) -> list[str]:
+    """Feltene i posten som ikke bærer data. Se `IKKE_DATA`."""
+    return sorted(f for f, v in post.items()
+                  if isinstance(v, dict) and IKKE_DATA in v)
 
 
 def _moduler_fra_kilden() -> dict[int, dict[str, str]]:
     """{modulnummer: {fase, dep, kl, rev}} lest ut av spesifikasjonen."""
     ut: dict[int, dict[str, str]] = {}
-    for nummer, post in _modulposter():
-        felt = _postfelt(post)
-        if "p" not in felt or "dep" not in felt:
+    for post in _katalogposter():
+        if not isinstance(post.get("p"), int) or not isinstance(
+                post.get("dep"), str):
             continue
-        ut[nummer] = {"fase": int(felt["p"]), "dep": felt["dep"]}
+        ut[post["n"]] = {"fase": post["p"], "dep": post["dep"]}
         for navn in ("kl", "rev"):
-            if navn in felt:
-                ut[nummer][navn] = felt[navn]
+            if isinstance(post.get(navn), str):
+                ut[post["n"]][navn] = post[navn]
     return ut
+
+
+# En katalog med to poster, slik kilden skriver dem, og en side rundt den.
+# Prøvene under legger UI-kode inn i `{ui}` og måler at leseren fortsatt gir
+# fra seg NØYAKTIG disse to.
+_PROEVESIDE = ("<html><body><p>prosa</p><script>\n"
+               "const M = [\n"
+               "  {{n:1,name:'En',area:'X',p:1,dep:'',kl:'sideeffektfri'}},\n"
+               "  {{n:2,name:'To',area:'X',p:2,dep:'M-1',rev:'direkte'}}\n"
+               "];\n"
+               "{ui}\n"
+               "</script></body></html>\n")
+
+
+def _les_proveside(tmp_path: Path, ui: str) -> tuple[dict, ...]:
+    """Kjør leseren mot en side med `ui` etter katalogen."""
+    sti = tmp_path / "prove.html"
+    sti.write_text(_PROEVESIDE.format(ui=ui), encoding="utf-8")
+    return _katalogposter(sti)
+
+
+@pytest.mark.parametrize("ui", [
+    # En postformet KODEKLAMME i UI-koden. Helt lovlig JS, og ingen modul.
+    'const demo = {n:2, p:4, dep:"M-56"};',
+    # Samme form i en STRENG, i en malstreng, i en kommentar.
+    """const demo = "{n:58,name:'Demo',area:'X',p:1}";""",
+    "const demo = `{n:58,name:'Demo',area:'X',p:1}`;",
+    "// {n:58,name:'Demo',area:'X',p:1}",
+    "/* {n:58,name:'Demo',area:'X',p:1} */",
+    # Tegnene `const M = [` i en streng, en malstreng og en kommentar.
+    'const hjelp = "katalogen står som const M = [ … ] i skriptet";',
+    "const hjelp = `katalogen står som const M = [ … ]`;",
+    "// katalogen står som const M = [ … ] lenger nede",
+    "/* const M = [] */",
+    'const hjelp = "const M = []";',
+    # Og en helt vanlig linje som rører DOM-en. Den KASTER i leseren, som
+    # ventet — bindingen `M` er alt gjort, og katalogen står.
+    "document.getElementById('x').textContent = M.length;",
+])
+def test_leseren_gir_fra_seg_bare_elementene_i_katalogen(tmp_path, ui):
+    """Bare elementene i `const M = [ … ]` er moduler.
+
+    Postene ble før LETT ETTER — først i råtekst, så i det skanneren mente var
+    kode (Codex P2 på #118, sjuende og sekstende runde). Siden er en levende
+    prototype med egen UI-kode, og en postformet klamme eller streng der ble
+    lest som en modul til; `_moduler_fra_kilden()` lagrer per modulnummer, så
+    en demo etter katalogen overskrev den ekte modulen, og fase- og enumporten
+    målte UI-data.
+
+    Nå er spørsmålet ikke lenger «hva ser ut som en post?». Katalogen er en
+    LISTE, motoren gir oss verdien av den, og en tekst som ser ut som en post
+    er en tekst.
+    """
+    poster = _les_proveside(tmp_path, ui)
+    assert [p["n"] for p in poster] == [1, 2], (
+        f"leseren fant andre poster enn katalogens to: {poster}")
+    assert poster[1]["dep"] == "M-1" and poster[1]["p"] == 2, (
+        "UI-koden overskrev en ekte modulpost")
+
+
+def test_to_kataloger_stopper_leseren(tmp_path):
+    """To `const M` er en redeklarasjon, og motoren avviser den selv.
+
+    Porten og generatoren hadde hver sin regel for at ankeret skulle stå
+    nøyaktig én gang, og hver sin måte å skille erklæringen fra de samme
+    tegnene i en streng. Motoren trenger ingen regel: `const M` to ganger i
+    samme skript er en SyntaxError ved KOMPILERING — også når den andre står i
+    kode som aldri kjører, slik den gjør her, bak et `document`-kall som
+    kaster.
+    """
+    with pytest.raises(AssertionError) as feil:
+        _les_proveside(tmp_path, "const M = [{n:58,name:'D',area:'X',p:1}];")
+    assert "gyldig JavaScript" in str(feil.value), str(feil.value)
+
+
+@pytest.mark.parametrize("element", [
+    "42",
+    "'en streng'",
+    "null",
+    "[{n:58}]",
+])
+def test_et_element_som_ikke_er_en_post_stopper_porten(tmp_path, element):
+    """Katalogen er en liste av POSTER, og bare det."""
+    sti = tmp_path / "prove.html"
+    sti.write_text(f"<html><script>const M = [{{n:1,name:'En',area:'X',p:1}}, "
+                   f"{element}];</script></html>", encoding="utf-8")
+    with pytest.raises(AssertionError) as feil:
+        _katalogposter(sti)
+    assert "modulpost" in str(feil.value), str(feil.value)
+
+
+@pytest.mark.parametrize("felt,lesbar", [
+    ("kl:'krever_outbox'", True),
+    ('"kl": "krever_outbox"', True),
+    # Skrivemåten forsvinner i lesningen: alle tre gir egenskapen `kl`.
+    (r"kl:'krever_outbox'", True),
+    ("['k' + 'l']:'krever_outbox'", True),
+    ("get kl(){return 'krever_outbox'}", True),
+    # Men en verdi som ikke er DATA, er ikke noe katalogen kan bære.
+    ("kl:/krever_outbox/", False),
+    ("kl:() => 'krever_outbox'", False),
+    ("kl:new Date(0)", False),
+])
+def test_leseren_krever_at_en_feltverdi_er_data(tmp_path, felt, lesbar):
+    """Katalogen skal kunne leses av mer enn nettleseren.
+
+    Nøkkelen er motorens sak nå, og den leser alle skrivemåtene likt. VERDIEN
+    er porten sin: en funksjon, et mønster eller en dato er ingen katalogverdi,
+    og et felt ingen kan lese er et felt ingen kan kontrollere. Leseren merker
+    det i stedet for å hoppe over det, se `IKKE_DATA`.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text(f"<html><script>const M = [{{n:1,name:'En',area:'X',p:1,"
+                   f"{felt}}}];</script></html>", encoding="utf-8")
+    post = _katalogposter(sti)[0]
+    assert (not _uleselige_felt(post)) is lesbar, post
 
 
 # Kontraktklassene katalogen bruker er de SAMME feltene modulregisteret lagrer,
@@ -3034,42 +2221,6 @@ def test_en_uleselig_verdi_stopper_enumoppslaget(tmp_path):
     assert ULESELIG_SQL not in noen_gang
 
 
-@pytest.mark.parametrize("post,lesbar", [
-    # Begge skrivemåtene kilden faktisk bærer, og en nøstet verdi.
-    ("""{n:1,name:'A',p:1,dep:'B',kl:"krever_outbox"}""", True),
-    ("""{"n":1,"name":"A","p":1,"dep":"B","kl":"krever_outbox"}""", True),
-    ("""{n:1,name:'A',p:1,dep:['M-6'],meta:{a:1,b:[2]}}""", True),
-    ("""{n:1,name:'A',p:1,kl /* begrunnelse */:"krever_outbox"}""", True),
-    # Nøkkelformer nettleseren leser som `kl`, men porten leste som noe annet
-    # — eller ikke i det hele tatt.
-    ("""{n:1,name:'A',p:1,['kl']:"oppfunnet"}""", False),
-    (r"""{n:1,name:'A',p:1,['\x6bl']:"oppfunnet"}""", False),
-    (r"""{n:1,name:'A',p:1,\u006bl:"oppfunnet"}""", False),
-    ("""{n:1,name:'A',p:1,[/]/.test("")?"x":"kl"]:"oppfunnet"}""", False),
-    # Egenskaper som ikke er skrevet som `nøkkel: verdi`.
-    ("""{n:1,name:'A',p:1,...{kl:"oppfunnet"}}""", False),
-    ("""{n:1,name:'A',p:1,kl}""", False),
-    ("""{n:1,name:'A',p:1,kl(){return "oppfunnet"}}""", False),
-    ("""{n:1,name:'A',p:1,get kl(){return "oppfunnet"}}""", False),
-    # Og verdier porten ikke kan lese, og derfor ikke kan hoppe over: et
-    # mønster med en fnutt i ville svelget kommaet og skjult `kl` bak seg.
-    ("""{n:1,name:'A',p:1,x:/["']/,kl:"oppfunnet"}""", False),
-    ("""{n:1,name:'A',p:1,kl:`oppfunnet`}""", False),
-])
-def test_kontraktparseren_leser_bare_navn_og_literal(post, lesbar):
-    """Porten må se HELE posten, ellers vokter den bare det den tilfeldigvis så.
-
-    Enumporten under sjekker de feltene som FINNES. Et `kl` porten ikke leser,
-    kontrollerer den ikke — og en klasse modulregisteret avviser går da grønt
-    gjennom CI mens nettleseren viser feltet som et helt vanlig felt.
-
-    Formene her sto ikke i kilden da de ble funnet, og gjør det ikke nå: en
-    port som bare måler dagens fil, går grønn helt til noen skriver linja. Det
-    var nettopp slik Codex fant dem én for én over tre runder på #118.
-    """
-    assert (ULESELIG not in _postfelt(post)) is lesbar, _postfelt(post)
-
-
 def test_kontraktklassene_i_katalogen_finnes_i_modulregisteret():
     """`kl` og `rev` i katalogen må være verdier registeret godtar.
 
@@ -3088,19 +2239,23 @@ def test_kontraktklassene_i_katalogen_finnes_i_modulregisteret():
     kontrakten lagres i, og altså den som sier nei. Se `_registerenum()`.
 
     Porten sjekker de feltene som FINNES, og derfor må den også kreve at hvert
-    feltnavn lar seg lese (Codex P2 på #118, tolvte runde). En nøkkel skrevet
+    felt lar seg lese (Codex P2 på #118, tolvte runde). En nøkkel skrevet
     `['\\x6bl']` er `kl` for nettleseren, men noe annet for en parser som leser
     råteksten — og det feltet porten ikke ser, kontrollerer den ikke. Å mangle
-    et felt er farligere enn å misforstå det.
+    et felt er farligere enn å misforstå det. NØKKELEN er ikke lenger et
+    spørsmål: `les_katalog.mjs` er en JavaScript-motor, så egenskapen heter det
+    nettleseren kaller den. VERDIEN er det fortsatt — en funksjon eller et
+    mønster i et `kl`-felt er ingen klasse noen kan måle, se `IKKE_DATA`.
 
     MUTASJONEN SOM DREPER DENNE: hardkod enumene i testen. Da vokter porten en
     kopi, og en migrasjon som strammer inn et vilkår går rett forbi den.
     """
-    uleselige = [f"M-{n}" for n, post in _modulposter()
-                 if ULESELIG in _postfelt(post)]
+    uleselige = [f"M-{p['n']}.{felt}" for p in _katalogposter()
+                 for felt in _uleselige_felt(p)]
     assert not uleselige, (
-        "modulposter med et feltnavn porten ikke kan lese (escape i nøkkelen): "
-        + ", ".join(uleselige) + " — skriv feltnavnet med bokstaver")
+        "modulposter med en feltverdi som ikke er data: "
+        + ", ".join(uleselige) + " — katalogen bærer tekst, tall og lister av "
+        "slike, ikke noe som først blir til når siden kjører")
     tillatt = {felt: _registerenum(kol) for felt, kol in KONTRAKTFELT.items()}
     avvik = [f"M-{n}.{felt}={d[felt]!r} (godtatt: "
              f"{', '.join(sorted(tillatt[felt]))})"
@@ -3271,33 +2426,62 @@ def test_en_sqlkommentar_skriver_ingen_identifikator(sql, star_igjen):
 
 _SKRIPTDEL_RE = re.compile(r"<script[^>]*>(.*?)</script>", re.S)
 
+# Etiketten dokumentteksten bærer. Den er det ene stykket som har en PLASS i
+# fila, så porten melder linjenummer for den og feltnavn for resten.
+DOKUMENTET = "dokumentet"
 
-def _prosetekst() -> str:
-    """Sannhetskilden med kjørende JavaScript maskert bort.
 
-    Alt utenfor `<script>` er dokumenttekst. Inne i skriptet skiller vi prosa
-    fra kode slik JS selv gjør det: fnutter og kommentarer er tekst noen har
-    SKREVET — modulpostenes `dep`, `guard`, `input` og `accept`, og merknadene
-    om hvor tallene kommer fra — mens resten er navn på bindinger som lever og
-    dør i denne fila. `filter_state` i en `const` sier ingenting om registeret;
-    `krever_outbox` i et `kl`-felt gjør det.
+def _prosastykker(kilde: Path = None) -> list[tuple[str, str]]:
+    """[(hvor, tekst)] — alt sannhetskilden SIER til den som skal bygge.
 
-    Hva som er prosa inne i skriptet avgjør `_prosaindekser()`, den samme
-    regelen prøvene i `test_skanneren_skiller_kode_fra_prosa()` måler.
+    To kilder, og grensen mellom dem er en grense i dokumentet, ikke i en
+    skanners ordliste:
 
-    Maskeringen bytter tegn mot mellomrom i stedet for å klippe dem ut, og
-    lar linjeskift stå: linjenummeret porten melder skal peke på linja i fila,
-    ikke i et utsnitt.
+      * DOKUMENTTEKSTEN, alt utenfor `<script>`. Det er der regresjonen i
+        tredje runde sto: endringsloggen forklarte `dokumentbehandling` og
+        `rådgivende_pluss_signert_utsendelse` som to nye katalogbegreper etter
+        at modulposten var rettet.
+      * MODULPOSTENES egne felt, lest av `les_katalog.mjs`. `merknad`, `guard`,
+        `goal`, `input`, `accept` og `flow` er prosa i katalogen, og `kl`/`rev`
+        er maskinform på nøkkelposisjon.
+
+    KJØRENDE JAVASCRIPT er ikke prosa (Codex P2 på #118, åttende runde). Porten
+    leste hele fila, også prototypens `<script>`, og et helt vanlig JS-navn —
+    `const filter_state = {}` — ble meldt som en oppfunnet registerklasse. Et
+    variabelnavn i kode PÅSTÅR ingenting om registeret; det er navnet på en
+    binding som lever og dør i denne fila.
+
+    Skillet ble den gangen trukket av JS-skanneren: kode maskert bort, fnutter
+    og kommentarer stående. Skanneren er borte, og med den nitten runders
+    former den ikke kjente. Grensen står i stedet der den kan sies rett ut, og
+    det er forskjellen fra en skanner med hull: UI-KODEN ER UTENFOR PORTEN —
+    også strengene og kommentarene i den. Den er dokumentasjon av prototypens
+    kode, skrevet til den som vedlikeholder den koden, og navnene den bruker er
+    dens egne bindinger og repoets egne filnavn. Det kildens LESER skal bygge
+    etter, står i dokumentteksten og i modulpostene, og begge måles her.
+
+    Grensen er en påstand hvem som helst kan etterprøve ved å lese den, ikke en
+    mengde grammatikkformer som stilltiende ikke ble kjent igjen. Skriver noen
+    en oppfunnet klasse i en kommentar i UI-koden, sier porten ingenting — og
+    det er sagt her, ikke oppdaget om atten runder.
     """
-    tekst = KILDE.read_text(encoding="utf-8")
-    ut = list(tekst)
+    kilde = kilde or KILDE
+    tekst = kilde.read_text(encoding="utf-8")
+    # Skriptet maskeres bort, men linjeskiftene blir stående: linjenummeret
+    # porten melder skal peke på linja i fila, ikke i et utsnitt.
+    biter, forrige = [], 0
     for del_ in _SKRIPTDEL_RE.finditer(tekst):
-        a, b = del_.start(1), del_.end(1)
-        prosa = _prosaindekser(tekst, a, b)
-        for k in range(a, b):
-            if k not in prosa and ut[k] != "\n":
-                ut[k] = " "
-    return "".join(ut)
+        biter.append(tekst[forrige:del_.start(1)])
+        biter.append("\n" * tekst.count("\n", del_.start(1), del_.end(1)))
+        forrige = del_.end(1)
+    biter.append(tekst[forrige:])
+    stykker: list[tuple[str, str]] = [(DOKUMENTET, "".join(biter))]
+    for post in _katalogposter(kilde):
+        for felt, verdi in sorted(post.items()):
+            for v in (verdi if isinstance(verdi, list) else [verdi]):
+                if isinstance(v, str):
+                    stykker.append((f"M-{post['n']}.{felt}", v))
+    return stykker
 
 
 def test_ingen_oppfunne_identifikatorer_i_sannhetskilden():
@@ -3327,25 +2511,73 @@ def test_ingen_oppfunne_identifikatorer_i_sannhetskilden():
     leste hele fila, også prototypens `<script>`, og et helt vanlig JS-navn —
     `const filter_state = {}` — ble meldt som en oppfunnet registerklasse. Et
     variabelnavn i kode PÅSTÅR ingenting om registeret; det er navnet på en
-    binding som lever og dør i denne fila. Porten leser derfor `_prosetekst()`:
-    dokumentteksten, og inne i skriptet fnutter og kommentarer — der kilden
-    faktisk sier noe til den som skal bygge — mens koden selv er maskert bort.
+    binding som lever og dør i denne fila. Porten leser derfor
+    `_prosastykker()`: dokumentteksten, og modulpostenes egne felt — der kilden
+    faktisk sier noe til den som skal bygge.
 
     MUTASJONEN SOM DREPER DENNE: la porten lese modulpostene i stedet for hele
-    prosaen. Da vokter den det port 9 allerede vokter, og prosaen — som er der
-    regresjonen faktisk sto — er igjen uten port.
+    prosaen. Da vokter den det port 9 allerede vokter, og dokumentteksten — som
+    er der regresjonen faktisk sto — er igjen uten port.
     """
-    kjente = _kjente_identifikatorer()
-    tekst = _prosetekst()
-    avvik: dict[str, int] = {}
-    for treff in IDENT_RE.finditer(tekst):
-        if treff.group(0) not in kjente:
-            avvik.setdefault(treff.group(0),
-                             tekst.count("\n", 0, treff.start()) + 1)
+    avvik = _oppfunne_identifikatorer()
     assert not avvik, (
         f"identifikatorer i {KILDE.name} som ikke finnes i registeret eller "
-        "som fil: " + "; ".join(f"«{ident}» (linje {linje})"
-                                for ident, linje in sorted(avvik.items())))
+        "som fil: " + "; ".join(f"«{ident}» ({sted})"
+                                for ident, sted in sorted(avvik.items())))
+
+
+@pytest.mark.parametrize("fra,til,ident,sted", [
+    # DOKUMENTTEKSTEN. Dette er regresjonen fra tredje runde, satt tilbake:
+    # modulposten er rettet, endringsloggen står igjen med den avviste klassen.
+    ("<b>krever_outbox</b>", "<b>rådgivende_pluss_signert_utsendelse</b>",
+     "rådgivende_pluss_signert_utsendelse", "linje"),
+    # MODULPOSTENS FELT — prosafeltet, maskinfeltet og et ledd i en liste.
+    ("Byggerekkefølge: etter M-16", "Klassen er oppfunnet_klasse. Etter M-16",
+     "oppfunnet_klasse", "M-57.merknad"),
+    ('"kl":"krever_outbox"', '"kl":"oppfunnet_klasse"',
+     "oppfunnet_klasse", "M-57.kl"),
+    ("'Importerer standardpolicy", "'Kjører i modus alltid_stoppp",
+     "alltid_stoppp", "M-1.flow"),
+])
+def test_prosaporten_maaler_dokumentet_og_modulpostene(tmp_path, fra, til,
+                                                       ident, sted):
+    """Begge halvdelene av `_prosastykker()` skal faktisk måles.
+
+    Porten leste før hele fila gjennom én maskering, og da var det ett sted å
+    ta feil. Nå er kilden to: dokumentteksten utenfor `<script>`, og feltene
+    `les_katalog.mjs` gir fra seg. Faller den ene ut — en sammenskjøting som
+    glemmer et ledd i en liste, en maskering som tar for mye — er porten grønn
+    på halve dokumentet uten at noe sier fra.
+
+    Prøvene setter derfor regresjonen tilbake i hver av dem, og krever at
+    porten melder BÅDE navnet og hvor det står. Stedet er med fordi det er det
+    som gjør meldingen brukbar: et linjenummer i dokumentet, et feltnavn i en
+    modulpost.
+    """
+    kilde = tmp_path / KILDE.name
+    tekst = KILDE.read_text(encoding="utf-8")
+    assert fra in tekst, f"fant ikke «{fra}» i kilden — den har endret form"
+    kilde.write_text(tekst.replace(fra, til, 1), encoding="utf-8")
+    avvik = _oppfunne_identifikatorer(kilde)
+    assert ident in avvik, (
+        f"porten så ikke «{ident}» i {sted} — halve prosaen er umålt")
+    assert avvik[ident].startswith(sted), (
+        f"porten melder «{ident}» i {avvik[ident]}, ikke i {sted}")
+
+
+def _oppfunne_identifikatorer(kilde: Path = None) -> dict[str, str]:
+    """{identifikator: hvor} for maskinform i kilden som ikke finnes."""
+    kjente = _kjente_identifikatorer()
+    avvik: dict[str, str] = {}
+    for hvor, tekst in _prosastykker(kilde):
+        for treff in IDENT_RE.finditer(tekst):
+            if treff.group(0) in kjente:
+                continue
+            sted = hvor
+            if hvor == DOKUMENTET:
+                sted = f"linje {tekst.count(chr(10), 0, treff.start()) + 1}"
+            avvik.setdefault(treff.group(0), sted)
+    return avvik
 
 
 # Markøren som innfører et tall som modulnummer, hvor som helst i leddet. Den
