@@ -32,7 +32,13 @@ KRAVGRENSER: dict[str, dict] = {
         "min_kjoringer": 10,
         "maks_avvik_mot_fasit": 0,
         "maks_robots_private": 0,
-        "min_frekvens_tillat": 4,
+        # 5xx-regresjonen skal være PRØVD: et krav på 0 sider er ikke en
+        # bestått port, det er en port som aldri kjørte (Codex, #117).
+        "min_robots_5xx_krav": 1,
+        # Taket er FIRE. En kjøring som slapp gjennom fem har alt utført
+        # en forespørsel over grensen — at den sjette ble avvist redder
+        # den ikke. Derfor eksakt, ikke minimum (Codex, #117).
+        "frekvens_tillat_eksakt": 4,
         "min_frekvens_avvist": 1,
         "maks_egress_lekkasjer": 0,
         "min_feilet_med_kvittering": 1,
@@ -588,8 +594,13 @@ def _grenser_wcag_kontroll(grense: dict, art: dict) -> list[str]:
     for melding in (m1, m2):
         if melding:
             feil.append(melding)
-    if not m1 and not m2 and sider != sider_krav:
-        feil.append(f"robots_5xx: kontrollert {sider}, krav {sider_krav}")
+    if not m1 and not m2:
+        if sider_krav < grense["min_robots_5xx_krav"]:
+            feil.append(f"robots_5xx_krav={sider_krav} — 5xx-siden ble"
+                        " aldri prøvd; likheten 0 == 0 er fravær av en"
+                        " kontroll, ikke en bestått kontroll")
+        elif sider != sider_krav:
+            feil.append(f"robots_5xx: kontrollert {sider}, krav {sider_krav}")
     # Frekvensporten: nøyaktig grensen tillates, ingenting over utføres.
     tillat, m1 = _teller(m, "frekvens_tillat", "frekvens_tillat")
     avvist, m2 = _teller(m, "frekvens_avvist_over_grense",
@@ -601,9 +612,11 @@ def _grenser_wcag_kontroll(grense: dict, art: dict) -> list[str]:
         if avvist < grense["min_frekvens_avvist"]:
             feil.append(f"frekvens_avvist_over_grense={avvist} — porten"
                         " målte aldri at taket faktisk avviser")
-        if tillat < grense["min_frekvens_tillat"]:
-            feil.append(f"frekvens_tillat={tillat}, krever >="
-                        f" {grense['min_frekvens_tillat']}")
+        if tillat != grense["frekvens_tillat_eksakt"]:
+            feil.append(f"frekvens_tillat={tillat}, krever nøyaktig"
+                        f" {grense['frekvens_tillat_eksakt']} — under er"
+                        " taket umålt, over er taket BRUTT (forespørselen"
+                        " ble utført, uansett hva den neste fikk)")
     # Feilveien: en feilet kjøring har kvittering og INGEN evidens.
     for felt, minst in (
             ("feilinjisering_feilet_med_kvittering",

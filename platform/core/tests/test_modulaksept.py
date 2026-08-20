@@ -521,6 +521,33 @@ def test_evidenskjeden_er_bytebundet_hele_veien():
         " og artefaktet har glidd fra hverandre"
 
 
+def test_wcag_grensene_maaler_at_portene_faktisk_kjorte():
+    """Codex' to P2 på PR #117: en port som ikke ble prøvd, og et tak som
+    ble brutt, passerte begge. `robots_5xx: 0 av 0` er fravær av en
+    kontroll — likheten var sann fordi ingenting ble målt — og
+    `frekvens_tillat` hadde bare et MINIMUM på 4, så en kjøring som
+    slapp gjennom fem forespørsler over et tak på fire var «bestått»
+    fordi den sjette ble avvist."""
+    from manifestskjema import _sjekk_grenser
+    ekte = json.loads((ROT / ("deploy/staging/artefakter/"
+                              "wcag-kontroll-v1-20260818T200413.json")
+                       ).read_text(encoding="utf-8"))
+    assert _sjekk_grenser(KRAV, ekte) == []
+
+    def _mutert(**felt):
+        return dict(ekte, maalt=dict(ekte["maalt"], **felt))
+
+    upravd = _mutert(robots_5xx_sider_kontrollert=0, robots_5xx_krav=0)
+    assert any("robots_5xx_krav" in f for f in _sjekk_grenser(KRAV, upravd)), \
+        "0 av 0 kontrollerte 5xx-sider slapp gjennom porten"
+    over = _mutert(frekvens_tillat=5, frekvens_avvist_over_grense=1)
+    assert any("frekvens_tillat" in f for f in _sjekk_grenser(KRAV, over)), \
+        "en kjøring som utførte en forespørsel over taket ble godtatt"
+    # Under grensen er fortsatt umålt, og ulikhet i 5xx står ved lag.
+    assert _sjekk_grenser(KRAV, _mutert(frekvens_tillat=3))
+    assert _sjekk_grenser(KRAV, _mutert(robots_5xx_sider_kontrollert=0))
+
+
 def _aksept_skript():
     """Akseptskriptet lastet som modul (filnavnet har bindestrek)."""
     import importlib.util
