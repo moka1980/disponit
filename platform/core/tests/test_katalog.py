@@ -1594,11 +1594,24 @@ def _liker(vilkar: dict, opptatt: dict, laget: set,
     vilkår på samme kolonne, sto bare det videre igjen i modellen, og porten
     kunne godta en klasse det kopierte avviser.
 
-    KJENNER porten malen, kopieres vilkårene som de er. De legges under
-    sidestilte nøkler, for porten vet ikke hva PostgreSQL kaller kopiene på den
-    nye tabellen — og et navn den ikke vet, skal ikke kunne treffes av et
-    slipp. Det holder snittet smalt, som er den trygge retningen. Malens
-    navn regnes som opptatte på den nye tabellen av samme grunn som i
+    KJENNER porten malen, kopieres vilkårene som de er — og KOPIEN HETER DET
+    KILDEN HETER (Codex P2 på #118, tjuetredje runde). PostgreSQL finner ikke
+    på et nytt navn her; den skriver kildens `conname` rett inn på den nye
+    tabellen, også når navnet er et den selv fant på for et unavngitt vilkår.
+    Første forsøk la kopiene under sidestilte nøkler ut fra at porten ikke
+    kunne vite hva de het. Men navnet ER kjent, og en sidestilt nøkkel kan
+    ingen `DROP CONSTRAINT` treffe: et `ALTER TABLE … DROP CONSTRAINT rev_chk`
+    fjernet da kopien i databasen mens modellen ble stående med en
+    innskrenkning som ikke lenger fantes, og porten avviste en verdi
+    registeret godtar.
+
+    Er navnet ALT i bruk på den nye tabellen, blir kopien liggende sidestilt
+    likevel — PostgreSQL ville avvist en slik `CREATE TABLE`, og porten skal
+    ikke miste et vilkår på en setning den ikke kan tolke. Det samme gjelder en
+    kilde som selv står under en sidestilt nøkkel: der er det virkelige navnet
+    ukjent i utgangspunktet, og kopien arver den uvissheten.
+
+    Malens navn regnes som opptatte på den nye tabellen av samme grunn som i
     `_tildelt_navn()`: kopiene tar plass i navnerommet.
 
     KJENNER den ikke malen — ingen migrasjon har opprettet den — er svaret
@@ -1609,9 +1622,11 @@ def _liker(vilkar: dict, opptatt: dict, laget: set,
         _uvisst_inn(vilkar)
         return
     for (kilde, navn), bindinger in list(vilkar.items()):
-        if kilde == mal:
-            vilkar[(tabell, _sidestilt_navn(vilkar, tabell, navn))] = \
-                dict(bindinger)
+        if kilde != mal:
+            continue
+        nytt = navn if "\0" not in navn and (tabell, navn) not in vilkar \
+            else _sidestilt_navn(vilkar, tabell, navn)
+        vilkar[(tabell, nytt)] = dict(bindinger)
     opptatt.setdefault(tabell, set()).update(opptatt.get(mal, ()))
 
 
@@ -2690,6 +2705,36 @@ def test_en_like_fra_en_ukjent_mal_er_uvisst(tmp_path):
     assert gjeldende.get((_UKJENT_TABELL, _UKJENT_KOLONNE)) == {
         ULESELIG_SQL}, (
         "malen porten aldri har lest ble lest som om den var tom")
+
+
+def test_et_kopiert_vilkaar_kan_slippes_paa_kildens_navn(tmp_path):
+    """Kopien bærer kildens vilkårsnavn, og et slipp treffer den der.
+
+    Codex P2 på #118, tjuetredje runde. Kopiene ble lagt under sidestilte
+    nøkler — nøkler ingen `DROP CONSTRAINT` kan skrive. Det var riktig
+    forsiktighet for et navn porten ikke kjenner, men navnet er kjent:
+    PostgreSQL skriver kildens `conname` rett inn på den nye tabellen.
+
+    Uten det sto modellen igjen med et vilkår databasen hadde sluppet, og
+    porten avviste `irreversibel` — en verdi registeret her faktisk godtar
+    etter slippet.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE kontraktmal (\n"
+        "    reversibilitet TEXT NOT NULL\n"
+        "        CONSTRAINT rev_chk\n"
+        "        CHECK (reversibilitet IN ('direkte', 'kompenserende')));\n",
+        "CREATE TABLE modulkontrakt (\n"
+        "    LIKE kontraktmal INCLUDING CONSTRAINTS,\n"
+        "    CONSTRAINT rev_bred CHECK (reversibilitet IN\n"
+        "        ('direkte', 'kompenserende', 'irreversibel')));\n",
+        "ALTER TABLE modulkontrakt DROP CONSTRAINT rev_chk;\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende.get((MODULKONTRAKT, "reversibilitet")) == {
+        "direkte", "kompenserende", "irreversibel"}, (
+        "slippet fant ikke det kopierte vilkåret — kopien lå under en nøkkel "
+        "ingen `DROP CONSTRAINT` kan navngi")
 
 
 def test_en_omdopt_mal_er_fortsatt_en_mal_porten_kjenner(tmp_path):
