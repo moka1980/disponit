@@ -854,9 +854,10 @@ def _snitt(a: set[str], b: set[str]) -> set[str]:
     return kjent | ({ULESELIG_SQL} & (a | b))
 
 
-# En hendelse i en migrasjon: enten et vilkår som legges på, eller et som
-# slippes. `betinget` er sant når setningen står bak en gren i en `DO`-kropp.
-_LEGG_PA, _SLIPP = "legg på", "slipp"
+# En hendelse i en migrasjon: et CHECK som legges på, et vilkår som slippes,
+# eller et vilkår av en annen type som bare OPPTAR navnet sitt. `betinget` er
+# sant når setningen står bak en gren i en `DO`-kropp.
+_LEGG_PA, _SLIPP, _NAVN = "legg på", "slipp", "navn"
 
 
 def _setningene(sql: str):
@@ -913,10 +914,16 @@ def _lesvilkar(node, tabell: str, ut: list, betinget: bool,
         for c in node.constraints or ():
             _lesvilkar(c, tabell, ut, betinget, node.colname)
         return
-    if isinstance(node, pglast.ast.Constraint) \
-            and node.contype == pglast.enums.ConstrType.CONSTR_CHECK:
+    if not isinstance(node, pglast.ast.Constraint):
+        return
+    if node.contype == pglast.enums.ConstrType.CONSTR_CHECK:
         ut.append((_LEGG_PA, tabell, node.conname, node.raw_expr, betinget,
                    kolonne))
+    elif node.conname:
+        # Et vilkår av en ANNEN type opptar navnet sitt (Codex P2 på #118,
+        # tjueførste runde). PostgreSQL teller alle vilkår på relasjonen når
+        # den navngir et unavngitt CHECK, uansett type, se `_tildelt_navn()`.
+        ut.append((_NAVN, tabell, node.conname, None, betinget))
 
 
 def _kroppen(stmt) -> tuple[str, str]:
@@ -1101,27 +1108,36 @@ def _registerets_enums(
     `noen_gang` er unionen av alt registeret har bundet, og er noe annet: den er
     historikken en pensjonert verdi kjennes igjen på.
     """
-    # {(tabell, vilkårsnavn): {kolonne: verdier}} — vilkårene som står igjen.
+    # {(tabell, vilkårsnavn): {kolonne: verdier}} — CHECK-ene som står igjen.
     vilkar: dict[tuple[str, str], dict[str, set[str]]] = {}
+    # {tabell: navnene som er i bruk} — ALLE vilkårstyper, ikke bare CHECK. Se
+    # `_tildelt_navn()`.
+    opptatt: dict[str, set[str]] = {}
     noen_gang: set[str] = set()
     for sql in sorted((mappe or MIGRASJONER).glob("*.sql")):
         for hendelse in _hendelsene(sql.read_text(encoding="utf-8")):
-            if hendelse[0] is _SLIPP:
-                _, tabell, navn, _, betinget = hendelse
-                if betinget:
+            slag, tabell, navn = hendelse[:3]
+            if slag is _NAVN:
+                opptatt.setdefault(tabell, set()).add(navn)
+                continue
+            if slag is _SLIPP:
+                if hendelse[4]:
                     # Et slipp bak en betingelse er ikke kjent kjørt, og et
                     # vilkår som blir stående kan bare gjøre snittet SMALERE.
                     continue
                 vilkar.pop((tabell, navn), None)
+                opptatt.get(tabell, set()).discard(navn)
                 continue
             _, tabell, navn, uttrykk, betinget, kolonne = hendelse
             bindinger = _bindinger(uttrykk)
             if not bindinger:
                 continue
             if navn is None:
-                navn = _tildelt_navn(vilkar, tabell, kolonne)
+                navn = _tildelt_navn(opptatt.get(tabell, ()), tabell, kolonne)
             if betinget and (tabell, navn) in vilkar:
                 navn = _sidestilt_navn(vilkar, tabell, navn)
+            else:
+                opptatt.setdefault(tabell, set()).add(navn)
             vilkar[(tabell, navn)] = bindinger
             noen_gang |= set().union(*bindinger.values())
     gjeldende: dict[tuple[str, str], set[str]] = {}
@@ -1133,7 +1149,7 @@ def _registerets_enums(
     return gjeldende, noen_gang - {ULESELIG_SQL}
 
 
-def _tildelt_navn(vilkar: dict, tabell: str, kolonne: str | None) -> str:
+def _tildelt_navn(opptatt, tabell: str, kolonne: str | None) -> str:
     """Navnet PostgreSQL gir et vilkår ingen har navngitt.
 
     `<tabell>_<kolonne>_check` for et vilkår skrevet PÅ en kolonne, og
@@ -1145,10 +1161,24 @@ def _tildelt_navn(vilkar: dict, tabell: str, kolonne: str | None) -> str:
     Navnet er ikke pynt: det er dette et senere `DROP CONSTRAINT` treffer. 014
     legger vilkåret rett på kolonnen uten å navngi det, og 036 slipper det som
     `modulkontrakt_reversibilitet_check`.
+
+    OPPTATT teller ALLE vilkårstyper på tabellen, ikke bare CHECK-ene (Codex P2
+    på #118, tjueførste runde). PostgreSQL har ett navnerom for vilkår per
+    relasjon, så en primærnøkkel eller en fremmednøkkel som ALT heter
+    `modulkontrakt_check` skyver det unavngitte CHECK-et videre til
+    `modulkontrakt_check1`. Med bare CHECK-ene i oppslaget fikk det navnet som
+    var opptatt, og et senere `DROP CONSTRAINT modulkontrakt_check` slapp da
+    enumvilkåret i modellen mens PostgreSQL slapp den andre. Sto et videre
+    vilkår igjen, ble svaret videre enn databasen.
+
+    GRENSEN: bare navngitte vilkår av andre typer telles. Et unavngitt vilkår
+    av en annen type får en av PostgreSQLs egne endelser — `_pkey`, `_key`,
+    `_fkey`, `_excl` — og ingen av dem kan bli `_check` eller `_<kolonne>_check`,
+    så det kan ikke kollidere med stammen her.
     """
     stamme = f"{tabell}_{kolonne}_check" if kolonne else f"{tabell}_check"
     navn, nr = stamme, 0
-    while (tabell, navn) in vilkar:
+    while navn in opptatt:
         nr += 1
         navn = f"{stamme}{nr}"
     return navn
@@ -1927,6 +1957,41 @@ def test_to_unavngitte_vilkaar_er_to_vilkaar(tmp_path):
         "        CHECK (reversibilitet IN ('direkte', 'irreversibel')));\n")
     gjeldende, _ = _registerets_enums(mappe)
     assert gjeldende[(MODULKONTRAKT, "reversibilitet")] == {"direkte"}
+
+
+def test_et_opptatt_navn_skyver_det_unavngitte_vilkaaret_videre(tmp_path):
+    """Navnerommet for vilkår er ETT per relasjon, uansett vilkårstype.
+
+    Codex P2 på #118, tjueførste runde. Et unavngitt CHECK fikk navnet
+    `<tabell>_<kolonne>_check` uten å spørre om noe ANNET vilkår alt het det.
+    PostgreSQL spør: heter primærnøkkelen eller fremmednøkkelen det, får
+    CHECK-et `…_check1`.
+
+    Uten det gikk et senere `DROP CONSTRAINT` på det navnet til enumvilkåret i
+    modellen, mens PostgreSQL slapp det andre vilkåret. Modellen mistet altså et
+    vilkår databasen fortsatt håndhever, og med et videre vilkår igjen ved
+    siden av ble svaret videre enn databasen — en klasse gjennom porten som
+    registeret avviser.
+
+    Her heter fremmednøkkelen `modulkontrakt_reversibilitet_check`. Slippet
+    treffer DEN, og enumvilkåret — som PostgreSQL kalte `…_check1` — blir
+    stående.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE modulkontrakt (\n"
+        "    eier TEXT,\n"
+        "    CONSTRAINT modulkontrakt_reversibilitet_check\n"
+        "        FOREIGN KEY (eier) REFERENCES eiere (id),\n"
+        "    reversibilitet TEXT NOT NULL\n"
+        "        CHECK (reversibilitet IN ('direkte', 'kompenserende')));\n",
+        "ALTER TABLE modulkontrakt\n"
+        "    DROP CONSTRAINT modulkontrakt_reversibilitet_check;\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende.get((MODULKONTRAKT, "reversibilitet")) == {
+        "direkte", "kompenserende"}, (
+        "slippet traff enumvilkåret — det unavngitte CHECK-et fikk et navn som "
+        "alt var i bruk")
 
 
 @pytest.mark.parametrize("vilkar", [
