@@ -481,6 +481,8 @@
   "ui.editor.handlinger": "Actions",
   "ui.editor.handlinger_hjelp": "For each action: choose the automation mode and set the limits (amount cap, currency, time window).",
   "ui.editor.modus": "Mode",
+  "ui.editor.verdi_ukjent": "{verdi} (unknown — choose a valid value)",
+  "ui.editor.verdi_mangler": "Not selected",
   "ui.editor.belop_maks": "Amount cap",
   "ui.editor.valuta": "Currency",
   "ui.editor.tidsvindu": "Time window",

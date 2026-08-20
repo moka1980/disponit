@@ -68,14 +68,46 @@ function tekstfelt(etikett, verdi, paaEndre, attrs = {}, hint = null) {
     el("span", { class: "felt-hint", id: hid, text: hint }));
 }
 
+// EN VELGER SKAL ALDRI VISE NOE ANNET ENN DET SOM ER LAGRET (Codex P2).
+//
+// `valg` er de GYLDIGE verdiene, og et lagret utkast er med vilje
+// ustrukturert til det valideres: `krever_rolle` kan peke på en rolle som
+// er fjernet, `modus` kan være et ord ingen kjenner, feltet kan mangle
+// helt. Sto verdien ikke i lista, merket ingen <option> seg som valgt —
+// og nettleseren viser da den FØRSTE. Modellen bar fortsatt den ugyldige
+// verdien, og ingen `change` fyrer av seg selv: eier så en gyldig rolle,
+// lagret den ugyldige, og fikk samme valideringsfeil om igjen. Med bare
+// ETT gyldig valg i lista fantes det ikke engang et annet valg å ta for å
+// utløse en `change` — eneste vei ut var å slette hele konfigurasjonen.
+//
+// Verdien vises derfor som det den ER: en egen, valgt oppføring merket
+// ukjent. Modellen skrives ikke om av at noe TEGNES — reparasjonen er
+// eiers handling, og den skal være synlig. Mangler verdien helt, sier
+// plassholderen det i stedet for å utpeke en vilkårlig vinner.
 function velg(etikett, verdi, valg, oversettPrefiks, paaEndre) {
   const sel = el("select", { class: "felt-inp" });
-  for (const v of valg) {
-    const o = el("option", { value: v, text: t(`${oversettPrefiks}${v}`, v) });
-    if (v === verdi) o.selected = true;
+  const gyldig = typeof verdi === "string" && valg.includes(verdi);
+  const navngitt = typeof verdi === "string" && verdi !== "";
+  if (!gyldig) {
+    const o = el("option", { value: navngitt ? verdi : "",
+      text: navngitt
+        ? t("ui.editor.verdi_ukjent").replace("{verdi}", verdi)
+        : t("ui.editor.verdi_mangler") });
+    o.selected = true;
     sel.append(o);
   }
-  sel.addEventListener("change", () => paaEndre(sel.value));
+  for (const v of valg) {
+    const o = el("option", { value: v, text: t(`${oversettPrefiks}${v}`, v) });
+    if (gyldig && v === verdi) o.selected = true;
+    sel.append(o);
+  }
+  sel.addEventListener("change", () => {
+    // Plassholderen er ikke en verdi, og skal ikke kunne skrives tilbake
+    // som en. Den ukjente verdien er derimot eierens egen — å velge den
+    // om igjen er å la den stå.
+    if (!navngitt && sel.value === "") return;
+    paaEndre(sel.value);
+  });
   return el("label", { class: "felt" },
     el("span", { class: "felt-navn", text: etikett }), sel);
 }
@@ -871,8 +903,11 @@ function overstyringSeksjon(policy, tegnPaaNytt, grunnlag) {
     deler.push(el("p", { class: "felt-hint",
       text: t("ui.editor.overstyring_ingen") }));
   } else {
+    // Verdien sendes RÅ til velgeren (Codex P2): en `|| ""` her ville
+    // gjort en ukjent rolle om til «mangler», og det er ikke det samme —
+    // eier må se hvilken rolle utkastet faktisk peker på.
     deler.push(velg(t("ui.editor.overstyring_rolle"),
-      mo.krever_rolle || "", roller, "",
+      mo.krever_rolle, roller, "",
       (v) => { mo.krever_rolle = v; }));
     const par = Array.isArray(mo.godkjennbare) ? mo.godkjennbare : [];
     deler.push(el("ul", { class: "overstyring-liste" },

@@ -481,6 +481,8 @@
   "ui.editor.handlinger": "Handlinger",
   "ui.editor.handlinger_hjelp": "For hver handling: velg automatiseringsmodus og sett grensene (beløpstak, valuta, tidsvindu).",
   "ui.editor.modus": "Modus",
+  "ui.editor.verdi_ukjent": "{verdi} (ukjent — velg en gyldig verdi)",
+  "ui.editor.verdi_mangler": "Ikke valgt",
   "ui.editor.belop_maks": "Beløpstak",
   "ui.editor.valuta": "Valuta",
   "ui.editor.tidsvindu": "Tidsvindu",

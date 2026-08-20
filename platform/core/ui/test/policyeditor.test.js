@@ -1384,6 +1384,62 @@ test("Overstyring: fravær er en TILSTAND, par legges til fra nedtrekk",
     assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
   });
 
+// Codex P2: en velger som viser noe ANNET enn det som er lagret.
+//
+// `krever_rolle` kan peke på en rolle som er fjernet — utkast lagres uten
+// skjemavalidering. Sto verdien ikke blant valgene, merket ingen <option> seg
+// som valgt, og nettleseren viste da den FØRSTE gyldige rollen mens modellen
+// fortsatt bar den ugyldige. Ingen `change` fyrer av seg selv, og med bare ETT
+// gyldig valg finnes det ikke engang et annet valg å ta for å utløse en: eier
+// så «agent», lagret «borte», og fikk samme valideringsfeil om igjen — eneste
+// vei ut var å slette hele overstyringen.
+test("Overstyring: en ukjent krever_rolle VISES, og lagres ikke i skjul",
+  async () => {
+    const cookieDesc = Object.getOwnPropertyDescriptor(
+      window.Document.prototype, "cookie");
+    Object.defineProperty(document, "cookie", { configurable: true,
+      get: () => "__Host-disponit_csrf=tok123" });
+    POST = undefined;
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), { aapneUtkast: () => {}, startPolicy: {
+      meta: { policy_id: "p-mo", versjon: "0.1.0", bransjemal: "x",
+              status: "utkast" },
+      roller: [{ id: "agent" }],
+      handlinger: [{ id: "faktura.bokfor", tillatt_for: ["agent"] }],
+      menneskelig_overstyring: { krever_rolle: "borte", godkjennbare: [] },
+    } });
+    await vent(() => h.querySelector(".editor-seksjon"));
+    gaaTilFane(h, t("ui.editor.fane.overstyring"));
+    await vent(() => h.textContent.includes(t("ui.editor.overstyring_rolle")));
+    const merket = [...h.querySelectorAll("select")]
+      .find((s) => [...s.options].some((o) => o.value === "borte"));
+    assert.ok(merket, "den ukjente rollen er ikke å se i velgeren");
+    assert.equal(merket.value, "borte",
+      "velgeren viste en annen rolle enn den som er lagret");
+    assert.ok(merket.textContent.includes(
+      t("ui.editor.verdi_ukjent").replace("{verdi}", "borte")),
+    "den ukjente verdien er ikke merket som ukjent");
+    // Ingenting skrives om av at noe TEGNES: modellen bærer fortsatt eiers
+    // egen verdi til eier selv retter den.
+    finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+    await vent(() => POST);
+    assert.equal(
+      JSON.parse(POST.opts.body).innhold.menneskelig_overstyring.krever_rolle,
+      "borte", "editoren viste én rolle og lagret en annen");
+    // …og reparasjonen er ETT valg unna, selv om det bare finnes én gyldig
+    // rolle: den ukjente oppføringen er den andre.
+    POST = undefined;
+    merket.value = "agent";
+    merket.dispatchEvent(new window.Event("change"));
+    finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+    await vent(() => POST);
+    assert.equal(
+      JSON.parse(POST.opts.body).innhold.menneskelig_overstyring.krever_rolle,
+      "agent");
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+    if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
+  });
+
 // Codex P2: skriveveien tar med vilje imot ustrukturerte utkast — porten står
 // i `valider_utkast`, ikke i lagringen. Et lagret utkast kan derfor bære
 // `roller: {}` eller `handlinger: {}`. Leste overstyringsfanen dem rått med
