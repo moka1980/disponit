@@ -673,6 +673,28 @@ def test_akseptcommiten_baerer_bytene_som_ble_validert(tmp_path):
     assert "finnes ikke i" in str(ei.value)
 
 
+def test_invariantpunktene_krever_en_groenn_kjoring_paa_akseptcommiten():
+    """Codex' P1 (runde 2): de 16 invariantpunktene ble hardkodet grønne
+    fra to strenger kalleren skrev. En kjøring som ikke er ferdig, som
+    er RØD, eller som testet en annen commit, skal ikke bære ett eneste
+    punkt — og et run-id som ikke er et run-id skal aldri nå nettet."""
+    m = _aksept_skript()
+    sha = "a" * 40
+    groenn = {"id": 42, "status": "completed", "conclusion": "success",
+              "head_sha": sha}
+    assert m._vurder_ci_kjoring(groenn, "42", sha) == []
+    for muteres, ord_i_feil in (
+            ({"conclusion": "failure"}, "conclusion"),
+            ({"conclusion": None, "status": "in_progress"}, "ikke ferdig"),
+            ({"head_sha": "b" * 40}, "akseptcommiten"),
+            ({"id": 43}, "svarte med kjøring")):
+        feil = m._vurder_ci_kjoring(dict(groenn, **muteres), "42", sha)
+        assert any(ord_i_feil in f for f in feil), (muteres, feil)
+    with pytest.raises(SystemExit) as ei:
+        m.verifiser_ci_kjoring("ikke-et-run-id", sha)
+    assert "workflow-run-id" in str(ei.value)
+
+
 @pg
 def test_planlinjen_og_etiketten_fulgte_flippet():
     """Port 12: planlinjen står i M-56-flyten FØRST NÅ (048 leverte

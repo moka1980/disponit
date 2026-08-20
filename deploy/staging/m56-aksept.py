@@ -13,7 +13,9 @@ Punktobservasjonene (A3) bygges fra kravpunkt-registeret i basen:
 måletallene fra runde-sammendraget der de finnes, CI-kjøringen som
 kilde for de rene invariantpunktene (skjema.*, egress-tokenet,
 malautorisasjonens negativporter) — de har ingen historiske rader og
-kan bare bevises «grønne da» av kjøringen på akseptcommiten.
+kan bare bevises «grønne da» av kjøringen på akseptcommiten. Den
+kjøringen slås opp og må være ferdig, grønn og kjørt på nettopp den
+commiten; `--ci-commit` er derfor akseptcommiten, ikke en fri streng.
 
 BRUK:
     sudo -E python3 deploy/staging/m56-aksept.py \
@@ -27,8 +29,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import re
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 HER = Path(__file__).resolve().parent
@@ -127,6 +133,80 @@ def bind_til_commit(commit: str, rel: str, sha: str) -> None:
         raise SystemExit(f"AVBRUTT: {rel} i arbeidstreet er ikke fila i"
                          f" {commit[:12]}… — {sha[:12]}… mot"
                          f" {i_commit[:12]}…; ucommitede bytes er ikke evidens")
+
+
+def _repo_slug() -> str:
+    r = _git("remote", "get-url", "origin")
+    m = re.search(r"github\.com[:/]+([^/]+/[^/]+?)(?:\.git)?$",
+                  r.stdout.decode().strip())
+    if r.returncode != 0 or not m:
+        raise SystemExit("AVBRUTT: finner ingen GitHub-remote å slå"
+                         " CI-kjøringen opp mot")
+    return m.group(1)
+
+
+def _hent_ci_kjoring(run_id: str) -> dict:
+    """Kjøringen slik GitHub kjenner den — eller avbrudd. Fail-closed:
+    et punkt ingen bekreftet kjøring bærer, skrives ikke."""
+    slug = _repo_slug()
+    url = f"https://api.github.com/repos/{slug}/actions/runs/{run_id}"
+    req = urllib.request.Request(url, headers={
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "m56-aksept"})
+    tok = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if tok:
+        req.add_header("Authorization", f"Bearer {tok}")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as svar:
+            return json.loads(svar.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        raise SystemExit(f"AVBRUTT: CI-kjøring {run_id} kan ikke slås opp i"
+                         f" {slug} (HTTP {e.code}) — en kjøring som ikke"
+                         " finnes, beviser ingenting")
+    except (OSError, ValueError) as e:
+        raise SystemExit(f"AVBRUTT: oppslaget av CI-kjøring {run_id} feilet"
+                         f" ({type(e).__name__}) — invariantpunktene kan ikke"
+                         " skrives uten at kjøringen er bekreftet grønn")
+
+
+def _vurder_ci_kjoring(data: dict, run_id: str, ci_commit: str) -> list[str]:
+    """De tre påstandene invariantpunktene hviler på, målt på svaret."""
+    feil: list[str] = []
+    if str(data.get("id")) != str(run_id):
+        feil.append(f"oppslaget svarte med kjøring {data.get('id')!r}, ikke"
+                    f" {run_id}")
+    if data.get("status") != "completed":
+        feil.append(f"status={data.get('status')!r} — kjøringen er ikke ferdig")
+    if data.get("conclusion") != "success":
+        feil.append(f"conclusion={data.get('conclusion')!r} — bare en grønn"
+                    " kjøring bærer punktene")
+    if (data.get("head_sha") or "") != ci_commit:
+        feil.append(f"kjøringen testet {(data.get('head_sha') or '?')[:12]}…,"
+                    f" ikke akseptcommiten {ci_commit[:12]}…")
+    return feil
+
+
+def verifiser_ci_kjoring(run_id: str, ci_commit: str) -> dict:
+    """CI-kjøringen bak de 16 invariantpunktene. -> kjøringen.
+
+    Codex' P1 på PR #117 (runde 2): punktene ble hardkodet grønne fra to
+    strenger kalleren skrev. En skrivefeil, en gammel kjøring eller en RØD
+    kjøring ga like fullt 16 immutable «grønne» punkter — en kjøring
+    ingen har sett bevise noe som helst. Nå slås kjøringen opp: den må
+    finnes i dette repoet, være FERDIG og GRØNN, og ha testet nøyaktig
+    akseptcommiten (klarsignalets §2.5: «run-ID + commit-sha på
+    akseptcommiten»).
+    """
+    if not re.fullmatch(r"[0-9]{1,20}", run_id):
+        raise SystemExit(f"AVBRUTT: --ci-run {run_id!r} er ingen"
+                         " workflow-run-id")
+    data = _hent_ci_kjoring(run_id)
+    feil = _vurder_ci_kjoring(data, run_id, ci_commit)
+    if feil:
+        raise SystemExit(f"AVBRUTT: CI-kjøring {run_id} bærer ikke"
+                         " invariantpunktene:\n  " + "\n  ".join(feil))
+    return data
 
 
 def repo_rel(sti: Path, hva: str = "artefaktet") -> str:
@@ -243,6 +323,15 @@ def main() -> int:
                      (repo_rel(a.runde), runde_sha),
                      (runde["oppsett"]["kilde"], evidens_sha)):
         bind_til_commit(manifest_commit, rel, sha)
+    # Invariantpunktene har ingen historiske rader: de hviler HELT på at
+    # CI-kjøringen finnes, er grønn og testet akseptcommiten.
+    ci_commit = loes_akseptcommit(a.ci_commit)
+    if ci_commit != manifest_commit:
+        raise SystemExit(f"AVBRUTT: --ci-commit {ci_commit[:12]}… er ikke"
+                         f" akseptcommiten {manifest_commit[:12]}… — punktene"
+                         " påberoper seg «grønn CI på akseptcommiten», og da"
+                         " må det være den kjøringen som måles")
+    verifiser_ci_kjoring(a.ci_run, ci_commit)
 
     m = runde["maalt"]
     punkter = {}
@@ -256,13 +345,11 @@ def main() -> int:
         punkter[punkt] = {"grenseverdi": "0 (porttest rød ved brudd)",
                           "maalt_verdi": "0 (grønn CI på akseptcommiten)",
                           "kilde_type": "ci_kjoring",
-                          "kilde_ref": f"run {a.ci_run} @ {a.ci_commit}"}
+                          "kilde_ref": f"run {a.ci_run} @ {ci_commit}"}
     punkter["malautorisasjon.positiv_sti_virker"] = {
         "grenseverdi": "ja", "maalt_verdi": "ja",
         "kilde_type": "ci_kjoring",
-        "kilde_ref": f"run {a.ci_run} @ {a.ci_commit}"}
-
-    import os
+        "kilde_ref": f"run {a.ci_run} @ {ci_commit}"}
 
     from db.pg import koble
     conn = koble(os.environ["DISPONIT_MIGRATOR_URL"])
