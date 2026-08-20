@@ -1518,10 +1518,22 @@ _TABELL_RE = re.compile(
 # kolonne, fordi PostgreSQL folder den bare formen ned til små bokstaver.
 # Mengden er lukket mot grammatikken — en identifikator er ETT sitert navn
 # eller ETT bart ord, ikke en åpen tegnklasse som også ville tatt `"a" + b`.
-_CHECK_RE = re.compile(
-    r"""(?:CONSTRAINT\s+([\w."]+)\s+)?CHECK\s*\(\s*"""
-    r"""("(?:[^"]|"")+"|\w+)\s+IN\s*\(([^)]*)\)""",
-    re.S | re.I)
+#
+# Og UTTRYKKET leses ikke lenger i det samme regexet (Codex P2 på #118,
+# syttende runde). Kolonnen måtte stå rett etter `CHECK (`, så en overflødig
+# parentes rundt vilkåret — `CHECK ((reversibilitet IN ('direkte')))`, en helt
+# alminnelig skrivemåte — ga ikke et treff i det hele tatt, med samme utfall
+# som den siterte kolonnen forrige runde: en innstramming porten ikke ser, er
+# en innstramming den ikke snitter med.
+#
+# Parenteser lar seg ikke telle i et regex, så mønsteret rekker bare til
+# ÅPNINGEN av `CHECK (`; innholdet leses av `_vilkarene()`, som finner den
+# lukkende parentesen ved å telle og skreller bort dem som bare pakker inn.
+# Samme lesning gir verdilista sin ekte slutt: `([^)]*)` stoppet ved den
+# første `)`, også når den sto inne i en streng.
+_CHECK_RE = re.compile(r"""(?:CONSTRAINT\s+([\w."]+)\s+)?CHECK\s*\(""", re.I)
+# Innsiden av et lesbart vilkår: kolonnen, og åpningen av verdilista.
+_IN_RE = re.compile(r"""("(?:[^"]|"")+"|\w+)\s+IN\s*\(""", re.S | re.I)
 # Et vilkår kan også FJERNES (Codex P2 på #118, ellevte runde). Tilstanden ble
 # regnet bare av CHECK-treff, så en `DROP CONSTRAINT` uten et nytt vilkår etter
 # seg lot verdiene fra forrige migrasjon bli stående som gjeldende: katalogporten
@@ -1624,6 +1636,70 @@ def _sqlverdier(liste: str) -> set[str]:
         else:
             ut.add(ULESELIG_SQL)
         i = j
+    return ut
+
+
+def _balansert(sql: str, i: int) -> int:
+    """Indeksen til parentesen som lukker den som åpner i `i`, ellers -1.
+
+    Parenteser lar seg ikke telle i et regex, og et vilkår er nettopp nøstede
+    parenteser: `CHECK ((kolonne IN ('a')))` er samme vilkår som uten det ytre
+    paret. Tellingen hopper over strengliteralene med `_sqlliteral()`, slik at
+    en parentes inne i en verdi — `'a)b'` — ikke lukker noe.
+    """
+    if i >= len(sql) or sql[i] != "(":
+        return -1
+    dybde, j, n = 0, i, len(sql)
+    while j < n:
+        slutt = _sqlliteral(sql, j)
+        if slutt >= 0:
+            j = slutt
+            continue
+        if sql[j] == "(":
+            dybde += 1
+        elif sql[j] == ")":
+            dybde -= 1
+            if not dybde:
+                return j
+        j += 1
+    return -1
+
+
+def _uten_ytre_parentes(uttrykk: str) -> str:
+    """Uttrykket uten parentesparene som bare pakker det inn.
+
+    Bare et par som spenner over HELE uttrykket er overflødig. `(a IN ('x'))
+    OR (b IN ('y'))` begynner også med en parentes, men den lukkes midtveis —
+    der ville en skrelling gjort en disjunksjon om til det første leddet, altså
+    lest et vilkår som strengere enn det er.
+    """
+    s = uttrykk.strip()
+    while s.startswith("(") and _balansert(s, 0) == len(s) - 1:
+        s = s[1:-1].strip()
+    return s
+
+
+def _vilkarene(tekst: str) -> list[tuple[int, str | None, str, str]]:
+    """(posisjon, vilkårsnavn, kolonne, verdiliste) for hvert lesbart `CHECK`.
+
+    Lesbart betyr her `<kolonne> IN (…)`, eventuelt pakket i overflødige
+    parenteser. Et vilkår av en annen form — `CHECK (beløp > 0)` — hører ikke
+    til noe enum og gis fra seg, som før.
+    """
+    ut = []
+    for m in _CHECK_RE.finditer(tekst):
+        slutt = _balansert(tekst, m.end() - 1)
+        if slutt < 0:
+            continue
+        uttrykk = _uten_ytre_parentes(tekst[m.end():slutt])
+        inn = _IN_RE.match(uttrykk)
+        if not inn:
+            continue
+        liste = _balansert(uttrykk, inn.end() - 1)
+        if liste < 0:
+            continue
+        ut.append((m.start(), m.group(1), inn.group(1),
+                   uttrykk[inn.end():liste]))
     return ut
 
 
@@ -1981,12 +2057,13 @@ def _registerets_enums(
                     for m in _TABELL_RE.finditer(tekst)
                     if not _i_data(data, m.start())]
         hendelser = sorted(
-            [(m.start(), True, m) for m in _CHECK_RE.finditer(tekst)
-             if not _i_data(data, m.start())]
-            + [(m.start(), False, m) for m in _DROPP_RE.finditer(tekst)
+            [(v[0], True, v[1:]) for v in _vilkarene(tekst)
+             if not _i_data(data, v[0])]
+            + [(m.start(), False, (m.group(1),))
+               for m in _DROPP_RE.finditer(tekst)
                if not _i_data(data, m.start())],
             key=lambda h: h[0])
-        for start, er_vilkar, m in hendelser:
+        for start, er_vilkar, felt in hendelser:
             tabell = ""
             for pos, navn in tabeller:
                 if pos > start:
@@ -1997,13 +2074,14 @@ def _registerets_enums(
                     # Et slipp bak en betingelse er ikke kjent kjørt, og et
                     # vilkår som blir stående kan bare gjøre snittet SMALERE.
                     continue
-                vilkar.pop((tabell, _vilkarsnavn(m.group(1))), None)
+                vilkar.pop((tabell, _vilkarsnavn(felt[0])), None)
                 continue
-            verdier = _sqlverdier(m.group(3))
+            rått_navn, rå_kolonne, verdiliste = felt
+            verdier = _sqlverdier(verdiliste)
             if not verdier:
                 continue
-            kolonne = _kolonnenavn(m.group(2))
-            navn = _vilkarsnavn(m.group(1)) if m.group(1) \
+            kolonne = _kolonnenavn(rå_kolonne)
+            navn = _vilkarsnavn(rått_navn) if rått_navn \
                 else _tildelt_navn(vilkar, tabell, kolonne)
             if _i_data(betinget, start) and (tabell, navn) in vilkar:
                 navn = _sidestilt_navn(vilkar, tabell, navn)
@@ -2236,6 +2314,42 @@ def test_sitert_kolonne_i_et_vilkaar_er_samme_kolonne(tmp_path):
     gjeldende, noen_gang = _registerets_enums(mappe)
     assert gjeldende[(MODULKONTRAKT, "reversibilitet")] == {"direkte"}
     assert {"direkte", "kompenserende"} <= noen_gang
+
+
+@pytest.mark.parametrize("vilkar,gjelder", [
+    # Overflødige parenteser endrer ingenting for PostgreSQL, og skal ikke
+    # endre noe for porten (Codex P2 på #118, syttende runde).
+    ("CHECK ((reversibilitet IN ('direkte')))", {"direkte"}),
+    ("CHECK ( ( ( reversibilitet IN ('direkte') ) ) )", {"direkte"}),
+    ('CHECK (("reversibilitet" IN (\'direkte\')))', {"direkte"}),
+    # Men et par som lukkes MIDTVEIS pakker ikke inn hele uttrykket. Å skrelle
+    # det bort ville lest en disjunksjon som sitt første ledd, altså som et
+    # strengere vilkår enn det er — her er begge verdiene fortsatt lovlige.
+    ("CHECK ((reversibilitet IN ('direkte'))\n"
+     "    OR (reversibilitet IN ('kompenserende')))",
+     {"direkte", "kompenserende"}),
+    # En parentes inne i en VERDI lukker ingen liste: `([^)]*)` stoppet ved
+    # den, og resten av lista falt bort sammen med verdien den sto i.
+    ("CHECK (reversibilitet IN ('a)b', 'kompenserende'))", {"kompenserende"}),
+])
+def test_overflodige_parenteser_er_samme_vilkaar(tmp_path, vilkar, gjelder):
+    """Et vilkår leses forbi parentesene som bare pakker det inn.
+
+    `_CHECK_RE` krevde kolonnen rett etter `CHECK (` (Codex P2 på #118,
+    syttende runde), så et vilkår med et ekstra parentespar var ikke et treff i
+    det hele tatt — og et vilkår porten ikke ser, snitter den ikke med. Legges
+    en innstramming skrevet slik ved siden av det videre vilkåret som står,
+    blir bare det videre gjeldende, og porten slipper inn en klasse registeret
+    avviser.
+
+    Grensen går ved HELE uttrykket: en disjunksjon begynner også med en
+    parentes, men den lukkes midtveis, og der er ingenting overflødig.
+    """
+    mappe = _migrasjoner(
+        tmp_path, _LAGER_VILKAR,
+        f"ALTER TABLE modulkontrakt ADD CONSTRAINT smalere\n    {vilkar};\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende[(MODULKONTRAKT, "reversibilitet")] == gjelder
 
 
 def test_enumtilstanden_leser_slipp_og_nytt_vilkaar_i_rekkefolge(tmp_path):
