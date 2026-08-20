@@ -1383,9 +1383,11 @@ def _registerets_enums(
     """
     # {(tabell, vilkårsnavn): {kolonne: verdier}} — CHECK-ene som står igjen.
     vilkar: dict[tuple[str, str], dict[str, set[str]]] = {}
-    # {tabell: navnene som er i bruk} — ALLE vilkårstyper, ikke bare CHECK. Se
-    # `_tildelt_navn()`.
-    opptatt: dict[str, set[str]] = {}
+    # {tabell: {navn: er det et CHECK?}} — navnene som er i bruk. ALLE
+    # vilkårstyper teller, ikke bare CHECK, se `_tildelt_navn()`. TYPEN følger
+    # med fordi `LIKE … INCLUDING CONSTRAINTS` kopierer CHECK-ene og bare dem,
+    # se `_liker()`.
+    opptatt: dict[str, dict[str, bool]] = {}
     # Tabellene porten har LEST et `CREATE TABLE` for. En `LIKE` som kopierer
     # fra en tabell som ikke står her, kopierer noe porten ikke kjenner.
     laget: set[str] = set()
@@ -1394,7 +1396,7 @@ def _registerets_enums(
         for hendelse in _hendelsene(sql.read_text(encoding="utf-8")):
             slag, tabell, navn = hendelse[:3]
             if slag is _NAVN:
-                opptatt.setdefault(tabell, set()).add(navn)
+                opptatt.setdefault(tabell, {})[navn] = False
                 continue
             if slag is _LAGET:
                 laget.add(tabell)
@@ -1411,7 +1413,7 @@ def _registerets_enums(
                     # vilkår som blir stående kan bare gjøre snittet SMALERE.
                     continue
                 vilkar.pop((tabell, navn), None)
-                opptatt.get(tabell, set()).discard(navn)
+                opptatt.get(tabell, {}).pop(navn, None)
                 continue
             _, tabell, navn, uttrykk, betinget, kolonne = hendelse
             # NAVNET tildeles først, og uavhengig av om vilkåret binder noe
@@ -1428,7 +1430,7 @@ def _registerets_enums(
             if navn == _DYN_NAVN or (betinget and (tabell, navn) in vilkar):
                 navn = _sidestilt_navn(vilkar, tabell, navn)
             else:
-                opptatt.setdefault(tabell, set()).add(navn)
+                opptatt.setdefault(tabell, {})[navn] = True
             bindinger = _bindinger(uttrykk)
             if not bindinger:
                 continue
@@ -1546,7 +1548,7 @@ def _omdop(vilkar: dict, opptatt: dict, laget: set, hendelse: tuple) -> None:
                 else _sidestilt_navn(vilkar, til, nokkel[1])
             vilkar[(til, navn)] = vilkar.pop(nokkel)
         if tabell in opptatt:
-            opptatt.setdefault(til, set()).update(opptatt.pop(tabell))
+            opptatt.setdefault(til, {}).update(opptatt.pop(tabell))
         if tabell in laget:
             laget.discard(tabell)
             laget.add(til)
@@ -1556,11 +1558,16 @@ def _omdop(vilkar: dict, opptatt: dict, laget: set, hendelse: tuple) -> None:
             if nokkel[0] == tabell and fra in bindinger:
                 bindinger[til] = bindinger.pop(fra)
         return
-    opptatt.setdefault(tabell, set()).add(til)
+    navnene = opptatt.setdefault(tabell, {})
+    # Typen følger navnet gjennom omdøpet. Et vilkår porten aldri har lest
+    # regnes som et CHECK: det er retningen som RESERVERER, og en reservasjon
+    # for mye koster en rød port, mens en for lite kan slippe en verdi gjennom.
+    # Se `_liker()`.
+    navnene[til] = navnene.get(fra, True)
     if betinget:
-        opptatt[tabell].add(fra)
+        navnene[fra] = navnene[til]
     else:
-        opptatt[tabell].discard(fra)
+        navnene.pop(fra, None)
     if (tabell, fra) not in vilkar:
         return
     flyttet = vilkar.pop((tabell, fra))
@@ -1611,8 +1618,18 @@ def _liker(vilkar: dict, opptatt: dict, laget: set,
     kilde som selv står under en sidestilt nøkkel: der er det virkelige navnet
     ukjent i utgangspunktet, og kopien arver den uvissheten.
 
-    Malens navn regnes som opptatte på den nye tabellen av samme grunn som i
-    `_tildelt_navn()`: kopiene tar plass i navnerommet.
+    Navnene som følger med er de KOPIENE faktisk opptar (Codex P2 på #118,
+    tjuetredje runde). `INCLUDING CONSTRAINTS` tar med malens CHECK-vilkår og
+    bare dem; en primærnøkkel, en unik nøkkel eller et ekskluderingsvilkår
+    kommer først med `INCLUDING INDEXES`, og PostgreSQL gir dem da NYE navn
+    avledet av den nye tabellen — `…_pkey`, `…_key`, `…_excl`, ingen av dem en
+    form som kan kollidere med `_check`-stammen. En fremmednøkkel kopieres
+    aldri av `LIKE`. Første forsøk førte hele `opptatt[mal]` over, altså også
+    navn ingenting kopierte, og et påfølgende unavngitt CHECK fikk da en teller
+    i modellen det ikke har i databasen: et senere slipp på basisnavnet traff
+    det i databasen og bommet i modellen, som ble stående med en innskrenkning
+    som ikke lenger fantes. Ellers regnes malens navn som opptatte av samme
+    grunn som i `_tildelt_navn()`: kopiene tar plass i navnerommet.
 
     KJENNER den ikke malen — ingen migrasjon har opprettet den — er svaret
     uvisst for alt. Malen kan bære nøyaktig det vilkåret katalogen måles mot,
@@ -1627,7 +1644,9 @@ def _liker(vilkar: dict, opptatt: dict, laget: set,
         nytt = navn if "\0" not in navn and (tabell, navn) not in vilkar \
             else _sidestilt_navn(vilkar, tabell, navn)
         vilkar[(tabell, nytt)] = dict(bindinger)
-    opptatt.setdefault(tabell, set()).update(opptatt.get(mal, ()))
+    for navn, er_check in opptatt.get(mal, {}).items():
+        if er_check:
+            opptatt.setdefault(tabell, {})[navn] = True
 
 
 def _registerenum(kolonne: str) -> set[str]:
@@ -2705,6 +2724,39 @@ def test_en_like_fra_en_ukjent_mal_er_uvisst(tmp_path):
     assert gjeldende.get((_UKJENT_TABELL, _UKJENT_KOLONNE)) == {
         ULESELIG_SQL}, (
         "malen porten aldri har lest ble lest som om den var tom")
+
+
+def test_en_like_reserverer_bare_navnene_kopiene_opptar(tmp_path):
+    """`INCLUDING CONSTRAINTS` kopierer CHECK-ene, og bare dem.
+
+    Codex P2 på #118, tjuetredje runde. Hele `opptatt[mal]` ble ført over, men
+    det oppslaget bærer alle vilkårstyper. Malens UNIKE nøkkel her heter
+    tilfeldigvis `modulkontrakt_check`, og siden ingenting kopierer den, er det
+    navnet ledig på den nye tabellen: PostgreSQL gir det unavngitte CHECK-et
+    nettopp `modulkontrakt_check`, mens modellen skjøv det til
+    `modulkontrakt_check1`.
+
+    Slippet traff da i databasen og bommet i modellen, som ble stående med et
+    vilkår som ikke lenger finnes — og porten avviste `irreversibel`, en verdi
+    registeret godtar etterpå.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE kontraktmal (\n"
+        "    reversibilitet TEXT NOT NULL,\n"
+        "    CONSTRAINT modulkontrakt_check UNIQUE (reversibilitet));\n",
+        "CREATE TABLE modulkontrakt (\n"
+        "    LIKE kontraktmal INCLUDING CONSTRAINTS,\n"
+        "    CHECK (reversibilitet IN ('direkte', 'kompenserende')));\n",
+        "ALTER TABLE modulkontrakt DROP CONSTRAINT modulkontrakt_check;\n"
+        "ALTER TABLE modulkontrakt ADD CONSTRAINT rev_ny\n"
+        "    CHECK (reversibilitet IN\n"
+        "           ('direkte', 'kompenserende', 'irreversibel'));\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende.get((MODULKONTRAKT, "reversibilitet")) == {
+        "direkte", "kompenserende", "irreversibel"}, (
+        "slippet bommet — modellen reserverte et navn `LIKE` ikke kopierer, "
+        "og skjøv det unavngitte vilkåret til en teller databasen ikke har")
 
 
 def test_et_kopiert_vilkaar_kan_slippes_paa_kildens_navn(tmp_path):
