@@ -267,6 +267,10 @@ _ORD_UTEN_VERDI = {
 # leses i `_kodespenn()`, som lar `for` bli stående som konteksten.
 _KONTROLLORD = {"if", "for", "while", "with", "switch", "catch"}
 
+# Ord som en SETNING kan følge rett etter. En krøllparentes der er en blokk,
+# ikke et objektliteral — `else {` og `try {` åpner kropper.
+_SETNINGSORD = {"else", "do", "try", "finally"}
+
 _TALL_START_RE = re.compile(r"(?:\d[\w.]*|\.\d[\w.]*)")
 
 
@@ -334,10 +338,28 @@ def _kodespenn(js: str, a: int, b: int, avslutt: bool = False):
     lukker en setningsdel og et mønster kan følge, `f(…)` gir en verdi og
     skråstreken etter er deling. Retningen er poenget: forover VET vi hva vi har
     passert, bakover må vi gjette.
+
+    KRØLLPARENTESEN har samme tvetydighet som parentesen (Codex P2 på #118,
+    ellevte runde): `}` lukker enten et OBJEKTLITERAL, som er en verdi, eller en
+    BLOKK, som ikke er det. Vi leste den alltid som en blokk, og da så
+    divisjonen i `` `${{x: 1} / 2} sti / hale` `` ut som starten på et mønster —
+    skanningen spiste seg forbi malstrengens slutt og etterlot kjørende kode som
+    prosa. `blokker` husker derfor for hver åpne `{` hva den åpnet, og
+    `blokkposisjon` sier hvor vi står: en krøllparentes er en blokk der en
+    SETNING kan begynne (etter `;`, `)`, `=>`, en annen blokk, `else`/`do`/
+    `try`/`finally`), og et objektliteral der et UTTRYKK står. `${…}` starter i
+    uttrykksposisjon — det er derfor `avslutt` også setter startposisjonen.
+
+    GRENSEN: en klassekropp (`class A {`) leses som et objektliteral, siden
+    navnet foran den er en verdi. Det betyr bare at en skråstrek RETT etter
+    `}` leses som divisjon, og en regex-literal rett etter en klasseerklæring
+    finnes ikke i praksis. Å skille dem ville krevd at skanneren fulgte
+    erklæringsformer, og det er å skrive en parser.
     """
     verdi, siste_ord = False, ""
     parenteser: list[bool] = []
-    dybde, i = 0, a
+    blokker: list[bool] = []
+    blokkposisjon, i = not avslutt, a
     while i < b:
         c = js[i]
         if c.isspace():
@@ -351,19 +373,19 @@ def _kodespenn(js: str, a: int, b: int, avslutt: bool = False):
         if c in "\"'":
             j = _strengslutt(js, i, b)
             yield i, j, "streng"
-            i, verdi, siste_ord = j, True, ""
+            i, verdi, siste_ord, blokkposisjon = j, True, "", False
             continue
         if c == "`":
             i = yield from _malspenn(js, i, b)
-            verdi, siste_ord = True, ""
+            verdi, siste_ord, blokkposisjon = True, "", False
             continue
         if c == "/":
             j = i if verdi else _regexslutt(js, i, b)
             if j > i:
                 yield i, j, "regex"
-                i, verdi, siste_ord = j, True, ""
+                i, verdi, siste_ord, blokkposisjon = j, True, "", False
                 continue
-            i, verdi, siste_ord = i + 1, False, ""
+            i, verdi, siste_ord, blokkposisjon = i + 1, False, "", False
             continue
         if (treff := _NAVN_RE.match(js, i, b)):
             # Etter et punktum er ordet en EGENSKAP, ikke et nøkkelord: `x.in`
@@ -377,33 +399,53 @@ def _kodespenn(js: str, a: int, b: int, avslutt: bool = False):
                 siste_ord = ordet
             i, verdi = treff.end(), (etter_punktum
                                      or ordet not in _ORD_UTEN_VERDI)
+            blokkposisjon = not etter_punktum and ordet in _SETNINGSORD
             continue
         if (treff := _TALL_START_RE.match(js, i, b)):
-            i, verdi, siste_ord = treff.end(), True, ""
+            i, verdi, siste_ord, blokkposisjon = treff.end(), True, "", False
             continue
         if c == ".":
-            i, verdi, siste_ord = i + 1, False, "."
+            i, verdi, siste_ord, blokkposisjon = i + 1, False, ".", False
             continue
         if c == "(":
             parenteser.append(siste_ord in _KONTROLLORD)
-            i, verdi, siste_ord = i + 1, False, ""
+            i, verdi, siste_ord, blokkposisjon = i + 1, False, "", False
             continue
         if c == ")":
             betingelse = parenteser.pop() if parenteser else False
-            i, verdi, siste_ord = i + 1, not betingelse, ""
+            # Står det en krøllparentes etter en `)`, er den en KROPP: `if (…)
+            # {`, `function f() {`, `m() {`. Et objektliteral står aldri rett
+            # etter en parentes — det står etter `=`, `(`, `,`, `:` eller `${`.
+            i, verdi, siste_ord, blokkposisjon = i + 1, not betingelse, "", True
             continue
         if c == "]":
-            i, verdi, siste_ord = i + 1, True, ""
+            i, verdi, siste_ord, blokkposisjon = i + 1, True, "", False
             continue
         if c == "}":
-            if dybde == 0 and avslutt:
+            if not blokker and avslutt:
                 return i
-            dybde = max(dybde - 1, 0)
-            i, verdi, siste_ord = i + 1, False, ""
+            # Lukker den et objektliteral, har den avsluttet en VERDI, og
+            # skråstreken etter deler. Lukker den en blokk, kan et mønster følge.
+            objekt = blokker.pop() if blokker else False
+            i, siste_ord = i + 1, ""
+            verdi, blokkposisjon = objekt, not objekt
             continue
         if c == "{":
-            dybde += 1
-        i, verdi, siste_ord = i + 1, False, ""
+            objekt = not blokkposisjon
+            blokker.append(objekt)
+            i, verdi, siste_ord = i + 1, False, ""
+            blokkposisjon = not objekt
+            continue
+        if js.startswith("=>", i):
+            # Etter en pilfunksjon kommer enten en kropp (`=> {`) eller et
+            # uttrykk (`=> /mønster/`). Begge deler, aldri et objektliteral —
+            # det må skrives `=> ({…})`.
+            i, verdi, siste_ord, blokkposisjon = i + 2, False, "", True
+            continue
+        if c == ";":
+            i, verdi, siste_ord, blokkposisjon = i + 1, False, "", True
+            continue
+        i, verdi, siste_ord, blokkposisjon = i + 1, False, "", False
     return b
 
 
@@ -492,6 +534,10 @@ _SKANNERPROEVER = [
     ('const t = `Tilstand: ${filter_state}`;', False),
     ('const t = `ytre ${p ? `indre ${filter_state}` : ""} slutt`;', False),
     ('const t = `en mal som nevner filter_state i teksten`;', True),
+    ('const t = `${{x: 1} / 2} sti / hale`; const filter_state = {};', False),
+    ('const o = {a: 1} / 2; const filter_state = {};', False),
+    ('function f() {} /["\']/.test(v); const filter_state = {};', False),
+    ('if (a) {} else /["\']/.test(v); const filter_state = {};', False),
 ]
 
 
