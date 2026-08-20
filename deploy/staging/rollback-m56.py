@@ -17,6 +17,17 @@ tre kontrollpunktene akseptflippen (049) krever:
       måler drillen bare at den gamle arbeideren sluttet å claime, og
       en forrige release som ikke lar seg kjøre på verten eller mot
       basen ville gitt et grønt rullbakkbevis (Codex P1, #117).
+
+      OG DEN BÆRER FORGJENGERENS BYTES. Rullback-releasen ble før
+      registrert med den DRILLEDE deploymentens digest, så «rullbakken»
+      var kandidatens egne bytes under et nytt navn — (b2) kunne stå
+      grønt uten at det man ruller tilbake TIL noen gang var prøvd
+      (Codex P1, #117 runde 6). Digesten hentes nå fra forgjengeren i
+      registeret, og siden sjekklistens fase 1/2 pinner det lokalt bygde
+      motorimaget, MÅLES det først at forgjengerens bytes er de samme —
+      er de ikke det, kan denne drillen ikke boote dem, og den sier det
+      i stedet for å registrere de drillede bytene og kalle det en
+      rullbakk.
   (c) fram igjen: akseptkandidaten — byte-identisk med den drillede
       (A1) — plukker det ventende oppdraget og promoterer rapporten.
       Kandidatens promoterte artefakt er samtidig akseptens E2E-bevis:
@@ -206,6 +217,68 @@ def _bestill_drill(sj, m, merkelapp):
     return r.json()["oppdrag_id"]
 
 
+def forgjengerens_bytes(m, drillet: str) -> tuple[str, str]:
+    """Releasen den drillede overtok fra, og HENNES digest.
+    -> (release_id, artifact_digest).
+
+    Codex' P1 på PR #117 (runde 6): rullback-releasen ble registrert med
+    `digest` — den DRILLEDE deploymentens. Rullbakken ble dermed
+    kandidatens egne bytes under en rullbakk-identitet, og (b2)-leddet
+    kunne stå grønt uten at forgjengerens bytes noen gang var prøvd. Et
+    rullbakkbevis som aldri rørte det man ruller tilbake TIL, er ikke et
+    rullbakkbevis.
+
+    Forgjengeren er deploymentraden med det seneste `fra_ts` før den
+    drillede — registerets egen historie, ikke en antakelse.
+    """
+    rad = m.execute(
+        "SELECT d.release_id, r.artifact_digest"
+        "  FROM moduldeployment d JOIN modulrelease r"
+        "    ON r.modul_id = d.modul_id AND r.release_id = d.release_id"
+        " WHERE d.modul_id=%s AND d.miljo=%s AND d.release_id <> %s"
+        "   AND d.fra_ts <= (SELECT fra_ts FROM moduldeployment"
+        "                     WHERE modul_id=%s AND miljo=%s"
+        "                       AND release_id=%s)"
+        " ORDER BY d.fra_ts DESC, d.release_id DESC LIMIT 1",
+        (MODUL, MILJO, drillet, MODUL, MILJO, drillet)).fetchone()
+    if rad is None:
+        raise SystemExit(
+            f"AVBRUTT: {drillet} har ingen forgjenger i {MILJO} — det"
+            " finnes ingenting å rulle tilbake TIL, og en drill som"
+            " ruller tilbake til seg selv måler ingen rullbakk")
+    return rad[0], rad[1]
+
+
+def krev_bootbare_forgjengerbytes(forgjenger: str, forgjenger_digest: str,
+                                  drillet_digest: str) -> None:
+    """Bootveien kan bare kjøre ÉN image — og det må være forgjengerens.
+
+    Sjekklistens fase 1 leser det lokalt bygde `disponit-wcag-motor`, og
+    fase 2 KREVER at den claimende deploymentens `artifact_digest` er
+    nøyaktig det imaget. `_kjor_faser` har altså ingen måte å boote et
+    annet image på, og den drillede releasen ble registrert fra samme
+    lokale bygg.
+
+    Er forgjengerens bytes andre enn de drillede, kan denne drillen
+    derfor IKKE prøve dem — og da skal den si det, ikke registrere
+    rullbakken med de drillede bytene og kalle det en rullbakk (Codex P1,
+    #117 runde 6). At m56-releasene i dag deler digest er A1s levende
+    bevis, og nettopp derfor må likheten MÅLES her: den er en tilstand
+    som kan endre seg, ikke en garanti.
+    """
+    if forgjenger_digest == drillet_digest:
+        return
+    raise SystemExit(
+        f"AVBRUTT: forgjengeren {forgjenger} bærer digest"
+        f" {str(forgjenger_digest)[:19]}…, mens den drillede releasen"
+        f" bærer {str(drillet_digest)[:19]}…. Sjekklistens fase 1/2 pinner"
+        " det LOKALT BYGDE motorimaget, så drillen kan ikke boote"
+        " forgjengerens bytes — og en rullbakk til de drillede bytene"
+        " prøver ikke det man ruller tilbake til. Bygg forgjengerens image"
+        " på verten først, eller kjør rullbakken manuelt og bind beviset"
+        " for hånd.")
+
+
 def krev_ubrukte_drillreleaser(m, drillet: str, rullback: str,
                                kandidat: str) -> None:
     """Drill-id-ene må være UBRUKTE deployments, ellers er dette en rest.
@@ -289,9 +362,15 @@ def main() -> int:
         raise SystemExit("AVBRUTT: ingen claiming-deployment å drille")
     drillet, kver, khash, digest = rad
     krev_ubrukte_drillreleaser(m, drillet, a.rullback_id, a.kandidat_id)
+    # Rullbakken skal bære FORGJENGERENS bytes, ikke den drilledes
+    # (Codex P1, #117 runde 6) — og bootveien må kunne kjøre dem.
+    forgjenger, forgjenger_digest = forgjengerens_bytes(m, drillet)
+    krev_bootbare_forgjengerbytes(forgjenger, forgjenger_digest, digest)
     epoch = m.execute("SELECT module_epoch FROM modulhode WHERE modul_id=%s",
                       (MODUL,)).fetchone()[0]
-    print(f"driller {drillet} (epoch {epoch}, digest {digest[:12]}…)")
+    print(f"driller {drillet} (epoch {epoch}, digest {digest[:12]}…),"
+          f" rullbakk til forgjengeren {forgjenger}s bytes"
+          f" ({forgjenger_digest[:12]}…)")
 
     # Rullback-releasen registreres FØR racet — registreringen er passiv,
     # selve rullingen er ett kall og fyres midt i det løpende oppdraget.
@@ -308,9 +387,14 @@ def main() -> int:
         (MODUL, a.rullback_id)).fetchone()
     if finnes is None:
         _admin(m)
+        # DIGESTEN ER FORGJENGERENS, ikke den drilledes (Codex P1, runde
+        # 6). Verdiene er like i dag — `krev_bootbare_forgjengerbytes`
+        # har alt målt det — men KILDEN er poenget: en rullbakk som
+        # henter bytene sine fra releasen den ruller VEKK fra, ruller
+        # ingen steder.
         m.execute("SELECT registrer_release(%s,%s,%s,%s,%s,%s,'m56-drill')",
                   (MODUL, a.rullback_id, kver, khash, _manifest_hash(),
-                   digest))
+                   forgjenger_digest))
     m.commit()
     m.execute("RESET ROLE")
 
@@ -447,11 +531,19 @@ def main() -> int:
     kandidat_digest = m.execute(
         "SELECT artifact_digest FROM modulrelease WHERE modul_id=%s"
         " AND release_id=%s", (MODUL, a.kandidat_id)).fetchone()[0]
+    rullback_digest = m.execute(
+        "SELECT artifact_digest FROM modulrelease WHERE modul_id=%s"
+        " AND release_id=%s", (MODUL, a.rullback_id)).fetchone()[0]
     etter = {
         "drillet_livslop": _deployment(m, drillet),
         "rullback_livslop": _deployment(m, a.rullback_id),
         "kandidat_livslop": _deployment(m, a.kandidat_id),
         "digest_likhet": kandidat_digest == digest,
+        # Leses fra REGISTERET etter drillen, ikke fra planen: bytene
+        # rullbakken faktisk bootet skal være forgjengerens (Codex P1,
+        # #117 runde 6).
+        "rullback_bytes_er_forgjengerens":
+            rullback_digest == forgjenger_digest,
         "modulstatus": m.execute(
             "SELECT status FROM modulhode WHERE modul_id=%s",
             (MODUL,)).fetchone()[0],
@@ -466,6 +558,13 @@ def main() -> int:
             "kandidat_release": a.kandidat_id,
             "drillet_digest": digest,
             "kandidat_digest": kandidat_digest,
+            # Hvem drillen rullet tilbake TIL, og med hvilke bytes. Uten
+            # disse kunne artefaktet ikke skille «rullet tilbake til
+            # forgjengeren» fra «registrerte den drillede på nytt under et
+            # annet navn» (Codex P1, #117 runde 6).
+            "forgjenger_release": forgjenger,
+            "forgjenger_digest": forgjenger_digest,
+            "rullback_digest": rullback_digest,
             "module_epoch": int(epoch),
         },
         # HVA drillen faktisk så, ikke bare HVOR MANGE. Codex' P2 på PR
@@ -526,7 +625,9 @@ def main() -> int:
         and art["maalt"]["rullback_claimet_oppdrag"] == 1
         and art["maalt"]["rullback_promoterte_artefakter"] >= 1
         and art["maalt"]["kandidat_promoterte_artefakter"] >= 1
-        and etter["digest_likhet"] and etter["drillet_livslop"] == "draining"
+        and etter["digest_likhet"]
+        and etter["rullback_bytes_er_forgjengerens"]
+        and etter["drillet_livslop"] == "draining"
         and etter["rullback_livslop"] == "draining"
         and etter["kandidat_livslop"] == "claiming"
         and etter["modulstatus"] == "aktiv")

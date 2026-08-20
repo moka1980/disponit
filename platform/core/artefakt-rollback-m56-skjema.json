@@ -36,7 +36,10 @@
         "kandidat_release",
         "drillet_digest",
         "kandidat_digest",
-        "module_epoch"
+        "module_epoch",
+        "forgjenger_release",
+        "rullback_digest",
+        "forgjenger_digest"
       ],
       "properties": {
         "modul": {
@@ -69,6 +72,21 @@
         },
         "module_epoch": {
           "$ref": "#/$defs/telling"
+        },
+        "forgjenger_release": {
+          "type": "string",
+          "minLength": 1,
+          "comment": "Releasen den drillede overtok fra - den drillen ruller TILBAKE til. Uten den kan artefaktet ikke skille en rullbakk fra en ny registrering av de drillede bytene (Codex P1, #117 runde 6)."
+        },
+        "rullback_digest": {
+          "type": "string",
+          "minLength": 12,
+          "comment": "Bytene rullbakk-releasen faktisk ble registrert og bootet med. Skal vaere forgjengerens, ikke den drilledes."
+        },
+        "forgjenger_digest": {
+          "type": "string",
+          "minLength": 12,
+          "comment": "Forgjengerens egne bytes, lest av registeret. Porten regner likheten mot `rullback_digest` ut av disse to - aldri av etterkontrollens flagg alene."
         }
       }
     },
@@ -148,7 +166,8 @@
         "rullback_livslop",
         "kandidat_livslop",
         "digest_likhet",
-        "modulstatus"
+        "modulstatus",
+        "rullback_bytes_er_forgjengerens"
       ],
       "properties": {
         "drillet_livslop": {
@@ -166,6 +185,10 @@
         "rullback_livslop": {
           "type": "string",
           "comment": "Rullbakkens livsloep etter at kandidaten overtok - drenert, som den drillede."
+        },
+        "rullback_bytes_er_forgjengerens": {
+          "type": "boolean",
+          "comment": "Lest av REGISTERET etter drillen: bar rullback-releasen forgjengerens digest? En rullbakk til de drillede bytene proever ikke det man ruller tilbake til."
         }
       }
     },

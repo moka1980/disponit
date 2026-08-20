@@ -821,9 +821,18 @@ def _drillartefakt(**maalt):
         # ikke måtte huske å mutere listen for at porten skal se det.
         ident[felt] = [f"{ident[felt][0][:-2]}{i:02x}"
                        for i in range(komplett[telling])]
+    # Rullbakken bærer FORGJENGERENS bytes (Codex P1, runde 6): hvem hun
+    # var, hvilke bytes hun hadde, og hvilke rullback-releasen faktisk
+    # fikk. Porten regner likheten ut av digestene, ikke av flagget.
+    forgjenger = ekte["oppsett"]["drillet_digest"]
     return dict(ekte, maalt=komplett, identiteter=ident,
+                oppsett=dict(ekte["oppsett"],
+                             forgjenger_release="wcag-r10",
+                             forgjenger_digest=forgjenger,
+                             rullback_digest=forgjenger),
                 etterkontroll=dict(ekte["etterkontroll"],
-                                   rullback_livslop="draining"))
+                                   rullback_livslop="draining",
+                                   rullback_bytes_er_forgjengerens=True))
 
 
 def test_rullbakken_maa_ha_bootet_og_gjort_arbeid():
@@ -853,6 +862,51 @@ def test_rullbakken_maa_ha_bootet_og_gjort_arbeid():
         "drillen uten rullbakk-boot passerer fortsatt evidensporten"
     assert valider_artefaktformat(gammel, drillkrav), \
         "skjemaet krever fortsatt ikke (b2)-målingene"
+
+
+def test_rullbakken_maa_baere_forgjengerens_bytes():
+    """Codex' P1 (runde 6): rullback-releasen ble registrert med den
+    DRILLEDE deploymentens digest.
+
+    «Rullbakken» var dermed kandidatens egne bytes under et nytt navn,
+    og (b2) kunne stå grønt uten at det man ruller tilbake TIL noen gang
+    var prøvd — en forgjenger som ikke lar seg kjøre på verten ville
+    fortsatt gitt et grønt rullbakkartefakt. Artefaktet navngir nå
+    forgjengeren og bærer begge digestene, og porten regner likheten ut
+    av dem — aldri av etterkontrollens flagg alene."""
+    from manifestskjema import _sjekk_grenser, valider_artefaktformat
+    drillkrav = "rollback-m56-v1"
+    assert _sjekk_grenser(drillkrav, _drillartefakt()) == []
+    # Selve angrepet: rullbakken fikk de DRILLEDE bytene, ikke
+    # forgjengerens. Flagget står grønt — porten skal ikke tro på det.
+    laant = _drillartefakt()
+    laant["oppsett"] = dict(laant["oppsett"],
+                            forgjenger_digest="ff" * 32)
+    assert any("forgjengerens" in f
+               for f in _sjekk_grenser(drillkrav, laant)), \
+        "rullbakk med andre bytes enn forgjengerens slapp gjennom"
+    # Flagget alene er heller ikke nok den andre veien.
+    uten_flagg = _drillartefakt()
+    uten_flagg["etterkontroll"] = dict(
+        uten_flagg["etterkontroll"], rullback_bytes_er_forgjengerens=False)
+    assert any("forgjengerens bytes" in f
+               for f in _sjekk_grenser(drillkrav, uten_flagg))
+    # En «rullbakk» til seg selv har ingen retning.
+    seg_selv = _drillartefakt()
+    seg_selv["oppsett"] = dict(
+        seg_selv["oppsett"],
+        forgjenger_release=seg_selv["oppsett"]["drillet_release"])
+    assert any("forgjenger_release" in f
+               for f in _sjekk_grenser(drillkrav, seg_selv))
+    # …og skjemaet krever feltene, så et artefakt uten dem er ikke bare
+    # umålt — det er ugyldig.
+    for felt in ("forgjenger_release", "forgjenger_digest",
+                 "rullback_digest"):
+        mangler = _drillartefakt()
+        mangler["oppsett"] = {k: v for k, v in mangler["oppsett"].items()
+                              if k != felt}
+        assert valider_artefaktformat(mangler, drillkrav), \
+            f"skjemaet krever ikke {felt}"
 
 
 def test_e2e_beviset_maa_vaere_det_drillen_saa():
@@ -1271,6 +1325,44 @@ def test_drillen_nekter_a_gjenoppta_en_avbrutt_kjoring():
     tekst = (ROT / "deploy/staging/rollback-m56.py").read_text(
         encoding="utf-8")
     assert "Rekjøring er trygg" not in tekst
+
+
+def test_drillen_nekter_naar_forgjengerens_bytes_ikke_kan_bootes():
+    """Codex' P1 (runde 6), skriptsiden.
+
+    Sjekklistens fase 1 leser det LOKALT BYGDE `disponit-wcag-motor`, og
+    fase 2 krever at den claimende deploymentens `artifact_digest` er
+    nøyaktig det imaget. `_kjor_faser` kan derfor ikke boote noe annet
+    image, og den drillede releasen kom fra samme bygg. Er forgjengerens
+    bytes andre, kan drillen ikke prøve dem — og da skal den si det, ikke
+    registrere rullbakken med de drillede bytene og kalle det en
+    rullbakk. At m56-releasene i dag deler digest er A1s levende bevis,
+    og nettopp derfor må likheten måles: den er en tilstand, ikke en
+    garanti."""
+    d = _drillskript()
+    d.krev_bootbare_forgjengerbytes("wcag-r10", "aa" * 32, "aa" * 32)
+    with pytest.raises(SystemExit) as ei:
+        d.krev_bootbare_forgjengerbytes("wcag-r10", "bb" * 32, "aa" * 32)
+    assert "wcag-r10" in str(ei.value)
+
+    class _Historie:
+        """Bare det `forgjengerens_bytes` spør om: én rad, eller ingen."""
+
+        def __init__(self, rad):
+            self.rad = rad
+
+        def execute(self, _sql, _params=None):
+            return self
+
+        def fetchone(self):
+            return self.rad
+
+    assert d.forgjengerens_bytes(_Historie(("wcag-r10", "aa" * 32)),
+                                 "wcag-r11") == ("wcag-r10", "aa" * 32)
+    # Ingen forgjenger: det finnes ingenting å rulle tilbake til.
+    with pytest.raises(SystemExit) as ei:
+        d.forgjengerens_bytes(_Historie(None), "wcag-r11")
+    assert "forgjenger" in str(ei.value)
 
 
 def test_drillartefaktet_maa_navngi_sin_fencing_generasjon():

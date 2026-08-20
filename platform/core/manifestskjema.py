@@ -738,6 +738,24 @@ def _grenser_rollback_m56(grense: dict, art: dict) -> list[str]:
                     " bytes må være drillede bytes")
     if k.get("digest_likhet") is not True:
         feil.append("etterkontrollen bekrefter ikke digestlikheten")
+    # (b2), andre halvdel (Codex P1, #117 runde 6): rullbakken skal ha
+    # bootet FORGJENGERENS bytes. Drillen registrerte før dette
+    # rullback-releasen med den DRILLEDE deploymentens digest, så
+    # rullbakken var kandidatens egne bytes under et annet navn — og
+    # (b2) kunne stå grønt uten at det man ruller tilbake TIL noen gang
+    # var prøvd. Som for A1 regnes likheten ut av digestene her, aldri
+    # av flagget: flagget er drillens påstand, digestene er målingen.
+    if o.get("rullback_digest") != o.get("forgjenger_digest"):
+        feil.append("rullbakkens digest er ikke forgjengerens — en"
+                    " rullbakk til andre bytes enn dem man rullet vekk"
+                    " fra, prøver ikke det man ruller tilbake til")
+    if k.get("rullback_bytes_er_forgjengerens") is not True:
+        feil.append("etterkontrollen bekrefter ikke at rullbakken bar"
+                    " forgjengerens bytes")
+    if o.get("forgjenger_release") in (None, "", o.get("drillet_release")):
+        feil.append(f"forgjenger_release={o.get('forgjenger_release')!r} —"
+                    " en drill kan ikke rulle tilbake til seg selv, og"
+                    " «rullet tilbake» uten retning er en påstand")
     if k.get("drillet_livslop") != "draining":
         feil.append(f"drillet_livslop={k.get('drillet_livslop')!r},"
                     " ventet 'draining' (drillen konsumerer den drillede)")
