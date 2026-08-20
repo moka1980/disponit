@@ -378,6 +378,7 @@ DECLARE v_id BIGINT; v_drillet_digest TEXT; v_kandidat_digest TEXT;
         v_epoch BIGINT; v_livslop TEXT; v_forrige_tenant TEXT;
         v_status TEXT; v_kvittering BOOLEAN; v_funnet INT;
         v_claim_stopp BOOLEAN; v_rene_utfall BOOLEAN; v_tilbake BOOLEAN;
+        v_rull_ts TIMESTAMPTZ; v_kand_ts TIMESTAMPTZ; v_vindu BOOLEAN;
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended('modul:' || p_modul_id, 0));
     -- SP-2: samme nøkkel → samme rad, aldri to. Avvikende innhold på
@@ -474,6 +475,50 @@ BEGIN
             p_utfort_ts USING ERRCODE = 'invalid_parameter_value';
     END IF;
     -- ------------------------------------------------------------
+    -- DRILLVINDUET: de to overgangene drillen faktisk gjorde.
+    --
+    -- Codex' P1 på PR #117 (runde 16): utfallene ble målt som REN
+    -- EKSISTENS av artefakter per release, uten et eneste ledd som
+    -- knyttet oppdragene til rullingen. Har de tre releasene håndtert
+    -- vanlig arbeid på noe tidspunkt i sine livsløp — og det har en
+    -- release som har vært claiming — kunne et direkte
+    -- `registrer_moduldrill`-kall plukke et signert, fullført oppdrag fra
+    -- den drillede og promoterte oppdrag fra rullbakken og kandidaten, og
+    -- få alle tre flaggene grønne uten at noe kappløp, noe claim-stopp
+    -- eller noen rulling hadde funnet sted. Predikatene sa «det finnes
+    -- arbeid på denne releasen», mens påstanden er «dette arbeidet krysset
+    -- rullingen».
+    --
+    -- `bytt_release` (014) skriver én `releasebytte`-hendelse per
+    -- overgang, med tidspunkt. De to overgangene drillen består av — inn
+    -- på rullbakken og inn på kandidaten — gir derfor drillens egne to
+    -- skillelinjer, og oppdragene måles MOT dem:
+    --
+    --   (b)  inflight: bestilt FØR rullingen, terminal ETTER den — det er
+    --        nettopp «oppdraget krysset byttet».
+    --   (a+b2) rullbakk: bestilt ETTER rullingen (mens den drillede
+    --        drenerte) og ferdig FØR kandidaten overtok — claim-stoppet og
+    --        overtakelsen er samme oppdrag, i det vinduet.
+    --   (c)  kandidat: bestilt ETTER kandidatens registerbytte, terminal
+    --        etterpå — arbeidet lå og ventet på nøyaktig den som overtok.
+    --
+    -- Alt sammen innenfor drillens egen måletid (`p_utfort_ts`), så et
+    -- gammelt oppdrag ikke kan lånes inn i en ny drills vindu.
+    --
+    -- Mangler overgangene, er flaggene FALSE — ikke en exception. Et
+    -- register uten drillens overganger bærer ingen drill å måle, og en
+    -- rød drillrad er nettopp det riktige svaret: aksepten står på FK-en
+    -- mot de tre grønne utfallene.
+    -- ------------------------------------------------------------
+    SELECT max(h.ts) INTO v_rull_ts FROM public.modulregister_hendelse h
+     WHERE h.modul_id = p_modul_id AND h.miljo = p_miljo
+       AND h.hendelse = 'releasebytte' AND h.release_id = p_rullback;
+    SELECT max(h.ts) INTO v_kand_ts FROM public.modulregister_hendelse h
+     WHERE h.modul_id = p_modul_id AND h.miljo = p_miljo
+       AND h.hendelse = 'releasebytte' AND h.release_id = p_kandidat;
+    v_vindu := v_rull_ts IS NOT NULL AND v_kand_ts IS NOT NULL
+               AND v_rull_ts < v_kand_ts AND v_kand_ts <= p_utfort_ts;
+    -- ------------------------------------------------------------
     -- UTFALLENE MÅLES (Codex P1, #117 runde 5).
     --
     -- `oppdrag` og `artefakt` står med FORCE ROW LEVEL SECURITY og
@@ -510,8 +555,15 @@ BEGIN
     -- rullbakken etter at hun ble bootet. Det andre leddet er det som
     -- skiller «den gamle sluttet å claime» fra «det gikk an å rulle
     -- tilbake»: uten det er claim-stoppet bare fravær av arbeid.
+    --
+    -- …OG OPPDRAGET MÅ LIGGE I VINDUET (Codex P1, #117 runde 16): bestilt
+    -- etter rullingen, gjort ferdig før kandidaten overtok. Et hvilket
+    -- som helst gammelt oppdrag med et promotert artefakt på rullbakken
+    -- ville ellers holdt — og et claim-stopp som ikke ble målt MENS den
+    -- drillede drenerte, er ikke et claim-stopp.
     v_claim_stopp :=
-        NOT EXISTS (SELECT 1 FROM public.artefakt a
+        v_vindu
+        AND NOT EXISTS (SELECT 1 FROM public.artefakt a
                      WHERE a.tenant = p_tenant
                        AND a.oppdrag_id = p_rullback_oppdrag
                        AND a.release_id = p_drillet)
@@ -519,7 +571,14 @@ BEGIN
                      WHERE a.tenant = p_tenant
                        AND a.oppdrag_id = p_rullback_oppdrag
                        AND a.release_id = p_rullback
-                       AND a.tilstand = 'promotert');
+                       AND a.tilstand = 'promotert')
+        AND EXISTS (SELECT 1 FROM public.oppdrag o
+                     WHERE o.tenant = p_tenant
+                       AND o.id = p_rullback_oppdrag
+                       AND o.opprettet > v_rull_ts
+                       AND o.opprettet < v_kand_ts
+                       AND o.status_ts > o.opprettet
+                       AND o.status_ts < v_kand_ts);
     -- (b) rent utfall (SP-3): terminalt, signert kvittering, og utfallet
     -- STEMMER med evidensen — et `utfort` uten promotert artefakt og et
     -- ikke-`utfort` MED er begge falske verdikter. Motsigelsen regnes
@@ -599,13 +658,33 @@ BEGIN
                  WHERE a.tenant = p_tenant
                    AND a.oppdrag_id = p_inflight_oppdrag
                    AND a.release_id = p_drillet
-                   AND a.tilstand = 'promotert'));
-    -- (c) fram igjen: kandidaten plukket sitt eget oppdrag og promoterte.
-    v_tilbake := EXISTS (SELECT 1 FROM public.artefakt a
+                   AND a.tilstand = 'promotert'))
+        -- …og oppdraget må ha KRYSSET rullingen (Codex P1, #117 runde
+        -- 16): bestilt før byttet, terminalt etter det, innenfor
+        -- drillens måletid. Et rent utfall som lå ferdig før rullingen i
+        -- det hele tatt ble fyrt, måler ikke SP-3.
+        AND v_vindu
+        AND EXISTS (SELECT 1 FROM public.oppdrag o
+                     WHERE o.tenant = p_tenant
+                       AND o.id = p_inflight_oppdrag
+                       AND o.opprettet < v_rull_ts
+                       AND o.status_ts > v_rull_ts
+                       AND o.status_ts <= p_utfort_ts);
+    -- (c) fram igjen: kandidaten plukket sitt eget oppdrag og promoterte
+    -- — og oppdraget ble bestilt ETTER kandidatens registerbytte, så det
+    -- lå og ventet på nøyaktig den som overtok (Codex P1, #117 runde 16).
+    v_tilbake := v_vindu
+        AND EXISTS (SELECT 1 FROM public.artefakt a
                           WHERE a.tenant = p_tenant
                             AND a.oppdrag_id = p_kandidat_oppdrag
                             AND a.release_id = p_kandidat
-                            AND a.tilstand = 'promotert');
+                            AND a.tilstand = 'promotert')
+        AND EXISTS (SELECT 1 FROM public.oppdrag o
+                     WHERE o.tenant = p_tenant
+                       AND o.id = p_kandidat_oppdrag
+                       AND o.opprettet > v_kand_ts
+                       AND o.status_ts > o.opprettet
+                       AND o.status_ts <= p_utfort_ts);
     PERFORM set_config('disponit.tenant',
                        coalesce(v_forrige_tenant, ''), true);
     INSERT INTO public.moduldrill (modul_id, miljo, drillet_release,

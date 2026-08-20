@@ -41,6 +41,20 @@ SHA0 = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
 #: Fast og i fortiden med vilje: en test som sender `now()` ville ikke
 #: kunne skille de to tidspunktene fra hverandre.
 DRILL_TS = datetime(2026, 8, 20, 13, 22, 6, tzinfo=timezone.utc)
+#: Drillens TIDSLINJE (Codex P1, #117 runde 16). Utfallene måles ikke
+#: lenger som ren eksistens av arbeid per release, men mot de to
+#: `releasebytte`-overgangene drillen består av. Fixturet bygger derfor
+#: den ekte rekkefølgen: inflight bestilt før rullingen og terminalt
+#: etter den, rullbakkens oppdrag bestilt etter rullingen og ferdig før
+#: kandidaten overtar, kandidatens oppdrag bestilt etter kandidatbyttet.
+T_INFLIGHT_BESTILT = DRILL_TS - timedelta(minutes=10)
+T_RULL = DRILL_TS - timedelta(minutes=9)
+T_INFLIGHT_SLUTT = DRILL_TS - timedelta(minutes=8)
+T_RB_BESTILT = DRILL_TS - timedelta(minutes=7)
+T_RB_SLUTT = DRILL_TS - timedelta(minutes=6)
+T_KAND_BYTTE = DRILL_TS - timedelta(minutes=5)
+T_KAND_BESTILT = DRILL_TS - timedelta(minutes=4)
+T_KAND_SLUTT = DRILL_TS - timedelta(minutes=3)
 #: E2E-artefaktet kandidaten promoterte i drillen — identiteten aksepten
 #: skal binde, ikke bare «ett promotert artefakt fra samme release».
 E2E_UUID = "ad1579e2-0000-4000-8000-000000000000"
@@ -124,8 +138,13 @@ def _kjede(m, *, promoter_paa_drillet=False, staged_paa_kandidat=False):
     # skrive direkte. True = brent slik veien gjør det; False = ingen
     # kapabilitet (en forfalskning skrevet rett på raden); "utstedt" =
     # utstedt, men aldri brent; "annen_hash" = brent på et annet resultat.
+    # `opprettet`/`status_ts` bærer drillens tidslinje (Codex P1, runde
+    # 16). Standarden er INFLIGHT-sporet: de negative prøvene bytter ut
+    # nettopp inflight-oppdraget, og skal falle på det de måler — ikke på
+    # et tidsstempel de ikke handler om.
     def oppdrag(*, status="utfort", kvittering=True, signatur=True,
-                eier=None, kapabilitet=True):
+                eier=None, kapabilitet=True,
+                opprettet=T_INFLIGHT_BESTILT, status_ts=T_INFLIGHT_SLUTT):
         sig = secrets.token_hex(16)
         # Samme form som API-veien lagrer: konvolutten står i `kvittering`,
         # signaturverdien ALENE i `kvittering_signatur`, resultathashen i
@@ -145,14 +164,15 @@ def _kjede(m, *, promoter_paa_drillet=False, staged_paa_kandidat=False):
             " handling, eiermodul, status, payload_kryptert, key_id, nonce,"
             " utforelsesfrist, evidensfrist, koblingsstatus,"
             " beslutning_loggpost_id, kvittering, kvittering_signatur,"
-            " resultathash) VALUES ('beslutning',%s,"
+            " resultathash, opprettet, status_ts) VALUES ('beslutning',%s,"
             "'kontroll.wcag.nettsted','kontroll.wcag.nettsted',%s,%s,"
             "%s,'k1',%s, now()+interval '1 hour', now()+interval '2 hours',"
-            "'KOBLET',%s,%s::jsonb,%s,%s) RETURNING id",
+            "'KOBLET',%s,%s::jsonb,%s,%s,%s,%s) RETURNING id",
             (ten, eier or mid, status, b"\x00" * 24, b"\x00" * 12, blid,
              konvolutt if kvittering else None,
              kolonne if kvittering else None,
-             SHA0 if kvittering else None)).fetchone()[0]
+             SHA0 if kvittering else None, opprettet,
+             status_ts)).fetchone()[0]
         if kvittering and kapabilitet is not False:
             kap_status = ("utstedt" if kapabilitet == "utstedt" else "brukt")
             kap_hash = (None if kapabilitet == "utstedt"
@@ -187,7 +207,18 @@ def _kjede(m, *, promoter_paa_drillet=False, staged_paa_kandidat=False):
             (ten, oid, at, mid, rel, tilstand, "ab" * 32, b"\x01" * 40,
              b"\x02" * 12, secrets.token_hex(12), tilstand)).fetchone()[0]
 
-    inflight, rullback, kandidat = oppdrag(), oppdrag(), oppdrag()
+    # Drillens to registerovergagner — rullingen og kandidatbyttet. Uten
+    # dem har registeret ingen drill å måle oppdragene mot, og alle tre
+    # utfallene er FALSE (Codex P1, runde 16).
+    for rel, ts in (("r-rullback", T_RULL), ("r-kandidat", T_KAND_BYTTE)):
+        m.execute("INSERT INTO modulregister_hendelse (modul_id, hendelse,"
+                  " til_livslop, release_id, miljo, kontraktversjon,"
+                  " kontrakt_hash, aktor, ts) VALUES"
+                  " (%s,'releasebytte','claiming',%s,'staging',1,'kh',"
+                  "'test',%s)", (mid, rel, ts))
+    inflight = oppdrag()
+    rullback = oppdrag(opprettet=T_RB_BESTILT, status_ts=T_RB_SLUTT)
+    kandidat = oppdrag(opprettet=T_KAND_BESTILT, status_ts=T_KAND_SLUTT)
     artefakt("r-drillet", "promotert", inflight)
     artefakt("r-rullback", "promotert", rullback)
     ut = {"mid": mid, "ten": ten, "at": at,
@@ -1514,6 +1545,75 @@ def test_drillen_baerer_sin_egen_maaletid(migrator):
                utfort_ts=DRILL_TS - timedelta(days=1))
     migrator.rollback()
     migrator.execute("RESET ROLE")
+
+
+@pg
+def test_drilloppdragene_maa_ligge_i_det_maalte_rullbakkvinduet(migrator):
+    """Codex' P1 (runde 16): utfallene ble målt som ren EKSISTENS av
+    arbeid per release.
+
+    Har de tre releasene håndtert vanlig arbeid på noe tidspunkt — og det
+    har en release som har vært claiming — kunne et direkte
+    `registrer_moduldrill`-kall plukke et signert, fullført oppdrag fra den
+    drillede og promoterte oppdrag fra rullbakken og kandidaten, og få alle
+    tre flaggene grønne uten at noe kappløp, noe claim-stopp eller noen
+    rulling hadde funnet sted. Predikatene sa «det finnes arbeid på denne
+    releasen», mens påstanden er «dette arbeidet krysset rullingen».
+
+    `bytt_release` skriver én `releasebytte`-hendelse per overgang, med
+    tidspunkt. Oppdragene måles nå mot drillens egne to skillelinjer."""
+    k = _kjede(migrator)
+    # Positiv kontroll FØRST: den ekte tidslinjen gir grønt på alle tre.
+    # Uten den ville resten bestått av en port som avviste alt.
+    did = _drill(migrator, k)
+    migrator.execute("RESET ROLE")
+    assert migrator.execute(
+        "SELECT claim_stopp_ok, rene_utfall_ok, tilbake_ok FROM moduldrill"
+        " WHERE drill_id=%s", (did,)).fetchone() == (True, True, True)
+    migrator.rollback()
+
+    # LÅNT ARBEID: nøyaktig samme artefaktform, men oppdragene ligger
+    # utenfor vinduet — inflight bestilt ETTER rullingen (krysset den
+    # aldri), rullbakkens bestilt FØR den (kan ikke ha målt et claim-stopp
+    # under dreneringen), kandidatens bestilt FØR kandidatbyttet (lå ikke
+    # og ventet på den som overtok).
+    laant = {
+        "inflight": k["oppdrag"](opprettet=T_RULL + timedelta(minutes=1),
+                                 status_ts=T_INFLIGHT_SLUTT),
+        "rullback": k["oppdrag"](opprettet=T_INFLIGHT_BESTILT,
+                                 status_ts=T_RB_SLUTT),
+        "kandidat": k["oppdrag"](opprettet=T_KAND_BYTTE - timedelta(minutes=1),
+                                 status_ts=T_KAND_SLUTT),
+    }
+    k["artefakt"]("r-drillet", "promotert", laant["inflight"])
+    k["artefakt"]("r-rullback", "promotert", laant["rullback"])
+    k["artefakt"]("r-kandidat", "promotert", laant["kandidat"])
+    migrator.commit()
+    did2 = _drill(migrator, k, nokkel="n-" + secrets.token_hex(6), opp=laant)
+    migrator.execute("RESET ROLE")
+    assert migrator.execute(
+        "SELECT claim_stopp_ok, rene_utfall_ok, tilbake_ok FROM moduldrill"
+        " WHERE drill_id=%s", (did2,)).fetchone() == (False, False, False), \
+        "lånt arbeid utenfor rullbakkvinduet teller fortsatt som drill"
+    migrator.rollback()
+
+    # …og et vindu som ikke lukkes FØR målingen, er heller ingen drill: en
+    # senere overgang inn på kandidaten flytter skillelinjen forbi
+    # drillens egen `utfort_ts`, og da er ingenting målt i det vinduet.
+    migrator.execute(
+        "INSERT INTO modulregister_hendelse (modul_id, hendelse,"
+        " til_livslop, release_id, miljo, kontraktversjon, kontrakt_hash,"
+        " aktor, ts) VALUES (%s,'releasebytte','claiming','r-kandidat',"
+        "'staging',1,'kh','test',%s)",
+        (k["mid"], DRILL_TS + timedelta(hours=1)))
+    migrator.commit()
+    did3 = _drill(migrator, k, nokkel="n-" + secrets.token_hex(6))
+    migrator.execute("RESET ROLE")
+    assert migrator.execute(
+        "SELECT claim_stopp_ok, rene_utfall_ok, tilbake_ok FROM moduldrill"
+        " WHERE drill_id=%s", (did3,)).fetchone() == (False, False, False), \
+        "drillen måler mot en overgang som ligger etter dens egen måletid"
+    migrator.rollback()
 
 
 @pg
