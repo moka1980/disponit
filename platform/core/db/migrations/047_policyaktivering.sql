@@ -348,6 +348,27 @@ ALTER TABLE policyer ADD COLUMN generasjon BIGINT NOT NULL
   DEFAULT nextval('policyer_generasjon_seq');
 ALTER TABLE policyer ADD CONSTRAINT policyer_generasjon_unik
   UNIQUE (generasjon);
+-- SEKVENSEN LEVER AV KOLONNEN, OG SKAL DØ MED DEN. `OWNED BY` er ikke
+-- pynt: dette er den FØRSTE frittstående sekvensen i hele
+-- migrasjonshistorikken, og uten eierskapsbåndet henger den igjen når
+-- `policyer` slippes. `DROP TABLE ... CASCADE` fjerner defaulten som
+-- peker hit, men ikke sekvensen selv — den er et eget objekt, ikke en
+-- del av tabellen.
+--
+-- Det er nøyaktig det som veltet gjenoppbyggingsveien: `_nullstill` i
+-- `test_kjorer_og_kryptering` river basen dynamisk (alle TABELLER, alle
+-- FUNKSJONER — «en reset som etterlater objekter er ingen reset») og
+-- kjører 1→47 på nytt. Sekvenser sto ikke på lista, for det har aldri
+-- FUNNES en frittstående sekvens før nå. 047 møtte da sin egen sekvens
+-- igjen og døde på «already exists» — og siden den migrasjonen aldri
+-- ble registrert, prøvde hver eneste senere test det samme, med
+-- samme utfall. Én uryddet rest, hele suiten rød.
+--
+-- Båndet hører uansett hjemme her: sekvensen har ingen mening utenfor
+-- `policyer.generasjon`, og den samsvarer med hvordan `SERIAL` ville
+-- knyttet dem. Da trenger ikke opprydderen å kjenne til sekvenser i det
+-- hele tatt — objektet forsvinner med tabellen det tilhører.
+ALTER SEQUENCE policyer_generasjon_seq OWNED BY policyer.generasjon;
 
 -- Generasjonen er identiteten, og en identitet som kan skrives om er ingen.
 -- Samme form som `policyer_operasjon_immutabel`.
