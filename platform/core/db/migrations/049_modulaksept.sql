@@ -189,6 +189,25 @@ CREATE TABLE akseptkrav_punkt (
     maalt_krav  TEXT NOT NULL,
     PRIMARY KEY (krav_id, punkt)
 );
+-- KRAVET ER IMMUTABELT (Codex P2, #117 runde 17). Uten dette kunne en
+-- senere migrasjon rette `grenseverdi`, `maalt_krav` eller `kilde_type`
+-- for et krav_id som ALT har aksepter skrevet mot seg — og aksepten er
+-- uforanderlig. Radene ville da stå som «akseptert mot wcag-kontroll-v1»
+-- mens observasjonene deres bærer den forrige grensen: et revisjonsspor
+-- som forteller noe annet enn kallet som lagde det. `modulaksept_punkt`
+-- binder bare (krav_id, punkt), så FK-en fanger det ikke.
+--
+-- En ENDRET grense er et nytt krav, ikke en rettelse: skriv
+-- `wcag-kontroll-v2` og la de gamle aksepene stå mot det de faktisk ble
+-- målt mot. Nye PUNKTER i et eksisterende krav er også en endring av hva
+-- «komplett» betyr, og hører derfor hjemme i en ny versjon — INSERT er
+-- åpen for at et nytt krav skal kunne registreres i det hele tatt.
+CREATE TRIGGER akseptkrav_punkt_immutable BEFORE UPDATE OR DELETE
+    ON akseptkrav_punkt
+    FOR EACH ROW EXECUTE FUNCTION modulregister_append_only();
+CREATE TRIGGER akseptkrav_punkt_ingen_truncate BEFORE TRUNCATE
+    ON akseptkrav_punkt
+    FOR EACH STATEMENT EXECUTE FUNCTION modulregister_append_only();
 -- ------------------------------------------------------------
 -- 3b. HVILKEN CI-kjøring invariantpunktene krever, og HVA veien som
 --     spurte GitHub faktisk så (Codex P1, #117 runde 16).
@@ -217,6 +236,13 @@ CREATE TABLE akseptkrav_ci (
     gren        TEXT NOT NULL,
     konklusjon  TEXT NOT NULL
 );
+-- Samme grunn som for punktregisteret: en aksept er skrevet mot ET krav,
+-- og kravet kan ikke endres under den i ettertid.
+CREATE TRIGGER akseptkrav_ci_immutable BEFORE UPDATE OR DELETE
+    ON akseptkrav_ci
+    FOR EACH ROW EXECUTE FUNCTION modulregister_append_only();
+CREATE TRIGGER akseptkrav_ci_ingen_truncate BEFORE TRUNCATE ON akseptkrav_ci
+    FOR EACH STATEMENT EXECUTE FUNCTION modulregister_append_only();
 -- Repoet har flere workflows, og en grønn kjøring av en ANNEN på samme
 -- commit beviser ingenting om portene her. `ci.yml` trigges dessuten av
 -- både `pull_request` og push til `main`, og bare den siste sier at

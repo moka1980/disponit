@@ -636,6 +636,44 @@ def test_ci_punktene_krever_referatet_fra_veien_som_spurte(migrator):
 
 
 @pg
+def test_kravet_kan_ikke_endres_under_en_skrevet_aksept(migrator):
+    """Codex' P2 (runde 17): kravpunktregisteret hadde ingen
+    append-only-trigger.
+
+    En senere migrasjon kunne derfor rette `grenseverdi`, `maalt_krav`
+    eller `kilde_type` for et `krav_id` som ALT har immutable aksepter
+    skrevet mot seg — `modulaksept_punkt` binder bare (krav_id, punkt), så
+    FK-en fanger det ikke. Radene ville stått som «akseptert mot
+    wcag-kontroll-v1» mens observasjonene deres bærer den forrige
+    grensen: et revisjonsspor som forteller noe annet enn kallet som
+    lagde det.
+
+    En endret grense er et NYTT krav, ikke en rettelse."""
+    k = _kjede(migrator)
+    did = _drill(migrator, k)
+    _aksepter(migrator, k, did)
+    migrator.commit()
+    migrator.execute("RESET ROLE")
+    for sql in (
+            "UPDATE akseptkrav_punkt SET grenseverdi='9' WHERE krav_id=%s",
+            "UPDATE akseptkrav_punkt SET kilde_type='artefakt'"
+            " WHERE krav_id=%s",
+            "DELETE FROM akseptkrav_punkt WHERE krav_id=%s",
+            "UPDATE akseptkrav_ci SET gren='m56' WHERE krav_id=%s",
+            "DELETE FROM akseptkrav_ci WHERE krav_id=%s"):
+        with pytest.raises(psycopg.errors.RaiseException):
+            migrator.execute(sql, (KRAV,))
+        migrator.rollback()
+    # …men et NYTT krav kan registreres: porten er mot å endre historien,
+    # ikke mot å skrive en ny versjon.
+    nytt = "wcag-kontroll-test-" + secrets.token_hex(3)
+    migrator.execute("INSERT INTO akseptkrav_punkt (krav_id, punkt,"
+                     " kilde_type, grenseverdi, maalt_krav) VALUES"
+                     " (%s,'x','evidensfil','0','0')", (nytt,))
+    migrator.rollback()
+
+
+@pg
 def test_ci_attesten_er_ikke_runtimes_a_skrive(migrator):
     """Kjøretidsrollen kan verken attestere en kjøring eller skrive
     referatet direkte. Kunne den det, ville attesten vært like fri som de
