@@ -401,7 +401,25 @@ DROP POLICY kildebackfill_047 ON policyer;
 CREATE OR REPLACE FUNCTION policyer_kilde_vakt() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
-  IF TG_OP = 'INSERT' AND NEW.aktiveringskilde = 'historisk' THEN
+  -- MERKET KAN HELLER IKKE SETTES AV EN UPDATE (Codex P2). Vakten
+  -- reserverte 'historisk' bare på INSERT, og da var forbeholdet ikke et
+  -- forbehold: en UPDATE — fra tabelleieren selv, eller fra en senere
+  -- vedlikeholdsskriver — kunne merke en hvilken som helst bootstrap- eller
+  -- umerket rad etterpå. Følgen er ikke kosmetisk. `policyversjon_i_kraft`
+  -- leser nettopp dette merket som «har vært i kraft», så en rad som ALDRI
+  -- ble aktivert gikk fra usann til sann: historikken begynner å påstå en
+  -- aktivering uten hendelse og uten tidspunkt, og raden blir gyldig
+  -- rullbakk-kilde. Det er en aktivering ingen har gjort.
+  --
+  -- Det som felles er OVERGANGEN INN i merket, ikke merket i seg selv: en
+  -- rad som ALT er backfilt kan fortsatt oppdateres (en re-registrering
+  -- bevarer merket sitt, og backfillen i del 7 løfter rader videre til
+  -- 'styrt' etter at vakten er på). Bare veien inn er stengt, og den er
+  -- stengt for alle: 'historisk' skrives av nøyaktig én setning, den over,
+  -- og den er ferdig før vakten begynner å gjelde.
+  IF NEW.aktiveringskilde = 'historisk'
+     AND (TG_OP = 'INSERT'
+          OR OLD.aktiveringskilde IS DISTINCT FROM 'historisk') THEN
     RAISE EXCEPTION 'policyer: aktiveringskilde=historisk er forbeholdt rader '
         'som fantes da 047 landet (%/%)', NEW.policy_id, NEW.versjon
         USING ERRCODE = 'check_violation',

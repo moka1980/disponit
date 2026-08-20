@@ -69,6 +69,24 @@ def _full_aktivering(pakrevd=2, forfatter_attesterer=False):
     return uid, pid, v
 
 
+def _backfill_historisk(m, sql, params):
+    """Skriv `'historisk'`-merket slik migrasjonens EGEN backfill gjorde.
+
+    Etter 047 er merket en TILSTAND ingen skriver kan sette — verken ved
+    INSERT eller UPDATE (Codex P2) — nettopp fordi `policyversjon_i_kraft`
+    leser det som «har vært i kraft»: kunne en UPDATE sette det, ville en
+    aldri aktivert rad fått en aktivering ingen har gjort. Testene som
+    trenger en backfilt rad må derfor gjøre det migrasjonen gjorde: skru
+    vakten av, skrive, skru den på igjen. At det KREVES, er porten.
+    """
+    m.execute("ALTER TABLE policyer DISABLE TRIGGER policyer_kilde_vakt_trg")
+    try:
+        m.execute(sql, params)
+    finally:
+        m.execute("ALTER TABLE policyer ENABLE TRIGGER"
+                  " policyer_kilde_vakt_trg")
+
+
 def _hendelse(m, pid, versjon):
     m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
     return m.execute(
@@ -914,6 +932,87 @@ def test_rullbakk_kilde_krever_at_versjonen_har_vart_i_kraft():
 
 
 @pg
+def test_historisk_merket_kan_ikke_settes_etter_migrasjonen():
+    """Codex P2: forbeholdet gjaldt bare INSERT, og var da intet forbehold.
+
+    `'historisk'` er en TILSTAND — «denne raden lå der da 047 landet» — og
+    `policyversjon_i_kraft` leser den som «har vært i kraft». Vakten
+    reserverte merket ved INSERT, men en UPDATE kunne sette det etterpå:
+    tabelleieren selv, eller en senere vedlikeholdsskriver. En bootstrap-
+    eller umerket rad som ALDRI ble aktivert gikk da fra usann til sann i
+    den prøven, uten hendelse og uten tidspunkt. Følgene er to: historikken
+    begynner å påstå en aktivering ingen har gjort, og raden blir en gyldig
+    rullbakk-KILDE — «vi vender tilbake til» noe som aldri har virket.
+
+    Det som felles er OVERGANGEN INN i merket. En rad som alt ER backfilt
+    kan fortsatt oppdateres — re-registreringen bevarer merket sitt, og
+    backfillen i del 7 løfter rader videre til `'styrt'` etter at vakten
+    er på — så begge de veiene måles her ved siden av.
+
+    Målt som MIGRATOR, altså tabelleieren selv: er porten sann for den,
+    er den sann for alle. Kontroll: ta `TG_OP = 'INSERT'`-grenen tilbake,
+    så blir denne rød.
+    """
+    pid = "pol-merke-" + secrets.token_hex(3)
+    m = _c()
+    try:
+        m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        m.execute(
+            "INSERT INTO policyer (tenant, policy_id, versjon, innholds_hash,"
+            " status, innhold, aktiv, aktiveringskilde) VALUES"
+            " (%s,%s,'1','ih-m','produksjon','{}'::jsonb,false,'bootstrap'),"
+            " (%s,%s,'2','ih-m2','produksjon','{}'::jsonb,false,NULL)",
+            (TEN, pid, TEN, pid))
+        m.commit()
+
+        def _i_kraft(versjon):
+            m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+            return m.execute(
+                "SELECT policyversjon_i_kraft(aktiv, bootstrap_aktivert_ts,"
+                "     aktiveringskilde) FROM policyer"
+                " WHERE tenant=%s AND policy_id=%s AND versjon=%s",
+                (TEN, pid, versjon)).fetchone()[0]
+
+        assert _i_kraft("1") is False and _i_kraft("2") is False
+        m.commit()
+
+        # Veien inn er stengt fra BEGGE utgangspunkt: et annet merke, og
+        # ingen merke i det hele tatt.
+        for versjon in ("1", "2"):
+            m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+            with pytest.raises(psycopg.errors.CheckViolation) as ei:
+                m.execute("UPDATE policyer SET aktiveringskilde='historisk'"
+                          " WHERE tenant=%s AND policy_id=%s AND versjon=%s",
+                          (TEN, pid, versjon))
+            assert "forbeholdt" in str(ei.value), str(ei.value)
+            m.rollback()
+
+        # INSERT-siden står som før.
+        m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        with pytest.raises(psycopg.errors.CheckViolation):
+            m.execute(
+                "INSERT INTO policyer (tenant, policy_id, versjon,"
+                " innholds_hash, status, innhold, aktiv, aktiveringskilde)"
+                " VALUES (%s,%s,'3','ih-m3','produksjon','{}'::jsonb,false,"
+                " 'historisk')", (TEN, pid))
+        m.rollback()
+
+        # …og en rad som ALT er backfilt kan fortsatt oppdateres: det er
+        # overgangen som er stengt, ikke raden.
+        m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        _backfill_historisk(
+            m, "UPDATE policyer SET aktiveringskilde='historisk'"
+               " WHERE tenant=%s AND policy_id=%s AND versjon='1'", (TEN, pid))
+        m.execute("UPDATE policyer SET status='produksjon'"
+                  " WHERE tenant=%s AND policy_id=%s AND versjon='1'",
+                  (TEN, pid))
+        assert _i_kraft("1") is True
+        m.rollback()
+    finally:
+        m.close()
+
+
+@pg
 def test_reregistrering_av_aktiv_historisk_rad_beholder_opphavet():
     """Codex P2: merket og tidspunktet er én påstand, og må ha én prøve.
 
@@ -952,12 +1051,13 @@ def test_reregistrering_av_aktiv_historisk_rad_beholder_opphavet():
         pr.registrer(m, TEN, mal, "produksjon")
         m.commit()
         # Gjør raden om til den førmigrasjonsraden backfillen ikke klarte
-        # å binde: aktiv, merket 'historisk', uten tidspunkt. Vakten
-        # forbyr bare INSERT av merket — dette er en UPDATE, samme vei
-        # migrasjonens egen backfill går.
-        m.execute("UPDATE policyer SET aktiveringskilde='historisk',"
-                  " bootstrap_aktivert_ts=NULL WHERE tenant=%s"
-                  " AND policy_id=%s AND versjon='1.0.0'", (TEN, pid))
+        # å binde: aktiv, merket 'historisk', uten tidspunkt. Merket kan
+        # ingen skriver sette etter 047 (se `_backfill_historisk`), så
+        # tilstanden bygges slik migrasjonen selv bygde den.
+        _backfill_historisk(
+            m, "UPDATE policyer SET aktiveringskilde='historisk',"
+               " bootstrap_aktivert_ts=NULL WHERE tenant=%s"
+               " AND policy_id=%s AND versjon='1.0.0'", (TEN, pid))
         m.commit()
         assert _kilde(m, "1.0.0") == ("historisk", None)
         m.commit()
@@ -974,9 +1074,10 @@ def test_reregistrering_av_aktiv_historisk_rad_beholder_opphavet():
         mal["meta"]["versjon"] = "2.0.0"
         pr.registrer(m, TEN, mal, "produksjon", aktiver=False)
         m.commit()
-        m.execute("UPDATE policyer SET aktiveringskilde='historisk'"
-                  " WHERE tenant=%s AND policy_id=%s AND versjon='2.0.0'",
-                  (TEN, pid))
+        _backfill_historisk(
+            m, "UPDATE policyer SET aktiveringskilde='historisk'"
+               " WHERE tenant=%s AND policy_id=%s AND versjon='2.0.0'",
+            (TEN, pid))
         m.commit()
         pr.registrer(m, TEN, mal, "produksjon")
         m.commit()
@@ -1026,9 +1127,10 @@ def test_reregistrering_av_avlost_rad_beholder_opphavet():
         m.commit()
         # 1.0.0 er nå avløst. Gjør den til førmigrasjonsraden backfillen
         # ikke klarte å binde: inaktiv, merket 'historisk', uten tidspunkt.
-        m.execute("UPDATE policyer SET aktiveringskilde='historisk',"
-                  " bootstrap_aktivert_ts=NULL WHERE tenant=%s"
-                  " AND policy_id=%s AND versjon='1.0.0'", (TEN, pid))
+        _backfill_historisk(
+            m, "UPDATE policyer SET aktiveringskilde='historisk',"
+               " bootstrap_aktivert_ts=NULL WHERE tenant=%s"
+               " AND policy_id=%s AND versjon='1.0.0'", (TEN, pid))
         m.commit()
 
         def _i_kraft():
