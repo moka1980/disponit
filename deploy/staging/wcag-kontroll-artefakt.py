@@ -39,6 +39,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -131,6 +132,23 @@ def fase5_linjene(rader: list[dict], kontekst: list,
             and kontekst[j] == kontekst[i_fase5]]
 
 
+def _tall(d: dict, felt: str):
+    """Måling som ER skrevet som et endelig tall — ellers `None`.
+
+    En `kjoring`-linje som er halvskrevet eller fabrikkert kan mangle
+    feltet helt, eller bære en `bool`. Begge deler slapp før gjennom:
+    `int(x or 0)` gjorde et manglende `avvik_mot_fasit` til null avvik,
+    og `isinstance(x, (int, float))` er sann for `True`/`False` fordi
+    `bool` arver `int` — så `varighet_s: False` var «0 sekunder, godt
+    innenfor fristen». `nan`/`inf` slapp også gjennom sammenligningen.
+    En måling som ikke er der, er ikke en grønn måling (Codex P2, #117).
+    """
+    v = d.get(felt)
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    return v if math.isfinite(v) else None
+
+
 def signert_innen_frist(linjer: list[dict]) -> int:
     """Teller kjøringene som FAKTISK ble målt signert innen fristen.
 
@@ -151,13 +169,16 @@ def signert_innen_frist(linjer: list[dict]) -> int:
     """
     gronne = set()
     for d in linjer:
-        varighet, frist = d.get("varighet_s"), d.get("frist_s")
+        avvik = _tall(d, "avvik_mot_fasit")
+        varighet, frist = _tall(d, "varighet_s"), _tall(d, "frist_s")
+        indeks = d.get("i")
         if (d.get("utfall") == "utfort"
-                and not int(d.get("avvik_mot_fasit") or 0)
-                and isinstance(varighet, (int, float))
-                and isinstance(frist, (int, float))
-                and varighet < frist):
-            gronne.add(d.get("i"))
+                and avvik == 0
+                and varighet is not None
+                and frist is not None
+                and varighet < frist
+                and isinstance(indeks, int) and not isinstance(indeks, bool)):
+            gronne.add(indeks)
     return len(gronne)
 
 

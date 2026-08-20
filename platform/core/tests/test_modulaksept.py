@@ -811,6 +811,27 @@ def test_fristtellingen_regnes_ut_av_de_ti_kjoringene():
     # Samme posisjon to ganger er én kjøring, ikke to.
     assert m.signert_innen_frist(linjer + linjer) == 10
 
+    # Codex' P2 (runde 15): en halvskrevet eller fabrikkert linje bærer
+    # ingen måling. Et manglende `avvik_mot_fasit` ble null avvik av
+    # `int(x or 0)`, og `bool` slapp gjennom talltesten fordi den arver
+    # `int` — `varighet_s: False` var «0 sekunder, innenfor fristen».
+    assert m.signert_innen_frist(
+        [{k: v for k, v in d.items() if k != "avvik_mot_fasit"}
+         for d in linjer]) == 0
+    assert m.signert_innen_frist(
+        [dict(d, avvik_mot_fasit=False) for d in linjer]) == 0
+    assert m.signert_innen_frist(
+        [dict(d, varighet_s=False) for d in linjer]) == 0
+    assert m.signert_innen_frist(
+        [dict(d, varighet_s=float("nan")) for d in linjer]) == 0
+    assert m.signert_innen_frist(
+        [dict(d, frist_s=float("inf")) for d in linjer]) == 0
+    assert m.signert_innen_frist(
+        [dict(d, avvik_mot_fasit="0") for d in linjer]) == 0
+    # …og uten en posisjon å avduplisere på er linja ikke en av de ti.
+    assert m.signert_innen_frist(
+        [{k: v for k, v in d.items() if k != "i"} for d in linjer]) == 0
+
     # Og generatoren nekter å skrive et sammendrag der summen påstår mer
     # enn linjene bærer: en ren gjenspilt runde stopper her.
     fase5 = rader[i_fase5]
