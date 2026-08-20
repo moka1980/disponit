@@ -25,10 +25,11 @@ id: wcag_audit
 navn: Automatisk WCAG-kontroll (controller)
 versjon: 0.1.0
 status: under_utvikling        # aktiv | inaktiv | under_utvikling
-# AKSEPTPORTEN: FEM AV SEKS PUNKTER ER BUNDET — FLIPPEDRILLEN MÅ KJØRES
-# PÅ NYTT (049, dokumentert avvik fra akseptflipp-klarsignalet §4):
+# AKSEPTPORTEN: FIRE AV SEKS PUNKTER ER BUNDET — FLIPPEDRILLEN MÅ KJØRES
+# PÅ NYTT, OG DATASETTPUNKTET MANGLER SIN LOKALE HALVDEL (049, dokumentert
+# avvik fra akseptflipp-klarsignalet §4):
 #
-# De fem `wcag-kontroll-v1`-punktene står `ja` med krav_id + innsjekket,
+# De fire `wcag-kontroll-v1`-punktene står `ja` med krav_id + innsjekket,
 # sha256-bundet artefakt + strukturerte `bevismaalinger` (kravet står i
 # manifestskjema.KRAVGRENSER, så CI RE-MÅLER tallene ved hver kjøring).
 # Apparatet er på plass: i basen skrives aksepten som en immutabel
@@ -43,6 +44,14 @@ status: under_utvikling        # aktiv | inaktiv | under_utvikling
 # Skriptet er rettet; artefaktet fra den kjøringen er superseder og ikke
 # lenger bundet. Aksepten kan ikke skrives før en ny, komplett
 # drillkjøring er bundet inn her.
+#
+# OG `syntetisk_datasett_likt_lokalt` ER BLOKKERT (Codex P2, PR #117
+# runde 10): punktet sto `ja` på én bevismåling — `maalt.avvik_mot_fasit`
+# — som generatoren utelukkende avleder av STAGING-rundens
+# `fase5_resultat`. Null avvik på staging måler ikke at datasettet er det
+# samme lokalt, og verken artefaktet eller evidensfila bærer en identitet
+# for bytene staging serverte. Begrunnelsen ved punktet sier hvilke to
+# veier som kan lukke gapet; begge krever en ny staging-runde.
 #
 # OG ETT GRENSEPUNKT MANGLER EN KILDE (Codex P1, PR #117 runde 5):
 # `egress.proxytoken_til_ikke_ekstern_lesing` hentet verdien sin fra
@@ -123,16 +132,43 @@ staging_sjekkliste:
       motormiljøet målt i containeren, 0 lekkasjer (kanari-DISPONIT_KEK og
       DATABASE_URL nådde aldri motoren).
   syntetisk_datasett_likt_lokalt:
-    status: ja
-    krav_id: wcag-kontroll-v1
-    bevismaalinger:
-      - maalt.avvik_mot_fasit
-    artefakt: deploy/staging/artefakter/wcag-kontroll-v1-20260818T200413.json
-    artefakt_sha256: 0a27526e024a9a91b52b26082a56940a66bb4d9148889808cf856ef8b35e3583
+    # PUNKTET HAR BARE HALVE MÅLINGEN SIN (Codex P2, PR #117 runde 10).
+    # Det sto `ja` med én bevismåling, `maalt.avvik_mot_fasit`, som
+    # generatoren utelukkende avleder av STAGING-rundens `fase5_resultat`.
+    # Null avvik på staging sier at motoren traff fasiten der; det sier
+    # ingenting om at datasettet er det samme lokalt. Påstanden «likt
+    # lokalt» har to ledd, og bare det ene var målt — og et punkt som
+    # navngir en måling det andre leddet ikke finnes i, låner en
+    # konklusjon.
+    #
+    # Ingen annen evidens i repoet lukker gapet: verken artefaktet eller
+    # evidens-jsonl-en fra 2026-08-18 bærer en identitet for bytene
+    # staging faktisk serverte (se hendelseslisten i evidensfila — det
+    # nærmeste er motorens image, ikke datasettet). «Samme commit» var en
+    # antakelse fra operatørens skjerm, ikke en måling registeret kunne
+    # gjenta. Merk også at den gamle noten pekte på
+    # `platform/modules/wcag_audit/testnettsted/` — den stien finnes ikke;
+    # datasettet bor i `platform/modules/m56_wcag_audit/testnettsted/`.
+    status: blokkert
+    blokkert_av: >-
+      Mangler den lokale halvdelen av målingen. Punktet kan settes `ja`
+      igjen når evidensen enten (a) bærer et LOKALT fasitkontrollresultat
+      for de samme scenariene, eller (b) binder bytene byte-nivå: en
+      sha256 over `platform/modules/m56_wcag_audit/testnettsted/`
+      (sider/ + fasit.json), skrevet av sjekklisten i evidensstrømmen,
+      båret videre til artefaktets `oppsett` av
+      deploy/staging/wcag-kontroll-artefakt.py, og sammenlignet med de
+      innsjekkede bytene her. Begge veier krever en ny staging-runde;
+      artefaktet fra 2026-08-18 kan ikke få feltet i ettertid, det er
+      hash-bundet. Aksepten (m56-aksept.py) er uansett blokkert til
+      flippedrillen er kjørt om igjen, jf. `rollback_testet`.
     notat: >-
-      MÅLT 2026-08-18, BUNDET 2026-08-20 (049). Testnettstedet (platform/modules/wcag_audit/testnettsted/, fasit
-      skrevet fra konstruksjonen) er identisk lokalt og på staging (samme
-      commit); fasitkontrollen ga avvik=0 begge steder 2026-08-18.
+      MÅLT PÅ STAGING 2026-08-18 (halve påstanden): fasitkontrollen ga
+      avvik=0 mot testnettstedets fasit i staging-runden — se
+      `tester_gronne_pa_staging`, som er punktet den målingen faktisk
+      beviser. Datasettet (platform/modules/m56_wcag_audit/testnettsted/,
+      fasit skrevet fra konstruksjonen) er sjekket inn, så den lokale
+      siden er tilgjengelig for måling; den er bare ikke målt ennå.
   revisjonslogg_korrekt:
     status: ja
     krav_id: wcag-kontroll-v1

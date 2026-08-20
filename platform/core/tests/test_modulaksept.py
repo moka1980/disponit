@@ -991,6 +991,35 @@ def test_manifestet_binder_ikke_den_supersederte_drillen():
         "historikken slettes ikke — den slutter å være bindende"
 
 
+def test_datasettpunktet_krever_den_lokale_halvdelen():
+    """Codex' P2 (runde 10): `syntetisk_datasett_likt_lokalt` sto `ja` på
+    en måling som bare finnes på staging.
+
+    Punktets eneste bevismåling var `maalt.avvik_mot_fasit`, og den
+    avleder `wcag-kontroll-artefakt.py` utelukkende av staging-rundens
+    `fase5_resultat`. Null avvik der sier at motoren traff fasiten på
+    staging; det sier ingenting om at datasettet er det samme lokalt — og
+    verken artefaktet eller evidensfila bærer en identitet for bytene
+    staging serverte. Halve påstanden var altså umålt, og et `ja` på et
+    umålt ledd er nøyaktig den lånte konklusjonen `bevismaalinger` finnes
+    for å stoppe."""
+    import yaml
+    man = yaml.safe_load(
+        (ROT / "platform/modules/m56_wcag_audit/manifest.yaml").read_text(
+            encoding="utf-8"))
+    p = man["staging_sjekkliste"]["syntetisk_datasett_likt_lokalt"]
+    assert p["status"] == "blokkert" and p.get("blokkert_av")
+    assert "artefakt" not in p and "bevismaalinger" not in p, \
+        "et blokkert punkt skal ikke bære en evidensbinding"
+    # Begrunnelsen må si hva som faktisk lukker gapet — ellers er
+    # `blokkert` bare et penere `nei`.
+    assert "lokal" in p["blokkert_av"].lower()
+    # Datasettet ER sjekket inn, så den lokale siden lar seg måle når
+    # noen kjører runden: stien i begrunnelsen skal finnes.
+    assert (ROT / "platform/modules/m56_wcag_audit/testnettsted"
+            / "fasit.json").exists()
+
+
 def test_falske_verdikter_er_en_motsigelse_begge_veier():
     """Codex' P2 (runde 2): drillen ga alltid `falske_verdikter=0` så
     snart utfallet ikke var `utfort` — en `feilet` jobb som LIKEVEL
