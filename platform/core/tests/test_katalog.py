@@ -232,31 +232,161 @@ def test_spesifikasjonen_baerer_produktnavnet():
         f"bunnteksten navngir ikke «{navn}»")
 
 
-def _moduler_fra_kilden() -> dict[int, dict[str, str]]:
-    """{modulnummer: {fase, dep}} lest ut av spesifikasjonen.
+_SKRIPT_RE = re.compile(r"<script[^>]*>(.*?)</script>", re.S)
+_NAVN_RE = re.compile(r"[A-Za-z_$][\w$]*")
+_START_RE = re.compile(r"""\{\s*["']?n["']?\s*:\s*(\d+)\s*[,}]""")
 
-    Kilden bærer to skrivemåter side om side: v7-arven er JS-literaler
-    (`n:38,…,p:1,…,dep:'…'`), v8-modulene er JSON (`"n": 53, …`). Porten leser
-    BEGGE — leste den bare den ene, ville halve katalogen vært uvoktet uten at
-    noe sa fra.
+
+def _hopp(js: str, i: int) -> int:
+    """Indeksen etter tegnet i `i` når det åpner en streng eller en kommentar.
+
+    Strenger: enkelt- og dobbeltfnutt og backtick, `\\` som escape. Kommentarer:
+    `//` til linjeskift, `/* */` til lukkingen. En uterminert streng eller
+    blokkommentar går til filslutt — da er kilden uansett ikke lesbar, og
+    postskanneren sier fra med modulnummeret som mangler.
     """
-    tekst = KILDE.read_text(encoding="utf-8")
-    starter = [(m.start(), int(m.group(1)))
-               for m in re.finditer(r'[{,]\s*(?:n:|"n":)\s*(\d+)', tekst)]
+    n = len(js)
+    if js.startswith("//", i):
+        j = js.find("\n", i)
+        return n if j < 0 else j + 1
+    if js.startswith("/*", i):
+        j = js.find("*/", i + 2)
+        return n if j < 0 else j + 2
+    sitat = js[i]
+    j = i + 1
+    while j < n and js[j] != sitat:
+        j += 2 if js[j] == "\\" else 1
+    return j + 1
+
+
+def _apner(js: str, i: int) -> bool:
+    return js[i] in "\"'`" or js.startswith("//", i) or js.startswith("/*", i)
+
+
+def _modulposter() -> list[tuple[int, str]]:
+    """[(modulnummer, posttekst)] for hver modulpost i sannhetskilden.
+
+    Postene ble før funnet med et repo-bredt regex mot rå filtekst, og posten
+    strakk seg til NESTE treff (Codex P2 på #118, sjuende runde). Da er enhver
+    postformet tekst en modulgrense: et fritekstfelt som dokumenterer et
+    API-svar — `input: "API-eksempel: {n:1}"` — ble lest som starten på en ny
+    modul, den ekte modulen ble kuttet før `dep`, og faseporten og enumporten
+    mistet den stille. Generatoren godtar samme prosa siden `postslutt()` ble
+    strengbevisst, så porten ville falt på en kilde generatoren var fornøyd
+    med.
+
+    Skanneren her hopper derfor over strenger og kommentarer, og avgrenser
+    posten ved dybdetelling i stedet for ved neste treff. Den er skrevet på nytt
+    og ikke importert fra generatoren med vilje: to uavhengige lesninger av
+    samme kilde er det som gjør at en feil i den ene blir SETT. Bare
+    `<script>`-innholdet leses — fnutter i HTML-prosa er ikke strenger.
+    """
+    js = "\n".join(_SKRIPT_RE.findall(KILDE.read_text(encoding="utf-8")))
+    ut: list[tuple[int, str]] = []
+    i, n = 0, len(js)
+    while i < n:
+        if _apner(js, i):
+            i = _hopp(js, i)
+            continue
+        if js[i] != "{":
+            i += 1
+            continue
+        treff = _START_RE.match(js, i)
+        if not treff:
+            i += 1
+            continue
+        start, dybde, j = i, 0, i
+        while j < n:
+            if _apner(js, j):
+                j = _hopp(js, j)
+                continue
+            if js[j] == "{":
+                dybde += 1
+            elif js[j] == "}":
+                dybde -= 1
+                if dybde == 0:
+                    j += 1
+                    break
+            j += 1
+        else:
+            raise AssertionError(
+                f"modulpost M-{treff.group(1)} i {KILDE.name} lukkes aldri — "
+                f"kilden har endret form, sjekk parseren")
+        ut.append((int(treff.group(1)), js[start:j]))
+        i = j
+    return ut
+
+
+def _postfelt(post: str) -> dict[str, str]:
+    """{feltnavn: verdi} for feltene på postens ØVERSTE nivå.
+
+    Verdien er råteksten fram til neste komma på samme nivå; er den en streng,
+    faller fnuttene bort. Felt i nøstede objekter og lister hører til dem, ikke
+    til posten, og telles ikke — og tekst inne i en feltverdi er tekst, ikke
+    felt. Kilden bærer to skrivemåter side om side: v7-arven er JS-literaler
+    (`n:38,…,p:1,…,dep:'…'`), v8-modulene er JSON (`"n": 53, …`). Begge leses —
+    leste porten bare den ene, ville halve katalogen vært uvoktet uten at noe
+    sa fra.
+    """
+    ut: dict[str, str] = {}
+    i, n = 1, len(post)
+    while i < n:
+        c = post[i]
+        if c.isspace() or c == ",":
+            i += 1
+            continue
+        if post.startswith("//", i) or post.startswith("/*", i):
+            i = _hopp(post, i)
+            continue
+        if c == "}":
+            break
+        if c in "\"'`":
+            j = _hopp(post, i)
+            navn, i = post[i + 1:j - 1], j
+        elif (treff := _NAVN_RE.match(post, i)):
+            navn, i = treff.group(0), treff.end()
+        else:
+            i += 1
+            continue
+        while i < n and post[i].isspace():
+            i += 1
+        if i >= n or post[i] != ":":
+            continue
+        i += 1
+        while i < n and post[i].isspace():
+            i += 1
+        start, dybde = i, 0
+        while i < n:
+            if _apner(post, i):
+                i = _hopp(post, i)
+                continue
+            if post[i] in "{[":
+                dybde += 1
+            elif post[i] in "}]":
+                if dybde == 0:
+                    break
+                dybde -= 1
+            elif post[i] == "," and dybde == 0:
+                break
+            i += 1
+        verdi = post[start:i].strip()
+        if len(verdi) >= 2 and verdi[0] in "\"'`" and verdi[-1] == verdi[0]:
+            verdi = verdi[1:-1]
+        ut[navn] = verdi
+    return ut
+
+
+def _moduler_fra_kilden() -> dict[int, dict[str, str]]:
+    """{modulnummer: {fase, dep, kl, rev}} lest ut av spesifikasjonen."""
     ut: dict[int, dict[str, str]] = {}
-    for i, (pos, n) in enumerate(starter):
-        slutt = starter[i + 1][0] if i + 1 < len(starter) else len(tekst)
-        seg = tekst[pos:slutt]
-        fase = re.search(r'(?:\bp:|"p":)\s*(\d+)', seg)
-        dep = re.search(r"(?:\bdep:'([^']*)'|\"dep\":\s*\"([^\"]*)\")", seg)
-        if fase and dep:
-            ut[n] = {"fase": int(fase.group(1)),
-                     "dep": dep.group(1) or dep.group(2)}
-            for felt in ("kl", "rev"):
-                verdi = re.search(
-                    rf"(?:\b{felt}:'([^']*)'|\"{felt}\":\s*\"([^\"]*)\")", seg)
-                if verdi:
-                    ut[n][felt] = verdi.group(1) or verdi.group(2)
+    for nummer, post in _modulposter():
+        felt = _postfelt(post)
+        if "p" not in felt or "dep" not in felt:
+            continue
+        ut[nummer] = {"fase": int(felt["p"]), "dep": felt["dep"]}
+        for navn in ("kl", "rev"):
+            if navn in felt:
+                ut[nummer][navn] = felt[navn]
     return ut
 
 
