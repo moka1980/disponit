@@ -345,9 +345,20 @@ def test_ingen_modul_avhenger_av_en_senere_fase():
 HISTORIKK = ("docs/pr/", "docs/beslutninger/", "prototype/", ".git/")
 SPEC_RE = re.compile(r"disponit-prototype-v(\d+)\.html")
 
+# Regresjonen porten finnes for var bare DELVIS et filnavn (Codex P2 på #118):
+# den obligatoriske arbeidsflyten krevde utkast «mot prototypen» med utgaven
+# skrevet i klartekst ved siden av ordet, ikke som filnavn. Et mønster bundet
+# til filnavnet leser rett forbi den formen, og da er porten grønn mens
+# instruksen fortsatt peker på noe som er slettet.
+#
+# Mellomrommet er hele avgrensningen mot arkivet: de gamle utgavene på disk
+# heter `…-prototype-v7.html` med bindestrek, og de skal fortsatt kunne
+# navngis. Prosa skriver ordet, mellomrom, versjonen.
+PROSA_RE = re.compile(r"(?i)prototypen?\s+v(\d+)")
+
 
 def test_ingen_peker_paa_en_slettet_spesifikasjon():
-    """Hver henvisning til spesifikasjonsfila må treffe fila som finnes.
+    """Hver henvisning til spesifikasjonsutgaven må treffe den som finnes.
 
     Codex P2 på PR #118: v9 gjorde spesifikasjonen til eneste sannhetskilde og
     slettet v8-fila, men den OBLIGATORISKE arbeidsflyten krevde fortsatt utkast
@@ -360,8 +371,13 @@ def test_ingen_peker_paa_en_slettet_spesifikasjon():
     Kuren i selve dokumentene er å slutte å bake versjonsnummeret inn i
     instruksen: de peker nå på `docs/spesifikasjon/`, som alltid inneholder
     gjeldende utgave. Denne porten dekker resten — stedene som med rett MÅ
-    navngi fila (README, STRUKTUR, generatoren, denne testen), og fanger neste
-    versjonsbump som glemmer ett av dem.
+    navngi utgaven (README, STRUKTUR, generatoren, denne testen), og fanger
+    neste versjonsbump som glemmer ett av dem.
+
+    Den måler BEGGE skrivemåtene, for regresjonen sto i begge: filnavnet, og
+    ordet «prototype» med utgaven skrevet ved siden av seg (Codex P2, andre
+    runde). Et mønster som bare kjente filnavnet ville latt den gamle
+    obligatoriske formuleringen komme rett tilbake, grønt.
 
     MUTASJONEN SOM DREPER DENNE: la porten godta et hvilket som helst
     versjonsnummer. Da er den bare en stavekontroll for filnavnet, og det var
@@ -369,6 +385,7 @@ def test_ingen_peker_paa_en_slettet_spesifikasjon():
     """
     gjeldende = SPEC_RE.search(KILDE.name)
     assert gjeldende, f"KILDE_REL navngir ikke en versjonert fil: {KILDE.name}"
+    versjon = gjeldende.group(1)
 
     spor = subprocess.run(["git", "ls-files", "-z"], cwd=ROT,
                           capture_output=True, text=True, check=True)
@@ -380,13 +397,15 @@ def test_ingen_peker_paa_en_slettet_spesifikasjon():
         if not sti.is_file():
             continue
         tekst = sti.read_text(encoding="utf-8", errors="ignore")
-        for treff in SPEC_RE.finditer(tekst):
-            if treff.group(0) != KILDE.name:
-                linje = tekst.count("\n", 0, treff.start()) + 1
-                avvik.append(f"{rel}:{linje} peker på {treff.group(0)}")
+        for monster in (SPEC_RE, PROSA_RE):
+            for treff in monster.finditer(tekst):
+                if treff.group(1) != versjon:
+                    linje = tekst.count("\n", 0, treff.start()) + 1
+                    avvik.append(
+                        f"{rel}:{linje} peker på «{treff.group(0)}»")
     assert not avvik, (
-        f"henvisninger til en spesifikasjon som ikke finnes (gjeldende er "
-        f"{KILDE.name}): " + "; ".join(avvik))
+        f"henvisninger til en spesifikasjonsutgave som ikke finnes (gjeldende "
+        f"er v{versjon}, {KILDE.name}): " + "; ".join(avvik))
 
 
 @pytest.mark.parametrize("sprak", sorted(LOCALER))

@@ -21,7 +21,7 @@ Malene er **utkast fra åpne kilder** (lovverk, bransjepraksis, vilkårssider). 
 
 Foreslått pipeline, med kvalitetsporter som gjør den trygg:
 
-**Steg 1 — Draft (Claude):** Claude skriver spesifikasjon/kode for én modul om gangen, alltid mot akseptansekriteriene i gjeldende prototype — fila i `docs/spesifikasjon/` (i dag v9). Én modul = én branch = én pull request. Aldri flere moduler i samme PR.
+**Steg 1 — Draft (Claude):** Claude skriver spesifikasjon/kode for én modul om gangen, alltid mot akseptansekriteriene i gjeldende prototype — fila i `docs/spesifikasjon/`, som alltid inneholder nøyaktig én utgave: den gjeldende. Én modul = én branch = én pull request. Aldri flere moduler i samme PR.
 
 **Steg 2 — Spesifikasjonsreview (ChatGPT):** ChatGPT reviewer drafts mot tre faste spørsmål: (a) Bryter noe med policy-skjemaet? (b) Er alle handlinger reversible eller eksplisitt merket irreversible med harde vilkår? (c) Mangler unntakshåndtering for noen feilvei? Review-svaret limes inn i PR-beskrivelsen.
 
