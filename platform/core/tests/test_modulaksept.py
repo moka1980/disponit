@@ -447,9 +447,9 @@ def test_fk_en_staar_bak_akseptfunksjonens_porter(migrator):
             "INSERT INTO modulaksept (modul_id, miljo, release_id, drill_id,"
             " krav_id, e2e_tenant, e2e_artefakt_id, evidens_jsonl_sha256,"
             " manifest_commit, ci_run, ci_commit, nokkel, aktor) VALUES"
-            " (%s,'staging',%s,%s,%s,%s,%s,'e','m','r','c',%s,'test')",
+            " (%s,'staging',%s,%s,%s,%s,%s,%s,'m','r','c',%s,'test')",
             (k["mid"], felt["release_id"], felt["drill_id"], KRAV, k["ten"],
-             felt["artefakt"], "d-" + secrets.token_hex(6)))
+             felt["artefakt"], EVIDENS_SHA, "d-" + secrets.token_hex(6)))
 
     for endring in ({"drill_id": 999999999},
                     {"artefakt": k["e2e_drillet"]},
@@ -827,10 +827,14 @@ def test_evidenshashen_bindes_til_lagret_evidens(migrator):
     migrator.rollback()
     assert "ingen sha256" in str(ei.value)
 
+    # Attesten hører til BYTENE og er delt på tvers av moduler: hvert
+    # ledd under trenger derfor sin egen, ferske «fil».
+    ulest, feil_sti, rod_fil = (secrets.token_hex(32) for _ in range(3))
+
     # (2) …og en velformet hash ingen har lest, er fortsatt ingen fil.
     migrator.execute("RESET ROLE")
     with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
-        _aksepter(migrator, k, did, ev_attest=False)
+        _aksepter(migrator, k, did, evidens_sha=ulest, ev_attest=False)
     migrator.rollback()
     assert "er lest og hva den bar" in str(ei.value)
 
@@ -840,14 +844,14 @@ def test_evidenshashen_bindes_til_lagret_evidens(migrator):
     with pytest.raises(psycopg.errors.InsufficientPrivilege):
         migrator.execute(
             "SELECT attester_evidensfil(%s,%s,%s,'{\"x\":\"0\"}'::jsonb,'a')",
-            (KRAV, EVIDENS_STI, EVIDENS_SHA))
+            (KRAV, EVIDENS_STI, ulest))
     migrator.rollback()
 
     # (4) STIEN er attestens, ikke kallerens: riktig hale holder ikke.
     migrator.execute("RESET ROLE")
-    _evidens_attest(migrator, EVIDENS_SHA, sti="annet/sted/evidens.jsonl")
+    _evidens_attest(migrator, feil_sti, sti="annet/sted/evidens.jsonl")
     with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
-        _aksepter(migrator, k, did, ev_attest=False)
+        _aksepter(migrator, k, did, evidens_sha=feil_sti, ev_attest=False)
     migrator.rollback()
     assert "attesten leste" in str(ei.value)
 
@@ -859,24 +863,25 @@ def test_evidenshashen_bindes_til_lagret_evidens(migrator):
         "  WHERE krav_id=%s AND kilde_type='evidensfil'", (KRAV,)).fetchall())
     rodt = sorted(maalt)[0]
     maalt[rodt] = "17"
-    _evidens_attest(migrator, EVIDENS_SHA, maalt=maalt)
+    _evidens_attest(migrator, rod_fil, maalt=maalt)
     with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
-        _aksepter(migrator, k, did, ev_attest=False)
+        _aksepter(migrator, k, did, evidens_sha=rod_fil, ev_attest=False)
     migrator.rollback()
     assert rodt in str(ei.value) and "bar «17»" in str(ei.value)
 
     # Motprøven: lest fil, riktig sti, grønne måletall → aksept.
     migrator.execute("RESET ROLE")
-    _aksepter(migrator, k, did)
+    gronn = secrets.token_hex(32)
+    _aksepter(migrator, k, did, evidens_sha=gronn)
     migrator.commit()
     migrator.execute("RESET ROLE")
     assert migrator.execute(
         "SELECT evidens_jsonl_sha256 FROM modulaksept WHERE modul_id=%s",
-        (k["mid"],)).fetchone()[0] == EVIDENS_SHA
+        (k["mid"],)).fetchone()[0] == gronn
     # …og attesten bærer den autentiserte identiteten, ikke etiketten.
     aktor, av = migrator.execute(
         "SELECT aktor, attestert_av FROM evidensfil_attest"
-        "  WHERE sha256=%s LIMIT 1", (EVIDENS_SHA,)).fetchone()
+        "  WHERE sha256=%s LIMIT 1", (gronn,)).fetchone()
     assert aktor == "test"
     assert av == migrator.execute(
         "SELECT session_user").fetchone()[0]
@@ -889,7 +894,7 @@ def test_evidensattesten_er_ett_referat_per_fil(migrator):
     fil — og det skal høres. Uten dette kunne en attest «rettes» under en
     aksept som alt hviler på den."""
     migrator.execute("RESET ROLE")
-    sha = "1a" * 32
+    sha = secrets.token_hex(32)     # attesten er delt på tvers av moduler
     _evidens_attest(migrator, sha)
     _evidens_attest(migrator, sha)          # identisk → no-op
     migrator.commit()
