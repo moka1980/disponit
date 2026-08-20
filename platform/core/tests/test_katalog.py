@@ -45,6 +45,7 @@ Begge er FAIL-CLOSED. Mangler node eller pglast, er porten rød — aldri hoppet
 over. En port som hopper over seg selv er grønn på noe ingen har lest.
 """
 import functools
+import itertools
 import json
 import re
 import shutil
@@ -812,6 +813,10 @@ def _bindinger(uttrykk) -> dict[str, set[str]]:
     tar porten feil om en node den ikke kjenner, blir svaret uvisst og høylytt,
     aldri stille bredere.
     """
+    if isinstance(uttrykk, dict):
+        # En dynamisk hendelse har alt regnet ut hva den binder, se
+        # `_lesdynamisk()`.
+        return uttrykk
     if isinstance(uttrykk, pglast.ast.BoolExpr) \
             and uttrykk.boolop == pglast.enums.BoolExprType.AND_EXPR:
         ut: dict[str, set[str]] = {}
@@ -858,6 +863,16 @@ def _snitt(a: set[str], b: set[str]) -> set[str]:
 # eller et vilkår av en annen type som bare OPPTAR navnet sitt. `betinget` er
 # sant når setningen står bak en gren i en `DO`-kropp.
 _LEGG_PA, _SLIPP, _NAVN = "legg på", "slipp", "navn"
+# Slaget `_plpgsql_setninger()` gir en `EXECUTE` — en setning som først blir
+# til når migrasjonen kjører. Se `_lesdynamisk()`.
+_DYNAMISK = "dynamisk"
+# Nøklene for «porten vet ikke hvilken». Begge bærer et NUL-tegn, og PostgreSQL
+# har ingen identifikator som gjør det: en ekte tabell eller kolonne kan aldri
+# kollidere med dem, og ingen `DROP CONSTRAINT` kan navngi dem.
+_UKJENT_TABELL, _UKJENT_KOLONNE = "\0tabell", "\0kolonne"
+# Navnet en dynamisk hendelse føres under. Den skal hverken erstatte et vilkår
+# som står, eller kunne slippes av et senere slipp.
+_DYN_NAVN = "\0dynamisk"
 
 
 def _setningene(sql: str):
@@ -960,14 +975,147 @@ def _leskropp(setning: str, ut: list, betinget: bool) -> None:
     en spørring som først avgjøres når migrasjonen kjører, så svaret er ukjent —
     og da velger `_registerets_enums()` den tolkningen som aldri utvider.
 
-    DYNAMISK DDL — `EXECUTE format(…)` — er ikke lesbar for noen tekstlesning,
-    og gis fra seg med vilje. `_registerenum()` sier fra hvis kolonnen katalogen
-    måles mot ender opp uten vilkår.
+    DYNAMISK DDL — `EXECUTE format(…)` — blir først til når migrasjonen kjører.
+    Den ble hoppet over i stillhet (Codex P2 på #118, tjueførste runde), og
+    stillhet er feil svar: en dynamisk `ADD CONSTRAINT` som strammer inn lot det
+    forrige, videre vilkåret stå igjen som gjeldende, og katalogporten kunne
+    slippe inn en klasse PostgreSQL avviser. Mønsteret er alt i bruk — 018 legger
+    `hostname`-gjerdet på tre tabeller slik. Se `_lesdynamisk()`.
     """
-    for spørring, i_gren in _plpgsql_setninger(
-            _plpgsql(setning), betinget):
-        for indre, indretekst in _setningene(spørring):
+    for slag, verdi, i_gren in _plpgsql_setninger(_plpgsql(setning), betinget):
+        if slag is _DYNAMISK:
+            _lesdynamisk(verdi, ut, i_gren)
+            continue
+        for indre, indretekst in _setningene(verdi):
             _lesstatement(indre, indretekst, ut, i_gren)
+
+
+# Teksten porten setter inn der den dynamiske setningen har noe den ikke kan
+# lese. Den er en gyldig identifikator, så skjelettet kan leses av grammatikken
+# — og den kan ikke kollidere med en ekte tabell eller kolonne, for ingen
+# migrasjon navngir noe `porten_ukjent`.
+_HULL = "porten_ukjent"
+# Formene et hull kan ha i setningen: et NAVN (tabell, vilkår, kolonne) eller
+# en hel VILKÅRSDEFINISJON. Grammatikken avgjør hvilken det er — vi prøver dem
+# og tar den som lar seg lese, i stedet for å gjette ut fra plasseringen.
+_HULLFORMER = (_HULL, f"CHECK ({_HULL})")
+# Hvor mange hull en setning kan ha før porten gir den fra seg. Kombinasjonene
+# er `len(_HULLFORMER) ** hull`, så taket holder forsøkene i tosifret antall;
+# repoets største dynamiske setning har tre. En setning over taket er ULESELIG,
+# altså rød port — ikke et stille hopp.
+_HULLTAK = 6
+# Plassholderen for `%I`, `%s` og `%L` i en `format()`-mal.
+_FORMATHULL_RE = re.compile(r"%%|%[IsL]")
+
+
+def _skjelett(uttrykk):
+    """Teksten en dynamisk setning bygger, med det ukjente byttet mot `_HULL`.
+
+    Bare de tre formene repoet faktisk skriver leses: en strengkonstant, en
+    `format()` med konstant mal, og en skjøt av slike. Alt annet gir `None`, og
+    det er FAIL-CLOSED — se `_lesdynamisk()`, der en setning uten skjelett gjør
+    hele registeret uleselig. En form som mangler her koster altså en rød port,
+    ikke et stille hull.
+    """
+    if isinstance(uttrykk, pglast.ast.A_Const):
+        return uttrykk.val.sval \
+            if isinstance(uttrykk.val, pglast.ast.String) else None
+    if isinstance(uttrykk, pglast.ast.A_Expr) \
+            and [s.sval for s in (uttrykk.name or ())] == ["||"]:
+        venstre, høyre = _skjelett(uttrykk.lexpr), _skjelett(uttrykk.rexpr)
+        return None if venstre is None or høyre is None else venstre + høyre
+    if isinstance(uttrykk, pglast.ast.FuncCall) \
+            and [s.sval for s in uttrykk.funcname][-1] == "format":
+        mal = _skjelett(uttrykk.args[0]) if uttrykk.args else None
+        if mal is None:
+            return None
+        return _FORMATHULL_RE.sub(
+            lambda m: "%" if m.group(0) == "%%" else _HULL, mal)
+    return _HULL
+
+
+def _lesdynamisk(uttrykk: dict, ut: list, betinget: bool) -> None:
+    """Hendelsene i en `EXECUTE`, så langt setningen lar seg gjenskape.
+
+    Codex P2 på #118, tjueførste runde: dynamisk DDL ble hoppet over uten et
+    ord. Det er den ene retningen som gjør skade — en `ADD CONSTRAINT` som
+    strammer inn ble usynlig, det forrige videre vilkåret sto igjen som
+    gjeldende, og porten kunne godta en klasse databasen avviser.
+
+    Setningen finnes ikke som tekst før den kjører, men den er BYGGET av tekst,
+    og det som er konstant i den er kjent nå. `_skjelett()` setter `_HULL` der
+    porten ikke vet, og grammatikken leser resten. Da faller 018 på plass av
+    seg selv: tabellen er `public.%I` og altså ukjent, mens vilkåret er
+    konstant og binder `hostname` — det kan ikke røre en kontraktklasse,
+    uansett hvilken tabell `%I` var.
+
+    Det ukjente sies med to nøkler ingen SQL-identifikator kan skrive:
+    `_UKJENT_TABELL` når tabellen er et hull, og `_UKJENT_KOLONNE` når det er
+    VILKÅRET som er det. `_registerenum()` snitter mot begge, så en dynamisk
+    innstramming på en ukjent tabell gjør kolonnen uviss i stedet for å
+    forsvinne.
+
+    Et dynamisk SLIPP gis fra seg: et vilkår som blir stående kan bare gjøre
+    snittet smalere, og det er den trygge retningen.
+
+    Lar setningen seg ikke gjenskape i det hele tatt, er svaret uvisst for ALT
+    — `(_UKJENT_TABELL, _UKJENT_KOLONNE)` — og porten blir rød. Det er meningen:
+    en setning ingen kan lese, skal ikke kunne leses som «ingenting skjedde».
+    """
+    skjelett = _skjelett(_uttrykket(uttrykk))
+    lest = _dynamiske_hendelser(skjelett, betinget) if skjelett else None
+    if lest is None:
+        ut.append((_LEGG_PA, _UKJENT_TABELL, _DYN_NAVN,
+                   {_UKJENT_KOLONNE: {ULESELIG_SQL}}, betinget, None))
+        return
+    ut += lest
+
+
+def _uttrykket(uttrykk: dict):
+    """Uttrykket en innebygd PL/pgSQL-spørring er, som SQL-tre."""
+    return pglast.parse_sql(_somsql(uttrykk))[0].stmt.targetList[0].val
+
+
+def _dynamiske_hendelser(skjelett: str, betinget: bool) -> list | None:
+    """Hendelsene i et skjelett, eller `None` om det ikke lar seg lese.
+
+    HVERT hull prøves i hver av formene `_HULLFORMER`, og grammatikken avgjør
+    hvilken kombinasjon som er en setning: i `ADD CONSTRAINT %I %s` er det
+    første hullet et navn og det andre en hel vilkårsdefinisjon, mens i
+    `ALTER TABLE %I` er hullet et navn. Vi spør i stedet for å gjette ut fra
+    plasseringen.
+
+    Tolkningene er få og bundet: to former per hull, og et skjelett med mer enn
+    en håndfull hull gis fra seg. Skulle to kombinasjoner begge la seg lese, er
+    de enige om det eneste porten bruker — TABELLEN står i den konstante delen,
+    og det ukjente blir ukjent uansett hvilken av dem som velges.
+    """
+    biter = skjelett.split(_HULL)
+    if len(biter) - 1 > _HULLTAK:
+        return None
+    for former in itertools.product(_HULLFORMER, repeat=len(biter) - 1):
+        forsøk = biter[0] + "".join(
+            f + b for f, b in zip(former, biter[1:]))
+        try:
+            setninger = list(_setningene(forsøk))
+        except pglast.parser.ParseError:
+            continue
+        ut: list = []
+        for stmt, tekst in setninger:
+            _lesstatement(stmt, tekst, ut, betinget)
+        return [_ukjentgjort(h) for h in ut if h[0] is not _SLIPP]
+    return None
+
+
+def _ukjentgjort(hendelse: tuple) -> tuple:
+    """Hendelsen med hullene byttet mot nøklene for «porten vet ikke»."""
+    slag, tabell, navn, uttrykk, betinget = hendelse[:5]
+    tabell = _UKJENT_TABELL if _HULL in tabell else tabell
+    if slag is _NAVN:
+        return (slag, tabell, navn, uttrykk, betinget)
+    bindinger = {(_UKJENT_KOLONNE if kol == _HULL else kol): verdier
+                 for kol, verdier in _bindinger(uttrykk).items()}
+    return (_LEGG_PA, tabell, _DYN_NAVN, bindinger, betinget, hendelse[5])
 
 
 def _plpgsql(setning: str) -> list:
@@ -1039,6 +1187,10 @@ def _plpgsql_setninger(node, betinget: bool):
     tilbake av sin egen `EXCEPTION`. Grammatikken skiller dem selv, så porten
     trenger ingen ordliste over hvordan de skrives — bare å vite hvilke felt
     som ALLTID kjører, se `_kjorende_felt()`.
+
+    Slaget skiller en setning som STÅR der, fra en `EXECUTE` som først blir til
+    når migrasjonen kjører. Den siste gis fra seg som `_DYNAMISK` med uttrykket
+    sitt, ikke hoppet over, se `_lesdynamisk()`.
     """
     if isinstance(node, list):
         for x in node:
@@ -1050,7 +1202,11 @@ def _plpgsql_setninger(node, betinget: bool):
         if navn == "PLpgSQL_stmt_execsql":
             spørring = (innhold.get("sqlstmt") or {}).get("PLpgSQL_expr", {})
             if spørring.get("query"):
-                yield spørring["query"], betinget
+                yield "sql", spørring["query"], betinget
+            continue
+        if navn == "PLpgSQL_stmt_dynexecute":
+            yield _DYNAMISK, (innhold.get("query") or {}).get(
+                "PLpgSQL_expr", {}), betinget
             continue
         if not isinstance(innhold, dict):
             yield from _plpgsql_setninger(innhold, betinget)
@@ -1134,7 +1290,7 @@ def _registerets_enums(
                 continue
             if navn is None:
                 navn = _tildelt_navn(opptatt.get(tabell, ()), tabell, kolonne)
-            if betinget and (tabell, navn) in vilkar:
+            if navn == _DYN_NAVN or (betinget and (tabell, navn) in vilkar):
                 navn = _sidestilt_navn(vilkar, tabell, navn)
             else:
                 opptatt.setdefault(tabell, set()).add(navn)
@@ -1222,18 +1378,30 @@ def _registerenum(kolonne: str) -> set[str]:
     En kolonne porten ikke kunne lese vilkåret for, se `ULESELIG_SQL`, sier fra
     HER og ikke ved enhver migrasjon som skriver noe uleselig et annet sted.
     Det er kolonnen katalogen faktisk måles mot som må være lest riktig.
+
+    DE UKJENTE NØKLENE snittes inn her (Codex P2 på #118, tjueførste runde). En
+    dynamisk `EXECUTE` kan ha lagt et vilkår på en tabell porten ikke kunne
+    lese navnet på, eller med en definisjon den ikke kunne lese i det hele
+    tatt. `_lesdynamisk()` fører dem under `_UKJENT_TABELL`/`_UKJENT_KOLONNE`,
+    og et vilkår som KANSKJE gjelder denne kolonnen må telle med — ellers er
+    svaret videre enn databasen, som er nøyaktig det hullet var.
     """
     gjeldende, _ = _registerets_enums()
     ut = gjeldende.get((MODULKONTRAKT, kolonne), set())
     assert ut, (f"fant ikke CHECK-vilkåret for {MODULKONTRAKT}.{kolonne} i "
                 f"migrasjonene")
+    for tabell in (MODULKONTRAKT, _UKJENT_TABELL):
+        for kol in (kolonne, _UKJENT_KOLONNE):
+            if (tabell, kol) != (MODULKONTRAKT, kolonne) \
+                    and (tabell, kol) in gjeldende:
+                ut = _snitt(ut, gjeldende[(tabell, kol)])
     assert ULESELIG_SQL not in ut, (
         f"CHECK-vilkåret for {MODULKONTRAKT}.{kolonne} er ikke en verdiliste "
-        f"porten kan regne på: et sammensatt eller negativt predikat sier hva "
-        f"kolonnen IKKE kan være, og hvor mye smalere det gjør vilkåret står i "
-        f"den delen ingen liste bærer. Skriv vilkåret som "
-        f"`{kolonne} IN ('…', '…')`; et gjettet innhold ville vært verre enn "
-        f"ingen.")
+        f"porten kan regne på: enten et sammensatt eller negativt predikat, "
+        f"som sier hva kolonnen IKKE kan være, eller en dynamisk `EXECUTE` som "
+        f"kan ha lagt et vilkår porten ikke kan gjenskape. Skriv vilkåret som "
+        f"`{kolonne} IN ('…', '…')` i en setning som står i migrasjonen; et "
+        f"gjettet innhold ville vært verre enn ingen.")
     return ut
 
 
@@ -1889,6 +2057,58 @@ def test_en_blokk_med_unntakshaandterer_kan_rulles_tilbake(tmp_path, kropp,
                          f"DO $do$\n{kropp} $do$;\n")
     gjeldende, _ = _registerets_enums(mappe)
     assert gjeldende.get((MODULKONTRAKT, "reversibilitet")) == gjelder
+
+
+@pytest.mark.parametrize("setning,uviss", [
+    # Tabellen er konstant og ER modulkontrakt, definisjonen ukjent: porten
+    # kan ikke si hva kolonnen godtar lenger. Dette er formen Codex beskrev.
+    ("EXECUTE 'ALTER TABLE modulkontrakt ADD CONSTRAINT '\n"
+     "        || quote_ident(c) || ' ' || def", True),
+    # Tabellen er et hull, så den KAN være modulkontrakt.
+    ("EXECUTE format('ALTER TABLE %I ADD CONSTRAINT %I %s', t, c, def)", True),
+    # Setningen lar seg ikke gjenskape i det hele tatt.
+    ("EXECUTE v_sql", True),
+    # Tabellen er et hull, men vilkåret er KONSTANT og binder en annen
+    # kolonne — formen 018 bruker. Den kan ikke røre en kontraktklasse,
+    # uansett hvilken tabell hullet var.
+    ("EXECUTE format('ALTER TABLE public.%I ADD CONSTRAINT %I'\n"
+     "               ' CHECK (er_kanonisk(hostname))', t, c)", False),
+    # Tabellen er konstant og en ANNEN enn modulkontrakt.
+    ("EXECUTE format('ALTER TABLE varsel ADD CONSTRAINT %I %s', c, def)",
+     False),
+    # Og en setning som ikke kan lage vilkår i det hele tatt.
+    ("EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t)", False),
+    ("EXECUTE format('DROP POLICY IF EXISTS tenant_isolasjon ON %I', t)",
+     False),
+    # Et dynamisk SLIPP gis fra seg: et vilkår som blir stående kan bare gjøre
+    # snittet smalere, og det er den trygge retningen.
+    ("EXECUTE format('ALTER TABLE modulkontrakt DROP CONSTRAINT %I', c)",
+     False),
+])
+def test_dynamisk_ddl_gjor_registeret_uvisst_ikke_uendret(tmp_path, setning,
+                                                          uviss):
+    """`EXECUTE` er DDL porten ikke kan lese — og stillhet er feil svar.
+
+    Codex P2 på #118, tjueførste runde. Dynamisk DDL ble hoppet over uten et
+    ord, og den ene retningen gjør skade: en `ADD CONSTRAINT` som strammer inn
+    ble usynlig, det forrige videre vilkåret sto igjen som gjeldende, og
+    katalogporten kunne godta en klasse PostgreSQL avviser. Mønsteret er alt i
+    bruk i repoet — 018 legger `hostname`-gjerdet på tre tabeller slik.
+
+    Setningen finnes ikke som tekst før den kjører, men den er BYGGET av tekst,
+    og det konstante i den er kjent nå. Prøvene her måler at porten bruker
+    nettopp det: den blir uviss når hullet KAN være kontrakten, og bare da.
+    """
+    mappe = _migrasjoner(
+        tmp_path, _LAGER_VILKAR,
+        "DO $do$ DECLARE t TEXT; c TEXT; def TEXT; v_sql TEXT;\n"
+        f"BEGIN\n    {setning};\nEND $do$;\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    uleselig = any(
+        ULESELIG_SQL in gjeldende.get((tabell, kolonne), set())
+        for tabell in (MODULKONTRAKT, _UKJENT_TABELL)
+        for kolonne in ("reversibilitet", _UKJENT_KOLONNE))
+    assert uleselig is uviss, gjeldende
 
 
 def test_repoets_do_blokker_leses_som_kjorte():
