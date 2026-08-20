@@ -1161,8 +1161,12 @@ GRANT SELECT, INSERT ON ci_kjoringsattest TO disponit_modul_eier;
 -- målingen bruker, er en fullmakt som venter på et annet kall.
 -- Tenant-policyen (016/008, FORCE) gjelder uansett: definerne eier
 -- ikke tabellene og setter `disponit.tenant` eksplisitt.
+-- `opprettet`/`status_ts` er drillvinduets to kolonner (Codex P1, runde
+-- 16): utfallene måles mot NÅR oppdraget ble bestilt og når det ble
+-- terminalt, holdt opp mot registerets to `releasebytte`-overganger.
+-- Uten dem er «arbeidet krysset rullingen» ikke målbart.
 GRANT SELECT (tenant, id, status, kvittering, kvittering_signatur,
-              resultathash, eiermodul)
+              resultathash, eiermodul, opprettet, status_ts)
     ON oppdrag TO disponit_modul_eier;
 GRANT SELECT (tenant, artefakt_id, oppdrag_id, release_id, tilstand)
     ON artefakt TO disponit_modul_eier;
