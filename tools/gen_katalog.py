@@ -323,12 +323,37 @@ def hopp_over_tomrom(tekst: str, i: int) -> int:
     return i
 
 
-# Navnet et felt får når nøkkelen er BEREGNET av noe annet enn én streng —
-# `[k]:` eller `[('sta' + 'tus')]:`. Da vet ikke generatoren hva feltet heter,
-# og et navn den ikke vet kan den heller ikke forby. Tegnet kan ikke kollidere
-# med et ekte feltnavn: `?` er ikke lovlig i en JS-identifikator, og en
-# strengnøkkel som inneholder det leses som seg selv.
+# Navnet et felt får når generatoren IKKE kan lese hva feltet heter. To former
+# gir det: en nøkkel som er beregnet av noe annet enn én streng — `[k]:` eller
+# `[('sta' + 'tus')]:` — og en nøkkel skrevet med escape-sekvenser, se
+# `nokkelnavn()`. Et navn generatoren ikke vet, kan den heller ikke forby.
+# Tegnet kan ikke kollidere med et ekte feltnavn: `?` er ikke lovlig i en
+# JS-identifikator, og en strengnøkkel som inneholder det leses som seg selv.
 UKJENT_FELT = "?"
+
+
+def nokkelnavn(innhold: str) -> str:
+    """Feltnavnet en strengnøkkel med dette innholdet gir — eller `UKJENT_FELT`.
+
+    Råteksten mellom fnuttene ER navnet bare så lenge den ikke inneholder en
+    escape-sekvens (Codex P2 på #118, tolvte runde). `['\\x73tatus']` og
+    `"\\u0073tatus":` gir begge den helt alminnelige egenskapen `status` i
+    nettleseren, mens en sammenligning mot råteksten ser `\\x73tatus` og lar
+    dem passere statusforbudet. Siden ville tegnet aksen; generatoren ville
+    kastet den i stillhet. Samme hull lot en escapet `kl`- eller `rev`-nøkkel
+    forsvinne for kontraktparseren, og et felt som ikke finnes blir ikke
+    kontrollert.
+
+    Vi AVVISER i stedet for å tolke. Å tolke betyr å skrive JS-strengregler i
+    Python — `\\xHH`, `\\uHHHH`, `\\u{…}`, linjefortsettelse, og de gamle
+    oktale escapene som fortsatt gjelder utenfor «use strict» — og hver form
+    som blir glemt er et nytt smutthull av nøyaktig denne typen. Avvisningen er
+    lukket: en nøkkel som inneholder en omvendt skråstrek er ikke et navn
+    generatoren kan lese, punktum. Prisen er null, for katalogens feltnavn er
+    `n`, `name`, `area`, `p`, `kl`, `rev`, `dep`, `guard` — ingen av dem
+    trenger en escape for å skrives.
+    """
+    return UKJENT_FELT if "\\" in innhold else innhold
 
 
 def beregnet_nokkel(post: str, i: int) -> tuple[str, int] | None:
@@ -338,7 +363,8 @@ def beregnet_nokkel(post: str, i: int) -> tuple[str, int] | None:
     en verdi, og der følger ingen kolon etter `]`. Kolonet er derfor prøven.
 
     Feltnavnet er `UKJENT_FELT` når nøkkelen ikke er én streng — da er den
-    regnet ut, og hva egenskapen kommer til å hete vet bare nettleseren.
+    regnet ut, og hva egenskapen kommer til å hete vet bare nettleseren — og
+    når strengen bærer en escape-sekvens, se `nokkelnavn()`.
     """
     j, dybde = i + 1, 0
     while j < len(post):
@@ -367,7 +393,7 @@ def beregnet_nokkel(post: str, i: int) -> tuple[str, int] | None:
         slutt = slutt_ikkekode(post, k)
         innhold = post[k + 1:slutt - 1]
         if hopp_over_tomrom(post, slutt) == j and "${" not in innhold:
-            return innhold, j + 1
+            return nokkelnavn(innhold), j + 1
     return UKJENT_FELT, j + 1
 
 
@@ -414,7 +440,9 @@ def toppnivafelt(post: str) -> list[str]:
             continue
         if c in "\"'`":
             j = slutt_ikkekode(post, i)
-            navn = post[i + 1:j - 1]
+            # Råteksten er navnet bare uten escape-sekvenser: `"\x73tatus":` er
+            # et helt vanlig `status`-felt for nettleseren. Se `nokkelnavn()`.
+            navn = nokkelnavn(post[i + 1:j - 1])
             i = j
         elif c == "{":
             dybde += 1
@@ -490,10 +518,12 @@ def les_katalog() -> list[dict]:
         feltnavn = toppnivafelt(post)
         if UKJENT_FELT in feltnavn:
             raise SystemExit(
-                f"M-{m.group(1)} «{m.group(3)}» i {KILDE_NAVN} har et felt med "
-                f"BEREGNET navn (`[…]:`). Katalogen er en kilde som skal kunne "
-                f"leses, og et navn som først finnes når siden kjører kan "
-                f"hverken leses eller forbys her. Skriv feltnavnet.")
+                f"M-{m.group(1)} «{m.group(3)}» i {KILDE_NAVN} har et felt "
+                f"generatoren ikke kan lese navnet på — enten BEREGNET "
+                f"(`[k]:`) eller skrevet med escape (`'\\x73tatus'`). "
+                f"Katalogen er en kilde som skal kunne leses, og et navn som "
+                f"først blir til når siden kjører kan hverken leses eller "
+                f"forbys her. Skriv feltnavnet med bokstaver.")
         forbudt = [f for f in feltnavn if f in FORBUDTE_FELT]
         if forbudt:
             raise SystemExit(

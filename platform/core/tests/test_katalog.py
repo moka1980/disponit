@@ -160,6 +160,9 @@ def _med_felt_i_m57(tmp_path: Path, felt: str) -> subprocess.CompletedProcess:
     ("['status']:'planlagt'", "status"),
     ('["sta" + "tus"]:"planlagt"', "BEREGNET"),
     ("[nokkel]:'planlagt'", "BEREGNET"),
+    (r"['\x73tatus']:'planlagt'", "escape"),
+    (r'["\u0073tatus"]:"planlagt"', "escape"),
+    (r'"\x73tatus":"planlagt"', "escape"),
 ])
 def test_statusforbudet_ser_alle_skrivemaater(tmp_path, felt, i_meldingen):
     """En tilstandsakse er forbudt uansett HVORDAN nøkkelen er skrevet.
@@ -173,6 +176,13 @@ def test_statusforbudet_ser_alle_skrivemaater(tmp_path, felt, i_meldingen):
     En nøkkel som er REGNET UT stoppes også, med sin egen beskjed: hva
     egenskapen kommer til å hete vet bare nettleseren, og et navn generatoren
     ikke kan lese kan den heller ikke forby.
+
+    Det samme gjelder en nøkkel skrevet med ESCAPE (Codex P2 på #118, tolvte
+    runde). `['\\x73tatus']` og `"\\u0073tatus":` gir begge den alminnelige
+    egenskapen `status`, mens en sammenligning mot råteksten ser noe annet og
+    slipper dem forbi. Generatoren tolker ikke sekvensene — den avviser dem, se
+    `nokkelnavn()` — så prøvene her krever bare at den STOPPER, ikke at den
+    gjettet hva nøkkelen skulle bety.
 
     Mutasjonen står i en KOPI av kilden — en port som retter fila den måler,
     kan ikke feile.
@@ -684,6 +694,23 @@ def _tomrom(js: str, i: int, spenn: dict[int, tuple]) -> int:
     return i
 
 
+# Navnet en strengnøkkel får når råteksten mellom fnuttene IKKE er navnet:
+# `['\x6bl']` og `"kl":` gir begge den alminnelige egenskapen `kl` i
+# nettleseren (Codex P2 på #118, tolvte runde). Leste porten råteksten, fikk
+# posten et felt som heter noe annet — og et felt som ikke finnes, sjekker
+# enumporten ikke. Escapene TOLKES ikke: å skrive JS-strengregler i Python
+# (`\xHH`, `\uHHHH`, `\u{…}`, oktalt utenfor «use strict») er en åpen liste der
+# hver glemt form er et nytt smutthull. De avvises, og navnet blir dette —
+# en omvendt skråstrek er ikke et lovlig feltnavn, så det kan ikke kollidere
+# med et ekte felt.
+ULESELIG = "\\"
+
+
+def _nokkelnavn(innhold: str) -> str:
+    """Feltnavnet en strengnøkkel med dette innholdet gir. Se `ULESELIG`."""
+    return ULESELIG if "\\" in innhold else innhold
+
+
 def _beregnet_nokkel(post: str, i: int,
                      spenn: dict[int, tuple]) -> tuple[str, int] | None:
     """(feltnavn, indeksen etter `]`) for en beregnet nøkkel som åpner i `i`.
@@ -727,7 +754,7 @@ def _beregnet_nokkel(post: str, i: int,
     if k in spenn and spenn[k][1] == "streng":
         slutt = spenn[k][0]
         if _tomrom(post, slutt, spenn) == j:
-            return post[k + 1:slutt - 1], j + 1
+            return _nokkelnavn(post[k + 1:slutt - 1]), j + 1
     return None
 
 
@@ -767,7 +794,7 @@ def _postfelt(post: str) -> dict[str, str]:
             navn, i = nokkel
         elif i in spenn and spenn[i][1] == "streng":
             j = spenn[i][0]
-            navn, i = post[i + 1:j - 1], j
+            navn, i = _nokkelnavn(post[i + 1:j - 1]), j
         elif (treff := _NAVN_RE.match(post, i)):
             navn, i = treff.group(0), treff.end()
         else:
@@ -1051,9 +1078,20 @@ def test_kontraktklassene_i_katalogen_finnes_i_modulregisteret():
     som tilfeldigvis har en kolonne med samme navn — det er den tabellen
     kontrakten lagres i, og altså den som sier nei. Se `_registerenum()`.
 
+    Porten sjekker de feltene som FINNES, og derfor må den også kreve at hvert
+    feltnavn lar seg lese (Codex P2 på #118, tolvte runde). En nøkkel skrevet
+    `['\\x6bl']` er `kl` for nettleseren, men noe annet for en parser som leser
+    råteksten — og det feltet porten ikke ser, kontrollerer den ikke. Å mangle
+    et felt er farligere enn å misforstå det.
+
     MUTASJONEN SOM DREPER DENNE: hardkod enumene i testen. Da vokter porten en
     kopi, og en migrasjon som strammer inn et vilkår går rett forbi den.
     """
+    uleselige = [f"M-{n}" for n, post in _modulposter()
+                 if ULESELIG in _postfelt(post)]
+    assert not uleselige, (
+        "modulposter med et feltnavn porten ikke kan lese (escape i nøkkelen): "
+        + ", ".join(uleselige) + " — skriv feltnavnet med bokstaver")
     tillatt = {felt: _registerenum(kol) for felt, kol in KONTRAKTFELT.items()}
     avvik = [f"M-{n}.{felt}={d[felt]!r} (godtatt: "
              f"{', '.join(sorted(tillatt[felt]))})"
