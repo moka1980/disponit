@@ -16,13 +16,20 @@ malautorisasjonens negativporter) — de har ingen historiske rader og
 kan bare bevises «grønne da» av kjøringen på akseptcommiten. Den
 kjøringen slås opp og må være ferdig, grønn og kjørt på nettopp den
 commiten; `--ci-commit` er derfor akseptcommiten, ikke en fri streng.
+Og den må være `ci.yml`s PUSH-kjøring på `main` — ikke en PR-kjøring på
+det samme forslaget, som er en helt annen påstand (se
+`_vurder_ci_kjoring`).
 
-BRUK:
+BRUK (kjøres ETTER merge, fra et utsjekk av `main`):
     sudo -E python3 deploy/staging/m56-aksept.py \
         --drill deploy/staging/artefakter/rollback-m56-v1-<ts>.json \
         --runde deploy/staging/artefakter/wcag-kontroll-v1-<ts>.json \
         --e2e-artefakt <uuid fra drillens kandidat-kjøring> \
         --ci-run <workflow-run-id> --ci-commit <sha> [--manifest-commit <sha>]
+
+    Run-ID-en er push-kjøringen på merge-commiten:
+        gh run list --workflow ci.yml --branch main --event push \
+            --commit <sha> --json databaseId,conclusion
 """
 from __future__ import annotations
 
@@ -53,6 +60,11 @@ MANIFEST_STI = REPO / MANIFEST_REL
 #: workflows, og en grønn kjøring av en ANNEN på samme commit beviser
 #: ingenting om testene her (Codex, #117).
 CI_WORKFLOW = ".github/workflows/ci.yml"
+#: ... og HENDELSEN den må ha kjørt på. `ci.yml` trigges både av
+#: `pull_request` og av push til `main`, og bare den siste sier at bytene
+#: faktisk ble en del av historikken (Codex P2, #117).
+CI_HENDELSE = "push"
+HOVEDGREN = "main"
 
 #: grensepunkt → (kilde_type, hvordan verdien hentes). Måletallene peker
 #: på runde-sammendraget (selv sha-bundet i manifestet); de rene
@@ -245,6 +257,22 @@ def _vurder_ci_kjoring(data: dict, run_id: str, ci_commit: str) -> list[str]:
         feil.append(f"kjøringen er {data.get('path') or '?'}, ikke"
                     f" {CI_WORKFLOW} — bare invarianttestene der bærer"
                     " punktene")
+    # ... og HENDELSEN må være pushen til `main` (Codex P2, #117 runde 11).
+    # `ci.yml` kjører for BÅDE `pull_request` og push til `main`, og
+    # kontrollene over — sti, conclusion, head_sha — passerer like godt på
+    # en grønn PR-kjøring. Kjøres kommandoen fra et PR-utsjekk, er den
+    # commiten bare et forslag: `loes_akseptcommit` krever at den finnes
+    # lokalt, ikke at den er nådd fra `main`, så en immutabel aksept kunne
+    # skrives på bytes som aldri ble merget — og kanskje aldri blir det.
+    # Utrullingen skjer ETTER merge (RUTINER pkt. 8), så kjøringen aksepten
+    # hviler på skal være den historikken faktisk fikk.
+    if (data.get("event") or "") != CI_HENDELSE:
+        feil.append(f"kjøringen ble trigget av {data.get('event') or '?'},"
+                    f" ikke {CI_HENDELSE} — en {data.get('event') or '?'}"
+                    "-kjøring testet et forslag, ikke historikken")
+    if (data.get("head_branch") or "") != HOVEDGREN:
+        feil.append(f"kjøringen sto på {data.get('head_branch') or '?'}, ikke"
+                    f" {HOVEDGREN} — akseptcommiten skal være merget")
     if data.get("status") != "completed":
         feil.append(f"status={data.get('status')!r} — kjøringen er ikke ferdig")
     if data.get("conclusion") != "success":
@@ -265,7 +293,9 @@ def verifiser_ci_kjoring(run_id: str, ci_commit: str) -> dict:
     ingen har sett bevise noe som helst. Nå slås kjøringen opp: den må
     finnes i dette repoet, være `ci.yml` (runde 3: en grønn
     `claude.yml`-kjøring på samme commit kjører ingen av
-    invarianttestene), være FERDIG og GRØNN, og ha testet nøyaktig
+    invarianttestene), være en PUSH PÅ `main` (runde 11: `ci.yml` kjører
+    også for `pull_request`, og en kjøring på et forslag beviser ikke at
+    bytene ble historikk), være FERDIG og GRØNN, og ha testet nøyaktig
     akseptcommiten (klarsignalets §2.5: «run-ID + commit-sha på
     akseptcommiten»).
     """

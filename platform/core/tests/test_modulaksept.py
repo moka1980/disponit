@@ -2437,7 +2437,8 @@ def test_invariantpunktene_krever_en_groenn_kjoring_paa_akseptcommiten():
     m = _aksept_skript()
     sha = "a" * 40
     groenn = {"id": 42, "status": "completed", "conclusion": "success",
-              "head_sha": sha, "path": ".github/workflows/ci.yml"}
+              "head_sha": sha, "path": ".github/workflows/ci.yml",
+              "event": "push", "head_branch": "main"}
     assert m._vurder_ci_kjoring(groenn, "42", sha) == []
     # Codex' P1 (runde 3): en GRØNN kjøring av en annen workflow på samme
     # commit bar alle 16 punktene. `claude.yml` kjører ingen av
@@ -2456,6 +2457,39 @@ def test_invariantpunktene_krever_en_groenn_kjoring_paa_akseptcommiten():
     with pytest.raises(SystemExit) as ei:
         m.verifiser_ci_kjoring("ikke-et-run-id", sha)
     assert "workflow-run-id" in str(ei.value)
+
+
+def test_invariantpunktene_krever_kjoringen_paa_main_ikke_paa_forslaget():
+    """Codex' P2 (runde 11): kjøringen ble målt på sti, conclusion og
+    head_sha — ikke på HENDELSEN.
+
+    `.github/workflows/ci.yml` trigges av BÅDE `pull_request` og push til
+    `main`, så en grønn PR-kjøring passerte hver eneste kontroll. Kjøres
+    akseptkommandoen fra et PR-utsjekk, holder `loes_akseptcommit` bare at
+    commiten finnes lokalt — den krever ikke at den er nådd fra `main` — og
+    da kunne en IMMUTABEL aksept skrives på bytes som aldri ble merget, og
+    kanskje aldri blir det. Utrullingen skjer etter merge, så kjøringen
+    aksepten hviler på skal være den historikken faktisk fikk.
+    """
+    m = _aksept_skript()
+    sha = "a" * 40
+    # Forutsetningen porten hviler på: workflowen kjører faktisk for begge
+    # hendelsene, så `event` er ikke utledbart av stien.
+    ci = (ROT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "pull_request:" in ci and "branches: [main]" in ci
+
+    groenn = {"id": 42, "status": "completed", "conclusion": "success",
+              "head_sha": sha, "path": ".github/workflows/ci.yml",
+              "event": "push", "head_branch": "main"}
+    assert m._vurder_ci_kjoring(groenn, "42", sha) == []
+    for muteres, ord_i_feil in (
+            ({"event": "pull_request"}, "ikke push"),
+            ({"event": None}, "ikke push"),
+            ({"event": "workflow_dispatch"}, "ikke push"),
+            ({"head_branch": "m56-akseptflipp"}, "skal være merget"),
+            ({"head_branch": None}, "skal være merget")):
+        feil = m._vurder_ci_kjoring(dict(groenn, **muteres), "42", sha)
+        assert any(ord_i_feil in f for f in feil), (muteres, feil)
 
 
 @pg
