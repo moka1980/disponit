@@ -142,7 +142,9 @@ def _kjede(m, *, promoter_paa_drillet=False, staged_paa_kandidat=False):
           "oppdrag": oppdrag, "artefakt": artefakt,
           "e2e": artefakt("r-kandidat", "promotert", kandidat)}
     if promoter_paa_drillet:
-        ut["e2e_drillet"] = artefakt("r-drillet", "promotert", kandidat)
+        # EGET oppdrag: `ett_promotert_per_oppdrag` (016) tillater bare ett
+        # promotert artefakt per oppdrag, og kandidatoppdraget har alt sitt.
+        ut["e2e_drillet"] = artefakt("r-drillet", "promotert")
     if staged_paa_kandidat:
         ut["staged"] = artefakt("r-kandidat", "staged", kandidat)
     m.commit()
@@ -225,12 +227,57 @@ def test_akseptflyten_ende_til_ende(migrator):
 
 @pg
 def test_aksept_uten_drill_avvises(migrator):
-    """Port 1: drill_id som ikke finnes → FK, navngitt constraint."""
+    """Port 1: drill_id som ikke finnes → avvist, med drillen navngitt.
+
+    Etter runde 5 slår funksjonen selv opp drillraden (den trenger
+    kandidatoppdraget for å binde E2E-beviset), så en ukjent drill høres
+    der og ikke først i FK-en. FK-en står bak og måles for seg i
+    `test_fk_en_staar_bak_akseptfunksjonens_porter`."""
     k = _kjede(migrator)
-    with pytest.raises(psycopg.errors.ForeignKeyViolation) as ei:
+    with pytest.raises((psycopg.errors.NoDataFound,
+                        psycopg.errors.ForeignKeyViolation)) as ei:
         _aksepter(migrator, k, 999999999)
     migrator.rollback()
-    assert "modulaksept" in str(ei.value)
+    assert "999999999" in str(ei.value)
+
+
+@pg
+def test_fk_en_staar_bak_akseptfunksjonens_porter(migrator):
+    """Akseptfunksjonen svarer først — men FK-ene er det som faktisk
+    bærer, for ENHVER skrivevei.
+
+    Runde 5 flyttet tre kontroller inn i `aksepter_moduldeployment`
+    (ukjent drill, E2E-artefaktet fra drillens kandidatoppdrag), og de
+    står nå foran FK-ene i rekkefølgen. Da måler ikke de testene lenger
+    at FK-ene finnes. Her skrives raden DIREKTE som migrator, forbi
+    funksjonen, så strukturen måles der den bor: ukjent drill, artefakt
+    fra feil release, og artefakt som ikke er promotert."""
+    k = _kjede(migrator, promoter_paa_drillet=True, staged_paa_kandidat=True)
+    did = _drill(migrator, k)
+    migrator.execute("RESET ROLE")
+
+    def rad(**endring):
+        felt = {"drill_id": did, "release_id": "r-kandidat",
+                "artefakt": k["e2e"], **endring}
+        migrator.execute(
+            "INSERT INTO modulaksept (modul_id, miljo, release_id, drill_id,"
+            " krav_id, e2e_tenant, e2e_artefakt_id, evidens_jsonl_sha256,"
+            " manifest_commit, ci_run, ci_commit, nokkel, aktor) VALUES"
+            " (%s,'staging',%s,%s,%s,%s,%s,'e','m','r','c',%s,'test')",
+            (k["mid"], felt["release_id"], felt["drill_id"], KRAV, k["ten"],
+             felt["artefakt"], "d-" + secrets.token_hex(6)))
+
+    for endring in ({"drill_id": 999999999},
+                    {"artefakt": k["e2e_drillet"]},
+                    {"artefakt": k["staged"]}):
+        with pytest.raises(psycopg.errors.ForeignKeyViolation) as ei:
+            rad(**endring)
+        assert "modulaksept" in str(ei.value)
+        migrator.rollback()
+        migrator.execute("RESET ROLE")
+    # Motprøven: den riktige formen går gjennom FK-ene.
+    rad()
+    migrator.rollback()
 
 
 @pg
@@ -254,10 +301,17 @@ def test_drill_for_annen_deploymentrad_avvises(migrator):
 def test_e2e_artefakt_fra_annen_release_avvises(migrator):
     """Port 3 (A2): gyldig, promotert artefakt — fra FEIL release
     (prod-formen: 23 r1-artefakter mot 1 r5). Delt release_id i FK-en
-    feller det."""
+    feller det.
+
+    Etter runde 5 svarer oppdragsbindingen først: artefaktet fra
+    r-drillet kom av et annet oppdrag enn drillens kandidatoppdrag, og
+    det måles før INSERT-en når FK-en. Samme dom, ett hakk tidligere —
+    og FK-en står bak den for enhver annen skrivevei; den måles for seg i
+    `test_fk_en_staar_bak_akseptfunksjonens_porter`."""
     k = _kjede(migrator, promoter_paa_drillet=True)
     did = _drill(migrator, k)
-    with pytest.raises(psycopg.errors.ForeignKeyViolation):
+    with pytest.raises((psycopg.errors.ForeignKeyViolation,
+                        psycopg.errors.InvalidParameterValue)):
         _aksepter(migrator, k, did, artefakt=k["e2e_drillet"])
     migrator.rollback()
 
