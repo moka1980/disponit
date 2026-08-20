@@ -170,18 +170,46 @@ staging_sjekkliste:
       fasit skrevet fra konstruksjonen) er sjekket inn, så den lokale
       siden er tilgjengelig for måling; den er bare ikke målt ennå.
   revisjonslogg_korrekt:
-    status: ja
-    krav_id: wcag-kontroll-v1
-    bevismaalinger:
-      - maalt.kjoringer_signert_innen_frist
-    artefakt: deploy/staging/artefakter/wcag-kontroll-v1-20260818T200413.json
-    artefakt_sha256: 0a27526e024a9a91b52b26082a56940a66bb4d9148889808cf856ef8b35e3583
+    # PUNKTET HAR IKKE MÅLINGEN SIN (Codex P2, PR #117 runde 14).
+    # Det sto `ja` med én bevismåling, `maalt.kjoringer_signert_innen_frist`
+    # — et AGGREGAT av fullføring og frist. Noten påsto noe helt annet:
+    # at kvitteringen attesterer release, regelsett, sider og artefakthash,
+    # og at revisjonsradene er korrekte. Ingen av de påstandene finnes i
+    # tallet: `kjoring`-linjene evidensen avleder det av bærer utfall,
+    # avvik, varighet og frist — ingen kvitteringssignatur, ingen attestert
+    # release/regelsett/hash, ingen revisjonslogg-observasjon (se
+    # hendelseslisten i evidensfila: der er ingen slik hendelse). Og
+    # rapport-lese-API-et leverer et promotert artefakt; det er ikke en
+    # måling av revisjonssporet.
+    #
+    # Ti kjøringer kan fullføre innen frist mens attesteringen mangler
+    # eller revisjonsradene er feil, og punktet ville stått grønt. Et punkt
+    # som navngir en måling påstanden ikke finnes i, låner en konklusjon —
+    # samme feil som `syntetisk_datasett_likt_lokalt` over.
+    status: blokkert
+    blokkert_av: >-
+      Mangler sin egen måling. Punktet kan settes `ja` igjen når en
+      staging-runde skriver EGNE observasjoner for de to leddene og
+      artefaktet bærer dem som tellere med grenser i KRAVGRENSER:
+      (a) KVITTERINGEN — for hver av de ti kjøringene: at
+      `oppdrag.kvittering_signatur` er satt, ikke tom, og identisk med
+      `kvittering->signatur->>verdi`, at `resultathash` er satt, og at
+      den attesterte release/regelsett/artefakthash er DEN kjøringen
+      faktisk gikk på (samme port som `registrer_moduldrill` alt måler
+      for drilloppdraget — her for kontrolløpet);
+      (b) REVISJONSRADEN — at `revisjonslogg` har en rad per kjøring med
+      riktig tenant, oppdrag og utfall, talt opp mot de ti bestilte.
+      Krever ny staging-runde: artefaktet fra 2026-08-18 kan ikke få
+      feltene i ettertid, det er hash-bundet.
     notat: >-
-      MÅLT 2026-08-18, BUNDET 2026-08-20 (049). Verifisert i
-      staging-kjøringen: kvitteringen attesterer release,
-      regelsett, sider og artefakthash (PR-006-signert, verifikator
-      v_wcag_audit mot nøkkelregisteret); rapport-lese-API-et leverer det
-      promoterte artefaktet dekryptert.
+      MÅLT 2026-08-18 (noe annet enn punktet): 10/10 kjøringer fullførte
+      innen frist med null avvik — se `ytelse_bestatt` og
+      `tester_gronne_pa_staging`, som er punktene den målingen beviser.
+      Kvitteringene BLE observert av operatøren i staging-runden
+      (verifikator v_wcag_audit mot nøkkelregisteret, PR-006-signert), og
+      rapport-lese-API-et leverte det promoterte artefaktet dekryptert —
+      men ingen av delene står som en måling i evidensen, og en
+      observasjon som ikke er skrevet ned, kan ingen gjenta.
   feilinjisering_til_unntakskø:
     status: ja
     krav_id: wcag-kontroll-v1
