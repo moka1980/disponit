@@ -1943,6 +1943,62 @@ def test_drillen_maaler_vertens_image_for_den_drenerer(monkeypatch):
     assert "bygg.sh" in str(ei.value)
 
 
+def test_drillen_pinner_motorimaget_for_hele_kjoringen(monkeypatch, tmp_path):
+    """Codex' P1 (runde 11): porten leste taggen og slapp den igjen.
+
+    `disponit-wcag-motor` er mutabel — `bygg.sh` retagger det samme navnet
+    — og sjekklistens fase 1 kjøres på nytt i HVER invokasjon av skriptet
+    (`main` kaller `fase1` uansett `--fase`). `_kjor_faser`-invokasjonene
+    ligger etter at drillen har drenert den levende deploymenten og brukt
+    opp rullbakk-ID-en, så en retagging i det vinduet ga fasene andre
+    bytes enn porten godkjente — oppdaget først som en
+    immutabilitetskonflikt i fase 2, med staging uten claimende arbeider.
+    Preflightens image-ID er immutabel, og den skal bæres inn i hver fase.
+    """
+    d = _drillskript()
+
+    class _Ut:
+        returncode = 0
+        stdout = "sha256:" + "ab" * 32
+
+    monkeypatch.setattr(d.subprocess, "run", lambda *a, **k: _Ut())
+    assert d.PINNET_MOTORIMAGE == "", "pinnen finnes ikke før den er målt"
+    d.lokalt_motorimage()
+    assert d.PINNET_MOTORIMAGE == "sha256:" + "ab" * 32
+
+    # …og pinnen følger med inn i hver fase, som en referanse fase 1 selv
+    # slår opp i stedet for taggen.
+    miljoer = []
+
+    class _Ok:
+        returncode, stdout, stderr = 0, "", ""
+
+    def _fanget(_cmd, **kw):
+        miljoer.append(kw["env"]["WCAG_MOTORIMAGE"])
+        return _Ok()
+
+    monkeypatch.setattr(d.subprocess, "run", _fanget)
+    d._kjor_faser("r-kand", tmp_path / "e.jsonl", hva="kandidaten")
+    assert miljoer == ["sha256:" + "ab" * 32] * 3
+
+    # Uten en målt pinne kjøres ingen fase: da ville de lest taggen.
+    monkeypatch.setattr(d, "PINNET_MOTORIMAGE", "")
+    with pytest.raises(SystemExit) as ei:
+        d._kjor_faser("r-kand", tmp_path / "e.jsonl", hva="kandidaten")
+    assert "ikke pinnet" in str(ei.value)
+
+    # Sjekklisten må FAKTISK bruke referansen — både i fase 1s oppslag og
+    # i motorkommandoen fasene 5–7 måler med. Leste én av dem taggen
+    # direkte, var pinnen bare pynt.
+    sj = (ROT / "deploy/staging/wcag-staging-sjekkliste.py").read_text(
+        encoding="utf-8")
+    assert 'MOTORIMAGE = os.environ.get("WCAG_MOTORIMAGE") or MOTORIMAGE_TAG' \
+        in sj
+    assert '"{{.Id}}", MOTORIMAGE' in sj
+    assert sj.count('"disponit-wcag-motor"') == 1, \
+        "taggen skal bare stå som standardverdien for MOTORIMAGE"
+
+
 def test_en_eksisterende_rullbakkrelease_maales_for_rullingen():
     """Codex' P1 (runde 6): registreringen av `--rullback-id` lå inne i en
     «finnes raden alt?»-test.
@@ -2105,6 +2161,7 @@ def test_kandidatens_oppdrag_bestilles_forst_naar_rullbakken_er_fenced(
         return _Ok()
 
     monkeypatch.setattr(d.subprocess, "run", _fanget)
+    monkeypatch.setattr(d, "PINNET_MOTORIMAGE", "sha256:" + "ab" * 32)
     evidens = tmp_path / "drill-evidens.jsonl"
     d._kjor_faser("r-kand", evidens, hva="kandidaten", faser=("2",))
     assert kjorte == ["2"]

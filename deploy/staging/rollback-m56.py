@@ -97,6 +97,10 @@ MODUL = "m_wcag_audit"   # registernavnet (modulmappen heter m56_wcag_audit)
 MILJO = "staging"
 VENTETID_S = 25.0        # claim-stoppet observeres minst så lenge
 POLL_S = 0.1
+#: Motorimaget drillen MÅLTE i preflighten, som immutabel image-referanse
+#: (`sha256:…`) — settes av `lokalt_motorimage()` og bæres inn i hver
+#: sjekklistefase av `_kjor_faser`. Se der for hvorfor taggen ikke duger.
+PINNET_MOTORIMAGE = ""
 # Låserommet for flippedriller. Egen klasse, ikke delt med arbeiderens
 # eller migrasjonenes nøkler, så en drill aldri kolliderer med noe annet
 # enn en annen drill av samme modul+miljø.
@@ -155,13 +159,28 @@ def _kjor_faser(release: str, evidens: Path, *, hva: str,
     arbeideren (fase 4/9) først startes ETTERPÅ. Rekkefølgen er ellers
     uendret — dette er samme kjede, delt på nøyaktig det ene punktet der
     fencingen og bestillingen møtes (Codex P2, #117 runde 6).
+
+    MOTORIMAGET ER PINNET (Codex P1, #117 runde 11). Preflighten leste
+    `disponit-wcag-motor` og slapp taggen igjen; hver invokasjon under
+    kjører sjekklistens fase 1 på nytt (den kjøres uansett `--fase`), og
+    et `bygg.sh` som retagger det samme navnet i mellomtiden ville derfor
+    gitt fasene et ANNET image enn det porten før rullingen målte — først
+    oppdaget i fase 2, med den levende deploymenten drenert og
+    rullbakk-ID-en brukt opp. `PINNET_MOTORIMAGE` er den immutable
+    image-ID-en preflighten faktisk så, og den bæres inn i hver fase, så
+    taggen kan flytte seg uten at drillen bytter bytes under seg selv.
     """
+    if not PINNET_MOTORIMAGE:
+        raise SystemExit("AVBRUTT: motorimaget er ikke pinnet — fasene skal"
+                         " ikke kjøres på en tag som kan ha flyttet seg"
+                         " siden porten målte den")
     for fase in faser:
         r = subprocess.run(
             [sys.executable, str(HER / "wcag-staging-sjekkliste.py"),
              "--evidens", str(evidens), "--fase", fase],
             env={**os.environ, "WCAG_RELEASE": release,
-                 "WCAG_RUNDE_ID": f"drill-{release}"},
+                 "WCAG_RUNDE_ID": f"drill-{release}",
+                 "WCAG_MOTORIMAGE": PINNET_MOTORIMAGE},
             capture_output=True, text=True)
         if r.returncode != 0:
             raise SystemExit(f"AVBRUTT: sjekklistefase {fase} for {hva}"
@@ -314,7 +333,7 @@ def forgjengerens_bytes(m, drillet: str, kver: int,
 
 
 def lokalt_motorimage() -> str:
-    """Digesten bootveien FAKTISK vil bære — lest her, av samme kilde.
+    """Digesten bootveien FAKTISK vil bære — lest her, og PINNET.
 
     Sjekklistens fase 1 kjører `docker image inspect --format {{.Id}}
     disponit-wcag-motor`, og fase 2 registrerer nøyaktig den verdien som
@@ -322,8 +341,20 @@ def lokalt_motorimage() -> str:
     kommando, og får dermed forhånds-svaret på det fase 2 senere vil
     kreve.
 
+    OG SVARET HOLDES FAST (Codex P1, #117 runde 11). Å lese taggen her og
+    slippe den igjen målte bare et øyeblikksbilde: `bygg.sh` retagger det
+    samme navnet, sjekklistens fase 1 kjøres på nytt i hver av `_kjor_faser`
+    sine invokasjoner, og de invokasjonene ligger ETTER at drillen har
+    drenert den levende deploymenten og brukt opp rullbakk-ID-en. En
+    retagging i det vinduet ga altså fasene andre bytes enn porten godkjente,
+    oppdaget først som en immutabilitetskonflikt i fase 2 — med staging
+    stående uten claimende arbeider. Image-ID-en er immutabel der taggen
+    ikke er, så den settes som `PINNET_MOTORIMAGE` og bæres inn i hver
+    fase; flytter taggen seg etterpå, rører det ikke denne drillen.
+
     -> `artifact_digest`-formen (64 hex, uten `sha256:`-forstavelsen).
     """
+    global PINNET_MOTORIMAGE
     ut = subprocess.run(["docker", "image", "inspect", "--format",
                          "{{.Id}}", "disponit-wcag-motor"],
                         capture_output=True, text=True)
@@ -340,6 +371,7 @@ def lokalt_motorimage() -> str:
             f"AVBRUTT: `docker image inspect` ga {ut.stdout.strip()!r},"
             " ikke en sha256-digest — fase 2 ville avvist den samme"
             " verdien når releaseraden skulle skrives")
+    PINNET_MOTORIMAGE = f"sha256:{digest}"
     return digest
 
 

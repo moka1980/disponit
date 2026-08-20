@@ -169,6 +169,19 @@ API = os.environ.get("DISPONIT_API_URL", "http://127.0.0.1:8099")
 #: `RUNDE` er /root og utilgjengelig for `disponit-wcag`.
 ARBEIDER = "disponit-wcag-audit.service"
 ARBEIDER_BRUKER = "disponit-wcag"
+
+#: MOTORIMAGET RUNDEN SKAL BRUKE — og som KAN PINNES (Codex P1, #117).
+#: `disponit-wcag-motor` er en mutabel tag: `bygg.sh` retagger det samme
+#: navnet, så to oppslag av taggen i samme kjøring kan gi to ulike images.
+#: Fase 1 kjøres på nytt i HVER invokasjon av dette skriptet (se `main`),
+#: og rullbakkdrillen invokerer det tre ganger etter at den har drenert
+#: den levende deploymenten — flyttes taggen i mellomtiden, oppdages det
+#: først i fase 2, med den gamle arbeideren fenset og rullbakk-ID-en brukt
+#: opp. `WCAG_MOTORIMAGE` lar kalleren pinne referansen til en IMMUTABEL
+#: image-ID (`sha256:…`) den har lest på forhånd; da kan taggen flytte seg
+#: så mye den vil uten at runden bytter bytes under seg selv.
+MOTORIMAGE_TAG = "disponit-wcag-motor"
+MOTORIMAGE = os.environ.get("WCAG_MOTORIMAGE") or MOTORIMAGE_TAG
 DRIFT_KONF_STANDARD = Path("/etc/disponit/wcag")
 DRIFT_KONF = Path(os.environ.get("WCAG_DRIFT_KONF", str(DRIFT_KONF_STANDARD)))
 
@@ -293,7 +306,7 @@ def fase1(m):
             "json.dump(d, open(f,'w'), indent=1)\nP\n"
             "  systemctl restart disponit-api")
     ut = subprocess.run(["docker", "image", "inspect",
-                         "--format", "{{.Id}}", "disponit-wcag-motor"],
+                         "--format", "{{.Id}}", MOTORIMAGE],
                         capture_output=True, text=True)
     if ut.returncode != 0:
         # BASISPINNEN FØRST (Codex P1, runde 6). `bygg.sh` avviser med
@@ -310,6 +323,9 @@ def fase1(m):
              " står med plassholderen). Hent verdien fra registryet og"
              f" commit den for seg:\n  bash {MOTOR_AXE}/bygg.sh pin\n"
              if upinnet else "")
+            + (f"motorimaget er PINNET til {MOTORIMAGE} (WCAG_MOTORIMAGE),"
+               " og den referansen finnes ikke i dockerlageret\n"
+               if MOTORIMAGE != MOTORIMAGE_TAG else "")
             + f"bygg motorimaget først: bash {MOTOR_AXE}/bygg.sh")
     digest = ut.stdout.strip()
     evidens("fase1_ok", image_id=digest)
@@ -380,7 +396,10 @@ def motorkommando(args) -> list[str]:
             # loopback; det er samme fixture, ikke to.
             "-e", f"MOTOR_VERTSKART={VERT}=127.0.0.1,"
                   f"{VERT_FREKVENS}=127.0.0.1",
-            "disponit-wcag-motor"]
+            # SAMME REFERANSE SOM FASE 1 SLO OPP — se `MOTORIMAGE`. Sto
+            # taggen her mens fase 1 var pinnet, målte fasene 5–7 et annet
+            # image enn det fase 2 registrerte som `artifact_digest`.
+            MOTORIMAGE]
 
 
 # ---------------------------------------------------------------------------
