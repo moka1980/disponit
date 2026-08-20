@@ -851,7 +851,17 @@ MODULKONTRAKT = "modulkontrakt"
 _TABELL_RE = re.compile(
     r"\b(?:CREATE|ALTER)\s+TABLE(?:\s+IF\s+(?:NOT\s+)?EXISTS)?\s+([\w.\"]+)",
     re.I)
-_CHECK_RE = re.compile(r"CHECK\s*\(\s*(\w+)\s+IN\s*\(([^)]*)\)", re.S)
+_CHECK_RE = re.compile(
+    r"""(?:CONSTRAINT\s+([\w."]+)\s+)?CHECK\s*\(\s*(\w+)\s+IN\s*\(([^)]*)\)""",
+    re.S | re.I)
+# Et vilkår kan også FJERNES (Codex P2 på #118, ellevte runde). Tilstanden ble
+# regnet bare av CHECK-treff, så en `DROP CONSTRAINT` uten et nytt vilkår etter
+# seg lot verdiene fra forrige migrasjon bli stående som gjeldende: katalogporten
+# ville avvist verdier PostgreSQL ikke lenger begrenser, og `_registerenum()`
+# ville ikke sagt fra om at vilkåret er borte. Slippet er en hendelse på linje
+# med vilkåret, og leses i samme rekkefølge som det.
+_DROPP_RE = re.compile(
+    r"""DROP\s+CONSTRAINT(?:\s+IF\s+EXISTS)?\s+([\w."]+)""", re.I)
 _SQL_KOMMENTAR_RE = re.compile(r"--[^\n]*")
 
 
@@ -872,29 +882,59 @@ def _tabellnavn(rå: str) -> str:
     return rest if rest and skjema == "public" else navn
 
 
-def _registerets_enums() -> tuple[dict[tuple[str, str], set[str]], set[str]]:
+def _registerets_enums(
+        mappe: Path | None = None
+) -> tuple[dict[tuple[str, str], set[str]], set[str]]:
     """(gjeldende verdier per (tabell, kolonne), verdier bundet noen gang).
 
     Migrasjonene leses i nummerrekkefølge; siste vilkår for samme kolonne i
     samme tabell er det som gjelder — en senere kan både UTVIDE (036 la
     `ekstern_lesing` til `sideeffektklasse`) og STRAMME INN.
+
+    Og FJERNE (Codex P2 på #118, ellevte runde). Et `DROP CONSTRAINT` uten et
+    nytt vilkår etter seg lot verdiene fra forrige migrasjon bli stående som
+    gjeldende, fordi bare CHECK-treff ble regnet med. Da ville katalogporten
+    fortsatt avvist verdier databasen ikke lenger begrenser. Vilkår og slipp
+    leses derfor i STILLINGSREKKEFØLGE i hver fil — 036 slipper og legger på
+    igjen i samme setningspar, og rekkefølgen er det eneste som skiller dem.
+
+    Hvilket vilkår et slipp treffer, avgjøres av navnet: et navngitt vilkår
+    huskes som det heter, og et vilkår skrevet rett på kolonnen får navnet
+    PostgreSQL selv gir det — `<tabell>_<kolonne>_check`. Det er den formen 036
+    slipper, og den formen 014 la inn uten å navngi.
     """
     gjeldende: dict[tuple[str, str], set[str]] = {}
+    vilkarsnavn: dict[tuple[str, str], str] = {}
     noen_gang: set[str] = set()
-    for sql in sorted(MIGRASJONER.glob("*.sql")):
+    for sql in sorted((mappe or MIGRASJONER).glob("*.sql")):
         tekst = _SQL_KOMMENTAR_RE.sub("", sql.read_text(encoding="utf-8"))
         tabeller = [(m.start(), _tabellnavn(m.group(1)))
                     for m in _TABELL_RE.finditer(tekst)]
-        for m in _CHECK_RE.finditer(tekst):
-            verdier = set(re.findall(r"'([^']*)'", m.group(2)))
-            if not verdier:
-                continue
+        hendelser = sorted(
+            [(m.start(), True, m) for m in _CHECK_RE.finditer(tekst)]
+            + [(m.start(), False, m) for m in _DROPP_RE.finditer(tekst)],
+            key=lambda h: h[0])
+        for start, er_vilkar, m in hendelser:
             tabell = ""
             for pos, navn in tabeller:
-                if pos > m.start():
+                if pos > start:
                     break
                 tabell = navn
-            gjeldende[(tabell, m.group(1))] = verdier
+            if not er_vilkar:
+                sluppet = m.group(1).lower().replace('"', "")
+                for nokkel, navn in list(vilkarsnavn.items()):
+                    if nokkel[0] == tabell and navn == sluppet:
+                        del gjeldende[nokkel]
+                        del vilkarsnavn[nokkel]
+                continue
+            verdier = set(re.findall(r"'([^']*)'", m.group(3)))
+            if not verdier:
+                continue
+            kolonne = m.group(2)
+            gjeldende[(tabell, kolonne)] = verdier
+            vilkarsnavn[(tabell, kolonne)] = (
+                m.group(1).lower().replace('"', "") if m.group(1)
+                else f"{tabell}_{kolonne}_check")
             noen_gang |= verdier
     return gjeldende, noen_gang
 
@@ -920,6 +960,78 @@ def _registerenum(kolonne: str) -> set[str]:
     assert ut, (f"fant ikke CHECK-vilkåret for {MODULKONTRAKT}.{kolonne} i "
                 f"migrasjonene")
     return ut
+
+
+def _migrasjoner(tmp_path: Path, *filer: str) -> Path:
+    """Skriv `filer` som nummererte migrasjoner og gi mappa tilbake."""
+    for nr, sql in enumerate(filer, start=1):
+        (tmp_path / f"{nr:03d}_prove.sql").write_text(sql, encoding="utf-8")
+    return tmp_path
+
+
+_LAGER_VILKAR = (
+    "CREATE TABLE modulkontrakt (\n"
+    "    reversibilitet TEXT NOT NULL\n"
+    "        CHECK (reversibilitet IN ('direkte', 'kompenserende')));\n")
+
+
+@pytest.mark.parametrize("slipp,star_igjen", [
+    # Vilkåret 014 skriver rett på kolonnen har ikke noe navn i filen —
+    # PostgreSQL gir det `<tabell>_<kolonne>_check`, og det er det navnet 036
+    # slipper. Kjenner ikke porten den formen, treffer slippet ingenting.
+    ("ALTER TABLE modulkontrakt\n"
+     "    DROP CONSTRAINT modulkontrakt_reversibilitet_check;\n", False),
+    # `IF EXISTS` er den formen migrasjonene i repoet bruker mest.
+    ("ALTER TABLE modulkontrakt DROP CONSTRAINT IF EXISTS "
+     "modulkontrakt_reversibilitet_check;\n", False),
+    # Et slipp som treffer et ANNET vilkår på samme tabell rører ikke enumet.
+    ("ALTER TABLE modulkontrakt DROP CONSTRAINT modulkontrakt_frister;\n",
+     True),
+    # Og et slipp av samme navn på en annen tabell heller ikke.
+    ("ALTER TABLE annen DROP CONSTRAINT "
+     "modulkontrakt_reversibilitet_check;\n", True),
+])
+def test_enumtilstanden_folger_et_sluppet_vilkar(tmp_path, slipp, star_igjen):
+    """Et vilkår som er FJERNET begrenser ingenting lenger.
+
+    Tilstanden ble regnet av CHECK-treff alene (Codex P2 på #118, ellevte
+    runde). En migrasjon som slipper et vilkår uten å legge på et nytt lot
+    derfor verdiene fra forrige migrasjon stå som gjeldende: katalogporten ville
+    fortsatt avvist `rev`-verdier databasen nettopp sluttet å begrense, og
+    `_registerenum()` ville ikke sagt fra om at vilkåret er borte — den ville
+    svart med en tilstand som ikke finnes.
+
+    Prøvene kjøres mot syntetiske migrasjoner og ikke mot repoets egne: repoet
+    slipper alltid et vilkår for å legge på et nytt i samme setningspar, så
+    formen «sluppet og ikke erstattet» finnes ikke der å måle på.
+    """
+    mappe = _migrasjoner(tmp_path, _LAGER_VILKAR, slipp)
+    gjeldende, noen_gang = _registerets_enums(mappe)
+    nokkel = (MODULKONTRAKT, "reversibilitet")
+    assert (nokkel in gjeldende) is star_igjen, (
+        f"gjeldende tilstand etter slippet: {gjeldende}")
+    # Historikken står uansett: `noen_gang` er hva registeret HAR bundet, og en
+    # verdi som faller ut av et vilkår er nettopp det `pensjonert` bygges av.
+    assert "direkte" in noen_gang
+
+
+def test_enumtilstanden_leser_slipp_og_nytt_vilkaar_i_rekkefolge(tmp_path):
+    """Slipp og nytt vilkår i samme fil avgjøres av rekkefølgen, ikke av slaget.
+
+    Det er formen 036 bruker: slipp vilkåret, legg på et videre. Leste porten
+    alle slipp etter alle vilkår, ville utvidelsen blitt slettet av sitt eget
+    slipp — og `sideeffektklasse` stått uten vilkår i det hele tatt.
+    """
+    mappe = _migrasjoner(
+        tmp_path, _LAGER_VILKAR,
+        "ALTER TABLE modulkontrakt\n"
+        "    DROP CONSTRAINT modulkontrakt_reversibilitet_check;\n"
+        "ALTER TABLE modulkontrakt ADD CONSTRAINT "
+        "modulkontrakt_reversibilitet_check\n"
+        "    CHECK (reversibilitet IN ('direkte', 'irreversibel'));\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende[(MODULKONTRAKT, "reversibilitet")] == {
+        "direkte", "irreversibel"}
 
 
 def test_kontraktklassene_i_katalogen_finnes_i_modulregisteret():
