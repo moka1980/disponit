@@ -486,6 +486,27 @@ def drillens_oppdrag(drill: dict) -> tuple[int, int, int]:
     return ut[0], ut[1], ut[2]
 
 
+def drillens_epoch(drill: dict) -> int:
+    """Fencing-generasjonen drillen ble målt i. -> module_epoch.
+
+    Codex' P2 på PR #117 (runde 5): `moduldrill.epoch_snapshot` ble
+    snapshottet av basen ved REGISTRERINGEN, og drillartefaktets egen
+    `oppsett.module_epoch` ble aldri sendt inn eller sammenlignet. En
+    nødstopp eller reaktivering mellom drill og aksept flytter
+    generasjonen, og den immutable raden kunne da påstå en annen
+    fencing-kontekst enn artefaktet som målte drillen — den SKJULTE et
+    misdannet bevis i stedet for å avvise det. Feltet er et heltall i
+    skjemaet; her leses det slik at en verdi som ikke er det, høres.
+    """
+    raa = (drill.get("oppsett") or {}).get("module_epoch")
+    if not isinstance(raa, int) or isinstance(raa, bool) or raa < 0:
+        raise SystemExit(f"AVBRUTT: drillartefaktets module_epoch er"
+                         f" {raa!r} — en fencing-generasjon er et"
+                         " ikke-negativt heltall, og uten den vet ingen"
+                         " hvilken kontekst drillen ble målt i")
+    return raa
+
+
 def _digest(raa: object) -> str:
     """Digesten uten `sha256:`-prefiks — samme form uansett kilde."""
     return str(raa or "").removeprefix("sha256:").strip().lower()
@@ -638,12 +659,20 @@ def main() -> int:
         # `oppdrag`/`artefakt`. Artefaktets `maalt`-tall er fortsatt
         # portet av `_sjekk_grenser` over; forskjellen er at raden ikke
         # lenger HVILER på dem.
+        # Codex' P2 (runde 5): `epoch_snapshot` ble snapshottet av basen
+        # ved registreringen, mens artefaktets egen `oppsett.module_epoch`
+        # aldri ble sendt eller sammenlignet. En nødstopp eller
+        # reaktivering mellom drill og aksept flytter generasjonen, og
+        # raden ville da påstått en annen fencing-kontekst enn den
+        # drillen faktisk målte i. Artefaktet sier nå hvilken det var, og
+        # basen krever at det er den levende.
         drill_id = conn.execute(
             "SELECT registrer_moduldrill(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
-            "'m56-aksept',%s)",
+            "%s,'m56-aksept',%s)",
             (MODUL, MILJO, o["drillet_release"], o["rullback_release"],
              o["kandidat_release"], TENANT,
-             inflight_opp, rullback_opp, kandidat_opp, drill_sha,
+             inflight_opp, rullback_opp, kandidat_opp,
+             drillens_epoch(drill), drill_sha,
              f"drill-{o['kandidat_release']}", drill_ts)).fetchone()[0]
         conn.execute(
             "SELECT aksepter_moduldeployment(%s,%s,%s,%s,%s,%s,%s::uuid,"

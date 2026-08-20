@@ -258,8 +258,8 @@ CREATE OR REPLACE FUNCTION registrer_moduldrill(
     p_modul_id TEXT, p_miljo TEXT, p_drillet TEXT, p_rullback TEXT,
     p_kandidat TEXT, p_tenant TEXT, p_inflight_oppdrag BIGINT,
     p_rullback_oppdrag BIGINT, p_kandidat_oppdrag BIGINT,
-    p_artefakt_sha TEXT, p_nokkel TEXT, p_aktor TEXT,
-    p_utfort_ts TIMESTAMPTZ)
+    p_module_epoch BIGINT, p_artefakt_sha TEXT, p_nokkel TEXT,
+    p_aktor TEXT, p_utfort_ts TIMESTAMPTZ)
 RETURNS BIGINT LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE v_id BIGINT; v_drillet_digest TEXT; v_kandidat_digest TEXT;
@@ -285,6 +285,7 @@ BEGIN
            AND inflight_oppdrag = p_inflight_oppdrag
            AND rullback_oppdrag = p_rullback_oppdrag
            AND kandidat_oppdrag = p_kandidat_oppdrag
+           AND epoch_snapshot = p_module_epoch
            AND artefakt_sha256 = lower(p_artefakt_sha)
            -- Måletidspunktet er like materielt som utfallene: samme
            -- nøkkel med en ANNEN drillkjørings tidsstempel er to
@@ -334,6 +335,23 @@ BEGIN
     IF NOT FOUND THEN
         RAISE EXCEPTION 'registrer_moduldrill: ukjent modul %', p_modul_id
             USING ERRCODE = 'no_data_found';
+    END IF;
+    -- Codex' P2 på PR #117 (runde 5): `epoch_snapshot` ble SNAPSHOTTET
+    -- her, ved registreringen, mens drillartefaktets egen
+    -- `oppsett.module_epoch` aldri ble sendt inn eller sammenlignet.
+    -- Fencing-generasjonen er ikke pynt: den er konteksten claim-stoppet
+    -- ble målt i, og en nødstopp eller reaktivering mellom drill og
+    -- aksept flytter den. Raden kunne derfor påstå en ANNEN generasjon
+    -- enn artefaktet som målte drillen — og skjule et misdannet bevis i
+    -- stedet for å avvise det. Nå må artefaktet si hvilken generasjon det
+    -- målte i, og den må være den levende.
+    IF p_module_epoch IS DISTINCT FROM v_epoch THEN
+        RAISE EXCEPTION 'registrer_moduldrill: drillen ble målt i epoch'
+            ' %, men modulen står i epoch % — fencing-generasjonen har'
+            ' flyttet seg siden målingen, og drillen gjelder da en annen'
+            ' kontekst enn den som registreres',
+            p_module_epoch, v_epoch
+            USING ERRCODE = 'invalid_parameter_value';
     END IF;
     -- Drillen ble utført FØR den ble registrert. Et tidsstempel fram i
     -- tid er ikke en måling, det er en påstand om framtiden — og
@@ -601,7 +619,7 @@ BEGIN
 END $$;
 
 ALTER FUNCTION registrer_moduldrill(TEXT, TEXT, TEXT, TEXT, TEXT, TEXT,
-    BIGINT, BIGINT, BIGINT, TEXT, TEXT, TEXT, TIMESTAMPTZ)
+    BIGINT, BIGINT, BIGINT, BIGINT, TEXT, TEXT, TEXT, TIMESTAMPTZ)
     OWNER TO disponit_modul_eier;
 ALTER FUNCTION aksepter_moduldeployment(TEXT, TEXT, TEXT, BIGINT, TEXT,
     TEXT, UUID, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT, TEXT)
@@ -610,14 +628,14 @@ ALTER FUNCTION aksepter_moduldeployment(TEXT, TEXT, TEXT, BIGINT, TEXT,
 -- en stille no-op, og PUBLIC ville beholdt default-EXECUTE på begge.
 SET LOCAL ROLE disponit_modul_eier;
 REVOKE ALL ON FUNCTION registrer_moduldrill(TEXT, TEXT, TEXT, TEXT, TEXT,
-    TEXT, BIGINT, BIGINT, BIGINT, TEXT, TEXT, TEXT, TIMESTAMPTZ)
+    TEXT, BIGINT, BIGINT, BIGINT, BIGINT, TEXT, TEXT, TEXT, TIMESTAMPTZ)
     FROM PUBLIC;
 REVOKE ALL ON FUNCTION aksepter_moduldeployment(TEXT, TEXT, TEXT, BIGINT,
     TEXT, TEXT, UUID, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT, TEXT)
     FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION registrer_moduldrill(TEXT, TEXT, TEXT, TEXT,
-    TEXT, TEXT, BIGINT, BIGINT, BIGINT, TEXT, TEXT, TEXT, TIMESTAMPTZ)
-    TO disponit_modules_admin;
+    TEXT, TEXT, BIGINT, BIGINT, BIGINT, BIGINT, TEXT, TEXT, TEXT,
+    TIMESTAMPTZ) TO disponit_modules_admin;
 GRANT EXECUTE ON FUNCTION aksepter_moduldeployment(TEXT, TEXT, TEXT,
     BIGINT, TEXT, TEXT, UUID, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT, TEXT)
     TO disponit_modules_admin;

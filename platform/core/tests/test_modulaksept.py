@@ -149,7 +149,8 @@ def _kjede(m, *, promoter_paa_drillet=False, staged_paa_kandidat=False):
     return ut
 
 
-def _drill(m, k, *, nokkel=None, utfort_ts=None, opp=None, sha=None):
+def _drill(m, k, *, nokkel=None, utfort_ts=None, opp=None, sha=None,
+           epoch=0):
     """Registrerer drillen for kjeden `k`. -> drill_id.
 
     Utfallene er ikke parametre lenger (Codex P1, #117 runde 5): kallet
@@ -159,9 +160,9 @@ def _drill(m, k, *, nokkel=None, utfort_ts=None, opp=None, sha=None):
     m.execute("SET ROLE disponit_modules_admin")
     did = m.execute(
         "SELECT registrer_moduldrill(%s,'staging','r-drillet','r-rullback',"
-        "'r-kandidat',%s,%s,%s,%s,%s,%s,'test',%s)",
+        "'r-kandidat',%s,%s,%s,%s,%s,%s,%s,'test',%s)",
         (k["mid"], k["ten"], o["inflight"], o["rullback"], o["kandidat"],
-         sha or DRILL_SHA, nokkel or "n-" + secrets.token_hex(6),
+         epoch, sha or DRILL_SHA, nokkel or "n-" + secrets.token_hex(6),
          utfort_ts or DRILL_TS)).fetchone()[0]
     # RESET FØR commit: en commit med SET ROLE stående gjør admin til
     # sesjonens «faste» rolle — enhver senere rollback faller da TILBAKE
@@ -445,7 +446,8 @@ def test_drillnokkel_med_andre_utfall_avvises(migrator):
     with pytest.raises(psycopg.errors.InvalidParameterValue):
         migrator.execute(
             "SELECT registrer_moduldrill(%s,'staging','r-drillet',"
-            "'r-annen-rullback','r-kandidat',%s,%s,%s,%s,%s,%s,'test',%s)",
+            "'r-annen-rullback','r-kandidat',%s,%s,%s,%s,0,%s,%s,"
+            "'test',%s)",
             (k["mid"], k["ten"], k["opp"]["inflight"], k["opp"]["rullback"],
              k["opp"]["kandidat"], DRILL_SHA, nk, DRILL_TS))
     migrator.rollback()
@@ -462,7 +464,7 @@ def test_ordinaere_roller_naar_ingenting(migrator):
                    (k["ten"],))
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             rt.execute("SELECT registrer_moduldrill(%s,'staging','a','b',"
-                       "'c',%s,1,2,3,%s,'n','x',%s)",
+                       "'c',%s,1,2,3,0,%s,'n','x',%s)",
                        (k["mid"], k["ten"], DRILL_SHA, DRILL_TS))
         rt.rollback()
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
@@ -516,7 +518,7 @@ def test_digestporten_feller_andre_bytes(migrator):
     with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
         migrator.execute(
             "SELECT registrer_moduldrill(%s,'staging','r-drillet',"
-            "'r-rullback','r-andre',%s,%s,%s,%s,%s,%s,'test',%s)",
+            "'r-rullback','r-andre',%s,%s,%s,%s,0,%s,%s,'test',%s)",
             (k["mid"], k["ten"], k["opp"]["inflight"], k["opp"]["rullback"],
              k["opp"]["kandidat"], DRILL_SHA,
              "n-" + secrets.token_hex(6), DRILL_TS))
@@ -1016,6 +1018,34 @@ def test_drillraden_navngir_oppdragene_og_bevisfilen(migrator):
 
 
 @pg
+def test_drillens_egen_epoch_maa_vaere_den_levende(migrator):
+    """Codex' P2 (runde 5): `epoch_snapshot` ble snapshottet av basen ved
+    REGISTRERINGEN, mens drillartefaktets egen `oppsett.module_epoch`
+    aldri ble sendt inn eller sammenlignet.
+
+    Fencing-generasjonen er ikke pynt — den er konteksten claim-stoppet
+    ble målt i, og en nødstopp eller reaktivering mellom drill og aksept
+    flytter den. Raden kunne derfor påstå en annen generasjon enn
+    artefaktet som målte drillen, og SKJULE et misdannet bevis i stedet
+    for å avvise det."""
+    k = _kjede(migrator)
+    # Artefaktet sier én generasjon, registeret står i en annen.
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _drill(migrator, k, epoch=7)
+    migrator.rollback()
+    assert "epoch" in str(ei.value)
+    # Den levende generasjonen går gjennom, og snapshottet ER den.
+    migrator.execute("RESET ROLE")
+    did = _drill(migrator, k, epoch=0)
+    migrator.execute("RESET ROLE")
+    snap = migrator.execute(
+        "SELECT epoch_snapshot FROM moduldrill WHERE modul_id=%s"
+        " AND drill_id=%s", (k["mid"], did)).fetchone()[0]
+    migrator.rollback()
+    assert snap == 0
+
+
+@pg
 def test_e2e_beviset_maa_komme_av_drillens_kandidatoppdrag(migrator):
     """Codex' P1 (runde 5), A2-leddet: FK-en binder tenant, modul,
     release og promotert tilstand — men ikke HVILKET arbeid artefaktet
@@ -1126,6 +1156,20 @@ def _aksept_skript():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def test_drillartefaktet_maa_navngi_sin_fencing_generasjon():
+    """Samme P2, skriptsiden: `oppsett.module_epoch` ble aldri LEST — den
+    sto i artefaktet og gikk ingen steder. Nå plukkes den opp, og en
+    verdi som ikke er en generasjon høres her, ikke som en typefeil i
+    psycopg."""
+    m = _aksept_skript()
+    ekte = _superseder_drill()
+    assert m.drillens_epoch(ekte) == ekte["oppsett"]["module_epoch"]
+    for daarlig in (None, "3", -1, True, 1.0):
+        with pytest.raises(SystemExit) as ei:
+            m.drillens_epoch({"oppsett": {"module_epoch": daarlig}})
+        assert "module_epoch" in str(ei.value)
 
 
 def test_hvert_grensepunkt_har_en_kilde_som_maaler_nettopp_det():
