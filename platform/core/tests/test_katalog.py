@@ -238,11 +238,27 @@ _NAVN_RE = re.compile(r"[A-Za-z_$][\w$]*")
 _START_RE = re.compile(r"""\{\s*["']?n["']?\s*:\s*(\d+)\s*[,}]""")
 
 
-# Ord som kan stå rett foran en regex-literal. Etter dem venter JS en VERDI,
-# så skråstreken åpner et mønster — `return /\d+/` er ikke en divisjon.
-_NOKKELORD_FOR_VERDI = {
-    "return", "typeof", "instanceof", "in", "of", "new", "delete", "void",
-    "do", "else", "case", "yield", "await",
+# Ord som IKKE er en verdi i seg selv. Etter dem venter JS noe mer, så
+# skråstreken som følger åpner et mønster — `return /\d+/` er ikke en divisjon.
+#
+# Lista er snudd (Codex P2 på #118, ellevte runde). Før sto den motsatt vei og
+# ramset opp de ordene et mønster kunne følge etter — `return`, `typeof`, `of`
+# … — og da er ethvert ord som IKKE ble husket en verdi: `throw /["']/.test(v)`
+# ble lest som divisjon, fnutten i mønsteret åpnet en «streng», og kjørende kode
+# ble stående igjen som prosa. Å legge til `throw` ville løst det tilfellet og
+# latt neste glemte ord stå. Snudd er lista lukket: den ER de reserverte ordene
+# i JS, og et ord som ikke er reservert er per definisjon en binding eller en
+# egenskap — altså en verdi.
+#
+# `this`, `super`, `true`, `false` og `null` er reserverte, men mangler her med
+# vilje: de ER verdier, og skråstreken etter dem deler.
+_ORD_UTEN_VERDI = {
+    "await", "break", "case", "catch", "class", "const", "continue",
+    "debugger", "default", "delete", "do", "else", "enum", "export",
+    "extends", "finally", "for", "function", "if", "implements", "import",
+    "in", "instanceof", "interface", "let", "new", "package", "private",
+    "protected", "public", "return", "static", "switch", "throw", "try",
+    "typeof", "var", "void", "while", "with", "yield",
 }
 
 # Ord som tar en parentes med en BETINGELSE, ikke en verdi. Parentesen deres
@@ -348,11 +364,18 @@ def _kodespenn(js: str, a: int, b: int, avslutt: bool = False):
             i, verdi, siste_ord = i + 1, False, ""
             continue
         if (treff := _NAVN_RE.match(js, i, b)):
+            # Etter et punktum er ordet en EGENSKAP, ikke et nøkkelord: `x.in`
+            # og `x.default` er verdier selv om ordene er reserverte.
+            etter_punktum = siste_ord == "."
             siste_ord = treff.group(0)
-            i, verdi = treff.end(), siste_ord not in _NOKKELORD_FOR_VERDI
+            i, verdi = treff.end(), (etter_punktum
+                                     or siste_ord not in _ORD_UTEN_VERDI)
             continue
         if (treff := _TALL_START_RE.match(js, i, b)):
             i, verdi, siste_ord = treff.end(), True, ""
+            continue
+        if c == ".":
+            i, verdi, siste_ord = i + 1, False, "."
             continue
         if c == "(":
             parenteser.append(siste_ord in _KONTROLLORD)
@@ -450,6 +473,8 @@ _SKANNERPROEVER = [
     ('if (klar) /["\']/.test(v); const filter_state = {};', False),
     ('for (const x of xs) /["\']/.test(x); const filter_state = {};', False),
     ('const m = /["\']/; const filter_state = {};', False),
+    ('throw /["\']/.test(v); const filter_state = {};', False),
+    ('const a = x.in / 2; const filter_state = {};', False),
     ('const a = (b + c) / d; const filter_state = {};', False),
     ('const a = f(b) / 2; const filter_state = {};', False),
     ('const a = arr[0] / 2; const filter_state = {};', False),
