@@ -2438,14 +2438,24 @@ def _revisjonsrolle(roller) -> str:
     return roller[0]
 
 
+def _idempotent_laas(conn, tenant: str, idempotency_key: str) -> None:
+    """Advisory-låsen som serialiserer per idempotensnøkkel.
+
+    Nøkkelformelen står ETT sted (Codex P2): to utskrifter av den er to
+    låser, og to låser serialiserer ingenting. Både claimet og den
+    ventende etterprøven under bruker denne.
+    """
+    conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                 (f"{tenant}\x1fpolidem\x1f{idempotency_key}",))
+
+
 def _idempotent_start(conn, tenant: str, idempotency_key: str,
                       input_hash: str, request_id: str):
     """Claim en idempotensnøkkel i kallerens tx (spec: `Idempotency-Key` på ALLE
     skriveruter, Codex P1 R3). -> ("ny", None) fortsett · ("replay", dict)
     returner lagret respons · ("konflikt", None) samme nøkkel, ANNET input.
     Serialiserer per nøkkel med en advisory-lås, som unntaksbehandlingen."""
-    conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
-                 (f"{tenant}\x1fpolidem\x1f{idempotency_key}",))
+    _idempotent_laas(conn, tenant, idempotency_key)
     claim = conn.execute(
         "INSERT INTO idempotens (tenant, nokkel, input_hash, status, request_id)"
         " VALUES (%s,%s,%s,'paagaar',%s) ON CONFLICT (tenant, nokkel)"
@@ -2471,7 +2481,8 @@ def _idempotent_start(conn, tenant: str, idempotency_key: str,
     return ("ny", None)
 
 
-def idempotent_svar(conn, tenant: str, idempotency_key: str, input_hash: str):
+def idempotent_svar(conn, tenant: str, idempotency_key: str, input_hash: str,
+                    vent_paa_vinner: bool = False):
     """Se på en idempotensnøkkel UTEN å claime den.
     -> ("replay", dict) · ("konflikt", None) · ("ukjent", None).
 
@@ -2485,7 +2496,19 @@ def idempotent_svar(conn, tenant: str, idempotency_key: str, input_hash: str):
 
     Ren lesing: ingen advisory-lås, ingen rad skrives. Er svaret ikke
     ferdig ennå, faller kalleren tilbake til den vanlige veien, og
-    `_idempotent_start` avgjør som før — der ligger serialiseringen."""
+    `_idempotent_start` avgjør som før — der ligger serialiseringen.
+
+    `vent_paa_vinner` snur det for ETTERPRØVEN (Codex P2). En overlappende
+    retry ser `ukjent` i forkontrollen fordi originalens idempotensrad
+    ennå ikke er committet, og et READ COMMITTED-snapshot kan ikke se den.
+    Rekker originalen å committe — og kilden å bli slettet — før retryen
+    slår opp versjonen, ville et lås-løst gjensyn fortsatt kunne bomme:
+    svaret er da et 404 på en nøkkel som ALT bærer et lagret 201, og en
+    senere retry ville replayet det samme. Låsen holdes av vinneren HELE
+    dens transaksjon, så å ta den her er å vente på at utfallet er
+    avgjort. Den koster bare i feilveien; forkontrollen er urørt."""
+    if vent_paa_vinner:
+        _idempotent_laas(conn, tenant, idempotency_key)
     rad = conn.execute(
         "SELECT input_hash, status, respons FROM idempotens"
         " WHERE tenant=%s AND nokkel=%s",

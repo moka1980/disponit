@@ -1632,6 +1632,113 @@ def test_rullbakk_er_serverens_kopi_og_replaysikker(klient):
 
 
 @pg
+def test_rullbakk_retry_beholder_et_lagret_svar_naar_kilden_er_borte(klient):
+    """Codex P2: forkontrollen ser ikke en vinner som ikke har committet.
+
+    Rullbakkopprettelsen gjør arbeid FØR den claimer nøkkelen — den henter
+    kildeversjonen, fordi serveren eier kopien — og forkontrollen foran
+    det arbeidet er en ren lesing. Kommer en retry mens originalen ennå er
+    underveis, finnes idempotensraden, men ikke i retryens READ
+    COMMITTED-snapshot: svaret er `ukjent`, og ruta går videre til
+    kildeoppslaget. Rekker originalen å committe, og `slett_ubrukt_policy`
+    å fjerne versjonen, før oppslaget skjer, svarte ruta 404 på en nøkkel
+    som ALT bar et lagret 201 — og en senere retry ville replayet nettopp
+    det. Samme forespørsel, to ulike svar, avgjort av hvem som vant et
+    kappløp.
+
+    Etterprøven VENTER på vinneren i stedet for å gjette: den tar den
+    samme advisory-låsen som claimet, og den holdes hele originalens
+    transaksjon.
+
+    Vinneren spilles her av en tråd som gjør nøyaktig det en pågående
+    original gjør på DB-nivå: tar låsen, skriver den ferdige raden, og
+    committer — men først når den ser at noen faktisk VENTER på låsen.
+    Uten etterprøven venter ingen: ruta svarer 404 med en gang, tråden
+    venter forgjeves ut fristen sin, og assert-en under er rød.
+    """
+    import threading
+    import time
+    from api import policyadmin as _pa
+    uid, pid, v = _full_aktivering(pakrevd=1)
+    cookie, csrf = _forvaltersesjon()
+    gen = _gen(pid, v)
+    nokkel = "rb-" + secrets.token_hex(8)
+    kropp = {"policy_id": pid, "rollback_av_versjon": v,
+             "rollback_av_generasjon": gen}
+    r = _post(klient, cookie, csrf, "/v1/policyutkast", kropp, nokkel)
+    assert r.status_code == 201, r.text
+    lagret_uid = r.json()["utkast_id"]
+
+    # Det vinneren skrev, hentes ut — og nøkkelen gjøres UKJENT igjen, for
+    # det er nettopp en uskrevet (usynlig) rad forkontrollen møter.
+    m = _c()
+    try:
+        m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        ih, respons = m.execute(
+            "SELECT input_hash, respons FROM idempotens"
+            " WHERE tenant=%s AND nokkel=%s", (TEN, nokkel)).fetchone()
+        m.execute("DELETE FROM idempotens WHERE tenant=%s AND nokkel=%s",
+                  (TEN, nokkel))
+        innholds_hash = m.execute(
+            "SELECT innholds_hash FROM policyer WHERE tenant=%s"
+            "  AND policy_id=%s AND versjon=%s", (TEN, pid, v)).fetchone()[0]
+        m.commit()
+    finally:
+        m.close()
+
+    # Kilden forsvinner — den støttede veien, ikke en fabrikasjon.
+    rt = _rt()
+    try:
+        rt.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        assert rt.execute("SELECT slett_ubrukt_policy(%s,%s,%s,%s)",
+                          (TEN, pid, v, innholds_hash)).fetchone()[0] == 1
+        rt.commit()
+    finally:
+        rt.close()
+
+    holder_laasen = threading.Event()
+    feil = []
+
+    def vinneren():
+        c = _c()
+        try:
+            c.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+            _pa._idempotent_laas(c, TEN, nokkel)
+            c.execute(
+                "INSERT INTO idempotens (tenant, nokkel, input_hash, status,"
+                " respons, request_id)"
+                " VALUES (%s,%s,%s,'ferdig',%s,'r-vinner')",
+                (TEN, nokkel, ih, json.dumps(respons)))
+            holder_laasen.set()
+            # Committer først når noen VENTER på låsen — det er da retryen
+            # har nådd etterprøven. Fristen er en sikkerhetsventil: uten
+            # etterprøven kommer ingen venter, og testen skal feile på
+            # svaret under, ikke henge.
+            frist = time.monotonic() + 15
+            while time.monotonic() < frist:
+                if c.execute(
+                    "SELECT count(*) FROM pg_locks WHERE locktype='advisory'"
+                    "   AND NOT granted").fetchone()[0] > 0:
+                    break
+                time.sleep(0.02)
+            c.commit()
+        except Exception as e:                       # pragma: no cover
+            feil.append(e)
+            c.rollback()
+        finally:
+            c.close()
+
+    tr = threading.Thread(target=vinneren, daemon=True)
+    tr.start()
+    assert holder_laasen.wait(15), "vinnertråden fikk aldri låsen"
+    r2 = _post(klient, cookie, csrf, "/v1/policyutkast", kropp, nokkel)
+    tr.join(30)
+    assert not feil, feil
+    assert r2.status_code == 201, r2.text
+    assert r2.json()["utkast_id"] == lagret_uid, r2.text
+
+
+@pg
 def test_rullbakkeopphavet_er_frosset_naar_historikken_leser_det(klient):
     """Codex P2: historikken rapporterer `rollback_av_versjon` som LINJE.
 

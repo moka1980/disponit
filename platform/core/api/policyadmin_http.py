@@ -262,6 +262,42 @@ def _leseauth(tjeneste, request, conn, rid: str):
     return auth.tenant, bid
 
 
+def _replay_foer_avslag(conn, tenant: str, bid: str, rid: str, idem: str,
+                        input_hash: str, kode: str, http: int | None = None):
+    """Et KILDEAVHENGIG avslag, målt én gang til mot idempotensraden.
+
+    Rullbakkopprettelsen gjør arbeid FØR den claimer nøkkelen: den henter
+    kildeversjonen, fordi serveren eier kopien. Forkontrollen foran det
+    arbeidet ser `ukjent` når en overlappende retry kommer mens originalen
+    ennå ikke har committet — raden finnes, men ikke i vårt snapshot.
+    Rekker originalen å committe, og kilden å bli slettet (eller gjenskapt
+    med en ny generasjon), før vi slår den opp, er avslaget her et 404
+    eller 409 på en nøkkel som ALT bærer et lagret 201 (Codex P2). Samme
+    forespørsel, to ulike svar, avgjort av hvem som vant et kappløp.
+
+    Etterprøven VENTER på vinneren: `vent_paa_vinner` tar den samme
+    advisory-låsen som claimet, og den holdes hele originalens
+    transaksjon. Er svaret ferdig når vi slipper til, replayes det; er
+    nøkkelen fortsatt ukjent, fantes det ingen vinner, og det
+    kildeavhengige avslaget er sant.
+
+    Konteksten settes på nytt: `sett_kontekst` er `SET LOCAL`, og
+    rollbacken over — enten vår egen eller den avbrutte transaksjonen —
+    tok den med seg. Uten den ville RLS gjort et lagret svar usynlig og
+    etterprøven til en tom forsikring.
+    """
+    conn.rollback()
+    _gjenopprett_kontekst(conn, tenant, bid, rid)
+    tilstand, lagret = policyadmin.idempotent_svar(
+        conn, tenant, idem, input_hash, vent_paa_vinner=True)
+    conn.rollback()
+    if tilstand == "replay":
+        return _ok(lagret, rid, 201)
+    if tilstand == "konflikt":
+        return _feil("idempotenskonflikt", rid)
+    return _feil(kode, rid, http)
+
+
 def _med_conn(tjeneste, rid: str, fn):
     """Hent en forbindelse, kjør `fn(conn)`, håndter Aktiveringsfeil + drift."""
     from .app import _rid  # noqa: F401  (holder importgrafen lik app.py)
@@ -366,16 +402,22 @@ def opprett_utkast_endepunkt(tjeneste, request):
                     " policyversjon_kilde(%s, %s, %s)",
                     (tenant, policy_id, rollback_av)).fetchone()
             except psycopg.errors.NoDataFound:
-                conn.rollback()
-                return _feil("ikke_funnet", rid, 404)
+                # Kilden er borte NÅ — men et forsøk som alt har lyktes
+                # skal ikke få 404 fordi versjonen er arkivert i
+                # mellomtiden (Codex P2). Se `_replay_foer_avslag`.
+                return _replay_foer_avslag(conn, tenant, bid, rid, idem, ih,
+                                           "ikke_funnet", 404)
             except psycopg.errors.InvalidParameterValue:
                 # Versjonen finnes, men har aldri vært i kraft, og en
                 # rullbakk til noe som aldri virket er ingen rullbakk
                 # (Codex P2). Flaten tilbyr ikke knappen for slike rader —
                 # dette er porten bak den, for kallere som ikke går via
-                # flaten og for en visning som har blitt foreldet.
-                conn.rollback()
-                return _feil("rullbakk_kilde_uaktivert", rid)
+                # flaten og for en visning som har blitt foreldet. Også
+                # dette er en påstand om kildens tilstand NÅ: er nummeret
+                # slettet og gjenskapt uten aktivering, gjelder samme
+                # etterprøve som over.
+                return _replay_foer_avslag(conn, tenant, bid, rid, idem, ih,
+                                           "rullbakk_kilde_uaktivert")
             except psycopg.errors.InsufficientPrivilege:
                 conn.rollback()
                 return _feil("ingen_tilgang", rid)
@@ -391,9 +433,14 @@ def opprett_utkast_endepunkt(tjeneste, request):
             # gjenskapt rad kan tilfeldigvis være byte-likt, og da hadde
             # den kontrollen sluppet nettopp forvekslingen gjennom.
             if kilde_gen != rollback_gen:
-                return _feil("rullbakk_kilde_endret", rid)
+                # Samme klasse avslag: en påstand om kildens tilstand NÅ,
+                # og den kan ha flyttet seg etter at et tidligere forsøk
+                # med SAMME nøkkel og input lyktes.
+                return _replay_foer_avslag(conn, tenant, bid, rid, idem, ih,
+                                           "rullbakk_kilde_endret")
             if innhold is not None and innhold != hentet:
-                return _feil("request_feilformet", rid)
+                return _replay_foer_avslag(conn, tenant, bid, rid, idem, ih,
+                                           "request_feilformet")
             innhold = hentet
         if not isinstance(policy_id, str) or not policy_id.strip() \
                 or not isinstance(innhold, dict):
