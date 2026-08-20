@@ -297,8 +297,9 @@ def _regexslutt(js: str, i: int, b: int) -> int:
 def _kodespenn(js: str, a: int, b: int, avslutt: bool = False):
     """Les js[a:b] som kode og gi fra deg hvert spenn som IKKE er kode.
 
-    Gir `(start, slutt, slag)` med slag «streng», «kommentar» eller «regex».
-    Alt mellom spennene er kjørende kode. Returverdien er indeksen der lesingen
+    Gir `(start, slutt, slag)` med slag «streng», «mal» (tekstbiten i en
+    malstreng), «kommentar» eller «regex». Alt mellom spennene er kjørende
+    kode — også uttrykkene i `${…}`. Returverdien er indeksen der lesingen
     stoppet. Med `avslutt` stopper vi ved den `}` som lukker uttrykket vi står
     i — det er slik `${…}` i en malstreng leses.
 
@@ -379,28 +380,35 @@ def _kodespenn(js: str, a: int, b: int, avslutt: bool = False):
 def _malspenn(js: str, i: int, b: int):
     """Les malstrengen som åpner i `i`. Returner indeksen etter den.
 
-    Malstrengen leses her og ikke som en vanlig streng fordi den kan bære
-    NØSTEDE malstrenger inne i `${…}`; en råskanning til neste backtick ville
+    En malstreng er ikke ett spenn, men vekselvis TEKST og KODE: `${…}` bærer
+    et uttrykk, ikke noe noen har skrevet til en leser. Vi gir derfor fra oss
+    tekstbitene hver for seg og leser uttrykkene som kode, slik at
+    `` `Tilstand: ${filter_state}` `` etterlater «Tilstand: » som prosa og
+    `filter_state` som det navnet på en binding det er (Codex P2 på #118,
+    tiende runde). Ble hele spennet gitt som tekst, meldte identifikatorporten
+    uttrykket som en oppfunnet registerklasse.
+
+    Uttrykkene leses av `_kodespenn()` og ikke ved en råskanning til neste
+    backtick, fordi de kan bære NØSTEDE malstrenger — da ville skanningen
     lukket på feil sted.
     """
-    j = i + 1
+    j = tekst = i + 1
     while j < b:
         c = js[j]
         if c == "\\":
             j += 2
             continue
         if c == "`":
-            j += 1
-            break
+            yield tekst, j, "mal"
+            return j + 1
         if js.startswith("${", j):
+            yield tekst, j, "mal"
             j = yield from _kodespenn(js, j + 2, b, avslutt=True)
-            j = min(j + 1, b)
+            tekst = j = min(j + 1, b)
             continue
         j += 1
-    else:
-        j = b
-    yield i, j, "streng"
-    return j
+    yield tekst, b, "mal"
+    return b
 
 
 def _spennkart(js: str, a: int = 0, b: int | None = None) -> dict[int, tuple]:
@@ -447,6 +455,9 @@ _SKANNERPROEVER = [
     ('const a = arr[0] / 2; const filter_state = {};', False),
     ('const s = "en streng med filter_state i", filter_state = 1;', True),
     ('// en kommentar om filter_state\nconst filter_state = {};', True),
+    ('const t = `Tilstand: ${filter_state}`;', False),
+    ('const t = `ytre ${p ? `indre ${filter_state}` : ""} slutt`;', False),
+    ('const t = `en mal som nevner filter_state i teksten`;', True),
 ]
 
 
