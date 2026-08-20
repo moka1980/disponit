@@ -1692,6 +1692,17 @@ def test_rent_utfall_krever_avtrykket_verifiseringsveien_setter_igjen(
         "definern skal MÅLE kapabiliteten, aldri kunne skrive den"
     migrator.rollback()
 
+    # …og DRILLSONDEN må stille samme krav (Codex P2, runde 15). Gjør den
+    # ikke det, gir en forfalsket kvittering et grønt rullbakk-artefakt
+    # av en drill som alt har konsumert release-IDene — og aksepten
+    # avviser samme utfall etterpå. En drill som rapporterer bestått for
+    # evidens som ikke kan aksepteres, måler noe annet enn aksepten.
+    drill = (ROT / "deploy/staging/rollback-m56.py").read_text(
+        encoding="utf-8")
+    assert "kvitteringskapabiliteter k" in drill and \
+        "k.status = 'brukt'" in drill, \
+        "drillsonden måler fortsatt bare feltene skriveren selv eier"
+
 
 @pg
 def test_drillraden_navngir_oppdragene_og_bevisfilen(migrator):

@@ -224,17 +224,38 @@ def _kvittering(m, tenant, oid):
     kjøretidsrollen har direkte `UPDATE`. Samme krav som porten i
     `registrer_moduldrill` stiller — artefaktet skal måle det aksepten
     regnes av, ellers er en grønn drill og en avvist aksept samme kjøring.
+
+    …OG DE TRE FELTENE EIES AV DEN SAMME SKRIVEREN (Codex P1, #117 runde
+    15). Porten i `registrer_moduldrill` krever derfor nå avtrykket
+    verifiseringsveien setter igjen: kvitteringskapabiliteten for
+    oppdraget BRENT med nøyaktig radens `resultathash`.
+    `kvitteringskapabiliteter` (005) står `REVOKE ALL ... FROM PUBLIC`
+    uten tabellgrant — den fylles og brennes bare av definerne, og
+    `bruk_kvitteringskapabilitet` kalles av API-et først etter at
+    `attestering.verifiser` har godtatt signaturen.
+
+    Sonden her må stille NØYAKTIG samme krav. Gjorde den ikke det, ville
+    en forfalsket kvittering gitt et grønt rullbakk-artefakt av en drill
+    som allerede har konsumert release-IDene — og aksepten ville avvist
+    samme utfall etterpå. En drill som rapporterer bestått for evidens
+    som ikke kan aksepteres, måler ikke aksepten; den måler noe annet.
     """
     m.execute("RESET ROLE")
     m.execute("SELECT set_config('disponit.tenant', %s, true)", (tenant,))
     rad = m.execute(
-        "SELECT kvittering IS NOT NULL"
-        "   AND kvittering_signatur IS NOT NULL"
-        "   AND btrim(kvittering_signatur) <> ''"
-        "   AND kvittering_signatur"
-        "       IS NOT DISTINCT FROM (kvittering->'signatur'->>'verdi')"
-        "   AND resultathash IS NOT NULL"
-        "  FROM oppdrag WHERE tenant=%s AND id=%s",
+        "SELECT o.kvittering IS NOT NULL"
+        "   AND o.kvittering_signatur IS NOT NULL"
+        "   AND btrim(o.kvittering_signatur) <> ''"
+        "   AND o.kvittering_signatur"
+        "       IS NOT DISTINCT FROM (o.kvittering->'signatur'->>'verdi')"
+        "   AND o.resultathash IS NOT NULL"
+        "   AND EXISTS (SELECT 1 FROM kvitteringskapabiliteter k"
+        "                WHERE k.tenant = o.tenant AND k.oppdrag_id = o.id"
+        "                  AND k.status = 'brukt'"
+        "                  AND k.resultathash IS NOT NULL"
+        "                  AND k.resultathash IS NOT DISTINCT FROM"
+        "                      o.resultathash)"
+        "  FROM oppdrag o WHERE o.tenant=%s AND o.id=%s",
         (tenant, oid)).fetchone()
     m.commit()
     return bool(rad and rad[0])
