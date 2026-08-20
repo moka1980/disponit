@@ -26,8 +26,23 @@ Testene her er derfor ti porter (Codex P2 på PR #43, #99 og #118):
                  maskinform må finnes i registeret slik det ER NÅ, eller som en
                  fil, så forklaringen ikke kan finne opp klasser posten ikke
                  har — og ikke leve videre på en verdi registeret har sluttet
-                 med. Prosa er dokumentteksten pluss fnutter og kommentarer i
-                 skriptet; prototypens egne variabelnavn er kode, ikke påstand.
+                 med. Prosa er dokumentteksten og modulpostenes egne felt;
+                 prototypens UI-kode er kode, ikke påstand.
+
+TO LESNINGER, INGEN SKANNERE. Katalogen står i JavaScript og registeret i SQL,
+og porten leste begge med håndskrevne skannere i Python. Nitten review-runder
+på PR #118 var nitten språkformer skannerne ikke hadde — og en skanner som
+ikke kjenner en form gjør ikke noe høylytt: den leser noe annet enn den som
+skal kjøre filen, og sier ingenting. Eier avgjorde saken 20/8: bytt lesning,
+ikke legg til former.
+
+  * KATALOGEN leses av `tools/les_katalog.mjs` — en JavaScript-motor, delt med
+    generatoren, så de to ikke kan lese hver sin katalog.
+  * MIGRASJONENE leses av `pglast`, altså libpg_query: PostgreSQLs egen
+    grammatikk, samme parser som serveren som skal kjøre dem.
+
+Begge er FAIL-CLOSED. Mangler node eller pglast, er porten rød — aldri hoppet
+over. En port som hopper over seg selv er grønn på noe ingen har lest.
 """
 import functools
 import json
@@ -657,713 +672,363 @@ KONTRAKTFELT = {"kl": "sideeffektklasse", "rev": "reversibilitet"}
 MODULKONTRAKT = "modulkontrakt"
 
 
+# ---------------------------------------------------------------------------
+# MIGRASJONENE, LEST AV POSTGRESQLS EGEN GRAMMATIKK
+#
 # Migrasjonsmappa er den ENESTE historikken i repoet som ikke kan redigeres:
 # en fil som er kjørt står for alltid, også når en senere fil erstatter det den
 # innførte. Alt annet — kildekode, maler, katalogen — er gjeldende tilstand,
 # fordi en fjernet verdi forsvinner med redigeringen. Derfor må registerets
 # gjeldende tilstand REGNES ut av migrasjonene, ikke leses som en union.
 #
-# Nøkkelen er (tabell, kolonne), ikke kolonnenavnet alene: `status` er CHECK-et
-# i tjue tabeller med hver sine verdier, og siste-treff-vinner på bare navnet
-# ville pensjonert nitten av dem. Tabellen er den siste CREATE/ALTER TABLE før
-# vilkåret. Alt som ikke er en KJØRT setning blankes ut først — 038 SITERER
-# formen «CHECK (hendelse IN (...))» i en kommentar, og den ville ellers slettet
-# en tabells enum. Begge kommentarformene, og dollarsitert tekst, og ingen av
-# delene inne i en streng: se `_kjort_sql()`.
+# Regningen sto på tjue regexer og en håndskrevet SQL-skanner: strengformer,
+# dollarsitering, nøstede blokkommentarer, `DO`-kropper, `IF … THEN`, parenteser
+# som måtte telles, tabellnavn bak `ONLY`. Ti runder med Codex-review på #118 var
+# ti SQL-former skanneren ikke hadde — og hver av dem gikk samme vei: et vilkår
+# porten ikke SÅ, ble et vilkår den ikke snittet med, og katalogporten kunne
+# godta en kontraktklasse databasen avviser.
 #
-# Og navnet må NORMALISERES før det brukes som nøkkel (Codex P2 på #118, femte
-# runde). Migrasjonene skriver samme tabell på to måter: 026 oppretter `varsel`,
-# 035 endrer `public.varsel` — konvensjonen i repoet er å kvalifisere med skjema
-# når setningen står inne i en `DO`-blokk. Uten normalisering blir det to
-# nøkler, og «siste vilkår gjelder» slutter å gjelde på tvers av dem: en senere
-# innstramming skrevet `public.<tabell>` ville ikke pensjonert noe som helst,
-# fordi den la seg ved siden av den opprinnelige i stedet for oppå. `public` er
-# standardskjemaet og derfor ikke en del av identiteten; et ANNET skjema er det,
-# og blir stående.
-# Mellom verbet og NAVNET kan det stå nøkkelord, og lista over dem sto som en
-# åpen oppramsing: bare `IF [NOT] EXISTS` (Codex P2 på #118, fjortende runde).
-# `ALTER TABLE ONLY modulkontrakt …` er en helt alminnelig form — den er
-# nettopp måten man endrer bare arvetabellen på — og der ble `ONLY` fanget som
-# tabellNAVNET. En innstramming la seg da under nøkkelen `('only', kolonne)`
-# mens det forrige, videre vilkåret på `modulkontrakt` ble stående som
-# gjeldende, og katalogporten ville sluppet inn en klasse PostgreSQL avviser.
+# Eier avgjorde saken 20/8: bytt lesning, ikke legg til former. Migrasjonene
+# leses nå av `pglast`, altså av libpg_query — PostgreSQLs EGEN parser, samme
+# grammatikk som serveren som skal kjøre filene. «En form grammatikken har og
+# lesningen ikke hadde» er da umulig per konstruksjon, ikke usannsynlig.
 #
-# Lista er derfor lukket mot grammatikken i stedet for mot tilfellene: ordene
-# som KAN stå mellom `TABLE` og navnet er `IF`, `NOT`, `EXISTS` og `ONLY`, og
-# det er hele mengden PostgreSQL tillater der. Alle fire er reserverte ord, så
-# ingen tabell kan hete noe av det uten anførselstegn — og med anførselstegn
-# begynner navnet med `"` og treffer ikke ordmengden. Modifikatorene FORAN
-# `TABLE` er samme sak fra samme rot: `CREATE TEMP TABLE t` og `CREATE UNLOGGED
-# TABLE t` traff ikke mønsteret i det hele tatt, så et vilkår i en slik tabell
-# ville festet seg til forrige tabell i filen.
-_TABELL_RE = re.compile(
-    r"""\b(?:CREATE(?:\s+(?:GLOBAL|LOCAL|TEMPORARY|TEMP|UNLOGGED)\b)*"""
-    r"""|ALTER)\s+TABLE(?:\s+(?:IF|NOT|EXISTS|ONLY)\b)*\s+([\w.\"]+)""",
-    re.I)
-# KOLONNEN i vilkåret kan være sitert (Codex P2 på #118, sekstende runde).
-# `\w+` leste bare den bare formen, så `CHECK ("reversibilitet" IN (…))` ikke
-# ble et treff i det hele tatt — og et vilkår porten ikke ser, er et vilkår den
-# ikke snitter med. Legger en migrasjon en innstramming skrevet slik ved siden
-# av det videre vilkåret som står, blir bare det videre gjeldende, og
-# katalogporten slipper inn en klasse den siterte CHECK-en avviser.
+# Det som følger med av seg selv, uten en linje kode her:
 #
-# Anførselstegnene er samme skrivemåte som `_tabellnavn()` og `_vilkarsnavn()`
-# alt normaliserer bort: `"reversibilitet"` og `reversibilitet` ER samme
-# kolonne, fordi PostgreSQL folder den bare formen ned til små bokstaver.
-# Mengden er lukket mot grammatikken — en identifikator er ETT sitert navn
-# eller ETT bart ord, ikke en åpen tegnklasse som også ville tatt `"a" + b`.
+#   * KOMMENTARER finnes ikke i et syntakstre. Både `--` og nøstede `/* … */`,
+#     og ingen av dem inne i en streng.
+#   * STRENGER er verdier, ikke setninger. `'ALTER TABLE … DROP CONSTRAINT r'`
+#     skrevet inn i en loggtabell er tekst, og `E'…'`, `$$…$$`, doblede
+#     apostrofer og fragmenter skjøtt over flere linjer er ÉN verdi hver, med
+#     escapene løst opp av den som eier reglene.
+#   * PARENTESER, siterte navn, `ONLY`, `TEMP`, `IF NOT EXISTS` — alt sammen
+#     former grammatikken har, og de er ikke lenger noe porten «kjenner».
 #
-# Og UTTRYKKET leses ikke lenger i det samme regexet (Codex P2 på #118,
-# syttende runde). Kolonnen måtte stå rett etter `CHECK (`, så en overflødig
-# parentes rundt vilkåret — `CHECK ((reversibilitet IN ('direkte')))`, en helt
-# alminnelig skrivemåte — ga ikke et treff i det hele tatt, med samme utfall
-# som den siterte kolonnen forrige runde: en innstramming porten ikke ser, er
-# en innstramming den ikke snitter med.
-#
-# Parenteser lar seg ikke telle i et regex, så mønsteret rekker bare til
-# ÅPNINGEN av `CHECK (`; innholdet leses av `_vilkarene()`, som finner den
-# lukkende parentesen ved å telle og skreller bort dem som bare pakker inn.
-# Samme lesning gir verdilista sin ekte slutt: `([^)]*)` stoppet ved den
-# første `)`, også når den sto inne i en streng.
-_CHECK_RE = re.compile(r"""(?:CONSTRAINT\s+([\w."]+)\s+)?CHECK\s*\(""", re.I)
-# Innsiden av et lesbart vilkår: kolonnen, og åpningen av verdilista.
-_IN_RE = re.compile(r"""("(?:[^"]|"")+"|\w+)\s+IN\s*\(""", re.S | re.I)
-# Et vilkår kan også FJERNES (Codex P2 på #118, ellevte runde). Tilstanden ble
-# regnet bare av CHECK-treff, så en `DROP CONSTRAINT` uten et nytt vilkår etter
-# seg lot verdiene fra forrige migrasjon bli stående som gjeldende: katalogporten
-# ville avvist verdier PostgreSQL ikke lenger begrenser, og `_registerenum()`
-# ville ikke sagt fra om at vilkåret er borte. Slippet er en hendelse på linje
-# med vilkåret, og leses i samme rekkefølge som det.
-_DROPP_RE = re.compile(
-    r"""DROP\s+CONSTRAINT(?:\s+IF\s+EXISTS)?\s+([\w."]+)""", re.I)
+# Igjen står de spørsmålene som faktisk er porten sine, og de er semantiske:
+# hvilket vilkår et slipp treffer, hva et sammensatt predikat betyr, og hva en
+# betinget gren i en `DO`-kropp gjør med tilstanden. De står under.
+try:
+    import pglast
+except ModuleNotFoundError:  # pragma: no cover - meldingen ER porten her
+    raise ModuleNotFoundError(
+        "pglast mangler — migrasjonene leses av PostgreSQLs egen grammatikk "
+        "(libpg_query), og uten den kan registerets enum ikke leses i det hele "
+        "tatt. Den står i requirements-dev.txt; en port som hopper over seg "
+        "selv her ville vært grønn på et uleste register.")
 
-
-# Dollarsitering: `$$…$$` og `$tagg$…$tagg$`. Formen brukes til tekst som bærer
-# fnutter og semikolon, og ingenting escaper der inne.
-_DOLLARTAGG_RE = re.compile(r"\$(?:[A-Za-z_]\w*)?\$")
-
-# Men en dollarsitert tekst er ikke ett slag (Codex P2 på #118, fjortende
-# runde). ETT sted er den en KROPP som kjøres nå: `DO $$ … $$` utfører sine
-# egne setninger i det migrasjonen kjører, og repoets konvensjon er nettopp å
-# pakke betinget DDL slik — 035 §6 legger `varsel_art_chk` på `public.varsel`
-# inne i en `DO`-blokk. Overalt ellers er den DATA: `AS $$ … $$` definerer en
-# funksjonskropp uten å kjøre den, og `RAISE NOTICE $$ … $$` skriver en melding.
-#
-# Hvilket av de to det er, leses av det som står FORAN taggen, ikke av
-# innholdet. `DO` tar valgfritt `LANGUAGE <navn>` mellom seg og kroppen.
-_DOKROPP_RE = re.compile(r"\bDO\b(?:\s+LANGUAGE\s+[\w.\"]+)?\s*\Z", re.I)
-
-# Lesningen av hva registeret SKRIVER teller også funksjonskroppen som kropp:
-# `CREATE FUNCTION … AS $$ … $$` definerer den uten å kjøre den, men verdiene
-# den bærer er skrevet av registeret. Se `_er_kropp()` mot `_er_dokropp()`.
-_KROPP_RE = re.compile(
-    r"\b(?:DO\b(?:\s+LANGUAGE\s+[\w.\"]+)?|AS)\s*\Z", re.I)
-
-# Verdien en CHECK-liste får når porten ikke kan lese den. Backslash kan ikke
-# være en enumverdi skrevet rett fram, så den kan ikke kollidere med en ekte.
+# Verdien en kolonne får når porten ikke kan lese vilkåret som binder den.
+# Backstrek kan ikke være en enumverdi skrevet rett fram, så den kan ikke
+# kollidere med en ekte.
 ULESELIG_SQL = "\\"
 
+# Nodetypene i treet som er en KOLONNE, et VILKÅR og en VERDI. Navnene er
+# libpg_querys egne.
+_CHECK = "CONSTR_CHECK"
 
-def _sqlliteral(sql: str, i: int) -> int:
-    """Indeksen etter strengliteralen som åpner i `i`, eller -1 om ingen gjør.
 
-    PostgreSQL har tre former, og porten leste bare den ene:
-
-      * `'…'` og `"…"` (sitert navn) — sitattegnet DOBLES for å escapes, så
-        `'det''s'` er ÉN streng.
-      * `E'…'` — der escaper `\\` også, og `\\'` lukker IKKE strengen (Codex P2
-        på #118, trettende runde). Porten leste den escapede fnutten som
-        slutten, og resten av `E'a\\'--b'` ble til en linjekommentar som spiste
-        vilkåret linja bar. Merk at `E'\\\\_\\\\_%'` i 041 fortsatt lukker der den
-        skal: `\\\\` er en escapet backslash og spises som ett par, så fnutten
-        etter den er den ekte.
-      * `$tagg$…$tagg$` — dollarsitering, som porten ikke kjente i det hele
-        tatt. Der escaper ingenting; strengen slutter ved den samme taggen.
-
-    `E` er bare et prefiks når det står alene: `case'x'` er et ord etterfulgt
-    av en streng, ikke en escapestreng.
-    """
-    n = len(sql)
-    c = sql[i]
-    if c == "$":
-        treff = _DOLLARTAGG_RE.match(sql, i)
-        if not treff:
-            return -1
-        j = sql.find(treff.group(0), treff.end())
-        return n if j < 0 else j + len(treff.group(0))
-    bakstrek = False
-    if c in "Ee" and i + 1 < n and sql[i + 1] == "'" \
-            and not (i and (sql[i - 1].isalnum() or sql[i - 1] == "_")):
-        i, c, bakstrek = i + 1, "'", True
-    if c not in "'\"":
-        return -1
-    j = i + 1
-    while j < n:
-        if bakstrek and sql[j] == "\\":
-            j += 2
-        elif sql[j] != c:
-            j += 1
-        elif j + 1 < n and sql[j + 1] == c:
-            j += 2
-        else:
-            return j + 1
-    return n
-
-
-def _strengkonstant(sql: str, i: int, b: int) -> tuple[str | None, int]:
-    """(verdien til strengkonstanten som åpner i `i`, indeksen etter den).
-
-    En strengkonstant i PostgreSQL kan være skrevet i FLERE fragmenter (Codex
-    P2 på #118, attende runde): står to `'…'` etter hverandre med bare tomrom
-    mellom seg, og tomrommet inneholder minst ett LINJESKIFT, skjøter serveren
-    dem til én verdi. Formen brukes gjennomgående i migrasjonene til å bryte
-    lange meldinger over flere linjer.
-
-    Porten leste hvert fragment som en verdi for seg, og begge lesningene tok
-    skade av det. `SELECT 'mangler '\\n'oppfunnet_klasse';` la navnet i lista
-    over kjente identifikatorer, enda databaseverdien er hele meldingen — samme
-    hull som kommentaren og den doblede fnutten. Og en `IN`-liste med en
-    brutt verdi i fikk verdier registeret aldri godtar, så porten ville avvist
-    en katalogmodul som bar den ekte.
-
-    Uten linjeskift er det ikke en skjøt, men en syntaksfeil i PostgreSQL, og
-    da skal porten heller ikke skjøte. Kommentarene mellom fragmentene er alt
-    byttet mot mellomrom av `_uten_sqlkommentar()`, som beholder linjeskiftene,
-    så en kommentar midt i skjøten teller som tomrommet den er.
-
-    `None` betyr uleselig, og det smitter: er ETT fragment en escapestreng
-    (`E'…'`) eller mangler sin lukkende fnutt, er hele den skjøtte verdien
-    ukjent. Å bruke resten ville vært et gjett.
-    """
-    deler: list[str] = []
-    lesbar = True
-    while True:
-        slutt = _sqlliteral(sql, i)
-        if slutt < 0:
-            break
-        slutt = min(slutt, b)
-        if sql[i] == "'" and slutt - i >= 2 and sql[slutt - 1] == "'":
-            deler.append(sql[i + 1:slutt - 1].replace("''", "'"))
-        else:
-            lesbar = False
-        i = slutt
-        neste = _skjot(sql, i, b)
-        if neste < 0:
-            break
-        i = neste
-    return ("".join(deler) if lesbar else None), i
-
-
-def _skjot(sql: str, i: int, b: int) -> int:
-    """Der neste fragment av samme strengkonstant åpner, ellers -1.
-
-    Kravet er PostgreSQLs eget: bare tomrom mellom fragmentene, og minst ett
-    linjeskift i det. Se `_strengkonstant()`.
-    """
-    j = i
-    while j < b and sql[j].isspace():
-        j += 1
-    if j >= b or "\n" not in sql[i:j]:
-        return -1
-    if sql[j] == "'" or (sql[j] in "Ee" and j + 1 < b and sql[j + 1] == "'"):
-        return j
-    return -1
-
-
-def _sqlverdier(liste: str) -> set[str]:
-    """Strengverdiene i en `IN (…)`-liste.
-
-    Leses med `_sqlliteral()` og ikke med et regex på «alt mellom to fnutter»:
-    SQL escaper ved å DOBLE sitattegnet, så `'det''s'` er ÉN verdi. Et regex
-    delte den i to og fikk en verdi til ut av lista.
-
-    En verdi skrevet med escape — `E'…'` — eller dollarsitert gir
-    `ULESELIG_SQL`. Å tolke ville betydd å skrive PostgreSQLs escaperegler av
-    i Python (`\\n`, `\\xHH`, `\\uXXXX`, oktalt), og hver glemt form er et nytt
-    smutthull; her ville et gjettet innhold vært verre enn ingen. Verdien
-    forplanter seg til enumet, og `_registerenum()` sier fra hvis kolonnen
-    katalogen faktisk måles mot bærer den — ikke ved enhver migrasjon som
-    tilfeldigvis skriver en slik verdi i en annen tabell.
-
-    Og én verdi kan være skrevet i FLERE fragmenter, se `_strengkonstant()`.
-    Ble de talt hver for seg, fikk lista verdier PostgreSQL aldri godtar, og
-    porten ville avvist en katalogmodul som bar den ekte, sammenskjøtte
-    verdien.
-    """
-    ut, i, n = set(), 0, len(liste)
-    while i < n:
-        j = _sqlliteral(liste, i)
-        if j < 0:
-            i += 1
-            continue
-        if liste[i] == '"':
-            ut.add(liste[i + 1:j - 1].replace('""', '"'))
-            i = j
-            continue
-        if liste[i] == "$":
-            ut.add(ULESELIG_SQL)
-            i = j
-            continue
-        verdi, i = _strengkonstant(liste, i, n)
-        ut.add(ULESELIG_SQL if verdi is None else verdi)
-    return ut
-
-
-def _balansert(sql: str, i: int) -> int:
-    """Indeksen til parentesen som lukker den som åpner i `i`, ellers -1.
-
-    Parenteser lar seg ikke telle i et regex, og et vilkår er nettopp nøstede
-    parenteser: `CHECK ((kolonne IN ('a')))` er samme vilkår som uten det ytre
-    paret. Tellingen hopper over strengliteralene med `_sqlliteral()`, slik at
-    en parentes inne i en verdi — `'a)b'` — ikke lukker noe.
-    """
-    if i >= len(sql) or sql[i] != "(":
-        return -1
-    dybde, j, n = 0, i, len(sql)
-    while j < n:
-        slutt = _sqlliteral(sql, j)
-        if slutt >= 0:
-            j = slutt
-            continue
-        if sql[j] == "(":
-            dybde += 1
-        elif sql[j] == ")":
-            dybde -= 1
-            if not dybde:
-                return j
-        j += 1
-    return -1
-
-
-def _uten_ytre_parentes(uttrykk: str) -> str:
-    """Uttrykket uten parentesparene som bare pakker det inn.
-
-    Bare et par som spenner over HELE uttrykket er overflødig. `(a IN ('x'))
-    OR (b IN ('y'))` begynner også med en parentes, men den lukkes midtveis —
-    der ville en skrelling gjort en disjunksjon om til det første leddet, altså
-    lest et vilkår som strengere enn det er.
-    """
-    s = uttrykk.strip()
-    while s.startswith("(") and _balansert(s, 0) == len(s) - 1:
-        s = s[1:-1].strip()
-    return s
-
-
-def _vilkarene(tekst: str) -> list[tuple[int, str | None, str, set[str]]]:
-    """(posisjon, vilkårsnavn, kolonne, verdier) for hvert lesbart `CHECK`.
-
-    Lesbart betyr her at HELE vilkåret er `<kolonne> IN (…)`, eventuelt pakket
-    i overflødige parenteser. Et vilkår av en annen form — `CHECK (beløp > 0)`
-    — hører ikke til noe enum og gis fra seg, som før: der finnes ingen kolonne
-    å tilskrive noe.
-
-    Men et vilkår som BÅDE har en `IN`-liste og noe mer, er en tredje ting
-    (Codex P2 på #118, attende runde). `IN`-lista ble lest, og resten av
-    predikatet gitt fra seg i stillhet: `CHECK ((reversibilitet IN ('direkte',
-    'irreversibel') AND reversibilitet <> 'irreversibel'))` ble meldt som om
-    begge verdiene var lov, mens PostgreSQL avviser den ene. Da kan
-    katalogporten godta en umulig kontrakt — nøyaktig det den finnes for å
-    fange.
-
-    Et sammensatt predikat kan bare gjøre vilkåret SMALERE enn lista, aldri
-    videre, men hvor mye smalere står i den delen porten ikke leser. Kolonnen
-    kjenner vi likevel, og da er `ULESELIG_SQL` svaret som hverken gjetter
-    eller tier: verdien forplanter seg til enumet, og `_registerenum()` sier
-    fra på den kolonnen katalogen faktisk måles mot. Det gjelder også når
-    lista står SIST — `col <> 'x' AND col IN (…)` — derfor søkes det etter
-    `IN` i stedet for å kreve den fremst; kravet er at treffet fyller
-    uttrykket.
-    """
-    ut = []
-    for m in _CHECK_RE.finditer(tekst):
-        slutt = _balansert(tekst, m.end() - 1)
-        if slutt < 0:
-            continue
-        uttrykk = _uten_ytre_parentes(tekst[m.end():slutt])
-        inn = _IN_RE.search(uttrykk)
-        if not inn:
-            continue
-        liste = _balansert(uttrykk, inn.end() - 1)
-        if liste < 0:
-            continue
-        verdier = _sqlverdier(uttrykk[inn.end():liste])
-        if inn.start() or uttrykk[liste + 1:].strip():
-            verdier = verdier | {ULESELIG_SQL}
-        ut.append((m.start(), m.group(1), inn.group(1), verdier))
-    return ut
-
-
-def _kjort_sql(sql: str) -> tuple[str, list[tuple[int, int]],
-                                  list[tuple[int, int]]]:
-    """(SQL-en uten alt som ikke er kjørt, DATA-spennene, de BETINGEDE).
-
-    Bare `--` ble fjernet før, med et regex per linje (Codex P2 på #118, tolvte
-    runde). Tre hull fulgte av det.
-
-    BLOKKOMMENTAREN sto igjen som kode. En migrasjon som setter en setning ut av
-    drift eller viser et eksempel — `/* … CHECK (reversibilitet IN ('oppfunnet'))
-    … */` — ble da lest som gjeldende tilstand, og katalogporten ville sluppet
-    inn en klasse PostgreSQL aldri godtar. Et blokkommentert `DROP CONSTRAINT`
-    gikk motsatt vei og slettet et vilkår som fortsatt gjelder. Blokkommentarer
-    NØSTES i PostgreSQL, så dybden telles.
-
-    Kommentartegnene ble lest også inne i STRENGER: en verdi som `'a--b'` kappet
-    resten av linja, og med den et vilkår som sto der. Strenger og siterte navn
-    hoppes derfor over først — de er data, ikke kommentarer.
-
-    Og DOLLARSITERT tekst ble lest som setninger (Codex P2 på #118, trettende
-    runde). `RAISE NOTICE $$CHECK (reversibilitet IN ('oppfunnet'))$$` KJØRER
-    ingen slik CHECK — PostgreSQL skriver en melding — men porten leste vilkåret
-    som gjeldende tilstand og ville sluppet klassen inn.
-
-    Så ble ALT dollarsitert maskert, og det var å bytte hullet mot det motsatte
-    hullet (Codex P2 på #118, fjortende runde). `DO $$ BEGIN … END $$` er ikke
-    data: PostgreSQL KJØRER kroppen der og da, og repoets konvensjon er nettopp
-    å pakke betinget DDL slik — 035 §6 legger `varsel_art_chk` på
-    `public.varsel` inne i en `DO`-blokk, og 035 er også grunnen til at
-    tabellnavn må normaliseres over `public.`. Med hele kroppen maskert ble et
-    innpakket `DROP CONSTRAINT` usynlig, så et sluppet vilkår ble stående som
-    gjeldende, og en innpakket innstramming forsvant ut av snittet. Begge veier
-    kan katalogporten godta en klasse PostgreSQL avviser.
-
-    Slaget avgjøres av det som står FORAN taggen, ikke av innholdet: en kropp
-    etter `DO` leses videre som kjørt SQL — bare taggene blankes — og alt annet
-    dollarsitert er data og blankes helt. `AS $$ … $$` DEFINERER en funksjon
-    uten å kjøre den, og hører derfor til data sammen med meldingsteksten.
-    Lesningen av kroppen er den samme funksjonen om igjen, så en dollarsitert
-    tekst INNE i kroppen er data på nytt — `RAISE NOTICE $$…$$` binder
-    fortsatt ingenting.
-
-    Dynamisk DDL som FAKTISK kjøres — `EXECUTE format(...)` med et vilkår i en
-    vanlig streng — blir dermed usynlig for porten. Det er med vilje: en
-    setning som først blir til når migrasjonen kjører, kan ikke leses av en
-    tekstlesning uansett, og et gjettet vilkår er verre enn ingen. `_registerenum()`
-    sier fra hvis kolonnen katalogen måles mot ender opp uten vilkår.
-
-    Lengden holdes, for hver maskering byttes tegn for tegn mot mellomrom.
-    Rekkefølgen mellom `CREATE TABLE`, `CHECK` og `DROP CONSTRAINT` leses av
-    posisjonene i teksten, og linjeskift beholdes så `--` fortsatt slutter der
-    linja slutter.
-
-    STRENGENE blir stående, og derfor gis spennene deres fra seg (Codex P2 på
-    #118, femtende runde). De må stå: verdiene et vilkår binder ER strenger, og
-    blankes de, forsvinner enumet sammen med dem. Men innholdet i en streng er
-    DATA, ikke setninger — en verdi som `'ALTER TABLE modulkontrakt DROP
-    CONSTRAINT r'` skrevet inn i en loggtabell ble lest som et slipp, og et
-    vilkår PostgreSQL fortsatt håndhever forsvant ut av snittet. Da kan
-    katalogporten godta en klasse databasen avviser.
-
-    Skillet går på hvor en HENDELSE begynner: `CHECK`, `DROP CONSTRAINT` og
-    `CREATE`/`ALTER TABLE` er nøkkelord, og et nøkkelord inne i en streng er
-    tekst. Verdiene i `IN (…)` står inne i strenger, men hendelsen de hører til
-    begynner utenfor — så et vilkår leses fortsatt helt, mens data ikke kan
-    utgi seg for å være en setning.
-
-    Og en setning i en `DO`-kropp er ikke nødvendigvis KJØRT (Codex P2 på #118,
-    femtende runde): kroppen er PL/pgSQL, og repoets konvensjon er å pakke DDL
-    i `IF … THEN … END IF`. Hele kroppen ble lest som ubetinget, så et
-    `IF FALSE THEN` rundt et slipp og et nytt vilkår ga porten erstatningen
-    mens PostgreSQL beholder originalen. Betingelsen er vilkårlig SQL som først
-    avgjøres når migrasjonen kjører, og et gjettet svar er verre enn ingen — så
-    de betingede spennene gis fra seg, og `_registerets_enums()` velger den
-    tolkningen som ALDRI utvider mengden verdier. Se der.
-    """
-    ut = list(sql)
-    data: list[tuple[int, int]] = []
-    kropper: list[tuple[int, int]] = []
-    _mask_ikkekjort(sql, ut, 0, len(sql), data, kropper)
-    tekst = "".join(ut)
-    betinget: list[tuple[int, int]] = []
-    for a, b in kropper:
-        betinget += _betingede_spenn(tekst, a, b, data)
-    return tekst, data, betinget
-
-
-def _i_data(spenn: list[tuple[int, int]], pos: int) -> bool:
-    """Står `pos` inne i et av spennene? Se `_kjort_sql()`."""
-    return any(a <= pos < b for a, b in spenn)
-
-
-# `IF … THEN … END IF` i en PL/pgSQL-kropp. `ELSIF` treffer ikke, for `\b`
-# krever ordgrense foran `IF`.
-_IFORD_RE = re.compile(r"\bEND\s+IF\b|\bIF\b", re.I)
-# Det som avgjør om et `IF` åpner en BETINGELSE: står det `THEN` før setningen
-# slutter, er det en if-setning. `DROP CONSTRAINT IF EXISTS c;` og `CREATE
-# TABLE IF NOT EXISTS t (…);` bærer samme ord uten å være en gren.
-_THEN_ELLER_SLUTT_RE = re.compile(r"\bTHEN\b|;", re.I)
-
-
-def _betingede_spenn(tekst: str, a: int, b: int,
-                     data: list[tuple[int, int]]) -> list[tuple[int, int]]:
-    """Spennene i `tekst[a:b]` der en setning står bak en betingelse.
-
-    Kroppen til en `DO`-blokk er PL/pgSQL, og der er `IF … THEN … END IF` den
-    formen repoet pakker DDL i — 035 §6 legger `varsel_art_chk` på
-    `public.varsel` nettopp slik. Betingelsen er en spørring mot katalogen,
-    altså noe som først avgjøres når migrasjonen kjører; en tekstlesning kan
-    ikke vite svaret. Den KAN vite at svaret er ukjent, og det er nok, se
-    `_registerets_enums()`.
-
-    Bare de ytterste spennene gis fra seg: en nøstet gren er betinget av begge,
-    og et spenn som dekker den ytterste dekker den derfor også.
-    """
-    ut: list[tuple[int, int]] = []
-    stabel: list[int] = []
-    for m in _IFORD_RE.finditer(tekst, a, b):
-        if _i_data(data, m.start()):
-            continue
-        if m.group(0)[0] in "Ee":  # `END IF`
-            if stabel:
-                start = stabel.pop()
-                if not stabel:
-                    ut.append((start, m.end()))
-            continue
-        if _apner_gren(tekst, m.end(), b, data):
-            stabel.append(m.start())
-    # En gren som aldri lukkes er en kropp vi ikke har lest ferdig; da er alt
-    # fra den og ut betinget. Det er den trygge veien — se `_registerets_enums()`.
-    if stabel:
-        ut.append((stabel[0], b))
-    return ut
-
-
-def _apner_gren(tekst: str, i: int, b: int,
-                data: list[tuple[int, int]]) -> bool:
-    """Følger `THEN` før setningen slutter? Se `_betingede_spenn()`."""
-    for m in _THEN_ELLER_SLUTT_RE.finditer(tekst, i, b):
-        if not _i_data(data, m.start()):
-            return m.group(0) != ";"
-    return False
-
-
-def _mask_ikkekjort(sql: str, ut: list, a: int, b: int,
-                    data: list[tuple[int, int]],
-                    kropper: list[tuple[int, int]]) -> None:
-    """Blank ut alt i `sql[a:b]` som ikke er en kjørt setning. Se `_kjort_sql()`.
-
-    Egen funksjon fordi kroppen til en `DO`-blokk er nøyaktig samme spørsmål om
-    igjen på et mindre spenn: den kjøres, så kommentarer og strenger inne i den
-    skal maskeres på samme måte som utenfor.
-    """
-    i = a
-    while i < b:
-        slutt = _sqlliteral(sql, i)
-        if slutt >= 0:
-            slutt = min(slutt, b)
-            if sql[i] == "$":
-                tagg = _DOLLARTAGG_RE.match(sql, i).group(0)
-                if _er_dokropp(ut, a, i):
-                    # Kroppen kjøres: taggene bort, innholdet leses videre.
-                    innen = min(i + len(tagg), slutt)
-                    lukk = sql.find(tagg, innen, slutt)
-                    lukk = slutt if lukk < 0 else lukk
-                    _blank(ut, i, innen)
-                    _blank(ut, lukk, slutt)
-                    _mask_ikkekjort(sql, ut, innen, lukk, data, kropper)
-                    kropper.append((innen, lukk))
-                else:
-                    _blank(ut, i, slutt)
-            else:
-                # En fnuttstreng eller et sitert navn: innholdet blir stående,
-                # men det er data og ingen setning. Se `_kjort_sql()`.
-                data.append((i, slutt))
-            i = slutt
-            continue
-        j = _sqlkommentar(sql, i, b)
-        if j < 0:
-            i += 1
-            continue
-        _blank(ut, i, j)
-        i = j
-
-
-def _sqlkommentar(sql: str, i: int, b: int) -> int:
-    """Indeksen etter kommentaren som åpner i `i`, eller -1 om ingen gjør.
-
-    `--` slutter der linja slutter. `/* … */` NØSTES i PostgreSQL, så dybden
-    telles — den ytre lukkes av den siste `*/`, ikke av den første.
-    """
-    if sql.startswith("--", i):
-        j = sql.find("\n", i, b)
-        return b if j < 0 else j
-    if not sql.startswith("/*", i):
-        return -1
-    j, dybde = i + 2, 1
-    while j < b and dybde:
-        if sql.startswith("/*", j):
-            dybde, j = dybde + 1, j + 2
-        elif sql.startswith("*/", j):
-            dybde, j = dybde - 1, j + 2
-        else:
-            j += 1
-    return j
-
-
-def _uten_sqlkommentar(sql: str) -> str:
-    """SQL-en med kommentarene byttet mot mellomrom, alt annet urørt.
-
-    Et ANNET spørsmål enn `_kjort_sql()`, og derfor en annen lesning. Der
-    spør vi hva migrasjonen håndhever nå; her spør vi hva den SKRIVER. En
-    verdi i en funksjonskropp er skrevet av registeret selv om `AS $$…$$` bare
-    definerer kroppen uten å kjøre den, mens en verdi i en kommentar ikke er
-    skrevet noe sted — den er en merknad.
-
-    Dollarsiterte KROPPER leses derfor videre i stedet for å blankes, og
-    kommentarene inne i dem er kommentarer på samme måte som utenfor. En
-    dollarsitert VERDI leses ikke inn i: der er `--` fire tegn i en tekst, ikke
-    starten på en kommentar, og å blanke dem ville endret verdien registeret
-    skriver. Se `_er_kropp()`.
-    """
-    ut = list(sql)
-    _mask_kommentar(sql, ut, 0, len(sql))
-    return "".join(ut)
-
-
-def _mask_kommentar(sql: str, ut: list, a: int, b: int) -> None:
-    """Blank kommentarene i `sql[a:b]`. Se `_uten_sqlkommentar()`."""
-    i = a
-    while i < b:
-        slutt = _sqlliteral(sql, i)
-        if slutt >= 0:
-            slutt = min(slutt, b)
-            if sql[i] == "$" and _er_kropp(sql, i):
-                tagg = _DOLLARTAGG_RE.match(sql, i).group(0)
-                innen = min(i + len(tagg), slutt)
-                _mask_kommentar(sql, ut, innen, max(innen, slutt - len(tagg)))
-            i = slutt
-            continue
-        j = _sqlkommentar(sql, i, b)
-        if j < 0:
-            i += 1
-            continue
-        _blank(ut, i, j)
-        i = j
-
-
-def _skrevne_verdier(sql: str, a: int | None = None,
-                     b: int | None = None) -> list[str]:
-    """Innholdet i hver HELE `'…'`-literal i `sql[a:b]`, escapene løst opp.
-
-    Verdiene ble hentet med `'([^']*)'` (Codex P2 på #118, syttende runde), og
-    et regex kan ikke se at SQL escaper ved å DOBLE fnutten: i `'mangler
-    ''oppfunnet_klasse'''` er det ÉN literal med en melding i, men mønsteret
-    leste den midterste biten som en literal for seg. Et oppfunnet navn nevnt i
-    en feilmelding ble dermed en «kjent identifikator», og prosaen i
-    sannhetskilden kunne presentere det som noe registeret har — porten under
-    sa ingenting, fordi navnet «finnes».
-
-    Lesningen er `_strengkonstant()`, og bare en HEL konstant teller — også
-    når den er skrevet i flere fragmenter over like mange linjer.
-    Escapestrengen `E'…'` gis fra seg med vilje: innholdet der krever
-    PostgreSQLs escaperegler for å bli en verdi, og et gjettet innhold er
-    verre enn ingen når svaret brukes til å godta et navn.
-
-    Et dollarsitert spenn er ikke ett slag (Codex P2 på #118, attende runde).
-    Alle ble lest VIDERE inn i, som om innholdet var setninger med literaler i,
-    og begge utfall var gale. En melding — `RAISE EXCEPTION $$mangler
-    'oppfunnet_klasse'$$` — ga navnet inni som en verdi for seg, selv om hele
-    spennet er ÉN tekst; det er samme hull som kommentaren og den doblede
-    fnutten, en klasse ingen tabell har hørt om. Og motsatt: en verdi skrevet
-    dollarsitert — `VALUES ($$virkelig_klasse$$)` — ga ingenting, fordi det
-    ikke står en apostrof i den. Ordet finnes da ikke i lista og kan ikke
-    brukes i prosaen, enda registeret skriver det.
-
-    Skillet er det samme som i `_kjort_sql()`, og det står FORAN taggen: en
-    kropp leses videre inn i, alt annet er én verdi. Se `_er_kropp()`. Her er
-    `AS $$…$$` med blant kroppene, i motsetning til der: en funksjonskropp er
-    SKREVET av registeret selv om den ikke kjøres når migrasjonen går.
-    """
-    a, b = a or 0, len(sql) if b is None else b
-    ut: list[str] = []
-    i = a
-    while i < b:
-        slutt = _sqlliteral(sql, i)
-        if slutt < 0:
-            i += 1
-            continue
-        slutt = min(slutt, b)
-        if sql[i] == "$":
-            tagg = _DOLLARTAGG_RE.match(sql, i).group(0)
-            innen = min(i + len(tagg), slutt)
-            indre = max(innen, slutt - len(tagg))
-            if _er_kropp(sql, i):
-                ut += _skrevne_verdier(sql, innen, indre)
-            elif sql[indre:slutt] == tagg:
-                # Et spenn uten sin lukkende tagg er ikke helt, på samme måte
-                # som en literal uten sin lukkende fnutt.
-                ut.append(sql[innen:indre])
-            i = slutt
-        elif sql[i] == '"':
-            # Et sitert NAVN er ikke en verdi registeret skriver.
-            i = slutt
-        else:
-            # En literal uten sin lukkende fnutt er ikke hel, og en `E'…'` er
-            # ikke lesbar: `_strengkonstant()` gir `None` for begge.
-            verdi, i = _strengkonstant(sql, i, b)
-            if verdi is not None:
-                ut.append(verdi)
-    return ut
-
-
-def _er_kropp(sql: str, i: int) -> bool:
-    """Er det dollarsiterte spennet som åpner i `i` en KROPP og ikke en verdi?
-
-    Samme spørsmål som `_er_dokropp()` stiller, og det avgjøres på samme sted:
-    av det som står FORAN taggen. Forskjellen er hva de to lesningene teller
-    som kropp. `_kjort_sql()` spør hva migrasjonen HÅNDHEVER, og der er bare
-    `DO $$…$$` en kropp — den kjører i det migrasjonen går, mens `AS $$…$$`
-    bare definerer. Her spør vi hva registeret SKRIVER, og da er
-    funksjonskroppen med: verdiene i den er skrevet av registeret uansett når
-    den kalles. Se `_uten_sqlkommentar()`.
-
-    Alt annet er en verdi og leses ikke inn i — der escaper ingenting, og hele
-    spennet er én tekst.
-    """
-    return bool(_KROPP_RE.search(sql[:i]))
-
-
-def _er_dokropp(ut: list, a: int, i: int) -> bool:
-    """Er den dollarsiterte teksten som åpner i `i` kroppen til en `DO`?
-
-    Spørsmålet stilles til den alt MASKERTE teksten foran: lesningen går
-    forfra, så kommentarer før `i` er allerede byttet mot mellomrom, og et
-    `-- DO` i en kommentar kan derfor ikke gjøre en meldingstekst til en kropp.
-
-    HELE teksten foran leses, ikke de siste 120 tegnene (Codex P2 på #118,
-    femtende runde). Grensen var et tall uten hjemmel i grammatikken: en lang
-    kommentar eller bare rikelig med luft mellom `DO` og taggen skjøv `DO` ut
-    av utsnittet, kroppen ble lest som data, og en innstramming inne i den
-    falt ut av snittet — da kan katalogporten godta en verdi PostgreSQL
-    avviser. Et lengre utsnitt kan ikke gi FLERE treff, bare slutte å miste
-    det ene som finnes: mønsteret er forankret i slutten og krever at det bare
-    står tomrom mellom `DO` og taggen.
-    """
-    return bool(_DOKROPP_RE.search("".join(ut[a:i])))
-
-
-def _blank(ut: list, i: int, j: int) -> None:
-    """Bytt ut[i:j] mot mellomrom. Linjeskift står, så `--` slutter der linja
-    slutter og posisjonene ellers holder seg."""
-    for k in range(i, j):
-        if ut[k] != "\n":
-            ut[k] = " "
-
-
-def _tabellnavn(rå: str) -> str:
+def _navn(rangevar) -> str:
     """Tabellidentiteten bak et navn slik migrasjonen skrev det.
 
-    Anførselstegn og bokstavstørrelse bort, og `public.`-prefikset bort fordi
-    det er standardskjemaet: `public.varsel` og `varsel` ER samme tabell.
-
-    Et navn som ikke lar seg løse opp — 018 gjør `ALTER TABLE public.%I` med
-    tabellen i en løkkevariabel — beholdes som det står. Det er med vilje: da
-    blir det sin egen nøkkel som aldri smelter sammen med en ekte tabell, i
-    stedet for å bli tom streng og dermed dele nøkkel med et vilkår vi ikke
-    fant noen tabell for i det hele tatt.
+    Grammatikken har alt skilt skjema fra tabell og foldet den usiterte formen
+    ned, så det eneste som står igjen er at `public` er STANDARDSKJEMAET og
+    derfor ikke en del av identiteten: 026 oppretter `varsel`, 035 endrer
+    `public.varsel`, og det er samme tabell. Uten dette ville «siste vilkår
+    gjelder» sluttet å gjelde på tvers av de to skrivemåtene. Et ANNET skjema
+    er derimot en del av identiteten og blir stående.
     """
-    navn = rå.lower().replace('"', "")
-    skjema, _, rest = navn.partition(".")
-    return rest if rest and skjema == "public" else navn
+    if rangevar.schemaname and rangevar.schemaname != "public":
+        return f"{rangevar.schemaname}.{rangevar.relname}"
+    return rangevar.relname
+
+
+def _samle(node, ut: set[str]) -> None:
+    """Legg kolonnenavnene i `node` i `ut`. Går gjennom hele undertreet."""
+    if isinstance(node, (list, tuple)):
+        for x in node:
+            _samle(x, ut)
+        return
+    if isinstance(node, pglast.ast.ColumnRef):
+        felt = [f.sval for f in node.fields
+                if isinstance(f, pglast.ast.String)]
+        if felt:
+            ut.add(felt[-1])
+        return
+    if isinstance(node, pglast.ast.Node):
+        for navn in node:
+            _samle(getattr(node, navn), ut)
+
+
+def _verdiliste(node) -> list[str] | None:
+    """Strengverdiene i `node` hvis HVERT ledd er én strengkonstant.
+
+    Et ledd som er et UTTRYKK gir `None` for hele lista (Codex P2 på #118,
+    tjuende runde): `IN ('direkte' || '_v2', 'irreversibel')` tillater `direkte_v2`
+    og `irreversibel`, ikke tre verdier. Å regne ut uttrykket ville vært å
+    skrive PostgreSQLs operatorer av i Python, og et gjettet innhold er verre
+    enn ingen når svaret brukes til å godta en kontrakt.
+    """
+    ut = []
+    for ledd in node or ():
+        if not isinstance(ledd, pglast.ast.A_Const) \
+                or not isinstance(ledd.val, pglast.ast.String):
+            return None
+        ut.append(ledd.val.sval)
+    return ut
+
+
+def _enkolonne(node) -> str | None:
+    """Kolonnen `node` er, hvis den er ÉN kolonnereferanse."""
+    if not isinstance(node, pglast.ast.ColumnRef):
+        return None
+    felt = [f.sval for f in node.fields if isinstance(f, pglast.ast.String)]
+    return felt[-1] if len(felt) == len(node.fields) and felt else None
+
+
+def _bindinger(uttrykk) -> dict[str, set[str]]:
+    """{kolonne: verdiene vilkåret tillater} for ett CHECK-uttrykk.
+
+    Tre regler, og de er semantiske — ikke former:
+
+    ET SAMMENSATT PREDIKAT er ikke bare lista si (Codex P2 på #118, attende og
+    tjuende runde). `IN`-lista ble lest og resten av uttrykket gitt fra seg i
+    stillhet, så `CHECK (rev IN ('a','b') AND rev <> 'b')` ble meldt som om
+    begge verdiene var lov. Verre: med flere `IN`-ledd ble bare det FØRSTE
+    lest, og et videre vilkår på den andre kolonnen ble stående som gjeldende.
+
+    `A AND B` er håndhevet nøyaktig når både A og B er det, så en OG-kjede
+    leses ledd for ledd og bidragene snittes. Alt ANNET — `OR`, `NOT`, en
+    sammenligning, et funksjonskall — kan porten ikke regne på, og da er
+    `ULESELIG_SQL` svaret for hver kolonne uttrykket nevner: det hverken
+    gjetter eller tier, og `_registerenum()` sier fra på den kolonnen katalogen
+    faktisk måles mot.
+
+    Det gjelder også en CHECK som narrer uten `IN` (Codex P2 på #118, tjuende
+    runde): `CHECK (rev = 'direkte')` er håndhevet av PostgreSQL, og ble før
+    forkastet i stillhet slik at det forrige, videre vilkåret sto igjen som
+    gjeldende. Nå faller den i «alt annet» og gjør kolonnen uviss.
+
+    `= ANY (ARRAY[…])` leses som `IN`, for det ER `IN` — grammatikken skiller
+    dem, semantikken ikke. Å lese den er derfor ingen ny FORM å vedlikeholde:
+    tar porten feil om en node den ikke kjenner, blir svaret uvisst og høylytt,
+    aldri stille bredere.
+    """
+    if isinstance(uttrykk, pglast.ast.BoolExpr) \
+            and uttrykk.boolop == pglast.enums.BoolExprType.AND_EXPR:
+        ut: dict[str, set[str]] = {}
+        for ledd in uttrykk.args:
+            for kol, verdier in _bindinger(ledd).items():
+                ut[kol] = _snitt(ut[kol], verdier) if kol in ut else verdier
+        return ut
+    if isinstance(uttrykk, pglast.ast.A_Expr) \
+            and [s.sval for s in uttrykk.name] == ["="]:
+        kolonne = _enkolonne(uttrykk.lexpr)
+        verdier = None
+        if uttrykk.kind == pglast.enums.A_Expr_Kind.AEXPR_IN:
+            verdier = _verdiliste(uttrykk.rexpr)
+        elif uttrykk.kind == pglast.enums.A_Expr_Kind.AEXPR_OP_ANY \
+                and isinstance(uttrykk.rexpr, pglast.ast.A_ArrayExpr):
+            verdier = _verdiliste(uttrykk.rexpr.elements)
+        if kolonne and verdier:
+            return {kolonne: set(verdier)}
+    nevnte: set[str] = set()
+    _samle(uttrykk, nevnte)
+    return {kol: {ULESELIG_SQL} for kol in nevnte}
+
+
+def _snitt(a: set[str], b: set[str]) -> set[str]:
+    """Verdiene to vilkår er enige om — med uvissheten i behold.
+
+    En mengde her er en ØVRE GRENSE med et flagg: verdiene, og `ULESELIG_SQL`
+    hvis den øvre grensen kan være videre enn det som faktisk gjelder. En
+    mengde som BARE er `{ULESELIG_SQL}` er «vi vet ingenting», altså ingen
+    grense i det hele tatt.
+
+    Da er snittet det opplagte: grensene snittes, og et vilkår vi ikke vet noe
+    om snevrer ingenting inn. Uvissheten forplanter seg, for det ULESELIGE er
+    ikke en verdi — det er en manglende opplysning, og et annet vilkår kan ikke
+    opplyse den. Snittes den bort, blir et vilkår porten bare kjenner et
+    oversett av, meldt som lest, og da er svaret videre enn databasen.
+    """
+    kjent_a, kjent_b = a - {ULESELIG_SQL}, b - {ULESELIG_SQL}
+    kjent = kjent_a & kjent_b if kjent_a and kjent_b else kjent_a or kjent_b
+    return kjent | ({ULESELIG_SQL} & (a | b))
+
+
+# En hendelse i en migrasjon: enten et vilkår som legges på, eller et som
+# slippes. `betinget` er sant når setningen står bak en gren i en `DO`-kropp.
+_LEGG_PA, _SLIPP = "legg på", "slipp"
+
+
+def _setningene(sql: str):
+    """(setningen, teksten den står som) for hver setning i `sql`.
+
+    TEKSTEN følger med fordi en `DO`- eller funksjonsKROPP må leses av
+    `parse_plpgsql`, og den vil ha HELE setningen: kroppen alene sier ikke om
+    funksjonen har parametre, om den returnerer noe, eller om `NEW` finnes.
+    Å pakke kroppen inn i en `DO` for anledningen — som er den nærliggende
+    snarveien — gjør en helt alminnelig triggerfunksjon usyntaktisk, og da
+    ville lesningen hoppet over den i stillhet. Det er nøyaktig feilklassen
+    denne runden fjerner.
+    """
+    for rå in pglast.parse_sql(sql):
+        a = rå.stmt_location
+        yield rå.stmt, sql[a:a + rå.stmt_len] if rå.stmt_len else sql[a:]
+
+
+def _hendelsene(sql: str) -> list[tuple]:
+    """[(slag, tabell, navn, uttrykk, betinget[, kolonne])] i kjørerekkefølge."""
+    ut: list[tuple] = []
+    for stmt, tekst in _setningene(sql):
+        _lesstatement(stmt, tekst, ut, False)
+    return ut
+
+
+def _lesstatement(stmt, tekst: str, ut: list, betinget: bool) -> None:
+    """Legg hendelsene i `stmt` til i `ut`, i rekkefølge."""
+    if isinstance(stmt, pglast.ast.CreateStmt):
+        tabell = _navn(stmt.relation)
+        for element in stmt.tableElts or ():
+            _lesvilkar(element, tabell, ut, betinget)
+        return
+    if isinstance(stmt, pglast.ast.AlterTableStmt):
+        tabell = _navn(stmt.relation)
+        for cmd in stmt.cmds or ():
+            if cmd.subtype == pglast.enums.AlterTableType.AT_DropConstraint:
+                ut.append((_SLIPP, tabell, cmd.name, None, betinget))
+            else:
+                _lesvilkar(cmd.def_, tabell, ut, betinget)
+        return
+    if isinstance(stmt, pglast.ast.DoStmt) and _kroppen(stmt)[1] == "plpgsql":
+        _leskropp(tekst, ut, betinget)
+
+
+def _lesvilkar(node, tabell: str, ut: list, betinget: bool,
+               kolonne: str | None = None) -> None:
+    """Et CHECK-vilkår i en kolonne- eller tabelldefinisjon.
+
+    `kolonne` er satt når vilkåret står PÅ en kolonne. Det avgjør navnet
+    PostgreSQL gir et vilkår ingen har navngitt, se `_tildelt_navn()`.
+    """
+    if isinstance(node, pglast.ast.ColumnDef):
+        for c in node.constraints or ():
+            _lesvilkar(c, tabell, ut, betinget, node.colname)
+        return
+    if isinstance(node, pglast.ast.Constraint) \
+            and node.contype == pglast.enums.ConstrType.CONSTR_CHECK:
+        ut.append((_LEGG_PA, tabell, node.conname, node.raw_expr, betinget,
+                   kolonne))
+
+
+def _kroppen(stmt) -> tuple[str, str]:
+    """(teksten i kroppen, språket den er skrevet i).
+
+    Kroppen står som en STRENGKONSTANT i treet, men den er kode og ikke en
+    verdi. Språket avgjør hvordan den skal leses videre: `DO` er PL/pgSQL med
+    mindre noe annet står, og en funksjon sier det selv.
+    """
+    kropp, sprak = "", "plpgsql"
+    for arg in (stmt.args if isinstance(stmt, pglast.ast.DoStmt)
+                else stmt.options) or ():
+        if arg.defname == "as":
+            kropp = arg.arg.sval if isinstance(arg.arg, pglast.ast.String) \
+                else " ".join(s.sval for s in arg.arg
+                              if isinstance(s, pglast.ast.String))
+        elif arg.defname == "language" and isinstance(arg.arg,
+                                                      pglast.ast.String):
+            sprak = arg.arg.sval
+    return kropp, sprak.lower()
+
+
+def _leskropp(setning: str, ut: list, betinget: bool) -> None:
+    """Hendelsene i en PL/pgSQL-kropp, med grener merket som betinget.
+
+    En `DO $$ … $$` KJØRER kroppen sin i det migrasjonen går, og repoets
+    konvensjon er nettopp å pakke betinget DDL slik — 035 §6 legger
+    `varsel_art_chk` på `public.varsel` inne i en `DO`-blokk. Kroppen er
+    PL/pgSQL, ikke SQL, og leses derfor av `parse_plpgsql`: grammatikken skiller
+    selv en gren fra en setning som alltid kjører, og både `IF … THEN`,
+    `ELSIF`, `ELSE`, løkker og unntakshåndtering faller ut som det de er.
+
+    Det porten trenger å vite, er om setningen er KJENT kjørt. En betingelse er
+    en spørring som først avgjøres når migrasjonen kjører, så svaret er ukjent —
+    og da velger `_registerets_enums()` den tolkningen som aldri utvider.
+
+    DYNAMISK DDL — `EXECUTE format(…)` — er ikke lesbar for noen tekstlesning,
+    og gis fra seg med vilje. `_registerenum()` sier fra hvis kolonnen katalogen
+    måles mot ender opp uten vilkår.
+    """
+    for spørring, i_gren in _plpgsql_setninger(
+            _plpgsql(setning), betinget):
+        for indre, indretekst in _setningene(spørring):
+            _lesstatement(indre, indretekst, ut, i_gren)
+
+
+def _plpgsql(setning: str) -> list:
+    """PL/pgSQL-treet for `setning` — en hel `DO` eller `CREATE FUNCTION`.
+
+    `pglast.parse_plpgsql()` er `json.loads()` på det libpg_query skriver, og
+    for en TRIGGERFUNKSJON skriver den ugyldig JSON: hver ubrukt plass i
+    `datums` kommer ut som `{}}` med en klammeparentes for mye. 76 av repoets
+    296 PL/pgSQL-setninger treffer det.
+
+    Reparasjonen er smal og kan sies helt ut: `[{}}` og `,{}}` finnes ikke i
+    gyldig JSON. Etter `[` eller `,` står et ELEMENT, så `{}` der er et tomt
+    objekt — og da må neste tegn være `,` eller `]`, aldri `}`. De to
+    sekvensene kan derfor bare være denne defekten, og ingenting annet.
+
+    Feltet vi retter i, `datums`, er navnene på funksjonens variabler; porten
+    leser aldri der. Alternativet — å hoppe over setninger som ikke lot seg
+    lese — er nøyaktig den stille lesningen denne runden fjerner: 120 av
+    hvitlistens identifikatorer, `alltid_stopp` blant dem, står i en
+    funksjonskropp og ville forsvunnet uten et ord.
+    """
+    rå = pglast.parser.parse_plpgsql_json(setning)
+    try:
+        return json.loads(rå)
+    except json.JSONDecodeError:
+        return json.loads(rå.replace("[{}}", "[{}").replace(",{}}", ",{}"))
+
+
+# Setningstypene og feltene der kroppen KJØRER. Alt annet er en gren.
+#
+# Lista er snudd med vilje: en ukjent konstruksjon skal regnes som betinget,
+# ikke som kjørt. Tar porten feil den veien, blir svaret SMALERE enn databasen
+# — en verdi avvises som databasen godtar, og det stopper CI og blir rettet.
+# Motsatt vei ville et slipp inne i en konstruksjon porten ikke kjente blitt
+# regnet som utført, vilkåret forsvunnet ut av snittet, og katalogporten
+# sluppet inn en klasse PostgreSQL avviser — i stillhet.
+_KJORER = {
+    "PLpgSQL_function": ("action",),
+    "PLpgSQL_stmt_block": ("body",),
+}
+
+
+def _plpgsql_setninger(node, betinget: bool):
+    """(SQL-tekst, betinget) for hver setning i PL/pgSQL-treet.
+
+    En setning er BETINGET når den står bak en gren: `IF … THEN`, `ELSIF`,
+    `ELSE`, en løkke, en unntakshåndterer. Grammatikken skiller dem selv, så
+    porten trenger ingen ordliste over hvordan de skrives — bare å vite hvilke
+    felt som ALLTID kjører, se `_KJORER`.
+    """
+    if isinstance(node, list):
+        for x in node:
+            yield from _plpgsql_setninger(x, betinget)
+        return
+    if not isinstance(node, dict):
+        return
+    for navn, innhold in node.items():
+        if navn == "PLpgSQL_stmt_execsql":
+            spørring = (innhold.get("sqlstmt") or {}).get("PLpgSQL_expr", {})
+            if spørring.get("query"):
+                yield spørring["query"], betinget
+            continue
+        if not isinstance(innhold, dict):
+            yield from _plpgsql_setninger(innhold, betinget)
+            continue
+        kjorer = _KJORER.get(navn, ())
+        for felt, verdi in innhold.items():
+            yield from _plpgsql_setninger(verdi, betinget or felt not in kjorer)
 
 
 def _registerets_enums(
@@ -1371,15 +1036,14 @@ def _registerets_enums(
 ) -> tuple[dict[tuple[str, str], set[str]], set[str]]:
     """(gjeldende verdier per (tabell, kolonne), verdier bundet noen gang).
 
-    Migrasjonene leses i nummerrekkefølge, og hvert `CHECK` og `DROP
+    Migrasjonene leses i nummerrekkefølge, og hvert `CHECK` og hvert `DROP
     CONSTRAINT` er en HENDELSE som endrer hvilke vilkår som står igjen. Et
     vilkår kan både UTVIDE (036 la `ekstern_lesing` til `sideeffektklasse`) og
-    stramme inn, og det kan FJERNES (Codex P2 på #118, ellevte runde): et slipp
-    uten et nytt vilkår etter seg lot verdiene fra forrige migrasjon bli stående
-    som gjeldende, og katalogporten ville avvist verdier databasen ikke lenger
-    begrenser. Vilkår og slipp leses derfor i STILLINGSREKKEFØLGE i hver fil —
-    036 slipper og legger på igjen i samme setningspar, og rekkefølgen er det
-    eneste som skiller dem.
+    stramme inn, og det kan FJERNES: et slipp uten et nytt vilkår etter seg lot
+    verdiene fra forrige migrasjon bli stående som gjeldende, og katalogporten
+    ville avvist verdier databasen ikke lenger begrenser. Vilkår og slipp leses
+    derfor i STILLINGSREKKEFØLGE i hver fil — 036 slipper og legger på igjen i
+    samme setningspar, og rekkefølgen er det eneste som skiller dem.
 
     Hvilket vilkår et slipp treffer, avgjøres av NAVNET: et navngitt vilkår
     huskes som det heter, og et vilkår skrevet rett på kolonnen får navnet
@@ -1387,122 +1051,80 @@ def _registerets_enums(
     `_check2` … hvis navnet er opptatt. Det er den formen 036 slipper, og den
     formen 014 la inn uten å navngi.
 
-    Og navnet er IDENTITETEN til vilkåret, ikke (tabell, kolonne) (Codex P2 på
-    #118, trettende runde). Tilstanden ble ført per kolonne, så et nytt vilkår
-    på samme kolonne ERSTATTET det forrige. Det er ikke det databasen gjør:
-    legger en migrasjon til en CHECK uten å slippe den gamle, håndhever
-    PostgreSQL BEGGE, og en verdi må stå i begge for å slippe gjennom. Med
-    erstatning kunne en modul bære en `rev`-verdi det nyeste vilkåret godtar og
-    det eldste avviser — altså nøyaktig den umulige modulen porten finnes for å
-    fange. Gjeldende verdier for en kolonne er derfor SNITTET av vilkårene som
-    står igjen.
+    Og navnet er IDENTITETEN til vilkåret, ikke (tabell, kolonne). Tilstanden
+    ble ført per kolonne, så et nytt vilkår på samme kolonne ERSTATTET det
+    forrige. Det er ikke det databasen gjør: legger en migrasjon til en CHECK
+    uten å slippe den gamle, håndhever PostgreSQL BEGGE, og en verdi må stå i
+    begge for å slippe gjennom. Med erstatning kunne en modul bære en
+    `rev`-verdi det nyeste vilkåret godtar og det eldste avviser — altså den
+    umulige modulen porten finnes for å fange. Gjeldende verdier for en kolonne
+    er derfor SNITTET av vilkårene som står igjen.
 
-    En hendelse i en `DO`-kropp kan stå bak en BETINGELSE (Codex P2 på #118,
-    femtende runde). Kroppen ble lest som om alt i den kjørte, og et `IF FALSE
-    THEN` rundt et slipp og en erstatning ga porten erstatningens verdier mens
-    PostgreSQL beholder originalen — altså et snitt som er VIDERE enn
-    databasen, og katalogporten ville sluppet inn en klasse registeret avviser.
+    En hendelse i en `DO`-kropp kan stå bak en BETINGELSE. Betingelsen er en
+    spørring som først avgjøres når migrasjonen kjører, så porten kan ikke lese
+    svaret. Den kan velge den tolkningen som aldri utvider: et betinget SLIPP
+    regnes som ikke utført, så vilkåret blir stående, mens et betinget VILKÅR
+    regnes som lagt på. Begge veier snevrer de inn. Tar porten feil, avviser den
+    en verdi databasen godtar — det er en feil som stopper CI og blir rettet, i
+    motsetning til den motsatte, som slipper en umulig modul gjennom i stillhet.
 
-    Betingelsen er en spørring som først avgjøres når migrasjonen kjører, så
-    porten kan ikke lese svaret. Den kan velge den tolkningen som aldri
-    utvider: et betinget SLIPP regnes som ikke utført, så vilkåret blir
-    stående, mens et betinget VILKÅR regnes som lagt på. Begge veier snevrer
-    de inn. Tar porten feil, avviser den en verdi databasen godtar — det er en
-    feil som stopper CI og blir rettet, i motsetning til den motsatte, som
-    slipper en umulig modul gjennom i stillhet.
+    De to reglene møtes når grenen slipper og legger på igjen under SAMME navn.
+    Slippet gis fra seg, så det gamle vilkåret står — men tillegget ville skrevet
+    seg på den samme nøkkelen og erstattet det likevel. Kjørte grenen, gjelder
+    erstatningen; kjørte den ikke, gjelder originalen — porten vet ikke hvilken,
+    så BEGGE blir stående, og snittet er da det eneste svaret som ikke utvider.
+    Erstatningen legges derfor ved siden av, under en nøkkel ingen `DROP
+    CONSTRAINT` kan skrive.
 
-    De to reglene møtes når grenen slipper og legger på igjen under SAMME navn
-    (Codex P2 på #118, sekstende runde). Slippet ble gitt fra seg, så det gamle
-    vilkåret sto — men tillegget skrev seg på den samme nøkkelen og ERSTATTET
-    det likevel, og da falt den ene halvdelen av det konservative valget bort.
-    Kjørte grenen, gjelder erstatningen; kjørte den ikke, gjelder originalen —
-    porten vet ikke hvilken, så BEGGE må bli stående, og snittet er da det
-    eneste svaret som ikke utvider. Erstatningen legges derfor ved siden av,
-    under en nøkkel ingen `DROP CONSTRAINT` kan skrive.
-
-    `noen_gang` er unionen av alt registeret har bundet, og er noe annet: den
-    er historikken en pensjonert verdi kjennes igjen på.
+    `noen_gang` er unionen av alt registeret har bundet, og er noe annet: den er
+    historikken en pensjonert verdi kjennes igjen på.
     """
-    # {(tabell, vilkårsnavn): (kolonne, verdier)} — vilkårene som står igjen.
-    vilkar: dict[tuple[str, str], tuple[str, set[str]]] = {}
+    # {(tabell, vilkårsnavn): {kolonne: verdier}} — vilkårene som står igjen.
+    vilkar: dict[tuple[str, str], dict[str, set[str]]] = {}
     noen_gang: set[str] = set()
     for sql in sorted((mappe or MIGRASJONER).glob("*.sql")):
-        tekst, data, betinget = _kjort_sql(sql.read_text(encoding="utf-8"))
-        tabeller = [(m.start(), _tabellnavn(m.group(1)))
-                    for m in _TABELL_RE.finditer(tekst)
-                    if not _i_data(data, m.start())]
-        hendelser = sorted(
-            [(v[0], True, v[1:]) for v in _vilkarene(tekst)
-             if not _i_data(data, v[0])]
-            + [(m.start(), False, (m.group(1),))
-               for m in _DROPP_RE.finditer(tekst)
-               if not _i_data(data, m.start())],
-            key=lambda h: h[0])
-        for start, er_vilkar, felt in hendelser:
-            tabell = ""
-            for pos, navn in tabeller:
-                if pos > start:
-                    break
-                tabell = navn
-            if not er_vilkar:
-                if _i_data(betinget, start):
+        for hendelse in _hendelsene(sql.read_text(encoding="utf-8")):
+            if hendelse[0] is _SLIPP:
+                _, tabell, navn, _, betinget = hendelse
+                if betinget:
                     # Et slipp bak en betingelse er ikke kjent kjørt, og et
                     # vilkår som blir stående kan bare gjøre snittet SMALERE.
                     continue
-                vilkar.pop((tabell, _vilkarsnavn(felt[0])), None)
+                vilkar.pop((tabell, navn), None)
                 continue
-            rått_navn, rå_kolonne, verdier = felt
-            if not verdier:
+            _, tabell, navn, uttrykk, betinget, kolonne = hendelse
+            bindinger = _bindinger(uttrykk)
+            if not bindinger:
                 continue
-            kolonne = _kolonnenavn(rå_kolonne)
-            navn = _vilkarsnavn(rått_navn) if rått_navn \
-                else _tildelt_navn(vilkar, tabell, kolonne)
-            if _i_data(betinget, start) and (tabell, navn) in vilkar:
+            if navn is None:
+                navn = _tildelt_navn(vilkar, tabell, kolonne)
+            if betinget and (tabell, navn) in vilkar:
                 navn = _sidestilt_navn(vilkar, tabell, navn)
-            vilkar[(tabell, navn)] = (kolonne, verdier)
-            noen_gang |= verdier
+            vilkar[(tabell, navn)] = bindinger
+            noen_gang |= set().union(*bindinger.values())
     gjeldende: dict[tuple[str, str], set[str]] = {}
-    for (tabell, _), (kolonne, verdier) in vilkar.items():
-        nokkel = (tabell, kolonne)
-        if nokkel not in gjeldende:
-            gjeldende[nokkel] = set(verdier)
-            continue
-        # Snittet fjerner det ett vilkår ikke godtar — men det ULESELIGE er
-        # ikke en verdi, det er en manglende opplysning, og et annet vilkår
-        # kan ikke opplyse den. Snittes den bort, blir et vilkår porten bare
-        # kjenner et OVERSETT av, meldt som lest, og da er svaret videre enn
-        # databasen. Uvissheten blir derfor stående til `_registerenum()`.
-        uvisst = {ULESELIG_SQL} & (gjeldende[nokkel] | verdier)
-        gjeldende[nokkel] = (gjeldende[nokkel] & verdier) | uvisst
+    for (tabell, _), bindinger in vilkar.items():
+        for kolonne, verdier in bindinger.items():
+            nokkel = (tabell, kolonne)
+            gjeldende[nokkel] = _snitt(gjeldende[nokkel], verdier) \
+                if nokkel in gjeldende else set(verdier)
     return gjeldende, noen_gang - {ULESELIG_SQL}
 
 
-def _vilkarsnavn(rå: str) -> str:
-    """Vilkårsnavnet normalisert, slik `_tabellnavn()` gjør med tabellen."""
-    return rå.lower().replace('"', "")
-
-
-def _kolonnenavn(rå: str) -> str:
-    """Kolonneidentiteten bak navnet slik vilkåret skrev det.
-
-    Samme normalisering som `_tabellnavn()` og `_vilkarsnavn()`: den siterte og
-    den bare formen er samme kolonne, og det er DEN kolonnen `gjeldende` er
-    nøklet på. Uten dette ville et sitert vilkår fått sin egen nøkkel og aldri
-    møtt det usiterte i snittet — samme feil som fjortende runde fant mellom
-    `varsel` og `public.varsel`.
-    """
-    return rå.lower().replace('"', "")
-
-
-def _tildelt_navn(vilkar: dict, tabell: str, kolonne: str) -> str:
+def _tildelt_navn(vilkar: dict, tabell: str, kolonne: str | None) -> str:
     """Navnet PostgreSQL gir et vilkår ingen har navngitt.
 
-    `<tabell>_<kolonne>_check`, og `_check1`, `_check2` … når navnet er opptatt
-    — det er den formen serveren selv bruker. To vilkår uten navn på samme
-    kolonne er derfor to vilkår, ikke ett som overskriver det andre, og begge
-    teller med i snittet.
+    `<tabell>_<kolonne>_check` for et vilkår skrevet PÅ en kolonne, og
+    `<tabell>_check` for et som står for seg i tabelldefinisjonen — det er de
+    formene serveren selv bruker. Er navnet opptatt, teller den opp:
+    `…_check1`, `…_check2`. To vilkår uten navn på samme kolonne er derfor to
+    vilkår, ikke ett som overskriver det andre, og begge teller med i snittet.
+
+    Navnet er ikke pynt: det er dette et senere `DROP CONSTRAINT` treffer. 014
+    legger vilkåret rett på kolonnen uten å navngi det, og 036 slipper det som
+    `modulkontrakt_reversibilitet_check`.
     """
-    stamme = f"{tabell}_{kolonne}_check"
+    stamme = f"{tabell}_{kolonne}_check" if kolonne else f"{tabell}_check"
     navn, nr = stamme, 0
     while (tabell, navn) in vilkar:
         nr += 1
@@ -1519,10 +1141,10 @@ def _sidestilt_navn(vilkar: dict, tabell: str, navn: str) -> str:
     SIDESTILT — begge blir stående, og `gjeldende` snitter dem per kolonne, som
     er den tolkningen som aldri utvider.
 
-    Nøkkelen bærer et NUL-tegn. `_vilkarsnavn()` gir bare fra seg tegnene i en
-    SQL-identifikator, så ingen `DROP CONSTRAINT` kan navngi den sidestilte
-    oppføringen — og det er meningen: et senere slipp skal ikke kunne fjerne
-    den halvdelen av snittet som holder porten smal.
+    Nøkkelen bærer et NUL-tegn, og PostgreSQL har ingen identifikator som gjør
+    det: ingen `DROP CONSTRAINT` kan navngi den sidestilte oppføringen. Det er
+    meningen — et senere slipp skal ikke kunne fjerne den halvdelen av snittet
+    som holder porten smal.
     """
     nr = 1
     while (tabell, f"{navn}\0{nr}") in vilkar:
@@ -1542,26 +1164,129 @@ def _registerenum(kolonne: str) -> set[str]:
     `rev: "snapshot"` gyldig i katalogen mens `modulkontrakt` fortsatt sier
     nei — altså nøyaktig den umulige modulen porten finnes for å fange.
 
-    `_registerets_enums()` har alt tabellidentiteten i nøkkelen sin; her brukes
-    den. Feiler oppslaget, er det fordi kolonnen ikke lenger CHECK-es på
+    Feiler oppslaget, er det fordi kolonnen ikke lenger CHECK-es på
     `modulkontrakt` — og da er det porten som skal rettes, ikke katalogen.
 
-    En verdi porten ikke kunne lese, se `ULESELIG_SQL`, sier fra HER og ikke
-    ved enhver migrasjon som skriver en slik verdi et annet sted. Det er
-    kolonnen katalogen faktisk måles mot som må være lest riktig.
+    En kolonne porten ikke kunne lese vilkåret for, se `ULESELIG_SQL`, sier fra
+    HER og ikke ved enhver migrasjon som skriver noe uleselig et annet sted.
+    Det er kolonnen katalogen faktisk måles mot som må være lest riktig.
     """
     gjeldende, _ = _registerets_enums()
     ut = gjeldende.get((MODULKONTRAKT, kolonne), set())
     assert ut, (f"fant ikke CHECK-vilkåret for {MODULKONTRAKT}.{kolonne} i "
                 f"migrasjonene")
     assert ULESELIG_SQL not in ut, (
-        f"CHECK-vilkåret for {MODULKONTRAKT}.{kolonne} har noe porten ikke kan "
-        f"lese: enten en verdi skrevet som escapestreng (`E'…'`) eller "
-        f"dollarsitert, eller et sammensatt predikat der `IN`-lista bare er et "
-        f"oversett. Skriv vilkåret som `{kolonne} IN ('…', '…')` med enkle "
-        f"apostrofer, eller lær porten formen; et gjettet innhold ville vært "
-        f"verre enn ingen")
+        f"CHECK-vilkåret for {MODULKONTRAKT}.{kolonne} er ikke en verdiliste "
+        f"porten kan regne på: et sammensatt eller negativt predikat sier hva "
+        f"kolonnen IKKE kan være, og hvor mye smalere det gjør vilkåret står i "
+        f"den delen ingen liste bærer. Skriv vilkåret som "
+        f"`{kolonne} IN ('…', '…')`; et gjettet innhold ville vært verre enn "
+        f"ingen.")
     return ut
+
+
+def _skrevne_verdier(sql: str) -> list[str]:
+    """Hver strengverdi migrasjonen SKRIVER — kropper med, kommentarer uten.
+
+    Grunnlaget for hvitlisten i `_kjente_identifikatorer()`, og skillet det
+    hviler på er: hva HAR registeret skrevet ned? Et navn nevnt i en merknad er
+    ikke skrevet — en kommentar finnes ikke i et syntakstre, så den forsvinner
+    av seg selv nå. En melding er ÉN tekst, ikke setninger med navn i, uansett
+    om den er skrevet med doblede apostrofer, dollarsitert eller skjøtt over
+    flere linjer; grammatikken løser opp alle tre til den ene verdien.
+
+    En KROPP leses derimot videre inn i: `CREATE FUNCTION … AS $$ … $$`
+    definerer den uten å kjøre den, men verdiene den bærer er skrevet av
+    registeret. Det samme gjelder `DO $$ … $$`.
+    """
+    ut: list[str] = []
+    for stmt, tekst in _setningene(sql):
+        _samleverdier(stmt, ut, tekst)
+    return ut
+
+
+def _samleverdier(node, ut: list[str], tekst: str = None) -> None:
+    """Legg strengkonstantene i `node` i `ut`, kropper regnet med."""
+    if isinstance(node, (list, tuple)):
+        for x in node:
+            _samleverdier(x, ut)
+        return
+    if isinstance(node, (pglast.ast.DoStmt, pglast.ast.CreateFunctionStmt)):
+        _samleikropp(node, ut, tekst)
+        return
+    if isinstance(node, pglast.ast.A_Const) \
+            and isinstance(node.val, pglast.ast.String):
+        ut.append(node.val.sval)
+        return
+    if isinstance(node, pglast.ast.Node):
+        for navn in node:
+            _samleverdier(getattr(node, navn), ut)
+
+
+def _samleikropp(stmt, ut: list[str], tekst: str) -> None:
+    """Verdiene i en `DO`- eller funksjonskropp.
+
+    Kroppen står som en strengkonstant i treet, men den er KODE og ikke en
+    verdi: leses den som en verdi, blir hele kroppen ett ord ingen kjenner
+    igjen, og verdiene i den blir usynlige. Den leses derfor som det den er —
+    PL/pgSQL med `parse_plpgsql`, ren SQL med `parse_sql`.
+    """
+    kropp, sprak = _kroppen(stmt)
+    if not kropp:
+        return
+    if sprak != "plpgsql":
+        for rå in pglast.parse_sql(kropp):
+            _samleverdier(rå.stmt, ut)
+        return
+    assert tekst, ("en PL/pgSQL-kropp uten setningen sin — `parse_plpgsql` "
+                   "trenger hele erklæringen, se `_setningene()`")
+    _samleiplpgsql(_plpgsql(tekst), ut)
+
+
+# Feltene i PL/pgSQL-treet som bærer TEKST registeret skriver, men som ikke er
+# SQL: meldingen i en `RAISE` er én tekst, ikke setninger med verdier i.
+_TEKSTFELT = ("message", "condname", "value")
+# PL/pgSQL merker selv hva en innebygd spørring ER, og merkelappen er
+# PostgreSQLs egen `RawParseMode`. Bare den første er en hel SETNING; resten må
+# gjøres til gyldig SQL før de kan leses, for de er skrevet slik PL/pgSQL leser
+# dem: betingelsen i et `IF` står som `FALSE`, ikke `SELECT FALSE`, og en
+# tildeling som `v_tenant := 1`, ikke som en setning.
+#
+# Modusen leses av treet, ikke gjettet av formen. En modus porten ikke kjenner
+# er en `KeyError` med tallet i — høyt, ikke stille.
+_SETNINGSMODUS = 0
+_TILDELINGSMODI = (3, 4, 5)
+
+
+def _somsql(uttrykk: dict) -> str:
+    """En innebygd PL/pgSQL-spørring som en hel SQL-setning. Se `_SETNINGSMODUS`."""
+    spørring, modus = uttrykk.get("query", ""), uttrykk.get("parseMode", 0)
+    if modus == _SETNINGSMODUS:
+        return spørring
+    if modus in _TILDELINGSMODI:
+        # `mål := uttrykk`. Målet er en variabel med eventuelle ledd, og
+        # verdien er alt etter tildelingstegnet.
+        return "SELECT " + spørring.split(":=", 1)[1]
+    return "SELECT " + spørring
+
+
+def _samleiplpgsql(node, ut: list[str]) -> None:
+    """Verdiene i et PL/pgSQL-tre. Spørringene i det leses som SQL."""
+    if isinstance(node, list):
+        for x in node:
+            _samleiplpgsql(x, ut)
+        return
+    if not isinstance(node, dict):
+        return
+    for navn, innhold in node.items():
+        if navn == "PLpgSQL_expr" and isinstance(innhold, dict):
+            for rå in pglast.parse_sql(_somsql(innhold)):
+                _samleverdier(rå.stmt, ut)
+            continue
+        if navn in _TEKSTFELT and isinstance(innhold, str):
+            ut.append(innhold)
+            continue
+        _samleiplpgsql(innhold, ut)
 
 
 def _migrasjoner(tmp_path: Path, *filer: str) -> Path:
@@ -1706,14 +1431,18 @@ def test_sitert_kolonne_i_et_vilkaar_er_samme_kolonne(tmp_path):
     ("CHECK ((reversibilitet IN ('direkte')))", {"direkte"}),
     ("CHECK ( ( ( reversibilitet IN ('direkte') ) ) )", {"direkte"}),
     ('CHECK (("reversibilitet" IN (\'direkte\')))', {"direkte"}),
-    # Men et par som lukkes MIDTVEIS pakker ikke inn hele uttrykket. Å skrelle
-    # det bort ville lest en disjunksjon som sitt første ledd, altså som et
-    # strengere vilkår enn det er. Uttrykket er sammensatt, og da er svaret
-    # `ULESELIG_SQL`: en disjunksjon UTVIDER — `X OR Y` godtar unionen — så
-    # både det første leddet og ingenting ville vært feil svar.
+    # En DISJUNKSJON er ikke lista si. `X OR Y` godtar unionen, så hverken det
+    # første leddet eller ingenting er riktig svar: vilkåret sier ingenting
+    # porten kan regne på, og den øvre grensen blir stående fra vilkåret 014
+    # la inn — med uvissheten på.
+    #
+    # Skanneren svarte `{'direkte', ULESELIG_SQL}` her: den leste det FØRSTE
+    # leddet som om det var vilkåret, og mistet `kompenserende` ut av den øvre
+    # grensen. Det er et snevrere svar enn databasen gir, altså feil vei for en
+    # port som skal si hva registeret godtar.
     ("CHECK ((reversibilitet IN ('direkte'))\n"
      "    OR (reversibilitet IN ('kompenserende')))",
-     {"direkte", ULESELIG_SQL}),
+     {"direkte", "kompenserende", ULESELIG_SQL}),
     # En parentes inne i en VERDI lukker ingen liste: `([^)]*)` stoppet ved
     # den, og resten av lista falt bort sammen med verdien den sto i.
     ("CHECK (reversibilitet IN ('a)b', 'kompenserende'))", {"kompenserende"}),
@@ -1728,10 +1457,10 @@ def test_overflodige_parenteser_er_samme_vilkaar(tmp_path, vilkar, gjelder):
     blir bare det videre gjeldende, og porten slipper inn en klasse registeret
     avviser.
 
-    Grensen går ved HELE uttrykket: en disjunksjon begynner også med en
-    parentes, men den lukkes midtveis, og der er ingenting overflødig. Det som
-    blir stående etter skrellingen, må så FYLLE uttrykket for å være vilkåret;
-    ellers er lista bare en del av det, og porten sier fra.
+    Parenteser er ikke lenger noe porten teller: grammatikken har alt gjort
+    `((x))` og `x` til samme uttrykk, og en parentes inne i en verdi er en del
+    av verdien. Prøvene står likevel — de måler at lesningen faktisk er den, og
+    ikke noe som bare oppfører seg likt på dagens filer.
     """
     mappe = _migrasjoner(
         tmp_path, _LAGER_VILKAR,
@@ -2165,12 +1894,91 @@ def test_et_sammensatt_vilkaar_leses_ikke_som_bare_lista(tmp_path, vilkar):
     assert ULESELIG_SQL in gjeldende[(MODULKONTRAKT, "reversibilitet")]
 
 
+def test_hvert_ledd_i_et_sammensatt_vilkaar_leses(tmp_path):
+    """En OG-kjede binder ALLE leddene sine, ikke det første porten fant.
+
+    Codex P2 på #118, tjuende runde: lesningen stoppet ved det første
+    `IN`-treffet i uttrykket. Et vilkår som binder to kolonner meldte da bare
+    den ene, og den andre — her `reversibilitet` — ble stående på det videre
+    vilkåret fra forrige migrasjon, enda PostgreSQL nå avviser resten av
+    verdiene. Katalogporten kunne dermed godta en klasse databasen ikke tar.
+
+    `A AND B` er håndhevet nøyaktig når både A og B er det, så kjeden leses
+    ledd for ledd. Da er ikke rekkefølgen et spørsmål lenger.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE modulkontrakt (\n"
+        "    flagg TEXT, reversibilitet TEXT,\n"
+        "    CONSTRAINT vidt CHECK (reversibilitet IN\n"
+        "        ('direkte', 'kompenserende', 'irreversibel')));\n",
+        "ALTER TABLE modulkontrakt ADD CONSTRAINT smalt\n"
+        "    CHECK (flagg IN ('ja') AND reversibilitet IN ('direkte'));\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende[(MODULKONTRAKT, "reversibilitet")] == {"direkte"}, (
+        "leddet etter det første ble ikke lest — kolonnen sto igjen på det "
+        "videre vilkåret")
+    assert gjeldende[(MODULKONTRAKT, "flagg")] == {"ja"}
+
+
+@pytest.mark.parametrize("vilkar,gjelder", [
+    # `= ANY (ARRAY[…])` ER `IN` — grammatikken skiller dem, semantikken ikke.
+    ("CHECK (reversibilitet = ANY (ARRAY['direkte', 'kompenserende']))",
+     {"direkte", "kompenserende"}),
+    # Og et ledd som ikke er én konstant gjør lista uleselig, ikke tre verdier.
+    ("CHECK (reversibilitet IN ('direkte' || '_v2', 'kompenserende'))",
+     {"direkte", "kompenserende", ULESELIG_SQL}),
+])
+def test_verdilista_leses_naar_den_er_verdier(tmp_path, vilkar, gjelder):
+    """En liste er lesbar når hvert ledd er én strengkonstant, ellers ikke.
+
+    Begge formene er Codex P2 på #118, tjuende runde, og de går hver sin vei:
+    `= ANY (ARRAY[…])` ble forkastet i stillhet enda PostgreSQL håndhever den,
+    mens `'direkte' || '_v2'` ble talt som TO verdier — hvorav den ene,
+    `direkte`, er en klasse vilkåret nettopp ikke tillater.
+
+    Å regne ut uttrykket ville vært å skrive PostgreSQLs operatorer av i
+    Python; her stopper porten i stedet, og sier hvorfor.
+    """
+    mappe = _migrasjoner(
+        tmp_path, _LAGER_VILKAR,
+        f"ALTER TABLE modulkontrakt ADD CONSTRAINT smalere {vilkar};\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende[(MODULKONTRAKT, "reversibilitet")] == gjelder
+
+
+def test_en_dollarkropp_bak_en_kommentar_er_fortsatt_en_kropp(tmp_path):
+    """`AS /* … */ $$ … $$` er en funksjonskropp, ikke en verdi.
+
+    Codex P2 på #118, tjuende runde: skillet mellom kropp og verdi ble avgjort
+    av hva som sto rett FORAN dollartaggen, målt i den delvis maskerte
+    teksten. En helt alminnelig kommentar mellom `AS` og kroppen skjøv `AS` ut
+    av synsfeltet, spennet ble lest som én verdi, og navnene i kommentarene
+    inne i kroppen kom inn i hvitlisten som om registeret hadde skrevet dem.
+
+    Grammatikken har ikke det spørsmålet: en kommentar finnes ikke i treet, og
+    kroppen er kroppen.
+    """
+    sql = ("CREATE FUNCTION f() RETURNS text LANGUAGE sql AS /* merknad */ $$\n"
+           "    -- het 'oppfunnet_klasse' før\n"
+           "    SELECT 'ekte_verdi';\n"
+           "$$;\n")
+    verdier = _skrevne_verdier(sql)
+    assert "ekte_verdi" in verdier, "kroppen ble lest som én verdi"
+    assert "oppfunnet_klasse" not in verdier, (
+        "en kommentar inne i kroppen ble lest som noe registeret skriver")
+
+
 def test_uvissheten_snittes_ikke_bort_av_et_annet_vilkaar(tmp_path):
     """Et lesbart vilkår ved siden av kan ikke opplyse det uleselige.
 
     Snittet fjerner verdier vilkårene er uenige om, og `ULESELIG_SQL` ville
     forsvunnet i den operasjonen — da sto et vilkår porten bare kjenner et
     oversett av, igjen som lest, og svaret ble videre enn databasen.
+
+    Her møtes de to reglene: `A AND B` snittes ledd for ledd, så lista bidrar
+    med sine to verdier, mens `<>`-leddet gjør kolonnen uviss. Uvissheten blir
+    stående gjennom snittet, både innenfor vilkåret og mellom vilkårene.
     """
     mappe = _migrasjoner(
         tmp_path, _LAGER_VILKAR,
@@ -2202,23 +2010,61 @@ def test_en_verdi_brutt_over_to_linjer_er_en_verdi(tmp_path):
         "direkte", "kompenserende"}
 
 
-def test_en_uleselig_verdi_stopper_enumoppslaget(tmp_path):
-    """En verdi porten ikke kan lese skal si fra, ikke gjettes på.
+@pytest.mark.parametrize("vilkar", [
+    # Et ledd som er et UTTRYKK og ikke én konstant (Codex P2 på #118, tjuende
+    # runde). PostgreSQL godtar `direkte_v2` og `irreversibel`, ikke tre
+    # verdier — porten leste tre, og en av dem var oppfunnet.
+    "CHECK (reversibilitet IN ('direkte' || '_v2', 'irreversibel'))",
+    # En CHECK som narrer UTEN `IN` (samme runde). Den ble forkastet i
+    # stillhet, så det forrige, videre vilkåret sto igjen som gjeldende.
+    "CHECK (reversibilitet = 'direkte')",
+    "CHECK (reversibilitet <> 'direkte')",
+    "CHECK (length(reversibilitet) < 20)",
+    # Og et sammensatt predikat der lista bare er et oversett.
+    "CHECK (reversibilitet IN ('direkte') AND reversibilitet <> 'direkte')",
+])
+def test_et_vilkaar_porten_ikke_kan_regne_paa_stopper_enumoppslaget(
+        tmp_path, vilkar):
+    """Et vilkår porten ikke kan regne på skal si fra, ikke gjettes på.
 
-    `E'…'` og dollarsitering krever PostgreSQLs escaperegler for å tolkes, og
-    den lista er åpen i feil ende. Verdien merkes derfor som uleselig og følger
-    med til `_registerenum()`, som er stedet der det faktisk betyr noe.
+    Hver av formene her ble lest FEIL av skanneren, og alle på samme måte: den
+    fant en `IN`-liste (eller ingen), meldte den som hele sannheten, og gikk
+    videre. Da kan katalogporten godta en kontraktklasse PostgreSQL avviser —
+    nøyaktig det den finnes for å fange.
+
+    Svaret er hverken et gjett eller taushet: kolonnen merkes uviss, og
+    `_registerenum()` sier fra på den kolonnen katalogen faktisk måles mot.
+    Det gjør at en form ingen har tenkt på gir en RØD port, ikke en stille
+    videre en — og det er den egenskapen som gjør at lista over former ikke
+    trenger å være komplett.
     """
     mappe = _migrasjoner(
-        tmp_path,
-        "CREATE TABLE modulkontrakt (\n"
-        "    reversibilitet TEXT NOT NULL\n"
-        "        CHECK (reversibilitet IN ('direkte', E'irre\\\\versibel')));\n")
+        tmp_path, _LAGER_VILKAR,
+        f"ALTER TABLE modulkontrakt ADD CONSTRAINT smalere {vilkar};\n")
     gjeldende, noen_gang = _registerets_enums(mappe)
     assert ULESELIG_SQL in gjeldende[(MODULKONTRAKT, "reversibilitet")]
     # Historikken bærer den ikke videre — `pensjonert` skal ikke bygges på et
     # innhold porten ikke leste.
     assert ULESELIG_SQL not in noen_gang
+
+
+def test_en_escapet_verdi_er_verdien_escapen_gir(tmp_path):
+    """`E'…'` og dollarsitering er verdier, ikke noe porten må gjette på.
+
+    Begge ga `ULESELIG_SQL` før, og med god grunn: å tolke dem betydde å skrive
+    PostgreSQLs escaperegler av i Python — `\\n`, `\\xHH`, `\\uXXXX`, oktalt —
+    og hver glemt form er et nytt smutthull. Nå er det den som EIER reglene som
+    løser dem opp, så verdien er verdien, og porten trenger ingen liste.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE modulkontrakt (\n"
+        "    reversibilitet TEXT NOT NULL\n"
+        "        CHECK (reversibilitet IN (E'direk\\x74e', $$irreversibel$$,\n"
+        "                                  'det''s')));\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende[(MODULKONTRAKT, "reversibilitet")] == {
+        "direkte", "irreversibel", "det's"}
 
 
 def test_kontraktklassene_i_katalogen_finnes_i_modulregisteret():
@@ -2308,33 +2154,25 @@ def _kjente_identifikatorer() -> set[str]:
     ingen registertilstand å falle ut av, og filstammene er gjeldende tilstand
     i seg selv, siden en slettet fil forsvinner fra `git ls-files`.
 
-    Og verdiene leses ut av det migrasjonen SKRIVER, ikke ut av råteksten
-    (Codex P2 på #118, femtende runde). En KOMMENTAR skriver ingenting: en
-    merknad som nevner `'oppfunnet_klasse'` i forbifarten la ordet i lista, og
-    prosaen i sannhetskilden kunne så presentere en klasse ingen tabell har
-    hørt om — porten under sa ingenting, fordi navnet «finnes». Merk at
-    lesningen her er en annen enn i `_registerets_enums()`: en verdi i en
-    funksjonskropp ER skrevet av registeret, selv om `AS $$…$$` bare definerer
-    kroppen uten å kjøre den. Se `_uten_sqlkommentar()`.
+    Og verdiene leses ut av det migrasjonen SKRIVER, ikke ut av råteksten. Tre
+    runder på #118 gikk med på hva «skriver» betyr, og hver av dem lot et navn
+    ingen tabell har hørt om komme inn i lista: en KOMMENTAR som nevnte
+    `oppfunnet_klasse` i forbifarten (femtende runde), en MELDING der navnet
+    sto mellom doblede apostrofer (syttende), og en DOLLARSITERT melding
+    (attende). Alle tre er svar grammatikken gir uten å bli spurt — en
+    kommentar finnes ikke i et syntakstre, og en melding er ÉN verdi uansett
+    hvordan den er sitert. Se `_skrevne_verdier()`.
 
-    Og en VERDI er en hel literal (Codex P2 på #118, syttende runde). Det som
-    ble igjen av råtekstlesningen var mønsteret `'([^']*)'`, og det kan ikke
-    se at SQL escaper ved å doble fnutten: en melding som `'mangler
-    ''oppfunnet_klasse'''` ga navnet inni som om det sto for seg selv — samme
-    utfall som kommentaren, en klasse ingen tabell har hørt om. Verdiene leses
-    nå med `_skrevne_verdier()`.
-
-    Det samme gjelder en DOLLARSITERT tekst (Codex P2 på #118, attende runde):
-    `RAISE EXCEPTION $$mangler 'oppfunnet_klasse'$$` er én melding, ikke et
-    navn. Motsatt vei var hullet at en verdi skrevet dollarsitert ikke ble
-    lest i det hele tatt. Se `_er_kropp()`.
+    En KROPP er derimot noe registeret skriver: verdiene i `AS $$ … $$` teller,
+    selv om setningen bare definerer funksjonen uten å kjøre den. Det er
+    forskjellen fra `_registerets_enums()`, som spør hva som er HÅNDHEVET.
     """
     gjeldende, noen_gang = _registerets_enums()
     pensjonert = noen_gang - set().union(*gjeldende.values(), set())
     ut: set[str] = set()
     for sql in sorted(MIGRASJONER.glob("*.sql")):
-        tekst = _uten_sqlkommentar(sql.read_text(encoding="utf-8"))
-        ut.update(t for t in _skrevne_verdier(tekst) if IDENT_RE.fullmatch(t))
+        ut.update(t for t in _skrevne_verdier(sql.read_text(encoding="utf-8"))
+                  if IDENT_RE.fullmatch(t))
     ut -= pensjonert
     spor = subprocess.run(["git", "ls-files", "-z"], cwd=ROT,
                           capture_output=True, text=True, check=True)
@@ -2344,8 +2182,8 @@ def _kjente_identifikatorer() -> set[str]:
 
 @pytest.mark.parametrize("sql,star_igjen", [
     # En merknad skriver ingenting, og navnet i den finnes ikke av den grunn.
-    ("-- en gang het den 'oppfunnet_klasse'\n", False),
-    ("/* en gang het den 'oppfunnet_klasse' */\n", False),
+    ("-- en gang het den 'oppfunnet_klasse'\nSELECT 1;\n", False),
+    ("/* en gang het den 'oppfunnet_klasse' */\nSELECT 1;\n", False),
     # Men en verdi i en funksjonsKROPP er skrevet av registeret, selv om
     # `AS $$…$$` bare definerer kroppen uten å kjøre den.
     ("CREATE FUNCTION f() RETURNS text LANGUAGE sql AS $$\n"
@@ -2356,23 +2194,38 @@ def _kjente_identifikatorer() -> set[str]:
      "    -- het 'oppfunnet_klasse' før\n"
      "    SELECT 'noe';\n"
      "$$;\n", False),
+    # Det samme i en PL/pgSQL-kropp, der lesningen går en annen vei.
+    ("CREATE FUNCTION f() RETURNS text LANGUAGE plpgsql AS $$\n"
+     "BEGIN RETURN 'oppfunnet_klasse'; END $$;\n", True),
+    ("CREATE FUNCTION f() RETURNS text LANGUAGE plpgsql AS $$\n"
+     "BEGIN -- het 'oppfunnet_klasse' før\n"
+     "  RETURN 'noe'; END $$;\n", False),
+    # En TRIGGERFUNKSJON leses som alle andre. Den er formen libpg_query
+    # skriver ugyldig JSON for, se `_plpgsql()`; uten reparasjonen der ville
+    # verdien forsvunnet i stillhet — og med den 120 andre.
+    ("CREATE FUNCTION f() RETURNS trigger LANGUAGE plpgsql AS $$\n"
+     "BEGIN NEW.a := 'oppfunnet_klasse'; RETURN NEW; END $$;\n", True),
     # Kommentartegn inne i en STRENG er data, ikke starten på en kommentar.
     ("INSERT INTO t (a, b) VALUES ('a--b', 'oppfunnet_klasse');\n", True),
     # En doblet fnutt er en ESCAPE, ikke slutten på én verdi og starten på en
     # ny (Codex P2 på #118, syttende runde): meldingen her er ÉN literal, og
     # navnet i den står ikke for seg selv noe sted.
-    ("    RAISE EXCEPTION 'mangler ''oppfunnet_klasse''';\n", False),
+    ("DO $do$ BEGIN\n"
+     "    RAISE EXCEPTION 'mangler ''oppfunnet_klasse''';\n"
+     "END $do$;\n", False),
     ("SELECT 'det''s ''oppfunnet_klasse'' som mangler';\n", False),
     # Men en verdi som ER navnet, med en escapet nabo, står fortsatt.
     ("INSERT INTO t (a, b) VALUES ('det''s', 'oppfunnet_klasse');\n", True),
-    # En escapestreng gis fra seg: innholdet krever escapereglene for å bli en
-    # verdi, og et gjettet innhold er verre enn ingen når svaret godtar navn.
-    ("SELECT E'oppfunnet_klasse';\n", False),
+    # En ESCAPESTRENG er verdien escapen gir. Den ble gitt fra seg før, fordi å
+    # tolke den betydde å skrive PostgreSQLs escaperegler av i Python; nå løser
+    # den som EIER reglene dem opp, og da er verdien verdien.
+    ("SELECT E'oppfunnet_klasse';\n", True),
+    ("SELECT E'oppfunnet\\x5fklasse';\n", True),
     # Et dollarsitert spenn som ikke er en kropp, er ÉN tekst (Codex P2 på
     # #118, attende runde). Meldingen her nevner navnet, den skriver det ikke.
-    ("    RAISE EXCEPTION $$mangler 'oppfunnet_klasse'$$;\n", False),
-    ("    RAISE EXCEPTION $melding$mangler 'oppfunnet_klasse'$melding$;\n",
-     False),
+    ("DO $do$ BEGIN\n"
+     "    RAISE EXCEPTION $$mangler 'oppfunnet_klasse'$$;\n"
+     "END $do$;\n", False),
     # Og kommentartegn inne i en slik tekst er data: blankes de, blir en annen
     # verdi enn den registeret skriver stående igjen.
     ("INSERT INTO t (a) VALUES ($$oppfunnet_klasse -- ikke en kommentar$$);\n",
@@ -2381,7 +2234,7 @@ def _kjente_identifikatorer() -> set[str]:
     # ikke står en apostrof i den.
     ("INSERT INTO t (a) VALUES ($$oppfunnet_klasse$$);\n", True),
     ("INSERT INTO t (a) VALUES ($tagg$oppfunnet_klasse$tagg$);\n", True),
-    # En `DO`-kropp er en kropp her på samme måte som i `_kjort_sql()`.
+    # En `DO`-kropp er en kropp her på samme måte som i `_hendelsene()`.
     ("DO $$ BEGIN\n"
      "    PERFORM 'oppfunnet_klasse';\n"
      "END $$;\n", True),
@@ -2389,15 +2242,8 @@ def _kjente_identifikatorer() -> set[str]:
     # attende runde), og formen brukes gjennomgående til lange meldinger.
     ("SELECT 'mangler '\n"
      "       'oppfunnet_klasse';\n", False),
-    ("    RAISE EXCEPTION 'mangler '\n"
-     "        -- brutt for lesbarhetens skyld\n"
-     "        'oppfunnet_klasse';\n", False),
-    # Er ETT fragment uleselig, er hele den skjøtte verdien det.
-    ("SELECT 'oppfunnet_klasse'\n"
-     "       E'\\\\n';\n", False),
-    # Uten linjeskift skjøter ikke PostgreSQL — det er en syntaksfeil der — så
-    # porten skal heller ikke gjøre det.
-    ("SELECT 'oppfunnet_klasse' 'og mer';\n", True),
+    # Uten linjeskift skjøter ikke PostgreSQL — det er en syntaksfeil der.
+    ("SELECT 'oppfunnet_klasse' 'og mer';\n", None),
     # Og en verdi som står alene på linja, står fortsatt.
     ("SELECT 'mangler',\n"
      "       'oppfunnet_klasse';\n", True),
@@ -2408,20 +2254,23 @@ def test_en_sqlkommentar_skriver_ingen_identifikator(sql, star_igjen):
     Verdiene ble hentet ut av råteksten (Codex P2 på #118, femtende runde), og
     et maskinformet navn nevnt i en merknad havnet dermed i lista uten å finnes
     noe sted. Prosaen i sannhetskilden kunne så presentere en klasse ingen
-    tabell har hørt om, og porten sa ingenting fordi navnet «finnes».
+    tabell har hørt om, og porten sa ingenting fordi navnet «finnes». Runde
+    sytten og atten fant to former til av samme sak: den doblede apostrofen og
+    den dollarsiterte meldingen.
 
-    Lesningen er en annen enn den `_registerets_enums()` bruker, og det er
-    med vilje: der spør vi hva registeret HÅNDHEVER nå, her hva det SKRIVER.
-    En funksjonskropp er skrevet selv om `AS $$…$$` ikke kjører den.
+    Lesningen er en annen enn den `_registerets_enums()` bruker, og det er med
+    vilje: der spør vi hva registeret HÅNDHEVER nå, her hva det SKRIVER. En
+    funksjonskropp er skrevet selv om `AS $$…$$` ikke kjører den.
 
-    Og en verdi er en HEL literal (Codex P2 på #118, syttende runde). Prøven
-    her målte lesningen med et regex skrevet av ved siden av den funksjonen
-    bruker, så den kunne ikke se at de to sa forskjellige ting: `'mangler
-    ''oppfunnet_klasse'''` er én melding, ikke et navn. Nå måler den den samme
-    lesningen som lista faktisk gjøres med.
+    `star_igjen=None` betyr at fragmentet ikke er gyldig SQL. PostgreSQL skjøter
+    ikke to fragmenter uten linjeskift mellom seg, og da skal porten heller ikke
+    gjøre det — men den skal si fra HØYT, ikke lese noe annet enn serveren.
     """
-    verdier = _skrevne_verdier(_uten_sqlkommentar(sql))
-    assert ("oppfunnet_klasse" in verdier) is star_igjen
+    if star_igjen is None:
+        with pytest.raises(pglast.parser.ParseError):
+            _skrevne_verdier(sql)
+        return
+    assert ("oppfunnet_klasse" in _skrevne_verdier(sql)) is star_igjen
 
 
 _SKRIPTDEL_RE = re.compile(r"<script[^>]*>(.*?)</script>", re.S)
