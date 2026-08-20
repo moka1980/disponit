@@ -480,7 +480,34 @@ BEGIN
     -- (`kvittering_signatur` ER `kvittering->signatur->>verdi`, hentet ut
     -- av verifiseringen selv — spriker de, kommer raden ikke derfra), og
     -- `resultathash` må være satt, siden veien skriver alle tre i samme
-    -- `UPDATE`. Da må en forfalskning konstrueres helt, ikke bare utelates.
+    -- `UPDATE`.
+    --
+    -- …MEN DE TRE FELTENE EIES AV DEN SAMME SKRIVEREN (Codex P1, #117
+    -- runde 15). Kjøretidsrollen har direkte `UPDATE` på oppdragsraden —
+    -- det er den API-et selv bruker — og et `UPDATE oppdrag SET
+    -- kvittering='{"signatur":{"verdi":"x"}}', kvittering_signatur='x',
+    -- resultathash='x'` oppfyller hele likheten over uten at noen
+    -- konvolutt noen gang er verifisert. Feltenighet mellom kolonner én
+    -- rolle kan skrive fritt, er ikke et bevis; det er en form som er
+    -- litt mer arbeid å fylle ut.
+    --
+    -- Derfor kreves AVTRYKKET utenfor raden: kvitteringskapabiliteten for
+    -- oppdraget må være BRENT, med nøyaktig den `resultathash`-en raden
+    -- bærer. `kvitteringskapabiliteter` (005) står `REVOKE ALL ... FROM
+    -- PUBLIC` uten et eneste tabellgrant — ingen rolle skriver den
+    -- direkte. Den fylles bare av `utsted_kvitteringskapabilitet` (krever
+    -- en claim kalleren HOLDER, med matchende `owner_claim_id`/
+    -- `owner_generation` på et `plukket` oppdrag) og brennes bare av
+    -- `bruk_kvitteringskapabilitet`, som API-et kaller FØRST etter at
+    -- `attestering.verifiser` har godtatt signaturen mot nøkkelregisteret.
+    -- Hashen er uforanderlig når den først er festet (statusmaskinen i
+    -- 005), og `brukt` er engangs.
+    --
+    -- Det gjør ikke basen til en signaturverifiserer — HMAC-hemmelighetene
+    -- bor i API-et, og ingen SQL kan regne dem ut på nytt. Men det flytter
+    -- kravet fra «tre felter er enige» til «verifiseringsveien har
+    -- FAKTISK vært her, på dette oppdraget, med denne hashen», og det er
+    -- det sterkeste sporet den veien etterlater i basen.
     SELECT o.status,
            o.kvittering IS NOT NULL
            AND o.kvittering_signatur IS NOT NULL
@@ -488,6 +515,14 @@ BEGIN
            AND o.kvittering_signatur
                IS NOT DISTINCT FROM (o.kvittering -> 'signatur' ->> 'verdi')
            AND o.resultathash IS NOT NULL
+           AND EXISTS (SELECT 1
+                         FROM public.kvitteringskapabiliteter k
+                        WHERE k.tenant = o.tenant
+                          AND k.oppdrag_id = o.id
+                          AND k.status = 'brukt'
+                          AND k.resultathash IS NOT NULL
+                          AND k.resultathash
+                              IS NOT DISTINCT FROM o.resultathash)
       INTO v_status, v_kvittering
       FROM public.oppdrag o
      WHERE o.tenant = p_tenant AND o.id = p_inflight_oppdrag;
@@ -737,6 +772,21 @@ GRANT SELECT (tenant, id, status, kvittering, kvittering_signatur,
     ON oppdrag TO disponit_modul_eier;
 GRANT SELECT (tenant, artefakt_id, oppdrag_id, release_id, tilstand)
     ON artefakt TO disponit_modul_eier;
+-- …og AVTRYKKET verifiseringsveien etterlater (Codex P1, runde 15):
+-- «signert kvittering» måles ikke lenger på tre kolonner den samme
+-- rollen kan skrive fritt, men på at kvitteringskapabiliteten for
+-- oppdraget er brent med nøyaktig oppdragets `resultathash`.
+-- `kvitteringskapabiliteter` eies av `disponit_m37_claimer` (005), så
+-- granten må gis I EIERVINDUET — en GRANT fra en ikke-eier er en feil,
+-- og en REVOKE fra en ikke-eier en stille no-op (048-disiplinen).
+-- Kolonnenivå, som over: målingen leser fire felter, ikke jti-en, ikke
+-- claim-identiteten, ikke fristene. Tabellen har ingen RLS — den står
+-- `REVOKE ALL ... FROM PUBLIC` uten et eneste tabellgrant, og dette er
+-- det første og eneste.
+SET LOCAL ROLE disponit_m37_claimer;
+GRANT SELECT (tenant, oppdrag_id, status, resultathash)
+    ON kvitteringskapabiliteter TO disponit_modul_eier;
+RESET ROLE;
 DO $$
 BEGIN  -- identity-sekvensen alene, aldri hele skjemaets (minste fullmakt)
     EXECUTE format('GRANT USAGE ON SEQUENCE %s TO disponit_modul_eier',

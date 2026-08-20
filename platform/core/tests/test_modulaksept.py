@@ -113,8 +113,18 @@ def _kjede(m, *, promoter_paa_drillet=False, staged_paa_kandidat=False):
     # skriver dem har direkte `UPDATE`, men `oppdrag_kolonnelaas` fryser
     # kvitteringsfeltene så snart nyttelasten først er lagret, så en
     # forfalskning fødes som rad — den endrer ikke en ekte.
+    #
+    # `kapabilitet` styrer AVTRYKKET verifiseringsveien etterlater — formen
+    # Codex' P1 (runde 15) peker på. De tre kvitteringsfeltene eies av den
+    # samme skriveren (kjøretidsrollen har direkte `UPDATE`), så enighet
+    # mellom dem er ingen verifisering. Den ekte veien brenner
+    # kvitteringskapabiliteten med oppdragets `resultathash` FØR den
+    # skriver kvitteringen, og `kvitteringskapabiliteter` kan ingen rolle
+    # skrive direkte. True = brent slik veien gjør det; False = ingen
+    # kapabilitet (en forfalskning skrevet rett på raden); "utstedt" =
+    # utstedt, men aldri brent; "annen_hash" = brent på et annet resultat.
     def oppdrag(*, status="utfort", kvittering=True, signatur=True,
-                eier=None):
+                eier=None, kapabilitet=True):
         sig = secrets.token_hex(16)
         # Samme form som API-veien lagrer: konvolutten står i `kvittering`,
         # signaturverdien ALENE i `kvittering_signatur`, resultathashen i
@@ -129,7 +139,7 @@ def _kjede(m, *, promoter_paa_drillet=False, staged_paa_kandidat=False):
             " beslutning, begrunnelse, idempotency_key, kilde) VALUES"
             " (%s,'h','p','TILLAT','[]'::jsonb,%s,'arbeidskapabilitet')"
             " RETURNING id", (ten, secrets.token_hex(8))).fetchone()[0]
-        return m.execute(
+        oid = m.execute(
             "INSERT INTO oppdrag (opprinnelse, tenant, oppdragstype,"
             " handling, eiermodul, status, payload_kryptert, key_id, nonce,"
             " utforelsesfrist, evidensfrist, koblingsstatus,"
@@ -142,6 +152,19 @@ def _kjede(m, *, promoter_paa_drillet=False, staged_paa_kandidat=False):
              konvolutt if kvittering else None,
              kolonne if kvittering else None,
              SHA0 if kvittering else None)).fetchone()[0]
+        if kvittering and kapabilitet is not False:
+            kap_status = ("utstedt" if kapabilitet == "utstedt" else "brukt")
+            kap_hash = (None if kapabilitet == "utstedt"
+                        else ("ff" * 32 if kapabilitet == "annen_hash"
+                              else SHA0))
+            m.execute(
+                "INSERT INTO kvitteringskapabiliteter (jti, tenant,"
+                " oppdrag_id, modul_id, owner_claim_id, owner_generation,"
+                " status, resultathash, utloper) VALUES"
+                " (%s,%s,%s,%s,'claim-x',1,%s,%s, now()+interval '2 hours')",
+                (secrets.token_hex(16), ten, oid, eier or mid,
+                 kap_status, kap_hash))
+        return oid
 
     def artefakt(rel, tilstand, oid=None):
         oid = oppdrag() if oid is None else oid
@@ -1513,6 +1536,79 @@ def test_rent_utfall_krever_signaturen_ikke_bare_nyttelasten(migrator):
     # testen over også bestått av en port som avviste alt.
     assert maal(True) is True, \
         "porten avviser den ekte, signerte formen"
+
+
+@pg
+def test_rent_utfall_krever_avtrykket_verifiseringsveien_setter_igjen(
+        migrator):
+    """Codex' P1 (runde 15): de tre feltene eies av SAMME skriver.
+
+    Runde 8 gjorde «signert» til en likhet mellom `kvittering_signatur`,
+    konvoluttens `signatur.verdi` og en satt `resultathash`. Men
+    kjøretidsrollen har direkte `UPDATE` på oppdragsraden — det er den
+    API-et selv bruker — så én `UPDATE oppdrag SET kvittering=
+    '{"signatur":{"verdi":"x"}}', kvittering_signatur='x',
+    resultathash='x'` oppfyller hele likheten uten at noen konvolutt er
+    verifisert. Feltenighet mellom kolonner én rolle skriver fritt, er
+    ikke et bevis; det er en form som er litt mer arbeid å fylle ut.
+
+    Porten krever nå avtrykket UTENFOR raden: kvitteringskapabiliteten
+    for oppdraget må være BRENT, med nøyaktig radens `resultathash`.
+    `kvitteringskapabiliteter` står `REVOKE ALL ... FROM PUBLIC` (005)
+    uten et eneste tabellgrant — den fylles bare av
+    `utsted_kvitteringskapabilitet` (krever en claim kalleren holder) og
+    brennes bare av `bruk_kvitteringskapabilitet`, som API-et kaller
+    FØRST etter at `attestering.verifiser` har godtatt signaturen.
+
+    Tre former må falle, og de skiller seg fra hverandre: ingen
+    kapabilitet i det hele tatt, en utstedt som aldri ble brent, og en
+    brent på et ANNET resultat enn det raden bærer.
+    """
+    k = _kjede(migrator)
+
+    def maal(kapabilitet):
+        migrator.execute("RESET ROLE")
+        oid = k["oppdrag"](kapabilitet=kapabilitet)
+        k["artefakt"]("r-drillet", "promotert", oid)
+        migrator.commit()
+        did = _drill(migrator, k, nokkel="n-" + secrets.token_hex(6),
+                     opp={**k["opp"], "inflight": oid})
+        migrator.execute("RESET ROLE")
+        rad = migrator.execute(
+            "SELECT rene_utfall_ok FROM moduldrill WHERE drill_id=%s",
+            (did,)).fetchone()[0]
+        migrator.rollback()
+        return rad
+
+    for navn, kapabilitet in (
+        ("kvitteringen er skrevet rett på raden, uten kapabilitet", False),
+        ("kapabiliteten er utstedt, men aldri brent", "utstedt"),
+        ("kapabiliteten er brent på et annet resultat", "annen_hash"),
+    ):
+        assert maal(kapabilitet) is False, \
+            f"porten kaller utfallet rent når {navn}"
+
+    # Motprøven: brent med radens egen resultathash — nøyaktig det
+    # `_forbruk_kapabilitet` gjør etter at signaturen er verifisert.
+    assert maal(True) is True, \
+        "porten avviser den ekte formen verifiseringsveien etterlater"
+
+    # …og fullmakten er MINST MULIG: målingen leser fire kolonner, ikke
+    # jti-en eller claim-identiteten.
+    migrator.execute("RESET ROLE")
+    kolonner = {r[0] for r in migrator.execute(
+        "SELECT a.attname FROM pg_attribute a"
+        " WHERE a.attrelid = 'kvitteringskapabiliteter'::regclass"
+        "   AND a.attnum > 0 AND NOT a.attisdropped"
+        "   AND has_column_privilege('disponit_modul_eier', a.attrelid,"
+        "                            a.attnum, 'SELECT')").fetchall()}
+    assert kolonner == {"tenant", "oppdrag_id", "status", "resultathash"}, \
+        kolonner
+    assert not migrator.execute(
+        "SELECT has_table_privilege('disponit_modul_eier',"
+        " 'kvitteringskapabiliteter', 'INSERT')").fetchone()[0], \
+        "definern skal MÅLE kapabiliteten, aldri kunne skrive den"
+    migrator.rollback()
 
 
 @pg
