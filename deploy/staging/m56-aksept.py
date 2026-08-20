@@ -49,6 +49,10 @@ DRILLKRAV = "rollback-m56-v1"
 TENANT = "t-wcagfasit"
 MANIFEST_REL = "platform/modules/m56_wcag_audit/manifest.yaml"
 MANIFEST_STI = REPO / MANIFEST_REL
+#: Workflowen invariantpunktene faktisk hviler på. Repoet har flere
+#: workflows, og en grønn kjøring av en ANNEN på samme commit beviser
+#: ingenting om testene her (Codex, #117).
+CI_WORKFLOW = ".github/workflows/ci.yml"
 
 #: grensepunkt → (kilde_type, hvordan verdien hentes). Måletallene peker
 #: på runde-sammendraget (selv sha-bundet i manifestet); de rene
@@ -172,11 +176,21 @@ def _hent_ci_kjoring(run_id: str) -> dict:
 
 
 def _vurder_ci_kjoring(data: dict, run_id: str, ci_commit: str) -> list[str]:
-    """De tre påstandene invariantpunktene hviler på, målt på svaret."""
+    """De fire påstandene invariantpunktene hviler på, målt på svaret."""
     feil: list[str] = []
     if str(data.get("id")) != str(run_id):
         feil.append(f"oppslaget svarte med kjøring {data.get('id')!r}, ikke"
                     f" {run_id}")
+    # Codex' P1 på PR #117 (runde 3): id, terminalstatus, conclusion og
+    # sha sa ingenting om HVILKEN workflow som kjørte. Repoet har også
+    # `claude.yml`, og en grønn kjøring DERFRA på akseptcommiten kjører
+    # ikke én eneste av invarianttestene punktene påberoper seg — like
+    # fullt bar den alle 16. Punktene hviler på testene i `ci.yml`, så
+    # det er den workflowen som må ha kjørt.
+    if (data.get("path") or "") != CI_WORKFLOW:
+        feil.append(f"kjøringen er {data.get('path') or '?'}, ikke"
+                    f" {CI_WORKFLOW} — bare invarianttestene der bærer"
+                    " punktene")
     if data.get("status") != "completed":
         feil.append(f"status={data.get('status')!r} — kjøringen er ikke ferdig")
     if data.get("conclusion") != "success":
@@ -195,7 +209,9 @@ def verifiser_ci_kjoring(run_id: str, ci_commit: str) -> dict:
     strenger kalleren skrev. En skrivefeil, en gammel kjøring eller en RØD
     kjøring ga like fullt 16 immutable «grønne» punkter — en kjøring
     ingen har sett bevise noe som helst. Nå slås kjøringen opp: den må
-    finnes i dette repoet, være FERDIG og GRØNN, og ha testet nøyaktig
+    finnes i dette repoet, være `ci.yml` (runde 3: en grønn
+    `claude.yml`-kjøring på samme commit kjører ingen av
+    invarianttestene), være FERDIG og GRØNN, og ha testet nøyaktig
     akseptcommiten (klarsignalets §2.5: «run-ID + commit-sha på
     akseptcommiten»).
     """

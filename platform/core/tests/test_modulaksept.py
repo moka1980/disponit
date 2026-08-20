@@ -841,12 +841,19 @@ def test_invariantpunktene_krever_en_groenn_kjoring_paa_akseptcommiten():
     m = _aksept_skript()
     sha = "a" * 40
     groenn = {"id": 42, "status": "completed", "conclusion": "success",
-              "head_sha": sha}
+              "head_sha": sha, "path": ".github/workflows/ci.yml"}
     assert m._vurder_ci_kjoring(groenn, "42", sha) == []
+    # Codex' P1 (runde 3): en GRØNN kjøring av en annen workflow på samme
+    # commit bar alle 16 punktene. `claude.yml` kjører ingen av
+    # invarianttestene punktene påberoper seg.
+    assert (ROT / ".github/workflows/claude.yml").exists(), \
+        "porten under måler nettopp at denne workflowen ikke bærer punktene"
     for muteres, ord_i_feil in (
             ({"conclusion": "failure"}, "conclusion"),
             ({"conclusion": None, "status": "in_progress"}, "ikke ferdig"),
             ({"head_sha": "b" * 40}, "akseptcommiten"),
+            ({"path": ".github/workflows/claude.yml"}, "claude.yml"),
+            ({"path": None}, "ci.yml"),
             ({"id": 43}, "svarte med kjøring")):
         feil = m._vurder_ci_kjoring(dict(groenn, **muteres), "42", sha)
         assert any(ord_i_feil in f for f in feil), (muteres, feil)
