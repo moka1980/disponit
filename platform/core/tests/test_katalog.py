@@ -626,15 +626,47 @@ def test_ingen_oppfunne_identifikatorer_i_sannhetskilden():
                                 for ident, linje in sorted(avvik.items())))
 
 
+_MODULMARKOR_RE = re.compile(r"^(?:M-|[Mm]odul(?:ene)?\s+)(?=\d)")
+# Et tall eller et intervall, i starten av leddet. Et ledd som BARE er dette
+# (bortsett fra sluttpunktum) kan være neste ledd i en påbegynt oppramsing.
+_TALL_RE = re.compile(r"\d+(?:\s*[–-]\s*(\d+))?")
+
+
 def _modulreferanser(dep: str, kjente: set[int]) -> set[int]:
     """Modulnumrene en dep-streng peker på — `M-14`, `modul 24` og intervaller
-    som `1–2` eller `13–14`. Alt som ikke er et kjent modulnummer (connectorer,
-    infrastruktur, «landpakke») faller utenfor: de har ingen fase å bryte."""
+    som `1–2` eller `13–14`.
+
+    Markøren `M-`/`modul` var VALGFRI (Codex P2 på #118, sjuende runde), så
+    ethvert tall i teksten ble et modulnummer. `dep` er prosa og navngir også
+    infrastruktur: «PostgreSQL 16» ble til M-16, og en fase 1-modul som nevnte
+    den fikk en oppdiktet kant til en fase 2-modul og felte faseporten på noe
+    som ikke står i kilden. Connectorversjoner («Peppol 3», «HTTP 2») ville gitt
+    flere av samme sort.
+
+    Et tall teller derfor bare når det er INNFØRT som modul: enten med sin egen
+    markør, eller som et senere ledd i en oppramsing en markør åpnet — «Modul 1,
+    5, 9 og HRIS-connector» er tre moduler og en connector. Oppramsingen brytes
+    av det første leddet som ikke er rene tall, så «Modul 3, HRIS-connector og
+    lønnssystem» ikke drar noe med seg videre. Alt annet (connectorer,
+    infrastruktur, «landpakke») faller utenfor: de har ingen fase å bryte.
+    """
     ut: set[int] = set()
-    for a, b in re.findall(r"(\d+)\s*[–-]\s*(\d+)", dep):
-        ut.update(range(int(a), int(b) + 1))
-    resten = re.sub(r"\d+\s*[–-]\s*\d+", " ", dep)
-    ut.update(int(x) for x in re.findall(r"(?:M-|[Mm]odul\s+)?(\d+)", resten))
+    i_liste = False
+    for ledd in re.split(r",|\bog\b", dep):
+        ledd = ledd.strip()
+        if not ledd:
+            continue
+        markor = _MODULMARKOR_RE.match(ledd)
+        if markor:
+            treff, i_liste = _TALL_RE.match(ledd, markor.end()), True
+        else:
+            treff = _TALL_RE.fullmatch(ledd.rstrip("."))
+            if not (i_liste and treff):
+                i_liste = False
+                continue
+        forste = int(re.match(r"\d+", treff.group(0)).group(0))
+        siste = int(treff.group(1)) if treff.group(1) else forste
+        ut.update(range(forste, siste + 1))
     return ut & kjente
 
 
