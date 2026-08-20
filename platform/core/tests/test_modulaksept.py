@@ -998,6 +998,38 @@ def test_artefaktene_maa_navngi_modulen_som_aksepteres():
         KRAV), "skjemaet godtar fortsatt katalognavnet som modulidentitet"
 
 
+def test_drillen_maa_vaere_kjort_i_miljoet_som_aksepteres():
+    """Codex' P1 (runde 4): modulidentiteten var bundet, miljøet ikke.
+
+    Skjemaet godtar hvilken som helst `oppsett.miljo`, og begge
+    basekallene skriver `staging` ubetinget. Release-id-er og digester er
+    globale, så et drillartefakt fra produksjon — for de samme releasene
+    — passerte både live-tilstands- og digestkontrollen og ble evidens
+    for en immutabel STAGING-aksept.
+    """
+    from manifestskjema import valider_artefaktformat
+    m = _aksept_skript()
+    assert m.MILJO == "staging"
+    drill = _drillartefakt()
+    assert drill["oppsett"]["miljo"] == m.MILJO
+    m.verifiser_miljo(drill)                              # ingen SystemExit
+    for fremmed in ("prod", "dev", ""):
+        feil = dict(drill, oppsett=dict(drill["oppsett"], miljo=fremmed))
+        with pytest.raises(SystemExit) as ei:
+            m.verifiser_miljo(feil)
+        assert "miljø" in str(ei.value), fremmed
+    # …og et drillartefakt uten miljø i det hele tatt er ikke «staging».
+    uten = dict(drill, oppsett={k: v for k, v in drill["oppsett"].items()
+                                if k != "miljo"})
+    with pytest.raises(SystemExit):
+        m.verifiser_miljo(uten)
+    # Skjemaet fanger det IKKE — og skal ikke: `rollback-m56-v1` er
+    # drillformen, ikke staging-formen. Derfor må skriptet måle det.
+    assert not valider_artefaktformat(
+        dict(drill, oppsett=dict(drill["oppsett"], miljo="prod")),
+        "rollback-m56-v1")
+
+
 def test_akseptcommiten_baerer_bytene_som_ble_validert(tmp_path):
     """Codex' P1 (runde 2): hash-, skjema- og grensekontrollene hadde
     ARBEIDSTREET som tillitsrot, mens `manifest_commit` var en

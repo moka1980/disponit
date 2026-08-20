@@ -326,6 +326,32 @@ def verifiser_modul(art: dict, hva: str) -> None:
                          " ingenting her")
 
 
+def verifiser_miljo(drill: dict) -> None:
+    """Drillen må være kjørt i MILJØET som aksepteres, ikke et annet.
+
+    Codex' P1 på PR #117 (runde 4): `verifiser_modul` bandt hvilken MODUL
+    evidensen gjelder, men ingenting bandt hvilket MILJØ. Skjemaet godtar
+    en hvilken som helst ikke-tom `oppsett.miljo`, og begge basekallene
+    nedenfor skriver `MILJO` ubetinget. Release-id-er og digester er
+    globale, så er de samme releasene også utrullet i staging, passerer
+    både live-tilstands- og digestkontrollen — og et drillutfall målt i
+    produksjon kunne kopieres inn i en immutabel STAGING-aksept. Designet
+    krever én drill per miljø nettopp fordi vert, base og naboer er
+    forskjellige; da må artefaktet si hvilket det målte, og det må være
+    dette.
+
+    Bindingen hører hjemme her og ikke i skjemaet: `rollback-m56-v1` er
+    drillformen, ikke staging-formen — den samme drillen skal kunne
+    kjøres i produksjon senere. Det er DETTE skriptet som velger miljø,
+    og derfor her miljøet må måles.
+    """
+    navn = (drill.get("oppsett") or {}).get("miljo")
+    if navn != MILJO:
+        raise SystemExit(f"AVBRUTT: drillartefaktet ble målt i miljø"
+                         f" {navn!r}, ikke {MILJO!r} — en drill i ett miljø"
+                         " er ikke bevis for et annet")
+
+
 def verifiser_kilde(runde: dict) -> str:
     """Råfilen bak sammendraget. -> sha256 av de faktiske bytene.
 
@@ -463,6 +489,7 @@ def main() -> int:
     runde, runde_sha = les_bundet_artefakt(a.runde, KRAV, manifest)
     verifiser_modul(drill, "drillartefaktet")
     verifiser_modul(runde, "runde-sammendraget")
+    verifiser_miljo(drill)
     drill_ts = drillens_maaletid(drill)
     # Målte bytes = drillede bytes = aksepterte bytes (A1, siste ledd).
     digest = verifiser_digestkjede(runde, drill)
