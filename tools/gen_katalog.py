@@ -323,6 +323,54 @@ def hopp_over_tomrom(tekst: str, i: int) -> int:
     return i
 
 
+# Navnet et felt får når nøkkelen er BEREGNET av noe annet enn én streng —
+# `[k]:` eller `[('sta' + 'tus')]:`. Da vet ikke generatoren hva feltet heter,
+# og et navn den ikke vet kan den heller ikke forby. Tegnet kan ikke kollidere
+# med et ekte feltnavn: `?` er ikke lovlig i en JS-identifikator, og en
+# strengnøkkel som inneholder det leses som seg selv.
+UKJENT_FELT = "?"
+
+
+def beregnet_nokkel(post: str, i: int) -> tuple[str, int] | None:
+    """(feltnavn, indeksen etter `]`) for en beregnet nøkkel som åpner i `i`.
+
+    `None` når klammen ikke bærer en NØKKEL i det hele tatt: `dep: ['M-6']` er
+    en verdi, og der følger ingen kolon etter `]`. Kolonet er derfor prøven.
+
+    Feltnavnet er `UKJENT_FELT` når nøkkelen ikke er én streng — da er den
+    regnet ut, og hva egenskapen kommer til å hete vet bare nettleseren.
+    """
+    j, dybde = i + 1, 0
+    while j < len(post):
+        if apner_ikkekode(post, j):
+            j = slutt_ikkekode(post, j)
+            continue
+        c = post[j]
+        if c in "[{(":
+            dybde += 1
+        elif c in "})":
+            dybde -= 1
+        elif c == "]":
+            if dybde == 0:
+                break
+            dybde -= 1
+        j += 1
+    if j >= len(post):
+        return None
+    etter = hopp_over_tomrom(post, j + 1)
+    if etter >= len(post) or post[etter] != ":":
+        return None
+    # Nøkkelen er statisk bare når klammen bærer NØYAKTIG én streng, og den
+    # strengen ikke selv regner ut noe: `` [`${felt}`] `` er en beregning.
+    k = hopp_over_tomrom(post, i + 1)
+    if k < len(post) and post[k] in "\"'`":
+        slutt = slutt_ikkekode(post, k)
+        innhold = post[k + 1:slutt - 1]
+        if hopp_over_tomrom(post, slutt) == j and "${" not in innhold:
+            return innhold, j + 1
+    return UKJENT_FELT, j + 1
+
+
 def toppnivafelt(post: str) -> list[str]:
     """Feltnavnene på ØVERSTE nivå i en modulpost, i den rekkefølgen de står.
 
@@ -377,6 +425,19 @@ def toppnivafelt(post: str) -> list[str]:
             i += 1
             continue
         elif c == "[":
+            # En STATISK beregnet nøkkel er et helt vanlig felt for nettleseren:
+            # `['status']: 'planlagt'` gir egenskapen `status`, og siden ville
+            # tegnet den (Codex P2 på #118, ellevte runde). Her løftet klammen
+            # bare `klammer`, så nøkkelen inne i den ble aldri talt som felt —
+            # og forbudet slapp gjennom nøyaktig den aksen det er satt til å
+            # stoppe. En klamme som IKKE bærer en nøkkel er en verdi, og telles
+            # som før.
+            nokkel = beregnet_nokkel(post, i) if dybde == 1 and not klammer \
+                else None
+            if nokkel is not None:
+                felt.append(nokkel[0])
+                i = nokkel[1]
+                continue
             klammer += 1
             i += 1
             continue
@@ -426,7 +487,14 @@ def les_katalog() -> list[dict]:
     poster = []
     for m in POST_RE.finditer(skript):
         post = skript[m.start():postslutt(skript, m.start())]
-        forbudt = [f for f in toppnivafelt(post) if f in FORBUDTE_FELT]
+        feltnavn = toppnivafelt(post)
+        if UKJENT_FELT in feltnavn:
+            raise SystemExit(
+                f"M-{m.group(1)} «{m.group(3)}» i {KILDE_NAVN} har et felt med "
+                f"BEREGNET navn (`[…]:`). Katalogen er en kilde som skal kunne "
+                f"leses, og et navn som først finnes når siden kjører kan "
+                f"hverken leses eller forbys her. Skriv feltnavnet.")
+        forbudt = [f for f in feltnavn if f in FORBUDTE_FELT]
         if forbudt:
             raise SystemExit(
                 f"M-{m.group(1)} «{m.group(3)}» i {KILDE_NAVN} bærer "

@@ -142,6 +142,63 @@ def test_katalogen_er_fersk(tmp_path):
             assert faktisk.get(k) == v, f"{sprak}: {k} er ikke fersk"
 
 
+def _med_felt_i_m57(tmp_path: Path, felt: str) -> subprocess.CompletedProcess:
+    """Kjør generatoren mot en kopi der M-57 har fått `felt` satt inn."""
+    rot = _temprot(tmp_path)
+    spek = rot.joinpath(*KILDE_REL)
+    tekst = spek.read_text(encoding="utf-8")
+    anker = '"kl":"krever_outbox"'
+    assert anker in tekst, "fant ikke ankeret i M-57 — kilden har endret form"
+    spek.write_text(tekst.replace(anker, felt + "," + anker, 1),
+                    encoding="utf-8")
+    return subprocess.run([sys.executable, str(GENERATOR), str(rot)],
+                          capture_output=True, text=True)
+
+
+@pytest.mark.parametrize("felt,i_meldingen", [
+    ('"status":"planlagt"', "status"),
+    ("['status']:'planlagt'", "status"),
+    ('["sta" + "tus"]:"planlagt"', "BEREGNET"),
+    ("[nokkel]:'planlagt'", "BEREGNET"),
+])
+def test_statusforbudet_ser_alle_skrivemaater(tmp_path, felt, i_meldingen):
+    """En tilstandsakse er forbudt uansett HVORDAN nøkkelen er skrevet.
+
+    Forbudet leste feltnavn som navn eller fnuttstreng, og klammen rundt en
+    beregnet nøkkel løftet bare klammetelleren: `['status']: 'planlagt'` ble
+    aldri talt som felt (Codex P2 på #118, ellevte runde). For nettleseren er
+    det den samme egenskapen som `status:` — den frittstående siden ville
+    tegnet den, mens generatoren kastet den stille, og da lyver kilden.
+
+    En nøkkel som er REGNET UT stoppes også, med sin egen beskjed: hva
+    egenskapen kommer til å hete vet bare nettleseren, og et navn generatoren
+    ikke kan lese kan den heller ikke forby.
+
+    Mutasjonen står i en KOPI av kilden — en port som retter fila den måler,
+    kan ikke feile.
+    """
+    r = _med_felt_i_m57(tmp_path, felt)
+    assert r.returncode != 0, (
+        f"generatoren godtok «{felt}» i modulposten")
+    melding = r.stderr + r.stdout
+    assert "M-57" in melding and i_meldingen in melding, (
+        f"feilmeldingen sier ikke hva som er galt: {melding}")
+
+
+def test_statusforbudet_tar_ikke_en_verdiliste_for_en_nokkel(tmp_path):
+    """En klamme i VERDI-posisjon er ikke en nøkkel.
+
+    `dep: ['M-6']` og `flow: [...]` står i hver eneste modulpost. Leste
+    nøkkellesningen dem som beregnede nøkler, ville generatoren stoppet på en
+    kilde som er helt i orden. Prøven her er den samme kilden uendret: den skal
+    gå gjennom.
+    """
+    rot = _temprot(tmp_path)
+    r = subprocess.run([sys.executable, str(GENERATOR), str(rot)],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr + r.stdout
+
+
 def test_navneendring_krever_ny_oversettelse(tmp_path):
     """Et omdøpt modulnavn i kilden skal stoppe genereringen (Codex P2 på #43).
 
@@ -627,6 +684,53 @@ def _tomrom(js: str, i: int, spenn: dict[int, tuple]) -> int:
     return i
 
 
+def _beregnet_nokkel(post: str, i: int,
+                     spenn: dict[int, tuple]) -> tuple[str, int] | None:
+    """(feltnavn, indeksen etter `]`) for en beregnet nøkkel som åpner i `i`.
+
+    `['kl']: "oppfunnet"` er et helt vanlig `kl`-felt for nettleseren (Codex P2
+    på #118, ellevte runde). Leste porten klammen som noe annet enn en nøkkel,
+    hadde posten manglet feltet — og enumporten sjekker bare de feltene som
+    finnes, så en klasse registeret avviser ville gått grønt gjennom CI.
+
+    `None` når klammen ikke bærer en nøkkel: `dep: ['M-6']` er en verdi, og der
+    følger ingen kolon etter `]`. Kolonet er prøven.
+
+    En nøkkel som er REGNET UT — `[k]:` — gir også `None`. Hva den kommer til å
+    hete vet bare nettleseren, og generatoren stopper på den formen; her ville
+    et gjettet navn vært verre enn ingen.
+    """
+    j, dybde, n = i + 1, 0, len(post)
+    while j < n:
+        if j in spenn:
+            j = spenn[j][0]
+            continue
+        c = post[j]
+        if c in "[{(":
+            dybde += 1
+        elif c in "})":
+            dybde -= 1
+        elif c == "]":
+            if dybde == 0:
+                break
+            dybde -= 1
+        j += 1
+    if j >= n:
+        return None
+    etter = _tomrom(post, j + 1, spenn)
+    if etter >= n or post[etter] != ":":
+        return None
+    # Statisk er nøkkelen bare når klammen bærer NØYAKTIG én fnuttstreng. En
+    # malstreng gir ikke noe spenn på selve backticken — den er alltid delvis
+    # kode — og faller derfor ut her, som seg hør og bør.
+    k = _tomrom(post, i + 1, spenn)
+    if k in spenn and spenn[k][1] == "streng":
+        slutt = spenn[k][0]
+        if _tomrom(post, slutt, spenn) == j:
+            return post[k + 1:slutt - 1], j + 1
+    return None
+
+
 def _postfelt(post: str) -> dict[str, str]:
     """{feltnavn: verdi} for feltene på postens ØVERSTE nivå.
 
@@ -659,7 +763,9 @@ def _postfelt(post: str) -> dict[str, str]:
             continue
         if c == "}":
             break
-        if i in spenn and spenn[i][1] == "streng":
+        if c == "[" and (nokkel := _beregnet_nokkel(post, i, spenn)):
+            navn, i = nokkel
+        elif i in spenn and spenn[i][1] == "streng":
             j = spenn[i][0]
             navn, i = post[i + 1:j - 1], j
         elif (treff := _NAVN_RE.match(post, i)):
