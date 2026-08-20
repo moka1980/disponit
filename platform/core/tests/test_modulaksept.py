@@ -157,6 +157,12 @@ def _kjede(m, *, promoter_paa_drillet=False, staged_paa_kandidat=False):
             kap_hash = (None if kapabilitet == "utstedt"
                         else ("ff" * 32 if kapabilitet == "annen_hash"
                               else SHA0))
+            # Tabellen eies av `disponit_m37_claimer` og står `REVOKE ALL
+            # ... FROM PUBLIC` — migrator har ingen rettigheter på den.
+            # Det er hele poenget med målingen: ingen skriver den
+            # direkte. Fixturet må derfor låne eierrollen for å bygge
+            # formen den ekte veien etterlater.
+            m.execute("SET LOCAL ROLE disponit_m37_claimer")
             m.execute(
                 "INSERT INTO kvitteringskapabiliteter (jti, tenant,"
                 " oppdrag_id, modul_id, owner_claim_id, owner_generation,"
@@ -164,6 +170,7 @@ def _kjede(m, *, promoter_paa_drillet=False, staged_paa_kandidat=False):
                 " (%s,%s,%s,%s,'claim-x',1,%s,%s, now()+interval '2 hours')",
                 (secrets.token_hex(16), ten, oid, eier or mid,
                  kap_status, kap_hash))
+            m.execute("RESET ROLE")
         return oid
 
     def artefakt(rel, tilstand, oid=None):
