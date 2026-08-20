@@ -22,8 +22,10 @@ Testene her er derfor ti porter (Codex P2 på PR #43, #99 og #118):
   9. KLASSER   — `kl` og `rev` i katalogen er verdier modulregisteret godtar,
                  lest ut av CHECK-vilkårene i migrasjonene.
  10. IDENTER   — også PROSAEN rundt postene: en identifikator skrevet i
-                 maskinform må finnes i en migrasjon eller som en fil, så
-                 forklaringen ikke kan finne opp klasser posten ikke har.
+                 maskinform må finnes i registeret slik det ER NÅ, eller som en
+                 fil, så forklaringen ikke kan finne opp klasser posten ikke
+                 har — og ikke leve videre på en verdi registeret har sluttet
+                 med.
 """
 import json
 import re
@@ -257,21 +259,63 @@ def _moduler_fra_kilden() -> dict[int, dict[str, str]]:
 # og registeret håndhever dem med CHECK-vilkår. Enumene leses derfor ut av
 # migrasjonene, ikke skrevet av her: en kopi i testen ville vært nok en kilde
 # som kan drive fra databasen — akkurat feilen porten finnes for å hindre.
-# Migrasjonene kjøres i nummerrekkefølge, og en senere kan UTVIDE et vilkår
-# (036 la `ekstern_lesing` til `sideeffektklasse`), så det siste treffet gjelder.
+# Migrasjonene kjøres i nummerrekkefølge, og en senere kan både UTVIDE et
+# vilkår (036 la `ekstern_lesing` til `sideeffektklasse`) og stramme det inn,
+# så det siste treffet for samme tabell og kolonne er det som gjelder.
 MIGRASJONER = ROT / "platform" / "core" / "db" / "migrations"
 KONTRAKTFELT = {"kl": "sideeffektklasse", "rev": "reversibilitet"}
 
 
-def _registerenum(kolonne: str) -> set[str]:
-    gjeldende: set[str] | None = None
+# Migrasjonsmappa er den ENESTE historikken i repoet som ikke kan redigeres:
+# en fil som er kjørt står for alltid, også når en senere fil erstatter det den
+# innførte. Alt annet — kildekode, maler, katalogen — er gjeldende tilstand,
+# fordi en fjernet verdi forsvinner med redigeringen. Derfor må registerets
+# gjeldende tilstand REGNES ut av migrasjonene, ikke leses som en union.
+#
+# Nøkkelen er (tabell, kolonne), ikke kolonnenavnet alene: `status` er CHECK-et
+# i tjue tabeller med hver sine verdier, og siste-treff-vinner på bare navnet
+# ville pensjonert nitten av dem. Tabellen er den siste CREATE/ALTER TABLE før
+# vilkåret. SQL-kommentarer fjernes først — 038 SITERER formen «CHECK (hendelse
+# IN (...))» i en kommentar, og den ville ellers slettet en tabells enum.
+_TABELL_RE = re.compile(
+    r"\b(?:CREATE|ALTER)\s+TABLE(?:\s+IF\s+(?:NOT\s+)?EXISTS)?\s+([\w.]+)", re.I)
+_CHECK_RE = re.compile(r"CHECK\s*\(\s*(\w+)\s+IN\s*\(([^)]*)\)", re.S)
+_SQL_KOMMENTAR_RE = re.compile(r"--[^\n]*")
+
+
+def _registerets_enums() -> tuple[dict[tuple[str, str], set[str]], set[str]]:
+    """(gjeldende verdier per (tabell, kolonne), verdier bundet noen gang).
+
+    Migrasjonene leses i nummerrekkefølge; siste vilkår for samme kolonne i
+    samme tabell er det som gjelder — en senere kan både UTVIDE (036 la
+    `ekstern_lesing` til `sideeffektklasse`) og STRAMME INN.
+    """
+    gjeldende: dict[tuple[str, str], set[str]] = {}
+    noen_gang: set[str] = set()
     for sql in sorted(MIGRASJONER.glob("*.sql")):
-        for m in re.finditer(
-                rf"CHECK\s*\(\s*{kolonne}\s+IN\s*\(([^)]*)\)",
-                sql.read_text(encoding="utf-8"), re.S):
-            gjeldende = set(re.findall(r"'([^']*)'", m.group(1)))
-    assert gjeldende, f"fant ikke CHECK-vilkåret for {kolonne} i migrasjonene"
-    return gjeldende
+        tekst = _SQL_KOMMENTAR_RE.sub("", sql.read_text(encoding="utf-8"))
+        tabeller = [(m.start(), m.group(1)) for m in _TABELL_RE.finditer(tekst)]
+        for m in _CHECK_RE.finditer(tekst):
+            verdier = set(re.findall(r"'([^']*)'", m.group(2)))
+            if not verdier:
+                continue
+            tabell = ""
+            for pos, navn in tabeller:
+                if pos > m.start():
+                    break
+                tabell = navn
+            gjeldende[(tabell, m.group(1))] = verdier
+            noen_gang |= verdier
+    return gjeldende, noen_gang
+
+
+def _registerenum(kolonne: str) -> set[str]:
+    """Verdiene registeret godtar i `kolonne` NÅ, uansett hvilken tabell."""
+    gjeldende, _ = _registerets_enums()
+    ut = set().union(*(v for (_, kol), v in gjeldende.items() if kol == kolonne),
+                     set())
+    assert ut, f"fant ikke CHECK-vilkåret for {kolonne} i migrasjonene"
+    return ut
 
 
 def test_kontraktklassene_i_katalogen_finnes_i_modulregisteret():
@@ -324,18 +368,32 @@ IDENT_RE = re.compile(r"\b[a-zæøå][a-zæøå0-9]*(?:_[a-zæøå0-9]+)+\b")
 
 
 def _kjente_identifikatorer() -> set[str]:
-    """Identifikatorer i maskinform som faktisk finnes i repoet.
+    """Identifikatorer i maskinform som faktisk finnes i repoet — NÅ.
 
     To kilder, begge lest ut av repoet i stedet for skrevet av her: verdier
     migrasjonene skriver i apostrofer (registerets egne klasser, moduser og
     tilstander), og stammen i navnet på en sporet fil (spesifikasjonen navngir
     porter og verktøy, som `test_ui_kontrakt`).
+
+    Migrasjonene er historikk (Codex P2 på #118, fjerde runde). En ren union
+    over dem gjorde enhver verdi gyldig for alltid: strammet en senere
+    migrasjon inn et CHECK-vilkår, sto den fjernede verdien igjen i lista fordi
+    filen som innførte den fortsatt ligger der — og prosaen kunne fortsette å
+    presentere en klasse registeret nettopp hadde sluttet å godta. Verdier
+    registeret BINDER i et vilkår måles derfor mot gjeldende tilstand: er den
+    ute av vilkåret, er den ute av lista. En verdi som aldri har stått i et
+    CHECK (`alltid_stopp` er en modus, håndhevet i kode) berøres ikke — den har
+    ingen registertilstand å falle ut av, og filstammene er gjeldende tilstand
+    i seg selv, siden en slettet fil forsvinner fra `git ls-files`.
     """
+    gjeldende, noen_gang = _registerets_enums()
+    pensjonert = noen_gang - set().union(*gjeldende.values(), set())
     ut: set[str] = set()
-    for sql in MIGRASJONER.glob("*.sql"):
+    for sql in sorted(MIGRASJONER.glob("*.sql")):
         ut.update(t for t in re.findall(r"'([^']*)'",
                                         sql.read_text(encoding="utf-8"))
                   if IDENT_RE.fullmatch(t))
+    ut -= pensjonert
     spor = subprocess.run(["git", "ls-files", "-z"], cwd=ROT,
                           capture_output=True, text=True, check=True)
     ut.update(Path(rel).stem for rel in spor.stdout.split("\0") if rel)
