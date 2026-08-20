@@ -7,12 +7,13 @@ import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import {
   hentJson, validerUtkast, forkastUtkast, gjenapneUtkast, apneRunde,
-  attesterAktivering,
+  attesterAktivering, opprettUtkast,
   UgyldigFeil,
   nyIdempotensnokkel, ApiFeil, UautorisertFeil, IngenTilgangFeil,
 } from "../api.js";
 import {
   Tidspunkt, TomTilstand, Feiltilstand, TilgangsVakt, Faner, meldLive,
+  meldAlert,
 } from "../komponenter.js";
 import { DataTabell } from "../tabell.js";
 import { visningsToken, erGjeldendeVisning } from "../ruter.js";
@@ -20,6 +21,8 @@ import { Bekreftelsesdialog } from "../dialog.js";
 import { medStatus, flateHode, kvRad, fokuserOverskrift } from "./felles.js";
 import { visPolicyeditor } from "./policyeditor.js";
 import { aktivePolicyerSeksjon } from "./policy.js";
+import { tegnHistorikkflate, versjonerUrl } from "./policyhistorikk.js";
+import { harScope } from "../sitekart.js";
 
 function risikoBadge(klasse) {
   return el("span", {
@@ -1549,7 +1552,8 @@ export function visPolicyadmin(hoved, ctx, mal) {
       // ikke på den lesende policy-flaten. Seksjonen eier sitt eget
       // liv (henter /v1/policy/aktive selv); `last` frisker opp utkastlista
       // etter en sletting, siden aktiverte utkast peker på policyen.
-      aktivePolicyerSeksjon(ctx, () => last({ fokus: true })),
+      aktivePolicyerSeksjon(ctx, () => last({ fokus: true }),
+                            aapneHistorikk),
       verktoylinje(),
       melding
         ? el("p", { role: "alert",
@@ -1605,6 +1609,96 @@ export function visPolicyadmin(hoved, ctx, mal) {
   }
 
   function tilbakeTilListe() { ryddDyplenke(); last({ fokus: true }); }
+
+  // --- Versjonshistorikk (047, klarsignal §6/§7) ---------------------------
+  // Egen visning i flaten: versjonslisten fra HENDELSEN (aktivert_ts og
+  // attestanter kommer derfra — en ubundet historisk versjon sier
+  // «attestanter ikke bundet», aldri feil attestanter), diff mellom
+  // vilkårlige versjoner som TEKSTLISTE med retningen i ord først, og
+  // rullbakk som alertdialog → nytt utkast gjennom hele den vanlige løypa.
+  function aapneHistorikk(policyId) {
+    const min = nyVisning();
+    const kanSkrive = harScope(ctx, "policy:write");
+    // Idempotensnøklene bor på VISNINGEN, én per versjon — ikke i dialogen
+    // (Codex P2). Se `bekreftRullbakk`.
+    const rullbakkNokler = new Map();
+    medStatus(hoved, ctx,
+      () => hentJson(versjonerUrl(policyId)), (d) => {
+        tegnHistorikk(policyId, (d && d.versjoner) || [], kanSkrive, min,
+                      rullbakkNokler, (d && d.nytt_utkast_avvist) || null);
+      }, () => eierSkjermen(min), true);
+  }
+
+  // Selve visningen bor i `policyhistorikk.js` — den deles med den
+  // LESENDE policy-flaten, der `policy:read` alene holder (Codex P2).
+  // Herfra kommer bare det som er policyadmin sitt: skjermeierskapet og
+  // rullbakken, som krever `policy:write`.
+  function tegnHistorikk(policyId, versjoner, kanSkrive, min, nokler,
+                         sperret) {
+    tegnHistorikkflate(hoved, ctx, {
+      policyId, versjoner,
+      tilbake: tilbakeTilListe,
+      paaRullbakk: kanSkrive
+        ? (v) => bekreftRullbakk(policyId, v, min, nokler) : null,
+      // PORTENS dom over identiteten (Codex P2): en arvet policy-id som
+      // `opprett_utkast` avviser kan leses, men ikke rulles tilbake —
+      // knappen ville endt i 400 hver eneste gang. Visningen sier hvorfor
+      // i stedet for å tilby den.
+      rullbakkSperret: sperret,
+      erGyldig: () => eierSkjermen(min),
+    });
+  }
+
+  function bekreftRullbakk(policyId, v, min, nokler) {
+    // STABIL nøkkel per VERSJON OG VISNING (SP-2/port 23), ikke per dialog
+    // (Codex P2). Samme idiom som `angreSeksjon` i policy.js, og av samme
+    // grunn: `Bekreftelsesdialog` lukker seg synkront når primærknappen
+    // klikkes, så et tvetydig nettverksavbrudd — svaret gikk tapt, men
+    // forespørselen kom fram og committet — etterlater brukeren med en
+    // lukket dialog og ingen kvittering. Den eneste veien videre er å åpne
+    // dialogen på nytt, og med nøkkelen laget HER inne var det en FERSK
+    // nøkkel: serveren så en ny operasjon og laget et rullbakk-utkast nummer
+    // to, i stedet for å replaye det første. Nøyaktig det replay-evnen
+    // finnes for.
+    //
+    // Kartet bor på historikkVISNINGEN og lever like lenge som den. Per
+    // versjon fordi to versjoner er to ulike operasjoner; per visning fordi
+    // en ny render er et nytt forsett. En avvisning ruller tilbake claimet
+    // server-side, så nøkkelen er ubrukt og kan prøves igjen; et vellykket
+    // kall navigerer til det nye utkastet.
+    if (!nokler.has(v.versjon)) nokler.set(v.versjon, nyIdempotensnokkel());
+    const nokkel = nokler.get(v.versjon);
+    Bekreftelsesdialog({
+      tittel: t("ui.historikk.rullbakk_tittel").replace("{n}", v.versjon),
+      // Alertdialog (§7): konsekvensen leses opp FØR handlingen —
+      // dette lager et UTKAST som må gjennom hele fire-øyne-løypa.
+      tekst: t("ui.historikk.rullbakk_tekst").replace("{n}", v.versjon),
+      primarTekst: t("ui.historikk.rullbakk"),
+      rolle: "alertdialog",
+      paaPrimar: () => {
+        // Generasjonen LINJEN VISTE følger med (Codex P2): nummeret
+        // peker, generasjonen identifiserer. Er raden slettet og
+        // gjenskapt siden historikken ble hentet, avviser serveren med
+        // `rullbakk_kilde_endret` i stedet for å kopiere en erstatning
+        // eier aldri så.
+        opprettUtkast(policyId, undefined, nokkel, v.versjon,
+                      v.generasjon).then((res) => {
+          meldAlert(t("ui.historikk.rullbakk_opprettet")
+            .replace("{n}", v.versjon));
+          if (!eierSkjermen(min)) return;
+          // Fokus til det nye utkastet (§7): detaljsiden flytter fokus
+          // til sin egen overskrift, og valideringen der leser feilene
+          // opp for et ugyldig utkast.
+          aapneDetalj(res.utkast_id);
+        }).catch((e) => {
+          if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+          meldAlert(t(`ui.historikk.feil.${e.kode}`,
+                      t("ui.historikk.rullbakk_feilet")));
+        });
+      },
+    });
+  }
+
 
   // `mal` er utkastet ruteren ble bedt om å åpne (`#/policyadmin/<utkast_id>`).
   // Det er veien fra et varsel til HANDLINGEN: uten den kom godkjenneren til

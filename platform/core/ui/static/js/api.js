@@ -169,8 +169,28 @@ export async function hentAktivPolicyId() {
     return { kjent: false, id: null };
   }
 }
-export const opprettUtkast = (policyId, innhold, idem = nyIdempotensnokkel()) =>
-  _muter("/v1/policyutkast", "POST", { policy_id: policyId, innhold }, idem);
+// 047: `rollbackAvVersjon` gjør utkastet til en RULLBAKK — serveren
+// henter da selve innholdet fra versjonen (kopien er serverens sannhet,
+// port 22), så `innhold` utelates. Uten feltet er kontrakten som før.
+//
+// `rollbackAvGenerasjon` er den OPTIMISTISKE LÅSEN på kilden (Codex P2),
+// søsteren til `slettPolicy`s `versjon`/`innholds_hash`. Et versjonsnummer
+// frigjøres av `slett_ubrukt_policy` og kan gjenskapes med annet innhold,
+// så nummeret alene sier ikke HVILKEN rad eier så. Slettes og gjenskapes
+// den mellom visningen og bekreftelsen, kopierte serveren erstatningen og
+// lagret et opphav som var internt konsistent og likevel ikke det eier ba
+// om. Generasjonen er identiteten som ikke gjenbrukes; serveren avviser
+// med `rullbakk_kilde_endret` (409) når den ikke stemmer.
+export const opprettUtkast = (policyId, innhold,
+                              idem = nyIdempotensnokkel(),
+                              rollbackAvVersjon = null,
+                              rollbackAvGenerasjon = null) =>
+  _muter("/v1/policyutkast", "POST",
+         { policy_id: policyId,
+           ...(innhold === undefined ? {} : { innhold }),
+           ...(rollbackAvVersjon == null ? {}
+               : { rollback_av_versjon: rollbackAvVersjon,
+                   rollback_av_generasjon: rollbackAvGenerasjon }) }, idem);
 export const redigerUtkast = (uid, utkastversjon, innhold,
                               idem = nyIdempotensnokkel()) =>
   _muter(`/v1/policyutkast/${uid}`, "PUT", { utkastversjon, innhold }, idem);

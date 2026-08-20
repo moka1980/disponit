@@ -37,8 +37,18 @@ def _policy(betrodd: dict[str, list[str]], vilkaar: list[str], *,
             prioritet: dict[str, int] | None = None,
             kan_permanent: tuple[str, ...] = (),
             maks_alder_s: int | None = None,
+            versjon: str = "1.0.0",
             handling: str = MAAL) -> dict:
-    """En minimal, men produksjonsformet policy."""
+    """En minimal, men produksjonsformet policy.
+
+    `versjon` er et argument fordi EN TILBAKETREKKING ER EN NY VERSJON
+    (047): `registrer` avviser nå at et innhold som HAR VÆRT I KRAFT
+    byttes ut under samme nummer — versjonsnummeret er `policyer`s eneste
+    nøkkel til fortiden, og en oppsettskjøring med redigert innhold
+    skrev om selve dokumentet der det sto, uten at noen aktivering hadde
+    skjedd. Testene under trekker fullmakter tilbake midt i en sak, og
+    det er nettopp en versjonsovergang — den skal se ut som en.
+    """
     # Vilkårets `verifikator` må være EN som faktisk er betrodd for det —
     # den semantiske validatoren krysspeiler de to, og en fixture som ikke
     # tåler kontrollen ville aldri nådd databasen.
@@ -57,7 +67,7 @@ def _policy(betrodd: dict[str, list[str]], vilkaar: list[str], *,
     if maks_alder_s is not None:
         h["maks_attestasjon_alder_s"] = maks_alder_s
     ut = {"schema_version": "0.2",
-          "meta": {"policy_id": "test-pol", "versjon": "1.0.0",
+          "meta": {"policy_id": "test-pol", "versjon": versjon,
                    "bransjemal": "test-pol", "status": "utkast"},
           "tidssone": "Europe/Oslo",
           "roller": [{"id": "agent", "beskrivelse": "test"}],
@@ -485,7 +495,7 @@ def test_port4_og_vilkaar_V1_autoritet_tilbakekalt_etter_ingest_stopper_fase2(
     # det hele tatt, og validatoren avviser den før den når databasen.
     _registrer_policy(migrator,
                       _policy({"v_fordring": ["a"], "v_regnskap": ["b"]},
-                              ["a", "b"]), t)
+                              ["a", "b"], versjon="1.1.0"), t)
 
     rt = koble(DSN)
     try:
@@ -528,7 +538,8 @@ def test_port6_og_vilkaar_V3_fjernet_vilkaar_sendes_ikke_videre(migrator, miljo)
     assert _lever_sett(migrator, t)["status"] == "positiv"
 
     # Aktiv policy krever nå BARE `a`.
-    _registrer_policy(migrator, _policy({"v_fordring": ["a", "b"]}, ["a"]), t)
+    _registrer_policy(migrator, _policy({"v_fordring": ["a", "b"]}, ["a"],
+                                        versjon="1.1.0"), t)
 
     rt = koble(DSN)
     try:
@@ -843,7 +854,7 @@ def test_scope_v2_pkt2_tilbakekalt_autoritet_avviser_kvitteringen(migrator,
             _registrer_policy(
                 migrator,
                 _policy({"v_fordring": ["a"], "v_regnskap": ["b"]},
-                        ["a", "b"]), t)
+                        ["a", "b"], versjon="1.1.0"), t)
             r = c.post("/v1/oppdrag/kvittering",
                        json={"kvittering_jti": o["kvittering_jti"],
                              "konvolutt": _verifikatorkvittering(

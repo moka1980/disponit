@@ -30,6 +30,33 @@ globalThis.fetch = async (url, opts) => {
       json: async () => ({ utkast_id: "u-ny", status: "utkast",
         utkastversjon: 1 }) }; }
   const sti = url.split("?")[0];
+  if (sti === "/v1/policyadmin/editorgrunnlag") {
+    return { ok: true, status: 200, json: async () => ({
+      plattformvilkar: [{ vilkar_type: "domenekontroll_verifisert",
+                          maldomene: "web_hostname" },
+                        // To registrerte navn for SAMME domene: serverens
+                        // prøve er eksistensiell, så hvert av dem dekker
+                        // kravet alene.
+                        { vilkar_type: "domene_eier_bekreftet",
+                          maldomene: "web_hostname" },
+                        // Et registrert plattformvilkår for et ANNET domene:
+                        // det er aldri denne handlingens krav, og skal aldri
+                        // låses her.
+                        { vilkar_type: "annet_domenevilkar",
+                          maldomene: "annet_domene" }],
+      // Hvilke handlinger kravet i det hele tatt GJELDER for, og for
+      // hvilket domene (`oppdragskontrakt`). Registeret er plattform-
+      // globalt, kravet er ikke.
+      malautorisasjonskrav: [{ prefiks: "kontroll.wcag.",
+                               maldomene: "web_hostname" }],
+      // `frekvensgrense_naadd` står med vilje i navnelista uten et krav:
+      // motoren kan ikke løfte den, og flaten skal da ikke tilby den.
+      godkjennbare_grunnkoder: ["belop_over_grense",
+        "valuta_ikke_tillatt", "frekvensgrense_naadd"],
+      godkjennbare_krav: [
+        { grunnkode: "belop_over_grense", krever: "belop_maks" },
+        { grunnkode: "valuta_ikke_tillatt", krever: "valuta" }] }) };
+  }
   if (sti === "/v1/policymaler") {
     return { ok: true, status: 200, json: async () => ({ maler: [
       { mal_id: "netthandel", bransjemal: "netthandel-no", innhold: MAL }] }) };
@@ -91,7 +118,8 @@ test("Ny: malvelger → skjema → lagre POSTer med CSRF + Idempotency-Key", asy
   await vent(() => h.querySelector(".editor-seksjon"));
   const fanetitler = [...h.querySelectorAll('[role="tab"]')].map((f) => f.textContent);
   assert.deepEqual(fanetitler, [t("ui.editor.fane.grunn"),
-    t("ui.editor.fane.roller"), t("ui.editor.fane.handlinger")]);
+    t("ui.editor.fane.roller"), t("ui.editor.fane.handlinger"),
+    t("ui.editor.fane.overstyring")]);
   gaaTilFane(h, t("ui.editor.fane.roller"));
   assert.ok(h.textContent.includes(t("ui.editor.roller")));
   gaaTilFane(h, t("ui.editor.fane.handlinger"));
@@ -1300,3 +1328,615 @@ test("Handlinger: velgeren viser modusen som faktisk vil bli lagret",
     assert.ok(h.querySelector(".editor-kort").textContent
       .includes("ordre.bekreft"));
   });
+
+
+// --- 047: menneskelig overstyring og vilkår (portene 27–33, 41) ------------
+
+test("Overstyring: fravær er en TILSTAND, par legges til fra nedtrekk",
+  async () => {
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), {
+      startPolicy: JSON.parse(JSON.stringify(MAL)) });
+    await vent(() => h.querySelector(".editor-seksjon"));
+    gaaTilFane(h, t("ui.editor.fane.overstyring"));
+    await vent(() => h.textContent.includes(t("ui.editor.overstyring")));
+    // Port 27: fraværet vises som tilstand — «ingen (standard)» —
+    // aldri som tomhet.
+    assert.ok(h.textContent.includes(t("ui.editor.overstyring_ingen")));
+    // Grunnkodene og handlingene er NEDTREKK (port 29/30): bare motorens
+    // godkjennbare koder og policyens egne handlinger kan velges.
+    await vent(() => h.querySelector("#mo-grunnkode"));
+    const gk = h.querySelector("#mo-grunnkode");
+    const koder = [...gk.querySelectorAll("option")].map((o) => o.value);
+    // `frekvensgrense_naadd` står i serverens navneliste, men uten et krav —
+    // motoren kan ikke løfte den. Da tilbys den ikke: en oppføring for den
+    // ville endt i STOPP ved HVER godkjenning.
+    assert.deepEqual(koder, ["belop_over_grense", "valuta_ikke_tillatt"]);
+    assert.ok(!koder.includes("teknisk_feil"),
+      "en ikke-godkjennbar grunnkode er ikke velgbar");
+    const hv = h.querySelector("#mo-handling");
+    assert.deepEqual([...hv.querySelectorAll("option")].map((o) => o.value),
+      ["ordre.bekreft"]);
+    // Paret alene er ikke en overstyring: uten verdien motoren skal løfte
+    // TIL avvises det her og nå, og ingenting legges til.
+    finnKnapp(h, t("ui.editor.overstyring_legg_til"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => h.textContent.includes(
+      t("ui.editor.overstyring_valuta_feil")));
+    assert.equal(h.querySelector(".overstyring-liste li"), null,
+      "en oppføring motoren ikke kan anvende skal ikke kunne legges til");
+    // Med beløpstak og valuta går den gjennom — og verdien vises i raden.
+    const belop = h.querySelector("#mo-belop");
+    const valuta = h.querySelector("#mo-valuta");
+    valuta.value = "nok";
+    valuta.dispatchEvent(new window.Event("input"));
+    belop.value = "50000.00";
+    belop.dispatchEvent(new window.Event("input"));
+    finnKnapp(h, t("ui.editor.overstyring_legg_til"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => h.querySelector(".overstyring-liste li"));
+    assert.ok(h.textContent.includes(t("ui.editor.overstyring_par")
+      .replace("{grunnkode}", "belop_over_grense")
+      .replace("{handling}", "ordre.bekreft")));
+    assert.ok(h.textContent.includes("50000.00 NOK"),
+      "verdien motoren løfter til vises i raden");
+    assert.ok(!h.textContent.includes(t("ui.editor.overstyring_ingen")));
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+  });
+
+// Codex P2: en velger som viser noe ANNET enn det som er lagret.
+//
+// `krever_rolle` kan peke på en rolle som er fjernet — utkast lagres uten
+// skjemavalidering. Sto verdien ikke blant valgene, merket ingen <option> seg
+// som valgt, og nettleseren viste da den FØRSTE gyldige rollen mens modellen
+// fortsatt bar den ugyldige. Ingen `change` fyrer av seg selv, og med bare ETT
+// gyldig valg finnes det ikke engang et annet valg å ta for å utløse en: eier
+// så «agent», lagret «borte», og fikk samme valideringsfeil om igjen — eneste
+// vei ut var å slette hele overstyringen.
+test("Overstyring: en ukjent krever_rolle VISES, og lagres ikke i skjul",
+  async () => {
+    const cookieDesc = Object.getOwnPropertyDescriptor(
+      window.Document.prototype, "cookie");
+    Object.defineProperty(document, "cookie", { configurable: true,
+      get: () => "__Host-disponit_csrf=tok123" });
+    POST = undefined;
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), { aapneUtkast: () => {}, startPolicy: {
+      meta: { policy_id: "p-mo", versjon: "0.1.0", bransjemal: "x",
+              status: "utkast" },
+      roller: [{ id: "agent" }],
+      handlinger: [{ id: "faktura.bokfor", tillatt_for: ["agent"] }],
+      menneskelig_overstyring: { krever_rolle: "borte", godkjennbare: [] },
+    } });
+    await vent(() => h.querySelector(".editor-seksjon"));
+    gaaTilFane(h, t("ui.editor.fane.overstyring"));
+    await vent(() => h.textContent.includes(t("ui.editor.overstyring_rolle")));
+    const merket = [...h.querySelectorAll("select")]
+      .find((s) => [...s.options].some((o) => o.value === "borte"));
+    assert.ok(merket, "den ukjente rollen er ikke å se i velgeren");
+    assert.equal(merket.value, "borte",
+      "velgeren viste en annen rolle enn den som er lagret");
+    assert.ok(merket.textContent.includes(
+      t("ui.editor.verdi_ukjent").replace("{verdi}", "borte")),
+    "den ukjente verdien er ikke merket som ukjent");
+    // Ingenting skrives om av at noe TEGNES: modellen bærer fortsatt eiers
+    // egen verdi til eier selv retter den.
+    finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+    await vent(() => POST);
+    assert.equal(
+      JSON.parse(POST.opts.body).innhold.menneskelig_overstyring.krever_rolle,
+      "borte", "editoren viste én rolle og lagret en annen");
+    // …og reparasjonen er ETT valg unna, selv om det bare finnes én gyldig
+    // rolle: den ukjente oppføringen er den andre.
+    POST = undefined;
+    merket.value = "agent";
+    merket.dispatchEvent(new window.Event("change"));
+    finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+    await vent(() => POST);
+    assert.equal(
+      JSON.parse(POST.opts.body).innhold.menneskelig_overstyring.krever_rolle,
+      "agent");
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+    if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
+  });
+
+// Codex P2: skriveveien tar med vilje imot ustrukturerte utkast — porten står
+// i `valider_utkast`, ikke i lagringen. Et lagret utkast kan derfor bære
+// `roller: {}` eller `handlinger: {}`. Leste overstyringsfanen dem rått med
+// `.map`, kastet den TypeError på nettopp den fanen eier måtte åpne for å se
+// hva som var galt, og skjemafeilen kunne bare forkastes.
+test("Overstyring: en ustrukturert roller/handlinger-samling krasjer ikke",
+  async () => {
+    for (const vrang of [{}, "roller", 7, [null, { id: 5 }, { id: "ok" }]]) {
+      const start = JSON.parse(JSON.stringify(MAL));
+      start.roller = vrang;
+      start.handlinger = vrang;
+      start.menneskelig_overstyring = { krever_rolle: "agent",
+        godkjennbare: [] };
+      const h = nyHoved();
+      visPolicyeditor(h, ctx(), { startPolicy: start });
+      await vent(() => h.querySelector(".editor-seksjon"));
+      gaaTilFane(h, t("ui.editor.fane.overstyring"));
+      await vent(() => h.textContent.includes(t("ui.editor.overstyring")));
+      // Fanen tegner seg, og nedtrekkene bærer bare de LESBARE id-ene.
+      await vent(() => h.querySelector("#mo-handling"));
+      const valg = [...h.querySelectorAll("#mo-handling option")]
+        .map((o) => o.value);
+      assert.deepEqual(valg, Array.isArray(vrang) ? ["ok"] : [],
+        JSON.stringify(vrang));
+    }
+  });
+
+// `_krev_malautorisasjonsvilkar` stiller kravet KUN for en handling hvis
+// kodefestede type krever målautorisasjon, og bare for typens eget domene.
+// Låsen er en påstand om at serveren nekter fjerningen, så testene under
+// måler den der kravet faktisk finnes — `kontroll.wcag.`-prefikset. Motprøven
+// («…på en handling kravet ikke gjelder…») bruker malens egen `ordre.bekreft`.
+function medKravhandling(start) {
+  start.handlinger[0].id = "kontroll.wcag.nettsted";
+  return start;
+}
+
+test("Vilkår: plattformvilkåret er LÅST med aria-disabled og forklaring",
+  async () => {
+    const start = medKravhandling(JSON.parse(JSON.stringify(MAL)));
+    start.verifikatorer = { v_domenekontroll: {
+      beskrivelse: "Plattformens domenekontroll",
+      betrodd_for: ["domenekontroll_verifisert", "eget_vilkar"] } };
+    start.handlinger[0].vilkaar = [
+      { navn: "domenekontroll_verifisert", verifikator: "v_domenekontroll" },
+      { navn: "eget_vilkar", verifikator: "v_domenekontroll" },
+    ];
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), { startPolicy: start });
+    await vent(() => h.querySelector(".editor-seksjon"));
+    gaaTilFane(h, t("ui.editor.fane.handlinger"));
+    // Grunnlaget hentes asynkront; det som skal måles er tilstanden ETTER
+    // at det er inne (uten det er alt låst — egen test under).
+    await vent(() => h.textContent.includes(
+      t("ui.editor.vilkaar_plattform_forklaring")));
+    const rader = [...h.querySelectorAll(".vilkaar-rad")];
+    assert.equal(rader.length, 2);
+    // Port 41: låst rad har aria-disabled OG aria-describedby → forklaring.
+    const laast = rader[0].querySelector('[aria-disabled="true"]');
+    assert.ok(laast, "plattformvilkåret er låst");
+    const beskrivelse = document.getElementById(
+      laast.getAttribute("aria-describedby"));
+    assert.ok(beskrivelse.textContent.includes(
+      t("ui.editor.vilkaar_plattform_forklaring")));
+    assert.ok(!rader[0].querySelector("button"),
+      "ingen fjern-knapp på plattformvilkåret (port 31)");
+    // Policyens EGET vilkår kan fjernes; nytt velges fra verifikatorens
+    // betrodd_for (port 33).
+    assert.ok(rader[1].querySelector("button"));
+    const navnValg = h.querySelector('[id^="vk-navn-"]');
+    assert.deepEqual(
+      [...navnValg.querySelectorAll("option")].map((o) => o.value),
+      ["domenekontroll_verifisert", "eget_vilkar"]);
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+  });
+
+// Codex P2: låsen verner KRAVET, ikke raden. `_krev_malautorisasjonsvilkar`
+// er et `SELECT 1`: den spør om handlingen HAR et målautorisasjonsvilkår for
+// domenet sitt. Bærer den to, godtar serveren gjerne at det ene fjernes —
+// men låste flaten begge, kunne en dublett eller et foreldet navn aldri
+// ryddes, og eier møtte et nei porten aldri sa.
+test("Vilkår: overflødige plattformvilkår kan fjernes, det siste ikke",
+  async () => {
+    // To ULIKE registrerte navn for samme domene, og en dublett i tillegg:
+    // tre rader som hver for seg dekker kravet.
+    for (const [andre, merkelapp] of [
+      [{ navn: "domene_eier_bekreftet", verifikator: "v_domenekontroll" },
+       "to ulike navn"],
+      [{ navn: "domenekontroll_verifisert", verifikator: "v_annen" },
+       "dublett"],
+    ]) {
+      const start = medKravhandling(JSON.parse(JSON.stringify(MAL)));
+      start.verifikatorer = {
+        v_domenekontroll: { beskrivelse: "Plattformens domenekontroll",
+          betrodd_for: ["domenekontroll_verifisert",
+            "domene_eier_bekreftet"] },
+        v_annen: { beskrivelse: "En annen",
+          betrodd_for: ["domenekontroll_verifisert"] },
+      };
+      start.handlinger[0].vilkaar = [
+        { navn: "domenekontroll_verifisert",
+          verifikator: "v_domenekontroll" },
+        andre,
+      ];
+      const h = nyHoved();
+      visPolicyeditor(h, ctx(), { startPolicy: start });
+      await vent(() => h.querySelector(".editor-seksjon"));
+      gaaTilFane(h, t("ui.editor.fane.handlinger"));
+      await vent(() => h.textContent.includes(
+        t("ui.editor.vilkaar_plattform_forklaring")));
+      let rader = [...h.querySelectorAll(".vilkaar-rad")];
+      assert.equal(rader.length, 2, merkelapp);
+      // INGEN av dem er låst: kravet står igjen uansett hvilken som går.
+      // Og de er fjern-knapper, ikke reparasjonsnedtrekk — radene feiler
+      // ingenting, de er bare overflødige.
+      for (const rad of rader) {
+        assert.ok(!rad.querySelector('[aria-disabled="true"]'),
+          `${merkelapp}: en overflødig rad var låst`);
+        assert.ok(!rad.querySelector("select"),
+          `${merkelapp}: en velformet rad ble tilbudt reparasjon`);
+        assert.equal(rad.querySelector("button").textContent,
+          t("ui.editor.vilkaar_fjern"), merkelapp);
+      }
+      // Fjern den ene — den som blir igjen bærer kravet alene, og låses.
+      rader[1].querySelector("button").click();
+      await vent(() => h.querySelectorAll(".vilkaar-rad").length === 1);
+      rader = [...h.querySelectorAll(".vilkaar-rad")];
+      assert.ok(rader[0].querySelector('[aria-disabled="true"]'),
+        `${merkelapp}: den siste raden mistet låsen`);
+      assert.ok(!rader[0].querySelector("button"),
+        `${merkelapp}: den siste raden kunne fjernes`);
+      assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+    }
+  });
+
+// Codex P2: låsen gjelder IDENTITETEN (navnet + verifikatoren), ikke
+// terskelen. `min` er eierens egen, og den avgjør om en attestasjon godtas
+// — en foreldet terskel er derfor en levende feil hun må kunne rette.
+// Uten dette viste den låste raden verken verdien eller en vei til å endre
+// den, og raden kunne ikke fjernes og legges inn på nytt: eneste utvei var
+// å forkaste utkastet, for en endring serveren gjerne ville tatt imot.
+test("Vilkår: terskelen på et låst plattformvilkår kan rettes",
+  async () => {
+    const start = medKravhandling(JSON.parse(JSON.stringify(MAL)));
+    start.verifikatorer = { v_domenekontroll: {
+      beskrivelse: "Plattformens domenekontroll",
+      betrodd_for: ["domenekontroll_verifisert"] } };
+    start.handlinger[0].vilkaar = [
+      { navn: "domenekontroll_verifisert", verifikator: "v_domenekontroll",
+        min: 2 },
+    ];
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), { startPolicy: start });
+    await vent(() => h.querySelector(".editor-seksjon"));
+    gaaTilFane(h, t("ui.editor.fane.handlinger"));
+    await vent(() => h.textContent.includes(
+      t("ui.editor.vilkaar_plattform_forklaring")));
+    const rad = h.querySelector(".vilkaar-rad");
+    assert.ok(rad.querySelector('[aria-disabled="true"]'),
+      "identiteten er fortsatt låst");
+    const felt = rad.querySelector("input");
+    assert.ok(felt, "terskelen har ikke noe felt");
+    // Verdien VISES — den var usynlig før.
+    assert.equal(felt.value, "2");
+    // …og endringen lever i editorens egen tilstand: målt ved å tegne
+    // fanen på nytt, ikke ved å lese objektet vi sendte inn.
+    const lesTerskel = () => {
+      gaaTilFane(h, t("ui.editor.fane.roller"));
+      gaaTilFane(h, t("ui.editor.fane.handlinger"));
+      return h.querySelector(".vilkaar-rad input");
+    };
+    felt.value = "5";
+    felt.dispatchEvent(new window.Event("input"));
+    assert.equal(lesTerskel().value, "5");
+    // Tom = ingen terskel, ikke en ugyldig verdi — og raden er FORTSATT
+    // låst, altså fortsatt velformet.
+    const felt2 = h.querySelector(".vilkaar-rad input");
+    felt2.value = "";
+    felt2.dispatchEvent(new window.Event("input"));
+    assert.equal(lesTerskel().value, "");
+    assert.ok(h.querySelector('.vilkaar-rad [aria-disabled="true"]'),
+      "raden mistet låsen da terskelen ble fjernet");
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+  });
+
+// Codex P2: skriveveien tar med vilje imot ustrukturerte utkast — porten
+// står i `valider_utkast`, ikke i lagringen. Et lagret utkast kan derfor
+// bære `vilkaar: [null]` eller en naken streng. Leste editoren `v.navn`
+// rått, kastet den TypeError på nettopp det utkastet eier måtte åpne for å
+// RETTE feilen, og flaten låste seg på det eneste stedet den kunne fjernes.
+test("Vilkår: en ulesbar oppføring kan åpnes og fjernes, ikke krasje",
+  async () => {
+    const start = JSON.parse(JSON.stringify(MAL));
+    start.verifikatorer = { v: { betrodd_for: ["eget_vilkar"] } };
+    start.handlinger[0].vilkaar = [
+      null,
+      "eget_vilkar",                                   // naken streng
+      { navn: "eget_vilkar", verifikator: "v" },
+    ];
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), { startPolicy: start });
+    await vent(() => h.querySelector(".editor-seksjon"));
+    gaaTilFane(h, t("ui.editor.fane.handlinger"));
+    await vent(() => h.textContent.includes(
+      t("ui.editor.vilkaar_plattform_forklaring")));
+    const rader = [...h.querySelectorAll(".vilkaar-rad")];
+    assert.equal(rader.length, 3, "alle tre oppføringene tegnes");
+    // Den ulesbare sier hva den er, i stedet for å bli et «?».
+    assert.ok(rader[0].textContent.includes(
+      t("ui.editor.vilkaar_ulesbart")), rader[0].textContent);
+    // …og den kan fjernes, ellers er utkastet en blindgate.
+    const fjern = rader[0].querySelector("button");
+    assert.ok(fjern, "den ulesbare oppføringen må kunne fjernes");
+    fjern.dispatchEvent(new window.Event("click"));
+    await vent(() => h.querySelectorAll(".vilkaar-rad").length === 2);
+    assert.equal(h.querySelectorAll(".vilkaar-rad").length, 2,
+      "den ulesbare oppføringen ble ikke fjernet");
+    assert.ok(!h.textContent.includes(t("ui.editor.vilkaar_ulesbart")));
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+  });
+
+// Codex P2: låsen målte NAVNET alene. Et utkast med et registrert
+// plattformnavn, men uten en betrodd verifikator, ble derfor låst — mens
+// valideringen avviste nettopp den verifikatorpekeren. Raden kunne verken
+// rettes eller fjernes, og utkastet kunne bare forkastes.
+test("Vilkår: et plattformvilkår uten betrodd verifikator kan repareres",
+  async () => {
+    const start = medKravhandling(JSON.parse(JSON.stringify(MAL)));
+    start.verifikatorer = { v_domenekontroll: {
+      beskrivelse: "Plattformens domenekontroll",
+      betrodd_for: ["domenekontroll_verifisert"] } };
+    start.handlinger[0].vilkaar = [
+      { navn: "domenekontroll_verifisert" },            // verifikator mangler
+      { navn: "domenekontroll_verifisert", verifikator: 7 },  // ikke en streng
+    ];
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), { startPolicy: start });
+    await vent(() => h.querySelector(".editor-seksjon"));
+    gaaTilFane(h, t("ui.editor.fane.handlinger"));
+    await vent(() => h.textContent.includes(
+      t("ui.editor.vilkaar_plattform_forklaring")));
+    const rader = [...h.querySelectorAll(".vilkaar-rad")];
+    assert.equal(rader.length, 2);
+    for (const rad of rader) {
+      assert.ok(!rad.querySelector('[aria-disabled="true"]'),
+        "en ufullstendig oppføring er ikke et håndhevet plattformvilkår");
+    }
+    // Reparasjonen tilbyr KUN verifikatorer som er betrodd for navnet.
+    const velg = rader[0].querySelector("select");
+    assert.ok(velg, "raden må kunne repareres");
+    assert.deepEqual([...velg.querySelectorAll("option")].map((o) => o.value),
+      ["v_domenekontroll"]);
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+    rader[0].querySelector("button").dispatchEvent(new window.Event("click"));
+    await vent(() => h.querySelector('.vilkaar-rad [aria-disabled="true"]'));
+    // Navnet registeret krever overlevde reparasjonen — raden bærer nå
+    // navnet OG verifikatoren, og er det låste plattformvilkåret den skal
+    // være.
+    const reparert = h.querySelectorAll(".vilkaar-rad")[0];
+    assert.ok(reparert.textContent.includes(
+      "domenekontroll_verifisert — v_domenekontroll"), reparert.textContent);
+    assert.ok(reparert.querySelector('[aria-disabled="true"]'));
+    // Den andre raden er urørt og fortsatt reparerbar.
+    assert.ok(h.querySelectorAll(".vilkaar-rad")[1].querySelector("select"));
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+  });
+
+// Er ingen av policyens verifikatorer betrodd for navnet, finnes det ingen
+// gyldig form av raden i det hele tatt — da er fjerning den eneste veien ut,
+// og en lås ville gjort utkastet til en blindgate.
+test("Vilkår: et plattformnavn ingen verifikator kan bære, kan fjernes",
+  async () => {
+    const start = medKravhandling(JSON.parse(JSON.stringify(MAL)));
+    start.verifikatorer = { v_annet: { betrodd_for: ["eget_vilkar"] } };
+    start.handlinger[0].vilkaar = [{ navn: "domenekontroll_verifisert" }];
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), { startPolicy: start });
+    await vent(() => h.querySelector(".editor-seksjon"));
+    gaaTilFane(h, t("ui.editor.fane.handlinger"));
+    await vent(() => h.textContent.includes(
+      t("ui.editor.vilkaar_plattform_forklaring")));
+    const rad = h.querySelector(".vilkaar-rad");
+    assert.ok(!rad.querySelector('[aria-disabled="true"]'));
+    assert.ok(!rad.querySelector("select"), "ingen betrodd verifikator å velge");
+    rad.querySelector("button").dispatchEvent(new window.Event("click"));
+    await vent(() => !h.querySelector(".vilkaar-rad"));
+    assert.equal(h.querySelectorAll(".vilkaar-rad").length, 0);
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+  });
+
+// Codex P2: låsen målte navn + verifikatortillit (§5), men skjemaet krever
+// også at `min` er numerisk og avviser ekstra felter. En rad med
+// `min: "ugyldig"` var derfor «velformet» for låsen og ble låst, mens
+// serveren avviste den — samme blindgate som navnelåsen ga, én etasje ned.
+test("Vilkår: en rad skjemaet avviser på strukturen låses ikke", async () => {
+  const start = medKravhandling(JSON.parse(JSON.stringify(MAL)));
+  start.verifikatorer = { v_domenekontroll: {
+    beskrivelse: "Plattformens domenekontroll",
+    betrodd_for: ["domenekontroll_verifisert"] } };
+  start.handlinger[0].vilkaar = [
+    // Betrodd verifikator, men `min` er ikke et tall (skjemaet: number).
+    { navn: "domenekontroll_verifisert", verifikator: "v_domenekontroll",
+      min: "ugyldig" },
+    // Betrodd verifikator, men et felt skjemaet ikke kjenner
+    // (additionalProperties: false).
+    { navn: "domenekontroll_verifisert", verifikator: "v_domenekontroll",
+      tull: 1 },
+  ];
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { startPolicy: start });
+  await vent(() => h.querySelector(".editor-seksjon"));
+  gaaTilFane(h, t("ui.editor.fane.handlinger"));
+  await vent(() => h.textContent.includes(
+    t("ui.editor.vilkaar_plattform_forklaring")));
+  const rader = [...h.querySelectorAll(".vilkaar-rad")];
+  assert.equal(rader.length, 2);
+  for (const rad of rader) {
+    assert.ok(!rad.querySelector('[aria-disabled="true"]'),
+      "en rad skjemaet avviser er ikke et håndhevet plattformvilkår");
+    assert.ok(rad.querySelector("select"), "raden må kunne repareres");
+  }
+  assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+  // Reparasjonen rydder bort nettopp det skjemaet avviste, og raden blir
+  // det låste plattformvilkåret den skulle vært. Låsen ER påstanden om at
+  // raden nå er velformet i BEGGE lag — den kan ikke bli sann med
+  // `min: "ugyldig"` i behold.
+  rader[0].querySelector("button").dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector('.vilkaar-rad [aria-disabled="true"]'));
+  const reparert = h.querySelectorAll(".vilkaar-rad")[0];
+  assert.ok(reparert.querySelector('[aria-disabled="true"]'));
+  assert.ok(!reparert.querySelector("button"));
+  assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+});
+
+// En GYLDIG `min` er eierens egen terskel, ikke feilen som ble reparert —
+// den skal ikke forsvinne fordi verifikatorpekeren måtte rettes.
+test("Vilkår: en velformet rad med numerisk min er låst, og min overlever"
+  + " en reparasjon", async () => {
+    const cookieDesc = Object.getOwnPropertyDescriptor(
+      window.Document.prototype, "cookie");
+    Object.defineProperty(document, "cookie", { configurable: true,
+      get: () => "__Host-disponit_csrf=tok123" });
+    const start = medKravhandling(JSON.parse(JSON.stringify(MAL)));
+    start.verifikatorer = { v_domenekontroll: {
+      betrodd_for: ["domenekontroll_verifisert"] } };
+    start.handlinger[0].vilkaar = [
+      // Velformet: `min` er et tall → låst som ethvert plattformvilkår.
+      { navn: "domenekontroll_verifisert", verifikator: "v_domenekontroll",
+        min: 2 },
+      // Ubetrodd verifikator, men gyldig `min` — reparasjonen retter
+      // pekeren og BEHOLDER terskelen.
+      { navn: "domenekontroll_verifisert", verifikator: "v_ukjent", min: 3 },
+    ];
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), { startPolicy: start });
+    await vent(() => h.querySelector(".editor-seksjon"));
+    gaaTilFane(h, t("ui.editor.fane.handlinger"));
+    await vent(() => h.textContent.includes(
+      t("ui.editor.vilkaar_plattform_forklaring")));
+    const rader = [...h.querySelectorAll(".vilkaar-rad")];
+    assert.equal(rader.length, 2);
+    assert.ok(rader[0].querySelector('[aria-disabled="true"]'),
+      "numerisk min er velformet og skal fortsatt låses");
+    assert.ok(!rader[0].querySelector("button"));
+    rader[1].querySelector("button").dispatchEvent(new window.Event("click"));
+    await vent(() => !h.querySelectorAll(".vilkaar-rad")[1]
+      .querySelector("select"));
+    // Editoren dyp-kopierer `startPolicy`, så terskelen leses av det som
+    // faktisk sendes til serveren — ikke av originalobjektet.
+    POST = undefined;
+    finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+    await vent(() => POST);
+    assert.deepEqual(
+      JSON.parse(POST.opts.body).innhold.handlinger[0].vilkaar,
+      [{ navn: "domenekontroll_verifisert", verifikator: "v_domenekontroll",
+         min: 2 },
+       { navn: "domenekontroll_verifisert", verifikator: "v_domenekontroll",
+         min: 3 }],
+      "reparasjonen kastet eierens egen terskel");
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+    if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
+  });
+
+// Codex P2: låsen målte et GLOBALT sett av vilkårsnavn. Registeret er
+// plattform-globalt, men kravet er ikke: `_krev_malautorisasjonsvilkar`
+// stiller det bare for handlinger hvis kodefestede type krever
+// målautorisasjon, og bare for typens eget domene. Et velformet
+// `domenekontroll_verifisert` som havnet på en vanlig `ordre.bekreft` ble
+// derfor umulig å fjerne — enda serveren gjerne ville sluppet fjerningen.
+test("Vilkår: et plattformvilkår på en handling uten kravet kan fjernes",
+  async () => {
+    const start = JSON.parse(JSON.stringify(MAL));   // `ordre.bekreft`
+    start.verifikatorer = { v_domenekontroll: {
+      betrodd_for: ["domenekontroll_verifisert"] } };
+    start.handlinger[0].vilkaar = [
+      { navn: "domenekontroll_verifisert", verifikator: "v_domenekontroll" },
+    ];
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), { startPolicy: start });
+    await vent(() => h.querySelector(".editor-seksjon"));
+    gaaTilFane(h, t("ui.editor.fane.handlinger"));
+    await vent(() => h.textContent.includes(
+      t("ui.editor.vilkaar_plattform_forklaring")));
+    const rad = h.querySelector(".vilkaar-rad");
+    assert.ok(!rad.querySelector('[aria-disabled="true"]'),
+      "kravet gjelder ikke denne handlingen, så raden er ikke låst");
+    rad.querySelector("button").dispatchEvent(new window.Event("click"));
+    await vent(() => !h.querySelector(".vilkaar-rad"));
+    assert.equal(h.querySelectorAll(".vilkaar-rad").length, 0);
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+  });
+
+// …og motsatt vei: på en handling kravet GJELDER for, låses bare vilkåret
+// for handlingens EGET domene. Et registrert plattformvilkår for et annet
+// domene kan aldri tilfredsstille kravet, og skal derfor kunne fjernes.
+test("Vilkår: bare vilkåret for handlingens eget domene låses", async () => {
+  const start = medKravhandling(JSON.parse(JSON.stringify(MAL)));
+  start.verifikatorer = { v_dk: {
+    betrodd_for: ["domenekontroll_verifisert", "annet_domenevilkar"] } };
+  start.handlinger[0].vilkaar = [
+    { navn: "domenekontroll_verifisert", verifikator: "v_dk" },
+    { navn: "annet_domenevilkar", verifikator: "v_dk" },
+  ];
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { startPolicy: start });
+  await vent(() => h.querySelector(".editor-seksjon"));
+  gaaTilFane(h, t("ui.editor.fane.handlinger"));
+  await vent(() => h.textContent.includes(
+    t("ui.editor.vilkaar_plattform_forklaring")));
+  const rader = [...h.querySelectorAll(".vilkaar-rad")];
+  assert.equal(rader.length, 2);
+  assert.ok(rader[0].querySelector('[aria-disabled="true"]'),
+    "handlingens eget domene er kravet, og låses");
+  assert.ok(!rader[1].querySelector('[aria-disabled="true"]'),
+    "et annet domene kan aldri telle for denne handlingen");
+  assert.ok(rader[1].querySelector("button"), "…og må kunne fjernes");
+  assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+});
+
+// Fail-closed gjelder også en HALV grunnlagsrespons: uten kravlisten vet
+// flaten ikke hvilke handlinger kravet gjelder for, og kan ikke tilby en
+// fjerning serveren kanskje nekter.
+test("Vilkår: uten kravlisten i grunnlaget er ALT låst", async () => {
+  const gammelFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    const sti = url.split("?")[0];
+    if (sti === "/v1/policyadmin/editorgrunnlag") {
+      const svar = await gammelFetch(url, opts);
+      const d = await svar.json();
+      delete d.malautorisasjonskrav;
+      return { ok: true, status: 200, json: async () => d };
+    }
+    return gammelFetch(url, opts);
+  };
+  try {
+    const start = JSON.parse(JSON.stringify(MAL));
+    start.verifikatorer = { v: { betrodd_for: ["eget_vilkar"] } };
+    start.handlinger[0].vilkaar = [{ navn: "eget_vilkar", verifikator: "v" }];
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), { startPolicy: start });
+    await vent(() => h.querySelector(".editor-seksjon"));
+    gaaTilFane(h, t("ui.editor.fane.handlinger"));
+    await vent(() => h.querySelector(".vilkaar-liste"));
+    assert.ok(h.textContent.includes(t("ui.editor.vilkaar_grunnlag_mangler")));
+    assert.ok(!h.querySelector(".vilkaar-rad button"),
+      "ingen fjern-knapp uten kravlisten");
+  } finally {
+    globalThis.fetch = gammelFetch;
+  }
+});
+
+test("Vilkår: uten editorgrunnlag er ALT låst (fail-closed)", async () => {
+  const gammelFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    const sti = url.split("?")[0];
+    if (sti === "/v1/policyadmin/editorgrunnlag") {
+      return { ok: false, status: 500, json: async () => ({ feil: "x" }) };
+    }
+    return gammelFetch(url, opts);
+  };
+  try {
+    const start = JSON.parse(JSON.stringify(MAL));
+    start.verifikatorer = { v: { betrodd_for: ["eget_vilkar"] } };
+    start.handlinger[0].vilkaar = [{ navn: "eget_vilkar",
+      verifikator: "v" }];
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), { startPolicy: start });
+    await vent(() => h.querySelector(".editor-seksjon"));
+    gaaTilFane(h, t("ui.editor.fane.handlinger"));
+    await vent(() => h.querySelector(".vilkaar-liste"));
+    // Port 31 er en LUKKING: kan ikke flaten vite hva som er plattformens,
+    // kan den ikke tilby fjerning av noe som helst.
+    assert.ok(h.textContent.includes(
+      t("ui.editor.vilkaar_grunnlag_mangler")));
+    assert.ok(!h.querySelector(".vilkaar-rad button"),
+      "ingen fjern-knapp uten grunnlag");
+  } finally {
+    globalThis.fetch = gammelFetch;
+  }
+});

@@ -141,6 +141,28 @@ INSERT INTO _design VALUES
     -- (den optimistiske låsen). Toargumentsformen finnes ikke lenger — den
     -- slettet uten å binde seg til en versjon, og migrasjonen dropper den.
     ('FUNCTION', 'slett_ubrukt_policy(text,text,text,text)', 'disponit_policy_eier'),
+    -- 047: historikk-leseveiene (flaten leser aldri policyer direkte).
+    ('FUNCTION', 'policyversjoner_for_tenant(text,text)',   'disponit_policy_eier'),
+    -- Generasjonen står i signaturen: et versjonsnummer er en peker som
+    -- `slett_ubrukt_policy` frigjør, så diffen må navngi identiteten.
+    ('FUNCTION', 'policyversjon_innhold(text,text,text,bigint)', 'disponit_policy_eier'),
+    -- Kilden for en rullbakk: innholdet OG generasjonens egen
+    -- `innholds_hash` i ett oppslag — opphavet lagres som identiteten,
+    -- ikke som versjonsnummeret, og de to må komme fra samme rad.
+    ('FUNCTION', 'policyversjon_kilde(text,text,text)',     'disponit_policy_eier'),
+    -- 047: vakten «én hendelse per LEVENDE versjon». Den er SECURITY
+    -- DEFINER og eid av policy_eier fordi en DEFERRED constraint-trigger
+    -- fyrer ved COMMIT, utenfor `aktiver_policy` sin definer-kontekst —
+    -- altså som runtime-rollen, som verken har SELECT på `policyaktivering`
+    -- eller eierens RLS-policy.
+    ('FUNCTION', 'hendelse_en_per_levende_versjon()',       'disponit_policy_eier'),
+    -- 047: prøven «har denne versjonen vært i kraft». Ren funksjon av fire
+    -- skalarer, så EXECUTE står til PUBLIC som normalt — men EIEREN er
+    -- policy_eier, som for de andre 047-definerne, og da må den stå her.
+    -- Uten raden klassifiserer reparasjonen den som strøgods og flytter
+    -- eierskapet til migrator, og definerne som kaller den er ikke lenger
+    -- det designet sier de er.
+    ('FUNCTION', 'policyversjon_i_kraft(boolean,timestamp with time zone,text,timestamp with time zone)', 'disponit_policy_eier'),
     -- 014 (PR-014a): modulregisterets herdede overgangsfunksjoner. Eid av
     -- disponit_modul_eier fordi registertabellene er off-limits for runtime
     -- (runtime får KUN SELECT). Paritetstesten dekker dem.

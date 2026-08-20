@@ -66,6 +66,57 @@ def _policyrad(c, pid, versjon="1.0.0", aktiv=True):
         (TEN, pid, versjon if aktiv else None))
 
 
+def _brukt_runde(c, uid, pid, aktivert_versjon, base_hash, *, runde=1,
+                 utkast_hash="i", diff_hash="d"):
+    """En BRUKT runde i den ENESTE formen 047 tillater.
+
+    En terminal runde bærer bindingen til versjonen den aktiverte, og
+    hendelsen FK-en krever. Fikstur-formen «brukt + operasjons-id, ingen
+    binding» var mulig så lenge `runde_versjon_krever_brukt` ikke krevde
+    `aktivert_som_versjon`: FK-en er MATCH SIMPLE og sov med én NULL, og
+    tilstandsmaskin-triggeren er BEFORE UPDATE, så en rad som FØDES
+    terminal passerte begge (Codex P1). Nå kan ikke fiksturen bygge en
+    form systemet forbyr — og det er nettopp poenget: den bygger den
+    ekte i stedet.
+
+    KVORUMET MÅ OGSÅ VÆRE OPPFYLT (Codex P2). Runden erklærte UTVIDER med
+    `pakrevd_antall_godkjennere = 2` og bar ÉN attestasjon; `aktiver_policy`
+    avviser nøyaktig den tilstanden (steg 3 teller attestasjonene mot
+    kvorumet). Fiksturen bygde altså fortsatt en terminal historikk
+    produksjonsveien ikke kan lage — bare et hakk mer troverdig enn før,
+    og en test som hviler på en umulig fortid måler ikke det den sier.
+    To uavhengige attestanter, og hendelsen bærer BEGGE: erklæringen,
+    attestasjonene og hendelsen sier nå det samme.
+    """
+    opid = f"bf-{uid}-{runde}"
+    c.execute(
+        "INSERT INTO aktiveringsrunde (tenant,utkast_id,runde,status,"
+        "diff_hash,utkast_innholds_hash,base_policy_hash,risikoklasse,"
+        "klassifisering_hash,klassifikatorversjon,policyskjema_versjon,"
+        "motor_semantikkversjon,deny_all_hash,deny_all_versjon,"
+        "pakrevd_antall_godkjennere,utloper,decision_operation_id,"
+        "aktivert_som_versjon)"
+        " VALUES (%s,%s,%s,'brukt',%s,%s,%s,'UTVIDER','k','1','0.2','1',"
+        "'dh','1',2,now()+interval '1 hour',%s,%s)",
+        (TEN, uid, runde, diff_hash, utkast_hash, base_hash, opid,
+         aktivert_versjon))
+    for bruker in ("uavh", "uavh2"):
+        c.execute(
+            "INSERT INTO aktiveringsattestasjon (tenant,utkast_id,runde,"
+            "bruker_id,rolle,authz_version,er_forfatter,diff_hash,"
+            "klassifisering_hash,risikoklasse,konvoluttversjon,"
+            "konvolutt_hash,mac,mac_key_id,jti,utloper)"
+            " VALUES (%s,%s,%s,%s,'okonomi',1,false,%s,'k','UTVIDER',"
+            "1,'h','m','mk1',%s,now()+interval '1 hour')",
+            (TEN, uid, runde, bruker, diff_hash, secrets.token_hex(16)))
+    c.execute(
+        "INSERT INTO policyaktivering (tenant,policy_id,utkast_id,runde,"
+        "decision_operation_id,versjon,innholds_hash,diff_hash,attestant_a,"
+        "attestant_b) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'uavh','uavh2')",
+        (TEN, pid, uid, runde, opid, aktivert_versjon, utkast_hash, diff_hash))
+    return opid
+
+
 def _slett(c, pid, tenant=TEN, versjon="1.0.0", innholds_hash=None):
     """Slettingen er BUNDET til den aktive policyen kalleren så — versjon +
     innholdshash, den optimistiske låsen (Codex P1)."""
@@ -477,18 +528,11 @@ def test_versjonen_en_runde_ble_attestert_mot_blir_staaende():
         "INSERT INTO policyutkast (tenant,utkast_id,policy_id,innhold,"
         "opprettet_av,status) VALUES (%s,%s,%s,'{}'::jsonb,'forf','aktivert')",
         (TEN, uid, pid))
-    m.execute(
-        "INSERT INTO aktiveringsrunde (tenant,utkast_id,runde,status,"
-        "diff_hash,utkast_innholds_hash,base_policy_hash,risikoklasse,"
-        "klassifisering_hash,klassifikatorversjon,policyskjema_versjon,"
-        "motor_semantikkversjon,deny_all_hash,deny_all_versjon,"
-        "pakrevd_antall_godkjennere,utloper)"
-        " VALUES (%s,%s,1,'brukt','d','i',%s,'UTVIDER','k','1','0.2','1',"
-        "'dh','1',2,now()+interval '1 hour')",
-        (TEN, uid, _hash(pid, "1.0.0")))
-    m.commit()
+    # Runden aktiverte 1.1.0 med 1.0.0 som base. Versjonen må finnes før
+    # hendelsen kan binde seg til den.
     sett_kontekst(m, TEN, "test", "r0")
-    _aktiver_ny_versjon(m, pid, "1.1.0")                 # runden aktiverte 1.1.0
+    _aktiver_ny_versjon(m, pid, "1.1.0")
+    _brukt_runde(m, uid, pid, "1.1.0", _hash(pid, "1.0.0"))
     m.commit()
     rt = _rt()
     try:
@@ -528,15 +572,8 @@ def test_bootstrap_policy_slettes_i_sin_helhet():
         "INSERT INTO policyutkast (tenant,utkast_id,policy_id,innhold,"
         "opprettet_av,status) VALUES (%s,%s,%s,'{}'::jsonb,'forf','aktivert')",
         (TEN, uid, pid))
-    m.execute(
-        "INSERT INTO aktiveringsrunde (tenant,utkast_id,runde,status,"
-        "diff_hash,utkast_innholds_hash,base_policy_hash,risikoklasse,"
-        "klassifisering_hash,klassifikatorversjon,policyskjema_versjon,"
-        "motor_semantikkversjon,deny_all_hash,deny_all_versjon,"
-        "pakrevd_antall_godkjennere,utloper)"
-        " VALUES (%s,%s,1,'brukt','d','i',%s,'UTVIDER','k','1','0.2','1',"
-        "'dh','1',2,now()+interval '1 hour')",
-        (TEN, uid, DENY_ALL_HASH))
+    # Bootstrap-runden: basen er DENY_ALL_HASH, ikke en lagret versjon.
+    _brukt_runde(m, uid, pid, "1.0.0", DENY_ALL_HASH)
     m.commit()
     rt = _rt()
     try:

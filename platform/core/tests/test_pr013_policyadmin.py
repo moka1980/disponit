@@ -52,6 +52,16 @@ def _utkast(c, uid, pid, av="bruker-a", status="utkast", innhold='{"a":1}'):
 
 
 def _runde(c, uid, runde=1, **over):
+    # 047: hendelsens FK binder runden til utkastets FAKTISKE innholds_hash
+    # — en fixturrunde med dummyhash kan ikke lenger aktiveres. Default er
+    # derfor sannheten fra utkastraden; tester som vil måle avvik
+    # overstyrer eksplisitt.
+    if "utkast_innholds_hash" not in over:
+        rad = c.execute(
+            "SELECT innholds_hash FROM policyutkast WHERE tenant=%s AND"
+            " utkast_id=%s", (TEN, uid)).fetchone()
+        if rad and rad[0]:
+            over["utkast_innholds_hash"] = rad[0]
     felt = dict(diff_hash="d", utkast_innholds_hash="u", base_policy_hash="b",
                 risikoklasse="UTVIDER", klassifisering_hash="k",
                 klassifikatorversjon="kv1", policyskjema_versjon="0.2",

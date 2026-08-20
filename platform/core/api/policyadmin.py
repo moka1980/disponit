@@ -64,6 +64,33 @@ KONVOLUTTVERSJON = 1
 #: Aktiverte policyer settes i produksjonsstatus (den blir den aktive raden).
 _AKTIV_STATUS = "produksjon"
 
+#: Rullbakkevaktens navngitte constraints (047) → feilkode (Codex P2).
+#:
+#: `policyutkast_rullbakkeopphav_vakt` er den AUTORITATIVE prøven på et
+#: opphav, og den kjører i SKRIVINGENS transaksjon — etter at HTTP-veien har
+#: sluppet sin lesetransaksjon. Rekker `slett_ubrukt_policy` å slette eller
+#: gjenskape kilden i mellomtiden, feller triggeren innsettingen. Det er en
+#: STØTTET samtidighet, ikke en driverfeil, men uten navnene her nådde
+#: `psycopg.errors.CheckViolation` helt ut til `_med_conn` — som bare kjenner
+#: `Aktiveringsfeil` — og eier fikk 500 i stedet for det 409-et forkontrollen
+#: gir for nøyaktig samme tilstand.
+#:
+#: Oversettelsen bor HER, ikke i HTTP-laget: triggeren vokter tabellen mot
+#: enhver skriver, og en kaller utenfor forespørselsveien skal møte det samme
+#: domenesvaret. Navnet er kontrakten — en constraint vi ikke kjenner kastes
+#: videre urørt, for da er det virkelig noe uventet.
+_RULLBAKKVAKT_FEIL = {
+    # Kilden er borte, eller bærer nå en annen generasjon: raden er ikke den
+    # klienten så. Samme kode og samme 409 som forkontrollens egen prøve
+    # (`kilde_gen != rollback_gen`) — flaten laster historikken på nytt.
+    "utkast_rullbakk_kilde_finnes": "rullbakk_kilde_endret",
+    # En rullbakk uten kildegenerasjon. HTTP-veien krever feltet, så dette er
+    # en kaller utenfor den: 400, ikke 500 — forespørselen er feilformet.
+    "utkast_rullbakk_krever_generasjon": "utkast_feilformet",
+    # Innholdet er ikke kildens. Samme klasse, samme svar.
+    "utkast_rullbakk_er_kopi": "utkast_feilformet",
+}
+
 _AKTIVER_SCOPE = "policy:activate"
 
 #: Feltene konvolutten binder til de LÅSTE dataene (defense-in-depth: server
@@ -150,10 +177,16 @@ def _base_med_versjon(conn, tenant, policy_id) -> tuple[dict, str, str | None]:
 def opprett_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
                    request_id: str, policy_id: str, innhold: dict,
                    idempotency_key: str, input_hash: str,
-                   rollback_av_versjon: str | None = None) -> dict:
+                   rollback_av_versjon: str | None = None,
+                   rollback_av_generasjon: int | None = None) -> dict:
     """Opprett et nytt utkast (status `utkast`). Fanger gjeldende aktive versjon
     + hash som `basert_pa_*` for konfliktdeteksjon (§4). Idempotent (P1 R3):
-    en replay returnerer NØYAKTIG samme utkast_id. Kalleren eier tx."""
+    en replay returnerer NØYAKTIG samme utkast_id. Kalleren eier tx.
+
+    En RULLBAKK må levere kilderadens `generasjon`, hentet SAMMEN med
+    innholdet den kopierer: opphavet lagres som generasjonens identitet,
+    ikke som versjonsnummeret eller innholdet — begge kan gjenskapes etter
+    en sletting, generasjonstallet kan ikke. Se migrasjon 047."""
     sett_kontekst(conn, tenant, aktor, request_id)
     if not isinstance(innhold, dict):
         conn.rollback()
@@ -180,30 +213,12 @@ def opprett_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
     # under ruller posten tilbake sammen med resten av transaksjonen: en
     # forespørsel som aldri kunne blitt et utkast brenner ikke nøkkelen.
     #
-    # FORMEN først: en id som ikke er skjemagyldig kan aldri skrives inn i
-    # dokumentet, og en skjemagyldig id ville spriket fra raden. Rekkefølgen er
-    # ikke tilfeldig — `"ACME"` er feil FORM, ikke for stor, og skal få den
-    # beskjeden.
-    if not _POLICY_ID.fullmatch(policy_id or ""):
+    # Selve prøven bor i `nytt_utkast_avvik` — flatene spør den FØR de tilbyr
+    # en handling som ellers alltid ender i 400 (Codex P2).
+    avvik = nytt_utkast_avvik(tenant, policy_id)
+    if avvik:
         conn.rollback()
-        raise Aktiveringsfeil("policy_id_ugyldig", f"policy_id={policy_id!r}")
-    # Så PLASSEN: levner identiteten ikke rom til en versjon i registerets
-    # primærnøkkel, er ingen versjon eier senere kan skrive i stand til å få
-    # plass. Da er det opprettelsen som skal si nei, ikke en validering hun
-    # aldri kan tilfredsstille.
-    #
-    # EGEN KODE, ikke `utkast_feilformet` (Codex P3). HTTP-laget slipper bare
-    # koden videre — detaljen under når aldri skjermen — og editoren oversetter
-    # `utkast_feilformet` til «innholdet er ikke gyldig JSON-struktur». Eier ble
-    # altså sendt for å reparere dokumentet sitt, som er helt i orden, mens det
-    # eneste som må gjøres er å FORKORTE id-en. En id som er for stor er heller
-    # ikke feil form: `_POLICY_ID` over har alt sagt ja til den.
-    if _nokkelbytes(tenant, policy_id) > _MAKS_NOKKELBYTES - _VERSJONSRESERVE:
-        conn.rollback()
-        raise Aktiveringsfeil(
-            "policy_id_for_stor",
-            f"policy_id levner ikke plass til en versjon i registernøkkelen"
-            f" ({_nokkelbytes(tenant, policy_id)} byte)")
+        raise Aktiveringsfeil(*avvik)
     # Identiteten er godkjent. Så INNHOLDET, og her retter vi i stedet for å
     # avvise — statusen er ikke eiers valg (se under).
     #
@@ -250,12 +265,34 @@ def opprett_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
                 innhold = {**innhold,
                            "meta": {**innhold["meta"], "versjon": forslag}}
     utkast_id = "u-" + secrets.token_hex(8)
-    conn.execute(
-        "INSERT INTO policyutkast (tenant, utkast_id, policy_id,"
-        " basert_pa_versjon, basert_pa_hash, rollback_av_versjon, innhold,"
-        " opprettet_av) VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb,%s)",
-        (tenant, utkast_id, policy_id, aktiv, base_hash, rollback_av_versjon,
-         json.dumps(innhold), aktor))
+    # Opphavet bindes til GENERASJONEN, ikke til nummeret og ikke til
+    # innholdet (Codex P2). Begge de to kan gjenskapes: nummeret frigjøres
+    # av sletting, og det samme dokumentet kan settes inn igjen — da er
+    # hashen lik og generasjonen en annen. Tallet leses av kalleren SAMMEN
+    # med innholdet kopien er tatt fra, ikke i et nytt oppslag her: en
+    # gjenskaping mellom de to ville ellers bundet kopien til en generasjon
+    # den aldri kom fra. En rullbakk uten kildegenerasjon får NULL —
+    # historikken sier da «kilden er ikke bundet» i stedet for å påstå noe.
+    rb_gen = (rollback_av_generasjon if rollback_av_versjon is not None
+              and isinstance(rollback_av_generasjon, int) else None)
+    # Vakten i 047 måler opphavet HER, i vår egen transaksjon. Kilden kan ha
+    # flyttet seg siden kalleren leste den, og da er avslaget et domenesvar —
+    # se `_RULLBAKKVAKT_FEIL`. `rollback()` først: transaksjonen er avbrutt av
+    # feilen, og `Aktiveringsfeil` reises ellers på en død forbindelse.
+    try:
+        conn.execute(
+            "INSERT INTO policyutkast (tenant, utkast_id, policy_id,"
+            " basert_pa_versjon, basert_pa_hash, rollback_av_versjon,"
+            " rollback_av_generasjon, innhold, opprettet_av)"
+            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)",
+            (tenant, utkast_id, policy_id, aktiv, base_hash,
+             rollback_av_versjon, rb_gen, json.dumps(innhold), aktor))
+    except psycopg.errors.CheckViolation as e:
+        kode = _RULLBAKKVAKT_FEIL.get(e.diag.constraint_name or "")
+        conn.rollback()
+        if kode is None:
+            raise
+        raise Aktiveringsfeil(kode) from e
     return _fullfor(conn, tenant, idempotency_key, {
         "utkast_id": utkast_id, "policy_id": policy_id,
         "utkastversjon": 1, "status": "utkast", "base_versjon": aktiv})
@@ -300,6 +337,79 @@ def rediger_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
         (json.dumps(innhold), ny, tenant, utkast_id))
     return _fullfor(conn, tenant, idempotency_key, {
         "utkast_id": utkast_id, "utkastversjon": ny, "status": "utkast"})
+
+
+def _krev_malautorisasjonsvilkar(conn: psycopg.Connection,
+                                 innhold) -> list[str]:
+    """Feilliste: `ekstern_lesing`-handlinger uten plattformvilkår (047).
+
+    HVILKE handlinger porten gjelder for avgjøres av `_er_ekstern_lesing` —
+    den SAMME klassifiseringen aktiveringsporten bruker (Codex P2): koden
+    først, registeret bare der koden ikke selv stiller kravet. Et rent
+    registeroppslag her var ikke bare en annen mening om samme handling,
+    det var en STILLERE mening. For en kodefestet type som
+    `kontroll.wcag.nettsted` med manglende eller feil registerrad
+    (`sideeffektfri`) krevde `_krev_ekstern_lesing_port` fortsatt et
+    målautorisasjonsvilkår, mens valideringen her fant ingen ekstern
+    handling i det hele tatt og FRØS utkastet som gyldig. Eier møtte da
+    kravet først ved rundeåpning eller attestering — etter frysingen, der
+    innholdet ikke lenger kan rettes, bare erstattes. Hele poenget med å
+    måle kravet i valideringen er at det skal komme mens utkastet ennå er
+    redigerbart, og da må de to veiene klassifisere likt.
+
+    Vilkårskravet leses fra `malautorisasjonsvilkar` — ingen hardkodet
+    liste (port 32) — og måles mot typens `malautorisasjonsdomene`, samme
+    domenebinding som aktiveringsporten krever. En handling som er
+    ekstern lesing UTEN en målautorisasjonsbærende oppdragstype kan ikke
+    aktiveres i det hele tatt (porten avviser den med
+    `malautorisasjon_mangler`); den får derfor sin egen linje her i
+    stedet for å bli stående som tilsynelatende gyldig.
+
+    En handling hvis id verken er en kodefestet type eller en registrert
+    oppdragstype er ikke denne portens sak: den er enten en intern
+    handling (motoren) eller fanges av bestillingsveien."""
+    if not isinstance(innhold, dict):
+        return []
+    handlinger = innhold.get("handlinger")
+    if not isinstance(handlinger, list):
+        return []
+    feil = []
+    for h in handlinger:
+        if not isinstance(h, dict):
+            continue
+        ekstern, t = _er_ekstern_lesing(conn, h)
+        if not ekstern:
+            continue
+        hid = h.get("id") if isinstance(h.get("id"), str) else "?"
+        if t is None or not t.krever_malautorisasjon \
+                or t.malautorisasjonsdomene is None:
+            feil.append(
+                f"handling '{hid}': ekstern_lesing uten"
+                " målautorisasjonsbærende oppdragstype — det finnes ikke"
+                " noe målautorisasjonsvilkår som kan telle, og handlingen"
+                " kan ikke aktiveres")
+            continue
+        # Ustrukturert `vilkaar` er en skjemasak og er alt rapportert av
+        # `valider_ny_policy`; her leses bare det som ER lesbart, slik at
+        # feillisten ikke drukner i en TypeError fra et halvferdig utkast.
+        vilkaar = h.get("vilkaar") if isinstance(h.get("vilkaar"), list) \
+            else []
+        navn = [v.get("navn") for v in vilkaar
+                if isinstance(v, dict) and isinstance(v.get("navn"), str)]
+        navn += [v for v in vilkaar if isinstance(v, str)]
+        if not navn or conn.execute(
+                "SELECT 1 FROM malautorisasjonsvilkar WHERE"
+                " vilkar_type = ANY(%s) AND maldomene = %s LIMIT 1",
+                (navn, t.malautorisasjonsdomene)).fetchone() is None:
+            lovlige = [r[0] for r in conn.execute(
+                "SELECT vilkar_type FROM malautorisasjonsvilkar"
+                " WHERE maldomene = %s ORDER BY vilkar_type",
+                (t.malautorisasjonsdomene,)).fetchall()]
+            feil.append(
+                f"handling '{hid}': ekstern_lesing krever et "
+                f"målautorisasjonsvilkår for {t.malautorisasjonsdomene} "
+                f"({', '.join(lovlige) or 'ingen registrert ennå'})")
+    return feil
 
 
 def valider_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
@@ -357,6 +467,24 @@ def valider_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
     # aktivere eller redigere. Avvikene legges i feillisten sammen med
     # skjemafeilene, så eier ser NØYAKTIG hva som må rettes i editoren.
     feil = list(feil) + _dokumentavvik(policy_id, innhold, tenant)
+    # 047 (klarsignal §5/port 34): en handling hvis oppdragstype er
+    # `ekstern_lesing` MÅ bære et plattform-målautorisasjonsvilkår —
+    # målt her, FØR runden, ikke først i modulaktiveringsporten (036).
+    # Dette er samtidig fjerningsvernet (port 31): å redigere bort
+    # vilkåret gjør utkastet ugyldig, uansett hvilken flate som prøvde.
+    #
+    # REGISTERAVVIK, ikke dokumentfeil (Codex P2). Dommen ser på utkastet,
+    # men den FELLES av registeret: `_er_ekstern_lesing` leser
+    # `modulkontrakt` og `oppdragstype_register`, og vilkårslista leses fra
+    # den append-only `malautorisasjonsvilkar`. Alle tre flytter seg — det
+    # er nettopp derfor kravet ikke er hardkodet (port 32). Kjørte
+    # valideringen før drift hadde registrert vilkåret eller kontrakten, og
+    # eier prøvde igjen med flatens stabile `valNokkel` etter at det var på
+    # plass, ville `_idempotent_start` replayet den gamle dommen uten å
+    # spørre det reparerte registeret — og det uendrede utkastet var umulig
+    # å validere fra den visningen til eier tilfeldigvis tvang fram en ny
+    # render. Samme resonnement som `_versjonsavvik` under, samme bøtte.
+    reg_feil = _krev_malautorisasjonsvilkar(conn, innhold)
     # Versjonen måles mot REGISTERET her — ikke først ved rundeåpning. Eiers
     # utkast 17/8 bar den aktive policyens egen versjon (0.3.0), gikk
     # gjennom valideringen med glans, og døde så med `versjon_i_bruk` i et
@@ -366,7 +494,7 @@ def valider_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
     # Porten `_krev_ny_versjon` består uendret ved rundeåpning og attestering;
     # her brukes den som PRØVE, så de to aldri kan mene noe ulikt om samme
     # versjon.
-    reg_feil = _versjonsavvik(conn, tenant, policy_id, innhold)
+    reg_feil += _versjonsavvik(conn, tenant, policy_id, innhold)
     if feil:
         # Ugyldig CACHES også (bundet til versjonen): en retry med samme nøkkel
         # får samme svar; et endret utkast (ny versjon) → egen nøkkel/konflikt.
@@ -379,10 +507,11 @@ def valider_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
         # dokumentfeilene over er egenskaper ved det uforanderlige utkastet og
         # tåler et replay, men registeret flytter seg — slettes policyen som
         # holder versjonen (slettingen frigjør uttrykkelig versjonsnumrene),
-        # er det samme utkastet gyldig. Et cachet «ugyldig» ville da replayet
-        # en foreldet dom uten å spørre registeret, og flaten gjenbruker med
-        # rette nøkkelen sin per render. Rollback tar claimet med seg — en
-        # validering som ikke frøs noe skal ikke brenne nøkkelen.
+        # eller registreres vilkåret/kontrakten en `ekstern_lesing`-handling
+        # manglet, er det samme utkastet gyldig. Et cachet «ugyldig» ville da
+        # replayet en foreldet dom uten å spørre registeret, og flaten
+        # gjenbruker med rette nøkkelen sin per render. Rollback tar claimet
+        # med seg — en validering som ikke frøs noe skal ikke brenne nøkkelen.
         conn.rollback()
         return {"utfall": "ugyldig", "utkast_id": utkast_id, "feil": reg_feil}
     h = _pr.innholds_hash(innhold)
@@ -1358,6 +1487,45 @@ _VERSJONSRESERVE = 64
 def _nokkelbytes(*deler: str) -> int:
     """Nøkkelens størrelse slik Postgres måler den (`octet_length`, UTF-8)."""
     return sum(len(d.encode("utf-8")) for d in deler if isinstance(d, str))
+
+
+def nytt_utkast_avvik(tenant: str, policy_id: str) -> tuple[str, str] | None:
+    """`(kode, detalj)` for grunnen til at et NYTT utkast på denne identiteten
+    ville blitt avvist ved opprettelsen — eller `None` om den kan bære et.
+
+    ÉN definisjon, to lesere (Codex P2). `opprett_utkast` bruker den som port,
+    og HISTORIKKEN bruker den til å avgjøre om rullbakk i det hele tatt er en
+    mulig handling for serien. Lastekontrakten slipper med vilje gjennom
+    aktive policyer fra før innstrammingen — en arvet id som `acme\\n` finnes
+    og skal fortsatt kunne LESES — men en slik serie kan ikke få et nytt
+    utkast. Tilbød flaten rullbakk likevel, endte hver eneste knapp i et 400
+    ingen kunne gjøre noe med. Med to kopier av prøven ville flaten før eller
+    siden tilbudt en knapp porten avviser, eller skjult en den godtar.
+
+    FORMEN først: en id som ikke er skjemagyldig kan aldri skrives inn i
+    dokumentet, og en skjemagyldig id ville spriket fra raden. Rekkefølgen er
+    ikke tilfeldig — `"ACME"` er feil FORM, ikke for stor, og skal få den
+    beskjeden.
+
+    Så PLASSEN: levner identiteten ikke rom til en versjon i registerets
+    primærnøkkel, er ingen versjon eier senere kan skrive i stand til å få
+    plass. Da er det opprettelsen som skal si nei, ikke en validering hun
+    aldri kan tilfredsstille.
+
+    EGEN KODE, ikke `utkast_feilformet` (Codex P3). HTTP-laget slipper bare
+    koden videre — detaljen når aldri skjermen — og editoren oversetter
+    `utkast_feilformet` til «innholdet er ikke gyldig JSON-struktur». Eier ble
+    altså sendt for å reparere dokumentet sitt, som er helt i orden, mens det
+    eneste som må gjøres er å FORKORTE id-en. En id som er for stor er heller
+    ikke feil form: `_POLICY_ID` har alt sagt ja til den."""
+    if not _POLICY_ID.fullmatch(policy_id or ""):
+        return ("policy_id_ugyldig", f"policy_id={policy_id!r}")
+    stor = _nokkelbytes(tenant, policy_id)
+    if stor > _MAKS_NOKKELBYTES - _VERSJONSRESERVE:
+        return ("policy_id_for_stor",
+                "policy_id levner ikke plass til en versjon i"
+                f" registernøkkelen ({stor} byte)")
+    return None
 #: Tallpunktet versjon — semver, men også de eldre «1»/«2»-radene den styrte
 #: aktiveringen skrev før migrasjon 020. Alt annet sammenlignes ikke.
 _TALLVERSJON = re.compile(r"^[0-9]+(\.[0-9]+)*$")
@@ -1510,6 +1678,46 @@ def _typens_sideeffektklasse(conn, oppdragstype: str) -> str | None:
     return rad[0] if rad else None
 
 
+def _er_ekstern_lesing(conn, h) -> tuple[bool, object | None]:
+    """Er DENNE handlingen ekstern lesing? -> (ja/nei, kodefestet type).
+
+    Den ENE autoritative klassifiseringen, delt av aktiveringsporten
+    (`_krev_ekstern_lesing_port`) og valideringen
+    (`_krev_malautorisasjonsvilkar`) (Codex P2). To kopier av regelen var
+    to steder å bli uenige, og uenigheten hadde en retning: valideringen
+    var den mildeste, så et utkast kunne fryses som gyldig og først dø i
+    porten — etter at innholdet ikke lenger kunne rettes.
+
+    Rekkefølgen er KODEN FØRST. Bærer den kodefestede typen
+    `krever_malautorisasjon`, ER dette ekstern lesing uansett hva
+    `modulkontrakt` sier — også når registeret ikke har rukket å si noe
+    (Codex P1) og også når det sier `sideeffektfri` (Codex P2, runde 19).
+    En registrering kan legge krav TIL, aldri fjerne et krav koden
+    stiller.
+
+    Sier koden ingenting, avgjør registeret: typens EGEN kontrakt
+    (`_typens_sideeffektklasse`, join på hele identiteten) når typen er
+    registrert, ellers den konservative modulbrede prøven på den
+    DEKLARERTE eiermodulen. `handlinger[].modul` er policyens navnerom
+    (`M-23`) og kan bare brukes når koden ikke kjenner typen i det hele
+    tatt."""
+    import oppdragskontrakt
+    hid = h.get("id") if isinstance(h.get("id"), str) else ""
+    t = oppdragskontrakt.type_for_handling(hid)
+    klasse = _typens_sideeffektklasse(conn, t.navn) if t is not None else None
+    if t is not None and t.krever_malautorisasjon:
+        return True, t
+    if klasse is None:
+        eier = t.eiermodul if t is not None and t.eiermodul else h.get("modul")
+        if not isinstance(eier, str) or not conn.execute(
+                "SELECT 1 FROM modulkontrakt WHERE modul_id=%s"
+                " AND sideeffektklasse='ekstern_lesing' LIMIT 1",
+                (eier,)).fetchone():
+            return False, t
+        return True, t
+    return klasse == "ekstern_lesing", t
+
+
 def _krev_ekstern_lesing_port(conn, ny_innhold) -> None:
     """Aktiveringsporten for `ekstern_lesing` (PR-014c §6) — under
     aktiveringslåsen, på begge veiene (rundeåpning og attestering, som
@@ -1567,62 +1775,18 @@ def _krev_ekstern_lesing_port(conn, ny_innhold) -> None:
     for h in (ny_innhold.get("handlinger") or []):
         if not isinstance(h, dict):
             continue
-        modul = h.get("modul")
         hid = h.get("id") if isinstance(h.get("id"), str) else ""
-        t = oppdragskontrakt.type_for_handling(hid)
-        klasse = (_typens_sideeffektklasse(conn, t.navn)
-                  if t is not None else None)
-        if t is not None and t.krever_malautorisasjon:
-            # Den KODEFESTEDE typen bærer målautorisasjonsbehov. Da gjelder
-            # porten, UANSETT hva registeret sier om klassen — også når
-            # registeret ikke har rukket å si noe (Codex P1) og når det sier
-            # noe ANNET (Codex P2, runde 19).
-            #
-            # Ingen registrert rad er nåbart (Codex P1):
-            # `registrer-m-wcag-audit.py` kjøres manuelt, og deploy-porten
-            # sjekker bare DB-rader som mangler i koden, ikke omvendt.
-            #
-            # FEIL registrert klasse er nåbart på samme vis (Codex P2): binder
-            # en støttet administrativ registrering `kontroll.wcag.nettsted`
-            # til en `sideeffektfri`-kontrakt, oppdager deploy-porten det
-            # først ved neste `opp.sh`. I mellomtiden står tjenestene oppe, og
-            # `elif klasse != 'ekstern_lesing'` under `continue`-et forbi BÅDE
-            # frekvenstaket og målautorisasjonen for nettopp den handlingen de
-            # er bygget for. En feilregistrering skal ikke kunne SVEKKE et krav
-            # koden stiller — den kan bare legge krav til.
-            #
-            # Den gamle veien falt her tilbake på den modulbrede prøven — og
-            # den prøven leser `handlinger[].modul`, som er POLICYENS
-            # modulidentifikator (`M-23`), et annet navnerom enn
-            # modulregisteret (`m_wcag_audit`). Oppslaget fant derfor
-            # ingenting, handlingen ble klassifisert som ikke-ekstern, og
-            # BEGGE portene ble hoppet over for nettopp den handlingstypen de
-            # er bygget for.
-            #
-            # Koden er autoriteten når registeret ikke har tatt igjen, eller
-            # sier noe annet: deklarasjonen `krever_malautorisasjon` sier at
-            # dette ER en ekstern lesing, og da gjelder porten uansett hva som
-            # står i `modul` og i `modulkontrakt`. Fail-closed, uavhengig av
-            # navnerommet — og uten en vei der en registrering utenfor koden
-            # kan slå av et krav koden stiller.
-            pass
-        elif klasse is None:
-            # Ingen registrert type OG ingen kodefestet målautorisasjon: da
-            # faller vi tilbake på den konservative modulbrede prøven. Er
-            # eiermodulen deklarert i koden, er DEN identiteten registeret
-            # kjenner — `handlinger[].modul` er policyens navnerom og kan
-            # ikke slås opp i `modulkontrakt`.
-            eier = (t.eiermodul if t is not None and t.eiermodul else modul)
-            if not isinstance(eier, str) or not conn.execute(
-                    "SELECT 1 FROM modulkontrakt WHERE modul_id=%s"
-                    " AND sideeffektklasse='ekstern_lesing' LIMIT 1",
-                    (eier,)).fetchone():
-                continue
-        elif klasse != "ekstern_lesing":
-            # Typen handlingen faktisk er registrert som eies av en annen
-            # kontrakt, OG koden stiller ikke selv kravet (den grenen er tatt
-            # over). At modulen ET STED har en gammel ekstern_lesing-rad sier
-            # ingenting om DENNE handlingen.
+        # Klassifiseringen bor i `_er_ekstern_lesing` — KODEN FØRST, med
+        # registeret som konservativ reserve. Den er delt med valideringen
+        # (`_krev_malautorisasjonsvilkar`) nettopp fordi to kopier av regelen
+        # var to steder å bli uenige, og valideringen var den mildeste av dem
+        # (Codex P2): et utkast med en kodefestet `krever_malautorisasjon`-type
+        # og en manglende eller feilregistrert kontraktrad ble frosset som
+        # gyldig og døde først her, etter at innholdet ikke lenger kunne
+        # rettes. Se docstringen der for hvorfor retningen — registeret kan
+        # legge krav TIL, aldri fjerne et krav koden stiller — er hele poenget.
+        ekstern, t = _er_ekstern_lesing(conn, h)
+        if not ekstern:
             continue
         grenser = h.get("grenser") if isinstance(h.get("grenser"), dict) \
             else {}
@@ -2312,14 +2476,24 @@ def _revisjonsrolle(roller) -> str:
     return roller[0]
 
 
+def _idempotent_laas(conn, tenant: str, idempotency_key: str) -> None:
+    """Advisory-låsen som serialiserer per idempotensnøkkel.
+
+    Nøkkelformelen står ETT sted (Codex P2): to utskrifter av den er to
+    låser, og to låser serialiserer ingenting. Både claimet og den
+    ventende etterprøven under bruker denne.
+    """
+    conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                 (f"{tenant}\x1fpolidem\x1f{idempotency_key}",))
+
+
 def _idempotent_start(conn, tenant: str, idempotency_key: str,
                       input_hash: str, request_id: str):
     """Claim en idempotensnøkkel i kallerens tx (spec: `Idempotency-Key` på ALLE
     skriveruter, Codex P1 R3). -> ("ny", None) fortsett · ("replay", dict)
     returner lagret respons · ("konflikt", None) samme nøkkel, ANNET input.
     Serialiserer per nøkkel med en advisory-lås, som unntaksbehandlingen."""
-    conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
-                 (f"{tenant}\x1fpolidem\x1f{idempotency_key}",))
+    _idempotent_laas(conn, tenant, idempotency_key)
     claim = conn.execute(
         "INSERT INTO idempotens (tenant, nokkel, input_hash, status, request_id)"
         " VALUES (%s,%s,%s,'paagaar',%s) ON CONFLICT (tenant, nokkel)"
@@ -2343,6 +2517,48 @@ def _idempotent_start(conn, tenant: str, idempotency_key: str,
                  " WHERE tenant=%s AND nokkel=%s",
                  (request_id, tenant, idempotency_key))
     return ("ny", None)
+
+
+def idempotent_svar(conn, tenant: str, idempotency_key: str, input_hash: str,
+                    vent_paa_vinner: bool = False):
+    """Se på en idempotensnøkkel UTEN å claime den.
+    -> ("replay", dict) · ("konflikt", None) · ("ukjent", None).
+
+    `_idempotent_start` claimer, og claimet hører hjemme i selve
+    operasjonens transaksjon. Men noen ruter må gjøre arbeid FØR den —
+    rullbakkopprettelsen henter kildeversjonen for å bygge innholdet — og
+    det arbeidet kan feile av grunner som ikke lenger er sanne for et
+    forsøk som ALT har lyktes: kilden kan være arkivert siden. Da skal
+    retryen få det lagrede svaret, ikke en 404 på et utkast som finnes
+    (047, Codex P2).
+
+    Ren lesing: ingen advisory-lås, ingen rad skrives. Er svaret ikke
+    ferdig ennå, faller kalleren tilbake til den vanlige veien, og
+    `_idempotent_start` avgjør som før — der ligger serialiseringen.
+
+    `vent_paa_vinner` snur det for ETTERPRØVEN (Codex P2). En overlappende
+    retry ser `ukjent` i forkontrollen fordi originalens idempotensrad
+    ennå ikke er committet, og et READ COMMITTED-snapshot kan ikke se den.
+    Rekker originalen å committe — og kilden å bli slettet — før retryen
+    slår opp versjonen, ville et lås-løst gjensyn fortsatt kunne bomme:
+    svaret er da et 404 på en nøkkel som ALT bærer et lagret 201, og en
+    senere retry ville replayet det samme. Låsen holdes av vinneren HELE
+    dens transaksjon, så å ta den her er å vente på at utfallet er
+    avgjort. Den koster bare i feilveien; forkontrollen er urørt."""
+    if vent_paa_vinner:
+        _idempotent_laas(conn, tenant, idempotency_key)
+    rad = conn.execute(
+        "SELECT input_hash, status, respons FROM idempotens"
+        " WHERE tenant=%s AND nokkel=%s",
+        (tenant, idempotency_key)).fetchone()
+    if rad is None:
+        return ("ukjent", None)
+    lagret_hash, istatus, respons = rad
+    if lagret_hash != input_hash:
+        return ("konflikt", None)
+    if istatus == "ferdig":
+        return ("replay", {**respons, "replay": True})
+    return ("ukjent", None)
 
 
 def _fullfor(conn, tenant, idempotency_key, res: dict) -> dict:

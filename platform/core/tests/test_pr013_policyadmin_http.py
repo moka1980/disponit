@@ -201,6 +201,32 @@ def test_opprett_idempotent_replay_samme_utkast_id():
         rt.close()
 
 
+def test_nytt_utkast_avvik_er_portens_egen_prove():
+    """Codex P2: flaten må kunne SPØRRE om en identitet kan bære et utkast.
+
+    Historikken tilbyr rullbakk, og rullbakk er en utkastopprettelse. En
+    arvet policy-id som `acme\\n` kan leses (lastekontrakten slipper den
+    gjennom med vilje), men `opprett_utkast` avviser den — knappen endte
+    derfor deterministisk i 400. Prøven bor ETT sted, så flatens dom og
+    portens dom ikke kan gå fra hverandre; her måles nettopp den
+    likheten, ikke en kopi av regelen.
+    """
+    from api.policyadmin import (_MAKS_NOKKELBYTES, _VERSJONSRESERVE,
+                                 nytt_utkast_avvik)
+    assert nytt_utkast_avvik("t", "faktura-no") is None
+    # Formen: den arvede id-en, og et par nabotilfeller.
+    for rar in ("acme\n", "ACME", "ab", "acme_no", ""):
+        avvik = nytt_utkast_avvik("t", rar)
+        assert avvik and avvik[0] == "policy_id_ugyldig", (rar, avvik)
+    assert nytt_utkast_avvik("t", None) is not None
+    # Plassen: formen er grei, men nøkkelen levner ikke rom til en versjon.
+    lang = "a" * (_MAKS_NOKKELBYTES - _VERSJONSRESERVE)
+    avvik = nytt_utkast_avvik("t", lang)
+    assert avvik and avvik[0] == "policy_id_for_stor", avvik
+    # FORMEN måles først: `"ACME"` er feil form, ikke for stor.
+    assert nytt_utkast_avvik("t", ("A" * len(lang)))[0] == "policy_id_ugyldig"
+
+
 def test_opprett_input_hash_binder_rollback_av_versjon():
     # Codex R3: bevis at ENDEPUNKTETS hash-konstruksjon binder
     # `rollback_av_versjon` (ikke bare at funksjonen skiller ulike input_hash).
@@ -217,6 +243,31 @@ def test_opprett_input_hash_binder_rollback_av_versjon():
     assert h_uten != h_tom, "null og tom streng gir samme idempotenshash"
     # Deterministisk: samme input → samme hash.
     assert h_v3 == opprett_input_hash(rollback_av="3", **felles)
+    # Codex R4: klientens PÅSTAND om kildeinnholdet binder også. Ellers kunne
+    # en retry med samme nøkkel og en LØGN om innholdet replaye det gamle
+    # 201-svaret uten at påstanden noen gang ble målt mot kilden.
+    uten_paastand = dict(felles, innhold=None)
+    h_paastandslos = opprett_input_hash(rollback_av="3", **uten_paastand)
+    assert h_paastandslos != h_v3, "påstanden om kildeinnholdet binder ikke"
+    h_annen = opprett_input_hash(rollback_av="3",
+                                 **dict(felles, innhold={"a": 2}))
+    assert h_annen != h_v3, "to ULIKE påstander gir samme idempotenshash"
+    # ... men en rullbakk UTEN påstand er fortsatt uavhengig av det serveren
+    # henter: hashen må kunne regnes ut FØR kildeoppslaget, ellers er
+    # replay-før-oppslag umulig igjen.
+    assert h_paastandslos == opprett_input_hash(rollback_av="3",
+                                                **uten_paastand)
+    # Codex P2: KILDEGENERASJONEN binder også. Versjonsnummeret gjenbrukes
+    # — `slett_ubrukt_policy` frigjør det uttrykkelig — så «rull tilbake
+    # til 3» sier ikke hvilken RAD det gjelder. Uten generasjonen i hashen
+    # kunne en retry mot en gjenskapt kilde replayet det gamle 201-svaret
+    # uten at den nye kilden noen gang ble målt: samme nøkkel, annen rad.
+    h_g7 = opprett_input_hash(rollback_av="3", rollback_gen=7, **felles)
+    h_g8 = opprett_input_hash(rollback_av="3", rollback_gen=8, **felles)
+    assert h_g7 != h_g8, "to ULIKE kildegenerasjoner gir samme idempotenshash"
+    assert h_g7 != h_v3, "generasjonen binder ikke hashen"
+    assert h_g7 == opprett_input_hash(rollback_av="3", rollback_gen=7,
+                                      **felles)
 
 
 @pg

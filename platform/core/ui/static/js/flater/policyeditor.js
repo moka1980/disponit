@@ -68,14 +68,46 @@ function tekstfelt(etikett, verdi, paaEndre, attrs = {}, hint = null) {
     el("span", { class: "felt-hint", id: hid, text: hint }));
 }
 
+// EN VELGER SKAL ALDRI VISE NOE ANNET ENN DET SOM ER LAGRET (Codex P2).
+//
+// `valg` er de GYLDIGE verdiene, og et lagret utkast er med vilje
+// ustrukturert til det valideres: `krever_rolle` kan peke på en rolle som
+// er fjernet, `modus` kan være et ord ingen kjenner, feltet kan mangle
+// helt. Sto verdien ikke i lista, merket ingen <option> seg som valgt —
+// og nettleseren viser da den FØRSTE. Modellen bar fortsatt den ugyldige
+// verdien, og ingen `change` fyrer av seg selv: eier så en gyldig rolle,
+// lagret den ugyldige, og fikk samme valideringsfeil om igjen. Med bare
+// ETT gyldig valg i lista fantes det ikke engang et annet valg å ta for å
+// utløse en `change` — eneste vei ut var å slette hele konfigurasjonen.
+//
+// Verdien vises derfor som det den ER: en egen, valgt oppføring merket
+// ukjent. Modellen skrives ikke om av at noe TEGNES — reparasjonen er
+// eiers handling, og den skal være synlig. Mangler verdien helt, sier
+// plassholderen det i stedet for å utpeke en vilkårlig vinner.
 function velg(etikett, verdi, valg, oversettPrefiks, paaEndre) {
   const sel = el("select", { class: "felt-inp" });
-  for (const v of valg) {
-    const o = el("option", { value: v, text: t(`${oversettPrefiks}${v}`, v) });
-    if (v === verdi) o.selected = true;
+  const gyldig = typeof verdi === "string" && valg.includes(verdi);
+  const navngitt = typeof verdi === "string" && verdi !== "";
+  if (!gyldig) {
+    const o = el("option", { value: navngitt ? verdi : "",
+      text: navngitt
+        ? t("ui.editor.verdi_ukjent").replace("{verdi}", verdi)
+        : t("ui.editor.verdi_mangler") });
+    o.selected = true;
     sel.append(o);
   }
-  sel.addEventListener("change", () => paaEndre(sel.value));
+  for (const v of valg) {
+    const o = el("option", { value: v, text: t(`${oversettPrefiks}${v}`, v) });
+    if (gyldig && v === verdi) o.selected = true;
+    sel.append(o);
+  }
+  sel.addEventListener("change", () => {
+    // Plassholderen er ikke en verdi, og skal ikke kunne skrives tilbake
+    // som en. Den ukjente verdien er derimot eierens egen — å velge den
+    // om igjen er å la den stå.
+    if (!navngitt && sel.value === "") return;
+    paaEndre(sel.value);
+  });
   return el("label", { class: "felt" },
     el("span", { class: "felt-navn", text: etikett }), sel);
 }
@@ -494,7 +526,7 @@ function valutaVelger(g, tegnPaaNytt) {
     legg);
 }
 
-function handlingKort(h, tegnPaaNytt) {
+function handlingKort(h, tegnPaaNytt, policy, grunnlag) {
   h.grenser = (h.grenser && typeof h.grenser === "object") ? h.grenser : {};
   const g = h.grenser;
   return el("div", { class: "editor-kort" },
@@ -514,7 +546,495 @@ function handlingKort(h, tegnPaaNytt) {
         if (!v) delete g.belop_maks; else g.belop_maks = v;
       }, { inputmode: "decimal" }, t("ui.editor.belop_hint")),
     valutaVelger(g, tegnPaaNytt),
-    tidsvinduVelger(g, tegnPaaNytt));
+    tidsvinduVelger(g, tegnPaaNytt),
+    vilkaarFelt(h, policy, tegnPaaNytt, grunnlag));
+}
+
+// --- Vilkår per handling (047, klarsignal §5) ------------------------------
+// To nivåer: policyens EGNE vilkår (redigerbare, nedtrekk fra policyens
+// deklarerte verifikatorer og deres betrodd_for) og PLATTFORMVILKÅRENE
+// (malautorisasjonsregisteret) — låst rad med aria-disabled OG
+// aria-describedby til forklaringen; de kan ikke fjernes herfra, og
+// valideringen avviser fjerning uansett vei (port 31/34). Låsen gjelder den
+// VELFORMEDE raden: en oppføring som bare bærer plattformnavnet, uten en
+// betrodd verifikator, er ikke et håndhevet vilkår ennå og får en
+// reparasjonsvei som beholder navnet (se `vilkaarErVelformet`). Registeret leses
+// fra serveren — ingen hardkodet liste (port 32); mangler grunnlaget
+// (nettfeil), er ALT låst: fail-closed, aldri en flate som lover en
+// fjerning serveren nekter.
+// Et UTKAST er med vilje ustrukturert til det valideres: skriveveien tar
+// imot vilkårlige dicter, og skjemaporten står i `valider_utkast`, ikke i
+// lagringen. Et lagret utkast kan derfor bære `vilkaar: [null]` eller en
+// naken streng (aktiveringsporten leser begge former). Leste editoren
+// `v.navn` rått, kastet den TypeError på nettopp de utkastene eier trengte
+// å åpne for å RETTE dem — flaten låste seg på det eneste stedet feilen
+// kunne fjernes (Codex P2). Uleselige oppføringer vises derfor som det de
+// er, og kan fjernes som alle andre.
+function vilkaarNavn(v) {
+  if (typeof v === "string") return v;
+  if (v && typeof v === "object" && typeof v.navn === "string") return v.navn;
+  return null;
+}
+
+function vilkaarVerifikator(v) {
+  return (v && typeof v === "object" && typeof v.verifikator === "string")
+    ? v.verifikator : null;
+}
+
+// VELFORMET = det serveren faktisk godtar, i BEGGE lag (Codex P2). Målte
+// denne prøven bare §5-semantikken — deklarert og betrodd verifikator —
+// var en rad som `{navn, verifikator, min: "ugyldig"}` «velformet» her og
+// ble låst, mens `policy-schema-v0.2.json` avviste den på STRUKTUR-laget.
+// Låsen tok da igjen fra eier både rettingen og fjerningen, og utkastet
+// kunne bare forkastes. Låsen er en påstand om at raden ER et håndhevet
+// plattformvilkår; da må den måle hele formen den påstanden hviler på:
+//
+//   lag 1 (skjemaet): et objekt med `navn` og `verifikator`, ingen andre
+//     felter enn `min`, navnet på registerformen, `min` numerisk;
+//   lag 2 (`schema.py` §5): verifikatoren er DEKLARERT og betrodd for
+//     navnet — de samme kravene «legg til»-nedtrekkene bygger av.
+//
+// Én definisjon av en gyldig vilkårsrad på flaten, ikke to.
+const VILKAAR_TILLATTE_FELT = new Set(["navn", "verifikator", "min"]);
+const VILKAAR_NAVNFORM = /^[a-z0-9_]+$/;
+
+// `min` er valgfri, men numerisk når den finnes (skjemaet: `type: number`).
+function vilkaarMin(v) {
+  return (v && typeof v === "object" && typeof v.min === "number"
+    && Number.isFinite(v.min)) ? v.min : null;
+}
+
+function vilkaarErVelformet(v, verifikatorer) {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return false;
+  if (Object.keys(v).some((k) => !VILKAAR_TILLATTE_FELT.has(k))) return false;
+  const navn = vilkaarNavn(v);
+  const vid = vilkaarVerifikator(v);
+  if (navn === null || vid === null) return false;
+  if (!VILKAAR_NAVNFORM.test(navn)) return false;
+  if ("min" in v && vilkaarMin(v) === null) return false;
+  const dekl = verifikatorer[vid];
+  return !!dekl && Array.isArray(dekl.betrodd_for)
+    && dekl.betrodd_for.includes(navn);
+}
+
+// Hvilke av policyens egne verifikatorer som KAN bære et gitt vilkårsnavn.
+function betroddeFor(navn, verifikatorer) {
+  return Object.keys(verifikatorer).sort().filter((vid) => {
+    const dekl = verifikatorer[vid];
+    return dekl && Array.isArray(dekl.betrodd_for)
+      && dekl.betrodd_for.includes(navn);
+  });
+}
+
+// HVILKET måldomene DENNE handlingen krever et vilkår for — eller null når
+// kravet ikke gjelder den i det hele tatt.
+//
+// Kravlisten er serverens (`malautorisasjonskrav` i editorgrunnlaget), ikke
+// flatens: hvilke oppdragstyper som bærer `krever_malautorisasjon` og
+// hvilket domene de peker på er kodefestet, og skal leses fra kilden som
+// alt annet i grunnlaget (port 30/32).
+//
+// LENGSTE PREFIKS VINNER, samme regel som `oppdragskontrakt.
+// type_for_handling`: prefiksene er ikke disjunkte (`kontroll.wcag.` ligger
+// under `kontroll.`), så «første treff» ville gjort domenet — og dermed
+// låsen — avhengig av rekkefølgen i svaret.
+function krevdMaldomene(handlingId, grunnlag) {
+  if (typeof handlingId !== "string") return null;
+  const krav = (grunnlag && grunnlag.malautorisasjonskrav) || [];
+  let beste = null;
+  let bestLengde = -1;
+  for (const k of krav) {
+    if (!k || typeof k.prefiks !== "string"
+      || typeof k.maldomene !== "string") continue;
+    if (handlingId.startsWith(k.prefiks) && k.prefiks.length > bestLengde) {
+      beste = k.maldomene;
+      bestLengde = k.prefiks.length;
+    }
+  }
+  return beste;
+}
+
+function vilkaarFelt(h, policy, tegnPaaNytt, grunnlag) {
+  const vilkaar = Array.isArray(h.vilkaar) ? h.vilkaar : [];
+  // Navn → domenet vilkåret hører til. Navnet alene sier bare at raden er
+  // ET plattformvilkår, ikke at den er DENNE handlingens (Codex P2).
+  const plattform = new Map(
+    ((grunnlag && grunnlag.plattformvilkar) || [])
+      .filter((v) => v && typeof v.vilkar_type === "string")
+      .map((v) => [v.vilkar_type, v.maldomene]));
+  // Fail-closed som resten av grunnlaget: uten kravlisten vet flaten ikke
+  // hvilke handlinger kravet gjelder for, og da låses alt — aldri en flate
+  // som lover en fjerning serveren nekter.
+  const laastAlt = !grunnlag
+    || !Array.isArray(grunnlag.malautorisasjonskrav);
+  // Domenet SERVEREN krever et vilkår for på nettopp denne handlingen.
+  // null = ingen `_krev_malautorisasjonsvilkar`-sak, og da nekter serveren
+  // ingen fjerning — altså ingen lås.
+  const krevdDomene = krevdMaldomene(h.id, grunnlag);
+  const forklaringId = `vilkaar-laast-${h.id || "x"}`;
+  // Policyens EGNE deklarasjoner. Låsen, reparasjonen og «legg til» måler
+  // alle tre mot disse — derfor leses de ett sted, før radene tegnes.
+  const verifikatorer = (policy && typeof policy.verifikatorer === "object"
+    && policy.verifikatorer) || {};
+  const vids = Object.keys(verifikatorer).sort();
+  // LÅSEN VERNER KRAVET, IKKE RADEN (Codex P2). Serverens prøve er
+  // EKSISTENSIELL — `SELECT 1 ... vilkar_type = ANY(navn)`: den spør om
+  // handlingen HAR et målautorisasjonsvilkår for domenet sitt, ikke hvilke.
+  // Bærer handlingen to slike — dubletter, eller to registrerte navn for
+  // samme domene — godtar serveren gjerne at det ene fjernes. Låste vi
+  // begge, kunne en overflødig eller foreldet rad aldri ryddes, og flaten
+  // nektet en endring porten ville tatt imot.
+  //
+  // TELLES BLANT DE VELFORMEDE. Porten teller riktignok på navnet alene,
+  // men en rad skjemaporten avviser gjør ikke utkastet gyldig, og kan
+  // derfor ikke være det som gjør en ANNEN rad overflødig: fjernet eier
+  // den velformede og satt igjen med den ødelagte, hadde hun byttet en
+  // gyldig policy mot en hun uansett må reparere. Den ødelagte har sin
+  // egen vei ut (reparasjon eller fjerning), så ingen blindgate oppstår
+  // av at den ikke teller — repareres den, blir begge fjernbare.
+  const dekkerKravet = (x) => {
+    const n = vilkaarNavn(x);
+    return n !== null && krevdDomene !== null
+      && plattform.get(n) === krevdDomene
+      && vilkaarErVelformet(x, verifikatorer);
+  };
+  const antallKrevde = vilkaar.filter(dekkerKravet).length;
+
+  const rader = vilkaar.map((v, i) => {
+    const navn = vilkaarNavn(v);
+    const fjernKnapp = () => {
+      const fjern = el("button", { class: "knapp liten",
+        type: "button", text: t("ui.editor.vilkaar_fjern") });
+      fjern.addEventListener("click", () => {
+        h.vilkaar.splice(i, 1);
+        if (!h.vilkaar.length) delete h.vilkaar;
+        tegnPaaNytt();
+      });
+      return fjern;
+    };
+    // `laastAlt` beholder fail-closed-regelen uendret: uten grunnlaget vet
+    // vi ikke hva som ER et plattformvilk\u00e5r, og da l\u00e5ses alt. En uleselig
+    // oppf\u00f8ring kan uansett aldri matche registeret, som sl\u00e5r opp p\u00e5 navn.
+    //
+    // OG DEN MÅ VÆRE DENNE HANDLINGENS (Codex P2). Registeret er
+    // plattform-globalt, men kravet er ikke: `_krev_malautorisasjonsvilkar`
+    // stiller det bare for en handling hvis kodefestede type krever
+    // målautorisasjon, og bare for TYPENS eget domæne. Et gyldig
+    // `domenekontroll_verifisert` som havnet på en vanlig, ikke-ekstern
+    // handling er derfor en rad serveren gjerne slipper — og den må kunne
+    // fjernes. Målt på navnet alene ble den låst for alltid.
+    const plattformNavn = navn !== null && krevdDomene !== null
+      && plattform.get(navn) === krevdDomene;
+    // L\u00c5SEN GJELDER DEN VELFORMEDE RADEN (Codex P2). En rad som bare B\u00c6RER
+    // et registrert plattformnavn er ikke et h\u00e5ndhevet plattformvilk\u00e5r \u2014
+    // den er et utkast p\u00e5 vei dit. L\u00e5ste vi p\u00e5 navnet alene, ble en
+    // oppf\u00f8ring med manglende eller ubetrodd `verifikator` verken
+    // redigerbar eller fjernbar, mens valideringen avviste nettopp den
+    // verifikatorpekeren: utkastet kunne bare forkastes, enda et utkast med
+    // vilje f\u00e5r b\u00e6re ugyldige mellomtilstander. Navnet er likevel det
+    // registeret krever, s\u00e5 reparasjonen BEHOLDER det og ber bare om
+    // verifikatoren som mangler. Har policyen ingen verifikator betrodd for
+    // navnet, kan raden ikke gj\u00f8res gyldig i det hele tatt, og da er
+    // fjerning den eneste veien ut.
+    //
+    // VELFORMET m\u00e5les mot HELE skjemaformen, ikke bare verifikatortilliten
+    // (Codex P2): en rad med ugyldig `min` eller et ukjent felt avvises av
+    // serveren p\u00e5 strukturlaget, og en l\u00e5s p\u00e5 den gjorde utkastet like
+    // ureparerbart som navnel\u00e5sen gjorde. Se `vilkaarErVelformet`.
+    const velformet = vilkaarErVelformet(v, verifikatorer);
+    const kandidater = (plattformNavn && !velformet && !laastAlt)
+      ? betroddeFor(navn, verifikatorer) : [];
+    // `antallKrevde < 2`: er raden den ENESTE som bærer kravet, felles den
+    // og kravet sammen — og da låses den. Finnes det en til, står kravet
+    // igjen etter fjerningen, og raden er en helt vanlig redigerbar rad.
+    const erPlattform = laastAlt
+      || (plattformNavn && velformet && antallKrevde < 2);
+    const rad = el("li", { class: "vilkaar-rad" },
+      el("span", {},
+        el("code", { text: navn || t("ui.editor.vilkaar_ulesbart") }),
+        ` \u2014 ${vilkaarVerifikator(v) || "?"}`),
+      erPlattform
+        // LÅSEN GJELDER IDENTITETEN, IKKE TERSKELEN (Codex P2). Det
+        // serveren krever er at vilkåret FINNES for handlingen — navnet og
+        // verifikatoren. `min` er eierens egen terskel, og den avgjør om
+        // en attestasjon godtas i det hele tatt; en foreldet terskel er
+        // altså en levende feil hun må kunne rette. Var hele raden et
+        // dødt merke, fantes ingen vei: verdien ble ikke engang vist,
+        // raden kunne ikke fjernes og legges inn på nytt, og serveren
+        // ville gladelig tatt imot endringen hun ikke fikk gjøre.
+        ? el("span", { class: "vilkaar-laast" },
+            el("span", { class: "site-badge info", "aria-disabled": "true",
+              "aria-describedby": forklaringId,
+              text: t("ui.editor.vilkaar_laast") }),
+            tekstfelt(t("ui.editor.vilkaar_min"),
+              vilkaarMin(v) === null ? "" : vilkaarMin(v),
+              (nyverdi) => {
+                const s = nyverdi.trim();
+                if (!s) { delete v.min; return; }
+                const n = Number(s);
+                // Et tall lagres som TALL (skjemaet: `type: number`). Noe
+                // annet lagres som det er skrevet — utkastet får bære
+                // mellomtilstanden, raden blir ikke lenger velformet, og
+                // dermed heller ikke låst: eier kan rette eller fjerne
+                // den. Ingen blindgate i noen av retningene.
+                v.min = Number.isFinite(n) && s !== "" ? n : s;
+              }, { inputmode: "decimal" }, t("ui.editor.vilkaar_min_hint")))
+        : (plattformNavn && kandidater.length
+            ? (() => {
+                const repId = `vk-rep-${h.id || "x"}-${i}`;
+                const velg = el("select", { id: repId },
+                  ...kandidater.map((vid) =>
+                    el("option", { value: vid, text: vid })));
+                const knapp = el("button", { class: "knapp liten",
+                  type: "button", text: t("ui.editor.vilkaar_reparer") });
+                knapp.addEventListener("click", () => {
+                  // Navnet er registerets krav og skal overleve
+                  // reparasjonen; bare verifikatoren settes. En GYLDIG
+                  // `min` er eierens egen terskel og følger med — alt
+                  // annet (ugyldig `min`, ukjente felter) er nettopp det
+                  // skjemaet avviste, og skal ikke overleve reparasjonen.
+                  const rettet = { navn, verifikator: velg.value };
+                  const min = vilkaarMin(v);
+                  if (min !== null) rettet.min = min;
+                  h.vilkaar[i] = rettet;
+                  tegnPaaNytt();
+                });
+                return el("span", { class: "vilkaar-reparer" },
+                  el("label", { for: repId,
+                    text: t("ui.editor.vilkaar_reparer_hint") }),
+                  velg, knapp);
+              })()
+            : fjernKnapp()));
+    return rad;
+  });
+
+  // Legg til: verifikator-nedtrekk fra policyens EGNE deklarasjoner,
+  // vilkårsnavn fra den valgte verifikatorens betrodd_for (§5) — ukjente
+  // kombinasjoner kan ikke velges, og serveren avviser dem uansett.
+  let leggTil = null;
+  if (!laastAlt && vids.length) {
+    const vidValg = el("select", { id: `vk-vid-${h.id || "x"}` },
+      ...vids.map((v) => el("option", { value: v, text: v })));
+    const navnValg = el("select", { id: `vk-navn-${h.id || "x"}` });
+    const fyllNavn = () => {
+      const betrodd = (verifikatorer[vidValg.value]
+        && verifikatorer[vidValg.value].betrodd_for) || [];
+      sett(navnValg, ...betrodd.map((n) =>
+        el("option", { value: n, text: n })));
+    };
+    fyllNavn();
+    vidValg.addEventListener("change", fyllNavn);
+    const knapp = el("button", { class: "knapp liten", type: "button",
+      text: t("ui.editor.vilkaar_legg_til") });
+    knapp.addEventListener("click", () => {
+      if (!navnValg.value) return;
+      h.vilkaar = Array.isArray(h.vilkaar) ? h.vilkaar : [];
+      if (h.vilkaar.some((v) => vilkaarNavn(v) === navnValg.value
+          && vilkaarVerifikator(v) === vidValg.value)) return;
+      h.vilkaar.push({ navn: navnValg.value, verifikator: vidValg.value });
+      tegnPaaNytt();
+    });
+    leggTil = el("div", { class: "vilkaar-legg-til" },
+      el("label", { for: `vk-vid-${h.id || "x"}`,
+        text: t("ui.editor.vilkaar_verifikator") }), vidValg,
+      el("label", { for: `vk-navn-${h.id || "x"}`,
+        text: t("ui.editor.vilkaar_navn") }), navnValg,
+      knapp);
+  }
+
+  return el("div", { class: "vilkaar-felt" },
+    el("h5", { text: t("ui.editor.vilkaar") }),
+    el("p", { class: "felt-hint", id: forklaringId,
+      text: laastAlt ? t("ui.editor.vilkaar_grunnlag_mangler")
+                     : t("ui.editor.vilkaar_plattform_forklaring") }),
+    rader.length ? el("ul", { class: "vilkaar-liste" }, ...rader)
+                 : el("p", { class: "muted",
+                     text: t("ui.editor.vilkaar_ingen") }),
+    leggTil);
+}
+
+// --- Menneskelig overstyring (047, klarsignal §4) --------------------------
+// ETT felt per policy; fravær er deny og vises som TILSTAND («ingen
+// (standard)»), aldri som tomhet. Hvert (grunnkode × handling)-par er én
+// rad; nedtrekkene er policyens egne handlinger/roller og motorens
+// godkjennbare grunnkoder (fra editorgrunnlaget — port 29/30: ukjent
+// handling/rolle og ikke-godkjennbar grunnkode kan ikke velges, og
+// schema.py avviser dem uansett om noe sendes utenom).
+function overstyringSeksjon(policy, tegnPaaNytt, grunnlag) {
+  const mo = (policy.menneskelig_overstyring
+    && typeof policy.menneskelig_overstyring === "object")
+    ? policy.menneskelig_overstyring : null;
+  // Et lagret utkast er med vilje ustrukturert til det valideres (samme
+  // grunn som `vilkaar: [null]` over): skriveveien tar imot vilkårlige
+  // dicter, og skjemaporten står i `valider_utkast`. `roller` kan derfor
+  // være `{}`, en streng eller en liste med `null` i. `truthy || []` slapp
+  // alt annet enn null/undefined videre til `.map`, og fanen eier åpnet
+  // NETTOPP for å rette formen kastet TypeError i stedet for å tegne seg
+  // (Codex P2). Nedtrekkene leser bare id-ene, så de normaliserer som de
+  // dedikerte rolle- og handlingsseksjonene gjør — uten å skrive tilbake:
+  // reparasjonen hører hjemme i den seksjonen som eier feltet.
+  const idListe = (v) => (Array.isArray(v) ? v : [])
+    .map((x) => (x && typeof x === "object") ? x.id : null)
+    .filter((id) => typeof id === "string" && id);
+  const roller = idListe(policy.roller);
+  const handlinger = idListe(policy.handlinger);
+  // Hvilket FELT hver grunnkode krever, fra serverens `godkjennbare_krav`
+  // — som leser motorens egen `LOFTBARE_GRUNNKODER` (Codex P1). Et par
+  // alene er ikke en overstyring: `_loft_policy` bygger løftet av
+  // `belop_maks` eller `valuta`, og uten verdien gir den None, altså STOPP
+  // ved HVER godkjenning.
+  //
+  // FAIL-CLOSED, som resten av grunnlaget (port 30 er en LUKKING): en
+  // grunnkode vi ikke vet kravet til kan ikke tilbys, for da kan flaten
+  // ikke bygge en oppføring som virker. Er kravlista borte, er lista over
+  // valgbare koder tom, og seksjonen sier «grunnlaget mangler» som ellers.
+  const overstyringKrav = {};
+  for (const k of (grunnlag && grunnlag.godkjennbare_krav) || []) {
+    if (k && typeof k.grunnkode === "string" && typeof k.krever === "string") {
+      overstyringKrav[k.grunnkode] = k.krever;
+    }
+  }
+  const grunnkoder = ((grunnlag && grunnlag.godkjennbare_grunnkoder) || [])
+    .filter((g) => overstyringKrav[g]);
+
+  const deler = [el("h3", { text: t("ui.editor.overstyring") })];
+  if (!mo) {
+    // Fraværet ER en tilstand: deny-by-default, sagt med ord.
+    deler.push(el("p", { class: "felt-hint",
+      text: t("ui.editor.overstyring_ingen") }));
+  } else {
+    // Verdien sendes RÅ til velgeren (Codex P2): en `|| ""` her ville
+    // gjort en ukjent rolle om til «mangler», og det er ikke det samme —
+    // eier må se hvilken rolle utkastet faktisk peker på.
+    deler.push(velg(t("ui.editor.overstyring_rolle"),
+      mo.krever_rolle, roller, "",
+      (v) => { mo.krever_rolle = v; }));
+    const par = Array.isArray(mo.godkjennbare) ? mo.godkjennbare : [];
+    deler.push(el("ul", { class: "overstyring-liste" },
+      ...par.map((e2, i) => {
+        const fjern = el("button", { class: "knapp liten", type: "button",
+          text: t("ui.editor.overstyring_fjern") });
+        fjern.addEventListener("click", () => {
+          par.splice(i, 1);
+          if (!par.length) delete policy.menneskelig_overstyring;
+          tegnPaaNytt();
+        });
+        const o = (e2 && typeof e2 === "object") ? e2 : {};
+        // Verdien motoren løfter TIL vises alltid når den finnes — det er
+        // den som avgjør om overstyringen kan virke i det hele tatt.
+        const verdi = o.belop_maks
+          ? ` (${o.belop_maks} ${o.valuta || ""})`
+          : (o.valuta ? ` (${o.valuta})` : null);
+        return el("li", {},
+          el("span", { text: t("ui.editor.overstyring_par")
+            .replace("{grunnkode}", o.grunnkode || "?")
+            .replace("{handling}", o.handling || "?") }),
+          verdi ? el("span", { class: "sub", text: verdi }) : null,
+          fjern);
+      })));
+    const slettAlt = el("button", { class: "knapp liten", type: "button",
+      text: t("ui.editor.overstyring_slett") });
+    slettAlt.addEventListener("click", () => {
+      delete policy.menneskelig_overstyring;
+      tegnPaaNytt();
+    });
+    deler.push(slettAlt);
+  }
+
+  // Legg til par — aktiverer feltet når det ikke finnes. Fail-closed på
+  // grunnlaget: uten listen over godkjennbare grunnkoder kan ingenting
+  // legges til (port 30 er en LUKKING, ikke en anbefaling).
+  if (grunnkoder.length && handlinger.length && roller.length) {
+    const gkValg = el("select", { id: "mo-grunnkode" },
+      ...grunnkoder.map((g) => el("option", { value: g,
+        text: t(`grunnkode.${g}`, g) })));
+    const hValg = el("select", { id: "mo-handling" },
+      ...handlinger.map((h) => el("option", { value: h, text: h })));
+    const krav = overstyringKrav;
+    const belop = el("input", { type: "text", id: "mo-belop",
+      class: "felt-inp", inputmode: "decimal" });
+    const valuta = el("input", { type: "text", id: "mo-valuta",
+      class: "felt-inp", maxlength: "3" });
+    const belopRad = el("div", { class: "skjemarad" },
+      el("label", { for: "mo-belop",
+        text: t("ui.editor.overstyring_belop_maks") }), belop);
+    const valutaRad = el("div", { class: "skjemarad" },
+      el("label", { for: "mo-valuta",
+        text: t("ui.editor.overstyring_valuta") }), valuta);
+    const feilUt = el("p", { class: "skjemafeil", id: "mo-feil" });
+    const nullstillFeil = () => {
+      feilUt.textContent = "";
+      for (const inp of [belop, valuta]) {
+        inp.removeAttribute("aria-invalid");
+        inp.removeAttribute("aria-errormessage");
+      }
+    };
+    const settFeil = (inp, tekst) => {
+      feilUt.textContent = tekst;
+      inp.setAttribute("aria-invalid", "true");
+      inp.setAttribute("aria-errormessage", "mo-feil");
+      inp.focus();
+    };
+    belop.addEventListener("input", nullstillFeil);
+    valuta.addEventListener("input", nullstillFeil);
+    // `belop_maks` drar `valuta` med seg (skjemaets `dependentRequired`):
+    // et beløpstak uten valuta er ikke et beløp.
+    const synkFelter = () => {
+      const k = krav[gkValg.value];
+      belopRad.hidden = k !== "belop_maks";
+      valutaRad.hidden = k !== "belop_maks" && k !== "valuta";
+    };
+    gkValg.addEventListener("change", synkFelter);
+    synkFelter();
+    const leggTil = el("button", { class: "knapp liten", type: "button",
+      text: t("ui.editor.overstyring_legg_til") });
+    leggTil.addEventListener("click", () => {
+      nullstillFeil();
+      const k = krav[gkValg.value];
+      const oppf = { grunnkode: gkValg.value, handling: hValg.value };
+      // Fail-closed på FORMEN også: serveren avviser uansett (mønstrene er
+      // skjemaets), men eier skal få vite det her og nå — ikke etter en
+      // runde med validering på et frosset utkast.
+      if (k === "belop_maks" || k === "valuta") {
+        const v = valuta.value.trim().toUpperCase();
+        if (!/^[A-Z]{3}$/.test(v)) {
+          settFeil(valuta, t("ui.editor.overstyring_valuta_feil"));
+          return;
+        }
+        oppf.valuta = v;
+      }
+      if (k === "belop_maks") {
+        const b = belop.value.trim();
+        if (!/^\d+(\.\d{1,2})?$/.test(b)) {
+          settFeil(belop, t("ui.editor.overstyring_belop_feil"));
+          return;
+        }
+        oppf.belop_maks = b;
+      }
+      const m = policy.menneskelig_overstyring
+        = (policy.menneskelig_overstyring
+           && typeof policy.menneskelig_overstyring === "object")
+          ? policy.menneskelig_overstyring
+          : { godkjennbare: [], krever_rolle: roller[0] };
+      m.godkjennbare = Array.isArray(m.godkjennbare) ? m.godkjennbare : [];
+      if (m.godkjennbare.some((e2) => e2 && e2.grunnkode === gkValg.value
+          && e2.handling === hValg.value)) return;   // duplikatpar (schema)
+      m.godkjennbare.push(oppf);
+      tegnPaaNytt();
+    });
+    deler.push(el("div", { class: "overstyring-legg-til" },
+      el("label", { for: "mo-grunnkode",
+        text: t("ui.editor.overstyring_grunnkode") }), gkValg,
+      el("label", { for: "mo-handling",
+        text: t("ui.editor.overstyring_handling") }), hValg,
+      belopRad, valutaRad, feilUt,
+      leggTil));
+  } else if (!grunnkoder.length) {
+    deler.push(el("p", { class: "muted",
+      text: t("ui.editor.vilkaar_grunnlag_mangler") }));
+  }
+  return el("section", { class: "editor-seksjon",
+    "aria-label": t("ui.editor.overstyring") }, ...deler);
 }
 
 function handlingerSeksjon(policy, tegnPaaNytt, st) {
@@ -584,7 +1104,7 @@ function handlingerSeksjon(policy, tegnPaaNytt, st) {
     el("p", { class: "sub", text: t("ui.editor.handling_posisjon")
       .replace("{n}", String(i + 1))
       .replace("{av}", String(handlinger.length)) }),
-    handlingKort(valgt, tegnPaaNytt),
+    handlingKort(valgt, tegnPaaNytt, policy, st.grunnlag),
     el("div", { class: "editor-knapper" }, forrige, neste));
 }
 
@@ -740,7 +1260,17 @@ export function visPolicyeditor(hoved, ctx, opts = {}) {
                aktiv: { kjent: false, id: null },
                // Ble dokumentets id rettet mot radens ved innlasting? Da bærer
                // hjelpeteksten den gamle verdien (`policyIdLaastHint`).
-               rettetFra: null };
+               rettetFra: null,
+               // Editorgrunnlaget (047): plattformvilkår + godkjennbare
+               // grunnkoder, fra serveren. null = utilgjengelig, og da er
+               // vilkårsredigeringen LÅST og overstyringspar kan ikke
+               // legges til (fail-closed, port 30/31).
+               grunnlag: null };
+
+  hentJson("/v1/policyadmin/editorgrunnlag").then((d) => {
+    st.grunnlag = d;
+    if (!st.laster && st.policy && eier()) tegn();
+  }).catch(() => { /* fail-closed: grunnlag forblir null */ });
 
   function lagre() {
     const pid = (st.policy.meta && st.policy.meta.policy_id || "").trim();
@@ -838,6 +1368,8 @@ export function visPolicyeditor(hoved, ctx, opts = {}) {
           bygg: () => rollerSeksjon(st.policy, tegn) },
         { nokkel: "handlinger", tittel: t("ui.editor.fane.handlinger"),
           bygg: () => handlingerSeksjon(st.policy, tegn, st) },
+        { nokkel: "overstyring", tittel: t("ui.editor.fane.overstyring"),
+          bygg: () => overstyringSeksjon(st.policy, tegn, st.grunnlag) },
       ],
     });
     const barn = [
