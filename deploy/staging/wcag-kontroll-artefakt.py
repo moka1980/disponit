@@ -19,6 +19,13 @@ utvalgsregler som kan leses, angripes og kjøres om igjen:
     deler digest, så tallene gjelder nøyaktig de aksepterte bytene (A1).
   * `bestatt` regnes ut av de VALGTE hendelsenes egne `ok`-felter —
     aldri påstått.
+  * FRISTTELLINGEN REGNES UT AV `kjoring`-LINJENE, ikke lest av
+    `fase5_resultat`s summeringsstreng. Et gjenspill setter
+    `utfall: "utfort"` og `varighet_s: null` uten å måle fristen på
+    nytt, så summen kan bli «10/10» av rapporter som opprinnelig brøt
+    fristen. Bare linjer med rent utfall, null avvik og en MÅLT varighet
+    under sin egen frist telles — og spriker linjene fra summen, skrives
+    det ikke noe sammendrag i det hele tatt.
 
 Deterministisk med vilje: samme fil inn gir byte-identisk artefakt ut
 (ingen klokkelesing), så CI kan regenerere og sammenligne.
@@ -105,6 +112,55 @@ def en_kjoring(rader: list[dict], kontekst: list, valgte: list[int]) -> tuple:
     return digest, release
 
 
+def fase5_linjene(rader: list[dict], kontekst: list,
+                  i_fase5: int) -> list[dict]:
+    """`kjoring`-linjene DEN valgte fase 5-summen er summen av.
+
+    Fila er append-only og fase 5 kan kjøres flere ganger: linjene som
+    hører til summen, er de som står mellom forrige `fase5_resultat` og
+    denne — i den samme konteksten (release + image). Posisjon, ikke
+    `ts`, av samme grunn som i `kontekster`.
+    """
+    start = 0
+    for j in range(i_fase5 - 1, -1, -1):
+        if rader[j].get("hendelse") == "fase5_resultat":
+            start = j + 1
+            break
+    return [rader[j] for j in range(start, i_fase5)
+            if rader[j].get("hendelse") == "kjoring"
+            and kontekst[j] == kontekst[i_fase5]]
+
+
+def signert_innen_frist(linjer: list[dict]) -> int:
+    """Teller kjøringene som FAKTISK ble målt signert innen fristen.
+
+    Codex' P2 på PR #117 (runde 10): tallet ble kopiert ordrett fra
+    `fase5_resultat`s summeringsstreng. Men fase 5 er idempotent, og på
+    et gjenspill (`alt_utfort`) er rapporten alt lesbar: da settes
+    `utfall: "utfort"` uten at motoren kjøres, `varighet_s` er `None`, og
+    linjas `ok` blir grønn UTEN at fristen er målt på nytt. Ti rapporter
+    som opprinnelig BRØT fristen kunne derfor bli «10/10» ved neste
+    gjenkjøring, og gå rett gjennom evidensporten.
+
+    Her telles bare linjer som bærer sin egen måling: et rent utfall
+    (`utfort`), null avvik mot fasiten, og en varighet som ER målt og
+    ligger under den fristen linja selv oppgir. Et gjenspill teller ikke
+    — ikke fordi kjøringen var dårlig, men fordi den linja ikke MÅLTE
+    noe. `i` avduplikeres, så en delvis gjenkjøring aldri kan telle en
+    posisjon to ganger.
+    """
+    gronne = set()
+    for d in linjer:
+        varighet, frist = d.get("varighet_s"), d.get("frist_s")
+        if (d.get("utfall") == "utfort"
+                and not int(d.get("avvik_mot_fasit") or 0)
+                and isinstance(varighet, (int, float))
+                and isinstance(frist, (int, float))
+                and varighet < frist):
+            gronne.add(d.get("i"))
+    return len(gronne)
+
+
 def sammendrag(rader: list[dict], kilde: str, kilde_sha256: str) -> dict:
     kontekst = kontekster(rader)
 
@@ -129,8 +185,22 @@ def sammendrag(rader: list[dict], kilde: str, kilde_sha256: str) -> dict:
     valgte = tuple(rader[i] for i in indekser)
     (fase5, robots, robots5, frekv, motor, injeksjon, frist) = valgte
 
-    signert, krav = (int(x) for x in
+    påstått, krav = (int(x) for x in
                      str(fase5["ti_kjoringer_signert_innen_frist"]).split("/"))
+    # TALLET REGNES UT AV LINJENE, ikke lest av summen (Codex P2, runde
+    # 10). Og spriker de to, er evidensfila i strid med seg selv: summen
+    # påstår flere målte kjøringer enn linjene bærer, og da skrives det
+    # ikke noe sammendrag i det hele tatt.
+    signert = signert_innen_frist(fase5_linjene(rader, kontekst, indekser[0]))
+    if signert != påstått:
+        raise SystemExit(
+            f"AVBRUTT: `fase5_resultat` påstår {påstått}/{krav} signert"
+            f" innen frist, men bare {signert} av `kjoring`-linjene i den"
+            " runden bærer et rent utfall, null avvik OG en målt varighet"
+            " under sin egen frist. Et gjenspill setter utfall=utfort og"
+            " varighet_s=null uten å måle fristen på nytt, så summen kan"
+            " ikke være kilden. Kjør fase 5 på nytt (nye"
+            " idempotensnøkler) og la kjøringene måle seg selv.")
     return {
         "krav_id": "wcag-kontroll-v1",
         "ts": max(d["ts"] for d in valgte),

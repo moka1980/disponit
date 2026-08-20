@@ -751,11 +751,19 @@ def test_sammendraget_maa_komme_fra_en_sammenhengende_kjoring():
 
     # …men en HEL gjenkjøring på det nye imaget er en gyldig runde, og
     # da er det den nye digesten som skrives — ikke den gamle.
+    #
+    # «Hel» inkluderer de ti `kjoring`-linjene: fase 5-summen er ikke
+    # selv en måling (Codex P2, runde 10), og en runde som bare bærer
+    # summen har ingen frist- og fasitmålinger å regne den ut av.
     typer = ("fase5_resultat", "port20_robots", "port20_robots_5xx",
              "port21_frekvens", "port24_motormiljo",
              "feilinjisering_motorfeil", "feilinjisering_evidensfrist")
+    i_fase5 = max(i for i, d in enumerate(rader)
+                  if d["hendelse"] == "fase5_resultat")
     hel = [{"ts": "2026-08-19T09:00:00+00:00", "hendelse": "fase1_ok",
             "image_id": f"sha256:{fremmed}"}]
+    hel += [dict(d, ts="2026-08-19T08:59:59+00:00")
+            for d in m.fase5_linjene(rader, m.kontekster(rader), i_fase5)]
     for n, navn in enumerate(typer):
         siste = [d for d in rader if d["hendelse"] == navn
                  and d.get("utfall") != "tomt"][-1]
@@ -765,6 +773,56 @@ def test_sammendraget_maa_komme_fra_en_sammenhengende_kjoring():
     assert ny["oppsett"]["release"] == \
         [d for d in rader if d["hendelse"] == "fase2_ok"][-1]["release"]
     assert ny["maalt"] == art["maalt"] and ny["bestatt"] is True
+
+
+def test_fristtellingen_regnes_ut_av_de_ti_kjoringene():
+    """Codex' P2 (runde 10): `kjoringer_signert_innen_frist` ble kopiert
+    ordrett fra `fase5_resultat`s summeringsstreng.
+
+    Fase 5 er idempotent: er rapporten alt lesbar (`alt_utfort`), settes
+    `utfall: "utfort"` uten at motoren kjøres, `varighet_s` blir `None`,
+    og linjas `ok` blir grønn UTEN at fristen måles på nytt. Ti rapporter
+    som opprinnelig brøt fristen kunne derfor bli «10/10» ved neste
+    gjenkjøring — og et sammendrag som bare arver den strengen, bærer
+    påstanden videre inn i en immutabel aksept."""
+    m = _runde_skript()
+    art = json.loads((ROT / ("deploy/staging/artefakter/"
+                             "wcag-kontroll-v1-20260818T200413.json")
+                      ).read_text(encoding="utf-8"))
+    kilde = ROT / art["oppsett"]["kilde"]
+    rader = m.les(kilde)
+    kontekst = m.kontekster(rader)
+    i_fase5 = max(i for i, d in enumerate(rader)
+                  if d["hendelse"] == "fase5_resultat")
+    linjer = m.fase5_linjene(rader, kontekst, i_fase5)
+    # Den innsjekkede runden BLE målt: ti linjer med egen varighet.
+    assert len(linjer) == 10
+    assert m.signert_innen_frist(linjer) == 10
+
+    # Gjenspill: samme ti rapporter, men ingen frist målt.
+    gjenspilt = [dict(d, gjenspill=True, varighet_s=None) for d in linjer]
+    assert m.signert_innen_frist(gjenspilt) == 0
+    # En kjøring som brøt sin egen frist teller ikke, uansett `ok`.
+    over = [dict(d, varighet_s=d["frist_s"] + 1, ok=True) for d in linjer]
+    assert m.signert_innen_frist(over) == 0
+    # …og avvik mot fasiten er heller ikke et signert, rent utfall.
+    avvik = [dict(d, avvik_mot_fasit=1) for d in linjer]
+    assert m.signert_innen_frist(avvik) == 0
+    # Samme posisjon to ganger er én kjøring, ikke to.
+    assert m.signert_innen_frist(linjer + linjer) == 10
+
+    # Og generatoren nekter å skrive et sammendrag der summen påstår mer
+    # enn linjene bærer: en ren gjenspilt runde stopper her.
+    fase5 = rader[i_fase5]
+    gjenspilt_runde = (
+        rader[:i_fase5 - len(linjer)]
+        + [dict(d, gjenspill=True, varighet_s=None) for d in linjer]
+        + [dict(fase5, ti_kjoringer_signert_innen_frist="10/10", ok=True)]
+        + rader[i_fase5 + 1:])
+    with pytest.raises(SystemExit) as ei:
+        m.sammendrag(gjenspilt_runde, art["oppsett"]["kilde"],
+                     art["oppsett"]["kilde_sha256"])
+    assert "gjenspill" in str(ei.value)
 
 
 def test_wcag_grensene_maaler_at_portene_faktisk_kjorte():
