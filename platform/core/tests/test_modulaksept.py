@@ -460,6 +460,104 @@ def test_evidenskjeden_er_bytebundet_hele_veien():
         " og artefaktet har glidd fra hverandre"
 
 
+def _aksept_skript():
+    """Akseptskriptet lastet som modul (filnavnet har bindestrek)."""
+    import importlib.util
+    sti = ROT / "deploy/staging/m56-aksept.py"
+    spec = importlib.util.spec_from_file_location("m56_aksept", sti)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_akseptporten_avviser_artefakter_som_ikke_er_bevis():
+    """Codex' P1 på PR #117: skriptet leste `bestatt` — kallerens EGEN
+    påstand — og skrev deretter en immutabel grønn drill- og akseptrad.
+    Porten skal måle alle fire lagene: manifestbindingen, sha256 av de
+    leste bytene, det lukkede skjemaet og grensene."""
+    import yaml
+    m = _aksept_skript()
+    man = yaml.safe_load(
+        (ROT / "platform/modules/m56_wcag_audit/manifest.yaml").read_text(
+            encoding="utf-8"))
+    drill_sti = ROT / ("deploy/staging/artefakter/"
+                       "rollback-m56-v1-20260820T132200.json")
+    runde_sti = ROT / ("deploy/staging/artefakter/"
+                       "wcag-kontroll-v1-20260818T200413.json")
+    # De ekte artefaktene passerer — porten er ikke bare streng, den er riktig.
+    drill, drill_sha = m.les_bundet_artefakt(drill_sti, "rollback-m56-v1", man)
+    runde, _ = m.les_bundet_artefakt(runde_sti, KRAV, man)
+    assert drill["oppsett"]["kandidat_release"]
+    assert drill_sha == hashlib.sha256(drill_sti.read_bytes()).hexdigest()
+    assert m.verifiser_kilde(runde) == runde["oppsett"]["kilde_sha256"]
+
+
+def test_fabrikkert_artefakt_naar_ikke_de_priviligerte_funksjonene(tmp_path):
+    """Selve angrepet Codex beskrev: en håndskrevet JSON-fil med
+    `bestatt: true` og passende tellere. Den er ikke manifestbundet, og
+    stopper på første lag — før transaksjonen i det hele tatt åpnes."""
+    import yaml
+    m = _aksept_skript()
+    man = yaml.safe_load(
+        (ROT / "platform/modules/m56_wcag_audit/manifest.yaml").read_text(
+            encoding="utf-8"))
+    falsk = tmp_path / "rollback-m56-v1-falsk.json"
+    falsk.write_text(json.dumps({
+        "krav_id": "rollback-m56-v1", "bestatt": True,
+        "maalt": {"nye_oppdrag_claimet_av_drillet_release": 0,
+                  "falske_verdikter": 0, "kandidat_promoterte_artefakter": 1},
+        "oppsett": {"drillet_release": "wcag-r11",
+                    "rullback_release": "wcag-r12",
+                    "kandidat_release": "wcag-r13"}}), encoding="utf-8")
+    with pytest.raises(SystemExit) as ei:
+        m.les_bundet_artefakt(falsk, "rollback-m56-v1", man)
+    assert "utenfor repoet" in str(ei.value)
+
+
+def test_akseptporten_maaler_hash_og_grenser(tmp_path):
+    """De to lagene bak stikontrollen: en manifestbinding med feil sha
+    stopper en lokalt endret fil, og grensene kjøres faktisk — et
+    artefakt for ET ANNET krav passerer ikke fordi filnavnet stemte."""
+    import yaml
+    m = _aksept_skript()
+    man = yaml.safe_load(
+        (ROT / "platform/modules/m56_wcag_audit/manifest.yaml").read_text(
+            encoding="utf-8"))
+    rel = "deploy/staging/artefakter/rollback-m56-v1-20260820T132200.json"
+    sti = ROT / rel
+    feil_sha = dict(man, staging_sjekkliste={"x": {
+        "status": "ja", "krav_id": "rollback-m56-v1", "artefakt": rel,
+        "artefakt_sha256": SHA0}})
+    with pytest.raises(SystemExit) as ei:
+        m.les_bundet_artefakt(sti, "rollback-m56-v1", feil_sha)
+    assert "endret" in str(ei.value)
+    # Riktig sha, feil innhold for kravet: grensene må fyre.
+    ekte = hashlib.sha256(sti.read_bytes()).hexdigest()
+    forbyttet = dict(man, staging_sjekkliste={"x": {
+        "status": "ja", "krav_id": KRAV, "artefakt": rel,
+        "artefakt_sha256": ekte}})
+    with pytest.raises(SystemExit) as ei:
+        m.les_bundet_artefakt(sti, KRAV, forbyttet)
+    assert "evidensporten" in str(ei.value)
+
+
+def test_akseptporten_binder_raafilen():
+    """Sammendraget som binder en råfil det ikke er avledet av, er en
+    peker til noe som ikke finnes — siste ledd i SP-11-kjeden."""
+    m = _aksept_skript()
+    art = json.loads((ROT / ("deploy/staging/artefakter/"
+                             "wcag-kontroll-v1-20260818T200413.json")
+                      ).read_text(encoding="utf-8"))
+    mutert = dict(art, oppsett=dict(art["oppsett"], kilde_sha256=SHA0))
+    with pytest.raises(SystemExit) as ei:
+        m.verifiser_kilde(mutert)
+    assert "råfilen" in str(ei.value)
+    utenfor = dict(art, oppsett=dict(art["oppsett"], kilde="../../etc/passwd"))
+    with pytest.raises(SystemExit) as ei:
+        m.verifiser_kilde(utenfor)
+    assert "utenfor repoet" in str(ei.value)
+
+
 @pg
 def test_planlinjen_og_etiketten_fulgte_flippet():
     """Port 12: planlinjen står i M-56-flyten FØRST NÅ (048 leverte

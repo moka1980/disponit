@@ -38,7 +38,9 @@ sys.path.insert(0, str(REPO / "platform/core"))
 MODUL = "m_wcag_audit"   # registernavnet (modulmappen heter m56_wcag_audit)
 MILJO = "staging"
 KRAV = "wcag-kontroll-v1"
+DRILLKRAV = "rollback-m56-v1"
 TENANT = "t-wcagfasit"
+MANIFEST_STI = REPO / "platform/modules/m56_wcag_audit/manifest.yaml"
 
 #: grensepunkt → (kilde_type, hvordan verdien hentes). Måletallene peker
 #: på runde-sammendraget (selv sha-bundet i manifestet); de rene
@@ -75,6 +77,89 @@ CI_PUNKTER = (
 )
 
 
+def les_manifest() -> dict:
+    import yaml
+    return yaml.safe_load(MANIFEST_STI.read_text(encoding="utf-8"))
+
+
+def les_bundet_artefakt(sti: Path, krav_id: str,
+                        manifest: dict) -> tuple[dict, str]:
+    """Artefaktet gjennom HELE evidensporten. -> (innhold, sha256).
+
+    Codex' P1 på PR #117: den forrige formen leste `bestatt` — et felt
+    KALLEREN kontrollerer — og skrev deretter en immutabel, grønn
+    drill- og akseptrad. En håndskrevet JSON-fil med `bestatt: true` og
+    passende tellere nådde altså de priviligerte funksjonene, og hele
+    evidensgrensen skriptet finnes for var omgått av en tekstredigerer.
+
+    Fire lag, alle FØR transaksjonen åpnes:
+
+    1. stien må ligge i repoet og være NØYAKTIG den fila manifestet
+       binder for `krav_id` — en lokalt endret eller fremmed fil er
+       ikke evidens uansett hva den inneholder;
+    2. sha256 av de leste bytene må være manifestets (`_les_artefakt`
+       hasher og tolker ETT lesesteg, så det er samme bytes begge veier);
+    3. det lukkede JSON-skjemaet (`additionalProperties: false`);
+    4. `_sjekk_grenser` — som REGNER UT invariantene på nytt i stedet
+       for å tro på `bestatt`, og som håndhever §12-grensene.
+    """
+    import manifestskjema as ms
+    try:
+        rel = sti.resolve().relative_to(REPO).as_posix()
+    except ValueError:
+        raise SystemExit(f"AVBRUTT: {sti} peker utenfor repoet — bare"
+                         " innsjekkede, manifestbundne artefakter aksepterer"
+                         " noe")
+    bundet = {p["artefakt_sha256"] for p in
+              (manifest.get("staging_sjekkliste") or {}).values()
+              if isinstance(p, dict) and p.get("status") == "ja"
+              and p.get("krav_id") == krav_id and p.get("artefakt") == rel
+              and p.get("artefakt_sha256")}
+    if not bundet:
+        raise SystemExit(f"AVBRUTT: {rel} er ikke artefaktet manifestet"
+                         f" binder for {krav_id}")
+    data, sha, melding = ms._les_artefakt(sti)
+    if melding:
+        raise SystemExit(f"AVBRUTT: {rel}: {melding}")
+    if sha not in bundet:
+        raise SystemExit(f"AVBRUTT: {rel} er endret — manifestet binder"
+                         f" {sorted(bundet)[0][:12]}…, filen er {sha[:12]}…")
+    feil = (ms.valider_artefaktformat(data, krav_id)
+            + ms._sjekk_grenser(krav_id, data))
+    if feil:
+        raise SystemExit(f"AVBRUTT: {rel} består ikke evidensporten:\n  "
+                         + "\n  ".join(feil))
+    return data, sha
+
+
+def verifiser_kilde(runde: dict) -> str:
+    """Råfilen bak sammendraget. -> sha256 av de faktiske bytene.
+
+    Sammendraget er avledet av `evidens.jsonl`; binder det en råfil som
+    ikke lenger er den, er `kilde_sha256` i akseptraden en peker til noe
+    som ikke finnes. Kjeden manifest→sammendrag→råfil skal være sha-bundet
+    ledd for ledd (SP-11), og siste ledd måles her.
+    """
+    kilde = (runde.get("oppsett") or {}).get("kilde")
+    forventet = (runde.get("oppsett") or {}).get("kilde_sha256")
+    if not kilde or not forventet:
+        raise SystemExit("AVBRUTT: sammendraget mangler kilde/kilde_sha256")
+    sti = (REPO / kilde).resolve()
+    try:
+        sti.relative_to(REPO)
+    except ValueError:
+        raise SystemExit(f"AVBRUTT: kilden {kilde} peker utenfor repoet")
+    try:
+        sha = hashlib.sha256(sti.read_bytes()).hexdigest()
+    except OSError as e:
+        raise SystemExit(f"AVBRUTT: kilden {kilde} kan ikke leses"
+                         f" ({type(e).__name__})")
+    if sha != forventet:
+        raise SystemExit(f"AVBRUTT: {kilde} er ikke råfilen sammendraget"
+                         f" binder — {forventet[:12]}… mot {sha[:12]}…")
+    return sha
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--drill", type=Path, required=True)
@@ -85,12 +170,19 @@ def main() -> int:
     ap.add_argument("--manifest-commit")
     a = ap.parse_args()
 
-    drill = json.loads(a.drill.read_text(encoding="utf-8"))
-    runde = json.loads(a.runde.read_text(encoding="utf-8"))
-    if not (drill.get("bestatt") and runde.get("bestatt")):
-        raise SystemExit("AVBRUTT: et rødt artefakt aksepterer ingenting")
-    evidens_sti = REPO / runde["oppsett"]["kilde"]
-    evidens_sha = hashlib.sha256(evidens_sti.read_bytes()).hexdigest()
+    import manifestskjema as ms
+
+    # Ingenting skrives før hele evidenskjeden er målt: manifestets egen
+    # port (hash → skjema → grenser → hvilken måling punktet påberoper
+    # seg), så de to artefaktene kalleren faktisk sendte inn, så råfilen.
+    manifest = les_manifest()
+    kjedefeil = ms.valider_artefakter(manifest)
+    if kjedefeil:
+        raise SystemExit("AVBRUTT: manifestets evidenskjede er rød:\n  "
+                         + "\n  ".join(kjedefeil))
+    drill, _ = les_bundet_artefakt(a.drill, DRILLKRAV, manifest)
+    runde, _ = les_bundet_artefakt(a.runde, KRAV, manifest)
+    evidens_sha = verifiser_kilde(runde)
     manifest_commit = a.manifest_commit or subprocess.run(
         ["git", "-C", str(REPO), "rev-parse", "HEAD"],
         capture_output=True, text=True, check=True).stdout.strip()
