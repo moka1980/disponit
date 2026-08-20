@@ -673,6 +673,28 @@ def test_akseptcommiten_baerer_bytene_som_ble_validert(tmp_path):
     assert "finnes ikke i" in str(ei.value)
 
 
+@pg
+def test_kvitteringen_leses_uten_admin_fullmakten(migrator):
+    """Codex' P1 (runde 2): akseptskriptet leste kvitteringsraden mens
+    `SET ROLE disponit_modules_admin` fortsatt sto. 049 gir den rollen
+    BARE `EXECUTE` på de to definerne — `SELECT` på tabellen har eier og
+    runtime. Aksepten ble altså skrevet og committet, hvorpå lesningen
+    ga `permission denied`: kjøringen og hvert forsøk på nytt rapporterte
+    feil på en aksept som alt lå der."""
+    migrator.execute("SET ROLE disponit_modules_admin")
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        migrator.execute("SELECT akseptert_ts FROM modulaksept LIMIT 1")
+    migrator.rollback()
+    migrator.execute("RESET ROLE")
+    migrator.execute("SELECT count(*) FROM modulaksept")   # som migrator: ok
+    migrator.rollback()
+    # …og skriptet legger ned fullmakten før det leser kvitteringen.
+    kilde = (ROT / "deploy/staging/m56-aksept.py").read_text(encoding="utf-8")
+    assert kilde.index('conn.execute("RESET ROLE")') \
+        < kilde.index("SELECT akseptert_ts"), \
+        "kvitteringen leses fortsatt med admin-rollen stående"
+
+
 def test_invariantpunktene_krever_en_groenn_kjoring_paa_akseptcommiten():
     """Codex' P1 (runde 2): de 16 invariantpunktene ble hardkodet grønne
     fra to strenger kalleren skrev. En kjøring som ikke er ferdig, som

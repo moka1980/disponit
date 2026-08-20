@@ -370,9 +370,19 @@ def main() -> int:
             "%s,%s,%s,%s,%s::jsonb,%s,'m56-aksept')",
             (MODUL, MILJO, o["kandidat_release"], drill_id, KRAV,
              TENANT, a.e2e_artefakt, evidens_sha, manifest_commit,
-             a.ci_run, a.ci_commit, json.dumps(punkter),
+             a.ci_run, ci_commit, json.dumps(punkter),
              f"aksept-{o['kandidat_release']}"))
         conn.commit()
+        # Codex' P1 på PR #117 (runde 2): kvitteringslesningen kjørte
+        # fortsatt som `disponit_modules_admin`, og 049 gir den rollen
+        # BARE `EXECUTE` på de to definerne — `SELECT` på tabellen har
+        # eier og runtime, ikke admin. Raden var altså skrevet og
+        # committet, hvorpå denne lesningen ga `permission denied`: både
+        # kjøringen og hvert eneste forsøk på nytt rapporterte feil på en
+        # aksept som ALT lå der. Fullmakten legges ned når den er brukt —
+        # kvitteringen leses som migrator (samme grep som drillskriptets
+        # etterkontroll).
+        conn.execute("RESET ROLE")
         rad = conn.execute(
             "SELECT akseptert_ts FROM modulaksept WHERE modul_id=%s"
             " AND miljo=%s AND release_id=%s",
