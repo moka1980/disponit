@@ -1520,7 +1520,8 @@ def test_en_eksisterende_rullbakkrelease_maales_for_rullingen():
 
     # Raden skrives UANSETT — ingen «finnes den?»-omvei foran.
     ok = _Base()
-    d.registrer_rullbakkreleasen(ok, "wcag-r12", 1, "kh", "aa" * 32)
+    d.registrer_drillrelease(ok, "wcag-r12", 1, "kh", "aa" * 32,
+                             hva="rullback", flagg="--rullback-id")
     kall = [s for s, _ in ok.kall]
     assert not any("SELECT 1 FROM modulrelease" in s for s in kall), \
         "eksistenstesten er tilbake — da måles den eksisterende raden ikke"
@@ -1534,16 +1535,72 @@ def test_en_eksisterende_rullbakkrelease_maales_for_rullingen():
     # Avvikende rad: drillen stopper HER, før noen `bytt_release`.
     sprakk = _Base(sprekk="release (m_wcag_audit,wcag-r12) er immutable")
     with pytest.raises(SystemExit) as ei:
-        d.registrer_rullbakkreleasen(sprakk, "wcag-r12", 1, "kh", "aa" * 32)
+        d.registrer_drillrelease(sprakk, "wcag-r12", 1, "kh", "aa" * 32,
+                                 hva="rullback", flagg="--rullback-id")
     assert "immutabel" in str(ei.value) and "wcag-r12" in str(ei.value)
+    assert "--rullback-id" in str(ei.value)
     assert sprakk.rullet_tilbake
     assert not any("bytt_release" in s for s, _ in sprakk.kall)
 
     # …og porten står før rullingen også i kilden.
     tekst = (ROT / "deploy/staging/rollback-m56.py").read_text(
         encoding="utf-8")
-    assert (tekst.index("registrer_rullbakkreleasen(m, a.rullback_id")
+    assert (tekst.index("registrer_drillrelease(m, a.rullback_id")
             < tekst.index("SELECT bytt_release"))
+
+
+def test_en_eksisterende_kandidatrelease_maales_ogsaa_for_rullingen():
+    """Codex' P2 (runde 7): porten foran drillen måler `moduldeployment`.
+
+    En `--kandidat-id` som alt lå i `modulrelease` — uten deployment, med
+    avvikende immutabelt innhold — ble derfor lest som «ubrukt». Drillen
+    brukte da opp originaldeploymenten, bootet rullbakken og målte hele
+    (a)/(b)/(b2), og konflikten dukket først opp i KANDIDATENS fase 2:
+    fase 1 hadde alt stoppet rullbakk-arbeideren, så rullbakk-deploymenten
+    sto claiming uten arbeider og begge drill-id-ene var konsumert.
+
+    Kandidaten går nå samme vei som rullbakken (runde 6): raden skrives
+    ubetinget FØR racet, og en avvikende rad stopper drillen der."""
+    d = _drillskript()
+    tekst = (ROT / "deploy/staging/rollback-m56.py").read_text(
+        encoding="utf-8")
+    assert (tekst.index("registrer_drillrelease(m, a.kandidat_id")
+            < tekst.index("SELECT bytt_release")), \
+        "kandidatraden må skrives før den destruktive rullingen"
+
+    class _Base:
+        def __init__(self, sprekk=None):
+            self.kall, self.sprekk = [], sprekk
+            self.rullet_tilbake = False
+
+        def execute(self, sql, params=None):
+            self.kall.append((sql, params))
+            if self.sprekk and "registrer_release" in sql:
+                raise RuntimeError(self.sprekk)
+            return self
+
+        def commit(self):
+            self.kall.append(("COMMIT", None))
+
+        def rollback(self):
+            self.rullet_tilbake = True
+
+    # Kandidatens digest er den DRILLEDE releasens: fase 1/2 pinner det
+    # lokalt bygde motorimaget, og drillen står på det hele veien.
+    ok = _Base()
+    d.registrer_drillrelease(ok, "wcag-r17", 1, "kh", "bb" * 32,
+                             hva="kandidat", flagg="--kandidat-id")
+    (reg,) = [p for s, p in ok.kall if "registrer_release" in s]
+    assert reg[1] == "wcag-r17" and reg[5] == "bb" * 32
+    assert reg[4] == d._manifest_hash()
+
+    sprakk = _Base(sprekk="release (m_wcag_audit,wcag-r17) er immutable")
+    with pytest.raises(SystemExit) as ei:
+        d.registrer_drillrelease(sprakk, "wcag-r17", 1, "kh", "bb" * 32,
+                                 hva="kandidat", flagg="--kandidat-id")
+    assert "kandidat-releasen wcag-r17" in str(ei.value)
+    assert "--kandidat-id" in str(ei.value)
+    assert not any("bytt_release" in s for s, _ in sprakk.kall)
 
 
 def test_kandidatens_oppdrag_bestilles_forst_naar_rullbakken_er_fenced(

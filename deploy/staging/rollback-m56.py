@@ -286,10 +286,10 @@ def krev_bootbare_forgjengerbytes(forgjenger: str, forgjenger_digest: str,
         " for hånd.")
 
 
-def registrer_rullbakkreleasen(m, rullback: str, kver: int, khash: str,
-                               forgjenger_digest: str) -> None:
-    """Skriver rullback-releaseraden — UBETINGET, før den destruktive
-    rullingen (Codex P1, #117 runde 6).
+def registrer_drillrelease(m, release: str, kver: int, khash: str,
+                           digest: str, *, hva: str, flagg: str) -> None:
+    """Skriver drillreleaseraden — UBETINGET, før den destruktive
+    rullingen (Codex P1, #117 runde 6; P2, runde 7).
 
     Kallet lå før inne i en «finnes raden alt?»-test, og en eksisterende
     `--rullback-id` slapp da forbi HELT umålt. Testen ga ingenting:
@@ -308,35 +308,49 @@ def registrer_rullbakkreleasen(m, rullback: str, kver: int, khash: str,
     drilltilstanden er brukt opp. Porten hører hjemme her.
 
     MANIFESTHASHEN ER DENNE UTSJEKKINGENS, ikke den drillede radens:
-    rullback-releasen bootes senere gjennom sjekklistens egne faser, og
+    begge drillreleasene bootes senere gjennom sjekklistens egne faser, og
     `registrer-m-wcag-audit.py` regner da hashen ut av manifest.yaml på
     disk. Skrev vi den drillede radens hash her, ville den passive
     registreringen og fase 2 vært to ULIKE påstander om samme immutable
     rad — og fase 2 ville dødd på en konflikt drillen selv lagde.
 
-    DIGESTEN ER FORGJENGERENS, ikke den drilledes (Codex P1, runde 6).
-    Verdiene er like i dag — `krev_bootbare_forgjengerbytes` har alt målt
-    det — men KILDEN er poenget: en rullbakk som henter bytene sine fra
-    releasen den ruller VEKK fra, ruller ingen steder.
+    RULLBAKKENS DIGEST ER FORGJENGERENS, ikke den drilledes (Codex P1,
+    runde 6). Verdiene er like i dag — `krev_bootbare_forgjengerbytes` har
+    alt målt det — men KILDEN er poenget: en rullbakk som henter bytene
+    sine fra releasen den ruller VEKK fra, ruller ingen steder.
+
+    OG KANDIDATEN GÅR SAMME VEI (Codex P2, runde 7). Porten foran drillen
+    målte bare `moduldeployment`, så en `--kandidat-id` som alt lå i
+    `modulrelease` — uten deployment, med avvikende immutabelt innhold —
+    ble lest som «ubrukt». Konflikten dukket da opp i KANDIDATENS fase 2,
+    altså etter at drillen hadde rullet, målt hele (a)/(b)/(b2) og fase 1
+    alt hadde stoppet rullbakk-arbeideren: rullbakk-deploymenten sto
+    claiming uten arbeider, og begge drill-id-ene var konsumert. Samme
+    hull, samme rot, samme rettelse — raden skrives, eller drillen stopper
+    før den rører noe.
+
+    Kandidatens digest er den DRILLEDE releasens: sjekklistens fase 1/2
+    pinner det lokalt bygde motorimaget, så det er de bytene kandidaten
+    kan bootes på — og `krev_bootbare_forgjengerbytes` har alt målt at
+    hele drillen står på samme image.
     """
     manifest = _manifest_hash()
     _admin(m)
     try:
         m.execute("SELECT registrer_release(%s,%s,%s,%s,%s,%s,'m56-drill')",
-                  (MODUL, rullback, kver, khash, manifest,
-                   forgjenger_digest))
+                  (MODUL, release, kver, khash, manifest, digest))
         m.commit()
     except Exception as e:
         m.rollback()
         raise SystemExit(
-            f"AVBRUTT: rullback-releasen {rullback} finnes alt i registeret"
+            f"AVBRUTT: {hva}-releasen {release} finnes alt i registeret"
             " med et ANNET innhold enn drillen ville skrevet (kontrakt"
             f" v{kver}, manifest {manifest[:12]}…, digest"
-            f" {str(forgjenger_digest)[:19]}…): {e}\nRaden er immutabel, så"
-            " den kan ikke rettes — og hadde drillen rullet dit likevel,"
+            f" {str(digest)[:19]}…): {e}\nRaden er immutabel, så"
+            " den kan ikke rettes — og hadde drillen kjørt videre likevel,"
             " ville fase 2 dødd på nøyaktig denne konflikten ETTER at den"
             " levende deploymenten var drenert. Kjør drillen med en ubrukt"
-            " --rullback-id.") from e
+            f" {flagg}.") from e
     m.execute("RESET ROLE")
 
 
@@ -450,10 +464,17 @@ def main() -> int:
           f" rullbakk til forgjengeren {forgjenger}s bytes"
           f" ({forgjenger_digest[:12]}…)")
 
-    # Rullback-releasen registreres FØR racet — registreringen er passiv,
-    # selve rullingen er ett kall og fyres midt i det løpende oppdraget.
-    registrer_rullbakkreleasen(m, a.rullback_id, kver, khash,
-                               forgjenger_digest)
+    # BEGGE drillreleasene registreres FØR racet — registreringen er
+    # passiv (en rad i `modulrelease`, ingen deployment), mens rullingen
+    # er ett kall som fyres midt i det løpende oppdraget. Kandidaten er
+    # med her fordi porten over bare måler `moduldeployment`: en
+    # eksisterende, avvikende kandidatRAD ville ellers først blitt
+    # oppdaget i kandidatens fase 2 — etter rullingen, og etter at fase 1
+    # hadde stoppet rullbakk-arbeideren (Codex P2, #117 runde 7).
+    registrer_drillrelease(m, a.rullback_id, kver, khash, forgjenger_digest,
+                           hva="rullback", flagg="--rullback-id")
+    registrer_drillrelease(m, a.kandidat_id, kver, khash, digest,
+                           hva="kandidat", flagg="--kandidat-id")
 
     # (b) — det løpende oppdraget. Arbeideren stoppes så bestillingen
     # beviselig ligger uclaimet, startes, og rullingen fyres i det claimet
