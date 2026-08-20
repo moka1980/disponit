@@ -636,6 +636,43 @@ def _grenser_wcag_kontroll(grense: dict, art: dict) -> list[str]:
     return feil
 
 
+def _falske_verdikter(m: dict) -> list[str]:
+    """SP-3-motsigelsen regnet ut på nytt av råtallene, ikke lest.
+
+    Codex' P2 på PR #117 (runde 2): et falskt verdikt er at UTFALLET og
+    EVIDENSEN motsier hverandre, og det går begge veier — et `utfort`
+    uten promotert artefakt, og et ikke-`utfort` som likevel promoterte.
+    Drillens gamle uttrykk ga alltid 0 for det siste tilfellet, og
+    porten her hadde ingen egen telling å regne motsigelsen ut fra.
+
+    Mangler tellingen er den bare tilgivelig når utfallet ER `utfort`:
+    da er «ingen motsigelse» det eneste `falske_verdikter = 0` kan bety.
+    Et ikke-`utfort` utfall UTEN evidenstelling er derimot et umålt
+    tilfelle som rapporterer seg selv rent.
+    """
+    utfall = m.get("inflight_utfall")
+    rapportert, melding = _teller(m, "falske_verdikter", "falske_verdikter")
+    if melding:
+        return []                       # alt rapportert av grensesløyfen
+    if "inflight_promoterte_artefakter" not in m:
+        if utfall == "utfort":
+            return []
+        return [f"inflight_utfall={utfall!r} uten"
+                " `inflight_promoterte_artefakter` — et utfall som ikke er"
+                " `utfort` kan bare kalles rent når evidensen bak det er"
+                " TALT; en feilet jobb som likevel promoterte er et falskt"
+                " verdikt"]
+    promotert, melding = _teller(m, "inflight_promoterte_artefakter",
+                                 "inflight_promoterte_artefakter")
+    if melding:
+        return [melding]
+    motsigelse = 0 if (utfall == "utfort") == (promotert > 0) else 1
+    if rapportert != motsigelse:
+        return [f"falske_verdikter={rapportert}, men utfallet {utfall!r} med"
+                f" {promotert} promoterte artefakter gir {motsigelse}"]
+    return []
+
+
 def _grenser_rollback_m56(grense: dict, art: dict) -> list[str]:
     """`rollback-m56-v1` — flippedrillen for moduldeployment (049).
 
@@ -674,6 +711,7 @@ def _grenser_rollback_m56(grense: dict, art: dict) -> list[str]:
     if m.get("inflight_utfall") not in grense["rene_utfall"]:
         feil.append(f"inflight_utfall={m.get('inflight_utfall')!r} er ikke"
                     f" et rent utfall ({sorted(grense['rene_utfall'])})")
+    feil += _falske_verdikter(m)
     vent, melding = _positiv(m, "ventetid_ubehandlet_s",
                              "ventetid_ubehandlet_s")
     if melding:

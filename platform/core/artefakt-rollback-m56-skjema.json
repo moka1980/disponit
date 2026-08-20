@@ -96,6 +96,10 @@
         "inflight_har_signert_kvittering": {
           "type": "boolean"
         },
+        "inflight_promoterte_artefakter": {
+          "$ref": "#/$defs/telling",
+          "comment": "Evidensen bak utfallet til det loepende oppdraget. Baeres av alle drillkjoeringer fra og med PR #117 runde 2; porten krever den for hvert utfall som ikke er `utfort` - uten den kan ikke `falske_verdikter` regnes ut paa nytt."
+        },
         "falske_verdikter": {
           "$ref": "#/$defs/telling"
         },

@@ -342,9 +342,18 @@ def main() -> int:
             # utfallet: et feilet oppdrag uten kvittering er nettopp
             # formen SP-3 forbyr.
             "inflight_har_signert_kvittering": inflight_kvittering,
-            "falske_verdikter": 0 if (
-                inflight["utfall"] != "utfort" or inflight_artefakter)
-                else 1,
+            # Evidensen bak utfallet MÅLES og skrives ned, slik at porten
+            # kan regne motsigelsen ut på nytt i stedet for å tro på
+            # tallet under.
+            "inflight_promoterte_artefakter": len(inflight_artefakter),
+            # Codex' P2 på PR #117: den forrige formen ga alltid 0 så
+            # snart utfallet IKKE var `utfort` — en `feilet` jobb som
+            # likevel hadde promotert et artefakt ble altså talt som et
+            # rent utfall. Falskt verdikt er en MOTSIGELSE mellom utfall
+            # og evidens, og den går begge veier: et `utfort` uten
+            # evidens, og et ikke-`utfort` MED evidens.
+            "falske_verdikter": 0 if (inflight["utfall"] == "utfort")
+                                == bool(inflight_artefakter) else 1,
             "nye_oppdrag_claimet_av_drillet_release":
                 claimet_under_drenering,
             "ventetid_ubehandlet_s": ventetid,

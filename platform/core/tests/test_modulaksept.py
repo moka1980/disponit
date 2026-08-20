@@ -556,6 +556,46 @@ def test_wcag_grensene_maaler_at_portene_faktisk_kjorte():
     assert _sjekk_grenser(KRAV, _mutert(kjoringer_signert_innen_frist=9))
 
 
+def test_falske_verdikter_er_en_motsigelse_begge_veier():
+    """Codex' P2 (runde 2): drillen ga alltid `falske_verdikter=0` så
+    snart utfallet ikke var `utfort` — en `feilet` jobb som LIKEVEL
+    hadde promotert et artefakt ble talt som et rent utfall, og porten
+    hadde ingen egen telling å regne motsigelsen ut fra. Nå måles
+    evidensen bak utfallet, og motsigelsen regnes ut på nytt."""
+    from manifestskjema import _sjekk_grenser
+    drillkrav = "rollback-m56-v1"
+    ekte = json.loads((ROT / ("deploy/staging/artefakter/"
+                              "rollback-m56-v1-20260820T132200.json")
+                       ).read_text(encoding="utf-8"))
+    assert _sjekk_grenser(drillkrav, ekte) == []
+
+    def _mutert(**felt):
+        return dict(ekte, maalt=dict(ekte["maalt"], **felt))
+
+    # Selve hullet: feilet jobb, promotert artefakt, «ingen falske».
+    feilet_med_evidens = _mutert(inflight_utfall="feilet",
+                                 inflight_promoterte_artefakter=1,
+                                 falske_verdikter=0)
+    assert any("falske_verdikter" in f
+               for f in _sjekk_grenser(drillkrav, feilet_med_evidens)), \
+        "en feilet jobb som promoterte evidens ble talt som rent utfall"
+    # Den andre veien står også: utført uten evidens er like falskt.
+    utfort_uten_evidens = _mutert(inflight_promoterte_artefakter=0,
+                                  falske_verdikter=0)
+    assert any("falske_verdikter" in f
+               for f in _sjekk_grenser(drillkrav, utfort_uten_evidens))
+    # Et ikke-`utfort` utfall UTEN telling er umålt, ikke rent.
+    assert any("inflight_promoterte_artefakter" in f
+               for f in _sjekk_grenser(drillkrav,
+                                       _mutert(inflight_utfall="feilet")))
+    # …og de to rene formene passerer.
+    assert _sjekk_grenser(drillkrav,
+                          _mutert(inflight_promoterte_artefakter=1)) == []
+    assert _sjekk_grenser(drillkrav, _mutert(
+        inflight_utfall="feilet", inflight_promoterte_artefakter=0,
+        falske_verdikter=0)) == []
+
+
 def _aksept_skript():
     """Akseptskriptet lastet som modul (filnavnet har bindestrek)."""
     import importlib.util
