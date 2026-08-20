@@ -394,6 +394,15 @@ CREATE POLICY kildebackfill_047 ON policyer FOR ALL
 UPDATE policyer SET aktiveringskilde = 'historisk';
 DROP POLICY kildebackfill_047 ON policyer;
 
+-- Masse-UPDATE-en over køet én utsatt konsistenskontroll PER RAD
+-- (012-æraens deferrable peker⇔aktiv-triggere på policyer), og ALTER
+-- TABLE lenger nede nekter å kjøre forbi ventende trigger-hendelser:
+-- «cannot ALTER TABLE because it has pending trigger events». CI så det
+-- aldri — en tom base har ingen rader å merke — det var PRODUKSJONEN som
+-- traff det (deploy 20/8). Fyr kontrollene NÅ: de måler peker⇔aktiv, som
+-- merkingen ikke rører, og køen må være tom før neste lås.
+SET CONSTRAINTS ALL IMMEDIATE;
+
 -- 'historisk' er en TILSTAND, ikke et valg: den beskriver rader som lå der
 -- da 047 landet, og kan derfor ikke skrives av noen etterpå. Og 'styrt'
 -- betyr nøyaktig én ting — det finnes en hendelse — så merket og
@@ -1696,6 +1705,18 @@ BEGIN
     RAISE NOTICE '047-backfill policyaktivering: % bundet, % åpne '
         '(derav % flertydige)', v_bundet, v_aapne, v_flertydige;
 END $$;
+
+-- Backfillens skrivinger etterlater VENTENDE trigger-hendelser fra de
+-- utsatte lineage-FK-ene, og alt etter dette punktet som trenger
+-- tabellås (DROP POLICY, CREATE TRIGGER) nekter PostgreSQL å kjøre forbi
+-- dem: «cannot ALTER TABLE because it has pending trigger events». CI så
+-- det aldri — en tom base backfiller ingenting — det var PRODUKSJONEN,
+-- med ekte policyrader, som traff det (deploy 20/8). Samme lærdom som
+-- testens egen `SET CONSTRAINTS ALL IMMEDIATE` under CI-rundene: fyr de
+-- utsatte kontrollene NÅ, mens backfillens rader fortsatt er synlige —
+-- det validerer lineagen på stedet i stedet for ved commit, og rydder
+-- køen så resten av migrasjonen får låsene sine.
+SET CONSTRAINTS ALL IMMEDIATE;
 
 -- Broen rives i samme transaksjon som den ble bygget.
 DROP POLICY backfill_047 ON policyer;
