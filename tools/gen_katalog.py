@@ -238,6 +238,32 @@ def slug(navn: str) -> str:
     return re.sub(r"[^a-z0-9_]", "", ut)
 
 
+def apner_ikkekode(tekst: str, i: int) -> bool:
+    """Om tegnet i `i` åpner en streng eller en kommentar."""
+    return (tekst[i] in "\"'`"
+            or tekst.startswith("//", i) or tekst.startswith("/*", i))
+
+
+def slutt_ikkekode(tekst: str, i: int) -> int:
+    """Indeksen etter strengen eller kommentaren som åpner i `i`.
+
+    Strenger: enkelt- og dobbeltfnutt og backtick, med `\\` som escape.
+    Kommentarer: `//` til linjeskift, `/* */` til lukkingen. Uterminert går til
+    tekstslutt — da sier `postslutt()` fra om at posten aldri lukkes.
+    """
+    if tekst.startswith("//", i):
+        j = tekst.find("\n", i)
+        return len(tekst) if j < 0 else j + 1
+    if tekst.startswith("/*", i):
+        j = tekst.find("*/", i + 2)
+        return len(tekst) if j < 0 else j + 2
+    sitat = tekst[i]
+    j = i + 1
+    while j < len(tekst) and tekst[j] != sitat:
+        j += 2 if tekst[j] == "\\" else 1
+    return j + 1
+
+
 def postslutt(tekst: str, start: int) -> int:
     """Indeksen rett ETTER krøllparentesen som lukker posten som åpner i `start`.
 
@@ -249,6 +275,12 @@ def postslutt(tekst: str, start: int) -> int:
     escape. En `${...}` i en backtick-streng går opp i opp: åpnings- og
     lukkeparentesen ligger begge inne i strengen og telles ingen av dem.
 
+    KOMMENTARER hoppes over på samme måte (Codex P2 på #118, sjuende runde).
+    En blokkommentar med en ubalansert `}` i seg — `/* TODO: } her */` — lukket
+    posten for tidlig, og alt etter den, inkludert et `status`-felt, falt
+    utenfor det statusforbudet fikk se. En kommentar er kildekode om koden, ikke
+    kode: den kan ikke telle med i dybden.
+
     Uterminert post er ikke en tom mengde treff — det er en kilde som har
     endret form, og da er katalogen ikke lenger lesbar. Da stopper vi.
     """
@@ -256,11 +288,10 @@ def postslutt(tekst: str, start: int) -> int:
     i = start
     while i < len(tekst):
         c = tekst[i]
-        if c in "\"'`":
-            i += 1
-            while i < len(tekst) and tekst[i] != c:
-                i += 2 if tekst[i] == "\\" else 1
-        elif c == "{":
+        if apner_ikkekode(tekst, i):
+            i = slutt_ikkekode(tekst, i)
+            continue
+        if c == "{":
             dybde += 1
         elif c == "}":
             dybde -= 1
@@ -294,6 +325,11 @@ def toppnivafelt(post: str) -> list[str]:
     Motsatt vei holder posisjonskravet fortsatt: ordet «status» står overalt i
     feltVERDIene — «samtykkestatus», «onboardingstatus», «resultatstatus» — og
     det er prosa om hva en modul gjør. Bare et FELT er en tilstandsakse.
+
+    KOMMENTARER er heller ikke felt (Codex P2, sjuende runde): en linje som
+    `// status: kommer fra manifestet` sto på postens eget nivå og ble meldt som
+    et forbudt felt — en merknad om at feltet nettopp IKKE finnes stoppet
+    generatoren. De hoppes derfor over her på samme måte som i `postslutt()`.
     """
     felt = []
     dybde = 0
@@ -301,12 +337,13 @@ def toppnivafelt(post: str) -> list[str]:
     i = 0
     while i < len(post):
         c = post[i]
+        if post.startswith("//", i) or post.startswith("/*", i):
+            i = slutt_ikkekode(post, i)
+            continue
         if c in "\"'`":
-            j = i + 1
-            while j < len(post) and post[j] != c:
-                j += 2 if post[j] == "\\" else 1
-            navn = post[i + 1:j]
-            i = j + 1
+            j = slutt_ikkekode(post, i)
+            navn = post[i + 1:j - 1]
+            i = j
         elif c == "{":
             dybde += 1
             i += 1
