@@ -1307,8 +1307,21 @@ _TABELL_RE = re.compile(
     r"""\b(?:CREATE(?:\s+(?:GLOBAL|LOCAL|TEMPORARY|TEMP|UNLOGGED)\b)*"""
     r"""|ALTER)\s+TABLE(?:\s+(?:IF|NOT|EXISTS|ONLY)\b)*\s+([\w.\"]+)""",
     re.I)
+# KOLONNEN i vilkåret kan være sitert (Codex P2 på #118, sekstende runde).
+# `\w+` leste bare den bare formen, så `CHECK ("reversibilitet" IN (…))` ikke
+# ble et treff i det hele tatt — og et vilkår porten ikke ser, er et vilkår den
+# ikke snitter med. Legger en migrasjon en innstramming skrevet slik ved siden
+# av det videre vilkåret som står, blir bare det videre gjeldende, og
+# katalogporten slipper inn en klasse den siterte CHECK-en avviser.
+#
+# Anførselstegnene er samme skrivemåte som `_tabellnavn()` og `_vilkarsnavn()`
+# alt normaliserer bort: `"reversibilitet"` og `reversibilitet` ER samme
+# kolonne, fordi PostgreSQL folder den bare formen ned til små bokstaver.
+# Mengden er lukket mot grammatikken — en identifikator er ETT sitert navn
+# eller ETT bart ord, ikke en åpen tegnklasse som også ville tatt `"a" + b`.
 _CHECK_RE = re.compile(
-    r"""(?:CONSTRAINT\s+([\w."]+)\s+)?CHECK\s*\(\s*(\w+)\s+IN\s*\(([^)]*)\)""",
+    r"""(?:CONSTRAINT\s+([\w."]+)\s+)?CHECK\s*\(\s*"""
+    r"""("(?:[^"]|"")+"|\w+)\s+IN\s*\(([^)]*)\)""",
     re.S | re.I)
 # Et vilkår kan også FJERNES (Codex P2 på #118, ellevte runde). Tilstanden ble
 # regnet bare av CHECK-treff, så en `DROP CONSTRAINT` uten et nytt vilkår etter
@@ -1790,7 +1803,7 @@ def _registerets_enums(
             verdier = _sqlverdier(m.group(3))
             if not verdier:
                 continue
-            kolonne = m.group(2)
+            kolonne = _kolonnenavn(m.group(2))
             navn = _vilkarsnavn(m.group(1)) if m.group(1) \
                 else _tildelt_navn(vilkar, tabell, kolonne)
             if _i_data(betinget, start) and (tabell, navn) in vilkar:
@@ -1807,6 +1820,18 @@ def _registerets_enums(
 
 def _vilkarsnavn(rå: str) -> str:
     """Vilkårsnavnet normalisert, slik `_tabellnavn()` gjør med tabellen."""
+    return rå.lower().replace('"', "")
+
+
+def _kolonnenavn(rå: str) -> str:
+    """Kolonneidentiteten bak navnet slik vilkåret skrev det.
+
+    Samme normalisering som `_tabellnavn()` og `_vilkarsnavn()`: den siterte og
+    den bare formen er samme kolonne, og det er DEN kolonnen `gjeldende` er
+    nøklet på. Uten dette ville et sitert vilkår fått sin egen nøkkel og aldri
+    møtt det usiterte i snittet — samme feil som fjortende runde fant mellom
+    `varsel` og `public.varsel`.
+    """
     return rå.lower().replace('"', "")
 
 
@@ -1993,6 +2018,25 @@ def test_kommentartegn_i_en_streng_er_ikke_kommentar(tmp_path):
     gjeldende, _ = _registerets_enums(mappe)
     assert gjeldende[(MODULKONTRAKT, "reversibilitet")] == {
         "a--b", "c/*d", "det's"}
+
+
+def test_sitert_kolonne_i_et_vilkaar_er_samme_kolonne(tmp_path):
+    """`CHECK ("reversibilitet" IN (…))` vokter den alminnelige kolonnen.
+
+    `_CHECK_RE` leste bare den bare formen (Codex P2 på #118, sekstende runde),
+    så et vilkår skrevet slik var ikke et treff i det hele tatt. Legges en
+    innstramming ved siden av det videre vilkåret som står, blir den usynlig,
+    bare det videre blir gjeldende, og porten slipper inn en klasse den siterte
+    CHECK-en avviser. PostgreSQL folder den bare formen ned til små bokstaver,
+    så de to skrivemåtene peker på samme kolonne og må havne i samme snitt.
+    """
+    mappe = _migrasjoner(
+        tmp_path, _LAGER_VILKAR,
+        'ALTER TABLE "modulkontrakt" ADD CONSTRAINT smalere\n'
+        '    CHECK ("reversibilitet" IN (\'direkte\'));\n')
+    gjeldende, noen_gang = _registerets_enums(mappe)
+    assert gjeldende[(MODULKONTRAKT, "reversibilitet")] == {"direkte"}
+    assert {"direkte", "kompenserende"} <= noen_gang
 
 
 def test_enumtilstanden_leser_slipp_og_nytt_vilkaar_i_rekkefolge(tmp_path):
