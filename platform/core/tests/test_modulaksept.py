@@ -947,20 +947,22 @@ def test_digestporten_feller_andre_bytes(migrator):
     k = _kjede(migrator)
     migrator.execute("SELECT set_config('disponit.tenant',%s,false)",
                      (k["ten"],))
-    # Egen kontrakt: `en_claiming_per_kontrakt` tillater bare én claiming
-    # per kontrakt-hash, og kandidaten med andre bytes trenger sin egen.
-    migrator.execute("INSERT INTO modulkontrakt (modul_id, kontraktversjon,"
-                     " kontrakt_hash, payload_schema_hash,"
-                     " kvittering_schema_hash, sideeffektklasse,"
-                     " reversibilitet) VALUES (%s,2,'kh2','ph','qh',"
-                     "'ekstern_lesing','direkte')", (k["mid"],))
+    # Kandidaten med andre bytes må stå på DRILLENS egen kontraktlinje:
+    # linjeporten (Codex P1, runde 17) måler før digestporten, så en
+    # kandidat på 2/'kh2' ville falt på linjen og aldri nådd bytene.
+    # `en_claiming_per_kontrakt` tillater bare én claiming per
+    # (modul, miljø, kontraktversjon, kontrakt_hash), så fixturets egen
+    # kandidat dreneres først — claiming→draining er lovlig forover.
+    migrator.execute("UPDATE moduldeployment SET livslop='draining'"
+                     " WHERE modul_id=%s AND miljo='staging'"
+                     " AND release_id='r-kandidat'", (k["mid"],))
     migrator.execute("INSERT INTO modulrelease (modul_id, release_id,"
                      " kontraktversjon, kontrakt_hash, manifest_hash,"
-                     " artifact_digest) VALUES (%s,'r-andre',2,'kh2','mh',"
+                     " artifact_digest) VALUES (%s,'r-andre',1,'kh','mh',"
                      "'digest-ANNEN')", (k["mid"],))
     migrator.execute("INSERT INTO moduldeployment (modul_id, release_id,"
                      " kontraktversjon, kontrakt_hash, miljo, livslop)"
-                     " SELECT %s,'r-andre',2,'kh2','staging','claiming'",
+                     " SELECT %s,'r-andre',1,'kh','staging','claiming'",
                      (k["mid"],))
     migrator.commit()
     migrator.execute("SET ROLE disponit_modules_admin")
