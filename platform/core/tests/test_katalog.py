@@ -264,6 +264,10 @@ def _moduler_fra_kilden() -> dict[int, dict[str, str]]:
 # så det siste treffet for samme tabell og kolonne er det som gjelder.
 MIGRASJONER = ROT / "platform" / "core" / "db" / "migrations"
 KONTRAKTFELT = {"kl": "sideeffektklasse", "rev": "reversibilitet"}
+# Tabellen kontrakten faktisk lagres i, opprettet i 014 og utvidet i 036. Den
+# står her fordi enumoppslaget skal binde seg til den, ikke til kolonnenavnet
+# på tvers av skjemaet — se `_registerenum()`.
+MODULKONTRAKT = "modulkontrakt"
 
 
 # Migrasjonsmappa er den ENESTE historikken i repoet som ikke kan redigeres:
@@ -339,11 +343,25 @@ def _registerets_enums() -> tuple[dict[tuple[str, str], set[str]], set[str]]:
 
 
 def _registerenum(kolonne: str) -> set[str]:
-    """Verdiene registeret godtar i `kolonne` NÅ, uansett hvilken tabell."""
+    """Verdiene `modulkontrakt` godtar i `kolonne` NÅ.
+
+    TABELLEN er en del av spørsmålet (Codex P2 på #118, sjette runde). Dette
+    slo før opp på kolonnenavnet alene og unionerte over alle tabeller — og en
+    union er ikke det databasen gjør. Kontrakten en katalogmodul blir til når
+    den bygges, lagres i `modulkontrakt`, og det er DEN tabellens CHECK-vilkår
+    som avviser den. Legger en senere migrasjon en `reversibilitet`-kolonne på
+    en annen tabell med `snapshot` blant verdiene, ville unionen gjort
+    `rev: "snapshot"` gyldig i katalogen mens `modulkontrakt` fortsatt sier
+    nei — altså nøyaktig den umulige modulen porten finnes for å fange.
+
+    `_registerets_enums()` har alt tabellidentiteten i nøkkelen sin; her brukes
+    den. Feiler oppslaget, er det fordi kolonnen ikke lenger CHECK-es på
+    `modulkontrakt` — og da er det porten som skal rettes, ikke katalogen.
+    """
     gjeldende, _ = _registerets_enums()
-    ut = set().union(*(v for (_, kol), v in gjeldende.items() if kol == kolonne),
-                     set())
-    assert ut, f"fant ikke CHECK-vilkåret for {kolonne} i migrasjonene"
+    ut = gjeldende.get((MODULKONTRAKT, kolonne), set())
+    assert ut, (f"fant ikke CHECK-vilkåret for {MODULKONTRAKT}.{kolonne} i "
+                f"migrasjonene")
     return ut
 
 
@@ -359,6 +377,10 @@ def test_kontraktklassene_i_katalogen_finnes_i_modulregisteret():
 
     Prosa om hvorfor en klasse ble valgt hører hjemme i `merknad` og `guard` —
     de feltene har ingen enum og ingen maskin leser dem.
+
+    Enumene leses fra `modulkontrakt` og ikke som en union over alle tabeller
+    som tilfeldigvis har en kolonne med samme navn — det er den tabellen
+    kontrakten lagres i, og altså den som sier nei. Se `_registerenum()`.
 
     MUTASJONEN SOM DREPER DENNE: hardkod enumene i testen. Da vokter porten en
     kopi, og en migrasjon som strammer inn et vilkår går rett forbi den.
