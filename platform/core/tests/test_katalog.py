@@ -1297,8 +1297,9 @@ def _sqlverdier(liste: str) -> set[str]:
     return ut
 
 
-def _kjort_sql(sql: str) -> tuple[str, list[tuple[int, int]]]:
-    """(SQL-en uten alt som ikke er kjørt, spennene som er DATA).
+def _kjort_sql(sql: str) -> tuple[str, list[tuple[int, int]],
+                                  list[tuple[int, int]]]:
+    """(SQL-en uten alt som ikke er kjørt, DATA-spennene, de BETINGEDE).
 
     Bare `--` ble fjernet før, med et regex per linje (Codex P2 på #118, tolvte
     runde). Tre hull fulgte av det.
@@ -1361,11 +1362,25 @@ def _kjort_sql(sql: str) -> tuple[str, list[tuple[int, int]]]:
     tekst. Verdiene i `IN (…)` står inne i strenger, men hendelsen de hører til
     begynner utenfor — så et vilkår leses fortsatt helt, mens data ikke kan
     utgi seg for å være en setning.
+
+    Og en setning i en `DO`-kropp er ikke nødvendigvis KJØRT (Codex P2 på #118,
+    femtende runde): kroppen er PL/pgSQL, og repoets konvensjon er å pakke DDL
+    i `IF … THEN … END IF`. Hele kroppen ble lest som ubetinget, så et
+    `IF FALSE THEN` rundt et slipp og et nytt vilkår ga porten erstatningen
+    mens PostgreSQL beholder originalen. Betingelsen er vilkårlig SQL som først
+    avgjøres når migrasjonen kjører, og et gjettet svar er verre enn ingen — så
+    de betingede spennene gis fra seg, og `_registerets_enums()` velger den
+    tolkningen som ALDRI utvider mengden verdier. Se der.
     """
     ut = list(sql)
     data: list[tuple[int, int]] = []
-    _mask_ikkekjort(sql, ut, 0, len(sql), data)
-    return "".join(ut), data
+    kropper: list[tuple[int, int]] = []
+    _mask_ikkekjort(sql, ut, 0, len(sql), data, kropper)
+    tekst = "".join(ut)
+    betinget: list[tuple[int, int]] = []
+    for a, b in kropper:
+        betinget += _betingede_spenn(tekst, a, b, data)
+    return tekst, data, betinget
 
 
 def _i_data(spenn: list[tuple[int, int]], pos: int) -> bool:
@@ -1373,8 +1388,61 @@ def _i_data(spenn: list[tuple[int, int]], pos: int) -> bool:
     return any(a <= pos < b for a, b in spenn)
 
 
+# `IF … THEN … END IF` i en PL/pgSQL-kropp. `ELSIF` treffer ikke, for `\b`
+# krever ordgrense foran `IF`.
+_IFORD_RE = re.compile(r"\bEND\s+IF\b|\bIF\b", re.I)
+# Det som avgjør om et `IF` åpner en BETINGELSE: står det `THEN` før setningen
+# slutter, er det en if-setning. `DROP CONSTRAINT IF EXISTS c;` og `CREATE
+# TABLE IF NOT EXISTS t (…);` bærer samme ord uten å være en gren.
+_THEN_ELLER_SLUTT_RE = re.compile(r"\bTHEN\b|;", re.I)
+
+
+def _betingede_spenn(tekst: str, a: int, b: int,
+                     data: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Spennene i `tekst[a:b]` der en setning står bak en betingelse.
+
+    Kroppen til en `DO`-blokk er PL/pgSQL, og der er `IF … THEN … END IF` den
+    formen repoet pakker DDL i — 035 §6 legger `varsel_art_chk` på
+    `public.varsel` nettopp slik. Betingelsen er en spørring mot katalogen,
+    altså noe som først avgjøres når migrasjonen kjører; en tekstlesning kan
+    ikke vite svaret. Den KAN vite at svaret er ukjent, og det er nok, se
+    `_registerets_enums()`.
+
+    Bare de ytterste spennene gis fra seg: en nøstet gren er betinget av begge,
+    og et spenn som dekker den ytterste dekker den derfor også.
+    """
+    ut: list[tuple[int, int]] = []
+    stabel: list[int] = []
+    for m in _IFORD_RE.finditer(tekst, a, b):
+        if _i_data(data, m.start()):
+            continue
+        if m.group(0)[0] in "Ee":  # `END IF`
+            if stabel:
+                start = stabel.pop()
+                if not stabel:
+                    ut.append((start, m.end()))
+            continue
+        if _apner_gren(tekst, m.end(), b, data):
+            stabel.append(m.start())
+    # En gren som aldri lukkes er en kropp vi ikke har lest ferdig; da er alt
+    # fra den og ut betinget. Det er den trygge veien — se `_registerets_enums()`.
+    if stabel:
+        ut.append((stabel[0], b))
+    return ut
+
+
+def _apner_gren(tekst: str, i: int, b: int,
+                data: list[tuple[int, int]]) -> bool:
+    """Følger `THEN` før setningen slutter? Se `_betingede_spenn()`."""
+    for m in _THEN_ELLER_SLUTT_RE.finditer(tekst, i, b):
+        if not _i_data(data, m.start()):
+            return m.group(0) != ";"
+    return False
+
+
 def _mask_ikkekjort(sql: str, ut: list, a: int, b: int,
-                    data: list[tuple[int, int]]) -> None:
+                    data: list[tuple[int, int]],
+                    kropper: list[tuple[int, int]]) -> None:
     """Blank ut alt i `sql[a:b]` som ikke er en kjørt setning. Se `_kjort_sql()`.
 
     Egen funksjon fordi kroppen til en `DO`-blokk er nøyaktig samme spørsmål om
@@ -1395,7 +1463,8 @@ def _mask_ikkekjort(sql: str, ut: list, a: int, b: int,
                     lukk = slutt if lukk < 0 else lukk
                     _blank(ut, i, innen)
                     _blank(ut, lukk, slutt)
-                    _mask_ikkekjort(sql, ut, innen, lukk, data)
+                    _mask_ikkekjort(sql, ut, innen, lukk, data, kropper)
+                    kropper.append((innen, lukk))
                 else:
                     _blank(ut, i, slutt)
             else:
@@ -1489,6 +1558,20 @@ def _registerets_enums(
     fange. Gjeldende verdier for en kolonne er derfor SNITTET av vilkårene som
     står igjen.
 
+    En hendelse i en `DO`-kropp kan stå bak en BETINGELSE (Codex P2 på #118,
+    femtende runde). Kroppen ble lest som om alt i den kjørte, og et `IF FALSE
+    THEN` rundt et slipp og en erstatning ga porten erstatningens verdier mens
+    PostgreSQL beholder originalen — altså et snitt som er VIDERE enn
+    databasen, og katalogporten ville sluppet inn en klasse registeret avviser.
+
+    Betingelsen er en spørring som først avgjøres når migrasjonen kjører, så
+    porten kan ikke lese svaret. Den kan velge den tolkningen som aldri
+    utvider: et betinget SLIPP regnes som ikke utført, så vilkåret blir
+    stående, mens et betinget VILKÅR regnes som lagt på. Begge veier snevrer
+    de inn. Tar porten feil, avviser den en verdi databasen godtar — det er en
+    feil som stopper CI og blir rettet, i motsetning til den motsatte, som
+    slipper en umulig modul gjennom i stillhet.
+
     `noen_gang` er unionen av alt registeret har bundet, og er noe annet: den
     er historikken en pensjonert verdi kjennes igjen på.
     """
@@ -1496,7 +1579,7 @@ def _registerets_enums(
     vilkar: dict[tuple[str, str], tuple[str, set[str]]] = {}
     noen_gang: set[str] = set()
     for sql in sorted((mappe or MIGRASJONER).glob("*.sql")):
-        tekst, data = _kjort_sql(sql.read_text(encoding="utf-8"))
+        tekst, data, betinget = _kjort_sql(sql.read_text(encoding="utf-8"))
         tabeller = [(m.start(), _tabellnavn(m.group(1)))
                     for m in _TABELL_RE.finditer(tekst)
                     if not _i_data(data, m.start())]
@@ -1513,6 +1596,10 @@ def _registerets_enums(
                     break
                 tabell = navn
             if not er_vilkar:
+                if _i_data(betinget, start):
+                    # Et slipp bak en betingelse er ikke kjent kjørt, og et
+                    # vilkår som blir stående kan bare gjøre snittet SMALERE.
+                    continue
                 vilkar.pop((tabell, _vilkarsnavn(m.group(1))), None)
                 continue
             verdier = _sqlverdier(m.group(3))
@@ -1905,6 +1992,74 @@ def test_en_sql_streng_er_data_og_ingen_setning(tmp_path, senere, gjelder):
 
     Skillet går på hvor hendelsen BEGYNNER: et nøkkelord inne i en streng er
     tekst, mens verdiene i `IN (…)` hører til et vilkår som begynte utenfor.
+    """
+    mappe = _migrasjoner(tmp_path, _LAGER_VILKAR, senere)
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende.get((MODULKONTRAKT, "reversibilitet")) == gjelder
+
+
+@pytest.mark.parametrize("senere,gjelder", [
+    # Et slipp bak en betingelse er ikke kjent kjørt: vilkåret blir stående.
+    ("DO $$ BEGIN\n"
+     "    IF FALSE THEN\n"
+     "        ALTER TABLE modulkontrakt\n"
+     "            DROP CONSTRAINT modulkontrakt_reversibilitet_check;\n"
+     "        ALTER TABLE modulkontrakt ADD CONSTRAINT r\n"
+     "            CHECK (reversibilitet IN ('oppfunnet'));\n"
+     "    END IF;\n"
+     "END $$;\n", set()),
+    # Nøstede grener er betinget av begge, og det ytterste spennet dekker dem.
+    ("DO $$ BEGIN\n"
+     "    IF FALSE THEN\n"
+     "        IF TRUE THEN\n"
+     "            ALTER TABLE modulkontrakt\n"
+     "                DROP CONSTRAINT modulkontrakt_reversibilitet_check;\n"
+     "        END IF;\n"
+     "    END IF;\n"
+     "END $$;\n", {"direkte", "kompenserende"}),
+    # Et UBETINGET slipp i en kropp kjører fortsatt — det er formen porten
+    # lærte forrige runde, og den skal stå.
+    ("DO $$ BEGIN\n"
+     "    ALTER TABLE modulkontrakt\n"
+     "        DROP CONSTRAINT modulkontrakt_reversibilitet_check;\n"
+     "END $$;\n", None),
+    # `IF EXISTS` i et slipp er ikke en gren: ordet hører til DDL-en.
+    ("DO $$ BEGIN\n"
+     "    ALTER TABLE modulkontrakt DROP CONSTRAINT IF EXISTS\n"
+     "        modulkontrakt_reversibilitet_check;\n"
+     "END $$;\n", None),
+    # Et slipp etter at grenen er lukket er ubetinget igjen.
+    ("DO $$ BEGIN\n"
+     "    IF FALSE THEN\n"
+     "        RAISE NOTICE 'ingenting';\n"
+     "    END IF;\n"
+     "    ALTER TABLE modulkontrakt\n"
+     "        DROP CONSTRAINT modulkontrakt_reversibilitet_check;\n"
+     "END $$;\n", None),
+    # Og formen 035 §6 bruker står: et betinget VILKÅR regnes som lagt på, for
+    # et vilkår mer kan bare gjøre snittet smalere.
+    ("DO $$ BEGIN\n"
+     "    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'r') THEN\n"
+     "        ALTER TABLE public.modulkontrakt ADD CONSTRAINT r\n"
+     "            CHECK (reversibilitet IN ('direkte'));\n"
+     "    END IF;\n"
+     "END $$;\n", {"direkte"}),
+])
+def test_betinget_ddl_i_en_do_kropp_utvider_aldri(tmp_path, senere, gjelder):
+    """En gren i en `DO`-kropp kan ikke leses, bare regnes konservativt.
+
+    Kroppen ble lest som om ALT i den kjørte (Codex P2 på #118, femtende
+    runde). Et `IF FALSE THEN` rundt et slipp og en erstatning ga porten
+    erstatningens verdier mens PostgreSQL beholder originalen: snittet ble
+    videre enn databasen, og katalogporten ville sluppet inn en `kl`- eller
+    `rev`-klasse registeret avviser.
+
+    Betingelsen er en spørring mot katalogen som først avgjøres når migrasjonen
+    kjører, så svaret kan ikke leses ut av teksten. Porten velger derfor den
+    tolkningen som aldri UTVIDER: et betinget slipp regnes som ikke utført, et
+    betinget vilkår som lagt på. Feiler den, avviser den en verdi databasen
+    godtar — en feil som stopper CI, ikke en som slipper en umulig modul
+    gjennom i stillhet.
     """
     mappe = _migrasjoner(tmp_path, _LAGER_VILKAR, senere)
     gjeldende, _ = _registerets_enums(mappe)
