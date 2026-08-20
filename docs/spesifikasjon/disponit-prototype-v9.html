@@ -273,7 +273,7 @@ table.chg caption{text-align:left}
   <div class="wrap">
     <p class="eyebrow">Arkitektur</p>
     <h2>Felles plattform — bygges én gang</h2>
-    <p class="intro">Modulene er arbeidsflyter på samme sikre motor, ikke 56 separate applikasjoner. Fire plan, der unntakskø (M-37) og kapasitet/modellruting (M-38) nå er eksplisitte fase&nbsp;1-moduler i kontroll- og agentplanet.</p>
+    <p class="intro">Modulene er arbeidsflyter på samme sikre motor, ikke 57 separate applikasjoner. Fire plan, der unntakskø (M-37) og kapasitet/modellruting (M-38) nå er eksplisitte fase&nbsp;1-moduler i kontroll- og agentplanet.</p>
     <div class="plat">
       <div><b>1 · Tilkoblinger</b><p>OAuth, webhooks, filimport, e-post, kalender, CRM, ERP, bank og telefoni. Selvtest og token-fornyelse via M-11.</p></div>
       <div><b>2 · Dataplan</b><p>Tenant-isolasjon, kryptering, normalisering, søk og datakvalitet (M-3). Objektlagring og retention-policy.</p></div>
@@ -291,7 +291,7 @@ table.chg caption{text-align:left}
     <div class="phases">
       <div class="ph" data-f="1"><span class="cnt">14</span><b>Fase 1 · Fundament</b><p>Plattform, sikkerhet, fil, e-post, dokument, møte, kalender, kunnskap, backup, integrasjoner og identitet.</p></div>
       <div class="ph" data-f="2"><span class="cnt">16</span><b>Fase 2 · Operasjoner</b><p>Økonomi, lønn, HR, kunde, innhold, avtaler, lisenser og rapportering.</p></div>
-      <div class="ph" data-f="3"><span class="cnt">19</span><b>Fase 3 · Autopiloter</b><p>Ende-til-ende-prosesser: fordring, innkjøp, ordre, telefoni, kampanje, svindelvakt, sikkerhet og personvern.</p></div>
+      <div class="ph" data-f="3"><span class="cnt">20</span><b>Fase 3 · Autopiloter</b><p>Ende-til-ende-prosesser: fordring, innkjøp, ordre, telefoni, kampanje, svindelvakt, sikkerhet og personvern.</p></div>
       <div class="ph" data-f="4"><span class="cnt">7</span><b>Fase 4 · Global skala</b><p>Lokalisering og skatt, prediksjon, compliance, kontinuitet, ESG og porteføljeoptimalisering.</p></div>
     </div>
   </div>
@@ -352,9 +352,9 @@ table.chg caption{text-align:left}
 <section>
   <div class="wrap">
     <p class="eyebrow">Omfang</p>
-    <h2>Katalogen fryses på 56</h2>
+    <h2>Katalogen fryses på 57</h2>
     <div class="notice">
-      <b>Kompletthetskriterium:</b> «Alle moduler bedrifter trenger» kan ikke bevises fra et møterom — det bevises empirisk. Katalogen ble frosset på 45 i v7 og heves i v8 til 56 — 55 fra gjennomgangen av idelisten under samme krav, pluss M-56 på lovkrav; nye moduler legges fortsatt kun til ved dokumentert behov fra pilotkunder, etter samme regel som policy-skjemaet: når nye piloter slutter å avdekke nye behov, er katalogen komplett. Vertikale v5-moduler (byggesak, saksbehandling, strømoptimalisering m.fl.) er bevisst utelatt fra den horisontale kjernen og bygges senere som bransjemoduler på samme plattform.
+      <b>Kompletthetskriterium:</b> «Alle moduler bedrifter trenger» kan ikke bevises fra et møterom — det bevises empirisk. Katalogen ble frosset på 45 i v7, hevet i v8 til 56 — 55 fra gjennomgangen av idelisten under samme krav, pluss M-56 på lovkrav — og heves i v9 til 57 med M-57 fra eiers ATS-kravspesifikasjon, gjennom samme produktport; nye moduler legges fortsatt kun til ved dokumentert behov fra pilotkunder, etter samme regel som policy-skjemaet: når nye piloter slutter å avdekke nye behov, er katalogen komplett. Vertikale v5-moduler (byggesak, saksbehandling, strømoptimalisering m.fl.) er bevisst utelatt fra den horisontale kjernen og bygges senere som bransjemoduler på samme plattform.
     </div>
   </div>
 </section>
@@ -541,10 +541,19 @@ function render(){
     html+=`<div class="phasehead"><h3>${phaseNames[p]}</h3><span class="eyebrow">${list.length} moduler</span></div>`;
     html+=list.map(card).join('');
   }
-  cat.innerHTML=html||'<p class="intro">Ingen moduler matcher filteret. Nullstill søket for å se alle 56.</p>';
+  cat.innerHTML=html||`<p class="intro">Ingen moduler matcher filteret. Nullstill søket for å se alle ${M.length}.</p>`;
   document.getElementById('count').textContent=shown+' / '+M.length+' moduler';
 }
 ['q','fArea','fPhase','fNew'].forEach(id=>document.getElementById(id).addEventListener(id==='q'?'input':'change',render));
+
+// Fasetellerne står som tall i markupen så de også vises uten JavaScript og på
+// papir, men v9 la til M-57 i fase 3 uten å endre 19-tallet (Codex P2 på #118).
+// Er JavaScript på, teller vi dem opp fra `M` og overskriver: da er katalogen
+// selv fasiten, og et hardkodet tall som er blitt feil retter seg selv.
+document.querySelectorAll('.ph').forEach(el=>{
+  const f=Number(el.dataset.f);
+  el.querySelector('.cnt').textContent=M.filter(m=>m.p===f).length;
+});
 render();
 window.addEventListener('beforeprint',()=>document.querySelectorAll('details.card').forEach(d=>d.open=true));
 </script>
