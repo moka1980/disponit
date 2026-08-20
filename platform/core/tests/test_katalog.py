@@ -26,7 +26,8 @@ Testene her er derfor ti porter (Codex P2 på PR #43, #99 og #118):
                  maskinform må finnes i registeret slik det ER NÅ, eller som en
                  fil, så forklaringen ikke kan finne opp klasser posten ikke
                  har — og ikke leve videre på en verdi registeret har sluttet
-                 med.
+                 med. Prosa er dokumentteksten pluss fnutter og kommentarer i
+                 skriptet; prototypens egne variabelnavn er kode, ikke påstand.
 """
 import json
 import re
@@ -586,6 +587,42 @@ def _kjente_identifikatorer() -> set[str]:
     return ut
 
 
+_SKRIPTDEL_RE = re.compile(r"<script[^>]*>(.*?)</script>", re.S)
+
+
+def _prosetekst() -> str:
+    """Sannhetskilden med kjørende JavaScript maskert bort.
+
+    Alt utenfor `<script>` er dokumenttekst. Inne i skriptet skiller vi prosa
+    fra kode slik JS selv gjør det: fnutter og kommentarer er tekst noen har
+    SKREVET — modulpostenes `dep`, `guard`, `input` og `accept`, og merknadene
+    om hvor tallene kommer fra — mens resten er navn på bindinger som lever og
+    dør i denne fila. `filter_state` i en `const` sier ingenting om registeret;
+    `krever_outbox` i et `kl`-felt gjør det.
+
+    Maskeringen bytter tegn mot mellomrom i stedet for å klippe dem ut, og
+    lar linjeskift stå: linjenummeret porten melder skal peke på linja i fila,
+    ikke i et utsnitt.
+    """
+    tekst = KILDE.read_text(encoding="utf-8")
+    ut = list(tekst)
+    for del_ in _SKRIPTDEL_RE.finditer(tekst):
+        a, b = del_.start(1), del_.end(1)
+        behold: set[int] = set()
+        i = a
+        while i < b:
+            if _apner(tekst, i):
+                j = min(_hopp(tekst, i), b)
+                behold.update(range(i, j))
+                i = j
+                continue
+            i += 1
+        for k in range(a, b):
+            if k not in behold and ut[k] != "\n":
+                ut[k] = " "
+    return "".join(ut)
+
+
 def test_ingen_oppfunne_identifikatorer_i_sannhetskilden():
     """Maskinform i spesifikasjonen må peke på noe som finnes.
 
@@ -609,12 +646,20 @@ def test_ingen_oppfunne_identifikatorer_i_sannhetskilden():
     rundt. Det ettordstilfellet vokter port 9 der det gjør skade — i `kl`/`rev`
     på selve posten.
 
+    KJØRENDE JAVASCRIPT er ikke prosa (Codex P2 på #118, åttende runde). Porten
+    leste hele fila, også prototypens `<script>`, og et helt vanlig JS-navn —
+    `const filter_state = {}` — ble meldt som en oppfunnet registerklasse. Et
+    variabelnavn i kode PÅSTÅR ingenting om registeret; det er navnet på en
+    binding som lever og dør i denne fila. Porten leser derfor `_prosetekst()`:
+    dokumentteksten, og inne i skriptet fnutter og kommentarer — der kilden
+    faktisk sier noe til den som skal bygge — mens koden selv er maskert bort.
+
     MUTASJONEN SOM DREPER DENNE: la porten lese modulpostene i stedet for hele
-    fila. Da vokter den det port 9 allerede vokter, og prosaen — som er der
+    prosaen. Da vokter den det port 9 allerede vokter, og prosaen — som er der
     regresjonen faktisk sto — er igjen uten port.
     """
     kjente = _kjente_identifikatorer()
-    tekst = KILDE.read_text(encoding="utf-8")
+    tekst = _prosetekst()
     avvik: dict[str, int] = {}
     for treff in IDENT_RE.finditer(tekst):
         if treff.group(0) not in kjente:
