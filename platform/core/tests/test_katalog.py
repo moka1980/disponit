@@ -1297,8 +1297,8 @@ def _sqlverdier(liste: str) -> set[str]:
     return ut
 
 
-def _kjort_sql(sql: str) -> str:
-    """SQL-en med alt som IKKE er en kjørt setning byttet mot mellomrom.
+def _kjort_sql(sql: str) -> tuple[str, list[tuple[int, int]]]:
+    """(SQL-en uten alt som ikke er kjørt, spennene som er DATA).
 
     Bare `--` ble fjernet før, med et regex per linje (Codex P2 på #118, tolvte
     runde). Tre hull fulgte av det.
@@ -1347,13 +1347,34 @@ def _kjort_sql(sql: str) -> str:
     Rekkefølgen mellom `CREATE TABLE`, `CHECK` og `DROP CONSTRAINT` leses av
     posisjonene i teksten, og linjeskift beholdes så `--` fortsatt slutter der
     linja slutter.
+
+    STRENGENE blir stående, og derfor gis spennene deres fra seg (Codex P2 på
+    #118, femtende runde). De må stå: verdiene et vilkår binder ER strenger, og
+    blankes de, forsvinner enumet sammen med dem. Men innholdet i en streng er
+    DATA, ikke setninger — en verdi som `'ALTER TABLE modulkontrakt DROP
+    CONSTRAINT r'` skrevet inn i en loggtabell ble lest som et slipp, og et
+    vilkår PostgreSQL fortsatt håndhever forsvant ut av snittet. Da kan
+    katalogporten godta en klasse databasen avviser.
+
+    Skillet går på hvor en HENDELSE begynner: `CHECK`, `DROP CONSTRAINT` og
+    `CREATE`/`ALTER TABLE` er nøkkelord, og et nøkkelord inne i en streng er
+    tekst. Verdiene i `IN (…)` står inne i strenger, men hendelsen de hører til
+    begynner utenfor — så et vilkår leses fortsatt helt, mens data ikke kan
+    utgi seg for å være en setning.
     """
     ut = list(sql)
-    _mask_ikkekjort(sql, ut, 0, len(sql))
-    return "".join(ut)
+    data: list[tuple[int, int]] = []
+    _mask_ikkekjort(sql, ut, 0, len(sql), data)
+    return "".join(ut), data
 
 
-def _mask_ikkekjort(sql: str, ut: list, a: int, b: int) -> None:
+def _i_data(spenn: list[tuple[int, int]], pos: int) -> bool:
+    """Står `pos` inne i et av spennene? Se `_kjort_sql()`."""
+    return any(a <= pos < b for a, b in spenn)
+
+
+def _mask_ikkekjort(sql: str, ut: list, a: int, b: int,
+                    data: list[tuple[int, int]]) -> None:
     """Blank ut alt i `sql[a:b]` som ikke er en kjørt setning. Se `_kjort_sql()`.
 
     Egen funksjon fordi kroppen til en `DO`-blokk er nøyaktig samme spørsmål om
@@ -1374,9 +1395,13 @@ def _mask_ikkekjort(sql: str, ut: list, a: int, b: int) -> None:
                     lukk = slutt if lukk < 0 else lukk
                     _blank(ut, i, innen)
                     _blank(ut, lukk, slutt)
-                    _mask_ikkekjort(sql, ut, innen, lukk)
+                    _mask_ikkekjort(sql, ut, innen, lukk, data)
                 else:
                     _blank(ut, i, slutt)
+            else:
+                # En fnuttstreng eller et sitert navn: innholdet blir stående,
+                # men det er data og ingen setning. Se `_kjort_sql()`.
+                data.append((i, slutt))
             i = slutt
             continue
         if sql.startswith("--", i):
@@ -1471,12 +1496,15 @@ def _registerets_enums(
     vilkar: dict[tuple[str, str], tuple[str, set[str]]] = {}
     noen_gang: set[str] = set()
     for sql in sorted((mappe or MIGRASJONER).glob("*.sql")):
-        tekst = _kjort_sql(sql.read_text(encoding="utf-8"))
+        tekst, data = _kjort_sql(sql.read_text(encoding="utf-8"))
         tabeller = [(m.start(), _tabellnavn(m.group(1)))
-                    for m in _TABELL_RE.finditer(tekst)]
+                    for m in _TABELL_RE.finditer(tekst)
+                    if not _i_data(data, m.start())]
         hendelser = sorted(
-            [(m.start(), True, m) for m in _CHECK_RE.finditer(tekst)]
-            + [(m.start(), False, m) for m in _DROPP_RE.finditer(tekst)],
+            [(m.start(), True, m) for m in _CHECK_RE.finditer(tekst)
+             if not _i_data(data, m.start())]
+            + [(m.start(), False, m) for m in _DROPP_RE.finditer(tekst)
+               if not _i_data(data, m.start())],
             key=lambda h: h[0])
         for start, er_vilkar, m in hendelser:
             tabell = ""
@@ -1839,6 +1867,44 @@ def test_en_do_kropp_kjorer_sine_egne_setninger(tmp_path, senere, gjelder):
     Slaget avgjøres av det som står FORAN taggen: etter `DO` er det en kropp,
     ellers er det data. Derfor står funksjonsdefinisjonen med her — `AS $$…$$`
     definerer uten å kjøre, og skal fortsatt ikke binde noe.
+    """
+    mappe = _migrasjoner(tmp_path, _LAGER_VILKAR, senere)
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende.get((MODULKONTRAKT, "reversibilitet")) == gjelder
+
+
+@pytest.mark.parametrize("senere,gjelder", [
+    # Et slipp SKREVET som en verdi er data. Vilkåret står igjen.
+    ("INSERT INTO endringslogg (tekst) VALUES\n"
+     "    ('ALTER TABLE modulkontrakt DROP CONSTRAINT "
+     "modulkontrakt_reversibilitet_check');\n", {"direkte", "kompenserende"}),
+    # Og et vilkår skrevet som en verdi binder ingen ting.
+    ("INSERT INTO endringslogg (tekst) VALUES\n"
+     "    ('ALTER TABLE modulkontrakt ADD CONSTRAINT r "
+     "CHECK (reversibilitet IN (''oppfunnet''))');\n",
+     {"direkte", "kompenserende"}),
+    # Et tabellnavn i en verdi flytter ikke hvilken tabell vilkåret havner på.
+    ("INSERT INTO endringslogg (tekst) VALUES ('CREATE TABLE annen (x INT)');\n"
+     "ALTER TABLE modulkontrakt ADD CONSTRAINT r\n"
+     "    CHECK (reversibilitet IN ('direkte'));\n", {"direkte"}),
+    # Et ekte slipp rett etter en verdi som ligner leses fortsatt.
+    ("INSERT INTO endringslogg (tekst) VALUES ('DROP CONSTRAINT r');\n"
+     "ALTER TABLE modulkontrakt\n"
+     "    DROP CONSTRAINT modulkontrakt_reversibilitet_check;\n", None),
+])
+def test_en_sql_streng_er_data_og_ingen_setning(tmp_path, senere, gjelder):
+    """Innholdet i en fnuttstreng er verdier, ikke DDL som er kjørt.
+
+    Strengene ble stående uendret i den maskerte teksten, med rette — verdiene
+    et vilkår binder ER strenger, og blankes de, forsvinner enumet med dem.
+    Men hendelsene ble så lett etter i den samme teksten (Codex P2 på #118,
+    femtende runde), og et `DROP CONSTRAINT` skrevet inn i en loggverdi fjernet
+    dermed et vilkår PostgreSQL fortsatt håndhever. Snittet ble videre enn
+    databasen, og katalogporten ville sluppet inn en `kl`- eller `rev`-klasse
+    registeret avviser.
+
+    Skillet går på hvor hendelsen BEGYNNER: et nøkkelord inne i en streng er
+    tekst, mens verdiene i `IN (…)` hører til et vilkår som begynte utenfor.
     """
     mappe = _migrasjoner(tmp_path, _LAGER_VILKAR, senere)
     gjeldende, _ = _registerets_enums(mappe)
