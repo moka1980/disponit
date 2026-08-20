@@ -103,7 +103,25 @@ def _kjede(m, *, promoter_paa_drillet=False, staged_paa_kandidat=False):
               " VALUES (%s,'k1','\\x00'::bytea) ON CONFLICT DO NOTHING",
               (ten,))
 
-    def oppdrag(*, status="utfort", kvittering=True, eier=None):
+    # `signatur` styrer forholdet mellom konvolutten og signaturkolonnen —
+    # formene Codex' P1 (runde 8) peker på. True er den ekte (kolonnen ER
+    # konvoluttens signaturverdi); False lar kolonnen stå tom ved siden av
+    # en fullverdig konvolutt; en streng skrives rått i kolonnen mens
+    # konvolutten beholder sin egen. Alle tre må settes ved INSERT: den som
+    # skriver dem har direkte `UPDATE`, men `oppdrag_kolonnelaas` fryser
+    # kvitteringsfeltene så snart nyttelasten først er lagret, så en
+    # forfalskning fødes som rad — den endrer ikke en ekte.
+    def oppdrag(*, status="utfort", kvittering=True, signatur=True,
+                eier=None):
+        sig = secrets.token_hex(16)
+        # Samme form som API-veien lagrer: konvolutten står i `kvittering`,
+        # signaturverdien ALENE i `kvittering_signatur`, resultathashen i
+        # `resultathash` — alle tre i samme UPDATE.
+        konvolutt = json.dumps({
+            "resultat": "utfort" if status == "utfort" else "feilet",
+            "signatur": {"nokkel_id": "k1", "verdi": sig}})
+        kolonne = sig if signatur is True else (
+            None if signatur is False else signatur)
         blid = m.execute(
             "INSERT INTO revisjonslogg (tenant, input_hash, policy_id,"
             " beslutning, begrunnelse, idempotency_key, kilde) VALUES"
@@ -113,12 +131,15 @@ def _kjede(m, *, promoter_paa_drillet=False, staged_paa_kandidat=False):
             "INSERT INTO oppdrag (opprinnelse, tenant, oppdragstype,"
             " handling, eiermodul, status, payload_kryptert, key_id, nonce,"
             " utforelsesfrist, evidensfrist, koblingsstatus,"
-            " beslutning_loggpost_id, kvittering) VALUES ('beslutning',%s,"
+            " beslutning_loggpost_id, kvittering, kvittering_signatur,"
+            " resultathash) VALUES ('beslutning',%s,"
             "'kontroll.wcag.nettsted','kontroll.wcag.nettsted',%s,%s,"
             "%s,'k1',%s, now()+interval '1 hour', now()+interval '2 hours',"
-            "'KOBLET',%s,%s::jsonb) RETURNING id",
+            "'KOBLET',%s,%s::jsonb,%s,%s) RETURNING id",
             (ten, eier or mid, status, b"\x00" * 24, b"\x00" * 12, blid,
-             '{"signatur":"s"}' if kvittering else None)).fetchone()[0]
+             konvolutt if kvittering else None,
+             kolonne if kvittering else None,
+             SHA0 if kvittering else None)).fetchone()[0]
 
     def artefakt(rel, tilstand, oid=None):
         oid = oppdrag() if oid is None else oid
@@ -1095,6 +1116,64 @@ def test_admin_kan_ikke_skrive_gronn_drill_uten_arbeid(migrator):
         " WHERE modul_id=%s AND drill_id=%s",
         (k["mid"], ekte)).fetchone() == (True, True, True)
     migrator.rollback()
+
+
+@pg
+def test_rent_utfall_krever_signaturen_ikke_bare_nyttelasten(migrator):
+    """Codex' P1 (runde 8): «signert kvittering» ble målt på JSON-blobben.
+
+    Porten leste `kvittering IS NOT NULL` og kalte utfallet signert. Men
+    signaturen er en EGEN kolonne (`oppdrag.kvittering_signatur`), og
+    `oppdrag`-skjemaet lar de to variere fritt: kolonnelåsen fryser
+    kvitteringsfeltene etter at de er satt, men krever ikke at en nyttelast
+    har en signatur ved siden av seg — og kjøretidsrollen har direkte
+    `UPDATE`. Én rad med en håndskrevet konvolutt og tom signaturkolonne ga
+    dermed `rene_utfall_ok = true`, og aksepten — uforanderlig når den først
+    er skrevet — påsto for alltid at drillen endte i en signert kvittering
+    det ikke fantes noen signatur for.
+
+    Tre former må falle, og de skiller seg fra hverandre: signaturen
+    mangler, signaturen er tom, og signaturen finnes men er en ANNEN enn
+    den konvolutten bærer (da kommer raden ikke fra veien som verifiserte).
+    """
+    k = _kjede(migrator)
+
+    def maal(signatur):
+        """Bygger en inflight-rad med den gitte signaturformen og måler.
+
+        Kolonnelåsen fryser kvitteringsfeltene så snart nyttelasten er
+        lagret, så hver form fødes som sin EGEN rad. Det er også den
+        realistiske angrepsformen: en fabrikkert rad, ikke en endret ekte.
+        Alt annet — status, promotert artefakt på den drillede releasen,
+        rullbakk- og kandidatleddet — holdes likt, så det eneste som
+        skiller kjøringene er signaturen.
+        """
+        migrator.execute("RESET ROLE")
+        oid = k["oppdrag"](signatur=signatur)
+        k["artefakt"]("r-drillet", "promotert", oid)
+        migrator.commit()
+        did = _drill(migrator, k, nokkel="n-" + secrets.token_hex(6),
+                     opp={**k["opp"], "inflight": oid})
+        migrator.execute("RESET ROLE")
+        rad = migrator.execute(
+            "SELECT rene_utfall_ok FROM moduldrill WHERE drill_id=%s",
+            (did,)).fetchone()[0]
+        migrator.rollback()
+        return rad
+
+    for navn, signatur in (
+        ("signaturen mangler", False),
+        ("signaturen er tom", "   "),
+        ("signaturen er en annen enn konvoluttens", "ff" * 16),
+    ):
+        assert maal(signatur) is False, \
+            f"porten kaller utfallet rent når {navn}"
+
+    # Motprøven, gjennom nøyaktig samme vei: det ENESTE som endres er at
+    # kolonnen bærer konvoluttens egen signaturverdi. Uten den ville
+    # testen over også bestått av en port som avviste alt.
+    assert maal(True) is True, \
+        "porten avviser den ekte, signerte formen"
 
 
 @pg

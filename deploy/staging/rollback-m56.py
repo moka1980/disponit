@@ -163,10 +163,26 @@ def _vent_terminal(m, sj, oid: str, frist_s: float) -> str | None:
 
 
 def _kvittering(m, tenant, oid):
+    """Er kvitteringen SIGNERT — målt på signaturen, ikke på nyttelasten.
+
+    Codex' P1 på PR #117: `kvittering IS NOT NULL` sier bare at det ligger
+    en JSON-blob i feltet. Signaturen er en egen kolonne
+    (`oppdrag.kvittering_signatur`), kolonnene varierer uavhengig, og
+    kjøretidsrollen har direkte `UPDATE`. Samme krav som porten i
+    `registrer_moduldrill` stiller — artefaktet skal måle det aksepten
+    regnes av, ellers er en grønn drill og en avvist aksept samme kjøring.
+    """
     m.execute("RESET ROLE")
     m.execute("SELECT set_config('disponit.tenant', %s, true)", (tenant,))
-    rad = m.execute("SELECT kvittering IS NOT NULL FROM oppdrag"
-                    " WHERE tenant=%s AND id=%s", (tenant, oid)).fetchone()
+    rad = m.execute(
+        "SELECT kvittering IS NOT NULL"
+        "   AND kvittering_signatur IS NOT NULL"
+        "   AND btrim(kvittering_signatur) <> ''"
+        "   AND kvittering_signatur"
+        "       IS NOT DISTINCT FROM (kvittering->'signatur'->>'verdi')"
+        "   AND resultathash IS NOT NULL"
+        "  FROM oppdrag WHERE tenant=%s AND id=%s",
+        (tenant, oid)).fetchone()
     m.commit()
     return bool(rad and rad[0])
 

@@ -412,7 +412,37 @@ BEGIN
     -- STEMMER med evidensen — et `utfort` uten promotert artefakt og et
     -- ikke-`utfort` MED er begge falske verdikter. Motsigelsen regnes
     -- her, av radene selv, ikke av et tall i et artefakt.
-    SELECT o.status, o.kvittering IS NOT NULL
+    --
+    -- SIGNERT MÅLES PÅ SIGNATUREN, IKKE PÅ NYTTELASTEN (Codex P1, #117).
+    -- Den forrige formen leste `kvittering IS NOT NULL` og kalte det
+    -- «signert kvittering». Men signaturen er en EGEN kolonne
+    -- (`oppdrag.kvittering_signatur`, 005), og `oppdrag`-skjemaet lar de
+    -- to variere fritt: kolonnelåsen gjør kvitteringsfeltene uforanderlige
+    -- ETTER at de er satt, og statusmaskinen sier ingenting om at en
+    -- nyttelast må ha en signatur ved siden av seg. Kjøretidsrollen har
+    -- direkte `UPDATE` på raden. Én `UPDATE oppdrag SET kvittering='{}'`
+    -- uten signaturkolonne ga altså `rene_utfall_ok = true`, og aksepten —
+    -- som er UFORANDERLIG når den først er skrevet — påsto for alltid at
+    -- drillen endte i en signert kvittering det aldri fantes en signatur
+    -- for. Det er nøyaktig den formen SP-3 finnes for å utelukke.
+    --
+    -- Signaturen kan ikke verifiseres kryptografisk her (nøklene bor i
+    -- API-et, som er den ENESTE veien som verifiserer en konvolutt før den
+    -- lagres). Det porten kan gjøre, er å kreve HELE avtrykket den veien
+    -- setter igjen, i stedet for det ene feltet enhver skriver kan finne
+    -- på: signaturen må stå i sin egen kolonne, den må ikke være tom, den
+    -- må være IDENTISK med signaturverdien i konvolutten som ligger lagret
+    -- (`kvittering_signatur` ER `kvittering->signatur->>verdi`, hentet ut
+    -- av verifiseringen selv — spriker de, kommer raden ikke derfra), og
+    -- `resultathash` må være satt, siden veien skriver alle tre i samme
+    -- `UPDATE`. Da må en forfalskning konstrueres helt, ikke bare utelates.
+    SELECT o.status,
+           o.kvittering IS NOT NULL
+           AND o.kvittering_signatur IS NOT NULL
+           AND pg_catalog.btrim(o.kvittering_signatur) <> ''
+           AND o.kvittering_signatur
+               IS NOT DISTINCT FROM (o.kvittering -> 'signatur' ->> 'verdi')
+           AND o.resultathash IS NOT NULL
       INTO v_status, v_kvittering
       FROM public.oppdrag o
      WHERE o.tenant = p_tenant AND o.id = p_inflight_oppdrag;
@@ -649,13 +679,16 @@ GRANT SELECT, INSERT ON moduldrill, modulaksept, modulaksept_punkt
 GRANT SELECT ON akseptkrav_punkt TO disponit_modul_eier;
 -- Definerne MÅLER nå drillutfallene i `oppdrag`/`artefakt` i stedet for å
 -- motta dem (Codex P1, #117 runde 5), og trenger derfor lesetilgang dit.
--- KOLONNENIVÅ, ikke tabellnivå: målingene leser status, kvitteringens
--- eksistens, eierskap og artefaktenes tilhørighet — aldri
--- `payload_kryptert`, `key_id`, `nonce` eller `ciphertext`. En fullmakt
--- som gir mer enn målingen bruker, er en fullmakt som venter på et annet
--- kall. Tenant-policyen (016/008, FORCE) gjelder uansett: definerne eier
+-- KOLONNENIVÅ, ikke tabellnivå: målingene leser status, kvitteringen med
+-- SIGNATUREN og resultathashen sin (Codex P1, runde 8 — «signert» måles på
+-- signaturkolonnen, ikke på nyttelasten, så kolonnen må være lesbar her),
+-- eierskap og artefaktenes tilhørighet — aldri `payload_kryptert`,
+-- `key_id`, `nonce` eller `ciphertext`. En fullmakt som gir mer enn
+-- målingen bruker, er en fullmakt som venter på et annet kall.
+-- Tenant-policyen (016/008, FORCE) gjelder uansett: definerne eier
 -- ikke tabellene og setter `disponit.tenant` eksplisitt.
-GRANT SELECT (tenant, id, status, kvittering, eiermodul)
+GRANT SELECT (tenant, id, status, kvittering, kvittering_signatur,
+              resultathash, eiermodul)
     ON oppdrag TO disponit_modul_eier;
 GRANT SELECT (tenant, artefakt_id, oppdrag_id, release_id, tilstand)
     ON artefakt TO disponit_modul_eier;
