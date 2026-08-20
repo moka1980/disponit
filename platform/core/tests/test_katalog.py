@@ -888,7 +888,8 @@ MODULKONTRAKT = "modulkontrakt"
 # i tjue tabeller med hver sine verdier, og siste-treff-vinner på bare navnet
 # ville pensjonert nitten av dem. Tabellen er den siste CREATE/ALTER TABLE før
 # vilkåret. SQL-kommentarer fjernes først — 038 SITERER formen «CHECK (hendelse
-# IN (...))» i en kommentar, og den ville ellers slettet en tabells enum.
+# IN (...))» i en kommentar, og den ville ellers slettet en tabells enum. BEGGE
+# kommentarformene, og ikke inne i strenger: se `_uten_sqlkommentar()`.
 #
 # Og navnet må NORMALISERES før det brukes som nøkkel (Codex P2 på #118, femte
 # runde). Migrasjonene skriver samme tabell på to måter: 026 oppretter `varsel`,
@@ -913,7 +914,94 @@ _CHECK_RE = re.compile(
 # med vilkåret, og leses i samme rekkefølge som det.
 _DROPP_RE = re.compile(
     r"""DROP\s+CONSTRAINT(?:\s+IF\s+EXISTS)?\s+([\w."]+)""", re.I)
-_SQL_KOMMENTAR_RE = re.compile(r"--[^\n]*")
+
+
+def _sqlstrengslutt(sql: str, i: int) -> int:
+    """Indeksen etter strengen eller det siterte navnet som åpner i `i`.
+
+    SQL escaper ikke med omvendt skråstrek, men ved å DOBLE sitattegnet:
+    `'det''s'` er én streng. `E'…'` er unntaket der `\\` også escaper, men den
+    formen bruker migrasjonene bare til tegn som `\\n` og `\\x1f` — aldri til et
+    sitattegn — og en regel om at `\\'` ikke lukker ville brutt `E'\\\\_\\\\_%'`
+    i 041, der skråstrekene er escapet og fnutten lukker som vanlig.
+    """
+    sitat, j, n = sql[i], i + 1, len(sql)
+    while j < n:
+        if sql[j] != sitat:
+            j += 1
+        elif j + 1 < n and sql[j + 1] == sitat:
+            j += 2
+        else:
+            return j + 1
+    return n
+
+
+def _sqlverdier(liste: str) -> set[str]:
+    """Strengverdiene i en `IN (…)`-liste.
+
+    Leses med `_sqlstrengslutt()` og ikke med et regex på «alt mellom to
+    fnutter»: SQL escaper ved å DOBLE sitattegnet, så `'det''s'` er ÉN verdi.
+    Et regex delte den i to og fikk en verdi til ut av lista.
+    """
+    ut, i, n = set(), 0, len(liste)
+    while i < n:
+        if liste[i] == "'":
+            j = _sqlstrengslutt(liste, i)
+            ut.add(liste[i + 1:j - 1].replace("''", "'"))
+            i = j
+        else:
+            i += 1
+    return ut
+
+
+def _uten_sqlkommentar(sql: str) -> str:
+    """SQL-en med kommentarene byttet mot mellomrom.
+
+    Bare `--` ble fjernet før, med et regex per linje (Codex P2 på #118, tolvte
+    runde). To hull fulgte av det.
+
+    BLOKKOMMENTAREN sto igjen som kode. En migrasjon som setter en setning ut av
+    drift eller viser et eksempel — `/* … CHECK (reversibilitet IN ('oppfunnet'))
+    … */` — ble da lest som gjeldende tilstand, og katalogporten ville sluppet
+    inn en klasse PostgreSQL aldri godtar. Et blokkommentert `DROP CONSTRAINT`
+    gikk motsatt vei og slettet et vilkår som fortsatt gjelder. Blokkommentarer
+    NØSTES i PostgreSQL, så dybden telles.
+
+    Og kommentartegnene ble lest også inne i STRENGER: en verdi som `'a--b'`
+    kappet resten av linja, og med den et vilkår som sto der. Strenger og
+    siterte navn hoppes derfor over først — de er data, ikke kommentarer.
+
+    Lengden holdes, for hver kommentar byttes tegn for tegn mot mellomrom.
+    Rekkefølgen mellom `CREATE TABLE`, `CHECK` og `DROP CONSTRAINT` leses av
+    posisjonene i teksten, og linjeskift beholdes så `--` fortsatt slutter der
+    linja slutter.
+    """
+    ut = list(sql)
+    i, n = 0, len(sql)
+    while i < n:
+        if sql[i] in "'\"":
+            i = _sqlstrengslutt(sql, i)
+            continue
+        if sql.startswith("--", i):
+            j = sql.find("\n", i)
+            j = n if j < 0 else j
+        elif sql.startswith("/*", i):
+            j, dybde = i + 2, 1
+            while j < n and dybde:
+                if sql.startswith("/*", j):
+                    dybde, j = dybde + 1, j + 2
+                elif sql.startswith("*/", j):
+                    dybde, j = dybde - 1, j + 2
+                else:
+                    j += 1
+        else:
+            i += 1
+            continue
+        for k in range(i, j):
+            if ut[k] != "\n":
+                ut[k] = " "
+        i = j
+    return "".join(ut)
 
 
 def _tabellnavn(rå: str) -> str:
@@ -958,7 +1046,7 @@ def _registerets_enums(
     vilkarsnavn: dict[tuple[str, str], str] = {}
     noen_gang: set[str] = set()
     for sql in sorted((mappe or MIGRASJONER).glob("*.sql")):
-        tekst = _SQL_KOMMENTAR_RE.sub("", sql.read_text(encoding="utf-8"))
+        tekst = _uten_sqlkommentar(sql.read_text(encoding="utf-8"))
         tabeller = [(m.start(), _tabellnavn(m.group(1)))
                     for m in _TABELL_RE.finditer(tekst)]
         hendelser = sorted(
@@ -978,7 +1066,7 @@ def _registerets_enums(
                         del gjeldende[nokkel]
                         del vilkarsnavn[nokkel]
                 continue
-            verdier = set(re.findall(r"'([^']*)'", m.group(3)))
+            verdier = _sqlverdier(m.group(3))
             if not verdier:
                 continue
             kolonne = m.group(2)
@@ -1064,6 +1152,70 @@ def test_enumtilstanden_folger_et_sluppet_vilkar(tmp_path, slipp, star_igjen):
     # Historikken står uansett: `noen_gang` er hva registeret HAR bundet, og en
     # verdi som faller ut av et vilkår er nettopp det `pensjonert` bygges av.
     assert "direkte" in noen_gang
+
+
+@pytest.mark.parametrize("senere", [
+    # Et vilkår satt ut av drift i en blokkommentar er ikke gjeldende tilstand.
+    "/* ALTER TABLE modulkontrakt ADD CONSTRAINT r\n"
+    "     CHECK (reversibilitet IN ('oppfunnet')); */\n",
+    # Blokkommentarer NØSTES i PostgreSQL: den ytre lukkes av den siste `*/`.
+    "/* eksempel /* nøstet */ ALTER TABLE modulkontrakt ADD CONSTRAINT r\n"
+    "     CHECK (reversibilitet IN ('oppfunnet')); */\n",
+    # Og på én linje, som et eksempel midt i en forklaring.
+    "-- ALTER TABLE modulkontrakt ADD CONSTRAINT r CHECK "
+    "(reversibilitet IN ('oppfunnet'));\n",
+])
+def test_et_kommentert_vilkaar_er_ikke_gjeldende_tilstand(tmp_path, senere):
+    """En SQL-setning i en kommentar er ikke kjørt, og binder ingenting.
+
+    Bare `--` ble fjernet (Codex P2 på #118, tolvte runde). En blokkommentert
+    `CHECK` ble derfor lest som gjeldende tilstand, og katalogporten ville
+    sluppet inn en `kl`- eller `rev`-verdi PostgreSQL avviser ved registrering —
+    altså nøyaktig den umulige modulen porten finnes for å fange.
+
+    Formen finnes ikke i repoets migrasjoner i dag, og det er grunnen til at den
+    må stå her: en port som bare måler dagens filer, går grønn helt til noen
+    skriver linja.
+    """
+    mappe = _migrasjoner(tmp_path, _LAGER_VILKAR, senere)
+    gjeldende, noen_gang = _registerets_enums(mappe)
+    assert gjeldende[(MODULKONTRAKT, "reversibilitet")] == {
+        "direkte", "kompenserende"}
+    assert "oppfunnet" not in noen_gang
+
+
+def test_et_kommentert_slipp_fjerner_ingenting(tmp_path):
+    """Motsatt vei: et blokkommentert slipp skal ikke slette et levende vilkår.
+
+    Da hadde porten sluttet å vokte kolonnen i det hele tatt — enhver verdi
+    ville gått gjennom — og `_registerenum()` ville meldt et vilkår som borte
+    mens databasen fortsatt håndhever det.
+    """
+    mappe = _migrasjoner(
+        tmp_path, _LAGER_VILKAR,
+        "/* midlertidig ute av drift:\n"
+        "   ALTER TABLE modulkontrakt\n"
+        "       DROP CONSTRAINT modulkontrakt_reversibilitet_check; */\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende[(MODULKONTRAKT, "reversibilitet")] == {
+        "direkte", "kompenserende"}
+
+
+def test_kommentartegn_i_en_streng_er_ikke_kommentar(tmp_path):
+    """`--` og `/*` inne i en verdi er data, ikke starten på en kommentar.
+
+    Fjernet vi dem der, kappet vi vilkåret midt i verdilista — og da fant
+    `_CHECK_RE` ingen ting, så kolonnen sto uvoktet uten at noe sa fra. Doblet
+    sitattegn er SQLs escape og lukker ikke strengen.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE modulkontrakt (\n"
+        "    reversibilitet TEXT NOT NULL\n"
+        "        CHECK (reversibilitet IN ('a--b', 'c/*d', 'det''s')));\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende[(MODULKONTRAKT, "reversibilitet")] == {
+        "a--b", "c/*d", "det's"}
 
 
 def test_enumtilstanden_leser_slipp_og_nytt_vilkaar_i_rekkefolge(tmp_path):
