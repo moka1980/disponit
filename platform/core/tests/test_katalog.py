@@ -924,20 +924,43 @@ def _hendelsene(sql: str) -> list[tuple]:
 
 
 def _lesstatement(stmt, tekst: str, ut: list, betinget: bool) -> None:
-    """Legg hendelsene i `stmt` til i `ut`, i rekkefølge."""
+    """Legg hendelsene i `stmt` til i `ut`, i rekkefølge.
+
+    EN ERKLÆRING SOM KAN BLI HOPPET OVER ER BETINGET (Codex P2 på #118,
+    tjuefjerde runde). `IF NOT EXISTS` og `IF EXISTS` ser ut som ren
+    forsiktighet i teksten, men de er en gren på linje med `IF … THEN` i en
+    `DO`-kropp: står tabellen der fra før, kjører PostgreSQL ingenting av
+    `CREATE TABLE IF NOT EXISTS`, og finnes ikke tabellen, kjører den ingen av
+    kommandoene i `ALTER TABLE IF EXISTS`. Porten leste erklæringen som
+    utført, og et videre vilkår som gjenbruker navnet på et smalt vilkår som
+    STÅR, skrev seg da over det smale — så porten godtok en klasse databasen
+    fortsatt avviser. Merket betinget havner de to i stedet sidestilt, og
+    snittet er da svaret som aldri utvider.
+
+    ET SLIPP MED `IF EXISTS` er ikke det samme, og blir stående ubetinget:
+    hoppes det over, er det fordi vilkåret ikke finnes, og da er modellens
+    oppføring alt foreldet — å fjerne den er å følge databasen, ikke å gjette.
+    Det er `ALTER TABLE IF EXISTS` som gjør et slipp betinget, for der er det
+    TABELLEN som kan mangle.
+    """
     if isinstance(stmt, pglast.ast.CreateStmt):
         tabell = _navn(stmt.relation)
+        betinget = betinget or bool(stmt.if_not_exists)
         ut.append((_LAGET, tabell, None, None, betinget))
         for element in stmt.tableElts or ():
             _lesvilkar(element, tabell, ut, betinget)
         return
     if isinstance(stmt, pglast.ast.AlterTableStmt):
         tabell = _navn(stmt.relation)
+        betinget = betinget or bool(stmt.missing_ok)
         for cmd in stmt.cmds or ():
             if cmd.subtype == pglast.enums.AlterTableType.AT_DropConstraint:
                 ut.append((_SLIPP, tabell, cmd.name, None, betinget))
             else:
-                _lesvilkar(cmd.def_, tabell, ut, betinget)
+                # `ADD COLUMN IF NOT EXISTS` hopper over kolonnen — og
+                # vilkårene skrevet på den — når den alt finnes.
+                _lesvilkar(cmd.def_, tabell, ut,
+                           betinget or bool(cmd.missing_ok))
         return
     if isinstance(stmt, pglast.ast.RenameStmt):
         _lesomdop(stmt, ut, betinget)
@@ -1399,7 +1422,14 @@ def _registerets_enums(
                 opptatt.setdefault(tabell, {})[navn] = False
                 continue
             if slag is _LAGET:
-                laget.add(tabell)
+                # En BETINGET opprettelse gjør ikke tabellen til en mal
+                # porten kjenner (Codex P2 på #118, tjuefjerde runde). Kjørte
+                # den ikke — `IF NOT EXISTS` mot en tabell som står der fra
+                # før — er det den ANDRE tabellens vilkår som gjelder, og dem
+                # har porten aldri lest. `_liker()` skriver da uvisst, som er
+                # en rød port og ikke et hull.
+                if not hendelse[4]:
+                    laget.add(tabell)
                 continue
             if slag is _LIKE:
                 _liker(vilkar, opptatt, laget, tabell, navn)
@@ -2538,6 +2568,75 @@ def test_et_vilkaar_uten_bindinger_bruker_opp_navnet_sitt(tmp_path,
         "direkte", "kompenserende"}, (
         "slippet traff enumvilkåret — vilkåret uten bindinger ga aldri fra seg "
         "navnet sitt til modellen")
+
+
+@pytest.mark.parametrize("gjentakelsen", [
+    # HELE tabellen erklært på nytt. Står den der fra før, kjører PostgreSQL
+    # ingenting av setningen — heller ikke vilkårene i den.
+    "CREATE TABLE IF NOT EXISTS modulkontrakt (\n"
+    "    reversibilitet TEXT NOT NULL\n"
+    "        CONSTRAINT rev_chk CHECK (reversibilitet IN\n"
+    "            ('direkte', 'kompenserende', 'irreversibel')));\n",
+    # Bare KOLONNEN. Finnes den, hoppes den over, og vilkåret skrevet på den
+    # blir aldri lagt på. Formen er i bruk i repoet — 003 og 005 legger til
+    # kolonner slik.
+    "ALTER TABLE modulkontrakt\n"
+    "    ADD COLUMN IF NOT EXISTS reversibilitet TEXT\n"
+    "        CONSTRAINT rev_chk CHECK (reversibilitet IN\n"
+    "            ('direkte', 'kompenserende', 'irreversibel'));\n",
+])
+def test_en_erklaering_som_kan_hoppes_over_er_betinget(tmp_path, gjentakelsen):
+    """`IF NOT EXISTS` er en gren, ikke et høflig ord.
+
+    Codex P2 på #118, tjuefjerde runde. Porten leste erklæringen som utført.
+    Står tabellen — eller kolonnen — der fra før, kjører PostgreSQL ingenting
+    av den, og det SMALE vilkåret fra første migrasjon blir stående.
+
+    Gjentakelsen her gjenbruker navnet `rev_chk` med en VIDERE definisjon, og
+    navnet er nøkkelen modellen fører vilkåret under: det videre skrev seg rett
+    over det smale, og porten meldte `irreversibel` som gyldig mens databasen
+    fortsatt avviser den. Merket betinget havner de to sidestilt, og snittet er
+    svaret som aldri utvider.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE modulkontrakt (\n"
+        "    reversibilitet TEXT NOT NULL\n"
+        "        CONSTRAINT rev_chk CHECK (reversibilitet IN\n"
+        "            ('direkte', 'kompenserende')));\n",
+        gjentakelsen)
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende.get((MODULKONTRAKT, "reversibilitet")) == {
+        "direkte", "kompenserende"}, (
+        "den gjentatte erklæringen ble lest som utført, og det videre "
+        "vilkåret skrev seg over det smale som står")
+
+
+def test_en_betinget_opprettet_mal_er_ingen_mal_porten_kjenner(tmp_path):
+    """`CREATE TABLE IF NOT EXISTS` gjør ikke tabellen til en lest mal.
+
+    Den andre halvdelen av samme funn. Hoppet setningen over, er tabellen der
+    fra før — og da er det DENS vilkår `LIKE` kopierer, ikke de porten leste i
+    teksten. Å kopiere de leste ville vært en gjetning, og gjetningen går den
+    ene veien som gjør skade: her ville `irreversibel` stått igjen som gyldig.
+
+    Svaret er uvisst for alt, altså rød port. Det er samme svar som en mal
+    ingen migrasjon har opprettet, se `_liker()`.
+    """
+    mappe = _migrasjoner(
+        tmp_path,
+        "CREATE TABLE IF NOT EXISTS kontraktmal (\n"
+        "    reversibilitet TEXT NOT NULL\n"
+        "        CHECK (reversibilitet IN ('direkte', 'kompenserende')));\n",
+        "CREATE TABLE modulkontrakt (\n"
+        "    LIKE kontraktmal INCLUDING CONSTRAINTS,\n"
+        "    CHECK (reversibilitet IN\n"
+        "           ('direkte', 'kompenserende', 'irreversibel')));\n")
+    gjeldende, _ = _registerets_enums(mappe)
+    assert gjeldende.get((_UKJENT_TABELL, _UKJENT_KOLONNE)) == {
+        ULESELIG_SQL}, (
+        "malen kan være en annen tabell enn den porten leste, og ble likevel "
+        "kopiert som lest")
 
 
 def test_et_omdopt_vilkaar_frigjor_navnet_sitt(tmp_path):
