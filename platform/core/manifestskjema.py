@@ -651,23 +651,24 @@ def _falske_verdikter(m: dict) -> list[str]:
     Drillens gamle uttrykk ga alltid 0 for det siste tilfellet, og
     porten her hadde ingen egen telling å regne motsigelsen ut fra.
 
-    Mangler tellingen er den bare tilgivelig når utfallet ER `utfort`:
-    da er «ingen motsigelse» det eneste `falske_verdikter = 0` kan bety.
-    Et ikke-`utfort` utfall UTEN evidenstelling er derimot et umålt
-    tilfelle som rapporterer seg selv rent.
+    RUNDE 3: den forrige formen tilga fravær av tellingen når utfallet
+    var `utfort` — «ingen motsigelse er det eneste 0 kan bety». Det var
+    å tro på tallet igjen, bare med et ekstra ledd: et `utfort` uten
+    promotert artefakt er nettopp den omvendte falske verdikten, og det
+    var den formen det innsjekkede drillartefaktet hadde. Tellingen er
+    ikke valgfri for noe utfall — uten den er motsigelsen UMÅLT, og en
+    umålt motsigelse rapporterer seg selv som null.
     """
     utfall = m.get("inflight_utfall")
     rapportert, melding = _teller(m, "falske_verdikter", "falske_verdikter")
     if melding:
         return []                       # alt rapportert av grensesløyfen
     if "inflight_promoterte_artefakter" not in m:
-        if utfall == "utfort":
-            return []
         return [f"inflight_utfall={utfall!r} uten"
-                " `inflight_promoterte_artefakter` — et utfall som ikke er"
-                " `utfort` kan bare kalles rent når evidensen bak det er"
-                " TALT; en feilet jobb som likevel promoterte er et falskt"
-                " verdikt"]
+                " `inflight_promoterte_artefakter` — et utfall kan bare"
+                " kalles rent når evidensen bak det er TALT; både en"
+                " feilet jobb som likevel promoterte OG en utført jobb"
+                " uten et eneste artefakt er falske verdikter"]
     promotert, melding = _teller(m, "inflight_promoterte_artefakter",
                                  "inflight_promoterte_artefakter")
     if melding:

@@ -675,11 +675,18 @@ def test_falske_verdikter_er_en_motsigelse_begge_veier():
                                   falske_verdikter=0)
     assert any("falske_verdikter" in f
                for f in _sjekk_grenser(drillkrav, utfort_uten_evidens))
-    # Et ikke-`utfort` utfall UTEN telling er umålt, ikke rent.
-    utelatt = _mutert(inflight_utfall="feilet")
-    utelatt["maalt"].pop("inflight_promoterte_artefakter")
-    assert any("inflight_promoterte_artefakter" in f
-               for f in _sjekk_grenser(drillkrav, utelatt))
+    # Codex' P1 (runde 3): fraværet av tellingen ble TILGITT når utfallet
+    # var `utfort` — «ingen motsigelse er det eneste 0 kan bety» — og det
+    # var nøyaktig formen det innsjekkede artefaktet hadde. Et utfall
+    # uten evidenstelling er umålt, uansett hvilket utfall det er.
+    from manifestskjema import valider_artefaktformat
+    for utfall in ("utfort", "feilet"):
+        utelatt = _mutert(inflight_utfall=utfall)
+        utelatt["maalt"].pop("inflight_promoterte_artefakter")
+        assert any("inflight_promoterte_artefakter" in f
+                   for f in _sjekk_grenser(drillkrav, utelatt)), utfall
+        assert valider_artefaktformat(utelatt, drillkrav), \
+            f"skjemaet godtar fortsatt {utfall} uten evidenstelling"
     # …og de to rene formene passerer.
     assert _sjekk_grenser(drillkrav,
                           _mutert(inflight_promoterte_artefakter=1)) == []
