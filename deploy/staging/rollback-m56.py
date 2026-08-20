@@ -342,6 +342,43 @@ def _status(m, tenant, oid):
     return rad[0] if rad else None
 
 
+def _claim_release(m, tenant, oid):
+    """Hvilken release CLAIMET oppdraget — sporet claim-porten satte.
+
+    Codex' P1 på PR #117 (runde 20): drillens tre ledd påstår hver sin
+    release, men bare `utfort` bar en binding (det promoterte artefaktet).
+    Et `feilet` inflight-utfall hvilte på fravær av artefakt, som er sant
+    for alt arbeid i verden. `claim_neste_oppdrag` stempler nå
+    `claim_release_id`/`claim_miljo` (049 §0), og `registrer_moduldrill`
+    måler leddene mot det sporet.
+
+    Sonden må stille samme krav som porten, av samme grunn som runde 17:
+    en drill som rapporterer bestått for evidens aksepten senere avviser,
+    måler ikke aksepten — og den kan ikke kjøres om igjen, fordi den har
+    konsumert release-IDene sine.
+    """
+    m.execute("RESET ROLE")
+    m.execute("SELECT set_config('disponit.tenant', %s, true)", (tenant,))
+    rad = m.execute(
+        "SELECT claim_release_id, claim_miljo FROM oppdrag"
+        " WHERE tenant=%s AND id=%s", (tenant, oid)).fetchone()
+    m.commit()
+    return tuple(rad) if rad else (None, None)
+
+
+def _krev_claimet_av(m, tenant, oid, release, ledd):
+    """Avbryter drillen hvis leddet ikke er claimet av sin egen release."""
+    funnet = _claim_release(m, tenant, oid)
+    if funnet != (release, MILJO):
+        raise SystemExit(
+            f"AVBRUTT: {ledd}-oppdraget {oid} bærer claim-sporet {funnet},"
+            f" ikke ({release}, {MILJO}) — utfallet tilhører ikke releasen"
+            " leddet handler om, og registrer_moduldrill ville målt det"
+            " rødt. Er sporet tomt, er oppdraget claimet før migrasjon"
+            " 049; drillen må kjøres på nytt etter den")
+    return funnet
+
+
 def _promoterte(m, tenant, oid, release):
     m.execute("SELECT set_config('disponit.tenant', %s, true)", (tenant,))
     rad = m.execute(
@@ -1324,6 +1361,7 @@ def main() -> int:
     if inflight is None or inflight["utfall"] not in ("utfort", "feilet"):
         raise SystemExit("AVBRUTT: fikk aldri målt et løpende oppdrag over"
                          " rullingen — kjør drillen på nytt")
+    _krev_claimet_av(m, sj.TENANT, inflight["oppdrag"], drillet, "inflight")
     inflight_artefakter = _promoterte(m, sj.TENANT, inflight["oppdrag"],
                                       drillet)
     inflight_kvittering = _kvittering(m, sj.TENANT, inflight["oppdrag"])
@@ -1367,6 +1405,7 @@ def main() -> int:
                          f" {st_rb}) — en release som ikke kan kjøre, er"
                          " ingen rullbakk")
     rullback_overtakelse = round(time.monotonic() - rullback_ts, 3)
+    _krev_claimet_av(m, sj.TENANT, o2, a.rullback_id, "rullbakk")
     rullback_artefakter = _promoterte(m, sj.TENANT, o2, a.rullback_id)
     print(f"  (b2) rullbakk: {o2} utført av {a.rullback_id}, artefakter"
           f" {rullback_artefakter}, overtakelse {rullback_overtakelse} s")
@@ -1415,6 +1454,7 @@ def main() -> int:
         raise SystemExit(f"AVBRUTT: kandidaten fullførte ikke det ventende"
                          f" oppdraget ({o3} = {st2})")
     overtakelse = round(time.monotonic() - fram_ts, 3)
+    _krev_claimet_av(m, sj.TENANT, o3, a.kandidat_id, "kandidat")
     kandidat_artefakter = _promoterte(m, sj.TENANT, o3, a.kandidat_id)
     print(f"  (c) kandidat: {o3} utført, artefakter {kandidat_artefakter},"
           f" overtakelse {overtakelse} s")

@@ -640,6 +640,43 @@ def verifiser_registrert_digest(conn, releaser: tuple[str, ...],
                 " de målte")
 
 
+def verifiser_claim_spor(conn, o: dict, inflight: int, rullback: int,
+                         kandidat: int) -> None:
+    """Hvert drilledd må være CLAIMET av releasen leddet handler om.
+
+    Codex' P1 på PR #117 (runde 20): drillens (b)-ledd påstår at den
+    drillede releasen hadde et oppdrag inne da rullingen traff, men bare
+    `utfort` bar en binding (det promoterte artefaktet). Et `feilet`
+    utfall hvilte på FRAVÆR av artefakt på den drillede — sant for alt
+    arbeid i verden. `claim_neste_oppdrag` stempler nå
+    `claim_release_id`/`claim_miljo` (049 §0), og `registrer_moduldrill`
+    måler de tre leddene mot det sporet.
+
+    Sporet finnes bare for claim gjort ETTER 049. Uten denne porten
+    ville et pre-049-claim gitt en rød drillrad, og aksepten ville falt
+    på FK-en mot et grønt utfall — en melding som ikke sier at drillen må
+    kjøres på nytt. Her sies det.
+    """
+    conn.execute("SELECT set_config('disponit.tenant', %s, true)", (TENANT,))
+    for ledd, oid, release in (
+            ("inflight", inflight, o["drillet_release"]),
+            ("rullbakk", rullback, o["rullback_release"]),
+            ("kandidat", kandidat, o["kandidat_release"])):
+        rad = conn.execute(
+            "SELECT claim_release_id, claim_miljo FROM oppdrag"
+            " WHERE tenant=%s AND id=%s", (TENANT, oid)).fetchone()
+        if rad is None:
+            raise SystemExit(f"AVBRUTT: {ledd}-oppdraget {oid} finnes ikke"
+                             f" for tenant {TENANT}")
+        if tuple(rad) != (release, MILJO):
+            raise SystemExit(
+                f"AVBRUTT: {ledd}-oppdraget {oid} bærer claim-sporet"
+                f" {tuple(rad)}, ikke ({release}, {MILJO}) — drillraden"
+                " ville blitt rød på dette leddet. Er sporet tomt, ble"
+                " oppdraget claimet før migrasjon 049 la til kolonnen, og"
+                " drillen må kjøres på nytt etter 049")
+
+
 def _manifestgenerasjoner(commit: str) -> dict[str, str]:
     """sha256 → commit for HVER innsjekkede generasjon av manifestet.
 
@@ -838,6 +875,16 @@ def main() -> int:
         # image ingen av de levende radene bærer.
         verifiser_registrert_digest(
             conn, (o["drillet_release"], o["kandidat_release"]), digest)
+        # …og hvert drilledd må bære CLAIM-SPORET sitt (Codex P1, runde
+        # 20). `registrer_moduldrill` måler leddene mot
+        # `oppdrag.claim_release_id`; mangler sporet, blir drillraden RØD
+        # og aksepten faller på en FK-melding som ikke sier hvorfor.
+        # Oppdrag claimet FØR migrasjon 049 har intet spor — kolonnen
+        # fantes ikke — og det er nettopp svaret operatøren trenger.
+        # Måles her, i det samme lesevinduet som digesten, før fullmakten
+        # tas og før noe skrives.
+        verifiser_claim_spor(conn, o, inflight_opp, rullback_opp,
+                             kandidat_opp)
         # …og manifestet radene ble REGISTRERT fra, må være dette
         # manifestet utenfor evidensbindingen (Codex P1, runde 7): like
         # image-bytes sier ingenting om hvilken modulkonfigurasjon den

@@ -154,8 +154,16 @@ def _kjede(m, *, promoter_paa_drillet=False, staged_paa_kandidat=False,
     # 16). Standarden er INFLIGHT-sporet: de negative prøvene bytter ut
     # nettopp inflight-oppdraget, og skal falle på det de måler — ikke på
     # et tidsstempel de ikke handler om.
+    # `claim_release` er sporet claim-porten setter (049 §0, Codex P1 runde
+    # 20): hvilken release som FAKTISK tok oppdraget. `claim_neste_oppdrag`
+    # er eneste skriver — `oppdrag_claim_release`-vakten avviser både
+    # INSERT-veien og enhver annen rolle — så fixturet må låne
+    # `disponit_m37_claimer` for å bygge formen, akkurat som med
+    # kvitteringskapabiliteten. None = aldri claimet (eller claimet før
+    # 049), som er nøyaktig det NULL betyr i basen.
     def oppdrag(*, status="utfort", kvittering=True, signatur=True,
-                eier=None, kapabilitet=True,
+                eier=None, kapabilitet=True, claim_release=None,
+                claim_miljo="staging",
                 opprettet=T_INFLIGHT_BESTILT, status_ts=T_INFLIGHT_SLUTT):
         sig = secrets.token_hex(16)
         # Samme form som API-veien lagrer: konvolutten står i `kvittering`,
@@ -204,6 +212,13 @@ def _kjede(m, *, promoter_paa_drillet=False, staged_paa_kandidat=False,
                 (secrets.token_hex(16), ten, oid, eier or mid,
                  kap_status, kap_hash))
             m.execute("RESET ROLE")
+        if claim_release is not None:
+            m.execute("SET LOCAL ROLE disponit_m37_claimer")
+            m.execute(
+                "UPDATE oppdrag SET claim_release_id=%s, claim_miljo=%s"
+                " WHERE tenant=%s AND id=%s",
+                (claim_release, claim_miljo, ten, oid))
+            m.execute("RESET ROLE")
         return oid
 
     def artefakt(rel, tilstand, oid=None):
@@ -247,9 +262,11 @@ def _kjede(m, *, promoter_paa_drillet=False, staged_paa_kandidat=False,
                   " kontrakt_hash, aktor, ts) VALUES"
                   " (%s,'releasebytte','claiming',%s,'staging',1,'kh',"
                   "'test',%s)", (mid, ny, ts))
-    inflight = oppdrag()
-    rullback = oppdrag(opprettet=T_RB_BESTILT, status_ts=T_RB_SLUTT)
-    kandidat = oppdrag(opprettet=T_KAND_BESTILT, status_ts=T_KAND_SLUTT)
+    inflight = oppdrag(claim_release="r-drillet")
+    rullback = oppdrag(opprettet=T_RB_BESTILT, status_ts=T_RB_SLUTT,
+                       claim_release="r-rullback")
+    kandidat = oppdrag(opprettet=T_KAND_BESTILT, status_ts=T_KAND_SLUTT,
+                       claim_release="r-kandidat")
     artefakt("r-drillet", "promotert", inflight)
     artefakt("r-rullback", "promotert", rullback)
     ut = {"mid": mid, "ten": ten, "at": at,
@@ -951,20 +968,25 @@ def test_drill_med_roedt_kontrollpunkt_baerer_ingen_aksept(migrator):
     # Rødt punkt er nå EVIDENS som ikke bærer utfallet — funksjonen måler
     # selv (Codex P1, runde 5), så en rød drill lages ved å gi den den
     # formen en mislykket drill faktisk etterlater.
-    roedt_claim = k["oppdrag"]()          # den DRENERTE releasen tok det
+    # …og «den drenerte releasen tok det» er nå BÅDE artefaktet og
+    # claim-sporet (Codex P1, runde 20): et rullbakkledd som den drillede
+    # releasen claimet, er nettopp et claim-stopp som ikke holdt.
+    roedt_claim = k["oppdrag"](claim_release="r-drillet")
     k["artefakt"]("r-drillet", "promotert", roedt_claim)
     varianter = (
         # (a) claim-stoppet holdt ikke
         ("claim_stopp", {**k["opp"], "rullback": roedt_claim},
          psycopg.errors.ForeignKeyViolation),
         # (b) `utfort` uten promotert evidens — falskt verdikt
-        ("rene", {**k["opp"], "inflight": k["oppdrag"]()},
+        ("rene", {**k["opp"],
+                  "inflight": k["oppdrag"](claim_release="r-drillet")},
          psycopg.errors.ForeignKeyViolation),
         # (c) kandidaten promoterte aldri. `tilbake_ok` og E2E-porten
         # måler her SAMME faktum, så finnes det ingen gyldig drill finnes
         # det heller ikke noe gyldig E2E-bevis: porten foran FK-en svarer
         # først. Begge dommene er avvisning, og FK-en står bak uansett.
-        ("tilbake", {**k["opp"], "kandidat": k["oppdrag"]()},
+        ("tilbake", {**k["opp"],
+                     "kandidat": k["oppdrag"](claim_release="r-kandidat")},
          (psycopg.errors.ForeignKeyViolation,
           psycopg.errors.InvalidParameterValue)),
     )
@@ -1990,13 +2012,18 @@ def test_drilloppdragene_maa_ligge_i_det_maalte_rullbakkvinduet(migrator):
     # aldri), rullbakkens bestilt FØR den (kan ikke ha målt et claim-stopp
     # under dreneringen), kandidatens bestilt FØR kandidatbyttet (lå ikke
     # og ventet på den som overtok).
+    # Claim-sporet er RIKTIG på alle tre (Codex P1, runde 20) — ellers
+    # ville prøven falt på det, og sluttet å måle vinduet den handler om.
     laant = {
         "inflight": k["oppdrag"](opprettet=T_RULL + timedelta(minutes=1),
-                                 status_ts=T_INFLIGHT_SLUTT),
+                                 status_ts=T_INFLIGHT_SLUTT,
+                                 claim_release="r-drillet"),
         "rullback": k["oppdrag"](opprettet=T_INFLIGHT_BESTILT,
-                                 status_ts=T_RB_SLUTT),
+                                 status_ts=T_RB_SLUTT,
+                                 claim_release="r-rullback"),
         "kandidat": k["oppdrag"](opprettet=T_KAND_BYTTE - timedelta(minutes=1),
-                                 status_ts=T_KAND_SLUTT),
+                                 status_ts=T_KAND_SLUTT,
+                                 claim_release="r-kandidat"),
     }
     k["artefakt"]("r-drillet", "promotert", laant["inflight"])
     k["artefakt"]("r-rullback", "promotert", laant["rullback"])
@@ -2046,6 +2073,158 @@ def test_drilloppdragene_maa_ligge_i_det_maalte_rullbakkvinduet(migrator):
         "SELECT claim_stopp_ok, rene_utfall_ok, tilbake_ok FROM moduldrill"
         " WHERE drill_id=%s", (did3,)).fetchone() == (False, False, False), \
         "drillen måler mot en overgang som ligger etter dens egen måletid"
+    migrator.rollback()
+
+
+@pg
+def test_utfallene_maa_vaere_claimet_av_sin_egen_release(migrator):
+    """Codex' P1 (runde 20): `feilet` var et rent utfall uten eier.
+
+    Vinduet sier at oppdraget KRYSSET rullingen; det sier ikke hvem som
+    hadde det. For `utfort` bar det promoterte artefaktet releasen, men
+    for `feilet` krevde artefaktlikheten bare at det IKKE fantes et
+    promotert artefakt på den drillede — og det er sant for alt arbeid i
+    verden. Et helt vanlig oppdrag, bestilt før rullingen og feilet
+    etterpå av rullbakk- eller kandidatarbeideren, oppfylte da alt
+    (b)-leddet krevde, og en kaller med `disponit_modules_admin` kunne
+    skrive en grønn, uforanderlig drillrad uten at den drillede releasen
+    noensinne hadde arbeid inne.
+
+    `claim_neste_oppdrag` stempler nå claim-releasen (049 §0), og hvert
+    ledd måles mot sitt eget spor.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `AND v_claimet_av_drillet` fra
+    `v_rene_utfall` (eller det tilsvarende leddet i de to andre)."""
+    k = _kjede(migrator)
+
+    # Nøyaktig angrepsformen: `feilet` med signert kvittering og brent
+    # kapabilitet, i vinduet, uten promotert artefakt på den drillede —
+    # men claimet av RULLBAKKEN. Alt annet er den ekte drillens form.
+    fremmed = k["oppdrag"](status="feilet", claim_release="r-rullback")
+    migrator.commit()
+    did = _drill(migrator, k, opp={**k["opp"], "inflight": fremmed})
+    migrator.execute("RESET ROLE")
+    assert migrator.execute(
+        "SELECT rene_utfall_ok FROM moduldrill WHERE drill_id=%s",
+        (did,)).fetchone()[0] is False, \
+        "et feilet oppdrag rullbakken claimet teller som den drillede" \
+        " releasens inflight-utfall"
+    migrator.rollback()
+
+    # …og det SAMME oppdraget med den drillede releasens claim-spor er
+    # grønt. Uten dette leddet ville prøven over bestått på at `feilet`
+    # aldri kan være rent, i stedet for på eierskapet.
+    eget = k["oppdrag"](status="feilet", claim_release="r-drillet")
+    migrator.commit()
+    did2 = _drill(migrator, k, nokkel="n-" + secrets.token_hex(6),
+                  opp={**k["opp"], "inflight": eget})
+    migrator.execute("RESET ROLE")
+    assert migrator.execute(
+        "SELECT rene_utfall_ok FROM moduldrill WHERE drill_id=%s",
+        (did2,)).fetchone()[0] is True, \
+        "et feilet utfall den drillede releasen selv hadde inne, er rent"
+    migrator.rollback()
+
+    # De to andre leddene måles likt: et oppdrag med FEIL eller manglende
+    # claim-spor bærer ikke leddet sitt, uansett hvor riktig artefaktene
+    # og tidsstemplene ser ut.
+    def sett_spor(oid, spor):
+        migrator.execute("RESET ROLE")
+        migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+        migrator.execute(
+            "UPDATE oppdrag SET claim_release_id=%s WHERE tenant=%s"
+            " AND id=%s", (spor, k["ten"], oid))
+        migrator.execute("RESET ROLE")
+        migrator.commit()
+
+    for ledd, rett_spor, feil_spor in (
+            ("rullback", "r-rullback", "r-kandidat"),
+            ("kandidat", "r-kandidat", "r-rullback"),
+            ("inflight", "r-drillet", None)):     # aldri claimet / før 049
+        oid = k["opp"][ledd]
+        sett_spor(oid, feil_spor)
+        d = _drill(migrator, k, nokkel="n-" + secrets.token_hex(6))
+        migrator.execute("RESET ROLE")
+        maalt = migrator.execute(
+            "SELECT claim_stopp_ok, rene_utfall_ok, tilbake_ok"
+            "  FROM moduldrill WHERE drill_id=%s", (d,)).fetchone()
+        # Hver drillkjøring committer, så sporet må legges TILBAKE før
+        # neste runde — ellers måler runde to summen av begge.
+        sett_spor(oid, rett_spor)
+        assert maalt == (ledd != "rullback", ledd != "inflight",
+                         ledd != "kandidat"), ledd
+
+
+@pg
+def test_claim_sporet_skrives_bare_av_claim_funksjonen(migrator):
+    """Sporet drillen hviler på må ha ÉN skriver (Codex P1, runde 20).
+
+    `oppdrag` har direkte `INSERT`/`UPDATE` for kjøretidsrollen, og
+    deployfullmakten er den som kaller `registrer_moduldrill`. Kunne
+    enten av dem skrive `claim_release_id`, ville leddene målt en
+    forfalskning som var billigere å lage enn den var å oppdage. Samme
+    vakt som kontraktbindingen har (015): kun `disponit_m37_claimer`, og
+    aldri ved opprettelse."""
+    k = _kjede(migrator)
+    migrator.commit()
+
+    # Ved opprettelse: aldri, uansett rolle.
+    with pytest.raises(psycopg.errors.RaiseException):
+        migrator.execute(
+            "INSERT INTO oppdrag (opprinnelse, tenant, oppdragstype,"
+            " handling, eiermodul, status, payload_kryptert, key_id, nonce,"
+            " utforelsesfrist, evidensfrist, koblingsstatus,"
+            " claim_release_id) VALUES ('beslutning',%s,'t','t',%s,"
+            "'opprettet',%s,'k1',%s, now()+interval '1 hour',"
+            " now()+interval '2 hours','UKOBLET','r-drillet')",
+            (k["ten"], k["mid"], b"\x00" * 24, b"\x00" * 12))
+    migrator.rollback()
+
+    # Ved oppdatering: migrator eier tabellen og har all DML — og når
+    # likevel ikke kolonnen.
+    with pytest.raises(psycopg.errors.RaiseException):
+        migrator.execute(
+            "UPDATE oppdrag SET claim_release_id='r-kandidat'"
+            " WHERE tenant=%s AND id=%s",
+            (k["ten"], k["opp"]["inflight"]))
+    migrator.rollback()
+
+    # …heller ikke deployfullmakten, som er den som skriver drillraden.
+    migrator.execute("SET ROLE disponit_modules_admin")
+    with pytest.raises((psycopg.errors.RaiseException,
+                        psycopg.errors.InsufficientPrivilege)):
+        migrator.execute(
+            "UPDATE oppdrag SET claim_release_id='r-kandidat'"
+            " WHERE tenant=%s AND id=%s",
+            (k["ten"], k["opp"]["inflight"]))
+    migrator.rollback()
+    migrator.execute("RESET ROLE")
+
+    # …og kjøretidsrollen, som har direkte UPDATE på oppdrag. Den kan
+    # falle på vakten eller på fullmakten — men den skal ALDRI ende med
+    # et endret spor, og det er postbetingelsen som måles.
+    rt = _rt()
+    try:
+        rt.execute("SELECT set_config('disponit.tenant', %s, true)",
+                   (k["ten"],))
+        try:
+            rt.execute(
+                "UPDATE oppdrag SET claim_release_id='r-kandidat'"
+                " WHERE tenant=%s AND id=%s",
+                (k["ten"], k["opp"]["inflight"]))
+            rt.commit()
+        except (psycopg.errors.RaiseException,
+                psycopg.errors.InsufficientPrivilege):
+            rt.rollback()
+    finally:
+        rt.rollback()
+        rt.close()
+    migrator.execute("SELECT set_config('disponit.tenant', %s, true)",
+                     (k["ten"],))
+    assert migrator.execute(
+        "SELECT claim_release_id FROM oppdrag WHERE tenant=%s AND id=%s",
+        (k["ten"], k["opp"]["inflight"])).fetchone()[0] == "r-drillet", \
+        "kjøretidsrollen skrev claim-sporet drillen hviler på"
     migrator.rollback()
 
 
@@ -2127,7 +2306,7 @@ def test_rent_utfall_krever_signaturen_ikke_bare_nyttelasten(migrator):
         skiller kjøringene er signaturen.
         """
         migrator.execute("RESET ROLE")
-        oid = k["oppdrag"](signatur=signatur)
+        oid = k["oppdrag"](signatur=signatur, claim_release="r-drillet")
         k["artefakt"]("r-drillet", "promotert", oid)
         migrator.commit()
         did = _drill(migrator, k, nokkel="n-" + secrets.token_hex(6),
@@ -2184,7 +2363,7 @@ def test_rent_utfall_krever_avtrykket_verifiseringsveien_setter_igjen(
 
     def maal(kapabilitet):
         migrator.execute("RESET ROLE")
-        oid = k["oppdrag"](kapabilitet=kapabilitet)
+        oid = k["oppdrag"](kapabilitet=kapabilitet, claim_release="r-drillet")
         k["artefakt"]("r-drillet", "promotert", oid)
         migrator.commit()
         did = _drill(migrator, k, nokkel="n-" + secrets.token_hex(6),

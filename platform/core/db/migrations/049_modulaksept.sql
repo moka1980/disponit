@@ -24,6 +24,257 @@
 -- drillet fra udrillet — bare deployment-identiteten kan.)
 
 -- ------------------------------------------------------------
+-- 0. CLAIMET ETTERLATER HVEM SOM TOK DET (Codex P1, #117 runde 20).
+--
+--    Drillens (b)-ledd påstår at NØYAKTIG den drillede releasen hadde et
+--    oppdrag inne da rullingen traff. Målingen av det leddet hvilte på
+--    artefaktlikheten: `utfort` ⇔ det finnes et promotert artefakt på
+--    `p_drillet`. For `utfort` bærer artefaktet releasen og påstanden
+--    holder — men `feilet` er også et rent utfall (SP-3 handler om at
+--    utfallet er terminalt og signert, ikke om at det gikk bra), og for
+--    den statusen sier likheten bare at det IKKE finnes et promotert
+--    artefakt. Det er ingen binding; det er fravær av en.
+--
+--    Et helt vanlig oppdrag som ble bestilt før rullingen og claimet og
+--    FEILET etterpå — av rullbakk- eller kandidatarbeideren — oppfyller
+--    da alt (b) krever: terminalt, signert kvittering med brent
+--    kapabilitet, opprettet før `v_rull_ts`, terminalt etter. En kaller
+--    med `disponit_modules_admin` kunne pare et slikt oppdrag med de to
+--    andre vindusoppfyllende oppdragene og skrive en grønn, UFORANDERLIG
+--    drillrad uten at den drillede releasen noensinne hadde arbeid inne.
+--
+--    `oppdrag` visste ikke hvem som claimet. Kontraktbindingen
+--    (modul/versjon/hash/epoch, 015) stemples ved claim, men RELEASEN —
+--    den ene identiteten hele drillen handler om — ble aldri skrevet
+--    ned, enda `claim_neste_oppdrag` fencer på nettopp den (kallerens
+--    deployment må være `claiming`). Den skrives ned nå, av den samme
+--    funksjonen, i det samme UPDATE-et, under den samme fullmakten.
+--
+--    ⚠️ DRIFTSKONSEKVENS, uttalt: sporet finnes bare for claim gjort
+--    ETTER denne migrasjonen. Oppdragene fra staging-drillen 2026-08-20
+--    ble claimet før kolonnen fantes og står med NULL, og en drillrad
+--    registrert på dem får derfor `rene_utfall_ok = false` — aksepten
+--    stopper på FK-en mot et grønt utfall, høylytt og før noe skrives.
+--    Drillen må kjøres på nytt etter 049. Alternativet — å la NULL
+--    passere som «vi vet ikke» — er nøyaktig hullet funnet peker på, og
+--    en uforanderlig aksept er feil sted å ta den snarveien.
+-- ------------------------------------------------------------
+ALTER TABLE oppdrag
+    ADD COLUMN IF NOT EXISTS claim_release_id TEXT,
+    ADD COLUMN IF NOT EXISTS claim_miljo      TEXT;
+
+-- Samme vakt som kontraktbindingen har (015): kolonnene settes KUN av
+-- den herdede claim-funksjonen, og aldri ved opprettelse. Kjøretiden og
+-- deployfullmakten har direkte `UPDATE`/`INSERT` på `oppdrag`; uten
+-- vakten kunne begge skrive hvilken som helst release inn i sporet, og
+-- sporet ville målt sin egen forfalskning.
+--
+-- Egen trigger, ikke en utvidelse av `oppdrag_kolonnelaas`: den
+-- funksjonen bor i 015 og ville måttet kopieres hit i sin helhet for to
+-- nye ledd. To BEFORE ROW-triggere fyrer i navnerekkefølge og må begge
+-- passere; leddene her er uavhengige av statusmaskinen, så rekkefølgen
+-- betyr ingenting.
+--
+-- IKKE write-once: en reclaim etter utløpt lease (005/037) skal
+-- re-stemple, slik at sporet peker på den releasen som faktisk holdt
+-- claimet til slutt. Et oppdrag er ikke reclaimbart når det først er
+-- terminalt, så den siste stemplingen ER den som tok det i mål.
+CREATE OR REPLACE FUNCTION oppdrag_claim_release_vakt()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        IF NEW.claim_release_id IS NOT NULL OR NEW.claim_miljo IS NOT NULL
+        THEN
+            RAISE EXCEPTION 'oppdrag: claim-releasen kan ikke settes ved'
+                ' opprettelse (stemples kun ved claim)';
+        END IF;
+        RETURN NEW;
+    END IF;
+    IF current_user <> 'disponit_m37_claimer' AND (
+           NEW.claim_release_id IS DISTINCT FROM OLD.claim_release_id
+        OR NEW.claim_miljo      IS DISTINCT FROM OLD.claim_miljo) THEN
+        RAISE EXCEPTION 'oppdrag: claim-releasen settes kun av'
+            ' claim-funksjonen';
+    END IF;
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS oppdrag_claim_release ON oppdrag;
+CREATE TRIGGER oppdrag_claim_release BEFORE INSERT OR UPDATE ON oppdrag
+    FOR EACH ROW EXECUTE FUNCTION oppdrag_claim_release_vakt();
+
+-- Claim-funksjonen stempler sporet. Kroppen er ordrett 037 — kun
+-- `v_b_rel`/`v_b_miljo` og de to kolonnene i UPDATE-et er nye — og
+-- signaturen er uendret, så `CREATE OR REPLACE` beholder eierskap
+-- (`disponit_m37_claimer`) og privilegier.
+--
+-- Sporet følger BINDINGEN: en uregistrert oppdragstype claimes uten
+-- kontrakt og uten deployment-port (legacy-grenen), og da er det ingen
+-- verifisert release å skrive ned. `p_release_id` fra en slik kaller er
+-- en påstand ingen port har prøvd, og en påstand hører ikke hjemme i et
+-- spor drillen senere måler på. NULL er det ærlige svaret.
+SET LOCAL ROLE disponit_m37_claimer;
+CREATE OR REPLACE FUNCTION claim_neste_oppdrag(
+    p_modul_id TEXT, p_prefiks TEXT[], p_claim_id TEXT,
+    p_lease_s INT DEFAULT 300, p_release_id TEXT DEFAULT NULL,
+    p_miljo TEXT DEFAULT NULL, p_module_epoch BIGINT DEFAULT NULL)
+RETURNS TABLE (id BIGINT, tenant TEXT, unntak_id BIGINT, oppdragstype TEXT,
+               handling TEXT, repair_operation_id TEXT,
+               payload_kryptert BYTEA, key_id TEXT, nonce BYTEA,
+               owner_generation INT, utforelsesfrist TIMESTAMPTZ,
+               evidensfrist TIMESTAMPTZ)
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog
+AS $$
+DECLARE
+    v_lease INT := least(greatest(coalesce(p_lease_s, 300), 30), 3600);
+    v_hoppet BIGINT[] := ARRAY[]::BIGINT[];
+    v_id BIGINT; v_ot TEXT; r RECORD; v_ok BOOLEAN;
+    v_b_modul TEXT; v_b_ver INT; v_b_hash TEXT; v_b_epoch BIGINT;
+    v_b_rel TEXT; v_b_miljo TEXT;
+BEGIN
+    IF p_claim_id IS NULL OR p_claim_id !~ '^[0-9a-f]{32,}$' THEN
+        RAISE EXCEPTION 'claim_neste_oppdrag: ugyldig claim_id-format';
+    END IF;
+    IF p_modul_id IS NULL OR length(btrim(p_modul_id)) = 0 THEN
+        RAISE EXCEPTION 'claim_neste_oppdrag: modul_id mangler';
+    END IF;
+
+    -- Codex P1: DELT gjerde mot registrering av oppdragstyper — SAMME nøkkel som
+    -- `registrer_oppdragstype` tar EKSKLUSIVT (014). Uten dette er «uregistrert»
+    -- en avgjørelse tatt på et snapshot: en `registrer_oppdragstype` kan committe
+    -- ETTER at kandidatsøket og registeroppslaget her har lest, men FØR claimet
+    -- committer, og oppdraget blir da claimet UBUNDET (ingen kontrakt, ingen
+    -- epoch) og uten aktiv-modul-/deployment-portene — nøyaktig den porten
+    -- registreringen skulle innføre. Gjerdet tas FØR kandidatsøket, som selv leser
+    -- `oppdragstype_register` i predikatet, så begge lesningene ligger innenfor.
+    -- Delt: samtidige claims (også på tvers av moduler) sperrer ikke for
+    -- hverandre; kun en registrering venter, og registrering er en sjelden
+    -- admin-/deployhandling. Låserekkefølgen er global → modul → oppdragsrad i
+    -- ALLE stier (overgangsfunksjonene tar bare modul-låsen), så ingen syklus.
+    PERFORM pg_advisory_xact_lock_shared(
+        hashtextextended('modulregister:oppdragstype', 0));
+
+    LOOP
+        -- Oppdragslås: neste kandidat for eiermodulen (SKIP LOCKED). Den betingede
+        -- binding-tilgjengeligheten er ALT et predikat her (Codex P2: da låses
+        -- ikke en uclaimbar backlog rad for rad) — en registrert oppdragstype
+        -- selekteres bare når kallerens deployment er claiming og modulen aktiv.
+        -- v_hoppet holder kun de sjeldne som taper race-en mot noddeaktiver under
+        -- modul-låsen (re-verifiseringen nedenfor); SKIP LOCKED hopper ikke over
+        -- rader denne transaksjonen selv har låst.
+        SELECT k.id, k.oppdragstype INTO v_id, v_ot
+          FROM public.oppdrag k
+         WHERE (
+                 k.status = 'opprettet'
+                 OR (k.status = 'plukket' AND k.owner_lease_utloper IS NOT NULL
+                     AND k.owner_lease_utloper < now())
+               )
+           AND k.eiermodul = p_modul_id
+           AND p_prefiks IS NOT NULL
+           AND array_length(p_prefiks, 1) > 0
+           AND EXISTS (SELECT 1 FROM unnest(p_prefiks) AS pre
+                        WHERE k.handling LIKE pre || '%')
+           AND k.utforelsesfrist > now()
+           AND k.id <> ALL (v_hoppet)
+           AND (
+                 NOT EXISTS (SELECT 1 FROM public.oppdragstype_register reg
+                              WHERE reg.oppdragstype = k.oppdragstype)
+                 OR EXISTS (
+                     SELECT 1 FROM public.oppdragstype_register reg
+                       JOIN public.modulhode h
+                         ON h.modul_id = reg.eiermodul AND h.status = 'aktiv'
+                        AND h.module_epoch IS NOT DISTINCT FROM p_module_epoch
+                       JOIN public.moduldeployment d
+                         ON d.modul_id = reg.eiermodul
+                        AND d.kontraktversjon = reg.kontraktversjon
+                        AND d.kontrakt_hash = reg.kontrakt_hash
+                        AND d.release_id = p_release_id AND d.miljo = p_miljo
+                        AND d.livslop = 'claiming'
+                      WHERE reg.oppdragstype = k.oppdragstype
+                        AND reg.eiermodul = p_modul_id)
+               )
+         ORDER BY k.opprettet, k.id
+           FOR UPDATE SKIP LOCKED
+         LIMIT 1;
+        IF NOT FOUND THEN
+            RETURN;   -- tom kø (eller alle gjenværende ikke claimbare av kalleren)
+        END IF;
+
+        -- Tabellen aliases (reg): funksjonens RETURNS TABLE-kolonner (id, tenant,
+        -- oppdragstype, ...) er OUT-variabler i skopet og ville ellers kollidert
+        -- med en ukvalifisert kolonnereferanse (AmbiguousColumn).
+        SELECT reg.eiermodul, reg.kontraktversjon, reg.kontrakt_hash INTO r
+          FROM public.oppdragstype_register reg WHERE reg.oppdragstype = v_ot;
+
+        IF NOT FOUND THEN
+            -- Legacy: uregistrert oppdragstype → ingen binding (som før).
+            v_b_modul := NULL; v_b_ver := NULL; v_b_hash := NULL; v_b_epoch := NULL;
+            v_b_rel := NULL; v_b_miljo := NULL;
+        ELSE
+            -- Modul-lås, DELT (Codex P2): claims skal serialiseres mot
+            -- overgangene (nødstopp/status/releasebytte tar den EKSKLUSIVT),
+            -- men ikke mot hverandre — en eksklusiv lås her ville køet alle
+            -- modulens pollere bak hele claim-transaksjonen (API-et committer
+            -- først etter dekryptering, minimering og kapabilitetsutstedelse),
+            -- selv når SKIP LOCKED alt har gitt dem hver sin rad. Delt lås gir
+            -- samme gjerde mot nødstopp: den venter til et evt. samtidig
+            -- noddeaktiver_modul har committet, så re-lesingen under er FERSK.
+            PERFORM pg_advisory_xact_lock_shared(
+                hashtextextended('modul:' || r.eiermodul, 0));
+            SELECT (r.eiermodul = p_modul_id)   -- Codex P1: eiermodulen eier typen
+               AND EXISTS (SELECT 1 FROM public.modulhode h
+                            WHERE h.modul_id = r.eiermodul AND h.status = 'aktiv'
+                              AND h.module_epoch IS NOT DISTINCT FROM p_module_epoch)
+               AND EXISTS (SELECT 1 FROM public.moduldeployment d
+                            WHERE d.modul_id = r.eiermodul
+                              AND d.kontraktversjon = r.kontraktversjon
+                              AND d.kontrakt_hash = r.kontrakt_hash
+                              AND d.release_id = p_release_id      -- Codex P1:
+                              AND d.miljo = p_miljo                -- KALLERENS
+                              AND d.livslop = 'claiming')          -- deployment
+              INTO v_ok;
+            IF NOT v_ok THEN
+                v_hoppet := array_append(v_hoppet, v_id);
+                CONTINUE;   -- ikke claimbar av denne kalleren; prøv neste
+            END IF;
+            v_b_modul := r.eiermodul; v_b_ver := r.kontraktversjon;
+            v_b_hash := r.kontrakt_hash; v_b_epoch := p_module_epoch;
+            -- Verifisert av porten rett over: NETTOPP denne releasen er
+            -- den claiming deploymenten for kontrakten (Codex P1, runde
+            -- 20). Da er den også den eneste som kan ha tatt raden.
+            v_b_rel := p_release_id; v_b_miljo := p_miljo;
+        END IF;
+
+        RETURN QUERY
+        UPDATE public.oppdrag o
+           SET status = 'plukket',
+               owner_claim_id = p_claim_id,
+               owner_generation = o.owner_generation + 1,
+               -- Codex P1 (037): leasen dekker oppdragets EGEN frist.
+               -- `greatest(...)` strekker den til `utforelsesfrist` når
+               -- kallerens tall er kortere enn arbeidet plattformen selv
+               -- har gitt tid til; `least(...)` holder funksjonens tak på
+               -- 3600 s. Etter fristen er raden uansett ikke claimbar
+               -- (`k.utforelsesfrist > now()` over), så en lease som
+               -- slutter der stenger nøyaktig det vinduet der en
+               -- «utløpt» lease bare betydde at eieren fortsatt jobbet.
+               owner_lease_utloper = least(
+                   now() + '3600 seconds'::INTERVAL,
+                   greatest(now() + (v_lease || ' seconds')::INTERVAL,
+                            o.utforelsesfrist)),
+               modul_id = v_b_modul, kontraktversjon = v_b_ver,
+               kontrakt_hash = v_b_hash, module_epoch = v_b_epoch,
+               claim_release_id = v_b_rel, claim_miljo = v_b_miljo
+         WHERE o.id = v_id
+        RETURNING o.id, o.tenant, o.unntak_id, o.oppdragstype, o.handling,
+                  o.repair_operation_id, o.payload_kryptert, o.key_id, o.nonce,
+                  o.owner_generation, o.utforelsesfrist, o.evidensfrist;
+        RETURN;
+    END LOOP;
+END $$;
+RESET ROLE;
+
+-- ------------------------------------------------------------
 -- 1. Drillen: egen smal, immutabel tabell (lesesvar 2: detalj-jsonb i
 --    modulregister_hendelse har ingen skjemahåndheving; en rad som skal
 --    FK-refereres og bære kontrollpunktutfall fortjener kolonner).
@@ -563,6 +814,8 @@ DECLARE v_id BIGINT; v_drillet_digest TEXT; v_kandidat_digest TEXT;
         v_claim_stopp BOOLEAN; v_rene_utfall BOOLEAN; v_tilbake BOOLEAN;
         v_rull_ts TIMESTAMPTZ; v_kand_ts TIMESTAMPTZ; v_vindu BOOLEAN;
         v_kver INT; v_khash TEXT;
+        v_claimet_av_drillet BOOLEAN; v_claimet_av_rullback BOOLEAN;
+        v_claimet_av_kandidat BOOLEAN;
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended('modul:' || p_modul_id, 0));
     -- SP-2: samme nøkkel → samme rad, aldri to. Avvikende innhold på
@@ -790,6 +1043,41 @@ BEGIN
             ' ingen drill av denne', p_modul_id
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
+    -- ------------------------------------------------------------
+    -- HVER LEDD MÅ VÆRE CLAIMET AV DEN RELEASEN LEDDET HANDLER OM
+    -- (Codex P1, #117 runde 20).
+    --
+    -- Tidsvinduet over sier at oppdraget KRYSSET rullingen; det sier
+    -- ikke hvem som hadde det. For `utfort` bar det promoterte
+    -- artefaktet releasen, men `feilet` er også et rent utfall, og der
+    -- krevde artefaktlikheten bare at det IKKE fantes et promotert
+    -- artefakt på den drillede — fravær av en binding, ikke en binding.
+    -- Et vanlig oppdrag bestilt før rullingen og feilet etterpå av
+    -- rullbakk- eller kandidatarbeideren passerte derfor som den
+    -- drillede releasens inflight-utfall.
+    --
+    -- `claim_neste_oppdrag` stempler nå claim-releasen på raden (§0), og
+    -- de tre leddene måles mot den: inflight tilhører den DRILLEDE,
+    -- rullbakkleddet RULLBAKKEN, kandidatleddet KANDIDATEN. Sporet er
+    -- claim-funksjonens eget — ingen annen rolle kan skrive det — så
+    -- dette er den ene identiteten drillen faktisk hviler på, ikke en
+    -- slutning fra et fravær. Miljøet er med: samme release-ID i et
+    -- annet miljø er en annen deployment.
+    -- ------------------------------------------------------------
+    SELECT EXISTS (SELECT 1 FROM public.oppdrag o
+                    WHERE o.tenant = p_tenant AND o.id = p_inflight_oppdrag
+                      AND o.claim_release_id = p_drillet
+                      AND o.claim_miljo = p_miljo),
+           EXISTS (SELECT 1 FROM public.oppdrag o
+                    WHERE o.tenant = p_tenant AND o.id = p_rullback_oppdrag
+                      AND o.claim_release_id = p_rullback
+                      AND o.claim_miljo = p_miljo),
+           EXISTS (SELECT 1 FROM public.oppdrag o
+                    WHERE o.tenant = p_tenant AND o.id = p_kandidat_oppdrag
+                      AND o.claim_release_id = p_kandidat
+                      AND o.claim_miljo = p_miljo)
+      INTO v_claimet_av_drillet, v_claimet_av_rullback,
+           v_claimet_av_kandidat;
     -- (a)+(b2) claim-stopp: oppdraget som ble bestilt mens den drillede
     -- releasen drenerte, ble IKKE tatt av den — og ble tatt av
     -- rullbakken etter at hun ble bootet. Det andre leddet er det som
@@ -803,6 +1091,10 @@ BEGIN
     -- drillede drenerte, er ikke et claim-stopp.
     v_claim_stopp :=
         v_vindu
+        -- …og rullbakken må være den som CLAIMET det (runde 20): et
+        -- promotert artefakt med rullbakkens release-ID er skrevet av
+        -- arbeideren, mens claim-sporet er portens eget.
+        AND v_claimet_av_rullback
         AND NOT EXISTS (SELECT 1 FROM public.artefakt a
                      WHERE a.tenant = p_tenant
                        AND a.oppdrag_id = p_rullback_oppdrag
@@ -883,6 +1175,11 @@ BEGIN
      WHERE o.tenant = p_tenant AND o.id = p_inflight_oppdrag;
     v_kvittering := public.maal_rent_utfall(p_tenant, p_inflight_oppdrag);
     v_rene_utfall := v_status IN ('utfort', 'feilet') AND v_kvittering
+        -- DEN DRILLEDE RELEASEN HADDE DET INNE (Codex P1, runde 20).
+        -- Uten dette leddet er `feilet` et utfall uten eier: ingen
+        -- artefakt bærer releasen, og «det finnes ikke et promotert
+        -- artefakt på den drillede» er sant for alt arbeid i verden.
+        AND v_claimet_av_drillet
         AND ((v_status = 'utfort') = EXISTS (
                 SELECT 1 FROM public.artefakt a
                  WHERE a.tenant = p_tenant
@@ -904,6 +1201,9 @@ BEGIN
     -- — og oppdraget ble bestilt ETTER kandidatens registerbytte, så det
     -- lå og ventet på nøyaktig den som overtok (Codex P1, #117 runde 16).
     v_tilbake := v_vindu
+        -- …og kandidaten må ha CLAIMET det (runde 20): overtakelsen er
+        -- at nettopp hun tok raden, ikke at et artefakt bærer navnet.
+        AND v_claimet_av_kandidat
         AND EXISTS (SELECT 1 FROM public.artefakt a
                           WHERE a.tenant = p_tenant
                             AND a.oppdrag_id = p_kandidat_oppdrag
@@ -1540,8 +1840,11 @@ GRANT SELECT, INSERT ON ci_kjoringsattest, evidensfil_attest
 -- 16): utfallene måles mot NÅR oppdraget ble bestilt og når det ble
 -- terminalt, holdt opp mot registerets to `releasebytte`-overganger.
 -- Uten dem er «arbeidet krysset rullingen» ikke målbart.
+-- `claim_release_id`/`claim_miljo` er sporet claim-porten setter (§0), og
+-- den ene identiteten drillens tre ledd hviler på (Codex P1, runde 20).
 GRANT SELECT (tenant, id, status, kvittering, kvittering_signatur,
-              resultathash, eiermodul, opprettet, status_ts)
+              resultathash, eiermodul, opprettet, status_ts,
+              claim_release_id, claim_miljo)
     ON oppdrag TO disponit_modul_eier;
 GRANT SELECT (tenant, artefakt_id, oppdrag_id, release_id, tilstand)
     ON artefakt TO disponit_modul_eier;
