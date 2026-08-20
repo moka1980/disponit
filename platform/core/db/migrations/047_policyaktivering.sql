@@ -1112,6 +1112,81 @@ $$;
 ALTER FUNCTION public.policyversjon_i_kraft(
     BOOLEAN, TIMESTAMPTZ, TEXT, TIMESTAMPTZ) OWNER TO disponit_policy_eier;
 
+-- OPPHAVET MÅ VÆRE SANT ALLEREDE VED FØDSELEN (Codex P2).
+--
+-- Frysingen over verner et opphav som ALT er skrevet: ingen kan flytte
+-- det etterpå. Men fødselen var uvoktet, og `deploy/staging/migrer.py`
+-- gir kjøretidsrollen direkte INSERT på `policyutkast`. En direkte — eller
+-- en fremtidig, uoppmerksom — skriver kunne derfor sette inn et hvilket
+-- som helst innhold sammen med versjonen og generasjonen til en levende,
+-- urelatert kilde. `aktiver_policy` spør aldri om utkastet FAKTISK er en
+-- kopi, og etter aktiveringen står historikken og sier `bundet` om et
+-- opphav ingen har kopiert fra. Frysingen gjorde da bare løgnen varig.
+--
+-- Porten måler de tre påstandene «rullbakk» består av, i den rekkefølgen
+-- de kan felles:
+--   1. Generasjonen er NAVNGITT. Et versjonsnummer alene er en peker
+--      `slett_ubrukt_policy` frigjør; en rullbakk uten generasjon er en
+--      påstand uten adresse. (NULL er fortsatt lovlig i KOLONNEN — rader
+--      fra før 047 har den — men ingen ny rad får fødes slik.)
+--   2. Kilden FINNES, med nøyaktig den generasjonen, og har VÆRT I KRAFT.
+--      Samme prøve som `policyversjon_kilde` gjør for HTTP-veien, her for
+--      alle andre: en rullbakk til noe som aldri virket er ingen rullbakk.
+--   3. Innholdet ER kopien. Bare `meta.versjon` får avvike — opprettelsen
+--      bumper den, fordi den gamle versjonen aldri kan aktiveres om igjen.
+--
+-- Prøve 3 binder OPPRETTELSEN, ikke utkastets videre liv: et rullbakk-
+-- utkast kan redigeres som ethvert annet utkast, og da er det eierens
+-- egen, sporede handling. Det porten stenger, er den formen ingen har
+-- gjort: et utkast som fødes med et opphav det aldri hadde.
+CREATE OR REPLACE FUNCTION policyutkast_rullbakkeopphav_vakt()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    v_innhold JSONB;
+    v_i_kraft BOOLEAN;
+BEGIN
+    IF NEW.rollback_av_versjon IS NULL THEN
+        RETURN NEW;
+    END IF;
+    IF NEW.rollback_av_generasjon IS NULL THEN
+        RAISE EXCEPTION 'policyutkast: en rullbakk må navngi kildens '
+            'generasjon (%)', NEW.utkast_id
+            USING ERRCODE = 'check_violation',
+                  CONSTRAINT = 'utkast_rullbakk_krever_generasjon';
+    END IF;
+    SELECT p.innhold,
+           public.policyversjon_i_kraft(p.aktiv, p.bootstrap_aktivert_ts,
+                                        p.aktiveringskilde)
+      INTO v_innhold, v_i_kraft
+      FROM public.policyer p
+     WHERE p.tenant = NEW.tenant AND p.policy_id = NEW.policy_id
+       AND p.versjon = NEW.rollback_av_versjon
+       AND p.generasjon = NEW.rollback_av_generasjon;
+    IF NOT FOUND OR NOT coalesce(v_i_kraft, false) THEN
+        RAISE EXCEPTION 'policyutkast: rullbakkekilden %/% (generasjon %) '
+            'finnes ikke eller har aldri vært i kraft', NEW.policy_id,
+            NEW.rollback_av_versjon, NEW.rollback_av_generasjon
+            USING ERRCODE = 'check_violation',
+                  CONSTRAINT = 'utkast_rullbakk_kilde_finnes';
+    END IF;
+    -- `meta.versjon` er det ENESTE som får avvike. Sammenligningen tar
+    -- dokumentet i to deler i stedet for å `jsonb_set`-e: et utkast uten
+    -- `meta` skal falle på prøven, ikke få et `meta` skrevet inn av den.
+    IF (NEW.innhold - 'meta') IS DISTINCT FROM (v_innhold - 'meta')
+       OR ((NEW.innhold -> 'meta') - 'versjon')
+          IS DISTINCT FROM ((v_innhold -> 'meta') - 'versjon') THEN
+        RAISE EXCEPTION 'policyutkast: en rullbakk er en KOPI av kilden '
+            '(%/%)', NEW.policy_id, NEW.rollback_av_versjon
+            USING ERRCODE = 'check_violation',
+                  CONSTRAINT = 'utkast_rullbakk_er_kopi';
+    END IF;
+    RETURN NEW;
+END $$;
+
+CREATE TRIGGER policyutkast_rullbakkeopphav_vakt_trg
+  BEFORE INSERT ON policyutkast
+  FOR EACH ROW EXECUTE FUNCTION policyutkast_rullbakkeopphav_vakt();
+
 CREATE OR REPLACE FUNCTION policyversjoner_for_tenant(
     p_tenant TEXT, p_policy_id TEXT)
 RETURNS TABLE (versjon TEXT, innholds_hash TEXT, aktiv BOOLEAN,

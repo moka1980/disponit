@@ -1841,6 +1841,90 @@ def test_rullbakk_retry_beholder_et_lagret_svar_naar_kilden_er_borte(klient):
 
 
 @pg
+def test_rullbakkeopphavet_maa_vaere_sant_ved_innsettingen():
+    """Codex P2: frysingen vernet et opphav som ALT var skrevet.
+
+    Ingen kan flytte `rollback_av_versjon`/`-generasjon` etterpå — men
+    fødselen var uvoktet, og kjøretidsrollen har direkte INSERT på
+    `policyutkast`. En direkte eller uoppmerksom skriver kunne sette inn
+    et hvilket som helst innhold sammen med versjonen og generasjonen til
+    en levende, urelatert kilde. `aktiver_policy` spør aldri om utkastet
+    FAKTISK er en kopi, så historikken sto etterpå og sa `bundet` om et
+    opphav ingen hadde kopiert fra — og frysingen gjorde løgnen varig.
+
+    Alle fire påstandene måles her, som MIGRATOR (tabelleieren selv): er
+    porten sann for den, er den sann for alle.
+
+    Kontroll: dropp `policyutkast_rullbakkeopphav_vakt_trg`, så blir alle
+    de fire avvisningene under grønne innsettinger.
+    """
+    uid, pid, v = _full_aktivering(pakrevd=1)
+    gen = _gen(pid, v)
+    kolonner = ("INSERT INTO policyutkast (tenant,utkast_id,policy_id,"
+                "innhold,status,innholds_hash,opprettet_av,"
+                "rollback_av_versjon,rollback_av_generasjon) VALUES"
+                " (%s,%s,%s,%s::jsonb,'validert',%s,'forf',%s,%s)")
+
+    def _sett_inn(m, innhold, kilde_versjon, kilde_gen):
+        m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        m.execute(kolonner, (TEN, "u-" + secrets.token_hex(5), pid,
+                             json.dumps(innhold), "ih-" + secrets.token_hex(6),
+                             kilde_versjon, kilde_gen))
+
+    m = _c()
+    try:
+        m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        kilde = m.execute(
+            "SELECT innhold FROM policyer WHERE tenant=%s AND policy_id=%s"
+            "  AND versjon=%s", (TEN, pid, v)).fetchone()[0]
+        m.rollback()
+        kopi = json.loads(json.dumps(kilde))
+        kopi["meta"]["versjon"] = "9.9.9"
+
+        # 1: opphavet uten adresse — nummeret alene er en peker.
+        with pytest.raises(psycopg.errors.CheckViolation) as e1:
+            _sett_inn(m, kopi, v, None)
+        assert "generasjon" in str(e1.value), str(e1.value)
+        m.rollback()
+
+        # 2: en kilde som ikke finnes med den generasjonen.
+        with pytest.raises(psycopg.errors.CheckViolation) as e2:
+            _sett_inn(m, kopi, v, gen + 100000)
+        assert "finnes ikke" in str(e2.value), str(e2.value)
+        m.rollback()
+
+        # 3: riktig kilde, men innholdet er ikke kopien. Dette er selve
+        # fabrikasjonen: et fremmed dokument som bærer et ekte opphav.
+        with pytest.raises(psycopg.errors.CheckViolation) as e3:
+            _sett_inn(m, {"meta": {"policy_id": pid, "versjon": "9.9.9",
+                                   "status": "produksjon"}, "a": 2}, v, gen)
+        assert "KOPI" in str(e3.value), str(e3.value)
+        m.rollback()
+
+        # 4: en kilde som ALDRI har vært i kraft er ingen rullbakk-kilde —
+        # samme prøve som `policyversjon_kilde` gjør for HTTP-veien.
+        m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        uaktivert = m.execute(
+            "INSERT INTO policyer (tenant, policy_id, versjon, innholds_hash,"
+            " status, innhold, aktiv, aktiveringskilde) VALUES"
+            " (%s,%s,'8.0.0','ih-u','produksjon',%s::jsonb,false,'bootstrap')"
+            " RETURNING generasjon",
+            (TEN, pid, json.dumps(kilde))).fetchone()[0]
+        with pytest.raises(psycopg.errors.CheckViolation) as e4:
+            m.execute(kolonner, (TEN, "u-" + secrets.token_hex(5), pid,
+                                 json.dumps(kopi), "ih-x", "8.0.0", uaktivert))
+        assert "i kraft" in str(e4.value), str(e4.value)
+        m.rollback()
+
+        # …og den ekte kopien slipper gjennom. Porten er en port, ikke en
+        # mur: det er nettopp denne formen `opprett_utkast` lager.
+        _sett_inn(m, kopi, v, gen)
+        m.rollback()
+    finally:
+        m.close()
+
+
+@pg
 def test_rullbakkeopphavet_er_frosset_naar_historikken_leser_det(klient):
     """Codex P2: historikken rapporterer `rollback_av_versjon` som LINJE.
 
@@ -1999,16 +2083,39 @@ def test_sql_gaten_kjenner_de_samme_loftbare_kodene():
 def _rullbakkutkast(c, uid, pid, versjon, kilde_versjon, kilde_gen):
     """Et validert utkast som BÆRER et rullbakkeopphav. `_validert_utkast`
     kjenner ikke kolonnene; her settes de ved INNSETTINGEN, som i porten —
-    de er frosset etterpå."""
-    innhold = ('{"meta":{"policy_id":"' + pid + '","versjon":"' + versjon
-               + '","status":"produksjon"},"a":1}')
-    c.execute(
-        "INSERT INTO policyutkast (tenant,utkast_id,policy_id,innhold,"
-        "status,innholds_hash,opprettet_av,rollback_av_versjon,"
-        "rollback_av_generasjon) VALUES"
-        " (%s,%s,%s,%s::jsonb,'validert',%s,'forf',%s,%s)",
-        (TEN, uid, pid, innhold, "ih-" + secrets.token_hex(8),
-         kilde_versjon, kilde_gen))
+    de er frosset etterpå.
+
+    Innholdet er en EKTE kopi av kildeversjonen, med `meta.versjon` bumpet:
+    det er formen `opprett_utkast` lager, og etter Codex P2 den eneste
+    `policyutkast_rullbakkeopphav_vakt` slipper inn.
+
+    `borte` og `ubundet` er derimot tilstander TIDEN lager — kilden ble
+    slettet etter at kopien ble tatt, eller utkastet er eldre enn 047.
+    Ingen skriver får lage dem, så fiksturen bygger dem med vakten av,
+    slik den bygger backfilte rader i `_backfill_historisk`.
+    """
+    kilde_innhold, levende_gen = c.execute(
+        "SELECT innhold, generasjon FROM policyer WHERE tenant=%s"
+        "  AND policy_id=%s AND versjon=%s",
+        (TEN, pid, kilde_versjon)).fetchone()
+    innhold = json.loads(json.dumps(kilde_innhold))
+    innhold["meta"]["versjon"] = versjon
+    sql = ("INSERT INTO policyutkast (tenant,utkast_id,policy_id,innhold,"
+           "status,innholds_hash,opprettet_av,rollback_av_versjon,"
+           "rollback_av_generasjon) VALUES"
+           " (%s,%s,%s,%s::jsonb,'validert',%s,'forf',%s,%s)")
+    param = (TEN, uid, pid, json.dumps(innhold),
+             "ih-" + secrets.token_hex(8), kilde_versjon, kilde_gen)
+    if kilde_gen == levende_gen:
+        c.execute(sql, param)
+        return
+    c.execute("ALTER TABLE policyutkast DISABLE TRIGGER"
+              " policyutkast_rullbakkeopphav_vakt_trg")
+    try:
+        c.execute(sql, param)
+    finally:
+        c.execute("ALTER TABLE policyutkast ENABLE TRIGGER"
+                  " policyutkast_rullbakkeopphav_vakt_trg")
 
 
 @pg
