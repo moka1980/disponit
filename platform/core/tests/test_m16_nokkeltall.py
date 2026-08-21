@@ -77,12 +77,21 @@ def _kall(conn, tenant, fn, fra, til, *ekstra):
     _sett_kontekst(conn, tenant)
     args = (tenant, fra, til, *ekstra)
     rader = conn.execute(
-        f"SELECT nokkel, antall FROM {fn}({','.join(['%s'] * len(args))})",
+        f"SELECT er_total, nokkel, antall FROM"
+        f" {fn}({','.join(['%s'] * len(args))})",
         args).fetchall()
     conn.rollback()
-    total = dict(rader).get("__total__", 0)
-    deler = {k: v for k, v in rader if k != "__total__"}
-    return total, deler
+    return _del(rader)
+
+
+def _del(rader):
+    """(er_total, nokkel, antall) → (total, deler).
+
+    Skillet er RADENS egenskap, ikke en reservert nøkkelverdi: ingen
+    kategoristreng kan derfor forveksles med aggregatet.
+    """
+    total = next((a for er_total, _, a in rader if er_total), 0)
+    return total, {k: a for er_total, k, a in rader if not er_total}
 
 
 # ---------------------------------------------------------------------------
@@ -181,14 +190,13 @@ def test_ukjent_verdi_telles_synlig_i_totalen(migrator):
     try:
         _sett_kontekst(rt, POLTEN)
         rader = rt.execute(
-            "SELECT nokkel, antall FROM m16_aktiveringer(%s,%s,%s)"
-            " WHERE partisjon='kvorumskrav'",
+            "SELECT er_total, nokkel, antall FROM"
+            " m16_aktiveringer(%s,%s,%s) WHERE partisjon='kvorumskrav'",
             (POLTEN, fra, til)).fetchall()
         rt.rollback()
     finally:
         rt.close()
-    total = dict(rader)["__total__"]
-    deler = {k: v for k, v in rader if k != "__total__"}
+    total, deler = _del(rader)
     assert deler.get("ukjent", 0) >= 1
     assert sum(deler.values()) == total
 
@@ -251,6 +259,47 @@ def test_grensehendelse_tilhorer_neste_vindu(migrator):
     finally:
         rt.close()
     assert (for1, etter) == (0, 1)
+
+
+@pg
+def test_aggregatmerket_kolliderer_ikke_med_en_ekte_kategori(migrator):
+    """Merket for totalraden er en egenskap ved RADEN (`er_total`), ikke
+    en reservert nøkkelverdi.
+
+    `unntak.kategori` er en fri TEXT-kolonne uten skranke, så `__total__`
+    — strengen merket besto av før — er en fullt lovlig kategori. Sto den
+    i samme kolonne som kategoriene, var en ekte gruppe ikke til å skille
+    fra aggregatet: API-laget leste begge som total, suminvarianten
+    sprakk, og `/v1/nokkeltall` svarte `intern_feil` på data som var helt
+    i orden. Med bare den ene kategorien i settet ble kortet i stedet
+    tegnet som om det ikke hadde en eneste rad.
+
+    Testen bruker nettopp den strengen, fordi det er den ETABLERTE
+    kollisjonen; poenget er at INGEN kategoristreng har en særstilling.
+    """
+    ten = "t-m16-" + secrets.token_hex(3)
+    naa = datetime.now(timezone.utc)
+    _sett_kontekst(migrator, ten)
+    _sak(migrator, ten, ts=naa, kategori="__total__")
+    _sak(migrator, ten, ts=naa, kategori="__total__")
+    _sak(migrator, ten, ts=naa, kategori="over_grense")
+    migrator.commit()
+    fra, til = naa - timedelta(hours=1), naa + timedelta(hours=1)
+    rt = _rt()
+    try:
+        total, deler = _kall(rt, ten, "m16_unntak_aktivitet", fra, til,
+                             ALLE_SAKSTYPER)
+    finally:
+        rt.close()
+    assert total == 3
+    assert deler == {"__total__": 2, "over_grense": 1}
+    # Suminvarianten er hele poenget: API-laget skal kunne stole på den
+    # uten å vite hvilke strenger kategorikolonnen inneholder.
+    assert sum(deler.values()) == total
+    from api.lesing import _partisjon
+    assert _partisjon([(True, None, 3), (False, "__total__", 2),
+                       (False, "over_grense", 1)]) == {
+        "total": 3, "deler": {"__total__": 2, "over_grense": 1}}
 
 
 @pg
@@ -542,15 +591,19 @@ def test_rettighetene_folger_signaturene_som_faktisk_finnes(migrator):
 
 
 @pg
-def test_rettighetsblokken_gjentar_ikke_argumentlistene():
+def test_ingen_setning_gjentar_argumentlistene():
     """Roten under funnet over: signaturen skal stå ETT sted i 051 —
-    i CREATE. En REVOKE/GRANT med egen argumentliste er en andre
+    i CREATE. En REVOKE/GRANT/DROP med egen argumentliste er en andre
     utgave som driver fra definisjonen i stillhet, og det er nettopp
-    slik drift som brøt migrasjonen. DROP-linjene er unntaket: de
-    navngir med vilje overlaster som IKKE lenger skal finnes."""
+    slik drift som brøt migrasjonen.
+
+    DROP var unntaket til denne regelen, og det holdt akkurat til
+    returtypene endret seg: da måtte ENDA en håndskrevet signaturliste
+    holdes i takt med CREATE-ene. Både ryddingen og rettighetene spør
+    nå katalogen, så unntaket finnes ikke lenger."""
     kode = [l for l in M051.read_text(encoding="utf-8").splitlines()
             if not l.strip().startswith("--")]
     for linje in kode:
-        if re.search(r"\b(REVOKE|GRANT)\b.*\bON FUNCTION\b", linje):
+        if re.search(r"\b(REVOKE|GRANT|DROP)\b.*\bFUNCTION\b", linje):
             assert "||" in linje, \
-                f"rettighetssetning med håndskrevet signatur: {linje!r}"
+                f"setning med håndskrevet signatur: {linje!r}"

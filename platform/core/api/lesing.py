@@ -167,17 +167,25 @@ def _nokkeltall_vindu(request: Request) -> tuple[datetime, datetime] | None:
 
 
 def _partisjon(rader) -> dict:
-    """(nokkel, antall)-rader → {'total': n, 'deler': {nokkel: antall}}.
+    """(er_total, nokkel, antall) → {'total': n, 'deler': {nokkel: antall}}.
 
     Totalen og delene kommer fra SAMME skann (GROUPING SETS i defineren),
     så suminvarianten holder per konstruksjon — den KONTROLLERES likevel
     her, fail-closed: et avvik er en definerfeil og skal høres, ikke
     vises som pene tall.
+
+    Aggregatet kjennes på `er_total` — en egenskap ved RADEN — og ikke på
+    en reservert nøkkelverdi. Merket var før strengen `__total__` i samme
+    kolonne som kategoriene, men `unntak.kategori` er en fri TEXT-kolonne:
+    en sak med nøyaktig den kategorien var ikke til å skille fra
+    aggregatet, og kontrollen under ville da slått ut på data som var helt
+    i orden — eller, i et sett med bare den kategorien, gitt et kort uten
+    en eneste rad. Nå finnes det ingen kategoristreng som kan kollidere.
     """
     total = 0
     deler: dict[str, int] = {}
-    for nokkel, antall in rader:
-        if nokkel == "__total__":
+    for er_total, nokkel, antall in rader:
+        if er_total:
             total = antall
         else:
             deler[nokkel] = antall
@@ -198,17 +206,18 @@ def nokkeltall(tjeneste, request: Request) -> Response:
         fra, til = vindu
         arg = (auth.tenant, fra, til)
         beslutninger = _partisjon(conn.execute(
-            "SELECT nokkel, antall FROM m16_beslutninger(%s,%s,%s)",
+            "SELECT er_total, nokkel, antall FROM m16_beslutninger(%s,%s,%s)",
             arg).fetchall())
         reservasjoner = conn.execute(
             "SELECT m16_frekvensreservasjoner(%s,%s,%s)", arg).fetchone()[0]
         aktiveringer: dict[str, list] = {}
-        for partisjon, nokkel, antall in conn.execute(
-                "SELECT partisjon, nokkel, antall FROM"
+        for partisjon, er_total, nokkel, antall in conn.execute(
+                "SELECT partisjon, er_total, nokkel, antall FROM"
                 " m16_aktiveringer(%s,%s,%s)", arg).fetchall():
-            aktiveringer.setdefault(partisjon, []).append((nokkel, antall))
+            aktiveringer.setdefault(partisjon, []).append(
+                (er_total, nokkel, antall))
         oppdrag = _partisjon(conn.execute(
-            "SELECT nokkel, antall FROM m16_oppdrag(%s,%s,%s)",
+            "SELECT er_total, nokkel, antall FROM m16_oppdrag(%s,%s,%s)",
             arg).fetchall())
         # Terminalsettet er app-lagets ENE definisjon — statusmaskinen
         # kopieres aldri inn i SQL (oversikt-lærdommen fra #105-æraen).
@@ -224,7 +233,8 @@ def nokkeltall(tjeneste, request: Request) -> Response:
         terminale = list(TERMINALE_UNNTAKSSTATUSER)
         sakstyper = list(synlige_sakstyper(auth.scopes))
         aktivitet = _partisjon(conn.execute(
-            "SELECT nokkel, antall FROM m16_unntak_aktivitet(%s,%s,%s,%s)",
+            "SELECT er_total, nokkel, antall FROM"
+            " m16_unntak_aktivitet(%s,%s,%s,%s)",
             (*arg, sakstyper)).fetchall())
         # Radlisten har en grense — og grensen er ALDRI stille: defineren
         # returnerer hele tellingen i vinduet (`antall_totalt`, samme
@@ -250,7 +260,7 @@ def nokkeltall(tjeneste, request: Request) -> Response:
             "SELECT m16_unntak_apne(%s,%s,%s)",
             (auth.tenant, terminale, sakstyper)).fetchone()[0]
         tick = _partisjon(conn.execute(
-            "SELECT nokkel, antall FROM m16_tick(%s,%s,%s)",
+            "SELECT er_total, nokkel, antall FROM m16_tick(%s,%s,%s)",
             arg).fetchall())
         return kanonisk_json(
             {"vindu_start": fra.isoformat(), "vindu_slutt": til.isoformat(),
