@@ -1117,5 +1117,6 @@
   "grunnkode.utenfor_tidsvindu": "Outside the time window",
   "grunnkode.rolle_ikke_tillatt": "Role not allowed",
   "grunnkode.dataklasse_ikke_tillatt": "Data class not allowed",
-  "grunnkode.modus_alltid_stopp": "Action is set to always stop"
+  "grunnkode.modus_alltid_stopp": "Action is set to always stop",
+  "site.katalog.m57.navn": "Recruitment agent (ATS)"
 }

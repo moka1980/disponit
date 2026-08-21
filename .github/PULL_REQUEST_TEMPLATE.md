@@ -11,7 +11,7 @@
 ## Codex merge-porter (steg 4)
 - [ ] CI grønn — inkludert negative policytester (ingen fjernet/svekket)
 - [ ] Ingen kodevei uten ved_brudd-håndtering
-- [ ] Akseptansemapping mot v8 komplett i beskrivelsen
+- [ ] Akseptansemapping mot gjeldende prototype (`docs/spesifikasjon/`) komplett i beskrivelsen
 - [ ] Ingen secrets; ingen skrivetilgang utenom policymotoren
 
 ## Filplassering

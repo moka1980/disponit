@@ -1117,5 +1117,6 @@
   "grunnkode.utenfor_tidsvindu": "Utenfor tidsvinduet",
   "grunnkode.rolle_ikke_tillatt": "Rolle ikke tillatt",
   "grunnkode.dataklasse_ikke_tillatt": "Dataklasse ikke tillatt",
-  "grunnkode.modus_alltid_stopp": "Handlingen står i alltid stopp"
+  "grunnkode.modus_alltid_stopp": "Handlingen står i alltid stopp",
+  "site.katalog.m57.navn": "Rekrutteringsagent (ATS)"
 }

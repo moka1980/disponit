@@ -50,7 +50,7 @@ jobs:
       - name: "Port: norsk uten ASCII-normalisering i sannhetskilden"
         run: |
           python prototype/sjekk_norsk.py --selftest
-          python prototype/sjekk_norsk.py docs/spesifikasjon/disponit-prototype-v8.html
+          python prototype/sjekk_norsk.py docs/spesifikasjon/disponit-prototype-v9.html
       - name: "Databaseroller (speiler deploy/staging/oppsett-postgresql.sh)"
         env: {PGPASSWORD: postgres}
         run: |
