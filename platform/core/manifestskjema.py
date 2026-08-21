@@ -62,7 +62,15 @@ KRAVGRENSER: dict[str, dict] = {
         "min_kandidat_claims": 1,
         "min_kandidat_promoterte": 1,
         "min_ventetid_s": 20.0,
-        "rene_utfall": ("utfort", "feilet", "avbrutt"),
+        # TO utfall, ikke tre (Codex P2, #117). `avbrutt` sto her, men
+        # ingen annen del av apparatet kjenner det: `registrer_moduldrill`
+        # regner `rene_utfall_ok` bare for `oppdrag.status IN ('utfort',
+        # 'feilet')`, og drillsonden venter bare på de to. Filvalidatoren
+        # kunne altså godkjenne — og manifestbindingen merke rullbakk-
+        # punktet grønt på — evidens akseptbasen ALDRI kan kvalifisere.
+        # En grense som er videre enn den den håndhever, er ingen grense;
+        # den er et løfte som brytes ett steg senere.
+        "rene_utfall": ("utfort", "feilet"),
     },
     "perf-m01-v1": {
         "min_antall": 6000,

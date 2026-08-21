@@ -2569,6 +2569,25 @@ def test_ventetidsterskelen_er_den_samme_i_base_og_manifestskjema(migrator):
 
 
 @pg
+def test_de_rene_utfallene_er_de_samme_i_base_og_manifestskjema(migrator):
+    """Codex' P2 (runde 22): filvalidatoren godtok `avbrutt` som et rent
+    inflight-utfall. Basen har aldri kjent det — `rene_utfall_ok` regnes
+    bare for `oppdrag.status IN ('utfort','feilet')` — og drillsonden
+    venter bare på de to. Et manifest kunne derfor binde og merke
+    rullbakkpunktet grønt på evidens akseptbasen ALDRI kan kvalifisere:
+    en drill som består i fila og faller i basen. Settet bor i basen, der
+    det håndheves, og prøven binder de to."""
+    from manifestskjema import KRAVGRENSER
+    fra_basen = migrator.execute(
+        "SELECT moduldrill_rene_utfall()").fetchone()[0]
+    assert tuple(fra_basen) == KRAVGRENSER["rollback-m56-v1"]["rene_utfall"]
+    # …og `avbrutt` er ikke ett av dem: `rene_utfall_ok` leser NØYAKTIG
+    # denne lista, og drillsonden venter på de samme to statusene.
+    assert "avbrutt" not in fra_basen
+    migrator.rollback()
+
+
+@pg
 def test_admin_kan_ikke_skrive_gronn_drill_uten_arbeid(migrator):
     """Codex' P1 (runde 5): hele evidensapparatet lå i `m56-aksept.py`.
 

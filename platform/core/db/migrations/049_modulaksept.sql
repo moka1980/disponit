@@ -864,6 +864,22 @@ CREATE POLICY modulaksept_punkt_eier ON modulaksept_punkt
 CREATE OR REPLACE FUNCTION moduldrill_min_ventetid_s()
 RETURNS NUMERIC LANGUAGE sql IMMUTABLE AS $$ SELECT 20.0::NUMERIC $$;
 
+-- …og SAMME GREP for de rene utfallene (Codex P2, #117 runde 22).
+-- `manifestskjema.KRAVGRENSER` godtok `avbrutt` som et rent inflight-
+-- utfall. Basen har aldri kjent det: `rene_utfall_ok` regnes bare for
+-- `oppdrag.status IN ('utfort','feilet')`, og drillsonden venter bare på
+-- de to. Filvalidatoren kunne derfor godkjenne — og manifestbindingen
+-- merke rullbakkpunktet grønt på — evidens akseptbasen ALDRI kan
+-- kvalifisere: en drill som består i fila og faller i basen.
+-- Settet bor her, der det håndheves, og
+-- `test_de_rene_utfallene_er_de_samme_i_base_og_manifestskjema` binder
+-- det til filvalidatoren, så de to ikke kan gli fra hverandre i
+-- stillhet. Samme offentlighet som terskelen over: å lese kravet er
+-- ingen fullmakt.
+CREATE OR REPLACE FUNCTION moduldrill_rene_utfall()
+RETURNS TEXT[] LANGUAGE sql IMMUTABLE
+AS $$ SELECT ARRAY['utfort', 'feilet']::TEXT[] $$;
+
 -- ------------------------------------------------------------
 -- 6. Funksjonene — modul_eier-eide definere, EXECUTE kun til
 --    disponit_modules_admin (014-mønsteret). INSERT på tabellene er
@@ -1269,7 +1285,8 @@ BEGIN
       FROM public.oppdrag o
      WHERE o.tenant = p_tenant AND o.id = p_inflight_oppdrag;
     v_kvittering := public.maal_rent_utfall(p_tenant, p_inflight_oppdrag);
-    v_rene_utfall := v_status IN ('utfort', 'feilet') AND v_kvittering
+    v_rene_utfall := v_status = ANY (public.moduldrill_rene_utfall())
+        AND v_kvittering
         -- DEN DRILLEDE RELEASEN HADDE DET INNE (Codex P1, runde 20).
         -- Uten dette leddet er `feilet` et utfall uten eier: ingen
         -- artefakt bærer releasen, og «det finnes ikke et promotert
