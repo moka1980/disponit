@@ -129,6 +129,9 @@ INSERT INTO akseptkrav_ci (krav_id, arbeidsflyt, hendelse, gren,
 -- gjelder PÅ TVERS av kravrevisjoner. Samme bytes, samme punkt, to
 -- ulike måletall er fortsatt to motstridende referater av én fil, og
 -- det høres fortsatt — nå også når de to står under hvert sitt krav.
+-- MEN: en kontroll som flyttes ut av nøkkelen mister nøkkelens
+-- serialisering og må ta den selv. Funksjonen under låser derfor på
+-- bytene før den leser (Codex P2, #121 runde 2).
 -- Tabellen eies av migrator (049: «de nye eies av migrator»), så
 -- nøkkelbyttet trenger intet eiervindu. Attestene som alt står blir
 -- liggende: `(sha256, punkt)` er unik i den gamle nøkkelen, så hver
@@ -163,6 +166,26 @@ BEGIN
             ' uten måletall er ikke et referat'
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
+    -- LÅSEN FØR KONTROLLEN (Codex P2, #121 runde 2).
+    --
+    -- I 049 var motsigelseskontrollen under gjorde jobben SAMMEN med
+    -- nøkkelen: PK-en var `(sha256, punkt)`, så to samtidige attester om
+    -- de samme bytene kolliderte i unikindeksen uansett hva SELECT-en
+    -- rakk å se. Nøkkelbyttet over gir bort nettopp den serialiseringen
+    -- — `(sha256, punkt, krav_id)` lar to revisjoner stå side om side,
+    -- som er hele poenget, men da kan også to SESJONER som skriver hver
+    -- sin revisjon begge se ingen konflikt og begge sette inn. Resultatet
+    -- ville vært to immutable, motstridende referater om én fil: akkurat
+    -- det kontrollen finnes for å hindre, tapt i et kappløp.
+    --
+    -- Låsen er transaksjonsscopet og slippes ved commit/rollback. Den
+    -- nøkles på BYTENE, ikke på (bytes, punkt): hele kallet er ÉN
+    -- fillesning, alle punktene hører til samme sha, og én lås pr. kall
+    -- er både en overmengde av det invarianten trenger og fri for
+    -- låserekkefølge mellom punktene. Attester skrives én gang pr. fil
+    -- pr. grense, så det koster ingenting å ta den grovt.
+    PERFORM pg_advisory_xact_lock(hashtextextended('evidensfil:' || v_sha,
+                                                   0));
     FOR v_punkt, v_verdi IN
         SELECT j.k, j.v #>> '{}' FROM jsonb_each(p_punkter) AS j(k, v)
          ORDER BY j.k LOOP

@@ -1222,6 +1222,67 @@ def test_en_fillesning_baerer_flere_kravrevisjoner(migrator):
 
 
 @pg
+def test_motsigelseskontrollen_serialiseres_paa_bytene(migrator):
+    """Codex' P2 (#121 runde 2): kontrollen som ble flyttet ut av
+    nøkkelen må ta nøkkelens serialisering med seg.
+
+    049 nøklet attesten på `(sha256, punkt)`, så motsigelseskontrollen
+    hadde unikindeksen i ryggen: to samtidige attester om de samme
+    bytene og det samme punktet kolliderte i indeksen uansett hva
+    SELECT-en rakk å se. 050 løfter `krav_id` inn i nøkkelen — det er
+    hele poenget med `test_en_fillesning_baerer_flere_kravrevisjoner` —
+    og gir dermed bort den serialiseringen: to sesjoner som attesterer
+    SAMME fil under HVER SIN revisjon ser begge ingen konflikt i sitt
+    eget snapshot, og begge innsettingene lykkes fordi radene skiller
+    seg på `krav_id`. To immutable, motstridende referater om én fil,
+    tapt i et kappløp.
+
+    Testen holder låsen fra en annen forbindelse og krever at kallet
+    STOPPER der. Uten låsen går det rett gjennom.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `pg_advisory_xact_lock` fra
+    `attester_evidensfil` i 050, eller nøkle den med noe annet enn
+    `hashtextextended('evidensfil:' || sha, 0)`.
+    """
+    from db.pg import koble
+    migrator.execute("RESET ROLE")
+    sha = secrets.token_hex(32)
+    maalt = dict(migrator.execute(
+        "SELECT punkt, maalt_krav FROM akseptkrav_punkt"
+        "  WHERE krav_id=%s AND kilde_type='evidensfil'",
+        (KRAV,)).fetchall())
+    migrator.rollback()
+
+    holder = koble(MIGRATOR_DSN)
+    v = _verifikator()
+    try:
+        holder.execute("SELECT pg_advisory_xact_lock("
+                       "hashtextextended(%s, 0))", ("evidensfil:" + sha,))
+        v.execute("SET lock_timeout = '750ms'")
+        with pytest.raises(psycopg.errors.LockNotAvailable):
+            v.execute("SELECT attester_evidensfil(%s,%s,%s,%s::jsonb,'test')",
+                      (KRAV, EVIDENS_STI, sha, json.dumps(maalt)))
+        v.rollback()
+    finally:
+        holder.rollback()          # slipper låsen
+        holder.close()
+        v.close()
+
+    migrator.execute("RESET ROLE")
+    assert migrator.execute(
+        "SELECT count(*) FROM evidensfil_attest WHERE sha256=%s",
+        (sha,)).fetchone()[0] == 0, "attesten slapp forbi låsen"
+    migrator.rollback()
+    # …og med låsen sluppet går den samme lesningen inn som før.
+    _evidens_attest(migrator, sha, maalt=maalt)
+    migrator.execute("RESET ROLE")
+    assert migrator.execute(
+        "SELECT count(*) FROM evidensfil_attest WHERE sha256=%s",
+        (sha,)).fetchone()[0] == len(maalt)
+    migrator.rollback()
+
+
+@pg
 def test_hendelse_drill_og_punkt_er_append_only(migrator):
     """Port 6: UPDATE/DELETE avvises på alle tre tabellene — også for
     migrator."""
