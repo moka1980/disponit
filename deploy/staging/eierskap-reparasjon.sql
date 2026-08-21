@@ -216,6 +216,7 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'registrer_release(text,text,integer,text,text,text,text)', 'disponit_modul_eier'),
     ('FUNCTION', 'registrer_moduldrill(text,text,text,text,text,text,bigint,bigint,bigint,bigint,text,text,text,timestamp with time zone)', 'disponit_modul_eier'),
     ('FUNCTION', 'aksepter_moduldeployment(text,text,text,bigint,text,text,uuid,text,text,text,text,jsonb,text,text)', 'disponit_modul_eier'),
+    ('FUNCTION', 'aksepter_moduldeployment(text,text,text,bigint,text,text,uuid,text,text,text,text,jsonb,text,text,bigint[])', 'disponit_modul_eier'),
     ('FUNCTION', 'attester_ci_kjoring(text,text,text,text,text,text,text)', 'disponit_modul_eier'),
     -- 052: attesten navngir også drillartefaktet den ble regnet mot
     -- (Codex P1, PR #123) — signaturen er den nye, seksargs. BEGGE formene
@@ -229,8 +230,15 @@ INSERT INTO _design VALUES
     -- designrader uten objekt hoppes stille over.
     ('FUNCTION', 'attester_evidensfil(text,text,text,jsonb,text)',    'disponit_modul_eier'),
     ('FUNCTION', 'attester_evidensfil(text,text,text,jsonb,text,text)', 'disponit_modul_eier'),
+    ('FUNCTION', 'attester_evidensfil(text,text,text,jsonb,text,text,text)', 'disponit_modul_eier'),
     ('FUNCTION', 'maal_rent_utfall(text,bigint)',                     'disponit_modul_eier'),
+    -- 053: signaturbyttene. De gamle formene står TRANSITORISK (#123
+    -- r3-fella: reparasjonen kjører FØR migrer.py på en base som ennå
+    -- står på 052, og steg 2 gir strøgods til migrator — som ikke kan
+    -- droppe på eierens vegne). Designrader uten objekt hoppes stille
+    -- over etter 053.
     ('FUNCTION', 'maal_kjoringsattest(text,bigint,text,text)',        'disponit_modul_eier'),
+    ('FUNCTION', 'maal_kjoringsattest(text,bigint,text,text,text,text)', 'disponit_modul_eier'),
     ('FUNCTION', 'bytt_release(text,text,text,integer,text,text)',    'disponit_modul_eier'),
     ('FUNCTION', 'pensjoner_release(text,text,text,text)',            'disponit_modul_eier'),
     ('FUNCTION', 'noddeaktiver_modul(text,text,text)',               'disponit_modul_eier'),
