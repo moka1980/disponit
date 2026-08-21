@@ -13,7 +13,7 @@
 // «åpne nå» er TILSTAND og står utenfor vindusvelgeren, med egen
 // ledetekst — velgeren rører den ikke.
 import { el, sett } from "../dom.js";
-import { t } from "../i18n.js";
+import { t, harNokkel } from "../i18n.js";
 import { hentJson, UautorisertFeil, IngenTilgangFeil } from "../api.js";
 import { Tidspunkt, Feiltilstand, TilgangsVakt } from "../komponenter.js";
 import { flateHode } from "./felles.js";
@@ -31,13 +31,30 @@ function soyle(antall, maks) {
   return rot;
 }
 
+// Partisjonsverdiene ER databasens maskinkoder («utfort», «over_grense»,
+// «hoppet_over»), og de fleste av dem har ALT en oversatt nøkkel andre
+// steder i repoet. Uten denne koblingen falt de tilbake til den rå koden,
+// og i engelsk visning sto halve flaten på norsk. Hvert kort peker derfor
+// på SIN kanoniske nøkkelfamilie i stedet for at nøkkeltallflaten bygger
+// et parallelt oversettelsessett som må vedlikeholdes ved siden av.
+const NOKKELFAMILIER = {
+  oppdrag: (v) => `art.outbox_${v}`,     // oppdragsstatus (jf. lesing.py)
+  unntak: (v) => `unntak.${v}`,          // unntakskategori
+  tick: (v) => `ui.plan.utfall.${v}`,    // planutfall (044)
+};
+
+// Rekkefølge: kortets egen nøkkel, så flatens generelle, så repoets
+// kanoniske familie. Den rå koden er SISTE utvei — en ukjent verdi skal
+// fortsatt vises (port 1: aldri stille utenfor totalen), ikke skjules.
 function nokkelTekst(kortNokkel, verdi) {
-  const spesifikk = `ui.nokkeltall.verdi.${kortNokkel}.${verdi}`;
-  const generell = `ui.nokkeltall.verdi.${verdi}`;
-  const s = t(spesifikk);
-  if (s !== spesifikk) return s;
-  const g = t(generell);
-  return g === generell ? verdi : g;
+  const familie = NOKKELFAMILIER[kortNokkel];
+  const kandidater = [`ui.nokkeltall.verdi.${kortNokkel}.${verdi}`,
+                      `ui.nokkeltall.verdi.${verdi}`];
+  if (familie) kandidater.push(familie(verdi));
+  for (const k of kandidater) {
+    if (harNokkel(k)) return t(k);
+  }
+  return verdi;
 }
 
 // Ett partisjonskort: <table> med rader (nokkel, antall, søyle) + total.

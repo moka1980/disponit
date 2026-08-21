@@ -4,8 +4,15 @@
 // som eksplisitt innhold. Ingen delt fixture.
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { NB, alvorligeBrudd, nyttBrett } from "./hjelp.js";
 import { settI18nForTest, t } from "../static/js/i18n.js";
+
+const EN = JSON.parse(readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)),
+       "../../../../locales/en.json"), "utf-8"));
 import { visNokkeltall } from "../static/js/flater/nokkeltall.js";
 
 settI18nForTest(NB, "nb");
@@ -206,6 +213,38 @@ test("Nøkkeltall: et utdatert vindussvar overskriver aldri et nyere", async () 
     "en utdatert feil erstattet et ferskt vindusresultat");
   assert.ok(h.querySelectorAll("table").length >= 5, "kortene ble revet ned");
   globalThis.fetch = STANDARD_FETCH;
+});
+
+test("Nøkkeltall: engelsk visning viser aldri de norske maskinkodene", async () => {
+  SVAR = { "/v1/nokkeltall": { ...SVARFORM,
+    tick: { total: 3, deler: { tillat: 2, hoppet_over: 1 } } } };
+  settI18nForTest(EN, "en");
+  try {
+    const h = nyHoved();
+    visNokkeltall(h, ctx());
+    await vent(() => h.querySelectorAll("table").length >= 5);
+    const tekst = h.textContent;
+    // Hver kode har en kanonisk nøkkelfamilie i repoet — den skal brukes.
+    for (const [kode, engelsk] of [
+      ["utfort", EN["art.outbox_utfort"]],
+      ["feilet", EN["art.outbox_feilet"]],
+      ["over_grense", EN["unntak.over_grense"]],
+      ["styrt", EN["ui.nokkeltall.verdi.aktivering.styrt"]],
+      ["historisk", EN["ui.nokkeltall.verdi.aktivering.historisk"]],
+      ["hoppet_over", EN["ui.plan.utfall.hoppet_over"]],
+      ["tillat", EN["ui.plan.utfall.tillat"]],
+    ]) {
+      assert.ok(tekst.includes(engelsk),
+        `mangler oversettelsen av «${kode}»`);
+      assert.ok(!tekst.includes(kode),
+        `den norske koden «${kode}» lekker ut i engelsk visning`);
+    }
+    // Port 1 står: en verdi UTENFOR det kjente domenet vises fortsatt rå,
+    // i egen rad og i totalen — den skjules aldri fordi den er ukjent.
+    assert.ok(tekst.includes("hokuspokus"));
+  } finally {
+    settI18nForTest(NB, "nb");
+  }
 });
 
 test("Nøkkeltall: ingen SVG/canvas — søylen er HTML/CSS, tastaturvei", async () => {
