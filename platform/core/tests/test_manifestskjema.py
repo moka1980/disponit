@@ -1128,3 +1128,132 @@ def test_m37s_avhengigheter_er_aktive_for_den_selv_kan_bli_det():
     feil = valider(moduler).feil
     assert any("m02_revisjonslogg" in f and "ikke er aktiv" in f
                for f in feil), feil
+
+
+def _m02_suite_artefakt(**maalt):
+    """Et helt m02-suite-v1-artefakt, med `maalt` overstyrbar felt for
+    felt — så hver test under er ÉN mutasjon fra et grønt artefakt."""
+    from manifestskjema import M02_SUITE_ANDEL
+    tall = {"tester_totalt": 1972, "tester_feilet": 0,
+            "tester_hoppet": 12, "m2_tester": len(M02_SUITE_ANDEL),
+            "m2_feilet": 0,
+            "m2_hoppet": 0, "suite_exitkode": 0, "m2_exitkode": 0}
+    tall.update(maalt)
+    return {
+        "krav_id": "m02-suite-v1", "ts": "2026-08-21T00:00:00+00:00",
+        "bestatt": True,
+        "oppsett": {"modul": "m02_revisjonslogg", "commit": "a" * 40,
+                    "vert": "disponit-srv",
+                    "m2_filer": list(M02_SUITE_ANDEL)},
+        "maalt": tall,
+    }
+
+
+def test_m02_suite_hel_kjoring_passerer():
+    """Referansen de negative portene under måles mot."""
+    from manifestskjema import _sjekk_grenser, valider_artefaktformat
+    art = _m02_suite_artefakt()
+    assert valider_artefaktformat(art, "m02-suite-v1") == []
+    assert _sjekk_grenser("m02-suite-v1", art) == []
+
+
+def test_m02_suite_hoppet_m2_andel_er_ikke_en_maaling():
+    """Hele M-2-andelen er `skipif(not DSN)`, og junit teller en hoppet
+    test i `tests` med null failures og null errors. En vert uten oppsatt
+    testbase leverte derfor en full andel, null feilede — over gulvet —
+    uten at ÉN M-2-test hadde kjørt. Delingsbetingelsen krever en MÅLING
+    for nettopp denne modulen; en hoppet port måler ingenting.
+
+    MUTASJONEN SOM DREPER DENNE: la grensen måle `m2_tester` i stedet for
+    de KJØRTE.
+    """
+    from manifestskjema import M02_SUITE_ANDEL, _sjekk_grenser
+    feil = _sjekk_grenser(
+        "m02-suite-v1",
+        _m02_suite_artefakt(m2_hoppet=len(M02_SUITE_ANDEL)))
+    assert any("m2_hoppet" in f for f in feil), feil
+    # ... og gulvet for hele suiten måles på samme vis.
+    feil = _sjekk_grenser("m02-suite-v1",
+                          _m02_suite_artefakt(tester_hoppet=1900))
+    assert any("kjørte" in f for f in feil), feil
+
+
+def test_m02_suite_avbrutt_pytest_er_ikke_en_hel_suite():
+    """En avbrutt pytest skriver junit-XML likevel, over bare testene som
+    rakk å bli ferdige: alle grønne, null failures, null errors — og et
+    antall som kan klare gulvet. Exitkoden er det eneste stedet avbruddet
+    står (exit 2 ved en sen KeyboardInterrupt).
+
+    MUTASJONEN SOM DREPER DENNE: kast `CompletedProcess` i `_kjor` igjen.
+    """
+    from manifestskjema import _sjekk_grenser
+    feil = _sjekk_grenser("m02-suite-v1",
+                          _m02_suite_artefakt(suite_exitkode=2))
+    assert any("suite_exitkode" in f for f in feil), feil
+    feil = _sjekk_grenser("m02-suite-v1",
+                          _m02_suite_artefakt(m2_exitkode=2))
+    assert any("m2_exitkode" in f for f in feil), feil
+
+
+def test_m02_suite_vrangt_oppsett_feiler_lukket():
+    """`valider_artefakter` går med vilje videre i grensene etter en
+    formatfeil, for å samle ALLE røde funn. Da må grensene tåle et vrangt
+    artefakt: et sant ikke-objekt i `oppsett` skal gi et FUNN, ikke en
+    AttributeError som river med seg hele valideringskjøringen."""
+    from manifestskjema import _sjekk_grenser, valider_artefaktformat
+    art = dict(_m02_suite_artefakt(), oppsett="ikke et objekt")
+    assert valider_artefaktformat(art, "m02-suite-v1") != []
+    assert any("m2_filer" in f for f in _sjekk_grenser("m02-suite-v1", art))
+
+
+def test_m02_suite_redusert_kolleksjon_er_roedt():
+    """En pytest-kjøring som samlet inn et redusert utvalg — etter en sti-
+    eller konfigendring — er grønn i seg selv: null feilede, null hoppede,
+    exit 0. Den er likevel ikke suitekjøringen punktet krever, og gulvet
+    er det eneste stedet forskjellen står. Produsenten spør nå NØYAKTIG
+    denne porten før den melder `bestatt`, så staging-kommandoen ikke kan
+    returnere 0 for et artefakt CI feller.
+
+    MUTASJONEN SOM DREPER DENNE: senk `min_tester` til noe en delkjøring
+    klarer.
+    """
+    from manifestskjema import _sjekk_grenser
+    feil = _sjekk_grenser("m02-suite-v1",
+                          _m02_suite_artefakt(tester_totalt=40,
+                                              tester_hoppet=0))
+    assert any("krever >=" in f for f in feil), feil
+
+
+def test_m02_suite_m2_filer_maa_vaere_det_pinnede_utvalget():
+    """Å NAVNGI et utvalg er ikke å bli målt på det. Skjemaet krever bare
+    en ikke-tom strengliste, så et artefakt kunne klare alle tallene med
+    `m2_filer: ["noen andres tester"]` og likevel bli lest som beviset for
+    M-2 — delingsbetingelsen sier hvilken MÅLING som beviser punktet, og
+    da kan ikke produsenten velge målingen selv.
+
+    MUTASJONEN SOM DREPER DENNE: la porten godta enhver ikke-tom liste
+    igjen.
+    """
+    from manifestskjema import M02_SUITE_ANDEL, _sjekk_grenser
+
+    def med_filer(filer):
+        art = _m02_suite_artefakt()
+        art["oppsett"]["m2_filer"] = filer
+        return _sjekk_grenser("m02-suite-v1", art)
+
+    assert med_filer(list(M02_SUITE_ANDEL)) == []
+    # Et helt annet utvalg — tallene er de samme, beviset er ikke.
+    feil = med_filer(["platform/core/tests/test_noe_annet.py"])
+    assert any("m2_filer" in f and "godkjente utvalget" in f
+               for f in feil), feil
+    # ... og et utvalg som mangler ÉN av de pinnede portene er heller ikke
+    # utvalget: append-only-porten er ikke valgfri.
+    feil = med_filer(list(M02_SUITE_ANDEL[1:]))
+    assert any("mangler" in f for f in feil), feil
+    # ... og de pinnede portene finnes FAKTISK: en node-id som er skrevet
+    # feil er en port som aldri kjører, og «0 feilede av 0» ser grønt ut.
+    for velger in M02_SUITE_ANDEL:
+        sti, _, navn = velger.partition("::")
+        kilde = (Path(__file__).resolve().parents[3] / sti
+                 ).read_text(encoding="utf-8")
+        assert f"def {navn}(" in kilde, velger

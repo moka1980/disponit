@@ -109,10 +109,15 @@ staging_sjekkliste:
       MÅLT, IKKE BUNDET (delt m01-kjøring uten `bevismaalinger`).
       Samme suite som m01, kjørt på staging etter hver merge. Revisjons-
       loggens egne porter ligger i test_api.py (evidensfelter, aktør fra
-      serverkontekst, idempotent replay uten ny loggpost) og i
-      test_kjorer_og_kryptering.py (append-only-triggerne). Punktet lukkes
-      når m01-suitekjøringen finnes som artefakt i repoet og M-2s andel av
-      den er navngitt som måling.
+      serverkontekst, idempotent replay uten ny loggpost, rullet loggpost
+      ved feilet unntaksskriv) og i test_pg_og_attestering.py (append-only
+      i basen, runtime som ikke kan skru den av, triggeren etter
+      migrasjon). RETTET: dette notatet pekte på test_kjorer_og_kryptering
+      .py for append-only-triggerne, og det stemte ikke — den filen måler
+      migrasjonskjøreren, DEK-ene og tokenene, og nevner ikke
+      revisjonsloggen. Punktet lukkes når suitekjøringen finnes som
+      artefakt i repoet og M-2s andel av den er det PINNEDE utvalget i
+      `KRAVGRENSER['m02-suite-v1']['m2_andel_pakrevd']`.
   syntetisk_datasett_likt_lokalt:
     status: nei
     notat: >-

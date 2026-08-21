@@ -205,6 +205,90 @@ KRAVGRENSER["wcag-kontroll-v2"] = {
     "krev_datasett_sha_lik_innsjekket": True,
 }
 
+# --- m02-aksept-arcen (klarsignal 6d1cf8ec…, §3) ----------------------
+# De to nye artefaktene er arcens eneste nye målearbeid. Begge er
+# MÅLINGS-artefakter (perf-m01-formen): produsert av en kjøring, ikke
+# avledet av en fil — så porten re-regner de interne invariantene og
+# håndhever grensene, og SP-11-bindingen (sha i manifestet/akseptveien)
+# gjør bytene immutable.
+
+#: M-2s andel av suiten — PINNET, ikke bare «navngitt». Delingsbetingelsen
+#: krever at punktet navngir hvilken MÅLING som beviser det for nettopp
+#: denne modulen, og et fritt `m2_filer` oppfylte bare halve kravet: et
+#: artefakt med `m2_filer: ["noen andres tester"]` klarte tallene og
+#: passerte porten. Porten under krever nøyaktig DENNE lista, og
+#: produsenten (`deploy/staging/m02-suite-artefakt.py`) kjører den samme —
+#: ett sted, to lesere, så utvalget ikke kan gli.
+#:
+#: Utvalget er node-id-er, ikke filer: M-2 deler hver av disse filene med
+#: M-1 og plattformlaget, og en hel fil hadde tatt med målinger som ikke
+#: sier noe om revisjonsloggen. Den forrige lista tok med HELE
+#: `test_kjorer_og_kryptering.py` med begrunnelsen at append-only-portene
+#: lå der. Det stemte ikke (Codex P1, runde 2): den filen nevner ikke
+#: revisjonsloggen med ett ord — den måler migrasjonskjøreren, DEK-ene og
+#: tokenene — mens de tre append-only-portene står i
+#: `test_pg_og_attestering.py` og manglet i utvalget helt. Hele suiten
+#: kjøres uansett og har sine egne grenser; det er ANDELEN som skal være
+#: M-2s egne porter.
+M02_SUITE_ANDEL: tuple[str, ...] = (
+    # Append-only håndhevet i BASEN, ikke av applikasjonskode.
+    "platform/core/tests/test_pg_og_attestering.py::"
+    "test_revisjonslogg_er_append_only_i_databasen",
+    "platform/core/tests/test_pg_og_attestering.py::"
+    "test_runtime_kan_ikke_skru_av_append_only",
+    "platform/core/tests/test_pg_og_attestering.py::"
+    "test_append_only_triggeren_star_paa_etter_migrasjon",
+    # Loggposten selv: evidensfeltene, aktøren fra serverkonteksten,
+    # replay uten ny rad, og at et feilet unntaksskriv ruller loggposten.
+    "platform/core/tests/test_api.py::"
+    "test_tillat_gir_loggpost_med_evidensfelter",
+    "platform/core/tests/test_api.py::"
+    "test_unntakshistorikk_far_aktor_fra_serverkontekst",
+    "platform/core/tests/test_api.py::"
+    "test_idempotent_replay_er_byteidentisk_uten_ny_loggpost",
+    "platform/core/tests/test_api.py::"
+    "test_unntaksskriv_feilet_ruller_ogsa_loggposten",
+)
+
+KRAVGRENSER["m02-suite-v1"] = {
+    # Suitekjøringen PÅ STAGING: hele suiten grønn, og M-2s ANDEL er
+    # pinnet og grønn — delingsbetingelsen i RUTINER.md gjort målbar.
+    # Gulvet for helheten er romslig med vilje: det måler at KJØRINGEN var
+    # hel, ikke at antallet aldri vokser (det gjør det, hver uke).
+    # Gulvene måles mot KJØRTE tester (totalt minus hoppede), og M-2s
+    # andel tåler ingen hoppede i det hele tatt: både
+    # `test_pg_og_attestering.py` og `test_api.py` er `skipif(not DSN)`,
+    # så uten den porten ville en vert uten oppsatt testbase levert en
+    # «grønn» andel der ingen av testene hadde kjørt.
+    "min_tester": 1500,
+    "maks_feilet": 0,
+    # Én node-id er én test, så gulvet ER lengden på det pinnede
+    # utvalget: alle sju skal ha kjørt, ikke «minst noen av dem».
+    "min_m2_tester": len(M02_SUITE_ANDEL),
+    "maks_m2_feilet": 0,
+    "maks_m2_hoppet": 0,
+    "m2_andel_pakrevd": M02_SUITE_ANDEL,
+}
+KRAVGRENSER["m02-fordeling-v1"] = {
+    # Det syntetiske settet er REPRODUSERT, ikke historisk: basen på
+    # disponit-srv har ingen rader fra m01-rundens opprinnelige 180
+    # (målt 2026-08-21 — null STOPP i hele basen; radene ble aldri med
+    # fra gammel staging). Fasiten 84/3/93 er derfor drevet PÅ NYTT
+    # gjennom beslutningsveien, med samme fordeling — og CI kjører det
+    # SAMME settet mot lokal base (test_m02_fordeling), så «likt
+    # lokalt» er en stående måling, ikke et minne.
+    "fordeling_eksakt": {"TILLAT": 84, "STOPP": 3, "UNNTAK": 93},
+    "min_hendelser": 180,
+    # ... og «samme sett» må være MÅLT, ikke oppgitt: driverens bytes
+    # hashes i begge ledd og må stemme (samme form som §1.2 for
+    # WCAG-datasettet). Uten den kunne staging drevet helt andre
+    # hendelser til samme sum og likevel passert.
+    "krev_sett_sha_lik_innsjekket": True,
+}
+
+#: Settdriveren begge ledd deler — bytene som ER settet.
+M02_SETT_STI = REPOROT / "deploy/staging/m02_fordeling.py"
+
 #: Hvilket LUKKEDE skjema som gjelder for hvilket krav. Uten dette ville
 #: alle artefakter blitt målt mot ytelsesskjemaet, og et feilinjiserings-
 #: artefakt ville feilet på «mangler `krav`» i stedet for å bli validert.
@@ -216,6 +300,8 @@ ARTEFAKTSKJEMAER: dict[str, str] = {
     "policyadmin-v1": "artefakt-policyadmin-skjema.json",
     "wcag-kontroll-v1": "artefakt-wcag-kontroll-skjema.json",
     "wcag-kontroll-v2": "artefakt-wcag-kontroll-v2-skjema.json",
+    "m02-suite-v1": "artefakt-m02-suite-skjema.json",
+    "m02-fordeling-v1": "artefakt-m02-fordeling-skjema.json",
     "rollback-m56-v1": "artefakt-rollback-m56-skjema.json",
 }
 
@@ -450,6 +536,10 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _grenser_wcag_kontroll(grense, art)
     if krav_id == "wcag-kontroll-v2":
         return feil + _grenser_wcag_kontroll_v2(grense, art)
+    if krav_id == "m02-suite-v1":
+        return feil + _grenser_m02_suite(grense, art)
+    if krav_id == "m02-fordeling-v1":
+        return feil + _grenser_m02_fordeling(grense, art)
     if krav_id == "rollback-m56-v1":
         return feil + _grenser_rollback_m56(grense, art)
 
@@ -858,6 +948,176 @@ def _grenser_wcag_kontroll_v2(grense: dict, art: dict) -> list[str]:
                     " serverte er ikke datasettet fasiten beskriver;"
                     " byte-likhet i BEGGE ledd er kravet (SP-11, §1.2)")
     return feil
+
+
+def _grenser_m02_suite(grense: dict, art: dict) -> list[str]:
+    """`m02-suite-v1` — suitekjøringen på staging, med M-2s andel
+    navngitt (m02-aksept-klarsignalet §3). Tallene re-regnes: andelen
+    kan ikke overstige helheten, en feilfri suite har null feilede, og
+    M-2s filer må faktisk stå i artefaktet."""
+    feil: list[str] = []
+    m = art.get("maalt")
+    if not isinstance(m, dict):
+        return ["artefaktet mangler `maalt`"]
+    total, m1 = _teller(m, "tester_totalt", "tester_totalt")
+    feilet, m2 = _teller(m, "tester_feilet", "tester_feilet")
+    m2t, m3 = _teller(m, "m2_tester", "m2_tester")
+    m2f, m4 = _teller(m, "m2_feilet", "m2_feilet")
+    kode, m5 = _teller(m, "suite_exitkode", "suite_exitkode")
+    m2k, m6 = _teller(m, "m2_exitkode", "m2_exitkode")
+    hoppet, m7 = _teller(m, "tester_hoppet", "tester_hoppet")
+    m2h, m8 = _teller(m, "m2_hoppet", "m2_hoppet")
+    for melding in (m1, m2, m3, m4, m5, m6, m7, m8):
+        if melding:
+            feil.append(melding)
+    if any((m1, m2, m3, m4, m5, m6, m7, m8)):
+        return feil
+    # Gulvene måles mot KJØRTE tester, ikke mot `tests`: junit teller en
+    # hoppet test i `tests` og rapporterer null failures og null errors
+    # for den, så en suite som er hoppet over ser ut som en suite som
+    # gikk. En hoppet test er ikke en bestått test.
+    if total - hoppet < grense["min_tester"]:
+        feil.append(f"tester_totalt={total} minus tester_hoppet={hoppet}"
+                    f" = {total - hoppet} kjørte, krever >="
+                    f" {grense['min_tester']}")
+    if feilet > grense["maks_feilet"]:
+        feil.append(f"tester_feilet={feilet}, krever <="
+                    f" {grense['maks_feilet']}")
+    if m2t - m2h < grense["min_m2_tester"]:
+        feil.append(f"m2_tester={m2t} minus m2_hoppet={m2h}"
+                    f" = {m2t - m2h} kjørte, krever >="
+                    f" {grense['min_m2_tester']}")
+    if m2f > grense["maks_m2_feilet"]:
+        feil.append(f"m2_feilet={m2f}, krever <= {grense['maks_m2_feilet']}")
+    # ... og M-2s andel er PINNET og PÅKREVD: både
+    # test_pg_og_attestering.py og test_api.py er `skipif(not DSN)`, så en
+    # testbase som ikke er satt opp hadde gitt en andel uten én kjørt test.
+    # Delingsbetingelsen krever en MÅLING for nettopp denne modulen —
+    # en hoppet port måler ingenting.
+    if m2h > grense["maks_m2_hoppet"]:
+        feil.append(f"m2_hoppet={m2h}, krever <="
+                    f" {grense['maks_m2_hoppet']} — M-2s navngitte andel"
+                    " skal være KJØRT, ikke hoppet over")
+    if m2t > total:
+        feil.append(f"m2_tester={m2t} > tester_totalt={total} — andelen"
+                    " kan ikke overstige helheten")
+    # En AVBRUTT pytest skriver junit-XML likevel, over bare de testene
+    # som rakk å bli ferdige: null failures, null errors, og et tall som
+    # kan klare gulvet. Exitkoden er det eneste stedet avbruddet står, så
+    # den er en egen port — en hel, grønn kjøring er exit 0, og ingenting
+    # annet er det.
+    for navn, verdi in (("suite_exitkode", kode), ("m2_exitkode", m2k)):
+        if verdi != 0:
+            feil.append(f"{navn}={verdi} — pytest avsluttet unormalt;"
+                        " en junit-XML fra en avbrutt kjøring teller bare"
+                        " testene som rakk å bli ferdige, og er ikke en"
+                        " hel suite")
+    # `or {}` fanget None, men ikke en SANN ikke-dict: er `oppsett` f.eks.
+    # strengen "…", melder skjemaet formatfeilen riktig, mens
+    # `valider_artefakter` med vilje går videre hit — og et `.get` på en
+    # streng kastet AttributeError og rev med seg hele valideringskjøringen
+    # i stedet for å returnere de røde funnene. Et vrangt artefakt skal
+    # feile lukket, ikke krasje.
+    oppsett = art.get("oppsett")
+    filer = oppsett.get("m2_filer") if isinstance(oppsett, dict) else None
+    if not (isinstance(filer, list) and filer
+            and all(isinstance(x, str) and x for x in filer)):
+        feil.append("oppsett.m2_filer mangler — M-2s andel skal være"
+                    " NAVNGITT, ikke antatt (delingsbetingelsen)")
+    # ... og NAVNGITT er ikke nok i seg selv: en hvilken som helst ikke-tom
+    # strengliste passerte formkravet over, så et artefakt kunne klare
+    # tallene med `m2_filer: ["noen andres tester"]` og likevel bli lest
+    # som beviset for M-2. Utvalget er derfor PINNET i KRAVGRENSER, og
+    # porten krever nøyaktig det — hvilke målinger som beviser punktet er
+    # en godkjent beslutning, ikke noe produsenten oppgir om seg selv.
+    elif sorted(filer) != sorted(grense["m2_andel_pakrevd"]):
+        mangler = sorted(set(grense["m2_andel_pakrevd"]) - set(filer))
+        ekstra = sorted(set(filer) - set(grense["m2_andel_pakrevd"]))
+        feil.append(
+            "oppsett.m2_filer er ikke det godkjente utvalget"
+            + (f"; mangler {mangler}" if mangler else "")
+            + (f"; ukjente {ekstra}" if ekstra else "")
+            + " — delingsbetingelsen krever de PINNEDE målingene, ikke"
+              " en liste produsenten valgte selv")
+    return feil
+
+
+def _grenser_m02_fordeling(grense: dict, art: dict) -> list[str]:
+    """`m02-fordeling-v1` — det syntetiske settet gjennom
+    beslutningsveien. Fordelingen RE-REGNES av radene artefaktet selv
+    bærer (SP-11: bytene er bundet, så radene er målingen) og må være
+    EKSAKT fasiten — 83 TILLAT er ikke «nesten», det er et annet sett."""
+    feil: list[str] = []
+    m = art.get("maalt")
+    if not isinstance(m, dict):
+        return ["artefaktet mangler `maalt`"]
+    rader = art.get("rader")
+    if not isinstance(rader, list) or not rader:
+        return feil + ["artefaktet mangler `rader` — en fordeling uten"
+                       " radene sine kan ikke re-regnes"]
+    talt: dict[str, int] = {}
+    ider = set()
+    for r in rader:
+        if not (isinstance(r, list) and len(r) == 2
+                and isinstance(r[0], int) and not isinstance(r[0], bool)
+                and r[0] > 0 and isinstance(r[1], str)):
+            return feil + ["rader har en linje som ikke er"
+                           " [loggpost_id, beslutning]"]
+        ider.add(r[0])
+        talt[r[1]] = talt.get(r[1], 0) + 1
+    if len(ider) != len(rader):
+        feil.append("rader gjentar en loggpost — én hendelse er én rad")
+    if len(rader) < grense["min_hendelser"]:
+        feil.append(f"{len(rader)} rader, krever >="
+                    f" {grense['min_hendelser']}")
+    if talt != grense["fordeling_eksakt"]:
+        feil.append(f"fordelingen re-regnet av radene er {talt}, fasiten"
+                    f" er {grense['fordeling_eksakt']} — eksakt, aldri"
+                    " «nesten»")
+    for nokkel, verdi in grense["fordeling_eksakt"].items():
+        oppgitt, melding = _teller(m, f"antall_{nokkel.lower()}",
+                                   f"antall_{nokkel.lower()}")
+        if melding:
+            feil.append(melding)
+        elif oppgitt != verdi:
+            feil.append(f"antall_{nokkel.lower()}={oppgitt} spriker fra"
+                        f" fasiten {verdi}")
+    feil += _sett_bundet(grense, art)
+    return feil
+
+
+def _sett_bundet(grense: dict, art: dict) -> list[str]:
+    """Er fordelingen drevet av DET settet CI driver — eller et annet?
+
+    Artefaktet bandt settet med `sett_versjon: "m02-sett-1"`, en streng
+    noen skriver for hånd, og radene bærer loggpost-id og beslutning —
+    ikke hendelsene som ble sendt inn. Et staging-ledd på en eldre
+    utrulling, eller med en lokalt endret driver, kunne derfor telle
+    84/3/93 av helt andre hendelser og likevel valideres som «likt
+    lokalt» (Codex P1, runde 2). Da måler punktet at to kjøringer fikk
+    samme SUM, ikke at de drev samme SETT.
+
+    Bytene er bindingen: produsenten hasher driveren den faktisk kjørte
+    (`m02_fordeling.sett_sha256`), og her hashes de innsjekkede bytene med
+    nøyaktig samme uttrykk. Samme form som §1.2/SP-11 for
+    WCAG-datasettet — likhet i BEGGE ledd, ellers rødt.
+    """
+    oppsett = art.get("oppsett")
+    sha = oppsett.get("sett_sha256") if isinstance(oppsett, dict) else None
+    if not (isinstance(sha, str) and len(sha) == 64):
+        return ["oppsett.sett_sha256 mangler — uten driverens bytes er"
+                " «samme sett» en påstand, ikke en måling"]
+    if not grense.get("krev_sett_sha_lik_innsjekket"):
+        return []
+    try:
+        lokal = hashlib.sha256(M02_SETT_STI.read_bytes()).hexdigest()
+    except OSError as e:
+        return [f"settdriveren lot seg ikke hashe lokalt: {e}"]
+    if sha != lokal:
+        return [f"sett_sha256={sha[:12]}… er ikke de innsjekkede bytenes"
+                f" {lokal[:12]}… — settet staging drev er ikke settet CI"
+                " driver, og da er ikke fordelingen «lik lokalt»"]
+    return []
 
 
 def _falske_verdikter(m: dict) -> list[str]:
