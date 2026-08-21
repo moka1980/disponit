@@ -563,7 +563,7 @@ function render(){
       .filter(m=>!fa||m.area===fa)
       .filter(m=>!fp||String(m.p)===fp)
       .filter(m=>!fn||erNy(m))
-      .filter(m=>!q||(m.name+' '+m.goal+' '+m.area+' '+m.guard+' '+m.accept).toLowerCase().includes(q))
+      .filter(m=>!q||(m.name+' '+m.goal+' '+(m.merknad||'')+' '+m.area+' '+m.guard+' '+m.accept).toLowerCase().includes(q))
       .sort((a,b)=>a.n-b.n);
     if(!list.length)continue;
     shown+=list.length;
