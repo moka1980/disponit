@@ -90,14 +90,20 @@ def main() -> int:
 
     m = koble(os.environ["DISPONIT_MIGRATOR_URL"])
 
-    # Tenant + nøkler + policy + token — samme former som test_api sine
-    # fixturer, mot staging-basen. Policyen er bransjemal-tjenestebedrift
-    # med verifikatoren byttet til den som faktisk KAN signere her.
+    # Tenant + policy + token — samme former som test_api sine fixturer,
+    # mot staging-basen. Policyen er bransjemal-tjenestebedrift med
+    # verifikatoren byttet til den som faktisk KAN signere her.
+    #
+    # DEK-en lages IKKE her. API-et kaller `hent_eller_opprett_aktiv_dek`
+    # ved første unntaksskriv og pakker den med sin egen KEK; en
+    # plassholderrad hadde sett aktiv ut for det oppslaget, og `_pakk_ut`
+    # kan ikke AES-GCM-dekryptere en nullbyte — den første STOPP-en hadde
+    # felt kjøringen, ikke fordelingen. (Har tenanten allerede en aktiv
+    # DEK under et annet key_id, ville raden dessuten brutt
+    # `en_aktiv_dek_per_tenant`.) Bootstrap er API-ets jobb, med den
+    # ekte KEK-en.
     m.execute("SELECT set_config('disponit.tenant', %s, false),"
               " set_config('disponit.aktor', 'm02-fordeling', false)",
-              (a.tenant,))
-    m.execute("INSERT INTO tenant_nokler (tenant, key_id, wrapped_dek)"
-              " VALUES (%s,'k1','\\x00'::bytea) ON CONFLICT DO NOTHING",
               (a.tenant,))
     p = yaml.safe_load((REPO / "policies/bransjemal-tjenestebedrift.yaml"
                         ).read_text(encoding="utf-8"))
