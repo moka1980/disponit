@@ -44,10 +44,17 @@ kjøre skal ikke rapportere grønt.
 
 Bruk:
     python3 sjekk_norsk.py fil.html [...]
+    python3 sjekk_norsk.py             # gjeldende sannhetskilde, se KILDE
     python3 sjekk_norsk.py --selftest
 Exit 1 ved treff eller manglende forutsetning.
 """
 import re, sys, pathlib, itertools
+
+ROT = pathlib.Path(__file__).resolve().parents[1]
+# Argumentløs kjøring sjekker den gjeldende spesifikasjonen — samme sti
+# `tools/gen_katalog.py` og `platform/core/tests/test_katalog.py` regner som
+# kilden. CI kaller den eksplisitt; dette er formen for lokal kjøring.
+KILDE = ROT / "docs" / "spesifikasjon" / "disponit-prototype-v9.html"
 
 # ---- lag 1: bekreftet feil i våre dokumenter -----------------------------
 BEKREFTET = {
@@ -189,6 +196,9 @@ def _prosa(tekst):
     return re.sub(r"<[^>]+>", lambda m: _skjul_utenom_strenger(m.group(0)), tekst)
 
 def sjekk(sti, zipf):
+    if not sti.is_file():
+        print(f"RØD PORT: {sti} finnes ikke — kontrollen kunne ikke kjøre.")
+        return 1
     bek, gj = _analyser(_prosa(sti.read_text(encoding="utf-8")), zipf)
     if not bek and not gj:
         print(f"OK    {sti.name}"); return 0
@@ -273,5 +283,5 @@ if __name__ == "__main__":
     if "--selftest" in sys.argv:
         sys.exit(selftest(zipf))
     filer = [pathlib.Path(a) for a in sys.argv[1:] if not a.startswith("-")] or \
-            [pathlib.Path("/mnt/user-data/outputs/AI-bedriftsagent-prototype-v8.html")]
+            [KILDE]
     sys.exit(max([selftest(zipf)] + [sjekk(f, zipf) for f in filer]))
