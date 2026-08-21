@@ -177,6 +177,7 @@ RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE v_punkt RECORD; v_verdi JSONB; v_ref TEXT; v_status TEXT;
         v_ci RECORD; v_ci_av TEXT; v_mangler TEXT; v_rad RECORD;
+        v_evidens RECORD; v_kilde_sha TEXT;
         v_avvik TEXT;
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended(
@@ -364,6 +365,69 @@ BEGIN
                     ' refererer ikke ved hash («sti@sha256:<64 hex>»);'
                     ' en delt måling uten sha er en beskrivelse, ikke en'
                     ' referanse', v_punkt.punkt, v_ref
+                    USING ERRCODE = 'invalid_parameter_value';
+            END IF;
+            -- …MEN FORMEN ER INGEN MÅLING (Codex P1, runde 1). Med
+            -- gyldig CI-attest kunne en `disponit_modules_admin`-kaller
+            -- lese registerets grønne `maalt_krav` rett ut av
+            -- `akseptkrav_punkt`, gjenta dem, og feste en oppdiktet
+            -- `oppdiktet@sha256:<64 hex>` til hvert punkt: alt basen så
+            -- var at strengen hadde riktig hale. Aksepten ble immutabel
+            -- uten at ÉN av de refererte målingene fantes — nøyaktig
+            -- hullet `049`/`053` lukket for deployment-veien.
+            --
+            -- Punktet måles derfor mot REFERATET, som der: en immutabel
+            -- `evidensfil_attest`-rad, skrevet av veien som faktisk
+            -- hashet artefaktet (`attester_evidensfil` har EXECUTE bare
+            -- til `disponit_ci_verifikator`), som sier hvilken sti
+            -- bytene lå på og hva de bar for NØYAKTIG dette punktet.
+            -- Kalleren kan bare gjenta den.
+            --
+            -- Attesten slås opp uten drill (`drill_sha256 = ''`): en
+            -- plattformmodul har ingen moduldrill å regne målingen mot,
+            -- så lesningen er filens egen. Delingen faller ut av
+            -- nøkkelen: samme bytes attestert under to punkter er to
+            -- rader om én fil, og `attester_evidensfil` hører selv at de
+            -- to sier det samme.
+            v_kilde_sha := substring(v_ref from '@sha256:([0-9a-f]{64})$');
+            SELECT * INTO v_evidens FROM public.evidensfil_attest e
+             WHERE e.sha256 = v_kilde_sha AND e.punkt = v_punkt.punkt
+               AND e.krav_id = p_grense_id AND e.drill_sha256 = '';
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'aksepter_plattformmodul: punkt % hviler'
+                    ' på sha256:%, men ingen attest sier at de bytene er'
+                    ' lest og hva de bar for punktet — en hash aksepten'
+                    ' selv oppgir, beviser ingenting; det gjør referatet'
+                    ' fra veien som leste', v_punkt.punkt, v_kilde_sha
+                    USING ERRCODE = 'invalid_parameter_value';
+            END IF;
+            IF v_evidens.attestert_av = session_user THEN
+                RAISE EXCEPTION 'aksepter_plattformmodul: punkt % hviler'
+                    ' på en evidensattest skrevet av % — samme innlogging'
+                    ' som skriver aksepten. Den som leste målingen og den'
+                    ' som aksepterer på det den bar, skal være to'
+                    ' autentiserte identiteter', v_punkt.punkt,
+                    v_evidens.attestert_av
+                    USING ERRCODE = 'invalid_parameter_value';
+            END IF;
+            -- Stien er attestens, ikke kallerens: LIKHET, ikke hale.
+            IF v_ref IS DISTINCT FROM
+               (v_evidens.sti || '@sha256:' || v_kilde_sha) THEN
+                RAISE EXCEPTION 'aksepter_plattformmodul: punkt % viser'
+                    ' til «%», mens attesten leste «%@sha256:%» — en'
+                    ' observasjon skal navngi DEN målingen som ble lest,'
+                    ' ikke en sti med riktig hale', v_punkt.punkt, v_ref,
+                    v_evidens.sti, v_kilde_sha
+                    USING ERRCODE = 'invalid_parameter_value';
+            END IF;
+            -- …og det er MÅLINGENS tall som skal oppfylle kravet.
+            IF v_evidens.maalt_verdi IS DISTINCT FROM v_punkt.maalt_krav
+            THEN
+                RAISE EXCEPTION 'aksepter_plattformmodul: punkt % —'
+                    ' sha256:% bar «%», men en grønn observasjon er «%».'
+                    ' Aksepten regner mot det målingen SA, ikke mot det'
+                    ' kallet gjentar', v_punkt.punkt, v_kilde_sha,
+                    v_evidens.maalt_verdi, v_punkt.maalt_krav
                     USING ERRCODE = 'invalid_parameter_value';
             END IF;
         ELSIF v_punkt.kilde_type = 'ci_kjoring' THEN

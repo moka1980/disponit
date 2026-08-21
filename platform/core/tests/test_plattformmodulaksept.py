@@ -1,8 +1,9 @@
 """Søsterfunksjonen i akseptmaskineriet (054, m02-aksept-klarsignalet
 6d1cf8ecb850e457): aksept for PLATTFORMMODULER uten deploymentrad —
 innholdsadressert identitet, «utenfor grensen» som førsteklasses
-tilstand med påkrevd begrunnelse, delte målinger referert VED HASH,
-attestant ≠ akseptør på session_user, SP-2-replay, append-only.
+tilstand med påkrevd begrunnelse, delte målinger referert VED HASH og
+målt mot evidensattesten, attestant ≠ akseptør på session_user,
+SP-2-replay, append-only.
 
 Portene her er klarsignalets §5 (1–9 + 13). Flipp-portene 14/15 bor i
 registry-/manifesttestene og m56-arcen.
@@ -30,6 +31,11 @@ CI_SHA = "f" * 40
 #: De åtte punktene slik registeret (054) definerer dem — testene leser
 #: fasiten fra basen, dette settet brukes bare til statiske påstander.
 UTENFOR = {"moduldrill_boot", "flate_axe_tastatur"}
+#: Den delte målingen testene refererer: ÉN sti og ÉN sha, attestert av
+#: verifikatoren for hvert artefaktpunkt — delingen er nettopp at flere
+#: punkter hviler på de samme bytene.
+ARTEFAKT_STI = "deploy/staging/artefakter/x.json"
+ARTEFAKT_SHA = "ab" * 32
 
 
 def _verifikator():
@@ -50,6 +56,30 @@ def _ci_attest(m, ci_run, ci_commit=CI_SHA):
         v.close()
 
 
+def _artefaktkrav(m):
+    """Registerets grønne fasit for artefaktpunktene — {punkt: krav}."""
+    return {p: krav for p, krav in m.execute(
+        "SELECT punkt, maalt_krav FROM akseptkrav_punkt"
+        "  WHERE krav_id=%s AND kilde_type='artefakt'"
+        "    AND maalt_krav <> '<utenfor grensen>'", (GRENSE,)).fetchall()}
+
+
+def _evidensattest(m, punkter=None, sti=ARTEFAKT_STI, sha=ARTEFAKT_SHA):
+    """Referatet fra veien som LESTE målingen (Codex P1, runde 1):
+    `evidensfil_attest`-rader skrevet av VERIFIKATOREN — en annen
+    autentisert identitet enn akseptøren."""
+    m.execute("RESET ROLE")
+    v = _verifikator()
+    try:
+        v.execute("SELECT attester_evidensfil(%s,%s,%s,%s::jsonb,'test')",
+                  (GRENSE, sti, sha,
+                   json.dumps(punkter if punkter is not None
+                              else _artefaktkrav(m))))
+        v.commit()
+    finally:
+        v.close()
+
+
 def _punkter(m, ci_run, ci_commit=CI_SHA):
     """Punktsettet slik registeret krever det — grønne verdier, riktige
     kildeformer (artefakt VED HASH — også de delte målingene, som eies av
@@ -65,8 +95,8 @@ def _punkter(m, ci_run, ci_commit=CI_SHA):
         elif kt == "artefakt":
             ut[punkt] = {"status": "maalt", "grenseverdi": grense,
                          "maalt_verdi": krav, "kilde_type": kt,
-                         "kilde_ref": f"deploy/staging/artefakter/x.json"
-                                      f"@sha256:{'ab' * 32}"}
+                         "kilde_ref": f"{ARTEFAKT_STI}"
+                                      f"@sha256:{ARTEFAKT_SHA}"}
         else:
             ut[punkt] = {"status": "maalt", "grenseverdi": grense,
                          "maalt_verdi": krav, "kilde_type": kt,
@@ -75,7 +105,8 @@ def _punkter(m, ci_run, ci_commit=CI_SHA):
 
 
 def _aksepter(m, *, modul=None, commit=None, sha=None, punkter=None,
-              ci_run=None, ci_commit=None, nokkel=None, attest=True):
+              ci_run=None, ci_commit=None, nokkel=None, attest=True,
+              evidens=True):
     modul = modul or "m02_test_" + secrets.token_hex(3)
     commit = commit or secrets.token_hex(20)
     ci_run = ci_run or "run-" + secrets.token_hex(4)
@@ -88,6 +119,8 @@ def _aksepter(m, *, modul=None, commit=None, sha=None, punkter=None,
         punkter = _punkter(m, ci_run, ci_commit)
     if attest:
         _ci_attest(m, ci_run, ci_commit)
+    if evidens:
+        _evidensattest(m)
     m.execute("SET ROLE disponit_modules_admin")
     m.execute(
         "SELECT aksepter_plattformmodul(%s,%s,%s,%s,%s,%s,%s::jsonb,"
@@ -248,6 +281,63 @@ def test_maalinger_regnes_mot_registeret_og_kilder_peker(migrator):
     with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
         _aksepter(migrator, ci_run=ci_run, punkter=p)
     assert "registerets" in str(ei.value)
+    migrator.rollback()
+
+
+@pg
+def test_hashen_maales_mot_referatet_ikke_mot_formen(migrator):
+    """Codex P1, runde 1: en velformet hash er ingen måling. Punktet
+    måles mot `evidensfil_attest` — referatet fra veien som faktisk
+    hashet artefaktet — på fire ledd: at raden FINNES, at stien er
+    attestens (likhet, ikke hale), at det er MÅLINGENS tall som oppfyller
+    kravet, og at referatet er skrevet av en annen innlogging enn
+    aksepten."""
+    migrator.execute("RESET ROLE")
+    # 1. oppdiktede bytes med riktig hale — ingen attest, ingen aksept.
+    ci_run = "run-" + secrets.token_hex(4)
+    p = _punkter(migrator, ci_run)
+    p["ytelse_bestatt"]["kilde_ref"] = f"{ARTEFAKT_STI}@sha256:{'ee' * 32}"
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, ci_run=ci_run, punkter=p)
+    assert "ingen attest sier at de bytene er lest" in str(ei.value)
+    migrator.rollback()
+    # 2. attesterte bytes, men en annen sti: en observasjon navngir DEN
+    #    målingen som ble lest, ikke en sti med riktig hale.
+    ci_run = "run-" + secrets.token_hex(4)
+    p = _punkter(migrator, ci_run)
+    p["ytelse_bestatt"]["kilde_ref"] = f"annen/sti.json@sha256:{ARTEFAKT_SHA}"
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, ci_run=ci_run, punkter=p)
+    assert "riktig hale" in str(ei.value)
+    migrator.rollback()
+    # 3. referatet bar et RØDT tall — kallerens grønne gjentakelse av
+    #    registerets fasit hjelper ikke.
+    roed = "dd" * 32
+    _evidensattest(migrator, punkter={"ytelse_bestatt": "5999/6000"},
+                   sha=roed)
+    ci_run = "run-" + secrets.token_hex(4)
+    p = _punkter(migrator, ci_run)
+    p["ytelse_bestatt"]["kilde_ref"] = f"{ARTEFAKT_STI}@sha256:{roed}"
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, ci_run=ci_run, punkter=p)
+    assert "regner mot det målingen SA" in str(ei.value)
+    migrator.rollback()
+    # 4. …og fire øyne, som på CI-attesten: et referat skrevet av
+    #    akseptørens egen innlogging gjennom eierrollen teller ikke.
+    selv = "cc" * 32
+    krav = _artefaktkrav(migrator)["ytelse_bestatt"]
+    migrator.execute("SET ROLE disponit_modul_eier")
+    migrator.execute(
+        "SELECT attester_evidensfil(%s,%s,%s,%s::jsonb,'test')",
+        (GRENSE, ARTEFAKT_STI, selv, json.dumps({"ytelse_bestatt": krav})))
+    migrator.execute("RESET ROLE")
+    migrator.commit()
+    ci_run = "run-" + secrets.token_hex(4)
+    p = _punkter(migrator, ci_run)
+    p["ytelse_bestatt"]["kilde_ref"] = f"{ARTEFAKT_STI}@sha256:{selv}"
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, ci_run=ci_run, punkter=p)
+    assert "to autentiserte identiteter" in str(ei.value)
     migrator.rollback()
 
 
