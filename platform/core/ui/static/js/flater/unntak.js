@@ -14,7 +14,7 @@ import {
 } from "../komponenter.js";
 import { DataTabell } from "../tabell.js";
 import { Detaljpanel, Bekreftelsesdialog } from "../dialog.js";
-import { medStatus, flateHode, kvRad } from "./felles.js";
+import { keysetListe, flateHode, kvRad } from "./felles.js";
 import { synligeSakstyper } from "../sitekart.js";
 
 const STATUSFILTRE = [null, "ny", "under_behandling", "løst", "avvist"];
@@ -304,22 +304,10 @@ export function visUnntak(hoved, ctx) {
                                     status: st.status, cursor });
   }
 
-  function lastForste() {
-    medStatus(hoved, ctx, () => sok(null), (d) => {
-      st.rader = d.saker; st.neste = d.neste_cursor; tegn();
-    });
-  }
-
-  async function lastMer() {
-    try {
-      const d = await sok(st.neste);
-      st.rader = st.rader.concat(d.saker); st.neste = d.neste_cursor; tegn();
-      meldLive(`${st.rader.length}`);
-    } catch (e) {
-      if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
-      meldLive(t("ui.feil_tittel"));
-    }
-  }
+  // Utvalget her er kø OG status; begge bytter liste, og begge gjør en
+  // utestående «Vis mer» foreldet.
+  const { lastForste, lastMer } = keysetListe({ hoved, ctx, st, sok, tegn,
+    rader: (d) => d.saker });
 
   lastForste();
 }

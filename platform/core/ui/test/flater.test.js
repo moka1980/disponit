@@ -244,6 +244,67 @@ test("Unntak: med `security:read` når flaten hver kø nøkkeltallene teller",
     assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
   });
 
+// «VIS MER» HØRER TIL UTVALGET SOM BA OM DEN (Codex P2).
+//
+// Cursoren er delt ut i én kø. Rekker eier å bytte kø mens sidelastingen er
+// ute, kom svaret tilbake med den forrige køens rader OG cursor, og `lastMer`
+// skrev begge inn i den nye køen: `normal`-rader tegnet under overskriften
+// `drift`, og et «Vis mer» som pekte videre inn i feil kø.
+test("Unntak: en «Vis mer» fra forrige kø skriver ikke inn i den nye",
+  async () => {
+    const ekte = globalThis.fetch;
+    let slippMer;
+    const merUte = new Promise((r) => { slippMer = r; });
+    globalThis.fetch = async (url) => {
+      URLER.push(url);
+      // Bare sidelastingen holdes igjen — den er kappløpets ene halvdel.
+      if (url.includes("cursor=c1")) {
+        await merUte;
+        return { ok: true, status: 200, json: async () => ({
+          saker: [{ id: 99, ts: "2026-08-09T08:00:00+00:00",
+            handling: "gammel_ko", kategori: "over_grense", prioritet: "hoy",
+            status: "ny", sakstype: "normal" }],
+          neste_cursor: "c2" }) };
+      }
+      const ko = (url.match(/[?&]sakstype=([a-z]+)/) || [])[1];
+      return { ok: true, status: 200, json: async () => ({
+        saker: [{ id: 1, ts: "2026-08-09T09:00:00+00:00", handling: ko,
+          kategori: "over_grense", prioritet: "hoy", status: "ny",
+          sakstype: ko }],
+        neste_cursor: ko === "normal" ? "c1" : null }) };
+    };
+    try {
+      URLER.length = 0;
+      const h = nyHoved();
+      visUnntak(h, ctx(KO_CTX));
+      await vent(() => h.querySelector("tbody button"));
+      const visMer = [...h.querySelectorAll(".cursornav button")]
+        .find((b) => b.textContent.trim() === t("ui.vis_mer"));
+      assert.ok(visMer, "«Vis mer» mangler — cursoren kom ikke fram");
+      visMer.dispatchEvent(new window.Event("click"));
+      await vent(() => URLER.some((u) => u.includes("cursor=c1")));
+
+      // Kø byttes MENS sidelastingen er ute, og den nye lista lander først.
+      h.querySelectorAll(".filterbar")[0].querySelectorAll("button")[2]
+        .dispatchEvent(new window.Event("click"));
+      await vent(() => h.textContent.includes("drift"));
+
+      slippMer();
+      await vent(() => false, 10);   // gi det foreldede svaret full sjanse
+
+      assert.ok(!h.textContent.includes("gammel_ko"),
+        "rader fra forrige kø ble tegnet under den nye");
+      // Cursoren fulgte med i samme skriving: uten vakten står «Vis mer»
+      // igjen på `c2` — en peker inn i en kø flaten ikke lenger viser.
+      URLER.length = 0;
+      const merNaa = [...h.querySelectorAll(".cursornav button")]
+        .find((b) => b.textContent.trim() === t("ui.vis_mer"));
+      assert.ok(!merNaa, "«Vis mer» arvet cursoren fra den forrige køen");
+    } finally {
+      globalThis.fetch = ekte;
+    }
+  });
+
 test("Unntak: behandlingsknapper + godkjenn-bekreftelse + CSRF-POST (PR-012)", async () => {
   const kalt = [];
   const ekte = globalThis.fetch;
