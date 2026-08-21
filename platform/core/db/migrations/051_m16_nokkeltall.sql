@@ -118,10 +118,30 @@ BEGIN
      GROUP BY GROUPING SETS ((o.status), ());
 END $$;
 
+-- SAKSTYPEVERNET på de tre unntaksdefinerne (`p_sakstyper`):
+--
+-- `sikkerhet` og `drift` er EGNE køer med eget scope (v3-delta pkt. 5),
+-- og det vernede er ikke bare innholdet — det er at saken FINNES.
+-- Unntakslisten holder dette allerede (`app.py`: `synlige_sakstyper`),
+-- men de tre definerne under leser de samme radene UTENOM den veien, og
+-- uten filteret ville en ren `decisions:read` fått kategoritellinger,
+-- «åpne nå», og IDer/tidspunkter/sakstyper for lukkede sikkerhetssaker.
+--
+-- Settet er KALLERENS, akkurat som `p_terminale`: SQL avleder ikke
+-- scope-regelen på egen hånd (oversikt-lærdommen — to utgaver av samme
+-- kontroll er to kontroller). Fila her filtrerer bare på det den får.
+--
+-- At utelatte rader ikke nevnes i svaret er IKKE samme sak som den
+-- stille trunkeringen `antall_totalt` løser: der skjulte grensen fakta
+-- kalleren har rett til å se, her er selve eksistensen det scopet
+-- verner. Å opplyse «+3 skjulte» ville lekket nøyaktig opplysningen.
+
 -- Unntak, AKTIVITETSAKSEN: opprettet i vinduet, per kategori (anker ts).
 -- Kun metadata — payloaden er kryptert og røres aldri herfra.
+DROP FUNCTION IF EXISTS m16_unntak_aktivitet(
+    TEXT, TIMESTAMPTZ, TIMESTAMPTZ);
 CREATE OR REPLACE FUNCTION m16_unntak_aktivitet(
-    p_tenant TEXT, p_fra TIMESTAMPTZ, p_til TIMESTAMPTZ)
+    p_tenant TEXT, p_fra TIMESTAMPTZ, p_til TIMESTAMPTZ, p_sakstyper TEXT[])
 RETURNS TABLE(nokkel TEXT, antall BIGINT)
 LANGUAGE plpgsql STABLE SECURITY DEFINER
 SET search_path = pg_catalog AS $$
@@ -133,6 +153,7 @@ BEGIN
            count(*)
       FROM public.unntak u
      WHERE u.tenant = p_tenant AND u.ts >= p_fra AND u.ts < p_til
+       AND u.sakstype = ANY(p_sakstyper)
      GROUP BY GROUPING SETS ((u.kategori), ());
 END $$;
 
@@ -149,9 +170,11 @@ END $$;
 -- var det (SP: aldri stille ufullstendige fakta).
 DROP FUNCTION IF EXISTS m16_unntak_lukkede(
     TEXT, TIMESTAMPTZ, TIMESTAMPTZ, TEXT[], INT);
+DROP FUNCTION IF EXISTS m16_unntak_lukkede(
+    TEXT, TIMESTAMPTZ, TIMESTAMPTZ, TEXT[], TEXT[], INT);
 CREATE FUNCTION m16_unntak_lukkede(
     p_tenant TEXT, p_fra TIMESTAMPTZ, p_til TIMESTAMPTZ,
-    p_terminale TEXT[], p_grense INT)
+    p_terminale TEXT[], p_sakstyper TEXT[], p_grense INT)
 RETURNS TABLE(id BIGINT, kategori TEXT, sakstype TEXT, status TEXT,
               opprettet TIMESTAMPTZ, lukket TIMESTAMPTZ, varighet_s BIGINT,
               antall_totalt BIGINT)
@@ -167,14 +190,16 @@ BEGIN
            count(*) OVER ()
       FROM public.unntak u
      WHERE u.tenant = p_tenant AND u.status = ANY(p_terminale)
+       AND u.sakstype = ANY(p_sakstyper)
        AND u.status_ts >= p_fra AND u.status_ts < p_til
      ORDER BY u.status_ts DESC
      LIMIT greatest(least(coalesce(p_grense, 50), 200), 1);
 END $$;
 
 -- Unntak, TILSTANDSAKSEN: «åpne nå» — utenfor enhver vindusvelger.
+DROP FUNCTION IF EXISTS m16_unntak_apne(TEXT, TEXT[]);
 CREATE OR REPLACE FUNCTION m16_unntak_apne(
-    p_tenant TEXT, p_terminale TEXT[])
+    p_tenant TEXT, p_terminale TEXT[], p_sakstyper TEXT[])
 RETURNS BIGINT
 LANGUAGE plpgsql STABLE SECURITY DEFINER
 SET search_path = pg_catalog AS $$
@@ -182,7 +207,8 @@ DECLARE v BIGINT;
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant, 'm16_unntak_apne');
     SELECT count(*) INTO v FROM public.unntak u
-     WHERE u.tenant = p_tenant AND NOT (u.status = ANY(p_terminale));
+     WHERE u.tenant = p_tenant AND NOT (u.status = ANY(p_terminale))
+       AND u.sakstype = ANY(p_sakstyper);
     RETURN v;
 END $$;
 

@@ -99,9 +99,13 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm16_frekvensreservasjoner(text,timestamp with time zone,timestamp with time zone)', 'disponit_m37_claimer'),
     ('FUNCTION', 'm16_aktiveringer(text,timestamp with time zone,timestamp with time zone)', 'disponit_m37_claimer'),
     ('FUNCTION', 'm16_oppdrag(text,timestamp with time zone,timestamp with time zone)', 'disponit_m37_claimer'),
-    ('FUNCTION', 'm16_unntak_aktivitet(text,timestamp with time zone,timestamp with time zone)', 'disponit_m37_claimer'),
-    ('FUNCTION', 'm16_unntak_lukkede(text,timestamp with time zone,timestamp with time zone,text[],integer)', 'disponit_m37_claimer'),
-    ('FUNCTION', 'm16_unntak_apne(text,text[])',                      'disponit_m37_claimer'),
+    -- Haleargumentet `p_sakstyper` er sakstypevernet (`security:read`) —
+    -- settet er kallerens, som `p_terminale`. 051 har aldri vært
+    -- deployet, så de tidligere formene finnes ikke i noen base og skal
+    -- ikke stå her.
+    ('FUNCTION', 'm16_unntak_aktivitet(text,timestamp with time zone,timestamp with time zone,text[])', 'disponit_m37_claimer'),
+    ('FUNCTION', 'm16_unntak_lukkede(text,timestamp with time zone,timestamp with time zone,text[],text[],integer)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'm16_unntak_apne(text,text[],text[])',               'disponit_m37_claimer'),
     ('FUNCTION', 'm16_tick(text,timestamp with time zone,timestamp with time zone)', 'disponit_m37_claimer'),
     ('FUNCTION', 'hent_plan_hendelser(text,uuid,integer)',            'disponit_m37_claimer'),
     ('FUNCTION', 'planer_med_menneskelig_avvis()',                    'disponit_m37_claimer'),

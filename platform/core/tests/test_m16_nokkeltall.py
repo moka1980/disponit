@@ -15,8 +15,8 @@ from pathlib import Path
 import psycopg
 import pytest
 
-from .test_api import DSN, MIGRATOR_DSN, app, dekker, klient, migrator, \
-    miljo, token  # noqa: F401
+from .test_api import DSN, MIGRATOR_DSN, TENANT, app, dekker, klient, \
+    migrator, miljo, token  # noqa: F401
 from .test_pr013_policyadmin import (TEN as POLTEN, _attest, _c, _runde,
                                      _validert_utkast)
 from .test_m37 import _sett_kontekst
@@ -43,7 +43,7 @@ def _logg(m, tenant, ts=None, beslutning="TILLAT"):
 
 
 def _sak(m, tenant, *, ts=None, status="manuell", status_ts=None,
-         kategori="over_grense"):
+         kategori="over_grense", sakstype="normal"):
     # `manuell` er ÅPEN men ikke claimbar: `status='ny'` er det eneste
     # claim-bare (005), og en telle-test skal aldri etterlate saker
     # m37-kappløpstesten kan plukke opp på tvers av tenants.
@@ -61,18 +61,24 @@ def _sak(m, tenant, *, ts=None, status="manuell", status_ts=None,
         " sakstype, prioritet, status, payload_kryptert, key_id, nonce,"
         " sakskilde, maks_auto_forsok_snapshot, policy_versjon,"
         " policy_content_hash, ts, status_ts) VALUES (%s,%s,'utbetaling',"
-        "%s,'normal','hoy',%s,%s,%s,%s,'policybrudd',3,'1.0.0',%s,"
+        "%s,%s,'hoy',%s,%s,%s,%s,'policybrudd',3,'1.0.0',%s,"
         " coalesce(%s, now()), coalesce(%s, now()))"
         " RETURNING id",
-        (tenant, lid, kategori, status, ct, key_id, nonce, "c" * 64,
-         ts, status_ts)).fetchone()[0]
+        (tenant, lid, kategori, sakstype, status, ct, key_id, nonce,
+         "c" * 64, ts, status_ts)).fetchone()[0]
 
 
-def _kall(conn, tenant, fn, fra, til):
+#: Sakstypesettet et token MED `security:read` ser (app.SAKSTYPER).
+ALLE_SAKSTYPER = ["normal", "sikkerhet", "drift"]
+TERM = ["løst", "avvist"]
+
+
+def _kall(conn, tenant, fn, fra, til, *ekstra):
     _sett_kontekst(conn, tenant)
+    args = (tenant, fra, til, *ekstra)
     rader = conn.execute(
-        f"SELECT nokkel, antall FROM {fn}(%s,%s,%s)",
-        (tenant, fra, til)).fetchall()
+        f"SELECT nokkel, antall FROM {fn}({','.join(['%s'] * len(args))})",
+        args).fetchall()
     conn.rollback()
     total = dict(rader).get("__total__", 0)
     deler = {k: v for k, v in rader if k != "__total__"}
@@ -211,10 +217,12 @@ def test_tenantbinding_per_definer(migrator):
                 ("m16_beslutninger(%s,%s,%s)", (b, fra, til)),
                 ("m16_aktiveringer(%s,%s,%s)", (b, fra, til)),
                 ("m16_oppdrag(%s,%s,%s)", (b, fra, til)),
-                ("m16_unntak_aktivitet(%s,%s,%s)", (b, fra, til)),
-                ("m16_unntak_apne(%s,%s)", (b, ["løst", "avvist"])),
-                ("m16_unntak_lukkede(%s,%s,%s,%s,10)",
-                 (b, fra, til, ["løst", "avvist"])),
+                ("m16_unntak_aktivitet(%s,%s,%s,%s)",
+                 (b, fra, til, ALLE_SAKSTYPER)),
+                ("m16_unntak_apne(%s,%s,%s)",
+                 (b, TERM, ALLE_SAKSTYPER)),
+                ("m16_unntak_lukkede(%s,%s,%s,%s,%s,10)",
+                 (b, fra, til, TERM, ALLE_SAKSTYPER)),
                 ("m16_tick(%s,%s,%s)", (b, fra, til)),
                 ("m16_frekvensreservasjoner(%s,%s,%s)", (b, fra, til))):
             _sett_kontekst(rt, a)      # kontekst a, parameter b
@@ -262,21 +270,22 @@ def test_tidsanker_per_kort(migrator):
     fra, til = naa - timedelta(hours=1), naa + timedelta(hours=1)
     rt = _rt()
     try:
-        akt_total, _ = _kall(rt, ten, "m16_unntak_aktivitet", fra, til)
+        akt_total, _ = _kall(rt, ten, "m16_unntak_aktivitet", fra, til,
+                             ALLE_SAKSTYPER)
         assert akt_total == 0, "aktivitet talte en sak opprettet før vinduet"
         _sett_kontekst(rt, ten)
         lukkede = rt.execute(
-            "SELECT id FROM m16_unntak_lukkede(%s,%s,%s,%s,10)",
-            (ten, fra, til, ["løst", "avvist"])).fetchall()
-        apne = rt.execute("SELECT m16_unntak_apne(%s,%s)",
-                          (ten, ["løst", "avvist"])).fetchone()[0]
+            "SELECT id FROM m16_unntak_lukkede(%s,%s,%s,%s,%s,10)",
+            (ten, fra, til, TERM, ALLE_SAKSTYPER)).fetchall()
+        apne = rt.execute("SELECT m16_unntak_apne(%s,%s,%s)",
+                          (ten, TERM, ALLE_SAKSTYPER)).fetchone()[0]
         rt.rollback()
         assert len(lukkede) == 1
         assert apne == 1                       # 7b: alltid «åpne nå»
         # 7c: «åpne nå» er upåvirket av ethvert vindu (ingen vindusarg).
         _sett_kontekst(rt, ten)
-        apne2 = rt.execute("SELECT m16_unntak_apne(%s,%s)",
-                           (ten, ["løst", "avvist"])).fetchone()[0]
+        apne2 = rt.execute("SELECT m16_unntak_apne(%s,%s,%s)",
+                           (ten, TERM, ALLE_SAKSTYPER)).fetchone()[0]
         rt.rollback()
         assert apne2 == apne
     finally:
@@ -346,6 +355,56 @@ def test_api_endepunktet_er_generaliseringen(migrator, klient, token):
 
 
 @pg
+def test_vernede_sakstyper_teller_ikke_uten_security_read(
+        migrator, klient, token):
+    """Sikkerhets- og driftskøene er egne køer med eget scope, og vernet
+    gjelder EKSISTENSEN: uten `security:read` skal nøkkeltallene verken
+    telle dem, liste dem eller la dem påvirke «åpne nå».
+
+    Nøkkeltallene leser `unntak` via egne definere, altså utenom
+    unntakslistens sakstypeport — uten `p_sakstyper` var endepunktet en
+    sidevei rundt `security:read` for ethvert `decisions:read`.
+    """
+    naa = datetime.now(timezone.utc)
+    _sett_kontekst(migrator, TENANT)
+    # Én åpen + én lukket av HVER sakstype, alle innenfor 24t-vinduet.
+    for st in ("normal", "sikkerhet", "drift"):
+        _sak(migrator, TENANT, sakstype=st, kategori="k_" + st)
+        _sak(migrator, TENANT, sakstype=st, kategori="k_" + st,
+             status="løst", status_ts=naa - timedelta(minutes=5))
+    migrator.commit()
+
+    def _hent(*scopes):
+        tok, _ = token(scopes=scopes)
+        r = klient.get("/v1/nokkeltall",
+                       headers={"authorization": f"Bearer {tok}"})
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    smal = _hent("decisions:read")
+    bred = _hent("decisions:read", "security:read")
+
+    # Kategoriene fra de vernede køene finnes ikke engang som nøkkel.
+    assert set(smal["unntak_aktivitet"]["deler"]) \
+        & {"k_sikkerhet", "k_drift"} == set()
+    assert {"k_sikkerhet", "k_drift"} <= set(bred["unntak_aktivitet"]["deler"])
+    # Suminvarianten holder på BEGGE sider av porten — et filtrert svar
+    # er et helt svar om et mindre sett, aldri en total med hull i.
+    for d in (smal, bred):
+        assert sum(d["unntak_aktivitet"]["deler"].values()) \
+            == d["unntak_aktivitet"]["total"]
+    assert bred["unntak_aktivitet"]["total"] \
+        == smal["unntak_aktivitet"]["total"] + 4
+    # Tilstandsaksen og radlisten er vernet på samme måte.
+    assert bred["apne_naa"] == smal["apne_naa"] + 2
+    assert {r["sakstype"] for r in smal["unntak_lukkede"]} <= {"normal"}
+    assert {"sikkerhet", "drift"} \
+        <= {r["sakstype"] for r in bred["unntak_lukkede"]}
+    assert bred["unntak_lukkede_totalt"] \
+        == smal["unntak_lukkede_totalt"] + 2
+
+
+@pg
 def test_lukkede_trunkeres_aldri_stille(migrator):
     """Radgrensen på lukkede-listen er et VISNINGSTAK, ikke en telling:
     `antall_totalt` er hele settet i vinduet, fra samme skann som radene,
@@ -363,8 +422,8 @@ def test_lukkede_trunkeres_aldri_stille(migrator):
         _sett_kontekst(rt, ten)
         rader = rt.execute(
             "SELECT id, antall_totalt FROM"
-            " m16_unntak_lukkede(%s,%s,%s,%s,2)",
-            (ten, fra, til, ["løst", "avvist"])).fetchall()
+            " m16_unntak_lukkede(%s,%s,%s,%s,%s,2)",
+            (ten, fra, til, TERM, ALLE_SAKSTYPER)).fetchall()
         rt.rollback()
     finally:
         rt.close()

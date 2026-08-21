@@ -210,13 +210,22 @@ def nokkeltall(tjeneste, request: Request) -> Response:
         oppdrag = _partisjon(conn.execute(
             "SELECT nokkel, antall FROM m16_oppdrag(%s,%s,%s)",
             arg).fetchall())
-        aktivitet = _partisjon(conn.execute(
-            "SELECT nokkel, antall FROM m16_unntak_aktivitet(%s,%s,%s)",
-            arg).fetchall())
         # Terminalsettet er app-lagets ENE definisjon — statusmaskinen
         # kopieres aldri inn i SQL (oversikt-lærdommen fra #105-æraen).
-        from .app import TERMINALE_UNNTAKSSTATUSER
+        # Sakstypesettet kommer samme vei og av samme grunn: hvilke køer
+        # DETTE tokenet får se er en scope-regel, og den har ett hjem
+        # (`app.synlige_sakstyper`). Uten den ville nøkkeltallene vært en
+        # sidevei rundt `security:read`: tellingene, «åpne nå» og de
+        # lukkede radene leser `unntak` direkte, altså utenom
+        # unntakslistens egen sakstypeport. Skjulte rader nevnes IKKE i
+        # svaret — her er eksistensen det vernede (samme grunn som at
+        # `_hent_unntak` svarer `ikke_funnet`, ikke 403).
+        from .app import TERMINALE_UNNTAKSSTATUSER, synlige_sakstyper
         terminale = list(TERMINALE_UNNTAKSSTATUSER)
+        sakstyper = list(synlige_sakstyper(auth.scopes))
+        aktivitet = _partisjon(conn.execute(
+            "SELECT nokkel, antall FROM m16_unntak_aktivitet(%s,%s,%s,%s)",
+            (*arg, sakstyper)).fetchall())
         # Radlisten har en grense — og grensen er ALDRI stille: defineren
         # returnerer hele tellingen i vinduet (`antall_totalt`, samme
         # skann), så svaret bærer både utsnittet og hvor stort settet er.
@@ -225,8 +234,9 @@ def nokkeltall(tjeneste, request: Request) -> Response:
         lukkede_rader = conn.execute(
             "SELECT id, kategori, sakstype, status, opprettet,"
             " lukket, varighet_s, antall_totalt FROM"
-            " m16_unntak_lukkede(%s,%s,%s,%s,%s)",
-            (*arg, terminale, NOKKELTALL_LUKKEDE_GRENSE)).fetchall()
+            " m16_unntak_lukkede(%s,%s,%s,%s,%s,%s)",
+            (*arg, terminale, sakstyper,
+             NOKKELTALL_LUKKEDE_GRENSE)).fetchall()
         lukkede = [
             {"id": r[0], "kategori": r[1], "sakstype": r[2],
              "status": r[3], "opprettet": r[4].isoformat(),
@@ -237,8 +247,8 @@ def nokkeltall(tjeneste, request: Request) -> Response:
         lukkede_totalt = lukkede_rader[0][7] if lukkede_rader else 0
         # TILSTAND, ikke aktivitet: «åpne nå» står utenfor vinduet.
         apne_naa = conn.execute(
-            "SELECT m16_unntak_apne(%s,%s)",
-            (auth.tenant, terminale)).fetchone()[0]
+            "SELECT m16_unntak_apne(%s,%s,%s)",
+            (auth.tenant, terminale, sakstyper)).fetchone()[0]
         tick = _partisjon(conn.execute(
             "SELECT nokkel, antall FROM m16_tick(%s,%s,%s)",
             arg).fetchall())

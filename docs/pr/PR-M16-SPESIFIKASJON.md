@@ -113,6 +113,18 @@ nytt.
 - `unntak`-payloaden er kryptert og **røres ikke**: kun
   metadatakolonnene leses, og porten tester statisk at ingen
   dekrypteringsvei kalles fra nøkkeltallsveien.
+- **Sakstypevernet arves, det gjenskapes ikke.** `sikkerhet` og `drift`
+  er egne køer med eget scope (v3-delta pkt. 5), og det vernede er at
+  saken FINNES. Alle tre unntakskortene — kategoritellingen, «åpne nå»
+  og lukkede-listen — filtreres derfor på sakstypene tokenet faktisk
+  ser, avledet ETT sted (`app.synlige_sakstyper`) og sendt inn i
+  definerne som parameter, slik terminalsettet er. Uten `security:read`
+  er de vernede radene fraværende, og fraværet **nevnes ikke**: en
+  «+N skjulte»-linje ville lekket nøyaktig den opplysningen scopet
+  verner (samme grunn som at et oppslag på en sikkerhetssak svarer
+  `ikke_funnet` og ikke `403`). Dette er ikke i strid med regelen om at
+  en grense aldri er stille: der skjuler taket fakta kalleren HAR rett
+  til å se, her har kalleren ingen rett til å vite at radene finnes.
 - Keyset-cursor gjenbrukes der lister vises (beslutningslisten finnes
   alt som `/v1/beslutninger`; kortet lenker dit i stedet for å bygge en
   ny liste).
