@@ -334,9 +334,19 @@ def revisjonsrader_mot_bestilt(linjer: list[dict], krav: int) -> int:
     bestilte posisjoner — én rad delt av flere kjøringer er én rad, og
     en linje uten egen loggpost-identitet er ikke målt (`_identitet`,
     samme kanoniske form som oppdrags-IDen).
+
+    Codex' P1 på PR #123: tellingen filtrerte på POSISJON, men nøklet på
+    oppdrag — og kastet dermed posisjonen den nettopp hadde krevd. Ti
+    `revisjonsrad_ok`-linjer på samme posisjon 0, med hvert sitt oppdrag
+    og hver sin loggpost, ga «10 rader» selv om ni av de bestilte
+    kjøringene ikke hadde noen rad i det hele tatt. Nøkkelen er nå
+    posisjonen — samme disiplin som `rent_innen_frist` — og tallet er
+    det minste av antall distinkte oppdrag og antall distinkte
+    loggposter bak dem: ti rader krever ti bestilte posisjoner med hvert
+    sitt oppdrag og hver sin rad.
     """
     bestilte = range(krav)
-    per_oppdrag: dict[int, int] = {}
+    per_indeks: dict[int, tuple[int, int]] = {}
     for d in linjer:
         indeks, oppdrag = d.get("i"), _identitet(d, "oppdrag")
         logg = _identitet(d, "loggpost")
@@ -345,8 +355,9 @@ def revisjonsrader_mot_bestilt(linjer: list[dict], krav: int) -> int:
                 and isinstance(indeks, int) and not isinstance(indeks, bool)
                 and indeks in bestilte
                 and oppdrag is not None):
-            per_oppdrag[oppdrag] = logg
-    return len(set(per_oppdrag.values()))
+            per_indeks[indeks] = (oppdrag, logg)
+    return min(len({par[0] for par in per_indeks.values()}),
+               len({par[1] for par in per_indeks.values()}))
 
 
 def revisjonsrad_avvik(linjer: list[dict]) -> int:

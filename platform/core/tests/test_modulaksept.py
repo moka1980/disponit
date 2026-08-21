@@ -5332,6 +5332,10 @@ def test_konverterens_attesttellere_krever_egne_maalinger():
     ett = [linje(i, oppdrag=7, loggpost=100 + i) for i in range(10)]
     assert m.attestert_kvittering(ett, 10) == 1
     assert m.revisjonsrader_mot_bestilt(ett, 10) == 1
+    # Codex' P1 (#123): ti rader på ÉN bestilt posisjon er én posisjon —
+    # tellingen nøkles på posisjonen, ikke på oppdraget bak den.
+    stablet = [linje(0, oppdrag=20 + i, loggpost=200 + i) for i in range(10)]
+    assert m.revisjonsrader_mot_bestilt(stablet, 10) == 1
 
 
 def test_aksept_skriptet_baerer_v3_og_sammenhengskravet():
