@@ -5718,8 +5718,10 @@ def test_akseptporten_maaler_kjoringene_selv(migrator):
         _aksepter(migrator, k, did, kjoringer=ti[:9])
     assert "9/10 er rødt" in str(ei.value)
     migrator.rollback()
-    # (c3) …og typen er DRILLENS (Codex P1, #125 r3): et utført, signert
-    # oppdrag av en ANNEN registrert type er ikke kontrolløpet.
+    # (c3) …og KONTROLLTYPEN er registerets, entydig (Codex P1, #125
+    # r4): en modul med TO registrerte typer kan ikke akseptere i det
+    # hele tatt — flertydighet er en stopp, aldri et valg. Den som
+    # registrerer en type til for å komme forbi porten, låser den.
     k = _kjede(migrator)
     did = _drill(migrator, k)
     ti = _kontrollkjoringer(k, migrator)
@@ -5727,12 +5729,25 @@ def test_akseptporten_maaler_kjoringene_selv(migrator):
         "INSERT INTO oppdragstype_register (oppdragstype, eiermodul,"
         " kontraktversjon, kontrakt_hash) VALUES (%s,%s,1,'kh')",
         (f"annen.type.{k['mid']}", k["mid"]))
-    fremmed = k["oppdrag"](claim_release="r-drillet",
-                           typen=f"annen.type.{k['mid']}")
-    k["artefakt"]("r-drillet", "promotert", fremmed)
+    migrator.commit()
     with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
-        _aksepter(migrator, k, did, kjoringer=ti[:9] + [fremmed])
-    assert "attesteres ikke av basen" in str(ei.value)
+        _aksepter(migrator, k, did, kjoringer=ti)
+    assert "nøyaktig én entydig kontrolltype" in str(ei.value)
+    migrator.rollback()
+    # (registeret er append-only — kjeden med to typer forlates; c4 får
+    # sin egen)
+    # (c4) …og DRILLEN selv må ha kjørt kontrolltypen (r4): en drill
+    # målt på et inflight-oppdrag av en annen (uregistrert) type er
+    # ikke modulens kontrolldrill, uansett hvor grønn den er.
+    k = _kjede(migrator)
+    avvik = k["oppdrag"](claim_release="r-drillet",
+                         typen=f"utenom.{k['mid']}")
+    k["artefakt"]("r-drillet", "promotert", avvik)
+    did = _drill(migrator, k, opp={**k["opp"], "inflight": avvik})
+    ti = _kontrollkjoringer(k, migrator)
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, k, did, kjoringer=ti)
+    assert "bærer ikke kontrolltypen" in str(ei.value)
     migrator.rollback()
     # (d) tom liste: et aggregat alene bærer ingen aksept. (Attestveien
     # avviser en tom liste alt ved skriving, så referatet hoppes over —

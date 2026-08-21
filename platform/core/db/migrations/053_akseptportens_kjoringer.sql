@@ -340,7 +340,7 @@ DECLARE v_livslop TEXT; v_mangler TEXT; v_punkt RECORD; v_verdi JSONB;
         v_evidens RECORD; v_ci_av TEXT; v_drill_artefakt TEXT;
         v_drillet_release TEXT; v_kjoring BIGINT; v_att RECORD;
         v_loggposter BIGINT[] := '{}'; v_inflight BIGINT;
-        v_kontrolltype TEXT;
+        v_kontrolltype TEXT; v_antall_typer INT;
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended('modul:' || p_modul_id, 0));
     -- FORMEN FØRST (Codex P1, #117 runde 19). `p_evidens_sha` gikk rett
@@ -870,11 +870,41 @@ BEGIN
             v_evidens.kjoringer
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
-    -- Kontrolltypen er DRILLENS EGEN (Codex P1, #125 r3): typen på
-    -- oppdraget drillen målte inflight — claim-bevist, base-eid — er
-    -- typen kontrolløpet består av. Aldri en parameter fra kalleren.
-    SELECT o.oppdragstype INTO v_kontrolltype FROM public.oppdrag o
-     WHERE o.tenant = p_e2e_tenant AND o.id = v_inflight;
+    -- KONTROLLTYPEN ER REGISTERETS, OG DEN MÅ VÆRE ENTYDIG (Codex
+    -- P1, #125 r4). Runde 3 deriverte den av drillens inflight-oppdrag
+    -- — men det oppdraget er selv ubundet i type
+    -- (`registrer_moduldrill` måler eiermodul, aldri typen), så en
+    -- drill kjørt helt på en annen registrert type ville gjort DEN til
+    -- fasit. Fasiten er registerets egen: modulen som aksepteres skal
+    -- ha NØYAKTIG ÉN registrert oppdragstype — kontrolltypen — og både
+    -- drillens inflight-oppdrag og hver av de ti kjøringene må bære
+    -- den. Får en modul legitimt flere typer en dag, må porten
+    -- revideres SYNLIG; til da er flertydighet en stopp, aldri et
+    -- valg — også når noen med deployfullmakten registrerer en type
+    -- til for å komme forbi: da låser de aksepten, de åpner den ikke.
+    SELECT min(t.oppdragstype), count(*)
+      INTO v_kontrolltype, v_antall_typer
+      FROM public.oppdragstype_register t
+     WHERE t.eiermodul = p_modul_id;
+    IF v_antall_typer IS DISTINCT FROM 1 THEN
+        RAISE EXCEPTION 'aksepter_moduldeployment: modul % har %'
+            ' registrerte oppdragstyper — aksepten krever nøyaktig én'
+            ' entydig kontrolltype; flertydighet er en stopp, aldri et'
+            ' valg', p_modul_id, coalesce(v_antall_typer, 0)
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- …og DRILLEN selv må ha kjørt kontrolltypen: inflight-oppdraget
+    -- er drillens claim-beviste kjøring, og en drill målt på en annen
+    -- type er ikke denne modulens kontrolldrill.
+    IF NOT EXISTS (SELECT 1 FROM public.oppdrag o
+                    WHERE o.tenant = p_e2e_tenant AND o.id = v_inflight
+                      AND o.oppdragstype = v_kontrolltype) THEN
+        RAISE EXCEPTION 'aksepter_moduldeployment: drillens'
+            ' inflight-oppdrag % bærer ikke kontrolltypen «%» — drillen'
+            ' må selv ha kjørt det løpet aksepten binder',
+            v_inflight, v_kontrolltype
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
     FOREACH v_kjoring IN ARRAY p_kjoringer LOOP
         SELECT * INTO v_att FROM public.maal_kjoringsattest(
             p_e2e_tenant, v_kjoring, v_drillet_release, p_miljo,
