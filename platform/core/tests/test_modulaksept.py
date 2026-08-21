@@ -4488,7 +4488,8 @@ def test_drillartefaktet_maa_navngi_sin_fencing_generasjon():
         assert "module_epoch" in str(ei.value)
 
 
-def test_hvert_grensepunkt_har_en_kilde_som_maaler_nettopp_det():
+@pg
+def test_hvert_grensepunkt_har_en_kilde_som_maaler_nettopp_det(migrator):
     """Codex' P1 (runde 5): `egress.proxytoken_til_ikke_ekstern_lesing`
     hentet verdien sin fra `maalt.egress_lekkasjer`.
 
@@ -4505,18 +4506,27 @@ def test_hvert_grensepunkt_har_en_kilde_som_maaler_nettopp_det():
     runde 15 — registeret eier dem nå, og et kall som sier noe annet
     avvises av basen, så et avvik her er en aksept som ville dødd på
     staging), og at et punkt uten ekte kilde BLOKKERER aksepten i stedet
-    for å bli pyntet."""
+    for å bli pyntet.
+
+    SP-13 (ratifisert i denne commiten): registeret slås opp i den
+    MIGRERTE BASEN, ikke hand-parses ut av migrasjonsfila. Den forrige
+    formen skar teksten ved første semikolon og plukket radene med et
+    regex — en håndskrevet SQL-parser, altså nøyaktig det porten forbyr.
+    Den målte i tillegg feil ting: uttrykt med like gyldig SQL — en cast,
+    en escapet apostrof, et ekstra statement — kunne det rekonstruerte
+    registeret avvike fra radene PostgreSQL faktisk får, og da feiler
+    testen enten på uskyldig formatering eller går glipp av et sprik
+    mellom skript og base som først dukker opp i staging-aksepten.
+    Tabellen er sannheten; migrasjonsfila er bare veien dit."""
     m = _aksept_skript()
-    # NØYAKTIG punktregisterets INSERT: `akseptkrav_ci` (runde 16) bærer
-    # også en `wcag-kontroll-v1`-rad med fem strengfelt, og den er et krav
-    # til CI-KJØRINGEN, ikke et grensepunkt.
-    sql = M050.read_text(encoding="utf-8")
-    blokk = sql[sql.index("INSERT INTO akseptkrav_punkt"):]
-    blokk = blokk[:blokk.index(";")]
-    register = {
-        p: (kt, g, mk) for p, kt, g, mk in re.findall(
-            r"\('m56-akseptflipp-v2',\s*'([^']+)',\s*'([^']+)',"
-            r"\s*'([^']*)',\s*'([^']*)'\)", blokk)}
+    # Kravpunktregisteret slik det STÅR etter migrering. `akseptkrav_ci`
+    # er en annen tabell — den bærer krav til CI-KJØRINGEN, ikke
+    # grensepunkter — så oppslaget kan ikke forveksle de to slik en
+    # tekstsøk i fila måtte passe på.
+    migrator.execute("RESET ROLE")
+    register = {p: (kt, g, mk) for p, kt, g, mk in migrator.execute(
+        "SELECT punkt, kilde_type, grenseverdi, maalt_krav"
+        "  FROM akseptkrav_punkt WHERE krav_id=%s", (KRAV,)).fetchall()}
     punkter = set(register)
     assert len(punkter) == 22, punkter
     kilder = (set(m.MAALTE), set(m.CI_PUNKTER), set(m.UMAALTE),
@@ -4539,19 +4549,25 @@ def test_hvert_grensepunkt_har_en_kilde_som_maaler_nettopp_det():
         encoding="utf-8")
     assert register["malautorisasjon.positiv_sti_virker"] == \
         ("ci_kjoring", "ja", "ja")
-    # 050-revisjonen, målt SYNLIG: proxytoken-punktet er UTE av v2 (det
-    # krevde en mekanisme som ikke finnes), erstatningene er inne med
-    # hver sin ekte kilde, endringsnotatet står i migrasjonsfila — og
-    # v1-raden består som historie med intensjonsnotatet sitt.
+    # 050-revisjonen, målt SYNLIG i BASEN: proxytoken-punktet er UTE av
+    # v2 (det krevde en mekanisme som ikke finnes), erstatningene er inne
+    # med hver sin ekte kilde — og v1-raden består som historie, fordi
+    # registeret er append-only med krav-lås.
     assert "egress.proxytoken_til_ikke_ekstern_lesing" not in punkter
     assert register["egress.hemmeligheter_i_browsermiljo"][0] == \
         "evidensfil"
     assert register["egress.sideeffektklasse_gater_aktivering"][0] == \
         "ci_kjoring"
+    assert migrator.execute(
+        "SELECT count(*) FROM akseptkrav_punkt"
+        "  WHERE krav_id=%s AND punkt=%s",
+        (V1_KRAV, "egress.proxytoken_til_ikke_ekstern_lesing")
+    ).fetchone()[0] == 1, "v1-historien er visket ut"
+    # Endringsnotatet er en KOMMENTAR — den finnes bare i fila, og et
+    # substrengsøk etter den er ingen tolkning av SQL-grammatikk.
+    sql = M050.read_text(encoding="utf-8")
     for notat in ("ENDRINGSNOTAT", "FJERNET", "ERSTATTET", "FREMTID"):
         assert notat in sql, f"endringsnotatet mangler {notat}-leddet"
-    assert "egress.proxytoken_til_ikke_ekstern_lesing" in \
-        M049.read_text(encoding="utf-8"), "v1-historien er visket ut"
     # port24-tallet bærer nå SIN EGEN invariant — under riktig navn.
     assert "egress.hemmeligheter_i_browsermiljo" in m.MAALTE
     assert "egress.proxytoken_til_ikke_ekstern_lesing" not in m.MAALTE
