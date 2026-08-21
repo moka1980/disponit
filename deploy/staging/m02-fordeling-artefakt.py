@@ -13,9 +13,10 @@ BRUK (på verten, som root, med API-et oppe):
         [--nokkel-id k1] [--ut deploy/staging/artefakter/...json]
 
 Verifikatoren må finnes i API-tjenestens DISPONIT_ATT_NOKLER — skriptet
-leser samme miljøfil og NEKTER å starte hvis den ikke gjør det, i
-stedet for å drive 84 hendelser som alle blir STOPP: et sett som ikke
-er settet, telles ikke.
+leser NØYAKTIG de nøklene den kjørende tjenesten har lastet (se
+`_verdi`) og NEKTER å starte hvis den ikke gjør det, i stedet for å
+drive 84 hendelser som alle blir STOPP: et sett som ikke er settet,
+telles ikke.
 """
 from __future__ import annotations
 
@@ -40,6 +41,15 @@ spec.loader.exec_module(lib)
 
 MILJOFILER = ("/etc/disponit/staging.env", "/etc/disponit/wcag/konfig")
 
+#: API-ets EGNE credential-filer — nøyaktig de `disponit-api.service`
+#: laster med `LoadCredential=`. Det er DISSE bytene den kjørende
+#: prosessen verifiserer signaturer og bearer-tokener med, og derfor de
+#: eneste som kan svare på «kan API-et signere med denne verifikatoren».
+#: Miljøfilen over er en deploy-artefakt som KAN ha gått fra hverandre
+#: (halvferdig nøkkelrotasjon er nettopp øyeblikket den gjør det), og en
+#: preflight som godkjenner nøkler API-et ikke har, godkjenner ingenting.
+API_CRED = Path("/etc/disponit/api")
+
 
 def _miljo() -> dict:
     ut: dict[str, str] = {}
@@ -55,6 +65,33 @@ def _miljo() -> dict:
     return ut
 
 
+def _verdi(navn: str, miljo: dict) -> str:
+    """Verdien skriptet skal bruke, i tur og orden:
+
+    1. eksplisitt satt i miljøet — bevisst overstyring fra kalleren,
+    2. API-ets utrullede credential-fil — det tjenesten FAKTISK har,
+    3. miljøfilen — for det som ikke er en API-credential (migrator-DSN).
+
+    Avviker (2) og (3), sies det høyt: da er verten midt i en rotasjon,
+    og den som vinner skal ikke være et tilfelle.
+    """
+    eksplisitt = os.environ.get(navn)
+    if eksplisitt:
+        return eksplisitt
+    fra_fil = miljo.get(navn, "")
+    try:
+        utrullet = (API_CRED / navn).read_text(encoding="utf-8").strip()
+    except OSError:
+        utrullet = ""
+    if not utrullet:
+        return fra_fil
+    if fra_fil and fra_fil != utrullet:
+        print(f"NB: {navn} i miljøfilen avviker fra {API_CRED / navn} —"
+              " API-ets utrullede verdi brukes (verdiene selv skrives"
+              " aldri ut)")
+    return utrullet
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--api", required=True)
@@ -67,9 +104,10 @@ def main() -> int:
     miljo = _miljo()
     for n in ("DISPONIT_TOKEN_PEPPER", "DISPONIT_ATT_NOKLER",
               "DISPONIT_MIGRATOR_URL"):
-        os.environ.setdefault(n, miljo.get(n, os.environ.get(n, "")))
+        os.environ[n] = _verdi(n, miljo)
         if not os.environ[n]:
-            raise SystemExit(f"AVBRUTT: {n} mangler i miljøet — les"
+            raise SystemExit(f"AVBRUTT: {n} mangler — verken satt i"
+                             f" miljøet, i {API_CRED / n} eller i"
                              f" {MILJOFILER}")
     nokler = json.loads(os.environ["DISPONIT_ATT_NOKLER"])
     if a.verifikator not in nokler \
