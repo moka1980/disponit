@@ -152,6 +152,12 @@ NOKKELTALL_LUKKEDE_GRENSE = 50
 
 
 def _nokkeltall_vindu(request: Request) -> tuple[datetime, datetime] | None:
+    # Fritt intervall er BEVISST ikke implementert i v1 (§3:
+    # forhåndsdefinerte vinduer). En klient som likevel ber om `fra`/`til`
+    # skal få 400 — ikke et urelatert 24-timerssvar med status 200. Et
+    # eksplisitt spørsmål besvares aldri stille med noe annet.
+    if "fra" in request.query_params or "til" in request.query_params:
+        return None
     valg = request.query_params.get("vindu", "24t")
     lengde = NOKKELTALL_VINDUER.get(valg)
     if lengde is None:

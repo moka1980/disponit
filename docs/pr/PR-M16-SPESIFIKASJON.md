@@ -92,12 +92,19 @@ volumet er null (§6).
 
 ## 4. API — generalisering av det som finnes
 
-`GET /v1/nokkeltall?fra=…&til=…` bak samme scope som lesingen ellers
+`GET /v1/nokkeltall?vindu=24t|7d|30d` bak samme scope som lesingen ellers
 (`decisions:read`), implementert som **generaliseringen av
 24h-sammendraget**: samme filtertelling over valgbart vindu. Mønsteret
 er allerede Codex-herdet; v1 gjenbruker det framfor å finne opp et
 nytt.
 
+- **Vinduet velges med `vindu`, ikke med et fritt intervall.** Den ENE
+  parameteren er `vindu` ∈ {`24t`, `7d`, `30d`} (utelatt = `24t`); en
+  ukjent verdi er `400 request_feilformet`. Fritt `fra`/`til` er
+  bevisst ikke implementert i v1 (§3: forhåndsdefinerte vinduer), og et
+  kall som likevel sender dem **avvises med 400** framfor å få et
+  urelatert 24-timerssvar med status 200. Et eksplisitt spørsmål skal
+  ikke kunne besvares stille med noe annet.
 - Alle spørringer via definere med `tenant = p_tenant` og
   `krev_tenantkontekst` (SP-1); flaten leser aldri tabellene direkte
   (SP-7).

@@ -335,6 +335,14 @@ def test_api_endepunktet_er_generaliseringen(migrator, klient, token):
     r3 = klient.get("/v1/nokkeltall?vindu=30d",
                     headers={"authorization": f"Bearer {tok}"})
     assert r3.status_code == 200
+    # Fritt intervall finnes ikke i v1: et kall som ber om `fra`/`til`
+    # avvises, det får ALDRI et urelatert 24-timerssvar med status 200.
+    for spm in ("?fra=2026-08-01T00:00:00Z&til=2026-08-02T00:00:00Z",
+                "?fra=2026-08-01T00:00:00Z",
+                "?vindu=7d&til=2026-08-02T00:00:00Z"):
+        rf = klient.get("/v1/nokkeltall" + spm,
+                        headers={"authorization": f"Bearer {tok}"})
+        assert rf.status_code == 400, spm
 
 
 @pg

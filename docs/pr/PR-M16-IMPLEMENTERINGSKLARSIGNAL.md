@@ -51,7 +51,7 @@ K1–K5-konvergensreglene gjelder sløyferundene.**
 
 ## 4. API og definere
 
-- `GET /v1/nokkeltall?fra=…&til=…` bak `decisions:read` —
+- `GET /v1/nokkeltall?vindu=24t|7d|30d` bak `decisions:read` —
   **generaliseringen av 24h-sammendraget**: samme filtertelling,
   valgbart vindu (forhåndsdefinert: 24 t / 7 d / 30 d). Gjenbruk
   mønsteret; ikke nytt maskineri.
