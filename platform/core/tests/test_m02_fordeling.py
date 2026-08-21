@@ -85,3 +85,78 @@ def test_settet_er_bundet_til_bytene_ikke_til_navnet_sitt():
     assert valider_artefaktformat(uten, "m02-fordeling-v1") != []
     assert any("sett_sha256" in f
                for f in _sjekk_grenser("m02-fordeling-v1", uten))
+
+
+@pg
+def test_fordelingen_er_lik_lokalt(klient, policy, token, migrator):
+    """Hele settet gjennom den EKTE beslutningsveien lokalt: hver
+    kategori dømmes per svar (fail-closed i driveren), radene leses av
+    revisjonsloggen via idempotensnøklene, og artefaktet — bygget av
+    NØYAKTIG samme funksjon som staging-leddet bruker — består både det
+    lukkede skjemaet og grensene. Én rad fjernet feller det.
+
+    DENNE er «likt lokalt». Testene over måler settet og bindingen som
+    DATA — de bygger radene av `bygg_sett()` selv og rører aldri
+    beslutningsveien. Uten dette leddet er `kjor_sett` uten kaller i
+    hele treet, og en regresjon i beslutning, signatur eller
+    revisjonslogg lar porten stå grønn mens den lokale fordelingen ikke
+    lenger er 84/3/93.
+
+    MUTASJONEN SOM DREPER DENNE: bygg `rader` av `bygg_sett()` i stedet
+    for av `revisjonslogg`, eller slett testen — da er påstanden i
+    modulens egen docstring ikke lenger sann.
+    """
+    from manifestskjema import _sjekk_grenser, valider_artefaktformat
+    m = _lib()
+    tok, _ = token()
+    runde = secrets.token_hex(4)
+
+    def _post(e, nokkel):
+        r = post(klient, policy, e, tok, nokkel=nokkel)
+        return r.status_code, (r.json().get("beslutning")
+                               if r.status_code == 200 else None)
+
+    def _tillat(ressurs):
+        return hendelse(policy, ressurs=ressurs)
+
+    def _uten(handling, ressurs):
+        return hendelse_uten_attestasjoner(ressurs=ressurs,
+                                           handling=handling)
+
+    def _tukle(e):
+        # snudd UTEN ny signering — signaturporten skal felle den, og
+        # nettopp det avtrykket er STOPP-kategorien.
+        e["attestasjoner"]["ingen_aktiv_tvist"]["resultat"] = False
+        return e
+
+    talt = m.kjor_sett(runde, _post, _tillat, _uten, _tukle)
+    assert talt == m.FORDELING
+    migrator.execute("RESET ROLE")
+    migrator.execute("SELECT set_config('disponit.tenant', %s, false)",
+                     (TENANT,))
+    rader = migrator.execute(
+        "SELECT id, beslutning FROM revisjonslogg WHERE tenant=%s"
+        "  AND idempotency_key LIKE %s",
+        (TENANT, f"m02f-{runde}-%")).fetchall()
+    migrator.rollback()
+    art = m.artefakt([(r[0], r[1]) for r in rader], TENANT, "lokal",
+                     "2026-08-21T00:00:00+00:00")
+    assert art["bestatt"] is True
+    assert valider_artefaktformat(art, "m02-fordeling-v1") == []
+    assert _sjekk_grenser("m02-fordeling-v1", art) == []
+    # Negative porter: én rad borte → fordelingen spriker; en beslutning
+    # byttet → re-regningen feller den; gjentatt loggpost → én hendelse
+    # er én rad.
+    amputert = dict(art, rader=art["rader"][1:],
+                    maalt=dict(art["maalt"]))
+    assert any("fasiten" in f or "krever >=" in f
+               for f in _sjekk_grenser("m02-fordeling-v1", amputert))
+    annen = "TILLAT" if art["rader"][0][1] != "TILLAT" else "STOPP"
+    byttet = dict(art, rader=[[art["rader"][0][0], annen]]
+                  + [list(r) for r in art["rader"][1:]])
+    assert any("fasiten" in f
+               for f in _sjekk_grenser("m02-fordeling-v1", byttet))
+    dublert = dict(art, rader=[list(art["rader"][0])]
+                   + [list(r) for r in art["rader"][:-1]])
+    assert any("gjentar" in f
+               for f in _sjekk_grenser("m02-fordeling-v1", dublert))
