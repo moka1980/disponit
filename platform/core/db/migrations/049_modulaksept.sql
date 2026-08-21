@@ -746,9 +746,19 @@ CREATE TABLE modulaksept (
     -- `kilde_ref` som endte på `@sha256:`.
     evidens_jsonl_sha256 TEXT NOT NULL
         CHECK (evidens_jsonl_sha256 ~ '^[0-9a-f]{64}$'),
-    manifest_commit TEXT NOT NULL,
+    -- …og commiten raden peker på navngis som en commit (Codex P1,
+    -- runde 22). `manifest_commit` gikk rett inn i den uforanderlige
+    -- raden uten noe formkrav i det hele tatt: en tom streng, et
+    -- grennavn eller en setning var like gyldig «proveniens» som en sha.
+    manifest_commit TEXT NOT NULL CHECK (manifest_commit ~ '^[0-9a-f]{40}$'),
     ci_run     TEXT NOT NULL,
-    ci_commit  TEXT NOT NULL,
+    ci_commit  TEXT NOT NULL CHECK (ci_commit ~ '^[0-9a-f]{40}$'),
+    -- …og de to er DEN SAMME commiten. Punktene påberoper seg «grønn CI
+    -- på akseptcommiten», og akseptskriptet har alltid krevd likheten —
+    -- men et krav som bare finnes i et skript, er ingen skranke for den
+    -- som kaller definereren direkte. To kolonner som får sprike, lar
+    -- raden attestere én commit og bevise en annen.
+    CHECK (manifest_commit = ci_commit),
     nokkel     TEXT NOT NULL,            -- SP-2: replay-nøkkel
     aktor      TEXT NOT NULL,
     akseptert_ts TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -1516,6 +1526,33 @@ BEGIN
     IF p_evidens_sha !~ '^[0-9a-f]{64}$' THEN
         RAISE EXCEPTION 'aksepter_moduldeployment: «%» er ingen sha256 —'
             ' evidensfilen skal navngis av bytene sine', p_evidens_sha
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- …og PROVENIENSEN på samme måte (Codex P1, #117 runde 22).
+    -- `p_manifest_commit` gikk rett inn i den uforanderlige raden uten
+    -- noe formkrav, og uten noe bånd til commiten CI-attesten gjelder.
+    -- En kaller med `disponit_modules_admin` kunne derfor oppgi en pen,
+    -- grønt attestert `p_ci_commit` og skrive hva som helst i
+    -- `p_manifest_commit` — og raden ville stått for alltid og påstått
+    -- at manifestet og artefaktene fra ÉN commit var prøvd av en
+    -- kjøring på en ANNEN. `m56-aksept.py` har alltid krevd likheten
+    -- (punktene påberoper seg «grønn CI på akseptcommiten»), men et
+    -- skript er ingen skranke for den som kaller definereren direkte.
+    -- Små bokstaver kreves, ikke normaliseres — samme disiplin som
+    -- evidenshashen over: raden og attesten skal ikke kunne stå med to
+    -- skrivemåter av samme commit.
+    IF p_manifest_commit !~ '^[0-9a-f]{40}$'
+       OR p_ci_commit !~ '^[0-9a-f]{40}$' THEN
+        RAISE EXCEPTION 'aksepter_moduldeployment: «%»/«%» er ingen'
+            ' commit-sha — en aksept navngir commiten den hviler på',
+            p_manifest_commit, p_ci_commit
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF p_manifest_commit IS DISTINCT FROM p_ci_commit THEN
+        RAISE EXCEPTION 'aksepter_moduldeployment: manifestet er hentet'
+            ' fra %, mens CI-kjøringen prøvde % — akseptcommiten er ÉN'
+            ' commit, og punktene påberoper seg en grønn kjøring på'
+            ' nøyaktig den', p_manifest_commit, p_ci_commit
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
     -- SP-2: replay er et no-op, aldri en ny hendelse — men BARE når hele

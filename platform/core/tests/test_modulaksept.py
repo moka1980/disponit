@@ -453,15 +453,16 @@ def _punkter(m, krav=KRAV, *, evidens_sha=EVIDENS_SHA, ci_run="run-1",
 def _aksepter(m, k, did, *, release="r-kandidat", artefakt=None,
               punkter=None, nokkel=None, miljo="staging",
               evidens_sha=EVIDENS_SHA, ci_run="run-1", attest=True,
-              ev_attest=True):
+              ev_attest=True, ci_commit=CI_SHA, manifest_commit=None):
     m.execute("RESET ROLE")     # forrige _aksepter kan ha etterlatt admin
     if punkter is None:
         # leses som migrator — admin har ikke SELECT
-        punkter = _punkter(m, evidens_sha=evidens_sha, ci_run=ci_run)
+        punkter = _punkter(m, evidens_sha=evidens_sha, ci_run=ci_run,
+                           ci_commit=ci_commit)
     if attest:
         # Den ekte veien attesterer kjøringen rett etter at
         # `verifiser_ci_kjoring` har godtatt den (Codex P1, runde 16).
-        _ci_attest(m, ci_run)
+        _ci_attest(m, ci_run, ci_commit=ci_commit)
     if ev_attest:
         # …og evidensfilen rett etter at `verifiser_kilde` har hashet den
         # og grenseporten har regnet invariantene på nytt (runde 19).
@@ -469,9 +470,13 @@ def _aksepter(m, k, did, *, release="r-kandidat", artefakt=None,
     m.execute("SET ROLE disponit_modules_admin")
     m.execute(
         "SELECT aksepter_moduldeployment(%s,%s,%s,%s,%s,%s,%s::uuid,%s,"
-        "'m-commit',%s,%s,%s::jsonb,%s,'test')",
+        "%s,%s,%s,%s::jsonb,%s,'test')",
         (k["mid"], miljo, release, did, KRAV, k["ten"],
-         artefakt or k["e2e"], evidens_sha, ci_run, CI_SHA,
+         artefakt or k["e2e"], evidens_sha,
+         # Manifestcommiten ER akseptcommiten (Codex P1, runde 22) —
+         # basen krever nå likheten skriptet alltid har krevd.
+         ci_commit if manifest_commit is None else manifest_commit,
+         ci_run, ci_commit,
          json.dumps(punkter),
          nokkel or "a-" + secrets.token_hex(6)))
     m.execute("RESET ROLE")   # aldri la admin bli sesjonens faste rolle
@@ -541,9 +546,10 @@ def test_fk_en_staar_bak_akseptfunksjonens_porter(migrator):
             "INSERT INTO modulaksept (modul_id, miljo, release_id, drill_id,"
             " krav_id, e2e_tenant, e2e_artefakt_id, evidens_jsonl_sha256,"
             " manifest_commit, ci_run, ci_commit, nokkel, aktor) VALUES"
-            " (%s,'staging',%s,%s,%s,%s,%s,%s,'m','r','c',%s,'test')",
+            " (%s,'staging',%s,%s,%s,%s,%s,%s,%s,'r',%s,%s,'test')",
             (k["mid"], felt["release_id"], felt["drill_id"], KRAV, k["ten"],
-             felt["artefakt"], EVIDENS_SHA, "d-" + secrets.token_hex(6)))
+             felt["artefakt"], EVIDENS_SHA, CI_SHA, CI_SHA,
+             "d-" + secrets.token_hex(6)))
 
     for endring in ({"drill_id": 999999999},
                     {"artefakt": k["e2e_drillet"]},
@@ -971,6 +977,57 @@ def test_attesten_maa_baere_en_annen_innlogging_enn_aksepten(migrator):
     assert migrator.execute(
         "SELECT count(*) FROM modulaksept WHERE modul_id=%s",
         (k["mid"],)).fetchone()[0] == 1
+
+
+@pg
+def test_akseptens_manifestcommit_er_den_attesterte_commiten(migrator):
+    """Codex' P1 (runde 22): `p_manifest_commit` gikk rett inn i den
+    uforanderlige raden — uten formkrav og uten bånd til commiten
+    CI-attesten gjelder. En kaller med `disponit_modules_admin` kunne
+    derfor oppgi en ekte, grønt attestert `p_ci_commit` og skrive hva som
+    helst som proveniens, og raden ville stått for alltid og påstått at
+    manifestet fra ÉN commit var prøvd av en kjøring på en ANNEN.
+    `m56-aksept.py` har alltid krevd likheten; en skranke som bare finnes
+    i et skript, gjelder ikke den som kaller definereren direkte."""
+    k = _kjede(migrator)
+    did = _drill(migrator, k)
+
+    # 1. FORMEN: proveniensen skal navngi en commit, ikke fortelle om en.
+    for daarlig in ("", "m-commit", "HEAD", "CC" * 20, "cc" * 19):
+        with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+            _aksepter(migrator, k, did, manifest_commit=daarlig)
+        migrator.rollback()
+        assert "ingen commit-sha" in str(ei.value), daarlig
+
+    # 2. …og den skal være DEN commiten kjøringen prøvde. Begge er
+    #    velformede shaer her: det er ikke formen som mangler.
+    annen = "ab" * 20
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, k, did, manifest_commit=annen)
+    migrator.rollback()
+    assert "akseptcommiten er ÉN commit" in str(ei.value)
+
+    # 3. …og tabellen bærer invarianten selv: den gjelder enhver
+    #    skrivevei, ikke bare definererens.
+    for m_commit, c_commit in ((annen, CI_SHA), ("m", "m")):
+        with pytest.raises(psycopg.errors.CheckViolation):
+            migrator.execute(
+                "INSERT INTO modulaksept (modul_id, miljo, release_id,"
+                " drill_id, krav_id, e2e_tenant, e2e_artefakt_id,"
+                " evidens_jsonl_sha256, manifest_commit, ci_run, ci_commit,"
+                " nokkel, aktor) VALUES"
+                " (%s,'staging','r-kandidat',%s,%s,%s,%s,%s,%s,'r',%s,%s,"
+                "'test')",
+                (k["mid"], did, KRAV, k["ten"], k["e2e"], EVIDENS_SHA,
+                 m_commit, c_commit, "d-" + secrets.token_hex(6)))
+        migrator.rollback()
+
+    # 4. Motprøven: samme commit, og aksepten skrives.
+    _aksepter(migrator, k, did)
+    migrator.commit()
+    assert migrator.execute(
+        "SELECT manifest_commit = ci_commit FROM modulaksept"
+        "  WHERE modul_id=%s", (k["mid"],)).fetchone()[0]
 
 
 @pg
