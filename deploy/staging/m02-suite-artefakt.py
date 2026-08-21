@@ -21,6 +21,12 @@ BRUK (på verten, med testbase og testmiljø satt opp):
 
 Tallene leses av pytests EGEN maskinlesbare rapport (--junit-xml) —
 aldri av en regex over menneskelig oppsummeringstekst.
+
+Artefaktet MÅLES her, men VALIDERES av evidensporten: `bestatt` og
+exitkoden settes av `valider_artefaktformat` + `_sjekk_grenser` — samme
+funksjoner CI kjører. En produsent med sine egne, mildere betingelser
+melder grønt om artefakter porten feller, og bruker opp oppmerksomheten
+før noen ser porten.
 """
 from __future__ import annotations
 
@@ -39,7 +45,8 @@ sys.path.insert(0, str(REPO / "platform/core"))
 #: M-2s andel og grensene den måles mot — hentet fra akseptporten selv,
 #: aldri gjentatt her. To lister som skal være like, er før eller siden to
 #: ulike lister; denne leser den ENE.
-from manifestskjema import M02_SUITE_ANDEL as M2_ANDEL  # noqa: E402
+from manifestskjema import (M02_SUITE_ANDEL as M2_ANDEL,  # noqa: E402
+                            _sjekk_grenser, valider_artefaktformat)
 
 
 def _kjor(mal: list[str], junit: Path) -> tuple[int, int, int, int]:
@@ -91,11 +98,10 @@ def main() -> int:
              else str(REPO / p.split("::")[0]) + "::" + p.split("::", 1)[1]
              for p in M2_ANDEL], Path(tmp) / "m2.xml")
     ts = datetime.now(timezone.utc).isoformat()
-    art = {"krav_id": "m02-suite-v1", "ts": ts,
-           # M-2s andel er NAVNGITT og PÅKREVD: én hoppet test der er et
-           # punkt uten måling, ikke et grønt punkt.
-           "bestatt": roede == 0 and m2_roede == 0 and m2_hoppet == 0
-           and totalt - hoppet > 0 and kode == 0 and m2_kode == 0,
+    # `bestatt` settes provisorisk true så form- og grensekontrollen har et
+    # komplett artefakt å måle; deretter er den sann HVIS OG BARE HVIS
+    # begge er tomme. Samme form som feilinjisering-behandling.py.
+    art = {"krav_id": "m02-suite-v1", "ts": ts, "bestatt": True,
            "oppsett": {"modul": "m02_revisjonslogg", "commit": commit,
                        "vert": vert, "m2_filer": list(M2_ANDEL)},
            "maalt": {"tester_totalt": totalt, "tester_feilet": roede,
@@ -103,6 +109,20 @@ def main() -> int:
                      "m2_tester": m2, "m2_feilet": m2_roede,
                      "m2_hoppet": m2_hoppet,
                      "suite_exitkode": kode, "m2_exitkode": m2_kode}}
+    # De håndskrevne betingelsene her kjente ikke GULVENE: «null feilede
+    # og minst én kjørt test» er sant også for en kjøring som samlet inn
+    # 40 tester etter en sti- eller konfigendring. Skriptet meldte da
+    # `bestatt: true` og returnerte 0 — mens akseptporten senere feller
+    # nøyaktig det artefaktet på `min_tester`. En produsent som sier
+    # grønt om noe porten kaller rødt, er verre enn ingen måling: den
+    # bruker opp oppmerksomheten før noen ser porten.
+    #
+    # Derfor spørres PORTEN, ikke en kopi av tallene dens: samme funksjon,
+    # samme grenser, samme svar. Artefaktet valideres uansett på nytt i CI
+    # — `bestatt` er produsentens påstand, aldri beviset.
+    formfeil = valider_artefaktformat(art, "m02-suite-v1")
+    grensefeil = _sjekk_grenser("m02-suite-v1", art)
+    art["bestatt"] = not formfeil and not grensefeil
     ut = a.ut or (REPO / "deploy/staging/artefakter" /
                   f"m02-suite-v1-{ts[:19].replace(':', '').replace('-', '')}.json")
     ut.write_text(json.dumps(art, indent=2, ensure_ascii=False,
@@ -110,6 +130,8 @@ def main() -> int:
     print(f"skrev {ut} (bestatt={art['bestatt']},"
           f" {totalt - hoppet} kjørte av {totalt} tester,"
           f" m2-andel {m2 - m2_hoppet} av {m2})")
+    for f in formfeil + grensefeil:
+        print(f"  RØDT: {f}")
     return 0 if art["bestatt"] else 1
 
 

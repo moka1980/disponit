@@ -1206,6 +1206,24 @@ def test_m02_suite_vrangt_oppsett_feiler_lukket():
     assert any("m2_filer" in f for f in _sjekk_grenser("m02-suite-v1", art))
 
 
+def test_m02_suite_redusert_kolleksjon_er_roedt():
+    """En pytest-kjøring som samlet inn et redusert utvalg — etter en sti-
+    eller konfigendring — er grønn i seg selv: null feilede, null hoppede,
+    exit 0. Den er likevel ikke suitekjøringen punktet krever, og gulvet
+    er det eneste stedet forskjellen står. Produsenten spør nå NØYAKTIG
+    denne porten før den melder `bestatt`, så staging-kommandoen ikke kan
+    returnere 0 for et artefakt CI feller.
+
+    MUTASJONEN SOM DREPER DENNE: senk `min_tester` til noe en delkjøring
+    klarer.
+    """
+    from manifestskjema import _sjekk_grenser
+    feil = _sjekk_grenser("m02-suite-v1",
+                          _m02_suite_artefakt(tester_totalt=40,
+                                              tester_hoppet=0))
+    assert any("krever >=" in f for f in feil), feil
+
+
 def test_m02_suite_m2_filer_maa_vaere_det_pinnede_utvalget():
     """Å NAVNGI et utvalg er ikke å bli målt på det. Skjemaet krever bare
     en ikke-tom strengliste, så et artefakt kunne klare alle tallene med
