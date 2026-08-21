@@ -286,6 +286,61 @@ CREATE TRIGGER plattformmodulaksept_punkt_ingen_truncate BEFORE TRUNCATE
     ON plattformmodulaksept_punkt
     FOR EACH STATEMENT EXECUTE FUNCTION modulregister_append_only();
 
+-- KOMPLETT ELLER INGEN AKSEPT — PÅ ENHVER SKRIVEVEI (Codex P2, runde 3).
+-- Funksjonens sentrale invariant er at en aksept bærer HELE det
+-- registrerte punktsettet eller ikke finnes. Den sto bare i funksjonen,
+-- og funksjonen er ikke eneste vei inn: eier- og migratorveien har
+-- INSERT på hodebordet (samme vei runde 2 lukket for punktbordet), og
+-- et hode uten ett eneste punkt passerte både modul-/klasse-FK-en og
+-- append-only-triggeren — og ble deretter permanent. Et tomt hode er en
+-- aksept som ikke har målt noe.
+--
+-- Skranken kan ikke være en CHECK: den spenner to tabeller. Den er
+-- derfor husets egen CONSTRAINT TRIGGER-form (012/041/047), og den må
+-- være DEFERRABLE INITIALLY DEFERRED — funksjonen skriver hodet FØR
+-- punktene, så en umiddelbar prøve leste et halvferdig bilde. Ved commit
+-- er settet på plass.
+--
+-- SECURITY DEFINER er nødvendig, ikke pyntelig (047-lærdommen): en
+-- DEFERRED trigger fyrer ved COMMIT, utenfor `aksepter_plattformmodul`
+-- sin definer-kontekst — altså som `disponit_modules_admin`, som verken
+-- har SELECT på punktbordet eller på kravpunktregisteret. En vanlig
+-- INVOKER-funksjon ville felt den LOVLIGE veien på «permission denied» i
+-- selve commit-en.
+CREATE FUNCTION plattformaksept_er_komplett() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+DECLARE v_mangler TEXT;
+BEGIN
+    SELECT pg_catalog.string_agg(k.punkt, ', ' ORDER BY k.punkt)
+      INTO v_mangler
+      FROM public.akseptkrav_punkt k
+     WHERE k.krav_id = NEW.grense_id
+       AND NOT EXISTS (
+           SELECT 1 FROM public.plattformmodulaksept_punkt p
+            WHERE p.modul_id = NEW.modul_id
+              AND p.manifest_commit = NEW.manifest_commit
+              AND p.grense_id = NEW.grense_id
+              AND p.punkt = k.punkt);
+    IF v_mangler IS NOT NULL THEN
+        RAISE EXCEPTION 'plattformmodulaksept %/% mangler punktene % av'
+            ' grensen % — en aksept bærer HELE det registrerte'
+            ' punktsettet eller finnes ikke', NEW.modul_id,
+            NEW.manifest_commit, v_mangler, NEW.grense_id
+            USING ERRCODE = 'check_violation',
+                  CONSTRAINT = 'plattformmodulaksept_komplett';
+    END IF;
+    RETURN NULL;
+END $$;
+
+ALTER FUNCTION plattformaksept_er_komplett()
+    OWNER TO disponit_modul_eier;
+
+CREATE CONSTRAINT TRIGGER plattformmodulaksept_komplett
+    AFTER INSERT ON plattformmodulaksept
+    DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW EXECUTE FUNCTION plattformaksept_er_komplett();
+
 -- ------------------------------------------------------------
 -- 3. Søsterfunksjonen — i eiervinduet (047/048-disiplinen).
 -- ------------------------------------------------------------

@@ -572,6 +572,42 @@ def test_hendelsen_og_punktene_er_immutable(migrator):
 
 
 @pg
+def test_et_tomt_aksepthode_finnes_ikke(migrator):
+    """Codex P2, runde 3: funksjonens sentrale invariant — HELE det
+    registrerte punktsettet eller ingen aksept — holder også på eier-
+    og migratorveien, som har INSERT på hodebordet. Skranken spenner to
+    tabeller og kan derfor ikke være en CHECK; den er en DEFERRED
+    CONSTRAINT TRIGGER, og felles ved COMMIT."""
+    # Den LOVLIGE veien først, og den commiter mens rollen fortsatt er
+    # kallerens: den deferrede triggeren fyrer utenfor definer-konteksten
+    # (047-lærdommen), og en INVOKER-vakt ville felt nettopp dette kallet
+    # på «permission denied» i selve commit-en.
+    _aksepter(migrator)
+    migrator.execute("SET ROLE disponit_modules_admin")
+    migrator.commit()
+    migrator.execute("RESET ROLE")
+    # …og et hode uten ett eneste punkt slipper ikke gjennom, selv om
+    # modul-/klasse-FK-en og append-only-triggeren er fornøyd. Uten
+    # skranken ble raden permanent i det commit-en gikk igjennom.
+    smug = secrets.token_hex(20)
+    migrator.execute("SET ROLE disponit_modul_eier")
+    migrator.execute(
+        "INSERT INTO plattformmodulaksept (modul_id, manifest_commit,"
+        " manifest_sha256, grense_id, ci_run, ci_commit, nokkel, aktor)"
+        " VALUES (%s,%s,%s,%s,'run-smug',%s,%s,'smugler')",
+        (MODUL, smug, MANIFEST_SHA, GRENSE, smug,
+         "pn-smug-" + secrets.token_hex(6)))
+    with pytest.raises(psycopg.errors.CheckViolation) as ei:
+        migrator.commit()
+    assert "mangler punktene" in str(ei.value)
+    migrator.rollback()
+    migrator.execute("RESET ROLE")
+    assert migrator.execute(
+        "SELECT count(*) FROM plattformmodulaksept WHERE manifest_commit=%s",
+        (smug,)).fetchone()[0] == 0
+
+
+@pg
 def test_plattformgrensen_er_ikke_valgbar_for_deploymentveien(migrator):
     """Codex P1, runde 2: `m02-aksept-v1` står i det DELTE
     kravpunktregisteret — det må den, attestene binder `(krav_id, punkt)`
