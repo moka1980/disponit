@@ -1081,10 +1081,19 @@ def main() -> int:
         # sti bytene lå på og hva filen bar for hvert punkt, og aksepten
         # regner punktet mot DEN raden. Verdiene er `verifiser_kilde`- og
         # `_sjekk_grenser`-portenes egne; kallet under kan bare gjenta dem.
+        # …og attesten navngir DRILLEN de tre sammenhengspunktene ble
+        # regnet mot (Codex P1, PR #123). `sammenheng_verdier` leser
+        # BEGGE artefaktene, men referatet bar bare rundens sha: en
+        # grønn attest fra ett forsøk kunne derfor gjenbrukes av et
+        # senere direktekall med en ANNEN drill, og
+        # `evidens.pa_tvers_av_runder` sto grønt for et forhold som
+        # aldri ble målt mot den drillen. Drillartefaktets bytes er nå
+        # en del av attestens identitet, og `aksepter_moduldeployment`
+        # slår opp attesten med bytene drillraden ble registrert med.
         vconn.execute(
-            "SELECT attester_evidensfil(%s,%s,%s,%s::jsonb,'m56-aksept')",
+            "SELECT attester_evidensfil(%s,%s,%s,%s::jsonb,'m56-aksept',%s)",
             (KRAV, runde["oppsett"]["kilde"], evidens_sha,
-             json.dumps(evidens_maalt)))
+             json.dumps(evidens_maalt), drill_sha))
         vconn.commit()
         vconn.close()
         vconn = None

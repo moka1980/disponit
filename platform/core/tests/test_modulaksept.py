@@ -420,7 +420,7 @@ def _ci_attest(m, ci_run="run-1", *, ci_commit=None, arbeidsflyt=None,
 
 
 def _evidens_attest(m, sha=EVIDENS_SHA, *, sti=EVIDENS_STI, krav=KRAV,
-                    maalt=None):
+                    maalt=None, drill_sha=DRILL_SHA):
     """Referatet fra veien som LESTE evidensfilen (Codex P1, runde 19).
 
     Verdiene er de FILEN bar. Standard er registerets grønne fasit, som i
@@ -429,6 +429,11 @@ def _evidens_attest(m, sha=EVIDENS_SHA, *, sti=EVIDENS_STI, krav=KRAV,
 
     Skrives av verifikatorens innlogging: den som LESER filen og den som
     aksepterer på det den bar, er to identiteter (Codex P1, runde 22).
+
+    …og attesten navngir DRILLEN lesningen ble regnet sammen med (Codex
+    P1, PR #123): sammenhengspunktene måles på tvers av runde og drill,
+    så et referat som bare navngir runden kan gjenbrukes med en annen
+    drill. `DRILL_SHA` er den `_drill` registrerer med.
     """
     if maalt is None:
         maalt = {p: v for p, v in m.execute(
@@ -437,8 +442,8 @@ def _evidens_attest(m, sha=EVIDENS_SHA, *, sti=EVIDENS_STI, krav=KRAV,
             (krav,)).fetchall()}
     v = _verifikator()
     try:
-        v.execute("SELECT attester_evidensfil(%s,%s,%s,%s::jsonb,'test')",
-                  (krav, sti, sha, json.dumps(maalt)))
+        v.execute("SELECT attester_evidensfil(%s,%s,%s,%s::jsonb,'test',%s)",
+                  (krav, sti, sha, json.dumps(maalt), drill_sha))
         v.commit()
     finally:
         v.close()
@@ -462,10 +467,11 @@ def _punkter(m, krav=KRAV, *, evidens_sha=EVIDENS_SHA, ci_run="run-1",
     if any(kt == "registerhendelse" for _, kt, _, _ in rader):
         # v3s drillpunkter (052): `kilde_ref` er `rollback_drill`-
         # hendelsen drillregistreringen skrev — den ekte veien slår den
-        # opp etter `registrer_moduldrill`, og porten krever bare at
-        # hendelsen finnes på modulen. Uten drill (negative prøver)
-        # brukes modulens siste hendelse; finnes ingen modul, en umulig
-        # id — prøven skal da falle på nettopp det.
+        # opp etter `registrer_moduldrill`, og porten krever at det ER
+        # `rollback_drill`-hendelsen for NØYAKTIG den drillen aksepten
+        # bærer (Codex P2, PR #123). Uten drill (negative prøver) brukes
+        # modulens siste hendelse; finnes ingen modul, en umulig id —
+        # prøven skal da falle på nettopp det.
         rad = m.execute(
             "SELECT id FROM modulregister_hendelse WHERE modul_id=%s"
             " ORDER BY (hendelse='rollback_drill') DESC, id DESC LIMIT 1",
@@ -987,8 +993,12 @@ def test_attesten_maa_baere_en_annen_innlogging_enn_aksepten(migrator):
         "  WHERE krav_id=%s AND kilde_type='evidensfil'",
         (KRAV,)).fetchall()}
     migrator.execute("SET ROLE disponit_modul_eier")
-    migrator.execute("SELECT attester_evidensfil(%s,%s,%s,%s::jsonb,'test')",
-                     (KRAV, EVIDENS_STI, sha, json.dumps(maalt)))
+    # Samme drill som `_evidens_attest` bruker: attesten under skal være
+    # DEN raden aksepten finner, ikke en verifikatorskrevet søsterrad på
+    # en annen drill (052 nøkler attesten også på drillartefaktet).
+    migrator.execute(
+        "SELECT attester_evidensfil(%s,%s,%s,%s::jsonb,'test',%s)",
+        (KRAV, EVIDENS_STI, sha, json.dumps(maalt), DRILL_SHA))
     migrator.execute("RESET ROLE")
     migrator.commit()
     with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
@@ -1233,6 +1243,66 @@ def test_en_fillesning_baerer_flere_kravrevisjoner(migrator):
     assert migrator.execute(
         "SELECT count(*) FROM evidensfil_attest WHERE sha256=%s",
         (sha,)).fetchone()[0] == 2 * len(delte)
+
+
+@pg
+def test_drillbandet_maales_paa_hendelsen_og_paa_attesten(migrator):
+    """Codex' P1 + P2 (#123): et bevis hvis MENING avhenger av drillen,
+    må navngi den drillen aksepten faktisk bærer.
+
+    052 innførte to slike familier, og begge sto uten båndet:
+
+    * drillpunktenes `kilde_ref` er `rollback_drill`-hendelsen
+      drillraden skrev, men porten spurte bare om IDen var EN hendelse
+      på modulen — en aktivering, en nødstopp eller en eldre drills
+      hendelse passerte like godt, og ble stående for alltid som
+      kildereferansen for begge drillobservasjonene;
+    * de tre sammenhengspunktene måles PÅ TVERS av runde-evidensen og
+      drillartefaktet, men attesten navnga bare runden — en grønn
+      attest fra ett forsøk kunne derfor gjenbrukes av et senere
+      direktekall med en ANNEN drill.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `h.hendelse = 'rollback_drill'`/
+    `h.detalj ->> 'drill_id'`-leddet, eller `e.drill_sha256`-leddet, fra
+    `aksepter_moduldeployment` i 052."""
+    k = _kjede(migrator)
+    did = _drill(migrator, k)
+    migrator.commit()
+
+    # (1) HENDELSEN: en annen hendelse på modulen er ikke drillens.
+    migrator.execute("RESET ROLE")
+    annen = migrator.execute(
+        "SELECT id FROM modulregister_hendelse WHERE modul_id=%s"
+        "   AND hendelse <> 'rollback_drill' ORDER BY id DESC LIMIT 1",
+        (k["mid"],)).fetchone()
+    assert annen is not None, "modulen har ingen annen hendelse å prøve med"
+    feil = _punkter(migrator, mid=k["mid"])
+    for verdi in feil.values():
+        if verdi["kilde_type"] == "registerhendelse":
+            verdi["kilde_ref"] = str(annen[0])
+    migrator.rollback()
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, k, did, punkter=feil)
+    migrator.rollback()
+    assert "rollback_drill" in str(ei.value)
+
+    # (2) ATTESTEN: en lesning attestert sammen med et ANNET
+    #     drillartefakt er ikke denne drillens referat.
+    sha = secrets.token_hex(32)
+    _evidens_attest(migrator, sha, drill_sha="22" * 32)
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, k, did, evidens_sha=sha, ev_attest=False)
+    migrator.rollback()
+    assert "drillartefaktet" in str(ei.value)
+
+    # …og med drillens egne bytes går nøyaktig den samme lesningen inn.
+    _aksepter(migrator, k, did, evidens_sha=sha)
+    migrator.commit()
+    migrator.execute("RESET ROLE")
+    assert migrator.execute(
+        "SELECT count(*) FROM modulaksept WHERE modul_id=%s",
+        (k["mid"],)).fetchone()[0] == 1
+    migrator.rollback()
 
 
 @pg

@@ -217,7 +217,9 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'registrer_moduldrill(text,text,text,text,text,text,bigint,bigint,bigint,bigint,text,text,text,timestamp with time zone)', 'disponit_modul_eier'),
     ('FUNCTION', 'aksepter_moduldeployment(text,text,text,bigint,text,text,uuid,text,text,text,text,jsonb,text,text)', 'disponit_modul_eier'),
     ('FUNCTION', 'attester_ci_kjoring(text,text,text,text,text,text,text)', 'disponit_modul_eier'),
-    ('FUNCTION', 'attester_evidensfil(text,text,text,jsonb,text)',    'disponit_modul_eier'),
+    -- 052: attesten navngir også drillartefaktet den ble regnet mot
+    -- (Codex P1, PR #123) — signaturen er den nye, seksargs.
+    ('FUNCTION', 'attester_evidensfil(text,text,text,jsonb,text,text)', 'disponit_modul_eier'),
     ('FUNCTION', 'maal_rent_utfall(text,bigint)',                     'disponit_modul_eier'),
     ('FUNCTION', 'maal_kjoringsattest(text,bigint,text,text)',        'disponit_modul_eier'),
     ('FUNCTION', 'bytt_release(text,text,text,integer,text,text)',    'disponit_modul_eier'),

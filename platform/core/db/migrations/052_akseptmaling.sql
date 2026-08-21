@@ -19,6 +19,11 @@
 --   3. `syntetisk_datasett_likt_lokalt` (§1.2) måles i filene
 --      (sjekkliste → artefakt → manifestskjema-porten, SP-11) og
 --      trenger ingen baseendring.
+--   4. DRILLBÅNDET på de to nye bevisfamiliene (Codex P1+P2, PR #123):
+--      `evidensfil_attest` navngir drillartefaktet lesningen ble regnet
+--      sammen med, og `aksepter_moduldeployment` krever at
+--      `registerhendelse`-punktene peker på `rollback_drill`-hendelsen
+--      for NØYAKTIG den drillen aksepten bærer. Se blokka nederst.
 --
 -- GRENSEREVISJONEN: akseptgrensen får de sju evidenspunktene fra
 -- klarsignalets §5. Registeret er append-only med krav-lås
@@ -716,4 +721,628 @@ REVOKE ALL ON FUNCTION maal_kjoringsattest(TEXT, BIGINT, TEXT, TEXT)
     FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION maal_kjoringsattest(TEXT, BIGINT, TEXT, TEXT)
     TO disponit_modules_admin;
+RESET ROLE;
+
+-- ------------------------------------------------------------
+-- DE TO KRYSSBINDINGENE (Codex P1 + P2, PR #123).
+--
+-- 052 innførte to familier av punkter som ikke måles PÅ ÉN kilde:
+--
+--   * de tre sammenhengspunktene (§2) regnes på tvers av runde-
+--     evidensen OG drillartefaktet, men ble attestert med bare
+--     rundens sha i identiteten;
+--   * de to drillpunktene (§5) påberoper seg `rollback_drill`-
+--     hendelsen drillraden skrev, men aksepten kontrollerte bare at
+--     IDen var EN hendelse på modulen.
+--
+-- Begge hullene har samme form: et bevis hvis MENING avhenger av
+-- drillen, uten noe bånd til den drillen aksepten faktisk bærer. En
+-- kaller med `disponit_modules_admin` kunne derfor sette sammen en
+-- grønn attest fra ett forsøk med en drill fra et annet, eller peke
+-- drillpunktene på en tilfeldig registerhendelse — og få en immutabel
+-- aksept som påstår mer enn noen måling dekker. Båndet legges der
+-- forutsetningen forbrukes: i basen, ikke i skriptet.
+--
+-- Attesttabellen eies av migrator (049), så kolonnen og nøkkelen
+-- trenger intet eiervindu. Kolonnen er NOT NULL med tom streng som
+-- historisk verdi: de attestene som alt står, ble skrevet uten drill,
+-- og `(sha256, punkt, krav_id)` er unik i den gamle nøkkelen — hver
+-- eksisterende rad er dermed unik også i den nye. Drillen INN i
+-- nøkkelen (ikke bare i raden): samme fil lest sammen med to ulike
+-- driller er to referater, og et nytt forsøk med en ny drill skal
+-- kunne skrive sitt eget uten å kollidere med det gamle.
+-- ------------------------------------------------------------
+ALTER TABLE evidensfil_attest
+    ADD COLUMN drill_sha256 TEXT NOT NULL DEFAULT ''
+        CHECK (drill_sha256 = '' OR drill_sha256 ~ '^[0-9a-f]{64}$');
+ALTER TABLE evidensfil_attest
+    DROP CONSTRAINT evidensfil_attest_pkey,
+    ADD PRIMARY KEY (sha256, punkt, krav_id, drill_sha256);
+
+-- Begge funksjonene eies av `disponit_modul_eier` (049) og migrator har
+-- rollen WITH INHERIT FALSE: endringen skjer i EIERVINDUET
+-- (047/048-disiplinen). `attester_evidensfil` får en ny parameter og er
+-- dermed en NY funksjon — den gamle slippes, og ACL-bildet settes
+-- eksplisitt nederst, siden DROP tar ACLen med seg. Parameteren har
+-- DEFAULT '' slik at de kallveiene som ikke har noen drill å navngi
+-- (v1/v2-lesninger) står uendret.
+SET LOCAL ROLE disponit_modul_eier;
+
+DROP FUNCTION attester_evidensfil(TEXT, TEXT, TEXT, JSONB, TEXT);
+
+CREATE FUNCTION attester_evidensfil(
+    p_krav_id TEXT, p_sti TEXT, p_sha256 TEXT, p_punkter JSONB,
+    p_aktor TEXT, p_drill_sha TEXT DEFAULT '')
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+DECLARE v_sha TEXT; v_punkt TEXT; v_verdi TEXT; v_annet RECORD;
+        v_drill TEXT;
+BEGIN
+    v_sha := lower(p_sha256);
+    IF v_sha !~ '^[0-9a-f]{64}$' THEN
+        RAISE EXCEPTION 'attester_evidensfil: «%» er ingen sha256 — en'
+            ' attest som ikke navngir bytene, binder ingenting', p_sha256
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- DRILLEN LESNINGEN HØRER TIL (Codex P1, PR #123). Tre av v3s
+    -- evidenspunkter måles PÅ TVERS av runde-evidensen og
+    -- drillartefaktet, men referatet navnga bare runden. Attesten
+    -- bærer nå bytene til det drillartefaktet den ble regnet mot, og
+    -- de er en del av identiteten: samme fil lest sammen med to
+    -- ulike driller er to referater, ikke ett gjenbrukbart.
+    -- Tom streng er den historiske lesningen uten drill (v1/v2);
+    -- alt annet må navngi bytes.
+    v_drill := lower(p_drill_sha);
+    IF v_drill <> '' AND v_drill !~ '^[0-9a-f]{64}$' THEN
+        RAISE EXCEPTION 'attester_evidensfil: «%» er ingen sha256 —'
+            ' drillartefaktet attesten hører til, navngis av bytene'
+            ' sine', p_drill_sha
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF p_punkter IS NULL OR jsonb_typeof(p_punkter) <> 'object'
+       OR p_punkter = '{}'::jsonb THEN
+        RAISE EXCEPTION 'attester_evidensfil: ingen punkter — en lesning'
+            ' uten måletall er ikke et referat'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- LÅSEN FØR KONTROLLEN (Codex P2, #121 runde 2).
+    --
+    -- I 049 var motsigelseskontrollen under gjorde jobben SAMMEN med
+    -- nøkkelen: PK-en var `(sha256, punkt)`, så to samtidige attester om
+    -- de samme bytene kolliderte i unikindeksen uansett hva SELECT-en
+    -- rakk å se. Nøkkelbyttet over gir bort nettopp den serialiseringen
+    -- — `(sha256, punkt, krav_id)` lar to revisjoner stå side om side,
+    -- som er hele poenget, men da kan også to SESJONER som skriver hver
+    -- sin revisjon begge se ingen konflikt og begge sette inn. Resultatet
+    -- ville vært to immutable, motstridende referater om én fil: akkurat
+    -- det kontrollen finnes for å hindre, tapt i et kappløp.
+    --
+    -- Låsen er transaksjonsscopet og slippes ved commit/rollback. Den
+    -- nøkles på BYTENE, ikke på (bytes, punkt): hele kallet er ÉN
+    -- fillesning, alle punktene hører til samme sha, og én lås pr. kall
+    -- er både en overmengde av det invarianten trenger og fri for
+    -- låserekkefølge mellom punktene. Attester skrives én gang pr. fil
+    -- pr. grense, så det koster ingenting å ta den grovt.
+    PERFORM pg_advisory_xact_lock(hashtextextended('evidensfil:' || v_sha,
+                                                   0));
+    FOR v_punkt, v_verdi IN
+        SELECT j.k, j.v #>> '{}' FROM jsonb_each(p_punkter) AS j(k, v)
+         ORDER BY j.k LOOP
+        IF v_verdi IS NULL THEN
+            RAISE EXCEPTION 'attester_evidensfil: punkt % mangler måletall',
+                v_punkt USING ERRCODE = 'invalid_parameter_value';
+        END IF;
+        -- FØRST: «én fil har ett innhold», på tvers av kravrevisjoner.
+        -- Kontrollen er 049s, minus krav_id-leddet som nå er en del av
+        -- nøkkelen: to referater om de SAMME bytene og det SAMME punktet
+        -- skal si det samme, uansett hvilken grense som spurte. Sprik i
+        -- sti eller måletall er fortsatt en programfeil.
+        SELECT * INTO v_annet FROM public.evidensfil_attest e
+         WHERE e.sha256 = v_sha AND e.punkt = v_punkt
+           AND (e.sti IS DISTINCT FROM p_sti
+                OR e.maalt_verdi IS DISTINCT FROM v_verdi)
+         LIMIT 1;
+        IF FOUND THEN
+            RAISE EXCEPTION 'attester_evidensfil: sha256:% er alt'
+                ' attestert for punkt % med et annet innhold («%» fra'
+                ' «%», krav %) — én fil har ett innhold, og et referat'
+                ' som spriker fra det lagrede er en programfeil',
+                v_sha, v_punkt, v_annet.maalt_verdi, v_annet.sti,
+                v_annet.krav_id
+                USING ERRCODE = 'invalid_parameter_value';
+        END IF;
+        -- SÅ: replay for NØYAKTIG dette kravet er en no-op (SP-2), og
+        -- en ny kravrevisjon får sin egen rad om de samme bytene.
+        -- Innholdet er alt bevist likt av kontrollen over, så det som
+        -- gjenstår er om DENNE revisjonens rad finnes.
+        IF NOT EXISTS (SELECT 1 FROM public.evidensfil_attest e
+                        WHERE e.sha256 = v_sha AND e.punkt = v_punkt
+                          AND e.krav_id = p_krav_id
+                          AND e.drill_sha256 = v_drill) THEN
+            INSERT INTO public.evidensfil_attest (sha256, punkt, krav_id,
+                drill_sha256, sti, maalt_verdi, aktor, attestert_av)
+            VALUES (v_sha, v_punkt, p_krav_id, v_drill, p_sti, v_verdi,
+                    p_aktor, session_user);
+        END IF;
+    END LOOP;
+END $$;
+
+CREATE OR REPLACE FUNCTION aksepter_moduldeployment(
+    p_modul_id TEXT, p_miljo TEXT, p_release_id TEXT, p_drill_id BIGINT,
+    p_krav_id TEXT, p_e2e_tenant TEXT, p_e2e_artefakt UUID,
+    p_evidens_sha TEXT, p_manifest_commit TEXT, p_ci_run TEXT,
+    p_ci_commit TEXT, p_punkter JSONB, p_nokkel TEXT, p_aktor TEXT)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+DECLARE v_livslop TEXT; v_mangler TEXT; v_punkt RECORD; v_verdi JSONB;
+        v_epoch BIGINT; v_avvik TEXT; v_drill_tenant TEXT;
+        v_kandidat_oppdrag BIGINT; v_forrige_tenant TEXT; v_ref TEXT;
+        v_holder BOOLEAN; v_ci RECORD; v_ci_attest BOOLEAN;
+        v_evidens RECORD; v_ci_av TEXT; v_drill_artefakt TEXT;
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('modul:' || p_modul_id, 0));
+    -- FORMEN FØRST (Codex P1, #117 runde 19). `p_evidens_sha` gikk rett
+    -- inn i den immutable raden og inn i sammenligningen mot `kilde_ref`
+    -- uten noe formkrav. En TOM streng var derfor en gyldig «hash», og
+    -- en `kilde_ref` som endte på `@sha256:` var «enig» med den. En sha
+    -- måles på formen sin før den brukes til noe som helst — samme
+    -- disiplin som `hode_sha` i CI-attesten. Små bokstaver kreves, ikke
+    -- normaliseres: raden og attesten skal ikke kunne stå med to
+    -- skrivemåter av samme bytes.
+    IF p_evidens_sha !~ '^[0-9a-f]{64}$' THEN
+        RAISE EXCEPTION 'aksepter_moduldeployment: «%» er ingen sha256 —'
+            ' evidensfilen skal navngis av bytene sine', p_evidens_sha
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- …og PROVENIENSEN på samme måte (Codex P1, #117 runde 22).
+    -- `p_manifest_commit` gikk rett inn i den uforanderlige raden uten
+    -- noe formkrav, og uten noe bånd til commiten CI-attesten gjelder.
+    -- En kaller med `disponit_modules_admin` kunne derfor oppgi en pen,
+    -- grønt attestert `p_ci_commit` og skrive hva som helst i
+    -- `p_manifest_commit` — og raden ville stått for alltid og påstått
+    -- at manifestet og artefaktene fra ÉN commit var prøvd av en
+    -- kjøring på en ANNEN. `m56-aksept.py` har alltid krevd likheten
+    -- (punktene påberoper seg «grønn CI på akseptcommiten»), men et
+    -- skript er ingen skranke for den som kaller definereren direkte.
+    -- Små bokstaver kreves, ikke normaliseres — samme disiplin som
+    -- evidenshashen over: raden og attesten skal ikke kunne stå med to
+    -- skrivemåter av samme commit.
+    IF p_manifest_commit !~ '^[0-9a-f]{40}$'
+       OR p_ci_commit !~ '^[0-9a-f]{40}$' THEN
+        RAISE EXCEPTION 'aksepter_moduldeployment: «%»/«%» er ingen'
+            ' commit-sha — en aksept navngir commiten den hviler på',
+            p_manifest_commit, p_ci_commit
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF p_manifest_commit IS DISTINCT FROM p_ci_commit THEN
+        RAISE EXCEPTION 'aksepter_moduldeployment: manifestet er hentet'
+            ' fra %, mens CI-kjøringen prøvde % — akseptcommiten er ÉN'
+            ' commit, og punktene påberoper seg en grønn kjøring på'
+            ' nøyaktig den', p_manifest_commit, p_ci_commit
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- SP-2: replay er et no-op, aldri en ny hendelse — men BARE når hele
+    -- det materielle innholdet er det samme.
+    --
+    -- Codex' P2 på PR #117: den forrige formen returnerte på nøkkelen
+    -- alene. Kjørte operatøren akseptkommandoen på nytt etter å ha
+    -- rettet en CI-kjøring, evidenshash, drill eller E2E-artefakt, ble
+    -- rettelsen STILLE forkastet — raden er immutabel, så den bar
+    -- fortsatt de gamle bevisene — og skriptet skrev likevel AKSEPTERT.
+    -- Revisjonssporet fortalte da noe annet enn kallet som lagde det.
+    -- Avvikende gjenbruk av en nøkkel er en programfeil og skal høres,
+    -- akkurat som i `registrer_moduldrill`.
+    PERFORM 1 FROM public.modulaksept WHERE nokkel = p_nokkel;
+    IF FOUND THEN
+        PERFORM 1 FROM public.modulaksept
+         WHERE nokkel = p_nokkel AND modul_id = p_modul_id
+           AND miljo = p_miljo AND release_id = p_release_id
+           AND drill_id = p_drill_id AND krav_id = p_krav_id
+           AND e2e_tenant = p_e2e_tenant
+           AND e2e_artefakt_id = p_e2e_artefakt
+           AND evidens_jsonl_sha256 = p_evidens_sha
+           AND manifest_commit = p_manifest_commit
+           AND ci_run = p_ci_run AND ci_commit = p_ci_commit;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'aksepter_moduldeployment: nøkkel % gjenbrukt'
+                ' med annet innhold — den lagrede aksepten bærer andre'
+                ' bevis enn dette kallet', p_nokkel
+                USING ERRCODE = 'invalid_parameter_value';
+        END IF;
+        -- Punktobservasjonene er like materielle som radens egne felt:
+        -- en rettet måling på samme nøkkel er også en forkastet rettelse.
+        SELECT string_agg(pk.punkt, ', ' ORDER BY pk.punkt) INTO v_avvik
+          FROM public.modulaksept_punkt pk
+         WHERE pk.modul_id = p_modul_id AND pk.miljo = p_miljo
+           AND pk.release_id = p_release_id
+           AND ((p_punkter -> pk.punkt) ->> 'grenseverdi'
+                    IS DISTINCT FROM pk.grenseverdi
+             OR (p_punkter -> pk.punkt) ->> 'maalt_verdi'
+                    IS DISTINCT FROM pk.maalt_verdi
+             OR (p_punkter -> pk.punkt) ->> 'kilde_type'
+                    IS DISTINCT FROM pk.kilde_type
+             OR (p_punkter -> pk.punkt) ->> 'kilde_ref'
+                    IS DISTINCT FROM pk.kilde_ref);
+        IF v_avvik IS NOT NULL THEN
+            RAISE EXCEPTION 'aksepter_moduldeployment: nøkkel % gjenbrukt'
+                ' med andre punktobservasjoner: %', p_nokkel, v_avvik
+                USING ERRCODE = 'invalid_parameter_value';
+        END IF;
+        RETURN;
+    END IF;
+    -- Aksepten gjelder raden slik den faktisk kjører.
+    SELECT livslop INTO v_livslop FROM public.moduldeployment
+     WHERE modul_id = p_modul_id AND miljo = p_miljo
+       AND release_id = p_release_id;
+    IF v_livslop IS DISTINCT FROM 'claiming' THEN
+        RAISE EXCEPTION 'aksepter_moduldeployment: %/%/% er % — aksepten'
+            ' binder deploymentraden slik den faktisk kjører (claiming)',
+            p_modul_id, p_miljo, p_release_id,
+            coalesce(v_livslop, '<mangler>')
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- A2, siste ledd (Codex P1, #117 runde 5): E2E-beviset må komme fra
+    -- DRILLENS KANDIDATOPPDRAG. FK-en på tabellen binder tenant, modul,
+    -- release og promotert tilstand — men ikke HVILKET arbeid artefaktet
+    -- kom av, så et hvilket som helst annet promotert artefakt fra samme
+    -- release passerte den. Kontrollen fantes bare i `m56-aksept.py`, og
+    -- et skript er ingen skranke for den som kaller funksjonen direkte.
+    -- Drillraden bærer nå kandidatoppdraget, så båndet kan måles her.
+    -- Kun DEN dimensjonen måles her; release og tilstand bæres fortsatt
+    -- av FK-en, som gjelder enhver skrivevei og ikke bare denne.
+    SELECT d.tenant, d.kandidat_oppdrag, d.artefakt_sha256
+      INTO v_drill_tenant, v_kandidat_oppdrag, v_drill_artefakt
+      FROM public.moduldrill d
+     WHERE d.modul_id = p_modul_id AND d.drill_id = p_drill_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'aksepter_moduldeployment: ukjent drill %/%',
+            p_modul_id, p_drill_id USING ERRCODE = 'no_data_found';
+    END IF;
+    IF v_drill_tenant IS DISTINCT FROM p_e2e_tenant THEN
+        RAISE EXCEPTION 'aksepter_moduldeployment: drillen ble målt for'
+            ' tenant %, mens E2E-beviset er % — evidens fra én tenant'
+            ' aksepterer ingenting for en annen',
+            v_drill_tenant, p_e2e_tenant
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    v_forrige_tenant := current_setting('disponit.tenant', true);
+    PERFORM set_config('disponit.tenant', p_e2e_tenant, true);
+    IF NOT EXISTS (SELECT 1 FROM public.artefakt a
+                    WHERE a.tenant = p_e2e_tenant
+                      AND a.artefakt_id = p_e2e_artefakt
+                      AND a.oppdrag_id = v_kandidat_oppdrag) THEN
+        RAISE EXCEPTION 'aksepter_moduldeployment: E2E-artefaktet % kom'
+            ' ikke av drillens kandidatoppdrag % — aksepten skal binde'
+            ' beviset drillen SÅ, ikke et annet artefakt fra samme'
+            ' release', p_e2e_artefakt, v_kandidat_oppdrag
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    PERFORM set_config('disponit.tenant',
+                       coalesce(v_forrige_tenant, ''), true);
+    -- Port 5: KOMPLETT punktsett, målt mot kravpunkt-registeret — ikke
+    -- mot kallerens liste. Hvert punkt må bære alle fire feltene.
+    SELECT string_agg(k.punkt, ', ') INTO v_mangler
+      FROM public.akseptkrav_punkt k
+     WHERE k.krav_id = p_krav_id AND NOT (p_punkter ? k.punkt);
+    IF v_mangler IS NOT NULL THEN
+        RAISE EXCEPTION 'aksepter_moduldeployment: ufullstendig punktsett'
+            ' — mangler: %', v_mangler
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM public.akseptkrav_punkt
+                    WHERE krav_id = p_krav_id) THEN
+        RAISE EXCEPTION 'aksepter_moduldeployment: ukjent krav %', p_krav_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    INSERT INTO public.modulaksept (modul_id, miljo, release_id, drill_id,
+        krav_id, e2e_tenant, e2e_artefakt_id, evidens_jsonl_sha256,
+        manifest_commit, ci_run, ci_commit, nokkel, aktor)
+    VALUES (p_modul_id, p_miljo, p_release_id, p_drill_id, p_krav_id,
+            p_e2e_tenant, p_e2e_artefakt, p_evidens_sha, p_manifest_commit,
+            p_ci_run, p_ci_commit, p_nokkel, p_aktor);
+    -- ------------------------------------------------------------
+    -- A3: HVER OBSERVASJON MÅLES (Codex P1, #117 runde 15).
+    --
+    -- Løkka under kontrollerte at de fire feltene FANTES, aldri hva de
+    -- sa. En kaller med `disponit_modules_admin` kunne derfor sende
+    -- hjemmelagde grenser, måletall og kildereferanser for alle 21
+    -- punktene og oppfylle A3 uten å ha vært innom `m56-aksept.py` —
+    -- og observasjonene er uforanderlige når de først står der.
+    --
+    -- Tre ting måles nå, i denne rekkefølgen:
+    --   (1) GRENSEN OG KILDETYPEN er REGISTERETS, ikke kallerens.
+    --       Kalleren må gjenta dem ordrett; spriker de, er kallet en
+    --       annen påstand enn kravet og avvises. (Feltene sendes
+    --       fortsatt — SP-2-replaykontrollen over sammenligner dem med
+    --       de lagrede radene, og et kall som utelot dem ville gjort
+    --       den kontrollen innholdsløs.)
+    --   (2) MÅLINGEN REGNES MOT KRAVET. `maalt_verdi` må være den
+    --       verdien registeret sier en grønn observasjon har. Et punkt
+    --       som ikke oppfyller kravet skrives ikke — det er ikke et
+    --       punkt med en dårlig verdi, det er en aksept som ikke skal
+    --       finnes.
+    --   (3) KILDEN MÅ PEKE PÅ EVIDENS DENNE TRANSAKSJONEN SER.
+    --       `evidensfil` må ende på hashen aksepten selv binder,
+    --       `ci_kjoring` må navngi nøyaktig aksepradens egen kjøring og
+    --       commit, `artefakt` må være et promotert artefakt på den
+    --       aksepterte releasen, og `registerhendelse` en hendelse på
+    --       denne modulen. Da kan `kilde_ref` ikke lenger være en
+    --       fortelling; den er en peker som holder.
+    -- ------------------------------------------------------------
+    -- CI-KJØRINGEN MÅLES MOT ATTESTEN, IKKE MOT KALLERENS EGNE PARAMETRE
+    -- (Codex P1, #117 runde 16). `p_ci_run` og `p_ci_commit` kommer fra
+    -- samme kall som `kilde_ref`; at de tre er enige, sier ingenting om
+    -- at noe er kjørt. Kravet står i `akseptkrav_ci`, og det som skal
+    -- oppfylle det er referatet veien som spurte GitHub skrev ned.
+    SELECT c.arbeidsflyt, c.hendelse, c.gren, c.konklusjon INTO v_ci
+      FROM public.akseptkrav_ci c WHERE c.krav_id = p_krav_id;
+    SELECT a.attestert_av INTO v_ci_av
+      FROM public.ci_kjoringsattest a
+     WHERE a.ci_run = p_ci_run
+       AND a.arbeidsflyt = v_ci.arbeidsflyt
+       AND a.hendelse = v_ci.hendelse
+       AND a.gren = v_ci.gren
+       AND a.konklusjon = v_ci.konklusjon
+       AND a.hode_sha = lower(p_ci_commit);
+    v_ci_attest := v_ci.arbeidsflyt IS NOT NULL AND v_ci_av IS NOT NULL;
+    -- ------------------------------------------------------------
+    -- FIRE ØYNE, MÅLT PÅ INNLOGGINGEN (Codex P1, #117 runde 19→22).
+    --
+    -- Skillet mellom attestant og akseptør var hittil bare en
+    -- RETTIGHETSGRENSE: `disponit_modules_admin` har ikke EXECUTE på
+    -- attestfunksjonene. En rettighetsgrense holder bare så lenge ingen
+    -- innlogging står på begge sider av den — og migrator er medlem av
+    -- BÅDE `disponit_modul_eier` og `disponit_modules_admin`. `WITH
+    -- INHERIT FALSE` sperrer arv, ikke `SET ROLE`, så én autentisert
+    -- identitet kunne skrive attesten, legge fullmakten ned, ta den
+    -- andre opp og skrive aksepten som hviler på sin egen attest.
+    -- Nøyaktig det samme gjelder enhver ny rolle som får medlemskap i
+    -- eierrollen: en smalere GRANT flytter grensen, den håndhever den
+    -- ikke.
+    --
+    -- Regelen hører derfor hjemme HER, der forutsetningen forbrukes, og
+    -- den måles på `session_user` — den AUTENTISERTE identiteten, som
+    -- `SET ROLE` ikke rører. Attesten aksepten hviler på må være skrevet
+    -- av en ANNEN innlogging enn den som skriver aksepten. To fullmakter
+    -- i én sesjon er én identitet, og én identitet er ikke fire øyne.
+    -- ------------------------------------------------------------
+    IF v_ci_av IS NOT NULL AND v_ci_av = session_user THEN
+        RAISE EXCEPTION 'aksepter_moduldeployment: CI-attesten for kjøring'
+            ' % er skrevet av % — samme innlogging som skriver aksepten.'
+            ' Attestanten er ikke akseptøren: referatet og aksepten som'
+            ' hviler på det skal komme fra to autentiserte identiteter,'
+            ' ikke fra to rolleskift i én sesjon', p_ci_run, v_ci_av
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    v_forrige_tenant := current_setting('disponit.tenant', true);
+    PERFORM set_config('disponit.tenant', p_e2e_tenant, true);
+    FOR v_punkt IN SELECT k.punkt, k.kilde_type, k.grenseverdi, k.maalt_krav
+                     FROM public.akseptkrav_punkt k
+                    WHERE k.krav_id = p_krav_id LOOP
+        v_verdi := p_punkter -> v_punkt.punkt;
+        IF v_verdi IS NULL
+           OR v_verdi ->> 'grenseverdi' IS NULL
+           OR v_verdi ->> 'maalt_verdi' IS NULL
+           OR v_verdi ->> 'kilde_type' IS NULL
+           OR v_verdi ->> 'kilde_ref' IS NULL THEN
+            RAISE EXCEPTION 'aksepter_moduldeployment: punkt % mangler'
+                ' grenseverdi/maalt_verdi/kilde_type/kilde_ref',
+                v_punkt.punkt USING ERRCODE = 'invalid_parameter_value';
+        END IF;
+        IF v_verdi ->> 'grenseverdi' IS DISTINCT FROM v_punkt.grenseverdi
+           OR v_verdi ->> 'kilde_type' IS DISTINCT FROM v_punkt.kilde_type
+        THEN
+            RAISE EXCEPTION 'aksepter_moduldeployment: punkt % oppgir'
+                ' grense «%» av type «%», mens kravet er «%» av type'
+                ' «%» — grensen er registerets, ikke kallerens',
+                v_punkt.punkt, v_verdi ->> 'grenseverdi',
+                v_verdi ->> 'kilde_type', v_punkt.grenseverdi,
+                v_punkt.kilde_type
+                USING ERRCODE = 'invalid_parameter_value';
+        END IF;
+        IF v_verdi ->> 'maalt_verdi' IS DISTINCT FROM v_punkt.maalt_krav THEN
+            RAISE EXCEPTION 'aksepter_moduldeployment: punkt % målte «%»,'
+                ' men en grønn observasjon er «%» — en aksept skrives av'
+                ' målinger som oppfyller kravet, ikke av målinger som'
+                ' ikke gjør det', v_punkt.punkt, v_verdi ->> 'maalt_verdi',
+                v_punkt.maalt_krav
+                USING ERRCODE = 'invalid_parameter_value';
+        END IF;
+        v_ref := v_verdi ->> 'kilde_ref';
+        IF v_punkt.kilde_type = 'evidensfil' THEN
+            -- REFERATET FRA VEIEN SOM LESTE FILEN (Codex P1, runde 19).
+            -- Den forrige formen sammenlignet `kilde_ref` med aksepten
+            -- sin egen `p_evidens_sha` — to felter fra samme kall — og
+            -- godtok hele halen av strengen uten å se på stien. Med en
+            -- tom `p_evidens_sha` holdt en `kilde_ref` som endte på
+            -- `@sha256:`, og siden `maalt_verdi` uansett må være
+            -- registerets grønne fasit, kunne fire observasjoner om en
+            -- fil som ikke fantes bli en immutabel aksept.
+            --
+            -- Punktet måles nå mot ATTESTEN: en immutabel rad, skrevet
+            -- med eierrollens fullmakt av veien som faktisk hashet fila,
+            -- som sier hvilken sti bytene lå på og hva filen bar for
+            -- NØYAKTIG dette punktet. Kalleren kan bare gjenta den.
+            --
+            -- …OG ATTESTEN ER DENNE DRILLENS (Codex P1, PR #123).
+            -- Tre av v3-punktene måles PÅ TVERS av runde-evidensen og
+            -- drillartefaktet (`sammenheng_verdier`), men referatet ble
+            -- skrevet med bare rundens sha, punktet og kravet i
+            -- identiteten. Et forsøk som attesterte runde R sammen med
+            -- drill A og deretter falt, etterlot altså en immutabel
+            -- grønn attest som et senere direktekall kunne gjenbruke
+            -- med en ANNEN drill B: aksepten fant attesten på
+            -- evidenshashen alene og spurte aldri hvilken drill
+            -- forholdet var regnet mot, så `evidens.pa_tvers_av_runder`
+            -- kunne stå grønt selv om R målte en annen release enn den
+            -- B drillet. Attesten navngir nå drillartefaktets bytes, og
+            -- oppslaget krever at det er DE bytene drillraden aksepten
+            -- hviler på ble registrert med: en måling regnet på tvers
+            -- av to artefakter gjelder de to, ikke det ene.
+            SELECT * INTO v_evidens FROM public.evidensfil_attest e
+             WHERE e.sha256 = lower(p_evidens_sha)
+               AND e.punkt = v_punkt.punkt AND e.krav_id = p_krav_id
+               AND e.drill_sha256 = v_drill_artefakt;
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'aksepter_moduldeployment: punkt % hviler'
+                    ' på evidensfilen sha256:%, men ingen attest sier at'
+                    ' den filen er lest og hva den bar for punktet —'
+                    ' sammen med drillartefaktet sha256:%. En hash'
+                    ' aksepten selv oppgir, beviser ingenting; det gjør'
+                    ' referatet fra veien som leste',
+                    v_punkt.punkt, lower(p_evidens_sha), v_drill_artefakt
+                    USING ERRCODE = 'invalid_parameter_value';
+            END IF;
+            -- …og evidensattesten måles på samme fire øyne som
+            -- CI-attesten over: den som LESTE filen skal ikke være den
+            -- som skriver aksepten filens måletall bærer.
+            IF v_evidens.attestert_av = session_user THEN
+                RAISE EXCEPTION 'aksepter_moduldeployment: punkt % hviler'
+                    ' på en evidensattest skrevet av % — samme innlogging'
+                    ' som skriver aksepten. Den som leste filen og den som'
+                    ' aksepterer på det den bar, skal være to autentiserte'
+                    ' identiteter', v_punkt.punkt, v_evidens.attestert_av
+                    USING ERRCODE = 'invalid_parameter_value';
+            END IF;
+            -- Stien er attestens, ikke kallerens: LIKHET, ikke hale.
+            IF v_ref IS DISTINCT FROM
+               (v_evidens.sti || '@sha256:' || lower(p_evidens_sha)) THEN
+                RAISE EXCEPTION 'aksepter_moduldeployment: punkt % viser'
+                    ' til evidensfilen «%», mens attesten leste «%@sha256:%»'
+                    ' — en observasjon skal navngi DEN filen som ble lest,'
+                    ' ikke en sti med riktig hale', v_punkt.punkt, v_ref,
+                    v_evidens.sti, lower(p_evidens_sha)
+                    USING ERRCODE = 'invalid_parameter_value';
+            END IF;
+            -- …og det er FILENS måletall som skal oppfylle kravet.
+            IF v_evidens.maalt_verdi IS DISTINCT FROM v_punkt.maalt_krav THEN
+                RAISE EXCEPTION 'aksepter_moduldeployment: punkt % — filen'
+                    ' sha256:% bar «%», men en grønn observasjon er «%».'
+                    ' Aksepten regner mot det filen SA, ikke mot det'
+                    ' kallet gjentar', v_punkt.punkt, lower(p_evidens_sha),
+                    v_evidens.maalt_verdi, v_punkt.maalt_krav
+                    USING ERRCODE = 'invalid_parameter_value';
+            END IF;
+        ELSIF v_punkt.kilde_type = 'ci_kjoring' THEN
+            IF v_ref IS DISTINCT FROM
+               ('run ' || p_ci_run || ' @ ' || p_ci_commit) THEN
+                RAISE EXCEPTION 'aksepter_moduldeployment: punkt % viser'
+                    ' til CI-kjøringen «%», mens aksepten bærer «run % @'
+                    ' %» — invariantpunktene hviler HELT på den ene'
+                    ' kjøringen raden navngir', v_punkt.punkt, v_ref,
+                    p_ci_run, p_ci_commit
+                    USING ERRCODE = 'invalid_parameter_value';
+            END IF;
+            -- …og den kjøringen må være ATTESTERT (Codex P1, runde 16):
+            -- referatet fra veien som spurte GitHub må si at kravets
+            -- workflow kjørte grønt, på kravets hendelse og gren, for
+            -- nøyaktig akseptcommiten. Uten den er «run X @ Y» bare to
+            -- av kallerens egne strenger som ligner på hverandre.
+            IF NOT v_ci_attest THEN
+                RAISE EXCEPTION 'aksepter_moduldeployment: punkt % hviler'
+                    ' på CI-kjøring %, men ingen attest sier at kravets'
+                    ' workflow (%) kjørte % på %/% for commit % — en'
+                    ' kjøring aksepten selv navngir, beviser ingenting;'
+                    ' det gjør referatet fra veien som spurte',
+                    v_punkt.punkt, p_ci_run,
+                    coalesce(v_ci.arbeidsflyt, '<krav uten ci-krav>'),
+                    coalesce(v_ci.konklusjon, '?'),
+                    coalesce(v_ci.hendelse, '?'), coalesce(v_ci.gren, '?'),
+                    lower(p_ci_commit)
+                    USING ERRCODE = 'invalid_parameter_value';
+            END IF;
+        ELSIF v_punkt.kilde_type = 'artefakt' THEN
+            -- Formen FØRST, i sin egen IF: PostgreSQL lover ingen
+            -- kortslutning av `OR`, så en `v_ref::uuid` ved siden av
+            -- formkontrollen kunne blitt evaluert likevel og kastet
+            -- `invalid_text_representation` i stedet for feilen her.
+            v_holder := v_ref ~
+                ('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
+                 || '[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$');
+            IF v_holder THEN
+                v_holder := EXISTS (SELECT 1 FROM public.artefakt a
+                                     WHERE a.tenant = p_e2e_tenant
+                                       AND a.artefakt_id = v_ref::uuid
+                                       AND a.modul_id = p_modul_id
+                                       AND a.release_id = p_release_id
+                                       AND a.tilstand = 'promotert');
+            END IF;
+            IF NOT v_holder THEN
+                RAISE EXCEPTION 'aksepter_moduldeployment: punkt % viser'
+                    ' til artefaktet «%», som ikke er et promotert'
+                    ' artefakt fra %/% for tenant % — et bevis som ikke'
+                    ' finnes, beviser ingenting', v_punkt.punkt, v_ref,
+                    p_modul_id, p_release_id, p_e2e_tenant
+                    USING ERRCODE = 'invalid_parameter_value';
+            END IF;
+        ELSE   -- 'registerhendelse'
+            -- `^[0-9]{1,18}$`: sifre ALENE holder ikke, for en id som er
+            -- for stor for BIGINT kaster på castet (samme grunn som over).
+            --
+            -- …OG HENDELSEN MÅ VÆRE DRILLENS (Codex P2, PR #123).
+            -- 052s to drillpunkter påberoper seg `rollback_drill`-
+            -- hendelsen akkurat DENNE drillraden skrev, men kontrollen
+            -- spurte bare om IDen var EN hendelse på modulen.
+            -- `m56-aksept.py` slår opp riktig hendelse; et skript er
+            -- ingen skranke for den som holder `disponit_modules_admin`
+            -- og kaller definereren direkte, og en aktivering, en
+            -- nødstopp eller en eldre drills hendelse ville passert
+            -- like godt — og stått for alltid som kildereferansen for
+            -- BEGGE drillobservasjonene. Typen og drillbåndet måles nå
+            -- her, der forutsetningen forbrukes.
+            -- Sammenligningen er TEKSTLIG (`->>` mot `p_drill_id::text`)
+            -- og ikke et cast: PostgreSQL lover ingen rekkefølge på
+            -- predikatene, og en `detalj` uten et tall i `drill_id`
+            -- skal gi denne feilmeldingen, ikke `invalid_text_
+            -- representation` (samme grunn som uuid-formen over).
+            v_holder := v_ref ~ '^[0-9]{1,18}$';
+            IF v_holder THEN
+                v_holder := EXISTS (
+                    SELECT 1 FROM public.modulregister_hendelse h
+                     WHERE h.id = v_ref::bigint
+                       AND h.modul_id = p_modul_id
+                       AND h.hendelse = 'rollback_drill'
+                       AND h.detalj ->> 'drill_id' = p_drill_id::text);
+            END IF;
+            IF NOT v_holder THEN
+                RAISE EXCEPTION 'aksepter_moduldeployment: punkt % viser'
+                    ' til registerhendelsen «%», som ikke er en hendelse'
+                    ' på % — nærmere bestemt ikke `rollback_drill`-'
+                    'hendelsen drill % skrev. Et drillpunkt hviler på'
+                    ' hendelsen DEN drillen skrev, ikke på en hvilken som'
+                    ' helst hendelse på modulen',
+                    v_punkt.punkt, v_ref, p_modul_id, p_drill_id
+                    USING ERRCODE = 'invalid_parameter_value';
+            END IF;
+        END IF;
+        INSERT INTO public.modulaksept_punkt (modul_id, miljo, release_id,
+            krav_id, punkt, grenseverdi, maalt_verdi, kilde_type, kilde_ref)
+        VALUES (p_modul_id, p_miljo, p_release_id, p_krav_id,
+                v_punkt.punkt, v_punkt.grenseverdi,
+                v_punkt.maalt_krav, v_punkt.kilde_type, v_ref);
+    END LOOP;
+    PERFORM set_config('disponit.tenant',
+                       coalesce(v_forrige_tenant, ''), true);
+    SELECT module_epoch INTO v_epoch FROM public.modulhode
+     WHERE modul_id = p_modul_id;
+    INSERT INTO public.modulregister_hendelse (modul_id, hendelse,
+        release_id, miljo, module_epoch, aktor, detalj)
+    VALUES (p_modul_id, 'modulaksept', p_release_id, p_miljo, v_epoch,
+            p_aktor, jsonb_build_object(
+                'drill_id', p_drill_id, 'krav_id', p_krav_id,
+                'e2e_artefakt_id', p_e2e_artefakt::text,
+                'evidens_jsonl_sha256', p_evidens_sha,
+                'ci_run', p_ci_run, 'ci_commit', p_ci_commit));
+END $$;
+
+RESET ROLE;
+
+-- ACL-bildet for den nye attestsignaturen — 049s ordrett: INGEN GRANT
+-- til `disponit_modules_admin` (attestanten skal ikke være akseptøren),
+-- EXECUTE bare til attestveiens egen innlogging.
+SET LOCAL ROLE disponit_modul_eier;
+REVOKE ALL ON FUNCTION attester_evidensfil(TEXT, TEXT, TEXT, JSONB, TEXT,
+    TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION attester_evidensfil(TEXT, TEXT, TEXT, JSONB,
+    TEXT, TEXT) TO disponit_ci_verifikator;
 RESET ROLE;
