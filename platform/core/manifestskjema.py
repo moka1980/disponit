@@ -938,7 +938,14 @@ def _grenser_m02_suite(grense: dict, art: dict) -> list[str]:
                         " en junit-XML fra en avbrutt kjøring teller bare"
                         " testene som rakk å bli ferdige, og er ikke en"
                         " hel suite")
-    filer = (art.get("oppsett") or {}).get("m2_filer")
+    # `or {}` fanget None, men ikke en SANN ikke-dict: er `oppsett` f.eks.
+    # strengen "…", melder skjemaet formatfeilen riktig, mens
+    # `valider_artefakter` med vilje går videre hit — og et `.get` på en
+    # streng kastet AttributeError og rev med seg hele valideringskjøringen
+    # i stedet for å returnere de røde funnene. Et vrangt artefakt skal
+    # feile lukket, ikke krasje.
+    oppsett = art.get("oppsett")
+    filer = oppsett.get("m2_filer") if isinstance(oppsett, dict) else None
     if not (isinstance(filer, list) and filer
             and all(isinstance(x, str) and x for x in filer)):
         feil.append("oppsett.m2_filer mangler — M-2s andel skal være"
