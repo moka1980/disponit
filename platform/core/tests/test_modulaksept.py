@@ -47,9 +47,11 @@ pg = pytest.mark.skipif(
 ROT = Path(__file__).resolve().parents[3]
 M049 = ROT / "platform/core/db/migrations/049_modulaksept.sql"
 M050 = ROT / "platform/core/db/migrations/050_akseptgrense_v2.sql"
-# 050: grensen ble synlig reversjonert — akseptene skrives mot v2;
-# v1-radene består som historie (registeret er append-only med krav-lås).
-KRAV = "m56-akseptflipp-v2"
+M052 = ROT / "platform/core/db/migrations/052_akseptmaling.sql"
+# 050/052: grensen er synlig reversjonert to ganger — akseptene skrives
+# mot v3 (052: + de sju §5-punktene fra aksept-arc-klarsignalet);
+# v1-/v2-radene består som historie (append-only med krav-lås).
+KRAV = "m56-akseptflipp-v3"
 #: AKSEPTGRENSEN slik 049 registrerte den — og navnet er nettopp grunnen
 #: til at 050 gir revisjonen en egen akse: v1 kalte akseptens punktsett
 #: det samme som artefaktenes krav_id, som om de var samme påstand.
@@ -418,7 +420,7 @@ def _ci_attest(m, ci_run="run-1", *, ci_commit=None, arbeidsflyt=None,
 
 
 def _evidens_attest(m, sha=EVIDENS_SHA, *, sti=EVIDENS_STI, krav=KRAV,
-                    maalt=None):
+                    maalt=None, drill_sha=DRILL_SHA):
     """Referatet fra veien som LESTE evidensfilen (Codex P1, runde 19).
 
     Verdiene er de FILEN bar. Standard er registerets grønne fasit, som i
@@ -427,6 +429,11 @@ def _evidens_attest(m, sha=EVIDENS_SHA, *, sti=EVIDENS_STI, krav=KRAV,
 
     Skrives av verifikatorens innlogging: den som LESER filen og den som
     aksepterer på det den bar, er to identiteter (Codex P1, runde 22).
+
+    …og attesten navngir DRILLEN lesningen ble regnet sammen med (Codex
+    P1, PR #123): sammenhengspunktene måles på tvers av runde og drill,
+    så et referat som bare navngir runden kan gjenbrukes med en annen
+    drill. `DRILL_SHA` er den `_drill` registrerer med.
     """
     if maalt is None:
         maalt = {p: v for p, v in m.execute(
@@ -435,15 +442,15 @@ def _evidens_attest(m, sha=EVIDENS_SHA, *, sti=EVIDENS_STI, krav=KRAV,
             (krav,)).fetchall()}
     v = _verifikator()
     try:
-        v.execute("SELECT attester_evidensfil(%s,%s,%s,%s::jsonb,'test')",
-                  (krav, sti, sha, json.dumps(maalt)))
+        v.execute("SELECT attester_evidensfil(%s,%s,%s,%s::jsonb,'test',%s)",
+                  (krav, sti, sha, json.dumps(maalt), drill_sha))
         v.commit()
     finally:
         v.close()
 
 
 def _punkter(m, krav=KRAV, *, evidens_sha=EVIDENS_SHA, ci_run="run-1",
-             ci_commit=None, evidens_sti=EVIDENS_STI):
+             ci_commit=None, evidens_sti=EVIDENS_STI, mid=None):
     """Punktsettet slik REGISTERET krever det (Codex P1, #117 runde 15).
 
     Grensen, kildetypen og den grønne verdien er registerets, ikke
@@ -457,6 +464,19 @@ def _punkter(m, krav=KRAV, *, evidens_sha=EVIDENS_SHA, ci_run="run-1",
         "  FROM akseptkrav_punkt WHERE krav_id=%s", (krav,)).fetchall()
     ref = {"evidensfil": f"{evidens_sti}@sha256:{evidens_sha}",
            "ci_kjoring": f"run {ci_run} @ {ci_commit or CI_SHA}"}
+    if any(kt == "registerhendelse" for _, kt, _, _ in rader):
+        # v3s drillpunkter (052): `kilde_ref` er `rollback_drill`-
+        # hendelsen drillregistreringen skrev — den ekte veien slår den
+        # opp etter `registrer_moduldrill`, og porten krever at det ER
+        # `rollback_drill`-hendelsen for NØYAKTIG den drillen aksepten
+        # bærer (Codex P2, PR #123). Uten drill (negative prøver) brukes
+        # modulens siste hendelse; finnes ingen modul, en umulig id —
+        # prøven skal da falle på nettopp det.
+        rad = m.execute(
+            "SELECT id FROM modulregister_hendelse WHERE modul_id=%s"
+            " ORDER BY (hendelse='rollback_drill') DESC, id DESC LIMIT 1",
+            (mid,)).fetchone() if mid else None
+        ref["registerhendelse"] = str(rad[0]) if rad else "999999999"
     return {p: {"grenseverdi": g, "maalt_verdi": mk, "kilde_type": kt,
                 "kilde_ref": ref[kt]}
             for p, kt, g, mk in rader}
@@ -470,7 +490,7 @@ def _aksepter(m, k, did, *, release="r-kandidat", artefakt=None,
     if punkter is None:
         # leses som migrator — admin har ikke SELECT
         punkter = _punkter(m, evidens_sha=evidens_sha, ci_run=ci_run,
-                           ci_commit=ci_commit)
+                           ci_commit=ci_commit, mid=k["mid"])
     if attest:
         # Den ekte veien attesterer kjøringen rett etter at
         # `verifiser_ci_kjoring` har godtatt den (Codex P1, runde 16).
@@ -631,7 +651,7 @@ def test_ufullstendig_punktsett_gir_ingen_hendelse(migrator):
     «komplett», ikke kallerens liste."""
     k = _kjede(migrator)
     did = _drill(migrator, k)
-    punkter = _punkter(migrator)
+    punkter = _punkter(migrator, mid=k["mid"])
     fjernet = sorted(punkter)[0]
     del punkter[fjernet]
     with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
@@ -639,7 +659,7 @@ def test_ufullstendig_punktsett_gir_ingen_hendelse(migrator):
     migrator.rollback()
     assert fjernet in str(ei.value)
     # ... og et punkt uten alle fire feltene er også ufullstendig.
-    punkter = _punkter(migrator)
+    punkter = _punkter(migrator, mid=k["mid"])
     punkter[fjernet] = {"grenseverdi": "0"}
     with pytest.raises(psycopg.errors.InvalidParameterValue):
         _aksepter(migrator, k, did, punkter=punkter)
@@ -671,7 +691,7 @@ def test_punktobservasjonene_maales_ikke_bare_mottas(migrator):
     def avvist(i_meldingen, *, type_=None, **endring):
         """Muterer ETT punkt (av den gitte kildetypen) og krever avslag."""
         migrator.execute("RESET ROLE")
-        p = _punkter(migrator)
+        p = _punkter(migrator, mid=k["mid"])
         punkt = sorted(pp for pp, v in p.items()
                        if type_ is None or v["kilde_type"] == type_)[0]
         p[punkt] = dict(p[punkt], **endring)
@@ -973,8 +993,12 @@ def test_attesten_maa_baere_en_annen_innlogging_enn_aksepten(migrator):
         "  WHERE krav_id=%s AND kilde_type='evidensfil'",
         (KRAV,)).fetchall()}
     migrator.execute("SET ROLE disponit_modul_eier")
-    migrator.execute("SELECT attester_evidensfil(%s,%s,%s,%s::jsonb,'test')",
-                     (KRAV, EVIDENS_STI, sha, json.dumps(maalt)))
+    # Samme drill som `_evidens_attest` bruker: attesten under skal være
+    # DEN raden aksepten finner, ikke en verifikatorskrevet søsterrad på
+    # en annen drill (052 nøkler attesten også på drillartefaktet).
+    migrator.execute(
+        "SELECT attester_evidensfil(%s,%s,%s,%s::jsonb,'test',%s)",
+        (KRAV, EVIDENS_STI, sha, json.dumps(maalt), DRILL_SHA))
     migrator.execute("RESET ROLE")
     migrator.commit()
     with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
@@ -1057,7 +1081,7 @@ def test_evidenshashen_bindes_til_lagret_evidens(migrator):
 
     # (1) FORMEN: Codex' eget eksempel — tom hash mot `@sha256:`.
     migrator.execute("RESET ROLE")
-    p = _punkter(migrator, evidens_sha="", evidens_sti="")
+    p = _punkter(migrator, evidens_sha="", evidens_sti="", mid=k["mid"])
     with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
         _aksepter(migrator, k, did, punkter=p, evidens_sha="",
                   ev_attest=False)
@@ -1219,6 +1243,66 @@ def test_en_fillesning_baerer_flere_kravrevisjoner(migrator):
     assert migrator.execute(
         "SELECT count(*) FROM evidensfil_attest WHERE sha256=%s",
         (sha,)).fetchone()[0] == 2 * len(delte)
+
+
+@pg
+def test_drillbandet_maales_paa_hendelsen_og_paa_attesten(migrator):
+    """Codex' P1 + P2 (#123): et bevis hvis MENING avhenger av drillen,
+    må navngi den drillen aksepten faktisk bærer.
+
+    052 innførte to slike familier, og begge sto uten båndet:
+
+    * drillpunktenes `kilde_ref` er `rollback_drill`-hendelsen
+      drillraden skrev, men porten spurte bare om IDen var EN hendelse
+      på modulen — en aktivering, en nødstopp eller en eldre drills
+      hendelse passerte like godt, og ble stående for alltid som
+      kildereferansen for begge drillobservasjonene;
+    * de tre sammenhengspunktene måles PÅ TVERS av runde-evidensen og
+      drillartefaktet, men attesten navnga bare runden — en grønn
+      attest fra ett forsøk kunne derfor gjenbrukes av et senere
+      direktekall med en ANNEN drill.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `h.hendelse = 'rollback_drill'`/
+    `h.detalj ->> 'drill_id'`-leddet, eller `e.drill_sha256`-leddet, fra
+    `aksepter_moduldeployment` i 052."""
+    k = _kjede(migrator)
+    did = _drill(migrator, k)
+    migrator.commit()
+
+    # (1) HENDELSEN: en annen hendelse på modulen er ikke drillens.
+    migrator.execute("RESET ROLE")
+    annen = migrator.execute(
+        "SELECT id FROM modulregister_hendelse WHERE modul_id=%s"
+        "   AND hendelse <> 'rollback_drill' ORDER BY id DESC LIMIT 1",
+        (k["mid"],)).fetchone()
+    assert annen is not None, "modulen har ingen annen hendelse å prøve med"
+    feil = _punkter(migrator, mid=k["mid"])
+    for verdi in feil.values():
+        if verdi["kilde_type"] == "registerhendelse":
+            verdi["kilde_ref"] = str(annen[0])
+    migrator.rollback()
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, k, did, punkter=feil)
+    migrator.rollback()
+    assert "rollback_drill" in str(ei.value)
+
+    # (2) ATTESTEN: en lesning attestert sammen med et ANNET
+    #     drillartefakt er ikke denne drillens referat.
+    sha = secrets.token_hex(32)
+    _evidens_attest(migrator, sha, drill_sha="22" * 32)
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, k, did, evidens_sha=sha, ev_attest=False)
+    migrator.rollback()
+    assert "drillartefaktet" in str(ei.value)
+
+    # …og med drillens egne bytes går nøyaktig den samme lesningen inn.
+    _aksepter(migrator, k, did, evidens_sha=sha)
+    migrator.commit()
+    migrator.execute("RESET ROLE")
+    assert migrator.execute(
+        "SELECT count(*) FROM modulaksept WHERE modul_id=%s",
+        (k["mid"],)).fetchone()[0] == 1
+    migrator.rollback()
 
 
 @pg
@@ -1385,7 +1469,7 @@ def test_replay_med_andre_bevis_avvises(migrator):
         assert "annet innhold" in str(ei.value)
         migrator.rollback()
     migrator.execute("RESET ROLE")
-    p = _punkter(migrator)
+    p = _punkter(migrator, mid=k["mid"])
     rettet = sorted(p)[0]
     p[rettet] = dict(p[rettet], maalt_verdi="1")
     with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
@@ -1601,11 +1685,20 @@ def test_kravet_er_registrert_og_punktene_bundet(migrator):
         "        krav_id='wcag-kontroll-v1'),"
         "       (SELECT count(*) FROM akseptkrav_punkt WHERE"
         "        krav_id='m56-akseptflipp-v2')").fetchone()
+    v3 = migrator.execute(
+        "SELECT count(*) FROM akseptkrav_punkt"
+        "  WHERE krav_id='m56-akseptflipp-v3'").fetchone()[0]
     migrator.rollback()
     # 050-revisjonen: v2 = §12 minus proxytoken-punktet pluss de to
     # egress-erstatningene; v1 består urørt som historie.
     assert v1 == 21, f"v1-historikken har {v1} punkter, ventet 21"
     assert v2 == 22, f"v2-grensen har {v2} punkter, ventet 22"
+    # 052-revisjonen: v3 = v2 + de sju §5-punktene — og notatet står i
+    # migrasjonsfila, samme synlighetskrav som 050s.
+    assert v3 == 29, f"v3-grensen har {v3} punkter, ventet 29"
+    sql052 = M052.read_text(encoding="utf-8")
+    for notat in ("ENDRINGSNOTAT", "TILLAGT", "UENDRET"):
+        assert notat in sql052, f"052-endringsnotatet mangler {notat}"
     man = yaml.safe_load(
         (ROT / "platform/modules/m56_wcag_audit/manifest.yaml").read_text(
             encoding="utf-8"))
@@ -2122,6 +2215,7 @@ def _drillartefakt(**maalt):
     ekte = _superseder_drill()
     komplett = dict(ekte["maalt"], inflight_promoterte_artefakter=1,
                     rullback_claimet_oppdrag=1,
+                    rullback_har_signert_kvittering=True,
                     rullback_promoterte_artefakter=1,
                     rullback_overtakelse_s=18.4)
     komplett.update(maalt)
@@ -4589,9 +4683,10 @@ def test_hvert_grensepunkt_har_en_kilde_som_maaler_nettopp_det(migrator):
         "SELECT punkt, kilde_type, grenseverdi, maalt_krav"
         "  FROM akseptkrav_punkt WHERE krav_id=%s", (KRAV,)).fetchall()}
     punkter = set(register)
-    assert len(punkter) == 22, punkter
+    assert len(punkter) == 29, punkter
     kilder = (set(m.MAALTE), set(m.CI_PUNKTER), set(m.UMAALTE),
-              {"malautorisasjon.positiv_sti_virker"})
+              {"malautorisasjon.positiv_sti_virker"},
+              set(m.DRILL_PUNKTER), set(m.SAMMENHENG_PUNKTER))
     flat = [p for s in kilder for p in s]
     assert len(flat) == len(set(flat)), "et punkt har to kilder"
     assert set(flat) == punkter, (
@@ -4610,6 +4705,17 @@ def test_hvert_grensepunkt_har_en_kilde_som_maaler_nettopp_det(migrator):
         encoding="utf-8")
     assert register["malautorisasjon.positiv_sti_virker"] == \
         ("ci_kjoring", "ja", "ja")
+    # v3s drillpunkter måles av drillRADEN (FK-en med utfallsboolene i
+    # den refererbare nøkkelen); skriptet gjentar registerets grense og
+    # den grønne verdien — avvik dør i basen, som for MAALTE over.
+    for punkt, (grense, verdi) in m.DRILL_PUNKTER.items():
+        assert register[punkt] == ("registerhendelse", grense, verdi), \
+            (punkt, register[punkt])
+    # …og sammenhengspunktene (§2) bæres av runde-evidensfilen.
+    for punkt in m.SAMMENHENG_PUNKTER:
+        assert register[punkt][:2] == \
+            ("evidensfil", m.SAMMENHENG_GRENSER[punkt]), \
+            (punkt, register[punkt])
     # 050-revisjonen, målt SYNLIG i BASEN: proxytoken-punktet er UTE av
     # v2 (det krevde en mekanisme som ikke finnes), erstatningene er inne
     # med hver sin ekte kilde — og v1-raden består som historie, fordi
@@ -5059,3 +5165,370 @@ def test_drillen_nekter_en_annen_manifestgenerasjon_enn_den_drillede():
         encoding="utf-8")
     assert (tekst.index("krev_akseptbar_manifestgenerasjon(m, drillet)")
             < tekst.index("registrer_drillrelease(m, a.rullback_id"))
+
+
+# ---------------------------------------------------------------------------
+# 052 — målekoden for de tre blokkerte manifestpunktene
+# (aksept-arc-klarsignalet §1). Portene her er arcens egne vitner: hver
+# ny måling har en positiv kontroll OG den røde formen den finnes for.
+# ---------------------------------------------------------------------------
+
+@pg
+def test_rullbakkens_kvittering_er_en_del_av_claim_stoppet(migrator):
+    """§1.1a: «rullbakken fullførte selv» krever kvitteringen fra DENS
+    kjøring. Promoteringsleddet alene sier at et artefakt finnes — 052
+    legger `maal_rent_utfall` på rullbakk-oppdraget inn i
+    `claim_stopp_ok`, i samme drillrad som de to andre kontrollpunktene.
+    En kvittering med tom signaturkolonne eller uten brent kapabilitet
+    er nettopp formene porten skal se."""
+    # …og UTFALLET må være utført (Codex P1, #123 runde 5): en signert
+    # `feilet`-kvittering med promotert artefakt bærer hele avtrykket,
+    # men en rullbakk som feilet fullførte ingenting.
+    for variant in ({"kapabilitet": False}, {"signatur": False},
+                    {"status": "feilet"}):
+        k = _kjede(migrator)
+        uten = k["oppdrag"](opprettet=T_RB_BESTILT, status_ts=T_RB_SLUTT,
+                            claim_release="r-rullback", **variant)
+        k["artefakt"]("r-rullback", "promotert", uten)
+        did = _drill(migrator, k, opp={**k["opp"], "rullback": uten})
+        migrator.execute("RESET ROLE")
+        stopp = migrator.execute(
+            "SELECT claim_stopp_ok FROM moduldrill WHERE modul_id=%s"
+            " AND drill_id=%s", (k["mid"], did)).fetchone()[0]
+        migrator.rollback()
+        assert stopp is False, \
+            f"rullbakk uten {variant} ga grønt claim-stopp"
+        # …og en rød drillrad kan aldri refereres av en aksept (E1f).
+        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+            _aksepter(migrator, k, did)
+        migrator.rollback()
+    # Positiv kontroll: standardkjeden (full kvittering) måler grønt.
+    k = _kjede(migrator)
+    did = _drill(migrator, k)
+    migrator.execute("RESET ROLE")
+    assert migrator.execute(
+        "SELECT claim_stopp_ok FROM moduldrill WHERE modul_id=%s"
+        " AND drill_id=%s", (k["mid"], did)).fetchone()[0] is True
+    migrator.rollback()
+
+
+@pg
+def test_maal_kjoringsattest_maaler_kontrolloepet(migrator):
+    """§1.3a: drilloppdragets port anvendt per kjøring. Kvitterings-
+    avtrykket, claim-sporet, artefakt-likheten og revisjonsraden måles i
+    basen — og `loggpost` returneres så telleren kan kreve DISTINKTE
+    rader. Et oppdrag som ikke finnes måler alt til false."""
+    k = _kjede(migrator)
+    oid = k["opp"]["inflight"]
+
+    def attest(oppdrag, release, miljo="staging"):
+        migrator.execute("SET ROLE disponit_modules_admin")
+        rad = migrator.execute(
+            "SELECT kvittering_ok, claim_release_ok, artefakt_ok,"
+            " revisjonsrad_ok, loggpost"
+            " FROM maal_kjoringsattest(%s,%s,%s,%s)",
+            (k["ten"], oppdrag, release, miljo)).fetchone()
+        migrator.execute("RESET ROLE")
+        return rad
+
+    god = attest(oid, "r-drillet")
+    assert god[:4] == (True, True, True, True) and god[4] is not None, god
+    # Feil release: claim-sporet OG artefakt-likheten er røde — utfort
+    # uten promotert artefakt PÅ DEN RELEASEN er et falskt verdikt.
+    feil_rel = attest(oid, "r-rullback")
+    assert feil_rel[1] is False and feil_rel[2] is False, feil_rel
+    # Feil miljø er en annen deployment (samme regel som drillens ledd).
+    assert attest(oid, "r-drillet", "prod")[1] is False
+    # Et oppdrag som ikke finnes: ingen grønne målinger, ingen identitet.
+    borte = attest(999999999, "r-drillet")
+    assert borte[:4] == (False, False, False, False) and borte[4] is None
+    # …og loggposten er REVISJONSRADENS identitet: den raden oppdraget
+    # faktisk er koblet til (008), lesbar for telling av distinkthet.
+    migrator.execute("RESET ROLE")
+    ekte = migrator.execute(
+        "SELECT beslutning_loggpost_id FROM oppdrag WHERE tenant=%s"
+        " AND id=%s", (k["ten"], oid)).fetchone()[0]
+    migrator.rollback()
+    assert god[4] == ekte
+
+
+def test_grenser_wcag_kontroll_v2_maaler_de_nye_tellerne():
+    """v2-grensen (052): de tretten v1-grensene pluss §1.2/§1.3 — og
+    9/10 er rødt, ikke «nesten». Datasett-leddet er en NEGATIV byteport:
+    én byte ulik i ett ledd feller punktet."""
+    from manifestskjema import (_sjekk_grenser, valider_artefaktformat,
+                                datasett_sha256, DATASETT_STI)
+    ekte = json.loads((ROT / ("deploy/staging/artefakter/"
+                              "wcag-kontroll-v1-20260818T200413.json")
+                       ).read_text(encoding="utf-8"))
+    lokal = datasett_sha256(DATASETT_STI)
+
+    def v2(oppsett_ekstra=None, **maalt_ekstra):
+        art = json.loads(json.dumps(ekte))
+        art["krav_id"] = "wcag-kontroll-v2"
+        art["oppsett"]["datasett_sha256"] = lokal
+        art["oppsett"].update(oppsett_ekstra or {})
+        art["maalt"].update({
+            "kjoringer_med_attestert_kvittering": 10,
+            "kvittering_attest_avvik": 0,
+            "revisjonsrader_mot_bestilt": 10,
+            "revisjonsrad_avvik": 0, **maalt_ekstra})
+        return art
+
+    assert valider_artefaktformat(v2(), "wcag-kontroll-v2") == []
+    assert _sjekk_grenser("wcag-kontroll-v2", v2()) == []
+    # 9/10 attestert er rødt — og et målt avvik er rødt uansett telling.
+    assert any("attestert" in f for f in _sjekk_grenser(
+        "wcag-kontroll-v2", v2(kjoringer_med_attestert_kvittering=9)))
+    assert any("kvittering_attest_avvik" in f for f in _sjekk_grenser(
+        "wcag-kontroll-v2", v2(kvittering_attest_avvik=1)))
+    assert any("revisjonsrader" in f for f in _sjekk_grenser(
+        "wcag-kontroll-v2", v2(revisjonsrader_mot_bestilt=9)))
+    assert any("revisjonsrad_avvik" in f for f in _sjekk_grenser(
+        "wcag-kontroll-v2", v2(revisjonsrad_avvik=1)))
+    # Én hex-flipp i staging-leddet → rødt (SP-11, negativ byteport).
+    flip = ("0" if lokal[0] != "0" else "1") + lokal[1:]
+    assert any("innsjekkede" in f for f in _sjekk_grenser(
+        "wcag-kontroll-v2", v2({"datasett_sha256": flip})))
+    # Umålt staging-ledd er umålt, aldri grønt.
+    mangler = v2()
+    del mangler["oppsett"]["datasett_sha256"]
+    assert any("umålt" in f for f in _sjekk_grenser("wcag-kontroll-v2",
+                                                    mangler))
+    assert valider_artefaktformat(mangler, "wcag-kontroll-v2"), \
+        "skjemaet lot staging-leddet mangle"
+    # …og de nye tellerne er PÅKREVDE felter, ikke valgfrie påstander.
+    uten = v2()
+    del uten["maalt"]["kjoringer_med_attestert_kvittering"]
+    assert valider_artefaktformat(uten, "wcag-kontroll-v2")
+    # v1-grensen står urørt: samme fil består som historie.
+    assert _sjekk_grenser("wcag-kontroll-v1", ekte) == []
+
+
+def test_datasett_identiteten_er_bytene_ikke_serveringen(tmp_path):
+    """§1.2: identiteten er fasit.json + sider/ som BYTES — determinis-
+    tisk på tvers av maskiner, følsom for én byte, og blind for
+    `server.py` (serveringen er ikke datasettet)."""
+    import shutil
+    from manifestskjema import datasett_sha256, DATASETT_STI
+    kopi = tmp_path / "testnettsted"
+    shutil.copytree(DATASETT_STI, kopi)
+    original = datasett_sha256(DATASETT_STI)
+    assert datasett_sha256(kopi) == original, \
+        "samme bytes ga ulik identitet — kanoniseringen er ustabil"
+    fil = kopi / "sider" / "index.html"
+    raa = fil.read_bytes()
+    fil.write_bytes(raa[:-1] + bytes([raa[-1] ^ 1]))
+    assert datasett_sha256(kopi) != original, \
+        "én byte endret og identiteten sto stille"
+    fil.write_bytes(raa)
+    (kopi / "server.py").write_text("# endret servering\n",
+                                    encoding="utf-8")
+    assert datasett_sha256(kopi) == original, \
+        "server.py talte med — serveringen er ikke datasettet"
+
+
+def test_konverteren_sammendrar_v2_naar_datasettet_er_maalt():
+    """Konverteren velger v1 eller v2 av FILA (052): en runde som målte
+    datasett-identiteten sammendras som v2 — med tellerne på null når
+    attestene aldri ble målt (synlig, aldri lånt), og med avbrudd når
+    identiteten ikke er en kanonisk sha."""
+    m = _runde_skript()
+    art = json.loads((ROT / ("deploy/staging/artefakter/"
+                             "wcag-kontroll-v1-20260818T200413.json")
+                      ).read_text(encoding="utf-8"))
+    rader = m.les(ROT / art["oppsett"]["kilde"])
+    # Hendelsen legges I RUNDENS VINDU — rett FØR siste
+    # `fase5_resultat`, slik fase 5 faktisk skriver den (identiteten
+    # først, kjøringene, så resultatet). Halen av fila har senere
+    # fase 2-hendelser (gjenåpningen), og en identitet målt utenfor
+    # vinduet skal konverteren avvise, ikke sammendra.
+    siste_f5 = max(i for i, d in enumerate(rader)
+                   if d.get("hendelse") == "fase5_resultat")
+    hendelse = {"ts": rader[siste_f5]["ts"],
+                "hendelse": "datasett_identitet",
+                "datasett_sha256": "ab" * 32, "ok": True}
+    rader = rader[:siste_f5] + [hendelse] + rader[siste_f5:]
+    v2 = m.sammendrag(rader, art["oppsett"]["kilde"],
+                      art["oppsett"]["kilde_sha256"])
+    assert v2["krav_id"] == "wcag-kontroll-v2"
+    assert v2["oppsett"]["datasett_sha256"] == "ab" * 32
+    # 18/8-linjene bærer ingen attestmåling: tellerne står på null —
+    # det er det fila faktisk viser, og grensen feller det ved binding.
+    assert v2["maalt"]["kjoringer_med_attestert_kvittering"] == 0
+    assert v2["maalt"]["revisjonsrader_mot_bestilt"] == 0
+    assert v2["maalt"]["kvittering_attest_avvik"] == 0
+    assert v2["maalt"]["revisjonsrad_avvik"] == 0
+    # En identitet som ikke er en kanonisk sha256 er ingen måling.
+    daarlig = list(rader)
+    daarlig[siste_f5] = dict(hendelse, datasett_sha256="xyz")
+    with pytest.raises(SystemExit) as ei:
+        m.sammendrag(daarlig, art["oppsett"]["kilde"],
+                     art["oppsett"]["kilde_sha256"])
+    assert "kanonisk sha256" in str(ei.value)
+    # …og en identitet skrevet ETTER det valgte resultatet er et annet
+    # forsøks måling — vindusporten feller den FØR kontekstlikheten får
+    # spørsmålet (Codex P1, #123 runde 5: en gjenkjøring som skriver ny
+    # identitet og krasjer før sitt eget resultat, ville ellers paret
+    # den nye identiteten med det gamle grønne resultatet).
+    utenfor = m.les(ROT / art["oppsett"]["kilde"]) + [hendelse]
+    with pytest.raises(SystemExit) as ei:
+        m.sammendrag(utenfor, art["oppsett"]["kilde"],
+                     art["oppsett"]["kilde_sha256"])
+    assert "utenfor det valgte" in str(ei.value)
+    # …og et påbegynt forsøk ETTER det valgte resultatet (en `kjoring`
+    # uten nytt `fase5_resultat`) gjør fila ufullstendig — sammendraget
+    # velger aldri et eldre resultat forbi et nyere forsøk.
+    paabegynt = rader + [{"ts": hendelse["ts"], "hendelse": "kjoring",
+                          "i": 0, "utfall": "feilet"}]
+    with pytest.raises(SystemExit) as ei:
+        m.sammendrag(paabegynt, art["oppsett"]["kilde"],
+                     art["oppsett"]["kilde_sha256"])
+    assert "påbegynt" in str(ei.value)
+
+
+def test_konverterens_attesttellere_krever_egne_maalinger():
+    """Tellernes egen semantikk, målt på syntetiske linjer: distinkte
+    oppdrag, distinkte LOGGPOSTER (én rad delt av ti kjøringer er ÉN
+    rad), og avvik = målt nei — aldri fravær av måling."""
+    m = _runde_skript()
+
+    RSETT = "axe-core-4.9.1"
+
+    def linje(i, **felt):
+        return {"hendelse": "kjoring", "i": i, "oppdrag": i + 1,
+                "utfall": "utfort", "avvik_mot_fasit": 0,
+                "varighet_s": 1.0, "frist_s": 1800,
+                "kvittering_signert": True, "kvittering_attest_ok": True,
+                "revisjonsrad_ok": True, "loggpost": 100 + i,
+                "regelsett": RSETT, **felt}
+
+    gronne = [linje(i) for i in range(10)]
+    assert m.attestert_kvittering(gronne, 10, RSETT) == 10
+    assert m.revisjonsrader_mot_bestilt(gronne, 10) == 10
+    assert m.kvittering_attest_avvik(gronne) == 0
+    # Én rad delt av alle ti: ti kjøringer, ÉN revisjonsrad.
+    delt = [linje(i, loggpost=100) for i in range(10)]
+    assert m.revisjonsrader_mot_bestilt(delt, 10) == 1
+    # Målt nei er et avvik OG en manglende attest; umålt er bare umålt.
+    rodt = [linje(0, kvittering_attest_ok=False)] + gronne[1:]
+    assert m.attestert_kvittering(rodt, 10, RSETT) == 9
+    assert m.kvittering_attest_avvik(rodt) == 1
+    umaalt = [{k: v for k, v in linje(0).items()
+               if k != "kvittering_attest_ok"}] + gronne[1:]
+    assert m.attestert_kvittering(umaalt, 10, RSETT) == 9
+    assert m.kvittering_attest_avvik(umaalt) == 0
+    # REGELSETTET regnes, det leses ikke ferdigtygd (Codex P1, #123):
+    # en grønn `kvittering_attest_ok` på et annet — eller manglende —
+    # regelsett teller ikke, og en runde uten forventning står på null.
+    annet = [linje(0, regelsett="axe-core-4.8.0")] + gronne[1:]
+    assert m.attestert_kvittering(annet, 10, RSETT) == 9
+    uten = [{k: v for k, v in linje(0).items() if k != "regelsett"}] \
+        + gronne[1:]
+    assert m.attestert_kvittering(uten, 10, RSETT) == 9
+    assert m.attestert_kvittering(gronne, 10, None) == 0
+    assert m.attestert_kvittering(uten, 10, None) == 0
+    # Samme oppdrag på alle posisjoner er én kjøring — aldri ti.
+    ett = [linje(i, oppdrag=7, loggpost=100 + i) for i in range(10)]
+    assert m.attestert_kvittering(ett, 10, RSETT) == 1
+    assert m.revisjonsrader_mot_bestilt(ett, 10) == 1
+    # Codex' P1 (#123): ti rader på ÉN bestilt posisjon er én posisjon —
+    # tellingen nøkles på posisjonen, ikke på oppdraget bak den.
+    stablet = [linje(0, oppdrag=20 + i, loggpost=200 + i) for i in range(10)]
+    assert m.revisjonsrader_mot_bestilt(stablet, 10) == 1
+    # Codex' P1 (#123 runde 2): attest og revisjonsrad skal bæres av
+    # SAMME kjøring. En strøm med én ren attestert linje UTEN rad og én
+    # annen linje MED rad per posisjon — uansett om den andre er uren
+    # eller ren, og uansett rekkefølge — kan aldri gi 10/10 på begge:
+    # posisjonens representant velges ÉN gang, og hver teller leser sin
+    # måling av nettopp den linja.
+    uten_rad = [{k: v for k, v in linje(i).items()
+                 if k not in ("revisjonsrad_ok", "loggpost")}
+                for i in range(10)]
+    med_rad_uren = [linje(i, utfall="feilet", oppdrag=50 + i,
+                          loggpost=200 + i) for i in range(10)]
+    med_rad_ren = [{k: v for k, v in
+                    linje(i, oppdrag=50 + i, loggpost=200 + i).items()
+                    if k != "kvittering_attest_ok"} for i in range(10)]
+    for spleis in (uten_rad + med_rad_uren, uten_rad + med_rad_ren,
+                   med_rad_ren + uten_rad):
+        a = m.attestert_kvittering(spleis, 10, RSETT)
+        r = m.revisjonsrader_mot_bestilt(spleis, 10)
+        assert not (a == 10 and r == 10), (a, r)
+    # Codex' P1 (#123 runde 4): SISTE linje per posisjon ER posisjonens
+    # tilstand — også når den er rød eller halvskrevet. Ti rene linjer
+    # etterfulgt av ti `feilet` på de samme posisjonene er null målte
+    # kjøringer, ikke ti; utvelgelsen skjer FØR predikatet, aldri i det.
+    seinere_rode = gronne + [linje(i, utfall="feilet", oppdrag=30 + i)
+                             for i in range(10)]
+    assert m.rent_innen_frist(seinere_rode, 10) == 0
+    assert m.attestert_kvittering(seinere_rode, 10, RSETT) == 0
+    assert m.revisjonsrader_mot_bestilt(seinere_rode, 10) == 0
+    # …og en halvskrevet siste linje (uten kanonisk oppdrag) feller
+    # posisjonen i stedet for å bli oversett.
+    halv = gronne + [{"hendelse": "kjoring", "i": 0, "utfall": "utfort"}]
+    assert m.rent_innen_frist(halv, 10) == 9
+
+
+@pg
+def test_roedt_referat_mot_feil_drill_laaser_ikke_riktig_par(migrator):
+    """Codex' P1 (#123 runde 5): et mislykket akseptforsøk med feil
+    drill committer sitt røde referat før basen avviser aksepten — og
+    referatet er immutabelt. Motsigelseskontrollen er derfor scopet til
+    drill-PARET: det riktige parets grønne referat skal fortsatt kunne
+    skrives, mens to referater om samme bytes MOT SAMME drill fortsatt
+    må si det samme."""
+    k = _kjede(migrator)
+    did = _drill(migrator, k)
+    punkt = "evidens.pa_tvers_av_runder"
+    # Det røde referatet fra feilparingen — en annen drills bytes.
+    _evidens_attest(migrator,
+                    maalt={punkt: "runden målte 'r-x', drillen 'r-y'"},
+                    drill_sha="ee" * 32)
+    # Riktig par: full grønn attest + aksept går gjennom.
+    _aksepter(migrator, k, did)
+    migrator.commit()
+    migrator.execute("RESET ROLE")
+    n = migrator.execute(
+        "SELECT count(*) FROM modulaksept WHERE modul_id=%s",
+        (k["mid"],)).fetchone()[0]
+    migrator.rollback()
+    assert n == 1, "det røde referatet fra feil par sperret riktig par"
+    # …og innenfor SAMME drill er en avvikende verdi fortsatt en
+    # motsigelse som skal høres.
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _evidens_attest(migrator, maalt={punkt: "en annen verdi"},
+                        drill_sha=DRILL_SHA)
+    assert "annet innhold" in str(ei.value)
+    migrator.rollback()
+
+
+def test_aksept_skriptet_baerer_v3_og_sammenhengskravet():
+    """v3-aksen (052): akseptens punktsett er v3, bevisenes krav er v2 —
+    og sammenhengsverdiene (§2) regnes av artefaktene, med den røde
+    formen som tekst basen aldri godtar."""
+    import manifestskjema as ms
+    m = _aksept_skript()
+    assert m.KRAV == "m56-akseptflipp-v3"
+    assert m.ARTEFAKT_KRAV == "wcag-kontroll-v2"
+    assert m.DRILLKRAV == "rollback-m56-v1"
+    lokal = ms.datasett_sha256(ms.DATASETT_STI)
+    runde = {"krav_id": "wcag-kontroll-v2",
+             "oppsett": {"release": "wcag-r21", "datasett_sha256": lokal}}
+    drill = {"oppsett": {"drillet_release": "wcag-r21"}}
+    v = m.sammenheng_verdier(runde, drill, ms)
+    assert set(v) == set(m.SAMMENHENG_PUNKTER)
+    assert all(verdi == "0" for verdi in v.values()), v
+    # Runden målte én release, drillen drillet en annen: spleiset
+    # evidens, og §2-porten feller det FØR basen ser noe.
+    annen = m.sammenheng_verdier(
+        runde, {"oppsett": {"drillet_release": "wcag-r9"}}, ms)
+    assert annen["evidens.pa_tvers_av_runder"] != "0"
+    # Gammelt datasett-ledd → rødt; gammel v1-runde → gjenbruk.
+    gml = dict(runde, oppsett=dict(runde["oppsett"],
+                                   datasett_sha256="ab" * 32))
+    assert m.sammenheng_verdier(gml, drill,
+                                ms)["datasett.sha_ulik_mellom_ledd"] != "0"
+    v1 = dict(runde, krav_id="wcag-kontroll-v1")
+    assert m.sammenheng_verdier(v1, drill,
+                                ms)["aksept.gjenbrukt_gammel_evidens"] != "0"

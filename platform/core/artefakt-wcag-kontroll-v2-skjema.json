@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/wcagkontrollartefakt-v2.json",
+  "title": "WCAG-kontrollartefakt (wcag-kontroll-v2)",
+  "comment": "v2 = v1-runden + de tre maalingene som manglet (aksept-arc-klarsignalet paragraf 1, migrasjon 052): datasettets sha256 (byte-likhet begge ledd, SP-11), kvittering-attest per kjoering (maal_kjoringsattest) og revisjonsrad per kjoering talt mot de bestilte. Avledet MEKANISK av evidens.jsonl (deploy/staging/wcag-kontroll-artefakt.py) - aldri skrevet for haand. Grensene staar i KRAVGRENSER; tallene maales paa nytt av porten ved hver CI-kjoering.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "wcag-kontroll-v2"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "modul",
+        "release",
+        "image_digest",
+        "kilde",
+        "kilde_sha256",
+        "datasett_sha256"
+      ],
+      "properties": {
+        "modul": {
+          "const": "m_wcag_audit",
+          "comment": "REGISTERIDENTITETEN (modulhode.modul_id), ikke katalognavnet m56_wcag_audit. Kravet wcag-kontroll-v1 er m56s egen stagingrunde, saa modulen er kjent i skjemaet - en ikke-tom streng lot sammendraget navngi en annen modul enn den som aksepteres."
+        },
+        "release": {
+          "type": "string",
+          "minLength": 1
+        },
+        "image_digest": {
+          "type": "string",
+          "minLength": 12
+        },
+        "kilde": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kilde_sha256": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "datasett_sha256": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "comment": "Kanonisk sha256 over testnettstedet (sider/ + fasit.json), maalt av sjekklisten PAA STAGING med manifestskjema.datasett_sha256 - samme funksjon porten bruker paa de innsjekkede bytene. Byte-likhet begge ledd er kravet (paragraf 1.2)."
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kjoringer_rent_innen_frist",
+        "kjoringer_med_maalt_signatur",
+        "kjoringer_krav",
+        "avvik_mot_fasit",
+        "robots_private_forisporsler",
+        "robots_5xx_sider_kontrollert",
+        "robots_5xx_krav",
+        "frekvens_tillat",
+        "frekvens_avvist_over_grense",
+        "egress_lekkasjer",
+        "egress_motormiljo_maalt",
+        "feilinjisering_feilet_med_kvittering",
+        "feilinjisering_promoterte_artefakter",
+        "evidensfrist_reapet",
+        "evidensfrist_sak_opprettet",
+        "kjoringer_med_attestert_kvittering",
+        "kvittering_attest_avvik",
+        "revisjonsrader_mot_bestilt",
+        "revisjonsrad_avvik"
+      ],
+      "properties": {
+        "kjoringer_rent_innen_frist": {
+          "$ref": "#/$defs/telling",
+          "comment": "Kjoringer med rent utfall, null avvik og en MAALT varighet under sin egen frist. Het `kjoringer_signert_innen_frist` til Codex' P2 paa #117 runde 15: navnet var det eneste `signert` ved det - ingen del av maalingen spurte om en kvitteringssignatur."
+        },
+        "kjoringer_med_maalt_signatur": {
+          "$ref": "#/$defs/telling",
+          "comment": "Av dem: de som i tillegg bar `kvittering_signert: true` - en EGEN maaling produsenten gjor i basen (signaturkolonnen identisk med konvoluttens, resultathash satt, og kvitteringskapabiliteten brent med nettopp den hashen). En runde som ikke maalte dette staar paa 0, og akseptpunktet `kontroll.ti_kjoringer_signert_innen_frist` blokkerer."
+        },
+        "kjoringer_krav": {
+          "$ref": "#/$defs/telling"
+        },
+        "avvik_mot_fasit": {
+          "$ref": "#/$defs/telling"
+        },
+        "robots_private_forisporsler": {
+          "$ref": "#/$defs/telling"
+        },
+        "robots_5xx_sider_kontrollert": {
+          "$ref": "#/$defs/telling"
+        },
+        "robots_5xx_krav": {
+          "$ref": "#/$defs/telling"
+        },
+        "frekvens_tillat": {
+          "$ref": "#/$defs/telling"
+        },
+        "frekvens_avvist_over_grense": {
+          "$ref": "#/$defs/telling"
+        },
+        "egress_lekkasjer": {
+          "$ref": "#/$defs/telling",
+          "comment": "Antall linjer i browser-containerens miljo som bar en hemmelighet. Tallet alene skiller ikke «ingen lekkasjer» fra «proben kjorte aldri» - `egress_motormiljo_maalt` gjor det."
+        },
+        "egress_motormiljo_maalt": {
+          "$ref": "#/$defs/telling",
+          "comment": "1 bare naar port24-proben FAKTISK kjorte en containerkommando og den gikk rent (returkode 0). En probe som ikke kom i gang, eller som dode for den rakk aa skrive miljoet, star paa 0 - og akseptpunktet `egress.hemmeligheter_i_browsermiljo` blokkerer (Codex P1, #121)."
+        },
+        "feilinjisering_feilet_med_kvittering": {
+          "$ref": "#/$defs/telling"
+        },
+        "feilinjisering_promoterte_artefakter": {
+          "$ref": "#/$defs/telling"
+        },
+        "evidensfrist_reapet": {
+          "$ref": "#/$defs/telling"
+        },
+        "evidensfrist_sak_opprettet": {
+          "$ref": "#/$defs/telling"
+        },
+        "kjoringer_med_attestert_kvittering": {
+          "$ref": "#/$defs/telling",
+          "comment": "Av de bestilte: kjoeringer der HELE attesten er maalt groenn (maal_kjoringsattest, 052): kvitteringsavtrykket, claim-sporet (release+miljoe == kjoeringens), artefakt-likheten (utfort <=> promotert paa releasen) og revisjonsraden - pluss et maalt regelsett identisk med motorens pinnede. 9/10 er roedt."
+        },
+        "kvittering_attest_avvik": {
+          "$ref": "#/$defs/telling",
+          "comment": "Linjer som BAERER attestmaalingen og baerer den roed. Null avvik er kravet - et avvik er en kjoering hvis kvittering attesterer noe annet enn det kjoeringen faktisk gikk paa."
+        },
+        "revisjonsrader_mot_bestilt": {
+          "$ref": "#/$defs/telling",
+          "comment": "Antall DISTINKTE fase-2-TILLAT-loggposter (008: beslutning_loggpost_id) blant de bestilte kjoeringene med groenn revisjonsrad-maaling. Ti kjoeringer skal baere ti rader - en rad delt av flere kjoeringer er faerre rader, ikke flere."
+        },
+        "revisjonsrad_avvik": {
+          "$ref": "#/$defs/telling",
+          "comment": "Linjer som baerer revisjonsrad-maalingen roed. Null er kravet."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "telling": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

@@ -33,6 +33,13 @@ utvalgsregler som kan leses, angripes og kjøres om igjen:
     `kjoringer_med_maalt_signatur`, avledet av `kvittering_signert` på
     hver linje. En runde som ikke målte signaturen, står på null.
 
+  * v1 ELLER v2 AVGJØRES AV FILA (052): en runde som målte datasettets
+    identitet (`datasett_identitet`) bærer 052-målekoden og
+    sammendras som `wcag-kontroll-v2` — med datasett-sha i `oppsett` og
+    attest-/revisjonsradtellerne i `maalt`. Runden fra 18/8 har ingen
+    slik hendelse og regenererer byte-identisk som v1: hash-bundet
+    historie får aldri felter i ettertid.
+
 Deterministisk med vilje: samme fil inn gir byte-identisk artefakt ut
 (ingen klokkelesing), så CI kan regenerere og sammenligne.
 
@@ -239,25 +246,62 @@ def rent_innen_frist(linjer: list[dict], krav: int) -> int:
     Det denne funksjonen IKKE måler, er signaturen: den har sitt eget
     predikat (`signert_innen_frist`) og sitt eget tall. Se det.
     """
+    valgt = _posisjonenes_kjoringer(linjer, krav)
+    # Ett oppdrag kan ikke ha kjørt to av de bestilte posisjonene. Går den
+    # samme IDen igjen, er det ikke to kjøringer, og antallet er antallet
+    # oppdrag — aldri antallet linjer som viser til dem.
+    return len({_identitet(d, "oppdrag") for d in valgt.values()})
+
+
+def _posisjonenes_kjoringer(linjer: list[dict], krav: int) -> dict[int, dict]:
+    """ÉN utvelgelse for ALLE tellerne — posisjonens representant.
+
+    Codex' P1 på PR #123 (runde 2): attest- og revisjonsradtelleren
+    valgte hver sine linjer, og en redigert strøm kunne dermed legge én
+    ren, attestert linje UTEN revisjonsradmåling og én annen linje MED
+    grønn rad på samme posisjon — ti attesterte og ti rader, uten at én
+    eneste kjøring bar begge deler. Per-posisjon-nøklingen (runde 1) var
+    nødvendig, men ikke nok: to tellere som filtrerer hver for seg kan
+    fortsatt peke på hver sin virkelighet.
+
+    Derfor velges posisjonens kjøring ÉN gang, her — og i TO steg, i
+    riktig rekkefølge (Codex P1, #123 runde 4): først hvilken linje som
+    ER posisjonens siste tilstand, SÅ om den tilstanden består
+    målepredikatet. Den forrige formen la predikatet i utvelgelsen
+    (`valgt[indeks] = d` bare for rene linjer), så en SENERE rød eller
+    halvskrevet linje ble ignorert i stedet for å erstatte tilstanden —
+    ti rene linjer etterfulgt av ti `feilet` på de samme posisjonene
+    talte fortsatt 10/10, og docstringen lovet det motsatte. Runden er
+    idempotent og fila append-only: siste linje per bestilt posisjon ER
+    posisjonens tilstand, uansett farge — og en posisjon hvis siste
+    tilstand ikke bærer en ren, målt kjøring med eget oppdrag, er ikke
+    en målt posisjon. Et gjenspill som siste tilstand teller dermed
+    heller ikke (varigheten er ikke målt) — samme dom som
+    `rent_innen_frist` alltid har felt over gjenspilte vinduer.
+
+    HVER teller leser så sin måling av NETTOPP posisjonens linje. En
+    signatur, en attest eller en revisjonsrad på en annen linje enn
+    posisjonens, er ikke posisjonens måling.
+    """
     bestilte = range(krav)
-    gronne: dict[int, int] = {}
+    siste: dict[int, dict] = {}
     for d in linjer:
+        indeks = d.get("i")
+        if (isinstance(indeks, int) and not isinstance(indeks, bool)
+                and indeks in bestilte):
+            siste[indeks] = d
+    valgt: dict[int, dict] = {}
+    for indeks, d in siste.items():
         avvik = _tall(d, "avvik_mot_fasit")
         varighet, frist = _tall(d, "varighet_s"), _tall(d, "frist_s")
-        indeks, oppdrag = d.get("i"), _identitet(d, "oppdrag")
         if (d.get("utfall") == "utfort"
                 and avvik == 0
                 and varighet is not None
                 and frist is not None
                 and varighet < frist
-                and isinstance(indeks, int) and not isinstance(indeks, bool)
-                and indeks in bestilte
-                and oppdrag is not None):
-            gronne[indeks] = oppdrag
-    # Ett oppdrag kan ikke ha kjørt to av de bestilte posisjonene. Går den
-    # samme IDen igjen, er det ikke to kjøringer, og antallet er antallet
-    # oppdrag — aldri antallet linjer som viser til dem.
-    return len(set(gronne.values()))
+                and _identitet(d, "oppdrag") is not None):
+            valgt[indeks] = d
+    return valgt
 
 
 def signert_innen_frist(linjer: list[dict], krav: int) -> int:
@@ -284,8 +328,97 @@ def signert_innen_frist(linjer: list[dict], krav: int) -> int:
     `_tall`. Runden fra 18/8 målte det aldri, og teller derfor null her;
     det er ikke en feil i fila, det er det fila faktisk viser.
     """
-    signerte = [d for d in linjer if d.get("kvittering_signert") is True]
-    return rent_innen_frist(signerte, krav)
+    valgt = _posisjonenes_kjoringer(linjer, krav)
+    return len({_identitet(d, "oppdrag") for d in valgt.values()
+                if d.get("kvittering_signert") is True})
+
+
+def attestert_kvittering(linjer: list[dict], krav: int,
+                         regelsett: object) -> int:
+    """Teller kjøringene som i tillegg fikk kvitteringen ATTESTERT.
+
+    052 (§1.3a): `kvittering_attest_ok` er basens egen måling
+    (`maal_kjoringsattest`) av at kvitteringen hører til NØYAKTIG den
+    kjøringen — avtrykket, claim-sporet (release+miljø), artefakt-
+    likheten. Samme utvalgsdisiplin som signaturen: `is True`, aldri
+    sannhetsverdi, og bare linjer som alt teller som rene kjøringer på
+    bestilte posisjoner med egne oppdrag. En runde som ikke målte
+    attesten står på null — synlig, aldri lånt fra et annet tall.
+
+    REGELSETTET REGNES HER, det leses ikke ferdigtygd (Codex P1, #123).
+    Den forrige formen lot `kvittering_attest_ok` bære HELE
+    regelsettmålingen: produsenten hadde alt sammenlignet rapportens
+    `regelsett_versjon` med motorens pinnede og skrevet ut ett ja/nei,
+    mens `regelsett` på linja lå der uleste. En redigert eller
+    halvskrevet evidensfil kunne sette flagget grønt på ti linjer som
+    bar et annet — eller ingen — regelsett, og verken v2-skjemaet eller
+    `_grenser_wcag_kontroll_v2` bevarte verdien til å motsi den. Nå
+    bærer `fase5_resultat` forventningen runden bandt seg til, linja
+    bærer det som faktisk ble observert, og likheten regnes av de to.
+
+    En runde uten forventning har ikke målt dette, og står da på null —
+    aldri på «alle linjene mangler regelsett, altså er de like». Samme
+    fail-closed som `_tall` og signaturen.
+    """
+    if not (isinstance(regelsett, str) and regelsett):
+        return 0
+    valgt = _posisjonenes_kjoringer(linjer, krav)
+    return len({_identitet(d, "oppdrag") for d in valgt.values()
+                if d.get("kvittering_signert") is True
+                and d.get("kvittering_attest_ok") is True
+                and d.get("regelsett") == regelsett})
+
+
+def kvittering_attest_avvik(linjer: list[dict]) -> int:
+    """Linjer som BÆRER attestmålingen og bærer den rød.
+
+    Grensen er null avvik — 9/10 er rødt, ikke «nesten» (klarsignalet
+    §1.3). `is False`, ikke `not x`: en linje uten målingen er umålt og
+    telles av tallet over (som da ikke når kravet); en linje som MÅLTE
+    og fikk nei er et avvik, og det skal synes som det.
+    """
+    return sum(1 for d in linjer
+               if d.get("kvittering_attest_ok") is False)
+
+
+def revisjonsrader_mot_bestilt(linjer: list[dict], krav: int) -> int:
+    """Antall DISTINKTE revisjonsrader bak de bestilte kjøringene.
+
+    052 (§1.3b): hver kjøring er koblet til sin fase-2-TILLAT-loggpost
+    (008), og `maal_kjoringsattest` målte at raden finnes med riktig
+    tenant og beslutning. Ti kjøringer skal bære ti rader: tellingen er
+    antallet distinkte loggpost-identiteter over distinkte oppdrag på
+    bestilte posisjoner — én rad delt av flere kjøringer er én rad, og
+    en linje uten egen loggpost-identitet er ikke målt (`_identitet`,
+    samme kanoniske form som oppdrags-IDen).
+
+    Codex' P1 på PR #123 (runde 1): tellingen filtrerte på POSISJON,
+    men nøklet på oppdrag — ti `revisjonsrad_ok`-linjer på samme
+    posisjon 0 ga «10 rader». Og P1 i runde 2: per-posisjon-nøkling med
+    EGET filter var fortsatt ikke nok, for attest- og radtelleren kunne
+    velge hver sin linje på samme posisjon — én ren attestert uten rad,
+    én annen med rad. Målingen leses derfor nå av POSISJONENS
+    REPRESENTANT (`_posisjonenes_kjoringer` — samme linje som bærer
+    rent-, signatur- og attestmålingen): en rad på en linje som ikke er
+    posisjonens kjøring, er ikke posisjonens rad. Tallet er det minste
+    av antall distinkte oppdrag og antall distinkte loggposter bak dem:
+    ti rader krever ti kjøringer med hvert sitt oppdrag og hver sin rad.
+    """
+    valgt = _posisjonenes_kjoringer(linjer, krav)
+    par = [(_identitet(d, "oppdrag"), _identitet(d, "loggpost"))
+           for d in valgt.values()
+           if d.get("revisjonsrad_ok") is True
+           and _identitet(d, "loggpost") is not None]
+    return min(len({o for o, _ in par}), len({l for _, l in par}))
+
+
+def revisjonsrad_avvik(linjer: list[dict]) -> int:
+    """Linjer som bærer revisjonsrad-målingen rød. Samme form som
+    `kvittering_attest_avvik`: målt nei er et avvik, umålt er umålt."""
+    return sum(1 for d in linjer if d.get("revisjonsrad_ok") is False)
+
+
+_SHA256 = re.compile(r"\A[0-9a-f]{64}\Z")
 
 
 def sammendrag(rader: list[dict], kilde: str, kilde_sha256: str) -> dict:
@@ -308,9 +441,56 @@ def sammendrag(rader: list[dict], kilde: str, kilde_sha256: str) -> dict:
         siste("feilinjisering_motorfeil", lambda d: d.get("utfall") != "tomt"),
         siste("feilinjisering_evidensfrist"),
     ]
+    # v2-RUNDE ELLER v1-RUNDE — avgjort av FILA, aldri av et flagg
+    # (052, §1.2): en runde som målte datasettets identitet
+    # (`datasett_identitet` i strømmen) bærer målekoden fra 052, og da
+    # kreves HELE settet av nye observasjoner — halvmålt er umålt, og
+    # sammendraget skrives som `wcag-kontroll-v2`. Runden fra 18/8 har
+    # ingen slik hendelse og regenererer byte-identisk som v1: den fila
+    # er hash-bundet historie og kan ikke få felter i ettertid.
+    v2 = any(d.get("hendelse") == "datasett_identitet" for d in rader)
+    if v2:
+        i_f5 = indekser[0]
+        # IDENTITETEN MÅ VÆRE MÅLT I DET VALGTE VINDUET (Codex P1, #123
+        # runde 5). Fase 5 skriver `datasett_identitet` FØR kjøringene og
+        # `fase5_resultat` til slutt — så i en hel runde ligger
+        # identiteten MELLOM forrige og valgte resultat. En gjenkjøring
+        # som skriver ny identitet (og kanskje en halv kjøring) og så
+        # krasjer FØR sitt eget resultat, ville ellers fått den nye
+        # identiteten paret med det GAMLE grønne resultatet — evidens
+        # spleiset av to forsøk. Kontekstlikheten under ser det ikke
+        # (samme release, samme image), så vinduet må måles selv.
+        i_ds = siste("datasett_identitet")
+        start = 0
+        for j in range(i_f5 - 1, -1, -1):
+            if rader[j].get("hendelse") == "fase5_resultat":
+                start = j + 1
+                break
+        if not (start <= i_ds < i_f5):
+            raise SystemExit(
+                "AVBRUTT: siste `datasett_identitet` ligger utenfor det"
+                " valgte fase 5-vinduet — identiteten er målt av et annet"
+                " (påbegynt eller eldre) forsøk enn resultatet, og et"
+                " sammendrag spleiset av to forsøk skrives ikke")
+        # …og et PÅBEGYNT forsøk etter det valgte resultatet er heller
+        # ikke historie som kan overses: en `kjoring` eller ny identitet
+        # etter siste `fase5_resultat` er en runde som aldri ble målt
+        # ferdig, og filas siste tilstand er da «ufullstendig» — samme
+        # dom som en manglende hendelse, ikke et fritt valg av det siste
+        # grønne.
+        etter = [d.get("hendelse") for d in rader[i_f5 + 1:]
+                 if d.get("hendelse") in ("kjoring", "datasett_identitet")]
+        if etter:
+            raise SystemExit(
+                f"AVBRUTT: fila bærer {len(etter)} fase 5-hendelse(r)"
+                " ETTER det valgte resultatet — et påbegynt, uavsluttet"
+                " forsøk. Kjør runden ferdig (nytt `fase5_resultat`)"
+                " eller fjern ingenting: sammendraget velger aldri et"
+                " eldre resultat forbi et nyere forsøk")
+        indekser.append(i_ds)
     image_digest, release = en_kjoring(rader, kontekst, indekser)
     valgte = tuple(rader[i] for i in indekser)
-    (fase5, robots, robots5, frekv, motor, injeksjon, frist) = valgte
+    (fase5, robots, robots5, frekv, motor, injeksjon, frist) = valgte[:7]
 
     # Aggregatets navn: fase 5 het før «ti_kjoringer_SIGNERT_innen_frist»,
     # men det den summerte var rene utfall innen frist — signaturen ble
@@ -342,6 +522,22 @@ def sammendrag(rader: list[dict], kilde: str, kilde_sha256: str) -> dict:
     # målte den aldri, og står derfor på null — synlig, i stedet for
     # skjult bak et ord.
     signert = signert_innen_frist(fase5_linjer, krav)
+    if v2:
+        # De nye tellerne regnes av de SAMME bestilte linjene, med samme
+        # disiplin — og datasett-hendelsen må bære en kanonisk sha.
+        datasett = rader[indekser[7]]
+        dsha = datasett.get("datasett_sha256")
+        if not (isinstance(dsha, str) and _SHA256.match(dsha)):
+            raise SystemExit("AVBRUTT: `datasett_identitet` bærer ingen"
+                             " kanonisk sha256 — identiteten til bytene"
+                             " staging serverte er ikke målt")
+        # …og attesttelleren regner regelsettet av summens egen
+        # forventning mot linjenes observasjon (Codex P1, #123).
+        attestert = attestert_kvittering(
+            fase5_linjer, krav, fase5.get("regelsett_forventet"))
+        attest_avvik = kvittering_attest_avvik(fase5_linjer)
+        rader_mot = revisjonsrader_mot_bestilt(fase5_linjer, krav)
+        rad_avvik = revisjonsrad_avvik(fase5_linjer)
     if rent != påstått:
         raise SystemExit(
             f"AVBRUTT: `fase5_resultat` påstår {påstått}/{krav} utført"
@@ -354,8 +550,15 @@ def sammendrag(rader: list[dict], kilde: str, kilde_sha256: str) -> dict:
             " oppdraget gjentatt på flere posisjoner er én kjøring, ikke"
             " flere — så summen kan ikke være kilden. Kjør fase 5 på nytt"
             " (nye idempotensnøkler) og la kjøringene måle seg selv.")
+    ut_oppsett_ekstra = {"datasett_sha256": dsha} if v2 else {}
+    ut_maalt_ekstra = ({
+        "kjoringer_med_attestert_kvittering": attestert,
+        "kvittering_attest_avvik": attest_avvik,
+        "revisjonsrader_mot_bestilt": rader_mot,
+        "revisjonsrad_avvik": rad_avvik,
+    } if v2 else {})
     return {
-        "krav_id": "wcag-kontroll-v1",
+        "krav_id": "wcag-kontroll-v2" if v2 else "wcag-kontroll-v1",
         "ts": max(d["ts"] for d in valgte),
         "bestatt": all(d.get("ok") is True for d in valgte),
         "oppsett": {
@@ -369,6 +572,7 @@ def sammendrag(rader: list[dict], kilde: str, kilde_sha256: str) -> dict:
             # og artefaktet hash-binder råfilen det er avledet av — et
             # bytte av evidens.jsonl bryter kjeden i CI, ikke i en lesning.
             "kilde_sha256": kilde_sha256,
+            **ut_oppsett_ekstra,
         },
         "maalt": {
             "kjoringer_rent_innen_frist": rent,
@@ -404,6 +608,7 @@ def sammendrag(rader: list[dict], kilde: str, kilde_sha256: str) -> dict:
                 int(injeksjon["promoterte_artefakter"]),
             "evidensfrist_reapet": len(frist["reapet"]),
             "evidensfrist_sak_opprettet": 1 if frist.get("sak") else 0,
+            **ut_maalt_ekstra,
         },
     }
 

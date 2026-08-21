@@ -187,6 +187,24 @@ KRAVGRENSER: dict[str, dict] = {
     },
 }
 
+# --- 052 (aksept-arc-klarsignalet §1) ---------------------------------
+# `wcag-kontroll-v2` ER v1-runden pluss de tre målingene som manglet —
+# avledet, ikke kopiert, så de tretten arvede grensene aldri kan gli fra
+# v1s i stillhet. Revisjonen er SYNLIG (050-formen): v1 består som
+# historie for artefaktet fra 2026-08-18; en ny runde måler mot v2.
+KRAVGRENSER["wcag-kontroll-v2"] = {
+    **KRAVGRENSER["wcag-kontroll-v1"],
+    # §1.3: null avvik i BEGGE tellinger — 9/10 er rødt, ikke «nesten».
+    # Eksaktheten (attestert == krav, rader == krav) er strukturell og
+    # håndheves i `_grenser_wcag_kontroll_v2`, samme form som
+    # `kjoringer_rent_innen_frist == kjoringer_krav` i v1.
+    "maks_kvittering_attest_avvik": 0,
+    "maks_revisjonsrad_avvik": 0,
+    # §1.2: byte-likhet i begge ledd (SP-11). Negativ port: én byte
+    # endret i ett av leddene → punktet rødt.
+    "krev_datasett_sha_lik_innsjekket": True,
+}
+
 #: Hvilket LUKKEDE skjema som gjelder for hvilket krav. Uten dette ville
 #: alle artefakter blitt målt mot ytelsesskjemaet, og et feilinjiserings-
 #: artefakt ville feilet på «mangler `krav`» i stedet for å bli validert.
@@ -197,6 +215,7 @@ ARTEFAKTSKJEMAER: dict[str, str] = {
     "behandling-m37-v1": "artefakt-behandling-skjema.json",
     "policyadmin-v1": "artefakt-policyadmin-skjema.json",
     "wcag-kontroll-v1": "artefakt-wcag-kontroll-skjema.json",
+    "wcag-kontroll-v2": "artefakt-wcag-kontroll-v2-skjema.json",
     "rollback-m56-v1": "artefakt-rollback-m56-skjema.json",
 }
 
@@ -429,6 +448,8 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _grenser_policyadmin(grense, art)
     if krav_id == "wcag-kontroll-v1":
         return feil + _grenser_wcag_kontroll(grense, art)
+    if krav_id == "wcag-kontroll-v2":
+        return feil + _grenser_wcag_kontroll_v2(grense, art)
     if krav_id == "rollback-m56-v1":
         return feil + _grenser_rollback_m56(grense, art)
 
@@ -711,6 +732,111 @@ def _grenser_wcag_kontroll(grense: dict, art: dict) -> list[str]:
     return feil
 
 
+#: Datasettet punktet `syntetisk_datasett_likt_lokalt` binder: fasiten og
+#: sidene den beskriver. `server.py` er SERVERINGEN, ikke datasettet — den
+#: står utenfor identiteten med vilje, akkurat som blokkert-noten sier
+#: («sider/ + fasit.json»).
+DATASETT_STI = REPOROT / "platform/modules/m56_wcag_audit/testnettsted"
+
+
+def datasett_sha256(rot: Path) -> str:
+    """Kanonisk identitet for det syntetiske datasettet — BYTENE.
+
+    Én funksjon, to lesere (aksept-arc-klarsignalet §1.2): sjekklisten
+    kaller den på staging og skriver tallet i evidensstrømmen;
+    `_grenser_wcag_kontroll_v2` kaller den på de innsjekkede bytene i CI
+    og krever likhet. Punktet er `ja` kun ved byte-likhet BEGGE steder
+    (SP-11) — og fordi begge ledd bruker nøyaktig denne funksjonen, kan
+    ikke to kanoniseringer gli fra hverandre og gjøre likheten vakuøs.
+
+    Formen: for hver fil, i sortert POSIX-stirekkefølge (fasit.json
+    først, så sider/ rekursivt), hashes den relative stien og filens
+    egen sha256 — sti OG innhold, så en fil som flyttes eller byttes med
+    en annens bytes endrer identiteten. Ingen mtime, ingen eier, ingen
+    tilfeldighet: samme bytes gir samme tall på enhver maskin.
+    """
+    h = hashlib.sha256()
+    filer = [rot / "fasit.json"] + sorted(
+        p for p in (rot / "sider").rglob("*") if p.is_file())
+    for p in filer:
+        rel = p.relative_to(rot).as_posix()
+        h.update(rel.encode("utf-8") + b"\x00")
+        h.update(hashlib.sha256(p.read_bytes()).digest())
+    return h.hexdigest()
+
+
+def _grenser_wcag_kontroll_v2(grense: dict, art: dict) -> list[str]:
+    """`wcag-kontroll-v2` — v1-runden + de tre målingene som manglet.
+
+    Aksept-arc-klarsignalet §1: (1.2) datasettets sha256 målt på staging
+    OG mot innsjekkede bytes, (1.3) kvittering-attest og revisjonsrad
+    per kjøring med null avvik — 9/10 er rødt, ikke «nesten». De
+    tretten v1-grensene håndheves uendret av `_grenser_wcag_kontroll`.
+    """
+    feil = _grenser_wcag_kontroll(grense, art)
+    m = art.get("maalt")
+    if not isinstance(m, dict):
+        return feil
+    krav, mk = _teller(m, "kjoringer_krav", "kjoringer_krav")
+    # §1.3a: KVITTERINGEN — attestert er en EGEN måling
+    # (`maal_kjoringsattest`, 052: avtrykk + claim-spor + artefakt-
+    # likhet + regelsett), og tallet må være NØYAKTIG kravet: under er
+    # runden ikke bevist, over er tallet internt umulig.
+    attestert, m1 = _teller(m, "kjoringer_med_attestert_kvittering",
+                            "kjoringer_med_attestert_kvittering")
+    if m1:
+        feil.append(m1)
+    elif not mk and attestert != krav:
+        feil.append(f"kjoringer_med_attestert_kvittering={attestert} av"
+                    f" {krav} — alle de bestilte kjøringene skal bære en"
+                    " attestert kvittering, og 9/10 er rødt, ikke"
+                    " «nesten» (aksept-arc-klarsignalet §1.3)")
+    avvik, m2 = _teller(m, "kvittering_attest_avvik",
+                        "kvittering_attest_avvik")
+    if m2:
+        feil.append(m2)
+    elif avvik > grense["maks_kvittering_attest_avvik"]:
+        feil.append(f"kvittering_attest_avvik={avvik}, krever <="
+                    f" {grense['maks_kvittering_attest_avvik']}")
+    # §1.3b: REVISJONSRADEN — én DISTINKT rad per bestilt kjøring.
+    rader, m3 = _teller(m, "revisjonsrader_mot_bestilt",
+                        "revisjonsrader_mot_bestilt")
+    if m3:
+        feil.append(m3)
+    elif not mk and rader != krav:
+        feil.append(f"revisjonsrader_mot_bestilt={rader} av {krav} — ti"
+                    " bestilte kjøringer skal bære ti distinkte"
+                    " revisjonsrader, og 9/10 er rødt")
+    ravvik, m4 = _teller(m, "revisjonsrad_avvik", "revisjonsrad_avvik")
+    if m4:
+        feil.append(m4)
+    elif ravvik > grense["maks_revisjonsrad_avvik"]:
+        feil.append(f"revisjonsrad_avvik={ravvik}, krever <="
+                    f" {grense['maks_revisjonsrad_avvik']}")
+    # §1.2: datasettets identitet — begge ledd, byte-likhet. Leddet her
+    # er det LOKALE: de innsjekkede bytene hashes med nøyaktig samme
+    # funksjon produsenten brukte på staging.
+    oppsett = art.get("oppsett")
+    sha = oppsett.get("datasett_sha256") if isinstance(oppsett, dict) \
+        else None
+    if not (isinstance(sha, str) and len(sha) == 64):
+        feil.append("oppsett.datasett_sha256 mangler — staging-leddet av"
+                    " datasettmålingen er umålt (§1.2)")
+    elif grense.get("krev_datasett_sha_lik_innsjekket"):
+        try:
+            lokal = datasett_sha256(DATASETT_STI)
+        except OSError as e:
+            feil.append(f"datasettet lot seg ikke hashe lokalt: {e}")
+        else:
+            if sha != lokal:
+                feil.append(
+                    f"datasett_sha256={sha[:12]}… er ikke de innsjekkede"
+                    f" bytenes {lokal[:12]}… — datasettet staging"
+                    " serverte er ikke datasettet fasiten beskriver;"
+                    " byte-likhet i BEGGE ledd er kravet (SP-11, §1.2)")
+    return feil
+
+
 def _falske_verdikter(m: dict) -> list[str]:
     """SP-3-motsigelsen regnet ut på nytt av råtallene, ikke lest.
 
@@ -790,6 +916,15 @@ def _grenser_rollback_m56(grense: dict, art: dict) -> list[str]:
             feil.append(f"{felt}={verdi}, krever >= {minst}")
     if m.get("inflight_har_signert_kvittering") is not True:
         feil.append("det løpende oppdraget mangler signert kvittering")
+    # (052, aksept-arc-klarsignalet §1.1a): «rullbakken fullførte selv»
+    # krever kvitteringen fra DENS kjøring — promoteringstellingen over
+    # sier at et artefakt finnes, ikke at kvitteringsveien var innom.
+    # `registrer_moduldrill` måler det samme i basen (claim_stopp_ok);
+    # her måles filens egen påstand, samme form som inflight-leddet.
+    if m.get("rullback_har_signert_kvittering") is not True:
+        feil.append("rullbakkens oppdrag mangler signert kvittering —"
+                    " en rullbakk som ikke selv fullførte med kvittering"
+                    " fra SIN kjøring er ikke målt (§1.1a)")
     if m.get("inflight_utfall") not in grense["rene_utfall"]:
         feil.append(f"inflight_utfall={m.get('inflight_utfall')!r} er ikke"
                     f" et rent utfall ({sorted(grense['rene_utfall'])})")

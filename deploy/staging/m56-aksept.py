@@ -56,12 +56,19 @@ MILJO = "staging"
 # erstattet av de to målbare egress-invariantene; endringsnotatet står i
 # migrasjonsfila. Registeret er append-only med krav-lås, så revisjonen
 # ER et nytt krav_id.
-KRAV = "m56-akseptflipp-v2"
-#: Artefaktenes krav_id er UENDRET: runde-sammendraget er v1-evidens —
-#: nøyaktig de samme bytene manifestet binder og KRAVGRENSER måler.
-#: Grenserevisjonen (050) endret AKSEPTENS punktsett, ikke bevisene:
-#: to akser, to navn — aldri ett navn som later som de er samme ting.
-ARTEFAKT_KRAV = "wcag-kontroll-v1"
+#: v3 (052, aksept-arc-klarsignalet): v2s 22 punkter pluss de sju
+#: evidenspunktene fra §5 — drillens to (målt av drillraden selv),
+#: attest-/revisjonsrad-avvikene og datasett-likheten (målt i runden),
+#: og de to sammenhengspunktene (§2: én runde, én drill, én
+#: manifestgenerasjon; aldri gjenbrukt gammel evidens).
+KRAV = "m56-akseptflipp-v3"
+#: Artefaktkravet fulgte MED målekoden (052): en runde som målte
+#: datasett-identiteten og kjøringsattestene sammendras som
+#: `wcag-kontroll-v2` — og aksepten krever nettopp de målingene, så
+#: v1-artefaktet fra 2026-08-18 kan aldri bli akseptbevis igjen
+#: (klarsignalet §2: de gamle målingene er historikk). Fortsatt to
+#: akser: artefaktkravet er BEVISENES navn, KRAV er AKSEPTENS.
+ARTEFAKT_KRAV = "wcag-kontroll-v2"
 DRILLKRAV = "rollback-m56-v1"
 TENANT = "t-wcagfasit"
 MANIFEST_REL = "platform/modules/m56_wcag_audit/manifest.yaml"
@@ -111,6 +118,37 @@ MAALTE = {
         ("0", lambda m: str(m["egress_lekkasjer"])
                         if m.get("egress_motormiljo_maalt") == 1
                         else "umålt (port24-proben kjørte ikke rent)"),
+    # v3 (052, §1.3): avvikstallet teller bare når attesteringen NÅDDE
+    # kravet — 9/10 attesterte med 0 avvik er én umålt kjøring, ikke en
+    # ren runde. Samme form som frekvenspunktet over: den røde formen
+    # skrives som tekst basen aldri godtar.
+    "kvittering.attest_avvik":
+        ("0 (10/10, 9/10 er rødt)",
+         lambda m: str(m["kvittering_attest_avvik"])
+                   if m["kjoringer_med_attestert_kvittering"]
+                      == m["kjoringer_krav"]
+                   else (f"rødt ({m['kjoringer_med_attestert_kvittering']}"
+                         f"/{m['kjoringer_krav']} attestert)")),
+    "revisjonsrad.avvik_mot_bestilt":
+        ("0 (10/10 mot de bestilte)",
+         lambda m: str(m["revisjonsrad_avvik"])
+                   if m["revisjonsrader_mot_bestilt"]
+                      == m["kjoringer_krav"]
+                   else (f"rødt ({m['revisjonsrader_mot_bestilt']}"
+                         f"/{m['kjoringer_krav']} rader)")),
+}
+#: §5-punktene som måles av DRILLRADEN selv. `registrer_moduldrill`
+#: regner kontrollpunktutfallene i basen, og akseptens FK refererer
+#: drillraden med de tre utfallsboolene I den refererbare nøkkelen
+#: (E1f): en aksept mot en rad der ett av dem er false, finnes ikke.
+#: Rullbakkens egen kvittering er en del av `claim_stopp_ok` (052), og
+#: «én måling, én rad» er radens egen form — tenant, alle tre oppdrag
+#: og artefaktets sha256 i samme rad, spleising har ingen vei inn.
+#: `kilde_ref` er `rollback_drill`-registerhendelsen drillraden skrev.
+DRILL_PUNKTER = {
+    "drill.rullbakk_bootet_og_fullforte":
+        ("ja (alle tre kontrollpunkter i samme drillrad)", "ja"),
+    "drill.spleisede_malinger": ("0 (én måling, én rad)", "0"),
 }
 #: Punkter i kravet som INGEN kilde vi har faktisk måler. De skrives
 #: ikke — de BLOKKERER aksepten, og teksten sier hvorfor. Mekanismen er
@@ -819,6 +857,67 @@ def verifiser_registrert_manifest(conn, releaser: tuple[str, ...],
     return kilde
 
 
+#: §5-punktene som måles PÅ TVERS av de to artefaktene — klarsignalets
+#: §2 (sammenhengskravet) gjort mekanisk. Verdiene regnes her og
+#: attesteres på runde-evidensfilen: det er DENS runde de binder.
+SAMMENHENG_PUNKTER = (
+    "datasett.sha_ulik_mellom_ledd",
+    "evidens.pa_tvers_av_runder",
+    "aksept.gjenbrukt_gammel_evidens",
+)
+SAMMENHENG_GRENSER = {
+    "datasett.sha_ulik_mellom_ledd": "0 (byte-likhet begge ledd, SP-11)",
+    "evidens.pa_tvers_av_runder":
+        "0 (én runde, én drill, én manifestgenerasjon)",
+    "aksept.gjenbrukt_gammel_evidens": "0 (ny runde, ferske release-id-er)",
+}
+
+
+def sammenheng_verdier(runde: dict, drill: dict, ms) -> dict[str, str]:
+    """Sammenhengskravet (§2) målt — grønt er «0», alt annet er teksten.
+
+    * `datasett.sha_ulik_mellom_ledd`: runde-artefaktets
+      `oppsett.datasett_sha256` (staging-leddet) mot de innsjekkede
+      bytene hashet med SAMME funksjon (`manifestskjema.datasett_sha256`)
+      — byte-likhet i begge ledd, én byte ulik er rødt (§1.2).
+      `_sjekk_grenser` har alt målt dette i evidensporten; her regnes
+      det ut på nytt fordi punktet skrives i en immutabel akseptrad.
+    * `evidens.pa_tvers_av_runder`: runden målte NØYAKTIG den releasen
+      drillen deretter drillet — `oppsett.release` == drillens
+      `drillet_release`. Sammen med `verifiser_registrert_manifest`
+      (samme manifest_hash på begge drill-releasene) og
+      `verifiser_digestkjede` (samme image-bytes) er det den mekaniske
+      formen av «ett evidenssett beskriver samme kjøring av samme
+      kandidat». Fristelsen til å spleise den grønne 19/8-runden med en
+      ny drill dør her, ikke i en huskeregel.
+    * `aksept.gjenbrukt_gammel_evidens`: runde-evidensen bærer
+      v2-artefaktkravets målinger (attestene og datasett-identiteten
+      fantes ikke før 052, så en gammel runde KAN ikke bære dem —
+      `les_bundet_artefakt` har alt avvist alt annet), og
+      drill-releasene er ubrukte ved drilling
+      (`krev_ubrukte_drillreleaser`) og konsumeres av den (livsløpet er
+      enveis, 014). Måles her som kravsjekken på artefaktet; basens
+      enveis livsløp er porten som gjør gjenbruk umulig, ikke bare
+      forbudt.
+    """
+    verdier = {}
+    sha = (runde.get("oppsett") or {}).get("datasett_sha256")
+    lokal = ms.datasett_sha256(ms.DATASETT_STI)
+    verdier["datasett.sha_ulik_mellom_ledd"] = (
+        "0" if sha == lokal
+        else f"ulik ({str(sha)[:12]}… mot innsjekket {lokal[:12]}…)")
+    r_rel = (runde.get("oppsett") or {}).get("release")
+    d_rel = (drill.get("oppsett") or {}).get("drillet_release")
+    verdier["evidens.pa_tvers_av_runder"] = (
+        "0" if r_rel and r_rel == d_rel
+        else f"runden målte {r_rel!r}, drillen drillet {d_rel!r}")
+    verdier["aksept.gjenbrukt_gammel_evidens"] = (
+        "0" if runde.get("krav_id") == ARTEFAKT_KRAV
+        else f"runde-evidensen er {runde.get('krav_id')!r}, ikke"
+             f" {ARTEFAKT_KRAV!r}")
+    return verdier
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--drill", type=Path, required=True)
@@ -886,8 +985,17 @@ def main() -> int:
     # under (Codex P1, runde 19). Basen regner punktet mot attesten, ikke
     # mot dette kallet; at de er like er poenget, ikke tilfeldig.
     evidens_maalt = {punkt: hent(m) for punkt, (_, hent) in MAALTE.items()}
+    # …og sammenhengspunktene (§2/§5) måles på tvers av de to
+    # artefaktene og attesteres på runde-evidensfilen — det er DENS
+    # runde de binder.
+    evidens_maalt.update(sammenheng_verdier(runde, drill, ms))
     for punkt, (grense, _) in MAALTE.items():
         punkter[punkt] = {"grenseverdi": grense,
+                          "maalt_verdi": evidens_maalt[punkt],
+                          "kilde_type": "evidensfil",
+                          "kilde_ref": runde_ref}
+    for punkt in SAMMENHENG_PUNKTER:
+        punkter[punkt] = {"grenseverdi": SAMMENHENG_GRENSER[punkt],
                           "maalt_verdi": evidens_maalt[punkt],
                           "kilde_type": "evidensfil",
                           "kilde_ref": runde_ref}
@@ -973,10 +1081,19 @@ def main() -> int:
         # sti bytene lå på og hva filen bar for hvert punkt, og aksepten
         # regner punktet mot DEN raden. Verdiene er `verifiser_kilde`- og
         # `_sjekk_grenser`-portenes egne; kallet under kan bare gjenta dem.
+        # …og attesten navngir DRILLEN de tre sammenhengspunktene ble
+        # regnet mot (Codex P1, PR #123). `sammenheng_verdier` leser
+        # BEGGE artefaktene, men referatet bar bare rundens sha: en
+        # grønn attest fra ett forsøk kunne derfor gjenbrukes av et
+        # senere direktekall med en ANNEN drill, og
+        # `evidens.pa_tvers_av_runder` sto grønt for et forhold som
+        # aldri ble målt mot den drillen. Drillartefaktets bytes er nå
+        # en del av attestens identitet, og `aksepter_moduldeployment`
+        # slår opp attesten med bytene drillraden ble registrert med.
         vconn.execute(
-            "SELECT attester_evidensfil(%s,%s,%s,%s::jsonb,'m56-aksept')",
+            "SELECT attester_evidensfil(%s,%s,%s,%s::jsonb,'m56-aksept',%s)",
             (KRAV, runde["oppsett"]["kilde"], evidens_sha,
-             json.dumps(evidens_maalt)))
+             json.dumps(evidens_maalt), drill_sha))
         vconn.commit()
         vconn.close()
         vconn = None
@@ -1007,6 +1124,32 @@ def main() -> int:
              inflight_opp, rullback_opp, kandidat_opp,
              drillens_epoch(drill), drill_sha,
              f"drill-{o['kandidat_release']}", drill_ts)).fetchone()[0]
+        # Drillpunktene (§5): `kilde_ref` er `rollback_drill`-hendelsen
+        # drillraden nettopp skrev (eller skrev ved forrige replay —
+        # SP-2 gir samme rad). Utfallene bor i BASEN: FK-en fra
+        # akseptraden refererer drillraden med de tre utfallsboolene i
+        # den refererbare nøkkelen, så en aksept mot en rad med et rødt
+        # kontrollpunkt finnes ikke — verdiene her er filens egne,
+        # alt målt grønne av evidensporten (`les_bundet_artefakt`).
+        # Hendelsen leses som migrator (registerhendelser eies av
+        # migrator; deployfullmakten trenger den ikke) — samme grep som
+        # kvitteringslesningen under.
+        conn.execute("RESET ROLE")
+        hendelse = conn.execute(
+            "SELECT id FROM modulregister_hendelse"
+            " WHERE modul_id=%s AND hendelse='rollback_drill'"
+            "   AND (detalj->>'drill_id')::bigint=%s"
+            " ORDER BY id DESC LIMIT 1", (MODUL, drill_id)).fetchone()
+        if hendelse is None:
+            raise SystemExit(f"AVBRUTT: drillrad {drill_id} har ingen"
+                             " rollback_drill-registerhendelse — raden"
+                             " og hendelsen skrives i samme kall, så"
+                             " dette er en programfeil, ikke en tilstand")
+        for punkt, (grense, verdi) in DRILL_PUNKTER.items():
+            punkter[punkt] = {"grenseverdi": grense, "maalt_verdi": verdi,
+                              "kilde_type": "registerhendelse",
+                              "kilde_ref": str(hendelse[0])}
+        conn.execute("SET ROLE disponit_modules_admin")
         conn.execute(
             "SELECT aksepter_moduldeployment(%s,%s,%s,%s,%s,%s,%s::uuid,"
             "%s,%s,%s,%s,%s::jsonb,%s,'m56-aksept')",
