@@ -57,7 +57,15 @@ def kjor_sett(runde_id: str, post, hendelse, hendelse_uten,
     """
     talt: dict[str, int] = {}
     for forventet, i in bygg_sett():
-        ressurs = f"m02f-{forventet.lower()}-{i:03d}"
+        # `runde_id` MÅ stå i ressursen, ikke bare i idempotensnøkkelen:
+        # purring.send har `frekvens: {maks: 1, periode: 14 dager,
+        # grupperingsnokkel: faktura_id}`, og ressursen ER faktura_id-en.
+        # Uten runden ville hver TILLAT-hendelse i kjøring nummer to
+        # gjenbrukt den gruppen kjøring nummer én alt hadde brukt opp, og
+        # fått `frekvensgrense_naadd`/UNNTAK i stedet for TILLAT — en fersk
+        # idempotensnøkkel hjelper ikke mot en brukt frekvensgruppe. Med
+        # runden inne er to bevisrunder uavhengige.
+        ressurs = f"m02f-{runde_id}-{forventet.lower()}-{i:03d}"
         if forventet == "TILLAT":
             e = hendelse(ressurs)
         elif forventet == "STOPP":
