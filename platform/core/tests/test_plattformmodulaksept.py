@@ -252,6 +252,17 @@ def test_aksepten_ende_til_ende_med_replay(migrator):
                       nokkel=nokkel, punkter=p, attest=False)
         assert "andre punktobservasjoner" in str(ei.value), felt
         migrator.rollback()
+    # …og sammenligningen går BEGGE VEIER (Codex P2, runde 2): et retry
+    # med et EKSTRA toppnivåpunkt finner hver lagrede rad uendret, og
+    # ville ellers fått «vellykket» på en påstand den vanlige veien
+    # avviser — og som aldri ble lagret.
+    p = _punkter(migrator, ci_run)
+    p["banan_punkt"] = {"status": "maalt"}
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, modul=modul, commit=commit, ci_run=ci_run,
+                  nokkel=nokkel, punkter=p, attest=False)
+    assert "aldri ble lagret" in str(ei.value)
+    migrator.rollback()
 
 
 @pg

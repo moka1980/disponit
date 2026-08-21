@@ -265,6 +265,30 @@ BEGIN
                 ' med andre punktobservasjoner (%)', p_nokkel, v_avvik
                 USING ERRCODE = 'invalid_parameter_value';
         END IF;
+        -- …OG SAMMENLIGNINGEN GÅR BEGGE VEIER (Codex P2, runde 2).
+        -- Kontrollen over drives av de LAGREDE radene, så den ser bare
+        -- det basen alt har: et retry som la til et toppnivåpunkt fant
+        -- hver eneste lagrede rad uendret og fikk «vellykket» tilbake.
+        -- Den vanlige veien avviser nettopp det punktet noen linjer
+        -- lenger nede («står ikke i grensen»), men replayet returnerer
+        -- FØR den kontrollen — så en nøkkel som var brukt én gang, gjorde
+        -- en ellers ugyldig påstand til et vellykket kall, uten at noe
+        -- av den ble lagret.
+        SELECT j.key INTO v_avvik FROM pg_catalog.jsonb_each(p_punkter) j
+         WHERE NOT EXISTS (
+               SELECT 1 FROM public.plattformmodulaksept_punkt pk
+                WHERE pk.modul_id = p_modul_id
+                  AND pk.manifest_commit = lower(p_manifest_commit)
+                  AND pk.grense_id = p_grense_id
+                  AND pk.punkt = j.key)
+         LIMIT 1;
+        IF v_avvik IS NOT NULL THEN
+            RAISE EXCEPTION 'aksepter_plattformmodul: nøkkel % gjenbrukt'
+                ' med punktet %, som aldri ble lagret — et replay er den'
+                ' SAMME observasjonen, ikke den samme pluss én',
+                p_nokkel, v_avvik
+                USING ERRCODE = 'invalid_parameter_value';
+        END IF;
         RETURN;
     END IF;
     -- CI-kjøringen måles mot ATTESTEN og kravet i registeret — aldri
