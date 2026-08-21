@@ -1575,6 +1575,40 @@ def fase8():
                       key=lambda p: p.stat().st_mtime) if katalog.is_dir() \
         else []
     forrige = [p for p in releaser if p != naa]
+    # …OG MÅLET MÅ VÆRE MIGRASJONSKOMPATIBELT (runde r20, 2026-08-21).
+    # Bootporten (`krev_migrasjonstilstand`) krever EKSAKT samsvar
+    # mellom releasens migrasjonssett og basens — det er porten som
+    # virker. Rett etter en deploy som la til migrasjoner finnes det
+    # derfor ingen forrige release som KAN boote, og fase 8 valgte
+    # offeret blindt: 788bd83 (forventer 1→51) mot basen på 1→53 ga
+    # activating → failed, en rød måling av bootportens korrekthet i
+    # stedet for av rullbakken. Målet velges nå blant releasene med
+    # SAMME migrasjonssett som den aktive (versjonstallene i
+    # platform/core/db/migrations — samme fasit bootporten leser), og
+    # finnes ingen, er drillen ÆRLIG umålt-rød: fyll katalogen med en
+    # kompatibel release (neste deploy på samme skjema) og mål igjen.
+    def _migrasjonssett(rot: Path) -> tuple:
+        """Releasens migrasjonssett SLIK BOOTPORTEN LESER DET.
+
+        NØKKELEN MÅ VÆRE PORTENS EGEN (Codex P2, runde 1 på denne
+        mekanismen): `forventede_migrasjoner()` i
+        `platform/core/api/app.py` globber `[0-9][0-9][0-9]_*.sql` og
+        beholder KUN det tresifrede versjonstallet — det samme gjør
+        checksum-kjøreren. Sammenlignet vi hele filnavn, ville et
+        omdøpt suffiks på en uendret migrasjon (samme versjon, samme
+        skjema) gjort en release som porten ville sluppet inn, til
+        «inkompatibel»: fase 8 hopper rødt, fase 9 blokkeres, og
+        runden krever en unødig ekstra deploy for å måle noe den
+        allerede kunne målt. Nøkkelen leses derfor med portens mønster
+        og portens versjonsparsing, ikke med en egen fasit.
+        """
+        katalog = rot / "platform/core/db/migrations"
+        return tuple(sorted(int(p.name[:3]) for p in
+                            katalog.glob("[0-9][0-9][0-9]_*.sql"))) \
+            if katalog.is_dir() else ()
+    fasit_sett = _migrasjonssett(naa)
+    kompatible = [p for p in forrige if _migrasjonssett(p) == fasit_sett]
+    inkompatible = [p.name[:12] for p in forrige if p not in kompatible]
     if not forrige:
         # EN DRILL SOM IKKE KAN KJØRES ER EN RØD MÅLING (Codex P1, runde 6).
         # Grenen førte `fase8_hoppet` UTEN `ok`, så `_ROEDE` forble tom og
@@ -1591,22 +1625,78 @@ def fase8():
                         " forrige release er den UMÅLT, ikke bestått",
                 ok=False)
         return
-    forrige = forrige[-1]
+    if forrige and not kompatible:
+        evidens("fase8_hoppet",
+                grunn="ingen migrasjonskompatibel forrige release",
+                aktiv=naa.name[:12], inkompatible=inkompatible,
+                merknad="bootporten krever eksakt migrasjonssamsvar, så"
+                        " ingen av de forrige KAN boote mot denne basen"
+                        " — rullbakken er UMÅLT, ikke bestått; deploy en"
+                        " release til på samme skjema og mål igjen",
+                ok=False)
+        return
+    forrige = kompatible[-1]
 
     def _pek(mal: Path) -> None:
         subprocess.run(["ln", "-sfn", str(mal), str(aktiv)], check=True)
 
     def _restart_og_status() -> str:
-        """-> systemd-statusen etter restart. Restarten er MÅLINGEN, ikke
-        en forutsetning: `check=True` her ville kastet før statusen ble
-        lest, og en release som ikke starter er nettopp utfallet drillen
-        skal fange."""
+        """-> statusen etter restart, MÅLT TIL RELEASEN FAKTISK SVARER.
+
+        Restarten er MÅLINGEN, ikke en forutsetning: `check=True` her
+        ville kastet før statusen ble lest, og en release som ikke
+        starter er nettopp utfallet drillen skal fange.
+
+        To lærdommer fra r20-runden: (1) `activating` er ingen dom —
+        et fast `sleep(4)` målte klokka, ikke releasen; det polles til
+        tilstanden er terminal (systemd restarter selv med backoff, så
+        vinduet må romme den). (2) `reset-failed` FØRST: etter en
+        feilet måling står start-rate-grensen igjen, og uten nullstilling
+        ville GJENOPPRETTINGEN truffet «Start request repeated too
+        quickly» og latt staging ligge nede — drillen skal aldri
+        etterlate miljøet i tilstanden den tester.
+
+        OG `active` ER IKKE OPPE (Codex P1). Uniten er `Type=simple`,
+        ikke `notify`: systemd melder `active` i det Python-prosessen er
+        EXECet — altså FØR `lag_app()` har kjørt en eneste bootsjekk
+        (migrasjonstilstand, bind, miljøsignatur). Dømte vi på første
+        `active`, ville en release som feiler et sekund senere målt
+        grønn i BEGGE retninger: rullbakken «bestått» og
+        gjenopprettingen «bestått», med staging nede. Dommen er derfor
+        den samme readiness-porten deployen selv stoler på — `/ready`
+        over unix-socketen (`opp.sh`s ventesløyfe, `helse-sjekk.sh`s
+        `/live`) — mens vi fortsetter å vokte på `failed` i samme
+        vindu. Svarer den aldri, er utfallet `active_men_ikke_klar`:
+        ikke `active`, altså rødt, og ordet sier hva som ble målt.
+        """
+        def _klar() -> bool:
+            """200 fra `/ready` = `lag_app()` kom gjennom bootsjekkene
+            OG basen samsvarer. Socketen, ikke nginx: drillen måler
+            releasen, ikke proxyen foran den."""
+            return subprocess.run(
+                ["curl", "-fsS", "--max-time", "5", "--unix-socket",
+                 "/run/disponit/api.sock", "http://disponit/ready"],
+                capture_output=True).returncode == 0
+
+        subprocess.run(["systemctl", "reset-failed",
+                        "disponit-api.service"], capture_output=True)
         subprocess.run(["systemctl", "restart", "disponit-api.service"],
                        capture_output=True)
-        time.sleep(4)
-        return subprocess.run(
-            ["systemctl", "is-active", "disponit-api.service"],
-            capture_output=True, text=True).stdout.strip()
+        frist = time.monotonic() + 45
+        st = "ikke_maalt"
+        while time.monotonic() < frist:
+            st = subprocess.run(
+                ["systemctl", "is-active", "disponit-api.service"],
+                capture_output=True, text=True).stdout.strip()
+            if st in ("activating", "deactivating", "reloading"):
+                time.sleep(1)
+                continue
+            if st != "active":
+                return st          # failed/inactive: terminalt, og dommen.
+            if _klar():
+                return st          # oppe OG gjennom bootsjekkene.
+            time.sleep(1)          # EXECet, men ikke klar ennå — vent videre
+        return "active_men_ikke_klar" if st == "active" else st
 
     # GJENOPPRETTINGEN LIGGER I `finally` (Codex P2). Klarte ikke forrige
     # release å starte, kastet `check=True` med én gang, og `aktiv` ble
