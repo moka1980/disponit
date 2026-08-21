@@ -761,6 +761,9 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def oversikt(request: Request) -> Response:
         return lesing.oversikt(tjeneste, request)
 
+    def nokkeltall(request: Request) -> Response:
+        return lesing.nokkeltall(tjeneste, request)
+
     def beslutninger(request: Request) -> Response:
         return lesing.beslutninger(tjeneste, request)
 
@@ -972,6 +975,7 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         # den, og detaljrutene bruker {id:int} så en ikke-numerisk sti er
         # 404 fra routeren, ikke en kodevei.
         Route("/v1/oversikt", oversikt, methods=["GET"]),
+        Route("/v1/nokkeltall", nokkeltall, methods=["GET"]),
         Route("/v1/beslutninger", beslutninger, methods=["GET"]),
         Route("/v1/beslutninger/{id:int}", beslutning_detalj, methods=["GET"]),
         Route("/v1/rapport/{id:int}", rapport_detalj, methods=["GET"]),
@@ -1406,6 +1410,7 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/oppdrag/kvittering"):      ORDRESCOPE + "<prefiks>",
     ("POST", "/v1/artefakt"):                "artifacts:upload",
     ("GET",  "/v1/oversikt"):                "decisions:read",
+    ("GET",  "/v1/nokkeltall"):              "decisions:read",
     ("GET",  "/v1/beslutninger"):            "decisions:read",
     ("GET",  "/v1/beslutninger/{id:int}"):   "decisions:read",
     # 038 §7: rapporten er evidensen bak tenantens egen beslutning.

@@ -62,6 +62,9 @@ export function erPlattformdrift(sesjon) {
 // API bak seg og hører derfor alle kundeøkter til.
 const BASISRUTER = [
   { nokkel: "oversikt", scope: "decisions:read" },
+  // M-16: nøkkeltall regnet fra faktiske beslutninger — ren leseflate
+  // over samme scope som oversikten (tallene ER beslutningsdataene).
+  { nokkel: "nokkeltall", scope: "decisions:read" },
   { nokkel: "policy", scope: "policy:read" },
   { nokkel: "beslutninger", scope: "decisions:read" },
   { nokkel: "unntak", scope: "exceptions:read" },

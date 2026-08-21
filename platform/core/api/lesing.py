@@ -133,6 +133,114 @@ def oversikt(tjeneste, request: Request) -> Response:
 
 
 # ---------------------------------------------------------------------------
+# GET /v1/nokkeltall — scope decisions:read (M-16 v1, ren lesing)
+# ---------------------------------------------------------------------------
+
+#: DEN ENE vindusdefinisjonen (M-16 §3): UTC, halvåpent `[fra, til)`,
+#: forhåndsdefinerte vinduer. En hendelse nøyaktig på `til` tilhører
+#: neste vindu — det følger av `< til` i hver definer, og ingen
+#: kortspørring har egen vindusaritmetikk: alle får NØYAKTIG paret
+#: herfra (statisk port).
+NOKKELTALL_VINDUER = {"24t": timedelta(hours=24),
+                      "7d": timedelta(days=7),
+                      "30d": timedelta(days=30)}
+
+
+def _nokkeltall_vindu(request: Request) -> tuple[datetime, datetime] | None:
+    valg = request.query_params.get("vindu", "24t")
+    lengde = NOKKELTALL_VINDUER.get(valg)
+    if lengde is None:
+        return None
+    til = datetime.now(timezone.utc)
+    return til - lengde, til
+
+
+def _partisjon(rader) -> dict:
+    """(nokkel, antall)-rader → {'total': n, 'deler': {nokkel: antall}}.
+
+    Totalen og delene kommer fra SAMME skann (GROUPING SETS i defineren),
+    så suminvarianten holder per konstruksjon — den KONTROLLERES likevel
+    her, fail-closed: et avvik er en definerfeil og skal høres, ikke
+    vises som pene tall.
+    """
+    total = 0
+    deler: dict[str, int] = {}
+    for nokkel, antall in rader:
+        if nokkel == "__total__":
+            total = antall
+        else:
+            deler[nokkel] = antall
+    if sum(deler.values()) != total:
+        raise kjerne.Feilsvar("intern_feil")
+    return {"total": total, "deler": deler}
+
+
+def nokkeltall(tjeneste, request: Request) -> Response:
+    """M-16: nøkkeltall regnet fra faktiske beslutninger — telling over
+    rader som finnes, radvise varigheter, aldri analyse. Generaliseringen
+    av 24-timerssammendraget i `oversikt`: samme filtertelling, valgbart
+    vindu, alt via definere (SP-1/SP-7)."""
+    def _fn(conn, auth, rid):
+        vindu = _nokkeltall_vindu(request)
+        if vindu is None:
+            return _feilsvar("request_feilformet", rid)
+        fra, til = vindu
+        arg = (auth.tenant, fra, til)
+        beslutninger = _partisjon(conn.execute(
+            "SELECT nokkel, antall FROM m16_beslutninger(%s,%s,%s)",
+            arg).fetchall())
+        reservasjoner = conn.execute(
+            "SELECT m16_frekvensreservasjoner(%s,%s,%s)", arg).fetchone()[0]
+        aktiveringer: dict[str, list] = {}
+        for partisjon, nokkel, antall in conn.execute(
+                "SELECT partisjon, nokkel, antall FROM"
+                " m16_aktiveringer(%s,%s,%s)", arg).fetchall():
+            aktiveringer.setdefault(partisjon, []).append((nokkel, antall))
+        oppdrag = _partisjon(conn.execute(
+            "SELECT nokkel, antall FROM m16_oppdrag(%s,%s,%s)",
+            arg).fetchall())
+        aktivitet = _partisjon(conn.execute(
+            "SELECT nokkel, antall FROM m16_unntak_aktivitet(%s,%s,%s)",
+            arg).fetchall())
+        # Terminalsettet er app-lagets ENE definisjon — statusmaskinen
+        # kopieres aldri inn i SQL (oversikt-lærdommen fra #105-æraen).
+        from .app import TERMINALE_UNNTAKSSTATUSER
+        terminale = list(TERMINALE_UNNTAKSSTATUSER)
+        lukkede = [
+            {"id": r[0], "kategori": r[1], "sakstype": r[2],
+             "status": r[3], "opprettet": r[4].isoformat(),
+             "lukket": r[5].isoformat(), "varighet_s": r[6]}
+            for r in conn.execute(
+                "SELECT id, kategori, sakstype, status, opprettet,"
+                " lukket, varighet_s FROM"
+                " m16_unntak_lukkede(%s,%s,%s,%s,50)",
+                (*arg, terminale)).fetchall()]
+        # TILSTAND, ikke aktivitet: «åpne nå» står utenfor vinduet.
+        apne_naa = conn.execute(
+            "SELECT m16_unntak_apne(%s,%s)",
+            (auth.tenant, terminale)).fetchone()[0]
+        tick = _partisjon(conn.execute(
+            "SELECT nokkel, antall FROM m16_tick(%s,%s,%s)",
+            arg).fetchall())
+        return kanonisk_json(
+            {"vindu_start": fra.isoformat(), "vindu_slutt": til.isoformat(),
+             "tidssone": "UTC",
+             "beslutninger": beslutninger,
+             "frekvensreservasjoner": reservasjoner,
+             "aktiveringer": {
+                 p: _partisjon(rader)
+                 for p, rader in aktiveringer.items()},
+             "oppdrag": oppdrag,
+             "unntak_aktivitet": aktivitet,
+             "unntak_lukkede": lukkede,
+             "apne_naa": apne_naa,
+             "tick": tick,
+             "request_id": rid},
+            200, {"x-request-id": rid})
+    return _les(tjeneste, request, "decisions:read", _fn)
+
+
+# ---------------------------------------------------------------------------
 # GET /v1/beslutninger — scope decisions:read, keyset DESC, filterbundet
 # ---------------------------------------------------------------------------
 

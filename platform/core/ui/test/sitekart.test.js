@@ -30,8 +30,8 @@ test("byggRuter: hver rute krever scopet API-et bak flaten krever", () => {
   // mutasjonsscopet på hele oppføringen inndro sammenslåingen tilgang de
   // hadde før den.
   assert.deepEqual(alle,
-    ["oversikt", "policy", "beslutninger", "unntak", "kundeadmin",
-      "wcagkontroll"]);
+    ["oversikt", "nokkeltall", "policy", "beslutninger", "unntak",
+      "kundeadmin", "wcagkontroll"]);
   const medBestilling = byggRuter({ scopes: ["decisions:read",
     "bestilling:opprett"] }).map((r) => r.nokkel);
   assert.ok(medBestilling.includes("wcagkontroll"));
