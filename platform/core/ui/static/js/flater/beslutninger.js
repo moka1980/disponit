@@ -8,11 +8,11 @@ import { t } from "../i18n.js";
 import { hentJson, UautorisertFeil, IngenTilgangFeil } from "../api.js";
 import {
   BeslutningBadge, BegrunnelseKjede, Tidspunkt, TomTilstand, Feiltilstand,
-  TilgangsVakt, CursorNavigasjon, meldLive,
+  TilgangsVakt, CursorNavigasjon,
 } from "../komponenter.js";
 import { DataTabell } from "../tabell.js";
 import { Detaljpanel } from "../dialog.js";
-import { medStatus, flateHode, kvRad } from "./felles.js";
+import { keysetListe, flateHode, kvRad } from "./felles.js";
 
 const KJENTE_ARTER = new Set([
   "policy_stoppet", "sideeffektfri_tillatt", "til_unntak",
@@ -126,22 +126,10 @@ export function visBeslutninger(hoved, ctx) {
       { limit: 50, policybeslutning: st.filter, cursor });
   }
 
-  function lastForste() {
-    medStatus(hoved, ctx, () => sok(null), (d) => {
-      st.rader = d.rader; st.neste = d.neste_cursor; tegn();
-    });
-  }
-
-  async function lastMer() {
-    try {
-      const d = await sok(st.neste);
-      st.rader = st.rader.concat(d.rader); st.neste = d.neste_cursor; tegn();
-      meldLive(`${st.rader.length}`);
-    } catch (e) {
-      if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
-      meldLive(t("ui.feil_tittel"));
-    }
-  }
+  // Samme lista som unntaksflaten, og samme utvalgsregel: filterbytte er en
+  // ny liste, og en «Vis mer» fra det forrige filteret skriver ikke inn i den.
+  const { lastForste, lastMer } = keysetListe({ hoved, ctx, st, sok, tegn,
+    rader: (d) => d.rader });
 
   lastForste();
 }

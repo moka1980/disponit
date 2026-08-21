@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Generer modulkatalogen for forsiden fra spesifikasjonen — én kilde, ikke avskrift.
 
-Katalogen (56 moduler, 11 områder, 4 faser) lever i
-`docs/spesifikasjon/disponit-prototype-v8.html`. Å taste den inn på nytt ville
+Katalogen (57 moduler, 11 områder, 4 faser) lever i
+`docs/spesifikasjon/disponit-prototype-v9.html`. Å taste den inn på nytt ville
 gitt to sannheter som driver fra hverandre; dette skriptet leser spesifikasjonen
 og skriver ut både datafila og locale-nøklene, så en endring i katalogen bare
 krever en ny kjøring.
@@ -41,13 +41,13 @@ ROT = pathlib.Path(sys.argv[1]).resolve() if len(sys.argv) > 1 \
 # som peker på en slettet fil er ikke stille — den stopper på `SystemExit` — men
 # den ville uansett vært feil: uten dette bytte ville den offentlige katalogen
 # blitt stående på 45 moduler mens produktomfanget er 55.
-KILDE = ROT / "docs" / "spesifikasjon" / "disponit-prototype-v8.html"
-KILDE_NAVN = "docs/spesifikasjon/disponit-prototype-v8.html"
+KILDE = ROT / "docs" / "spesifikasjon" / "disponit-prototype-v9.html"
+KILDE_NAVN = "docs/spesifikasjon/disponit-prototype-v9.html"
 
 # Produktomfanget slik det står i spesifikasjonen. Tallet står ett sted og
 # brukes både til nummerporten under og til overskriften i den genererte fila,
 # så en utvidelse ikke kan gi en katalog som teller seg selv feil.
-ANTALL_MODULER = 56
+ANTALL_MODULER = 57
 
 # Områdenavn på engelsk.
 OMRADE_EN = {
@@ -189,6 +189,8 @@ MODUL_EN = {
         "Brand and IP monitor"),
     56: ("Automatisk WCAG-kontroll",
         "Automatic WCAG check"),
+    57: ("Rekrutteringsagent (ATS)",
+        "Recruitment agent (ATS)"),
 }
 
 

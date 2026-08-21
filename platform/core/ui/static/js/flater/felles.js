@@ -64,6 +64,50 @@ export async function medStatus(hoved, ctx, lastFn, tegnFn, erGjeldende,
   }
 }
 
+// KEYSET-LISTA: ett utvalg (filtre/kø) + «Vis mer» som utvider NØYAKTIG det
+// utvalget. Cursoren er delt ut i ett bestemt utvalg og betyr ingenting i et
+// annet, så et filterbytte er en NY liste — `lastForste` nullstiller rader og
+// cursor.
+//
+// Et svar hører til utvalget som ba om det. Uten den regelen kunne en «Vis
+// mer» som alt var ute komme tilbake ETTER at eier byttet kø, og `lastMer`
+// skrev både radene og cursoren fra det FORRIGE utvalget inn i det nye
+// (Codex P2): gamle rader tegnet under den nye køens overskrift, og en cursor
+// som pekte inn i en kø flaten ikke lenger viser. `fetch` kan ikke trekkes
+// tilbake gjennom `hentJson`, så svaret slippes i stedet — samme grep som
+// `medStatus` gjør for en forlatt visning, ett hakk lenger inn.
+//
+// Regelen bor HER, ikke i hver flate. Formen var kopiert per flate — samme
+// `st`, samme to laste-funksjoner — og en vakt lagt i den ene ville latt den
+// andre kopien stå med feilen; det er nettopp derfor `medStatus` selv ble
+// løftet hit. Flaten eier fortsatt spørsmålet (`sok` lukker over filtrene
+// sine); lista eier svaret.
+export function keysetListe({ hoved, ctx, st, sok, tegn, rader }) {
+  let utvalg = 0;
+  function lastForste() {
+    const min = ++utvalg;
+    return medStatus(hoved, ctx, () => sok(null), (d) => {
+      st.rader = rader(d); st.neste = d.neste_cursor; tegn();
+    }, () => min === utvalg);
+  }
+  async function lastMer() {
+    // «Vis mer» starter ikke et nytt utvalg — den utvider det som står.
+    const min = utvalg;
+    try {
+      const d = await sok(st.neste);
+      if (min !== utvalg) return;
+      st.rader = st.rader.concat(rader(d)); st.neste = d.neste_cursor; tegn();
+      meldLive(`${st.rader.length}`);
+    } catch (e) {
+      // 401 er GLOBAL — økten er ute uansett hvilket utvalg svaret hørte til.
+      if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+      if (min !== utvalg) return;
+      meldLive(t("ui.feil_tittel"));
+    }
+  }
+  return { lastForste, lastMer };
+}
+
 // Fokus til sidens overskrift: siden ble byttet ut, og uten dette står fokus
 // igjen på et element som ikke er på skjermen lenger — i praksis på `body`, der
 // tastaturnavigasjonen starter forfra. Bor her fordi både flatene og rammen

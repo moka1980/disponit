@@ -4979,11 +4979,10 @@ def test_planlinjen_og_etiketten_fulgte_flippet():
     scheduleren), og katalogens etikett er avledet — ikke hardkodet
     (manifest-bindingen måles av test_ui_kontrakt; her måles selve
     innholdet)."""
-    v8 = (ROT / "docs/spesifikasjon/disponit-prototype-v8.html").read_text(
+    spec = (ROT / "docs/spesifikasjon/disponit-prototype-v9.html").read_text(
         encoding="utf-8")
-    assert "Mottar bestilling gjennom beslutningsveien, eller fra en"
     assert ("Mottar bestilling gjennom beslutningsveien, eller fra en"
-            " aktiv plan") in v8
+            " aktiv plan") in spec
     ui = (ROT / "platform/core/ui/static/js/plattformdata.js").read_text(
         encoding="utf-8")
     blokk = re.search(r"export const MODULSTATUS = \{(.*?)\n\};", ui, re.S)

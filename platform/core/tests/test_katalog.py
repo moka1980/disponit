@@ -1,6 +1,6 @@
 """Modulkatalogen på forsiden: fersk, komplett og formriktig.
 
-Katalogen er generert fra `docs/spesifikasjon/disponit-prototype-v8.html` av
+Katalogen er generert fra `docs/spesifikasjon/disponit-prototype-v9.html` av
 `tools/gen_katalog.py`. En generator uten en port i CI er bare en vennlig
 anbefaling: den dagen noen redigerer `katalog.js` for hånd, eller endrer
 spesifikasjonen uten å kjøre generatoren, driver de to kildene fra hverandre —
@@ -11,7 +11,7 @@ Testene her er derfor sju porter (Codex P2 på PR #43, P2 på PR #99):
   2. FERSKHET  — regenerering i en temp-rot gir NØYAKTIG det som ligger i repoet.
   3. OMDØPING  — nytt navn i kilden stopper genereringen til oversettelsen er
                  vurdert på nytt, så nb og en ikke kan drive fra hverandre.
-  4. FORM      — 56 moduler, elleve områder, faser 1–4, alle representert.
+  4. FORM      — 57 moduler, elleve områder, faser 1–4, alle representert.
   5. TEKST     — hvert modul- og områdenavn har nøkkel i BEGGE locale-sett.
   6. MERKEVARE — sannhetskilden bærer produktnavnet resten av repoet bruker.
   7. FASEORDEN — ingen modul avhenger av en modul i en senere fase, så den
@@ -33,12 +33,12 @@ KATALOG_JS = ROT / "platform" / "core" / "ui" / "static" / "js" / "katalog.js"
 # som en LITERAL her, ikke importert fra generatoren: en port som henter
 # kildestien fra det den skal vokte, godkjenner enhver sti generatoren måtte
 # bytte til.
-KILDE_REL = ("docs", "spesifikasjon", "disponit-prototype-v8.html")
+KILDE_REL = ("docs", "spesifikasjon", "disponit-prototype-v9.html")
 KILDE = ROT.joinpath(*KILDE_REL)
 ARKIV = ROT / "prototype"
 LOCALER = {s: ROT / "locales" / f"{s}.json" for s in ("nb", "en")}
 
-MODULER = 56
+MODULER = 57
 OMRADER = 11
 FASER = {1, 2, 3, 4}
 

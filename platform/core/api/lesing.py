@@ -133,6 +133,156 @@ def oversikt(tjeneste, request: Request) -> Response:
 
 
 # ---------------------------------------------------------------------------
+# GET /v1/nokkeltall — scope decisions:read (M-16 v1, ren lesing)
+# ---------------------------------------------------------------------------
+
+#: DEN ENE vindusdefinisjonen (M-16 §3): UTC, halvåpent `[fra, til)`,
+#: forhåndsdefinerte vinduer. En hendelse nøyaktig på `til` tilhører
+#: neste vindu — det følger av `< til` i hver definer, og ingen
+#: kortspørring har egen vindusaritmetikk: alle får NØYAKTIG paret
+#: herfra (statisk port).
+NOKKELTALL_VINDUER = {"24t": timedelta(hours=24),
+                      "7d": timedelta(days=7),
+                      "30d": timedelta(days=30)}
+
+#: Radgrensen for lukkede-listen. Den er et VISNINGSTAK på radfakta, ikke
+#: en telling: svaret bærer alltid `unntak_lukkede_totalt` ved siden av,
+#: så et avkuttet utsnitt er synlig for klienten (M-16 §3).
+NOKKELTALL_LUKKEDE_GRENSE = 50
+
+
+def _nokkeltall_vindu(request: Request) -> tuple[datetime, datetime] | None:
+    # Fritt intervall er BEVISST ikke implementert i v1 (§3:
+    # forhåndsdefinerte vinduer). En klient som likevel ber om `fra`/`til`
+    # skal få 400 — ikke et urelatert 24-timerssvar med status 200. Et
+    # eksplisitt spørsmål besvares aldri stille med noe annet.
+    if "fra" in request.query_params or "til" in request.query_params:
+        return None
+    valg = request.query_params.get("vindu", "24t")
+    lengde = NOKKELTALL_VINDUER.get(valg)
+    if lengde is None:
+        return None
+    til = datetime.now(timezone.utc)
+    return til - lengde, til
+
+
+def _partisjon(rader) -> dict:
+    """(er_total, nokkel, antall) → {'total': n, 'deler': {nokkel: antall}}.
+
+    Totalen og delene kommer fra SAMME skann (GROUPING SETS i defineren),
+    så suminvarianten holder per konstruksjon — den KONTROLLERES likevel
+    her, fail-closed: et avvik er en definerfeil og skal høres, ikke
+    vises som pene tall.
+
+    Aggregatet kjennes på `er_total` — en egenskap ved RADEN — og ikke på
+    en reservert nøkkelverdi. Merket var før strengen `__total__` i samme
+    kolonne som kategoriene, men `unntak.kategori` er en fri TEXT-kolonne:
+    en sak med nøyaktig den kategorien var ikke til å skille fra
+    aggregatet, og kontrollen under ville da slått ut på data som var helt
+    i orden — eller, i et sett med bare den kategorien, gitt et kort uten
+    en eneste rad. Nå finnes det ingen kategoristreng som kan kollidere.
+    """
+    total = 0
+    deler: dict[str, int] = {}
+    for er_total, nokkel, antall in rader:
+        if er_total:
+            total = antall
+        else:
+            deler[nokkel] = antall
+    if sum(deler.values()) != total:
+        raise kjerne.Feilsvar("intern_feil")
+    return {"total": total, "deler": deler}
+
+
+def nokkeltall(tjeneste, request: Request) -> Response:
+    """M-16: nøkkeltall regnet fra faktiske beslutninger — telling over
+    rader som finnes, radvise varigheter, aldri analyse. Generaliseringen
+    av 24-timerssammendraget i `oversikt`: samme filtertelling, valgbart
+    vindu, alt via definere (SP-1/SP-7)."""
+    def _fn(conn, auth, rid):
+        vindu = _nokkeltall_vindu(request)
+        if vindu is None:
+            return _feilsvar("request_feilformet", rid)
+        fra, til = vindu
+        arg = (auth.tenant, fra, til)
+        beslutninger = _partisjon(conn.execute(
+            "SELECT er_total, nokkel, antall FROM m16_beslutninger(%s,%s,%s)",
+            arg).fetchall())
+        reservasjoner = conn.execute(
+            "SELECT m16_frekvensreservasjoner(%s,%s,%s)", arg).fetchone()[0]
+        aktiveringer: dict[str, list] = {}
+        for partisjon, er_total, nokkel, antall in conn.execute(
+                "SELECT partisjon, er_total, nokkel, antall FROM"
+                " m16_aktiveringer(%s,%s,%s)", arg).fetchall():
+            aktiveringer.setdefault(partisjon, []).append(
+                (er_total, nokkel, antall))
+        oppdrag = _partisjon(conn.execute(
+            "SELECT er_total, nokkel, antall FROM m16_oppdrag(%s,%s,%s)",
+            arg).fetchall())
+        # Terminalsettet er app-lagets ENE definisjon — statusmaskinen
+        # kopieres aldri inn i SQL (oversikt-lærdommen fra #105-æraen).
+        # Sakstypesettet kommer samme vei og av samme grunn: hvilke køer
+        # DETTE tokenet får se er en scope-regel, og den har ett hjem
+        # (`app.synlige_sakstyper`). Uten den ville nøkkeltallene vært en
+        # sidevei rundt `security:read`: tellingene, «åpne nå» og de
+        # lukkede radene leser `unntak` direkte, altså utenom
+        # unntakslistens egen sakstypeport. Skjulte rader nevnes IKKE i
+        # svaret — her er eksistensen det vernede (samme grunn som at
+        # `_hent_unntak` svarer `ikke_funnet`, ikke 403).
+        from .app import TERMINALE_UNNTAKSSTATUSER, synlige_sakstyper
+        terminale = list(TERMINALE_UNNTAKSSTATUSER)
+        sakstyper = list(synlige_sakstyper(auth.scopes))
+        aktivitet = _partisjon(conn.execute(
+            "SELECT er_total, nokkel, antall FROM"
+            " m16_unntak_aktivitet(%s,%s,%s,%s)",
+            (*arg, sakstyper)).fetchall())
+        # Radlisten har en grense — og grensen er ALDRI stille: defineren
+        # returnerer hele tellingen i vinduet (`antall_totalt`, samme
+        # skann), så svaret bærer både utsnittet og hvor stort settet er.
+        # Klienten kan dermed si «viser N av M»; den kan aldri komme til å
+        # påstå at N ER alle lukkede saker i vinduet.
+        lukkede_rader = conn.execute(
+            "SELECT id, kategori, sakstype, status, opprettet,"
+            " lukket, varighet_s, antall_totalt FROM"
+            " m16_unntak_lukkede(%s,%s,%s,%s,%s,%s)",
+            (*arg, terminale, sakstyper,
+             NOKKELTALL_LUKKEDE_GRENSE)).fetchall()
+        lukkede = [
+            {"id": r[0], "kategori": r[1], "sakstype": r[2],
+             "status": r[3], "opprettet": r[4].isoformat(),
+             "lukket": r[5].isoformat(), "varighet_s": r[6]}
+            for r in lukkede_rader]
+        # Tom liste ⇒ 0; ellers er tellingen lik i hver rad (window over
+        # hele settet), så første rad holder.
+        lukkede_totalt = lukkede_rader[0][7] if lukkede_rader else 0
+        # TILSTAND, ikke aktivitet: «åpne nå» står utenfor vinduet.
+        apne_naa = conn.execute(
+            "SELECT m16_unntak_apne(%s,%s,%s)",
+            (auth.tenant, terminale, sakstyper)).fetchone()[0]
+        tick = _partisjon(conn.execute(
+            "SELECT er_total, nokkel, antall FROM m16_tick(%s,%s,%s)",
+            arg).fetchall())
+        return kanonisk_json(
+            {"vindu_start": fra.isoformat(), "vindu_slutt": til.isoformat(),
+             "tidssone": "UTC",
+             "beslutninger": beslutninger,
+             "frekvensreservasjoner": reservasjoner,
+             "aktiveringer": {
+                 p: _partisjon(rader)
+                 for p, rader in aktiveringer.items()},
+             "oppdrag": oppdrag,
+             "unntak_aktivitet": aktivitet,
+             "unntak_lukkede": lukkede,
+             "unntak_lukkede_totalt": lukkede_totalt,
+             "unntak_lukkede_grense": NOKKELTALL_LUKKEDE_GRENSE,
+             "apne_naa": apne_naa,
+             "tick": tick,
+             "request_id": rid},
+            200, {"x-request-id": rid})
+    return _les(tjeneste, request, "decisions:read", _fn)
+
+
+# ---------------------------------------------------------------------------
 # GET /v1/beslutninger — scope decisions:read, keyset DESC, filterbundet
 # ---------------------------------------------------------------------------
 
