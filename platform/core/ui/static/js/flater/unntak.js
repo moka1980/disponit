@@ -15,6 +15,7 @@ import {
 import { DataTabell } from "../tabell.js";
 import { Detaljpanel, Bekreftelsesdialog } from "../dialog.js";
 import { medStatus, flateHode, kvRad } from "./felles.js";
+import { synligeSakstyper } from "../sitekart.js";
 
 const STATUSFILTRE = [null, "ny", "under_behandling", "løst", "avvist"];
 
@@ -201,9 +202,14 @@ function aapneDetalj(id, ctx) {
 }
 
 export function visUnntak(hoved, ctx) {
+  // Køene ØKTEN kan lese — én avledning, `sitekart.synligeSakstyper`, samme
+  // regel som serveren håndhever. `normal` er første valg og dermed
+  // uendret inngang for alle: den er også serverens standard.
+  const koer = synligeSakstyper(ctx);
   // `sort` bor her, ikke i tabellen: den bygges på nytt ved hvert statusbytte og
   // hver «Vis mer», og eiers kolonnevalg skal ikke nullstilles av det.
-  const st = { status: null, rader: [], neste: null, sort: null };
+  const st = { status: null, sakstype: koer[0], rader: [], neste: null,
+               sort: null };
 
   function rad(r) {
     return {
@@ -240,6 +246,33 @@ export function visUnntak(hoved, ctx) {
     return bar;
   }
 
+  // Køvelgeren finnes bare når det ER noe å velge mellom. Uten
+  // `security:read` er `normal` den eneste køen økten kan lese, og en velger
+  // med ett alternativ er en kontroll som later som den tilbyr et valg — og
+  // som ville antydet at det finnes andre køer, den opplysningen v3-delta
+  // pkt. 5 nettopp verner (`app.py:84`: at en sikkerhetssak FINNES er selv
+  // den beskyttede opplysningen).
+  function kofilter() {
+    if (koer.length < 2) return null;
+    const bar = el("div", { class: "filterbar", role: "group",
+      "aria-label": t("ui.unntak.sakstype") });
+    for (const s of koer) {
+      const b = el("button", { class: "knapp", type: "button",
+        text: t(`sakstype.${s}`, s),
+        "aria-pressed": String(st.sakstype === s) });
+      b.addEventListener("click", () => {
+        if (st.sakstype === s) return;
+        // Købytte er en NY liste, ikke et filter over den gamle: cursoren
+        // hører til køen den ble delt ut i, og `lastForste` nullstiller
+        // begge deler. Statusvalget følger med — det er leserens spørsmål,
+        // ikke køens.
+        st.sakstype = s; lastForste();
+      });
+      bar.append(b);
+    }
+    return bar;
+  }
+
   function tegn() {
     const innhold = st.rader.length
       ? DataTabell({
@@ -259,6 +292,7 @@ export function visUnntak(hoved, ctx) {
       : TomTilstand({});
     sett(hoved,
       ...flateHode(t("ui.unntak.tittel")),
+      kofilter(),
       filterbar(),
       innhold,
       CursorNavigasjon({ neste: st.neste, paaMer: lastMer,
@@ -266,7 +300,8 @@ export function visUnntak(hoved, ctx) {
   }
 
   function sok(cursor) {
-    return hentJson("/v1/unntak", { limit: 50, status: st.status, cursor });
+    return hentJson("/v1/unntak", { limit: 50, sakstype: st.sakstype,
+                                    status: st.status, cursor });
   }
 
   function lastForste() {

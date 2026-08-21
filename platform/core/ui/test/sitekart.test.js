@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { byggRuter, harScope, hashForDypLenke, tillatteFlater, visningFraSok }
-  from "../static/js/sitekart.js";
+import { byggRuter, harScope, hashForDypLenke, synligeSakstyper,
+  tillatteFlater, visningFraSok } from "../static/js/sitekart.js";
 
 const HER = dirname(fileURLToPath(import.meta.url));
 const locale = (navn) => JSON.parse(readFileSync(
@@ -14,6 +14,42 @@ test("harScope: leser scopes fra sesjon uten kast", () => {
   assert.equal(harScope({ scopes: ["policy:write"] }, "policy:write"), true);
   assert.equal(harScope({ scopes: [] }, "policy:write"), false);
   assert.equal(harScope({}, "policy:write"), false);
+});
+
+test("synligeSakstyper: køene avledes av `security:read`, ikke av flaten", () => {
+  // Uten scopet finnes nøyaktig én kø — og det er serverens standard, så
+  // inngangen er uendret for alle som har flaten i dag.
+  assert.deepEqual(synligeSakstyper({ scopes: ["exceptions:read"] }),
+    ["normal"]);
+  assert.deepEqual(synligeSakstyper({}), ["normal"]);
+  // Med scopet er alle tre nåbare — og `normal` står først, så
+  // standardvisningen ikke flytter seg for den som får scopet.
+  const alle = synligeSakstyper({ scopes: ["exceptions:read",
+                                           "security:read"] });
+  assert.deepEqual(alle, ["normal", "sikkerhet", "drift"]);
+  assert.equal(alle[0], "normal");
+});
+
+test("synligeSakstyper speiler serverens `synlige_sakstyper`", () => {
+  // Codex P2: to avledninger av samme køregel er én for mye. Nøkkeltallene
+  // teller over serverens liste, unntaksflaten når klientens — glir de fra
+  // hverandre, teller kortet rader flaten ikke har noen vei til, og «hele
+  // listen» blir igjen et løfte som ikke holdes. Her krysses de mekanisk.
+  const py = readFileSync(
+    join(HER, "..", "..", "api", "app.py"), "utf8");
+  const m = py.match(/^SAKSTYPER = \(([^)]+)\)/m);
+  assert.ok(m, "fant ikke `SAKSTYPER` i api/app.py");
+  const serverAlle = m[1].match(/"([^"]+)"/g).map((s) => s.slice(1, -1));
+  assert.deepEqual(synligeSakstyper({ scopes: ["security:read"] }), serverAlle,
+    "klientens køliste har glidd fra serverens SAKSTYPER");
+  // …og at det er `security:read` som skiller, ikke noe annet scope: uten
+  // det svarer serveren `scope_mangler` på alt utenom `normal`.
+  const smal = py.match(
+    /def synlige_sakstyper[\s\S]*?if "([^"]+)" in scopes:\s*\n\s*return SAKSTYPER\s*\n\s*return \(("[^"]+"),?\)/);
+  assert.ok(smal, "fant ikke regelen i `synlige_sakstyper`");
+  assert.equal(smal[1], "security:read");
+  assert.deepEqual(synligeSakstyper({ scopes: [] }),
+    [smal[2].slice(1, -1)]);
 });
 
 test("byggRuter: hver rute krever scopet API-et bak flaten krever", () => {

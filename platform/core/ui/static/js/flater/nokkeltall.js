@@ -298,6 +298,13 @@ function lenkeTilBeslutninger(ctx) {
 
 // Veien videre når lukkede-listen er avkuttet: unntaksflaten har hele
 // settet — nøkkeltallflaten paginerer aldri, den VISER.
+//
+// «Hele settet» krever at flaten når de SAMME køene tallene er talt over.
+// Begge sider avleder køene av `security:read` — nøkkeltallene gjennom
+// `synlige_sakstyper` (app.py) og unntaksflaten gjennom `synligeSakstyper`
+// (sitekart.js) — så en økt som teller sikkerhets- og driftssaker her også
+// kan åpne dem der. Da flaten var låst til `normal`, kunne avkuttingen være
+// forårsaket av rader knappen ikke hadde noen vei til.
 function lenkeTilUnntak(ctx) {
   return flateknapp(ctx, "ui.nokkeltall.til_unntak", "#/unntak",
                     "exceptions:read");
