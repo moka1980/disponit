@@ -56,7 +56,13 @@ VARSLER=disponit_varselsender
 # fulle DML. Rollen får bestillingsveiens delmengde + claim-funksjonene
 # (migrer.py PLAN_RETTIGHETER); runtime MISTER claim-EXECUTE i 048.
 PLANARB=disponit_plan_arbeider
-for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER" "$EGRESS" "$DOMENER" "$VARSLER" "$PLANARB"; do
+# 049/#117 (Codex P1): CI-attesten og aksepten skal bæres av TO
+# identiteter. Verifikatoren er innloggingsrollen som SKRIVER attesten
+# (SET til modul_eier — eksplisitt, sporbar), og den er MED VILJE ikke
+# medlem av modules_admin: én innlogging skal aldri kunne gjøre begge
+# rolleskiftene i m56-aksept.py. Attestant og akseptør er to logins.
+VERIFIKATOR=disponit_ci_verifikator
+for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER" "$EGRESS" "$DOMENER" "$VARSLER" "$PLANARB" "$VERIFIKATOR"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
     | grep -q 1 || sudo -u postgres psql -c \
     "CREATE ROLE $r LOGIN PASSWORD '$(openssl rand -hex 24)'"
@@ -84,6 +90,9 @@ sudo -u postgres psql -qc "GRANT $M37 TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $POLICYEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $MODULEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $MODULESADMIN TO $MIGRATOR WITH INHERIT FALSE"
+# Verifikatoren får KUN eierrollen (SET, aldri arv) — se blokken over
+# LOGIN-løkka: aldri modules_admin.
+sudo -u postgres psql -qc "GRANT $MODULEIER TO $VERIFIKATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $DOMENEEIER TO $MIGRATOR WITH INHERIT FALSE"
 # 041: adjudikatorrollen — klyngeobjekt som rollene over. Runtime faar SET
 # (aldri arv) for de to lesningene i adjudikasjonsendepunktene; migrator
@@ -138,6 +147,7 @@ EGRESS_DSN=("DISPONIT_EGRESS_URL=$DB" "DISPONIT_TEST_EGRESS_DSN=${DB}_test")
 DOMENER_DSN=("DISPONIT_DOMAINS_URL=$DB" "DISPONIT_TEST_DOMAINS_DSN=${DB}_test")
 VARSLER_DSN=("DISPONIT_VARSEL_URL=$DB" "DISPONIT_TEST_VARSEL_DSN=${DB}_test")
 PLANARB_DSN=("DISPONIT_PLAN_URL=$DB" "DISPONIT_TEST_PLAN_DSN=${DB}_test")
+VERIFIKATOR_DSN=("DISPONIT_VERIFIKATOR_URL=$DB" "DISPONIT_TEST_VERIFIKATOR_DSN=${DB}_test")
 
 sikre_rolle_dsn "$BRUKER"     "${RUNTIME_DSN[@]}"
 sikre_rolle_dsn "$MIGRATOR"   "${MIGRATOR_DSN[@]}"
@@ -147,6 +157,7 @@ sikre_rolle_dsn "$EGRESS"     "${EGRESS_DSN[@]}"
 sikre_rolle_dsn "$DOMENER"    "${DOMENER_DSN[@]}"
 sikre_rolle_dsn "$VARSLER"    "${VARSLER_DSN[@]}"
 sikre_rolle_dsn "$PLANARB"    "${PLANARB_DSN[@]}"
+sikre_rolle_dsn "$VERIFIKATOR" "${VERIFIKATOR_DSN[@]}"
 sikre_attestasjonsnokler
 sikre_mac_nokler          # PR-012: MAC-register (oppstartsperre for API-et)
 # KEK og token-pepper (PR-005b). KEK manglet helt etter PR-005a: krypteringen
@@ -170,6 +181,7 @@ verifiser_og_reparer "$EGRESS"     "${EGRESS_DSN[@]}"
 verifiser_og_reparer "$DOMENER"    "${DOMENER_DSN[@]}"
 verifiser_og_reparer "$VARSLER"    "${VARSLER_DSN[@]}"
 verifiser_og_reparer "$PLANARB"    "${PLANARB_DSN[@]}"
+verifiser_og_reparer "$VERIFIKATOR" "${VERIFIKATOR_DSN[@]}"
 
 # ------------------------------------------------------------
 # Migrasjoner kjøres av MIGRATOR-rollen — verken av postgres eller av
@@ -361,6 +373,7 @@ verifiser_og_reparer "$EGRESS"     "${EGRESS_DSN[@]}"
 verifiser_og_reparer "$DOMENER"    "${DOMENER_DSN[@]}"
 verifiser_og_reparer "$VARSLER"    "${VARSLER_DSN[@]}"
 verifiser_og_reparer "$PLANARB"    "${PLANARB_DSN[@]}"
+verifiser_og_reparer "$VERIFIKATOR" "${VERIFIKATOR_DSN[@]}"
 
 # ------------------------------------------------------------
 # 048 (#108), Codex P1: LUKK VEDLIKEHOLDSVINDUET.
