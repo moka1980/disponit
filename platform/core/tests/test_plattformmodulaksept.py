@@ -295,18 +295,38 @@ def test_punktsettet_er_komplett_eller_ingen_hendelse(migrator):
     # et punkt i grensen kan ikke skopes bort av KALLEREN…
     ci_run = "run-" + secrets.token_hex(4)
     p = _punkter(migrator, ci_run)
-    p["ytelse_bestatt"] = {"status": "utenfor_grensen",
-                           "begrunnelse": "orker ikke"}
+    # (uten begrunnelse — feltkontrakten ville ellers svart først;
+    # UMAALTE-porten er den som skal måles her)
+    p["ytelse_bestatt"] = {"status": "utenfor_grensen"}
     with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
         _aksepter(migrator, ci_run=ci_run, punkter=p)
     assert "må være MÅLT" in str(ei.value)
     migrator.rollback()
+    # FREMMEDE FELTER AVVISES PÅ FØRSTE KALL (SP-2-valg b, runde 4):
+    # det som godtas er nøyaktig det som lagres — så et identisk replay
+    # aldri kan bomme på en kanonisert rad. Et målt punkt med
+    # `begrunnelse`, eller et skopet med kildefelter, er en påstand
+    # ingen rad kan bære.
+    ci_run = "run-" + secrets.token_hex(4)
+    p = _punkter(migrator, ci_run)
+    p["ytelse_bestatt"]["begrunnelse"] = "unødvendig prosa"
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, ci_run=ci_run, punkter=p)
+    assert "fremmede felter" in str(ei.value)
+    migrator.rollback()
+    ci_run = "run-" + secrets.token_hex(4)
+    p = _punkter(migrator, ci_run)
+    p["moduldrill_boot"]["kilde_ref"] = "x@sha256:" + "ab" * 32
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, ci_run=ci_run, punkter=p)
+    assert "fremmede felter" in str(ei.value)
+    migrator.rollback()
     # …og et registerskopet punkt kan ikke pyntes til målt.
     ci_run = "run-" + secrets.token_hex(4)
     p = _punkter(migrator, ci_run)
-    p["moduldrill_boot"] = {"status": "maalt", "grenseverdi": "x",
-                            "maalt_verdi": "x", "kilde_type": "artefakt",
-                            "kilde_ref": "x@sha256:" + "ab" * 32}
+    # (kun status — feltkontrakten svarer ellers først; skopingsporten
+    # er den som skal måles)
+    p["moduldrill_boot"] = {"status": "maalt"}
     with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
         _aksepter(migrator, ci_run=ci_run, punkter=p)
     assert "skopet utenfor grensen" in str(ei.value)

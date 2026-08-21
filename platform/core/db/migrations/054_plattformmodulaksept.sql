@@ -270,6 +270,19 @@ CREATE TABLE plattformmodulaksept_punkt (
 
 REVOKE ALL ON plattformmodulaksept, plattformmodulaksept_punkt
     FROM PUBLIC;
+-- DIREKTEVEIEN ER EN TILLITSGRENSE, IKKE EN ANGREPSFLATE (K2-valg 1,
+-- #129 runde 4). Granten under ER definer-funksjonens skrivetilgang —
+-- samme form som `modulaksept` i 049 — og den som holder
+-- `disponit_modul_eier` kan uansett CREATE OR REPLACE selve funksjonen.
+-- Skrankene i tabellene (FK-ene, CHECK-ene, kompletthetsvakten,
+-- append-only) er derfor UHELLSVERN for eier-/migreringsveien, ikke en
+-- fullstendig håndhevelse av akseptens semantikk: håndhevelsen bor i
+-- funksjonen, og det som binder PÅ TVERS av identiteter er attestene
+-- (CI-referatet og evidenslesningene, skrevet av verifikatorens
+-- innlogging) — de kan ikke skrives av eierrollen. Å uttrykke hele
+-- funksjonen én gang til som triggere ville vært å bygge definereren
+-- to steder og drifte dem fra hverandre. Neste review som åpner dette
+-- sporet: les denne blokken først.
 GRANT SELECT, INSERT ON plattformmodulaksept, plattformmodulaksept_punkt
     TO disponit_modul_eier;
 
@@ -512,6 +525,30 @@ BEGIN
         v_verdi := p_punkter -> v_punkt.punkt;
         v_status := v_verdi ->> 'status';
         v_ref := v_verdi ->> 'kilde_ref';
+        -- STRENG OBJEKTKONTRAKT (SP-2-regresjonen, Codex P2 runde 4 —
+        -- K2-valg b): skriveveien lagret et KANONISERT punkt (målt uten
+        -- `begrunnelse`, skopet uten kildefeltene), mens replayet
+        -- sammenlignet kallerens RÅ JSON mot raden. Samme kall som
+        -- nettopp lyktes, feilet dermed ved gjentakelse. I stedet for å
+        -- kanonisere i to veier avvises fremmede felter på FØRSTE kall:
+        -- det som godtas, er nøyaktig det som lagres, og replayets
+        -- likhet er ekte likhet. Et felt uten mening for statusen er
+        -- ikke støy — det er en påstand ingen rad kan bære.
+        SELECT string_agg(j.key, ', ' ORDER BY j.key) INTO v_avvik
+          FROM pg_catalog.jsonb_object_keys(v_verdi)
+               WITH ORDINALITY AS j(key, i)
+         WHERE (v_punkt.maalt_krav = '<utenfor grensen>'
+                AND j.key NOT IN ('status', 'begrunnelse'))
+            OR (v_punkt.maalt_krav <> '<utenfor grensen>'
+                AND j.key NOT IN ('status', 'grenseverdi', 'maalt_verdi',
+                                  'kilde_type', 'kilde_ref'));
+        IF v_avvik IS NOT NULL THEN
+            RAISE EXCEPTION 'aksepter_plattformmodul: punkt % bærer'
+                ' fremmede felter (%) for statusen sin — det som godtas'
+                ' er nøyaktig det som lagres, og et replay er den samme'
+                ' observasjonen', v_punkt.punkt, v_avvik
+                USING ERRCODE = 'invalid_parameter_value';
+        END IF;
         -- Registerets andre sentinel: for IDENTITETSPUNKTET er den
         -- grønne verdien manifestets digest — den står ikke i registeret,
         -- for registeret navngir kravet, ikke den enkelte aksepten.
