@@ -1892,6 +1892,86 @@ def test_wcag_grensene_maaler_at_portene_faktisk_kjorte():
     assert _sjekk_grenser(ARTEFAKT_KRAV, _mutert(kjoringer_rent_innen_frist=9))
 
 
+def test_egressprobens_null_lekkasjer_krever_at_proben_faktisk_kjorte():
+    """Codex' P1 (#121): «0 lekkasjer» fra en probe som aldri kjørte.
+
+    `port24_motormiljo` måler at DISPONIT_KEK/DATABASE_URL ikke når
+    browser-containerens miljø ved å STARTE containeren med kanarier i
+    miljøet og lese `env`. Produsenten vet at returkoden er en del av
+    målingen — den skriver `ok=false` når kommandoen døde — men
+    sammendraget reduserte hele hendelsen til `egress_lekkasjer`, og en
+    kjøring som ikke kom i gang har null lekkasjer å vise. `0 <= 0` var
+    da fravær av en måling lest som en bestått port, og
+    `egress.hemmeligheter_i_browsermiljo` ville stått grønt i en
+    IMMUTABEL akseptrad.
+
+    Tre lag måles her: at sammendraget BÆRER probens tilstand, at
+    evidensporten KREVER den, og at akseptskriptet skriver «umålt» —
+    aldri «0» — når den mangler."""
+    import importlib.util
+
+    from manifestskjema import _sjekk_grenser, valider_artefaktformat
+    sti = ROT / "deploy/staging/wcag-kontroll-artefakt.py"
+    spec = importlib.util.spec_from_file_location("wcag_artefakt", sti)
+    wa = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(wa)
+
+    # 1. Produsenten: den ekte, innsjekkede runden bar en probe som
+    #    kjørte rent — og sammendraget sier det nå eksplisitt.
+    rader = wa.les(ROT / ("deploy/staging/artefakter/"
+                          "evidens-wcag-runde-20260818.jsonl"))
+    port24 = [d for d in rader if d.get("hendelse") == "port24_motormiljo"]
+    assert len(port24) == 1 and port24[-1]["ok"] is True
+    fasit = json.loads((ROT / ("deploy/staging/artefakter/"
+                               "wcag-kontroll-v1-20260818T200413.json")
+                        ).read_text(encoding="utf-8"))
+    assert fasit["maalt"]["egress_motormiljo_maalt"] == 1
+
+    # …og en probe som DØDE uten å rekke å skrive miljøet — returkode
+    # ≠ 0, tom lekkasjeliste — gir 0, ikke et grønt tall.
+    død = [dict(d, returkode=1, ok=False, feil="no such image")
+           if d.get("hendelse") == "port24_motormiljo" else d
+           for d in rader]
+    sam = wa.sammendrag(død, fasit["oppsett"]["kilde"],
+                        fasit["oppsett"]["kilde_sha256"])
+    assert sam["maalt"]["egress_lekkasjer"] == 0, \
+        "en probe som døde har fortsatt ingen lekkasjer å vise"
+    assert sam["maalt"]["egress_motormiljo_maalt"] == 0
+    # Og en probe som aldri var en containerkjøring i det hele tatt
+    # (`maalt: false`) har ikke engang en `lekkasjer`-nøkkel.
+    umålt = [{k: v for k, v in d.items() if k != "lekkasjer"}
+             | {"maalt": False, "ok": False}
+             if d.get("hendelse") == "port24_motormiljo" else d
+             for d in rader]
+    assert wa.sammendrag(umålt, "x", "y")["maalt"][
+        "egress_motormiljo_maalt"] == 0
+
+    # 2. Evidensporten krever den — feltet er i skjemaet, og verdien 0
+    #    er en FEIL, ikke stillhet.
+    def _mutert(**felt):
+        return dict(fasit, maalt=dict(fasit["maalt"], **felt))
+
+    assert _sjekk_grenser(ARTEFAKT_KRAV, fasit) == []
+    assert any("egress_motormiljo_maalt" in f
+               for f in _sjekk_grenser(ARTEFAKT_KRAV,
+                                       _mutert(egress_motormiljo_maalt=0))), \
+        "en umålt egressprobe med 0 lekkasjer slapp gjennom porten"
+    uten = dict(fasit, maalt={k: v for k, v in fasit["maalt"].items()
+                              if k != "egress_motormiljo_maalt"})
+    assert _sjekk_grenser(ARTEFAKT_KRAV, uten), \
+        "et sammendrag uten probens tilstand slapp gjennom porten"
+    assert valider_artefaktformat(uten, ARTEFAKT_KRAV), \
+        "skjemaet krever ikke probens tilstand"
+
+    # 3. Akseptskriptet skriver «umålt», ikke «0» — og basen avviser en
+    #    måleverdi som ikke er `maalt_krav`, så punktet blokkerer.
+    m = _aksept_skript()
+    _, hent = m.MAALTE["egress.hemmeligheter_i_browsermiljo"]
+    assert hent(fasit["maalt"]) == "0"
+    assert hent(sam["maalt"]).startswith("umålt")
+    assert hent({"egress_lekkasjer": 0}).startswith("umålt")
+
+
 def _superseder_drill():
     """Drillkjøringen 2026-08-20 13:22, slik den ligger innsjekket.
 

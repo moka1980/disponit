@@ -382,7 +382,21 @@ def sammendrag(rader: list[dict], kilde: str, kilde_sha256: str) -> dict:
                                    if u == "tillat"),
             "frekvens_avvist_over_grense": sum(1 for u in frekv["utfall"]
                                                if u != "tillat"),
-            "egress_lekkasjer": len(motor["lekkasjer"]),
+            # Lekkasjetallet er MENINGSLØST uten probens egen tilstand
+            # (Codex P1, #121): en port24-kjøring som ikke kom i gang —
+            # eller som døde med returkode ≠ 0 før den rakk å skrive
+            # miljøet — har heller ingen lekkasjer å vise, og «0» blir
+            # da fravær av en måling forkledd som en bestått port.
+            # Produsenten måler nettopp det (`ok`), men sammendraget
+            # kastet det. Nå bæres det: 1 bare når proben FAKTISK kjørte
+            # en containerkommando OG den gikk rent.
+            "egress_motormiljo_maalt":
+                1 if (motor.get("maalt") is True
+                      and motor.get("ok") is True) else 0,
+            # `.get(..., [])`: en umålt probe har ingen `lekkasjer`-nøkkel
+            # i det hele tatt. Tallet er ikke lenger noe å hvile på alene
+            # — feltet over sier om det ble målt.
+            "egress_lekkasjer": len(motor.get("lekkasjer", [])),
             "feilinjisering_feilet_med_kvittering":
                 1 if (injeksjon["oppdragstatus"] == "feilet"
                       and injeksjon["har_kvittering"]) else 0,

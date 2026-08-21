@@ -101,8 +101,16 @@ MAALTE = {
     # hemmelighetene aldri når browser-containerens miljø. (Det var
     # dette tallet proxytoken-punktet lånte; nå bærer det sin egen
     # invariant, og bare den.)
+    #
+    # …og det leses sammen med probens EGEN tilstand (Codex P1, #121):
+    # en port24-kjøring som ikke kom i gang, eller som døde med
+    # returkode ≠ 0 før den rakk å skrive miljøet, har heller ingen
+    # lekkasjer å vise. Da er «0» fravær av en måling, ikke et rent
+    # containermiljø — nøyaktig samme form som frekvenstaket over.
     "egress.hemmeligheter_i_browsermiljo":
-        ("0", lambda m: str(m["egress_lekkasjer"])),
+        ("0", lambda m: str(m["egress_lekkasjer"])
+                        if m.get("egress_motormiljo_maalt") == 1
+                        else "umålt (port24-proben kjørte ikke rent)"),
 }
 #: Punkter i kravet som INGEN kilde vi har faktisk måler. De skrives
 #: ikke — de BLOKKERER aksepten, og teksten sier hvorfor. Mekanismen er

@@ -71,6 +71,7 @@
         "frekvens_tillat",
         "frekvens_avvist_over_grense",
         "egress_lekkasjer",
+        "egress_motormiljo_maalt",
         "feilinjisering_feilet_med_kvittering",
         "feilinjisering_promoterte_artefakter",
         "evidensfrist_reapet",
@@ -107,7 +108,12 @@
           "$ref": "#/$defs/telling"
         },
         "egress_lekkasjer": {
-          "$ref": "#/$defs/telling"
+          "$ref": "#/$defs/telling",
+          "comment": "Antall linjer i browser-containerens miljo som bar en hemmelighet. Tallet alene skiller ikke «ingen lekkasjer» fra «proben kjorte aldri» - `egress_motormiljo_maalt` gjor det."
+        },
+        "egress_motormiljo_maalt": {
+          "$ref": "#/$defs/telling",
+          "comment": "1 bare naar port24-proben FAKTISK kjorte en containerkommando og den gikk rent (returkode 0). En probe som ikke kom i gang, eller som dode for den rakk aa skrive miljoet, star paa 0 - og akseptpunktet `egress.hemmeligheter_i_browsermiljo` blokkerer (Codex P1, #121)."
         },
         "feilinjisering_feilet_med_kvittering": {
           "$ref": "#/$defs/telling"

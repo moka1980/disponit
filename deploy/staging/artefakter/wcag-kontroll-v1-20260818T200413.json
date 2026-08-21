@@ -4,6 +4,7 @@
   "maalt": {
     "avvik_mot_fasit": 0,
     "egress_lekkasjer": 0,
+    "egress_motormiljo_maalt": 1,
     "evidensfrist_reapet": 1,
     "evidensfrist_sak_opprettet": 1,
     "feilinjisering_feilet_med_kvittering": 1,
