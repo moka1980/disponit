@@ -441,3 +441,36 @@ test("Nøkkeltall: ingen SVG/canvas — søylen er HTML/CSS, tastaturvei", async
   bytt.dispatchEvent(new window.Event("change"));
   await vent(() => h.querySelectorAll("table").length >= 5);
 });
+
+// KPI-BLOKKEN KRYMPER, DEN RULLER IKKE (Codex P2, WCAG 1.4.10).
+//
+// Ved 320 CSS-piksler — 400 % zoom på en vanlig skjerm — har `.skall-hoved`
+// under 20rem igjen etter sin egen padding. Hver absolutte bredde i blokka
+// er derfor en potensiell horisontal siderulling, og de var tre: sporet i
+// rutenettet, søylens `width`, og et radnavn uten et sted å brekke.
+// jsdom har ingen layout å måle, så porten står på stilkilden — samme form
+// som `.skall-bruker` bruker for nøyaktig samme klasse feil.
+test("Nøkkeltall: ingen absolutt bredde tvinger fram siderulling", () => {
+  const css = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)),
+         "..", "static", "css", "komponenter.css"), "utf-8");
+  const regel = (velger) => {
+    const i = css.indexOf(velger);
+    assert.ok(i >= 0, `${velger} skal finnes i stilkilden`);
+    return css.slice(i, css.indexOf("}", i));
+  };
+  // Sporet er et ØNSKE om 20rem, avkortet av plassen som faktisk finnes.
+  assert.match(regel(".kpi-kort-liste{"),
+    /minmax\(\s*min\(\s*20rem\s*,\s*100%\s*\)\s*,\s*1fr\s*\)/,
+    "et ubetinget rem-minimum i sporet sprenger containeren på smal skjerm");
+  // Søylen er aria-hidden og gir etter først; teksten bærer opplysningen.
+  const soyle = regel(".kpi-soyle{");
+  assert.match(soyle, /max-width:\s*8rem/,
+    "8rem må være søylens fulle bredde, ikke dens minste");
+  assert.ok(!/(^|[;{\s])width:\s*8rem/.test(soyle),
+    "en fast søylebredde binder tallkolonnene uansett skjermbredde");
+  // En rå maskinkode er ett ord uten mellomrom å brekke på.
+  assert.match(regel(".kpi-tabell td,.kpi-tabell th{"),
+    /overflow-wrap:\s*(anywhere|break-word)/,
+    "et ubrytelig radnavn setter ellers tabellens minstebredde");
+});
