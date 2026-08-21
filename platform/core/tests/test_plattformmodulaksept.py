@@ -165,6 +165,19 @@ def test_aksepten_ende_til_ende_med_replay(migrator):
                   nokkel=nokkel, punkter=p, attest=False)
     assert "andre punktobservasjoner" in str(ei.value)
     migrator.rollback()
+    # …og materialiteten er HELE observasjonen: også `grenseverdi` og
+    # `kilde_type` (Codex P2, runde 1). Replayet returnerer før den
+    # vanlige registerkontrollen, så et retry som bytter nettopp de to
+    # ville ellers fått «vellykket» på noe basen aldri lagret.
+    for felt, verdi in (("grenseverdi", "min egen grense"),
+                        ("kilde_type", "ci_kjoring")):
+        p = _punkter(migrator, ci_run)
+        p["ytelse_bestatt"][felt] = verdi
+        with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+            _aksepter(migrator, modul=modul, commit=commit, ci_run=ci_run,
+                      nokkel=nokkel, punkter=p, attest=False)
+        assert "andre punktobservasjoner" in str(ei.value), felt
+        migrator.rollback()
 
 
 @pg

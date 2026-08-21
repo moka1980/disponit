@@ -206,8 +206,19 @@ BEGIN
            AND ((p_punkter -> pk.punkt) IS NULL
              OR (p_punkter -> pk.punkt) ->> 'status'
                     IS DISTINCT FROM pk.status
+             -- HELE observasjonen, ikke de fleste feltene (Codex P2,
+             -- runde 1). `grenseverdi` og `kilde_type` sto utenfor
+             -- sammenligningen, og replayet returnerer FØR den vanlige
+             -- registerkontrollen: et retry som byttet grense eller
+             -- kildeform fikk dermed «vellykket» tilbake på en
+             -- observasjon basen aldri lagret — og en kaller som
+             -- korrigerte nettopp de feltene, trodde rettelsen sto.
+             OR (p_punkter -> pk.punkt) ->> 'grenseverdi'
+                    IS DISTINCT FROM pk.grenseverdi
              OR (p_punkter -> pk.punkt) ->> 'maalt_verdi'
                     IS DISTINCT FROM pk.maalt_verdi
+             OR (p_punkter -> pk.punkt) ->> 'kilde_type'
+                    IS DISTINCT FROM pk.kilde_type
              OR (p_punkter -> pk.punkt) ->> 'kilde_ref'
                     IS DISTINCT FROM pk.kilde_ref
              OR (p_punkter -> pk.punkt) ->> 'begrunnelse'
