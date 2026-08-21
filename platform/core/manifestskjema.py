@@ -211,21 +211,63 @@ KRAVGRENSER["wcag-kontroll-v2"] = {
 # avledet av en fil — så porten re-regner de interne invariantene og
 # håndhever grensene, og SP-11-bindingen (sha i manifestet/akseptveien)
 # gjør bytene immutable.
+
+#: M-2s andel av suiten — PINNET, ikke bare «navngitt». Delingsbetingelsen
+#: krever at punktet navngir hvilken MÅLING som beviser det for nettopp
+#: denne modulen, og et fritt `m2_filer` oppfylte bare halve kravet: et
+#: artefakt med `m2_filer: ["noen andres tester"]` klarte tallene og
+#: passerte porten. Porten under krever nøyaktig DENNE lista, og
+#: produsenten (`deploy/staging/m02-suite-artefakt.py`) kjører den samme —
+#: ett sted, to lesere, så utvalget ikke kan gli.
+#:
+#: Utvalget er node-id-er, ikke filer: M-2 deler hver av disse filene med
+#: M-1 og plattformlaget, og en hel fil hadde tatt med målinger som ikke
+#: sier noe om revisjonsloggen. Den forrige lista tok med HELE
+#: `test_kjorer_og_kryptering.py` med begrunnelsen at append-only-portene
+#: lå der. Det stemte ikke (Codex P1, runde 2): den filen nevner ikke
+#: revisjonsloggen med ett ord — den måler migrasjonskjøreren, DEK-ene og
+#: tokenene — mens de tre append-only-portene står i
+#: `test_pg_og_attestering.py` og manglet i utvalget helt. Hele suiten
+#: kjøres uansett og har sine egne grenser; det er ANDELEN som skal være
+#: M-2s egne porter.
+M02_SUITE_ANDEL: tuple[str, ...] = (
+    # Append-only håndhevet i BASEN, ikke av applikasjonskode.
+    "platform/core/tests/test_pg_og_attestering.py::"
+    "test_revisjonslogg_er_append_only_i_databasen",
+    "platform/core/tests/test_pg_og_attestering.py::"
+    "test_runtime_kan_ikke_skru_av_append_only",
+    "platform/core/tests/test_pg_og_attestering.py::"
+    "test_append_only_triggeren_star_paa_etter_migrasjon",
+    # Loggposten selv: evidensfeltene, aktøren fra serverkonteksten,
+    # replay uten ny rad, og at et feilet unntaksskriv ruller loggposten.
+    "platform/core/tests/test_api.py::"
+    "test_tillat_gir_loggpost_med_evidensfelter",
+    "platform/core/tests/test_api.py::"
+    "test_unntakshistorikk_far_aktor_fra_serverkontekst",
+    "platform/core/tests/test_api.py::"
+    "test_idempotent_replay_er_byteidentisk_uten_ny_loggpost",
+    "platform/core/tests/test_api.py::"
+    "test_unntaksskriv_feilet_ruller_ogsa_loggposten",
+)
+
 KRAVGRENSER["m02-suite-v1"] = {
     # Suitekjøringen PÅ STAGING: hele suiten grønn, og M-2s ANDEL er
-    # navngitt og grønn — delingsbetingelsen i RUTINER.md gjort målbar.
-    # Gulvet er romslig med vilje: det måler at KJØRINGEN var hel, ikke
-    # at antallet aldri vokser (det gjør det, hver uke).
+    # pinnet og grønn — delingsbetingelsen i RUTINER.md gjort målbar.
+    # Gulvet for helheten er romslig med vilje: det måler at KJØRINGEN var
+    # hel, ikke at antallet aldri vokser (det gjør det, hver uke).
     # Gulvene måles mot KJØRTE tester (totalt minus hoppede), og M-2s
-    # navngitte andel tåler ingen hoppede i det hele tatt: hele
-    # test_kjorer_og_kryptering.py er `skipif(not DSN)`, så uten den
-    # porten ville en vert uten oppsatt testbase levert en «grønn» andel
-    # der ingen av testene hadde kjørt.
+    # andel tåler ingen hoppede i det hele tatt: både
+    # `test_pg_og_attestering.py` og `test_api.py` er `skipif(not DSN)`,
+    # så uten den porten ville en vert uten oppsatt testbase levert en
+    # «grønn» andel der ingen av testene hadde kjørt.
     "min_tester": 1500,
     "maks_feilet": 0,
-    "min_m2_tester": 30,
+    # Én node-id er én test, så gulvet ER lengden på det pinnede
+    # utvalget: alle sju skal ha kjørt, ikke «minst noen av dem».
+    "min_m2_tester": len(M02_SUITE_ANDEL),
     "maks_m2_feilet": 0,
     "maks_m2_hoppet": 0,
+    "m2_andel_pakrevd": M02_SUITE_ANDEL,
 }
 KRAVGRENSER["m02-fordeling-v1"] = {
     # Det syntetiske settet er REPRODUSERT, ikke historisk: basen på
@@ -939,9 +981,9 @@ def _grenser_m02_suite(grense: dict, art: dict) -> list[str]:
                     f" {grense['min_m2_tester']}")
     if m2f > grense["maks_m2_feilet"]:
         feil.append(f"m2_feilet={m2f}, krever <= {grense['maks_m2_feilet']}")
-    # ... og M-2s andel er NAVNGITT og PÅKREVD: hele
-    # test_kjorer_og_kryptering.py er `skipif(not DSN)`, så en testbase
-    # som ikke er satt opp hadde gitt en andel uten én kjørt test.
+    # ... og M-2s andel er PINNET og PÅKREVD: både
+    # test_pg_og_attestering.py og test_api.py er `skipif(not DSN)`, så en
+    # testbase som ikke er satt opp hadde gitt en andel uten én kjørt test.
     # Delingsbetingelsen krever en MÅLING for nettopp denne modulen —
     # en hoppet port måler ingenting.
     if m2h > grense["maks_m2_hoppet"]:
@@ -974,6 +1016,21 @@ def _grenser_m02_suite(grense: dict, art: dict) -> list[str]:
             and all(isinstance(x, str) and x for x in filer)):
         feil.append("oppsett.m2_filer mangler — M-2s andel skal være"
                     " NAVNGITT, ikke antatt (delingsbetingelsen)")
+    # ... og NAVNGITT er ikke nok i seg selv: en hvilken som helst ikke-tom
+    # strengliste passerte formkravet over, så et artefakt kunne klare
+    # tallene med `m2_filer: ["noen andres tester"]` og likevel bli lest
+    # som beviset for M-2. Utvalget er derfor PINNET i KRAVGRENSER, og
+    # porten krever nøyaktig det — hvilke målinger som beviser punktet er
+    # en godkjent beslutning, ikke noe produsenten oppgir om seg selv.
+    elif sorted(filer) != sorted(grense["m2_andel_pakrevd"]):
+        mangler = sorted(set(grense["m2_andel_pakrevd"]) - set(filer))
+        ekstra = sorted(set(filer) - set(grense["m2_andel_pakrevd"]))
+        feil.append(
+            "oppsett.m2_filer er ikke det godkjente utvalget"
+            + (f"; mangler {mangler}" if mangler else "")
+            + (f"; ukjente {ekstra}" if ekstra else "")
+            + " — delingsbetingelsen krever de PINNEDE målingene, ikke"
+              " en liste produsenten valgte selv")
     return feil
 
 

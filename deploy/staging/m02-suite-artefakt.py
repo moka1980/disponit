@@ -6,9 +6,13 @@ artefakt — med M-2s andel NAVNGITT og målt for seg (delingsbetingelsen
 i RUTINER.md: et delt løp må navngi hvilken måling som beviser punktet
 for nettopp denne modulen; fritekst er ikke en binding).
 
-M-2s andel er append-only-portene (hele test_kjorer_og_kryptering.py)
-og revisjonsloggens tre navngitte porter i test_api.py — evidensfelter,
-aktør fra serverkontekst, idempotent replay uten ny loggpost.
+M-2s andel er PINNET i `manifestskjema.M02_SUITE_ANDEL` og leses derfra:
+append-only-portene i test_pg_og_attestering.py og revisjonsloggens fire
+porter i test_api.py (evidensfelter, aktør fra serverkontekst, idempotent
+replay uten ny loggpost, rullet loggpost ved feilet unntaksskriv).
+Utvalget står ETT sted fordi porten og produsenten ellers kunne gli fra
+hverandre — og da hadde artefaktet navngitt ett utvalg mens akseptporten
+godtok et annet.
 
 BRUK (på verten, med testbase og testmiljø satt opp):
     DISPONIT_TEST_DSN=... DISPONIT_TEST_MIGRATOR_DSN=... \
@@ -30,20 +34,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / "platform/core"))
 
-#: M-2s andel — NAVNGITT, ikke antatt. Filen i sin helhet der modulen
-#: eier hele måleflaten, node-id-er der den deler fil med M-1.
-M2_ANDEL = (
-    "platform/core/tests/test_kjorer_og_kryptering.py",
-    "platform/core/tests/test_api.py::"
-    "test_tillat_gir_loggpost_med_evidensfelter",
-    "platform/core/tests/test_api.py::"
-    "test_unntakshistorikk_far_aktor_fra_serverkontekst",
-    "platform/core/tests/test_api.py::"
-    "test_idempotent_replay_er_byteidentisk_uten_ny_loggpost",
-    "platform/core/tests/test_api.py::"
-    "test_unntaksskriv_feilet_ruller_ogsa_loggposten",
-)
+#: M-2s andel og grensene den måles mot — hentet fra akseptporten selv,
+#: aldri gjentatt her. To lister som skal være like, er før eller siden to
+#: ulike lister; denne leser den ENE.
+from manifestskjema import M02_SUITE_ANDEL as M2_ANDEL  # noqa: E402
 
 
 def _kjor(mal: list[str], junit: Path) -> tuple[int, int, int, int]:
@@ -51,10 +47,10 @@ def _kjor(mal: list[str], junit: Path) -> tuple[int, int, int, int]:
 
     `skipped` MÅLES ved siden av `tests`: junit teller en hoppet test i
     `tests` og rapporterer null failures og null errors for den. Hele
-    M-2-andelen er `skipif(not DSN)` (test_kjorer_og_kryptering.py), så
-    en testbase som ikke er satt opp ga 31 «tester», null feilede — og et
-    artefakt som påsto at M-2s andel var grønn uten at én av dem hadde
-    kjørt. En hoppet test er ikke en bestått test.
+    M-2-andelen er `skipif(not DSN)` (både test_pg_og_attestering.py og
+    test_api.py), så en testbase som ikke er satt opp ga en andel med null
+    feilede — og et artefakt som påsto at M-2s andel var grønn uten at én
+    av dem hadde kjørt. En hoppet test er ikke en bestått test.
 
     Exitkoden MÅLES, den kastes ikke: junit-XML-en skrives også når
     kjøringen ble avbrutt underveis, og da beskriver den bare testene som

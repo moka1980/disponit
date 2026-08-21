@@ -1133,8 +1133,10 @@ def test_m37s_avhengigheter_er_aktive_for_den_selv_kan_bli_det():
 def _m02_suite_artefakt(**maalt):
     """Et helt m02-suite-v1-artefakt, med `maalt` overstyrbar felt for
     felt — så hver test under er ÉN mutasjon fra et grønt artefakt."""
+    from manifestskjema import M02_SUITE_ANDEL
     tall = {"tester_totalt": 1972, "tester_feilet": 0,
-            "tester_hoppet": 12, "m2_tester": 31, "m2_feilet": 0,
+            "tester_hoppet": 12, "m2_tester": len(M02_SUITE_ANDEL),
+            "m2_feilet": 0,
             "m2_hoppet": 0, "suite_exitkode": 0, "m2_exitkode": 0}
     tall.update(maalt)
     return {
@@ -1142,8 +1144,7 @@ def _m02_suite_artefakt(**maalt):
         "bestatt": True,
         "oppsett": {"modul": "m02_revisjonslogg", "commit": "a" * 40,
                     "vert": "disponit-srv",
-                    "m2_filer": ["platform/core/tests/"
-                                 "test_kjorer_og_kryptering.py"]},
+                    "m2_filer": list(M02_SUITE_ANDEL)},
         "maalt": tall,
     }
 
@@ -1157,18 +1158,19 @@ def test_m02_suite_hel_kjoring_passerer():
 
 
 def test_m02_suite_hoppet_m2_andel_er_ikke_en_maaling():
-    """Hele `test_kjorer_og_kryptering.py` er `skipif(not DSN)`, og junit
-    teller en hoppet test i `tests` med null failures og null errors. En
-    vert uten oppsatt testbase leverte derfor 31 «tester», null feilede —
-    over gulvet — uten at ÉN M-2-test hadde kjørt. Delingsbetingelsen
-    krever en MÅLING for nettopp denne modulen; en hoppet port måler
-    ingenting.
+    """Hele M-2-andelen er `skipif(not DSN)`, og junit teller en hoppet
+    test i `tests` med null failures og null errors. En vert uten oppsatt
+    testbase leverte derfor en full andel, null feilede — over gulvet —
+    uten at ÉN M-2-test hadde kjørt. Delingsbetingelsen krever en MÅLING
+    for nettopp denne modulen; en hoppet port måler ingenting.
 
     MUTASJONEN SOM DREPER DENNE: la grensen måle `m2_tester` i stedet for
     de KJØRTE.
     """
-    from manifestskjema import _sjekk_grenser
-    feil = _sjekk_grenser("m02-suite-v1", _m02_suite_artefakt(m2_hoppet=31))
+    from manifestskjema import M02_SUITE_ANDEL, _sjekk_grenser
+    feil = _sjekk_grenser(
+        "m02-suite-v1",
+        _m02_suite_artefakt(m2_hoppet=len(M02_SUITE_ANDEL)))
     assert any("m2_hoppet" in f for f in feil), feil
     # ... og gulvet for hele suiten måles på samme vis.
     feil = _sjekk_grenser("m02-suite-v1",
@@ -1202,3 +1204,38 @@ def test_m02_suite_vrangt_oppsett_feiler_lukket():
     art = dict(_m02_suite_artefakt(), oppsett="ikke et objekt")
     assert valider_artefaktformat(art, "m02-suite-v1") != []
     assert any("m2_filer" in f for f in _sjekk_grenser("m02-suite-v1", art))
+
+
+def test_m02_suite_m2_filer_maa_vaere_det_pinnede_utvalget():
+    """Å NAVNGI et utvalg er ikke å bli målt på det. Skjemaet krever bare
+    en ikke-tom strengliste, så et artefakt kunne klare alle tallene med
+    `m2_filer: ["noen andres tester"]` og likevel bli lest som beviset for
+    M-2 — delingsbetingelsen sier hvilken MÅLING som beviser punktet, og
+    da kan ikke produsenten velge målingen selv.
+
+    MUTASJONEN SOM DREPER DENNE: la porten godta enhver ikke-tom liste
+    igjen.
+    """
+    from manifestskjema import M02_SUITE_ANDEL, _sjekk_grenser
+
+    def med_filer(filer):
+        art = _m02_suite_artefakt()
+        art["oppsett"]["m2_filer"] = filer
+        return _sjekk_grenser("m02-suite-v1", art)
+
+    assert med_filer(list(M02_SUITE_ANDEL)) == []
+    # Et helt annet utvalg — tallene er de samme, beviset er ikke.
+    feil = med_filer(["platform/core/tests/test_noe_annet.py"])
+    assert any("m2_filer" in f and "godkjente utvalget" in f
+               for f in feil), feil
+    # ... og et utvalg som mangler ÉN av de pinnede portene er heller ikke
+    # utvalget: append-only-porten er ikke valgfri.
+    feil = med_filer(list(M02_SUITE_ANDEL[1:]))
+    assert any("mangler" in f for f in feil), feil
+    # ... og de pinnede portene finnes FAKTISK: en node-id som er skrevet
+    # feil er en port som aldri kjører, og «0 feilede av 0» ser grønt ut.
+    for velger in M02_SUITE_ANDEL:
+        sti, _, navn = velger.partition("::")
+        kilde = (Path(__file__).resolve().parents[3] / sti
+                 ).read_text(encoding="utf-8")
+        assert f"def {navn}(" in kilde, velger
