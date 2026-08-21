@@ -100,3 +100,108 @@ INSERT INTO akseptkrav_ci (krav_id, arbeidsflyt, hendelse, gren,
                            konklusjon) VALUES
     ('m56-akseptflipp-v2', '.github/workflows/ci.yml', 'push', 'main',
      'success');
+
+-- ------------------------------------------------------------
+-- EVIDENSATTESTEN MÅ TÅLE AT KRAVET REVISJONERES (Codex P2, #121).
+--
+-- 049 nøklet `evidensfil_attest` på `(sha256, punkt)` — «attesten hører
+-- til BYTENE, ikke til stien» — men la samtidig `krav_id` inn i
+-- motsigelseskontrollen: et referat som spriker fra det lagrede på
+-- krav_id, sti ELLER måletall ble avvist. De to påstandene er ikke
+-- forenlige når grensen reversjoneres.
+--
+-- Fire av v2s evidensbårne punkter er GJENBRUKT fra v1
+-- (`kontroll.ti_kjoringer_signert_innen_frist`, `funn.avvik_mot_fasit`,
+-- `robots.brudd_i_mallogg`, `frekvens.over_grense_utfort`). Er de
+-- samme bytene alt attestert under `wcag-kontroll-v1` — samme sha,
+-- samme sti, samme måletall — så avviser `attester_evidensfil`
+-- v2-kallet med «alt attestert med et annet innhold», selv om
+-- INNHOLDET er identisk og bare kravrevisjonen er ny. Aksepten som
+-- 050 finnes for å muliggjøre, ville dødd på sin egen revisjon.
+--
+-- Én immutabel fillesning skal kunne bære FLERE kravrevisjoner.
+-- Kravet går derfor inn i attestens identitet — som det alt er i
+-- oppslaget `aksepter_moduldeployment` gjør (`AND e.krav_id =
+-- p_krav_id`) og i FK-en mot `akseptkrav_punkt (krav_id, punkt)`.
+--
+-- Og invarianten 049 ville ha — «én fil har ett innhold» — mistes
+-- ikke: den flyttes ut av nøkkelen og inn i en EGEN kontroll som
+-- gjelder PÅ TVERS av kravrevisjoner. Samme bytes, samme punkt, to
+-- ulike måletall er fortsatt to motstridende referater av én fil, og
+-- det høres fortsatt — nå også når de to står under hvert sitt krav.
+-- Tabellen eies av migrator (049: «de nye eies av migrator»), så
+-- nøkkelbyttet trenger intet eiervindu. Attestene som alt står blir
+-- liggende: `(sha256, punkt)` er unik i den gamle nøkkelen, så hver
+-- eksisterende rad er unik også i den nye.
+ALTER TABLE evidensfil_attest
+    DROP CONSTRAINT evidensfil_attest_pkey,
+    ADD PRIMARY KEY (sha256, punkt, krav_id);
+
+-- Funksjonen eies av `disponit_modul_eier` (049) og migrator har rollen
+-- WITH INHERIT FALSE, så erstatningen skjer i EIERVINDUET —
+-- 047/048-disiplinen. CREATE OR REPLACE beholder eier og ACL, så
+-- REVOKE/GRANT-bildet fra 049 står uendret: ingen GRANT til
+-- `disponit_modules_admin`, EXECUTE bare til `disponit_ci_verifikator`.
+SET LOCAL ROLE disponit_modul_eier;
+
+CREATE OR REPLACE FUNCTION attester_evidensfil(
+    p_krav_id TEXT, p_sti TEXT, p_sha256 TEXT, p_punkter JSONB,
+    p_aktor TEXT)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+DECLARE v_sha TEXT; v_punkt TEXT; v_verdi TEXT; v_annet RECORD;
+BEGIN
+    v_sha := lower(p_sha256);
+    IF v_sha !~ '^[0-9a-f]{64}$' THEN
+        RAISE EXCEPTION 'attester_evidensfil: «%» er ingen sha256 — en'
+            ' attest som ikke navngir bytene, binder ingenting', p_sha256
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF p_punkter IS NULL OR jsonb_typeof(p_punkter) <> 'object'
+       OR p_punkter = '{}'::jsonb THEN
+        RAISE EXCEPTION 'attester_evidensfil: ingen punkter — en lesning'
+            ' uten måletall er ikke et referat'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    FOR v_punkt, v_verdi IN
+        SELECT j.k, j.v #>> '{}' FROM jsonb_each(p_punkter) AS j(k, v)
+         ORDER BY j.k LOOP
+        IF v_verdi IS NULL THEN
+            RAISE EXCEPTION 'attester_evidensfil: punkt % mangler måletall',
+                v_punkt USING ERRCODE = 'invalid_parameter_value';
+        END IF;
+        -- FØRST: «én fil har ett innhold», på tvers av kravrevisjoner.
+        -- Kontrollen er 049s, minus krav_id-leddet som nå er en del av
+        -- nøkkelen: to referater om de SAMME bytene og det SAMME punktet
+        -- skal si det samme, uansett hvilken grense som spurte. Sprik i
+        -- sti eller måletall er fortsatt en programfeil.
+        SELECT * INTO v_annet FROM public.evidensfil_attest e
+         WHERE e.sha256 = v_sha AND e.punkt = v_punkt
+           AND (e.sti IS DISTINCT FROM p_sti
+                OR e.maalt_verdi IS DISTINCT FROM v_verdi)
+         LIMIT 1;
+        IF FOUND THEN
+            RAISE EXCEPTION 'attester_evidensfil: sha256:% er alt'
+                ' attestert for punkt % med et annet innhold («%» fra'
+                ' «%», krav %) — én fil har ett innhold, og et referat'
+                ' som spriker fra det lagrede er en programfeil',
+                v_sha, v_punkt, v_annet.maalt_verdi, v_annet.sti,
+                v_annet.krav_id
+                USING ERRCODE = 'invalid_parameter_value';
+        END IF;
+        -- SÅ: replay for NØYAKTIG dette kravet er en no-op (SP-2), og
+        -- en ny kravrevisjon får sin egen rad om de samme bytene.
+        -- Innholdet er alt bevist likt av kontrollen over, så det som
+        -- gjenstår er om DENNE revisjonens rad finnes.
+        IF NOT EXISTS (SELECT 1 FROM public.evidensfil_attest e
+                        WHERE e.sha256 = v_sha AND e.punkt = v_punkt
+                          AND e.krav_id = p_krav_id) THEN
+            INSERT INTO public.evidensfil_attest (sha256, punkt, krav_id,
+                sti, maalt_verdi, aktor, attestert_av)
+            VALUES (v_sha, v_punkt, p_krav_id, p_sti, v_verdi, p_aktor,
+                    session_user);
+        END IF;
+    END LOOP;
+END $$;
+
+RESET ROLE;

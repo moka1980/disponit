@@ -50,6 +50,12 @@ M050 = ROT / "platform/core/db/migrations/050_akseptgrense_v2.sql"
 # 050: grensen ble synlig reversjonert — akseptene skrives mot v2;
 # v1-radene består som historie (registeret er append-only med krav-lås).
 KRAV = "m56-akseptflipp-v2"
+#: AKSEPTGRENSEN slik 049 registrerte den — og navnet er nettopp grunnen
+#: til at 050 gir revisjonen en egen akse: v1 kalte akseptens punktsett
+#: det samme som artefaktenes krav_id, som om de var samme påstand.
+#: Radene består som historie, og fire evidensbårne punkter er gjenbrukt
+#: uendret i v2 (Codex P2, #121).
+V1_KRAV = "wcag-kontroll-v1"
 #: Artefaktenes/manifestets krav-akse — uendret av grenserevisjonen:
 #: bevisene er de samme bytene; det er AKSEPTENS punktsett som er v2.
 ARTEFAKT_KRAV = "wcag-kontroll-v1"
@@ -1152,6 +1158,67 @@ def test_evidensattesten_er_ett_referat_per_fil(migrator):
     assert migrator.execute(
         "SELECT count(*) FROM evidensfil_attest WHERE sha256=%s",
         (sha,)).fetchone()[0] == n
+
+
+@pg
+def test_en_fillesning_baerer_flere_kravrevisjoner(migrator):
+    """Codex' P2 (#121): grensen kan reversjoneres, filen kan ikke leses
+    om igjen.
+
+    049 nøklet attesten på `(sha256, punkt)` — «attesten hører til
+    BYTENE» — men avviste samtidig et referat som spriker på `krav_id`.
+    Fire av v2s evidensbårne punkter er GJENBRUKT fra v1, så de samme
+    bytene, den samme stien og de samme måletallene ville blitt avvist
+    med «alt attestert med et annet innhold» bare fordi grensen hadde
+    fått et nytt navn. Aksepten 050 finnes for å muliggjøre, ville dødd
+    på sin egen revisjon.
+
+    Kravet er nå en del av identiteten — som i oppslaget
+    `aksepter_moduldeployment` alt gjør og i FK-en mot
+    `akseptkrav_punkt` — mens «én fil har ett innhold» står igjen som en
+    EGEN kontroll PÅ TVERS av revisjoner."""
+    migrator.execute("RESET ROLE")
+    sha = secrets.token_hex(32)
+    delte = sorted(migrator.execute(
+        "SELECT p.punkt, p.maalt_krav FROM akseptkrav_punkt p"
+        "  WHERE p.krav_id=%s AND p.kilde_type='evidensfil'"
+        "    AND EXISTS (SELECT 1 FROM akseptkrav_punkt v"
+        "                 WHERE v.krav_id=%s AND v.punkt=p.punkt"
+        "                   AND v.kilde_type='evidensfil')",
+        (KRAV, V1_KRAV)).fetchall())
+    assert len(delte) >= 4, f"v2 gjenbruker ikke v1-punkter: {delte}"
+    v1_maalt = dict(delte)
+
+    # v1 leser filen først …
+    _evidens_attest(migrator, sha, krav=V1_KRAV, maalt=v1_maalt)
+    # … og v2 skal kunne hvile på NØYAKTIG den samme lesningen.
+    _evidens_attest(migrator, sha, krav=KRAV, maalt=v1_maalt)
+    migrator.commit()
+    migrator.execute("RESET ROLE")
+    krav_pr_punkt = dict(migrator.execute(
+        "SELECT punkt, array_agg(krav_id ORDER BY krav_id)"
+        "  FROM evidensfil_attest WHERE sha256=%s GROUP BY punkt",
+        (sha,)).fetchall())
+    for punkt, _ in delte:
+        assert krav_pr_punkt[punkt] == sorted([V1_KRAV, KRAV]), punkt
+
+    # …og motsigelsen står: samme bytes, samme punkt, ANNET måletall er
+    # fortsatt to referater om én fil — også under et annet krav.
+    punkt = delte[0][0]
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _evidens_attest(migrator, sha, krav=KRAV,
+                        maalt=dict(v1_maalt, **{punkt: "17"}))
+    migrator.rollback()
+    assert "annet innhold" in str(ei.value)
+    # Det samme gjelder stien: bytene lå ett sted.
+    with pytest.raises(psycopg.errors.InvalidParameterValue):
+        _evidens_attest(migrator, sha, krav=KRAV, sti="en/annen/sti.jsonl",
+                        maalt=v1_maalt)
+    migrator.rollback()
+    migrator.execute("RESET ROLE")
+    assert migrator.execute(
+        "SELECT count(*) FROM evidensfil_attest WHERE sha256=%s",
+        (sha,)).fetchone()[0] == 2 * len(delte)
 
 
 @pg
