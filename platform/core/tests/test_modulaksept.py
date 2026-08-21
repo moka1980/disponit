@@ -1103,12 +1103,14 @@ def test_evidenshashen_bindes_til_lagret_evidens(migrator):
     assert migrator.execute(
         "SELECT evidens_jsonl_sha256 FROM modulaksept WHERE modul_id=%s",
         (k["mid"],)).fetchone()[0] == gronn
-    # …og attesten bærer den autentiserte identiteten, ikke etiketten.
+    # …og attesten bærer den autentiserte identiteten, ikke etiketten —
+    # og den er attestveiens EGEN, ikke akseptørens (Codex P1, runde 22).
     aktor, av = migrator.execute(
         "SELECT aktor, attestert_av FROM evidensfil_attest"
         "  WHERE sha256=%s LIMIT 1", (gronn,)).fetchone()
     assert aktor == "test"
-    assert av == migrator.execute(
+    assert av == "disponit_ci_verifikator"
+    assert av != migrator.execute(
         "SELECT session_user").fetchone()[0]
 
 
