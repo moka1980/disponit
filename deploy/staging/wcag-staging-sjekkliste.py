@@ -1157,8 +1157,8 @@ def _kjoringsattest(m, oid: int) -> dict:
     rad = m.execute(
         "SELECT kvittering_ok, claim_release_ok, artefakt_ok,"
         " revisjonsrad_ok, modul_ok, loggpost"
-        " FROM maal_kjoringsattest(%s,%s,%s,%s,%s)",
-        (TENANT, oid, RELEASE, MILJO, MODUL)).fetchone()
+        " FROM maal_kjoringsattest(%s,%s,%s,%s,%s,%s)",
+        (TENANT, oid, RELEASE, MILJO, MODUL, OPPDRAGSTYPE)).fetchone()
     m.execute("RESET ROLE")
     return {"kvittering_ok": bool(rad and rad[0]),
             "claim_release_ok": bool(rad and rad[1]),

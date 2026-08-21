@@ -252,7 +252,8 @@ def _kjede(m, *, promoter_paa_drillet=False, staged_paa_kandidat=False,
     def oppdrag(*, status="utfort", kvittering=True, signatur=True,
                 eier=None, kapabilitet=True, claim_release=None,
                 claim_miljo="staging", claim_ts=None,
-                opprettet=T_INFLIGHT_BESTILT, status_ts=T_INFLIGHT_SLUTT):
+                opprettet=T_INFLIGHT_BESTILT, status_ts=T_INFLIGHT_SLUTT,
+                typen=None):
         sig = secrets.token_hex(16)
         # Samme form som API-veien lagrer: konvolutten står i `kvittering`,
         # signaturverdien ALENE i `kvittering_signatur`, resultathashen i
@@ -276,7 +277,7 @@ def _kjede(m, *, promoter_paa_drillet=False, staged_paa_kandidat=False,
             "%s,%s,%s,%s,"
             "%s,'k1',%s, now()+interval '1 hour', now()+interval '2 hours',"
             "'KOBLET',%s,%s::jsonb,%s,%s,%s,%s) RETURNING id",
-            (ten, otype, otype, eier or mid, status,
+            (ten, typen or otype, typen or otype, eier or mid, status,
              b"\x00" * 24, b"\x00" * 12, blid,
              konvolutt if kvittering else None,
              kolonne if kvittering else None,
@@ -495,6 +496,24 @@ def _punkter(m, krav=KRAV, *, evidens_sha=None, ci_run="run-1",
             for p, kt, g, mk in rader}
 
 
+def _kontrollkjoringer(k, m=None):
+    """Kjedens ti kontrollkjøringer — bygget én gang, gjenbrukt (053:
+    `modulaksept_min_kjoringer()` krever ti, og replay-materialiteten
+    krever at samme nøkkel ser samme liste). Inflight-oppdraget er den
+    første; de ni andre er egne utførte kjøringer på den drillede
+    releasen med hver sin kvittering, artefakt og loggpost."""
+    if "kontrollkjoringer" not in k:
+        ekstra = []
+        for _ in range(9):
+            o = k["oppdrag"](claim_release="r-drillet")
+            k["artefakt"]("r-drillet", "promotert", o)
+            ekstra.append(o)
+        k["kontrollkjoringer"] = [k["opp"]["inflight"]] + ekstra
+        if m is not None:
+            m.commit()
+    return k["kontrollkjoringer"]
+
+
 def _evidens_sha_for(kjede_eller_mid):
     """Kjedens egen evidens-sha. Identitetsreferatet (053) er nøklet på
     (fil, krav, drill) og navngir kjedens EGNE oppdrag — to kjeder som
@@ -516,9 +535,9 @@ def _aksepter(m, k, did, *, release="r-kandidat", artefakt=None,
     m.execute("RESET ROLE")     # forrige _aksepter kan ha etterlatt admin
     if kjoringer is None:
         # 053: aksepten navngir kontrollkjøringene og basen måler dem
-        # selv. Kjedens inflight-oppdrag ER en fullført kjøring på den
-        # drillede releasen — kontrolløpets form i miniatyr.
-        kjoringer = [k["opp"]["inflight"]]
+        # selv — og kravet er ti (modulaksept_min_kjoringer). Kjeden
+        # bygger sine ti én gang og gjenbruker dem.
+        kjoringer = _kontrollkjoringer(k, m)
     if punkter is None:
         # leses som migrator — admin har ikke SELECT
         punkter = _punkter(m, evidens_sha=evidens_sha, ci_run=ci_run,
@@ -5257,14 +5276,15 @@ def test_maal_kjoringsattest_maaler_kontrolloepet(migrator):
     k = _kjede(migrator)
     oid = k["opp"]["inflight"]
 
-    def attest(oppdrag, release, miljo="staging", modul=None):
+    def attest(oppdrag, release, miljo="staging", modul=None,
+               otype=None):
         migrator.execute("SET ROLE disponit_modules_admin")
         rad = migrator.execute(
             "SELECT kvittering_ok, claim_release_ok, artefakt_ok,"
             " revisjonsrad_ok, modul_ok, loggpost"
-            " FROM maal_kjoringsattest(%s,%s,%s,%s,%s)",
+            " FROM maal_kjoringsattest(%s,%s,%s,%s,%s,%s)",
             (k["ten"], oppdrag, release, miljo,
-             modul or k["mid"])).fetchone()
+             modul or k["mid"], otype or k["otype"])).fetchone()
         migrator.execute("RESET ROLE")
         return rad
 
@@ -5279,6 +5299,9 @@ def test_maal_kjoringsattest_maaler_kontrolloepet(migrator):
     # Feil modul: et oppdrag fra en annen modul med samme release-
     # etikett er ikke denne modulens kjøring (053).
     assert attest(oid, "r-drillet", modul="m_en_annen")[4] is False
+    # Feil TYPE: en modul kan eie flere registrerte typer, og en annen
+    # type er ikke kontrolløpet (Codex P1, #125 r3).
+    assert attest(oid, "r-drillet", otype="annen.type")[4] is False
     # EKVIVALENSFELLEN (Codex P1, #125): `feilet` UTEN promotert
     # artefakt ga `false = false` → grønt i den gamle formen.
     # Konjunksjonen (053) krever utført OG promotert.
@@ -5588,7 +5611,9 @@ def test_akseptporten_remaaler_kjoringene_i_basen(migrator):
     m = _aksept_skript()
     k = _kjede(migrator)
     gammel_tenant, gammel_modul = m.TENANT, m.MODUL
+    gammel_type = m.OPPDRAGSTYPE
     m.TENANT, m.MODUL = k["ten"], k["mid"]
+    m.OPPDRAGSTYPE = k["otype"]
     try:
         def runde(kjoringer, release="r-drillet", krav=None):
             return {"maalt": {"kjoringer_krav": krav or len(kjoringer)},
@@ -5632,7 +5657,21 @@ def test_akseptporten_remaaler_kjoringene_i_basen(migrator):
         assert "navngir ikke 10" in str(ei.value)
     finally:
         m.TENANT, m.MODUL = gammel_tenant, gammel_modul
+        m.OPPDRAGSTYPE = gammel_type
         migrator.rollback()
+
+
+@pg
+def test_min_kjoringer_er_filgrensens_ti(migrator):
+    """Terskelen i porten (`modulaksept_min_kjoringer`, 053) og
+    filgrensens 10/10 er SAMME tall — binder de to så de ikke kan gli
+    fra hverandre i stillhet (moduldrill_rene_utfall-formen)."""
+    from manifestskjema import KRAVGRENSER
+    migrator.execute("RESET ROLE")
+    n = migrator.execute(
+        "SELECT modulaksept_min_kjoringer()").fetchone()[0]
+    migrator.rollback()
+    assert n == KRAVGRENSER["wcag-kontroll-v2"]["min_kjoringer"] == 10
 
 
 @pg
@@ -5651,21 +5690,48 @@ def test_akseptporten_maaler_kjoringene_selv(migrator):
     # (b) tuklet liste: kallets kjøringer må være ordrett referatets.
     k = _kjede(migrator)
     did = _drill(migrator, k)
+    ti = _kontrollkjoringer(k, migrator)
     annet = k["oppdrag"](claim_release="r-drillet")
     k["artefakt"]("r-drillet", "promotert", annet)
     _evidens_attest(migrator, _evidens_sha_for(k),
-                    kjoringer=str(k["opp"]["inflight"]))
+                    kjoringer=",".join(str(o) for o in ti))
     with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
-        _aksepter(migrator, k, did, kjoringer=[annet], id_attest=False,
-                  ev_attest=False)
+        _aksepter(migrator, k, did, kjoringer=ti[:-1] + [annet],
+                  id_attest=False, ev_attest=False)
     assert "ikke dem referatet navngir" in str(ei.value)
     migrator.rollback()
     # (c) en navngitt kjøring basen feller NÅ (claimet av rullbakken,
     # målt mot den drillede releasen): aksepten faller på basens svar.
     k = _kjede(migrator)
     did = _drill(migrator, k)
+    ti = _kontrollkjoringer(k, migrator)
     with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
-        _aksepter(migrator, k, did, kjoringer=[k["opp"]["rullback"]])
+        _aksepter(migrator, k, did,
+                  kjoringer=ti[:-1] + [k["opp"]["rullback"]])
+    assert "attesteres ikke av basen" in str(ei.value)
+    migrator.rollback()
+    # (c2) NI er rødt (Codex P2, #125 r3): terskelen bor i porten selv.
+    k = _kjede(migrator)
+    did = _drill(migrator, k)
+    ti = _kontrollkjoringer(k, migrator)
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, k, did, kjoringer=ti[:9])
+    assert "9/10 er rødt" in str(ei.value)
+    migrator.rollback()
+    # (c3) …og typen er DRILLENS (Codex P1, #125 r3): et utført, signert
+    # oppdrag av en ANNEN registrert type er ikke kontrolløpet.
+    k = _kjede(migrator)
+    did = _drill(migrator, k)
+    ti = _kontrollkjoringer(k, migrator)
+    migrator.execute(
+        "INSERT INTO oppdragstype_register (oppdragstype, eiermodul,"
+        " kontraktversjon, kontrakt_hash) VALUES (%s,%s,1,'kh')",
+        (f"annen.type.{k['mid']}", k["mid"]))
+    fremmed = k["oppdrag"](claim_release="r-drillet",
+                           typen=f"annen.type.{k['mid']}")
+    k["artefakt"]("r-drillet", "promotert", fremmed)
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, k, did, kjoringer=ti[:9] + [fremmed])
     assert "attesteres ikke av basen" in str(ei.value)
     migrator.rollback()
     # (d) tom liste: et aggregat alene bærer ingen aksept. (Attestveien
@@ -5690,14 +5756,15 @@ def test_akseptporten_maaler_kjoringene_selv(migrator):
         " WHERE modul_id=%s AND hendelse='modulaksept'",
         (k["mid"],)).fetchone()[0]
     migrator.rollback()
-    assert detalj == [k["opp"]["inflight"]]
+    assert detalj == _kontrollkjoringer(k, migrator)
     # (e) replay: KJØRINGSLISTEN er materiell (Codex P2, #125 r2) — samme
     # nøkkel med andre kjøringer er to motstridende referater av én
     # aksept, selv når alle andre felt er identiske.
     annet = k["oppdrag"](claim_release="r-drillet")
     k["artefakt"]("r-drillet", "promotert", annet)
     with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
-        _aksepter(migrator, k, did, nokkel=ak, kjoringer=[annet],
+        _aksepter(migrator, k, did, nokkel=ak,
+                  kjoringer=_kontrollkjoringer(k, migrator)[:-1] + [annet],
                   attest=False, ev_attest=False, id_attest=False)
     assert "andre kontrollkjøringer" in str(ei.value)
     migrator.rollback()

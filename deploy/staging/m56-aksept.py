@@ -71,6 +71,12 @@ KRAV = "m56-akseptflipp-v3"
 ARTEFAKT_KRAV = "wcag-kontroll-v2"
 DRILLKRAV = "rollback-m56-v1"
 TENANT = "t-wcagfasit"
+#: Kontrolløpets oppdragstype — samme som sjekklisten bestiller
+#: (Codex P1, #125 r3: en modul kan eie flere registrerte typer; ti
+#: vellykkede jobber av en annen type er ikke kontrolløpet). Basen
+#: deriverer sin egen fasit fra drillens inflight-oppdrag; dette er
+#: fail-fast-speilets kopi.
+OPPDRAGSTYPE = "kontroll.wcag.nettsted"
 MANIFEST_REL = "platform/modules/m56_wcag_audit/manifest.yaml"
 MANIFEST_STI = REPO / MANIFEST_REL
 #: Workflowen invariantpunktene faktisk hviler på. Repoet har flere
@@ -969,8 +975,9 @@ def verifiser_kjoringsattester(conn, runde: dict) -> None:
             rad = conn.execute(
                 "SELECT kvittering_ok, claim_release_ok, artefakt_ok,"
                 " revisjonsrad_ok, modul_ok, loggpost"
-                " FROM maal_kjoringsattest(%s,%s,%s,%s,%s)",
-                (TENANT, o, rel, MILJO, MODUL)).fetchone()
+                " FROM maal_kjoringsattest(%s,%s,%s,%s,%s,%s)",
+                (TENANT, o, rel, MILJO, MODUL,
+                 OPPDRAGSTYPE)).fetchone()
             if not (rad and rad[0] and rad[1] and rad[2] and rad[3]
                     and rad[4] and rad[5] is not None):
                 deler = dict(zip(("kvittering", "claim_release",

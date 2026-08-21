@@ -75,6 +75,13 @@ CREATE TRIGGER evidensfil_kjoringer_ingen_truncate BEFORE TRUNCATE
 GRANT SELECT (oppdragstype) ON oppdrag TO disponit_modul_eier;
 GRANT SELECT ON oppdragstype_register TO disponit_modul_eier;
 
+-- Terskelen for kontrollkjøringene — samme offentlighetsgrep som
+-- `moduldrill_min_ventetid_s` (049): å lese kravet er ingen fullmakt,
+-- og sonden, skriptet og prøvene skal se NØYAKTIG det tallet porten
+-- håndhever. Testene binder den til filgrensens «10/10».
+CREATE OR REPLACE FUNCTION modulaksept_min_kjoringer()
+RETURNS INT LANGUAGE sql IMMUTABLE AS $$ SELECT 10 $$;
+
 SET LOCAL ROLE disponit_modul_eier;
 
 DROP FUNCTION maal_kjoringsattest(TEXT, BIGINT, TEXT, TEXT);
@@ -99,7 +106,8 @@ DROP FUNCTION maal_kjoringsattest(TEXT, BIGINT, TEXT, TEXT);
 --                         release-etikett er ikke denne modulens
 --                         kjøring.
 CREATE FUNCTION maal_kjoringsattest(p_tenant TEXT,
-    p_oppdrag BIGINT, p_release TEXT, p_miljo TEXT, p_modul TEXT)
+    p_oppdrag BIGINT, p_release TEXT, p_miljo TEXT, p_modul TEXT,
+    p_oppdragstype TEXT)
 RETURNS TABLE (kvittering_ok BOOLEAN, claim_release_ok BOOLEAN,
                artefakt_ok BOOLEAN, revisjonsrad_ok BOOLEAN,
                modul_ok BOOLEAN, loggpost BIGINT)
@@ -139,7 +147,13 @@ BEGIN
             SELECT 1 FROM public.revisjonslogg r
              WHERE r.tenant = p_tenant AND r.id = v_loggpost
                AND r.beslutning = 'TILLAT'),
-        v_eiermodul IS NOT DISTINCT FROM p_modul AND EXISTS (
+        v_eiermodul IS NOT DISTINCT FROM p_modul
+            -- …og KONTROLLTYPEN, ikke bare «en av modulens typer»
+            -- (Codex P1, #125 r3): en modul kan eie flere registrerte
+            -- typer, og ti vellykkede jobber av en annen type er ikke
+            -- kontrolløpet. Typen kreves eksplisitt OG registrert.
+            AND v_type IS NOT DISTINCT FROM p_oppdragstype
+            AND EXISTS (
             SELECT 1 FROM public.oppdragstype_register t
              WHERE t.oppdragstype = v_type
                AND t.eiermodul = p_modul),
@@ -325,7 +339,8 @@ DECLARE v_livslop TEXT; v_mangler TEXT; v_punkt RECORD; v_verdi JSONB;
         v_holder BOOLEAN; v_ci RECORD; v_ci_attest BOOLEAN;
         v_evidens RECORD; v_ci_av TEXT; v_drill_artefakt TEXT;
         v_drillet_release TEXT; v_kjoring BIGINT; v_att RECORD;
-        v_loggposter BIGINT[] := '{}';
+        v_loggposter BIGINT[] := '{}'; v_inflight BIGINT;
+        v_kontrolltype TEXT;
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended('modul:' || p_modul_id, 0));
     -- FORMEN FØRST (Codex P1, #117 runde 19). `p_evidens_sha` gikk rett
@@ -456,9 +471,9 @@ BEGIN
     -- Kun DEN dimensjonen måles her; release og tilstand bæres fortsatt
     -- av FK-en, som gjelder enhver skrivevei og ikke bare denne.
     SELECT d.tenant, d.kandidat_oppdrag, d.artefakt_sha256,
-           d.drillet_release
+           d.drillet_release, d.inflight_oppdrag
       INTO v_drill_tenant, v_kandidat_oppdrag, v_drill_artefakt,
-           v_drillet_release
+           v_drillet_release, v_inflight
       FROM public.moduldrill d
      WHERE d.modul_id = p_modul_id AND d.drill_id = p_drill_id;
     IF NOT FOUND THEN
@@ -810,6 +825,17 @@ BEGIN
             ' måle, ikke på et aggregat alene'
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
+    -- …og KRAVETS ANTALL, i porten selv (Codex P2, #125 r3): «9/10 er
+    -- rødt» håndheves ellers bare av fil- og skriptlaget, og et
+    -- direktekall med ett gyldig oppdrag kunne skrive raden. Terskelen
+    -- bor i sin egen definer (moduldrill_min_ventetid_s-formen), og
+    -- testene binder den til filgrensens 10/10.
+    IF cardinality(p_kjoringer) < public.modulaksept_min_kjoringer() THEN
+        RAISE EXCEPTION 'aksepter_moduldeployment: % kontrollkjøringer'
+            ' navngitt, kravet er minst % — 9/10 er rødt, ikke «nesten»',
+            cardinality(p_kjoringer), public.modulaksept_min_kjoringer()
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
     IF (SELECT count(DISTINCT u) FROM unnest(p_kjoringer) u)
            <> cardinality(p_kjoringer) THEN
         RAISE EXCEPTION 'aksepter_moduldeployment: kontrollkjøringene'
@@ -844,10 +870,15 @@ BEGIN
             v_evidens.kjoringer
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
+    -- Kontrolltypen er DRILLENS EGEN (Codex P1, #125 r3): typen på
+    -- oppdraget drillen målte inflight — claim-bevist, base-eid — er
+    -- typen kontrolløpet består av. Aldri en parameter fra kalleren.
+    SELECT o.oppdragstype INTO v_kontrolltype FROM public.oppdrag o
+     WHERE o.tenant = p_e2e_tenant AND o.id = v_inflight;
     FOREACH v_kjoring IN ARRAY p_kjoringer LOOP
         SELECT * INTO v_att FROM public.maal_kjoringsattest(
             p_e2e_tenant, v_kjoring, v_drillet_release, p_miljo,
-            p_modul_id);
+            p_modul_id, v_kontrolltype);
         IF NOT (v_att.kvittering_ok AND v_att.claim_release_ok
                 AND v_att.artefakt_ok AND v_att.revisjonsrad_ok
                 AND v_att.modul_ok AND v_att.loggpost IS NOT NULL) THEN
@@ -893,9 +924,9 @@ RESET ROLE;
 -- sjekklisten og aksepten under `disponit_modules_admin`.
 SET LOCAL ROLE disponit_modul_eier;
 REVOKE ALL ON FUNCTION maal_kjoringsattest(TEXT, BIGINT, TEXT, TEXT,
-    TEXT) FROM PUBLIC;
+    TEXT, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION maal_kjoringsattest(TEXT, BIGINT, TEXT, TEXT,
-    TEXT) TO disponit_modules_admin;
+    TEXT, TEXT) TO disponit_modules_admin;
 REVOKE ALL ON FUNCTION aksepter_moduldeployment(TEXT, TEXT, TEXT,
     BIGINT, TEXT, TEXT, UUID, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT,
     TEXT, BIGINT[]) FROM PUBLIC;

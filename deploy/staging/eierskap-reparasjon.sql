@@ -238,7 +238,7 @@ INSERT INTO _design VALUES
     -- droppe på eierens vegne). Designrader uten objekt hoppes stille
     -- over etter 053.
     ('FUNCTION', 'maal_kjoringsattest(text,bigint,text,text)',        'disponit_modul_eier'),
-    ('FUNCTION', 'maal_kjoringsattest(text,bigint,text,text,text)',   'disponit_modul_eier'),
+    ('FUNCTION', 'maal_kjoringsattest(text,bigint,text,text,text,text)', 'disponit_modul_eier'),
     ('FUNCTION', 'bytt_release(text,text,text,integer,text,text)',    'disponit_modul_eier'),
     ('FUNCTION', 'pensjoner_release(text,text,text,text)',            'disponit_modul_eier'),
     ('FUNCTION', 'noddeaktiver_modul(text,text,text)',               'disponit_modul_eier'),
