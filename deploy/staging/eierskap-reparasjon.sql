@@ -240,6 +240,13 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'maal_kjoringsattest(text,bigint,text,text)',        'disponit_modul_eier'),
     ('FUNCTION', 'maal_kjoringsattest(text,bigint,text,text,text,text)', 'disponit_modul_eier'),
     ('FUNCTION', 'aksepter_plattformmodul(text,text,text,text,text,text,jsonb,text,text)', 'disponit_modul_eier'),
+    -- 054: kompletthetsvakten på plattformaksepten. Den er SECURITY
+    -- DEFINER og MÅ eies av modul_eier — den fyrer ved COMMIT, utenfor
+    -- akseptfunksjonens definer-kontekst, og eieren er den eneste rollen
+    -- som ser både punktbordet og kravpunktregisteret. Flatet ut til
+    -- migrator ville den lest med for brede rettigheter, og derfor står
+    -- den i designet, ikke i strøgodset.
+    ('FUNCTION', 'plattformaksept_er_komplett()',                     'disponit_modul_eier'),
     ('FUNCTION', 'bytt_release(text,text,text,integer,text,text)',    'disponit_modul_eier'),
     ('FUNCTION', 'pensjoner_release(text,text,text,text)',            'disponit_modul_eier'),
     ('FUNCTION', 'noddeaktiver_modul(text,text,text)',               'disponit_modul_eier'),
