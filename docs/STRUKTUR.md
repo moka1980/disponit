@@ -14,7 +14,7 @@ disponit/                           ← repo-rot (main-branch), github.com/moka1
 │   ├── pr/                         ← én fil per PR: PR-NNN.md = PR-beskrivelsen
 │   ├── beslutninger/               ← ADR-er: hvorfor, ikke bare hva. ADR-NNN-*.md
 │   └── spesifikasjon/
-│       └── disponit-prototype-v8.html      ← sannhetskilden (v8)
+│       └── disponit-prototype-v9.html      ← sannhetskilden (v9)
 ├── platform/
 │   ├── core/                       ← plattformkjernen. Importerer ALDRI fra modules/
 │   │   ├── policy_validator/       ← M-1-kjernen: engine.py, schema.py, audit.py,

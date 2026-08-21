@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Disponit – Produktspesifikasjon v8.0</title>
+<title>Disponit – Produktspesifikasjon v9.0</title>
 <style>
 :root{
   --paper:#F6F8F7; --card:#FFFFFF; --ink:#14232B; --muted:#5A6E77;
@@ -132,17 +132,17 @@ table.chg caption{text-align:left}
 <a class="skip" href="#hovedinnhold">Hopp til hovedinnhold</a>
 <header class="hero">
   <div class="wrap">
-    <p class="eyebrow">Produkt- og kravspesifikasjon · versjon 8.0</p>
+    <p class="eyebrow">Produkt- og kravspesifikasjon · versjon 9.0</p>
     <h1>Disponit</h1>
     <p class="lead">En modulær operasjonsplattform som utfører bedriftens rutineprosesser automatisk innenfor dokumenterte fullmakter — med sporbarhet, sikker rollback og maskinell avvikshåndtering. Vi bygger få, lette moduler helt ferdig først, og ekspanderer når kvalitet og verdi er bevist i produksjon.</p>
     <div class="stats" role="list">
-      <div role="listitem"><b>56</b><span>konsoliderte moduler</span></div>
-      <div role="listitem" class="n"><b>11</b><span>nye i v8</span></div>
+      <div role="listitem"><b>57</b><span>konsoliderte moduler</span></div>
+      <div role="listitem" class="n"><b>1</b><span>ny i v9</span></div>
       <div role="listitem"><b>14</b><span>MVP-moduler i fase 1</span></div>
       <div role="listitem"><b>11</b><span>forretningsområder</span></div>
       <div role="listitem"><b>100&nbsp;%</b><span>automatisk normalflyt</span></div>
     </div>
-    <span class="stamp">v8.0 · 18. august 2026 · konfidensielt · spesifikasjon før implementering</span>
+    <span class="stamp">v9.0 · 20. august 2026 · konfidensielt · spesifikasjon før implementering</span>
   </div>
 </header>
 
@@ -237,11 +237,43 @@ table.chg caption{text-align:left}
   </div>
 </section>
 
+<section aria-labelledby="h-v9">
+  <div class="wrap">
+    <p class="eyebrow">Endringslogg</p>
+    <h2 id="h-v9">Hva er nytt fra v8 til v9</h2>
+    <p class="intro">v9 tar inn én modul fra eiers ATS-kravspesifikasjon, gjennom samme produktport som v8-runden: kandidaten ble omskrevet fra sidesystem til plattformmodul før opptak, og porten skilte katalogopptak fra byggeprioritet. Antallet moduler går fra 56 til 57; fase 3 går fra 19 til 20. Full spesifikasjon skrives først når modulen prioriteres som byggearbeid.</p>
+
+    <h3 class="subh" id="h-v9-ny">Én ny modul</h3>
+    <table class="chg">
+      <caption class="vh">Ny modul i v9 med fase og begrunnelse</caption>
+      <thead><tr><th scope="col">Modul</th><th scope="col">Navn</th><th scope="col">Fase</th><th scope="col">Hvorfor egen modul</th></tr></thead>
+      <tbody>
+        <tr><td>M-57</td><td><b>Ny:</b> Rekrutteringsagent (ATS)</td><td>Fase 3</td><td>Klarest betalingsvilje av kandidatene, og rekruttering er en rutineprosess med kjent normalflyt — men høyrisiko etter EU AI Act (vedlegg III), så mennesket beslutter hvert utfall: utfiltrering innstiller, aldri beslutter, og all utsendelse krever signatur per liste. Bygges etter M-16 (KPI-dashboards), som har produksjonsdata å vise og langt mindre ny tillitsflate — katalogopptak og byggeprioritet er skilt.</td></tr>
+      </tbody>
+    </table>
+
+    <h3 class="subh" id="h-v9-begreper">Ingen nye katalogbegreper</h3>
+    <p class="intro">Kandidaten ble lagt fram med to oppfunne verdier — en sikkerhetsklasse for dokumentbehandling og et revisjonsnivå for rådgivende analyse pluss signert utsendelse. Ingen av dem er tatt inn. <b>kl</b> og <b>rev</b> er nettopp de feltene modulregisteret binder, og en modul med verdier utenfor CHECK-vilkårene i migrasjon 014 og 036 kan ikke registreres den dagen den skal bygges: den som implementerer måtte enten se bort fra sannhetskilden eller endre den. M-57 står derfor med <b>krever_outbox</b> og <b>irreversibel</b>, samme par som M-53. Klassen gjelder utsendelsen, ikke rangeringen: evalueringen er rådgivende og skriver bare artefakter, men modulen finnes ikke uten utsendelsen, og en sendt invitasjon eller et sendt avslag kan ikke kalles tilbake. At søknadsfilene leses i isolert container og ikke fra eksterne domener — så modulen ikke er <b>ekstern_lesing</b> i M-56-forstand — er en egenskap ved flyten og står beskrevet der, ikke som en klasse. Katalogen beskriver; registeret binder. En beskrivelse som låner registerets felt, slutter å være beskrivelse.</p>
+
+    <h3 class="subh" id="h-v9-beslutninger">Portens produktbeslutninger</h3>
+    <table class="chg">
+      <caption class="vh">Produktbeslutninger fra v9-runden</caption>
+      <thead><tr><th scope="col">Beslutning</th><th scope="col">Innhold</th></tr></thead>
+      <tbody>
+        <tr><td>Byggerekkefølge</td><td>M-16 før M-57. M-57 får nummeret nå; M-16 bygges først. M-57 står som neste store arbeidsmodulkandidat etterpå.</td></tr>
+        <tr><td>Avslagsmaler</td><td>Plattformkuraterte rammer med begrenset kundetilpasning: plattformen eier struktur, tillatte flettefelt, begrunnelsestyper og forbudet mot modellgenerert fritekst i masseavslag; kunden eier tone, firmatekst, kontaktinfo og forhåndsgodkjente tekstblokker. Signaturen står uansett.</td></tr>
+        <tr><td>Retensjon</td><td>Kundevalgt innenfor plattformdefinert spenn med streng standard: lukket prosess starter en eksplisitt slettefrist som ikke kan være ubegrenset eller glemmes; lovlige hold er senere eksplisitte tilstander, aldri en generell «ikke slett»-bryter. Spennet tallfestes i spesifikasjonen.</td></tr>
+        <tr><td>Parkert</td><td>Desktop-agent (lokal mappeovervåking), annonse-URL-uttrekk fra tredjepartssider (egen ekstern lesing-vurdering — derfor også ute av input i v1) og automatisk booking-forhandling. Egne beslutninger senere.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
 <section>
   <div class="wrap">
     <p class="eyebrow">Arkitektur</p>
     <h2>Felles plattform — bygges én gang</h2>
-    <p class="intro">Modulene er arbeidsflyter på samme sikre motor, ikke 56 separate applikasjoner. Fire plan, der unntakskø (M-37) og kapasitet/modellruting (M-38) nå er eksplisitte fase&nbsp;1-moduler i kontroll- og agentplanet.</p>
+    <p class="intro">Modulene er arbeidsflyter på samme sikre motor, ikke 57 separate applikasjoner. Fire plan, der unntakskø (M-37) og kapasitet/modellruting (M-38) nå er eksplisitte fase&nbsp;1-moduler i kontroll- og agentplanet.</p>
     <div class="plat">
       <div><b>1 · Tilkoblinger</b><p>OAuth, webhooks, filimport, e-post, kalender, CRM, ERP, bank og telefoni. Selvtest og token-fornyelse via M-11.</p></div>
       <div><b>2 · Dataplan</b><p>Tenant-isolasjon, kryptering, normalisering, søk og datakvalitet (M-3). Objektlagring og retention-policy.</p></div>
@@ -259,7 +291,7 @@ table.chg caption{text-align:left}
     <div class="phases">
       <div class="ph" data-f="1"><span class="cnt">14</span><b>Fase 1 · Fundament</b><p>Plattform, sikkerhet, fil, e-post, dokument, møte, kalender, kunnskap, backup, integrasjoner og identitet.</p></div>
       <div class="ph" data-f="2"><span class="cnt">16</span><b>Fase 2 · Operasjoner</b><p>Økonomi, lønn, HR, kunde, innhold, avtaler, lisenser og rapportering.</p></div>
-      <div class="ph" data-f="3"><span class="cnt">19</span><b>Fase 3 · Autopiloter</b><p>Ende-til-ende-prosesser: fordring, innkjøp, ordre, telefoni, kampanje, svindelvakt, sikkerhet og personvern.</p></div>
+      <div class="ph" data-f="3"><span class="cnt">20</span><b>Fase 3 · Autopiloter</b><p>Ende-til-ende-prosesser: fordring, innkjøp, ordre, telefoni, kampanje, svindelvakt, sikkerhet og personvern.</p></div>
       <div class="ph" data-f="4"><span class="cnt">7</span><b>Fase 4 · Global skala</b><p>Lokalisering og skatt, prediksjon, compliance, kontinuitet, ESG og porteføljeoptimalisering.</p></div>
     </div>
   </div>
@@ -320,9 +352,9 @@ table.chg caption{text-align:left}
 <section>
   <div class="wrap">
     <p class="eyebrow">Omfang</p>
-    <h2>Katalogen fryses på 56</h2>
+    <h2>Katalogen fryses på 57</h2>
     <div class="notice">
-      <b>Kompletthetskriterium:</b> «Alle moduler bedrifter trenger» kan ikke bevises fra et møterom — det bevises empirisk. Katalogen ble frosset på 45 i v7 og heves i v8 til 56 — 55 fra gjennomgangen av idelisten under samme krav, pluss M-56 på lovkrav; nye moduler legges fortsatt kun til ved dokumentert behov fra pilotkunder, etter samme regel som policy-skjemaet: når nye piloter slutter å avdekke nye behov, er katalogen komplett. Vertikale v5-moduler (byggesak, saksbehandling, strømoptimalisering m.fl.) er bevisst utelatt fra den horisontale kjernen og bygges senere som bransjemoduler på samme plattform.
+      <b>Kompletthetskriterium:</b> «Alle moduler bedrifter trenger» kan ikke bevises fra et møterom — det bevises empirisk. Katalogen ble frosset på 45 i v7, hevet i v8 til 56 — 55 fra gjennomgangen av idelisten under samme krav, pluss M-56 på lovkrav — og heves i v9 til 57 med M-57 fra eiers ATS-kravspesifikasjon, gjennom samme produktport; nye moduler legges fortsatt kun til ved dokumentert behov fra pilotkunder, etter samme regel som policy-skjemaet: når nye piloter slutter å avdekke nye behov, er katalogen komplett. Vertikale v5-moduler (byggesak, saksbehandling, strømoptimalisering m.fl.) er bevisst utelatt fra den horisontale kjernen og bygges senere som bransjemoduler på samme plattform.
     </div>
   </div>
 </section>
@@ -357,7 +389,7 @@ table.chg caption{text-align:left}
     <label class="fl" for="fPhase">Fase</label><select id="fPhase">
       <option value="">Alle faser</option><option value="1">Fase 1</option><option value="2">Fase 2</option><option value="3">Fase 3</option><option value="4">Fase 4</option>
     </select>
-    <label class="chk"><input type="checkbox" id="fNew"> Vis kun de elleve nye i v8</label>
+    <label class="chk"><input type="checkbox" id="fNew"> Vis kun den nye i v9</label>
     <span id="count" role="status" aria-live="polite"></span>
   </div>
 </div>
@@ -365,7 +397,7 @@ table.chg caption{text-align:left}
 <section>
   <div class="wrap">
     <p class="eyebrow">Katalog</p>
-    <h2>Modulkatalog — 56 moduler</h2>
+    <h2>Modulkatalog — 57 moduler</h2>
     <p class="intro">Hver modul er spesifisert med normalflyt, input/output, integrasjoner, sikkerhetsgrenser, KPI-er, akseptansekriterier og avhengigheter. En modul regnes som ferdig først når akseptansekriteriene består i produksjon.</p>
     <div id="catalog"></div>
   </div>
@@ -381,7 +413,7 @@ table.chg caption{text-align:left}
       <div><b>Sikker standard</b><p>Minste privilegium, ingen sletting uten retention-policy, idempotente handlinger og automatisk rollback.</p></div>
       <div><b>Ærlig kostnadspåstand</b><p>«Ingen obligatorisk kostnad per LLM-token; lokale modeller er standard.» Integrasjoner (betaling, telefoni, e-post, bank) har egne kostnader.</p></div>
     </div>
-    <p class="fin">Disponit · Prototype v8.0 · 18. august 2026 · Produktspesifikasjon før implementering · Bygger på v5 (100 moduler) og v6 (36 moduler)</p>
+    <p class="fin">Disponit · Prototype v9.0 · 20. august 2026 · Produktspesifikasjon før implementering · Bygger på v5 (100 moduler) og v6 (36 moduler)</p>
   </div>
 </footer>
 
@@ -443,7 +475,8 @@ const M=[
 {"n": 54, "name": "EHF- og Peppol-avviksretter", "area": "Økonomi", "p": 2, "level": "Middels", "v8": "ny", "kl": "krever_outbox", "rev": "kompenserende", "goal": "Finner årsaken når en faktura avvises i det elektroniske fakturanettverket, og klargjør rettingen for signatur.", "flow": ["Fanger opp avvisningsmeldinger fra Peppol-aksesspunktet", "Tolker feilkoden deterministisk mot EHF-standarden", "Slår opp korrekt organisasjonsnummer og mva-status i offentlige registre", "Retter det avviste feltet og validerer XML mot skjema på nytt", "Legger rettet faktura til signatur, sender etter godkjenning og følger til levering"], "input": "Avviste EHF-fakturaer, feilmeldinger, foretaksregister og kundedata.", "output": "Rettet og validert faktura, leveringsbekreftelse og feilstatistikk.", "int": "Peppol-aksesspunkt, regnskapssystem, Brreg, VIES.", "guard": "Retter kun felt som kan verifiseres mot et autoritativt register. Beløp, varelinjer og mva-sats endres aldri. Ingen ny utsending uten menneskelig signatur — resend er den eksterne handlingen klassen krever_outbox finnes for å kontrollere.", "kpi": "Andel avvisninger løst uten manuell utredning; tid fra avvisning til levering; gjentatte avvisninger.", "accept": "Ingen utsending uten signatur; ingen beløpsendring i det hele tatt; hver retting logger felt, gammel verdi, ny verdi og kilde; ingen dobbeltsending.", "dep": "M-1, M-2, M-14, M-37."},
 {"n": 55, "name": "Merkevare- og IP-overvåker", "area": "Juridisk og compliance", "p": 4, "level": "Middels", "v8": "ny", "kl": "ekstern_lesing", "rev": "direkte", "goal": "Oppdager uautorisert bruk av bedriftens navn, logo og innhold.", "flow": ["Overvåker søk, annonser, domenenavn og markedsplasser", "Sammenligner funn mot registrerte varemerker og eget innhold", "Vurderer sannsynlighet for forveksling deterministisk", "Dokumenterer funnet med tidsstempel, skjermbilde og URL", "Legger saken til menneskelig vurdering"], "input": "Varemerkeregister, egen mediebank, søkemotorer og annonseplattformer.", "output": "Dokumentert funnliste med bevisbyrde og prioritering.", "int": "Søk-API-er, annonseplattformer, domeneregistre, varemerkeregister.", "guard": "Sender aldri juridiske krav eller klager. Modulen dokumenterer og rapporterer; enhver reaksjon besluttes av menneske.", "kpi": "Reelle funn; falske funn; tid fra publisering til oppdagelse.", "accept": "Ingen utgående henvendelse til tredjepart; hvert funn har URL, tidsstempel og bevaringskopi.", "dep": "M-1, M-2, M-20, M-37."}
 ,
-{"n":56,"name":"Automatisk WCAG-kontroll","area":"Juridisk og compliance","p":3,"level":"Middels","v8":"ny","kl":"ekstern_lesing","rev":"direkte","goal":"Kjører automatisk WCAG 2.1-kontroll av et nettsted kunden har bevist DNS-kontroll over, og lagrer en rapport som evidens.","flow":["Mottar bestilling gjennom beslutningsveien, eller fra en aktiv plan","Kontrollerer at hostnamet er verifisert for tenanten, og på nytt før hver forespørsel","Kjører axe-core i isolert browser-container der egressen er stengt inne i nettleseren: hver forespørsel og websocket avskjæres, vertsnavn pinnes til den verifiserte adressen, og alt annet blokkeres og telles","Pakker funn til lukket rapportskjema med versjoner og dekningsbegrensninger","Laster opp rapporten og kvitterer signert"],"input":"Hostname og sti kunden har verifisert, kravsett, omfang og maks antall sider.","output":"Rapport med funn per regel, sammendrag, hvilke sider som faktisk ble kontrollert, og hva som ikke ble vurdert.","int":"axe-core, Chromium i container med egressvakt i nettleseren, artefaktlager.","guard":"Kontrollerer aldri et hostname uten bevist DNS-kontroll. Respekterer robots.txt og hastighetsgrense. Rapporten sier aldri at nettstedet oppfyller WCAG — kun hva den automatiske kontrollen fant, og at manuelle kriterier ikke er vurdert.","kpi":"Kontroller fullført innen frist; funn som matcher fasit på testnettsted; andel kjøringer med dekningsbegrensninger.","accept":"Ingen trafikk mot uverifisert domene; rapport uten versjonsdigester avvises; avkorting og blokkerte eksterne ressurser står som tekst i rapporten.","dep":"M-1, M-2, M-37, modulregister, domenekontroll."}
+{"n":56,"name":"Automatisk WCAG-kontroll","area":"Juridisk og compliance","p":3,"level":"Middels","v8":"ny","kl":"ekstern_lesing","rev":"direkte","goal":"Kjører automatisk WCAG 2.1-kontroll av et nettsted kunden har bevist DNS-kontroll over, og lagrer en rapport som evidens.","flow":["Mottar bestilling gjennom beslutningsveien, eller fra en aktiv plan","Kontrollerer at hostnamet er verifisert for tenanten, og på nytt før hver forespørsel","Kjører axe-core i isolert browser-container der egressen er stengt inne i nettleseren: hver forespørsel og websocket avskjæres, vertsnavn pinnes til den verifiserte adressen, og alt annet blokkeres og telles","Pakker funn til lukket rapportskjema med versjoner og dekningsbegrensninger","Laster opp rapporten og kvitterer signert"],"input":"Hostname og sti kunden har verifisert, kravsett, omfang og maks antall sider.","output":"Rapport med funn per regel, sammendrag, hvilke sider som faktisk ble kontrollert, og hva som ikke ble vurdert.","int":"axe-core, Chromium i container med egressvakt i nettleseren, artefaktlager.","guard":"Kontrollerer aldri et hostname uten bevist DNS-kontroll. Respekterer robots.txt og hastighetsgrense. Rapporten sier aldri at nettstedet oppfyller WCAG — kun hva den automatiske kontrollen fant, og at manuelle kriterier ikke er vurdert.","kpi":"Kontroller fullført innen frist; funn som matcher fasit på testnettsted; andel kjøringer med dekningsbegrensninger.","accept":"Ingen trafikk mot uverifisert domene; rapport uten versjonsdigester avvises; avkorting og blokkerte eksterne ressurser står som tekst i rapporten.","dep":"M-1, M-2, M-37, modulregister, domenekontroll."},
+{"n":57,"name":"Rekrutteringsagent (ATS)","area":"Samarbeid og HR","p":3,"level":"Krevende","v9":"ny","merknad":"Byggerekkefølge: etter M-16 (KPI-dashboards). Katalogopptak og byggeprioritet er skilt — hva modulen faktisk ER til enhver tid, står i modulregisteret, ikke her. Kontraktklassen gjelder utsendelsen, ikke rangeringen: selve evalueringen er rådgivende og skriver bare artefakter, men modulen finnes ikke uten utsendelsen, og en sendt invitasjon eller et sendt avslag kan ikke kalles tilbake.","kl":"krever_outbox","rev":"irreversibel","goal":"Leser og rangerer opptil 5000 søknader mot stillingens krav, forbereder intervjuspørsmål og innstiller svar — mennesket beslutter hvem som går videre og godkjenner all utsendelse.","flow":["Mottar bestilling gjennom beslutningsveien med stillingsprofil og søknadsbunt (ZIP)","Pakker ut og trekker tekst fra PDF, Word og HTML i isolert container","Blinder som standard: navn, kjønn, alder, adresse, bilde og kontaktfelt maskeres før evaluering","Grovsorterer mot absolutte minimumskrav, deretter detaljevaluering av resten","Lagrer rangering, funn og skreddersydde intervjuspørsmål som artefakt per kandidat","Innstiller intervjuinvitasjoner og malbaserte avslag — sendes først etter menneskelig signatur per liste"],"input":"Stillingsprofil med vektede krav, søknadsbunt (ZIP med PDF/DOCX/HTML).","output":"Rangert kandidatliste med begrunnede funn per kandidat, intervjuforberedelse, og innstilte utsendelser som venter på signatur.","int":"Dokumentparsing i container, artefaktlager, e-postutsendelse gjennom M-6 og plattformens signerte outbox, ledige intervjutider lest gjennom M-8 — kalenderintegrasjonen eies der, og modulen bygger ingen egen.","guard":"Ingen kandidat avslås eller kontaktes uten menneskelig signatur — automatisk utfiltrering innstiller, aldri beslutter (GDPR art. 22; EU AI Act høyrisiko, vedlegg III). Blindet evaluering (personalia skjult) er standard på — de maskerte feltene er navngitt i flyten; modulen påstår ikke anonymisering ut over dem. Avslag er malbaserte med flettefelt fra sporbare funn — aldri frigenerert prosa i masseutsendelse. Rangering vises som rangering med synlige vekter, aldri som målt sannhet. Søkerdata slettes etter fastsatt frist når prosessen lukkes.","kpi":"Andel bunter ferdig rangert innen frist; andel innstillinger signert uendret; klager på avslagsinnhold (mål: null); slettefrister overholdt.","accept":"Ingen utsendelse uten signaturhendelse; evaluering kjørt blindet med mindre eier eksplisitt har skrudd det av (auditert); risikofunn uten kildereferanse i søknadsteksten avvises; biasmåling dokumentert per modellversjon.","dep":"M-1, M-2, M-6 (e-postutsendelse), M-8 (ledige intervjutider), M-37, artefaktlager, outbox."}
 ];
 const areaOrder=[...new Set(M.map(m=>m.area))].sort((a,b)=>a.localeCompare(b,'nb'));
 const sel=document.getElementById('fArea');
@@ -453,15 +486,53 @@ const cat=document.getElementById('catalog');
 const phaseNames={1:'Fase 1 · Fundament',2:'Fase 2 · Operasjoner',3:'Fase 3 · Autopiloter',4:'Fase 4 · Global skala'};
 const esc=t=>String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;');
 
+// «Ny i denne versjonen» står ETT sted. Da v9 kom ble merket byttet fra v8 til
+// v9 i kortet, men filteret i render() ble stående på v8 (Codex P2 på #118):
+// avkrysningen lovet den ene nye i v9 og viste de elleve i v8. Med predikatet
+// samlet her kan de to ikke lenger si hver sin ting — neste versjonsbump
+// endrer denne linjen, og både merke, data-attributt og filter følger med.
+const NY_I = 'v9';
+const erNy = m => m[NY_I] === 'ny';
+
+// Og MERKETEKSTEN avledes av NY_I, ikke skrevet av (Codex P2 på #118, sjette
+// runde). Linjen som tegnet merket var en kjede av literaler: `NY I V9` for
+// den nye, og en fallback som bare kjente v8 og v7. Ved `NY_I = 'v10'` ville
+// den ene linjen over sagt v10 mens kortet fortsatt sto på «NY I V9», og
+// M-57 ville mistet sitt historiske merke helt — det er ingen gren for v9 i
+// fallbacken. Versjonsbumpet var lovet som én linje; da må merket følge den.
+//
+// Modulen bærer selv merkene sine som felt (`v7`, `v8`, `v9`), så det nyeste
+// feltet modulen har ER merket. Ingen liste over versjoner å vedlikeholde:
+// neste utgave legger til `v10: 'ny'` på de nye kortene, og resten står.
+const VERSJONSFELT = /^v(\d+)$/;
+const MERKEORD = {ny: 'Ny', utvidet: 'Utvidet', endret: 'Utvidet'};
+function versjonsmerke(m){
+  const nyeste = Object.keys(m)
+    .filter(k => VERSJONSFELT.test(k) && MERKEORD[m[k]])
+    .sort((a,b) => Number(b.slice(1)) - Number(a.slice(1)))[0];
+  if(!nyeste) return '';
+  const tekst = `${MERKEORD[m[nyeste]]} i ${nyeste}`;
+  return nyeste === NY_I
+    ? `<span class="chip ny">${tekst.toUpperCase()}</span>`
+    : `<span class="chip v7">${tekst}</span>`;
+}
+
 function card(m){
   const id='M-'+String(m.n).padStart(2,'0');
-  const tag=m.v8==='ny'?'<span class="chip ny">NY I V8</span>':m.v8==='utvidet'?'<span class="chip ny">UTVIDET I V8</span>':m.v7==='ny'?'<span class="chip v7">Ny i v7</span>':m.v7==='endret'?'<span class="chip v7">Utvidet i v7</span>':'';
+  const tag=versjonsmerke(m);
+  // Ingen statusbrikke her. Katalogen bærer STRUKTUR — nummer, navn, område,
+  // fase — ikke tilstand; hva en modul FAKTISK er, står i `MODULSTATUS` i
+  // plattformdata.js, avledet av manifestene og pinnet av test_ui_kontrakt.py.
+  // M-57 bar en stund et eget `status: "planlagt"` som ble tegnet rett inn
+  // (Codex P2 på #118). Generatoren kaster feltet, så denne siden ville blitt
+  // stående på PLANLAGT når manifestet førte modulen videre til bygges eller
+  // i drift. Samme feil ble tatt ut for M-56 i #109; den skal ikke tilbake.
   const kl=m.kl?`<span class="chip kl">${esc(m.kl)}</span><span class="chip kl">${esc(m.rev)}</span>`:'';
-  return `<details class="card" data-n="${m.n}" data-area="${esc(m.area)}" data-phase="${m.p}" data-new="${m.v8==='ny'?1:0}">
+  return `<details class="card" data-n="${m.n}" data-area="${esc(m.area)}" data-phase="${m.p}" data-new="${erNy(m)?1:0}">
   <summary>
     <div class="mline"><span class="mid">${id}</span><span class="chip f${m.p}">FASE ${m.p}</span><span>${esc(m.level).toUpperCase()}</span><span>${esc(m.area).toUpperCase()}</span>${tag}${kl}</div>
     <h4>${esc(m.name)}</h4>
-    <p class="goal">${esc(m.goal)}</p>
+    <p class="goal">${esc(m.goal)}</p>${m.merknad?`<p class="goal"><b>${esc(m.merknad)}</b></p>`:''}
     <p class="hint"><span class="cl">▸ Vis full spesifikasjon</span><span class="op">▾ Skjul spesifikasjon</span></p>
   </summary>
   <div class="body">
@@ -491,18 +562,27 @@ function render(){
     const list=M.filter(m=>m.p===p)
       .filter(m=>!fa||m.area===fa)
       .filter(m=>!fp||String(m.p)===fp)
-      .filter(m=>!fn||m.v8==='ny')
-      .filter(m=>!q||(m.name+' '+m.goal+' '+m.area+' '+m.guard+' '+m.accept).toLowerCase().includes(q))
+      .filter(m=>!fn||erNy(m))
+      .filter(m=>!q||(m.name+' '+m.goal+' '+(m.merknad||'')+' '+m.area+' '+m.guard+' '+m.accept).toLowerCase().includes(q))
       .sort((a,b)=>a.n-b.n);
     if(!list.length)continue;
     shown+=list.length;
     html+=`<div class="phasehead"><h3>${phaseNames[p]}</h3><span class="eyebrow">${list.length} moduler</span></div>`;
     html+=list.map(card).join('');
   }
-  cat.innerHTML=html||'<p class="intro">Ingen moduler matcher filteret. Nullstill søket for å se alle 56.</p>';
+  cat.innerHTML=html||`<p class="intro">Ingen moduler matcher filteret. Nullstill søket for å se alle ${M.length}.</p>`;
   document.getElementById('count').textContent=shown+' / '+M.length+' moduler';
 }
 ['q','fArea','fPhase','fNew'].forEach(id=>document.getElementById(id).addEventListener(id==='q'?'input':'change',render));
+
+// Fasetellerne står som tall i markupen så de også vises uten JavaScript og på
+// papir, men v9 la til M-57 i fase 3 uten å endre 19-tallet (Codex P2 på #118).
+// Er JavaScript på, teller vi dem opp fra `M` og overskriver: da er katalogen
+// selv fasiten, og et hardkodet tall som er blitt feil retter seg selv.
+document.querySelectorAll('.ph').forEach(el=>{
+  const f=Number(el.dataset.f);
+  el.querySelector('.cnt').textContent=M.filter(m=>m.p===f).length;
+});
 render();
 window.addEventListener('beforeprint',()=>document.querySelectorAll('details.card').forEach(d=>d.open=true));
 </script>

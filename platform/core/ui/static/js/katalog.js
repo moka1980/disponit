@@ -1,7 +1,7 @@
 // GENERERT av tools/gen_katalog.py fra
-// docs/spesifikasjon/disponit-prototype-v8.html — IKKE rediger for hånd.
+// docs/spesifikasjon/disponit-prototype-v9.html — IKKE rediger for hånd.
 //
-// Modulkatalogen er produktomfanget: 56 moduler i 11 områder over fire
+// Modulkatalogen er produktomfanget: 57 moduler i 11 områder over fire
 // faser. Den er OFFENTLIG informasjon (hva vi tilbyr), i motsetning til
 // tenantdata, som aldri skal ligge i en anonymt nedlastbar fil.
 //
@@ -65,6 +65,7 @@ export const KATALOG = [
   { n: 54, omrade: "okonomi", fase: 2 },
   { n: 55, omrade: "juridisk_og_compliance", fase: 4 },
   { n: 56, omrade: "juridisk_og_compliance", fase: 3 },
+  { n: 57, omrade: "samarbeid_og_hr", fase: 3 },
 ];
 
 // Områdene i fast rekkefølge, med modulene sine.
@@ -78,7 +79,7 @@ export const OMRADER = [
   { id: "kunde_og_salg", moduler: [17, 18, 19, 25, 26, 43, 46, 50] },
   { id: "markedsforing", moduler: [20, 44] },
   { id: "plattform_og_sikkerhet", moduler: [1, 2, 29, 31, 37, 38] },
-  { id: "samarbeid_og_hr", moduler: [7, 8, 40, 53] },
+  { id: "samarbeid_og_hr", moduler: [7, 8, 40, 53, 57] },
   { id: "okonomi", moduler: [13, 14, 15, 23, 39, 41, 42, 48, 51, 54] },
 ];
 
