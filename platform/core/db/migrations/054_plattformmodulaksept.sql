@@ -58,7 +58,22 @@
 CREATE TABLE akseptgrense_klasse (
     krav_id TEXT PRIMARY KEY,
     klasse  TEXT NOT NULL CHECK (klasse IN ('deployment', 'plattform')),
-    UNIQUE (krav_id, klasse)
+    -- …OG PLATTFORMGRENSEN ER ÉN MODULS GRENSE (Codex P1, runde 2).
+    -- Aksepten var ikke bundet til modulen den gjelder: verken grensen,
+    -- manifestattesten eller CI-attesten navngir en modul, så en kaller
+    -- med gyldig evidens kunne bytte `p_modul_id` fritt og la bytene og
+    -- målingene for `m02_revisjonslogg` bære en aksept for en helt annen
+    -- plattformmodul — immutabelt, med registerhendelse og alt.
+    --
+    -- Bindingen hører hjemme i registeret, ikke i funksjonen: grensen
+    -- ER m02s grense (punktene navngir m02s mekanismer), og neste
+    -- plattformmodul arver formen ved å registrere SIN grense mot SIN
+    -- modul. Deployment-grensene har ingen slik binding — der er modulen
+    -- deploymentraden — og kolonnen er derfor NULL nøyaktig for dem.
+    modul_id TEXT,
+    CHECK ((modul_id IS NOT NULL) = (klasse = 'plattform')),
+    UNIQUE (krav_id, klasse),
+    UNIQUE (krav_id, klasse, modul_id)
 );
 -- Samme grunn som for kravpunktene og CI-kravet (049): en aksept er
 -- skrevet mot ÉN klasse, og klassen kan ikke endres under den etterpå.
@@ -83,20 +98,19 @@ SELECT krav_id, 'deployment' FROM modulaksept;
 -- Deployment-aksepten bærer klassen sin, på hodet OG på punktradene:
 -- funksjonen skriver begge, og eier-/migratorveien kan skrive dem
 -- direkte (samme lærdom som punkt-FK-en lenger nede).
-ALTER TABLE modulaksept
-    ADD COLUMN krav_klasse TEXT NOT NULL DEFAULT 'deployment'
-        CHECK (krav_klasse = 'deployment'),
-    ADD FOREIGN KEY (krav_id, krav_klasse)
-        REFERENCES akseptgrense_klasse (krav_id, klasse);
-ALTER TABLE modulaksept_punkt
-    ADD COLUMN krav_klasse TEXT NOT NULL DEFAULT 'deployment'
-        CHECK (krav_klasse = 'deployment'),
-    ADD FOREIGN KEY (krav_id, krav_klasse)
-        REFERENCES akseptgrense_klasse (krav_id, klasse);
+ALTER TABLE modulaksept ADD COLUMN krav_klasse TEXT NOT NULL
+    DEFAULT 'deployment' CHECK (krav_klasse = 'deployment');
+ALTER TABLE modulaksept ADD FOREIGN KEY (krav_id, krav_klasse)
+    REFERENCES akseptgrense_klasse (krav_id, klasse);
+ALTER TABLE modulaksept_punkt ADD COLUMN krav_klasse TEXT NOT NULL
+    DEFAULT 'deployment' CHECK (krav_klasse = 'deployment');
+ALTER TABLE modulaksept_punkt ADD FOREIGN KEY (krav_id, krav_klasse)
+    REFERENCES akseptgrense_klasse (krav_id, klasse);
 
--- …og plattformgrensen er en plattformgrense.
-INSERT INTO akseptgrense_klasse (krav_id, klasse) VALUES
-    ('m02-aksept-v1', 'plattform');
+-- …og plattformgrensen er en plattformgrense — for `m02_revisjonslogg`
+-- og ingen annen modul.
+INSERT INTO akseptgrense_klasse (krav_id, klasse, modul_id) VALUES
+    ('m02-aksept-v1', 'plattform', 'm02_revisjonslogg');
 
 -- ------------------------------------------------------------
 -- 1. Grensen `m02-aksept-v1` i kravpunktregisteret (definert FØR
@@ -207,8 +221,13 @@ CREATE TABLE plattformmodulaksept (
     akseptert_ts    TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (modul_id, manifest_commit),
     UNIQUE (modul_id, manifest_commit, grense_id),
-    FOREIGN KEY (grense_id, grense_klasse)
-        REFERENCES akseptgrense_klasse (krav_id, klasse)
+    -- Én FK bærer begge invariantene: at grensen er en PLATTFORM-grense,
+    -- og at den er NETTOPP DENNE modulens grense (Codex P1, runde 2).
+    -- `modul_id` er ikke lenger kallerens frie valg — den må være den
+    -- registrerte, og evidensen for én plattformmodul kan derfor ikke
+    -- bære aksepten for en annen.
+    FOREIGN KEY (grense_id, grense_klasse, modul_id)
+        REFERENCES akseptgrense_klasse (krav_id, klasse, modul_id)
 );
 
 CREATE TABLE plattformmodulaksept_punkt (

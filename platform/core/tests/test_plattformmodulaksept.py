@@ -28,6 +28,9 @@ pg = pytest.mark.skipif(
     reason="DISPONIT_TEST_DSN/DISPONIT_TEST_VERIFIKATOR_DSN ikke satt")
 
 GRENSE = "m02-aksept-v1"
+#: Grensen er ÉN plattformmoduls grense, og registeret navngir hvilken
+#: (Codex P1, runde 2) — `modul_id` er ikke kallerens frie valg.
+MODUL = "m02_revisjonslogg"
 CI_SHA = "f" * 40
 #: De åtte punktene slik registeret (054) definerer dem — testene leser
 #: fasiten fra basen, dette settet brukes bare til statiske påstander.
@@ -139,7 +142,7 @@ def _punkter(m, ci_run, ci_commit=CI_SHA, manifest_sha=MANIFEST_SHA):
 def _aksepter(m, *, modul=None, commit=None, sha=None, punkter=None,
               ci_run=None, ci_commit=None, nokkel=None, attest=True,
               evidens=True):
-    modul = modul or "m02_test_" + secrets.token_hex(3)
+    modul = modul or MODUL
     commit = commit or secrets.token_hex(20)
     ci_run = ci_run or "run-" + secrets.token_hex(4)
     # CI-commiten ER identiteten (funksjonens egen regel) — tester som
@@ -206,30 +209,34 @@ def test_aksepten_ende_til_ende_med_replay(migrator):
     modul, commit, ci_run = _aksepter(migrator, nokkel=nokkel)
     migrator.commit()
     migrator.execute("RESET ROLE")
+    # Identiteten er (modul, manifestcommit): modulen er registerets
+    # (Codex P1, runde 2), commiten er denne aksepten.
     n_h, n_p, n_u = migrator.execute(
         "SELECT (SELECT count(*) FROM plattformmodulaksept"
-        "         WHERE modul_id=%s),"
+        "         WHERE modul_id=%s AND manifest_commit=%s),"
         "       (SELECT count(*) FROM plattformmodulaksept_punkt"
-        "         WHERE modul_id=%s),"
+        "         WHERE modul_id=%s AND manifest_commit=%s),"
         "       (SELECT count(*) FROM plattformmodulaksept_punkt"
-        "         WHERE modul_id=%s AND status='utenfor_grensen'"
+        "         WHERE modul_id=%s AND manifest_commit=%s"
+        "           AND status='utenfor_grensen'"
         "           AND begrunnelse IS NOT NULL)",
-        (modul, modul, modul)).fetchone()
+        (modul, commit, modul, commit, modul, commit)).fetchone()
     hendelse = migrator.execute(
-        "SELECT detalj->>'manifest_commit' FROM modulregister_hendelse"
-        " WHERE modul_id=%s AND hendelse='plattformmodulaksept'",
-        (modul,)).fetchone()[0]
+        "SELECT count(*) FROM modulregister_hendelse"
+        " WHERE modul_id=%s AND hendelse='plattformmodulaksept'"
+        "   AND detalj->>'manifest_commit'=%s", (modul, commit)).fetchone()[0]
     migrator.rollback()
     assert (n_h, n_p, n_u) == (1, 9, 2)
-    assert hendelse == commit
+    assert hendelse == 1
     # identisk replay -> no-op (attesten finnes alt)
     _aksepter(migrator, modul=modul, commit=commit, ci_run=ci_run,
               nokkel=nokkel, attest=False)
     migrator.commit()
     migrator.execute("RESET ROLE")
     assert migrator.execute(
-        "SELECT count(*) FROM plattformmodulaksept WHERE modul_id=%s",
-        (modul,)).fetchone()[0] == 1
+        "SELECT count(*) FROM plattformmodulaksept"
+        " WHERE modul_id=%s AND manifest_commit=%s",
+        (modul, commit)).fetchone()[0] == 1
     migrator.rollback()
     # samme nøkkel, annen observasjon -> avvist
     p = _punkter(migrator, ci_run)
@@ -447,8 +454,8 @@ def test_manifestdigesten_er_malt_ikke_pastatt(migrator):
         "  FROM plattformmodulaksept a JOIN plattformmodulaksept_punkt p"
         "    ON (p.modul_id, p.manifest_commit, p.grense_id)"
         "     = (a.modul_id, a.manifest_commit, a.grense_id)"
-        " WHERE a.modul_id=%s AND p.punkt=%s",
-        (modul, punkt)).fetchone()
+        " WHERE a.modul_id=%s AND a.manifest_commit=%s AND p.punkt=%s",
+        (modul, commit, punkt)).fetchone()
     migrator.rollback()
     assert (sha, verdi) == (MANIFEST_SHA, MANIFEST_SHA)
     assert ref == f"{MANIFEST_STI}@sha256:{MANIFEST_SHA}"
@@ -608,6 +615,41 @@ def test_plattformgrensen_er_ikke_valgbar_for_deploymentveien(migrator):
             (k["mid"], did, GRENSE, k["ten"], k["e2e"], EVIDENS_SHA,
              CI_SHA, CI_SHA, "d-" + secrets.token_hex(6)))
     assert "akseptgrense_klasse" in str(ei.value)
+    migrator.rollback()
+
+
+@pg
+def test_aksepten_er_bundet_til_modulen_sin(migrator):
+    """Codex P1, runde 2: aksepten var ikke knyttet til modulen den
+    gjelder. Verken grensen, manifestattesten eller CI-attesten navngir
+    en modul, så en kaller med gyldig evidens kunne gjenbruke ALT og
+    bare bytte `p_modul_id` — og bytene og målingene for
+    `m02_revisjonslogg` bar da en immutabel aksept, med registerhendelse,
+    for en helt annen plattformmodul.
+
+    Bindingen står nå i registeret: grensen ER én moduls grense, og
+    FK-en gjør `modul_id` til registerets valg, ikke kallerens."""
+    migrator.execute("RESET ROLE")
+    assert migrator.execute(
+        "SELECT modul_id FROM akseptgrense_klasse WHERE krav_id=%s",
+        (GRENSE,)).fetchone()[0] == MODUL
+    migrator.rollback()
+    # …og med nøyaktig samme evidens, attest og punktsett: en annen modul
+    # får ingen aksept.
+    ci_run = "run-" + secrets.token_hex(4)
+    with pytest.raises(psycopg.errors.ForeignKeyViolation) as ei:
+        _aksepter(migrator, modul="m56_wcag_audit", ci_run=ci_run)
+    assert "akseptgrense_klasse" in str(ei.value)
+    migrator.rollback()
+    # Motprøven: den registrerte modulen aksepteres, og raden bærer den.
+    modul, commit, _ = _aksepter(migrator)
+    migrator.commit()
+    migrator.execute("RESET ROLE")
+    assert modul == MODUL
+    assert migrator.execute(
+        "SELECT count(*) FROM plattformmodulaksept"
+        " WHERE modul_id=%s AND manifest_commit=%s AND grense_id=%s",
+        (MODUL, commit, GRENSE)).fetchone()[0] == 1
     migrator.rollback()
 
 
