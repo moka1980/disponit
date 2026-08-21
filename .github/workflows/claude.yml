@@ -114,7 +114,25 @@ jobs:
                og `gh api` mot pulls/<nr>/reviews og pulls/<nr>/comments.
                Ignorer rene triggerkommentarer («@codex review»).
             2. Reelle funn (P1/P2/aksjonspunkter): fiks dem i roten, ikke
-               symptomet. Full testsuite krever Postgres og kjører i CI —
+               symptomet. KONVERGENSREGLENE (RUTINER.md §9, ratifisert
+               21/8) er bindende for hvordan:
+               * K1 — en fiksrunde BYGGER aldri: lukk funnet med minst
+                 mulig endring; krever det ny maskin (parser, simulator,
+                 rammeverk), stopp — eget issue + egen PR for maskinen,
+                 og merk funnet utsatt dit. Ny kode i en fiksrunde er i
+                 seg selv et rødt flagg.
+               * K2 — TREDJE runde på samme fil/mekanisme: ikke et fjerde
+                 formforsøk — stopp, skriv rotårsaken, eskaler
+                 arkitekturvalget til eier i PR-tråden.
+               * K3 — står produktdelen ferdig og uimotsagt to runder på
+                 rad mens funnene treffer test-/portkode PR-en selv
+                 innførte: foreslå deling (produktet merges, maskineriet
+                 får egen PR) i stedet for enda en runde.
+               * K4/SP-13 — aldri hand-parse en fremmed grammatikk:
+                 ekte parser for syntaks, oppslag i virkelig tilstand
+                 for semantikk — aldri regex-tilstandsmaskiner eller
+                 simulatorer.
+               Full testsuite krever Postgres og kjører i CI —
                kjør det du kan lokalt (python -m compileall, målrettede
                tester), commit med forklarende melding på norsk, push til
                PR-branchen. Kommenter deretter `@codex review` (bevist
