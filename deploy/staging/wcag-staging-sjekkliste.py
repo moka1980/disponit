@@ -1641,7 +1641,7 @@ def fase8():
         subprocess.run(["ln", "-sfn", str(mal), str(aktiv)], check=True)
 
     def _restart_og_status() -> str:
-        """-> systemd-statusen etter restart, MÅLT TIL TERMINAL tilstand.
+        """-> statusen etter restart, MÅLT TIL RELEASEN FAKTISK SVARER.
 
         Restarten er MÅLINGEN, ikke en forutsetning: `check=True` her
         ville kastet før statusen ble lest, og en release som ikke
@@ -1655,20 +1655,48 @@ def fase8():
         ville GJENOPPRETTINGEN truffet «Start request repeated too
         quickly» og latt staging ligge nede — drillen skal aldri
         etterlate miljøet i tilstanden den tester.
+
+        OG `active` ER IKKE OPPE (Codex P1). Uniten er `Type=simple`,
+        ikke `notify`: systemd melder `active` i det Python-prosessen er
+        EXECet — altså FØR `lag_app()` har kjørt en eneste bootsjekk
+        (migrasjonstilstand, bind, miljøsignatur). Dømte vi på første
+        `active`, ville en release som feiler et sekund senere målt
+        grønn i BEGGE retninger: rullbakken «bestått» og
+        gjenopprettingen «bestått», med staging nede. Dommen er derfor
+        den samme readiness-porten deployen selv stoler på — `/ready`
+        over unix-socketen (`opp.sh`s ventesløyfe, `helse-sjekk.sh`s
+        `/live`) — mens vi fortsetter å vokte på `failed` i samme
+        vindu. Svarer den aldri, er utfallet `active_men_ikke_klar`:
+        ikke `active`, altså rødt, og ordet sier hva som ble målt.
         """
+        def _klar() -> bool:
+            """200 fra `/ready` = `lag_app()` kom gjennom bootsjekkene
+            OG basen samsvarer. Socketen, ikke nginx: drillen måler
+            releasen, ikke proxyen foran den."""
+            return subprocess.run(
+                ["curl", "-fsS", "--max-time", "5", "--unix-socket",
+                 "/run/disponit/api.sock", "http://disponit/ready"],
+                capture_output=True).returncode == 0
+
         subprocess.run(["systemctl", "reset-failed",
                         "disponit-api.service"], capture_output=True)
         subprocess.run(["systemctl", "restart", "disponit-api.service"],
                        capture_output=True)
         frist = time.monotonic() + 45
+        st = "ikke_maalt"
         while time.monotonic() < frist:
             st = subprocess.run(
                 ["systemctl", "is-active", "disponit-api.service"],
                 capture_output=True, text=True).stdout.strip()
-            if st not in ("activating", "deactivating", "reloading"):
-                return st
-            time.sleep(1)
-        return st
+            if st in ("activating", "deactivating", "reloading"):
+                time.sleep(1)
+                continue
+            if st != "active":
+                return st          # failed/inactive: terminalt, og dommen.
+            if _klar():
+                return st          # oppe OG gjennom bootsjekkene.
+            time.sleep(1)          # EXECet, men ikke klar ennå — vent videre
+        return "active_men_ikke_klar" if st == "active" else st
 
     # GJENOPPRETTINGEN LIGGER I `finally` (Codex P2). Klarte ikke forrige
     # release å starte, kastet `check=True` med én gang, og `aktiv` ble
