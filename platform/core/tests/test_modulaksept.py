@@ -3852,6 +3852,35 @@ def test_drillen_nekter_flere_claimende_kontraktlinjer():
         "porten må stå foran registreringene og rullingen"
 
 
+def test_rullingen_maaler_oppdraget_i_sin_egen_transaksjon():
+    """Codex' P1 (runde 22): statusen ble lest i en EGEN, avsluttet
+    transaksjon, og rullingen fyrt etterpå.
+
+    Rakk arbeideren å fullføre i gapet mellom de to, gikk den destruktive
+    rullingen likevel — begge enveis release-IDene brukt opp — på et
+    oppdrag som aldri krysset den. Ventesløyfa så da en terminal status,
+    `bestatt` regnet ingen motsigelse, og drillen rapporterte grønt;
+    først `registrer_moduldrill` avviste evidensen, fordi den krever
+    `oppdrag.status_ts > v_rull_ts`. Da var drilltilstanden forbrukt.
+
+    Raden må derfor låses og måles på nytt INNE i byttets transaksjon:
+    ingen commit mellom låsen og `bytt_release`, ellers finnes gapet
+    fortsatt."""
+    tekst = (ROT / "deploy/staging/rollback-m56.py").read_text(
+        encoding="utf-8")
+    kropp = tekst[tekst.index("\ndef main()"):]
+    vindu = kropp[kropp.index('krev_reservasjonen("rullingen")'):
+                  kropp.index("SELECT bytt_release")]
+    assert "FOR UPDATE" in vindu, \
+        "oppdraget låses ikke foran rullingen — gapet står åpent"
+    assert vindu.index("FOR UPDATE") < vindu.index('!= "plukket"'), \
+        "statusen måles utenfor låsen, altså på en rad som kan flytte seg"
+    assert "m.commit()" not in vindu, \
+        "en commit mellom låsen og byttet gjenåpner nøyaktig gapet"
+    assert "lock_timeout" in vindu, \
+        "en lås uten frist gjør drillen hengende i stedet for å avbryte"
+
+
 def test_drillen_nekter_naar_forgjengerens_bytes_ikke_kan_bootes():
     """Codex' P1 (runde 6), skriptsiden.
 

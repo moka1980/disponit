@@ -1390,10 +1390,52 @@ def main() -> int:
         # Siste port foran det uigjenkallelige: gjerdet må stå NÅ, ikke
         # ha stått da drillen startet.
         krev_reservasjonen("rullingen")
+        # …og STATUSEN MÅLES I SAMME TRANSAKSJON SOM BYTTET (Codex P1,
+        # #117 runde 22). Lesningen over er en egen, avsluttet
+        # transaksjon: rekker arbeideren å fullføre i gapet mellom den og
+        # `bytt_release`, fyres den destruktive rullingen likevel — begge
+        # enveis release-IDene er brukt opp — på et oppdrag som ALDRI
+        # krysset den. Ventesløyfa under ser da en terminal status,
+        # artefaktets `bestatt` regner ingen motsigelse, og drillen
+        # rapporterer grønt; først `registrer_moduldrill` avviser
+        # evidensen, fordi den krever `oppdrag.status_ts > v_rull_ts`.
+        # Da er drilltilstanden allerede forbrukt.
+        #
+        # Raden LÅSES derfor og måles på nytt inne i byttets egen
+        # transaksjon. Er arbeideren midt i fullføringen, blokkerer
+        # låsen til den er ferdig — og da leser vi det terminale
+        # utfallet og avbryter FØR noen release er rørt. Fullføringen kan
+        # ikke lenger skje i gapet, for gapet finnes ikke.
+        # `lock_timeout` gjør ventingen endelig: en lås vi ikke får, er
+        # også et svar, og det svaret er «ikke rull».
+        m.execute("RESET ROLE")
+        m.execute("SET LOCAL lock_timeout = '30s'")
+        m.execute("SELECT set_config('disponit.tenant', %s, true)",
+                  (sj.TENANT,))
+        try:
+            laast = m.execute(
+                "SELECT status FROM oppdrag WHERE tenant=%s AND id=%s"
+                " FOR UPDATE", (sj.TENANT, oid)).fetchone()
+        except psycopg.errors.LockNotAvailable:
+            m.rollback()
+            raise SystemExit(
+                f"AVBRUTT: fikk ikke låst oppdrag {oid} foran rullingen —"
+                " en annen skriver holder raden. Ingen release er rørt;"
+                " kjør drillen på nytt.")
+        st = laast[0] if laast else None
+        if st != "plukket":
+            m.rollback()
+            raise SystemExit(
+                f"AVBRUTT: oppdrag {oid} sto i {st!r} da låsen ble tatt —"
+                " det rakk å bli terminalt i gapet foran rullingen, og et"
+                " oppdrag som ikke krysser rullingen er ingen måling."
+                " Ingen release er rørt; kjør drillen på nytt.")
         rulle_ts = time.monotonic()
         _admin(m)
         m.execute("SELECT bytt_release(%s,%s,%s,%s,%s,'m56-drill')",
                   (MODUL, MILJO, a.rullback_id, kver, khash))
+        # Låsen slippes først HER: fra og med commit er byttet og
+        # oppdragets «ennå ikke terminal» ett og samme faktum.
         m.commit()
         # Oppdraget VAR claimet da rullingen traff — vent på terminalen.
         frist = time.monotonic() + 600
