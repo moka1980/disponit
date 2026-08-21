@@ -295,20 +295,38 @@ def signert_innen_frist(linjer: list[dict], krav: int) -> int:
     return rent_innen_frist(signerte, krav)
 
 
-def attestert_kvittering(linjer: list[dict], krav: int) -> int:
+def attestert_kvittering(linjer: list[dict], krav: int,
+                         regelsett: object) -> int:
     """Teller kjøringene som i tillegg fikk kvitteringen ATTESTERT.
 
     052 (§1.3a): `kvittering_attest_ok` er basens egen måling
     (`maal_kjoringsattest`) av at kvitteringen hører til NØYAKTIG den
     kjøringen — avtrykket, claim-sporet (release+miljø), artefakt-
-    likheten — pluss et målt regelsett identisk med motorens pinnede.
-    Samme utvalgsdisiplin som signaturen: `is True`, aldri sannhetsverdi,
-    og bare linjer som alt teller som rene kjøringer på bestilte
-    posisjoner med egne oppdrag. En runde som ikke målte attesten står
-    på null — synlig, aldri lånt fra et annet tall.
+    likheten. Samme utvalgsdisiplin som signaturen: `is True`, aldri
+    sannhetsverdi, og bare linjer som alt teller som rene kjøringer på
+    bestilte posisjoner med egne oppdrag. En runde som ikke målte
+    attesten står på null — synlig, aldri lånt fra et annet tall.
+
+    REGELSETTET REGNES HER, det leses ikke ferdigtygd (Codex P1, #123).
+    Den forrige formen lot `kvittering_attest_ok` bære HELE
+    regelsettmålingen: produsenten hadde alt sammenlignet rapportens
+    `regelsett_versjon` med motorens pinnede og skrevet ut ett ja/nei,
+    mens `regelsett` på linja lå der uleste. En redigert eller
+    halvskrevet evidensfil kunne sette flagget grønt på ti linjer som
+    bar et annet — eller ingen — regelsett, og verken v2-skjemaet eller
+    `_grenser_wcag_kontroll_v2` bevarte verdien til å motsi den. Nå
+    bærer `fase5_resultat` forventningen runden bandt seg til, linja
+    bærer det som faktisk ble observert, og likheten regnes av de to.
+
+    En runde uten forventning har ikke målt dette, og står da på null —
+    aldri på «alle linjene mangler regelsett, altså er de like». Samme
+    fail-closed som `_tall` og signaturen.
     """
+    if not (isinstance(regelsett, str) and regelsett):
+        return 0
     kandidater = [d for d in linjer if d.get("kvittering_signert") is True
-                  and d.get("kvittering_attest_ok") is True]
+                  and d.get("kvittering_attest_ok") is True
+                  and d.get("regelsett") == regelsett]
     return rent_innen_frist(kandidater, krav)
 
 
@@ -442,7 +460,10 @@ def sammendrag(rader: list[dict], kilde: str, kilde_sha256: str) -> dict:
             raise SystemExit("AVBRUTT: `datasett_identitet` bærer ingen"
                              " kanonisk sha256 — identiteten til bytene"
                              " staging serverte er ikke målt")
-        attestert = attestert_kvittering(fase5_linjer, krav)
+        # …og attesttelleren regner regelsettet av summens egen
+        # forventning mot linjenes observasjon (Codex P1, #123).
+        attestert = attestert_kvittering(
+            fase5_linjer, krav, fase5.get("regelsett_forventet"))
         attest_avvik = kvittering_attest_avvik(fase5_linjer)
         rader_mot = revisjonsrader_mot_bestilt(fase5_linjer, krav)
         rad_avvik = revisjonsrad_avvik(fase5_linjer)

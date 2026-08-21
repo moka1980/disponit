@@ -1286,7 +1286,15 @@ def fase5(m, http, mtk, motorkmd, digest):
     # sammendragsgeneratoren regner begge ut av `kjoring`-linjene i
     # stedet for å lese dem her. Så et navn kan ikke igjen bære en
     # påstand ingen måling står bak.
+    #
+    # …og REGELSETTET runden bandt seg til skrives ned (Codex P1, #123).
+    # `kvittering_attest_ok` bar sammenligningen `regelsett ==
+    # forventet_regelsett` som ett ferdigtygd ja/nei fra produsenten,
+    # mens `regelsett` på hver linje aldri ble sett av noen. Nå bærer
+    # summen forventningen, linjene bærer det observerte, og konverteren
+    # regner likheten selv.
     evidens("fase5_resultat",
+            regelsett_forventet=forventet_regelsett,
             ti_kjoringer_rent_innen_frist=f"{gronne}/10",
             kjoringer_med_maalt_signatur=f"{signerte}/10",
             kjoringer_med_attestert_kvittering=f"{attesterte}/10",

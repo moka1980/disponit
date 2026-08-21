@@ -5306,15 +5306,18 @@ def test_konverterens_attesttellere_krever_egne_maalinger():
     rad), og avvik = målt nei — aldri fravær av måling."""
     m = _runde_skript()
 
+    RSETT = "axe-core-4.9.1"
+
     def linje(i, **felt):
         return {"hendelse": "kjoring", "i": i, "oppdrag": i + 1,
                 "utfall": "utfort", "avvik_mot_fasit": 0,
                 "varighet_s": 1.0, "frist_s": 1800,
                 "kvittering_signert": True, "kvittering_attest_ok": True,
-                "revisjonsrad_ok": True, "loggpost": 100 + i, **felt}
+                "revisjonsrad_ok": True, "loggpost": 100 + i,
+                "regelsett": RSETT, **felt}
 
     gronne = [linje(i) for i in range(10)]
-    assert m.attestert_kvittering(gronne, 10) == 10
+    assert m.attestert_kvittering(gronne, 10, RSETT) == 10
     assert m.revisjonsrader_mot_bestilt(gronne, 10) == 10
     assert m.kvittering_attest_avvik(gronne) == 0
     # Én rad delt av alle ti: ti kjøringer, ÉN revisjonsrad.
@@ -5322,15 +5325,25 @@ def test_konverterens_attesttellere_krever_egne_maalinger():
     assert m.revisjonsrader_mot_bestilt(delt, 10) == 1
     # Målt nei er et avvik OG en manglende attest; umålt er bare umålt.
     rodt = [linje(0, kvittering_attest_ok=False)] + gronne[1:]
-    assert m.attestert_kvittering(rodt, 10) == 9
+    assert m.attestert_kvittering(rodt, 10, RSETT) == 9
     assert m.kvittering_attest_avvik(rodt) == 1
     umaalt = [{k: v for k, v in linje(0).items()
                if k != "kvittering_attest_ok"}] + gronne[1:]
-    assert m.attestert_kvittering(umaalt, 10) == 9
+    assert m.attestert_kvittering(umaalt, 10, RSETT) == 9
     assert m.kvittering_attest_avvik(umaalt) == 0
+    # REGELSETTET regnes, det leses ikke ferdigtygd (Codex P1, #123):
+    # en grønn `kvittering_attest_ok` på et annet — eller manglende —
+    # regelsett teller ikke, og en runde uten forventning står på null.
+    annet = [linje(0, regelsett="axe-core-4.8.0")] + gronne[1:]
+    assert m.attestert_kvittering(annet, 10, RSETT) == 9
+    uten = [{k: v for k, v in linje(0).items() if k != "regelsett"}] \
+        + gronne[1:]
+    assert m.attestert_kvittering(uten, 10, RSETT) == 9
+    assert m.attestert_kvittering(gronne, 10, None) == 0
+    assert m.attestert_kvittering(uten, 10, None) == 0
     # Samme oppdrag på alle posisjoner er én kjøring — aldri ti.
     ett = [linje(i, oppdrag=7, loggpost=100 + i) for i in range(10)]
-    assert m.attestert_kvittering(ett, 10) == 1
+    assert m.attestert_kvittering(ett, 10, RSETT) == 1
     assert m.revisjonsrader_mot_bestilt(ett, 10) == 1
     # Codex' P1 (#123): ti rader på ÉN bestilt posisjon er én posisjon —
     # tellingen nøkles på posisjonen, ikke på oppdraget bak den.
