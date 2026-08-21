@@ -146,9 +146,20 @@ export function visNokkeltall(hoved, ctx) {
   const kropp = el("div", { class: "kpi-kort-liste" });
   hoved.append(tilstand, kontroll, meta, kropp);
 
+  // Bare det SISTE vindusvalget får skrive til flaten. Uten dette lever
+  // to kall side om side når velgeren endres mens et svar er underveis,
+  // og et sent svar for det GAMLE vinduet kan overskrive det nye — eller
+  // en gammel feil erstatte et ferskt resultat. Da ville tallene stått
+  // under en annen vindusledetekst enn de er talt i, og flaten vist noe
+  // som aldri var sant. Hver last får derfor et løpenummer, og et svar
+  // som ikke lenger er det siste, kastes: velgeren er sannheten.
+  let siste = 0;
   const last = () => {
+    const min = ++siste;
+    const utdatert = () => min !== siste;
     sett(kropp, el("p", { class: "muted", text: t("ui.laster") }));
     hentJson("/v1/nokkeltall", { vindu }).then((d) => {
+      if (utdatert()) return;
       sett(tilstand,
         el("b", { text: String(d.apne_naa) }),
         el("span", { text: " " + t("ui.nokkeltall.apne_naa_tekst") }));
@@ -187,7 +198,10 @@ export function visNokkeltall(hoved, ctx) {
               t("ui.nokkeltall.kort.tick"), d.tick)));
       sett(kropp, ...kort);
     }).catch((e) => {
+      // Uautorisert er en ØKTTILSTAND, ikke et vindusresultat: den gjelder
+      // uansett hvilket kall som oppdaget den, og slippes derfor gjennom.
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+      if (utdatert()) return;
       if (e instanceof IngenTilgangFeil) { sett(kropp, TilgangsVakt({})); return; }
       sett(kropp, Feiltilstand({ paaProvIgjen: last }));
     });

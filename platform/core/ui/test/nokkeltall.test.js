@@ -34,7 +34,7 @@ const SVARFORM = {
 };
 
 let SVAR;
-globalThis.fetch = async (url) => {
+const STANDARD_FETCH = async (url) => {
   const sti = url.split("?")[0];
   const oppf = SVAR[sti];
   if (!oppf) return { ok: false, status: 404,
@@ -44,6 +44,7 @@ globalThis.fetch = async (url) => {
   }
   return { ok: true, status: 200, json: async () => oppf };
 };
+globalThis.fetch = STANDARD_FETCH;
 
 function ctx() {
   return { sprak: "nb", scopes: [], tenant: "acme",
@@ -162,6 +163,49 @@ test("Nøkkeltall: ufullstendig liste påstås aldri fullstendig", async () => {
   visNokkeltall(h, ctx());
   await vent(() => h.querySelectorAll("table").length >= 5);
   assert.ok(!h.textContent.includes(t("ui.nokkeltall.til_unntak")));
+});
+
+test("Nøkkeltall: et utdatert vindussvar overskriver aldri et nyere", async () => {
+  // To vindusbytter i rask rekkefølge, der det FØRSTE svaret kommer sist:
+  // flaten må vise det siste valget, ikke det siste svaret.
+  const svar = [];
+  globalThis.fetch = async (url) =>
+    new Promise((r) => { svar.push({ url, r }); });
+  const h = nyHoved();
+  visNokkeltall(h, ctx());
+  await vent(() => svar.length === 1);
+  const velger = h.querySelector("select#nokkeltall-vindu");
+  velger.value = "7d";
+  velger.dispatchEvent(new window.Event("change"));
+  await vent(() => svar.length === 2);
+
+  const ok = (d) => ({ ok: true, status: 200, json: async () => d });
+  // Nyeste kall (7d) svarer først …
+  svar[1].r(ok({ ...SVARFORM, apne_naa: 42 }));
+  await vent(() => h.querySelector(".kpi-tilstand").textContent
+    .includes("42"));
+  // … og deretter kommer det trege 24t-svaret. Det skal kastes.
+  svar[0].r(ok({ ...SVARFORM, apne_naa: 6 }));
+  await vent(() => false, 10);
+  assert.ok(h.querySelector(".kpi-tilstand").textContent.includes("42"),
+    "et utdatert svar overskrev det nyere vindusresultatet");
+
+  // Samme vei for en sen FEIL: den skal ikke rive ned et ferskt svar.
+  velger.value = "30d";
+  velger.dispatchEvent(new window.Event("change"));
+  await vent(() => svar.length === 3);
+  velger.value = "24t";
+  velger.dispatchEvent(new window.Event("change"));
+  await vent(() => svar.length === 4);
+  svar[3].r(ok({ ...SVARFORM, apne_naa: 7 }));
+  await vent(() => h.querySelector(".kpi-tilstand").textContent
+    .includes("7"));
+  svar[2].r({ ok: false, status: 500, json: async () => ({ feil: "x" }) });
+  await vent(() => false, 10);
+  assert.ok(h.querySelector(".kpi-tilstand").textContent.includes("7"),
+    "en utdatert feil erstattet et ferskt vindusresultat");
+  assert.ok(h.querySelectorAll("table").length >= 5, "kortene ble revet ned");
+  globalThis.fetch = STANDARD_FETCH;
 });
 
 test("Nøkkeltall: ingen SVG/canvas — søylen er HTML/CSS, tastaturvei", async () => {
