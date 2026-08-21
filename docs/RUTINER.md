@@ -93,3 +93,30 @@ Repoet bor på github.com. Reglene under er ikke anbefalinger — de konfigurere
 **CODEOWNERS er ikke lenger en sperre.** Filen beholdes fordi GitHub fortsatt automatisk ber om review fra eier på de fire stiene, men den **blokkerer ingen merge**. Skal tillitsanker-porten gjeninnføres senere, er det ett API-kall: `require_code_owner_reviews: true` + `required_approving_review_count: 1` — og da må rolle-kontoene under finnes først.
 
 **Rolle-kontoer (fortsatt anbefalt, nå av en annen grunn):** egne GitHub-kontoer for Claude Code og Codex gir sporbarhet — hvem gjorde hva — og gjør det mulig å kreve at Codex faktisk godkjenner Claude Codes PR før merge, uten at Eier involveres. Så lenge begge kjører som `moka1980` er «Codex reviewet» kun en påstand i PR-beskrivelsen, ikke noe GitHub kan bekrefte.
+
+## 9. Konvergensregler for review-runder (K1–K5, ratifisert 21/8)
+
+Rotårsaken de finnes for er målt, ikke ment: Codex reviewer hele
+diffen, så en fiks som VOKSER flaten gir flere funn neste runde —
+selvforsterkende. I #118 gikk porten 292 → 4281 linjer over 19 runder
+mens produktet på 116 linjer sto ferdig og uimotsagt fra runde 6.
+
+- **K1 — En fiksrunde bygger aldri.** Et funn lukkes med minst mulig
+  endring; fikser krymper eller holder flaten. Krever funnet ny maskin
+  (parser, simulator, rammeverk), stopper runden: eget issue + egen PR
+  for maskinen, og funnet merkes utsatt dit. Ny kode introdusert i en
+  fiksrunde er i seg selv et rødt flagg.
+- **K2 — Tre-runders-regelen.** Tredje runde på samme fil/mekanisme =
+  automatisk stopp: rotårsaksanalyse og arkitekturvalg eskaleres FØR et
+  fjerde formforsøk.
+- **K3 — Produktet holdes aldri som gissel.** Står produktdelen ferdig
+  og uimotsagt to runder på rad mens funnene treffer test-/portkode
+  introdusert i PR-en, deles PR-en: produktet merges, maskineriet får
+  egen PR.
+- **K4 — Aldri hand-parse en fremmed grammatikk.** Løftet til SP-13 i
+  `docs/ARKITEKTUR-STAENDE-PORTER.md`: ekte parser for syntaks, oppslag
+  i virkelig tilstand for semantikk — aldri regex-tilstandsmaskiner
+  eller simulatorer.
+- **K5 — Overvåkeren griper inn.** Ved K2-/K3-brudd legges en
+  scope-kjennelse i PR-tråden rundt runde 8 — med eskalering til eier —
+  ikke etter tjue runder.

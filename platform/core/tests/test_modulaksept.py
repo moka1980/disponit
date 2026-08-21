@@ -46,7 +46,19 @@ pg = pytest.mark.skipif(
 
 ROT = Path(__file__).resolve().parents[3]
 M049 = ROT / "platform/core/db/migrations/049_modulaksept.sql"
-KRAV = "wcag-kontroll-v1"
+M050 = ROT / "platform/core/db/migrations/050_akseptgrense_v2.sql"
+# 050: grensen ble synlig reversjonert — akseptene skrives mot v2;
+# v1-radene består som historie (registeret er append-only med krav-lås).
+KRAV = "m56-akseptflipp-v2"
+#: AKSEPTGRENSEN slik 049 registrerte den — og navnet er nettopp grunnen
+#: til at 050 gir revisjonen en egen akse: v1 kalte akseptens punktsett
+#: det samme som artefaktenes krav_id, som om de var samme påstand.
+#: Radene består som historie, og fire evidensbårne punkter er gjenbrukt
+#: uendret i v2 (Codex P2, #121).
+V1_KRAV = "wcag-kontroll-v1"
+#: Artefaktenes/manifestets krav-akse — uendret av grenserevisjonen:
+#: bevisene er de samme bytene; det er AKSEPTENS punktsett som er v2.
+ARTEFAKT_KRAV = "wcag-kontroll-v1"
 SHA0 = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
 #: Drillens MÅLETID — artefaktets egen `ts`, ikke innskrivingstiden.
 #: Fast og i fortiden med vilje: en test som sender `now()` ville ikke
@@ -1149,6 +1161,128 @@ def test_evidensattesten_er_ett_referat_per_fil(migrator):
 
 
 @pg
+def test_en_fillesning_baerer_flere_kravrevisjoner(migrator):
+    """Codex' P2 (#121): grensen kan reversjoneres, filen kan ikke leses
+    om igjen.
+
+    049 nøklet attesten på `(sha256, punkt)` — «attesten hører til
+    BYTENE» — men avviste samtidig et referat som spriker på `krav_id`.
+    Fire av v2s evidensbårne punkter er GJENBRUKT fra v1, så de samme
+    bytene, den samme stien og de samme måletallene ville blitt avvist
+    med «alt attestert med et annet innhold» bare fordi grensen hadde
+    fått et nytt navn. Aksepten 050 finnes for å muliggjøre, ville dødd
+    på sin egen revisjon.
+
+    Kravet er nå en del av identiteten — som i oppslaget
+    `aksepter_moduldeployment` alt gjør og i FK-en mot
+    `akseptkrav_punkt` — mens «én fil har ett innhold» står igjen som en
+    EGEN kontroll PÅ TVERS av revisjoner."""
+    migrator.execute("RESET ROLE")
+    sha = secrets.token_hex(32)
+    delte = sorted(migrator.execute(
+        "SELECT p.punkt, p.maalt_krav FROM akseptkrav_punkt p"
+        "  WHERE p.krav_id=%s AND p.kilde_type='evidensfil'"
+        "    AND EXISTS (SELECT 1 FROM akseptkrav_punkt v"
+        "                 WHERE v.krav_id=%s AND v.punkt=p.punkt"
+        "                   AND v.kilde_type='evidensfil')",
+        (KRAV, V1_KRAV)).fetchall())
+    assert len(delte) >= 4, f"v2 gjenbruker ikke v1-punkter: {delte}"
+    v1_maalt = dict(delte)
+
+    # v1 leser filen først …
+    _evidens_attest(migrator, sha, krav=V1_KRAV, maalt=v1_maalt)
+    # … og v2 skal kunne hvile på NØYAKTIG den samme lesningen.
+    _evidens_attest(migrator, sha, krav=KRAV, maalt=v1_maalt)
+    migrator.commit()
+    migrator.execute("RESET ROLE")
+    krav_pr_punkt = dict(migrator.execute(
+        "SELECT punkt, array_agg(krav_id ORDER BY krav_id)"
+        "  FROM evidensfil_attest WHERE sha256=%s GROUP BY punkt",
+        (sha,)).fetchall())
+    for punkt, _ in delte:
+        assert krav_pr_punkt[punkt] == sorted([V1_KRAV, KRAV]), punkt
+
+    # …og motsigelsen står: samme bytes, samme punkt, ANNET måletall er
+    # fortsatt to referater om én fil — også under et annet krav.
+    punkt = delte[0][0]
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _evidens_attest(migrator, sha, krav=KRAV,
+                        maalt=dict(v1_maalt, **{punkt: "17"}))
+    migrator.rollback()
+    assert "annet innhold" in str(ei.value)
+    # Det samme gjelder stien: bytene lå ett sted.
+    with pytest.raises(psycopg.errors.InvalidParameterValue):
+        _evidens_attest(migrator, sha, krav=KRAV, sti="en/annen/sti.jsonl",
+                        maalt=v1_maalt)
+    migrator.rollback()
+    migrator.execute("RESET ROLE")
+    assert migrator.execute(
+        "SELECT count(*) FROM evidensfil_attest WHERE sha256=%s",
+        (sha,)).fetchone()[0] == 2 * len(delte)
+
+
+@pg
+def test_motsigelseskontrollen_serialiseres_paa_bytene(migrator):
+    """Codex' P2 (#121 runde 2): kontrollen som ble flyttet ut av
+    nøkkelen må ta nøkkelens serialisering med seg.
+
+    049 nøklet attesten på `(sha256, punkt)`, så motsigelseskontrollen
+    hadde unikindeksen i ryggen: to samtidige attester om de samme
+    bytene og det samme punktet kolliderte i indeksen uansett hva
+    SELECT-en rakk å se. 050 løfter `krav_id` inn i nøkkelen — det er
+    hele poenget med `test_en_fillesning_baerer_flere_kravrevisjoner` —
+    og gir dermed bort den serialiseringen: to sesjoner som attesterer
+    SAMME fil under HVER SIN revisjon ser begge ingen konflikt i sitt
+    eget snapshot, og begge innsettingene lykkes fordi radene skiller
+    seg på `krav_id`. To immutable, motstridende referater om én fil,
+    tapt i et kappløp.
+
+    Testen holder låsen fra en annen forbindelse og krever at kallet
+    STOPPER der. Uten låsen går det rett gjennom.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `pg_advisory_xact_lock` fra
+    `attester_evidensfil` i 050, eller nøkle den med noe annet enn
+    `hashtextextended('evidensfil:' || sha, 0)`.
+    """
+    from db.pg import koble
+    migrator.execute("RESET ROLE")
+    sha = secrets.token_hex(32)
+    maalt = dict(migrator.execute(
+        "SELECT punkt, maalt_krav FROM akseptkrav_punkt"
+        "  WHERE krav_id=%s AND kilde_type='evidensfil'",
+        (KRAV,)).fetchall())
+    migrator.rollback()
+
+    holder = koble(MIGRATOR_DSN)
+    v = _verifikator()
+    try:
+        holder.execute("SELECT pg_advisory_xact_lock("
+                       "hashtextextended(%s, 0))", ("evidensfil:" + sha,))
+        v.execute("SET lock_timeout = '750ms'")
+        with pytest.raises(psycopg.errors.LockNotAvailable):
+            v.execute("SELECT attester_evidensfil(%s,%s,%s,%s::jsonb,'test')",
+                      (KRAV, EVIDENS_STI, sha, json.dumps(maalt)))
+        v.rollback()
+    finally:
+        holder.rollback()          # slipper låsen
+        holder.close()
+        v.close()
+
+    migrator.execute("RESET ROLE")
+    assert migrator.execute(
+        "SELECT count(*) FROM evidensfil_attest WHERE sha256=%s",
+        (sha,)).fetchone()[0] == 0, "attesten slapp forbi låsen"
+    migrator.rollback()
+    # …og med låsen sluppet går den samme lesningen inn som før.
+    _evidens_attest(migrator, sha, maalt=maalt)
+    migrator.execute("RESET ROLE")
+    assert migrator.execute(
+        "SELECT count(*) FROM evidensfil_attest WHERE sha256=%s",
+        (sha,)).fetchone()[0] == len(maalt)
+    migrator.rollback()
+
+
+@pg
 def test_hendelse_drill_og_punkt_er_append_only(migrator):
     """Port 6: UPDATE/DELETE avvises på alle tre tabellene — også for
     migrator."""
@@ -1462,10 +1596,16 @@ def test_kravet_er_registrert_og_punktene_bundet(migrator):
     from manifestskjema import KRAVGRENSER, valider_artefakter
     assert "wcag-kontroll-v1" in KRAVGRENSER
     assert "rollback-m56-v1" in KRAVGRENSER
-    n = migrator.execute("SELECT count(*) FROM akseptkrav_punkt WHERE"
-                         " krav_id='wcag-kontroll-v1'").fetchone()[0]
+    v1, v2 = migrator.execute(
+        "SELECT (SELECT count(*) FROM akseptkrav_punkt WHERE"
+        "        krav_id='wcag-kontroll-v1'),"
+        "       (SELECT count(*) FROM akseptkrav_punkt WHERE"
+        "        krav_id='m56-akseptflipp-v2')").fetchone()
     migrator.rollback()
-    assert n == 21, f"kravpunktregisteret har {n} punkter, §12 har 21"
+    # 050-revisjonen: v2 = §12 minus proxytoken-punktet pluss de to
+    # egress-erstatningene; v1 består urørt som historie.
+    assert v1 == 21, f"v1-historikken har {v1} punkter, ventet 21"
+    assert v2 == 22, f"v2-grensen har {v2} punkter, ventet 22"
     man = yaml.safe_load(
         (ROT / "platform/modules/m56_wcag_audit/manifest.yaml").read_text(
             encoding="utf-8"))
@@ -1846,26 +1986,26 @@ def test_wcag_grensene_maaler_at_portene_faktisk_kjorte():
     ekte = json.loads((ROT / ("deploy/staging/artefakter/"
                               "wcag-kontroll-v1-20260818T200413.json")
                        ).read_text(encoding="utf-8"))
-    assert _sjekk_grenser(KRAV, ekte) == []
+    assert _sjekk_grenser(ARTEFAKT_KRAV, ekte) == []
 
     def _mutert(**felt):
         return dict(ekte, maalt=dict(ekte["maalt"], **felt))
 
     upravd = _mutert(robots_5xx_sider_kontrollert=0, robots_5xx_krav=0)
-    assert any("robots_5xx_krav" in f for f in _sjekk_grenser(KRAV, upravd)), \
+    assert any("robots_5xx_krav" in f for f in _sjekk_grenser(ARTEFAKT_KRAV, upravd)), \
         "0 av 0 kontrollerte 5xx-sider slapp gjennom porten"
     over = _mutert(frekvens_tillat=5, frekvens_avvist_over_grense=1)
-    assert any("frekvens_tillat" in f for f in _sjekk_grenser(KRAV, over)), \
+    assert any("frekvens_tillat" in f for f in _sjekk_grenser(ARTEFAKT_KRAV, over)), \
         "en kjøring som utførte en forespørsel over taket ble godtatt"
     # Under grensen er fortsatt umålt, og ulikhet i 5xx står ved lag.
-    assert _sjekk_grenser(KRAV, _mutert(frekvens_tillat=3))
-    assert _sjekk_grenser(KRAV, _mutert(robots_5xx_sider_kontrollert=0))
+    assert _sjekk_grenser(ARTEFAKT_KRAV, _mutert(frekvens_tillat=3))
+    assert _sjekk_grenser(ARTEFAKT_KRAV, _mutert(robots_5xx_sider_kontrollert=0))
     # Codex' P2 (runde 2): 11 rene av 10 kjørte er ikke et strengere
     # bevis, det er et tall som ikke stemmer med seg selv — og
     # akseptraden ville båret «11/10» som om det var bestått.
     umulig = _mutert(kjoringer_rent_innen_frist=11, kjoringer_krav=10)
     assert any("kjoringer_rent_innen_frist" in f
-               for f in _sjekk_grenser(KRAV, umulig)), \
+               for f in _sjekk_grenser(ARTEFAKT_KRAV, umulig)), \
         "flere rene kjøringer enn kjørte slapp gjennom porten"
     # …og det samme gjelder signaturtallet, som er sin egen måling
     # (Codex P2, runde 15): flere målte signaturer enn kjøringer finnes
@@ -1874,10 +2014,90 @@ def test_wcag_grensene_maaler_at_portene_faktisk_kjorte():
     # målte signaturen og artefaktet skal kunne si nettopp det.
     umulig_sig = _mutert(kjoringer_med_maalt_signatur=11, kjoringer_krav=10)
     assert any("kjoringer_med_maalt_signatur" in f
-               for f in _sjekk_grenser(KRAV, umulig_sig)), \
+               for f in _sjekk_grenser(ARTEFAKT_KRAV, umulig_sig)), \
         "flere målte signaturer enn kjøringer slapp gjennom porten"
-    assert not _sjekk_grenser(KRAV, _mutert(kjoringer_med_maalt_signatur=0))
-    assert _sjekk_grenser(KRAV, _mutert(kjoringer_rent_innen_frist=9))
+    assert not _sjekk_grenser(ARTEFAKT_KRAV, _mutert(kjoringer_med_maalt_signatur=0))
+    assert _sjekk_grenser(ARTEFAKT_KRAV, _mutert(kjoringer_rent_innen_frist=9))
+
+
+def test_egressprobens_null_lekkasjer_krever_at_proben_faktisk_kjorte():
+    """Codex' P1 (#121): «0 lekkasjer» fra en probe som aldri kjørte.
+
+    `port24_motormiljo` måler at DISPONIT_KEK/DATABASE_URL ikke når
+    browser-containerens miljø ved å STARTE containeren med kanarier i
+    miljøet og lese `env`. Produsenten vet at returkoden er en del av
+    målingen — den skriver `ok=false` når kommandoen døde — men
+    sammendraget reduserte hele hendelsen til `egress_lekkasjer`, og en
+    kjøring som ikke kom i gang har null lekkasjer å vise. `0 <= 0` var
+    da fravær av en måling lest som en bestått port, og
+    `egress.hemmeligheter_i_browsermiljo` ville stått grønt i en
+    IMMUTABEL akseptrad.
+
+    Tre lag måles her: at sammendraget BÆRER probens tilstand, at
+    evidensporten KREVER den, og at akseptskriptet skriver «umålt» —
+    aldri «0» — når den mangler."""
+    import importlib.util
+
+    from manifestskjema import _sjekk_grenser, valider_artefaktformat
+    sti = ROT / "deploy/staging/wcag-kontroll-artefakt.py"
+    spec = importlib.util.spec_from_file_location("wcag_artefakt", sti)
+    wa = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(wa)
+
+    # 1. Produsenten: den ekte, innsjekkede runden bar en probe som
+    #    kjørte rent — og sammendraget sier det nå eksplisitt.
+    rader = wa.les(ROT / ("deploy/staging/artefakter/"
+                          "evidens-wcag-runde-20260818.jsonl"))
+    port24 = [d for d in rader if d.get("hendelse") == "port24_motormiljo"]
+    assert len(port24) == 1 and port24[-1]["ok"] is True
+    fasit = json.loads((ROT / ("deploy/staging/artefakter/"
+                               "wcag-kontroll-v1-20260818T200413.json")
+                        ).read_text(encoding="utf-8"))
+    assert fasit["maalt"]["egress_motormiljo_maalt"] == 1
+
+    # …og en probe som DØDE uten å rekke å skrive miljøet — returkode
+    # ≠ 0, tom lekkasjeliste — gir 0, ikke et grønt tall.
+    død = [dict(d, returkode=1, ok=False, feil="no such image")
+           if d.get("hendelse") == "port24_motormiljo" else d
+           for d in rader]
+    sam = wa.sammendrag(død, fasit["oppsett"]["kilde"],
+                        fasit["oppsett"]["kilde_sha256"])
+    assert sam["maalt"]["egress_lekkasjer"] == 0, \
+        "en probe som døde har fortsatt ingen lekkasjer å vise"
+    assert sam["maalt"]["egress_motormiljo_maalt"] == 0
+    # Og en probe som aldri var en containerkjøring i det hele tatt
+    # (`maalt: false`) har ikke engang en `lekkasjer`-nøkkel.
+    umålt = [{k: v for k, v in d.items() if k != "lekkasjer"}
+             | {"maalt": False, "ok": False}
+             if d.get("hendelse") == "port24_motormiljo" else d
+             for d in rader]
+    assert wa.sammendrag(umålt, "x", "y")["maalt"][
+        "egress_motormiljo_maalt"] == 0
+
+    # 2. Evidensporten krever den — feltet er i skjemaet, og verdien 0
+    #    er en FEIL, ikke stillhet.
+    def _mutert(**felt):
+        return dict(fasit, maalt=dict(fasit["maalt"], **felt))
+
+    assert _sjekk_grenser(ARTEFAKT_KRAV, fasit) == []
+    assert any("egress_motormiljo_maalt" in f
+               for f in _sjekk_grenser(ARTEFAKT_KRAV,
+                                       _mutert(egress_motormiljo_maalt=0))), \
+        "en umålt egressprobe med 0 lekkasjer slapp gjennom porten"
+    uten = dict(fasit, maalt={k: v for k, v in fasit["maalt"].items()
+                              if k != "egress_motormiljo_maalt"})
+    assert _sjekk_grenser(ARTEFAKT_KRAV, uten), \
+        "et sammendrag uten probens tilstand slapp gjennom porten"
+    assert valider_artefaktformat(uten, ARTEFAKT_KRAV), \
+        "skjemaet krever ikke probens tilstand"
+
+    # 3. Akseptskriptet skriver «umålt», ikke «0» — og basen avviser en
+    #    måleverdi som ikke er `maalt_krav`, så punktet blokkerer.
+    m = _aksept_skript()
+    _, hent = m.MAALTE["egress.hemmeligheter_i_browsermiljo"]
+    assert hent(fasit["maalt"]) == "0"
+    assert hent(sam["maalt"]).startswith("umålt")
+    assert hent({"egress_lekkasjer": 0}).startswith("umålt")
 
 
 def _superseder_drill():
@@ -4329,7 +4549,8 @@ def test_drillartefaktet_maa_navngi_sin_fencing_generasjon():
         assert "module_epoch" in str(ei.value)
 
 
-def test_hvert_grensepunkt_har_en_kilde_som_maaler_nettopp_det():
+@pg
+def test_hvert_grensepunkt_har_en_kilde_som_maaler_nettopp_det(migrator):
     """Codex' P1 (runde 5): `egress.proxytoken_til_ikke_ekstern_lesing`
     hentet verdien sin fra `maalt.egress_lekkasjer`.
 
@@ -4346,20 +4567,29 @@ def test_hvert_grensepunkt_har_en_kilde_som_maaler_nettopp_det():
     runde 15 — registeret eier dem nå, og et kall som sier noe annet
     avvises av basen, så et avvik her er en aksept som ville dødd på
     staging), og at et punkt uten ekte kilde BLOKKERER aksepten i stedet
-    for å bli pyntet."""
+    for å bli pyntet.
+
+    SP-13 (ratifisert i denne commiten): registeret slås opp i den
+    MIGRERTE BASEN, ikke hand-parses ut av migrasjonsfila. Den forrige
+    formen skar teksten ved første semikolon og plukket radene med et
+    regex — en håndskrevet SQL-parser, altså nøyaktig det porten forbyr.
+    Den målte i tillegg feil ting: uttrykt med like gyldig SQL — en cast,
+    en escapet apostrof, et ekstra statement — kunne det rekonstruerte
+    registeret avvike fra radene PostgreSQL faktisk får, og da feiler
+    testen enten på uskyldig formatering eller går glipp av et sprik
+    mellom skript og base som først dukker opp i staging-aksepten.
+    Tabellen er sannheten; migrasjonsfila er bare veien dit."""
     m = _aksept_skript()
-    # NØYAKTIG punktregisterets INSERT: `akseptkrav_ci` (runde 16) bærer
-    # også en `wcag-kontroll-v1`-rad med fem strengfelt, og den er et krav
-    # til CI-KJØRINGEN, ikke et grensepunkt.
-    sql = M049.read_text(encoding="utf-8")
-    blokk = sql[sql.index("INSERT INTO akseptkrav_punkt"):]
-    blokk = blokk[:blokk.index(";")]
-    register = {
-        p: (kt, g, mk) for p, kt, g, mk in re.findall(
-            r"\('wcag-kontroll-v1',\s*'([^']+)',\s*'([^']+)',"
-            r"\s*'([^']*)',\s*'([^']*)'\)", blokk)}
+    # Kravpunktregisteret slik det STÅR etter migrering. `akseptkrav_ci`
+    # er en annen tabell — den bærer krav til CI-KJØRINGEN, ikke
+    # grensepunkter — så oppslaget kan ikke forveksle de to slik en
+    # tekstsøk i fila måtte passe på.
+    migrator.execute("RESET ROLE")
+    register = {p: (kt, g, mk) for p, kt, g, mk in migrator.execute(
+        "SELECT punkt, kilde_type, grenseverdi, maalt_krav"
+        "  FROM akseptkrav_punkt WHERE krav_id=%s", (KRAV,)).fetchall()}
     punkter = set(register)
-    assert len(punkter) == 21, punkter
+    assert len(punkter) == 22, punkter
     kilder = (set(m.MAALTE), set(m.CI_PUNKTER), set(m.UMAALTE),
               {"malautorisasjon.positiv_sti_virker"})
     flat = [p for s in kilder for p in s]
@@ -4380,18 +4610,39 @@ def test_hvert_grensepunkt_har_en_kilde_som_maaler_nettopp_det():
         encoding="utf-8")
     assert register["malautorisasjon.positiv_sti_virker"] == \
         ("ci_kjoring", "ja", "ja")
-    # Selve feilen: det ene punktet skal ikke lenger hvile på
-    # containermiljø-tallet.
+    # 050-revisjonen, målt SYNLIG i BASEN: proxytoken-punktet er UTE av
+    # v2 (det krevde en mekanisme som ikke finnes), erstatningene er inne
+    # med hver sin ekte kilde — og v1-raden består som historie, fordi
+    # registeret er append-only med krav-lås.
+    assert "egress.proxytoken_til_ikke_ekstern_lesing" not in punkter
+    assert register["egress.hemmeligheter_i_browsermiljo"][0] == \
+        "evidensfil"
+    assert register["egress.sideeffektklasse_gater_aktivering"][0] == \
+        "ci_kjoring"
+    assert migrator.execute(
+        "SELECT count(*) FROM akseptkrav_punkt"
+        "  WHERE krav_id=%s AND punkt=%s",
+        (V1_KRAV, "egress.proxytoken_til_ikke_ekstern_lesing")
+    ).fetchone()[0] == 1, "v1-historien er visket ut"
+    # Endringsnotatet er en KOMMENTAR — den finnes bare i fila, og et
+    # substrengsøk etter den er ingen tolkning av SQL-grammatikk.
+    sql = M050.read_text(encoding="utf-8")
+    for notat in ("ENDRINGSNOTAT", "FJERNET", "ERSTATTET", "FREMTID"):
+        assert notat in sql, f"endringsnotatet mangler {notat}-leddet"
+    # port24-tallet bærer nå SIN EGEN invariant — under riktig navn.
+    assert "egress.hemmeligheter_i_browsermiljo" in m.MAALTE
     assert "egress.proxytoken_til_ikke_ekstern_lesing" not in m.MAALTE
-    skript = (ROT / "deploy/staging/m56-aksept.py").read_text(
-        encoding="utf-8")
-    assert 'm["egress_lekkasjer"]' not in skript, \
-        "punktet henter fortsatt containermiljø-tallet"
-    # …og så lenge det står umålt, skrives ingen aksept.
-    assert "egress.proxytoken_til_ikke_ekstern_lesing" in m.UMAALTE
-    with pytest.raises(SystemExit) as ei:
-        m.krev_maalbare_punkter()
-    assert "proxytoken" in str(ei.value)
+    # UMAALTE er tom i v2 — men MEKANISMEN består (ratifisert stående):
+    # et umålt punkt skal fortsatt blokkere hele aksepten.
+    assert m.UMAALTE == {}
+    m.krev_maalbare_punkter()          # tom → ingen blokkering
+    m.UMAALTE["syntetisk.punkt"] = "prøve: mekanismen skal fortsatt bite"
+    try:
+        with pytest.raises(SystemExit) as ei:
+            m.krev_maalbare_punkter()
+        assert "syntetisk.punkt" in str(ei.value)
+    finally:
+        m.UMAALTE.clear()
 
 
 def test_akseptporten_avviser_artefakter_som_ikke_er_bevis():
@@ -4410,7 +4661,7 @@ def test_akseptporten_avviser_artefakter_som_ikke_er_bevis():
                        "wcag-kontroll-v1-20260818T200413.json")
     # Det ekte artefaktet passerer — porten er ikke bare streng, den er
     # riktig.
-    runde, runde_sha = m.les_bundet_artefakt(runde_sti, KRAV, man)
+    runde, runde_sha = m.les_bundet_artefakt(runde_sti, ARTEFAKT_KRAV, man)
     assert runde_sha == hashlib.sha256(runde_sti.read_bytes()).hexdigest()
     assert m.verifiser_kilde(runde) == runde["oppsett"]["kilde_sha256"]
     # …og drillen fra 13:22 er ikke lenger bundet (blokkert punkt, Codex
@@ -4463,10 +4714,10 @@ def test_akseptporten_maaler_hash_og_grenser(tmp_path):
     # Riktig sha, feil innhold for kravet: grensene må fyre.
     ekte = hashlib.sha256(sti.read_bytes()).hexdigest()
     forbyttet = dict(man, staging_sjekkliste={"x": {
-        "status": "ja", "krav_id": KRAV, "artefakt": rel,
+        "status": "ja", "krav_id": ARTEFAKT_KRAV, "artefakt": rel,
         "artefakt_sha256": ekte}})
     with pytest.raises(SystemExit) as ei:
-        m.les_bundet_artefakt(sti, KRAV, forbyttet)
+        m.les_bundet_artefakt(sti, ARTEFAKT_KRAV, forbyttet)
     assert "evidensporten" in str(ei.value)
 
 
@@ -4507,12 +4758,24 @@ def test_artefaktene_maa_navngi_modulen_som_aksepteres():
             m.verifiser_modul(feil, navn)
         assert "m56_wcag_audit" in str(ei.value)
     # …og skjemaet bærer det samme kravet, uavhengig av skriptet.
+    #
+    # ARTEFAKTENES krav-akse, ikke akseptens (Codex P2, #121): kallet sto
+    # med `KRAV`, og `m56-akseptflipp-v2` har intet artefaktskjema. Da
+    # falt oppslaget tilbake til det generiske ytelsesskjemaet, og
+    # runde-sammendraget brøt DET uansett hva `oppsett.modul` sa — så
+    # påstanden var grønn av feil grunn og ville blitt stående grønn om
+    # WCAG-skjemaet mistet sin `m_wcag_audit`-binding. Tilbakefallet er
+    # nå selv en feil, men porten måles her på det den skal måle:
+    # artefaktet er GYLDIG som det står, og bare mutasjonen avvises.
     runde = json.loads((ROT / ("deploy/staging/artefakter/"
                                "wcag-kontroll-v1-20260818T200413.json")
                         ).read_text(encoding="utf-8"))
-    assert valider_artefaktformat(
-        dict(runde, oppsett=dict(runde["oppsett"], modul="m56_wcag_audit")),
-        KRAV), "skjemaet godtar fortsatt katalognavnet som modulidentitet"
+    assert valider_artefaktformat(runde, ARTEFAKT_KRAV) == []
+    katalognavn = dict(runde,
+                       oppsett=dict(runde["oppsett"], modul="m56_wcag_audit"))
+    feil = valider_artefaktformat(katalognavn, ARTEFAKT_KRAV)
+    assert any("modul" in f for f in feil), \
+        f"skjemaet godtar fortsatt katalognavnet som modulidentitet: {feil}"
 
 
 def test_drillen_maa_vaere_kjort_i_miljoet_som_aksepteres():

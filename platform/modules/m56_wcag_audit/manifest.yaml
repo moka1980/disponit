@@ -116,7 +116,7 @@ staging_sjekkliste:
       - maalt.kjoringer_rent_innen_frist
       - maalt.avvik_mot_fasit
     artefakt: deploy/staging/artefakter/wcag-kontroll-v1-20260818T200413.json
-    artefakt_sha256: 37b08686c6d32cfbad19978789231182494f6ed313517becaf96d3cde60d674b
+    artefakt_sha256: 61f0d56a35b6dea8e33bceca9a0c04ab0cc598ff7c64606417104a3f7dd25dc0
     notat: >-
       MÅLT 2026-08-18, BUNDET 2026-08-20 (049).
       På disponit-srv (release wcag-r1 — byte-identisk med den aksepterte
@@ -225,7 +225,7 @@ staging_sjekkliste:
       - maalt.feilinjisering_promoterte_artefakter
       - maalt.evidensfrist_reapet
     artefakt: deploy/staging/artefakter/wcag-kontroll-v1-20260818T200413.json
-    artefakt_sha256: 37b08686c6d32cfbad19978789231182494f6ed313517becaf96d3cde60d674b
+    artefakt_sha256: 61f0d56a35b6dea8e33bceca9a0c04ab0cc598ff7c64606417104a3f7dd25dc0
     notat: >-
       MÅLT 2026-08-18, BUNDET 2026-08-20 (049). Motorfeil (kommando exit 1) → kvittering 'avbrutt', oppdrag
       feilet MED signert feilkvittering, 0 promoterte artefakter;
@@ -238,7 +238,7 @@ staging_sjekkliste:
       - maalt.kjoringer_rent_innen_frist
       - maalt.kjoringer_krav
     artefakt: deploy/staging/artefakter/wcag-kontroll-v1-20260818T200413.json
-    artefakt_sha256: 37b08686c6d32cfbad19978789231182494f6ed313517becaf96d3cde60d674b
+    artefakt_sha256: 61f0d56a35b6dea8e33bceca9a0c04ab0cc598ff7c64606417104a3f7dd25dc0
     notat: >-
       MÅLT 2026-08-18, BUNDET 2026-08-20 (049). 10/10 kjøringer utført innen frist (verste 2.1 s mot 1800/3600 s
       budsjett — det syntetiske nettstedet er lite; fristene deklarert i

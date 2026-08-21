@@ -51,7 +51,17 @@ sys.path.insert(0, str(REPO / "platform/core"))
 
 MODUL = "m_wcag_audit"   # registernavnet (modulmappen heter m56_wcag_audit)
 MILJO = "staging"
-KRAV = "wcag-kontroll-v1"
+# 050: grensen ble SYNLIG reversjonert (BESLUTNING-AKSEPTFLIPP-049 §1)
+# — proxytoken-punktet krevde en mekanisme som ikke finnes og er
+# erstattet av de to målbare egress-invariantene; endringsnotatet står i
+# migrasjonsfila. Registeret er append-only med krav-lås, så revisjonen
+# ER et nytt krav_id.
+KRAV = "m56-akseptflipp-v2"
+#: Artefaktenes krav_id er UENDRET: runde-sammendraget er v1-evidens —
+#: nøyaktig de samme bytene manifestet binder og KRAVGRENSER måler.
+#: Grenserevisjonen (050) endret AKSEPTENS punktsett, ikke bevisene:
+#: to akser, to navn — aldri ett navn som later som de er samme ting.
+ARTEFAKT_KRAV = "wcag-kontroll-v1"
 DRILLKRAV = "rollback-m56-v1"
 TENANT = "t-wcagfasit"
 MANIFEST_REL = "platform/modules/m56_wcag_audit/manifest.yaml"
@@ -87,32 +97,33 @@ MAALTE = {
     "frekvens.over_grense_utfort":
         ("0", lambda m: "0" if m["frekvens_avvist_over_grense"] >= 1
                         else "umålt (taket ga aldri avslag)"),
+    # v2: port24-tallet under sitt RIKTIGE navn — målingen av at
+    # hemmelighetene aldri når browser-containerens miljø. (Det var
+    # dette tallet proxytoken-punktet lånte; nå bærer det sin egen
+    # invariant, og bare den.)
+    #
+    # …og det leses sammen med probens EGEN tilstand (Codex P1, #121):
+    # en port24-kjøring som ikke kom i gang, eller som døde med
+    # returkode ≠ 0 før den rakk å skrive miljøet, har heller ingen
+    # lekkasjer å vise. Da er «0» fravær av en måling, ikke et rent
+    # containermiljø — nøyaktig samme form som frekvenstaket over.
+    "egress.hemmeligheter_i_browsermiljo":
+        ("0", lambda m: str(m["egress_lekkasjer"])
+                        if m.get("egress_motormiljo_maalt") == 1
+                        else "umålt (port24-proben kjørte ikke rent)"),
 }
-#: Punkter i `wcag-kontroll-v1` som INGEN kilde vi har faktisk måler.
-#: De skrives ikke — de BLOKKERER aksepten, og teksten sier hvorfor.
+#: Punkter i kravet som INGEN kilde vi har faktisk måler. De skrives
+#: ikke — de BLOKKERER aksepten, og teksten sier hvorfor. Mekanismen er
+#: RATIFISERT som stående (beslutningsdokumentet §1): et umålt punkt
+#: blokkerer, aldri pyntes.
 #:
-#: Et grensepunkt er ikke et tall man finner et sted som ligner; det er en
-#: navngitt invariant, og kilden må ha stilt nettopp DENS spørsmål. Uten
-#: denne listen var alternativet til «finn en kilde» stilltiende å la et
-#: punkt hvile på nærmeste tall — og et nærmeste tall er ikke en måling.
-UMAALTE = {
-    "egress.proxytoken_til_ikke_ekstern_lesing":
-        "punktet gjelder egress-proxyens TOKENUTSTEDELSE: at en modul som"
-        " ikke er klassifisert `ekstern_lesing` aldri får et proxytoken."
-        " Verdien ble hentet fra `maalt.egress_lekkasjer`, og det tallet er"
-        " `port24_motormiljo` — porten som måler om DISPONIT_KEK og"
-        " DATABASE_URL lekker inn i BROWSER-CONTAINERENS miljø. Den ber"
-        " aldri om et proxytoken, for noen modul, av noen klasse. Et rent"
-        " containermiljø ble dermed en immutabel grønn observasjon om en"
-        " helt annen invariant (Codex P1, #117 runde 5). Repoet har"
-        " egress-rollen (`disponit_egress`) og visningen den leser"
-        " (`v_domeneautorisasjon`), men ingen utstedende proxy, og"
-        " evidens.jsonl fra 18/8 har ingen hendelse som ber om et token —"
-        " så verken runden eller en CI-port måler dette i dag. Punktet"
-        " trenger en kilde som faktisk BER om et proxytoken for en"
-        " ikke-`ekstern_lesing`-modul og får nei; til da er «0» en påstand,"
-        " ikke en måling",
-}
+#: Tom i v2 — med vilje, og ikke ved at noen fant «nærmeste tall»:
+#: proxytoken-punktet som sto her ble FJERNET av grenserevisjonen (050)
+#: fordi mekanismen det målte ikke finnes; erstatningene er ekte målinger
+#: med egne kilder. Bygges en utstedende egress-proxy, får dens arc
+#: punktet tilbake i sin egen grense — og står det da umålt, skal det
+#: rett inn her igjen.
+UMAALTE: dict[str, str] = {}
 CI_PUNKTER = (
     "skjema.brudd_promotert", "skjema.hash_uten_rad_akseptert",
     "skjema.mutert_ureferert", "skjema.slettet",
@@ -127,6 +138,9 @@ CI_PUNKTER = (
     "klasse.aktivering_uten_malautorisasjon_lyktes",
     "malautorisasjon.ikke_registrert_vilkar_talte",
     "malautorisasjon.feil_maldomene_godtatt",
+    # v2: 036-porten — aktiveringsveien krever ekstern_lesing-klasse med
+    # målautorisasjonsflagg; porttestene er røde ved brudd.
+    "egress.sideeffektklasse_gater_aktivering",
 )
 
 
@@ -832,7 +846,7 @@ def main() -> int:
         raise SystemExit("AVBRUTT: manifestets evidenskjede er rød:\n  "
                          + "\n  ".join(kjedefeil))
     drill, drill_sha = les_bundet_artefakt(a.drill, DRILLKRAV, manifest)
-    runde, runde_sha = les_bundet_artefakt(a.runde, KRAV, manifest)
+    runde, runde_sha = les_bundet_artefakt(a.runde, ARTEFAKT_KRAV, manifest)
     verifiser_modul(drill, "drillartefaktet")
     verifiser_modul(runde, "runde-sammendraget")
     verifiser_miljo(drill)

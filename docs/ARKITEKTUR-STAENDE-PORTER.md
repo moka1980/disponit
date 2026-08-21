@@ -1,9 +1,9 @@
 # ARKITEKTURNOTAT — ratifisering og stående porter etter 044
 
-**Forfattet av Claude.ai · tatt inn av Claude Code 2026-08-19, utvidet
-med SP-9…SP-12 fra editor-ratifiseringen 2026-08-20. Grunnlag: debrief
-periodisk kontroll 2026-08-19 (PR #105, 5 runder, 32 funn) og
-ratifiseringen etter 047 (`docs/pr/RATIFISERING-EDITOR-047.md`).**
+**Forfattet av Claude.ai · tatt inn av Claude Code 2026-08-21 (SP-13
+fra beslutningsdokumentet for 049).
+Grunnlag: debrief periodisk kontroll 2026-08-19 (PR #105, 5 runder,
+32 funn).**
 
 Dette dokumentet har to formål: rette arkitekturmodellen der
 implementeringen viste at spesifikasjonen tok feil, og løfte funnklassene
@@ -39,7 +39,7 @@ angrepsflate for å oppnå det samme.
 Dette gjelder også neste scheduler, neste importvei og neste
 integrasjon. Ingen skal re-litigere det.
 
-## 2. Tolv stående porter
+## 2. Tretten stående porter
 
 Skal inn i hver spesifikasjon som rører DB-funksjoner, flate eller
 produsenter. Nummereringen er stabil så de kan refereres direkte.
@@ -162,6 +162,18 @@ eksplisitt — aldri stille treffe den nye.
 *(047-reviewen innførte `aktiveringskilde` + generasjoner; regelen her
 er den generelle formen.)*
 
+### SP-13 Fremmed grammatikk parses av dens egen parser
+SQL, YAML, HTML og andre språk med egen grammatikk leses med en ekte
+parser (pglast for SQL), aldri med regex eller håndskrevet
+tilstandsmaskin. Og semantikk verifiseres som **oppslag i den virkelige
+tilstanden** (den migrerte basen), aldri med en simulator — en simulator
+måler sin egen fullstendighet, ikke virkeligheten.
+*Port:* verifikatorer som leser fremmed syntaks importerer en parser;
+semantiske påstander testes mot faktisk kjørt tilstand.
+*Hvorfor den er stående:* #118 brukte 20+ runder der de seks siste
+funnene gjaldt migrasjoner som ikke fantes — simulatorens hull, ikke
+basens. Norskportens V8-D2 var samme klasse: en kontroll som måler det
+den vet om, melder grønt om alt den ikke vet om.
 
 ## 3. Hva jeg tar med meg som spesifikasjonsforfatter
 
@@ -188,8 +200,8 @@ attestant som sier «dette er den» er lineage og må bindes.
 ---
 
 ```
-NÅ:    Ratifisering og SP-1…SP-12 gjennom porten som arkitekturendring
+NÅ:    Ratifisering og SP-1…SP-13 gjennom porten som arkitekturendring
        — ChatGPT (Eier relayer) — docs/ARKITEKTUR-STAENDE-PORTER.md
-NESTE: SP-1…SP-12 refereres fra hver senere spesifikasjon; avviket i §1
+NESTE: SP-1…SP-13 refereres fra hver senere spesifikasjon; avviket i §1
        gjør at «kun /v1/bestilling» ikke skrives igjen — Claude.ai
 ```

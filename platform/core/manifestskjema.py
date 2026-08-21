@@ -41,6 +41,11 @@ KRAVGRENSER: dict[str, dict] = {
         "frekvens_tillat_eksakt": 4,
         "min_frekvens_avvist": 1,
         "maks_egress_lekkasjer": 0,
+        # …og lekkasjetallet teller bare hvis proben KJØRTE (Codex P1,
+        # #121). En port24-kjøring som døde med returkode ≠ 0 har null
+        # lekkasjer å vise, og «0 ≤ 0» ville lest fraværet av en måling
+        # som en bestått port. Samme form som `min_robots_5xx_krav`.
+        "min_egress_motormiljo_maalt": 1,
         "min_feilet_med_kvittering": 1,
         "maks_promoterte_ved_feil": 0,
         "min_evidensfrist_reapet": 1,
@@ -356,9 +361,22 @@ def valider_artefaktformat(art: object,
     `additionalProperties: false` snur standarden: en ukjent nøkkel er en
     FEIL, ikke stillhet. Utvider noen artefaktformatet, må de utvide porten
     i samme slengen — det er hele poenget.
+
+    Og et krav_id UTEN registrert skjema er en FEIL, ikke en stille
+    tilbakefallsvalidering (Codex P2, #121). Oppslaget falt før tilbake
+    til det generiske ytelsesskjemaet, og da gjelder svaret et helt annet
+    format: enhver kaller som skriver feil krav_id — f.eks. akseptens
+    `m56-akseptflipp-v2` der artefaktets `wcag-kontroll-v1` skulle stått
+    — får en full feilliste uansett hva artefaktet inneholder, og en
+    `assert valider_artefaktformat(...)` er grønn av samme grunn som den
+    ville vært grønn ved et ekte funn. Standardskjemaet gjelder BARE når
+    ingen krav_id er oppgitt (`perf-m01-v1`s eget format).
     """
     try:
         import jsonschema
+        if krav_id is not None and krav_id not in ARTEFAKTSKJEMAER:
+            return [f"<rot>: ukjent krav_id {krav_id!r} — ingen registrert"
+                    " artefaktskjema; svaret ville gjeldt et annet format"]
         filnavn = ARTEFAKTSKJEMAER.get(krav_id or "")
         sti = (ARTEFAKTSKJEMA_STI.parent / filnavn) if filnavn \
             else ARTEFAKTSKJEMA_STI
@@ -635,6 +653,19 @@ def _grenser_wcag_kontroll(grense: dict, art: dict) -> list[str]:
             feil.append(melding)
         elif verdi > tak:
             feil.append(f"{felt}={verdi}, krever <= {tak}")
+    # Egress-proben: «0 lekkasjer» er bare et bevis hvis proben KJØRTE
+    # (Codex P1, #121). Produsenten måler det selv — `ok` er returkode 0
+    # OG ingen lekkasjer — og sammendraget bærer det nå. Uten denne
+    # kontrollen ville en probe som falt over på returkode ≠ 0 båret
+    # `egress_lekkasjer=0` rett inn i en immutabel akseptrad.
+    maalt_probe, melding = _teller(m, "egress_motormiljo_maalt",
+                                   "egress_motormiljo_maalt")
+    if melding:
+        feil.append(melding)
+    elif maalt_probe < grense["min_egress_motormiljo_maalt"]:
+        feil.append("egress_motormiljo_maalt=0 — port24-proben kom aldri"
+                    " i gang eller gikk ikke rent; «0 lekkasjer» er da"
+                    " fravær av en måling, ikke en bestått port")
     # 5xx-siden: en 500-side som «ren» var nettopp dogfooding-fellen —
     # antall kontrollerte sider må VÆRE kravet, ikke bare over null.
     sider, m1 = _teller(m, "robots_5xx_sider_kontrollert",
