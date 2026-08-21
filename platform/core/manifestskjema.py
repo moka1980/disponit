@@ -205,6 +205,34 @@ KRAVGRENSER["wcag-kontroll-v2"] = {
     "krev_datasett_sha_lik_innsjekket": True,
 }
 
+# --- m02-aksept-arcen (klarsignal 6d1cf8ec…, §3) ----------------------
+# De to nye artefaktene er arcens eneste nye målearbeid. Begge er
+# MÅLINGS-artefakter (perf-m01-formen): produsert av en kjøring, ikke
+# avledet av en fil — så porten re-regner de interne invariantene og
+# håndhever grensene, og SP-11-bindingen (sha i manifestet/akseptveien)
+# gjør bytene immutable.
+KRAVGRENSER["m02-suite-v1"] = {
+    # Suitekjøringen PÅ STAGING: hele suiten grønn, og M-2s ANDEL er
+    # navngitt og grønn — delingsbetingelsen i RUTINER.md gjort målbar.
+    # Gulvet er romslig med vilje: det måler at KJØRINGEN var hel, ikke
+    # at antallet aldri vokser (det gjør det, hver uke).
+    "min_tester": 1500,
+    "maks_feilet": 0,
+    "min_m2_tester": 30,
+    "maks_m2_feilet": 0,
+}
+KRAVGRENSER["m02-fordeling-v1"] = {
+    # Det syntetiske settet er REPRODUSERT, ikke historisk: basen på
+    # disponit-srv har ingen rader fra m01-rundens opprinnelige 180
+    # (målt 2026-08-21 — null STOPP i hele basen; radene ble aldri med
+    # fra gammel staging). Fasiten 84/3/93 er derfor drevet PÅ NYTT
+    # gjennom beslutningsveien, med samme fordeling — og CI kjører det
+    # SAMME settet mot lokal base (test_m02_fordeling), så «likt
+    # lokalt» er en stående måling, ikke et minne.
+    "fordeling_eksakt": {"TILLAT": 84, "STOPP": 3, "UNNTAK": 93},
+    "min_hendelser": 180,
+}
+
 #: Hvilket LUKKEDE skjema som gjelder for hvilket krav. Uten dette ville
 #: alle artefakter blitt målt mot ytelsesskjemaet, og et feilinjiserings-
 #: artefakt ville feilet på «mangler `krav`» i stedet for å bli validert.
@@ -216,6 +244,8 @@ ARTEFAKTSKJEMAER: dict[str, str] = {
     "policyadmin-v1": "artefakt-policyadmin-skjema.json",
     "wcag-kontroll-v1": "artefakt-wcag-kontroll-skjema.json",
     "wcag-kontroll-v2": "artefakt-wcag-kontroll-v2-skjema.json",
+    "m02-suite-v1": "artefakt-m02-suite-skjema.json",
+    "m02-fordeling-v1": "artefakt-m02-fordeling-skjema.json",
     "rollback-m56-v1": "artefakt-rollback-m56-skjema.json",
 }
 
@@ -450,6 +480,10 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _grenser_wcag_kontroll(grense, art)
     if krav_id == "wcag-kontroll-v2":
         return feil + _grenser_wcag_kontroll_v2(grense, art)
+    if krav_id == "m02-suite-v1":
+        return feil + _grenser_m02_suite(grense, art)
+    if krav_id == "m02-fordeling-v1":
+        return feil + _grenser_m02_fordeling(grense, art)
     if krav_id == "rollback-m56-v1":
         return feil + _grenser_rollback_m56(grense, art)
 
@@ -857,6 +891,88 @@ def _grenser_wcag_kontroll_v2(grense: dict, art: dict) -> list[str]:
                     f" bytenes {lokal[:12]}… — datasettet staging"
                     " serverte er ikke datasettet fasiten beskriver;"
                     " byte-likhet i BEGGE ledd er kravet (SP-11, §1.2)")
+    return feil
+
+
+def _grenser_m02_suite(grense: dict, art: dict) -> list[str]:
+    """`m02-suite-v1` — suitekjøringen på staging, med M-2s andel
+    navngitt (m02-aksept-klarsignalet §3). Tallene re-regnes: andelen
+    kan ikke overstige helheten, en feilfri suite har null feilede, og
+    M-2s filer må faktisk stå i artefaktet."""
+    feil: list[str] = []
+    m = art.get("maalt")
+    if not isinstance(m, dict):
+        return ["artefaktet mangler `maalt`"]
+    total, m1 = _teller(m, "tester_totalt", "tester_totalt")
+    feilet, m2 = _teller(m, "tester_feilet", "tester_feilet")
+    m2t, m3 = _teller(m, "m2_tester", "m2_tester")
+    m2f, m4 = _teller(m, "m2_feilet", "m2_feilet")
+    for melding in (m1, m2, m3, m4):
+        if melding:
+            feil.append(melding)
+    if any((m1, m2, m3, m4)):
+        return feil
+    if total < grense["min_tester"]:
+        feil.append(f"tester_totalt={total}, krever >="
+                    f" {grense['min_tester']}")
+    if feilet > grense["maks_feilet"]:
+        feil.append(f"tester_feilet={feilet}, krever <="
+                    f" {grense['maks_feilet']}")
+    if m2t < grense["min_m2_tester"]:
+        feil.append(f"m2_tester={m2t}, krever >= {grense['min_m2_tester']}")
+    if m2f > grense["maks_m2_feilet"]:
+        feil.append(f"m2_feilet={m2f}, krever <= {grense['maks_m2_feilet']}")
+    if m2t > total:
+        feil.append(f"m2_tester={m2t} > tester_totalt={total} — andelen"
+                    " kan ikke overstige helheten")
+    filer = (art.get("oppsett") or {}).get("m2_filer")
+    if not (isinstance(filer, list) and filer
+            and all(isinstance(x, str) and x for x in filer)):
+        feil.append("oppsett.m2_filer mangler — M-2s andel skal være"
+                    " NAVNGITT, ikke antatt (delingsbetingelsen)")
+    return feil
+
+
+def _grenser_m02_fordeling(grense: dict, art: dict) -> list[str]:
+    """`m02-fordeling-v1` — det syntetiske settet gjennom
+    beslutningsveien. Fordelingen RE-REGNES av radene artefaktet selv
+    bærer (SP-11: bytene er bundet, så radene er målingen) og må være
+    EKSAKT fasiten — 83 TILLAT er ikke «nesten», det er et annet sett."""
+    feil: list[str] = []
+    m = art.get("maalt")
+    if not isinstance(m, dict):
+        return ["artefaktet mangler `maalt`"]
+    rader = art.get("rader")
+    if not isinstance(rader, list) or not rader:
+        return feil + ["artefaktet mangler `rader` — en fordeling uten"
+                       " radene sine kan ikke re-regnes"]
+    talt: dict[str, int] = {}
+    ider = set()
+    for r in rader:
+        if not (isinstance(r, list) and len(r) == 2
+                and isinstance(r[0], int) and not isinstance(r[0], bool)
+                and r[0] > 0 and isinstance(r[1], str)):
+            return feil + ["rader har en linje som ikke er"
+                           " [loggpost_id, beslutning]"]
+        ider.add(r[0])
+        talt[r[1]] = talt.get(r[1], 0) + 1
+    if len(ider) != len(rader):
+        feil.append("rader gjentar en loggpost — én hendelse er én rad")
+    if len(rader) < grense["min_hendelser"]:
+        feil.append(f"{len(rader)} rader, krever >="
+                    f" {grense['min_hendelser']}")
+    if talt != grense["fordeling_eksakt"]:
+        feil.append(f"fordelingen re-regnet av radene er {talt}, fasiten"
+                    f" er {grense['fordeling_eksakt']} — eksakt, aldri"
+                    " «nesten»")
+    for nokkel, verdi in grense["fordeling_eksakt"].items():
+        oppgitt, melding = _teller(m, f"antall_{nokkel.lower()}",
+                                   f"antall_{nokkel.lower()}")
+        if melding:
+            feil.append(melding)
+        elif oppgitt != verdi:
+            feil.append(f"antall_{nokkel.lower()}={oppgitt} spriker fra"
+                        f" fasiten {verdi}")
     return feil
 
 
