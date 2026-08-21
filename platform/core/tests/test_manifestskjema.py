@@ -1128,3 +1128,77 @@ def test_m37s_avhengigheter_er_aktive_for_den_selv_kan_bli_det():
     feil = valider(moduler).feil
     assert any("m02_revisjonslogg" in f and "ikke er aktiv" in f
                for f in feil), feil
+
+
+def _m02_suite_artefakt(**maalt):
+    """Et helt m02-suite-v1-artefakt, med `maalt` overstyrbar felt for
+    felt — så hver test under er ÉN mutasjon fra et grønt artefakt."""
+    tall = {"tester_totalt": 1972, "tester_feilet": 0,
+            "tester_hoppet": 12, "m2_tester": 31, "m2_feilet": 0,
+            "m2_hoppet": 0, "suite_exitkode": 0, "m2_exitkode": 0}
+    tall.update(maalt)
+    return {
+        "krav_id": "m02-suite-v1", "ts": "2026-08-21T00:00:00+00:00",
+        "bestatt": True,
+        "oppsett": {"modul": "m02_revisjonslogg", "commit": "a" * 40,
+                    "vert": "disponit-srv",
+                    "m2_filer": ["platform/core/tests/"
+                                 "test_kjorer_og_kryptering.py"]},
+        "maalt": tall,
+    }
+
+
+def test_m02_suite_hel_kjoring_passerer():
+    """Referansen de negative portene under måles mot."""
+    from manifestskjema import _sjekk_grenser, valider_artefaktformat
+    art = _m02_suite_artefakt()
+    assert valider_artefaktformat(art, "m02-suite-v1") == []
+    assert _sjekk_grenser("m02-suite-v1", art) == []
+
+
+def test_m02_suite_hoppet_m2_andel_er_ikke_en_maaling():
+    """Hele `test_kjorer_og_kryptering.py` er `skipif(not DSN)`, og junit
+    teller en hoppet test i `tests` med null failures og null errors. En
+    vert uten oppsatt testbase leverte derfor 31 «tester», null feilede —
+    over gulvet — uten at ÉN M-2-test hadde kjørt. Delingsbetingelsen
+    krever en MÅLING for nettopp denne modulen; en hoppet port måler
+    ingenting.
+
+    MUTASJONEN SOM DREPER DENNE: la grensen måle `m2_tester` i stedet for
+    de KJØRTE.
+    """
+    from manifestskjema import _sjekk_grenser
+    feil = _sjekk_grenser("m02-suite-v1", _m02_suite_artefakt(m2_hoppet=31))
+    assert any("m2_hoppet" in f for f in feil), feil
+    # ... og gulvet for hele suiten måles på samme vis.
+    feil = _sjekk_grenser("m02-suite-v1",
+                          _m02_suite_artefakt(tester_hoppet=1900))
+    assert any("kjørte" in f for f in feil), feil
+
+
+def test_m02_suite_avbrutt_pytest_er_ikke_en_hel_suite():
+    """En avbrutt pytest skriver junit-XML likevel, over bare testene som
+    rakk å bli ferdige: alle grønne, null failures, null errors — og et
+    antall som kan klare gulvet. Exitkoden er det eneste stedet avbruddet
+    står (exit 2 ved en sen KeyboardInterrupt).
+
+    MUTASJONEN SOM DREPER DENNE: kast `CompletedProcess` i `_kjor` igjen.
+    """
+    from manifestskjema import _sjekk_grenser
+    feil = _sjekk_grenser("m02-suite-v1",
+                          _m02_suite_artefakt(suite_exitkode=2))
+    assert any("suite_exitkode" in f for f in feil), feil
+    feil = _sjekk_grenser("m02-suite-v1",
+                          _m02_suite_artefakt(m2_exitkode=2))
+    assert any("m2_exitkode" in f for f in feil), feil
+
+
+def test_m02_suite_vrangt_oppsett_feiler_lukket():
+    """`valider_artefakter` går med vilje videre i grensene etter en
+    formatfeil, for å samle ALLE røde funn. Da må grensene tåle et vrangt
+    artefakt: et sant ikke-objekt i `oppsett` skal gi et FUNN, ikke en
+    AttributeError som river med seg hele valideringskjøringen."""
+    from manifestskjema import _sjekk_grenser, valider_artefaktformat
+    art = dict(_m02_suite_artefakt(), oppsett="ikke et objekt")
+    assert valider_artefaktformat(art, "m02-suite-v1") != []
+    assert any("m2_filer" in f for f in _sjekk_grenser("m02-suite-v1", art))
