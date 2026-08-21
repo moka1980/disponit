@@ -115,6 +115,10 @@ OPPDRAGSTYPE = "kontroll.wcag.nettsted"
 # feiler. `LEGACY_RELEASE` under er uberørt: den navngir releasen de gamle
 # rundefilene tilhørte, ikke den vi kjører nå.
 RELEASE = os.environ.get("WCAG_RELEASE", "").strip() or "wcag-r20"
+#: Miljøet deployment- og claim-radene bærer (fase 2 registrerer
+#: 'staging'; claim-porten stempler det på oppdraget). Attestmålingen
+#: (052) måler claim-sporet mot NØYAKTIG dette paret (release, miljø).
+MILJO = "staging"
 TENANT = "t-wcagfasit"
 TENANT_FREKVENS = "t-wcagfrekvens"
 VERT_FREKVENS = "fasit-frekvens.test"
@@ -1125,10 +1129,64 @@ def _kvittering_signert(m, oid: int) -> bool:
     return bool(rad and rad[0])
 
 
+def _kjoringsattest(m, oid: int) -> dict:
+    """Drilloppdragets port anvendt på KONTROLLØPET (052, §1.3a).
+
+    `revisjonslogg_korrekt` lånte fristtellingen — et aggregat som aldri
+    spurte om kvitteringen attesterte riktig release, eller om
+    revisjonsraden fantes. Nå måles hver kjøring for seg, i basen, av
+    `maal_kjoringsattest` (samme fullmaktsform som `maal_rent_utfall`,
+    og med drillportens egne ledd):
+
+      * kvitteringsavtrykket (`maal_rent_utfall` — signaturkolonnen
+        identisk med konvoluttens, resultathash satt, kapabiliteten
+        brent med nøyaktig den hashen);
+      * claim-sporet: oppdraget ble claimet av NØYAKTIG (RELEASE, MILJO)
+        — kjøringens egen kontekst, ikke en annen releases;
+      * artefakt-likheten (SP-3): utfort ⇔ promotert artefakt på
+        releasen;
+      * revisjonsraden: oppdraget er koblet til sin
+        fase-2-TILLAT-loggpost (008), og raden finnes med riktig tenant
+        og beslutning. `loggpost` returneres så ti kjøringer kan kreves
+        å bære ti DISTINKTE rader — én rad delt av alle er én rad.
+
+    Målingen bor i basen bak fullmakten den trenger (Codex P1, #117
+    runde 17-formen); skriptet skriver bare utfallene i evidensstrømmen.
+    """
+    m.execute("SET ROLE disponit_modules_admin")
+    rad = m.execute(
+        "SELECT kvittering_ok, claim_release_ok, artefakt_ok,"
+        " revisjonsrad_ok, loggpost FROM maal_kjoringsattest(%s,%s,%s,%s)",
+        (TENANT, oid, RELEASE, MILJO)).fetchone()
+    m.execute("RESET ROLE")
+    return {"kvittering_ok": bool(rad and rad[0]),
+            "claim_release_ok": bool(rad and rad[1]),
+            "artefakt_ok": bool(rad and rad[2]),
+            "revisjonsrad_ok": bool(rad and rad[3]),
+            "loggpost": rad[4] if rad else None}
+
+
 def fase5(m, http, mtk, motorkmd, digest):
     cookie, csrf = _adminokt(m, TENANT)
     lese_tok = _lesetoken(m, TENANT)
-    gronne = signerte = 0
+    # DATASETTETS IDENTITET (052, §1.2): sha256 over BYTENE serveren
+    # faktisk serverer i denne runden (testnettstedet leses live fra
+    # utsjekket), målt med NØYAKTIG samme funksjon CI bruker på de
+    # innsjekkede bytene (`manifestskjema.datasett_sha256`) — én
+    # kanonisering, to ledd, byte-likhet som krav (SP-11). Skrives i
+    # evidensstrømmen så konverteren kan bære den til artefaktets
+    # `oppsett` og porten sammenligne.
+    import manifestskjema as ms
+    evidens("datasett_identitet",
+            datasett_sha256=ms.datasett_sha256(TESTNETT), ok=True)
+    # Regelsettet kjøringene SKAL gå på er motorens pinnede — samme
+    # kilde som miljøblokka rapporten attesterer (`_serverkontekst`).
+    # Hver rapports `regelsett_versjon` måles mot dette; et avvik er en
+    # kjøring på et annet regelsett enn det aksepten binder.
+    forventet_regelsett = ("axe-core-"
+                           + _serverkontekst(digest, motorkmd)["axe_versjon"])
+    gronne = signerte = attesterte = 0
+    loggposter = set()
     for i in range(10):
         scenario = "nettsted_maks4" if i % 3 == 0 else "enkeltside"
         fasit = json.loads((TESTNETT / "fasit.json").read_text())
@@ -1180,20 +1238,40 @@ def fase5(m, http, mtk, motorkmd, digest):
         # kvitteringen alt levert og avtrykket ligger i basen.
         _kontekst(m, TENANT)
         signert = _kvittering_signert(m, oid)
+        # …og ATTESTEN er sin egen måling (052, §1.3a): kvitteringen
+        # attesterer NØYAKTIG den releasen/miljøet/artefaktet kjøringen
+        # gikk på, og revisjonsraden finnes. Også på et gjenspill —
+        # avtrykkene ligger i basen.
+        attest = _kjoringsattest(m, oid)
         m.rollback()
+        regelsett = (rr.json()["rapport"].get("regelsett_versjon")
+                     if rr.status_code == 200 else None)
+        attest_ok = (attest["kvittering_ok"] and attest["claim_release_ok"]
+                     and attest["artefakt_ok"]
+                     and regelsett == forventet_regelsett)
         # Fristen ble målt da kjøringen faktisk skjedde, og den målingen
         # står i evidensfila fra den runden. Et gjenspill kan ikke måle den
         # på nytt, og skal ikke late som.
         rent = (res.get("utfall") == "utfort" and not avvik
                 and (alt_utfort or varighet < frist))
-        ok = rent and signert
+        # 9/10 er rødt, ikke «nesten» (klarsignalet §1.3): en rød attest
+        # eller manglende revisjonsrad gjør LINJA rød, og fase 9 gater
+        # aktiveringen på nettopp det.
+        ok = rent and signert and attest_ok and attest["revisjonsrad_ok"]
         gronne += rent
-        signerte += ok
+        signerte += rent and signert
+        attesterte += rent and signert and attest_ok
+        if rent and attest["revisjonsrad_ok"] \
+                and attest["loggpost"] is not None:
+            loggposter.add(attest["loggpost"])
         evidens("kjoring", i=i, scenario=scenario, oppdrag=oid,
                 utfall=res.get("utfall"), gjenspill=alt_utfort,
                 varighet_s=None if varighet is None else round(varighet, 1),
                 frist_s=frist, avvik_mot_fasit=len(avvik),
                 kvittering_signert=signert,
+                kvittering_attest_ok=attest_ok,
+                revisjonsrad_ok=attest["revisjonsrad_ok"],
+                loggpost=attest["loggpost"], regelsett=regelsett,
                 avvik=avvik[:5], ok=ok)
     # ... og SUMMEN bærer den samme påstanden (Codex P1). Fasitkravet er
     # 10/10; alt annet er en rød måling, uansett hvilken av de ti som
@@ -1211,8 +1289,11 @@ def fase5(m, http, mtk, motorkmd, digest):
     evidens("fase5_resultat",
             ti_kjoringer_rent_innen_frist=f"{gronne}/10",
             kjoringer_med_maalt_signatur=f"{signerte}/10",
+            kjoringer_med_attestert_kvittering=f"{attesterte}/10",
+            revisjonsrader_mot_bestilt=f"{len(loggposter)}/10",
             funn_avvik_mot_fasit=0 if gronne == 10 else "SE kjoring-linjene",
-            ok=gronne == 10 and signerte == 10)
+            ok=gronne == 10 and signerte == 10 and attesterte == 10
+               and len(loggposter) == 10)
     return signerte
 
 

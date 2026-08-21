@@ -97,6 +97,7 @@
         "inflight_oppdrag",
         "inflight_utfall",
         "inflight_har_signert_kvittering",
+        "rullback_har_signert_kvittering",
         "inflight_promoterte_artefakter",
         "falske_verdikter",
         "nye_oppdrag_claimet_av_drillet_release",
@@ -155,6 +156,10 @@
           "type": "number",
           "minimum": 0,
           "comment": "Sekunder fra rullbakken begynte aa bootes til det ventende oppdraget var fullfoert."
+        },
+        "rullback_har_signert_kvittering": {
+          "type": "boolean",
+          "comment": "052 (klarsignalet paragraf 1.1a): rullbakk-releasen fullfoerte det ventende oppdraget SELV, med signert kvittering fra SIN kjoering - maalt i basen av maal_rent_utfall, samme predikat som inflight-leddet. Promoteringstellingen alene sier ikke at kvitteringsveien var innom oppdraget."
         }
       }
     },

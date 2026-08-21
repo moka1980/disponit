@@ -33,6 +33,13 @@ utvalgsregler som kan leses, angripes og kjøres om igjen:
     `kjoringer_med_maalt_signatur`, avledet av `kvittering_signert` på
     hver linje. En runde som ikke målte signaturen, står på null.
 
+  * v1 ELLER v2 AVGJØRES AV FILA (052): en runde som målte datasettets
+    identitet (`datasett_identitet`) bærer 052-målekoden og
+    sammendras som `wcag-kontroll-v2` — med datasett-sha i `oppsett` og
+    attest-/revisjonsradtellerne i `maalt`. Runden fra 18/8 har ingen
+    slik hendelse og regenererer byte-identisk som v1: hash-bundet
+    historie får aldri felter i ettertid.
+
 Deterministisk med vilje: samme fil inn gir byte-identisk artefakt ut
 (ingen klokkelesing), så CI kan regenerere og sammenligne.
 
@@ -288,6 +295,69 @@ def signert_innen_frist(linjer: list[dict], krav: int) -> int:
     return rent_innen_frist(signerte, krav)
 
 
+def attestert_kvittering(linjer: list[dict], krav: int) -> int:
+    """Teller kjøringene som i tillegg fikk kvitteringen ATTESTERT.
+
+    052 (§1.3a): `kvittering_attest_ok` er basens egen måling
+    (`maal_kjoringsattest`) av at kvitteringen hører til NØYAKTIG den
+    kjøringen — avtrykket, claim-sporet (release+miljø), artefakt-
+    likheten — pluss et målt regelsett identisk med motorens pinnede.
+    Samme utvalgsdisiplin som signaturen: `is True`, aldri sannhetsverdi,
+    og bare linjer som alt teller som rene kjøringer på bestilte
+    posisjoner med egne oppdrag. En runde som ikke målte attesten står
+    på null — synlig, aldri lånt fra et annet tall.
+    """
+    kandidater = [d for d in linjer if d.get("kvittering_signert") is True
+                  and d.get("kvittering_attest_ok") is True]
+    return rent_innen_frist(kandidater, krav)
+
+
+def kvittering_attest_avvik(linjer: list[dict]) -> int:
+    """Linjer som BÆRER attestmålingen og bærer den rød.
+
+    Grensen er null avvik — 9/10 er rødt, ikke «nesten» (klarsignalet
+    §1.3). `is False`, ikke `not x`: en linje uten målingen er umålt og
+    telles av tallet over (som da ikke når kravet); en linje som MÅLTE
+    og fikk nei er et avvik, og det skal synes som det.
+    """
+    return sum(1 for d in linjer
+               if d.get("kvittering_attest_ok") is False)
+
+
+def revisjonsrader_mot_bestilt(linjer: list[dict], krav: int) -> int:
+    """Antall DISTINKTE revisjonsrader bak de bestilte kjøringene.
+
+    052 (§1.3b): hver kjøring er koblet til sin fase-2-TILLAT-loggpost
+    (008), og `maal_kjoringsattest` målte at raden finnes med riktig
+    tenant og beslutning. Ti kjøringer skal bære ti rader: tellingen er
+    antallet distinkte loggpost-identiteter over distinkte oppdrag på
+    bestilte posisjoner — én rad delt av flere kjøringer er én rad, og
+    en linje uten egen loggpost-identitet er ikke målt (`_identitet`,
+    samme kanoniske form som oppdrags-IDen).
+    """
+    bestilte = range(krav)
+    per_oppdrag: dict[int, int] = {}
+    for d in linjer:
+        indeks, oppdrag = d.get("i"), _identitet(d, "oppdrag")
+        logg = _identitet(d, "loggpost")
+        if (d.get("revisjonsrad_ok") is True
+                and logg is not None
+                and isinstance(indeks, int) and not isinstance(indeks, bool)
+                and indeks in bestilte
+                and oppdrag is not None):
+            per_oppdrag[oppdrag] = logg
+    return len(set(per_oppdrag.values()))
+
+
+def revisjonsrad_avvik(linjer: list[dict]) -> int:
+    """Linjer som bærer revisjonsrad-målingen rød. Samme form som
+    `kvittering_attest_avvik`: målt nei er et avvik, umålt er umålt."""
+    return sum(1 for d in linjer if d.get("revisjonsrad_ok") is False)
+
+
+_SHA256 = re.compile(r"\A[0-9a-f]{64}\Z")
+
+
 def sammendrag(rader: list[dict], kilde: str, kilde_sha256: str) -> dict:
     kontekst = kontekster(rader)
 
@@ -308,9 +378,19 @@ def sammendrag(rader: list[dict], kilde: str, kilde_sha256: str) -> dict:
         siste("feilinjisering_motorfeil", lambda d: d.get("utfall") != "tomt"),
         siste("feilinjisering_evidensfrist"),
     ]
+    # v2-RUNDE ELLER v1-RUNDE — avgjort av FILA, aldri av et flagg
+    # (052, §1.2): en runde som målte datasettets identitet
+    # (`datasett_identitet` i strømmen) bærer målekoden fra 052, og da
+    # kreves HELE settet av nye observasjoner — halvmålt er umålt, og
+    # sammendraget skrives som `wcag-kontroll-v2`. Runden fra 18/8 har
+    # ingen slik hendelse og regenererer byte-identisk som v1: den fila
+    # er hash-bundet historie og kan ikke få felter i ettertid.
+    v2 = any(d.get("hendelse") == "datasett_identitet" for d in rader)
+    if v2:
+        indekser.append(siste("datasett_identitet"))
     image_digest, release = en_kjoring(rader, kontekst, indekser)
     valgte = tuple(rader[i] for i in indekser)
-    (fase5, robots, robots5, frekv, motor, injeksjon, frist) = valgte
+    (fase5, robots, robots5, frekv, motor, injeksjon, frist) = valgte[:7]
 
     # Aggregatets navn: fase 5 het før «ti_kjoringer_SIGNERT_innen_frist»,
     # men det den summerte var rene utfall innen frist — signaturen ble
@@ -342,6 +422,19 @@ def sammendrag(rader: list[dict], kilde: str, kilde_sha256: str) -> dict:
     # målte den aldri, og står derfor på null — synlig, i stedet for
     # skjult bak et ord.
     signert = signert_innen_frist(fase5_linjer, krav)
+    if v2:
+        # De nye tellerne regnes av de SAMME bestilte linjene, med samme
+        # disiplin — og datasett-hendelsen må bære en kanonisk sha.
+        datasett = rader[indekser[7]]
+        dsha = datasett.get("datasett_sha256")
+        if not (isinstance(dsha, str) and _SHA256.match(dsha)):
+            raise SystemExit("AVBRUTT: `datasett_identitet` bærer ingen"
+                             " kanonisk sha256 — identiteten til bytene"
+                             " staging serverte er ikke målt")
+        attestert = attestert_kvittering(fase5_linjer, krav)
+        attest_avvik = kvittering_attest_avvik(fase5_linjer)
+        rader_mot = revisjonsrader_mot_bestilt(fase5_linjer, krav)
+        rad_avvik = revisjonsrad_avvik(fase5_linjer)
     if rent != påstått:
         raise SystemExit(
             f"AVBRUTT: `fase5_resultat` påstår {påstått}/{krav} utført"
@@ -354,8 +447,15 @@ def sammendrag(rader: list[dict], kilde: str, kilde_sha256: str) -> dict:
             " oppdraget gjentatt på flere posisjoner er én kjøring, ikke"
             " flere — så summen kan ikke være kilden. Kjør fase 5 på nytt"
             " (nye idempotensnøkler) og la kjøringene måle seg selv.")
+    ut_oppsett_ekstra = {"datasett_sha256": dsha} if v2 else {}
+    ut_maalt_ekstra = ({
+        "kjoringer_med_attestert_kvittering": attestert,
+        "kvittering_attest_avvik": attest_avvik,
+        "revisjonsrader_mot_bestilt": rader_mot,
+        "revisjonsrad_avvik": rad_avvik,
+    } if v2 else {})
     return {
-        "krav_id": "wcag-kontroll-v1",
+        "krav_id": "wcag-kontroll-v2" if v2 else "wcag-kontroll-v1",
         "ts": max(d["ts"] for d in valgte),
         "bestatt": all(d.get("ok") is True for d in valgte),
         "oppsett": {
@@ -369,6 +469,7 @@ def sammendrag(rader: list[dict], kilde: str, kilde_sha256: str) -> dict:
             # og artefaktet hash-binder råfilen det er avledet av — et
             # bytte av evidens.jsonl bryter kjeden i CI, ikke i en lesning.
             "kilde_sha256": kilde_sha256,
+            **ut_oppsett_ekstra,
         },
         "maalt": {
             "kjoringer_rent_innen_frist": rent,
@@ -404,6 +505,7 @@ def sammendrag(rader: list[dict], kilde: str, kilde_sha256: str) -> dict:
                 int(injeksjon["promoterte_artefakter"]),
             "evidensfrist_reapet": len(frist["reapet"]),
             "evidensfrist_sak_opprettet": 1 if frist.get("sak") else 0,
+            **ut_maalt_ekstra,
         },
     }
 

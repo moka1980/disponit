@@ -1496,6 +1496,15 @@ def main() -> int:
                          " ingen rullbakk")
     rullback_overtakelse = round(time.monotonic() - rullback_ts, 3)
     _krev_claimet_av(m, sj.TENANT, o2, a.rullback_id, "rullbakk")
+    # …OG RULLBAKKENS EGEN KVITTERING (052, klarsignalet §1.1a): at
+    # oppdraget ble utført sier at motoren kjørte; at kvitteringen er
+    # signert med kapabiliteten brent sier at HELE kjeden — claim →
+    # motor → rapport → verifisert kvittering — virket på rullbakkens
+    # bytes. Samme måling som inflight-leddet (`maal_rent_utfall` via
+    # `_kvittering`), og `registrer_moduldrill` regner den selv på nytt
+    # ved aksepten: en kvittering attestert på en annen kjøring enn
+    # rullbakkens finnes ikke som grønn.
+    rullback_kvittering = _kvittering(m, sj.TENANT, o2)
     # Varigheten porten regner på — basens tall, ikke skriptets klokke.
     ventetid_maalt = _krev_maalt_ventetid(m, sj.TENANT, o2)
     rullback_artefakter = _promoterte(m, sj.TENANT, o2, a.rullback_id)
@@ -1636,6 +1645,9 @@ def main() -> int:
             # Uten disse to måler artefaktet bare at den gamle arbeideren
             # sluttet å claime — ikke at det gikk an å rulle tilbake.
             "rullback_claimet_oppdrag": 1 if st_rb == "utfort" else 0,
+            # …med sin EGEN signerte kvittering (052, §1.1a) — målt i
+            # basen av samme predikat som inflight-leddet.
+            "rullback_har_signert_kvittering": rullback_kvittering,
             "rullback_promoterte_artefakter": len(rullback_artefakter),
             "rullback_overtakelse_s": rullback_overtakelse,
             "kandidat_claimet_oppdrag": 1 if st2 == "utfort" else 0,
@@ -1649,6 +1661,7 @@ def main() -> int:
         and art["maalt"]["nye_oppdrag_claimet_av_drillet_release"] == 0
         and art["maalt"]["falske_verdikter"] == 0
         and art["maalt"]["rullback_claimet_oppdrag"] == 1
+        and art["maalt"]["rullback_har_signert_kvittering"]
         and art["maalt"]["rullback_promoterte_artefakter"] >= 1
         and art["maalt"]["kandidat_promoterte_artefakter"] >= 1
         and etter["digest_likhet"]

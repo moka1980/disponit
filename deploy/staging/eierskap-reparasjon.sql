@@ -219,6 +219,7 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'attester_ci_kjoring(text,text,text,text,text,text,text)', 'disponit_modul_eier'),
     ('FUNCTION', 'attester_evidensfil(text,text,text,jsonb,text)',    'disponit_modul_eier'),
     ('FUNCTION', 'maal_rent_utfall(text,bigint)',                     'disponit_modul_eier'),
+    ('FUNCTION', 'maal_kjoringsattest(text,bigint,text,text)',        'disponit_modul_eier'),
     ('FUNCTION', 'bytt_release(text,text,text,integer,text,text)',    'disponit_modul_eier'),
     ('FUNCTION', 'pensjoner_release(text,text,text,text)',            'disponit_modul_eier'),
     ('FUNCTION', 'noddeaktiver_modul(text,text,text)',               'disponit_modul_eier'),
