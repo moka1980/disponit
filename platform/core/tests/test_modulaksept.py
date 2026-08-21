@@ -4614,12 +4614,24 @@ def test_artefaktene_maa_navngi_modulen_som_aksepteres():
             m.verifiser_modul(feil, navn)
         assert "m56_wcag_audit" in str(ei.value)
     # …og skjemaet bærer det samme kravet, uavhengig av skriptet.
+    #
+    # ARTEFAKTENES krav-akse, ikke akseptens (Codex P2, #121): kallet sto
+    # med `KRAV`, og `m56-akseptflipp-v2` har intet artefaktskjema. Da
+    # falt oppslaget tilbake til det generiske ytelsesskjemaet, og
+    # runde-sammendraget brøt DET uansett hva `oppsett.modul` sa — så
+    # påstanden var grønn av feil grunn og ville blitt stående grønn om
+    # WCAG-skjemaet mistet sin `m_wcag_audit`-binding. Tilbakefallet er
+    # nå selv en feil, men porten måles her på det den skal måle:
+    # artefaktet er GYLDIG som det står, og bare mutasjonen avvises.
     runde = json.loads((ROT / ("deploy/staging/artefakter/"
                                "wcag-kontroll-v1-20260818T200413.json")
                         ).read_text(encoding="utf-8"))
-    assert valider_artefaktformat(
-        dict(runde, oppsett=dict(runde["oppsett"], modul="m56_wcag_audit")),
-        KRAV), "skjemaet godtar fortsatt katalognavnet som modulidentitet"
+    assert valider_artefaktformat(runde, ARTEFAKT_KRAV) == []
+    katalognavn = dict(runde,
+                       oppsett=dict(runde["oppsett"], modul="m56_wcag_audit"))
+    feil = valider_artefaktformat(katalognavn, ARTEFAKT_KRAV)
+    assert any("modul" in f for f in feil), \
+        f"skjemaet godtar fortsatt katalognavnet som modulidentitet: {feil}"
 
 
 def test_drillen_maa_vaere_kjort_i_miljoet_som_aksepteres():

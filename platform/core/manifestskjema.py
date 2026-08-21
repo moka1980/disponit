@@ -361,9 +361,22 @@ def valider_artefaktformat(art: object,
     `additionalProperties: false` snur standarden: en ukjent nøkkel er en
     FEIL, ikke stillhet. Utvider noen artefaktformatet, må de utvide porten
     i samme slengen — det er hele poenget.
+
+    Og et krav_id UTEN registrert skjema er en FEIL, ikke en stille
+    tilbakefallsvalidering (Codex P2, #121). Oppslaget falt før tilbake
+    til det generiske ytelsesskjemaet, og da gjelder svaret et helt annet
+    format: enhver kaller som skriver feil krav_id — f.eks. akseptens
+    `m56-akseptflipp-v2` der artefaktets `wcag-kontroll-v1` skulle stått
+    — får en full feilliste uansett hva artefaktet inneholder, og en
+    `assert valider_artefaktformat(...)` er grønn av samme grunn som den
+    ville vært grønn ved et ekte funn. Standardskjemaet gjelder BARE når
+    ingen krav_id er oppgitt (`perf-m01-v1`s eget format).
     """
     try:
         import jsonschema
+        if krav_id is not None and krav_id not in ARTEFAKTSKJEMAER:
+            return [f"<rot>: ukjent krav_id {krav_id!r} — ingen registrert"
+                    " artefaktskjema; svaret ville gjeldt et annet format"]
         filnavn = ARTEFAKTSKJEMAER.get(krav_id or "")
         sti = (ARTEFAKTSKJEMA_STI.parent / filnavn) if filnavn \
             else ARTEFAKTSKJEMA_STI
