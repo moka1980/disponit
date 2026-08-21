@@ -114,7 +114,7 @@ OPPDRAGSTYPE = "kontroll.wcag.nettsted"
 # sammen — ellers oppdages det først i en staging-runde ingen ser før den
 # feiler. `LEGACY_RELEASE` under er uberørt: den navngir releasen de gamle
 # rundefilene tilhørte, ikke den vi kjører nå.
-RELEASE = os.environ.get("WCAG_RELEASE", "").strip() or "wcag-r2"
+RELEASE = os.environ.get("WCAG_RELEASE", "").strip() or "wcag-r19"
 TENANT = "t-wcagfasit"
 TENANT_FREKVENS = "t-wcagfrekvens"
 VERT_FREKVENS = "fasit-frekvens.test"
@@ -169,6 +169,19 @@ API = os.environ.get("DISPONIT_API_URL", "http://127.0.0.1:8099")
 #: `RUNDE` er /root og utilgjengelig for `disponit-wcag`.
 ARBEIDER = "disponit-wcag-audit.service"
 ARBEIDER_BRUKER = "disponit-wcag"
+
+#: MOTORIMAGET RUNDEN SKAL BRUKE — og som KAN PINNES (Codex P1, #117).
+#: `disponit-wcag-motor` er en mutabel tag: `bygg.sh` retagger det samme
+#: navnet, så to oppslag av taggen i samme kjøring kan gi to ulike images.
+#: Fase 1 kjøres på nytt i HVER invokasjon av dette skriptet (se `main`),
+#: og rullbakkdrillen invokerer det tre ganger etter at den har drenert
+#: den levende deploymenten — flyttes taggen i mellomtiden, oppdages det
+#: først i fase 2, med den gamle arbeideren fenset og rullbakk-ID-en brukt
+#: opp. `WCAG_MOTORIMAGE` lar kalleren pinne referansen til en IMMUTABEL
+#: image-ID (`sha256:…`) den har lest på forhånd; da kan taggen flytte seg
+#: så mye den vil uten at runden bytter bytes under seg selv.
+MOTORIMAGE_TAG = "disponit-wcag-motor"
+MOTORIMAGE = os.environ.get("WCAG_MOTORIMAGE") or MOTORIMAGE_TAG
 DRIFT_KONF_STANDARD = Path("/etc/disponit/wcag")
 DRIFT_KONF = Path(os.environ.get("WCAG_DRIFT_KONF", str(DRIFT_KONF_STANDARD)))
 
@@ -203,6 +216,19 @@ def _miljo() -> dict:
 
 def _pg(dsn: str):
     c = psycopg.connect(dsn)
+    # DRILLENS RESERVASJON ARVES (Codex P1, #117 runde 14). Flippedrillen
+    # reserverer deploymentflaten i `moduldeployment_reservasjon` (049) og
+    # `moduldeployment`-vakten avviser enhver overgang som ikke presenterer
+    # innehaver-tokenet. Fasene 2/4/9 er drillens EGNE overganger, men de
+    # kjøres som egne prosesser med egne sesjoner — uten tokenet ville
+    # drillen blitt stoppet av sitt eget gjerde. Er variabelen ikke satt
+    # (en vanlig sjekklisterunde), settes ingenting, og en runde som treffer
+    # en ANNENS reservasjon skal nettopp avvises.
+    token = os.environ.get("DISPONIT_DEPLOYRESERVASJON", "").strip()
+    if token:
+        c.execute("SELECT set_config('disponit.deployreservasjon',%s,false)",
+                  (token,))
+        c.commit()
     return c
 
 
@@ -293,7 +319,7 @@ def fase1(m):
             "json.dump(d, open(f,'w'), indent=1)\nP\n"
             "  systemctl restart disponit-api")
     ut = subprocess.run(["docker", "image", "inspect",
-                         "--format", "{{.Id}}", "disponit-wcag-motor"],
+                         "--format", "{{.Id}}", MOTORIMAGE],
                         capture_output=True, text=True)
     if ut.returncode != 0:
         # BASISPINNEN FØRST (Codex P1, runde 6). `bygg.sh` avviser med
@@ -310,6 +336,9 @@ def fase1(m):
              " står med plassholderen). Hent verdien fra registryet og"
              f" commit den for seg:\n  bash {MOTOR_AXE}/bygg.sh pin\n"
              if upinnet else "")
+            + (f"motorimaget er PINNET til {MOTORIMAGE} (WCAG_MOTORIMAGE),"
+               " og den referansen finnes ikke i dockerlageret\n"
+               if MOTORIMAGE != MOTORIMAGE_TAG else "")
             + f"bygg motorimaget først: bash {MOTOR_AXE}/bygg.sh")
     digest = ut.stdout.strip()
     evidens("fase1_ok", image_id=digest)
@@ -380,7 +409,10 @@ def motorkommando(args) -> list[str]:
             # loopback; det er samme fixture, ikke to.
             "-e", f"MOTOR_VERTSKART={VERT}=127.0.0.1,"
                   f"{VERT_FREKVENS}=127.0.0.1",
-            "disponit-wcag-motor"]
+            # SAMME REFERANSE SOM FASE 1 SLO OPP — se `MOTORIMAGE`. Sto
+            # taggen her mens fase 1 var pinnet, målte fasene 5–7 et annet
+            # image enn det fase 2 registrerte som `artifact_digest`.
+            MOTORIMAGE]
 
 
 # ---------------------------------------------------------------------------
@@ -1047,10 +1079,56 @@ def _rapport(http, lese_tok, oid):
                     headers={"authorization": f"Bearer {lese_tok}"})
 
 
+def _kvittering_signert(m, oid: int) -> bool:
+    """MÅLER at kvitteringen på `oid` kom av verifiseringsveien.
+
+    Codex' P2 på PR #117 (runde 15): fase 5 skrev «ti kjøringer signert
+    innen frist», og hverken linja eller sammendragets predikat inneholdt
+    én eneste måling av en signatur. Ti rapporter med usignerte eller
+    manglende kvitteringer ga et grønt `10/10` — ordet «signert» sto der
+    som en påstand om noe runden aldri spurte om.
+
+    Det som måles her, er AVTRYKKET kvitteringsveien setter igjen, ikke
+    at to felter samme skriver eier er enige:
+
+      * signaturen står i sin egen kolonne, ikke tom, og er identisk med
+        verdien i konvolutten som ligger lagret — `kvittering_signatur`
+        ER `kvittering->signatur->>verdi`, hentet ut av verifiseringen
+        selv (app.py), så spriker de, kommer raden ikke derfra;
+      * `resultathash` er satt, siden veien skriver alle tre i samme
+        `UPDATE`;
+      * og kvitteringskapabiliteten for oppdraget er BRENT med nøyaktig
+        den hashen. `kvitteringskapabiliteter` er `REVOKE ALL ... FROM
+        PUBLIC` (005): ingen rolle skriver den direkte, bare
+        definerne — og `bruk_kvitteringskapabilitet` kalles av API-et
+        FØRST etter at `attestering.verifiser` har godtatt signaturen.
+        Hashen er uforanderlig når den først er festet.
+
+    Nøklene er HMAC-hemmeligheter som bor i API-et; en SQL-spørring kan
+    ikke verifisere signaturen på nytt. Da er den brente kapabiliteten
+    med matchende resultathash det sterkeste sporet basen har av at
+    verifiseringen FAKTISK skjedde — og det er det denne målingen er.
+
+    MÅLINGEN BOR I BASEN (Codex P1, #117 runde 17). Spørringen sto her,
+    og den kjørte som `disponit_migrator` — men `kvitteringskapabiliteter`
+    er `REVOKE ALL … FROM PUBLIC` med kolonnegrant bare til
+    `disponit_modul_eier`, og migrators medlemskap i eierrollen er `WITH
+    INHERIT FALSE`. Den ville derfor dødd på «permission denied» første
+    gang den faktisk ble kjørt. `maal_rent_utfall` (049) er samme
+    predikat bak fullmakten det trenger, og `registrer_moduldrill` og
+    drillsonden kaller nøyaktig den: én måling, ett sted.
+    """
+    m.execute("SET ROLE disponit_modules_admin")
+    rad = m.execute("SELECT maal_rent_utfall(%s,%s)",
+                    (TENANT, oid)).fetchone()
+    m.execute("RESET ROLE")
+    return bool(rad and rad[0])
+
+
 def fase5(m, http, mtk, motorkmd, digest):
     cookie, csrf = _adminokt(m, TENANT)
     lese_tok = _lesetoken(m, TENANT)
-    gronne = 0
+    gronne = signerte = 0
     for i in range(10):
         scenario = "nettsted_maks4" if i % 3 == 0 else "enkeltside"
         fasit = json.loads((TESTNETT / "fasit.json").read_text())
@@ -1095,26 +1173,47 @@ def fase5(m, http, mtk, motorkmd, digest):
         frist = 1800 if sp["omfang"] == "enkeltside" else 3600
         avvik = (_fasitkontroll(scenario, rr.json()["rapport"])
                  if rr.status_code == 200 else [f"rapport {rr.status_code}"])
+        # …og SIGNATUREN måles, den påstås ikke (Codex P2, runde 15).
+        # Aggregatet under het «ti kjøringer SIGNERT innen frist» mens
+        # ingen del av runden noensinne spurte om en signatur. Nå bærer
+        # hver linje sin egen måling — også en gjenspilt, for der ER
+        # kvitteringen alt levert og avtrykket ligger i basen.
+        _kontekst(m, TENANT)
+        signert = _kvittering_signert(m, oid)
+        m.rollback()
         # Fristen ble målt da kjøringen faktisk skjedde, og den målingen
         # står i evidensfila fra den runden. Et gjenspill kan ikke måle den
         # på nytt, og skal ikke late som.
-        ok = (res.get("utfall") == "utfort" and not avvik
-              and (alt_utfort or varighet < frist))
-        gronne += ok
+        rent = (res.get("utfall") == "utfort" and not avvik
+                and (alt_utfort or varighet < frist))
+        ok = rent and signert
+        gronne += rent
+        signerte += ok
         evidens("kjoring", i=i, scenario=scenario, oppdrag=oid,
                 utfall=res.get("utfall"), gjenspill=alt_utfort,
                 varighet_s=None if varighet is None else round(varighet, 1),
                 frist_s=frist, avvik_mot_fasit=len(avvik),
+                kvittering_signert=signert,
                 avvik=avvik[:5], ok=ok)
     # ... og SUMMEN bærer den samme påstanden (Codex P1). Fasitkravet er
     # 10/10; alt annet er en rød måling, uansett hvilken av de ti som
     # sviktet og på hvilken måte. Uten `ok` her kunne aggregatet stå
     # `9/10` i evidensfila mens `_ROEDE` var tom.
+    #
+    # De to tallene er TO målinger, ikke ett navn på to ting (Codex P2,
+    # runde 15). Aggregatet het `ti_kjoringer_signert_innen_frist`, men
+    # det det talte var RENE utfall innen egen frist — ingen del av
+    # runden spurte noen gang om en signatur, og navnet var hele beviset.
+    # Det heter nå det det teller, signaturen har fått sitt eget tall, og
+    # sammendragsgeneratoren regner begge ut av `kjoring`-linjene i
+    # stedet for å lese dem her. Så et navn kan ikke igjen bære en
+    # påstand ingen måling står bak.
     evidens("fase5_resultat",
-            ti_kjoringer_signert_innen_frist=f"{gronne}/10",
+            ti_kjoringer_rent_innen_frist=f"{gronne}/10",
+            kjoringer_med_maalt_signatur=f"{signerte}/10",
             funn_avvik_mot_fasit=0 if gronne == 10 else "SE kjoring-linjene",
-            ok=gronne == 10)
-    return gronne
+            ok=gronne == 10 and signerte == 10)
+    return signerte
 
 
 def _lesetoken(m, tenant):

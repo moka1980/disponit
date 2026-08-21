@@ -100,6 +100,25 @@ def test_designtabellen_speiler_migrasjonene():
                                     "disponit_m37_claimer"}
     for nokkel, eier in DESIGN.items():
         assert design.get(nokkel) == eier, f"utdraget spriker: {nokkel}"
+    # …og hver signatur er skrevet slik `regprocedure` skriver den.
+    # Postgres kjenner igjen `timestamptz` i en DDL, men gjengir den
+    # ALDRI: identiteten som kommer ut av basen heter «timestamp with
+    # time zone». En rad med aliaset matcher derfor ingenting, og
+    # reparasjonen lar objektet stå — det var bare paritetstesten mot en
+    # migrert base som kunne se det, og den krever Postgres. Her ses det
+    # uten base, der signaturen faktisk skrives.
+    ALIAS = {"timestamptz": "timestamp with time zone",
+             "timetz": "time with time zone", "int2": "smallint",
+             "int4": "integer", "int8": "bigint", "bool": "boolean",
+             "varchar": "character varying", "bpchar": "character",
+             "float4": "real", "float8": "double precision",
+             "decimal": "numeric"}
+    for art, ident in design:
+        argdel = ident.split("(", 1)[1].rstrip(")") if "(" in ident else ""
+        for arg in (a.strip() for a in argdel.split(",")):
+            assert arg not in ALIAS, (
+                f"{ident}: {arg!r} er et alias — regprocedure skriver"
+                f" {ALIAS.get(arg)!r}, så raden matcher ingen funksjon")
 
 
 @pg

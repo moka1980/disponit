@@ -87,8 +87,19 @@ def _claim(modul_id, prefiks, cid, lease=300, release=None, miljo=None,
 
 def _binding(conn, opp):
     _sett_kontekst(conn, TENANT)
+    # `claim_release_id`/`claim_miljo` er lagt til bakerst (049 §0, Codex
+    # P1 på PR #117 runde 20): claimet skriver ned HVILKEN deployment som
+    # tok raden. Drillens tre ledd i 049 måles mot nettopp det sporet, og
+    # den porten er bare så god som stemplingen her.
+    #
+    # `forste_claim_ts` er samme spors klokke (Codex P1 runde 21):
+    # claim-stoppet i 049 måles som `forste_claim_ts - opprettet`, og
+    # stempelet er write-once nettopp fordi en reclaim ellers ville
+    # forlenget et ventevindu som aldri ble observert.
     rad = conn.execute("SELECT modul_id, kontraktversjon, kontrakt_hash,"
-                       " module_epoch, status, owner_generation FROM oppdrag"
+                       " module_epoch, status, owner_generation,"
+                       " claim_release_id, claim_miljo, forste_claim_ts"
+                       " FROM oppdrag"
                        " WHERE tenant=%s AND id=%s", (TENANT, opp)).fetchone()
     conn.rollback()
     return rad
@@ -145,6 +156,9 @@ def test_port5_registrert_oppdragstype_krever_aktiv_claiming_kontrakt(migrator):
     b = _binding(migrator, opp)
     assert b[0] == modul and b[1] == 1 and b[2] == kh, "kontrakt ikke stemplet"
     assert b[3] == 0, "module_epoch ikke stemplet"
+    # …og deploymenten porten nettopp verifiserte som `claiming`, står på
+    # raden: uten det sporet kan ingen senere måling si HVEM som tok den.
+    assert (b[6], b[7]) == ("r1", "staging"), "claim-releasen ikke stemplet"
     # Codex P1: samme modul, men FEIL deployment-identitet (annen release) →
     # ikke claimbar (drenert/retired r1-prosess kan ikke claime via en annen).
     _sett_kontekst(migrator, TENANT)
@@ -226,6 +240,12 @@ def test_port7_reclaim_bumper_generasjon_og_bevarer_binding(migrator):
     b2 = _binding(migrator, opp)
     assert (b2[0], b2[1], b2[2]) == (b1[0], b1[1], b1[2]), \
         "kontraktbindingen endret seg ved reclaim (skal være write-once)"
+    # Ventetidsstempelet står også (Codex P1 runde 21): flyttet det seg
+    # ved reclaim, kunne et oppdrag som ble tatt med én gang og reclaimet
+    # et halvt minutt senere målt seg som et claim-stopp ingen observerte.
+    assert b1[8] is not None, "claimet stemplet ikke forste_claim_ts"
+    assert b2[8] == b1[8], \
+        "forste_claim_ts flyttet seg ved reclaim (skal være write-once)"
 
 
 @pg
@@ -365,6 +385,29 @@ def test_legacy_uregistrert_oppdragstype_claimes_som_for(migrator):
     b = _binding(migrator, opp)
     assert b[0] is None and b[1] is None and b[2] is None and b[3] is None, \
         "uregistrert oppdragstype fikk kontraktbinding"
+    # Claim-sporet følger bindingen: legacy-grenen har ingen
+    # deployment-port, så kallerens release er en uprøvd påstand — og
+    # en påstand hører ikke hjemme i et spor drillen måler på.
+    assert b[6] is None and b[7] is None, \
+        "uregistrert oppdragstype fikk et claim-spor ingen port hadde prøvd"
+    # Klokka er derimot portens EGEN (Codex P1 runde 21), ikke noe
+    # kalleren oppgir: når raden ble tatt er sant også når det ikke
+    # finnes en verifisert release å skrive ned.
+    assert b[8] is not None, "legacy-claimet stemplet ikke forste_claim_ts"
+    # …også når kalleren OPPGIR en: legacy-grenen prøver den ikke mot
+    # `moduldeployment`, så den skrives ikke ned.
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute("UPDATE oppdrag SET status='opprettet',"
+                     " owner_claim_id=NULL, owner_lease_utloper=NULL"
+                     " WHERE tenant=%s AND id=%s", (TENANT, opp))
+    migrator.commit()
+    assert _claim(modul, ["purring."], secrets.token_hex(16),
+                  release="pastand", miljo="staging") is not None
+    b2 = _binding(migrator, opp)
+    assert b2[6] is None and b2[7] is None, \
+        "legacy-claimet skrev kallerens uprøvde release inn i sporet"
+    assert b2[8] == b[8], \
+        "det andre claimet flyttet forste_claim_ts (skal være write-once)"
 
 
 @pg
