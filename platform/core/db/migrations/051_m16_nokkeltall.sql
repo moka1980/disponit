@@ -140,11 +140,21 @@ END $$;
 -- varighet — aldri aggregert, aldri delt på noe. Terminalsettet er
 -- KALLERENS (app.py::TERMINALE_UNNTAKSSTATUSER) — statusmaskinen
 -- kopieres ikke inn i SQL (oversikt-lærdommen).
-CREATE OR REPLACE FUNCTION m16_unntak_lukkede(
+--
+-- `antall_totalt` er HELE tellingen i vinduet, ikke antall RETURNERTE
+-- rader: `count(*) OVER ()` regnes etter WHERE, men før ORDER BY og
+-- LIMIT, altså i SAMME skann som radene. Uten den ville grensen
+-- trunkert STILLE, og flaten påstått «lukket i vinduet» om et utsnitt
+-- — en telling som ikke er hele tellingen skal aldri vises som om den
+-- var det (SP: aldri stille ufullstendige fakta).
+DROP FUNCTION IF EXISTS m16_unntak_lukkede(
+    TEXT, TIMESTAMPTZ, TIMESTAMPTZ, TEXT[], INT);
+CREATE FUNCTION m16_unntak_lukkede(
     p_tenant TEXT, p_fra TIMESTAMPTZ, p_til TIMESTAMPTZ,
     p_terminale TEXT[], p_grense INT)
 RETURNS TABLE(id BIGINT, kategori TEXT, sakstype TEXT, status TEXT,
-              opprettet TIMESTAMPTZ, lukket TIMESTAMPTZ, varighet_s BIGINT)
+              opprettet TIMESTAMPTZ, lukket TIMESTAMPTZ, varighet_s BIGINT,
+              antall_totalt BIGINT)
 LANGUAGE plpgsql STABLE SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 #variable_conflict use_column
@@ -153,7 +163,8 @@ BEGIN
     RETURN QUERY
     SELECT u.id, coalesce(u.kategori, 'ukjent'), u.sakstype, u.status,
            u.ts, u.status_ts,
-           EXTRACT(EPOCH FROM (u.status_ts - u.ts))::bigint
+           EXTRACT(EPOCH FROM (u.status_ts - u.ts))::bigint,
+           count(*) OVER ()
       FROM public.unntak u
      WHERE u.tenant = p_tenant AND u.status = ANY(p_terminale)
        AND u.status_ts >= p_fra AND u.status_ts < p_til

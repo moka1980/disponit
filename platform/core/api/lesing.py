@@ -145,6 +145,11 @@ NOKKELTALL_VINDUER = {"24t": timedelta(hours=24),
                       "7d": timedelta(days=7),
                       "30d": timedelta(days=30)}
 
+#: Radgrensen for lukkede-listen. Den er et VISNINGSTAK på radfakta, ikke
+#: en telling: svaret bærer alltid `unntak_lukkede_totalt` ved siden av,
+#: så et avkuttet utsnitt er synlig for klienten (M-16 §3).
+NOKKELTALL_LUKKEDE_GRENSE = 50
+
 
 def _nokkeltall_vindu(request: Request) -> tuple[datetime, datetime] | None:
     valg = request.query_params.get("vindu", "24t")
@@ -206,15 +211,24 @@ def nokkeltall(tjeneste, request: Request) -> Response:
         # kopieres aldri inn i SQL (oversikt-lærdommen fra #105-æraen).
         from .app import TERMINALE_UNNTAKSSTATUSER
         terminale = list(TERMINALE_UNNTAKSSTATUSER)
+        # Radlisten har en grense — og grensen er ALDRI stille: defineren
+        # returnerer hele tellingen i vinduet (`antall_totalt`, samme
+        # skann), så svaret bærer både utsnittet og hvor stort settet er.
+        # Klienten kan dermed si «viser N av M»; den kan aldri komme til å
+        # påstå at N ER alle lukkede saker i vinduet.
+        lukkede_rader = conn.execute(
+            "SELECT id, kategori, sakstype, status, opprettet,"
+            " lukket, varighet_s, antall_totalt FROM"
+            " m16_unntak_lukkede(%s,%s,%s,%s,%s)",
+            (*arg, terminale, NOKKELTALL_LUKKEDE_GRENSE)).fetchall()
         lukkede = [
             {"id": r[0], "kategori": r[1], "sakstype": r[2],
              "status": r[3], "opprettet": r[4].isoformat(),
              "lukket": r[5].isoformat(), "varighet_s": r[6]}
-            for r in conn.execute(
-                "SELECT id, kategori, sakstype, status, opprettet,"
-                " lukket, varighet_s FROM"
-                " m16_unntak_lukkede(%s,%s,%s,%s,50)",
-                (*arg, terminale)).fetchall()]
+            for r in lukkede_rader]
+        # Tom liste ⇒ 0; ellers er tellingen lik i hver rad (window over
+        # hele settet), så første rad holder.
+        lukkede_totalt = lukkede_rader[0][7] if lukkede_rader else 0
         # TILSTAND, ikke aktivitet: «åpne nå» står utenfor vinduet.
         apne_naa = conn.execute(
             "SELECT m16_unntak_apne(%s,%s)",
@@ -233,6 +247,8 @@ def nokkeltall(tjeneste, request: Request) -> Response:
              "oppdrag": oppdrag,
              "unntak_aktivitet": aktivitet,
              "unntak_lukkede": lukkede,
+             "unntak_lukkede_totalt": lukkede_totalt,
+             "unntak_lukkede_grense": NOKKELTALL_LUKKEDE_GRENSE,
              "apne_naa": apne_naa,
              "tick": tick,
              "request_id": rid},

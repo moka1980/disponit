@@ -105,6 +105,13 @@ nytt.
 - Keyset-cursor gjenbrukes der lister vises (beslutningslisten finnes
   alt som `/v1/beslutninger`; kortet lenker dit i stedet for å bygge en
   ny liste).
+- **Radgrensen er aldri stille.** Lukkede-listen er radfakta med et
+  visningstak (`unntak_lukkede_grense`, 50 rader), og svaret bærer
+  ALLTID hele tellingen i vinduet ved siden av
+  (`unntak_lukkede_totalt`, fra samme skann som radene — `count(*)
+  OVER ()` før `LIMIT`). Er settet større enn taket, sier flaten det i
+  klartekst og lenker til unntakslisten; et utsnitt presenteres aldri
+  som «alle saker lukket i vinduet».
 
 ## 5. Flaten — første graf-flate, WCAG-kontrakt fra første commit
 

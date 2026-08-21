@@ -337,6 +337,34 @@ def test_api_endepunktet_er_generaliseringen(migrator, klient, token):
     assert r3.status_code == 200
 
 
+@pg
+def test_lukkede_trunkeres_aldri_stille(migrator):
+    """Radgrensen på lukkede-listen er et VISNINGSTAK, ikke en telling:
+    `antall_totalt` er hele settet i vinduet, fra samme skann som radene,
+    så et avkuttet utsnitt aldri kan leses som «alle lukkede saker»."""
+    ten = "t-m16-" + secrets.token_hex(3)
+    naa = datetime.now(timezone.utc)
+    _sett_kontekst(migrator, ten)
+    for i in range(5):
+        _sak(migrator, ten, ts=naa - timedelta(hours=2),
+             status="løst", status_ts=naa - timedelta(minutes=i + 1))
+    migrator.commit()
+    fra, til = naa - timedelta(hours=1), naa + timedelta(hours=1)
+    rt = _rt()
+    try:
+        _sett_kontekst(rt, ten)
+        rader = rt.execute(
+            "SELECT id, antall_totalt FROM"
+            " m16_unntak_lukkede(%s,%s,%s,%s,2)",
+            (ten, fra, til, ["løst", "avvist"])).fetchall()
+        rt.rollback()
+    finally:
+        rt.close()
+    assert len(rader) == 2, "grensen kuttet ikke radlisten"
+    # Grensen kuttet radene — men ALDRI tellingen.
+    assert {r[1] for r in rader} == {5}
+
+
 # ---------------------------------------------------------------------------
 # Statiske porter (3, 4, 6, 8, 10)
 # ---------------------------------------------------------------------------

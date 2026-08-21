@@ -26,6 +26,8 @@ const SVARFORM = {
   unntak_lukkede: [{ id: 9, kategori: "over_grense", sakstype: "normal",
     status: "løst", opprettet: "2026-08-20T11:00:00+00:00",
     lukket: "2026-08-20T12:30:00+00:00", varighet_s: 5400 }],
+  unntak_lukkede_totalt: 1,
+  unntak_lukkede_grense: 50,
   apne_naa: 6,
   tick: { total: 0, deler: {} },
   request_id: "r-test",
@@ -123,7 +125,7 @@ test("Nøkkeltall: tomt vindu viser 0 og «ingen» — aldri et skjult kort", as
     beslutninger: { total: 0, deler: {} },
     oppdrag: { total: 0, deler: {} },
     unntak_aktivitet: { total: 0, deler: {} },
-    unntak_lukkede: [], apne_naa: 0 } };
+    unntak_lukkede: [], unntak_lukkede_totalt: 0, apne_naa: 0 } };
   const h = nyHoved();
   visNokkeltall(h, ctx());
   await vent(() => h.querySelectorAll("table").length >= 4);
@@ -134,6 +136,32 @@ test("Nøkkeltall: tomt vindu viser 0 og «ingen» — aldri et skjult kort", as
   assert.ok(beslT.querySelector("tfoot").textContent.includes("0"));
   assert.ok(h.textContent.includes(t("ui.nokkeltall.ingen_lukkede")));
   assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+});
+
+test("Nøkkeltall: avkuttet lukkede-liste sier det i klartekst", async () => {
+  SVAR = { "/v1/nokkeltall": { ...SVARFORM, unntak_lukkede_totalt: 137,
+    unntak_lukkede_grense: 50 } };
+  const h = nyHoved();
+  visNokkeltall(h, ctx());
+  await vent(() => h.querySelectorAll("table").length >= 5);
+  // Både utsnittet og settets størrelse står som TEKST — flaten kan
+  // aldri lese som om den viste alle lukkede saker i vinduet.
+  const tekst = h.textContent;
+  assert.ok(tekst.includes("137"), "totalen i vinduet mangler som tekst");
+  assert.ok(tekst.includes(t("ui.nokkeltall.lukkede_avkuttet")
+    .replace("{vist}", "1").replace("{totalt}", "137")
+    .replace("{grense}", "50")));
+  assert.ok(tekst.includes(t("ui.nokkeltall.til_unntak")));
+  assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+});
+
+test("Nøkkeltall: ufullstendig liste påstås aldri fullstendig", async () => {
+  // Ikke avkuttet: ingen grense-setning, ingen lenke til unntakslisten.
+  SVAR = { "/v1/nokkeltall": SVARFORM };
+  const h = nyHoved();
+  visNokkeltall(h, ctx());
+  await vent(() => h.querySelectorAll("table").length >= 5);
+  assert.ok(!h.textContent.includes(t("ui.nokkeltall.til_unntak")));
 });
 
 test("Nøkkeltall: ingen SVG/canvas — søylen er HTML/CSS, tastaturvei", async () => {

@@ -73,11 +73,15 @@ function partisjonstabell(kortNokkel, caption, partisjon) {
   return tabell;
 }
 
-function lukkedeTabell(rader) {
+// Lukkede saker: RADFAKTA med et visningstak. Taket er aldri stille —
+// er totalen i vinduet større enn antall rader, står det i klartekst
+// hvor mange av hvor mange som vises, rett ved tabellen.
+function lukkedeTabell(rader, totalt, grense) {
   if (!rader.length) {
     return el("p", { class: "muted",
       text: t("ui.nokkeltall.ingen_lukkede") });
   }
+  const bolk = el("div");
   const tabell = el("table", { class: "kpi-tabell" },
     el("caption", { text: t("ui.nokkeltall.lukkede_caption") }));
   tabell.append(el("thead", {}, el("tr", {},
@@ -94,7 +98,16 @@ function lukkedeTabell(rader) {
       el("td", { text: varighetTekst(r.varighet_s) })));
   }
   tabell.append(tbody);
-  return tabell;
+  bolk.append(tabell);
+  if (totalt > rader.length) {
+    bolk.append(el("p", { class: "muted",
+      text: t("ui.nokkeltall.lukkede_avkuttet")
+        .replace("{vist}", String(rader.length))
+        .replace("{totalt}", String(totalt))
+        .replace("{grense}", String(grense)) }),
+      lenkeTilUnntak());
+  }
+  return bolk;
 }
 
 // Varighet som klartekst — en OMSKRIVING av sekundtallet (presentasjon),
@@ -161,7 +174,8 @@ export function visNokkeltall(hoved, ctx) {
       kort.push(el("section", { class: "kpi-kort" },
         partisjonstabell("unntak",
           t("ui.nokkeltall.kort.unntak_aktivitet"), d.unntak_aktivitet),
-        lukkedeTabell(d.unntak_lukkede)));
+        lukkedeTabell(d.unntak_lukkede, d.unntak_lukkede_totalt,
+                      d.unntak_lukkede_grense)));
       // Tick-kortet: 0 rader er en SETNING, ikke en tom graf.
       kort.push(el("section", { class: "kpi-kort" },
         d.tick.total === 0
@@ -183,8 +197,18 @@ export function visNokkeltall(hoved, ctx) {
 }
 
 function lenkeTilBeslutninger() {
+  return flateknapp("ui.nokkeltall.til_beslutninger", "#/beslutninger");
+}
+
+// Veien videre når lukkede-listen er avkuttet: unntaksflaten har hele
+// settet — nøkkeltallflaten paginerer aldri, den VISER.
+function lenkeTilUnntak() {
+  return flateknapp("ui.nokkeltall.til_unntak", "#/unntak");
+}
+
+function flateknapp(nokkel, hash) {
   const b = el("button", { class: "knapp liten", type: "button",
-    text: t("ui.nokkeltall.til_beslutninger") });
-  b.addEventListener("click", () => { window.location.hash = "#/beslutninger"; });
+    text: t(nokkel) });
+  b.addEventListener("click", () => { window.location.hash = hash; });
   return b;
 }
