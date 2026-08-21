@@ -519,6 +519,20 @@ def test_hendelsen_og_punktene_er_immutable(migrator):
             " (%s,%s,%s,'smugpunkt','utenfor_grensen')",
             (modul, commit, GRENSE))
     migrator.rollback()
+    # …og punktet må STÅ I GRENSEN, også på denne veien (Codex P2,
+    # runde 2): et komplett-utseende smugpunkt som aldri var en del av
+    # det aksepterte settet, felles av FK-en mot kravpunktregisteret —
+    # ikke bare av funksjonen kalleren her går utenom.
+    migrator.execute("SET ROLE disponit_modul_eier")
+    with pytest.raises(psycopg.errors.ForeignKeyViolation) as ei:
+        migrator.execute(
+            "INSERT INTO plattformmodulaksept_punkt (modul_id,"
+            " manifest_commit, grense_id, punkt, status, grenseverdi,"
+            " maalt_verdi, kilde_type, kilde_ref) VALUES"
+            " (%s,%s,%s,'smugpunkt','maalt','x','x','artefakt',%s)",
+            (modul, commit, GRENSE, "x@sha256:" + "ab" * 32))
+    assert "akseptkrav_punkt" in str(ei.value)
+    migrator.rollback()
     # port 8: verifikator (ordinær, smal rolle) når ingenting.
     v = _verifikator()
     try:

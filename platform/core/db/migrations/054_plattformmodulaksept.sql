@@ -161,7 +161,18 @@ CREATE TABLE plattformmodulaksept_punkt (
                                      AND btrim(begrunnelse) <> '')),
     FOREIGN KEY (modul_id, manifest_commit, grense_id)
         REFERENCES plattformmodulaksept (modul_id, manifest_commit,
-                                         grense_id)
+                                         grense_id),
+    -- PUNKTET STÅR I GRENSEN — PÅ ENHVER SKRIVEVEI (Codex P2, runde 2).
+    -- Funksjonen avviser punkter utenfor registeret, men funksjonen er
+    -- ikke den eneste veien inn: eier- og migratorveien har INSERT på
+    -- tabellen (det er nettopp den veien konstruksjonstesten måler), og
+    -- et komplett-utseende punkt som aldri sto i grensen blir permanent
+    -- i det append-only-triggeren har sett det. `modulaksept_punkt`
+    -- bærer bindingen som FK i 049; søstertabellen gjorde det ikke, og
+    -- en invariant som bare finnes i en funksjon, er ingen skranke for
+    -- den som skriver forbi den.
+    FOREIGN KEY (grense_id, punkt)
+        REFERENCES akseptkrav_punkt (krav_id, punkt)
 );
 
 REVOKE ALL ON plattformmodulaksept, plattformmodulaksept_punkt
