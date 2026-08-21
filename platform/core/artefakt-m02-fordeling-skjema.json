@@ -31,7 +31,8 @@
         "modul",
         "tenant",
         "vert",
-        "sett_versjon"
+        "sett_versjon",
+        "sett_sha256"
       ],
       "properties": {
         "modul": {
@@ -49,6 +50,11 @@
           "type": "string",
           "minLength": 1,
           "comment": "bygg_sett()-versjonen som drev settet."
+        },
+        "sett_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "comment": "sha256 av settdriverens bytes (deploy/staging/m02_fordeling.py) slik staging FAKTISK kjoerte den. sett_versjon er en haandholdt streng; denne er identiteten. Porten krever likhet med de innsjekkede bytene - samme form som datasett_sha256 (SP-11, paragraf 1.2)."
         }
       }
     },

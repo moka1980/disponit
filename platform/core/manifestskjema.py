@@ -279,7 +279,15 @@ KRAVGRENSER["m02-fordeling-v1"] = {
     # lokalt» er en stående måling, ikke et minne.
     "fordeling_eksakt": {"TILLAT": 84, "STOPP": 3, "UNNTAK": 93},
     "min_hendelser": 180,
+    # ... og «samme sett» må være MÅLT, ikke oppgitt: driverens bytes
+    # hashes i begge ledd og må stemme (samme form som §1.2 for
+    # WCAG-datasettet). Uten den kunne staging drevet helt andre
+    # hendelser til samme sum og likevel passert.
+    "krev_sett_sha_lik_innsjekket": True,
 }
+
+#: Settdriveren begge ledd deler — bytene som ER settet.
+M02_SETT_STI = REPOROT / "deploy/staging/m02_fordeling.py"
 
 #: Hvilket LUKKEDE skjema som gjelder for hvilket krav. Uten dette ville
 #: alle artefakter blitt målt mot ytelsesskjemaet, og et feilinjiserings-
@@ -1074,7 +1082,42 @@ def _grenser_m02_fordeling(grense: dict, art: dict) -> list[str]:
         elif oppgitt != verdi:
             feil.append(f"antall_{nokkel.lower()}={oppgitt} spriker fra"
                         f" fasiten {verdi}")
+    feil += _sett_bundet(grense, art)
     return feil
+
+
+def _sett_bundet(grense: dict, art: dict) -> list[str]:
+    """Er fordelingen drevet av DET settet CI driver — eller et annet?
+
+    Artefaktet bandt settet med `sett_versjon: "m02-sett-1"`, en streng
+    noen skriver for hånd, og radene bærer loggpost-id og beslutning —
+    ikke hendelsene som ble sendt inn. Et staging-ledd på en eldre
+    utrulling, eller med en lokalt endret driver, kunne derfor telle
+    84/3/93 av helt andre hendelser og likevel valideres som «likt
+    lokalt» (Codex P1, runde 2). Da måler punktet at to kjøringer fikk
+    samme SUM, ikke at de drev samme SETT.
+
+    Bytene er bindingen: produsenten hasher driveren den faktisk kjørte
+    (`m02_fordeling.sett_sha256`), og her hashes de innsjekkede bytene med
+    nøyaktig samme uttrykk. Samme form som §1.2/SP-11 for
+    WCAG-datasettet — likhet i BEGGE ledd, ellers rødt.
+    """
+    oppsett = art.get("oppsett")
+    sha = oppsett.get("sett_sha256") if isinstance(oppsett, dict) else None
+    if not (isinstance(sha, str) and len(sha) == 64):
+        return ["oppsett.sett_sha256 mangler — uten driverens bytes er"
+                " «samme sett» en påstand, ikke en måling"]
+    if not grense.get("krev_sett_sha_lik_innsjekket"):
+        return []
+    try:
+        lokal = hashlib.sha256(M02_SETT_STI.read_bytes()).hexdigest()
+    except OSError as e:
+        return [f"settdriveren lot seg ikke hashe lokalt: {e}"]
+    if sha != lokal:
+        return [f"sett_sha256={sha[:12]}… er ikke de innsjekkede bytenes"
+                f" {lokal[:12]}… — settet staging drev er ikke settet CI"
+                " driver, og da er ikke fordelingen «lik lokalt»"]
+    return []
 
 
 def _falske_verdikter(m: dict) -> list[str]:

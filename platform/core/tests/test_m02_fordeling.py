@@ -45,6 +45,45 @@ def test_settet_er_fasiten():
     assert m.bygg_sett() == sett            # deterministisk
 
 
+def test_settet_er_bundet_til_bytene_ikke_til_navnet_sitt():
+    """«Likt lokalt» er en påstand om SETTET, ikke om summen.
+
+    Radene bærer loggpost-id og beslutning — ikke hendelsene som ble sendt
+    inn — og `sett_versjon` er en håndholdt streng. Et staging-ledd på en
+    eldre utrulling kunne derfor drive helt andre hendelser til de samme
+    84/3/93 og valideres som det samme settet. Bytene er bindingen, og de
+    hashes i BEGGE ledd (samme form som datasett_sha256/§1.2).
+
+    MUTASJONEN SOM DREPER DENNE: la porten godta et artefakt uten
+    `sett_sha256`, eller slutt å sammenligne med de innsjekkede bytene.
+    """
+    import hashlib
+
+    from manifestskjema import (M02_SETT_STI, _sjekk_grenser,
+                                valider_artefaktformat)
+    m = _lib()
+    assert m.sett_sha256() == hashlib.sha256(
+        M02_SETT_STI.read_bytes()).hexdigest()
+
+    rader = [(i + 1, b) for i, (b, _) in enumerate(m.bygg_sett())]
+    art = m.artefakt(rader, "t-test", "lokal", "2026-08-21T00:00:00+00:00")
+    assert art["bestatt"] is True
+    assert valider_artefaktformat(art, "m02-fordeling-v1") == []
+    assert _sjekk_grenser("m02-fordeling-v1", art) == []
+
+    # En driver som ikke er den innsjekkede — samme tall, annet sett.
+    annen = dict(art, oppsett=dict(art["oppsett"], sett_sha256="0" * 64))
+    assert any("sett_sha256" in f
+               for f in _sjekk_grenser("m02-fordeling-v1", annen))
+    # ... og et artefakt uten bindingen i det hele tatt er umålt, ikke
+    # grønt: det lukkede skjemaet krever feltet, og porten sier det selv.
+    uten = dict(art, oppsett={k: v for k, v in art["oppsett"].items()
+                              if k != "sett_sha256"})
+    assert valider_artefaktformat(uten, "m02-fordeling-v1") != []
+    assert any("sett_sha256" in f
+               for f in _sjekk_grenser("m02-fordeling-v1", uten))
+
+
 @pg
 def test_fordelingen_er_lik_lokalt(klient, policy, token, migrator):
     """Hele settet gjennom den EKTE beslutningsveien lokalt: hver

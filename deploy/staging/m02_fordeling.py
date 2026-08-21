@@ -8,7 +8,10 @@ REPRODUSERT, ikke mimret: settet under drives gjennom den EKTE
 beslutningsveien (/v1/beslutning) både lokalt (CI,
 `test_m02_fordeling.py` — det er «likt lokalt»-leddet, stående) og på
 staging (`m02-fordeling-artefakt.py` — artefaktets ledd). Fordi begge
-ledd bruker NØYAKTIG dette settet, kan de aldri gli fra hverandre.
+ledd bruker NØYAKTIG dette settet, kan de aldri gli fra hverandre — og
+at det ER nøyaktig dette settet, er MÅLT og ikke påstått: artefaktet
+bærer `sett_sha256` (se under), og porten krever likhet med de
+innsjekkede bytene.
 
 Kategoriene er beslutningsveiens egne, fra m01-portene:
 
@@ -28,8 +31,31 @@ kjøringen i stedet for å telle videre. Radene identifiseres etterpå i
 """
 from __future__ import annotations
 
+import hashlib
+from pathlib import Path
+
 SETT_VERSJON = "m02-sett-1"
 FORDELING = {"TILLAT": 84, "STOPP": 3, "UNNTAK": 93}
+
+
+def sett_sha256() -> str:
+    """Settets identitet — BYTENE i denne filen.
+
+    `SETT_VERSJON` er en streng noen skriver for hånd, og den sa bare at
+    to kjøringer MENTE å drive samme sett. Radene i artefaktet bærer
+    loggpost-id og beslutning, ikke hendelsene som ble sendt inn — så et
+    staging-ledd som kjørte en eldre utrulling eller en lokalt endret
+    driver kunne produsere 84/3/93 av HELT andre hendelser og likevel
+    valideres som «likt lokalt». Det er nettopp den likheten punktet
+    handler om.
+
+    Derfor bæres bytene: staging-leddet hasher driveren det faktisk
+    kjørte, og porten (`_grenser_m02_fordeling`) krever likhet med de
+    innsjekkede bytene CI driver — samme form som `datasett_sha256`/§1.2
+    for WCAG-datasettet. Ett tall, to ledd: glir de fra hverandre, er
+    punktet rødt.
+    """
+    return hashlib.sha256(Path(__file__).resolve().read_bytes()).hexdigest()
 
 
 def bygg_sett() -> list[tuple[str, int]]:
@@ -101,7 +127,11 @@ def artefakt(rader: list[tuple[int, str]], tenant: str, vert: str,
         "bestatt": talt == FORDELING and len(rader) == sum(
             FORDELING.values()),
         "oppsett": {"modul": "m02_revisjonslogg", "tenant": tenant,
-                    "vert": vert, "sett_versjon": SETT_VERSJON},
+                    "vert": vert, "sett_versjon": SETT_VERSJON,
+                    # ... og settets IDENTITET, ikke bare dets navn:
+                    # `sett_versjon` er håndholdt, `sett_sha256` er bytene
+                    # som faktisk drev hendelsene.
+                    "sett_sha256": sett_sha256()},
         "maalt": {"antall_tillat": talt.get("TILLAT", 0),
                   "antall_stopp": talt.get("STOPP", 0),
                   "antall_unntak": talt.get("UNNTAK", 0)},
