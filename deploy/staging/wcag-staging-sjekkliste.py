@@ -1583,13 +1583,28 @@ def fase8():
     # offeret blindt: 788bd83 (forventer 1→51) mot basen på 1→53 ga
     # activating → failed, en rød måling av bootportens korrekthet i
     # stedet for av rullbakken. Målet velges nå blant releasene med
-    # SAMME migrasjonssett som den aktive (filnavnene i
+    # SAMME migrasjonssett som den aktive (versjonstallene i
     # platform/core/db/migrations — samme fasit bootporten leser), og
     # finnes ingen, er drillen ÆRLIG umålt-rød: fyll katalogen med en
     # kompatibel release (neste deploy på samme skjema) og mål igjen.
     def _migrasjonssett(rot: Path) -> tuple:
+        """Releasens migrasjonssett SLIK BOOTPORTEN LESER DET.
+
+        NØKKELEN MÅ VÆRE PORTENS EGEN (Codex P2, runde 1 på denne
+        mekanismen): `forventede_migrasjoner()` i
+        `platform/core/api/app.py` globber `[0-9][0-9][0-9]_*.sql` og
+        beholder KUN det tresifrede versjonstallet — det samme gjør
+        checksum-kjøreren. Sammenlignet vi hele filnavn, ville et
+        omdøpt suffiks på en uendret migrasjon (samme versjon, samme
+        skjema) gjort en release som porten ville sluppet inn, til
+        «inkompatibel»: fase 8 hopper rødt, fase 9 blokkeres, og
+        runden krever en unødig ekstra deploy for å måle noe den
+        allerede kunne målt. Nøkkelen leses derfor med portens mønster
+        og portens versjonsparsing, ikke med en egen fasit.
+        """
         katalog = rot / "platform/core/db/migrations"
-        return tuple(sorted(p.name for p in katalog.glob("*.sql"))) \
+        return tuple(sorted(int(p.name[:3]) for p in
+                            katalog.glob("[0-9][0-9][0-9]_*.sql"))) \
             if katalog.is_dir() else ()
     fasit_sett = _migrasjonssett(naa)
     kompatible = [p for p in forrige if _migrasjonssett(p) == fasit_sett]
