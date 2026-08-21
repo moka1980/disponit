@@ -46,8 +46,15 @@ M2_ANDEL = (
 )
 
 
-def _kjor(mal: list[str], junit: Path) -> tuple[int, int, int]:
-    """pytest over `mal`. -> (tester, feilet+error, exitkode).
+def _kjor(mal: list[str], junit: Path) -> tuple[int, int, int, int]:
+    """pytest over `mal`. -> (tester, feilet+error, hoppet, exitkode).
+
+    `skipped` MÅLES ved siden av `tests`: junit teller en hoppet test i
+    `tests` og rapporterer null failures og null errors for den. Hele
+    M-2-andelen er `skipif(not DSN)` (test_kjorer_og_kryptering.py), så
+    en testbase som ikke er satt opp ga 31 «tester», null feilede — og et
+    artefakt som påsto at M-2s andel var grønn uten at én av dem hadde
+    kjørt. En hoppet test er ikke en bestått test.
 
     Exitkoden MÅLES, den kastes ikke: junit-XML-en skrives også når
     kjøringen ble avbrutt underveis, og da beskriver den bare testene som
@@ -67,7 +74,8 @@ def _kjor(mal: list[str], junit: Path) -> tuple[int, int, int]:
     suite = rot if rot.tag == "testsuite" else rot.find("testsuite")
     tester = int(suite.get("tests", 0))
     roede = int(suite.get("failures", 0)) + int(suite.get("errors", 0))
-    return tester, roede, p.returncode
+    hoppet = int(suite.get("skipped", 0))
+    return tester, roede, hoppet, p.returncode
 
 
 def main() -> int:
@@ -80,27 +88,32 @@ def main() -> int:
     vert = subprocess.run(["hostname"], capture_output=True,
                           text=True).stdout.strip() or "ukjent"
     with tempfile.TemporaryDirectory() as tmp:
-        totalt, roede, kode = _kjor(["tests"], Path(tmp) / "alle.xml")
-        m2, m2_roede, m2_kode = _kjor([str(REPO / p) if "::" not in p
-                                       else str(REPO / p.split("::")[0])
-                                       + "::" + p.split("::", 1)[1]
-                                       for p in M2_ANDEL],
-                                      Path(tmp) / "m2.xml")
+        totalt, roede, hoppet, kode = _kjor(["tests"],
+                                            Path(tmp) / "alle.xml")
+        m2, m2_roede, m2_hoppet, m2_kode = _kjor(
+            [str(REPO / p) if "::" not in p
+             else str(REPO / p.split("::")[0]) + "::" + p.split("::", 1)[1]
+             for p in M2_ANDEL], Path(tmp) / "m2.xml")
     ts = datetime.now(timezone.utc).isoformat()
     art = {"krav_id": "m02-suite-v1", "ts": ts,
-           "bestatt": roede == 0 and m2_roede == 0 and totalt > 0
-           and kode == 0 and m2_kode == 0,
+           # M-2s andel er NAVNGITT og PÅKREVD: én hoppet test der er et
+           # punkt uten måling, ikke et grønt punkt.
+           "bestatt": roede == 0 and m2_roede == 0 and m2_hoppet == 0
+           and totalt - hoppet > 0 and kode == 0 and m2_kode == 0,
            "oppsett": {"modul": "m02_revisjonslogg", "commit": commit,
                        "vert": vert, "m2_filer": list(M2_ANDEL)},
            "maalt": {"tester_totalt": totalt, "tester_feilet": roede,
+                     "tester_hoppet": hoppet,
                      "m2_tester": m2, "m2_feilet": m2_roede,
+                     "m2_hoppet": m2_hoppet,
                      "suite_exitkode": kode, "m2_exitkode": m2_kode}}
     ut = a.ut or (REPO / "deploy/staging/artefakter" /
                   f"m02-suite-v1-{ts[:19].replace(':', '').replace('-', '')}.json")
     ut.write_text(json.dumps(art, indent=2, ensure_ascii=False,
                              sort_keys=True) + "\n", encoding="utf-8")
-    print(f"skrev {ut} (bestatt={art['bestatt']}, {totalt} tester,"
-          f" m2-andel {m2})")
+    print(f"skrev {ut} (bestatt={art['bestatt']},"
+          f" {totalt - hoppet} kjørte av {totalt} tester,"
+          f" m2-andel {m2 - m2_hoppet} av {m2})")
     return 0 if art["bestatt"] else 1
 
 

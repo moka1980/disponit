@@ -61,8 +61,10 @@
       "required": [
         "tester_totalt",
         "tester_feilet",
+        "tester_hoppet",
         "m2_tester",
         "m2_feilet",
+        "m2_hoppet",
         "suite_exitkode",
         "m2_exitkode"
       ],
@@ -75,6 +77,11 @@
           "type": "integer",
           "minimum": 0
         },
+        "tester_hoppet": {
+          "type": "integer",
+          "minimum": 0,
+          "comment": "Hoppede tester. Junit teller dem i `tests` med null failures og null errors, saa gulvet maa maales mot KJOERTE tester - en hoppet test er ikke en bestaatt test."
+        },
         "m2_tester": {
           "type": "integer",
           "minimum": 0
@@ -82,6 +89,11 @@
         "m2_feilet": {
           "type": "integer",
           "minimum": 0
+        },
+        "m2_hoppet": {
+          "type": "integer",
+          "minimum": 0,
+          "comment": "Hoppede tester i M-2s NAVNGITTE andel. Hele test_kjorer_og_kryptering.py er skipif(not DSN), saa uten en oppsatt testbase ville andelen sett groenn ut uten aa ha kjoert. Kravet er null."
         },
         "suite_exitkode": {
           "type": "integer",

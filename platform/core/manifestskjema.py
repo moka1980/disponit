@@ -216,10 +216,16 @@ KRAVGRENSER["m02-suite-v1"] = {
     # navngitt og grønn — delingsbetingelsen i RUTINER.md gjort målbar.
     # Gulvet er romslig med vilje: det måler at KJØRINGEN var hel, ikke
     # at antallet aldri vokser (det gjør det, hver uke).
+    # Gulvene måles mot KJØRTE tester (totalt minus hoppede), og M-2s
+    # navngitte andel tåler ingen hoppede i det hele tatt: hele
+    # test_kjorer_og_kryptering.py er `skipif(not DSN)`, så uten den
+    # porten ville en vert uten oppsatt testbase levert en «grønn» andel
+    # der ingen av testene hadde kjørt.
     "min_tester": 1500,
     "maks_feilet": 0,
     "min_m2_tester": 30,
     "maks_m2_feilet": 0,
+    "maks_m2_hoppet": 0,
 }
 KRAVGRENSER["m02-fordeling-v1"] = {
     # Det syntetiske settet er REPRODUSERT, ikke historisk: basen på
@@ -909,21 +915,39 @@ def _grenser_m02_suite(grense: dict, art: dict) -> list[str]:
     m2f, m4 = _teller(m, "m2_feilet", "m2_feilet")
     kode, m5 = _teller(m, "suite_exitkode", "suite_exitkode")
     m2k, m6 = _teller(m, "m2_exitkode", "m2_exitkode")
-    for melding in (m1, m2, m3, m4, m5, m6):
+    hoppet, m7 = _teller(m, "tester_hoppet", "tester_hoppet")
+    m2h, m8 = _teller(m, "m2_hoppet", "m2_hoppet")
+    for melding in (m1, m2, m3, m4, m5, m6, m7, m8):
         if melding:
             feil.append(melding)
-    if any((m1, m2, m3, m4, m5, m6)):
+    if any((m1, m2, m3, m4, m5, m6, m7, m8)):
         return feil
-    if total < grense["min_tester"]:
-        feil.append(f"tester_totalt={total}, krever >="
+    # Gulvene måles mot KJØRTE tester, ikke mot `tests`: junit teller en
+    # hoppet test i `tests` og rapporterer null failures og null errors
+    # for den, så en suite som er hoppet over ser ut som en suite som
+    # gikk. En hoppet test er ikke en bestått test.
+    if total - hoppet < grense["min_tester"]:
+        feil.append(f"tester_totalt={total} minus tester_hoppet={hoppet}"
+                    f" = {total - hoppet} kjørte, krever >="
                     f" {grense['min_tester']}")
     if feilet > grense["maks_feilet"]:
         feil.append(f"tester_feilet={feilet}, krever <="
                     f" {grense['maks_feilet']}")
-    if m2t < grense["min_m2_tester"]:
-        feil.append(f"m2_tester={m2t}, krever >= {grense['min_m2_tester']}")
+    if m2t - m2h < grense["min_m2_tester"]:
+        feil.append(f"m2_tester={m2t} minus m2_hoppet={m2h}"
+                    f" = {m2t - m2h} kjørte, krever >="
+                    f" {grense['min_m2_tester']}")
     if m2f > grense["maks_m2_feilet"]:
         feil.append(f"m2_feilet={m2f}, krever <= {grense['maks_m2_feilet']}")
+    # ... og M-2s andel er NAVNGITT og PÅKREVD: hele
+    # test_kjorer_og_kryptering.py er `skipif(not DSN)`, så en testbase
+    # som ikke er satt opp hadde gitt en andel uten én kjørt test.
+    # Delingsbetingelsen krever en MÅLING for nettopp denne modulen —
+    # en hoppet port måler ingenting.
+    if m2h > grense["maks_m2_hoppet"]:
+        feil.append(f"m2_hoppet={m2h}, krever <="
+                    f" {grense['maks_m2_hoppet']} — M-2s navngitte andel"
+                    " skal være KJØRT, ikke hoppet over")
     if m2t > total:
         feil.append(f"m2_tester={m2t} > tester_totalt={total} — andelen"
                     " kan ikke overstige helheten")
