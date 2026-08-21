@@ -268,23 +268,40 @@ BEGIN
                 ' kjøringsliste (kommadelte positive heltall)',
                 p_kjoringer USING ERRCODE = 'invalid_parameter_value';
         END IF;
+        -- FØRST, PÅ TVERS AV DRILLSCOPENE (Codex P2, #125 runde 3).
+        -- Punktattestene over er drillscopet med vilje: tre av v3s
+        -- punkter MÅLES av (runde, drill)-paret, så samme fil lest mot
+        -- to driller gir legitimt to verdier. Kjøringslisten er ikke
+        -- slik. Den er hvilke kjøringer FILEN navngir — rundens
+        -- egenskap alene, uavhengig av hvilket drillartefakt lesningen
+        -- ble regnet mot. Uten dette leddet kunne samme fil og krav
+        -- bære én liste under én drill og en annen under en annen, og
+        -- aksepten — som slår opp raden for SIN drill (linje ~819) —
+        -- ville da re-målt et ombyttet sett grønne oppdrag i stedet
+        -- for dem filen faktisk navnga.
         SELECT * INTO v_annet FROM public.evidensfil_kjoringer e
          WHERE e.sha256 = v_sha AND e.krav_id = p_krav_id
-           AND e.drill_sha256 = v_drill;
+           AND e.kjoringer IS DISTINCT FROM p_kjoringer
+         LIMIT 1;
         IF FOUND THEN
-            IF v_annet.kjoringer IS DISTINCT FROM p_kjoringer THEN
-                RAISE EXCEPTION 'attester_evidensfil: sha256:% har alt'
-                    ' et identitetsreferat for krav % og denne drillen'
-                    ' («%») — et referat som navngir andre kjøringer'
-                    ' («%») er en programfeil', v_sha, p_krav_id,
-                    v_annet.kjoringer, p_kjoringer
-                    USING ERRCODE = 'invalid_parameter_value';
-            END IF;
-        ELSE
-            -- den NORMALISERTE digesten (Codex P2, #125 r2): raden
-            -- valideres og slås opp som `v_drill` — å lagre kallerens
-            -- råform ville latt en uppercase-attest passere skrivingen
-            -- og aldri bli funnet av aksepten.
+            RAISE EXCEPTION 'attester_evidensfil: sha256:% har alt'
+                ' et identitetsreferat for krav % («%», drill «%») —'
+                ' et referat som navngir andre kjøringer («%») er en'
+                ' programfeil. Hvilke kjøringer filen navngir er'
+                ' rundens egenskap, ikke drillens',
+                v_sha, p_krav_id, v_annet.kjoringer,
+                v_annet.drill_sha256, p_kjoringer
+                USING ERRCODE = 'invalid_parameter_value';
+        END IF;
+        -- SÅ: replay for NØYAKTIG denne drillen er no-op (SP-2), som i
+        -- punktveien. Innholdet er alt bevist likt av kontrollen over.
+        -- Den NORMALISERTE digesten (Codex P2, #125 r2): raden
+        -- valideres og slås opp som `v_drill` — å lagre kallerens
+        -- råform ville latt en uppercase-attest passere skrivingen
+        -- og aldri bli funnet av aksepten.
+        IF NOT EXISTS (SELECT 1 FROM public.evidensfil_kjoringer e
+                        WHERE e.sha256 = v_sha AND e.krav_id = p_krav_id
+                          AND e.drill_sha256 = v_drill) THEN
             INSERT INTO public.evidensfil_kjoringer (sha256, krav_id,
                 drill_sha256, kjoringer, aktor, attestert_av)
             VALUES (v_sha, p_krav_id, v_drill, p_kjoringer,

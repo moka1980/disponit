@@ -5716,6 +5716,29 @@ def test_akseptporten_maaler_kjoringene_selv(migrator):
         (_evidens_sha_for(k2),)).fetchone()[0]
     migrator.rollback()
     assert lagret == DRILL_SHA
+    # (g) listen er RUNDENS egenskap, ikke drillens (Codex P2, #125 r3):
+    # punktattestene er drillscopet fordi sammenhengspunktene MÅLES av
+    # paret, men hvilke kjøringer filen navngir kan ikke endre seg med
+    # drillen. To lister om samme fil og krav er motstridende referater
+    # også på tvers av drillscoper — ellers kunne aksepten, som leser
+    # raden for SIN drill, re-målt et ombyttet sett grønne oppdrag.
+    k3 = _kjede(migrator)
+    annet3 = k3["oppdrag"](claim_release="r-drillet")
+    _evidens_attest(migrator, _evidens_sha_for(k3),
+                    kjoringer=str(k3["opp"]["inflight"]))
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _evidens_attest(migrator, _evidens_sha_for(k3),
+                        drill_sha="22" * 32, kjoringer=str(annet3))
+    assert "rundens egenskap" in str(ei.value)
+    # …mens NØYAKTIG samme liste under et annet drillscope er en
+    # lesning til av det samme referatet, og går inn som før.
+    _evidens_attest(migrator, _evidens_sha_for(k3), drill_sha="22" * 32,
+                    kjoringer=str(k3["opp"]["inflight"]))
+    migrator.execute("RESET ROLE")
+    assert migrator.execute(
+        "SELECT count(*) FROM evidensfil_kjoringer WHERE sha256=%s",
+        (_evidens_sha_for(k3),)).fetchone()[0] == 2
+    migrator.rollback()
 
 
 def test_aksept_skriptet_baerer_v3_og_sammenhengskravet():
