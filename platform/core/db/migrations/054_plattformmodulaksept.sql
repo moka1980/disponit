@@ -33,6 +33,72 @@
 -- urørt.
 
 -- ------------------------------------------------------------
+-- 0. GRENSEKLASSEN — hvilken akseptvei en grense hører til (Codex P1,
+--    runde 2).
+--
+--    `m02-aksept-v1` MÅ stå i det delte kravpunktregisteret: attestene
+--    binder `(krav_id, punkt)` dit (`evidensfil_attest`, 049), så en egen
+--    kopi av registeret ville vært en ny attestmaskin, ikke en fiks. Men
+--    `aksepter_moduldeployment` tar imot ENHVER registrert `p_krav_id`,
+--    og plattformgrensens punkter er alle `artefakt`. En kaller med en
+--    ekte drill, en claiming release og et promotert artefakt kunne
+--    derfor velge plattformgrensen, gjenta de ni verdiene — sentinelene
+--    inkludert, som for DEN funksjonen bare er literale grønne strenger —
+--    og få en immutabel `modulaksept` uten å ha vært i nærheten av
+--    WCAG-grensen deployment-veien finnes for.
+--
+--    Skranken legges i TABELLENE, ikke i en kopi av en 450-linjers
+--    funksjon: grensen får en klasse i registeret, og hver aksepttabell
+--    bærer sin egen klasse i en CHECK-låst kolonne som FK-en må matche.
+--    Det er 049-idiomet fra drillens utfallskolonner — kolonnene finnes
+--    for å bære FK-en, ikke for å kunne variere. Da felles feilvalget på
+--    enhver skrivevei, ikke bare i definereren, og ingen av de to
+--    akseptfunksjonene måtte skrives om for å si det.
+-- ------------------------------------------------------------
+CREATE TABLE akseptgrense_klasse (
+    krav_id TEXT PRIMARY KEY,
+    klasse  TEXT NOT NULL CHECK (klasse IN ('deployment', 'plattform')),
+    UNIQUE (krav_id, klasse)
+);
+-- Samme grunn som for kravpunktene og CI-kravet (049): en aksept er
+-- skrevet mot ÉN klasse, og klassen kan ikke endres under den etterpå.
+CREATE TRIGGER akseptgrense_klasse_immutable BEFORE UPDATE OR DELETE
+    ON akseptgrense_klasse
+    FOR EACH ROW EXECUTE FUNCTION modulregister_append_only();
+CREATE TRIGGER akseptgrense_klasse_ingen_truncate BEFORE TRUNCATE
+    ON akseptgrense_klasse
+    FOR EACH STATEMENT EXECUTE FUNCTION modulregister_append_only();
+GRANT SELECT ON akseptgrense_klasse TO disponit_modul_eier;
+
+-- Hver grense som fantes FØR denne migrasjonen er per definisjon en
+-- deployment-grense: deployment-aksepten har vært den eneste veien.
+-- Listen LESES derfor ut av registeret og av aksepene selv, i stedet for
+-- å ramses opp for hånd — en håndskrevet liste kan gå ut av takt med
+-- 049/050/052, og da ville FK-en under felt en ekte aksept.
+INSERT INTO akseptgrense_klasse (krav_id, klasse)
+SELECT krav_id, 'deployment' FROM akseptkrav_punkt
+ UNION
+SELECT krav_id, 'deployment' FROM modulaksept;
+
+-- Deployment-aksepten bærer klassen sin, på hodet OG på punktradene:
+-- funksjonen skriver begge, og eier-/migratorveien kan skrive dem
+-- direkte (samme lærdom som punkt-FK-en lenger nede).
+ALTER TABLE modulaksept
+    ADD COLUMN krav_klasse TEXT NOT NULL DEFAULT 'deployment'
+        CHECK (krav_klasse = 'deployment'),
+    ADD FOREIGN KEY (krav_id, krav_klasse)
+        REFERENCES akseptgrense_klasse (krav_id, klasse);
+ALTER TABLE modulaksept_punkt
+    ADD COLUMN krav_klasse TEXT NOT NULL DEFAULT 'deployment'
+        CHECK (krav_klasse = 'deployment'),
+    ADD FOREIGN KEY (krav_id, krav_klasse)
+        REFERENCES akseptgrense_klasse (krav_id, klasse);
+
+-- …og plattformgrensen er en plattformgrense.
+INSERT INTO akseptgrense_klasse (krav_id, klasse) VALUES
+    ('m02-aksept-v1', 'plattform');
+
+-- ------------------------------------------------------------
 -- 1. Grensen `m02-aksept-v1` i kravpunktregisteret (definert FØR
 --    målingene).
 --
@@ -128,13 +194,21 @@ CREATE TABLE plattformmodulaksept (
     manifest_commit TEXT NOT NULL CHECK (manifest_commit ~ '^[0-9a-f]{40}$'),
     manifest_sha256 TEXT NOT NULL CHECK (manifest_sha256 ~ '^[0-9a-f]{64}$'),
     grense_id       TEXT NOT NULL,
+    -- …og den er en PLATTFORM-grense (Codex P1, runde 2). CHECK-låst,
+    -- som deployment-sidens kolonne: den finnes for å bære FK-en. Uten
+    -- den kunne søsterfunksjonen speilvendt samme feil og aksepteres mot
+    -- en deployment-grense.
+    grense_klasse   TEXT NOT NULL DEFAULT 'plattform'
+                    CHECK (grense_klasse = 'plattform'),
     ci_run          TEXT NOT NULL,
     ci_commit       TEXT NOT NULL,
     nokkel          TEXT NOT NULL UNIQUE,
     aktor           TEXT NOT NULL,
     akseptert_ts    TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (modul_id, manifest_commit),
-    UNIQUE (modul_id, manifest_commit, grense_id)
+    UNIQUE (modul_id, manifest_commit, grense_id),
+    FOREIGN KEY (grense_id, grense_klasse)
+        REFERENCES akseptgrense_klasse (krav_id, klasse)
 );
 
 CREATE TABLE plattformmodulaksept_punkt (

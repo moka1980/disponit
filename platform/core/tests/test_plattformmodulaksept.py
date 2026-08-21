@@ -19,6 +19,7 @@ import pytest
 
 from .test_api import migrator, miljo  # noqa: F401 — delte fixturer
 from .test_modulaksept import _rene_attester  # noqa: F401 — attestrydding
+from .test_modulaksept import EVIDENS_SHA, _drill, _kjede
 
 DSN = os.environ.get("DISPONIT_TEST_DSN")
 VERIFIKATOR_DSN = os.environ.get("DISPONIT_TEST_VERIFIKATOR_DSN")
@@ -561,6 +562,53 @@ def test_hendelsen_og_punktene_er_immutable(migrator):
         v.rollback()
     finally:
         v.close()
+
+
+@pg
+def test_plattformgrensen_er_ikke_valgbar_for_deploymentveien(migrator):
+    """Codex P1, runde 2: `m02-aksept-v1` står i det DELTE
+    kravpunktregisteret — det må den, attestene binder `(krav_id, punkt)`
+    dit — og `aksepter_moduldeployment` tar imot enhver registrert
+    `p_krav_id`. Punktene er alle `artefakt`, og sentinelene er for DEN
+    funksjonen bare literale grønne strenger: en kaller med ekte drill,
+    release og promotert artefakt kunne fått en immutabel `modulaksept`
+    uten å ha vært i nærheten av WCAG-grensen.
+
+    Klassen står nå i registeret, og hver aksepttabell bærer sin egen i
+    en CHECK-låst kolonne FK-en må matche — så feilvalget felles på
+    ENHVER skrivevei, ikke bare i definereren."""
+    migrator.execute("RESET ROLE")
+    klasser = dict(migrator.execute(
+        "SELECT krav_id, klasse FROM akseptgrense_klasse").fetchall())
+    # Hver registrert grense har nøyaktig én klasse, og plattformgrensen
+    # er den eneste plattformen.
+    uklassifiserte = migrator.execute(
+        "SELECT count(*) FROM akseptkrav_punkt k WHERE NOT EXISTS"
+        " (SELECT 1 FROM akseptgrense_klasse g WHERE g.krav_id=k.krav_id)"
+    ).fetchone()[0]
+    migrator.rollback()
+    assert klasser.get(GRENSE) == "plattform"
+    assert {k for k, v in klasser.items() if v == "plattform"} == {GRENSE}
+    assert uklassifiserte == 0
+
+    # …og skranken måles der den bor: en deploymentkjede som ellers er
+    # komplett — drill, kandidatrelease, promotert E2E-artefakt — kan
+    # ikke skrive en aksept mot plattformgrensen.
+    k = _kjede(migrator, promoter_paa_drillet=True, staged_paa_kandidat=True)
+    did = _drill(migrator, k)
+    migrator.execute("RESET ROLE")
+    with pytest.raises(psycopg.errors.ForeignKeyViolation) as ei:
+        migrator.execute(
+            "INSERT INTO modulaksept (modul_id, miljo, release_id,"
+            " drill_id, krav_id, e2e_tenant, e2e_artefakt_id,"
+            " evidens_jsonl_sha256, manifest_commit, ci_run, ci_commit,"
+            " nokkel, aktor) VALUES"
+            " (%s,'staging','r-kandidat',%s,%s,%s,%s,%s,%s,'r',%s,%s,"
+            "'test')",
+            (k["mid"], did, GRENSE, k["ten"], k["e2e"], EVIDENS_SHA,
+             CI_SHA, CI_SHA, "d-" + secrets.token_hex(6)))
+    assert "akseptgrense_klasse" in str(ei.value)
+    migrator.rollback()
 
 
 def test_ingen_syntetiske_registerrader_i_migrasjonen():
