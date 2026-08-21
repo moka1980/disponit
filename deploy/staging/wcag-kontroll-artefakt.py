@@ -550,6 +550,17 @@ def sammendrag(rader: list[dict], kilde: str, kilde_sha256: str) -> dict:
             " oppdraget gjentatt på flere posisjoner er én kjøring, ikke"
             " flere — så summen kan ikke være kilden. Kjør fase 5 på nytt"
             " (nye idempotensnøkler) og la kjøringene måle seg selv.")
+    ut_identiteter = {}
+    if v2:
+        # IDENTITETENE FØLGER TALLENE (#124, drillartefaktets form —
+        # Codex P2 #117 r3): akseptporten skal kunne spørre BASEN om
+        # nøyaktig de kjøringene sammendraget teller, ikke om «ti
+        # kjøringer» i abstrakt. Posisjonsordnet, fra samme utvalg som
+        # alle tellerne (`_posisjonenes_kjoringer`) — så identitetene og
+        # tallene aldri kan peke på hver sin virkelighet.
+        valgt_id = _posisjonenes_kjoringer(fase5_linjer, krav)
+        ut_identiteter = {"identiteter": {"kjoringer": [
+            _identitet(valgt_id[i], "oppdrag") for i in sorted(valgt_id)]}}
     ut_oppsett_ekstra = {"datasett_sha256": dsha} if v2 else {}
     ut_maalt_ekstra = ({
         "kjoringer_med_attestert_kvittering": attestert,
@@ -560,6 +571,7 @@ def sammendrag(rader: list[dict], kilde: str, kilde_sha256: str) -> dict:
     return {
         "krav_id": "wcag-kontroll-v2" if v2 else "wcag-kontroll-v1",
         "ts": max(d["ts"] for d in valgte),
+        **ut_identiteter,
         "bestatt": all(d.get("ok") is True for d in valgte),
         "oppsett": {
             "modul": MODUL,

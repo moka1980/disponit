@@ -813,6 +813,29 @@ def _grenser_wcag_kontroll_v2(grense: dict, art: dict) -> list[str]:
     elif ravvik > grense["maks_revisjonsrad_avvik"]:
         feil.append(f"revisjonsrad_avvik={ravvik}, krever <="
                     f" {grense['maks_revisjonsrad_avvik']}")
+    # #124: identitetene FØLGER tallene — tredjelaget, samme form som
+    # drillens `_identiteter_stemmer`. Akseptporten re-måler nøyaktig
+    # disse kjøringene i basen, så et sett som ikke stemmer med tallet
+    # det står ved siden av, er to påstander i ett artefakt.
+    ident = art.get("identiteter")
+    kjoringer = ident.get("kjoringer") if isinstance(ident, dict) else None
+    if not isinstance(kjoringer, list):
+        feil.append("identiteter.kjoringer mangler — akseptporten kan"
+                    " ikke re-måle kjøringer den ikke får navngitt")
+    else:
+        gyldige = [o for o in kjoringer
+                   if isinstance(o, int) and not isinstance(o, bool)
+                   and o > 0]
+        if len(gyldige) != len(kjoringer):
+            feil.append("identiteter.kjoringer bærer verdier som ikke er"
+                        " oppdrags-IDer")
+        if not mk and len(kjoringer) != krav:
+            feil.append(f"identiteter.kjoringer har {len(kjoringer)} av"
+                        f" {krav} — hver bestilte kjøring skal være"
+                        " navngitt")
+        if len(set(gyldige)) != len(gyldige):
+            feil.append("identiteter.kjoringer gjentar et oppdrag — ett"
+                        " oppdrag er én kjøring, aldri to")
     # §1.2: datasettets identitet — begge ledd, byte-likhet. Leddet her
     # er det LOKALE: de innsjekkede bytene hashes med nøyaktig samme
     # funksjon produsenten brukte på staging.

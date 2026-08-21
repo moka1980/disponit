@@ -5263,11 +5263,15 @@ def test_grenser_wcag_kontroll_v2_maaler_de_nye_tellerne():
                        ).read_text(encoding="utf-8"))
     lokal = datasett_sha256(DATASETT_STI)
 
-    def v2(oppsett_ekstra=None, **maalt_ekstra):
+    def v2(oppsett_ekstra=None, identiteter="standard", **maalt_ekstra):
         art = json.loads(json.dumps(ekte))
         art["krav_id"] = "wcag-kontroll-v2"
         art["oppsett"]["datasett_sha256"] = lokal
         art["oppsett"].update(oppsett_ekstra or {})
+        if identiteter == "standard":
+            art["identiteter"] = {"kjoringer": list(range(41, 51))}
+        elif identiteter is not None:
+            art["identiteter"] = identiteter
         art["maalt"].update({
             "kjoringer_med_attestert_kvittering": 10,
             "kvittering_attest_avvik": 0,
@@ -5301,6 +5305,19 @@ def test_grenser_wcag_kontroll_v2_maaler_de_nye_tellerne():
     uten = v2()
     del uten["maalt"]["kjoringer_med_attestert_kvittering"]
     assert valider_artefaktformat(uten, "wcag-kontroll-v2")
+    # #124: identitetene FØLGER tallene — mangler, for få eller
+    # gjentatte oppdrag feller artefaktet i både skjema og grense.
+    assert valider_artefaktformat(v2(identiteter=None),
+                                  "wcag-kontroll-v2"), \
+        "skjemaet lot identitetene mangle"
+    assert any("identiteter" in fe for fe in _sjekk_grenser(
+        "wcag-kontroll-v2", v2(identiteter=None)))
+    assert any("av 10" in fe for fe in _sjekk_grenser(
+        "wcag-kontroll-v2",
+        v2(identiteter={"kjoringer": list(range(41, 50))})))
+    assert any("gjentar" in fe for fe in _sjekk_grenser(
+        "wcag-kontroll-v2",
+        v2(identiteter={"kjoringer": [41] * 10})))
     # v1-grensen står urørt: samme fil består som historie.
     assert _sjekk_grenser("wcag-kontroll-v1", ekte) == []
 
@@ -5359,6 +5376,11 @@ def test_konverteren_sammendrar_v2_naar_datasettet_er_maalt():
     assert v2["maalt"]["revisjonsrader_mot_bestilt"] == 0
     assert v2["maalt"]["kvittering_attest_avvik"] == 0
     assert v2["maalt"]["revisjonsrad_avvik"] == 0
+    # #124: identitetene følger tallene — de ti målte kjøringene, fra
+    # samme utvalg som tellerne, distinkte og i posisjonsorden.
+    kj = v2["identiteter"]["kjoringer"]
+    assert len(kj) == 10 and len(set(kj)) == 10
+    assert all(isinstance(o, int) and o > 0 for o in kj)
     # En identitet som ikke er en kanonisk sha256 er ingen måling.
     daarlig = list(rader)
     daarlig[siste_f5] = dict(hendelse, datasett_sha256="xyz")
@@ -5501,6 +5523,62 @@ def test_roedt_referat_mot_feil_drill_laaser_ikke_riktig_par(migrator):
                         drill_sha=DRILL_SHA)
     assert "annet innhold" in str(ei.value)
     migrator.rollback()
+
+
+@pg
+def test_akseptporten_remaaler_kjoringene_i_basen(migrator):
+    """#124: akseptraden hviler på basens NÅ-svar for de navngitte
+    kjøringene, ikke på artefaktets transkripsjon. Grønn kontroll +
+    de røde formene: feil release, ukjent oppdrag, delte loggposter,
+    og et identitetssett som ikke navngir kravet."""
+    m = _aksept_skript()
+    k = _kjede(migrator)
+    gammel_tenant = m.TENANT
+    m.TENANT = k["ten"]
+    try:
+        def runde(kjoringer, release="r-drillet", krav=None):
+            return {"maalt": {"kjoringer_krav": krav or len(kjoringer)},
+                    "oppsett": {"release": release},
+                    "identiteter": {"kjoringer": kjoringer}}
+        # Positiv kontroll: inflight-oppdraget attesteres av basen nå.
+        m.verifiser_kjoringsattester(migrator, runde([k["opp"]["inflight"]]))
+        # Feil release: claim-sporet sier nei — og det skal høres.
+        with pytest.raises(SystemExit) as ei:
+            m.verifiser_kjoringsattester(
+                migrator, runde([k["opp"]["inflight"]],
+                                release="r-rullback"))
+        assert "attesterer den ikke NÅ" in str(ei.value)
+        # Et oppdrag basen ikke kjenner er ingen kjøring.
+        with pytest.raises(SystemExit):
+            m.verifiser_kjoringsattester(migrator, runde([999999999]))
+        # To kjøringer som deler revisjonsrad kan ikke engang BYGGES:
+        # `oppdrag_en_per_beslutning` (008) er unik per (tenant,
+        # loggpost). Skriptets distinkthetstelling er beltet OVER den
+        # strukturen — den måles her som porten den er, og skriptleddet
+        # står som vern om invarianten noensinne svekkes.
+        migrator.execute("RESET ROLE")
+        delt = migrator.execute(
+            "SELECT beslutning_loggpost_id FROM oppdrag WHERE tenant=%s"
+            " AND id=%s", (k["ten"], k["opp"]["inflight"])).fetchone()[0]
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            migrator.execute(
+                "INSERT INTO oppdrag (opprinnelse, tenant, oppdragstype,"
+                " handling, eiermodul, status, payload_kryptert, key_id,"
+                " nonce, utforelsesfrist, evidensfrist, koblingsstatus,"
+                " beslutning_loggpost_id) VALUES ('beslutning',%s,"
+                "'kontroll.wcag.nettsted','kontroll.wcag.nettsted',%s,"
+                "'opprettet',%s,'k1',%s, now()+interval '1 hour',"
+                " now()+interval '2 hours','KOBLET',%s)",
+                (k["ten"], k["mid"], b"\x00" * 24, b"\x00" * 12, delt))
+        migrator.rollback()
+        # …og et sett som ikke navngir kravet stoppes før basen spørres.
+        with pytest.raises(SystemExit) as ei:
+            m.verifiser_kjoringsattester(
+                migrator, runde([k["opp"]["inflight"]], krav=10))
+        assert "navngir ikke 10" in str(ei.value)
+    finally:
+        m.TENANT = gammel_tenant
+        migrator.rollback()
 
 
 def test_aksept_skriptet_baerer_v3_og_sammenhengskravet():

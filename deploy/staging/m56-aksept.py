@@ -918,6 +918,65 @@ def sammenheng_verdier(runde: dict, drill: dict, ms) -> dict[str, str]:
     return verdier
 
 
+def verifiser_kjoringsattester(conn, runde: dict) -> None:
+    """#124: basens NÅ-svar for kontrollkjøringene — før raden skrives.
+
+    Konverterens tellere er avledet av en produsent-skrevet evidensfil,
+    og seks review-runder på tvers av #117/#123 fant hver en ny form for
+    «hva om fila lyver». Fila kan ikke spørres hardere — men BASEN kan:
+    v2-artefaktet navngir nå de ti kjøringene (`identiteter.kjoringer`,
+    fra samme utvalg som tellerne), og her re-kjøres
+    `maal_kjoringsattest` for hver av dem, mot nøyaktig den releasen
+    runden målte. Samme form som drillen: `registrer_moduldrill` tror
+    aldri på artefaktets utfall, den måler selv i `oppdrag`/`artefakt`.
+
+    Kravene er akseptgrensens egne (§1.3): hvert oppdrag bærer
+    kvitteringsavtrykket, claim-sporet (release+miljø), artefakt-
+    likheten og revisjonsraden — og de ti loggpostene er DISTINKTE.
+    Fail-closed: et oppdrag basen ikke attesterer NÅ, stopper aksepten
+    her, før noen fullmakt er tatt og noe referat skrevet.
+    """
+    m = runde["maalt"]
+    krav = m["kjoringer_krav"]
+    ident = (runde.get("identiteter") or {}).get("kjoringer")
+    if not (isinstance(ident, list) and len(ident) == krav
+            and all(isinstance(o, int) and not isinstance(o, bool)
+                    and o > 0 for o in ident)
+            and len(set(ident)) == krav):
+        raise SystemExit(
+            f"AVBRUTT: runde-artefaktet navngir ikke {krav} distinkte"
+            " kjøringer (identiteter.kjoringer) — akseptporten kan ikke"
+            " re-måle kjøringer den ikke får navngitt")
+    rel = runde["oppsett"]["release"]
+    loggposter = set()
+    conn.execute("SET ROLE disponit_modules_admin")
+    try:
+        for o in ident:
+            rad = conn.execute(
+                "SELECT kvittering_ok, claim_release_ok, artefakt_ok,"
+                " revisjonsrad_ok, loggpost"
+                " FROM maal_kjoringsattest(%s,%s,%s,%s)",
+                (TENANT, o, rel, MILJO)).fetchone()
+            if not (rad and rad[0] and rad[1] and rad[2] and rad[3]
+                    and rad[4] is not None):
+                deler = dict(zip(("kvittering", "claim_release",
+                                  "artefakt", "revisjonsrad"),
+                                 rad[:4] if rad else (False,) * 4))
+                raise SystemExit(
+                    f"AVBRUTT: kjøring {o}: basen attesterer den ikke NÅ"
+                    f" mot ({rel}, {MILJO}) — {deler}. Artefaktets tall"
+                    " er transkripsjonen; akseptraden hviler på basens"
+                    " eget svar, og det svaret er nei")
+            loggposter.add(rad[4])
+    finally:
+        conn.execute("RESET ROLE")
+    if len(loggposter) != krav:
+        raise SystemExit(
+            f"AVBRUTT: de {krav} kjøringene bærer {len(loggposter)}"
+            " distinkte revisjonsrader — én rad per kjøring er kravet,"
+            " og en rad delt av flere kjøringer er én rad")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--drill", type=Path, required=True)
@@ -1044,6 +1103,9 @@ def main() -> int:
         manifestkilde = verifiser_registrert_manifest(
             conn, (o["drillet_release"], o["kandidat_release"]),
             manifest, manifest_sha, manifest_commit)
+        # #124: basens NÅ-svar for de ti kontrollkjøringene — i samme
+        # lesevindu som digest- og claim-sporene, før noe skrives.
+        verifiser_kjoringsattester(conn, runde)
         # REFERATET FRA VEIEN SOM SPURTE (Codex P1, #117 runde 16).
         # Basen sammenlignet `kilde_ref` med sine egne to parametre, og
         # to felter fra samme kaller som er enige, er ingen CI-kjøring.

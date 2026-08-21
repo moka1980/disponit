@@ -9,6 +9,7 @@
     "krav_id",
     "ts",
     "bestatt",
+    "identiteter",
     "oppsett",
     "maalt"
   ],
@@ -153,6 +154,24 @@
         "revisjonsrad_avvik": {
           "$ref": "#/$defs/telling",
           "comment": "Linjer som baerer revisjonsrad-maalingen roed. Null er kravet."
+        }
+      }
+    },
+    "identiteter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kjoringer"
+      ],
+      "comment": "#124: identitetene FOELGER tallene (drillartefaktets form, Codex P2 #117 r3). Akseptporten re-maaler disse kjoeringene i BASEN (maal_kjoringsattest) foer raden skrives - basens naa-svar, ikke transkripsjonen fra runden.",
+      "properties": {
+        "kjoringer": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "comment": "Posisjonsordnede oppdrags-IDer fra samme utvalg som tellerne."
         }
       }
     }
