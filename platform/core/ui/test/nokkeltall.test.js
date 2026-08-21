@@ -265,6 +265,42 @@ test("Nøkkeltall: et utdatert vindussvar overskriver aldri et nyere", async () 
   globalThis.fetch = STANDARD_FETCH;
 });
 
+test("Nøkkeltall: en feilet last lar ikke forrige svars tall stå igjen",
+  async () => {
+    // Ett vellykket vindu, så ett som feiler. Feilveien tegnet bare
+    // kortene, så «åpne nå» og grensene fra det FORRIGE svaret ble stående
+    // ved siden av feilen — under den nye vindusledeteksten.
+    const svar = [];
+    globalThis.fetch = async (url) =>
+      new Promise((r) => { svar.push({ url, r }); });
+    try {
+      const h = nyHoved();
+      visNokkeltall(h, ctx());
+      await vent(() => svar.length === 1);
+      svar[0].r({ ok: true, status: 200,
+        json: async () => ({ ...SVARFORM, apne_naa: 6 }) });
+      await vent(() => h.querySelector(".kpi-tilstand").textContent
+        .includes("6"));
+      const grenser = h.querySelectorAll("p.muted")[0].textContent;
+      assert.ok(grenser.includes(t("ui.nokkeltall.vindu_valgt")));
+
+      const velger = h.querySelector("select#nokkeltall-vindu");
+      velger.value = "7d";
+      velger.dispatchEvent(new window.Event("change"));
+      await vent(() => svar.length === 2);
+      svar[1].r({ ok: false, status: 500, json: async () => ({ feil: "x" }) });
+      await vent(() => h.querySelector(".tilstand.feil"));
+
+      assert.ok(!h.querySelector(".kpi-tilstand").textContent.includes("6"),
+        "«åpne nå» fra forrige svar sto igjen ved siden av feilen");
+      assert.ok(!h.textContent.includes(t("ui.nokkeltall.vindu_valgt")),
+        "grensene fra forrige vindu sto igjen under det nye vindusnavnet");
+      assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+    } finally {
+      globalThis.fetch = STANDARD_FETCH;
+    }
+  });
+
 test("Nøkkeltall: engelsk visning viser aldri de norske maskinkodene", async () => {
   SVAR = { "/v1/nokkeltall": { ...SVARFORM,
     tick: { total: 3, deler: { tillat: 2, hoppet_over: 1 } } } };

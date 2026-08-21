@@ -226,10 +226,25 @@ export function visNokkeltall(hoved, ctx) {
   // under en annen vindusledetekst enn de er talt i, og flaten vist noe
   // som aldri var sant. Hver last får derfor et løpenummer, og et svar
   // som ikke lenger er det siste, kastes: velgeren er sannheten.
+  //
+  // Flaten er ÉN LESNING. «Åpne nå», vindusgrensene og kortene kommer fra
+  // samme svar, talt i samme skann — men lastingen og feilveien ryddet bare
+  // kortene (Codex P2). Et vindusvalg som feilet lot derfor forrige svars
+  // «åpne nå» og forrige vindus grenser bli stående, under velgerens NYE
+  // vindusnavn: et tall flaten ikke har fått, og grenser for et annet
+  // utsnitt enn det som er valgt — nettopp den formen «to akser, aldri
+  // blandet» finnes for å hindre.
+  //
+  // De tømmes derfor sammen med kortene, i det lastingen starter. At
+  // «åpne nå» ikke er talt over vinduet betyr at velgeren ikke SKOPER den,
+  // ikke at den overlever et svar som aldri kom: «nå» er en påstand om
+  // tidspunktet, og den holder bare så lenge svaret bak den gjør det.
   let siste = 0;
   const last = () => {
     const min = ++siste;
     const utdatert = () => min !== siste;
+    sett(tilstand);
+    sett(meta);
     sett(kropp, el("p", { class: "muted", text: t("ui.laster") }));
     hentJson("/v1/nokkeltall", { vindu }).then((d) => {
       if (utdatert()) return;
