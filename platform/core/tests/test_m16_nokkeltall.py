@@ -508,3 +508,49 @@ def test_terminalsettet_kommer_fra_app_laget():
         "terminalstatuser hardkodet i definerfila"
     from api.app import TERMINALE_UNNTAKSSTATUSER
     assert set(TERMINALE_UNNTAKSSTATUSER) == {"løst", "avvist"}
+
+
+#: Definerne 051 lager — navn, ikke signatur: signaturen er nettopp det
+#: fila ikke skal ha en andre utgave av.
+M16_DEFINERE = ["m16_beslutninger", "m16_frekvensreservasjoner",
+                "m16_aktiveringer", "m16_oppdrag", "m16_unntak_aktivitet",
+                "m16_unntak_lukkede", "m16_unntak_apne", "m16_tick"]
+
+
+@pg
+def test_rettighetene_folger_signaturene_som_faktisk_finnes(migrator):
+    """SP-7 etter at sakstypevernet endret tre signaturer: hver definer
+    finnes i NØYAKTIG én utgave, runtime har EXECUTE på den, og PUBLIC
+    har den ikke. En rettighetssetning som gjentok argumentlista pekte
+    på en overlast DROP-en alt hadde fjernet — PostgreSQL slår opp på
+    eksakt argumentliste, så migrasjonen stoppet og rullet tilbake."""
+    rader = migrator.execute(
+        "SELECT p.proname, p.oid::regprocedure::text,"
+        "       has_function_privilege('disponit', p.oid, 'EXECUTE'),"
+        "       has_function_privilege('public', p.oid, 'EXECUTE')"
+        "  FROM pg_catalog.pg_proc p"
+        "  JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace"
+        " WHERE n.nspname = 'public' AND p.proname = ANY(%s)",
+        (M16_DEFINERE,)).fetchall()
+    migrator.rollback()
+    navn = [r[0] for r in rader]
+    assert sorted(navn) == sorted(M16_DEFINERE), \
+        f"definer mangler eller finnes i flere utgaver: {sorted(navn)}"
+    for proname, signatur, kjorer_har, alle_har in rader:
+        assert kjorer_har, f"runtime mangler EXECUTE på {signatur}"
+        assert not alle_har, f"PUBLIC har fortsatt EXECUTE på {signatur}"
+
+
+@pg
+def test_rettighetsblokken_gjentar_ikke_argumentlistene():
+    """Roten under funnet over: signaturen skal stå ETT sted i 051 —
+    i CREATE. En REVOKE/GRANT med egen argumentliste er en andre
+    utgave som driver fra definisjonen i stillhet, og det er nettopp
+    slik drift som brøt migrasjonen. DROP-linjene er unntaket: de
+    navngir med vilje overlaster som IKKE lenger skal finnes."""
+    kode = [l for l in M051.read_text(encoding="utf-8").splitlines()
+            if not l.strip().startswith("--")]
+    for linje in kode:
+        if re.search(r"\b(REVOKE|GRANT)\b.*\bON FUNCTION\b", linje):
+            assert "||" in linje, \
+                f"rettighetssetning med håndskrevet signatur: {linje!r}"

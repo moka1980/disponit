@@ -232,21 +232,49 @@ BEGIN
 END $$;
 
 -- Runtime får KUN EXECUTE (flaten leser aldri tabeller — SP-7).
-REVOKE ALL ON FUNCTION m16_beslutninger(TEXT, TIMESTAMPTZ, TIMESTAMPTZ) FROM PUBLIC;
-REVOKE ALL ON FUNCTION m16_frekvensreservasjoner(TEXT, TIMESTAMPTZ, TIMESTAMPTZ) FROM PUBLIC;
-REVOKE ALL ON FUNCTION m16_aktiveringer(TEXT, TIMESTAMPTZ, TIMESTAMPTZ) FROM PUBLIC;
-REVOKE ALL ON FUNCTION m16_oppdrag(TEXT, TIMESTAMPTZ, TIMESTAMPTZ) FROM PUBLIC;
-REVOKE ALL ON FUNCTION m16_unntak_aktivitet(TEXT, TIMESTAMPTZ, TIMESTAMPTZ) FROM PUBLIC;
-REVOKE ALL ON FUNCTION m16_unntak_lukkede(TEXT, TIMESTAMPTZ, TIMESTAMPTZ, TEXT[], INT) FROM PUBLIC;
-REVOKE ALL ON FUNCTION m16_unntak_apne(TEXT, TEXT[]) FROM PUBLIC;
-REVOKE ALL ON FUNCTION m16_tick(TEXT, TIMESTAMPTZ, TIMESTAMPTZ) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION m16_beslutninger(TEXT, TIMESTAMPTZ, TIMESTAMPTZ) TO disponit;
-GRANT EXECUTE ON FUNCTION m16_frekvensreservasjoner(TEXT, TIMESTAMPTZ, TIMESTAMPTZ) TO disponit;
-GRANT EXECUTE ON FUNCTION m16_aktiveringer(TEXT, TIMESTAMPTZ, TIMESTAMPTZ) TO disponit;
-GRANT EXECUTE ON FUNCTION m16_oppdrag(TEXT, TIMESTAMPTZ, TIMESTAMPTZ) TO disponit;
-GRANT EXECUTE ON FUNCTION m16_unntak_aktivitet(TEXT, TIMESTAMPTZ, TIMESTAMPTZ) TO disponit;
-GRANT EXECUTE ON FUNCTION m16_unntak_lukkede(TEXT, TIMESTAMPTZ, TIMESTAMPTZ, TEXT[], INT) TO disponit;
-GRANT EXECUTE ON FUNCTION m16_unntak_apne(TEXT, TEXT[]) TO disponit;
-GRANT EXECUTE ON FUNCTION m16_tick(TEXT, TIMESTAMPTZ, TIMESTAMPTZ) TO disponit;
+--
+-- ARGUMENTLISTENE SKRIVES IKKE EN GANG TIL HER. En rettighetssetning
+-- som gjentar signaturen er en ANDRE utgave av definisjonen, og de to
+-- driver fra hverandre i stillhet: da sakstypevernet la `p_sakstyper`
+-- på de tre unntaksdefinerne, pekte REVOKE fortsatt på de gamle
+-- overlastene DROP-linjene over nettopp hadde fjernet. PostgreSQL
+-- slår opp funksjonsrettigheter på EKSAKT argumentliste, så den
+-- FØRSTE av dem hadde stoppet hele migrasjonen og rullet den tilbake
+-- — samme lærdom som ellers i repoet: én kontroll, ett sted.
+--
+-- Navnene er intensjonen (åtte definere, verken flere eller færre);
+-- signaturene henter vi fra funksjonene CREATE-setningene over
+-- FAKTISK laget. Avviket kan da bare gå én vei, og `antall <> 8`
+-- fanger begge retninger høylytt: en definer som mangler, eller en
+-- gammel overlast som overlevde DROP-en og ville stått igjen med sine
+-- egne rettigheter.
+DO $rettigheter$
+DECLARE
+    signatur TEXT;
+    antall   INT := 0;
+BEGIN
+    FOR signatur IN
+        SELECT p.oid::regprocedure::text
+          FROM pg_catalog.pg_proc p
+          JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+         WHERE n.nspname = 'public'
+           AND p.proname = ANY (ARRAY[
+                   'm16_beslutninger', 'm16_frekvensreservasjoner',
+                   'm16_aktiveringer', 'm16_oppdrag',
+                   'm16_unntak_aktivitet', 'm16_unntak_lukkede',
+                   'm16_unntak_apne', 'm16_tick'])
+         ORDER BY 1
+    LOOP
+        EXECUTE 'REVOKE ALL ON FUNCTION ' || signatur || ' FROM PUBLIC';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION ' || signatur || ' TO disponit';
+        antall := antall + 1;
+    END LOOP;
+    IF antall <> 8 THEN
+        RAISE EXCEPTION
+            'M-16 (051): fant % m16-definere, forventet 8 — en definer '
+            'mangler, eller en gammel overlast overlevde DROP-en',
+            antall;
+    END IF;
+END $rettigheter$;
 
 RESET ROLE;
