@@ -49,6 +49,32 @@ test("KategoriTag/Tidspunkt/SensitiveData rendrer trygt", async () => {
   assert.equal(SensitiveData().textContent, t("ui.sensitiv.skjult"));
 });
 
+test("Tidspunkt: sonemerket er sonen det faktisk ble formatert i",
+  async () => {
+    // 22:30Z er 07:30 dagen etter i Tokyo. Formateres tidspunktet I sonen,
+    // står den timen der — uansett hvilken sone testkjøreren står i.
+    const iso = "2026-08-09T22:30:00+00:00";
+    const tokyo = Tidspunkt(iso, { tidssone: "Asia/Tokyo" });
+    assert.ok(tokyo.textContent.includes("07:30"),
+      `sonen ble ikke brukt: ${tokyo.textContent}`);
+    assert.ok(tokyo.textContent.endsWith("(Asia/Tokyo)"),
+      `sonen mangler i klartekst: ${tokyo.textContent}`);
+    // Og beviset som holder i ENHVER vertssone: to ulike soner kan ikke
+    // gi samme tekst. Faller `timeZone` ut, formateres begge i verten og
+    // de blir like — som da `(UTC)` sto over lokal tid.
+    const utc = Tidspunkt(iso, { tidssone: "UTC" });
+    assert.notEqual(utc.textContent, tokyo.textContent);
+    assert.ok(utc.textContent.endsWith("(UTC)"));
+    // Maskinlesbar verdi er urørt av presentasjonen.
+    assert.equal(tokyo.getAttribute("datetime"), iso);
+    // Uten sone påstås ingenting: leserens egen sone, ingen merkelapp.
+    assert.ok(!/\(/.test(Tidspunkt(iso).textContent));
+    // Ukjent sone: rå ISO, som bærer offsetten selv — aldri en ny
+    // merkelapp over feil klokkeslett.
+    assert.equal(Tidspunkt(iso, { tidssone: "Mars/Olympus" }).textContent,
+      iso);
+  });
+
 test("BegrunnelseKjede: ukjent kode faller trygt til råkode", async () => {
   const n = BegrunnelseKjede(["belop_over_grense", "helt_ukjent_kode_xyz"]);
   assert.ok(n.textContent.includes(t("kode.belop_over_grense")));

@@ -77,6 +77,32 @@ SIDE_STANDARD, SIDE_MAKS = 50, 200
 #: Blir det noen gang en tredje terminal status, står den her — og ingen andre
 #: steder.
 TERMINALE_UNNTAKSSTATUSER = ("løst", "avvist")
+
+#: Sakstypene i `unntak` (migrasjon 003). `sikkerhet` og `drift` er EGNE
+#: køer med eget scope (v3-delta pkt. 5), og vernet gjelder ikke bare
+#: saksinnholdet: at det FINNES en sikkerhetssak er selv den beskyttede
+#: opplysningen — derfor svarer `_hent_unntak` `ikke_funnet` og ikke 403.
+SAKSTYPER = ("normal", "sikkerhet", "drift")
+
+
+def synlige_sakstyper(scopes) -> tuple[str, ...]:
+    """Sakstypene dette tokenet får se — DEN ENE avledningen av regelen.
+
+    Regelen bodde tidligere som en naken `!= "normal"`-test inne i
+    unntakslisten, altså i ETT endepunkt og ikke i domenet. Det gjorde
+    den umulig å arve: M-16-nøkkeltallene leser de samme radene, og
+    fordi de leser dem via egne definere kom de utenom testen — kategori-
+    og tilstandstellinger, og IDer, tidspunkter og sakstyper for lukkede
+    saker fra sikkerhets- og driftskøene, lå dermed åpne for ethvert
+    `decisions:read`. En scope-regel som bare finnes i én leser er en
+    regel det neste endepunktet ikke vet om; her er den én funksjon, og
+    hver leser av `unntak` spør den.
+    """
+    if "security:read" in scopes:
+        return SAKSTYPER
+    return ("normal",)
+
+
 MIGRASJONSMAPPE = Path(__file__).resolve().parents[1] / "db" / "migrations"
 
 
@@ -761,6 +787,9 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def oversikt(request: Request) -> Response:
         return lesing.oversikt(tjeneste, request)
 
+    def nokkeltall(request: Request) -> Response:
+        return lesing.nokkeltall(tjeneste, request)
+
     def beslutninger(request: Request) -> Response:
         return lesing.beslutninger(tjeneste, request)
 
@@ -972,6 +1001,7 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         # den, og detaljrutene bruker {id:int} så en ikke-numerisk sti er
         # 404 fra routeren, ikke en kodevei.
         Route("/v1/oversikt", oversikt, methods=["GET"]),
+        Route("/v1/nokkeltall", nokkeltall, methods=["GET"]),
         Route("/v1/beslutninger", beslutninger, methods=["GET"]),
         Route("/v1/beslutninger/{id:int}", beslutning_detalj, methods=["GET"]),
         Route("/v1/rapport/{id:int}", rapport_detalj, methods=["GET"]),
@@ -1274,9 +1304,9 @@ def _unntak(tjeneste: Tjeneste, request: Request) -> Response:
             sett_kontekst(conn, auth.tenant, auth.aktor, rid)
 
             sakstype = request.query_params.get("sakstype", "normal")
-            if sakstype not in ("normal", "sikkerhet", "drift"):
+            if sakstype not in SAKSTYPER:
                 return _feilsvar("request_feilformet", rid)
-            if sakstype != "normal" and "security:read" not in auth.scopes:
+            if sakstype not in synlige_sakstyper(auth.scopes):
                 # v3-delta pkt. 5: sikkerhets- og driftskøene er egne køer med
                 # eget scope. `exceptions:read` alene ser dem aldri.
                 tjeneste.logg.hendelse("scope_mangler", rid, auth.tenant,
@@ -1406,6 +1436,7 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/oppdrag/kvittering"):      ORDRESCOPE + "<prefiks>",
     ("POST", "/v1/artefakt"):                "artifacts:upload",
     ("GET",  "/v1/oversikt"):                "decisions:read",
+    ("GET",  "/v1/nokkeltall"):              "decisions:read",
     ("GET",  "/v1/beslutninger"):            "decisions:read",
     ("GET",  "/v1/beslutninger/{id:int}"):   "decisions:read",
     # 038 §7: rapporten er evidensen bak tenantens egen beslutning.

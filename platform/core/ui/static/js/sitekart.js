@@ -21,6 +21,29 @@ export function kanLeseUnntak(sesjon) {
   return harScope(sesjon, "exceptions:read");
 }
 
+// KØEN ER ET VALG, IKKE EN KONSTANT (Codex P2).
+//
+// `sikkerhet` og `drift` er EGNE køer med eget scope (v3-delta pkt. 5), og
+// `/v1/unntak` leser én kø av gangen (`?sakstype=`, `app.py:1306`). Unntaks-
+// flaten sendte aldri parameteren og fikk derfor alltid serverens standard
+// `normal`. For en økt med `security:read` betydde det at to av tre køer den
+// har LOV til å lese ikke fantes noe sted i klienten — og M-16-nøkkeltallene,
+// som teller over nøyaktig de sakstypene økten kan se, pekte hit med et løfte
+// om «hele listen» flaten ikke kunne holde: et avkuttet utsnitt kunne være
+// avkuttet nettopp av rader den eneste nåbare køen ikke inneholder.
+//
+// Regelen står her, blant de øvrige scope-avledningene, og ikke inne i flaten.
+// Det er samme grep som `synlige_sakstyper` i `app.py`: en køregel som bare
+// finnes i én leser er en regel den neste leseren ikke vet om, og det var
+// nøyaktig den formen serversiden ryddet bort. Verdiene speiler `SAKSTYPER`
+// der; endres køene, endres de to stedene sammen, slik `RUTESCOPE` og rutene
+// under allerede holdes like.
+export function synligeSakstyper(sesjon) {
+  return harScope(sesjon, "security:read")
+    ? ["normal", "sikkerhet", "drift"]
+    : ["normal"];
+}
+
 // 044: planen forvaltes av administratoren — opprett/aktiver/gjenoppta.
 export function kanForvaltePlan(sesjon) {
   return harScope(sesjon, "plan:opprett") || harScope(sesjon, "plan:aktiver")
@@ -62,6 +85,9 @@ export function erPlattformdrift(sesjon) {
 // API bak seg og hører derfor alle kundeøkter til.
 const BASISRUTER = [
   { nokkel: "oversikt", scope: "decisions:read" },
+  // M-16: nøkkeltall regnet fra faktiske beslutninger — ren leseflate
+  // over samme scope som oversikten (tallene ER beslutningsdataene).
+  { nokkel: "nokkeltall", scope: "decisions:read" },
   { nokkel: "policy", scope: "policy:read" },
   { nokkel: "beslutninger", scope: "decisions:read" },
   { nokkel: "unntak", scope: "exceptions:read" },

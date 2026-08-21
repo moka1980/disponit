@@ -49,7 +49,12 @@ const STD = {
 };
 
 let SVAR;
+// Hele URL-en, ikke bare stien: køvalget lever i spørrestrengen, og en test
+// som bare ser stien kan ikke skille `?sakstype=drift` fra ingen kø i det
+// hele tatt.
+const URLER = [];
 globalThis.fetch = async (url) => {
+  URLER.push(url);
   const sti = url.split("?")[0];
   const oppf = SVAR[sti];
   if (!oppf) return { ok: false, status: 404, json: async () => ({ feil: "ikke_funnet" }) };
@@ -166,6 +171,139 @@ test("Unntak: liste + detalj med begrunnelse og historikk", async () => {
   assert.ok(dlg.textContent.includes(t("hendelse.opprettet")));
   assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
 });
+
+// KØEN NÅS AV FLATEN NØKKELTALLENE PEKER PÅ (Codex P2).
+//
+// M-16-kortet teller lukkede unntak over ALLE sakstypene økten kan se, og
+// når utsnittet er avkuttet peker det hit med «se hele listen». Flaten sendte
+// aldri `sakstype` og fikk derfor alltid serverens `normal` — for en økt med
+// `security:read` kunne avkuttingen altså være forårsaket av rader knappen
+// ikke hadde noen vei til. De to testene holder de to sidene av det løftet.
+const KO_CTX = { scopes: ["exceptions:read", "security:read"] };
+
+function sisteUnntakskall() {
+  return [...URLER].reverse().find((u) => u.split("?")[0] === "/v1/unntak");
+}
+
+test("Unntak: uten `security:read` finnes ingen kø å velge mellom", async () => {
+  SVAR = STD;
+  URLER.length = 0;
+  const h = nyHoved();
+  visUnntak(h, ctx({ scopes: ["exceptions:read"] }));
+  await vent(() => h.querySelector("tbody button"));
+  // Én filterbar — statusfilteret. En velger med ett alternativ ville
+  // dessuten antydet at det finnes andre køer, som er nettopp det
+  // v3-delta pkt. 5 verner (`app.py:84`).
+  assert.equal(h.querySelectorAll(".filterbar").length, 1);
+  assert.ok(!h.textContent.includes(t("sakstype.sikkerhet")));
+  assert.ok(!h.textContent.includes(t("sakstype.drift")));
+  // Køen er likevel EKSPLISITT i kallet: flaten ber om den den viser.
+  assert.match(sisteUnntakskall(), /[?&]sakstype=normal(&|$)/);
+});
+
+test("Unntak: med `security:read` når flaten hver kø nøkkeltallene teller",
+  async () => {
+    SVAR = STD;
+    URLER.length = 0;
+    const h = nyHoved();
+    visUnntak(h, ctx(KO_CTX));
+    await vent(() => h.querySelector("tbody button"));
+    const barer = h.querySelectorAll(".filterbar");
+    assert.equal(barer.length, 2, "køvelgeren mangler");
+    const ko = barer[0];
+    assert.equal(ko.getAttribute("aria-label"), t("ui.unntak.sakstype"));
+    const knapper = [...ko.querySelectorAll("button")];
+    assert.deepEqual(knapper.map((b) => b.textContent.trim()),
+      [t("sakstype.normal"), t("sakstype.sikkerhet"), t("sakstype.drift")]);
+    // Det valgte er annonsert, ikke bare tegnet.
+    assert.deepEqual(knapper.map((b) => b.getAttribute("aria-pressed")),
+      ["true", "false", "false"]);
+    assert.match(sisteUnntakskall(), /[?&]sakstype=normal(&|$)/);
+
+    // Hver av de vernede køene er FAKTISK nåbar herfra — det er hele
+    // innholdet i løftet nøkkeltallknappen gir.
+    for (const [i, forventet] of [[1, "sikkerhet"], [2, "drift"]]) {
+      URLER.length = 0;
+      h.querySelectorAll(".filterbar")[0].querySelectorAll("button")[i]
+        .dispatchEvent(new window.Event("click"));
+      await vent(() => sisteUnntakskall());
+      assert.match(sisteUnntakskall(),
+        new RegExp(`[?&]sakstype=${forventet}(&|$)`));
+      // Købytte er en ny liste: cursoren hørte til køen den ble delt ut i.
+      assert.ok(!sisteUnntakskall().includes("cursor="),
+        "købytte skal ikke bære med seg forrige køs cursor");
+      // Kallet går ut MENS flaten står i lastetilstand — velgeren er tegnet
+      // på nytt først når listen er der.
+      await vent(() => h.querySelector(".filterbar")
+        && h.querySelector("tbody button"));
+      const valgt = [...h.querySelectorAll(".filterbar")[0]
+        .querySelectorAll("button")].map((b) => b.getAttribute("aria-pressed"));
+      assert.equal(valgt[i], "true");
+      assert.equal(valgt.filter((v) => v === "true").length, 1);
+    }
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+  });
+
+// «VIS MER» HØRER TIL UTVALGET SOM BA OM DEN (Codex P2).
+//
+// Cursoren er delt ut i én kø. Rekker eier å bytte kø mens sidelastingen er
+// ute, kom svaret tilbake med den forrige køens rader OG cursor, og `lastMer`
+// skrev begge inn i den nye køen: `normal`-rader tegnet under overskriften
+// `drift`, og et «Vis mer» som pekte videre inn i feil kø.
+test("Unntak: en «Vis mer» fra forrige kø skriver ikke inn i den nye",
+  async () => {
+    const ekte = globalThis.fetch;
+    let slippMer;
+    const merUte = new Promise((r) => { slippMer = r; });
+    globalThis.fetch = async (url) => {
+      URLER.push(url);
+      // Bare sidelastingen holdes igjen — den er kappløpets ene halvdel.
+      if (url.includes("cursor=c1")) {
+        await merUte;
+        return { ok: true, status: 200, json: async () => ({
+          saker: [{ id: 99, ts: "2026-08-09T08:00:00+00:00",
+            handling: "gammel_ko", kategori: "over_grense", prioritet: "hoy",
+            status: "ny", sakstype: "normal" }],
+          neste_cursor: "c2" }) };
+      }
+      const ko = (url.match(/[?&]sakstype=([a-z]+)/) || [])[1];
+      return { ok: true, status: 200, json: async () => ({
+        saker: [{ id: 1, ts: "2026-08-09T09:00:00+00:00", handling: ko,
+          kategori: "over_grense", prioritet: "hoy", status: "ny",
+          sakstype: ko }],
+        neste_cursor: ko === "normal" ? "c1" : null }) };
+    };
+    try {
+      URLER.length = 0;
+      const h = nyHoved();
+      visUnntak(h, ctx(KO_CTX));
+      await vent(() => h.querySelector("tbody button"));
+      const visMer = [...h.querySelectorAll(".cursornav button")]
+        .find((b) => b.textContent.trim() === t("ui.vis_mer"));
+      assert.ok(visMer, "«Vis mer» mangler — cursoren kom ikke fram");
+      visMer.dispatchEvent(new window.Event("click"));
+      await vent(() => URLER.some((u) => u.includes("cursor=c1")));
+
+      // Kø byttes MENS sidelastingen er ute, og den nye lista lander først.
+      h.querySelectorAll(".filterbar")[0].querySelectorAll("button")[2]
+        .dispatchEvent(new window.Event("click"));
+      await vent(() => h.textContent.includes("drift"));
+
+      slippMer();
+      await vent(() => false, 10);   // gi det foreldede svaret full sjanse
+
+      assert.ok(!h.textContent.includes("gammel_ko"),
+        "rader fra forrige kø ble tegnet under den nye");
+      // Cursoren fulgte med i samme skriving: uten vakten står «Vis mer»
+      // igjen på `c2` — en peker inn i en kø flaten ikke lenger viser.
+      URLER.length = 0;
+      const merNaa = [...h.querySelectorAll(".cursornav button")]
+        .find((b) => b.textContent.trim() === t("ui.vis_mer"));
+      assert.ok(!merNaa, "«Vis mer» arvet cursoren fra den forrige køen");
+    } finally {
+      globalThis.fetch = ekte;
+    }
+  });
 
 test("Unntak: behandlingsknapper + godkjenn-bekreftelse + CSRF-POST (PR-012)", async () => {
   const kalt = [];

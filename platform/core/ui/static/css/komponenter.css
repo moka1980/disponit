@@ -934,3 +934,52 @@ html[data-visning="landing"] .skall-hoved {
   margin-top: var(--sp-4);
   padding-top: var(--sp-3);
 }
+
+/* M-16 nøkkeltall: tabellen er tilgangsformen; søylen er visuell støtte
+   VED SIDEN AV tallet (aria-hidden), én farge fra tokens — kategorien
+   bæres av tekstkolonnen, aldri av farge. */
+/* 20rem er et ØNSKE om kortbredde, ikke et krav: `min(20rem,100%)` lar
+   sporet aldri bli bredere enn plassen det står i. Ved 320 CSS-piksler —
+   som er 400 % zoom på en vanlig skjerm, ikke en sjelden telefon — har
+   `.skall-hoved` under 20rem igjen etter sin egen padding, og et
+   ubetinget minimum sprengte containeren og ga horisontal SIDErulling i
+   stedet for omflyt (WCAG 1.4.10). Taket ligger i uttrykket og ikke i en
+   egen smalskjermregel, fordi et bruddpunkt er en ny påstand om hvor
+   grensen går — og den påstanden ville vært feil igjen ved neste endring
+   av padding eller sonebredde. */
+.kpi-kort-liste{display:grid;gap:var(--sp-4);
+  grid-template-columns:repeat(auto-fit,minmax(min(20rem,100%),1fr))}
+.kpi-kort{border:1px solid var(--line);border-radius:var(--radius);
+  padding:var(--sp-4);background:var(--card)}
+.kpi-tabell{width:100%;border-collapse:collapse}
+.kpi-tabell caption{text-align:left;font-weight:600;
+  margin-bottom:var(--sp-2)}
+/* Radnavnet kan være en RÅ maskinkode: en verdi uten oversatt nøkkel skal
+   fortsatt vises (port 1), og «utforelsesdata_ikke_tilgjengelig» er ett
+   ord uten et eneste sted å brekke. Uten dette setter det ene ordet
+   tabellens minstebredde, og kortet flyter over samme hvor smalt sporet
+   får lov til å bli. */
+.kpi-tabell td,.kpi-tabell th{padding:var(--sp-1) var(--sp-2);
+  text-align:left;overflow-wrap:anywhere}
+/* Radnavnet er en <th scope="row"> av hensyn til skjermleseren, ikke
+   for å framheve kategorien: nettleserens standard fete th ville gjort
+   hver rad like tung som totalraden under, og dermed visket ut den ene
+   uthevingen tabellen faktisk mener. Semantikken endres, vekten ikke. */
+.kpi-tabell tbody th{font-weight:400}
+.kpi-tabell tfoot th,.kpi-tabell tfoot td{border-top:1px solid
+  var(--line);font-weight:600}
+/* Søylen er presentasjon (aria-hidden) og gir derfor etter først: 8rem er
+   dens fulle bredde, ikke dens minste. En fast bredde her ville bundet
+   tallkolonnene til 8rem uansett hvor smal skjermen er — og det er
+   TEKSTEN som bærer opplysningen. Alle søylene i én tabell får samme
+   bredde, så sammenlikningen mellom radene holder på hver skjermbredde. */
+.kpi-soyle{width:100%;max-width:8rem;height:var(--sp-3);
+  background:var(--info-bg);
+  border-radius:var(--radius-sm);overflow:hidden}
+.kpi-soyle-fyll{height:100%;background:var(--info)}
+.kpi-tilstand{border:1px solid var(--line);border-radius:var(--radius);
+  padding:var(--sp-3) var(--sp-4);margin-bottom:var(--sp-4);
+  background:var(--card)}
+.kpi-tilstand b{font-size:var(--fs-ingress);margin-right:var(--sp-1)}
+.kpi-kontroll{display:flex;gap:var(--sp-2);align-items:center;
+  margin-bottom:var(--sp-2)}

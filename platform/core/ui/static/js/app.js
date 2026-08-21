@@ -18,10 +18,11 @@ import { visVarsler } from "./flater/varsler.js";
 import { visAdmin } from "./flater/admin.js";
 import { visWcagKontroll } from "./flater/wcagkontroll.js";
 import { visAdjudikator } from "./flater/adjudikator.js";
+import { visNokkeltall } from "./flater/nokkeltall.js";
 import { byggRuter, hashForDypLenke, tillatteFlater } from "./sitekart.js";
 
 const FLATER = {
-  oversikt: visOversikt, policy: visPolicy,
+  oversikt: visOversikt, nokkeltall: visNokkeltall, policy: visPolicy,
   beslutninger: visBeslutninger, unntak: visUnntak,
   policyadmin: visPolicyadmin, kundeadmin: visKundeadmin,
   varsler: visVarsler,
