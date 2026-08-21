@@ -62,7 +62,9 @@
         "tester_totalt",
         "tester_feilet",
         "m2_tester",
-        "m2_feilet"
+        "m2_feilet",
+        "suite_exitkode",
+        "m2_exitkode"
       ],
       "properties": {
         "tester_totalt": {
@@ -80,6 +82,16 @@
         "m2_feilet": {
           "type": "integer",
           "minimum": 0
+        },
+        "suite_exitkode": {
+          "type": "integer",
+          "minimum": 0,
+          "comment": "pytests exitkode for hele suiten. Junit-XML skrives ogsaa for en AVBRUTT kjoering, og beskriver da bare testene som rakk aa bli ferdige - alle groenne. Bare 0 er en hel kjoering."
+        },
+        "m2_exitkode": {
+          "type": "integer",
+          "minimum": 0,
+          "comment": "Samme for M-2-andelens egen kjoering."
         }
       }
     }

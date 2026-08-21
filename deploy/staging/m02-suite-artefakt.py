@@ -46,9 +46,17 @@ M2_ANDEL = (
 )
 
 
-def _kjor(mal: list[str], junit: Path) -> tuple[int, int]:
-    """pytest over `mal`. -> (tester, feilet+error) fra junit-XML."""
-    subprocess.run(
+def _kjor(mal: list[str], junit: Path) -> tuple[int, int, int]:
+    """pytest over `mal`. -> (tester, feilet+error, exitkode).
+
+    Exitkoden MÅLES, den kastes ikke: junit-XML-en skrives også når
+    kjøringen ble avbrutt underveis, og da beskriver den bare testene som
+    rakk å bli ferdige — alle grønne, null failures, null errors. Et
+    KeyboardInterrupt sent i suiten gir exit 2 med nettopp en slik XML,
+    og uten koden er den umulig å skille fra en hel kjøring. En hel
+    grønn suite er exit 0; alt annet er ikke et grønt artefakt.
+    """
+    p = subprocess.run(
         [sys.executable, "-m", "pytest", *mal, "-q",
          f"--junit-xml={junit}"],
         cwd=REPO / "platform/core",
@@ -59,7 +67,7 @@ def _kjor(mal: list[str], junit: Path) -> tuple[int, int]:
     suite = rot if rot.tag == "testsuite" else rot.find("testsuite")
     tester = int(suite.get("tests", 0))
     roede = int(suite.get("failures", 0)) + int(suite.get("errors", 0))
-    return tester, roede
+    return tester, roede, p.returncode
 
 
 def main() -> int:
@@ -72,18 +80,21 @@ def main() -> int:
     vert = subprocess.run(["hostname"], capture_output=True,
                           text=True).stdout.strip() or "ukjent"
     with tempfile.TemporaryDirectory() as tmp:
-        totalt, roede = _kjor(["tests"], Path(tmp) / "alle.xml")
-        m2, m2_roede = _kjor([str(REPO / p) if "::" not in p
-                              else str(REPO / p.split("::")[0])
-                              + "::" + p.split("::", 1)[1]
-                              for p in M2_ANDEL], Path(tmp) / "m2.xml")
+        totalt, roede, kode = _kjor(["tests"], Path(tmp) / "alle.xml")
+        m2, m2_roede, m2_kode = _kjor([str(REPO / p) if "::" not in p
+                                       else str(REPO / p.split("::")[0])
+                                       + "::" + p.split("::", 1)[1]
+                                       for p in M2_ANDEL],
+                                      Path(tmp) / "m2.xml")
     ts = datetime.now(timezone.utc).isoformat()
     art = {"krav_id": "m02-suite-v1", "ts": ts,
-           "bestatt": roede == 0 and m2_roede == 0 and totalt > 0,
+           "bestatt": roede == 0 and m2_roede == 0 and totalt > 0
+           and kode == 0 and m2_kode == 0,
            "oppsett": {"modul": "m02_revisjonslogg", "commit": commit,
                        "vert": vert, "m2_filer": list(M2_ANDEL)},
            "maalt": {"tester_totalt": totalt, "tester_feilet": roede,
-                     "m2_tester": m2, "m2_feilet": m2_roede}}
+                     "m2_tester": m2, "m2_feilet": m2_roede,
+                     "suite_exitkode": kode, "m2_exitkode": m2_kode}}
     ut = a.ut or (REPO / "deploy/staging/artefakter" /
                   f"m02-suite-v1-{ts[:19].replace(':', '').replace('-', '')}.json")
     ut.write_text(json.dumps(art, indent=2, ensure_ascii=False,

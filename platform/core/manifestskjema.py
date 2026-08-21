@@ -907,10 +907,12 @@ def _grenser_m02_suite(grense: dict, art: dict) -> list[str]:
     feilet, m2 = _teller(m, "tester_feilet", "tester_feilet")
     m2t, m3 = _teller(m, "m2_tester", "m2_tester")
     m2f, m4 = _teller(m, "m2_feilet", "m2_feilet")
-    for melding in (m1, m2, m3, m4):
+    kode, m5 = _teller(m, "suite_exitkode", "suite_exitkode")
+    m2k, m6 = _teller(m, "m2_exitkode", "m2_exitkode")
+    for melding in (m1, m2, m3, m4, m5, m6):
         if melding:
             feil.append(melding)
-    if any((m1, m2, m3, m4)):
+    if any((m1, m2, m3, m4, m5, m6)):
         return feil
     if total < grense["min_tester"]:
         feil.append(f"tester_totalt={total}, krever >="
@@ -925,6 +927,17 @@ def _grenser_m02_suite(grense: dict, art: dict) -> list[str]:
     if m2t > total:
         feil.append(f"m2_tester={m2t} > tester_totalt={total} — andelen"
                     " kan ikke overstige helheten")
+    # En AVBRUTT pytest skriver junit-XML likevel, over bare de testene
+    # som rakk å bli ferdige: null failures, null errors, og et tall som
+    # kan klare gulvet. Exitkoden er det eneste stedet avbruddet står, så
+    # den er en egen port — en hel, grønn kjøring er exit 0, og ingenting
+    # annet er det.
+    for navn, verdi in (("suite_exitkode", kode), ("m2_exitkode", m2k)):
+        if verdi != 0:
+            feil.append(f"{navn}={verdi} — pytest avsluttet unormalt;"
+                        " en junit-XML fra en avbrutt kjøring teller bare"
+                        " testene som rakk å bli ferdige, og er ikke en"
+                        " hel suite")
     filer = (art.get("oppsett") or {}).get("m2_filer")
     if not (isinstance(filer, list) and filer
             and all(isinstance(x, str) and x for x in filer)):
