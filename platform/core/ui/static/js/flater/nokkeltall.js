@@ -44,14 +44,31 @@ const NOKKELFAMILIER = {
   tick: (v) => `ui.plan.utfall.${v}`,    // planutfall (044)
 };
 
-// Rekkefølge: kortets egen nøkkel, så flatens generelle, så repoets
-// kanoniske familie. Den rå koden er SISTE utvei — en ukjent verdi skal
-// fortsatt vises (port 1: aldri stille utenfor totalen), ikke skjules.
+// Rekkefølgen er SPESIFISITET, ikke opphav: den nøkkelen som vet mest om
+// hvilket kort verdien står på, vinner.
+//
+//   1. kortets egen nøkkel   — sagt om nøyaktig dette kortet
+//   2. kortets familie       — sagt om domenet kortet teller over
+//   3. flatens generelle     — sagt om ingen av delene, siste tekst
+//   4. den rå koden          — siste utvei; en ukjent verdi skal fortsatt
+//                              VISES (port 1: aldri stille utenfor
+//                              totalen), ikke skjules.
+//
+// Var listen sortert på opphav — «våre nøkler før repoets» — kunne en
+// kortblind nøkkel i tier 3 kapre en verdi den ikke visste hvilket kort
+// tilhørte. `ukjent` er nettopp den formen: definerne skriver den som
+// NULL-sentinel på HVERT kort (`coalesce(..., 'ukjent')` i 051), men på
+// unntakskortet er den samtidig en ekte kategori som resten av repoet
+// leser som «Handlingen er ikke definert i policy» (`unntak.ukjent`,
+// samme tekst som KategoriTag). Den generelle «ukjent» stjal den
+// betydningen. Det gjelder alle tiere, ikke bare denne verdien: en
+// framtidig `ui.nokkeltall.verdi.utfort` ville ellers overstyrt
+// `art.outbox_utfort` for alle kort samtidig.
 function nokkelTekst(kortNokkel, verdi) {
   const familie = NOKKELFAMILIER[kortNokkel];
-  const kandidater = [`ui.nokkeltall.verdi.${kortNokkel}.${verdi}`,
-                      `ui.nokkeltall.verdi.${verdi}`];
+  const kandidater = [`ui.nokkeltall.verdi.${kortNokkel}.${verdi}`];
   if (familie) kandidater.push(familie(verdi));
+  kandidater.push(`ui.nokkeltall.verdi.${verdi}`);
   for (const k of kandidater) {
     if (harNokkel(k)) return t(k);
   }

@@ -287,6 +287,31 @@ test("Nøkkeltall: engelsk visning viser aldri de norske maskinkodene", async ()
   }
 });
 
+test("Nøkkeltall: samme kode leses av kortet den står på", async () => {
+  // Codex P2: definerne skriver `ukjent` som NULL-sentinel på HVERT kort,
+  // men på unntakskortet er den samtidig en ekte kategori med en etablert
+  // betydning i repoet. Den kortblinde `ui.nokkeltall.verdi.ukjent` sto
+  // først i kandidatlisten og stjal den betydningen. Nå avgjør
+  // spesifisitet: kortets familie slår flatens generelle tekst.
+  SVAR = { "/v1/nokkeltall": { ...SVARFORM,
+    unntak_aktivitet: { total: 2, deler: { ukjent: 2 } },
+    aktiveringer: { ...SVARFORM.aktiveringer,
+      kvorumskrav: { total: 1, deler: { ukjent: 1 } } } } };
+  const h = nyHoved();
+  visNokkeltall(h, ctx());
+  await vent(() => h.querySelectorAll("table").length >= 5);
+  const kort = (caption) => [...h.querySelectorAll("table")]
+    .find((tb) => tb.querySelector("caption").textContent === caption);
+  assert.ok(kort(t("ui.nokkeltall.kort.unntak_aktivitet")).textContent
+    .includes(t("unntak.ukjent")),
+    "unntakskortet viser ikke kategoriens etablerte betydning");
+  // Kvorumskravkortet har ingen familie: der ER `ukjent` NULL-sentinelen,
+  // og flatens generelle tekst er fortsatt riktig — og fortsatt synlig.
+  assert.ok(kort(t("ui.nokkeltall.kort.aktiveringer.kvorumskrav"))
+    .textContent.includes(t("ui.nokkeltall.verdi.ukjent")));
+  SVAR = { "/v1/nokkeltall": SVARFORM };
+});
+
 test("Nøkkeltall: radvis varighet mister aldri presisjon", async () => {
   // Grensetilfellene Codex pekte på: 119 s var «1 min», 86 399 s var
   // «23 timer». Nå skal hvert sekund kunne leses tilbake ut av teksten.
