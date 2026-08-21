@@ -5419,6 +5419,25 @@ def test_konverterens_attesttellere_krever_egne_maalinger():
     # tellingen nøkles på posisjonen, ikke på oppdraget bak den.
     stablet = [linje(0, oppdrag=20 + i, loggpost=200 + i) for i in range(10)]
     assert m.revisjonsrader_mot_bestilt(stablet, 10) == 1
+    # Codex' P1 (#123 runde 2): attest og revisjonsrad skal bæres av
+    # SAMME kjøring. En strøm med én ren attestert linje UTEN rad og én
+    # annen linje MED rad per posisjon — uansett om den andre er uren
+    # eller ren, og uansett rekkefølge — kan aldri gi 10/10 på begge:
+    # posisjonens representant velges ÉN gang, og hver teller leser sin
+    # måling av nettopp den linja.
+    uten_rad = [{k: v for k, v in linje(i).items()
+                 if k not in ("revisjonsrad_ok", "loggpost")}
+                for i in range(10)]
+    med_rad_uren = [linje(i, utfall="feilet", oppdrag=50 + i,
+                          loggpost=200 + i) for i in range(10)]
+    med_rad_ren = [{k: v for k, v in
+                    linje(i, oppdrag=50 + i, loggpost=200 + i).items()
+                    if k != "kvittering_attest_ok"} for i in range(10)]
+    for spleis in (uten_rad + med_rad_uren, uten_rad + med_rad_ren,
+                   med_rad_ren + uten_rad):
+        a = m.attestert_kvittering(spleis, 10, RSETT)
+        r = m.revisjonsrader_mot_bestilt(spleis, 10)
+        assert not (a == 10 and r == 10), (a, r)
 
 
 def test_aksept_skriptet_baerer_v3_og_sammenhengskravet():

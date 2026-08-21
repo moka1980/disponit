@@ -246,12 +246,38 @@ def rent_innen_frist(linjer: list[dict], krav: int) -> int:
     Det denne funksjonen IKKE måler, er signaturen: den har sitt eget
     predikat (`signert_innen_frist`) og sitt eget tall. Se det.
     """
+    valgt = _posisjonenes_kjoringer(linjer, krav)
+    # Ett oppdrag kan ikke ha kjørt to av de bestilte posisjonene. Går den
+    # samme IDen igjen, er det ikke to kjøringer, og antallet er antallet
+    # oppdrag — aldri antallet linjer som viser til dem.
+    return len({_identitet(d, "oppdrag") for d in valgt.values()})
+
+
+def _posisjonenes_kjoringer(linjer: list[dict], krav: int) -> dict[int, dict]:
+    """ÉN utvelgelse for ALLE tellerne — posisjonens representant.
+
+    Codex' P1 på PR #123 (runde 2): attest- og revisjonsradtelleren
+    valgte hver sine linjer, og en redigert strøm kunne dermed legge én
+    ren, attestert linje UTEN revisjonsradmåling og én annen linje MED
+    grønn rad på samme posisjon — ti attesterte og ti rader, uten at én
+    eneste kjøring bar begge deler. Per-posisjon-nøklingen (runde 1) var
+    nødvendig, men ikke nok: to tellere som filtrerer hver for seg kan
+    fortsatt peke på hver sin virkelighet.
+
+    Derfor velges posisjonens kjøring ÉN gang, her, med hele
+    rent-predikatet (rent utfall, null avvik, målt varighet under egen
+    frist, bestilt posisjon, eget oppdrag) — og HVER teller leser sin
+    måling av NETTOPP den linja. En signatur, en attest eller en
+    revisjonsrad på en linje som ikke er posisjonens kjøring, er ikke
+    posisjonens måling. Siste linje vinner, som i hele fila: runden er
+    idempotent, og siste tilstand er rundens tilstand.
+    """
     bestilte = range(krav)
-    gronne: dict[int, int] = {}
+    valgt: dict[int, dict] = {}
     for d in linjer:
         avvik = _tall(d, "avvik_mot_fasit")
         varighet, frist = _tall(d, "varighet_s"), _tall(d, "frist_s")
-        indeks, oppdrag = d.get("i"), _identitet(d, "oppdrag")
+        indeks = d.get("i")
         if (d.get("utfall") == "utfort"
                 and avvik == 0
                 and varighet is not None
@@ -259,12 +285,9 @@ def rent_innen_frist(linjer: list[dict], krav: int) -> int:
                 and varighet < frist
                 and isinstance(indeks, int) and not isinstance(indeks, bool)
                 and indeks in bestilte
-                and oppdrag is not None):
-            gronne[indeks] = oppdrag
-    # Ett oppdrag kan ikke ha kjørt to av de bestilte posisjonene. Går den
-    # samme IDen igjen, er det ikke to kjøringer, og antallet er antallet
-    # oppdrag — aldri antallet linjer som viser til dem.
-    return len(set(gronne.values()))
+                and _identitet(d, "oppdrag") is not None):
+            valgt[indeks] = d
+    return valgt
 
 
 def signert_innen_frist(linjer: list[dict], krav: int) -> int:
@@ -291,8 +314,9 @@ def signert_innen_frist(linjer: list[dict], krav: int) -> int:
     `_tall`. Runden fra 18/8 målte det aldri, og teller derfor null her;
     det er ikke en feil i fila, det er det fila faktisk viser.
     """
-    signerte = [d for d in linjer if d.get("kvittering_signert") is True]
-    return rent_innen_frist(signerte, krav)
+    valgt = _posisjonenes_kjoringer(linjer, krav)
+    return len({_identitet(d, "oppdrag") for d in valgt.values()
+                if d.get("kvittering_signert") is True})
 
 
 def attestert_kvittering(linjer: list[dict], krav: int,
@@ -324,10 +348,11 @@ def attestert_kvittering(linjer: list[dict], krav: int,
     """
     if not (isinstance(regelsett, str) and regelsett):
         return 0
-    kandidater = [d for d in linjer if d.get("kvittering_signert") is True
-                  and d.get("kvittering_attest_ok") is True
-                  and d.get("regelsett") == regelsett]
-    return rent_innen_frist(kandidater, krav)
+    valgt = _posisjonenes_kjoringer(linjer, krav)
+    return len({_identitet(d, "oppdrag") for d in valgt.values()
+                if d.get("kvittering_signert") is True
+                and d.get("kvittering_attest_ok") is True
+                and d.get("regelsett") == regelsett})
 
 
 def kvittering_attest_avvik(linjer: list[dict]) -> int:
@@ -353,29 +378,24 @@ def revisjonsrader_mot_bestilt(linjer: list[dict], krav: int) -> int:
     en linje uten egen loggpost-identitet er ikke målt (`_identitet`,
     samme kanoniske form som oppdrags-IDen).
 
-    Codex' P1 på PR #123: tellingen filtrerte på POSISJON, men nøklet på
-    oppdrag — og kastet dermed posisjonen den nettopp hadde krevd. Ti
-    `revisjonsrad_ok`-linjer på samme posisjon 0, med hvert sitt oppdrag
-    og hver sin loggpost, ga «10 rader» selv om ni av de bestilte
-    kjøringene ikke hadde noen rad i det hele tatt. Nøkkelen er nå
-    posisjonen — samme disiplin som `rent_innen_frist` — og tallet er
-    det minste av antall distinkte oppdrag og antall distinkte
-    loggposter bak dem: ti rader krever ti bestilte posisjoner med hvert
-    sitt oppdrag og hver sin rad.
+    Codex' P1 på PR #123 (runde 1): tellingen filtrerte på POSISJON,
+    men nøklet på oppdrag — ti `revisjonsrad_ok`-linjer på samme
+    posisjon 0 ga «10 rader». Og P1 i runde 2: per-posisjon-nøkling med
+    EGET filter var fortsatt ikke nok, for attest- og radtelleren kunne
+    velge hver sin linje på samme posisjon — én ren attestert uten rad,
+    én annen med rad. Målingen leses derfor nå av POSISJONENS
+    REPRESENTANT (`_posisjonenes_kjoringer` — samme linje som bærer
+    rent-, signatur- og attestmålingen): en rad på en linje som ikke er
+    posisjonens kjøring, er ikke posisjonens rad. Tallet er det minste
+    av antall distinkte oppdrag og antall distinkte loggposter bak dem:
+    ti rader krever ti kjøringer med hvert sitt oppdrag og hver sin rad.
     """
-    bestilte = range(krav)
-    per_indeks: dict[int, tuple[int, int]] = {}
-    for d in linjer:
-        indeks, oppdrag = d.get("i"), _identitet(d, "oppdrag")
-        logg = _identitet(d, "loggpost")
-        if (d.get("revisjonsrad_ok") is True
-                and logg is not None
-                and isinstance(indeks, int) and not isinstance(indeks, bool)
-                and indeks in bestilte
-                and oppdrag is not None):
-            per_indeks[indeks] = (oppdrag, logg)
-    return min(len({par[0] for par in per_indeks.values()}),
-               len({par[1] for par in per_indeks.values()}))
+    valgt = _posisjonenes_kjoringer(linjer, krav)
+    par = [(_identitet(d, "oppdrag"), _identitet(d, "loggpost"))
+           for d in valgt.values()
+           if d.get("revisjonsrad_ok") is True
+           and _identitet(d, "loggpost") is not None]
+    return min(len({o for o, _ in par}), len({l for _, l in par}))
 
 
 def revisjonsrad_avvik(linjer: list[dict]) -> int:
