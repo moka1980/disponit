@@ -21,12 +21,15 @@ from .test_api import (  # noqa: F401 — delte fixturer og byggere
 ROT = Path(__file__).resolve().parents[3]
 
 
-def _lib():
-    spec = importlib.util.spec_from_file_location(
-        "m02_fordeling", ROT / "deploy/staging/m02_fordeling.py")
+def _last(navn: str, fil: str):
+    spec = importlib.util.spec_from_file_location(navn, ROT / fil)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def _lib():
+    return _last("m02_fordeling", "deploy/staging/m02_fordeling.py")
 
 
 def test_settet_er_fasiten():
@@ -82,6 +85,54 @@ def test_settet_er_bundet_til_bytene_ikke_til_navnet_sitt():
     assert valider_artefaktformat(uten, "m02-fordeling-v1") != []
     assert any("sett_sha256" in f
                for f in _sjekk_grenser("m02-fordeling-v1", uten))
+
+
+def test_policyvarianten_beholder_verifikatoren_den_bytter_til():
+    """Staging-leddet bytter purring-vilkårene til en verifikator API-et
+    faktisk KAN signere med. Byttet var et tekstbytte i den serialiserte
+    YAML-en, og navnet det byttes TIL finnes ofte i malen fra før
+    (`v_bank`, `v_regnskap`, `v_dlp`): da fikk `verifikatorer` to nøkler
+    med samme navn, `safe_load` beholdt den siste i stillhet, og den ekte
+    verifikatorens tillitserklæringer forsvant — hvorpå
+    `valider_ny_policy` avviste policyen før settet fikk kjøre.
+
+    MUTASJONEN SOM DREPER DENNE: gå tilbake til `safe_dump().replace()`.
+    """
+    import yaml
+
+    from policy_validator.schema import valider_ny_policy
+    cli = _last("m02_fordeling_artefakt",
+                "deploy/staging/m02-fordeling-artefakt.py")
+    mal = (ROT / "policies/bransjemal-tjenestebedrift.yaml").read_text(
+        encoding="utf-8")
+    purringens = {"forfall_passert_dager", "ingen_aktiv_tvist"}
+
+    # 1) Et navn som ALT står i malen — den gamle formen mistet
+    #    v_banks egen tillit; den nye utvider den.
+    p = cli.bytt_verifikator(yaml.safe_load(mal), cli.MAL_VERIFIKATOR,
+                             "v_bank")
+    assert set(p["verifikatorer"]["v_bank"]["betrodd_for"]) == \
+        purringens | {"konto_verifisert"}
+    assert valider_ny_policy(p) == []
+    gammel = yaml.safe_load(
+        yaml.safe_dump(yaml.safe_load(mal)).replace(cli.MAL_VERIFIKATOR,
+                                                    "v_bank"))
+    assert "konto_verifisert" not in \
+        gammel["verifikatorer"]["v_bank"]["betrodd_for"]
+    assert valider_ny_policy(gammel) != []
+
+    # 2) Et navn som IKKE står i malen — verifikatoren opprettes, betrodd
+    #    for nøyaktig vilkårene den overtok.
+    p = cli.bytt_verifikator(yaml.safe_load(mal), cli.MAL_VERIFIKATOR,
+                             "v_m02fordeling")
+    assert set(p["verifikatorer"]["v_m02fordeling"]["betrodd_for"]) == \
+        purringens
+    assert valider_ny_policy(p) == []
+
+    # 3) Samme navn — ingen endring, og ingen dublett.
+    urort = yaml.safe_load(mal)
+    assert cli.bytt_verifikator(yaml.safe_load(mal), cli.MAL_VERIFIKATOR,
+                                cli.MAL_VERIFIKATOR) == urort
 
 
 @pg

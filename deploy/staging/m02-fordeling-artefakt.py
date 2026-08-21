@@ -41,6 +41,9 @@ spec.loader.exec_module(lib)
 
 MILJOFILER = ("/etc/disponit/staging.env", "/etc/disponit/wcag/konfig")
 
+#: Verifikatoren bransjemalen bruker for purring.send-vilkårene.
+MAL_VERIFIKATOR = "v_fordring"
+
 #: API-ets EGNE credential-filer — nøyaktig de `disponit-api.service`
 #: laster med `LoadCredential=`. Det er DISSE bytene den kjørende
 #: prosessen verifiserer signaturer og bearer-tokener med, og derfor de
@@ -90,6 +93,38 @@ def _verdi(navn: str, miljo: dict) -> str:
               " API-ets utrullede verdi brukes (verdiene selv skrives"
               " aldri ut)")
     return utrullet
+
+
+def bytt_verifikator(policy: dict, fra: str, til: str) -> dict:
+    """Pek vilkårene fra `fra` til `til` i den PARSEDE policyen.
+
+    Formen før dette var `yaml.safe_dump(policy).replace(fra, til)` fulgt
+    av `safe_load`. Er `til` alt en verifikator i malen — og `v_bank`,
+    `v_regnskap`, `v_dlp` er det — ga byttet TO mappingnøkler med samme
+    navn: `safe_load` beholder den siste i stillhet, den ekte
+    verifikatorens `betrodd_for` forsvant, og `valider_ny_policy` avviste
+    policyen («ikke betrodd for vilkår») før settet i det hele tatt fikk
+    kjøre. Tekstbyttet traff dessuten hver forekomst av strengen, også
+    inne i beskrivelser.
+
+    SP-13/K4: en fremmed grammatikk endres i sin PARSEDE form, aldri som
+    tekst. Her betyr det: flytt vilkårene, og UTVID målverifikatorens
+    tillitserklæringer i stedet for å skrive over dem.
+    """
+    if fra == til:
+        return policy
+    flyttet: set[str] = set()
+    for h in policy.get("handlinger") or []:
+        for vk in h.get("vilkaar") or []:
+            if vk.get("verifikator") == fra:
+                vk["verifikator"] = til
+                flyttet.add(vk["navn"])
+    verifikatorer = policy.setdefault("verifikatorer", {})
+    ny = verifikatorer.setdefault(
+        til, {"beskrivelse": f"m02-fordeling: signerbar erstatning for {fra}",
+              "betrodd_for": []})
+    ny["betrodd_for"] = sorted(set(ny.get("betrodd_for") or []) | flyttet)
+    return policy
 
 
 def main() -> int:
@@ -145,9 +180,7 @@ def main() -> int:
               (a.tenant,))
     p = yaml.safe_load((REPO / "policies/bransjemal-tjenestebedrift.yaml"
                         ).read_text(encoding="utf-8"))
-    tekst = yaml.safe_dump(p)
-    if "v_fordring" in tekst and a.verifikator != "v_fordring":
-        p = yaml.safe_load(tekst.replace("v_fordring", a.verifikator))
+    bytt_verifikator(p, MAL_VERIFIKATOR, a.verifikator)
     policyregister.registrer(m, a.tenant, p, p["meta"]["status"])
     m.commit()
     pid = p["meta"]["policy_id"]
