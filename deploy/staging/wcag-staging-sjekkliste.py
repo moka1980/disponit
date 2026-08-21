@@ -1575,6 +1575,25 @@ def fase8():
                       key=lambda p: p.stat().st_mtime) if katalog.is_dir() \
         else []
     forrige = [p for p in releaser if p != naa]
+    # …OG MÅLET MÅ VÆRE MIGRASJONSKOMPATIBELT (runde r20, 2026-08-21).
+    # Bootporten (`krev_migrasjonstilstand`) krever EKSAKT samsvar
+    # mellom releasens migrasjonssett og basens — det er porten som
+    # virker. Rett etter en deploy som la til migrasjoner finnes det
+    # derfor ingen forrige release som KAN boote, og fase 8 valgte
+    # offeret blindt: 788bd83 (forventer 1→51) mot basen på 1→53 ga
+    # activating → failed, en rød måling av bootportens korrekthet i
+    # stedet for av rullbakken. Målet velges nå blant releasene med
+    # SAMME migrasjonssett som den aktive (filnavnene i
+    # platform/core/db/migrations — samme fasit bootporten leser), og
+    # finnes ingen, er drillen ÆRLIG umålt-rød: fyll katalogen med en
+    # kompatibel release (neste deploy på samme skjema) og mål igjen.
+    def _migrasjonssett(rot: Path) -> tuple:
+        katalog = rot / "platform/core/db/migrations"
+        return tuple(sorted(p.name for p in katalog.glob("*.sql"))) \
+            if katalog.is_dir() else ()
+    fasit_sett = _migrasjonssett(naa)
+    kompatible = [p for p in forrige if _migrasjonssett(p) == fasit_sett]
+    inkompatible = [p.name[:12] for p in forrige if p not in kompatible]
     if not forrige:
         # EN DRILL SOM IKKE KAN KJØRES ER EN RØD MÅLING (Codex P1, runde 6).
         # Grenen førte `fase8_hoppet` UTEN `ok`, så `_ROEDE` forble tom og
@@ -1591,22 +1610,50 @@ def fase8():
                         " forrige release er den UMÅLT, ikke bestått",
                 ok=False)
         return
-    forrige = forrige[-1]
+    if forrige and not kompatible:
+        evidens("fase8_hoppet",
+                grunn="ingen migrasjonskompatibel forrige release",
+                aktiv=naa.name[:12], inkompatible=inkompatible,
+                merknad="bootporten krever eksakt migrasjonssamsvar, så"
+                        " ingen av de forrige KAN boote mot denne basen"
+                        " — rullbakken er UMÅLT, ikke bestått; deploy en"
+                        " release til på samme skjema og mål igjen",
+                ok=False)
+        return
+    forrige = kompatible[-1]
 
     def _pek(mal: Path) -> None:
         subprocess.run(["ln", "-sfn", str(mal), str(aktiv)], check=True)
 
     def _restart_og_status() -> str:
-        """-> systemd-statusen etter restart. Restarten er MÅLINGEN, ikke
-        en forutsetning: `check=True` her ville kastet før statusen ble
-        lest, og en release som ikke starter er nettopp utfallet drillen
-        skal fange."""
+        """-> systemd-statusen etter restart, MÅLT TIL TERMINAL tilstand.
+
+        Restarten er MÅLINGEN, ikke en forutsetning: `check=True` her
+        ville kastet før statusen ble lest, og en release som ikke
+        starter er nettopp utfallet drillen skal fange.
+
+        To lærdommer fra r20-runden: (1) `activating` er ingen dom —
+        et fast `sleep(4)` målte klokka, ikke releasen; det polles til
+        tilstanden er terminal (systemd restarter selv med backoff, så
+        vinduet må romme den). (2) `reset-failed` FØRST: etter en
+        feilet måling står start-rate-grensen igjen, og uten nullstilling
+        ville GJENOPPRETTINGEN truffet «Start request repeated too
+        quickly» og latt staging ligge nede — drillen skal aldri
+        etterlate miljøet i tilstanden den tester.
+        """
+        subprocess.run(["systemctl", "reset-failed",
+                        "disponit-api.service"], capture_output=True)
         subprocess.run(["systemctl", "restart", "disponit-api.service"],
                        capture_output=True)
-        time.sleep(4)
-        return subprocess.run(
-            ["systemctl", "is-active", "disponit-api.service"],
-            capture_output=True, text=True).stdout.strip()
+        frist = time.monotonic() + 45
+        while time.monotonic() < frist:
+            st = subprocess.run(
+                ["systemctl", "is-active", "disponit-api.service"],
+                capture_output=True, text=True).stdout.strip()
+            if st not in ("activating", "deactivating", "reloading"):
+                return st
+            time.sleep(1)
+        return st
 
     # GJENOPPRETTINGEN LIGGER I `finally` (Codex P2). Klarte ikke forrige
     # release å starte, kastet `check=True` med én gang, og `aktiv` ble
