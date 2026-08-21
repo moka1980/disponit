@@ -472,6 +472,19 @@ BEGIN
         -- over binder oppdraget til rullbakk-releasen, og avtrykket
         -- binder kvitteringen til oppdraget.
         AND public.maal_rent_utfall(p_tenant, p_rullback_oppdrag)
+        -- …OG UTFALLET ER UTFORT (Codex P1, #123 runde 5).
+        -- `maal_rent_utfall` måler avtrykket, ikke statusen: en signert
+        -- `feilet`-kvittering med et promotert artefakt bar hele
+        -- avtrykket og passerte alle leddene rundt — og en direkte
+        -- kaller med deployfullmakten kunne skrive `claim_stopp_ok =
+        -- true` for en rullbakk som FEILET. «Rullbakken fullførte det
+        -- ventende oppdraget selv» (klarsignalet §1.1a) betyr utført —
+        -- det er nøyaktig det drillskriptet krever (`st_rb == utfort`),
+        -- og basen skal aldri være svakere enn skriptet den måler for.
+        AND EXISTS (SELECT 1 FROM public.oppdrag o
+                     WHERE o.tenant = p_tenant
+                       AND o.id = p_rullback_oppdrag
+                       AND o.status = 'utfort')
         AND NOT EXISTS (SELECT 1 FROM public.artefakt a
                      WHERE a.tenant = p_tenant
                        AND a.oppdrag_id = p_rullback_oppdrag
@@ -832,13 +845,21 @@ BEGIN
             RAISE EXCEPTION 'attester_evidensfil: punkt % mangler måletall',
                 v_punkt USING ERRCODE = 'invalid_parameter_value';
         END IF;
-        -- FØRST: «én fil har ett innhold», på tvers av kravrevisjoner.
-        -- Kontrollen er 049s, minus krav_id-leddet som nå er en del av
-        -- nøkkelen: to referater om de SAMME bytene og det SAMME punktet
-        -- skal si det samme, uansett hvilken grense som spurte. Sprik i
-        -- sti eller måletall er fortsatt en programfeil.
+        -- FØRST: «én fil har ett innhold», på tvers av kravrevisjoner —
+        -- MEN innenfor SAMME drill-par (Codex P1, #123 runde 5).
+        -- Sammenhengspunktene måles av (runde, drill)-PARET, og et
+        -- mislykket akseptforsøk med feil drill committer sitt røde
+        -- referat før basen avviser aksepten. Uten drill-leddet her
+        -- ville det immutable røde referatet så sperret det RIKTIGE
+        -- parets grønne verdi for alltid — nøkkelen tillater raden,
+        -- men motsigelseskontrollen avviste den. To referater om samme
+        -- bytes MOT SAMME DRILL skal fortsatt si det samme; to ulike
+        -- drill-par er to målekontekster, og aksepten leser uansett
+        -- bare raden for NØYAKTIG sitt par (oppslaget med
+        -- `drill_sha256` nedenfor).
         SELECT * INTO v_annet FROM public.evidensfil_attest e
          WHERE e.sha256 = v_sha AND e.punkt = v_punkt
+           AND e.drill_sha256 = v_drill
            AND (e.sti IS DISTINCT FROM p_sti
                 OR e.maalt_verdi IS DISTINCT FROM v_verdi)
          LIMIT 1;

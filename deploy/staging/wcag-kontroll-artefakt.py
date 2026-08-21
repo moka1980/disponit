@@ -450,7 +450,44 @@ def sammendrag(rader: list[dict], kilde: str, kilde_sha256: str) -> dict:
     # er hash-bundet historie og kan ikke få felter i ettertid.
     v2 = any(d.get("hendelse") == "datasett_identitet" for d in rader)
     if v2:
-        indekser.append(siste("datasett_identitet"))
+        i_f5 = indekser[0]
+        # IDENTITETEN MÅ VÆRE MÅLT I DET VALGTE VINDUET (Codex P1, #123
+        # runde 5). Fase 5 skriver `datasett_identitet` FØR kjøringene og
+        # `fase5_resultat` til slutt — så i en hel runde ligger
+        # identiteten MELLOM forrige og valgte resultat. En gjenkjøring
+        # som skriver ny identitet (og kanskje en halv kjøring) og så
+        # krasjer FØR sitt eget resultat, ville ellers fått den nye
+        # identiteten paret med det GAMLE grønne resultatet — evidens
+        # spleiset av to forsøk. Kontekstlikheten under ser det ikke
+        # (samme release, samme image), så vinduet må måles selv.
+        i_ds = siste("datasett_identitet")
+        start = 0
+        for j in range(i_f5 - 1, -1, -1):
+            if rader[j].get("hendelse") == "fase5_resultat":
+                start = j + 1
+                break
+        if not (start <= i_ds < i_f5):
+            raise SystemExit(
+                "AVBRUTT: siste `datasett_identitet` ligger utenfor det"
+                " valgte fase 5-vinduet — identiteten er målt av et annet"
+                " (påbegynt eller eldre) forsøk enn resultatet, og et"
+                " sammendrag spleiset av to forsøk skrives ikke")
+        # …og et PÅBEGYNT forsøk etter det valgte resultatet er heller
+        # ikke historie som kan overses: en `kjoring` eller ny identitet
+        # etter siste `fase5_resultat` er en runde som aldri ble målt
+        # ferdig, og filas siste tilstand er da «ufullstendig» — samme
+        # dom som en manglende hendelse, ikke et fritt valg av det siste
+        # grønne.
+        etter = [d.get("hendelse") for d in rader[i_f5 + 1:]
+                 if d.get("hendelse") in ("kjoring", "datasett_identitet")]
+        if etter:
+            raise SystemExit(
+                f"AVBRUTT: fila bærer {len(etter)} fase 5-hendelse(r)"
+                " ETTER det valgte resultatet — et påbegynt, uavsluttet"
+                " forsøk. Kjør runden ferdig (nytt `fase5_resultat`)"
+                " eller fjern ingenting: sammendraget velger aldri et"
+                " eldre resultat forbi et nyere forsøk")
+        indekser.append(i_ds)
     image_digest, release = en_kjoring(rader, kontekst, indekser)
     valgte = tuple(rader[i] for i in indekser)
     (fase5, robots, robots5, frekv, motor, injeksjon, frist) = valgte[:7]

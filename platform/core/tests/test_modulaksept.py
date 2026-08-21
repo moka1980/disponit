@@ -5181,7 +5181,11 @@ def test_rullbakkens_kvittering_er_en_del_av_claim_stoppet(migrator):
     `claim_stopp_ok`, i samme drillrad som de to andre kontrollpunktene.
     En kvittering med tom signaturkolonne eller uten brent kapabilitet
     er nettopp formene porten skal se."""
-    for variant in ({"kapabilitet": False}, {"signatur": False}):
+    # …og UTFALLET må være utført (Codex P1, #123 runde 5): en signert
+    # `feilet`-kvittering med promotert artefakt bærer hele avtrykket,
+    # men en rullbakk som feilet fullførte ingenting.
+    for variant in ({"kapabilitet": False}, {"signatur": False},
+                    {"status": "feilet"}):
         k = _kjede(migrator)
         uten = k["oppdrag"](opprettet=T_RB_BESTILT, status_ts=T_RB_SLUTT,
                             claim_release="r-rullback", **variant)
@@ -5334,16 +5338,17 @@ def test_konverteren_sammendrar_v2_naar_datasettet_er_maalt():
                              "wcag-kontroll-v1-20260818T200413.json")
                       ).read_text(encoding="utf-8"))
     rader = m.les(ROT / art["oppsett"]["kilde"])
-    # Hendelsen legges I RUNDENS KONTEKST — rett etter siste
-    # `fase5_resultat`, slik sjekklisten skriver den. Halen av fila har
-    # senere fase 2-hendelser (gjenåpningen), og en identitet målt i EN
-    # ANNEN kontekst skal konverteren avvise, ikke sammendra.
+    # Hendelsen legges I RUNDENS VINDU — rett FØR siste
+    # `fase5_resultat`, slik fase 5 faktisk skriver den (identiteten
+    # først, kjøringene, så resultatet). Halen av fila har senere
+    # fase 2-hendelser (gjenåpningen), og en identitet målt utenfor
+    # vinduet skal konverteren avvise, ikke sammendra.
     siste_f5 = max(i for i, d in enumerate(rader)
                    if d.get("hendelse") == "fase5_resultat")
     hendelse = {"ts": rader[siste_f5]["ts"],
                 "hendelse": "datasett_identitet",
                 "datasett_sha256": "ab" * 32, "ok": True}
-    rader = rader[:siste_f5 + 1] + [hendelse] + rader[siste_f5 + 1:]
+    rader = rader[:siste_f5] + [hendelse] + rader[siste_f5:]
     v2 = m.sammendrag(rader, art["oppsett"]["kilde"],
                       art["oppsett"]["kilde_sha256"])
     assert v2["krav_id"] == "wcag-kontroll-v2"
@@ -5356,18 +5361,30 @@ def test_konverteren_sammendrar_v2_naar_datasettet_er_maalt():
     assert v2["maalt"]["revisjonsrad_avvik"] == 0
     # En identitet som ikke er en kanonisk sha256 er ingen måling.
     daarlig = list(rader)
-    daarlig[siste_f5 + 1] = dict(hendelse, datasett_sha256="xyz")
+    daarlig[siste_f5] = dict(hendelse, datasett_sha256="xyz")
     with pytest.raises(SystemExit) as ei:
         m.sammendrag(daarlig, art["oppsett"]["kilde"],
                      art["oppsett"]["kilde_sha256"])
     assert "kanonisk sha256" in str(ei.value)
-    # …og en identitet målt i en ANNEN kontekst (etter gjenåpningens
-    # fase 2) er ikke rundens: sammendraget skrives ikke.
+    # …og en identitet skrevet ETTER det valgte resultatet er et annet
+    # forsøks måling — vindusporten feller den FØR kontekstlikheten får
+    # spørsmålet (Codex P1, #123 runde 5: en gjenkjøring som skriver ny
+    # identitet og krasjer før sitt eget resultat, ville ellers paret
+    # den nye identiteten med det gamle grønne resultatet).
     utenfor = m.les(ROT / art["oppsett"]["kilde"]) + [hendelse]
     with pytest.raises(SystemExit) as ei:
         m.sammendrag(utenfor, art["oppsett"]["kilde"],
                      art["oppsett"]["kilde_sha256"])
-    assert "ULIKE kjøringer" in str(ei.value)
+    assert "utenfor det valgte" in str(ei.value)
+    # …og et påbegynt forsøk ETTER det valgte resultatet (en `kjoring`
+    # uten nytt `fase5_resultat`) gjør fila ufullstendig — sammendraget
+    # velger aldri et eldre resultat forbi et nyere forsøk.
+    paabegynt = rader + [{"ts": hendelse["ts"], "hendelse": "kjoring",
+                          "i": 0, "utfall": "feilet"}]
+    with pytest.raises(SystemExit) as ei:
+        m.sammendrag(paabegynt, art["oppsett"]["kilde"],
+                     art["oppsett"]["kilde_sha256"])
+    assert "påbegynt" in str(ei.value)
 
 
 def test_konverterens_attesttellere_krever_egne_maalinger():
@@ -5451,6 +5468,39 @@ def test_konverterens_attesttellere_krever_egne_maalinger():
     # posisjonen i stedet for å bli oversett.
     halv = gronne + [{"hendelse": "kjoring", "i": 0, "utfall": "utfort"}]
     assert m.rent_innen_frist(halv, 10) == 9
+
+
+@pg
+def test_roedt_referat_mot_feil_drill_laaser_ikke_riktig_par(migrator):
+    """Codex' P1 (#123 runde 5): et mislykket akseptforsøk med feil
+    drill committer sitt røde referat før basen avviser aksepten — og
+    referatet er immutabelt. Motsigelseskontrollen er derfor scopet til
+    drill-PARET: det riktige parets grønne referat skal fortsatt kunne
+    skrives, mens to referater om samme bytes MOT SAMME drill fortsatt
+    må si det samme."""
+    k = _kjede(migrator)
+    did = _drill(migrator, k)
+    punkt = "evidens.pa_tvers_av_runder"
+    # Det røde referatet fra feilparingen — en annen drills bytes.
+    _evidens_attest(migrator,
+                    maalt={punkt: "runden målte 'r-x', drillen 'r-y'"},
+                    drill_sha="ee" * 32)
+    # Riktig par: full grønn attest + aksept går gjennom.
+    _aksepter(migrator, k, did)
+    migrator.commit()
+    migrator.execute("RESET ROLE")
+    n = migrator.execute(
+        "SELECT count(*) FROM modulaksept WHERE modul_id=%s",
+        (k["mid"],)).fetchone()[0]
+    migrator.rollback()
+    assert n == 1, "det røde referatet fra feil par sperret riktig par"
+    # …og innenfor SAMME drill er en avvikende verdi fortsatt en
+    # motsigelse som skal høres.
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _evidens_attest(migrator, maalt={punkt: "en annen verdi"},
+                        drill_sha=DRILL_SHA)
+    assert "annet innhold" in str(ei.value)
+    migrator.rollback()
 
 
 def test_aksept_skriptet_baerer_v3_og_sammenhengskravet():
