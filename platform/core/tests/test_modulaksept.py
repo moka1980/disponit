@@ -112,7 +112,8 @@ def _rt():
 #: konstruerer all annen tilstand selv; disse to tabellene får samme
 #: behandling.
 ATTESTTABELLER = (("ci_kjoringsattest", "ci_attest_immutable"),
-                  ("evidensfil_attest", "evidensfil_attest_immutable"))
+                  ("evidensfil_attest", "evidensfil_attest_immutable"),
+                  ("evidensfil_kjoringer", "evidensfil_kjoringer_immutable"))
 
 
 def _tom_attestene():
@@ -185,6 +186,13 @@ def _kjede(m, *, promoter_paa_drillet=False, staged_paa_kandidat=False,
               " kontrakt_hash, payload_schema_hash, kvittering_schema_hash,"
               " sideeffektklasse, reversibilitet) VALUES"
               " (%s,1,'kh','ph','qh','ekstern_lesing','direkte')", (mid,))
+    # 053: attestmålingen krever at oppdragstypen er REGISTRERT til
+    # modulen (oppdragstype_register, 014) — typen er global PK, så hver
+    # kjede får sin egen.
+    otype = f"kontroll.aksept.{mid}"
+    m.execute("INSERT INTO oppdragstype_register (oppdragstype,"
+              " eiermodul, kontraktversjon, kontrakt_hash) VALUES"
+              " (%s,%s,1,'kh')", (otype, mid))
     for rel in ("r-drillet", "r-rullback", "r-kandidat"):
         m.execute("INSERT INTO modulrelease (modul_id, release_id,"
                   " kontraktversjon, kontrakt_hash, manifest_hash,"
@@ -265,10 +273,11 @@ def _kjede(m, *, promoter_paa_drillet=False, staged_paa_kandidat=False,
             " utforelsesfrist, evidensfrist, koblingsstatus,"
             " beslutning_loggpost_id, kvittering, kvittering_signatur,"
             " resultathash, opprettet, status_ts) VALUES ('beslutning',%s,"
-            "'kontroll.wcag.nettsted','kontroll.wcag.nettsted',%s,%s,"
+            "%s,%s,%s,%s,"
             "%s,'k1',%s, now()+interval '1 hour', now()+interval '2 hours',"
             "'KOBLET',%s,%s::jsonb,%s,%s,%s,%s) RETURNING id",
-            (ten, eier or mid, status, b"\x00" * 24, b"\x00" * 12, blid,
+            (ten, otype, otype, eier or mid, status,
+             b"\x00" * 24, b"\x00" * 12, blid,
              konvolutt if kvittering else None,
              kolonne if kvittering else None,
              SHA0 if kvittering else None, opprettet,
@@ -352,7 +361,7 @@ def _kjede(m, *, promoter_paa_drillet=False, staged_paa_kandidat=False,
                        claim_release="r-kandidat")
     artefakt("r-drillet", "promotert", inflight)
     artefakt("r-rullback", "promotert", rullback)
-    ut = {"mid": mid, "ten": ten, "at": at,
+    ut = {"mid": mid, "ten": ten, "at": at, "otype": otype,
           "opp": {"inflight": inflight, "rullback": rullback,
                   "kandidat": kandidat},
           "oppdrag": oppdrag, "artefakt": artefakt,
@@ -420,7 +429,7 @@ def _ci_attest(m, ci_run="run-1", *, ci_commit=None, arbeidsflyt=None,
 
 
 def _evidens_attest(m, sha=EVIDENS_SHA, *, sti=EVIDENS_STI, krav=KRAV,
-                    maalt=None, drill_sha=DRILL_SHA):
+                    maalt=None, drill_sha=DRILL_SHA, kjoringer=None):
     """Referatet fra veien som LESTE evidensfilen (Codex P1, runde 19).
 
     Verdiene er de FILEN bar. Standard er registerets grønne fasit, som i
@@ -442,14 +451,16 @@ def _evidens_attest(m, sha=EVIDENS_SHA, *, sti=EVIDENS_STI, krav=KRAV,
             (krav,)).fetchall()}
     v = _verifikator()
     try:
-        v.execute("SELECT attester_evidensfil(%s,%s,%s,%s::jsonb,'test',%s)",
-                  (krav, sti, sha, json.dumps(maalt), drill_sha))
+        v.execute("SELECT attester_evidensfil(%s,%s,%s,%s::jsonb,'test',"
+                  "%s,%s)",
+                  (krav, sti, sha, json.dumps(maalt), drill_sha,
+                   kjoringer))
         v.commit()
     finally:
         v.close()
 
 
-def _punkter(m, krav=KRAV, *, evidens_sha=EVIDENS_SHA, ci_run="run-1",
+def _punkter(m, krav=KRAV, *, evidens_sha=None, ci_run="run-1",
              ci_commit=None, evidens_sti=EVIDENS_STI, mid=None):
     """Punktsettet slik REGISTERET krever det (Codex P1, #117 runde 15).
 
@@ -459,6 +470,8 @@ def _punkter(m, krav=KRAV, *, evidens_sha=EVIDENS_SHA, ci_run="run-1",
     hashen aksepten binder, for `ci_kjoring` nøyaktig radens egen
     kjøring og commit.
     """
+    if evidens_sha is None:
+        evidens_sha = _evidens_sha_for(mid) if mid else EVIDENS_SHA
     rader = m.execute(
         "SELECT punkt, kilde_type, grenseverdi, maalt_krav"
         "  FROM akseptkrav_punkt WHERE krav_id=%s", (krav,)).fetchall()
@@ -482,11 +495,30 @@ def _punkter(m, krav=KRAV, *, evidens_sha=EVIDENS_SHA, ci_run="run-1",
             for p, kt, g, mk in rader}
 
 
+def _evidens_sha_for(kjede_eller_mid):
+    """Kjedens egen evidens-sha. Identitetsreferatet (053) er nøklet på
+    (fil, krav, drill) og navngir kjedens EGNE oppdrag — to kjeder som
+    deler `EVIDENS_SHA` ville vært to motstridende referater om én fil,
+    og det er nettopp det attestveien skal avvise. Én kjede, én fil.
+    Nøkles på modul-IDen, som både `_aksepter` og `_punkter` kjenner."""
+    mid = (kjede_eller_mid["mid"] if isinstance(kjede_eller_mid, dict)
+           else kjede_eller_mid)
+    return hashlib.sha256(str(mid).encode("utf-8")).hexdigest()
+
+
 def _aksepter(m, k, did, *, release="r-kandidat", artefakt=None,
               punkter=None, nokkel=None, miljo="staging",
-              evidens_sha=EVIDENS_SHA, ci_run="run-1", attest=True,
-              ev_attest=True, ci_commit=CI_SHA, manifest_commit=None):
+              evidens_sha=None, ci_run="run-1", attest=True,
+              ev_attest=True, ci_commit=CI_SHA, manifest_commit=None,
+              kjoringer=None, id_attest=True):
+    if evidens_sha is None:
+        evidens_sha = _evidens_sha_for(k)
     m.execute("RESET ROLE")     # forrige _aksepter kan ha etterlatt admin
+    if kjoringer is None:
+        # 053: aksepten navngir kontrollkjøringene og basen måler dem
+        # selv. Kjedens inflight-oppdrag ER en fullført kjøring på den
+        # drillede releasen — kontrolløpets form i miniatyr.
+        kjoringer = [k["opp"]["inflight"]]
     if punkter is None:
         # leses som migrator — admin har ikke SELECT
         punkter = _punkter(m, evidens_sha=evidens_sha, ci_run=ci_run,
@@ -497,12 +529,14 @@ def _aksepter(m, k, did, *, release="r-kandidat", artefakt=None,
         _ci_attest(m, ci_run, ci_commit=ci_commit)
     if ev_attest:
         # …og evidensfilen rett etter at `verifiser_kilde` har hashet den
-        # og grenseporten har regnet invariantene på nytt (runde 19).
-        _evidens_attest(m, evidens_sha)
+        # og grenseporten har regnet invariantene på nytt (runde 19) —
+        # med kjøringsidentitetene i samme referat (053).
+        _evidens_attest(m, evidens_sha, kjoringer=(
+            ",".join(str(o) for o in kjoringer) if id_attest else None))
     m.execute("SET ROLE disponit_modules_admin")
     m.execute(
         "SELECT aksepter_moduldeployment(%s,%s,%s,%s,%s,%s,%s::uuid,%s,"
-        "%s,%s,%s,%s::jsonb,%s,'test')",
+        "%s,%s,%s,%s::jsonb,%s,'test',%s::bigint[])",
         (k["mid"], miljo, release, did, KRAV, k["ten"],
          artefakt or k["e2e"], evidens_sha,
          # Manifestcommiten ER akseptcommiten (Codex P1, runde 22) —
@@ -510,7 +544,7 @@ def _aksepter(m, k, did, *, release="r-kandidat", artefakt=None,
          ci_commit if manifest_commit is None else manifest_commit,
          ci_run, ci_commit,
          json.dumps(punkter),
-         nokkel or "a-" + secrets.token_hex(6)))
+         nokkel or "a-" + secrets.token_hex(6), kjoringer))
     m.execute("RESET ROLE")   # aldri la admin bli sesjonens faste rolle
 
 
@@ -964,7 +998,8 @@ def test_attesten_maa_baere_en_annen_innlogging_enn_aksepten(migrator):
                  "'r-rullback','r-kandidat','t',1,2,3,0,'x','n','v',now())",
                  (k["mid"],)),
                 ("SELECT aksepter_moduldeployment(%s,'staging','r-kandidat',"
-                 "1,'k','t',NULL::uuid,'e','c','r','c','{}'::jsonb,'n','v')",
+                 "1,'k','t',NULL::uuid,'e','c','r','c','{}'::jsonb,'n','v',"
+                 "ARRAY[1]::bigint[])",
                  (k["mid"],))):
             with pytest.raises(psycopg.errors.InsufficientPrivilege):
                 v.execute(sql, arg)
@@ -1542,7 +1577,8 @@ def test_ordinaere_roller_naar_ingenting(migrator):
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             rt.execute("SELECT aksepter_moduldeployment(%s,'staging','r',"
                        "1,'k','t',gen_random_uuid(),'e','m','r','c',"
-                       "'{}'::jsonb,'n','x')", (k["mid"],))
+                       "'{}'::jsonb,'n','x',ARRAY[1]::bigint[])",
+                       (k["mid"],))
         rt.rollback()
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             rt.execute("INSERT INTO moduldrill (modul_id, miljo,"
@@ -5221,27 +5257,37 @@ def test_maal_kjoringsattest_maaler_kontrolloepet(migrator):
     k = _kjede(migrator)
     oid = k["opp"]["inflight"]
 
-    def attest(oppdrag, release, miljo="staging"):
+    def attest(oppdrag, release, miljo="staging", modul=None):
         migrator.execute("SET ROLE disponit_modules_admin")
         rad = migrator.execute(
             "SELECT kvittering_ok, claim_release_ok, artefakt_ok,"
-            " revisjonsrad_ok, loggpost"
-            " FROM maal_kjoringsattest(%s,%s,%s,%s)",
-            (k["ten"], oppdrag, release, miljo)).fetchone()
+            " revisjonsrad_ok, modul_ok, loggpost"
+            " FROM maal_kjoringsattest(%s,%s,%s,%s,%s)",
+            (k["ten"], oppdrag, release, miljo,
+             modul or k["mid"])).fetchone()
         migrator.execute("RESET ROLE")
         return rad
 
     god = attest(oid, "r-drillet")
-    assert god[:4] == (True, True, True, True) and god[4] is not None, god
+    assert god[:5] == (True,) * 5 and god[5] is not None, god
     # Feil release: claim-sporet OG artefakt-likheten er røde — utfort
     # uten promotert artefakt PÅ DEN RELEASEN er et falskt verdikt.
     feil_rel = attest(oid, "r-rullback")
     assert feil_rel[1] is False and feil_rel[2] is False, feil_rel
     # Feil miljø er en annen deployment (samme regel som drillens ledd).
     assert attest(oid, "r-drillet", "prod")[1] is False
+    # Feil modul: et oppdrag fra en annen modul med samme release-
+    # etikett er ikke denne modulens kjøring (053).
+    assert attest(oid, "r-drillet", modul="m_en_annen")[4] is False
+    # EKVIVALENSFELLEN (Codex P1, #125): `feilet` UTEN promotert
+    # artefakt ga `false = false` → grønt i den gamle formen.
+    # Konjunksjonen (053) krever utført OG promotert.
+    feilet = k["oppdrag"](status="feilet", claim_release="r-drillet")
+    assert attest(feilet, "r-drillet")[2] is False, \
+        "feilet uten artefakt målte grønt — ekvivalensen er tilbake"
     # Et oppdrag som ikke finnes: ingen grønne målinger, ingen identitet.
     borte = attest(999999999, "r-drillet")
-    assert borte[:4] == (False, False, False, False) and borte[4] is None
+    assert borte[:5] == (False,) * 5 and borte[5] is None
     # …og loggposten er REVISJONSRADENS identitet: den raden oppdraget
     # faktisk er koblet til (008), lesbar for telling av distinkthet.
     migrator.execute("RESET ROLE")
@@ -5249,7 +5295,7 @@ def test_maal_kjoringsattest_maaler_kontrolloepet(migrator):
         "SELECT beslutning_loggpost_id FROM oppdrag WHERE tenant=%s"
         " AND id=%s", (k["ten"], oid)).fetchone()[0]
     migrator.rollback()
-    assert god[4] == ekte
+    assert god[5] == ekte
 
 
 def test_grenser_wcag_kontroll_v2_maaler_de_nye_tellerne():
@@ -5504,7 +5550,7 @@ def test_roedt_referat_mot_feil_drill_laaser_ikke_riktig_par(migrator):
     did = _drill(migrator, k)
     punkt = "evidens.pa_tvers_av_runder"
     # Det røde referatet fra feilparingen — en annen drills bytes.
-    _evidens_attest(migrator,
+    _evidens_attest(migrator, _evidens_sha_for(k),
                     maalt={punkt: "runden målte 'r-x', drillen 'r-y'"},
                     drill_sha="ee" * 32)
     # Riktig par: full grønn attest + aksept går gjennom.
@@ -5519,7 +5565,8 @@ def test_roedt_referat_mot_feil_drill_laaser_ikke_riktig_par(migrator):
     # …og innenfor SAMME drill er en avvikende verdi fortsatt en
     # motsigelse som skal høres.
     with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
-        _evidens_attest(migrator, maalt={punkt: "en annen verdi"},
+        _evidens_attest(migrator, _evidens_sha_for(k),
+                        maalt={punkt: "en annen verdi"},
                         drill_sha=DRILL_SHA)
     assert "annet innhold" in str(ei.value)
     migrator.rollback()
@@ -5533,8 +5580,8 @@ def test_akseptporten_remaaler_kjoringene_i_basen(migrator):
     og et identitetssett som ikke navngir kravet."""
     m = _aksept_skript()
     k = _kjede(migrator)
-    gammel_tenant = m.TENANT
-    m.TENANT = k["ten"]
+    gammel_tenant, gammel_modul = m.TENANT, m.MODUL
+    m.TENANT, m.MODUL = k["ten"], k["mid"]
     try:
         def runde(kjoringer, release="r-drillet", krav=None):
             return {"maalt": {"kjoringer_krav": krav or len(kjoringer)},
@@ -5577,8 +5624,65 @@ def test_akseptporten_remaaler_kjoringene_i_basen(migrator):
                 migrator, runde([k["opp"]["inflight"]], krav=10))
         assert "navngir ikke 10" in str(ei.value)
     finally:
-        m.TENANT = gammel_tenant
+        m.TENANT, m.MODUL = gammel_tenant, gammel_modul
         migrator.rollback()
+
+
+@pg
+def test_akseptporten_maaler_kjoringene_selv(migrator):
+    """053 (Codex P1 på #125): skranken bor i BASEN. En kaller med
+    deployfullmakten kan ikke hoppe over skriptet — akseptfunksjonen
+    krever kjøringslisten, binder den til verifikatorens drillscopede
+    identitetsreferat, og re-måler hver kjøring selv."""
+    # (a) uten identitetsreferat: aksepten faller, uansett grønne punkter.
+    k = _kjede(migrator)
+    did = _drill(migrator, k)
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, k, did, id_attest=False)
+    assert "ingen attest sier" in str(ei.value)
+    migrator.rollback()
+    # (b) tuklet liste: kallets kjøringer må være ordrett referatets.
+    k = _kjede(migrator)
+    did = _drill(migrator, k)
+    annet = k["oppdrag"](claim_release="r-drillet")
+    k["artefakt"]("r-drillet", "promotert", annet)
+    _evidens_attest(migrator, _evidens_sha_for(k),
+                    kjoringer=str(k["opp"]["inflight"]))
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, k, did, kjoringer=[annet], id_attest=False,
+                  ev_attest=False)
+    assert "ikke dem referatet navngir" in str(ei.value)
+    migrator.rollback()
+    # (c) en navngitt kjøring basen feller NÅ (claimet av rullbakken,
+    # målt mot den drillede releasen): aksepten faller på basens svar.
+    k = _kjede(migrator)
+    did = _drill(migrator, k)
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, k, did, kjoringer=[k["opp"]["rullback"]])
+    assert "attesteres ikke av basen" in str(ei.value)
+    migrator.rollback()
+    # (d) tom liste: et aggregat alene bærer ingen aksept. (Attestveien
+    # avviser en tom liste alt ved skriving, så referatet hoppes over —
+    # porten som måles her er akseptfunksjonens egen.)
+    k = _kjede(migrator)
+    did = _drill(migrator, k)
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, k, did, kjoringer=[], id_attest=False)
+    assert "ingen kontrollkjøringer" in str(ei.value)
+    migrator.rollback()
+    # Positiv kontroll: den ekte formen går gjennom, og hendelsen
+    # bærer kjøringene.
+    k = _kjede(migrator)
+    did = _drill(migrator, k)
+    _aksepter(migrator, k, did)
+    migrator.commit()
+    migrator.execute("RESET ROLE")
+    detalj = migrator.execute(
+        "SELECT detalj->'kontrollkjoringer' FROM modulregister_hendelse"
+        " WHERE modul_id=%s AND hendelse='modulaksept'",
+        (k["mid"],)).fetchone()[0]
+    migrator.rollback()
+    assert detalj == [k["opp"]["inflight"]]
 
 
 def test_aksept_skriptet_baerer_v3_og_sammenhengskravet():

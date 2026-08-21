@@ -931,10 +931,24 @@ def verifiser_kjoringsattester(conn, runde: dict) -> None:
     aldri på artefaktets utfall, den måler selv i `oppdrag`/`artefakt`.
 
     Kravene er akseptgrensens egne (§1.3): hvert oppdrag bærer
-    kvitteringsavtrykket, claim-sporet (release+miljø), artefakt-
-    likheten og revisjonsraden — og de ti loggpostene er DISTINKTE.
-    Fail-closed: et oppdrag basen ikke attesterer NÅ, stopper aksepten
-    her, før noen fullmakt er tatt og noe referat skrevet.
+    kvitteringsavtrykket, claim-sporet (release+miljø), det utførte
+    utfallet med promotert artefakt, modul-eierskapet med registrert
+    oppdragstype, og revisjonsraden — og loggpostene er DISTINKTE.
+
+    SKRANKEN BOR I BASEN (053, Codex P1 på #125): `aksepter_
+    moduldeployment` gjør nøyaktig denne målingen selv, mot drillradens
+    `drillet_release`, bundet til identitetene verifikatoren attesterte.
+    Dette kallet er fail-fast-SPEILET av den porten — det stopper en død
+    kjøring FØR fullmakter tas og referater skrives, men det er basens
+    egen måling akseptraden hviler på, ikke denne.
+
+    REGELSETTET måles ikke her, og trenger ikke måles her: liv-leddet er
+    transitivt. Claim-sporet binder kjøringen til releasen, releasen til
+    den registrerte digesten (liv-målt av `verifiser_registrert_digest`),
+    og motoren i det imaget NEKTER å kjøre med axe-bytes ≠ pinnet sha256
+    (`motor_axe/kjor.py`, exit ≠ 0) — enhver fullført kjøring på den
+    digesten kjørte det pinnede regelsettet. Filtelleren
+    (`kjoringer_med_attestert_kvittering`) vokter transkripsjonen.
     """
     m = runde["maalt"]
     krav = m["kjoringer_krav"]
@@ -954,20 +968,20 @@ def verifiser_kjoringsattester(conn, runde: dict) -> None:
         for o in ident:
             rad = conn.execute(
                 "SELECT kvittering_ok, claim_release_ok, artefakt_ok,"
-                " revisjonsrad_ok, loggpost"
-                " FROM maal_kjoringsattest(%s,%s,%s,%s)",
-                (TENANT, o, rel, MILJO)).fetchone()
+                " revisjonsrad_ok, modul_ok, loggpost"
+                " FROM maal_kjoringsattest(%s,%s,%s,%s,%s)",
+                (TENANT, o, rel, MILJO, MODUL)).fetchone()
             if not (rad and rad[0] and rad[1] and rad[2] and rad[3]
-                    and rad[4] is not None):
+                    and rad[4] and rad[5] is not None):
                 deler = dict(zip(("kvittering", "claim_release",
-                                  "artefakt", "revisjonsrad"),
-                                 rad[:4] if rad else (False,) * 4))
+                                  "artefakt", "revisjonsrad", "modul"),
+                                 rad[:5] if rad else (False,) * 5))
                 raise SystemExit(
                     f"AVBRUTT: kjøring {o}: basen attesterer den ikke NÅ"
                     f" mot ({rel}, {MILJO}) — {deler}. Artefaktets tall"
                     " er transkripsjonen; akseptraden hviler på basens"
                     " eget svar, og det svaret er nei")
-            loggposter.add(rad[4])
+            loggposter.add(rad[5])
     finally:
         conn.execute("RESET ROLE")
     if len(loggposter) != krav:
@@ -1048,6 +1062,11 @@ def main() -> int:
     # artefaktene og attesteres på runde-evidensfilen — det er DENS
     # runde de binder.
     evidens_maalt.update(sammenheng_verdier(runde, drill, ms))
+    # …og IDENTITETENE (053): verifikatoren attesterer hvilke kjøringer
+    # filen navngir, drillscopet — og basen krever at akseptens
+    # kjøringsliste er ordrett referatets. Kanonisk form: kommadelt.
+    evidens_maalt["identiteter.kjoringer"] = ",".join(
+        str(o) for o in runde["identiteter"]["kjoringer"])
     for punkt, (grense, _) in MAALTE.items():
         punkter[punkt] = {"grenseverdi": grense,
                           "maalt_verdi": evidens_maalt[punkt],
@@ -1152,10 +1171,15 @@ def main() -> int:
         # aldri ble målt mot den drillen. Drillartefaktets bytes er nå
         # en del av attestens identitet, og `aksepter_moduldeployment`
         # slår opp attesten med bytene drillraden ble registrert med.
+        # …med IDENTITETSREFERATET i samme kall (053): hvilke kjøringer
+        # filen navngir, drillscopet — basen krever at akseptens liste
+        # er ordrett referatets. Kanonisk form: kommadelt.
         vconn.execute(
-            "SELECT attester_evidensfil(%s,%s,%s,%s::jsonb,'m56-aksept',%s)",
+            "SELECT attester_evidensfil(%s,%s,%s,%s::jsonb,'m56-aksept',"
+            "%s,%s)",
             (KRAV, runde["oppsett"]["kilde"], evidens_sha,
-             json.dumps(evidens_maalt), drill_sha))
+             json.dumps(evidens_maalt), drill_sha,
+             ",".join(str(o) for o in runde["identiteter"]["kjoringer"])))
         vconn.commit()
         vconn.close()
         vconn = None
@@ -1214,11 +1238,12 @@ def main() -> int:
         conn.execute("SET ROLE disponit_modules_admin")
         conn.execute(
             "SELECT aksepter_moduldeployment(%s,%s,%s,%s,%s,%s,%s::uuid,"
-            "%s,%s,%s,%s,%s::jsonb,%s,'m56-aksept')",
+            "%s,%s,%s,%s,%s::jsonb,%s,'m56-aksept',%s::bigint[])",
             (MODUL, MILJO, o["kandidat_release"], drill_id, KRAV,
              TENANT, e2e_artefakt, evidens_sha, manifest_commit,
              a.ci_run, ci_commit, json.dumps(punkter),
-             f"aksept-{o['kandidat_release']}"))
+             f"aksept-{o['kandidat_release']}",
+             list(runde["identiteter"]["kjoringer"])))
         conn.commit()
         # Codex' P1 på PR #117 (runde 2): kvitteringslesningen kjørte
         # fortsatt som `disponit_modules_admin`, og 049 gir den rollen

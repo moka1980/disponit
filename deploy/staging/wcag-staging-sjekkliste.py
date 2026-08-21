@@ -1156,14 +1156,16 @@ def _kjoringsattest(m, oid: int) -> dict:
     m.execute("SET ROLE disponit_modules_admin")
     rad = m.execute(
         "SELECT kvittering_ok, claim_release_ok, artefakt_ok,"
-        " revisjonsrad_ok, loggpost FROM maal_kjoringsattest(%s,%s,%s,%s)",
-        (TENANT, oid, RELEASE, MILJO)).fetchone()
+        " revisjonsrad_ok, modul_ok, loggpost"
+        " FROM maal_kjoringsattest(%s,%s,%s,%s,%s)",
+        (TENANT, oid, RELEASE, MILJO, MODUL)).fetchone()
     m.execute("RESET ROLE")
     return {"kvittering_ok": bool(rad and rad[0]),
             "claim_release_ok": bool(rad and rad[1]),
             "artefakt_ok": bool(rad and rad[2]),
             "revisjonsrad_ok": bool(rad and rad[3]),
-            "loggpost": rad[4] if rad else None}
+            "modul_ok": bool(rad and rad[4]),
+            "loggpost": rad[5] if rad else None}
 
 
 def fase5(m, http, mtk, motorkmd, digest):
@@ -1247,7 +1249,7 @@ def fase5(m, http, mtk, motorkmd, digest):
         regelsett = (rr.json()["rapport"].get("regelsett_versjon")
                      if rr.status_code == 200 else None)
         attest_ok = (attest["kvittering_ok"] and attest["claim_release_ok"]
-                     and attest["artefakt_ok"]
+                     and attest["artefakt_ok"] and attest["modul_ok"]
                      and regelsett == forventet_regelsett)
         # Fristen ble målt da kjøringen faktisk skjedde, og den målingen
         # står i evidensfila fra den runden. Et gjenspill kan ikke måle den
