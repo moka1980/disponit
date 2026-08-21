@@ -75,6 +75,20 @@ function nokkelTekst(kortNokkel, verdi) {
   return verdi;
 }
 
+// Cellen som NAVNGIR raden er en overskrift, ikke data — «over_grense»
+// er ikke en verdi i kolonnen, det er hva de andre cellene i raden
+// handler om. Uten dette knytter en skjermleser i tall- eller
+// søylekolonnen bare kolonneoverskriften til tallet, og leseren mister
+// hvilken kategori tallet gjelder.
+//
+// Regelen bodde allerede i filen, men bare på totalraden. Den er derfor
+// ÉN funksjon som hver radnavncelle går gjennom — begge tabellformene og
+// tomraden — i stedet for en `scope`-verdi som må huskes på nytt hvert
+// sted en rad bygges. Det var nettopp det som glapp.
+function radnavn(tekst) {
+  return el("th", { scope: "row", text: tekst });
+}
+
 // Ett partisjonskort: <table> med rader (nokkel, antall, søyle) + total.
 // Tomt vindu er en EKSPLISITT rad: 0 og «ingen» — aldri et skjult kort.
 function partisjonstabell(kortNokkel, caption, partisjon) {
@@ -90,18 +104,18 @@ function partisjonstabell(kortNokkel, caption, partisjon) {
   const maks = Math.max(0, ...deler.map(([, n]) => n));
   if (!deler.length) {
     tbody.append(el("tr", {},
-      el("td", { text: t("ui.nokkeltall.ingen") }),
+      radnavn(t("ui.nokkeltall.ingen")),
       el("td", { text: "0" }),
       el("td", {})));
   }
   for (const [nokkel, antall] of deler) {
     tbody.append(el("tr", {},
-      el("td", { text: nokkelTekst(kortNokkel, nokkel) }),
+      radnavn(nokkelTekst(kortNokkel, nokkel)),
       el("td", { text: String(antall) }),
       el("td", {}, soyle(antall, maks))));
   }
   const tfoot = el("tfoot", {}, el("tr", {},
-    el("th", { scope: "row", text: t("ui.nokkeltall.total") }),
+    radnavn(t("ui.nokkeltall.total")),
     el("td", { text: String(partisjon.total) }),
     el("td", {})));
   tabell.append(thead, tbody, tfoot);
@@ -131,7 +145,7 @@ function lukkedeTabell(ctx, rader, totalt, grense, tidssone) {
   for (const r of rader) {
     // Radvis varighet — én saks egen differanse, aldri et snitt.
     tbody.append(el("tr", {},
-      el("td", { text: nokkelTekst("unntak", r.kategori) }),
+      radnavn(nokkelTekst("unntak", r.kategori)),
       el("td", {}, Tidspunkt(r.lukket, { tidssone })),
       el("td", { text: varighetTekst(r.varighet_s) })));
   }

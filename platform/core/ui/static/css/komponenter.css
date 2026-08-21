@@ -947,6 +947,11 @@ html[data-visning="landing"] .skall-hoved {
   margin-bottom:var(--sp-2)}
 .kpi-tabell td,.kpi-tabell th{padding:var(--sp-1) var(--sp-2);
   text-align:left}
+/* Radnavnet er en <th scope="row"> av hensyn til skjermleseren, ikke
+   for å framheve kategorien: nettleserens standard fete th ville gjort
+   hver rad like tung som totalraden under, og dermed visket ut den ene
+   uthevingen tabellen faktisk mener. Semantikken endres, vekten ikke. */
+.kpi-tabell tbody th{font-weight:400}
 .kpi-tabell tfoot th,.kpi-tabell tfoot td{border-top:1px solid
   var(--line);font-weight:600}
 .kpi-soyle{width:8rem;height:var(--sp-3);background:var(--info-bg);

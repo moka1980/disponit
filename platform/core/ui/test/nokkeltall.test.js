@@ -112,6 +112,16 @@ test("Nøkkeltall: UI-tall == API-svar, tabellform, axe rent", async () => {
   for (const tb of h.querySelectorAll("table")) {
     assert.ok(tb.querySelector("caption").textContent.trim().length > 0);
     assert.ok(tb.querySelector('th[scope="col"]'));
+    // Codex P2: raden skal ha BEGGE retningene. Cellen som navngir raden
+    // er en overskrift — ellers knytter en skjermleser i tall- eller
+    // søylekolonnen bare kolonneoverskriften til tallet, og hvilken
+    // kategori tallet gjelder går tapt. Gjelder begge tabellformene.
+    for (const rad of tb.querySelectorAll("tbody tr, tfoot tr")) {
+      assert.equal(rad.cells[0].tagName, "TH",
+        `radnavnet er ikke en overskrift i «${
+          tb.querySelector("caption").textContent}»`);
+      assert.equal(rad.cells[0].getAttribute("scope"), "row");
+    }
   }
   // Vindusvelgeren: <select> med <label for>.
   const velger = h.querySelector("select#nokkeltall-vindu");
