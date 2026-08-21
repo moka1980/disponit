@@ -32,7 +32,17 @@ import pytest
 
 from .test_api import DSN, MIGRATOR_DSN, dekker, migrator, miljo  # noqa: F401
 
-pg = pytest.mark.skipif(not DSN, reason="DISPONIT_TEST_DSN ikke satt")
+#: Attestveiens EGEN innlogging (Codex P1, #117 runde 19→22). Fire øyne
+#: kan ikke prøves med én login: `aksepter_moduldeployment` avviser en
+#: attest hvis `attestert_av` er akseptørens `session_user`, og den
+#: forskjellen finnes bare hvis testen faktisk har to identiteter.
+#: Ingen fallback til migrator-DSN-en — da ville hele porten vært stum
+#: og prøvene her målt at én rolle kan gjøre begge deler.
+VERIFIKATOR_DSN = os.environ.get("DISPONIT_TEST_VERIFIKATOR_DSN")
+
+pg = pytest.mark.skipif(
+    not (DSN and VERIFIKATOR_DSN),
+    reason="DISPONIT_TEST_DSN/DISPONIT_TEST_VERIFIKATOR_DSN ikke satt")
 
 ROT = Path(__file__).resolve().parents[3]
 M049 = ROT / "platform/core/db/migrations/049_modulaksept.sql"
@@ -77,6 +87,56 @@ EVIDENS_SHA = "ee" * 32
 def _rt():
     from db.pg import koble
     return koble(DSN)
+
+
+#: Attesttabellene og deres append-only-vakter. Attestene skrives nå av
+#: en ANNEN forbindelse enn testens, og en annen forbindelse ser bare
+#: det som er COMMITTET — så referatene overlever testen som skrev dem.
+#: Nøklene er delte (`ci_run`, og (`sha256`, `punkt`)), og en test som
+#: skal se en RØD måling for `EVIDENS_SHA` ville da falt på replay-
+#: regelen mot en grønn rad en tidligere test la igjen. Modulens tester
+#: konstruerer all annen tilstand selv; disse to tabellene får samme
+#: behandling.
+ATTESTTABELLER = (("ci_kjoringsattest", "ci_attest_immutable"),
+                  ("evidensfil_attest", "evidensfil_attest_immutable"))
+
+
+def _tom_attestene():
+    """Nullstiller de to attesttabellene. Krever eier-rollen — at
+    ryddingen må skru av append-only-vaktene er i seg selv beviset på at
+    de virker (samme grep som `_rydd` i test_api)."""
+    from db.pg import koble
+    c = koble(MIGRATOR_DSN)
+    try:
+        for tabell, trigger in ATTESTTABELLER:
+            c.execute(f"ALTER TABLE {tabell} DISABLE TRIGGER {trigger}")
+            c.execute(f"DELETE FROM {tabell}")
+            c.execute(f"ALTER TABLE {tabell} ENABLE TRIGGER {trigger}")
+        c.commit()
+    finally:
+        c.close()
+
+
+@pytest.fixture(autouse=True)
+def _rene_attester():
+    if DSN and VERIFIKATOR_DSN:
+        _tom_attestene()
+    yield
+
+
+def _verifikator():
+    """Attestveiens forbindelse — en EGEN innlogging, ikke et rolleskift.
+
+    Codex' P1 (runde 19→22): skillet mellom attestant og akseptør lå
+    først bare i rettighetene (`disponit_modules_admin` har ikke EXECUTE
+    på attestfunksjonene), og ble tatt ut som `SET ROLE
+    disponit_modul_eier` på akseptørens egen forbindelse. Migrator er
+    medlem av begge rollene, så det var én autentisert identitet med to
+    hatter. `disponit_ci_verifikator` har EXECUTE på nøyaktig de to
+    attestfunksjonene og ingen vei til eierrollen.
+    """
+    from db.pg import koble
+    return koble(VERIFIKATOR_DSN)
 
 
 def _kjede(m, *, promoter_paa_drillet=False, staged_paa_kandidat=False,
@@ -325,19 +385,24 @@ def _ci_attest(m, ci_run="run-1", *, ci_commit=None, arbeidsflyt=None,
     at kravets workflow kjørte grønt på kravets hendelse og gren, for
     nøyaktig akseptcommiten, skrives ingen aksept.
 
-    Skrives som EIERROLLEN, ikke som deployfullmakten (Codex P1, runde
-    19): attestanten skal ikke være akseptøren, og `attester_ci_kjoring`
-    er derfor ikke grantet til `disponit_modules_admin` lenger.
+    Skrives av VERIFIKATORENS innlogging, ikke av testens egen (Codex
+    P1, runde 19→22): attestanten skal ikke være akseptøren, og basen
+    måler nå forskjellen på `session_user`. Attesten committes — to
+    forbindelser deler ingen transaksjon, og et referat som ikke er
+    skrevet, kan ikke leses av aksepten.
     """
     if arbeidsflyt is None:
         arbeidsflyt = m.execute(
             "SELECT arbeidsflyt FROM akseptkrav_ci WHERE krav_id=%s",
             (KRAV,)).fetchone()[0]
-    m.execute("SET ROLE disponit_modul_eier")
-    m.execute("SELECT attester_ci_kjoring(%s,%s,%s,%s,%s,%s,'test')",
-              (ci_run, arbeidsflyt, hendelse, gren, konklusjon,
-               ci_commit or CI_SHA))
-    m.execute("RESET ROLE")
+    v = _verifikator()
+    try:
+        v.execute("SELECT attester_ci_kjoring(%s,%s,%s,%s,%s,%s,'test')",
+                  (ci_run, arbeidsflyt, hendelse, gren, konklusjon,
+                   ci_commit or CI_SHA))
+        v.commit()
+    finally:
+        v.close()
 
 
 def _evidens_attest(m, sha=EVIDENS_SHA, *, sti=EVIDENS_STI, krav=KRAV,
@@ -348,18 +413,21 @@ def _evidens_attest(m, sha=EVIDENS_SHA, *, sti=EVIDENS_STI, krav=KRAV,
     en ekte grønn runde — testene som skal se en rød måling sender sin
     egen `maalt`.
 
-    Skrives som eierrollen: deployfullmakten kan ikke attestere, nettopp
-    fordi den skriver aksepten som hviler på attesten.
+    Skrives av verifikatorens innlogging: den som LESER filen og den som
+    aksepterer på det den bar, er to identiteter (Codex P1, runde 22).
     """
     if maalt is None:
         maalt = {p: v for p, v in m.execute(
             "SELECT punkt, maalt_krav FROM akseptkrav_punkt"
             "  WHERE krav_id=%s AND kilde_type='evidensfil'",
             (krav,)).fetchall()}
-    m.execute("SET ROLE disponit_modul_eier")
-    m.execute("SELECT attester_evidensfil(%s,%s,%s,%s::jsonb,'test')",
-              (krav, sti, sha, json.dumps(maalt)))
-    m.execute("RESET ROLE")
+    v = _verifikator()
+    try:
+        v.execute("SELECT attester_evidensfil(%s,%s,%s,%s::jsonb,'test')",
+                  (krav, sti, sha, json.dumps(maalt)))
+        v.commit()
+    finally:
+        v.close()
 
 
 def _punkter(m, krav=KRAV, *, evidens_sha=EVIDENS_SHA, ci_run="run-1",
@@ -817,8 +885,8 @@ def test_attestanten_er_ikke_akseptoren(migrator):
     migrator.rollback()
     assert "ingen attest" in str(ei.value)
 
-    # 3. Eierrollen attesterer, og raden bærer den AUTENTISERTE
-    #    identiteten — ikke etiketten kallet oppga.
+    # 3. Verifikatoren attesterer, og raden bærer den AUTENTISERTE
+    #    identiteten — ikke etiketten kallet oppga, og ikke akseptørens.
     _ci_attest(migrator, "run-egen")
     _aksepter(migrator, k, did, ci_run="run-egen", attest=False)
     migrator.commit()
@@ -826,9 +894,83 @@ def test_attestanten_er_ikke_akseptoren(migrator):
     aktor, av = migrator.execute(
         "SELECT aktor, attestert_av FROM ci_kjoringsattest WHERE ci_run=%s",
         ("run-egen",)).fetchone()
-    assert aktor == "test"          # etiketten kallet oppga
-    assert av == migrator.execute(  # …og den innloggede identiteten
+    assert aktor == "test"                      # etiketten kallet oppga
+    assert av == "disponit_ci_verifikator"      # …og innloggingen
+    assert av != migrator.execute(
         "SELECT session_user").fetchone()[0]
+
+
+@pg
+def test_attesten_maa_baere_en_annen_innlogging_enn_aksepten(migrator):
+    """Codex' P1 (runde 22): rettighetsgrensen mellom attestant og
+    akseptør holdt bare så lenge ingen innlogging sto på begge sider av
+    den — og migrator er medlem av BÅDE `disponit_modul_eier` og
+    `disponit_modules_admin`. `WITH INHERIT FALSE` sperrer arv, ikke
+    `SET ROLE`, så én autentisert identitet kunne skrive attesten, legge
+    fullmakten ned, ta den andre opp og skrive aksepten som hviler på sin
+    egen attest. Regelen måles nå i basen, på `session_user`."""
+    k = _kjede(migrator)
+    did = _drill(migrator, k)
+    arbeidsflyt = migrator.execute(
+        "SELECT arbeidsflyt FROM akseptkrav_ci WHERE krav_id=%s",
+        (KRAV,)).fetchone()[0]
+
+    # 0. Verifikatorens fullmakt er SMAL (Codex P1, runde 22): den har
+    #    de to attestkallene og ingenting av akseptveien. Første form ga
+    #    den medlemskap i `disponit_modul_eier` — rollen som EIER begge
+    #    sider — og et `SET ROLE` var da hele veien inn.
+    v = _verifikator()
+    try:
+        for sql, arg in (
+                ("SELECT registrer_moduldrill(%s,'staging','r-drillet',"
+                 "'r-rullback','r-kandidat','t',1,2,3,0,'x','n','v',now())",
+                 (k["mid"],)),
+                ("SELECT aksepter_moduldeployment(%s,'staging','r-kandidat',"
+                 "1,'k','t',NULL::uuid,'e','c','r','c','{}'::jsonb,'n','v')",
+                 (k["mid"],))):
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                v.execute(sql, arg)
+            v.rollback()
+    finally:
+        v.close()
+
+    # 1. CI-ATTESTEN: akseptørens egen innlogging skriver referatet
+    #    gjennom eierrollen — nøyaktig veien m56-aksept.py gikk før.
+    migrator.execute("SET ROLE disponit_modul_eier")
+    migrator.execute(
+        "SELECT attester_ci_kjoring(%s,%s,'push','main','success',%s,'test')",
+        ("run-selv", arbeidsflyt, CI_SHA))
+    migrator.execute("RESET ROLE")
+    migrator.commit()
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, k, did, ci_run="run-selv", attest=False)
+    migrator.rollback()
+    assert "samme innlogging" in str(ei.value)
+
+    # 2. …og EVIDENSATTESTEN måles på det samme. Den som leste filen skal
+    #    ikke være den som aksepterer på det den bar.
+    sha = "ab" * 32
+    maalt = {p: v for p, v in migrator.execute(
+        "SELECT punkt, maalt_krav FROM akseptkrav_punkt"
+        "  WHERE krav_id=%s AND kilde_type='evidensfil'",
+        (KRAV,)).fetchall()}
+    migrator.execute("SET ROLE disponit_modul_eier")
+    migrator.execute("SELECT attester_evidensfil(%s,%s,%s,%s::jsonb,'test')",
+                     (KRAV, EVIDENS_STI, sha, json.dumps(maalt)))
+    migrator.execute("RESET ROLE")
+    migrator.commit()
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, k, did, evidens_sha=sha)
+    migrator.rollback()
+    assert "samme innlogging" in str(ei.value)
+
+    # 3. To identiteter, og aksepten skrives. Forskjellen er den ENESTE
+    #    tingen som er endret mellom 1/2 og dette kallet.
+    _aksepter(migrator, k, did)
+    migrator.commit()
+    assert migrator.execute(
+        "SELECT count(*) FROM modulaksept WHERE modul_id=%s",
+        (k["mid"],)).fetchone()[0] == 1
 
 
 @pg

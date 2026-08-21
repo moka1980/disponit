@@ -1502,7 +1502,7 @@ DECLARE v_livslop TEXT; v_mangler TEXT; v_punkt RECORD; v_verdi JSONB;
         v_epoch BIGINT; v_avvik TEXT; v_drill_tenant TEXT;
         v_kandidat_oppdrag BIGINT; v_forrige_tenant TEXT; v_ref TEXT;
         v_holder BOOLEAN; v_ci RECORD; v_ci_attest BOOLEAN;
-        v_evidens RECORD;
+        v_evidens RECORD; v_ci_av TEXT;
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended('modul:' || p_modul_id, 0));
     -- FORMEN FØRST (Codex P1, #117 runde 19). `p_evidens_sha` gikk rett
@@ -1673,14 +1673,44 @@ BEGIN
     -- oppfylle det er referatet veien som spurte GitHub skrev ned.
     SELECT c.arbeidsflyt, c.hendelse, c.gren, c.konklusjon INTO v_ci
       FROM public.akseptkrav_ci c WHERE c.krav_id = p_krav_id;
-    v_ci_attest := v_ci.arbeidsflyt IS NOT NULL AND EXISTS (
-        SELECT 1 FROM public.ci_kjoringsattest a
-         WHERE a.ci_run = p_ci_run
-           AND a.arbeidsflyt = v_ci.arbeidsflyt
-           AND a.hendelse = v_ci.hendelse
-           AND a.gren = v_ci.gren
-           AND a.konklusjon = v_ci.konklusjon
-           AND a.hode_sha = lower(p_ci_commit));
+    SELECT a.attestert_av INTO v_ci_av
+      FROM public.ci_kjoringsattest a
+     WHERE a.ci_run = p_ci_run
+       AND a.arbeidsflyt = v_ci.arbeidsflyt
+       AND a.hendelse = v_ci.hendelse
+       AND a.gren = v_ci.gren
+       AND a.konklusjon = v_ci.konklusjon
+       AND a.hode_sha = lower(p_ci_commit);
+    v_ci_attest := v_ci.arbeidsflyt IS NOT NULL AND v_ci_av IS NOT NULL;
+    -- ------------------------------------------------------------
+    -- FIRE ØYNE, MÅLT PÅ INNLOGGINGEN (Codex P1, #117 runde 19→22).
+    --
+    -- Skillet mellom attestant og akseptør var hittil bare en
+    -- RETTIGHETSGRENSE: `disponit_modules_admin` har ikke EXECUTE på
+    -- attestfunksjonene. En rettighetsgrense holder bare så lenge ingen
+    -- innlogging står på begge sider av den — og migrator er medlem av
+    -- BÅDE `disponit_modul_eier` og `disponit_modules_admin`. `WITH
+    -- INHERIT FALSE` sperrer arv, ikke `SET ROLE`, så én autentisert
+    -- identitet kunne skrive attesten, legge fullmakten ned, ta den
+    -- andre opp og skrive aksepten som hviler på sin egen attest.
+    -- Nøyaktig det samme gjelder enhver ny rolle som får medlemskap i
+    -- eierrollen: en smalere GRANT flytter grensen, den håndhever den
+    -- ikke.
+    --
+    -- Regelen hører derfor hjemme HER, der forutsetningen forbrukes, og
+    -- den måles på `session_user` — den AUTENTISERTE identiteten, som
+    -- `SET ROLE` ikke rører. Attesten aksepten hviler på må være skrevet
+    -- av en ANNEN innlogging enn den som skriver aksepten. To fullmakter
+    -- i én sesjon er én identitet, og én identitet er ikke fire øyne.
+    -- ------------------------------------------------------------
+    IF v_ci_av IS NOT NULL AND v_ci_av = session_user THEN
+        RAISE EXCEPTION 'aksepter_moduldeployment: CI-attesten for kjøring'
+            ' % er skrevet av % — samme innlogging som skriver aksepten.'
+            ' Attestanten er ikke akseptøren: referatet og aksepten som'
+            ' hviler på det skal komme fra to autentiserte identiteter,'
+            ' ikke fra to rolleskift i én sesjon', p_ci_run, v_ci_av
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
     v_forrige_tenant := current_setting('disponit.tenant', true);
     PERFORM set_config('disponit.tenant', p_e2e_tenant, true);
     FOR v_punkt IN SELECT k.punkt, k.kilde_type, k.grenseverdi, k.maalt_krav
@@ -1740,6 +1770,17 @@ BEGIN
                     ' hash aksepten selv oppgir, beviser ingenting; det'
                     ' gjør referatet fra veien som leste',
                     v_punkt.punkt, lower(p_evidens_sha)
+                    USING ERRCODE = 'invalid_parameter_value';
+            END IF;
+            -- …og evidensattesten måles på samme fire øyne som
+            -- CI-attesten over: den som LESTE filen skal ikke være den
+            -- som skriver aksepten filens måletall bærer.
+            IF v_evidens.attestert_av = session_user THEN
+                RAISE EXCEPTION 'aksepter_moduldeployment: punkt % hviler'
+                    ' på en evidensattest skrevet av % — samme innlogging'
+                    ' som skriver aksepten. Den som leste filen og den som'
+                    ' aksepterer på det den bar, skal være to autentiserte'
+                    ' identiteter', v_punkt.punkt, v_evidens.attestert_av
                     USING ERRCODE = 'invalid_parameter_value';
             END IF;
             -- Stien er attestens, ikke kallerens: LIKHET, ikke hale.
@@ -1893,6 +1934,23 @@ GRANT EXECUTE ON FUNCTION aksepter_moduldeployment(TEXT, TEXT, TEXT,
 -- oppsettet gjør for m37_claimer og policy_eier).
 -- Å legge attesten på PUBLIC eller på admin igjen er å gjenåpne hullet;
 -- en ny fullmakt hører hjemme i en NY rolle i oppsett-skriptet.
+--
+-- …og attestveiens innlogging får den fullmakten HER, smalt (Codex P1,
+-- #117 runde 22). `disponit_ci_verifikator` fikk først `GRANT
+-- disponit_modul_eier ... WITH INHERIT FALSE`, men eierrollen eier
+-- BEGGE sider — attestfunksjonene OG `registrer_moduldrill`/
+-- `aksepter_moduldeployment` — og eier har EXECUTE i kraft av
+-- eierskapet, uansett hva som er revokert fra PUBLIC. Et `SET ROLE`
+-- ville altså gitt verifikatoren hele akseptveien. Den trenger to
+-- kall og får nøyaktig to: EXECUTE direkte på attestfunksjonene, og
+-- ingen vei til eierrollen. Rettighetsgrensen er dermed like smal som
+-- oppgaven — og fire-øyne-regelen i `aksepter_moduldeployment` står
+-- uansett bak den, for en grense som bare finnes i en GRANT, faller
+-- den dagen noen gir et medlemskap som «bare» er praktisk.
+GRANT EXECUTE ON FUNCTION attester_ci_kjoring(TEXT, TEXT, TEXT, TEXT,
+    TEXT, TEXT, TEXT) TO disponit_ci_verifikator;
+GRANT EXECUTE ON FUNCTION attester_evidensfil(TEXT, TEXT, TEXT, JSONB,
+    TEXT) TO disponit_ci_verifikator;
 -- Målingen er LESING og gir ingen skrivevei: den svarer ja/nei om ett
 -- oppdrag i én tenant, og drillsonden og sjekklisten kaller den med
 -- nøyaktig den deployfullmakten de alt har.

@@ -888,7 +888,16 @@ def main() -> int:
         "kilde_ref": f"run {a.ci_run} @ {ci_commit}"}
 
     from db.pg import koble
+    # Attestveiens innlogging leses FØR noe skrives: mangler den, skal
+    # kjøringen dø her og ikke midt mellom to fullmakter.
+    if not os.environ.get("DISPONIT_VERIFIKATOR_URL"):
+        raise SystemExit(
+            "AVBRUTT: DISPONIT_VERIFIKATOR_URL mangler — attesten og"
+            " aksepten skal skrives av to autentiserte identiteter, og"
+            " basen avviser en attest som bærer akseptørens egen"
+            " innlogging. Kjør deploy/staging/oppsett-postgresql.sh")
     conn = koble(os.environ["DISPONIT_MIGRATOR_URL"])
+    vconn = None
     try:
         o = drill["oppsett"]
         # Siste ledd i A1-kjeden, målt i registeret FØR fullmakten tas:
@@ -923,14 +932,22 @@ def main() -> int:
         # `verifiser_ci_kjoring` har alt avvist alt annet enn en grønn
         # `ci.yml`-push på `main` for akseptcommiten.
         #
-        # …og attesten skrives med EN ANNEN FULLMAKT enn aksepten (Codex
-        # P1, runde 19): `disponit_modules_admin` har ikke lenger EXECUTE
-        # på `attester_ci_kjoring`, nettopp fordi den er rollen som
-        # skriver aksepten som hviler på attesten. Referatet er
-        # registerets eget, og skrives som eierrollen — et eksplisitt,
-        # sporbart `SET ROLE`, lagt NED igjen før deployfullmakten tas.
-        conn.execute("SET ROLE disponit_modul_eier")
-        conn.execute(
+        # …og attesten skrives med EN ANNEN INNLOGGING enn aksepten
+        # (Codex P1, runde 19→22). Første form la skillet i rollene:
+        # `disponit_modules_admin` har ikke EXECUTE på
+        # `attester_ci_kjoring`, så attesten ble skrevet under et
+        # `SET ROLE disponit_modul_eier` på DENNE forbindelsen. Men
+        # migrator er medlem av begge rollene, og `WITH INHERIT FALSE`
+        # sperrer arv, ikke `SET ROLE`: én autentisert identitet gjorde
+        # begge rolleskiftene, og attestanten var akseptøren.
+        # Attesten har nå sin EGEN forbindelse, med sin egen innlogging
+        # (`DISPONIT_VERIFIKATOR_URL`), og basen krever forskjellen —
+        # `aksepter_moduldeployment` avviser en attest hvis
+        # `attestert_av` er akseptørens `session_user`. Attestene
+        # committes FØR aksepten leser dem: to forbindelser deler ingen
+        # transaksjon, og et referat som ikke er skrevet, kan ikke leses.
+        vconn = koble(os.environ["DISPONIT_VERIFIKATOR_URL"])
+        vconn.execute(
             "SELECT attester_ci_kjoring(%s,%s,%s,%s,%s,%s,'m56-aksept')",
             (str(ci_kjoring.get("id")), ci_kjoring.get("path"),
              ci_kjoring.get("event"), ci_kjoring.get("head_branch"),
@@ -942,11 +959,13 @@ def main() -> int:
         # sti bytene lå på og hva filen bar for hvert punkt, og aksepten
         # regner punktet mot DEN raden. Verdiene er `verifiser_kilde`- og
         # `_sjekk_grenser`-portenes egne; kallet under kan bare gjenta dem.
-        conn.execute(
+        vconn.execute(
             "SELECT attester_evidensfil(%s,%s,%s,%s::jsonb,'m56-aksept')",
             (KRAV, runde["oppsett"]["kilde"], evidens_sha,
              json.dumps(evidens_maalt)))
-        conn.execute("RESET ROLE")
+        vconn.commit()
+        vconn.close()
+        vconn = None
         conn.execute("SET ROLE disponit_modules_admin")
         # Codex' P1 på PR #117 (runde 5): de tre kontrollpunktutfallene
         # ble regnet ut HER, av artefaktets egne tall, og sendt inn som
@@ -1000,6 +1019,8 @@ def main() -> int:
               f" drill_id={drill_id} ts={rad[0]}"
               f" manifestgenerasjon={manifestkilde[:12]}…")
     finally:
+        if vconn is not None:
+            vconn.close()
         conn.close()
     return 0
 

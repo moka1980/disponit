@@ -57,10 +57,18 @@ VARSLER=disponit_varselsender
 # (migrer.py PLAN_RETTIGHETER); runtime MISTER claim-EXECUTE i 048.
 PLANARB=disponit_plan_arbeider
 # 049/#117 (Codex P1): CI-attesten og aksepten skal bæres av TO
-# identiteter. Verifikatoren er innloggingsrollen som SKRIVER attesten
-# (SET til modul_eier — eksplisitt, sporbar), og den er MED VILJE ikke
-# medlem av modules_admin: én innlogging skal aldri kunne gjøre begge
-# rolleskiftene i m56-aksept.py. Attestant og akseptør er to logins.
+# identiteter. Verifikatoren er innloggingsrollen som SKRIVER attesten,
+# og den er MED VILJE ikke medlem av modules_admin: én innlogging skal
+# aldri kunne gjøre begge rolleskiftene i m56-aksept.py. Attestant og
+# akseptør er to logins.
+# Runde 22 (Codex P1): den fikk først medlemskap i modul_eier «WITH
+# INHERIT FALSE». Det var for bredt. Eierrollen eier BEGGE sider —
+# attestfunksjonene OG registrer_moduldrill/aksepter_moduldeployment —
+# og en eier har EXECUTE i kraft av eierskapet. `SET ROLE` var altså en
+# åpen dør til hele akseptveien, og fire-øyne-skillet lå bare i at
+# skriptet ikke gikk gjennom den. Verifikatoren får nå EXECUTE direkte
+# på de to attestfunksjonene (migrasjon 049) og ingen vei til
+# eierrollen.
 VERIFIKATOR=disponit_ci_verifikator
 for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER" "$EGRESS" "$DOMENER" "$VARSLER" "$PLANARB" "$VERIFIKATOR"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
@@ -90,9 +98,11 @@ sudo -u postgres psql -qc "GRANT $M37 TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $POLICYEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $MODULEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $MODULESADMIN TO $MIGRATOR WITH INHERIT FALSE"
-# Verifikatoren får KUN eierrollen (SET, aldri arv) — se blokken over
-# LOGIN-løkka: aldri modules_admin.
-sudo -u postgres psql -qc "GRANT $MODULEIER TO $VERIFIKATOR WITH INHERIT FALSE"
+# Verifikatoren får INGEN rollemedlemskap — se blokken over LOGIN-løkka.
+# Fullmakten er de to EXECUTE-ene migrasjon 049 gir den, og ikke noe mer.
+# REVOKE-en er ikke pynt: baser satt opp med runde 21-varianten har alt
+# medlemskapet, og oppsettet er idempotent nettopp for å ta dem igjen.
+sudo -u postgres psql -qc "REVOKE $MODULEIER FROM $VERIFIKATOR"
 sudo -u postgres psql -qc "GRANT $DOMENEEIER TO $MIGRATOR WITH INHERIT FALSE"
 # 041: adjudikatorrollen — klyngeobjekt som rollene over. Runtime faar SET
 # (aldri arv) for de to lesningene i adjudikasjonsendepunktene; migrator
