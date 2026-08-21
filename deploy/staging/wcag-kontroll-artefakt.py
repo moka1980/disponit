@@ -264,27 +264,41 @@ def _posisjonenes_kjoringer(linjer: list[dict], krav: int) -> dict[int, dict]:
     nødvendig, men ikke nok: to tellere som filtrerer hver for seg kan
     fortsatt peke på hver sin virkelighet.
 
-    Derfor velges posisjonens kjøring ÉN gang, her, med hele
-    rent-predikatet (rent utfall, null avvik, målt varighet under egen
-    frist, bestilt posisjon, eget oppdrag) — og HVER teller leser sin
-    måling av NETTOPP den linja. En signatur, en attest eller en
-    revisjonsrad på en linje som ikke er posisjonens kjøring, er ikke
-    posisjonens måling. Siste linje vinner, som i hele fila: runden er
-    idempotent, og siste tilstand er rundens tilstand.
+    Derfor velges posisjonens kjøring ÉN gang, her — og i TO steg, i
+    riktig rekkefølge (Codex P1, #123 runde 4): først hvilken linje som
+    ER posisjonens siste tilstand, SÅ om den tilstanden består
+    målepredikatet. Den forrige formen la predikatet i utvelgelsen
+    (`valgt[indeks] = d` bare for rene linjer), så en SENERE rød eller
+    halvskrevet linje ble ignorert i stedet for å erstatte tilstanden —
+    ti rene linjer etterfulgt av ti `feilet` på de samme posisjonene
+    talte fortsatt 10/10, og docstringen lovet det motsatte. Runden er
+    idempotent og fila append-only: siste linje per bestilt posisjon ER
+    posisjonens tilstand, uansett farge — og en posisjon hvis siste
+    tilstand ikke bærer en ren, målt kjøring med eget oppdrag, er ikke
+    en målt posisjon. Et gjenspill som siste tilstand teller dermed
+    heller ikke (varigheten er ikke målt) — samme dom som
+    `rent_innen_frist` alltid har felt over gjenspilte vinduer.
+
+    HVER teller leser så sin måling av NETTOPP posisjonens linje. En
+    signatur, en attest eller en revisjonsrad på en annen linje enn
+    posisjonens, er ikke posisjonens måling.
     """
     bestilte = range(krav)
-    valgt: dict[int, dict] = {}
+    siste: dict[int, dict] = {}
     for d in linjer:
+        indeks = d.get("i")
+        if (isinstance(indeks, int) and not isinstance(indeks, bool)
+                and indeks in bestilte):
+            siste[indeks] = d
+    valgt: dict[int, dict] = {}
+    for indeks, d in siste.items():
         avvik = _tall(d, "avvik_mot_fasit")
         varighet, frist = _tall(d, "varighet_s"), _tall(d, "frist_s")
-        indeks = d.get("i")
         if (d.get("utfall") == "utfort"
                 and avvik == 0
                 and varighet is not None
                 and frist is not None
                 and varighet < frist
-                and isinstance(indeks, int) and not isinstance(indeks, bool)
-                and indeks in bestilte
                 and _identitet(d, "oppdrag") is not None):
             valgt[indeks] = d
     return valgt

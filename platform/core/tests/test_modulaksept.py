@@ -5438,6 +5438,19 @@ def test_konverterens_attesttellere_krever_egne_maalinger():
         a = m.attestert_kvittering(spleis, 10, RSETT)
         r = m.revisjonsrader_mot_bestilt(spleis, 10)
         assert not (a == 10 and r == 10), (a, r)
+    # Codex' P1 (#123 runde 4): SISTE linje per posisjon ER posisjonens
+    # tilstand — også når den er rød eller halvskrevet. Ti rene linjer
+    # etterfulgt av ti `feilet` på de samme posisjonene er null målte
+    # kjøringer, ikke ti; utvelgelsen skjer FØR predikatet, aldri i det.
+    seinere_rode = gronne + [linje(i, utfall="feilet", oppdrag=30 + i)
+                             for i in range(10)]
+    assert m.rent_innen_frist(seinere_rode, 10) == 0
+    assert m.attestert_kvittering(seinere_rode, 10, RSETT) == 0
+    assert m.revisjonsrader_mot_bestilt(seinere_rode, 10) == 0
+    # …og en halvskrevet siste linje (uten kanonisk oppdrag) feller
+    # posisjonen i stedet for å bli oversett.
+    halv = gronne + [{"hendelse": "kjoring", "i": 0, "utfall": "utfort"}]
+    assert m.rent_innen_frist(halv, 10) == 9
 
 
 def test_aksept_skriptet_baerer_v3_og_sammenhengskravet():
