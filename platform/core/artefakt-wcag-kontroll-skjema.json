@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/wcagkontrollartefakt-v1.json",
+  "title": "WCAG-kontrollartefakt (wcag-kontroll-v1)",
+  "comment": "Sammendraget av stagingsjekklisterunden for m56_wcag_audit, avledet MEKANISK av evidens.jsonl (deploy/staging/wcag-kontroll-artefakt.py) - aldri skrevet for haand. Grensene staar i KRAVGRENSER; talene her males paa nytt av porten ved hver CI-kjoering.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "wcag-kontroll-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "modul",
+        "release",
+        "image_digest",
+        "kilde",
+        "kilde_sha256"
+      ],
+      "properties": {
+        "modul": {
+          "const": "m_wcag_audit",
+          "comment": "REGISTERIDENTITETEN (modulhode.modul_id), ikke katalognavnet m56_wcag_audit. Kravet wcag-kontroll-v1 er m56s egen stagingrunde, saa modulen er kjent i skjemaet - en ikke-tom streng lot sammendraget navngi en annen modul enn den som aksepteres."
+        },
+        "release": {
+          "type": "string",
+          "minLength": 1
+        },
+        "image_digest": {
+          "type": "string",
+          "minLength": 12
+        },
+        "kilde": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kilde_sha256": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kjoringer_rent_innen_frist",
+        "kjoringer_med_maalt_signatur",
+        "kjoringer_krav",
+        "avvik_mot_fasit",
+        "robots_private_forisporsler",
+        "robots_5xx_sider_kontrollert",
+        "robots_5xx_krav",
+        "frekvens_tillat",
+        "frekvens_avvist_over_grense",
+        "egress_lekkasjer",
+        "feilinjisering_feilet_med_kvittering",
+        "feilinjisering_promoterte_artefakter",
+        "evidensfrist_reapet",
+        "evidensfrist_sak_opprettet"
+      ],
+      "properties": {
+        "kjoringer_rent_innen_frist": {
+          "$ref": "#/$defs/telling",
+          "comment": "Kjoringer med rent utfall, null avvik og en MAALT varighet under sin egen frist. Het `kjoringer_signert_innen_frist` til Codex' P2 paa #117 runde 15: navnet var det eneste `signert` ved det - ingen del av maalingen spurte om en kvitteringssignatur."
+        },
+        "kjoringer_med_maalt_signatur": {
+          "$ref": "#/$defs/telling",
+          "comment": "Av dem: de som i tillegg bar `kvittering_signert: true` - en EGEN maaling produsenten gjor i basen (signaturkolonnen identisk med konvoluttens, resultathash satt, og kvitteringskapabiliteten brent med nettopp den hashen). En runde som ikke maalte dette staar paa 0, og akseptpunktet `kontroll.ti_kjoringer_signert_innen_frist` blokkerer."
+        },
+        "kjoringer_krav": {
+          "$ref": "#/$defs/telling"
+        },
+        "avvik_mot_fasit": {
+          "$ref": "#/$defs/telling"
+        },
+        "robots_private_forisporsler": {
+          "$ref": "#/$defs/telling"
+        },
+        "robots_5xx_sider_kontrollert": {
+          "$ref": "#/$defs/telling"
+        },
+        "robots_5xx_krav": {
+          "$ref": "#/$defs/telling"
+        },
+        "frekvens_tillat": {
+          "$ref": "#/$defs/telling"
+        },
+        "frekvens_avvist_over_grense": {
+          "$ref": "#/$defs/telling"
+        },
+        "egress_lekkasjer": {
+          "$ref": "#/$defs/telling"
+        },
+        "feilinjisering_feilet_med_kvittering": {
+          "$ref": "#/$defs/telling"
+        },
+        "feilinjisering_promoterte_artefakter": {
+          "$ref": "#/$defs/telling"
+        },
+        "evidensfrist_reapet": {
+          "$ref": "#/$defs/telling"
+        },
+        "evidensfrist_sak_opprettet": {
+          "$ref": "#/$defs/telling"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "telling": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

@@ -1951,6 +1951,13 @@ def test_rapport_lese_api(migrator, klient):
     key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(migrator, TENANT)
     ct, nonce = kryptering.krypter(dek, rapport, TENANT, key_id)
 
+    # 049: releasesnapshotet er FK-bundet — registrer 'r1' for modulen.
+    migrator.execute(
+        "INSERT INTO modulrelease (modul_id, release_id, kontraktversjon,"
+        " kontrakt_hash, manifest_hash, artifact_digest) VALUES"
+        " (%s,'r1',1,%s,'mh','digest-fixtur') ON CONFLICT DO NOTHING",
+        (modul, kh))
+
     def _promoter(oppdrag, artefakttype, ts="now()"):
         _sett_kontekst(migrator, TENANT)
         migrator.execute(

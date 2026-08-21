@@ -1,0 +1,32 @@
+{
+  "bestatt": true,
+  "etterkontroll": {
+    "digest_likhet": true,
+    "drillet_livslop": "draining",
+    "kandidat_livslop": "claiming",
+    "modulstatus": "aktiv"
+  },
+  "krav_id": "rollback-m56-v1",
+  "maalt": {
+    "falske_verdikter": 0,
+    "inflight_har_signert_kvittering": true,
+    "inflight_oppdrag": 1,
+    "inflight_utfall": "utfort",
+    "kandidat_claimet_oppdrag": 1,
+    "kandidat_promoterte_artefakter": 1,
+    "nye_oppdrag_claimet_av_drillet_release": 0,
+    "overtakelse_s": 12.448,
+    "ventetid_ubehandlet_s": 25.079
+  },
+  "oppsett": {
+    "drillet_digest": "af92b70542f18874ebab5807b1bdcca4f69a84b2cd6dd30066e7579ce1b88325",
+    "drillet_release": "wcag-r11",
+    "kandidat_digest": "af92b70542f18874ebab5807b1bdcca4f69a84b2cd6dd30066e7579ce1b88325",
+    "kandidat_release": "wcag-r13",
+    "miljo": "staging",
+    "modul": "m_wcag_audit",
+    "module_epoch": 8,
+    "rullback_release": "wcag-r12"
+  },
+  "ts": "2026-08-20T13:22:06.782956+00:00"
+}

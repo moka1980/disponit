@@ -56,7 +56,21 @@ VARSLER=disponit_varselsender
 # fulle DML. Rollen får bestillingsveiens delmengde + claim-funksjonene
 # (migrer.py PLAN_RETTIGHETER); runtime MISTER claim-EXECUTE i 048.
 PLANARB=disponit_plan_arbeider
-for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER" "$EGRESS" "$DOMENER" "$VARSLER" "$PLANARB"; do
+# 049/#117 (Codex P1): CI-attesten og aksepten skal bæres av TO
+# identiteter. Verifikatoren er innloggingsrollen som SKRIVER attesten,
+# og den er MED VILJE ikke medlem av modules_admin: én innlogging skal
+# aldri kunne gjøre begge rolleskiftene i m56-aksept.py. Attestant og
+# akseptør er to logins.
+# Runde 22 (Codex P1): den fikk først medlemskap i modul_eier «WITH
+# INHERIT FALSE». Det var for bredt. Eierrollen eier BEGGE sider —
+# attestfunksjonene OG registrer_moduldrill/aksepter_moduldeployment —
+# og en eier har EXECUTE i kraft av eierskapet. `SET ROLE` var altså en
+# åpen dør til hele akseptveien, og fire-øyne-skillet lå bare i at
+# skriptet ikke gikk gjennom den. Verifikatoren får nå EXECUTE direkte
+# på de to attestfunksjonene (migrasjon 049) og ingen vei til
+# eierrollen.
+VERIFIKATOR=disponit_ci_verifikator
+for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER" "$EGRESS" "$DOMENER" "$VARSLER" "$PLANARB" "$VERIFIKATOR"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
     | grep -q 1 || sudo -u postgres psql -c \
     "CREATE ROLE $r LOGIN PASSWORD '$(openssl rand -hex 24)'"
@@ -84,6 +98,11 @@ sudo -u postgres psql -qc "GRANT $M37 TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $POLICYEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $MODULEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $MODULESADMIN TO $MIGRATOR WITH INHERIT FALSE"
+# Verifikatoren får INGEN rollemedlemskap — se blokken over LOGIN-løkka.
+# Fullmakten er de to EXECUTE-ene migrasjon 049 gir den, og ikke noe mer.
+# REVOKE-en er ikke pynt: baser satt opp med runde 21-varianten har alt
+# medlemskapet, og oppsettet er idempotent nettopp for å ta dem igjen.
+sudo -u postgres psql -qc "REVOKE $MODULEIER FROM $VERIFIKATOR"
 sudo -u postgres psql -qc "GRANT $DOMENEEIER TO $MIGRATOR WITH INHERIT FALSE"
 # 041: adjudikatorrollen — klyngeobjekt som rollene over. Runtime faar SET
 # (aldri arv) for de to lesningene i adjudikasjonsendepunktene; migrator
@@ -138,6 +157,7 @@ EGRESS_DSN=("DISPONIT_EGRESS_URL=$DB" "DISPONIT_TEST_EGRESS_DSN=${DB}_test")
 DOMENER_DSN=("DISPONIT_DOMAINS_URL=$DB" "DISPONIT_TEST_DOMAINS_DSN=${DB}_test")
 VARSLER_DSN=("DISPONIT_VARSEL_URL=$DB" "DISPONIT_TEST_VARSEL_DSN=${DB}_test")
 PLANARB_DSN=("DISPONIT_PLAN_URL=$DB" "DISPONIT_TEST_PLAN_DSN=${DB}_test")
+VERIFIKATOR_DSN=("DISPONIT_VERIFIKATOR_URL=$DB" "DISPONIT_TEST_VERIFIKATOR_DSN=${DB}_test")
 
 sikre_rolle_dsn "$BRUKER"     "${RUNTIME_DSN[@]}"
 sikre_rolle_dsn "$MIGRATOR"   "${MIGRATOR_DSN[@]}"
@@ -147,6 +167,7 @@ sikre_rolle_dsn "$EGRESS"     "${EGRESS_DSN[@]}"
 sikre_rolle_dsn "$DOMENER"    "${DOMENER_DSN[@]}"
 sikre_rolle_dsn "$VARSLER"    "${VARSLER_DSN[@]}"
 sikre_rolle_dsn "$PLANARB"    "${PLANARB_DSN[@]}"
+sikre_rolle_dsn "$VERIFIKATOR" "${VERIFIKATOR_DSN[@]}"
 sikre_attestasjonsnokler
 sikre_mac_nokler          # PR-012: MAC-register (oppstartsperre for API-et)
 # KEK og token-pepper (PR-005b). KEK manglet helt etter PR-005a: krypteringen
@@ -170,6 +191,7 @@ verifiser_og_reparer "$EGRESS"     "${EGRESS_DSN[@]}"
 verifiser_og_reparer "$DOMENER"    "${DOMENER_DSN[@]}"
 verifiser_og_reparer "$VARSLER"    "${VARSLER_DSN[@]}"
 verifiser_og_reparer "$PLANARB"    "${PLANARB_DSN[@]}"
+verifiser_og_reparer "$VERIFIKATOR" "${VERIFIKATOR_DSN[@]}"
 
 # ------------------------------------------------------------
 # Migrasjoner kjøres av MIGRATOR-rollen — verken av postgres eller av
@@ -361,6 +383,7 @@ verifiser_og_reparer "$EGRESS"     "${EGRESS_DSN[@]}"
 verifiser_og_reparer "$DOMENER"    "${DOMENER_DSN[@]}"
 verifiser_og_reparer "$VARSLER"    "${VARSLER_DSN[@]}"
 verifiser_og_reparer "$PLANARB"    "${PLANARB_DSN[@]}"
+verifiser_og_reparer "$VERIFIKATOR" "${VERIFIKATOR_DSN[@]}"
 
 # ------------------------------------------------------------
 # 048 (#108), Codex P1: LUKK VEDLIKEHOLDSVINDUET.

@@ -36,6 +36,7 @@ jobs:
       DISPONIT_TEST_TOKEN_ADMIN_DSN: postgresql://disponit_token_admin:tok@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_VARSEL_DSN: postgresql://disponit_varselsender:var@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_PLAN_DSN: postgresql://disponit_plan_arbeider:pla@127.0.0.1:5432/disponit_test
+      DISPONIT_TEST_VERIFIKATOR_DSN: postgresql://disponit_ci_verifikator:ver@127.0.0.1:5432/disponit_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -59,6 +60,10 @@ jobs:
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_token_admin LOGIN PASSWORD 'tok'"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_varselsender LOGIN PASSWORD 'var'"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_plan_arbeider LOGIN PASSWORD 'pla'"
+          # 049/#117: CI-attestens EGEN innlogging — SET til modul_eier,
+          # aldri medlem av modules_admin: attestant og akseptør skal
+          # være to identiteter (fire-øyne på akseptens forutsetning).
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_ci_verifikator LOGIN PASSWORD 'ver'"
           # PR-006: NOLOGIN-eieren av arbeidskapabiliteter og claim-funksjonene.
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_m37_claimer NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_authenticator TO disponit_migrator"
@@ -75,6 +80,7 @@ jobs:
           # admin-rollen som får EXECUTE på dem (ikke direkte DML).
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_modul_eier NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_modul_eier TO disponit_migrator WITH INHERIT FALSE"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_modul_eier TO disponit_ci_verifikator WITH INHERIT FALSE"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_modules_admin NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_modules_admin TO disponit_migrator WITH INHERIT FALSE"
           # PR-014b: egress-tjenesterollen (LOGIN, SELECT kun paa visningen),
@@ -138,7 +144,9 @@ jobs:
         env:
           DISPONIT_SP10_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
           DISPONIT_SP10_MIGRATOR_URL: postgresql://disponit_migrator:mig@127.0.0.1:5432/disponit_sp10
-        run: python deploy/staging/sp10-provekjoring.py 48
+        run: |
+          python deploy/staging/sp10-provekjoring.py 48
+          python deploy/staging/sp10-provekjoring.py 49
       - name: Enhetstester + negative policytester
         run: python -m pytest platform/core/tests -q
       - name: "Port: ingen DB-tester ble hoppet over"
