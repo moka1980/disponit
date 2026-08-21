@@ -321,6 +321,37 @@ test("Nøkkeltall: radvis varighet mister aldri presisjon", async () => {
   });
 });
 
+test("Nøkkeltall: sonemerket er sonen tidspunktene faktisk vises i",
+  async () => {
+    // Svaret sier hvilken sone grensene er uttrykt i, og flaten skal
+    // TEGNE dem i den — ikke bare skrive navnet ved siden av leserens
+    // egen klokke. Tokyo er valgt fordi den ligger langt fra både UTC og
+    // kjørerens sone: 10:00Z er 19:00, 12:30Z er 21:30.
+    SVAR = { "/v1/nokkeltall": { ...SVARFORM, tidssone: "Asia/Tokyo" } };
+    const h = nyHoved();
+    visNokkeltall(h, ctx());
+    await vent(() => h.querySelectorAll("table").length >= 5);
+    const meta = [...h.querySelectorAll("time")]
+      .filter((n) => n.getAttribute("datetime") === SVARFORM.vindu_start
+                  || n.getAttribute("datetime") === SVARFORM.vindu_slutt);
+    assert.equal(meta.length, 2, "vindusgrensene mangler som <time>");
+    for (const n of meta) {
+      assert.ok(n.textContent.endsWith("(Asia/Tokyo)"),
+        `grensen bærer ikke sonen: ${n.textContent}`);
+      assert.ok(n.textContent.includes("19:00"),
+        `grensen er ikke tegnet i sonen: ${n.textContent}`);
+    }
+    // Radene ligger per definisjon i vinduet — tegnes de i en annen sone
+    // enn grensene, ser en leser rader utenfor vinduet de er talt i.
+    const lukket = [...h.querySelectorAll("time")]
+      .find((n) => n.getAttribute("datetime")
+        === SVARFORM.unntak_lukkede[0].lukket);
+    assert.ok(lukket, "lukket-tidspunktet mangler som <time>");
+    assert.ok(lukket.textContent.includes("21:30")
+      && lukket.textContent.endsWith("(Asia/Tokyo)"),
+      `raden følger ikke vinduets sone: ${lukket.textContent}`);
+  });
+
 test("Nøkkeltall: ingen SVG/canvas — søylen er HTML/CSS, tastaturvei", async () => {
   SVAR = { "/v1/nokkeltall": SVARFORM };
   const h = nyHoved();

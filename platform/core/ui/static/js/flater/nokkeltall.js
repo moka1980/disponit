@@ -94,7 +94,10 @@ function partisjonstabell(kortNokkel, caption, partisjon) {
 // Lukkede saker: RADFAKTA med et visningstak. Taket er aldri stille —
 // er totalen i vinduet større enn antall rader, står det i klartekst
 // hvor mange av hvor mange som vises, rett ved tabellen.
-function lukkedeTabell(ctx, rader, totalt, grense) {
+// `tidssone` er den samme som vindusledeteksten merkes med: radene ligger
+// PER DEFINISJON i vinduet, så tegnes de i en annen sone enn grensene, ser
+// en leser utenfor UTC rader som faller utenfor vinduet de er talt i.
+function lukkedeTabell(ctx, rader, totalt, grense, tidssone) {
   if (!rader.length) {
     return el("p", { class: "muted",
       text: t("ui.nokkeltall.ingen_lukkede") });
@@ -112,7 +115,7 @@ function lukkedeTabell(ctx, rader, totalt, grense) {
     // Radvis varighet — én saks egen differanse, aldri et snitt.
     tbody.append(el("tr", {},
       el("td", { text: nokkelTekst("unntak", r.kategori) }),
-      el("td", {}, Tidspunkt(r.lukket)),
+      el("td", {}, Tidspunkt(r.lukket, { tidssone })),
       el("td", { text: varighetTekst(r.varighet_s) })));
   }
   tabell.append(tbody);
@@ -203,8 +206,9 @@ export function visNokkeltall(hoved, ctx) {
         el("b", { text: String(d.apne_naa) }),
         el("span", { text: " " + t("ui.nokkeltall.apne_naa_tekst") }));
       sett(meta,
-        `${t("ui.nokkeltall.vindu_valgt")}: `, Tidspunkt(d.vindu_start),
-        " – ", Tidspunkt(d.vindu_slutt), ` (${d.tidssone})`);
+        `${t("ui.nokkeltall.vindu_valgt")}: `,
+        Tidspunkt(d.vindu_start, { tidssone: d.tidssone }),
+        " – ", Tidspunkt(d.vindu_slutt, { tidssone: d.tidssone }));
       const kort = [];
       const besl = partisjonstabell("beslutning",
         t("ui.nokkeltall.kort.beslutninger"), d.beslutninger);
@@ -227,7 +231,7 @@ export function visNokkeltall(hoved, ctx) {
         partisjonstabell("unntak",
           t("ui.nokkeltall.kort.unntak_aktivitet"), d.unntak_aktivitet),
         lukkedeTabell(ctx, d.unntak_lukkede, d.unntak_lukkede_totalt,
-                      d.unntak_lukkede_grense)));
+                      d.unntak_lukkede_grense, d.tidssone)));
       // Tick-kortet: 0 rader er en SETNING, ikke en tom graf — og
       // setningen gjelder VINDUET, ikke all tid. Kortet teller aktivitet
       // i [fra, til), og 0 der sier ingenting om hva som skjedde før:

@@ -27,11 +27,26 @@ export function KategoriTag(kategori) {
 }
 
 // --- Tidspunkt (ISO → lokalisert <time>) -----------------------------------
-export function Tidspunkt(iso) {
+// UTEN `tidssone`: formatert i leserens egen sone, og flaten påstår
+// ingenting om hvilken — det er formen alle flatene utenom nøkkeltall
+// bruker. MED `tidssone`: formatert I den sonen OG merket med den.
+//
+// De to henger sammen i ÉN beslutning, og den bor her. Skrives merkelappen
+// ved SIDEN av kallet, er sonen to steder: formateringen og påstanden om
+// formateringen. Da kan de sprike i stillhet — og det gjorde de: `(UTC)`
+// sto inntil en `Intl.DateTimeFormat` uten `timeZone`, så en leser i UTC+2
+// fikk `10:00–11:00 (UTC)` for vinduet `08:00–09:00Z`.
+//
+// Kaster `Intl` på en ukjent sone, faller vi tilbake til rå ISO — som
+// bærer offsetten selv. Fallbacken kan altså ikke bli en ny feilmerking.
+export function Tidspunkt(iso, { tidssone } = {}) {
   let vis = iso;
   try {
+    const valg = { dateStyle: "short", timeStyle: "short" };
+    if (tidssone) valg.timeZone = tidssone;
     vis = new Intl.DateTimeFormat(sprak() === "en" ? "en-GB" : "nb-NO",
-      { dateStyle: "short", timeStyle: "short" }).format(new Date(iso));
+      valg).format(new Date(iso));
+    if (tidssone) vis = `${vis} (${tidssone})`;
   } catch { /* behold iso som fallback */ }
   return el("time", { datetime: iso, text: vis });
 }
