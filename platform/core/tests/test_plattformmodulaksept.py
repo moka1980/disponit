@@ -36,6 +36,9 @@ UTENFOR = {"moduldrill_boot", "flate_axe_tastatur"}
 #: punkter hviler på de samme bytene.
 ARTEFAKT_STI = "deploy/staging/artefakter/x.json"
 ARTEFAKT_SHA = "ab" * 32
+#: Identitetspunktet: manifestet selv, lest og hashet av verifikatoren.
+MANIFEST_STI = "platform/modules/m02_revisjonslogg/manifest.yaml"
+MANIFEST_SHA = "cd" * 32
 
 
 def _verifikator():
@@ -57,11 +60,32 @@ def _ci_attest(m, ci_run, ci_commit=CI_SHA):
 
 
 def _artefaktkrav(m):
-    """Registerets grønne fasit for artefaktpunktene — {punkt: krav}."""
+    """Registerets grønne fasit for de ORDINÆRE artefaktpunktene —
+    {punkt: krav}. Sentinelpunktene (skoping, identitet) står utenfor:
+    de har ingen literal fasit i registeret."""
     return {p: krav for p, krav in m.execute(
         "SELECT punkt, maalt_krav FROM akseptkrav_punkt"
         "  WHERE krav_id=%s AND kilde_type='artefakt'"
-        "    AND maalt_krav <> '<utenfor grensen>'", (GRENSE,)).fetchall()}
+        "    AND maalt_krav NOT LIKE '<%%>'", (GRENSE,)).fetchall()}
+
+
+def _identitetspunkt(m):
+    """Punktet med `<manifestets sha256>`-sentinelen, eller None."""
+    rad = m.execute(
+        "SELECT punkt FROM akseptkrav_punkt"
+        "  WHERE krav_id=%s AND maalt_krav='<manifestets sha256>'",
+        (GRENSE,)).fetchone()
+    return rad and rad[0]
+
+
+def _manifestattest(m, sha=MANIFEST_SHA, sti=MANIFEST_STI, verdi=None):
+    """Referatet om MANIFESTET: verifikatoren leste stien, hashet bytene
+    og skrev hva de bar for identitetspunktet — digesten selv."""
+    punkt = _identitetspunkt(m)
+    if punkt is None:
+        return
+    _evidensattest(m, punkter={punkt: verdi if verdi is not None else sha},
+                   sti=sti, sha=sha)
 
 
 def _evidensattest(m, punkter=None, sti=ARTEFAKT_STI, sha=ARTEFAKT_SHA):
@@ -80,7 +104,7 @@ def _evidensattest(m, punkter=None, sti=ARTEFAKT_STI, sha=ARTEFAKT_SHA):
         v.close()
 
 
-def _punkter(m, ci_run, ci_commit=CI_SHA):
+def _punkter(m, ci_run, ci_commit=CI_SHA, manifest_sha=MANIFEST_SHA):
     """Punktsettet slik registeret krever det — grønne verdier, riktige
     kildeformer (artefakt VED HASH — også de delte målingene, som eies av
     et annet punkts artefakt — ci_kjoring på akseptens egen kjøring),
@@ -92,6 +116,13 @@ def _punkter(m, ci_run, ci_commit=CI_SHA):
         if krav == "<utenfor grensen>":
             ut[punkt] = {"status": "utenfor_grensen",
                          "begrunnelse": grense}
+        elif krav == "<manifestets sha256>":
+            # Identitetspunktet: den grønne verdien ER akseptens digest,
+            # og referansen navngir manifestets egne bytes.
+            ut[punkt] = {"status": "maalt", "grenseverdi": grense,
+                         "maalt_verdi": manifest_sha, "kilde_type": kt,
+                         "kilde_ref": f"{MANIFEST_STI}"
+                                      f"@sha256:{manifest_sha}"}
         elif kt == "artefakt":
             ut[punkt] = {"status": "maalt", "grenseverdi": grense,
                          "maalt_verdi": krav, "kilde_type": kt,
@@ -114,18 +145,23 @@ def _aksepter(m, *, modul=None, commit=None, sha=None, punkter=None,
     # skal måle nettopp den porten sender eksplisitt avvik.
     if ci_commit is None:
         ci_commit = commit
+    sha = sha or MANIFEST_SHA
     m.execute("RESET ROLE")
     if punkter is None:
-        punkter = _punkter(m, ci_run, ci_commit)
+        punkter = _punkter(m, ci_run, ci_commit, sha)
     if attest:
         _ci_attest(m, ci_run, ci_commit)
     if evidens:
         _evidensattest(m)
+        # …og referatet om manifestet, når digesten i det hele tatt har
+        # en form å lese (formporten måles av egne tester).
+        if len(sha) == 64 and all(t in "0123456789abcdef" for t in sha):
+            _manifestattest(m, sha=sha)
     m.execute("SET ROLE disponit_modules_admin")
     m.execute(
         "SELECT aksepter_plattformmodul(%s,%s,%s,%s,%s,%s,%s::jsonb,"
         "%s,'test')",
-        (modul, commit, sha or "cd" * 32, GRENSE, ci_run, ci_commit,
+        (modul, commit, sha, GRENSE, ci_run, ci_commit,
          json.dumps(punkter), nokkel or "pn-" + secrets.token_hex(6)))
     m.execute("RESET ROLE")
     return modul, commit, ci_run
@@ -136,15 +172,19 @@ def test_grensen_star_i_registeret_uten_onskepunkter(migrator):
     """Port 13 (ønskepunkt-vernet): hvert punkt i grensen måler en
     mekanisme m02 HAR — og skopingen er registerets, eksplisitt: nøyaktig
     de to punktene for mekanismer m02 ikke har står som `<utenfor
-    grensen>`-sentinel, og ingen punkter nevner egress/browser/proxy."""
+    grensen>`-sentinel, og ingen punkter nevner egress/browser/proxy.
+    De åtte klarsignalpunktene + identitetspunktet (Codex P1, runde 1),
+    som ikke er et ønskepunkt men SP-12-invarianten gjort målbar."""
     migrator.execute("RESET ROLE")
     rader = {p: (kt, krav) for p, kt, krav in migrator.execute(
         "SELECT punkt, kilde_type, maalt_krav FROM akseptkrav_punkt"
         "  WHERE krav_id=%s", (GRENSE,)).fetchall()}
     migrator.rollback()
-    assert len(rader) == 8, sorted(rader)
+    assert len(rader) == 9, sorted(rader)
     assert {p for p, (_, krav) in rader.items()
             if krav == "<utenfor grensen>"} == UTENFOR
+    assert {p for p, (_, krav) in rader.items()
+            if krav == "<manifestets sha256>"} == {"manifest_identitet"}
     for navn in rader:
         assert not any(ord_ in navn for ord_ in
                        ("egress", "browser", "proxy")), navn
@@ -179,7 +219,7 @@ def test_aksepten_ende_til_ende_med_replay(migrator):
         " WHERE modul_id=%s AND hendelse='plattformmodulaksept'",
         (modul,)).fetchone()[0]
     migrator.rollback()
-    assert (n_h, n_p, n_u) == (1, 8, 2)
+    assert (n_h, n_p, n_u) == (1, 9, 2)
     assert hendelse == commit
     # identisk replay -> no-op (attesten finnes alt)
     _aksepter(migrator, modul=modul, commit=commit, ci_run=ci_run,
@@ -339,6 +379,67 @@ def test_hashen_maales_mot_referatet_ikke_mot_formen(migrator):
         _aksepter(migrator, ci_run=ci_run, punkter=p)
     assert "to autentiserte identiteter" in str(ei.value)
     migrator.rollback()
+
+
+@pg
+def test_manifestdigesten_er_malt_ikke_pastatt(migrator):
+    """Codex P1, runde 1: `manifest_sha` var bare formkontrollert, så en
+    kaller med gyldig CI-attest kunne feste hvilken som helst velformet
+    64-hex til en immutabel aksept. Identitetspunktet binder digesten til
+    bytes verifikatoren har lest: uten referat, med referanse til ANDRE
+    bytes, med en påstått verdi eller med et referat som bar noe annet —
+    ingen aksept. Og står den, bærer raden digesten."""
+    migrator.execute("RESET ROLE")
+    punkt = _identitetspunkt(migrator)
+    assert punkt is not None
+    # 1. en digest ingen har lest: attestene for de øvrige punktene
+    #    finnes, manifestets gjør det ikke.
+    fri = "ba" * 32
+    _evidensattest(migrator)
+    ci_run = "run-" + secrets.token_hex(4)
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, ci_run=ci_run, sha=fri, evidens=False)
+    assert "ingen attest sier at de bytene er lest" in str(ei.value)
+    migrator.rollback()
+    # 2. attesterte bytes — men et ANNET artefakt enn manifestet.
+    ci_run = "run-" + secrets.token_hex(4)
+    p = _punkter(migrator, ci_run)
+    p[punkt]["kilde_ref"] = f"{ARTEFAKT_STI}@sha256:{ARTEFAKT_SHA}"
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, ci_run=ci_run, punkter=p)
+    assert "manifestets egne bytes" in str(ei.value)
+    migrator.rollback()
+    # 3. en påstått verdi som ikke er akseptens digest.
+    ci_run = "run-" + secrets.token_hex(4)
+    p = _punkter(migrator, ci_run)
+    p[punkt]["maalt_verdi"] = "ff" * 32
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, ci_run=ci_run, punkter=p)
+    assert "grønn observasjon" in str(ei.value)
+    migrator.rollback()
+    # 4. referatet om manifestet bar noe annet enn digesten.
+    annen = "bc" * 32
+    _evidensattest(migrator)
+    _manifestattest(migrator, sha=annen, verdi="et helt annet manifest")
+    ci_run = "run-" + secrets.token_hex(4)
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, ci_run=ci_run, sha=annen, evidens=False)
+    assert "regner mot det målingen SA" in str(ei.value)
+    migrator.rollback()
+    # …og den grønne veien: raden bærer digesten som målt verdi.
+    modul, commit, _ = _aksepter(migrator)
+    migrator.commit()
+    migrator.execute("RESET ROLE")
+    sha, verdi, ref = migrator.execute(
+        "SELECT a.manifest_sha256, p.maalt_verdi, p.kilde_ref"
+        "  FROM plattformmodulaksept a JOIN plattformmodulaksept_punkt p"
+        "    ON (p.modul_id, p.manifest_commit, p.grense_id)"
+        "     = (a.modul_id, a.manifest_commit, a.grense_id)"
+        " WHERE a.modul_id=%s AND p.punkt=%s",
+        (modul, punkt)).fetchone()
+    migrator.rollback()
+    assert (sha, verdi) == (MANIFEST_SHA, MANIFEST_SHA)
+    assert ref == f"{MANIFEST_STI}@sha256:{MANIFEST_SHA}"
 
 
 @pg

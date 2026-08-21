@@ -18,7 +18,9 @@
 -- attestant ≠ akseptør målt på session_user, SP-2-replay, målinger mot
 -- REGISTERETS grense — aldri kallerens), egen tabell fordi identiteten
 -- er en annen: innholdsadressert (manifest_commit + manifest_sha256,
--- SP-11/SP-12) i stedet for en deploymentrad.
+-- SP-11/SP-12) i stedet for en deploymentrad. Digesten er MÅLT, ikke
+-- påstått: grensens identitetspunkt binder den til bytes en annen
+-- autentisert identitet har lest og attestert.
 --
 -- «UTENFOR GRENSEN» ER EN FØRSTEKLASSES TILSTAND, ikke et fravær:
 -- punkter for mekanismer modulen ikke har (moduldrill uten bootbar
@@ -55,8 +57,24 @@
 -- Sentinelen `<utenfor grensen>` i maalt_krav er registerets
 -- FORHÅNDSGODKJENNING av skoping: bare punkter med den kan skrives som
 -- `utenfor_grensen`, og de kan aldri skrives som målt.
+--
+-- IDENTITETEN MÅLES, DEN PÅSTÅS IKKE (Codex P1, runde 1). `manifest_sha`
+-- var bare formkontrollert: en kaller med gyldig CI-attest kunne oppgi
+-- hvilken som helst velformet 64-hex, og den immutable raden og
+-- registerhendelsen påsto da en innholdsadressert identitet hvis digest
+-- ikke hadde noe med manifestet å gjøre — SP-12-invarianten var en
+-- påstand, ikke en måling. Grensen bærer derfor et IDENTITETSPUNKT med
+-- sin egen sentinel: `<manifestets sha256>` betyr «den grønne verdien
+-- for dette punktet ER akseptens manifest-digest». Punktet måles som de
+-- andre artefaktpunktene — mot `evidensfil_attest` — og i tillegg må de
+-- ATTESTERTE bytene være nøyaktig manifestets. Digesten er dermed noe en
+-- annen autentisert identitet har lest, ikke noe kallet fant på.
 INSERT INTO akseptkrav_punkt (krav_id, punkt, kilde_type, grenseverdi,
                               maalt_krav) VALUES
+    ('m02-aksept-v1', 'manifest_identitet', 'artefakt',
+     'manifestet ved akseptcommiten, lest og hashet utenfor aksepten;'
+     ' digesten aksepten bærer er DE bytene (m02-manifest-v1)',
+     '<manifestets sha256>'),
     ('m02-aksept-v1', 'feilinjisering_til_unntakskø', 'artefakt',
      'historikk_komplett=true og klartekst_payload_funnet=false'
      ' (feilinjisering-m01-v1)',
@@ -177,7 +195,7 @@ RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE v_punkt RECORD; v_verdi JSONB; v_ref TEXT; v_status TEXT;
         v_ci RECORD; v_ci_av TEXT; v_mangler TEXT; v_rad RECORD;
-        v_evidens RECORD; v_kilde_sha TEXT;
+        v_evidens RECORD; v_kilde_sha TEXT; v_krav_verdi TEXT;
         v_avvik TEXT;
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended(
@@ -311,6 +329,13 @@ BEGIN
         v_verdi := p_punkter -> v_punkt.punkt;
         v_status := v_verdi ->> 'status';
         v_ref := v_verdi ->> 'kilde_ref';
+        -- Registerets andre sentinel: for IDENTITETSPUNKTET er den
+        -- grønne verdien manifestets digest — den står ikke i registeret,
+        -- for registeret navngir kravet, ikke den enkelte aksepten.
+        -- Ellers er kravet registerets literal, som før.
+        v_krav_verdi := CASE
+            WHEN v_punkt.maalt_krav = '<manifestets sha256>'
+            THEN lower(p_manifest_sha) ELSE v_punkt.maalt_krav END;
         IF v_punkt.maalt_krav = '<utenfor grensen>' THEN
             -- Registerets forhåndsgodkjente skoping: punktet SKAL stå
             -- utenfor, med kallerens begrunnelse — aldri som målt.
@@ -347,12 +372,11 @@ BEGIN
                 v_punkt.kilde_type
                 USING ERRCODE = 'invalid_parameter_value';
         END IF;
-        IF v_verdi ->> 'maalt_verdi' IS DISTINCT FROM v_punkt.maalt_krav
-        THEN
+        IF v_verdi ->> 'maalt_verdi' IS DISTINCT FROM v_krav_verdi THEN
             RAISE EXCEPTION 'aksepter_plattformmodul: punkt % målte «%»,'
                 ' men en grønn observasjon er «%» — en aksept skrives av'
                 ' målinger som oppfyller kravet', v_punkt.punkt,
-                v_verdi ->> 'maalt_verdi', v_punkt.maalt_krav
+                v_verdi ->> 'maalt_verdi', v_krav_verdi
                 USING ERRCODE = 'invalid_parameter_value';
         END IF;
         -- Kilden er en PEKER som holder, aldri en fortelling:
@@ -390,6 +414,19 @@ BEGIN
             -- rader om én fil, og `attester_evidensfil` hører selv at de
             -- to sier det samme.
             v_kilde_sha := substring(v_ref from '@sha256:([0-9a-f]{64})$');
+            -- Identitetspunktet peker på MANIFESTET og ingenting annet:
+            -- uten dette leddet kunne en attest om en hvilken som helst
+            -- annen fil bære punktet, og digesten i den immutable raden
+            -- ville fortsatt vært kallerens påstand.
+            IF v_punkt.maalt_krav = '<manifestets sha256>'
+               AND v_kilde_sha IS DISTINCT FROM lower(p_manifest_sha) THEN
+                RAISE EXCEPTION 'aksepter_plattformmodul: punkt % skal'
+                    ' navngi manifestets egne bytes (sha256:%), men viser'
+                    ' til sha256:% — identiteten er innholdet, og da må'
+                    ' det være innholdet som er lest',
+                    v_punkt.punkt, lower(p_manifest_sha), v_kilde_sha
+                    USING ERRCODE = 'invalid_parameter_value';
+            END IF;
             SELECT * INTO v_evidens FROM public.evidensfil_attest e
              WHERE e.sha256 = v_kilde_sha AND e.punkt = v_punkt.punkt
                AND e.krav_id = p_grense_id AND e.drill_sha256 = '';
@@ -421,13 +458,12 @@ BEGIN
                     USING ERRCODE = 'invalid_parameter_value';
             END IF;
             -- …og det er MÅLINGENS tall som skal oppfylle kravet.
-            IF v_evidens.maalt_verdi IS DISTINCT FROM v_punkt.maalt_krav
-            THEN
+            IF v_evidens.maalt_verdi IS DISTINCT FROM v_krav_verdi THEN
                 RAISE EXCEPTION 'aksepter_plattformmodul: punkt % —'
                     ' sha256:% bar «%», men en grønn observasjon er «%».'
                     ' Aksepten regner mot det målingen SA, ikke mot det'
                     ' kallet gjentar', v_punkt.punkt, v_kilde_sha,
-                    v_evidens.maalt_verdi, v_punkt.maalt_krav
+                    v_evidens.maalt_verdi, v_krav_verdi
                     USING ERRCODE = 'invalid_parameter_value';
             END IF;
         ELSIF v_punkt.kilde_type = 'ci_kjoring' THEN
@@ -444,7 +480,7 @@ BEGIN
             maalt_verdi, kilde_type, kilde_ref)
         VALUES (p_modul_id, lower(p_manifest_commit), p_grense_id,
                 v_punkt.punkt, 'maalt', v_punkt.grenseverdi,
-                v_punkt.maalt_krav, v_punkt.kilde_type, v_ref);
+                v_krav_verdi, v_punkt.kilde_type, v_ref);
     END LOOP;
     INSERT INTO public.modulregister_hendelse (modul_id, hendelse,
         aktor, detalj)
