@@ -116,7 +116,7 @@
   "ui.nokkeltall.total": "Total",
   "ui.nokkeltall.ingen": "none",
   "ui.nokkeltall.ingen_lukkede": "No cases closed in the window.",
-  "ui.nokkeltall.ingen_tick": "No plans have run yet.",
+  "ui.nokkeltall.ingen_tick": "No plans ran in the selected window.",
   "ui.nokkeltall.kort.beslutninger": "Decisions in the window",
   "ui.nokkeltall.reservasjoner": "Frequency reservations in the window",
   "ui.nokkeltall.kort.aktiveringer.kilde": "Policy activations by source",

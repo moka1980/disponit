@@ -220,7 +220,12 @@ export function visNokkeltall(hoved, ctx) {
           t("ui.nokkeltall.kort.unntak_aktivitet"), d.unntak_aktivitet),
         lukkedeTabell(d.unntak_lukkede, d.unntak_lukkede_totalt,
                       d.unntak_lukkede_grense)));
-      // Tick-kortet: 0 rader er en SETNING, ikke en tom graf.
+      // Tick-kortet: 0 rader er en SETNING, ikke en tom graf — og
+      // setningen gjelder VINDUET, ikke all tid. Kortet teller aktivitet
+      // i [fra, til), og 0 der sier ingenting om hva som skjedde før:
+      // «ingen planer har kjørt ennå» ville gjort et gyldig tomt
+      // 24-timers- eller 7-døgnsutsnitt om til et fravær som aldri er
+      // målt. Skulle all-tid-påstanden vises, måtte API-et telle den.
       kort.push(el("section", { class: "kpi-kort" },
         d.tick.total === 0
           ? el("div", {},

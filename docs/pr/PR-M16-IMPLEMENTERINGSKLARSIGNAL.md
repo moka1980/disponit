@@ -33,7 +33,7 @@ K1–K5-konvergensreglene gjelder sløyferundene.**
 | **Policyaktiveringer** | `policyaktivering` · `aktivert_ts` | Per vindu; partisjon per `aktiveringskilde`; partisjon per `pakrevd_antall`; rå tellinger 1 / 2 attestanter (`attestant_b IS NOT NULL`) — ingen andel |
 | **Oppdrag** | `oppdrag` · `status_ts` | Partisjon per status per vindu |
 | **Unntakskøen** | `unntak` · `ts` (opprettet), `status_ts` (lukket) | **To akser, aldri blandet:** aktivitet i `[fra, til)` per kategori; og «åpne nå» som egen rå teller **utenfor vindusvelgeren**. Radvis varighet `status_ts − ts` for lukkede — som radfakta, aldri aggregert. **Kun metadatafelter; kryptert payload røres aldri** |
-| **Planer (tick)** | `bestillingsplan_tick` · **`vindu_start`**, aldri `registrert` (SP-6) | Prod har 0 rader: kortet viser «ingen planer har kjørt ennå» som setning, ikke tom graf. Spørringen finnes og er testet med fixture for dagen data kommer |
+| **Planer (tick)** | `bestillingsplan_tick` · **`vindu_start`**, aldri `registrert` (SP-6) | Prod har 0 rader: kortet viser «ingen planer kjørte i det valgte vinduet» som setning, ikke tom graf — skopet til vinduet, aldri en all-tid-påstand. Spørringen finnes og er testet med fixture for dagen data kommer |
 
 ## 3. Vindus- og suminvariantene
 

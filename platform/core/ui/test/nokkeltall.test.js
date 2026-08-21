@@ -118,8 +118,17 @@ test("Nøkkeltall: UI-tall == API-svar, tabellform, axe rent", async () => {
   assert.ok(tilstand.textContent
     .includes(t("ui.nokkeltall.apne_naa_tekst")));
   assert.ok(!tilstand.closest(".kpi-kort-liste"));
-  // Port 9: tick-kortet med 0 rader er en SETNING.
+  // Port 9: tick-kortet med 0 rader er en SETNING — om VINDUET.
   assert.ok(tekst.includes(t("ui.nokkeltall.ingen_tick")));
+  // Et tomt vindu er ikke et fravær over all tid: kortet teller
+  // aktivitet i [fra, til), og setningen får ikke påstå mer enn det.
+  for (const kart of [NB, EN]) {
+    const s = kart["ui.nokkeltall.ingen_tick"].toLowerCase();
+    for (const paastand of ["ennå", "yet", "aldri", "never"]) {
+      assert.ok(!s.includes(paastand),
+        `tomt tick-vindu påstår et fravær over all tid: ${s}`);
+    }
+  }
   // Radvis varighet vises som omskrevet klartekst.
   // 5400 s → «1 t 30 min» (omskriving av radens eget tall, tapsfri).
   assert.ok(tekst.includes(

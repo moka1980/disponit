@@ -42,8 +42,12 @@ Fire kort i v1, alle fra eksisterende tabeller og leseveier:
 beslutningskortet (reservasjoner per vindu) — ikke eget kort i v1.
 
 **Tick-kortet (planer) er med, ærlig tomt:** prod har 0 rader, og kortet
-viser «ingen planer har kjørt ennå» som tekst — ikke en tom graf som ser
-ødelagt ut. Lesing skjer uten ny indeks; volumet er null (§6).
+viser «ingen planer kjørte i det valgte vinduet» som tekst — ikke en tom
+graf som ser ødelagt ut. Setningen er skopet til VINDUET: kortet teller
+aktivitet i `[fra, til)`, og 0 der sier ingenting om tiden før. En
+påstand om at ingen planer noen gang har kjørt ville krevd en egen
+all-tid-telling, og den finnes ikke i v1. Lesing skjer uten ny indeks;
+volumet er null (§6).
 
 ## 3. Én vindusdefinisjon, én suminvariant
 
@@ -204,9 +208,9 @@ Et punkt uten definert, målbar grense regnes som `nei`.
 
 ## Spørsmål til porten — **besvart i første runde**
 
-1. **Tick-kortet: beholdes** — «ingen planer har kjørt ennå» er ærlig
-   observasjon som viser at planfunksjonen finnes uten å fabrikere
-   aktivitet.
+1. **Tick-kortet: beholdes** — «ingen planer kjørte i det valgte
+   vinduet» er ærlig observasjon som viser at planfunksjonen finnes uten
+   å fabrikere aktivitet, og uten å påstå et fravær utenfor vinduet.
 2. **Testtenantmerking: utsatt** til en faktisk plattformvisning
    spesifiseres — v1 er tenant-skopet, og en skrivevei nå ville brutt
    den bevisst lille read-only-arcen.

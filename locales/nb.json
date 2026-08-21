@@ -116,7 +116,7 @@
   "ui.nokkeltall.total": "Totalt",
   "ui.nokkeltall.ingen": "ingen",
   "ui.nokkeltall.ingen_lukkede": "Ingen saker lukket i vinduet.",
-  "ui.nokkeltall.ingen_tick": "Ingen planer har kjørt ennå.",
+  "ui.nokkeltall.ingen_tick": "Ingen planer kjørte i det valgte vinduet.",
   "ui.nokkeltall.kort.beslutninger": "Beslutninger i vinduet",
   "ui.nokkeltall.reservasjoner": "Frekvensreservasjoner i vinduet",
   "ui.nokkeltall.kort.aktiveringer.kilde": "Policyaktiveringer per kilde",
