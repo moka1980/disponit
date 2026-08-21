@@ -52,8 +52,9 @@ def _ci_attest(m, ci_run, ci_commit=CI_SHA):
 
 def _punkter(m, ci_run, ci_commit=CI_SHA):
     """Punktsettet slik registeret krever det — grønne verdier, riktige
-    kildeformer (delt måling/artefakt VED HASH, ci_kjoring på akseptens
-    egen kjøring), begrunnelse for de skopede."""
+    kildeformer (artefakt VED HASH — også de delte målingene, som eies av
+    et annet punkts artefakt — ci_kjoring på akseptens egen kjøring),
+    begrunnelse for de skopede."""
     ut = {}
     for punkt, kt, grense, krav in m.execute(
             "SELECT punkt, kilde_type, grenseverdi, maalt_krav"
@@ -61,7 +62,7 @@ def _punkter(m, ci_run, ci_commit=CI_SHA):
         if krav == "<utenfor grensen>":
             ut[punkt] = {"status": "utenfor_grensen",
                          "begrunnelse": grense}
-        elif kt in ("delt_maaling", "artefakt"):
+        elif kt == "artefakt":
             ut[punkt] = {"status": "maalt", "grenseverdi": grense,
                          "maalt_verdi": krav, "kilde_type": kt,
                          "kilde_ref": f"deploy/staging/artefakter/x.json"
@@ -360,3 +361,16 @@ def test_ingen_syntetiske_registerrader_i_migrasjonen():
                    "modulkontrakt"):
         assert f"INSERT INTO {tabell}" not in sql \
             and f"INSERT INTO public.{tabell}" not in sql, tabell
+
+
+def test_det_delte_kildedomenet_er_urort():
+    """Codex P2, runde 1 (statisk): 054 utvider ikke `akseptkrav_punkt`s
+    FELLES kildedomene. En type deployment-veien ikke kan måle, ville
+    vært en registrerbar tilstand som aldri kan gi en aksept — delingen
+    bæres av hashen og evidensattesten, ikke av en egen kildetype."""
+    from pathlib import Path
+    rot = Path(__file__).resolve().parents[3]
+    sql = (rot / "platform/core/db/migrations"
+           / "054_plattformmodulaksept.sql").read_text(encoding="utf-8")
+    assert "ALTER TABLE akseptkrav_punkt" not in sql
+    assert "delt_maaling'" not in sql

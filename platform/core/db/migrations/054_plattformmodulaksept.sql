@@ -32,32 +32,39 @@
 
 -- ------------------------------------------------------------
 -- 1. Grensen `m02-aksept-v1` i kravpunktregisteret (definert FØR
---    målingene). `delt_maaling` inn i kildedomenet: en måling som EIES
---    av et annet punkts artefakt og refereres VED HASH (klarsignalets
---    delingsregel: to punkter kan dele en måling, aldri en TYPE måling
---    — kilde_ref uten sha avvises av funksjonen).
---    Constraint-bytte er lovlig: krav-låsen verner RADENE, ikke skjemaet.
+--    målingene).
+--
+--    DELINGEN BÆRES AV HASHEN, IKKE AV EN EGEN KILDETYPE (Codex P2,
+--    runde 1). Første form utvidet det DELTE kildedomenet i
+--    `akseptkrav_punkt` med `delt_maaling`. Domenet er felles med
+--    deployment-grensene, og der er typen en blindvei: `modulaksept_punkt`
+--    (049) avviser den, og `aksepter_moduldeployment` ruter alt utenfor
+--    `evidensfil`/`ci_kjoring`/`artefakt` til `registerhendelse`. Et krav
+--    registrert med den nye typen kunne altså aldri gi en
+--    deployment-aksept — en registrerbar tilstand som ikke kan måles er
+--    ingen utvidelse, den er en felle.
+--
+--    Typen er derfor borte, og domenet står som før. De delte målingene
+--    er `artefakt` — som de andre — og delingsregelen (to punkter kan
+--    dele en MÅLING, aldri en TYPE måling) håndheves der den hører
+--    hjemme: `kilde_ref` må referere ved hash, og punktet måles mot
+--    evidensattesten for NØYAKTIG de bytene. Hvilket punkts artefakt
+--    målingen eies av, står i `grenseverdi`.
 -- ------------------------------------------------------------
-ALTER TABLE akseptkrav_punkt
-    DROP CONSTRAINT akseptkrav_punkt_kilde_type_check;
-ALTER TABLE akseptkrav_punkt
-    ADD CONSTRAINT akseptkrav_punkt_kilde_type_check CHECK (kilde_type IN
-        ('artefakt', 'registerhendelse', 'evidensfil', 'ci_kjoring',
-         'delt_maaling'));
 
 -- Sentinelen `<utenfor grensen>` i maalt_krav er registerets
 -- FORHÅNDSGODKJENNING av skoping: bare punkter med den kan skrives som
 -- `utenfor_grensen`, og de kan aldri skrives som målt.
 INSERT INTO akseptkrav_punkt (krav_id, punkt, kilde_type, grenseverdi,
                               maalt_krav) VALUES
-    ('m02-aksept-v1', 'feilinjisering_til_unntakskø', 'delt_maaling',
+    ('m02-aksept-v1', 'feilinjisering_til_unntakskø', 'artefakt',
      'historikk_komplett=true og klartekst_payload_funnet=false'
      ' (feilinjisering-m01-v1)',
      'historikk_komplett=true, klartekst=0'),
-    ('m02-aksept-v1', 'ytelse_bestatt', 'delt_maaling',
+    ('m02-aksept-v1', 'ytelse_bestatt', 'artefakt',
      '6000 auditerte svar -> 6000 loggposter, en_til_en (perf-m01-v1)',
      '6000/6000 en_til_en'),
-    ('m02-aksept-v1', 'rollback_testet', 'delt_maaling',
+    ('m02-aksept-v1', 'rollback_testet', 'artefakt',
      'tapte_loggposter=0 og identisk radtelling gjennom av-vinduet'
      ' (rollback-m01-v1; service-rollback, ikke moduldrill)',
      'tapte_loggposter=0, radtelling identisk'),
@@ -66,7 +73,7 @@ INSERT INTO akseptkrav_punkt (krav_id, punkt, kilde_type, grenseverdi,
     -- CI-leddene (aktør fra kontekst; append-only i basen) bæres av
     -- grensens egen CI-attest — én rød porttest gjør kjøringen rød og
     -- attesten umulig.
-    ('m02-aksept-v1', 'revisjonslogg_korrekt', 'delt_maaling',
+    ('m02-aksept-v1', 'revisjonslogg_korrekt', 'artefakt',
      '10/10 revisjonsrader mot bestilt, 0 avvik (wcag-kontroll-v2,'
      ' r21) + CI-leddene aktør-fra-kontekst og append-only grønne',
      '10/10 rader, 0 avvik'),
@@ -76,12 +83,12 @@ INSERT INTO akseptkrav_punkt (krav_id, punkt, kilde_type, grenseverdi,
     ('m02-aksept-v1', 'syntetisk_datasett_likt_lokalt', 'artefakt',
      'fordelingen 84/3/93 over 180 hendelser re-målbar av artefaktet'
      ' (m02-fordeling-v1)', '84/3/93 av 180, re-målt'),
-    ('m02-aksept-v1', 'moduldrill_boot', 'delt_maaling',
+    ('m02-aksept-v1', 'moduldrill_boot', 'artefakt',
      'utenfor grensen: m02 har ingen bootbar enhet — ingen modulhode-,'
      ' release- eller deploymentrad; koden kjører i m01s prosess.'
      ' Service-rollbacken er målt i rollback_testet',
      '<utenfor grensen>'),
-    ('m02-aksept-v1', 'flate_axe_tastatur', 'delt_maaling',
+    ('m02-aksept-v1', 'flate_axe_tastatur', 'artefakt',
      'utenfor grensen: m02 eier ingen flate — loggen leses av M-1'
      ' (beslutninger) og M-16 (nøkkeltall), som axe-portes av sine'
      ' egne moduler', '<utenfor grensen>');
@@ -121,8 +128,7 @@ CREATE TABLE plattformmodulaksept_punkt (
                                                     'utenfor_grensen')),
     grenseverdi     TEXT,
     maalt_verdi     TEXT,
-    kilde_type      TEXT CHECK (kilde_type IN ('artefakt', 'delt_maaling',
-                                               'ci_kjoring')),
+    kilde_type      TEXT CHECK (kilde_type IN ('artefakt', 'ci_kjoring')),
     kilde_ref       TEXT,
     begrunnelse     TEXT,
     PRIMARY KEY (modul_id, manifest_commit, grense_id, punkt),
@@ -349,10 +355,10 @@ BEGIN
                 USING ERRCODE = 'invalid_parameter_value';
         END IF;
         -- Kilden er en PEKER som holder, aldri en fortelling:
-        -- `delt_maaling` og `artefakt` refereres VED HASH (klarsignalets
-        -- delingsregel — to punkter kan dele en måling, aldri en type
-        -- måling), `ci_kjoring` navngir nøyaktig akseptens egen kjøring.
-        IF v_punkt.kilde_type IN ('delt_maaling', 'artefakt') THEN
+        -- `artefakt` refereres VED HASH (delingsregelen — to punkter kan
+        -- dele en måling, aldri en type måling), `ci_kjoring` navngir
+        -- nøyaktig akseptens egen kjøring.
+        IF v_punkt.kilde_type = 'artefakt' THEN
             IF v_ref !~ '@sha256:[0-9a-f]{64}$' THEN
                 RAISE EXCEPTION 'aksepter_plattformmodul: punkt % — «%»'
                     ' refererer ikke ved hash («sti@sha256:<64 hex>»);'
