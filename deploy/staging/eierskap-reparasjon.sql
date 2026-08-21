@@ -218,7 +218,16 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'aksepter_moduldeployment(text,text,text,bigint,text,text,uuid,text,text,text,text,jsonb,text,text)', 'disponit_modul_eier'),
     ('FUNCTION', 'attester_ci_kjoring(text,text,text,text,text,text,text)', 'disponit_modul_eier'),
     -- 052: attesten navngir også drillartefaktet den ble regnet mot
-    -- (Codex P1, PR #123) — signaturen er den nye, seksargs.
+    -- (Codex P1, PR #123) — signaturen er den nye, seksargs. BEGGE formene
+    -- står her, av samme grunn som for claim-signaturen over: reparasjonen
+    -- kjører FØR migrer.py, så en base som ennå ikke har kjørt 052 har den
+    -- gamle femargumentsformen installert og eid av modul_eier. Sto den
+    -- ikke her, ville steg 2 klassifisert den som strøgods og flyttet den
+    -- til migrator — og 052, som dropper den under SET LOCAL ROLE
+    -- disponit_modul_eier, ville feilet på manglende eierskap. Raden er
+    -- transitorisk: etter 052 finnes ikke femargumentsformen, og
+    -- designrader uten objekt hoppes stille over.
+    ('FUNCTION', 'attester_evidensfil(text,text,text,jsonb,text)',    'disponit_modul_eier'),
     ('FUNCTION', 'attester_evidensfil(text,text,text,jsonb,text,text)', 'disponit_modul_eier'),
     ('FUNCTION', 'maal_rent_utfall(text,bigint)',                     'disponit_modul_eier'),
     ('FUNCTION', 'maal_kjoringsattest(text,bigint,text,text)',        'disponit_modul_eier'),
