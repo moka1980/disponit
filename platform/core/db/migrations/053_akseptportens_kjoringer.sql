@@ -270,7 +270,7 @@ BEGIN
         END IF;
         SELECT * INTO v_annet FROM public.evidensfil_kjoringer e
          WHERE e.sha256 = v_sha AND e.krav_id = p_krav_id
-           AND e.drill_sha256 = p_drill_sha;
+           AND e.drill_sha256 = v_drill;
         IF FOUND THEN
             IF v_annet.kjoringer IS DISTINCT FROM p_kjoringer THEN
                 RAISE EXCEPTION 'attester_evidensfil: sha256:% har alt'
@@ -281,9 +281,13 @@ BEGIN
                     USING ERRCODE = 'invalid_parameter_value';
             END IF;
         ELSE
+            -- den NORMALISERTE digesten (Codex P2, #125 r2): raden
+            -- valideres og slås opp som `v_drill` — å lagre kallerens
+            -- råform ville latt en uppercase-attest passere skrivingen
+            -- og aldri bli funnet av aksepten.
             INSERT INTO public.evidensfil_kjoringer (sha256, krav_id,
                 drill_sha256, kjoringer, aktor, attestert_av)
-            VALUES (v_sha, p_krav_id, p_drill_sha, p_kjoringer,
+            VALUES (v_sha, p_krav_id, v_drill, p_kjoringer,
                     p_aktor, session_user);
         END IF;
     END IF;
@@ -392,6 +396,24 @@ BEGIN
         IF v_avvik IS NOT NULL THEN
             RAISE EXCEPTION 'aksepter_moduldeployment: nøkkel % gjenbrukt'
                 ' med andre punktobservasjoner: %', p_nokkel, v_avvik
+                USING ERRCODE = 'invalid_parameter_value';
+        END IF;
+        -- …og KJØRINGSLISTEN er like materiell (Codex P2, #125 r2): et
+        -- replay med samme nøkkel men andre kjøringer er to
+        -- motstridende referater av én aksept. Listen står i
+        -- aksepthendelsen raden skrev — den er append-only, så
+        -- sammenligningen er mot det som faktisk ble målt.
+        IF NOT EXISTS (
+            SELECT 1 FROM public.modulregister_hendelse h
+             WHERE h.modul_id = p_modul_id
+               AND h.hendelse = 'modulaksept'
+               AND h.release_id = p_release_id
+               AND h.miljo = p_miljo
+               AND h.detalj -> 'kontrollkjoringer'
+                       = pg_catalog.to_jsonb(p_kjoringer)) THEN
+            RAISE EXCEPTION 'aksepter_moduldeployment: nøkkel % gjenbrukt'
+                ' med andre kontrollkjøringer enn dem aksepten ble målt'
+                ' på', p_nokkel
                 USING ERRCODE = 'invalid_parameter_value';
         END IF;
         RETURN;

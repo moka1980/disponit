@@ -1062,11 +1062,6 @@ def main() -> int:
     # artefaktene og attesteres på runde-evidensfilen — det er DENS
     # runde de binder.
     evidens_maalt.update(sammenheng_verdier(runde, drill, ms))
-    # …og IDENTITETENE (053): verifikatoren attesterer hvilke kjøringer
-    # filen navngir, drillscopet — og basen krever at akseptens
-    # kjøringsliste er ordrett referatets. Kanonisk form: kommadelt.
-    evidens_maalt["identiteter.kjoringer"] = ",".join(
-        str(o) for o in runde["identiteter"]["kjoringer"])
     for punkt, (grense, _) in MAALTE.items():
         punkter[punkt] = {"grenseverdi": grense,
                           "maalt_verdi": evidens_maalt[punkt],

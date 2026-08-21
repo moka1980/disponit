@@ -5361,6 +5361,13 @@ def test_grenser_wcag_kontroll_v2_maaler_de_nye_tellerne():
     assert any("av 10" in fe for fe in _sjekk_grenser(
         "wcag-kontroll-v2",
         v2(identiteter={"kjoringer": list(range(41, 50))})))
+    # …og det LUKKEDE skjemaet sier det samme som grensen (Codex P2,
+    # #125 r2): nøyaktig ti, unike — også for en leser med bare skjemaet.
+    assert valider_artefaktformat(
+        v2(identiteter={"kjoringer": list(range(41, 50))}),
+        "wcag-kontroll-v2")
+    assert valider_artefaktformat(
+        v2(identiteter={"kjoringer": [41] * 10}), "wcag-kontroll-v2")
     assert any("gjentar" in fe for fe in _sjekk_grenser(
         "wcag-kontroll-v2",
         v2(identiteter={"kjoringer": [41] * 10})))
@@ -5674,7 +5681,8 @@ def test_akseptporten_maaler_kjoringene_selv(migrator):
     # bærer kjøringene.
     k = _kjede(migrator)
     did = _drill(migrator, k)
-    _aksepter(migrator, k, did)
+    ak = "a-" + secrets.token_hex(6)
+    _aksepter(migrator, k, did, nokkel=ak)
     migrator.commit()
     migrator.execute("RESET ROLE")
     detalj = migrator.execute(
@@ -5683,6 +5691,31 @@ def test_akseptporten_maaler_kjoringene_selv(migrator):
         (k["mid"],)).fetchone()[0]
     migrator.rollback()
     assert detalj == [k["opp"]["inflight"]]
+    # (e) replay: KJØRINGSLISTEN er materiell (Codex P2, #125 r2) — samme
+    # nøkkel med andre kjøringer er to motstridende referater av én
+    # aksept, selv når alle andre felt er identiske.
+    annet = k["oppdrag"](claim_release="r-drillet")
+    k["artefakt"]("r-drillet", "promotert", annet)
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, k, did, nokkel=ak, kjoringer=[annet],
+                  attest=False, ev_attest=False, id_attest=False)
+    assert "andre kontrollkjøringer" in str(ei.value)
+    migrator.rollback()
+    _aksepter(migrator, k, did, nokkel=ak, attest=False,
+              ev_attest=False)          # identisk replay → no-op
+    migrator.rollback()
+    # (f) identitetsreferatet lagres med NORMALISERT drilldigest (Codex
+    # P2, #125 r2): en uppercase-attest må finnes igjen av aksepten.
+    k2 = _kjede(migrator)
+    _evidens_attest(migrator, _evidens_sha_for(k2),
+                    drill_sha=DRILL_SHA.upper(),
+                    kjoringer=str(k2["opp"]["inflight"]))
+    migrator.execute("RESET ROLE")
+    lagret = migrator.execute(
+        "SELECT drill_sha256 FROM evidensfil_kjoringer WHERE sha256=%s",
+        (_evidens_sha_for(k2),)).fetchone()[0]
+    migrator.rollback()
+    assert lagret == DRILL_SHA
 
 
 def test_aksept_skriptet_baerer_v3_og_sammenhengskravet():
@@ -5691,6 +5724,14 @@ def test_aksept_skriptet_baerer_v3_og_sammenhengskravet():
     formen som tekst basen aldri godtar."""
     import manifestskjema as ms
     m = _aksept_skript()
+    # Codex P1 (#125 r2): identitetslisten inn i `evidens_maalt` sender
+    # den som PUNKT til `attester_evidensfil`, og FK-en mot
+    # `akseptkrav_punkt` feller da enhver normal aksept. Identitetene
+    # går som eget parameter til attestveien (053-bordet) — aldri som
+    # pseudo-punkt.
+    kilde = (ROT / "deploy/staging/m56-aksept.py").read_text(
+        encoding="utf-8")
+    assert 'evidens_maalt["identiteter' not in kilde
     assert m.KRAV == "m56-akseptflipp-v3"
     assert m.ARTEFAKT_KRAV == "wcag-kontroll-v2"
     assert m.DRILLKRAV == "rollback-m56-v1"

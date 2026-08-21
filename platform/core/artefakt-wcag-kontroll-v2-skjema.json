@@ -171,7 +171,10 @@
             "type": "integer",
             "minimum": 1
           },
-          "comment": "Posisjonsordnede oppdrags-IDer fra samme utvalg som tellerne."
+          "comment": "Posisjonsordnede oppdrags-IDer fra samme utvalg som tellerne. NOEYAKTIG ti og unike (Codex P2, #125 r2): kravet er 10/10 distinkte kjoeringer, og det lukkede skjemaet skal si det samme som grensen - ogsaa for en leser som bare har skjemaet.",
+          "minItems": 10,
+          "maxItems": 10,
+          "uniqueItems": true
         }
       }
     }
