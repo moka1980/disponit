@@ -121,9 +121,10 @@ test("Nøkkeltall: UI-tall == API-svar, tabellform, axe rent", async () => {
   // Port 9: tick-kortet med 0 rader er en SETNING.
   assert.ok(tekst.includes(t("ui.nokkeltall.ingen_tick")));
   // Radvis varighet vises som omskrevet klartekst.
-  // 5400 s → «1 timer»-formen (omskriving av radens eget tall).
-  assert.ok(tekst.includes(t("ui.nokkeltall.varighet_timer")
-    .replace("{n}", "1")));
+  // 5400 s → «1 t 30 min» (omskriving av radens eget tall, tapsfri).
+  assert.ok(tekst.includes(
+    `${t("ui.nokkeltall.varighet_timer").replace("{n}", "1")} `
+    + t("ui.nokkeltall.varighet_min").replace("{n}", "30")));
   // Port 12: axe uten alvorlige brudd.
   assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
 });
@@ -245,6 +246,40 @@ test("Nøkkeltall: engelsk visning viser aldri de norske maskinkodene", async ()
   } finally {
     settI18nForTest(NB, "nb");
   }
+});
+
+test("Nøkkeltall: radvis varighet mister aldri presisjon", async () => {
+  // Grensetilfellene Codex pekte på: 119 s var «1 min», 86 399 s var
+  // «23 timer». Nå skal hvert sekund kunne leses tilbake ut av teksten.
+  const sak = (id, varighet_s) => ({ id, kategori: "over_grense",
+    sakstype: "normal", status: "løst",
+    opprettet: "2026-08-20T11:00:00+00:00",
+    lukket: "2026-08-20T12:30:00+00:00", varighet_s });
+  SVAR = { "/v1/nokkeltall": { ...SVARFORM, unntak_lukkede: [
+    sak(1, 119), sak(2, 86399), sak(3, 45), sak(4, 90061), sak(5, 3600)],
+    unntak_lukkede_totalt: 5 } };
+  const h = nyHoved();
+  visNokkeltall(h, ctx());
+  await vent(() => h.querySelectorAll("table").length >= 5);
+  const celler = [...h.querySelectorAll("table")]
+    .find((tb) => tb.querySelector("caption").textContent
+      === t("ui.nokkeltall.lukkede_caption"))
+    .querySelectorAll("tbody tr");
+  const d = (n) => t("ui.nokkeltall.varighet_dogn").replace("{n}", String(n));
+  const ti = (n) => t("ui.nokkeltall.varighet_timer").replace("{n}", String(n));
+  const mi = (n) => t("ui.nokkeltall.varighet_min").replace("{n}", String(n));
+  const se = (n) => t("ui.nokkeltall.varighet_sek").replace("{n}", String(n));
+  const forventet = [
+    `${mi(1)} ${se(59)}`,                      // 119 s, ikke «1 min»
+    `${ti(23)} ${mi(59)} ${se(59)}`,           // 86 399 s, ikke «23 timer»
+    se(45),
+    `${d(1)} ${ti(1)} ${mi(1)} ${se(1)}`,      // 90 061 s
+    ti(1),                                     // eksakt time: ingen haleledd
+  ];
+  assert.equal(celler.length, forventet.length);
+  celler.forEach((rad, i) => {
+    assert.equal(rad.cells[2].textContent, forventet[i]);
+  });
 });
 
 test("Nøkkeltall: ingen SVG/canvas — søylen er HTML/CSS, tastaturvei", async () => {

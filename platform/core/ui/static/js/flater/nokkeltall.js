@@ -127,17 +127,33 @@ function lukkedeTabell(rader, totalt, grense) {
   return bolk;
 }
 
+const VARIGHETSLEDD = [[86400, "ui.nokkeltall.varighet_dogn"],
+                       [3600, "ui.nokkeltall.varighet_timer"],
+                       [60, "ui.nokkeltall.varighet_min"],
+                       [1, "ui.nokkeltall.varighet_sek"]];
+
 // Varighet som klartekst — en OMSKRIVING av sekundtallet (presentasjon),
 // ingen beregning over flere rader.
+//
+// Omskrivingen er TAPSFRI: den bryter sekundtallet ned i alle leddene som
+// er større enn null, ned til sekundet. Å bare vise det største leddet
+// kastet resten — 119 s ble «1 min» og 86 399 s ble «23 timer» — og
+// kortet lover nettopp den enkelte sakens FAKTISKE varighet, ikke et
+// avrundet anslag. Et tall denne flaten viser skal kunne leses tilbake.
 function varighetTekst(sek) {
-  if (sek < 60) return t("ui.nokkeltall.varighet_sek")
-    .replace("{n}", String(sek));
-  if (sek < 3600) return t("ui.nokkeltall.varighet_min")
-    .replace("{n}", String(Math.floor(sek / 60)));
-  if (sek < 86400) return t("ui.nokkeltall.varighet_timer")
-    .replace("{n}", String(Math.floor(sek / 3600)));
-  return t("ui.nokkeltall.varighet_dogn")
-    .replace("{n}", String(Math.floor(sek / 86400)));
+  // 0 og et negativt tall (status_ts før ts) vises som det er: en
+  // dataanomali skal SES, ikke glattes bort til «0 sek».
+  if (!(sek > 0)) {
+    return t("ui.nokkeltall.varighet_sek").replace("{n}", String(sek));
+  }
+  const ledd = [];
+  let rest = sek;
+  for (const [storrelse, nokkel] of VARIGHETSLEDD) {
+    const n = Math.floor(rest / storrelse);
+    rest -= n * storrelse;
+    if (n > 0) ledd.push(t(nokkel).replace("{n}", String(n)));
+  }
+  return ledd.join(" ");
 }
 
 export function visNokkeltall(hoved, ctx) {
