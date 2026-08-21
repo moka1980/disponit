@@ -53,8 +53,13 @@ const STANDARD_FETCH = async (url) => {
 };
 globalThis.fetch = STANDARD_FETCH;
 
-function ctx() {
-  return { sprak: "nb", scopes: [], tenant: "acme",
+// Nøkkeltallflaten ligger bak `decisions:read` i sitekartet, så DET er
+// grunnlinjen for enhver økt som i det hele tatt kan se den; `leser` har
+// unntaksscopet i tillegg. Et tomt scopesett — som sto her før — er ingen
+// virkelig økt, og en flate testet uten scopes kan ikke vise at den
+// skjuler noe for den som mangler ett.
+function ctx(scopes = ["decisions:read", "exceptions:read"]) {
+  return { sprak: "nb", scopes, tenant: "acme",
     paaUautorisert: () => {} };
 }
 
@@ -170,6 +175,31 @@ test("Nøkkeltall: avkuttet lukkede-liste sier det i klartekst", async () => {
     .replace("{vist}", "1").replace("{totalt}", "137")
     .replace("{grense}", "50")));
   assert.ok(tekst.includes(t("ui.nokkeltall.til_unntak")));
+  assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+});
+
+test("Nøkkeltall: veien videre tilbys aldri til en økt som ikke kan gå den",
+     async () => {
+  // `policyforvalter` har `decisions:read` (ser nøkkeltallene) men ikke
+  // `exceptions:read`, så `#/unntak` er ikke en rute i hennes sitekart:
+  // ruteren leser klikket som en ukjent adresse og tegner Oversikt. Da
+  // skal knappen ikke finnes — men SETNINGEN om at listen er avkuttet
+  // skal fortsatt stå, for den er sann uansett hvem som leser.
+  SVAR = { "/v1/nokkeltall": { ...SVARFORM, unntak_lukkede_totalt: 137,
+    unntak_lukkede_grense: 50 } };
+  const h = nyHoved();
+  visNokkeltall(h, ctx(["decisions:read", "policy:write"]));
+  await vent(() => h.querySelectorAll("table").length >= 5);
+  const tekst = h.textContent;
+  assert.ok(tekst.includes(t("ui.nokkeltall.lukkede_avkuttet")
+    .replace("{vist}", "1").replace("{totalt}", "137")
+    .replace("{grense}", "50")),
+    "avkuttingen skal sies uansett scope");
+  assert.ok(!tekst.includes(t("ui.nokkeltall.til_unntak")),
+    "lovet en flate økten ikke har rute til");
+  // Beslutningsflaten deler scope med nøkkeltallflaten — den veien er
+  // åpen for den samme økten, og skal derfor fortsatt tilbys.
+  assert.ok(tekst.includes(t("ui.nokkeltall.til_beslutninger")));
   assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
 });
 

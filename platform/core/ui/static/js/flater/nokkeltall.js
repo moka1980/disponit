@@ -16,6 +16,7 @@ import { el, sett } from "../dom.js";
 import { t, harNokkel } from "../i18n.js";
 import { hentJson, UautorisertFeil, IngenTilgangFeil } from "../api.js";
 import { Tidspunkt, Feiltilstand, TilgangsVakt } from "../komponenter.js";
+import { harScope } from "../sitekart.js";
 import { flateHode } from "./felles.js";
 
 const VINDUER = ["24t", "7d", "30d"];
@@ -93,7 +94,7 @@ function partisjonstabell(kortNokkel, caption, partisjon) {
 // Lukkede saker: RADFAKTA med et visningstak. Taket er aldri stille —
 // er totalen i vinduet større enn antall rader, står det i klartekst
 // hvor mange av hvor mange som vises, rett ved tabellen.
-function lukkedeTabell(rader, totalt, grense) {
+function lukkedeTabell(ctx, rader, totalt, grense) {
   if (!rader.length) {
     return el("p", { class: "muted",
       text: t("ui.nokkeltall.ingen_lukkede") });
@@ -117,12 +118,17 @@ function lukkedeTabell(rader, totalt, grense) {
   tabell.append(tbody);
   bolk.append(tabell);
   if (totalt > rader.length) {
+    // Setningen står uansett hvem som leser: at utsnittet er avkuttet er
+    // sant for alle, og den påstanden avhenger ikke av at det finnes en
+    // knapp ved siden av. Veien videre gjør — den tegnes bare for en økt
+    // som faktisk kan gå den.
     bolk.append(el("p", { class: "muted",
       text: t("ui.nokkeltall.lukkede_avkuttet")
         .replace("{vist}", String(rader.length))
         .replace("{totalt}", String(totalt))
-        .replace("{grense}", String(grense)) }),
-      lenkeTilUnntak());
+        .replace("{grense}", String(grense)) }));
+    const videre = lenkeTilUnntak(ctx);
+    if (videre) bolk.append(videre);
   }
   return bolk;
 }
@@ -202,10 +208,12 @@ export function visNokkeltall(hoved, ctx) {
       const kort = [];
       const besl = partisjonstabell("beslutning",
         t("ui.nokkeltall.kort.beslutninger"), d.beslutninger);
-      kort.push(el("section", { class: "kpi-kort" }, besl,
+      const beslKort = el("section", { class: "kpi-kort" }, besl,
         el("p", { class: "muted", text:
-          `${t("ui.nokkeltall.reservasjoner")}: ${d.frekvensreservasjoner}` }),
-        lenkeTilBeslutninger()));
+          `${t("ui.nokkeltall.reservasjoner")}: ${d.frekvensreservasjoner}` }));
+      const tilBesl = lenkeTilBeslutninger(ctx);
+      if (tilBesl) beslKort.append(tilBesl);
+      kort.push(beslKort);
       const akt = el("section", { class: "kpi-kort" });
       for (const [partisjon, data] of Object.entries(d.aktiveringer)) {
         akt.append(partisjonstabell("aktivering",
@@ -218,7 +226,7 @@ export function visNokkeltall(hoved, ctx) {
       kort.push(el("section", { class: "kpi-kort" },
         partisjonstabell("unntak",
           t("ui.nokkeltall.kort.unntak_aktivitet"), d.unntak_aktivitet),
-        lukkedeTabell(d.unntak_lukkede, d.unntak_lukkede_totalt,
+        lukkedeTabell(ctx, d.unntak_lukkede, d.unntak_lukkede_totalt,
                       d.unntak_lukkede_grense)));
       // Tick-kortet: 0 rader er en SETNING, ikke en tom graf — og
       // setningen gjelder VINDUET, ikke all tid. Kortet teller aktivitet
@@ -248,17 +256,36 @@ export function visNokkeltall(hoved, ctx) {
   last();
 }
 
-function lenkeTilBeslutninger() {
-  return flateknapp("ui.nokkeltall.til_beslutninger", "#/beslutninger");
+function lenkeTilBeslutninger(ctx) {
+  return flateknapp(ctx, "ui.nokkeltall.til_beslutninger", "#/beslutninger",
+                    "decisions:read");
 }
 
 // Veien videre når lukkede-listen er avkuttet: unntaksflaten har hele
 // settet — nøkkeltallflaten paginerer aldri, den VISER.
-function lenkeTilUnntak() {
-  return flateknapp("ui.nokkeltall.til_unntak", "#/unntak");
+function lenkeTilUnntak(ctx) {
+  return flateknapp(ctx, "ui.nokkeltall.til_unntak", "#/unntak",
+                    "exceptions:read");
 }
 
-function flateknapp(nokkel, hash) {
+// EN VEI VIDERE ER ET LØFTE OM AT FLATEN FINNES (Codex P2).
+//
+// Både menyen og ruteren bygges av `sitekart` fra ØKTENS scopes, så en
+// rute økten ikke har finnes rett og slett ikke: `lagRuter` leser
+// `#/unntak` som en ukjent adresse og tegner reserveflaten (Oversikt).
+// En `policyforvalter` har `decisions:read` og ser derfor nøkkeltallene,
+// men mangler `exceptions:read` — «Til unntakslisten» sendte henne til
+// Oversikt, uten et ord om hvorfor, etter at flaten nettopp hadde lovet
+// henne resten av listen der.
+//
+// Knappen bærer derfor scopet til flaten den peker på, og finnes ikke
+// uten det. Regelen ligger her og ikke på hvert kallsted, fordi en
+// knapp uten scope er nøyaktig den formen som glapp: `#/beslutninger`
+// har scopet nøkkeltallflaten selv krever og var trygg ved en
+// tilfeldighet, ikke ved en kontroll. En ny knapp må nå navngi hvor den
+// fører.
+function flateknapp(ctx, nokkel, hash, scope) {
+  if (!harScope(ctx, scope)) return null;
   const b = el("button", { class: "knapp liten", type: "button",
     text: t(nokkel) });
   b.addEventListener("click", () => { window.location.hash = hash; });

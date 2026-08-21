@@ -133,8 +133,14 @@ nytt.
   ALLTID hele tellingen i vinduet ved siden av
   (`unntak_lukkede_totalt`, fra samme skann som radene — `count(*)
   OVER ()` før `LIMIT`). Er settet større enn taket, sier flaten det i
-  klartekst og lenker til unntakslisten; et utsnitt presenteres aldri
-  som «alle saker lukket i vinduet».
+  klartekst; et utsnitt presenteres aldri som «alle saker lukket i
+  vinduet». **Selve setningen står uansett hvem som leser** — at
+  utsnittet er avkuttet er sant for alle. Knappen videre til
+  unntakslisten gjør ikke: den bærer scopet til flaten den peker på
+  (`exceptions:read`) og tegnes ikke uten, for sitekartet bygger ruter
+  av øktens scopes, og en `policyforvalter` som klikket den havnet på
+  Oversikt uten et ord om hvorfor. En vei videre er et løfte om at
+  flaten finnes.
 
 ## 5. Flaten — første graf-flate, WCAG-kontrakt fra første commit
 
