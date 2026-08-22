@@ -562,12 +562,24 @@ def _dyp_kropp() -> tuple[str, bool]:
     RecursionError-veien UOPPNÅELIG for klientinput i dette miljøet, og
     løftet som gjenstår å måle er at den dypeste lovlige kroppen får det
     dokumenterte 400-svaret — aldri en 500. Målt her, aldri antatt.
+
+    Codex P2: «lovlig» er KROPPSGRENSEN, ikke et rundt tall i nærheten av
+    den. Dypeste probe var 33 000 nivåer = 198 001 B mens `MAKS_KROPP` er
+    262 144 B, så en tolk med tak mellom de to dybdene ble meldt som
+    «feller ikke» enda en klient fortsatt kunne utløse RecursionError —
+    testen tok fallback-grenen og sluttet å måle unntakshåndteringen mens
+    den fremdeles var nåbar. Dybden utledes derfor AV grensen: hvert nivå
+    koster 6 byte (`{"a":` + `}`) pluss den ene `1`-en.
     """
     import json as jsonmodul
+
+    from api.app import MAKS_KROPP
+    dypest = (MAKS_KROPP - 1) // 6      # 6*d+1 <= MAKS_KROPP
     kropp = ""
-    for dybde in (15000, 33000):
+    for dybde in (15000, 33000, dypest):
         kropp = '{"a":' * dybde + "1" + "}" * dybde
-        assert len(kropp) < 200_000, "testkroppen skal ligge under kroppsgrensen"
+        assert len(kropp) <= MAKS_KROPP, \
+            "testkroppen skal ligge innenfor kroppsgrensen"
         try:
             jsonmodul.loads(kropp)
         except RecursionError:
