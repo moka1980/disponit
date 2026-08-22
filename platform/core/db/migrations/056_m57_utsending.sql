@@ -705,3 +705,167 @@ DO $$ BEGIN
 END $$;
 GRANT SELECT, INSERT ON utsendingsliste, utsendingssignatur,
     utsendingsfrigivelse TO disponit_m37_claimer;
+
+-- ------------------------------------------------------------
+-- 9. sikre_sak_for_oppdrag (038 → 041 §16) — KOPI av gjeldende kropp,
+--    diff-endret: den tredje opprinnelsen får en REVISJONSLINJE.
+--
+--    Codex P1 (runde 5 på #140): saksveien for oppdrag utleder loggposten
+--    av `coalesce(o.beslutning_loggpost_id, o.loggpost_id)`. Frigivelses-
+--    armen i §5 setter BEGGE til NULL — med vilje, for autorisasjonen er
+--    signaturen — og dermed ville `unntak`-innsettingen brutt sin egen
+--    `loggpost_id NOT NULL` og rullet tilbake HELE den sene kvitteringen
+--    eller sikkerhetskonflikten. Den nye armen slår opp linjen gjennom
+--    frigivelse → liste → evalueringsoppdrag i stedet.
+--
+--    `CREATE OR REPLACE` beholder eier og grants; blokken må derfor stå
+--    som EIEREN (`disponit_m37_claimer`), som i 041.
+-- ------------------------------------------------------------
+SET LOCAL ROLE disponit_m37_claimer;
+CREATE OR REPLACE FUNCTION sikre_sak_for_oppdrag(p_tenant text, p_oppdrag_id bigint, p_arsak text, p_aktor text, p_request_id text)
+ RETURNS bigint
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'pg_catalog'
+AS $function$
+DECLARE o RECORD; v_id BIGINT; v_logg BIGINT; v_policy TEXT; v_policy_hash TEXT;
+        v_forsok INT := 0;
+BEGIN
+    -- Tenantporten FØRST — før GUC-ene under settes og før noe leses.
+    -- Dette er den API-kallbare formen, og uten porten var `p_tenant`
+    -- kallerens frie valg (se `krev_tenantkontekst`).
+    PERFORM public.krev_tenantkontekst(p_tenant, 'sikre_sak_for_oppdrag');
+    -- Historikktriggeren på unntak krever aktør + request-id i GUC-ene.
+    -- Funksjonen FÅR dem eksplisitt — den setter dem selv (LOCAL), så
+    -- reaper-/kvitteringsveiene ikke er avhengige av at kalleren husket
+    -- nøyaktig hvilken kontekstvariant den satte.
+    PERFORM set_config('disponit.aktor', p_aktor, true);
+    PERFORM set_config('disponit.request_id', p_request_id, true);
+    -- OPPDRAGSRADEN LÅSES FØRST, også på gjenbruksveien. Låsrekkefølgen
+    -- er oppdrag → unntak overalt: reaperen (§5) holder alt `FOR UPDATE`
+    -- på oppdraget når den kaller hit, og kvitteringsveien likeså. Ble
+    -- unntaket låst først her, hadde to veier tatt de samme to låsene i
+    -- hver sin rekkefølge — altså vranglås.
+    SELECT * INTO o FROM public.oppdrag k
+     WHERE k.tenant = p_tenant AND k.id = p_oppdrag_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'sikre_sak_for_oppdrag: ukjent oppdrag %',
+            p_oppdrag_id USING ERRCODE = 'no_data_found';
+    END IF;
+    v_logg := coalesce(o.beslutning_loggpost_id, o.loggpost_id);
+    -- ... OG DEN TREDJE OPPRINNELSEN HAR INGEN EGEN LOGGPOST (Codex P1,
+    -- runde 5 på #140). `oppdrag_opprinnelse_komplett` tvinger BEGGE
+    -- referansene til NULL på frigivelses-armen — autorisasjonen der er
+    -- SIGNATUREN, ikke en revisjonslogg-rad — så `coalesce` over gir
+    -- NULL, mens `unntak.loggpost_id` er NOT NULL. Uten linjen under dør
+    -- hver sen kvittering og hver sikkerhetskonflikt på et
+    -- frigivelsesoppdrag i en rollback: den IRREVERSIBLE utsendelsen
+    -- blir verken ført som sak eller synlig for et menneske — presis det
+    -- utfallet unntaksveien finnes for å hindre.
+    --
+    -- Linjen FINNES, den var bare ikke slått opp: frigivelsen bærer
+    -- listen, og listen bærer EVALUERINGSOPPDRAGET
+    -- (`opprett_utsendingsliste` krever en FULLFØRT
+    -- `rekruttering.evaluering` med opprinnelse `beslutning` eller
+    -- `m37_reparasjon`) — og BEGGE de armene har en NOT NULL loggpost i
+    -- den samme totalformen. Oppslag i virkelig tilstand, ingen ny
+    -- maskin: saken havner på loggposten som autoriserte evalueringen
+    -- kjeden springer ut av, og policysnapshotet under arver den samme.
+    IF v_logg IS NULL AND o.frigivelse_id IS NOT NULL THEN
+        SELECT coalesce(e.beslutning_loggpost_id, e.loggpost_id)
+          INTO v_logg
+          FROM public.utsendingsfrigivelse f
+          JOIN public.utsendingsliste l
+            ON l.tenant = f.tenant AND l.liste_id = f.liste_id
+          JOIN public.oppdrag e
+            ON e.tenant = l.tenant AND e.id = l.oppdrag_id
+         WHERE f.tenant = p_tenant
+           AND f.frigivelse_id = o.frigivelse_id;
+        IF v_logg IS NULL THEN
+            -- Skal ikke kunne skje (FK-kjeden + totalformen), men en
+            -- NOT NULL-krasj to setninger senere er en dårligere
+            -- diagnose enn en navngitt.
+            RAISE EXCEPTION 'sikre_sak_for_oppdrag: frigivelsesoppdrag %'
+                ' mangler revisjonslinje gjennom frigivelse %',
+                p_oppdrag_id, o.frigivelse_id
+                USING ERRCODE = 'no_data_found';
+        END IF;
+    END IF;
+    -- Policysnapshotet (011) arver saken fra BESLUTNINGSLOGGPOSTEN — det
+    -- er den policyen som autoriserte oppdraget. `maks_auto_forsok` er 0:
+    -- en oppdragssak finnes for MENNESKER (evidensfrist/sikkerhet), aldri
+    -- for auto-reparasjon.
+    SELECT r.policy_id, r.policy_content_hash INTO v_policy, v_policy_hash
+      FROM public.revisjonslogg r
+     WHERE r.tenant = p_tenant AND r.id = v_logg;
+    -- «TERMINAL GJENBRUKES ALDRI» ER EN LÅS, IKKE ET BLIKK (Codex P2).
+    --
+    -- Uten `FOR UPDATE` leste gjenbruksveien saken i sitt eget snapshot:
+    -- en saksbehandler som akkurat da satte `løst`/`avvist` uten å ha
+    -- committet var usynlig, og hendelsen ble hengt på en sak som et
+    -- øyeblikk senere var endelig — stikk i strid med regelen indeksen
+    -- håndhever for INNSETTING. Med låsen venter vi på den transaksjonen,
+    -- og READ COMMITTED revaluerer `NOT terminal` mot den nye versjonen:
+    -- ble saken terminal, er raden ikke lenger et treff, og vi faller
+    -- gjennom til å opprette en ny åpen sak. Det er nettopp utfallet
+    -- regelen ber om.
+    --
+    -- Løkken er kappløpets andre halvdel: taper vi unik-bruddet, finnes
+    -- vinnerens rad, og neste runde LÅSER den og leser den (eller ser at
+    -- den alt er terminal og prøver innsettingen på nytt). Et tak på
+    -- forsøkene, så et patologisk ping-pong mellom opprettelse og løsning
+    -- blir en feil vi ser og ikke en evig løkke.
+    LOOP
+        v_forsok := v_forsok + 1;
+        SELECT u.id INTO v_id FROM public.unntak u
+         WHERE u.tenant = p_tenant AND u.oppdrag_id = p_oppdrag_id
+           AND u.arsak = p_arsak AND NOT u.terminal
+           FOR UPDATE;
+        IF FOUND THEN
+            RETURN v_id;                          -- idempotent (port 25)
+        END IF;
+        BEGIN
+            INSERT INTO public.unntak (tenant, loggpost_id, handling, kategori,
+                sakstype, prioritet, payload_kryptert, key_id, nonce,
+                maks_auto_forsok_snapshot, policy_versjon, policy_content_hash,
+                oppdrag_id, arsak,
+                -- 041: payload_type er NOT NULL uten default; oppdragssaker
+                -- arver alltid kryptert payload; sakskilde eksplisitt.
+                payload_type, sakskilde)
+            VALUES (p_tenant, v_logg, o.handling, 'teknisk_feil',
+                    CASE p_arsak WHEN 'sikkerhet' THEN 'sikkerhet'
+                                 ELSE 'normal' END,
+                    CASE p_arsak WHEN 'sikkerhet' THEN 'hoy' ELSE 'normal' END,
+                    o.payload_kryptert, o.key_id, o.nonce,
+                    0, coalesce(v_policy, 'ukjent'),
+                    coalesce(v_policy_hash, ''),
+                    p_oppdrag_id, p_arsak,
+                    'kryptert', 'oppdrag')
+            RETURNING id INTO v_id;
+            EXIT;                                 -- innsettingsveien
+        EXCEPTION WHEN unique_violation THEN
+            -- Kappløpstaperen. Retur skjer i NESTE runde, gjennom
+            -- gjenbruksveien over — ikke gjennom innsettingsveiens hale.
+            -- Sakskoblingen er én HENDELSE, ikke en tilstand: raden er
+            -- idempotent fordi indeksen gjør den det, men historikken er
+            -- append-only og teller. Falt taperen ut i den felles halen,
+            -- fikk ETT oppdrag TO `sak_for_oppdrag`-rader for den samme
+            -- koblingen — og det skjer i praksis, med samtidige sene
+            -- kvitteringer eller sikkerhetskonflikter fra hver sin
+            -- claim-generasjon. Å telle hendelser i sporet er nettopp det
+            -- sporet er til for.
+            IF v_forsok >= 5 THEN
+                RAISE;
+            END IF;
+        END;
+    END LOOP;
+    -- Kun på INNSETTINGSVEIEN: koblingen skjedde nettopp, her.
+    INSERT INTO public.unntak_historikk (tenant, unntak_id, hendelse,
+                                         aktor, request_id, detalj)
+    VALUES (p_tenant, v_id, 'sak_for_oppdrag', p_aktor, p_request_id,
+            jsonb_build_object('oppdrag_id', p_oppdrag_id,
+                               'arsak', p_arsak));
+    RETURN v_id;
+END $function$;
+
+RESET ROLE;

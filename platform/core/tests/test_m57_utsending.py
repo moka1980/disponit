@@ -928,6 +928,50 @@ def test_migrer_baerer_utsendingskjedens_rettigheter():
         assert f"GRANT EXECUTE ON FUNCTION {fn} TO {{rolle}};" in tekst, fn
 
 
+@pg
+def test_frigivelsesoppdrag_faar_sak_med_revisjonslinje(migrator):
+    """Codex P1 på #140 (runde 5): `sikre_sak_for_oppdrag` utleder
+    saksloggen av `coalesce(beslutning_loggpost_id, loggpost_id)`, men
+    frigivelses-armen i totalformen tvinger BEGGE til NULL —
+    autorisasjonen der er signaturen. Uten en utledet linje brøt
+    `unntak.loggpost_id NOT NULL`, og HELE den sene kvitteringen eller
+    sikkerhetskonflikten rullet tilbake: en IRREVERSIBEL utsending uten
+    sak og uten et menneske som fikk se den.
+
+    Linjen slås opp der den finnes — frigivelse → liste →
+    evalueringsoppdrag — og saken skal bære nøyaktig den loggposten
+    evalueringen ble autorisert av.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `IF v_logg IS NULL AND
+    o.frigivelse_id IS NOT NULL`-armen fra 056 §9."""
+    oid, payload = _evaluering(migrator)
+    _sett_kontekst(migrator, TENANT)
+    logg = migrator.execute(
+        "SELECT beslutning_loggpost_id FROM oppdrag WHERE tenant=%s"
+        " AND id=%s", (TENANT, oid)).fetchone()[0]
+    bid = _signatar(migrator)
+    liste = _liste(migrator, oid)
+    _signer(migrator, liste, bid)
+    fid = _frigi(migrator, liste)
+    aoid = _ats_oppdrag(migrator, fid, payload)
+    rt = _rt()
+    try:
+        _sett_kontekst(rt, TENANT)
+        # Sen kvittering på et frigivelsesoppdrag — veien app.py tar.
+        sak = rt.execute("SELECT sikre_sak_for_oppdrag(%s,%s,'evidensfrist',"
+                         "'kvitteringsport','r-m57')",
+                         (TENANT, aoid)).fetchone()[0]
+        rt.commit()
+    finally:
+        rt.close()
+    assert sak is not None
+    _sett_kontekst(migrator, TENANT)
+    rad = migrator.execute(
+        "SELECT loggpost_id, oppdrag_id, arsak FROM unntak WHERE id=%s",
+        (sak,)).fetchone()
+    assert rad == (logg, aoid, "evidensfrist"), rad
+
+
 def test_056_granter_aldri_ubetinget_til_lokalnavnet():
     """Codex P1 på #140 (runde 5): `disponit` er LOKAL-/TESTNAVNET på
     runtime-rollen — `migrer.py` tar navnet som argument. En ubetinget
