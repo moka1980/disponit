@@ -885,6 +885,54 @@ def test_en_merkelappgetter_som_ikke_terminerer_henger_ikke_leseren(tmp_path):
     assert _uleselige_felt(json.loads(r.stdout)["moduler"][0]) == ["kl"], r.stdout
 
 
+def test_en_proxyfelle_kjorer_i_konteksten_ikke_i_verten(tmp_path):
+    """Materialiseringen bor i konteksten (Codex P2, F10 — rotfiksen).
+
+    F3 var en getter, F7 en merkelappgetter, F10 en proxy-felle: en Proxy
+    fanger nesten enhver operasjon, også dem klassifiseringen selv trenger
+    (`getPrototypeOf`, deskriptorlesning, `Object.keys`), så lista over trygge
+    operasjoner kan aldri bli komplett. Grensen som holder er HVOR de kjøres:
+    alt som rører en kontekstverdi kjører nå INNE i konteksten, under samme
+    tidsgrense som kildens egen kode.
+
+    Fellen her KASTER, og porten skal da stoppe rødt med materialiserings-
+    meldingen — fellen kjørte der den skulle, under motorens kontroll. En
+    regresjon (vertskjøring) hadde gitt en ubehandlet unntaksdød uten
+    meldingen.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text(
+        "<html><script>const M = [{n:1,name:'En',area:'X',p:1,"
+        "flow:new Proxy({}, {getPrototypeOf(){throw new Error('felle')}})}];"
+        "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode != 0, r.stdout
+    assert "materialisere" in r.stderr, r.stderr
+
+
+def test_en_proxyfelle_som_aldri_returnerer_gir_tidsavbrudd(tmp_path):
+    """Fellen som aldri returnerer feller porten — porten henger ikke.
+
+    `flow: new Proxy({}, {getPrototypeOf(){for(;;){}}})` hang leseren,
+    generatoren og CI før: fellen kjørte i verten, etter at `runInContext` var
+    ferdig, utenfor enhver tidsgrense. Nå kjører den i konteksten, og
+    tidsgrensen feller den. Prøven skrur grensen ned med
+    `LES_KATALOG_TIMEOUT_MS` så beviset tar millisekunder — en regresjon viser
+    seg som rød her, ikke som en jobb som aldri blir ferdig.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text(
+        "<html><script>const M = [{n:1,name:'En',area:'X',p:1,"
+        "flow:new Proxy({}, {getPrototypeOf(){for(;;){}}})}];"
+        "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60,
+                       env={**os.environ, "LES_KATALOG_TIMEOUT_MS": "500"})
+    assert r.returncode != 0, r.stdout
+    assert "materialisere" in r.stderr, r.stderr
+
+
 # Kontraktklassene katalogen bruker er de SAMME feltene modulregisteret lagrer,
 # og registeret håndhever dem med CHECK-vilkår. Enumene leses derfor ut av
 # den MIGRERTE BASEN, ikke skrevet av her: en kopi i testen ville vært nok en

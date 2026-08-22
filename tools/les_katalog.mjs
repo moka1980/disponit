@@ -85,6 +85,22 @@ const JS_MIME = new Set([
 // den skal si om det — her sier vi bare hva vi så.
 const IKKE_DATA = '__ikke_data__'
 
+// Tidsgrensen all kjøring av kildens kode står under — også materialiseringen,
+// se `MATERIALISER`. Miljøvariabelen finnes for portens egne prøver (en felle
+// som aldri returnerer skal kunne bevises på millisekunder, ikke på ti
+// sekunder); produksjonsverdien er ti sekunder.
+const TIMEOUT = Number(process.env.LES_KATALOG_TIMEOUT_MS) > 0
+  ? Number(process.env.LES_KATALOG_TIMEOUT_MS) : 10000
+
+// KJENT GRENSE (sporet i #137): `SKRIPT_RE` leser råteksten og ser ikke at en
+// tagg står inne i en HTML-kommentar (`<!-- <script>…</script> -->`).
+// Nettleseren tokeniserer; en regex gjør ikke det, og en regex som først
+// skreller kommentarer er tilstandsmaskinen K4/SP-13 forbyr. Løsningen er
+// nettlesergrammatikkens egen leser (jsdom) og tas som eget arkitekturvalg i
+// #137 — ikke som en fjerde form her. En kommentert-ut ekstra katalog gir i
+// dag et HØYLYTT stopp (redeklarasjon), aldri et stille galt valg; en
+// kommentert-ut ENESTE katalog gir «fant ingen» — også høylytt.
+
 function stopp(melding) {
   process.stderr.write(melding + '\n')
   process.exit(1)
@@ -135,6 +151,96 @@ function skriptene(html) {
   return deler
 }
 
+// MATERIALISERINGEN, SOM KONTEKST-KODE (Codex P2, F10 — rotfiksen).
+//
+// F3 var en getter, F7 en merkelapp-getter, F10 en proxy-felle: tredje funn i
+// samme mekanisme, og klassen er ubegrenset — JavaScript lar et objekt fange
+// nesten enhver operasjon (`getPrototypeOf`, `getOwnPropertyDescriptor`,
+// `Object.keys`, alle med feller når verdien er en Proxy). En liste over
+// «trygge operasjoner» kan derfor aldri bli komplett. Grensen som holder er
+// ikke HVILKE operasjoner som kjøres, men HVOR: alt som rører en verdi fra
+// konteksten kjører INNE i konteksten, under samme `timeout` som all annen
+// kode fra kilden. En felle som aldri returnerer gir tidsavbrudd; en felle
+// som kaster gir stopp. Det eneste som krysser kontekstgrensen ut, er én
+// JSON-tekst.
+//
+// Logikken er den samme som portens etablerte doktrine: egenskaper leses som
+// DESKRIPTOR og en accessor påkalles aldri (F3/F7); ordinære dataobjekter
+// kjennes på prototypekjeden; det som bygges har null-prototype så en
+// beregnet `['__proto__']`-nøkkel er et felt (F11). Intrinsics fanges ved
+// materialiseringens start — kilden er repoets egen spesifikasjon, ikke en
+// motstander, og det som IKKE kan fanges slik ville uansett vært sidens kode
+// under samme tidsgrense.
+const MATERIALISER = `(() => {
+  'use strict'
+  const IKKE_DATA = ${JSON.stringify(IKKE_DATA)}
+  const beskriv = Object.getOwnPropertyDescriptor
+  const proto = Object.getPrototypeOf
+  const nokler = Object.keys
+  const erListe = Array.isArray
+  const lagUten = Object.create
+  const endelig = Number.isFinite
+  const tilJson = JSON.stringify
+  const plattObjekt = (verdi) => {
+    const over = proto(verdi)
+    return over === null || proto(over) === null
+  }
+  const slaget = (verdi) => {
+    const over = proto(verdi)
+    const k = over && beskriv(over, 'constructor')
+    if (!k || !('value' in k) || typeof k.value !== 'function') return 'objekt'
+    const n = beskriv(k.value, 'name')
+    if (!n || !('value' in n) || typeof n.value !== 'string' || !n.value) {
+      return 'objekt'
+    }
+    return n.value.toLowerCase()
+  }
+  const merket = (hva) => {
+    const ut = lagUten(null)
+    ut[IKKE_DATA] = hva
+    return ut
+  }
+  const somData = (verdi) => {
+    if (verdi === null) return null
+    const slag = typeof verdi
+    if (slag === 'string' || slag === 'boolean') return verdi
+    if (slag === 'number') {
+      return endelig(verdi) ? verdi : merket('tallet ' + verdi)
+    }
+    if (erListe(verdi)) {
+      const ut = []
+      for (let i = 0; i < verdi.length; i++) ut.push(egenskapen(verdi, i))
+      return ut
+    }
+    if (slag === 'object' && plattObjekt(verdi)) {
+      const ut = lagUten(null)
+      for (const n of nokler(verdi)) ut[n] = egenskapen(verdi, n)
+      return ut
+    }
+    return merket(slag === 'object' ? slaget(verdi) : slag)
+  }
+  const egenskapen = (objekt, nokkel) => {
+    const d = beskriv(objekt, nokkel)
+    if (!d) return null
+    if (!('value' in d)) return merket('accessor')
+    return somData(d.value)
+  }
+  let katalog
+  try { katalog = M } catch (e) { return tilJson({feil: 'mangler'}) }
+  if (typeof katalog === 'undefined') return tilJson({feil: 'mangler'})
+  if (!erListe(katalog)) return tilJson({feil: 'ikke_liste'})
+  const moduler = []
+  for (let i = 0; i < katalog.length; i++) {
+    const post = egenskapen(katalog, i)
+    if (post === null || typeof post !== 'object' || erListe(post) ||
+        IKKE_DATA in post) {
+      return tilJson({feil: 'ikke_post', hvor: i + 1, post})
+    }
+    moduler.push(post)
+  }
+  return tilJson({feil: null, moduler})
+})()`
+
 /** Katalogverdien `M` slik en JavaScript-motor ser den.
  *
  *  HVER TAGG ER SITT EGET SKRIPT (Codex P2). Taggene ble før skjøtt sammen til
@@ -165,7 +271,7 @@ function katalogverdien(deler, kilde) {
             'nettleseren selv avviser.')
     }
     try {
-      skript.runInContext(ctx, {timeout: 10000})
+      skript.runInContext(ctx, {timeout: TIMEOUT})
     } catch (e) {
       // Feilobjektet kommer fra en annen realm, så `instanceof` biter ikke.
       if (e && e.name === 'SyntaxError') {
@@ -177,107 +283,31 @@ function katalogverdien(deler, kilde) {
       if (!kastet) kastet = e
     }
   })
-  let M
+  let tekst
   try {
-    M = vm.runInContext('M', ctx, {timeout: 10000})
+    tekst = vm.runInContext(MATERIALISER, ctx, {timeout: TIMEOUT})
   } catch (e) {
+    stopp('kunne ikke materialisere modulkatalogen: ' + e.message + '\n' +
+          'Alt som rører en kontekstverdi kjører inne i konteksten, under ' +
+          'samme tidsgrense som kildens egen kode — en proxy-felle eller ' +
+          'getter som aldri returnerer gir tidsavbrudd her, aldri en hengt ' +
+          'port. Se `MATERIALISER`.')
+  }
+  const svar = JSON.parse(tekst)
+  if (svar.feil === 'mangler') {
     stopp('fant ingen modulkatalog `M` i sannhetskilden.\n' +
-          `Skriptet stoppet før erklæringen: ${kastet ? kastet.message : e.message}`)
+          `Skriptet stoppet før erklæringen: ${kastet ? kastet.message : 'ukjent årsak'}`)
   }
-  return M
-}
-
-/** `verdi` som ren data, eller `IKKE_DATA`-merket hvis den ikke er det.
- *
- *  Verdiene kommer fra en annen kontekst, så de har ikke vertens prototyper.
- *  `Array.isArray` leser den interne merkelappen og virker på tvers; det som
- *  IKKE er en liste avgjøres av `plattObjekt()`.
- *
- *  OBJEKTET VI BYGGER HAR INGEN PROTOTYPE (Codex P2). `{}` arver `__proto__`
- *  fra `Object.prototype`, og den egenskapen er en SETTER: `ut['__proto__'] =
- *  …` bytter prototypen på `ut` i stedet for å lage et felt. Nøkkelen ble da
- *  borte fra JSON-en, og med den alt som lå under — også en funksjon eller en
- *  accessor den rekursive kontrollen skulle ha meldt. En katalogpost med en
- *  egen, beregnet `['__proto__']`-nøkkel er data som alle andre nøkler her:
- *  over `Object.create(null)` finnes det ingen setter å treffe. */
-function somData(verdi) {
-  if (verdi === null) return null
-  const slag = typeof verdi
-  if (slag === 'string' || slag === 'boolean') return verdi
-  if (slag === 'number') {
-    return Number.isFinite(verdi) ? verdi : {[IKKE_DATA]: 'tallet ' + verdi}
+  if (svar.feil === 'ikke_liste') {
+    stopp('modulkatalogen `M` i sannhetskilden er ikke en liste — katalogen ' +
+          'er en liste av modulposter, og bare det')
   }
-  if (Array.isArray(verdi)) {
-    const ut = []
-    for (let i = 0; i < verdi.length; i++) ut.push(egenskapen(verdi, i))
-    return ut
+  if (svar.feil === 'ikke_post') {
+    stopp(`element ${svar.hvor} i modulkatalogen er ikke en modulpost: ` +
+          `${JSON.stringify(svar.post).slice(0, 60)} — katalogen er en ` +
+          'liste av poster, og bare det')
   }
-  if (slag === 'object' && plattObjekt(verdi)) {
-    const ut = Object.create(null)
-    for (const nokkel of Object.keys(verdi)) ut[nokkel] = egenskapen(verdi, nokkel)
-    return ut
-  }
-  return {[IKKE_DATA]: slag === 'object' ? slaget(verdi) : slag}
-}
-
-/** Sant hvis `verdi` er et objekt som bare bærer felt.
- *
- *  KLASSIFISERINGEN PÅKALLER INGENTING (Codex P2).
- *  `Object.prototype.toString.call(verdi)` LESER `Symbol.toStringTag`, og den
- *  egenskapen kan siden gi en getter. Getteren kjørte da her ute i Node, etter
- *  at `runInContext` hadde returnert — utenfor `timeout`-en, altså nøyaktig
- *  hullet F3 lukket for `verdi[nokkel]`, med en ny inngang: kontrollen som
- *  skulle avgjøre om verdien i det hele tatt er data, kjørte sidens kode først.
- *  Én `get [Symbol.toStringTag](){for(;;);}` hang generatoren, porten og CI.
- *
- *  `getPrototypeOf` leser en intern peker og påkaller ingen egenskap. Over et
- *  vanlig objekt står `Object.prototype` og over den ingenting — også for
- *  `Object.create(null)`, som ikke har noe over seg i det hele tatt. En `Date`,
- *  en `RegExp`, en `Map` eller en klasseforekomst har ett ledd til, og det
- *  leddet er nettopp oppførselen en katalogverdi ikke kan ha. */
-function plattObjekt(verdi) {
-  const over = Object.getPrototypeOf(verdi)
-  return over === null || Object.getPrototypeOf(over) === null
-}
-
-/** Navnet på slaget `verdi` er — `date`, `regexp`, `map` — til meldingen.
- *
- *  Også dette leses uten å påkalle noe: konstruktøren og navnet dens hentes
- *  som DESKRIPTOR, og bare når de er vanlige verdier. Er de det ikke, sier vi
- *  bare `objekt`; en merkelapp er en forklaring, ikke en grunn til å kjøre
- *  sidens kode. */
-function slaget(verdi) {
-  const over = Object.getPrototypeOf(verdi)
-  const k = over && Object.getOwnPropertyDescriptor(over, 'constructor')
-  if (!k || !('value' in k) || typeof k.value !== 'function') return 'objekt'
-  const n = Object.getOwnPropertyDescriptor(k.value, 'name')
-  if (!n || !('value' in n) || typeof n.value !== 'string' || !n.value) {
-    return 'objekt'
-  }
-  return n.value.toLowerCase()
-}
-
-/** Egenskapen `nokkel` på `objekt`, som data.
- *
- *  Egenskapen leses som DESKRIPTOR, aldri som `objekt[nokkel]` (Codex P2). Er
- *  den en accessor, er getteren sidens egen kode, og et vanlig oppslag ville
- *  kjørt den HER UTE i Node — etter at `runInContext` har returnert, altså
- *  utenfor `timeout`-en som verner lesningen mot en løkke i kilden. Én
- *  `get kl(){for(;;);}` ville hengt generatoren, porten og CI uten at noe slo
- *  av.
- *
- *  Getteren kjøres derfor ikke i det hele tatt, og det er samme svar som
- *  merket alt gir for en funksjon: en egenskap som først BLIR TIL når siden
- *  kjører kan hverken leses eller måles av andre enn nettleseren, og katalogen
- *  skal kunne leses av mer enn den.
- *
- *  Et hull i en liste har ingen deskriptor. Det er `null`, slik JSON også ser
- *  det — ikke en accessor. */
-function egenskapen(objekt, nokkel) {
-  const d = Object.getOwnPropertyDescriptor(objekt, nokkel)
-  if (!d) return null
-  if (!('value' in d)) return {[IKKE_DATA]: 'accessor'}
-  return somData(d.value)
+  return svar.moduler
 }
 
 function main() {
@@ -289,28 +319,7 @@ function main() {
   } catch (e) {
     stopp(`fant ikke sannhetskilden: ${sti}`)
   }
-  const M = katalogverdien(skriptene(html), sti)
-  if (!Array.isArray(M)) {
-    stopp('modulkatalogen `M` i sannhetskilden er ikke en liste — katalogen ' +
-          'er en liste av modulposter, og bare det')
-  }
-  // Elementene leses med `egenskapen()`, ikke med `M[i]`: også et ledd i
-  // katalogen kan være en accessor, og den skal ikke kjøre her. Posten er
-  // derfor alt gjort om til data når den kontrolleres.
-  const moduler = []
-  for (let i = 0; i < M.length; i++) {
-    const post = egenskapen(M, i)
-    if (post === null || typeof post !== 'object' || Array.isArray(post) ||
-        IKKE_DATA in post) {
-      // Meldingen skrives med `JSON.stringify`, ikke `String()`: posten er alt
-      // gjort om til data, og de dataene kan bære et objekt uten prototype —
-      // og det har ingen `toString` å konvertere med.
-      stopp(`element ${i + 1} i modulkatalogen er ikke en modulpost: ` +
-            `${JSON.stringify(post).slice(0, 60)} — katalogen er en ` +
-            'liste av poster, og bare det')
-    }
-    moduler.push(post)
-  }
+  const moduler = katalogverdien(skriptene(html), sti)
   process.stdout.write(JSON.stringify({moduler}, null, 1) + '\n')
 }
 
