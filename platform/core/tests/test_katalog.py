@@ -1580,9 +1580,22 @@ def _samleikropp(stmt, ut: list[str], tekst: str) -> None:
     verdi: leses den som en verdi, blir hele kroppen ett ord ingen kjenner
     igjen, og verdiene i den blir usynlige. Den leses derfor som det den er —
     PL/pgSQL med `parse_plpgsql`, ren SQL med `parse_sql`.
+
+    EN SQL-STANDARD KROPP STÅR IKKE SOM STRENG I DET HELE TATT (Codex P2, F22).
+    `CREATE FUNCTION … LANGUAGE SQL BEGIN ATOMIC … END` er PostgreSQL 14s egen
+    form, og der PARSES kroppen med resten av setningen: den ligger ferdig som
+    AST i `sql_body`, og `options` har ingen `as`. `_samleverdier()` fanger hver
+    `CreateFunctionStmt` og gir den hit, så et tomt strengsvar her betydde at
+    hele funksjonen ble hoppet over — verdiene i den forsvant, uten et ord.
+    Da mangler navn registeret FAKTISK har skrevet i hvitlista, og prosaporten
+    kan avvise dem som oppfunnet.
+
+    Treet er alt der, så det leses som et tre. Ingen ny lesning, ingen ny form
+    å vedlikeholde — bare den ene grenen som ikke ble gått.
     """
     kropp, sprak = _kroppen(stmt)
     if not kropp:
+        _samleverdier(getattr(stmt, "sql_body", None), ut)
         return
     if sprak != "plpgsql":
         for rå in pglast.parse_sql(kropp):
@@ -2147,6 +2160,35 @@ def test_en_pensjonert_verdi_er_ute_av_de_kjente(monkeypatch):
      "    PERFORM 'nærmere: æøå';\n"
      "    PERFORM 'oppfunnet_klasse';\n"
      "END $$;\n", True),
+    # EN SQL-STANDARD KROPP ER OGSÅ SKREVET (Codex P2, F22). PostgreSQL 14 kan
+    # skrive kroppen uten sitering, og da PARSES den med resten av setningen:
+    # den står som AST i `sql_body`, og `options` har ingen `as`. Grenen som
+    # fanget hver `CreateFunctionStmt` returnerte da uten å ha lest noe, og
+    # verdiene i funksjonen forsvant i stillhet — navn registeret HAR skrevet
+    # ble borte fra hvitlista, og prosaporten kunne avvise dem som oppfunnet.
+    ("CREATE FUNCTION f() RETURNS text LANGUAGE SQL\n"
+     "BEGIN ATOMIC\n"
+     "    SELECT 'oppfunnet_klasse';\n"
+     "END;\n", True),
+    # Flere setninger i kroppen, og verdien i den siste.
+    ("CREATE FUNCTION f() RETURNS text LANGUAGE SQL\n"
+     "BEGIN ATOMIC\n"
+     "    SELECT 'annet';\n"
+     "    SELECT 'oppfunnet_klasse';\n"
+     "END;\n", True),
+    # Og enkeltuttrykksformen, der `sql_body` er én node og ikke en liste.
+    ("CREATE FUNCTION f() RETURNS text LANGUAGE SQL\n"
+     "RETURN 'oppfunnet_klasse';\n", True),
+    # Den siterte formen leses fortsatt som før — begge veier, begge språk.
+    ("CREATE FUNCTION g() RETURNS text LANGUAGE SQL\n"
+     "AS $$ SELECT 'oppfunnet_klasse' $$;\n", True),
+    ("CREATE FUNCTION h() RETURNS text LANGUAGE plpgsql\n"
+     "AS $$ BEGIN RETURN 'oppfunnet_klasse'; END $$;\n", True),
+    # En SQL-standard kropp uten navnet skriver det fortsatt ikke.
+    ("CREATE FUNCTION f() RETURNS text LANGUAGE SQL\n"
+     "BEGIN ATOMIC\n"
+     "    SELECT 'noe_helt_annet';\n"
+     "END;\n", False),
 ])
 def test_en_sqlkommentar_skriver_ingen_identifikator(sql, star_igjen):
     """Lista over kjente identifikatorer leses av det migrasjonen SKRIVER.
