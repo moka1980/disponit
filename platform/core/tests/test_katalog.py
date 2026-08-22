@@ -665,6 +665,40 @@ def test_leseren_hopper_over_skript_nettleseren_ikke_kjorer(tmp_path, fremmed):
         f"klassisk JavaScript: {poster}")
 
 
+@pytest.mark.parametrize("tagg", [
+    # Egne `data-`-attributter. Nettleseren ser ingen `src` og ingen `type`
+    # her, og kjører taggen som helt vanlig innskript.
+    '<script data-src="documentation">',
+    '<script data-type="module">',
+    '<script data-kilde="spec" data-type="application/ld+json">',
+    # Navnet står helt, men skrivemåten er sidens egen: versaler, mellomrom
+    # rundt likhetstegnet, apostrofer.
+    "<script TYPE = 'text/javascript'>",
+    # Et navn uten verdi, og et navn som ENDER på `type` uten å være det.
+    "<script async data-subtype=module>",
+])
+def test_leseren_leser_attributtnavnene_hele(tmp_path, tagg):
+    """Et suffiks er ikke et attributtnavn (Codex P2).
+
+    Silingen fra forrige runde søkte i råteksten etter attributtlista:
+    `\\bsrc\\s*=` og `\\btype\\s*=`. Ordgrensen fester seg like godt midt i et
+    navn, så `data-src="documentation"` ble lest som ekstern kode og
+    `data-type="module"` som en ES-modul. Nettleseren kjører taggen — den har
+    hverken `src` eller `type` — mens leseren hoppet over den og meldte at
+    sannhetskilden ikke har noen katalog. Katalogen kunne da ikke genereres i
+    det hele tatt, på grunn av et attributt siden selv håndterer riktig.
+
+    Silingen ble strammet inn for å slippe fremmede skript UT; den må ikke
+    samtidig slippe kilden selv ut. Attributtene leses derfor navn for navn.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text(_PROEVESIDE.format(ui="").replace("<script>", tagg, 1),
+                   encoding="utf-8")
+    poster = _katalogposter(sti)
+    assert [p["n"] for p in poster] == [1, 2], (
+        f"leseren hoppet over katalogens egen tagg «{tagg}»: {poster}")
+
+
 def test_en_tagg_som_kaster_stopper_ikke_en_senere_katalog(tmp_path):
     """Hver `<script>` er sitt eget skript (Codex P2).
 

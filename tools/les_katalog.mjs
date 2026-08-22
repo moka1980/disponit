@@ -53,8 +53,19 @@ import fs from 'node:fs'
 import vm from 'node:vm'
 
 const SKRIPT_RE = /<script([^>]*)>([\s\S]*?)<\/script>/g
-const TYPE_RE = /\btype\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i
-const EKSTERN_RE = /\bsrc\s*=/i
+
+// Ett attributt i en starttagg: navnet, og en eventuell verdi sitert med
+// fnutter, apostrofer eller ingenting. Navnet står til det kommer mellomrom,
+// `/`, `>`, `=` eller en fnutt — HTMLs egen oppdeling.
+//
+// ATTRIBUTTNAVN LESES HELE (Codex P2). `\btype\s*=` og `\bsrc\s*=` søkte i
+// råteksten etter attributtlista, og `\b` fester seg like godt midt i et navn:
+// `data-src="documentation"` og `data-type="module"` traff begge. Nettleseren
+// har da ingen `src` og ingen `type`, kjører taggen som helt vanlig innskript
+// — og leseren hoppet over den og meldte at katalogen ikke fantes. Et suffiks
+// er ikke et navn.
+const ATTRIBUTT_RE =
+  /([^\s"'>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]*)))?/g
 
 // MIME-typene HTML-standarden regner som klassisk JavaScript. En `<script>` er
 // klassisk når den ikke har `type` i det hele tatt, når `type` er tom, eller
@@ -90,11 +101,24 @@ function stopp(melding) {
  *  et element siden selv håndterer helt riktig. Har taggen `src`, er koden
  *  ekstern og kroppen kjøres ikke i det hele tatt. */
 function klassisk(attributter) {
-  if (EKSTERN_RE.test(attributter)) return false
-  const t = TYPE_RE.exec(attributter)
-  if (!t) return true
-  const type = (t[1] ?? t[2] ?? t[3]).trim().split(';')[0].trim().toLowerCase()
+  const attr = attributtene(attributter)
+  if (attr.has('src')) return false
+  if (!attr.has('type')) return true
+  const type = attr.get('type').trim().split(';')[0].trim().toLowerCase()
   return type === '' || JS_MIME.has(type)
+}
+
+/** Attributtene i `<script ${attributter}>` som `navn → verdi`.
+ *
+ *  Navn er ikke versalfølsomme, og står et navn to ganger er det FØRSTE som
+ *  gjelder — begge deler slik nettleseren gjør det. Se `ATTRIBUTT_RE`. */
+function attributtene(tekst) {
+  const ut = new Map()
+  for (const a of tekst.matchAll(ATTRIBUTT_RE)) {
+    const navn = a[1].toLowerCase()
+    if (!ut.has(navn)) ut.set(navn, a[2] ?? a[3] ?? a[4] ?? '')
+  }
+  return ut
 }
 
 /** Innholdet i `<script>`-taggene nettleseren kjører, i dokumentrekkefølge.
