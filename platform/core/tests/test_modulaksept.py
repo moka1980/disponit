@@ -1797,14 +1797,36 @@ def test_kravet_er_registrert_og_punktene_bundet(migrator):
     assert "m02" in hode and "konsistensregel" in hode
 
 
+#: Hvert innsjekket WCAG-sammendrag som BÆRER en aksept: v1 er m56s
+#: historiske runde, v2 er det både m56-manifestet og m02-manifestet
+#: binder for `revisjonslogg_korrekt`. Begge skal kunne regenereres av
+#: sin egen råfil — en binding uten regenerering er en påstand.
+EVIDENSKJEDEN = (
+    "deploy/staging/artefakter/wcag-kontroll-v1-20260818T200413.json",
+    "deploy/staging/artefakter/wcag-kontroll-v2-20260822T190624Z.json",
+)
+
+
 @pg
-def test_evidenskjeden_er_bytebundet_hele_veien():
+@pytest.mark.parametrize("artefakt_rel", EVIDENSKJEDEN)
+def test_evidenskjeden_er_bytebundet_hele_veien(artefakt_rel):
     """Port 11 (SP-11): manifestet binder sammendraget med sha256,
     sammendraget binder råfilen (`kilde_sha256`), og sammendraget kan
     REGENERERES mekanisk av den innsjekkede råfilen — et bytte i noe
-    ledd bryter kjeden her, i CI."""
-    art_sti = ROT / ("deploy/staging/artefakter/"
-                     "wcag-kontroll-v1-20260818T200413.json")
+    ledd bryter kjeden her, i CI.
+
+    Codex' P2 (#147, runde 2): porten var hardkodet til v1-artefaktet
+    fra 20260818, mens det er v2-artefaktet fra 20260822 som bærer
+    m02-akseptens `revisjonslogg_korrekt` — modulens kjernepunkt.
+    Akseptkalleren verifiserer sammendragets skjema og grenser, og
+    hasher råfila hver for seg, men beviser aldri at det ene er UTLEDET
+    av det andre: et håndredigert sammendrag med grønne tellere og en
+    fullt gyldig peker til den urørte råfila kunne dermed bære den
+    IMMUTABLE aksepten. Nå måles begge sammendragene — og motprøven
+    under viser at ingen teller er fri: hver eneste én av dem er
+    bestemt av råfila.
+    """
+    art_sti = ROT / artefakt_rel
     art = json.loads(art_sti.read_text(encoding="utf-8"))
     kilde = ROT / art["oppsett"]["kilde"]
     assert hashlib.sha256(kilde.read_bytes()).hexdigest() == \
@@ -1813,9 +1835,20 @@ def test_evidenskjeden_er_bytebundet_hele_veien():
         [sys.executable, str(ROT / "deploy/staging/wcag-kontroll-artefakt.py"),
          str(kilde)], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
-    assert json.loads(r.stdout) == art, \
+    regenerert = json.loads(r.stdout)
+    assert regenerert == art, \
         "sammendraget lar seg ikke regenerere fra råfilen — utvalgsreglene" \
         " og artefaktet har glidd fra hverandre"
+    # Motprøven: porten er ikke en tautologi. Én endret teller — det
+    # håndredigerte, grønne sammendraget — skiller de to, for hver
+    # eneste teller artefaktet bærer.
+    assert art["maalt"], "sammendraget har ingen tellere å måle"
+    for teller in sorted(art["maalt"]):
+        mutert = json.loads(json.dumps(art))
+        mutert["maalt"][teller] += 1
+        assert regenerert != mutert, \
+            f"maalt.{teller} overlever regenereringen — den telleren er" \
+            " ikke bundet av råfila"
 
 
 def _runde_skript():
