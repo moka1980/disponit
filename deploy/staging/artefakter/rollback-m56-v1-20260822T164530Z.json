@@ -1,0 +1,56 @@
+{
+  "bestatt": true,
+  "etterkontroll": {
+    "digest_likhet": true,
+    "drillet_livslop": "draining",
+    "kandidat_livslop": "claiming",
+    "modulstatus": "aktiv",
+    "rullback_bytes_er_forgjengerens": true,
+    "rullback_livslop": "draining"
+  },
+  "identiteter": {
+    "inflight_artefakter": [
+      "dec09aa7-eeb3-4bc7-a710-d04dc24ddea7"
+    ],
+    "inflight_oppdrag_id": "91",
+    "kandidat_artefakter": [
+      "52d316c7-d547-4133-b57d-ba5d45781351"
+    ],
+    "kandidat_oppdrag_id": "93",
+    "rullback_artefakter": [
+      "b6245c61-33fe-46d7-a67e-9c36a679d147"
+    ],
+    "rullback_oppdrag_id": "92"
+  },
+  "krav_id": "rollback-m56-v1",
+  "maalt": {
+    "falske_verdikter": 0,
+    "inflight_har_signert_kvittering": true,
+    "inflight_oppdrag": 1,
+    "inflight_promoterte_artefakter": 1,
+    "inflight_utfall": "utfort",
+    "kandidat_claimet_oppdrag": 1,
+    "kandidat_promoterte_artefakter": 1,
+    "nye_oppdrag_claimet_av_drillet_release": 0,
+    "overtakelse_s": 10.392,
+    "rullback_claimet_oppdrag": 1,
+    "rullback_har_signert_kvittering": true,
+    "rullback_overtakelse_s": 12.504,
+    "rullback_promoterte_artefakter": 1,
+    "ventetid_ubehandlet_s": 25.092
+  },
+  "oppsett": {
+    "drillet_digest": "af92b70542f18874ebab5807b1bdcca4f69a84b2cd6dd30066e7579ce1b88325",
+    "drillet_release": "wcag-r21",
+    "forgjenger_digest": "af92b70542f18874ebab5807b1bdcca4f69a84b2cd6dd30066e7579ce1b88325",
+    "forgjenger_release": "wcag-r20",
+    "kandidat_digest": "af92b70542f18874ebab5807b1bdcca4f69a84b2cd6dd30066e7579ce1b88325",
+    "kandidat_release": "wcag-r23",
+    "miljo": "staging",
+    "modul": "m_wcag_audit",
+    "module_epoch": 10,
+    "rullback_digest": "af92b70542f18874ebab5807b1bdcca4f69a84b2cd6dd30066e7579ce1b88325",
+    "rullback_release": "wcag-r22"
+  },
+  "ts": "2026-08-22T16:46:42.678300+00:00"
+}

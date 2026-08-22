@@ -153,26 +153,27 @@ staging_sjekkliste:
     # gjenta. Merk også at den gamle noten pekte på
     # `platform/modules/wcag_audit/testnettsted/` — den stien finnes ikke;
     # datasettet bor i `platform/modules/m56_wcag_audit/testnettsted/`.
-    status: blokkert
-    blokkert_av: >-
-      Mangler den lokale halvdelen av målingen. Punktet kan settes `ja`
-      igjen når evidensen enten (a) bærer et LOKALT fasitkontrollresultat
-      for de samme scenariene, eller (b) binder bytene byte-nivå: en
-      sha256 over `platform/modules/m56_wcag_audit/testnettsted/`
-      (sider/ + fasit.json), skrevet av sjekklisten i evidensstrømmen,
-      båret videre til artefaktets `oppsett` av
-      deploy/staging/wcag-kontroll-artefakt.py, og sammenlignet med de
-      innsjekkede bytene her. Begge veier krever en ny staging-runde;
-      artefaktet fra 2026-08-18 kan ikke få feltet i ettertid, det er
-      hash-bundet. Aksepten (m56-aksept.py) er uansett blokkert til
-      flippedrillen er kjørt om igjen, jf. `rollback_testet`.
+    status: ja
+    krav_id: wcag-kontroll-v2
+    bevismaalinger:
+      - oppsett.datasett_sha256
+      - maalt.avvik_mot_fasit
+    artefakt: deploy/staging/artefakter/wcag-kontroll-v2-20260822T190624Z.json
+    artefakt_sha256: e4ec7c51a770e7275c046b4b2e53090bb456025ea660cb967da731dfaae47b26
+    # Vei (b) fra blokkert-noten, som var spec-en: byte-binding.
+    # datasett_identitet skrives av sjekklisten i evidensstrømmen (fase 5),
+    # bæres til artefaktets `oppsett.datasett_sha256` av konverteren, og
+    # grensen `krev_datasett_sha_lik_innsjekket` (wcag-kontroll-v2) holder
+    # den mot de innsjekkede bytene — regnet på nytt av porten hver kjøring.
     notat: >-
-      MÅLT PÅ STAGING 2026-08-18 (halve påstanden): fasitkontrollen ga
-      avvik=0 mot testnettstedets fasit i staging-runden — se
-      `tester_gronne_pa_staging`, som er punktet den målingen faktisk
-      beviser. Datasettet (platform/modules/m56_wcag_audit/testnettsted/,
-      fasit skrevet fra konstruksjonen) er sjekket inn, så den lokale
-      siden er tilgjengelig for måling; den er bare ikke målt ennå.
+      MÅLT 2026-08-22 (r21), BEGGE halvdelene: staging-halvdelen
+      avvik_mot_fasit=0, og den lokale halvdelen via vei (b) fra
+      blokkert-noten — sjekklisten skrev datasett-identiteten
+      (sha256 over sider/ + fasit.json) i evidensstrømmen (fase 5),
+      konverteren bar den til artefaktets oppsett.datasett_sha256, og
+      grensen krev_datasett_sha_lik_innsjekket holder den mot de
+      innsjekkede bytene, regnet på nytt av porten hver kjøring.
+      Målingen fra 2026-08-18 dekket bare staging-halvdelen.
   revisjonslogg_korrekt:
     # PUNKTET HAR IKKE MÅLINGEN SIN (Codex P2, PR #117 runde 14).
     # Det sto `ja` med én bevismåling, fristtellingen (som den gang het
@@ -193,30 +194,33 @@ staging_sjekkliste:
     # eller revisjonsradene er feil, og punktet ville stått grønt. Et punkt
     # som navngir en måling påstanden ikke finnes i, låner en konklusjon —
     # samme feil som `syntetisk_datasett_likt_lokalt` over.
-    status: blokkert
-    blokkert_av: >-
-      Mangler sin egen måling. Punktet kan settes `ja` igjen når en
-      staging-runde skriver EGNE observasjoner for de to leddene og
-      artefaktet bærer dem som tellere med grenser i KRAVGRENSER:
-      (a) KVITTERINGEN — for hver av de ti kjøringene: at
-      `oppdrag.kvittering_signatur` er satt, ikke tom, og identisk med
-      `kvittering->signatur->>verdi`, at `resultathash` er satt, og at
-      den attesterte release/regelsett/artefakthash er DEN kjøringen
-      faktisk gikk på (samme port som `registrer_moduldrill` alt måler
-      for drilloppdraget — her for kontrolløpet);
-      (b) REVISJONSRADEN — at `revisjonslogg` har en rad per kjøring med
-      riktig tenant, oppdrag og utfall, talt opp mot de ti bestilte.
-      Krever ny staging-runde: artefaktet fra 2026-08-18 kan ikke få
-      feltene i ettertid, det er hash-bundet.
+    status: ja
+    krav_id: wcag-kontroll-v2
+    bevismaalinger:
+      - maalt.kjoringer_med_attestert_kvittering
+      - maalt.kvittering_attest_avvik
+      - maalt.revisjonsrader_mot_bestilt
+      - maalt.revisjonsrad_avvik
+    artefakt: deploy/staging/artefakter/wcag-kontroll-v2-20260822T190624Z.json
+    artefakt_sha256: e4ec7c51a770e7275c046b4b2e53090bb456025ea660cb967da731dfaae47b26
+    # Begge leddene fra blokkert-noten, som var spec-en, målt i r21:
+    # (a) KVITTERINGEN — maal_kjoringsattest per kjøring (signatur satt og
+    # identisk med kvittering->signatur->>verdi, resultathash satt,
+    # attestert release/regelsett/artefakthash == kjøringens egne — samme
+    # port som registrer_moduldrill, her for kontrolløpet);
+    # (b) REVISJONSRADEN — rad per kjøring med riktig tenant/oppdrag/
+    # utfall, talt mot de ti bestilte. Grensene i wcag-kontroll-v2 krever
+    # 10/10 og 0 avvik i begge ledd.
     notat: >-
-      MÅLT 2026-08-18 (noe annet enn punktet): 10/10 kjøringer fullførte
-      innen frist med null avvik — se `ytelse_bestatt` og
-      `tester_gronne_pa_staging`, som er punktene den målingen beviser.
-      Kvitteringene BLE observert av operatøren i staging-runden
-      (verifikator v_wcag_audit mot nøkkelregisteret, PR-006-signert), og
-      rapport-lese-API-et leverte det promoterte artefaktet dekryptert —
-      men ingen av delene står som en måling i evidensen, og en
-      observasjon som ikke er skrevet ned, kan ingen gjenta.
+      MÅLT 2026-08-22 (r21), begge leddene som EGNE observasjoner i
+      evidensen: (a) kvitteringen — maal_kjoringsattest per kjøring
+      (signatur satt og identisk med kvittering→signatur→verdi,
+      resultathash satt, attestert release/regelsett/artefakthash lik
+      kjøringens egne), 10/10 og kvittering_attest_avvik=0; (b)
+      revisjonsraden — rad per kjøring med riktig tenant/oppdrag/utfall
+      talt mot de ti bestilte, revisjonsrader_mot_bestilt=10 og
+      revisjonsrad_avvik=0. Målingen fra 2026-08-18 var et aggregat av
+      fullføring og frist og beviste aldri disse leddene.
   feilinjisering_til_unntakskø:
     status: ja
     krav_id: wcag-kontroll-v1
@@ -258,28 +262,35 @@ staging_sjekkliste:
     # hvis fødsel og claim-opptak drillen selv bevitnet. At alle m56-
     # releasene deler digest er A1s levende bevis: digest kunne aldri
     # skilt drillet fra udrillet — bare deployment-identiteten kan.
-    status: blokkert
-    blokkert_av: >-
-      Drillen må KJØRES PÅ NYTT på verten med det rettede skriptet
-      (Codex P1 ×2 + P2, PR #117 runde 3). Kjøringen 2026-08-20 13:22
-      bootet aldri rullback-releasen — den oppdaterte bare
-      `moduldeployment` og gikk rett til kandidaten — så artefaktet
-      måler ikke det rullbakkbeviset skal måle, og det bærer verken
-      evidenstellingen bak det løpende oppdragets utfall eller
-      kandidatjobbens identitet. Artefaktet fra 13:22 ligger urørt i
-      `deploy/staging/artefakter/` som historikk; det er ikke lenger
-      bundet her, for evidens som ikke lar seg måle av porten er ikke
-      evidens. Aksepten (m56-aksept.py) er blokkert til en ny,
-      komplett drillkjøring er bundet inn.
+    status: ja
+    krav_id: rollback-m56-v1
+    bevismaalinger:
+      - maalt.nye_oppdrag_claimet_av_drillet_release
+      - maalt.inflight_har_signert_kvittering
+      - maalt.falske_verdikter
+      - maalt.rullback_claimet_oppdrag
+      - maalt.rullback_har_signert_kvittering
+      - maalt.kandidat_claimet_oppdrag
+      - maalt.overtakelse_s
+    artefakt: deploy/staging/artefakter/rollback-m56-v1-20260822T164530Z.json
+    artefakt_sha256: 4d71448933bddc004e048b73af2fe789eca8b8310362f0d9e4fa3cef4dff8b64
+    # KJØRT PÅ NYTT 2026-08-22 16:45 med det rettede skriptet, alle fire
+    # ledd i ÉN kjøring: (a) 0 claims fra drenert wcag-r21 · (b) inflight
+    # utført med signert kvittering 1,51 s etter rullingen · (b2) wcag-r22
+    # med FORGJENGERENS bytes bootet gjennom fase 2/4/9 og utførte det
+    # ventende oppdraget (overtakelse 12,5 s) · (c) akseptkandidaten
+    # wcag-r23 utførte og promoterte E2E-artefaktet 52d316c7-d547-4133-
+    # b57d-ba5d45781351 (akseptens A2-bevis). Kandidaten er raden aksepten
+    # binder. Artefaktet fra 2026-08-20 13:22 ligger som historikk.
     notat: >-
-      KJØRT 2026-08-20 13:22 mot (m_wcag_audit, staging), SUPERSEDERT:
-      wcag-r11 rullet til wcag-r12 MENS oppdrag 54 var claimet —
-      oppdraget fullførte utfort med signert kvittering og promotert
-      artefakt 1,5 s etter rullingen (SP-3: rent utfall); den drenerte
-      releasen claimet INGENTING på 25 s med levende arbeider;
-      kandidaten wcag-r13 (byte-identisk, digest af92b705…) plukket det
-      ventende oppdraget og promoterte E2E-artefaktet ad1579e2… 12,4 s
-      etter fram-rullingen. Det som ALDRI ble målt, er om wcag-r12
-      faktisk lot seg kjøre: releasen ble aldri startet på verten. Den
-      nye kjøringen booter rullbakken gjennom sjekklistens faser 2/4/9
-      og lar den fullføre det ventende oppdraget før kandidaten overtar.
+      KJØRT 2026-08-22 16:45 med det rettede skriptet, alle fire ledd i
+      ÉN kjøring: wcag-r21 rullet MENS oppdrag 91 var claimet —
+      oppdraget fullførte utfort med signert kvittering 1,51 s etter
+      rullingen (SP-3); den drenerte releasen claimet INGENTING på 25 s
+      med levende arbeider; rullbakken wcag-r22 med FORGJENGERENS bytes
+      ble BOOTET gjennom sjekklistens faser 2/4/9 og utførte det
+      ventende oppdraget (overtakelse 12,5 s) — leddet kjøringen fra
+      2026-08-20 aldri målte; kandidaten wcag-r23 (byte-identisk,
+      digest af92b705…) utførte og promoterte E2E-artefaktet
+      52d316c7… (akseptens A2-bevis). Kandidaten er raden aksepten
+      binder. 20/8-kjøringen står som historikk, aldri bindende.

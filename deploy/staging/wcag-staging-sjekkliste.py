@@ -114,7 +114,7 @@ OPPDRAGSTYPE = "kontroll.wcag.nettsted"
 # sammen — ellers oppdages det først i en staging-runde ingen ser før den
 # feiler. `LEGACY_RELEASE` under er uberørt: den navngir releasen de gamle
 # rundefilene tilhørte, ikke den vi kjører nå.
-RELEASE = os.environ.get("WCAG_RELEASE", "").strip() or "wcag-r20"
+RELEASE = os.environ.get("WCAG_RELEASE", "").strip() or "wcag-r24"
 #: Miljøet deployment- og claim-radene bærer (fase 2 registrerer
 #: 'staging'; claim-porten stempler det på oppdraget). Attestmålingen
 #: (052) måler claim-sporet mot NØYAKTIG dette paret (release, miljø).
