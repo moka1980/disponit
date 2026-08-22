@@ -1133,7 +1133,7 @@ def test_m37s_avhengigheter_er_aktive_for_den_selv_kan_bli_det():
 def _m02_suite_artefakt(**maalt):
     """Et helt m02-suite-v1-artefakt, med `maalt` overstyrbar felt for
     felt — så hver test under er ÉN mutasjon fra et grønt artefakt."""
-    from manifestskjema import M02_SUITE_ANDEL
+    from manifestskjema import M02_SUITE_ANDEL, m02_bevisrot_sha256
     tall = {"tester_totalt": 1972, "tester_feilet": 0,
             "tester_hoppet": 12, "m2_tester": len(M02_SUITE_ANDEL),
             "m2_feilet": 0,
@@ -1144,7 +1144,8 @@ def _m02_suite_artefakt(**maalt):
         "bestatt": True,
         "oppsett": {"modul": "m02_revisjonslogg", "commit": "a" * 40,
                     "vert": "disponit-srv",
-                    "m2_filer": list(M02_SUITE_ANDEL)},
+                    "m2_filer": list(M02_SUITE_ANDEL),
+                    "bevisrot_sha256": m02_bevisrot_sha256()},
         "maalt": tall,
     }
 

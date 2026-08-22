@@ -32,7 +32,8 @@
         "tenant",
         "vert",
         "sett_versjon",
-        "sett_sha256"
+        "sett_sha256",
+        "bevisrot_sha256"
       ],
       "properties": {
         "modul": {
@@ -55,6 +56,12 @@
           "type": "string",
           "pattern": "^[0-9a-f]{64}$",
           "comment": "sha256 av settdriverens bytes (deploy/staging/m02_fordeling.py) slik staging FAKTISK kjoerte den. sett_versjon er en haandholdt streng; denne er identiteten. Porten krever likhet med de innsjekkede bytene - samme form som datasett_sha256 (SP-11, paragraf 1.2)."
+        },
+        "bevisrot_sha256": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "comment": "Tillitsgrensens anker (#131-K2/#132): EN digest over hele m02-produsentflaten (manifestskjema.M02_BEVISROT_FILER), re-regnet av porten over sitt eget tre. Artefaktet beviser KJOERINGEN - verten bindes av deploymentkjeden."
         }
       }
     },

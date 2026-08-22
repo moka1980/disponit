@@ -30,7 +30,8 @@
         "modul",
         "commit",
         "vert",
-        "m2_filer"
+        "m2_filer",
+        "bevisrot_sha256"
       ],
       "properties": {
         "modul": {
@@ -52,6 +53,12 @@
             "minLength": 1
           },
           "comment": "Velgerne som ER M-2s andel - navngitt, ikke antatt (delingsbetingelsen i RUTINER.md). Skjemaet krever formen; KRAVGRENSER['m02-suite-v1']['m2_andel_pakrevd'] krever NOEYAKTIG det pinnede utvalget, saa en produsent ikke kan velge sin egen maaling."
+        },
+        "bevisrot_sha256": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "comment": "Tillitsgrensens anker (#131-K2/#132): EN digest over hele m02-produsentflaten (manifestskjema.M02_BEVISROT_FILER), re-regnet av porten over sitt eget tre. Artefaktet beviser KJOERINGEN - verten bindes av deploymentkjeden."
         }
       }
     },

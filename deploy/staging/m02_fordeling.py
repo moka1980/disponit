@@ -71,7 +71,7 @@ def idemnokkel(runde_id: str, beslutning: str, i: int) -> str:
 
 
 def kjor_sett(runde_id: str, post, hendelse, hendelse_uten,
-              tukle) -> dict[str, int]:
+              tukle, pause_s: float = 0.0) -> dict[str, int]:
     """Driver settet gjennom beslutningsveien. -> antall per beslutning.
 
     Avhengighetene er injisert så CI-leddet og staging-leddet bruker
@@ -80,7 +80,12 @@ def kjor_sett(runde_id: str, post, hendelse, hendelse_uten,
       hendelse(ressurs)             -> gyldig hendelse (TILLAT-form)
       hendelse_uten(handling, ressurs) -> uten attestasjoner (UNNTAK)
       tukle(e)                      -> hendelsen med snudd attestasjon
+      pause_s: pacing mellom kallene. Staging-leddet må holde seg under
+      nginx-sonen `disponit_general` (600r/m = 10/s, burst 100) — 180
+      upacede kall sprenger den (Codex P1, #131 r3). CI-leddet kjører
+      in-process uten nginx og pacer ikke.
     """
+    import time
     talt: dict[str, int] = {}
     for forventet, i in bygg_sett():
         # `runde_id` MÅ stå i ressursen, ikke bare i idempotensnøkkelen:
@@ -98,6 +103,8 @@ def kjor_sett(runde_id: str, post, hendelse, hendelse_uten,
             e = tukle(hendelse(ressurs))
         else:
             e = hendelse_uten(f"m02.finnes.ikke.{i}", ressurs)
+        if pause_s:
+            time.sleep(pause_s)
         status, beslutning = post(e, idemnokkel(runde_id, forventet, i))
         if status != 200 or beslutning != forventet:
             raise SystemExit(
@@ -109,7 +116,7 @@ def kjor_sett(runde_id: str, post, hendelse, hendelse_uten,
 
 
 def artefakt(rader: list[tuple[int, str]], tenant: str, vert: str,
-             ts: str) -> dict:
+             ts: str, bevisrot: str) -> dict:
     """Artefaktet, med tallene REGNET AV RADENE — aldri av driveren.
 
     `rader` er [(loggpost_id, beslutning)] lest ut av `revisjonslogg`
@@ -131,7 +138,12 @@ def artefakt(rader: list[tuple[int, str]], tenant: str, vert: str,
                     # ... og settets IDENTITET, ikke bare dets navn:
                     # `sett_versjon` er håndholdt, `sett_sha256` er bytene
                     # som faktisk drev hendelsene.
-                    "sett_sha256": sett_sha256()},
+                    "sett_sha256": sett_sha256(),
+                    # Tillitsgrensens anker (#131-K2/#132): hele
+                    # produsentflaten som innsjekkede bytes — kalleren
+                    # regner den med manifestskjema.m02_bevisrot_sha256,
+                    # og porten re-regner over sitt eget tre.
+                    "bevisrot_sha256": bevisrot},
         "maalt": {"antall_tillat": talt.get("TILLAT", 0),
                   "antall_stopp": talt.get("STOPP", 0),
                   "antall_unntak": talt.get("UNNTAK", 0)},
