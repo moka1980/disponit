@@ -208,6 +208,17 @@ def _rydd(migrator, *tenanter: str) -> None:
                 # 056: ATS-oppdragene PEKER på frigivelsene og må ut
                 # først — mens listene peker på EVAL-oppdragene, som
                 # ryddes med resten av `oppdrag` etter kjeden.
+                #
+                # ... og fra 056 §9 kan et ATS-oppdrag BÆRE EN SAK (sen
+                # kvittering / sikkerhetskonflikt utleder nå en
+                # revisjonslinje gjennom frigivelse→liste→evaluering, der
+                # den før døde på `loggpost_id NOT NULL`). Forsteget som
+                # står ved `oppdrag` under gjelder derfor allerede her:
+                # sakene ut FØR oppdragene de peker på.
+                migrator.execute(
+                    "DELETE FROM unntak WHERE tenant=%s AND oppdrag_id IN"
+                    " (SELECT id FROM oppdrag WHERE tenant=%s"
+                    "   AND frigivelse_id IS NOT NULL)", (tenant, tenant))
                 migrator.execute("DELETE FROM oppdrag WHERE tenant=%s"
                                  " AND frigivelse_id IS NOT NULL", (tenant,))
             if tabell == "oppdrag":
