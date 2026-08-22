@@ -15,6 +15,23 @@
 -- høyst ett barn per ledd, høyst én SIGNERT versjon per serie. Dermed:
 -- ingen gyldig signatur => ingen representerbar ATS-utsendelse, bevisbart
 -- med direkte DML (portene 6–12).
+--
+-- HVA CP1 IKKE PÅSTÅR — snevret eksplisitt (Cursor P1-2/P2-4, runde 7 på
+-- #140; Funn 8 fra runde 2). Kjeden over binder frigivelsens IDENTITET:
+-- «dette oppdraget hører til denne frigivelsen, som hører til denne
+-- signerte listeversjonen». Den binder IKKE innholdet som faktisk sendes:
+--   * `payload_kryptert` er utenfor retry-materialiteten (AES-GCM gir ny
+--     nonce per kryptering, se §7d), så `disponit_varselsender` — rollen
+--     som har EXECUTE — kan feste vilkårlig chiffertekst til en gyldig
+--     frigivelse. Mennesket signerte listeinnholdet, ikke chifferteksten.
+--   * `mottaker_ref` er et ANTALLTAK mot det signerte `antall`, ikke et
+--     MEDLEMSKAP: basen har ingen representasjon av listens mottakere, så
+--     «disse N mottakerne» er i dag «høyst N strenger».
+-- Begge krever samme maskin — et per-mottaker-manifest skrevet før
+-- signering og dekket av `innhold_hash` — altså ny produktflate, ikke en
+-- fiksrunde-endring (K1, RUTINER §9). Sporet er GitHub-issue #149, og
+-- `test_frigivelse_binder_ikke_payload_til_signert_innhold` dokumenterer
+-- dagens tillatte avvik så regresjonen synes når manifestet kommer.
 
 -- ------------------------------------------------------------
 -- 1. Listeversjonene. Append-only: hele raden er innholdet signaturen

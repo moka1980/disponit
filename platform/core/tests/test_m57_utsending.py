@@ -1535,6 +1535,66 @@ def test_frigivelsesoppdragets_retry_maa_beskrive_samme_oppdrag(migrator):
 
 
 @pg
+def test_frigivelse_binder_ikke_payload_til_signert_innhold(migrator):
+    """DOKUMENTERER ET ÅPENT AVVIK — den skal SNU, ikke bestå, når
+    manifestet kommer (GitHub-issue #149; Funn 8 fra Codex runde 2,
+    gjentatt av Cursor som P1-2/P2-4 i runde 7 på #140).
+
+    CP1 binder frigivelsens IDENTITET, ikke innholdet som sendes.
+    `payload_kryptert` er utenfor retry-materialiteten fordi AES-GCM gir
+    ny nonce per kryptering — riktig for retry-klassen, men det betyr at
+    `disponit_varselsender` kan feste VILKÅRLIG chiffertekst til en
+    gyldig frigivelse, og at `mottaker_ref` er et antalltak og ikke et
+    medlemskap i det signerte innholdet. Ekte binding krever et
+    per-mottaker-manifest, altså ny produktflate (K1), og hører i egen
+    PR.
+
+    Testen fester dagens oppførsel så regresjonen SYNES: to kall med
+    samme frigivelse og samme kontrakt, men ULIK chiffertekst, gir samme
+    oppdrag — og vinnerens chiffertekst er den som blir stående og sendt.
+
+    NÅR #149 LANDER: denne testen skal erstattes av «avvikende
+    innholdsdigest avvises; matchende digest er idempotent»."""
+    from db import kryptering
+    oid, payload = _grunnlag(migrator)
+    ct, key_id, nonce = payload
+    bid = _signatar(migrator)
+    liste = _liste(migrator, oid)
+    _signer(migrator, liste, bid)
+    fid = _frigi(migrator, liste)
+    _sett_kontekst(migrator, TENANT)
+    _key, dek = kryptering.hent_eller_opprett_aktiv_dek(migrator, TENANT)
+    annet_ct, annet_nonce = kryptering.krypter(
+        dek, {"m57": "ET HELT ANNET INNHOLD"}, TENANT, _key)
+    migrator.commit()
+    assert _key == key_id, "testen forutsetter samme aktive DEK"
+    kall = ("SELECT opprett_frigivelsesoppdrag(%s,%s,"
+            "'rekruttering.utsending','rekruttering.utsending','m57_ats',"
+            "%s,%s,%s, now()+interval '4 hours', now()+interval '1 day')")
+    snd = _sender()
+    try:
+        _sett_kontekst(snd, TENANT)
+        forst = snd.execute(kall, (TENANT, fid, ct, key_id, nonce)
+                            ).fetchone()[0]
+        snd.commit()
+        _sett_kontekst(snd, TENANT)
+        andre = snd.execute(
+            kall, (TENANT, fid, annet_ct, key_id, annet_nonce)).fetchone()[0]
+        snd.commit()
+    finally:
+        snd.close()
+    assert andre == forst, (
+        "forutsetningen for avviket er borte — se #149 og snu testen")
+    _sett_kontekst(migrator, TENANT)
+    lagret = migrator.execute(
+        "SELECT payload_kryptert FROM oppdrag WHERE tenant=%s AND id=%s",
+        (TENANT, forst)).fetchone()[0]
+    migrator.rollback()
+    assert bytes(lagret) == bytes(ct), (
+        "vinnerens chiffertekst skal bli stående — det ER avviket")
+
+
+@pg
 @pytest.mark.parametrize("trippel", [
     ("kontroll.wcag.nettsted", "kontroll.wcag.nettsted", "m_wcag_audit"),
     ("rekruttering.utsending", "rekruttering.utsending", "m_wcag_audit"),
