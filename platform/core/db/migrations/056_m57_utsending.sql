@@ -103,25 +103,79 @@ CREATE TRIGGER utsendingssignatur_ingen_truncate
 -- 3. Frigivelsen: én rad per mottaker, og FK-kjeden krever at listen er
 --    SIGNERT (port 6) — det finnes ingen representerbar frigivelse av en
 --    usignert liste, uansett hvilken vei noen skriver.
+--    KLARSIGNAL-KORREKSJON (Codex P1, runde 2): skissen i §3 skriver
+--    `mottaker_ref TEXT NOT NULL`, men §5 krever at NØYAKTIG dette feltet
+--    slettes ved TTL-utløp. De to kan ikke begge stå, og §5 er den
+--    målte grensen — skissens NOT NULL viker.
+--    `mottaker_ref` ER KANDIDATDATA og må kunne slettes ved TTL-utløp:
+--    klarsignal §5 krever at utsendingsdataene
+--    fjernes i alle seks lagre, og evidensgrensen måler det
+--    (`ttl.persondata_funnet_etter_reaping = 0`). Som `NOT NULL` under en
+--    ren append-only-trigger var det kravet UMULIG å innfri — verken
+--    UPDATE eller DELETE slapp gjennom, og en fremtidig reaper ville
+--    stått uten lovlig vei. Kolonnen er derfor slettbar, og formen holder
+--    tilstanden entydig: enten bærer raden en mottaker og er ikke slettet,
+--    eller den er slettet og bærer ingen. Resten av raden (evidensen:
+--    hvem signerte hva, når det ble frigitt) består uendret.
 CREATE TABLE utsendingsfrigivelse (
     tenant TEXT NOT NULL,
     frigivelse_id UUID NOT NULL,
     liste_id UUID NOT NULL,
     innhold_hash TEXT NOT NULL,
     utkast_serie UUID NOT NULL,
-    mottaker_ref TEXT NOT NULL,
+    mottaker_ref TEXT,                   -- slettbar ved TTL-utløp (§5)
+    slettet_ts TIMESTAMPTZ,
     frigitt_ts TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (tenant, frigivelse_id),
     UNIQUE (tenant, liste_id, mottaker_ref),
+    CONSTRAINT frigivelse_mottaker_eller_slettet CHECK (
+           (mottaker_ref IS NOT NULL AND slettet_ts IS NULL)
+        OR (mottaker_ref IS NULL     AND slettet_ts IS NOT NULL)),
     FOREIGN KEY (tenant, liste_id, innhold_hash, utkast_serie)
         REFERENCES utsendingssignatur
             (tenant, liste_id, innhold_hash, utkast_serie));
+
+-- Append-only MED ÉN navngitt overgang. Frigivelsen er evidens, så
+-- DELETE er fortsatt forbudt og hvert felt fortsatt frosset — unntatt
+-- den ene mutasjonen TTL-en krever: `mottaker_ref` satt → NULL, én vei,
+-- med stempel. Vakten er tabellens egen (035s
+-- `onboarding_familiefrist_immutable`-form), ikke en ny mekanisme:
+-- `avvis_endring` kan ikke uttrykke et unntak, og et unntak uten vakt
+-- ville åpnet raden for omskriving.
+--
+-- REAPEREN SELV hører til TTL-kontrollpunktet (portene 18–20): den
+-- trenger en herdet funksjon og en rolle, og ingen av delene finnes ennå.
+-- Det som rettes her, er at basen gjorde kravet UREALISERBART.
+CREATE OR REPLACE FUNCTION utsendingsfrigivelse_kun_ttl_redaksjon()
+RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog AS $$
+BEGIN
+    IF TG_OP <> 'UPDATE' THEN
+        RAISE EXCEPTION 'utsendingsfrigivelse: % er ikke tillatt'
+            ' (frigivelsen er evidens)', TG_OP
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF OLD.mottaker_ref IS NULL                     -- alt slettet
+       OR NEW.mottaker_ref IS NOT NULL              -- ikke en sletting
+       OR NEW.slettet_ts IS NULL                    -- uten stempel
+       OR OLD.slettet_ts IS NOT NULL
+       OR NEW.tenant        IS DISTINCT FROM OLD.tenant
+       OR NEW.frigivelse_id IS DISTINCT FROM OLD.frigivelse_id
+       OR NEW.liste_id      IS DISTINCT FROM OLD.liste_id
+       OR NEW.innhold_hash  IS DISTINCT FROM OLD.innhold_hash
+       OR NEW.utkast_serie  IS DISTINCT FROM OLD.utkast_serie
+       OR NEW.frigitt_ts    IS DISTINCT FROM OLD.frigitt_ts THEN
+        RAISE EXCEPTION 'utsendingsfrigivelse: eneste lovlige endring er'
+            ' TTL-sletting av mottaker_ref (satt → NULL med slettet_ts)'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END $$;
 
 DROP TRIGGER IF EXISTS utsendingsfrigivelse_append_only
     ON utsendingsfrigivelse;
 CREATE TRIGGER utsendingsfrigivelse_append_only
     BEFORE UPDATE OR DELETE ON utsendingsfrigivelse
-    FOR EACH ROW EXECUTE FUNCTION avvis_endring();
+    FOR EACH ROW EXECUTE FUNCTION utsendingsfrigivelse_kun_ttl_redaksjon();
 DROP TRIGGER IF EXISTS utsendingsfrigivelse_ingen_truncate
     ON utsendingsfrigivelse;
 CREATE TRIGGER utsendingsfrigivelse_ingen_truncate

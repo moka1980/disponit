@@ -369,6 +369,49 @@ def test_listeversjonen_er_append_only(migrator):
 
 
 @pg
+def test_mottaker_ref_kan_slettes_ved_ttl_utlop(migrator):
+    """Codex P1 (runde 2): `mottaker_ref` er kandidatdata, og klarsignal
+    §5 krever at utsendingsdataene fjernes ved TTL-utløp
+    (`ttl.persondata_funnet_etter_reaping = 0`). Som NOT NULL under en
+    ren append-only-trigger var kravet UMULIG å innfri. Nå finnes ÉN
+    navngitt overgang — og bare den: DELETE, omskriving og en sletting
+    uten stempel avvises fortsatt, evidensen består, og en slettet rad
+    kan ikke gjenopplives."""
+    oid, _ = _grunnlag(migrator)
+    bid = _signatar(migrator)
+    liste = _liste(migrator, oid)
+    _signer(migrator, liste, bid)
+    fid = _frigi(migrator, liste)
+    hvor = "WHERE tenant=%s AND frigivelse_id=%s"
+    for setning in (
+            f"DELETE FROM utsendingsfrigivelse {hvor}",
+            f"UPDATE utsendingsfrigivelse SET mottaker_ref='en-annen' {hvor}",
+            f"UPDATE utsendingsfrigivelse SET mottaker_ref=NULL {hvor}",
+            f"UPDATE utsendingsfrigivelse SET liste_id=gen_random_uuid(),"
+            f" mottaker_ref=NULL, slettet_ts=now() {hvor}"):
+        _sett_kontekst(migrator, TENANT)
+        with pytest.raises(psycopg.errors.CheckViolation):
+            migrator.execute(setning, (TENANT, fid))
+        migrator.rollback()
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute(
+        "UPDATE utsendingsfrigivelse SET mottaker_ref=NULL,"
+        f" slettet_ts=now() {hvor}", (TENANT, fid))
+    rad = migrator.execute(
+        "SELECT mottaker_ref, slettet_ts IS NOT NULL, liste_id,"
+        f" innhold_hash FROM utsendingsfrigivelse {hvor}",
+        (TENANT, fid)).fetchone()
+    assert rad == (None, True, liste[0], liste[2]), (
+        "evidensen skal bestå når kandidatreferansen slettes")
+    # Gjenoppliving er ikke en TTL-sletting.
+    with pytest.raises(psycopg.errors.CheckViolation):
+        migrator.execute(
+            "UPDATE utsendingsfrigivelse SET mottaker_ref='m1',"
+            f" slettet_ts=NULL {hvor}", (TENANT, fid))
+    migrator.rollback()
+
+
+@pg
 def test_kjedetabellene_taaler_ikke_truncate(migrator):
     """Codex P2 (runde 1, aldri lukket): TRUNCATE fyrer INGEN radtrigger.
     Uten en statement-vakt kunne tabelleieren tømt hele bevisrekken —
