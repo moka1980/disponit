@@ -1311,6 +1311,24 @@ def _setningene(sql: str):
     snarveien — gjør en helt alminnelig triggerfunksjon usyntaktisk, og da
     ville lesningen hoppet over den i stillhet. Det er nøyaktig feilklassen
     denne runden fjerner.
+
+    SNITTET TAS I TEGN, OG DET ER RIKTIG (Codex P1, F19 — målt og avvist).
+    `libpg_query` teller i BYTE, så innvendingen gjelder biblioteket under:
+    en `ø` foran en setning ville forskjøvet den. Men `pglast` regner om for
+    oss før vi ser tallene, og det er lett å vise:
+
+        sql = "-- ø ø ø\\nDO $$ BEGIN PERFORM 'x'; END $$;\\n"
+        parse_sql_json(sql) -> stmt_location 12   # byte, rått fra libpg_query
+        parse_sql(sql)      -> stmt_location  9   # tegn, etter omregning
+
+    Det samme gjelder `stmt_len`: en setning på 38 tegn / 39 byte meldes som
+    38. Å snitte i `sql.encode()` med disse tallene ville derfor INNFØRT
+    nettopp feilen funnet advarer mot. Målt over repoets eget korpus: alle
+    1625 setningene i `platform/core/db/migrations/*.sql` snittes med
+    tegnindeks til en tekst som reparser til NØYAKTIG samme tre som setningen
+    porten fikk; med byteindeks bommer samtlige. `pglast==8.4` er pinnet i
+    `requirements-dev.txt`, så det er denne omregningen CI kjører. To ledd i
+    `test_en_sqlkommentar_skriver_ingen_identifikator` holder det nede.
     """
     for rå in pglast.parse_sql(sql):
         a = rå.stmt_location
@@ -1961,6 +1979,23 @@ def test_en_pensjonert_verdi_er_ute_av_de_kjente(monkeypatch):
     # Og en verdi som står alene på linja, står fortsatt.
     ("SELECT 'mangler',\n"
      "       'oppfunnet_klasse';\n", True),
+    # IKKE-ASCII FORAN EN KROPP FORSKYVER INGENTING (Codex P1, F19). `DO`- og
+    # funksjonskropper leses av `parse_plpgsql`, som får HELE setningen skåret
+    # ut med `stmt_location`/`stmt_len`. libpg_query teller de tallene i BYTE,
+    # `pglast` regner dem om til TEGN, og repoets migrasjoner har norsk prosa
+    # foran setningene sine. Skjæres det i bytene i stedet, starter utsnittet
+    # for tidlig, `parse_plpgsql` får en usyntaktisk kropp og verdien
+    # forsvinner. Se `_setningene()`.
+    ("-- én ø, så en kropp: æøå ÆØÅ\n"
+     "DO $$ BEGIN\n"
+     "    PERFORM 'oppfunnet_klasse';\n"
+     "END $$;\n", True),
+    # Samme sak med tegnet inne i kroppen: kuttes det etter byteLENGDEN, faller
+    # halen av setningen bort og `END $$` mangler.
+    ("DO $$ BEGIN\n"
+     "    PERFORM 'nærmere: æøå';\n"
+     "    PERFORM 'oppfunnet_klasse';\n"
+     "END $$;\n", True),
 ])
 def test_en_sqlkommentar_skriver_ingen_identifikator(sql, star_igjen):
     """Lista over kjente identifikatorer leses av det migrasjonen SKRIVER.
