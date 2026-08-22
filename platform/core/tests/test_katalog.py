@@ -840,6 +840,29 @@ def test_en_proto_nokkel_er_et_felt_og_ikke_en_prototype(tmp_path):
     assert post["flow"] == {"__proto__": {"note": "x"}}, post
 
 
+def test_en_ikke_tellbar_egenskap_faller_ikke_stille_ut(tmp_path):
+    """Nettleseren ser `post.status`, altså skal leseren se den (Codex P2).
+
+    `Object.keys` gir bare de TELLBARE egne egenskapene, og tellbarhet er en
+    visningsdetalj — den styrer `for…in` og spredning, ikke om egenskapen
+    finnes. En post bygget med `Object.defineProperty(…, 'status', {…})` har
+    egenskapen, nettleseren leser den, og porten lover å avvise nettopp den
+    aksen uansett hvordan den er skrevet. Leseren slapp den stille ut av
+    JSON-en, så løftet sto grønt på en post som brøt det.
+
+    Testen måler at BÅDE nøkkelen og verdien kommer ut: en post uten `status`
+    ville også vært en gyldig post, og en dom alene hadde ikke skilt dem.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>\n"
+                   "const p = {n:1,name:'En',area:'X',p:1};\n"
+                   "Object.defineProperty(p, 'status', {value:'planlagt'});\n"
+                   "const M = [p];\n"
+                   "</script></html>", encoding="utf-8")
+    post = _katalogposter(sti)[0]
+    assert post.get("status") == "planlagt", post
+
+
 def test_en_getter_som_ikke_terminerer_henger_ikke_leseren(tmp_path):
     """Getteren kjøres ikke, så den kan ikke henge noen (Codex P2).
 

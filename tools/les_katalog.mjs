@@ -176,7 +176,13 @@ const MATERIALISER = `(() => {
   const IKKE_DATA = ${JSON.stringify(IKKE_DATA)}
   const beskriv = Object.getOwnPropertyDescriptor
   const proto = Object.getPrototypeOf
-  const nokler = Object.keys
+  // EGNE EGENSKAPER, IKKE BARE DE TELLBARE (Codex P2, F16). Object.keys
+  // hopper stille over en ikke-tellbar egen egenskap, så en post bygget med
+  // Object.defineProperty(post, 'status', {value:'planlagt'}) forsvant ut av
+  // JSON-en mens nettleseren så post.status — nøyaktig det stille avviket
+  // hele lesersteget finnes for å fjerne. Tellbarhet er en visningsdetalj;
+  // egenskapen er der.
+  const nokler = Object.getOwnPropertyNames
   const erListe = Array.isArray
   const lagUten = Object.create
   const endelig = Number.isFinite
