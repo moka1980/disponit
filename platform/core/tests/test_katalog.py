@@ -1998,8 +1998,15 @@ def _oppfunne_identifikatorer(kilde: Path = None) -> dict[str, str]:
 # Markøren som innfører et tall som modulnummer, hvor som helst i leddet. Den
 # må stå fritt: uten det venstre gjerdet ville «ARM-16» og «GSM-2» båret hver
 # sin M- inne i et ord og laget kanter av maskinvarenavn.
+#
+# ORDET BØYES (Codex P2). Markøren kjente `modul` og `modulene`, men ikke den
+# helt vanlige ubestemte flertallsformen: «Avhenger av moduler 55 og 58» traff
+# ingenting, og da så faseporten ingen kant i det hele tatt — på en
+# avhengighet som står skrevet rett ut. Nå står alle fire formene av ordet
+# (`modul`, `modulen`, `moduler`, `modulene`), for det er samme ord og samme
+# innføring; det som avgjør er fortsatt at et TALL følger rett etter.
 _MODULMARKOR_RE = re.compile(
-    r"(?<![0-9A-Za-zÆØÅæøå_-])(?:M-|[Mm]odul(?:ene)?\s+)(?=\d)")
+    r"(?<![0-9A-Za-zÆØÅæøå_-])(?:M-|[Mm]odul(?:ene|en|er)?\s+)(?=\d)")
 # Et tall eller et intervall. Et ledd som BARE er dette (bortsett fra
 # sluttpunktum) kan være neste ledd i en påbegynt oppramsing.
 _TALL_RE = re.compile(r"\d+(?:\s*[–-]\s*(\d+))?")
@@ -2065,6 +2072,38 @@ def _modulreferanser(dep: str) -> set[int]:
             siste = int(treff.group(1)) if treff.group(1) else forste
             ut.update(range(forste, siste + 1))
     return ut
+
+
+@pytest.mark.parametrize("dep,ventet", [
+    # De fire formene av ordet, og den korte markøren.
+    ("Avhenger av modul 24", {24}),
+    ("Avhenger av modulen 24", {24}),
+    ("Avhenger av moduler 55 og 58", {55, 58}),
+    ("Avhenger av modulene 55 og 58", {55, 58}),
+    ("Kjører via M-16", {16}),
+    # Oppramsingen en markør åpnet, og intervallet.
+    ("Modul 1, 5, 9 og HRIS-connector", {1, 5, 9}),
+    ("Moduler 13–14", {13, 14}),
+    # Uten markør er et tall bare et tall — prosaen navngir infrastruktur.
+    ("Krever PostgreSQL 16 og Peppol 3", set()),
+    # Og markøren må stå fritt: et suffiks er ikke ordet.
+    ("Kjører på ARM-16 og GSM-2", set()),
+    ("Bruker submodul 16", set()),
+])
+def test_markoren_kjenner_ordet_i_alle_former(dep, ventet):
+    """«moduler» er samme innføring som «modul» (Codex P2).
+
+    Markøren kjente `modul` og `modulene`, men ikke den ubestemte
+    flertallsformen. «Avhenger av moduler 55 og 58» ga da ingen kant i det hele
+    tatt — ikke en feil kant, men ingen — og faseporten sto grønn på en
+    avhengighet som er skrevet rett ut i klartekst. Det er nøyaktig hullet
+    porten finnes for, og samme feilklasse som ankringen i åttende runde på
+    #118.
+
+    Gjerdene fra de tidligere rundene måles i samme slengen: uten markør er et
+    tall infrastruktur, og et suffiks («submodul», «ARM-») er ikke ordet.
+    """
+    assert _modulreferanser(dep) == ventet
 
 
 def test_ingen_modul_avhenger_av_en_senere_fase():
