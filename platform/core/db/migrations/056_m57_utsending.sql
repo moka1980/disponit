@@ -34,6 +34,15 @@ CREATE TABLE utsendingsliste (
     UNIQUE (tenant, liste_id, innhold_hash),
     UNIQUE (tenant, utkast_serie, liste_id),           -- serie-refererbar
     UNIQUE (tenant, utkast_serie, innhold_hash),
+    -- ... og en versjon kan ikke være SIN EGEN forelder (Cursor P2 på
+    -- #140, runde 5). Self-FK-en er lovlig i PostgreSQL, så direkte DML
+    -- kunne sette `forrige_liste_id = liste_id`: serien fikk da NULL
+    -- røtter — `en_rot_per_serie` teller kun rader med forelder NULL — og
+    -- kjeden signer → frigi → oppdrag virket likevel. «Én rot per serie»
+    -- skal være schema-håndhevet, ikke en konvensjon funksjonsveien
+    -- tilfeldigvis holder.
+    CONSTRAINT utsendingsliste_ikke_egen_forelder
+        CHECK (forrige_liste_id IS NULL OR forrige_liste_id <> liste_id),
     -- Forelderen må stå i SAMME serie (port 9): FK-en går på
     -- serie-nøkkelen, så en versjon aldri kan adoptere en annen series
     -- historikk.
@@ -971,3 +980,112 @@ BEGIN
 END $$;
 
 RESET ROLE;
+
+-- ------------------------------------------------------------
+-- 11. Koblingsvakta (008 → 038 §5) — KOPI av gjeldende kropp, diff-endret
+--     i TO punkter: den tredje opprinnelsen får sin egen INSERT-arm, og
+--     UPDATE-armen fryser `frigivelse_id` sammen med de to andre.
+--
+--     Codex P2 (runde 3) og Cursor P2 (runde 5) fant det samme: §6 over
+--     speiler fødselsattributtet i KOLONNELÅSEN, men koblingsvakten —
+--     husets andre lag — sto igjen med bare `koblingsstatus` og
+--     `beslutning_loggpost_id`. To lag er mønsteret nettopp fordi ett lag
+--     er en regresjonsflate: en senere «rydding» i kolonnelåsen ville
+--     åpnet repeking av autorisasjonen på en IRREVERSIBEL vei, uten at
+--     noen port sa fra.
+--
+--     Vakten er en trigger på `oppdrag` og eies av migrator; ingen
+--     rollebytte trengs.
+-- ------------------------------------------------------------
+CREATE OR REPLACE FUNCTION oppdrag_koblingsvakt()
+RETURNS trigger LANGUAGE plpgsql
+SET search_path = pg_catalog AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        IF NEW.koblingsstatus = 'LEGACY_UKJENT' THEN
+            RAISE EXCEPTION
+                'oppdrag: LEGACY_UKJENT kan kun settes av migrasjon 008 — '
+                'runtime skal levere beslutning_loggpost_id (KOBLET) eller '
+                'et verifikasjonsoppdrag (VERIFIKASJON)';
+        END IF;
+        IF NEW.koblingsstatus NOT IN ('KOBLET', 'VERIFIKASJON') THEN
+            RAISE EXCEPTION 'oppdrag: ukjent koblingsstatus %',
+                NEW.koblingsstatus;
+        END IF;
+        -- 038: beslutningsopphavet. Loggposten er beslutningen selv;
+        -- kravet er at den ER en TILLAT-beslutning hos samme tenant —
+        -- under kallerens RLS, fail-closed som resten.
+        IF NEW.opprinnelse = 'beslutning' THEN
+            IF NEW.koblingsstatus <> 'KOBLET' THEN
+                RAISE EXCEPTION 'oppdrag: et beslutningsoppdrag er alltid '
+                    'KOBLET — det ER koblingen';
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM public.revisjonslogg r
+                 WHERE r.tenant = NEW.tenant
+                   AND r.id = NEW.beslutning_loggpost_id
+                   AND r.beslutning = 'TILLAT') THEN
+                RAISE EXCEPTION
+                    'oppdrag: beslutning_loggpost_id % er ikke en '
+                    'TILLAT-beslutning hos tenanten',
+                    NEW.beslutning_loggpost_id;
+            END IF;
+            RETURN NEW;
+        END IF;
+        -- 056: FRIGIVELSESOPPHAVET. Beslutningsarmen over har sin egen
+        -- eksplisitte arm; den tredje opprinnelsen manglet sin (Codex P2
+        -- runde 3 + Cursor P2 runde 5 — samme funn, to reviewere). Her ER
+        -- signaturen autorisasjonen, og FK-en mot `utsendingsfrigivelse`
+        -- beviser at frigivelsen finnes; det vakten må si, er at raden
+        -- ikke kan påstå et frigivelsesopphav og samtidig være ukoblet.
+        IF NEW.opprinnelse = 'frigivelse' THEN
+            IF NEW.koblingsstatus <> 'KOBLET' THEN
+                RAISE EXCEPTION 'oppdrag: et frigivelsesoppdrag er alltid '
+                    'KOBLET — signaturen ER koblingen';
+            END IF;
+            IF NEW.frigivelse_id IS NULL THEN
+                RAISE EXCEPTION 'oppdrag: et frigivelsesoppdrag uten '
+                    'frigivelse_id har ingen autorisasjon';
+            END IF;
+            RETURN NEW;
+        END IF;
+        -- Codex P1 (review-runde 1): FK-en beviser at LOGGPOSTEN FINNES,
+        -- ikke at den er RIKTIG beslutning. Uten dette kunne en KOBLET rad
+        -- peke på en vilkårlig revisjonsrad hos samme tenant — og
+        -- lese-API-et ville vist en fremmed beslutnings «utførelse» med
+        -- full FK-integritet. Porten er SEMANTISK og ligger i databasen:
+        -- loggposten må være nøyaktig fase-2-TILLAT-beslutningen for
+        -- DETTE oppdragets reparasjonsidentitet — samme tre predikater som
+        -- backfillen og arbeiderens oppslag, håndhevet der raden fødes.
+        -- Kjøres under kallerens RLS: en innsetting uten tenantkontekst
+        -- ser ingen loggpost og avvises — fail-closed, ikke en bypass.
+        -- NULL-FK-en overlates til CHECK-en `oppdrag_kobling_konsistent`
+        -- (BEFORE-triggere kjører FØR CHECK; uten IS NOT NULL her ville
+        -- den navngitte constrainten aldri fått rapportere sitt eget brudd).
+        IF NEW.koblingsstatus = 'KOBLET'
+           AND NEW.beslutning_loggpost_id IS NOT NULL
+           AND NOT EXISTS (
+            SELECT 1 FROM public.revisjonslogg r
+             WHERE r.tenant = NEW.tenant
+               AND r.id = NEW.beslutning_loggpost_id
+               AND r.idempotency_key = NEW.repair_operation_id
+               AND r.kilde = 'arbeidskapabilitet'
+               AND r.beslutning = 'TILLAT') THEN
+            RAISE EXCEPTION
+                'oppdrag: beslutning_loggpost_id % er ikke fase-2-TILLAT-'
+                'beslutningen for repair_operation_id % (semantisk kobling '
+                'kreves: idempotency_key + kilde + beslutning)',
+                NEW.beslutning_loggpost_id, NEW.repair_operation_id;
+        END IF;
+        RETURN NEW;
+    END IF;
+    -- UPDATE: koblingen er uforanderlig etter innsetting (v5 pkt. 1).
+    IF NEW.koblingsstatus IS DISTINCT FROM OLD.koblingsstatus
+       OR NEW.beslutning_loggpost_id IS DISTINCT FROM OLD.beslutning_loggpost_id
+       OR NEW.frigivelse_id IS DISTINCT FROM OLD.frigivelse_id THEN
+        RAISE EXCEPTION
+            'oppdrag: koblingsstatus, beslutning_loggpost_id og '
+            'frigivelse_id er uforanderlige etter innsetting';
+    END IF;
+    RETURN NEW;
+END $$;

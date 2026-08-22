@@ -99,6 +99,17 @@ SET LOCAL ROLE disponit_modul_eier;
 REVOKE ALL ON FUNCTION varsle_tokenfamilie_utlop(text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION varsle_tokenfamilie_utlop(text) FROM {rolle};
 RESET ROLE;
+-- 056: utsendingsveien er SAMME KLASSE, og verre — den er IRREVERSIBEL
+-- (Cursor P2 på #140). `frigi_utsendelse` og `opprett_frigivelsesoppdrag`
+-- gis KUN til `disponit_varselsender` (VARSLER_RETTIGHETER); web-API-rollen
+-- skal aldri kunne frigi en signert liste. Læren fra varsel-funnet over
+-- gjelder ordrett: en grant som bare slutter å bli GITT er ikke trukket
+-- tilbake — en tidligere kjøring, eller en manuell grant, ville overlevd
+-- alle senere migreringer i stillhet.
+SET LOCAL ROLE disponit_m37_claimer;
+REVOKE ALL ON FUNCTION frigi_utsendelse(TEXT, UUID, TEXT) FROM {rolle};
+REVOKE ALL ON FUNCTION opprett_frigivelsesoppdrag(TEXT, UUID, TEXT, TEXT, TEXT, BYTEA, TEXT, BYTEA, TIMESTAMPTZ, TIMESTAMPTZ) FROM {rolle};
+RESET ROLE;
 GRANT SELECT, INSERT, UPDATE ON varselvalg TO {rolle};
 -- PR-014a: modulregisteret. Runtime LESER det (default-deny, GRANT-modell §4) —
 -- INGEN INSERT/UPDATE/DELETE på registertabellene. Alle skriv går via de herdede

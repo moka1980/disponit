@@ -251,6 +251,77 @@ def test_opprinnelsesreferansene_er_fodselsattributter(migrator):
 
 
 @pg
+def test_koblingsvakten_dekker_frigivelsespekeren(migrator):
+    """Codex P2 (runde 3) + Cursor P2 (runde 5), samme funn fra to
+    reviewere: 056 speilet fødselsattributtet i KOLONNELÅSEN, men
+    koblingsvakten — husets andre lag — sto igjen med bare
+    `koblingsstatus` og `beslutning_loggpost_id`. Ett lag er en
+    regresjonsflate på en irreversibel vei: en senere «rydding» i
+    kolonnelåsen ville åpnet repeking av autorisasjonen uten at noen port
+    sa fra.
+
+    Vakten fyrer FØR kolonnelåsen (`oppdrag_koblingslaas` <
+    `oppdrag_laas`), så meldingen her er vaktens egen.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `frigivelse_id`-leddet fra
+    UPDATE-armen, eller INSERT-armen, i 056 §11."""
+    oid, payload = _grunnlag(migrator)
+    ct, key_id, nonce = payload
+    bid = _signatar(migrator)
+    liste = _liste(migrator, oid)
+    _signer(migrator, liste, bid)
+    fid = _frigi(migrator, liste)
+    aoid = _ats_oppdrag(migrator, fid, payload)
+    fid2 = _frigi(migrator, liste, mottaker="kv-m2")
+    _sett_kontekst(migrator, TENANT)
+    with pytest.raises(psycopg.errors.RaiseException) as ei:
+        migrator.execute(
+            "UPDATE oppdrag SET frigivelse_id=%s WHERE tenant=%s AND id=%s",
+            (fid2, TENANT, aoid))
+    assert "uforanderlige etter innsetting" in str(ei.value), str(ei.value)
+    migrator.rollback()
+    # INSERT-armen: et frigivelsesoppdrag er alltid KOBLET — vakten sier
+    # det selv, før CHECK-en får rapportere.
+    _sett_kontekst(migrator, TENANT)
+    with pytest.raises(psycopg.errors.RaiseException) as ei:
+        migrator.execute(
+            "INSERT INTO oppdrag (opprinnelse, tenant, frigivelse_id,"
+            " oppdragstype, handling, eiermodul, payload_kryptert,"
+            " key_id, nonce, utforelsesfrist, evidensfrist,"
+            " koblingsstatus)"
+            " VALUES ('frigivelse',%s,%s,'verifikasjon','h','e',%s,%s,%s,"
+            " now()+interval '1 hour', now()+interval '1 day',"
+            "'VERIFIKASJON')", (TENANT, fid2, ct, key_id, nonce))
+    assert "alltid " in str(ei.value), str(ei.value)
+    migrator.rollback()
+
+
+@pg
+def test_listeversjon_kan_ikke_vaere_sin_egen_forelder(migrator):
+    """Cursor P2 på #140 (runde 5): en self-FK er lovlig i PostgreSQL, så
+    direkte DML kunne sette `forrige_liste_id = liste_id`. Serien fikk da
+    NULL røtter — `en_rot_per_serie` teller kun rader med forelder NULL —
+    og kjeden signer → frigi → oppdrag virket likevel. «Én rot per serie»
+    skal være schema-håndhevet.
+
+    MUTASJONEN SOM DREPER DENNE: fjern
+    `utsendingsliste_ikke_egen_forelder`."""
+    import uuid as _uuid
+
+    oid, _ = _evaluering(migrator)
+    _sett_kontekst(migrator, TENANT)
+    lid = _uuid.uuid4()
+    with pytest.raises(psycopg.errors.CheckViolation):
+        migrator.execute(
+            "INSERT INTO utsendingsliste (tenant, liste_id, utkast_serie,"
+            " forrige_liste_id, oppdrag_id, listetype, malversjon,"
+            " innhold_hash, antall)"
+            " VALUES (%s,%s,%s,%s,%s,'invitasjon','m@1','h-selv',3)",
+            (TENANT, lid, _uuid.uuid4(), lid, oid))
+    migrator.rollback()
+
+
+@pg
 def test_de_gamle_armene_star_urort(migrator):
     """Port 5: regresjon på begge eksisterende opphavsveier gjennom
     swappen — beslutningsoppdraget i `_grunnlag` er selve beviset for
@@ -937,6 +1008,15 @@ def test_migrer_baerer_utsendingskjedens_rettigheter():
                "opprett_frigivelsesoppdrag(TEXT, UUID, TEXT, TEXT, TEXT,"
                " BYTEA, TEXT, BYTEA, TIMESTAMPTZ, TIMESTAMPTZ)"):
         assert f"GRANT EXECUTE ON FUNCTION {fn} TO {{rolle}};" in tekst, fn
+    # ... og utsendingsveien må TREKKES fra runtime, ikke bare la være å
+    # bli gitt (Cursor P2 på #140, runde 5 — husets egen lære fra
+    # varsel-funnet: «en grant som bare slutter å bli GITT er ikke trukket
+    # tilbake»). Veien er irreversibel; en tidligere kjøring eller en
+    # manuell grant skal ikke overleve i stillhet.
+    for fn in ("frigi_utsendelse(TEXT, UUID, TEXT)",
+               "opprett_frigivelsesoppdrag(TEXT, UUID, TEXT, TEXT, TEXT,"
+               " BYTEA, TEXT, BYTEA, TIMESTAMPTZ, TIMESTAMPTZ)"):
+        assert f"REVOKE ALL ON FUNCTION {fn} FROM {{rolle}};" in tekst, fn
 
 
 @pg
