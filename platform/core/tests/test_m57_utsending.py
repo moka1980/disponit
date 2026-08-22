@@ -1388,8 +1388,9 @@ def test_frigivelsesoppdrag_avviser_alt_utlopt_frist(migrator):
     gir frigivelsen nøyaktig ETT forsøk, så et dødfødt oppdrag blokkerer
     dessuten det gyldige som aldri kommer.
 
-    MUTASJONEN SOM DREPER DENNE: fjern `IF p_utforelsesfrist <= now()`
-    fra `opprett_frigivelsesoppdrag`."""
+    MUTASJONEN SOM DREPER DENNE: fjern fristporten
+    (`IF p_utforelsesfrist <= clock_timestamp()`) fra
+    `opprett_frigivelsesoppdrag`."""
     oid, payload = _evaluering(migrator)
     ct, key_id, nonce = payload
     bid = _signatar(migrator)
@@ -1405,6 +1406,50 @@ def test_frigivelsesoppdrag_avviser_alt_utlopt_frist(migrator):
                 "'rekruttering.utsending','rekruttering.utsending',"
                 "'m57_ats',%s,%s,%s, now()-interval '1 minute',"
                 " now()+interval '1 day')", (TENANT, fid, ct, key_id, nonce))
+        snd.rollback()
+    finally:
+        snd.close()
+    _sett_kontekst(migrator, TENANT)
+    assert migrator.execute(
+        "SELECT count(*) FROM oppdrag WHERE tenant=%s AND frigivelse_id=%s",
+        (TENANT, fid)).fetchone()[0] == 0, "dødfødt oppdrag ble laget"
+
+
+@pg
+def test_frigivelsesoppdrag_maaler_fristen_mot_veggklokken(migrator):
+    """Codex P2 på #140 (runde 9): porten over målte mot `now()`, som er
+    `transaction_timestamp()` — frosset ved transaksjonens FØRSTE setning.
+
+    Senderen åpner transaksjonen, gjør sitt arbeid, og kaller først
+    DERETTER hit. En frist som lå i fremtiden ved `BEGIN`, men var utløpt
+    ved kallet, slapp dermed gjennom en port som finnes nettopp for å
+    hindre den — og brukte opp frigivelsens ENE forsøk
+    (`oppdrag_en_per_frigivelse`) på et oppdrag `claim_neste_oppdrag`
+    aldri kan plukke.
+
+    Testen holder transaksjonen åpen forbi fristen: `pg_sleep` flytter
+    veggklokken, ikke transaksjonstiden.
+
+    MUTASJONEN SOM DREPER DENNE: sett `clock_timestamp()` tilbake til
+    `now()` i `opprett_frigivelsesoppdrag`."""
+    oid, payload = _evaluering(migrator)
+    ct, key_id, nonce = payload
+    bid = _signatar(migrator)
+    liste = _liste(migrator, oid)
+    _signer(migrator, liste, bid)
+    fid = _frigi(migrator, liste)
+    snd = _sender()
+    try:
+        _sett_kontekst(snd, TENANT)          # her fryses now() for alltid
+        snd.execute("SELECT pg_sleep(1.5)")  # veggklokken går, now() står
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            snd.execute(
+                "SELECT opprett_frigivelsesoppdrag(%s,%s,"
+                "'rekruttering.utsending','rekruttering.utsending',"
+                "'m57_ats',%s,%s,%s,"
+                " transaction_timestamp()+interval '500 milliseconds',"
+                " transaction_timestamp()+interval '1 day')",
+                (TENANT, fid, ct, key_id, nonce))
         snd.rollback()
     finally:
         snd.close()

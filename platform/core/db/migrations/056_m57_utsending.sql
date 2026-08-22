@@ -810,7 +810,22 @@ BEGIN
     -- regner dem PÅ NYTT. Et retry som sender inn en utløpt frist beskriver
     -- en jobb som ikke kan utføres, og skal høre det — ikke få et
     -- uplukkbart oppdrag tilbake som om alt var i orden.
-    IF p_utforelsesfrist <= now() THEN
+    --
+    -- KLOKKEN ER VEGGKLOKKEN, IKKE TRANSAKSJONENS FØDSELSTID (Codex P2,
+    -- runde 9 på #140). `now()` er `transaction_timestamp()`: den fryses
+    -- ved transaksjonens FØRSTE setning og står stille resten av
+    -- transaksjonen. En sender som åpner transaksjonen, gjør sitt arbeid,
+    -- og først deretter kaller hit, målte da fristen mot et tidspunkt som
+    -- alt hadde passert — en frist som var i fremtiden ved BEGIN, men
+    -- utløpt ved kallet, slapp gjennom porten og fødte nøyaktig det
+    -- dødfødte oppdraget porten finnes for å hindre. Verre enn ingen
+    -- port: frigivelsens ENE forsøk (`oppdrag_en_per_frigivelse`) er
+    -- brukt opp på et oppdrag som aldri kan plukkes.
+    --
+    -- `clock_timestamp()` leser veggklokken der og da, altså den faktiske
+    -- kalltiden, og er den eneste av de tre som svarer på spørsmålet
+    -- porten stiller: er fristen utløpt NÅ?
+    IF p_utforelsesfrist <= clock_timestamp() THEN
         RAISE EXCEPTION 'opprett_frigivelsesoppdrag: utforelsesfrist % er'
             ' alt utløpt — oppdraget ville aldri kunne plukkes',
             p_utforelsesfrist USING ERRCODE = 'invalid_parameter_value';
