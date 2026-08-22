@@ -3,7 +3,15 @@
 # wordfreq er den rød, og en port som alltid er rød blir en port noen
 # slår av. Derfor hører ordlisten hjemme i byggemiljøet, ikke i en
 # README-setning.
+#
+# `pglast` er libpg_query, altså PostgreSQLs EGEN parser. Katalogporten regner
+# registerets gjeldende enum ut av migrasjonene, og gjorde det med håndskrevne
+# regexer til og med PR #118 — ti review-runder var ti SQL-former de ikke
+# hadde. En lesning som ikke kjenner en form gjør ikke noe høylytt: den leser
+# noe annet enn serveren og sier ingenting. Porten er FAIL-CLOSED uten den, av
+# samme grunn som norskporten er det uten wordfreq.
 pytest
 pyyaml
 jsonschema
 wordfreq==3.1.1
+pglast==8.4
