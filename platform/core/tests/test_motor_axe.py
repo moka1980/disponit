@@ -1898,7 +1898,7 @@ def test_kontraktsdokumentet_er_frosset_pa_den_registrerte_hashen():
 #: release-raden, og raden er immutabel.
 RELEASE_ID = "wcag-r24"
 MANIFEST_HASH_FOR_RELEASE = \
-    "0b55fd204615482d01e6105ac5b0707f8976d192418206e5233c94881e219a9c"
+    "13e08fb1d9c1200341dd09bce972243b0a2784d1e0f6cc9de51f84365081cdb1"
 
 
 def test_release_id_folger_manifestets_bytes():

@@ -39,7 +39,7 @@
   "oppsett": {
     "datasett_sha256": "9c5bccd2d362d7fa50a6c5b2c4c1deb0ef7dc797c9f575566fa576b51ea83fab",
     "image_digest": "af92b70542f18874ebab5807b1bdcca4f69a84b2cd6dd30066e7579ce1b88325",
-    "kilde": "evidens-r21.jsonl",
+    "kilde": "deploy/staging/artefakter/evidens-wcag-runde-20260822.jsonl",
     "kilde_sha256": "a65e849dd4edb8aafa7de5d514bd43c4b287dda2b506a3a5969021127c191d58",
     "modul": "m_wcag_audit",
     "release": "wcag-r21"
