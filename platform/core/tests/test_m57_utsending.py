@@ -854,6 +854,61 @@ def test_frigi_er_idempotent_under_kapplop(migrator):
 
 
 @pg
+def test_to_ulike_mottakere_mot_tak_paa_en(migrator):
+    """Cursor P2 på #140 (runde 5): advisory-låsen finnes nettopp for
+    tilfellet «begge leser `antall-1` og begge setter inn» — men suiten
+    dekket bare sekvensielt tak og SAMME mottaker under kappløp. Uten
+    denne kunne låsen fjernes og alt fortsatt være grønt, mens en liste
+    signert for ÉN e-post sendte to.
+
+    A frigir `m1` uten å committe; B kaller for `m2` og skal blokkere på
+    låsen, ikke på unik-nøkkelen (mottakerne er ulike). Etter As commit
+    ser B taket og avvises.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `pg_advisory_xact_lock` fra
+    `frigi_utsendelse`."""
+    import threading
+
+    oid, _ = _grunnlag(migrator)
+    bid = _signatar(migrator)
+    liste = _liste(migrator, oid, antall=1)
+    _signer(migrator, liste, bid)
+    a = _sender()
+    b = _sender()
+    try:
+        _sett_kontekst(a, TENANT)
+        a.execute("SELECT frigi_utsendelse(%s,%s,'tak1-m1')",
+                  (TENANT, liste[0]))
+        resultat: dict = {}
+
+        def taper():
+            try:
+                _sett_kontekst(b, TENANT)
+                b.execute("SELECT frigi_utsendelse(%s,%s,'tak1-m2')",
+                          (TENANT, liste[0]))
+                resultat["utfall"] = "godtatt"
+                b.commit()
+            except psycopg.errors.InvalidParameterValue:
+                resultat["utfall"] = "avvist"
+                b.rollback()
+
+        t = threading.Thread(target=taper)
+        t.start()
+        t.join(timeout=2)
+        assert t.is_alive(), "B skulle blokkere på As advisory-lås"
+        a.commit()
+        t.join(timeout=10)
+        assert not t.is_alive(), "B kom aldri gjennom etter As commit"
+        assert resultat.get("utfall") == "avvist", resultat
+    finally:
+        a.close(); b.close()
+    _sett_kontekst(migrator, TENANT)
+    assert migrator.execute(
+        "SELECT count(*) FROM utsendingsfrigivelse WHERE tenant=%s"
+        " AND liste_id=%s", (TENANT, liste[0])).fetchone()[0] == 1
+
+
+@pg
 def test_frigi_gjenkjenner_mottaker_etter_laasen_selv_med_fullt_tak(migrator):
     """Codex på #140 (runde 3): to FØRSTEGANGS-kall for SAMME mottaker på
     en liste signert for kun ÉN mottaker (antall=1) kan begge bomme på
