@@ -44,9 +44,10 @@
 // Generatoren og porten hadde hver sin regel for at `const M = [ … ]` skulle
 // stå nøyaktig én gang, og hver sin måte å skille erklæringen fra de samme
 // tegnene inne i en streng eller en kommentar. Motoren gjør det uten regel:
-// `const M` to ganger i samme skript er en redeklarasjon, og den er en
-// SyntaxError ved KOMPILERING — også når den andre står i kode som aldri
-// kjører. Tegnene `const M = [` inne i en streng er en streng.
+// `const M` to ganger er en redeklarasjon, og motoren avviser den selv — i
+// samme <script> ved KOMPILERING, også når den andre står i kode som aldri
+// kjører, og på tvers av <script> når den andre taggen bindes til det samme
+// globale skopet. Tegnene `const M = [` inne i en streng er en streng.
 
 import fs from 'node:fs'
 import vm from 'node:vm'
@@ -96,9 +97,9 @@ function klassisk(attributter) {
   return type === '' || JS_MIME.has(type)
 }
 
-/** Innholdet i alle `<script>`-taggene, skjøtt sammen slik nettleseren ser dem
- *  på ett skop. Prosaen rundt er HTML og ikke JavaScript. */
-function skriptet(html) {
+/** Innholdet i `<script>`-taggene nettleseren kjører, i dokumentrekkefølge.
+ *  Prosaen rundt er HTML og ikke JavaScript. */
+function skriptene(html) {
   const alle = [...html.matchAll(SKRIPT_RE)]
   if (!alle.length) stopp('fant ingen <script> i sannhetskilden')
   const deler = alle.filter(m => klassisk(m[1])).map(m => m[2])
@@ -107,27 +108,51 @@ function skriptet(html) {
           'nettleseren kjører som klassisk JavaScript — katalogen står i et ' +
           'vanlig innskript, ikke i en datablokk eller en modul')
   }
-  return deler.join('\n')
+  return deler
 }
 
-/** Katalogverdien `M` slik en JavaScript-motor ser den. */
-function katalogverdien(kode, kilde) {
-  let skript
-  try {
-    skript = new vm.Script(kode, {filename: kilde})
-  } catch (e) {
-    stopp(`sannhetskilden er ikke gyldig JavaScript: ${e.message}\n` +
-          'To `const M = [ … ]` er nettopp denne feilen — en redeklarasjon ' +
-          'nettleseren selv avviser.')
-  }
+/** Katalogverdien `M` slik en JavaScript-motor ser den.
+ *
+ *  HVER TAGG ER SITT EGET SKRIPT (Codex P2). Taggene ble før skjøtt sammen til
+ *  ett, og da arvet de noe nettleseren ikke gjør: et unntak i den første
+ *  taggen stoppet resten. En side som deler seg i `<script>`-oppsett og
+ *  `<script>`-katalog — der oppsettet rører `document` og kaster — ble dermed
+ *  meldt som en side uten katalog, og kunne ikke genereres i det hele tatt.
+ *  Nettleseren kjører taggene hver for seg, PÅ SAMME globale skop: en feil i
+ *  én tagg stopper bare den, og en `const` som alt er bundet står. Det gjør vi
+ *  også — samme `ctx` hele veien, egen `runInContext` per tagg.
+ *
+ *  En SYNTAKSFEIL stopper oss likevel, uansett hvilken tagg den står i. Den er
+ *  kildens FORM, ikke sidens oppførsel, og to `const M` er nettopp en slik:
+ *  i samme tagg avvises den ved kompilering, på tvers av tagger når den andre
+ *  taggen bindes. Nettleseren ville tiet og beholdt den første katalogen; her
+ *  er en kilde med to kataloger en kilde ingen skal gjette i. */
+function katalogverdien(deler, kilde) {
   const ctx = vm.createContext(Object.create(null))
   let kastet = null
-  try {
-    skript.runInContext(ctx, {timeout: 10000})
-  } catch (e) {
-    // Ventet: UI-koden etter katalogen rører `document`. Se toppen av fila.
-    kastet = e
-  }
+  deler.forEach((kode, i) => {
+    const navn = deler.length > 1 ? `${kilde} <script> ${i + 1}` : kilde
+    let skript
+    try {
+      skript = new vm.Script(kode, {filename: navn})
+    } catch (e) {
+      stopp(`${navn} er ikke gyldig JavaScript: ${e.message}\n` +
+            'To `const M = [ … ]` er nettopp denne feilen — en redeklarasjon ' +
+            'nettleseren selv avviser.')
+    }
+    try {
+      skript.runInContext(ctx, {timeout: 10000})
+    } catch (e) {
+      // Feilobjektet kommer fra en annen realm, så `instanceof` biter ikke.
+      if (e && e.name === 'SyntaxError') {
+        stopp(`${navn} er ikke gyldig JavaScript: ${e.message}\n` +
+              'To `const M = [ … ]` i hver sin <script> er nettopp denne ' +
+              'feilen — den andre erklæringen avvises når taggen bindes.')
+      }
+      // Ventet: UI-koden etter katalogen rører `document`. Se toppen av fila.
+      if (!kastet) kastet = e
+    }
+  })
   let M
   try {
     M = vm.runInContext('M', ctx, {timeout: 10000})
@@ -170,7 +195,7 @@ function main() {
   } catch (e) {
     stopp(`fant ikke sannhetskilden: ${sti}`)
   }
-  const M = katalogverdien(skriptet(html), sti)
+  const M = katalogverdien(skriptene(html), sti)
   if (!Array.isArray(M)) {
     stopp('modulkatalogen `M` i sannhetskilden er ikke en liste — katalogen ' +
           'er en liste av modulposter, og bare det')

@@ -641,7 +641,32 @@ def test_leseren_hopper_over_skript_nettleseren_ikke_kjorer(tmp_path, fremmed):
         f"klassisk JavaScript: {poster}")
 
 
-def test_to_kataloger_stopper_leseren(tmp_path):
+def test_en_tagg_som_kaster_stopper_ikke_en_senere_katalog(tmp_path):
+    """Hver `<script>` er sitt eget skript (Codex P2).
+
+    Leseren skjøtte taggene sammen til ett skript, og da arvet den noe
+    nettleseren ikke gjør: et unntak i en tidligere tagg stoppet resten.
+    Nettleseren kompilerer og kjører klassiske skript hver for seg på samme
+    globale skop — et oppsettsskript som rører `document` og kaster hindrer
+    ikke en senere tagg i å erklære katalogen.
+
+    Skjøten gjorde en helt vanlig sideform ulesbar: leseren meldte at det ikke
+    fantes noen katalog i en kilde som fungerer i nettleseren, og da kunne
+    hverken generatoren eller porten komme videre.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text(
+        "<html><body><script>document.title = 'oppsett';</script>\n"
+        "<script>\nconst M = [\n"
+        "  {n:1,name:'En',area:'X',p:1,dep:'',kl:'sideeffektfri'}\n"
+        "];\n</script></body></html>\n", encoding="utf-8")
+    poster = _katalogposter(sti)
+    assert [p["n"] for p in poster] == [1], (
+        f"en tidligere tagg som kastet tok katalogen med seg: {poster}")
+
+
+@pytest.mark.parametrize("todelt", [False, True])
+def test_to_kataloger_stopper_leseren(tmp_path, todelt):
     """To `const M` er en redeklarasjon, og motoren avviser den selv.
 
     Porten og generatoren hadde hver sin regel for at ankeret skulle stå
@@ -650,9 +675,23 @@ def test_to_kataloger_stopper_leseren(tmp_path):
     samme skript er en SyntaxError ved KOMPILERING — også når den andre står i
     kode som aldri kjører, slik den gjør her, bak et `document`-kall som
     kaster.
+
+    STÅR DE I HVER SIN TAGG, kommer den samme feilen når den andre taggen
+    bindes til det globale skopet. Nettleseren ville tiet og beholdt den
+    første katalogen; en kilde med to kataloger er en kilde ingen skal gjette
+    i, så leseren stopper — det er den ene tingen den gjør strengere enn
+    nettleseren, og den står her.
     """
+    andre = "const M = [{n:58,name:'D',area:'X',p:1}];"
     with pytest.raises(AssertionError) as feil:
-        _les_proveside(tmp_path, "const M = [{n:58,name:'D',area:'X',p:1}];")
+        if todelt:
+            sti = tmp_path / "prove.html"
+            sti.write_text(
+                _PROEVESIDE.format(ui="") + f"<script>{andre}</script>\n",
+                encoding="utf-8")
+            _katalogposter(sti)
+        else:
+            _les_proveside(tmp_path, andre)
     assert "gyldig JavaScript" in str(feil.value), str(feil.value)
 
 
