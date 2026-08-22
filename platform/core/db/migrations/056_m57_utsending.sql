@@ -32,6 +32,26 @@
 -- fiksrunde-endring (K1, RUTINER §9). Sporet er GitHub-issue #149, og
 -- `test_frigivelse_binder_ikke_payload_til_signert_innhold` dokumenterer
 -- dagens tillatte avvik så regresjonen synes når manifestet kommer.
+--
+-- ... OG CP1 PÅSTÅR IKKE AT EIEREN AV FUNKSJONENE ER BUNDET AV DEM
+-- (snevret i runde 10 på #140; sporet er issue #150). Den bærende
+-- påstanden over er NEGATIV og gjelder alle: ingen gyldig signatur ⇒
+-- ingen representerbar utsendelse. Den er en skjemasannhet — FK-kjeden og
+-- constraintene i §1–§5 — og måles med direkte DML som EIEREN.
+-- Påstander om MENGDE og HVEM er derimot funksjonssanne, ikke
+-- skjemasanne: `frigi_utsendelse` håndhever taket mot signert `antall`,
+-- `signer_utsendingsliste` håndhever signatarens aktive medlemskap, og
+-- `opprett_frigivelsesoppdrag` avviser en alt utløpt `utforelsesfrist`.
+-- De tre er sanne for enhver ORDINÆR rolle (runtime og varselsenderen har
+-- ingen INSERT; §8 + porten `test_funksjonene_er_eneste_vei_...`), men
+-- ikke for `disponit_m37_claimer`, som eier funksjonene og derfor må ha
+-- INSERT på tabellene deres. Å speile hver forutsetning i en trigger
+-- duplikaterer funksjonskroppene og lukker ikke klassen — rotårsaken er
+-- at den herdede døren og bakdøren har SAMME eier. Fiksen er et
+-- eierskille (egen NOLOGIN-rolle for kjedefunksjonene, claimerens INSERT
+-- trukket), altså ny rigg i `oppsett-postgresql.sh`/`migrer.py`/SP-10 =
+-- ny maskin = egen PR (K1). Issue #150 bærer den, med Cursors tre funn
+-- (signert `antall`-tak, signatar-medlemskap, fristport) utsatt dit.
 
 -- ------------------------------------------------------------
 -- 1. Listeversjonene. Append-only: hele raden er innholdet signaturen

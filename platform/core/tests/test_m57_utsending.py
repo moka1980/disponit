@@ -852,7 +852,15 @@ def test_funksjonene_er_eneste_vei_for_ordinaere_roller(migrator):
     """Port 4, grant-halvdelen: runtime har SELECT men ikke INSERT på
     kjedetabellene — skrivingen går gjennom funksjonene. (Den statiske
     halvdelen — at ingen annen kodevei setter opprinnelsen — måles av
-    modultestene når modulen kommer; i dag finnes ingen kodevei.)"""
+    modultestene når modulen kommer; i dag finnes ingen kodevei.)
+
+    ORDINÆRE er ordet som bærer avgrensningen (runde 10 på #140, issue
+    #150): `disponit_m37_claimer` EIER kjedefunksjonene og må derfor ha
+    INSERT på tabellene deres. For den rollen er taket mot signert
+    `antall`, signatarens medlemskap og fristporten funksjonssanne, ikke
+    skjemasanne. Den negative bærebjelken — ingen gyldig signatur ⇒ ingen
+    representerbar utsendelse — er derimot skjemasann også for eieren, og
+    måles slik i portene 6–12."""
     from db.pg import koble
     oid, _ = _grunnlag(migrator)
     liste = _liste(migrator, oid)
