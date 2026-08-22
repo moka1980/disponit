@@ -214,6 +214,13 @@ PAAKREVD = {"n": int, "name": str, "area": str, "p": int}
 
 # Merkelappen `les_katalog.mjs` setter på en feltverdi som ikke er DATA — en
 # funksjon, et mønster, en dato. Se der.
+#
+# NØYAKTIG DENNE STRENGEN KAN BARE KOMME FRA LESEREN (Codex P2, F37). Merket er
+# et objekt med denne ene nøkkelen, og kontrakten tillater nestede objekter av
+# data — så en helt ordinær `flow: {__ikke_data__: 'vanlig tekst'}` så nøyaktig
+# ut som merket, og genereringen stoppet på en verdi JSON bærer helt fint.
+# Leseren gir nå en kildenøkkel i den familien én understrek til, så de to ikke
+# kan forveksles; kontrollen her står derfor på nøkkelen slik den er.
 IKKE_DATA = "__ikke_data__"
 
 # Leseren. ETT lesersteg, delt med porten i `platform/core/tests/test_katalog.py`

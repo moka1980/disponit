@@ -83,6 +83,15 @@ const JS_MIME = new Set([
 // kunne leses av mer enn nettleseren, så en funksjon, et mønster eller en dato
 // hører ikke hjemme i en modulpost. Den som konsumerer lesningen avgjør hva
 // den skal si om det — her sier vi bare hva vi så.
+//
+// NAVNET ER VÅRT, NØKKELROMMET ER KILDENS (Codex P2, F37). Merket er et objekt
+// med denne ene nøkkelen, og kontrakten tillater nestede objekter av data — så
+// en helt ordinær `flow: {__ikke_data__: 'vanlig tekst'}` ser nøyaktig ut som
+// merket vårt. Derfor får en nøkkel fra KILDEN som ligger i familien (null
+// eller flere understreker foran navnet) én understrek til på vei ut, og den
+// nøyaktige strengen under kan bare komme fra leseren selv. Se `reservert()`.
+// Nestede felt er noe porten MÅLER, ikke noe generatoren skriver videre:
+// `katalog.js` bærer bare `n`, `omrade` og `fase`.
 const IKKE_DATA = '__ikke_data__'
 
 // Tidsgrensen all kjøring av kildens kode står under — også materialiseringen,
@@ -364,6 +373,26 @@ const BYGG_HJELPER =`((glob) => {
     ut[IKKE_DATA] = hva
     return ut
   }
+  // MARKOERNAVNET ER VAART, NOEKKELROMMET ER KILDENS (Codex P2, F37).
+  //
+  // Markoeren er et objekt med EN noekkel, og kontrakten tillater nestede
+  // objekter av data. En helt ordinaer flow: {__ikke_data__: 'vanlig tekst'}
+  // er derfor gyldig katalogdata som ser NOEYAKTIG ut som merket vaart, og
+  // generatoren avviste den som en funksjon eller et moenster. Kilden eier
+  // noekkelrommet sitt; vi kan ikke reservere et navn i det.
+  //
+  // Vi kan derimot skille de to fra hverandre paa vei ut: en noekkel fra
+  // KILDEN som ligger i familien (null eller flere understreker foran
+  // __ikke_data__) faar en understrek til. Avbildningen er injektiv — den
+  // flytter familien ett hakk opp og roerer ingenting utenfor — saa den
+  // noeyaktige strengen __ikke_data__ kan bare komme fra merket().
+  const reservert = (n) => {
+    const m = n.length, k = IKKE_DATA.length
+    if (m < k) return false
+    for (let i = 0; i < k; i++) if (n[m - k + i] !== IKKE_DATA[i]) return false
+    for (let i = 0; i < m - k; i++) if (n[i] !== '_') return false
+    return true
+  }
   const somData = (verdi) => {
     if (verdi === null) return null
     const slag = typeof verdi
@@ -383,7 +412,12 @@ const BYGG_HJELPER =`((glob) => {
     }
     if (slag === 'object' && plattObjekt(verdi)) {
       const ut = lagUten(null)
-      for (const n of nokler(verdi)) ut[n] = egenskapen(verdi, n)
+      // Indeksloekke, ikke for-of: iteratoren er en egenskap paa sidens
+      // Array.prototype, og lesningen skal ikke gaa gjennom den. Se F21/F36.
+      const n = nokler(verdi)
+      for (let i = 0; i < n.length; i++) {
+        ut[reservert(n[i]) ? '_' + n[i] : n[i]] = egenskapen(verdi, n[i])
+      }
       return ut
     }
     return merket(slag === 'object' ? slaget(verdi) : slag)

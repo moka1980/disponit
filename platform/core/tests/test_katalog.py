@@ -530,6 +530,11 @@ def _katalogposter(kilde: Path = None) -> tuple[dict, ...]:
 # funksjon, et mønster, en dato. Katalogen er en kilde som skal kunne leses av
 # mer enn nettleseren, og en egenskap som først blir til når siden kjører kan
 # hverken leses eller måles.
+#
+# NØYAKTIG DENNE STRENGEN KAN BARE KOMME FRA LESEREN (Codex P2, F37): en
+# kildenøkkel i samme familie får én understrek til på vei ut, så et helt
+# ordinært `flow: {__ikke_data__: 'vanlig tekst'}` ikke leses som merket. Se
+# `reservert()` i `les_katalog.mjs`.
 IKKE_DATA = "__ikke_data__"
 
 
@@ -1532,6 +1537,40 @@ def test_en_endret_prototype_stopper_lesningen(tmp_path, krok, hvem, navn):
                        capture_output=True, text=True, timeout=60)
     assert r.returncode == 1, r.stdout
     assert hvem in r.stderr and navn in r.stderr, r.stderr
+
+
+def test_en_kildenokkel_som_ligner_merket_er_ikke_merket(tmp_path):
+    """Navnet er leserens, nøkkelrommet er kildens (Codex P2, F37).
+
+    Merket er et objekt med ÉN nøkkel, og kontrakten tillater nestede objekter
+    av data — så `flow: {__ikke_data__: 'vanlig tekst'}` er gyldig katalogdata
+    som ser nøyaktig ut som merket. Målt på `f44dc6f` stoppet genereringen på
+    den med «har egenskapen `flow` som ikke er data (vanlig tekst)»: en verdi
+    JSON bærer helt fint, avvist fordi den lånte et navn.
+
+    En kildenøkkel i familien (null eller flere understreker foran navnet) får
+    nå én understrek til på vei ut. Avbildningen er injektiv, så den nøyaktige
+    strengen kan bare komme fra leseren selv — og et EKTE ikke-data-felt under
+    en slik nøkkel meldes fortsatt.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text(
+        "<html><script>\n"
+        "const M = [{n:1,name:'En',area:'X',p:1,"
+        "flow:{'__ikke_data__':'vanlig tekst'},"
+        "dypt:{'___ikke_data__':{'__ikke_data__':'ogsaa tekst'}},"
+        "ekte:{'__ikke_data__':() => 42}}];\n"
+        "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    post = json.loads(r.stdout)["moduler"][0]
+    assert post["flow"] == {"___ikke_data__": "vanlig tekst"}, r.stdout
+    assert post["dypt"] == {
+        "____ikke_data__": {"___ikke_data__": "ogsaa tekst"}}, r.stdout
+    # Og verdien som FAKTISK ikke er data bærer merket, uten understrek foran.
+    assert post["ekte"] == {"___ikke_data__": {IKKE_DATA: "function"}}, r.stdout
+    assert _uleselige_felt(post) == ["ekte"], r.stdout
 
 
 def test_urorte_prototyper_leses_som_for(tmp_path):
