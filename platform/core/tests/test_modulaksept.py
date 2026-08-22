@@ -378,7 +378,7 @@ def _kjede(m, *, promoter_paa_drillet=False, staged_paa_kandidat=False,
 
 
 def _drill(m, k, *, nokkel=None, utfort_ts=None, opp=None, sha=None,
-           epoch=0):
+           epoch=0, aktor="test"):
     """Registrerer drillen for kjeden `k`. -> drill_id.
 
     Utfallene er ikke parametre lenger (Codex P1, #117 runde 5): kallet
@@ -388,10 +388,10 @@ def _drill(m, k, *, nokkel=None, utfort_ts=None, opp=None, sha=None,
     m.execute("SET ROLE disponit_modules_admin")
     did = m.execute(
         "SELECT registrer_moduldrill(%s,'staging','r-drillet','r-rullback',"
-        "'r-kandidat',%s,%s,%s,%s,%s,%s,%s,'test',%s)",
+        "'r-kandidat',%s,%s,%s,%s,%s,%s,%s,%s,%s)",
         (k["mid"], k["ten"], o["inflight"], o["rullback"], o["kandidat"],
          epoch, sha or DRILL_SHA, nokkel or "n-" + secrets.token_hex(6),
-         utfort_ts or DRILL_TS)).fetchone()[0]
+         aktor, utfort_ts or DRILL_TS)).fetchone()[0]
     # RESET FØR commit: en commit med SET ROLE stående gjør admin til
     # sesjonens «faste» rolle — enhver senere rollback faller da TILBAKE
     # til admin, og neste migrator-lesning dør på grants.
@@ -529,7 +529,7 @@ def _aksepter(m, k, did, *, release="r-kandidat", artefakt=None,
               punkter=None, nokkel=None, miljo="staging",
               evidens_sha=None, ci_run="run-1", attest=True,
               ev_attest=True, ci_commit=CI_SHA, manifest_commit=None,
-              kjoringer=None, id_attest=True):
+              kjoringer=None, id_attest=True, aktor="test"):
     if evidens_sha is None:
         evidens_sha = _evidens_sha_for(k)
     m.execute("RESET ROLE")     # forrige _aksepter kan ha etterlatt admin
@@ -555,7 +555,7 @@ def _aksepter(m, k, did, *, release="r-kandidat", artefakt=None,
     m.execute("SET ROLE disponit_modules_admin")
     m.execute(
         "SELECT aksepter_moduldeployment(%s,%s,%s,%s,%s,%s,%s::uuid,%s,"
-        "%s,%s,%s,%s::jsonb,%s,'test',%s::bigint[])",
+        "%s,%s,%s,%s::jsonb,%s,%s,%s::bigint[])",
         (k["mid"], miljo, release, did, KRAV, k["ten"],
          artefakt or k["e2e"], evidens_sha,
          # Manifestcommiten ER akseptcommiten (Codex P1, runde 22) —
@@ -563,7 +563,7 @@ def _aksepter(m, k, did, *, release="r-kandidat", artefakt=None,
          ci_commit if manifest_commit is None else manifest_commit,
          ci_run, ci_commit,
          json.dumps(punkter),
-         nokkel or "a-" + secrets.token_hex(6), kjoringer))
+         nokkel or "a-" + secrets.token_hex(6), aktor, kjoringer))
     m.execute("RESET ROLE")   # aldri la admin bli sesjonens faste rolle
 
 
@@ -1516,7 +1516,11 @@ def test_replay_med_andre_bevis_avvises(migrator):
     ak = "a-" + secrets.token_hex(6)
     _aksepter(migrator, k, did, nokkel=ak)
     migrator.commit()
-    for endring in ({"ci_run": "run-2"}, {"evidens_sha": "ab" * 32}):
+    # Aktøren er materiell (055, Codex etterkontroll på #129): samme
+    # nøkkel fra en ANNEN aktør er ikke en replay — raden bærer hvem som
+    # aksepterte, og to parter kan ikke begge tro de skrev hendelsen.
+    for endring in ({"ci_run": "run-2"}, {"evidens_sha": "ab" * 32},
+                    {"aktor": "noen-andre"}):
         migrator.execute("RESET ROLE")
         with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
             _aksepter(migrator, k, did, nokkel=ak, **endring)
@@ -1565,6 +1569,12 @@ def test_drillnokkel_med_andre_utfall_avvises(migrator):
     migrator.execute("RESET ROLE")
     with pytest.raises(psycopg.errors.InvalidParameterValue):
         _drill(migrator, k, nokkel=nk, sha="22" * 32)
+    migrator.rollback()
+    # …og AKTØREN (055, Codex etterkontroll på #129): samme nøkkel fra en
+    # annen aktør er to påstander om hvem som drillet, ikke en replay.
+    migrator.execute("RESET ROLE")
+    with pytest.raises(psycopg.errors.InvalidParameterValue):
+        _drill(migrator, k, nokkel=nk, aktor="noen-andre")
     migrator.rollback()
     migrator.execute("RESET ROLE")
     migrator.execute("SET ROLE disponit_modules_admin")
