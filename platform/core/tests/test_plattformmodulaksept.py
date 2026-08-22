@@ -141,7 +141,7 @@ def _punkter(m, ci_run, ci_commit=CI_SHA, manifest_sha=MANIFEST_SHA):
 
 def _aksepter(m, *, modul=None, commit=None, sha=None, punkter=None,
               ci_run=None, ci_commit=None, nokkel=None, attest=True,
-              evidens=True):
+              evidens=True, aktor="test"):
     modul = modul or MODUL
     commit = commit or secrets.token_hex(20)
     ci_run = ci_run or "run-" + secrets.token_hex(4)
@@ -164,9 +164,10 @@ def _aksepter(m, *, modul=None, commit=None, sha=None, punkter=None,
     m.execute("SET ROLE disponit_modules_admin")
     m.execute(
         "SELECT aksepter_plattformmodul(%s,%s,%s,%s,%s,%s,%s::jsonb,"
-        "%s,'test')",
+        "%s,%s)",
         (modul, commit, sha, GRENSE, ci_run, ci_commit,
-         json.dumps(punkter), nokkel or "pn-" + secrets.token_hex(6)))
+         json.dumps(punkter), nokkel or "pn-" + secrets.token_hex(6),
+         aktor))
     m.execute("RESET ROLE")
     return modul, commit, ci_run
 
@@ -237,6 +238,15 @@ def test_aksepten_ende_til_ende_med_replay(migrator):
         "SELECT count(*) FROM plattformmodulaksept"
         " WHERE modul_id=%s AND manifest_commit=%s",
         (modul, commit)).fetchone()[0] == 1
+    migrator.rollback()
+    # samme nøkkel, ANNEN AKTØR -> avvist (055, Codex etterkontroll på
+    # #129): hendelsen bærer hvem som aksepterte, og et kall fra en annen
+    # aktør er ikke en replay — uten vilkåret fikk den andre aktøren
+    # «vellykket» mens raden fortsatt bar den første.
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        _aksepter(migrator, modul=modul, commit=commit, ci_run=ci_run,
+                  nokkel=nokkel, attest=False, aktor="noen-andre")
+    assert "annet innhold" in str(ei.value)
     migrator.rollback()
     # samme nøkkel, annen observasjon -> avvist
     p = _punkter(migrator, ci_run)
