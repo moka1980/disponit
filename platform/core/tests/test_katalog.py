@@ -1211,14 +1211,30 @@ _TILDELINGSMODI = (3, 4, 5)
 
 
 def _somsql(uttrykk: dict) -> str:
-    """En innebygd PL/pgSQL-spørring som en hel SQL-setning. Se `_SETNINGSMODUS`."""
+    """En innebygd PL/pgSQL-spørring som en hel SQL-setning. Se `_SETNINGSMODUS`.
+
+    TILDELINGSTEGNET ER DET SOM STÅR DER (Codex P2). PL/pgSQL godtar begge
+    skrivemåtene — `v := uttrykk` og `v = uttrykk` — og PostgreSQL utfører dem
+    likt. Porten delte på `:=` og indekserte ledd nummer to, så en migrasjon
+    skrevet med `=` ga `IndexError` og felte hele suiten på noe basen sier ja
+    til. Å prøve `:=` FØRST er dessuten feil vei: i `v = 'har := ikke'` står
+    tegnene inne i verdien.
+
+    Tildelingstegnet er derfor det FØRSTE `=` i spørringen — skrevet `:=` når
+    et kolon står foran — og alt etter det er uttrykket. Målet er en variabel
+    med eventuelle ledd, og det bærer ikke noe likhetstegn. Finnes ikke tegnet,
+    er spørringen ikke den tildelingen PL/pgSQL merket den som, og da sier vi
+    fra høyt i stedet for å lese noe annet enn serveren.
+    """
     spørring, modus = uttrykk.get("query", ""), uttrykk.get("parseMode", 0)
     if modus == _SETNINGSMODUS:
         return spørring
     if modus in _TILDELINGSMODI:
-        # `mål := uttrykk`. Målet er en variabel med eventuelle ledd, og
-        # verdien er alt etter tildelingstegnet.
-        return "SELECT " + spørring.split(":=", 1)[1]
+        skille = spørring.find("=")
+        assert skille != -1, (
+            f"PL/pgSQL merket {spørring!r} som en tildeling (modus {modus}), "
+            "men det står ikke noe tildelingstegn i den")
+        return "SELECT " + spørring[skille + 1:]
     return "SELECT " + spørring
 
 
@@ -1660,6 +1676,20 @@ def test_en_pensjonert_verdi_er_ute_av_de_kjente(monkeypatch):
     # verdien forsvunnet i stillhet — og med den 120 andre.
     ("CREATE FUNCTION f() RETURNS trigger LANGUAGE plpgsql AS $$\n"
      "BEGIN NEW.a := 'oppfunnet_klasse'; RETURN NEW; END $$;\n", True),
+    # PL/pgSQL godtar BEGGE skrivemåtene av tildeling, og PostgreSQL utfører
+    # dem likt (Codex P2). `=` uten kolon ga `IndexError` og felte suiten.
+    ("CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $$\n"
+     "DECLARE v_state text;\n"
+     "BEGIN v_state = 'oppfunnet_klasse'; END $$;\n", True),
+    # Og tegnene `:=` inne i en VERDI er verdien, ikke tildelingstegnet: å lete
+    # etter `:=` først ville kuttet setningen midt i strengen.
+    ("CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $$\n"
+     "DECLARE v_state text;\n"
+     "BEGIN v_state = 'oppfunnet_klasse := nei'; END $$;\n", False),
+    ("CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $$\n"
+     "DECLARE v_state text;\n"
+     "BEGIN v_state = 'a := b'; v_state := 'oppfunnet_klasse'; END $$;\n",
+     True),
     # Kommentartegn inne i en STRENG er data, ikke starten på en kommentar.
     ("INSERT INTO t (a, b) VALUES ('a--b', 'oppfunnet_klasse');\n", True),
     # En doblet fnutt er en ESCAPE, ikke slutten på én verdi og starten på en
