@@ -746,3 +746,87 @@ def test_det_delte_kildedomenet_er_urort():
            / "054_plattformmodulaksept.sql").read_text(encoding="utf-8")
     assert "ALTER TABLE akseptkrav_punkt" not in sql
     assert "delt_maaling'" not in sql
+
+
+def _kalleren():
+    """`m02-aksept.py` PARSET (SP-13: ekte parser for syntaks, aldri
+    tekstsøk etter kode). Porten leser treet fordi det er formen den
+    påstår noe om — ikke bytene rundt den."""
+    import ast
+    from pathlib import Path
+    rot = Path(__file__).resolve().parents[3]
+    sti = rot / "deploy/staging/m02-aksept.py"
+    return ast.parse(sti.read_text(encoding="utf-8"))
+
+
+def _tildelt(tre, navn):
+    """Uttrykket `navn` får sin verdi fra — nøyaktig ett sted."""
+    import ast
+    traff = [n.value for n in ast.walk(tre) if isinstance(n, ast.Assign)
+             and any(isinstance(t, ast.Name) and t.id == navn
+                     for t in n.targets)]
+    assert len(traff) == 1, f"{navn} settes {len(traff)} steder, ikke ett"
+    return traff[0]
+
+
+def test_kallerens_nokkel_baerer_hele_akseptidentiteten():
+    """Codex P2, runde 2 (statisk): runde 1 lukket kollisjonen —
+    `m02-aksept-<manifest_sha[:12]>` var lik for to aksepter av de samme
+    manifestbytene fra ULIKE commits, og siden `nokkel` er globalt
+    UNIQUE kunne den andre, fullt gyldige aksepten aldri skrives. Men
+    ingen test leste kalleren, så en senere avkorting ville latt suiten
+    stå grønn med hullet åpent igjen. Porten pinner formen: nøkkelen er
+    HELE akseptcommiten + HELE manifestdigesten, og begge leddene er de
+    målte verdiene — ikke et prefiks av dem."""
+    import ast
+    tre = _kalleren()
+    verdi = _tildelt(tre, "nokkel")
+    assert isinstance(verdi, ast.JoinedStr), \
+        "akseptnøkkelen settes ikke lenger som én f-streng"
+    innsatte = [d.value for d in verdi.values
+                if isinstance(d, ast.FormattedValue)]
+    assert [ast.unparse(u) for u in innsatte] == ["commit", "manifest_sha"], \
+        "nøkkelen bærer ikke nøyaktig akseptcommiten og manifestdigesten"
+    # Selve runde 1-funnet: et `[:12]`-prefiks er en avkortet identitet.
+    assert not any(isinstance(u, ast.Subscript) for u in innsatte), \
+        "et ledd i nøkkelen er avkortet — det var nettopp kollisjonen"
+    # …og leddene er de MÅLTE verdiene: akseptcommiten fra porten, og
+    # digesten av manifestbytene skriptet selv leste. Et navnebytte som
+    # smugler inn en kortform må felles her, ikke i produksjon.
+    assert ast.unparse(_tildelt(tre, "commit")) \
+        == "ma.loes_akseptcommit(a.manifest_commit)"
+    assert ast.unparse(_tildelt(tre, "manifest_sha")) \
+        == "hashlib.sha256(manifest_bytes).hexdigest()"
+
+
+def test_kalleren_maaler_og_binder_raafila_bak_sammendraget():
+    """Codex P2, runde 2 (statisk): den andre halvdelen av runde 1 —
+    råfila `oppsett.kilde` navngir ble aldri lest, hashet eller bundet
+    til akseptcommiten, så et sammendrag med en kilde-peker til noe som
+    ikke lenger fantes kunne bære den immutable
+    `revisjonslogg_korrekt`-aksepten. Porten pinner kjeden: m56-portene
+    kalles, og det er den MÅLTE sha-en som bindes til akseptcommiten —
+    ikke en påstått."""
+    import ast
+    tre = _kalleren()
+    kall = [n for n in ast.walk(tre) if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Attribute)]
+    maalinger = [n for n in kall if n.func.attr == "verifiser_kilde"]
+    assert len(maalinger) == 1, \
+        "råfila måles ikke med m56s `verifiser_kilde` — én port, aldri to"
+    assert ast.unparse(maalinger[0]) == "ma.verifiser_kilde(runde_innhold)", \
+        "det er ikke WCAG-sammendragets egen kilde som måles"
+    # Målingen skal ikke kastes: den navngir sha-en bindingen bruker.
+    maalt = [n.targets[0].id for n in ast.walk(tre)
+             if isinstance(n, ast.Assign) and isinstance(n.value, ast.Call)
+             and isinstance(n.value.func, ast.Attribute)
+             and n.value.func.attr == "verifiser_kilde"]
+    assert len(maalt) == 1, "målingen av råfila bindes ikke til et navn"
+    bindinger = [n for n in kall if n.func.attr == "bind_til_commit"
+                 and ast.unparse(n.args[1]).endswith(
+                     "['oppsett']['kilde']")]
+    assert len(bindinger) == 1, \
+        "råfila bindes ikke til akseptcommiten (ucommitede bytes er evidens)"
+    assert ast.unparse(bindinger[0].args[0]) == "commit"
+    assert ast.unparse(bindinger[0].args[2]) == maalt[0], \
+        "bindingen bruker en annen sha enn den `verifiser_kilde` målte"

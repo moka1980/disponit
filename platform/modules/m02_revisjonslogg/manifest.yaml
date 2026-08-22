@@ -104,8 +104,24 @@ i18n_prefiks: m02
 # egen avgjørelse, ikke et funn i denne runden.
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    status: ja
+    krav_id: m02-suite-v1
+    bevismaalinger:
+      - maalt.tester_totalt
+      - maalt.tester_feilet
+      - maalt.m2_tester
+      - maalt.m2_feilet
+    artefakt: deploy/staging/artefakter/m02-suite-v1-20260822T184611Z.json
+    artefakt_sha256: d5c5a05016f81e4c0e804f5e82b3069f029d321341f719b4fcd39ef7d8611385
     notat: >-
+      BUNDET 2026-08-22: suitekjøringen finnes som artefakt i repoet —
+      2195/2195 grønne på verten (main 67f40ef, test-DB 1→55), og M-2s
+      andel er det PINNEDE utvalget (m2_tester=7, m2_feilet=0, målt mot
+      KRAVGRENSER['m02-suite-v1']). FRISKHETSGRENSEN er kjent og
+      sporet i #148 (K2-eskaleringen fra #147): suiten målte commiten
+      oppsett.commit, som er ancestor av — aldri lik — akseptcommiten;
+      ancestry-porten med avgrenset diff er egen maskin og egen PR.
+      Tilstanden før bindingen, som historikk:
       MÅLT, IKKE BUNDET (delt m01-kjøring uten `bevismaalinger`).
       Samme suite som m01, kjørt på staging etter hver merge. Revisjons-
       loggens egne porter ligger i test_api.py (evidensfelter, aktør fra
@@ -119,8 +135,21 @@ staging_sjekkliste:
       artefakt i repoet og M-2s andel av den er det PINNEDE utvalget i
       `KRAVGRENSER['m02-suite-v1']['m2_andel_pakrevd']`.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    status: ja
+    krav_id: m02-fordeling-v1
+    bevismaalinger:
+      - maalt.antall_tillat
+      - maalt.antall_stopp
+      - maalt.antall_unntak
+    artefakt: deploy/staging/artefakter/m02-fordeling-v1-20260822T161849Z.json
+    artefakt_sha256: 50e7d51192c952311fb855db497386ba6489b594ca4f40a603f7580a72ce9471
     notat: >-
+      BUNDET 2026-08-22: fordelingen 84/3/93 over 180 hendelser drevet
+      gjennom den EKTE beslutningsveien (t-m02fordeling, policyvariant i
+      parset form), og artefaktet er re-målbart: porten regner tallene ut
+      av radene på nytt og holder bevisroten (settdriver + CLI-er +
+      policy-YAML) mot repoets bytes hver kjøring. Tilstanden før
+      bindingen, som historikk:
       MÅLT, IKKE BUNDET (delt m01-kjøring uten `bevismaalinger`).
       Den samme kjøringen på 180 hendelser ga identisk fordeling lokalt og
       på staging — og fordelingen ER loggen: 84 TILLAT / 3 STOPP / 93 UNNTAK
@@ -130,8 +159,23 @@ staging_sjekkliste:
     # M-2s kjernepunkt. Her er M-2 ikke en delt måling, men hovedsaken —
     # og nettopp derfor er det verst å la det stå ubundet: punktet modulen
     # finnes for, er det ingen port måler.
-    status: nei
+    status: ja
+    krav_id: wcag-kontroll-v2
+    bevismaalinger:
+      - maalt.revisjonsrader_mot_bestilt
+      - maalt.revisjonsrad_avvik
+      - maalt.kjoringer_med_attestert_kvittering
+    artefakt: deploy/staging/artefakter/wcag-kontroll-v2-20260822T190624Z.json
+    artefakt_sha256: e4ec7c51a770e7275c046b4b2e53090bb456025ea660cb967da731dfaae47b26
     notat: >-
+      BUNDET 2026-08-22, tredelt (klarsignalet §2): rad-per-hendelse-
+      leddet bæres av den DELTE r21-målingen — 10/10 revisjonsrader mot
+      bestilt, 0 avvik, referert ved artefaktets sha (delingsregelen: to
+      punkter kan dele en måling, aldri en type måling); de to andre
+      leddene — aktør fra serverkontekst og append-only håndhevet i
+      basen — bæres av CI-portene i test_api.py og
+      test_pg_og_attestering.py, som m02-akseptens CI-attest krever
+      grønne. Tilstanden før bindingen, som historikk:
       MÅLT, IKKE BUNDET (ingen `krav_id`, altså ingen målbar grense).
       Ekte beslutning gjennom sikker_beslutning_pg lagret med tenant, aktør
       og kilde fra konteksten — aldri fra payloaden. UPDATE og DELETE
