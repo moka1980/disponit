@@ -53,6 +53,9 @@ jobs:
       issues: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # `gh pr view` kjører FØR checkout — uten repo-kontekst må gh få
+      # repoet eksplisitt, ellers dør steget på «not a git repository».
+      GH_REPO: ${{ github.repository }}
       CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
       PR: ${{ github.event.pull_request.number || github.event.issue.number }}
     steps:
