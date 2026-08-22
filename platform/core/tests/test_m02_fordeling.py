@@ -63,13 +63,15 @@ def test_settet_er_bundet_til_bytene_ikke_til_navnet_sitt():
     import hashlib
 
     from manifestskjema import (M02_SETT_STI, _sjekk_grenser,
+                                m02_bevisrot_sha256,
                                 valider_artefaktformat)
     m = _lib()
     assert m.sett_sha256() == hashlib.sha256(
         M02_SETT_STI.read_bytes()).hexdigest()
 
     rader = [(i + 1, b) for i, (b, _) in enumerate(m.bygg_sett())]
-    art = m.artefakt(rader, "t-test", "lokal", "2026-08-21T00:00:00+00:00")
+    art = m.artefakt(rader, "t-test", "lokal", "2026-08-21T00:00:00+00:00",
+                     m02_bevisrot_sha256())
     assert art["bestatt"] is True
     assert valider_artefaktformat(art, "m02-fordeling-v1") == []
     assert _sjekk_grenser("m02-fordeling-v1", art) == []
@@ -78,6 +80,17 @@ def test_settet_er_bundet_til_bytene_ikke_til_navnet_sitt():
     annen = dict(art, oppsett=dict(art["oppsett"], sett_sha256="0" * 64))
     assert any("sett_sha256" in f
                for f in _sjekk_grenser("m02-fordeling-v1", annen))
+    # …og TILLITSGRENSENS anker (#132): en kjøring av en annen
+    # produsentflate — eller en ubundet en — er ikke denne kjøringen.
+    fremmed = dict(art, oppsett=dict(art["oppsett"],
+                                     bevisrot_sha256="1" * 64))
+    assert any("produsentflate" in f
+               for f in _sjekk_grenser("m02-fordeling-v1", fremmed))
+    ubundet = dict(art, oppsett={k: v for k, v in art["oppsett"].items()
+                                 if k != "bevisrot_sha256"})
+    assert valider_artefaktformat(ubundet, "m02-fordeling-v1")
+    assert any("bevisrot" in f
+               for f in _sjekk_grenser("m02-fordeling-v1", ubundet))
     # ... og et artefakt uten bindingen i det hele tatt er umålt, ikke
     # grønt: det lukkede skjemaet krever feltet, og porten sier det selv.
     uten = dict(art, oppsett={k: v for k, v in art["oppsett"].items()
@@ -139,8 +152,9 @@ def test_fordelingen_er_lik_lokalt(klient, policy, token, migrator):
         "  AND idempotency_key LIKE %s",
         (TENANT, f"m02f-{runde}-%")).fetchall()
     migrator.rollback()
+    from manifestskjema import m02_bevisrot_sha256
     art = m.artefakt([(r[0], r[1]) for r in rader], TENANT, "lokal",
-                     "2026-08-21T00:00:00+00:00")
+                     "2026-08-21T00:00:00+00:00", m02_bevisrot_sha256())
     assert art["bestatt"] is True
     assert valider_artefaktformat(art, "m02-fordeling-v1") == []
     assert _sjekk_grenser("m02-fordeling-v1", art) == []
@@ -160,3 +174,116 @@ def test_fordelingen_er_lik_lokalt(klient, policy, token, migrator):
                    + [list(r) for r in art["rader"][:-1]])
     assert any("gjentar" in f
                for f in _sjekk_grenser("m02-fordeling-v1", dublert))
+
+
+def test_policyvarianten_beholder_verifikatoren_den_bytter_til():
+    """Staging-leddet bytter purring-vilkårene til en verifikator API-et
+    faktisk KAN signere med. Byttet var et tekstbytte i den serialiserte
+    YAML-en, og navnet det byttes TIL finnes ofte i malen fra før
+    (`v_bank`, `v_regnskap`, `v_dlp`): da fikk `verifikatorer` to nøkler
+    med samme navn, `safe_load` beholdt den siste i stillhet, og den ekte
+    verifikatorens tillitserklæringer forsvant — hvorpå
+    `valider_ny_policy` avviste policyen før settet fikk kjøre.
+
+    MUTASJONEN SOM DREPER DENNE: gå tilbake til `safe_dump().replace()`.
+    """
+    import yaml
+
+    from policy_validator.schema import valider_ny_policy
+    cli = _last("m02_fordeling_artefakt",
+                "deploy/staging/m02-fordeling-artefakt.py")
+    mal = (ROT / "policies/bransjemal-tjenestebedrift.yaml").read_text(
+        encoding="utf-8")
+    purringens = {"forfall_passert_dager", "ingen_aktiv_tvist"}
+
+    # 1) Et navn som ALT står i malen — den gamle formen mistet
+    #    v_banks egen tillit; den nye utvider den.
+    p = cli.bytt_verifikator(yaml.safe_load(mal), cli.MAL_VERIFIKATOR,
+                             "v_bank")
+    assert set(p["verifikatorer"]["v_bank"]["betrodd_for"]) == \
+        purringens | {"konto_verifisert"}
+    assert valider_ny_policy(p) == []
+    gammel = yaml.safe_load(
+        yaml.safe_dump(yaml.safe_load(mal)).replace(cli.MAL_VERIFIKATOR,
+                                                    "v_bank"))
+    assert "konto_verifisert" not in \
+        gammel["verifikatorer"]["v_bank"]["betrodd_for"]
+    assert valider_ny_policy(gammel) != []
+
+    # 2) Et navn som IKKE står i malen — verifikatoren opprettes, betrodd
+    #    for nøyaktig vilkårene den overtok.
+    p = cli.bytt_verifikator(yaml.safe_load(mal), cli.MAL_VERIFIKATOR,
+                             "v_m02fordeling")
+    assert set(p["verifikatorer"]["v_m02fordeling"]["betrodd_for"]) == \
+        purringens
+    assert valider_ny_policy(p) == []
+
+    # 3) Samme navn — ingen endring, og ingen dublett.
+    urort = yaml.safe_load(mal)
+    assert cli.bytt_verifikator(yaml.safe_load(mal), cli.MAL_VERIFIKATOR,
+                                cli.MAL_VERIFIKATOR) == urort
+
+
+@pg
+def test_fordelingen_er_lik_lokalt(klient, policy, token, migrator):
+    """Hele settet gjennom den EKTE beslutningsveien lokalt: hver
+    kategori dømmes per svar (fail-closed i driveren), radene leses av
+    revisjonsloggen via idempotensnøklene, og artefaktet — bygget av
+    NØYAKTIG samme funksjon som staging-leddet bruker — består både det
+    lukkede skjemaet og grensene. Én rad fjernet feller det."""
+    from manifestskjema import _sjekk_grenser, valider_artefaktformat
+    m = _lib()
+    tok, _ = token()
+    runde = secrets.token_hex(4)
+
+    def _post(e, nokkel):
+        r = post(klient, policy, e, tok, nokkel=nokkel)
+        return r.status_code, (r.json().get("beslutning")
+                               if r.status_code == 200 else None)
+
+    def _tillat(ressurs):
+        return hendelse(policy, ressurs=ressurs)
+
+    def _uten(handling, ressurs):
+        return hendelse_uten_attestasjoner(ressurs=ressurs,
+                                           handling=handling)
+
+    def _tukle(e):
+        # snudd UTEN ny signering — signaturporten skal felle den, og
+        # nettopp det avtrykket er STOPP-kategorien.
+        e["attestasjoner"]["ingen_aktiv_tvist"]["resultat"] = False
+        return e
+
+    talt = m.kjor_sett(runde, _post, _tillat, _uten, _tukle)
+    assert talt == m.FORDELING
+    migrator.execute("RESET ROLE")
+    migrator.execute("SELECT set_config('disponit.tenant', %s, false)",
+                     (TENANT,))
+    rader = migrator.execute(
+        "SELECT id, beslutning FROM revisjonslogg WHERE tenant=%s"
+        "  AND idempotency_key LIKE %s",
+        (TENANT, f"m02f-{runde}-%")).fetchall()
+    migrator.rollback()
+    from manifestskjema import m02_bevisrot_sha256
+    art = m.artefakt([(r[0], r[1]) for r in rader], TENANT, "lokal",
+                     "2026-08-21T00:00:00+00:00", m02_bevisrot_sha256())
+    assert art["bestatt"] is True
+    assert valider_artefaktformat(art, "m02-fordeling-v1") == []
+    assert _sjekk_grenser("m02-fordeling-v1", art) == []
+    # Negative porter: én rad borte → fordelingen spriker; en beslutning
+    # byttet → re-regningen feller den; gjentatt loggpost → én hendelse
+    # er én rad.
+    amputert = dict(art, rader=art["rader"][1:],
+                    maalt=dict(art["maalt"]))
+    assert any("fasiten" in f or "krever >=" in f
+               for f in _sjekk_grenser("m02-fordeling-v1", amputert))
+    annen = "TILLAT" if art["rader"][0][1] != "TILLAT" else "STOPP"
+    byttet = dict(art, rader=[[art["rader"][0][0], annen]]
+                  + [list(r) for r in art["rader"][1:]])
+    assert any("fasiten" in f
+               for f in _sjekk_grenser("m02-fordeling-v1", byttet))
+    dublert = dict(art, rader=[list(art["rader"][0])]
+                   + [list(r) for r in art["rader"][:-1]])
+    assert any("gjentar" in f
+               for f in _sjekk_grenser("m02-fordeling-v1", dublert))
+

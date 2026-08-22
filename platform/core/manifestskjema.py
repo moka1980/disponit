@@ -950,6 +950,63 @@ def _grenser_wcag_kontroll_v2(grense: dict, art: dict) -> list[str]:
     return feil
 
 
+#: PRODUSENTFLATEN bevisroten dekker — fastlåst liste, aldri glob:
+#: en glob ville latt en NY fil utvide flaten uten at porten så det.
+M02_BEVISROT_FILER = (
+    "deploy/staging/m02_fordeling.py",
+    "deploy/staging/m02-fordeling-artefakt.py",
+    "deploy/staging/m02-suite-artefakt.py",
+    "policies/bransjemal-tjenestebedrift.yaml",
+)
+
+
+def m02_bevisrot_sha256() -> str:
+    """ÉN digest over hele m02-produsentflaten — tillitsgrensens anker.
+
+    K2-beslutningen i #131 (spec: issue #132): artefaktet beviser
+    KJØRINGEN — settet, byggerne og policyen slik de er sjekket inn —
+    og DENNE digesten er den påstanden som bytes. Porten regner den ut
+    over sitt eget tre og krever likhet med artefaktets; commit-feltet
+    blir dermed informativt, byte-bindingen er porten. Samme kanoniske
+    form som `datasett_sha256`: sti + innholds-sha per fil, i fastlåst
+    rekkefølge.
+
+    DYPERE BINDING ER EKSPLISITT UTENFOR GRENSEN: API-runtime på verten,
+    credential-snapshots og importerte biblioteker bindes av
+    deploymentkjeden (release → digest → CI-attest) — det er
+    akseptmaskineriets jobb, ikke denne digestens. Hvert hakk under
+    denne flaten peker på et nytt hakk (#131 runde 3 målte kjeden), og
+    svaret er en besluttet grense, ikke en dypere hash. Neste review
+    som åpner sporet: les #131-K2-beslutningen først.
+    """
+    h = hashlib.sha256()
+    for rel in M02_BEVISROT_FILER:
+        p = REPOROT / rel
+        h.update(rel.encode("utf-8") + b"\x00")
+        h.update(hashlib.sha256(p.read_bytes()).digest())
+    return h.hexdigest()
+
+
+def _m02_bevisrot_feil(art: dict) -> list[str]:
+    """Felles bevisrot-ledd for begge m02-artefaktene."""
+    oppsett = art.get("oppsett")
+    sha = oppsett.get("bevisrot_sha256") if isinstance(oppsett, dict) \
+        else None
+    if not (isinstance(sha, str) and len(sha) == 64):
+        return ["oppsett.bevisrot_sha256 mangler — produsentflaten er"
+                " ubundet, og artefaktet beviser da en kjøring av"
+                " ukjente bytes"]
+    try:
+        lokal = m02_bevisrot_sha256()
+    except OSError as e:
+        return [f"bevisroten lot seg ikke hashe lokalt: {e}"]
+    if sha != lokal:
+        return [f"bevisrot_sha256={sha[:12]}… er ikke de innsjekkede"
+                f" bytenes {lokal[:12]}… — kjøringen brukte en annen"
+                " produsentflate enn treet porten står i"]
+    return []
+
+
 def _grenser_m02_suite(grense: dict, art: dict) -> list[str]:
     """`m02-suite-v1` — suitekjøringen på staging, med M-2s andel
     navngitt (m02-aksept-klarsignalet §3). Tallene re-regnes: andelen
@@ -1019,6 +1076,7 @@ def _grenser_m02_suite(grense: dict, art: dict) -> list[str]:
     # i stedet for å returnere de røde funnene. Et vrangt artefakt skal
     # feile lukket, ikke krasje.
     oppsett = art.get("oppsett")
+    feil += _m02_bevisrot_feil(art)
     filer = oppsett.get("m2_filer") if isinstance(oppsett, dict) else None
     if not (isinstance(filer, list) and filer
             and all(isinstance(x, str) and x for x in filer)):
@@ -1051,6 +1109,7 @@ def _grenser_m02_fordeling(grense: dict, art: dict) -> list[str]:
     m = art.get("maalt")
     if not isinstance(m, dict):
         return ["artefaktet mangler `maalt`"]
+    feil += _m02_bevisrot_feil(art)
     rader = art.get("rader")
     if not isinstance(rader, list) or not rader:
         return feil + ["artefaktet mangler `rader` — en fordeling uten"
