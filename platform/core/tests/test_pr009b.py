@@ -282,3 +282,66 @@ def test_nginx_bruker_i_proxy_gruppe_m37_aldri():
     assert "usermod -aG disponit-proxy" in opp
     assert "disponit-m37" not in opp, \
         "transport skal aldri gi M-37 socket-tilgang"
+
+
+def test_rollbackdommen_maales_mot_bootportens_fasit_127():
+    """Issue #127 (målt 2026-08-21): opp.sh meldte «forrige kode er
+    fortsatt kompatibel» i samme deploy som oppsett-postgresql.sh hadde
+    migrert 52+53 — «ingen nye migrasjoner i DENNE kjøringen» er et
+    utsagn om kjøringen, ikke om rullbakken, og bootporten nektet
+    788bd83 mot basen på 1→53 (fase 8 målte activating → failed).
+
+    Dommen felles nå mot bootportens egen fasit: forrige releases
+    migrasjonsversjoner mot basens anvendte. Matrisen kjøres mot den
+    rene funksjonen; katalog-/base-lesningen prøves mot et fabrikert
+    tre, og umålt er aldri kompatibelt."""
+    import subprocess
+    import tempfile
+    from pathlib import Path as P
+    lib = ROT / "deploy/staging/lib-opp.sh"
+
+    def ren(forrige, base):
+        r = subprocess.run(
+            ["bash", "-c",
+             f'. {lib}; vurder_rollbackmaal "{forrige}" "{base}"'],
+            capture_output=True, text=True)
+        return r.returncode, r.stdout.strip()
+
+    kode, _ = ren("001 002 003", "001 002 003")
+    assert kode == 0, "identiske sett skal godkjennes"
+    for forrige, base in (("001 002", "001 002 003"),   # basen foran
+                          ("001 002 003", "001 002"),   # forrige foran
+                          ("", "001"), ("001", "")):
+        kode, tekst = ren(forrige, base)
+        assert kode != 0, f"({forrige!r}, {base!r}) skal avvises"
+        if forrige or base:
+            assert "forventer" in tekst
+    # Kataloglesningen bruker bootportens nøkkel (tresifret prefiks) og
+    # ignorerer alt annet i katalogen. Målt gjennom DEN FUNKSJONEN SOM
+    # KJØRER i deploy — en kopi av rørledningen her ville målt kopien
+    # (slik en kopi skjulte at uttrekket mistet tilbakereferansen `\1`).
+    # Basen er utilgjengelig med vilje: da rapporterer funksjonen begge
+    # settene den faktisk leste, og «umålt er ikke kompatibelt».
+    import os
+    with tempfile.TemporaryDirectory() as tmp:
+        kat = P(tmp) / "platform/core/db/migrations"
+        kat.mkdir(parents=True)
+        for navn in ("001_init.sql", "002_x.sql", "README.md",
+                     "ikke_migrasjon.sql"):
+            (kat / navn).write_text("-- t", encoding="utf-8")
+        r = subprocess.run(
+            ["bash", "-c",
+             f'. {lib}; rollbackmaal_kompatibelt "{tmp}" '
+             '"postgresql:///finnes_ikke?host=/finnes-ikke-katalog"'],
+            capture_output=True, text=True,
+            env=dict(os.environ, PGCONNECT_TIMEOUT="1"))
+        assert r.returncode != 0, "uleselig base skal aldri godkjennes"
+        assert "forrige: '001 002'" in r.stdout, \
+            f"kataloguttrekket skal gi bootportens nøkler: {r.stdout!r}"
+        assert "umålt er ikke kompatibelt" in r.stdout
+    # …og opp.sh BRUKER den målte dommen — den gamle slutningen fra
+    # NYE_MIGRASJONER alene er borte.
+    opp = (ROT / "deploy/staging/opp.sh").read_text(encoding="utf-8")
+    assert "rollbackmaal_kompatibelt" in opp
+    assert "er fortsatt kompatibel med skjemaet" not in opp
+    assert "UMÅLT, ikke lovet" in opp

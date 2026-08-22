@@ -638,14 +638,27 @@ echo "(a) schema, per base:"
 vurder_migrasjoner runtime "$RAPPORT_KATALOG/runtime" \
                    test    "$RAPPORT_KATALOG/test"
 echo "(b) kandidat:  api=$API m37=$M37 /ready=$KLAR (release $SHA)"
-if [ -z "$NYE_MIGRASJONER" ]; then
-  echo "(c) rollback:  ingen nye migrasjoner i NOEN base — forrige kode"
-  echo "               ($FORRIGE) er fortsatt kompatibel med skjemaet."
+# Issue #127: dommen felles mot BOOTPORTENS fasit (forrige releases
+# migrasjonssett vs basens anvendte), aldri bare mot hva DENNE
+# kjøringen migrerte — oppsett-postgresql.sh kan ha migrert i samme
+# deploy, og da er «ingen nye her» et utsagn om kjøringen, ikke om
+# rullbakken. NYE_MIGRASJONER beholdes som konservativt tilleggssignal.
+ROLLBACK_DOM=""
+if [ -n "$FORRIGE" ] && [ "$FORRIGE" != "$(readlink -f "$AKTIV")" ]; then
+  ROLLBACK_DOM=$(rollbackmaal_kompatibelt "$FORRIGE" "$DISPONIT_MIGRATOR_URL") || true
+fi
+if [ -z "$FORRIGE" ] || [ "$FORRIGE" = "$(readlink -f "$AKTIV")" ]; then
+  echo "(c) rollback:  ingen forrige release å vurdere — rullbakk er"
+  echo "               UMÅLT, ikke lovet."
+elif [ -z "$NYE_MIGRASJONER" ] && [ -z "$ROLLBACK_DOM" ]; then
+  echo "(c) rollback:  forrige kode ($FORRIGE)"
+  echo "               bærer NØYAKTIG basens migrasjonssett (målt mot"
+  echo "               bootportens fasit) og kan bootes."
 else
-  echo "(c) rollback:  FORBUDT. Nye migrasjoner [$NYE_MIGRASJONER] er"
-  echo "               forward-only; forrige kode kan IKKE startes mot"
-  echo "               dette skjemaet. Dommen felles over UNIONEN av"
-  echo "               basene — én base er nok. Feil rettes FREMOVER."
+  echo "(c) rollback:  FORBUDT. ${NYE_MIGRASJONER:+Nye migrasjoner [$NYE_MIGRASJONER]. }${ROLLBACK_DOM}"
+  echo "               Forrige kode kan IKKE startes mot dette skjemaet;"
+  echo "               feil rettes FREMOVER. (Dommen er målt, ikke"
+  echo "               utledet av hva denne kjøringen gjorde — #127.)"
 fi
 if [ -z "${DISPONIT_ARBEIDER_URL:-}" ]; then
   echo "AVVIK: DISPONIT_ARBEIDER_URL er ikke satt — arbeideren deler"
