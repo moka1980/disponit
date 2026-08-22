@@ -30,8 +30,8 @@ jobs:
         github.event_name == 'issue_comment' &&
         github.event.issue.pull_request &&
         contains(github.event.comment.body, '@cursor review') &&
-        !contains(github.event.comment.body, 'Cursor pre-Codex') &&
-        github.event.comment.user.type != 'Bot'
+        !contains(github.event.comment.body, '## Cursor pre-Codex') &&
+        github.actor != 'github-actions[bot]'
       ) ||
       (
         github.event_name == 'pull_request' &&
@@ -59,8 +59,8 @@ jobs:
       - name: Krev CURSOR_API_KEY
         run: |
           if [ -z "$CURSOR_API_KEY" ]; then
-            echo "::error::CURSOR_API_KEY mangler som repo-secret. Opprett nøkkel på https://cursor.com/dashboard/api og kjør: gh secret set CURSOR_API_KEY --repo moka1980/disponit"
-            gh pr comment "$PR" --body "@moka1980 Cursor pre-Codex kan ikke starte: \`CURSOR_API_KEY\` mangler som repo-secret. Opprett nøkkel på https://cursor.com/dashboard/api og sett den med \`gh secret set CURSOR_API_KEY --repo moka1980/disponit\`. GitHub App-tilgang alene er ikke nok for Actions."
+            echo "::error::CURSOR_API_KEY mangler som repo-secret."
+            gh pr comment "$PR" --body "@moka1980 Cursor pre-Codex kan ikke starte: \`CURSOR_API_KEY\` mangler som repo-secret. Opprett nøkkel på https://cursor.com/dashboard/api og sett den med \`gh secret set CURSOR_API_KEY --repo moka1980/disponit\`."
             exit 1
           fi
 
@@ -91,47 +91,56 @@ jobs:
           HEAD_SHA: ${{ steps.meta.outputs.sha }}
         run: |
           set -euo pipefail
+          # Prompt i egen fil — unngår at --- / blanke linjer knuser YAML-blokken.
+          cat > /tmp/cursor-prompt.txt <<'PROMPT'
+          Du er Cursor pre-Codex-angriperen i disponit (RUTINER §10).
+
+          OPPGAVE: adversariell pre-Codex-review av HELE PR-diffen mot main.
+          Mål: finn det Codex ellers ville funnet i runde 2–18 — race, TOCTOU,
+          lease/idempotens-kollisjon, navneromskollisjon, kolonnelås, FK/CHECK-hull,
+          lineage-forgrening, SP-10-regresjon, nabo-regresjon (m37/outbox/038),
+          manglende negativ test — FØR Codex ser PR-en.
+
+          Les først (i denne rekkefølgen når de finnes):
+          1. docs/RUTINER.md §9 (K1–K5) og §10
+          2. Eventuelt frosset klarsignal under docs/pr/ for modulen i PR-tittelen
+             (f.eks. PR-M57-IMPLEMENTERINGSKLARSIGNAL.md for M-57)
+          3. git diff origin/main...HEAD (hele flaten)
+
+          REGLER:
+          - Du merger ALDRI. Du pusher ALDRI. Du endrer ALDRI repo-filer.
+          - Skriv hele utfallet som vanlig svartekst (stdout fanges av CI).
+          - ÉN batched liste — ikke drypp. Prioriter P1 deretter P2. P3 blokkerer ikke.
+          - Hvert funn: fil:linje (eller constraint-navn), rotårsak, konkret fiks, test som beviser.
+          - Hvis ingen P1/P2: status PASS.
+          - Avslutt med nøyaktig én av disse to footerene:
+
+          FUNN-footer (bruk linjen med tre bindestreker under):
+          ---
+          @claude Fiks alle P1/P2 i listen over (K1: minst mulig endring; ikke bygg ny maskin).
+          IKKE skriv @codex review før P1/P2 er lukket. Når ferdig: kommenter @cursor review
+          for verifiseringspass.
+          ---
+
+          PASS-footer:
+          ---
+          @claude Cursor pre-Codex: PASS (ingen P1/P2). Kommenter nå @codex review.
+          ---
+          PROMPT
+          # Fjern felles innrykk fra heredoc (YAML krever innrykk; agenten skal ikke ha det).
+          sed -i 's/^          //' /tmp/cursor-prompt.txt
+          {
+            echo "PR: #$PR — $PR_TITLE"
+            echo "URL: $PR_URL"
+            echo "HEAD: $HEAD_SHA"
+            echo "Branch: sjekket ut lokalt."
+            echo
+            cat /tmp/cursor-prompt.txt
+          } > /tmp/cursor-prompt-full.txt
+
           # --mode ask = read-only (ingen filendringer, ingen push/merge)
           agent -p --mode ask --trust --workspace "$(pwd)" --output-format text \
-            "Du er Cursor pre-Codex-angriperen i disponit (RUTINER §10).
-
-PR: #$PR — $PR_TITLE
-URL: $PR_URL
-HEAD: $HEAD_SHA
-Branch: sjekket ut lokalt.
-
-OPPGAVE: adversariell pre-Codex-review av HELE PR-diffen mot main.
-Mål: finn det Codex ellers ville funnet i runde 2–18 — race, TOCTOU,
-lease/idempotens-kollisjon, navneromskollisjon, kolonnelås, FK/CHECK-hull,
-lineage-forgrening, SP-10-regresjon, nabo-regresjon (m37/outbox/038),
-manglende negativ test — FØR Codex ser PR-en.
-
-Les først (i denne rekkefølgen når de finnes):
-1. docs/RUTINER.md §9 (K1–K5) og §10
-2. Eventuelt frosset klarsignal under docs/pr/ for modulen i PR-tittelen
-   (f.eks. PR-M57-IMPLEMENTERINGSKLARSIGNAL.md for M-57)
-3. git diff origin/main...HEAD (hele flaten)
-
-REGLER:
-- Du merger ALDRI. Du pusher ALDRI. Du endrer ALDRI repo-filer.
-- Skriv hele utfallet som vanlig svartekst (stdout fanges av CI).
-- ÉN batched liste — ikke drypp. Prioriter P1 deretter P2. P3 blokkerer ikke.
-- Hvert funn: fil:linje (eller constraint-navn), rotårsak, konkret fiks, test som beviser.
-- Hvis ingen P1/P2: status PASS.
-- Avslutt med nøyaktig én av disse to footerene:
-
-FUNN-footer:
----
-@claude Fiks alle P1/P2 i listen over (K1: minst mulig endring; ikke bygg ny maskin).
-IKKE skriv \`@codex review\` før P1/P2 er lukket. Når ferdig: kommenter \`@cursor review\`
-for verifiseringspass.
----
-
-PASS-footer:
----
-@claude Cursor pre-Codex: PASS (ingen P1/P2). Kommenter nå \`@codex review\`.
----
-" | tee /tmp/cursor-pre-codex.md
+            "$(cat /tmp/cursor-prompt-full.txt)" | tee /tmp/cursor-pre-codex.md
 
           test -s /tmp/cursor-pre-codex.md
 
