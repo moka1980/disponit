@@ -563,18 +563,63 @@ def _uleselige_felt(post: dict) -> list[str]:
     return sorted(f for f, v in post.items() if _ikke_data_i(v) is not None)
 
 
-def _moduler_fra_kilden() -> dict[int, dict[str, str]]:
-    """{modulnummer: {fase, dep, kl, rev}} lest ut av spesifikasjonen."""
-    ut: dict[int, dict[str, str]] = {}
+def _moduler_fra_kilden() -> dict[int, dict]:
+    """{modulnummer: {fase, dep, kl, rev}} lest ut av spesifikasjonen.
+
+    FRAVÆR ER LOV, FEIL TYPE ER DET IKKE (Codex P2, F27). `kl` og `rev` er
+    valgfrie — eldre poster mangler dem, og de skal fortsatt gå gjennom. Men
+    feltene ble hentet med `isinstance(..., str)`, og da falt en post med
+    `kl: null`, `kl: 42` eller `rev: false` ut i STILLHET: generatoren krever
+    ikke typen på dem, og enumporten under leser bare felt som ble beholdt
+    her. En kontraktklasse modulregisteret aldri ville godtatt passerte
+    dermed hele runden grønn. Testen står på NØKKELEN, så en verdi som er der
+    blir med videre og møter enumen som seg selv.
+    """
+    ut: dict[int, dict] = {}
     for post in _katalogposter():
         if not isinstance(post.get("p"), int) or not isinstance(
                 post.get("dep"), str):
             continue
         ut[post["n"]] = {"fase": post["p"], "dep": post["dep"]}
         for navn in ("kl", "rev"):
-            if isinstance(post.get(navn), str):
+            if navn in post:
                 ut[post["n"]][navn] = post[navn]
     return ut
+
+
+@pytest.mark.parametrize("post,ventet", [
+    # Feltet er DER, med en verdi modulregisteret aldri kan godta. Det skal
+    # møte enumen, ikke forsvinne på veien.
+    ({"n": 1, "p": 1, "dep": "", "kl": None}, {"kl": None}),
+    ({"n": 1, "p": 1, "dep": "", "kl": 42}, {"kl": 42}),
+    ({"n": 1, "p": 1, "dep": "", "rev": False}, {"rev": False}),
+    ({"n": 1, "p": 1, "dep": "", "kl": ["sideeffektfri"]},
+     {"kl": ["sideeffektfri"]}),
+    # Feltet MANGLER. Det er lov — begge er valgfrie, og eldre poster har dem
+    # ikke. Fravær og feil type er to forskjellige ting.
+    ({"n": 1, "p": 1, "dep": ""}, {}),
+    # Og den vanlige posten, uendret.
+    ({"n": 1, "p": 1, "dep": "", "kl": "sideeffektfri", "rev": "direkte"},
+     {"kl": "sideeffektfri", "rev": "direkte"}),
+])
+def test_et_kontraktfelt_med_feil_type_faller_ikke_stille_ut(
+        monkeypatch, post, ventet):
+    """En verdi som er skrevet ned, skal måles (Codex P2, F27).
+
+    Feltene ble hentet med `isinstance(..., str)`, så `kl: null`, `kl: 42` og
+    `rev: false` falt ut av den normaliserte modulen i stillhet. Generatoren
+    krever ikke typen på dem, og enumporten leser bare felt som ble beholdt
+    her — så en kontraktklasse `modulkontrakt` aldri ville godtatt passerte
+    hele runden grønn. Målt: leseren gir `"kl": null, "rev": 42` fra kilden
+    helt fint; det var porten som mistet dem.
+
+    MUTASJONEN SOM DREPER DENNE: bytt `navn in post` tilbake til en typetest.
+    Da blir de fire første tilfellene `{}` igjen.
+    """
+    monkeypatch.setattr(sys.modules[__name__], "_katalogposter",
+                        lambda *a, **k: (post,))
+    lest = _moduler_fra_kilden()[1]
+    assert {f: v for f, v in lest.items() if f in KONTRAKTFELT} == ventet, lest
 
 
 # En katalog med to poster, slik kilden skriver dem, og en side rundt den.
@@ -2029,8 +2074,11 @@ def test_basens_egen_dom_bekrefter_lesningen():
     """
     for felt, kolonne in KONTRAKTFELT.items():
         tillatt = _registerenum(kolonne)
+        # Bare tekstverdier probes: en `kl: 42` er ikke en enumverdi basen kan
+        # spørres om i det hele tatt, og den felles av enumporten over (F27).
+        # Denne testen måler om to LESNINGER av registeret dømmer likt.
         brukte = {d[felt] for _, d in sorted(_moduler_fra_kilden().items())
-                  if felt in d}
+                  if isinstance(d.get(felt), str)}
         assert brukte, f"ingen modulpost bærer feltet {felt!r} — porten er tom"
         for verdi in sorted(brukte | {"klasse_ingen_har"}):
             dom = _proben_godtar(kolonne, verdi)
