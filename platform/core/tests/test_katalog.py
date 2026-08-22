@@ -1912,6 +1912,46 @@ _TEKSTFELT = ("message", "condname", "value")
 _SETNINGSMODUS = 0
 _TILDELINGSMODI = (3, 4, 5)
 
+# Tokenene en tildeling kan være skrevet med, og parentesene et mål kan bære.
+# Navnene er PostgreSQLs egne, fra den samme skanneren som leser dem — `:=` er
+# `COLON_EQUALS`, `=` er `ASCII_61`. Se `_tildelingsskillet()`.
+_TILDELINGSTEGN = ("COLON_EQUALS", "ASCII_61")
+_APNER = ("ASCII_40", "ASCII_91")
+_LUKKER = ("ASCII_41", "ASCII_93")
+
+
+def _tildelingsskillet(spørring: str) -> int | None:
+    """Tegnet ETTER tildelingstegnet i `spørring`, eller `None`.
+
+    POSISJONEN LESES AV POSTGRESQLS EGEN SKANNER (Codex P2, F38). Å ta det
+    første `=` i råteksten var å lete etter et TEGN der spørsmålet gjelder et
+    TOKEN: et helt lovlig tildelingsmål kan selv bære et likhetstegn — et
+    sitert variabelnavn (`"v=x" := …`) eller en subskriptnøkkel
+    (`v['key=value'] := …`) — og da sto skillet inne i målet, og resten ble
+    usyntaktisk SQL. Målt på `f44dc6f`: begge formene ga `ParseError` og felte
+    hele suiten på migrasjoner PostgreSQL utfører uten å blunke.
+
+    `pglast.parser.scan()` er libpg_query, altså PostgreSQLs egen lekser, og
+    den avgjør spørsmålet per definisjon: tegnene inne i en streng eller et
+    sitert navn er ETT token, så de kan ikke forveksles med et tildelingstegn.
+    Det er K4/SP-13 brukt på samme grammatikk som resten av fila: ekte leser
+    for syntaks, aldri en tilstandsmaskin over råtekst.
+
+    Ett gjerde til: målets subskript er en parentes rundt et uttrykk som SELV
+    kan bære et likhetstegn (`v[(a = b)::int] := …`), så bare et tegn på
+    DYBDE 0 er tildelingen. Posisjonene skanneren gir er tegn, ikke byte — se
+    `_setningene()` — og `end` peker på siste tegn i tokenet.
+    """
+    dybde = 0
+    for token in pglast.parser.scan(spørring):
+        if token.name in _APNER:
+            dybde += 1
+        elif token.name in _LUKKER:
+            dybde -= 1
+        elif dybde == 0 and token.name in _TILDELINGSTEGN:
+            return token.end + 1
+    return None
+
 
 def _somsql(uttrykk: dict) -> str:
     """En innebygd PL/pgSQL-spørring som en hel SQL-setning. Se `_SETNINGSMODUS`.
@@ -1920,24 +1960,22 @@ def _somsql(uttrykk: dict) -> str:
     skrivemåtene — `v := uttrykk` og `v = uttrykk` — og PostgreSQL utfører dem
     likt. Porten delte på `:=` og indekserte ledd nummer to, så en migrasjon
     skrevet med `=` ga `IndexError` og felte hele suiten på noe basen sier ja
-    til. Å prøve `:=` FØRST er dessuten feil vei: i `v = 'har := ikke'` står
-    tegnene inne i verdien.
+    til.
 
-    Tildelingstegnet er derfor det FØRSTE `=` i spørringen — skrevet `:=` når
-    et kolon står foran — og alt etter det er uttrykket. Målet er en variabel
-    med eventuelle ledd, og det bærer ikke noe likhetstegn. Finnes ikke tegnet,
-    er spørringen ikke den tildelingen PL/pgSQL merket den som, og da sier vi
-    fra høyt i stedet for å lese noe annet enn serveren.
+    Hvor tegnet STÅR er et syntaksspørsmål, og det stilles til skanneren, ikke
+    til råteksten: se `_tildelingsskillet()`. Alt etter tegnet er uttrykket.
+    Finnes ikke tegnet, er spørringen ikke den tildelingen PL/pgSQL merket den
+    som, og da sier vi fra høyt i stedet for å lese noe annet enn serveren.
     """
     spørring, modus = uttrykk.get("query", ""), uttrykk.get("parseMode", 0)
     if modus == _SETNINGSMODUS:
         return spørring
     if modus in _TILDELINGSMODI:
-        skille = spørring.find("=")
-        assert skille != -1, (
+        skille = _tildelingsskillet(spørring)
+        assert skille is not None, (
             f"PL/pgSQL merket {spørring!r} som en tildeling (modus {modus}), "
-            "men det står ikke noe tildelingstegn i den")
-        return "SELECT " + spørring[skille + 1:]
+            "men PostgreSQLs egen skanner finner ikke noe tildelingstegn i den")
+        return "SELECT " + spørring[skille:]
     return "SELECT " + spørring
 
 
@@ -2465,6 +2503,28 @@ def test_en_pensjonert_verdi_er_ute_av_de_kjente(monkeypatch):
      "DECLARE v_state text;\n"
      "BEGIN v_state = 'a := b'; v_state := 'oppfunnet_klasse'; END $$;\n",
      True),
+    # OG ET LIKHETSTEGN INNE I MÅLET ER MÅLET (Codex P2, F38). Et sitert
+    # variabelnavn og en subskriptnøkkel kan begge bære `=`, og da sto skillet
+    # inne i målet: målt på `f44dc6f` ga begge `ParseError` — «unterminated
+    # quoted identifier», «unterminated quoted string» — og felte hele suiten
+    # på migrasjoner PostgreSQL utfører uten å blunke. Skanneren ser ett token
+    # der råteksten så et tegn.
+    ('CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $$\n'
+     'DECLARE "v=x" text;\n'
+     'BEGIN "v=x" := \'oppfunnet_klasse\'; END $$;\n', True),
+    ('CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $$\n'
+     'DECLARE "v=x" text;\n'
+     'BEGIN "v=x" = \'oppfunnet_klasse\'; END $$;\n', True),
+    ("CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $$\n"
+     "DECLARE v jsonb;\n"
+     "BEGIN v['key=value'] := to_jsonb('oppfunnet_klasse'::text); END $$;\n",
+     True),
+    # Og et likhetstegn inne i en PARENTES i målet er heller ikke tildelingen:
+    # bare tegnet på dybde 0 er den.
+    ("CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $$\n"
+     "DECLARE v jsonb;\n"
+     "BEGIN v[('a' = 'b')::int::text] := to_jsonb('oppfunnet_klasse'::text);\n"
+     "END $$;\n", True),
     # Kommentartegn inne i en STRENG er data, ikke starten på en kommentar.
     ("INSERT INTO t (a, b) VALUES ('a--b', 'oppfunnet_klasse');\n", True),
     # En doblet fnutt er en ESCAPE, ikke slutten på én verdi og starten på en
