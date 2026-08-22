@@ -190,15 +190,33 @@ def main() -> int:
             "%s,'m02-aksept')", (a.ci_run, arbeidsflyt, ci_commit))
         vconn.commit()
 
-        # 7. Hendelsen. Nøkkelen er deterministisk på identiteten (SP-2:
-        #    en replay av NØYAKTIG dette innholdet er en no-op; alt annet
-        #    på samme nøkkel skal høres).
+        # 7. Hendelsen. Nøkkelen er deterministisk på HELE identiteten
+        #    (SP-2: en replay av NØYAKTIG dette innholdet er en no-op;
+        #    alt annet på samme nøkkel skal høres).
+        #
+        #    Codex' P2 (#147, runde 1): den forrige formen var
+        #    `m02-aksept-<manifest_sha[:12]>` — bare et prefiks av
+        #    manifestdigesten, uten commiten. Aksepteres de SAMME
+        #    manifestbytene fra en senere commit (manifestet er
+        #    uendret, men en urelatert merge flyttet HEAD), er nøkkelen
+        #    identisk mens `manifest_commit`, `ci_run` og `ci_commit`
+        #    er andre. `plattformmodulaksept.nokkel` er globalt UNIQUE,
+        #    og 054 avviser eksplisitt gjenbruk av en nøkkel med annet
+        #    innhold — den andre, fullt gyldige aksepten kunne dermed
+        #    aldri skrives. Nøkkelen bærer nå radens egen identitet:
+        #    akseptcommiten + HELE digesten, samme kjerne som
+        #    `UNIQUE (modul_id, manifest_commit, grense_id)`.
+        #    CI-leddene holdes UTENFOR med vilje: et nytt forsøk på
+        #    samme commit med en annen kjøring skal treffe 054s klare
+        #    «nøkkel gjenbrukt med annet innhold», ikke stille bli en
+        #    ny nøkkel som bryter mot radnøkkelen i stedet.
+        nokkel = f"m02-aksept-{commit}-{manifest_sha}"
         conn.execute("SET ROLE disponit_modules_admin")
         conn.execute(
             "SELECT aksepter_plattformmodul(%s,%s,%s,%s,%s,%s,%s::jsonb,"
             "%s,'m02-aksept')",
             (MODUL, commit, manifest_sha, GRENSE, a.ci_run, ci_commit,
-             json.dumps(punkter), f"m02-aksept-{manifest_sha[:12]}"))
+             json.dumps(punkter), nokkel))
         conn.commit()
         conn.execute("RESET ROLE")
         rad = conn.execute(
