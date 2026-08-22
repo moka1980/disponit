@@ -106,6 +106,30 @@ function stopp(melding) {
   process.exit(1)
 }
 
+// EN AVVISNING FRA SIDEN ER SAMME VENTEDE KLASSE SOM ET KAST (Codex P2, F17).
+//
+// UI-koden etter katalogen rører `document`, og gjør den det i en `.then()`
+// blir feilen en AVVISNING i stedet for et kast. Uten en lytter her er
+// standardoppførselen å felle prosessen — etter at katalogen alt er skrevet
+// ut. `gen_katalog.py` og porten leser exitkoden, så en helt ordinær
+// `Promise.resolve().then(() => document.title = 'x')` gjorde en vellykket
+// lesning til en feilet jobb.
+//
+// Et synkront kast fra den samme koden ignoreres allerede (se toppen av fila);
+// at feilen kom en mikrooppgave senere endrer ikke hva den er. Vi TELLER dem
+// og sier fra ved exit i stedet for å tie: verdien selv leser vi ikke, den kan
+// være den samme fellen som i F18, og her finnes ingen kontekst å lese den i.
+let avvisninger = 0
+process.on('unhandledRejection', () => { avvisninger += 1 })
+process.on('exit', () => {
+  if (avvisninger) {
+    process.stderr.write(
+      `merk: ${avvisninger} ubehandlet(e) avvisning(er) fra sidens egen kode ` +
+      'ble ignorert — samme ventede klasse som et kast fra UI-koden, og ' +
+      'katalogen er lest uavhengig av dem\n')
+  }
+})
+
 /** Sant hvis `<script ${attributter}>` er en tagg nettleseren kjører som
  *  KLASSISK JavaScript, med kroppen sin som kilde (Codex P2).
  *
@@ -361,7 +385,14 @@ function feilen(ctx, kastet) {
  *  taggen bindes. Nettleseren ville tiet og beholdt den første katalogen; her
  *  er en kilde med to kataloger en kilde ingen skal gjette i. */
 function katalogverdien(deler, kilde) {
-  const ctx = vm.createContext(Object.create(null))
+  // `microtaskMode: 'afterEvaluate'` gir konteksten SIN EGEN mikrooppgavekø,
+  // og tømmer den mens `runInContext` fortsatt kjører (Codex P2, F17). Uten
+  // den kjørte alt siden la i køen ETTER at kjøringen var over — altså utenfor
+  // tidsgrensen, på nøyaktig samme måte som materialiseringen gjorde før F10.
+  // En rekursiv `Promise.resolve().then(g)`-kjede hang da leseren for godt.
+  // Nå er køen en del av kjøringen den kom fra, og tidsgrensen feller den.
+  const ctx = vm.createContext(Object.create(null),
+                               {microtaskMode: 'afterEvaluate'})
   // FØRST hjelperen, så kilden. Rekkefølgen er hele poenget i F15: intrinsics
   // må være fanget før en `const Object` i sidekoden kan skygge for dem.
   vm.runInContext(BYGG_HJELPER, ctx, {timeout: TIMEOUT})

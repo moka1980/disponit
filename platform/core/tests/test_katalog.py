@@ -984,6 +984,65 @@ def test_en_proxyfelle_som_aldri_returnerer_gir_tidsavbrudd(tmp_path):
     assert "materialisere" in r.stderr, r.stderr
 
 
+def test_en_evig_mikrooppgavekjede_felles_av_tidsgrensen(tmp_path):
+    """Sidens mikrooppgaver hører til sidens kjøring (Codex P2, F17).
+
+    `runInContext` returnerer når den siste SETNINGEN er kjørt, ikke når køen
+    siden fylte er tom. Alt et `.then()` la igjen kjørte derfor ETTERPÅ —
+    utenfor tidsgrensen, på nøyaktig samme måte som materialiseringen gjorde
+    før F10. En rekursiv `Promise.resolve().then(g)`-kjede hang dermed leseren,
+    generatoren og CI for godt: ikke feilet, hengt.
+
+    Konteksten har nå sin egen mikrooppgavekø som tømmes MENS kjøringen står,
+    så grensen gjelder også der. Utfallet blir da det samme som for en evig
+    `for(;;)` etter katalogen, og av samme grunn: kjøringen felles, feilen er
+    sidens egen kode som stoppet etter at `M` var bundet, og katalogen kommer
+    ut. Nettleseren ville også beholdt en ferdig bundet `const M`.
+
+    Prøven skrur grensen ned med `LES_KATALOG_TIMEOUT_MS` så beviset tar
+    millisekunder. En regresjon viser seg som en jobb som aldri blir ferdig —
+    derfor kalles leseren direkte, med en frist.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>\n"
+                   "const M = [{n:1,name:'En',area:'X',p:1}];\n"
+                   "const g = () => Promise.resolve().then(g); g();\n"
+                   "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60,
+                       env={**os.environ, "LES_KATALOG_TIMEOUT_MS": "500"})
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["moduler"] == [
+        {"n": 1, "name": "En", "area": "X", "p": 1}], r.stdout
+
+
+def test_en_avvisning_fra_ui_koden_feller_ikke_lesningen(tmp_path):
+    """En avvisning er samme ventede klasse som et kast (Codex P2, F17).
+
+    UI-koden etter katalogen rører `document`, og gjør den det inne i en
+    `.then()` blir feilen en AVVISNING i stedet for et kast. Uten en lytter er
+    standardoppførselen å felle prosessen — ETTER at katalogen er skrevet ut.
+    Både generatoren og porten leser exitkoden, så en helt ordinær
+    `Promise.resolve().then(() => document.title = 'x')` gjorde en fullt
+    vellykket lesning til en feilet jobb.
+
+    Et synkront kast fra den samme koden ignoreres allerede. At feilen kom en
+    mikrooppgave senere endrer ikke hva den er — men den telles og meldes på
+    stderr, så utfallet er ikke stille.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>\n"
+                   "const M = [{n:1,name:'En',area:'X',p:1}];\n"
+                   "Promise.resolve().then(() => { document.title = 'x' });\n"
+                   "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["moduler"] == [
+        {"n": 1, "name": "En", "area": "X", "p": 1}], r.stdout
+    assert "avvisning" in r.stderr, r.stderr
+
+
 def test_en_kastet_felle_leses_i_konteksten_ikke_i_verten(tmp_path):
     """Også FEILSTIEN går under tidsgrensen (Codex P2, F18).
 
