@@ -291,17 +291,28 @@ SET search_path = pg_catalog AS $$
 DECLARE v_id UUID := gen_random_uuid();
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant, 'opprett_utsendingsliste');
-    -- Kjeden starter i et EVALUERINGSOPPDRAG (Cursor P2 på #140, runde
-    -- 2): FK-en alene godtok ethvert oppdrag — også et frigivelses-
-    -- oppdrag, som ville latt kjeden sirkle inn i seg selv. Lineagen
-    -- oppdrag→liste→signatur→frigivelse→utsendingsoppdrag har retning.
+    -- LISTEN PROMOTERER EN FULLFØRT EVALUERING (Codex P1 + Cursor P2 på
+    -- #140, runde 2). FK-en på (tenant, oppdrag_id) sier bare at
+    -- oppdraget finnes hos tenanten. Den skiller verken
+    --   * RETNING — et frigivelsesoppdrag kunne startet en ny liste, og
+    --     kjeden ville sirklet inn i seg selv, eller
+    --   * PROVENIENS — feil oppdragstype, en kjøring som fortsatt går,
+    --     eller en som feilet/ble kansellert, kunne bære en liste videre
+    --     gjennom signatur og frigivelse som en gyldig kjede.
+    -- Klarsignalet er entydig på begge: ÉN oppdragstype for evalueringen
+    -- (`rekruttering.evaluering`, §1), og «avbrutt kjøring → INGEN
+    -- promotert liste» (§7, port 28). Måles her, før raden finnes —
+    -- etterpå er listen signerbar, og en signert liste er sendbar.
     PERFORM 1 FROM public.oppdrag o
      WHERE o.tenant = p_tenant AND o.id = p_oppdrag_id
+       AND o.oppdragstype = 'rekruttering.evaluering'
+       AND o.status = 'utfort'
        AND o.opprinnelse IN ('beslutning', 'm37_reparasjon');
     IF NOT FOUND THEN
-        RAISE EXCEPTION 'opprett_utsendingsliste: oppdrag % er ikke et'
-            ' evalueringsoppdrag i tenanten (kjeden starter aldri i et'
-            ' frigivelsesoppdrag)', p_oppdrag_id
+        RAISE EXCEPTION 'opprett_utsendingsliste: oppdrag % er ikke en'
+            ' FULLFØRT rekruttering.evaluering hos % (kjeden starter aldri'
+            ' i et frigivelsesoppdrag, og en avbrutt kjøring promoteres'
+            ' aldri)', p_oppdrag_id, p_tenant
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
     INSERT INTO public.utsendingsliste (tenant, liste_id, utkast_serie,

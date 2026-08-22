@@ -45,7 +45,7 @@ pg = pytest.mark.skipif(
     reason="DISPONIT_TEST_DSN/DISPONIT_TEST_MIGRATOR_DSN ikke satt")
 
 
-def _grunnlag(m):
+def _grunnlag(m, *, oppdragstype="kontroll.wcag.nettsted", status=None):
     """TILLAT-loggpost + kryptert payload + beslutningsoppdrag — kjedens
     startpunkt (listen peker på evalueringsoppdraget)."""
     from db import kryptering
@@ -61,12 +61,27 @@ def _grunnlag(m):
         "INSERT INTO oppdrag (opprinnelse, tenant, beslutning_loggpost_id,"
         " oppdragstype, handling, eiermodul, payload_kryptert, key_id,"
         " nonce, utforelsesfrist, evidensfrist, koblingsstatus)"
-        " VALUES ('beslutning',%s,%s,'kontroll.wcag.nettsted',"
-        "'kontroll.wcag.nettsted','m_wcag_audit',%s,%s,%s,"
+        " VALUES ('beslutning',%s,%s,%s,%s,'m_wcag_audit',%s,%s,%s,"
         " now()+interval '1 hour', now()+interval '1 day','KOBLET')"
-        " RETURNING id", (TENANT, logg, ct, key_id, nonce)).fetchone()[0]
+        " RETURNING id",
+        (TENANT, logg, oppdragstype, oppdragstype, ct, key_id,
+         nonce)).fetchone()[0]
+    if status:
+        # Lovlig vei gjennom `oppdrag_kolonnelaas`' statusmaskin:
+        # opprettet → plukket → utfort, og opprettet → kansellert.
+        for steg in (("plukket", "utfort") if status == "utfort"
+                     else (status,)):
+            m.execute("UPDATE oppdrag SET status=%s WHERE tenant=%s"
+                      " AND id=%s", (steg, TENANT, oid))
     m.commit()
     return int(oid), (ct, key_id, nonce)
+
+
+def _evaluering(m):
+    """Et FULLFØRT `rekruttering.evaluering`-oppdrag — det ENESTE en
+    liste kan promotere (klarsignal §1 + §7/port 28)."""
+    return _grunnlag(m, oppdragstype="rekruttering.evaluering",
+                     status="utfort")
 
 
 def _liste(m, oid, *, serie=None, forrige=None, hash_="h1", antall=3):
@@ -440,7 +455,7 @@ def test_funksjonskjeden_ende_til_ende_med_replay(migrator):
     """Positiv kontroll for funksjonsveien + SP-2: opprett → signer →
     frigi → frigivelsesoppdrag; identisk replay er no-op, samme nøkkel
     med annet innhold (også en ANNEN SIGNATAR — 055-regelen) avvises."""
-    oid, payload = _grunnlag(migrator)
+    oid, payload = _evaluering(migrator)
     ct, key_id, nonce = payload
     bid, bid2 = _signatar(migrator), _signatar(migrator)
     # Kallene går som de EKTE rollene: runtime lager og signerer (API-
@@ -490,6 +505,40 @@ def test_funksjonskjeden_ende_til_ende_med_replay(migrator):
         (liste_id, TENANT, aoid)).fetchone()
     migrator.rollback()
     assert rad == ("frigivelse", fid, 2)
+
+
+@pg
+def test_liste_krever_fullfort_evalueringsoppdrag(migrator):
+    """Codex P1 (runde 2), klarsignalets port 28: en avbrutt kjøring skal
+    ikke kunne promoteres. Retningsporten alene (opprinnelsen) slapp
+    fortsatt gjennom feil oppdragstype, en kjøring som fortsatt går, og
+    en som ble kansellert — og derfra bar kjeden videre gjennom signatur
+    og frigivelse."""
+    feil_type, _ = _grunnlag(migrator)
+    gar_fortsatt, _ = _grunnlag(migrator,
+                                oppdragstype="rekruttering.evaluering")
+    avbrutt, _ = _grunnlag(migrator, oppdragstype="rekruttering.evaluering",
+                           status="kansellert")
+    fullfort, _ = _evaluering(migrator)
+    uuid = __import__("uuid")
+    rt = _rt()
+    try:
+        for oid in (feil_type, gar_fortsatt, avbrutt):
+            _sett_kontekst(rt, TENANT)
+            with pytest.raises(psycopg.errors.InvalidParameterValue):
+                rt.execute(
+                    "SELECT opprett_utsendingsliste(%s,%s,NULL,%s,"
+                    "'invitasjon','m@1','h-neg',2)",
+                    (TENANT, uuid.uuid4(), oid))
+            rt.rollback()
+        # Positiv kontroll: den fullførte evalueringen promoteres.
+        _sett_kontekst(rt, TENANT)
+        rt.execute(
+            "SELECT opprett_utsendingsliste(%s,%s,NULL,%s,'invitasjon',"
+            "'m@1','h-pos',2)", (TENANT, uuid.uuid4(), fullfort))
+        rt.rollback()
+    finally:
+        rt.close()
 
 
 @pg
@@ -781,8 +830,9 @@ def test_listen_starter_i_et_evalueringsoppdrag(migrator):
     """Cursor P2 på #140 (runde 2): lineagen har RETNING — en liste kan
     aldri startes på et frigivelsesoppdrag (kjeden ville sirklet inn i
     seg selv). Evalueringsoppdrag (beslutning/m37) er de lovlige
-    startpunktene."""
-    oid, payload = _grunnlag(migrator)
+    startpunktene — og siden runde 2 må evalueringen dessuten være
+    FULLFØRT (se `test_liste_krever_fullfort_evalueringsoppdrag`)."""
+    oid, payload = _evaluering(migrator)
     bid = _signatar(migrator)
     liste = _liste(migrator, oid)
     _signer(migrator, liste, bid)
