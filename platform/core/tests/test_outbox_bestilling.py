@@ -891,11 +891,13 @@ def _reaperkobling() -> tuple[object, bool]:
     drift, og i enhver testbase på samme cluster som driften, for roller er
     cluster-globale — eier DEN `reap_evidensfrister`, og runtime er nektet.
     Uten timerrollen eier runtime jobben (lokalt). Miljøet melder seg med
-    `DISPONIT_TEST_DOMENER_DSN`; å anta lokal-oppsettet gjorde testene
-    stille røde på verten (InsufficientPrivilege — som er GRANTET som
-    virker, ikke en feil).
+    `DISPONIT_TEST_DOMAINS_DSN` — navnet `oppsett-postgresql.sh` faktisk
+    skriver til miljøfilen for `$DOMENER` (paret til `DISPONIT_DOMAINS_URL`,
+    som timerne leser). Å anta lokal-oppsettet gjorde testene stille røde
+    på verten (InsufficientPrivilege — som er GRANTET som virker, ikke en
+    feil).
     """
-    dsn = os.environ.get("DISPONIT_TEST_DOMENER_DSN")
+    dsn = os.environ.get("DISPONIT_TEST_DOMAINS_DSN")
     if dsn:
         from db.pg import koble
         return koble(dsn), True
