@@ -53,6 +53,7 @@ Begge er FAIL-CLOSED. Mangler node eller pglast, er porten rød — aldri hoppet
 over. En port som hopper over seg selv er grønn på noe ingen har lest.
 """
 import functools
+import html
 import os
 import itertools
 import json
@@ -1726,6 +1727,29 @@ def _tekstene_i(verdi) -> list[str]:
     return []
 
 
+def _avkodet(dokument: str) -> str:
+    """Dokumentteksten slik den STÅR FOR EN LESER — entiteter avkodet.
+
+    Porten skannet råteksten (Codex P2). En entitet er ikke tegnene sine:
+    `oppfunnet&#95;klasse` og `oppfunnet&lowbar;klasse` vises begge som
+    `oppfunnet_klasse`, men råteksten har ingen understrek i dem, og
+    `IDENT_RE` — som fester seg nettopp i understreken — så ingenting. Porten
+    sto grønn mens den som leser dokumentet fikk servert den oppfunne
+    identifikatoren i klartekst: nøyaktig det porten finnes for.
+
+    Å skrive maskinform slik er ingen normal skrivemåte, og det er poenget —
+    en port som bare tåler den normale skrivemåten vokter bare den som ikke
+    prøver. Avkodingen er `html.unescape`, altså både `&#95;` og HTML5s navn.
+
+    LINJENUMRENE STÅR. En entitet kan selv være et linjeskift (`&#10;`), og et
+    linjeskift i dokumentteksten er mellomrom for leseren — det avkodes derfor
+    linje for linje, og et linjeskift som kommer ut av en entitet blir
+    mellomrom i stedet for å forskyve linja porten melder.
+    """
+    return "\n".join(re.sub(r"[\r\n]", " ", html.unescape(linje))
+                     for linje in dokument.split("\n"))
+
+
 def _prosastykker(kilde: Path = None) -> list[tuple[str, str]]:
     """[(hvor, tekst)] — alt sannhetskilden SIER til den som skal bygge.
 
@@ -1770,7 +1794,7 @@ def _prosastykker(kilde: Path = None) -> list[tuple[str, str]]:
         biter.append("\n" * tekst.count("\n", del_.start(1), del_.end(1)))
         forrige = del_.end(1)
     biter.append(tekst[forrige:])
-    stykker: list[tuple[str, str]] = [(DOKUMENTET, "".join(biter))]
+    stykker: list[tuple[str, str]] = [(DOKUMENTET, _avkodet("".join(biter)))]
     for post in _katalogposter(kilde):
         for felt, verdi in sorted(post.items()):
             for tekst in _tekstene_i(verdi):
@@ -1827,6 +1851,14 @@ def test_ingen_oppfunne_identifikatorer_i_sannhetskilden():
     # modulposten er rettet, endringsloggen står igjen med den avviste klassen.
     ("<b>krever_outbox</b>", "<b>rådgivende_pluss_signert_utsendelse</b>",
      "rådgivende_pluss_signert_utsendelse", "linje"),
+    # SAMME REGRESJON, SKREVET MED ENTITETER (Codex P2). Leseren av dokumentet
+    # ser `oppfunnet_klasse`; råteksten har ingen understrek å feste `IDENT_RE`
+    # i, og porten sto grønn på det den finnes for. Både tallformen og HTML5s
+    # navn, for begge er entiteter nettleseren avkoder uten videre.
+    ("<b>krever_outbox</b>", "<b>oppfunnet&#95;klasse</b>",
+     "oppfunnet_klasse", "linje"),
+    ("<b>krever_outbox</b>", "<b>oppfunnet&lowbar;klasse</b>",
+     "oppfunnet_klasse", "linje"),
     # MODULPOSTENS FELT — prosafeltet, maskinfeltet og et ledd i en liste.
     ("Byggerekkefølge: etter M-16", "Klassen er oppfunnet_klasse. Etter M-16",
      "oppfunnet_klasse", "M-57.merknad"),
@@ -1864,6 +1896,29 @@ def test_prosaporten_maaler_dokumentet_og_modulpostene(tmp_path, fra, til,
         f"porten så ikke «{ident}» i {sted} — halve prosaen er umålt")
     assert avvik[ident].startswith(sted), (
         f"porten melder «{ident}» i {avvik[ident]}, ikke i {sted}")
+
+
+@pg
+def test_en_entitet_som_er_linjeskift_flytter_ikke_linjenummeret(tmp_path):
+    """Avkodingen må ikke koste meldingen dens ene brukbare opplysning.
+
+    Dokumentteksten avkodes før den skannes, og en entitet kan selv være et
+    linjeskift (`&#10;`). Ble hele teksten avkodet under ett, ville hver slik
+    entitet lagt en linje til og skjøvet alt under seg: porten melder da et
+    linjenummer som ikke finnes i fila, og den som skal rette må lete.
+
+    Et linjeskift i dokumentteksten er dessuten mellomrom for den som leser
+    siden, ikke en ny linje i kilden. `_avkodet()` går derfor linje for linje.
+    """
+    fra = "<b>krever_outbox</b>"
+    tekst = KILDE.read_text(encoding="utf-8")
+    assert fra in tekst, f"fant ikke «{fra}» i kilden — den har endret form"
+    ny = tekst.replace(fra, "<b>&#10;&#10;oppfunnet&#95;klasse</b>", 1)
+    kilde = tmp_path / KILDE.name
+    kilde.write_text(ny, encoding="utf-8")
+    ventet = ny.count("\n", 0, ny.index("oppfunnet&#95;klasse")) + 1
+    assert _oppfunne_identifikatorer(kilde).get("oppfunnet_klasse") \
+        == f"linje {ventet}", "linjenummeret forskjøv seg av avkodingen"
 
 
 def _oppfunne_identifikatorer(kilde: Path = None) -> dict[str, str]:
