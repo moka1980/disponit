@@ -137,3 +137,41 @@ vurder_migrasjoner() {
     esac
   done
 }
+
+# Issue #127 (målt 2026-08-21): «ingen nye migrasjoner i DENNE kjøringen»
+# er ikke «forrige release kan boote». Kjørte oppsett-postgresql.sh
+# migrasjonene i SAMME deploy (den kjører FØR opp.sh), var opp.sh sine
+# migrer-kall no-ops, (c) meldte «fortsatt kompatibel» — og bootporten
+# (`krev_migrasjonstilstand`, EKSAKT samsvar) nektet 788bd83 mot basen
+# på 1→53. Fase 8 beviste det: activating → failed.
+#
+# Dommen felles derfor mot BOOTPORTENS EGEN FASIT: forrige releases
+# migrasjonsversjoner (tresifret prefiks i filnavnene — samme nøkkel
+# fase 8 og `forventede_migrasjoner()` bruker) mot versjonene som
+# FAKTISK er anvendt i runtime-basen. En lesning av virkelig tilstand,
+# aldri en slutning fra hva denne kjøringen gjorde.
+#
+# -> stdout: tom (kompatibel) eller en énlinjes forklaring (inkompatibel).
+#    Ren funksjon over to inputlinjer så matrisen kan måles uten base.
+vurder_rollbackmaal() {  # <forrige-versjoner> <base-versjoner>
+  local forrige=$1 base=$2
+  if [ "$forrige" = "$base" ]; then
+    return 0
+  fi
+  echo "forrige release forventer [$forrige], basen har [$base]"
+  return 1
+}
+
+# Leser de to versjonssettene og feller dommen. Skriver forklaringen til
+# stdout ved inkompatibilitet; returverdi 0 = forrige KAN boote.
+rollbackmaal_kompatibelt() {  # <forrige-katalog> <runtime-migrator-url>
+  local forrige_kat=$1 url=$2 fv bv
+  fv=$(ls "$forrige_kat/platform/core/db/migrations" 2>/dev/null        | sed -n 's/^\([0-9][0-9][0-9]\)_.*\.sql$//p' | sort -n        | tr '
+' ' ' | sed 's/ $//')
+  bv=$(psql "$url" -tAc        "SELECT string_agg(lpad(versjon::text, 3, '0'), ' ' ORDER BY versjon) FROM migrasjoner"        2>/dev/null | tr -d '')
+  if [ -z "$fv" ] || [ -z "$bv" ]; then
+    echo "versjonssettene lot seg ikke lese (forrige: '${fv:-tom}',"          "base: '${bv:-tom}') — umålt er ikke kompatibelt"
+    return 1
+  fi
+  vurder_rollbackmaal "$fv" "$bv"
+}
