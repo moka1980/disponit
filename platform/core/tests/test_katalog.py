@@ -789,6 +789,12 @@ def test_et_element_som_ikke_er_en_post_stopper_porten(tmp_path, element):
     ("flow:[['Steg'],{note:'x'}]", True),
     ("flow:[() => 42]", False),
     ("flow:{steg:[new Date(0)]}", False),
+    # En egen, beregnet `['__proto__']`-nøkkel er et FELT som alle andre
+    # (Codex P2). Ble den tilordnet et vanlig `{}` i leseren, traff den
+    # prototype-SETTEREN i stedet, og nøkkelen — med alt under seg — falt ut
+    # av JSON-en før kontrollen over rakk å se den.
+    ("flow:{['__proto__']:{note:() => 42}}", False),
+    ("flow:{['__proto__']:{note:'x'}}", True),
 ])
 def test_leseren_krever_at_en_feltverdi_er_data(tmp_path, felt, lesbar):
     """Katalogen skal kunne leses av mer enn nettleseren.
@@ -809,6 +815,29 @@ def test_leseren_krever_at_en_feltverdi_er_data(tmp_path, felt, lesbar):
                    f"{felt}}}];</script></html>", encoding="utf-8")
     post = _katalogposter(sti)[0]
     assert (not _uleselige_felt(post)) is lesbar, post
+
+
+def test_en_proto_nokkel_er_et_felt_og_ikke_en_prototype(tmp_path):
+    """`['__proto__']` skal ut av leseren med alt som står under (Codex P2).
+
+    En beregnet `['__proto__']`-nøkkel er en helt vanlig egen egenskap for
+    motoren, og nettleseren ser den som et felt. Leseren bygde derimot
+    resultatet i et vanlig `{}`, og der ARVES `__proto__` fra
+    `Object.prototype` som en SETTER: tilordningen byttet prototype på
+    vertsobjektet i stedet for å lage feltet. Nøkkelen forsvant dermed ut av
+    JSON-en sammen med alt den bar — også en funksjon dypt nede, som den
+    rekursive kontrollen skulle ha meldt. Et felt porten ikke ser, kontrollerer
+    den ikke; det er samme klasse feil som en nøkkel skrevet `['\\x6bl']`.
+
+    Testen måler NØKKELEN, ikke bare dommen: en tom `flow` ville også vært
+    «lesbar».
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>const M = [{n:1,name:'En',area:'X',p:1,"
+                   "flow:{['__proto__']:{note:'x'}}}];</script></html>",
+                   encoding="utf-8")
+    post = _katalogposter(sti)[0]
+    assert post["flow"] == {"__proto__": {"note": "x"}}, post
 
 
 def test_en_getter_som_ikke_terminerer_henger_ikke_leseren(tmp_path):

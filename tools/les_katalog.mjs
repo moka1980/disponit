@@ -191,7 +191,15 @@ function katalogverdien(deler, kilde) {
  *
  *  Verdiene kommer fra en annen kontekst, så de har ikke vertens prototyper.
  *  `Array.isArray` leser den interne merkelappen og virker på tvers; det som
- *  IKKE er en liste avgjøres av `plattObjekt()`. */
+ *  IKKE er en liste avgjøres av `plattObjekt()`.
+ *
+ *  OBJEKTET VI BYGGER HAR INGEN PROTOTYPE (Codex P2). `{}` arver `__proto__`
+ *  fra `Object.prototype`, og den egenskapen er en SETTER: `ut['__proto__'] =
+ *  …` bytter prototypen på `ut` i stedet for å lage et felt. Nøkkelen ble da
+ *  borte fra JSON-en, og med den alt som lå under — også en funksjon eller en
+ *  accessor den rekursive kontrollen skulle ha meldt. En katalogpost med en
+ *  egen, beregnet `['__proto__']`-nøkkel er data som alle andre nøkler her:
+ *  over `Object.create(null)` finnes det ingen setter å treffe. */
 function somData(verdi) {
   if (verdi === null) return null
   const slag = typeof verdi
@@ -205,7 +213,7 @@ function somData(verdi) {
     return ut
   }
   if (slag === 'object' && plattObjekt(verdi)) {
-    const ut = {}
+    const ut = Object.create(null)
     for (const nokkel of Object.keys(verdi)) ut[nokkel] = egenskapen(verdi, nokkel)
     return ut
   }
@@ -294,8 +302,11 @@ function main() {
     const post = egenskapen(M, i)
     if (post === null || typeof post !== 'object' || Array.isArray(post) ||
         IKKE_DATA in post) {
+      // Meldingen skrives med `JSON.stringify`, ikke `String()`: posten er alt
+      // gjort om til data, og de dataene kan bære et objekt uten prototype —
+      // og det har ingen `toString` å konvertere med.
       stopp(`element ${i + 1} i modulkatalogen er ikke en modulpost: ` +
-            `${JSON.stringify(String(post)).slice(0, 60)} — katalogen er en ` +
+            `${JSON.stringify(post).slice(0, 60)} — katalogen er en ` +
             'liste av poster, og bare det')
     }
     moduler.push(post)
