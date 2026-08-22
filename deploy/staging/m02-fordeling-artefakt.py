@@ -25,6 +25,7 @@ import importlib.util
 import json
 import os
 import secrets
+import shlex
 import sys
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -59,6 +60,22 @@ MAL_VERIFIKATOR = "v_fordring"
 
 
 def _miljo() -> dict:
+    """Leser miljøfilene med SHELLETS EGEN sitatgrammatikk, ikke med et
+    strip av de tegnene vi tror står der.
+
+    `deploy/staging/lib-miljofil.sh::sett_nokkel` — den ENESTE skriveren
+    av /etc/disponit/staging.env — skriver hver verdi som
+    `NAVN='verdi'`, med ENKLE fnutter. Formen før dette strippet bare
+    `"`, så `DISPONIT_ATT_NOKLER` kom ut som strengen `'{"v_fordring":
+    ...}'` med apostrofene i behold, og `json.loads` felte skriptet ved
+    oppstart — før én hendelse var drevet og før noe artefakt fantes
+    (Codex P1). En DSN-linje traff det samme.
+
+    SP-13/K4: en fremmed grammatikk leses av en ekte lekser.
+    `shlex.split` er nøyaktig den ordsplittingen `source` ville gjort på
+    linja — enkle fnutter, doble fnutter og escapes håndteres av shellets
+    egne regler, ikke av vår gjetning om dem.
+    """
     ut: dict[str, str] = {}
     for sti in MILJOFILER:
         p = Path(sti)
@@ -66,9 +83,16 @@ def _miljo() -> dict:
             continue
         for linje in p.read_text(encoding="utf-8").splitlines():
             linje = linje.strip()
-            if linje and not linje.startswith("#") and "=" in linje:
-                k, _, v = linje.partition("=")
-                ut.setdefault(k.strip(), v.strip().strip('"'))
+            if not linje or linje.startswith("#") or "=" not in linje:
+                continue
+            try:
+                ord_ = shlex.split(linje)
+            except ValueError:
+                continue    # ubalanserte fnutter: ikke en linje vi kan lese
+            if not ord_ or "=" not in ord_[0]:
+                continue
+            k, _, v = ord_[0].partition("=")
+            ut.setdefault(k, v)
     return ut
 
 

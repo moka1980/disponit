@@ -11,12 +11,15 @@ prod-basen, målt 2026-08-21 — hele basen hadde null STOPP).
 from __future__ import annotations
 
 import importlib.util
+import json
 import secrets
+import subprocess
 from pathlib import Path
 
 from .test_api import (  # noqa: F401 — delte fixturer og byggere
     TENANT, app, hendelse, hendelse_uten_attestasjoner, klient,
     malpolicy, migrator, miljo, pg, policy, post, token)
+from .test_deploy_miljofil import kun_posix  # bash/Linux-porten, delt
 
 ROT = Path(__file__).resolve().parents[3]
 
@@ -222,6 +225,55 @@ def test_policyvarianten_beholder_verifikatoren_den_bytter_til():
     urort = yaml.safe_load(mal)
     assert cli.bytt_verifikator(yaml.safe_load(mal), cli.MAL_VERIFIKATOR,
                                 cli.MAL_VERIFIKATOR) == urort
+
+
+@kun_posix
+def test_miljofila_leses_slik_deploy_skrev_den(tmp_path, monkeypatch):
+    """Leseren i staging-leddet bindes til den ENESTE skriveren.
+
+    `lib-miljofil.sh::sett_nokkel` skriver `NAVN='verdi'` med ENKLE
+    fnutter. Leseren strippet bare `"`, så DISPONIT_ATT_NOKLER kom ut som
+    `'{"v_fordring": ...}'` — apostrofene i behold — og `json.loads` felte
+    skriptet ved oppstart, før én hendelse var drevet (Codex P1). DSN-en
+    tok samme smell.
+
+    Fasiten skrives her av den EKTE shell-funksjonen, ikke av vår
+    gjengivelse av formatet: gliret mellom skriver og leser er nettopp
+    det som ikke kan måles av to sider som begge er vår egen gjetning.
+
+    MUTASJONEN SOM DREPER DENNE: bytt `shlex.split` tilbake mot et
+    `.strip()` av tegn.
+    """
+    miljofil = tmp_path / "staging.env"
+    skript = tmp_path / "skriv.sh"
+    skript.write_text(
+        f'set -eu\nMILJOFIL="{miljofil}"\n'
+        f'DB=disponit; BRUKER=disponit; MIGRATOR=disponit_migrator\n'
+        f'touch "$MILJOFIL"; chmod 600 "$MILJOFIL"\n'
+        f'. "{ROT / "deploy/staging/lib-miljofil.sh"}"\n'
+        'sikre_attestasjonsnokler\n'
+        'sikre_hex_hemmelighet DISPONIT_TOKEN_PEPPER\n'
+        "sett_nokkel DISPONIT_MIGRATOR_URL"
+        " 'host=127.0.0.1 dbname=disponit user=m password=hemmelig'\n",
+        encoding="utf-8")
+    kjort = subprocess.run(["bash", str(skript)], capture_output=True,
+                           text=True)
+    assert kjort.returncode == 0, kjort.stderr
+
+    cli = _last("m02_fordeling_artefakt",
+                "deploy/staging/m02-fordeling-artefakt.py")
+    monkeypatch.setattr(cli, "MILJOFILER", (str(miljofil),))
+    miljo = cli._miljo()
+
+    # JSON-nøklene: den linja `json.loads` faktisk feller på.
+    nokler = json.loads(miljo["DISPONIT_ATT_NOKLER"])
+    assert "k1" in nokler[cli.MAL_VERIFIKATOR]
+    # DSN-en: mellomrommene ER verdien, ikke ordskiller.
+    assert miljo["DISPONIT_MIGRATOR_URL"] == \
+        "host=127.0.0.1 dbname=disponit user=m password=hemmelig"
+    assert len(miljo["DISPONIT_TOKEN_PEPPER"]) == 64
+    assert not any(v.startswith("'") or v.endswith("'")
+                   for v in miljo.values())
 
 
 @pg
