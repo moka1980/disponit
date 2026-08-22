@@ -840,6 +840,34 @@ def test_en_proto_nokkel_er_et_felt_og_ikke_en_prototype(tmp_path):
     assert post["flow"] == {"__proto__": {"note": "x"}}, post
 
 
+@pytest.mark.parametrize("skygge", [
+    "const Object = {hjelp: 1};",
+    "const Array = {hjelp: 1};",
+    "const Number = {hjelp: 1};",
+    "const JSON = {hjelp: 1};",
+])
+def test_sidens_egne_globaler_skygger_ikke_for_leserens(tmp_path, skygge):
+    """Leseren låner ikke navn av siden (Codex P2).
+
+    Materialiseringen fanget `Object`, `Array`, `Number` og `JSON` da den
+    STARTET — altså etter at kildens skript hadde kjørt. En helt ordinær
+    leksikalsk global i sidekoden, `const Object = appHelpers`, skygger da for
+    intrinsicen, og `Object.getOwnPropertyDescriptor` ble `undefined`: lesningen
+    feilet på en side nettleseren håndterer helt fint. Det er ikke et angrep,
+    det er navnekollisjon — og en leser som knekker på den leser ikke kilden.
+
+    Hjelperen bygges nå i en egen kjøring FØR sidens kode og lukker om
+    intrinsics slik konteksten ble født med dem. `M` bindes fortsatt senere,
+    fordi en fri variabel slås opp når funksjonen kalles.
+    """
+    assert _les_proveside(tmp_path, skygge) == (
+        {"n": 1, "name": "En", "area": "X", "p": 1, "dep": "",
+         "kl": "sideeffektfri"},
+        {"n": 2, "name": "To", "area": "X", "p": 2, "dep": "M-1",
+         "rev": "direkte"},
+    )
+
+
 def test_en_ikke_tellbar_egenskap_faller_ikke_stille_ut(tmp_path):
     """Nettleseren ser `post.status`, altså skal leseren se den (Codex P2).
 

@@ -86,7 +86,7 @@ const JS_MIME = new Set([
 const IKKE_DATA = '__ikke_data__'
 
 // Tidsgrensen all kjøring av kildens kode står under — også materialiseringen,
-// se `MATERIALISER`. Miljøvariabelen finnes for portens egne prøver (en felle
+// se `BYGG_HJELPER`. Miljøvariabelen finnes for portens egne prøver (en felle
 // som aldri returnerer skal kunne bevises på millisekunder, ikke på ti
 // sekunder); produksjonsverdien er ti sekunder.
 const TIMEOUT = Number(process.env.LES_KATALOG_TIMEOUT_MS) > 0
@@ -167,11 +167,27 @@ function skriptene(html) {
 // Logikken er den samme som portens etablerte doktrine: egenskaper leses som
 // DESKRIPTOR og en accessor påkalles aldri (F3/F7); ordinære dataobjekter
 // kjennes på prototypekjeden; det som bygges har null-prototype så en
-// beregnet `['__proto__']`-nøkkel er et felt (F11). Intrinsics fanges ved
-// materialiseringens start — kilden er repoets egen spesifikasjon, ikke en
-// motstander, og det som IKKE kan fanges slik ville uansett vært sidens kode
-// under samme tidsgrense.
-const MATERIALISER = `(() => {
+// beregnet `['__proto__']`-nøkkel er et felt (F11).
+//
+// HJELPEREN BYGGES FØR SIDENS KODE KJØRER (Codex P2, F15)
+//
+// Intrinsics ble fanget når materialiseringen START — altså ETTER at kildens
+// egne skript hadde kjørt. En helt ordinær leksikalsk global i sidekoden,
+// `const Object = appHelpers`, skygger da for intrinsicen: `Object` i
+// materialiseringen ble sidens objekt, `Object.getOwnPropertyDescriptor` ble
+// `undefined`, og lesningen feilet på en side nettleseren håndterer fint.
+// `Array`, `Number` og `JSON` har samme inngang. Det er ikke et angrep — det
+// er navnekollisjon, og en leser som knekker på den leser ikke kilden.
+//
+// Derfor bygges hjelperen i en EGEN kjøring i den friske konteksten, før noen
+// tagg fra kilden har sluppet til. Den lukker om intrinsics slik de var da
+// konteksten ble laget, og `M` bindes først senere — en fri variabel slås opp
+// i det globale leksikalske skopet når `materialiser()` KALLES, ikke når
+// hjelperen defineres. Alt kjører fortsatt inne i konteksten, under samme
+// tidsgrense; det eneste som krysser ut er én JSON-tekst.
+const HJELPER = '__les_katalog__'
+
+const BYGG_HJELPER = `globalThis[${JSON.stringify(HJELPER)}] = (() => {
   'use strict'
   const IKKE_DATA = ${JSON.stringify(IKKE_DATA)}
   const beskriv = Object.getOwnPropertyDescriptor
@@ -231,20 +247,26 @@ const MATERIALISER = `(() => {
     if (!('value' in d)) return merket('accessor')
     return somData(d.value)
   }
-  let katalog
-  try { katalog = M } catch (e) { return tilJson({feil: 'mangler'}) }
-  if (typeof katalog === 'undefined') return tilJson({feil: 'mangler'})
-  if (!erListe(katalog)) return tilJson({feil: 'ikke_liste'})
-  const moduler = []
-  for (let i = 0; i < katalog.length; i++) {
-    const post = egenskapen(katalog, i)
-    if (post === null || typeof post !== 'object' || erListe(post) ||
-        IKKE_DATA in post) {
-      return tilJson({feil: 'ikke_post', hvor: i + 1, post})
+  // Fri variabel: M slås opp i det globale leksikalske skopet når denne
+  // KALLES, altså etter at kildens tagger har kjørt. Intrinsics over er
+  // derimot bundet nå, før noen av dem slapp til. Se F15.
+  const materialiser = () => {
+    let katalog
+    try { katalog = M } catch (e) { return tilJson({feil: 'mangler'}) }
+    if (typeof katalog === 'undefined') return tilJson({feil: 'mangler'})
+    if (!erListe(katalog)) return tilJson({feil: 'ikke_liste'})
+    const moduler = []
+    for (let i = 0; i < katalog.length; i++) {
+      const post = egenskapen(katalog, i)
+      if (post === null || typeof post !== 'object' || erListe(post) ||
+          IKKE_DATA in post) {
+        return tilJson({feil: 'ikke_post', hvor: i + 1, post})
+      }
+      moduler.push(post)
     }
-    moduler.push(post)
+    return tilJson({feil: null, moduler})
   }
-  return tilJson({feil: null, moduler})
+  return {materialiser}
 })()`
 
 /** Katalogverdien `M` slik en JavaScript-motor ser den.
@@ -265,6 +287,9 @@ const MATERIALISER = `(() => {
  *  er en kilde med to kataloger en kilde ingen skal gjette i. */
 function katalogverdien(deler, kilde) {
   const ctx = vm.createContext(Object.create(null))
+  // FØRST hjelperen, så kilden. Rekkefølgen er hele poenget i F15: intrinsics
+  // må være fanget før en `const Object` i sidekoden kan skygge for dem.
+  vm.runInContext(BYGG_HJELPER, ctx, {timeout: TIMEOUT})
   let kastet = null
   deler.forEach((kode, i) => {
     const navn = deler.length > 1 ? `${kilde} <script> ${i + 1}` : kilde
@@ -291,13 +316,13 @@ function katalogverdien(deler, kilde) {
   })
   let tekst
   try {
-    tekst = vm.runInContext(MATERIALISER, ctx, {timeout: TIMEOUT})
+    tekst = vm.runInContext(`${HJELPER}.materialiser()`, ctx, {timeout: TIMEOUT})
   } catch (e) {
     stopp('kunne ikke materialisere modulkatalogen: ' + e.message + '\n' +
           'Alt som rører en kontekstverdi kjører inne i konteksten, under ' +
           'samme tidsgrense som kildens egen kode — en proxy-felle eller ' +
           'getter som aldri returnerer gir tidsavbrudd her, aldri en hengt ' +
-          'port. Se `MATERIALISER`.')
+          'port. Se `BYGG_HJELPER`.')
   }
   const svar = JSON.parse(tekst)
   if (svar.feil === 'mangler') {
