@@ -117,8 +117,11 @@ staging_sjekkliste:
       BUNDET 2026-08-22: suitekjøringen finnes som artefakt i repoet —
       2195/2195 grønne på verten (main 67f40ef, test-DB 1→55), og M-2s
       andel er det PINNEDE utvalget (m2_tester=7, m2_feilet=0, målt mot
-      KRAVGRENSER['m02-suite-v1']). Tilstanden før bindingen, som
-      historikk:
+      KRAVGRENSER['m02-suite-v1']). FRISKHETSGRENSEN er kjent og
+      sporet i #148 (K2-eskaleringen fra #147): suiten målte commiten
+      oppsett.commit, som er ancestor av — aldri lik — akseptcommiten;
+      ancestry-porten med avgrenset diff er egen maskin og egen PR.
+      Tilstanden før bindingen, som historikk:
       MÅLT, IKKE BUNDET (delt m01-kjøring uten `bevismaalinger`).
       Samme suite som m01, kjørt på staging etter hver merge. Revisjons-
       loggens egne porter ligger i test_api.py (evidensfelter, aktør fra
