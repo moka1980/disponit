@@ -31,7 +31,8 @@ jobs:
         github.event.issue.pull_request &&
         contains(github.event.comment.body, '@cursor review') &&
         !contains(github.event.comment.body, '## Cursor pre-Codex') &&
-        github.actor != 'github-actions[bot]'
+        github.actor != 'github-actions[bot]' &&
+        github.actor != 'cursor[bot]'
       ) ||
       (
         github.event_name == 'pull_request' &&
@@ -142,9 +143,34 @@ jobs:
           } > /tmp/cursor-prompt-full.txt
 
           # --mode ask = read-only (ingen filendringer, ingen push/merge)
+          set +e
           agent -p --mode ask --trust --workspace "$(pwd)" --output-format text \
-            "$(cat /tmp/cursor-prompt-full.txt)" | tee /tmp/cursor-pre-codex.md
+            "$(cat /tmp/cursor-prompt-full.txt)" > /tmp/cursor-pre-codex.md 2> /tmp/cursor-pre-codex.err
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            cat /tmp/cursor-pre-codex.err /tmp/cursor-pre-codex.md 2>/dev/null | tee /tmp/cursor-err-combined.txt | tail -c 4000
+            if grep -qi 'usage limit' /tmp/cursor-err-combined.txt; then
+              cat > /tmp/cursor-fail-comment.md <<EOF
+          @moka1980 Cursor pre-Codex stoppet: **usage limit** på kontoen bak \`CURSOR_API_KEY\`.
 
+          Løs kvote/Pro på https://cursor.com/dashboard og kommenter \`@cursor review\` på nytt.
+          Codex venter til Cursor-PASS (RUTINER §10).
+          EOF
+            else
+              {
+                echo "@moka1980 Cursor pre-Codex feilet (exit $status). Se Actions-loggen."
+                echo
+                echo '```'
+                tail -c 3500 /tmp/cursor-err-combined.txt
+                echo
+                echo '```'
+              } > /tmp/cursor-fail-comment.md
+            fi
+            sed -i 's/^          //' /tmp/cursor-fail-comment.md
+            gh pr comment "$PR" --body-file /tmp/cursor-fail-comment.md
+            exit "$status"
+          fi
           test -s /tmp/cursor-pre-codex.md
 
       - name: Post funnliste på PR
