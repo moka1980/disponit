@@ -1187,6 +1187,84 @@ def test_kilden_kan_ikke_gjore_feilsporet_om_til_en_accessor(tmp_path):
         {"n": 1, "name": "En", "area": "X", "p": 1}], r.stdout
 
 
+# Kroker og metoder sidekoden kan legge på SINE EGNE prototyper. Ingen av dem
+# er et angrep — `Object.prototype.toJSON` er et kjent (om enn uskikkelig)
+# bibliotekstriks, og en side eier sine prototyper. Nettleseren leser `M` likt
+# i alle fire; det gjorde ikke leseren.
+@pytest.mark.parametrize("krok", [
+    # Hele svaret ble til `{}`.
+    "Object.prototype.toJSON = function () { return {kapret: true} };",
+    # Modullista ble til en streng.
+    "Array.prototype.toJSON = function () { return 'borte' };",
+    # Codex' eget eksempel: fase 1 ble stille til fase 4 på vei ut.
+    "Object.prototype.toJSON = function () {"
+    "  if (this.moduler) this.moduler[0].p = 4;"
+    "  const ut = {}; for (const k in this) ut[k] = this[k];"
+    "  delete ut.toJSON; return ut; };",
+    # Og beholderen fylles ikke med en metode siden eier.
+    "Array.prototype.push = function () { return 0 };",
+])
+def test_en_krok_pa_sidens_prototyper_omskriver_ikke_katalogen(tmp_path, krok):
+    """Ingenting leseren bygger arver fra siden (Codex P2, F21).
+
+    `JSON.stringify` er fanget som intrinsic før sidens kode kjørte (F15), men
+    det holder ikke: den SLÅR OPP `toJSON` på hver verdi den møter, og et
+    objektliteral arver fra `Object.prototype`, en liste fra `Array.prototype`.
+    Begge er sidens objekter. Kroken kjørte altså på den ferdig materialiserte
+    katalogen, inne i konteksten — og omskrev den STILLE, med exit 0: målt ga
+    `Object.prototype.toJSON` hele svaret som `{}`, `Array.prototype.toJSON` ga
+    `"moduler": "borte"`, og Codex' eget eksempel flyttet en modul fra fase 1
+    til fase 4 uten et ord.
+
+    Samme klasse, egen inngang: beholderen ble fylt med `.push`, som også er
+    `Array.prototype`. En overskrevet `push` ga en tom katalog med exit 0.
+
+    Objektene bygges alt med null-prototype. Listene løsnes fra sin når de er
+    ferdige — en liste med null-prototype er fortsatt en liste for
+    `Array.isArray` og `JSON.stringify`, men den arver ingen krok — og de
+    fylles med indekstilordning i stedet for `push`.
+
+    Dette er ikke mekanismen fra F3/F7/F10/F18: alt her kjørte allerede INNE i
+    konteksten, under tidsgrensen. Grensen sto riktig; det var arven som var
+    sidens.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>\n"
+                   "const M = [{n:1,name:'En',area:'X',p:1}];\n"
+                   f"{krok}\n"
+                   "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["moduler"] == [
+        {"n": 1, "name": "En", "area": "X", "p": 1}], r.stdout
+
+
+def test_nestede_lister_overlever_at_listene_losnes(tmp_path):
+    """Løsningen på F21 må ikke koste katalogen dybden sin.
+
+    `flow` er lister av lister, og `Object.setPrototypeOf(liste, null)` er en
+    inngripen i noe leseren gir fra seg. En liste med null-prototype er
+    fortsatt en liste for både `Array.isArray` og `JSON.stringify` — prøven
+    står for å si det høyt, ikke fordi det er tvilsomt.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text(
+        "<html><script>\n"
+        "const M = [{n:1,name:'En',area:'X',p:1,"
+        "flow:[['dypt',['dypere']]],obj:{a:[1,2,{b:'c'}]},fn:[() => 42]}];\n"
+        "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["moduler"] == [{
+        "n": 1, "name": "En", "area": "X", "p": 1,
+        "flow": [["dypt", ["dypere"]]],
+        "obj": {"a": [1, 2, {"b": "c"}]},
+        "fn": [{IKKE_DATA: "function"}],
+    }], r.stdout
+
+
 # Kontraktklassene katalogen bruker er de SAMME feltene modulregisteret lagrer,
 # og registeret håndhever dem med CHECK-vilkår. Enumene leses derfor ut av
 # den MIGRERTE BASEN, ikke skrevet av her: en kopi i testen ville vært nok en

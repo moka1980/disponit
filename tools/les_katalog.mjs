@@ -277,6 +277,27 @@ const BYGG_HJELPER =`((glob) => {
   const endelig = Number.isFinite
   const tilJson = JSON.stringify
   const tilTekst = String
+  const settProto = Object.setPrototypeOf
+  // INGENTING VI BYGGER SKAL ARVE FRA SIDEN (Codex P2, F21).
+  //
+  // JSON.stringify er fanget som intrinsic, men den SLÅR OPP toJSON paa hver
+  // verdi den moeter — og et objektliteral arver fra Object.prototype, en
+  // liste fra Array.prototype. Begge er sidens objekter. En helt ordinaer
+  // Object.prototype.toJSON = ... omskrev derfor den ferdig materialiserte
+  // katalogen paa vei ut, stille og med exit 0: maalt ga den {} for hele
+  // svaret, Array.prototype.toJSON ga "moduler": "borte", og Codex' eget
+  // eksempel flyttet en modul fra fase 1 til fase 4 uten et ord. Det er
+  // nøyaktig den stille uenigheten med nettleseren hele lesersteget finnes
+  // for aa fjerne.
+  //
+  // Objekter bygges alt med null-prototype (lagUten). Lister kan ikke lages
+  // uten prototype, men de kan LOESNES fra sin naar de er ferdige: en liste
+  // med null-prototype er fortsatt en liste (Array.isArray og JSON.stringify
+  // ser paa den interne merkelappen, ikke paa arven), men den arver ingen
+  // krok. Av samme grunn fylles de med indekstilordning og ikke med .push:
+  // push er ogsaa Array.prototype, og en overskrevet push ga maalt en tom
+  // katalog med exit 0.
+  const uarvet = (liste) => settProto(liste, null)
   const plattObjekt = (verdi) => {
     const over = proto(verdi)
     return over === null || proto(over) === null
@@ -305,8 +326,8 @@ const BYGG_HJELPER =`((glob) => {
     }
     if (erListe(verdi)) {
       const ut = []
-      for (let i = 0; i < verdi.length; i++) ut.push(egenskapen(verdi, i))
-      return ut
+      for (let i = 0; i < verdi.length; i++) ut[i] = egenskapen(verdi, i)
+      return uarvet(ut)
     }
     if (slag === 'object' && plattObjekt(verdi)) {
       const ut = lagUten(null)
@@ -321,24 +342,36 @@ const BYGG_HJELPER =`((glob) => {
     if (!('value' in d)) return merket('accessor')
     return somData(d.value)
   }
+  // Svarhylsteret er ogsaa en beholder, og et objektliteral arver fra
+  // Object.prototype. Se F21: det er hylsteret Codex' eget eksempel kapret.
+  const utfall = (feil) => {
+    const ut = lagUten(null)
+    ut.feil = feil
+    return ut
+  }
   // Fri variabel: M slås opp i det globale leksikalske skopet når denne
   // KALLES, altså etter at kildens tagger har kjørt. Intrinsics over er
   // derimot bundet nå, før noen av dem slapp til. Se F15.
   const materialiser = () => {
     let katalog
-    try { katalog = M } catch (e) { return tilJson({feil: 'mangler'}) }
-    if (typeof katalog === 'undefined') return tilJson({feil: 'mangler'})
-    if (!erListe(katalog)) return tilJson({feil: 'ikke_liste'})
+    try { katalog = M } catch (e) { return tilJson(utfall('mangler')) }
+    if (typeof katalog === 'undefined') return tilJson(utfall('mangler'))
+    if (!erListe(katalog)) return tilJson(utfall('ikke_liste'))
     const moduler = []
     for (let i = 0; i < katalog.length; i++) {
       const post = egenskapen(katalog, i)
       if (post === null || typeof post !== 'object' || erListe(post) ||
           IKKE_DATA in post) {
-        return tilJson({feil: 'ikke_post', hvor: i + 1, post})
+        const svar = utfall('ikke_post')
+        svar.hvor = i + 1
+        svar.post = post
+        return tilJson(svar)
       }
-      moduler.push(post)
+      moduler[i] = post
     }
-    return tilJson({feil: null, moduler})
+    const svar = utfall(null)
+    svar.moduler = uarvet(moduler)
+    return tilJson(svar)
   }
   // EN KASTET VERDI LESES OGSÅ HER INNE (Codex P2, F18). navn og message kan
   // være accessorer siden eier — samme klasse som F3/F7/F10, med feilstien som
