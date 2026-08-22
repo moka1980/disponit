@@ -369,6 +369,24 @@ def test_listeversjonen_er_append_only(migrator):
 
 
 @pg
+def test_kjedetabellene_taaler_ikke_truncate(migrator):
+    """Codex P2 (runde 1, aldri lukket): TRUNCATE fyrer INGEN radtrigger.
+    Uten en statement-vakt kunne tabelleieren tømt hele bevisrekken —
+    signerte lister, signaturer og frigivelser — uten å møte
+    `avvis_endring` en eneste gang.
+
+    CASCADE så FK-sperren ikke skygger for vakten som faktisk prøves:
+    BEFORE TRUNCATE fyrer først. Kontroll: fjern `*_ingen_truncate` i
+    056, så blir denne rød."""
+    _sett_kontekst(migrator, TENANT)
+    for tabell in ("utsendingsfrigivelse", "utsendingssignatur",
+                   "utsendingsliste"):
+        with pytest.raises(psycopg.errors.CheckViolation):
+            migrator.execute(f"TRUNCATE {tabell} CASCADE")
+        migrator.rollback()
+
+
+@pg
 def test_forelder_i_annen_serie_avvises(migrator):
     """Port 9: FK-en går på serienøkkelen — en versjon kan ikke adoptere
     en annen series historikk."""

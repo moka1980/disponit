@@ -56,6 +56,14 @@ DROP TRIGGER IF EXISTS utsendingsliste_append_only ON utsendingsliste;
 CREATE TRIGGER utsendingsliste_append_only
     BEFORE UPDATE OR DELETE ON utsendingsliste
     FOR EACH ROW EXECUTE FUNCTION avvis_endring();
+-- TRUNCATE fyrer ALDRI radtriggere (Codex P2, runde 1): uten en egen
+-- statement-vakt kunne eieren tømme hele bevisrekken uten å møte
+-- `avvis_endring` én eneste gang. Samme par som resten av husets
+-- append-only-tabeller (011, 014, 053).
+DROP TRIGGER IF EXISTS utsendingsliste_ingen_truncate ON utsendingsliste;
+CREATE TRIGGER utsendingsliste_ingen_truncate
+    BEFORE TRUNCATE ON utsendingsliste
+    FOR EACH STATEMENT EXECUTE FUNCTION avvis_endring();
 
 -- ------------------------------------------------------------
 -- 2. Signaturen. Én signert versjon per serie (port 12) — det er
@@ -85,6 +93,11 @@ DROP TRIGGER IF EXISTS utsendingssignatur_append_only ON utsendingssignatur;
 CREATE TRIGGER utsendingssignatur_append_only
     BEFORE UPDATE OR DELETE ON utsendingssignatur
     FOR EACH ROW EXECUTE FUNCTION avvis_endring();
+DROP TRIGGER IF EXISTS utsendingssignatur_ingen_truncate
+    ON utsendingssignatur;
+CREATE TRIGGER utsendingssignatur_ingen_truncate
+    BEFORE TRUNCATE ON utsendingssignatur
+    FOR EACH STATEMENT EXECUTE FUNCTION avvis_endring();
 
 -- ------------------------------------------------------------
 -- 3. Frigivelsen: én rad per mottaker, og FK-kjeden krever at listen er
@@ -109,6 +122,11 @@ DROP TRIGGER IF EXISTS utsendingsfrigivelse_append_only
 CREATE TRIGGER utsendingsfrigivelse_append_only
     BEFORE UPDATE OR DELETE ON utsendingsfrigivelse
     FOR EACH ROW EXECUTE FUNCTION avvis_endring();
+DROP TRIGGER IF EXISTS utsendingsfrigivelse_ingen_truncate
+    ON utsendingsfrigivelse;
+CREATE TRIGGER utsendingsfrigivelse_ingen_truncate
+    BEFORE TRUNCATE ON utsendingsfrigivelse
+    FOR EACH STATEMENT EXECUTE FUNCTION avvis_endring();
 
 -- ------------------------------------------------------------
 -- 4. Tenant-isolasjon — samme form som 038s tabeller.
