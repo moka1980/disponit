@@ -10,6 +10,7 @@ Gjelder alle i pipelinen. Avvik fra rutinene er selv en review-feil.
 | **Claude.ai** | Arkitekt og produktleder | Bestemmer struktur og spesifikasjon, lager drafts, koordinerer reviews, tar beslutninger på vegne av Eier der det trengs. Avslutter **alltid** med NÅ/NESTE-blokken (se pkt. 3). |
 | **ChatGPT** | Spesifikasjonsreview | Reviewer drafts mot de tre faste spørsmålene (se docs/README-arbeidsflyt.md). Svar limes inn i PR-beskrivelsen. |
 | **Claude Code** | Implementering | Skriver kode i repoet, kjører tester lokalt og på staging-serveren. Deployer aldri til produksjon direkte. |
+| **Cursor** | Pre-Codex-angriper | Kjører automatisk på GitHub (`.github/workflows/cursor-pre-codex.yml`) før Codex. Poster én batched funnliste eller PASS. Merger aldri. |
 | **Codex** | Kodereview og merge | Håndhever de fire merge-portene. Merger kun grønt. |
 
 ## 2. Modulrutine — én modul om gangen, helt ferdig
@@ -18,9 +19,10 @@ Gjelder alle i pipelinen. Avvik fra rutinene er selv en review-feil.
 2. **Spesifikasjonsreview (ChatGPT) — OBLIGATORISK for alle PR-er som rører `platform/`, `policies/` eller `deploy/`.** Claude.ai sender draften (spesifikasjon eller kode) til ChatGPT FØR Claude Code starter implementering. Review-svaret limes inn i PR-beskrivelsen. Kun PR-er som utelukkende endrer `docs/` kan hoppe over porten, og da skal PR-beskrivelsen si det eksplisitt med begrunnelse.
    *Historikk: porten ble hoppet over i PR-003 (forsvarlig, ren docs) og PR-004 (ikke forsvarlig — tillitsankerets tilstandslag). Codex og Claude Code fanget tolv P1 i PR-004-rundene, men porten foran skal redusere antallet som når dit. Denne presiseringen finnes fordi arkitekten brøt sin egen rutine; regelen gjelder Claude.ai mest av alle.*
 3. **Implementering** (Claude Code): kode + tester, inkludert obligatoriske negative policytester.
-4. **Kodereview** (Codex): fire porter, merge til main.
-5. **Staging-test** (Claude Code): modulen kjøres på staging-serveren — ekte server, syntetiske data, sandkasse-integrasjoner. Hele sjekklisten i modulens manifest må bestå 100 %.
-6. **Aksept** (Claude.ai bekrefter, Eier informeres): modulstatus settes til `aktiv`. Først nå starter neste modul.
+4. **Pre-Codex** (Cursor, automatisk): når PR er `ready_for_review`, merket `pre-codex`, eller noen kommenterer `@cursor review`. Cursor poster én batched funnliste (P1/P2/P3) eller PASS, og vekker Claude med `@claude`. Claude fikser P1/P2 og ber om nytt `@cursor review` til PASS. **Ingen `@codex review` før Cursor-PASS.**
+5. **Kodereview** (Codex): fire porter, merge til main — først etter Cursor-PASS.
+6. **Staging-test** (Claude Code): modulen kjøres på staging-serveren — ekte server, syntetiske data, sandkasse-integrasjoner. Hele sjekklisten i modulens manifest må bestå 100 %.
+7. **Aksept** (Claude.ai bekrefter, Eier informeres): modulstatus settes til `aktiv`. Først nå starter neste modul.
 
 **Regel:** «Testes direkte på serveren» betyr staging-serveren — aldri produksjon. Produksjon nås kun via utrullingsløypen i gjeldende prototype, seksjonen «Utrulling» (kanari → gradvis → automatisk rollback).
 
@@ -75,7 +77,7 @@ Ingen leveranse uten denne blokken. Uklarhet om hvem/hva/hvor er en feil.
 
 Repoet bor på github.com. Reglene under er ikke anbefalinger — de konfigureres som branch protection slik at GitHub nekter det som er forbudt.
 
-**Flyt:** Claude Code lager branch `pr-XXX-mNN-kortnavn` → åpner PR med malen (.github/PULL_REQUEST_TEMPLATE.md) → CI kjører automatisk (.github/workflows/ci.yml) → ChatGPT-review limes inn i PR-beskrivelsen → Codex reviewer i PR-en og merger når portene er grønne → merge til main trigger staging-deploy (PR-004).
+**Flyt:** Claude Code lager branch `pr-XXX-mNN-kortnavn` → åpner PR med malen (.github/PULL_REQUEST_TEMPLATE.md) → CI kjører automatisk (.github/workflows/ci.yml) → ChatGPT-review limes inn i PR-beskrivelsen → **Cursor pre-Codex** (PASS eller Claude fikser batched funn) → Codex reviewer i PR-en og merger når portene er grønne → merge til main trigger staging-deploy (PR-004).
 
 > ✅ **Status 2026-08-01: branch protection er aktiv og satt opp av Claude Code via GitHub-API-et** (ikke i Settings-menyen). Del B i `docs/PUSH-INSTRUKS.md` er utført; verifiser med `gh api repos/moka1980/disponit/branches/main/protection` framfor å sette den opp på nytt.
 
@@ -120,3 +122,24 @@ mens produktet på 116 linjer sto ferdig og uimotsagt fra runde 6.
 - **K5 — Overvåkeren griper inn.** Ved K2-/K3-brudd legges en
   scope-kjennelse i PR-tråden rundt runde 8 — med eskalering til eier —
   ikke etter tjue runder.
+
+## 10. Cursor pre-Codex (automatisk, GitHub)
+
+Formål: kutte Codex-rundene fra 10–18 ned mot 2–3 ved å angripe PR-en
+*før* Codex. Pilot: M-57 / PR #140; deretter alle `platform/`-PR-er.
+
+**Automatikk (ingen manuell ping):**
+1. Trigger: `ready_for_review`, label `pre-codex`, eller kommentar `@cursor review`
+2. Workflow: `.github/workflows/cursor-pre-codex.yml`
+3. Cursor kjører i `--mode ask` (read-only), poster én kommentar med P1/P2/P3 eller PASS
+4. Footer vekker Claude (`@claude`) — `claude.yml` mention-jobben fikser
+5. Etter fiks: Claude kommenterer `@cursor review` (verifisering)
+6. Først ved Cursor-PASS: Claude kommenterer `@codex review`
+7. Codex forblir eneste merge-autoritet
+
+**Hard stop:** to Cursor-FUNN-runder på samme mekanisme uten konvergens →
+K2 gjelder; eskaler i PR-tråden, ikke et tredje formforsøk via Cursor.
+
+**Secret:** `CURSOR_API_KEY` må ligge i repo-secrets (Cursor Dashboard →
+API Keys). GitHub App-installasjonen gir repo-tilgang; Actions trenger
+nøkkelen for å starte agenten.
