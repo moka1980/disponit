@@ -336,9 +336,16 @@ const BYGG_HJELPER =`((glob) => {
     }
     return merket(slag === 'object' ? slaget(verdi) : slag)
   }
+  // ET HULL ER IKKE EN VERDI (Codex P2, F26). Ingen deskriptor betyr at
+  // egenskapen ikke finnes. For en post kan det ikke skje — noklene kommer
+  // fra getOwnPropertyNames — men en liste kan vaere GLISSEN: flow: [, 'steg']
+  // har ingen plass 0. Nettleseren ser et fravaer der (map, forEach og
+  // JSON.stringify skiller hull fra verdi), og null er en verdi: den ble lest
+  // videre som helt ordinaer data, mens en eksplisitt undefined avvises rett
+  // ved siden av. Vi sier hva vi saa i stedet for aa gjette en verdi inn.
   const egenskapen = (objekt, nokkel) => {
     const d = beskriv(objekt, nokkel)
-    if (!d) return null
+    if (!d) return merket('hull')
     if (!('value' in d)) return merket('accessor')
     return somData(d.value)
   }

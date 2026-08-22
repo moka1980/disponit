@@ -1265,6 +1265,49 @@ def test_nestede_lister_overlever_at_listene_losnes(tmp_path):
     }], r.stdout
 
 
+def test_et_hull_i_en_liste_er_ikke_en_verdi(tmp_path):
+    """En glissen liste gjettes ikke full (Codex P2, F26).
+
+    `flow: [, 'steg']` har ingen plass 0 — `Object.getOwnPropertyDescriptor`
+    gir `undefined` der, og leseren skrev da `null` inn i hullet. Det er en
+    VERDI: nettleseren skiller de to (`map`, `forEach` og `JSON.stringify`
+    hopper over hullet, men ville besøkt `null`), og en eksplisitt `undefined`
+    avvises som ikke-data rett ved siden av. Målt før fiksen: `[null, "steg"]`,
+    godtatt som helt ordinær data hele veien gjennom porten.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>\n"
+                   "const M = [{n:1,name:'En',area:'X',p:1,"
+                   "flow:[, 'steg'],hel:[0, 'steg']}];\n"
+                   "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    post = json.loads(r.stdout)["moduler"][0]
+    assert post["flow"] == [{IKKE_DATA: "hull"}, "steg"], r.stdout
+    # Kontrollen: en plass som FINNES og bærer en falsy verdi er data.
+    assert post["hel"] == [0, "steg"], r.stdout
+    assert _uleselige_felt(post) == ["flow"], r.stdout
+
+
+def test_et_hull_i_selve_katalogen_stopper_porten(tmp_path):
+    """Samme hull ett nivå opp er ingen modulpost. Se F26.
+
+    Katalogen er en liste av poster, og bare det. Før fiksen ble hullet `null`
+    her også — og `null` er ikke en post, så stoppet kom uansett; prøven står
+    fordi meldingen skal NAVNGI hva den så, ikke gjette en verdi inn i den.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>\n"
+                   "const M = [{n:1,name:'En',area:'X',p:1}, , "
+                   "{n:2,name:'To',area:'X',p:2}];\n"
+                   "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 1, r.stdout
+    assert "element 2" in r.stderr and IKKE_DATA in r.stderr, r.stderr
+
+
 # Kontraktklassene katalogen bruker er de SAMME feltene modulregisteret lagrer,
 # og registeret håndhever dem med CHECK-vilkår. Enumene leses derfor ut av
 # den MIGRERTE BASEN, ikke skrevet av her: en kopi i testen ville vært nok en
