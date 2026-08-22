@@ -2822,6 +2822,18 @@ def _modulreferanser(dep: str) -> set[int]:
         for treff in markerte:
             forste = int(re.match(r"\d+", treff.group(0)).group(0))
             siste = int(treff.group(1)) if treff.group(1) else forste
+            # ET INTERVALL SOM TELLER NEDOVER ER EN SKRIVEFEIL, IKKE ET TOMROM
+            # (Codex P2, F40). `range(58, 55 + 1)` er tom, så «Modul 58–55» ble
+            # INGEN kant — verken M-58 eller M-55 — og faseporten sto grønn på
+            # en avhengighet som er skrevet rett ut. Det er samme klasse som
+            # den ubestemte flertallsformen i runde 3: en dep porten later som
+            # den ikke så. Endepunktene er begge INNFØRT som moduler, så det
+            # eneste gale er rekkefølgen, og den sier vi fra om.
+            assert siste >= forste, (
+                f"«{treff.group(0).strip()}» i dep-teksten er et modulintervall "
+                f"som teller nedover — M-{forste} til M-{siste} er ingen "
+                f"moduler i det hele tatt. Skriv det stigende "
+                f"(«{siste}–{forste}») eller navngi modulene hver for seg.")
             ut.update(range(forste, siste + 1))
     return ut
 
@@ -2856,6 +2868,39 @@ def test_markoren_kjenner_ordet_i_alle_former(dep, ventet):
     tall infrastruktur, og et suffiks («submodul», «ARM-») er ikke ordet.
     """
     assert _modulreferanser(dep) == ventet
+
+
+@pytest.mark.parametrize("dep", [
+    "Avhenger av modul 58–55",
+    "Moduler 14-13 og HRIS-connector",
+    "Modul 3, 9–5",
+])
+def test_et_intervall_som_teller_nedover_er_hoylytt(dep):
+    """En bakvendt modulrekke er en skrivefeil, ikke et tomrom (Codex P2, F40).
+
+    `range(58, 55 + 1)` er tom, så «Modul 58–55» ga verken M-58 eller M-55 —
+    ingen kant i det hele tatt. Begge endepunktene er INNFØRT som moduler med
+    markøren foran seg, så det er ingen tvil om at leddet er ment som en
+    avhengighet; det eneste gale er rekkefølgen. En dep som forsvinner er den
+    verste formen for grønn: porten sier ingenting om noe som står skrevet
+    rett ut. Målt på `f44dc6f`: de to første ga `set()`, det tredje ga `{3}` —
+    altså modulen som sto utenfor intervallet, og ingenting av intervallet.
+
+    Det tredje leddet er den samme feilen i en oppramsing markøren åpnet, altså
+    den veien inn i tallet som ikke har sin egen markør.
+    """
+    with pytest.raises(AssertionError, match="teller nedover"):
+        _modulreferanser(dep)
+
+
+def test_et_intervall_som_teller_oppover_star_urort():
+    """Gjerdet mot F40 tar bare den bakvendte formen.
+
+    Grensetilfellet er intervallet der endepunktene er like — det er lov, og
+    det er nøyaktig verdien en av-en-feil i sammenligningen ville felt.
+    """
+    assert _modulreferanser("Moduler 13–14") == {13, 14}
+    assert _modulreferanser("Modul 13–13") == {13}
 
 
 def _sykelen(kanter: dict[int, set[int]]) -> list[int] | None:
