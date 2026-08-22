@@ -15,7 +15,8 @@ from pathlib import Path
 import psycopg
 import pytest
 
-from .test_api import DSN, MIGRATOR_DSN, TENANT, migrator, miljo  # noqa: F401
+from .test_api import (ANNEN_TENANT, DSN, MIGRATOR_DSN, TENANT,  # noqa: F401
+                       migrator, miljo)
 from .test_m37 import _sett_kontekst
 
 VARSEL_DSN = os.environ.get("DISPONIT_TEST_VARSEL_DSN")
@@ -82,12 +83,21 @@ def _liste(m, oid, *, serie=None, forrige=None, hash_="h1", antall=3):
     return rad
 
 
-def _signatar(m):
-    _sett_kontekst(m, TENANT)
+def _signatar(m, *, tenant=TENANT, medlem=True, aktiv=True):
+    """Signataren er et MENNESKE i tenanten. `brukeridentitet` alene er
+    global (runde 2: den sier bare at strengen er kjent et sted) —
+    medlemskapet er autorisasjonsinngangen, og den seedes her."""
+    _sett_kontekst(m, tenant)
     bid = m.execute(
         "INSERT INTO brukeridentitet (issuer, sub) VALUES"
         " ('https://m57.test', %s) RETURNING bruker_id",
         ("s-" + secrets.token_hex(6),)).fetchone()[0]
+    if medlem:
+        m.execute(
+            "INSERT INTO brukermedlemskap (tenant, bruker_id, aktiv, roller)"
+            " VALUES (%s,%s,%s,ARRAY['admin'])"
+            " ON CONFLICT (tenant, bruker_id) DO NOTHING",
+            (tenant, bid, aktiv))
     m.commit()
     return bid
 
@@ -478,6 +488,38 @@ def test_funksjonskjeden_ende_til_ende_med_replay(migrator):
         (liste_id, TENANT, aoid)).fetchone()
     migrator.rollback()
     assert rad == ("frigivelse", fid, 2)
+
+
+@pg
+def test_signatar_uten_aktivt_medlemskap_avvises(migrator):
+    """Codex P1 + Cursor P1-1 (runde 2): signaturen ER den menneskelige
+    autorisasjonen for en irreversibel utsending, men FK-en mot
+    `brukeridentitet` er GLOBAL. Uten medlemskapsporten kunne runtime —
+    som selv har INSERT på `brukeridentitet` — tilskrive signaturen en
+    fabrikkert bruker, en avskrudd bruker eller en bruker i en ANNEN
+    tenant. Alle tre skal falle; et aktivt medlem består."""
+    oid, _ = _grunnlag(migrator)
+    liste = _liste(migrator, oid)
+    fabrikkert = _signatar(migrator, medlem=False)
+    avskrudd = _signatar(migrator, aktiv=False)
+    fremmed = _signatar(migrator, tenant=ANNEN_TENANT)
+    rt = _rt()
+    try:
+        for bid in (fabrikkert, avskrudd, fremmed):
+            _sett_kontekst(rt, TENANT)
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                rt.execute("SELECT signer_utsendingsliste(%s,%s,%s,%s)",
+                           (TENANT, liste[0], bid,
+                            "n-" + secrets.token_hex(6)))
+            rt.rollback()
+        # Positiv kontroll: aktivt medlemskap i DENNE tenanten går gjennom.
+        _sett_kontekst(rt, TENANT)
+        rt.execute("SELECT signer_utsendingsliste(%s,%s,%s,%s)",
+                   (TENANT, liste[0], _signatar(migrator),
+                    "n-" + secrets.token_hex(6)))
+        rt.rollback()
+    finally:
+        rt.close()
 
 
 @pg

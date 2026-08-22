@@ -315,6 +315,29 @@ BEGIN
         RAISE EXCEPTION 'signer_utsendingsliste: ukjent liste %', p_liste_id
             USING ERRCODE = 'no_data_found';
     END IF;
+    -- SIGNATAREN ER AUTORISASJONEN (Codex P1 + Cursor P1-1, runde 2).
+    -- FK-en mot `brukeridentitet` er GLOBAL: den sier bare at strengen er
+    -- en kjent bruker et sted i installasjonen. Runtime har EXECUTE her og
+    -- INSERT på `brukeridentitet` (010) — uten denne porten kunne den
+    -- tilskrive signaturen en bruker i en ANNEN tenant, en avskrudd bruker
+    -- eller en identitet den nettopp fabrikkerte, og senderen ville
+    -- deretter sendt irreversibel e-post på et menneske som aldri sa ja.
+    -- 043-doktrinen: den ene autorisasjonsinngangen runtime IKKE kan
+    -- skrive er medlemskapet (OIDC-forvaltet, runtime har kun SELECT).
+    -- ÆRLIG OM RESTEN: en kompromittert runtime kan fortsatt lese
+    -- medlemskapstabellen og UTGI SEG FOR et aktivt medlem. Den resten er
+    -- ikke lukkbar herfra (den forutsetter at basen kan verifisere
+    -- konvolutten) — presis samme avgrensning som 043 skrev ned. Rolle-
+    -- og scope-nivået hører til flatens egen autorisasjon (CP3), der
+    -- signeringsrollen defineres; her bindes det basen faktisk eier.
+    IF NOT EXISTS (SELECT 1 FROM public.brukermedlemskap m
+                    WHERE m.tenant = p_tenant
+                      AND m.bruker_id = p_signatar
+                      AND m.aktiv) THEN
+        RAISE EXCEPTION 'signer_utsendingsliste: signatar % mangler aktivt'
+            ' medlemskap i %', p_signatar, p_tenant
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
     SELECT * INTO s FROM public.utsendingssignatur
      WHERE tenant = p_tenant AND operasjonsnokkel = p_nokkel;
     IF FOUND THEN
