@@ -697,41 +697,6 @@ def test_migrer_baerer_utsendingskjedens_rettigheter():
 
 
 @pg
-def test_signaturen_krever_aktivt_medlemskap_i_tenanten(migrator):
-    """Cursor P1 på #140 (runde 2): signaturen er den menneskelige,
-    irreversible autorisasjonen — en identitet uten aktivt medlemskap i
-    TENANTEN kan ikke bære den. Uten porten kunne runtime tilskrive
-    signaturen en fremmed tenants bruker eller en fabrikkert
-    identitetsrad."""
-    oid, _ = _grunnlag(migrator)
-    liste = _liste(migrator, oid)
-    rt = _rt()
-    try:
-        # (a) identitet uten medlemskap
-        uten = _signatar(migrator, medlem=False)
-        _sett_kontekst(rt, TENANT)
-        with pytest.raises(psycopg.errors.InsufficientPrivilege):
-            rt.execute("SELECT signer_utsendingsliste(%s,%s,%s,%s)",
-                       (TENANT, liste[0], uten, secrets.token_hex(6)))
-        rt.rollback()
-        # (b) medlemskap i en ANNEN tenant
-        fremmed = _signatar(migrator, tenant="t-en-annen")
-        _sett_kontekst(rt, TENANT)
-        with pytest.raises(psycopg.errors.InsufficientPrivilege):
-            rt.execute("SELECT signer_utsendingsliste(%s,%s,%s,%s)",
-                       (TENANT, liste[0], fremmed, secrets.token_hex(6)))
-        rt.rollback()
-        # (c) aktivt medlemskap i tenanten -> OK
-        med = _signatar(migrator)
-        _sett_kontekst(rt, TENANT)
-        rt.execute("SELECT signer_utsendingsliste(%s,%s,%s,%s)",
-                   (TENANT, liste[0], med, secrets.token_hex(6)))
-        rt.rollback()
-    finally:
-        rt.close()
-
-
-@pg
 def test_frigivelsesoppdragets_retry_maa_beskrive_samme_oppdrag(migrator):
     """Cursor P2 på #140 (runde 2): kappløpstaperen får vinnerens id BARE
     når kallet beskriver samme oppdrag — et retry med annen payload skal

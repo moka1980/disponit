@@ -322,28 +322,7 @@ SET search_path = pg_catalog AS $$
 DECLARE l RECORD; s RECORD;
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant, 'signer_utsendingsliste');
-    -- SIGNATAREN MÅ HØRE TIL TENANTEN (Cursor P1 på #140, runde 2):
-    -- signaturen er den menneskelige, irreversible autorisasjonen, og
-    -- en global brukeridentitet-FK alene lot runtime tilskrive den til
-    -- en bruker i en annen tenant, en deaktivert bruker eller en
-    -- fabrikkert identitetsrad — samme tillitsgrense 043 lukket for
-    -- menneskelige irreversible handlinger.
-    IF NOT EXISTS (
-        SELECT 1 FROM public.brukermedlemskap m
-         WHERE m.tenant = p_tenant AND m.bruker_id = p_signatar
-           AND m.aktiv
-    ) THEN
-        RAISE EXCEPTION 'signer_utsendingsliste: signatar % mangler'
-            ' aktivt medlemskap i %', p_signatar, p_tenant
-            USING ERRCODE = 'insufficient_privilege';
-    END IF;
-    SELECT * INTO l FROM public.utsendingsliste
-     WHERE tenant = p_tenant AND liste_id = p_liste_id;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'signer_utsendingsliste: ukjent liste %', p_liste_id
-            USING ERRCODE = 'no_data_found';
-    END IF;
-    -- SIGNATAREN ER AUTORISASJONEN (Codex P1 + Cursor P1-1, runde 2).
+    -- SIGNATAREN ER AUTORISASJONEN (Codex P1 + Cursor P1, runde 2).
     -- FK-en mot `brukeridentitet` er GLOBAL: den sier bare at strengen er
     -- en kjent bruker et sted i installasjonen. Runtime har EXECUTE her og
     -- INSERT på `brukeridentitet` (010) — uten denne porten kunne den
@@ -358,13 +337,20 @@ BEGIN
     -- konvolutten) — presis samme avgrensning som 043 skrev ned. Rolle-
     -- og scope-nivået hører til flatens egen autorisasjon (CP3), der
     -- signeringsrollen defineres; her bindes det basen faktisk eier.
-    IF NOT EXISTS (SELECT 1 FROM public.brukermedlemskap m
-                    WHERE m.tenant = p_tenant
-                      AND m.bruker_id = p_signatar
-                      AND m.aktiv) THEN
-        RAISE EXCEPTION 'signer_utsendingsliste: signatar % mangler aktivt'
-            ' medlemskap i %', p_signatar, p_tenant
+    IF NOT EXISTS (
+        SELECT 1 FROM public.brukermedlemskap m
+         WHERE m.tenant = p_tenant AND m.bruker_id = p_signatar
+           AND m.aktiv
+    ) THEN
+        RAISE EXCEPTION 'signer_utsendingsliste: signatar % mangler'
+            ' aktivt medlemskap i %', p_signatar, p_tenant
             USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    SELECT * INTO l FROM public.utsendingsliste
+     WHERE tenant = p_tenant AND liste_id = p_liste_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'signer_utsendingsliste: ukjent liste %', p_liste_id
+            USING ERRCODE = 'no_data_found';
     END IF;
     SELECT * INTO s FROM public.utsendingssignatur
      WHERE tenant = p_tenant AND operasjonsnokkel = p_nokkel;
