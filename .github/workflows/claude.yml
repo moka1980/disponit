@@ -1,10 +1,11 @@
 name: Claude fikser og merger
 
-# Autonom sløyfe: Claude implementerer (PR-ene kommer fra Claude/eier),
-# Codex reviewer. Når et Codex-verdikt lander — som formell review ELLER som
-# vanlig kommentar fra chatgpt-codex-connector[bot] — fikser Claude funnene
-# og ber om ny runde; rent verdikt merges etter grønn CI. Kjører helt på
-# GitHub — maskinen hjemme kan være av.
+# Autonom sløyfe: Claude implementerer, Cursor pre-Codex-angriper (RUTINER
+# §10), Codex reviewer/merger. Når et Codex-verdikt lander — som formell
+# review ELLER som vanlig kommentar fra chatgpt-codex-connector[bot] — fikser
+# Claude funnene og ber om `@cursor review` (ikke `@codex review` direkte);
+# Cursor-PASS vekker Claude til å be om ny Codex-runde; rent verdikt merges
+# etter grønn CI. Kjører helt på GitHub — maskinen hjemme kan være av.
 #
 # Merges det flere PR-er etter hverandre, blir de neste liggende BEHIND fordi
 # `main` krever `strict: true`. Steg 3a oppdaterer grenen selv; uten det stopper
@@ -135,9 +136,12 @@ jobs:
                Full testsuite krever Postgres og kjører i CI —
                kjør det du kan lokalt (python -m compileall, målrettede
                tester), commit med forklarende melding på norsk, push til
-               PR-branchen. Kommenter deretter `@codex review` (bevist
-               trigger; auto-review ved push er IKKE bevist her — en
-               eventuell dobbel review er ok). IKKE rediger
+               PR-branchen. CURSOR-PORT (RUTINER §10): kommenter deretter
+               `@cursor review` — ALDRI `@codex review` før Cursor har
+               PASS på denne HEAD. Cursor poster FUNN/PASS og vekker deg
+               med `@claude`. Ved FUNN: fiks P1/P2, push, nytt
+               `@cursor review`. Ved PASS: først da `@codex review`.
+               To Cursor-FUNN uten konvergens → K2, eskaler. IKKE rediger
                .github/workflows, .env eller hemmeligheter.
 
                PUSH UNDERVEIS. Ta funnene ETT AV GANGEN: fiks, commit, push
@@ -238,8 +242,9 @@ jobs:
                stopp og eskaler rotårsaken til eier; K3 står produktet
                ferdig mens funnene treffer PR-intern portkode → foreslå
                deling; K4/SP-13 aldri hand-parse fremmed grammatikk.
-            2. Er alle funn adressert: kommenter `@codex review` og stopp —
-               neste verdikt starter en ny runde.
+            2. Er alle funn adressert: CURSOR-PORT (RUTINER §10) — kommenter
+               `@cursor review` (ikke `@codex review` før Cursor-PASS på
+               denne HEAD). Stopp; Cursor/Claude-sløyfa fortsetter.
             3. Er verdiktet rent / godkjent: merge i denne rekkefølgen —
                (a) `gh pr view <nr> --json mergeStateStatus`; `BEHIND` →
                `gh pr update-branch <nr>` (ikke rebase/force-push), `DIRTY`
@@ -282,7 +287,8 @@ jobs:
             Dette er siste forsøk. Prioriter i denne rekkefølgen:
             1. Push alt arbeid som er i nærheten av ferdig, ett funn per
                commit.
-            2. Er alle funn adressert: kommenter `@codex review`.
+            2. Er alle funn adressert: kommenter `@cursor review` (RUTINER
+               §10 — Codex først etter Cursor-PASS).
             3. Rekker du ikke resten: skriv EN kommentar adressert til eier
                med nøyaktig hvilke funn som gjenstår og hvor arbeidet står,
                så sløyfa kan startes igjen med en `@claude`-kommentar. En
