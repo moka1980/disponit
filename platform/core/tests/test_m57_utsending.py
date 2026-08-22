@@ -172,10 +172,11 @@ def test_frigivelsesoppdrag_uten_frigivelse_avvises(migrator):
     logg = migrator.execute(
         "SELECT beslutning_loggpost_id FROM oppdrag WHERE tenant=%s"
         " AND id=%s", (TENANT, oid)).fetchone()[0]
-    # Raden er ellers gyldig (KOBLET m/ beslutningsloggpost), men
-    # opprinnelsen sier 'frigivelse' uten frigivelse_id: ingen arm i
-    # totalformen passer. BEFORE-triggere kan nå å si nei først —
-    # begge er lagringens avvisning av samme rad.
+    # Raden er ellers gyldig (KOBLET m/ beslutningsloggpost, og den
+    # LOVLIGE utsendingstrippelen — så det er frigivelse_id som mangler,
+    # ikke kontrakten), men opprinnelsen sier 'frigivelse' uten
+    # frigivelse_id: ingen arm i totalformen passer. BEFORE-triggere kan
+    # nå å si nei først — begge er lagringens avvisning av samme rad.
     with pytest.raises((psycopg.errors.CheckViolation,
                         psycopg.errors.RaiseException)):
         migrator.execute(
@@ -183,7 +184,8 @@ def test_frigivelsesoppdrag_uten_frigivelse_avvises(migrator):
             " beslutning_loggpost_id, oppdragstype,"
             " handling, eiermodul, payload_kryptert, key_id, nonce,"
             " utforelsesfrist, evidensfrist, koblingsstatus)"
-            " VALUES ('frigivelse',%s,%s,'rekruttering.utsending','h','e',"
+            " VALUES ('frigivelse',%s,%s,'rekruttering.utsending',"
+            "'rekruttering.utsending','m57_ats',"
             " %s,%s,%s, now()+interval '1 hour', now()+interval '1 day',"
             " 'KOBLET')", (TENANT, logg, ct, key_id, nonce))
     migrator.rollback()
@@ -215,6 +217,51 @@ def test_frigivelse_pa_annen_opprinnelse_avvises(migrator):
             " now()+interval '1 hour', now()+interval '1 day','KOBLET')",
             (TENANT, logg, fid, ct, key_id, nonce))
     migrator.rollback()
+
+
+@pg
+@pytest.mark.parametrize("trippel", [
+    ("kontroll.wcag.nettsted", "kontroll.wcag.nettsted", "m_wcag_audit"),
+    ("rekruttering.utsending", "rekruttering.utsending", "m_wcag_audit"),
+    ("rekruttering.utsending", "kontroll.wcag.nettsted", "m57_ats"),
+    ("rekruttering.evaluering", "rekruttering.utsending", "m57_ats"),
+])
+def test_frigivelseskontrakten_er_skjemasann_ikke_bare_funksjonssann(
+        migrator, trippel):
+    """Cursor P1 på #140 (runde 7): runde 6 låste trippelen i
+    `opprett_frigivelsesoppdrag`, men porten sto i FUNKSJONEN mens
+    `disponit_m37_claimer` har `INSERT ON oppdrag` (038). Direkte DML
+    kunne dermed føde et KOBLET frigivelsesoppdrag i en ANNEN moduls kø
+    — og siden `oppdrag_en_per_frigivelse` gir frigivelsen NØYAKTIG ETT
+    forsøk, ville den raden samtidig BRENT den signerte utsendelsen:
+    aldri plukkbar for `m57_ats`, aldri erstattbar.
+
+    Uten denne testen kunne CHECK-en fjernes igjen og
+    `test_frigivelsesoppdraget_maa_beskrive_utsendingskontrakten`
+    fortsatt være grønn — det er funksjonsveien, ikke skjemaveien.
+
+    MUTASJONEN SOM DREPER DENNE: ta trippelen ut av frigivelse-armen i
+    `oppdrag_opprinnelse_komplett`."""
+    oid, payload = _grunnlag(migrator)
+    ct, key_id, nonce = payload
+    bid = _signatar(migrator)
+    liste = _liste(migrator, oid)
+    _signer(migrator, liste, bid)
+    fid = _frigi(migrator, liste)
+    _sett_kontekst(migrator, TENANT)
+    with pytest.raises(psycopg.errors.CheckViolation):
+        migrator.execute(
+            "INSERT INTO oppdrag (opprinnelse, tenant, frigivelse_id,"
+            " oppdragstype, handling, eiermodul, payload_kryptert,"
+            " key_id, nonce, utforelsesfrist, evidensfrist,"
+            " koblingsstatus)"
+            " VALUES ('frigivelse',%s,%s,%s,%s,%s,%s,%s,%s,"
+            " now()+interval '4 hours', now()+interval '1 day','KOBLET')",
+            (TENANT, fid, *trippel, ct, key_id, nonce))
+    migrator.rollback()
+    # ... og ingen rad ble liggende igjen: frigivelsen har fortsatt sitt
+    # ene forsøk i behold, og den GYLDIGE trippelen slipper gjennom.
+    assert _ats_oppdrag(migrator, fid, payload) is not None
 
 
 @pg
@@ -345,8 +392,9 @@ def test_de_gamle_armene_star_urort(migrator):
             " beslutning_loggpost_id, frigivelse_id, oppdragstype,"
             " handling, eiermodul, payload_kryptert, key_id, nonce,"
             " utforelsesfrist, evidensfrist, koblingsstatus)"
-            " VALUES ('frigivelse',%s,%s,%s,'rekruttering.utsending','h',"
-            "'e',%s,%s,%s, now()+interval '1 hour',"
+            " VALUES ('frigivelse',%s,%s,%s,'rekruttering.utsending',"
+            "'rekruttering.utsending','m57_ats',%s,%s,%s,"
+            " now()+interval '1 hour',"
             " now()+interval '1 day','KOBLET')",
             (TENANT, logg, fid, ct, key_id, nonce))
     migrator.rollback()
@@ -400,7 +448,8 @@ def test_ingen_gyldig_signatur_ingen_ats_utsendelse(migrator):
             " key_id, nonce, utforelsesfrist, evidensfrist,"
             " koblingsstatus)"
             " VALUES ('frigivelse',%s, gen_random_uuid(),"
-            "'rekruttering.utsending','h','e',%s,%s,%s,"
+            "'rekruttering.utsending','rekruttering.utsending','m57_ats',"
+            "%s,%s,%s,"
             " now()+interval '1 hour', now()+interval '1 day','KOBLET')",
             (TENANT, ct, key_id, nonce))
     migrator.rollback()
@@ -751,8 +800,9 @@ def test_en_frigivelse_gir_ett_oppdrag(migrator):
             " oppdragstype, handling, eiermodul, payload_kryptert,"
             " key_id, nonce, utforelsesfrist, evidensfrist,"
             " koblingsstatus)"
-            " VALUES ('frigivelse',%s,%s,'rekruttering.utsending','h',"
-            "'e',%s,%s,%s, now()+interval '1 hour',"
+            " VALUES ('frigivelse',%s,%s,'rekruttering.utsending',"
+            "'rekruttering.utsending','m57_ats',%s,%s,%s,"
+            " now()+interval '1 hour',"
             " now()+interval '1 day','KOBLET')",
             (TENANT, fid, ct, key_id, nonce))
     migrator.rollback()

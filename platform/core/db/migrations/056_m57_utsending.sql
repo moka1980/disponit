@@ -249,7 +249,30 @@ ALTER TABLE oppdrag ADD CONSTRAINT oppdrag_opprinnelse_komplett CHECK (
           AND frigivelse_id IS NOT NULL
           AND unntak_id IS NULL AND loggpost_id IS NULL
           AND repair_operation_id IS NULL
-          AND beslutning_loggpost_id IS NULL));
+          AND beslutning_loggpost_id IS NULL
+          -- ... OG KONTRAKTEN ER EN DEL AV OPPRINNELSESFORMEN (Cursor
+          -- P1, runde 7 på #140). Runde 6 lukket at senderen kunne velge
+          -- trippelen gjennom `opprett_frigivelsesoppdrag`, men porten
+          -- ble stående i FUNKSJONEN — og `disponit_m37_claimer` har
+          -- `INSERT ON oppdrag` (038). Direkte DML kunne dermed føde et
+          -- KOBLET, frigivelses-bærende oppdrag i en ANNEN moduls kø
+          -- (`claim_neste_oppdrag` plukker på eiermodul +
+          -- handlingsprefiks) — og fordi `oppdrag_en_per_frigivelse`
+          -- gir frigivelsen NØYAKTIG ETT forsøk, ville den raden
+          -- samtidig BRENT den signerte utsendelsen: aldri plukkbar for
+          -- `m57_ats`, aldri erstattbar.
+          --
+          -- Samme flytting som runde 6 gjorde med serie-proveniensen:
+          -- klarsignalets bevisform er NEGATIV og tas med direkte DML,
+          -- så påstanden hører i totalformen der resten av
+          -- opprinnelsesarmene alt bor. Funksjonsporten i §7d beholdes
+          -- som forsvar i dybden (den gir kalleren en presis feil).
+          -- Konsekvensen er den samme som runde 6 skrev ned: en senere
+          -- utsendingsvariant krever en migrasjon som utvider listen —
+          -- nå to steder, begge bevisste.
+          AND oppdragstype = 'rekruttering.utsending'
+          AND handling = 'rekruttering.utsending'
+          AND eiermodul = 'm57_ats'));
 
 -- Koblingsvilkåret får frigivelses-armen: et KOBLET oppdrag er koblet
 -- til autorisasjonen sin — beslutningsloggposten ELLER frigivelsen.
