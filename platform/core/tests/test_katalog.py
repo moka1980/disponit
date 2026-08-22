@@ -1941,6 +1941,72 @@ def _somsql(uttrykk: dict) -> str:
     return "SELECT " + spørring
 
 
+def _litteral_kommando(uttrykk: dict) -> str | None:
+    """SQL-teksten en `EXECUTE` kjører, når den står som ÉN strengkonstant.
+
+    `EXECUTE format('… %I …', t)` bygges først når funksjonen KJØRER, og hva
+    den da skriver kan ingen lesning av kilden vite. `EXECUTE 'INSERT …'` er
+    derimot ferdig skrevet: den står i migrasjonen, tegn for tegn.
+
+    `None` betyr «ikke en ferdig skrevet kommando», og kalleren leser da
+    uttrykket som før — som et uttrykk.
+    """
+    try:
+        stmt = pglast.parse_sql(_somsql(uttrykk))[0].stmt
+    except pglast.parser.ParseError:
+        return None
+    mål = getattr(stmt, "targetList", None) or ()
+    if not isinstance(stmt, pglast.ast.SelectStmt) or len(mål) != 1:
+        return None
+    verdi = mål[0].val
+    if isinstance(verdi, pglast.ast.A_Const) \
+            and isinstance(verdi.val, pglast.ast.String):
+        return verdi.val.sval
+    return None
+
+
+def _samleidynexecute(stmt: dict, ut: list[str]) -> None:
+    """Verdiene en `EXECUTE` skriver — kommandoen lest som SQL (Codex P2, F41).
+
+    En dynamisk `EXECUTE` er ÉN spørring i treet, og spørringen er en
+    strengkonstant. Leses den som en verdi, blir hele kommandoen ett ord ingen
+    kjenner igjen — nøyaktig samme feil som en kropp lest som streng (F22):
+    `EXECUTE 'INSERT INTO t(v) VALUES (''oppfunnet_klasse'')'` ga verdien
+    `INSERT INTO t(v) VALUES ('oppfunnet_klasse')`, som ikke er en
+    identifikator, og `oppfunnet_klasse` — som migrasjonen FAKTISK skriver —
+    manglet i hvitlista. Prosaporten kunne da avvise den som oppfunnet.
+
+    Kommandoen leses derfor som det den er: SQL, med `_setningene()`, samme
+    lesning som migrasjonsfila selv får. Er den ikke ferdig skrevet (`format`,
+    en konkatenering, en variabel), leses uttrykket som før — da finnes det
+    ingen kommandotekst å lese, og vi dikter ikke en.
+
+    Er den ferdig skrevet, men ikke gyldig SQL, sier vi fra HØYT: da ville
+    serveren feilet på den også, og en stille utelatelse er nettopp hullet
+    denne runden lukker.
+    """
+    uttrykk = (stmt.get("query") or {}).get("PLpgSQL_expr")
+    kommando = _litteral_kommando(uttrykk) if isinstance(uttrykk, dict) else None
+    if kommando is None:
+        for innhold in stmt.values():
+            _samleiplpgsql(innhold, ut)
+        return
+    # Resten av setningen — `USING`-parametrene, `INTO` — leses som før.
+    for navn, innhold in stmt.items():
+        if navn != "query":
+            _samleiplpgsql(innhold, ut)
+    try:
+        setninger = list(_setningene(kommando))
+    except pglast.parser.ParseError as feil:
+        raise AssertionError(
+            f"en EXECUTE med ferdig skrevet kommando som ikke er gyldig SQL: "
+            f"{kommando!r} ({feil}). Verdiene den skriver kan ikke leses, og "
+            f"en hvitliste med et hull i er en grønn port på en oppfunnet "
+            f"identifikator.") from None
+    for s, tekst in setninger:
+        _samleverdier(s, ut, tekst)
+
+
 def _samleiplpgsql(node, ut: list[str]) -> None:
     """Verdiene i et PL/pgSQL-tre. Spørringene i det leses som SQL."""
     if isinstance(node, list):
@@ -1950,6 +2016,9 @@ def _samleiplpgsql(node, ut: list[str]) -> None:
     if not isinstance(node, dict):
         return
     for navn, innhold in node.items():
+        if navn == "PLpgSQL_stmt_dynexecute" and isinstance(innhold, dict):
+            _samleidynexecute(innhold, ut)
+            continue
         if navn == "PLpgSQL_expr" and isinstance(innhold, dict):
             for rå in pglast.parse_sql(_somsql(innhold)):
                 _samleverdier(rå.stmt, ut)
@@ -2484,6 +2553,32 @@ def test_en_pensjonert_verdi_er_ute_av_de_kjente(monkeypatch):
      "BEGIN ATOMIC\n"
      "    SELECT 'noe_helt_annet';\n"
      "END;\n", False),
+    # EN FERDIG SKREVET `EXECUTE` ER SKREVET (Codex P2, F41). Kommandoen står
+    # som ÉN strengkonstant i treet, og lest som en verdi ble hele setningen
+    # ett ord ingen kjenner igjen — samme feil som en kropp lest som streng
+    # (F22). Verdien migrasjonen faktisk skriver manglet da i hvitlista, og
+    # prosaporten kunne avvise den som oppfunnet.
+    ("DO $$ BEGIN\n"
+     "    EXECUTE 'INSERT INTO t (a) VALUES (''oppfunnet_klasse'')';\n"
+     "END $$;\n", True),
+    # Også når kommandoen selv bærer en kropp: den leses som SQL, hele veien.
+    ("DO $$ BEGIN\n"
+     "    EXECUTE 'DO $x$ BEGIN PERFORM ''oppfunnet_klasse''; END $x$';\n"
+     "END $$;\n", True),
+    # En ferdig skrevet kommando UTEN navnet skriver det fortsatt ikke.
+    ("DO $$ BEGIN\n"
+     "    EXECUTE 'INSERT INTO t (a) VALUES (''noe_helt_annet'')';\n"
+     "END $$;\n", False),
+    # Og en kommando som først BLIR TIL når funksjonen kjører, leses som før:
+    # uttrykket er det som står i kilden, og verdiene i det er skrevet.
+    ("DO $$ BEGIN\n"
+     "    EXECUTE format('INSERT INTO %I (a) VALUES (%L)', 't',\n"
+     "                   'oppfunnet_klasse');\n"
+     "END $$;\n", True),
+    ("DO $$ BEGIN\n"
+     "    EXECUTE format('INSERT INTO %I (a) VALUES (%L)', 't',\n"
+     "                   'noe_helt_annet');\n"
+     "END $$;\n", False),
 ])
 def test_en_sqlkommentar_skriver_ingen_identifikator(sql, star_igjen):
     """Lista over kjente identifikatorer leses av det migrasjonen SKRIVER.
@@ -2508,6 +2603,18 @@ def test_en_sqlkommentar_skriver_ingen_identifikator(sql, star_igjen):
             _skrevne_verdier(sql)
         return
     assert ("oppfunnet_klasse" in _skrevne_verdier(sql)) is star_igjen
+
+
+def test_en_ferdig_skrevet_execute_som_ikke_er_sql_sier_fra():
+    """En kommando vi ikke kan lese, skal ikke bli et hull (Codex P2, F41).
+
+    Står kommandoen ferdig skrevet i kilden, men ikke som gyldig SQL, ville
+    serveren feilet på den også. Da er alternativet til å si fra å utelate
+    verdiene i den i stillhet — og en hvitliste med et hull i er en grønn port
+    på en identifikator som ikke finnes noe sted.
+    """
+    with pytest.raises(AssertionError, match="ikke er gyldig SQL"):
+        _skrevne_verdier("DO $$ BEGIN EXECUTE 'INSERT INTO'; END $$;\n")
 
 
 _SKRIPTDEL_RE = re.compile(r"<script[^>]*>(.*?)</script>", re.S)
