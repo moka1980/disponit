@@ -1565,6 +1565,12 @@ def test_reaper_lukker_utlopte_beslutningsoppdrag(migrator):
     gjentatt kjøring er no-op; `unntak_id` forblir NULL; et utløpt
     M-37-oppdrag røres ALDRI av reaperen."""
     rt = _rt()
+    # Codex P2: reaperkoblingen skal lukkes den også. `finally` lukket bare
+    # `rt`, så en feil etter `_reaperkobling()` etterlot `rp` åpen med
+    # transaksjonen — og låsene `reap_evidensfrister` alt hadde tatt — i
+    # live. Da blokkerer oppryddingen eller neste DB-test i stedet for å
+    # melde regresjonen rent. Samme idiom som `holder` alt bruker.
+    rp = None
     try:
         oid, logg = _utlopt_beslutningsoppdrag(rt, migrator)
         # M-37-kontrollen: et reparasjonsoppdrag med utløpt frist —
@@ -1618,6 +1624,8 @@ def test_reaper_lukker_utlopte_beslutningsoppdrag(migrator):
         migrator.rollback()
         assert n == 1
     finally:
+        if rp is not None:
+            rp.rollback(); rp.close()
         rt.close()
 
 
@@ -2107,6 +2115,12 @@ def test_reaperen_venter_aldri_paa_sakslasen(migrator):
 
     rt = _rt()
     holder = None
+    # Codex P2: her er den etterlatte reaperkoblingen verst. Faller testen
+    # på den tiltenkte `LockNotAvailable`-en, holder `rp` en avbrutt
+    # transaksjon med låsene fra `reap_evidensfrister` — nettopp låsene
+    # denne testen handler om. Uten lukkingen henger oppryddingen på dem i
+    # stedet for at testen melder regresjonen.
+    rp = None
     try:
         oid, _ = _utlopt_beslutningsoppdrag(rt, migrator)
         # Saken finnes ALT — som etter en tidligere sen kvittering. Lages
@@ -2151,4 +2165,6 @@ def test_reaperen_venter_aldri_paa_sakslasen(migrator):
     finally:
         if holder is not None:
             holder.rollback(); holder.close()
+        if rp is not None:
+            rp.rollback(); rp.close()
         rt.close()
