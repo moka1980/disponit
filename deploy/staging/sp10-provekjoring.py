@@ -381,8 +381,27 @@ def _mal_056(conn) -> list[str]:
     # Kjeden er representerbar — og rekkefølgen er tvungen. Direkte DML
     # (eierens rett), for funksjonsveien måles av pytest-portene.
     sett_kontekst(conn, TEN, "sp10:fasit", "r-sp10-056-3")
-    oid = conn.execute("SELECT id FROM oppdrag WHERE tenant=%s AND"
-                       " opprinnelse='beslutning'", (TEN,)).fetchone()[0]
+    # Kjeden STARTER i en fullført `rekruttering.evaluering` — etter
+    # Cursor P2 (runde 7 på #140) er det en SKJEMApåstand
+    # (`utsendingsliste_promotering`), ikke bare en funksjonspåstand, så
+    # den seedede WCAG-raden kan ikke lenger bære listen. Den seedede
+    # raden står urørt (fasit over måler nettopp det); evalueringen
+    # lages her, av samme autorisasjon og samme payload.
+    oid = conn.execute(
+        "INSERT INTO oppdrag (opprinnelse, tenant,"
+        " beslutning_loggpost_id, oppdragstype, handling, eiermodul,"
+        " payload_kryptert, key_id, nonce, utforelsesfrist,"
+        " evidensfrist, koblingsstatus)"
+        " SELECT 'beslutning', tenant, beslutning_loggpost_id,"
+        " 'rekruttering.evaluering','rekruttering.evaluering', eiermodul,"
+        " payload_kryptert, key_id, nonce, utforelsesfrist, evidensfrist,"
+        " 'KOBLET' FROM oppdrag WHERE tenant=%s AND"
+        " opprinnelse='beslutning'"
+        " AND oppdragstype='kontroll.wcag.nettsted' RETURNING id",
+        (TEN,)).fetchone()[0]
+    for steg in ("plukket", "utfort"):        # statusmaskinens lovlige vei
+        conn.execute("UPDATE oppdrag SET status=%s WHERE tenant=%s"
+                     " AND id=%s", (steg, TEN, oid))
     bid = conn.execute(
         "INSERT INTO brukeridentitet (issuer, sub) VALUES"
         " ('https://sp10.local','sp10-056') RETURNING bruker_id"
@@ -428,8 +447,8 @@ def _mal_056(conn) -> list[str]:
         " SELECT 'frigivelse', tenant, %s, 'rekruttering.utsending',"
         " 'rekruttering.utsending', 'm57_ats', payload_kryptert, key_id,"
         " nonce, now()+interval '4 hours', now()+interval '1 day',"
-        " 'KOBLET' FROM oppdrag WHERE tenant=%s AND"
-        " opprinnelse='beslutning'", (frig, TEN))
+        " 'KOBLET' FROM oppdrag WHERE tenant=%s AND id=%s",
+        (frig, TEN, oid))
     conn.commit()
     # GUC-en er transaksjonslokal — kontekst settes på nytt for tellingen,
     # ellers teller RLS et tomt vindu og kaller det null rader.

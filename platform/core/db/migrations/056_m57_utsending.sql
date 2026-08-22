@@ -100,6 +100,50 @@ CREATE TRIGGER utsendingsliste_ingen_truncate
     BEFORE TRUNCATE ON utsendingsliste
     FOR EACH STATEMENT EXECUTE FUNCTION avvis_endring();
 
+-- PROMOTERINGEN ER EN SKJEMAPÅSTAND (Cursor P2, runde 7 på #140).
+-- Klarsignal §1 + §7/port 28 sier at en liste promoterer NØYAKTIG en
+-- fullført `rekruttering.evaluering` — «avbrutt kjøring ⇒ INGEN
+-- promotert liste». Runde 2 la den påstanden i `opprett_utsendingsliste`,
+-- men FK-en `(tenant, oppdrag_id)` sier bare at oppdraget finnes hos
+-- tenanten, og `disponit_m37_claimer` har `INSERT` på listetabellene.
+-- Direkte DML kunne derfor promotere en liste på et WCAG-oppdrag, på en
+-- evaluering som fortsatt går eller ble kansellert, eller på et
+-- FRIGIVELSESOPPDRAG — og etterpå er den listen signerbar og sendbar
+-- som en hvilken som helst annen. Kjeden ville sirklet inn i seg selv.
+--
+-- Samme klasse og samme svar som `oppdrag_koblingsvakt` (008 → 038 §5):
+-- semantikken er et OPPSLAG I VIRKELIG TILSTAND, håndhevet der raden
+-- fødes (SP-13). Deklarativt er den ikke tilgjengelig — en FK kan ikke
+-- peke på et partielt indeks, og `status` er ikke en konstant.
+--
+-- Kjøres under kallerens RLS, fail-closed som koblingsvakten: en
+-- innsetting uten tenantkontekst ser ingen oppdrag og avvises.
+-- Funksjonsporten i §7a beholdes som forsvar i dybden.
+CREATE OR REPLACE FUNCTION utsendingsliste_promoteringsvakt()
+RETURNS trigger LANGUAGE plpgsql
+SET search_path = pg_catalog AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM public.oppdrag o
+         WHERE o.tenant = NEW.tenant
+           AND o.id = NEW.oppdrag_id
+           AND o.oppdragstype = 'rekruttering.evaluering'
+           AND o.status = 'utfort'
+           AND o.opprinnelse IN ('beslutning', 'm37_reparasjon')) THEN
+        RAISE EXCEPTION 'utsendingsliste: oppdrag % er ikke en FULLFØRT'
+            ' rekruttering.evaluering hos % — kjeden starter aldri i et'
+            ' frigivelsesoppdrag, og en avbrutt kjøring promoteres aldri',
+            NEW.oppdrag_id, NEW.tenant
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS utsendingsliste_promotering ON utsendingsliste;
+CREATE TRIGGER utsendingsliste_promotering
+    BEFORE INSERT ON utsendingsliste
+    FOR EACH ROW EXECUTE FUNCTION utsendingsliste_promoteringsvakt();
+
 -- ------------------------------------------------------------
 -- 2. Signaturen. Én signert versjon per serie (port 12) — det er
 --    versjonen som får sendes, og bare den. Signaturen binder innholdet

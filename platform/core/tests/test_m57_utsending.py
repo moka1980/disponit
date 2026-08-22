@@ -46,9 +46,18 @@ pg = pytest.mark.skipif(
     reason="DISPONIT_TEST_DSN/DISPONIT_TEST_MIGRATOR_DSN ikke satt")
 
 
-def _grunnlag(m, *, oppdragstype="kontroll.wcag.nettsted", status=None):
+def _grunnlag(m, *, oppdragstype="rekruttering.evaluering",
+              status="utfort"):
     """TILLAT-loggpost + kryptert payload + beslutningsoppdrag — kjedens
-    startpunkt (listen peker på evalueringsoppdraget)."""
+    startpunkt (listen peker på evalueringsoppdraget).
+
+    DEFAULTEN ER DEN PROMOTERBARE (Cursor P2, runde 7 på #140): med
+    `utsendingsliste_promotering` er «fullført rekruttering.evaluering»
+    en SKJEMApåstand, så en liste kan ikke lenger plantes på et
+    WCAG-oppdrag med direkte DML. Testoppsettet brukte tidligere
+    nettopp det hullet, og lot dermed hver lineage-/signatur-/
+    frigivelsestest bevise sitt eget funn på et grunnlag kjeden aldri
+    skal ha hatt. De negative stiene oppgir nå avviket EKSPLISITT."""
     from db import kryptering
     _sett_kontekst(m, TENANT)
     logg = m.execute(
@@ -688,9 +697,11 @@ def test_liste_krever_fullfort_evalueringsoppdrag(migrator):
     fortsatt gjennom feil oppdragstype, en kjøring som fortsatt går, og
     en som ble kansellert — og derfra bar kjeden videre gjennom signatur
     og frigivelse."""
-    feil_type, _ = _grunnlag(migrator)
+    feil_type, _ = _grunnlag(migrator,
+                             oppdragstype="kontroll.wcag.nettsted")
     gar_fortsatt, _ = _grunnlag(migrator,
-                                oppdragstype="rekruttering.evaluering")
+                                oppdragstype="rekruttering.evaluering",
+                                status=None)
     avbrutt, _ = _grunnlag(migrator, oppdragstype="rekruttering.evaluering",
                            status="kansellert")
     fullfort, _ = _evaluering(migrator)
@@ -713,6 +724,46 @@ def test_liste_krever_fullfort_evalueringsoppdrag(migrator):
         rt.rollback()
     finally:
         rt.close()
+
+
+@pg
+def test_promoteringen_er_skjemasann_ikke_bare_funksjonssann(migrator):
+    """Cursor P2 på #140 (runde 7): porten over er FUNKSJONSveien.
+    FK-en `(tenant, oppdrag_id)` sier bare at oppdraget finnes hos
+    tenanten, og `disponit_m37_claimer` har `INSERT` på listetabellene —
+    så direkte DML kunne promotere en liste på et WCAG-oppdrag, på en
+    kansellert evaluering eller på et FRIGIVELSESOPPDRAG (kjeden inn i
+    seg selv). Derfra var listen signerbar og sendbar som en hvilken som
+    helst annen. Klarsignalets bevisform er negativ; dette er den.
+
+    MUTASJONEN SOM DREPER DENNE: fjern triggeren
+    `utsendingsliste_promotering` fra 056 §1."""
+    fullfort, payload = _evaluering(migrator)
+    bid = _signatar(migrator)
+    liste = _liste(migrator, fullfort)
+    _signer(migrator, liste, bid)
+    fid = _frigi(migrator, liste)
+    frigivelsesoppdrag = _ats_oppdrag(migrator, fid, payload)
+    wcag, _ = _grunnlag(migrator, oppdragstype="kontroll.wcag.nettsted")
+    avbrutt, _ = _grunnlag(migrator,
+                           oppdragstype="rekruttering.evaluering",
+                           status="kansellert")
+    gar_fortsatt, _ = _grunnlag(migrator,
+                                oppdragstype="rekruttering.evaluering",
+                                status=None)
+    for oid in (frigivelsesoppdrag, wcag, avbrutt, gar_fortsatt):
+        _sett_kontekst(migrator, TENANT)
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            migrator.execute(
+                "INSERT INTO utsendingsliste (tenant, liste_id,"
+                " utkast_serie, oppdrag_id, listetype, malversjon,"
+                " innhold_hash, antall)"
+                " VALUES (%s, gen_random_uuid(), gen_random_uuid(), %s,"
+                " 'invitasjon','m@1','h-dml',2)", (TENANT, oid))
+        migrator.rollback()
+    # Positiv kontroll: den fullførte evalueringen bærer fortsatt en
+    # liste, også når raden skrives direkte.
+    assert _liste(migrator, fullfort, hash_="h-dml-ok") is not None
 
 
 @pg
