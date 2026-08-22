@@ -317,7 +317,12 @@ def test_rollbackdommen_maales_mot_bootportens_fasit_127():
         if forrige or base:
             assert "forventer" in tekst
     # Kataloglesningen bruker bootportens nøkkel (tresifret prefiks) og
-    # ignorerer alt annet i katalogen.
+    # ignorerer alt annet i katalogen. Målt gjennom DEN FUNKSJONEN SOM
+    # KJØRER i deploy — en kopi av rørledningen her ville målt kopien
+    # (slik en kopi skjulte at uttrekket mistet tilbakereferansen `\1`).
+    # Basen er utilgjengelig med vilje: da rapporterer funksjonen begge
+    # settene den faktisk leste, og «umålt er ikke kompatibelt».
+    import os
     with tempfile.TemporaryDirectory() as tmp:
         kat = P(tmp) / "platform/core/db/migrations"
         kat.mkdir(parents=True)
@@ -326,11 +331,14 @@ def test_rollbackdommen_maales_mot_bootportens_fasit_127():
             (kat / navn).write_text("-- t", encoding="utf-8")
         r = subprocess.run(
             ["bash", "-c",
-             f'. {lib}; fv=$(ls "{tmp}/platform/core/db/migrations" '
-             r"| sed -n 's/^\([0-9][0-9][0-9]\)_.*\.sql$/\1/p' "
-             f"| sort -n | tr '\\n' ' ' | sed 's/ $//'); echo \"$fv\""],
-            capture_output=True, text=True)
-        assert r.stdout.strip() == "001 002"
+             f'. {lib}; rollbackmaal_kompatibelt "{tmp}" '
+             '"postgresql:///finnes_ikke?host=/finnes-ikke-katalog"'],
+            capture_output=True, text=True,
+            env=dict(os.environ, PGCONNECT_TIMEOUT="1"))
+        assert r.returncode != 0, "uleselig base skal aldri godkjennes"
+        assert "forrige: '001 002'" in r.stdout, \
+            f"kataloguttrekket skal gi bootportens nøkler: {r.stdout!r}"
+        assert "umålt er ikke kompatibelt" in r.stdout
     # …og opp.sh BRUKER den målte dommen — den gamle slutningen fra
     # NYE_MIGRASJONER alene er borte.
     opp = (ROT / "deploy/staging/opp.sh").read_text(encoding="utf-8")

@@ -166,7 +166,7 @@ vurder_rollbackmaal() {  # <forrige-versjoner> <base-versjoner>
 # stdout ved inkompatibilitet; returverdi 0 = forrige KAN boote.
 rollbackmaal_kompatibelt() {  # <forrige-katalog> <runtime-migrator-url>
   local forrige_kat=$1 url=$2 fv bv
-  fv=$(ls "$forrige_kat/platform/core/db/migrations" 2>/dev/null        | sed -n 's/^\([0-9][0-9][0-9]\)_.*\.sql$//p' | sort -n        | tr '
+  fv=$(ls "$forrige_kat/platform/core/db/migrations" 2>/dev/null        | sed -n 's/^\([0-9][0-9][0-9]\)_.*\.sql$/\1/p' | sort -n        | tr '
 ' ' ' | sed 's/ $//')
   bv=$(psql "$url" -tAc        "SELECT string_agg(lpad(versjon::text, 3, '0'), ' ' ORDER BY versjon) FROM migrasjoner"        2>/dev/null | tr -d '')
   if [ -z "$fv" ] || [ -z "$bv" ]; then
