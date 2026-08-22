@@ -33,6 +33,9 @@ CREATE TABLE utsendingsliste (
     PRIMARY KEY (tenant, liste_id),
     UNIQUE (tenant, liste_id, innhold_hash),
     UNIQUE (tenant, utkast_serie, liste_id),           -- serie-refererbar
+    -- ... og den samme nøkkelen MED evalueringsoppdraget: FK-målet som
+    -- gjør proveniensen til en skjemapåstand (se self-FK-en under).
+    UNIQUE (tenant, utkast_serie, liste_id, oppdrag_id),
     UNIQUE (tenant, utkast_serie, innhold_hash),
     -- ... og en versjon kan ikke være SIN EGEN forelder (Cursor P2 på
     -- #140, runde 5). Self-FK-en er lovlig i PostgreSQL, så direkte DML
@@ -43,11 +46,34 @@ CREATE TABLE utsendingsliste (
     -- tilfeldigvis holder.
     CONSTRAINT utsendingsliste_ikke_egen_forelder
         CHECK (forrige_liste_id IS NULL OR forrige_liste_id <> liste_id),
-    -- Forelderen må stå i SAMME serie (port 9): FK-en går på
-    -- serie-nøkkelen, så en versjon aldri kan adoptere en annen series
-    -- historikk.
-    FOREIGN KEY (tenant, utkast_serie, forrige_liste_id)
-        REFERENCES utsendingsliste (tenant, utkast_serie, liste_id),
+    -- Forelderen må stå i SAMME serie (port 9) OG bære SAMME
+    -- evalueringsoppdrag: FK-en går på serie-nøkkelen utvidet med
+    -- `oppdrag_id`, så en versjon hverken kan adoptere en annen series
+    -- historikk eller forgrene proveniensen inni sin egen.
+    --
+    -- Codex P2 (runde 6 på #140) + Cursor P2 (runde 5), samme funn: de to
+    -- FK-ene var UAVHENGIGE — barnet måtte peke på forelderen i serien, og
+    -- barnet måtte peke på ET evalueringsoppdrag, men ingenting knyttet de
+    -- to. Direkte DML fra eier/claimer kunne dermed lage en «lineær» serie
+    -- der `oppdrag_id` forgrenet seg, og den forgrenede versjonen var
+    -- fortsatt signerbar og sendbar.
+    --
+    -- ROTÅRSAKEN, siden dette er tredje runde på proveniensen (K2):
+    -- påstanden sto i FUNKSJONEN (`opprett_utsendingsliste`, lukket i
+    -- runde 3) mens resten av lineage-kontrakten — `ett_barn_per_versjon`,
+    -- `en_rot_per_serie`, `utsendingsliste_ikke_egen_forelder` — står i
+    -- SKJEMAET. En funksjonsport beviser bare noe om den ene veien; hele
+    -- klarsignalets bevisform er negativ og tas med direkte DML. Fiksen er
+    -- ikke et nytt formforsøk, men å flytte den siste påstanden dit de
+    -- andre allerede bor. Codex' egen anvisning («a composite relationship
+    -- that includes `oppdrag_id`») gjør det uten trigger: barnets EGEN
+    -- `oppdrag_id` er med i referansen, så den må være forelderens.
+    --
+    -- Røttene er upåvirket: `forrige_liste_id` er NULL der, og MATCH
+    -- SIMPLE sjekker ikke en FK med NULL i noen kolonne.
+    FOREIGN KEY (tenant, utkast_serie, forrige_liste_id, oppdrag_id)
+        REFERENCES utsendingsliste
+            (tenant, utkast_serie, liste_id, oppdrag_id),
     FOREIGN KEY (tenant, oppdrag_id) REFERENCES oppdrag (tenant, id));
 
 -- Lineær lineage (portene 10–11): høyst ETT barn per forelder, og

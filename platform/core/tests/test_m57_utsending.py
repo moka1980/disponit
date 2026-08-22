@@ -1458,6 +1458,46 @@ def test_barn_arver_forelderens_evalueringsoppdrag(migrator):
 
 
 @pg
+def test_serien_baerer_ETT_evalueringsoppdrag_ogsaa_ved_direkte_dml(migrator):
+    """Codex P2 på #140 (runde 6) + Cursor P2 (runde 5), samme funn:
+    funksjonsporten over stopper funksjonsveien, men de to FK-ene på
+    tabellen var UAVHENGIGE — barnet måtte stå i forelderens serie, og
+    barnet måtte peke på ET evalueringsoppdrag, men ingenting knyttet de to.
+    Direkte DML fra eier/claimer kunne derfor lage en «lineær» serie der
+    proveniensen forgrenet seg, og den forgrenede versjonen var fortsatt
+    signerbar og sendbar. Klarsignalets bevisform er negativ og tas med
+    direkte DML — da må påstanden stå i skjemaet, ikke i funksjonen.
+
+    MUTASJONEN SOM DREPER DENNE: ta `oppdrag_id` ut av self-FK-en (tilbake
+    til `(tenant, utkast_serie, forrige_liste_id)`)."""
+    import uuid as _uuid
+
+    e1, _ = _evaluering(migrator)
+    e2, _ = _evaluering(migrator)
+    rot = _liste(migrator, e1, hash_="h-rot-dml")
+    _sett_kontekst(migrator, TENANT)
+    with pytest.raises(psycopg.errors.ForeignKeyViolation):
+        migrator.execute(
+            "INSERT INTO utsendingsliste (tenant, liste_id, utkast_serie,"
+            " forrige_liste_id, oppdrag_id, listetype, malversjon,"
+            " innhold_hash, antall)"
+            " VALUES (%s,%s,%s,%s,%s,'invitasjon','m@1','h-barn-dml',3)",
+            (TENANT, _uuid.uuid4(), rot[1], rot[0], e2))
+    migrator.rollback()
+    # positiv kontroll: forelderens evalueringsoppdrag -> raden står. Roten
+    # selv er upåvirket (NULL forelder ⇒ MATCH SIMPLE sjekker ikke FK-en),
+    # ellers ville `_liste` over feilet.
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute(
+        "INSERT INTO utsendingsliste (tenant, liste_id, utkast_serie,"
+        " forrige_liste_id, oppdrag_id, listetype, malversjon,"
+        " innhold_hash, antall)"
+        " VALUES (%s,%s,%s,%s,%s,'invitasjon','m@1','h-barn-dml-ok',3)",
+        (TENANT, _uuid.uuid4(), rot[1], rot[0], e1))
+    migrator.commit()
+
+
+@pg
 def test_listen_starter_i_et_evalueringsoppdrag(migrator):
     """Cursor P2 på #140 (runde 2): lineagen har RETNING — en liste kan
     aldri startes på et frigivelsesoppdrag (kjeden ville sirklet inn i
