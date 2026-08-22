@@ -125,6 +125,24 @@ def main() -> int:
         ma.bind_til_commit(commit, rel, sha)
         filer[nokkel] = (rel, sha, innhold)
 
+    # 2b. Siste ledd i SP-11-kjeden: råfila bak WCAG-sammendraget.
+    #
+    #     Codex' P2 (#147, runde 1): `les_bundet_artefakt` validerer
+    #     SAMMENDRAGET — stien, manifestets sha, det lukkede skjemaet og
+    #     tellerne — men leser aldri JSONL-en `oppsett.kilde` navngir.
+    #     m56-veien kaller `verifiser_kilde` og binder råfila til
+    #     akseptcommiten; denne kalleren gjorde ingen av delene. Et
+    #     sammendrag hvis råfil manglet eller ikke lenger matchet
+    #     `oppsett.kilde_sha256` kunne dermed bære den immutable
+    #     `revisjonslogg_korrekt`-aksepten, med en kilde-peker til noe
+    #     som ikke finnes. Samme port som m56 — én implementasjon,
+    #     aldri to som kan drive — så kjeden manifest→sammendrag→råfil
+    #     er sha-bundet ledd for ledd, og også råfila er ucommitede
+    #     bytes til den er bundet til akseptcommiten.
+    runde_innhold = filer["runde"][2]
+    evidens_sha = ma.verifiser_kilde(runde_innhold)
+    ma.bind_til_commit(commit, runde_innhold["oppsett"]["kilde"], evidens_sha)
+
     # 3. CI-kjøringen mot GitHub — samme port som m56-aksepten.
     ma.verifiser_ci_kjoring(a.ci_run, ci_commit)
 
