@@ -2858,6 +2858,68 @@ def test_markoren_kjenner_ordet_i_alle_former(dep, ventet):
     assert _modulreferanser(dep) == ventet
 
 
+def _sykelen(kanter: dict[int, set[int]]) -> list[int] | None:
+    """Første sykelen i avhengighetsgrafen, som stien den går — ellers `None`.
+
+    Fasesammenligningen fanger den uoppfyllelige rekkefølgen som KRYSSER en
+    fasegrense (Codex P2, F35). Den fanger ikke den som ligger inne i én fase:
+    M-a → M-b → M-a har like fasenumre hele veien rundt, så ingen kant er et
+    brudd — og likevel kan ingen av de to bygges først. En modul som peker på
+    seg selv er samme sak med én kant.
+
+    Fasen er fortsatt rekkefølgens grovkorn: en kant innenfor en fase er lov,
+    og det er ikke kanten som meldes her, det er RUNDEN. Grafen er den samme
+    dep-grafen faseporten alt leser, så dette er ingen ny lesning av kilden —
+    bare et spørsmål til som stilles av den.
+
+    Vanlig dybde-først med tre farger: hvit (ubesøkt), grå (på stien nå), svart
+    (ferdig). Treffer vi grått, er stien tilbake dit sykelen.
+    """
+    grå: dict[int, bool] = {}
+    sti: list[int] = []
+
+    def gå(n: int) -> list[int] | None:
+        grå[n] = True
+        sti.append(n)
+        for neste in sorted(kanter.get(n, ())):
+            if grå.get(neste):
+                return sti[sti.index(neste):] + [neste]
+            if neste not in grå:
+                funnet = gå(neste)
+                if funnet:
+                    return funnet
+        sti.pop()
+        grå[n] = False
+        return None
+
+    for start in sorted(kanter):
+        if start not in grå:
+            funnet = gå(start)
+            if funnet:
+                return funnet
+    return None
+
+
+@pytest.mark.parametrize("kanter,ventet", [
+    # Ingen sykel: en helt vanlig kjede, og et diamantmønster.
+    ({1: set(), 2: {1}, 3: {1, 2}}, None),
+    ({1: set(), 2: {1}, 3: {1}, 4: {2, 3}}, None),
+    # En modul som peker på SEG SELV er en sykel med én kant.
+    ({1: {1}}, [1, 1]),
+    # To moduler som peker på hverandre — formen som passerte faseporten.
+    ({1: {2}, 2: {1}}, [1, 2, 1]),
+    # En lengre runde, med en uskyldig modul foran som ikke er med i den.
+    ({1: set(), 2: {1, 3}, 3: {4}, 4: {2}}, [2, 3, 4, 2]),
+])
+def test_sykelsoket_finner_runden_og_bare_den(kanter, ventet):
+    """Vitnet for `_sykelen()`. Se F35.
+
+    Grafene er syntetiske med vilje: porten under måler den ekte katalogen, og
+    en port kan ikke bevises av kilden den vokter.
+    """
+    assert _sykelen(kanter) == ventet
+
+
 def test_ingen_modul_avhenger_av_en_senere_fase():
     """Faseporten må være oppfyllelig (Codex P2 på PR #99).
 
@@ -2874,10 +2936,17 @@ def test_ingen_modul_avhenger_av_en_senere_fase():
     avgjøre om rekkefølgen holder — og «kan ikke avgjøres» er ikke det samme
     som «i orden». Før ble den silt bort i stillhet.
 
+    EN SYKEL ER SAMME UOPPFYLLELIGHET UTEN FASEGRENSE (Codex P2, F35).
+    Sammenligningen leser én kant om gangen, og M-a → M-b → M-a har like
+    fasenumre hele veien rundt: ingen av kantene er et brudd, og likevel kan
+    ingen av de to bygges først. Det samme gjelder en modul som peker på seg
+    selv. Grafen er den samme, spørsmålet er ett til — se `_sykelen()`.
+
     MUTASJONEN SOM DREPER DENNE: sett `>` til `>=`. Da ville en avhengighet
     innenfor samme fase blitt et brudd — og det er den ikke: fasen er
     rekkefølgens grovkorn, modulene i den bygges i en rekkefølge fasen ikke
-    bestemmer.
+    bestemmer. Det er nettopp derfor sykelen må søkes fram i stedet: den er
+    den delen av samme-fase-kantene som faktisk ER uoppfyllelig.
     """
     moduler = _moduler_fra_kilden()
     assert len(moduler) == MODULER, (
@@ -2893,6 +2962,11 @@ def test_ingen_modul_avhenger_av_en_senere_fase():
              for r in sorted(_modulreferanser(d["dep"]))
              if moduler[r]["fase"] > d["fase"]]
     assert not brudd, "uoppfyllelig utrullingsrekkefølge: " + "; ".join(brudd)
+    sykel = _sykelen({n: _modulreferanser(d["dep"])
+                      for n, d in moduler.items()})
+    assert sykel is None, (
+        "uoppfyllelig utrullingsrekkefølge — ingen i runden kan bygges "
+        "først: " + " → ".join(f"M-{n}" for n in sykel or ()))
 
 
 # Filer som ikke skal måles mot dagens versjon: `docs/pr/` og
