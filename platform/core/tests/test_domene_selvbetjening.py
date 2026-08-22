@@ -550,6 +550,31 @@ def test_http_ukanonisk_hostname_avvises_av_basen(migrator, klient):
         409, "domene_challenge_avvist"), r.text
 
 
+
+
+def _dyp_kropp() -> tuple[str, bool]:
+    """(kropp, feller_parseren): dypeste kropp under kroppsgrensen, og om
+    `json.loads` HER faktisk kaster RecursionError på den.
+
+    Taket flytter seg mellom Python-versjoner — MÅLT: 3.12 feller ved
+    15 000 nivåer (~90 kB); 3.14 først ved ~200 000, som er 1,2 MB kropp og
+    ligger OVER kroppsgrensen. Der taket ikke kan nås under grensen, er
+    RecursionError-veien UOPPNÅELIG for klientinput i dette miljøet, og
+    løftet som gjenstår å måle er at den dypeste lovlige kroppen får det
+    dokumenterte 400-svaret — aldri en 500. Målt her, aldri antatt.
+    """
+    import json as jsonmodul
+    kropp = ""
+    for dybde in (15000, 33000):
+        kropp = '{"a":' * dybde + "1" + "}" * dybde
+        assert len(kropp) < 200_000, "testkroppen skal ligge under kroppsgrensen"
+        try:
+            jsonmodul.loads(kropp)
+        except RecursionError:
+            return kropp, True
+    return kropp, False
+
+
 @pg
 def test_dypt_nostet_kropp_er_request_feil(migrator, klient):
     """Codex P2: `json.loads` er REKURSIV. Et syntaktisk gyldig, dypt nøstet
@@ -564,23 +589,25 @@ def test_dypt_nostet_kropp_er_request_feil(migrator, klient):
     grensen (C-parserens tak flytter seg mellom Python-versjoner).
 
     MUTASJONEN SOM DREPER DENNE: fjern RecursionError fra except-en rundt
-    `json.loads` i `utsted_endepunkt`.
+    `json.loads` i `utsted_endepunkt` — på en Python der taket kan nås
+    under kroppsgrensen (se `_dyp_kropp`).
     """
-    import json as jsonmodul
-
     from api import sesjon as sesjonmodul
     cookie, csrf = _adminsesjon()
-    dybde = 15000
-    kropp = '{"a":' * dybde + "1" + "}" * dybde
-    assert len(kropp) < 200_000, "testkroppen skal ligge under kroppsgrensen"
-    with pytest.raises(RecursionError):
-        jsonmodul.loads(kropp)
+    kropp, feller = _dyp_kropp()
     r = klient.post("/v1/domener", content=kropp,
                     headers={"X-Disponit-CSRF": csrf,
                              "content-type": "application/json"},
                     cookies={sesjonmodul.C_SESJON: cookie})
-    assert (r.status_code, r.json()["feil"]) == (
-        400, "request_feilformet"), r.text
+    if feller:
+        assert (r.status_code, r.json()["feil"]) == (
+            400, "request_feilformet"), r.text
+    else:
+        # Parseren HER makter kroppen (se `_dyp_kropp`): da er den gyldig
+        # JSON med feil FORM, og løftet som står igjen å måle er det samme
+        # dokumenterte 400-svaret — aldri en generisk 500.
+        assert r.status_code == 400, r.text
+        assert r.json().get("feil"), r.text
 
 
 @pg
