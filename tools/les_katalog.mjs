@@ -190,8 +190,8 @@ function katalogverdien(deler, kilde) {
 /** `verdi` som ren data, eller `IKKE_DATA`-merket hvis den ikke er det.
  *
  *  Verdiene kommer fra en annen kontekst, så de har ikke vertens prototyper.
- *  `Object.prototype.toString` leser den interne merkelappen og virker på
- *  tvers; `Array.isArray` gjør det samme for lister. */
+ *  `Array.isArray` leser den interne merkelappen og virker på tvers; det som
+ *  IKKE er en liste avgjøres av `plattObjekt()`. */
 function somData(verdi) {
   if (verdi === null) return null
   const slag = typeof verdi
@@ -204,14 +204,49 @@ function somData(verdi) {
     for (let i = 0; i < verdi.length; i++) ut.push(egenskapen(verdi, i))
     return ut
   }
-  if (slag === 'object' && Object.prototype.toString.call(verdi) === '[object Object]') {
+  if (slag === 'object' && plattObjekt(verdi)) {
     const ut = {}
     for (const nokkel of Object.keys(verdi)) ut[nokkel] = egenskapen(verdi, nokkel)
     return ut
   }
-  return {[IKKE_DATA]: slag === 'object'
-    ? Object.prototype.toString.call(verdi).slice(8, -1).toLowerCase()
-    : slag}
+  return {[IKKE_DATA]: slag === 'object' ? slaget(verdi) : slag}
+}
+
+/** Sant hvis `verdi` er et objekt som bare bærer felt.
+ *
+ *  KLASSIFISERINGEN PÅKALLER INGENTING (Codex P2).
+ *  `Object.prototype.toString.call(verdi)` LESER `Symbol.toStringTag`, og den
+ *  egenskapen kan siden gi en getter. Getteren kjørte da her ute i Node, etter
+ *  at `runInContext` hadde returnert — utenfor `timeout`-en, altså nøyaktig
+ *  hullet F3 lukket for `verdi[nokkel]`, med en ny inngang: kontrollen som
+ *  skulle avgjøre om verdien i det hele tatt er data, kjørte sidens kode først.
+ *  Én `get [Symbol.toStringTag](){for(;;);}` hang generatoren, porten og CI.
+ *
+ *  `getPrototypeOf` leser en intern peker og påkaller ingen egenskap. Over et
+ *  vanlig objekt står `Object.prototype` og over den ingenting — også for
+ *  `Object.create(null)`, som ikke har noe over seg i det hele tatt. En `Date`,
+ *  en `RegExp`, en `Map` eller en klasseforekomst har ett ledd til, og det
+ *  leddet er nettopp oppførselen en katalogverdi ikke kan ha. */
+function plattObjekt(verdi) {
+  const over = Object.getPrototypeOf(verdi)
+  return over === null || Object.getPrototypeOf(over) === null
+}
+
+/** Navnet på slaget `verdi` er — `date`, `regexp`, `map` — til meldingen.
+ *
+ *  Også dette leses uten å påkalle noe: konstruktøren og navnet dens hentes
+ *  som DESKRIPTOR, og bare når de er vanlige verdier. Er de det ikke, sier vi
+ *  bare `objekt`; en merkelapp er en forklaring, ikke en grunn til å kjøre
+ *  sidens kode. */
+function slaget(verdi) {
+  const over = Object.getPrototypeOf(verdi)
+  const k = over && Object.getOwnPropertyDescriptor(over, 'constructor')
+  if (!k || !('value' in k) || typeof k.value !== 'function') return 'objekt'
+  const n = Object.getOwnPropertyDescriptor(k.value, 'name')
+  if (!n || !('value' in n) || typeof n.value !== 'string' || !n.value) {
+    return 'objekt'
+  }
+  return n.value.toLowerCase()
 }
 
 /** Egenskapen `nokkel` på `objekt`, som data.

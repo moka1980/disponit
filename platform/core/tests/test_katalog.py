@@ -831,6 +831,30 @@ def test_en_getter_som_ikke_terminerer_henger_ikke_leseren(tmp_path):
     assert _uleselige_felt(json.loads(r.stdout)["moduler"][0]) == ["kl"], r.stdout
 
 
+def test_en_merkelappgetter_som_ikke_terminerer_henger_ikke_leseren(tmp_path):
+    """Klassifiseringen påkaller ingenting (Codex P2).
+
+    Egenskapene leses som deskriptor siden forrige runde, så en `get kl()`
+    kjøres ikke. Men KONTROLLEN som avgjorde om verdien var data —
+    `Object.prototype.toString.call(verdi)` — LESER `Symbol.toStringTag`, og
+    den kan siden gi en getter. Den kjørte da her ute i Node etter at
+    `runInContext` hadde returnert: samme hull som forrige runde lukket, med en
+    ny inngang, og den var åpen FØR deskriptorlesningen fikk se noe som helst.
+
+    Leseren kalles direkte, med en frist, av samme grunn som over: en regresjon
+    her viser seg ikke som en rød test, men som en jobb som aldri blir ferdig.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>\n"
+                   "class Ond { get [Symbol.toStringTag](){for(;;);} }\n"
+                   "const M = [{n:1,name:'En',area:'X',p:1,kl:new Ond()}];\n"
+                   "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    assert _uleselige_felt(json.loads(r.stdout)["moduler"][0]) == ["kl"], r.stdout
+
+
 # Kontraktklassene katalogen bruker er de SAMME feltene modulregisteret lagrer,
 # og registeret håndhever dem med CHECK-vilkår. Enumene leses derfor ut av
 # den MIGRERTE BASEN, ikke skrevet av her: en kopi i testen ville vært nok en
