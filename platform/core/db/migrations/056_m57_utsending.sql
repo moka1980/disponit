@@ -544,11 +544,28 @@ BEGIN
     -- konvolutten) — presis samme avgrensning som 043 skrev ned. Rolle-
     -- og scope-nivået hører til flatens egen autorisasjon (CP3), der
     -- signeringsrollen defineres; her bindes det basen faktisk eier.
-    IF NOT EXISTS (
-        SELECT 1 FROM public.brukermedlemskap m
-         WHERE m.tenant = p_tenant AND m.bruker_id = p_signatar
-           AND m.aktiv
-    ) THEN
+    -- LÅST, IKKE BARE LEST (Codex P1, runde 10 på #140). En ren lesning er
+    -- et øyeblikksbilde: en administrator kan skru av dette medlemskapet
+    -- samtidig, og deaktiveringen kan committe ETTER lesningen og FØR
+    -- signaturen står i tabellen. Da er en tilbakekalt bruker skrevet inn
+    -- som den som autoriserte en irreversibel utsending — append-only, så
+    -- den raden kan aldri rettes. Låsen tas gjennom `laas_godkjenner()`
+    -- (013), ikke med en egen `FOR UPDATE` her, og grunnen er den HARDE
+    -- grensen 019 alt skrev ned: PostgreSQL krever UPDATE-privilegium for
+    -- ENHVER radlåsklausul, også `FOR SHARE`, og `disponit_m37_claimer` —
+    -- som eier denne funksjonen — har kun SELECT på `brukermedlemskap`
+    -- (043 §6b). Den skal ALDRI kunne skrive et medlemskap: det er nettopp
+    -- uskrivbarheten som gjør medlemskapet til autorisasjonsinngangen i
+    -- doktrinen over. `laas_godkjenner` er SECURITY DEFINER eid av
+    -- tabellens egen eier og finnes for nøyaktig dette kappløpet (013s
+    -- reautorisering av policygodkjennere, 019s attestasjoner); `FOR
+    -- UPDATE` konflikter med tilbakekallingens egen radlås, så de
+    -- serialiseres og deaktiveringen kan ikke committe før denne
+    -- transaksjonen er ferdig. Funksjonen kjører som SIN eier og ikke som
+    -- vår, men `krev_tenantkontekst` over har alt bundet `disponit.tenant`
+    -- til `p_tenant`, så RLS-vinduet er det samme lesningen hadde.
+    PERFORM 1 FROM public.laas_godkjenner(p_tenant, p_signatar);
+    IF NOT FOUND THEN
         RAISE EXCEPTION 'signer_utsendingsliste: signatar % mangler'
             ' aktivt medlemskap i %', p_signatar, p_tenant
             USING ERRCODE = 'insufficient_privilege';
@@ -948,6 +965,16 @@ DO $$ BEGIN
 END $$;
 GRANT SELECT, INSERT ON utsendingsliste, utsendingssignatur,
     utsendingsfrigivelse TO disponit_m37_claimer;
+-- Signaturporten (§7b) LÅSER signatarens medlemskap gjennom
+-- `laas_godkjenner()` (013). Granten hører HIT og ikke i rolleblokken over:
+-- `laas_godkjenner` eies av migrator, og retten til å gi bort et privilegium
+-- følger EIERSKAPET — inne i `SET LOCAL ROLE disponit_m37_claimer` ville
+-- denne linjen vært en stille no-op med en advarsel (027-fellen).
+-- EXECUTE, ikke DML: eieren av kjedefunksjonene får LÅSE en medlemskapsrad,
+-- aldri skrive den. `brukermedlemskap` er OIDC-forvaltet, og 043 §6b ga med
+-- vilje kun SELECT.
+GRANT EXECUTE ON FUNCTION laas_godkjenner(TEXT, TEXT)
+    TO disponit_m37_claimer;
 
 -- ------------------------------------------------------------
 -- 9. sikre_sak_for_oppdrag (038 → 041 §16) — KOPI av gjeldende kropp,

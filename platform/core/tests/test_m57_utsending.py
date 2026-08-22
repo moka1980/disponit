@@ -799,6 +799,55 @@ def test_signatar_uten_aktivt_medlemskap_avvises(migrator):
 
 
 @pg
+def test_signaturen_holder_medlemskapslaasen(migrator):
+    """Codex P1 (runde 10 på #140): medlemskapsporten var en LESNING, og
+    en lesning er et øyeblikksbilde.
+
+    Testen over måler at et INAKTIVT medlemskap avvises. Den sier ingenting
+    om medlemskapet som er aktivt NÅ og deaktiveres ett øyeblikk senere: en
+    administrator kan committe tilbakekallingen etter porten og før
+    signaturen står i tabellen, og da er en tilbakekalt bruker skrevet inn
+    — append-only — som den som autoriserte en irreversibel utsending.
+
+    Muterings-drepende bevis, 013s form: mens signeringstransaksjonen står
+    åpen, skal en `UPDATE` på NØYAKTIG den medlemskapsraden blokkeres
+    (`lock_timeout` → `LockNotAvailable`). Med den gamle `IF NOT EXISTS
+    (SELECT ...)` låses ingenting, tilbakekallingen går rett gjennom, og
+    denne testen er rød. Kontrollen etterpå viser at låsen SLIPPES: en
+    tilbakekalling er fortsatt lovlig når signeringen er ferdig."""
+    from db.pg import koble
+    oid, _ = _grunnlag(migrator)
+    liste = _liste(migrator, oid)
+    bid = _signatar(migrator)
+    rt = _rt()
+    revoker = koble(MIGRATOR_DSN)
+    try:
+        _sett_kontekst(rt, TENANT)
+        rt.execute("SELECT signer_utsendingsliste(%s,%s,%s,%s)",
+                   (TENANT, liste[0], bid, "n-" + secrets.token_hex(6)))
+        # INGEN commit: signaturen er ikke synlig ennå, og låsen på
+        # medlemskapsraden holdes ut transaksjonen.
+        _sett_kontekst(revoker, TENANT)
+        revoker.execute("SET lock_timeout='800ms'")
+        with pytest.raises(psycopg.errors.LockNotAvailable):
+            revoker.execute("UPDATE brukermedlemskap SET aktiv=false"
+                            " WHERE tenant=%s AND bruker_id=%s",
+                            (TENANT, bid))
+        revoker.rollback()
+        rt.commit()                                  # låsen slippes her
+        _sett_kontekst(revoker, TENANT)
+        revoker.execute("UPDATE brukermedlemskap SET aktiv=false"
+                        " WHERE tenant=%s AND bruker_id=%s", (TENANT, bid))
+        naa = revoker.execute(
+            "SELECT aktiv FROM brukermedlemskap WHERE tenant=%s"
+            " AND bruker_id=%s", (TENANT, bid)).fetchone()[0]
+        revoker.commit()
+        assert naa is False
+    finally:
+        rt.close(); revoker.close()
+
+
+@pg
 def test_funksjonene_er_eneste_vei_for_ordinaere_roller(migrator):
     """Port 4, grant-halvdelen: runtime har SELECT men ikke INSERT på
     kjedetabellene — skrivingen går gjennom funksjonene. (Den statiske
