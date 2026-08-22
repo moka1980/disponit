@@ -1348,6 +1348,44 @@ def _samle(node, ut: set[str]) -> None:
             _samle(getattr(node, navn), ut)
 
 
+# Typene et kast BEVISELIG ikke kan endre en strengverdi til. `text` er den
+# basens egen rendering bruker for kontraktens TEXT-kolonner, og `varchar` uten
+# lengde lagrer strengen som den er. Alt annet — og enhver lengdeangivelse — må
+# regnes som noe som kan endre verdien; se `_bevarer_verdien()`.
+_BEVARENDE_KAST = frozenset({"text", "varchar"})
+
+
+def _bevarer_verdien(kast) -> bool:
+    """Sant hvis `kast` beviselig gjengir strengen under uendret.
+
+    ET KAST KAN VÆRE EN ANNEN VERDI (Codex P2, F23). Hvert `TypeCast` ble
+    pakket ut og strengen under ført opp som en tillatt verdi, men PostgreSQL
+    sammenligner mot RESULTATET av kastet:
+
+        CAST('sideeffektfri_extra' AS varchar(13))  ->  'sideeffektfri'
+        'sideeffektfri'::char(5)                    ->  'sidee'
+        'sideeffektfri'::char                       ->  's'
+        'sideeffektfri'::name                       ->  trunkert på 63
+
+    Porten navnga da et ANNET sett enn vilkåret, og `_registerenum()` kunne
+    avvise en gyldig katalogverdi eller melde en ugyldig som tillatt — helt til
+    INSERT-prøven ga en uenighet ingen kunne forklare.
+
+    Regelen er den samme som ellers i lesningen: pakk bare ut det som er
+    bevist, la resten bli UVISST. En lengdeangivelse (`typmods`) kan trunkere
+    eller etterfylle, og `arrayBounds` gjør en streng om til en liste, så begge
+    diskvalifiserer. Navnet må være `text` eller `varchar`, eventuelt kvalifisert
+    med `pg_catalog` slik basens rendering skriver det.
+    """
+    navn = [s.sval for s in kast.typeName.names
+            if isinstance(s, pglast.ast.String)]
+    if kast.typeName.typmods or kast.typeName.arrayBounds:
+        return False
+    if len(navn) == 2 and navn[0] == "pg_catalog":
+        navn = navn[1:]
+    return len(navn) == 1 and navn[0] in _BEVARENDE_KAST
+
+
 def _verdiliste(node) -> list[str] | None:
     """Strengverdiene i `node` hvis HVERT ledd er én strengkonstant.
 
@@ -1356,14 +1394,20 @@ def _verdiliste(node) -> list[str] | None:
     og `irreversibel`, ikke tre verdier. Å regne ut uttrykket ville vært å
     skrive PostgreSQLs operatorer av i Python, og et gjettet innhold er verre
     enn ingen når svaret brukes til å godta en kontrakt.
+
+    Et kast som ENDRER verdien er samme sak (Codex P2, F23), og faller på samme
+    regel — se `_bevarer_verdien()`.
     """
     ut = []
     for ledd in node or ():
         # Basens egen rendering (`pg_get_constraintdef`) skriver hvert ledd
-        # som `'verdi'::text`. Kastet endrer ingen tekstverdi, så det pakkes
-        # ut — men bare ETT lag, og bare rundt en konstant: et kast rundt et
-        # uttrykk er fortsatt et uttrykk.
+        # som `'verdi'::text`. Det kastet endrer ingen tekstverdi, så det
+        # pakkes ut — men bare ETT lag, bare rundt en konstant, og bare når
+        # kastet er bevist ufarlig: et kast rundt et uttrykk er fortsatt et
+        # uttrykk, og `::varchar(13)` er en annen verdi enn strengen i treet.
         if isinstance(ledd, pglast.ast.TypeCast):
+            if not _bevarer_verdien(ledd):
+                return None
             ledd = ledd.arg
         if not isinstance(ledd, pglast.ast.A_Const) \
                 or not isinstance(ledd.val, pglast.ast.String):
@@ -1448,6 +1492,54 @@ def _snitt(a: set[str], b: set[str]) -> set[str]:
     kjent_a, kjent_b = a - {ULESELIG_SQL}, b - {ULESELIG_SQL}
     kjent = kjent_a & kjent_b if kjent_a and kjent_b else kjent_a or kjent_b
     return kjent | ({ULESELIG_SQL} & (a | b))
+
+
+def _check_uttrykket(vilkar: str):
+    """CHECK-uttrykket i `vilkar`, slik `_registerenum()` får det fra basen."""
+    setning = f"ALTER TABLE t ADD CONSTRAINT c {vilkar};"
+    return pglast.parse_sql(setning)[0].stmt.cmds[0].def_.raw_expr
+
+
+@pytest.mark.parametrize("vilkar,forventet", [
+    # Basens egen rendering for kontraktens TEXT-kolonner. Kastet til `text`
+    # gjengir strengen som den er, så lista leses.
+    ("CHECK ((k = ANY (ARRAY['sideeffektfri'::text, 'ekstern_lesing'::text])))",
+     {"sideeffektfri", "ekstern_lesing"}),
+    ("CHECK (k IN ('sideeffektfri'::text))", {"sideeffektfri"}),
+    # `varchar` UTEN lengde lagrer strengen som den er.
+    ("CHECK (k IN ('sideeffektfri'::character varying))", {"sideeffektfri"}),
+    ("CHECK (k IN ('sideeffektfri'))", {"sideeffektfri"}),
+    # Codex' eget eksempel: kastet TRUNKERER, så PostgreSQL sammenligner mot
+    # `sideeffektfri` — ikke mot strengen som står i treet.
+    ("CHECK (k IN (CAST('sideeffektfri_extra' AS varchar(13))))",
+     {ULESELIG_SQL}),
+    ("CHECK (k IN ('sideeffektfri_extra'::varchar(13)))", {ULESELIG_SQL}),
+    # `char(n)` trunkerer OG etterfyller med mellomrom.
+    ("CHECK (k IN ('sideeffektfri'::char(5)))", {ULESELIG_SQL}),
+    # Og `char` uten lengde er `char(1)`: verdien blir `s`.
+    ("CHECK (k IN ('sideeffektfri'::char))", {ULESELIG_SQL}),
+    # `name` trunkerer på 63 tegn.
+    ("CHECK (k IN ('sideeffektfri'::name))", {ULESELIG_SQL}),
+    # En liste er ikke en streng.
+    ("CHECK (k IN ('{a,b}'::text[]))", {ULESELIG_SQL}),
+    # Ett ledd som ikke lar seg lese gjør HELE lista uviss — som før.
+    ("CHECK (k IN ('sideeffektfri'::text, 'x'::varchar(1)))", {ULESELIG_SQL}),
+])
+def test_et_kast_som_endrer_verdien_gjor_vilkaret_uleselig(vilkar, forventet):
+    """Porten navngir det vilkåret HÅNDHEVER, ikke strengen i treet (F23).
+
+    Hvert `TypeCast` ble pakket ut og strengen under ført opp som tillatt
+    verdi. Men PostgreSQL sammenligner mot RESULTATET av kastet, og et kast med
+    lengde endrer strengen: `CAST('sideeffektfri_extra' AS varchar(13))` er
+    `sideeffektfri`. Porten navnga da et annet sett enn vilkåret, og
+    `_registerenum()` kunne avvise en gyldig katalogverdi eller melde en ugyldig
+    som tillatt — helt til INSERT-prøven ga en uenighet ingen kunne forklare.
+
+    Regelen er den samme som ellers i lesningen, og den er hele grunnen til at
+    `ULESELIG_SQL` finnes: pakk bare ut det som er BEVIST ufarlig, la resten bli
+    uvisst. Uvisst er høylytt; en gjettet verdi er stille.
+    """
+    assert _bindinger(_check_uttrykket(vilkar)) == {"k": forventet}
 
 
 
