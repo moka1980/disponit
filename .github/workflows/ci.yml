@@ -147,6 +147,7 @@ jobs:
         run: |
           python deploy/staging/sp10-provekjoring.py 48
           python deploy/staging/sp10-provekjoring.py 49
+          python deploy/staging/sp10-provekjoring.py 56
       - name: Enhetstester + negative policytester
         run: python -m pytest platform/core/tests -q
       - name: "Port: ingen DB-tester ble hoppet over"

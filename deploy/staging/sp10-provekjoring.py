@@ -268,7 +268,181 @@ def _mal_049(conn) -> list[str]:
 
 #: Migrasjonsnummer -> (seed før N, måling etter N). En backfill-migrasjon
 #: uten oppføring her kan ikke bestå port 17.
-SEEDS = {48: (_seed_048, _mal_048), 49: (_seed_049, _mal_049)}
+
+
+def _seed_056(conn):
+    """Bebodd 055-tilstand for 056-swappen (klarsignalets port 33): ett
+    oppdrag per EKSISTERENDE opprinnelse, i produksjonsform, som skal
+    bæres uendret gjennom constraint-swappen. Uten seedet måler
+    prøvekjøringen bare at swappen godtar en tom tabell — 047-stoppets
+    klasse."""
+    import os
+    import secrets
+    # Engangsbasen har ingen driftshemmeligheter: payloaden seedet
+    # krypterer finnes bare for at radene skal ha produksjonsFORM, og
+    # nøkkelen er testens egen (samme mønster som pytest-fixturens KEK).
+    os.environ.setdefault("DISPONIT_KEK", "ab" * 32)
+    from db import kryptering
+    from db.pg import sett_kontekst
+    sett_kontekst(conn, TEN, "sp10:seed", "r-sp10-056")
+    key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(conn, TEN)
+    ct, nonce = kryptering.krypter(dek, {"sp10": "056"}, TEN, key_id)
+    # Beslutningsveien: TILLAT-loggpost + oppdrag som API-veien lager det.
+    logg = conn.execute(
+        "INSERT INTO revisjonslogg (tenant, aktor, kilde, input_hash,"
+        " policy_id, beslutning, begrunnelse, idempotency_key)"
+        " VALUES (%s,'sp10','api_token','ih','p@1.0.0/x.y','TILLAT','[]',%s)"
+        " RETURNING id", (TEN, "sp10-056-b")).fetchone()[0]
+    conn.execute(
+        "INSERT INTO oppdrag (opprinnelse, tenant, beslutning_loggpost_id,"
+        " oppdragstype, handling, eiermodul, payload_kryptert, key_id,"
+        " nonce, utforelsesfrist, evidensfrist, koblingsstatus)"
+        " VALUES ('beslutning',%s,%s,'kontroll.wcag.nettsted',"
+        "'kontroll.wcag.nettsted','m_wcag_audit',%s,%s,%s,"
+        " now()+interval '1 hour', now()+interval '1 day','KOBLET')",
+        (TEN, logg, ct, key_id, nonce))
+    # M-37-veien: unntakssak + reparasjonsoperasjon + fase-2-loggpost +
+    # oppdrag med hele trioen — formen `_lag_sak`/`_lag_oppdrag` bruker.
+    ulogg = conn.execute(
+        "INSERT INTO revisjonslogg (tenant, aktor, kilde, input_hash,"
+        " policy_id, beslutning, begrunnelse, policy_content_hash)"
+        " VALUES (%s,'sp10','test','ih','p@1.0.0/purring.send','UNNTAK',"
+        "'[]',%s) RETURNING id", (TEN, "1" * 64)).fetchone()[0]
+    sak = conn.execute(
+        "INSERT INTO unntak (tenant, loggpost_id, handling, kategori,"
+        " sakstype, prioritet, payload_kryptert, key_id, nonce,"
+        " maks_auto_forsok_snapshot, policy_versjon, policy_content_hash,"
+        " sakskilde)"
+        " VALUES (%s,%s,'purring.send','manglende_data','normal','normal',"
+        " %s,%s,%s,3,'1.0.0',%s,'policybrudd') RETURNING id",
+        (TEN, ulogg, ct, key_id, nonce, "1" * 64)).fetchone()[0]
+    rid = secrets.token_hex(32)          # 64 hex-tegn — formen 006 krever
+    conn.execute(
+        "INSERT INTO reparasjonsoperasjoner (tenant, unntak_id,"
+        " repair_operation_id, repair_generation, handler_id,"
+        " handler_versjon, maalhandling, input_hash, kategori)"
+        " VALUES (%s,%s,%s,0,'r1_reinnsending','1','purring.send',%s,"
+        "'manglende_data')", (TEN, sak, rid, secrets.token_hex(32)))
+    # KOBLET krever fase-2-beslutningsloggposten også for m37-veien
+    # (oppdrag_kobling_konsistent) — produksjonsformen fra _lag_oppdrag.
+    fase2 = conn.execute(
+        "INSERT INTO revisjonslogg (tenant, aktor, kilde, input_hash,"
+        " policy_id, beslutning, begrunnelse, idempotency_key)"
+        " VALUES (%s,'sp10','arbeidskapabilitet','ih2','p@1.0.0/x.y',"
+        "'TILLAT','[]',%s) RETURNING id", (TEN, rid)).fetchone()[0]
+    conn.execute(
+        "INSERT INTO oppdrag (opprinnelse, tenant, unntak_id, loggpost_id,"
+        " repair_operation_id, beslutning_loggpost_id, oppdragstype,"
+        " handling, eiermodul,"
+        " payload_kryptert, key_id, nonce, utforelsesfrist, evidensfrist,"
+        " koblingsstatus)"
+        " VALUES ('m37_reparasjon',%s,%s,%s,%s,%s,'reinnsending',"
+        "'purring.send','eiermodul:reinnsending',%s,%s,%s,"
+        " now()+interval '1 hour', now()+interval '30 days','KOBLET')",
+        (TEN, sak, ulogg, rid, fase2, ct, key_id, nonce))
+    conn.commit()
+
+
+def _mal_056(conn) -> list[str]:
+    """Etter 056: begge seedede opprinnelser står uendret; totalformen
+    avviser hybrider; kjeden liste→signatur→frigivelse→oppdrag er
+    representerbar — og usignert frigivelse er det IKKE."""
+    import psycopg
+    from db.pg import sett_kontekst
+    sett_kontekst(conn, TEN, "sp10:fasit", "r-sp10-056-2")
+    feil = []
+    rader = conn.execute(
+        "SELECT opprinnelse, beslutning_loggpost_id IS NOT NULL,"
+        "       unntak_id IS NOT NULL, frigivelse_id"
+        "  FROM oppdrag WHERE tenant = %s ORDER BY opprinnelse",
+        (TEN,)).fetchall()
+    fasit = [("beslutning", True, False, None),
+             ("m37_reparasjon", True, True, None)]
+    if rader != fasit:
+        feil.append(f"seedede oppdrag etter 056: {rader!r}, ventet {fasit!r}")
+    # Totalformen: den GAMLE beslutningsarmen tok aldri stilling til
+    # frigivelse_id — nå avvises hybriden av CHECK-en, før noen FK rekker
+    # å mene noe.
+    try:
+        conn.execute(
+            "INSERT INTO oppdrag (opprinnelse, tenant,"
+            " beslutning_loggpost_id, frigivelse_id, oppdragstype,"
+            " handling, eiermodul, payload_kryptert, key_id, nonce,"
+            " utforelsesfrist, evidensfrist, koblingsstatus)"
+            " SELECT 'beslutning', tenant, beslutning_loggpost_id,"
+            " gen_random_uuid(), oppdragstype, handling, eiermodul,"
+            " payload_kryptert, key_id, nonce, utforelsesfrist,"
+            " evidensfrist, koblingsstatus FROM oppdrag"
+            " WHERE tenant = %s AND opprinnelse = 'beslutning'", (TEN,))
+        feil.append("hybrid (beslutning + frigivelse_id) ble AKSEPTERT")
+        conn.rollback()
+    except psycopg.errors.CheckViolation:
+        conn.rollback()
+    # Kjeden er representerbar — og rekkefølgen er tvungen. Direkte DML
+    # (eierens rett), for funksjonsveien måles av pytest-portene.
+    sett_kontekst(conn, TEN, "sp10:fasit", "r-sp10-056-3")
+    oid = conn.execute("SELECT id FROM oppdrag WHERE tenant=%s AND"
+                       " opprinnelse='beslutning'", (TEN,)).fetchone()[0]
+    bid = conn.execute(
+        "INSERT INTO brukeridentitet (issuer, sub) VALUES"
+        " ('https://sp10.local','sp10-056') RETURNING bruker_id"
+        ).fetchone()[0]
+    liste = conn.execute(
+        "INSERT INTO utsendingsliste (tenant, liste_id, utkast_serie,"
+        " oppdrag_id, listetype, malversjon, innhold_hash, antall)"
+        " VALUES (%s, gen_random_uuid(), gen_random_uuid(), %s,"
+        " 'invitasjon','m@1','h1',3) RETURNING liste_id, utkast_serie,"
+        " innhold_hash", (TEN, oid)).fetchone()
+    # Grunnlaget committes FØR den negative proben: rollbacken etter det
+    # FORVENTEDE nei-et skal kaste probens rad, aldri grunnlaget.
+    conn.commit()
+    sett_kontekst(conn, TEN, "sp10:fasit", "r-sp10-056-3b")
+    # Usignert frigivelse er ikke representerbar (port 6):
+    try:
+        conn.execute(
+            "INSERT INTO utsendingsfrigivelse (tenant, frigivelse_id,"
+            " liste_id, innhold_hash, utkast_serie, mottaker_ref)"
+            " VALUES (%s, gen_random_uuid(), %s, %s, %s, 'm1')",
+            (TEN, liste[0], liste[2], liste[1]))
+        feil.append("frigivelse UTEN signatur ble akseptert")
+        conn.rollback()
+        return feil
+    except psycopg.errors.ForeignKeyViolation:
+        conn.rollback()
+    sett_kontekst(conn, TEN, "sp10:fasit", "r-sp10-056-4")
+    conn.execute(
+        "INSERT INTO utsendingssignatur (tenant, liste_id, utkast_serie,"
+        " innhold_hash, signatar, operasjonsnokkel)"
+        " VALUES (%s,%s,%s,%s,%s,'sp10-056-sig')",
+        (TEN, liste[0], liste[1], liste[2], bid))
+    frig = conn.execute(
+        "INSERT INTO utsendingsfrigivelse (tenant, frigivelse_id,"
+        " liste_id, innhold_hash, utkast_serie, mottaker_ref)"
+        " VALUES (%s, gen_random_uuid(), %s, %s, %s, 'm1')"
+        " RETURNING frigivelse_id", (TEN, liste[0], liste[2],
+                                     liste[1])).fetchone()[0]
+    conn.execute(
+        "INSERT INTO oppdrag (opprinnelse, tenant, frigivelse_id,"
+        " oppdragstype, handling, eiermodul, payload_kryptert, key_id,"
+        " nonce, utforelsesfrist, evidensfrist, koblingsstatus)"
+        " SELECT 'frigivelse', tenant, %s, 'rekruttering.utsending',"
+        " 'rekruttering.utsending', 'm57_ats', payload_kryptert, key_id,"
+        " nonce, now()+interval '4 hours', now()+interval '1 day',"
+        " 'KOBLET' FROM oppdrag WHERE tenant=%s AND"
+        " opprinnelse='beslutning'", (frig, TEN))
+    conn.commit()
+    # GUC-en er transaksjonslokal — kontekst settes på nytt for tellingen,
+    # ellers teller RLS et tomt vindu og kaller det null rader.
+    sett_kontekst(conn, TEN, "sp10:fasit", "r-sp10-056-5")
+    n = conn.execute("SELECT count(*) FROM oppdrag WHERE tenant=%s AND"
+                     " opprinnelse='frigivelse'", (TEN,)).fetchone()[0]
+    if n != 1:
+        feil.append(f"frigivelsesoppdraget: {n} rader, ventet 1")
+    return feil
+
+
+SEEDS = {48: (_seed_048, _mal_048), 49: (_seed_049, _mal_049),
+         56: (_seed_056, _mal_056)}
 
 
 def main(argv: list[str] | None = None) -> int:
