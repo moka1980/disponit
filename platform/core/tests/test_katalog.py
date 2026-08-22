@@ -1401,6 +1401,70 @@ def test_en_symbolnokkel_pa_selve_posten_stopper_porten(tmp_path):
     assert "element 2" in r.stderr and "symbolnokkel" in r.stderr, r.stderr
 
 
+def test_et_arvet_felt_forsvinner_ikke_i_stillhet(tmp_path):
+    """En verdi med egen prototypekjede leses ikke som en platt en (Codex P2,
+    F31).
+
+    Prøven på om noe var et platt objekt var «prototypen har selv ingen
+    prototype». Den er sann for de to formene katalogen bruker — et
+    objektliteral (`Object.prototype`) og et null-prototype-objekt — men den
+    er sann for en tredje også: et objekt bygget OVER et null-prototype-objekt.
+    Det slapp gjennom som platt, og deretter leses bare EGNE nøkler. Målt før
+    fiksen: `Object.create(Object.create(null, {status:…}), {steg:…})` kom ut
+    som `{"steg":"a"}` med exit 0, mens nettleseren ser `flow.status`. Et felt
+    porten ikke ser, kontrollerer den ikke.
+
+    Prøven står nå på IDENTITET mot den fangede intrinsicen: `null` eller
+    `Object.prototype`, ingenting annet.
+
+    MUTASJONEN SOM DREPER DENNE: bytt `over === objektProto` tilbake mot
+    `proto(over) === null`.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text(
+        "<html><script>\n"
+        "const forelder = Object.create(null, "
+        "{status:{value:'planlagt',enumerable:true}});\n"
+        "const arvet = Object.create(forelder, "
+        "{steg:{value:'a',enumerable:true}});\n"
+        "const nullpost = Object.create(null); nullpost.a = 'b';\n"
+        "const M = [{n:1,name:'En',area:'X',p:1,flow:arvet,"
+        "hel:{a:'b'},bar:nullpost}];\n"
+        "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    post = json.loads(r.stdout)["moduler"][0]
+    assert post["flow"] == {IKKE_DATA: "objekt"}, r.stdout
+    # Kontrollene: begge formene katalogen faktisk bruker er fortsatt data.
+    assert post["hel"] == {"a": "b"}, r.stdout
+    assert post["bar"] == {"a": "b"}, r.stdout
+    assert _uleselige_felt(post) == ["flow"], r.stdout
+
+
+def test_en_arvet_post_stopper_porten(tmp_path):
+    """Samme arv ett nivå opp er ingen modulpost. Se F31.
+
+    Før fiksen ble posten lest som platt, og feltene forelderen bar — her
+    `status` — forsvant stille ut av katalogen mens nettleseren så dem. Nå
+    navngir stoppet hva leseren så.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text(
+        "<html><script>\n"
+        "const forelder = Object.create(null, "
+        "{status:{value:'planlagt',enumerable:true}});\n"
+        "const post = Object.create(forelder, "
+        "{n:{value:2,enumerable:true},name:{value:'To',enumerable:true},"
+        "area:{value:'X',enumerable:true},p:{value:2,enumerable:true}});\n"
+        "const M = [{n:1,name:'En',area:'X',p:1}, post];\n"
+        "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 1, r.stdout
+    assert "element 2" in r.stderr and IKKE_DATA in r.stderr, r.stderr
+
+
 # Kontraktklassene katalogen bruker er de SAMME feltene modulregisteret lagrer,
 # og registeret håndhever dem med CHECK-vilkår. Enumene leses derfor ut av
 # den MIGRERTE BASEN, ikke skrevet av her: en kopi i testen ville vært nok en

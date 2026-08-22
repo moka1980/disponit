@@ -306,9 +306,21 @@ const BYGG_HJELPER =`((glob) => {
   // push er ogsaa Array.prototype, og en overskrevet push ga maalt en tom
   // katalog med exit 0.
   const uarvet = (liste) => settProto(liste, null)
+  // ARVEDE FELT ER OGSAA FELT (Codex P2, F31). Proeven var «prototypen har
+  // selv ingen prototype», og den holder for de to formene katalogen bruker:
+  // et objektliteral (Object.prototype) og et null-prototype-objekt. Men den
+  // holder for en tredje ogsaa — et objekt bygget OVER et null-prototype-
+  // objekt. Object.create(Object.create(null, {status:...}), ...) slapp
+  // gjennom som en platt post, og deretter leses bare EGNE noekler: status
+  // forsvant ut av JSON-en med exit 0 mens nettleseren ser post.status.
+  // Proeven staar naa paa IDENTITET mot den fangede intrinsicen i stedet for
+  // paa en form: null eller Object.prototype, og ingenting annet. Alt annet
+  // er en arv vi ikke leser, og da sier vi hva vi saa (se slaget) i stedet
+  // for aa tie om den.
+  const objektProto = Object.prototype
   const plattObjekt = (verdi) => {
     const over = proto(verdi)
-    return over === null || proto(over) === null
+    return over === null || over === objektProto
   }
   const slaget = (verdi) => {
     const over = proto(verdi)
