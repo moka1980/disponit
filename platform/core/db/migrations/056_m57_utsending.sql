@@ -587,6 +587,24 @@ BEGIN
         RAISE EXCEPTION 'opprett_frigivelsesoppdrag: ukjent frigivelse %',
             p_frigivelse_id USING ERRCODE = 'no_data_found';
     END IF;
+    -- EN DØDFØDT JOBB SKAL IKKE FØDES (Codex P2, runde 5 på #140).
+    -- `claim_neste_oppdrag` plukker kun rader med `utforelsesfrist >
+    -- now()`, og `oppdrag_en_per_frigivelse` gir frigivelsen nøyaktig ETT
+    -- forsøk: et oppdrag opprettet med en alt utløpt frist er derfor
+    -- uplukkbart fra første sekund, OG blokkerer det gyldige oppdraget
+    -- frigivelsen aldri får. Reaperen i §10 rydder opp i rader som løper
+    -- ut etterpå; denne porten hindrer at de i det hele tatt oppstår.
+    --
+    -- Porten står FØR innsettingen, også på retry-veien: fristene er med
+    -- vilje utenfor materialiteten (se under) fordi et legitimt retry
+    -- regner dem PÅ NYTT. Et retry som sender inn en utløpt frist beskriver
+    -- en jobb som ikke kan utføres, og skal høre det — ikke få et
+    -- uplukkbart oppdrag tilbake som om alt var i orden.
+    IF p_utforelsesfrist <= now() THEN
+        RAISE EXCEPTION 'opprett_frigivelsesoppdrag: utforelsesfrist % er'
+            ' alt utløpt — oppdraget ville aldri kunne plukkes',
+            p_utforelsesfrist USING ERRCODE = 'invalid_parameter_value';
+    END IF;
     -- Én frigivelse -> ett oppdrag (indeksen over håndhever det):
     -- kappløpstaperen får VINNERENS oppdrag tilbake — en irreversibel
     -- utsending skal aldri kunne dobles av et retry (Cursor P1 på #140).
@@ -867,5 +885,72 @@ BEGIN
                                'arsak', p_arsak));
     RETURN v_id;
 END $function$;
+
+RESET ROLE;
+
+-- ------------------------------------------------------------
+-- 10. reap_evidensfrister (038 §5 → 043 §12) — KOPI av gjeldende kropp,
+--     diff-endret: ÉN linje i predikatet, den tredje opprinnelsen med.
+--
+--     Codex P2 (runde 5 på #140): et frigivelsesoppdrag som passerer
+--     `utforelsesfrist` mens det står i kø kan ikke lenger PLUKKES —
+--     `claim_neste_oppdrag` tar kun rader med `utforelsesfrist > now()`
+--     (005/015/037/049) — og INGEN vei førte det videre: reaperen tok
+--     bare `opprinnelse = 'beslutning'`. Raden ble stående ikke-terminal
+--     for alltid, og en e-post som ALDRI ble sendt så ut som en jobb som
+--     fortsatt skulle sendes.
+--
+--     038 holdt m37-veien utenfor med en uttalt grunn: dens oppdrag hører til
+--     en sak som ALT finnes, med egen fase-2-oppfølging. Frigivelsesveien har
+--     ingen slik sak — autorisasjonen er en signatur, ikke et unntak — så den
+--     hører til nettopp her, sammen med beslutningsveien. Saksveien er
+--     tilgjengelig fordi §9 over ga frigivelsesoppdrag en revisjonslinje.
+--
+--     `CREATE OR REPLACE` beholder eier og grants (timerrollen).
+-- ------------------------------------------------------------
+SET LOCAL ROLE disponit_m37_claimer;
+CREATE OR REPLACE FUNCTION reap_evidensfrister(p_grense INT DEFAULT 200)
+RETURNS TABLE (tenant TEXT, oppdrag_id BIGINT, unntak_id BIGINT)
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+DECLARE r RECORD; v_sak BIGINT; v_rid TEXT; v_kontekst TEXT;
+        v_kandidat BIGINT;
+BEGIN
+    v_rid := 'reap-' || replace(gen_random_uuid()::text, '-', '');
+    v_kontekst := current_setting('disponit.tenant', true);
+    FOR r IN
+        SELECT o.tenant AS t, o.id AS oid FROM public.oppdrag o
+         WHERE o.opprinnelse IN ('beslutning', 'frigivelse')
+           AND o.status IN ('opprettet', 'plukket')
+           AND now() > o.evidensfrist
+         ORDER BY o.evidensfrist
+         LIMIT p_grense
+         FOR UPDATE OF o SKIP LOCKED
+    LOOP
+        PERFORM set_config('disponit.tenant', r.t, true);
+        -- SAKEN, MED SAMME REGEL SOM OPPDRAGET (043 §9): finnes den alt,
+        -- må låsen være ledig — ellers er dette sveipets kandidat, ikke
+        -- dette sveipets rad.
+        SELECT u.id INTO v_kandidat FROM public.unntak u
+         WHERE u.tenant = r.t AND u.oppdrag_id = r.oid
+           AND u.arsak = 'evidensfrist' AND NOT u.terminal;
+        IF v_kandidat IS NOT NULL THEN
+            PERFORM 1 FROM public.unntak u
+             WHERE u.tenant = r.t AND u.id = v_kandidat
+               FOR UPDATE SKIP LOCKED;
+            IF NOT FOUND THEN
+                CONTINUE;
+            END IF;
+        END IF;
+        v_sak := public.sikre_sak_for_oppdrag(
+            r.t, r.oid, 'evidensfrist', 'evidensreaper', v_rid);
+        UPDATE public.oppdrag o SET status = 'feilet'
+         WHERE o.tenant = r.t AND o.id = r.oid
+           AND o.status IN ('opprettet', 'plukket');
+        tenant := r.t; oppdrag_id := r.oid; unntak_id := v_sak;
+        RETURN NEXT;
+    END LOOP;
+    PERFORM set_config('disponit.tenant', coalesce(v_kontekst, ''), true);
+END $$;
 
 RESET ROLE;

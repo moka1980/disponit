@@ -972,6 +972,94 @@ def test_frigivelsesoppdrag_faar_sak_med_revisjonslinje(migrator):
     assert rad == (logg, aoid, "evidensfrist"), rad
 
 
+@pg
+def test_utlopt_frigivelsesoppdrag_blir_terminalt(migrator):
+    """Codex P2 på #140 (runde 5): `claim_neste_oppdrag` plukker kun
+    rader med `utforelsesfrist > now()`, og reaperen tok bare
+    `opprinnelse='beslutning'`. Et frigivelsesoppdrag som løp ut i køen
+    var dermed hverken plukkbart eller terminaliserbart — det sto
+    ikke-terminalt for alltid, og en e-post som ALDRI ble sendt så ut som
+    en jobb som fortsatt skulle sendes.
+
+    Den tredje opprinnelsen hører hjemme i reaperen (i motsetning til
+    m37-veien, som 038 holdt utenfor fordi dens oppdrag alt HAR en sak):
+    autorisasjonen er en signatur, ikke et unntak.
+
+    MUTASJONEN SOM DREPER DENNE: sett predikatet i 056 §10 tilbake til
+    `o.opprinnelse = 'beslutning'`."""
+    from .test_outbox_bestilling import _reaperkobling
+
+    oid, payload = _evaluering(migrator)
+    ct, key_id, nonce = payload
+    bid = _signatar(migrator)
+    liste = _liste(migrator, oid)
+    _signer(migrator, liste, bid)
+    fid = _frigi(migrator, liste)
+    _sett_kontekst(migrator, TENANT)
+    aoid = migrator.execute(
+        "INSERT INTO oppdrag (opprinnelse, tenant, frigivelse_id,"
+        " oppdragstype, handling, eiermodul, payload_kryptert, key_id,"
+        " nonce, utforelsesfrist, evidensfrist, koblingsstatus)"
+        " VALUES ('frigivelse',%s,%s,'rekruttering.utsending',"
+        "'rekruttering.utsending','m57_ats',%s,%s,%s,"
+        " now()-interval '2 minutes', now()-interval '1 minute','KOBLET')"
+        " RETURNING id", (TENANT, fid, ct, key_id, nonce)).fetchone()[0]
+    migrator.commit()
+    rp = None
+    try:
+        rp, _timerrolle = _reaperkobling()
+        rader = rp.execute("SELECT tenant, oppdrag_id, unntak_id"
+                           " FROM reap_evidensfrister(200)").fetchall()
+        rp.commit()
+    finally:
+        if rp is not None:
+            rp.close()
+    mine = [r for r in rader if r[0] == TENANT and r[1] == aoid]
+    assert len(mine) == 1, f"reaperen lot frigivelsesoppdraget stå: {rader!r}"
+    _sett_kontekst(migrator, TENANT)
+    status, kvittering = migrator.execute(
+        "SELECT status, kvittering IS NULL FROM oppdrag WHERE tenant=%s"
+        " AND id=%s", (TENANT, aoid)).fetchone()
+    assert (status, kvittering) == ("feilet", True), (status, kvittering)
+    assert migrator.execute(
+        "SELECT arsak FROM unntak WHERE id=%s",
+        (mine[0][2],)).fetchone()[0] == "evidensfrist"
+
+
+@pg
+def test_frigivelsesoppdrag_avviser_alt_utlopt_frist(migrator):
+    """Codex P2 på #140 (runde 5), andre halvdel: reaperen rydder rader
+    som løper ut ETTER at de ble laget — en jobb som er uplukkbar i det
+    den fødes skal ikke fødes i det hele tatt. `oppdrag_en_per_frigivelse`
+    gir frigivelsen nøyaktig ETT forsøk, så et dødfødt oppdrag blokkerer
+    dessuten det gyldige som aldri kommer.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `IF p_utforelsesfrist <= now()`
+    fra `opprett_frigivelsesoppdrag`."""
+    oid, payload = _evaluering(migrator)
+    ct, key_id, nonce = payload
+    bid = _signatar(migrator)
+    liste = _liste(migrator, oid)
+    _signer(migrator, liste, bid)
+    fid = _frigi(migrator, liste)
+    snd = _sender()
+    try:
+        _sett_kontekst(snd, TENANT)
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            snd.execute(
+                "SELECT opprett_frigivelsesoppdrag(%s,%s,"
+                "'rekruttering.utsending','rekruttering.utsending',"
+                "'m57_ats',%s,%s,%s, now()-interval '1 minute',"
+                " now()+interval '1 day')", (TENANT, fid, ct, key_id, nonce))
+        snd.rollback()
+    finally:
+        snd.close()
+    _sett_kontekst(migrator, TENANT)
+    assert migrator.execute(
+        "SELECT count(*) FROM oppdrag WHERE tenant=%s AND frigivelse_id=%s",
+        (TENANT, fid)).fetchone()[0] == 0, "dødfødt oppdrag ble laget"
+
+
 def test_056_granter_aldri_ubetinget_til_lokalnavnet():
     """Codex P1 på #140 (runde 5): `disponit` er LOKAL-/TESTNAVNET på
     runtime-rollen — `migrer.py` tar navnet som argument. En ubetinget
