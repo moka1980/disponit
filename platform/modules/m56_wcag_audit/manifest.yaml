@@ -166,12 +166,19 @@ staging_sjekkliste:
     # grensen `krev_datasett_sha_lik_innsjekket` (wcag-kontroll-v2) holder
     # den mot de innsjekkede bytene — regnet på nytt av porten hver kjøring.
     notat: >-
-      MÅLT PÅ STAGING 2026-08-18 (halve påstanden): fasitkontrollen ga
-      avvik=0 mot testnettstedets fasit i staging-runden — se
-      `tester_gronne_pa_staging`, som er punktet den målingen faktisk
-      beviser. Datasettet (platform/modules/m56_wcag_audit/testnettsted/,
-      fasit skrevet fra konstruksjonen) er sjekket inn, så den lokale
-      siden er tilgjengelig for måling; den er bare ikke målt ennå.
+      MÅLT PÅ STAGING 2026-08-22 (release wcag-r21, begge ledd):
+      oppsett.datasett_sha256 = 9c5bccd2… er identiteten til bytene
+      staging faktisk serverte — sjekklisten regner den i fase 5 og
+      skriver den som `datasett_identitet` i evidensstrømmen, konverteren
+      bærer den til artefaktet, og grensen
+      `krev_datasett_sha_lik_innsjekket` (wcag-kontroll-v2) regner den om
+      igjen over de innsjekkede bytene i
+      platform/modules/m56_wcag_audit/testnettsted/ (sider/ + fasit.json)
+      og krever likhet ved hver kjøring. Det er vei (b) fra
+      blokkert-noten: leddet «likt lokalt» er nå en måling, ikke en
+      antakelse fra operatørens skjerm. Andre ledd:
+      maalt.avvik_mot_fasit = 0 — motoren traff fasiten på de samme
+      bytene.
   revisjonslogg_korrekt:
     # PUNKTET HAR IKKE MÅLINGEN SIN (Codex P2, PR #117 runde 14).
     # Det sto `ja` med én bevismåling, fristtellingen (som den gang het
@@ -210,14 +217,19 @@ staging_sjekkliste:
     # utfall, talt mot de ti bestilte. Grensene i wcag-kontroll-v2 krever
     # 10/10 og 0 avvik i begge ledd.
     notat: >-
-      MÅLT 2026-08-18 (noe annet enn punktet): 10/10 kjøringer fullførte
-      innen frist med null avvik — se `ytelse_bestatt` og
-      `tester_gronne_pa_staging`, som er punktene den målingen beviser.
-      Kvitteringene BLE observert av operatøren i staging-runden
-      (verifikator v_wcag_audit mot nøkkelregisteret, PR-006-signert), og
-      rapport-lese-API-et leverte det promoterte artefaktet dekryptert —
-      men ingen av delene står som en måling i evidensen, og en
-      observasjon som ikke er skrevet ned, kan ingen gjenta.
+      MÅLT 2026-08-22 (release wcag-r21, punktets egne to ledd, kjøring
+      73–82): (a) KVITTERINGEN —
+      maalt.kjoringer_med_attestert_kvittering = 10/10 og
+      maalt.kvittering_attest_avvik = 0: for hver kjøring er
+      `oppdrag.kvittering_signatur` satt og identisk med
+      `kvittering->signatur->>verdi`, `resultathash` er satt, og den
+      attesterte release/regelsett/artefakthash er DEN kjøringen faktisk
+      gikk på. (b) REVISJONSRADEN —
+      maalt.revisjonsrader_mot_bestilt = 10 og
+      maalt.revisjonsrad_avvik = 0: `revisjonslogg` har én rad per
+      kjøring med riktig tenant, oppdrag og utfall, talt mot de ti
+      bestilte. Observasjonene operatøren gjorde i runden fra 18/8 er nå
+      skrevet ned som tellere med grenser, så de kan gjentas.
   feilinjisering_til_unntakskø:
     status: ja
     krav_id: wcag-kontroll-v1
@@ -280,14 +292,25 @@ staging_sjekkliste:
     # b57d-ba5d45781351 (akseptens A2-bevis). Kandidaten er raden aksepten
     # binder. Artefaktet fra 2026-08-20 13:22 ligger som historikk.
     notat: >-
-      KJØRT 2026-08-20 13:22 mot (m_wcag_audit, staging), SUPERSEDERT:
-      wcag-r11 rullet til wcag-r12 MENS oppdrag 54 var claimet —
-      oppdraget fullførte utfort med signert kvittering og promotert
-      artefakt 1,5 s etter rullingen (SP-3: rent utfall); den drenerte
-      releasen claimet INGENTING på 25 s med levende arbeider;
-      kandidaten wcag-r13 (byte-identisk, digest af92b705…) plukket det
-      ventende oppdraget og promoterte E2E-artefaktet ad1579e2… 12,4 s
-      etter fram-rullingen. Det som ALDRI ble målt, er om wcag-r12
-      faktisk lot seg kjøre: releasen ble aldri startet på verten. Den
-      nye kjøringen booter rullbakken gjennom sjekklistens faser 2/4/9
-      og lar den fullføre det ventende oppdraget før kandidaten overtar.
+      KJØRT PÅ NYTT 2026-08-22 16:45 mot (m_wcag_audit, staging),
+      module_epoch 10, med det rettede skriptet — alle fire ledd i ÉN
+      kjøring: den drillede wcag-r21 ble drenert og claimet INGENTING på
+      25,1 s med levende arbeider
+      (maalt.nye_oppdrag_claimet_av_drillet_release = 0,
+      maalt.falske_verdikter = 0) · det inflight-claimede oppdraget 91
+      fullførte `utfort` med signert kvittering og promotert artefakt
+      dec09aa7… (maalt.inflight_har_signert_kvittering = true; SP-3:
+      rent utfall) · rullbakken wcag-r22 ble FAKTISK BOOTET på verten
+      gjennom sjekklistens faser 2/4/9 med forgjengerens bytes
+      (etterkontroll.rullback_bytes_er_forgjengerens = true), claimet det
+      ventende oppdraget 92 etter 12,5 s og fullførte det med signert
+      kvittering og artefakt b6245c61… (maalt.rullback_claimet_oppdrag =
+      1, maalt.rullback_har_signert_kvittering = true) — nettopp det
+      kjøringen 2026-08-20 13:22 aldri målte · akseptkandidaten wcag-r23
+      claimet oppdrag 93 10,4 s etter fram-rullingen
+      (maalt.kandidat_claimet_oppdrag = 1, maalt.overtakelse_s = 10,392)
+      og promoterte E2E-artefaktet
+      52d316c7-d547-4133-b57d-ba5d45781351, som er akseptens A2-bevis.
+      Alle fire releasene deler digest af92b705…. Kandidatraden er den
+      aksepten binder. Artefaktet fra 2026-08-20 13:22 ligger urørt i
+      deploy/staging/artefakter/ som historikk og er ikke bundet her.
