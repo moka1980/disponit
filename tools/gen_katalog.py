@@ -17,6 +17,7 @@ uten at noe sa fra.
 import json
 import pathlib
 import re
+import subprocess
 import sys
 
 # Repoet finnes ut fra SKRIPTETS egen plassering, ikke fra en absolutt sti på
@@ -193,33 +194,77 @@ MODUL_EN = {
         "Recruitment agent (ATS)"),
 }
 
-
-# Modulpostene i `M` står i TO former, og begge må leses (Codex P1 på PR #99).
-# v7-postene er kompakte JS-literaler — `{n:1,name:'…',area:'…',p:1,…}` — mens
-# de ti nye v8-postene er JSON-aktige: `{"n": 46, "name": "…", …}`. En parser
-# bundet til den ene formen feiler ikke; den finner bare FÆRRE moduler, og det
-# er den verste utgaven: `katalog.js` ville blitt regenerert til 45 moduler,
-# ferskhetsporten ville vært grønn mot sitt eget utdata, og forsiden hadde vist
-# et produktomfang ingen har bestemt. Nummerporten under er derfor det som
-# fanger et parserbrudd, og den krever HELE 1..ANTALL_MODULER.
-#
-# Mellomrommene mellom feltene er `[^{}]*?`, ikke `.*?`: en post uten `area`
-# ville med `.*?` latt treffet renne videre inn i NESTE post og gitt et
-# nummerpar som aldri sto sammen i kilden. Ingen `{`/`}` finnes inne i
-# feltverdiene, så klammeforbudet er en trygg postgrense.
-POST_RE = re.compile(
-    r"""\{\s*["']?n["']?\s*:\s*(\d+)\s*,"""
-    r"""\s*["']?name["']?\s*:\s*(['"])(.*?)\2"""
-    r"""[^{}]*?,\s*["']?area["']?\s*:\s*(['"])(.*?)\4"""
-    r"""\s*,\s*["']?p["']?\s*:\s*(\d+)""",
-    re.S)
-
 # Katalogen bærer STRUKTUR (nummer, navn, område, fase) — ikke tilstand.
 # Et eget statusfelt her sto kort i #109 og er tatt ut igjen (Codex P1): to
 # statuskilder for samme modul kan bare drive fra hverandre, og den ene som
 # ikke er forankret i et manifest kan love drift ingen port har bestått.
 # Hva en modul FAKTISK er, står ett sted: `MODULSTATUS` i plattformdata.js,
 # avledet av manifestene og pinnet av test_ui_kontrakt.py.
+#
+# Forbudet gjelder MODULPOSTENE — ikke alt som står i en `<script>`-tagg.
+# Siden er en levende prototype med egen UI-kode: et tilstandsobjekt med
+# `status:` i en filterrutine, et API-eksempel i en hjelpetekst — alt sammen
+# helt lovlig, og ingen av delene en tilstandsakse ved siden av manifestet.
+# Med `les_katalog.mjs` er avgrensningen ikke lenger en regel noen måtte
+# skrive: leseren gir fra seg postene i `M`, og bare dem.
+FORBUDTE_FELT = ("status", "driftstilstand")
+
+# Feltene en modulpost MÅ bære, og typen de har.
+PAAKREVD = {"n": int, "name": str, "area": str, "p": int}
+
+# Merkelappen `les_katalog.mjs` setter på en feltverdi som ikke er DATA — en
+# funksjon, et mønster, en dato. Se der.
+#
+# NØYAKTIG DENNE STRENGEN KAN BARE KOMME FRA LESEREN (Codex P2, F37). Merket er
+# et objekt med denne ene nøkkelen, og kontrakten tillater nestede objekter av
+# data — så en helt ordinær `flow: {__ikke_data__: 'vanlig tekst'}` så nøyaktig
+# ut som merket, og genereringen stoppet på en verdi JSON bærer helt fint.
+# Leseren gir nå en kildenøkkel i den familien én understrek til, så de to ikke
+# kan forveksles; kontrollen her står derfor på nøkkelen slik den er.
+IKKE_DATA = "__ikke_data__"
+
+# Leseren. ETT lesersteg, delt med porten i `platform/core/tests/test_katalog.py`
+# (eiers beslutning 20/8 på PR #118).
+#
+# Katalogen sto i JavaScript, og både generatoren og porten leste den med hver
+# sin håndskrevne skanner i Python. Nitten review-runder på #118 var nitten
+# JavaScript-former skannerne ikke hadde — en beregnet nøkkel, en escapet
+# nøkkel, en spredning, en accessor, en malstreng, en skråstrek som både er
+# divisjon og mønster … Formene tar aldri slutt, for mengden er hele
+# grammatikken, og en skanner som ikke kjenner en form gjør ikke noe høylytt:
+# den leser noe annet enn nettleseren og sier ingenting.
+#
+# Nå leses katalogen av en JavaScript-motor, som per konstruksjon ikke kan ha
+# en annen forestilling om JavaScript enn nettleseren har. Og porten leser den
+# gjennom SAMME fil — to lesninger av samme kilde var ment å gjøre en feil i
+# den ene synlig, men i praksis ga det to skannere som drev fra hverandre og
+# måtte lappes hver for seg. Én leser kan ikke drive fra seg selv.
+LESER = pathlib.Path(__file__).resolve().parent / "les_katalog.mjs"
+
+
+def ikke_data_i(verdi) -> str | None:
+    """Hva som ikke er data i `verdi`, eller `None` — HELE VEIEN NED.
+
+    Merket ble bare lett etter i feltets egen verdi (Codex P2). Katalogen
+    tillater lister og objekter av data, og leseren merker det som ikke er data
+    DER DET STÅR — så en `flow: [() => 42]` fikk merket sitt inne i lista, og
+    et felt med en funksjon i seg gikk rett gjennom kontrollen. Lovlig er tekst,
+    tall, `true`/`false`/`null` og lister og objekter av slike, rekursivt, og da
+    må kontrollen være det samme.
+    """
+    if isinstance(verdi, dict):
+        if IKKE_DATA in verdi:
+            return str(verdi[IKKE_DATA])
+        kilder = verdi.values()
+    elif isinstance(verdi, list):
+        kilder = verdi
+    else:
+        return None
+    for v in kilder:
+        funn = ikke_data_i(v)
+        if funn is not None:
+            return funn
+    return None
 
 
 def slug(navn: str) -> str:
@@ -229,16 +274,59 @@ def slug(navn: str) -> str:
 
 
 def les_katalog() -> list[dict]:
+    """Modulpostene i sannhetskilden, lest av `les_katalog.mjs`."""
     if not KILDE.exists():
         raise SystemExit(f"fant ikke sannhetskilden: {KILDE_NAVN}")
-    skript = "\n".join(re.findall(r"<script[^>]*>(.*?)</script>",
-                                  KILDE.read_text(encoding="utf-8",
-                                                  errors="replace"), re.S))
-    poster = [
-        {"n": int(m.group(1)), "navn": m.group(3), "omrade": m.group(5),
-         "fase": int(m.group(6))}
-        for m in POST_RE.finditer(skript)
-    ]
+    try:
+        r = subprocess.run(["node", str(LESER), str(KILDE)],
+                           capture_output=True, text=True)
+    except FileNotFoundError:
+        # FAIL-CLOSED. Uten node er katalogen ulest, og en generator som da
+        # skrev noe som helst ville skrevet gammelt innhold over et nytt
+        # produktomfang. Ubuntu-runneren har node preinstallert, og UI-jobben
+        # krever den alt.
+        raise SystemExit(
+            "fant ikke `node` — modulkatalogen leses av tools/les_katalog.mjs, "
+            "og uten en JavaScript-motor kan den ikke leses i det hele tatt.")
+    if r.returncode != 0:
+        raise SystemExit(
+            f"kunne ikke lese modulkatalogen i {KILDE_NAVN}:\n{r.stderr.strip()}")
+    poster = json.loads(r.stdout)["moduler"]
+
+    for i, post in enumerate(poster, start=1):
+        # Navnet en post kalles ved i en feilmelding. `n` er det leseren ga oss,
+        # og er den ikke lesbar, er plassen i lista det eneste vi har.
+        hvem = f"M-{post['n']}" if isinstance(post.get("n"), int) \
+            else f"post {i} i katalogen"
+        if isinstance(post.get("name"), str):
+            hvem += f" «{post['name']}»"
+        # Forbudet FØRST: et `status`-felt er forbudt uansett hva verdien er,
+        # og meldingen skal navngi aksen, ikke formen den var skrevet i.
+        forbudt = [f for f in post if f in FORBUDTE_FELT]
+        if forbudt:
+            raise SystemExit(
+                f"{hvem} i {KILDE_NAVN} bærer `{forbudt[0]}` — katalogen bærer "
+                f"struktur (nummer, navn, område, fase), ikke tilstand. Hva en "
+                f"modul FAKTISK er, står i `MODULSTATUS` i plattformdata.js, "
+                f"avledet av manifestene. Fjern feltet.")
+        uleselige = sorted(f for f, v in post.items()
+                           if ikke_data_i(v) is not None)
+        if uleselige:
+            raise SystemExit(
+                f"{hvem} i {KILDE_NAVN} har egenskapen `{uleselige[0]}` som "
+                f"ikke er data ({ikke_data_i(post[uleselige[0]])}). Katalogen er "
+                f"en kilde som skal kunne leses av mer enn nettleseren: lovlig "
+                f"er tekst, tall, `true`/`false`/`null` og lister og objekter "
+                f"av slike.")
+        for felt, slag in PAAKREVD.items():
+            # `bool` er en `int` i Python; et `p: true` er ikke en fase.
+            if not isinstance(post.get(felt), slag) \
+                    or isinstance(post.get(felt), bool):
+                raise SystemExit(
+                    f"{hvem} i {KILDE_NAVN} mangler formen katalogen bærer: "
+                    f"`{felt}` skal være {'et tall' if slag is int else 'tekst'}"
+                    f", ikke {post.get(felt)!r}.")
+
     # Antallet alene er ikke en kontroll (Codex P2): en duplisert `n` sammen
     # med en manglende modul gir også riktig antall poster, og da hadde
     # katalogen sett komplett ut mens én modul var borte og en annen sto to
@@ -255,8 +343,11 @@ def les_katalog() -> list[dict]:
         raise SystemExit(
             f"katalogen er ikke 1..{ANTALL_MODULER} — mangler: {mangler}, "
             f"ukjente: {ukjente} ({KILDE_NAVN} har endret form, sjekk "
-            f"parseren)")
-    return sorted(poster, key=lambda p: p["n"])
+            f"leseren)")
+    return sorted(
+        ({"n": p["n"], "navn": p["name"], "omrade": p["area"], "fase": p["p"]}
+         for p in poster), key=lambda p: p["n"])
+
 
 
 def main() -> None:

@@ -6,7 +6,7 @@ anbefaling: den dagen noen redigerer `katalog.js` for hånd, eller endrer
 spesifikasjonen uten å kjøre generatoren, driver de to kildene fra hverandre —
 og forsiden viser da et produktomfang ingen har bestemt.
 
-Testene her er derfor sju porter (Codex P2 på PR #43, P2 på PR #99):
+Testene her er derfor ti porter (Codex P2 på PR #43, #99 og #118):
   1. KILDE     — generatoren leser sannhetskilden, ikke arkivet i `prototype/`.
   2. FERSKHET  — regenerering i en temp-rot gir NØYAKTIG det som ligger i repoet.
   3. OMDØPING  — nytt navn i kilden stopper genereringen til oversettelsen er
@@ -16,14 +16,55 @@ Testene her er derfor sju porter (Codex P2 på PR #43, P2 på PR #99):
   6. MERKEVARE — sannhetskilden bærer produktnavnet resten av repoet bruker.
   7. FASEORDEN — ingen modul avhenger av en modul i en senere fase, så den
                  erklærte utrullingsrekkefølgen faktisk kan følges.
+  8. PEKERE    — spesifikasjonsmappa inneholder nøyaktig én utgave, og ingen
+                 fil i repoet henviser til en annen; historikken i docs/pr/ og
+                 docs/beslutninger/ og arkivet i prototype/ er med rette
+                 unntatt.
+  9. KLASSER   — `kl` og `rev` i katalogen er verdier modulregisteret godtar,
+                 målt i den MIGRERTE BASEN: vilkårene slik de står der nå,
+                 og basens egen dom over hver verdi som motprøve.
+ 10. IDENTER   — også PROSAEN rundt postene: en identifikator skrevet i
+                 maskinform må finnes i registeret slik det ER NÅ, eller som en
+                 fil, så forklaringen ikke kan finne opp klasser posten ikke
+                 har — og ikke leve videre på en verdi registeret har sluttet
+                 med. Prosa er dokumentteksten og modulpostenes egne felt;
+                 prototypens UI-kode er kode, ikke påstand.
+
+TO LESNINGER, INGEN SKANNERE. Katalogen står i JavaScript og registeret i SQL,
+og porten leste begge med håndskrevne skannere i Python. Nitten review-runder
+på PR #118 var nitten språkformer skannerne ikke hadde — og en skanner som
+ikke kjenner en form gjør ikke noe høylytt: den leser noe annet enn den som
+skal kjøre filen, og sier ingenting. Eier avgjorde saken 20/8: bytt lesning,
+ikke legg til former.
+
+  * KATALOGEN leses av `tools/les_katalog.mjs` — en JavaScript-motor, delt med
+    generatoren, så de to ikke kan lese hver sin katalog.
+  * REGISTERET spørres der det BOR (SP-13): gjeldende enum leses av basens
+    egen `pg_get_constraintdef` i den migrerte testbasen, og dommen over
+    hver verdi måles i tillegg med en INSERT-probe mot en kopi av vilkårene
+    — aldri regnet fram av en simulator over migrasjonshistorikken. En
+    simulator måler sin egen fullstendighet, ikke virkeligheten: #118s
+    seks siste funn gjaldt migrasjoner som ikke fantes. `pglast` —
+    libpg_query, PostgreSQLs egen grammatikk — leser bare det som ER
+    syntaks: vilkårsdefinisjonen basen selv skriver ut, og strengverdiene
+    migrasjonsfilene skriver.
+
+Begge er FAIL-CLOSED. Mangler node eller pglast, er porten rød — aldri hoppet
+over. En port som hopper over seg selv er grønn på noe ingen har lest.
 """
+import functools
+import html
+import os
+import itertools
 import json
 import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
+import psycopg
 import pytest
 
 ROT = Path(__file__).resolve().parents[3]
@@ -35,6 +76,10 @@ KATALOG_JS = ROT / "platform" / "core" / "ui" / "static" / "js" / "katalog.js"
 # bytte til.
 KILDE_REL = ("docs", "spesifikasjon", "disponit-prototype-v9.html")
 KILDE = ROT.joinpath(*KILDE_REL)
+# Mappa instruksene i README-arbeidsflyt.md og RUTINER.md peker på i stedet for
+# å bake versjonsnummeret inn i teksten. Den er avledet av KILDE_REL, ikke
+# skrevet av: to literaler for samme mappe ville kunnet drive fra hverandre.
+SPEKMAPPE = "/".join(KILDE_REL[:-1]) + "/"
 ARKIV = ROT / "prototype"
 LOCALER = {s: ROT / "locales" / f"{s}.json" for s in ("nb", "en")}
 
@@ -124,6 +169,224 @@ def test_katalogen_er_fersk(tmp_path):
                   if k.startswith(("site.katalog.m", "site.omrade."))}
         for k, v in nokler.items():
             assert faktisk.get(k) == v, f"{sprak}: {k} er ikke fersk"
+
+
+def _med_felt_i_m57(tmp_path: Path, felt: str) -> subprocess.CompletedProcess:
+    """Kjør generatoren mot en kopi der M-57 har fått `felt` satt inn."""
+    rot = _temprot(tmp_path)
+    spek = rot.joinpath(*KILDE_REL)
+    tekst = spek.read_text(encoding="utf-8")
+    anker = '"kl":"krever_outbox"'
+    assert anker in tekst, "fant ikke ankeret i M-57 — kilden har endret form"
+    spek.write_text(tekst.replace(anker, felt + "," + anker, 1),
+                    encoding="utf-8")
+    return subprocess.run([sys.executable, str(GENERATOR), str(rot)],
+                          capture_output=True, text=True)
+
+
+# Egenskapen `status` skrevet på tolv måter. Alle gir nettleseren den helt
+# alminnelige egenskapen `status` — og det er nettopp poenget: leseren er en
+# JavaScript-motor, så skrivemåten er ikke lenger et spørsmål den kan svare
+# feil på. Andre kolonne er hva feilmeldingen må si.
+_STATUSFORMER = [
+    ('"status":"planlagt"', "status"),
+    ("['status']:'planlagt'", "status"),
+    ('["sta" + "tus"]:"planlagt"', "status"),
+    (r"['\x73tatus']:'planlagt'", "status"),
+    (r'["\u0073tatus"]:"planlagt"', "status"),
+    (r'"\x73tatus":"planlagt"', "status"),
+    (r'\u0073tatus:"planlagt"', "status"),
+    ('...{status:"planlagt"}', "status"),
+    ('status(){return "planlagt"}', "status"),
+    ('get status(){return "planlagt"}', "status"),
+    ('[/]/.test("") ? "x" : "status"]:"planlagt"', "status"),
+    ('x:/["\']/, "status":"planlagt"', "status"),
+    # To former navngir noe som ikke finnes: forkortelsen `status` og den
+    # beregnede nøkkelen `[nokkel]` leser begge en variabel ingen har erklært.
+    # Nettleseren kaster `ReferenceError` der, og da er det ingen katalog å
+    # tegne i det hele tatt — siden er død. Leseren sier det samme, og det er
+    # høyere enn det gamle svaret: generatoren kastet feltet i stillhet.
+    ("status", "fant ingen modulkatalog"),
+    ("[nokkel]:'planlagt'", "fant ingen modulkatalog"),
+]
+
+
+@pytest.mark.parametrize("felt,i_meldingen", _STATUSFORMER)
+def test_statusforbudet_ser_alle_skrivemaater(tmp_path, felt, i_meldingen):
+    """En tilstandsakse er forbudt uansett HVORDAN egenskapen er skrevet.
+
+    Forbudet leste feltnavn som navn eller fnuttstreng og gikk videre på alt
+    annet. Det er åpent i feil ende, og Codex fant formene én for én over tre
+    runder på #118: `['status']:` (ellevte), `['\\x73tatus']:` (tolvte), og i
+    trettende runde `\\u0073tatus:`, spredning, forkortelse, metode, accessor
+    og en beregnet nøkkel med en `]` inne i et mønster. Alle gir nettleseren
+    den helt alminnelige egenskapen `status`: den frittstående siden ville
+    tegnet den, mens generatoren kastet den stille, og da lyver kilden.
+
+    Svaret var å AVVISE hver form generatoren ikke kunne lese, og lista over
+    dem vokste med én for hver runde. Nå leses katalogen av `les_katalog.mjs`,
+    altså av en JavaScript-motor: skrivemåten forsvinner i lesningen, og
+    egenskapen HETER `status` når forbudet spør. Derfor krever prøvene her at
+    meldingen navngir AKSEN og ikke formen — formen er ikke lenger noe
+    generatoren har en mening om.
+
+    Mutasjonen står i en KOPI av kilden — en port som retter fila den måler,
+    kan ikke feile.
+    """
+    r = _med_felt_i_m57(tmp_path, felt)
+    assert r.returncode != 0, (
+        f"generatoren godtok «{felt}» i modulposten")
+    melding = r.stderr + r.stdout
+    assert i_meldingen in melding, (
+        f"feilmeldingen sier ikke hva som er galt: {melding}")
+
+
+def test_en_doblet_egenskap_leses_som_nettleseren_leser_den(tmp_path):
+    """`{…, p:3, p:4}` er fase 4 — for generatoren som for nettleseren.
+
+    Doblingen var et STOPP før (Codex P2 på #118, femtende runde), og med god
+    grunn: `POST_RE` hentet den FØRSTE verdien mens nettleseren bruker den
+    siste. Den frittstående siden ville tegnet M-57 i fase 4 mens `katalog.js`
+    sa fase 3, og ferskhetsporten hadde vært grønn hele veien — den måler
+    regenerering mot sitt eget utdata, og begge sider leste da den samme
+    første verdien.
+
+    Det avviket kan ikke oppstå lenger. `les_katalog.mjs` ER en JavaScript-
+    motor, så generatoren og nettleseren leser ikke to verdier de kan velge
+    ulikt mellom; de leser den samme. Da er doblingen slurv og ikke en
+    tvetydighet, og porten måler det som faktisk sto på spill: at katalogen
+    får verdien siden viser. Går denne i stykker, har lesningen sluttet å være
+    nettleserens.
+    """
+    rot = _temprot(tmp_path)
+    spek = rot.joinpath(*KILDE_REL)
+    tekst = spek.read_text(encoding="utf-8")
+    anker = '"kl":"krever_outbox"'
+    assert anker in tekst, "fant ikke ankeret i M-57 — kilden har endret form"
+    spek.write_text(tekst.replace(anker, '"p":4,' + anker, 1), encoding="utf-8")
+    r = subprocess.run([sys.executable, str(GENERATOR), str(rot)],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr + r.stdout
+    katalog = (rot / "platform/core/ui/static/js/katalog.js").read_text(
+        encoding="utf-8")
+    assert "{ n: 57, omrade: \"samarbeid_og_hr\", fase: 4 }" in katalog, (
+        "generatoren leste ikke den siste verdien, slik nettleseren gjør")
+
+
+def test_statusforbudet_tar_ikke_en_verdiliste_for_en_nokkel(tmp_path):
+    """En klamme i VERDI-posisjon er ikke en nøkkel.
+
+    `dep: ['M-6']` og `flow: [...]` står i hver eneste modulpost. Leste
+    nøkkellesningen dem som beregnede nøkler, ville generatoren stoppet på en
+    kilde som er helt i orden. Prøven her er den samme kilden uendret: den skal
+    gå gjennom.
+    """
+    rot = _temprot(tmp_path)
+    r = subprocess.run([sys.executable, str(GENERATOR), str(rot)],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr + r.stdout
+
+
+def _med_uikode(tmp_path: Path, linje: str) -> subprocess.CompletedProcess:
+    """Kjør generatoren mot en kopi der `linje` er satt inn i UI-koden.
+
+    Ankeret står UTENFOR modulkatalogen, i den vanlige skriptkoden på siden —
+    det er nettopp det som er poenget: dette er kode som ikke har noe med
+    katalogen å gjøre.
+    """
+    rot = _temprot(tmp_path)
+    spek = rot.joinpath(*KILDE_REL)
+    tekst = spek.read_text(encoding="utf-8")
+    anker = "const MERKEORD = "
+    assert anker in tekst, "fant ikke ankeret i UI-koden — kilden har endret form"
+    spek.write_text(tekst.replace(anker, linje + "\n" + anker, 1),
+                    encoding="utf-8")
+    return subprocess.run([sys.executable, str(GENERATOR), str(rot)],
+                          capture_output=True, text=True)
+
+
+@pytest.mark.parametrize("linje", [
+    # En postformet STRENG i UI-koden. Helt lovlig JS, og ingen modul.
+    """const demo = "{n:58,name:'Demo',area:'X',p:1}";""",
+    # Samme form i en linjekommentar, for eksempel som dokumentasjon av
+    # hvordan en post ser ut.
+    "// {n:58,name:'Demo',area:'X',p:1}",
+    # Og i en blokkommentar.
+    "/* {n:58,name:'Demo',area:'X',p:1} */",
+    # En malstreng er samme sak.
+    "const demo = `{n:58,name:'Demo',area:'X',p:1}`;",
+])
+def test_en_postformet_streng_i_ui_koden_er_ingen_modul(tmp_path, linje):
+    """Bare elementene i `const M = [ … ]` er moduler.
+
+    Generatoren fant postene med et fritt søk gjennom hele skriptet (Codex P2
+    på #118, fjortende runde), og et regex mot rå tekst ser ikke forskjell på
+    kode og tekst. Siden er en levende prototype med egen UI-kode, så en helt
+    lovlig linje ble lest som en modul til, og nummerporten stoppet
+    genereringen med en melding om en modul ingen har skrevet. Motsatt vei ville
+    en post satt ut av drift i en kommentar telt med på samme måte.
+
+    Roten var ikke hvilke tekstformer som ble husket, men at postene ble LETT
+    ETTER i det hele tatt. Katalogen er en liste, og en liste har elementer.
+    """
+    r = _med_uikode(tmp_path, linje)
+    assert r.returncode == 0, r.stderr + r.stdout
+
+
+@pytest.mark.parametrize("linje", [
+    # Tegnene `const M = [` i en helt alminnelig streng — for eksempel en
+    # feilmelding eller en hjelpetekst som forklarer hva katalogen heter.
+    '''const hjelp = "katalogen står som const M = [ … ] i skriptet";''',
+    # Samme tegn i en linjekommentar.
+    "// katalogen står som const M = [ … ] lenger nede",
+    # Og i en blokkommentar.
+    "/* katalogen står som const M = [ … ] lenger nede */",
+    # En malstreng er samme sak.
+    "const hjelp = `katalogen står som const M = [ … ]`;",
+    # Og en KOMPLETT tom liste i prosa er fortsatt prosa (Codex P2 på #118,
+    # sekstende runde). Formen «hvert element er en post» er sann uten videre
+    # når det ikke står noen elementer der, så disse fire ble stående som en
+    # katalog nummer to og stoppet generatoren på en redeklarasjon
+    # nettleseren ikke ser.
+    'const hjelp = "const M = []";',
+    "// const M = []",
+    "/* const M = [] */",
+    "const hjelp = `const M = []`;",
+])
+def test_et_ankerformet_ord_i_ui_koden_er_ingen_katalog(tmp_path, linje):
+    """Bare en ERKLÆRING er en katalog, ikke tegnene som ser ut som en.
+
+    Postene ble gjort strukturelle forrige runde, men ANKERET ble fortsatt lett
+    etter i rå skripttekst (Codex P2 på #118, femtende runde), og et regex mot
+    rå tekst ser ikke forskjell på kode og streng. En helt lovlig hjelpetekst
+    ga da et treff til, og generatoren stoppet på en redeklarasjon nettleseren
+    ikke ser — altså rød ferskhetsport av en tekstendring som ikke rører
+    katalogen.
+
+    Samme regel som gjorde postene strukturelle gjelder ankeret: en erklæring
+    er fulgt av en LISTE av modulposter, og tegnene i en streng er det ikke.
+    """
+    r = _med_uikode(tmp_path, linje)
+    assert r.returncode == 0, r.stderr + r.stdout
+
+
+def test_to_modulkataloger_er_et_stopp(tmp_path):
+    """Ankeret må finnes nøyaktig én gang, ellers vet ingen hvilken som gjelder.
+
+    To `const M` er en redeklarasjon nettleseren selv avviser, så kravet er det
+    samme som JS stiller. Uten det ville en halv katalog nummer to stilltiende
+    avgjort hva generatoren leste.
+
+    Prøven står ved siden av den over, og de to måler hver sin side av det
+    samme skillet: tegnene `const M = [` i en streng er ikke en erklæring, mens
+    en HALV katalog er det — og skal fortsatt stoppe, uansett hvor få poster
+    den bærer. Den TOMME lista er den ene formen generatoren ikke kan svare på
+    fra formen alene; den vokter porten i stedet, se
+    `test_to_ekte_kataloger_stopper_porten()`.
+    """
+    r = _med_uikode(tmp_path, "const M = [{n:58,name:'D',area:'X',p:1}];")
+    assert r.returncode != 0, "generatoren valgte én av to kataloger"
+    assert "modulkatalog" in (r.stderr + r.stdout)
 
 
 def test_navneendring_krever_ny_oversettelse(tmp_path):
@@ -217,39 +480,2906 @@ def test_spesifikasjonen_baerer_produktnavnet():
         f"bunnteksten navngir ikke «{navn}»")
 
 
-def _moduler_fra_kilden() -> dict[int, dict[str, str]]:
-    """{modulnummer: {fase, dep}} lest ut av spesifikasjonen.
+# ---------------------------------------------------------------------------
+# MODULKATALOGEN, LEST AV EN JAVASCRIPT-MOTOR
+#
+# Katalogen står i JavaScript i sannhetskilden, og porten leste den med en
+# håndskrevet skanner i Python — tusen linjer som skulle avgjøre hva som er
+# kode og hva som er tekst: strenger, malstrenger, mønstre mot divisjon,
+# kommentarer, ASI, `for await`, `catch` uten binding, beregnede nøkler,
+# escapede nøkler, accessorer. Generatoren hadde sin egen, litt annerledes.
+#
+# Nitten runder med Codex-review på #118 var nitten former skannerne ikke
+# hadde. Formene tar aldri slutt, for mengden er hele grammatikken, og en
+# skanner som ikke kjenner en form gjør ikke noe høylytt: den leser noe annet
+# enn nettleseren og sier ingenting. Eier avgjorde saken 20/8: bytt lesning,
+# ikke legg til former.
+#
+# `tools/les_katalog.mjs` er nå det ENESTE lesersteget, og både porten og
+# generatoren går gjennom det. Det var før et POENG at de to leste hver for
+# seg — to lesninger av samme kilde gjør en feil i den ene synlig. I praksis
+# ga det to skannere som drev fra hverandre og måtte lappes hver for seg,
+# nitten ganger. Én leser kan ikke drive fra seg selv, og den leseren er en
+# JavaScript-motor: den kan per konstruksjon ikke ha en annen forestilling om
+# JavaScript enn nettleseren har.
+LESER = ROT / "tools" / "les_katalog.mjs"
 
-    Kilden bærer to skrivemåter side om side: v7-arven er JS-literaler
-    (`n:38,…,p:1,…,dep:'…'`), v8-modulene er JSON (`"n": 53, …`). Porten leser
-    BEGGE — leste den bare den ene, ville halve katalogen vært uvoktet uten at
-    noe sa fra.
+
+@functools.lru_cache(maxsize=None)
+def _katalogposter(kilde: Path = None) -> tuple[dict, ...]:
+    """Modulpostene i sannhetskilden, slik nettleseren ser dem.
+
+    FAIL-CLOSED. Uten node er katalogen ulest, og en port som da hoppet over
+    seg selv ville vært grønn på en kilde ingen har lest. Ubuntu-runneren har
+    node preinstallert, og UI-jobben krever den alt.
     """
-    tekst = KILDE.read_text(encoding="utf-8")
-    starter = [(m.start(), int(m.group(1)))
-               for m in re.finditer(r'[{,]\s*(?:n:|"n":)\s*(\d+)', tekst)]
-    ut: dict[int, dict[str, str]] = {}
-    for i, (pos, n) in enumerate(starter):
-        slutt = starter[i + 1][0] if i + 1 < len(starter) else len(tekst)
-        seg = tekst[pos:slutt]
-        fase = re.search(r'(?:\bp:|"p":)\s*(\d+)', seg)
-        dep = re.search(r"(?:\bdep:'([^']*)'|\"dep\":\s*\"([^\"]*)\")", seg)
-        if fase and dep:
-            ut[n] = {"fase": int(fase.group(1)),
-                     "dep": dep.group(1) or dep.group(2)}
+    kilde = kilde or KILDE
+    try:
+        r = subprocess.run(["node", str(LESER), str(kilde)],
+                           capture_output=True, text=True)
+    except FileNotFoundError:
+        raise AssertionError(
+            "fant ikke `node` — modulkatalogen leses av tools/les_katalog.mjs, "
+            "og uten en JavaScript-motor kan den ikke leses i det hele tatt. "
+            "En port som hopper over seg selv her er grønn på en ulest kilde.")
+    assert r.returncode == 0, (
+        f"kunne ikke lese modulkatalogen i {kilde.name}:\n{r.stderr.strip()}")
+    return tuple(json.loads(r.stdout)["moduler"])
+
+
+# Merkelappen `les_katalog.mjs` setter på en feltverdi som ikke er DATA — en
+# funksjon, et mønster, en dato. Katalogen er en kilde som skal kunne leses av
+# mer enn nettleseren, og en egenskap som først blir til når siden kjører kan
+# hverken leses eller måles.
+#
+# NØYAKTIG DENNE STRENGEN KAN BARE KOMME FRA LESEREN (Codex P2, F37): en
+# kildenøkkel i samme familie får én understrek til på vei ut, så et helt
+# ordinært `flow: {__ikke_data__: 'vanlig tekst'}` ikke leses som merket. Se
+# `reservert()` i `les_katalog.mjs`.
+IKKE_DATA = "__ikke_data__"
+
+
+def _ikke_data_i(verdi) -> str | None:
+    """Hva som ikke er data i `verdi`, eller `None` — HELE VEIEN NED.
+
+    Merket ble bare lett etter i feltets egen verdi (Codex P2). Katalogen
+    tillater lister og objekter av data, og leseren merker det som ikke er data
+    DER DET STÅR — så en `flow: [() => 42]` bar merket sitt inne i lista, og
+    feltet gikk for lesbart. Lovlig er tekst, tall, `true`/`false`/`null` og
+    lister og objekter av slike, rekursivt, og kontrollen må gå like dypt som
+    tillatelsen.
+    """
+    if isinstance(verdi, dict):
+        if IKKE_DATA in verdi:
+            return str(verdi[IKKE_DATA])
+        kilder = verdi.values()
+    elif isinstance(verdi, list):
+        kilder = verdi
+    else:
+        return None
+    for v in kilder:
+        funn = _ikke_data_i(v)
+        if funn is not None:
+            return funn
+    return None
+
+
+def _uleselige_felt(post: dict) -> list[str]:
+    """Feltene i posten som ikke bærer data. Se `IKKE_DATA`."""
+    return sorted(f for f, v in post.items() if _ikke_data_i(v) is not None)
+
+
+def _moduler_fra_kilden() -> dict[int, dict]:
+    """{modulnummer: {fase, dep, kl, rev}} lest ut av spesifikasjonen.
+
+    FRAVÆR ER LOV, FEIL TYPE ER DET IKKE (Codex P2, F27). `kl` og `rev` er
+    valgfrie — eldre poster mangler dem, og de skal fortsatt gå gjennom. Men
+    feltene ble hentet med `isinstance(..., str)`, og da falt en post med
+    `kl: null`, `kl: 42` eller `rev: false` ut i STILLHET: generatoren krever
+    ikke typen på dem, og enumporten under leser bare felt som ble beholdt
+    her. En kontraktklasse modulregisteret aldri ville godtatt passerte
+    dermed hele runden grønn. Testen står på NØKKELEN, så en verdi som er der
+    blir med videre og møter enumen som seg selv.
+    """
+    ut: dict[int, dict] = {}
+    for post in _katalogposter():
+        if not isinstance(post.get("p"), int) or not isinstance(
+                post.get("dep"), str):
+            continue
+        ut[post["n"]] = {"fase": post["p"], "dep": post["dep"]}
+        for navn in ("kl", "rev"):
+            if navn in post:
+                ut[post["n"]][navn] = post[navn]
     return ut
 
 
-def _modulreferanser(dep: str, kjente: set[int]) -> set[int]:
+@pytest.mark.parametrize("post,ventet", [
+    # Feltet er DER, med en verdi modulregisteret aldri kan godta. Det skal
+    # møte enumen, ikke forsvinne på veien.
+    ({"n": 1, "p": 1, "dep": "", "kl": None}, {"kl": None}),
+    ({"n": 1, "p": 1, "dep": "", "kl": 42}, {"kl": 42}),
+    ({"n": 1, "p": 1, "dep": "", "rev": False}, {"rev": False}),
+    ({"n": 1, "p": 1, "dep": "", "kl": ["sideeffektfri"]},
+     {"kl": ["sideeffektfri"]}),
+    # Feltet MANGLER. Det er lov — begge er valgfrie, og eldre poster har dem
+    # ikke. Fravær og feil type er to forskjellige ting.
+    ({"n": 1, "p": 1, "dep": ""}, {}),
+    # Og den vanlige posten, uendret.
+    ({"n": 1, "p": 1, "dep": "", "kl": "sideeffektfri", "rev": "direkte"},
+     {"kl": "sideeffektfri", "rev": "direkte"}),
+])
+def test_et_kontraktfelt_med_feil_type_faller_ikke_stille_ut(
+        monkeypatch, post, ventet):
+    """En verdi som er skrevet ned, skal måles (Codex P2, F27).
+
+    Feltene ble hentet med `isinstance(..., str)`, så `kl: null`, `kl: 42` og
+    `rev: false` falt ut av den normaliserte modulen i stillhet. Generatoren
+    krever ikke typen på dem, og enumporten leser bare felt som ble beholdt
+    her — så en kontraktklasse `modulkontrakt` aldri ville godtatt passerte
+    hele runden grønn. Målt: leseren gir `"kl": null, "rev": 42` fra kilden
+    helt fint; det var porten som mistet dem.
+
+    MUTASJONEN SOM DREPER DENNE: bytt `navn in post` tilbake til en typetest.
+    Da blir de fire første tilfellene `{}` igjen.
+    """
+    monkeypatch.setattr(sys.modules[__name__], "_katalogposter",
+                        lambda *a, **k: (post,))
+    lest = _moduler_fra_kilden()[1]
+    assert {f: v for f, v in lest.items() if f in KONTRAKTFELT} == ventet, lest
+
+
+# En katalog med to poster, slik kilden skriver dem, og en side rundt den.
+# Prøvene under legger UI-kode inn i `{ui}` og måler at leseren fortsatt gir
+# fra seg NØYAKTIG disse to.
+_PROEVESIDE = ("<html><body><p>prosa</p><script>\n"
+               "const M = [\n"
+               "  {{n:1,name:'En',area:'X',p:1,dep:'',kl:'sideeffektfri'}},\n"
+               "  {{n:2,name:'To',area:'X',p:2,dep:'M-1',rev:'direkte'}}\n"
+               "];\n"
+               "{ui}\n"
+               "</script></body></html>\n")
+
+
+def _les_proveside(tmp_path: Path, ui: str) -> tuple[dict, ...]:
+    """Kjør leseren mot en side med `ui` etter katalogen."""
+    sti = tmp_path / "prove.html"
+    sti.write_text(_PROEVESIDE.format(ui=ui), encoding="utf-8")
+    return _katalogposter(sti)
+
+
+@pytest.mark.parametrize("ui", [
+    # En postformet KODEKLAMME i UI-koden. Helt lovlig JS, og ingen modul.
+    'const demo = {n:2, p:4, dep:"M-56"};',
+    # Samme form i en STRENG, i en malstreng, i en kommentar.
+    """const demo = "{n:58,name:'Demo',area:'X',p:1}";""",
+    "const demo = `{n:58,name:'Demo',area:'X',p:1}`;",
+    "// {n:58,name:'Demo',area:'X',p:1}",
+    "/* {n:58,name:'Demo',area:'X',p:1} */",
+    # Tegnene `const M = [` i en streng, en malstreng og en kommentar.
+    'const hjelp = "katalogen står som const M = [ … ] i skriptet";',
+    "const hjelp = `katalogen står som const M = [ … ]`;",
+    "// katalogen står som const M = [ … ] lenger nede",
+    "/* const M = [] */",
+    'const hjelp = "const M = []";',
+    # Og en helt vanlig linje som rører DOM-en. Den KASTER i leseren, som
+    # ventet — bindingen `M` er alt gjort, og katalogen står.
+    "document.getElementById('x').textContent = M.length;",
+])
+def test_leseren_gir_fra_seg_bare_elementene_i_katalogen(tmp_path, ui):
+    """Bare elementene i `const M = [ … ]` er moduler.
+
+    Postene ble før LETT ETTER — først i råtekst, så i det skanneren mente var
+    kode (Codex P2 på #118, sjuende og sekstende runde). Siden er en levende
+    prototype med egen UI-kode, og en postformet klamme eller streng der ble
+    lest som en modul til; `_moduler_fra_kilden()` lagrer per modulnummer, så
+    en demo etter katalogen overskrev den ekte modulen, og fase- og enumporten
+    målte UI-data.
+
+    Nå er spørsmålet ikke lenger «hva ser ut som en post?». Katalogen er en
+    LISTE, motoren gir oss verdien av den, og en tekst som ser ut som en post
+    er en tekst.
+    """
+    poster = _les_proveside(tmp_path, ui)
+    assert [p["n"] for p in poster] == [1, 2], (
+        f"leseren fant andre poster enn katalogens to: {poster}")
+    assert poster[1]["dep"] == "M-1" and poster[1]["p"] == 2, (
+        "UI-koden overskrev en ekte modulpost")
+
+
+@pytest.mark.parametrize("fremmed", [
+    # En DATABLOKK. Nettleseren kjører den ikke, og innholdet er JSON-LD — som
+    # klassisk JavaScript er `{"@context": …}` en blokk med en etikett, altså
+    # en syntaksfeil.
+    '<script type="application/ld+json">{"@context":"https://schema.org"}'
+    '</script>',
+    # En ES-MODUL. Den kjøres, men med egen syntaks og eget skop: `export` er
+    # en syntaksfeil i et klassisk skript, og en `const` der er usynlig ute.
+    '<script type="module">export const hjelp = 1;</script>',
+    # EKSTERN kode. Kroppen kjøres ikke i det hele tatt når `src` står.
+    '<script src="ui.js">dette er ikke JavaScript</script>',
+])
+def test_leseren_hopper_over_skript_nettleseren_ikke_kjorer(tmp_path, fremmed):
+    """Bare klassiske innskript er JavaScript (Codex P2).
+
+    Leseren tok før innholdet i ALLE `<script>` og ga det til en klassisk
+    `vm.Script`. Legger noen en JSON-LD-blokk eller en modul på siden — begge
+    helt vanlige og helt riktig håndtert av nettleseren — er det en syntaksfeil
+    for den leseren, og katalogen kan ikke genereres i det hele tatt. Feilen
+    ville stått i et element som ikke har noe med katalogen å gjøre.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text(
+        _PROEVESIDE.format(ui="").replace("<script>", fremmed + "<script>", 1),
+        encoding="utf-8")
+    poster = _katalogposter(sti)
+    assert [p["n"] for p in poster] == [1, 2], (
+        f"leseren felte katalogen på et skript nettleseren ikke kjører som "
+        f"klassisk JavaScript: {poster}")
+
+
+@pytest.mark.parametrize("tagg", [
+    # Egne `data-`-attributter. Nettleseren ser ingen `src` og ingen `type`
+    # her, og kjører taggen som helt vanlig innskript.
+    '<script data-src="documentation">',
+    '<script data-type="module">',
+    '<script data-kilde="spec" data-type="application/ld+json">',
+    # Navnet står helt, men skrivemåten er sidens egen: versaler, mellomrom
+    # rundt likhetstegnet, apostrofer.
+    "<script TYPE = 'text/javascript'>",
+    # Et navn uten verdi, og et navn som ENDER på `type` uten å være det.
+    "<script async data-subtype=module>",
+])
+def test_leseren_leser_attributtnavnene_hele(tmp_path, tagg):
+    """Et suffiks er ikke et attributtnavn (Codex P2).
+
+    Silingen fra forrige runde søkte i råteksten etter attributtlista:
+    `\\bsrc\\s*=` og `\\btype\\s*=`. Ordgrensen fester seg like godt midt i et
+    navn, så `data-src="documentation"` ble lest som ekstern kode og
+    `data-type="module"` som en ES-modul. Nettleseren kjører taggen — den har
+    hverken `src` eller `type` — mens leseren hoppet over den og meldte at
+    sannhetskilden ikke har noen katalog. Katalogen kunne da ikke genereres i
+    det hele tatt, på grunn av et attributt siden selv håndterer riktig.
+
+    Silingen ble strammet inn for å slippe fremmede skript UT; den må ikke
+    samtidig slippe kilden selv ut. Attributtene leses derfor navn for navn.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text(_PROEVESIDE.format(ui="").replace("<script>", tagg, 1),
+                   encoding="utf-8")
+    poster = _katalogposter(sti)
+    assert [p["n"] for p in poster] == [1, 2], (
+        f"leseren hoppet over katalogens egen tagg «{tagg}»: {poster}")
+
+
+def test_en_tagg_som_kaster_stopper_ikke_en_senere_katalog(tmp_path):
+    """Hver `<script>` er sitt eget skript (Codex P2).
+
+    Leseren skjøtte taggene sammen til ett skript, og da arvet den noe
+    nettleseren ikke gjør: et unntak i en tidligere tagg stoppet resten.
+    Nettleseren kompilerer og kjører klassiske skript hver for seg på samme
+    globale skop — et oppsettsskript som rører `document` og kaster hindrer
+    ikke en senere tagg i å erklære katalogen.
+
+    Skjøten gjorde en helt vanlig sideform ulesbar: leseren meldte at det ikke
+    fantes noen katalog i en kilde som fungerer i nettleseren, og da kunne
+    hverken generatoren eller porten komme videre.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text(
+        "<html><body><script>document.title = 'oppsett';</script>\n"
+        "<script>\nconst M = [\n"
+        "  {n:1,name:'En',area:'X',p:1,dep:'',kl:'sideeffektfri'}\n"
+        "];\n</script></body></html>\n", encoding="utf-8")
+    poster = _katalogposter(sti)
+    assert [p["n"] for p in poster] == [1], (
+        f"en tidligere tagg som kastet tok katalogen med seg: {poster}")
+
+
+@pytest.mark.parametrize("todelt", [False, True])
+def test_to_kataloger_stopper_leseren(tmp_path, todelt):
+    """To `const M` er en redeklarasjon, og motoren avviser den selv.
+
+    Porten og generatoren hadde hver sin regel for at ankeret skulle stå
+    nøyaktig én gang, og hver sin måte å skille erklæringen fra de samme
+    tegnene i en streng. Motoren trenger ingen regel: `const M` to ganger i
+    samme skript er en SyntaxError ved KOMPILERING — også når den andre står i
+    kode som aldri kjører, slik den gjør her, bak et `document`-kall som
+    kaster.
+
+    STÅR DE I HVER SIN TAGG, kommer den samme feilen når den andre taggen
+    bindes til det globale skopet. Nettleseren ville tiet og beholdt den
+    første katalogen; en kilde med to kataloger er en kilde ingen skal gjette
+    i, så leseren stopper — det er den ene tingen den gjør strengere enn
+    nettleseren, og den står her.
+    """
+    andre = "const M = [{n:58,name:'D',area:'X',p:1}];"
+    with pytest.raises(AssertionError) as feil:
+        if todelt:
+            sti = tmp_path / "prove.html"
+            sti.write_text(
+                _PROEVESIDE.format(ui="") + f"<script>{andre}</script>\n",
+                encoding="utf-8")
+            _katalogposter(sti)
+        else:
+            _les_proveside(tmp_path, andre)
+    assert "gyldig JavaScript" in str(feil.value), str(feil.value)
+
+
+@pytest.mark.parametrize("element", [
+    "42",
+    "'en streng'",
+    "null",
+    "[{n:58}]",
+    # Et ledd som ikke er DATA i det hele tatt — merket, ikke en post.
+    "() => ({n:58})",
+])
+def test_et_element_som_ikke_er_en_post_stopper_porten(tmp_path, element):
+    """Katalogen er en liste av POSTER, og bare det."""
+    sti = tmp_path / "prove.html"
+    sti.write_text(f"<html><script>const M = [{{n:1,name:'En',area:'X',p:1}}, "
+                   f"{element}];</script></html>", encoding="utf-8")
+    with pytest.raises(AssertionError) as feil:
+        _katalogposter(sti)
+    assert "modulpost" in str(feil.value), str(feil.value)
+
+
+@pytest.mark.parametrize("felt,lesbar", [
+    ("kl:'krever_outbox'", True),
+    ('"kl": "krever_outbox"', True),
+    # Skrivemåten forsvinner i lesningen: begge gir egenskapen `kl`.
+    (r"kl:'krever_outbox'", True),
+    ("['k' + 'l']:'krever_outbox'", True),
+    # Men en verdi som ikke er DATA, er ikke noe katalogen kan bære.
+    ("kl:/krever_outbox/", False),
+    ("kl:() => 'krever_outbox'", False),
+    ("kl:new Date(0)", False),
+    # En ACCESSOR er ikke en skrivemåte, den er sidens kode (Codex P2).
+    ("get kl(){return 'krever_outbox'}", False),
+    # NEDE I EN BEHOLDER teller like mye (Codex P2). Lister og objekter av
+    # data er lovlig, så kontrollen må gå like dypt som tillatelsen.
+    ("flow:[['Steg'],{note:'x'}]", True),
+    ("flow:[() => 42]", False),
+    ("flow:{steg:[new Date(0)]}", False),
+    # En egen, beregnet `['__proto__']`-nøkkel er et FELT som alle andre
+    # (Codex P2). Ble den tilordnet et vanlig `{}` i leseren, traff den
+    # prototype-SETTEREN i stedet, og nøkkelen — med alt under seg — falt ut
+    # av JSON-en før kontrollen over rakk å se den.
+    ("flow:{['__proto__']:{note:() => 42}}", False),
+    ("flow:{['__proto__']:{note:'x'}}", True),
+])
+def test_leseren_krever_at_en_feltverdi_er_data(tmp_path, felt, lesbar):
+    """Katalogen skal kunne leses av mer enn nettleseren.
+
+    Nøkkelen er motorens sak nå, og den leser alle skrivemåtene likt. VERDIEN
+    er porten sin: en funksjon, et mønster eller en dato er ingen katalogverdi,
+    og et felt ingen kan lese er et felt ingen kan kontrollere. Leseren merker
+    det i stedet for å hoppe over det, se `IKKE_DATA`.
+
+    EN ACCESSOR HAR INGEN VERDI Å LESE. Den ble før lest som en vanlig
+    egenskap, og da kjørte getteren — sidens kode — her ute i Node, etter at
+    motorens `timeout` var over (Codex P2). Nå leses egenskapen som deskriptor
+    og getteren påkalles aldri. Det er også det svaret merket alt gir for en
+    funksjon: en egenskap som først blir til når siden kjører er ikke data.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text(f"<html><script>const M = [{{n:1,name:'En',area:'X',p:1,"
+                   f"{felt}}}];</script></html>", encoding="utf-8")
+    post = _katalogposter(sti)[0]
+    assert (not _uleselige_felt(post)) is lesbar, post
+
+
+def test_en_proto_nokkel_er_et_felt_og_ikke_en_prototype(tmp_path):
+    """`['__proto__']` skal ut av leseren med alt som står under (Codex P2).
+
+    En beregnet `['__proto__']`-nøkkel er en helt vanlig egen egenskap for
+    motoren, og nettleseren ser den som et felt. Leseren bygde derimot
+    resultatet i et vanlig `{}`, og der ARVES `__proto__` fra
+    `Object.prototype` som en SETTER: tilordningen byttet prototype på
+    vertsobjektet i stedet for å lage feltet. Nøkkelen forsvant dermed ut av
+    JSON-en sammen med alt den bar — også en funksjon dypt nede, som den
+    rekursive kontrollen skulle ha meldt. Et felt porten ikke ser, kontrollerer
+    den ikke; det er samme klasse feil som en nøkkel skrevet `['\\x6bl']`.
+
+    Testen måler NØKKELEN, ikke bare dommen: en tom `flow` ville også vært
+    «lesbar».
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>const M = [{n:1,name:'En',area:'X',p:1,"
+                   "flow:{['__proto__']:{note:'x'}}}];</script></html>",
+                   encoding="utf-8")
+    post = _katalogposter(sti)[0]
+    assert post["flow"] == {"__proto__": {"note": "x"}}, post
+
+
+@pytest.mark.parametrize("skygge", [
+    "const Object = {hjelp: 1};",
+    "const Array = {hjelp: 1};",
+    "const Number = {hjelp: 1};",
+    "const JSON = {hjelp: 1};",
+])
+def test_sidens_egne_globaler_skygger_ikke_for_leserens(tmp_path, skygge):
+    """Leseren låner ikke navn av siden (Codex P2).
+
+    Materialiseringen fanget `Object`, `Array`, `Number` og `JSON` da den
+    STARTET — altså etter at kildens skript hadde kjørt. En helt ordinær
+    leksikalsk global i sidekoden, `const Object = appHelpers`, skygger da for
+    intrinsicen, og `Object.getOwnPropertyDescriptor` ble `undefined`: lesningen
+    feilet på en side nettleseren håndterer helt fint. Det er ikke et angrep,
+    det er navnekollisjon — og en leser som knekker på den leser ikke kilden.
+
+    Hjelperen bygges nå i en egen kjøring FØR sidens kode og lukker om
+    intrinsics slik konteksten ble født med dem. `M` bindes fortsatt senere,
+    fordi en fri variabel slås opp når funksjonen kalles.
+    """
+    assert _les_proveside(tmp_path, skygge) == (
+        {"n": 1, "name": "En", "area": "X", "p": 1, "dep": "",
+         "kl": "sideeffektfri"},
+        {"n": 2, "name": "To", "area": "X", "p": 2, "dep": "M-1",
+         "rev": "direkte"},
+    )
+
+
+def test_en_ikke_tellbar_egenskap_faller_ikke_stille_ut(tmp_path):
+    """Nettleseren ser `post.status`, altså skal leseren se den (Codex P2).
+
+    `Object.keys` gir bare de TELLBARE egne egenskapene, og tellbarhet er en
+    visningsdetalj — den styrer `for…in` og spredning, ikke om egenskapen
+    finnes. En post bygget med `Object.defineProperty(…, 'status', {…})` har
+    egenskapen, nettleseren leser den, og porten lover å avvise nettopp den
+    aksen uansett hvordan den er skrevet. Leseren slapp den stille ut av
+    JSON-en, så løftet sto grønt på en post som brøt det.
+
+    Testen måler at BÅDE nøkkelen og verdien kommer ut: en post uten `status`
+    ville også vært en gyldig post, og en dom alene hadde ikke skilt dem.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>\n"
+                   "const p = {n:1,name:'En',area:'X',p:1};\n"
+                   "Object.defineProperty(p, 'status', {value:'planlagt'});\n"
+                   "const M = [p];\n"
+                   "</script></html>", encoding="utf-8")
+    post = _katalogposter(sti)[0]
+    assert post.get("status") == "planlagt", post
+
+
+def test_en_getter_som_ikke_terminerer_henger_ikke_leseren(tmp_path):
+    """Getteren kjøres ikke, så den kan ikke henge noen (Codex P2).
+
+    `runInContext` har en `timeout`, men den verner bare det som kjører INNE i
+    motoren. Egenskapene ble lest etterpå, her ute i Node, og en accessor ble
+    da påkalt uten noen som helst grense: én `get kl(){for(;;);}` i kilden
+    hadde hengt generatoren og CI til noe annet slo dem av — ikke feilet,
+    hengt.
+
+    Leseren kalles direkte her, med en frist, fordi en regresjon ellers ikke
+    ville vist seg som en rød test men som en jobb som aldri blir ferdig.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>const M = [{n:1,name:'En',area:'X',p:1,"
+                   "get kl(){for(;;);}}];</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    assert _uleselige_felt(json.loads(r.stdout)["moduler"][0]) == ["kl"], r.stdout
+
+
+def test_en_merkelappgetter_som_ikke_terminerer_henger_ikke_leseren(tmp_path):
+    """Klassifiseringen påkaller ingenting (Codex P2).
+
+    Egenskapene leses som deskriptor siden forrige runde, så en `get kl()`
+    kjøres ikke. Men KONTROLLEN som avgjorde om verdien var data —
+    `Object.prototype.toString.call(verdi)` — LESER `Symbol.toStringTag`, og
+    den kan siden gi en getter. Den kjørte da her ute i Node etter at
+    `runInContext` hadde returnert: samme hull som forrige runde lukket, med en
+    ny inngang, og den var åpen FØR deskriptorlesningen fikk se noe som helst.
+
+    Leseren kalles direkte, med en frist, av samme grunn som over: en regresjon
+    her viser seg ikke som en rød test, men som en jobb som aldri blir ferdig.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>\n"
+                   "class Ond { get [Symbol.toStringTag](){for(;;);} }\n"
+                   "const M = [{n:1,name:'En',area:'X',p:1,kl:new Ond()}];\n"
+                   "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    assert _uleselige_felt(json.loads(r.stdout)["moduler"][0]) == ["kl"], r.stdout
+
+
+def test_en_proxyfelle_kjorer_i_konteksten_ikke_i_verten(tmp_path):
+    """Materialiseringen bor i konteksten (Codex P2, F10 — rotfiksen).
+
+    F3 var en getter, F7 en merkelappgetter, F10 en proxy-felle: en Proxy
+    fanger nesten enhver operasjon, også dem klassifiseringen selv trenger
+    (`getPrototypeOf`, deskriptorlesning, `Object.keys`), så lista over trygge
+    operasjoner kan aldri bli komplett. Grensen som holder er HVOR de kjøres:
+    alt som rører en kontekstverdi kjører nå INNE i konteksten, under samme
+    tidsgrense som kildens egen kode.
+
+    Fellen her KASTER, og porten skal da stoppe rødt med materialiserings-
+    meldingen — fellen kjørte der den skulle, under motorens kontroll. En
+    regresjon (vertskjøring) hadde gitt en ubehandlet unntaksdød uten
+    meldingen.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text(
+        "<html><script>const M = [{n:1,name:'En',area:'X',p:1,"
+        "flow:new Proxy({}, {getPrototypeOf(){throw new Error('felle')}})}];"
+        "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode != 0, r.stdout
+    assert "materialisere" in r.stderr, r.stderr
+
+
+@pytest.mark.parametrize("katalog,hvor", [
+    # Codex' eget eksempel: fella RETURNERER, og gir noe annet enn det som
+    # står under. Nettleseren leser `M[0].p` som 4; deskriptoren sier 1.
+    ("const ekte = {n:1,name:'En',area:'X',p:1};\n"
+     "const M = [new Proxy(ekte, {get(m,k){return k === 'p' ? 4 : m[k]}})];",
+     "element 1"),
+    # En Proxy uten en eneste felle er like lite data: det er ikke det den
+    # GJØR i dag som avvises, det er at oppslaget er kode.
+    ("const M = [{n:1,name:'En',area:'X',p:1,flow:new Proxy({a:'b'}, {})}];",
+     "element 1"),
+    # Og katalogen selv kan være en: `Array.isArray` ser gjennom til lista
+    # under, så `erListe` alene fanger den ikke.
+    ("const M = new Proxy([{n:1,name:'En',area:'X',p:1}], {});",
+     "selve katalogen"),
+])
+def test_en_proxy_som_returnerer_avvises(tmp_path, katalog, hvor):
+    """En felle som RETURNERER er ikke fanget av tidsgrensen (Codex P2, F39).
+
+    F10 flyttet all berøring av en kontekstverdi inn i konteksten, og det lukket
+    fellen som HENGER — se prøven under. Den som returnerer sto igjen: en Proxy
+    med en `get`-felle som gir 4 for `p` leses av deskriptorene UNDER den, altså
+    fase 1, mens nettleseren leser 4 av det samme objektet. Målt på `f44dc6f`:
+    exit 0 og `"p": 1`. Ingen felle hang, ingen kastet; katalogen ble bare en
+    annen enn sidens — nøyaktig den stille uenigheten lesersteget finnes for.
+
+    Ingen kode inne i konteksten kan spørre om noe ER en Proxy: hver operasjon
+    som når verdien, når fellen først. Verten kan (`util.types.isProxy`, en
+    maskinnær prøve som ikke påkaller en eneste felle), og beholderne
+    materialiseringen rørte ligger i en liste leseren selv bygger. Doktrinen fra
+    F10 står: her ute røres bare `length` og indeksene på vår egen liste.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text(f"<html><script>\n{katalog}\n</script></html>",
+                   encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 1, r.stdout
+    assert "Proxy" in r.stderr and hvor in r.stderr, r.stderr
+
+
+def test_en_proxyfelle_som_aldri_returnerer_gir_tidsavbrudd(tmp_path):
+    """Fellen som aldri returnerer feller porten — porten henger ikke.
+
+    `flow: new Proxy({}, {getPrototypeOf(){for(;;){}}})` hang leseren,
+    generatoren og CI før: fellen kjørte i verten, etter at `runInContext` var
+    ferdig, utenfor enhver tidsgrense. Nå kjører den i konteksten, og
+    tidsgrensen feller den. Prøven skrur grensen ned med
+    `LES_KATALOG_TIMEOUT_MS` så beviset tar millisekunder — en regresjon viser
+    seg som rød her, ikke som en jobb som aldri blir ferdig.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text(
+        "<html><script>const M = [{n:1,name:'En',area:'X',p:1,"
+        "flow:new Proxy({}, {getPrototypeOf(){for(;;){}}})}];"
+        "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60,
+                       env={**os.environ, "LES_KATALOG_TIMEOUT_MS": "500"})
+    assert r.returncode != 0, r.stdout
+    assert "materialisere" in r.stderr, r.stderr
+
+
+def test_en_evig_mikrooppgavekjede_felles_av_tidsgrensen(tmp_path):
+    """Sidens mikrooppgaver hører til sidens kjøring (Codex P2, F17).
+
+    `runInContext` returnerer når den siste SETNINGEN er kjørt, ikke når køen
+    siden fylte er tom. Alt et `.then()` la igjen kjørte derfor ETTERPÅ —
+    utenfor tidsgrensen, på nøyaktig samme måte som materialiseringen gjorde
+    før F10. En rekursiv `Promise.resolve().then(g)`-kjede hang dermed leseren,
+    generatoren og CI for godt: ikke feilet, hengt.
+
+    Konteksten har nå sin egen mikrooppgavekø som tømmes MENS kjøringen står,
+    så grensen gjelder også der. Utfallet blir da det samme som for en evig
+    `for(;;)` etter katalogen, og av samme grunn: kjøringen felles, feilen er
+    sidens egen kode som stoppet etter at `M` var bundet, og katalogen kommer
+    ut. Nettleseren ville også beholdt en ferdig bundet `const M`.
+
+    Prøven skrur grensen ned med `LES_KATALOG_TIMEOUT_MS` så beviset tar
+    millisekunder. En regresjon viser seg som en jobb som aldri blir ferdig —
+    derfor kalles leseren direkte, med en frist.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>\n"
+                   "const M = [{n:1,name:'En',area:'X',p:1}];\n"
+                   "const g = () => Promise.resolve().then(g); g();\n"
+                   "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60,
+                       env={**os.environ, "LES_KATALOG_TIMEOUT_MS": "500"})
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["moduler"] == [
+        {"n": 1, "name": "En", "area": "X", "p": 1}], r.stdout
+
+
+def test_tidsgrensen_gjelder_siden_ikke_den_enkelte_taggen(tmp_path):
+    """Tidsgrensen kjøpes ikke opp med flere tagger (Codex P2, F43).
+
+    `timeout` gjelder ETT `runInContext`-kall, og leseren gjør ett per
+    `<script>`. Hver tagg fikk derfor hele grensen på nytt, så total kjøretid
+    var ubundet i antall tagger: målt på `3c314ee` brukte åtte evige tagger med
+    grensen på 100 ms hele 846 ms — og gikk ut med **exit 0** på en katalog lest
+    etterpå. Ved produksjonsverdien holder hundre slike tagger CI opptatt i
+    sytten minutter, av en grense som lover det motsatte.
+
+    Taggene deler nå én frist. Utfallet er høylytt: siden som ikke blir ferdig
+    innen grensen stoppes, den kjører ikke videre på nytt budsjett.
+
+    Prøven måler også veggklokka, for det er nettopp den regresjonen ville
+    flyttet — seksten tagger ganger grensen er 3,2 sekunder mot 0,2.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><body>" + "<script>for(;;){}</script>" * 16 +
+                   "<script>const M = [{n:1,name:'En',area:'X',p:1}];</script>"
+                   "</body></html>", encoding="utf-8")
+    start = time.monotonic()
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60,
+                       env={**os.environ, "LES_KATALOG_TIMEOUT_MS": "200"})
+    brukt = time.monotonic() - start
+    assert r.returncode != 0, r.stdout
+    assert "brukte opp tidsgrensen" in r.stderr, r.stderr
+    assert brukt < 2.0, f"{brukt:.2f} s — grensen deles ikke lenger"
+
+
+def test_feillesningen_deler_fristen_med_taggene(tmp_path):
+    """Også FEILSTIEN teller på fasens frist (Codex P2, F43).
+
+    Feilen en tagg kaster leses inne i konteksten (F18), altså med enda et
+    `runInContext` — og fikk den sin egen fulle grense, var hullet det samme
+    ett skritt til siden: åtte tagger som hver kaster en felle med en `get` som
+    aldri returnerer ville brukt åtte hele grenser i feillesningen alene, uten
+    at en eneste tagg kjørte lenge.
+
+    Fristen er fasens, ikke kallets. Taggene og feillesningene deres deler den.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><body>" +
+                   "<script>throw new Proxy({}, {get(){for(;;){}}});</script>"
+                   * 8 +
+                   "<script>const M = [{n:1,name:'En',area:'X',p:1}];</script>"
+                   "</body></html>", encoding="utf-8")
+    start = time.monotonic()
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60,
+                       env={**os.environ, "LES_KATALOG_TIMEOUT_MS": "200"})
+    brukt = time.monotonic() - start
+    assert r.returncode != 0, r.stdout
+    assert "brukte opp tidsgrensen" in r.stderr, r.stderr
+    assert brukt < 1.2, f"{brukt:.2f} s — feillesningen har ingen egen grense"
+
+
+def test_materialiseringen_har_sin_egen_frist(tmp_path):
+    """Fasene er skilt, og det er med vilje (Codex P2, F43).
+
+    Sidens tagger deler én frist; materialiseringen får sin. Hadde de delt én,
+    ville en side som brukte opp taggenes tid mistet katalogen sin — og den er
+    ferdig bundet, akkurat som nettleseren ville sett den (F17/F18). En evig
+    `for(;;)` etter `const M` bruker hele taggfasen og skal likevel gi
+    katalogen ut hel.
+
+    Grensen er fortsatt en konstant: to faser, ikke én per tagg og ikke én per
+    kall.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>\n"
+                   "const M = [{n:1,name:'En',area:'X',p:1}];\n"
+                   "for(;;){}\n"
+                   "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60,
+                       env={**os.environ, "LES_KATALOG_TIMEOUT_MS": "300"})
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["moduler"] == [
+        {"n": 1, "name": "En", "area": "X", "p": 1}], r.stdout
+
+
+def test_en_avvisning_fra_ui_koden_feller_ikke_lesningen(tmp_path):
+    """En avvisning er samme ventede klasse som et kast (Codex P2, F17).
+
+    UI-koden etter katalogen rører `document`, og gjør den det inne i en
+    `.then()` blir feilen en AVVISNING i stedet for et kast. Uten en lytter er
+    standardoppførselen å felle prosessen — ETTER at katalogen er skrevet ut.
+    Både generatoren og porten leser exitkoden, så en helt ordinær
+    `Promise.resolve().then(() => document.title = 'x')` gjorde en fullt
+    vellykket lesning til en feilet jobb.
+
+    Et synkront kast fra den samme koden ignoreres allerede. At feilen kom en
+    mikrooppgave senere endrer ikke hva den er — men den telles og meldes på
+    stderr, så utfallet er ikke stille.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>\n"
+                   "const M = [{n:1,name:'En',area:'X',p:1}];\n"
+                   "Promise.resolve().then(() => { document.title = 'x' });\n"
+                   "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["moduler"] == [
+        {"n": 1, "name": "En", "area": "X", "p": 1}], r.stdout
+    assert "avvisning" in r.stderr, r.stderr
+
+
+def test_en_kastet_felle_leses_i_konteksten_ikke_i_verten(tmp_path):
+    """Også FEILSTIEN går under tidsgrensen (Codex P2, F18).
+
+    UI-koden etter katalogen kaster — det er ventet, og leseren tar vare på
+    feilen for å kunne si hvorfor `M` mangler. Men `e.name` og `e.message` er
+    helt ordinære egenskapsoppslag, og siden kan eie begge som accessorer.
+    Lest i verten sto de utenfor enhver grense: `throw new Proxy({}, {get(){
+    for(;;){}}})` hang leseren, generatoren og CI. Samme klasse som F3, F7 og
+    F10, med den ene stien rotfiksen ikke hadde tatt med seg.
+
+    Den dypere årsaken lå ETT hakk lenger ned enn egenskapslesningen: med
+    `displayErrors` på leser Node selv `.stack` på den kastede verdien for å
+    pynte sporet, og den lesningen skjer på vei UT av `runInContext`, etter at
+    tidsvakten er koblet fra. Fellen slo altså til før én av leserens egne
+    linjer hadde sett verdien. Uten pyntingen krysser den ut umiddelbart, og
+    lesningen skjer inne i konteksten der grensen gjelder.
+
+    Katalogen står FØR fellen, så den skal komme ut hel: nettleseren ville også
+    beholdt en `const M` som var ferdig bundet da UI-koden kastet.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>\n"
+                   "const M = [{n:1,name:'En',area:'X',p:1}];\n"
+                   "throw new Proxy({}, {get(){for(;;){}}});\n"
+                   "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60,
+                       env={**os.environ, "LES_KATALOG_TIMEOUT_MS": "500"})
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["moduler"] == [
+        {"n": 1, "name": "En", "area": "X", "p": 1}], r.stdout
+
+
+def test_en_kastet_felle_foran_katalogen_gir_stopp_ikke_heng(tmp_path):
+    """Fellen foran katalogen feller lesningen — den henger den ikke (F18).
+
+    Her finnes ingen `M`, så leseren skal si fra om at skriptet stoppet før
+    erklæringen, og bruke feilens melding som årsak. Nettopp den meldingen er
+    det siden kan gjøre til en felle. Årsaken leses inne i konteksten, så en
+    `message`-getter som aldri returnerer felles av tidsgrensen og gir et
+    HØYLYTT utfall: rød exit med teksten om at feilen ikke lot seg lese.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>\n"
+                   "throw new Proxy({}, {get(){for(;;){}}});\n"
+                   "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60,
+                       env={**os.environ, "LES_KATALOG_TIMEOUT_MS": "500"})
+    assert r.returncode != 0, r.stdout
+    assert "fant ingen modulkatalog" in r.stderr, r.stderr
+    assert "kunne ikke leses innen tidsgrensen" in r.stderr, r.stderr
+
+
+def test_en_vanlig_feil_foran_katalogen_navngir_fortsatt_arsaken(tmp_path):
+    """Årsaken skal fortsatt STÅ DER — lesningen flyttet, den forsvant ikke.
+
+    Feilmeldingen krysser nå kontekstgrensen som tekst i stedet for som objekt
+    (F18). En regresjon der ville ikke vist seg som en hengt jobb, men som en
+    leser som plutselig sier «ukjent årsak» om noe den vet.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>document.title = 'x';\n"
+                   "const M = [{n:1,name:'En',area:'X',p:1}];\n"
+                   "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode != 0, r.stdout
+    assert "document is not defined" in r.stderr, r.stderr
+
+
+# Helt ordinær sidekode som tar navnene leseren hviler på. Ingen av dem er et
+# angrep: `__les_katalog__` er et navn en side kan bruke til hva den vil, og
+# `const globalThis` er en lovlig global leksikalsk erklæring fordi egenskapen
+# `globalThis` er konfigurerbar. Nettleseren leser katalogen i alle fem.
+@pytest.mark.parametrize("sidekode", [
+    "var __les_katalog__ = {side: true};",
+    "__les_katalog__ = 42;",
+    "globalThis.__les_katalog__ = null;",
+    "delete globalThis.__les_katalog__;",
+    "const globalThis = {};",
+])
+def test_sidekoden_kan_ikke_ta_navnene_leseren_hviler_pa(tmp_path, sidekode):
+    """Leseren låner ikke bare intrinsics av siden — den låner NAVNEROMMET.
+
+    F15 lukket den ene halvparten: en `const Object` i sidekoden skygget for
+    intrinsics, så de fanges nå før noen tagg slipper til. Denne er den andre
+    halvparten (Codex P2, F20). Hjelperen lå i en helt ordinær SKRIVBAR
+    egenskap på det globale objektet, og en like ordinær `var __les_katalog__`
+    i sidekoden overskrev den. `materialiser()` fant da ikke seg selv, og
+    lesningen feilet på en side nettleseren håndterer fint.
+
+    Veien DIT var dessuten et bart navn: `globalThis` er selv en konfigurerbar
+    egenskap, så `const globalThis = {}` er en lovlig global leksikalsk
+    erklæring som skygger for oss i hvert senere skript i samme kontekst.
+
+    Begge er lukket samme sted: sporene defineres ikke-skrivbare og
+    ikke-konfigurerbare FØR kildens kode kjører, og nås via `this` på toppnivå
+    — et nøkkelord ingen erklæring kan skygge for.
+
+    Katalogen står før sidekoden her, så den skal komme ut hel i alle tilfeller.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>\n"
+                   "const M = [{n:1,name:'En',area:'X',p:1}];\n"
+                   f"{sidekode}\n"
+                   "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["moduler"] == [
+        {"n": 1, "name": "En", "area": "X", "p": 1}], r.stdout
+
+
+def test_kilden_kan_ikke_gjore_feilsporet_om_til_en_accessor(tmp_path):
+    """Sporet verten SKRIVER til kan ikke bli sidens setter (Codex P2, F20).
+
+    `feilen()` legger den kastede verdien i `FEILSPOR` på konteksten for å
+    kunne lese den inne i konteksten (F18). Den ene skrivningen skjer i VERTEN.
+    Var sporet konfigurerbart, kunne kilden gjort det om til en accessor — og
+    da hadde `ctx[FEILSPOR] = kastet` påkalt sidens setter her ute, utenfor
+    enhver tidsgrense. Samme klasse som F3/F7/F10/F18, med vertens eneste
+    skrivning som inngang.
+
+    Sporet er derfor skrivbart, men ikke konfigurerbart: `defineProperty` mot
+    det kaster inne i kilden, og det kastet er sidens egen feil — ventet klasse,
+    akkurat som `document`-kastet. Katalogen kommer ut hel.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text(
+        "<html><script>\n"
+        "const M = [{n:1,name:'En',area:'X',p:1}];\n"
+        "Object.defineProperty(globalThis, '__les_katalog_feil__', "
+        "{set(){for(;;){}}, get(){for(;;){}}, configurable: true});\n"
+        "throw new Error('ui');\n"
+        "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60,
+                       env={**os.environ, "LES_KATALOG_TIMEOUT_MS": "500"})
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["moduler"] == [
+        {"n": 1, "name": "En", "area": "X", "p": 1}], r.stdout
+
+
+# Metoder sidekoden BYTTER UT på sine egne prototyper. Ingen av dem er et
+# angrep — en side eier sine prototyper — og ingen av dem endrer NØKLENE på
+# prototypen, så F36-prøven ser dem ikke: det er arven i det leseren selv
+# bygger som må være løsnet, og bare den.
+@pytest.mark.parametrize("krok", [
+    # Beholderen fylles ikke med en metode siden eier.
+    "Array.prototype.push = function () { return 0 };",
+    # Og lesningen slår aldri opp en metode på sidens prototyper.
+    "Object.prototype.toString = function () { return 'kapret' };",
+    "Object.prototype.valueOf = function () { return 'kapret' };",
+])
+def test_en_krok_pa_sidens_prototyper_omskriver_ikke_katalogen(tmp_path, krok):
+    """Ingenting leseren bygger arver fra siden (Codex P2, F21).
+
+    `JSON.stringify` er fanget som intrinsic før sidens kode kjørte (F15), men
+    det holder ikke: den SLÅR OPP `toJSON` på hver verdi den møter, og et
+    objektliteral arver fra `Object.prototype`, en liste fra `Array.prototype`.
+    Begge er sidens objekter. Kroken kjørte altså på den ferdig materialiserte
+    katalogen, inne i konteksten — og omskrev den STILLE, med exit 0: målt ga
+    `Object.prototype.toJSON` hele svaret som `{}`, `Array.prototype.toJSON` ga
+    `"moduler": "borte"`, og Codex' eget eksempel flyttet en modul fra fase 1
+    til fase 4 uten et ord.
+
+    Samme klasse, egen inngang: beholderen ble fylt med `.push`, som også er
+    `Array.prototype`. En overskrevet `push` ga en tom katalog med exit 0.
+
+    Objektene bygges alt med null-prototype. Listene løsnes fra sin når de er
+    ferdige — en liste med null-prototype er fortsatt en liste for
+    `Array.isArray` og `JSON.stringify`, men den arver ingen krok — og de
+    fylles med indekstilordning i stedet for `push`.
+
+    TO LAG, TO HALVDELER (Codex P2, F36). `toJSON`-formene står nå i
+    `test_en_krok_som_legger_til_en_noekkel_stopper_lesningen`: å legge på
+    `toJSON` LEGGER TIL en nøkkel på prototypen, og da stopper lesningen før
+    kroken kan spørres i det hele tatt. Å bytte ut `push`, `toString` eller
+    `valueOf` gjør det ikke — nøkkelen fantes fra før — og der er det bare
+    løsningen fra F21 som står mellom siden og katalogen. Derfor står begge.
+
+    Dette er ikke mekanismen fra F3/F7/F10/F18: alt her kjørte allerede INNE i
+    konteksten, under tidsgrensen. Grensen sto riktig; det var arven som var
+    sidens.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>\n"
+                   "const M = [{n:1,name:'En',area:'X',p:1}];\n"
+                   f"{krok}\n"
+                   "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["moduler"] == [
+        {"n": 1, "name": "En", "area": "X", "p": 1}], r.stdout
+
+
+@pytest.mark.parametrize("krok,hvem", [
+    # Hele svaret ble til `{}`.
+    ("Object.prototype.toJSON = function () { return {kapret: true} };",
+     "Object.prototype"),
+    # Modullista ble til en streng.
+    ("Array.prototype.toJSON = function () { return 'borte' };",
+     "Array.prototype"),
+    # Codex' eget eksempel: fase 1 ble stille til fase 4 på vei ut.
+    ("Object.prototype.toJSON = function () {"
+     "  if (this.moduler) this.moduler[0].p = 4;"
+     "  const ut = {}; for (const k in this) ut[k] = this[k];"
+     "  delete ut.toJSON; return ut; };", "Object.prototype"),
+])
+def test_en_krok_som_legger_til_en_noekkel_stopper_lesningen(
+        tmp_path, krok, hvem):
+    """`toJSON` er en NY nøkkel på prototypen, og da stopper vi (F21 → F36).
+
+    Krokene sto grønne her fra F21 og utover: løsrivelsen gjorde dem
+    virkningsløse, og katalogen kom ut riktig. Med F36 svarer leseren tidligere
+    og hardere — en prototype som har fått en nøkkel den ikke hadde, gjør hver
+    beholder i katalogen til noe vi ikke kan love at vi leser som nettleseren.
+    Utfallet er strengere enn før og i samme retning: katalogen blir ikke
+    omskrevet, og nå tier vi ikke om grunnen heller.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>\n"
+                   "const M = [{n:1,name:'En',area:'X',p:1}];\n"
+                   f"{krok}\n"
+                   "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 1, r.stdout
+    assert hvem in r.stderr and "toJSON" in r.stderr, r.stderr
+
+
+def test_nestede_lister_overlever_at_listene_losnes(tmp_path):
+    """Løsningen på F21 må ikke koste katalogen dybden sin.
+
+    `flow` er lister av lister, og `Object.setPrototypeOf(liste, null)` er en
+    inngripen i noe leseren gir fra seg. En liste med null-prototype er
+    fortsatt en liste for både `Array.isArray` og `JSON.stringify` — prøven
+    står for å si det høyt, ikke fordi det er tvilsomt.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text(
+        "<html><script>\n"
+        "const M = [{n:1,name:'En',area:'X',p:1,"
+        "flow:[['dypt',['dypere']]],obj:{a:[1,2,{b:'c'}]},fn:[() => 42]}];\n"
+        "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["moduler"] == [{
+        "n": 1, "name": "En", "area": "X", "p": 1,
+        "flow": [["dypt", ["dypere"]]],
+        "obj": {"a": [1, 2, {"b": "c"}]},
+        "fn": [{IKKE_DATA: "function"}],
+    }], r.stdout
+
+
+def test_et_hull_i_en_liste_er_ikke_en_verdi(tmp_path):
+    """En glissen liste gjettes ikke full (Codex P2, F26).
+
+    `flow: [, 'steg']` har ingen plass 0 — `Object.getOwnPropertyDescriptor`
+    gir `undefined` der, og leseren skrev da `null` inn i hullet. Det er en
+    VERDI: nettleseren skiller de to (`map`, `forEach` og `JSON.stringify`
+    hopper over hullet, men ville besøkt `null`), og en eksplisitt `undefined`
+    avvises som ikke-data rett ved siden av. Målt før fiksen: `[null, "steg"]`,
+    godtatt som helt ordinær data hele veien gjennom porten.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>\n"
+                   "const M = [{n:1,name:'En',area:'X',p:1,"
+                   "flow:[, 'steg'],hel:[0, 'steg']}];\n"
+                   "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    post = json.loads(r.stdout)["moduler"][0]
+    assert post["flow"] == [{IKKE_DATA: "hull"}, "steg"], r.stdout
+    # Kontrollen: en plass som FINNES og bærer en falsy verdi er data.
+    assert post["hel"] == [0, "steg"], r.stdout
+    assert _uleselige_felt(post) == ["flow"], r.stdout
+
+
+def test_et_hull_i_selve_katalogen_stopper_porten(tmp_path):
+    """Samme hull ett nivå opp er ingen modulpost. Se F26.
+
+    Katalogen er en liste av poster, og bare det. Før fiksen ble hullet `null`
+    her også — og `null` er ikke en post, så stoppet kom uansett; prøven står
+    fordi meldingen skal NAVNGI hva den så, ikke gjette en verdi inn i den.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>\n"
+                   "const M = [{n:1,name:'En',area:'X',p:1}, , "
+                   "{n:2,name:'To',area:'X',p:2}];\n"
+                   "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 1, r.stdout
+    assert "element 2" in r.stderr and IKKE_DATA in r.stderr, r.stderr
+
+
+def test_en_symbolnokkel_er_ogsaa_en_egen_nokkel(tmp_path):
+    """En egen symbolnøkkel ses, den hoppes ikke over (Codex P2, F30).
+
+    F16 lukket tellbarheten ved å bytte `Object.keys` mot
+    `Object.getOwnPropertyNames`, men egne nøkler i JavaScript er strenger
+    PLUSS symboler, og `getOwnPropertyNames` gir bare de første. Målt før
+    fiksen: `flow: {[Symbol('x')]: () => 42}` ble skrevet ut som `"flow": {}`
+    med exit 0 — nettleseren ser et objekt som bærer en funksjon, leseren
+    meldte et tomt og lesbart objekt, og porten godtok det. En symbolnøkkel
+    kan ikke bæres av JSON, så beholderen er ikke data.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>\n"
+                   "const s = Symbol('x');\n"
+                   "const liste = ['steg']; liste[Symbol('y')] = () => 42;\n"
+                   "const M = [{n:1,name:'En',area:'X',p:1,"
+                   "flow:{[s]: () => 42},sti:liste,hel:{a:'b'}}];\n"
+                   "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    post = json.loads(r.stdout)["moduler"][0]
+    assert post["flow"] == {IKKE_DATA: "symbolnokkel"}, r.stdout
+    # En LISTE med symbolnøkkel er samme sak: indeksene sier ingenting om den.
+    assert post["sti"] == {IKKE_DATA: "symbolnokkel"}, r.stdout
+    # Kontrollen: en helt ordinær beholder uten symboler er fortsatt data.
+    assert post["hel"] == {"a": "b"}, r.stdout
+    assert sorted(_uleselige_felt(post)) == ["flow", "sti"], r.stdout
+
+
+def test_en_symbolnokkel_pa_selve_posten_stopper_porten(tmp_path):
+    """Samme nøkkel ett nivå opp er ingen modulpost. Se F30.
+
+    Før fiksen forsvant symbolegenskapen stille, og posten passerte som en
+    helt ordinær modulpost. Nå navngir stoppet hva leseren så.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>\n"
+                   "const post = {n:2,name:'To',area:'X',p:2};\n"
+                   "post[Symbol('y')] = 'skjult';\n"
+                   "const M = [{n:1,name:'En',area:'X',p:1}, post];\n"
+                   "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 1, r.stdout
+    assert "element 2" in r.stderr and "symbolnokkel" in r.stderr, r.stderr
+
+
+def test_et_arvet_felt_forsvinner_ikke_i_stillhet(tmp_path):
+    """En verdi med egen prototypekjede leses ikke som en platt en (Codex P2,
+    F31).
+
+    Prøven på om noe var et platt objekt var «prototypen har selv ingen
+    prototype». Den er sann for de to formene katalogen bruker — et
+    objektliteral (`Object.prototype`) og et null-prototype-objekt — men den
+    er sann for en tredje også: et objekt bygget OVER et null-prototype-objekt.
+    Det slapp gjennom som platt, og deretter leses bare EGNE nøkler. Målt før
+    fiksen: `Object.create(Object.create(null, {status:…}), {steg:…})` kom ut
+    som `{"steg":"a"}` med exit 0, mens nettleseren ser `flow.status`. Et felt
+    porten ikke ser, kontrollerer den ikke.
+
+    Prøven står nå på IDENTITET mot den fangede intrinsicen: `null` eller
+    `Object.prototype`, ingenting annet.
+
+    MUTASJONEN SOM DREPER DENNE: bytt `over === objektProto` tilbake mot
+    `proto(over) === null`.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text(
+        "<html><script>\n"
+        "const forelder = Object.create(null, "
+        "{status:{value:'planlagt',enumerable:true}});\n"
+        "const arvet = Object.create(forelder, "
+        "{steg:{value:'a',enumerable:true}});\n"
+        "const nullpost = Object.create(null); nullpost.a = 'b';\n"
+        "const M = [{n:1,name:'En',area:'X',p:1,flow:arvet,"
+        "hel:{a:'b'},bar:nullpost}];\n"
+        "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    post = json.loads(r.stdout)["moduler"][0]
+    assert post["flow"] == {IKKE_DATA: "objekt"}, r.stdout
+    # Kontrollene: begge formene katalogen faktisk bruker er fortsatt data.
+    assert post["hel"] == {"a": "b"}, r.stdout
+    assert post["bar"] == {"a": "b"}, r.stdout
+    assert _uleselige_felt(post) == ["flow"], r.stdout
+
+
+def test_en_arvet_post_stopper_porten(tmp_path):
+    """Samme arv ett nivå opp er ingen modulpost. Se F31.
+
+    Før fiksen ble posten lest som platt, og feltene forelderen bar — her
+    `status` — forsvant stille ut av katalogen mens nettleseren så dem. Nå
+    navngir stoppet hva leseren så.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text(
+        "<html><script>\n"
+        "const forelder = Object.create(null, "
+        "{status:{value:'planlagt',enumerable:true}});\n"
+        "const post = Object.create(forelder, "
+        "{n:{value:2,enumerable:true},name:{value:'To',enumerable:true},"
+        "area:{value:'X',enumerable:true},p:{value:2,enumerable:true}});\n"
+        "const M = [{n:1,name:'En',area:'X',p:1}, post];\n"
+        "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 1, r.stdout
+    assert "element 2" in r.stderr and IKKE_DATA in r.stderr, r.stderr
+
+
+@pytest.mark.parametrize("krok,hvem,navn", [
+    ("Object.prototype.status = 'planlagt';", "Object.prototype", "status"),
+    ("Object.defineProperty(Object.prototype, 'kl', {value: 'x'});",
+     "Object.prototype", "kl"),
+    ("Array.prototype.ekstra = 'synlig';", "Array.prototype", "ekstra"),
+])
+def test_en_endret_prototype_stopper_lesningen(tmp_path, krok, hvem, navn):
+    """En prototype er også en beholder (Codex P2, F36).
+
+    F31 satte prøven på IDENTITET mot den fangede intrinsicen, og den holder så
+    lenge intrinsicen er den vi fanget. Men `Object.prototype` er MUTERBAR: en
+    helt ordinær `Object.prototype.status = 'planlagt'` foran katalogen gir
+    HVER objektliteral et arvet felt — nettleseren ser `M[0].status` — mens
+    identitetsprøven fortsatt sier ja og oppslaget etterpå bare leser EGNE
+    nøkler. Målt på `f44dc6f`: exit 0, og posten skrevet ut uten `status`.
+    `Array.prototype` er samme inngang for listene.
+
+    Arven kan ikke leses som felt (da ville `toString` og `hasOwnProperty`
+    blitt katalogdata), og hvilke navn en side eier kan vi ikke vite. Det vi
+    KAN vite, er om prototypen er den samme som da konteksten var frisk:
+    nøklene på den fanges før noen tagg fra kilden har sluppet til (F15) og
+    sammenlignes når katalogen materialiseres.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text(f"<html><script>\n{krok}\n"
+                   "const M = [{n:1,name:'En',area:'X',p:1,flow:['a']}];\n"
+                   "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 1, r.stdout
+    assert hvem in r.stderr and navn in r.stderr, r.stderr
+
+
+def test_en_kildenokkel_som_ligner_merket_er_ikke_merket(tmp_path):
+    """Navnet er leserens, nøkkelrommet er kildens (Codex P2, F37).
+
+    Merket er et objekt med ÉN nøkkel, og kontrakten tillater nestede objekter
+    av data — så `flow: {__ikke_data__: 'vanlig tekst'}` er gyldig katalogdata
+    som ser nøyaktig ut som merket. Målt på `f44dc6f` stoppet genereringen på
+    den med «har egenskapen `flow` som ikke er data (vanlig tekst)»: en verdi
+    JSON bærer helt fint, avvist fordi den lånte et navn.
+
+    En kildenøkkel i familien (null eller flere understreker foran navnet) får
+    nå én understrek til på vei ut. Avbildningen er injektiv, så den nøyaktige
+    strengen kan bare komme fra leseren selv — og et EKTE ikke-data-felt under
+    en slik nøkkel meldes fortsatt.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text(
+        "<html><script>\n"
+        "const M = [{n:1,name:'En',area:'X',p:1,"
+        "flow:{'__ikke_data__':'vanlig tekst'},"
+        "dypt:{'___ikke_data__':{'__ikke_data__':'ogsaa tekst'}},"
+        "ekte:{'__ikke_data__':() => 42}}];\n"
+        "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    post = json.loads(r.stdout)["moduler"][0]
+    assert post["flow"] == {"___ikke_data__": "vanlig tekst"}, r.stdout
+    assert post["dypt"] == {
+        "____ikke_data__": {"___ikke_data__": "ogsaa tekst"}}, r.stdout
+    # Og verdien som FAKTISK ikke er data bærer merket, uten understrek foran.
+    assert post["ekte"] == {"___ikke_data__": {IKKE_DATA: "function"}}, r.stdout
+    assert _uleselige_felt(post) == ["ekte"], r.stdout
+
+
+def test_urorte_prototyper_leses_som_for(tmp_path):
+    """Gjerdet mot F36 måler ENDRINGEN, ikke prototypen.
+
+    En katalog på en side som ikke rører prototypene skal leses som før — og
+    den ekte sannhetskilden er nettopp en slik side. Prøven står fordi
+    signaturen er en sammenligning: en som alltid slår ut ville stoppet
+    genereringen på alt.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>\n"
+                   "const M = [{n:1,name:'En',area:'X',p:1,flow:['a']}];\n"
+                   "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["moduler"] == [
+        {"n": 1, "name": "En", "area": "X", "p": 1, "flow": ["a"]}], r.stdout
+
+
+# Kontraktklassene katalogen bruker er de SAMME feltene modulregisteret lagrer,
+# og registeret håndhever dem med CHECK-vilkår. Enumene leses derfor ut av
+# den MIGRERTE BASEN, ikke skrevet av her: en kopi i testen ville vært nok en
+# kilde som kan drive fra databasen — akkurat feilen porten finnes for å
+# hindre. Og de regnes ikke fram av migrasjonshistorikken: hva som står igjen
+# etter utvidelser, innstramminger og slipp er nøyaktig det basen VET, fordi
+# den har kjørt filene.
+MIGRASJONER = ROT / "platform" / "core" / "db" / "migrations"
+KONTRAKTFELT = {"kl": "sideeffektklasse", "rev": "reversibilitet"}
+# Tabellen kontrakten faktisk lagres i, opprettet i 014 og utvidet i 036. Den
+# står her fordi enumoppslaget skal binde seg til den, ikke til kolonnenavnet
+# på tvers av skjemaet — se `_registerenum()`.
+MODULKONTRAKT = "modulkontrakt"
+
+
+
+# ---------------------------------------------------------------------------
+# REGISTERETS ENUM, MÅLT I DEN MIGRERTE BASEN
+#
+# Porten regnet før registerets gjeldende tilstand ut av migrasjonshistorikken:
+# hvert CHECK og hvert slipp en hendelse, `DO`-grener, omdøp, arv og dynamisk
+# DDL modellert i Python. Tjue runder med Codex-review på #118 var tjue hull i
+# den modellen, og de seks siste funnene gjaldt migrasjoner som ikke fantes —
+# simulatorens hull, ikke basens. En simulator måler sin egen fullstendighet.
+#
+# SP-13 avgjorde saken: semantikk verifiseres som OPPSLAG i den virkelige
+# tilstanden. Testbasen HAR kjørt migrasjonene — hva som står igjen etter
+# utvidelser, innstramminger, slipp og betingede grener er ikke et
+# regnestykke her, det er et faktum der. Porten spør derfor basen, to veier
+# som må være enige:
+#
+#   * LESNINGEN: `pg_get_constraintdef` gir vilkårene som står på
+#     `modulkontrakt` NÅ, i basens egen kanoniske form, og `pglast` —
+#     PostgreSQLs egen grammatikk — leser verdilistene ut av dem. Et vilkår
+#     som ikke er en verdiliste gjør kolonnen UVISS, høylytt og aldri stille
+#     bredere (`ULESELIG_SQL`).
+#   * DOMMEN: hver verdi katalogen bruker prøves med en INSERT mot en kopi av
+#     vilkårene (`LIKE … INCLUDING CONSTRAINTS`), så det er PostgreSQL selv
+#     som sier ja eller nei — også den dagen et vilkår får en form lesningen
+#     ikke kan regne på.
+#
+# Basen er den samme migrerte testbasen resten av testene bruker
+# (`DISPONIT_TEST_*`-DSN-ene); uten den hopper DB-portene her over på samme
+# vilkår som i søstertestene — CI setter alltid DSN-ene, så i CI er porten
+# aldri hoppet over.
+try:
+    import pglast
+except ModuleNotFoundError:  # pragma: no cover - meldingen ER porten her
+    raise ModuleNotFoundError(
+        "pglast mangler — vilkårsdefinisjonene og migrasjonenes strengverdier "
+        "leses av PostgreSQLs egen grammatikk (libpg_query), og uten den kan "
+        "registerets enum ikke leses i det hele tatt. Den står i "
+        "requirements-dev.txt; en port som hopper over seg selv her ville "
+        "vært grønn på et ulest register.")
+
+DSN = os.environ.get("DISPONIT_TEST_MIGRATOR_DSN") \
+    or os.environ.get("DISPONIT_TEST_DSN")
+pg = pytest.mark.skipif(
+    not DSN, reason="DISPONIT_TEST_MIGRATOR_DSN/DISPONIT_TEST_DSN ikke satt")
+
+# Verdien en kolonne får når porten ikke kan lese vilkåret som binder den.
+# Backstrek kan ikke være en enumverdi skrevet rett fram, så den kan ikke
+# kollidere med en ekte.
+ULESELIG_SQL = "\\"
+
+
+def _samle(node, ut: set[str]) -> None:
+    """Legg kolonnenavnene i `node` i `ut`. Går gjennom hele undertreet."""
+    if isinstance(node, (list, tuple)):
+        for x in node:
+            _samle(x, ut)
+        return
+    if isinstance(node, pglast.ast.ColumnRef):
+        felt = [f.sval for f in node.fields
+                if isinstance(f, pglast.ast.String)]
+        if felt:
+            ut.add(felt[-1])
+        return
+    if isinstance(node, pglast.ast.Node):
+        for navn in node:
+            _samle(getattr(node, navn), ut)
+
+
+# Typene et kast BEVISELIG ikke kan endre en strengverdi til. `text` er den
+# basens egen rendering bruker for kontraktens TEXT-kolonner, og `varchar` uten
+# lengde lagrer strengen som den er. Alt annet — og enhver lengdeangivelse — må
+# regnes som noe som kan endre verdien; se `_bevarer_verdien()`.
+_BEVARENDE_KAST = frozenset({"text", "varchar"})
+
+
+def _bevarer_verdien(kast) -> bool:
+    """Sant hvis `kast` beviselig gjengir strengen under uendret.
+
+    ET KAST KAN VÆRE EN ANNEN VERDI (Codex P2, F23). Hvert `TypeCast` ble
+    pakket ut og strengen under ført opp som en tillatt verdi, men PostgreSQL
+    sammenligner mot RESULTATET av kastet:
+
+        CAST('sideeffektfri_extra' AS varchar(13))  ->  'sideeffektfri'
+        'sideeffektfri'::char(5)                    ->  'sidee'
+        'sideeffektfri'::char                       ->  's'
+        'sideeffektfri'::name                       ->  trunkert på 63
+
+    Porten navnga da et ANNET sett enn vilkåret, og `_registerenum()` kunne
+    avvise en gyldig katalogverdi eller melde en ugyldig som tillatt — helt til
+    INSERT-prøven ga en uenighet ingen kunne forklare.
+
+    Regelen er den samme som ellers i lesningen: pakk bare ut det som er
+    bevist, la resten bli UVISST. En lengdeangivelse (`typmods`) kan trunkere
+    eller etterfylle, og `arrayBounds` gjør en streng om til en liste, så begge
+    diskvalifiserer. Navnet må være `text` eller `varchar`, eventuelt kvalifisert
+    med `pg_catalog` slik basens rendering skriver det.
+    """
+    navn = [s.sval for s in kast.typeName.names
+            if isinstance(s, pglast.ast.String)]
+    if kast.typeName.typmods or kast.typeName.arrayBounds:
+        return False
+    if len(navn) == 2 and navn[0] == "pg_catalog":
+        navn = navn[1:]
+    return len(navn) == 1 and navn[0] in _BEVARENDE_KAST
+
+
+def _verdiliste(node) -> list[str] | None:
+    """Strengverdiene i `node` hvis HVERT ledd er én strengkonstant.
+
+    Et ledd som er et UTTRYKK gir `None` for hele lista (Codex P2 på #118,
+    tjuende runde): `IN ('direkte' || '_v2', 'irreversibel')` tillater `direkte_v2`
+    og `irreversibel`, ikke tre verdier. Å regne ut uttrykket ville vært å
+    skrive PostgreSQLs operatorer av i Python, og et gjettet innhold er verre
+    enn ingen når svaret brukes til å godta en kontrakt.
+
+    Et kast som ENDRER verdien er samme sak (Codex P2, F23), og faller på samme
+    regel — se `_bevarer_verdien()`.
+    """
+    ut = []
+    for ledd in node or ():
+        # Basens egen rendering (`pg_get_constraintdef`) skriver hvert ledd
+        # som `'verdi'::text`. Det kastet endrer ingen tekstverdi, så det
+        # pakkes ut — men bare ETT lag, bare rundt en konstant, og bare når
+        # kastet er bevist ufarlig: et kast rundt et uttrykk er fortsatt et
+        # uttrykk, og `::varchar(13)` er en annen verdi enn strengen i treet.
+        if isinstance(ledd, pglast.ast.TypeCast):
+            if not _bevarer_verdien(ledd):
+                return None
+            ledd = ledd.arg
+        if not isinstance(ledd, pglast.ast.A_Const) \
+                or not isinstance(ledd.val, pglast.ast.String):
+            return None
+        ut.append(ledd.val.sval)
+    return ut
+
+
+def _enkolonne(node) -> str | None:
+    """Kolonnen `node` er, hvis den er ÉN kolonnereferanse."""
+    if not isinstance(node, pglast.ast.ColumnRef):
+        return None
+    felt = [f.sval for f in node.fields if isinstance(f, pglast.ast.String)]
+    return felt[-1] if len(felt) == len(node.fields) and felt else None
+
+
+def _bindinger(uttrykk) -> dict[str, set[str]]:
+    """{kolonne: verdiene vilkåret tillater} for ett CHECK-uttrykk.
+
+    Tre regler, og de er semantiske — ikke former:
+
+    ET SAMMENSATT PREDIKAT er ikke bare lista si (Codex P2 på #118, attende og
+    tjuende runde). `IN`-lista ble lest og resten av uttrykket gitt fra seg i
+    stillhet, så `CHECK (rev IN ('a','b') AND rev <> 'b')` ble meldt som om
+    begge verdiene var lov. Verre: med flere `IN`-ledd ble bare det FØRSTE
+    lest, og et videre vilkår på den andre kolonnen ble stående som gjeldende.
+
+    `A AND B` er håndhevet nøyaktig når både A og B er det, så en OG-kjede
+    leses ledd for ledd og bidragene snittes. Alt ANNET — `OR`, `NOT`, en
+    sammenligning, et funksjonskall — kan porten ikke regne på, og da er
+    `ULESELIG_SQL` svaret for hver kolonne uttrykket nevner: det hverken
+    gjetter eller tier, og `_registerenum()` sier fra på den kolonnen katalogen
+    faktisk måles mot.
+
+    Det gjelder også en CHECK som narrer uten `IN` (Codex P2 på #118, tjuende
+    runde): `CHECK (rev = 'direkte')` er håndhevet av PostgreSQL, og ble før
+    forkastet i stillhet slik at det forrige, videre vilkåret sto igjen som
+    gjeldende. Nå faller den i «alt annet» og gjør kolonnen uviss.
+
+    `= ANY (ARRAY[…])` leses som `IN`, for det ER `IN` — grammatikken skiller
+    dem, semantikken ikke. Å lese den er derfor ingen ny FORM å vedlikeholde:
+    tar porten feil om en node den ikke kjenner, blir svaret uvisst og høylytt,
+    aldri stille bredere.
+    """
+    if isinstance(uttrykk, pglast.ast.BoolExpr) \
+            and uttrykk.boolop == pglast.enums.BoolExprType.AND_EXPR:
+        ut: dict[str, set[str]] = {}
+        for ledd in uttrykk.args:
+            for kol, verdier in _bindinger(ledd).items():
+                ut[kol] = _snitt(ut[kol], verdier) if kol in ut else verdier
+        return ut
+    if isinstance(uttrykk, pglast.ast.A_Expr) \
+            and [s.sval for s in uttrykk.name] == ["="]:
+        kolonne = _enkolonne(uttrykk.lexpr)
+        verdier = None
+        if uttrykk.kind == pglast.enums.A_Expr_Kind.AEXPR_IN:
+            verdier = _verdiliste(uttrykk.rexpr)
+        elif uttrykk.kind == pglast.enums.A_Expr_Kind.AEXPR_OP_ANY \
+                and isinstance(uttrykk.rexpr, pglast.ast.A_ArrayExpr):
+            verdier = _verdiliste(uttrykk.rexpr.elements)
+        if kolonne and verdier:
+            return {kolonne: set(verdier)}
+    nevnte: set[str] = set()
+    _samle(uttrykk, nevnte)
+    return {kol: {ULESELIG_SQL} for kol in nevnte}
+
+
+def _snitt(a: set[str], b: set[str]) -> set[str]:
+    """Verdiene to vilkår er enige om — med uvissheten i behold.
+
+    En mengde her er en ØVRE GRENSE med et flagg: verdiene, og `ULESELIG_SQL`
+    hvis den øvre grensen kan være videre enn det som faktisk gjelder. En
+    mengde som BARE er `{ULESELIG_SQL}` er «vi vet ingenting», altså ingen
+    grense i det hele tatt.
+
+    Da er snittet det opplagte: grensene snittes, og et vilkår vi ikke vet noe
+    om snevrer ingenting inn. Uvissheten forplanter seg, for det ULESELIGE er
+    ikke en verdi — det er en manglende opplysning, og et annet vilkår kan ikke
+    opplyse den. Snittes den bort, blir et vilkår porten bare kjenner et
+    oversett av, meldt som lest, og da er svaret videre enn databasen.
+    """
+    kjent_a, kjent_b = a - {ULESELIG_SQL}, b - {ULESELIG_SQL}
+    kjent = kjent_a & kjent_b if kjent_a and kjent_b else kjent_a or kjent_b
+    return kjent | ({ULESELIG_SQL} & (a | b))
+
+
+def _check_uttrykket(vilkar: str):
+    """CHECK-uttrykket i `vilkar`, slik `_registerenum()` får det fra basen."""
+    setning = f"ALTER TABLE t ADD CONSTRAINT c {vilkar};"
+    return pglast.parse_sql(setning)[0].stmt.cmds[0].def_.raw_expr
+
+
+@pytest.mark.parametrize("vilkar,forventet", [
+    # Basens egen rendering for kontraktens TEXT-kolonner. Kastet til `text`
+    # gjengir strengen som den er, så lista leses.
+    ("CHECK ((k = ANY (ARRAY['sideeffektfri'::text, 'ekstern_lesing'::text])))",
+     {"sideeffektfri", "ekstern_lesing"}),
+    ("CHECK (k IN ('sideeffektfri'::text))", {"sideeffektfri"}),
+    # `varchar` UTEN lengde lagrer strengen som den er.
+    ("CHECK (k IN ('sideeffektfri'::character varying))", {"sideeffektfri"}),
+    ("CHECK (k IN ('sideeffektfri'))", {"sideeffektfri"}),
+    # Codex' eget eksempel: kastet TRUNKERER, så PostgreSQL sammenligner mot
+    # `sideeffektfri` — ikke mot strengen som står i treet.
+    ("CHECK (k IN (CAST('sideeffektfri_extra' AS varchar(13))))",
+     {ULESELIG_SQL}),
+    ("CHECK (k IN ('sideeffektfri_extra'::varchar(13)))", {ULESELIG_SQL}),
+    # `char(n)` trunkerer OG etterfyller med mellomrom.
+    ("CHECK (k IN ('sideeffektfri'::char(5)))", {ULESELIG_SQL}),
+    # Og `char` uten lengde er `char(1)`: verdien blir `s`.
+    ("CHECK (k IN ('sideeffektfri'::char))", {ULESELIG_SQL}),
+    # `name` trunkerer på 63 tegn.
+    ("CHECK (k IN ('sideeffektfri'::name))", {ULESELIG_SQL}),
+    # En liste er ikke en streng.
+    ("CHECK (k IN ('{a,b}'::text[]))", {ULESELIG_SQL}),
+    # Ett ledd som ikke lar seg lese gjør HELE lista uviss — som før.
+    ("CHECK (k IN ('sideeffektfri'::text, 'x'::varchar(1)))", {ULESELIG_SQL}),
+])
+def test_et_kast_som_endrer_verdien_gjor_vilkaret_uleselig(vilkar, forventet):
+    """Porten navngir det vilkåret HÅNDHEVER, ikke strengen i treet (F23).
+
+    Hvert `TypeCast` ble pakket ut og strengen under ført opp som tillatt
+    verdi. Men PostgreSQL sammenligner mot RESULTATET av kastet, og et kast med
+    lengde endrer strengen: `CAST('sideeffektfri_extra' AS varchar(13))` er
+    `sideeffektfri`. Porten navnga da et annet sett enn vilkåret, og
+    `_registerenum()` kunne avvise en gyldig katalogverdi eller melde en ugyldig
+    som tillatt — helt til INSERT-prøven ga en uenighet ingen kunne forklare.
+
+    Regelen er den samme som ellers i lesningen, og den er hele grunnen til at
+    `ULESELIG_SQL` finnes: pakk bare ut det som er BEVIST ufarlig, la resten bli
+    uvisst. Uvisst er høylytt; en gjettet verdi er stille.
+    """
+    assert _bindinger(_check_uttrykket(vilkar)) == {"k": forventet}
+
+
+
+
+def _setningene(sql: str):
+    """(setningen, teksten den står som) for hver setning i `sql`.
+
+    TEKSTEN følger med fordi en `DO`- eller funksjonsKROPP må leses av
+    `parse_plpgsql`, og den vil ha HELE setningen: kroppen alene sier ikke om
+    funksjonen har parametre, om den returnerer noe, eller om `NEW` finnes.
+    Å pakke kroppen inn i en `DO` for anledningen — som er den nærliggende
+    snarveien — gjør en helt alminnelig triggerfunksjon usyntaktisk, og da
+    ville lesningen hoppet over den i stillhet. Det er nøyaktig feilklassen
+    denne runden fjerner.
+
+    SNITTET TAS I TEGN, OG DET ER RIKTIG (Codex P1, F19 — målt og avvist).
+    `libpg_query` teller i BYTE, så innvendingen gjelder biblioteket under:
+    en `ø` foran en setning ville forskjøvet den. Men `pglast` regner om for
+    oss før vi ser tallene, og det er lett å vise:
+
+        sql = "-- ø ø ø\\nDO $$ BEGIN PERFORM 'x'; END $$;\\n"
+        parse_sql_json(sql) -> stmt_location 12   # byte, rått fra libpg_query
+        parse_sql(sql)      -> stmt_location  9   # tegn, etter omregning
+
+    Det samme gjelder `stmt_len`: en setning på 38 tegn / 39 byte meldes som
+    38. Å snitte i `sql.encode()` med disse tallene ville derfor INNFØRT
+    nettopp feilen funnet advarer mot. Målt over repoets eget korpus: alle
+    1625 setningene i `platform/core/db/migrations/*.sql` snittes med
+    tegnindeks til en tekst som reparser til NØYAKTIG samme tre som setningen
+    porten fikk; med byteindeks bommer samtlige. `pglast==8.4` er pinnet i
+    `requirements-dev.txt`, så det er denne omregningen CI kjører. To ledd i
+    `test_en_sqlkommentar_skriver_ingen_identifikator` holder det nede.
+    """
+    for rå in pglast.parse_sql(sql):
+        a = rå.stmt_location
+        yield rå.stmt, sql[a:a + rå.stmt_len] if rå.stmt_len else sql[a:]
+
+
+
+def _kroppen(stmt) -> tuple[str, str]:
+    """(teksten i kroppen, språket den er skrevet i).
+
+    Kroppen står som en STRENGKONSTANT i treet, men den er kode og ikke en
+    verdi. Språket avgjør hvordan den skal leses videre: `DO` er PL/pgSQL med
+    mindre noe annet står, og en funksjon sier det selv.
+    """
+    kropp, sprak = "", "plpgsql"
+    for arg in (stmt.args if isinstance(stmt, pglast.ast.DoStmt)
+                else stmt.options) or ():
+        if arg.defname == "as":
+            kropp = arg.arg.sval if isinstance(arg.arg, pglast.ast.String) \
+                else " ".join(s.sval for s in arg.arg
+                              if isinstance(s, pglast.ast.String))
+        elif arg.defname == "language" and isinstance(arg.arg,
+                                                      pglast.ast.String):
+            sprak = arg.arg.sval
+    return kropp, sprak.lower()
+
+
+
+def _plpgsql(setning: str) -> list:
+    """PL/pgSQL-treet for `setning` — en hel `DO` eller `CREATE FUNCTION`.
+
+    `pglast.parse_plpgsql()` er `json.loads()` på det libpg_query skriver, og
+    for en TRIGGERFUNKSJON skriver den ugyldig JSON: hver ubrukt plass i
+    `datums` kommer ut som `{}}` med en klammeparentes for mye. 76 av repoets
+    296 PL/pgSQL-setninger treffer det.
+
+    Reparasjonen er smal og kan sies helt ut: `[{}}` og `,{}}` finnes ikke i
+    gyldig JSON. Etter `[` eller `,` står et ELEMENT, så `{}` der er et tomt
+    objekt — og da må neste tegn være `,` eller `]`, aldri `}`. De to
+    sekvensene kan derfor bare være denne defekten, og ingenting annet.
+
+    Feltet vi retter i, `datums`, er navnene på funksjonens variabler; porten
+    leser aldri der. Alternativet — å hoppe over setninger som ikke lot seg
+    lese — er nøyaktig den stille lesningen denne runden fjerner: 120 av
+    hvitlistens identifikatorer, `alltid_stopp` blant dem, står i en
+    funksjonskropp og ville forsvunnet uten et ord.
+    """
+    rå = pglast.parser.parse_plpgsql_json(setning)
+    try:
+        return json.loads(rå)
+    except json.JSONDecodeError:
+        return json.loads(rå.replace("[{}}", "[{}").replace(",{}}", ",{}"))
+
+
+
+def _skrevne_verdier(sql: str) -> list[str]:
+    """Hver strengverdi migrasjonen SKRIVER — kropper med, kommentarer uten.
+
+    Grunnlaget for hvitlisten i `_kjente_identifikatorer()`, og skillet det
+    hviler på er: hva HAR registeret skrevet ned? Et navn nevnt i en merknad er
+    ikke skrevet — en kommentar finnes ikke i et syntakstre, så den forsvinner
+    av seg selv nå. En melding er ÉN tekst, ikke setninger med navn i, uansett
+    om den er skrevet med doblede apostrofer, dollarsitert eller skjøtt over
+    flere linjer; grammatikken løser opp alle tre til den ene verdien.
+
+    En KROPP leses derimot videre inn i: `CREATE FUNCTION … AS $$ … $$`
+    definerer den uten å kjøre den, men verdiene den bærer er skrevet av
+    registeret. Det samme gjelder `DO $$ … $$`.
+    """
+    ut: list[str] = []
+    for stmt, tekst in _setningene(sql):
+        _samleverdier(stmt, ut, tekst)
+    return ut
+
+
+def _samleverdier(node, ut: list[str], tekst: str = None) -> None:
+    """Legg strengkonstantene i `node` i `ut`, kropper regnet med."""
+    if isinstance(node, (list, tuple)):
+        for x in node:
+            _samleverdier(x, ut)
+        return
+    if isinstance(node, (pglast.ast.DoStmt, pglast.ast.CreateFunctionStmt)):
+        _samleikropp(node, ut, tekst)
+        return
+    if isinstance(node, pglast.ast.A_Const) \
+            and isinstance(node.val, pglast.ast.String):
+        ut.append(node.val.sval)
+        return
+    if isinstance(node, pglast.ast.Node):
+        for navn in node:
+            _samleverdier(getattr(node, navn), ut)
+
+
+def _samleikropp(stmt, ut: list[str], tekst: str) -> None:
+    """Verdiene i en `DO`- eller funksjonskropp.
+
+    Kroppen står som en strengkonstant i treet, men den er KODE og ikke en
+    verdi: leses den som en verdi, blir hele kroppen ett ord ingen kjenner
+    igjen, og verdiene i den blir usynlige. Den leses derfor som det den er —
+    PL/pgSQL med `parse_plpgsql`, ren SQL med `parse_sql`.
+
+    EN SQL-STANDARD KROPP STÅR IKKE SOM STRENG I DET HELE TATT (Codex P2, F22).
+    `CREATE FUNCTION … LANGUAGE SQL BEGIN ATOMIC … END` er PostgreSQL 14s egen
+    form, og der PARSES kroppen med resten av setningen: den ligger ferdig som
+    AST i `sql_body`, og `options` har ingen `as`. `_samleverdier()` fanger hver
+    `CreateFunctionStmt` og gir den hit, så et tomt strengsvar her betydde at
+    hele funksjonen ble hoppet over — verdiene i den forsvant, uten et ord.
+    Da mangler navn registeret FAKTISK har skrevet i hvitlista, og prosaporten
+    kan avvise dem som oppfunnet.
+
+    Treet er alt der, så det leses som et tre. Ingen ny lesning, ingen ny form
+    å vedlikeholde — bare den ene grenen som ikke ble gått.
+    """
+    kropp, sprak = _kroppen(stmt)
+    if not kropp:
+        _samleverdier(getattr(stmt, "sql_body", None), ut)
+        return
+    if sprak != "plpgsql":
+        for rå in pglast.parse_sql(kropp):
+            _samleverdier(rå.stmt, ut)
+        return
+    assert tekst, ("en PL/pgSQL-kropp uten setningen sin — `parse_plpgsql` "
+                   "trenger hele erklæringen, se `_setningene()`")
+    _samleiplpgsql(_plpgsql(tekst), ut)
+
+
+# Feltene i PL/pgSQL-treet som bærer TEKST registeret skriver, men som ikke er
+# SQL: meldingen i en `RAISE` er én tekst, ikke setninger med verdier i.
+_TEKSTFELT = ("message", "condname", "value")
+# PL/pgSQL merker selv hva en innebygd spørring ER, og merkelappen er
+# PostgreSQLs egen `RawParseMode`. Bare den første er en hel SETNING; resten må
+# gjøres til gyldig SQL før de kan leses, for de er skrevet slik PL/pgSQL leser
+# dem: betingelsen i et `IF` står som `FALSE`, ikke `SELECT FALSE`, og en
+# tildeling som `v_tenant := 1`, ikke som en setning.
+#
+# Modusen leses av treet, ikke gjettet av formen. En modus porten ikke kjenner
+# er en `KeyError` med tallet i — høyt, ikke stille.
+_SETNINGSMODUS = 0
+_TILDELINGSMODI = (3, 4, 5)
+
+# Tokenene en tildeling kan være skrevet med, og parentesene et mål kan bære.
+# Navnene er PostgreSQLs egne, fra den samme skanneren som leser dem — `:=` er
+# `COLON_EQUALS`, `=` er `ASCII_61`. Se `_tildelingsskillet()`.
+_TILDELINGSTEGN = ("COLON_EQUALS", "ASCII_61")
+_APNER = ("ASCII_40", "ASCII_91")
+_LUKKER = ("ASCII_41", "ASCII_93")
+
+
+def _tildelingsskillet(spørring: str) -> int | None:
+    """Tegnet ETTER tildelingstegnet i `spørring`, eller `None`.
+
+    POSISJONEN LESES AV POSTGRESQLS EGEN SKANNER (Codex P2, F38). Å ta det
+    første `=` i råteksten var å lete etter et TEGN der spørsmålet gjelder et
+    TOKEN: et helt lovlig tildelingsmål kan selv bære et likhetstegn — et
+    sitert variabelnavn (`"v=x" := …`) eller en subskriptnøkkel
+    (`v['key=value'] := …`) — og da sto skillet inne i målet, og resten ble
+    usyntaktisk SQL. Målt på `f44dc6f`: begge formene ga `ParseError` og felte
+    hele suiten på migrasjoner PostgreSQL utfører uten å blunke.
+
+    `pglast.parser.scan()` er libpg_query, altså PostgreSQLs egen lekser, og
+    den avgjør spørsmålet per definisjon: tegnene inne i en streng eller et
+    sitert navn er ETT token, så de kan ikke forveksles med et tildelingstegn.
+    Det er K4/SP-13 brukt på samme grammatikk som resten av fila: ekte leser
+    for syntaks, aldri en tilstandsmaskin over råtekst.
+
+    Ett gjerde til: målets subskript er en parentes rundt et uttrykk som SELV
+    kan bære et likhetstegn (`v[(a = b)::int] := …`), så bare et tegn på
+    DYBDE 0 er tildelingen. Posisjonene skanneren gir er tegn, ikke byte — se
+    `_setningene()` — og `end` peker på siste tegn i tokenet.
+    """
+    dybde = 0
+    for token in pglast.parser.scan(spørring):
+        if token.name in _APNER:
+            dybde += 1
+        elif token.name in _LUKKER:
+            dybde -= 1
+        elif dybde == 0 and token.name in _TILDELINGSTEGN:
+            return token.end + 1
+    return None
+
+
+def _somsql(uttrykk: dict) -> str:
+    """En innebygd PL/pgSQL-spørring som en hel SQL-setning. Se `_SETNINGSMODUS`.
+
+    TILDELINGSTEGNET ER DET SOM STÅR DER (Codex P2). PL/pgSQL godtar begge
+    skrivemåtene — `v := uttrykk` og `v = uttrykk` — og PostgreSQL utfører dem
+    likt. Porten delte på `:=` og indekserte ledd nummer to, så en migrasjon
+    skrevet med `=` ga `IndexError` og felte hele suiten på noe basen sier ja
+    til.
+
+    Hvor tegnet STÅR er et syntaksspørsmål, og det stilles til skanneren, ikke
+    til råteksten: se `_tildelingsskillet()`. Alt etter tegnet er uttrykket.
+    Finnes ikke tegnet, er spørringen ikke den tildelingen PL/pgSQL merket den
+    som, og da sier vi fra høyt i stedet for å lese noe annet enn serveren.
+    """
+    spørring, modus = uttrykk.get("query", ""), uttrykk.get("parseMode", 0)
+    if modus == _SETNINGSMODUS:
+        return spørring
+    if modus in _TILDELINGSMODI:
+        skille = _tildelingsskillet(spørring)
+        assert skille is not None, (
+            f"PL/pgSQL merket {spørring!r} som en tildeling (modus {modus}), "
+            "men PostgreSQLs egen skanner finner ikke noe tildelingstegn i den")
+        return "SELECT " + spørring[skille:]
+    return "SELECT " + spørring
+
+
+def _litteral_kommando(uttrykk: dict) -> str | None:
+    """SQL-teksten en `EXECUTE` kjører, når den står som ÉN strengkonstant.
+
+    `EXECUTE format('… %I …', t)` bygges først når funksjonen KJØRER, og hva
+    den da skriver kan ingen lesning av kilden vite. `EXECUTE 'INSERT …'` er
+    derimot ferdig skrevet: den står i migrasjonen, tegn for tegn.
+
+    `None` betyr «ikke en ferdig skrevet kommando», og kalleren leser da
+    uttrykket som før — som et uttrykk.
+    """
+    try:
+        stmt = pglast.parse_sql(_somsql(uttrykk))[0].stmt
+    except pglast.parser.ParseError:
+        return None
+    mål = getattr(stmt, "targetList", None) or ()
+    if not isinstance(stmt, pglast.ast.SelectStmt) or len(mål) != 1:
+        return None
+    verdi = mål[0].val
+    if isinstance(verdi, pglast.ast.A_Const) \
+            and isinstance(verdi.val, pglast.ast.String):
+        return verdi.val.sval
+    return None
+
+
+def _samleidynexecute(stmt: dict, ut: list[str]) -> None:
+    """Verdiene en `EXECUTE` skriver — kommandoen lest som SQL (Codex P2, F41).
+
+    En dynamisk `EXECUTE` er ÉN spørring i treet, og spørringen er en
+    strengkonstant. Leses den som en verdi, blir hele kommandoen ett ord ingen
+    kjenner igjen — nøyaktig samme feil som en kropp lest som streng (F22):
+    `EXECUTE 'INSERT INTO t(v) VALUES (''oppfunnet_klasse'')'` ga verdien
+    `INSERT INTO t(v) VALUES ('oppfunnet_klasse')`, som ikke er en
+    identifikator, og `oppfunnet_klasse` — som migrasjonen FAKTISK skriver —
+    manglet i hvitlista. Prosaporten kunne da avvise den som oppfunnet.
+
+    Kommandoen leses derfor som det den er: SQL, med `_setningene()`, samme
+    lesning som migrasjonsfila selv får. Er den ikke ferdig skrevet (`format`,
+    en konkatenering, en variabel), leses uttrykket som før — da finnes det
+    ingen kommandotekst å lese, og vi dikter ikke en.
+
+    Er den ferdig skrevet, men ikke gyldig SQL, sier vi fra HØYT: da ville
+    serveren feilet på den også, og en stille utelatelse er nettopp hullet
+    denne runden lukker.
+    """
+    uttrykk = (stmt.get("query") or {}).get("PLpgSQL_expr")
+    kommando = _litteral_kommando(uttrykk) if isinstance(uttrykk, dict) else None
+    if kommando is None:
+        for innhold in stmt.values():
+            _samleiplpgsql(innhold, ut)
+        return
+    # Resten av setningen — `USING`-parametrene, `INTO` — leses som før.
+    for navn, innhold in stmt.items():
+        if navn != "query":
+            _samleiplpgsql(innhold, ut)
+    try:
+        setninger = list(_setningene(kommando))
+    except pglast.parser.ParseError as feil:
+        raise AssertionError(
+            f"en EXECUTE med ferdig skrevet kommando som ikke er gyldig SQL: "
+            f"{kommando!r} ({feil}). Verdiene den skriver kan ikke leses, og "
+            f"en hvitliste med et hull i er en grønn port på en oppfunnet "
+            f"identifikator.") from None
+    for s, tekst in setninger:
+        _samleverdier(s, ut, tekst)
+
+
+def _samleiplpgsql(node, ut: list[str]) -> None:
+    """Verdiene i et PL/pgSQL-tre. Spørringene i det leses som SQL."""
+    if isinstance(node, list):
+        for x in node:
+            _samleiplpgsql(x, ut)
+        return
+    if not isinstance(node, dict):
+        return
+    for navn, innhold in node.items():
+        if navn == "PLpgSQL_stmt_dynexecute" and isinstance(innhold, dict):
+            _samleidynexecute(innhold, ut)
+            continue
+        if navn == "PLpgSQL_expr" and isinstance(innhold, dict):
+            for rå in pglast.parse_sql(_somsql(innhold)):
+                _samleverdier(rå.stmt, ut)
+            continue
+        if navn in _TEKSTFELT and isinstance(innhold, str):
+            ut.append(innhold)
+            continue
+        _samleiplpgsql(innhold, ut)
+
+
+@functools.cache
+def _kontraktvilkar() -> tuple[tuple[str, str], ...]:
+    """(navn, definisjon) for hvert CHECK-vilkår på `modulkontrakt` — NÅ.
+
+    Definisjonen er basens egen (`pg_get_constraintdef`), altså den kanoniske
+    formen av det som faktisk håndheves: legger en migrasjon til en CHECK uten
+    å slippe den gamle, står begge her, og et vilkår som er sluppet er borte.
+    Alt simulatoren regnet på — rekkefølge, grener, omdøp — er allerede
+    avgjort av at basen kjørte filene.
+    """
+    with psycopg.connect(DSN) as k:
+        try:
+            rader = k.execute(
+                "SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint"
+                " WHERE conrelid = %s::regclass AND contype = 'c'"
+                " ORDER BY conname", (MODULKONTRAKT,)).fetchall()
+        finally:
+            k.rollback()
+    return tuple((navn, definisjon) for navn, definisjon in rader)
+
+
+def _enum_av(vilkar, kolonne: str) -> set[str]:
+    """Verdiene `vilkar` tillater i `kolonne` — snittet, med uvissheten i behold.
+
+    Hver definisjon er ETT uttrykk; `_bindinger()` leser det, og bidragene fra
+    flere vilkår på samme kolonne snittes fordi PostgreSQL håndhever ALLE:
+    en verdi må stå i hvert av dem for å slippe gjennom.
+    """
+    ut: set[str] | None = None
+    for _navn, definisjon in vilkar:
+        uttrykk = pglast.parse_sql(
+            f"ALTER TABLE {MODULKONTRAKT} ADD CONSTRAINT p {definisjon}"
+        )[0].stmt.cmds[0].def_.raw_expr
+        bind = _bindinger(uttrykk)
+        if kolonne in bind:
+            ut = bind[kolonne] if ut is None else _snitt(ut, bind[kolonne])
+    return ut if ut is not None else set()
+
+
+def _registerenum(kolonne: str) -> set[str]:
+    """Verdiene `modulkontrakt` godtar i `kolonne` NÅ, lest av basen.
+
+    TABELLEN er en del av spørsmålet (Codex P2 på #118, sjette runde): dette
+    slo før opp på kolonnenavnet alene og unionerte over alle tabeller — og en
+    union er ikke det databasen gjør. Kontrakten en katalogmodul blir til når
+    den bygges, lagres i `modulkontrakt`, og det er DEN tabellens CHECK-vilkår
+    som avviser den; oppslaget binder seg derfor til `conrelid`.
+
+    Feiler oppslaget, er det fordi kolonnen ikke lenger CHECK-es på
+    `modulkontrakt` — og da er det porten som skal rettes, ikke katalogen.
+
+    En kolonne porten ikke kunne lese vilkåret for, se `ULESELIG_SQL`, sier
+    fra HER: det er kolonnen katalogen faktisk måles mot som må være lest
+    riktig, og et gjettet innhold ville vært verre enn ingen.
+    """
+    ut = _enum_av(_kontraktvilkar(), kolonne)
+    assert ut, (f"fant ikke noe CHECK-vilkår for {MODULKONTRAKT}.{kolonne} i "
+                f"basen — kolonnen er ikke lenger bundet der, og da er det "
+                f"porten som må rettes, ikke katalogen")
+    assert ULESELIG_SQL not in ut, (
+        f"CHECK-vilkåret for {MODULKONTRAKT}.{kolonne} er ikke en verdiliste "
+        f"porten kan regne på — et sammensatt eller negativt predikat, eller "
+        f"et uttrykk i lista. Skriv vilkåret som `{kolonne} IN ('…', '…')`; "
+        f"proben (`_proben_godtar`) dømmer fortsatt riktig, men lesningen som "
+        f"skal NAVNGI de tillatte verdiene kan ikke gjette.")
+    return ut
+
+
+def _proben_godtar(kolonne: str, verdi: str) -> bool:
+    """Basens egen dom over `verdi` i `modulkontrakt.kolonne`.
+
+    Vilkårene kopieres til en temp-tabell (`LIKE … INCLUDING CONSTRAINTS`) av
+    PostgreSQL selv, NOT NULL på de andre kolonnene løsnes så én kolonne kan
+    prøves alene, og så er dommen en INSERT: `CheckViolation` er nei, alt
+    annet er ja. Ingen lesning av vilkåret i det hele tatt — dette er
+    motprøven som holder `_registerenum()` ærlig den dagen et vilkår får en
+    form lesningen ikke kan regne på.
+
+    Et vilkår som binder FLERE kolonner sammen dømmer her med de andre
+    kolonnene som NULL — og et CHECK med ukjent operand slipper gjennom, slik
+    PostgreSQL selv definerer det. Det er samme dom som basen feller; proben
+    dikter ikke en strengere.
+    """
+    with psycopg.connect(DSN) as k:
+        try:
+            k.execute(f"CREATE TEMP TABLE katalogprobe "
+                      f"(LIKE {MODULKONTRAKT} INCLUDING CONSTRAINTS)")
+            for (kol,) in k.execute(
+                    "SELECT attname FROM pg_attribute"
+                    " WHERE attrelid = 'katalogprobe'::regclass"
+                    " AND attnum > 0 AND NOT attisdropped AND attnotnull"
+                    ).fetchall():
+                k.execute(f'ALTER TABLE katalogprobe '
+                          f'ALTER COLUMN "{kol}" DROP NOT NULL')
+            try:
+                k.execute(
+                    f'INSERT INTO katalogprobe ("{kolonne}") VALUES (%s)',
+                    (verdi,))
+            except psycopg.errors.CheckViolation:
+                return False
+            return True
+        finally:
+            k.rollback()
+
+
+def _modulkontraktens_vilkarsuttrykk(stmt) -> list:
+    """CHECK-uttrykkene én setning legger på `modulkontrakt` — ren syntaks.
+
+    Ingen tilstand føres: ikke rekkefølge, ikke slipp, ikke grener. Dette er
+    grunnlaget for `_noen_gang_bundet()`, som bare trenger UNIONEN over
+    historikken — hva som gjelder NÅ svarer basen på, se `_registerenum()`.
+    """
+    ut = []
+    sjekk = pglast.enums.ConstrType.CONSTR_CHECK
+    if isinstance(stmt, pglast.ast.CreateStmt) \
+            and stmt.relation.relname == MODULKONTRAKT:
+        for elt in stmt.tableElts or ():
+            if isinstance(elt, pglast.ast.ColumnDef):
+                ut.extend(c.raw_expr for c in elt.constraints or ()
+                          if c.contype == sjekk and c.raw_expr is not None)
+            elif isinstance(elt, pglast.ast.Constraint) \
+                    and elt.contype == sjekk and elt.raw_expr is not None:
+                ut.append(elt.raw_expr)
+    if isinstance(stmt, pglast.ast.AlterTableStmt) \
+            and stmt.relation.relname == MODULKONTRAKT:
+        for cmd in stmt.cmds or ():
+            definisjon = getattr(cmd, "def_", None)
+            if isinstance(definisjon, pglast.ast.Constraint) \
+                    and definisjon.contype == sjekk \
+                    and definisjon.raw_expr is not None:
+                ut.append(definisjon.raw_expr)
+    return ut
+
+
+@functools.cache
+def _noen_gang_bundet() -> frozenset[str]:
+    """Verdier som noen gang har stått i et CHECK på kontraktkolonnene.
+
+    En ren union over migrasjonsfilene, lest som syntaks setning for setning —
+    med vilje uten tilstand: spørsmålet er «har registeret noen gang bundet
+    dette navnet?», og for det er historikken svaret uansett hva senere filer
+    gjorde med vilkåret. Hva som gjelder NÅ er basens spørsmål, og
+    pensjonert = noen gang − nå regnes der de to møtes, se
+    `_kjente_identifikatorer()`.
+
+    RETNINGEN når lesningen ikke ser alt, sagt rett ut: et vilkår lagt på
+    gjennom dynamisk DDL eller i en `DO`-kropp fanges ikke her. Da mangler
+    verdien i `noen gang`, blir ikke regnet som pensjonert, og prosaporten
+    forblir MILDERE — den avviser aldri legitim tekst på grunn av et hull her.
+    Selve enum-dommen over katalogen tar ingen omvei om denne lista; den bor i
+    basen.
+    """
+    ut: set[str] = set()
+    kolonner = set(KONTRAKTFELT.values())
+    for fil in sorted(MIGRASJONER.glob("*.sql")):
+        for stmt, _tekst in _setningene(fil.read_text(encoding="utf-8")):
+            for uttrykk in _modulkontraktens_vilkarsuttrykk(stmt):
+                for kol, verdier in _bindinger(uttrykk).items():
+                    if kol in kolonner:
+                        ut |= verdier - {ULESELIG_SQL}
+    return frozenset(ut)
+
+
+@pg
+def test_kontraktklassene_i_katalogen_finnes_i_modulregisteret():
+    """`kl` og `rev` i katalogen må være verdier registeret godtar.
+
+    Codex P2 på PR #118: M-57 kom inn med `kl: "dokumentbehandling"` og
+    `rev: "rådgivende_pluss_signert_utsendelse"`. Begge er utenfor CHECK-
+    vilkårene i migrasjon 014 og 036, og de står i nøyaktig de feltene hver
+    annen modul bruker til maskinlesbare klasser. En modul beskrevet slik kan
+    ikke registreres når den skal bygges: kontrakten avvises av databasen, og
+    den som implementerer må enten se bort fra sannhetskilden eller endre den.
+
+    Prosa om hvorfor en klasse ble valgt hører hjemme i `merknad` og `guard` —
+    de feltene har ingen enum og ingen maskin leser dem.
+
+    Enumene leses fra `modulkontrakt` i den MIGRERTE BASEN og ikke som en
+    union over alle tabeller som tilfeldigvis har en kolonne med samme navn —
+    det er den tabellen kontrakten lagres i, og altså den som sier nei. Se
+    `_registerenum()`.
+
+    Porten sjekker de feltene som FINNES, og derfor må den også kreve at hvert
+    felt lar seg lese (Codex P2 på #118, tolvte runde). En nøkkel skrevet
+    `['\\x6bl']` er `kl` for nettleseren, men noe annet for en parser som leser
+    råteksten — og det feltet porten ikke ser, kontrollerer den ikke. Å mangle
+    et felt er farligere enn å misforstå det. NØKKELEN er ikke lenger et
+    spørsmål: `les_katalog.mjs` er en JavaScript-motor, så egenskapen heter det
+    nettleseren kaller den. VERDIEN er det fortsatt — en funksjon eller et
+    mønster i et `kl`-felt er ingen klasse noen kan måle, se `IKKE_DATA`.
+
+    MUTASJONEN SOM DREPER DENNE: hardkod enumene i testen. Da vokter porten en
+    kopi, og en migrasjon som strammer inn et vilkår går rett forbi den.
+    """
+    uleselige = [f"M-{p['n']}.{felt}" for p in _katalogposter()
+                 for felt in _uleselige_felt(p)]
+    assert not uleselige, (
+        "modulposter med en feltverdi som ikke er data: "
+        + ", ".join(uleselige) + " — katalogen bærer tekst, tall og lister av "
+        "slike, ikke noe som først blir til når siden kjører")
+    tillatt = {felt: _registerenum(kol) for felt, kol in KONTRAKTFELT.items()}
+    avvik = [f"M-{n}.{felt}={d[felt]!r} (godtatt: "
+             f"{', '.join(sorted(tillatt[felt]))})"
+             for n, d in sorted(_moduler_fra_kilden().items())
+             for felt in KONTRAKTFELT
+             if felt in d and d[felt] not in tillatt[felt]]
+    assert not avvik, (
+        "kontraktklasser i katalogen som modulregisteret vil avvise: "
+        + "; ".join(avvik))
+
+
+@pg
+def test_basens_egen_dom_bekrefter_lesningen():
+    """To lesninger av samme register må dømme likt — ellers er porten rød.
+
+    `_registerenum()` NAVNGIR de tillatte verdiene ved å lese basens egen
+    vilkårsdefinisjon; `_proben_godtar()` spør basen direkte, verdi for verdi,
+    uten å lese noe. Er de uenige om én eneste verdi katalogen bruker, har
+    lesningen et hull — og da skal porten si det HER, ikke la katalogporten
+    stå grønn på en lesning ingen har motprøvd.
+
+    Den negative kontrollen er med fordi to lesninger som begge sier ja til
+    alt også er «enige»: en verdi ingen har, må få nei fra BEGGE.
+    """
+    for felt, kolonne in KONTRAKTFELT.items():
+        tillatt = _registerenum(kolonne)
+        # Bare tekstverdier probes: en `kl: 42` er ikke en enumverdi basen kan
+        # spørres om i det hele tatt, og den felles av enumporten over (F27).
+        # Denne testen måler om to LESNINGER av registeret dømmer likt.
+        brukte = {d[felt] for _, d in sorted(_moduler_fra_kilden().items())
+                  if isinstance(d.get(felt), str)}
+        assert brukte, f"ingen modulpost bærer feltet {felt!r} — porten er tom"
+        for verdi in sorted(brukte | {"klasse_ingen_har"}):
+            dom = _proben_godtar(kolonne, verdi)
+            assert dom is (verdi in tillatt), (
+                f"basen og lesningen er uenige om {kolonne}={verdi!r}: "
+                f"proben sier {'ja' if dom else 'nei'}, lesningen "
+                f"{'ja' if verdi in tillatt else 'nei'} (lest: "
+                f"{', '.join(sorted(tillatt))})")
+        assert not _proben_godtar(kolonne, "klasse_ingen_har")
+
+
+# Formene under er basens egen rendering (`pg_get_constraintdef`-fasong, med
+# kast og doble parenteser) og de rene kildeformene om hverandre — lesningen
+# skal dømme likt uansett hvem som skrev vilkåret ned.
+@pytest.mark.parametrize("definisjon,forventet", [
+    # 036-vilkårets fasong slik basen selv skriver den ut.
+    ("CHECK ((sideeffektklasse = ANY (ARRAY['sideeffektfri'::text, "
+     "'ekstern_lesing'::text, 'krever_outbox'::text])))",
+     {"sideeffektfri", "ekstern_lesing", "krever_outbox"}),
+    # Kildeformen fra 014.
+    ("CHECK (reversibilitet IN ('direkte', 'kompenserende', 'irreversibel'))",
+     {"direkte", "kompenserende", "irreversibel"}),
+    # Et vilkår som ikke er en verdiliste gjør kolonnen UVISS — aldri gjettet,
+    # aldri stille videre. Hver av disse formene ble lest FEIL av skanneren
+    # før #118: den fant en liste (eller ingen), meldte den som hele
+    # sannheten, og gikk videre.
+    ("CHECK ((length(sideeffektklasse) < 20))", {ULESELIG_SQL}),
+    ("CHECK ((sideeffektklasse <> 'sideeffektfri'))", {ULESELIG_SQL}),
+    # En OG-kjede leses ledd for ledd og snittes — og uvissheten fra leddet
+    # lesningen ikke kan regne på, forplanter seg i stedet for å snittes bort.
+    ("CHECK (((sideeffektklasse = ANY (ARRAY['sideeffektfri'::text])) "
+     "AND (sideeffektklasse <> 'krever_outbox')))",
+     {"sideeffektfri", ULESELIG_SQL}),
+    # Et ledd som er et UTTRYKK gir ingen liste: å regne det ut ville vært å
+    # skrive PostgreSQLs operatorer av i Python (Codex P2 på #118, tjuende
+    # runde).
+    ("CHECK ((sideeffektklasse = ANY (ARRAY[('side'::text || "
+     "'effektfri'::text)])))", {ULESELIG_SQL}),
+])
+def test_et_vilkaar_som_ikke_er_en_verdiliste_gjor_kolonnen_uviss(
+        definisjon, forventet):
+    """Lesningen navngir verdier eller melder uvisst — aldri noe imellom.
+
+    Dette er den rene lesningen, uten base: `_enum_av()` får definisjonen som
+    tekst, nøyaktig slik `_kontraktvilkar()` ville gitt den videre. Uvisshet
+    her er ikke en feil i seg selv — proben dømmer fortsatt — men
+    `_registerenum()` skal stoppe HØYT på den i stedet for å gjette, se
+    testen under.
+    """
+    assert _enum_av((("p", definisjon),),
+                    "sideeffektklasse" if "sideeffektklasse" in definisjon
+                    else "reversibilitet") == forventet
+
+
+def test_et_uleselig_vilkaar_stopper_enumoppslaget(monkeypatch):
+    """`_registerenum()` skal si fra HØYT, ikke gjette eller tie.
+
+    Den dagen et vilkår på `modulkontrakt` får en form lesningen ikke kan
+    regne på, er riktig svar en rød port med beskjed om å skrive vilkåret som
+    en verdiliste — aldri et gjettet innhold, og aldri en stille videre en.
+    """
+    monkeypatch.setattr(
+        sys.modules[__name__], "_kontraktvilkar",
+        lambda: (("p", "CHECK ((length(sideeffektklasse) < 20))"),))
+    with pytest.raises(AssertionError, match="ikke en verdiliste"):
+        _registerenum("sideeffektklasse")
+
+
+def test_en_ubundet_kolonne_stopper_enumoppslaget(monkeypatch):
+    """Forsvinner vilkåret helt, er det porten som skal rettes — høylytt."""
+    monkeypatch.setattr(sys.modules[__name__], "_kontraktvilkar", lambda: ())
+    with pytest.raises(AssertionError, match="ikke noe CHECK-vilkår"):
+        _registerenum("sideeffektklasse")
+
+
+# Port 9 leser modulpostene. Den forklarende prosaen rundt dem leser den ikke —
+# og det var der de to oppfunne klassene ble stående etter at postene var
+# rettet (Codex P2 på #118, tredje runde): endringsloggen presenterte fortsatt
+# `dokumentbehandling` og `rådgivende_pluss_signert_utsendelse` som nye
+# katalogbegreper. Sannhetskilden sa da to ting samtidig, og den som
+# implementerer leser prosaen først.
+#
+# Regelen: skriver dokumentet en identifikator i maskinform, må maskinen ha
+# den. Ordskiller er understrek — vanlig norsk prosa skriver ikke sånn, så
+# mønsteret treffer nettopp de ordene som utgir seg for å være noe systemet
+# kjenner. Sammensetninger med bindestrek (`axe-core`, `robots.txt`) er prosa
+# og faller utenfor med vilje.
+#
+# Siffer teller med etter første bokstav (Codex P2 på #118, fjerde runde). Kun
+# bokstaver i hvert ledd betydde at enhver maskinidentifikator med et tall i
+# seg gikk usett forbi: den avviste klassen kunne kommet tilbake som
+# `rådgivende_pluss_signert_utsendelse_v2`, og et oppfunnet `sha_256_digest`
+# leste porten som ingenting. Første tegn må fortsatt være en bokstav, slik at
+# `\b` har noe å feste seg i og tallgrupper i vanlig tekst ikke blir treff.
+IDENT_RE = re.compile(r"\b[a-zæøå][a-zæøå0-9]*(?:_[a-zæøå0-9]+)+\b")
+
+
+
+
+def _kjente_identifikatorer() -> set[str]:
+    """Identifikatorer i maskinform som faktisk finnes i repoet — NÅ.
+
+    To kilder, begge lest ut av repoet i stedet for skrevet av her: verdier
+    migrasjonene skriver i apostrofer (registerets egne klasser, moduser og
+    tilstander), og stammen i navnet på en sporet fil (spesifikasjonen navngir
+    porter og verktøy, som `test_ui_kontrakt`).
+
+    Migrasjonene er historikk (Codex P2 på #118, fjerde runde). En ren union
+    over dem gjorde enhver verdi gyldig for alltid: strammet en senere
+    migrasjon inn et CHECK-vilkår, sto den fjernede verdien igjen i lista fordi
+    filen som innførte den fortsatt ligger der — og prosaen kunne fortsette å
+    presentere en klasse registeret nettopp hadde sluttet å godta. Verdier
+    registeret BINDER i et vilkår måles derfor mot gjeldende tilstand, og den
+    leses av BASEN (`_registerenum()`): har verdien stått i et vilkår på
+    kontraktkolonnene (`_noen_gang_bundet()`) og basen ikke godtar den nå, er
+    den pensjonert og ute av lista. En verdi som aldri har stått i et CHECK
+    (`alltid_stopp` er en modus, håndhevet i kode) berøres ikke — den har
+    ingen registertilstand å falle ut av, og filstammene er gjeldende tilstand
+    i seg selv, siden en slettet fil forsvinner fra `git ls-files`.
+
+    Og verdiene leses ut av det migrasjonen SKRIVER, ikke ut av råteksten: en
+    kommentar finnes ikke i et syntakstre, en melding er ÉN verdi uansett
+    sitering, og en funksjonskropp er skrevet selv om `AS $$…$$` ikke kjører
+    den. Se `_skrevne_verdier()` og prøvene på den under.
+    """
+    gjeldende = set().union(
+        *(_registerenum(kol) for kol in KONTRAKTFELT.values()))
+    pensjonert = set(_noen_gang_bundet()) - gjeldende
+    ut: set[str] = set()
+    for sql in sorted(MIGRASJONER.glob("*.sql")):
+        ut.update(t for t in _skrevne_verdier(sql.read_text(encoding="utf-8"))
+                  if IDENT_RE.fullmatch(t))
+    ut -= pensjonert
+    spor = subprocess.run(["git", "ls-files", "-z"], cwd=ROT,
+                          capture_output=True, text=True, check=True)
+    ut.update(Path(rel).stem for rel in spor.stdout.split("\0") if rel)
+    return ut
+
+
+@pg
+def test_en_pensjonert_verdi_er_ute_av_de_kjente(monkeypatch):
+    """Subtraksjonen som holder lista gjeldende må bevises, ikke antas.
+
+    Historikken i dag er et rent superset (036 utvidet vilkåret uten å fjerne
+    noe), så pensjonert-mengden er TOM — og en mekanisme ingen prøve driver,
+    er stille verdiløs den dagen den trengs. Prøven setter derfor en verdi som
+    beviselig er skrevet i migrasjonene (`alltid_stopp`, en modus) inn i
+    «noen gang bundet»-mengden: basen godtar den ikke i kontraktkolonnene, så
+    den SKAL regnes som pensjonert og falle ut av de kjente — mens en verdi
+    basen fortsatt godtar (`ekstern_lesing`) står urørt.
+    """
+    ekte = _kjente_identifikatorer()
+    assert {"alltid_stopp", "ekstern_lesing"} <= ekte, (
+        "prøvens forutsetning røk: verdiene finnes ikke lenger i migrasjonene")
+    monkeypatch.setattr(
+        sys.modules[__name__], "_noen_gang_bundet",
+        lambda: frozenset({"alltid_stopp", "ekstern_lesing"}))
+    kjente = _kjente_identifikatorer()
+    assert "alltid_stopp" not in kjente, (
+        "en verdi registeret har sluttet å binde ble stående som kjent — "
+        "pensjonert-subtraksjonen virker ikke")
+    assert "ekstern_lesing" in kjente
+
+
+
+
+@pytest.mark.parametrize("sql,star_igjen", [
+    # En merknad skriver ingenting, og navnet i den finnes ikke av den grunn.
+    ("-- en gang het den 'oppfunnet_klasse'\nSELECT 1;\n", False),
+    ("/* en gang het den 'oppfunnet_klasse' */\nSELECT 1;\n", False),
+    # Men en verdi i en funksjonsKROPP er skrevet av registeret, selv om
+    # `AS $$…$$` bare definerer kroppen uten å kjøre den.
+    ("CREATE FUNCTION f() RETURNS text LANGUAGE sql AS $$\n"
+     "    SELECT 'oppfunnet_klasse';\n"
+     "$$;\n", True),
+    # Og en kommentar INNE i en slik kropp er fortsatt en kommentar.
+    ("CREATE FUNCTION f() RETURNS text LANGUAGE sql AS $$\n"
+     "    -- het 'oppfunnet_klasse' før\n"
+     "    SELECT 'noe';\n"
+     "$$;\n", False),
+    # Det samme i en PL/pgSQL-kropp, der lesningen går en annen vei.
+    ("CREATE FUNCTION f() RETURNS text LANGUAGE plpgsql AS $$\n"
+     "BEGIN RETURN 'oppfunnet_klasse'; END $$;\n", True),
+    ("CREATE FUNCTION f() RETURNS text LANGUAGE plpgsql AS $$\n"
+     "BEGIN -- het 'oppfunnet_klasse' før\n"
+     "  RETURN 'noe'; END $$;\n", False),
+    # En TRIGGERFUNKSJON leses som alle andre. Den er formen libpg_query
+    # skriver ugyldig JSON for, se `_plpgsql()`; uten reparasjonen der ville
+    # verdien forsvunnet i stillhet — og med den 120 andre.
+    ("CREATE FUNCTION f() RETURNS trigger LANGUAGE plpgsql AS $$\n"
+     "BEGIN NEW.a := 'oppfunnet_klasse'; RETURN NEW; END $$;\n", True),
+    # PL/pgSQL godtar BEGGE skrivemåtene av tildeling, og PostgreSQL utfører
+    # dem likt (Codex P2). `=` uten kolon ga `IndexError` og felte suiten.
+    ("CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $$\n"
+     "DECLARE v_state text;\n"
+     "BEGIN v_state = 'oppfunnet_klasse'; END $$;\n", True),
+    # Og tegnene `:=` inne i en VERDI er verdien, ikke tildelingstegnet: å lete
+    # etter `:=` først ville kuttet setningen midt i strengen.
+    ("CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $$\n"
+     "DECLARE v_state text;\n"
+     "BEGIN v_state = 'oppfunnet_klasse := nei'; END $$;\n", False),
+    ("CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $$\n"
+     "DECLARE v_state text;\n"
+     "BEGIN v_state = 'a := b'; v_state := 'oppfunnet_klasse'; END $$;\n",
+     True),
+    # OG ET LIKHETSTEGN INNE I MÅLET ER MÅLET (Codex P2, F38). Et sitert
+    # variabelnavn og en subskriptnøkkel kan begge bære `=`, og da sto skillet
+    # inne i målet: målt på `f44dc6f` ga begge `ParseError` — «unterminated
+    # quoted identifier», «unterminated quoted string» — og felte hele suiten
+    # på migrasjoner PostgreSQL utfører uten å blunke. Skanneren ser ett token
+    # der råteksten så et tegn.
+    ('CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $$\n'
+     'DECLARE "v=x" text;\n'
+     'BEGIN "v=x" := \'oppfunnet_klasse\'; END $$;\n', True),
+    ('CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $$\n'
+     'DECLARE "v=x" text;\n'
+     'BEGIN "v=x" = \'oppfunnet_klasse\'; END $$;\n', True),
+    ("CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $$\n"
+     "DECLARE v jsonb;\n"
+     "BEGIN v['key=value'] := to_jsonb('oppfunnet_klasse'::text); END $$;\n",
+     True),
+    # Og et likhetstegn inne i en PARENTES i målet er heller ikke tildelingen:
+    # bare tegnet på dybde 0 er den.
+    ("CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $$\n"
+     "DECLARE v jsonb;\n"
+     "BEGIN v[('a' = 'b')::int::text] := to_jsonb('oppfunnet_klasse'::text);\n"
+     "END $$;\n", True),
+    # Kommentartegn inne i en STRENG er data, ikke starten på en kommentar.
+    ("INSERT INTO t (a, b) VALUES ('a--b', 'oppfunnet_klasse');\n", True),
+    # En doblet fnutt er en ESCAPE, ikke slutten på én verdi og starten på en
+    # ny (Codex P2 på #118, syttende runde): meldingen her er ÉN literal, og
+    # navnet i den står ikke for seg selv noe sted.
+    ("DO $do$ BEGIN\n"
+     "    RAISE EXCEPTION 'mangler ''oppfunnet_klasse''';\n"
+     "END $do$;\n", False),
+    ("SELECT 'det''s ''oppfunnet_klasse'' som mangler';\n", False),
+    # Men en verdi som ER navnet, med en escapet nabo, står fortsatt.
+    ("INSERT INTO t (a, b) VALUES ('det''s', 'oppfunnet_klasse');\n", True),
+    # En ESCAPESTRENG er verdien escapen gir. Den ble gitt fra seg før, fordi å
+    # tolke den betydde å skrive PostgreSQLs escaperegler av i Python; nå løser
+    # den som EIER reglene dem opp, og da er verdien verdien.
+    ("SELECT E'oppfunnet_klasse';\n", True),
+    ("SELECT E'oppfunnet\\x5fklasse';\n", True),
+    # Et dollarsitert spenn som ikke er en kropp, er ÉN tekst (Codex P2 på
+    # #118, attende runde). Meldingen her nevner navnet, den skriver det ikke.
+    ("DO $do$ BEGIN\n"
+     "    RAISE EXCEPTION $$mangler 'oppfunnet_klasse'$$;\n"
+     "END $do$;\n", False),
+    # Og kommentartegn inne i en slik tekst er data: blankes de, blir en annen
+    # verdi enn den registeret skriver stående igjen.
+    ("INSERT INTO t (a) VALUES ($$oppfunnet_klasse -- ikke en kommentar$$);\n",
+     False),
+    # Men motsatt vei: en VERDI skrevet dollarsitert er skrevet, selv om det
+    # ikke står en apostrof i den.
+    ("INSERT INTO t (a) VALUES ($$oppfunnet_klasse$$);\n", True),
+    ("INSERT INTO t (a) VALUES ($tagg$oppfunnet_klasse$tagg$);\n", True),
+    # En `DO`-kropp er en kropp — verdiene i den er skrevet av registeret.
+    ("DO $$ BEGIN\n"
+     "    PERFORM 'oppfunnet_klasse';\n"
+     "END $$;\n", True),
+    # To fragmenter med linjeskift mellom seg er ÉN verdi (Codex P2 på #118,
+    # attende runde), og formen brukes gjennomgående til lange meldinger.
+    ("SELECT 'mangler '\n"
+     "       'oppfunnet_klasse';\n", False),
+    # Uten linjeskift skjøter ikke PostgreSQL — det er en syntaksfeil der.
+    ("SELECT 'oppfunnet_klasse' 'og mer';\n", None),
+    # Og en verdi som står alene på linja, står fortsatt.
+    ("SELECT 'mangler',\n"
+     "       'oppfunnet_klasse';\n", True),
+    # IKKE-ASCII FORAN EN KROPP FORSKYVER INGENTING (Codex P1, F19). `DO`- og
+    # funksjonskropper leses av `parse_plpgsql`, som får HELE setningen skåret
+    # ut med `stmt_location`/`stmt_len`. libpg_query teller de tallene i BYTE,
+    # `pglast` regner dem om til TEGN, og repoets migrasjoner har norsk prosa
+    # foran setningene sine. Skjæres det i bytene i stedet, starter utsnittet
+    # for tidlig, `parse_plpgsql` får en usyntaktisk kropp og verdien
+    # forsvinner. Se `_setningene()`.
+    ("-- én ø, så en kropp: æøå ÆØÅ\n"
+     "DO $$ BEGIN\n"
+     "    PERFORM 'oppfunnet_klasse';\n"
+     "END $$;\n", True),
+    # Samme sak med tegnet inne i kroppen: kuttes det etter byteLENGDEN, faller
+    # halen av setningen bort og `END $$` mangler.
+    ("DO $$ BEGIN\n"
+     "    PERFORM 'nærmere: æøå';\n"
+     "    PERFORM 'oppfunnet_klasse';\n"
+     "END $$;\n", True),
+    # EN SQL-STANDARD KROPP ER OGSÅ SKREVET (Codex P2, F22). PostgreSQL 14 kan
+    # skrive kroppen uten sitering, og da PARSES den med resten av setningen:
+    # den står som AST i `sql_body`, og `options` har ingen `as`. Grenen som
+    # fanget hver `CreateFunctionStmt` returnerte da uten å ha lest noe, og
+    # verdiene i funksjonen forsvant i stillhet — navn registeret HAR skrevet
+    # ble borte fra hvitlista, og prosaporten kunne avvise dem som oppfunnet.
+    ("CREATE FUNCTION f() RETURNS text LANGUAGE SQL\n"
+     "BEGIN ATOMIC\n"
+     "    SELECT 'oppfunnet_klasse';\n"
+     "END;\n", True),
+    # Flere setninger i kroppen, og verdien i den siste.
+    ("CREATE FUNCTION f() RETURNS text LANGUAGE SQL\n"
+     "BEGIN ATOMIC\n"
+     "    SELECT 'annet';\n"
+     "    SELECT 'oppfunnet_klasse';\n"
+     "END;\n", True),
+    # Og enkeltuttrykksformen, der `sql_body` er én node og ikke en liste.
+    ("CREATE FUNCTION f() RETURNS text LANGUAGE SQL\n"
+     "RETURN 'oppfunnet_klasse';\n", True),
+    # Den siterte formen leses fortsatt som før — begge veier, begge språk.
+    ("CREATE FUNCTION g() RETURNS text LANGUAGE SQL\n"
+     "AS $$ SELECT 'oppfunnet_klasse' $$;\n", True),
+    ("CREATE FUNCTION h() RETURNS text LANGUAGE plpgsql\n"
+     "AS $$ BEGIN RETURN 'oppfunnet_klasse'; END $$;\n", True),
+    # En SQL-standard kropp uten navnet skriver det fortsatt ikke.
+    ("CREATE FUNCTION f() RETURNS text LANGUAGE SQL\n"
+     "BEGIN ATOMIC\n"
+     "    SELECT 'noe_helt_annet';\n"
+     "END;\n", False),
+    # EN FERDIG SKREVET `EXECUTE` ER SKREVET (Codex P2, F41). Kommandoen står
+    # som ÉN strengkonstant i treet, og lest som en verdi ble hele setningen
+    # ett ord ingen kjenner igjen — samme feil som en kropp lest som streng
+    # (F22). Verdien migrasjonen faktisk skriver manglet da i hvitlista, og
+    # prosaporten kunne avvise den som oppfunnet.
+    ("DO $$ BEGIN\n"
+     "    EXECUTE 'INSERT INTO t (a) VALUES (''oppfunnet_klasse'')';\n"
+     "END $$;\n", True),
+    # Også når kommandoen selv bærer en kropp: den leses som SQL, hele veien.
+    ("DO $$ BEGIN\n"
+     "    EXECUTE 'DO $x$ BEGIN PERFORM ''oppfunnet_klasse''; END $x$';\n"
+     "END $$;\n", True),
+    # En ferdig skrevet kommando UTEN navnet skriver det fortsatt ikke.
+    ("DO $$ BEGIN\n"
+     "    EXECUTE 'INSERT INTO t (a) VALUES (''noe_helt_annet'')';\n"
+     "END $$;\n", False),
+    # Og en kommando som først BLIR TIL når funksjonen kjører, leses som før:
+    # uttrykket er det som står i kilden, og verdiene i det er skrevet.
+    ("DO $$ BEGIN\n"
+     "    EXECUTE format('INSERT INTO %I (a) VALUES (%L)', 't',\n"
+     "                   'oppfunnet_klasse');\n"
+     "END $$;\n", True),
+    ("DO $$ BEGIN\n"
+     "    EXECUTE format('INSERT INTO %I (a) VALUES (%L)', 't',\n"
+     "                   'noe_helt_annet');\n"
+     "END $$;\n", False),
+])
+def test_en_sqlkommentar_skriver_ingen_identifikator(sql, star_igjen):
+    """Lista over kjente identifikatorer leses av det migrasjonen SKRIVER.
+
+    Verdiene ble hentet ut av råteksten (Codex P2 på #118, femtende runde), og
+    et maskinformet navn nevnt i en merknad havnet dermed i lista uten å finnes
+    noe sted. Prosaen i sannhetskilden kunne så presentere en klasse ingen
+    tabell har hørt om, og porten sa ingenting fordi navnet «finnes». Runde
+    sytten og atten fant to former til av samme sak: den doblede apostrofen og
+    den dollarsiterte meldingen.
+
+    Lesningen er en annen enn enum-dommen i `_registerenum()`, og det er med
+    vilje: der spør vi basen hva registeret HÅNDHEVER nå, her hva det SKRIVER. En
+    funksjonskropp er skrevet selv om `AS $$…$$` ikke kjører den.
+
+    `star_igjen=None` betyr at fragmentet ikke er gyldig SQL. PostgreSQL skjøter
+    ikke to fragmenter uten linjeskift mellom seg, og da skal porten heller ikke
+    gjøre det — men den skal si fra HØYT, ikke lese noe annet enn serveren.
+    """
+    if star_igjen is None:
+        with pytest.raises(pglast.parser.ParseError):
+            _skrevne_verdier(sql)
+        return
+    assert ("oppfunnet_klasse" in _skrevne_verdier(sql)) is star_igjen
+
+
+def test_en_ferdig_skrevet_execute_som_ikke_er_sql_sier_fra():
+    """En kommando vi ikke kan lese, skal ikke bli et hull (Codex P2, F41).
+
+    Står kommandoen ferdig skrevet i kilden, men ikke som gyldig SQL, ville
+    serveren feilet på den også. Da er alternativet til å si fra å utelate
+    verdiene i den i stillhet — og en hvitliste med et hull i er en grønn port
+    på en identifikator som ikke finnes noe sted.
+    """
+    with pytest.raises(AssertionError, match="ikke er gyldig SQL"):
+        _skrevne_verdier("DO $$ BEGIN EXECUTE 'INSERT INTO'; END $$;\n")
+
+
+_SKRIPTDEL_RE = re.compile(r"<script[^>]*>(.*?)</script>", re.S)
+
+# Etiketten dokumentteksten bærer. Den er det ene stykket som har en PLASS i
+# fila, så porten melder linjenummer for den og feltnavn for resten.
+DOKUMENTET = "dokumentet"
+
+
+def _tekstene_i(verdi) -> list[str]:
+    """Alle tekstene i en feltverdi — HELE VEIEN NED.
+
+    Prosaen ble hentet fra en direkte streng eller et direkte listeledd (Codex
+    P2). Leseren tillater lister og objekter av data i vilkårlig dybde, så en
+    `flow:[['…']]` eller et objektfelt bar prosa porten aldri fikk se, og en
+    oppfunnet maskinidentifikator kunne stå der med grønn port. Det som samles
+    inn må gå like dypt som det som er lov å skrive.
+
+    NØKLENE er ikke med. `kl`/`rev` er maskinform på nøkkelposisjon og vokter
+    seg selv i port 9; det som måles her er hva kilden SIER.
+    """
+    if isinstance(verdi, str):
+        return [verdi]
+    if isinstance(verdi, list):
+        return [t for v in verdi for t in _tekstene_i(v)]
+    if isinstance(verdi, dict):
+        return [t for v in verdi.values() for t in _tekstene_i(v)]
+    return []
+
+
+def _avkodet(dokument: str) -> str:
+    """Dokumentteksten slik den STÅR FOR EN LESER — entiteter avkodet.
+
+    Porten skannet råteksten (Codex P2). En entitet er ikke tegnene sine:
+    `oppfunnet&#95;klasse` og `oppfunnet&lowbar;klasse` vises begge som
+    `oppfunnet_klasse`, men råteksten har ingen understrek i dem, og
+    `IDENT_RE` — som fester seg nettopp i understreken — så ingenting. Porten
+    sto grønn mens den som leser dokumentet fikk servert den oppfunne
+    identifikatoren i klartekst: nøyaktig det porten finnes for.
+
+    Å skrive maskinform slik er ingen normal skrivemåte, og det er poenget —
+    en port som bare tåler den normale skrivemåten vokter bare den som ikke
+    prøver. Avkodingen er `html.unescape`, altså både `&#95;` og HTML5s navn.
+
+    LINJENUMRENE STÅR. En entitet kan selv være et linjeskift (`&#10;`), og et
+    linjeskift i dokumentteksten er mellomrom for leseren — det avkodes derfor
+    linje for linje, og et linjeskift som kommer ut av en entitet blir
+    mellomrom i stedet for å forskyve linja porten melder.
+    """
+    return "\n".join(re.sub(r"[\r\n]", " ", html.unescape(linje))
+                     for linje in dokument.split("\n"))
+
+
+def _prosastykker(kilde: Path = None) -> list[tuple[str, str]]:
+    """[(hvor, tekst)] — alt sannhetskilden SIER til den som skal bygge.
+
+    To kilder, og grensen mellom dem er en grense i dokumentet, ikke i en
+    skanners ordliste:
+
+      * DOKUMENTTEKSTEN, alt utenfor `<script>`. Det er der regresjonen i
+        tredje runde sto: endringsloggen forklarte `dokumentbehandling` og
+        `rådgivende_pluss_signert_utsendelse` som to nye katalogbegreper etter
+        at modulposten var rettet.
+      * MODULPOSTENES egne felt, lest av `les_katalog.mjs`. `merknad`, `guard`,
+        `goal`, `input`, `accept` og `flow` er prosa i katalogen, og `kl`/`rev`
+        er maskinform på nøkkelposisjon.
+
+    KJØRENDE JAVASCRIPT er ikke prosa (Codex P2 på #118, åttende runde). Porten
+    leste hele fila, også prototypens `<script>`, og et helt vanlig JS-navn —
+    `const filter_state = {}` — ble meldt som en oppfunnet registerklasse. Et
+    variabelnavn i kode PÅSTÅR ingenting om registeret; det er navnet på en
+    binding som lever og dør i denne fila.
+
+    Skillet ble den gangen trukket av JS-skanneren: kode maskert bort, fnutter
+    og kommentarer stående. Skanneren er borte, og med den nitten runders
+    former den ikke kjente. Grensen står i stedet der den kan sies rett ut, og
+    det er forskjellen fra en skanner med hull: UI-KODEN ER UTENFOR PORTEN —
+    også strengene og kommentarene i den. Den er dokumentasjon av prototypens
+    kode, skrevet til den som vedlikeholder den koden, og navnene den bruker er
+    dens egne bindinger og repoets egne filnavn. Det kildens LESER skal bygge
+    etter, står i dokumentteksten og i modulpostene, og begge måles her.
+
+    Grensen er en påstand hvem som helst kan etterprøve ved å lese den, ikke en
+    mengde grammatikkformer som stilltiende ikke ble kjent igjen. Skriver noen
+    en oppfunnet klasse i en kommentar i UI-koden, sier porten ingenting — og
+    det er sagt her, ikke oppdaget om atten runder.
+    """
+    kilde = kilde or KILDE
+    tekst = kilde.read_text(encoding="utf-8")
+    # Skriptet maskeres bort, men linjeskiftene blir stående: linjenummeret
+    # porten melder skal peke på linja i fila, ikke i et utsnitt.
+    biter, forrige = [], 0
+    for del_ in _SKRIPTDEL_RE.finditer(tekst):
+        biter.append(tekst[forrige:del_.start(1)])
+        biter.append("\n" * tekst.count("\n", del_.start(1), del_.end(1)))
+        forrige = del_.end(1)
+    biter.append(tekst[forrige:])
+    stykker: list[tuple[str, str]] = [(DOKUMENTET, _avkodet("".join(biter)))]
+    for post in _katalogposter(kilde):
+        for felt, verdi in sorted(post.items()):
+            for tekst in _tekstene_i(verdi):
+                stykker.append((f"M-{post['n']}.{felt}", tekst))
+    return stykker
+
+
+@pg
+def test_ingen_oppfunne_identifikatorer_i_sannhetskilden():
+    """Maskinform i spesifikasjonen må peke på noe som finnes.
+
+    Codex P2 på PR #118, tredje runde: modulposten for M-57 var rettet til
+    `krever_outbox`/`irreversibel`, men endringsloggen i samme fil forklarte
+    fortsatt `dokumentbehandling` og `rådgivende_pluss_signert_utsendelse` som
+    to nye katalogbegreper. Port 9 så det ikke — den leser postene, og dette
+    sto i prosaen. En oppfunnet klasse trenger ikke stå i et `kl`-felt for å
+    gjøre skade; den trenger bare å stå i dokumentet alle leser før de bygger.
+
+    Porten sier ikke at spesifikasjonen må slutte å forklare. Den sier at en
+    forklaring ikke får låne maskinens skrivemåte for noe maskinen ikke har:
+    prosa om hvorfor en klasse ble valgt skrives som prosa, og en identifikator
+    kommer inn ved å finnes — i en migrasjon eller som en fil i repoet.
+
+    GRENSEN, sagt rett ut: understreken er signalet, så en oppfunnet klasse som
+    er ETT ord (`dokumentbehandling` var det) går forbi her. Å skille den fra
+    vanlig norsk krever at porten leser hva setningen PÅSTÅR, og en slik
+    prosaregel ville enten avvist legitim dokumentasjon av en klasse som
+    faktisk kom (036 la `ekstern_lesing` til) eller vært lett å skrive seg
+    rundt. Det ettordstilfellet vokter port 9 der det gjør skade — i `kl`/`rev`
+    på selve posten.
+
+    KJØRENDE JAVASCRIPT er ikke prosa (Codex P2 på #118, åttende runde). Porten
+    leste hele fila, også prototypens `<script>`, og et helt vanlig JS-navn —
+    `const filter_state = {}` — ble meldt som en oppfunnet registerklasse. Et
+    variabelnavn i kode PÅSTÅR ingenting om registeret; det er navnet på en
+    binding som lever og dør i denne fila. Porten leser derfor
+    `_prosastykker()`: dokumentteksten, og modulpostenes egne felt — der kilden
+    faktisk sier noe til den som skal bygge.
+
+    MUTASJONEN SOM DREPER DENNE: la porten lese modulpostene i stedet for hele
+    prosaen. Da vokter den det port 9 allerede vokter, og dokumentteksten — som
+    er der regresjonen faktisk sto — er igjen uten port.
+    """
+    avvik = _oppfunne_identifikatorer()
+    assert not avvik, (
+        f"identifikatorer i {KILDE.name} som ikke finnes i registeret eller "
+        "som fil: " + "; ".join(f"«{ident}» ({sted})"
+                                for ident, sted in sorted(avvik.items())))
+
+
+@pg
+@pytest.mark.parametrize("fra,til,ident,sted", [
+    # DOKUMENTTEKSTEN. Dette er regresjonen fra tredje runde, satt tilbake:
+    # modulposten er rettet, endringsloggen står igjen med den avviste klassen.
+    ("<b>krever_outbox</b>", "<b>rådgivende_pluss_signert_utsendelse</b>",
+     "rådgivende_pluss_signert_utsendelse", "linje"),
+    # SAMME REGRESJON, SKREVET MED ENTITETER (Codex P2). Leseren av dokumentet
+    # ser `oppfunnet_klasse`; råteksten har ingen understrek å feste `IDENT_RE`
+    # i, og porten sto grønn på det den finnes for. Både tallformen og HTML5s
+    # navn, for begge er entiteter nettleseren avkoder uten videre.
+    ("<b>krever_outbox</b>", "<b>oppfunnet&#95;klasse</b>",
+     "oppfunnet_klasse", "linje"),
+    ("<b>krever_outbox</b>", "<b>oppfunnet&lowbar;klasse</b>",
+     "oppfunnet_klasse", "linje"),
+    # MODULPOSTENS FELT — prosafeltet, maskinfeltet og et ledd i en liste.
+    ("Byggerekkefølge: etter M-16", "Klassen er oppfunnet_klasse. Etter M-16",
+     "oppfunnet_klasse", "M-57.merknad"),
+    ('"kl":"krever_outbox"', '"kl":"oppfunnet_klasse"',
+     "oppfunnet_klasse", "M-57.kl"),
+    ("'Importerer standardpolicy", "'Kjører i modus alltid_stoppp",
+     "alltid_stoppp", "M-1.flow"),
+    # NEDE I FELTET. Leseren tillater lister og objekter i vilkårlig dybde, og
+    # prosa som står der er prosa (Codex P2).
+    ("'Importerer standardpolicy for kundens bransje og plan'",
+     "[{steg:'Kjører i modus dypt_oppfunnet'}]",
+     "dypt_oppfunnet", "M-1.flow"),
+])
+def test_prosaporten_maaler_dokumentet_og_modulpostene(tmp_path, fra, til,
+                                                       ident, sted):
+    """Begge halvdelene av `_prosastykker()` skal faktisk måles.
+
+    Porten leste før hele fila gjennom én maskering, og da var det ett sted å
+    ta feil. Nå er kilden to: dokumentteksten utenfor `<script>`, og feltene
+    `les_katalog.mjs` gir fra seg. Faller den ene ut — en sammenskjøting som
+    glemmer et ledd i en liste, en maskering som tar for mye — er porten grønn
+    på halve dokumentet uten at noe sier fra.
+
+    Prøvene setter derfor regresjonen tilbake i hver av dem, og krever at
+    porten melder BÅDE navnet og hvor det står. Stedet er med fordi det er det
+    som gjør meldingen brukbar: et linjenummer i dokumentet, et feltnavn i en
+    modulpost.
+    """
+    kilde = tmp_path / KILDE.name
+    tekst = KILDE.read_text(encoding="utf-8")
+    assert fra in tekst, f"fant ikke «{fra}» i kilden — den har endret form"
+    kilde.write_text(tekst.replace(fra, til, 1), encoding="utf-8")
+    avvik = _oppfunne_identifikatorer(kilde)
+    assert ident in avvik, (
+        f"porten så ikke «{ident}» i {sted} — halve prosaen er umålt")
+    assert avvik[ident].startswith(sted), (
+        f"porten melder «{ident}» i {avvik[ident]}, ikke i {sted}")
+
+
+@pg
+def test_en_entitet_som_er_linjeskift_flytter_ikke_linjenummeret(tmp_path):
+    """Avkodingen må ikke koste meldingen dens ene brukbare opplysning.
+
+    Dokumentteksten avkodes før den skannes, og en entitet kan selv være et
+    linjeskift (`&#10;`). Ble hele teksten avkodet under ett, ville hver slik
+    entitet lagt en linje til og skjøvet alt under seg: porten melder da et
+    linjenummer som ikke finnes i fila, og den som skal rette må lete.
+
+    Et linjeskift i dokumentteksten er dessuten mellomrom for den som leser
+    siden, ikke en ny linje i kilden. `_avkodet()` går derfor linje for linje.
+    """
+    fra = "<b>krever_outbox</b>"
+    tekst = KILDE.read_text(encoding="utf-8")
+    assert fra in tekst, f"fant ikke «{fra}» i kilden — den har endret form"
+    ny = tekst.replace(fra, "<b>&#10;&#10;oppfunnet&#95;klasse</b>", 1)
+    kilde = tmp_path / KILDE.name
+    kilde.write_text(ny, encoding="utf-8")
+    ventet = ny.count("\n", 0, ny.index("oppfunnet&#95;klasse")) + 1
+    assert _oppfunne_identifikatorer(kilde).get("oppfunnet_klasse") \
+        == f"linje {ventet}", "linjenummeret forskjøv seg av avkodingen"
+
+
+def _oppfunne_identifikatorer(kilde: Path = None) -> dict[str, str]:
+    """{identifikator: hvor} for maskinform i kilden som ikke finnes."""
+    kjente = _kjente_identifikatorer()
+    avvik: dict[str, str] = {}
+    for hvor, tekst in _prosastykker(kilde):
+        for treff in IDENT_RE.finditer(tekst):
+            if treff.group(0) in kjente:
+                continue
+            sted = hvor
+            if hvor == DOKUMENTET:
+                sted = f"linje {tekst.count(chr(10), 0, treff.start()) + 1}"
+            avvik.setdefault(treff.group(0), sted)
+    return avvik
+
+
+# Markøren som innfører et tall som modulnummer, hvor som helst i leddet. Den
+# må stå fritt: uten det venstre gjerdet ville «ARM-16» og «GSM-2» båret hver
+# sin M- inne i et ord og laget kanter av maskinvarenavn.
+#
+# ORDET BØYES (Codex P2). Markøren kjente `modul` og `modulene`, men ikke den
+# helt vanlige ubestemte flertallsformen: «Avhenger av moduler 55 og 58» traff
+# ingenting, og da så faseporten ingen kant i det hele tatt — på en
+# avhengighet som står skrevet rett ut. Nå står alle fire formene av ordet
+# (`modul`, `modulen`, `moduler`, `modulene`), for det er samme ord og samme
+# innføring; det som avgjør er fortsatt at et TALL følger rett etter.
+_MODULMARKOR_RE = re.compile(
+    r"(?<![0-9A-Za-zÆØÅæøå_-])(?:M-|[Mm]odul(?:ene|en|er)?\s+)(?=\d)")
+# Et tall eller et intervall. Et ledd som BARE er dette (bortsett fra
+# sluttpunktum) kan være neste ledd i en påbegynt oppramsing.
+_TALL_RE = re.compile(r"\d+(?:\s*[–-]\s*(\d+))?")
+
+
+def _modulreferanser(dep: str) -> set[int]:
     """Modulnumrene en dep-streng peker på — `M-14`, `modul 24` og intervaller
-    som `1–2` eller `13–14`. Alt som ikke er et kjent modulnummer (connectorer,
-    infrastruktur, «landpakke») faller utenfor: de har ingen fase å bryte."""
+    som `1–2` eller `13–14`.
+
+    Markøren `M-`/`modul` var VALGFRI (Codex P2 på #118, sjuende runde), så
+    ethvert tall i teksten ble et modulnummer. `dep` er prosa og navngir også
+    infrastruktur: «PostgreSQL 16» ble til M-16, og en fase 1-modul som nevnte
+    den fikk en oppdiktet kant til en fase 2-modul og felte faseporten på noe
+    som ikke står i kilden. Connectorversjoner («Peppol 3», «HTTP 2») ville gitt
+    flere av samme sort.
+
+    Et tall teller derfor bare når det er INNFØRT som modul: enten med sin egen
+    markør, eller som et senere ledd i en oppramsing en markør åpnet — «Modul 1,
+    5, 9 og HRIS-connector» er tre moduler og en connector. Oppramsingen brytes
+    av det første leddet som ikke er rene tall, så «Modul 3, HRIS-connector og
+    lønnssystem» ikke drar noe med seg videre. Alt annet (connectorer,
+    infrastruktur, «landpakke») faller utenfor: de har ingen fase å bryte.
+
+    Markøren ble samtidig ANKRET i starten av leddet (Codex P2 på #118, åttende
+    runde), og da forsvant hele setningsformen: «Kjører via M-16» og «Avhenger
+    av modul 16» ga ingen kant i det hele tatt. En modul i fase 1 kunne dermed
+    navngi en modul i fase 3 i klartekst mens porten sto grønn — nøyaktig det
+    hullet porten finnes for. Kravet er at tallet er innført som modul, ikke at
+    innføringen står først, så markøren SØKES nå fram hvor som helst i leddet.
+    Den må stå fritt, ellers ville «ARM-16» og «GSM-2» blitt modulnumre.
+
+    Funksjonen SILER IKKE mot katalogen (Codex P2 på #118, niende runde). Den
+    returnerte før `ut & kjente`, og da forsvant en markert referanse til en
+    modul som ikke finnes — `M-58`, en tastefeil eller en modul noen planla
+    men aldri tok opp — stille ut av porten. Det er den verste formen for
+    grønn: dep peker på noe som ikke kan tildeles en fase, og porten sier
+    ingenting. Siling ga mening da markøren var valgfri og «PostgreSQL 16»
+    ville blitt meldt som M-16; nå er infrastrukturtall allerede ute, så det
+    som står igjen er referanser noen har MENT som moduler. Kalleren melder
+    dem som brudd.
+
+    MUTASJONEN SOM DREPER DENNE: gjør markøren valgfri igjen. Da er «PostgreSQL
+    16» en kant til M-16 på nytt, og porten faller på infrastruktur.
+    """
     ut: set[int] = set()
-    for a, b in re.findall(r"(\d+)\s*[–-]\s*(\d+)", dep):
-        ut.update(range(int(a), int(b) + 1))
-    resten = re.sub(r"\d+\s*[–-]\s*\d+", " ", dep)
-    ut.update(int(x) for x in re.findall(r"(?:M-|[Mm]odul\s+)?(\d+)", resten))
-    return ut & kjente
+    i_liste = False
+    for ledd in re.split(r",|\bog\b", dep):
+        ledd = ledd.strip()
+        if not ledd:
+            continue
+        markerte = [_TALL_RE.match(ledd, m.end())
+                    for m in _MODULMARKOR_RE.finditer(ledd)]
+        if markerte:
+            i_liste = True
+        else:
+            treff = _TALL_RE.fullmatch(ledd.rstrip("."))
+            if not (i_liste and treff):
+                i_liste = False
+                continue
+            markerte = [treff]
+        for treff in markerte:
+            forste = int(re.match(r"\d+", treff.group(0)).group(0))
+            siste = int(treff.group(1)) if treff.group(1) else forste
+            # ET INTERVALL SOM TELLER NEDOVER ER EN SKRIVEFEIL, IKKE ET TOMROM
+            # (Codex P2, F40). `range(58, 55 + 1)` er tom, så «Modul 58–55» ble
+            # INGEN kant — verken M-58 eller M-55 — og faseporten sto grønn på
+            # en avhengighet som er skrevet rett ut. Det er samme klasse som
+            # den ubestemte flertallsformen i runde 3: en dep porten later som
+            # den ikke så. Endepunktene er begge INNFØRT som moduler, så det
+            # eneste gale er rekkefølgen, og den sier vi fra om.
+            assert siste >= forste, (
+                f"«{treff.group(0).strip()}» i dep-teksten er et modulintervall "
+                f"som teller nedover — M-{forste} til M-{siste} er ingen "
+                f"moduler i det hele tatt. Skriv det stigende "
+                f"(«{siste}–{forste}») eller navngi modulene hver for seg.")
+            ut.update(range(forste, siste + 1))
+    return ut
+
+
+@pytest.mark.parametrize("dep,ventet", [
+    # De fire formene av ordet, og den korte markøren.
+    ("Avhenger av modul 24", {24}),
+    ("Avhenger av modulen 24", {24}),
+    ("Avhenger av moduler 55 og 58", {55, 58}),
+    ("Avhenger av modulene 55 og 58", {55, 58}),
+    ("Kjører via M-16", {16}),
+    # Oppramsingen en markør åpnet, og intervallet.
+    ("Modul 1, 5, 9 og HRIS-connector", {1, 5, 9}),
+    ("Moduler 13–14", {13, 14}),
+    # Uten markør er et tall bare et tall — prosaen navngir infrastruktur.
+    ("Krever PostgreSQL 16 og Peppol 3", set()),
+    # Og markøren må stå fritt: et suffiks er ikke ordet.
+    ("Kjører på ARM-16 og GSM-2", set()),
+    ("Bruker submodul 16", set()),
+])
+def test_markoren_kjenner_ordet_i_alle_former(dep, ventet):
+    """«moduler» er samme innføring som «modul» (Codex P2).
+
+    Markøren kjente `modul` og `modulene`, men ikke den ubestemte
+    flertallsformen. «Avhenger av moduler 55 og 58» ga da ingen kant i det hele
+    tatt — ikke en feil kant, men ingen — og faseporten sto grønn på en
+    avhengighet som er skrevet rett ut i klartekst. Det er nøyaktig hullet
+    porten finnes for, og samme feilklasse som ankringen i åttende runde på
+    #118.
+
+    Gjerdene fra de tidligere rundene måles i samme slengen: uten markør er et
+    tall infrastruktur, og et suffiks («submodul», «ARM-») er ikke ordet.
+    """
+    assert _modulreferanser(dep) == ventet
+
+
+@pytest.mark.parametrize("dep", [
+    "Avhenger av modul 58–55",
+    "Moduler 14-13 og HRIS-connector",
+    "Modul 3, 9–5",
+])
+def test_et_intervall_som_teller_nedover_er_hoylytt(dep):
+    """En bakvendt modulrekke er en skrivefeil, ikke et tomrom (Codex P2, F40).
+
+    `range(58, 55 + 1)` er tom, så «Modul 58–55» ga verken M-58 eller M-55 —
+    ingen kant i det hele tatt. Begge endepunktene er INNFØRT som moduler med
+    markøren foran seg, så det er ingen tvil om at leddet er ment som en
+    avhengighet; det eneste gale er rekkefølgen. En dep som forsvinner er den
+    verste formen for grønn: porten sier ingenting om noe som står skrevet
+    rett ut. Målt på `f44dc6f`: de to første ga `set()`, det tredje ga `{3}` —
+    altså modulen som sto utenfor intervallet, og ingenting av intervallet.
+
+    Det tredje leddet er den samme feilen i en oppramsing markøren åpnet, altså
+    den veien inn i tallet som ikke har sin egen markør.
+    """
+    with pytest.raises(AssertionError, match="teller nedover"):
+        _modulreferanser(dep)
+
+
+def test_et_intervall_som_teller_oppover_star_urort():
+    """Gjerdet mot F40 tar bare den bakvendte formen.
+
+    Grensetilfellet er intervallet der endepunktene er like — det er lov, og
+    det er nøyaktig verdien en av-en-feil i sammenligningen ville felt.
+    """
+    assert _modulreferanser("Moduler 13–14") == {13, 14}
+    assert _modulreferanser("Modul 13–13") == {13}
+
+
+def _sykelen(kanter: dict[int, set[int]]) -> list[int] | None:
+    """Første sykelen i avhengighetsgrafen, som stien den går — ellers `None`.
+
+    Fasesammenligningen fanger den uoppfyllelige rekkefølgen som KRYSSER en
+    fasegrense (Codex P2, F35). Den fanger ikke den som ligger inne i én fase:
+    M-a → M-b → M-a har like fasenumre hele veien rundt, så ingen kant er et
+    brudd — og likevel kan ingen av de to bygges først. En modul som peker på
+    seg selv er samme sak med én kant.
+
+    Fasen er fortsatt rekkefølgens grovkorn: en kant innenfor en fase er lov,
+    og det er ikke kanten som meldes her, det er RUNDEN. Grafen er den samme
+    dep-grafen faseporten alt leser, så dette er ingen ny lesning av kilden —
+    bare et spørsmål til som stilles av den.
+
+    Vanlig dybde-først med tre farger: hvit (ubesøkt), grå (på stien nå), svart
+    (ferdig). Treffer vi grått, er stien tilbake dit sykelen.
+    """
+    grå: dict[int, bool] = {}
+    sti: list[int] = []
+
+    def gå(n: int) -> list[int] | None:
+        grå[n] = True
+        sti.append(n)
+        for neste in sorted(kanter.get(n, ())):
+            if grå.get(neste):
+                return sti[sti.index(neste):] + [neste]
+            if neste not in grå:
+                funnet = gå(neste)
+                if funnet:
+                    return funnet
+        sti.pop()
+        grå[n] = False
+        return None
+
+    for start in sorted(kanter):
+        if start not in grå:
+            funnet = gå(start)
+            if funnet:
+                return funnet
+    return None
+
+
+@pytest.mark.parametrize("kanter,ventet", [
+    # Ingen sykel: en helt vanlig kjede, og et diamantmønster.
+    ({1: set(), 2: {1}, 3: {1, 2}}, None),
+    ({1: set(), 2: {1}, 3: {1}, 4: {2, 3}}, None),
+    # En modul som peker på SEG SELV er en sykel med én kant.
+    ({1: {1}}, [1, 1]),
+    # To moduler som peker på hverandre — formen som passerte faseporten.
+    ({1: {2}, 2: {1}}, [1, 2, 1]),
+    # En lengre runde, med en uskyldig modul foran som ikke er med i den.
+    ({1: set(), 2: {1, 3}, 3: {4}, 4: {2}}, [2, 3, 4, 2]),
+])
+def test_sykelsoket_finner_runden_og_bare_den(kanter, ventet):
+    """Vitnet for `_sykelen()`. Se F35.
+
+    Grafene er syntetiske med vilje: porten under måler den ekte katalogen, og
+    en port kan ikke bevises av kilden den vokter.
+    """
+    assert _sykelen(kanter) == ventet
 
 
 def test_ingen_modul_avhenger_av_en_senere_fase():
@@ -263,21 +3393,132 @@ def test_ingen_modul_avhenger_av_en_senere_fase():
     Codex fant M-53 → M-43. To til lå i samme fil (M-48 → M-23, M-38 → M-31),
     usett, fordi ingen port leste dep-feltene. Denne gjør det.
 
+    En referanse til en modul som IKKE finnes meldes samme sted (Codex P2 på
+    #118, niende runde). `M-58` kan ikke tildeles en fase, så porten kan ikke
+    avgjøre om rekkefølgen holder — og «kan ikke avgjøres» er ikke det samme
+    som «i orden». Før ble den silt bort i stillhet.
+
+    EN SYKEL ER SAMME UOPPFYLLELIGHET UTEN FASEGRENSE (Codex P2, F35).
+    Sammenligningen leser én kant om gangen, og M-a → M-b → M-a har like
+    fasenumre hele veien rundt: ingen av kantene er et brudd, og likevel kan
+    ingen av de to bygges først. Det samme gjelder en modul som peker på seg
+    selv. Grafen er den samme, spørsmålet er ett til — se `_sykelen()`.
+
     MUTASJONEN SOM DREPER DENNE: sett `>` til `>=`. Da ville en avhengighet
     innenfor samme fase blitt et brudd — og det er den ikke: fasen er
     rekkefølgens grovkorn, modulene i den bygges i en rekkefølge fasen ikke
-    bestemmer.
+    bestemmer. Det er nettopp derfor sykelen må søkes fram i stedet: den er
+    den delen av samme-fase-kantene som faktisk ER uoppfyllelig.
     """
     moduler = _moduler_fra_kilden()
     assert len(moduler) == MODULER, (
         f"leste {len(moduler)} moduler med fase og dep, forventet {MODULER}")
-    kjente = set(moduler)
+    ukjente = [f"M-{n} peker på M-{r}, som ikke finnes i katalogen"
+               for n, d in sorted(moduler.items())
+               for r in sorted(_modulreferanser(d["dep"]))
+               if r not in moduler]
+    assert not ukjente, "dep peker utenfor katalogen: " + "; ".join(ukjente)
     brudd = [f"M-{n} (fase {d['fase']}) avhenger av "
              f"M-{r} (fase {moduler[r]['fase']})"
              for n, d in sorted(moduler.items())
-             for r in sorted(_modulreferanser(d["dep"], kjente))
+             for r in sorted(_modulreferanser(d["dep"]))
              if moduler[r]["fase"] > d["fase"]]
     assert not brudd, "uoppfyllelig utrullingsrekkefølge: " + "; ".join(brudd)
+    sykel = _sykelen({n: _modulreferanser(d["dep"])
+                      for n, d in moduler.items()})
+    assert sykel is None, (
+        "uoppfyllelig utrullingsrekkefølge — ingen i runden kan bygges "
+        "først: " + " → ".join(f"M-{n}" for n in sykel or ()))
+
+
+# Filer som ikke skal måles mot dagens versjon: `docs/pr/` og
+# `docs/beslutninger/` ER historikk — en PR-beskrivelse eller en ADR skal si
+# hva som gjaldt DA, ikke skrives om når versjonen bumpes. Arkivet i
+# `prototype/` er gamle utgaver på disk. `.git` er ikke tekst.
+HISTORIKK = ("docs/pr/", "docs/beslutninger/", "prototype/", ".git/")
+SPEC_RE = re.compile(r"disponit-prototype-v(\d+)\.html")
+
+# Regresjonen porten finnes for var bare DELVIS et filnavn (Codex P2 på #118):
+# den obligatoriske arbeidsflyten krevde utkast «mot prototypen» med utgaven
+# skrevet i klartekst ved siden av ordet, ikke som filnavn. Et mønster bundet
+# til filnavnet leser rett forbi den formen, og da er porten grønn mens
+# instruksen fortsatt peker på noe som er slettet.
+#
+# Mellomrommet er hele avgrensningen mot arkivet: de gamle utgavene på disk
+# heter `…-prototype-v7.html` med bindestrek, og de skal fortsatt kunne
+# navngis. Prosa skriver ordet, mellomrom, versjonen.
+PROSA_RE = re.compile(r"(?i)prototypen?\s+v(\d+)")
+
+
+def test_ingen_peker_paa_en_slettet_spesifikasjon():
+    """Hver henvisning til spesifikasjonsutgaven må treffe den som finnes.
+
+    Codex P2 på PR #118: v9 gjorde spesifikasjonen til eneste sannhetskilde og
+    slettet v8-fila, men den OBLIGATORISKE arbeidsflyten krevde fortsatt utkast
+    og tester mot v8 (`docs/README-arbeidsflyt.md`, `docs/RUTINER.md`), og
+    PR-malen krevde akseptansemapping mot v8. En implementasjons-PR for M-57
+    kunne umulig oppfylle det: kriteriene finnes bare i v9. Instruksen pekte
+    altså på en fil som ikke er der — og ingenting knakk, for prosa kompilerer
+    ikke.
+
+    Kuren i selve dokumentene er å slutte å bake versjonsnummeret inn i
+    instruksen: de peker nå på `docs/spesifikasjon/`, som alltid inneholder
+    gjeldende utgave. Denne porten dekker resten — stedene som med rett MÅ
+    navngi utgaven (README, STRUKTUR, generatoren, denne testen), og fanger
+    neste versjonsbump som glemmer ett av dem.
+
+    Den måler BEGGE skrivemåtene, for regresjonen sto i begge: filnavnet, og
+    ordet «prototype» med utgaven skrevet ved siden av seg (Codex P2, andre
+    runde). Et mønster som bare kjente filnavnet ville latt den gamle
+    obligatoriske formuleringen komme rett tilbake, grønt.
+
+    Og den måler MAPPA før den måler teksten (Codex P2, sjette runde). Alt over
+    leser innholdet i sporede filer; ingenting leste filNAVNENE i
+    `docs/spesifikasjon/`. Legges v10 til uten at v9 slettes, blir porten
+    stående grønn — en gammel spesifikasjon trenger ikke nevne sitt eget
+    filnavn i teksten sin, så ingen henvisning peker feil. Men instruksene
+    peker nå på MAPPA nettopp fordi den skal inneholde gjeldende utgave og bare
+    den; med to filer der er «gjeldende utgave» ikke lenger et entydig svar, og
+    kuren i dokumentene slutter å virke. Arkivet i `prototype/` er unntatt: der
+    er flere utgaver hele poenget.
+
+    MUTASJONEN SOM DREPER DENNE: la porten godta et hvilket som helst
+    versjonsnummer. Da er den bare en stavekontroll for filnavnet, og det var
+    aldri feilen — feilen var at nummeret pekte forbi fila.
+    """
+    gjeldende = SPEC_RE.search(KILDE.name)
+    assert gjeldende, f"KILDE_REL navngir ikke en versjonert fil: {KILDE.name}"
+    versjon = gjeldende.group(1)
+
+    spor = subprocess.run(["git", "ls-files", "-z"], cwd=ROT,
+                          capture_output=True, text=True, check=True)
+    sporede = [r for r in spor.stdout.split("\0") if r]
+
+    utgaver = sorted(r for r in sporede
+                     if r.startswith(SPEKMAPPE) and SPEC_RE.search(Path(r).name))
+    assert utgaver == ["/".join(KILDE_REL)], (
+        f"{SPEKMAPPE} skal inneholde NØYAKTIG én spesifikasjonsutgave, og den "
+        f"skal være sannhetskilden {'/'.join(KILDE_REL)} — fant: "
+        f"{utgaver or 'ingen'}. Er en ny utgave lagt til, skal den gamle "
+        f"slettes; skal den bevares, hører den hjemme i arkivet {ARKIV.name}/.")
+
+    avvik = []
+    for rel in sporede:
+        if rel.startswith(HISTORIKK):
+            continue
+        sti = ROT / rel
+        if not sti.is_file():
+            continue
+        tekst = sti.read_text(encoding="utf-8", errors="ignore")
+        for monster in (SPEC_RE, PROSA_RE):
+            for treff in monster.finditer(tekst):
+                if treff.group(1) != versjon:
+                    linje = tekst.count("\n", 0, treff.start()) + 1
+                    avvik.append(
+                        f"{rel}:{linje} peker på «{treff.group(0)}»")
+    assert not avvik, (
+        f"henvisninger til en spesifikasjonsutgave som ikke finnes (gjeldende "
+        f"er v{versjon}, {KILDE.name}): " + "; ".join(avvik))
 
 
 @pytest.mark.parametrize("sprak", sorted(LOCALER))
