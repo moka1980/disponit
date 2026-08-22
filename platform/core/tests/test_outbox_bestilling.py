@@ -965,14 +965,16 @@ def test_dypt_nostet_kropp_er_request_feil(migrator, klient):
                     headers={"X-Disponit-CSRF": csrf,
                              "content-type": "application/json"},
                     cookies={sesjonmodul.C_SESJON: cookie})
-    if feller:
-        assert (r.status_code, r.json()["feil"]) == (
-            400, "request_feilformet"), r.text
-    else:
-        # Parseren HER makter kroppen (se `_dyp_kropp`): gyldig JSON med
-        # feil FORM — samme dokumenterte 400, aldri en generisk 500.
-        assert r.status_code == 400, r.text
-        assert r.json().get("feil"), r.text
+    # ÉN kontrakt, to veier inn til den (Codex P2): feller parseren HER, er
+    # dette RecursionError-veien; makter den kroppen, er dokumentet gyldig
+    # JSON med ugyldig toppform (`normaliser`: `set(data) - SKJEMAFELT`).
+    # Begge veier lover NØYAKTIG `request_feilformet` — aldri en generisk
+    # 500, og aldri en annen feilkode som en regresjon måtte finne på.
+    # Fallbacken sluttet å måle koden og godtok enhver ikke-tom `feil`; da
+    # var den grønn også for feil den var satt til å fange. `feller` følger
+    # med i feilmeldingen, så en rød test sier hvilken vei den tok.
+    assert (r.status_code, r.json().get("feil")) == (
+        400, "request_feilformet"), (feller, r.text)
 
 
 @pg
