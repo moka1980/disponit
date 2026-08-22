@@ -55,7 +55,11 @@ jobs:
       (github.event_name == 'issue_comment' &&
        github.event.issue.pull_request &&
        contains(github.event.comment.user.login, 'codex') &&
-       !startsWith(github.event.comment.body, 'Codex usage limits have been reached'))
+       !startsWith(github.event.comment.body, 'Codex usage limits have been reached')) ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       contains(github.event.comment.user.login, 'cursor') &&
+       contains(github.event.comment.body, '@claude'))
     runs-on: ubuntu-latest
     # Regnestykket, målt på denne workflowen selv: 101 turer tok 21 minutter,
     # altså ~12,5 s per tur. 300 turer er da ~62 min per forsøk, og tre forsøk
@@ -90,7 +94,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          allowed_bots: "chatgpt-codex-connector,codex"
+          allowed_bots: "chatgpt-codex-connector,codex,cursor,cursor-com"
           prompt: |
             Rolle: du er IMPLEMENTØREN i disponit — Codex reviewer, du
             fikser. Et review-verdikt fra
@@ -112,7 +116,17 @@ jobs:
                nede og at PR-en venter, og stopp.
             1. Les hele verdiktet og alle tråder: `gh pr view <nr> --comments`
                og `gh api` mot pulls/<nr>/reviews og pulls/<nr>/comments.
-               Ignorer rene triggerkommentarer («@codex review»).
+               Ignorer rene triggerkommentarer («@codex review»,
+               «@cursor review»). ET CURSOR-PASS (kommentar fra
+               cursor-boten med P1/P2/P3-funn, avsluttet med @claude) er
+               PRE-CODEX: fiks HELE batchen i ett pass, push, og skriv
+               deretter `@codex review` — Cursor-passet er da lukket.
+               Sa Cursor «Cursor-pass: ingen P1/P2», skriv `@codex
+               review` direkte. Skriv ALDRI `@codex review` mens et
+               Cursor-pass står ubesvart, og be aldri Cursor om nytt
+               pass selv — det er implementørens/eiers kall. Cursor har
+               ingen merge-autoritet; Codex-verdiktet er som før det
+               eneste som teller for merge.
             2. Reelle funn (P1/P2/aksjonspunkter): fiks dem i roten, ikke
                symptomet. KONVERGENSREGLENE (RUTINER.md §9, ratifisert
                21/8) er bindende for hvordan:
@@ -211,7 +225,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          allowed_bots: "chatgpt-codex-connector,codex"
+          allowed_bots: "chatgpt-codex-connector,codex,cursor,cursor-com"
           prompt: |
             FORTSETTELSESFORSØK (2 av 3) på PR
             #${{ github.event.pull_request.number || github.event.issue.number }}.
@@ -266,7 +280,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          allowed_bots: "chatgpt-codex-connector,codex"
+          allowed_bots: "chatgpt-codex-connector,codex,cursor,cursor-com"
           prompt: |
             FORTSETTELSESFORSØK (3 av 3, SISTE) på PR
             #${{ github.event.pull_request.number || github.event.issue.number }}.
