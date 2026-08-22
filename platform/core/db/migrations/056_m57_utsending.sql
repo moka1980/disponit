@@ -140,6 +140,15 @@ ALTER TABLE oppdrag
     FOREIGN KEY (tenant, frigivelse_id)
     REFERENCES utsendingsfrigivelse (tenant, frigivelse_id);
 
+-- ÉN frigivelse -> ETT oppdrag (Cursor P1 på #140): utsendelsen er
+-- IRREVERSIBEL, så kardinaliteten er en sikkerhetsinvariant — samme form
+-- som beslutningsveiens `oppdrag_en_per_beslutning` (008). To kall for
+-- samme frigivelse serialiseres av indeksen; funksjonen under gjør
+-- taperen idempotent i stedet for feilende.
+CREATE UNIQUE INDEX oppdrag_en_per_frigivelse
+    ON oppdrag (tenant, frigivelse_id)
+    WHERE frigivelse_id IS NOT NULL;
+
 -- KLARSIGNAL-KORREKSJON, målt av SP-10-seedet: skissens m37-arm sa
 -- `beslutning_loggpost_id IS NULL`, men m37-oppdrag bærer LEGITIMT en
 -- fase-2-beslutningsloggpost (`koblingsstatus='KOBLET'` KREVER den —
@@ -319,10 +328,28 @@ BEGIN
     END IF;
     -- Innholdet signaturen binder settes fra LISTEN, aldri fra kallet:
     -- hash og serie er versjonens egne, og FK-ene i §2 beviser sammenhengen.
-    INSERT INTO public.utsendingssignatur (tenant, liste_id, utkast_serie,
-        innhold_hash, signatar, operasjonsnokkel)
-    VALUES (p_tenant, p_liste_id, l.utkast_serie, l.innhold_hash,
-            p_signatar, p_nokkel);
+    -- Kappløpstaperen (Cursor P2 på #140): to samtidige kall passerer
+    -- begge nøkkel-lesningen over, og taperen treffer unik-bruddet.
+    -- Identisk replay er dokumentert no-op, så taperen skal inn i SAMME
+    -- dom som en sekvensiell replay — 038s mønster.
+    BEGIN
+        INSERT INTO public.utsendingssignatur (tenant, liste_id,
+            utkast_serie, innhold_hash, signatar, operasjonsnokkel)
+        VALUES (p_tenant, p_liste_id, l.utkast_serie, l.innhold_hash,
+                p_signatar, p_nokkel);
+    EXCEPTION WHEN unique_violation THEN
+        SELECT * INTO s FROM public.utsendingssignatur
+         WHERE tenant = p_tenant AND operasjonsnokkel = p_nokkel;
+        IF NOT FOUND
+           OR s.liste_id IS DISTINCT FROM p_liste_id
+           OR s.signatar IS DISTINCT FROM p_signatar THEN
+            -- Bruddet var ikke nøkkelens (listen/serien alt signert av en
+            -- annen operasjon) eller nøkkelen bærer annet innhold — det
+            -- skal høres, aldri sluke.
+            RAISE;
+        END IF;
+        -- vinnerens rad er identisk med dette kallet: no-op.
+    END;
 END $$;
 
 -- 7c. Frigivelsen: én mottaker om gangen, idempotent på (liste, mottaker)
@@ -340,18 +367,20 @@ BEGIN
         RAISE EXCEPTION 'frigi_utsendelse: liste % er ikke signert',
             p_liste_id USING ERRCODE = 'no_data_found';
     END IF;
+    -- Idempotent UNDER kappløp (Cursor P2 på #140): SELECT-så-INSERT lot
+    -- taperen få unik-bruddet i fanget. `ON CONFLICT DO NOTHING` +
+    -- gjenlesning gir begge kallerne VINNERENS id — 038s mønster
+    -- (`sikre_sak_for_oppdrag`), i insert-form.
+    INSERT INTO public.utsendingsfrigivelse (tenant, frigivelse_id,
+        liste_id, innhold_hash, utkast_serie, mottaker_ref)
+    VALUES (p_tenant, v_id, p_liste_id, s.innhold_hash, s.utkast_serie,
+            p_mottaker_ref)
+    ON CONFLICT (tenant, liste_id, mottaker_ref) DO NOTHING;
     SELECT frigivelse_id INTO v_eksisterende
       FROM public.utsendingsfrigivelse
      WHERE tenant = p_tenant AND liste_id = p_liste_id
        AND mottaker_ref = p_mottaker_ref;
-    IF FOUND THEN
-        RETURN v_eksisterende;                      -- idempotent per mottaker
-    END IF;
-    INSERT INTO public.utsendingsfrigivelse (tenant, frigivelse_id,
-        liste_id, innhold_hash, utkast_serie, mottaker_ref)
-    VALUES (p_tenant, v_id, p_liste_id, s.innhold_hash, s.utkast_serie,
-            p_mottaker_ref);
-    RETURN v_id;
+    RETURN v_eksisterende;
 END $$;
 
 -- 7d. Eneste vei til opprinnelse='frigivelse' (klarsignal §2): setter
@@ -372,33 +401,37 @@ BEGIN
         RAISE EXCEPTION 'opprett_frigivelsesoppdrag: ukjent frigivelse %',
             p_frigivelse_id USING ERRCODE = 'no_data_found';
     END IF;
-    INSERT INTO public.oppdrag (tenant, oppdragstype, handling, eiermodul,
-        payload_kryptert, key_id, nonce, utforelsesfrist, evidensfrist,
-        frigivelse_id, koblingsstatus, opprinnelse)
-    VALUES (p_tenant, p_oppdragstype, p_handling, p_eiermodul, p_payload,
-            p_key_id, p_nonce, p_utforelsesfrist, p_evidensfrist,
-            p_frigivelse_id, 'KOBLET', 'frigivelse')
-    RETURNING id INTO v_id;
+    -- Én frigivelse -> ett oppdrag (indeksen over håndhever det):
+    -- kappløpstaperen får VINNERENS oppdrag tilbake — en irreversibel
+    -- utsending skal aldri kunne dobles av et retry (Cursor P1 på #140).
+    BEGIN
+        INSERT INTO public.oppdrag (tenant, oppdragstype, handling,
+            eiermodul, payload_kryptert, key_id, nonce, utforelsesfrist,
+            evidensfrist, frigivelse_id, koblingsstatus, opprinnelse)
+        VALUES (p_tenant, p_oppdragstype, p_handling, p_eiermodul,
+                p_payload, p_key_id, p_nonce, p_utforelsesfrist,
+                p_evidensfrist, p_frigivelse_id, 'KOBLET', 'frigivelse')
+        RETURNING id INTO v_id;
+    EXCEPTION WHEN unique_violation THEN
+        SELECT id INTO v_id FROM public.oppdrag
+         WHERE tenant = p_tenant AND frigivelse_id = p_frigivelse_id;
+        IF NOT FOUND THEN
+            RAISE;                       -- bruddet var ikke frigivelsens
+        END IF;
+    END;
     RETURN v_id;
 END $$;
 
-RESET ROLE;
-
--- ------------------------------------------------------------
--- 8. Rettigheter. Tabellene: lesing til runtime (flaten viser lister og
---    status), INSERT kun gjennom funksjonene (eieren). Funksjonene:
---    liste + signatur kalles av API-et (runtime) — signataren bindes av
---    API-laget til den innloggede identiteten; frigivelse + frigivelses-
---    oppdrag kun til utsendingsveien (varselsender), for det er DEN som
---    konsumerer signerte lister. Speiler 038s REVOKE/GRANT-form med
---    betinget grant der rollen kan mangle.
-REVOKE ALL ON utsendingsliste, utsendingssignatur, utsendingsfrigivelse
-    FROM PUBLIC;
-GRANT SELECT ON utsendingsliste, utsendingssignatur, utsendingsfrigivelse
-    TO disponit;
-GRANT SELECT, INSERT ON utsendingsliste, utsendingssignatur,
-    utsendingsfrigivelse TO disponit_m37_claimer;
-
+-- FUNKSJONSRETTIGHETENE EIES AV EIEREN (Cursor-runden på #140 målte
+-- klassen): PostgreSQL gir nye funksjoner EXECUTE til PUBLIC ved
+-- fødselen, og både REVOKE og GRANT på claimer-eide funksjoner fra
+-- migrator er virkningsløse/ulovlige. Alt funksjonsrettslig skjer derfor
+-- HER, under eierrollen, før fullmakten legges ned: PUBLIC trekkes, og
+-- API-veiene (liste + signering) gis runtime; utsendingsveien (frigivelse
+-- + frigivelsesoppdrag) gis driftsrollen NÅR den finnes — ingen
+-- else-arm, for et fallback til runtime ville flytt videre til alt som
+-- arver runtime (plan-arbeideren), og kjøreren (migrer.py) er den
+-- autoritative rettighetskilden lokalt og i test.
 REVOKE ALL ON FUNCTION opprett_utsendingsliste(TEXT, UUID, UUID, BIGINT,
     TEXT, TEXT, TEXT, INT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION signer_utsendingsliste(TEXT, UUID, TEXT, TEXT)
@@ -419,13 +452,17 @@ BEGIN
         GRANT EXECUTE ON FUNCTION opprett_frigivelsesoppdrag(TEXT, UUID,
             TEXT, TEXT, TEXT, BYTEA, TEXT, BYTEA, TIMESTAMPTZ, TIMESTAMPTZ)
             TO disponit_varselsender;
-    ELSE
-        -- Uten egen utsendingsrolle (lokal/test der runtime er hele
-        -- plattformen) — samme form som 038s reaper-grant.
-        GRANT EXECUTE ON FUNCTION frigi_utsendelse(TEXT, UUID, TEXT)
-            TO disponit;
-        GRANT EXECUTE ON FUNCTION opprett_frigivelsesoppdrag(TEXT, UUID,
-            TEXT, TEXT, TEXT, BYTEA, TEXT, BYTEA, TIMESTAMPTZ, TIMESTAMPTZ)
-            TO disponit;
     END IF;
 END $$;
+
+RESET ROLE;
+
+-- ------------------------------------------------------------
+-- 8. Tabellrettigheter (tabellene eies av migrator): lesing til runtime
+--    og eieren av kjedefunksjonene; INSERT kun gjennom funksjonene.
+REVOKE ALL ON utsendingsliste, utsendingssignatur, utsendingsfrigivelse
+    FROM PUBLIC;
+GRANT SELECT ON utsendingsliste, utsendingssignatur, utsendingsfrigivelse
+    TO disponit;
+GRANT SELECT, INSERT ON utsendingsliste, utsendingssignatur,
+    utsendingsfrigivelse TO disponit_m37_claimer;

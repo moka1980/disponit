@@ -10,12 +10,34 @@ from __future__ import annotations
 
 import os
 import secrets
+from pathlib import Path
 
 import psycopg
 import pytest
 
 from .test_api import DSN, MIGRATOR_DSN, TENANT, migrator, miljo  # noqa: F401
 from .test_m37 import _sett_kontekst
+
+VARSEL_DSN = os.environ.get("DISPONIT_TEST_VARSEL_DSN")
+
+
+def _rt():
+    from db.pg import koble
+    return koble(DSN)
+
+
+def _sender():
+    """Utsendingsveiens EGEN innlogging (varselsenderen) — 056 gir
+    EXECUTE dit og ingen andre steder; lokalt uten rollen faller vi til
+    eierens SET ROLE, som i _drill."""
+    from db.pg import koble
+    if VARSEL_DSN:
+        return koble(VARSEL_DSN)
+    k = koble(MIGRATOR_DSN)
+    k.execute("SET ROLE disponit_m37_claimer")
+    return k
+
+ROT = Path(__file__).resolve().parents[3]
 
 pg = pytest.mark.skipif(
     not (DSN and MIGRATOR_DSN),
@@ -409,38 +431,45 @@ def test_funksjonskjeden_ende_til_ende_med_replay(migrator):
     oid, payload = _grunnlag(migrator)
     ct, key_id, nonce = payload
     bid, bid2 = _signatar(migrator), _signatar(migrator)
-    _sett_kontekst(migrator, TENANT)
+    # Kallene går som de EKTE rollene: runtime lager og signerer (API-
+    # veien), senderen frigir og legger ut oppdraget — migrator er
+    # utestengt fra funksjonene, og det er en del av det som måles.
+    rt = _rt()
+    snd = _sender()
+    _sett_kontekst(rt, TENANT)
     serie = __import__("uuid").uuid4()
-    liste_id = migrator.execute(
+    liste_id = rt.execute(
         "SELECT opprett_utsendingsliste(%s,%s,NULL,%s,'invitasjon','m@1',"
         "'h-fn',2)", (TENANT, serie, oid)).fetchone()[0]
     nk = "sig-" + secrets.token_hex(6)
-    migrator.execute("SELECT signer_utsendingsliste(%s,%s,%s,%s)",
-                     (TENANT, liste_id, bid, nk))
+    rt.execute("SELECT signer_utsendingsliste(%s,%s,%s,%s)",
+               (TENANT, liste_id, bid, nk))
     # Grunnlaget committes FØR den negative proben — rollbacken etter det
     # FORVENTEDE nei-et skal kaste probens virkning, aldri signaturen.
-    migrator.commit()
-    _sett_kontekst(migrator, TENANT)
+    rt.commit()
+    _sett_kontekst(rt, TENANT)
     # Identisk replay → no-op; annet innhold/annen signatar → avvist.
-    migrator.execute("SELECT signer_utsendingsliste(%s,%s,%s,%s)",
-                     (TENANT, liste_id, bid, nk))
+    rt.execute("SELECT signer_utsendingsliste(%s,%s,%s,%s)",
+               (TENANT, liste_id, bid, nk))
     with pytest.raises(psycopg.errors.InvalidParameterValue):
-        migrator.execute("SELECT signer_utsendingsliste(%s,%s,%s,%s)",
-                         (TENANT, liste_id, bid2, nk))
-    migrator.rollback()
-    _sett_kontekst(migrator, TENANT)
-    fid = migrator.execute("SELECT frigi_utsendelse(%s,%s,'fn-m1')",
-                           (TENANT, liste_id)).fetchone()[0]
+        rt.execute("SELECT signer_utsendingsliste(%s,%s,%s,%s)",
+                   (TENANT, liste_id, bid2, nk))
+    rt.rollback()
+    rt.close()
+    _sett_kontekst(snd, TENANT)
+    fid = snd.execute("SELECT frigi_utsendelse(%s,%s,'fn-m1')",
+                      (TENANT, liste_id)).fetchone()[0]
     # Idempotent per mottaker: samme kall gir samme frigivelse.
-    fid2 = migrator.execute("SELECT frigi_utsendelse(%s,%s,'fn-m1')",
-                            (TENANT, liste_id)).fetchone()[0]
+    fid2 = snd.execute("SELECT frigi_utsendelse(%s,%s,'fn-m1')",
+                       (TENANT, liste_id)).fetchone()[0]
     assert fid == fid2
-    aoid = migrator.execute(
+    aoid = snd.execute(
         "SELECT opprett_frigivelsesoppdrag(%s,%s,'rekruttering.utsending',"
         "'rekruttering.utsending','m57_ats',%s,%s,%s,"
         " now()+interval '4 hours', now()+interval '1 day')",
         (TENANT, fid, ct, key_id, nonce)).fetchone()[0]
-    migrator.commit()
+    snd.commit()
+    snd.close()
     _sett_kontekst(migrator, TENANT)
     rad = migrator.execute(
         "SELECT opprinnelse, frigivelse_id, antall FROM oppdrag o"
@@ -481,3 +510,143 @@ def test_funksjonene_er_eneste_vei_for_ordinaere_roller(migrator):
         rt.rollback()
     finally:
         rt.close()
+
+
+@pg
+def test_en_frigivelse_gir_ett_oppdrag(migrator):
+    """Cursor P1 på #140: utsendelsen er irreversibel, så kardinaliteten
+    én frigivelse -> ett oppdrag er en sikkerhetsinvariant — samme form
+    som beslutningsveiens `oppdrag_en_per_beslutning`. Direkte DML på
+    duplikatet avvises av indeksen; funksjonens andre kall er idempotent
+    og gir VINNERENS oppdrag tilbake, aldri et nytt."""
+    oid, payload = _grunnlag(migrator)
+    ct, key_id, nonce = payload
+    bid = _signatar(migrator)
+    liste = _liste(migrator, oid)
+    _signer(migrator, liste, bid)
+    fid = _frigi(migrator, liste)
+    aoid = _ats_oppdrag(migrator, fid, payload)
+    _sett_kontekst(migrator, TENANT)
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        migrator.execute(
+            "INSERT INTO oppdrag (opprinnelse, tenant, frigivelse_id,"
+            " oppdragstype, handling, eiermodul, payload_kryptert,"
+            " key_id, nonce, utforelsesfrist, evidensfrist,"
+            " koblingsstatus)"
+            " VALUES ('frigivelse',%s,%s,'rekruttering.utsending','h',"
+            "'e',%s,%s,%s, now()+interval '1 hour',"
+            " now()+interval '1 day','KOBLET')",
+            (TENANT, fid, ct, key_id, nonce))
+    migrator.rollback()
+    snd = _sender()
+    try:
+        _sett_kontekst(snd, TENANT)
+        aoid2 = snd.execute(
+            "SELECT opprett_frigivelsesoppdrag(%s,%s,"
+            "'rekruttering.utsending','rekruttering.utsending','m57_ats',"
+            "%s,%s,%s, now()+interval '4 hours', now()+interval '1 day')",
+            (TENANT, fid, ct, key_id, nonce)).fetchone()[0]
+        snd.rollback()
+    finally:
+        snd.close()
+    assert int(aoid2) == aoid, "retryet lagde et NYTT oppdrag"
+
+
+@pg
+def test_frigi_er_idempotent_under_kapplop(migrator):
+    """Cursor P2 på #140: SELECT-så-INSERT lot kappløpstaperen dø på
+    unik-bruddet. Nå får taperen vinnerens frigivelse: A setter inn uten
+    å committe; B (egen tilkobling) kaller funksjonen og blokkerer på
+    indeksen til A committer — og skal da returnere A-radens id."""
+    import threading
+
+    oid, _ = _grunnlag(migrator)
+    bid = _signatar(migrator)
+    liste = _liste(migrator, oid)
+    _signer(migrator, liste, bid)
+    a = _sender()
+    b = _sender()
+    try:
+        _sett_kontekst(a, TENANT)
+        fid_a = a.execute("SELECT frigi_utsendelse(%s,%s,'kapp-m1')",
+                          (TENANT, liste[0])).fetchone()[0]
+        resultat: dict = {}
+
+        def taper():
+            _sett_kontekst(b, TENANT)
+            resultat["fid"] = b.execute(
+                "SELECT frigi_utsendelse(%s,%s,'kapp-m1')",
+                (TENANT, liste[0])).fetchone()[0]
+            b.commit()
+
+        t = threading.Thread(target=taper)
+        t.start()
+        t.join(timeout=2)
+        assert t.is_alive(), "B skulle blokkere på As ucommittede rad"
+        a.commit()
+        t.join(timeout=10)
+        assert not t.is_alive(), "B kom aldri gjennom etter As commit"
+        assert resultat["fid"] == fid_a, "taperen fikk en ANNEN frigivelse"
+    finally:
+        a.close(); b.close()
+
+
+@pg
+def test_signer_kapplopstaper_faar_replaydommen(migrator):
+    """Cursor P2 på #140: identisk replay er no-op OGSÅ når kallene er
+    samtidige — taperen på unik nøkkel går inn i samme dom som en
+    sekvensiell replay, og avvikende innhold på nøkkelen skal fortsatt
+    høres."""
+    import threading
+
+    oid, _ = _grunnlag(migrator)
+    bid = _signatar(migrator)
+    liste = _liste(migrator, oid)
+    nk = "kapp-" + secrets.token_hex(6)
+    a = _rt()
+    b = _rt()
+    try:
+        _sett_kontekst(a, TENANT)
+        a.execute("SELECT signer_utsendingsliste(%s,%s,%s,%s)",
+                  (TENANT, liste[0], bid, nk))
+        feil: dict = {}
+
+        def taper():
+            _sett_kontekst(b, TENANT)
+            try:
+                b.execute("SELECT signer_utsendingsliste(%s,%s,%s,%s)",
+                          (TENANT, liste[0], bid, nk))
+                b.commit()
+            except Exception as e:            # noqa: BLE001 — dommen måles
+                feil["e"] = e
+                b.rollback()
+
+        t = threading.Thread(target=taper)
+        t.start()
+        t.join(timeout=2)
+        assert t.is_alive(), "B skulle blokkere på As ucommittede signatur"
+        a.commit()
+        t.join(timeout=10)
+        assert not t.is_alive()
+        assert "e" not in feil, f"identisk samtidig replay døde: {feil}"
+    finally:
+        a.close(); b.close()
+
+
+def test_migrer_baerer_utsendingskjedens_rettigheter():
+    """Cursor P1 på #140: kjøreren er AUTORITATIV — den revoker alt og
+    re-granter kun det som står i blokkene, så migrasjonens grants
+    overlever ikke ett `migrer.py`-kjør. Kjedens tilganger må stå i
+    kjørerens egne blokker: lesing til runtime, liste/signering på
+    API-veien, frigivelse/oppdrag hos senderen."""
+    tekst = (ROT / "deploy" / "staging" / "migrer.py").read_text(
+        encoding="utf-8")
+    assert ("GRANT SELECT ON utsendingsliste, utsendingssignatur,"
+            " utsendingsfrigivelse TO {rolle};") in tekst
+    for fn in ("opprett_utsendingsliste(TEXT, UUID, UUID, BIGINT, TEXT,"
+               " TEXT, TEXT, INT)",
+               "signer_utsendingsliste(TEXT, UUID, TEXT, TEXT)",
+               "frigi_utsendelse(TEXT, UUID, TEXT)",
+               "opprett_frigivelsesoppdrag(TEXT, UUID, TEXT, TEXT, TEXT,"
+               " BYTEA, TEXT, BYTEA, TIMESTAMPTZ, TIMESTAMPTZ)"):
+        assert f"GRANT EXECUTE ON FUNCTION {fn} TO {{rolle}};" in tekst, fn
