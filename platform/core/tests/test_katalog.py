@@ -984,6 +984,77 @@ def test_en_proxyfelle_som_aldri_returnerer_gir_tidsavbrudd(tmp_path):
     assert "materialisere" in r.stderr, r.stderr
 
 
+def test_en_kastet_felle_leses_i_konteksten_ikke_i_verten(tmp_path):
+    """Også FEILSTIEN går under tidsgrensen (Codex P2, F18).
+
+    UI-koden etter katalogen kaster — det er ventet, og leseren tar vare på
+    feilen for å kunne si hvorfor `M` mangler. Men `e.name` og `e.message` er
+    helt ordinære egenskapsoppslag, og siden kan eie begge som accessorer.
+    Lest i verten sto de utenfor enhver grense: `throw new Proxy({}, {get(){
+    for(;;){}}})` hang leseren, generatoren og CI. Samme klasse som F3, F7 og
+    F10, med den ene stien rotfiksen ikke hadde tatt med seg.
+
+    Den dypere årsaken lå ETT hakk lenger ned enn egenskapslesningen: med
+    `displayErrors` på leser Node selv `.stack` på den kastede verdien for å
+    pynte sporet, og den lesningen skjer på vei UT av `runInContext`, etter at
+    tidsvakten er koblet fra. Fellen slo altså til før én av leserens egne
+    linjer hadde sett verdien. Uten pyntingen krysser den ut umiddelbart, og
+    lesningen skjer inne i konteksten der grensen gjelder.
+
+    Katalogen står FØR fellen, så den skal komme ut hel: nettleseren ville også
+    beholdt en `const M` som var ferdig bundet da UI-koden kastet.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>\n"
+                   "const M = [{n:1,name:'En',area:'X',p:1}];\n"
+                   "throw new Proxy({}, {get(){for(;;){}}});\n"
+                   "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60,
+                       env={**os.environ, "LES_KATALOG_TIMEOUT_MS": "500"})
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["moduler"] == [
+        {"n": 1, "name": "En", "area": "X", "p": 1}], r.stdout
+
+
+def test_en_kastet_felle_foran_katalogen_gir_stopp_ikke_heng(tmp_path):
+    """Fellen foran katalogen feller lesningen — den henger den ikke (F18).
+
+    Her finnes ingen `M`, så leseren skal si fra om at skriptet stoppet før
+    erklæringen, og bruke feilens melding som årsak. Nettopp den meldingen er
+    det siden kan gjøre til en felle. Årsaken leses inne i konteksten, så en
+    `message`-getter som aldri returnerer felles av tidsgrensen og gir et
+    HØYLYTT utfall: rød exit med teksten om at feilen ikke lot seg lese.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>\n"
+                   "throw new Proxy({}, {get(){for(;;){}}});\n"
+                   "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60,
+                       env={**os.environ, "LES_KATALOG_TIMEOUT_MS": "500"})
+    assert r.returncode != 0, r.stdout
+    assert "fant ingen modulkatalog" in r.stderr, r.stderr
+    assert "kunne ikke leses innen tidsgrensen" in r.stderr, r.stderr
+
+
+def test_en_vanlig_feil_foran_katalogen_navngir_fortsatt_arsaken(tmp_path):
+    """Årsaken skal fortsatt STÅ DER — lesningen flyttet, den forsvant ikke.
+
+    Feilmeldingen krysser nå kontekstgrensen som tekst i stedet for som objekt
+    (F18). En regresjon der ville ikke vist seg som en hengt jobb, men som en
+    leser som plutselig sier «ukjent årsak» om noe den vet.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>document.title = 'x';\n"
+                   "const M = [{n:1,name:'En',area:'X',p:1}];\n"
+                   "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode != 0, r.stdout
+    assert "document is not defined" in r.stderr, r.stderr
+
+
 # Kontraktklassene katalogen bruker er de SAMME feltene modulregisteret lagrer,
 # og registeret håndhever dem med CHECK-vilkår. Enumene leses derfor ut av
 # den MIGRERTE BASEN, ikke skrevet av her: en kopi i testen ville vært nok en

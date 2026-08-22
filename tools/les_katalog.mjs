@@ -187,7 +187,21 @@ function skriptene(html) {
 // tidsgrense; det eneste som krysser ut er én JSON-tekst.
 const HJELPER = '__les_katalog__'
 
-const BYGG_HJELPER = `globalThis[${JSON.stringify(HJELPER)}] = (() => {
+// Slottet en kastet kontekstverdi legges i for å kunne LESES inne i
+// konteksten. Verten skriver den hit uten å røre en eneste egenskap på den.
+const FEILSPOR = '__les_katalog_feil__'
+
+/** Et uttrykk som når hjelperen uansett hva sidekoden har erklært.
+ *
+ *  `globalThis[…]` slår opp i det globale OBJEKTET, mens et bart navn først
+ *  slås opp i det globale LEKSIKALSKE skopet — der en `const __les_katalog__`
+ *  i kilden ville skygget for oss. Det er F15-lærdommen brukt på våre egne
+ *  navn: leseren skal ikke kunne skygges av kilden den leser. */
+function kall(metode, argument = '') {
+  return `globalThis[${JSON.stringify(HJELPER)}].${metode}(${argument})`
+}
+
+const BYGG_HJELPER =`globalThis[${JSON.stringify(HJELPER)}] = (() => {
   'use strict'
   const IKKE_DATA = ${JSON.stringify(IKKE_DATA)}
   const beskriv = Object.getOwnPropertyDescriptor
@@ -203,6 +217,7 @@ const BYGG_HJELPER = `globalThis[${JSON.stringify(HJELPER)}] = (() => {
   const lagUten = Object.create
   const endelig = Number.isFinite
   const tilJson = JSON.stringify
+  const tilTekst = String
   const plattObjekt = (verdi) => {
     const over = proto(verdi)
     return over === null || proto(over) === null
@@ -266,8 +281,68 @@ const BYGG_HJELPER = `globalThis[${JSON.stringify(HJELPER)}] = (() => {
     }
     return tilJson({feil: null, moduler})
   }
-  return {materialiser}
+  // EN KASTET VERDI LESES OGSÅ HER INNE (Codex P2, F18). navn og message kan
+  // være accessorer siden eier — samme klasse som F3/F7/F10, med feilstien som
+  // inngang. Leses de i verten, står de utenfor enhver tidsgrense; her felles
+  // de av den samme. Et primitivt kast har ingen av delene og gjengis som seg
+  // selv. Det som ikke lar seg lese blir tomt, aldri gjettet.
+  const feiltekst = (kastet) => {
+    const svar = lagUten(null)
+    svar.navn = ''
+    svar.melding = ''
+    try {
+      const slag = typeof kastet
+      if (kastet === null || (slag !== 'object' && slag !== 'function')) {
+        svar.melding = slag === 'string' ? kastet : tilTekst(kastet)
+      } else {
+        const n = kastet.name
+        const m = kastet.message
+        if (typeof n === 'string') svar.navn = n
+        if (typeof m === 'string') svar.melding = m
+      }
+    } catch (indre) {
+      svar.melding = ''
+    }
+    return tilJson(svar)
+  }
+  return {materialiser, feiltekst}
 })()`
+
+// KJØREVALGENE FOR SIDENS EGEN KODE (Codex P2, F18).
+//
+// `displayErrors: false` er ikke kosmetikk. Med standardverdien LESER Node
+// `.stack` på verdien som er kastet, for å pynte sporet med kildelinjen — og
+// den lesningen skjer på vei UT av `runInContext`, etter at tidsvakten er
+// koblet fra. `throw new Proxy({}, {get(){for(;;){}}})` hang derfor leseren
+// og CI før noen av våre linjer hadde sett verdien i det hele tatt; det var
+// ikke `e.name` som hang først, det var Node som pyntet. Uten pyntingen
+// krysser verdien ut på null millisekunder, og alt som skal LESES av den
+// leses etterpå inne i konteksten, under tidsgrensen. Se `feilen()`.
+//
+// Vi mister ingenting: meldingene våre bruker `message`, aldri `stack`.
+const KJOR = {timeout: TIMEOUT, displayErrors: false}
+
+/** `{navn, melding}` for noe konteksten kastet — lest INNE i konteksten.
+ *
+ *  F3 var en getter, F7 en merkelapp-getter, F10 en proxy-felle, og alle tre
+ *  ble lukket av den samme regelen: det som rører en kontekstverdi kjører i
+ *  konteksten, under tidsgrensen. Feilstien var stien regelen ikke hadde fått
+ *  ennå. `e.name` og `e.message` er helt ordinære egenskapsoppslag, og siden
+ *  kan eie begge som accessorer — lest her ute sto de utenfor enhver grense.
+ *
+ *  Verdien legges i `FEILSPOR` uten at verten rører en egenskap på den, og
+ *  hjelperen leser den der inne. Blir lesningen selv felt av tidsgrensen, sier
+ *  vi nettopp det: vi leser ingen egenskap på feilen VI fikk heller, for den
+ *  kunne vært den samme fellen. */
+function feilen(ctx, kastet) {
+  ctx[FEILSPOR] = kastet
+  try {
+    return JSON.parse(vm.runInContext(
+      kall('feiltekst', `globalThis[${JSON.stringify(FEILSPOR)}]`), ctx, KJOR))
+  } catch (e) {
+    return {navn: '', melding: 'feilen kunne ikke leses innen tidsgrensen'}
+  }
+}
 
 /** Katalogverdien `M` slik en JavaScript-motor ser den.
  *
@@ -302,23 +377,26 @@ function katalogverdien(deler, kilde) {
             'nettleseren selv avviser.')
     }
     try {
-      skript.runInContext(ctx, {timeout: TIMEOUT})
+      skript.runInContext(ctx, KJOR)
     } catch (e) {
-      // Feilobjektet kommer fra en annen realm, så `instanceof` biter ikke.
-      if (e && e.name === 'SyntaxError') {
-        stopp(`${navn} er ikke gyldig JavaScript: ${e.message}\n` +
+      // Feilobjektet kommer fra en annen realm, så `instanceof` biter ikke —
+      // og egenskapene på det leses inne i konteksten, ikke her. Se `feilen()`.
+      const info = feilen(ctx, e)
+      if (info.navn === 'SyntaxError') {
+        stopp(`${navn} er ikke gyldig JavaScript: ${info.melding}\n` +
               'To `const M = [ … ]` i hver sin <script> er nettopp denne ' +
               'feilen — den andre erklæringen avvises når taggen bindes.')
       }
       // Ventet: UI-koden etter katalogen rører `document`. Se toppen av fila.
-      if (!kastet) kastet = e
+      if (!kastet) kastet = info
     }
   })
   let tekst
   try {
-    tekst = vm.runInContext(`${HJELPER}.materialiser()`, ctx, {timeout: TIMEOUT})
+    tekst = vm.runInContext(kall('materialiser'), ctx, KJOR)
   } catch (e) {
-    stopp('kunne ikke materialisere modulkatalogen: ' + e.message + '\n' +
+    stopp('kunne ikke materialisere modulkatalogen: ' + feilen(ctx, e).melding +
+          '\n' +
           'Alt som rører en kontekstverdi kjører inne i konteksten, under ' +
           'samme tidsgrense som kildens egen kode — en proxy-felle eller ' +
           'getter som aldri returnerer gir tidsavbrudd her, aldri en hengt ' +
@@ -327,7 +405,8 @@ function katalogverdien(deler, kilde) {
   const svar = JSON.parse(tekst)
   if (svar.feil === 'mangler') {
     stopp('fant ingen modulkatalog `M` i sannhetskilden.\n' +
-          `Skriptet stoppet før erklæringen: ${kastet ? kastet.message : 'ukjent årsak'}`)
+          'Skriptet stoppet før erklæringen: ' +
+          `${kastet && kastet.melding ? kastet.melding : 'ukjent årsak'}`)
   }
   if (svar.feil === 'ikke_liste') {
     stopp('modulkatalogen `M` i sannhetskilden er ikke en liste — katalogen ' +
