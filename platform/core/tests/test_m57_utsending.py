@@ -18,7 +18,7 @@ import pytest
 
 from .test_api import (ANNEN_TENANT, DSN, MIGRATOR_DSN, TENANT,  # noqa: F401
                        migrator, miljo)
-from .test_m37 import _sett_kontekst
+from .test_m37 import _lag_oppdrag, _lag_sak, _sett_kontekst
 
 VARSEL_DSN = os.environ.get("DISPONIT_TEST_VARSEL_DSN")
 
@@ -92,6 +92,44 @@ def _evaluering(m):
     liste kan promotere (klarsignal §1 + §7/port 28)."""
     return _grunnlag(m, oppdragstype="rekruttering.evaluering",
                      status="utfort")
+
+
+def _m37_trio(m):
+    """Den KOBLEDE m37-trioen uten oppdraget: unntakssak, reparasjons-
+    operasjon og fase-2-loggpost. `_lag_oppdrag` (test_m37) lager rad og
+    trio i ett, men de negative stiene under må FØDE raden selv — det er
+    nettopp radens form som prøves."""
+    sak, logg = _lag_sak(m, TENANT)
+    rid = secrets.token_hex(32)
+    _sett_kontekst(m, TENANT)
+    m.execute(
+        "INSERT INTO reparasjonsoperasjoner (tenant, unntak_id,"
+        " repair_operation_id, repair_generation, handler_id,"
+        " handler_versjon, maalhandling, input_hash, kategori)"
+        " VALUES (%s,%s,%s,0,'r1_reinnsending','1','purring.send',%s,"
+        "'manglende_data')", (TENANT, sak, rid, secrets.token_hex(32)))
+    fase2 = m.execute(
+        "INSERT INTO revisjonslogg (tenant, aktor, kilde, input_hash,"
+        " policy_id, beslutning, begrunnelse, idempotency_key)"
+        " VALUES (%s,'test','arbeidskapabilitet','ih2','p@1.0.0/x.y',"
+        "'TILLAT','[]',%s) RETURNING id", (TENANT, rid)).fetchone()[0]
+    m.commit()
+    return sak, logg, rid, fase2
+
+
+def _m37_evaluering(m):
+    """En FULLFØRT `rekruttering.evaluering` på M37-ARMEN. Både vakten og
+    funksjonen tillater `opprinnelse IN ('beslutning','m37_reparasjon')`:
+    en evaluering kan også ha kommet av en reparasjon."""
+    sak, logg = _lag_sak(m, TENANT)
+    oid, _ = _lag_oppdrag(m, TENANT, sak, logg,
+                          oppdragstype="rekruttering.evaluering")
+    _sett_kontekst(m, TENANT)
+    for steg in ("plukket", "utfort"):
+        m.execute("UPDATE oppdrag SET status=%s WHERE tenant=%s AND id=%s",
+                  (steg, TENANT, oid))
+    m.commit()
+    return int(oid)
 
 
 def _liste(m, oid, *, serie=None, forrige=None, hash_="h1", antall=3):
@@ -225,6 +263,48 @@ def test_frigivelse_pa_annen_opprinnelse_avvises(migrator):
             "'kontroll.wcag.nettsted','m_wcag_audit',%s,%s,%s,"
             " now()+interval '1 hour', now()+interval '1 day','KOBLET')",
             (TENANT, logg, fid, ct, key_id, nonce))
+    migrator.rollback()
+
+
+@pg
+def test_frigivelse_pa_m37_opprinnelse_avvises(migrator):
+    """Cursor P2-1 (runde 10 på #140): port 2 var målt på ÉN av de to
+    andre armene.
+
+    Testen over dekker `beslutning`. Fjernet man `AND frigivelse_id IS
+    NULL` fra m37-armen alene, ble ingen test rød — og da kunne direkte
+    DML føde et KOBLET reparasjonsoppdrag som OGSÅ bar en gyldig
+    `frigivelse_id`. `oppdrag_en_per_frigivelse` er unik på den
+    referansen, så frigivelsens ENE forsøk ville vært brent på et oppdrag
+    `m57_ats` aldri eier: den irreversible utsendingen ble permanent
+    uplukkbar, uten at noe feilet underveis.
+
+    Positiv kontroll etterpå: NØYAKTIG samme rad uten `frigivelse_id`
+    står. Avvisningen skyldes altså referansen og ikke trioen — uten den
+    kontrollen kunne testen bestått av feil grunn."""
+    ev, payload = _evaluering(migrator)
+    bid = _signatar(migrator)
+    liste = _liste(migrator, ev)
+    _signer(migrator, liste, bid)
+    fid = _frigi(migrator, liste)
+    sak, logg, rid, fase2 = _m37_trio(migrator)
+    ct, key_id, nonce = payload
+    rad = ("INSERT INTO oppdrag (opprinnelse, tenant, unntak_id,"
+           " loggpost_id, repair_operation_id, beslutning_loggpost_id,"
+           " frigivelse_id, oppdragstype, handling, eiermodul,"
+           " payload_kryptert, key_id, nonce, utforelsesfrist,"
+           " evidensfrist, koblingsstatus)"
+           " VALUES ('m37_reparasjon',%s,%s,%s,%s,%s,%s,'reinnsending',"
+           "'purring.send','eiermodul:reinnsending',%s,%s,%s,"
+           " now()+interval '1 hour', now()+interval '30 days','KOBLET')")
+    _sett_kontekst(migrator, TENANT)
+    with pytest.raises(psycopg.errors.CheckViolation):
+        migrator.execute(rad, (TENANT, sak, logg, rid, fase2, fid,
+                               ct, key_id, nonce))
+    migrator.rollback()
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute(rad, (TENANT, sak, logg, rid, fase2, None,
+                           ct, key_id, nonce))
     migrator.rollback()
 
 
@@ -721,6 +801,33 @@ def test_liste_krever_fullfort_evalueringsoppdrag(migrator):
         rt.execute(
             "SELECT opprett_utsendingsliste(%s,%s,NULL,%s,'invitasjon',"
             "'m@1','h-pos',2)", (TENANT, uuid.uuid4(), fullfort))
+        rt.rollback()
+    finally:
+        rt.close()
+
+
+@pg
+def test_m37_evaluering_kan_promotere_liste(migrator):
+    """Cursor P2-2 (runde 10 på #140): BEGGE de tillatte opprinnelsene må
+    måles, ikke bare den ene.
+
+    Vakten og funksjonen sier eksplisitt `opprinnelse IN ('beslutning',
+    'm37_reparasjon')` — en evaluering kan også ha kommet av en
+    reparasjon. Ingen test konstruerte den armen, så en mutasjon som
+    strøk `'m37_reparasjon'` fra begge `IN`-listene forble grønn: en
+    stille regresjon som ville stengt reparasjonsveien ut av ATS-en, og
+    først vist seg hos en kunde med en reparert evaluering.
+
+    Begge veiene måles, for påstanden er skjemasann OG funksjonssann."""
+    oid = _m37_evaluering(migrator)
+    uuid = __import__("uuid")
+    assert _liste(migrator, oid, hash_="h-m37") is not None   # skjemaveien
+    rt = _rt()
+    try:
+        _sett_kontekst(rt, TENANT)
+        rt.execute(
+            "SELECT opprett_utsendingsliste(%s,%s,NULL,%s,'invitasjon',"
+            "'m@1','h-m37-fn',2)", (TENANT, uuid.uuid4(), oid))
         rt.rollback()
     finally:
         rt.close()

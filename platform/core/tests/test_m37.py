@@ -1397,6 +1397,7 @@ def _unik_eiermodul() -> str:
 
 def _lag_oppdrag(conn, tenant, sak_id, loggpost_id, *, rid=None,
                  handling="purring.send", eiermodul="eiermodul:reinnsending",
+                 oppdragstype="reinnsending",
                  utforelsesfrist="1 hour", evidensfrist="30 days"):
     """Et oppdrag slik arbeideren ville lagt det ut.
 
@@ -1429,11 +1430,11 @@ def _lag_oppdrag(conn, tenant, sak_id, loggpost_id, *, rid=None,
         " repair_operation_id, oppdragstype, handling, eiermodul,"
         " payload_kryptert, key_id, nonce, utforelsesfrist, evidensfrist,"
         " beslutning_loggpost_id, koblingsstatus)"
-        " VALUES ('m37_reparasjon',%s,%s,%s,%s,'reinnsending',%s,%s,%s,%s,%s,"
+        " VALUES ('m37_reparasjon',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
         f" now()+interval '{utforelsesfrist}', now()+interval '{evidensfrist}',"
         " %s,'KOBLET') RETURNING id",
-        (tenant, sak_id, loggpost_id, rid, handling, eiermodul, ct, key_id,
-         nonce, beslutning_loggpost)).fetchone()[0]
+        (tenant, sak_id, loggpost_id, rid, oppdragstype, handling, eiermodul,
+         ct, key_id, nonce, beslutning_loggpost)).fetchone()[0]
     conn.commit()
     return int(opp), rid
 
