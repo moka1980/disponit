@@ -50,6 +50,7 @@
 // globale skopet. Tegnene `const M = [` inne i en streng er en streng.
 
 import fs from 'node:fs'
+import util from 'node:util'
 import vm from 'node:vm'
 
 const SKRIPT_RE = /<script([^>]*)>([\s\S]*?)<\/script>/g
@@ -393,12 +394,34 @@ const BYGG_HJELPER =`((glob) => {
     for (let i = 0; i < m - k; i++) if (n[i] !== '_') return false
     return true
   }
+  // BEHOLDERNE VI ROERTE, SAA VERTEN KAN SI HVA DE VAR (Codex P2, F39).
+  //
+  // F10 flyttet all beroering av en kontekstverdi INN i konteksten, og det
+  // lukket proxy-fellen som HENGER: en felle som aldri returnerer felles av
+  // tidsgrensen. Den som RETURNERER staar igjen. En Proxy med en get-felle som
+  // gir 4 for p leses her som deskriptorene UNDER den — fase 1 — mens
+  // nettleseren leser 4 av det samme objektet. Det er stille uenighet med
+  // nettleseren, altsaa nettopp det lesersteget finnes for aa fjerne.
+  //
+  // Ingen kode inne i konteksten kan spoerre om noe ER en Proxy: hver
+  // operasjon som naar den, naar fella foerst. Verten kan — util.types.isProxy
+  // er en maskinnaer proeve som ikke paakaller en eneste felle. Verdiene faar
+  // derfor ligge i en liste vi selv bygger, og verten spoer lista etterpaa.
+  // Ingenting fra verten kommer inn hit; det er bare listen som gaar ut.
+  const sett = []
+  const steder = []
+  let hvorNaa = 0
   const somData = (verdi) => {
     if (verdi === null) return null
     const slag = typeof verdi
     if (slag === 'string' || slag === 'boolean') return verdi
     if (slag === 'number') {
       return endelig(verdi) ? verdi : merket('tallet ' + verdi)
+    }
+    // FOER enhver operasjon som kan naa en felle. Se over.
+    if (slag === 'object') {
+      sett[sett.length] = verdi
+      steder[steder.length] = hvorNaa
     }
     // En symbolnøkkel kan ikke bæres av JSON, så beholderen er ikke data —
     // uansett hva som står under den. Vi sier hva vi så. Se symboler over.
@@ -465,9 +488,16 @@ const BYGG_HJELPER =`((glob) => {
     let katalog
     try { katalog = M } catch (e) { return tilJson(utfall('mangler')) }
     if (typeof katalog === 'undefined') return tilJson(utfall('mangler'))
+    // Katalogen selv er ogsaa en beholder: Array.isArray ser gjennom en Proxy
+    // til lista under, saa M kan vaere en. Se F39.
+    if (typeof katalog === 'object') {
+      sett[sett.length] = katalog
+      steder[steder.length] = 0
+    }
     if (!erListe(katalog)) return tilJson(utfall('ikke_liste'))
     const moduler = []
     for (let i = 0; i < katalog.length; i++) {
+      hvorNaa = i + 1
       const post = egenskapen(katalog, i)
       if (post === null || typeof post !== 'object' || erListe(post) ||
           IKKE_DATA in post) {
@@ -511,6 +541,10 @@ const BYGG_HJELPER =`((glob) => {
   const api = lagUten(null)
   api.materialiser = materialiser
   api.feiltekst = feiltekst
+  // Listene over beholderne materialiseringen roerte, og hvor de sto. Verten
+  // leser dem med util.types.isProxy — se F39.
+  api.beholderne = () => sett
+  api.stedene = () => steder
   laas(${JSON.stringify(HJELPER)}, api, false)
   laas(${JSON.stringify(FEILSPOR)}, undefined, true)
 })(this)`
@@ -548,6 +582,40 @@ function feilen(ctx, kastet) {
       kall('feiltekst', `this[${JSON.stringify(FEILSPOR)}]`), ctx, KJOR))
   } catch (e) {
     return {navn: '', melding: 'feilen kunne ikke leses innen tidsgrensen'}
+  }
+}
+
+/** Stopper hvis noen beholder materialiseringen rørte er en Proxy (Codex P2,
+ *  F39).
+ *
+ *  F10 flyttet all berøring av en kontekstverdi INN i konteksten, og det lukket
+ *  proxy-fellen som HENGER: en felle som aldri returnerer felles av
+ *  tidsgrensen. Den som RETURNERER sto igjen. En Proxy over
+ *  `{n:1,name:'En',area:'X',p:1}` med en `get`-felle som gir 4 for `p` leses av
+ *  deskriptorene UNDER den — fase 1 — mens nettleseren leser `M[0].p` som 4.
+ *  Ingen felle hang, ingen kastet; katalogen ble bare en annen enn sidens.
+ *
+ *  Ingen kode inne i konteksten kan spørre om noe ER en Proxy: hver operasjon
+ *  som når verdien, når fellen først — det er hele poenget med en Proxy.
+ *  `util.types.isProxy` er derimot en maskinnær prøve i verten som ikke
+ *  påkaller en eneste felle, heller ikke på en verdi fra en annen kontekst.
+ *
+ *  Doktrinen fra F10 står: ingenting leses AV verdiene her ute. Lista er vår
+ *  egen, bygget inne i konteksten (`sett`), og her ute røres bare `length` og
+ *  indeksene på den — egne dataegenskaper på en helt ordinær liste. Ingen
+ *  vertsfunksjon slippes inn i konteksten; konteksten er fortsatt uten vei ut. */
+function proxyfri(ctx) {
+  const rørte = vm.runInContext(kall('beholderne'), ctx, KJOR)
+  const steder = vm.runInContext(kall('stedene'), ctx, KJOR)
+  for (let i = 0; i < rørte.length; i++) {
+    if (!util.types.isProxy(rørte[i])) continue
+    const hvor = steder[i]
+    stopp('modulkatalogen i sannhetskilden bærer en Proxy ' +
+          (hvor ? `i element ${hvor}` : 'som selve katalogen') + '.\n' +
+          'En Proxy er ikke data: den svarer på hvert oppslag med kode, og ' +
+          'det den svarer nettleseren kan være noe annet enn det den svarer ' +
+          'en lesning av egenskapene under den. Katalogen er dataliteraler, ' +
+          'og en verdi som først blir til når noen spør, kan ingen port måle.')
   }
 }
 
@@ -616,6 +684,7 @@ function katalogverdien(deler, kilde) {
           'getter som aldri returnerer gir tidsavbrudd her, aldri en hengt ' +
           'port. Se `BYGG_HJELPER`.')
   }
+  proxyfri(ctx)
   const svar = JSON.parse(tekst)
   if (svar.feil === 'proto_endret') {
     // Signaturene er NUL-skilte navnelister, laget inne i konteksten. Her ute

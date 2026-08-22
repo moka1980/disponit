@@ -1012,6 +1012,46 @@ def test_en_proxyfelle_kjorer_i_konteksten_ikke_i_verten(tmp_path):
     assert "materialisere" in r.stderr, r.stderr
 
 
+@pytest.mark.parametrize("katalog,hvor", [
+    # Codex' eget eksempel: fella RETURNERER, og gir noe annet enn det som
+    # står under. Nettleseren leser `M[0].p` som 4; deskriptoren sier 1.
+    ("const ekte = {n:1,name:'En',area:'X',p:1};\n"
+     "const M = [new Proxy(ekte, {get(m,k){return k === 'p' ? 4 : m[k]}})];",
+     "element 1"),
+    # En Proxy uten en eneste felle er like lite data: det er ikke det den
+    # GJØR i dag som avvises, det er at oppslaget er kode.
+    ("const M = [{n:1,name:'En',area:'X',p:1,flow:new Proxy({a:'b'}, {})}];",
+     "element 1"),
+    # Og katalogen selv kan være en: `Array.isArray` ser gjennom til lista
+    # under, så `erListe` alene fanger den ikke.
+    ("const M = new Proxy([{n:1,name:'En',area:'X',p:1}], {});",
+     "selve katalogen"),
+])
+def test_en_proxy_som_returnerer_avvises(tmp_path, katalog, hvor):
+    """En felle som RETURNERER er ikke fanget av tidsgrensen (Codex P2, F39).
+
+    F10 flyttet all berøring av en kontekstverdi inn i konteksten, og det lukket
+    fellen som HENGER — se prøven under. Den som returnerer sto igjen: en Proxy
+    med en `get`-felle som gir 4 for `p` leses av deskriptorene UNDER den, altså
+    fase 1, mens nettleseren leser 4 av det samme objektet. Målt på `f44dc6f`:
+    exit 0 og `"p": 1`. Ingen felle hang, ingen kastet; katalogen ble bare en
+    annen enn sidens — nøyaktig den stille uenigheten lesersteget finnes for.
+
+    Ingen kode inne i konteksten kan spørre om noe ER en Proxy: hver operasjon
+    som når verdien, når fellen først. Verten kan (`util.types.isProxy`, en
+    maskinnær prøve som ikke påkaller en eneste felle), og beholderne
+    materialiseringen rørte ligger i en liste leseren selv bygger. Doktrinen fra
+    F10 står: her ute røres bare `length` og indeksene på vår egen liste.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text(f"<html><script>\n{katalog}\n</script></html>",
+                   encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 1, r.stdout
+    assert "Proxy" in r.stderr and hvor in r.stderr, r.stderr
+
+
 def test_en_proxyfelle_som_aldri_returnerer_gir_tidsavbrudd(tmp_path):
     """Fellen som aldri returnerer feller porten — porten henger ikke.
 
