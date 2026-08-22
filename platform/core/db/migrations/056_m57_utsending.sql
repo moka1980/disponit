@@ -607,6 +607,35 @@ SET search_path = pg_catalog AS $$
 DECLARE v_id BIGINT;
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant, 'opprett_frigivelsesoppdrag');
+    -- FRIGIVELSEN AUTORISERER ÉN KONTRAKT, IKKE HVILKEN SOM HELST (Codex P1
+    -- runde 6 + Cursor P1 runde 5 på #140 — samme funn fra begge
+    -- reviewerne). Funksjonen setter `opprinnelse` og `frigivelse_id` selv,
+    -- men lot kalleren velge HVILKEN outbox-jobb signaturen skulle
+    -- autorisere. `claim_neste_oppdrag` plukker på eiermodul +
+    -- handlingsprefiks, så en kompromittert eller feilende
+    -- `disponit_varselsender` kunne føde et KOBLET, frigivelses-bærende
+    -- oppdrag i en ANNEN moduls kø — som den modulen så dekrypterer og
+    -- utfører. Mennesket signerte en utsendingsliste, ikke en
+    -- WCAG-kontroll.
+    --
+    -- Samme doktrine som at `opprinnelse` aldri kommer fra request:
+    -- argumentene beholdes (signaturen, og dermed grants/kallere, er
+    -- urørt), men de må BESKRIVE ATS-utsendelsen. Trippelen er den samme
+    -- som klarsignalet, testene og SP-10-prøvekjøringen alt bruker.
+    --
+    -- Skal en ANNEN utsendingsvariant (påminnelse, tilbaketrekking, en
+    -- annen kanal) fødes av en frigivelse senere, er det en utvidelse av
+    -- listen her — en bevisst migrasjon med sin egen gjennomgang, ikke noe
+    -- senderen kan velge i farten.
+    IF p_oppdragstype IS DISTINCT FROM 'rekruttering.utsending'
+       OR p_handling IS DISTINCT FROM 'rekruttering.utsending'
+       OR p_eiermodul IS DISTINCT FROM 'm57_ats' THEN
+        RAISE EXCEPTION 'opprett_frigivelsesoppdrag: (%, %, %) er ikke en'
+            ' godkjent utsendingskontrakt — en frigivelse autoriserer kun'
+            ' rekruttering.utsending/rekruttering.utsending/m57_ats',
+            p_oppdragstype, p_handling, p_eiermodul
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
     PERFORM 1 FROM public.utsendingsfrigivelse
      WHERE tenant = p_tenant AND frigivelse_id = p_frigivelse_id;
     IF NOT FOUND THEN

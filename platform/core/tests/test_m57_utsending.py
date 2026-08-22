@@ -1305,15 +1305,85 @@ def test_frigivelsesoppdragets_retry_maa_beskrive_samme_oppdrag(migrator):
             (TENANT, fid, ct3, key_id3, nonce3)).fetchone()[0]
         assert aoid3 == aoid, "et retry med fersk kryptering lagde et NYTT oppdrag"
         snd.rollback()
-        # annen METADATA (annen håndterer) -> fortsatt avvist
+        # annen METADATA -> fortsatt avvist. Etter at trippelen ble låst
+        # (Codex P1, runde 6) er `key_id` det ENESTE frie feltet i
+        # materialiteten, og det er FK-bundet til tenantens egne nøkler —
+        # scenariet er altså et retry som kommer inn på den andre siden av
+        # en nøkkelrotasjon. Den utrangerte nøkkelen legges inn direkte
+        # (aktiv=false, ikke destruert) fordi det er nettopp den formen en
+        # rotasjon etterlater.
+        _sett_kontekst(migrator, TENANT)
+        rotert = "dek-" + secrets.token_hex(8)
+        migrator.execute(
+            "INSERT INTO tenant_nokler (tenant, key_id, wrapped_dek, aktiv)"
+            " VALUES (%s,%s,%s,false)", (TENANT, rotert, b"utrangert"))
+        migrator.commit()
         _sett_kontekst(snd, TENANT)
         with pytest.raises(psycopg.errors.InvalidParameterValue):
             snd.execute(
                 "SELECT opprett_frigivelsesoppdrag(%s,%s,"
-                "'rekruttering.utsending','en-annen-handling',"
+                "'rekruttering.utsending','rekruttering.utsending',"
                 "'m57_ats',%s,%s,%s, now()+interval '4 hours',"
                 " now()+interval '1 day')",
-                (TENANT, fid, ct, key_id, nonce))
+                (TENANT, fid, ct, rotert, nonce))
+        snd.rollback()
+    finally:
+        snd.close()
+
+
+@pg
+@pytest.mark.parametrize("trippel", [
+    ("kontroll.wcag.nettsted", "kontroll.wcag.nettsted", "m_wcag_audit"),
+    ("rekruttering.utsending", "rekruttering.utsending", "m_wcag_audit"),
+    ("rekruttering.utsending", "kontroll.wcag.nettsted", "m57_ats"),
+    ("rekruttering.evaluering", "rekruttering.utsending", "m57_ats"),
+])
+def test_frigivelsesoppdraget_maa_beskrive_utsendingskontrakten(
+        migrator, trippel):
+    """Codex P1 på #140 (runde 6) + Cursor P1 (runde 5) — samme funn fra
+    begge reviewerne: funksjonen satte `opprinnelse` og `frigivelse_id`
+    selv, men lot kalleren velge HVILKEN outbox-jobb signaturen
+    autoriserte. `claim_neste_oppdrag` plukker på eiermodul +
+    handlingsprefiks, så senderen kunne føde et KOBLET, frigivelses-bærende
+    oppdrag i en ANNEN moduls kø — og den modulen dekrypterer og utfører
+    det. Mennesket signerte en utsendingsliste, ikke en WCAG-kontroll.
+
+    Alle fire varianter treffer ETT felt hver (eller typen alene), så
+    testen måler at porten leser hele trippelen, ikke bare eiermodulen.
+
+    MUTASJONEN SOM DREPER DENNE: fjern kontrakt-porten i
+    `opprett_frigivelsesoppdrag`."""
+    oid, payload = _grunnlag(migrator)
+    ct, key_id, nonce = payload
+    bid = _signatar(migrator)
+    liste = _liste(migrator, oid)
+    _signer(migrator, liste, bid)
+    fid = _frigi(migrator, liste)
+    snd = _sender()
+    try:
+        _sett_kontekst(snd, TENANT)
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            snd.execute(
+                "SELECT opprett_frigivelsesoppdrag(%s,%s,%s,%s,%s,%s,%s,%s,"
+                " now()+interval '4 hours', now()+interval '1 day')",
+                (TENANT, fid, *trippel, ct, key_id, nonce))
+        snd.rollback()
+        # ... og ingen rad ble lagt igjen: `oppdrag_en_per_frigivelse` gir
+        # frigivelsen nøyaktig ETT forsøk, så et avvist forsøk som likevel
+        # skrev ville blokkert det gyldige oppdraget for alltid.
+        _sett_kontekst(migrator, TENANT)
+        assert migrator.execute(
+            "SELECT count(*) FROM oppdrag WHERE tenant=%s AND"
+            " frigivelse_id=%s", (TENANT, fid)).fetchone()[0] == 0
+        migrator.rollback()
+        # positiv kontroll: den godkjente trippelen slipper gjennom.
+        _sett_kontekst(snd, TENANT)
+        aoid = snd.execute(
+            "SELECT opprett_frigivelsesoppdrag(%s,%s,"
+            "'rekruttering.utsending','rekruttering.utsending','m57_ats',"
+            "%s,%s,%s, now()+interval '4 hours', now()+interval '1 day')",
+            (TENANT, fid, ct, key_id, nonce)).fetchone()[0]
+        assert aoid
         snd.rollback()
     finally:
         snd.close()
