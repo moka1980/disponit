@@ -1353,6 +1353,54 @@ def test_et_hull_i_selve_katalogen_stopper_porten(tmp_path):
     assert "element 2" in r.stderr and IKKE_DATA in r.stderr, r.stderr
 
 
+def test_en_symbolnokkel_er_ogsaa_en_egen_nokkel(tmp_path):
+    """En egen symbolnøkkel ses, den hoppes ikke over (Codex P2, F30).
+
+    F16 lukket tellbarheten ved å bytte `Object.keys` mot
+    `Object.getOwnPropertyNames`, men egne nøkler i JavaScript er strenger
+    PLUSS symboler, og `getOwnPropertyNames` gir bare de første. Målt før
+    fiksen: `flow: {[Symbol('x')]: () => 42}` ble skrevet ut som `"flow": {}`
+    med exit 0 — nettleseren ser et objekt som bærer en funksjon, leseren
+    meldte et tomt og lesbart objekt, og porten godtok det. En symbolnøkkel
+    kan ikke bæres av JSON, så beholderen er ikke data.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>\n"
+                   "const s = Symbol('x');\n"
+                   "const liste = ['steg']; liste[Symbol('y')] = () => 42;\n"
+                   "const M = [{n:1,name:'En',area:'X',p:1,"
+                   "flow:{[s]: () => 42},sti:liste,hel:{a:'b'}}];\n"
+                   "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    post = json.loads(r.stdout)["moduler"][0]
+    assert post["flow"] == {IKKE_DATA: "symbolnokkel"}, r.stdout
+    # En LISTE med symbolnøkkel er samme sak: indeksene sier ingenting om den.
+    assert post["sti"] == {IKKE_DATA: "symbolnokkel"}, r.stdout
+    # Kontrollen: en helt ordinær beholder uten symboler er fortsatt data.
+    assert post["hel"] == {"a": "b"}, r.stdout
+    assert sorted(_uleselige_felt(post)) == ["flow", "sti"], r.stdout
+
+
+def test_en_symbolnokkel_pa_selve_posten_stopper_porten(tmp_path):
+    """Samme nøkkel ett nivå opp er ingen modulpost. Se F30.
+
+    Før fiksen forsvant symbolegenskapen stille, og posten passerte som en
+    helt ordinær modulpost. Nå navngir stoppet hva leseren så.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>\n"
+                   "const post = {n:2,name:'To',area:'X',p:2};\n"
+                   "post[Symbol('y')] = 'skjult';\n"
+                   "const M = [{n:1,name:'En',area:'X',p:1}, post];\n"
+                   "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 1, r.stdout
+    assert "element 2" in r.stderr and "symbolnokkel" in r.stderr, r.stderr
+
+
 # Kontraktklassene katalogen bruker er de SAMME feltene modulregisteret lagrer,
 # og registeret håndhever dem med CHECK-vilkår. Enumene leses derfor ut av
 # den MIGRERTE BASEN, ikke skrevet av her: en kopi i testen ville vært nok en

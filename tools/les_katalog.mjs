@@ -272,6 +272,14 @@ const BYGG_HJELPER =`((glob) => {
   // hele lesersteget finnes for å fjerne. Tellbarhet er en visningsdetalj;
   // egenskapen er der.
   const nokler = Object.getOwnPropertyNames
+  // ...OG IKKE BARE DE MED STRENGNØKKEL (Codex P2, F30). getOwnPropertyNames
+  // lukket tellbarheten, men egne nøkler i JavaScript er strenger PLUSS
+  // symboler, og den gir bare de første. flow: {[Symbol('x')]: () => 42} ble
+  // derfor skrevet ut som "flow": {} med exit 0: nettleseren ser et objekt som
+  // bærer en funksjon, leseren meldte et tomt og lesbart objekt. Det er ikke
+  // en ny form på F16 — det er den andre halvdelen av samme oppslag, og med
+  // begge er nøkkelrommet uttømt per definisjon.
+  const symboler = Object.getOwnPropertySymbols
   const erListe = Array.isArray
   const lagUten = Object.create
   const endelig = Number.isFinite
@@ -323,6 +331,11 @@ const BYGG_HJELPER =`((glob) => {
     if (slag === 'string' || slag === 'boolean') return verdi
     if (slag === 'number') {
       return endelig(verdi) ? verdi : merket('tallet ' + verdi)
+    }
+    // En symbolnøkkel kan ikke bæres av JSON, så beholderen er ikke data —
+    // uansett hva som står under den. Vi sier hva vi så. Se symboler over.
+    if (slag === 'object' && symboler(verdi).length) {
+      return merket('symbolnokkel')
     }
     if (erListe(verdi)) {
       const ut = []
