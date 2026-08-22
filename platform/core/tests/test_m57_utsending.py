@@ -928,6 +928,31 @@ def test_migrer_baerer_utsendingskjedens_rettigheter():
         assert f"GRANT EXECUTE ON FUNCTION {fn} TO {{rolle}};" in tekst, fn
 
 
+def test_056_granter_aldri_ubetinget_til_lokalnavnet():
+    """Codex P1 på #140 (runde 5): `disponit` er LOKAL-/TESTNAVNET på
+    runtime-rollen — `migrer.py` tar navnet som argument. En ubetinget
+    grant i migrasjonen har to utfall på en installasjon med et annet
+    navn: rollen finnes ikke og HELE 056 ruller tilbake før kjøreren
+    rekker `M37_RETTIGHETER_API`, eller den finnes som en urelatert/
+    utrangert innlogging og beholder EXECUTE for alltid (kjøreren
+    revoker aldri funksjonsgrants fra andre roller enn den konfigurerte).
+
+    Samme statiske port som 043 alt har
+    (`test_gate14b.py::…rettighetene_er_parameteriserte`): hver
+    `TO disponit;` i 056 må stå i en `IF EXISTS (… rolname = 'disponit')`.
+
+    MUTASJONEN SOM DREPER DENNE: fjern én av `DO $$`-innpakningene rundt
+    grantene i §7/§8."""
+    sql = (ROT / "platform" / "core" / "db" / "migrations"
+           / "056_m57_utsending.sql").read_text(encoding="utf-8")
+    treff = list(re.finditer(r"TO disponit\b\s*;", sql))
+    assert treff, "fant ingen runtime-grant i 056 — er porten fortsatt reell?"
+    for t in treff:
+        foran = sql[max(0, t.start() - 600):t.start()]
+        assert "rolname = 'disponit'" in foran, (
+            "ubetinget grant til lokalnavnet: " + repr(foran[-160:]))
+
+
 def test_sp10_daekker_056():
     """Cursor P2-3 på #140 (runde 3): CI kjører allerede
     `sp10-provekjoring.py 56` og skriptet har allerede

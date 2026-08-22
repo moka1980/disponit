@@ -657,10 +657,24 @@ REVOKE ALL ON FUNCTION frigi_utsendelse(TEXT, UUID, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION opprett_frigivelsesoppdrag(TEXT, UUID, TEXT, TEXT,
     TEXT, BYTEA, TEXT, BYTEA, TIMESTAMPTZ, TIMESTAMPTZ) FROM PUBLIC;
 
-GRANT EXECUTE ON FUNCTION opprett_utsendingsliste(TEXT, UUID, UUID, BIGINT,
-    TEXT, TEXT, TEXT, INT) TO disponit;
-GRANT EXECUTE ON FUNCTION signer_utsendingsliste(TEXT, UUID, TEXT, TEXT)
-    TO disponit;
+-- ... og `disponit` er LOKAL-/TESTNAVNET på runtime-rollen (Codex P1,
+-- runde 5 — samme klasse 043 §14b skrev ned). `deploy/staging/migrer.py`
+-- tar runtime-rollens navn som ARGUMENT: på en installasjon som kjører
+-- med et annet navn er en literal grant her enten en hard feil (rollen
+-- finnes ikke → hele 056 ruller tilbake, FØR kjøreren rekker
+-- `M37_RETTIGHETER_API`), eller en STILLE feiltildeling — en urelatert
+-- eller utrangert `disponit`-innlogging beholder EXECUTE på
+-- signeringsveien, for kjøreren revoker aldri funksjonsgrants fra andre
+-- roller enn den konfigurerte. Den autoritative granten er kjørerens
+-- parameteriserte blokk; denne står betinget, med 043s form.
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'disponit') THEN
+    GRANT EXECUTE ON FUNCTION opprett_utsendingsliste(TEXT, UUID, UUID,
+      BIGINT, TEXT, TEXT, TEXT, INT) TO disponit;
+    GRANT EXECUTE ON FUNCTION signer_utsendingsliste(TEXT, UUID, TEXT, TEXT)
+      TO disponit;
+  END IF;
+END $$;
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'disponit_varselsender') THEN
@@ -679,7 +693,15 @@ RESET ROLE;
 --    og eieren av kjedefunksjonene; INSERT kun gjennom funksjonene.
 REVOKE ALL ON utsendingsliste, utsendingssignatur, utsendingsfrigivelse
     FROM PUBLIC;
-GRANT SELECT ON utsendingsliste, utsendingssignatur, utsendingsfrigivelse
-    TO disponit;
+-- Samme betingelse og samme grunn som funksjonsgrantene over: kjørerens
+-- `M37_RETTIGHETER_API` eier lesetilgangen for den KONFIGURERTE
+-- runtime-rollen (migrer.py §056-linjen), denne er lokal-/testnavnets
+-- betingede speiling.
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'disponit') THEN
+    GRANT SELECT ON utsendingsliste, utsendingssignatur,
+      utsendingsfrigivelse TO disponit;
+  END IF;
+END $$;
 GRANT SELECT, INSERT ON utsendingsliste, utsendingssignatur,
     utsendingsfrigivelse TO disponit_m37_claimer;
