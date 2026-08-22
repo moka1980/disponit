@@ -83,21 +83,23 @@ def _liste(m, oid, *, serie=None, forrige=None, hash_="h1", antall=3):
     return rad
 
 
-def _signatar(m, *, tenant=TENANT, medlem=True, aktiv=True):
-    """Signataren er et MENNESKE i tenanten. `brukeridentitet` alene er
-    global (runde 2: den sier bare at strengen er kjent et sted) —
-    medlemskapet er autorisasjonsinngangen, og den seedes her."""
-    _sett_kontekst(m, tenant)
+def _signatar(m, *, medlem=True, tenant=None, aktiv=True):
+    """En brukeridentitet — med AKTIVT medlemskap i tenanten som standard
+    (signaturporten krever det); `medlem=False`, `aktiv=False` eller
+    annen tenant for de negative stiene."""
+    _sett_kontekst(m, TENANT)
     bid = m.execute(
         "INSERT INTO brukeridentitet (issuer, sub) VALUES"
         " ('https://m57.test', %s) RETURNING bruker_id",
         ("s-" + secrets.token_hex(6),)).fetchone()[0]
     if medlem:
+        # RLS på brukermedlemskap: WITH CHECK krever at konteksten ER
+        # tenanten det skrives for — settes eksplisitt for fremmed-stien.
+        _sett_kontekst(m, tenant or TENANT)
         m.execute(
-            "INSERT INTO brukermedlemskap (tenant, bruker_id, aktiv, roller)"
-            " VALUES (%s,%s,%s,ARRAY['admin'])"
-            " ON CONFLICT (tenant, bruker_id) DO NOTHING",
-            (tenant, bid, aktiv))
+            "INSERT INTO brukermedlemskap (tenant, bruker_id, roller,"
+            " aktiv) VALUES (%s,%s,%s,%s)",
+            (tenant or TENANT, bid, ["admin"], aktiv))
     m.commit()
     return bid
 
@@ -692,3 +694,149 @@ def test_migrer_baerer_utsendingskjedens_rettigheter():
                "opprett_frigivelsesoppdrag(TEXT, UUID, TEXT, TEXT, TEXT,"
                " BYTEA, TEXT, BYTEA, TIMESTAMPTZ, TIMESTAMPTZ)"):
         assert f"GRANT EXECUTE ON FUNCTION {fn} TO {{rolle}};" in tekst, fn
+
+
+@pg
+def test_signaturen_krever_aktivt_medlemskap_i_tenanten(migrator):
+    """Cursor P1 på #140 (runde 2): signaturen er den menneskelige,
+    irreversible autorisasjonen — en identitet uten aktivt medlemskap i
+    TENANTEN kan ikke bære den. Uten porten kunne runtime tilskrive
+    signaturen en fremmed tenants bruker eller en fabrikkert
+    identitetsrad."""
+    oid, _ = _grunnlag(migrator)
+    liste = _liste(migrator, oid)
+    rt = _rt()
+    try:
+        # (a) identitet uten medlemskap
+        uten = _signatar(migrator, medlem=False)
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.execute("SELECT signer_utsendingsliste(%s,%s,%s,%s)",
+                       (TENANT, liste[0], uten, secrets.token_hex(6)))
+        rt.rollback()
+        # (b) medlemskap i en ANNEN tenant
+        fremmed = _signatar(migrator, tenant="t-en-annen")
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.execute("SELECT signer_utsendingsliste(%s,%s,%s,%s)",
+                       (TENANT, liste[0], fremmed, secrets.token_hex(6)))
+        rt.rollback()
+        # (c) aktivt medlemskap i tenanten -> OK
+        med = _signatar(migrator)
+        _sett_kontekst(rt, TENANT)
+        rt.execute("SELECT signer_utsendingsliste(%s,%s,%s,%s)",
+                   (TENANT, liste[0], med, secrets.token_hex(6)))
+        rt.rollback()
+    finally:
+        rt.close()
+
+
+@pg
+def test_frigivelsesoppdragets_retry_maa_beskrive_samme_oppdrag(migrator):
+    """Cursor P2 på #140 (runde 2): kappløpstaperen får vinnerens id BARE
+    når kallet beskriver samme oppdrag — et retry med annen payload skal
+    høres, aldri få «suksess» med feil innhold."""
+    from db import kryptering
+    oid, payload = _grunnlag(migrator)
+    ct, key_id, nonce = payload
+    bid = _signatar(migrator)
+    liste = _liste(migrator, oid)
+    _signer(migrator, liste, bid)
+    fid = _frigi(migrator, liste)
+    snd = _sender()
+    try:
+        _sett_kontekst(snd, TENANT)
+        aoid = snd.execute(
+            "SELECT opprett_frigivelsesoppdrag(%s,%s,"
+            "'rekruttering.utsending','rekruttering.utsending','m57_ats',"
+            "%s,%s,%s, now()+interval '4 hours', now()+interval '1 day')",
+            (TENANT, fid, ct, key_id, nonce)).fetchone()[0]
+        snd.commit()
+        # identisk innhold, nye frister -> vinnerens id
+        _sett_kontekst(snd, TENANT)
+        aoid2 = snd.execute(
+            "SELECT opprett_frigivelsesoppdrag(%s,%s,"
+            "'rekruttering.utsending','rekruttering.utsending','m57_ats',"
+            "%s,%s,%s, now()+interval '2 hours', now()+interval '2 day')",
+            (TENANT, fid, ct, key_id, nonce)).fetchone()[0]
+        assert aoid2 == aoid
+        snd.rollback()
+        # annet innhold -> avvist
+        _sett_kontekst(migrator, TENANT)
+        key_id2, dek = kryptering.hent_eller_opprett_aktiv_dek(
+            migrator, TENANT)
+        ct2, nonce2 = kryptering.krypter(dek, {"m57": "annet"}, TENANT,
+                                         key_id2)
+        migrator.commit()
+        _sett_kontekst(snd, TENANT)
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            snd.execute(
+                "SELECT opprett_frigivelsesoppdrag(%s,%s,"
+                "'rekruttering.utsending','rekruttering.utsending',"
+                "'m57_ats',%s,%s,%s, now()+interval '4 hours',"
+                " now()+interval '1 day')",
+                (TENANT, fid, ct2, key_id2, nonce2))
+        snd.rollback()
+    finally:
+        snd.close()
+
+
+@pg
+def test_runtime_har_ikke_utsendingsveien(migrator):
+    """Cursor P2 på #140 (runde 2): grant-grensen måles, ikke bare
+    tabell-INSERT — runtime skal mangle EXECUTE på frigivelsen og
+    frigivelsesoppdraget (utsendingsveien er senderens), og senderen
+    skal ha den (positiv kontroll i funksjonskjede-testen)."""
+    oid, payload = _grunnlag(migrator)
+    ct, key_id, nonce = payload
+    bid = _signatar(migrator)
+    liste = _liste(migrator, oid)
+    _signer(migrator, liste, bid)
+    rt = _rt()
+    try:
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.execute("SELECT frigi_utsendelse(%s,%s,'rt-m1')",
+                       (TENANT, liste[0]))
+        rt.rollback()
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.execute(
+                "SELECT opprett_frigivelsesoppdrag(%s, gen_random_uuid(),"
+                "'rekruttering.utsending','rekruttering.utsending',"
+                "'m57_ats',%s,%s,%s, now()+interval '4 hours',"
+                " now()+interval '1 day')", (TENANT, ct, key_id, nonce))
+        rt.rollback()
+    finally:
+        rt.close()
+
+
+@pg
+def test_listen_starter_i_et_evalueringsoppdrag(migrator):
+    """Cursor P2 på #140 (runde 2): lineagen har RETNING — en liste kan
+    aldri startes på et frigivelsesoppdrag (kjeden ville sirklet inn i
+    seg selv). Evalueringsoppdrag (beslutning/m37) er de lovlige
+    startpunktene."""
+    oid, payload = _grunnlag(migrator)
+    bid = _signatar(migrator)
+    liste = _liste(migrator, oid)
+    _signer(migrator, liste, bid)
+    fid = _frigi(migrator, liste)
+    aoid = _ats_oppdrag(migrator, fid, payload)
+    rt = _rt()
+    try:
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            rt.execute(
+                "SELECT opprett_utsendingsliste(%s, gen_random_uuid(),"
+                " NULL, %s, 'invitasjon','m@1','h-sirkel',1)",
+                (TENANT, aoid))
+        rt.rollback()
+        # positiv kontroll: evalueringsoppdraget er lovlig startpunkt.
+        _sett_kontekst(rt, TENANT)
+        rt.execute(
+            "SELECT opprett_utsendingsliste(%s, gen_random_uuid(),"
+            " NULL, %s, 'invitasjon','m@1','h-eval',1)", (TENANT, oid))
+        rt.rollback()
+    finally:
+        rt.close()

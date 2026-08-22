@@ -291,6 +291,19 @@ SET search_path = pg_catalog AS $$
 DECLARE v_id UUID := gen_random_uuid();
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant, 'opprett_utsendingsliste');
+    -- Kjeden starter i et EVALUERINGSOPPDRAG (Cursor P2 på #140, runde
+    -- 2): FK-en alene godtok ethvert oppdrag — også et frigivelses-
+    -- oppdrag, som ville latt kjeden sirkle inn i seg selv. Lineagen
+    -- oppdrag→liste→signatur→frigivelse→utsendingsoppdrag har retning.
+    PERFORM 1 FROM public.oppdrag o
+     WHERE o.tenant = p_tenant AND o.id = p_oppdrag_id
+       AND o.opprinnelse IN ('beslutning', 'm37_reparasjon');
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'opprett_utsendingsliste: oppdrag % er ikke et'
+            ' evalueringsoppdrag i tenanten (kjeden starter aldri i et'
+            ' frigivelsesoppdrag)', p_oppdrag_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
     INSERT INTO public.utsendingsliste (tenant, liste_id, utkast_serie,
         forrige_liste_id, oppdrag_id, listetype, malversjon, innhold_hash,
         antall)
@@ -309,6 +322,21 @@ SET search_path = pg_catalog AS $$
 DECLARE l RECORD; s RECORD;
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant, 'signer_utsendingsliste');
+    -- SIGNATAREN MÅ HØRE TIL TENANTEN (Cursor P1 på #140, runde 2):
+    -- signaturen er den menneskelige, irreversible autorisasjonen, og
+    -- en global brukeridentitet-FK alene lot runtime tilskrive den til
+    -- en bruker i en annen tenant, en deaktivert bruker eller en
+    -- fabrikkert identitetsrad — samme tillitsgrense 043 lukket for
+    -- menneskelige irreversible handlinger.
+    IF NOT EXISTS (
+        SELECT 1 FROM public.brukermedlemskap m
+         WHERE m.tenant = p_tenant AND m.bruker_id = p_signatar
+           AND m.aktiv
+    ) THEN
+        RAISE EXCEPTION 'signer_utsendingsliste: signatar % mangler'
+            ' aktivt medlemskap i %', p_signatar, p_tenant
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
     SELECT * INTO l FROM public.utsendingsliste
      WHERE tenant = p_tenant AND liste_id = p_liste_id;
     IF NOT FOUND THEN
@@ -436,9 +464,30 @@ BEGIN
                 p_evidensfrist, p_frigivelse_id, 'KOBLET', 'frigivelse')
         RETURNING id INTO v_id;
     EXCEPTION WHEN unique_violation THEN
-        SELECT id INTO v_id FROM public.oppdrag
-         WHERE tenant = p_tenant AND frigivelse_id = p_frigivelse_id;
+        -- Materiell likhet (Cursor P2 på #140, runde 2): vinnerens id
+        -- returneres BARE når kallet beskriver samme oppdrag —
+        -- signaturveien dømmer slik, og et retry med annen payload
+        -- skal høres, ikke få «suksess» med feil innhold. Fristene
+        -- er utenfor materialiteten med vilje: et legitimt retry
+        -- regner klokkefrister på nytt, og fristen tilhører oppdraget
+        -- som faktisk ble skapt.
+        SELECT id INTO v_id FROM public.oppdrag o
+         WHERE o.tenant = p_tenant AND o.frigivelse_id = p_frigivelse_id
+           AND o.oppdragstype = p_oppdragstype
+           AND o.handling = p_handling
+           AND o.eiermodul = p_eiermodul
+           AND o.payload_kryptert = p_payload
+           AND o.key_id = p_key_id
+           AND o.nonce = p_nonce;
         IF NOT FOUND THEN
+            IF EXISTS (SELECT 1 FROM public.oppdrag
+                        WHERE tenant = p_tenant
+                          AND frigivelse_id = p_frigivelse_id) THEN
+                RAISE EXCEPTION 'opprett_frigivelsesoppdrag: frigivelse %'
+                    ' bærer alt et oppdrag med ANNET innhold — et retry'
+                    ' beskriver samme oppdrag eller feiler', p_frigivelse_id
+                    USING ERRCODE = 'invalid_parameter_value';
+            END IF;
             RAISE;                       -- bruddet var ikke frigivelsens
         END IF;
     END;
