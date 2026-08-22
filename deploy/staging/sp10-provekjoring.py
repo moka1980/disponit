@@ -387,18 +387,26 @@ def _mal_056(conn) -> list[str]:
     # den seedede WCAG-raden kan ikke lenger bære listen. Den seedede
     # raden står urørt (fasit over måler nettopp det); evalueringen
     # lages her, av samme autorisasjon og samme payload.
+    # EGEN beslutningsloggpost: `oppdrag_en_per_beslutning` (008) gir
+    # loggposten nøyaktig ETT oppdrag, så evalueringen kan ikke arve
+    # seedets — den er sin egen beslutning, slik API-veien lager den.
+    ev_logg = conn.execute(
+        "INSERT INTO revisjonslogg (tenant, aktor, kilde, input_hash,"
+        " policy_id, beslutning, begrunnelse, idempotency_key)"
+        " VALUES (%s,'sp10','api_token','ih','p@1.0.0/x.y','TILLAT','[]',"
+        "%s) RETURNING id", (TEN, "sp10-056-ev")).fetchone()[0]
     oid = conn.execute(
         "INSERT INTO oppdrag (opprinnelse, tenant,"
         " beslutning_loggpost_id, oppdragstype, handling, eiermodul,"
         " payload_kryptert, key_id, nonce, utforelsesfrist,"
         " evidensfrist, koblingsstatus)"
-        " SELECT 'beslutning', tenant, beslutning_loggpost_id,"
+        " SELECT 'beslutning', tenant, %s,"
         " 'rekruttering.evaluering','rekruttering.evaluering', eiermodul,"
         " payload_kryptert, key_id, nonce, utforelsesfrist, evidensfrist,"
         " 'KOBLET' FROM oppdrag WHERE tenant=%s AND"
         " opprinnelse='beslutning'"
         " AND oppdragstype='kontroll.wcag.nettsted' RETURNING id",
-        (TEN,)).fetchone()[0]
+        (ev_logg, TEN)).fetchone()[0]
     for steg in ("plukket", "utfort"):        # statusmaskinens lovlige vei
         conn.execute("UPDATE oppdrag SET status=%s WHERE tenant=%s"
                      " AND id=%s", (steg, TEN, oid))
