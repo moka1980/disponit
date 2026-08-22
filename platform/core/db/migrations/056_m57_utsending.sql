@@ -464,6 +464,36 @@ DECLARE s RECORD; v_id UUID := gen_random_uuid(); v_eksisterende UUID;
         v_frigitt INT;
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant, 'frigi_utsendelse');
+    -- SNAPSHOTKRAVET (Codex på #140, runde 4). Rotårsaken bak de tre
+    -- rundene på denne funksjonen: BEGGE løftene her — taket mot det
+    -- signerte `antall`, og «samme mottaker gir samme id» — er utledet av
+    -- en LESNING (`count(*)`, og gjenlesningen etter `ON CONFLICT DO
+    -- NOTHING`), ikke av en skrivekonflikt. En lesning ser bare det
+    -- transaksjonens snapshot inneholder. Advisory-låsen serialiserer
+    -- UTFØRELSEN, men den friskner ikke opp et snapshot: under REPEATABLE
+    -- READ tas snapshotet ved transaksjonens første setning, så to kall
+    -- som begge startet før den første committet, teller begge det gamle
+    -- tallet og kan begge sette inn — antall=1 gir to irreversible
+    -- e-poster. Samme snapshot gjør at gjenlesningen til slutt kan bomme
+    -- på vinnerens rad og returnere NULL der kontrakten lover en id.
+    --
+    -- READ COMMITTED tar ferskt snapshot PER setning, så både tellingen
+    -- og gjenlesningen etter låsen ser vinneren. SERIALIZABLE beholder
+    -- ett snapshot, men SSI ser rw-avhengigheten mellom tellingen og den
+    -- samtidige innsettingen og avbryter taperen med serialiseringsfeil —
+    -- et retry, ikke en oversending. REPEATABLE READ er det ene nivået
+    -- med snapshot OG uten SSI, og er derfor det ene vi må avvise.
+    --
+    -- K1: alternativet — en skrivekonfliktende teller på listeraden — ville
+    -- krevd et hull i append-only-vakten (`avvis_endring`) og er ny maskin,
+    -- altså egen PR. Se tråden.
+    IF current_setting('transaction_isolation') = 'repeatable read' THEN
+        RAISE EXCEPTION 'frigi_utsendelse: krever READ COMMITTED eller'
+            ' SERIALIZABLE — under REPEATABLE READ er både telleporten mot'
+            ' det signerte antallet og idempotensoppslaget blinde for'
+            ' samtidige frigivelser'
+            USING ERRCODE = 'invalid_transaction_state';
+    END IF;
     -- Signaturen OG listens `antall` i samme oppslag: tallet mennesket
     -- fikk se i signaturdialogen («Dette sender N e-poster. Kan ikke
     -- angres.») bor på listeversjonen signaturen binder.
