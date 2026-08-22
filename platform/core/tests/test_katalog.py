@@ -1114,6 +1114,79 @@ def test_en_vanlig_feil_foran_katalogen_navngir_fortsatt_arsaken(tmp_path):
     assert "document is not defined" in r.stderr, r.stderr
 
 
+# Helt ordinær sidekode som tar navnene leseren hviler på. Ingen av dem er et
+# angrep: `__les_katalog__` er et navn en side kan bruke til hva den vil, og
+# `const globalThis` er en lovlig global leksikalsk erklæring fordi egenskapen
+# `globalThis` er konfigurerbar. Nettleseren leser katalogen i alle fem.
+@pytest.mark.parametrize("sidekode", [
+    "var __les_katalog__ = {side: true};",
+    "__les_katalog__ = 42;",
+    "globalThis.__les_katalog__ = null;",
+    "delete globalThis.__les_katalog__;",
+    "const globalThis = {};",
+])
+def test_sidekoden_kan_ikke_ta_navnene_leseren_hviler_pa(tmp_path, sidekode):
+    """Leseren låner ikke bare intrinsics av siden — den låner NAVNEROMMET.
+
+    F15 lukket den ene halvparten: en `const Object` i sidekoden skygget for
+    intrinsics, så de fanges nå før noen tagg slipper til. Denne er den andre
+    halvparten (Codex P2, F20). Hjelperen lå i en helt ordinær SKRIVBAR
+    egenskap på det globale objektet, og en like ordinær `var __les_katalog__`
+    i sidekoden overskrev den. `materialiser()` fant da ikke seg selv, og
+    lesningen feilet på en side nettleseren håndterer fint.
+
+    Veien DIT var dessuten et bart navn: `globalThis` er selv en konfigurerbar
+    egenskap, så `const globalThis = {}` er en lovlig global leksikalsk
+    erklæring som skygger for oss i hvert senere skript i samme kontekst.
+
+    Begge er lukket samme sted: sporene defineres ikke-skrivbare og
+    ikke-konfigurerbare FØR kildens kode kjører, og nås via `this` på toppnivå
+    — et nøkkelord ingen erklæring kan skygge for.
+
+    Katalogen står før sidekoden her, så den skal komme ut hel i alle tilfeller.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>\n"
+                   "const M = [{n:1,name:'En',area:'X',p:1}];\n"
+                   f"{sidekode}\n"
+                   "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["moduler"] == [
+        {"n": 1, "name": "En", "area": "X", "p": 1}], r.stdout
+
+
+def test_kilden_kan_ikke_gjore_feilsporet_om_til_en_accessor(tmp_path):
+    """Sporet verten SKRIVER til kan ikke bli sidens setter (Codex P2, F20).
+
+    `feilen()` legger den kastede verdien i `FEILSPOR` på konteksten for å
+    kunne lese den inne i konteksten (F18). Den ene skrivningen skjer i VERTEN.
+    Var sporet konfigurerbart, kunne kilden gjort det om til en accessor — og
+    da hadde `ctx[FEILSPOR] = kastet` påkalt sidens setter her ute, utenfor
+    enhver tidsgrense. Samme klasse som F3/F7/F10/F18, med vertens eneste
+    skrivning som inngang.
+
+    Sporet er derfor skrivbart, men ikke konfigurerbart: `defineProperty` mot
+    det kaster inne i kilden, og det kastet er sidens egen feil — ventet klasse,
+    akkurat som `document`-kastet. Katalogen kommer ut hel.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text(
+        "<html><script>\n"
+        "const M = [{n:1,name:'En',area:'X',p:1}];\n"
+        "Object.defineProperty(globalThis, '__les_katalog_feil__', "
+        "{set(){for(;;){}}, get(){for(;;){}}, configurable: true});\n"
+        "throw new Error('ui');\n"
+        "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60,
+                       env={**os.environ, "LES_KATALOG_TIMEOUT_MS": "500"})
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["moduler"] == [
+        {"n": 1, "name": "En", "area": "X", "p": 1}], r.stdout
+
+
 # Kontraktklassene katalogen bruker er de SAMME feltene modulregisteret lagrer,
 # og registeret håndhever dem med CHECK-vilkår. Enumene leses derfor ut av
 # den MIGRERTE BASEN, ikke skrevet av her: en kopi i testen ville vært nok en

@@ -220,13 +220,48 @@ const FEILSPOR = '__les_katalog_feil__'
  *  `globalThis[…]` slår opp i det globale OBJEKTET, mens et bart navn først
  *  slås opp i det globale LEKSIKALSKE skopet — der en `const __les_katalog__`
  *  i kilden ville skygget for oss. Det er F15-lærdommen brukt på våre egne
- *  navn: leseren skal ikke kunne skygges av kilden den leser. */
+ *  navn: leseren skal ikke kunne skygges av kilden den leser.
+ *
+ *  MEN `globalThis` ER SELV ET BART NAVN (Codex P2, F20). Egenskapen
+ *  `globalThis` på det globale objektet er konfigurerbar, så en helt ordinær
+ *  `const globalThis = …` i sidekoden er en lovlig global leksikalsk
+ *  erklæring — og den skygger for oss i HVERT SENERE skript i samme kontekst.
+ *  Målt: etter den erklæringen er `typeof globalThis['__les_katalog__']` lik
+ *  `undefined`, mens `this['__les_katalog__']` fortsatt er hjelperen. `this`
+ *  på toppnivå i et ikke-strikt skript ER det globale objektet, og `this` er
+ *  et nøkkelord: ingen erklæring kan skygge for det. Derfor går veien dit. */
 function kall(metode, argument = '') {
-  return `globalThis[${JSON.stringify(HJELPER)}].${metode}(${argument})`
+  return `this[${JSON.stringify(HJELPER)}].${metode}(${argument})`
 }
 
-const BYGG_HJELPER =`globalThis[${JSON.stringify(HJELPER)}] = (() => {
+// SPORENE LÅSES, SÅ KILDEN IKKE KAN BYTTE DEM UT (Codex P2, F20).
+//
+// Hjelperen lå i en helt ordinær skrivbar egenskap på det globale objektet, og
+// en like ordinær `var __les_katalog__ = {…}` i sidekoden overskrev den. Da
+// fant ikke `materialiser()` seg selv, og lesningen feilet på en side
+// nettleseren leser fint. Det er ikke et angrep — navnerommet er sidens, og
+// leseren låner det. Målt: `typeof globalThis['…'].materialiser` → `undefined`
+// etter én `var`-erklæring.
+//
+// Vi kan ikke slutte å bruke det globale objektet: `M` bindes der, og alt som
+// rører en kontekstverdi skal kjøre INNE i konteksten (F10-doktrinen). Vi kan
+// derimot legge sporene der som egenskaper kilden ikke får bytte ut — ikke
+// skrivbare, ikke konfigurerbare, ikke tellbare, definert FØR noen tagg fra
+// kilden slipper til, akkurat som intrinsics i F15. Da er `var`, tilordning,
+// `delete` og `defineProperty` alle uten virkning eller høylytte kast.
+//
+// `FEILSPOR` må verten kunne SKRIVE til, så den er skrivbar — men ikke
+// konfigurerbar, og det er poenget: kunne kilden gjort den om til en accessor,
+// ville `ctx[FEILSPOR] = kastet` i `feilen()` påkalt sidens setter HER UTE i
+// verten, utenfor enhver tidsgrense. Samme klasse som F3/F7/F10/F18, med
+// vertens ene skrivning som inngang. En vanlig dataegenskap som ikke kan bli
+// noe annet lukker den.
+const BYGG_HJELPER =`((glob) => {
   'use strict'
+  const definer = Object.defineProperty
+  const laas = (navn, verdi, skrivbar) => definer(glob, navn, {
+    value: verdi, writable: skrivbar, enumerable: false, configurable: false,
+  })
   const IKKE_DATA = ${JSON.stringify(IKKE_DATA)}
   const beskriv = Object.getOwnPropertyDescriptor
   const proto = Object.getPrototypeOf
@@ -329,8 +364,14 @@ const BYGG_HJELPER =`globalThis[${JSON.stringify(HJELPER)}] = (() => {
     }
     return tilJson(svar)
   }
-  return {materialiser, feiltekst}
-})()`
+  // Selve hjelperobjektet har null-prototype: oppslaget av materialiser skal
+  // ikke kunne treffe en prototype kilden eier. Se ogsaa F21.
+  const api = lagUten(null)
+  api.materialiser = materialiser
+  api.feiltekst = feiltekst
+  laas(${JSON.stringify(HJELPER)}, api, false)
+  laas(${JSON.stringify(FEILSPOR)}, undefined, true)
+})(this)`
 
 // KJØREVALGENE FOR SIDENS EGEN KODE (Codex P2, F18).
 //
@@ -362,7 +403,7 @@ function feilen(ctx, kastet) {
   ctx[FEILSPOR] = kastet
   try {
     return JSON.parse(vm.runInContext(
-      kall('feiltekst', `globalThis[${JSON.stringify(FEILSPOR)}]`), ctx, KJOR))
+      kall('feiltekst', `this[${JSON.stringify(FEILSPOR)}]`), ctx, KJOR))
   } catch (e) {
     return {navn: '', melding: 'feilen kunne ikke leses innen tidsgrensen'}
   }
