@@ -610,6 +610,37 @@ def test_leseren_gir_fra_seg_bare_elementene_i_katalogen(tmp_path, ui):
         "UI-koden overskrev en ekte modulpost")
 
 
+@pytest.mark.parametrize("fremmed", [
+    # En DATABLOKK. Nettleseren kjører den ikke, og innholdet er JSON-LD — som
+    # klassisk JavaScript er `{"@context": …}` en blokk med en etikett, altså
+    # en syntaksfeil.
+    '<script type="application/ld+json">{"@context":"https://schema.org"}'
+    '</script>',
+    # En ES-MODUL. Den kjøres, men med egen syntaks og eget skop: `export` er
+    # en syntaksfeil i et klassisk skript, og en `const` der er usynlig ute.
+    '<script type="module">export const hjelp = 1;</script>',
+    # EKSTERN kode. Kroppen kjøres ikke i det hele tatt når `src` står.
+    '<script src="ui.js">dette er ikke JavaScript</script>',
+])
+def test_leseren_hopper_over_skript_nettleseren_ikke_kjorer(tmp_path, fremmed):
+    """Bare klassiske innskript er JavaScript (Codex P2).
+
+    Leseren tok før innholdet i ALLE `<script>` og ga det til en klassisk
+    `vm.Script`. Legger noen en JSON-LD-blokk eller en modul på siden — begge
+    helt vanlige og helt riktig håndtert av nettleseren — er det en syntaksfeil
+    for den leseren, og katalogen kan ikke genereres i det hele tatt. Feilen
+    ville stått i et element som ikke har noe med katalogen å gjøre.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text(
+        _PROEVESIDE.format(ui="").replace("<script>", fremmed + "<script>", 1),
+        encoding="utf-8")
+    poster = _katalogposter(sti)
+    assert [p["n"] for p in poster] == [1, 2], (
+        f"leseren felte katalogen på et skript nettleseren ikke kjører som "
+        f"klassisk JavaScript: {poster}")
+
+
 def test_to_kataloger_stopper_leseren(tmp_path):
     """To `const M` er en redeklarasjon, og motoren avviser den selv.
 

@@ -51,7 +51,21 @@
 import fs from 'node:fs'
 import vm from 'node:vm'
 
-const SKRIPT_RE = /<script[^>]*>([\s\S]*?)<\/script>/g
+const SKRIPT_RE = /<script([^>]*)>([\s\S]*?)<\/script>/g
+const TYPE_RE = /\btype\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i
+const EKSTERN_RE = /\bsrc\s*=/i
+
+// MIME-typene HTML-standarden regner som klassisk JavaScript. En `<script>` er
+// klassisk når den ikke har `type` i det hele tatt, når `type` er tom, eller
+// når den står her.
+const JS_MIME = new Set([
+  'application/ecmascript', 'application/javascript',
+  'application/x-ecmascript', 'application/x-javascript',
+  'text/ecmascript', 'text/javascript', 'text/javascript1.0',
+  'text/javascript1.1', 'text/javascript1.2', 'text/javascript1.3',
+  'text/javascript1.4', 'text/javascript1.5', 'text/jscript',
+  'text/livescript', 'text/x-ecmascript', 'text/x-javascript',
+])
 
 // Verdien et felt får når det ikke er DATA. Katalogen er en kilde som skal
 // kunne leses av mer enn nettleseren, så en funksjon, et mønster eller en dato
@@ -64,11 +78,35 @@ function stopp(melding) {
   process.exit(1)
 }
 
+/** Sant hvis `<script ${attributter}>` er en tagg nettleseren kjører som
+ *  KLASSISK JavaScript, med kroppen sin som kilde (Codex P2).
+ *
+ *  En `<script type="application/ld+json">` er en DATABLOKK: nettleseren
+ *  kjører den ikke, og innholdet er JSON-LD som er en syntaksfeil i JavaScript.
+ *  En `type="module"` kjøres, men som modul — egen syntaks (`import`/`export`)
+ *  og eget skop, så en `const M` der er ikke synlig for noen andre uansett.
+ *  Fôrer vi noen av dem til en klassisk `vm.Script`, feiler HELE lesningen på
+ *  et element siden selv håndterer helt riktig. Har taggen `src`, er koden
+ *  ekstern og kroppen kjøres ikke i det hele tatt. */
+function klassisk(attributter) {
+  if (EKSTERN_RE.test(attributter)) return false
+  const t = TYPE_RE.exec(attributter)
+  if (!t) return true
+  const type = (t[1] ?? t[2] ?? t[3]).trim().split(';')[0].trim().toLowerCase()
+  return type === '' || JS_MIME.has(type)
+}
+
 /** Innholdet i alle `<script>`-taggene, skjøtt sammen slik nettleseren ser dem
  *  på ett skop. Prosaen rundt er HTML og ikke JavaScript. */
 function skriptet(html) {
-  const deler = [...html.matchAll(SKRIPT_RE)].map(m => m[1])
-  if (!deler.length) stopp('fant ingen <script> i sannhetskilden')
+  const alle = [...html.matchAll(SKRIPT_RE)]
+  if (!alle.length) stopp('fant ingen <script> i sannhetskilden')
+  const deler = alle.filter(m => klassisk(m[1])).map(m => m[2])
+  if (!deler.length) {
+    stopp(`fant ${alle.length} <script> i sannhetskilden, men ingen som ` +
+          'nettleseren kjører som klassisk JavaScript — katalogen står i et ' +
+          'vanlig innskript, ikke i en datablokk eller en modul')
+  }
   return deler.join('\n')
 }
 
