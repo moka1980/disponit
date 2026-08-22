@@ -830,32 +830,43 @@ def test_frigi_gjenkjenner_mottaker_etter_laasen_selv_med_fullt_tak(migrator):
 
 
 @pg
-def test_frigi_avviser_repeatable_read(migrator):
-    """Codex på #140 (runde 4): advisory-låsen serialiserer utførelsen,
-    men friskner ikke opp et snapshot. Under REPEATABLE READ tas snapshotet
-    ved transaksjonens første setning, så tellingen mot det signerte
-    `antall` — og gjenlesningen som skal gi replayet vinnerens id — kan
-    begge lese et foreldet bilde. Begge løftene funksjonen gir er utledet
-    av LESNINGER, ikke av skrivekonflikter, og holder derfor kun der hvert
-    steg ser ferske data. Nivået avvises høylytt i stedet for å svare feil.
-    READ COMMITTED-veien skal være uendret."""
+def test_frigi_krever_read_committed(migrator):
+    """Codex på #140 (runde 4) + Cursor P1 (runde 5): advisory-låsen
+    serialiserer utførelsen, men friskner ikke opp et snapshot. Begge
+    løftene funksjonen gir — taket mot det signerte `antall` og «samme
+    mottaker → samme id» — er utledet av LESNINGER, ikke av
+    skrivekonflikter, og holder derfor kun der hvert steg ser ferske data.
+
+    Runde 4 slapp SERIALIZABLE gjennom fordi SSI antas å fange
+    rw-syklusen. Den fanger OVERSENDINGEN, men ikke REPLAY-IDEN: to
+    førstegangskall for SAMME mottaker gir taperen et unik-brudd som
+    `ON CONFLICT DO NOTHING` svelger, og gjenlesningen leser fortsatt
+    taperens eget snapshot — funksjonen svarer NULL, stille, der
+    kontrakten lover vinnerens id. Begge fastholdt-snapshot-nivåene
+    avvises derfor høylytt. READ COMMITTED-veien er uendret.
+
+    MUTASJONEN SOM DREPER DENNE: slipp `serializable` gjennom porten
+    igjen."""
     oid, _ = _grunnlag(migrator)
     bid = _signatar(migrator)
     liste = _liste(migrator, oid, antall=1)
     _signer(migrator, liste, bid)
-    snd = _sender()
-    try:
-        # `SET ROLE` i `_sender()` er sesjonsnivå og overlever commit-en;
-        # isolasjonsnivået kan bare byttes utenfor en åpen transaksjon.
-        snd.commit()
-        snd.isolation_level = psycopg.IsolationLevel.REPEATABLE_READ
-        _sett_kontekst(snd, TENANT)
-        with pytest.raises(psycopg.errors.InvalidTransactionState):
-            snd.execute("SELECT frigi_utsendelse(%s,%s,'rr-m1')",
-                        (TENANT, liste[0]))
-        snd.rollback()
-    finally:
-        snd.close()
+    for niva in (psycopg.IsolationLevel.REPEATABLE_READ,
+                 psycopg.IsolationLevel.SERIALIZABLE):
+        snd = _sender()
+        try:
+            # `SET ROLE` i `_sender()` er sesjonsnivå og overlever
+            # commit-en; isolasjonsnivået kan bare byttes utenfor en åpen
+            # transaksjon.
+            snd.commit()
+            snd.isolation_level = niva
+            _sett_kontekst(snd, TENANT)
+            with pytest.raises(psycopg.errors.InvalidTransactionState):
+                snd.execute("SELECT frigi_utsendelse(%s,%s,'rr-m1')",
+                            (TENANT, liste[0]))
+            snd.rollback()
+        finally:
+            snd.close()
     snd = _sender()
     try:
         _sett_kontekst(snd, TENANT)

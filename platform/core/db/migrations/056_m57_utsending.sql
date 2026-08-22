@@ -478,20 +478,37 @@ BEGIN
     -- på vinnerens rad og returnere NULL der kontrakten lover en id.
     --
     -- READ COMMITTED tar ferskt snapshot PER setning, så både tellingen
-    -- og gjenlesningen etter låsen ser vinneren. SERIALIZABLE beholder
-    -- ett snapshot, men SSI ser rw-avhengigheten mellom tellingen og den
-    -- samtidige innsettingen og avbryter taperen med serialiseringsfeil —
-    -- et retry, ikke en oversending. REPEATABLE READ er det ene nivået
-    -- med snapshot OG uten SSI, og er derfor det ene vi må avvise.
+    -- og gjenlesningen etter låsen ser vinneren.
+    --
+    -- ... OG SERIALIZABLE HOLDER IKKE (Cursor P1 på #140, runde 5 — svaret
+    -- på spørsmålet runde 4 selv stilte i tråden, med den fallbacken som
+    -- da ble varslet). Runde 4 antok at SSI redder nivået. SSI redder
+    -- OVERSENDINGEN (rw-syklusen mellom tellingen og en samtidig
+    -- innsetting av en ANNEN mottaker avbrytes ved COMMIT), men den redder
+    -- ikke REPLAY-IDEN: to førstegangskall for SAMME mottaker gir taperen
+    -- et unik-brudd som `ON CONFLICT DO NOTHING` svelger uten feil, og
+    -- gjenlesningen etterpå leser fortsatt taperens EGET snapshot — der
+    -- vinnerens rad ikke finnes. Funksjonen returnerer da NULL, stille,
+    -- der kontrakten lover «samme mottaker → samme id», og transaksjonen
+    -- kan committe fint fordi taperen aldri skrev noe.
+    --
+    -- Nivåkravet er derfor det snevre og ærlige: READ COMMITTED. Det er
+    -- det ENESTE nivået der hver setning ser ferske data, og begge løftene
+    -- her er utledet av lesninger.
     --
     -- K1: alternativet — en skrivekonfliktende teller på listeraden — ville
     -- krevd et hull i append-only-vakten (`avvis_endring`) og er ny maskin,
     -- altså egen PR. Se tråden.
-    IF current_setting('transaction_isolation') = 'repeatable read' THEN
-        RAISE EXCEPTION 'frigi_utsendelse: krever READ COMMITTED eller'
-            ' SERIALIZABLE — under REPEATABLE READ er både telleporten mot'
-            ' det signerte antallet og idempotensoppslaget blinde for'
-            ' samtidige frigivelser'
+    -- `read uncommitted` er med fordi PostgreSQL BEHANDLER det som READ
+    -- COMMITTED (nivået finnes bare som synonym); å avvise det ville vært
+    -- en falsk avvisning på en irreversibel vei.
+    IF current_setting('transaction_isolation')
+       NOT IN ('read committed', 'read uncommitted') THEN
+        RAISE EXCEPTION 'frigi_utsendelse: krever READ COMMITTED (fikk %)'
+            ' — både telleporten mot det signerte antallet og'
+            ' idempotensoppslaget er utledet av LESNINGER, og et fastholdt'
+            ' snapshot gjør dem blinde for samtidige frigivelser',
+            current_setting('transaction_isolation')
             USING ERRCODE = 'invalid_transaction_state';
     END IF;
     -- Signaturen OG listens `antall` i samme oppslag: tallet mennesket
