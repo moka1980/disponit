@@ -506,7 +506,10 @@ def test_port3_eneste_insertsted_er_opprett_oppdrag():
                       f.read_text(encoding="utf-8")
                       or "INSERT INTO oppdrag (" in
                       f.read_text(encoding="utf-8")})
-    assert fra_sql == ["038_outbox_bestilling.sql"], fra_sql
+    # 056: den tredje opphavsveien (frigivelse) fikk sin herdede funksjon
+    # i samme form som 038s — migrasjonen er et velsignet SQL-hjem til.
+    assert fra_sql == ["038_outbox_bestilling.sql",
+                       "056_m57_utsending.sql"], fra_sql
 
 
 def test_port3_forretningsoppdrag_uten_fk_er_programmeringsfeil():

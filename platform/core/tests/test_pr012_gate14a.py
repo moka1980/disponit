@@ -101,7 +101,10 @@ def test_port8_ingen_oppdrag_kapabilitet_insert_uten_sakslas():
     # herdede opphavsfunksjonene — migrasjonen er det nye, velsignede
     # SQL-hjemmet (og python-veiene er nå NULL, se pr008-port 3).
     sql_tillatt = {"005_m37_behandling.sql", "007_r1_tofase.sql",
-                   "038_outbox_bestilling.sql"}
+                   "038_outbox_bestilling.sql",
+                   # 056: opprett_frigivelsesoppdrag — tredje herdede
+                   # opphavsvei, samme disiplin som 038s to.
+                   "056_m57_utsending.sql"}
     for sql in (rot / "db" / "migrations").glob("*.sql"):
         if mons.search(sql.read_text(encoding="utf-8")):
             assert sql.name in sql_tillatt, \

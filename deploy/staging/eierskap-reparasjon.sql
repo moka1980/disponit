@@ -65,6 +65,13 @@ INSERT INTO _design VALUES
     -- (samme rolle som skriver oppdrag/unntak i claim-veien fra foer)
     ('FUNCTION', 'opprett_reparasjonsoppdrag(text,bigint,bigint,text,text,text,text,bytea,text,bytea,timestamp with time zone,timestamp with time zone,bigint,text)', 'disponit_m37_claimer'),
     ('FUNCTION', 'opprett_beslutningsoppdrag(text,bigint,text,text,text,bytea,text,bytea,timestamp with time zone,timestamp with time zone)', 'disponit_m37_claimer'),
+    -- 056: M-57-utsendingskjedens funksjoner — samme eier som outbox-
+    -- familiens opphavsveier. Paritetstesten fanget at de manglet her —
+    -- nøyaktig jobben dens.
+    ('FUNCTION', 'opprett_utsendingsliste(text,uuid,uuid,bigint,text,text,text,integer)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'signer_utsendingsliste(text,uuid,text,text)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'frigi_utsendelse(text,uuid,text)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'opprett_frigivelsesoppdrag(text,uuid,text,text,text,bytea,text,bytea,timestamp with time zone,timestamp with time zone)', 'disponit_m37_claimer'),
     ('FUNCTION', 'sikre_sak_for_oppdrag(text,bigint,text,text,text)', 'disponit_m37_claimer'),
     -- 043 (Gate 14b): oppløsningsveien — kansellering med fencing.
     ('FUNCTION', 'bruk_kvitteringskapabilitet(text,text,text)',        'disponit_m37_claimer'),
