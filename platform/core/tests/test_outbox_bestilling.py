@@ -15,6 +15,7 @@ forblir NULL gjennom hele sakslivsløpet.
 
 Alle tester konstruerer egen tilstand. Ingen delt fixture.
 """
+import os
 import secrets
 
 import psycopg
@@ -881,6 +882,67 @@ def test_lukket_kropp_og_normalisering(migrator, klient):
         assert r.json()["feil"] == "request_feilformet"
 
 
+
+
+def _reaperkobling() -> tuple[object, bool]:
+    """(kobling, timerrolle): den som EIER reap-jobben i dette miljøet.
+
+    038s grant er betinget: finnes timerrollen `disponit_domener` — som i
+    drift, og i enhver testbase på samme cluster som driften, for roller er
+    cluster-globale — eier DEN `reap_evidensfrister`, og runtime er nektet.
+    Uten timerrollen eier runtime jobben (lokalt). Miljøet melder seg med
+    `DISPONIT_TEST_DOMAINS_DSN` — navnet `oppsett-postgresql.sh` faktisk
+    skriver til miljøfilen for `$DOMENER` (paret til `DISPONIT_DOMAINS_URL`,
+    som timerne leser). Å anta lokal-oppsettet gjorde testene stille røde
+    på verten (InsufficientPrivilege — som er GRANTET som virker, ikke en
+    feil).
+    """
+    dsn = os.environ.get("DISPONIT_TEST_DOMAINS_DSN")
+    if dsn:
+        from db.pg import koble
+        return koble(dsn), True
+    return _rt(), False
+
+
+def _dyp_kropp() -> tuple[str, bool]:
+    """(kropp, feller_parseren): dypeste kropp under kroppsgrensen, og om
+    `json.loads` HER faktisk kaster RecursionError på den.
+
+    Taket flytter seg mellom Python-versjoner — MÅLT: 3.12 feller ved
+    15 000 nivåer (~90 kB); 3.14 først ved ~200 000, som er 1,2 MB kropp og
+    ligger OVER kroppsgrensen. Der taket ikke kan nås under grensen, er
+    RecursionError-veien UOPPNÅELIG for klientinput i dette miljøet, og
+    løftet som gjenstår å måle er at den dypeste lovlige kroppen får det
+    dokumenterte 400-svaret — aldri en 500. Målt her, aldri antatt.
+
+    Codex P2: «lovlig» er KROPPSGRENSEN, ikke et rundt tall i nærheten av
+    den — og «dypest» er klientens BILLIGSTE nøstingsform, ikke vår.
+    Dypeste probe var først 33 000 nivåer = 198 001 B mot en grense på
+    262 144 B; så ble dybden utledet AV grensen, men fremdeles i objektform
+    (`{"a":` + `}` = 6 byte per nivå), som stanser på 43 690 nivåer.
+    Nøstede ARRAYER koster 2 byte per nivå, så den samme grensen slipper
+    gjennom 131 072 nivåer — og på 3.14 parses 43 690 objektnivåer greit
+    mens array-formen feller parseren. En probe som måler sin egen dyre
+    form melder altså «uoppnåelig» om et tak klienten fortsatt når, og
+    testen blir grønn selv om `RecursionError` fjernes fra except-en.
+    Formen er derfor arrayer, og dybden utledes av grensen.
+    """
+    import json as jsonmodul
+
+    from api.app import MAKS_KROPP
+    dypest = MAKS_KROPP // 2            # 2*d <= MAKS_KROPP (`[`+`]`)
+    kropp = ""
+    for dybde in (15000, 33000, dypest):
+        kropp = "[" * dybde + "]" * dybde
+        assert len(kropp) <= MAKS_KROPP, \
+            "testkroppen skal ligge innenfor kroppsgrensen"
+        try:
+            jsonmodul.loads(kropp)
+        except RecursionError:
+            return kropp, True
+    return kropp, False
+
+
 @pg
 def test_dypt_nostet_kropp_er_request_feil(migrator, klient):
     """Codex P2: `json.loads` er REKURSIV. Et syntaktisk gyldig, dypt
@@ -896,24 +958,28 @@ def test_dypt_nostet_kropp_er_request_feil(migrator, klient):
     Python-versjoner — 3.12 tåler 8 000 nivåer, ikke 10 000).
 
     MUTASJONEN SOM DREPER DENNE: fjern RecursionError fra except-en rundt
-    bestillingskroppens `json.loads`.
+    bestillingskroppens `json.loads` — på en Python der taket kan nås
+    under kroppsgrensen (se `_dyp_kropp`).
     """
-    import json as jsonmodul
-
     from api import sesjon as sesjonmodul
     _wcag_policy(migrator)
     cookie, csrf = _adminsesjon()
-    dybde = 15000
-    kropp = '{"a":' * dybde + "1" + "}" * dybde
-    assert len(kropp) < 200_000, "testkroppen skal ligge under kroppsgrensen"
-    with pytest.raises(RecursionError):
-        jsonmodul.loads(kropp)
+    kropp, feller = _dyp_kropp()
     r = klient.post("/v1/bestilling", content=kropp,
                     headers={"X-Disponit-CSRF": csrf,
                              "content-type": "application/json"},
                     cookies={sesjonmodul.C_SESJON: cookie})
-    assert (r.status_code, r.json()["feil"]) == (
-        400, "request_feilformet"), r.text
+    # ÉN kontrakt, to veier inn til den (Codex P2): feller parseren HER, er
+    # dette RecursionError-veien; makter den kroppen, er dokumentet gyldig
+    # JSON med ugyldig toppform — en liste, ikke et objekt, som
+    # `normaliser` avviser på `not isinstance(data, dict)`.
+    # Begge veier lover NØYAKTIG `request_feilformet` — aldri en generisk
+    # 500, og aldri en annen feilkode som en regresjon måtte finne på.
+    # Fallbacken sluttet å måle koden og godtok enhver ikke-tom `feil`; da
+    # var den grønn også for feil den var satt til å fange. `feller` følger
+    # med i feilmeldingen, så en rød test sier hvilken vei den tok.
+    assert (r.status_code, r.json().get("feil")) == (
+        400, "request_feilformet"), (feller, r.text)
 
 
 @pg
@@ -1504,6 +1570,12 @@ def test_reaper_lukker_utlopte_beslutningsoppdrag(migrator):
     gjentatt kjøring er no-op; `unntak_id` forblir NULL; et utløpt
     M-37-oppdrag røres ALDRI av reaperen."""
     rt = _rt()
+    # Codex P2: reaperkoblingen skal lukkes den også. `finally` lukket bare
+    # `rt`, så en feil etter `_reaperkobling()` etterlot `rp` åpen med
+    # transaksjonen — og låsene `reap_evidensfrister` alt hadde tatt — i
+    # live. Da blokkerer oppryddingen eller neste DB-test i stedet for å
+    # melde regresjonen rent. Samme idiom som `holder` alt bruker.
+    rp = None
     try:
         oid, logg = _utlopt_beslutningsoppdrag(rt, migrator)
         # M-37-kontrollen: et reparasjonsoppdrag med utløpt frist —
@@ -1514,9 +1586,16 @@ def test_reaper_lukker_utlopte_beslutningsoppdrag(migrator):
                                   utforelsesfrist="-2 minutes",
                                   evidensfrist="-1 minutes")
 
-        rader = rt.execute("SELECT tenant, oppdrag_id, unntak_id"
+        rp, timerrolle = _reaperkobling()
+        if timerrolle:
+            # Sikkerhetsegenskapen 038 begrunner grantet med: runtime skal
+            # IKKE kunne skyve andre tenanters oppdrag til `feilet`.
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                rt.execute("SELECT * FROM reap_evidensfrister(50)")
+            rt.rollback()
+        rader = rp.execute("SELECT tenant, oppdrag_id, unntak_id"
                            " FROM reap_evidensfrister(50)").fetchall()
-        rt.commit()
+        rp.commit()
         mine = [r for r in rader if r[0] == TENANT and r[1] == oid]
         assert len(mine) == 1, rader
         sak_id = mine[0][2]
@@ -1539,9 +1618,9 @@ def test_reaper_lukker_utlopte_beslutningsoppdrag(migrator):
         assert sak == ("evidensfrist", oid, False, logg)
 
         # 25: gjentatt kjøring — oppdraget er terminalt, ingen ny sak.
-        rader2 = rt.execute("SELECT oppdrag_id"
+        rader2 = rp.execute("SELECT oppdrag_id"
                             " FROM reap_evidensfrister(50)").fetchall()
-        rt.commit()
+        rp.commit()
         assert all(r[0] != oid for r in rader2)
         _sett_kontekst(migrator, TENANT)
         n = migrator.execute(
@@ -1550,6 +1629,8 @@ def test_reaper_lukker_utlopte_beslutningsoppdrag(migrator):
         migrator.rollback()
         assert n == 1
     finally:
+        if rp is not None:
+            rp.rollback(); rp.close()
         rt.close()
 
 
@@ -2039,6 +2120,12 @@ def test_reaperen_venter_aldri_paa_sakslasen(migrator):
 
     rt = _rt()
     holder = None
+    # Codex P2: her er den etterlatte reaperkoblingen verst. Faller testen
+    # på den tiltenkte `LockNotAvailable`-en, holder `rp` en avbrutt
+    # transaksjon med låsene fra `reap_evidensfrister` — nettopp låsene
+    # denne testen handler om. Uten lukkingen henger oppryddingen på dem i
+    # stedet for at testen melder regresjonen.
+    rp = None
     try:
         oid, _ = _utlopt_beslutningsoppdrag(rt, migrator)
         # Saken finnes ALT — som etter en tidligere sen kvittering. Lages
@@ -2059,10 +2146,11 @@ def test_reaperen_venter_aldri_paa_sakslasen(migrator):
         holder.execute("SELECT 1 FROM unntak WHERE tenant=%s AND id=%s"
                        "   FOR UPDATE", (TENANT, sak))
 
-        rt.execute("SET LOCAL lock_timeout='3s'")
-        rader = rt.execute("SELECT tenant, oppdrag_id"
+        rp, _timer = _reaperkobling()
+        rp.execute("SET LOCAL lock_timeout='3s'")
+        rader = rp.execute("SELECT tenant, oppdrag_id"
                            " FROM reap_evidensfrister(50)").fetchall()
-        rt.commit()
+        rp.commit()
         assert all(r[1] != oid for r in rader), (
             "reaperen tok en kandidat den ikke hadde sakslåsen for")
 
@@ -2074,12 +2162,14 @@ def test_reaperen_venter_aldri_paa_sakslasen(migrator):
 
         # ... og når låsen slippes, tar NESTE sveip den.
         holder.rollback(); holder.close(); holder = None
-        rader2 = rt.execute("SELECT tenant, oppdrag_id"
+        rader2 = rp.execute("SELECT tenant, oppdrag_id"
                             " FROM reap_evidensfrister(50)").fetchall()
-        rt.commit()
+        rp.commit()
         assert any(r[1] == oid for r in rader2), (
             f"kandidaten ble aldri tatt etter at låsen gikk: {rader2}")
     finally:
         if holder is not None:
             holder.rollback(); holder.close()
+        if rp is not None:
+            rp.rollback(); rp.close()
         rt.close()

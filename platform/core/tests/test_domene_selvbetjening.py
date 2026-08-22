@@ -550,6 +550,47 @@ def test_http_ukanonisk_hostname_avvises_av_basen(migrator, klient):
         409, "domene_challenge_avvist"), r.text
 
 
+
+
+def _dyp_kropp() -> tuple[str, bool]:
+    """(kropp, feller_parseren): dypeste kropp under kroppsgrensen, og om
+    `json.loads` HER faktisk kaster RecursionError på den.
+
+    Taket flytter seg mellom Python-versjoner — MÅLT: 3.12 feller ved
+    15 000 nivåer (~90 kB); 3.14 først ved ~200 000, som er 1,2 MB kropp og
+    ligger OVER kroppsgrensen. Der taket ikke kan nås under grensen, er
+    RecursionError-veien UOPPNÅELIG for klientinput i dette miljøet, og
+    løftet som gjenstår å måle er at den dypeste lovlige kroppen får det
+    dokumenterte 400-svaret — aldri en 500. Målt her, aldri antatt.
+
+    Codex P2: «lovlig» er KROPPSGRENSEN, ikke et rundt tall i nærheten av
+    den — og «dypest» er klientens BILLIGSTE nøstingsform, ikke vår.
+    Dypeste probe var først 33 000 nivåer = 198 001 B mot en grense på
+    262 144 B; så ble dybden utledet AV grensen, men fremdeles i objektform
+    (`{"a":` + `}` = 6 byte per nivå), som stanser på 43 690 nivåer.
+    Nøstede ARRAYER koster 2 byte per nivå, så den samme grensen slipper
+    gjennom 131 072 nivåer — og på 3.14 parses 43 690 objektnivåer greit
+    mens array-formen feller parseren. En probe som måler sin egen dyre
+    form melder altså «uoppnåelig» om et tak klienten fortsatt når, og
+    testen blir grønn selv om `RecursionError` fjernes fra except-en.
+    Formen er derfor arrayer, og dybden utledes av grensen.
+    """
+    import json as jsonmodul
+
+    from api.app import MAKS_KROPP
+    dypest = MAKS_KROPP // 2            # 2*d <= MAKS_KROPP (`[`+`]`)
+    kropp = ""
+    for dybde in (15000, 33000, dypest):
+        kropp = "[" * dybde + "]" * dybde
+        assert len(kropp) <= MAKS_KROPP, \
+            "testkroppen skal ligge innenfor kroppsgrensen"
+        try:
+            jsonmodul.loads(kropp)
+        except RecursionError:
+            return kropp, True
+    return kropp, False
+
+
 @pg
 def test_dypt_nostet_kropp_er_request_feil(migrator, klient):
     """Codex P2: `json.loads` er REKURSIV. Et syntaktisk gyldig, dypt nøstet
@@ -564,23 +605,27 @@ def test_dypt_nostet_kropp_er_request_feil(migrator, klient):
     grensen (C-parserens tak flytter seg mellom Python-versjoner).
 
     MUTASJONEN SOM DREPER DENNE: fjern RecursionError fra except-en rundt
-    `json.loads` i `utsted_endepunkt`.
+    `json.loads` i `utsted_endepunkt` — på en Python der taket kan nås
+    under kroppsgrensen (se `_dyp_kropp`).
     """
-    import json as jsonmodul
-
     from api import sesjon as sesjonmodul
     cookie, csrf = _adminsesjon()
-    dybde = 15000
-    kropp = '{"a":' * dybde + "1" + "}" * dybde
-    assert len(kropp) < 200_000, "testkroppen skal ligge under kroppsgrensen"
-    with pytest.raises(RecursionError):
-        jsonmodul.loads(kropp)
+    kropp, feller = _dyp_kropp()
     r = klient.post("/v1/domener", content=kropp,
                     headers={"X-Disponit-CSRF": csrf,
                              "content-type": "application/json"},
                     cookies={sesjonmodul.C_SESJON: cookie})
-    assert (r.status_code, r.json()["feil"]) == (
-        400, "request_feilformet"), r.text
+    # ÉN kontrakt, to veier inn til den (Codex P2): feller parseren HER, er
+    # dette RecursionError-veien; makter den kroppen, er dokumentet gyldig
+    # JSON med ugyldig toppform — en liste, ikke et objekt, som
+    # `not isinstance(data, dict)` avviser. Begge veier
+    # lover NØYAKTIG `request_feilformet` — aldri en generisk 500, og aldri
+    # en annen feilkode som en regresjon måtte finne på. Fallbacken sluttet
+    # å måle koden og godtok enhver ikke-tom `feil`; da var den grønn også
+    # for feil den var satt til å fange. `feller` følger med i
+    # feilmeldingen, så en rød test sier hvilken vei den tok.
+    assert (r.status_code, r.json().get("feil")) == (
+        400, "request_feilformet"), (feller, r.text)
 
 
 @pg
