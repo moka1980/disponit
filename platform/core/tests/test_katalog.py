@@ -1647,6 +1647,27 @@ _SKRIPTDEL_RE = re.compile(r"<script[^>]*>(.*?)</script>", re.S)
 DOKUMENTET = "dokumentet"
 
 
+def _tekstene_i(verdi) -> list[str]:
+    """Alle tekstene i en feltverdi — HELE VEIEN NED.
+
+    Prosaen ble hentet fra en direkte streng eller et direkte listeledd (Codex
+    P2). Leseren tillater lister og objekter av data i vilkårlig dybde, så en
+    `flow:[['…']]` eller et objektfelt bar prosa porten aldri fikk se, og en
+    oppfunnet maskinidentifikator kunne stå der med grønn port. Det som samles
+    inn må gå like dypt som det som er lov å skrive.
+
+    NØKLENE er ikke med. `kl`/`rev` er maskinform på nøkkelposisjon og vokter
+    seg selv i port 9; det som måles her er hva kilden SIER.
+    """
+    if isinstance(verdi, str):
+        return [verdi]
+    if isinstance(verdi, list):
+        return [t for v in verdi for t in _tekstene_i(v)]
+    if isinstance(verdi, dict):
+        return [t for v in verdi.values() for t in _tekstene_i(v)]
+    return []
+
+
 def _prosastykker(kilde: Path = None) -> list[tuple[str, str]]:
     """[(hvor, tekst)] — alt sannhetskilden SIER til den som skal bygge.
 
@@ -1694,9 +1715,8 @@ def _prosastykker(kilde: Path = None) -> list[tuple[str, str]]:
     stykker: list[tuple[str, str]] = [(DOKUMENTET, "".join(biter))]
     for post in _katalogposter(kilde):
         for felt, verdi in sorted(post.items()):
-            for v in (verdi if isinstance(verdi, list) else [verdi]):
-                if isinstance(v, str):
-                    stykker.append((f"M-{post['n']}.{felt}", v))
+            for tekst in _tekstene_i(verdi):
+                stykker.append((f"M-{post['n']}.{felt}", tekst))
     return stykker
 
 
@@ -1756,6 +1776,11 @@ def test_ingen_oppfunne_identifikatorer_i_sannhetskilden():
      "oppfunnet_klasse", "M-57.kl"),
     ("'Importerer standardpolicy", "'Kjører i modus alltid_stoppp",
      "alltid_stoppp", "M-1.flow"),
+    # NEDE I FELTET. Leseren tillater lister og objekter i vilkårlig dybde, og
+    # prosa som står der er prosa (Codex P2).
+    ("'Importerer standardpolicy for kundens bransje og plan'",
+     "[{steg:'Kjører i modus dypt_oppfunnet'}]",
+     "dypt_oppfunnet", "M-1.flow"),
 ])
 def test_prosaporten_maaler_dokumentet_og_modulpostene(tmp_path, fra, til,
                                                        ident, sted):
