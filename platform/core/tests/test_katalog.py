@@ -532,10 +532,34 @@ def _katalogposter(kilde: Path = None) -> tuple[dict, ...]:
 IKKE_DATA = "__ikke_data__"
 
 
+def _ikke_data_i(verdi) -> str | None:
+    """Hva som ikke er data i `verdi`, eller `None` — HELE VEIEN NED.
+
+    Merket ble bare lett etter i feltets egen verdi (Codex P2). Katalogen
+    tillater lister og objekter av data, og leseren merker det som ikke er data
+    DER DET STÅR — så en `flow: [() => 42]` bar merket sitt inne i lista, og
+    feltet gikk for lesbart. Lovlig er tekst, tall, `true`/`false`/`null` og
+    lister og objekter av slike, rekursivt, og kontrollen må gå like dypt som
+    tillatelsen.
+    """
+    if isinstance(verdi, dict):
+        if IKKE_DATA in verdi:
+            return str(verdi[IKKE_DATA])
+        kilder = verdi.values()
+    elif isinstance(verdi, list):
+        kilder = verdi
+    else:
+        return None
+    for v in kilder:
+        funn = _ikke_data_i(v)
+        if funn is not None:
+            return funn
+    return None
+
+
 def _uleselige_felt(post: dict) -> list[str]:
     """Feltene i posten som ikke bærer data. Se `IKKE_DATA`."""
-    return sorted(f for f, v in post.items()
-                  if isinstance(v, dict) and IKKE_DATA in v)
+    return sorted(f for f, v in post.items() if _ikke_data_i(v) is not None)
 
 
 def _moduler_fra_kilden() -> dict[int, dict[str, str]]:
@@ -725,6 +749,11 @@ def test_et_element_som_ikke_er_en_post_stopper_porten(tmp_path, element):
     ("kl:new Date(0)", False),
     # En ACCESSOR er ikke en skrivemåte, den er sidens kode (Codex P2).
     ("get kl(){return 'krever_outbox'}", False),
+    # NEDE I EN BEHOLDER teller like mye (Codex P2). Lister og objekter av
+    # data er lovlig, så kontrollen må gå like dypt som tillatelsen.
+    ("flow:[['Steg'],{note:'x'}]", True),
+    ("flow:[() => 42]", False),
+    ("flow:{steg:[new Date(0)]}", False),
 ])
 def test_leseren_krever_at_en_feltverdi_er_data(tmp_path, felt, lesbar):
     """Katalogen skal kunne leses av mer enn nettleseren.

@@ -235,6 +235,31 @@ IKKE_DATA = "__ikke_data__"
 LESER = pathlib.Path(__file__).resolve().parent / "les_katalog.mjs"
 
 
+def ikke_data_i(verdi) -> str | None:
+    """Hva som ikke er data i `verdi`, eller `None` — HELE VEIEN NED.
+
+    Merket ble bare lett etter i feltets egen verdi (Codex P2). Katalogen
+    tillater lister og objekter av data, og leseren merker det som ikke er data
+    DER DET STÅR — så en `flow: [() => 42]` fikk merket sitt inne i lista, og
+    et felt med en funksjon i seg gikk rett gjennom kontrollen. Lovlig er tekst,
+    tall, `true`/`false`/`null` og lister og objekter av slike, rekursivt, og da
+    må kontrollen være det samme.
+    """
+    if isinstance(verdi, dict):
+        if IKKE_DATA in verdi:
+            return str(verdi[IKKE_DATA])
+        kilder = verdi.values()
+    elif isinstance(verdi, list):
+        kilder = verdi
+    else:
+        return None
+    for v in kilder:
+        funn = ikke_data_i(v)
+        if funn is not None:
+            return funn
+    return None
+
+
 def slug(navn: str) -> str:
     tegn = {"æ": "ae", "ø": "o", "å": "a", " ": "_"}
     ut = "".join(tegn.get(c, c) for c in navn.lower())
@@ -278,11 +303,11 @@ def les_katalog() -> list[dict]:
                 f"modul FAKTISK er, står i `MODULSTATUS` i plattformdata.js, "
                 f"avledet av manifestene. Fjern feltet.")
         uleselige = sorted(f for f, v in post.items()
-                           if isinstance(v, dict) and IKKE_DATA in v)
+                           if ikke_data_i(v) is not None)
         if uleselige:
             raise SystemExit(
                 f"{hvem} i {KILDE_NAVN} har egenskapen `{uleselige[0]}` som "
-                f"ikke er data ({post[uleselige[0]][IKKE_DATA]}). Katalogen er "
+                f"ikke er data ({ikke_data_i(post[uleselige[0]])}). Katalogen er "
                 f"en kilde som skal kunne leses av mer enn nettleseren: lovlig "
                 f"er tekst, tall, `true`/`false`/`null` og lister og objekter "
                 f"av slike.")
