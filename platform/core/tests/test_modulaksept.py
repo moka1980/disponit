@@ -2444,18 +2444,24 @@ def test_e2e_beviset_maa_vaere_det_drillen_saa():
 
 
 def test_manifestet_binder_ikke_den_supersederte_drillen():
-    """…og den blokkerte bindingen er DOKUMENTERT, ikke bare fjernet: et
-    punkt som stilltiende forsvant, ville sett ut som om kravet aldri
-    fantes."""
+    """Doktrinen består etter flippen: den supersederte drillen (2026-08-20
+    13:22 — bootet aldri rullbakken) blir ALDRI bindende igjen. Punktet er
+    nå `ja`, og det binder den NYE, komplette kjøringen fra 2026-08-22 —
+    aldri den gamle. Historikken slettes ikke; den slutter å være
+    bindende."""
     import yaml
     man = yaml.safe_load(
         (ROT / "platform/modules/m56_wcag_audit/manifest.yaml").read_text(
             encoding="utf-8"))
     p = man["staging_sjekkliste"]["rollback_testet"]
-    assert p["status"] == "blokkert" and p.get("blokkert_av")
-    assert "kjøres på nytt" in p["blokkert_av"].lower()
-    assert "artefakt" not in p, \
-        "et blokkert punkt skal ikke bære en artefaktbinding"
+    assert p["status"] == "ja" and p.get("krav_id") == "rollback-m56-v1"
+    assert "20260820T132200" not in p.get("artefakt", ""), \
+        "den supersederte drillen kan ikke bli bindende igjen"
+    assert "rollback-m56-v1-20260822T164530Z.json" in p["artefakt"]
+    sti = ROT / p["artefakt"]
+    import hashlib
+    assert hashlib.sha256(sti.read_bytes()).hexdigest() == \
+        p["artefakt_sha256"], "bindingen er hash-eksakt"
     assert (ROT / ("deploy/staging/artefakter/"
                    "rollback-m56-v1-20260820T132200.json")).exists(), \
         "historikken slettes ikke — den slutter å være bindende"
@@ -2463,7 +2469,8 @@ def test_manifestet_binder_ikke_den_supersederte_drillen():
 
 def test_datasettpunktet_krever_den_lokale_halvdelen():
     """Codex' P2 (runde 10): `syntetisk_datasett_likt_lokalt` sto `ja` på
-    en måling som bare finnes på staging.
+    en måling som bare finnes på staging. Nå er den lokale halvdelen MÅLT
+    (r21, 2026-08-22) — og porten krever at begge halvdelene står.
 
     Punktets eneste bevismåling var `maalt.avvik_mot_fasit`, og den
     avleder `wcag-kontroll-artefakt.py` utelukkende av staging-rundens
@@ -2474,18 +2481,28 @@ def test_datasettpunktet_krever_den_lokale_halvdelen():
     umålt ledd er nøyaktig den lånte konklusjonen `bevismaalinger` finnes
     for å stoppe."""
     import yaml
+    from manifestskjema import KRAVGRENSER
     man = yaml.safe_load(
         (ROT / "platform/modules/m56_wcag_audit/manifest.yaml").read_text(
             encoding="utf-8"))
     p = man["staging_sjekkliste"]["syntetisk_datasett_likt_lokalt"]
-    assert p["status"] == "blokkert" and p.get("blokkert_av")
-    assert "artefakt" not in p and "bevismaalinger" not in p, \
-        "et blokkert punkt skal ikke bære en evidensbinding"
-    # Begrunnelsen må si hva som faktisk lukker gapet — ellers er
-    # `blokkert` bare et penere `nei`.
-    assert "lokal" in p["blokkert_av"].lower()
-    # Datasettet ER sjekket inn, så den lokale siden lar seg måle når
-    # noen kjører runden: stien i begrunnelsen skal finnes.
+    # Flippet 2026-08-22 med vei (b) fra blokkert-noten (som var spec-en):
+    # byte-bindingen. BEGGE leddene må stå som bevismålinger — staging-
+    # halvdelen (avvik mot fasit) OG den lokale halvdelen (datasett-sha
+    # skrevet i evidensstrømmen, holdt mot innsjekkede bytes av grensen).
+    # Et `ja` med bare den ene halvdelen er den lånte konklusjonen
+    # `bevismaalinger` finnes for å stoppe.
+    assert p["status"] == "ja" and p.get("krav_id") == "wcag-kontroll-v2"
+    bm = p.get("bevismaalinger") or []
+    assert "oppsett.datasett_sha256" in bm, \
+        "den lokale halvdelen (byte-bindingen) er ikke navngitt"
+    assert "maalt.avvik_mot_fasit" in bm, \
+        "staging-halvdelen er ikke navngitt"
+    # …og bindingen er ikke dekorasjon: grensen punktets krav_id peker på
+    # HOLDER sha-en mot de innsjekkede bytene ved hver kjøring.
+    assert KRAVGRENSER["wcag-kontroll-v2"].get(
+        "krev_datasett_sha_lik_innsjekket") is True
+    # Datasettet som måles mot er sjekket inn.
     assert (ROT / "platform/modules/m56_wcag_audit/testnettsted"
             / "fasit.json").exists()
 

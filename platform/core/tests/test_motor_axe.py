@@ -1896,9 +1896,9 @@ def test_kontraktsdokumentet_er_frosset_pa_den_registrerte_hashen():
 #: Release-id-en staging-runden registrerer, og sha256 over manifestet slik
 #: det står FOR den id-en. Paret hører sammen: `manifest_hash` er et felt på
 #: release-raden, og raden er immutabel.
-RELEASE_ID = "wcag-r20"
+RELEASE_ID = "wcag-r24"
 MANIFEST_HASH_FOR_RELEASE = \
-    "3c05e0ada32c8f9f294f56f604e9fc44d504ebeb0c134348be048830cb9d03d7"
+    "13e08fb1d9c1200341dd09bce972243b0a2784d1e0f6cc9de51f84365081cdb1"
 
 
 def test_release_id_folger_manifestets_bytes():
