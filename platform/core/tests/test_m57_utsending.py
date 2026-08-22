@@ -9,6 +9,7 @@ Alle tester konstruerer egen tilstand; ingen delt fixture.
 from __future__ import annotations
 
 import os
+import re
 import secrets
 from pathlib import Path
 
@@ -369,14 +370,15 @@ def test_listeversjonen_er_append_only(migrator):
 
 
 @pg
-def test_mottaker_ref_kan_slettes_ved_ttl_utlop(migrator):
-    """Codex P1 (runde 2): `mottaker_ref` er kandidatdata, og klarsignal
-    §5 krever at utsendingsdataene fjernes ved TTL-utløp
-    (`ttl.persondata_funnet_etter_reaping = 0`). Som NOT NULL under en
-    ren append-only-trigger var kravet UMULIG å innfri. Nå finnes ÉN
-    navngitt overgang — og bare den: DELETE, omskriving og en sletting
-    uten stempel avvises fortsatt, evidensen består, og en slettet rad
-    kan ikke gjenopplives."""
+def test_frigivelsen_er_append_only(migrator):
+    """Runde 3-beslutning (K2 utløst på #140): §5s TTL-sletting av
+    `mottaker_ref` hører til TTL-kontrollpunktet (portene 18–20), ikke
+    til CP1 — reaperen (funksjon + rolle) finnes ikke ennå. Runde 2s
+    nullbare kolonne brøt idempotensen (NULL ≠ NULL under unik-nøkkelen),
+    og to runder på samme kolonne for to ulike krav er et
+    spesifikasjonsvalg, ikke et formforsøk. `mottaker_ref` er derfor
+    NOT NULL igjen, og frigivelsen er en REN append-only-tabell: DELETE
+    og enhver omskriving avvises, uten unntak."""
     oid, _ = _grunnlag(migrator)
     bid = _signatar(migrator)
     liste = _liste(migrator, oid)
@@ -386,28 +388,19 @@ def test_mottaker_ref_kan_slettes_ved_ttl_utlop(migrator):
     for setning in (
             f"DELETE FROM utsendingsfrigivelse {hvor}",
             f"UPDATE utsendingsfrigivelse SET mottaker_ref='en-annen' {hvor}",
-            f"UPDATE utsendingsfrigivelse SET mottaker_ref=NULL {hvor}",
-            f"UPDATE utsendingsfrigivelse SET liste_id=gen_random_uuid(),"
-            f" mottaker_ref=NULL, slettet_ts=now() {hvor}"):
+            f"UPDATE utsendingsfrigivelse SET liste_id=gen_random_uuid()"
+            f" {hvor}"):
         _sett_kontekst(migrator, TENANT)
         with pytest.raises(psycopg.errors.CheckViolation):
             migrator.execute(setning, (TENANT, fid))
         migrator.rollback()
     _sett_kontekst(migrator, TENANT)
-    migrator.execute(
-        "UPDATE utsendingsfrigivelse SET mottaker_ref=NULL,"
-        f" slettet_ts=now() {hvor}", (TENANT, fid))
-    rad = migrator.execute(
-        "SELECT mottaker_ref, slettet_ts IS NOT NULL, liste_id,"
-        f" innhold_hash FROM utsendingsfrigivelse {hvor}",
-        (TENANT, fid)).fetchone()
-    assert rad == (None, True, liste[0], liste[2]), (
-        "evidensen skal bestå når kandidatreferansen slettes")
-    # Gjenoppliving er ikke en TTL-sletting.
-    with pytest.raises(psycopg.errors.CheckViolation):
+    with pytest.raises(psycopg.errors.NotNullViolation):
         migrator.execute(
-            "UPDATE utsendingsfrigivelse SET mottaker_ref='m1',"
-            f" slettet_ts=NULL {hvor}", (TENANT, fid))
+            "INSERT INTO utsendingsfrigivelse (tenant, frigivelse_id,"
+            " liste_id, innhold_hash, utkast_serie, mottaker_ref)"
+            " VALUES (%s, gen_random_uuid(), %s, %s, %s, NULL)",
+            (TENANT, liste[0], liste[2], liste[1]))
     migrator.rollback()
 
 
@@ -790,6 +783,53 @@ def test_frigi_er_idempotent_under_kapplop(migrator):
 
 
 @pg
+def test_frigi_gjenkjenner_mottaker_etter_laasen_selv_med_fullt_tak(migrator):
+    """Codex på #140 (runde 3): to FØRSTEGANGS-kall for SAMME mottaker på
+    en liste signert for kun ÉN mottaker (antall=1) kan begge bomme på
+    oppslaget FØR låsen. Uten gjenlesning ETTER låsen ville taperen møtt
+    telleporten (v_frigitt=1 >= antall=1) og blitt avvist der
+    idempotens-kontrakten lovte vinnerens id."""
+    import threading
+
+    oid, _ = _grunnlag(migrator)
+    bid = _signatar(migrator)
+    liste = _liste(migrator, oid, antall=1)
+    _signer(migrator, liste, bid)
+    a = _sender()
+    b = _sender()
+    try:
+        _sett_kontekst(a, TENANT)
+        fid_a = a.execute("SELECT frigi_utsendelse(%s,%s,'tak-kapp-m1')",
+                          (TENANT, liste[0])).fetchone()[0]
+        resultat: dict = {}
+
+        def taper():
+            _sett_kontekst(b, TENANT)
+            try:
+                resultat["fid"] = b.execute(
+                    "SELECT frigi_utsendelse(%s,%s,'tak-kapp-m1')",
+                    (TENANT, liste[0])).fetchone()[0]
+                b.commit()
+            except Exception as e:            # noqa: BLE001 — dommen måles
+                resultat["feil"] = e
+                b.rollback()
+
+        t = threading.Thread(target=taper)
+        t.start()
+        t.join(timeout=2)
+        assert t.is_alive(), "B skulle blokkere på As ucommittede rad"
+        a.commit()
+        t.join(timeout=10)
+        assert not t.is_alive(), "B kom aldri gjennom etter As commit"
+        assert "feil" not in resultat, (
+            "taperen ble avvist av taket i stedet for å gjenkjenne"
+            f" mottakeren: {resultat.get('feil')}")
+        assert resultat["fid"] == fid_a, "taperen fikk en ANNEN frigivelse"
+    finally:
+        a.close(); b.close()
+
+
+@pg
 def test_signer_kapplopstaper_faar_replaydommen(migrator):
     """Cursor P2 på #140: identisk replay er no-op OGSÅ når kallene er
     samtidige — taperen på unik nøkkel går inn i samme dom som en
@@ -850,11 +890,37 @@ def test_migrer_baerer_utsendingskjedens_rettigheter():
         assert f"GRANT EXECUTE ON FUNCTION {fn} TO {{rolle}};" in tekst, fn
 
 
+def test_sp10_daekker_056():
+    """Cursor P2-3 på #140 (runde 3): CI kjører allerede
+    `sp10-provekjoring.py 56` og skriptet har allerede
+    `56: (_seed_056, _mal_056)` registrert — men ingen pytest speilet
+    koblingen (48/49 har den, jf. `test_begge_sp10_kjoringene_staar_i_ci`
+    og `test_sp10_daekker_049`). Uten en maskinell port kunne bebodd
+    SP-10-prøvekjøring for 056 fjernes stille."""
+    ci = (ROT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8")
+    assert re.search(r"sp10-provekjoring\.py 56\b", ci), (
+        "SP-10-prøvekjøringen for 056 mangler i CI")
+    sp10 = (ROT / "deploy" / "staging" / "sp10-provekjoring.py").read_text(
+        encoding="utf-8")
+    assert "56: (_seed_056, _mal_056)" in sp10, (
+        "056 har ingen registrert seed+måling")
+
+
 @pg
 def test_frigivelsesoppdragets_retry_maa_beskrive_samme_oppdrag(migrator):
-    """Cursor P2 på #140 (runde 2): kappløpstaperen får vinnerens id BARE
-    når kallet beskriver samme oppdrag — et retry med annen payload skal
-    høres, aldri få «suksess» med feil innhold."""
+    """Runde 3-beslutning (K2 utløst på #140): materialiteten er snevret
+    til de DETERMINISTISKE feltene (oppdragstype/handling/eiermodul/
+    key_id). `db/kryptering.py` gir hver kryptering en FERSK tilfeldig
+    nonce, så et legitimt retry som krypterer identisk klartekst på nytt
+    (etter en tvetydig commit/timeout) ALDRI får samme
+    `payload_kryptert`/`nonce` som forrige forsøk — runde 2s fulle
+    byte-likhet avviste nøyaktig det retryet den skulle godkjenne. Ekte
+    binding til det signerte innholdet er et eget, utsatt spørsmål
+    (Funn 8); denne porten dekker bare kappløps-/retry-klassen: samme
+    frigivelse + samme jobbtype/håndterer/eiermodul/nøkkel er samme
+    logiske utsendelse — mens et retry med ANNEN metadata fortsatt skal
+    høres."""
     from db import kryptering
     oid, payload = _grunnlag(migrator)
     ct, key_id, nonce = payload
@@ -871,7 +937,7 @@ def test_frigivelsesoppdragets_retry_maa_beskrive_samme_oppdrag(migrator):
             "%s,%s,%s, now()+interval '4 hours', now()+interval '1 day')",
             (TENANT, fid, ct, key_id, nonce)).fetchone()[0]
         snd.commit()
-        # identisk innhold, nye frister -> vinnerens id
+        # identisk chiffertekst, nye frister -> vinnerens id
         _sett_kontekst(snd, TENANT)
         aoid2 = snd.execute(
             "SELECT opprett_frigivelsesoppdrag(%s,%s,"
@@ -880,21 +946,33 @@ def test_frigivelsesoppdragets_retry_maa_beskrive_samme_oppdrag(migrator):
             (TENANT, fid, ct, key_id, nonce)).fetchone()[0]
         assert aoid2 == aoid
         snd.rollback()
-        # annet innhold -> avvist
+        # FERSK kryptering av SAMME klartekst: ny chiffertekst/nonce (AES-
+        # GCM randomiserer noncen), men samme deterministiske felter —
+        # nøyaktig det ekte retry-scenariet runde 3 fant og lukket.
         _sett_kontekst(migrator, TENANT)
-        key_id2, dek = kryptering.hent_eller_opprett_aktiv_dek(
+        key_id3, dek = kryptering.hent_eller_opprett_aktiv_dek(
             migrator, TENANT)
-        ct2, nonce2 = kryptering.krypter(dek, {"m57": "annet"}, TENANT,
-                                         key_id2)
+        ct3, nonce3 = kryptering.krypter(dek, {"m57": True}, TENANT, key_id3)
         migrator.commit()
+        assert (ct3, nonce3) != (ct, nonce), (
+            "testen forutsetter at krypteringen faktisk er randomisert")
+        _sett_kontekst(snd, TENANT)
+        aoid3 = snd.execute(
+            "SELECT opprett_frigivelsesoppdrag(%s,%s,"
+            "'rekruttering.utsending','rekruttering.utsending','m57_ats',"
+            "%s,%s,%s, now()+interval '4 hours', now()+interval '1 day')",
+            (TENANT, fid, ct3, key_id3, nonce3)).fetchone()[0]
+        assert aoid3 == aoid, "et retry med fersk kryptering lagde et NYTT oppdrag"
+        snd.rollback()
+        # annen METADATA (annen håndterer) -> fortsatt avvist
         _sett_kontekst(snd, TENANT)
         with pytest.raises(psycopg.errors.InvalidParameterValue):
             snd.execute(
                 "SELECT opprett_frigivelsesoppdrag(%s,%s,"
-                "'rekruttering.utsending','rekruttering.utsending',"
+                "'rekruttering.utsending','en-annen-handling',"
                 "'m57_ats',%s,%s,%s, now()+interval '4 hours',"
                 " now()+interval '1 day')",
-                (TENANT, fid, ct2, key_id2, nonce2))
+                (TENANT, fid, ct, key_id, nonce))
         snd.rollback()
     finally:
         snd.close()
@@ -926,6 +1004,44 @@ def test_runtime_har_ikke_utsendingsveien(migrator):
                 "'m57_ats',%s,%s,%s, now()+interval '4 hours',"
                 " now()+interval '1 day')", (TENANT, ct, key_id, nonce))
         rt.rollback()
+    finally:
+        rt.close()
+
+
+@pg
+def test_barn_arver_forelderens_evalueringsoppdrag(migrator):
+    """Cursor P2 på #140 (runde 3): en «lineær» serie kunne likevel la et
+    barn adoptere en ANNEN fullført evaluering enn forelderen sin —
+    proveniensen ville forgrene seg inni en kjede klarsignalet beskriver
+    som lineær. Barnet arver forelderens evalueringsoppdrag; det velger
+    det ikke."""
+    e1, _ = _evaluering(migrator)
+    e2, _ = _evaluering(migrator)
+    rt = _rt()
+    try:
+        _sett_kontekst(rt, TENANT)
+        rot = rt.execute(
+            "SELECT opprett_utsendingsliste(%s, gen_random_uuid(), NULL,"
+            " %s, 'invitasjon','m@1','h-rot-serie',1)",
+            (TENANT, e1)).fetchone()[0]
+        rot_serie = rt.execute(
+            "SELECT utkast_serie FROM utsendingsliste WHERE tenant=%s"
+            " AND liste_id=%s", (TENANT, rot)).fetchone()[0]
+        rt.commit()
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            rt.execute(
+                "SELECT opprett_utsendingsliste(%s, %s, %s, %s,"
+                " 'invitasjon','m@1','h-barn-feil',1)",
+                (TENANT, rot_serie, rot, e2))
+        rt.rollback()
+        # positiv kontroll: samme evalueringsoppdrag som forelderen -> OK.
+        _sett_kontekst(rt, TENANT)
+        rt.execute(
+            "SELECT opprett_utsendingsliste(%s, %s, %s, %s,"
+            " 'invitasjon','m@1','h-barn-ok',1)",
+            (TENANT, rot_serie, rot, e1))
+        rt.commit()
     finally:
         rt.close()
 

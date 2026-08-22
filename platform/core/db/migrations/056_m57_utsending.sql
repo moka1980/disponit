@@ -103,79 +103,44 @@ CREATE TRIGGER utsendingssignatur_ingen_truncate
 -- 3. Frigivelsen: én rad per mottaker, og FK-kjeden krever at listen er
 --    SIGNERT (port 6) — det finnes ingen representerbar frigivelse av en
 --    usignert liste, uansett hvilken vei noen skriver.
---    KLARSIGNAL-KORREKSJON (Codex P1, runde 2): skissen i §3 skriver
---    `mottaker_ref TEXT NOT NULL`, men §5 krever at NØYAKTIG dette feltet
---    slettes ved TTL-utløp. De to kan ikke begge stå, og §5 er den
---    målte grensen — skissens NOT NULL viker.
---    `mottaker_ref` ER KANDIDATDATA og må kunne slettes ved TTL-utløp:
---    klarsignal §5 krever at utsendingsdataene
---    fjernes i alle seks lagre, og evidensgrensen måler det
---    (`ttl.persondata_funnet_etter_reaping = 0`). Som `NOT NULL` under en
---    ren append-only-trigger var det kravet UMULIG å innfri — verken
---    UPDATE eller DELETE slapp gjennom, og en fremtidig reaper ville
---    stått uten lovlig vei. Kolonnen er derfor slettbar, og formen holder
---    tilstanden entydig: enten bærer raden en mottaker og er ikke slettet,
---    eller den er slettet og bærer ingen. Resten av raden (evidensen:
---    hvem signerte hva, når det ble frigitt) består uendret.
+--
+--    RUNDE 3-BESLUTNING (K2 utløst på #140, ansvarlig valgte eksplisitt):
+--    klarsignal §5s krav om at `mottaker_ref` slettes ved TTL-utløp hører
+--    til TTL-kontrollpunktet (portene 18–20), IKKE til CP1. Runde 2 gjorde
+--    kolonnen nullbar for å innfri §5 her og nå — men reaperen (funksjon
+--    + rolle) finnes ikke ennå, og en nullbar mottakerreferanse under en
+--    unik-nøkkel PÅ nøyaktig den kolonnen brøt idempotensen: PostgreSQL
+--    regner NULL som ulik NULL, så en TTL-redigert mottaker kunne frigis
+--    PÅ NYTT — mens et samtidig FØRSTEGANGS-kall (uten redaksjon) traff en
+--    beslektet kappløpsklasse i samme runde. To runder på samme kolonne
+--    for to ULIKE krav (slett kandidatreferansen vs. gjenkjenn den for
+--    alltid) er definisjonen på et spesifikasjonsvalg — ikke et
+--    formforsøk (K2 stopper formforsøk, ikke beslutninger).
+--
+--    Kolonnen er derfor NOT NULL igjen — skissens opprinnelige form i
+--    §3. §5s krav flyttes i sin helhet til reaper-PR-en, som uansett må
+--    eie funksjonen, rollen OG ta det spesifikasjonsvalget (durabel
+--    pseudonymnøkkel, eller at TTL-utløp stenger listen for videre
+--    frigivelse) — se diskusjonen på #140 for avveiningen.
 CREATE TABLE utsendingsfrigivelse (
     tenant TEXT NOT NULL,
     frigivelse_id UUID NOT NULL,
     liste_id UUID NOT NULL,
     innhold_hash TEXT NOT NULL,
     utkast_serie UUID NOT NULL,
-    mottaker_ref TEXT,                   -- slettbar ved TTL-utløp (§5)
-    slettet_ts TIMESTAMPTZ,
+    mottaker_ref TEXT NOT NULL,
     frigitt_ts TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (tenant, frigivelse_id),
     UNIQUE (tenant, liste_id, mottaker_ref),
-    CONSTRAINT frigivelse_mottaker_eller_slettet CHECK (
-           (mottaker_ref IS NOT NULL AND slettet_ts IS NULL)
-        OR (mottaker_ref IS NULL     AND slettet_ts IS NOT NULL)),
     FOREIGN KEY (tenant, liste_id, innhold_hash, utkast_serie)
         REFERENCES utsendingssignatur
             (tenant, liste_id, innhold_hash, utkast_serie));
-
--- Append-only MED ÉN navngitt overgang. Frigivelsen er evidens, så
--- DELETE er fortsatt forbudt og hvert felt fortsatt frosset — unntatt
--- den ene mutasjonen TTL-en krever: `mottaker_ref` satt → NULL, én vei,
--- med stempel. Vakten er tabellens egen (035s
--- `onboarding_familiefrist_immutable`-form), ikke en ny mekanisme:
--- `avvis_endring` kan ikke uttrykke et unntak, og et unntak uten vakt
--- ville åpnet raden for omskriving.
---
--- REAPEREN SELV hører til TTL-kontrollpunktet (portene 18–20): den
--- trenger en herdet funksjon og en rolle, og ingen av delene finnes ennå.
--- Det som rettes her, er at basen gjorde kravet UREALISERBART.
-CREATE OR REPLACE FUNCTION utsendingsfrigivelse_kun_ttl_redaksjon()
-RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog AS $$
-BEGIN
-    IF TG_OP <> 'UPDATE' THEN
-        RAISE EXCEPTION 'utsendingsfrigivelse: % er ikke tillatt'
-            ' (frigivelsen er evidens)', TG_OP
-            USING ERRCODE = 'check_violation';
-    END IF;
-    IF OLD.mottaker_ref IS NULL                     -- alt slettet
-       OR NEW.mottaker_ref IS NOT NULL              -- ikke en sletting
-       OR NEW.slettet_ts IS NULL                    -- uten stempel
-       OR OLD.slettet_ts IS NOT NULL
-       OR NEW.tenant        IS DISTINCT FROM OLD.tenant
-       OR NEW.frigivelse_id IS DISTINCT FROM OLD.frigivelse_id
-       OR NEW.liste_id      IS DISTINCT FROM OLD.liste_id
-       OR NEW.innhold_hash  IS DISTINCT FROM OLD.innhold_hash
-       OR NEW.utkast_serie  IS DISTINCT FROM OLD.utkast_serie
-       OR NEW.frigitt_ts    IS DISTINCT FROM OLD.frigitt_ts THEN
-        RAISE EXCEPTION 'utsendingsfrigivelse: eneste lovlige endring er'
-            ' TTL-sletting av mottaker_ref (satt → NULL med slettet_ts)'
-            USING ERRCODE = 'check_violation';
-    END IF;
-    RETURN NEW;
-END $$;
 
 DROP TRIGGER IF EXISTS utsendingsfrigivelse_append_only
     ON utsendingsfrigivelse;
 CREATE TRIGGER utsendingsfrigivelse_append_only
     BEFORE UPDATE OR DELETE ON utsendingsfrigivelse
-    FOR EACH ROW EXECUTE FUNCTION utsendingsfrigivelse_kun_ttl_redaksjon();
+    FOR EACH ROW EXECUTE FUNCTION avvis_endring();
 DROP TRIGGER IF EXISTS utsendingsfrigivelse_ingen_truncate
     ON utsendingsfrigivelse;
 CREATE TRIGGER utsendingsfrigivelse_ingen_truncate
@@ -360,9 +325,26 @@ CREATE FUNCTION opprett_utsendingsliste(
     p_listetype TEXT, p_malversjon TEXT, p_innhold_hash TEXT, p_antall INT)
 RETURNS UUID LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
-DECLARE v_id UUID := gen_random_uuid();
+DECLARE v_id UUID := gen_random_uuid(); v_forelder_oppdrag BIGINT;
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant, 'opprett_utsendingsliste');
+    -- SERIEN PEKER PÅ ÉN EVALUERING (Cursor P2 på #140, runde 3): uten
+    -- dette kunne et barn i en «lineær» serie likevel adoptere en ANNEN
+    -- fullført evaluering enn forelderen sin — proveniensen ville
+    -- forgrene seg inni en kjede klarsignalet beskriver som lineær.
+    -- Forelderen eier evalueringspekeren; barnet arver den, det velger
+    -- den ikke.
+    IF p_forrige IS NOT NULL THEN
+        SELECT oppdrag_id INTO v_forelder_oppdrag
+          FROM public.utsendingsliste
+         WHERE tenant = p_tenant AND liste_id = p_forrige;
+        IF FOUND AND v_forelder_oppdrag IS DISTINCT FROM p_oppdrag_id THEN
+            RAISE EXCEPTION 'opprett_utsendingsliste: barn må peke på'
+                ' samme evalueringsoppdrag som forelderen (%), ikke %',
+                v_forelder_oppdrag, p_oppdrag_id
+                USING ERRCODE = 'invalid_parameter_value';
+        END IF;
+    END IF;
     -- LISTEN PROMOTERER EN FULLFØRT EVALUERING (Codex P1 + Cursor P2 på
     -- #140, runde 2). FK-en på (tenant, oppdrag_id) sier bare at
     -- oppdraget finnes hos tenanten. Den skiller verken
@@ -519,6 +501,20 @@ BEGIN
     -- append-only tabell) og faller ved commit.
     PERFORM pg_advisory_xact_lock(hashtextextended(
         'm57:frigi:' || p_tenant || ':' || p_liste_id::text, 0));
+    -- GJENLES ETTER LÅSEN (Codex på #140, runde 3): to FØRSTEGANGS-kall
+    -- for SAMME mottaker kan begge bomme på oppslaget over (ingen rad
+    -- ennå), og taperen ville da møtt telleporten under i stedet for
+    -- replay-svaret — presis når taket er lite (f.eks. antall=1) og
+    -- vinneren alt har committet før taperen får låsen. Uten denne
+    -- gjenlesningen fikk et helt legitimt samtidig FØRSTE forsøk et
+    -- avvist svar der idempotens-kontrakten lovte samme id.
+    SELECT frigivelse_id INTO v_eksisterende
+      FROM public.utsendingsfrigivelse
+     WHERE tenant = p_tenant AND liste_id = p_liste_id
+       AND mottaker_ref = p_mottaker_ref;
+    IF v_eksisterende IS NOT NULL THEN
+        RETURN v_eksisterende;
+    END IF;
     SELECT count(*) INTO v_frigitt FROM public.utsendingsfrigivelse
      WHERE tenant = p_tenant AND liste_id = p_liste_id;
     IF v_frigitt >= s.antall THEN
@@ -573,21 +569,31 @@ BEGIN
                 p_evidensfrist, p_frigivelse_id, 'KOBLET', 'frigivelse')
         RETURNING id INTO v_id;
     EXCEPTION WHEN unique_violation THEN
-        -- Materiell likhet (Cursor P2 på #140, runde 2): vinnerens id
-        -- returneres BARE når kallet beskriver samme oppdrag —
-        -- signaturveien dømmer slik, og et retry med annen payload
-        -- skal høres, ikke få «suksess» med feil innhold. Fristene
-        -- er utenfor materialiteten med vilje: et legitimt retry
-        -- regner klokkefrister på nytt, og fristen tilhører oppdraget
-        -- som faktisk ble skapt.
+        -- RUNDE 3-BESLUTNING (K2 utløst på #140, ansvarlig valgte
+        -- eksplisitt): materialiteten snevres til de DETERMINISTISKE
+        -- feltene. `db/kryptering.py` genererer en FERSK tilfeldig nonce
+        -- for HVER kryptering (AES-GCM) — et legitimt retry som
+        -- krypterer identisk klartekst på nytt (etter en tvetydig
+        -- commit/timeout) ville ALDRI fått samme `payload_kryptert`/
+        -- `nonce` som forrige forsøk. Runde 2s fulle byte-likhet målte
+        -- derfor feil ting: den avviste nøyaktig det retryet som skulle
+        -- godkjennes (Codex + Cursor, runde 3).
+        --
+        -- Ekte binding til det SIGNERTE innholdet er en annen sak (Funn 8,
+        -- utsatt fra runde 2 — krever et per-mottaker-manifest ELLER en
+        -- kalleroppgitt digest, altså ny maskin under K1) og står fortsatt
+        -- åpen som eget spørsmål i tråden. Denne porten løser bare
+        -- kappløps-/retry-klassen: samme frigivelse + samme
+        -- jobbtype/håndterer/eiermodul/nøkkel er samme logiske utsendelse,
+        -- uansett chiffertekstbyte. Fristene er utenfor materialiteten av
+        -- samme grunn som før: et legitimt retry regner klokkefrister på
+        -- nytt.
         SELECT id INTO v_id FROM public.oppdrag o
          WHERE o.tenant = p_tenant AND o.frigivelse_id = p_frigivelse_id
            AND o.oppdragstype = p_oppdragstype
            AND o.handling = p_handling
            AND o.eiermodul = p_eiermodul
-           AND o.payload_kryptert = p_payload
-           AND o.key_id = p_key_id
-           AND o.nonce = p_nonce;
+           AND o.key_id = p_key_id;
         IF NOT FOUND THEN
             IF EXISTS (SELECT 1 FROM public.oppdrag
                         WHERE tenant = p_tenant
