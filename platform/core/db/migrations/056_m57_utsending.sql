@@ -407,13 +407,53 @@ CREATE FUNCTION frigi_utsendelse(
 RETURNS UUID LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE s RECORD; v_id UUID := gen_random_uuid(); v_eksisterende UUID;
+        v_frigitt INT;
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant, 'frigi_utsendelse');
-    SELECT * INTO s FROM public.utsendingssignatur
-     WHERE tenant = p_tenant AND liste_id = p_liste_id;
+    -- Signaturen OG listens `antall` i samme oppslag: tallet mennesket
+    -- fikk se i signaturdialogen («Dette sender N e-poster. Kan ikke
+    -- angres.») bor på listeversjonen signaturen binder.
+    SELECT sg.innhold_hash, sg.utkast_serie, l.antall INTO s
+      FROM public.utsendingssignatur sg
+      JOIN public.utsendingsliste l
+        ON l.tenant = sg.tenant AND l.liste_id = sg.liste_id
+     WHERE sg.tenant = p_tenant AND sg.liste_id = p_liste_id;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'frigi_utsendelse: liste % er ikke signert',
             p_liste_id USING ERRCODE = 'no_data_found';
+    END IF;
+    -- Allerede frigitt for DENNE mottakeren? Da er svaret gitt, og
+    -- replayet skal aldri møte telleporten under — en liste som står på
+    -- taket må fortsatt kunne svare idempotent på et retry.
+    SELECT frigivelse_id INTO v_eksisterende
+      FROM public.utsendingsfrigivelse
+     WHERE tenant = p_tenant AND liste_id = p_liste_id
+       AND mottaker_ref = p_mottaker_ref;
+    IF v_eksisterende IS NOT NULL THEN
+        RETURN v_eksisterende;
+    END IF;
+    -- DET SIGNERTE ANTALLET ER ET TAK (Codex P1, runde 2). Unikheten på
+    -- (liste, mottaker) hindret bare DUBLETTER — den sa ingenting om hvor
+    -- MANGE forskjellige mottakere senderen kunne frigi. En liste
+    -- presentert som «N e-poster» kunne dermed gi flere enn N irreversible
+    -- utsendelser, forbi til og med skjemaets 5000-grense, uten at noe
+    -- menneske signerte for det. Taket er en del av signaturens løfte.
+    --
+    -- Serialisert med en advisory-lås per (tenant, liste) — 014s mønster.
+    -- Uten den kunne to samtidige kall begge lese `antall - 1` og begge
+    -- sette inn: en ren count-så-INSERT er nøyaktig det TOCTOU-et runde 1
+    -- lukket andre steder i denne filen. Låsen krever ingen rettighet (i
+    -- motsetning til `SELECT ... FOR UPDATE`, som ville krevd UPDATE på en
+    -- append-only tabell) og faller ved commit.
+    PERFORM pg_advisory_xact_lock(hashtextextended(
+        'm57:frigi:' || p_tenant || ':' || p_liste_id::text, 0));
+    SELECT count(*) INTO v_frigitt FROM public.utsendingsfrigivelse
+     WHERE tenant = p_tenant AND liste_id = p_liste_id;
+    IF v_frigitt >= s.antall THEN
+        RAISE EXCEPTION 'frigi_utsendelse: liste % er signert for %'
+            ' mottakere, og % er alt frigitt — en ny mottaker krever en ny'
+            ' signert versjon', p_liste_id, s.antall, v_frigitt
+            USING ERRCODE = 'invalid_parameter_value';
     END IF;
     -- Idempotent UNDER kappløp (Cursor P2 på #140): SELECT-så-INSERT lot
     -- taperen få unik-bruddet i fanget. `ON CONFLICT DO NOTHING` +

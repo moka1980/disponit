@@ -646,6 +646,50 @@ def test_en_frigivelse_gir_ett_oppdrag(migrator):
 
 
 @pg
+def test_frigivelse_kan_ikke_overstige_signert_antall(migrator):
+    """Codex P1 (runde 2): unikheten på (liste, mottaker) hindret bare
+    DUBLETTER — ikke at senderen frigir flere FORSKJELLIGE mottakere enn
+    listen er signert for. «Dette sender N e-poster. Kan ikke angres.» må
+    holde: mottaker N+1 krever en ny signert versjon. Et replay på en
+    allerede frigitt mottaker skal fortsatt svare idempotent, også når
+    listen står på taket."""
+    oid, _ = _grunnlag(migrator)
+    bid = _signatar(migrator)
+    liste = _liste(migrator, oid, antall=2)
+    _signer(migrator, liste, bid)
+    snd = _sender()
+    try:
+        _sett_kontekst(snd, TENANT)
+        forste = snd.execute("SELECT frigi_utsendelse(%s,%s,'tak-m1')",
+                             (TENANT, liste[0])).fetchone()[0]
+        snd.execute("SELECT frigi_utsendelse(%s,%s,'tak-m2')",
+                    (TENANT, liste[0]))
+        snd.commit()
+    finally:
+        snd.close()
+    # Egen tilkobling per steg: `_sender()` faller lokalt tilbake på
+    # migrator + SET ROLE, og en rollback ville tatt rollen med seg.
+    snd = _sender()
+    try:
+        _sett_kontekst(snd, TENANT)
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            snd.execute("SELECT frigi_utsendelse(%s,%s,'tak-m3')",
+                        (TENANT, liste[0]))
+        snd.rollback()
+    finally:
+        snd.close()
+    snd = _sender()
+    try:
+        _sett_kontekst(snd, TENANT)
+        replay = snd.execute("SELECT frigi_utsendelse(%s,%s,'tak-m1')",
+                             (TENANT, liste[0])).fetchone()[0]
+        snd.rollback()
+    finally:
+        snd.close()
+    assert replay == forste, "replay på taket skal fortsatt være idempotent"
+
+
+@pg
 def test_frigi_er_idempotent_under_kapplop(migrator):
     """Cursor P2 på #140: SELECT-så-INSERT lot kappløpstaperen dø på
     unik-bruddet. Nå får taperen vinnerens frigivelse: A setter inn uten
