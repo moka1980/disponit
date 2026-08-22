@@ -564,20 +564,24 @@ def _dyp_kropp() -> tuple[str, bool]:
     dokumenterte 400-svaret — aldri en 500. Målt her, aldri antatt.
 
     Codex P2: «lovlig» er KROPPSGRENSEN, ikke et rundt tall i nærheten av
-    den. Dypeste probe var 33 000 nivåer = 198 001 B mens `MAKS_KROPP` er
-    262 144 B, så en tolk med tak mellom de to dybdene ble meldt som
-    «feller ikke» enda en klient fortsatt kunne utløse RecursionError —
-    testen tok fallback-grenen og sluttet å måle unntakshåndteringen mens
-    den fremdeles var nåbar. Dybden utledes derfor AV grensen: hvert nivå
-    koster 6 byte (`{"a":` + `}`) pluss den ene `1`-en.
+    den — og «dypest» er klientens BILLIGSTE nøstingsform, ikke vår.
+    Dypeste probe var først 33 000 nivåer = 198 001 B mot en grense på
+    262 144 B; så ble dybden utledet AV grensen, men fremdeles i objektform
+    (`{"a":` + `}` = 6 byte per nivå), som stanser på 43 690 nivåer.
+    Nøstede ARRAYER koster 2 byte per nivå, så den samme grensen slipper
+    gjennom 131 072 nivåer — og på 3.14 parses 43 690 objektnivåer greit
+    mens array-formen feller parseren. En probe som måler sin egen dyre
+    form melder altså «uoppnåelig» om et tak klienten fortsatt når, og
+    testen blir grønn selv om `RecursionError` fjernes fra except-en.
+    Formen er derfor arrayer, og dybden utledes av grensen.
     """
     import json as jsonmodul
 
     from api.app import MAKS_KROPP
-    dypest = (MAKS_KROPP - 1) // 6      # 6*d+1 <= MAKS_KROPP
+    dypest = MAKS_KROPP // 2            # 2*d <= MAKS_KROPP (`[`+`]`)
     kropp = ""
     for dybde in (15000, 33000, dypest):
-        kropp = '{"a":' * dybde + "1" + "}" * dybde
+        kropp = "[" * dybde + "]" * dybde
         assert len(kropp) <= MAKS_KROPP, \
             "testkroppen skal ligge innenfor kroppsgrensen"
         try:
@@ -613,7 +617,8 @@ def test_dypt_nostet_kropp_er_request_feil(migrator, klient):
                     cookies={sesjonmodul.C_SESJON: cookie})
     # ÉN kontrakt, to veier inn til den (Codex P2): feller parseren HER, er
     # dette RecursionError-veien; makter den kroppen, er dokumentet gyldig
-    # JSON med ugyldig toppform (`set(data) - {"hostname"}`). Begge veier
+    # JSON med ugyldig toppform — en liste, ikke et objekt, som
+    # `not isinstance(data, dict)` avviser. Begge veier
     # lover NØYAKTIG `request_feilformet` — aldri en generisk 500, og aldri
     # en annen feilkode som en regresjon måtte finne på. Fallbacken sluttet
     # å måle koden og godtok enhver ikke-tom `feil`; da var den grønn også
