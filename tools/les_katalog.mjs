@@ -175,15 +175,42 @@ function somData(verdi) {
   if (slag === 'number') {
     return Number.isFinite(verdi) ? verdi : {[IKKE_DATA]: 'tallet ' + verdi}
   }
-  if (Array.isArray(verdi)) return verdi.map(somData)
+  if (Array.isArray(verdi)) {
+    const ut = []
+    for (let i = 0; i < verdi.length; i++) ut.push(egenskapen(verdi, i))
+    return ut
+  }
   if (slag === 'object' && Object.prototype.toString.call(verdi) === '[object Object]') {
     const ut = {}
-    for (const nokkel of Object.keys(verdi)) ut[nokkel] = somData(verdi[nokkel])
+    for (const nokkel of Object.keys(verdi)) ut[nokkel] = egenskapen(verdi, nokkel)
     return ut
   }
   return {[IKKE_DATA]: slag === 'object'
     ? Object.prototype.toString.call(verdi).slice(8, -1).toLowerCase()
     : slag}
+}
+
+/** Egenskapen `nokkel` på `objekt`, som data.
+ *
+ *  Egenskapen leses som DESKRIPTOR, aldri som `objekt[nokkel]` (Codex P2). Er
+ *  den en accessor, er getteren sidens egen kode, og et vanlig oppslag ville
+ *  kjørt den HER UTE i Node — etter at `runInContext` har returnert, altså
+ *  utenfor `timeout`-en som verner lesningen mot en løkke i kilden. Én
+ *  `get kl(){for(;;);}` ville hengt generatoren, porten og CI uten at noe slo
+ *  av.
+ *
+ *  Getteren kjøres derfor ikke i det hele tatt, og det er samme svar som
+ *  merket alt gir for en funksjon: en egenskap som først BLIR TIL når siden
+ *  kjører kan hverken leses eller måles av andre enn nettleseren, og katalogen
+ *  skal kunne leses av mer enn den.
+ *
+ *  Et hull i en liste har ingen deskriptor. Det er `null`, slik JSON også ser
+ *  det — ikke en accessor. */
+function egenskapen(objekt, nokkel) {
+  const d = Object.getOwnPropertyDescriptor(objekt, nokkel)
+  if (!d) return null
+  if (!('value' in d)) return {[IKKE_DATA]: 'accessor'}
+  return somData(d.value)
 }
 
 function main() {
@@ -200,15 +227,20 @@ function main() {
     stopp('modulkatalogen `M` i sannhetskilden er ikke en liste — katalogen ' +
           'er en liste av modulposter, og bare det')
   }
-  const moduler = M.map((post, i) => {
+  // Elementene leses med `egenskapen()`, ikke med `M[i]`: også et ledd i
+  // katalogen kan være en accessor, og den skal ikke kjøre her. Posten er
+  // derfor alt gjort om til data når den kontrolleres.
+  const moduler = []
+  for (let i = 0; i < M.length; i++) {
+    const post = egenskapen(M, i)
     if (post === null || typeof post !== 'object' || Array.isArray(post) ||
-        Object.prototype.toString.call(post) !== '[object Object]') {
+        IKKE_DATA in post) {
       stopp(`element ${i + 1} i modulkatalogen er ikke en modulpost: ` +
             `${JSON.stringify(String(post)).slice(0, 60)} — katalogen er en ` +
             'liste av poster, og bare det')
     }
-    return somData(post)
-  })
+    moduler.push(post)
+  }
   process.stdout.write(JSON.stringify({moduler}, null, 1) + '\n')
 }
 

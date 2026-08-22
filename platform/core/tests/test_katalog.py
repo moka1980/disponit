@@ -700,6 +700,8 @@ def test_to_kataloger_stopper_leseren(tmp_path, todelt):
     "'en streng'",
     "null",
     "[{n:58}]",
+    # Et ledd som ikke er DATA i det hele tatt — merket, ikke en post.
+    "() => ({n:58})",
 ])
 def test_et_element_som_ikke_er_en_post_stopper_porten(tmp_path, element):
     """Katalogen er en liste av POSTER, og bare det."""
@@ -714,14 +716,15 @@ def test_et_element_som_ikke_er_en_post_stopper_porten(tmp_path, element):
 @pytest.mark.parametrize("felt,lesbar", [
     ("kl:'krever_outbox'", True),
     ('"kl": "krever_outbox"', True),
-    # Skrivemåten forsvinner i lesningen: alle tre gir egenskapen `kl`.
+    # Skrivemåten forsvinner i lesningen: begge gir egenskapen `kl`.
     (r"kl:'krever_outbox'", True),
     ("['k' + 'l']:'krever_outbox'", True),
-    ("get kl(){return 'krever_outbox'}", True),
     # Men en verdi som ikke er DATA, er ikke noe katalogen kan bære.
     ("kl:/krever_outbox/", False),
     ("kl:() => 'krever_outbox'", False),
     ("kl:new Date(0)", False),
+    # En ACCESSOR er ikke en skrivemåte, den er sidens kode (Codex P2).
+    ("get kl(){return 'krever_outbox'}", False),
 ])
 def test_leseren_krever_at_en_feltverdi_er_data(tmp_path, felt, lesbar):
     """Katalogen skal kunne leses av mer enn nettleseren.
@@ -730,12 +733,39 @@ def test_leseren_krever_at_en_feltverdi_er_data(tmp_path, felt, lesbar):
     er porten sin: en funksjon, et mønster eller en dato er ingen katalogverdi,
     og et felt ingen kan lese er et felt ingen kan kontrollere. Leseren merker
     det i stedet for å hoppe over det, se `IKKE_DATA`.
+
+    EN ACCESSOR HAR INGEN VERDI Å LESE. Den ble før lest som en vanlig
+    egenskap, og da kjørte getteren — sidens kode — her ute i Node, etter at
+    motorens `timeout` var over (Codex P2). Nå leses egenskapen som deskriptor
+    og getteren påkalles aldri. Det er også det svaret merket alt gir for en
+    funksjon: en egenskap som først blir til når siden kjører er ikke data.
     """
     sti = tmp_path / "prove.html"
     sti.write_text(f"<html><script>const M = [{{n:1,name:'En',area:'X',p:1,"
                    f"{felt}}}];</script></html>", encoding="utf-8")
     post = _katalogposter(sti)[0]
     assert (not _uleselige_felt(post)) is lesbar, post
+
+
+def test_en_getter_som_ikke_terminerer_henger_ikke_leseren(tmp_path):
+    """Getteren kjøres ikke, så den kan ikke henge noen (Codex P2).
+
+    `runInContext` har en `timeout`, men den verner bare det som kjører INNE i
+    motoren. Egenskapene ble lest etterpå, her ute i Node, og en accessor ble
+    da påkalt uten noen som helst grense: én `get kl(){for(;;);}` i kilden
+    hadde hengt generatoren og CI til noe annet slo dem av — ikke feilet,
+    hengt.
+
+    Leseren kalles direkte her, med en frist, fordi en regresjon ellers ikke
+    ville vist seg som en rød test men som en jobb som aldri blir ferdig.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>const M = [{n:1,name:'En',area:'X',p:1,"
+                   "get kl(){for(;;);}}];</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    assert _uleselige_felt(json.loads(r.stdout)["moduler"][0]) == ["kl"], r.stdout
 
 
 # Kontraktklassene katalogen bruker er de SAMME feltene modulregisteret lagrer,
