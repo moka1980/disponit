@@ -1232,22 +1232,16 @@ def test_kilden_kan_ikke_gjore_feilsporet_om_til_en_accessor(tmp_path):
         {"n": 1, "name": "En", "area": "X", "p": 1}], r.stdout
 
 
-# Kroker og metoder sidekoden kan legge på SINE EGNE prototyper. Ingen av dem
-# er et angrep — `Object.prototype.toJSON` er et kjent (om enn uskikkelig)
-# bibliotekstriks, og en side eier sine prototyper. Nettleseren leser `M` likt
-# i alle fire; det gjorde ikke leseren.
+# Metoder sidekoden BYTTER UT på sine egne prototyper. Ingen av dem er et
+# angrep — en side eier sine prototyper — og ingen av dem endrer NØKLENE på
+# prototypen, så F36-prøven ser dem ikke: det er arven i det leseren selv
+# bygger som må være løsnet, og bare den.
 @pytest.mark.parametrize("krok", [
-    # Hele svaret ble til `{}`.
-    "Object.prototype.toJSON = function () { return {kapret: true} };",
-    # Modullista ble til en streng.
-    "Array.prototype.toJSON = function () { return 'borte' };",
-    # Codex' eget eksempel: fase 1 ble stille til fase 4 på vei ut.
-    "Object.prototype.toJSON = function () {"
-    "  if (this.moduler) this.moduler[0].p = 4;"
-    "  const ut = {}; for (const k in this) ut[k] = this[k];"
-    "  delete ut.toJSON; return ut; };",
-    # Og beholderen fylles ikke med en metode siden eier.
+    # Beholderen fylles ikke med en metode siden eier.
     "Array.prototype.push = function () { return 0 };",
+    # Og lesningen slår aldri opp en metode på sidens prototyper.
+    "Object.prototype.toString = function () { return 'kapret' };",
+    "Object.prototype.valueOf = function () { return 'kapret' };",
 ])
 def test_en_krok_pa_sidens_prototyper_omskriver_ikke_katalogen(tmp_path, krok):
     """Ingenting leseren bygger arver fra siden (Codex P2, F21).
@@ -1269,6 +1263,13 @@ def test_en_krok_pa_sidens_prototyper_omskriver_ikke_katalogen(tmp_path, krok):
     `Array.isArray` og `JSON.stringify`, men den arver ingen krok — og de
     fylles med indekstilordning i stedet for `push`.
 
+    TO LAG, TO HALVDELER (Codex P2, F36). `toJSON`-formene står nå i
+    `test_en_krok_som_legger_til_en_noekkel_stopper_lesningen`: å legge på
+    `toJSON` LEGGER TIL en nøkkel på prototypen, og da stopper lesningen før
+    kroken kan spørres i det hele tatt. Å bytte ut `push`, `toString` eller
+    `valueOf` gjør det ikke — nøkkelen fantes fra før — og der er det bare
+    løsningen fra F21 som står mellom siden og katalogen. Derfor står begge.
+
     Dette er ikke mekanismen fra F3/F7/F10/F18: alt her kjørte allerede INNE i
     konteksten, under tidsgrensen. Grensen sto riktig; det var arven som var
     sidens.
@@ -1283,6 +1284,41 @@ def test_en_krok_pa_sidens_prototyper_omskriver_ikke_katalogen(tmp_path, krok):
     assert r.returncode == 0, r.stderr
     assert json.loads(r.stdout)["moduler"] == [
         {"n": 1, "name": "En", "area": "X", "p": 1}], r.stdout
+
+
+@pytest.mark.parametrize("krok,hvem", [
+    # Hele svaret ble til `{}`.
+    ("Object.prototype.toJSON = function () { return {kapret: true} };",
+     "Object.prototype"),
+    # Modullista ble til en streng.
+    ("Array.prototype.toJSON = function () { return 'borte' };",
+     "Array.prototype"),
+    # Codex' eget eksempel: fase 1 ble stille til fase 4 på vei ut.
+    ("Object.prototype.toJSON = function () {"
+     "  if (this.moduler) this.moduler[0].p = 4;"
+     "  const ut = {}; for (const k in this) ut[k] = this[k];"
+     "  delete ut.toJSON; return ut; };", "Object.prototype"),
+])
+def test_en_krok_som_legger_til_en_noekkel_stopper_lesningen(
+        tmp_path, krok, hvem):
+    """`toJSON` er en NY nøkkel på prototypen, og da stopper vi (F21 → F36).
+
+    Krokene sto grønne her fra F21 og utover: løsrivelsen gjorde dem
+    virkningsløse, og katalogen kom ut riktig. Med F36 svarer leseren tidligere
+    og hardere — en prototype som har fått en nøkkel den ikke hadde, gjør hver
+    beholder i katalogen til noe vi ikke kan love at vi leser som nettleseren.
+    Utfallet er strengere enn før og i samme retning: katalogen blir ikke
+    omskrevet, og nå tier vi ikke om grunnen heller.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>\n"
+                   "const M = [{n:1,name:'En',area:'X',p:1}];\n"
+                   f"{krok}\n"
+                   "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 1, r.stdout
+    assert hvem in r.stderr and "toJSON" in r.stderr, r.stderr
 
 
 def test_nestede_lister_overlever_at_listene_losnes(tmp_path):
@@ -1463,6 +1499,58 @@ def test_en_arvet_post_stopper_porten(tmp_path):
                        capture_output=True, text=True, timeout=60)
     assert r.returncode == 1, r.stdout
     assert "element 2" in r.stderr and IKKE_DATA in r.stderr, r.stderr
+
+
+@pytest.mark.parametrize("krok,hvem,navn", [
+    ("Object.prototype.status = 'planlagt';", "Object.prototype", "status"),
+    ("Object.defineProperty(Object.prototype, 'kl', {value: 'x'});",
+     "Object.prototype", "kl"),
+    ("Array.prototype.ekstra = 'synlig';", "Array.prototype", "ekstra"),
+])
+def test_en_endret_prototype_stopper_lesningen(tmp_path, krok, hvem, navn):
+    """En prototype er også en beholder (Codex P2, F36).
+
+    F31 satte prøven på IDENTITET mot den fangede intrinsicen, og den holder så
+    lenge intrinsicen er den vi fanget. Men `Object.prototype` er MUTERBAR: en
+    helt ordinær `Object.prototype.status = 'planlagt'` foran katalogen gir
+    HVER objektliteral et arvet felt — nettleseren ser `M[0].status` — mens
+    identitetsprøven fortsatt sier ja og oppslaget etterpå bare leser EGNE
+    nøkler. Målt på `f44dc6f`: exit 0, og posten skrevet ut uten `status`.
+    `Array.prototype` er samme inngang for listene.
+
+    Arven kan ikke leses som felt (da ville `toString` og `hasOwnProperty`
+    blitt katalogdata), og hvilke navn en side eier kan vi ikke vite. Det vi
+    KAN vite, er om prototypen er den samme som da konteksten var frisk:
+    nøklene på den fanges før noen tagg fra kilden har sluppet til (F15) og
+    sammenlignes når katalogen materialiseres.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text(f"<html><script>\n{krok}\n"
+                   "const M = [{n:1,name:'En',area:'X',p:1,flow:['a']}];\n"
+                   "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 1, r.stdout
+    assert hvem in r.stderr and navn in r.stderr, r.stderr
+
+
+def test_urorte_prototyper_leses_som_for(tmp_path):
+    """Gjerdet mot F36 måler ENDRINGEN, ikke prototypen.
+
+    En katalog på en side som ikke rører prototypene skal leses som før — og
+    den ekte sannhetskilden er nettopp en slik side. Prøven står fordi
+    signaturen er en sammenligning: en som alltid slår ut ville stoppet
+    genereringen på alt.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>\n"
+                   "const M = [{n:1,name:'En',area:'X',p:1,flow:['a']}];\n"
+                   "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["moduler"] == [
+        {"n": 1, "name": "En", "area": "X", "p": 1, "flow": ["a"]}], r.stdout
 
 
 # Kontraktklassene katalogen bruker er de SAMME feltene modulregisteret lagrer,

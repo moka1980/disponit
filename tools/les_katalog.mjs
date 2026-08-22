@@ -318,6 +318,33 @@ const BYGG_HJELPER =`((glob) => {
   // er en arv vi ikke leser, og da sier vi hva vi saa (se slaget) i stedet
   // for aa tie om den.
   const objektProto = Object.prototype
+  const listeProto = Array.prototype
+  // ...OG EN PROTOTYPE ER OGSAA EN BEHOLDER (Codex P2, F36). F31 satte proeven
+  // paa IDENTITET mot intrinsicen, og den holder saa lenge intrinsicen er den
+  // vi fanget. Men Object.prototype er MUTERBAR: en helt ordinaer
+  // Object.prototype.status = 'planlagt' foran katalogen gir HVER
+  // objektliteral et arvet felt — nettleseren ser M[0].status — mens
+  // identitetsproeven fortsatt sier ja og oppslaget etterpaa bare leser EGNE
+  // noekler. Maalt: exit 0, uten et ord om status. Samme inngang har
+  // Array.prototype for listene.
+  //
+  // Vi kan ikke lese arven som felt (da ville toString og hasOwnProperty blitt
+  // katalogdata), og vi kan ikke vite hvilke navn en side eier. Det vi KAN, er
+  // aa vite om prototypen er den samme som da konteksten var frisk: noeklene
+  // paa den fanges her, foer noen tagg fra kilden har sluppet til (F15), og
+  // sammenlignes naar katalogen materialiseres. Er den endret, er hver post i
+  // katalogen en post vi ikke kan lese — og det sier vi, i stedet for aa tie
+  // om et felt nettleseren ser.
+  const signaturen = (o) => {
+    let ut = ''
+    const n = nokler(o)
+    for (let i = 0; i < n.length; i++) ut += n[i] + '\\u0000'
+    const s = symboler(o)
+    for (let i = 0; i < s.length; i++) ut += tilTekst(s[i]) + '\\u0000'
+    return ut
+  }
+  const protoFoer = signaturen(objektProto)
+  const listeProtoFoer = signaturen(listeProto)
   const plattObjekt = (verdi) => {
     const over = proto(verdi)
     return over === null || over === objektProto
@@ -385,6 +412,22 @@ const BYGG_HJELPER =`((glob) => {
   // KALLES, altså etter at kildens tagger har kjørt. Intrinsics over er
   // derimot bundet nå, før noen av dem slapp til. Se F15.
   const materialiser = () => {
+    // Prototypene FOERST: er en av dem endret, arver hver eneste beholder i
+    // katalogen felt vi ikke leser, og da er ingen post lesbar. Se F36.
+    // Indeksloekker, ikke for-of: iteratoren er selv en egenskap paa
+    // Array.prototype, altsaa det vi holder paa aa proeve.
+    const proever = [[objektProto, protoFoer, 'Object.prototype'],
+                     [listeProto, listeProtoFoer, 'Array.prototype']]
+    for (let i = 0; i < proever.length; i++) {
+      const naa = signaturen(proever[i][0])
+      if (naa !== proever[i][1]) {
+        const svar = utfall('proto_endret')
+        svar.hvem = proever[i][2]
+        svar.foer = proever[i][1]
+        svar.naa = naa
+        return tilJson(svar)
+      }
+    }
     let katalog
     try { katalog = M } catch (e) { return tilJson(utfall('mangler')) }
     if (typeof katalog === 'undefined') return tilJson(utfall('mangler'))
@@ -540,6 +583,20 @@ function katalogverdien(deler, kilde) {
           'port. Se `BYGG_HJELPER`.')
   }
   const svar = JSON.parse(tekst)
+  if (svar.feil === 'proto_endret') {
+    // Signaturene er NUL-skilte navnelister, laget inne i konteksten. Her ute
+    // er de to helt ordinære strenger, og forskjellen på dem er hva sidens
+    // kode la til eller tok bort. Se F36.
+    const før = new Set(svar.foer.split('\u0000'))
+    const nå = svar.naa.split('\u0000').filter(n => n && !før.has(n))
+    stopp(`sidens egen kode har endret ${svar.hvem} i sannhetskilden` +
+          (nå.length ? `: ${nå.join(', ')}` : '') + '.\n' +
+          'Alt som arver derfra bærer da et felt nettleseren ser og leseren ' +
+          'ikke leser: en `Object.prototype.status = …` gir HVER modulpost i ' +
+          'katalogen den aksen, og lesningen ville tiet om den. Katalogen er ' +
+          'dataliteraler, og prototypen deres skal være den nettleseren ' +
+          'starter med.')
+  }
   if (svar.feil === 'mangler') {
     stopp('fant ingen modulkatalog `M` i sannhetskilden.\n' +
           'Skriptet stoppet før erklæringen: ' +
