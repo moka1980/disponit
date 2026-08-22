@@ -1005,6 +1005,108 @@ def test_frigi_krever_read_committed(migrator):
 
 
 @pg
+def test_signer_krever_read_committed(migrator):
+    """Codex P2 på #140 (runde 7): replay-løftet i
+    `signer_utsendingsliste` — «samme nøkkel + samme innhold ⇒ no-op» —
+    er utledet av LESNINGER i begge ender (nøkkel-oppslaget før
+    innsettingen, og gjenlesningen i `unique_violation`-armen).
+
+    PostgreSQL oversetter ikke et unik-brudd mot en samtidig COMMITTET
+    rad til en serialiseringsfeil: taperen får 23505 også under
+    REPEATABLE READ og SERIALIZABLE, og gjenlesningen etterpå bruker
+    fortsatt transaksjonens fastholdte snapshot — vinnerens signatur
+    finnes ikke der, armen faller til `RAISE`, og et helt legitimt
+    replay får en feil kontrakten lover skal være en no-op. Samme klasse
+    og samme ratifiserte form som `frigi_utsendelse`.
+
+    MUTASJONEN SOM DREPER DENNE: fjern porten i §7b."""
+    oid, _ = _grunnlag(migrator)
+    bid = _signatar(migrator)
+    liste = _liste(migrator, oid)
+    nk = "rr-" + secrets.token_hex(6)
+    for niva in (psycopg.IsolationLevel.REPEATABLE_READ,
+                 psycopg.IsolationLevel.SERIALIZABLE):
+        k = _rt()
+        try:
+            k.commit()                 # nivå byttes kun utenfor en tx
+            k.isolation_level = niva
+            _sett_kontekst(k, TENANT)
+            with pytest.raises(psycopg.errors.InvalidTransactionState):
+                k.execute("SELECT signer_utsendingsliste(%s,%s,%s,%s)",
+                          (TENANT, liste[0], bid, nk))
+            k.rollback()
+        finally:
+            k.close()
+    # READ COMMITTED-veien er uendret, replay inkludert.
+    k = _rt()
+    try:
+        _sett_kontekst(k, TENANT)
+        k.execute("SELECT signer_utsendingsliste(%s,%s,%s,%s)",
+                  (TENANT, liste[0], bid, nk))
+        k.commit()
+        _sett_kontekst(k, TENANT)
+        k.execute("SELECT signer_utsendingsliste(%s,%s,%s,%s)",
+                  (TENANT, liste[0], bid, nk))
+        k.commit()
+    finally:
+        k.close()
+    assert migrator.execute(
+        "SELECT count(*) FROM utsendingssignatur WHERE tenant=%s"
+        " AND liste_id=%s", (TENANT, liste[0])).fetchone()[0] == 1
+
+
+@pg
+def test_frigivelsesoppdrag_krever_read_committed(migrator):
+    """Codex P2 på #140 (runde 7): retry-løftet i
+    `opprett_frigivelsesoppdrag` («samme frigivelse + samme kontrakt ⇒
+    vinnerens oppdrag-id») leser oppdraget PÅ NYTT etter unik-bruddet.
+
+    Et retry som startet FØR vinneren committet, ser med fastholdt
+    snapshot hverken vinnerens rad i materialitetsoppslaget eller i
+    `EXISTS`-en som skiller «annet innhold» fra «bruddet var ikke
+    frigivelsens» — armen faller til bar `RAISE`, og den dokumenterte
+    idempotente retry-veien er brutt nettopp i situasjonen den finnes
+    for: etter en tvetydig commit. Utsendelsen er irreversibel.
+
+    MUTASJONEN SOM DREPER DENNE: fjern porten i §7d."""
+    oid, payload = _grunnlag(migrator)
+    ct, key_id, nonce = payload
+    bid = _signatar(migrator)
+    liste = _liste(migrator, oid)
+    _signer(migrator, liste, bid)
+    fid = _frigi(migrator, liste)
+    kall = ("SELECT opprett_frigivelsesoppdrag(%s,%s,"
+            "'rekruttering.utsending','rekruttering.utsending','m57_ats',"
+            "%s,%s,%s, now()+interval '4 hours', now()+interval '1 day')")
+    for niva in (psycopg.IsolationLevel.REPEATABLE_READ,
+                 psycopg.IsolationLevel.SERIALIZABLE):
+        snd = _sender()
+        try:
+            snd.commit()
+            snd.isolation_level = niva
+            _sett_kontekst(snd, TENANT)
+            with pytest.raises(psycopg.errors.InvalidTransactionState):
+                snd.execute(kall, (TENANT, fid, ct, key_id, nonce))
+            snd.rollback()
+        finally:
+            snd.close()
+    snd = _sender()
+    try:
+        _sett_kontekst(snd, TENANT)
+        aoid = snd.execute(kall, (TENANT, fid, ct, key_id, nonce)
+                           ).fetchone()[0]
+        snd.commit()
+        _sett_kontekst(snd, TENANT)
+        aoid2 = snd.execute(kall, (TENANT, fid, ct, key_id, nonce)
+                            ).fetchone()[0]
+        snd.commit()
+    finally:
+        snd.close()
+    assert aoid is not None and aoid2 == aoid, (
+        "READ COMMITTED-veien, retry inkludert, skal være uendret")
+
+
+@pg
 def test_signer_kapplopstaper_faar_replaydommen(migrator):
     """Cursor P2 på #140: identisk replay er no-op OGSÅ når kallene er
     samtidige — taperen på unik nøkkel går inn i samme dom som en

@@ -422,6 +422,29 @@ SET search_path = pg_catalog AS $$
 DECLARE l RECORD; s RECORD;
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant, 'signer_utsendingsliste');
+    -- SNAPSHOTKRAVET (Codex P2, runde 7 på #140) — samme klasse som
+    -- §7c, og formen der er den ratifiserte: dette er ikke et nytt
+    -- formforsøk, men den samme porten på det gjenstående stedet.
+    -- Replay-løftet under («samme nøkkel + samme innhold ⇒ no-op») er
+    -- utledet av LESNINGER i BEGGE ender: nøkkel-oppslaget FØR
+    -- innsettingen, og gjenlesningen i `unique_violation`-armen.
+    -- PostgreSQL oversetter ikke et unik-brudd mot en samtidig
+    -- COMMITTET rad til en serialiseringsfeil — taperen får 23505 også
+    -- under REPEATABLE READ og SERIALIZABLE. Subtransaksjonen rulles
+    -- tilbake, men transaksjonens snapshot står fast fra første
+    -- setning: gjenlesningen ser ikke vinnerens signatur, armen faller
+    -- til `RAISE`, og et helt legitimt replay får en feil der
+    -- kontrakten lover en no-op. `read uncommitted` er med av samme
+    -- grunn som i §7c (PostgreSQL behandler nivået som READ COMMITTED).
+    IF current_setting('transaction_isolation')
+       NOT IN ('read committed', 'read uncommitted') THEN
+        RAISE EXCEPTION 'signer_utsendingsliste: krever READ COMMITTED'
+            ' (fikk %) — replay-løftet er utledet av LESNINGER, og et'
+            ' fastholdt snapshot gjør dem blinde for en samtidig'
+            ' committet signatur',
+            current_setting('transaction_isolation')
+            USING ERRCODE = 'invalid_transaction_state';
+    END IF;
     -- SIGNATAREN ER AUTORISASJONEN (Codex P1 + Cursor P1, runde 2).
     -- FK-en mot `brukeridentitet` er GLOBAL: den sier bare at strengen er
     -- en kjent bruker et sted i installasjonen. Runtime har EXECUTE her og
@@ -633,6 +656,28 @@ SET search_path = pg_catalog AS $$
 DECLARE v_id BIGINT;
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant, 'opprett_frigivelsesoppdrag');
+    -- SNAPSHOTKRAVET (Codex P2, runde 7 på #140) — tredje og siste
+    -- stedet i denne filen der et løfte er utledet av en LESNING.
+    -- Retry-løftet i `unique_violation`-armen under («samme frigivelse +
+    -- samme kontrakt ⇒ vinnerens oppdrag-id») leser oppdraget PÅ NYTT
+    -- etter bruddet. Under REPEATABLE READ/SERIALIZABLE står snapshotet
+    -- fast fra transaksjonens første setning, så et retry som startet
+    -- FØR vinneren committet finner ingen rad — hverken i det snevrede
+    -- materialitetsoppslaget eller i `EXISTS`-en som skiller «annet
+    -- innhold» fra «bruddet var ikke frigivelsens». Armen faller da til
+    -- bar `RAISE`, og den dokumenterte idempotente retry-veien er
+    -- brutt nettopp der den finnes for: etter en tvetydig commit.
+    -- Utsendelsen er irreversibel; et retry som får en feil den ikke
+    -- skulle hatt, blir prøvd igjen av mennesker.
+    IF current_setting('transaction_isolation')
+       NOT IN ('read committed', 'read uncommitted') THEN
+        RAISE EXCEPTION 'opprett_frigivelsesoppdrag: krever READ'
+            ' COMMITTED (fikk %) — retryets gjenlesning etter'
+            ' unik-bruddet er utledet av en LESNING, og et fastholdt'
+            ' snapshot gjør den blind for det vinnende oppdraget',
+            current_setting('transaction_isolation')
+            USING ERRCODE = 'invalid_transaction_state';
+    END IF;
     -- FRIGIVELSEN AUTORISERER ÉN KONTRAKT, IKKE HVILKEN SOM HELST (Codex P1
     -- runde 6 + Cursor P1 runde 5 på #140 — samme funn fra begge
     -- reviewerne). Funksjonen setter `opprinnelse` og `frigivelse_id` selv,
