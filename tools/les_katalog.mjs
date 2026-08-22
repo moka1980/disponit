@@ -561,7 +561,37 @@ const BYGG_HJELPER =`((glob) => {
 // leses etterpå inne i konteksten, under tidsgrensen. Se `feilen()`.
 //
 // Vi mister ingenting: meldingene våre bruker `message`, aldri `stack`.
-const KJOR = {timeout: TIMEOUT, displayErrors: false}
+const IKKE_PYNT = {displayErrors: false}
+
+// ÉN FRIST FOR FASEN, IKKE ÉN PER TAGG (Codex P2, F43).
+//
+// `timeout` gjelder ETT `runInContext`-kall, og lesningen gjør mange: ett per
+// <script>, ett per feillesning, ett for materialiseringen. Hvert kall fikk
+// hele grensen på nytt, så en side kunne kjøpe seg vilkårlig mye tid ved å
+// legge til tagger: åtte evige `<script>` med grensen på 100 ms brukte 846 ms
+// og gikk ut med exit 0, og ved produksjonsverdien holder hundre slike CI
+// opptatt i sytten minutter. Grensen lovet en øvre kjøretid og ga en per kall.
+//
+// Fristen er nå felles, og de to fasene har hver sin: sidens egne tagger med
+// feillesningene sine, og deretter materialiseringen med sin. Fasene er skilt
+// fordi de er hver sin lesning — en side som brukte opp taggenes tid skal
+// fortsatt få katalogen sin materialisert, slik nettleseren også ville beholdt
+// en ferdig bundet `const M` (F17, F18) — men INNENFOR hver fase deles
+// budsjettet, og da er hele lesningen bundet av en konstant, ikke av hvor mange
+// tagger eller hvor mange feller siden inneholder.
+let frist = Infinity
+
+/** Starter en fase: fra nå og TIMEOUT millisekunder fram. */
+function nyFrist() { frist = Date.now() + TIMEOUT }
+
+/** Kjørevalgene for sidens egen kode: det som er igjen av fasens frist.
+ *
+ *  Aldri under 1 ms, for `timeout: 0` er «ingen grense» i `vm` — nøyaktig det
+ *  motsatte av det et oppbrukt budsjett betyr. */
+function kjor() {
+  const igjen = frist - Date.now()
+  return {timeout: igjen > 1 ? igjen : 1, ...IKKE_PYNT}
+}
 
 /** `{navn, melding}` for noe konteksten kastet — lest INNE i konteksten.
  *
@@ -579,7 +609,7 @@ function feilen(ctx, kastet) {
   ctx[FEILSPOR] = kastet
   try {
     return JSON.parse(vm.runInContext(
-      kall('feiltekst', `this[${JSON.stringify(FEILSPOR)}]`), ctx, KJOR))
+      kall('feiltekst', `this[${JSON.stringify(FEILSPOR)}]`), ctx, kjor()))
   } catch (e) {
     return {navn: '', melding: 'feilen kunne ikke leses innen tidsgrensen'}
   }
@@ -605,8 +635,8 @@ function feilen(ctx, kastet) {
  *  indeksene på den — egne dataegenskaper på en helt ordinær liste. Ingen
  *  vertsfunksjon slippes inn i konteksten; konteksten er fortsatt uten vei ut. */
 function proxyfri(ctx) {
-  const rørte = vm.runInContext(kall('beholderne'), ctx, KJOR)
-  const steder = vm.runInContext(kall('stedene'), ctx, KJOR)
+  const rørte = vm.runInContext(kall('beholderne'), ctx, kjor())
+  const steder = vm.runInContext(kall('stedene'), ctx, kjor())
   for (let i = 0; i < rørte.length; i++) {
     if (!util.types.isProxy(rørte[i])) continue
     const hvor = steder[i]
@@ -648,8 +678,17 @@ function katalogverdien(deler, kilde) {
   // må være fanget før en `const Object` i sidekoden kan skygge for dem.
   vm.runInContext(BYGG_HJELPER, ctx, {timeout: TIMEOUT})
   let kastet = null
+  // Sidens tagger er ÉN fase og deler én frist (F43).
+  nyFrist()
   deler.forEach((kode, i) => {
     const navn = deler.length > 1 ? `${kilde} <script> ${i + 1}` : kilde
+    if (Date.now() >= frist) {
+      stopp(`sannhetskilden brukte opp tidsgrensen (${TIMEOUT} ms) før ` +
+            `${navn} kunne kjøres.\n` +
+            'Tidsgrensen gjelder siden, ikke den enkelte taggen: en side som ' +
+            'ikke blir ferdig innen den, skal si fra høylytt — ikke kjøpe seg ' +
+            'ny tid for hver <script> den legger til.')
+    }
     let skript
     try {
       skript = new vm.Script(kode, {filename: navn})
@@ -659,7 +698,7 @@ function katalogverdien(deler, kilde) {
             'nettleseren selv avviser.')
     }
     try {
-      skript.runInContext(ctx, KJOR)
+      skript.runInContext(ctx, kjor())
     } catch (e) {
       // Feilobjektet kommer fra en annen realm, så `instanceof` biter ikke —
       // og egenskapene på det leses inne i konteksten, ikke her. Se `feilen()`.
@@ -674,8 +713,10 @@ function katalogverdien(deler, kilde) {
     }
   })
   let tekst
+  // Materialiseringen er den andre fasen, og får sin egen frist (F43).
+  nyFrist()
   try {
-    tekst = vm.runInContext(kall('materialiser'), ctx, KJOR)
+    tekst = vm.runInContext(kall('materialiser'), ctx, kjor())
   } catch (e) {
     stopp('kunne ikke materialisere modulkatalogen: ' + feilen(ctx, e).melding +
           '\n' +

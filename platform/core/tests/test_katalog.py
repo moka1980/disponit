@@ -61,6 +61,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import psycopg
@@ -1101,6 +1102,88 @@ def test_en_evig_mikrooppgavekjede_felles_av_tidsgrensen(tmp_path):
     r = subprocess.run(["node", str(LESER), str(sti)],
                        capture_output=True, text=True, timeout=60,
                        env={**os.environ, "LES_KATALOG_TIMEOUT_MS": "500"})
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["moduler"] == [
+        {"n": 1, "name": "En", "area": "X", "p": 1}], r.stdout
+
+
+def test_tidsgrensen_gjelder_siden_ikke_den_enkelte_taggen(tmp_path):
+    """Tidsgrensen kjøpes ikke opp med flere tagger (Codex P2, F43).
+
+    `timeout` gjelder ETT `runInContext`-kall, og leseren gjør ett per
+    `<script>`. Hver tagg fikk derfor hele grensen på nytt, så total kjøretid
+    var ubundet i antall tagger: målt på `3c314ee` brukte åtte evige tagger med
+    grensen på 100 ms hele 846 ms — og gikk ut med **exit 0** på en katalog lest
+    etterpå. Ved produksjonsverdien holder hundre slike tagger CI opptatt i
+    sytten minutter, av en grense som lover det motsatte.
+
+    Taggene deler nå én frist. Utfallet er høylytt: siden som ikke blir ferdig
+    innen grensen stoppes, den kjører ikke videre på nytt budsjett.
+
+    Prøven måler også veggklokka, for det er nettopp den regresjonen ville
+    flyttet — seksten tagger ganger grensen er 3,2 sekunder mot 0,2.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><body>" + "<script>for(;;){}</script>" * 16 +
+                   "<script>const M = [{n:1,name:'En',area:'X',p:1}];</script>"
+                   "</body></html>", encoding="utf-8")
+    start = time.monotonic()
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60,
+                       env={**os.environ, "LES_KATALOG_TIMEOUT_MS": "200"})
+    brukt = time.monotonic() - start
+    assert r.returncode != 0, r.stdout
+    assert "brukte opp tidsgrensen" in r.stderr, r.stderr
+    assert brukt < 2.0, f"{brukt:.2f} s — grensen deles ikke lenger"
+
+
+def test_feillesningen_deler_fristen_med_taggene(tmp_path):
+    """Også FEILSTIEN teller på fasens frist (Codex P2, F43).
+
+    Feilen en tagg kaster leses inne i konteksten (F18), altså med enda et
+    `runInContext` — og fikk den sin egen fulle grense, var hullet det samme
+    ett skritt til siden: åtte tagger som hver kaster en felle med en `get` som
+    aldri returnerer ville brukt åtte hele grenser i feillesningen alene, uten
+    at en eneste tagg kjørte lenge.
+
+    Fristen er fasens, ikke kallets. Taggene og feillesningene deres deler den.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><body>" +
+                   "<script>throw new Proxy({}, {get(){for(;;){}}});</script>"
+                   * 8 +
+                   "<script>const M = [{n:1,name:'En',area:'X',p:1}];</script>"
+                   "</body></html>", encoding="utf-8")
+    start = time.monotonic()
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60,
+                       env={**os.environ, "LES_KATALOG_TIMEOUT_MS": "200"})
+    brukt = time.monotonic() - start
+    assert r.returncode != 0, r.stdout
+    assert "brukte opp tidsgrensen" in r.stderr, r.stderr
+    assert brukt < 1.2, f"{brukt:.2f} s — feillesningen har ingen egen grense"
+
+
+def test_materialiseringen_har_sin_egen_frist(tmp_path):
+    """Fasene er skilt, og det er med vilje (Codex P2, F43).
+
+    Sidens tagger deler én frist; materialiseringen får sin. Hadde de delt én,
+    ville en side som brukte opp taggenes tid mistet katalogen sin — og den er
+    ferdig bundet, akkurat som nettleseren ville sett den (F17/F18). En evig
+    `for(;;)` etter `const M` bruker hele taggfasen og skal likevel gi
+    katalogen ut hel.
+
+    Grensen er fortsatt en konstant: to faser, ikke én per tagg og ikke én per
+    kall.
+    """
+    sti = tmp_path / "prove.html"
+    sti.write_text("<html><script>\n"
+                   "const M = [{n:1,name:'En',area:'X',p:1}];\n"
+                   "for(;;){}\n"
+                   "</script></html>", encoding="utf-8")
+    r = subprocess.run(["node", str(LESER), str(sti)],
+                       capture_output=True, text=True, timeout=60,
+                       env={**os.environ, "LES_KATALOG_TIMEOUT_MS": "300"})
     assert r.returncode == 0, r.stderr
     assert json.loads(r.stdout)["moduler"] == [
         {"n": 1, "name": "En", "area": "X", "p": 1}], r.stdout
