@@ -1151,9 +1151,14 @@ def test_signer_krever_read_committed(migrator):
         k.commit()
     finally:
         k.close()
-    assert migrator.execute(
+    # `utsendingssignatur` har FORCE ROW LEVEL SECURITY (§4), og GUC-en er
+    # transaksjonslokal — uten kontekst teller vi et tomt vindu.
+    _sett_kontekst(migrator, TENANT)
+    antall = migrator.execute(
         "SELECT count(*) FROM utsendingssignatur WHERE tenant=%s"
-        " AND liste_id=%s", (TENANT, liste[0])).fetchone()[0] == 1
+        " AND liste_id=%s", (TENANT, liste[0])).fetchone()[0]
+    migrator.rollback()
+    assert antall == 1, "replayet lagde en NY signatur"
 
 
 @pg
