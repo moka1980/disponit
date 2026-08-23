@@ -144,17 +144,26 @@ test("Rekruttering: avskruing av blinding krever alertdialog med begrunnelse", a
   assert.ok(dialog, "alertdialog mangler ved avskruing");
   assert.equal(bryter.checked, true,
     "bryteren skal stå PÅ til dialogen bekrefter");
-  // Bekreft uten begrunnelse → avvist lokalt, ingen POST.
+  // Bekreft uten begrunnelse → avvist lokalt, ingen POST — og dialogen
+  // BLIR STÅENDE (Codex P2): meldingen om det manglende feltet er verdiløs
+  // hvis feltet forsvant idet den kom, og brukeren måtte da skru bryteren
+  // om igjen for å rette seg.
   const primar = [...dialog.querySelectorAll("button")]
     .find((b) => b.textContent === t("ui.rekruttering.blinding_av_bekreft"));
   primar.click();
   await vent(() => KALL.some((k) => k.metode === "POST"), 5);
   assert.ok(!KALL.some((k) => k.metode === "POST"),
     "POST gikk uten begrunnelse");
-  // Med begrunnelse → POST med begrunnelsen i kroppen, utfall i alert.
-  bryter.checked = false;
-  bryter.dispatchEvent(new window.Event("change", { bubbles: true }));
-  const dialog2 = document.querySelector('[role="alertdialog"]');
+  assert.ok(document.body.contains(dialog),
+    "dialogen lukket seg, og feilmeldingen gjaldt et felt som var borte");
+  assert.equal(dialog.querySelector("textarea").getAttribute("aria-invalid"),
+    "true");
+  assert.ok([...dialog.querySelectorAll('[role="alert"]')]
+    .some((n) => n.textContent ===
+      t("ui.rekruttering.blinding_begrunnelse_mangler")),
+    "feilen ble aldri meldt inne i dialogen");
+  // Med begrunnelse i SAMME dialog → POST med begrunnelsen i kroppen.
+  const dialog2 = dialog;
   dialog2.querySelector("textarea").value = "intern rekruttering";
   SVAR["/v1/rekruttering/prosesser/p-1/blinding"] = { ok: true };
   [...dialog2.querySelectorAll("button")]

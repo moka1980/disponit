@@ -181,6 +181,11 @@ function tegn(hoved, ctx, data) {
     bryter.checked = true;                // står til dialogen bekrefter
     const begrunnelse = el("textarea", { id: "blinding-begrunnelse",
       rows: "3", required: true, "aria-required": "true" });
+    // Meldingen om manglende begrunnelse hører hjemme INNE i dialogen
+    // (Codex P2): utfallsområdet på flaten ligger bak `inert`-bakgrunnen
+    // og fokusfella mens dialogen står, så der ville brukeren verken se
+    // eller høre den.
+    const dialogfeil = el("p", { role: "alert", class: "dialog-feil" });
     Bekreftelsesdialog({
       rolle: "alertdialog",
       tittel: t("ui.rekruttering.blinding_av_tittel"),
@@ -188,14 +193,24 @@ function tegn(hoved, ctx, data) {
       detaljer: el("div", {},
         el("label", { for: "blinding-begrunnelse",
           text: t("ui.rekruttering.blinding_begrunnelse") }),
-        begrunnelse),
+        begrunnelse, dialogfeil),
       farlig: true,
       primarTekst: t("ui.rekruttering.blinding_av_bekreft"),
-      paaPrimar: async () => {
-        if (!begrunnelse.value.trim()) {
-          sett(utfall, t("ui.rekruttering.blinding_begrunnelse_mangler"));
-          return;
+      // Porten står FØR lukkingen: begrunnelsen er påkrevd, og et
+      // tomt felt skal kunne rettes der brukeren står.
+      valider: () => {
+        if (begrunnelse.value.trim()) {
+          begrunnelse.removeAttribute("aria-invalid");
+          dialogfeil.textContent = "";
+          return true;
         }
+        begrunnelse.setAttribute("aria-invalid", "true");
+        dialogfeil.textContent =
+          t("ui.rekruttering.blinding_begrunnelse_mangler");
+        begrunnelse.focus();
+        return false;
+      },
+      paaPrimar: async () => {
         try {
           await settRekrutteringBlinding(prosess.prosess_id, true,
             begrunnelse.value.trim());

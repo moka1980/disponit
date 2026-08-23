@@ -84,8 +84,15 @@ export function Detaljpanel({ tittel, innhold }) {
 // Bekreftelsesdialog: beskriver konsekvens; primær/avbryt; ESC + fokusretur.
 // `detaljer` er en valgfri node under setningen — for de bekreftelsene der
 // konsekvensen ikke lar seg si i én linje og må VISES (f.eks. en policy-diff).
+// `valider` er en VALGFRI port FØR lukkingen (Codex P2): returnerer den
+// usant, blir dialogen stående, og brukeren beholder feltet sitt. Uten
+// den lukket dialogen seg synkront før `paaPrimar` i det hele tatt kjørte,
+// så en callback som fant en manglende obligatorisk verdi meldte fra om
+// et felt som allerede var borte fra skjermen — og brukeren måtte finne
+// veien tilbake for å rette det. `required` på et felt utenfor en <form>
+// hindrer ikke lukkingen; det gjør denne porten.
 export function Bekreftelsesdialog({ tittel, tekst, detaljer, primarTekst,
-                                    paaPrimar, farlig = false,
+                                    paaPrimar, valider, farlig = false,
                                     rolle = "dialog" } = {}) {
   const avbryt = el("button", { class: "knapp", type: "button",
     text: t("ui.avbryt") });
@@ -104,6 +111,10 @@ export function Bekreftelsesdialog({ tittel, tekst, detaljer, primarTekst,
     handlinger: [avbryt, primar],
   });
   avbryt.addEventListener("click", ctrl.lukk);
-  primar.addEventListener("click", () => { ctrl.lukk(); if (paaPrimar) paaPrimar(); });
+  primar.addEventListener("click", () => {
+    if (valider && !valider()) return;      // dialogen blir stående
+    ctrl.lukk();
+    if (paaPrimar) paaPrimar();
+  });
   return ctrl;
 }
