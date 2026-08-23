@@ -640,10 +640,17 @@ def test_backstoppen_laser_oppdragsraden_som_funksjonen(migrator):
     INSERT-gren tilbake til et ulåst `EXISTS`."""
     import threading
 
+    from db.pg import koble
+
     oid, _ = _grunnlag(migrator, oppdragstype="rekruttering.evaluering",
                        status=None)
     a = _rt()
-    b = _rt()
+    # B er den direkte claimer-DML-en, og den går gjennom en EGEN
+    # eierkobling med `SET LOCAL ROLE`: runtime er fratatt tabell-INSERT
+    # på ankeret og er ikke medlem av claimeren, så en `_rt()` her ville
+    # feilet momentant — med samme unntakstype som porten kaster, altså
+    # en test som ser grønn ut uten å ha rørt låsen.
+    b = koble(MIGRATOR_DSN)
     try:
         _sett_kontekst(a, TENANT)
         a.execute("UPDATE oppdrag SET status='kansellert' WHERE tenant=%s"
@@ -651,8 +658,8 @@ def test_backstoppen_laser_oppdragsraden_som_funksjonen(migrator):
         resultat: dict = {}
 
         def foedsel():
-            _sett_kontekst(b, TENANT)
             try:
+                _sett_kontekst(b, TENANT)
                 b.execute("SET LOCAL ROLE disponit_m37_claimer")
                 b.execute(
                     "INSERT INTO rekrutteringsprosess (tenant, prosess_id,"
@@ -672,8 +679,12 @@ def test_backstoppen_laser_oppdragsraden_som_funksjonen(migrator):
         a.commit()
         t.join(timeout=10)
         assert not t.is_alive(), "B kom aldri gjennom etter As commit"
+        # Avvisningen må komme fra FØDSELSPORTEN, ikke fra en
+        # rettighetsnekt: begge er `insufficient_privilege`, og bare den
+        # ene er det denne testen måler.
         assert isinstance(resultat.get("feil"),
                           psycopg.errors.InsufficientPrivilege), resultat
+        assert "LEVENDE" in str(resultat["feil"]), resultat["feil"]
         _sett_kontekst(migrator, TENANT)
         assert migrator.execute(
             "SELECT count(*) FROM rekrutteringsprosess WHERE tenant=%s"
