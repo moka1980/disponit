@@ -405,9 +405,16 @@ def rapport_detalj(tjeneste, request: Request) -> Response:
         # registreringen skriver registerraden fra — så en ny
         # rapportbærende type blir lesbar ved å DEKLARERE seg, ikke ved at
         # noen husker å utvide en liste her.
+        # … og bare typer med en DEKLARERT LESEFLATE (Codex P2). Å bære
+        # en rapportartefakttype er ikke det samme som å ha en konsument:
+        # `rapportInnhold` på flaten dereferer WCAG-formen med en gang,
+        # så en ny rapportbærende kontrakt uten flate ville fått 200 her
+        # og feilet under rendring hos klienten. En type uten flate er
+        # ikke lesbar her ennå, og 404 er det ærlige svaret.
         par = [(navn, t.rapport_artefakttype)
                for navn, t in oppdragskontrakt.OPPDRAGSTYPER.items()
-               if t.rapport_artefakttype is not None]
+               if t.rapport_artefakttype is not None
+               and t.rapportflate is not None]
         rad = conn.execute(
             "SELECT a.artefakt_id, a.ciphertext, a.nonce, a.dek_ref,"
             " a.promotert_ts, a.artefakttype"

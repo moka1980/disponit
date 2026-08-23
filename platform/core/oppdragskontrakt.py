@@ -71,6 +71,18 @@ class Oppdragstype:
     #: må mene det samme: registreringen skriver registerraden, lesingen
     #: kjenner den igjen.
     rapport_artefakttype: str | None = None
+    #: HVILKEN leseflate som kan VISE rapporten (Codex P2). De to feltene
+    #: er ikke det samme spørsmålet: `rapport_artefakttype` sier hva
+    #: artefaktet ER — og er derfor påkrevd for at modulen skal få laste
+    #: det opp i det hele tatt — mens dette feltet sier at det finnes en
+    #: konsument som kan RENDRE det. `/v1/rapport/{id}` utledet flaten sin
+    #: fra det første feltet alene, så en ny rapportbærende type ble
+    #: automatisk servert til `ui/static/js/flater/rapport.js`, som
+    #: dereferer WCAG-formens `sammendrag` og `sider_kontrollert` uten
+    #: å spørre. En type uten flate er ikke ulovlig — den er bare ikke
+    #: lesbar der ennå, og et 404 er et ærligere svar enn en 200 med et
+    #: dokument mottakeren ikke kan lese.
+    rapportflate: str | None = None
 
     def valider(self) -> list[str]:
         feil = []
@@ -100,6 +112,10 @@ class Oppdragstype:
                         " ikke kjenne igjen, og en navngitt type på en"
                         " artefaktløs oppdragstype er en form ingen"
                         " kvittering kan levere")
+        if self.rapportflate is not None and self.rapport_artefakttype is None:
+            feil.append(f"{self.navn}: rapportflate uten"
+                        " rapport_artefakttype — en flate kan ikke vise"
+                        " en rapport typen aldri leverer")
         return feil
 
 
@@ -182,6 +198,8 @@ OPPDRAGSTYPER: dict[str, Oppdragstype] = {
         malautorisasjonsdomene="web_hostname",
         produserer_artefakt=True,
         rapport_artefakttype="kontroll.wcag.rapport",
+        # Flaten som faktisk kan rendre denne formen: `rapport.js`.
+        rapportflate="wcag",
         beskrivelse=("PR-014c: automatisk WCAG-kontroll av et positivt"
                      " autorisert hostname. `ekstern_lesing`-klassen:"
                      " observerbar trafikk ut, ingen ekstern mutasjon;"
@@ -236,6 +254,14 @@ OPPDRAGSTYPER: dict[str, Oppdragstype] = {
         # oppdragstypens eget — `rekruttering.evaluering` — så typen ligger
         # der navnerommet allerede peker.
         rapport_artefakttype="rekruttering.evaluering.rapport",
+        # INGEN `rapportflate` (Codex P2). Typen må navngis for at
+        # modulen skal få laste opp rapporten sin, men den generiske
+        # `/v1/rapport/{id}` mater `rapport.js`, som dereferer WCAG-formens
+        # `sammendrag` og `sider_kontrollert` uten å spørre — hver eneste
+        # M-57-rapport ville feilet UNDER rendring, etter en 200. Flaten
+        # for evalueringsrapporten er CP4s arbeid; til den finnes, er
+        # 404 det ærlige svaret.
+        rapportflate=None,
         beskrivelse=("M-57: leser og rangerer opptil 5000 søknader mot"
                      " stillingens krav i isolert container — ingen"
                      " ekstern trafikk, ingen mutasjon; utsendelse er en"

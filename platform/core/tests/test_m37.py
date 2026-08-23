@@ -202,6 +202,45 @@ def test_rapportartefakttypene_kan_faktisk_registreres():
                 f"{annen!r} overlapper {en!r} — registeret tar bare én"
 
 
+def test_rapportflaten_er_deklarert_aldri_utledet():
+    """Codex P2: `/v1/rapport/{id}` utledet hvilke rapporter den serverer
+    fra `rapport_artefakttype` alene.
+
+    De to feltene svarer på ULIKE spørsmål. `rapport_artefakttype` sier
+    hva artefaktet ER, og er påkrevd for at modulen skal få laste det opp
+    i det hele tatt. `rapportflate` sier at det finnes en konsument som
+    kan RENDRE det. Da M-57 fikk sin artefakttype, ble den derfor
+    automatisk servert til `ui/static/js/flater/rapport.js`, som
+    dereferer WCAG-formens `sammendrag` og `sider_kontrollert` uten å
+    spørre: hver eneste M-57-rapport ville feilet UNDER rendring, etter
+    en 200.
+
+    MUTASJONEN SOM DREPER DENNE: sett `rapportflate="wcag"` på
+    `rekruttering.evaluering`, eller fjern `rapportflate`-leddet i
+    `lesing.rapport_detalj`.
+    """
+    import oppdragskontrakt as ok
+    m57 = ok.OPPDRAGSTYPER["rekruttering.evaluering"]
+    assert m57.rapport_artefakttype is not None, \
+        "uten navngitt type får modulen `opplasting: null` ved claim"
+    assert m57.rapportflate is None, \
+        "M-57-rapporten har ingen flate før CP4 — 404 er det ærlige svaret"
+    wcag = ok.OPPDRAGSTYPER["kontroll.wcag.nettsted"]
+    assert wcag.rapportflate == "wcag"
+    # Kontraktporten: en flate uten artefakttype er en flate som viser en
+    # rapport typen aldri leverer.
+    from dataclasses import replace
+    assert any("rapportflate" in f for f in
+               replace(m57, produserer_artefakt=False,
+                       rapport_artefakttype=None,
+                       rapportflate="wcag").valider())
+    # … og leseveiens PAR er utledet av begge feltene, ikke bare det ene.
+    par = {navn for navn, t in ok.OPPDRAGSTYPER.items()
+           if t.rapport_artefakttype is not None
+           and t.rapportflate is not None}
+    assert par == {"kontroll.wcag.nettsted"}, par
+
+
 def test_lengste_prefiks_vinner_over_dict_rekkefolgen():
     """WCAG-kontrollen eier `kontroll.wcag.`, `verifikasjon` resten.
 
