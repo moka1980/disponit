@@ -283,6 +283,18 @@ OPPDRAGSTYPER: dict[str, Oppdragstype] = {
         # Formen er `kontroll.wcag.rapport`s, og underdomenet er
         # oppdragstypens eget — `rekruttering.evaluering` — så typen ligger
         # der navnerommet allerede peker.
+        # ÉN rapport, og det er en GRENSE modulen må bygge innenfor
+        # (Codex P1). Fullføringsprotokollen bærer én skalar
+        # `artefakt_id`, og `api/app.py` promoterer nøyaktig den raden;
+        # alt annet som er lastet opp blir stående staged. M-57s
+        # modulkontrakt lovet «ett artefakt per kandidat» ut, altså inntil
+        # 5000 promoterte artefakter fra én kvittering — et utfall stacken
+        # ikke har noen vei til. Løftet er rettet der det sto: den
+        # PROMOTERTE evidensen er den rangerte listen, med funn, poeng og
+        # intervjuspørsmål per kandidat INNI seg, mens det per-kandidat-
+        # artefaktet spesifikasjonen navngir er `kandidat_evaluerings-
+        # artefakt` — intern payload under §5-fristen, ikke varig evidens.
+        # En flerartefakt-kvittering er ny maskin i protokollen (K1).
         rapport_artefakttype="rekruttering.evaluering.rapport",
         # INGEN `rapportflate` (Codex P2). Typen må navngis for at
         # modulen skal få laste opp rapporten sin, men den generiske

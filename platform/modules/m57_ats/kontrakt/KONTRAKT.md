@@ -9,11 +9,26 @@ Modulen er KUNDE av plattformen, aldri omvendt (m56-formen):
   Valgfritt: `slettefrist_dogn` (30–365, standard 90) — kundens
   kandidatdatafrist, bundet i bestillingen fordi den ellers ikke har noe
   sted å stå (§5).
-* **Ut**: ett artefakt per kandidat (rangering, funn med kildereferanse,
-  intervjuspørsmål) og innstilte utsendingslister som VENTER på
-  menneskelig signatur gjennom 056-kjeden. Ingen vei fra modellutdata til
-  utsendingstekst — malene er plattformeide med lukket flettefeltsett
-  (`maler.py`), og bruddet er en statisk port, ikke en kodegjennomgang.
+* **Ut**: ÉN promotert rapport per oppdrag —
+  `rekruttering.evaluering.rapport`, den rangerte kandidatlisten med
+  begrunnede funn (kildereferanse), poeng med nedbrytning og
+  intervjuspørsmål PER KANDIDAT inni seg — og innstilte utsendingslister
+  som VENTER på menneskelig signatur gjennom 056-kjeden. Ingen vei fra
+  modellutdata til utsendingstekst — malene er plattformeide med lukket
+  flettefeltsett (`maler.py`), og bruddet er en statisk port, ikke en
+  kodegjennomgang.
+
+  ETT artefakt, ikke ett per kandidat (Codex P1). Linja sto før som «ett
+  artefakt per kandidat», og det er noe plattformen ikke kan levere:
+  kvitteringen bærer én skalar `artefakt_id`, og `api/app.py` promoterer
+  nøyaktig den ene raden ved fullføring. Med 4 999 kandidater igjen som
+  staged opplastinger ville en vellykket evaluering ikke kunnet levere
+  sitt eget deklarerte utfall. Det per-kandidat-artefaktet spesifikasjonen
+  navngir, er `kandidat_evalueringsartefakt` — ett av de seks
+  057-lagrene, altså INTERN kandidatpayload under §5-fristen, ikke varig
+  promotert evidens. De to var skrevet sammen her; de er skilt nå.
+  (En flerartefakt-kvittering er ny maskin i selve
+  fullføringsprotokollen — K1, ikke en fiksrunde.)
 * **Blinding** (klarsignalet §6): standard PÅ, målt på faktisk
   modellinput; avskruing er en auditert handling i flaten, ikke et
   bestillingsfelt.
