@@ -1326,6 +1326,81 @@ def test_port19_ett_lager_kan_ikke_reapes_alene(migrator):
 
 
 @pg
+def test_port19_forsinket_insert_kan_ikke_lage_blandingen(migrator):
+    """Codex P2: constraint-triggeren sto bare på UPDATE.
+
+    Runde 5 begrunnet det med at «en INSERT kan ikke lage blandingen».
+    Premissen holdt ikke. Porten måler BLANDINGEN, ikke merket, så en
+    skriver som reaper ALLE seks lagrene i én transaksjon uten å merke
+    ankeret ser ingen levende payload igjen ved COMMIT og slipper
+    gjennom — og ankervakten fanger bare den motsatte retningen (merke
+    uten tømte lagre). Tilstanden er altså stabil, ikke umulig; den er
+    nøyaktig den positive kontrollen i testen over.
+
+    Fra den tilstanden er lagervakten blind på riktig grunnlag: ankeret
+    ER umerket, så en forsinket INSERT er lovlig for den — og resultatet
+    er den varige blandingen av levende og reapet payload port 19
+    forbyr.
+
+    MUTASJONEN SOM DREPER DENNE: sett `*_reapes_samlet`-triggerne
+    tilbake til `AFTER UPDATE`."""
+    rt = _rt()
+    try:
+        _, pid = _prosess(migrator, rt)
+        _fyll_lagrene(rt, pid)
+        rt.commit()
+        # Den stabile tilstanden: alle seks reapet, ankeret UMERKET.
+        _sett_kontekst(migrator, TENANT)
+        for tab, payload in _REAP_SETNINGER:
+            migrator.execute(
+                f"UPDATE {tab} SET {payload}, slettet_ts=now()"
+                " WHERE tenant=%s AND prosess_id=%s", (TENANT, pid))
+        migrator.commit()
+        _sett_kontekst(migrator, TENANT)
+        assert migrator.execute(
+            "SELECT slettet_ts FROM rekrutteringsprosess WHERE tenant=%s"
+            " AND prosess_id=%s", (TENANT, pid)).fetchone()[0] is None
+        migrator.rollback()
+        # Den forsinkede INSERT-en: setningen går (lagervakten ser et
+        # umerket anker), COMMIT-en gjør det ikke.
+        _sett_kontekst(rt, TENANT)
+        _fyll_lagrene(rt, pid)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.commit()
+        rt.rollback()
+        # Ingen levende payload kom inn: transaksjonen ble aldri til noe.
+        _sett_kontekst(migrator, TENANT)
+        assert migrator.execute(
+            "SELECT count(*) FROM kandidat_originaldokument WHERE tenant=%s"
+            " AND prosess_id=%s AND slettet_ts IS NULL",
+            (TENANT, pid)).fetchone()[0] == 0
+        migrator.rollback()
+    finally:
+        rt.close()
+
+
+@pg
+def test_port19_forste_insert_pa_fersk_prosess_gar(migrator):
+    """Positiv kontroll til testen over: INSERT-armen må ikke felle den
+    vanlige veien inn. En fersk prosess har ingen reapet arm å treffe, og
+    hele fyllingen — seks lagre, én transaksjon — skal committe."""
+    rt = _rt()
+    try:
+        _, pid = _prosess(migrator, rt)
+        _fyll_lagrene(rt, pid)
+        _fyll_lagrene(rt, pid)
+        rt.commit()
+        _sett_kontekst(migrator, TENANT)
+        assert migrator.execute(
+            "SELECT count(*) FROM kandidat_originaldokument WHERE tenant=%s"
+            " AND prosess_id=%s AND slettet_ts IS NULL",
+            (TENANT, pid)).fetchone()[0] == 2
+        migrator.rollback()
+    finally:
+        rt.close()
+
+
+@pg
 def test_innhold_sha256_utledes_av_payloaden_ikke_av_kalleren(migrator):
     """Codex P2: hashen var kallerens PÅSTAND om innholdet.
 

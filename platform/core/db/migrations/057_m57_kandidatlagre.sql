@@ -579,12 +579,27 @@ BEGIN
         'kandidat_utsendingsdata', 'kandidat_avmaskering'] LOOP
         EXECUTE format('DROP TRIGGER IF EXISTS %I ON %I',
                        t || '_reapes_samlet', t);
-        -- Bare UPDATE: en INSERT kan ikke lage blandingen. Lagervakten
-        -- avviser INSERT på en reapet prosess, og en prosess der lagrene
-        -- er reapet uten at ankeret er merket, er nettopp det denne
-        -- porten forbyr — så det finnes ingen tilstand å skrive inn i.
+        -- INSERT OG UPDATE (Codex P2). Runde 5 skrev at «en INSERT kan
+        -- ikke lage blandingen», og begrunnelsen hvilte på at en prosess
+        -- med reapede lagre og umerket anker ikke kan finnes. Den
+        -- premissen holdt ikke: porten måler BLANDINGEN, ikke merket, så
+        -- en skriver som reaper ALLE seks lagrene i én transaksjon uten å
+        -- merke ankeret ser ingen levende payload igjen ved COMMIT og
+        -- slipper gjennom. Ankervakten fanger den motsatte retningen
+        -- (merke uten tømte lagre), så nettopp denne tilstanden har ingen
+        -- vakt — og den er stabil.
+        --
+        -- Fra den tilstanden er lagervakten blind på riktig grunnlag:
+        -- ankeret ER umerket, så en forsinket INSERT er lovlig for den,
+        -- og resultatet er nøyaktig den varige blandingen av levende og
+        -- reapet payload denne porten finnes for å forby — skrevet inn
+        -- av den ene operasjonen porten ikke så.
+        --
+        -- INSERT-armen gir ingen falske positive: en prosess med reapede
+        -- rader og MERKET anker avvises alt av lagervakten, og en fersk
+        -- prosess har ingen reapet arm å treffe.
         EXECUTE format(
-            'CREATE CONSTRAINT TRIGGER %I AFTER UPDATE ON %I'
+            'CREATE CONSTRAINT TRIGGER %I AFTER INSERT OR UPDATE ON %I'
             ' DEFERRABLE INITIALLY DEFERRED'
             ' FOR EACH ROW EXECUTE FUNCTION m57_lagrene_reapes_samlet()',
             t || '_reapes_samlet', t);
