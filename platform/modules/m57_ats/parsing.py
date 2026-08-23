@@ -167,9 +167,20 @@ def inspiser_bunt(sti: str | Path) -> list[Medlem]:
         alle = zf.infolist()
         if len(alle) > MAKS_FILER:
             raise Buntfeil("for_mange_filer", str(len(alle)))
+        # STIPORTEN MÅLER KATALOGEN, IKKE UTVALGET (Codex P2). Mappene ble
+        # filtrert bort FØR `_sjekk_navn`, så `../../unnslapp/` sto i
+        # katalogen til en bunt både gaten og strømmen godtok — porten som
+        # finnes for å avvise stier ut av bunten, så aldri oppføringen.
+        # En mappeoppføring er en oppføring: at VI ikke pakker den ut, er
+        # vår lesning, ikke en egenskap ved arkivet. Navn og filtype måles
+        # derfor på hver eneste oppføring; resten av grensene gjelder
+        # medlemmene som faktisk bærer innhold.
+        for info in alle:
+            _sjekk_navn(info.filename)
+            if (info.external_attr >> 16) & 0o170000 == 0o120000:
+                raise Buntfeil("symlenke", info.filename)
         infos = [i for i in alle if not i.is_dir()]
         for info in infos:
-            _sjekk_navn(info.filename)
             # En zip KAN bære to oppføringer med samme navn, og
             # `zf.open(navn)` slår opp i navnekartet — som bare husker den
             # SISTE. To ulike `cv.html` ville da blitt lest som den samme,
@@ -179,8 +190,6 @@ def inspiser_bunt(sti: str | Path) -> list[Medlem]:
             if info.filename in sett:
                 raise Buntfeil("duplikat_medlem", info.filename)
             sett.add(info.filename)
-            if (info.external_attr >> 16) & 0o170000 == 0o120000:
-                raise Buntfeil("symlenke", info.filename)
             endelse = _endelse(info.filename)
             if endelse in ARKIVENDELSER:
                 raise Buntfeil("nostet_arkiv", info.filename)
@@ -275,11 +284,23 @@ def _inspiser_docx(navn: str, data: bytes, *,
     if filer_brukt + len(alle) > MAKS_FILER:
         raise Buntfeil("for_mange_filer",
                        f"{navn}: {filer_brukt} + {len(alle)}")
+    # Runde 20 (Codex P2): sti- og lenkeporten måler HVER oppføring, ikke
+    # bare de vi pakker ut. Samme rekkefølgefeil som i den ytre gaten —
+    # mappene ble filtrert bort før navnet ble målt, så `../../unnslapp/`
+    # inni en docx passerte porten som finnes for å avvise den.
+    for info in alle:
+        _sjekk_navn(info.filename, kontekst=f"{navn}/{info.filename}")
+        # Symlenkeporten fra ytre gate gjelder også her (Cursor P3). En
+        # zip bærer filtypen i `external_attr`, og uttrekket skjer i
+        # containeren: en lenke inni en docx er samme klasse som en
+        # lenke i bunten, og den ene gaten kan ikke være strengere enn
+        # den andre uten at forskjellen er et hull.
+        if (info.external_attr >> 16) & 0o170000 == 0o120000:
+            raise Buntfeil("symlenke", f"{navn}/{info.filename}")
     infos = [i for i in alle if not i.is_dir()]
     utpakket = 0
     sett: set[str] = set()
     for info in infos:
-        _sjekk_navn(info.filename, kontekst=f"{navn}/{info.filename}")
         # Duplikatporten fra ytre gate gjelder også her (Cursor P2). En zip
         # kan bære to oppføringer med samme navn, og et medlemsoppslag på
         # navn treffer navnekartet, som bare husker den SISTE — to
@@ -289,13 +310,6 @@ def _inspiser_docx(navn: str, data: bytes, *,
         if info.filename in sett:
             raise Buntfeil("duplikat_medlem", f"{navn}/{info.filename}")
         sett.add(info.filename)
-        # Symlenkeporten fra ytre gate gjelder også her (Cursor P3). En
-        # zip bærer filtypen i `external_attr`, og uttrekket skjer i
-        # containeren: en lenke inni en docx er samme klasse som en
-        # lenke i bunten, og den ene gaten kan ikke være strengere enn
-        # den andre uten at forskjellen er et hull.
-        if (info.external_attr >> 16) & 0o170000 == 0o120000:
-            raise Buntfeil("symlenke", f"{navn}/{info.filename}")
         if _endelse(info.filename) in ARKIVENDELSER:
             raise Buntfeil("nostet_arkiv", f"{navn}/{info.filename}")
         # 25 MB-grensen gjelder MEDLEMMET, også inni en docx (Codex P1).

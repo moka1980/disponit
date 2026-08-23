@@ -138,6 +138,36 @@ def test_port22_sti_utenfor_bunten(tmp_path):
     ok = _bunt(tmp_path, [("kandidat1/cv.pdf", _pdf())])
     assert [m.navn for m in parsing.inspiser_bunt(ok)] == \
         ["kandidat1/cv.pdf"]
+    ok.unlink()
+    # Codex P2 (runde 20): en MAPPEOPPFØRING er også en oppføring. Porten
+    # måler katalogen, ikke utvalget vi pakker ut — mappene ble filtrert
+    # bort før navnet ble målt, så `../../unnslapp/` sto i katalogen til
+    # en bunt både gaten og strømmen godtok.
+    # MUTASJONEN SOM DREPER DENNE: flytt `_sjekk_navn` tilbake bak
+    # `infos = [i for i in alle if not i.is_dir()]`.
+    arkiv = _bunt(tmp_path, [("../../unnslapp/", b""),
+                             ("cv.pdf", _pdf())])
+    with pytest.raises(parsing.Buntfeil) as e:
+        parsing.inspiser_bunt(arkiv)
+    assert e.value.kode == "sti_utenfor_bunten"
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(arkiv))
+    assert e.value.kode == "sti_utenfor_bunten"
+    arkiv.unlink()
+    # … og inni en docx, der rekkefølgen var den samme.
+    docx = _docx([("../../unnslapp/", b""),
+                  ("word/document.xml", b"<w:t>CV</w:t>")])
+    arkiv = _bunt(tmp_path, [("cv.docx", docx)])
+    parsing.inspiser_bunt(arkiv)       # ytre gate ser en lovlig fil
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(arkiv))
+    assert e.value.kode == "sti_utenfor_bunten"
+    arkiv.unlink()
+    # Positiv kontroll begge veier: en LOVLIG mappeoppføring er ikke et
+    # funn, og den skal fortsatt ikke telle som en søknad.
+    ok = _bunt(tmp_path, [("kandidat1/", b""), ("kandidat1/cv.pdf", _pdf())])
+    assert [m.navn for m in parsing.inspiser_bunt(ok)] == \
+        ["kandidat1/cv.pdf"]
 
 
 def test_port23_symlenke_avvises(tmp_path):
