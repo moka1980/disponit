@@ -170,6 +170,32 @@ def test_port24_docx_inspiseres_som_arkivet_den_er(tmp_path):
     assert e.value.kode == "feil_innholdstype"
 
 
+def test_port26_duplikat_medlem_inni_docx_avvises(tmp_path):
+    """Cursor P2: ytre gate feller to like medlemsnavn, den indre gjorde
+    ikke.
+
+    `ZipFile.open(navn)` slår opp i navnekartet, som bare husker den
+    SISTE oppføringen. To `word/document.xml` inni samme docx betyr at
+    teksten uttrekket leser, ikke er den gaten målte — samme stillhetstap
+    som i ytre zip, og hvilken søknadstekst som evalueres er ikke et sted
+    for stillhet.
+
+    MUTASJONEN SOM DREPER DENNE: fjern duplikatsjekken i
+    `_inspiser_docx`."""
+    duplikat = _docx([("word/document.xml", b"<w:t>en</w:t>"),
+                      ("word/document.xml", b"<w:t>to</w:t>")])
+    arkiv = _bunt(tmp_path, [("cv.docx", duplikat)])
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(arkiv))
+    assert e.value.kode == "duplikat_medlem"
+    arkiv.unlink()
+    # Positiv kontroll: to ULIKE medlemmer i samme docx er helt vanlig.
+    ok = _bunt(tmp_path, [("cv.docx", _docx(
+        [("word/document.xml", b"<w:t>en</w:t>"),
+         ("word/styles.xml", b"<w:styles/>")]))])
+    assert len(list(parsing.les_porsjonsvis(ok))) == 1
+
+
 def test_port21_enkeltfilgrensen_gjelder_ogsa_inni_docx(tmp_path):
     """Codex P1: de tre grensene fanger ULIKE ting, og løkken inni docx-en
     målte bare to av dem.

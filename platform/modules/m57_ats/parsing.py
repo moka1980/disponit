@@ -174,8 +174,18 @@ def _inspiser_docx(navn: str, data: bytes) -> int:
     if len(infos) > MAKS_FILER:
         raise Buntfeil("for_mange_filer", f"{navn}: {len(infos)}")
     utpakket = 0
+    sett: set[str] = set()
     for info in infos:
         _sjekk_navn(info.filename, kontekst=f"{navn}/{info.filename}")
+        # Duplikatporten fra ytre gate gjelder også her (Cursor P2). En zip
+        # kan bære to oppføringer med samme navn, og `ZipFile.open(navn)`
+        # slår opp i navnekartet, som bare husker den SISTE — to
+        # `word/document.xml` betyr at det uttrekket leser ikke er det
+        # samme dokumentet gaten målte. Hvilken tekst som evalueres er
+        # ikke et sted for stillhet, hverken ute eller inne.
+        if info.filename in sett:
+            raise Buntfeil("duplikat_medlem", f"{navn}/{info.filename}")
+        sett.add(info.filename)
         if _endelse(info.filename) in ARKIVENDELSER:
             raise Buntfeil("nostet_arkiv", f"{navn}/{info.filename}")
         # 25 MB-grensen gjelder MEDLEMMET, også inni en docx (Codex P1).
