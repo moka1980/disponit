@@ -944,6 +944,43 @@ BEGIN
         RAISE EXCEPTION 'opprett_frigivelsesoppdrag: ukjent frigivelse %',
             p_frigivelse_id USING ERRCODE = 'no_data_found';
     END IF;
+    -- ET FERDIG RETRY AVGJØRES FØR FRISTPORTEN (Codex P2, runde 13 på
+    -- #140). Fristporten under avviser en alt utløpt `utforelsesfrist`,
+    -- og den sto FØR innsettingen — altså også før `unique_violation`-
+    -- armen som gir et retry vinnerens oppdrags-id. Et retry etter en
+    -- tvetydig commit sender med den SAMME absolutte fristen som
+    -- førstegangskallet (det er nettopp det som gjør det til et retry),
+    -- så et retry som kommer etter at fristen har passert døde på
+    -- fristporten uten noen gang å få vite at oppdraget alt STÅR. Kalleren
+    -- satt igjen med det samme umulige valget runde 11 lukket i
+    -- signeringsveien: «ble den avvist, eller er den opprettet?» — på en
+    -- IRREVERSIBEL utsendelse, som mennesker prøver igjen.
+    --
+    -- Fristporten finnes for å hindre at et DØDFØDT oppdrag FØDES. Et
+    -- ferdig retry føder ingenting, så porten har ingenting å si om det.
+    -- Oppslaget flyttes derfor foran, med NØYAKTIG samme snevre
+    -- materialitet som armen under (frigivelse + kontrakt + nøkkel;
+    -- fristene er utenfor av samme grunn som der).
+    --
+    -- ... og låsen er 014s/§7cs mønster, ikke ny maskin: uten den kunne to
+    -- FØRSTEGANGS-kall begge bomme på oppslaget, og taperen — som våkner
+    -- etter at vinneren committet og fristen passerte — ville møtt
+    -- fristporten i stedet for replay-svaret. Samme TOCTOU som
+    -- `frigi_utsendelse` lukket i runde 3, og samme rekkefølge: lås,
+    -- gjenles, avgjør. Låsen krever ingen rettighet og faller ved commit.
+    -- Låsordenen er entydig (`m57:frigi:` tas alltid FØR `m57:oppdrag:`,
+    -- for frigivelsen må finnes før jobben), så den kan ikke gi vranglås.
+    PERFORM pg_advisory_xact_lock(hashtextextended(
+        'm57:oppdrag:' || p_tenant || ':' || p_frigivelse_id::text, 0));
+    SELECT id INTO v_id FROM public.oppdrag o
+     WHERE o.tenant = p_tenant AND o.frigivelse_id = p_frigivelse_id
+       AND o.oppdragstype = p_oppdragstype
+       AND o.handling = p_handling
+       AND o.eiermodul = p_eiermodul
+       AND o.key_id = p_key_id;
+    IF FOUND THEN
+        RETURN v_id;
+    END IF;
     -- EN DØDFØDT JOBB SKAL IKKE FØDES (Codex P2, runde 5 på #140).
     -- `claim_neste_oppdrag` plukker kun rader med `utforelsesfrist >
     -- now()`, og `oppdrag_en_per_frigivelse` gir frigivelsen nøyaktig ETT
@@ -952,11 +989,13 @@ BEGIN
     -- frigivelsen aldri får. Reaperen i §10 rydder opp i rader som løper
     -- ut etterpå; denne porten hindrer at de i det hele tatt oppstår.
     --
-    -- Porten står FØR innsettingen, også på retry-veien: fristene er med
-    -- vilje utenfor materialiteten (se under) fordi et legitimt retry
-    -- regner dem PÅ NYTT. Et retry som sender inn en utløpt frist beskriver
-    -- en jobb som ikke kan utføres, og skal høre det — ikke få et
-    -- uplukkbart oppdrag tilbake som om alt var i orden.
+    -- Porten står FØR innsettingen, men ETTER replay-oppslaget over
+    -- (runde 13): fristene er med vilje utenfor materialiteten (se under)
+    -- fordi et legitimt retry regner dem PÅ NYTT. Et retry som sender inn
+    -- en utløpt frist og som IKKE har et oppdrag fra før beskriver en jobb
+    -- som ikke kan utføres, og skal høre det — ikke få et uplukkbart
+    -- oppdrag tilbake som om alt var i orden. Har det derimot alt et
+    -- oppdrag, er kallet ferdig før porten i det hele tatt stilles.
     --
     -- KLOKKEN ER VEGGKLOKKEN, IKKE TRANSAKSJONENS FØDSELSTID (Codex P2,
     -- runde 9 på #140). `now()` er `transaction_timestamp()`: den fryses

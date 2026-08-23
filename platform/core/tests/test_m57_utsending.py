@@ -1902,6 +1902,133 @@ def test_frigivelsesoppdrag_maaler_fristen_mot_veggklokken(migrator):
         (TENANT, fid)).fetchone()[0] == 0, "dødfødt oppdrag ble laget"
 
 
+@pg
+def test_retry_etter_utlopt_frist_faar_vinnerens_oppdrag(migrator):
+    """Codex P2 på #140 (runde 13): fristporten sto FØR innsettingen,
+    altså også før `unique_violation`-armen som gir et retry vinnerens
+    oppdrags-id.
+
+    Et retry etter en tvetydig commit sender med den SAMME absolutte
+    fristen som førstegangskallet — det er nettopp det som gjør det til
+    et retry. Kom retryet etter at den fristen hadde passert, døde det på
+    fristporten uten noen gang å få vite at oppdraget alt STÅR: samme
+    umulige valg for kalleren som runde 11 lukket i signeringsveien
+    («ble den avvist, eller er den opprettet?»), på en IRREVERSIBEL
+    utsendelse.
+
+    Fristporten finnes for å hindre at et dødfødt oppdrag FØDES. Et
+    ferdig retry føder ingenting, så oppslaget må avgjøres først.
+
+    MUTASJONEN SOM DREPER DENNE: flytt replay-oppslaget i
+    `opprett_frigivelsesoppdrag` tilbake til ETTER fristporten."""
+    oid, payload = _evaluering(migrator)
+    ct, key_id, nonce = payload
+    bid = _signatar(migrator)
+    liste = _liste(migrator, oid)
+    _signer(migrator, liste, bid)
+    fid = _frigi(migrator, liste)
+    snd = _sender()
+    try:
+        _sett_kontekst(snd, TENANT)
+        forste = snd.execute(
+            "SELECT opprett_frigivelsesoppdrag(%s,%s,"
+            "'rekruttering.utsending','rekruttering.utsending','m57_ats',"
+            "%s,%s,%s, now()+interval '4 hours', now()+interval '1 day')",
+            (TENANT, fid, ct, key_id, nonce)).fetchone()[0]
+        snd.commit()
+        # Svaret gikk tapt; retryet kommer etter at den samme absolutte
+        # fristen har passert. Fristen er utenfor materialiteten, så
+        # oppslaget kjenner igjen oppdraget uansett.
+        _sett_kontekst(snd, TENANT)
+        omigjen = snd.execute(
+            "SELECT opprett_frigivelsesoppdrag(%s,%s,"
+            "'rekruttering.utsending','rekruttering.utsending','m57_ats',"
+            "%s,%s,%s, now()-interval '1 minute', now()+interval '1 day')",
+            (TENANT, fid, ct, key_id, nonce)).fetchone()[0]
+        snd.commit()
+    finally:
+        snd.close()
+    assert omigjen == forste, (
+        "retry etter utløpt frist fikk ikke vinnerens oppdrag")
+    _sett_kontekst(migrator, TENANT)
+    assert migrator.execute(
+        "SELECT count(*) FROM oppdrag WHERE tenant=%s AND frigivelse_id=%s",
+        (TENANT, fid)).fetchone()[0] == 1, "retryet lagde et NYTT oppdrag"
+
+
+@pg
+def test_retry_venter_paa_vinneren_foer_fristporten(migrator):
+    """Codex P2 (runde 13), den samtidige halvdelen: testen over er
+    SEKVENSIELL — vinneren har committet før retryet begynner, og det
+    tidlige oppslaget ser den. Det fanger ikke at oppslaget uten en lås
+    er et rent TOCTOU, samme som `frigi_utsendelse` lukket i runde 3.
+
+    To transaksjoner:
+
+      A  oppretter oppdraget med en gyldig frist, men committer ikke
+      B  retry med den samme fristen, som nå har passert
+
+    Uten låsen bommer Bs oppslag (A er ucommittet), og B faller rett i
+    fristporten — avvist på et retry der kontrakten lover vinnerens id.
+    Med låsen står B og venter til A er ferdig, gjenleser, og finner
+    oppdraget.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `pg_advisory_xact_lock` foran
+    replay-oppslaget i `opprett_frigivelsesoppdrag` — B dør da med
+    `InvalidParameterValue`."""
+    import threading
+
+    oid, payload = _evaluering(migrator)
+    ct, key_id, nonce = payload
+    bid = _signatar(migrator)
+    liste = _liste(migrator, oid)
+    _signer(migrator, liste, bid)
+    fid = _frigi(migrator, liste)
+    a = _sender()
+    b = _sender()
+    utfall: dict = {}
+    try:
+        _sett_kontekst(a, TENANT)
+        aid = a.execute(
+            "SELECT opprett_frigivelsesoppdrag(%s,%s,"
+            "'rekruttering.utsending','rekruttering.utsending','m57_ats',"
+            "%s,%s,%s, now()+interval '4 hours', now()+interval '1 day')",
+            (TENANT, fid, ct, key_id, nonce)).fetchone()[0]
+
+        def retry():
+            try:
+                _sett_kontekst(b, TENANT)
+                utfall["id"] = b.execute(
+                    "SELECT opprett_frigivelsesoppdrag(%s,%s,"
+                    "'rekruttering.utsending','rekruttering.utsending',"
+                    "'m57_ats',%s,%s,%s, now()-interval '1 minute',"
+                    " now()+interval '1 day')",
+                    (TENANT, fid, ct, key_id, nonce)).fetchone()[0]
+                b.commit()
+            except Exception as e:            # noqa: BLE001 — dommen måles
+                utfall["feil"] = e
+                b.rollback()
+
+        tb = threading.Thread(target=retry)
+        tb.start()
+        tb.join(timeout=2)
+        assert tb.is_alive(), "B skulle vente på As lås, ikke avgjøre selv"
+        a.commit()
+        tb.join(timeout=10)
+        assert not tb.is_alive()
+    finally:
+        a.close()
+        b.close()
+    assert "feil" not in utfall, (
+        "samtidig retry døde i stedet for å få vinnerens oppdrag:"
+        f" {utfall.get('feil')}")
+    assert utfall["id"] == aid, "samtidig retry fikk et annet oppdrag"
+    _sett_kontekst(migrator, TENANT)
+    assert migrator.execute(
+        "SELECT count(*) FROM oppdrag WHERE tenant=%s AND frigivelse_id=%s",
+        (TENANT, fid)).fetchone()[0] == 1, "retryet lagde et NYTT oppdrag"
+
+
 def test_056_navngir_aldri_runtime_rollen():
     """Codex P1 på #140 (runde 13) — runde 5s `IF EXISTS`-form lukket bare
     HALVE funnet, og denne testen målte bare den halvdelen.
