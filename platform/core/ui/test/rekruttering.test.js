@@ -430,6 +430,43 @@ test("Rekruttering: signeringsnøkkel og «signert» overlever prosessbytte", as
     "listen ble sendt en gang til etter prosessbytte");
 });
 
+test("Rekruttering: vektskyveren rommer vektene kontrakten godtar", async () => {
+  // Codex P1: `evaluering.ranger` godtar ethvert ikke-negativt heltall,
+  // men kontrollen sto på `max="10"`. Med en gyldig vekt på 20 regnet
+  // flaten poeng på 20 og skrev 20 i `output`-en, mens skyveren selv sto
+  // klemt på 10 — og brukerens FØRSTE piltast slo vekten ned til 9 og
+  // rangerte kandidatene om uten at noe var ment endret.
+  //
+  // MUTASJONEN SOM DREPER DENNE: sett `max: "10"` tilbake.
+  const stor = prosess();
+  stor.prosesser[0].vekter = { drift: 20, sky: 2 };
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": stor };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")));
+
+  const range = hoved.querySelector('input[type="range"]#vekt-drift');
+  assert.ok(Number(range.max) >= 20,
+    `skyveren tar ikke imot vekten serveren sendte (max=${range.max})`);
+  // Kontrollens EGEN verdi er den serveren sendte — ikke en klemt utgave.
+  assert.equal(range.value, "20",
+    "nettleseren klemte verdien til taket; skyveren og tallet er uenige");
+  assert.equal(hoved.querySelector('output[for="vekt-drift"]').textContent,
+    "20");
+  // Skalaen deles, så skyverne fortsatt kan sammenliknes med øyet.
+  assert.equal(hoved.querySelector('input[type="range"]#vekt-sky').max,
+    range.max);
+  // Og en vanlig prosess beholder husets skala.
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": prosess() };
+  const vanlig = nyHoved();
+  visRekruttering(vanlig, ctx());
+  assert.ok(await vent(() => vanlig.querySelector("table")));
+  assert.equal(vanlig.querySelector('input[type="range"]#vekt-drift').max,
+    "10");
+});
+
 test("Rekruttering: blindingsvalget overlever prosessbytte", async () => {
   // Codex P1 / Cursor P2: en vellykket mutasjon oppdaterte bare bryteren.
   // `prosess.blinding_av` i det hentede svaret sto igjen slik serveren

@@ -169,13 +169,29 @@ function tegn(hoved, ctx, data, okt, valgtId) {
 
   // Vektene: én range per krav, med <label>, synlig verdi og
   // kunngjort re-rangering. Tastatur: piltaster på range er nok.
+  //
+  // TAKET FØLGER KONTRAKTEN, IKKE OMVENDT (Codex P1). `evaluering.ranger`
+  // godtar ETHVERT ikke-negativt heltall som vekt; `max="10"` var flatens
+  // egen påstand om noe annet. Kom en gyldig vekt på 20 inn, klemte
+  // nettleseren kontrollens verdi til 10 mens `vekter` og den synlige
+  // `output`-en fortsatt sa 20: poengsummene i tabellen var regnet på 20,
+  // skyveren sto på taket, og brukerens FØRSTE piltast hoppet vekten fra
+  // 20 til 9 — en stille omrangering av kandidatene. Taket regnes derfor
+  // ut fra verdiene serveren faktisk sendte (aldri under husets 10, så en
+  // vanlig prosess får samme skala som før), og alle kravene deler det, så
+  // skyverne fortsatt kan sammenliknes med øyet.
+  const VEKT_MAKS_STANDARD = 10;
+  const vektMaks = Object.values(vekter).reduce((maks, v) => {
+    const tall = Number(v);
+    return Number.isFinite(tall) && tall > maks ? tall : maks;
+  }, VEKT_MAKS_STANDARD);
   const vektRot = el("fieldset", { class: "rekrut-vekter" },
     el("legend", { text: t("ui.rekruttering.vekter_tittel") }));
   for (const [krav, verdi] of Object.entries(vekter)) {
     const id = `vekt-${krav}`;
     const visning = el("output", { for: id, text: String(verdi) });
-    const range = el("input", { type: "range", id, min: "0", max: "10",
-      step: "1", value: String(verdi) });
+    const range = el("input", { type: "range", id, min: "0",
+      max: String(vektMaks), step: "1", value: String(verdi) });
     range.addEventListener("input", () => {
       vekter[krav] = Number(range.value);
       visning.textContent = range.value;
