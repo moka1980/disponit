@@ -988,6 +988,46 @@ def test_port16_overlappende_verdier_maskeres_lengste_forst():
     assert avmaskering["[KONTAKT-1]"] == "Ann@example.com"
 
 
+def test_port16_feltformen_maales_ikke_paastas():
+    """Codex P2: `blind` stolte på TYPEANNOTASJONEN til et uttrekk den
+    ikke eier, og to velformede JSON-former slapp gjennom med hver sin
+    skade.
+
+    `{"navn": "Ann"}`: en streng er iterbar, så maskeringen fikk tegnene
+    `A`, `n`, `n` som «verdier» — hver eneste `A` og `n` i HELE søknaden
+    ble byttet ut, og `krev_blindet` godkjente det, fordi den leter etter
+    nøyaktig de samme tegnene og de er borte. Modellen fikk altså korrupt
+    tekst, og korrupt tekst kan endre både kravfunn og rangering.
+
+    `{"alder": [42]}`: `re.escape(42)` er en rå `TypeError` ut av
+    modulen — ikke et kodet blindingsavvik kalleren kan behandle.
+
+    MUTASJONEN SOM DREPER DENNE: fjern formløkka i `blind`."""
+    tekst = "Ann Nordmann planla en analyse av annonsen. Alder: 42."
+    for ugyldig in ({"navn": "Ann"}, {"alder": [42]}, {"navn": [None]},
+                    {"navn": {"Ann"}}, {"navn": {"a": "Ann"}},
+                    {"navn": ["Ann"], "alder": [42]}):
+        with pytest.raises(blinding.Blindingsfeil) as e:
+            blinding.blind(tekst, ugyldig)
+        assert e.value.kode == "ugyldig_maskeringsform", ugyldig
+    # Den ENESTE veien til modellinput arver grensen, og modellen kalles
+    # aldri på en form som ikke er målt.
+    modell = _Modell()
+    with pytest.raises(blinding.Blindingsfeil):
+        evaluering.evaluer_kandidat(modell, tekst, {"navn": "Ann"},
+                                    {"drift": 3}, biasmaalinger=_MAALINGER)
+    assert not modell.sett
+    # Positiv kontroll: kontrakten er en SEKVENS av strenger, og begge
+    # sekvensformene går. (Verdien er `Kari`, ikke `Ann`, med vilje:
+    # delstrengserstatningen ville truffet `ann` inni `Nordmann` også, og
+    # det er den ANDRE grensen — #158 — ikke formen som måles her.)
+    ren = "Kari Nordmann søker stillingen."
+    for gyldig in ({"navn": ["Kari"]}, {"navn": ("Kari",)}):
+        blindet, avmaskering = blinding.blind(ren, gyldig)
+        assert blindet == "[NAVN-1] Nordmann søker stillingen.", gyldig
+        assert avmaskering == {"[NAVN-1]": "Kari"}, gyldig
+
+
 def test_avkortet_modellsvar_er_en_feil_ikke_et_tomt_resultat():
     """Codex P1: artefakten ble bygget med `.get(..., tom)` per felt, så
     `{}` — det et avbrutt eller lengdekuttet svar typisk er — ble en

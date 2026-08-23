@@ -64,6 +64,30 @@ def blind(tekst: str, kandidatfelter: dict[str, list[str]]
     ukjente = set(kandidatfelter) - set(MASKERTE_FELTER)
     if ukjente:
         raise Blindingsfeil("ukjent_maskeringsfelt")
+    # FORMEN MÅLES, den tas ikke på ord (Codex P2). Typeannotasjonen sier
+    # `{felt: [verdier]}`, men uttrekket er en FREMMED produsent — en
+    # modell eller en parser — og en annotasjon er ingen port. To former
+    # er velformet JSON og begge er farlige:
+    #
+    #   * `{"navn": "Ann"}` — en streng er iterbar, så løkka under fikk
+    #     tegnene `A`, `n`, `n`. Hver eneste `A` og `n` i HELE søknaden
+    #     ble maskert, `krev_blindet` godkjente resultatet (den leter
+    #     etter de samme tegnene, og de er borte), og modellen fikk
+    #     korrupt tekst som input til både kravfunn og rangering.
+    #   * `{"alder": [42]}` — `re.escape(42)` er en rå `TypeError` ut av
+    #     modulen, ikke et kodet blindingsavvik kalleren kan behandle.
+    #
+    # Grensen er kontrakten `blind` ALT er skrevet for: en sekvens av
+    # strenger per felt. Dette er ikke et femte maskeringsforsøk (#158)
+    # — mønsteret og porten er uendret — det er inndatasiden av samme
+    # fail-closed regel som `blinding_uten_felter`: et umålt utfall er et
+    # avvist utfall (SP-3). Et `set` avvises med vilje sammen med de
+    # andre: tokennummereringen skal være deterministisk for samme input,
+    # og en uordnet samling gir den ikke.
+    for verdier in kandidatfelter.values():
+        if not isinstance(verdier, (list, tuple)) or not all(
+                isinstance(verdi, str) for verdi in verdier):
+            raise Blindingsfeil("ugyldig_maskeringsform")
     avmaskering: dict[str, str] = {}
     par: list[tuple[str, str]] = []
     for felt in MASKERTE_FELTER:
