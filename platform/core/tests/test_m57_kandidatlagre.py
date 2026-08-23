@@ -1100,17 +1100,24 @@ def test_port18_kandidatrad_fodes_levende(migrator):
         _, pid = _prosess(migrator, rt)
         rt.commit()
         # Gravsteinen — på et lager med payload og på et uten dokument-FK.
+        # Meldingen måles, ikke bare feilklassen: `insufficient_privilege`
+        # er også svaret fra de andre armene i samme vakt, og en test som
+        # godtar hvilken som helst av dem ville vært grønn på feil port.
         for tabell in ("kandidat_avmaskering", "kandidat_originaldokument"):
             _sett_kontekst(rt, TENANT)
-            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            with pytest.raises(psycopg.errors.InsufficientPrivilege) as e:
                 rt.execute(
                     f"INSERT INTO {tabell} (tenant, prosess_id, kandidat_id,"
                     f" innhold_sha256, slettet_ts)"
                     f" VALUES (%s,%s,%s,'0',now())",
                     (TENANT, pid, uuid.uuid4()))
+            assert "fødes LEVENDE" in str(e.value), str(e.value)
             rt.rollback()
         # Avvisningen kommer ved INSERT, ikke først når en senere,
         # legitim fylling støter på blandingen: prosessen er uskadd.
+        # Konteksten settes på nytt — `set_config(..., true)` er
+        # transaksjonslokal, og rollbacken over tok den med seg.
+        _sett_kontekst(rt, TENANT)
         _fyll_lagrene(rt, pid)
         rt.commit()
         assert _tell_fixtur(migrator, pid) == 9
