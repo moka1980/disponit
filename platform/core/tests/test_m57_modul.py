@@ -114,6 +114,30 @@ def test_port25_innholdstypen_er_en_paastand_begge_veier(tmp_path):
     assert e.value.kode == "feil_innholdstype"
 
 
+def test_duplikate_medlemsnavn_avvises(tmp_path):
+    """Codex P2: en zip KAN bære to oppføringer med samme navn, og
+    `zf.open(navn)` slår opp i navnekartet — som bare husker den siste.
+    To ulike `cv.html` ble derfor lest som den samme, to ganger, og den
+    første søknaden forsvant i stillhet. Hvilke søknader som evalueres er
+    ikke et sted for stillhet."""
+    import warnings
+    with warnings.catch_warnings():          # zipfile advarer selv om at
+        warnings.simplefilter("ignore")      # navnet er duplisert — det
+        arkiv = _bunt(tmp_path,              # er nettopp poenget her.
+                      [("cv.html", b"<p>soker A</p>"),
+                       ("cv.html", b"<p>soker B</p>")])
+    with pytest.raises(parsing.Buntfeil) as e:
+        parsing.inspiser_bunt(arkiv)
+    assert e.value.kode == "duplikat_medlem"
+    arkiv.unlink()
+    # Positiv kontroll: samme filnavn i ULIKE mapper er to forskjellige
+    # medlemmer, og begge leses.
+    ok = _bunt(tmp_path, [("a/cv.html", b"<p>A</p>"),
+                          ("b/cv.html", b"<p>B</p>")])
+    assert [d for _, _, d in parsing.les_porsjonsvis(ok)] == \
+        [b"<p>A</p>", b"<p>B</p>"]
+
+
 def test_port26_filantall(tmp_path):
     # Grensen måles VED grensen: nøyaktig taket går, én over felles —
     # med tomme oppføringer så testen er billig og fortsatt ekte.

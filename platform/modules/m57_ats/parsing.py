@@ -75,12 +75,22 @@ def inspiser_bunt(sti: str | Path) -> list[Medlem]:
         raise Buntfeil("ikke_zip")
     medlemmer: list[Medlem] = []
     total = 0
+    sett: set[str] = set()
     with zipfile.ZipFile(sti) as zf:
         infos = [i for i in zf.infolist() if not i.is_dir()]
         if len(infos) > MAKS_FILER:
             raise Buntfeil("for_mange_filer", str(len(infos)))
         for info in infos:
             _sjekk_navn(info.filename)
+            # En zip KAN bære to oppføringer med samme navn, og
+            # `zf.open(navn)` slår opp i navnekartet — som bare husker den
+            # SISTE. To ulike `cv.html` ville da blitt lest som den samme,
+            # to ganger, og den første søknaden forsvunnet i stillhet
+            # (Codex P2). Hvilke søknader som evalueres er ikke et sted
+            # for stillhet: bunten avvises.
+            if info.filename in sett:
+                raise Buntfeil("duplikat_medlem", info.filename)
+            sett.add(info.filename)
             if (info.external_attr >> 16) & 0o170000 == 0o120000:
                 raise Buntfeil("symlenke", info.filename)
             endelse = _endelse(info.filename)
