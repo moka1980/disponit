@@ -1875,6 +1875,41 @@ def test_lesefeil_paa_lageret_tilskrives_ikke_modellen(tmp_path, monkeypatch):
     assert e.value.kode == "modellfeil"
 
 
+def test_modellens_egen_nettverksfeil_er_ikke_en_driftssak(tmp_path):
+    """Codex P2: lagringshåndtereren dekket også modellkallet.
+
+    En `ConnectionResetError` fra modellklienten ER en `OSError` med errno,
+    akkurat som lesefeilen på lageret. Sto `except OSError` blant de øvrige
+    håndtererne, dekket den hele `try`-en — også `evaluer_kandidat` — og
+    modellens eget nettverksavbrudd ble meldt som `infrastrukturfeil`.
+    Forrige runde flyttet lagringsfeilen ut av modellkøen; uten
+    innsnevringen tok den modellens feil med seg samme vei, og driften
+    leter etter et lagringsavbrudd som aldri fant sted. Kilden avgjør
+    koden, og kilden er hvor unntaket oppsto.
+
+    MUTASJONEN SOM DREPER DENNE: flytt `except OSError`-grenen ut av den
+    indre `try`-en rundt arkivgaten og ned blant de øvrige igjen.
+    """
+    from modules.m57_ats import kjoring
+
+    class _ModellSomMisterForbindelsen(_Modell):
+        def vurder(self, tekst, vekter):
+            raise ConnectionResetError(errno.ECONNRESET, "Connection reset")
+
+    arkiv = _bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>")])
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, _ModellSomMisterForbindelsen(),
+                          vekter={"drift": 3},
+                          kandidatfelter_for=lambda m: {"navn": ["N"]},
+                          tekst_for=lambda m, d: d.decode("utf-8"),
+                          biasmaalinger=_MAALINGER)
+    assert e.value.kode == "modellfeil", (
+        "modellens eget avbrudd skal ikke sende driften på lagringssaken")
+    assert isinstance(e.value.__cause__, OSError)
+    # Arkivet ER lest ferdig — evidensen er ikke en lesefeil.
+    assert e.value.fremdrift["filer_lest"] == 1
+
+
 def test_feltuttrekket_tilskrives_ikke_modellen(tmp_path):
     """Codex P2: en vranglest strukturert søknad ble meldt som «modellfeil».
 
