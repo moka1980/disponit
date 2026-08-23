@@ -512,13 +512,18 @@ GRANT EXECUTE ON FUNCTION lukk_rekrutteringsprosess(TEXT, UUID,
     TIMESTAMPTZ) TO disponit;
 -- Reaperen er kryss-tenant (038-læren): i et oppsett MED egen timerrolle
 -- hører den hjemme der, og web-API-rollen skal ikke ha den. Lokalt/test
--- ER runtime hele plattformen.
-GRANT EXECUTE ON FUNCTION reap_kandidatdata(INT) TO disponit;
+-- ER runtime hele plattformen. 038-blokken ORDRETT (Codex P1): et grant
+-- som bare slutter å bli gitt er ikke trukket tilbake — finnes
+-- timerrollen, REVOKES runtime, ellers ville en kompromittert API-prosess
+-- kunne trigge retensjonsarbeid på tvers av alle tenanter.
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'disponit_domener') THEN
         GRANT EXECUTE ON FUNCTION reap_kandidatdata(INT)
             TO disponit_domener;
+        REVOKE EXECUTE ON FUNCTION reap_kandidatdata(INT) FROM disponit;
+    ELSE
+        GRANT EXECUTE ON FUNCTION reap_kandidatdata(INT) TO disponit;
     END IF;
 END $$;
 
@@ -535,7 +540,16 @@ REVOKE ALL ON rekrutteringsprosess, kandidat_originaldokument,
 -- Runtime skriver lagrene gjennom API-veien (RLS-gated INSERT + SELECT).
 -- INGEN UPDATE: den eneste lovlige mutasjonen er reap-overgangen, og den
 -- bor i reaperen. INGEN DELETE noensinne.
-GRANT SELECT, INSERT ON rekrutteringsprosess, kandidat_originaldokument,
+--
+-- ANKERET er unntaket (Codex P1): `rekrutteringsprosess` får KUN SELECT.
+-- Et tabell-INSERT der ville vært en vei UTENOM
+-- `opprett_rekrutteringsprosess` — vakten er BEFORE UPDATE OR DELETE og
+-- ser ingen INSERT, så runtime kunne skrevet en prosess på et oppdrag som
+-- ikke er en `rekruttering.evaluering`, eller satt `lukket_ts` frem i tid
+-- og dermed skjøvet hele slettefristen ut i det blå. Fødselen går gjennom
+-- funksjonen, som eier begge portene.
+GRANT SELECT ON rekrutteringsprosess TO disponit;
+GRANT SELECT, INSERT ON kandidat_originaldokument,
     kandidat_parsettekst, kandidat_evalueringsartefakt,
     kandidat_intervjusporsmal, kandidat_utsendingsdata,
     kandidat_avmaskering TO disponit;

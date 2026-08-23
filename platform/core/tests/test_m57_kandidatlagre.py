@@ -89,6 +89,17 @@ def _fyll_lagrene(rt, pid, kandidat=None):
     return kid
 
 
+def _reaperkobling():
+    """(kobling, timerrolle) for `reap_kandidatdata` — 038-formen, som
+    057 nå speiler ordrett (Codex P1): finnes `disponit_domener`, EIER den
+    reaperen og runtime er NEKTET den. Testen deler koblingsvalget med
+    evidensreaperen i stedet for å anta lokal-oppsettet — å anta det gjorde
+    038-testene stille røde på verten, der `InsufficientPrivilege` er
+    grantet som VIRKER, ikke en feil."""
+    from .test_outbox_bestilling import _reaperkobling as felles
+    return felles()
+
+
 def _tell_fixtur(m, pid):
     """Antall payloadfelter over ALLE seks lagre som fortsatt bærer
     fixture-strengen — målt kolonne for kolonne, ikke via en visning
@@ -204,6 +215,63 @@ def test_port20_fristen_kan_ikke_forlenges_av_noen(migrator):
 
 
 @pg
+def test_ankeret_fodes_kun_gjennom_funksjonen(migrator):
+    """Codex P1: radvakten er BEFORE UPDATE OR DELETE og ser ingen fødsel.
+    Et tabell-INSERT på `rekrutteringsprosess` ville derfor gått utenom
+    BEGGE portene i `opprett_rekrutteringsprosess` — oppdragstypen og
+    «lukket_ts aldri frem i tid» (som ville skjøvet hele slettefristen).
+    Runtime har derfor KUN SELECT på ankeret; lagrene beholder INSERT."""
+    har = migrator.execute(
+        "SELECT has_table_privilege('disponit', 'rekrutteringsprosess',"
+        " 'INSERT')").fetchone()[0]
+    assert har is False, "runtime kan føde en prosess utenom funksjonen"
+    for tabell in LAGRE:
+        assert migrator.execute(
+            "SELECT has_table_privilege('disponit', %s, 'INSERT')",
+            (tabell,)).fetchone()[0] is True, tabell
+    migrator.rollback()
+    # ... og forsøket feller i praksis, ikke bare i katalogen.
+    rt = _rt()
+    try:
+        oid, _ = _evaluering(migrator)
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.execute(
+                "INSERT INTO rekrutteringsprosess (tenant, prosess_id,"
+                " oppdrag_id, slettefrist_dogn, lukket_ts)"
+                " VALUES (%s,%s,%s,365, now() + interval '3650 days')",
+                (TENANT, uuid.uuid4(), oid))
+        rt.rollback()
+    finally:
+        rt.close()
+
+
+def test_057_rettighetene_er_parameterisert_pa_rollenavnet():
+    """Cursor P1 (samme form som gate14b port 18): migrasjonens `TO
+    disponit` er test/lokal-fallbacken — driftssannheten står i den
+    parameteriserte blokken i `migrer.py`. Uten EXECUTE der får en
+    installasjon med et annet runtime-rollenavn `permission denied` på
+    prosessfødselen og på lukkingen (som starter slettefristen).
+
+    Reaperen skal IKKE stå der: den er kryss-tenant og hører til
+    timerrollen — 038-formen, betinget DO-blokk i migrasjonen."""
+    from pathlib import Path
+    rot = Path(__file__).resolve().parents[3]
+    kjorer = (rot / "deploy" / "staging"
+              / "migrer.py").read_text(encoding="utf-8")
+    for sign in ("opprett_rekrutteringsprosess(TEXT, BIGINT, INT)",
+                 "lukk_rekrutteringsprosess(TEXT, UUID, TIMESTAMPTZ)"):
+        assert f"GRANT EXECUTE ON FUNCTION {sign} TO {{rolle}}" in kjorer, \
+            sign
+    assert "GRANT EXECUTE ON FUNCTION reap_kandidatdata" not in kjorer, \
+        "kryss-tenant-reaperen lekker til en parameterisert rolle"
+    # Tabellspeilet: ankeret KUN SELECT, lagrene SELECT + INSERT.
+    assert "GRANT SELECT ON rekrutteringsprosess TO {rolle};" in kjorer
+    assert ("GRANT SELECT, INSERT ON rekrutteringsprosess"
+            not in kjorer), "runtime får INSERT på ankeret i kjøreren"
+
+
+@pg
 def test_port20_lukkingen_kan_ikke_sta_frem_i_tid(migrator):
     """Fristen løper fra lukkingen — en lukking frem i tid ville
     forlenget den. Bakover korter den bare, og går."""
@@ -237,6 +305,7 @@ def test_port18_reaping_tommer_alle_seks_lagrene(migrator):
     søppel), og i NULL av dem etter. Radene består med hash og
     `slettet_ts` — minimal revisjonsevidens, ikke sporløshet."""
     rt = _rt()
+    rp = None
     try:
         _, pid = _prosess(migrator, rt, frist=30)
         _fyll_lagrene(rt, pid)
@@ -246,9 +315,17 @@ def test_port18_reaping_tommer_alle_seks_lagrene(migrator):
         assert _tell_fixtur(migrator, pid) == 9, \
             "positiv kontroll: fixturen skal stå i alle payloadfeltene"
         migrator.rollback()
-        reapet = rt.execute("SELECT * FROM reap_kandidatdata(50)"
+        rp, timerrolle = _reaperkobling()
+        if timerrolle:
+            # Sikkerhetsegenskapen 038/057 begrunner grantet med: en
+            # kompromittert web-API-rolle skal ikke kunne trigge
+            # retensjonsarbeid på tvers av alle tenanter.
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                rt.execute("SELECT * FROM reap_kandidatdata(50)")
+            rt.rollback()
+        reapet = rp.execute("SELECT * FROM reap_kandidatdata(50)"
                             ).fetchall()
-        rt.commit()
+        rp.commit()
         assert (TENANT, pid) in [(r[0], r[1]) for r in reapet]
         assert _tell_fixtur(migrator, pid) == 0
         # Radene og revisjonsevidensen består — i alle seks + ankeret.
@@ -267,6 +344,8 @@ def test_port18_reaping_tommer_alle_seks_lagrene(migrator):
         migrator.rollback()
     finally:
         rt.close()
+        if rp is not None:
+            rp.close()
 
 
 @pg
@@ -274,28 +353,33 @@ def test_reaping_respekterer_fristen(migrator):
     """Motstykket til port 18: en prosess som er lukket, men der fristen
     IKKE er løpt ut, røres ikke — et reap-kall er ikke en sletteknapp."""
     rt = _rt()
+    rp = None
     try:
         _, pid = _prosess(migrator, rt, frist=30)
         _fyll_lagrene(rt, pid)
         rt.execute("SELECT lukk_rekrutteringsprosess(%s,%s,"
                    " now() - interval '29 days')", (TENANT, pid))
         rt.commit()
-        reapet = rt.execute("SELECT * FROM reap_kandidatdata(50)"
+        rp, _timerrolle = _reaperkobling()
+        reapet = rp.execute("SELECT * FROM reap_kandidatdata(50)"
                             ).fetchall()
-        rt.commit()
+        rp.commit()
         assert (TENANT, pid) not in [(r[0], r[1]) for r in reapet]
         assert _tell_fixtur(migrator, pid) == 9
         migrator.rollback()
-        # ... og en ÅPEN prosess reapes aldri, uansett alder.
+        # ... og en ÅPEN prosess som ennå er innenfor levetiden røres
+        # ikke (den forlatte, som HAR passert den, er sin egen test).
         _, pid2 = _prosess(migrator, rt, frist=30)
         _fyll_lagrene(rt, pid2)
         rt.commit()
-        rt.execute("SELECT * FROM reap_kandidatdata(50)")
-        rt.commit()
+        rp.execute("SELECT * FROM reap_kandidatdata(50)")
+        rp.commit()
         assert _tell_fixtur(migrator, pid2) == 9
         migrator.rollback()
     finally:
         rt.close()
+        if rp is not None:
+            rp.close()
 
 
 @pg
