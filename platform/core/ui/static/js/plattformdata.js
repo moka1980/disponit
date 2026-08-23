@@ -115,28 +115,40 @@ export const KUNDEROLLER = [
   },
 ];
 
+// Fasestatusen sto som en EGEN skrevet verdi ved siden av `MODULSTATUS`
+// (Codex P2 på #152): M-56 ble `i_drift` i flippet, mens fasen modulen
+// ligger i fortsatt rendret «Planlagt» på den SAMME adminsiden som viste
+// kortet «I drift». Det er dobbeltautoriteten toppen av denne fila sier at
+// kort, merker og KPI-er ikke skal ha — og den koster en glemt linje hver
+// gang en modul flytter seg.
+//
+// Avledningen: en fase er `aktiv` når minst én av modulene i den er
+// PÅBEGYNT, altså har en annen tilstand enn `planlagt`. En fase ingen har
+// begynt på er planlagt. Det gir de samme fire verdiene flaten har vist
+// hele tiden, bortsett fra den ene som var feil.
+export function faseStatus(navn_nokkel) {
+  return MODULER.some((mod) => mod.fase_nokkel === navn_nokkel &&
+    modulStatus(mod.id) !== "planlagt") ? "aktiv" : "planlagt";
+}
+
 export const FASEOVERSIKT = [
   {
     navn_nokkel: "site.fase.fundament",
-    status: "aktiv",
     tekst_nokkel: "site.fase.fundament.tekst",
   },
   {
     navn_nokkel: "site.fase.operasjoner",
-    status: "planlagt",
     tekst_nokkel: "site.fase.operasjoner.tekst",
   },
   {
     navn_nokkel: "site.fase.autopiloter",
-    status: "planlagt",
     tekst_nokkel: "site.fase.autopiloter.tekst",
   },
   {
     navn_nokkel: "site.fase.global",
-    status: "planlagt",
     tekst_nokkel: "site.fase.global.tekst",
   },
-];
+].map((fase) => ({ ...fase, status: faseStatus(fase.navn_nokkel) }));
 
 // INGEN TENANTDATA I DENNE FILA (Codex P1). `/ui/{sti}` serveres uten
 // sesjonssjekk — den anonyme landingssiden importerer dette modultreet — så alt

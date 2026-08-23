@@ -4,7 +4,8 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
-  MODULOVERSIKT, MODULSTATUS, TILBUD, erTilgjengelig, erTilgjengeligFor,
+  FASEOVERSIKT, MODULOVERSIKT, MODULSTATUS, TILBUD,
+  erTilgjengelig, erTilgjengeligFor,
   heroTekstNokkel, produksjonsmiljo, settProduksjonsmiljo,
   heroTekstNokkelFor, modulStatus, modulerFraIder, modulmerke,
   plattformTelling, tenantTelling,
@@ -136,6 +137,40 @@ test("site.hero.tilbud: tilbudsteksten overlever hver utrullingstilstand", () =>
           `${nokkel} bærer tilbudsteksten (${omrade}) i locales/${sprak}.json` +
           " — den forsvinner da i de andre utrullingstilstandene");
       }
+    }
+  }
+});
+
+test("FASEOVERSIKT: ingen fase står planlagt med en påbegynt modul i seg", () => {
+  // Codex P2 på #152: M-56 gikk `i_drift` mens `site.fase.autopiloter` sto
+  // igjen på `planlagt` — samme adminside viste kortet i drift og fasen som
+  // ikke påbegynt. Statusen var skrevet, ikke avledet.
+  //
+  // Testen påstår om REGELEN, ikke om de fire verdiene: hver fase med minst
+  // én påbegynt modul må være aktiv, og en fase uten skal ikke være det.
+  // Da flytter porten seg av seg selv neste gang en modul skifter fase
+  // eller tilstand.
+  for (const fase of FASEOVERSIKT) {
+    const paabegynte = MODULOVERSIKT.filter(
+      (mod) => mod.fase_nokkel === fase.navn_nokkel &&
+        mod.status !== "planlagt");
+    assert.equal(fase.status, paabegynte.length ? "aktiv" : "planlagt",
+      `${fase.navn_nokkel} står ${fase.status} med ${paabegynte.length}` +
+      " påbegynte moduler i seg");
+  }
+  // Slik plattformen faktisk står etter flippet: fasen M-56 ligger i er
+  // aktiv, og de to fasene uten en eneste modul er det ikke.
+  const status = Object.fromEntries(
+    FASEOVERSIKT.map((f) => [f.navn_nokkel, f.status]));
+  assert.equal(status["site.fase.autopiloter"], "aktiv");
+  assert.equal(status["site.fase.fundament"], "aktiv");
+  assert.equal(status["site.fase.operasjoner"], "planlagt");
+  assert.equal(status["site.fase.global"], "planlagt");
+  // Etiketten må finnes på begge språk, ellers rendres nøkkelen som merke.
+  for (const [sprak, sett] of LOKALER) {
+    for (const verdi of ["aktiv", "planlagt"]) {
+      assert.ok(sett[`site.fase_status.${verdi}`],
+        `site.fase_status.${verdi} mangler i locales/${sprak}.json`);
     }
   }
 });
