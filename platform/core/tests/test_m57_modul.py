@@ -138,6 +138,36 @@ def test_duplikate_medlemsnavn_avvises(tmp_path):
         [b"<p>A</p>", b"<p>B</p>"]
 
 
+def test_port25_html_er_en_form_ikke_en_denyliste(tmp_path):
+    """Codex P2: innholdsporten for HTML var en denyliste på åtte byte —
+    og `%PDF` sto ikke i den, tross kommentaren som lovet det. En PDF
+    omdøpt til `cv.html` gikk rett gjennom, og det samme gjorde et tomt
+    zip-arkiv (`PK\\x05\\x06`), som heller ikke sto i listen.
+
+    Porten er nå positiv: et HTML-dokument begynner med et merke."""
+    for innhold, kode in ((_pdf(), "feil_innholdstype"),
+                          (b"MZ kjorbar", "feil_innholdstype"),
+                          (b"ren tekst uten merke", "feil_innholdstype"),
+                          (b"", "feil_innholdstype"),
+                          (b"PK\x05\x06" + b"\0" * 18, "nostet_arkiv"),
+                          (b"PK\x07\x08tull", "nostet_arkiv"),
+                          (b"\x1f\x8bgzip", "nostet_arkiv")):
+        arkiv = _bunt(tmp_path, [("cv.html", innhold)])
+        parsing.inspiser_bunt(arkiv)   # gaten ser bare navnet
+        with pytest.raises(parsing.Buntfeil) as e:
+            list(parsing.les_porsjonsvis(arkiv))
+        assert e.value.kode == kode, innhold[:8]
+        arkiv.unlink()
+    # Positiv kontroll: de lovlige formene går — også med BOM, innledende
+    # blanke og en doctype.
+    for innhold in (b"<p>ok</p>", b"\xef\xbb\xbf<html></html>",
+                    b"\n  <!DOCTYPE html>\n<html></html>",
+                    b"<!-- kommentar --><html></html>"):
+        arkiv = _bunt(tmp_path, [("cv.html", innhold)])
+        assert len(list(parsing.les_porsjonsvis(arkiv))) == 1, innhold[:8]
+        arkiv.unlink()
+
+
 def test_port26_filantall(tmp_path):
     # Grensen måles VED grensen: nøyaktig taket går, én over felles —
     # med tomme oppføringer så testen er billig og fortsatt ekte.

@@ -31,11 +31,13 @@ ARKIVENDELSER = frozenset({
 TILLATTE_ENDELSER = frozenset({".pdf", ".docx", ".html", ".htm"})
 
 #: Magi per endelse: deklarasjonen og innholdet må være SAMME påstand
-#: («feil innholdstype»-porten). HTML har ingen pålitelig magi og måles
-#: bare negativt (ikke arkiv-, ikke PDF-magi).
+#: («feil innholdstype»-porten).
 _MAGI = {".pdf": (b"%PDF",), ".docx": (b"PK\x03\x04",)}
-_ARKIVMAGI = (b"PK\x03\x04", b"\x1f\x8b", b"7z\xbc\xaf", b"Rar!",
-              b"BZh", b"\xfd7zXZ")
+#: Alle tre zip-signaturene, ikke bare den lokale filhodet (Codex P2): et
+#: TOMT arkiv begynner med `PK\x05\x06` og et spennet med `PK\x07\x08`, og
+#: en denyliste som ikke kjenner dem er en denyliste med hull.
+_ARKIVMAGI = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08", b"\x1f\x8b",
+              b"7z\xbc\xaf", b"Rar!", b"BZh", b"\xfd7zXZ")
 
 
 class Buntfeil(Exception):
@@ -62,6 +64,20 @@ def _sjekk_navn(navn: str) -> None:
 
 def _endelse(navn: str) -> str:
     return Path(navn.replace("\\", "/")).suffix.lower()
+
+
+def _ser_ut_som_html(hode: bytes) -> bool:
+    """HTML har ingen magi, men den har en FORM: første ikke-blanke tegn
+    (etter en eventuell BOM) er `<`. Positiv gjenkjenning, ikke en
+    denyliste over signaturene noen kom på — den slapp gjennom `%PDF`.
+
+    En tom fil er ikke HTML: den har ingen form å måle, og en tom søknad
+    er ikke en søknad."""
+    for bom in (b"\xef\xbb\xbf", b"\xff\xfe", b"\xfe\xff"):
+        if hode.startswith(bom):
+            hode = hode[len(bom):]
+            break
+    return hode.lstrip(b" \t\r\n\x00").startswith(b"<")
 
 
 def inspiser_bunt(sti: str | Path) -> list[Medlem]:
@@ -143,9 +159,19 @@ def les_porsjonsvis(sti: str | Path, *, porsjon: int = 200):
                         if not hode.startswith(magi):
                             raise Buntfeil("feil_innholdstype",
                                            medlem.navn)
-                    if endelse in (".html", ".htm") and any(
-                            hode.startswith(m) for m in _ARKIVMAGI):
-                        raise Buntfeil("nostet_arkiv", medlem.navn)
+                    if endelse in (".html", ".htm"):
+                        if any(hode.startswith(m) for m in _ARKIVMAGI):
+                            raise Buntfeil("nostet_arkiv", medlem.navn)
+                        # HTML har ingen magi, men den har en FORM: et
+                        # dokument begynner med et merke. Den gamle porten
+                        # var en denyliste på åtte byte — og `%PDF` sto
+                        # ikke i den, tross kommentaren som lovet det, så
+                        # en PDF omdøpt til `cv.html` gikk rett gjennom
+                        # (Codex P2). En positiv form fanger hele klassen
+                        # i stedet for de signaturene noen kom på.
+                        if not _ser_ut_som_html(hode):
+                            raise Buntfeil("feil_innholdstype",
+                                           medlem.navn)
                     biter.append(hode)
                     lest = len(hode)
                     while True:
