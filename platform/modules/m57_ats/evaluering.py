@@ -52,6 +52,38 @@ def valider_funn(funn: dict, soknadstekst: str) -> None:
         raise Evalueringsfeil("uten_kildereferanse")
 
 
+def _krev_helt_svar(svar: object, vekter: dict[str, int]) -> dict:
+    """Et AVKORTET modellsvar er en FEIL, ikke et tomt resultat
+    (Codex P1).
+
+    Artefakten ble bygget med `.get(..., tom)` per felt, så `{}` — det et
+    avbrutt eller lengdekuttet svar typisk er — ble til en vellykket
+    evaluering: ingen funn, ingen oppfylte krav, ingen intervjuspørsmål.
+    Kalleren kunne rangere og promotere den kandidaten som «oppfyller
+    ingenting». En avbrutt kjøring skal gi et rent feilutfall (§7), og
+    det gjelder også når avbruddet er modellens eget.
+
+    `oppfylt` måles mot PROFILEN: `ranger` avviser krav utenfor den, og
+    speilbildet er at et krav som mangler stille ble til null poeng."""
+    if not isinstance(svar, dict):
+        raise Evalueringsfeil("ufullstendig_modellsvar",
+                              type(svar).__name__)
+    for felt, form in (("funn", list), ("oppfylt", dict),
+                       ("intervjusporsmal", list)):
+        if not isinstance(svar.get(felt), form):
+            raise Evalueringsfeil("ufullstendig_modellsvar", felt)
+    if set(svar["oppfylt"]) != set(vekter):
+        raise Evalueringsfeil(
+            "ufullstendig_modellsvar",
+            "oppfylt: " + ",".join(sorted(
+                set(vekter) ^ set(svar["oppfylt"]))))
+    if any(not isinstance(s, str) or not s
+           for s in svar["intervjusporsmal"]):
+        raise Evalueringsfeil("ufullstendig_modellsvar",
+                              "intervjusporsmal")
+    return svar
+
+
 def ranger(kandidater: dict[str, dict[str, bool]],
            vekter: dict[str, int]) -> list[dict]:
     """Rangering med SYNLIGE vekter: poengsummen er en sum av
@@ -154,8 +186,8 @@ def evaluer_kandidat(modell, soknadstekst: str,
         soknadstekst, kandidatfelter,
         blinding_av=blinding_av, auditrad=auditrad)
     blinding.krev_blindet(tekst, avmaskering)
-    svar = modell.vurder(tekst, vekter)
-    for funn in svar.get("funn", ()):
+    svar = _krev_helt_svar(modell.vurder(tekst, vekter), vekter)
+    for funn in svar["funn"]:
         valider_funn(funn, tekst)
     # `kildetekst` er strengen kildereferansene faktisk indekserer, og den
     # følger med artefakten (Codex P2). Blindingen ENDRER lengder — «Kari»
@@ -164,8 +196,8 @@ def evaluer_kandidat(modell, soknadstekst: str,
     # uten strengen de hører til, var å invitere til nettopp den
     # forvekslingen; her er referansen entydig, og verifiserbar av
     # mottakeren med samme snitt som `valider_funn` bruker.
-    return {"funn": list(svar.get("funn", ())),
-            "oppfylt": dict(svar.get("oppfylt", {})),
-            "intervjusporsmal": list(svar.get("intervjusporsmal", ())),
+    return {"funn": list(svar["funn"]),
+            "oppfylt": dict(svar["oppfylt"]),
+            "intervjusporsmal": list(svar["intervjusporsmal"]),
             "avmaskering": avmaskering,
             "kildetekst": tekst}

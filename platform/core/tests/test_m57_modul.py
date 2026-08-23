@@ -464,6 +464,49 @@ def test_port16_overlappende_verdier_maskeres_lengste_forst():
     assert avmaskering["[KONTAKT-1]"] == "Ann@example.com"
 
 
+def test_avkortet_modellsvar_er_en_feil_ikke_et_tomt_resultat():
+    """Codex P1: artefakten ble bygget med `.get(..., tom)` per felt, så
+    `{}` — det et avbrutt eller lengdekuttet svar typisk er — ble en
+    VELLYKKET evaluering med null funn, null oppfylte krav og null
+    intervjuspørsmål. Kalleren kunne rangere og promotere den kandidaten
+    som «oppfyller ingenting». Et avbrudd skal gi et rent feilutfall."""
+    class _Avkortet(_Modell):
+        def __init__(self, svar):
+            super().__init__()
+            self._svar = svar
+
+        def vurder(self, tekst, vekter):
+            self.sett.append(tekst)
+            return self._svar
+
+    vekter = {"drift": 3, "sikkerhet": 2}
+    hele = {"funn": [], "oppfylt": {"drift": True, "sikkerhet": False},
+            "intervjusporsmal": ["Fortell om drift."]}
+    for svar in (
+            {},                                    # avkortet i sin helhet
+            "ikke et objekt",
+            {k: v for k, v in hele.items() if k != "oppfylt"},
+            {k: v for k, v in hele.items() if k != "intervjusporsmal"},
+            hele | {"funn": None},
+            # Et krav profilen har, men modellen ikke svarte på, ble
+            # stille til null poeng — speilbildet av `ranger`s avvisning
+            # av krav UTENFOR profilen.
+            hele | {"oppfylt": {"drift": True}},
+            hele | {"intervjusporsmal": [None]},
+            hele | {"intervjusporsmal": [""]}):
+        with pytest.raises(evaluering.Evalueringsfeil) as e:
+            evaluering.evaluer_kandidat(
+                _Avkortet(svar), "Kari søker.", {"navn": ["Kari"]},
+                vekter, biasmaalinger=_MAALINGER)
+        assert e.value.kode == "ufullstendig_modellsvar", svar
+    # Positiv kontroll: det HELE svaret går uendret gjennom.
+    ut = evaluering.evaluer_kandidat(
+        _Avkortet(hele), "Kari søker.", {"navn": ["Kari"]},
+        vekter, biasmaalinger=_MAALINGER)
+    assert ut["oppfylt"] == {"drift": True, "sikkerhet": False}
+    assert ut["intervjusporsmal"] == ["Fortell om drift."]
+
+
 def test_port16_versalvarianter_maskeres_og_maales():
     """Codex P1: metadata og dokument er sjelden enige om versaler —
     feltet sier `Kari`, CV-overskriften skriver `KARI`. Både erstatningen
