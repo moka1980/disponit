@@ -229,11 +229,37 @@ def _inspiser_docx(navn: str, data: bytes, *,
     møtte først tekstuttrekket. Unntaket er at DOCX er en av de tre lovede
     innholdstypene — ikke at grensene ikke gjelder inni den.
 
-    UTSATT, K2 → #155. Sju runder har funnet sju ULIKE former og ÉN rot:
+    UTSATT, K2 → #155. NI runder har funnet ni ULIKE former og ÉN rot:
     to implementasjoner av samme grense divergerer med nødvendighet.
     Eier valgte A — én strømmende gate, brukt rekursivt — som eget issue
     + egen PR. Denne funksjonen er den lappede tilstanden til den lander,
     og hver lapp under er navngitt med runden som fant den.
+
+    Runde 8 (Cursor P1) og runde 9 (Cursor P2) er IKKE lappet, og det er
+    med vilje — de treffer ikke en manglende sjekk, men selve
+    delelinjen mellom de to gatene, altså nøyaktig det #155 river ut:
+
+    * Runde 8 — GRENSENE HER MÅLER KATALOGEN, IKKE BYTENE. `file_size`
+      og `compress_size` under er hva den indre sentralkatalogen
+      PÅSTÅR; ingenting leses, og ingen CRC måles. En patchet indre
+      katalog kan derfor oppgi lav `file_size` og gå forbi 25 MB,
+      100:1 og 2 GB, mens den faktiske ekspansjonen først skjer i
+      tekstuttrekket. Den ytre veien lærte dette i `les_porsjonsvis`
+      (katalogen er en PÅSTAND, strømmen måler byte). Lappen ville vært
+      å lese hvert indre medlem med et hardt tak her — som ER den
+      strømmende gaten, bygget for tredje gang, i en fiksrunde. #155s
+      egen tekst felte denne formen på forhånd: «Katalogen i en zip er
+      ikke bytene i den.»
+    * Runde 9 — BUDSJETTLINJEN. `les_porsjonsvis` legger både
+      containerens målte byte (`lest`) og denne funksjonens
+      katalogsum (`utpakket`) til totalen, så et docx-lag betaler to
+      ganger. Det feiler LUKKET (en ærlig bunt kan avvises som for
+      stor, ingen slipper gjennom), og det er grunnen til at det ikke
+      hastes: å fjerne `lest` her ville tatt bort den ENESTE målte
+      byten en docx bidrar med, og latt katalogpåstanden fra runde 8
+      stå alene som budsjett. Hvilket lag som betaler, er ikke en lapp
+      — det er definisjonen av «ett budsjett, gjennomgående», og den
+      hører til i #155.
     """
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as indre:
