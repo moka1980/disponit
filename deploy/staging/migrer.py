@@ -79,10 +79,14 @@ GRANT UPDATE (status) ON aktiveringsrunde TO {rolle};
 -- og den bor i `reap_kandidatdata` (definer). INGEN DELETE noensinne:
 -- kandidatrader reapes (payload til NULL), de slettes aldri som rader.
 -- ANKERET får KUN SELECT (Codex P1): et INSERT på `rekrutteringsprosess`
--- er en vei utenom `opprett_rekrutteringsprosess` — radvakten er BEFORE
--- UPDATE OR DELETE og ser ingen fødsel, så oppdragstypeporten og
--- «lukket_ts aldri frem i tid» ville stått åpne. EXECUTE på de to
--- prosessfunksjonene ligger i M37_RETTIGHETER_API.
+-- er en vei utenom `opprett_rekrutteringsprosess`, som er den eneste
+-- veien som binder oppdraget, eiermodulen og fristen sammen ved
+-- fødselen. Radvakten har siden fått en egen INSERT-gren (Cursor P2), og
+-- kommentaren her sa fortsatt «BEFORE UPDATE OR DELETE» — misvisende for
+-- drift (Cursor P3). De to lagene står SAMMEN og med vilje: vakten
+-- gjelder enhver rolle, også claimeren som må ha INSERT for å være
+-- definer, mens denne rettigheten er den som holder runtime helt utenfor.
+-- EXECUTE på de to prosessfunksjonene ligger i M37_RETTIGHETER_API.
 GRANT SELECT ON rekrutteringsprosess TO {rolle};
 GRANT SELECT, INSERT ON kandidat_originaldokument,
     kandidat_parsettekst, kandidat_evalueringsartefakt,
