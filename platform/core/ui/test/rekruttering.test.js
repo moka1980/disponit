@@ -234,6 +234,17 @@ test("Rekruttering: signaturdialogen sier antall, type, hashkortform — og «Ka
   assert.ok(dialog, "signering uten alertdialog");
   const tekst = dialog.textContent;
   assert.ok(tekst.includes("42"), "antallet mangler");
+  // Cursor P1: `{antall}` står TO ganger i locale-teksten, og
+  // `String.replace` med en streng bytter bare den første. Dialogen sa
+  // «… 42 mottakere … Dette sender {antall} e-poster», og port 31 krever
+  // setningen med tallet. Målt generisk: ingen plassholder overlever, og
+  // tallet står like mange steder som locale-teksten nevner det.
+  assert.ok(!/\{[a-zæøå_]+\}/.test(tekst),
+    `plassholder står igjen i dialogen: ${tekst}`);
+  assert.equal(
+    (tekst.match(/42/g) || []).length,
+    (NB["ui.rekruttering.signer_tekst"].match(/\{antall\}/g) || []).length,
+    "antallet ble ikke satt inn overalt teksten nevner det");
   assert.ok(tekst.includes(t("ui.rekruttering.listetype.invitasjon")));
   assert.ok(tekst.includes(HASH.slice(0, 12) + "…"), "hashkortformen mangler");
   assert.ok(tekst.includes("Kan ikke angres"), "irreversibiliteten er taus");

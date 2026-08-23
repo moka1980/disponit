@@ -227,7 +227,7 @@ function tegn(hoved, ctx, data) {
   // en annen operasjon og en annen nøkkel (mønsteret fra bestilling.js).
   const signeringsnokler = new Map();
   function signeringsnokkel(liste) {
-    const id = `${liste.liste_id} ${liste.innhold_hash}`;
+    const id = `${liste.liste_id}|${liste.innhold_hash}`;
     if (!signeringsnokler.has(id)) {
       signeringsnokler.set(id, nyIdempotensnokkel());
     }
@@ -242,11 +242,16 @@ function tegn(hoved, ctx, data) {
         rolle: "alertdialog",
         farlig: true,
         tittel: t("ui.rekruttering.signer_tittel"),
+        // `replaceAll`, ikke `replace` (Cursor P1): `{antall}` står TO
+        // ganger i teksten — «… · 42 mottakere · … Dette sender {antall}
+        // e-poster» — og port 31 krever at setningen sier tallet, ikke
+        // plassholderen. Samme regel for de øvrige feltene: en tekst som
+        // gjentar et felt skal ikke avhenge av hvor i strengen det står.
         tekst: t("ui.rekruttering.signer_tekst")
-          .replace("{antall}", String(liste.antall))
-          .replace("{listetype}",
+          .replaceAll("{antall}", String(liste.antall))
+          .replaceAll("{listetype}",
             t(`ui.rekruttering.listetype.${liste.listetype}`))
-          .replace("{hash}", kortHash(liste.innhold_hash)),
+          .replaceAll("{hash}", kortHash(liste.innhold_hash)),
         primarTekst: t("ui.rekruttering.signer_bekreft"),
         paaPrimar: async () => {
           try {
