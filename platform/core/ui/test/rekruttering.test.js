@@ -201,6 +201,12 @@ test("Rekruttering: gjen-påslag av blinding er en mutasjon, og uten scope er br
   assert.ok(await vent(() => KALL.some((k) =>
     k.sti.endsWith("/blinding") && k.kropp.av === false)),
     "gjen-påslaget nådde aldri serveren");
+  // Cursor P2 / port 32: begrunnelsen er revisjonsinnhold OG tekst koden
+  // skriver — hardkodet ble den norsk også i en engelsk UI.
+  assert.equal(
+    KALL.find((k) => k.sti.endsWith("/blinding")).kropp.begrunnelse,
+    t("ui.rekruttering.blinding_pa_begrunnelse"),
+    "auditbegrunnelsen kommer ikke fra locale");
   assert.ok(await vent(() => bryter.checked));
   // …og feiler kallet, står bryteren AV (utfallet, ikke klikket).
   bryter.checked = false;

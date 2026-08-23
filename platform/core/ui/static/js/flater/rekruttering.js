@@ -185,8 +185,12 @@ function tegn(hoved, ctx, data) {
       bryter.checked = false;
       await laast(bryter, async () => {
         try {
+          // Begrunnelsen er REVISJONSINNHOLD, men den er også tekst
+          // koden skriver (Cursor P2 / port 32): hardkodet sto den norsk
+          // også i en engelsk UI. Av-veien får brukerens egne ord;
+          // på-veien får husets, via locale.
           await settRekrutteringBlinding(prosess.prosess_id, false,
-            "blinding slått på igjen");
+            t("ui.rekruttering.blinding_pa_begrunnelse"));
           bryter.checked = true;
           sett(utfall, t("ui.rekruttering.blinding_pa_utfall"));
         } catch (e) {
