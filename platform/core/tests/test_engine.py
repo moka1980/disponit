@@ -573,6 +573,11 @@ def test_alle_filkall_har_eksplisitt_utf8():
     # hele tatt — revisjonsloggen skriver ferdig UTF-8-kodede bytes dit med
     # vilje, for å styre skrivingen selv (se audit.skriv).
     raa_fd = re.compile(r"\bos\.(open|write|fdopen)\(")
+    # ZipFile.open gir en binær medlemsstrøm og har heller ingen
+    # encoding-parameter — samme klasse som os.open over. Konvensjonen i
+    # repoet er at zipfile-håndtaket heter `zf`, og carve-outen er bundet
+    # til nettopp det navnet så den ikke blir en generell .open-åpning.
+    zip_stroem = re.compile(r"\bzf\.open\(")
     rot = Path(__file__).resolve().parents[3]
     synder = []
     for fil in (rot / "platform").rglob("*.py"):
@@ -581,7 +586,7 @@ def test_alle_filkall_har_eksplisitt_utf8():
         linjer = fil.read_text(encoding="utf-8").splitlines()
         for nr, linje in enumerate(linjer, 1):
             if not tekstkall.search(linje) or binaer.search(linje) \
-                    or raa_fd.search(linje):
+                    or raa_fd.search(linje) or zip_stroem.search(linje):
                 continue
             # Kallet kan gå over flere linjer, og `encoding=` kan stå på en
             # senere. Se på hele setningen: samle linjer til parentesene går

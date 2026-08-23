@@ -78,6 +78,12 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'avvis_med_opplosning(text,bigint,bigint[],text,text)', 'disponit_m37_claimer'),
     ('FUNCTION', 'reversibilitet_for_oppdrag(text,bigint)',            'disponit_m37_claimer'),
     ('FUNCTION', 'reap_evidensfrister(integer)',                      'disponit_m37_claimer'),
+    -- 057: kandidatprosessens funksjoner — eies av claimer fordi de gaar
+    -- gjennom krev_tenantkontekst-porten (samme vindu, samme eier), og
+    -- reaperen er kryss-tenant paa 038-formen.
+    ('FUNCTION', 'opprett_rekrutteringsprosess(text,bigint,integer)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'lukk_rekrutteringsprosess(text,uuid,timestamp with time zone)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'reap_kandidatdata(integer)',                        'disponit_m37_claimer'),
     -- 038 §4-porten (Codex P1): binder `p_tenant` til kallerens
     -- tenantkontekst i definer-veiene over. Opprettes i det samme
     -- SET ROLE-vinduet og hoerer derfor til den samme eieren.
