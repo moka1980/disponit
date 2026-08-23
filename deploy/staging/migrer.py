@@ -99,6 +99,17 @@ SET LOCAL ROLE disponit_modul_eier;
 REVOKE ALL ON FUNCTION varsle_tokenfamilie_utlop(text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION varsle_tokenfamilie_utlop(text) FROM {rolle};
 RESET ROLE;
+-- 056: utsendingsveien er SAMME KLASSE, og verre — den er IRREVERSIBEL
+-- (Cursor P2 på #140). `frigi_utsendelse` og `opprett_frigivelsesoppdrag`
+-- gis KUN til `disponit_varselsender` (VARSLER_RETTIGHETER); web-API-rollen
+-- skal aldri kunne frigi en signert liste. Læren fra varsel-funnet over
+-- gjelder ordrett: en grant som bare slutter å bli GITT er ikke trukket
+-- tilbake — en tidligere kjøring, eller en manuell grant, ville overlevd
+-- alle senere migreringer i stillhet.
+SET LOCAL ROLE disponit_m37_claimer;
+REVOKE ALL ON FUNCTION frigi_utsendelse(TEXT, UUID, TEXT) FROM {rolle};
+REVOKE ALL ON FUNCTION opprett_frigivelsesoppdrag(TEXT, UUID, TEXT, TEXT, TEXT, BYTEA, TEXT, BYTEA, TIMESTAMPTZ, TIMESTAMPTZ) FROM {rolle};
+RESET ROLE;
 GRANT SELECT, INSERT, UPDATE ON varselvalg TO {rolle};
 -- PR-014a: modulregisteret. Runtime LESER det (default-deny, GRANT-modell §4) —
 -- INGEN INSERT/UPDATE/DELETE på registertabellene. Alle skriv går via de herdede
@@ -175,6 +186,12 @@ RESET ROLE;
 -- går gjennom hver sin herdede funksjon (opprett_reparasjonsoppdrag /
 -- opprett_beslutningsoppdrag), som setter `opprinnelse` selv.
 GRANT SELECT, UPDATE ON oppdrag TO {rolle};
+-- 056: utsendingskjeden — flaten leser lister/signaturer/frigivelser;
+-- skriving går KUN gjennom kjedefunksjonene (eid av m37_claimer, EXECUTE
+-- i M37_RETTIGHETER_API/VARSLER_RETTIGHETER). Kjøreren er autoritativ:
+-- uten radene her overlever ikke migrasjonens grants neste kjøring
+-- (Cursor P1 på #140).
+GRANT SELECT ON utsendingsliste, utsendingssignatur, utsendingsfrigivelse TO {rolle};
 GRANT SELECT, INSERT, UPDATE ON reparasjonsoperasjoner TO {rolle};
 GRANT SELECT ON verifikasjonsgenerasjon, verifikasjonsbevis, utforelsesklasser TO {rolle};
 GRANT SELECT ON verifikasjonskonflikt TO {rolle};
@@ -292,6 +309,11 @@ GRANT EXECUTE ON FUNCTION reversibilitet_for_oppdrag(TEXT, BIGINT) TO {rolle};
 -- vegne av hvem som helst — bare til å utføre et nei et navngitt,
 -- avvisningsberettiget menneske har sagt.
 GRANT EXECUTE ON FUNCTION avvis_med_opplosning(TEXT, BIGINT, BIGINT[], TEXT, TEXT) TO {rolle};
+-- 056: M-57s API-veier — listen opprettes og signeres av innloggede
+-- MENNESKER gjennom API-et (runtime alene; utsendingsveien — frigivelse
+-- og frigivelsesoppdrag — bor hos varsleren, se VARSLER_RETTIGHETER).
+GRANT EXECUTE ON FUNCTION opprett_utsendingsliste(TEXT, UUID, UUID, BIGINT, TEXT, TEXT, TEXT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION signer_utsendingsliste(TEXT, UUID, TEXT, TEXT) TO {rolle};
 """
 
 # Token-administrasjonen er en EGEN rolle som eier ingenting (korreksjon 2).
@@ -316,6 +338,7 @@ GRANT SELECT ON policyer TO {rolle};
 -- går gjennom hver sin herdede funksjon (opprett_reparasjonsoppdrag /
 -- opprett_beslutningsoppdrag), som setter `opprinnelse` selv.
 GRANT SELECT, UPDATE ON oppdrag TO {rolle};
+
 GRANT SELECT, INSERT, UPDATE ON reparasjonsoperasjoner TO {rolle};
 GRANT SELECT ON verifikasjonsgenerasjon, verifikasjonsbevis, utforelsesklasser TO {rolle};
 GRANT SELECT ON verifikasjonskonflikt TO {rolle};
@@ -338,6 +361,12 @@ RESET ROLE;
 -- enn de tre over, derfor sin egen SET LOCAL ROLE.
 SET LOCAL ROLE disponit_modul_eier;
 GRANT EXECUTE ON FUNCTION varsle_tokenfamilie_utlop(text) TO {rolle};
+RESET ROLE;
+-- 056: utsendingsveien — det er SENDEREN som konsumerer signerte lister:
+-- frigivelse per mottaker og frigivelsesoppdraget (tredje opphavsvei).
+SET LOCAL ROLE disponit_m37_claimer;
+GRANT EXECUTE ON FUNCTION frigi_utsendelse(TEXT, UUID, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION opprett_frigivelsesoppdrag(TEXT, UUID, TEXT, TEXT, TEXT, BYTEA, TEXT, BYTEA, TIMESTAMPTZ, TIMESTAMPTZ) TO {rolle};
 RESET ROLE;
 """
 

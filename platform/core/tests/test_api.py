@@ -76,6 +76,10 @@ APPEND_ONLY_TRIGGERE = (
     # samme DELETE-sperre. Uten dem her feiler oppryddingen — noe som i seg
     # selv er en bekreftelse på at sperrene virker.
     ("oppdrag", "oppdrag_ingen_delete"),
+    # 056: kjeden er append-only mot både UPDATE og DELETE.
+    ("utsendingsliste", "utsendingsliste_append_only"),
+    ("utsendingssignatur", "utsendingssignatur_append_only"),
+    ("utsendingsfrigivelse", "utsendingsfrigivelse_append_only"),
     ("reparasjonsoperasjoner", "reparasjon_vakt"),
     # PR-007: bevis og konflikt er append-only, generasjonen har
     # overgangsvakt. Alle tre nekter DELETE — som de skal.
@@ -148,6 +152,11 @@ RYDDETABELLER = ("bestillingsplan_tick", "bestillingsplan_vindu",
                  # slettingen av saken det ble gitt på.
                  "menneskelig_attestasjon",
                  "bestilling_idempotens", "unntak_historikk",
+                 # 056: utsendingskjeden peker på oppdrag (og innbyrdes
+                 # frigivelse→signatur→liste) — ut i avhengighetsrekkefølge
+                 # FØR oppdragene.
+                 "utsendingsfrigivelse", "utsendingssignatur",
+                 "utsendingsliste",
                  "oppdrag", "reparasjonsoperasjoner", "unntak",
                  "revisjonslogg", "attestasjon_jti", "idempotens",
                  # `policy_hode` FØR `policyer`: pekeren har FK dit.
@@ -195,6 +204,23 @@ def _rydd(migrator, *tenanter: str) -> None:
             "SELECT set_config('disponit.tenant',%s,true),"
             "       set_config('disponit.aktor','test',true)", (tenant,))
         for tabell in RYDDETABELLER:
+            if tabell == "utsendingsfrigivelse":
+                # 056: ATS-oppdragene PEKER på frigivelsene og må ut
+                # først — mens listene peker på EVAL-oppdragene, som
+                # ryddes med resten av `oppdrag` etter kjeden.
+                #
+                # ... og fra 056 §9 kan et ATS-oppdrag BÆRE EN SAK (sen
+                # kvittering / sikkerhetskonflikt utleder nå en
+                # revisjonslinje gjennom frigivelse→liste→evaluering, der
+                # den før døde på `loggpost_id NOT NULL`). Forsteget som
+                # står ved `oppdrag` under gjelder derfor allerede her:
+                # sakene ut FØR oppdragene de peker på.
+                migrator.execute(
+                    "DELETE FROM unntak WHERE tenant=%s AND oppdrag_id IN"
+                    " (SELECT id FROM oppdrag WHERE tenant=%s"
+                    "   AND frigivelse_id IS NOT NULL)", (tenant, tenant))
+                migrator.execute("DELETE FROM oppdrag WHERE tenant=%s"
+                                 " AND frigivelse_id IS NOT NULL", (tenant,))
             if tabell == "oppdrag":
                 # Forsteget fra kommentaren over RYDDETABELLER: sakene som
                 # PEKER på oppdrag må ut før oppdragene de peker på.
