@@ -21,10 +21,11 @@ import { OMRADER, KATALOG_ANTALL } from "./katalog.js";
 //
 // En «I drift»-etikett for M-56, båret av et eget statusfelt i katalogen,
 // sto kort her og er tatt ut igjen (Codex P1 på #109): `siteStatusMerke`
-// betyr per definisjon «kjører hos kunder», mens manifestet sier
-// `under_utvikling`/`ikke_i_drift` og `MODULSTATUS[56]` derfor `bygges`.
-// Skal katalogen en dag vise tilstand, må den utledes av `MODULSTATUS` —
-// den manifestforankrede aksen — ikke av en ny akse ved siden av.
+// betyr per definisjon «kjører hos kunder», og et felt her ville vært en
+// ANDRE statusakse ved siden av `MODULSTATUS`. M-56 står `i_drift` etter
+// akseptflippet — regelen står likevel, og det er nettopp flytting som er
+// prøven på den: skal katalogen vise tilstand, utledes den av
+// `MODULSTATUS`, den manifestforankrede aksen, ikke av en akse her.
 function lesSide() {
   const side = new URLSearchParams(window.location.search).get("side") || "hjem";
   return ["hjem", "tjenester", "produkt", "sikkerhet", "innlogging"].includes(side)

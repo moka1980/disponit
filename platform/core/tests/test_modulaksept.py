@@ -1785,16 +1785,14 @@ def test_kravet_er_registrert_og_punktene_bundet(migrator):
                      "bevismaalinger"):
             assert p.get(felt), f"{navn} mangler {felt}"
     assert valider_artefakter(man) == []
-    # Flippet er UTSATT (dokumentert avvik): registerets konsistensregel
-    # nekter en aktiv modul å avhenge av m02_revisjonslogg
-    # (under_utvikling). Porten her måler at utsettelsen er DOKUMENTERT i
-    # manifestet — og fjernes den (m02-aksept-arcen), skal disse to byttes
-    # til aktiv/produksjon-assertene.
-    assert man["status"] == "under_utvikling"
-    assert man["driftstilstand"] == "ikke_i_drift"
-    hode = (ROT / "platform/modules/m56_wcag_audit/manifest.yaml"
-            ).read_text(encoding="utf-8")
-    assert "m02" in hode and "konsistensregel" in hode
+    # FLIPPET (2026-08-23, akkurat slik utsettelses-noten forutsa):
+    # begge aksepthendelsene er skrevet i basen — m56-aksepten
+    # (m_wcag_audit, staging, wcag-r23; drill_id=1) og m02-aksepten
+    # (m02_revisjonslogg @ 2aaca01, grense m02-aksept-v1) — og status +
+    # driftstilstand flyttes SAMMEN, aldri hver for seg
+    # (test_drift_uten_aktiv_status_er_en_registerfeil pinner regelen).
+    assert man["status"] == "aktiv"
+    assert man["driftstilstand"] == "produksjon"
 
 
 #: Hvert innsjekket WCAG-sammendrag som BÆRER en aksept: v1 er m56s
@@ -5211,9 +5209,11 @@ def test_planlinjen_og_etiketten_fulgte_flippet():
     ui = (ROT / "platform/core/ui/static/js/plattformdata.js").read_text(
         encoding="utf-8")
     blokk = re.search(r"export const MODULSTATUS = \{(.*?)\n\};", ui, re.S)
-    # «bygges» til m02-aksepten flipper manifestet — etiketten er avledet,
-    # og test_ui_kontrakt binder den mot manifestaksene begge veier.
-    assert re.search(r'56:\s*"bygges"', blokk.group(1))
+    # Flippet 2026-08-23: etiketten er avledet av manifestaksene
+    # (aktiv/produksjon -> i_drift), og test_ui_kontrakt binder den mot
+    # manifestet begge veier — hardkodes den tilbake til «bygges» uten
+    # manifestendring, er DEN porten rød.
+    assert re.search(r'56:\s*"i_drift"', blokk.group(1))
 
 
 @pg
