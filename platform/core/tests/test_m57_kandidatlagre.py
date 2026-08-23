@@ -57,9 +57,10 @@ def _fyll_lagrene(rt, pid, kandidat=None):
         "INSERT INTO kandidat_originaldokument (tenant, prosess_id,"
         " kandidat_id, dokument_id, filnavn, innholdstype, dokument,"
         " storrelse_bytes, innhold_sha256) VALUES"
-        " (%s,%s,%s,%s,%s,%s,%s,7,%s)",
+        " (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
         (TENANT, pid, kid, did, f"{FIXTUR}.pdf",
-         f"application/pdf; kandidat={FIXTUR}", FIXTUR.encode(), sha))
+         f"application/pdf; kandidat={FIXTUR}", FIXTUR.encode(),
+         len(FIXTUR.encode()), sha))
     rt.execute(
         "INSERT INTO kandidat_parsettekst (tenant, prosess_id,"
         " kandidat_id, dokument_id, tekst, innhold_sha256)"
@@ -521,7 +522,9 @@ def test_lagervakten_avviser_alt_annet_enn_reap_overgangen(migrator):
 
 @pg
 def test_enkeltfilgrensen_star_i_basen(migrator):
-    """§4: 25 MB per fil — også som CHECK, ikke bare i parseren."""
+    """§4: 25 MB per fil — også som CHECK, ikke bare i parseren, og målt
+    på de LAGREDE bytene (Codex P2): en påstand om størrelsen er ikke en
+    måling av den, så `storrelse_bytes` er bundet til `octet_length`."""
     rt = _rt()
     try:
         _, pid = _prosess(migrator, rt)
@@ -534,6 +537,28 @@ def test_enkeltfilgrensen_star_i_basen(migrator):
                 " innhold_sha256) VALUES (%s,%s,%s,%s,'a.pdf','x',"
                 " %s, 26*1024*1024, '0')",
                 (TENANT, pid, uuid.uuid4(), uuid.uuid4(), b"x"))
+        rt.rollback()
+        # ... og en LØGN om størrelsen er like avvist: `storrelse_bytes`
+        # på 1 med et dokument på 32 byte er ikke en 1-bytes fil.
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.errors.CheckViolation):
+            rt.execute(
+                "INSERT INTO kandidat_originaldokument (tenant,"
+                " prosess_id, kandidat_id, dokument_id, filnavn,"
+                " innholdstype, dokument, storrelse_bytes,"
+                " innhold_sha256) VALUES (%s,%s,%s,%s,'a.pdf','x',"
+                " %s, 1, '0')",
+                (TENANT, pid, uuid.uuid4(), uuid.uuid4(), b"x" * 32))
+        rt.rollback()
+        # Positiv kontroll: sann størrelse går.
+        _sett_kontekst(rt, TENANT)
+        rt.execute(
+            "INSERT INTO kandidat_originaldokument (tenant,"
+            " prosess_id, kandidat_id, dokument_id, filnavn,"
+            " innholdstype, dokument, storrelse_bytes,"
+            " innhold_sha256) VALUES (%s,%s,%s,%s,'a.pdf','x',"
+            " %s, 32, '0')",
+            (TENANT, pid, uuid.uuid4(), uuid.uuid4(), b"x" * 32))
         rt.rollback()
     finally:
         rt.close()

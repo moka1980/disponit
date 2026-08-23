@@ -122,10 +122,7 @@ CREATE TABLE kandidat_originaldokument (
     innholdstype TEXT,
     dokument BYTEA,
     -- §4: enkeltfilgrensen står også i basen, ikke bare i parseren.
-    storrelse_bytes BIGINT NOT NULL
-        CONSTRAINT dokument_enkeltfilgrense
-        CHECK (storrelse_bytes >= 0
-               AND storrelse_bytes <= 25 * 1024 * 1024),
+    storrelse_bytes BIGINT NOT NULL,
     innhold_sha256 TEXT NOT NULL,
     opprettet TIMESTAMPTZ NOT NULL DEFAULT now(),
     slettet_ts TIMESTAMPTZ,
@@ -133,6 +130,17 @@ CREATE TABLE kandidat_originaldokument (
         PRIMARY KEY (tenant, prosess_id, kandidat_id, dokument_id),
     CONSTRAINT originaldokument_prosess_fk FOREIGN KEY (tenant, prosess_id)
         REFERENCES rekrutteringsprosess (tenant, prosess_id),
+    -- Grensen måles på de LAGREDE bytene, ikke på påstanden om dem
+    -- (Codex P2). `storrelse_bytes` kommer fra parseren, og en skriver som
+    -- satte 1 kunne lagre et vilkårlig stort dokument — da var «25 MB i
+    -- basen» bare parserens tall en gang til. Metadatakolonnen beholdes,
+    -- men er bundet til målingen: spriker de, finnes ikke raden.
+    CONSTRAINT dokument_enkeltfilgrense
+        CHECK (storrelse_bytes >= 0
+               AND storrelse_bytes <= 25 * 1024 * 1024
+               AND (dokument IS NULL
+                    OR (octet_length(dokument) <= 25 * 1024 * 1024
+                        AND storrelse_bytes = octet_length(dokument)))),
     -- Filnavnet er persondata så godt som noe (fornavn.etternavn-cv.pdf)
     -- og reapes med innholdet.
     CONSTRAINT originaldokument_payload_folger_slettet
