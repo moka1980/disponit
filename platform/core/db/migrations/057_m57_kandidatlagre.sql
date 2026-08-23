@@ -524,6 +524,19 @@ BEGIN
         END LOOP;
         NEW.innhold_sha256 :=
             encode(sha256(convert_to(v_payload::text, 'UTF8')), 'hex');
+        -- `opprettet` UTLEDES av samme grunn (Codex P2). DEFAULT now()
+        -- gjelder bare når kolonnen utelates, og runtime har INSERT rett
+        -- på de seks tabellene — den er ikke tvunget gjennom defaulten.
+        -- En skriver som satte tidspunktet selv, satte det for godt:
+        -- `opprettet` er ikke payload, så den overlever reapingen som
+        -- revisjonsevidens, og UPDATE-vakten under gjør den immutabel.
+        -- Da er ETTER-siden av lagerraden — hva som ble skrevet, når —
+        -- kallerens påstand, mens innholdet ved siden av er målt. Etter
+        -- denne linjen er `opprettet` basens klokke, ikke skriverens, og
+        -- klassen er lukket: `storrelse_bytes` er CHECK-bundet til
+        -- `octet_length`, `innhold_sha256` utledes over, og dette var den
+        -- siste bestående kolonnen kalleren fortsatt eide.
+        NEW.opprettet := pg_catalog.now();
         RETURN NEW;
     END IF;
     IF TG_OP <> 'UPDATE' THEN

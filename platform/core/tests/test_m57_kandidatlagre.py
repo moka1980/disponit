@@ -1763,6 +1763,52 @@ def test_innhold_sha256_utledes_av_payloaden_ikke_av_kalleren(migrator):
 
 
 @pg
+def test_opprettet_settes_av_basen_ikke_av_kalleren(migrator):
+    """Codex P2: `opprettet` var kallerens påstand om NÅR raden ble til.
+
+    DEFAULT now() gjelder bare når kolonnen utelates, og runtime har
+    INSERT rett på de seks tabellene — den er ikke tvunget gjennom
+    defaulten. `opprettet` er ikke payload, så den overlever reapingen
+    som revisjonsevidens, og UPDATE-vakten gjør den immutabel: et falskt
+    eller feil tidspunkt ble dermed PERMANENT, ved siden av et innhold
+    som er målt. Da er «hva ble skrevet, når» halvveis evidens.
+
+    Porten måler EGENSKAPEN: kallerens verdi overlever ikke, verken
+    frem eller bakover i tid — til forskjell fra ANKERET, der en fødsel
+    bakover er lovlig fordi den KORTER levetiden.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `NEW.opprettet := pg_catalog.now()`
+    fra INSERT-grenen i `m57_kandidatlager_vakt`."""
+    rt = _rt()
+    try:
+        _, pid = _prosess(migrator, rt)
+        _sett_kontekst(rt, TENANT)
+        kid_frem, kid_bak = uuid.uuid4(), uuid.uuid4()
+        for kid, forskyvning in ((kid_frem, "+ interval '400 days'"),
+                                 (kid_bak, "- interval '400 days'")):
+            rt.execute(
+                "INSERT INTO kandidat_evalueringsartefakt (tenant,"
+                " prosess_id, kandidat_id, artefakt, innhold_sha256,"
+                f" opprettet) VALUES (%s,%s,%s,'{{}}','0',"
+                f" now() {forskyvning})",
+                (TENANT, pid, kid))
+        rader = dict(rt.execute(
+            "SELECT kandidat_id::text, opprettet FROM"
+            " kandidat_evalueringsartefakt WHERE prosess_id=%s", (pid,)
+        ).fetchall())
+        naa, ett_dogn = rt.execute(
+            "SELECT now(), interval '1 day'").fetchone()
+        for kid in (kid_frem, kid_bak):
+            avvik = abs(rader[str(kid)] - naa)
+            assert avvik < ett_dogn, \
+                (f"kallerens tidspunkt overlevde ({rader[str(kid)]}) —"
+                 " opprettet er ikke utledet av basen")
+        rt.rollback()
+    finally:
+        rt.close()
+
+
+@pg
 def test_reap_utvalget_er_indeksert_paa_de_ureapede(migrator):
     """Codex P2: timerens utvalg hadde ingen indeks.
 
