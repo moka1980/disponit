@@ -240,6 +240,21 @@ OPPDRAGSTYPER: dict[str, Oppdragstype] = {
         # bestillingsvei ufullstendig for et valg de fleste ikke tar.
         # Verdien er bundet i `FELTGRENSER` under — samme spennet som
         # `prosess_frist_i_spennet`, målt der bestillingen tas imot.
+        #
+        # UTSATT, K1 → #162: `soknadsbunt_ref` er PÅKREVD, men det finnes
+        # ingen produsent, ingen resolver og ingen binær artefaktvei i
+        # repoet (Codex P1). Den ene opplastingsflaten,
+        # `api/app.py::_artefakt_upload`, tar et JSON-`rapport`-objekt,
+        # autoriseres av en UTDATA-kapabilitet utstedt etter claim, og er
+        # kanonisert (JCS) — den kan hverken bære en zip inn eller gi
+        # modulen noe å hente. Hver ekte bestilling når altså modulen med
+        # en streng ingen kan slå opp, og `inspiser_bunt` har ingen fil å
+        # inspisere. Lukkingen er en INNDATA-artefaktkontrakt: en bundet
+        # binær vei inn med deklarert maksimal fysisk størrelse, utstedt
+        # før claim, med resolver modulen kaller. Det er en maskin —
+        # opplastingsflate, kapabilitetsform, lager og oppslag — ikke en
+        # lapp i en frozenset, og den bærer også manifestet fra #161 og
+        # katalogbudsjettet fra `inspiser_bunt`s docstring.
         felter=frozenset({"stillingsprofil_ref", "soknadsbunt_ref",
                           "antall_soknader", "omfang",
                           "slettefrist_dogn"}),

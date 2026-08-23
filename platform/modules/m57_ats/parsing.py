@@ -131,6 +131,20 @@ def inspiser_bunt(sti: str | Path) -> list[Medlem]:
     (SP-13/K4): en kandidatform kan ikke gjettes ut av katalogen, den må
     DEKLARERES.
 
+    UTSATT, K1 → #162 — `MAKS_FILER` måles ETTER at `infolist()` har
+    materialisert hver eneste `ZipInfo` (Codex P2). En kompakt zip med
+    ~100 000 oppføringer koster derfor både parsetid og et objekt per
+    oppføring FØR grensen rekker å avvise den, altså nøyaktig det
+    arbeidet budsjettet finnes for å holde. Å måle antallet først krever
+    at noen leser sentralkatalogens EOCD-post (og ZIP64-lokatoren) — en
+    bit av zip-grammatikken lest for hånd, som er SP-13/K4 rett i
+    ansiktet, eller en bundet katalogleser, som er en maskin. Den ekte
+    lukkingen er BUNDET INNDATA: bunten har i dag ingen deklarert fysisk
+    størrelse fordi den ikke har noen vei inn (samme rot som
+    `soknadsbunt_ref`, #162), og med en bundet vei inn er arbeidet her
+    bundet av et tall noen har signert. Ny maskin: #162, ikke en
+    fiksrunde.
+
     Eiers avgjørelse: **B — bunten bærer et manifest.** Et lukket
     `soknader.json` i buntens rot navngir hver kandidat og filene hens;
     en ekte parser slår manifestet opp mot de faktiske medlemmene begge
