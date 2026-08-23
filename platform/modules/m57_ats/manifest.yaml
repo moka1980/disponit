@@ -1,0 +1,64 @@
+# M-57 Rekrutteringsagent (ATS) — modulmanifest.
+#
+# Status er UNDER_UTVIKLING til M-57-aksepten (ordinær deployment-aksept,
+# 049–053) er kjørt og skrevet i basen — flippet til aktiv/produksjon er
+# katalogens AVLESNING av en aksepthendelse, aldri en påstand i forkant
+# (m56/m02-formen). Evidensgrensen `m57-v1` er registrert i
+# manifestskjema.KRAVGRENSER FØR byggingen (klarsignalet §0), og hvert
+# sjekklistepunkt under peker dit: et punkt uten definert, målbar grense
+# regnes som nei.
+#
+# Det bærende (klarsignalet §1): evalueringen er RÅDGIVENDE — den skriver
+# artefakter og ingenting utad. Utsendelsen er IRREVERSIBEL og skjer kun
+# fordi et menneske signerte; den er ikke et modulnoppdrag, men en
+# signaturbundet frigivelse gjennom 056-kjeden.
+id: ats
+navn: Rekrutteringsagent (ATS)
+versjon: 0.1.0
+status: under_utvikling        # aktiv | inaktiv | under_utvikling
+driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+avhengigheter:
+  - m01_policy                 # bestilling går gjennom beslutningsveien
+  - m02_revisjonslogg          # én skrivevei til evidenskjeden
+kjerne: platform/modules/m57_ats
+i18n_prefiks: m57ats
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    krav_id: m57-v1
+    notat: >-
+      Lukkes av M-57-akseptarcen: suitekjøring på staging med modulens
+      andel pinnet (m02-suite-formen), målt mot KRAVGRENSER['m57-v1'].
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    krav_id: m57-v1
+    notat: >-
+      Syntetisk søknadsbunt med fasit-rangering, drevet både lokalt (CI)
+      og på staging — samme sett målt med samme sha (m02-fordelings-
+      formen).
+  revisjonslogg_korrekt:
+    status: nei
+    krav_id: m57-v1
+    notat: >-
+      Blinding-avskruinger, signaturhendelser og frigivelser står i
+      revisjonsloggen; måles i akseptarcen.
+  feilinjisering_til_unntakskø:
+    status: nei
+    krav_id: m57-v1
+    notat: >-
+      Avbrutt parsing/evaluering gir rent feilutfall uten promotert
+      liste (SP-3) og havner i unntakskøen; måles i akseptarcen.
+  ytelse_bestatt:
+    status: nei
+    krav_id: m57-v1
+    notat: >-
+      240-minuttersfristen (§4) reverifiseres mot målt prøvekjøring med
+      full bunt før merge av akseptflippet — avvik oppdaterer
+      klarsignalet, aldri porten.
+  rollback_testet:
+    status: nei
+    krav_id: m57-v1
+    notat: >-
+      049-flippedrillen for modulens release; ddl_begge_kjoringer_gronne
+      i m57-v1 bærer SP-10-målingen.

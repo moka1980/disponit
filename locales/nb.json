@@ -1036,6 +1036,8 @@
   "site.katalog.m56.navn": "Automatisk WCAG-kontroll",
   "site.modul.m56.navn": "Automatisk WCAG-kontroll",
   "site.modul.m56.tekst": "Kontrollerer nettsteder du har bekreftet at du kontrollerer, og lagrer rapporten som evidens.",
+  "site.modul.m57.navn": "Rekrutteringsagent (ATS)",
+  "site.modul.m57.tekst": "Leser og rangerer opptil 5000 søknader blindet mot stillingens krav — mennesket beslutter hvem som går videre, og ingen utsendelse skjer uten signatur.",
   "ui.wcag.fane.plan": "Periodisk kontroll",
   "ui.historikk.knapp": "Versjonshistorikk",
   "ui.historikk.tittel": "Versjonshistorikk — {policy}",

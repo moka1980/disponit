@@ -187,6 +187,27 @@ OPPDRAGSTYPER: dict[str, Oppdragstype] = {
                      " observerbar trafikk ut, ingen ekstern mutasjon;"
                      " målautorisasjon + frekvens håndheves av"
                      " aktiveringsporten, egress/robots av 014b.")),
+    # M-57 (klarsignalet §1): evalueringen er RÅDGIVENDE — artefakter,
+    # ingenting utad. LUKKET payload: stillingsprofilen (vektede krav),
+    # referansen til søknadsbunten i artefaktlageret, antallet (verdi-
+    # bundet under — aldri stille avkorting) og omfanget som bærer
+    # fristen. Blinding er STANDARD PÅ og er derfor ikke et felt her:
+    # å skru den av er en auditert handling i modulflaten (§6), ikke en
+    # bestillingsparameter en integrasjon kan liste forbi.
+    "rekruttering.evaluering": Oppdragstype(
+        navn="rekruttering.evaluering",
+        handlingsprefikser=("rekruttering.evaluering.",),
+        felter=frozenset({"stillingsprofil_ref", "soknadsbunt_ref",
+                          "antall_soknader", "omfang"}),
+        paakrevde=frozenset({"stillingsprofil_ref", "soknadsbunt_ref",
+                             "antall_soknader", "omfang"}),
+        eiermodul="m_ats",
+        produserer_artefakt=True,
+        rapport_artefakttype="rekruttering.evalueringsrapport",
+        beskrivelse=("M-57: leser og rangerer opptil 5000 søknader mot"
+                     " stillingens krav i isolert container — ingen"
+                     " ekstern trafikk, ingen mutasjon; utsendelse er en"
+                     " egen, signaturbundet vei (056).")),
 }
 
 
@@ -683,6 +704,9 @@ def mangler_paakrevde(oppdragstype: str, minimert: dict) -> list[str]:
 #: samme: bestillingsveien (M-37) skal ikke opprette oppdraget, og
 #: utføreren skal avvise det uten å røre målet om det likevel finnes.
 FELTVERDIER: dict[str, dict[str, tuple]] = {
+    # M-57: ett omfang i v1 — «bunt». Enumen er lukket med vilje: en ny
+    # verdi skal være en feil (og en fristbeslutning), ikke stillhet.
+    "rekruttering.evaluering": {"omfang": ("bunt",)},
     "kontroll.wcag.nettsted": {
         # Samme lukkede enum som rapportskjemaets `kravsett`: et oppdrag
         # med en annen verdi kan ikke gi en rapport som validerer.
@@ -697,6 +721,10 @@ FELTVERDIER: dict[str, dict[str, tuple]] = {
 #: oppfylle, siden `sider_kontrollert` har `maxItems: 50`.
 FELTGRENSER: dict[str, dict[str, tuple[int, int]]] = {
     "kontroll.wcag.nettsted": {"maks_sider": (1, 50)},
+    # M-57-klarsignalet §4: 5000 er HARD — 5001 avvises ved validering,
+    # aldri stille avkorting (katalogens løfte er «opptil 5000», og et
+    # oppdrag som fikk 5001 har alt brutt det før parseren startet).
+    "rekruttering.evaluering": {"antall_soknader": (1, 5000)},
 }
 
 #: URL-felter hvis RAPPORTFORM (`rapporturl`) har en lengdegrense, per

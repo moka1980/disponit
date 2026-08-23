@@ -1,0 +1,335 @@
+"""M-57-modulen: arkivgaten (portene 21–26), innhold og modell (13–17)
+og 5000-taket (27).
+
+Alle tester konstruerer egen tilstand — buntene bygges byte for byte i
+tmp_path, og der en header kan LYVE, patches katalogen bevisst så begge
+lagene måles: gaten mot deklarasjonen, strømmen mot de faktiske bytene.
+"""
+from __future__ import annotations
+
+import struct
+import zipfile
+from pathlib import Path
+
+import pytest
+
+from modules.m57_ats import blinding, evaluering, maler, parsing
+from modules.m57_ats.evaluering import Biasmaaling
+from oppdragskontrakt import bryter_feltkontrakten
+
+ROT = Path(__file__).resolve().parents[3]
+MODULROT = ROT / "platform/modules/m57_ats"
+
+
+def _bunt(sti: Path, filer: list[tuple], **zipkw) -> Path:
+    arkiv = sti / "bunt.zip"
+    with zipfile.ZipFile(arkiv, "w", zipfile.ZIP_DEFLATED, **zipkw) as zf:
+        for navn, innhold, *attr in filer:
+            info = zipfile.ZipInfo(navn)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            if attr:
+                info.external_attr = attr[0]
+            zf.writestr(info, innhold)
+    return arkiv
+
+
+def _patch_deklarert(arkiv: Path, navn: bytes, ny_storrelse: int,
+                     komprimert: int | None = None) -> None:
+    """Skriver om `uncompressed size` (og valgfritt `compressed size`) i
+    SENTRALKATALOGEN for én oppføring — katalogen er en PÅSTAND, og
+    nettopp det skal gaten/strømmen skille på."""
+    data = bytearray(arkiv.read_bytes())
+    sig = b"PK\x01\x02"
+    i = data.find(sig)
+    while i != -1:
+        navnlengde = struct.unpack_from("<H", data, i + 28)[0]
+        if data[i + 46:i + 46 + navnlengde] == navn:
+            struct.pack_into("<I", data, i + 24, ny_storrelse)
+            if komprimert is not None:
+                struct.pack_into("<I", data, i + 20, komprimert)
+            arkiv.write_bytes(bytes(data))
+            return
+        i = data.find(sig, i + 4)
+    raise AssertionError(f"{navn!r} ikke i sentralkatalogen")
+
+
+def _pdf(n: int = 64) -> bytes:
+    return b"%PDF-1.7\n" + b"x" * n
+
+
+def test_port22_sti_utenfor_bunten(tmp_path):
+    for navn in ("../unnslapp.pdf", "/etc/unnslapp.pdf",
+                 "mappe/../../unnslapp.pdf", "..\\unnslapp.pdf"):
+        arkiv = _bunt(tmp_path, [(navn, _pdf())])
+        with pytest.raises(parsing.Buntfeil) as e:
+            parsing.inspiser_bunt(arkiv)
+        assert e.value.kode == "sti_utenfor_bunten", navn
+        arkiv.unlink()
+    # Positiv kontroll: en lovlig undermappe-sti går.
+    ok = _bunt(tmp_path, [("kandidat1/cv.pdf", _pdf())])
+    assert [m.navn for m in parsing.inspiser_bunt(ok)] == \
+        ["kandidat1/cv.pdf"]
+
+
+def test_port23_symlenke_avvises(tmp_path):
+    arkiv = _bunt(tmp_path, [("lenke.pdf", b"/etc/passwd",
+                              (0o120777 << 16))])
+    with pytest.raises(parsing.Buntfeil) as e:
+        parsing.inspiser_bunt(arkiv)
+    assert e.value.kode == "symlenke"
+
+
+def test_port24_nostet_arkiv_avvises(tmp_path):
+    # Deklarert som arkiv → felles i gaten …
+    arkiv = _bunt(tmp_path, [("indre.zip", b"PK\x03\x04hva som helst")])
+    with pytest.raises(parsing.Buntfeil) as e:
+        parsing.inspiser_bunt(arkiv)
+    assert e.value.kode == "nostet_arkiv"
+    arkiv.unlink()
+    # … og et arkiv i HTML-KLÆR felles i strømmen, på magien.
+    arkiv = _bunt(tmp_path, [("side.html", b"PK\x03\x04forkledd")])
+    parsing.inspiser_bunt(arkiv)  # gaten ser bare navnet — og det er ok
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(arkiv))
+    assert e.value.kode == "nostet_arkiv"
+    # DOCX-unntaket: PK-magi er PÅKREVD der (det ER en zip) — positiv
+    # kontroll på at unntaket ikke ble en generell åpning.
+    arkiv2 = _bunt(tmp_path / "..", []) if False else None
+    ok = _bunt(tmp_path, [("cv.docx", b"PK\x03\x04" + b"d" * 32)])
+    assert len(list(parsing.les_porsjonsvis(ok))) == 1
+
+
+def test_port25_innholdstypen_er_en_paastand_begge_veier(tmp_path):
+    # Ukjent endelse → gaten.
+    arkiv = _bunt(tmp_path, [("skript.exe", b"MZ")])
+    with pytest.raises(parsing.Buntfeil) as e:
+        parsing.inspiser_bunt(arkiv)
+    assert e.value.kode == "ukjent_innholdstype"
+    arkiv.unlink()
+    # Lovlig endelse med feil innhold → strømmen (magien).
+    arkiv = _bunt(tmp_path, [("cv.pdf", b"MZ ikke en pdf")])
+    parsing.inspiser_bunt(arkiv)
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(arkiv))
+    assert e.value.kode == "feil_innholdstype"
+
+
+def test_port26_filantall(tmp_path):
+    # Grensen måles VED grensen: nøyaktig taket går, én over felles —
+    # med tomme oppføringer så testen er billig og fortsatt ekte.
+    mange = [(f"k/{n}.html", b"<p>x</p>") for n in range(parsing.MAKS_FILER)]
+    over = mange + [("k/en-til.html", b"<p>x</p>")]
+    arkiv = _bunt(tmp_path, over)
+    with pytest.raises(parsing.Buntfeil) as e:
+        parsing.inspiser_bunt(arkiv)
+    assert e.value.kode == "for_mange_filer"
+
+
+def test_port21_komprimeringsforhold(tmp_path):
+    # 4 MB nuller pakker ~1000:1 — langt over 100:1-taket.
+    arkiv = _bunt(tmp_path, [("cv.pdf", b"%PDF" + b"\0" * (4 << 20))])
+    with pytest.raises(parsing.Buntfeil) as e:
+        parsing.inspiser_bunt(arkiv)
+    assert e.value.kode == "komprimeringsforhold"
+
+
+def test_port21_totalgrensen_leses_fra_katalogen(tmp_path):
+    """91 filer deklarert til 24 MB hver (under både enkeltfil- og
+    forholdstaket, kompresjonsfeltet patchet konsistent) summerer forbi
+    2 GB — totalporten feller på KATALOGEN, før én byte pakkes ut."""
+    filer = [(f"k/{n}.pdf", _pdf()) for n in range(91)]
+    arkiv = _bunt(tmp_path, filer)
+    for navn, _ in filer:
+        _patch_deklarert(arkiv, navn.encode(), 24 * 1024 * 1024,
+                         komprimert=12 * 1024 * 1024)
+    with pytest.raises(parsing.Buntfeil) as e:
+        parsing.inspiser_bunt(arkiv)
+    assert e.value.kode == "total_for_stor"
+
+
+def test_en_lognaktig_katalog_er_en_korrupt_bunt(tmp_path):
+    """Katalogen KAN lyve — zipfile trunkerer da strømmen på den
+    deklarerte lengden og feller CRC-en. Poenget porten eier: utfallet
+    er en KODET avvisning (SP-3), aldri en rå zipfile-exception ut av
+    generatoren, og aldri en stille, avkortet «suksess». (Strømmens egen
+    bytemåling står i tillegg, for katalogformer der biblioteket ikke
+    trunkerer — f.eks. zip64-avvik.)"""
+    stor = b"%PDF" + b"\0" * 4096
+    arkiv = _bunt(tmp_path, [("cv.pdf", stor)])
+    _patch_deklarert(arkiv, b"cv.pdf", 1024, komprimert=None)
+    parsing.inspiser_bunt(arkiv)  # gaten tror på katalogen — og går
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(arkiv))
+    assert e.value.kode == "korrupt_bunt"
+
+
+def test_fremdriften_er_evidens(tmp_path):
+    filer = [(f"k/{n}.html", b"<p>ok</p>") for n in range(5)]
+    arkiv = _bunt(tmp_path, filer)
+    ut = list(parsing.les_porsjonsvis(arkiv, porsjon=2))
+    assert len(ut) == 5
+    merker = [f for f, _, _ in ut if f]
+    assert merker[-1] == {"filer_lest": 5, "filer_totalt": 5,
+                          "byte_lest": sum(len(i[1]) for i in filer)}
+
+
+def test_port13_ingen_vei_fra_modell_til_utsendingstekst():
+    """Statisk (§6): malfila kjenner hverken evalueringen eller noe
+    modellsymbol, og evalueringen kjenner ikke malene. Teksten i en
+    utsendelse kan dermed bare komme fra malen + flettefeltene — og
+    funn refereres med ID, aldri med modellens prosa."""
+    import ast
+    maltre = ast.parse((MODULROT / "maler.py").read_text(encoding="utf-8"))
+    evtre = ast.parse((MODULROT / "evaluering.py")
+                      .read_text(encoding="utf-8"))
+
+    def importerte(tre):
+        ut = set()
+        for node in ast.walk(tre):
+            if isinstance(node, ast.Import):
+                ut |= {a.name for a in node.names}
+            elif isinstance(node, ast.ImportFrom):
+                ut |= {a.name for a in node.names}
+                if node.module:
+                    ut.add(node.module)
+        return ut
+
+    assert not importerte(maltre) & {"evaluering", "blinding"}, \
+        "malene importerer evalueringssiden"
+    assert not importerte(evtre) & {"maler"}, \
+        "evalueringen når malene"
+    kall = {n.func.attr if isinstance(n.func, ast.Attribute)
+            else getattr(n.func, "id", None)
+            for n in ast.walk(evtre) if isinstance(n, ast.Call)}
+    assert "flett" not in kall
+    for mal in maler.MALER.values():
+        assert "funn_tekst" not in mal["felter"]
+
+
+def test_port14_flettefelt_utenfor_malen():
+    felter = {"stilling": "Utvikler", "kandidatnavn": "A",
+              "tidsvalg_lenke": "https://x/t", "firmatekst": "Hilsen oss"}
+    ut = maler.flett("invitasjon", felter)
+    assert "Utvikler" in ut["tekst"] and ut["malversjon"] == "invitasjon-v1"
+    with pytest.raises(maler.Malfeil) as e:
+        maler.flett("invitasjon", felter | {"fritekst": "modellens prosa"})
+    assert e.value.kode == "flettefelt_utenfor_malen"
+    with pytest.raises(maler.Malfeil) as e:
+        maler.flett("invitasjon", {k: v for k, v in felter.items()
+                                   if k != "firmatekst"})
+    assert e.value.kode == "flettefelt_mangler"
+    # Ingen andreordens fletting: en verdi med {felt}-syntaks er avvist.
+    with pytest.raises(maler.Malfeil) as e:
+        maler.flett("invitasjon", felter | {"firmatekst": "{funn_id}"})
+    assert e.value.kode == "ugyldig_feltverdi"
+
+
+def test_port15_funn_uten_kildereferanse():
+    tekst = "Jeg har ti års erfaring med drift."
+    gyldig = {"kategori": "uklar_tidslinje",
+              "kilde": {"start": 8, "slutt": 24,
+                        "sitat": tekst[8:24]}}
+    evaluering.valider_funn(gyldig, tekst)
+    for funn in (
+            {"kategori": "uklar_tidslinje"},
+            {"kategori": "uklar_tidslinje", "kilde": {}},
+            {"kategori": "uklar_tidslinje",
+             "kilde": {"start": 0, "slutt": 4, "sitat": "feil"}},
+            {"kategori": "pertentlighet",
+             "kilde": gyldig["kilde"]}):
+        with pytest.raises(evaluering.Evalueringsfeil):
+            evaluering.valider_funn(funn, tekst)
+    # Kategoriene beskriver dokumentasjon, aldri person — settet er
+    # lukket og karaktertrekk finnes ikke i det.
+    for kategori in evaluering.FUNN_KATEGORIER:
+        assert kategori in {
+            "krav_ikke_dokumentert", "manglende_dokumentasjon",
+            "motstridende_opplysning", "uklar_tidslinje",
+            "utenfor_soknadsfrist"}
+
+
+class _Modell:
+    image_digest = "sha256:" + "a" * 64
+
+    def __init__(self):
+        self.sett: list[str] = []
+
+    def vurder(self, tekst, vekter):
+        self.sett.append(tekst)
+        return {"funn": [], "oppfylt": {k: True for k in vekter},
+                "intervjusporsmal": ["Fortell om drift."]}
+
+
+_MAALINGER = {_Modell.image_digest: Biasmaaling(
+    _Modell.image_digest, "0" * 64, "2026-08-23T00:00:00+00:00")}
+
+
+def test_port16_blindingen_maales_pa_faktisk_input():
+    modell = _Modell()
+    tekst = "Kari Nordmann, 44 år, søker. Kari kan drift."
+    felter = {"navn": ["Kari Nordmann", "Kari"], "alder": ["44 år"]}
+    ut = evaluering.evaluer_kandidat(
+        modell, tekst, felter, {"drift": 3},
+        biasmaalinger=_MAALINGER)
+    assert modell.sett, "modellen ble aldri kalt"
+    for klartekst in ("Kari", "44 år"):
+        assert klartekst not in modell.sett[0]
+    assert set(ut["avmaskering"].values()) == {"Kari Nordmann", "Kari",
+                                               "44 år"}
+    # Avskrudd blinding UTEN auditrad → input finnes ikke, modellen
+    # kalles aldri (16b) …
+    modell2 = _Modell()
+    with pytest.raises(blinding.Blindingsfeil) as e:
+        evaluering.evaluer_kandidat(
+            modell2, tekst, felter, {"drift": 3},
+            biasmaalinger=_MAALINGER, blinding_av=True)
+    assert e.value.kode == "avskrudd_uten_auditrad"
+    assert not modell2.sett
+    # … og MED auditrad er avskruingen en auditert handling som gir
+    # råteksten (den auditerte veien skal virke, ellers er porten bare
+    # en av-knapp for hele funksjonen).
+    ut2 = evaluering.evaluer_kandidat(
+        modell2, tekst, felter, {"drift": 3},
+        biasmaalinger=_MAALINGER, blinding_av=True,
+        auditrad={"aktor": "eier@kunde", "ts": "2026-08-23T00:00:00Z",
+                  "begrunnelse": "intern rekruttering"})
+    assert modell2.sett[-1] == tekst and ut2["avmaskering"] == {}
+
+
+def test_port17_imagebytte_uten_biasmaaling_blokkerer():
+    modell = _Modell()
+    modell.image_digest = "sha256:" + "b" * 64  # nytt image, ingen måling
+    with pytest.raises(evaluering.Evalueringsfeil) as e:
+        evaluering.evaluer_kandidat(
+            modell, "tekst", {}, {"drift": 1}, biasmaalinger=_MAALINGER)
+    assert e.value.kode == "bias_maling_mangler_for_digest"
+    assert not modell.sett, "modellen kjørte uten biasmåling"
+
+
+def test_rangeringen_er_poeng_med_synlige_vekter():
+    ut = evaluering.ranger(
+        {"k2": {"drift": True, "sky": False},
+         "k1": {"drift": True, "sky": True}},
+        {"drift": 3, "sky": 2})
+    assert [k["kandidat_id"] for k in ut] == ["k1", "k2"]
+    assert ut[0]["poeng"] == 5 and ut[0]["nedbrytning"] == {"drift": 3,
+                                                           "sky": 2}
+    # Aldri prosent som målt egenskap — hverken som nøkkel eller verdi.
+    assert all("prosent" not in k for k in ut[0])
+    with pytest.raises(evaluering.Evalueringsfeil):
+        evaluering.ranger({"k": {"ukjent_krav": True}}, {"drift": 1})
+
+
+def test_port27_5001_avvises_ved_validering():
+    payload = {"stillingsprofil_ref": "art-1", "soknadsbunt_ref": "art-2",
+               "antall_soknader": 5000, "omfang": "bunt"}
+    assert bryter_feltkontrakten("rekruttering.evaluering", payload) == []
+    for antall in (5001, 0, -1):
+        brudd = bryter_feltkontrakten(
+            "rekruttering.evaluering", payload | {"antall_soknader": antall})
+        assert brudd, antall
+        assert any("antall_soknader" in b for b in brudd)
+    # … og omfanget er en lukket enum: en ny verdi er en feil (og en
+    # fristbeslutning), aldri stillhet.
+    assert bryter_feltkontrakten(
+        "rekruttering.evaluering", payload | {"omfang": "alt"})

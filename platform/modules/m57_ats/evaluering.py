@@ -1,0 +1,121 @@
+"""Evaluering (klarsignalet §6): rangering med synlige vekter — aldri
+prosent som målt egenskap; risikofunn krever kildereferanse i
+søknadsteksten; lukket kategorisett uten karaktertrekk-kategorier;
+modellen er et container-image der digesten ER modellversjonen, og
+biasmåling bundet til digesten er akseptkrav.
+
+Modellen er INJISERT (m56s motor-form): denne fila eier kontrakten
+rundt den — blindet input inn, skjemavaliderte funn ut — aldri selve
+kjøringen.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from . import blinding
+
+#: Lukket kategorisett (§6). Ingen karaktertrekk: kategoriene beskriver
+#: DOKUMENTASJONEN mot stillingens krav, aldri personen. En ny kategori
+#: er en kontraktsendring, ikke en modellidé.
+FUNN_KATEGORIER = frozenset({
+    "krav_ikke_dokumentert",
+    "manglende_dokumentasjon",
+    "motstridende_opplysning",
+    "uklar_tidslinje",
+    "utenfor_soknadsfrist",
+})
+
+
+class Evalueringsfeil(Exception):
+    def __init__(self, kode: str, detalj: str = ""):
+        self.kode = kode
+        super().__init__(f"{kode}: {detalj}" if detalj else kode)
+
+
+def valider_funn(funn: dict, soknadstekst: str) -> None:
+    """Skjemaporten (port 15): et funn uten kildereferanse som ordrett
+    står i søknadsteksten, finnes ikke. Sitatet måles mot teksten på
+    [start:slutt] — en referanse som ikke treffer er like avvist som en
+    som mangler."""
+    kategori = funn.get("kategori")
+    if kategori not in FUNN_KATEGORIER:
+        raise Evalueringsfeil("ukjent_kategori", repr(kategori))
+    kilde = funn.get("kilde")
+    if not isinstance(kilde, dict):
+        raise Evalueringsfeil("uten_kildereferanse")
+    start, slutt, sitat = (kilde.get("start"), kilde.get("slutt"),
+                           kilde.get("sitat"))
+    if (not isinstance(start, int) or not isinstance(slutt, int)
+            or not isinstance(sitat, str) or not sitat
+            or soknadstekst[start:slutt] != sitat):
+        raise Evalueringsfeil("uten_kildereferanse")
+
+
+def ranger(kandidater: dict[str, dict[str, bool]],
+           vekter: dict[str, int]) -> list[dict]:
+    """Rangering med SYNLIGE vekter: poengsummen er en sum av
+    vekt × oppfylt per krav, og nedbrytningen følger med hvert innslag.
+    Ingen prosent, ingen «match score» — poeng er poeng (§6).
+    """
+    if not vekter or any(not isinstance(v, int) or v < 0
+                         for v in vekter.values()):
+        raise Evalueringsfeil("ugyldige_vekter")
+    ut = []
+    for kandidat_id, oppfylt in kandidater.items():
+        ukjente = set(oppfylt) - set(vekter)
+        if ukjente:
+            raise Evalueringsfeil("krav_utenfor_profilen",
+                                  ",".join(sorted(ukjente)))
+        nedbrytning = {krav: (vekter[krav] if oppfylt.get(krav) else 0)
+                       for krav in vekter}
+        ut.append({"kandidat_id": kandidat_id,
+                   "poeng": sum(nedbrytning.values()),
+                   "nedbrytning": nedbrytning})
+    # Stabil orden: poeng synkende, deretter kandidat-id — likhet skal
+    # være synlig som likhet, aldri stille avgjort av dict-rekkefølgen.
+    ut.sort(key=lambda k: (-k["poeng"], k["kandidat_id"]))
+    return ut
+
+
+@dataclass(frozen=True)
+class Biasmaaling:
+    image_digest: str
+    artefakt_sha256: str
+    ts: str
+
+
+def krev_biasmaaling(image_digest: str,
+                     maalinger: dict[str, Biasmaaling]) -> Biasmaaling:
+    """Port 17: et imagebytte uten NY biasmåling blokkerer aksepten.
+    Målingen er bundet til digesten — samme modellfil bak ny digest er
+    en ny modellversjon med et nytt bevisbehov."""
+    maaling = maalinger.get(image_digest)
+    if maaling is None or maaling.image_digest != image_digest:
+        raise Evalueringsfeil("bias_maling_mangler_for_digest",
+                              image_digest)
+    return maaling
+
+
+def evaluer_kandidat(modell, soknadstekst: str,
+                     kandidatfelter: dict[str, list[str]],
+                     vekter: dict[str, int], *,
+                     biasmaalinger: dict[str, Biasmaaling],
+                     blinding_av: bool = False,
+                     auditrad: dict | None = None) -> dict:
+    """Én kandidat gjennom hele kontrakten: biasmåling for modellens
+    digest (port 17), blindet input (port 16), skjemavaliderte funn
+    (port 15). Modellen får ALDRI se råteksten når blinding står på —
+    rekkefølgen her er selve invarianten, ikke en implementasjonsdetalj.
+    """
+    krev_biasmaaling(modell.image_digest, biasmaalinger)
+    tekst, avmaskering = blinding.evalueringsinput(
+        soknadstekst, kandidatfelter,
+        blinding_av=blinding_av, auditrad=auditrad)
+    blinding.krev_blindet(tekst, avmaskering)
+    svar = modell.vurder(tekst, vekter)
+    for funn in svar.get("funn", ()):
+        valider_funn(funn, tekst)
+    return {"funn": list(svar.get("funn", ())),
+            "oppfylt": dict(svar.get("oppfylt", {})),
+            "intervjusporsmal": list(svar.get("intervjusporsmal", ())),
+            "avmaskering": avmaskering}

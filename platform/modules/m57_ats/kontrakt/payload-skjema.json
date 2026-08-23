@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/m57payload-v1.json",
+  "title": "rekruttering.evaluering payload",
+  "comment": "Speiler oppdragskontraktens lukkede feltsett - minimeringen der er siste skanse for feltbredden, dette skjemaet er utforerens egen avvisning av en payload den aldri skulle faatt (m56-formen).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "stillingsprofil_ref",
+    "soknadsbunt_ref",
+    "antall_soknader",
+    "omfang"
+  ],
+  "properties": {
+    "stillingsprofil_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "soknadsbunt_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "antall_soknader": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5000
+    },
+    "omfang": {
+      "const": "bunt"
+    }
+  }
+}
