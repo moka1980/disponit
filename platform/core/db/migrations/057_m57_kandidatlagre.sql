@@ -425,6 +425,27 @@ BEGIN
     -- kappløpsserialiseringen mot reaperen finnes heller ikke på denne
     -- veien. Vakten kan bare svare på det den SÅ — så en forelder den
     -- ikke så, er en avvisning.
+    --
+    -- UTSATT, K2 → #164. Vakten leser `slettet_ts`, ikke `lukket_ts`
+    -- (Codex P1): en forsinket skriver — også en INSERT som sto og
+    -- ventet på selve lukketransaksjonen — slipper gjennom ETTER at
+    -- `lukk_rekrutteringsprosess` har lukket prosessen. Har fristen alt
+    -- passert mens den batchede reaperen ennå ikke har nådd prosessen,
+    -- committes ny persondata etter det lovede slettetidspunktet.
+    --
+    -- Eiers presisering (dommen 14:33 på #153), som er grunnen til at
+    -- porten står urørt her og ikke får enda en arm: lukking er en
+    -- FRISTSTART i §5, ikke en skrivesperre; payload etter lukking
+    -- reapes uansett med prosessen (kortere levetid, ikke lengre), og
+    -- skriveveien (`kjoring.py`-armen) finnes ennå ikke.
+    --
+    -- Rotårsaken er den samme som i #163: en vakt som er en HÅNDTELT
+    -- LISTE over tilstander inviterer til én runde per tilstand.
+    -- Fødselsporten på ankeret har alt hatt runder på nøyaktig den
+    -- formen (eiermodul, låsen, `feilet`/`kansellert`, `utfort`), og
+    -- hver runde la til én arm. `lukket_ts` her ville vært den femte.
+    -- Formen som dreper klassen står i #164: INSERT-forutsetningene
+    -- UTLEDES av ankerets tilstandsmaskin — én kilde. Ingen A-arm.
     IF TG_OP = 'INSERT' THEN
         SELECT p.slettet_ts INTO v_slettet
           FROM public.rekrutteringsprosess p
