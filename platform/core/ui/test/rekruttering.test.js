@@ -251,6 +251,40 @@ test("Rekruttering: signaturdialogen sier antall, type, hashkortform — og «Ka
     .textContent.includes(HASH.slice(0, 12))), "utfallet mangler");
 });
 
+test("Rekruttering: signeringen gjenbruker idempotensnøkkelen etter usikker feil", async () => {
+  // Codex P1: den irreversible operasjonen fikk fersk nøkkel per klikk.
+  // Commiter serveren og svaret går tapt, må BRUKERENS retry bære SAMME
+  // nøkkel — ellers replayer serveren ikke, og klienten kan ikke avgjøre
+  // om posten er sendt.
+  const hoved = await tegnet();
+  const signer = () => {
+    [...hoved.querySelectorAll("button")]
+      .find((b) => b.textContent === t("ui.rekruttering.signer_knapp"))
+      .click();
+    [...document.querySelector('[role="alertdialog"]')
+      .querySelectorAll("button")]
+      .find((b) => b.textContent === t("ui.rekruttering.signer_bekreft"))
+      .click();
+  };
+  // Første forsøk: svaret går tapt (500) …
+  SVAR = (sti, opts) => (opts.method === "POST" ? 500 : prosess());
+  KALL = [];
+  signer();
+  assert.ok(await vent(() => KALL.some((k) => k.sti.endsWith("/signer"))));
+  const forste = KALL.find((k) => k.sti.endsWith("/signer"));
+  // … brukeren prøver igjen: samme nøkkel, så serveren kan replaye.
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/lister/L-1/signer": { innhold_hash: HASH } };
+  signer();
+  assert.ok(await vent(() => KALL.some((k) => k.sti.endsWith("/signer"))));
+  const andre = KALL.find((k) => k.sti.endsWith("/signer"));
+  assert.ok(forste.hoder["Idempotency-Key"], "signeringen gikk uten nøkkel");
+  assert.equal(andre.hoder["Idempotency-Key"],
+    forste.hoder["Idempotency-Key"],
+    "retryen bar en NY nøkkel — serveren ser en ny operasjon");
+});
+
 test("Rekruttering: 401 i mutasjonene er innlogging, ikke en handlingsfeil", async () => {
   // Codex P1: en utløpt økt ble fanget som «noe gikk galt», og brukeren
   // ble stående i det innloggede skallet uten økt bak seg. 401 er global

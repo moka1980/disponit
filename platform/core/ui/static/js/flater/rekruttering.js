@@ -16,8 +16,8 @@
 // egen sannhet.
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
-import { hentJson, settRekrutteringBlinding,
-         signerRekrutteringsliste, UautorisertFeil } from "../api.js";
+import { hentJson, settRekrutteringBlinding, signerRekrutteringsliste,
+         nyIdempotensnokkel, UautorisertFeil } from "../api.js";
 import { harScope } from "../sitekart.js";
 import { DataTabell } from "../tabell.js";
 import { Detaljpanel, Bekreftelsesdialog } from "../dialog.js";
@@ -217,6 +217,22 @@ function tegn(hoved, ctx, data) {
   // hashens kortform, «Kan ikke angres».
   const listeRot = el("div", { class: "rekrut-lister" },
     el("h2", { text: t("ui.rekruttering.lister_tittel") }));
+  // ÉN NØKKEL PER (liste, innholdshash) (Codex P1). Uten arg lager
+  // `api.js` en fersk nøkkel per kall, og signeringen er nettopp den
+  // operasjonen der det er farlig: commiter serveren og svaret går tapt,
+  // melder flaten «feil», og brukerens neste klikk kommer med en NY
+  // nøkkel — da replayer ikke serveren, den ser en ny operasjon, og
+  // klienten kan ikke lenger avgjøre om posten er sendt. Nøkkelen holdes
+  // derfor til vi har et definitivt svar; endres innholdshashen, er det
+  // en annen operasjon og en annen nøkkel (mønsteret fra bestilling.js).
+  const signeringsnokler = new Map();
+  function signeringsnokkel(liste) {
+    const id = `${liste.liste_id} ${liste.innhold_hash}`;
+    if (!signeringsnokler.has(id)) {
+      signeringsnokler.set(id, nyIdempotensnokkel());
+    }
+    return signeringsnokler.get(id);
+  }
   for (const liste of prosess.lister || []) {
     const knapp = el("button", { class: "knapp", type: "button",
       text: t("ui.rekruttering.signer_knapp") });
@@ -235,7 +251,8 @@ function tegn(hoved, ctx, data) {
         paaPrimar: async () => {
           try {
             const svar = await signerRekrutteringsliste(
-              liste.liste_id, liste.innhold_hash);
+              liste.liste_id, liste.innhold_hash,
+              signeringsnokkel(liste));
             sett(utfall, t("ui.rekruttering.signer_utfall")
               .replace("{hash}", kortHash(svar.innhold_hash
                 || liste.innhold_hash)));
