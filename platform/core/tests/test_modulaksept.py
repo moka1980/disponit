@@ -5286,6 +5286,40 @@ def test_drillen_nekter_en_annen_manifestgenerasjon_enn_den_drillede():
             < tekst.index("registrer_drillrelease(m, a.rullback_id"))
 
 
+def test_drillen_og_fase2_regner_manifesthashen_paa_samme_form():
+    """Codex' P1 (#154): de to leddene som skriver `manifest_hash` for
+    SAMME release-id må regne den likt.
+
+    `rollback-m56.py::_manifest_hash()` og
+    `registrer-m-wcag-audit.py::manifest_hash()` møtes to steder, og
+    begge er enveis. `krev_akseptbar_manifestgenerasjon` sammenligner
+    drillens tall med den drillede releasens registrerte rad — skrevet
+    av fase 2 — og drillens egen kandidatrad skrives med drillens tall
+    før fase 2 registrerer NØYAKTIG samme id med sitt. Divergerte de,
+    ville en nyregistrert release blitt avvist før drillen i det ene
+    tilfellet, og kandidatraden kollidert immutabelt i det andre — etter
+    at rullingen hadde drenert den levende deploymenten.
+
+    Formen er den kanoniske projeksjonen (A-vedtaket på #152), og den
+    måles her mot `manifestskjema` selv: da feller porten seg både om
+    ett av leddene faller tilbake til bytene, og om de to skulle bli
+    enige om en tredje form."""
+    import importlib.util
+
+    from manifestskjema import kanonisk_projeksjon
+    sti = ROT / "deploy/staging/registrer-m-wcag-audit.py"
+    spec = importlib.util.spec_from_file_location("registrer_m_wcag", sti)
+    fase2 = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fase2)
+    fasit = kanonisk_projeksjon(
+        (ROT / "platform/modules/m56_wcag_audit/manifest.yaml")
+        .read_text(encoding="utf-8"))
+    assert fase2.manifest_hash() == fasit, \
+        "fase 2 registrerer ikke manifestets kanoniske projeksjon"
+    assert _drillskript()._manifest_hash() == fasit, \
+        "drillen regner en annen manifesthash enn den fase 2 skriver"
+
+
 # ---------------------------------------------------------------------------
 # 052 — målekoden for de tre blokkerte manifestpunktene
 # (aksept-arc-klarsignalet §1). Portene her er arcens egne vitner: hver

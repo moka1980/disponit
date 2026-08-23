@@ -78,7 +78,6 @@ from __future__ import annotations
 
 import argparse
 import atexit
-import hashlib
 import importlib.util
 import json
 import os
@@ -189,9 +188,19 @@ def _admin(m):
 
 
 def _manifest_hash() -> str:
-    """Manifestets hash slik `registrer-m-wcag-audit.py` regner den ut."""
-    return hashlib.sha256(
-        (REPO / MANIFEST_REL).read_bytes()).hexdigest()
+    """Manifestets hash slik `registrer-m-wcag-audit.py` regner den ut.
+
+    Det er den KANONISKE PROJEKSJONEN (A-vedtaket på #152), ikke bytene:
+    samme funksjon, ikke en kopi av regnestykket. Regnet drillen byte-
+    hashen mens registreringen skriver projeksjonen, ville de to formene
+    møttes to steder og begge er enveis — `krev_akseptbar_manifest-
+    generasjon` ville avvist en nyregistrert release før drillen, og
+    kandidatraden drillen selv skriver ville kollidert immutabelt med
+    fase 2s registrering av samme id (Codex P1, #154).
+    """
+    import manifestskjema
+    return manifestskjema.kanonisk_projeksjon(
+        (REPO / MANIFEST_REL).read_text(encoding="utf-8"))
 
 
 def _kjor_faser(release: str, evidens: Path, *, hva: str,
