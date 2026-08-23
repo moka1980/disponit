@@ -1412,6 +1412,66 @@ def test_port19_forste_insert_pa_fersk_prosess_gar(migrator):
 
 
 @pg
+def test_port19_maaler_ogsaa_naar_konteksten_er_borte_ved_commit(migrator):
+    """Codex P1: porten kjørte UTSATT, men leste som INVOKER.
+
+    Den utsatte constraint-triggeren stiller spørsmålet sitt ved COMMIT —
+    og ved COMMIT er skriverens rolle og skriverens tenant-kontekst ikke
+    nødvendigvis den samme som da UPDATE-en gikk. `reap_kandidatdata` er
+    SECURITY DEFINER og nullstiller `disponit.tenant` før den returnerer,
+    så som invoker leste porten med tom kontekst gjennom
+    `tenant_isolasjon`: null rader, ingen blanding, commit. En vakt som
+    aldri så noe kan ikke felle noe.
+
+    (Driftsformens andre ende — timerrollen `disponit_domener`, som har
+    EXECUTE på reaperen og ingenting på lagrene, får `permission denied`
+    ved COMMIT og ruller hele reapen tilbake — krever den rollen og måles
+    på verten, ikke her. Blindheten kan måles i ETHVERT oppsett, og det
+    er nøyaktig samme rotårsak.)
+
+    Porten måler derfor egenskapen direkte: den halvtomme prosessen skal
+    avvises ved COMMIT selv når konteksten som gjorde radene synlige er
+    nullstilt i samme transaksjon.
+
+    MUTASJONEN SOM DREPER DENNE: ta `SECURITY DEFINER` av
+    `m57_lagrene_reapes_samlet` (eller flytt den ut av claimer-blokka, så
+    den eies av migrator igjen)."""
+    rt = _rt()
+    try:
+        _, pid = _prosess(migrator, rt)
+        _fyll_lagrene(rt, pid)
+        rt.commit()
+        # ETT lager alene — og så forsvinner konteksten før COMMIT,
+        # nøyaktig slik reaperen nullstiller sin egen.
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute(
+            "UPDATE kandidat_parsettekst SET tekst=NULL, slettet_ts=now()"
+            " WHERE tenant=%s AND prosess_id=%s", (TENANT, pid))
+        migrator.execute("SELECT set_config('disponit.tenant','',true)")
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            migrator.commit()
+        migrator.rollback()
+        # Payloaden står urørt.
+        assert _tell_fixtur(migrator, pid) == 9
+        migrator.rollback()
+    finally:
+        rt.close()
+
+
+@pg
+def test_port19_porten_eies_av_claimeren_og_er_definer(migrator):
+    """Speilet til testen over, målt på selve funksjonen: den utsatte
+    porten må lese med claimerens `m57_reaper`-policy uansett hvem som
+    committer. Eierskapet ER lesetilgangen — en migrator-eid invoker-port
+    er blind for den ene rollen som faktisk kjører reapen i drift."""
+    eier, definer = migrator.execute(
+        "SELECT pg_get_userbyid(proowner), prosecdef FROM pg_proc"
+        " WHERE proname = 'm57_lagrene_reapes_samlet'").fetchone()
+    assert eier == "disponit_m37_claimer", eier
+    assert definer is True
+
+
+@pg
 def test_innhold_sha256_utledes_av_payloaden_ikke_av_kalleren(migrator):
     """Codex P2: hashen var kallerens PÅSTAND om innholdet.
 

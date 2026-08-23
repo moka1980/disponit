@@ -84,6 +84,11 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'opprett_rekrutteringsprosess(text,bigint,integer)', 'disponit_m37_claimer'),
     ('FUNCTION', 'lukk_rekrutteringsprosess(text,uuid,timestamp with time zone)', 'disponit_m37_claimer'),
     ('FUNCTION', 'reap_kandidatdata(integer)',                        'disponit_m37_claimer'),
+    -- 057 port 19: den UTSATTE porten er claimer-eid definer, ikke en vakt
+    -- som migrator. Den kjoerer ved COMMIT, etter at reaperens definer-
+    -- identitet er borte, og maa lese gjennom claimerens m57_reaper-policy
+    -- uansett hvem som committer. Eierskapet ER lesetilgangen her.
+    ('FUNCTION', 'm57_lagrene_reapes_samlet()',                       'disponit_m37_claimer'),
     -- 038 §4-porten (Codex P1): binder `p_tenant` til kallerens
     -- tenantkontekst i definer-veiene over. Opprettes i det samme
     -- SET ROLE-vinduet og hoerer derfor til den samme eieren.

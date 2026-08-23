@@ -510,17 +510,33 @@ END $$;
 -- over. `EXISTS` på hver arm gjør prisen to indeksoppslag per arm, ikke
 -- en telling over hele prosessen.
 --
--- INVOKER, ikke definer, og det er et valg: porten skal se NØYAKTIG de
--- radene skriveren selv ser. Som definer ville den lest med migrators
--- øyne, og siden FORCE RLS gjelder også eieren, ville reaperens
--- kryss-tenant-transaksjon gjort den blind for alle prosesser unntatt
--- den siste — en vakt som feiler åpent. Som invoker leser claimeren
--- gjennom sin egen `m57_reaper`-policy og ser hele transaksjonen sin,
--- mens enhver tenant-bundet skriver måles innenfor sin egen kontekst.
--- Rollene som kan UPDATE-e disse tabellene i det hele tatt (claimeren og
--- eieren) har begge SELECT på dem.
+-- SECURITY DEFINER, eid av CLAIMEREN (Codex P1) — og det er nettopp
+-- fordi porten kjører UTSATT. Runde 5 valgte INVOKER med den begrunnelsen
+-- at «porten skal se nøyaktig de radene skriveren selv ser», og forsto
+-- «skriveren» som den rollen som kjørte UPDATE-en. Ved COMMIT er ikke den
+-- rollen der lenger: `reap_kandidatdata` er SECURITY DEFINER, så
+-- claimer-identiteten varer bare mens funksjonen kjører — PostgreSQL
+-- bevarer den ikke for utsatte triggere. Kjører timerrollen
+-- `disponit_domener` reaperen (driftsformen; den har EXECUTE på reaperen
+-- og INGENTING på de seks tabellene), stiller porten sitt spørsmål som
+-- timerrollen og får `permission denied` ved COMMIT — hele reapen ruller
+-- tilbake, og kandidatdatagrensen kan ikke kjøre i det hele tatt.
+--
+-- Den andre enden av samme feil er stillere: EIER runtime reaperen
+-- (lokalt/test, uten timerrolle), har den SELECT — men reaperen har alt
+-- nullstilt `disponit.tenant` før den returnerte, så `tenant_isolasjon`
+-- gir null rader og porten sier «ingen blanding» om enhver prosess. En
+-- vakt som feiler åpent, målt av ingen test, fordi den ALDRI så noe.
+--
+-- Som definer eid av claimeren leser porten gjennom `m57_reaper`-policyen
+-- uansett hvem som committer, og predikatet er allerede bundet til NEW:
+-- den ser bare rader for `NEW.tenant`/`NEW.prosess_id`, den returnerer
+-- ingenting, og den kan bare RAISE. For en tenant-bundet skriver er
+-- radsettet det samme som før (WITH CHECK binder NEW.tenant til
+-- konteksten); det som forsvinner er muligheten for at porten er blind.
+SET LOCAL ROLE disponit_m37_claimer;
 CREATE OR REPLACE FUNCTION m57_lagrene_reapes_samlet()
-RETURNS trigger LANGUAGE plpgsql
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 BEGIN
     IF EXISTS (
@@ -580,6 +596,30 @@ BEGIN
     RETURN NULL;
 END $$;
 
+-- Rettighetsendringen står INNE i claimer-blokka (#140-læren), og
+-- CREATE OR REPLACE gjør det samme: en definer-funksjon som eies av
+-- claimeren kan bare skrives om av claimeren, så en andre kjøring av
+-- migrasjonen (SP-10s `ddl_begge_kjoringer_gronne`) må gå samme vei inn.
+REVOKE ALL ON FUNCTION m57_lagrene_reapes_samlet() FROM PUBLIC;
+-- ... men migrator eier TABELLENE og lager triggerne, og CREATE TRIGGER
+-- forutsetter EXECUTE på funksjonen. Den er ikke migrators lenger, og
+-- medlemskapet i claimeren er `WITH INHERIT FALSE` (eierskapsreparasjonens
+-- egen lære), så migrator arver ingenting: rettigheten må sies høyt.
+-- Mottakeren slås opp som TABELLEIEREN, ikke som et rollenavn — det er
+-- den rollen som faktisk kjører CREATE TRIGGER under.
+DO $$
+DECLARE v_eier TEXT;
+BEGIN
+    SELECT pg_catalog.pg_get_userbyid(relowner) INTO v_eier
+      FROM pg_catalog.pg_class
+     WHERE oid = 'public.kandidat_originaldokument'::regclass;
+    EXECUTE format('GRANT EXECUTE ON FUNCTION m57_lagrene_reapes_samlet()'
+                   ' TO %I', v_eier);
+END $$;
+RESET ROLE;
+
+-- Triggerne er migrators: CREATE CONSTRAINT TRIGGER krever eierskap på
+-- TABELLEN, ikke på funksjonen.
 DO $$
 DECLARE t TEXT;
 BEGIN
@@ -965,10 +1005,11 @@ END $$;
 
 RESET ROLE;
 
--- Vaktene og tabellene er migrators egne.
+-- Radvaktene og tabellene er migrators egne. Den UTSATTE porten
+-- (`m57_lagrene_reapes_samlet`) er det ikke — den eies av claimeren og
+-- har sin egen REVOKE inne i sin egen blokk, der den virker.
 REVOKE ALL ON FUNCTION rekrutteringsprosess_vakt() FROM PUBLIC;
 REVOKE ALL ON FUNCTION m57_kandidatlager_vakt() FROM PUBLIC;
-REVOKE ALL ON FUNCTION m57_lagrene_reapes_samlet() FROM PUBLIC;
 
 REVOKE ALL ON rekrutteringsprosess, kandidat_originaldokument,
     kandidat_parsettekst, kandidat_evalueringsartefakt,
