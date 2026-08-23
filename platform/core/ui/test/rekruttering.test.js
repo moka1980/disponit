@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import { NB, alvorligeBrudd, beskrivBrudd, nyttBrett } from "./hjelp.js";
 import { settI18nForTest, t } from "../static/js/i18n.js";
 import { visRekruttering } from "../static/js/flater/rekruttering.js";
+import { byggRuter } from "../static/js/sitekart.js";
 
 settI18nForTest(NB, "nb");
 
@@ -728,5 +729,23 @@ test("Rekruttering: ingen hardkodet visningstekst, og tastaturgjennomgangen er d
   for (const flyt of ["vekt", "sorter", "blinding", "signer"]) {
     assert.ok(dok.toLowerCase().includes(flyt),
       `tastaturgjennomgangen dekker ikke ${flyt}-flyten`);
+  }
+  // …OG DEN PÅSTÅR IKKE MER ENN DEN MÅLTE (Cursor P2). Doket beskrev
+  // «`Tab` fra menyen → Rekruttering» som observert, mens `sitekart`
+  // bevisst holder ruten ute til serverarmen finnes: flyten var umulig å
+  // gå. En gjennomgang som sier «observert» om noe ingen kan gjøre, er
+  // falsk evidens for port 32 — verre enn ingen gjennomgang, fordi den
+  // ser ut som dekning. Kravet henger på rutetabellen selv, ikke på en
+  // liste her, så det løftes av seg selv den dagen ruten kommer inn.
+  //
+  // MUTASJONEN SOM DREPER DENNE: sett menyraden tilbake som observert.
+  const ruter = byggRuter({ scopes: ["decisions:read", "exceptions:read",
+    "policy:read", "bestilling:opprett", "domains:adjudicate"] })
+    .map((r) => r.nokkel);
+  if (!ruter.includes("rekruttering")) {
+    assert.ok(/ikke i sitekartet/i.test(dok),
+      "doket sier ikke fra om at ruten er ute, men beskriver menyveien");
+    assert.ok(dok.includes("UTESTÅENDE"),
+      "menyflyten står som gjennomgått mens ruten er stengt");
   }
 });
