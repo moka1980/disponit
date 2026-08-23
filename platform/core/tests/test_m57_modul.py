@@ -328,6 +328,40 @@ def test_port17_imagebytte_uten_biasmaaling_blokkerer():
     assert not modell.sett, "modellen kjørte uten biasmåling"
 
 
+def test_port17_en_oppforing_er_ikke_en_maaling():
+    """Codex P2: porten sjekket bare at det LÅ noe under digesten og at
+    objektet gjentok den. `Biasmaaling(digest, "", "")` — uten
+    artefakthash og uten tidspunkt — passerte dermed som bevis, og
+    akseptkravet kunne oppfylles med en plassholder."""
+    digest = _Modell.image_digest
+    for maaling, kode in (
+            (Biasmaaling(digest, "", ""), "bias_maling_uten_artefakt"),
+            (Biasmaaling(digest, "0" * 63, "2026-08-23T00:00:00+00:00"),
+             "bias_maling_uten_artefakt"),
+            (Biasmaaling(digest, "z" * 64, "2026-08-23T00:00:00+00:00"),
+             "bias_maling_uten_artefakt"),
+            (Biasmaaling(digest, "0" * 64, ""),
+             "bias_maling_uten_tidspunkt"),
+            (Biasmaaling(digest, "0" * 64, "i går"),
+             "bias_maling_uten_tidspunkt")):
+        modell = _Modell()
+        with pytest.raises(evaluering.Evalueringsfeil) as e:
+            evaluering.evaluer_kandidat(
+                modell, "tekst", {}, {"drift": 1},
+                biasmaalinger={digest: maaling})
+        assert e.value.kode == kode, maaling
+        assert not modell.sett, "modellen kjørte på en plassholdermåling"
+    # ... og en digest som ikke er en digest er heller ikke en binding.
+    falsk = "sha256:ikke-en-digest"
+    with pytest.raises(evaluering.Evalueringsfeil) as e:
+        evaluering.krev_biasmaaling(
+            falsk, {falsk: Biasmaaling(falsk, "0" * 64,
+                                       "2026-08-23T00:00:00+00:00")})
+    assert e.value.kode == "bias_maling_ugyldig_digest"
+    # Positiv kontroll: den ekte målingen slipper fortsatt gjennom.
+    assert evaluering.krev_biasmaaling(digest, _MAALINGER).ts
+
+
 def test_rangeringen_er_poeng_med_synlige_vekter():
     ut = evaluering.ranger(
         {"k2": {"drift": True, "sky": False},

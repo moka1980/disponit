@@ -11,6 +11,7 @@ kjøringen.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 from . import blinding
 
@@ -94,15 +95,42 @@ class Biasmaaling:
     ts: str
 
 
+def _er_sha256(verdi: object) -> bool:
+    return (isinstance(verdi, str) and len(verdi) == 64
+            and all(c in "0123456789abcdef" for c in verdi.lower()))
+
+
 def krev_biasmaaling(image_digest: str,
                      maalinger: dict[str, Biasmaaling]) -> Biasmaaling:
     """Port 17: et imagebytte uten NY biasmåling blokkerer aksepten.
     Målingen er bundet til digesten — samme modellfil bak ny digest er
-    en ny modellversjon med et nytt bevisbehov."""
+    en ny modellversjon med et nytt bevisbehov.
+
+    En OPPFØRING er ikke en måling (Codex P2): porten sjekket bare at det
+    lå noe under digesten og at objektet gjentok den, så
+    `Biasmaaling(digest, "", "")` — uten artefakthash og uten tidspunkt —
+    passerte som bevis. Feltene måles derfor: digesten på formen
+    `sha256:<64 hex>`, artefakthashen som sha256, tidspunktet som
+    lesbar ISO 8601.
+
+    At artefakten hashen peker på FINNES, måles ikke her: evidensgrensen
+    `m57-v1` eier oppslaget mot artefaktlageret, og et lager denne fila
+    ikke har, ville vært en ny maskin i en fiksrunde."""
     maaling = maalinger.get(image_digest)
     if maaling is None or maaling.image_digest != image_digest:
         raise Evalueringsfeil("bias_maling_mangler_for_digest",
                               image_digest)
+    if not (isinstance(image_digest, str)
+            and image_digest.startswith("sha256:")
+            and _er_sha256(image_digest[7:])):
+        raise Evalueringsfeil("bias_maling_ugyldig_digest", image_digest)
+    if not _er_sha256(maaling.artefakt_sha256):
+        raise Evalueringsfeil("bias_maling_uten_artefakt", image_digest)
+    try:
+        datetime.fromisoformat(str(maaling.ts).replace("Z", "+00:00"))
+    except (TypeError, ValueError) as feil:
+        raise Evalueringsfeil("bias_maling_uten_tidspunkt",
+                              image_digest) from feil
     return maaling
 
 
