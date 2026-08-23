@@ -47,14 +47,47 @@ CREATE TABLE rekrutteringsprosess (
         CHECK (slettet_ts IS NULL OR lukket_ts IS NOT NULL)
 );
 
--- Radvakten (§5 + port 20): fristen er immutabel, lukking skjer én gang
--- og aldri frem i tid, reap-merket settes én gang. Alt annet avvises —
--- også for eieren; en vakt som bare gjelder de rettighetsløse er ingen
--- vakt (append-only-husformen fra 011/053/056).
+-- Radvakten (§5 + port 20): fødselen skjer på et levende, m57-eid
+-- evalueringsoppdrag og alltid ÅPEN, fristen er immutabel, lukking skjer
+-- én gang og aldri frem i tid, reap-merket settes én gang. Alt annet
+-- avvises — også for eieren; en vakt som bare gjelder de rettighetsløse
+-- er ingen vakt (append-only-husformen fra 011/053/056).
 CREATE OR REPLACE FUNCTION rekrutteringsprosess_vakt()
 RETURNS trigger LANGUAGE plpgsql
 SET search_path = pg_catalog AS $$
 BEGIN
+    -- FØDSELEN måles her, ikke bare i funksjonen (Cursor P2). Vakten var
+    -- BEFORE UPDATE OR DELETE, og runtime ble derfor fratatt tabell-INSERT
+    -- i forrige runde — men CLAIMEREN må ha INSERT: den er definer for
+    -- `opprett_rekrutteringsprosess`. Direkte DML som claimer gikk dermed
+    -- utenom hele fødselsporten (oppdragstype, eiermodul, levende status,
+    -- åpen fødsel). En vakt som bare gjelder de rettighetsløse er ingen
+    -- vakt — samme lærdom som resten av denne funksjonen bygger på.
+    --
+    -- Porten er den SAMME som funksjonens, med vilje duplisert: funksjonen
+    -- eier den låste lesningen og det lesbare utfallet
+    -- (`invalid_parameter_value`), vakten er backstoppen som gjelder
+    -- ENHVER rolle, også eieren, og svarer i vaktens egen kode.
+    IF TG_OP = 'INSERT' THEN
+        IF NEW.lukket_ts IS NOT NULL OR NEW.slettet_ts IS NOT NULL THEN
+            RAISE EXCEPTION 'rekrutteringsprosess: en prosess fødes ÅPEN —'
+                ' lukking og reap-merke er egne, målte overganger'
+                USING ERRCODE = 'insufficient_privilege';
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM public.oppdrag o
+             WHERE o.tenant = NEW.tenant AND o.id = NEW.oppdrag_id
+               AND o.oppdragstype = 'rekruttering.evaluering'
+               AND o.eiermodul = 'm57_ats'
+               AND o.status NOT IN ('feilet', 'kansellert')) THEN
+            RAISE EXCEPTION 'rekrutteringsprosess: oppdrag % hos % er ikke'
+                ' et LEVENDE rekruttering.evaluering-oppdrag eid av'
+                ' m57_ats — fødselen går gjennom'
+                ' opprett_rekrutteringsprosess', NEW.oppdrag_id, NEW.tenant
+                USING ERRCODE = 'insufficient_privilege';
+        END IF;
+        RETURN NEW;
+    END IF;
     IF TG_OP <> 'UPDATE' THEN
         RAISE EXCEPTION 'rekrutteringsprosess: % avvist — raden består,'
             ' bare payloaden i lagrene reapes', TG_OP
@@ -99,7 +132,7 @@ END $$;
 
 DROP TRIGGER IF EXISTS rekrutteringsprosess_vakt ON rekrutteringsprosess;
 CREATE TRIGGER rekrutteringsprosess_vakt
-    BEFORE UPDATE OR DELETE ON rekrutteringsprosess
+    BEFORE INSERT OR UPDATE OR DELETE ON rekrutteringsprosess
     FOR EACH ROW EXECUTE FUNCTION rekrutteringsprosess_vakt();
 DROP TRIGGER IF EXISTS rekrutteringsprosess_ingen_truncate
     ON rekrutteringsprosess;
@@ -719,11 +752,17 @@ REVOKE ALL ON rekrutteringsprosess, kandidat_originaldokument,
 --
 -- ANKERET er unntaket (Codex P1): `rekrutteringsprosess` får KUN SELECT.
 -- Et tabell-INSERT der ville vært en vei UTENOM
--- `opprett_rekrutteringsprosess` — vakten er BEFORE UPDATE OR DELETE og
--- ser ingen INSERT, så runtime kunne skrevet en prosess på et oppdrag som
--- ikke er en `rekruttering.evaluering`, eller satt `lukket_ts` frem i tid
--- og dermed skjøvet hele slettefristen ut i det blå. Fødselen går gjennom
--- funksjonen, som eier begge portene.
+-- `opprett_rekrutteringsprosess`: runtime kunne skrevet en prosess på et
+-- oppdrag som ikke er en `rekruttering.evaluering`, eller satt `lukket_ts`
+-- frem i tid og dermed skjøvet hele slettefristen ut i det blå. Fødselen
+-- går gjennom funksjonen, som eier den låste lesningen og det lesbare
+-- utfallet.
+--
+-- Rettigheten er likevel ikke hele porten (Cursor P2): CLAIMEREN må ha
+-- INSERT — den er definer for funksjonen — så en rettighetsgrense alene
+-- ville sluppet direkte DML som claimer rett forbi fødselsporten. Vakten
+-- er derfor BEFORE INSERT OR UPDATE OR DELETE og måler den samme
+-- trippelen for enhver rolle, også eieren.
 --
 -- Tabellgrantene bor av samme grunn som funksjonsgrantene over i
 -- `migrer.py` på `{rolle}`-form — `GRANT SELECT ON rekrutteringsprosess`

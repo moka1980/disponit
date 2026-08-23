@@ -552,6 +552,52 @@ def test_057_navngir_aldri_runtime_rollen():
             for t in treff]))
 
 
+@pg
+def test_fodselsporten_gjelder_ogsa_claimeren(migrator):
+    """Cursor P2: rettighetsgrensen kunne bare halve jobben.
+
+    Runtime ble fratatt tabell-INSERT på ankeret i forrige runde, men
+    CLAIMEREN må ha det — den er definer for
+    `opprett_rekrutteringsprosess`. Direkte DML som claimer gikk derfor
+    rett forbi hele fødselsporten, og vakten var BEFORE UPDATE OR DELETE
+    og så ingen INSERT. En vakt som bare gjelder de rettighetsløse er
+    ingen vakt.
+
+    Målt for claimeren, altså den rollen som HAR rettigheten: feil
+    oppdragstype, feil eiermodul, terminal status og en fødsel som alt er
+    lukket — og positiv kontroll på at den lovlige fødselen fortsatt går.
+
+    MUTASJONEN SOM DREPER DENNE: sett triggeren tilbake til
+    BEFORE UPDATE OR DELETE."""
+    feil_type, _ = _grunnlag(migrator, oppdragstype="wcag.kontroll")
+    feil_eier, _ = _grunnlag(migrator,
+                             oppdragstype="rekruttering.evaluering",
+                             eiermodul="m_wcag_audit")
+    avbrutt, _ = _grunnlag(migrator, oppdragstype="rekruttering.evaluering",
+                           status="kansellert")
+    lovlig, _ = _evaluering(migrator)
+    for oid, lukket in ((feil_type, None), (feil_eier, None),
+                        (avbrutt, None), (lovlig, "now()")):
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            migrator.execute(
+                "INSERT INTO rekrutteringsprosess (tenant, prosess_id,"
+                " oppdrag_id, slettefrist_dogn, lukket_ts)"
+                f" VALUES (%s,%s,%s,90,{lukket or 'NULL'})",
+                (TENANT, uuid.uuid4(), oid))
+        migrator.rollback()
+    # Positiv kontroll: den lovlige, ÅPNE fødselen går — ellers ville en
+    # vakt som avviser alle INSERT sett like grønn ut her.
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+    migrator.execute(
+        "INSERT INTO rekrutteringsprosess (tenant, prosess_id,"
+        " oppdrag_id, slettefrist_dogn) VALUES (%s,%s,%s,90)",
+        (TENANT, uuid.uuid4(), lovlig))
+    migrator.rollback()
+
+
 def test_057_navngir_disponit_kun_under_eksistensvakt():
     """Codex P1: `REVOKE ... FROM disponit` er en FEIL, ikke en no-op.
 
