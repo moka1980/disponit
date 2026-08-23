@@ -1020,6 +1020,95 @@ def test_replay_overlever_at_signataren_deaktiveres(migrator):
 
 
 @pg
+def test_replay_overlever_deaktivering_i_laaskoen(migrator):
+    """Codex P2 (runde 12 på #140): testen over er SEKVENSIELL — den
+    deaktiverer etter at signaturen står, altså før retryet i det hele
+    tatt begynner. Det tidlige oppslaget fanger den saken. Det fanger
+    IKKE at låsen er et VENTEPUNKT.
+
+    Tre transaksjoner, FIFO på medlemskapsraden:
+
+      A  signerer og holder medlemskapslåsen (ingen commit)
+      R  deaktiverer medlemskapet  → stiller seg i kø bak A
+      B  replay med SAMME nøkkel   → tidlig oppslag ser INGEN signatur
+                                      (A er ucommittet), stiller seg bak R
+
+    A committer; R får låsen og committer; B våkner til et medlemskap
+    som ikke lenger er aktivt — enda den identiske signaturen NÅ står.
+    Uten gjentakelsen av oppslaget etter låsen får B
+    `insufficient_privilege` på et retry der kontrakten lover no-op:
+    samme umulige valg for kalleren som runde 11 lukket («ble den
+    AVVIST, eller STÅR den?»), bare med kappløpet i stedet for klokken.
+
+    MUTASJONEN SOM DREPER DENNE: fjern det gjentatte oppslaget i
+    `IF NOT FOUND`-armen i 056 §7b — B dør da med privilegiefeil.
+
+    Kontrollen til slutt viser at porten ikke er svekket underveis:
+    signaturen er fortsatt ÉN, altså skrev replayet ingenting."""
+    import threading
+
+    from db.pg import koble
+    oid, _ = _grunnlag(migrator)
+    bid = _signatar(migrator)
+    liste = _liste(migrator, oid)
+    nk = "ko-" + secrets.token_hex(6)
+    a = _rt()
+    b = _rt()
+    rev = koble(MIGRATOR_DSN)
+    feil: dict = {}
+    try:
+        _sett_kontekst(a, TENANT)
+        a.execute("SELECT signer_utsendingsliste(%s,%s,%s,%s)",
+                  (TENANT, liste[0], bid, nk))
+
+        def deaktiver():
+            try:
+                _sett_kontekst(rev, TENANT)
+                rev.execute("UPDATE brukermedlemskap SET aktiv=false"
+                            " WHERE tenant=%s AND bruker_id=%s",
+                            (TENANT, bid))
+                rev.commit()
+            except Exception as e:            # noqa: BLE001 — måles
+                feil["rev"] = e
+                rev.rollback()
+
+        def replay():
+            try:
+                _sett_kontekst(b, TENANT)
+                b.execute("SELECT signer_utsendingsliste(%s,%s,%s,%s)",
+                          (TENANT, liste[0], bid, nk))
+                b.commit()
+            except Exception as e:            # noqa: BLE001 — dommen måles
+                feil["b"] = e
+                b.rollback()
+
+        tr = threading.Thread(target=deaktiver)
+        tr.start()
+        tr.join(timeout=2)
+        assert tr.is_alive(), "R skulle blokkere på As medlemskapslås"
+        tb = threading.Thread(target=replay)
+        tb.start()
+        tb.join(timeout=2)
+        assert tb.is_alive(), "B skulle stille seg BAK R i låskøen"
+        a.commit()                          # låsen slippes: R, så B
+        tr.join(timeout=10)
+        tb.join(timeout=10)
+        assert not tr.is_alive() and not tb.is_alive()
+        assert "rev" not in feil, f"deaktiveringen døde: {feil}"
+        assert "b" not in feil, (
+            "identisk replay skal være no-op også når deaktiveringen vant"
+            f" låskøen foran det: {feil}")
+        _sett_kontekst(migrator, TENANT)
+        antall = migrator.execute(
+            "SELECT count(*) FROM utsendingssignatur WHERE tenant=%s"
+            " AND liste_id=%s", (TENANT, liste[0])).fetchone()[0]
+        migrator.rollback()
+        assert antall == 1
+    finally:
+        a.close(); b.close(); rev.close()
+
+
+@pg
 def test_funksjonene_er_eneste_vei_for_ordinaere_roller(migrator):
     """Port 4, grant-halvdelen: runtime har SELECT men ikke INSERT på
     kjedetabellene — skrivingen går gjennom funksjonene. (Den statiske

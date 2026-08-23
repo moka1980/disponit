@@ -638,6 +638,30 @@ BEGIN
     -- til `p_tenant`, så RLS-vinduet er det samme lesningen hadde.
     PERFORM 1 FROM public.laas_godkjenner(p_tenant, p_signatar);
     IF NOT FOUND THEN
+        -- ... OG OPPSLAGET GJENTAS ETTER VENTINGEN (Codex P2, runde 12 på
+        -- #140). Oppslaget over er tatt FØR låsen, og en lås er et
+        -- VENTEPUNKT: verden kan ha flyttet seg mens vi sto i køen.
+        -- Tre transaksjoner, og rekkefølgen er FIFO på medlemskapsraden:
+        -- originalen signerer og holder låsen; en deaktivering stiller
+        -- seg i kø; dette replayet gjør sitt tidlige oppslag, ser ingen
+        -- signatur (originalen er ucommittet) og stiller seg BAK
+        -- deaktiveringen. Originalen committer, deaktiveringen får låsen
+        -- og committer — og da våkner vi til et medlemskap som ikke
+        -- lenger er aktivt, enda den identiske signaturen NÅ står.
+        -- Dommen ville vært `insufficient_privilege` på et retry der
+        -- kontrakten lover no-op: nøyaktig feilen runde 11 lukket, bare
+        -- med kappløpet i stedet for klokken. Under READ COMMITTED —
+        -- som porten over KREVER — får denne setningen et ferskt
+        -- snapshot, så originalens rad er synlig her.
+        -- Samme predikat, samme snevre likhet som det tidlige oppslaget:
+        -- bare den nøyaktig identiske raden svares. Ukjent nøkkel, eller
+        -- nøkkel med annet innhold, faller fortsatt til RAISE-en under.
+        SELECT * INTO s FROM public.utsendingssignatur
+         WHERE tenant = p_tenant AND operasjonsnokkel = p_nokkel;
+        IF FOUND AND s.liste_id IS NOT DISTINCT FROM p_liste_id
+                 AND s.signatar IS NOT DISTINCT FROM p_signatar THEN
+            RETURN;               -- replayet ble ferdig mens vi ventet
+        END IF;
         RAISE EXCEPTION 'signer_utsendingsliste: signatar % mangler'
             ' aktivt medlemskap i %', p_signatar, p_tenant
             USING ERRCODE = 'insufficient_privilege';
