@@ -570,3 +570,20 @@ def test_port27_5001_avvises_ved_validering():
     # fristbeslutning), aldri stillhet.
     assert bryter_feltkontrakten(
         "rekruttering.evaluering", payload | {"omfang": "alt"})
+
+
+def test_artefaktreferansene_ma_vaere_strenger_ved_opprettelsen():
+    """Codex P2: `minimer` bevarer skalarer som de er og
+    `mangler_paakrevde` godtar enhver sann verdi, så
+    `stillingsprofil_ref: 123` overlevde BEGGE og ble køet. Modulens
+    payload-skjema krever `string, minLength 1` — men det kjører først
+    når utførelsen har startet, altså etter at oppdraget var opprettet,
+    claimet og talt. Referansen måles nå der bestillingen tas imot."""
+    payload = {"stillingsprofil_ref": "art-1", "soknadsbunt_ref": "art-2",
+               "antall_soknader": 10, "omfang": "bunt"}
+    assert bryter_feltkontrakten("rekruttering.evaluering", payload) == []
+    for felt in ("stillingsprofil_ref", "soknadsbunt_ref"):
+        for verdi in (123, True, "", "   ", None, 4.5):
+            brudd = bryter_feltkontrakten(
+                "rekruttering.evaluering", payload | {felt: verdi})
+            assert felt in brudd, (felt, verdi)

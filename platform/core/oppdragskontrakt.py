@@ -727,6 +727,19 @@ FELTGRENSER: dict[str, dict[str, tuple[int, int]]] = {
     "rekruttering.evaluering": {"antall_soknader": (1, 5000)},
 }
 
+#: Felter som må være en IKKE-TOM STRENG, per type (Codex P2).
+#:
+#: `minimer` bevarer skalarer som de er, og `mangler_paakrevde` godtar
+#: enhver sann verdi — så `stillingsprofil_ref: 123` overlevde begge og ble
+#: køet. Modulens eget payload-skjema krever `string, minLength 1`, men det
+#: kjører først når UTFØRELSEN har startet: oppdraget var da alt opprettet,
+#: claimet og talt. En referanse som ikke er en referanse skal avvises der
+#: bestillingen tas imot, ikke der den utføres — samme begrunnelse som
+#: `FELTGRENSER` har for `maks_sider`.
+FELTSTRENGER: dict[str, tuple[str, ...]] = {
+    "rekruttering.evaluering": ("stillingsprofil_ref", "soknadsbunt_ref"),
+}
+
 #: URL-felter hvis RAPPORTFORM (`rapporturl`) har en lengdegrense, per
 #: type (Codex P2). Grensa er rapportskjemaets egen `maxLength` på
 #: `sider_kontrollert[].url`.
@@ -823,6 +836,12 @@ def bryter_feltkontrakten(oppdragstype: str, minimert: dict) -> list[str]:
         # Et sidebudsjett på «sant» er ikke et tall noen har bestilt.
         if isinstance(v, bool) or not isinstance(v, int) or not (
                 nedre <= v <= ovre):
+            brudd.add(felt)
+    for felt in FELTSTRENGER.get(oppdragstype, ()):
+        if felt not in minimert:
+            continue
+        v = minimert[felt]
+        if not isinstance(v, str) or not v.strip():
             brudd.add(felt)
     for felt, maks in FELTURLLENGDER.get(oppdragstype, {}).items():
         if felt not in minimert:
