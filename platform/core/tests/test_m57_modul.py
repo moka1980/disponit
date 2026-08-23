@@ -624,6 +624,17 @@ def test_rangeringen_er_poeng_med_synlige_vekter():
         with pytest.raises(evaluering.Evalueringsfeil) as e:
             evaluering.ranger({"k": {"drift": verdi}}, {"drift": 3})
         assert e.value.kode == "ikke_boolsk_oppfyllelse", verdi
+    # Codex P2, samme klasse på VEKTSIDEN: `bool` er en subklasse av
+    # `int`, så en profil som deserialiserte JSON-`true` som vekt fikk
+    # vekten 1 — og `false` vekten 0. Rangeringen endret seg stille.
+    for vekt in (True, False):
+        with pytest.raises(evaluering.Evalueringsfeil) as e:
+            evaluering.ranger({"k": {"drift": True}}, {"drift": vekt})
+        assert e.value.kode == "ugyldige_vekter", vekt
+    # Positiv kontroll: 0 er en lovlig vekt (et krav uten uttelling er
+    # ikke en feil), og skal ikke felles av boolsk-porten.
+    assert evaluering.ranger({"k": {"drift": True}},
+                             {"drift": 0})[0]["poeng"] == 0
 
 
 def test_port27_5001_avvises_ved_validering():

@@ -90,8 +90,13 @@ def ranger(kandidater: dict[str, dict[str, bool]],
     vekt × oppfylt per krav, og nedbrytningen følger med hvert innslag.
     Ingen prosent, ingen «match score» — poeng er poeng (§6).
     """
-    if not vekter or any(not isinstance(v, int) or v < 0
-                         for v in vekter.values()):
+    # `bool` er en subklasse av `int` i Python (Codex P2): en
+    # stillingsprofil som deserialiserte en JSON-`true` som vekt fikk
+    # vekten 1, og `false` vekten 0 — rangeringen endret seg stille, og
+    # ingen port sa fra. Feltkontrakten i kjernen avviser boolske tall
+    # eksplisitt; her måles det samme.
+    if not vekter or any(not isinstance(v, int) or isinstance(v, bool)
+                         or v < 0 for v in vekter.values()):
         raise Evalueringsfeil("ugyldige_vekter")
     ut = []
     for kandidat_id, oppfylt in kandidater.items():
