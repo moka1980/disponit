@@ -9,6 +9,7 @@ delresultater holdes aldri varme.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from . import blinding, evaluering, parsing
@@ -100,7 +101,16 @@ def _felter(kandidatfelter_for, medlem, fremdrift):
     # seg: det faller til catch-allen og kommer ut som `modellfeil`, altså
     # nøyaktig den feilattribusjonen denne funksjonen ble laget for å
     # hindre. Returtypen måles derfor her, som `_tekst` måler sin.
-    if not isinstance(felter, dict):
+    #
+    # PORTEN MÅLER KONTRAKTEN, IKKE ÉN IMPLEMENTASJON AV DEN (Codex P2).
+    # Sto det `isinstance(felter, dict)` her, avviste vakten en
+    # `MappingProxyType` eller en `UserDict` — former `_flett_felter` alt
+    # tok imot, fordi `dict(nye)` der nede normaliserer et hvilket som
+    # helst kart. Vakten skulle stanse `None` og annet som IKKE er et
+    # kart; i stedet snevret den inn kontrakten for den injiserte
+    # uttrekkeren og gjorde et gyldig uttrekk til et kodet feilutfall.
+    # `Mapping` er den kontrakten forbrukeren faktisk krever.
+    if not isinstance(felter, Mapping):
         raise Kjoringsfeil("feltuttrekk_feilet", fremdrift)
     return felter
 

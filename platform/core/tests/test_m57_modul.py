@@ -7,10 +7,12 @@ lagene måles: gaten mot deklarasjonen, strømmen mot de faktiske bytene.
 """
 from __future__ import annotations
 
+import collections
 import errno
 import io
 import os
 import struct
+import types
 import zipfile
 from pathlib import Path
 
@@ -1971,6 +1973,37 @@ def test_feltuttrekk_som_gir_ikkekart_tilskrives_ikke_modellen(tmp_path):
         "en uttrekker som gir tilbake noe annet enn et kart, feilet")
     # Stoppen er FØR modellen — den ble aldri spurt.
     assert modell.sett == []
+
+
+def test_feltuttrekk_som_gir_annet_kart_enn_dict_slipper_gjennom(tmp_path):
+    """Codex P2: vakten over målte ÉN implementasjon, ikke kontrakten.
+
+    `_flett_felter` normaliserer med `dict(nye)` og har derfor alltid tatt
+    imot et hvilket som helst kart. Sto det `isinstance(felter, dict)` i
+    `_felter`, avviste porten en `MappingProxyType` (formen du får når
+    uttrekkeren leverer en uforanderlig visning av sin egen tilstand) eller
+    en `UserDict` — et gyldig uttrekk ble et kodet feilutfall, og
+    kontrakten for den injiserte uttrekkeren ble snevret inn av en vakt som
+    bare skulle stanse `None` og annet som IKKE er et kart.
+
+    MUTASJONEN SOM DREPER DENNE: skriv `Mapping`-porten i `_felter` om til
+    `isinstance(felter, dict)` — da blir koden `feltuttrekk_feilet` for et
+    uttrekk som er helt i orden.
+    """
+    from modules.m57_ats import kjoring
+
+    arkiv = _bunt(tmp_path, [("k1/cv.html", b"<p>Kari kan drift</p>")])
+    for kart in (types.MappingProxyType({"navn": ["Kari"]}),
+                 collections.UserDict({"navn": ["Kari"]})):
+        modell = _Modell()
+        ut = kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
+                               kandidatfelter_for=lambda m, k=kart: k,
+                               tekst_for=lambda m, d: d.decode("utf-8"),
+                               biasmaalinger=_MAALINGER)
+        assert [r["kandidat_id"] for r in ut["rangering"]] == ["k1"], (
+            f"{type(kart).__name__} er et kart og skal evalueres")
+        # Blindingen fikk feltene: klarteksten nådde aldri modellen.
+        assert modell.sett and "Kari" not in modell.sett[0]
 
 
 def test_bunt_uten_kandidater_er_kodet_feil_ikke_tomt_resultat(tmp_path):
