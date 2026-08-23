@@ -619,6 +619,80 @@ def test_port21_totalen_maales_ogsa_pa_et_medlem_uten_lesesloyfe(
     assert len(list(parsing.les_porsjonsvis(arkiv))) == 2
 
 
+def _patch_katalogpost(arkiv: Path, navn: bytes, skade) -> None:
+    """Skader SENTRALKATALOGENS post for én oppføring, og bare den.
+    EOCD-halen står urørt — `is_zipfile` finner den og svarer JA, mens
+    `ZipFile(...)` feller først når den parser posten. Nettopp det
+    gapet er porten under."""
+    data = bytearray(arkiv.read_bytes())
+    sig = b"PK\x01\x02"
+    i = data.find(sig)
+    while i != -1:
+        navnlengde = struct.unpack_from("<H", data, i + 28)[0]
+        if data[i + 46:i + 46 + navnlengde] == navn:
+            skade(data, i)
+            arkiv.write_bytes(bytes(data))
+            return
+        i = data.find(sig, i + 4)
+    raise AssertionError(f"{navn!r} ikke i sentralkatalogen")
+
+
+def _katalogsignatur(data: bytearray, i: int) -> None:
+    data[i + 3] = 0x09          # «Bad magic number for central directory»
+
+
+def _katalogversjon(data: bytearray, i: int) -> None:
+    struct.pack_into("<H", data, i + 6, 999)    # zip-versjon 99.9
+
+
+def _katalognavn_lyver_utf8(data: bytearray, i: int) -> None:
+    flagg = struct.unpack_from("<H", data, i + 8)[0]
+    struct.pack_into("<H", data, i + 8, flagg | 0x800)   # «navnet er UTF-8»
+    data[i + 46] = 0xFF                                  # … og det er det ikke
+
+
+@pytest.mark.parametrize("skade, kode", [
+    (_katalogsignatur, "korrupt_bunt"),
+    (_katalognavn_lyver_utf8, "korrupt_bunt"),
+    (_katalogversjon, "uleselig_medlem"),
+])
+def test_en_ulesbar_ytre_katalog_er_et_kodet_utfall(tmp_path, skade, kode):
+    """Codex P2: `is_zipfile` leter opp EOCD-posten, den LESER ikke
+    katalogen. En bunt med gyldig hale og en ødelagt post lenger inne
+    passerer derfor `ikke_zip`-porten, og `ZipFile(...)` kaster en RÅ
+    bibliotekfeil — utenfor håndteringen i `les_porsjonsvis`, som først
+    begynner inne i medlemssløyfa. Kontrakten er et KODET utfall (SP-3),
+    aldri en uventet arbeiderfeil, og porten måler BEGGE de ytre
+    åpningsstedene: gaten og strømmen."""
+    arkiv = _bunt(tmp_path, [("a.html", b"<p>a</p>"), ("b.html", b"<p>b</p>")])
+    assert len(parsing.inspiser_bunt(arkiv)) == 2   # positiv kontroll
+    _patch_katalogpost(arkiv, b"b.html", skade)
+    # Forutsetningen funnet hviler på: porten over sier fortsatt JA, så
+    # `ikke_zip` fanger ikke dette.
+    assert zipfile.is_zipfile(arkiv), "EOCD-halen er urørt"
+    with pytest.raises(parsing.Buntfeil) as e:
+        parsing.inspiser_bunt(arkiv)
+    assert e.value.kode == kode
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(arkiv))
+    assert e.value.kode == kode
+
+
+def test_en_ulesbar_indre_docx_katalog_er_feil_innholdstype(tmp_path):
+    """Samme dør, innsiden: et INDRE filnavn som påstår UTF-8 uten å
+    være det, feller `ZipFile(...)` med en rå `ValueError` — den ene
+    bibliotekformen `_inspiser_docx` ikke kjente. En docx som ikke lar
+    seg lese som arkiv er ikke en docx."""
+    docx = bytearray(_docx())
+    i = docx.index(b"PK\x01\x02")
+    _katalognavn_lyver_utf8(docx, i)
+    arkiv = _bunt(tmp_path, [("cv.docx", bytes(docx))])
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(arkiv))
+    assert e.value.kode == "feil_innholdstype"
+    assert "cv.docx" in e.value.args[0]
+
+
 def test_en_lognaktig_katalog_er_en_korrupt_bunt(tmp_path):
     """Katalogen KAN lyve — zipfile trunkerer da strømmen på den
     deklarerte lengden og feller CRC-en. Poenget porten eier: utfallet

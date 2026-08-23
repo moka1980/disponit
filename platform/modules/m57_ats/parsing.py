@@ -110,6 +110,39 @@ def _ser_ut_som_html(hode: bytes) -> bool:
     return hode.lstrip(b" \t\r\n\x00").startswith(b"<")
 
 
+def _apne_katalog(sti: str | Path) -> zipfile.ZipFile:
+    """DEN YTRE SENTRALKATALOGEN HAR ÉN DØR, OG DEN ER KODET (Codex P2).
+
+    `is_zipfile` leter opp EOCD-posten — den leser IKKE katalogen. En
+    bunt med gyldig hale og en ødelagt oppføring lenger inne passerer
+    derfor `ikke_zip`-porten, og `ZipFile(...)` feller først når den
+    faktisk parser posten. Begge de ytre åpningsstedene sto UTENFOR all
+    håndtering (`inspiser_bunt` har ingen, og `les_porsjonsvis` fanger
+    først inne i medlemssløyfa), så en angriperlevert bunt ble en uventet
+    arbeiderfeil i stedet for det kodede utfallet kontrakten lover
+    (SP-3). Den INDRE katalogen har hatt nettopp denne døren siden
+    docx-runden (`_inspiser_docx`); den ytre hadde den ikke.
+
+    Kodene er de samme som medlemssløyfa bruker, fordi det er de samme
+    bibliotekformene: bytene i katalogen er ødelagte (`BadZipFile`, og
+    et filnavn som PÅSTÅR UTF-8 uten å være det) er en KORRUPT bunt,
+    mens et arkiv biblioteket ikke har midler til å lese
+    (`NotImplementedError` på en zip-versjon den ikke kan, `RuntimeError`)
+    er ULESELIG. Døren AVVISER; den inspiserer ikke — grensene måles som
+    før av kallerne.
+    """
+    try:
+        return zipfile.ZipFile(sti)
+    except zipfile.BadZipFile as feil:
+        raise Buntfeil("korrupt_bunt", str(feil)) from feil
+    except UnicodeDecodeError as feil:
+        raise Buntfeil("korrupt_bunt",
+                       f"katalognavn: {feil.reason}") from feil
+    except (RuntimeError, NotImplementedError) as feil:
+        raise Buntfeil("uleselig_medlem",
+                       f"{type(feil).__name__}: {feil}") from feil
+
+
 def inspiser_bunt(sti: str | Path) -> list[Medlem]:
     """Hele gaten mot KATALOGEN, før én byte pakkes ut.
 
@@ -163,7 +196,7 @@ def inspiser_bunt(sti: str | Path) -> list[Medlem]:
     medlemmer: list[Medlem] = []
     total = 0
     sett: set[str] = set()
-    with zipfile.ZipFile(sti) as zf:
+    with _apne_katalog(sti) as zf:
         alle = zf.infolist()
         if len(alle) > MAKS_FILER:
             raise Buntfeil("for_mange_filer", str(len(alle)))
@@ -273,9 +306,14 @@ def _inspiser_docx(navn: str, data: bytes, *,
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as indre:
             alle = indre.infolist()
-    except (zipfile.BadZipFile, RuntimeError, NotImplementedError) as feil:
+    except (zipfile.BadZipFile, RuntimeError, NotImplementedError,
+            UnicodeDecodeError) as feil:
         # `PK` er ikke en zip; en docx som ikke lar seg lese som arkiv er
-        # ikke en docx.
+        # ikke en docx. `UnicodeDecodeError` er samme klasse og kom inn
+        # sammen med den ytre døren (`_apne_katalog`): et indre filnavn
+        # som PÅSTÅR UTF-8 uten å være det, feller `ZipFile(...)` med en
+        # rå `ValueError` — den ene bibliotekformen denne tuppelen ikke
+        # kjente. Døren utvides, den bygges ikke på nytt.
         raise Buntfeil("feil_innholdstype", navn) from feil
     # Mappene teller også her (Codex P2): budsjettet er katalogarbeid, og
     # en mappeoppføring koster like mye å lese som en filoppføring. Den
@@ -355,7 +393,7 @@ def les_porsjonsvis(sti: str | Path, *, porsjon: int = 200):
     """
     medlemmer = inspiser_bunt(sti)
     total = 0
-    with zipfile.ZipFile(sti) as zf:
+    with _apne_katalog(sti) as zf:
         # ÉN teller for hele bunten, nøstede docx-medlemmer inkludert
         # (Codex P1): budsjettet starter på buntens egne oppføringer og
         # forbrukes videre av hver docx, aldri nullstilt per arkiv. Det
