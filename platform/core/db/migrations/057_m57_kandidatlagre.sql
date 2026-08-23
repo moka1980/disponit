@@ -661,13 +661,24 @@ REVOKE ALL ON FUNCTION reap_kandidatdata(INT) FROM PUBLIC;
 -- som bare slutter å bli gitt er ikke trukket tilbake — finnes
 -- timerrollen, REVOKES runtime, ellers ville en kompromittert API-prosess
 -- kunne trigge retensjonsarbeid på tvers av alle tenanter.
+-- BEGGE armene er vaktet på at rollen `disponit` FINNES (Codex P1).
+-- Denne migrasjonens egen rettighetsseksjon sier at runtime-rollen kan
+-- hete noe annet — navnet er et argument til `migrer.py` — og PostgreSQL
+-- behandler `REVOKE ... FROM <ukjent rolle>` som en FEIL, ikke en no-op.
+-- På en installasjon som har timerrollen, men et eget runtime-rollenavn,
+-- rullet derfor hele 057 tilbake på en linje som skulle vært virkningsløs.
+-- Finnes ikke lokalnavnet, er det heller ingenting å trekke tilbake fra
+-- det: reaperen er kryss-tenant og hører til timerrollen, og en
+-- parameterisert runtime-rolle skal aldri få den (se testen over).
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'disponit_domener') THEN
         GRANT EXECUTE ON FUNCTION reap_kandidatdata(INT)
             TO disponit_domener;
-        REVOKE EXECUTE ON FUNCTION reap_kandidatdata(INT) FROM disponit;
-    ELSE
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'disponit') THEN
+            REVOKE EXECUTE ON FUNCTION reap_kandidatdata(INT) FROM disponit;
+        END IF;
+    ELSIF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'disponit') THEN
         GRANT EXECUTE ON FUNCTION reap_kandidatdata(INT) TO disponit;
     END IF;
 END $$;

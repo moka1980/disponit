@@ -455,6 +455,46 @@ def test_057_navngir_aldri_runtime_rollen():
             for t in treff]))
 
 
+def test_057_navngir_disponit_kun_under_eksistensvakt():
+    """Codex P1: `REVOKE ... FROM disponit` er en FEIL, ikke en no-op.
+
+    Unntaket over — den betingede reaperblokken — navngir lokalnavnet på
+    runtime-rollen i begge armer. PostgreSQL har ingen `IF EXISTS` på
+    REVOKE: navngir en migrasjon en rolle som ikke finnes, avbrytes hele
+    migrasjonen. En installasjon som HAR timerrollen `disponit_domener`,
+    men kjører `migrer.py` med sitt eget runtime-rollenavn, mistet dermed
+    hele 057 på en linje som skulle vært virkningsløs — og det er nettopp
+    kombinasjonen 057s egen rettighetsseksjon sier at den støtter.
+
+    Porten måler formen, ikke stedet: ENHVER setning i 057 som navngir
+    `disponit` ved lokalnavn må stå under en `pg_roles`-vakt på samme
+    navn, og ingen slik setning får stå utenfor en DO-blokk.
+
+    MUTASJONEN SOM DREPER DENNE: fjern den indre `IF EXISTS`-en, eller
+    gjør `ELSIF` om til `ELSE` igjen."""
+    import re
+    from pathlib import Path
+    rot = Path(__file__).resolve().parents[3]
+    sql = (rot / "platform" / "core" / "db" / "migrations"
+           / "057_m57_kandidatlagre.sql").read_text(encoding="utf-8")
+    blokk_re = re.compile(r"DO \$\$.*?END \$\$;", re.S)
+    navngir = re.compile(r"(?:TO|FROM) disponit\s*;")
+    funnet = 0
+    for blokk in blokk_re.findall(sql):
+        for treff in navngir.finditer(blokk):
+            funnet += 1
+            assert "rolname = 'disponit'" in blokk[:treff.start()], (
+                "057 navngir runtime-rollen uten eksistensvakt: "
+                + repr(blokk[max(0, treff.start() - 200):treff.end()]))
+    assert funnet >= 2, (
+        "reaperblokkens to armer navngir ikke lenger lokalnavnet — er"
+        " unntaket borte, skal denne testen og fritaket i"
+        " test_057_navngir_aldri_runtime_rollen fjernes sammen")
+    utenfor = blokk_re.sub("", sql)
+    assert not navngir.search(utenfor), \
+        "057 navngir runtime-rollen utenfor enhver eksistensvakt"
+
+
 @pg
 def test_port20_lukkingen_kan_ikke_sta_frem_i_tid(migrator):
     """Fristen løper fra lukkingen — en lukking frem i tid ville
