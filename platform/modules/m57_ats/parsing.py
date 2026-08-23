@@ -13,6 +13,7 @@ plattform-sidens dør inn og slipper bare gjennom det gaten har målt.
 """
 from __future__ import annotations
 
+import io
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,7 +26,9 @@ MAKS_ENKELTFIL = 25 * 1024 * 1024              # 25 MB
 # Nøstede arkiver: 0 (ikke tillatt). DOCX er teknisk en zip og er
 # UNNTAKET — den er en av de tre lovede innholdstypene, og magien
 # `PK` kreves der (innholdstypeporten under), mens alt annet med
-# arkivmagi eller arkivendelse felles.
+# arkivmagi eller arkivendelse felles. Unntaket gjelder TYPEN, ikke
+# grensene: `_inspiser_docx` måler det indre arkivet med de samme
+# tallene, og legger den utpakkede totalen til buntens.
 ARKIVENDELSER = frozenset({
     ".zip", ".tar", ".gz", ".tgz", ".bz2", ".xz", ".7z", ".rar", ".jar"})
 TILLATTE_ENDELSER = frozenset({".pdf", ".docx", ".html", ".htm"})
@@ -133,6 +136,43 @@ def inspiser_bunt(sti: str | Path) -> list[Medlem]:
     return medlemmer
 
 
+def _inspiser_docx(navn: str, data: bytes) -> int:
+    """DOCX-unntaket måles som alle andre arkiver — og returnerer den
+    utpakkede totalen sin, så den teller med i buntens (Codex P1).
+
+    En `.docx` ble sluppet gjennom på `PK`-magien og sin egen KOMPRIMERTE
+    størrelse alene. En liten docx kan bære et indre medlem som pakker ut
+    til gigabyte: den ytre bunten passerte hver eneste 2 GB/100:1-sjekk,
+    fordi den bare inneholdt de alt komprimerte docx-bytene, og bomben
+    møtte først tekstuttrekket. Unntaket er at DOCX er en av de tre lovede
+    innholdstypene — ikke at grensene ikke gjelder inni den.
+    """
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as indre:
+            infos = [i for i in indre.infolist() if not i.is_dir()]
+    except (zipfile.BadZipFile, RuntimeError, NotImplementedError) as feil:
+        # `PK` er ikke en zip; en docx som ikke lar seg lese som arkiv er
+        # ikke en docx.
+        raise Buntfeil("feil_innholdstype", navn) from feil
+    if len(infos) > MAKS_FILER:
+        raise Buntfeil("for_mange_filer", f"{navn}: {len(infos)}")
+    utpakket = 0
+    for info in infos:
+        _sjekk_navn(f"{navn}/{info.filename}")
+        if _endelse(info.filename) in ARKIVENDELSER:
+            raise Buntfeil("nostet_arkiv", f"{navn}/{info.filename}")
+        if info.file_size > 0 and (
+                info.compress_size <= 0
+                or info.file_size / info.compress_size
+                > MAKS_KOMPRIMERINGSFORHOLD):
+            raise Buntfeil("komprimeringsforhold",
+                           f"{navn}/{info.filename}")
+        utpakket += info.file_size
+        if utpakket > MAKS_TOTAL_UTPAKKET:
+            raise Buntfeil("total_for_stor", f"{navn}/{info.filename}")
+    return utpakket
+
+
 def les_porsjonsvis(sti: str | Path, *, porsjon: int = 200):
     """Generator: (fremdrift, medlem, bytes) — porsjonsvis parsing med
     fremdrift som evidens (§7).
@@ -200,6 +240,10 @@ def les_porsjonsvis(sti: str | Path, *, porsjon: int = 200):
                                f"{medlem.navn}: {type(feil).__name__}"
                                ) from feil
             total += lest
+            if _endelse(medlem.navn) == ".docx":
+                total += _inspiser_docx(medlem.navn, b"".join(biter))
+                if total > MAKS_TOTAL_UTPAKKET:
+                    raise Buntfeil("total_for_stor", medlem.navn)
             if nr % porsjon == 0 or nr == len(medlemmer):
                 fremdrift = {"filer_lest": nr,
                              "filer_totalt": len(medlemmer),

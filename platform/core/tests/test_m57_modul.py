@@ -7,6 +7,7 @@ lagene måles: gaten mot deklarasjonen, strømmen mot de faktiske bytene.
 """
 from __future__ import annotations
 
+import io
 import struct
 import zipfile
 from pathlib import Path
@@ -66,6 +67,18 @@ def _patch_kryptert(arkiv: Path) -> None:
     arkiv.write_bytes(bytes(data))
 
 
+def _docx(indre: list[tuple[str, bytes]] | None = None) -> bytes:
+    """En EKTE docx — altså en zip — bygget i minnet. DOCX er unntaket
+    fra «ingen nøstede arkiver», og et unntak kan bare måles med den
+    ekte formen."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for navn, innhold in (indre or [("word/document.xml",
+                                         b"<w:t>CV</w:t>")]):
+            zf.writestr(navn, innhold)
+    return buf.getvalue()
+
+
 def _pdf(n: int = 64) -> bytes:
     return b"%PDF-1.7\n" + b"x" * n
 
@@ -107,9 +120,44 @@ def test_port24_nostet_arkiv_avvises(tmp_path):
     assert e.value.kode == "nostet_arkiv"
     # DOCX-unntaket: PK-magi er PÅKREVD der (det ER en zip) — positiv
     # kontroll på at unntaket ikke ble en generell åpning.
-    arkiv2 = _bunt(tmp_path / "..", []) if False else None
-    ok = _bunt(tmp_path, [("cv.docx", b"PK\x03\x04" + b"d" * 32)])
+    ok = _bunt(tmp_path, [("cv.docx", _docx())])
     assert len(list(parsing.les_porsjonsvis(ok))) == 1
+
+
+def test_port24_docx_inspiseres_som_arkivet_den_er(tmp_path):
+    """Codex P1: DOCX slapp gjennom på `PK`-magien og sin egen
+    KOMPRIMERTE størrelse alene. En liten docx kan bære et indre medlem
+    som pakker ut til gigabyte — den ytre bunten passerer hver eneste
+    2 GB/100:1-sjekk, fordi den bare inneholder de alt komprimerte
+    docx-bytene, og bomben møter først tekstuttrekket.
+
+    Unntaket er at DOCX er en av de tre lovede innholdstypene, ikke at
+    grensene slutter å gjelde inni den."""
+    # 4 MB nuller pakker ~1000:1 inni docx-en; den ytre bunten ser bare
+    # noen få komprimerte kilobyte og ville sagt ja.
+    bombe = _bunt(tmp_path, [("cv.docx", _docx(
+        [("word/document.xml", b"<w:t>" + b"\0" * (4 << 20))]))])
+    assert parsing.inspiser_bunt(bombe)[0].storrelse < (1 << 20), \
+        "forutsetningen: den ytre bunten ser en liten fil"
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(bombe))
+    assert e.value.kode == "komprimeringsforhold"
+    bombe.unlink()
+    # Path traversal og nøstet arkiv INNI docx-en måles med samme koder.
+    for indre, kode in (
+            ([("../../unnslapp.xml", b"<x/>")], "sti_utenfor_bunten"),
+            ([("word/indre.zip", b"<x/>")], "nostet_arkiv")):
+        arkiv = _bunt(tmp_path, [("cv.docx", _docx(indre))])
+        with pytest.raises(parsing.Buntfeil) as e:
+            list(parsing.les_porsjonsvis(arkiv))
+        assert e.value.kode == kode, indre
+        arkiv.unlink()
+    # ... og en «docx» som ikke er et arkiv i det hele tatt er ikke en
+    # docx, uansett hvor mye den begynner på PK.
+    falsk = _bunt(tmp_path, [("cv.docx", b"PK\x03\x04" + b"d" * 32)])
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(falsk))
+    assert e.value.kode == "feil_innholdstype"
 
 
 def test_port25_innholdstypen_er_en_paastand_begge_veier(tmp_path):
