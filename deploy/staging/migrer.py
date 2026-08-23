@@ -328,13 +328,13 @@ GRANT EXECUTE ON FUNCTION avvis_med_opplosning(TEXT, BIGINT, BIGINT[], TEXT, TEX
 -- og frigivelsesoppdrag — bor hos varsleren, se VARSLER_RETTIGHETER).
 GRANT EXECUTE ON FUNCTION opprett_utsendingsliste(TEXT, UUID, UUID, BIGINT, TEXT, TEXT, TEXT, INT) TO {rolle};
 GRANT EXECUTE ON FUNCTION signer_utsendingsliste(TEXT, UUID, TEXT, TEXT) TO {rolle};
--- 057: kandidatprosessens to herdede veier. Migrasjonens `TO disponit` er
--- test/lokal-fallbacken (der runtime HETER disponit) — driftssannheten er
--- denne parameteriserte blokken. Uten den får en installasjon med et annet
--- runtime-rollenavn `permission denied` på prosessfødselen og på lukkingen
--- (som starter slettefristen) etter migrering. Reaperen står bevisst IKKE
--- her: den er kryss-tenant og hører til timerrollen (038-formen, betinget
--- DO-blokk i migrasjonen).
+-- 057: kandidatprosessens to herdede veier. Migrasjonen navngir ikke
+-- runtime-rollen i det hele tatt lenger (Cursor P2, samme form som 056):
+-- denne blokken er ENESTE rettighetskilde. Uten den får en installasjon
+-- `permission denied` på prosessfødselen og på lukkingen (som starter
+-- slettefristen) etter migrering. Reaperen står bevisst IKKE her: den er
+-- kryss-tenant og hører til timerrollen (038-formen, betinget DO-blokk i
+-- migrasjonen).
 GRANT EXECUTE ON FUNCTION opprett_rekrutteringsprosess(TEXT, BIGINT, INT) TO {rolle};
 GRANT EXECUTE ON FUNCTION lukk_rekrutteringsprosess(TEXT, UUID, TIMESTAMPTZ) TO {rolle};
 """

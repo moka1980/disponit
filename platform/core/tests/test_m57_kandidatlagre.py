@@ -313,6 +313,48 @@ def test_057_rettighetene_er_parameterisert_pa_rollenavnet():
             not in kjorer), "runtime får INSERT på ankeret i kjøreren"
 
 
+def test_057_navngir_aldri_runtime_rollen():
+    """Cursor P2, samme form som `test_056_navngir_aldri_runtime_rollen`.
+
+    057 gjentok 056s gamle feilklasse: `disponit` er LOKAL-/TESTNAVNET på
+    runtime-rollen, og `migrer.py` tar navnet som argument. Står grantene
+    i migrasjonen, har den to utfall og begge er gale — finnes ikke rollen,
+    ruller hele 057 tilbake; finnes navnet som en urelatert eller UTRANGERT
+    innlogging, får DEN varig EXECUTE på prosessfødselen og på lukkingen
+    (som starter slettefristen) og SELECT/INSERT på alle seks
+    kandidatlagrene, for kjørerens nullstilling gjelder den KONFIGURERTE
+    rollen, ikke alle roller.
+
+    Den betingede reaperblokken er unntaket og står igjen med vilje: den
+    er 038-formen ORDRETT, der `REVOKE ... FROM disponit` er selve poenget
+    (et grant som bare slutter å bli gitt, er ikke trukket tilbake).
+    Testen fjerner nettopp den blokken før den måler, slik at unntaket er
+    SYNLIG her og ikke et hull noen kan utvide i stillhet.
+
+    MUTASJONEN SOM DREPER DENNE: legg grant-blokkene tilbake i §7."""
+    import re
+    from pathlib import Path
+    rot = Path(__file__).resolve().parents[3]
+    sql = (rot / "platform" / "core" / "db" / "migrations"
+           / "057_m57_kandidatlagre.sql").read_text(encoding="utf-8")
+    # Anker BEGGE ender av unntaket. En lat `.*?` foran ville startet på
+    # den FØRSTE `DO $$` i filen og slukt alt imellom — altså skjult
+    # nettopp de grantene testen finnes for å måle.
+    reaperblokk = re.compile(
+        r"DO \$\$\s*BEGIN\s*IF EXISTS \(SELECT 1 FROM pg_roles"
+        r" WHERE rolname = 'disponit_domener'\)[^$]*?END \$\$;", re.S)
+    assert reaperblokk.search(sql), \
+        "den betingede reaperblokken er borte — unntaket testen tar høyde" \
+        " for finnes ikke lenger, og fritaket under er da et hull"
+    uten_reaper = reaperblokk.sub("", sql)
+    treff = list(re.finditer(r"TO disponit\b\s*;", uten_reaper))
+    assert not treff, (
+        "057 navngir runtime-rollen ved lokalnavn — kjøreren er eneste "
+        "rettighetskilde: " + repr([
+            uten_reaper[max(0, t.start() - 120):t.end()][-120:]
+            for t in treff]))
+
+
 @pg
 def test_port20_lukkingen_kan_ikke_sta_frem_i_tid(migrator):
     """Fristen løper fra lukkingen — en lukking frem i tid ville

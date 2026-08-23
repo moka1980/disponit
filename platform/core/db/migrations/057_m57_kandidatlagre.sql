@@ -598,10 +598,15 @@ REVOKE ALL ON FUNCTION opprett_rekrutteringsprosess(TEXT, BIGINT, INT)
 REVOKE ALL ON FUNCTION lukk_rekrutteringsprosess(TEXT, UUID, TIMESTAMPTZ)
     FROM PUBLIC;
 REVOKE ALL ON FUNCTION reap_kandidatdata(INT) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION opprett_rekrutteringsprosess(TEXT, BIGINT, INT)
-    TO disponit;
-GRANT EXECUTE ON FUNCTION lukk_rekrutteringsprosess(TEXT, UUID,
-    TIMESTAMPTZ) TO disponit;
+-- Runtime-grantene står IKKE her (Cursor P2). `disponit` er lokal-/test-
+-- navnet på runtime-rollen; `migrer.py` tar navnet som argument og er
+-- eneste rettighetskilde. 056 lukket samme feilklasse: på en installasjon
+-- uten rollen `disponit` ruller migrasjonen tilbake, og FINNES navnet som
+-- en urelatert eller utrangert innlogging, får DEN varig EXECUTE på
+-- prosessfødselen og på lukkingen — kjørerens nullstilling gjelder den
+-- KONFIGURERTE rollen, ikke alle roller. Grantene ligger på `{rolle}`-form
+-- i `migrer.py` (M37_RETTIGHETER_API), speilet av
+-- `test_057_rettighetene_er_parameterisert_pa_rollenavnet`.
 -- Reaperen er kryss-tenant (038-læren): i et oppsett MED egen timerrolle
 -- hører den hjemme der, og web-API-rollen skal ikke ha den. Lokalt/test
 -- ER runtime hele plattformen. 038-blokken ORDRETT (Codex P1): et grant
@@ -640,8 +645,9 @@ REVOKE ALL ON rekrutteringsprosess, kandidat_originaldokument,
 -- ikke er en `rekruttering.evaluering`, eller satt `lukket_ts` frem i tid
 -- og dermed skjøvet hele slettefristen ut i det blå. Fødselen går gjennom
 -- funksjonen, som eier begge portene.
-GRANT SELECT ON rekrutteringsprosess TO disponit;
-GRANT SELECT, INSERT ON kandidat_originaldokument,
-    kandidat_parsettekst, kandidat_evalueringsartefakt,
-    kandidat_intervjusporsmal, kandidat_utsendingsdata,
-    kandidat_avmaskering TO disponit;
+--
+-- Tabellgrantene bor av samme grunn som funksjonsgrantene over i
+-- `migrer.py` på `{rolle}`-form — `GRANT SELECT ON rekrutteringsprosess`
+-- og `GRANT SELECT, INSERT` på de seks lagrene, med ankerets INSERT
+-- fortsatt utelatt. Speilet av
+-- `test_057_rettighetene_er_parameterisert_pa_rollenavnet`.
