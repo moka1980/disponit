@@ -7,6 +7,7 @@ lagene måles: gaten mot deklarasjonen, strømmen mot de faktiske bytene.
 """
 from __future__ import annotations
 
+import errno
 import io
 import os
 import struct
@@ -24,16 +25,40 @@ ROT = Path(__file__).resolve().parents[3]
 MODULROT = ROT / "platform/modules/m57_ats"
 
 
-def _bunt(sti: Path, filer: list[tuple], **zipkw) -> Path:
+def _bunt(sti: Path, filer: list[tuple], *,
+          metode: int = zipfile.ZIP_DEFLATED, **zipkw) -> Path:
     arkiv = sti / "bunt.zip"
-    with zipfile.ZipFile(arkiv, "w", zipfile.ZIP_DEFLATED, **zipkw) as zf:
+    with zipfile.ZipFile(arkiv, "w", metode, **zipkw) as zf:
         for navn, innhold, *attr in filer:
             info = zipfile.ZipInfo(navn)
-            info.compress_type = zipfile.ZIP_DEFLATED
+            info.compress_type = metode
             if attr:
                 info.external_attr = attr[0]
             zf.writestr(info, innhold)
     return arkiv
+
+
+def _skad_payload(arkiv: Path, navn: bytes) -> None:
+    """Skader den KOMPRIMERTE strømmen til én oppføring, og bare den.
+    Katalogen, hodene og de deklarerte lengdene står urørt — gaten går
+    derfor gjennom, og skaden dukker først opp i dekompressoren."""
+    data = bytearray(arkiv.read_bytes())
+    i = data.find(b"PK\x03\x04")
+    while i != -1:
+        navnlengde, ekstra = struct.unpack_from("<HH", data, i + 26)
+        if data[i + 30:i + 30 + navnlengde] == navn:
+            start = i + 30 + navnlengde + ekstra
+            slutt = start + struct.unpack_from("<I", data, i + 18)[0]
+            # INNE i den komprimerte strømmen, ikke i halen: en skade helt
+            # sist dekoder gjerne til søppel som først felles av CRC-en —
+            # altså `BadZipFile`, den formen som ALT var håndtert. Skaden
+            # som treffer dekompressoren selv, er den porten her måler.
+            for n in range(start + 16, min(start + 112, slutt)):
+                data[n] ^= 0xFF
+            arkiv.write_bytes(bytes(data))
+            return
+        i = data.find(b"PK\x03\x04", i + 4)
+    raise AssertionError(f"{navn!r} ikke blant de lokale hodene")
 
 
 def _patch_deklarert(arkiv: Path, navn: bytes, ny_storrelse: int,
@@ -542,6 +567,55 @@ def test_en_lognaktig_katalog_er_en_korrupt_bunt(tmp_path):
     with pytest.raises(parsing.Buntfeil) as e:
         list(parsing.les_porsjonsvis(arkiv))
     assert e.value.kode == "korrupt_bunt"
+
+
+@pytest.mark.parametrize("modul, metode", [
+    ("zlib", zipfile.ZIP_DEFLATED),
+    ("bz2", zipfile.ZIP_BZIP2),
+    ("lzma", zipfile.ZIP_LZMA),
+])
+def test_dekompressorfeil_er_en_kodet_avvisning(tmp_path, modul, metode):
+    """Codex P2: `zipfile` oversetter bare det IT selv oppdager. En skadet
+    komprimert strøm feller biblioteket UNDER — `zlib.error`,
+    `lzma.LZMAError`, eller bz2s errno-løse `OSError` — før CRC-en måles,
+    og alle tre gikk forbi håndteringen. Katalogen er urørt her, så gaten
+    går; skaden finnes bare i payloaden, og utfallet skal være kodet
+    (SP-3), aldri en rå bibliotekfeil ut av generatoren."""
+    pytest.importorskip(modul)
+    # DELVIS komprimerbar med vilje (16 symboler ⇒ ~2:1, godt innenfor
+    # 100:1-porten). Ren tilfeldig payload er ikke komprimerbar, og
+    # DEFLATE legger den i STORED-blokker — en byte snudd der dekoder fint
+    # og felles først av CRC-en, altså den formen som alt var håndtert.
+    stor = b"%PDF-1.7\n" + bytes(b & 0x0F for b in os.urandom(300_000))
+    arkiv = _bunt(tmp_path, [("cv.pdf", stor)], metode=metode)
+    parsing.inspiser_bunt(arkiv)   # positiv kontroll: bunten er lesbar …
+    assert len(list(parsing.les_porsjonsvis(arkiv))) == 1
+    _skad_payload(arkiv, b"cv.pdf")
+    parsing.inspiser_bunt(arkiv)   # … og katalogen lyver fortsatt ikke
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(arkiv))
+    assert e.value.kode == "korrupt_bunt"
+
+
+def test_en_lesefeil_pa_disken_er_ikke_en_korrupt_bunt(tmp_path,
+                                                      monkeypatch):
+    """Baksiden av samme port: `OSError` MED errno er driftens feil, ikke
+    buntens. Ble den fanget i samme arm, ville en disk- eller
+    nettlagerfeil blitt til en avvisning av kundens leveranse — og den
+    kunden hadde ingenting galt gjort. Bare den errno-løse formen
+    dekompressoren kaster, er en korrupt bunt."""
+    arkiv = _bunt(tmp_path, [("cv.pdf", _pdf())])
+    ekte = zipfile.ZipExtFile.read
+
+    def lesefeil(self, *a, **kw):
+        raise OSError(errno.EIO, "I/O error")
+
+    monkeypatch.setattr(zipfile.ZipExtFile, "read", lesefeil)
+    with pytest.raises(OSError) as e:
+        list(parsing.les_porsjonsvis(arkiv))
+    assert e.value.errno == errno.EIO
+    monkeypatch.setattr(zipfile.ZipExtFile, "read", ekte)
+    assert len(list(parsing.les_porsjonsvis(arkiv))) == 1
 
 
 def test_passordbeskyttet_medlem_er_en_kodet_avvisning(tmp_path):

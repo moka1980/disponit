@@ -14,7 +14,9 @@ plattform-sidens dør inn og slipper bare gjennom det gaten har målt.
 from __future__ import annotations
 
 import io
+import lzma
 import zipfile
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -368,6 +370,34 @@ def les_porsjonsvis(sti: str | Path, *, porsjon: int = 200):
             except zipfile.BadZipFile as feil:
                 raise Buntfeil("korrupt_bunt",
                                f"{medlem.navn}: {feil}") from feil
+            # DEKOMPRESSOREN har sine EGNE feiltyper (Codex P2). `zipfile`
+            # oversetter bare det den selv oppdager — ødelagte headere og
+            # CRC-avvik — til `BadZipFile`. En SKADET komprimert strøm
+            # feller biblioteket under, FØR CRC-en i det hele tatt måles,
+            # og da kommer feilen i det formatets egen form: DEFLATE gir
+            # `zlib.error`, LZMA gir `lzma.LZMAError`, og BZIP2 gir en
+            # `OSError` uten errno («Invalid data stream»). Alle tre gikk
+            # forbi begge håndteringene her, så en STRUKTURELT gyldig zip
+            # med ødelagt payload ble en uventet arbeiderfeil i stedet for
+            # det kodede utfallet kontrakten lover (SP-3) — og den formen
+            # er billig å lage for den som leverer bunten.
+            except (zlib.error, lzma.LZMAError) as feil:
+                raise Buntfeil("korrupt_bunt",
+                               f"{medlem.navn}: {type(feil).__name__}"
+                               ) from feil
+            # `OSError` MED errno er noe helt annet: lesefeil på den
+            # underliggende fila (disk, nettlager). Det er ikke en påstand
+            # om buntens innhold, og å kalle det `korrupt_bunt` ville
+            # gjort en driftsfeil til en kundeavvisning — bunten ville
+            # blitt forkastet for noe som var vårt. Den slipper derfor
+            # gjennom som seg selv; bare den errno-løse formen
+            # dekompressoren kaster, er buntens skyld.
+            except OSError as feil:
+                if feil.errno is not None:
+                    raise
+                raise Buntfeil("korrupt_bunt",
+                               f"{medlem.navn}: {type(feil).__name__}"
+                               ) from feil
             # Et passordbeskyttet medlem passerer katalogen, men `zf.open`
             # kaster `RuntimeError: password required` — og en komprimering
             # biblioteket ikke har (bzip2/lzma uten modul) kaster
