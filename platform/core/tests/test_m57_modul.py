@@ -318,6 +318,33 @@ def test_port16_overlappende_verdier_maskeres_lengste_forst():
     assert avmaskering["[KONTAKT-1]"] == "Ann@example.com"
 
 
+def test_kildereferansen_folger_teksten_den_indekserer():
+    """Codex P2: blindingen ENDRER lengder («Kari» → `[NAVN-1]`), så en
+    [start:slutt] validert mot den blindede teksten peker på noe annet i
+    råsøknaden. Artefakten bærer derfor strengen offsetene hører til, og
+    mottakeren kan verifisere sitatet med samme snitt som porten."""
+    class _Sitatmodell(_Modell):
+        def vurder(self, tekst, vekter):
+            start = tekst.index("ti års")
+            return {"funn": [{"kategori": "uklar_tidslinje",
+                              "kilde": {"start": start,
+                                        "slutt": start + 6,
+                                        "sitat": "ti års"}}],
+                    "oppfylt": {k: True for k in vekter},
+                    "intervjusporsmal": []}
+
+    raa = "Kari Nordmann har ti års erfaring."
+    ut = evaluering.evaluer_kandidat(
+        _Sitatmodell(), raa, {"navn": ["Kari Nordmann"]}, {"drift": 1},
+        biasmaalinger=_MAALINGER)
+    kilde = ut["funn"][0]["kilde"]
+    assert ut["kildetekst"][kilde["start"]:kilde["slutt"]] == "ti års"
+    # ... og nettopp forvekslingen porten finnes for: samme snitt i
+    # råteksten treffer noe annet, fordi maskeringen forskjøv alt bak seg.
+    assert raa[kilde["start"]:kilde["slutt"]] != "ti års"
+    assert "Kari" not in ut["kildetekst"]
+
+
 def test_port17_imagebytte_uten_biasmaaling_blokkerer():
     modell = _Modell()
     modell.image_digest = "sha256:" + "b" * 64  # nytt image, ingen måling

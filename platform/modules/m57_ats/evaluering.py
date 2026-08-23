@@ -144,6 +144,10 @@ def evaluer_kandidat(modell, soknadstekst: str,
     digest (port 17), blindet input (port 16), skjemavaliderte funn
     (port 15). Modellen får ALDRI se råteksten når blinding står på —
     rekkefølgen her er selve invarianten, ikke en implementasjonsdetalj.
+
+    Funnenes `kilde.start/slutt` indekserer `kildetekst` i returverdien —
+    ALDRI `soknadstekst`. Blindingen endrer lengder, så de to er ikke
+    samme koordinatsystem.
     """
     krev_biasmaaling(modell.image_digest, biasmaalinger)
     tekst, avmaskering = blinding.evalueringsinput(
@@ -153,7 +157,15 @@ def evaluer_kandidat(modell, soknadstekst: str,
     svar = modell.vurder(tekst, vekter)
     for funn in svar.get("funn", ()):
         valider_funn(funn, tekst)
+    # `kildetekst` er strengen kildereferansene faktisk indekserer, og den
+    # følger med artefakten (Codex P2). Blindingen ENDRER lengder — «Kari»
+    # blir `[NAVN-1]` — så en [start:slutt] validert mot den blindede
+    # teksten peker på noe annet i råsøknaden. Å sende offsetene videre
+    # uten strengen de hører til, var å invitere til nettopp den
+    # forvekslingen; her er referansen entydig, og verifiserbar av
+    # mottakeren med samme snitt som `valider_funn` bruker.
     return {"funn": list(svar.get("funn", ())),
             "oppfylt": dict(svar.get("oppfylt", {})),
             "intervjusporsmal": list(svar.get("intervjusporsmal", ())),
-            "avmaskering": avmaskering}
+            "avmaskering": avmaskering,
+            "kildetekst": tekst}
