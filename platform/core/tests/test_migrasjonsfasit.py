@@ -13,6 +13,12 @@ den fødes (etter deploy er den kjørt); en endring i en pinnet fil er
 rød her — dokumentasjon av senere vedtak hører til i issuer, PR-tråder
 eller NYE filer, aldri i kjørt historikk.
 
+Fasiten er APPEND-ONLY, og den påstanden måles mot `main` — ikke mot
+fasiten i grenen som endrer den. Fil-mot-fasit alene er en port som
+måler treet mot seg selv: endrer noen migrasjonen og pinnen i samme
+commit, er alt grønt helt til deployet har stoppet tjenestene. En pin
+som er merget er historikk på lik linje med bytene den peker på.
+
 PROVENIENS — hvor pinnene kommer fra
 ------------------------------------
 Fasiten er en backfill: den ble født med 57 pinner på én gang, ikke én
@@ -53,9 +59,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 ROT = Path(__file__).resolve().parents[1]
+GITROT = Path(__file__).resolve().parents[3]
+FASITSTI = "platform/core/db/migrasjons-fasit.json"
 FASIT = json.loads((ROT / "db/migrasjons-fasit.json").read_text(
     encoding="utf-8"))
 KATALOG = ROT / "db/migrations"
@@ -145,6 +154,128 @@ def test_fasiten_dekker_alle_migrasjonene_i_treet():
         + " — hver migrasjon pinnes i samme commit som den fødes; en"
           " upinnet fil kan endres etter at deploy har kjørt den, og"
           " avviket dukker først opp når tjenestene alt er stoppet")
+
+
+def _git(*argv):
+    return subprocess.run(["git", "-C", str(GITROT), *argv],
+                          capture_output=True)
+
+
+def _basiscommit() -> str:
+    """`main` sin sha, om nødvendig hentet inn i den grunne utsjekkingen.
+
+    Samme grep som proveniensporten i `test_aksept_projeksjon.py`:
+    `actions/checkout` henter `refs/pull/<nr>/merge` på dybde 1, så
+    basisgrenen er ikke nødvendigvis i objektbasen — en `--depth=1`-henting
+    av `main` koster ett objektsett og utvider ikke historikken ellers.
+    """
+    for ref in ("origin/main^{commit}", "FETCH_HEAD^{commit}"):
+        r = _git("rev-parse", "--verify", "--quiet", ref)
+        if r.returncode == 0:
+            return r.stdout.decode().strip()
+        if ref.startswith("origin/"):
+            _git("fetch", "--quiet", "--depth=1", "origin", "main")
+    return ""
+
+
+def _basisfasit(commit: str) -> dict:
+    """Fasiten slik den står på basisgrenen — utenfor denne grenens rekkevidde.
+
+    Tom dict betyr «filen finnes ikke på main ennå», som er sant nøyaktig
+    i PR-en som føder den. Da er hver pin her ny, og porten under er
+    riktignok stille — men den er ikke blind: den måler fra og med neste
+    endring, som er den første som kan drifte.
+    """
+    blob = _git("cat-file", "blob", f"{commit}:{FASITSTI}")
+    return json.loads(blob.stdout.decode("utf-8")) \
+        if blob.returncode == 0 else {}
+
+
+def _regresjon(basis, naa):
+    """Append-only-målingen, med begge sider som parameter.
+
+    Utløst av samme grunn som `_bytefeil`: negativtesten under må kunne
+    spille av «bidragsyter endrer migrasjonen OG pinnen i takt» gjennom
+    NØYAKTIG denne løkken, uten å skrive til treet eller til `main`.
+    """
+    avvik = []
+    for navn, pinnet in basis.items():
+        if navn not in naa:
+            avvik.append(
+                f"{navn}: pinnet på main, men borte fra fasiten her — "
+                "en fjernet pin er en fil som kan endres usett")
+        elif naa[navn] != pinnet:
+            avvik.append(
+                f"{navn}: pinnen endret {pinnet[:12]}… → {naa[navn][:12]}… "
+                "— fasiten er APPEND-ONLY; en kjørt migrasjon får ikke ny "
+                "pin fordi filen fikk nye bytes, uansett om de to endres "
+                "i samme commit")
+    return avvik
+
+
+def test_fasiten_er_append_only_mot_basisgrenen():
+    """Basisen porten måler mot er `main`, ikke fasiten i denne grenen.
+
+    Codex P1: portene over sammenligner fil mot fasit, og BEGGE ligger i
+    arbeidstreet. En bidragsyter som endrer en kjørt migrasjon og regner
+    ut den nye hashen inn i fasiten i samme commit får alle tre grønne —
+    og deployet oppdager avviket først når tjenestene alt er stoppet,
+    altså nøyaktig 23/8 på nytt. En fasit som er sin egen fasit er ingen
+    fasit; verdien det måles mot må ligge et sted denne grenen ikke kan
+    skrive.
+
+    Den er `main`. Pinner får legges TIL (hver ny migrasjon fødes med
+    sin), men en pin som alt er merget er historikk: den endres ikke, og
+    den fjernes ikke.
+
+    Porten HOPPER IKKE (samme vedtak som proveniensporten i
+    `test_aksept_projeksjon.py`, Codex P1 #154): er `main` uleselig, er
+    påstanden umålt, og en umålt port er rød.
+    """
+    commit = _basiscommit()
+    assert commit, (
+        "basisgrenen `main` er verken i denne utsjekkingens historikk"
+        " eller hentbar fra `origin` — append-only kan da ikke måles."
+        " Kjør fra en utsjekking med nett eller full historikk"
+        " (`fetch-depth: 0`)")
+    avvik = _regresjon(_basisfasit(commit), FASIT)
+    assert not avvik, "\n".join(avvik)
+
+
+def test_pin_endret_i_takt_med_filen_felles_mot_basisgrenen():
+    """Negativtesten for porten over: hendelsen den finnes for, spilt av.
+
+    I PR-en som føder fasiten er basisen tom, og porten over er derfor
+    grønn uansett om den måler noe som helst. Angrepet spilles derfor av
+    i minnet: 23/8-kommentaren legges i 056 OG pinnen regnes om i takt,
+    slik en bidragsyter ville gjort for å få de tre andre portene grønne.
+
+    MUTASJONEN SOM DREPER DENNE: svekk `_regresjon` — fjern
+    verdisammenligningen, sammenlign bare nøklene, eller la basissiden
+    være arbeidstreets egen fasit. Da finner mutasjonen ingen avvik, og
+    denne blir rød.
+    """
+    kommentaren = (b"\n-- AVGJORT (eier, 2026-08-23 i #153): pseudonymnokkel."
+                   b"\n")
+    endret = hashlib.sha256(
+        (KATALOG / HENDELSEN_056).read_bytes() + kommentaren).hexdigest()
+
+    # Basis = fasiten slik den blir stående på main etter denne PR-en.
+    i_takt = {**FASIT, HENDELSEN_056: endret}
+    avvik = _regresjon(FASIT, i_takt)
+    assert len(avvik) == 1, (
+        "angrepet skal treffe 056 og BARE 056 — porten fant "
+        f"{len(avvik)} avvik: {avvik}")
+    assert avvik[0].startswith(HENDELSEN_056), avvik[0]
+    assert "APPEND-ONLY" in avvik[0], avvik[0]
+
+    # …og den andre halvdelen: pinnen slettet i stedet for endret.
+    uten = {navn: v for navn, v in FASIT.items() if navn != HENDELSEN_056}
+    slettet = _regresjon(FASIT, uten)
+    assert len(slettet) == 1 and slettet[0].startswith(HENDELSEN_056), slettet
+
+    # Ny migrasjon er derimot LOVLIG: fasiten vokser, den skrives ikke om.
+    assert not _regresjon(FASIT, {**FASIT, "058_ny.sql": "0" * 64})
 
 
 def test_fasiten_er_regnet_ikke_skrevet():
