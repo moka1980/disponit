@@ -140,6 +140,31 @@ test("site.hero.tilbud: tilbudsteksten overlever hver utrullingstilstand", () =>
   }
 });
 
+test("hero-tekstene sier ikke at en modul i drift venter på akseptporten", () => {
+  // Codex P2 på #152: `tekst_bygges` navnga WCAG-kontrollen og lovte at den
+  // «settes i drift når [akseptporten] er bestått». Da M-56 ble flippet til
+  // `i_drift` sto den setningen igjen som en ANNEN påstand om samme
+  // utrullingstilstand enn `MODULSTATUS` — og den vises på den anonyme
+  // forsiden, som er nettopp der ingen leser manifestet.
+  //
+  // Porten er per språk fordi setningen er prosa, ikke en nøkkel: den
+  // fanger den fremtidsformen som ble skrevet om, ikke enhver omtale av
+  // akseptporten.
+  if (modulStatus(56) !== "i_drift") return;
+  const ventende = { nb: ["står foran akseptporten"],
+                     en: ["is at the acceptance gate"] };
+  for (const [sprak, sett] of LOKALER) {
+    for (const nokkel of ["site.hero.tekst", "site.hero.tekst_bygges",
+                          "site.hero.tekst_delvis", "site.hero.tilbud"]) {
+      for (const frase of ventende[sprak]) {
+        assert.ok(!sett[nokkel].includes(frase),
+          `${nokkel} sier «${frase}» i locales/${sprak}.json mens M-56 står` +
+          " i_drift — forsiden motsier MODULSTATUS");
+      }
+    }
+  }
+});
+
 test("heroTekstNokkel: hovedløftet følger brikkene, ikke redaktøren", () => {
   // Nøkkelen utledes av den samme MODULSTATUS som brikkene: to kilder ville
   // drevet fra hverandre neste gang en modul skifter tilstand.
