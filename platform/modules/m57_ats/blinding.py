@@ -80,6 +80,25 @@ def blind(tekst: str, kandidatfelter: dict[str, list[str]]
     # godtar fordi den HELE adressen ikke lenger står der. Token-
     # nummereringen er fortsatt feltrekkefølgen, så den er uendret og
     # deterministisk; bare erstatningsrekkefølgen er lengdestyrt.
+    #
+    # UTSATT, K2 → #158. Erstatningen er en DELSTRENGSERSTATNING, og den
+    # treffer også inni urelaterte ord: med `navn: ["Ann"]` blir
+    # «planning» til «pl[NAVN-1]ing», og `krev_blindet` godkjenner
+    # resultatet fordi den leter etter det samme mønsteret. Modellen får
+    # altså korrupt input, og korrupt input kan endre både kravfunn og
+    # rangering. Funnet er ekte og målt (Codex P2, runde 19) — det er
+    # runde 4 i tabellen i #158.
+    #
+    # Ordgrenser er IKKE lappen. `krev_blindet` deler mønster med
+    # maskeringen her, så en `\b`-forankring ville forankret PORTEN
+    # også — og norsk sammensetning gjør den retningen dyrere enn
+    # korrupsjonen: et etternavn «Berg» ville stått umaskert i
+    # «Bergsveien», og porten ville sagt god for det. Det er å bytte
+    # korrupsjon inn mot lekkasje ut, som er den femte formen på samme
+    # rot, ikke en lukking av den. Eier ratifiserte B-veien (strukturell
+    # blinding: personfeltene finnes ikke i inputen i det hele tatt)
+    # nettopp fordi en invariant som hviler på et fritekstsøk ikke kan
+    # være absolutt i noen av retningene.
     for token, verdi in sorted(par, key=lambda p: -len(p[1])):
         # Erstatningen er en funksjon, ikke en mal: tokenet skal stå
         # ordrett, aldri tolkes som `re`-referanser. Avmaskeringstabellen
