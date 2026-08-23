@@ -2029,6 +2029,44 @@ def test_retry_venter_paa_vinneren_foer_fristporten(migrator):
         (TENANT, fid)).fetchone()[0] == 1, "retryet lagde et NYTT oppdrag"
 
 
+def test_cp1_har_ikke_den_konsumerende_benen():
+    """Codex 2 × P1 på #140 (runde 13), UTSATT UNDER K1 — sporet er
+    issue #151. Denne testen er ikke en port mot en angriper; den fester
+    FORUTSETNINGEN begge utsettelsene hviler på, og skal bli RØD i samme
+    PR som fjerner den.
+
+    CP1 bygger autorisasjonsbenen (evaluering → liste → signatur →
+    frigivelse → oppdrag i køen). Den bygger ikke den konsumerende
+    (claim → utførelse → kvittering), og den benen er avstengt ved
+    roten: `rekruttering.utsending` står ikke i `OPPDRAGSTYPER`, og
+    `api/app.py` kjører hver claimet payload gjennom
+    `oppdragskontrakt.minimer`, som kaster `Oppdragstypeukjent` og ruller
+    claimet tilbake. Et frigivelsesoppdrag kan derfor i dag ikke claimes,
+    ikke utføres og ikke kvitteres.
+
+    Nøyaktig i det øyeblikket typen registreres blir to funn ekte:
+
+      * kvitteringsveien (`_ingest_kvittering`) skriver den avsluttende
+        overgangen som en rå UPDATE som runtime, og porten i 056 §6
+        avviser den. Å slippe den gjennom er ikke en fiks — det ER
+        angrepsvei to (falsk kvittering), og porten kan ikke skille
+        ærlig fra falsk: det er samme setning fra samme rolle;
+      * `oppdrag_en_per_frigivelse` gir frigivelsen ett OPPDRAG, ikke én
+        SENDING. Krasjer arbeideren etter utsendelsen men før
+        kvitteringen, gjenclaimes raden når `owner_lease_utloper` går
+        (049), og den irreversible e-posten kan sendes om igjen.
+
+    Begge krever ny maskin = egen PR (K1, RUTINER §9). #151 bærer dem med
+    akseptkriterier, og fjerningen av denne testen er punkt 4 der.
+
+    MUTASJONEN SOM DREPER DENNE: registrer `rekruttering.utsending` i
+    `OPPDRAGSTYPER` uten å ta funnene i #151."""
+    from oppdragskontrakt import OPPDRAGSTYPER
+    assert "rekruttering.utsending" not in OPPDRAGSTYPER, (
+        "typen er registrert — da er #151s to P1 ekte, og denne testen"
+        " skal fjernes i samme PR som lukker dem")
+
+
 def test_056_navngir_aldri_runtime_rollen():
     """Codex P1 på #140 (runde 13) — runde 5s `IF EXISTS`-form lukket bare
     HALVE funnet, og denne testen målte bare den halvdelen.

@@ -56,6 +56,33 @@
 -- er schema-sann for en skriver som tar ÉN RAD OM GANGEN, men en enkelt
 -- flerrads-`INSERT` fra en rolle med `INSERT` kan lukke en rotløs
 -- 2-sykel. Se den fulle rotårsaken ved `en_rot_per_serie` i §1.
+--
+-- ... OG CP1 BYGGER AUTORISASJONSBENEN, IKKE DEN KONSUMERENDE (Codex
+-- 2 × P1, runde 13 på #140; sporet er issue #151). Kjeden her ender ved
+-- et `opprinnelse='frigivelse'`-oppdrag i køen. Claim → utførelse →
+-- kvittering hører til CP3, og den benen er AVSTENGT VED ROTEN i dag:
+-- `rekruttering.utsending` står ikke i `OPPDRAGSTYPER`, og
+-- `api/app.py` kjører hver claimet payload gjennom
+-- `oppdragskontrakt.minimer`, som kaster `Oppdragstypeukjent` og ruller
+-- claimet tilbake. To funn blir ekte i det ØYEBLIKKET typen registreres,
+-- og ikke før:
+--   * KVITTERINGSVEIEN kommer ikke gjennom porten i §6. `_ingest_kvittering`
+--     skriver den avsluttende overgangen som en rå UPDATE, som runtime —
+--     og porten gjelder alle runtime-UPDATEs på en frigivelsesrad. Å
+--     slippe den gjennom er ikke en fiks: det ER angrepsvei nummer to
+--     (falsk kvittering), og porten kan ikke skille ærlig fra falsk, for
+--     det er samme setning fra samme rolle. Løsningen er en
+--     eier-kontrollert SECURITY DEFINER-vei som krever
+--     kvitteringskapabiliteten og selv setter status/kvitteringsfeltene.
+--   * ÉN RAD ER IKKE ÉN SENDING. `oppdrag_en_per_frigivelse` gir
+--     frigivelsen ett OPPDRAG; krasjer arbeideren etter utsendelsen men
+--     før kvitteringen, gjenclaimes den samme `plukket`-raden når
+--     `owner_lease_utloper` går (049), og e-posten kan sendes om igjen.
+--     Idempotensen bor i transporten, ikke i en indeks.
+-- Begge krever ny maskin (registrering + kvitteringsfunksjon + omlagt
+-- app-vei; utsendingskontrakt med idempotensnøkkel + transportdedup) =
+-- egen PR under K1. `test_cp1_har_ikke_den_konsumerende_benen` fester
+-- forutsetningen og blir RØD i den PR-en som registrerer typen.
 
 -- ------------------------------------------------------------
 -- 1. Listeversjonene. Append-only: hele raden er innholdet signaturen
