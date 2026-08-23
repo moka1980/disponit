@@ -1041,6 +1041,7 @@
   "site.modul.m57.tekst": "Reads and ranks up to 5,000 applications blind against the role's requirements — a human decides who moves on, and nothing is sent without a signature.",
   "ui.rekruttering.tittel": "Recruitment",
   "ui.rekruttering.ingen_prosess": "No active recruitment process.",
+  "ui.rekruttering.prosessvelger": "Recruitment process",
   "ui.rekruttering.tabell_caption": "Candidates, ranked by points with the current weights",
   "ui.rekruttering.kol_kandidat": "Candidate",
   "ui.rekruttering.kol_poeng": "Points",

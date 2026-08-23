@@ -277,6 +277,45 @@ test("Rekruttering: signaturdialogen sier antall, type, hashkortform — og «Ka
     .textContent.includes(HASH.slice(0, 12))), "utfallet mangler");
 });
 
+test("Rekruttering: hver prosess i svaret kan velges (ikke bare den første)", async () => {
+  // Codex P2: endepunktet er i flertall og ruten bærer ingen prosess-id,
+  // så `prosesser[0]` gjorde enhver senere prosess — kandidatlisten og de
+  // usignerte utsendingene hennes — utilgjengelig.
+  const to = prosess();
+  to.prosesser.push({
+    prosess_id: "p-2", navn: "Sykepleier vest", blinding_av: false,
+    vekter: { drift: 1 },
+    kandidater: [{ kandidat_id: "K-9", oppfylt: { drift: true },
+      status: "anbefalt", funn: [], intervjusporsmal: [] }],
+    lister: [],
+  });
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": to };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")));
+  const velger = hoved.querySelector("#rekrut-prosessvelger");
+  assert.ok(velger, "ingen prosessvelger med flere prosesser i svaret");
+  assert.ok(hoved.querySelector('label[for="rekrut-prosessvelger"]'),
+    "velgeren mangler label");
+  assert.deepEqual([...velger.options].map((o) => o.value), ["p-1", "p-2"]);
+  // Den andre prosessens kandidater er nådd uten en ny runde i ruteren.
+  velger.value = "p-2";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  const rader = [...hoved.querySelectorAll("tbody tr")]
+    .map((tr) => tr.querySelector("td").textContent);
+  assert.deepEqual(rader, ["K-9"]);
+  assert.equal(hoved.querySelector("#rekrut-prosessvelger").value, "p-2",
+    "velgeren mistet valget da flaten ble tegnet på nytt");
+  // Med bare én prosess står ingen velger i veien.
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": prosess() };
+  const en = nyHoved();
+  visRekruttering(en, ctx());
+  assert.ok(await vent(() => en.querySelector("table")));
+  assert.equal(en.querySelector("#rekrut-prosessvelger"), null);
+});
+
 test("Rekruttering: signeringen gjenbruker idempotensnøkkelen etter usikker feil", async () => {
   // Codex P1: den irreversible operasjonen fikk fersk nøkkel per klikk.
   // Commiter serveren og svaret går tapt, må BRUKERENS retry bære SAMME

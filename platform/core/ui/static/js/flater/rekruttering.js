@@ -47,12 +47,39 @@ export function visRekruttering(hoved, ctx) {
     (data) => tegn(hoved, ctx, data));
 }
 
-function tegn(hoved, ctx, data) {
-  const prosess = data.prosesser && data.prosesser[0];
-  if (!prosess) {
+function tegn(hoved, ctx, data, valgtId) {
+  const prosesser = (data && data.prosesser) || [];
+  if (!prosesser.length) {
     sett(hoved, flateHode(t("ui.rekruttering.tittel")),
       el("p", { text: t("ui.rekruttering.ingen_prosess") }));
     return;
+  }
+  // FLERE PROSESSER ER TILGJENGELIGE, IKKE BARE DEN FØRSTE (Codex P2).
+  // Endepunktet er i flertall, og ruten bærer ingen prosess-id, så med
+  // `prosesser[0]` var enhver senere prosess — kandidatlisten og de
+  // usignerte utsendingene hennes — utilgjengelig for en tenant med mer
+  // enn én pågående rekruttering. Velgeren vises bare når det FINNES noe
+  // å velge mellom; valget tegner flaten på nytt for den prosessen.
+  const prosess = prosesser.find((p) => p.prosess_id === valgtId)
+    || prosesser[0];
+  let velgerRot = null;
+  if (prosesser.length > 1) {
+    const velgerId = "rekrut-prosessvelger";
+    const velger = el("select", { id: velgerId },
+      ...prosesser.map((p) => el("option",
+        { value: p.prosess_id,
+          ...(p.prosess_id === prosess.prosess_id ? { selected: "" } : {}) },
+        p.navn || p.prosess_id)));
+    velger.value = prosess.prosess_id;
+    velger.addEventListener("change", () => {
+      tegn(hoved, ctx, data, velger.value);
+      const ny = hoved.querySelector(`#${velgerId}`);
+      if (ny) ny.focus();
+    });
+    velgerRot = el("div", { class: "rekrut-prosessvelger" },
+      el("label", { for: velgerId,
+        text: t("ui.rekruttering.prosessvelger") }),
+      velger);
   }
   const vekter = { ...prosess.vekter };
   const kanBestille = harScope(ctx, "bestilling:opprett");
@@ -313,7 +340,7 @@ function tegn(hoved, ctx, data) {
       knapp));
   }
 
-  sett(hoved, flateHode(t("ui.rekruttering.tittel")),
+  sett(hoved, flateHode(t("ui.rekruttering.tittel")), velgerRot,
     utfall, kunngjoring, blindingRot, vektRot, tabellRot, listeRot);
   tegnTabell();
 }
