@@ -121,6 +121,21 @@ def inspiser_bunt(sti: str | Path) -> list[Medlem]:
     å filtrere. Ble mappene filtrert bort FØR målingen, slapp en bunt
     med 20 001 tomme mapper og én HTML-søknad gjennom nettopp det
     budsjettet grensen finnes for å holde.
+
+    UTSATT, K1 — SØKNADSANTALLET er IKKE bundet her. `MAKS_FILER` er
+    20 000 katalogoppføringer; `antall_soknader` (1–5000) valideres ved
+    bestillingen og leses aldri igjen. Codex har målt spriket to ganger,
+    fra hver sin side av snittet (runde 2 på `oppdragskontrakt.py`, runde
+    11 her), og ingen av sidene kan lukke det alene: gaten kjenner
+    MEDLEMMER, ikke søkere — én søknad kan være `cv.html` alene eller
+    `cv.html` + `vedlegg.docx`, og hvilken av delene det er, står ikke i
+    en zip-katalog. Å telle filer mot 5000 ville vært å gjette
+    grammatikken (SP-13/K4), og en `forventet_antall`-parameter ville
+    vært død kode: `les_porsjonsvis` har ingen kaller utenfor test — snittet
+    som skal bære oppdragets tall inn hit, kommer med utførelsesarmen.
+    Å lukke funnet krever en kandidatform i parseren OG det snittet, altså
+    ny maskin: eget issue + egen PR. Valget mellom formene er eiers og er
+    eskalert i #153-tråden.
     """
     if not zipfile.is_zipfile(sti):
         raise Buntfeil("ikke_zip")
