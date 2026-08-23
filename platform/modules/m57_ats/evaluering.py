@@ -58,6 +58,24 @@ def valider_funn(funn: dict, soknadstekst: str) -> dict:
     returverdien er et KANONISK funn bygget av de validerte verdiene.
     Et felt som ikke står i `FUNN_FELTER`/`KILDE_FELTER` kan da hverken
     slippe gjennom umålt eller følge med videre.
+
+    KJENT BEGRENSNING — DOKUMENTGRENSER (Codex G7/P2, utsatt til #174).
+    `soknadstekst` er ikke ett dokument: `kjoring.kjor_bunt` skjøter hele
+    kandidatmappen sammen med en tom linje mellom medlemmene, og porten
+    her måler bare at [start:slutt] står i DEN strengen. Et sitat kan
+    derfor starte i søknadsbrevet, løpe gjennom skjøten og fortsette inn
+    i CV-en, og bli godtatt selv om utdraget ikke står ordrett i noe
+    enkelt søknadsdokument. Grensene lar seg ikke bære inn hit i dagens
+    koordinatsystem: teksten porten måler mot er den BLINDEDE, og
+    blindingen endrer lengder («Kari» → `[NAVN-1]`), så råtekstens
+    dokumentgrenser peker et annet sted i den. Eierens K2-dom (23/8) er
+    valg 2 — `blind` splittes i «bygg tabell» (én per kandidat, delt
+    over dokumentene) og «anvend tabell» (per dokument), slik #158s
+    strukturelle vei uansett trenger. Da valideres funnet mot ETT
+    blindet dokument og kryss-sitater er umulige per konstruksjon. Se
+    #174. Sentinel-veien er AVVIST: ingen syntetisk skilletekst inn i
+    det modellen faktisk leser for å redde et koordinatsystem som skal
+    byttes.
     """
     if not isinstance(funn, dict) or set(funn) != FUNN_FELTER:
         raise Evalueringsfeil(
