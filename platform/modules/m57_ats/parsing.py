@@ -114,6 +114,13 @@ def inspiser_bunt(sti: str | Path) -> list[Medlem]:
     Rekkefølgen er bevisst: stier og lenker (angrep) før typer og
     størrelser (grenser), og totalsummen løpende — en bunt som bryter
     2 GB på fil nr. 3 avvises der, ikke etter 20 000 headere.
+
+    `MAKS_FILER` måles på ALLE katalogoppføringer, mappene inkludert
+    (Codex P2). Grensen bevokter arbeidet katalogen påfører oss — minne
+    og parsetid i `infolist()` — og det arbeidet er gjort før vi rekker
+    å filtrere. Ble mappene filtrert bort FØR målingen, slapp en bunt
+    med 20 001 tomme mapper og én HTML-søknad gjennom nettopp det
+    budsjettet grensen finnes for å holde.
     """
     if not zipfile.is_zipfile(sti):
         raise Buntfeil("ikke_zip")
@@ -121,9 +128,10 @@ def inspiser_bunt(sti: str | Path) -> list[Medlem]:
     total = 0
     sett: set[str] = set()
     with zipfile.ZipFile(sti) as zf:
-        infos = [i for i in zf.infolist() if not i.is_dir()]
-        if len(infos) > MAKS_FILER:
-            raise Buntfeil("for_mange_filer", str(len(infos)))
+        alle = zf.infolist()
+        if len(alle) > MAKS_FILER:
+            raise Buntfeil("for_mange_filer", str(len(alle)))
+        infos = [i for i in alle if not i.is_dir()]
         for info in infos:
             _sjekk_navn(info.filename)
             # En zip KAN bære to oppføringer med samme navn, og
@@ -187,14 +195,19 @@ def _inspiser_docx(navn: str, data: bytes, *,
     """
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as indre:
-            infos = [i for i in indre.infolist() if not i.is_dir()]
+            alle = indre.infolist()
     except (zipfile.BadZipFile, RuntimeError, NotImplementedError) as feil:
         # `PK` er ikke en zip; en docx som ikke lar seg lese som arkiv er
         # ikke en docx.
         raise Buntfeil("feil_innholdstype", navn) from feil
-    if filer_brukt + len(infos) > MAKS_FILER:
+    # Mappene teller også her (Codex P2): budsjettet er katalogarbeid, og
+    # en mappeoppføring koster like mye å lese som en filoppføring. Den
+    # ytre gaten teller alle oppføringer, og den indre kan ikke telle
+    # færre uten at forskjellen er nettopp veien rundt.
+    if filer_brukt + len(alle) > MAKS_FILER:
         raise Buntfeil("for_mange_filer",
-                       f"{navn}: {filer_brukt} + {len(infos)}")
+                       f"{navn}: {filer_brukt} + {len(alle)}")
+    infos = [i for i in alle if not i.is_dir()]
     utpakket = 0
     sett: set[str] = set()
     for info in infos:
@@ -243,7 +256,7 @@ def _inspiser_docx(navn: str, data: bytes, *,
             "feil_innholdstype",
             f"{navn}: mangler "
             + ", ".join(sorted(DOCX_PAKKEMEDLEMMER - sett)))
-    return utpakket, len(infos)
+    return utpakket, len(alle)
 
 
 def les_porsjonsvis(sti: str | Path, *, porsjon: int = 200):
@@ -260,11 +273,14 @@ def les_porsjonsvis(sti: str | Path, *, porsjon: int = 200):
     """
     medlemmer = inspiser_bunt(sti)
     total = 0
-    # ÉN teller for hele bunten, nøstede docx-medlemmer inkludert
-    # (Codex P1): budsjettet starter på buntens egne filer og forbrukes
-    # videre av hver docx, aldri nullstilt per arkiv.
-    filer = len(medlemmer)
     with zipfile.ZipFile(sti) as zf:
+        # ÉN teller for hele bunten, nøstede docx-medlemmer inkludert
+        # (Codex P1): budsjettet starter på buntens egne oppføringer og
+        # forbrukes videre av hver docx, aldri nullstilt per arkiv. Det
+        # er KATALOGOPPFØRINGENE som telles, ikke de filtrerte
+        # medlemmene — ellers finansierte hver mappe i den ytre bunten
+        # et indre docx-medlem gratis (Codex P2).
+        filer = len(zf.infolist())
         for nr, medlem in enumerate(medlemmer, start=1):
             biter: list[bytes] = []
             lest = 0

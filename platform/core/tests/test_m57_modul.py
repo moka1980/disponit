@@ -406,6 +406,49 @@ def test_port26_filantall(tmp_path):
     assert e.value.kode == "for_mange_filer"
 
 
+def test_port26_mapper_teller_i_filbudsjettet(tmp_path):
+    """Codex P2: mappene ble filtrert bort FØR `MAKS_FILER` ble målt.
+
+    Grensen bevokter arbeidet katalogen påfører oss — minnet og
+    parsetiden i `infolist()` — og det arbeidet er alt gjort når
+    filtreringen skjer. En bunt med 20 001 tomme mappeoppføringer og én
+    HTML-søknad passerte derfor et budsjett den brøt med 20 001
+    oppføringer.
+
+    MUTASJONEN SOM DREPER DENNE: mål `len(infos)` (de filtrerte) i
+    stedet for `len(alle)` i `inspiser_bunt`."""
+    mapper = [(f"m{n}/", b"") for n in range(parsing.MAKS_FILER)]
+    arkiv = _bunt(tmp_path, mapper + [("cv.html", b"<p>x</p>")])
+    with pytest.raises(parsing.Buntfeil) as e:
+        parsing.inspiser_bunt(arkiv)
+    assert e.value.kode == "for_mange_filer"
+    arkiv.unlink()
+    # Positiv kontroll: samme form, én oppføring under taket — mappene
+    # er fortsatt ikke medlemmer, de er bare betalt for.
+    faerre = mapper[:parsing.MAKS_FILER - 1]
+    ok = _bunt(tmp_path, faerre + [("cv.html", b"<p>x</p>")])
+    assert [m.navn for m in parsing.inspiser_bunt(ok)] == ["cv.html"]
+
+
+def test_port26_mapper_i_docx_teller_i_samme_budsjett(tmp_path):
+    """Samme hull i den INDRE gaten: mappeoppføringene inni en docx ble
+    filtrert bort før `filer_brukt + len(...)` ble målt, og hver docx
+    kunne dermed bære et ubegrenset antall katalogoppføringer forbi
+    buntens ene teller.
+
+    MUTASJONEN SOM DREPER DENNE: la `_inspiser_docx` måle og returnere
+    `len(infos)` i stedet for `len(alle)`."""
+    halv = parsing.MAKS_FILER // 2 + 2000     # 12 000 hver, 24 000 totalt
+    fyll = [(f"word/m{n}/", b"") for n in range(halv)]
+    docx = _docx([("word/document.xml", b"<w:t>x</w:t>")] + fyll)
+    assert len(docx) < parsing.MAKS_ENKELTFIL
+    arkiv = _bunt(tmp_path, [("a.docx", docx), ("b.docx", docx)])
+    parsing.inspiser_bunt(arkiv)          # ytre gate ser to små filer
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(arkiv))
+    assert e.value.kode == "for_mange_filer"
+
+
 def test_port21_komprimeringsforhold(tmp_path):
     # 4 MB nuller pakker ~1000:1 — langt over 100:1-taket.
     arkiv = _bunt(tmp_path, [("cv.pdf", b"%PDF" + b"\0" * (4 << 20))])
