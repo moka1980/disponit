@@ -8,6 +8,7 @@ lagene måles: gaten mot deklarasjonen, strømmen mot de faktiske bytene.
 from __future__ import annotations
 
 import io
+import os
 import struct
 import zipfile
 from pathlib import Path
@@ -167,6 +168,43 @@ def test_port24_docx_inspiseres_som_arkivet_den_er(tmp_path):
     with pytest.raises(parsing.Buntfeil) as e:
         list(parsing.les_porsjonsvis(falsk))
     assert e.value.kode == "feil_innholdstype"
+
+
+def test_port21_enkeltfilgrensen_gjelder_ogsa_inni_docx(tmp_path):
+    """Codex P1: de tre grensene fanger ULIKE ting, og løkken inni docx-en
+    målte bare to av dem.
+
+    Et indre medlem på 26 MB som komprimerer moderat bryter hverken
+    100:1 eller 2 GB, og den ytre docx-en blir noen hundre kilobyte —
+    altså langt under 25 MB, så ytre gate ser en liten, lovlig fil.
+    Nøyaktig den overdimensjonerte inputen enkeltfilgrensen finnes for å
+    stoppe, nådde dermed tekstuttrekket.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `MAKS_ENKELTFIL`-linjen i
+    `_inspiser_docx` — forholds- og totalsjekken er grønn hele veien."""
+    # 64 tilfeldige byte per 4 KB-blokk: deflate komprimerer nullene, men
+    # ikke støyen, så forholdet lander godt under 100:1 mens medlemmet
+    # pakker ut til mer enn 25 MB.
+    blokk = 4096
+    blokker = (parsing.MAKS_ENKELTFIL + (1 << 20)) // blokk
+    data = b"".join(os.urandom(64) + b"\0" * (blokk - 64)
+                    for _ in range(blokker))
+    assert len(data) > parsing.MAKS_ENKELTFIL
+    docx = _docx([("word/document.xml", data)])
+    assert len(docx) < parsing.MAKS_ENKELTFIL, \
+        "forutsetningen: den ytre docx-en er liten nok til å passere gaten"
+    assert len(data) / len(docx) < parsing.MAKS_KOMPRIMERINGSFORHOLD, \
+        "forutsetningen: forholdsporten sier ja"
+    arkiv = _bunt(tmp_path, [("cv.docx", docx)])
+    parsing.inspiser_bunt(arkiv)   # ytre gate ser en liten, lovlig fil
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(arkiv))
+    assert e.value.kode == "enkeltfil_for_stor"
+    arkiv.unlink()
+    # Positiv kontroll: samme form, ett medlem UNDER grensen, går gjennom.
+    liten = _docx([("word/document.xml", data[:1 << 20])])
+    ok = _bunt(tmp_path, [("cv.docx", liten)])
+    assert len(list(parsing.les_porsjonsvis(ok))) == 1
 
 
 def test_port25_innholdstypen_er_en_paastand_begge_veier(tmp_path):

@@ -178,6 +178,15 @@ def _inspiser_docx(navn: str, data: bytes) -> int:
         _sjekk_navn(info.filename, kontekst=f"{navn}/{info.filename}")
         if _endelse(info.filename) in ARKIVENDELSER:
             raise Buntfeil("nostet_arkiv", f"{navn}/{info.filename}")
+        # 25 MB-grensen gjelder MEDLEMMET, også inni en docx (Codex P1).
+        # Løkken målte forholdet og totalen, men ikke enkeltfilen — og de
+        # tre grensene fanger ulike ting: et moderat komprimerbart medlem
+        # kan pakke ut til hundrevis av megabyte uten å bryte hverken
+        # 100:1 eller 2 GB, mens den ytre docx-en holder seg under 25 MB
+        # og passerer ytre gate. Da er det nettopp den overdimensjonerte
+        # inputen tekstuttrekket møter, som grensen finnes for å stoppe.
+        if info.file_size > MAKS_ENKELTFIL:
+            raise Buntfeil("enkeltfil_for_stor", f"{navn}/{info.filename}")
         if info.file_size > 0 and (
                 info.compress_size <= 0
                 or info.file_size / info.compress_size
