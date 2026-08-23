@@ -1821,6 +1821,60 @@ def test_fremdriften_teller_hvert_medlem_ikke_bare_sjekkpunktene(tmp_path):
         "evidensen skal si at tre medlemmer var lest da det røk, ikke 0")
 
 
+def test_lesefeil_paa_lageret_tilskrives_ikke_modellen(tmp_path, monkeypatch):
+    """Codex P2: en lagringsutfall ble meldt som «modellfeil».
+
+    `les_porsjonsvis` slipper MED VILJE en `OSError` med errno gjennom som
+    seg selv — en lesefeil på disk eller nettlager er drift, ikke en
+    påstand om kundens bunt. Catch-allen i `kjor_bunt` fanget den likevel
+    og ga den koden `modellfeil`, så både arbeiderens retry og
+    driftsdiagnostikken tilskrev MODELLEN et lagringsavbrudd. Koden er
+    utfallets eneste data (SP-3), og da må den peke på det som faktisk
+    røk.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `except OSError`-grenen i
+    `kjor_bunt`, så lesefeilen faller til catch-allen igjen.
+    """
+    from modules.m57_ats import kjoring
+
+    def _strom_som_roeyker(sti, **kw):
+        yield ({"filer_lest": 1, "filer_totalt": 2, "byte_lest": 18},
+               parsing.Medlem("k1/cv.html", 18), b"<p>drift</p>")
+        # Nøyaktig formen `les_porsjonsvis` lar passere: errno er satt.
+        raise OSError(errno.EIO, "Input/output error")
+
+    monkeypatch.setattr(kjoring.parsing, "les_porsjonsvis",
+                        _strom_som_roeyker)
+    arkiv = _bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>")])
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
+                          kandidatfelter_for=lambda m: {"navn": ["N"]},
+                          tekst_for=lambda m, d: d.decode("utf-8"),
+                          biasmaalinger=_MAALINGER)
+    assert e.value.kode == "infrastrukturfeil", (
+        "en lesefeil på lageret skal ikke bære modellens kode")
+    assert isinstance(e.value.__cause__, OSError)
+    # Evidensen står: ett medlem var lest da det røk.
+    assert e.value.fremdrift["filer_lest"] == 1
+
+    # Den ERRNO-LØSE formen er noe annet — den er dekompressorens, og
+    # `parsing` oversetter den til `korrupt_bunt` før den kommer hit. Kommer
+    # den likevel, er den fremmed kode og skal IKKE bli en driftssak.
+    def _strom_uten_errno(sti, **kw):
+        yield ({"filer_lest": 1, "filer_totalt": 2, "byte_lest": 18},
+               parsing.Medlem("k1/cv.html", 18), b"<p>drift</p>")
+        raise OSError("Invalid data stream")
+
+    monkeypatch.setattr(kjoring.parsing, "les_porsjonsvis",
+                        _strom_uten_errno)
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
+                          kandidatfelter_for=lambda m: {"navn": ["N"]},
+                          tekst_for=lambda m, d: d.decode("utf-8"),
+                          biasmaalinger=_MAALINGER)
+    assert e.value.kode == "modellfeil"
+
+
 def test_ugyldig_feltform_i_SENERE_fil_felles_ogsaa(tmp_path):
     """Codex P1: flettingen skjulte en ugyldig form bak en gyldig rad.
 

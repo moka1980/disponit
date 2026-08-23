@@ -223,6 +223,24 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
         # tomme strukturerte felter stopper kjøringen med kode, aldri
         # med rå exception — og aldri med rå tekst videre i stillhet.
         raise Kjoringsfeil(feil.kode, fremdrift) from feil
+    except OSError as feil:
+        # LAGRINGEN ER IKKE MODELLEN (Codex P2). `les_porsjonsvis` slipper
+        # MED VILJE en `OSError` MED errno gjennom som seg selv: en lesefeil
+        # på disk eller nettlager er DRIFT, ikke en påstand om kundens bunt
+        # — å kalle den `korrupt_bunt` ville gjort vår feil til en
+        # kundeavvisning (parsing.py, «`OSError` MED errno er noe helt
+        # annet»). Catch-allen under pakket den likevel som «modellfeil»,
+        # og da leste både arbeiderens retry og driftsdiagnostikken et
+        # lagringsavbrudd som at MODELLEN sviktet: feil kø, feil alarm,
+        # feil sak. Utfallet får derfor sin egen kode — fortsatt kodet, så
+        # SP-3 står, men riktig adressert.
+        #
+        # Den ERRNO-LØSE formen er dekompressorens («Invalid data stream»),
+        # og den er alt oversatt til `korrupt_bunt` før den kommer hit; kom
+        # den likevel, er den fremmed kode som alt annet her nede.
+        if feil.errno is None:
+            raise Kjoringsfeil("modellfeil", fremdrift) from feil
+        raise Kjoringsfeil("infrastrukturfeil", fremdrift) from feil
     except Exception as feil:   # modellen er fremmed kode — også dens
         raise Kjoringsfeil("modellfeil", fremdrift) from feil
     return {"rangering": rangering,
