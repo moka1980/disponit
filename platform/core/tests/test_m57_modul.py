@@ -960,6 +960,17 @@ def test_rangeringen_er_poeng_med_synlige_vekter():
     assert all("prosent" not in k for k in ut[0])
     with pytest.raises(evaluering.Evalueringsfeil):
         evaluering.ranger({"k": {"ukjent_krav": True}}, {"drift": 1})
+    # Codex P2, den andre retningen: kravsettet er PROFILENS. Et resultat
+    # som mangler et krav ble stille lest som «ikke oppfylt» av `.get`, og
+    # `ranger({"k": {}}, {"drift": 3})` var da en vellykket rangering med
+    # null poeng. `_krev_helt_svar` måler dette for modellsvaret, men en
+    # kaller som rangerer et lagret resultat går utenom den.
+    for delvis, savnet in (({}, "drift,sky"), ({"sky": True}, "drift")):
+        with pytest.raises(evaluering.Evalueringsfeil) as e:
+            evaluering.ranger({"k": dict(delvis)}, {"drift": 3, "sky": 2})
+        assert e.value.kode == "krav_mangler_i_resultatet", delvis
+        # Meldingen navngir kravene som mangler, ikke bare at noe gjør det.
+        assert savnet in str(e.value), delvis
     # Codex P2: modellutdata er ikke typesjekket, og `"false"` — den
     # vanligste JSON-feilen en modell gjør — er en SANN streng. Uten
     # typeporten fikk kandidaten hele vekten for et krav modellen sa nei

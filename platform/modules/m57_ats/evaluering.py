@@ -164,6 +164,19 @@ def ranger(kandidater: dict[str, dict[str, bool]],
         if ukjente:
             raise Evalueringsfeil("krav_utenfor_profilen",
                                   ",".join(sorted(ukjente)))
+        # …og speilbildet: et krav som MANGLER (Codex P2). Porten målte
+        # bare den ene retningen, mens `nedbrytning` leser med `.get` —
+        # så `ranger({"k": {}}, {"drift": 3})` ga en vellykket rangering
+        # der kandidaten stille «oppfylte ingenting». `_krev_helt_svar`
+        # krever alt det eksakte settet av modellsvaret, men den ligger i
+        # evalueringsløypa: en kaller som rangerer et LAGRET eller på
+        # annen måte ferdigbygget resultat går utenom den. Kravsettet er
+        # profilens, ikke resultatets, og det måles her — der poengene
+        # faktisk regnes ut.
+        manglende = set(vekter) - set(oppfylt)
+        if manglende:
+            raise Evalueringsfeil("krav_mangler_i_resultatet",
+                                  ",".join(sorted(manglende)))
         # Oppfyllelsen er BOOLSK, ikke sannhetsverdien til hva som helst
         # (Codex P2). Modellutdata er ikke typesjekket noe sted, og
         # `"false"` — den vanligste JSON-feilen en modell gjør — er en
@@ -174,7 +187,10 @@ def ranger(kandidater: dict[str, dict[str, bool]],
         if ulovlige:
             raise Evalueringsfeil("ikke_boolsk_oppfyllelse",
                                   ",".join(sorted(ulovlige)))
-        nedbrytning = {krav: (vekter[krav] if oppfylt.get(krav) else 0)
+        # Oppslaget er direkte, ikke `.get`: etter de to portene over er
+        # nøkkelsettene per definisjon like, og da skal koden si det.
+        # `.get` var stedet standardverdien kom fra.
+        nedbrytning = {krav: (vekter[krav] if oppfylt[krav] else 0)
                        for krav in vekter}
         ut.append({"kandidat_id": kandidat_id,
                    "poeng": sum(nedbrytning.values()),
