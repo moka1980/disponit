@@ -1078,6 +1078,62 @@ def test_port18_insert_etter_reap_avvises(migrator):
 
 
 @pg
+def test_port18_insert_uten_tenantkontekst_avvises(migrator):
+    """Cursor P1: vakten er `SECURITY DEFINER` eid av MIGRATOR, og
+    `FORCE RLS` gjelder også eieren — så prosesslesningen går gjennom
+    `tenant_isolasjon`, som krever at `disponit.tenant` er satt.
+
+    `disponit_m37_claimer` har INSERT på lagrene og sin egen
+    kryss-tenant-policy (`m57_reaper`), altså en vei inn UTEN
+    tenantkontekst. Da er forelderen usynlig for defineren, og en vakt
+    som bare spurte `IF v_slettet IS NOT NULL` leste «ingen rad» som
+    «prosessen lever»: FK-en kjører ikke under RLS og claimeren ser
+    forelderen, så payloaden landet på en reapet prosess — persondata
+    gjenoppstått, uten noen vei til å slette dem igjen.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `IF NOT FOUND`-armen i
+    `m57_kandidatlager_vakt`s INSERT-gren."""
+    rt = _rt()
+    rp = None
+    try:
+        _, pid = _prosess(migrator, rt, frist=30)
+        _fyll_lagrene(rt, pid)
+        rt.execute("SELECT lukk_rekrutteringsprosess(%s,%s,"
+                   " now() - interval '31 days')", (TENANT, pid))
+        rt.commit()
+        rp, _timerrolle = _reaperkobling()
+        rp.execute("SELECT * FROM reap_kandidatdata(50)")
+        rp.commit()
+        assert _tell_fixtur(migrator, pid) == 0
+        migrator.rollback()
+        # Claimeren, uten tenantkontekst: den ene rollen som kan skrive
+        # forbi `tenant_isolasjon` er også den ene som gjør forelderen
+        # usynlig for vakten.
+        for tabell in LAGRE:
+            migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+            migrator.execute("SELECT set_config('disponit.tenant','',true)")
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                migrator.execute(
+                    f"INSERT INTO {tabell} (tenant, prosess_id,"
+                    f" kandidat_id, innhold_sha256) VALUES (%s,%s,%s,'0')",
+                    (TENANT, pid, uuid.uuid4()))
+            migrator.rollback()
+        assert _tell_fixtur(migrator, pid) == 0
+        migrator.rollback()
+        # Positiv kontroll: med kontekst satt tar en ÅPEN prosess fortsatt
+        # imot payload — armen er en synlighetsport, ikke en skrivesperre.
+        _, pid2 = _prosess(migrator, rt)
+        _fyll_lagrene(rt, pid2)
+        rt.commit()
+        assert _tell_fixtur(migrator, pid2) == 9
+        migrator.rollback()
+    finally:
+        rt.close()
+        if rp is not None:
+            rp.close()
+
+
+@pg
 def test_port18_insert_serialiseres_mot_reaping(migrator):
     """Codex P1: vakten LESTE prosessen, men låste den ikke — og et
     snapshot fra før reaperen committet viser en levende prosess.

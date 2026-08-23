@@ -393,11 +393,33 @@ BEGIN
     -- prosess som alt er merket slettet, og som reaperen aldri ser igjen.
     -- `FOR SHARE` konflikter med reaperens `FOR UPDATE`, så vakten venter
     -- på samme sted FK-en ville ventet — og leser radens NYE versjon.
+    --
+    -- INGEN RAD er like rødt som en reapet rad (Cursor P1): vakten er
+    -- SECURITY DEFINER eid av migrator, og `FORCE RLS` gjelder også
+    -- eieren, så defineren leser gjennom `tenant_isolasjon` — som krever
+    -- at `disponit.tenant` er satt til RADENS tenant. `disponit_m37_claimer`
+    -- har INSERT og sin egen kryss-tenant-policy (`m57_reaper`), så den
+    -- kan skrive en kandidatrad uten tenantkontekst i det hele tatt. Da
+    -- er forelderen usynlig for defineren, `SELECT ... INTO` setter
+    -- `v_slettet` til NULL, og en test på `IS NOT NULL` alene leser det
+    -- som «prosessen lever». Kommentaren under om at «FK-en og RLS-en
+    -- avviser» var usann for nettopp den rollen: FK-sjekken kjører ikke
+    -- under RLS, og claimeren ser forelderen. Sideeffekten er den samme
+    -- klassen: `FOR SHARE` tas ikke på en rad som ikke ble funnet, så
+    -- kappløpsserialiseringen mot reaperen finnes heller ikke på denne
+    -- veien. Vakten kan bare svare på det den SÅ — så en forelder den
+    -- ikke så, er en avvisning.
     IF TG_OP = 'INSERT' THEN
         SELECT p.slettet_ts INTO v_slettet
           FROM public.rekrutteringsprosess p
          WHERE p.tenant = NEW.tenant AND p.prosess_id = NEW.prosess_id
          FOR SHARE;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION '%: prosessen er ikke synlig for vakten —'
+                ' kandidatpayload skrives bare under en prosess vakten'
+                ' kan lese og låse (klarsignalet §5, port 18)',
+                TG_TABLE_NAME USING ERRCODE = 'insufficient_privilege';
+        END IF;
         IF v_slettet IS NOT NULL THEN
             RAISE EXCEPTION '%: prosessen er reapet — payload skrives'
                 ' ikke tilbake til en slettet prosess (klarsignalet §5)',
@@ -422,8 +444,6 @@ BEGIN
         END LOOP;
         NEW.innhold_sha256 :=
             encode(sha256(convert_to(v_payload::text, 'UTF8')), 'hex');
-        -- Finnes ingen (synlig) prosess, avviser FK-en og RLS-en raden
-        -- som før; vakten later ikke som den er den porten.
         RETURN NEW;
     END IF;
     IF TG_OP <> 'UPDATE' THEN
