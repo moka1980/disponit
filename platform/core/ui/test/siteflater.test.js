@@ -512,9 +512,9 @@ test("Kundeadmin: modulstatus og policyhandling rendres uten alvorlige brudd", a
 
 test("Kundeadmin: modulkort og KPI-er følger tenantens tildeling", async () => {
   // Kunden er tildelt M-1 og M-2. Da skal M-37 og M-38 IKKE stå på flaten.
-  // Ingen av de to er rullet ut hos kunder (M-1 kjører på staging, M-2 er
-  // under utvikling), så «aktive moduler» er 0 og «under arbeid» er 2 —
-  // kundens to, ikke katalogens.
+  // M-2 er i drift etter akseptflippen 2026-08-23; M-1 kjører på staging.
+  // «Aktive moduler» er derfor 1 og «under arbeid» 1 — kundens to, ikke
+  // katalogens.
   const h = nyHoved();
   visKundeadmin(h, ctx({ tenant: "Beta", moduler: [1, 2] }));
   assert.ok(h.textContent.includes(t("site.modul.m1.navn")));
@@ -524,8 +524,8 @@ test("Kundeadmin: modulkort og KPI-er følger tenantens tildeling", async () => 
   assert.ok(!h.textContent.includes(t("site.modul.m38.navn")),
     "M-38 vises for en tenant som ikke har den");
   const kpi = [...h.querySelectorAll(".site-kpi strong")].map((n) => n.textContent);
-  assert.equal(kpi[0], "0");
-  assert.equal(kpi[1], "2");
+  assert.equal(kpi[0], "1");
+  assert.equal(kpi[1], "1");
 });
 
 test("Kundeadmin: ukjent tenant sier «vet ikke», viser ikke katalogen", async () => {

@@ -23,13 +23,13 @@ test("modulStatus: ukjent modul er planlagt, ikke udefinert", () => {
   // kunder, og den finnes ikke ennå. M-37 er under utvikling, M-38 har intet
   // manifest.
   //
-  // M-2 sto kort `klargjort` mens manifestet var aktivert i akseptrunden på
-  // #89, og er tilbake på `bygges`: tre av seks sjekklistepunkter er målt,
-  // men ikke bundet gjennom evidensporten (Codex P1, runde 2). Denne testen
-  // og `MODULSTATUS` er to sider av samme påstand og må flytte seg sammen —
-  // ellers er den ene bare en kopi av den andre uten portverdi.
+  // M-2 gikk til `i_drift` 2026-08-23: m02-aksepthendelsen står i basen
+  // (innholdsadressert mot commit 2aaca01), og manifestet sier
+  // aktiv/produksjon. Denne testen og `MODULSTATUS` er to sider av samme
+  // påstand og må flytte seg sammen — ellers er den ene bare en kopi av
+  // den andre uten portverdi.
   assert.equal(modulStatus(1), "klargjort");
-  assert.equal(modulStatus(2), "bygges");
+  assert.equal(modulStatus(2), "i_drift");
   assert.equal(modulStatus(38), "planlagt");
   assert.equal(modulStatus(45), "planlagt");
 });
@@ -38,12 +38,12 @@ test("MODULSTATUS: ingen modul lover drift uten at manifestet gjør det", () => 
   // Regelen er BINDINGEN, ikke tallet: hver `i_drift` her må ha
   // `driftstilstand: produksjon` i sitt manifest, og
   // `test_ui_kontrakt.py::test_modulstatus_folger_manifestene` håndhever den
-  // retningen. Ingen har det i dag — M-1 kjører på staging-serveren, og
-  // `docs/DEPLOY.md` reserverer produksjon for en egen VPS med kundedata.
+  // retningen. M-2 og M-56 har det siden akseptflippen 2026-08-23 — begge
+  // aksepthendelsene står i basen, og manifestene er flippet sammen.
   assert.deepEqual(
     Object.entries(MODULSTATUS).filter(([, s]) => s === "i_drift")
       .map(([id]) => Number(id)),
-    [], "en modul påstår drift hos kunder — sjekk manifestets driftstilstand");
+    [2, 56], "i_drift-settet fulgte ikke manifestenes driftstilstand");
 });
 
 test("erTilgjengelig: løftet krever BÅDE drift og produksjonsmiljø", () => {
@@ -188,14 +188,14 @@ test("modulerFraIder: kundens tildeling, ikke plattformkatalogen", () => {
 });
 
 test("tenantTelling: teller kundens moduler, ikke plattformens", () => {
-  // En tenant med M-1 (klargjort) og M-2 (bygges): ingen i drift, to under
-  // arbeid — og resten av katalogen er planlagt for kunden. Tildelingen er
-  // ID-er fra den autentiserte veien, ikke et oppslag i klientpakken.
-  // Tellingen følger MODULSTATUS: `iDrift` er utrulling hos kunder, og M-1
-  // kjører på staging-serveren, ikke der.
+  // En tenant med M-1 (klargjort) og M-2 (i_drift etter akseptflippen
+  // 2026-08-23): én i drift, én under arbeid — og resten av katalogen er
+  // planlagt for kunden. Tildelingen er ID-er fra den autentiserte veien,
+  // ikke et oppslag i klientpakken. Tellingen følger MODULSTATUS: `iDrift`
+  // er utrulling hos kunder.
   const telling = tenantTelling(modulerFraIder([1, 2]));
-  assert.equal(telling.iDrift, 0);
-  assert.equal(telling.underArbeid, 2);
+  assert.equal(telling.iDrift, 1);
+  assert.equal(telling.underArbeid, 1);
   assert.equal(telling.planlagt, telling.totalt - 2);
   const ukjent = tenantTelling([]);
   assert.equal(ukjent.iDrift, 0);
