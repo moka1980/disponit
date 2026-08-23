@@ -225,7 +225,17 @@ OPPDRAGSTYPER: dict[str, Oppdragstype] = {
         # faktisk kjørte jobbene.
         eiermodul="m57_ats",
         produserer_artefakt=True,
-        rapport_artefakttype="rekruttering.evalueringsrapport",
+        # TRE ledd, ikke to (Codex P1). `registrer_artefakttype` (035/036)
+        # har en LUKKET navneform — `<domene>.<underdomene>.<artefakt>`,
+        # minst tre ledd — og `rekruttering.evalueringsrapport` hadde to.
+        # Typen kunne dermed aldri REGISTRERES, og siden claim-svaret
+        # utleder opplastingskapabiliteten utelukkende fra
+        # `artefakttype_register`, ville modulen fått `opplasting: null`
+        # på et oppdrag hvis kontrakt sier at den skal levere en rapport.
+        # Formen er `kontroll.wcag.rapport`s, og underdomenet er
+        # oppdragstypens eget — `rekruttering.evaluering` — så typen ligger
+        # der navnerommet allerede peker.
+        rapport_artefakttype="rekruttering.evaluering.rapport",
         beskrivelse=("M-57: leser og rangerer opptil 5000 søknader mot"
                      " stillingens krav i isolert container — ingen"
                      " ekstern trafikk, ingen mutasjon; utsendelse er en"

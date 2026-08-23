@@ -164,6 +164,44 @@ def test_oppdragstypenes_prefikser_er_entydige():
             eier[p] = t.navn
 
 
+def test_rapportartefakttypene_kan_faktisk_registreres():
+    """Codex P1: en artefakttype kontrakten lover, men registeret ikke kan
+    ta imot, er en kapabilitet som aldri oppstår.
+
+    `rekruttering.evalueringsrapport` hadde TO ledd. `registrer_artefakttype`
+    (035, herdet i 036) har en lukket navneform på minst tre —
+    `<domene>.<underdomene>.<artefakt>` — så registreringen ville feilet,
+    og claim-svaret utleder opplastingskapabiliteten utelukkende fra
+    `artefakttype_register`: modulen fikk `opplasting: null` på et oppdrag
+    hvis egen kontrakt sier at den skal levere en rapport.
+
+    Formen LESES ut av migrasjonen, den skrives ikke av på nytt her — en
+    port som gjentar regelen med egne ord måler sin egen avskrift.
+    Overlappsregelen fra samme funksjon måles på samme sett: to typer der
+    den ene er prefiks av den andre kan ikke sameksistere i registeret.
+    """
+    import re
+    from pathlib import Path
+    import oppdragskontrakt
+    rot = Path(__file__).resolve().parents[3]
+    sql = (rot / "platform" / "core" / "db" / "migrations"
+           / "036_wcag_kontroll.sql").read_text(encoding="utf-8")
+    m = re.search(r"IF p_artefakttype !~ '([^']+)' THEN", sql)
+    assert m, "navneformen finnes ikke lenger i 036 — porten måler ingenting"
+    navneform = re.compile(m.group(1))
+    typer = sorted({t.rapport_artefakttype
+                    for t in oppdragskontrakt.OPPDRAGSTYPER.values()
+                    if t.rapport_artefakttype is not None})
+    assert typer, "ingen artefakttyper å måle"
+    for artefakttype in typer:
+        assert navneform.match(artefakttype), \
+            f"{artefakttype!r} kan aldri registreres ({m.group(1)})"
+    for en in typer:
+        for annen in typer:
+            assert en == annen or not annen.startswith(en + "."), \
+                f"{annen!r} overlapper {en!r} — registeret tar bare én"
+
+
 def test_lengste_prefiks_vinner_over_dict_rekkefolgen():
     """WCAG-kontrollen eier `kontroll.wcag.`, `verifikasjon` resten.
 
