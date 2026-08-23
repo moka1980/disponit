@@ -252,25 +252,45 @@ CREATE TABLE kandidat_avmaskering (
 -- prosess. Én generisk vakt; payloadkolonnene står som
 -- trigger-argumenter, så hvert lager navngir sine og resten måles som
 -- «uendret» via radens jsonb.
+-- SECURITY DEFINER er INSERT-portens forutsetning, ikke en utvidelse:
+-- vakten må LÅSE prosessraden (under), og en radlåsende SELECT krever
+-- UPDATE-rettighet på tabellen. Runtime har med vilje bare SELECT på
+-- `rekrutteringsprosess` (forrige rundes P1), så en vakt som kjører som
+-- kalleren kunne ikke ta låsen. Definer er migrator, som eier tabellene;
+-- vakten skriver ingenting og kan bare slippe raden gjennom eller
+-- avvise den, og FORCE RLS gjelder også for eieren — tenant-policyen
+-- står derfor uendret.
 CREATE OR REPLACE FUNCTION m57_kandidatlager_vakt()
-RETURNS trigger LANGUAGE plpgsql
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
-DECLARE nj jsonb; oj jsonb; kol TEXT;
+DECLARE nj jsonb; oj jsonb; kol TEXT; v_slettet TIMESTAMPTZ;
 BEGIN
     -- Port 18, INSERT-siden (Codex P1): en reapet prosess tar ikke imot
     -- ny payload. FK-en krever bare at prosessen FINNES, og reaperen
     -- utelukker for alltid en prosess som alt har `slettet_ts` — så en
     -- forsinket eller retriet skriver kunne gjenoppstå persondata på en
     -- reapet prosess, uten noen vei til å slette dem igjen.
+    --
+    -- Lesningen må LÅSE (Codex P1): en ULÅST `EXISTS` måler snapshotet
+    -- fra før reaperen committet. Rekkefølgen var da: vakten ser en
+    -- levende prosess → FK-sjekken blokkerer på reaperens `FOR UPDATE`
+    -- → reaperen committer → FK-en er fortsatt oppfylt, for raden BLIR
+    -- stående (den er revisjonsevidens) → payloaden committes under en
+    -- prosess som alt er merket slettet, og som reaperen aldri ser igjen.
+    -- `FOR SHARE` konflikter med reaperens `FOR UPDATE`, så vakten venter
+    -- på samme sted FK-en ville ventet — og leser radens NYE versjon.
     IF TG_OP = 'INSERT' THEN
-        IF EXISTS (SELECT 1 FROM public.rekrutteringsprosess p
-                    WHERE p.tenant = NEW.tenant
-                      AND p.prosess_id = NEW.prosess_id
-                      AND p.slettet_ts IS NOT NULL) THEN
+        SELECT p.slettet_ts INTO v_slettet
+          FROM public.rekrutteringsprosess p
+         WHERE p.tenant = NEW.tenant AND p.prosess_id = NEW.prosess_id
+         FOR SHARE;
+        IF v_slettet IS NOT NULL THEN
             RAISE EXCEPTION '%: prosessen er reapet — payload skrives'
                 ' ikke tilbake til en slettet prosess (klarsignalet §5)',
                 TG_TABLE_NAME USING ERRCODE = 'insufficient_privilege';
         END IF;
+        -- Finnes ingen (synlig) prosess, avviser FK-en og RLS-en raden
+        -- som før; vakten later ikke som den er den porten.
         RETURN NEW;
     END IF;
     IF TG_OP <> 'UPDATE' THEN

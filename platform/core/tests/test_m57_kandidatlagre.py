@@ -519,6 +519,62 @@ def test_port18_insert_etter_reap_avvises(migrator):
 
 
 @pg
+def test_port18_insert_serialiseres_mot_reaping(migrator):
+    """Codex P1: vakten LESTE prosessen, men låste den ikke — og et
+    snapshot fra før reaperen committet viser en levende prosess.
+
+    Rekkefølgen som slapp payload gjennom: vakten ser levende prosess →
+    FK-sjekken blokkerer på reaperens radlås → reaperen committer →
+    FK-en er fortsatt oppfylt, for prosessraden BLIR stående → payloaden
+    committes under en prosess som alt er merket slettet, og som
+    reaperen for alltid utelukker. Med `FOR SHARE` venter vakten på
+    samme sted FK-en ville ventet, og leser radens nye versjon. Samme
+    kappløpsform som idempotenstesten over."""
+    import threading
+
+    rt = _rt()
+    rp = None
+    try:
+        _, pid = _prosess(migrator, rt, frist=30)
+        rt.execute("SELECT lukk_rekrutteringsprosess(%s,%s,"
+                   " now() - interval '31 days')", (TENANT, pid))
+        rt.commit()
+        # A: reaperen merker prosessen og HOLDER radlåsen — ucommittet.
+        rp, _timerrolle = _reaperkobling()
+        assert rp.execute("SELECT count(*) FROM reap_kandidatdata(50)"
+                          ).fetchone()[0] >= 1
+        resultat: dict = {}
+
+        def forsinket_skriver():
+            _sett_kontekst(rt, TENANT)
+            try:
+                _fyll_lagrene(rt, pid)
+                rt.commit()
+                resultat["kom_gjennom"] = True
+            except Exception as feil:
+                resultat["feil"] = feil
+
+        t = threading.Thread(target=forsinket_skriver)
+        t.start()
+        t.join(timeout=2)
+        assert t.is_alive(), "skriveren skulle blokkere på reaperens radlås"
+        rp.commit()
+        t.join(timeout=10)
+        assert not t.is_alive(), "skriveren sto fast etter reaperens commit"
+        assert "kom_gjennom" not in resultat, \
+            "payload committet under en prosess som alt var reapet"
+        assert isinstance(resultat.get("feil"),
+                          psycopg.errors.InsufficientPrivilege), resultat
+        rt.rollback()
+        assert _tell_fixtur(migrator, pid) == 0
+        migrator.rollback()
+    finally:
+        rt.close()
+        if rp is not None:
+            rp.close()
+
+
+@pg
 def test_port19_settet_av_lagre_er_maalt_mot_katalogen(migrator):
     """Port 19s virkelige form: «alle seks» er ikke en liste noen husker,
     men en MÅLING. Fasiten er katalogens — hver tabell med FK til
