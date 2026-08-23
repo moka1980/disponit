@@ -179,6 +179,18 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
                 (navn, medlem.navn,
                  _tekst(tekst_for, medlem, data, fremdrift),
                  _felter(kandidatfelter_for, medlem, fremdrift)))
+        # EN BUNT UTEN KANDIDATER ER IKKE EN FULLFØRT EVALUERING (Codex P2).
+        # Er zip-en tom, eller bærer den bare katalogoppføringer, yielder
+        # `les_porsjonsvis` ingenting: `biter` blir tom, løkken under kjører
+        # aldri, `ranger({}, ...)` gir en tom liste — og kjøringen returnerte
+        # et VELLYKKET utfall med tom rangering og tomt artefaktkart. Da har
+        # oppdraget «lyktes» uten at én eneste søknad ble vurdert, og
+        # promoteringsvakten i 056 får en gyldig, tom liste å slippe videre.
+        # Kontrakten sier `antall_soknader` er 1–5000 (payload-skjemaet), så
+        # null kandidater er per definisjon en ugyldig bunt — og en ugyldig
+        # bunt er SP-3s kodede utfall, aldri et resultat.
+        if not biter:
+            raise Kjoringsfeil("tom_bunt", fremdrift)
         for kandidat_id in sorted(biter):
             # Sortert på medlemsnavn: samme bunt gir samme tekst OG samme
             # feltrekkefølge, uansett hvilken rekkefølge arkivet leverte

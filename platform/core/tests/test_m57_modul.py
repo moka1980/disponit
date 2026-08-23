@@ -1910,6 +1910,54 @@ def test_feltuttrekket_tilskrives_ikke_modellen(tmp_path):
     assert e.value.fremdrift["filer_lest"] == 1
 
 
+def test_bunt_uten_kandidater_er_kodet_feil_ikke_tomt_resultat(tmp_path):
+    """Codex P2: en bunt uten medlemmer ble et VELLYKKET tomt utfall.
+
+    En tom zip — og en som bare bærer katalogoppføringer — passerer hele
+    arkivgaten og yielder ingenting. Da ble `biter` tom, evalueringssløyfa
+    kjørte aldri, `ranger({}, ...)` ga en tom liste, og `kjor_bunt`
+    RETURNERTE: rangering `[]`, artefakter `{}`. Oppdraget «lyktes» uten at
+    én eneste søknad var vurdert, og promoteringsvakten i 056 fikk en gyldig
+    tom liste å slippe videre. Payload-skjemaet sier `antall_soknader` er
+    1–5000, så null kandidater er per definisjon en ugyldig bunt, og en
+    ugyldig bunt er SP-3s kodede utfall.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `if not biter`-porten i `kjor_bunt`.
+    """
+    from modules.m57_ats import kjoring
+
+    def _kjor(arkiv, modell):
+        return kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
+                                 kandidatfelter_for=lambda m: {"navn": ["N"]},
+                                 tekst_for=lambda m, d: d.decode("utf-8"),
+                                 biasmaalinger=_MAALINGER)
+
+    tom = tmp_path / "tom.zip"
+    with zipfile.ZipFile(tom, "w") as zf:
+        pass
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        _kjor(tom, modell)
+    assert e.value.kode == "tom_bunt"
+    # Utfallet bærer ingen halv liste — evidensen er alt Kjoringsfeil har.
+    assert not hasattr(e.value, "rangering")
+    assert modell.sett == []
+
+    # Bare katalogoppføringer er samme sak: gaten går gjennom, og strømmen
+    # leverer ingen medlemmer.
+    bare_kataloger = tmp_path / "kataloger.zip"
+    with zipfile.ZipFile(bare_kataloger, "w") as zf:
+        zf.writestr(zipfile.ZipInfo("k1/"), b"")
+        zf.writestr(zipfile.ZipInfo("k2/"), b"")
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        _kjor(bare_kataloger, _Modell())
+    assert e.value.kode == "tom_bunt"
+
+    # … og én kandidat er nok: porten måler NULL, ikke «få».
+    ut = _kjor(_bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>")]), _Modell())
+    assert set(ut["artefakter"]) == {"k1"}
+
+
 def test_ugyldig_feltform_i_SENERE_fil_felles_ogsaa(tmp_path):
     """Codex P1: flettingen skjulte en ugyldig form bak en gyldig rad.
 
