@@ -1,0 +1,227 @@
+// M-57 Rekruttering (klarsignalet §8). Flaten viser ÉN prosess om gangen:
+// kandidatlisten som <table> med caption/scope/aria-sort, vektene som
+// range-kontroller med synlig verdi og ny rekkefølge annonsert i
+// aria-live="polite", blindingsbryteren med alertdialog ved AVSKRUING
+// (valget auditeres på serveren), detaljpanelet som dialog med fokusfelle,
+// og signaturdialogen som sier antall, listetype og hashens kortform før
+// den irreversible utsendelsen. Utfall meldes i role="alert".
+//
+// Trafikklyset er ALDRI bare farge: kategorien står som tekst i cellen, og
+// fargen er en klasse oppå — en monokrom skjerm og en skjermleser får
+// nøyaktig samme dom.
+//
+// Poeng er poeng (§6): flaten regner aldri om til prosent, og
+// re-rangeringen ved vektendring er RENT klientarbeid på nedbrytningen
+// serveren alt har levert — samme sum som `evaluering.ranger`, aldri en
+// egen sannhet.
+import { el, sett } from "../dom.js";
+import { t } from "../i18n.js";
+import { hentJson, settRekrutteringBlinding,
+         signerRekrutteringsliste } from "../api.js";
+import { harScope } from "../sitekart.js";
+import { DataTabell } from "../tabell.js";
+import { Detaljpanel, Bekreftelsesdialog } from "../dialog.js";
+import { medStatus, flateHode } from "./felles.js";
+
+function kortHash(hash) {
+  // Kortformen i signaturdialogen (§8): nok til å pare mot listen i
+  // revisjonssporet, kort nok til å leses opp.
+  return `${(hash || "").slice(0, 12)}…`;
+}
+
+export function visRekruttering(hoved, ctx) {
+  medStatus(hoved, ctx,
+    () => hentJson("/v1/rekruttering/prosesser"),
+    (data) => tegn(hoved, ctx, data));
+}
+
+function tegn(hoved, ctx, data) {
+  const prosess = data.prosesser && data.prosesser[0];
+  if (!prosess) {
+    sett(hoved, flateHode(t("ui.rekruttering.tittel")),
+      el("p", { text: t("ui.rekruttering.ingen_prosess") }));
+    return;
+  }
+  const vekter = { ...prosess.vekter };
+  const kanBestille = harScope(ctx, "bestilling:opprett");
+
+  // Utfallsområdet: role=alert — signering og blinding melder hit.
+  const utfall = el("div", { role: "alert", class: "rekrut-utfall" });
+  // Re-rangeringens kunngjøring: høflig, aldri avbrytende.
+  const kunngjoring = el("div", { "aria-live": "polite",
+    class: "sr-only rekrut-kunngjoring" });
+
+  function poengFor(kandidat) {
+    // Samme regel som evaluering.ranger: vekt teller når kravet er
+    // oppfylt. `oppfylt` er serverens dom; vekten er brukerens valg.
+    let sum = 0;
+    for (const [krav, vekt] of Object.entries(vekter)) {
+      if (kandidat.oppfylt && kandidat.oppfylt[krav]) sum += Number(vekt);
+    }
+    return sum;
+  }
+
+  const tabellRot = el("div", { class: "rekrut-tabell" });
+
+  function tegnTabell() {
+    const rader = prosess.kandidater
+      .map((k) => ({ kandidat: k, poeng: poengFor(k) }))
+      .sort((a, b) => b.poeng - a.poeng
+        || (a.kandidat.kandidat_id < b.kandidat.kandidat_id ? -1 : 1));
+    sett(tabellRot, DataTabell({
+      captionTekst: t("ui.rekruttering.tabell_caption"),
+      kolonner: [
+        { nokkel: "kandidat", tittel: t("ui.rekruttering.kol_kandidat") },
+        { nokkel: "poeng", tittel: t("ui.rekruttering.kol_poeng"),
+          sorterbar: true },
+        { nokkel: "kategori", tittel: t("ui.rekruttering.kol_kategori") },
+      ],
+      sort: { nokkel: "poeng", retning: "descending" },
+      rader: rader.map(({ kandidat, poeng }) => ({
+        celler: {
+          kandidat: kandidat.kandidat_id,
+          poeng: String(poeng),
+          // Trafikklys: tekst + klasse, aldri farge alene.
+          kategori: el("span",
+            { class: `trafikklys trafikklys-${kandidat.status}` },
+            el("span", { class: "trafikklys-prikk", "aria-hidden": "true" }),
+            t(`ui.rekruttering.status.${kandidat.status}`)),
+        },
+        sortverdi: { poeng },
+        handling: {
+          tekst: t("ui.rekruttering.detaljer"),
+          utfor: () => visDetalj(kandidat, poeng),
+        },
+      })),
+    }));
+    return rader;
+  }
+
+  function visDetalj(kandidat, poeng) {
+    // Sidepanelet er en dialog med fokusfelle (Detaljpanel → aapneDialog).
+    const funn = (kandidat.funn || []).map((f) =>
+      el("li", {},
+        el("strong", { text: t(`ui.rekruttering.funn.${f.kategori}`) }),
+        " — ",
+        el("q", { text: f.kilde.sitat })));
+    const sporsmal = (kandidat.intervjusporsmal || []).map((s) =>
+      el("li", { text: s }));
+    Detaljpanel({
+      tittel: `${t("ui.rekruttering.kandidat")} ${kandidat.kandidat_id}`,
+      innhold: el("div", {},
+        el("p", { text: `${t("ui.rekruttering.kol_poeng")}: ${poeng}` }),
+        el("h3", { text: t("ui.rekruttering.funn_tittel") }),
+        funn.length ? el("ul", {}, ...funn)
+          : el("p", { text: t("ui.rekruttering.ingen_funn") }),
+        el("h3", { text: t("ui.rekruttering.sporsmal_tittel") }),
+        sporsmal.length ? el("ul", {}, ...sporsmal)
+          : el("p", { text: t("ui.rekruttering.ingen_sporsmal") })),
+    });
+  }
+
+  // Vektene: én range per krav, med <label>, synlig verdi og
+  // kunngjort re-rangering. Tastatur: piltaster på range er nok.
+  const vektRot = el("fieldset", { class: "rekrut-vekter" },
+    el("legend", { text: t("ui.rekruttering.vekter_tittel") }));
+  for (const [krav, verdi] of Object.entries(vekter)) {
+    const id = `vekt-${krav}`;
+    const visning = el("output", { for: id, text: String(verdi) });
+    const range = el("input", { type: "range", id, min: "0", max: "10",
+      step: "1", value: String(verdi) });
+    range.addEventListener("input", () => {
+      vekter[krav] = Number(range.value);
+      visning.textContent = range.value;
+      const rader = tegnTabell();
+      kunngjoring.textContent = t("ui.rekruttering.ny_rekkefolge")
+        .replace("{forst}", rader.length ? rader[0].kandidat.kandidat_id : "");
+    });
+    vektRot.append(el("div", { class: "rekrut-vekt" },
+      el("label", { for: id, text: t(`ui.rekruttering.krav.${krav}`, krav) }),
+      range, visning));
+  }
+
+  // Blindingsbryteren: PÅ er standard. AVSKRUING åpner alertdialog med
+  // påkrevd begrunnelse — valget auditeres på serveren (§6).
+  const blindingId = "rekrut-blinding";
+  const bryter = el("input", { type: "checkbox", id: blindingId });
+  bryter.checked = !prosess.blinding_av;
+  bryter.addEventListener("change", () => {
+    if (bryter.checked) return;           // PÅ igjen krever ingen dialog
+    bryter.checked = true;                // står til dialogen bekrefter
+    const begrunnelse = el("textarea", { id: "blinding-begrunnelse",
+      rows: "3", required: true, "aria-required": "true" });
+    Bekreftelsesdialog({
+      rolle: "alertdialog",
+      tittel: t("ui.rekruttering.blinding_av_tittel"),
+      tekst: t("ui.rekruttering.blinding_av_tekst"),
+      detaljer: el("div", {},
+        el("label", { for: "blinding-begrunnelse",
+          text: t("ui.rekruttering.blinding_begrunnelse") }),
+        begrunnelse),
+      farlig: true,
+      primarTekst: t("ui.rekruttering.blinding_av_bekreft"),
+      paaPrimar: async () => {
+        if (!begrunnelse.value.trim()) {
+          sett(utfall, t("ui.rekruttering.blinding_begrunnelse_mangler"));
+          return;
+        }
+        try {
+          await settRekrutteringBlinding(prosess.prosess_id, true,
+            begrunnelse.value.trim());
+          bryter.checked = false;
+          sett(utfall, t("ui.rekruttering.blinding_av_utfall"));
+        } catch (e) {
+          sett(utfall, t("ui.rekruttering.feil_utfall"));
+        }
+      },
+    });
+  });
+  const blindingRot = el("div", { class: "rekrut-blinding" },
+    bryter,
+    el("label", { for: blindingId,
+      text: t("ui.rekruttering.blinding_etikett") }));
+
+  // Innstilte lister: signering er den irreversible handlingen, og
+  // dialogen sier nøyaktig hva som skjer (§8) — antall, listetype,
+  // hashens kortform, «Kan ikke angres».
+  const listeRot = el("div", { class: "rekrut-lister" },
+    el("h2", { text: t("ui.rekruttering.lister_tittel") }));
+  for (const liste of prosess.lister || []) {
+    const knapp = el("button", { class: "knapp", type: "button",
+      text: t("ui.rekruttering.signer_knapp") });
+    if (!kanBestille) knapp.setAttribute("disabled", "");
+    knapp.addEventListener("click", () => {
+      Bekreftelsesdialog({
+        rolle: "alertdialog",
+        farlig: true,
+        tittel: t("ui.rekruttering.signer_tittel"),
+        tekst: t("ui.rekruttering.signer_tekst")
+          .replace("{antall}", String(liste.antall))
+          .replace("{listetype}",
+            t(`ui.rekruttering.listetype.${liste.listetype}`))
+          .replace("{hash}", kortHash(liste.innhold_hash)),
+        primarTekst: t("ui.rekruttering.signer_bekreft"),
+        paaPrimar: async () => {
+          try {
+            const svar = await signerRekrutteringsliste(
+              liste.liste_id, liste.innhold_hash);
+            sett(utfall, t("ui.rekruttering.signer_utfall")
+              .replace("{hash}", kortHash(svar.innhold_hash
+                || liste.innhold_hash)));
+          } catch (e) {
+            sett(utfall, t("ui.rekruttering.feil_utfall"));
+          }
+        },
+      });
+    });
+    listeRot.append(el("div", { class: "rekrut-liste" },
+      el("span", { text:
+        `${t(`ui.rekruttering.listetype.${liste.listetype}`)} · `
+        + `${liste.antall} · ${kortHash(liste.innhold_hash)}` }),
+      knapp));
+  }
+
+  sett(hoved, flateHode(t("ui.rekruttering.tittel")),
+    utfall, kunngjoring, blindingRot, vektRot, tabellRot, listeRot);
+  tegnTabell();
+}

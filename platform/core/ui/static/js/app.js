@@ -17,6 +17,7 @@ import { visKundeadmin } from "./flater/kundeadmin.js";
 import { visVarsler } from "./flater/varsler.js";
 import { visAdmin } from "./flater/admin.js";
 import { visWcagKontroll } from "./flater/wcagkontroll.js";
+import { visRekruttering } from "./flater/rekruttering.js";
 import { visAdjudikator } from "./flater/adjudikator.js";
 import { visNokkeltall } from "./flater/nokkeltall.js";
 import { byggRuter, hashForDypLenke, tillatteFlater } from "./sitekart.js";
@@ -28,6 +29,7 @@ const FLATER = {
   varsler: visVarsler,
   admin: visAdmin,
   wcagkontroll: visWcagKontroll,
+  rekruttering: visRekruttering,
   adjudikator: visAdjudikator,
 };
 

@@ -65,9 +65,12 @@ test("byggRuter: hver rute krever scopet API-et bak flaten krever", () => {
   // rapportene sine — `GET /v1/rapport/{id}` krever bare det. Med
   // mutasjonsscopet på hele oppføringen inndro sammenslåingen tilgang de
   // hadde før den.
+  // M-57: rekruttering står bak samme svakeste ledd som WCAG-flaten —
+  // lesingen av kandidatlisten krever bare `decisions:read`; blinding og
+  // signering gates INNE i flaten.
   assert.deepEqual(alle,
     ["oversikt", "nokkeltall", "policy", "beslutninger", "unntak",
-      "kundeadmin", "wcagkontroll"]);
+      "kundeadmin", "wcagkontroll", "rekruttering"]);
   const medBestilling = byggRuter({ scopes: ["decisions:read",
     "bestilling:opprett"] }).map((r) => r.nokkel);
   assert.ok(medBestilling.includes("wcagkontroll"));

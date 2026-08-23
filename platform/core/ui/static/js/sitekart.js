@@ -114,6 +114,10 @@ const BASISRUTER = [
   // sak for fanene, og den avgjøres inne på flaten (`visWcagKontroll`), der
   // det finnes noe å skjule — en rute kan bare være der eller ikke.
   { nokkel: "wcagkontroll", scope: "decisions:read" },
+  // M-57 (§8): lesingen av kandidatlisten krever bare decisions:read —
+  // mutasjonene (blinding av, signering) gates INNE i flaten på
+  // bestilling:opprett, som WCAG-flatens bestillingsfane.
+  { nokkel: "rekruttering", scope: "decisions:read" },
   // 041: adjudikatorkøen viser sakenes PARTER på tvers av tenanter — den
   // finnes derfor KUN for adjudikasjonsscopet, aldri for en leserolle.
   { nokkel: "adjudikator", scope: "domains:adjudicate" },
