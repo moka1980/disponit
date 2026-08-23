@@ -232,7 +232,7 @@ def test_port25_html_er_en_form_ikke_en_denyliste(tmp_path):
                     b"<!-- kommentar --><html></html>",
                     b"\xef\xbb\xbf\r\n\r\n\r\n\r\n<html></html>",
                     b" " * 64 + b"<html></html>",
-                    b"\n" * (parsing._HODEBYTE - 16) + b"<html></html>"):
+                    b"\n" * 400 + b"<html></html>"):
         arkiv = _bunt(tmp_path, [("cv.html", innhold)])
         assert len(list(parsing.les_porsjonsvis(arkiv))) == 1, innhold[:8]
         arkiv.unlink()
