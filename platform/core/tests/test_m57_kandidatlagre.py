@@ -1078,6 +1078,48 @@ def test_port18_insert_etter_reap_avvises(migrator):
 
 
 @pg
+def test_port18_kandidatrad_fodes_levende(migrator):
+    """Cursor P1: vakten håndhevet fødselsformen for PROSESSEN, aldri for
+    raden — og payload-CHECK-en tillater den reapede formen
+    (`slettet_ts NOT NULL` ∧ payload NULL), for det er formen en reapet
+    rad skal ha ETTERPÅ.
+
+    En skriver med INSERT kunne derfor føde en GRAVSTEIN på en fersk,
+    umerket prosess. Den committer: `m57_lagrene_reapes_samlet` ser bare
+    den reapede armen, altså ingen blanding. Fra da av er prosessen
+    brent — enhver legitim fylling lager nettopp blandingen porten
+    forbyr og feiler ved COMMIT, raden kan ikke slettes (DELETE forbudt)
+    og ikke rettes (reapet rad er immutabel), og ett oppdrag har én
+    prosess. Én INSERT tok hele evalueringsoppdraget ut av drift, for
+    alltid.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `IF NEW.slettet_ts IS NOT NULL`-
+    armen i `m57_kandidatlager_vakt`s INSERT-gren."""
+    rt = _rt()
+    try:
+        _, pid = _prosess(migrator, rt)
+        rt.commit()
+        # Gravsteinen — på et lager med payload og på et uten dokument-FK.
+        for tabell in ("kandidat_avmaskering", "kandidat_originaldokument"):
+            _sett_kontekst(rt, TENANT)
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                rt.execute(
+                    f"INSERT INTO {tabell} (tenant, prosess_id, kandidat_id,"
+                    f" innhold_sha256, slettet_ts)"
+                    f" VALUES (%s,%s,%s,'0',now())",
+                    (TENANT, pid, uuid.uuid4()))
+            rt.rollback()
+        # Avvisningen kommer ved INSERT, ikke først når en senere,
+        # legitim fylling støter på blandingen: prosessen er uskadd.
+        _fyll_lagrene(rt, pid)
+        rt.commit()
+        assert _tell_fixtur(migrator, pid) == 9
+        migrator.rollback()
+    finally:
+        rt.close()
+
+
+@pg
 def test_port18_insert_uten_tenantkontekst_avvises(migrator):
     """Cursor P1: vakten er `SECURITY DEFINER` eid av MIGRATOR, og
     `FORCE RLS` gjelder også eieren — så prosesslesningen går gjennom

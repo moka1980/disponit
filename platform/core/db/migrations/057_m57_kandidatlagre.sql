@@ -425,6 +425,28 @@ BEGIN
                 ' ikke tilbake til en slettet prosess (klarsignalet §5)',
                 TG_TABLE_NAME USING ERRCODE = 'insufficient_privilege';
         END IF;
+        -- En RAD fødes LEVENDE (Cursor P1) — speilet av ankerets egen
+        -- «en prosess fødes ÅPEN» over. Vakten håndhevet fødselsformen
+        -- for PROSESSEN, aldri for raden, og payload-CHECK-en tillater
+        -- den reapede formen (`slettet_ts NOT NULL` ∧ payload NULL) fordi
+        -- det er formen en reapet rad SKAL ha ETTERPÅ. En skriver med
+        -- INSERT kunne derfor føde en gravstein: null payload,
+        -- `slettet_ts = now()`, på en fersk og umerket prosess. Den
+        -- committer, for `m57_lagrene_reapes_samlet` ser da bare den
+        -- reapede armen og ingen blanding.
+        --
+        -- Fra det øyeblikket er prosessen BRENT: enhver legitim fylling
+        -- lager nettopp blandingen porten forbyr og feiler ved COMMIT,
+        -- raden kan ikke slettes (DELETE er forbudt) og ikke rettes (en
+        -- reapet rad er immutabel). Ett oppdrag har én prosess
+        -- (`prosess_en_per_oppdrag`), så hele evalueringsoppdraget er
+        -- ute av stand til å bære payload — permanent, med én INSERT.
+        -- `slettet_ts` settes av reap-OVERGANGEN, aldri av en fødsel.
+        IF NEW.slettet_ts IS NOT NULL THEN
+            RAISE EXCEPTION '%: en kandidatrad fødes LEVENDE — reap-merket'
+                ' settes bare av reap-overgangen (klarsignalet §5)',
+                TG_TABLE_NAME USING ERRCODE = 'insufficient_privilege';
+        END IF;
         -- `innhold_sha256` UTLEDES her, den mottas ikke (Codex P2).
         -- Hashen er den ENESTE evidensen som består etter reaping:
         -- payloaden blir NULL, og raden står igjen som revisjonsspor.
