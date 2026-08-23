@@ -234,11 +234,26 @@ def krev_biasmaaling(image_digest: str,
     En kommentar som peker på en port som ikke er der, er verre enn ingen
     port, for den stopper neste leser fra å lete.
 
-    Grensen her er altså FORMEN, ikke eksistensen: `"0" * 64` er en
-    syntaktisk gyldig artefakthash og passerer. Å slå den opp krever et
-    artefaktlager denne modulen ikke har — altså ny maskin i en fiksrunde
-    (K1) — og hvor bindingen hører hjemme er eskalert til eier i
-    PR-tråden sammen med de to andre funnene på samme mekanisme (K2)."""
+    UTSATT, K1/K2 → #167. Grensen her er FORMEN, ikke eksistensen:
+    `"0" * 64` er en syntaktisk gyldig artefakthash og passerer, og
+    `maalinger`-kartet leveres av den samme kalleren som ber om
+    evalueringen. Å slå opp artefakten krever et artefaktlager denne
+    modulen ikke har — å gi en ren funksjon tenantkontekst og
+    databaseforbindelse ville flyttet portens tillitsgrense, altså ny
+    maskin i en fiksrunde (K1).
+
+    Codex har nå målt mekanismen TRE ganger (runde 12, runde 5, runde
+    19), og de to første var formforsøk på samme rot. §9 K2 sier at
+    tredje runde eskaleres, ikke lappes. Runde 5 skrev eskaleringen inn
+    HER, i en docstring — og der ble den liggende uten issue og uten
+    eiersvar, altså usynlig. #167 er stedet den bor nå, med A/B/C-valget
+    formulert for eier; det henger sammen med #162 (inndata-artefakter
+    har ingen bundet vei inn) og #166 (punktbinding i `KRAVGRENSER`).
+
+    MERK hva det betyr for akseptarken: invarianten
+    `bias.maling_mangler_for_digest = 0` teller manglende OPPFØRINGER,
+    ikke manglende MÅLINGER. Den leser sterkere enn denne porten
+    måler."""
     maaling = maalinger.get(image_digest)
     if maaling is None or maaling.image_digest != image_digest:
         raise Evalueringsfeil("bias_maling_mangler_for_digest",
