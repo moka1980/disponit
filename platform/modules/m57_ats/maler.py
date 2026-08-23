@@ -57,12 +57,26 @@ MALER: dict[str, dict] = {
 
 _FELTMONSTER = re.compile(r"\{([a-z_]+)\}")
 
+#: Feltene som LOVLIG kan være tomme (Codex P2). `firmatekst` er kundens
+#: tone, og «ingen tone» er en ekte tilstand — en kunde som ikke har satt
+#: noe, skal få malens struktur uten et påhengt avsnitt. Alle ANDRE felter
+#: bærer selve løftet i setningen de står i: en invitasjon uten
+#: `tidsvalg_lenke` ber kandidaten velge et tidspunkt «her:» og peker
+#: ingen steder, og et avslag uten `funn_id` sier at vurderingen er
+#: sporbar med en referanse som ikke finnes. Porten målte bare TYPEN og
+#: flettesyntaksen, så en tom streng passerte som en verdi. Den er ikke en
+#: verdi — den er et hull med riktig type.
+_KAN_VAERE_TOMME = frozenset({"firmatekst"})
+
 
 def flett(malnavn: str, felter: dict[str, str]) -> dict:
     """-> {malversjon, tekst}. Feltene må være NØYAKTIG malens (port 14):
     et felt utenfor malen er avvist, et manglende felt likeså — en mal
     med hull er ikke en utsendingstekst. Verdiene må være rene strenger
-    uten flettefeltsyntaks (ingen andreordens fletting)."""
+    uten flettefeltsyntaks (ingen andreordens fletting), og for alle
+    felter utenom `_KAN_VAERE_TOMME` må de faktisk bære innhold — et
+    tomt påkrevd felt er samme hull som et manglende felt, bare med
+    riktig type."""
     mal = MALER.get(malnavn)
     if mal is None:
         raise Malfeil("ukjent_mal", malnavn)
@@ -76,5 +90,7 @@ def flett(malnavn: str, felter: dict[str, str]) -> dict:
     for navn, verdi in felter.items():
         if not isinstance(verdi, str) or _FELTMONSTER.search(verdi):
             raise Malfeil("ugyldig_feltverdi", navn)
+        if navn not in _KAN_VAERE_TOMME and not verdi.strip():
+            raise Malfeil("tomt_flettefelt", navn)
     return {"malversjon": mal["malversjon"],
             "tekst": mal["tekst"].format(**felter)}

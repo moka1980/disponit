@@ -625,6 +625,19 @@ def test_port14_flettefelt_utenfor_malen():
     with pytest.raises(maler.Malfeil) as e:
         maler.flett("invitasjon", felter | {"firmatekst": "{funn_id}"})
     assert e.value.kode == "ugyldig_feltverdi"
+    # Codex P2: en TOM streng er et hull med riktig type. Invitasjonen
+    # ber kandidaten velge tidspunkt «her:» og peker ingen steder;
+    # avslaget lover en sporbar referanse som ikke finnes.
+    for tomt in ("", "   ", "\n"):
+        with pytest.raises(maler.Malfeil) as e:
+            maler.flett("invitasjon", felter | {"tidsvalg_lenke": tomt})
+        assert e.value.kode == "tomt_flettefelt"
+        with pytest.raises(maler.Malfeil) as e:
+            maler.flett("avslag", {"stilling": "Utvikler", "kandidatnavn": "A",
+                                   "funn_id": tomt, "firmatekst": "Hilsen"})
+        assert e.value.kode == "tomt_flettefelt"
+    # `firmatekst` er kundens tone, og «ingen tone» er en ekte tilstand.
+    assert maler.flett("invitasjon", felter | {"firmatekst": ""})["tekst"]
 
 
 def test_port15_funn_uten_kildereferanse():
