@@ -425,6 +425,53 @@ def test_reaping_respekterer_fristen(migrator):
 
 
 @pg
+def test_forlatt_apen_prosess_reapes_etter_maks_levetid(migrator):
+    """Codex P1: en kjøring som krasjer før `lukk_rekrutteringsprosess`
+    etterlot en prosess som ALDRI ble lukket — og et predikat på
+    `lukket_ts IS NOT NULL` utelukket den for alltid fra reaperen.
+    Persondataene ble stående i det uendelige.
+
+    Maks levetid er den samme fristen målt fra fødselen. Prosessen
+    konstrueres direkte som eier (fødselen setter `opprettet` til now(),
+    og kolonnen er immutabel — det er nettopp porten fristen hviler på)."""
+    rt = _rt()
+    rp = None
+    try:
+        oid, _ = _evaluering(migrator)
+        pid = uuid.uuid4()
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute(
+            "INSERT INTO rekrutteringsprosess (tenant, prosess_id,"
+            " oppdrag_id, slettefrist_dogn, opprettet)"
+            " VALUES (%s,%s,%s,30, now() - interval '31 days')",
+            (TENANT, pid, oid))
+        migrator.commit()
+        _sett_kontekst(rt, TENANT)
+        _fyll_lagrene(rt, pid)
+        rt.commit()
+        assert _tell_fixtur(migrator, pid) == 9
+        migrator.rollback()
+        rp, _timerrolle = _reaperkobling()
+        reapet = rp.execute("SELECT * FROM reap_kandidatdata(50)"
+                            ).fetchall()
+        rp.commit()
+        assert (TENANT, pid) in [(r[0], r[1]) for r in reapet]
+        assert _tell_fixtur(migrator, pid) == 0
+        # Prosessen er lukket ved FØDSELEN, ikke ved reapingen: fristen
+        # ble aldri forlenget, og `prosess_reapet_krever_lukket` holder.
+        lukket, opprettet, slettet = migrator.execute(
+            "SELECT lukket_ts, opprettet, slettet_ts FROM"
+            " rekrutteringsprosess WHERE tenant=%s AND prosess_id=%s",
+            (TENANT, pid)).fetchone()
+        assert lukket == opprettet and slettet is not None
+        migrator.rollback()
+    finally:
+        rt.close()
+        if rp is not None:
+            rp.close()
+
+
+@pg
 def test_port18_insert_etter_reap_avvises(migrator):
     """Codex P1: FK-en krever bare at prosessen FINNES, og reaperen
     utelukker for alltid en prosess med `slettet_ts`. Uten en INSERT-vakt

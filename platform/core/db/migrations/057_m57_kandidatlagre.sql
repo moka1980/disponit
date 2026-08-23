@@ -498,13 +498,23 @@ BEGIN
     v_kontekst := current_setting('disponit.tenant', true);
     v_naa := pg_catalog.now();
     FOR r IN
+        -- Den FORLATTE prosessen (Codex P1): fristen løper fra lukkingen
+        -- (§5), men en kjøring som krasjer eller kanselleres før
+        -- `lukk_rekrutteringsprosess` etterlot en prosess som ALDRI ble
+        -- lukket — og et predikat på `lukket_ts IS NOT NULL` utelukket
+        -- den for alltid. Originaldokumentene og alt avledet ble stående
+        -- i det uendelige, uansett hvor ferdig oppdraget var.
+        -- Maks levetid er derfor den samme fristen målt fra FØDSELEN:
+        -- ingen ny konstant, og strengere enn den lukkede veien (en
+        -- prosess som lukkes, får alltid hele fristen fra lukkingen).
+        -- Utførelsesfristen er 240 min, så en prosess som står åpen
+        -- forbi hele slettefristen er forlatt, ikke i arbeid.
         SELECT p.tenant AS t, p.prosess_id AS pid
           FROM public.rekrutteringsprosess p
-         WHERE p.lukket_ts IS NOT NULL
-           AND p.slettet_ts IS NULL
-           AND v_naa > p.lukket_ts
+         WHERE p.slettet_ts IS NULL
+           AND v_naa > coalesce(p.lukket_ts, p.opprettet)
                        + p.slettefrist_dogn * interval '1 day'
-         ORDER BY p.lukket_ts
+         ORDER BY coalesce(p.lukket_ts, p.opprettet)
          LIMIT p_grense
          FOR UPDATE OF p SKIP LOCKED
     LOOP
@@ -534,8 +544,13 @@ BEGIN
            SET felter = NULL, slettet_ts = v_naa
          WHERE k.tenant = r.t AND k.prosess_id = r.pid
            AND k.slettet_ts IS NULL;
+        -- En forlatt prosess lukkes ved FØDSELEN i samme setning som den
+        -- reapes: `prosess_reapet_krever_lukket` skal fortsatt holde, og
+        -- radvakten godtar nettopp denne retningen (lukking bakover
+        -- korter fristen, den forlenger den aldri).
         UPDATE public.rekrutteringsprosess p2
-           SET slettet_ts = v_naa
+           SET lukket_ts = coalesce(p2.lukket_ts, p2.opprettet),
+               slettet_ts = v_naa
          WHERE p2.tenant = r.t AND p2.prosess_id = r.pid;
         tenant := r.t; prosess_id := r.pid;
         RETURN NEXT;
