@@ -251,6 +251,45 @@ test("Rekruttering: signaturdialogen sier antall, type, hashkortform — og «Ka
     .textContent.includes(HASH.slice(0, 12))), "utfallet mangler");
 });
 
+test("Rekruttering: 401 i mutasjonene er innlogging, ikke en handlingsfeil", async () => {
+  // Codex P1: en utløpt økt ble fanget som «noe gikk galt», og brukeren
+  // ble stående i det innloggede skallet uten økt bak seg. 401 er global
+  // i resten av klienten (V2: 401 → innlogging, 403 → ingen tilgang).
+  for (const flyt of ["blinding", "signer"]) {
+    KALL = [];
+    SVAR = { "/v1/rekruttering/prosesser": prosess() };
+    let uautorisert = 0;
+    const hoved = nyHoved();
+    visRekruttering(hoved, { sprak: "nb", tenant: "acme",
+      scopes: ["decisions:read", "bestilling:opprett"],
+      paaUautorisert: () => { uautorisert += 1; } });
+    await vent(() => hoved.querySelector("table"));
+    SVAR = (sti, opts) => (opts.method === "POST" ? 401 : prosess());
+    if (flyt === "blinding") {
+      const bryter = hoved.querySelector("#rekrut-blinding");
+      bryter.checked = false;
+      bryter.dispatchEvent(new window.Event("change", { bubbles: true }));
+      const dialog = document.querySelector('[role="alertdialog"]');
+      dialog.querySelector("textarea").value = "intern rekruttering";
+      [...dialog.querySelectorAll("button")]
+        .find((b) => b.textContent === t("ui.rekruttering.blinding_av_bekreft"))
+        .click();
+    } else {
+      [...hoved.querySelectorAll("button")]
+        .find((b) => b.textContent === t("ui.rekruttering.signer_knapp"))
+        .click();
+      const dialog = document.querySelector('[role="alertdialog"]');
+      [...dialog.querySelectorAll("button")]
+        .find((b) => b.textContent === t("ui.rekruttering.signer_bekreft"))
+        .click();
+    }
+    assert.ok(await vent(() => uautorisert === 1),
+      `${flyt}: 401 nådde aldri paaUautorisert`);
+    assert.equal(hoved.querySelector('[role="alert"]').textContent, "",
+      `${flyt}: 401 ble meldt som en vanlig handlingsfeil`);
+  }
+});
+
 test("Rekruttering: ingen hardkodet visningstekst, og tastaturgjennomgangen er dokumentert (port 32)", async () => {
   // Alle brukersynlige strenger går via t() — målt ved å rendre med et
   // locale der hver nøkkel er sin egen verdi, og kreve at flatens tekst

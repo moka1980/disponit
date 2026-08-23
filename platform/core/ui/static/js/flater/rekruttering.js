@@ -17,11 +17,23 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { hentJson, settRekrutteringBlinding,
-         signerRekrutteringsliste } from "../api.js";
+         signerRekrutteringsliste, UautorisertFeil } from "../api.js";
 import { harScope } from "../sitekart.js";
 import { DataTabell } from "../tabell.js";
 import { Detaljpanel, Bekreftelsesdialog } from "../dialog.js";
 import { medStatus, flateHode } from "./felles.js";
+
+function meldFeil(ctx, utfall, e) {
+  // 401 ER IKKE EN HANDLINGSFEIL (Codex P1). Utløper økten mellom
+  // lastingen av flaten og mutasjonen, kaster `api.js` UautorisertFeil —
+  // og fanget den her som «noe gikk galt», ble brukeren stående i det
+  // innloggede skallet med en flate som ikke lenger har en økt bak seg.
+  // Resten av klienten sender 401 til `ctx.paaUautorisert` (V2: 401 →
+  // innlogging, 403 → ingen tilgang); disse to mutasjonene er ikke et
+  // unntak fra den regelen.
+  if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+  sett(utfall, t("ui.rekruttering.feil_utfall"));
+}
 
 function kortHash(hash) {
   // Kortformen i signaturdialogen (§8): nok til å pare mot listen i
@@ -162,7 +174,7 @@ function tegn(hoved, ctx, data) {
         bryter.checked = true;
         sett(utfall, t("ui.rekruttering.blinding_pa_utfall"));
       } catch (e) {
-        sett(utfall, t("ui.rekruttering.feil_utfall"));
+        meldFeil(ctx, utfall, e);
       }
       return;
     }
@@ -190,7 +202,7 @@ function tegn(hoved, ctx, data) {
           bryter.checked = false;
           sett(utfall, t("ui.rekruttering.blinding_av_utfall"));
         } catch (e) {
-          sett(utfall, t("ui.rekruttering.feil_utfall"));
+          meldFeil(ctx, utfall, e);
         }
       },
     });
@@ -228,7 +240,7 @@ function tegn(hoved, ctx, data) {
               .replace("{hash}", kortHash(svar.innhold_hash
                 || liste.innhold_hash)));
           } catch (e) {
-            sett(utfall, t("ui.rekruttering.feil_utfall"));
+            meldFeil(ctx, utfall, e);
           }
         },
       });
