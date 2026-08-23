@@ -344,6 +344,56 @@ KRAVGRENSER["m57-v1"] = {
     "ytelse_maks_minutter": 240,
 }
 
+#: KATALOGAKSENE (A-vedtaket på #152, K2): `status` og `driftstilstand`
+#: er katalogens AVLESNING av en aksepthendelse — de er ikke del av den
+#: identiteten aksepten binder. En aksept autoriserer flippet av dem;
+#: hadde de vært inne i identiteten, ville enhver flippcommit
+#: ugyldiggjort sitt eget bevis (fikspunktet målt i #152).
+KATALOGAKSER: tuple[str, ...] = ("status", "driftstilstand")
+
+
+def kanonisk_projeksjon(tekst: str) -> str:
+    """sha256 over manifestets KANONISKE PROJEKSJON: parset YAML minus
+    katalogaksene, dumpet deterministisk.
+
+    Formen er en ekte parser, aldri en byte-allowlist (K4/SP-13):
+    kommentarer og formatering dør i parsingen, så en «ren
+    historikkkommentar» trenger intet unntak — og dermed måler
+    projeksjonen identitet, ikke formatering. Alt STRUKTURELT
+    (`kjerne`, `avhengigheter`, `id`, sjekklistepunktene…) er med, og
+    én endring der flytter hashen.
+    """
+    import json as _json
+
+    import yaml as _yaml
+    data = _yaml.safe_load(tekst) or {}
+    for akse in KATALOGAKSER:
+        data.pop(akse, None)
+    kanonisk = _json.dumps(data, ensure_ascii=False, sort_keys=True,
+                           separators=(",", ":"))
+    return hashlib.sha256(kanonisk.encode("utf-8")).hexdigest()
+
+
+#: De skrevne aksepthendelsene, som PROJEKSJONER (A-vedtaket): hver
+#: modul med en aksept i basen står her med akseptcommiten og
+#: projeksjonen av manifestet SLIK AKSEPTEN MÅLTE DET. Porten i
+#: `test_aksept_projeksjon` krever at HEAD-manifestets projeksjon er
+#: identisk — katalogaksene og kommentarer kan flippes/skrives, alt
+#: annet er en NY identitet som krever ny aksept.
+AKSEPTERTE_GENERASJONER: dict[str, dict[str, str]] = {
+    "m02_revisjonslogg": {
+        "commit": "2aaca01c7187dbf46d06f4e09a3688a79d367739",
+        "manifest": "platform/modules/m02_revisjonslogg/manifest.yaml",
+        "projeksjon": "700962385382e16713cfb0bfcf918864fd53bad724d86b25651b6ceb7dc41f9a",
+    },
+    "wcag_audit": {
+        "commit": "2aaca01c7187dbf46d06f4e09a3688a79d367739",
+        "manifest": "platform/modules/m56_wcag_audit/manifest.yaml",
+        "projeksjon": "b2ea178fdab16783a4c626f14013353b51d63ec427cc0e73e9a5d830d5f30142",
+    },
+}
+
+
 #: Settdriveren begge ledd deler — bytene som ER settet.
 M02_SETT_STI = REPOROT / "deploy/staging/m02_fordeling.py"
 

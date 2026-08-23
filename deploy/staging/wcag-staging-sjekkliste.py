@@ -94,8 +94,9 @@ OPPDRAGSTYPE = "kontroll.wcag.nettsted"
 # eller `bytt_release` inn. Fase 2 kaller derfor `_gjenapne_modulen` først.
 #
 # DEFAULTEN ER `wcag-r2` FORDI MANIFESTET ER ENDRET (Codex P1 på #109).
-# Releaseraden bærer `manifest_hash` — sha256 over `manifest.yaml` på disk,
-# regnet ut av `registrer-m-wcag-audit.py` — og `registrer_release` avviser
+# Releaseraden bærer `manifest_hash` — manifestets kanoniske projeksjon,
+# regnet ut av `registrer-m-wcag-audit.py` (A-vedtaket på #152; t.o.m.
+# wcag-r23 var det sha256 over filens bytes) — og `registrer_release` avviser
 # en ANNEN hash for en eksisterende `(m_wcag_audit, release_id)`-rad. #109
 # både flyttet manifestet til `m56_wcag_audit/` og skrev om hodet, så
 # bytene er ikke lenger de som ble registrert for `wcag-r1` under
@@ -109,7 +110,7 @@ OPPDRAGSTYPE = "kontroll.wcag.nettsted"
 # derimot bare et FELT på release-raden, og en ny release-id er en ny rad:
 # derfor fryses kontrakten og nummereres releasen.
 #
-# Regelen står som port i CI (`test_release_id_folger_manifestets_bytes`):
+# Regelen står som port i CI (`test_release_id_folger_manifestets_projeksjon`):
 # endres manifestet igjen, må denne defaulten og den pinnede hashen flyttes
 # sammen — ellers oppdages det først i en staging-runde ingen ser før den
 # feiler. `LEGACY_RELEASE` under er uberørt: den navngir releasen de gamle
