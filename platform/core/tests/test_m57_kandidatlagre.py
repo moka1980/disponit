@@ -282,8 +282,17 @@ def test_mislykket_terminalstatus_foder_ingen_prosess(migrator):
     Codex ba om å bevare: den idempotente GJENLESNINGEN overlever at
     oppdraget blir ferdig.
 
+    Codex P2, tredje runde på samme port: «bevare» holdt bare for
+    `utfort`. Statusporten sto FØR oppslaget, så et retry etter en
+    tvetydig commit — kallet gikk igjennom, svaret gikk tapt, oppdraget
+    rakk å bli `feilet`/`kansellert` — fikk `invalid_parameter_value` i
+    stedet for prosess-id-en. Idempotensen brøt nøyaktig der den trengs.
+    Porten hører til FØDSELEN: gjenlesningen skjer først, statusporten
+    bare på veien som faktisk setter inn.
+
     MUTASJONEN SOM DREPER DENNE: sett porten tilbake til
-    `status NOT IN ('feilet','kansellert')`."""
+    `status NOT IN ('feilet','kansellert')`, eller flytt statusporten
+    tilbake foran oppslaget av `rekrutteringsprosess`."""
     for status in (None, "feilet", "kansellert", "utfort"):
         oid, _ = _grunnlag(migrator, oppdragstype="rekruttering.evaluering",
                            status=status)
@@ -305,28 +314,35 @@ def test_mislykket_terminalstatus_foder_ingen_prosess(migrator):
             rt.close()
     # Positiv kontroll: det claimede oppdraget går. Uten denne halvdelen
     # ville en port som avviser ALT bestått testen.
-    oid, _ = _claimet(migrator)
-    rt = _rt()
-    try:
-        _sett_kontekst(rt, TENANT)
-        pid = rt.execute("SELECT opprett_rekrutteringsprosess(%s,%s,90)",
-                         (TENANT, oid)).fetchone()[0]
-        assert pid is not None
-        rt.commit()
-        # GJENLESNINGEN overlever at kjøringen blir ferdig (Codex:
-        # «preserve idempotent reads of an existing process separately»).
-        # Et retry etter kvittering skal få SAMME id — det er fødselen
-        # som krever `plukket`, ikke oppslaget.
-        _sett_kontekst(migrator, TENANT)
-        migrator.execute("UPDATE oppdrag SET status='utfort' WHERE"
-                         " tenant=%s AND id=%s", (TENANT, oid))
-        migrator.commit()
-        _sett_kontekst(rt, TENANT)
-        assert rt.execute("SELECT opprett_rekrutteringsprosess(%s,%s,90)",
-                          (TENANT, oid)).fetchone()[0] == pid
-        rt.rollback()
-    finally:
-        rt.close()
+    #
+    # Og GJENLESNINGEN overlever ALLE tre terminaltilstandene, ikke bare
+    # `utfort` (Codex P2). Retryet etter en tvetydig commit er nettopp
+    # det som skjer når kjøringen feiler: kallet gikk igjennom, svaret
+    # gikk tapt, oppdraget ble `feilet`. Da skal den som rydder få SAMME
+    # id, ikke en avvisning. `kansellert` nås ikke direkte fra `plukket`
+    # (005s statusmaskin), så veien dit går via `opprettet`.
+    for vei in (("utfort",), ("feilet",), ("opprettet", "kansellert")):
+        oid, _ = _claimet(migrator)
+        rt = _rt()
+        try:
+            _sett_kontekst(rt, TENANT)
+            pid = rt.execute("SELECT opprett_rekrutteringsprosess(%s,%s,90)",
+                             (TENANT, oid)).fetchone()[0]
+            assert pid is not None
+            rt.commit()
+            _sett_kontekst(migrator, TENANT)
+            for status in vei:
+                migrator.execute("UPDATE oppdrag SET status=%s WHERE"
+                                 " tenant=%s AND id=%s",
+                                 (status, TENANT, oid))
+            migrator.commit()
+            _sett_kontekst(rt, TENANT)
+            assert rt.execute(
+                "SELECT opprett_rekrutteringsprosess(%s,%s,90)",
+                (TENANT, oid)).fetchone()[0] == pid, vei
+            rt.rollback()
+        finally:
+            rt.close()
 
 
 @pg

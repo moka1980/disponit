@@ -839,77 +839,83 @@ BEGIN
             current_setting('transaction_isolation')
             USING ERRCODE = 'invalid_transaction_state';
     END IF;
-    -- MISLYKKET TERMINALSTATUS FØDER INGEN PROSESS (Cursor P2).
-    -- Fristen løper fra LUKKINGEN (§5), og lukkingen er noe kjøringen
-    -- gjør når den er ferdig. Et `feilet`- eller `kansellert`-oppdrag er
-    -- alt over: kjøringen som skulle lukket prosessen kommer aldri, så
-    -- persondataene ville blitt liggende til reaperens MAKS LEVETID fra
-    -- fødselen i stedet for fristen fra faktisk avslutning — svakere enn
-    -- §5 lover, og for data som aldri skulle vært skrevet.
+    -- GJENLESNINGEN FØRST, PORTEN ETTERPÅ (Codex P2). Idempotensløftet
+    -- er «samme oppdrag ⇒ samme prosess-id», og det trengs nettopp etter
+    -- en TVETYDIG COMMIT: kallet gikk igjennom, svaret gikk tapt, og før
+    -- klienten rakk å prøve på nytt gikk oppdraget til `feilet` eller
+    -- `kansellert`. Sto statusporten først, avviste den retryet med
+    -- `invalid_parameter_value` FØR prosessen som alt fantes ble lest —
+    -- altså brøt løftet på det ene tidspunktet det finnes for.
     --
-    -- Porten er NEGATIV, ikke `= 'utfort'` som promoteringsvakten (§7d).
-    -- Vaktens spørsmål er «kan denne listen promoteres», og da ER
-    -- kjøringen ferdig. Dette ankeret fødes MENS kjøringen står på —
-    -- modulen claimer oppdraget (`plukket`) og trenger et sted å legge
-    -- parset tekst og artefakter der og da. Et `utfort`-krav her ville
-    -- betydd at modulen måtte lagre alt den evaluerer ETTER at den var
-    -- ferdig å evaluere, altså snudd livsløpet.
-    --
-    -- Fødselsporten dekker ikke oppdrag som feiler ETTER at prosessen er
-    -- født; der er reaperens maks-levetid-arm grensen. Den ekte roten —
-    -- å lukke prosessen i SAMME transaksjon som terminalovergangen —
-    -- hører til utføreren, som ikke finnes ennå (K1, se PR-tråden).
-    -- EIERMODULEN er en del av fødselsporten (Cursor P2). `claim_neste_-
-    -- oppdrag` plukker på `oppdrag.eiermodul`, så et oppdrag med riktig
-    -- TYPE men feil eier kan aldri claimes av `m57_ats`. Fødtes prosessen
-    -- likevel, ville persondataene ligget til reaperens maks levetid på et
-    -- oppdrag ingen modul kommer for å lukke — svakere enn §5, for data
-    -- som aldri skulle vært skrevet. Kontrakten binder paret ved
-    -- opprettelsen (`_eiermodul_for`), så et avvikende par er DML utenom
-    -- kontrakten, og det er nettopp da porten har arbeid å gjøre.
-    -- LÅST lesning, ikke et ulåst `EXISTS` (Cursor P2) — samme klasse og
-    -- samme form som INSERT-vakten mot reaperen. En ulåst sjekk er en
-    -- påstand om FORTIDEN: under READ COMMITTED kunne oppdraget gå til
-    -- `feilet`/`kansellert` mellom sjekken og INSERT-en, og prosessen ble
-    -- født på et oppdrag som alt var terminalt — nøyaktig den tilstanden
-    -- porten finnes for å nekte. `FOR SHARE` holder raden mens fødselen
-    -- fullføres, og PostgreSQL re-evaluerer predikatet etter låsen, så en
-    -- rad som ble terminal under ventingen faller ut av treffet i stedet
-    -- for å bli lest fra et gammelt snapshot.
-    SELECT o.status INTO v_status FROM public.oppdrag o
-        WHERE o.tenant = p_tenant AND o.id = p_oppdrag_id
-          AND o.oppdragstype = 'rekruttering.evaluering'
-          AND o.eiermodul = 'm57_ats'
-          AND o.status NOT IN ('feilet', 'kansellert')
-        FOR SHARE;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'rekrutteringsprosess: oppdrag % hos % er ikke et'
-            ' LEVENDE rekruttering.evaluering-oppdrag eid av m57_ats — en'
-            ' prosess fødes ikke på et oppdrag som er feilet eller'
-            ' kansellert (klarsignalet §5: fristen løper fra lukkingen, og'
-            ' den kommer aldri), og heller ikke på et oppdrag modulen'
-            ' aldri kan claime', p_oppdrag_id, p_tenant
-            USING ERRCODE = 'invalid_parameter_value';
-    END IF;
+    -- Porten hører til FØDSELEN, ikke til oppslaget: den finnes for å
+    -- hindre at persondata skrives på et oppdrag ingen kommer for å
+    -- lukke, og en prosess som ALT er født har passert den. Å avvise
+    -- gjenlesningen verner ingenting — den skjuler bare id-en den som
+    -- skal rydde trenger. Samme form som 056 alt bruker på
+    -- `frigi_utsendelse` og `opprett_frigivelsesoppdrag`: REPLAY først,
+    -- reautorisering bare på den veien som faktisk skriver.
     SELECT prosess_id, slettefrist_dogn INTO v_id, v_frist
       FROM public.rekrutteringsprosess
      WHERE tenant = p_tenant AND oppdrag_id = p_oppdrag_id;
     IF v_id IS NULL THEN
-        -- FØRSTEGANGSFØDSELEN krever et AKTIVT CLAIMET oppdrag (Codex P1).
-        -- Porten over er `NOT IN ('feilet','kansellert')`, og den skal
-        -- fortsette å være det: den bevokter BEGGE stiene, også den
-        -- idempotente GJENLESNINGEN av en prosess som alt finnes — et
-        -- retry etter at kjøringen er kvittert ut skal fortsatt få samme
-        -- id tilbake, ellers er idempotensløftet borte.
+        -- MISLYKKET TERMINALSTATUS FØDER INGEN PROSESS (Cursor P2).
+        -- Fristen løper fra LUKKINGEN (§5), og lukkingen er noe kjøringen
+        -- gjør når den er ferdig. Et `feilet`- eller `kansellert`-oppdrag
+        -- er alt over: kjøringen som skulle lukket prosessen kommer
+        -- aldri, så persondataene ville blitt liggende til reaperens MAKS
+        -- LEVETID fra fødselen i stedet for fristen fra faktisk
+        -- avslutning — svakere enn §5 lover, og for data som aldri skulle
+        -- vært skrevet.
         --
-        -- Men FØDSELEN er noe annet enn en gjenlesning. Kom det første
-        -- kallet etter at oppdraget var `utfort`, fødtes en åpen prosess
-        -- på en kjøring som var ferdig: lukkingen som starter fristen
-        -- (§5) kommer aldri, lagrene tar imot persondata etterpå, og
-        -- dataene blir liggende til reaperens maks-levetid-arm i stedet
-        -- for til fristen fra faktisk avslutning. `opprettet` — altså et
-        -- oppdrag ingen har claimet ennå — er samme klasse: prosessen
-        -- ville stått åpen uten noen som kommer for å lukke den.
+        -- Fødselsporten dekker ikke oppdrag som feiler ETTER at prosessen
+        -- er født; der er reaperens maks-levetid-arm grensen. Den ekte
+        -- roten — å lukke prosessen i SAMME transaksjon som
+        -- terminalovergangen — hører til utføreren, som ikke finnes ennå
+        -- (K1, se PR-tråden).
+        -- EIERMODULEN er en del av fødselsporten (Cursor P2).
+        -- `claim_neste_oppdrag` plukker på `oppdrag.eiermodul`, så et
+        -- oppdrag med riktig TYPE men feil eier kan aldri claimes av
+        -- `m57_ats`. Fødtes prosessen likevel, ville persondataene ligget
+        -- til reaperens maks levetid på et oppdrag ingen modul kommer for
+        -- å lukke. Kontrakten binder paret ved opprettelsen
+        -- (`_eiermodul_for`), så et avvikende par er DML utenom
+        -- kontrakten, og det er nettopp da porten har arbeid å gjøre.
+        -- LÅST lesning, ikke et ulåst `EXISTS` (Cursor P2) — samme klasse
+        -- og samme form som INSERT-vakten mot reaperen. En ulåst sjekk er
+        -- en påstand om FORTIDEN: under READ COMMITTED kunne oppdraget gå
+        -- til `feilet`/`kansellert` mellom sjekken og INSERT-en, og
+        -- prosessen ble født på et oppdrag som alt var terminalt —
+        -- nøyaktig den tilstanden porten finnes for å nekte. `FOR SHARE`
+        -- holder raden mens fødselen fullføres, og PostgreSQL
+        -- re-evaluerer predikatet etter låsen, så en rad som ble terminal
+        -- under ventingen faller ut av treffet i stedet for å bli lest
+        -- fra et gammelt snapshot.
+        SELECT o.status INTO v_status FROM public.oppdrag o
+            WHERE o.tenant = p_tenant AND o.id = p_oppdrag_id
+              AND o.oppdragstype = 'rekruttering.evaluering'
+              AND o.eiermodul = 'm57_ats'
+              AND o.status NOT IN ('feilet', 'kansellert')
+            FOR SHARE;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'rekrutteringsprosess: oppdrag % hos % er ikke'
+                ' et LEVENDE rekruttering.evaluering-oppdrag eid av'
+                ' m57_ats — en prosess fødes ikke på et oppdrag som er'
+                ' feilet eller kansellert (klarsignalet §5: fristen løper'
+                ' fra lukkingen, og den kommer aldri), og heller ikke på'
+                ' et oppdrag modulen aldri kan claime',
+                p_oppdrag_id, p_tenant
+                USING ERRCODE = 'invalid_parameter_value';
+        END IF;
+        -- FØRSTEGANGSFØDSELEN krever et AKTIVT CLAIMET oppdrag (Codex P1).
+        -- Porten over slipper alt som ikke er `feilet`/`kansellert`, og
+        -- det er for løst for en FØDSEL. Kom det første kallet etter at
+        -- oppdraget var `utfort`, fødtes en åpen prosess på en kjøring som
+        -- var ferdig: lukkingen som starter fristen (§5) kommer aldri,
+        -- lagrene tar imot persondata etterpå, og dataene blir liggende
+        -- til reaperens maks-levetid-arm i stedet for til fristen fra
+        -- faktisk avslutning. `opprettet` — altså et oppdrag ingen har
+        -- claimet ennå — er samme klasse: prosessen ville stått åpen uten
+        -- noen som kommer for å lukke den.
         --
         -- Kravet er POSITIVT og ikke en tredje tilstand lagt til en
         -- denyliste (§9 K2): fødselen skjer MENS kjøringen står på, og
