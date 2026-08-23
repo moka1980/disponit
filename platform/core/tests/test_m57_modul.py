@@ -488,6 +488,46 @@ def test_port21_totalgrensen_leses_fra_katalogen(tmp_path):
     assert e.value.kode == "total_for_stor"
 
 
+def test_port21_totalen_maales_ogsa_pa_et_medlem_uten_lesesloyfe(
+        tmp_path, monkeypatch):
+    """Codex P2: totalporten i strømmen sto INNE i lesesløyfa, og et
+    medlem som får plass i førstelesingen kommer aldri inn i den.
+
+    Katalogen bærer bare docx-ens KOMPRIMERTE størrelse, så en docx som
+    pakker ut nær taket passerer den ytre gaten. Etterpå står totalen
+    tett på grensen — og neste medlem, en HTML-fil på under 512 byte,
+    ble lagt til uten at noen spurte: `f.read` gir tomt, `break` går,
+    og `total += lest` var ubetinget. Én liten fil, eller mange,
+    passerte dermed 2 GB-taket fritt.
+
+    Grensen er skrudd ned her fordi det er FORMEN som måles, ikke
+    tallet: å bygge 2 GB ekte byte i CI ville målt disken, ikke porten.
+
+    MUTASJONEN SOM DREPER DENNE: gjør `total += lest`-sjekken betinget
+    igjen (eller fjern den) — sjekken inne i lesesløyfa er grønn hele
+    veien, for den kjøres aldri for dette medlemmet."""
+    docx = _docx([("word/media/bilde.bin", os.urandom(4096))])
+    liten = b"<html><body>cv</body></html>"
+    assert len(liten) < parsing._HODEBYTE, \
+        "forutsetningen: medlemmet leses ferdig FØR lesesløyfa"
+    arkiv = _bunt(tmp_path, [("a.docx", docx), ("liten.html", liten)])
+    # Taket måles mot buntens EGEN sluttsum, ikke mot et gjettet tall:
+    # strømmen rapporterer `byte_lest` på siste medlem, og nettopp den
+    # summen er det taket ett byte under skal felle.
+    fasit = [f for f, _, _ in parsing.les_porsjonsvis(arkiv) if f][-1]
+    total = fasit["byte_lest"]
+    monkeypatch.setattr(parsing, "MAKS_TOTAL_UTPAKKET", total - 1)
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(arkiv))
+    assert e.value.kode == "total_for_stor"
+    assert "liten.html" in e.value.args[0], \
+        "det er medlemmet som sprengte taket som navngis"
+    # Positiv kontroll: nøyaktig taket er nok — grensen er ikke strengere
+    # enn den sier.
+    monkeypatch.setattr(parsing, "MAKS_TOTAL_UTPAKKET", total)
+    assert len(list(parsing.les_porsjonsvis(arkiv))) == 2
+
+
 def test_en_lognaktig_katalog_er_en_korrupt_bunt(tmp_path):
     """Katalogen KAN lyve — zipfile trunkerer da strømmen på den
     deklarerte lengden og feller CRC-en. Poenget porten eier: utfallet

@@ -324,6 +324,10 @@ def les_porsjonsvis(sti: str | Path, *, porsjon: int = 200):
                         if lest > MAKS_ENKELTFIL:
                             raise Buntfeil("enkeltfil_for_stor",
                                            medlem.navn)
+                        # Denne sjekken er den TIDLIGE: den avbryter en
+                        # bombe midt i strømmen, før hele medlemmet ligger
+                        # i `biter`. Den er ikke totalens eneste port — se
+                        # under.
                         if total + lest > MAKS_TOTAL_UTPAKKET:
                             raise Buntfeil("total_for_stor", medlem.navn)
                         biter.append(bit)
@@ -341,7 +345,18 @@ def les_porsjonsvis(sti: str | Path, *, porsjon: int = 200):
                 raise Buntfeil("uleselig_medlem",
                                f"{medlem.navn}: {type(feil).__name__}"
                                ) from feil
+            # Totalen håndheves der den ENDRES, ikke bare der den vokser
+            # (Codex P2). Sjekken over står inne i lesesløyfa, og et medlem
+            # som får plass i førstelesingen kommer aldri inn i den:
+            # `f.read` returnerer tomt, `break` går, og denne linja la
+            # medlemmet til uten å spørre. Én liten HTML-fil etter en bunt
+            # som alt lå tett på 2 GB — eller mange av dem — passerte
+            # dermed grensen fritt. `_inspiser_docx` måler alt sin egen
+            # total etter hver oppdatering; den ytre strømmen gjorde det
+            # ikke.
             total += lest
+            if total > MAKS_TOTAL_UTPAKKET:
+                raise Buntfeil("total_for_stor", medlem.navn)
             if _endelse(medlem.navn) == ".docx":
                 utpakket, indre = _inspiser_docx(
                     medlem.navn, b"".join(biter),
