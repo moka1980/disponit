@@ -124,10 +124,31 @@ function tegn(hoved, ctx, data, okt, valgtId) {
 
   const tabellRot = el("div", { class: "rekrut-tabell" });
 
+  // SORTERINGEN ER BRUKERENS VALG, IKKE TABELLENS UTGANGSPUNKT (Codex P2).
+  // En vektendring KREVER en ny tabell — poengene er nye — og hver ny
+  // `DataTabell` fikk «poeng, synkende» hardkodet inn. Hadde brukeren
+  // vendt poengkolonnen stigende for å se hvem som faller ut nederst,
+  // slo tabellen tilbake til synkende ved første piltast på en skyver:
+  // nettopp den handlingen hun sorterte for å studere, kastet
+  // sorteringen. `tabell.js` er bygget for dette og sier det selv —
+  // «Tabellen kan ikke eie valget selv — den er borte ved neste tegning.
+  // Derfor tar den imot `sort` som utgangspunkt og melder fra via
+  // `paaSort`». Flaten hadde bare aldri koblet den ledningen.
+  //
+  // Valget holdes her, i `tegn`, fordi det er her tabellen bygges om.
+  // At det IKKE overlever et prosessbytte, er den samme klassen som G8
+  // og hører til den eskalerte avgjørelsen — ikke til denne fiksen.
+  let sortValg = { nokkel: "poeng", retning: "descending" };
+
   function tegnTabell() {
+    // Flatens egen rekkefølge følger valget, så `rader[0]` fortsatt er
+    // den raden som faktisk står øverst — kunngjøringen under leser den.
+    // Id-en bryter likhet stigende begge veier, som DataTabells stabile
+    // sortering ellers ville gjort.
     const rader = prosess.kandidater
       .map((k) => ({ kandidat: k, poeng: poengFor(k) }))
-      .sort((a, b) => b.poeng - a.poeng
+      .sort((a, b) => (sortValg.retning === "ascending"
+        ? a.poeng - b.poeng : b.poeng - a.poeng)
         || (a.kandidat.kandidat_id < b.kandidat.kandidat_id ? -1 : 1));
     sett(tabellRot, DataTabell({
       captionTekst: t("ui.rekruttering.tabell_caption"),
@@ -137,7 +158,8 @@ function tegn(hoved, ctx, data, okt, valgtId) {
           sorterbar: true },
         { nokkel: "kategori", tittel: t("ui.rekruttering.kol_kategori") },
       ],
-      sort: { nokkel: "poeng", retning: "descending" },
+      sort: sortValg,
+      paaSort: (valg) => { sortValg = valg; },
       rader: rader.map(({ kandidat, poeng }) => ({
         celler: {
           kandidat: kandidat.kandidat_id,

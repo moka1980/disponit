@@ -150,6 +150,41 @@ test("Rekruttering: vektendring uten mus re-rangerer og kunngjøres (port 30)", 
   assert.equal(visning.textContent, "0");
 });
 
+test("Rekruttering: brukerens sortering overlever en vektendring (port 30)", async () => {
+  // Codex P2: vektendringen KREVER en ny tabell, og hver nye `DataTabell`
+  // fikk «poeng, synkende» hardkodet. Vendte brukeren kolonnen stigende for
+  // å se hvem som ligger nederst, slo tabellen tilbake til synkende ved
+  // første piltast på en skyver — akkurat den handlingen hun sorterte for å
+  // studere. `tabell.js` tilbyr `sort`/`paaSort` for nettopp dette.
+  //
+  // MUTASJONEN SOM DREPER DENNE: sett `sort:` tilbake til
+  // `{ nokkel: "poeng", retning: "descending" }` i `rekruttering.js`, eller
+  // fjern `paaSort`.
+  const hoved = await tegnet();
+  const poengTh = [...hoved.querySelectorAll("th")]
+    .find((th) => th.textContent.includes(t("ui.rekruttering.kol_poeng")));
+  // Tastaturbrukerens vei: knappen i th-en, ingen mus.
+  poengTh.querySelector("button").click();
+  await vent(() => hoved.querySelector('th[aria-sort="ascending"]'));
+  assert.deepEqual([...hoved.querySelectorAll("tbody tr")]
+    .map((tr) => tr.querySelector("td").textContent), ["K-2", "K-1"],
+    "stigende sortering slo ikke igjennom");
+
+  // …og så en vektendring, som bygger tabellen på nytt.
+  const range = hoved.querySelector('input[type="range"]#vekt-drift');
+  range.value = "9";
+  range.dispatchEvent(new window.Event("input", { bubbles: true }));
+  assert.ok(hoved.querySelector('th[aria-sort="ascending"]'),
+    "vektendringen kastet brukerens sortering tilbake til synkende");
+  // K-1 (9+2=11) og K-2 (9+0=9): stigende betyr K-2 først, fortsatt.
+  assert.deepEqual([...hoved.querySelectorAll("tbody tr")]
+    .map((tr) => tr.querySelector("td").textContent), ["K-2", "K-1"]);
+  // Kunngjøringen leser den raden som FAKTISK står øverst, ikke den
+  // høyest rangerte: den skal aldri si noe annet enn det tabellen viser.
+  assert.ok(hoved.querySelector('[aria-live="polite"]').textContent
+    .includes("K-2"), "kunngjøringen navnga en annen rad enn den øverste");
+});
+
 test("Rekruttering: avskruing av blinding krever alertdialog med begrunnelse", async () => {
   const hoved = await tegnet();
   const bryter = hoved.querySelector("#rekrut-blinding");
