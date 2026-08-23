@@ -1690,6 +1690,43 @@ def test_tomt_tekstuttrekk_er_kodet_feil_ikke_en_tom_vurdering(tmp_path):
     assert set(ut["artefakter"]) == {"k1"}
 
 
+def test_fremdriften_teller_hvert_medlem_ikke_bare_sjekkpunktene(tmp_path):
+    """Codex P2: evidensen løy om hvor langt kjøringen kom.
+
+    `les_porsjonsvis` leverer et fremdriftsmerke bare hver 200. fil og på
+    det siste medlemmet. Sto `fremdrift` stille mellom merkene, meldte et
+    utfall på fil nr. 3 av 4 `filer_lest: 0` — og etter en porsjonsgrense
+    kunne det underrapportere med opptil 199. Feltet er kontraktens
+    EVIDENS for hvor langt kjøringen kom (§7); da må det telle det som
+    faktisk er lest.
+
+    MUTASJONEN SOM DREPER DENNE: sett `fremdrift = merke` bak
+    `if merke:` igjen, uten den egne medlemstelleren.
+    """
+    from modules.m57_ats import kjoring
+
+    arkiv = _bunt(tmp_path, [
+        ("k1/a.html", b"<p>drift</p>"),
+        ("k2/b.html", b"<p>drift</p>"),
+        ("k3/c.html", b"<p>drift</p>"),
+        ("k4/d.html", b"<p>drift</p>"),
+    ])
+
+    def _uttrekk(medlem, data):
+        # Feiler på det TREDJE medlemmet — før det avsluttende merket.
+        if medlem.navn == "k3/c.html":
+            raise ValueError("pdf-en er ødelagt")
+        return data.decode("utf-8")
+
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
+                          kandidatfelter_for=lambda m: {"navn": ["N"]},
+                          tekst_for=_uttrekk, biasmaalinger=_MAALINGER)
+    assert e.value.kode == "tekstuttrekk_feilet"
+    assert e.value.fremdrift["filer_lest"] == 3, (
+        "evidensen skal si at tre medlemmer var lest da det røk, ikke 0")
+
+
 def test_ugyldig_feltform_i_SENERE_fil_felles_ogsaa(tmp_path):
     """Codex P1: flettingen skjulte en ugyldig form bak en gyldig rad.
 

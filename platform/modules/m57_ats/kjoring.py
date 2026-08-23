@@ -114,10 +114,21 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
     # medlem under lesing, aldri på en utpakket bunt.
     biter: dict[str, list[tuple[str, str]]] = {}
     felter: dict[str, dict] = {}
+    lest = 0
     try:
         for merke, medlem, data in parsing.les_porsjonsvis(sti):
-            if merke:
-                fremdrift = merke
+            # FREMDRIFTEN TELLER MEDLEMMER, IKKE SJEKKPUNKTER (Codex P2).
+            # `les_porsjonsvis` leverer et merke bare hver 200. fil og på
+            # det siste medlemmet; sto `fremdrift` stille mellom dem, meldte
+            # et utfall på medlem 150 `filer_lest: 0` — og etter en
+            # porsjonsgrense kunne det underrapportere med opptil 199.
+            # Dette feltet er kontraktens EVIDENS for hvor langt kjøringen
+            # kom (§7), så det som telles må være det som faktisk er lest.
+            # `byte_lest`/`filer_totalt` er strømmens egne målinger og
+            # hentes fortsatt fra siste merke — de gjettes ikke her.
+            lest += 1
+            fremdrift = (dict(merke) if merke
+                         else {**fremdrift, "filer_lest": lest})
             navn = medlem.navn.replace("\\", "/")
             kandidat_id = navn.split("/")[0]
             biter.setdefault(kandidat_id, []).append(
