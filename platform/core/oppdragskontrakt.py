@@ -259,6 +259,15 @@ def type_for_handling(handling: str) -> Oppdragstype | None:
     Det som fortsatt IKKE er tillatt, er at to ULIKE typer deklarerer
     NØYAKTIG samme prefiks — da finnes det ikke noe lengste treff å velge,
     og `test_oppdragstypenes_prefikser_er_entydige` avviser det.
+
+    TREFFET GÅR PÅ SEGMENTGRENSEN, ikke på tegn (Codex P2). Handlings-ID-er
+    er tenantens frie strenger, og et rent `startswith` gjorde
+    `rekruttering.evalueringmal` til et M-57-oppdrag: den arvet M-57s
+    payloadkontrakt og eiermodul i stedet for å være ukjent. Prefiksene
+    som ender på punktum bar segmentgrensen i seg selv; den ene som ikke
+    gjør det — den KANONISKE handlingen, som er navngitt nøyaktig som
+    oppdragstypen — hadde ingen. Regelen er derfor felles: enten er
+    handlingen prefikset, eller så er den en etterkommer under punktumet.
     """
     if not isinstance(handling, str):
         return None
@@ -266,7 +275,9 @@ def type_for_handling(handling: str) -> Oppdragstype | None:
     beste_lengde = -1
     for t in OPPDRAGSTYPER.values():
         for p in t.handlingsprefikser:
-            if handling.startswith(p) and len(p) > beste_lengde:
+            gren = p if p.endswith(".") else p + "."
+            if ((handling == p or handling.startswith(gren))
+                    and len(p) > beste_lengde):
                 beste, beste_lengde = t, len(p)
     return beste
 

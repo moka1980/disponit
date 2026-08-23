@@ -955,6 +955,24 @@ def test_den_kanoniske_handlingen_binder_oppdraget_til_eiermodulen():
     assert _eiermodul_for("rekruttering.evaluering") == t.eiermodul
     assert not _eiermodul_for(
         "rekruttering.evaluering").startswith("eiermodul:")
+    # … men treffet går på SEGMENTGRENSEN, ikke på tegn (Codex P2).
+    # Handlings-ID-er i tenantpolicy er frie strenger, og et rent
+    # `startswith` ga `rekruttering.evalueringmal` M-57s payloadkontrakt
+    # og eiermodul i stedet for «ukjent».
+    # MUTASJONEN SOM DREPER DENNE: bytt segmentregelen i
+    # `type_for_handling` tilbake til `handling.startswith(p)`.
+    for fremmed in ("rekruttering.evalueringmal",
+                    "rekruttering.evalueringer",
+                    "rekruttering.evaluering-2"):
+        assert ok.type_for_handling(fremmed) is None, fremmed
+    # Etterkommere under punktumet hører fortsatt til typen — det er den
+    # samme regelen, ikke et unntak fra den.
+    assert ok.type_for_handling(
+        "rekruttering.evaluering.omkjoring") is t
+    # Og de punktumbærende prefiksene er uendret.
+    assert ok.type_for_handling("kontroll.wcag.nettsted").navn == \
+        "kontroll.wcag.nettsted"
+    assert ok.type_for_handling("verifiser.mva").navn == "verifikasjon"
 
 
 def test_m57_har_EN_modulidentitet_i_kontrakt_migrasjon_og_artefakt():
