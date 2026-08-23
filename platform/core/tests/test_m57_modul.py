@@ -697,3 +697,28 @@ def test_artefaktreferansene_ma_vaere_strenger_ved_opprettelsen():
             brudd = bryter_feltkontrakten(
                 "rekruttering.evaluering", payload | {felt: verdi})
             assert felt in brudd, (felt, verdi)
+
+
+def test_den_kanoniske_handlingen_binder_oppdraget_til_eiermodulen():
+    """Codex P1: prefikset bar et punktum den faktiske handlingen ikke har.
+
+    Handlingen M-57-flyten faktisk bruker er NØYAKTIG
+    `rekruttering.evaluering` — 057s prosessanker, 056s promoteringsvakt
+    og SP-10-seeden skriver alle den strengen, uten suffiks. Prefikset
+    `rekruttering.evaluering.` traff den derfor ikke, `type_for_handling`
+    ga None, og `_eiermodul_for` skrev `eiermodul:ukjent` i raden. Siden
+    `claim_neste_oppdrag` filtrerer på `oppdrag.eiermodul = modul_id`,
+    ville modulen aldri sett sitt eget oppdrag.
+
+    Testen måler KJEDEN, ikke strengen: fra handlingen til den id-en som
+    havner i `eiermodul`-kolonnen ved opprettelsen.
+    """
+    import oppdragskontrakt as ok
+    from m37.arbeider import _eiermodul_for
+
+    t = ok.type_for_handling("rekruttering.evaluering")
+    assert t is not None, "den kanoniske handlingen traff ingen oppdragstype"
+    assert t.navn == "rekruttering.evaluering"
+    assert _eiermodul_for("rekruttering.evaluering") == t.eiermodul
+    assert not _eiermodul_for(
+        "rekruttering.evaluering").startswith("eiermodul:")

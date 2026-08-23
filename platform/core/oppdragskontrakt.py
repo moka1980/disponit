@@ -196,7 +196,18 @@ OPPDRAGSTYPER: dict[str, Oppdragstype] = {
     # bestillingsparameter en integrasjon kan liste forbi.
     "rekruttering.evaluering": Oppdragstype(
         navn="rekruttering.evaluering",
-        handlingsprefikser=("rekruttering.evaluering.",),
+        # UTEN punktum til slutt (Codex P1). M-57-familien navngir
+        # handlingen NØYAKTIG som oppdragstypen — `rekruttering.evaluering`
+        # er både typen og handlingen i 056/057 og i SP-10-seeden, akkurat
+        # som `rekruttering.utsending` på utsendingsarmen. Med punktumet
+        # var det ingen handling som traff prefikset, så
+        # `type_for_handling("rekruttering.evaluering")` ga None: M37s
+        # opprettelses- og reparasjonsvei klassifiserte oppdraget som ukjent
+        # og skrev `eiermodul:ukjent`, og siden claim krever
+        # `oppdrag.eiermodul = auth.modul_id` kunne modulen aldri claimet
+        # sitt eget oppdrag. Prefikset uten punktum treffer både den
+        # nøyaktige handlingen og et eventuelt senere `...evaluering.<noe>`.
+        handlingsprefikser=("rekruttering.evaluering",),
         felter=frozenset({"stillingsprofil_ref", "soknadsbunt_ref",
                           "antall_soknader", "omfang"}),
         paakrevde=frozenset({"stillingsprofil_ref", "soknadsbunt_ref",
