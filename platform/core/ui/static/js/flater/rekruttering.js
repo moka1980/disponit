@@ -42,12 +42,21 @@ function kortHash(hash) {
 }
 
 export function visRekruttering(hoved, ctx) {
+  // ØKTEN OVERLEVER TEGNINGEN (Codex P1 / Cursor P1). Alt som handler om
+  // en IRREVERSIBEL operasjon — idempotensnøkkelen som lar serveren
+  // replaye, og «denne listen ER signert» — må høre til den lastede
+  // flaten, ikke til én `tegn`-lukning. Prosessvelgeren tegner flaten på
+  // nytt mot det SAMME svaret, og lå nøklene inne i `tegn`, fikk et bytte
+  // fram og tilbake både en fersk nøkkel (så en retry etter et tapt 2xx
+  // ble en NY operasjon serveren ikke kan replaye) og en levende
+  // «Signer»-knapp på en liste som alt var sendt. Begge holdes derfor her.
+  const okt = { signeringsnokler: new Map(), signerte: new Set() };
   medStatus(hoved, ctx,
     () => hentJson("/v1/rekruttering/prosesser"),
-    (data) => tegn(hoved, ctx, data));
+    (data) => tegn(hoved, ctx, data, okt));
 }
 
-function tegn(hoved, ctx, data, valgtId) {
+function tegn(hoved, ctx, data, okt, valgtId) {
   const prosesser = (data && data.prosesser) || [];
   if (!prosesser.length) {
     sett(hoved, flateHode(t("ui.rekruttering.tittel")),
@@ -72,7 +81,7 @@ function tegn(hoved, ctx, data, valgtId) {
         p.navn || p.prosess_id)));
     velger.value = prosess.prosess_id;
     velger.addEventListener("change", () => {
-      tegn(hoved, ctx, data, velger.value);
+      tegn(hoved, ctx, data, okt, velger.value);
       const ny = hoved.querySelector(`#${velgerId}`);
       if (ny) ny.focus();
     });
@@ -288,18 +297,27 @@ function tegn(hoved, ctx, data, valgtId) {
   // klienten kan ikke lenger avgjøre om posten er sendt. Nøkkelen holdes
   // derfor til vi har et definitivt svar; endres innholdshashen, er det
   // en annen operasjon og en annen nøkkel (mønsteret fra bestilling.js).
-  const signeringsnokler = new Map();
+  // Kartet ligger i ØKTEN (`visRekruttering`), ikke her: se der.
+  function listenokkel(liste) {
+    return `${liste.liste_id}|${liste.innhold_hash}`;
+  }
   function signeringsnokkel(liste) {
-    const id = `${liste.liste_id}|${liste.innhold_hash}`;
-    if (!signeringsnokler.has(id)) {
-      signeringsnokler.set(id, nyIdempotensnokkel());
+    const id = listenokkel(liste);
+    if (!okt.signeringsnokler.has(id)) {
+      okt.signeringsnokler.set(id, nyIdempotensnokkel());
     }
-    return signeringsnokler.get(id);
+    return okt.signeringsnokler.get(id);
   }
   for (const liste of prosess.lister || []) {
     const knapp = el("button", { class: "knapp", type: "button",
       text: t("ui.rekruttering.signer_knapp") });
-    if (!kanBestille) knapp.setAttribute("disabled", "");
+    // En liste som ER signert i denne økten, kommer tilbake død — også
+    // etter et prosessbytte, der `data` fortsatt er det svaret som ble
+    // hentet FØR signeringen og derfor viser listen som usignert.
+    if (okt.signerte.has(listenokkel(liste))) knapp.dataset.ferdig = "1";
+    if (!kanBestille || knapp.dataset.ferdig) {
+      knapp.setAttribute("disabled", "");
+    }
     knapp.addEventListener("click", () => {
       Bekreftelsesdialog({
         rolle: "alertdialog",
@@ -322,7 +340,9 @@ function tegn(hoved, ctx, data, valgtId) {
               liste.liste_id, liste.innhold_hash,
               signeringsnokkel(liste));
             // Signert er signert: knappen står igjen død, så den
-            // irreversible handlingen ikke kan gjentas fra denne visningen.
+            // irreversible handlingen ikke kan gjentas fra denne visningen
+            // — og merket ligger i ØKTEN, så heller ikke fra den neste.
+            okt.signerte.add(listenokkel(liste));
             knapp.dataset.ferdig = "1";
             sett(utfall, t("ui.rekruttering.signer_utfall")
               .replaceAll("{hash}", kortHash(svar.innhold_hash

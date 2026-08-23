@@ -353,6 +353,83 @@ test("Rekruttering: signeringen gjenbruker idempotensnøkkelen etter usikker fei
     "retryen bar en NY nøkkel — serveren ser en ny operasjon");
 });
 
+test("Rekruttering: signeringsnøkkel og «signert» overlever prosessbytte", async () => {
+  // Codex P1 / Cursor P1: nøkkelkartet og «denne knappen er ferdig» lå
+  // inne i `tegn`. Prosessvelgeren tegner flaten på nytt mot det SAMME
+  // svaret, så et bytte fram og tilbake ga fersk nøkkel (retryen etter et
+  // tapt svar ble en ny operasjon serveren ikke kan replaye) og en levende
+  // «Signer» på en liste som alt var sendt — irreversibelt, to ganger.
+  //
+  // MUTASJONEN SOM DREPER DENNE: flytt `signeringsnokler`/`signerte`
+  // tilbake inn i `tegn`.
+  const to = prosess();
+  to.prosesser.push({
+    prosess_id: "p-2", navn: "Sykepleier vest", blinding_av: false,
+    vekter: { drift: 1 },
+    kandidater: [{ kandidat_id: "K-9", oppfylt: { drift: true },
+      status: "anbefalt", funn: [], intervjusporsmal: [] }],
+    lister: [],
+  });
+  KALL = [];
+  SVAR = (sti, opts) => (opts.method === "POST" ? 500 : to);
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")));
+
+  const signerKnapp = () => [...hoved.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.signer_knapp"));
+  const signer = async () => {
+    const knapp = signerKnapp();
+    assert.ok(await vent(() => !knapp.disabled), "knappen ble aldri åpen");
+    knapp.click();
+    [...document.querySelector('[role="alertdialog"]')
+      .querySelectorAll("button")]
+      .find((b) => b.textContent === t("ui.rekruttering.signer_bekreft"))
+      .click();
+  };
+  const bytt = (id) => {
+    const velger = hoved.querySelector("#rekrut-prosessvelger");
+    velger.value = id;
+    velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  };
+
+  // Første forsøk på p-1: svaret går tapt.
+  await signer();
+  assert.ok(await vent(() => KALL.some((k) => k.sti.endsWith("/signer"))));
+  const forste = KALL.find((k) => k.sti.endsWith("/signer"));
+  assert.ok(forste.hoder["Idempotency-Key"], "signeringen gikk uten nøkkel");
+
+  // Brukeren ser innom den andre prosessen før hun prøver igjen.
+  bytt("p-2");
+  assert.equal(signerKnapp(), undefined, "p-2 har ingen lister å signere");
+  bytt("p-1");
+  KALL = [];
+  SVAR = (sti, opts) => (opts.method === "POST"
+    ? { innhold_hash: HASH } : to);
+  await signer();
+  assert.ok(await vent(() => KALL.some((k) => k.sti.endsWith("/signer"))));
+  assert.equal(KALL.find((k) => k.sti.endsWith("/signer"))
+    .hoder["Idempotency-Key"], forste.hoder["Idempotency-Key"],
+    "prosessbyttet ga retryen en NY nøkkel — serveren kan ikke replaye");
+
+  // …og etter den vellykkede signeringen er listen ferdig: et bytte fram
+  // og tilbake gjenoppliver den ikke.
+  assert.ok(await vent(() => signerKnapp().disabled),
+    "knappen levde videre etter vellykket signering");
+  bytt("p-2");
+  bytt("p-1");
+  KALL = [];
+  const gjenoppstatt = signerKnapp();
+  assert.ok(gjenoppstatt.disabled,
+    "prosessbyttet ga en levende Signer-knapp på en alt signert liste");
+  gjenoppstatt.click();
+  await vent(() => KALL.some((k) => k.metode === "POST"), 5);
+  assert.equal(document.querySelectorAll('[role="alertdialog"]').length, 0,
+    "den døde knappen åpnet signaturdialogen likevel");
+  assert.ok(!KALL.some((k) => k.metode === "POST"),
+    "listen ble sendt en gang til etter prosessbytte");
+});
+
 test("Rekruttering: in-flight-lås — ingen andre mutasjon mens den første henger", async () => {
   // Cursor P2: dialogen lukkes ved bekreftelse og knappene sto åpne, så
   // et nytt klikk mens forrige POST hang ga to samtidige kall på en
