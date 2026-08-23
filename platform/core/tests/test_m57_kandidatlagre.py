@@ -550,18 +550,60 @@ def test_port19_settet_av_lagre_er_maalt_mot_katalogen(migrator):
 
 
 @pg
-def test_port19_reapet_prosess_har_ingen_halvtomte_lagre(migrator):
-    """Invarianten et delvis reap ville brutt: for en prosess med
-    `slettet_ts` finnes ingen levende lagerrad. Målt over hele basen —
-    dagens OG gårsdagens reap-kjøringer."""
-    for tabell in LAGRE:
+def test_port19_ingen_prosess_har_halvtomme_lagre(migrator):
+    """Invarianten et delvis reap ville brutt — nå målt uten å gå veien om
+    prosessmerket (Cursor P2).
+
+    Den gamle formen krevde `p.slettet_ts IS NOT NULL`, altså at ANKERET
+    alt var merket. Nettopp den halvtomme tilstanden port 19 finnes for —
+    ett lager reapet, resten levende, prosessen ennå umerket — slapp
+    dermed gjennom. Fasiten er lagrene selv: for én prosess er ALLE
+    lagerradene enten levende eller reapet, aldri begge deler.
+
+    Målingen kjører SOM REAPERROLLEN: tabellene har FORCE ROW LEVEL
+    SECURITY, så en spørring uten tenantkontekst ser null rader og en
+    invariant-test over «hele basen» ville vært grønn på ingenting.
+    `m57_reaper`-policyen er den ene eksplisitte kryss-tenant-veien."""
+    unionen = " UNION ALL ".join(
+        f"SELECT tenant, prosess_id, slettet_ts FROM {t}" for t in LAGRE)
+    rt = _rt()
+    rp = None
+    try:
+        # Egen tilstand: én levende prosess og én ferdig reapet — begge
+        # skal være hele, og uten dem måler invarianten en tom base.
+        _, levende = _prosess(migrator, rt)
+        _fyll_lagrene(rt, levende)
+        _, reapet = _prosess(migrator, rt, frist=30)
+        _fyll_lagrene(rt, reapet)
+        rt.execute("SELECT lukk_rekrutteringsprosess(%s,%s,"
+                   " now() - interval '31 days')", (TENANT, reapet))
+        rt.commit()
+        rp, _timerrolle = _reaperkobling()
+        rp.execute("SELECT * FROM reap_kandidatdata(50)")
+        rp.commit()
+
+        migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
         halve = migrator.execute(
-            f"SELECT count(*) FROM {tabell} k"
-            f" JOIN rekrutteringsprosess p USING (tenant, prosess_id)"
-            f" WHERE p.slettet_ts IS NOT NULL AND k.slettet_ts IS NULL"
-        ).fetchone()[0]
-        assert halve == 0, tabell
-    migrator.rollback()
+            f"SELECT tenant, prosess_id FROM ({unionen}) k"
+            f" GROUP BY tenant, prosess_id"
+            f" HAVING count(*) FILTER (WHERE slettet_ts IS NOT NULL) > 0"
+            f"    AND count(*) FILTER (WHERE slettet_ts IS NULL) > 0"
+        ).fetchall()
+        # Positiv kontroll på at målingen ser noe i det hele tatt: uten
+        # den er en tom base og en oppfylt invariant samme grønne test.
+        begge = migrator.execute(
+            f"SELECT count(*) FILTER (WHERE slettet_ts IS NULL),"
+            f"       count(*) FILTER (WHERE slettet_ts IS NOT NULL)"
+            f"  FROM ({unionen}) k").fetchone()
+        migrator.execute("RESET ROLE")
+        assert halve == [], halve
+        assert begge[0] > 0 and begge[1] > 0, \
+            "invarianten så hverken levende eller reapede lagerrader"
+        migrator.rollback()
+    finally:
+        rt.close()
+        if rp is not None:
+            rp.close()
 
 
 @pg
