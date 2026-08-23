@@ -272,7 +272,12 @@ CREATE TABLE kandidat_originaldokument (
     innholdstype TEXT,
     dokument BYTEA,
     -- §4: enkeltfilgrensen står også i basen, ikke bare i parseren.
-    storrelse_bytes BIGINT NOT NULL,
+    -- NULLABLE, fordi den er PAYLOAD (Codex P2). Størrelsen er en
+    -- per-kandidat-egenskap ved dokumentet — «CV-en hens er 4 913 221
+    -- byte» — og med `NOT NULL` sto den utenfor reap-overgangen og ble
+    -- stående for alltid, stikk i strid med det denne fila selv sier
+    -- overlever fristen: ID-er, tidsstempler og innholdshashen.
+    storrelse_bytes BIGINT,
     innhold_sha256 TEXT NOT NULL,
     opprettet TIMESTAMPTZ NOT NULL DEFAULT now(),
     slettet_ts TIMESTAMPTZ,
@@ -286,18 +291,25 @@ CREATE TABLE kandidat_originaldokument (
     -- basen» bare parserens tall en gang til. Metadatakolonnen beholdes,
     -- men er bundet til målingen: spriker de, finnes ikke raden.
     CONSTRAINT dokument_enkeltfilgrense
-        CHECK (storrelse_bytes >= 0
-               AND storrelse_bytes <= 25 * 1024 * 1024
-               AND (dokument IS NULL
-                    OR (octet_length(dokument) <= 25 * 1024 * 1024
-                        AND storrelse_bytes = octet_length(dokument)))),
+        CHECK (storrelse_bytes IS NULL
+               OR (storrelse_bytes >= 0
+                   AND storrelse_bytes <= 25 * 1024 * 1024
+                   AND (dokument IS NULL
+                        OR (octet_length(dokument) <= 25 * 1024 * 1024
+                            AND storrelse_bytes = octet_length(dokument))))),
     -- Filnavnet er persondata så godt som noe (fornavn.etternavn-cv.pdf)
-    -- og reapes med innholdet.
+    -- og reapes med innholdet. Det samme gjelder størrelsen: CHECK-en
+    -- binder den BEGGE veier som resten av payloaden, så «levende rad har
+    -- payload / reapet rad har ikke» også dekker den — og NULL-armen i
+    -- `dokument_enkeltfilgrense` over kan derfor ikke bli en bakvei til å
+    -- lagre et dokument uten målt størrelse.
     CONSTRAINT originaldokument_payload_folger_slettet
         CHECK ((slettet_ts IS NULL AND dokument IS NOT NULL
-                AND filnavn IS NOT NULL AND innholdstype IS NOT NULL)
+                AND filnavn IS NOT NULL AND innholdstype IS NOT NULL
+                AND storrelse_bytes IS NOT NULL)
             OR (slettet_ts IS NOT NULL AND dokument IS NULL
-                AND filnavn IS NULL AND innholdstype IS NULL))
+                AND filnavn IS NULL AND innholdstype IS NULL
+                AND storrelse_bytes IS NULL))
 );
 
 CREATE TABLE kandidat_parsettekst (
@@ -576,7 +588,7 @@ DECLARE par RECORD;
 BEGIN
     FOR par IN SELECT * FROM (VALUES
         ('kandidat_originaldokument',
-         ARRAY['dokument', 'filnavn', 'innholdstype']),
+         ARRAY['dokument', 'filnavn', 'innholdstype', 'storrelse_bytes']),
         ('kandidat_parsettekst', ARRAY['tekst']),
         ('kandidat_evalueringsartefakt', ARRAY['artefakt']),
         ('kandidat_intervjusporsmal', ARRAY['sporsmal']),
@@ -1084,7 +1096,7 @@ BEGIN
         PERFORM set_config('disponit.tenant', r.t, true);
         UPDATE public.kandidat_originaldokument k
            SET dokument = NULL, filnavn = NULL, innholdstype = NULL,
-               slettet_ts = v_naa
+               storrelse_bytes = NULL, slettet_ts = v_naa
          WHERE k.tenant = r.t AND k.prosess_id = r.pid
            AND k.slettet_ts IS NULL;
         UPDATE public.kandidat_parsettekst k

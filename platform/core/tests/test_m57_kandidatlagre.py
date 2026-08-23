@@ -29,7 +29,8 @@ FIXTUR = "KANDIDATFIXTUR-" + secrets.token_hex(6)
 #: pinning, men fasiten måles mot katalogen (port 19b), så et syvende
 #: lager uten reap-dekning feller testen, ikke listen her.
 LAGRE = {
-    "kandidat_originaldokument": ("dokument", "filnavn", "innholdstype"),
+    "kandidat_originaldokument": ("dokument", "filnavn", "innholdstype",
+                                  "storrelse_bytes"),
     "kandidat_parsettekst": ("tekst",),
     "kandidat_evalueringsartefakt": ("artefakt",),
     "kandidat_intervjusporsmal": ("sporsmal",),
@@ -132,6 +133,19 @@ def _tell_fixtur(m, pid):
                 f" AND {uttrykk} LIKE %s",
                 (TENANT, pid, f"%{FIXTUR}%")).fetchone()[0]
     return treff
+
+
+def _tell_storrelser(m, pid):
+    """Antall originaldokumentrader som fortsatt bærer `storrelse_bytes`.
+
+    Egen måling fordi kolonnen er TALL: `_tell_fixtur` leter etter
+    fixture-strengen, og en `BIGINT` kan ikke bære den — men størrelsen
+    er per-kandidat-metadata om dokumentet og reapes med det."""
+    _sett_kontekst(m, TENANT)
+    return m.execute(
+        "SELECT count(*) FROM kandidat_originaldokument"
+        " WHERE tenant=%s AND prosess_id=%s AND storrelse_bytes IS NOT NULL",
+        (TENANT, pid)).fetchone()[0]
 
 
 @pg
@@ -895,6 +909,13 @@ def test_port18_reaping_tommer_alle_seks_lagrene(migrator):
         rt.commit()
         assert _tell_fixtur(migrator, pid) == 9, \
             "positiv kontroll: fixturen skal stå i alle payloadfeltene"
+        # `storrelse_bytes` er payload uten å kunne bære fixture-strengen
+        # (Codex P2): den er per-kandidat-metadata OM dokumentet, og den
+        # sto igjen for alltid fordi kolonnen var `NOT NULL` og dermed
+        # utenfor reap-overgangen. Den måles derfor for seg — positiv
+        # kontroll her, fravær etter reapingen.
+        assert _tell_storrelser(migrator, pid) >= 1, \
+            "positiv kontroll: dokumentstørrelsen skal stå før reaping"
         migrator.rollback()
         rp, timerrolle = _reaperkobling()
         if timerrolle:
@@ -909,6 +930,8 @@ def test_port18_reaping_tommer_alle_seks_lagrene(migrator):
         rp.commit()
         assert (TENANT, pid) in [(r[0], r[1]) for r in reapet]
         assert _tell_fixtur(migrator, pid) == 0
+        assert _tell_storrelser(migrator, pid) == 0, \
+            "dokumentstørrelsen er payload og skal være borte etter reaping"
         # Radene og revisjonsevidensen består — i alle seks + ankeret.
         for tabell in LAGRE:
             rad = migrator.execute(
@@ -1496,7 +1519,8 @@ def test_enkeltfilgrensen_star_i_basen(migrator):
 #: Reap-formen per lager: payloadkolonnene som skal bli NULL.
 _REAP_SETNINGER = (
     ("kandidat_originaldokument",
-     "dokument=NULL, filnavn=NULL, innholdstype=NULL"),
+     "dokument=NULL, filnavn=NULL, innholdstype=NULL,"
+     " storrelse_bytes=NULL"),
     ("kandidat_parsettekst", "tekst=NULL"),
     ("kandidat_evalueringsartefakt", "artefakt=NULL"),
     ("kandidat_intervjusporsmal", "sporsmal=NULL"),
