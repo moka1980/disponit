@@ -134,10 +134,54 @@ BEGIN
                 USING ERRCODE = 'insufficient_privilege';
         END IF;
     END IF;
-    IF NEW.slettet_ts IS DISTINCT FROM OLD.slettet_ts
-       AND OLD.slettet_ts IS NOT NULL THEN
-        RAISE EXCEPTION 'rekrutteringsprosess: slettet_ts er alt satt'
-            USING ERRCODE = 'insufficient_privilege';
+    IF NEW.slettet_ts IS DISTINCT FROM OLD.slettet_ts THEN
+        IF OLD.slettet_ts IS NOT NULL THEN
+            RAISE EXCEPTION 'rekrutteringsprosess: slettet_ts er alt satt'
+                USING ERRCODE = 'insufficient_privilege';
+        END IF;
+        -- REAP-MERKET ER EN KONKLUSJON, IKKE EN PÅSTAND (Cursor P1).
+        -- Reaperen velger bare prosesser med `slettet_ts IS NULL`, så et
+        -- merke satt UTEN at lagrene er tømt utelukker prosessen fra
+        -- reaping for alltid — payloaden blir stående, og evidensen sier
+        -- at den er slettet. Det er den verst tenkelige formen: §5s løfte
+        -- brutt og målingen selv gjort blind.
+        --
+        -- Merket måles derfor mot lagrene, ikke mot den som setter det:
+        -- ingen levende payload igjen på prosessen. Reaperen tømmer alle
+        -- seks FØR den merker ankeret, i samme transaksjon, så den lovlige
+        -- veien er uendret. En rad uten payload har `slettet_ts` satt
+        -- (CHECK-en binder de to begge veier), så predikatet er det samme
+        -- spørsmålet lagervakten stiller per rad.
+        IF EXISTS (SELECT 1 FROM public.kandidat_originaldokument k
+                    WHERE k.tenant = NEW.tenant
+                      AND k.prosess_id = NEW.prosess_id
+                      AND k.slettet_ts IS NULL)
+           OR EXISTS (SELECT 1 FROM public.kandidat_parsettekst k
+                       WHERE k.tenant = NEW.tenant
+                         AND k.prosess_id = NEW.prosess_id
+                         AND k.slettet_ts IS NULL)
+           OR EXISTS (SELECT 1 FROM public.kandidat_evalueringsartefakt k
+                       WHERE k.tenant = NEW.tenant
+                         AND k.prosess_id = NEW.prosess_id
+                         AND k.slettet_ts IS NULL)
+           OR EXISTS (SELECT 1 FROM public.kandidat_intervjusporsmal k
+                       WHERE k.tenant = NEW.tenant
+                         AND k.prosess_id = NEW.prosess_id
+                         AND k.slettet_ts IS NULL)
+           OR EXISTS (SELECT 1 FROM public.kandidat_utsendingsdata k
+                       WHERE k.tenant = NEW.tenant
+                         AND k.prosess_id = NEW.prosess_id
+                         AND k.slettet_ts IS NULL)
+           OR EXISTS (SELECT 1 FROM public.kandidat_avmaskering k
+                       WHERE k.tenant = NEW.tenant
+                         AND k.prosess_id = NEW.prosess_id
+                         AND k.slettet_ts IS NULL) THEN
+            RAISE EXCEPTION 'rekrutteringsprosess: % hos % kan ikke merkes'
+                ' reapet mens et av de seks lagrene fortsatt bærer payload'
+                ' — merket ville utelukket prosessen fra reaperen for'
+                ' alltid (klarsignalet §5)', NEW.prosess_id, NEW.tenant
+                USING ERRCODE = 'insufficient_privilege';
+        END IF;
     END IF;
     RETURN NEW;
 END $$;

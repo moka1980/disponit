@@ -862,6 +862,58 @@ def test_forlatt_apen_prosess_reapes_etter_maks_levetid(migrator):
 
 
 @pg
+def test_reapmerket_krever_at_lagrene_faktisk_er_tomme(migrator):
+    """Cursor P1: reap-merket var en PÅSTAND, ikke en konklusjon.
+
+    Reaperen velger bare prosesser med `slettet_ts IS NULL`. Et merke satt
+    direkte — claimeren har UPDATE på ankeret, og eieren har det alltid —
+    uten at lagrene er tømt, utelukket derfor prosessen fra reaping for
+    alltid: payloaden blir stående, mens evidensen sier at den er slettet.
+    §5s løfte brutt og målingen selv gjort blind, i én setning.
+
+    MUTASJONEN SOM DREPER DENNE: fjern lagersjekken i vaktens
+    `slettet_ts`-gren."""
+    rt = _rt()
+    rp = None
+    try:
+        _, pid = _prosess(migrator, rt, frist=30)
+        _fyll_lagrene(rt, pid)
+        rt.execute("SELECT lukk_rekrutteringsprosess(%s,%s,"
+                   " now() - interval '31 days')", (TENANT, pid))
+        rt.commit()
+        assert _tell_fixtur(migrator, pid) == 9
+        migrator.rollback()
+        # Merket, satt av den rollen som HAR rettigheten, uten reaping.
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            migrator.execute(
+                "UPDATE rekrutteringsprosess SET slettet_ts=now()"
+                " WHERE tenant=%s AND prosess_id=%s", (TENANT, pid))
+        migrator.rollback()
+        # ... og payloaden står fortsatt der, altså fortsatt synlig for
+        # reaperen — som er hele poenget med å nekte merket.
+        assert _tell_fixtur(migrator, pid) == 9
+        migrator.rollback()
+        # Positiv kontroll: den ekte reaperen tømmer først og merker
+        # etterpå, i samme transaksjon, og går uendret gjennom vakten.
+        rp, _timerrolle = _reaperkobling()
+        reapet = rp.execute("SELECT * FROM reap_kandidatdata(50)").fetchall()
+        rp.commit()
+        assert (TENANT, pid) in [(r[0], r[1]) for r in reapet]
+        assert _tell_fixtur(migrator, pid) == 0
+        assert migrator.execute(
+            "SELECT slettet_ts IS NOT NULL FROM rekrutteringsprosess"
+            " WHERE tenant=%s AND prosess_id=%s",
+            (TENANT, pid)).fetchone()[0] is True
+        migrator.rollback()
+    finally:
+        rt.close()
+        if rp is not None:
+            rp.close()
+
+
+@pg
 def test_port18_insert_etter_reap_avvises(migrator):
     """Codex P1: FK-en krever bare at prosessen FINNES, og reaperen
     utelukker for alltid en prosess med `slettet_ts`. Uten en INSERT-vakt
