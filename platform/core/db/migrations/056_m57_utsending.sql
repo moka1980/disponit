@@ -549,6 +549,27 @@ BEGIN
             current_setting('transaction_isolation')
             USING ERRCODE = 'invalid_transaction_state';
     END IF;
+    -- FERDIG REPLAY AVGJØRES FØR REAUTORISERINGEN (Codex P2, runde 11 på
+    -- #140). Medlemskapsporten under er nå en LÅS, og den svarer på
+    -- spørsmålet «får denne signataren signere NÅ». Et identisk replay
+    -- stiller ikke det spørsmålet: signaturen STÅR alt, den er
+    -- append-only, og den autoriserer utsendingen uansett hva som skjer
+    -- med medlemskapet etterpå. Kom porten først, ville den vanlige
+    -- tvetydige committen — signaturen landet, svaret gikk tapt, brukeren
+    -- ble deaktivert i mellomtiden — gitt retryet `insufficient_privilege`
+    -- der kontrakten lover no-op. Kalleren kan da ikke skille en AVVIST
+    -- signatur fra en VELLYKKET: den ene betyr «ikke send», den andre
+    -- «allerede autorisert», og forskjellen er irreversibel e-post.
+    -- SNEVERT MED VILJE: bare den nøyaktig identiske raden (samme liste,
+    -- samme signatar) svares her. Alt annet — ukjent nøkkel, eller nøkkel
+    -- gjenbrukt med annet innhold — faller gjennom til låsen og møter
+    -- nøyaktig de samme dommene i samme rekkefølge som før.
+    SELECT * INTO s FROM public.utsendingssignatur
+     WHERE tenant = p_tenant AND operasjonsnokkel = p_nokkel;
+    IF FOUND AND s.liste_id IS NOT DISTINCT FROM p_liste_id
+             AND s.signatar IS NOT DISTINCT FROM p_signatar THEN
+        RETURN;                       -- identisk replay: ferdig, no-op
+    END IF;
     -- SIGNATAREN ER AUTORISASJONEN (Codex P1 + Cursor P1, runde 2).
     -- FK-en mot `brukeridentitet` er GLOBAL: den sier bare at strengen er
     -- en kjent bruker et sted i installasjonen. Runtime har EXECUTE her og

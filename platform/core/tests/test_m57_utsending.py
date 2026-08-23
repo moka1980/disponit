@@ -955,6 +955,71 @@ def test_signaturen_holder_medlemskapslaasen(migrator):
 
 
 @pg
+def test_replay_overlever_at_signataren_deaktiveres(migrator):
+    """Codex P2 (runde 11 på #140): låsen fra forrige runde flyttet
+    medlemskapsporten FORAN nøkkeloppslaget, og da fikk det ferdige
+    replayet feil dom.
+
+    Den tvetydige committen er selve grunnen til at nøkkelen finnes:
+    signaturen landet, svaret gikk tapt, kalleren prøver igjen. Blir
+    brukeren deaktivert i mellomtiden, svarte funksjonen
+    `insufficient_privilege` på et retry der kontrakten lover no-op —
+    og kalleren kan ikke skille «signaturen ble AVVIST» fra «signaturen
+    STÅR». Den ene betyr ikke send, den andre allerede autorisert, og
+    forskjellen er irreversibel e-post.
+
+    Muterings-drepende: fjern det tidlige oppslaget, så faller replayet
+    tilbake til låsen og testen er rød. To kontroller viser at porten
+    IKKE er svekket: en NY nøkkel fra samme avskrudde signatar avvises
+    fortsatt, og nøkkelen gjenbrukt med annen signatar er fortsatt et
+    avvik — ellers kunne testen bestått ved at porten var borte."""
+    oid, _ = _grunnlag(migrator)
+    liste = _liste(migrator, oid)
+    bid = _signatar(migrator)
+    nk = "n-" + secrets.token_hex(6)
+    rt = _rt()
+    try:
+        _sett_kontekst(rt, TENANT)
+        rt.execute("SELECT signer_utsendingsliste(%s,%s,%s,%s)",
+                   (TENANT, liste[0], bid, nk))
+        rt.commit()                    # signaturen står; svaret gikk tapt
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute("UPDATE brukermedlemskap SET aktiv=false"
+                         " WHERE tenant=%s AND bruker_id=%s", (TENANT, bid))
+        migrator.commit()
+        # Retryet: identisk nøkkel, identisk innhold → dokumentert no-op.
+        _sett_kontekst(rt, TENANT)
+        rt.execute("SELECT signer_utsendingsliste(%s,%s,%s,%s)",
+                   (TENANT, liste[0], bid, nk))
+        rt.rollback()
+        # Kontroll 1: porten står. En NY signatur fra den nå avskrudde
+        # brukeren er fortsatt avvist.
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.execute("SELECT signer_utsendingsliste(%s,%s,%s,%s)",
+                       (TENANT, liste[0], bid,
+                        "n-" + secrets.token_hex(6)))
+        rt.rollback()
+        # Kontroll 2: samme nøkkel med ANNEN signatar er et avvik, ikke
+        # et replay — dommen skal ikke svekkes av at oppslaget kom først.
+        bid2 = _signatar(migrator)
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            rt.execute("SELECT signer_utsendingsliste(%s,%s,%s,%s)",
+                       (TENANT, liste[0], bid2, nk))
+        rt.rollback()
+        # Replayet skrev ingenting: signaturen er fortsatt den ene.
+        _sett_kontekst(migrator, TENANT)
+        antall = migrator.execute(
+            "SELECT count(*) FROM utsendingssignatur WHERE tenant=%s"
+            " AND liste_id=%s", (TENANT, liste[0])).fetchone()[0]
+        migrator.rollback()
+        assert antall == 1
+    finally:
+        rt.close()
+
+
+@pg
 def test_funksjonene_er_eneste_vei_for_ordinaere_roller(migrator):
     """Port 4, grant-halvdelen: runtime har SELECT men ikke INSERT på
     kjedetabellene — skrivingen går gjennom funksjonene. (Den statiske
