@@ -277,10 +277,13 @@ test("Rekruttering: signeringen gjenbruker idempotensnøkkelen etter usikker fei
   // nøkkel — ellers replayer serveren ikke, og klienten kan ikke avgjøre
   // om posten er sendt.
   const hoved = await tegnet();
-  const signer = () => {
-    [...hoved.querySelectorAll("button")]
-      .find((b) => b.textContent === t("ui.rekruttering.signer_knapp"))
-      .click();
+  const knapp = [...hoved.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.signer_knapp"));
+  const signer = async () => {
+    // In-flight-låsen holder knappen død til forrige forsøk er avgjort;
+    // brukerens retry kommer etter det.
+    assert.ok(await vent(() => !knapp.disabled), "knappen ble aldri åpen");
+    knapp.click();
     [...document.querySelector('[role="alertdialog"]')
       .querySelectorAll("button")]
       .find((b) => b.textContent === t("ui.rekruttering.signer_bekreft"))
@@ -289,20 +292,69 @@ test("Rekruttering: signeringen gjenbruker idempotensnøkkelen etter usikker fei
   // Første forsøk: svaret går tapt (500) …
   SVAR = (sti, opts) => (opts.method === "POST" ? 500 : prosess());
   KALL = [];
-  signer();
+  await signer();
   assert.ok(await vent(() => KALL.some((k) => k.sti.endsWith("/signer"))));
   const forste = KALL.find((k) => k.sti.endsWith("/signer"));
   // … brukeren prøver igjen: samme nøkkel, så serveren kan replaye.
   KALL = [];
   SVAR = { "/v1/rekruttering/prosesser": prosess(),
     "/v1/rekruttering/lister/L-1/signer": { innhold_hash: HASH } };
-  signer();
+  await signer();
   assert.ok(await vent(() => KALL.some((k) => k.sti.endsWith("/signer"))));
   const andre = KALL.find((k) => k.sti.endsWith("/signer"));
   assert.ok(forste.hoder["Idempotency-Key"], "signeringen gikk uten nøkkel");
   assert.equal(andre.hoder["Idempotency-Key"],
     forste.hoder["Idempotency-Key"],
     "retryen bar en NY nøkkel — serveren ser en ny operasjon");
+});
+
+test("Rekruttering: in-flight-lås — ingen andre mutasjon mens den første henger", async () => {
+  // Cursor P2: dialogen lukkes ved bekreftelse og knappene sto åpne, så
+  // et nytt klikk mens forrige POST hang ga to samtidige kall på en
+  // irreversibel (signering) og en auditert (blinding) handling.
+  const hoved = await tegnet();
+  const ekte = globalThis.fetch;
+  let poster = 0;
+  globalThis.fetch = async (url, opts = {}) => {
+    if ((opts.method || "GET") === "POST") {
+      poster += 1;
+      return new Promise(() => {});         // svaret kommer aldri
+    }
+    return ekte(url, opts);
+  };
+  try {
+    const knapp = [...hoved.querySelectorAll("button")]
+      .find((b) => b.textContent === t("ui.rekruttering.signer_knapp"));
+    knapp.click();
+    [...document.querySelector('[role="alertdialog"]')
+      .querySelectorAll("button")]
+      .find((b) => b.textContent === t("ui.rekruttering.signer_bekreft"))
+      .click();
+    assert.ok(await vent(() => poster === 1), "signeringen gikk aldri");
+    assert.ok(knapp.disabled, "signer-knappen sto åpen mens kallet hang");
+    knapp.click();
+    assert.equal(document.querySelectorAll('[role="alertdialog"]').length, 0,
+      "et nytt klikk åpnet dialogen igjen midt i en pågående signering");
+    assert.equal(poster, 1, "to signeringer av samme liste");
+
+    // Samme lås på blindingen: bryteren er død mens kallet henger.
+    const bryter = hoved.querySelector("#rekrut-blinding");
+    bryter.checked = false;
+    bryter.dispatchEvent(new window.Event("change", { bubbles: true }));
+    const dialog = document.querySelector('[role="alertdialog"]');
+    dialog.querySelector("textarea").value = "intern rekruttering";
+    [...dialog.querySelectorAll("button")]
+      .find((b) => b.textContent === t("ui.rekruttering.blinding_av_bekreft"))
+      .click();
+    assert.ok(await vent(() => poster === 2), "blindingskallet gikk aldri");
+    assert.ok(bryter.disabled, "bryteren sto åpen mens kallet hang");
+    bryter.checked = true;
+    bryter.dispatchEvent(new window.Event("change", { bubbles: true }));
+    await vent(() => poster === 3, 5);
+    assert.equal(poster, 2, "gjen-påslaget gikk mens avskruingen hang");
+  } finally {
+    globalThis.fetch = ekte;
+  }
 });
 
 test("Rekruttering: 401 i mutasjonene er innlogging, ikke en handlingsfeil", async () => {

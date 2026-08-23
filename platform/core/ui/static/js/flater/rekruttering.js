@@ -161,6 +161,21 @@ function tegn(hoved, ctx, data) {
   // en bruker uten mutasjonsscopet skal ikke engang tilbys valget —
   // en bryter som bare kan gi 403 er et løfte flaten ikke kan holde.
   if (!kanBestille) bryter.disabled = true;
+  // IN-FLIGHT-LÅS (Cursor P2). Blinding og signering er auditerte,
+  // henholdsvis irreversible handlinger, og uten lås kunne brukeren fyre
+  // av nummer to mens nummer én hang: to POST-er på samme valg, og
+  // bryteren som følger det svaret som tilfeldigvis kom sist. Låsen er
+  // per kontroll, ikke per flate, og løftes alltid — også ved feil, så en
+  // mislykket runde ikke etterlater en død bryter.
+  async function laast(kontroll, arbeid) {
+    if (kontroll.disabled) return;
+    kontroll.disabled = true;
+    try {
+      return await arbeid();
+    } finally {
+      if (kanBestille && !kontroll.dataset.ferdig) kontroll.disabled = false;
+    }
+  }
   bryter.addEventListener("change", async () => {
     if (bryter.checked) {
       // PÅ igjen er OGSÅ en mutasjon (CodeRabbit major: UI-tilstanden
@@ -168,14 +183,16 @@ function tegn(hoved, ctx, data) {
       // blindingen PÅ er standardtilstanden — men kallet må gå, og
       // bryteren følger UTFALLET, aldri klikket.
       bryter.checked = false;
-      try {
-        await settRekrutteringBlinding(prosess.prosess_id, false,
-          "blinding slått på igjen");
-        bryter.checked = true;
-        sett(utfall, t("ui.rekruttering.blinding_pa_utfall"));
-      } catch (e) {
-        meldFeil(ctx, utfall, e);
-      }
+      await laast(bryter, async () => {
+        try {
+          await settRekrutteringBlinding(prosess.prosess_id, false,
+            "blinding slått på igjen");
+          bryter.checked = true;
+          sett(utfall, t("ui.rekruttering.blinding_pa_utfall"));
+        } catch (e) {
+          meldFeil(ctx, utfall, e);
+        }
+      });
       return;
     }
     bryter.checked = true;                // står til dialogen bekrefter
@@ -210,7 +227,7 @@ function tegn(hoved, ctx, data) {
         begrunnelse.focus();
         return false;
       },
-      paaPrimar: async () => {
+      paaPrimar: () => laast(bryter, async () => {
         try {
           await settRekrutteringBlinding(prosess.prosess_id, true,
             begrunnelse.value.trim());
@@ -219,7 +236,7 @@ function tegn(hoved, ctx, data) {
         } catch (e) {
           meldFeil(ctx, utfall, e);
         }
-      },
+      }),
     });
   });
   const blindingRot = el("div", { class: "rekrut-blinding" },
@@ -268,18 +285,21 @@ function tegn(hoved, ctx, data) {
             t(`ui.rekruttering.listetype.${liste.listetype}`))
           .replaceAll("{hash}", kortHash(liste.innhold_hash)),
         primarTekst: t("ui.rekruttering.signer_bekreft"),
-        paaPrimar: async () => {
+        paaPrimar: () => laast(knapp, async () => {
           try {
             const svar = await signerRekrutteringsliste(
               liste.liste_id, liste.innhold_hash,
               signeringsnokkel(liste));
+            // Signert er signert: knappen står igjen død, så den
+            // irreversible handlingen ikke kan gjentas fra denne visningen.
+            knapp.dataset.ferdig = "1";
             sett(utfall, t("ui.rekruttering.signer_utfall")
-              .replace("{hash}", kortHash(svar.innhold_hash
+              .replaceAll("{hash}", kortHash(svar.innhold_hash
                 || liste.innhold_hash)));
           } catch (e) {
             meldFeil(ctx, utfall, e);
           }
-        },
+        }),
       });
     });
     listeRot.append(el("div", { class: "rekrut-liste" },
