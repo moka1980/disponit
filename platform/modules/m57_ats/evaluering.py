@@ -210,9 +210,19 @@ def krev_biasmaaling(image_digest: str,
     `sha256:<64 hex>`, artefakthashen som sha256, tidspunktet som
     lesbar ISO 8601.
 
-    At artefakten hashen peker på FINNES, måles ikke her: evidensgrensen
-    `m57-v1` eier oppslaget mot artefaktlageret, og et lager denne fila
-    ikke har, ville vært en ny maskin i en fiksrunde."""
+    AT ARTEFAKTEN FINNES, MÅLES INGEN STEDER ENNÅ — og det står her fordi
+    det er sant (Codex P1, runde 5). Den forrige formuleringen delegerte
+    oppslaget til evidensgrensen `m57-v1`, men den grensen måler hverken
+    artefakthashen eller modelldigesten: den er generert fra
+    invariantsettet, og et oppslag mot artefaktlageret finnes ikke i den.
+    En kommentar som peker på en port som ikke er der, er verre enn ingen
+    port, for den stopper neste leser fra å lete.
+
+    Grensen her er altså FORMEN, ikke eksistensen: `"0" * 64` er en
+    syntaktisk gyldig artefakthash og passerer. Å slå den opp krever et
+    artefaktlager denne modulen ikke har — altså ny maskin i en fiksrunde
+    (K1) — og hvor bindingen hører hjemme er eskalert til eier i
+    PR-tråden sammen med de to andre funnene på samme mekanisme (K2)."""
     maaling = maalinger.get(image_digest)
     if maaling is None or maaling.image_digest != image_digest:
         raise Evalueringsfeil("bias_maling_mangler_for_digest",
