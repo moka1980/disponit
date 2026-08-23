@@ -174,7 +174,7 @@ def test_port26_duplikat_medlem_inni_docx_avvises(tmp_path):
     """Cursor P2: ytre gate feller to like medlemsnavn, den indre gjorde
     ikke.
 
-    `ZipFile.open(navn)` slår opp i navnekartet, som bare husker den
+    Et medlemsoppslag på navn treffer navnekartet, som bare husker den
     SISTE oppføringen. To `word/document.xml` inni samme docx betyr at
     teksten uttrekket leser, ikke er den gaten målte — samme stillhetstap
     som i ytre zip, og hvilken søknadstekst som evalueres er ikke et sted
