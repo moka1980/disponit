@@ -27,8 +27,8 @@ MAKS_ENKELTFIL = 25 * 1024 * 1024              # 25 MB
 # UNNTAKET — den er en av de tre lovede innholdstypene, og magien
 # `PK` kreves der (innholdstypeporten under), mens alt annet med
 # arkivmagi eller arkivendelse felles. Unntaket gjelder TYPEN, ikke
-# grensene: `_inspiser_docx` måler det indre arkivet med de samme
-# tallene, og legger den utpakkede totalen til buntens.
+# grensene: `_inspiser_docx` måler det indre arkivet mot BUNTENS
+# budsjett — samme tall, samme teller, aldri et friskt sett per docx.
 ARKIVENDELSER = frozenset({
     ".zip", ".tar", ".gz", ".tgz", ".bz2", ".xz", ".7z", ".rar", ".jar"})
 TILLATTE_ENDELSER = frozenset({".pdf", ".docx", ".html", ".htm"})
@@ -153,9 +153,22 @@ def inspiser_bunt(sti: str | Path) -> list[Medlem]:
     return medlemmer
 
 
-def _inspiser_docx(navn: str, data: bytes) -> int:
-    """DOCX-unntaket måles som alle andre arkiver — og returnerer den
-    utpakkede totalen sin, så den teller med i buntens (Codex P1).
+def _inspiser_docx(navn: str, data: bytes, *,
+                   filer_brukt: int = 0,
+                   byte_brukt: int = 0) -> tuple[int, int]:
+    """DOCX-unntaket måles som alle andre arkiver — mot BUNTENS budsjett,
+    ikke mot sitt eget (Codex P1).
+
+    ROTÅRSAKEN, funnet fjerde runde på denne funksjonen: den indre gaten
+    var en KOPI av den ytre med SIN EGEN tilstand. Hver runde fant nok en
+    grense som ikke var kopiert (medlemsnavnet, 25 MB, duplikatene) — og
+    denne gangen var det ikke en manglende sjekk, men en nullstilt
+    teller: `MAKS_FILER` ble målt på nytt per docx, så to docx-er à
+    20 000 indre medlemmer passerte begge portene og ga 40 000 filer til
+    uttrekket. Grensene er buntens, ikke per arkiv: det som er brukt
+    kommer inn (`filer_brukt`, `byte_brukt`), og det som ble brukt går ut
+    (utpakkede byte, antall medlemmer). Da kan ingen ny nøstet fil få et
+    friskt budsjett.
 
     En `.docx` ble sluppet gjennom på `PK`-magien og sin egen KOMPRIMERTE
     størrelse alene. En liten docx kan bære et indre medlem som pakker ut
@@ -171,8 +184,9 @@ def _inspiser_docx(navn: str, data: bytes) -> int:
         # `PK` er ikke en zip; en docx som ikke lar seg lese som arkiv er
         # ikke en docx.
         raise Buntfeil("feil_innholdstype", navn) from feil
-    if len(infos) > MAKS_FILER:
-        raise Buntfeil("for_mange_filer", f"{navn}: {len(infos)}")
+    if filer_brukt + len(infos) > MAKS_FILER:
+        raise Buntfeil("for_mange_filer",
+                       f"{navn}: {filer_brukt} + {len(infos)}")
     utpakket = 0
     sett: set[str] = set()
     for info in infos:
@@ -204,9 +218,9 @@ def _inspiser_docx(navn: str, data: bytes) -> int:
             raise Buntfeil("komprimeringsforhold",
                            f"{navn}/{info.filename}")
         utpakket += info.file_size
-        if utpakket > MAKS_TOTAL_UTPAKKET:
+        if byte_brukt + utpakket > MAKS_TOTAL_UTPAKKET:
             raise Buntfeil("total_for_stor", f"{navn}/{info.filename}")
-    return utpakket
+    return utpakket, len(infos)
 
 
 def les_porsjonsvis(sti: str | Path, *, porsjon: int = 200):
@@ -223,6 +237,10 @@ def les_porsjonsvis(sti: str | Path, *, porsjon: int = 200):
     """
     medlemmer = inspiser_bunt(sti)
     total = 0
+    # ÉN teller for hele bunten, nøstede docx-medlemmer inkludert
+    # (Codex P1): budsjettet starter på buntens egne filer og forbrukes
+    # videre av hver docx, aldri nullstilt per arkiv.
+    filer = len(medlemmer)
     with zipfile.ZipFile(sti) as zf:
         for nr, medlem in enumerate(medlemmer, start=1):
             biter: list[bytes] = []
@@ -280,9 +298,11 @@ def les_porsjonsvis(sti: str | Path, *, porsjon: int = 200):
                                ) from feil
             total += lest
             if _endelse(medlem.navn) == ".docx":
-                total += _inspiser_docx(medlem.navn, b"".join(biter))
-                if total > MAKS_TOTAL_UTPAKKET:
-                    raise Buntfeil("total_for_stor", medlem.navn)
+                utpakket, indre = _inspiser_docx(
+                    medlem.navn, b"".join(biter),
+                    filer_brukt=filer, byte_brukt=total)
+                total += utpakket
+                filer += indre
             if nr % porsjon == 0 or nr == len(medlemmer):
                 fremdrift = {"filer_lest": nr,
                              "filer_totalt": len(medlemmer),

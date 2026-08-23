@@ -233,6 +233,34 @@ def test_port21_enkeltfilgrensen_gjelder_ogsa_inni_docx(tmp_path):
     assert len(list(parsing.les_porsjonsvis(ok))) == 1
 
 
+def test_port22_filbudsjettet_er_buntens_ikke_per_docx(tmp_path):
+    """Codex P1: `MAKS_FILER` ble målt på nytt inni HVER docx.
+
+    Grensen er buntens harde tak på 20 000 filer. Med en teller som
+    nullstilles per arkiv, passerte to docx-er à 12 000 indre medlemmer
+    begge portene — 24 000 filer til uttrekket, i en bunt på et par
+    hundre kilobyte. Budsjettet er derfor ÉN teller: buntens egne filer
+    pluss hvert nøstet medlem, aldri et friskt sett per docx.
+
+    MUTASJONEN SOM DREPER DENNE: la `_inspiser_docx` måle `len(infos)`
+    mot `MAKS_FILER` i stedet for `filer_brukt + len(infos)`."""
+    halv = parsing.MAKS_FILER // 2 + 2000     # 12 000 hver, 24 000 til sammen
+    fyll = [(f"word/f{n}.xml", b"") for n in range(halv)]
+    docx = _docx([("word/document.xml", b"<w:t>x</w:t>")] + fyll)
+    assert len(docx) < parsing.MAKS_ENKELTFIL
+    arkiv = _bunt(tmp_path, [("a.docx", docx), ("b.docx", docx)])
+    # Ytre gate ser to små, lovlige filer — hullet lå i den indre.
+    parsing.inspiser_bunt(arkiv)
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(arkiv))
+    assert e.value.kode == "for_mange_filer"
+    arkiv.unlink()
+    # Positiv kontroll: samme to docx-er, men til sammen UNDER taket.
+    smaa = _docx([("word/document.xml", b"<w:t>x</w:t>")] + fyll[:4000])
+    ok = _bunt(tmp_path, [("a.docx", smaa), ("b.docx", smaa)])
+    assert len(list(parsing.les_porsjonsvis(ok))) == 2
+
+
 def test_port25_innholdstypen_er_en_paastand_begge_veier(tmp_path):
     # Ukjent endelse → gaten.
     arkiv = _bunt(tmp_path, [("skript.exe", b"MZ")])
