@@ -497,6 +497,62 @@ def test_port15_funn_uten_kildereferanse():
             "utenfor_soknadsfrist"}
 
 
+def test_port15_funnkontrakten_er_et_lukket_sett():
+    """Codex P1/P2 (runde 5): kontrakten er SETTET, ikke de feltene noen
+    kom på å måle — og porten bygger funnet den slipper gjennom.
+
+    Et udeklarert felt (`karaktertrekk`) ble ikke sett av en validering
+    som bare leste `kategori` og `kilde`, og fulgte likevel med rått inn
+    i artefakten. En `kategori` modellen sendte som liste var uhashbar og
+    sprengte `in frozenset` med en rå `TypeError` i stedet for modulens
+    kodede utfall (SP-3)."""
+    tekst = "Jeg har ti års erfaring med drift."
+    kilde = {"start": 8, "slutt": 24, "sitat": tekst[8:24]}
+    # Udeklarerte felter — på funnet og i kildereferansen.
+    for funn, kode in (
+            ({"kategori": "uklar_tidslinje", "kilde": kilde,
+              "karaktertrekk": "pertentlig"}, "ukjent_funnfelt"),
+            ({"kategori": "uklar_tidslinje"}, "ukjent_funnfelt"),
+            ({"kilde": kilde}, "ukjent_funnfelt"),
+            ({"kategori": "uklar_tidslinje", "kilde": kilde | {"vekt": 1}},
+             "uten_kildereferanse")):
+        with pytest.raises(evaluering.Evalueringsfeil) as e:
+            evaluering.valider_funn(funn, tekst)
+        assert e.value.kode == kode, funn
+    # Uhashbar kategori: kodet avvisning, aldri TypeError.
+    for kategori in ([], {}, set(), None, 7, True):
+        with pytest.raises(evaluering.Evalueringsfeil) as e:
+            evaluering.valider_funn(
+                {"kategori": kategori, "kilde": kilde}, tekst)
+        assert e.value.kode == "ukjent_kategori", kategori
+    # Positiv kontroll: det KANONISKE funnet er returverdien.
+    assert evaluering.valider_funn(
+        {"kategori": "uklar_tidslinje", "kilde": dict(kilde)}, tekst) == {
+            "kategori": "uklar_tidslinje", "kilde": kilde}
+
+
+def test_port15_artefakten_baerer_det_kanoniske_funnet():
+    """Speilbildet: et udeklarert felt kan hverken slippe umålt gjennom
+    porten ELLER følge med videre — artefakten bærer funnet porten
+    bygget, ikke modellens dict."""
+    class _Slurvemodell(_Modell):
+        def vurder(self, tekst, vekter):
+            start = tekst.index("ti års")
+            return {"funn": [{"kategori": "uklar_tidslinje",
+                              "kilde": {"start": start,
+                                        "slutt": start + 6,
+                                        "sitat": "ti års"},
+                              "karaktertrekk": "pertentlig"}],
+                    "oppfylt": {k: True for k in vekter},
+                    "intervjusporsmal": []}
+
+    with pytest.raises(evaluering.Evalueringsfeil) as e:
+        evaluering.evaluer_kandidat(
+            _Slurvemodell(), "Kari har ti års erfaring.",
+            {"navn": ["Kari"]}, {"drift": 1}, biasmaalinger=_MAALINGER)
+    assert e.value.kode == "ukjent_funnfelt"
+
+
 class _Modell:
     image_digest = "sha256:" + "a" * 64
 

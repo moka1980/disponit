@@ -33,16 +33,45 @@ class Evalueringsfeil(Exception):
         super().__init__(f"{kode}: {detalj}" if detalj else kode)
 
 
-def valider_funn(funn: dict, soknadstekst: str) -> None:
+#: Funnets LUKKEDE feltsett, og kildereferansens. Kontrakten er settet,
+#: ikke de feltene noen kom på å måle: se `valider_funn`.
+FUNN_FELTER = frozenset({"kategori", "kilde"})
+KILDE_FELTER = frozenset({"start", "slutt", "sitat"})
+
+
+def valider_funn(funn: dict, soknadstekst: str) -> dict:
     """Skjemaporten (port 15): et funn uten kildereferanse som ordrett
     står i søknadsteksten, finnes ikke. Sitatet måles mot teksten på
     [start:slutt] — en referanse som ikke treffer er like avvist som en
-    som mangler."""
-    kategori = funn.get("kategori")
-    if kategori not in FUNN_KATEGORIER:
+    som mangler.
+
+    KONTRAKTEN ER SETTET, og porten BYGGER funnet (Codex P1/P2, runde 5).
+    Tre runder på rad fant hull av samme slag her, og rotårsaken var
+    felles: funnet ble målt felt for felt — de feltene noen kom på — og
+    så kopiert RÅTT videre inn i artefakten. Da bar
+    `{"kategori": ..., "kilde": ..., "karaktertrekk": "..."}` seg gjennom
+    den lukkede, karaktertrekkfrie kontrakten uten å bli sett, og en
+    `kategori` modellen sendte som liste sprengte `in frozenset` med en
+    rå `TypeError` i stedet for modulens kodede utfall (SP-3).
+
+    Svaret på begge er det samme: feltsettene er LUKKET begge veier, og
+    returverdien er et KANONISK funn bygget av de validerte verdiene.
+    Et felt som ikke står i `FUNN_FELTER`/`KILDE_FELTER` kan da hverken
+    slippe gjennom umålt eller følge med videre.
+    """
+    if not isinstance(funn, dict) or set(funn) != FUNN_FELTER:
+        raise Evalueringsfeil(
+            "ukjent_funnfelt",
+            ",".join(sorted(set(funn) ^ FUNN_FELTER))
+            if isinstance(funn, dict) else type(funn).__name__)
+    kategori = funn["kategori"]
+    # `isinstance` FØR mengdeoppslaget: en uhashbar verdi (liste, dict)
+    # kaster `TypeError` ut av `in frozenset`, og en bibliotekfeil er
+    # ikke en avvisning — den er en 500 hos kalleren.
+    if not isinstance(kategori, str) or kategori not in FUNN_KATEGORIER:
         raise Evalueringsfeil("ukjent_kategori", repr(kategori))
-    kilde = funn.get("kilde")
-    if not isinstance(kilde, dict):
+    kilde = funn["kilde"]
+    if not isinstance(kilde, dict) or set(kilde) != KILDE_FELTER:
         raise Evalueringsfeil("uten_kildereferanse")
     start, slutt, sitat = (kilde.get("start"), kilde.get("slutt"),
                            kilde.get("sitat"))
@@ -60,6 +89,8 @@ def valider_funn(funn: dict, soknadstekst: str) -> None:
             or not 0 <= start < slutt <= len(soknadstekst)
             or soknadstekst[start:slutt] != sitat):
         raise Evalueringsfeil("uten_kildereferanse")
+    return {"kategori": kategori,
+            "kilde": {"start": start, "slutt": slutt, "sitat": sitat}}
 
 
 def _krev_helt_svar(svar: object, vekter: dict[str, int]) -> dict:
@@ -221,8 +252,9 @@ def evaluer_kandidat(modell, soknadstekst: str,
         blinding_av=blinding_av, auditrad=auditrad)
     blinding.krev_blindet(tekst, avmaskering)
     svar = _krev_helt_svar(modell.vurder(tekst, vekter), vekter)
-    for funn in svar["funn"]:
-        valider_funn(funn, tekst)
+    # Porten BYGGER funnene: artefakten bærer det kanoniske funnet
+    # `valider_funn` returnerer, aldri modellens egen dict (Codex P1).
+    funn_kanonisk = [valider_funn(funn, tekst) for funn in svar["funn"]]
     # `kildetekst` er strengen kildereferansene faktisk indekserer, og den
     # følger med artefakten (Codex P2). Blindingen ENDRER lengder — «Kari»
     # blir `[NAVN-1]` — så en [start:slutt] validert mot den blindede
@@ -230,7 +262,7 @@ def evaluer_kandidat(modell, soknadstekst: str,
     # uten strengen de hører til, var å invitere til nettopp den
     # forvekslingen; her er referansen entydig, og verifiserbar av
     # mottakeren med samme snitt som `valider_funn` bruker.
-    return {"funn": list(svar["funn"]),
+    return {"funn": funn_kanonisk,
             "oppfylt": dict(svar["oppfylt"]),
             "intervjusporsmal": list(svar["intervjusporsmal"]),
             "avmaskering": avmaskering,
