@@ -3450,12 +3450,11 @@ def test_evidensbindingen_er_den_ene_tillatte_manifestendringen(
     """…og drillen må ellers ha kjørt NØYAKTIG den aksepterte modulen.
 
     Mellom drill og aksept endres manifestet én gang, av flyten selv:
-    drillartefaktet bindes inn i `staging_sjekkliste`, og akseptcommitens
-    manifest er derfor en annen generasjon enn kandidatreleasens. Den ene
-    endringen skal slippe gjennom. Alt annet — `status`,
-    `driftstilstand`, `kjerne`, avhengigheter — er modulens kjørende
-    identitet, og en endring der er en NY release som må registreres og
-    drilles for seg.
+    drillartefaktet bindes inn i `staging_sjekkliste`. Den endringen —
+    og KATALOGAKSENE, som er akseptens egen avlesning (A-vedtaket på
+    #152) — slipper gjennom. Alt strukturelt (`kjerne`, avhengigheter,
+    `id`) er modulens identitet, og en endring der er en NY release som
+    må registreres og drilles for seg.
     """
     import yaml
     m = _aksept_skript()
@@ -3479,10 +3478,15 @@ def test_evidensbindingen_er_den_ene_tillatte_manifestendringen(
     # sier hvilken commit den ble sjekket inn i.
     assert m.verifiser_registrert_manifest(
         conn, releaser, akseptert, ny_sha, hode) == gammel_commit
+    # Katalogaksene er en avlesning — de flytter ikke identiteten, og
+    # porten slipper dem gjennom (A-vedtakets positive kontroll).
+    for akse, verdi in (("status", "aktiv"),
+                        ("driftstilstand", "produksjon")):
+        assert m.verifiser_registrert_manifest(
+            conn, releaser, dict(akseptert, **{akse: verdi}), ny_sha,
+            hode) == gammel_commit
     # Identiteten er flyttet: da er dette en annen modul enn den drillede.
-    for felt, verdi in (("status", "aktiv"),
-                        ("driftstilstand", "produksjon"),
-                        ("kjerne", "platform/modules/en_annen"),
+    for felt, verdi in (("kjerne", "platform/modules/en_annen"),
                         ("avhengigheter", [])):
         with pytest.raises(SystemExit) as ei:
             m.verifiser_registrert_manifest(

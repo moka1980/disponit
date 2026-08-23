@@ -70,9 +70,16 @@ def _hex64(navn: str, verdi: str) -> str:
 
 
 def manifest_hash() -> str:
-    """sha256 over manifestets bytes på disk — manifestets EGEN hash, ikke
-    et annet dokuments."""
-    return hashlib.sha256((REPO / MANIFEST).read_bytes()).hexdigest()
+    """Manifestets KANONISKE PROJEKSJON (A-vedtaket på #152): parset
+    YAML minus katalogaksene. Raden er immutable, og med byte-hashen her
+    ville en ren kommentarlinje mellom to runder på samme release-id
+    dødd i «release er immutable» — identiteten releasen bærer er den
+    strukturelle, ikke formateringen. Eldre rader (t.o.m. wcag-r23)
+    bærer byte-hashen; akseptens oppslag er dobbeltnøklet og leser
+    begge formene."""
+    import manifestskjema
+    return manifestskjema.kanonisk_projeksjon(
+        (REPO / MANIFEST).read_text(encoding="utf-8"))
 
 
 def main() -> int:
