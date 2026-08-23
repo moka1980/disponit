@@ -1322,6 +1322,167 @@ def test_port27_5001_avvises_ved_validering():
         "rekruttering.evaluering", payload | {"omfang": "alt"})
 
 
+def test_kundens_slettefrist_baeres_av_bestillingen():
+    """Codex P1: fristvalget hadde ingen plass i det signerte oppdraget.
+
+    057 sier «kundevalgt 30–365 døgn (standard 90)», men det lukkede
+    feltsettet hadde ingen fristkolonne — så `minimer` strøk feltet, og
+    `opprett_rekrutteringsprosess` fikk fristen som et kallerargument
+    uten kilde i bestillingen. En kunde som avtalte 30 døgn fikk 90.
+    """
+    import json
+    from pathlib import Path
+
+    payload = {"stillingsprofil_ref": "art-1", "soknadsbunt_ref": "art-2",
+               "antall_soknader": 10, "omfang": "bunt"}
+    # Feltet OVERLEVER minimeringen (det var her det forsvant).
+    minimert = minimer("rekruttering.evaluering",
+                       payload | {"slettefrist_dogn": 30})
+    assert minimert["slettefrist_dogn"] == 30
+    # … og spennet er basens eget: `prosess_frist_i_spennet` (30–365).
+    for lovlig in (30, 90, 365):
+        assert bryter_feltkontrakten(
+            "rekruttering.evaluering",
+            payload | {"slettefrist_dogn": lovlig}) == [], lovlig
+    for ulovlig in (29, 366, 0, -1, True, "90", 90.0):
+        assert "slettefrist_dogn" in bryter_feltkontrakten(
+            "rekruttering.evaluering",
+            payload | {"slettefrist_dogn": ulovlig}), ulovlig
+    # Fraværet ER standardvalget (basens `DEFAULT 90`), ikke et brudd:
+    # feltet er valgfritt, og et oppdrag uten det er komplett.
+    assert bryter_feltkontrakten("rekruttering.evaluering", payload) == []
+    assert mangler_paakrevde(
+        "rekruttering.evaluering",
+        minimer("rekruttering.evaluering", payload)) == []
+    # Modulens eget skjema må speile det lukkede settet: med
+    # `additionalProperties: false` ville utføreren ellers avvist nettopp
+    # den payloaden plattformen nå slipper gjennom.
+    skjema = json.loads(
+        (Path(__file__).resolve().parents[3]
+         / "platform/modules/m57_ats/kontrakt/payload-skjema.json")
+        .read_text(encoding="utf-8"))
+    assert set(skjema["properties"]) == set(
+        OPPDRAGSTYPER["rekruttering.evaluering"].felter)
+    assert skjema["properties"]["slettefrist_dogn"] == {
+        "type": "integer", "minimum": 30, "maximum": 365}
+
+
+def test_artefaktreferansene_ma_vaere_strenger_ved_opprettelsen():
+    """Codex P2: `minimer` bevarer skalarer som de er og
+    `mangler_paakrevde` godtar enhver sann verdi, så
+    `stillingsprofil_ref: 123` overlevde BEGGE og ble køet. Modulens
+    payload-skjema krever `string, minLength 1` — men det kjører først
+    når utførelsen har startet, altså etter at oppdraget var opprettet,
+    claimet og talt. Referansen måles nå der bestillingen tas imot."""
+    payload = {"stillingsprofil_ref": "art-1", "soknadsbunt_ref": "art-2",
+               "antall_soknader": 10, "omfang": "bunt"}
+    assert bryter_feltkontrakten("rekruttering.evaluering", payload) == []
+    for felt in ("stillingsprofil_ref", "soknadsbunt_ref"):
+        for verdi in (123, True, "", "   ", None, 4.5):
+            brudd = bryter_feltkontrakten(
+                "rekruttering.evaluering", payload | {felt: verdi})
+            assert felt in brudd, (felt, verdi)
+
+
+def test_den_kanoniske_handlingen_binder_oppdraget_til_eiermodulen():
+    """Codex P1: prefikset bar et punktum den faktiske handlingen ikke har.
+
+    Handlingen M-57-flyten faktisk bruker er NØYAKTIG
+    `rekruttering.evaluering` — 057s prosessanker, 056s promoteringsvakt
+    og SP-10-seeden skriver alle den strengen, uten suffiks. Prefikset
+    `rekruttering.evaluering.` traff den derfor ikke, `type_for_handling`
+    ga None, og `_eiermodul_for` skrev `eiermodul:ukjent` i raden. Siden
+    `claim_neste_oppdrag` filtrerer på `oppdrag.eiermodul = modul_id`,
+    ville modulen aldri sett sitt eget oppdrag.
+
+    Testen måler KJEDEN, ikke strengen: fra handlingen til den id-en som
+    havner i `eiermodul`-kolonnen ved opprettelsen.
+    """
+    import oppdragskontrakt as ok
+    from m37.arbeider import _eiermodul_for
+
+    t = ok.type_for_handling("rekruttering.evaluering")
+    assert t is not None, "den kanoniske handlingen traff ingen oppdragstype"
+    assert t.navn == "rekruttering.evaluering"
+    assert _eiermodul_for("rekruttering.evaluering") == t.eiermodul
+    assert not _eiermodul_for(
+        "rekruttering.evaluering").startswith("eiermodul:")
+    # … men treffet går på SEGMENTGRENSEN, ikke på tegn (Codex P2).
+    # Handlings-ID-er i tenantpolicy er frie strenger, og et rent
+    # `startswith` ga `rekruttering.evalueringmal` M-57s payloadkontrakt
+    # og eiermodul i stedet for «ukjent».
+    # MUTASJONEN SOM DREPER DENNE: bytt segmentregelen i
+    # `type_for_handling` tilbake til `handling.startswith(p)`.
+    for fremmed in ("rekruttering.evalueringmal",
+                    "rekruttering.evalueringer",
+                    "rekruttering.evaluering-2"):
+        assert ok.type_for_handling(fremmed) is None, fremmed
+    # Etterkommere under punktumet hører fortsatt til typen — det er den
+    # samme regelen, ikke et unntak fra den.
+    assert ok.type_for_handling(
+        "rekruttering.evaluering.omkjoring") is t
+    # Og de punktumbærende prefiksene er uendret.
+    assert ok.type_for_handling("kontroll.wcag.nettsted").navn == \
+        "kontroll.wcag.nettsted"
+    assert ok.type_for_handling("verifiser.mva").navn == "verifikasjon"
+
+
+def test_m57_har_EN_modulidentitet_i_kontrakt_migrasjon_og_artefakt():
+    """Codex P2 / Cursor P1: `m_ats` mot `m57_ats` var en splitt.
+
+    De FIRE stedene som må være enige om hvem som eier M-57-oppdragene:
+
+    * kontrakten (`eiermodul` — det som skrives i raden ved opprettelsen
+      og det `claim_neste_oppdrag` filtrerer på),
+    * 056s CHECK + `opprett_frigivelsesoppdrag` (utsendingsarmen), og
+    * akseptartefaktets `oppsett.modul` (hvem aksepten attesterer), og
+    * modulmanifestets egen `id` (Cursor P1) — den fjerde kanonen porten
+      IKKE målte, så `id: ats` sto uimotsagt ved siden av tre `m57_ats`.
+
+    Var de uenige, kunne ingen modul claime BEGGE armene, og et
+    skjemagyldig akseptartefakt ville attestert en annen identitet enn
+    den som faktisk kjørte jobbene. Porten er statisk med vilje: den
+    feller en splitt før noe kjøres.
+
+    HVA MANIFEST-ARMEN FAKTISK MÅLER: `registry`-id-en og
+    `auth.modul_id` er to forskjellige registre — det siste kommer fra
+    `modultoken`/`modulhode`, registrert ved onboarding, ikke fra
+    manifestet. M-56 kjører i produksjon med `id: wcag_audit` mot
+    `eiermodul='m_wcag_audit'`, så et hus-vidt krav om likhet ville vært
+    usant. Armen er derfor bundet til M-57s EGEN kanon: her skal de fire
+    stemme, fordi det er den som skal leses av et menneske som
+    registrerer modulen — og som alt har stavet den feil én gang.
+    """
+    import json
+
+    import yaml
+
+    import oppdragskontrakt as ok
+
+    kjerne = Path(__file__).resolve().parents[1]
+    kanonisk = ok.OPPDRAGSTYPER["rekruttering.evaluering"].eiermodul
+    assert kanonisk == "m57_ats"
+
+    skjema = json.loads(
+        (kjerne / "artefakt-m57-skjema.json").read_text(encoding="utf-8"))
+    assert (skjema["properties"]["oppsett"]["properties"]["modul"]["const"]
+            == kanonisk)
+
+    sql = (kjerne / "db/migrations/056_m57_utsending.sql").read_text(
+        encoding="utf-8")
+    assert f"eiermodul = '{kanonisk}'" in sql
+    assert f"IS DISTINCT FROM '{kanonisk}'" in sql
+
+    manifest = yaml.safe_load(
+        (MODULROT / "manifest.yaml").read_text(encoding="utf-8"))
+    assert manifest["id"] == kanonisk, (
+        f"manifestet kaller modulen {manifest['id']!r}, kontrakten"
+        f" {kanonisk!r} — den fjerde kanonen er uenig med de tre andre")
+    # Og id-en er mappenavnet, som er `les_manifester` sitt eget fallback
+    # når `id` mangler: da kan de to aldri komme fra hverandre i stillhet.
+    assert manifest["id"] == MODULROT.name
+
+
 def test_port28_avbrutt_kjoring_promoterer_ingenting(tmp_path):
     """SP-3-porten på hele kjøringen: en modell som dør på kandidat 2
     gir et KODET feilutfall med fremdrift som evidens — og ingen
