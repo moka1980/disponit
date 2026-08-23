@@ -788,8 +788,10 @@ def verifiser_registrert_manifest(conn, releaser: tuple[str, ...],
 
     Codex' P1 på PR #117 (runde 7): digestkjeden ble bundet hele veien —
     målt image = drillet image = registrert image — men manifestet gikk
-    fri. `modulrelease.manifest_hash` er sha256 av `manifest.yaml` slik
-    den så ut da releasen ble REGISTRERT (drillens fase 2), og
+    fri. `modulrelease.manifest_hash` er manifestets identitet slik den
+    så ut da releasen ble REGISTRERT (drillens fase 2) — den kanoniske
+    projeksjonen fra og med wcag-r24, sha256 over filens bytes før det,
+    og `_manifestgenerasjoner` er dobbeltnøklet nettopp derfor — og
     akseptraden peker på `manifest_commit`. Ingenting bandt de to. Og
     de divergerer med nødvendighet: drillartefaktet bindes INN i
     manifestet etter drillen, så akseptcommitens manifest er per

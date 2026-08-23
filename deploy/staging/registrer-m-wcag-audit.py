@@ -19,9 +19,11 @@ immutabilitetskonflikt, uten vei tilbake. Derfor:
 
   * rapportskjemaet — REGNES UT her (`rapportskjema.skjema_hash()`), det
     er modulens eget dokument og ligger i koden;
-  * manifestet — REGNES UT her fra `manifest.yaml` på disk, sha256 over
-    filens bytes (samme «manifest på disk = register»-disiplin som
-    deploy-porten, 014a §7);
+  * manifestet — REGNES UT her fra `manifest.yaml` på disk, som dens
+    KANONISKE PROJEKSJON (A-vedtaket på #152: parset YAML minus
+    katalogaksene, `manifestskjema.kanonisk_projeksjon`) — samme
+    «manifest på disk = register»-disiplin som deploy-porten (014a §7),
+    men på identiteten, ikke på formateringen;
   * payload- og kvitteringsskjemaet — TAS IMOT, de eies av
     release-materialet (014b) og plattformkontrakten (PR-006), ikke av
     denne fila. Formen valideres før noe skrives.

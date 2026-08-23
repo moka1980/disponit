@@ -834,6 +834,16 @@ def krev_akseptbar_manifestgenerasjon(m, drillet: str) -> None:
 
     Porten står derfor foran alt: før registreringen, før bestillingen og
     lenge før rullingen.
+
+    LIKHETEN ER EKSAKT, OGSÅ OVER FORMSKIFTET (Cursor P2, #154). Rader
+    t.o.m. wcag-r23 bærer byte-hashen; fra wcag-r24 bærer de
+    projeksjonen. Å slippe gjennom BEGGE formene her ville vært å
+    gjenåpne runde 18: `verifiser_registrert_manifest` sammenligner de to
+    lagrede strengene tegn for tegn, så en byte-registrert drillet
+    release og en projeksjonsregistrert kandidatrad er ULIKE for
+    aksepten uansett hvor lik generasjonen er. Avbruddet er da ekte, ikke
+    falskt — og rettelsen er den samme som ellers: rull ut en ny release
+    fra dette manifestet og drill den.
     """
     rad = m.execute(
         "SELECT manifest_hash FROM modulrelease WHERE modul_id=%s"
@@ -857,6 +867,10 @@ def krev_akseptbar_manifestgenerasjon(m, drillet: str) -> None:
         " så hadde den kjørt, ville den drenert den levende deploymenten"
         " og brukt opp begge drill-id-ene for en aksept som aldri kunne"
         " skrives; radene er immutable og kan ikke rettes etterpå."
+        " (Er den claimende releasen wcag-r23 eller eldre, bærer raden"
+        " BYTE-hashen fra tiden før A-vedtaket på #152, mens drillen nå"
+        " regner den kanoniske projeksjonen — da er ingen utsjekking den"
+        " rette, og eneste vei er en ny release.)"
         " Kjør drillen fra utsjekket den claimende releasen ble"
         " registrert fra, eller rull ut en ny release fra dette"
         " manifestet først — og drill den.")

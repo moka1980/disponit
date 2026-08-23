@@ -1903,7 +1903,7 @@ MANIFEST_HASH_FOR_RELEASE = \
     "b2ea178fdab16783a4c626f14013353b51d63ec427cc0e73e9a5d830d5f30142"
 
 
-def test_release_id_folger_manifestets_bytes():
+def test_release_id_folger_manifestets_projeksjon():
     """Codex P1 på #109: manifestet ble både flyttet og endret, mens
     `fase2` fortsatt registrerte `wcag-r1`.
 
