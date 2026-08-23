@@ -97,15 +97,31 @@ BEGIN
         -- ventingen faller ut av treffet i stedet for å bli lest fra et
         -- gammelt snapshot. Vakten skal være minst like sterk som
         -- funksjonen den er backstopp for; her var den svakere.
+        -- PORTEN ER POSITIV, ikke en voksende denyliste (Codex P1).
+        -- Den sto som `status NOT IN ('feilet','kansellert')`, og da var
+        -- `utfort` lovlig: kom det FØRSTE kallet etter at kjøringen som
+        -- skulle lukket prosessen var ferdig, fødtes en åpen prosess på
+        -- et avsluttet oppdrag, og de seks lagrene tok imot persondata
+        -- etterpå — med fristen løpende fra reaperens maks levetid, ikke
+        -- fra en lukking som aldri kommer. `opprettet` hadde samme hull.
+        --
+        -- Å legge `utfort` til lista ville vært den fjerde runden på
+        -- samme form (§9 K2): en liste over tilstandene noen kom på.
+        -- Fødselen har ÉN lovlig tilstand, og kommentaren over sier den
+        -- alt høyt — «dette ankeret fødes MENS kjøringen står på». Den
+        -- skrives derfor ut som et krav i stedet for som et fravær:
+        -- `plukket`, altså et AKTIVT CLAIMET oppdrag, samme form som
+        -- 017/035 bruker for kapabilitetene. Da er det ingen femte
+        -- tilstand igjen å oppdage.
         PERFORM 1 FROM public.oppdrag o
             WHERE o.tenant = NEW.tenant AND o.id = NEW.oppdrag_id
               AND o.oppdragstype = 'rekruttering.evaluering'
               AND o.eiermodul = 'm57_ats'
-              AND o.status NOT IN ('feilet', 'kansellert')
+              AND o.status = 'plukket'
             FOR SHARE;
         IF NOT FOUND THEN
             RAISE EXCEPTION 'rekrutteringsprosess: oppdrag % hos % er ikke'
-                ' et LEVENDE rekruttering.evaluering-oppdrag eid av'
+                ' et AKTIVT CLAIMET rekruttering.evaluering-oppdrag eid av'
                 ' m57_ats — fødselen går gjennom'
                 ' opprett_rekrutteringsprosess', NEW.oppdrag_id, NEW.tenant
                 USING ERRCODE = 'insufficient_privilege';
@@ -774,7 +790,7 @@ CREATE OR REPLACE FUNCTION opprett_rekrutteringsprosess(
     p_tenant TEXT, p_oppdrag_id BIGINT, p_frist_dogn INT DEFAULT 90)
 RETURNS UUID LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
-DECLARE v_id UUID; v_frist INT;
+DECLARE v_id UUID; v_frist INT; v_status TEXT;
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant,
                                        'opprett_rekrutteringsprosess');
@@ -839,7 +855,7 @@ BEGIN
     -- fullføres, og PostgreSQL re-evaluerer predikatet etter låsen, så en
     -- rad som ble terminal under ventingen faller ut av treffet i stedet
     -- for å bli lest fra et gammelt snapshot.
-    PERFORM 1 FROM public.oppdrag o
+    SELECT o.status INTO v_status FROM public.oppdrag o
         WHERE o.tenant = p_tenant AND o.id = p_oppdrag_id
           AND o.oppdragstype = 'rekruttering.evaluering'
           AND o.eiermodul = 'm57_ats'
@@ -858,6 +874,36 @@ BEGIN
       FROM public.rekrutteringsprosess
      WHERE tenant = p_tenant AND oppdrag_id = p_oppdrag_id;
     IF v_id IS NULL THEN
+        -- FØRSTEGANGSFØDSELEN krever et AKTIVT CLAIMET oppdrag (Codex P1).
+        -- Porten over er `NOT IN ('feilet','kansellert')`, og den skal
+        -- fortsette å være det: den bevokter BEGGE stiene, også den
+        -- idempotente GJENLESNINGEN av en prosess som alt finnes — et
+        -- retry etter at kjøringen er kvittert ut skal fortsatt få samme
+        -- id tilbake, ellers er idempotensløftet borte.
+        --
+        -- Men FØDSELEN er noe annet enn en gjenlesning. Kom det første
+        -- kallet etter at oppdraget var `utfort`, fødtes en åpen prosess
+        -- på en kjøring som var ferdig: lukkingen som starter fristen
+        -- (§5) kommer aldri, lagrene tar imot persondata etterpå, og
+        -- dataene blir liggende til reaperens maks-levetid-arm i stedet
+        -- for til fristen fra faktisk avslutning. `opprettet` — altså et
+        -- oppdrag ingen har claimet ennå — er samme klasse: prosessen
+        -- ville stått åpen uten noen som kommer for å lukke den.
+        --
+        -- Kravet er POSITIVT og ikke en tredje tilstand lagt til en
+        -- denyliste (§9 K2): fødselen skjer MENS kjøringen står på, og
+        -- det er nøyaktig `plukket`. Samme form som 017/035 bruker for
+        -- artefaktkapabilitetene — «et aktivt claimet oppdrag».
+        IF v_status <> 'plukket' THEN
+            RAISE EXCEPTION 'rekrutteringsprosess: oppdrag % hos % har'
+                ' status % — en kandidatprosess FØDES bare på et aktivt'
+                ' claimet oppdrag, altså status plukket. Prosessen bærer'
+                ' persondata som lukkingen starter fristen for'
+                ' (klarsignalet §5), og på et oppdrag som er ferdig eller'
+                ' ikke plukket ennå kommer den lukkingen aldri',
+                p_oppdrag_id, p_tenant, v_status
+                USING ERRCODE = 'invalid_parameter_value';
+        END IF;
         -- Kappløpet mellom SELECT-en over og INSERT-en her er ekte
         -- (Codex P2): to samtidige retries av samme bestilling rakk
         -- begge forbi lesingen, og taperen fikk en rå `unique_violation`

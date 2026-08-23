@@ -21,7 +21,7 @@ import pytest
 from .test_api import (ANNEN_TENANT, DSN, MIGRATOR_DSN, TENANT,  # noqa: F401
                        migrator, miljo)
 from .test_m37 import _sett_kontekst
-from .test_m57_utsending import _evaluering, _grunnlag, _rt, pg
+from .test_m57_utsending import _grunnlag, _rt, pg
 
 FIXTUR = "KANDIDATFIXTUR-" + secrets.token_hex(6)
 
@@ -38,10 +38,23 @@ LAGRE = {
 }
 
 
+def _claimet(m):
+    """Et AKTIVT CLAIMET `rekruttering.evaluering`-oppdrag — den ENESTE
+    tilstanden en kandidatprosess fødes i (Codex P1).
+
+    `_evaluering` (056-nabofilen) gir et FULLFØRT oppdrag, fordi det er
+    det en utsendingsliste kan promoteres fra. Kandidatprosessen står i
+    motsatt ende av samme livsløp: den fødes MENS kjøringen står på, og
+    et `utfort` oppdrag betyr at kjøringen som skulle lukket prosessen
+    alt er ferdig."""
+    return _grunnlag(m, oppdragstype="rekruttering.evaluering",
+                     status="plukket")
+
+
 def _prosess(m, rt, *, frist=90):
     """Evalueringsoppdrag + prosess, gjennom den herdede veien. Setter
     konteksten selv — `krev_tenantkontekst` binder parameteret dit."""
-    oid, _ = _evaluering(m)
+    oid, _ = _claimet(m)
     _sett_kontekst(rt, TENANT)
     pid = rt.execute("SELECT opprett_rekrutteringsprosess(%s,%s,%s)",
                      (TENANT, oid, frist)).fetchone()[0]
@@ -134,7 +147,7 @@ def test_prosessen_krever_evalueringsoppdrag(migrator):
                        (TENANT, oid))
         rt.rollback()
         # Positiv kontroll i samme test: den riktige typen går.
-        oid2, _ = _evaluering(migrator)
+        oid2, _ = _claimet(migrator)
         _sett_kontekst(rt, TENANT)
         pid = rt.execute("SELECT opprett_rekrutteringsprosess(%s,%s,90)",
                          (TENANT, oid2)).fetchone()[0]
@@ -173,7 +186,7 @@ def test_prosessen_krever_m57_eiermodul(migrator):
             " AND oppdrag_id=%s", (TENANT, feil_eier)).fetchone()[0] == 0
         migrator.rollback()
         # Positiv kontroll: riktig par går.
-        oid, _ = _evaluering(migrator)
+        oid, _ = _claimet(migrator)
         _sett_kontekst(rt, TENANT)
         assert rt.execute("SELECT opprett_rekrutteringsprosess(%s,%s,90)",
                           (TENANT, oid)).fetchone()[0] is not None
@@ -210,7 +223,7 @@ def test_opprett_prosess_er_idempotent_under_kapplop(migrator):
     Samme form som `test_frigi_er_idempotent_under_kapplop` (056)."""
     import threading
 
-    oid, _ = _evaluering(migrator)
+    oid, _ = _claimet(migrator)
     a = _rt()
     b = _rt()
     try:
@@ -253,13 +266,25 @@ def test_mislykket_terminalstatus_foder_ingen_prosess(migrator):
     stedet for fristen fra faktisk avslutning — og det for data som aldri
     skulle vært skrevet.
 
-    Porten er NEGATIV, ikke `= 'utfort'` som promoteringsvakten:
-    ankeret fødes MENS kjøringen står på (modulen claimer oppdraget og
-    trenger et sted å legge parset tekst der og da). Derfor måler testen
-    BEGGE retninger — ellers ville et `utfort`-krav sett like grønt ut
-    her, samtidig som det snudde livsløpet og gjorde modulen ubrukelig.
-    """
-    for status in ("feilet", "kansellert"):
+    Codex P1, samme port én runde senere: den NEGATIVE formen var en
+    liste over tilstandene noen kom på, og `utfort` sto ikke i den. Kom
+    det FØRSTE kallet etter at kjøringen var kvittert ut, fødtes en åpen
+    prosess på et avsluttet oppdrag — og da gjelder nøyaktig skaden over,
+    bare med `utfort` i stedet for `feilet`. `opprettet` er samme klasse
+    fra den andre enden: ingen har claimet oppdraget, så ingen kommer for
+    å lukke prosessen.
+
+    Porten er derfor POSITIV: fødselen krever `plukket`, altså et aktivt
+    claimet oppdrag. Den er fortsatt IKKE `= 'utfort'` som
+    promoteringsvakten — ankeret fødes MENS kjøringen står på (modulen
+    trenger et sted å legge parset tekst der og da), og et `utfort`-krav
+    ville snudd livsløpet. Testen måler begge retninger, og i tillegg det
+    Codex ba om å bevare: den idempotente GJENLESNINGEN overlever at
+    oppdraget blir ferdig.
+
+    MUTASJONEN SOM DREPER DENNE: sett porten tilbake til
+    `status NOT IN ('feilet','kansellert')`."""
+    for status in (None, "feilet", "kansellert", "utfort"):
         oid, _ = _grunnlag(migrator, oppdragstype="rekruttering.evaluering",
                            status=status)
         rt = _rt()
@@ -269,22 +294,39 @@ def test_mislykket_terminalstatus_foder_ingen_prosess(migrator):
                 rt.execute("SELECT opprett_rekrutteringsprosess(%s,%s,90)",
                            (TENANT, oid))
             rt.rollback()
+            # ... og ingen prosess ble lagt igjen.
+            _sett_kontekst(migrator, TENANT)
+            assert migrator.execute(
+                "SELECT count(*) FROM rekrutteringsprosess WHERE tenant=%s"
+                " AND oppdrag_id=%s", (TENANT, oid)).fetchone()[0] == 0, \
+                status
+            migrator.rollback()
         finally:
             rt.close()
-    # Positiv kontroll — de LEVENDE statusene og den fullførte går. Uten
-    # denne halvdelen ville `AND o.status = 'utfort'` bestått testen.
-    for status in (None, "plukket", "utfort"):
-        oid, _ = _grunnlag(migrator, oppdragstype="rekruttering.evaluering",
-                           status=status)
-        rt = _rt()
-        try:
-            _sett_kontekst(rt, TENANT)
-            assert rt.execute(
-                "SELECT opprett_rekrutteringsprosess(%s,%s,90)",
-                (TENANT, oid)).fetchone()[0] is not None, status
-            rt.rollback()
-        finally:
-            rt.close()
+    # Positiv kontroll: det claimede oppdraget går. Uten denne halvdelen
+    # ville en port som avviser ALT bestått testen.
+    oid, _ = _claimet(migrator)
+    rt = _rt()
+    try:
+        _sett_kontekst(rt, TENANT)
+        pid = rt.execute("SELECT opprett_rekrutteringsprosess(%s,%s,90)",
+                         (TENANT, oid)).fetchone()[0]
+        assert pid is not None
+        rt.commit()
+        # GJENLESNINGEN overlever at kjøringen blir ferdig (Codex:
+        # «preserve idempotent reads of an existing process separately»).
+        # Et retry etter kvittering skal få SAMME id — det er fødselen
+        # som krever `plukket`, ikke oppslaget.
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute("UPDATE oppdrag SET status='utfort' WHERE"
+                         " tenant=%s AND id=%s", (TENANT, oid))
+        migrator.commit()
+        _sett_kontekst(rt, TENANT)
+        assert rt.execute("SELECT opprett_rekrutteringsprosess(%s,%s,90)",
+                          (TENANT, oid)).fetchone()[0] == pid
+        rt.rollback()
+    finally:
+        rt.close()
 
 
 @pg
@@ -297,7 +339,7 @@ def test_terminalstatus_under_kapplop_foder_ingen_prosess(migrator):
     alt var terminalt — nøyaktig tilstanden porten finnes for å nekte, og
     den statiske testen over kan ikke se det.
 
-    A (egen tilkobling) holder en ucommittet kansellering; B kaller
+    A (egen tilkobling) holder en ucommittet terminalovergang; B kaller
     fødselen og skal BLOKKERE på radlåsen, ikke lese forbi den. Etter As
     commit re-evaluerer PostgreSQL predikatet, raden faller ut av
     treffet, og B får en ærlig avvisning.
@@ -306,13 +348,17 @@ def test_terminalstatus_under_kapplop_foder_ingen_prosess(migrator):
     et ulåst `EXISTS`."""
     import threading
 
-    oid, _ = _grunnlag(migrator, oppdragstype="rekruttering.evaluering",
-                       status=None)
+    # PLUKKET, ikke `opprettet` (Codex P1): fødselsporten er positiv nå,
+    # og en rad som ikke matcher predikatet i det hele tatt blir aldri
+    # forsøkt låst — da ville B falt igjennom med en gang og testen målt
+    # avvisningen i stedet for LÅSEN. A tar oppdraget til `feilet`, som
+    # er den lovlige terminalovergangen fra `plukket` (005s statusmaskin).
+    oid, _ = _claimet(migrator)
     a = _rt()
     b = _rt()
     try:
         _sett_kontekst(a, TENANT)
-        a.execute("UPDATE oppdrag SET status='kansellert' WHERE tenant=%s"
+        a.execute("UPDATE oppdrag SET status='feilet' WHERE tenant=%s"
                   " AND id=%s", (TENANT, oid))
         resultat: dict = {}
 
@@ -331,7 +377,7 @@ def test_terminalstatus_under_kapplop_foder_ingen_prosess(migrator):
         t.start()
         t.join(timeout=2)
         assert t.is_alive(), \
-            "B leste forbi As ucommittede kansellering i stedet for å låse"
+            "B leste forbi As ucommittede terminalovergang i stedet for å låse"
         a.commit()
         t.join(timeout=10)
         assert not t.is_alive(), "B kom aldri gjennom etter As commit"
@@ -366,7 +412,7 @@ def test_opprett_prosess_krever_read_committed(migrator):
 
     MUTASJONEN SOM DREPER DENNE: slipp `serializable` gjennom porten
     igjen."""
-    oid, _ = _evaluering(migrator)
+    oid, _ = _claimet(migrator)
     vinner = _rt()
     try:
         _sett_kontekst(vinner, TENANT)
@@ -410,7 +456,7 @@ def test_fristen_utenfor_spennet_avvises(migrator):
     try:
         _sett_kontekst(rt, TENANT)
         for frist in (29, 366, 0, -1):
-            oid, _ = _evaluering(migrator)
+            oid, _ = _claimet(migrator)
             _sett_kontekst(rt, TENANT)
             with pytest.raises(psycopg.errors.CheckViolation):
                 rt.execute(
@@ -418,7 +464,7 @@ def test_fristen_utenfor_spennet_avvises(migrator):
                     (TENANT, oid, frist))
             rt.rollback()
         for frist in (30, 365):
-            oid, _ = _evaluering(migrator)
+            oid, _ = _claimet(migrator)
             _sett_kontekst(rt, TENANT)
             rt.execute("SELECT opprett_rekrutteringsprosess(%s,%s,%s)",
                        (TENANT, oid, frist))
@@ -472,7 +518,7 @@ def test_ankeret_fodes_kun_gjennom_funksjonen(migrator):
     # ... og forsøket feller i praksis, ikke bare i katalogen.
     rt = _rt()
     try:
-        oid, _ = _evaluering(migrator)
+        oid, _ = _claimet(migrator)
         _sett_kontekst(rt, TENANT)
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             rt.execute(
@@ -564,8 +610,11 @@ def test_fodselsporten_gjelder_ogsa_claimeren(migrator):
     ingen vakt.
 
     Målt for claimeren, altså den rollen som HAR rettigheten: feil
-    oppdragstype, feil eiermodul, terminal status og en fødsel som alt er
-    lukket — og positiv kontroll på at den lovlige fødselen fortsatt går.
+    oppdragstype, feil eiermodul, IKKE-CLAIMET status (avbrutt, ferdig og
+    ikke plukket ennå — Codex P1) og en fødsel som alt er lukket — og
+    positiv kontroll på at den lovlige fødselen fortsatt går. Backstoppen
+    skal være nøyaktig like sterk som funksjonen den backstopper; her var
+    den svakere i samme retning som funksjonen.
 
     MUTASJONEN SOM DREPER DENNE: sett triggeren tilbake til
     BEFORE UPDATE OR DELETE."""
@@ -575,10 +624,16 @@ def test_fodselsporten_gjelder_ogsa_claimeren(migrator):
                              eiermodul="m_wcag_audit")
     avbrutt, _ = _grunnlag(migrator, oppdragstype="rekruttering.evaluering",
                            status="kansellert")
-    lovlig, _ = _evaluering(migrator)
-    bakover, _ = _evaluering(migrator)
+    ferdig, _ = _grunnlag(migrator, oppdragstype="rekruttering.evaluering",
+                          status="utfort")
+    uplukket, _ = _grunnlag(migrator,
+                            oppdragstype="rekruttering.evaluering",
+                            status=None)
+    lovlig, _ = _claimet(migrator)
+    bakover, _ = _claimet(migrator)
     for oid, lukket in ((feil_type, None), (feil_eier, None),
-                        (avbrutt, None), (lovlig, "now()")):
+                        (avbrutt, None), (ferdig, None), (uplukket, None),
+                        (lovlig, "now()")):
         _sett_kontekst(migrator, TENANT)
         migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
@@ -632,7 +687,7 @@ def test_backstoppen_laser_oppdragsraden_som_funksjonen(migrator):
     av statuskolonnen er ikke i konflikt med den låsen.
 
     Samme oppsett som funksjonens kappløpstest: A holder en ucommittet
-    kansellering, B gjør claimer-INSERT-en direkte og skal BLOKKERE på
+    terminalovergang, B gjør claimer-INSERT-en direkte og skal BLOKKERE på
     radlåsen. Etter As commit re-evaluerer PostgreSQL predikatet, raden
     faller ut av treffet, og vakten avviser.
 
@@ -642,8 +697,12 @@ def test_backstoppen_laser_oppdragsraden_som_funksjonen(migrator):
 
     from db.pg import koble
 
-    oid, _ = _grunnlag(migrator, oppdragstype="rekruttering.evaluering",
-                       status=None)
+    # PLUKKET, ikke `opprettet` (Codex P1): fødselsporten er positiv nå,
+    # og en rad som ikke matcher predikatet i det hele tatt blir aldri
+    # forsøkt låst — da ville B falt igjennom med en gang og testen målt
+    # avvisningen i stedet for LÅSEN. A tar oppdraget til `feilet`, som
+    # er den lovlige terminalovergangen fra `plukket` (005s statusmaskin).
+    oid, _ = _claimet(migrator)
     a = _rt()
     # B er den direkte claimer-DML-en, og den går gjennom en EGEN
     # eierkobling med `SET LOCAL ROLE`: runtime er fratatt tabell-INSERT
@@ -653,7 +712,7 @@ def test_backstoppen_laser_oppdragsraden_som_funksjonen(migrator):
     b = koble(MIGRATOR_DSN)
     try:
         _sett_kontekst(a, TENANT)
-        a.execute("UPDATE oppdrag SET status='kansellert' WHERE tenant=%s"
+        a.execute("UPDATE oppdrag SET status='feilet' WHERE tenant=%s"
                   " AND id=%s", (TENANT, oid))
         resultat: dict = {}
 
@@ -675,7 +734,7 @@ def test_backstoppen_laser_oppdragsraden_som_funksjonen(migrator):
         t.start()
         t.join(timeout=2)
         assert t.is_alive(), \
-            "B leste forbi As ucommittede kansellering i stedet for å låse"
+            "B leste forbi As ucommittede terminalovergang i stedet for å låse"
         a.commit()
         t.join(timeout=10)
         assert not t.is_alive(), "B kom aldri gjennom etter As commit"
@@ -684,7 +743,7 @@ def test_backstoppen_laser_oppdragsraden_som_funksjonen(migrator):
         # ene er det denne testen måler.
         assert isinstance(resultat.get("feil"),
                           psycopg.errors.InsufficientPrivilege), resultat
-        assert "LEVENDE" in str(resultat["feil"]), resultat["feil"]
+        assert "AKTIVT CLAIMET" in str(resultat["feil"]), resultat["feil"]
         _sett_kontekst(migrator, TENANT)
         assert migrator.execute(
             "SELECT count(*) FROM rekrutteringsprosess WHERE tenant=%s"
@@ -944,7 +1003,7 @@ def test_forlatt_apen_prosess_reapes_etter_maks_levetid(migrator):
     rt = _rt()
     rp = None
     try:
-        oid, _ = _evaluering(migrator)
+        oid, _ = _claimet(migrator)
         pid = uuid.uuid4()
         _sett_kontekst(migrator, TENANT)
         migrator.execute(
