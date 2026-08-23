@@ -178,8 +178,19 @@ function tegn(hoved, ctx, data, okt, valgtId) {
         // og gjorde intet: funnene, kildesitatene og intervjuspørsmålene
         // i detaljpanelet var utilgjengelige for alle. Navnet er tabellens,
         // ikke flatens, og de øvrige kallerne bruker det.
+        //
+        // HVER RAD SIER HVILKEN KANDIDAT (Codex P2). Knappeteksten er
+        // «Detaljer» på hver eneste rad, og kandidat-id-en står i
+        // SØSKENCELLEN — søskentekst inngår ikke i en knapps tilgjengelige
+        // navn. En skjermleserbruker som navigerer knapp for knapp, fikk
+        // derfor N identiske «Detaljer» og ingen måte å vite hvilken
+        // kandidat hun åpnet. `tabell.js` har mekanismen for nøyaktig dette
+        // (`tilgjengeligNavn` → `aria-label`), og `policyadmin` bruker den
+        // med samme «tekst: id»-form. Den synlige teksten er uendret.
         handling: {
           tekst: t("ui.rekruttering.detaljer"),
+          tilgjengeligNavn:
+            `${t("ui.rekruttering.detaljer")}: ${kandidat.kandidat_id}`,
           paaKlikk: () => visDetalj(kandidat, poeng),
         },
       })),

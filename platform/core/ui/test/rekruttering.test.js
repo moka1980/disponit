@@ -881,3 +881,48 @@ test("Rekruttering: hver signeringsknapp har sitt eget tilgjengelige navn (port 
   const brudd = await alvorligeBrudd(hoved);
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
 });
+
+test("Rekruttering: hver detaljknapp har sitt eget tilgjengelige navn (port 29)", async () => {
+  // Codex P2: samme klasse som signeringsknappene, én rad ned. Hver rad
+  // bærer knappeteksten «Detaljer», og kandidat-id-en står i SØSKENCELLEN
+  // — som ikke inngår i knappens tilgjengelige navn. En skjermleserbruker
+  // som navigerer knapp for knapp fikk derfor N identiske «Detaljer» og
+  // ingen måte å vite hvilken kandidat hun åpnet.
+  //
+  // MUTASJONEN SOM DREPER DENNE: fjern `tilgjengeligNavn` fra radhandlingen
+  // i `rekruttering.js` — navnene faller tilbake til knappeteksten og blir
+  // like.
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": prosess() };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "tabellen kom aldri");
+
+  const knapper = [...hoved.querySelectorAll("tbody .handling-celle button")];
+  assert.equal(knapper.length, 2, "begge kandidatradene skal ha en knapp");
+  const navn = knapper.map((b) => b.getAttribute("aria-label"));
+  assert.equal(new Set(navn).size, 2,
+    `to radhandlinger deler tilgjengelig navn: ${navn.join(" / ")}`);
+  // Navnet bærer kandidat-id-en raden viser med øyet — og radene står i
+  // rangert rekkefølge, så navnet må følge SIN rad, ikke fikstureringen.
+  for (const rad of hoved.querySelectorAll("tbody tr")) {
+    const id = rad.querySelector("td").textContent;
+    const knapp = rad.querySelector(".handling-celle button");
+    assert.ok(knapp.getAttribute("aria-label").includes(id),
+      `knappen på raden for ${id} navngir ikke kandidaten`);
+  }
+  // Den synlige teksten står fortsatt der: `aria-label` supplerer cellen.
+  assert.equal(knapper[0].textContent, t("ui.rekruttering.detaljer"));
+  // … og knappen gjør fortsatt jobben sin: detaljpanelet åpnes.
+  knapper[0].click();
+  assert.ok(await vent(() => document.querySelector(".dialog.skuff")),
+    "detaljpanelet åpnet ikke");
+  const panel = document.querySelector(".dialog.skuff");
+  assert.ok(panel.textContent.includes(knapper[0].closest("tr")
+    .querySelector("td").textContent),
+    "detaljpanelet viser en annen kandidat enn knappen navnga");
+  panel.querySelector(".dialog-lukk").click();
+
+  const brudd2 = await alvorligeBrudd(hoved);
+  assert.equal(brudd2.length, 0, beskrivBrudd(brudd2));
+});
