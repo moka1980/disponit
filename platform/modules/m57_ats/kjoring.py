@@ -54,6 +54,14 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for,
                 blinding_av=blinding_av, auditrad=auditrad)
             artefakter[kandidat_id] = resultat
             oppfylt[kandidat_id] = resultat["oppfylt"]
+        # RANGERINGEN ER EN DEL AV KJØRINGEN (Codex P1). Sto den utenfor
+        # `try`, slapp `ranger`s egne kodede feil — ugyldige vekter, krav
+        # utenfor profilen, ikke-boolsk oppfyllelse — ut som RÅ
+        # `Evalueringsfeil`, mens nøyaktig samme unntakstype ble oversatt
+        # til `Kjoringsfeil` når den kom fra evalueringen én linje over.
+        # I arbeideren er det forskjellen på det rene SP-3-utfallet og en
+        # uventet arbeiderfeil.
+        rangering = evaluering.ranger(oppfylt, vekter)
     except parsing.Buntfeil as feil:
         raise Kjoringsfeil(feil.kode, fremdrift) from feil
     except evaluering.Evalueringsfeil as feil:
@@ -65,5 +73,5 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for,
         raise Kjoringsfeil(feil.kode, fremdrift) from feil
     except Exception as feil:   # modellen er fremmed kode — også dens
         raise Kjoringsfeil("modellfeil", fremdrift) from feil
-    return {"rangering": evaluering.ranger(oppfylt, vekter),
+    return {"rangering": rangering,
             "artefakter": artefakter, "fremdrift": fremdrift}

@@ -1531,3 +1531,13 @@ def test_port28_avbrutt_kjoring_promoterer_ingenting(tmp_path):
                           kandidatfelter_for=lambda m: {},
                           biasmaalinger=_MAALINGER)
     assert e.value.kode == "blinding_uten_felter"
+    # RANGERINGEN er også innenfor utfallet (Codex P1): en ugyldig vekt
+    # feller `evaluering.ranger` etter at hver kandidat er evaluert, og
+    # den feilen skal ut som KODET Kjoringsfeil — ikke som rå
+    # Evalueringsfeil bare fordi den kom fra siste steg.
+    # MUTASJONEN SOM DREPER DENNE: flytt `ranger`-kallet ut av `try`.
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": True},
+                          kandidatfelter_for=felter,
+                          biasmaalinger=_MAALINGER)
+    assert e.value.kode == "ugyldige_vekter"
