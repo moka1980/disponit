@@ -74,6 +74,14 @@ GRANT SELECT, INSERT, UPDATE ON policyutkast, aktiveringsattestasjon TO {rolle};
 -- tabellnivå-UPDATE her ville lagt kolonnen åpen igjen ved hvert deploy.
 GRANT SELECT, INSERT ON aktiveringsrunde TO {rolle};
 GRANT UPDATE (status) ON aktiveringsrunde TO {rolle};
+-- 057: M-57s kandidatlagre. Runtime leser og skriver gjennom API-veien
+-- (RLS-gated). INGEN UPDATE — eneste lovlige mutasjon er reap-overgangen,
+-- og den bor i `reap_kandidatdata` (definer). INGEN DELETE noensinne:
+-- kandidatrader reapes (payload til NULL), de slettes aldri som rader.
+GRANT SELECT, INSERT ON rekrutteringsprosess, kandidat_originaldokument,
+    kandidat_parsettekst, kandidat_evalueringsartefakt,
+    kandidat_intervjusporsmal, kandidat_utsendingsdata,
+    kandidat_avmaskering TO {rolle};
 -- Varsler: flaten leser og merker som lest; tjenesten oppretter. Senderen
 -- oppdaterer e-poststatus. Ingen DELETE — rydding er en driftsoppgave med
 -- egen rolle, ikke noe forespørselsveien skal kunne gjøre.
