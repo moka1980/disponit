@@ -916,6 +916,45 @@ def test_registeret_skiller_godkjent_fra_utrullet(m01):
     assert st.feil == [], st.feil
 
 
+#: Setninger som BARE gir mening så lenge en modul ikke er flippet. Lista er
+#: konkret med vilje: den navngir de faktiske setningene som ble stående
+#: igjen over `status: aktiv` etter flippen 2026-08-23 — ikke en grammatikk
+#: over manifestprosa, som ville vært en tilstandsmaskin over vår egen
+#: fritekst (SP-13). Nye setninger legges til når de faktisk oppstår.
+ETTERLATT_TILBAKERULLINGSNARRATIV = (
+    "FLIPPET ER TATT TILBAKE",
+    "står derfor på `ikke_i_drift`",
+    "FIRE AV SEKS PUNKTER ER BUNDET",
+    "FLIPPEDRILLEN MÅ KJØRES",
+)
+
+
+def test_aktivt_manifest_baerer_ikke_et_tilbakerullingsnarrativ():
+    """Cursor-P1 på #152: to autoriteter i samme registerfil.
+
+    Manifestet er registerets ENESTE kilde, og feltene er bare halve fila:
+    over dem står prosaen som forklarer hvorfor de står som de gjør. Da
+    m56 og m02 ble flippet til `aktiv`/`produksjon`, ble
+    #89-tilbakerullingen og blokkert-narrativet stående uendret rett over
+    de nye verdiene. En leser — menneske eller agent — som følger toppen,
+    «retter» da flippen tilbake, og det er nøyaktig feilen #89 var.
+
+    Porten er en negativ strengsjekk, ikke en tolkning av prosaen: er
+    modulen `aktiv`, kan setningene som sier at flippet IKKE har skjedd
+    ikke stå i fila. Skal en av dem bevares som historikk, må den skrives
+    om til fortid — som er hele poenget.
+    """
+    for sti in sorted(MODULROT.glob("*/manifest.yaml")):
+        tekst = sti.read_text(encoding="utf-8")
+        if (yaml.safe_load(tekst) or {}).get("status") != "aktiv":
+            continue
+        for frase in ETTERLATT_TILBAKERULLINGSNARRATIV:
+            assert frase not in tekst, (
+                f"{sti.parent.name}/manifest.yaml står `aktiv`, men bærer"
+                f" fortsatt «{frase}» — feltet og prosaen over det er to"
+                " uenige autoriteter om samme flipp")
+
+
 def test_drift_uten_aktiv_status_er_en_registerfeil():
     """Den nye invarianten: en modul kan ikke kjøre uten å være godkjent.
 

@@ -4,11 +4,13 @@
 # sagt at det skulle: mNN_-vakten (test_ui_kontrakt) tvinger dermed frem
 # den bevisste UI-oppdateringen i MODULSTATUS. Databasens modul_id er
 # fortsatt `m_wcag_audit` (vedtatt i 014c §1) og endres ikke av
-# registernavnet. Statusflippet (status/driftstilstand) er IKKE en del av
-# nummer-tildelingen — det står bak akseptporten under (rollback-punktet),
-# som før. Forsiden har derfor INGEN «I drift»-etikett for M-56: et eget
-# statusfelt i katalogen sto kort i #109 og er tatt ut igjen (Codex P1).
-# Flaten har én statusakse, og den er avledet av dette manifestet.
+# registernavnet. Statusflippet (status/driftstilstand) var IKKE en del av
+# nummer-tildelingen — det sto bak akseptporten under, og ble tatt
+# 2026-08-23 da porten var bestått. Forsidens etikett er ikke et eget
+# statusfelt: et slikt felt sto kort i katalogen i #109 og er tatt ut igjen
+# (Codex P1), så flaten har én statusakse og den er AVLEDET av dette
+# manifestet — «I drift» på M-56 kommer derfor av linjene under, ikke av en
+# redaktør.
 # OMDØPINGEN STOPPER VED kontrakt/KONTRAKT.md: den fila er hash-bundet
 # (`modulkontrakt.kontrakt_hash`, kontraktversjon 1, alt registrert), så
 # stien den nevner er den gamle med vilje. Codex P1 på #109; porten står i
@@ -25,45 +27,42 @@ id: wcag_audit
 navn: Automatisk WCAG-kontroll (controller)
 versjon: 0.1.0
 status: aktiv                  # aktiv | inaktiv | under_utvikling
-# AKSEPTPORTEN: FIRE AV SEKS PUNKTER ER BUNDET — FLIPPEDRILLEN MÅ KJØRES
-# PÅ NYTT, OG DATASETTPUNKTET MANGLER SIN LOKALE HALVDEL (049, dokumentert
-# avvik fra akseptflipp-klarsignalet §4):
+# AKSEPTPORTEN ER BESTÅTT — ALLE SEKS PUNKTER ER BUNDET, OG AKSEPTEN ER
+# SKREVET SOM EN IMMUTABEL HENDELSE 2026-08-23 (grensen
+# `m56-akseptflipp-v3`, drill_id=1):
 #
-# De fire `wcag-kontroll-v1`-punktene står `ja` med krav_id + innsjekket,
-# sha256-bundet artefakt + strukturerte `bevismaalinger` (kravet står i
+# Hvert punkt under står `ja` med krav_id + innsjekket, sha256-bundet
+# artefakt + strukturerte `bevismaalinger` (kravene står i
 # manifestskjema.KRAVGRENSER, så CI RE-MÅLER tallene ved hver kjøring).
-# Apparatet er på plass: i basen skrives aksepten som en immutabel
-# hendelse (`modulaksept`, migrasjon 049; deploy/staging/m56-aksept.py)
-# som FK-refererer drillraden, det promoterte E2E-artefaktet fra
-# NØYAKTIG den aksepterte deploymentraden (m_wcag_audit, staging,
-# wcag-r13), og én observasjon per grensepunkt.
+# I basen er aksepten én rad i `modulaksept` (migrasjon 049;
+# deploy/staging/m56-aksept.py) som FK-refererer drillraden, det
+# promoterte E2E-artefaktet fra NØYAKTIG den aksepterte deploymentraden
+# (m_wcag_audit, staging, wcag-r23), og én observasjon per grensepunkt.
 #
-# `rollback_testet` er derimot BLOKKERT: drillkjøringen 2026-08-20 13:22
-# bootet aldri rullback-releasen, så den målte fencingen — ikke om det
-# gikk an å KJØRE på den forrige releasen (Codex P1, PR #117 runde 3).
-# Skriptet er rettet; artefaktet fra den kjøringen er superseder og ikke
-# lenger bundet. Aksepten kan ikke skrives før en ny, komplett
-# drillkjøring er bundet inn her.
+# HISTORIKK, så ingen leser «retter» flippet tilbake: tre ting blokkerte
+# aksepten fram til 2026-08-22, og de ble lukket hver for seg —
 #
-# OG `syntetisk_datasett_likt_lokalt` ER BLOKKERT (Codex P2, PR #117
-# runde 10): punktet sto `ja` på én bevismåling — `maalt.avvik_mot_fasit`
-# — som generatoren utelukkende avleder av STAGING-rundens
-# `fase5_resultat`. Null avvik på staging måler ikke at datasettet er det
-# samme lokalt, og verken artefaktet eller evidensfila bærer en identitet
-# for bytene staging serverte. Begrunnelsen ved punktet sier hvilke to
-# veier som kan lukke gapet; begge krever en ny staging-runde.
-#
-# OG ETT GRENSEPUNKT MANGLER EN KILDE (Codex P1, PR #117 runde 5):
-# `egress.proxytoken_til_ikke_ekstern_lesing` hentet verdien sin fra
-# `maalt.egress_lekkasjer` — som er `port24_motormiljo`, porten som måler
-# om DISPONIT_KEK og DATABASE_URL lekker inn i browser-containerens
-# miljø. Den ber aldri om et proxytoken, for noen modul, av noen klasse,
-# så et rent containermiljø ble en grønn observasjon om en helt annen
-# invariant. Punktet står nå i `m56-aksept.py`s `UMAALTE` og BLOKKERER
-# aksepten til det får en kilde som faktisk ber om et proxytoken for en
-# ikke-`ekstern_lesing`-modul og får nei. Ingen av de seks
-# sjekklistepunktene under påberoper seg dette punktet; det er
-# akseptgrensen §12 som krever det.
+#   * `rollback_testet` var blokkert fordi drillkjøringen 2026-08-20 13:22
+#     aldri bootet rullback-releasen: den målte fencingen, ikke om det gikk
+#     an å KJØRE på den forrige releasen (Codex P1, PR #117 runde 3).
+#     Skriptet ble rettet, og drillen 2026-08-22 16:45 tok alle fire ledd i
+#     ÉN kjøring — artefaktet ved punktet er den kjøringen. 20/8-kjøringen
+#     er superseder og bindes ikke.
+#   * `syntetisk_datasett_likt_lokalt` var blokkert fordi punktet hvilte på
+#     `maalt.avvik_mot_fasit` alene, som generatoren avleder av STAGING-
+#     rundens `fase5_resultat` (Codex P2, PR #117 runde 10). Null avvik på
+#     staging måler ikke at datasettet er det samme lokalt. Gapet krevde en
+#     ny staging-runde, og den kom: punktet bæres nå av `wcag-kontroll-v2`,
+#     som måler datasett-identiteten selv.
+#   * `egress.proxytoken_til_ikke_ekstern_lesing` manglet en kilde (Codex
+#     P1, PR #117 runde 5): det lånte `maalt.egress_lekkasjer`, altså
+#     `port24_motormiljo`, som måler om DISPONIT_KEK og DATABASE_URL lekker
+#     inn i browser-containerens miljø og aldri ber om et proxytoken.
+#     Grenserevisjonen (050, BESLUTNING-AKSEPTFLIPP-049 §1) FJERNET punktet
+#     fordi mekanismen det målte ikke finnes, og erstattet det med to
+#     målbare egress-invarianter med egne kilder. `m56-aksept.py`s `UMAALTE`
+#     er derfor tom — og bygges en utstedende egress-proxy, får punktet
+#     tilbake sin egen grense.
 #
 # Flippet SKJEDDE 2026-08-23, i samme commit for begge modulene:
 # registerets konsistensregel (registry.valider — en `aktiv` modul kan
@@ -73,8 +72,8 @@ status: aktiv                  # aktiv | inaktiv | under_utvikling
 # manifest-sha b69aec8f...), og statusen under er katalogens avlesning
 # av dem — alle portene for m56 var bestått og bundet FØR flippet.
 #
-# MILJØAKSEN (når flippet skjer): aksepthendelsen binder deploymentraden
-# SLIK DEN FAKTISK KJØRER — (staging, wcag-r13); det finnes ett miljø.
+# MILJØAKSEN: aksepthendelsen binder deploymentraden SLIK DEN FAKTISK
+# KJØRER — (staging, wcag-r23); det finnes ett miljø.
 # `driftstilstand: produksjon` er katalogens sannhet om BRUK, ikke om
 # miljøetiketten; et eget produksjonsmiljø krever egen aksept med egen
 # drill (port 14 i 049).
@@ -119,7 +118,7 @@ staging_sjekkliste:
     notat: >-
       MÅLT 2026-08-18, BUNDET 2026-08-20 (049).
       På disponit-srv (release wcag-r1 — byte-identisk med den aksepterte
-      wcag-r13, alle m56-releaser deler artifact_digest af92b705…): ekte motor
+      wcag-r23, alle m56-releaser deler artifact_digest af92b705…): ekte motor
       (axe-core-4.10.3, Chromium 131.0.6778.33, docker, image
       sha256:af92b705…) gjennom hele produksjonskjeden bestilling→claim→
       motor→rapport→kvittering→promotert artefakt.
