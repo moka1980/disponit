@@ -728,6 +728,43 @@ def test_port16_blindingen_maales_pa_faktisk_input():
     assert modell2.sett[-1] == tekst and ut2["avmaskering"] == {}
 
 
+def test_port16_blinding_uten_felter_feiler_lukket():
+    """Codex P1 (eiers K2-avgjørelse): blindingen feilet ÅPENT.
+
+    Med tomme eller manglende strukturerte felter blir `avmaskering` tom,
+    og `krev_blindet` godkjenner VAKUØST — den har ingenting å lete
+    etter. Råteksten gikk dermed til modellen mens kjøringen ble
+    registrert som blindet, altså nøyaktig det motsatte av porten.
+    Et umålt utfall er et avvist utfall (SP-3): modellen kalles aldri.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `if not avmaskering`-armen i
+    `evalueringsinput`.
+
+    ÆRLIG OM DEKNINGEN: dette er det DEGENERERTE tilfellet. Det delvise
+    (`navn` uten `adresse`) passerer fortsatt og venter på B-veien —
+    målt eksplisitt i den siste asserten her, så ingen tror porten er
+    sterkere enn den er."""
+    tekst = "Kari Nordmann, 44 år, søker."
+    for tomme in ({}, {"navn": []}, {"navn": [""], "alder": []}):
+        modell = _Modell()
+        with pytest.raises(blinding.Blindingsfeil) as e:
+            evaluering.evaluer_kandidat(
+                modell, tekst, tomme, {"drift": 3},
+                biasmaalinger=_MAALINGER)
+        assert e.value.kode == "blinding_uten_felter", tomme
+        assert not modell.sett, tomme
+    # Positiv kontroll: ett ekte felt, og veien er åpen som før.
+    modell = _Modell()
+    evaluering.evaluer_kandidat(
+        modell, tekst, {"navn": ["Kari Nordmann"]}, {"drift": 3},
+        biasmaalinger=_MAALINGER)
+    assert modell.sett and "Kari Nordmann" not in modell.sett[0]
+    # … og GRENSEN for hva porten lukker: `44 år` står igjen, fordi
+    # `alder` ikke ble trukket ut. Det er den delvise lekkasjen B skal
+    # dissolvere; den er ikke lukket her, og testen sier det høyt.
+    assert "44 år" in modell.sett[0]
+
+
 def test_port16_overlappende_verdier_maskeres_lengste_forst():
     """Codex P1: sekvensiell erstatning i FELTREKKEFØLGE lot en kortere
     verdi spise starten av en lengre, slik at resten sto igjen i

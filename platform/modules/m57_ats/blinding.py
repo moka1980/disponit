@@ -2,10 +2,20 @@
 faktisk input; avskruing er en AUDITERT handling, aldri en stille
 parameter.
 
-De maskerte feltene er navngitt i katalogen («navn, kjønn, alder,
-adresse, bilde og kontaktfelt») — modulen påstår ikke anonymisering ut
-over dem. Av-maskeringstabellen er payload i `kandidat_avmaskering`
-(057) og reapes med resten.
+Løftet er PRESIST, og ordlyden er valgt for å ikke lese sterkere enn
+porten måler: modulen maskerer **de navngitte feltene i sin kanoniske
+form** — «navn, kjønn, alder, adresse, bilde og kontaktfelt» slik de
+står i de STRUKTURERTE verdiene. Den påstår ikke anonymisering ut over
+dem, og den påstår ikke å finne personalia som bare finnes i fritekst.
+En invariant som hviler på et SØK i fritekst kan ikke være absolutt:
+fire runder har målt lekkasje ut (delstrenger, versaler, NFC/NFD) og
+korrupsjon inn fra samme grense. Den absolutte formen er strukturell
+blinding — personfeltene finnes ikke i inputen i det hele tatt — og den
+er eiers ratifiserte mål (B-veien, eget issue + egen PR); til den lander
+er ordlyden over det ærlige løftet.
+
+Av-maskeringstabellen er payload i `kandidat_avmaskering` (057) og
+reapes med resten.
 """
 from __future__ import annotations
 
@@ -99,5 +109,21 @@ def evalueringsinput(tekst: str, kandidatfelter: dict[str, list[str]], *,
             raise Blindingsfeil("avskrudd_uten_auditrad")
         return tekst, {}
     blindet, avmaskering = blind(tekst, kandidatfelter)
+    # FAIL-CLOSED (Codex P1, eiers K2-avgjørelse). Med tomme eller
+    # manglende strukturerte felter ble `avmaskering` tom, `krev_blindet`
+    # godkjente VAKUØST — den har ingenting å lete etter — og råteksten
+    # gikk til modellen mens kjøringen ble registrert som blindet. En
+    # port som ikke kan feile er ikke en port; her er avviket at det ikke
+    # FINNES noe å måle, og et umålt utfall er et avvist utfall (SP-3).
+    #
+    # ÆRLIG OM HVA DETTE IKKE LUKKER: dette feller det degenererte
+    # tilfellet (ingenting å maskere), ikke det delvise. Et uttrekk som
+    # gir `navn` men taper `adresse` passerer fortsatt, like vakuøst for
+    # adressen. Fullstendighet har ingen målbar definisjon så lenge
+    # invarianten hviler på et fritekstsøk — den kommer med B-veien
+    # (strukturell blinding), som er eiers ratifiserte mål. Denne linjen
+    # er SP-3 på veien som alt finnes, ikke en femte maskeringsform.
+    if not avmaskering:
+        raise Blindingsfeil("blinding_uten_felter")
     krev_blindet(blindet, avmaskering)
     return blindet, avmaskering
