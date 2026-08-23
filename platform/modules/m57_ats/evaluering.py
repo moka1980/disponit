@@ -66,6 +66,16 @@ def ranger(kandidater: dict[str, dict[str, bool]],
         if ukjente:
             raise Evalueringsfeil("krav_utenfor_profilen",
                                   ",".join(sorted(ukjente)))
+        # Oppfyllelsen er BOOLSK, ikke sannhetsverdien til hva som helst
+        # (Codex P2). Modellutdata er ikke typesjekket noe sted, og
+        # `"false"` — den vanligste JSON-feilen en modell gjør — er en
+        # sann streng: kandidaten fikk hele kravets vekt og rangeringen
+        # ble stille feil. En verdi vi ikke kan lese er en feil, aldri et
+        # ja.
+        ulovlige = [k for k, v in oppfylt.items() if not isinstance(v, bool)]
+        if ulovlige:
+            raise Evalueringsfeil("ikke_boolsk_oppfyllelse",
+                                  ",".join(sorted(ulovlige)))
         nedbrytning = {krav: (vekter[krav] if oppfylt.get(krav) else 0)
                        for krav in vekter}
         ut.append({"kandidat_id": kandidat_id,

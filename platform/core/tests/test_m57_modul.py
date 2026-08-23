@@ -340,6 +340,14 @@ def test_rangeringen_er_poeng_med_synlige_vekter():
     assert all("prosent" not in k for k in ut[0])
     with pytest.raises(evaluering.Evalueringsfeil):
         evaluering.ranger({"k": {"ukjent_krav": True}}, {"drift": 1})
+    # Codex P2: modellutdata er ikke typesjekket, og `"false"` — den
+    # vanligste JSON-feilen en modell gjør — er en SANN streng. Uten
+    # typeporten fikk kandidaten hele vekten for et krav modellen sa nei
+    # til, og rangeringen ble stille feil.
+    for verdi in ("false", "true", 1, 0, None, [], {"a": 1}):
+        with pytest.raises(evaluering.Evalueringsfeil) as e:
+            evaluering.ranger({"k": {"drift": verdi}}, {"drift": 3})
+        assert e.value.kode == "ikke_boolsk_oppfyllelse", verdi
 
 
 def test_port27_5001_avvises_ved_validering():
