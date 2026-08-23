@@ -1735,6 +1735,55 @@ def test_feltene_flettes_i_medlemsrekkefolge_ikke_zip_rekkefolge(tmp_path):
             == forst["artefakter"]["k1"]["kildetekst"])
 
 
+def test_skraastrekaliaser_avgjores_paa_raanavnet_ikke_arkivrekkefolgen(
+        tmp_path):
+    """Codex P2: det normaliserte medlemsnavnet er ikke en entydig nøkkel.
+
+    `kjor_bunt` normaliserer `\\` til `/` for å finne kandidatmappen, og
+    sorterer så bitene på DET navnet. En bunt kan lovlig bære både
+    `k1/cv.html` og `k1\\cv.html` — buntgaten måler duplikater på RÅnavnet,
+    og de to er forskjellige — men etter normaliseringen er de samme
+    streng. Sorteringen ble da et uavgjort, og `sorted` er stabil: den
+    falt tilbake på ARKIVREKKEFØLGEN, altså nøyaktig avhengigheten C2
+    fjernet. Med ombyttede oppføringer flettes feltene i motsatt orden,
+    `blinding.blind` nummererer etter listeposisjon, og `[NAVN-1]` peker
+    på en ANNEN person: samme bunt, to ulike artefakter.
+
+    MUTASJONEN SOM DREPER DENNE: sett sorteringsnøkkelen tilbake til
+    `bit[0]` (bare det normaliserte navnet).
+    """
+    from modules.m57_ats import kjoring
+
+    def felter(medlem):
+        # Rånavnet er det eneste som skiller de to medlemmene.
+        return ({"navn": ["Ola"]} if "\\" in medlem.navn
+                else {"navn": ["Kari"]})
+
+    def kjor(katalog, filer):
+        katalog.mkdir()
+        return kjoring.kjor_bunt(
+            _bunt(katalog, filer), _Modell(), vekter={"drift": 3},
+            kandidatfelter_for=felter,
+            tekst_for=lambda m, d: d.decode("utf-8"),
+            biasmaalinger=_MAALINGER)
+
+    skraa = ("k1/cv.html", b"<p>Kari kan drift</p>")
+    bakover = ("k1\\cv.html", b"<p>Ola anbefaler Kari</p>")
+    forst = kjor(tmp_path / "forst", [skraa, bakover])
+    omvendt = kjor(tmp_path / "omvendt", [bakover, skraa])
+
+    # Begge er samme kandidat — normaliseringen gjør sin jobb …
+    assert set(forst["artefakter"]) == {"k1"}
+    # … og rånavnet avgjør rekkefølgen, så tokentildelingen er den samme
+    # uansett hvordan arkivet ble pakket («/» < «\» i tegnverdi).
+    assert forst["artefakter"]["k1"]["avmaskering"] == {
+        "[NAVN-1]": "Kari", "[NAVN-2]": "Ola"}
+    assert (omvendt["artefakter"]["k1"]["avmaskering"]
+            == forst["artefakter"]["k1"]["avmaskering"])
+    assert (omvendt["artefakter"]["k1"]["kildetekst"]
+            == forst["artefakter"]["k1"]["kildetekst"])
+
+
 def test_fremdriften_teller_hvert_medlem_ikke_bare_sjekkpunktene(tmp_path):
     """Codex P2: evidensen løy om hvor langt kjøringen kom.
 

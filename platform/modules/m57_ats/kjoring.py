@@ -136,7 +136,11 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
     # `blinding.blind` nummererte tokenene ulikt: samme dokumenter, ulik
     # `kildetekst`, ulik artefakt. Determinismen C2 innførte for teksten
     # gjelder feltene like fullt.
-    biter: dict[str, list[tuple[str, str, object]]] = {}
+    #
+    # RÅNAVNET FØLGER MED SOM SKILLETEGN (Codex P2). Biten bærer BEGGE
+    # navnene — det normaliserte og medlemmets eget — fordi det
+    # normaliserte alene ikke er en entydig nøkkel: se sorteringen under.
+    biter: dict[str, list[tuple[str, str, str, object]]] = {}
     lest = 0
     try:
         for merke, medlem, data in parsing.les_porsjonsvis(sti):
@@ -155,17 +159,30 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
             navn = medlem.navn.replace("\\", "/")
             kandidat_id = navn.split("/")[0]
             biter.setdefault(kandidat_id, []).append(
-                (navn, _tekst(tekst_for, medlem, data, fremdrift),
+                (navn, medlem.navn,
+                 _tekst(tekst_for, medlem, data, fremdrift),
                  kandidatfelter_for(medlem)))
         for kandidat_id in sorted(biter):
             # Sortert på medlemsnavn: samme bunt gir samme tekst OG samme
             # feltrekkefølge, uansett hvilken rekkefølge arkivet leverte
-            # medlemmene i. Nøkkelen er navnet alene — to biter kan ellers
+            # medlemmene i. Nøkkelen er navnene alene — to biter kan ellers
             # bli sammenlignet på feltdikten, som ikke har noen orden.
-            medlemmer = sorted(biter[kandidat_id], key=lambda bit: bit[0])
-            tekst = "\n\n".join(tekst for _, tekst, _ in medlemmer)
+            #
+            # RÅNAVNET BRYTER LIKHETEN (Codex P2). Det normaliserte navnet
+            # er IKKE entydig: en bunt kan lovlig bære både `k1/a.html` og
+            # `k1\a.html` — parsingen tar imot begge (bare traversering og
+            # endelse måles på den normaliserte formen), og linjen over
+            # gjør dem til samme navn. Da ble denne sorteringen et
+            # uavgjort, og `sorted` er stabil: rekkefølgen falt tilbake på
+            # ARKIVREKKEFØLGEN, altså nøyaktig den avhengigheten C2 fjernet.
+            # Ombyttede oppføringer ga en annen feltflettingsrekkefølge og
+            # dermed en annen tokentildeling — `[NAVN-1]` kunne peke på en
+            # annen person. Rånavnet er medlemmets egen, entydige nøkkel
+            # (buntgaten avviser duplikater av den), så det avgjør likheten.
+            medlemmer = sorted(biter[kandidat_id], key=lambda bit: bit[:2])
+            tekst = "\n\n".join(bit[2] for bit in medlemmer)
             kandidatfelter: dict = {}
-            for _, _, nye in medlemmer:
+            for *_, nye in medlemmer:
                 _flett_felter(kandidatfelter, nye)
             # EN TOM SØKNAD ER IKKE EN DÅRLIG SØKNAD (Codex P1). Porten
             # over måler bare at uttrekket ER en `str`, og en skannet pdf
