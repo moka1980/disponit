@@ -1481,3 +1481,540 @@ def test_m57_har_EN_modulidentitet_i_kontrakt_migrasjon_og_artefakt():
     # Og id-en er mappenavnet, som er `les_manifester` sitt eget fallback
     # når `id` mangler: da kan de to aldri komme fra hverandre i stillhet.
     assert manifest["id"] == MODULROT.name
+
+
+def test_port28_avbrutt_kjoring_promoterer_ingenting(tmp_path):
+    """SP-3-porten på hele kjøringen: en modell som dør på kandidat 2
+    gir et KODET feilutfall med fremdrift som evidens — og ingen
+    rangering, ingen artefakter, ikke noe delresultat å plukke fra.
+    Positiv kontroll i samme test: samme bunt uten feilen gir helheten."""
+    from modules.m57_ats import kjoring
+
+    arkiv = _bunt(tmp_path, [
+        ("k1/soknad.html", b"<p>drift hos k1</p>"),
+        ("k2/soknad.html", b"<p>drift hos k2</p>"),
+        ("k3/soknad.html", b"<p>drift hos k3</p>"),
+    ])
+
+    class _Doende(_Modell):
+        def vurder(self, tekst, vekter):
+            if "k2" in tekst:
+                raise RuntimeError("container døde")
+            return super().vurder(tekst, vekter)
+
+    # Fail-closed-blindingen krever STRUKTURERTE felter per kandidat —
+    # et tomt sett er sin egen kodede stopp (målt til slutt i testen).
+    felter = lambda m: {"navn": [f"Kandidat {m.navn.split('/')[0]}"]}
+    # Tekstuttrekket er containerens (§7/port 24) og INJISERES; her er
+    # bunten ren HTML, så uttrekkeren er en dekoding.
+    uttrekk = lambda m, d: d.decode("utf-8")
+
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, _Doende(), vekter={"drift": 3},
+                          kandidatfelter_for=felter, tekst_for=uttrekk,
+                          biasmaalinger=_MAALINGER)
+    assert e.value.kode == "modellfeil"
+    assert e.value.fremdrift, "fremdriften (evidensen) mangler i utfallet"
+    # Feilutfallet KAN ikke bære et delresultat — målt på typen, ikke på
+    # disiplin: Kjoringsfeil har ingen felter for kandidater eller lister.
+    assert set(kjoring.Kjoringsfeil.__dataclass_fields__) == \
+        {"kode", "fremdrift"}
+
+    helt = kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
+                             kandidatfelter_for=felter, tekst_for=uttrekk,
+                             biasmaalinger=_MAALINGER)
+    assert {k["kandidat_id"] for k in helt["rangering"]} == \
+        {"k1", "k2", "k3"}
+    assert helt["fremdrift"]["filer_lest"] == 3
+    # …og fail-closed-blindingen gjennom kjøringen er et KODET utfall:
+    # tomme strukturerte felter gir Kjoringsfeil, aldri rå Blindingsfeil
+    # og aldri en kjøring som "gikk" med ublindet tekst.
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
+                          kandidatfelter_for=lambda m: {},
+                          tekst_for=uttrekk,
+                          biasmaalinger=_MAALINGER)
+    assert e.value.kode == "blinding_uten_felter"
+    # RANGERINGEN er også innenfor utfallet (Codex P1): en ugyldig vekt
+    # feller `evaluering.ranger` etter at hver kandidat er evaluert, og
+    # den feilen skal ut som KODET Kjoringsfeil — ikke som rå
+    # Evalueringsfeil bare fordi den kom fra siste steg.
+    # MUTASJONEN SOM DREPER DENNE: flytt `ranger`-kallet ut av `try`.
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": True},
+                          kandidatfelter_for=felter, tekst_for=uttrekk,
+                          biasmaalinger=_MAALINGER)
+    assert e.value.kode == "ugyldige_vekter"
+
+
+def test_flere_filer_under_samme_kandidat_blir_EN_evaluering(tmp_path):
+    """Codex P1: siste medlem vant, og rekkefølgen avgjorde resultatet.
+
+    En kandidatmappe rommer både CV og søknadsbrev. Med én evaluering per
+    MEDLEM og `artefakter[kandidat_id] = resultat` overskrev filene
+    hverandre: kvalifikasjonene i den første forsvant i stillhet, og
+    hvilken som overlevde avhang av zip-medlemmenes rekkefølge.
+
+    MUTASJONEN SOM DREPER DENNE: flytt `evaluer_kandidat` tilbake inn i
+    lesesløyfa.
+    """
+    from modules.m57_ats import kjoring
+
+    arkiv = _bunt(tmp_path, [
+        ("k1/soknad.html", b"<p>Kari kan drift</p>"),
+        ("k1/cv.html", b"<p>Kari har sertifisering</p>"),
+        ("k2/soknad.html", b"<p>Ola kan drift</p>"),
+    ])
+    # Feltene er MEDLEMMETS: navnet står i søknadsbrevet, ikke i CV-en —
+    # og blindingen gjelder likevel hele mappen.
+    def felter(medlem):
+        return ({"navn": ["Kari"]} if medlem.navn == "k1/soknad.html"
+                else {"navn": ["Ola"]} if medlem.navn.startswith("k2")
+                else {})
+
+    modell = _Modell()
+    ut = kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
+                           kandidatfelter_for=felter,
+                           tekst_for=lambda m, d: d.decode("utf-8"),
+                           biasmaalinger=_MAALINGER)
+    # Tre filer lest, TO kandidater evaluert — én evaluering per mappe.
+    assert ut["fremdrift"]["filer_lest"] == 3
+    assert set(ut["artefakter"]) == {"k1", "k2"}
+    assert len(modell.sett) == 2
+    k1 = next(t for t in modell.sett if "sertifisering" in t)
+    # Begge filene er MED (ingen stille dropp) …
+    assert "drift" in k1
+    # … og navnet fra søknadsbrevet blinder også CV-ens forekomst.
+    assert "Kari" not in k1
+
+
+def test_tekstuttrekket_er_containerens_aldri_en_utf8_dekoding(tmp_path):
+    """Codex P1: pdf og docx er BINÆRE — to av de tre lovede typene.
+
+    `data.decode("utf-8", errors="replace")` returnerte alltid en streng,
+    og strengen var nettopp derfor farlig: for en docx (komprimert
+    OPC-pakke) og en pdf ga den U+FFFD-støy som modellen evaluerte som om
+    det var en søknad. Uttrekket hører hjemme i den credential-frie
+    containeren (§7/port 24), og kjøringen KREVER det inn — den gjetter
+    aldri selv, og et uttrekk som feiler er et kodet utfall.
+
+    MUTASJONEN SOM DREPER DENNE: gi `tekst_for` en default som dekoder
+    `data` som UTF-8.
+    """
+    from modules.m57_ats import kjoring
+
+    arkiv = _bunt(tmp_path, [("k1/soknad.html", b"<p>drift hos k1</p>")])
+    felter = lambda m: {"navn": ["Kandidat k1"]}
+
+    # Uten uttrekker finnes det ingen kjøring — argumentet er påkrevd.
+    with pytest.raises(TypeError):
+        kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
+                          kandidatfelter_for=felter,
+                          biasmaalinger=_MAALINGER)
+
+    # Modellen ser NØYAKTIG det uttrekkeren ga — ikke bytene fra arkivet.
+    modell = _Modell()
+    kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
+                      kandidatfelter_for=felter,
+                      tekst_for=lambda m, d: "uttrukket drift-tekst",
+                      biasmaalinger=_MAALINGER)
+    assert modell.sett == ["uttrukket drift-tekst"]
+
+    # Et uttrekk som feiler (ødelagt pdf) er SP-3s kodede utfall, ikke en
+    # rå bibliotekfeil ut av modulen …
+    def _doende_uttrekk(medlem, data):
+        raise ValueError("pdf-en er ødelagt")
+
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
+                          kandidatfelter_for=felter,
+                          tekst_for=_doende_uttrekk,
+                          biasmaalinger=_MAALINGER)
+    assert e.value.kode == "tekstuttrekk_feilet"
+    # … og en uttrekker som gir tilbake bytene sine er samme feil: da
+    # hadde modellen fått binærstøyen igjen, bare via en annen dør.
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
+                          kandidatfelter_for=felter,
+                          tekst_for=lambda m, d: d,
+                          biasmaalinger=_MAALINGER)
+    assert e.value.kode == "tekstuttrekk_feilet"
+
+
+def test_tomt_tekstuttrekk_er_kodet_feil_ikke_en_tom_vurdering(tmp_path):
+    """Codex P1: `isinstance(tekst, str)` slipper `""` og bare blanktegn.
+
+    En skannet pdf uten OCR, en docx uten lesbare avsnitt og en html som
+    bare er markup gir alle en STRENG — bare uten innhold. Modellen får
+    da ingenting å vurdere, svarer skjemakomplett «ingen krav oppfylt»,
+    og det blir en VELLYKKET artefakt: kandidaten rangeres nederst som om
+    søknaden hennes var tom, uten at noen får vite at det var uttrekket
+    som feilet. Kravet måles på den SAMLEDE teksten per kandidat, ikke
+    per fil: et tomt søknadsbrev ved siden av en full CV er en helt
+    normal mappe.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `if not tekst.strip()`-porten i
+    `kjor_bunt`.
+    """
+    from modules.m57_ats import kjoring
+
+    felter = lambda m: {"navn": ["Kandidat k1"]}
+    tomt = tmp_path / "tomt"
+    tomt.mkdir()
+    arkiv = _bunt(tomt, [("k1/soknad.html", b"<p>drift hos k1</p>")])
+
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
+                          kandidatfelter_for=felter,
+                          tekst_for=lambda m, d: "   \n\t ",
+                          biasmaalinger=_MAALINGER)
+    assert e.value.kode == "tekstuttrekk_feilet"
+    # Stoppen er FØR modellen: ingen tom vurdering ble laget.
+    assert modell.sett == []
+
+    # … men ett tomt medlem i en mappe som ellers har tekst, er ingen
+    # feil — kravet gjelder kandidaten, ikke fila.
+    delvis = tmp_path / "delvis"
+    delvis.mkdir()
+    arkiv2 = _bunt(delvis, [
+        ("k1/soknad.html", b"<p>tom</p>"),
+        ("k1/cv.html", b"<p>drift</p>"),
+    ])
+    ut = kjoring.kjor_bunt(
+        arkiv2, _Modell(), vekter={"drift": 3},
+        kandidatfelter_for=felter,
+        tekst_for=lambda m, d: ("" if m.navn.endswith("soknad.html")
+                                else "drift i CV-en"),
+        biasmaalinger=_MAALINGER)
+    assert set(ut["artefakter"]) == {"k1"}
+
+
+def test_feltene_flettes_i_medlemsrekkefolge_ikke_zip_rekkefolge(tmp_path):
+    """Codex P2: teksten var determinisert, feltene var det ikke.
+
+    C2 sorterte tekstbitene på medlemsnavn nettopp for at samme bunt skal
+    gi samme resultat uansett hvordan arkivet ble pakket. Feltene ble
+    likevel flettet i lesesløyfa — altså i ZIP-rekkefølge. Bidro to filer
+    for samme kandidat ulike verdier til samme maskerte felt, ga en
+    ombyttet arkivrekkefølge en annen listerekkefølge, og `blinding.blind`
+    nummererer tokenene etter listeposisjon: `[NAVN-1]`/`[NAVN-2]` byttet
+    plass, `kildetekst` ble en annen streng, og artefakten avhang igjen av
+    medlemsrekkefølgen.
+
+    MUTASJONEN SOM DREPER DENNE: flytt `_flett_felter` tilbake inn i
+    lesesløyfa.
+    """
+    from modules.m57_ats import kjoring
+
+    def felter(medlem):
+        return ({"navn": ["Kari"]} if medlem.navn.endswith("cv.html")
+                else {"navn": ["Ola"]})
+
+    def kjor(katalog, filer):
+        katalog.mkdir()
+        return kjoring.kjor_bunt(
+            _bunt(katalog, filer), _Modell(), vekter={"drift": 3},
+            kandidatfelter_for=felter,
+            tekst_for=lambda m, d: d.decode("utf-8"),
+            biasmaalinger=_MAALINGER)
+
+    a = ("k1/a_cv.html", b"<p>Kari kan drift</p>")
+    b = ("k1/b_soknad.html", b"<p>Ola anbefaler Kari</p>")
+    forst = kjor(tmp_path / "forst", [a, b])
+    omvendt = kjor(tmp_path / "omvendt", [b, a])
+
+    # Samme dokumenter, motsatt arkivrekkefølge — samme tokentildeling …
+    assert forst["artefakter"]["k1"]["avmaskering"] == {
+        "[NAVN-1]": "Kari", "[NAVN-2]": "Ola"}
+    assert (omvendt["artefakter"]["k1"]["avmaskering"]
+            == forst["artefakter"]["k1"]["avmaskering"])
+    # … og dermed nøyaktig samme kildetekst, som er strengen funnenes
+    # [start:slutt] indekserer.
+    assert (omvendt["artefakter"]["k1"]["kildetekst"]
+            == forst["artefakter"]["k1"]["kildetekst"])
+
+
+def test_skraastrekaliaser_avgjores_paa_raanavnet_ikke_arkivrekkefolgen(
+        tmp_path):
+    """Codex P2: det normaliserte medlemsnavnet er ikke en entydig nøkkel.
+
+    `kjor_bunt` normaliserer `\\` til `/` for å finne kandidatmappen, og
+    sorterer så bitene på DET navnet. En bunt kan lovlig bære både
+    `k1/cv.html` og `k1\\cv.html` — buntgaten måler duplikater på RÅnavnet,
+    og de to er forskjellige — men etter normaliseringen er de samme
+    streng. Sorteringen ble da et uavgjort, og `sorted` er stabil: den
+    falt tilbake på ARKIVREKKEFØLGEN, altså nøyaktig avhengigheten C2
+    fjernet. Med ombyttede oppføringer flettes feltene i motsatt orden,
+    `blinding.blind` nummererer etter listeposisjon, og `[NAVN-1]` peker
+    på en ANNEN person: samme bunt, to ulike artefakter.
+
+    MUTASJONEN SOM DREPER DENNE: sett sorteringsnøkkelen tilbake til
+    `bit[0]` (bare det normaliserte navnet).
+    """
+    from modules.m57_ats import kjoring
+
+    def felter(medlem):
+        # Rånavnet er det eneste som skiller de to medlemmene.
+        return ({"navn": ["Ola"]} if "\\" in medlem.navn
+                else {"navn": ["Kari"]})
+
+    def kjor(katalog, filer):
+        katalog.mkdir()
+        return kjoring.kjor_bunt(
+            _bunt(katalog, filer), _Modell(), vekter={"drift": 3},
+            kandidatfelter_for=felter,
+            tekst_for=lambda m, d: d.decode("utf-8"),
+            biasmaalinger=_MAALINGER)
+
+    skraa = ("k1/cv.html", b"<p>Kari kan drift</p>")
+    bakover = ("k1\\cv.html", b"<p>Ola anbefaler Kari</p>")
+    forst = kjor(tmp_path / "forst", [skraa, bakover])
+    omvendt = kjor(tmp_path / "omvendt", [bakover, skraa])
+
+    # Begge er samme kandidat — normaliseringen gjør sin jobb …
+    assert set(forst["artefakter"]) == {"k1"}
+    # … og rånavnet avgjør rekkefølgen, så tokentildelingen er den samme
+    # uansett hvordan arkivet ble pakket («/» < «\» i tegnverdi).
+    assert forst["artefakter"]["k1"]["avmaskering"] == {
+        "[NAVN-1]": "Kari", "[NAVN-2]": "Ola"}
+    assert (omvendt["artefakter"]["k1"]["avmaskering"]
+            == forst["artefakter"]["k1"]["avmaskering"])
+    assert (omvendt["artefakter"]["k1"]["kildetekst"]
+            == forst["artefakter"]["k1"]["kildetekst"])
+
+
+def test_fremdriften_teller_hvert_medlem_ikke_bare_sjekkpunktene(tmp_path):
+    """Codex P2: evidensen løy om hvor langt kjøringen kom.
+
+    `les_porsjonsvis` leverer et fremdriftsmerke bare hver 200. fil og på
+    det siste medlemmet. Sto `fremdrift` stille mellom merkene, meldte et
+    utfall på fil nr. 3 av 4 `filer_lest: 0` — og etter en porsjonsgrense
+    kunne det underrapportere med opptil 199. Feltet er kontraktens
+    EVIDENS for hvor langt kjøringen kom (§7); da må det telle det som
+    faktisk er lest.
+
+    MUTASJONEN SOM DREPER DENNE: sett `fremdrift = merke` bak
+    `if merke:` igjen, uten den egne medlemstelleren.
+    """
+    from modules.m57_ats import kjoring
+
+    arkiv = _bunt(tmp_path, [
+        ("k1/a.html", b"<p>drift</p>"),
+        ("k2/b.html", b"<p>drift</p>"),
+        ("k3/c.html", b"<p>drift</p>"),
+        ("k4/d.html", b"<p>drift</p>"),
+    ])
+
+    def _uttrekk(medlem, data):
+        # Feiler på det TREDJE medlemmet — før det avsluttende merket.
+        if medlem.navn == "k3/c.html":
+            raise ValueError("pdf-en er ødelagt")
+        return data.decode("utf-8")
+
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
+                          kandidatfelter_for=lambda m: {"navn": ["N"]},
+                          tekst_for=_uttrekk, biasmaalinger=_MAALINGER)
+    assert e.value.kode == "tekstuttrekk_feilet"
+    assert e.value.fremdrift["filer_lest"] == 3, (
+        "evidensen skal si at tre medlemmer var lest da det røk, ikke 0")
+
+
+def test_lesefeil_paa_lageret_tilskrives_ikke_modellen(tmp_path, monkeypatch):
+    """Codex P2: en lagringsutfall ble meldt som «modellfeil».
+
+    `les_porsjonsvis` slipper MED VILJE en `OSError` med errno gjennom som
+    seg selv — en lesefeil på disk eller nettlager er drift, ikke en
+    påstand om kundens bunt. Catch-allen i `kjor_bunt` fanget den likevel
+    og ga den koden `modellfeil`, så både arbeiderens retry og
+    driftsdiagnostikken tilskrev MODELLEN et lagringsavbrudd. Koden er
+    utfallets eneste data (SP-3), og da må den peke på det som faktisk
+    røk.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `except OSError`-grenen i
+    `kjor_bunt`, så lesefeilen faller til catch-allen igjen.
+    """
+    from modules.m57_ats import kjoring
+
+    def _strom_som_roeyker(sti, **kw):
+        yield ({"filer_lest": 1, "filer_totalt": 2, "byte_lest": 18},
+               parsing.Medlem("k1/cv.html", 18), b"<p>drift</p>")
+        # Nøyaktig formen `les_porsjonsvis` lar passere: errno er satt.
+        raise OSError(errno.EIO, "Input/output error")
+
+    monkeypatch.setattr(kjoring.parsing, "les_porsjonsvis",
+                        _strom_som_roeyker)
+    arkiv = _bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>")])
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
+                          kandidatfelter_for=lambda m: {"navn": ["N"]},
+                          tekst_for=lambda m, d: d.decode("utf-8"),
+                          biasmaalinger=_MAALINGER)
+    assert e.value.kode == "infrastrukturfeil", (
+        "en lesefeil på lageret skal ikke bære modellens kode")
+    assert isinstance(e.value.__cause__, OSError)
+    # Evidensen står: ett medlem var lest da det røk.
+    assert e.value.fremdrift["filer_lest"] == 1
+
+    # Den ERRNO-LØSE formen er noe annet — den er dekompressorens, og
+    # `parsing` oversetter den til `korrupt_bunt` før den kommer hit. Kommer
+    # den likevel, er den fremmed kode og skal IKKE bli en driftssak.
+    def _strom_uten_errno(sti, **kw):
+        yield ({"filer_lest": 1, "filer_totalt": 2, "byte_lest": 18},
+               parsing.Medlem("k1/cv.html", 18), b"<p>drift</p>")
+        raise OSError("Invalid data stream")
+
+    monkeypatch.setattr(kjoring.parsing, "les_porsjonsvis",
+                        _strom_uten_errno)
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
+                          kandidatfelter_for=lambda m: {"navn": ["N"]},
+                          tekst_for=lambda m, d: d.decode("utf-8"),
+                          biasmaalinger=_MAALINGER)
+    assert e.value.kode == "modellfeil"
+
+
+def test_feltuttrekket_tilskrives_ikke_modellen(tmp_path):
+    """Codex P2: en vranglest strukturert søknad ble meldt som «modellfeil».
+
+    `kandidatfelter_for` er INJISERT fremmed kode på nøyaktig samme måte
+    som `tekst_for` — men bare `tekst_for` hadde vakt. Feilet feltuttrekket
+    på en søknadsform det ikke forsto, falt unntaket til catch-allen og kom
+    ut med modellens kode, selv om modellen aldri ble kalt. Da retryer
+    arbeideren mot en deterministisk inndatafeil, og driftsdiagnostikken
+    leter etter modellen som aldri kjørte.
+
+    MUTASJONEN SOM DREPER DENNE: kall `kandidatfelter_for(medlem)` direkte
+    i lesesløyfa igjen, uten `_felter`.
+    """
+    from modules.m57_ats import kjoring
+
+    arkiv = _bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>")])
+
+    def _doende_felter(medlem):
+        raise ValueError("ukjent søknadsform")
+
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
+                          kandidatfelter_for=_doende_felter,
+                          tekst_for=lambda m, d: d.decode("utf-8"),
+                          biasmaalinger=_MAALINGER)
+    assert e.value.kode == "feltuttrekk_feilet", (
+        "et feltuttrekk som feiler skal ikke bære modellens kode")
+    assert isinstance(e.value.__cause__, ValueError)
+    # Stoppen er FØR modellen — den ble aldri spurt.
+    assert modell.sett == []
+    # Evidensen står: medlemmet var lest da det røk.
+    assert e.value.fremdrift["filer_lest"] == 1
+
+
+def test_bunt_uten_kandidater_er_kodet_feil_ikke_tomt_resultat(tmp_path):
+    """Codex P2: en bunt uten medlemmer ble et VELLYKKET tomt utfall.
+
+    En tom zip — og en som bare bærer katalogoppføringer — passerer hele
+    arkivgaten og yielder ingenting. Da ble `biter` tom, evalueringssløyfa
+    kjørte aldri, `ranger({}, ...)` ga en tom liste, og `kjor_bunt`
+    RETURNERTE: rangering `[]`, artefakter `{}`. Oppdraget «lyktes» uten at
+    én eneste søknad var vurdert, og promoteringsvakten i 056 fikk en gyldig
+    tom liste å slippe videre. Payload-skjemaet sier `antall_soknader` er
+    1–5000, så null kandidater er per definisjon en ugyldig bunt, og en
+    ugyldig bunt er SP-3s kodede utfall.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `if not biter`-porten i `kjor_bunt`.
+    """
+    from modules.m57_ats import kjoring
+
+    def _kjor(arkiv, modell):
+        return kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
+                                 kandidatfelter_for=lambda m: {"navn": ["N"]},
+                                 tekst_for=lambda m, d: d.decode("utf-8"),
+                                 biasmaalinger=_MAALINGER)
+
+    tom = tmp_path / "tom.zip"
+    with zipfile.ZipFile(tom, "w") as zf:
+        pass
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        _kjor(tom, modell)
+    assert e.value.kode == "tom_bunt"
+    # Utfallet bærer ingen halv liste — evidensen er alt Kjoringsfeil har.
+    assert not hasattr(e.value, "rangering")
+    assert modell.sett == []
+
+    # Bare katalogoppføringer er samme sak: gaten går gjennom, og strømmen
+    # leverer ingen medlemmer.
+    bare_kataloger = tmp_path / "kataloger.zip"
+    with zipfile.ZipFile(bare_kataloger, "w") as zf:
+        zf.writestr(zipfile.ZipInfo("k1/"), b"")
+        zf.writestr(zipfile.ZipInfo("k2/"), b"")
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        _kjor(bare_kataloger, _Modell())
+    assert e.value.kode == "tom_bunt"
+
+    # … og én kandidat er nok: porten måler NULL, ikke «få».
+    ut = _kjor(_bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>")]), _Modell())
+    assert set(ut["artefakter"]) == {"k1"}
+
+
+def test_ugyldig_feltform_i_SENERE_fil_felles_ogsaa(tmp_path):
+    """Codex P1: flettingen skjulte en ugyldig form bak en gyldig rad.
+
+    CV-en leverer `{"kontakt": ["k@eksempel.no"]}` — velformet, og raden
+    blir en liste. Søknadsbrevet leverer så SAMME felt som en bar streng,
+    `{"kontakt": "annen@eksempel.no"}`. Formen er nettopp den `blind`
+    skal felle (en streng er iterbar, så hvert TEGN ville blitt maskert),
+    men fordi raden alt fantes som liste, ble den senere verdien stille
+    forkastet: `blind` fikk aldri se den, kunne ikke reise
+    `ugyldig_maskeringsform`, og adressen som bare sto i søknadsbrevet ble
+    med UMASKERT inn i den samlede teksten til modellen. Fail-closed må
+    måle den VERSTE formen feltet kom i, ikke den første.
+
+    MUTASJONEN SOM DREPER DENNE: sett betingelsen tilbake til
+    `if rad is None:` i `_flett_felter`.
+    """
+    from modules.m57_ats import kjoring
+
+    forst = tmp_path / "forst"
+    forst.mkdir()
+    arkiv = _bunt(forst, [
+        ("k1/cv.html", b"<p>drift, k@eksempel.no</p>"),
+        ("k1/soknad.html", b"<p>drift, annen@eksempel.no</p>"),
+    ])
+
+    def felter(medlem):
+        if medlem.navn.endswith("cv.html"):
+            return {"kontakt": ["k@eksempel.no"]}
+        return {"kontakt": "annen@eksempel.no"}
+
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
+                          kandidatfelter_for=felter,
+                          tekst_for=lambda m, d: d.decode("utf-8"),
+                          biasmaalinger=_MAALINGER)
+    assert e.value.kode == "ugyldig_maskeringsform"
+    # Og stoppen er FØR modellen: ingen tekst forlot kjøringen.
+    assert modell.sett == []
+
+    # Rekkefølgen skal ikke avgjøre: den ugyldige formen FØRST felles
+    # like fullt, og en gyldig etterfølger vasker den ikke bort.
+    omvendt = tmp_path / "omvendt"
+    omvendt.mkdir()
+    arkiv2 = _bunt(omvendt, [
+        ("k1/a_soknad.html", b"<p>drift, annen@eksempel.no</p>"),
+        ("k1/b_cv.html", b"<p>drift, k@eksempel.no</p>"),
+    ])
+
+    def felter_omvendt(medlem):
+        if medlem.navn.endswith("b_cv.html"):
+            return {"kontakt": ["k@eksempel.no"]}
+        return {"kontakt": "annen@eksempel.no"}
+
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv2, _Modell(), vekter={"drift": 3},
+                          kandidatfelter_for=felter_omvendt,
+                          tekst_for=lambda m, d: d.decode("utf-8"),
+                          biasmaalinger=_MAALINGER)
+    assert e.value.kode == "ugyldig_maskeringsform"

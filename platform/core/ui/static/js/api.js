@@ -148,6 +148,17 @@ async function _muter(sti, metode, kropp, idempotensnokkel) {
 // genereres en fersk (for engangs-klikk der duplikat ikke er en risiko).
 export const hentMaler = () => hentJson("/v1/policymaler");
 
+// M-57 (§6/§8): blinding av/på er en AUDITERT handling — begrunnelsen er
+// del av kroppen, og serveren skriver revisjonsraden. Signeringen binder
+// INNHOLDSHASHEN, aldri bare listen: signataren skal signere nøyaktig de
+// bytene dialogen viste kortformen av (056s signer_utsendingsliste-form).
+export const settRekrutteringBlinding = (prosessId, av, begrunnelse, idem) =>
+  _muter(`/v1/rekruttering/prosesser/${encodeURIComponent(prosessId)}/blinding`,
+         "POST", { av, begrunnelse }, idem || nyIdempotensnokkel());
+export const signerRekrutteringsliste = (listeId, innholdHash, idem) =>
+  _muter(`/v1/rekruttering/lister/${encodeURIComponent(listeId)}/signer`,
+         "POST", { innhold_hash: innholdHash }, idem || nyIdempotensnokkel());
+
 // Hvilken policy GJELDER i dag? Editoren kan ikke bare anta at malens id er
 // dagens policy-id: aktivering er per `policy_id`, så en ny id lager en NY
 // policyserie ved siden av den som gjelder i stedet for å avløse den — og
