@@ -97,6 +97,19 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
     aldri gjette det: uten en uttrekker finnes det ingen kjøring. Feiler
     uttrekket, er det et kodet utfall som alt annet
     (`tekstuttrekk_feilet`), ikke en rå bibliotekfeil.
+
+    KJENT BEGRENSNING — MINNET ER IKKE BUNDET (Codex G6/P1, utsatt til
+    #173). `biter` holder hvert utpakkede dokument til hele arkivet er
+    lest, og returverdien bærer `kildetekst` for HVER kandidat:
+    topppunktet er Θ(hele buntens tekst), uansett hvor små porsjoner
+    arkivgaten leser i. En bunt som passerte hver eneste arkivgrense kan
+    derfor fortsatt OOM-drepe arbeideren. Det lar seg ikke lukke smått:
+    å binde minnet krever at RETURKONTRAKTEN over endres — artefaktene
+    strømmes til kandidatlagrene (057) underveis, og retur blir
+    referanser + rangering, med SP-3-atomisiteten flyttet fra minnet til
+    promoteringsvakten som alt står i 056. Det er ny maskin, og K1 sier
+    egen PR. Eierens K2-dom (23/8) er valg 1, og den bærer HARD SPERRE:
+    ingen kjøring mot reelle bunter i full størrelse før #173 er landet.
     """
     artefakter: dict[str, dict] = {}
     oppfylt: dict[str, dict] = {}
@@ -107,11 +120,13 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
     # forsvant i stillhet, og rangeringen avhang av zip-medlemmenes
     # rekkefølge. Mappen samles derfor først og evalueres én gang.
     #
-    # Om minnet: tekstbitene holdes til evalueringen, men det er ingen ny
+    # Om minnet: tekstbitene holdes til evalueringen, og det er ingen ny
     # størrelsesorden — `evaluer_kandidat` returnerer `kildetekst` per
-    # kandidat, så resultatet bærer allerede hele buntens tekst. Selve
-    # STRØMMINGEN er uendret: arkivgatens grenser måles fortsatt per
-    # medlem under lesing, aldri på en utpakket bunt.
+    # kandidat, så resultatet bærer allerede hele buntens tekst. Det er
+    # nettopp DET som er G6 (se docstringen): topppunktet er ubundet i
+    # begge ender, og #173 binder begge ved å strømme artefaktene.
+    # Selve STRØMMINGEN er uendret: arkivgatens grenser måles fortsatt
+    # per medlem under lesing, aldri på en utpakket bunt.
     #
     # Biten er (medlemsnavn, tekst, felter): FELTENE FØLGER MEDLEMMET SITT
     # HELE VEIEN (Codex P2). Teksten ble sortert på medlemsnavn her nede,
