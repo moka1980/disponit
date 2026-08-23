@@ -80,6 +80,15 @@ APPEND_ONLY_TRIGGERE = (
     ("utsendingsliste", "utsendingsliste_append_only"),
     ("utsendingssignatur", "utsendingssignatur_append_only"),
     ("utsendingsfrigivelse", "utsendingsfrigivelse_append_only"),
+    # 057: kandidatlagrene reapes (payload til NULL), men rader slettes
+    # aldri — så også de må skrus av for at oppryddingen skal komme til.
+    ("rekrutteringsprosess", "rekrutteringsprosess_vakt"),
+    ("kandidat_originaldokument", "kandidat_originaldokument_vakt"),
+    ("kandidat_parsettekst", "kandidat_parsettekst_vakt"),
+    ("kandidat_evalueringsartefakt", "kandidat_evalueringsartefakt_vakt"),
+    ("kandidat_intervjusporsmal", "kandidat_intervjusporsmal_vakt"),
+    ("kandidat_utsendingsdata", "kandidat_utsendingsdata_vakt"),
+    ("kandidat_avmaskering", "kandidat_avmaskering_vakt"),
     ("reparasjonsoperasjoner", "reparasjon_vakt"),
     # PR-007: bevis og konflikt er append-only, generasjonen har
     # overgangsvakt. Alle tre nekter DELETE — som de skal.
@@ -157,6 +166,13 @@ RYDDETABELLER = ("bestillingsplan_tick", "bestillingsplan_vindu",
                  # FØR oppdragene.
                  "utsendingsfrigivelse", "utsendingssignatur",
                  "utsendingsliste",
+                 # 057: kandidatlagrene peker på prosessen (og parset
+                 # tekst på originaldokumentet), prosessen på oppdraget —
+                 # barna først, ankeret sist, alt FØR oppdragene.
+                 "kandidat_parsettekst", "kandidat_originaldokument",
+                 "kandidat_evalueringsartefakt", "kandidat_intervjusporsmal",
+                 "kandidat_utsendingsdata", "kandidat_avmaskering",
+                 "rekrutteringsprosess",
                  "oppdrag", "reparasjonsoperasjoner", "unntak",
                  "revisjonslogg", "attestasjon_jti", "idempotens",
                  # `policy_hode` FØR `policyer`: pekeren har FK dit.

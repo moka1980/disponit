@@ -377,6 +377,14 @@ def _kombinasjon_lovlig(art: str, ev: str, sen: bool, konflikt: bool) -> bool:
     return False
 
 
+#: Leseflaten DETTE endepunktet er — `ui/static/js/flater/rapport.js`.
+#: `rapportflate` på oppdragstypen navngir hvilken rendrer som kan vise
+#: rapportformen; her står navnet på den ene rendreren denne veien
+#: serverer, så filteret under kan sammenligne verdier i stedet for å
+#: spørre om feltet i det hele tatt er satt.
+RAPPORTFLATE = "wcag"
+
+
 def rapport_detalj(tjeneste, request: Request) -> Response:
     """GET /v1/rapport/{oppdrag_id} — den promoterte WCAG-rapporten (038 §7).
 
@@ -405,9 +413,26 @@ def rapport_detalj(tjeneste, request: Request) -> Response:
         # registreringen skriver registerraden fra — så en ny
         # rapportbærende type blir lesbar ved å DEKLARERE seg, ikke ved at
         # noen husker å utvide en liste her.
+        # … og bare typer med DENNE leseflaten (Codex P2). Å bære en
+        # rapportartefakttype er ikke det samme som å ha en konsument:
+        # `rapportInnhold` på flaten dereferer WCAG-formen med en gang,
+        # så en ny rapportbærende kontrakt uten flate ville fått 200 her
+        # og feilet under rendring hos klienten. En type uten flate er
+        # ikke lesbar her ennå, og 404 er det ærlige svaret.
+        #
+        # `rapportflate` er en DISKRIMINATOR, ikke en boolsk (Codex P2).
+        # Leddet spurte bare om feltet var satt, og da var det bare M-57s
+        # manglende flate som holdt M-57-rapporten unna WCAG-rendreren.
+        # Den dagen CP4 gir modulen sin egen flate, ville `"ats"` blitt
+        # servert hit igjen — nøyaktig 200-og-feiler-under-rendring dette
+        # leddet ble lagt til for å hindre, og med den TAUSESTE mulige
+        # utløseren: at en helt annen kontrakt fylte ut sitt eget felt.
+        # En ny flate blir lesbar ved å få sin EGEN vei, ikke ved å arve
+        # denne.
         par = [(navn, t.rapport_artefakttype)
                for navn, t in oppdragskontrakt.OPPDRAGSTYPER.items()
-               if t.rapport_artefakttype is not None]
+               if t.rapport_artefakttype is not None
+               and t.rapportflate == RAPPORTFLATE]
         rad = conn.execute(
             "SELECT a.artefakt_id, a.ciphertext, a.nonce, a.dek_ref,"
             " a.promotert_ts, a.artefakttype"

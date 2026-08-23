@@ -37,6 +37,8 @@ export const MODULSTATUS = {
   // veier. Manifestet (denne flatens eneste kilde) sier
   // aktiv/produksjon.
   56: "i_drift",
+  57: "bygges",     // m57_ats: under_utvikling, ikke_i_drift — flippes
+                    // av M-57-aksepten, aldri av en byggemilepæl
 };
 
 // Status står IKKE her: modulene beskriver navn, fase og tekst, mens
@@ -73,6 +75,12 @@ const MODULER = [
     navn_nokkel: "site.modul.m56.navn",
     fase_nokkel: "site.fase.autopiloter",
     tekst_nokkel: "site.modul.m56.tekst",
+  },
+  {
+    id: 57,
+    navn_nokkel: "site.modul.m57.navn",
+    fase_nokkel: "site.fase.autopiloter",
+    tekst_nokkel: "site.modul.m57.tekst",
   },
 ];
 

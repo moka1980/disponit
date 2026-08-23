@@ -286,6 +286,64 @@ KRAVGRENSER["m02-fordeling-v1"] = {
     "krev_sett_sha_lik_innsjekket": True,
 }
 
+#: M-57-klarsignalet §10, registrert FØR bygging (§0). Hver numeriske
+#: invariant måles som et PAR: `<navn>_forsok` (antall ganger bruddet ble
+#: FORSØKT konstruert) og `<navn>_brudd` (antall som slapp gjennom).
+#: Grensen er null brudd OG minst ett forsøk — en port som aldri kjørte
+#: har ikke målt noe (feedback: en fraværstest går grønn på søppel;
+#: samme form som `min_robots_5xx_krav` og `min_egress_motormiljo_maalt`).
+M57_INVARIANTER: tuple[str, ...] = (
+    # Sikkerhetsinvariantene (§10 første liste)
+    "utsending_uten_signaturkjede",
+    "liste_signert_versjon_endret",
+    "serie_to_signerte_versjoner",
+    "liste_forelder_i_annen_serie",
+    "ttl_persondata_funnet_etter_reaping",
+    "blinding_maskert_felt_i_modellinput",
+    "utsending_modellgenerert_fritekst",
+    "arkiv_utpakking_utenfor_grense",
+    # Øvrige (§10 andre liste)
+    "oppdrag_frigivelse_id_endret",
+    "oppdrag_frigivelse_pa_annen_opprinnelse",
+    "serie_forgrenet_historikk",
+    "serie_uten_entydig_rot",
+    "funn_uten_kildereferanse",
+    "blinding_avskrudd_uten_auditrad",
+    "bias_maling_mangler_for_digest",
+    "ttl_lager_utenfor_kandidatgrensen",
+    "bestilling_over_5000_akseptert",
+    "kjoring_delvis_resultat_promotert",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m57-v1"] = {
+    # Settet er PINNET her, ikke avledet av artefaktet: et artefakt som
+    # utelater en invariant skal felles på fraværet, ikke definere det
+    # bort. «Et punkt uten definert, målbar grense regnes som nei» (§10).
+    "invarianter": M57_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    # De to ja-punktene: bokstavelig `true`, alt annet er nei.
+    "krav_ja": ("ui_tastaturgjennomgang_dokumentert",
+                "ddl_begge_kjoringer_gronne"),
+    # YTELSEN ER EN MÅLING, IKKE ET JA-PUNKT (Codex P1).
+    # `staging_sjekkliste.ytelse_bestatt` peker på `m57-v1`, men grensen
+    # bar bare invariantpar og to booleans: et skjemagyldig, grønt
+    # artefakt kunne krysse av for ytelse uten at noen hadde kjørt en
+    # eneste søknad, og en modul som ikke er levedyktig ville passert
+    # aktiveringen. «Et punkt uten definert, målbar grense regnes som
+    # nei» (§10) — så punktet får sin grense her, FØR bygging (§0), som
+    # resten av `m57-v1`.
+    #
+    # De to tallene henger sammen og må måles sammen: en varighet uten
+    # last er en tom kjøring, og en last uten varighet er en påstand om
+    # at det gikk. 5000 er den lovede fulle bunten (§4, samme tak som
+    # `antall_soknader`); 240 minutter er utførelsesfristen for `bunt`
+    # (§4, samme tall som `UTFORELSESFRIST_VALG`). Drifter de to fra
+    # hverandre, sier `test_ytelsesgrensen_er_klarsignalets_tall` ifra.
+    "ytelse_min_soknader": 5000,
+    "ytelse_maks_minutter": 240,
+}
+
 #: KATALOGAKSENE (A-vedtaket på #152, K2): `status` og `driftstilstand`
 #: er katalogens AVLESNING av en aksepthendelse — de er ikke del av den
 #: identiteten aksepten binder. En aksept autoriserer flippet av dem;
@@ -353,6 +411,7 @@ ARTEFAKTSKJEMAER: dict[str, str] = {
     "m02-suite-v1": "artefakt-m02-suite-skjema.json",
     "m02-fordeling-v1": "artefakt-m02-fordeling-skjema.json",
     "rollback-m56-v1": "artefakt-rollback-m56-skjema.json",
+    "m57-v1": "artefakt-m57-skjema.json",
 }
 
 
@@ -592,6 +651,8 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _grenser_m02_fordeling(grense, art)
     if krav_id == "rollback-m56-v1":
         return feil + _grenser_rollback_m56(grense, art)
+    if krav_id == "m57-v1":
+        return feil + _grenser_m57(grense, art)
 
     m = art.get("maalt")
     if not isinstance(m, dict):
@@ -1265,6 +1326,57 @@ def _falske_verdikter(m: dict) -> list[str]:
         return [f"falske_verdikter={rapportert}, men utfallet {utfall!r} med"
                 f" {promotert} promoterte artefakter gir {motsigelse}"]
     return []
+
+
+def _grenser_m57(grense: dict, art: dict) -> list[str]:
+    """`m57-v1` — M-57-klarsignalet §10. Hver invariant er et par
+    (forsøk, brudd): null brudd beviser ingenting uten minst ett forsøk,
+    og settet av invarianter er grensens, ikke artefaktets."""
+    feil: list[str] = []
+    m = art.get("maalt")
+    if not isinstance(m, dict):
+        return ["artefaktet mangler `maalt`"]
+    for navn in grense["invarianter"]:
+        forsok, f1 = _teller(m, f"{navn}_forsok", f"{navn}_forsok")
+        brudd, f2 = _teller(m, f"{navn}_brudd", f"{navn}_brudd")
+        for melding in (f1, f2):
+            if melding:
+                feil.append(melding)
+        if f1 or f2:
+            continue
+        if forsok < grense["min_forsok"]:
+            feil.append(f"{navn}_forsok={forsok}, krever >="
+                        f" {grense['min_forsok']} — en port som aldri"
+                        " kjørte har ikke målt noe")
+        if brudd > grense["maks_brudd"]:
+            feil.append(f"{navn}_brudd={brudd}, krever <="
+                        f" {grense['maks_brudd']}")
+    for navn in grense["krav_ja"]:
+        if m.get(navn) is not True:
+            feil.append(f"{navn}={m.get(navn)!r}, krever bokstavelig true"
+                        " — et punkt uten målbar grense regnes som nei")
+    # Ytelsen (§4): den fulle bunten OG tiden den tok, målt sammen.
+    # Hver for seg beviser de ingenting — en rask kjøring på ti søknader
+    # er ikke 240-minuttersløftet, og en full bunt uten varighet er bare
+    # en påstand om at det gikk.
+    soknader, f_ant = _teller(m, "maalt.ytelse_full_bunt_soknader",
+                              "ytelse_full_bunt_soknader")
+    if f_ant:
+        feil.append(f_ant)
+    elif soknader < grense["ytelse_min_soknader"]:
+        feil.append(
+            f"ytelse_full_bunt_soknader={soknader}, krever >="
+            f" {grense['ytelse_min_soknader']} — ytelsespunktet er den"
+            " FULLE bunten, ikke en prøve")
+    minutter, f_tid = _positiv(m, "maalt.ytelse_full_bunt_minutter",
+                               "ytelse_full_bunt_minutter")
+    if f_tid:
+        feil.append(f_tid)
+    elif minutter > grense["ytelse_maks_minutter"]:
+        feil.append(
+            f"ytelse_full_bunt_minutter={minutter:g}, krever <="
+            f" {grense['ytelse_maks_minutter']} (§4s utførelsesfrist)")
+    return feil
 
 
 def _grenser_rollback_m56(grense: dict, art: dict) -> list[str]:

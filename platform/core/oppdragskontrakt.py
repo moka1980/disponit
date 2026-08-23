@@ -71,6 +71,18 @@ class Oppdragstype:
     #: må mene det samme: registreringen skriver registerraden, lesingen
     #: kjenner den igjen.
     rapport_artefakttype: str | None = None
+    #: HVILKEN leseflate som kan VISE rapporten (Codex P2). De to feltene
+    #: er ikke det samme spørsmålet: `rapport_artefakttype` sier hva
+    #: artefaktet ER — og er derfor påkrevd for at modulen skal få laste
+    #: det opp i det hele tatt — mens dette feltet sier at det finnes en
+    #: konsument som kan RENDRE det. `/v1/rapport/{id}` utledet flaten sin
+    #: fra det første feltet alene, så en ny rapportbærende type ble
+    #: automatisk servert til `ui/static/js/flater/rapport.js`, som
+    #: dereferer WCAG-formens `sammendrag` og `sider_kontrollert` uten
+    #: å spørre. En type uten flate er ikke ulovlig — den er bare ikke
+    #: lesbar der ennå, og et 404 er et ærligere svar enn en 200 med et
+    #: dokument mottakeren ikke kan lese.
+    rapportflate: str | None = None
 
     def valider(self) -> list[str]:
         feil = []
@@ -100,6 +112,10 @@ class Oppdragstype:
                         " ikke kjenne igjen, og en navngitt type på en"
                         " artefaktløs oppdragstype er en form ingen"
                         " kvittering kan levere")
+        if self.rapportflate is not None and self.rapport_artefakttype is None:
+            feil.append(f"{self.navn}: rapportflate uten"
+                        " rapport_artefakttype — en flate kan ikke vise"
+                        " en rapport typen aldri leverer")
         return feil
 
 
@@ -182,11 +198,133 @@ OPPDRAGSTYPER: dict[str, Oppdragstype] = {
         malautorisasjonsdomene="web_hostname",
         produserer_artefakt=True,
         rapport_artefakttype="kontroll.wcag.rapport",
+        # Flaten som faktisk kan rendre denne formen: `rapport.js`.
+        rapportflate="wcag",
         beskrivelse=("PR-014c: automatisk WCAG-kontroll av et positivt"
                      " autorisert hostname. `ekstern_lesing`-klassen:"
                      " observerbar trafikk ut, ingen ekstern mutasjon;"
                      " målautorisasjon + frekvens håndheves av"
                      " aktiveringsporten, egress/robots av 014b.")),
+    # M-57 (klarsignalet §1): evalueringen er RÅDGIVENDE — artefakter,
+    # ingenting utad. LUKKET payload: stillingsprofilen (vektede krav),
+    # referansen til søknadsbunten i artefaktlageret, antallet (verdi-
+    # bundet under — aldri stille avkorting) og omfanget som bærer
+    # fristen. Blinding er STANDARD PÅ og er derfor ikke et felt her:
+    # å skru den av er en auditert handling i modulflaten (§6), ikke en
+    # bestillingsparameter en integrasjon kan liste forbi.
+    "rekruttering.evaluering": Oppdragstype(
+        navn="rekruttering.evaluering",
+        # UTEN punktum til slutt (Codex P1). M-57-familien navngir
+        # handlingen NØYAKTIG som oppdragstypen — `rekruttering.evaluering`
+        # er både typen og handlingen i 056/057 og i SP-10-seeden, akkurat
+        # som `rekruttering.utsending` på utsendingsarmen. Med punktumet
+        # var det ingen handling som traff prefikset, så
+        # `type_for_handling("rekruttering.evaluering")` ga None: M37s
+        # opprettelses- og reparasjonsvei klassifiserte oppdraget som ukjent
+        # og skrev `eiermodul:ukjent`, og siden claim krever
+        # `oppdrag.eiermodul = auth.modul_id` kunne modulen aldri claimet
+        # sitt eget oppdrag. Prefikset uten punktum treffer både den
+        # nøyaktige handlingen og et eventuelt senere `...evaluering.<noe>`.
+        handlingsprefikser=("rekruttering.evaluering",),
+        # `slettefrist_dogn` er KUNDENS valg, ikke kallerens (Codex P1).
+        # 057 sier det ordrett: «fristen er kundevalgt 30–365 døgn
+        # (standard 90)», og basen har både CHECK-en og immutabiliteten.
+        # Men feltet fantes ikke i det lukkede settet, så `minimer` strøk
+        # det: en kunde som valgte 30 kunne ikke uttrykke valget noe sted
+        # bestillingen bærer det. `opprett_rekrutteringsprosess` tar
+        # fristen som et argument, og argumentet hadde ingen kilde i det
+        # signerte oppdraget — altså falt hver prosess tilbake på
+        # standarden, og en 30-dagers avtale ble stille til 90.
+        # VALGFRITT, ikke påkrevd: fraværet ER standardvalget (basens
+        # `DEFAULT 90`), og et påkrevd felt ville gjort hver eksisterende
+        # bestillingsvei ufullstendig for et valg de fleste ikke tar.
+        # Verdien er bundet i `FELTGRENSER` under — samme spennet som
+        # `prosess_frist_i_spennet`, målt der bestillingen tas imot.
+        #
+        # UTSATT, K1 → #162: `soknadsbunt_ref` er PÅKREVD, men det finnes
+        # ingen produsent, ingen resolver og ingen binær artefaktvei i
+        # repoet (Codex P1). Den ene opplastingsflaten,
+        # `api/app.py::_artefakt_upload`, tar et JSON-`rapport`-objekt,
+        # autoriseres av en UTDATA-kapabilitet utstedt etter claim, og er
+        # kanonisert (JCS) — den kan hverken bære en zip inn eller gi
+        # modulen noe å hente. Hver ekte bestilling når altså modulen med
+        # en streng ingen kan slå opp, og `inspiser_bunt` har ingen fil å
+        # inspisere. Lukkingen er en INNDATA-artefaktkontrakt: en bundet
+        # binær vei inn med deklarert maksimal fysisk størrelse, utstedt
+        # før claim, med resolver modulen kaller. Det er en maskin —
+        # opplastingsflate, kapabilitetsform, lager og oppslag — ikke en
+        # lapp i en frozenset, og den bærer også manifestet fra #161 og
+        # katalogbudsjettet fra `inspiser_bunt`s docstring.
+        felter=frozenset({"stillingsprofil_ref", "soknadsbunt_ref",
+                          "antall_soknader", "omfang",
+                          "slettefrist_dogn"}),
+        paakrevde=frozenset({"stillingsprofil_ref", "soknadsbunt_ref",
+                             "antall_soknader", "omfang"}),
+        # `m57_ats`, ikke `m_ats` (Codex P2 / Cursor P1). Identiteten er
+        # ALLEREDE avgjort og støpt: 056 CHECK-binder utsendingsarmen til
+        # `eiermodul = 'm57_ats'`, `opprett_frigivelsesoppdrag` avviser alt
+        # annet, og akseptartefaktets `oppsett.modul` er `const m57_ats`.
+        # 056 er merget, så å flytte DEN siden er en ny migrasjon på
+        # bebodd base — altså ny maskin, ikke en fiks. `m_ats` fantes
+        # nøyaktig ett sted i repoet: her. Med to identiteter kunne én
+        # modul verken claime evalueringsoppdrag registrert som `m57_ats`
+        # eller utsendingsoppdrag registrert som `m_ats`, og
+        # akseptartefaktet ville attestert en annen eier enn den som
+        # faktisk kjørte jobbene.
+        eiermodul="m57_ats",
+        produserer_artefakt=True,
+        # TRE ledd, ikke to (Codex P1). `registrer_artefakttype` (035/036)
+        # har en LUKKET navneform — `<domene>.<underdomene>.<artefakt>`,
+        # minst tre ledd — og `rekruttering.evalueringsrapport` hadde to.
+        # Typen kunne dermed aldri REGISTRERES, og siden claim-svaret
+        # utleder opplastingskapabiliteten utelukkende fra
+        # `artefakttype_register`, ville modulen fått `opplasting: null`
+        # på et oppdrag hvis kontrakt sier at den skal levere en rapport.
+        # Formen er `kontroll.wcag.rapport`s, og underdomenet er
+        # oppdragstypens eget — `rekruttering.evaluering` — så typen ligger
+        # der navnerommet allerede peker.
+        # ÉN rapport, og det er en GRENSE modulen må bygge innenfor
+        # (Codex P1). Fullføringsprotokollen bærer én skalar
+        # `artefakt_id`, og `api/app.py` promoterer nøyaktig den raden;
+        # alt annet som er lastet opp blir stående staged. M-57s
+        # modulkontrakt lovet «ett artefakt per kandidat» ut, altså inntil
+        # 5000 promoterte artefakter fra én kvittering — et utfall stacken
+        # ikke har noen vei til. Løftet er rettet der det sto: den
+        # PROMOTERTE evidensen er den rangerte listen, med funn, poeng og
+        # intervjuspørsmål per kandidat INNI seg, mens det per-kandidat-
+        # artefaktet spesifikasjonen navngir er `kandidat_evaluerings-
+        # artefakt` — intern payload under §5-fristen, ikke varig evidens.
+        # En flerartefakt-kvittering er ny maskin i protokollen (K1).
+        #
+        # TYPEN ER DEKLARERT, IKKE REGISTRERT — UTSATT, K1 → #169
+        # (Codex P1, runde 22). Navnet her gjør typen registrerbar; det
+        # registrerer den ikke. Claim-veien slår opp `artefakttype_register`
+        # på (eiermodul, kontraktversjon, kontrakt_hash), og uten rad
+        # utstedes ingen opplastingskapabilitet — claimen lykkes, med
+        # `opplasting: null`. Fasiten er `registrer-m-wcag-audit.py`: hele
+        # kjeden (installer_modul → kontrakt → release → oppdragstype →
+        # skjema → artefakttype) kjøres av en PRODUSENT ved deploy, og
+        # M-57 har ingen — verken `rapportskjema.py` i modulen, et
+        # `registrer-m57-ats.py` eller en release å hente digesten fra
+        # (manifestet står `under_utvikling`/`ikke_i_drift`). Å skrive
+        # produsenten her er ny maskin, og radene den skriver er
+        # immutable. Dessuten er skjemaets FELTSETT nøyaktig det åpne
+        # eiervalget i #168 — bærer den promoterte rapporten
+        # kandidatpayload eller bare beslutningssporet — så et skjema
+        # skrevet nå ville avgjort #168 for hånd.
+        rapport_artefakttype="rekruttering.evaluering.rapport",
+        # INGEN `rapportflate` (Codex P2). Typen må navngis for at
+        # modulen skal få laste opp rapporten sin, men den generiske
+        # `/v1/rapport/{id}` mater `rapport.js`, som dereferer WCAG-formens
+        # `sammendrag` og `sider_kontrollert` uten å spørre — hver eneste
+        # M-57-rapport ville feilet UNDER rendring, etter en 200. Flaten
+        # for evalueringsrapporten er CP4s arbeid; til den finnes, er
+        # 404 det ærlige svaret.
+        rapportflate=None,
+        beskrivelse=("M-57: leser og rangerer opptil 5000 søknader mot"
+                     " stillingens krav i isolert container — ingen"
+                     " ekstern trafikk, ingen mutasjon; utsendelse er en"
+                     " egen, signaturbundet vei (056).")),
 }
 
 
@@ -206,6 +344,15 @@ def type_for_handling(handling: str) -> Oppdragstype | None:
     Det som fortsatt IKKE er tillatt, er at to ULIKE typer deklarerer
     NØYAKTIG samme prefiks — da finnes det ikke noe lengste treff å velge,
     og `test_oppdragstypenes_prefikser_er_entydige` avviser det.
+
+    TREFFET GÅR PÅ SEGMENTGRENSEN, ikke på tegn (Codex P2). Handlings-ID-er
+    er tenantens frie strenger, og et rent `startswith` gjorde
+    `rekruttering.evalueringmal` til et M-57-oppdrag: den arvet M-57s
+    payloadkontrakt og eiermodul i stedet for å være ukjent. Prefiksene
+    som ender på punktum bar segmentgrensen i seg selv; den ene som ikke
+    gjør det — den KANONISKE handlingen, som er navngitt nøyaktig som
+    oppdragstypen — hadde ingen. Regelen er derfor felles: enten er
+    handlingen prefikset, eller så er den en etterkommer under punktumet.
     """
     if not isinstance(handling, str):
         return None
@@ -213,7 +360,9 @@ def type_for_handling(handling: str) -> Oppdragstype | None:
     beste_lengde = -1
     for t in OPPDRAGSTYPER.values():
         for p in t.handlingsprefikser:
-            if handling.startswith(p) and len(p) > beste_lengde:
+            gren = p if p.endswith(".") else p + "."
+            if ((handling == p or handling.startswith(gren))
+                    and len(p) > beste_lengde):
                 beste, beste_lengde = t, len(p)
     return beste
 
@@ -683,6 +832,9 @@ def mangler_paakrevde(oppdragstype: str, minimert: dict) -> list[str]:
 #: samme: bestillingsveien (M-37) skal ikke opprette oppdraget, og
 #: utføreren skal avvise det uten å røre målet om det likevel finnes.
 FELTVERDIER: dict[str, dict[str, tuple]] = {
+    # M-57: ett omfang i v1 — «bunt». Enumen er lukket med vilje: en ny
+    # verdi skal være en feil (og en fristbeslutning), ikke stillhet.
+    "rekruttering.evaluering": {"omfang": ("bunt",)},
     "kontroll.wcag.nettsted": {
         # Samme lukkede enum som rapportskjemaets `kravsett`: et oppdrag
         # med en annen verdi kan ikke gi en rapport som validerer.
@@ -697,6 +849,40 @@ FELTVERDIER: dict[str, dict[str, tuple]] = {
 #: oppfylle, siden `sider_kontrollert` har `maxItems: 50`.
 FELTGRENSER: dict[str, dict[str, tuple[int, int]]] = {
     "kontroll.wcag.nettsted": {"maks_sider": (1, 50)},
+    # M-57-klarsignalet §4: 5000 er HARD — 5001 avvises ved validering,
+    # aldri stille avkorting (katalogens løfte er «opptil 5000», og et
+    # oppdrag som fikk 5001 har alt brutt det før parseren startet).
+    #
+    # UTSATT, K1 → #161: grensen måler det BESTILLEREN OPPGIR, ikke
+    # bunten. Et oppdrag som sier `antall_soknader: 1` og peker på en zip
+    # med 5001 CV-er passerer her, og arkivgaten teller
+    # katalogoppføringer (20 000), ikke søknader. Eiers avgjørelse: B —
+    # bunten bærer et manifest (`soknader.json`), og utførelsesarmen
+    # avviser der `len(kandidater)` spriker fra dette tallet. Rotårsaken
+    # og B-formen står i `inspiser_bunt`s docstring og i #161.
+    "rekruttering.evaluering": {
+        "antall_soknader": (1, 5000),
+        # Kandidatdatagrensen (klarsignalet §5 / 057:34): 30–365 døgn,
+        # samme spenn som `prosess_frist_i_spennet`. Tabellen står her og
+        # ikke bare i basen av samme grunn som `maks_sider`: en
+        # bestilling med `slettefrist_dogn: 3650` er dødfødt, og den skal
+        # avvises der den tas imot — ikke først når prosessfødselen
+        # feiler på en CHECK, etter at oppdraget er opprettet og claimet.
+        "slettefrist_dogn": (30, 365),
+    },
+}
+
+#: Felter som må være en IKKE-TOM STRENG, per type (Codex P2).
+#:
+#: `minimer` bevarer skalarer som de er, og `mangler_paakrevde` godtar
+#: enhver sann verdi — så `stillingsprofil_ref: 123` overlevde begge og ble
+#: køet. Modulens eget payload-skjema krever `string, minLength 1`, men det
+#: kjører først når UTFØRELSEN har startet: oppdraget var da alt opprettet,
+#: claimet og talt. En referanse som ikke er en referanse skal avvises der
+#: bestillingen tas imot, ikke der den utføres — samme begrunnelse som
+#: `FELTGRENSER` har for `maks_sider`.
+FELTSTRENGER: dict[str, tuple[str, ...]] = {
+    "rekruttering.evaluering": ("stillingsprofil_ref", "soknadsbunt_ref"),
 }
 
 #: URL-felter hvis RAPPORTFORM (`rapporturl`) har en lengdegrense, per
@@ -741,6 +927,31 @@ FELTURLLENGDER: dict[str, dict[str, int]] = {
 UTFORELSESFRIST_VALG: dict[str, tuple[str, dict[object, int]]] = {
     "kontroll.wcag.nettsted": ("omfang", {"enkeltside": 30 * 60,
                                           "nettsted": 60 * 60}),
+    # M-57 (klarsignalet §4): 240 min for evalueringen — 5000 søknader
+    # med porsjonsvis parsing. Tallet REVERIFISERES mot målt prøvekjøring
+    # før modulen aksepteres; avviker det, oppdateres klarsignalet, aldri
+    # porten (fristen svekkes ikke for å redde en treg kjøring).
+    #
+    # UTSATT, K1 → #165 — FRISTEN ER LENGRE ENN AUTORITETEN SOM DEKKER
+    # DEN (Codex P1). Eierleasen klemmes til 3600 s i `claim_neste_-
+    # oppdrag` (037), og opplastingskapabiliteten utstedes med
+    # `min(igjen, 3600)` i claim-endepunktet; noen fornyelsesvei finnes
+    # ikke (037 sier det selv om heartbeat). Reclaim-grenen krever bare
+    # `utforelsesfrist > now()`, og den er sann i tre timer ETTER at
+    # leasen er ute: en helt normal kjøring i det annonserte vinduet blir
+    # derfor reclaimet av en annen utfører på t+1t — dobbel evaluering av
+    # de samme persondataene — mens den opprinnelige utføreren verken kan
+    # laste opp eller kvittere. Det er nøyaktig skaden 037 ble skrevet
+    # for å lukke, bare i motsatt retning: 037 strekker leasen TIL
+    # fristen, opp til sitt eget tak, og her er fristen lengre enn taket.
+    #
+    # Ikke lukkbart i en fiksrunde: å heve taket er en ny migrasjon på
+    # bebodd base som flytter en PLATTFORMVID tillitsgrense (M-37 og
+    # M-56 deler den), en fornyelsesvei er en ny autentisert flate, og
+    # partisjonering endrer bestillingsformen. Fristen står som
+    # klarsignalet sier; #165 bærer valget, med hard sperre mot kjøringer
+    # over én time til den er merget (samme form som #163).
+    "rekruttering.evaluering": ("omfang", {"bunt": 240 * 60}),
 }
 
 
@@ -790,6 +1001,12 @@ def bryter_feltkontrakten(oppdragstype: str, minimert: dict) -> list[str]:
         # Et sidebudsjett på «sant» er ikke et tall noen har bestilt.
         if isinstance(v, bool) or not isinstance(v, int) or not (
                 nedre <= v <= ovre):
+            brudd.add(felt)
+    for felt in FELTSTRENGER.get(oppdragstype, ()):
+        if felt not in minimert:
+            continue
+        v = minimert[felt]
+        if not isinstance(v, str) or not v.strip():
             brudd.add(felt)
     for felt, maks in FELTURLLENGDER.get(oppdragstype, {}).items():
         if felt not in minimert:

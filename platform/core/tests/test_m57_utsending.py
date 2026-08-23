@@ -47,7 +47,7 @@ pg = pytest.mark.skipif(
 
 
 def _grunnlag(m, *, oppdragstype="rekruttering.evaluering",
-              status="utfort"):
+              status="utfort", eiermodul=None):
     """TILLAT-loggpost + kryptert payload + beslutningsoppdrag — kjedens
     startpunkt (listen peker på evalueringsoppdraget).
 
@@ -57,8 +57,18 @@ def _grunnlag(m, *, oppdragstype="rekruttering.evaluering",
     WCAG-oppdrag med direkte DML. Testoppsettet brukte tidligere
     nettopp det hullet, og lot dermed hver lineage-/signatur-/
     frigivelsestest bevise sitt eget funn på et grunnlag kjeden aldri
-    skal ha hatt. De negative stiene oppgir nå avviket EKSPLISITT."""
+    skal ha hatt. De negative stiene oppgir nå avviket EKSPLISITT.
+
+    EIERMODULEN FØLGER TYPEN (Cursor P2/P3): hjelperen skrev
+    `m_wcag_audit` på ALT, også på `rekruttering.evaluering`-oppdrag —
+    et par kontrakten aldri kan produsere (`_eiermodul_for` binder dem
+    ved opprettelsen). Fasiten hentes derfor fra kontrakten, og en test
+    som VIL ha avviket oppgir det eksplisitt."""
     from db import kryptering
+    from oppdragskontrakt import type_for_handling
+    if eiermodul is None:
+        kontrakt = type_for_handling(oppdragstype)
+        eiermodul = kontrakt.eiermodul if kontrakt else "m_wcag_audit"
     _sett_kontekst(m, TENANT)
     logg = m.execute(
         "INSERT INTO revisjonslogg (tenant, aktor, kilde, input_hash,"
@@ -71,10 +81,10 @@ def _grunnlag(m, *, oppdragstype="rekruttering.evaluering",
         "INSERT INTO oppdrag (opprinnelse, tenant, beslutning_loggpost_id,"
         " oppdragstype, handling, eiermodul, payload_kryptert, key_id,"
         " nonce, utforelsesfrist, evidensfrist, koblingsstatus)"
-        " VALUES ('beslutning',%s,%s,%s,%s,'m_wcag_audit',%s,%s,%s,"
+        " VALUES ('beslutning',%s,%s,%s,%s,%s,%s,%s,%s,"
         " now()+interval '1 hour', now()+interval '1 day','KOBLET')"
         " RETURNING id",
-        (TENANT, logg, oppdragstype, oppdragstype, ct, key_id,
+        (TENANT, logg, oppdragstype, oppdragstype, eiermodul, ct, key_id,
          nonce)).fetchone()[0]
     if status:
         # Lovlig vei gjennom `oppdrag_kolonnelaas`' statusmaskin:

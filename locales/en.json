@@ -1036,6 +1036,8 @@
   "site.katalog.m56.navn": "Automatic WCAG check",
   "site.modul.m56.navn": "Automatic WCAG check",
   "site.modul.m56.tekst": "Checks websites you have confirmed that you control, and stores the report as evidence.",
+  "site.modul.m57.navn": "Recruitment agent (ATS)",
+  "site.modul.m57.tekst": "Reads and ranks up to 5,000 applications blind against the role's requirements — a human decides who moves on, and nothing is sent without a signature.",
   "ui.wcag.fane.plan": "Recurring checks",
   "ui.historikk.knapp": "Version history",
   "ui.historikk.tittel": "Version history — {policy}",

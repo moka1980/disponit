@@ -164,6 +164,149 @@ def test_oppdragstypenes_prefikser_er_entydige():
             eier[p] = t.navn
 
 
+def test_rapportartefakttypene_kan_faktisk_registreres():
+    """Codex P1: en artefakttype kontrakten lover, men registeret ikke kan
+    ta imot, er en kapabilitet som aldri oppstår.
+
+    `rekruttering.evalueringsrapport` hadde TO ledd. `registrer_artefakttype`
+    (035, herdet i 036) har en lukket navneform på minst tre —
+    `<domene>.<underdomene>.<artefakt>` — så registreringen ville feilet,
+    og claim-svaret utleder opplastingskapabiliteten utelukkende fra
+    `artefakttype_register`: modulen fikk `opplasting: null` på et oppdrag
+    hvis egen kontrakt sier at den skal levere en rapport.
+
+    Formen LESES ut av migrasjonen, den skrives ikke av på nytt her — en
+    port som gjentar regelen med egne ord måler sin egen avskrift.
+    Overlappsregelen fra samme funksjon måles på samme sett: to typer der
+    den ene er prefiks av den andre kan ikke sameksistere i registeret.
+    """
+    import re
+    from pathlib import Path
+    import oppdragskontrakt
+    rot = Path(__file__).resolve().parents[3]
+    sql = (rot / "platform" / "core" / "db" / "migrations"
+           / "036_wcag_kontroll.sql").read_text(encoding="utf-8")
+    m = re.search(r"IF p_artefakttype !~ '([^']+)' THEN", sql)
+    assert m, "navneformen finnes ikke lenger i 036 — porten måler ingenting"
+    navneform = re.compile(m.group(1))
+    typer = sorted({t.rapport_artefakttype
+                    for t in oppdragskontrakt.OPPDRAGSTYPER.values()
+                    if t.rapport_artefakttype is not None})
+    assert typer, "ingen artefakttyper å måle"
+    for artefakttype in typer:
+        assert navneform.match(artefakttype), \
+            f"{artefakttype!r} kan aldri registreres ({m.group(1)})"
+    for en in typer:
+        for annen in typer:
+            assert en == annen or not annen.startswith(en + "."), \
+                f"{annen!r} overlapper {en!r} — registeret tar bare én"
+
+
+def test_rapportflaten_er_deklarert_aldri_utledet():
+    """Codex P2: `/v1/rapport/{id}` utledet hvilke rapporter den serverer
+    fra `rapport_artefakttype` alene.
+
+    De to feltene svarer på ULIKE spørsmål. `rapport_artefakttype` sier
+    hva artefaktet ER, og er påkrevd for at modulen skal få laste det opp
+    i det hele tatt. `rapportflate` sier at det finnes en konsument som
+    kan RENDRE det. Da M-57 fikk sin artefakttype, ble den derfor
+    automatisk servert til `ui/static/js/flater/rapport.js`, som
+    dereferer WCAG-formens `sammendrag` og `sider_kontrollert` uten å
+    spørre: hver eneste M-57-rapport ville feilet UNDER rendring, etter
+    en 200.
+
+    At feltet DEKLARERES er halve saken; at leseveien DISPATCHER på
+    VERDIEN er den andre, og den står i nabotesten under.
+
+    MUTASJONEN SOM DREPER DENNE: sett `rapportflate="wcag"` på
+    `rekruttering.evaluering`, eller fjern `rapportflate`-leddet i
+    `lesing.rapport_detalj`.
+    """
+    import oppdragskontrakt as ok
+    m57 = ok.OPPDRAGSTYPER["rekruttering.evaluering"]
+    assert m57.rapport_artefakttype is not None, \
+        "uten navngitt type får modulen `opplasting: null` ved claim"
+    assert m57.rapportflate is None, \
+        "M-57-rapporten har ingen flate før CP4 — 404 er det ærlige svaret"
+    wcag = ok.OPPDRAGSTYPER["kontroll.wcag.nettsted"]
+    assert wcag.rapportflate == "wcag"
+    # Kontraktporten: en flate uten artefakttype er en flate som viser en
+    # rapport typen aldri leverer.
+    from dataclasses import replace
+    assert any("rapportflate" in f for f in
+               replace(m57, produserer_artefakt=False,
+                       rapport_artefakttype=None,
+                       rapportflate="wcag").valider())
+    # … og leseveiens PAR er utledet av begge feltene, ikke bare det ene.
+    par = {navn for navn, t in ok.OPPDRAGSTYPER.items()
+           if t.rapport_artefakttype is not None
+           and t.rapportflate is not None}
+    assert par == {"kontroll.wcag.nettsted"}, par
+
+
+def test_rapportflaten_er_en_diskriminator_ikke_en_boolsk():
+    """Codex P2: `/v1/rapport/{id}` spurte om flaten var SATT, ikke hvilken.
+
+    Nabotesten over måler at feltet DEKLARERES. Denne måler at leseveien
+    DISPATCHER på verdien. Forskjellen var usynlig så lenge M-57 er den
+    eneste andre rapportbærende typen og står uten flate: det var M-57s
+    tomme felt, ikke endepunktets valg, som holdt ATS-rapporten unna
+    WCAG-rendreren. Den dagen CP4 gir modulen sin egen flate (`"ats"`),
+    ville `rapport.js` fått den igjen — 200 og feil under rendring, med
+    den tauseste mulige utløseren: at en annen kontrakt fylte ut sitt
+    eget felt.
+
+    Selve SAMMENLIGNINGEN er det som må måles, og den finnes bare i
+    endepunktets kode: at `par`-settet i dag blir det samme uansett, er
+    nettopp funnet. `api.lesing` drar inn både driveren og webrammeverket,
+    så leddet leses med AST — samme valg som `_importer` over, og av
+    samme grunn: en tekstsøkning ville truffet ordet i en kommentar.
+
+    MUTASJONEN SOM DREPER DENNE: gjør `rapportflate`-leddet i
+    `lesing.rapport_detalj` boolsk igjen (`is not None`), eller pek
+    `lesing.RAPPORTFLATE` på en annen flate enn den `rapport.js` rendrer.
+    """
+    from dataclasses import replace
+    import oppdragskontrakt as ok
+    m57 = ok.OPPDRAGSTYPER["rekruttering.evaluering"]
+    wcag = ok.OPPDRAGSTYPER["kontroll.wcag.nettsted"]
+    tre = ast.parse((CORE / "api" / "lesing.py").read_text(encoding="utf-8"))
+    flate = next(
+        (n.value.value for n in tre.body
+         if isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant)
+         and any(isinstance(m, ast.Name) and m.id == "RAPPORTFLATE"
+                 for m in n.targets)), None)
+    assert flate == wcag.rapportflate, \
+        ("/v1/rapport serverer `rapport.js`, altså WCAG-formen —"
+         f" endepunktet navngir {flate!r}")
+    fn = next(n for n in tre.body if isinstance(n, ast.FunctionDef)
+              and n.name == "rapport_detalj")
+    ledd = [c for c in ast.walk(fn) if isinstance(c, ast.Compare)
+            and isinstance(c.left, ast.Attribute)
+            and c.left.attr == "rapportflate"]
+    assert ledd, "endepunktet spør ikke om `rapportflate` i det hele tatt"
+    for c in ledd:
+        assert (all(isinstance(o, ast.Eq) for o in c.ops)
+                and all(isinstance(k, ast.Name) and k.id == "RAPPORTFLATE"
+                        for k in c.comparators)), \
+            ("leseveien spør om flaten FINNES, ikke hvilken den er:"
+             f" {ast.unparse(c)}")
+    # Fremtiden porten finnes for: en kontrakt med rapportartefakttype og
+    # sin EGEN flate er lovlig, og hører likevel ikke til her.
+    ats = replace(m57, rapportflate="ats")
+    assert not ats.valider(), \
+        "en type med artefakttype OG flate er en lovlig kontrakt"
+    assert not (ats.rapport_artefakttype is not None
+                and ats.rapportflate == flate), \
+        "en fremmed leseflate ble servert av WCAG-endepunktet"
+    # … og kontroll på at leddet ikke bare er trivielt usant: WCAG-typen
+    # selv slipper gjennom, og endepunktets utvalg er fortsatt den ene.
+    par = {navn for navn, t in ok.OPPDRAGSTYPER.items()
+           if t.rapport_artefakttype is not None
+           and t.rapportflate == flate}
+    assert par == {"kontroll.wcag.nettsted"}, par
+
+
 def test_lengste_prefiks_vinner_over_dict_rekkefolgen():
     """WCAG-kontrollen eier `kontroll.wcag.`, `verifikasjon` resten.
 

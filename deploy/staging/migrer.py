@@ -74,6 +74,24 @@ GRANT SELECT, INSERT, UPDATE ON policyutkast, aktiveringsattestasjon TO {rolle};
 -- tabellnivå-UPDATE her ville lagt kolonnen åpen igjen ved hvert deploy.
 GRANT SELECT, INSERT ON aktiveringsrunde TO {rolle};
 GRANT UPDATE (status) ON aktiveringsrunde TO {rolle};
+-- 057: M-57s kandidatlagre. Runtime leser og skriver gjennom API-veien
+-- (RLS-gated). INGEN UPDATE — eneste lovlige mutasjon er reap-overgangen,
+-- og den bor i `reap_kandidatdata` (definer). INGEN DELETE noensinne:
+-- kandidatrader reapes (payload til NULL), de slettes aldri som rader.
+-- ANKERET får KUN SELECT (Codex P1): et INSERT på `rekrutteringsprosess`
+-- er en vei utenom `opprett_rekrutteringsprosess`, som er den eneste
+-- veien som binder oppdraget, eiermodulen og fristen sammen ved
+-- fødselen. Radvakten har siden fått en egen INSERT-gren (Cursor P2), og
+-- kommentaren her sa fortsatt «BEFORE UPDATE OR DELETE» — misvisende for
+-- drift (Cursor P3). De to lagene står SAMMEN og med vilje: vakten
+-- gjelder enhver rolle, også claimeren som må ha INSERT for å være
+-- definer, mens denne rettigheten er den som holder runtime helt utenfor.
+-- EXECUTE på de to prosessfunksjonene ligger i M37_RETTIGHETER_API.
+GRANT SELECT ON rekrutteringsprosess TO {rolle};
+GRANT SELECT, INSERT ON kandidat_originaldokument,
+    kandidat_parsettekst, kandidat_evalueringsartefakt,
+    kandidat_intervjusporsmal, kandidat_utsendingsdata,
+    kandidat_avmaskering TO {rolle};
 -- Varsler: flaten leser og merker som lest; tjenesten oppretter. Senderen
 -- oppdaterer e-poststatus. Ingen DELETE — rydding er en driftsoppgave med
 -- egen rolle, ikke noe forespørselsveien skal kunne gjøre.
@@ -314,6 +332,15 @@ GRANT EXECUTE ON FUNCTION avvis_med_opplosning(TEXT, BIGINT, BIGINT[], TEXT, TEX
 -- og frigivelsesoppdrag — bor hos varsleren, se VARSLER_RETTIGHETER).
 GRANT EXECUTE ON FUNCTION opprett_utsendingsliste(TEXT, UUID, UUID, BIGINT, TEXT, TEXT, TEXT, INT) TO {rolle};
 GRANT EXECUTE ON FUNCTION signer_utsendingsliste(TEXT, UUID, TEXT, TEXT) TO {rolle};
+-- 057: kandidatprosessens to herdede veier. Migrasjonen navngir ikke
+-- runtime-rollen i det hele tatt lenger (Cursor P2, samme form som 056):
+-- denne blokken er ENESTE rettighetskilde. Uten den får en installasjon
+-- `permission denied` på prosessfødselen og på lukkingen (som starter
+-- slettefristen) etter migrering. Reaperen står bevisst IKKE her: den er
+-- kryss-tenant og hører til timerrollen (038-formen, betinget DO-blokk i
+-- migrasjonen).
+GRANT EXECUTE ON FUNCTION opprett_rekrutteringsprosess(TEXT, BIGINT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION lukk_rekrutteringsprosess(TEXT, UUID, TIMESTAMPTZ) TO {rolle};
 """
 
 # Token-administrasjonen er en EGEN rolle som eier ingenting (korreksjon 2).
