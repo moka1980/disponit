@@ -288,6 +288,65 @@ def test_mislykket_terminalstatus_foder_ingen_prosess(migrator):
 
 
 @pg
+def test_terminalstatus_under_kapplop_foder_ingen_prosess(migrator):
+    """Cursor P2: statusporten var en påstand om FORTIDEN.
+
+    Det ulåste `EXISTS` leste oppdraget fra transaksjonens snapshot, og
+    under READ COMMITTED kunne kjøringen gå til `feilet`/`kansellert`
+    mellom sjekken og INSERT-en. Prosessen ble da født på et oppdrag som
+    alt var terminalt — nøyaktig tilstanden porten finnes for å nekte, og
+    den statiske testen over kan ikke se det.
+
+    A (egen tilkobling) holder en ucommittet kansellering; B kaller
+    fødselen og skal BLOKKERE på radlåsen, ikke lese forbi den. Etter As
+    commit re-evaluerer PostgreSQL predikatet, raden faller ut av
+    treffet, og B får en ærlig avvisning.
+
+    MUTASJONEN SOM DREPER DENNE: bytt `FOR SHARE`-lesningen tilbake til
+    et ulåst `EXISTS`."""
+    import threading
+
+    oid, _ = _grunnlag(migrator, oppdragstype="rekruttering.evaluering",
+                       status=None)
+    a = _rt()
+    b = _rt()
+    try:
+        _sett_kontekst(a, TENANT)
+        a.execute("UPDATE oppdrag SET status='kansellert' WHERE tenant=%s"
+                  " AND id=%s", (TENANT, oid))
+        resultat: dict = {}
+
+        def foedsel():
+            _sett_kontekst(b, TENANT)
+            try:
+                resultat["pid"] = b.execute(
+                    "SELECT opprett_rekrutteringsprosess(%s,%s,90)",
+                    (TENANT, oid)).fetchone()[0]
+                b.commit()
+            except Exception as feil:
+                resultat["feil"] = feil
+                b.rollback()
+
+        t = threading.Thread(target=foedsel)
+        t.start()
+        t.join(timeout=2)
+        assert t.is_alive(), \
+            "B leste forbi As ucommittede kansellering i stedet for å låse"
+        a.commit()
+        t.join(timeout=10)
+        assert not t.is_alive(), "B kom aldri gjennom etter As commit"
+        assert isinstance(resultat.get("feil"),
+                          psycopg.errors.InvalidParameterValue), resultat
+        _sett_kontekst(migrator, TENANT)
+        assert migrator.execute(
+            "SELECT count(*) FROM rekrutteringsprosess WHERE tenant=%s"
+            " AND oppdrag_id=%s", (TENANT, oid)).fetchone()[0] == 0
+        migrator.rollback()
+    finally:
+        a.close(); b.close()
+
+
+@pg
 def test_opprett_prosess_krever_read_committed(migrator):
     """Cursor P2: kappløpstesten over kjørte BARE under READ COMMITTED.
 

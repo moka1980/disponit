@@ -473,12 +473,22 @@ BEGIN
     -- som aldri skulle vært skrevet. Kontrakten binder paret ved
     -- opprettelsen (`_eiermodul_for`), så et avvikende par er DML utenom
     -- kontrakten, og det er nettopp da porten har arbeid å gjøre.
-    IF NOT EXISTS (
-        SELECT 1 FROM public.oppdrag o
-         WHERE o.tenant = p_tenant AND o.id = p_oppdrag_id
-           AND o.oppdragstype = 'rekruttering.evaluering'
-           AND o.eiermodul = 'm57_ats'
-           AND o.status NOT IN ('feilet', 'kansellert')) THEN
+    -- LÅST lesning, ikke et ulåst `EXISTS` (Cursor P2) — samme klasse og
+    -- samme form som INSERT-vakten mot reaperen. En ulåst sjekk er en
+    -- påstand om FORTIDEN: under READ COMMITTED kunne oppdraget gå til
+    -- `feilet`/`kansellert` mellom sjekken og INSERT-en, og prosessen ble
+    -- født på et oppdrag som alt var terminalt — nøyaktig den tilstanden
+    -- porten finnes for å nekte. `FOR SHARE` holder raden mens fødselen
+    -- fullføres, og PostgreSQL re-evaluerer predikatet etter låsen, så en
+    -- rad som ble terminal under ventingen faller ut av treffet i stedet
+    -- for å bli lest fra et gammelt snapshot.
+    PERFORM 1 FROM public.oppdrag o
+        WHERE o.tenant = p_tenant AND o.id = p_oppdrag_id
+          AND o.oppdragstype = 'rekruttering.evaluering'
+          AND o.eiermodul = 'm57_ats'
+          AND o.status NOT IN ('feilet', 'kansellert')
+        FOR SHARE;
+    IF NOT FOUND THEN
         RAISE EXCEPTION 'rekrutteringsprosess: oppdrag % hos % er ikke et'
             ' LEVENDE rekruttering.evaluering-oppdrag eid av m57_ats — en'
             ' prosess fødes ikke på et oppdrag som er feilet eller'
