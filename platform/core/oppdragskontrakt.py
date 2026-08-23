@@ -295,6 +295,23 @@ OPPDRAGSTYPER: dict[str, Oppdragstype] = {
         # artefaktet spesifikasjonen navngir er `kandidat_evaluerings-
         # artefakt` — intern payload under §5-fristen, ikke varig evidens.
         # En flerartefakt-kvittering er ny maskin i protokollen (K1).
+        #
+        # TYPEN ER DEKLARERT, IKKE REGISTRERT — UTSATT, K1 → #169
+        # (Codex P1, runde 22). Navnet her gjør typen registrerbar; det
+        # registrerer den ikke. Claim-veien slår opp `artefakttype_register`
+        # på (eiermodul, kontraktversjon, kontrakt_hash), og uten rad
+        # utstedes ingen opplastingskapabilitet — claimen lykkes, med
+        # `opplasting: null`. Fasiten er `registrer-m-wcag-audit.py`: hele
+        # kjeden (installer_modul → kontrakt → release → oppdragstype →
+        # skjema → artefakttype) kjøres av en PRODUSENT ved deploy, og
+        # M-57 har ingen — verken `rapportskjema.py` i modulen, et
+        # `registrer-m57-ats.py` eller en release å hente digesten fra
+        # (manifestet står `under_utvikling`/`ikke_i_drift`). Å skrive
+        # produsenten her er ny maskin, og radene den skriver er
+        # immutable. Dessuten er skjemaets FELTSETT nøyaktig det åpne
+        # eiervalget i #168 — bærer den promoterte rapporten
+        # kandidatpayload eller bare beslutningssporet — så et skjema
+        # skrevet nå ville avgjort #168 for hånd.
         rapport_artefakttype="rekruttering.evaluering.rapport",
         # INGEN `rapportflate` (Codex P2). Typen må navngis for at
         # modulen skal få laste opp rapporten sin, men den generiske
