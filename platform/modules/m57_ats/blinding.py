@@ -9,6 +9,8 @@ over dem. Av-maskeringstabellen er payload i `kandidat_avmaskering`
 """
 from __future__ import annotations
 
+import re
+
 #: Katalogens løfte, ordrett — settet er LUKKET og rekkefølgen stabil
 #: (tokennummereringen skal være deterministisk for samme input).
 MASKERTE_FELTER: tuple[str, ...] = (
@@ -19,6 +21,23 @@ class Blindingsfeil(Exception):
     def __init__(self, kode: str):
         self.kode = kode
         super().__init__(kode)
+
+
+def _monster(verdi: str) -> re.Pattern[str]:
+    """Personverdien som mønster — VERSALUFØLSOMT (Codex P1).
+
+    De strukturerte feltene og dokumentet er to kilder som sjelden er
+    enige om store bokstaver: metadata sier `Kari`, CV-en skriver `KARI`
+    i overskriften. `str.replace` og `in` er begge versalfølsomme, så
+    navnet gikk umaskert til modellen — og `krev_blindet` lette etter
+    nøyaktig samme skrivemåte og fant den ikke, så porten sa god for
+    lekkasjen. Samme mønster brukes derfor BEGGE steder: det som
+    maskeres og det som måles er per definisjon den samme testen.
+
+    Løftet er versalene, ikke normaliseringsformer: `re.IGNORECASE`
+    gjør Unicodes enkle case-folding, og en NFC/NFD-forskjell i kilden
+    er fortsatt en forskjell."""
+    return re.compile(re.escape(verdi), re.IGNORECASE)
 
 
 def blind(tekst: str, kandidatfelter: dict[str, list[str]]
@@ -49,7 +68,12 @@ def blind(tekst: str, kandidatfelter: dict[str, list[str]]
     # nummereringen er fortsatt feltrekkefølgen, så den er uendret og
     # deterministisk; bare erstatningsrekkefølgen er lengdestyrt.
     for token, verdi in sorted(par, key=lambda p: -len(p[1])):
-        tekst = tekst.replace(verdi, token)
+        # Erstatningen er en funksjon, ikke en mal: tokenet skal stå
+        # ordrett, aldri tolkes som `re`-referanser. Avmaskeringstabellen
+        # bærer den STRUKTURERTE skrivemåten — en avmaskering gir altså
+        # `Kari` tilbake der dokumentet skrev `KARI`, og det er riktig:
+        # feltverdien er kilden, dokumentets versaler er formatering.
+        tekst = _monster(verdi).sub(lambda _t, tok=token: tok, tekst)
     return tekst, avmaskering
 
 
@@ -57,7 +81,7 @@ def krev_blindet(tekst: str, avmaskering: dict[str, str]) -> None:
     """Porten på FAKTISK modellinput (port 16): ingen av klartekst-
     verdiene får stå i teksten som går til modellen."""
     for token, verdi in avmaskering.items():
-        if verdi and verdi in tekst:
+        if verdi and _monster(verdi).search(tekst):
             raise Blindingsfeil("maskert_felt_i_modellinput")
 
 

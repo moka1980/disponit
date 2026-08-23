@@ -464,6 +464,32 @@ def test_port16_overlappende_verdier_maskeres_lengste_forst():
     assert avmaskering["[KONTAKT-1]"] == "Ann@example.com"
 
 
+def test_port16_versalvarianter_maskeres_og_maales():
+    """Codex P1: metadata og dokument er sjelden enige om versaler —
+    feltet sier `Kari`, CV-overskriften skriver `KARI`. Både erstatningen
+    og restsjekken var versalfølsomme, så navnet gikk umaskert til
+    modellen OG porten sa god for det: den lette etter nøyaktig samme
+    skrivemåte og fant den ikke."""
+    tekst = ("KARI NORDMANN\nKari Nordmann søker. E-post:"
+             " KARI@EXAMPLE.COM. Hilsen kari.")
+    felter = {"navn": ["Kari Nordmann", "Kari"],
+              "kontakt": ["kari@example.com"]}
+    blindet, avmaskering = blinding.blind(tekst, felter)
+    for rest in ("KARI", "Kari", "kari", "NORDMANN", "EXAMPLE.COM"):
+        assert rest not in blindet, (rest, blindet)
+    blinding.krev_blindet(blindet, avmaskering)
+    # Avmaskeringen bærer den STRUKTURERTE skrivemåten: feltverdien er
+    # kilden, dokumentets versaler er formatering.
+    assert avmaskering["[NAVN-1]"] == "Kari Nordmann"
+    assert avmaskering["[KONTAKT-1]"] == "kari@example.com"
+    # Porten måler versaluavhengig også når blindingen er noen andres:
+    # en «blindet» tekst der bare skrivemåten er endret, er ikke blindet.
+    with pytest.raises(blinding.Blindingsfeil) as e:
+        blinding.krev_blindet("Søkeren KARI NORDMANN er aktuell.",
+                              {"[NAVN-1]": "Kari Nordmann"})
+    assert e.value.kode == "maskert_felt_i_modellinput"
+
+
 def test_kildereferansen_folger_teksten_den_indekserer():
     """Codex P2: blindingen ENDRER lengder («Kari» → `[NAVN-1]`), så en
     [start:slutt] validert mot den blindede teksten peker på noe annet i
