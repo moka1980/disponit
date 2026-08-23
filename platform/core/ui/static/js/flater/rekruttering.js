@@ -377,8 +377,22 @@ function tegn(hoved, ctx, data, okt, valgtId) {
     return okt.signeringsnokler.get(id);
   }
   for (const liste of prosess.lister || []) {
+    // HVER KNAPP SIER HVILKEN LISTE (Codex P2). Knappeteksten er den samme
+    // på alle radene — «Signer og send» — og listetypen, antallet og hashen
+    // står som SØSKENTEKST i raden, som ikke inngår i knappens tilgjengelige
+    // navn. En skjermleserbruker som navigerer knapp for knapp, fikk derfor
+    // to identiske irreversible utsendelser og ingen måte å skille dem på før
+    // dialogen sto åpen. Huset har mekanismen fra før: `tabell.js` gir hver
+    // radhandling `tilgjengeligNavn` → `aria-label` av nøyaktig samme grunn.
+    // Teksten i cellen blir stående; `aria-label` erstatter den ikke, den gir
+    // knappen det navnet cellen alt viser med øyet.
     const knapp = el("button", { class: "knapp", type: "button",
-      text: t("ui.rekruttering.signer_knapp") });
+      text: t("ui.rekruttering.signer_knapp"),
+      "aria-label": t("ui.rekruttering.signer_knapp_navn")
+        .replaceAll("{listetype}",
+          t(`ui.rekruttering.listetype.${liste.listetype}`))
+        .replaceAll("{antall}", String(liste.antall))
+        .replaceAll("{hash}", kortHash(liste.innhold_hash)) });
     // En liste som ER signert i denne økten, kommer tilbake død — også
     // etter et prosessbytte, der `data` fortsatt er det svaret som ble
     // hentet FØR signeringen og derfor viser listen som usignert.

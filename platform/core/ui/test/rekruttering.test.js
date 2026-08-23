@@ -805,3 +805,44 @@ test("Rekruttering: ingen hardkodet visningstekst, og tastaturgjennomgangen er d
       "menyflyten står som gjennomgått mens ruten er stengt");
   }
 });
+
+test("Rekruttering: hver signeringsknapp har sitt eget tilgjengelige navn (port 29)", async () => {
+  // Codex P2: med to utsendingslister sto to knapper med IDENTISK
+  // tilgjengelig navn — «Signer og send» — mens listetypen, antallet og
+  // hashen lå som søskentekst i raden, som ikke inngår i knappens navn. En
+  // skjermleserbruker som navigerer knapp for knapp, kunne ikke avgjøre
+  // hvilken irreversibel utsendelse hun sto på før dialogen var åpen.
+  //
+  // MUTASJONEN SOM DREPER DENNE: fjern `aria-label` fra knappen i
+  // `rekruttering.js` — navnene faller tilbake til knappeteksten og blir like.
+  KALL = [];
+  const data = prosess();
+  data.prosesser[0].lister.push({ liste_id: "L-2", listetype: "avslag",
+    antall: 7, innhold_hash: "f".repeat(64) });
+  SVAR = { "/v1/rekruttering/prosesser": data };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "tabellen kom aldri");
+
+  const knapper = [...hoved.querySelectorAll(".rekrut-liste button")];
+  assert.equal(knapper.length, 2, "begge listene skal ha en signeringsknapp");
+  const navn = knapper.map((b) => b.getAttribute("aria-label"));
+  assert.equal(new Set(navn).size, 2,
+    `to irreversible handlinger deler tilgjengelig navn: ${navn.join(" / ")}`);
+  // Navnet bærer det raden viser med øyet: type, antall og hashkortform.
+  assert.ok(navn[0].includes(t("ui.rekruttering.listetype.invitasjon")));
+  assert.ok(navn[0].includes("42"));
+  assert.ok(navn[0].includes(HASH.slice(0, 12) + "…"), "hashkortformen mangler");
+  assert.ok(navn[1].includes(t("ui.rekruttering.listetype.avslag")));
+  assert.ok(navn[1].includes("7"));
+  // Ingen fullhash, og ingen plassholder som overlevde innsettingen.
+  for (const n of navn) {
+    assert.ok(!n.includes(HASH), "fullhashen skal ikke ut i navnet");
+    assert.ok(!/\{[a-zæøå_]+\}/.test(n), `plassholder står igjen: ${n}`);
+  }
+  // Den synlige teksten står fortsatt der: `aria-label` supplerer cellen,
+  // den erstatter den ikke, og knappeteksten er uendret for øyet.
+  assert.equal(knapper[0].textContent, t("ui.rekruttering.signer_knapp"));
+  const brudd = await alvorligeBrudd(hoved);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});

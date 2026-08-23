@@ -1075,6 +1075,7 @@
   "ui.rekruttering.listetype.invitasjon": "Invitation",
   "ui.rekruttering.listetype.avslag": "Rejection",
   "ui.rekruttering.signer_knapp": "Sign and send",
+  "ui.rekruttering.signer_knapp_navn": "Sign and send: {listetype} · {antall} recipients · content {hash}",
   "ui.rekruttering.signer_tittel": "Sign the dispatch?",
   "ui.rekruttering.signer_tekst": "{listetype} · {antall} recipients · content {hash}. This sends {antall} emails. Cannot be undone.",
   "ui.rekruttering.signer_bekreft": "Sign",

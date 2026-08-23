@@ -1075,6 +1075,7 @@
   "ui.rekruttering.listetype.invitasjon": "Invitasjon",
   "ui.rekruttering.listetype.avslag": "Avslag",
   "ui.rekruttering.signer_knapp": "Signer og send",
+  "ui.rekruttering.signer_knapp_navn": "Signer og send: {listetype} · {antall} mottakere · innhold {hash}",
   "ui.rekruttering.signer_tittel": "Signer utsendelsen?",
   "ui.rekruttering.signer_tekst": "{listetype} · {antall} mottakere · innhold {hash}. Dette sender {antall} e-poster. Kan ikke angres.",
   "ui.rekruttering.signer_bekreft": "Signer",
