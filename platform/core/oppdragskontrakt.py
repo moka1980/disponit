@@ -741,6 +741,11 @@ FELTURLLENGDER: dict[str, dict[str, int]] = {
 UTFORELSESFRIST_VALG: dict[str, tuple[str, dict[object, int]]] = {
     "kontroll.wcag.nettsted": ("omfang", {"enkeltside": 30 * 60,
                                           "nettsted": 60 * 60}),
+    # M-57 (klarsignalet §4): 240 min for evalueringen — 5000 søknader
+    # med porsjonsvis parsing. Tallet REVERIFISERES mot målt prøvekjøring
+    # før modulen aksepteres; avviker det, oppdateres klarsignalet, aldri
+    # porten (fristen svekkes ikke for å redde en treg kjøring).
+    "rekruttering.evaluering": ("omfang", {"bunt": 240 * 60}),
 }
 
 
