@@ -32,7 +32,19 @@ function meldFeil(ctx, utfall, e) {
   // innlogging, 403 → ingen tilgang); disse to mutasjonene er ikke et
   // unntak fra den regelen.
   if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
-  sett(utfall, t("ui.rekruttering.feil_utfall"));
+  // ET TAPT SVAR ER IKKE ET AVSLAG (Codex P1). «Handlingen ble avvist.
+  // Ingenting er sendt.» er en DEFINITIV setning, og den ble sagt også
+  // når `_muter` kastet status 0 (fetch nådde aldri fram, eller svaret
+  // gikk tapt etter at serveren commitet) og ved 5xx, der commit-status
+  // er ukjent. For en irreversibel utsendelse er det falsk trygghet:
+  // brukeren kan gå fra skjermen i den tro at ingen e-post gikk ut.
+  // Bare 4xx er serverens egen avvisning FØR commit. Alt annet meldes
+  // som det er — uvisst — med veien videre: nøkkelen er beholdt, så en
+  // ny forsøk replayer den samme operasjonen i stedet for å lage en ny.
+  const status = (e && typeof e.status === "number") ? e.status : 0;
+  const definitivt = status >= 400 && status < 500;
+  sett(utfall, t(definitivt ? "ui.rekruttering.feil_utfall"
+    : "ui.rekruttering.usikkert_utfall"));
 }
 
 function kortHash(hash) {

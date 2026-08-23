@@ -369,6 +369,52 @@ test("Rekruttering: signeringen gjenbruker idempotensnøkkelen etter usikker fei
     "retryen bar en NY nøkkel — serveren ser en ny operasjon");
 });
 
+test("Rekruttering: et tapt svar meldes som uvisst, ikke som «ingenting er sendt»", async () => {
+  // Codex P1: `meldFeil` sa den DEFINITIVE setningen «Handlingen ble
+  // avvist. Ingenting er sendt.» også ved status 0 (fetch nådde aldri
+  // fram, eller svaret gikk tapt etter at serveren commitet) og ved 5xx,
+  // der commit-status er ukjent. For en irreversibel utsendelse er det
+  // falsk trygghet: brukeren kan gå fra skjermen i den tro at ingen
+  // e-post gikk ut. Bare 4xx er serverens avvisning FØR commit.
+  //
+  // MUTASJONEN SOM DREPER DENNE: la `meldFeil` melde `feil_utfall` for
+  // alt som ikke er 401.
+  const hoved = await tegnet();
+  const knapp = [...hoved.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.signer_knapp"));
+  const melding = () => hoved.querySelector('[role="alert"]').textContent;
+  const signer = async () => {
+    assert.ok(await vent(() => !knapp.disabled), "knappen ble aldri åpen");
+    knapp.click();
+    [...document.querySelector('[role="alertdialog"]')
+      .querySelectorAll("button")]
+      .find((b) => b.textContent === t("ui.rekruttering.signer_bekreft"))
+      .click();
+  };
+  // 5xx: serveren kan ha commitet før den røk.
+  SVAR = (sti, opts) => (opts.method === "POST" ? 500 : prosess());
+  await signer();
+  assert.ok(await vent(() =>
+    melding() === t("ui.rekruttering.usikkert_utfall")),
+    "5xx ble meldt som et definitivt avslag");
+  // Transporten som aldri kom fram (status 0) er samme uvisshet.
+  SVAR = (sti, opts) => {
+    if (opts.method === "POST") throw new TypeError("failed to fetch");
+    return prosess();
+  };
+  await signer();
+  assert.ok(await vent(() =>
+    melding() === t("ui.rekruttering.usikkert_utfall")),
+    "en tapt transport ble meldt som et definitivt avslag");
+  // …og 4xx ER serverens egen avvisning før commit: da SKAL setningen
+  // være definitiv, ellers er den nye meldingen bare støy.
+  SVAR = (sti, opts) => (opts.method === "POST" ? 422 : prosess());
+  await signer();
+  assert.ok(await vent(() =>
+    melding() === t("ui.rekruttering.feil_utfall")),
+    "et 4xx-avslag ble meldt som uvisst");
+});
+
 test("Rekruttering: signeringsnøkkel og «signert» overlever prosessbytte", async () => {
   // Codex P1 / Cursor P1: nøkkelkartet og «denne knappen er ferdig» lå
   // inne i `tegn`. Prosessvelgeren tegner flaten på nytt mot det SAMME

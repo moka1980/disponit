@@ -1080,6 +1080,7 @@
   "ui.rekruttering.signer_bekreft": "Sign",
   "ui.rekruttering.signer_utfall": "The list is signed ({hash}). The dispatch is released through the platform's signed path.",
   "ui.rekruttering.feil_utfall": "The action was rejected. Nothing has been sent.",
+  "ui.rekruttering.usikkert_utfall": "We got no answer from the server and cannot tell whether the action was carried out. Try again — a retry repeats the SAME operation and does not create a new one. If the outcome is still unclear, reload the surface to see the server's state.",
   "ui.wcag.fane.plan": "Recurring checks",
   "ui.historikk.knapp": "Version history",
   "ui.historikk.tittel": "Version history — {policy}",

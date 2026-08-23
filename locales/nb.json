@@ -1080,6 +1080,7 @@
   "ui.rekruttering.signer_bekreft": "Signer",
   "ui.rekruttering.signer_utfall": "Listen er signert ({hash}). Utsendelsen frigis gjennom plattformens signerte vei.",
   "ui.rekruttering.feil_utfall": "Handlingen ble avvist. Ingenting er sendt.",
+  "ui.rekruttering.usikkert_utfall": "Vi fikk ikke svar fra serveren, og vet ikke om handlingen ble utført. Prøv igjen — et nytt forsøk gjentar den SAMME operasjonen og lager ingen ny. Er utfallet fortsatt uklart, last flaten på nytt for å se serverens tilstand.",
   "ui.wcag.fane.plan": "Periodisk kontroll",
   "ui.historikk.knapp": "Versjonshistorikk",
   "ui.historikk.tittel": "Versjonshistorikk — {policy}",
