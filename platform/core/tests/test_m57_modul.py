@@ -1547,6 +1547,47 @@ def test_port28_avbrutt_kjoring_promoterer_ingenting(tmp_path):
     assert e.value.kode == "ugyldige_vekter"
 
 
+def test_flere_filer_under_samme_kandidat_blir_EN_evaluering(tmp_path):
+    """Codex P1: siste medlem vant, og rekkefølgen avgjorde resultatet.
+
+    En kandidatmappe rommer både CV og søknadsbrev. Med én evaluering per
+    MEDLEM og `artefakter[kandidat_id] = resultat` overskrev filene
+    hverandre: kvalifikasjonene i den første forsvant i stillhet, og
+    hvilken som overlevde avhang av zip-medlemmenes rekkefølge.
+
+    MUTASJONEN SOM DREPER DENNE: flytt `evaluer_kandidat` tilbake inn i
+    lesesløyfa.
+    """
+    from modules.m57_ats import kjoring
+
+    arkiv = _bunt(tmp_path, [
+        ("k1/soknad.html", b"<p>Kari kan drift</p>"),
+        ("k1/cv.html", b"<p>Kari har sertifisering</p>"),
+        ("k2/soknad.html", b"<p>Ola kan drift</p>"),
+    ])
+    # Feltene er MEDLEMMETS: navnet står i søknadsbrevet, ikke i CV-en —
+    # og blindingen gjelder likevel hele mappen.
+    def felter(medlem):
+        return ({"navn": ["Kari"]} if medlem.navn == "k1/soknad.html"
+                else {"navn": ["Ola"]} if medlem.navn.startswith("k2")
+                else {})
+
+    modell = _Modell()
+    ut = kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
+                           kandidatfelter_for=felter,
+                           tekst_for=lambda m, d: d.decode("utf-8"),
+                           biasmaalinger=_MAALINGER)
+    # Tre filer lest, TO kandidater evaluert — én evaluering per mappe.
+    assert ut["fremdrift"]["filer_lest"] == 3
+    assert set(ut["artefakter"]) == {"k1", "k2"}
+    assert len(modell.sett) == 2
+    k1 = next(t for t in modell.sett if "sertifisering" in t)
+    # Begge filene er MED (ingen stille dropp) …
+    assert "drift" in k1
+    # … og navnet fra søknadsbrevet blinder også CV-ens forekomst.
+    assert "Kari" not in k1
+
+
 def test_tekstuttrekket_er_containerens_aldri_en_utf8_dekoding(tmp_path):
     """Codex P1: pdf og docx er BINÆRE — to av de tre lovede typene.
 

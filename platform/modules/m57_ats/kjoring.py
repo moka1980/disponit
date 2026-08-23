@@ -30,6 +30,29 @@ class Kjoringsfeil(Exception):
         return f"{self.kode} ({self.fremdrift})"
 
 
+def _flett_felter(samlet, nye):
+    """Blindingens kilde er HELE kandidatmappen. Står navnet bare i
+    søknadsbrevet, skal det maskeres i CV-en også — feltene fra hvert
+    medlem legges derfor sammen (uten duplikater, i den rekkefølgen de
+    kom, så tokennummereringen holder seg deterministisk). Formen måles
+    av `blinding.blind`; her flettes den bare."""
+    for felt, verdier in dict(nye).items():
+        rad = samlet.get(felt)
+        if not (isinstance(rad, list) and isinstance(verdier, (list, tuple))):
+            # Enten er dette første verdien for feltet, eller så er en av
+            # de to en form `blind` skal FELLE. Da settes den som den er,
+            # og porten der nede måler den — flettingen skjuler aldri en
+            # ugyldig maskeringsform bak et pent snitt.
+            if rad is None:
+                samlet[felt] = (list(verdier)
+                                if isinstance(verdier, (list, tuple))
+                                else verdier)
+            continue
+        for verdi in verdier:
+            if verdi not in rad:
+                rad.append(verdi)
+
+
 def _tekst(tekst_for, medlem, data, fremdrift):
     """Uttrekket er FREMMED kode (containerens), og feiler det, er det et
     kodet utfall — ikke en rå `PdfReadError` ut av modulen."""
@@ -68,14 +91,36 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
     artefakter: dict[str, dict] = {}
     oppfylt: dict[str, dict] = {}
     fremdrift: dict = {"filer_lest": 0, "filer_totalt": 0, "byte_lest": 0}
+    # ÉN KANDIDAT, ÉN EVALUERING (Codex P1). Én mappe kan inneholde både
+    # CV og søknadsbrev, og med `artefakter[kandidat_id] = resultat` per
+    # MEDLEM vant den siste: kvalifikasjoner og funn fra de øvrige filene
+    # forsvant i stillhet, og rangeringen avhang av zip-medlemmenes
+    # rekkefølge. Mappen samles derfor først og evalueres én gang.
+    #
+    # Om minnet: tekstbitene holdes til evalueringen, men det er ingen ny
+    # størrelsesorden — `evaluer_kandidat` returnerer `kildetekst` per
+    # kandidat, så resultatet bærer allerede hele buntens tekst. Selve
+    # STRØMMINGEN er uendret: arkivgatens grenser måles fortsatt per
+    # medlem under lesing, aldri på en utpakket bunt.
+    biter: dict[str, list[tuple[str, str]]] = {}
+    felter: dict[str, dict] = {}
     try:
         for merke, medlem, data in parsing.les_porsjonsvis(sti):
             if merke:
                 fremdrift = merke
-            kandidat_id = medlem.navn.replace("\\", "/").split("/")[0]
-            tekst = _tekst(tekst_for, medlem, data, fremdrift)
+            navn = medlem.navn.replace("\\", "/")
+            kandidat_id = navn.split("/")[0]
+            biter.setdefault(kandidat_id, []).append(
+                (navn, _tekst(tekst_for, medlem, data, fremdrift)))
+            _flett_felter(felter.setdefault(kandidat_id, {}),
+                          kandidatfelter_for(medlem))
+        for kandidat_id in sorted(biter):
+            # Sortert på medlemsnavn: samme bunt gir samme tekst, uansett
+            # hvilken rekkefølge arkivet leverte medlemmene i.
+            tekst = "\n\n".join(
+                tekst for _, tekst in sorted(biter[kandidat_id]))
             resultat = evaluering.evaluer_kandidat(
-                modell, tekst, kandidatfelter_for(medlem), vekter,
+                modell, tekst, felter[kandidat_id], vekter,
                 biasmaalinger=biasmaalinger,
                 blinding_av=blinding_av, auditrad=auditrad)
             artefakter[kandidat_id] = resultat
