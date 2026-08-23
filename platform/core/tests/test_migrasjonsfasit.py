@@ -41,14 +41,25 @@ def test_kjorte_migrasjoner_er_byte_identiske_med_fasiten():
     assert not avvik, "\n".join(avvik)
 
 
-def test_fasiten_dekker_alle_kjorte_migrasjoner():
-    """Motsatt retning: hver migrasjon t.o.m. høyeste pinnede nummer må
-    STÅ i fasiten — et hull er en fil noen kan redigere usett."""
-    hoyeste = max(int(n[:3]) for n in FASIT)
-    for fil in sorted(KATALOG.glob("*.sql")):
-        if int(fil.name[:3]) <= hoyeste:
-            assert fil.name in FASIT, \
-                f"{fil.name} er kjørt (≤{hoyeste:03d}) men ikke pinnet"
+def test_fasiten_dekker_alle_migrasjonene_i_treet():
+    """Motsatt retning: HVER migrasjon i katalogen må stå i fasiten — et
+    hull er en fil noen kan redigere usett.
+
+    Grensen leses fra KATALOGEN, ikke fra fasiten. En fasit som er sin
+    egen øvre grense kan senkes stille: slett siste linje mens du endrer
+    den migrasjonen, så slutter porten over å se filen OG grensen faller
+    med den — alle tre testene blir grønne selv om en pinnet, prod-kjørt
+    migrasjon er fjernet og endret. Katalogen kan ikke synke når fasiten
+    gjør det: å fjerne pinnen fjerner ikke filen.
+    """
+    upinnet = [fil.name for fil in sorted(KATALOG.glob("*.sql"))
+               if fil.name not in FASIT]
+    assert not upinnet, (
+        "migrasjoner i treet uten pin i fasiten: "
+        + ", ".join(upinnet)
+        + " — hver migrasjon pinnes i samme commit som den fødes; en"
+          " upinnet fil kan endres etter at deploy har kjørt den, og"
+          " avviket dukker først opp når tjenestene alt er stoppet")
 
 
 def test_fasiten_er_regnet_ikke_skrevet():
