@@ -8,7 +8,12 @@
 2. Er alle handlinger reversible eller eksplisitt irreversible med harde vilkår?
 3. Mangler unntakshåndtering for noen feilvei?
 
-## Codex merge-porter (steg 4)
+## Cursor pre-Codex (steg 4) — før Codex
+- [ ] `@cursor review` kjørt (eller PR markert ready_for_review / label `pre-codex`)
+- [ ] Cursor-PASS, eller alle P1/P2 fra Cursor lukket + verifiseringspass
+- [ ] Ingen `@codex review` før Cursor-PASS
+
+## Codex merge-porter (steg 5)
 - [ ] CI grønn — inkludert negative policytester (ingen fjernet/svekket)
 - [ ] Ingen kodevei uten ved_brudd-håndtering
 - [ ] Akseptansemapping mot gjeldende prototype (`docs/spesifikasjon/`) komplett i beskrivelsen

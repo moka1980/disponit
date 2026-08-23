@@ -1797,14 +1797,36 @@ def test_kravet_er_registrert_og_punktene_bundet(migrator):
     assert "m02" in hode and "konsistensregel" in hode
 
 
+#: Hvert innsjekket WCAG-sammendrag som BÆRER en aksept: v1 er m56s
+#: historiske runde, v2 er det både m56-manifestet og m02-manifestet
+#: binder for `revisjonslogg_korrekt`. Begge skal kunne regenereres av
+#: sin egen råfil — en binding uten regenerering er en påstand.
+EVIDENSKJEDEN = (
+    "deploy/staging/artefakter/wcag-kontroll-v1-20260818T200413.json",
+    "deploy/staging/artefakter/wcag-kontroll-v2-20260822T190624Z.json",
+)
+
+
 @pg
-def test_evidenskjeden_er_bytebundet_hele_veien():
+@pytest.mark.parametrize("artefakt_rel", EVIDENSKJEDEN)
+def test_evidenskjeden_er_bytebundet_hele_veien(artefakt_rel):
     """Port 11 (SP-11): manifestet binder sammendraget med sha256,
     sammendraget binder råfilen (`kilde_sha256`), og sammendraget kan
     REGENERERES mekanisk av den innsjekkede råfilen — et bytte i noe
-    ledd bryter kjeden her, i CI."""
-    art_sti = ROT / ("deploy/staging/artefakter/"
-                     "wcag-kontroll-v1-20260818T200413.json")
+    ledd bryter kjeden her, i CI.
+
+    Codex' P2 (#147, runde 2): porten var hardkodet til v1-artefaktet
+    fra 20260818, mens det er v2-artefaktet fra 20260822 som bærer
+    m02-akseptens `revisjonslogg_korrekt` — modulens kjernepunkt.
+    Akseptkalleren verifiserer sammendragets skjema og grenser, og
+    hasher råfila hver for seg, men beviser aldri at det ene er UTLEDET
+    av det andre: et håndredigert sammendrag med grønne tellere og en
+    fullt gyldig peker til den urørte råfila kunne dermed bære den
+    IMMUTABLE aksepten. Nå måles begge sammendragene — og motprøven
+    under viser at ingen teller er fri: hver eneste én av dem er
+    bestemt av råfila.
+    """
+    art_sti = ROT / artefakt_rel
     art = json.loads(art_sti.read_text(encoding="utf-8"))
     kilde = ROT / art["oppsett"]["kilde"]
     assert hashlib.sha256(kilde.read_bytes()).hexdigest() == \
@@ -1813,9 +1835,20 @@ def test_evidenskjeden_er_bytebundet_hele_veien():
         [sys.executable, str(ROT / "deploy/staging/wcag-kontroll-artefakt.py"),
          str(kilde)], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
-    assert json.loads(r.stdout) == art, \
+    regenerert = json.loads(r.stdout)
+    assert regenerert == art, \
         "sammendraget lar seg ikke regenerere fra råfilen — utvalgsreglene" \
         " og artefaktet har glidd fra hverandre"
+    # Motprøven: porten er ikke en tautologi. Én endret teller — det
+    # håndredigerte, grønne sammendraget — skiller de to, for hver
+    # eneste teller artefaktet bærer.
+    assert art["maalt"], "sammendraget har ingen tellere å måle"
+    for teller in sorted(art["maalt"]):
+        mutert = json.loads(json.dumps(art))
+        mutert["maalt"][teller] += 1
+        assert regenerert != mutert, \
+            f"maalt.{teller} overlever regenereringen — den telleren er" \
+            " ikke bundet av råfila"
 
 
 def _runde_skript():
@@ -2444,18 +2477,24 @@ def test_e2e_beviset_maa_vaere_det_drillen_saa():
 
 
 def test_manifestet_binder_ikke_den_supersederte_drillen():
-    """…og den blokkerte bindingen er DOKUMENTERT, ikke bare fjernet: et
-    punkt som stilltiende forsvant, ville sett ut som om kravet aldri
-    fantes."""
+    """Doktrinen består etter flippen: den supersederte drillen (2026-08-20
+    13:22 — bootet aldri rullbakken) blir ALDRI bindende igjen. Punktet er
+    nå `ja`, og det binder den NYE, komplette kjøringen fra 2026-08-22 —
+    aldri den gamle. Historikken slettes ikke; den slutter å være
+    bindende."""
     import yaml
     man = yaml.safe_load(
         (ROT / "platform/modules/m56_wcag_audit/manifest.yaml").read_text(
             encoding="utf-8"))
     p = man["staging_sjekkliste"]["rollback_testet"]
-    assert p["status"] == "blokkert" and p.get("blokkert_av")
-    assert "kjøres på nytt" in p["blokkert_av"].lower()
-    assert "artefakt" not in p, \
-        "et blokkert punkt skal ikke bære en artefaktbinding"
+    assert p["status"] == "ja" and p.get("krav_id") == "rollback-m56-v1"
+    assert "20260820T132200" not in p.get("artefakt", ""), \
+        "den supersederte drillen kan ikke bli bindende igjen"
+    assert "rollback-m56-v1-20260822T164530Z.json" in p["artefakt"]
+    sti = ROT / p["artefakt"]
+    import hashlib
+    assert hashlib.sha256(sti.read_bytes()).hexdigest() == \
+        p["artefakt_sha256"], "bindingen er hash-eksakt"
     assert (ROT / ("deploy/staging/artefakter/"
                    "rollback-m56-v1-20260820T132200.json")).exists(), \
         "historikken slettes ikke — den slutter å være bindende"
@@ -2463,7 +2502,8 @@ def test_manifestet_binder_ikke_den_supersederte_drillen():
 
 def test_datasettpunktet_krever_den_lokale_halvdelen():
     """Codex' P2 (runde 10): `syntetisk_datasett_likt_lokalt` sto `ja` på
-    en måling som bare finnes på staging.
+    en måling som bare finnes på staging. Nå er den lokale halvdelen MÅLT
+    (r21, 2026-08-22) — og porten krever at begge halvdelene står.
 
     Punktets eneste bevismåling var `maalt.avvik_mot_fasit`, og den
     avleder `wcag-kontroll-artefakt.py` utelukkende av staging-rundens
@@ -2474,18 +2514,28 @@ def test_datasettpunktet_krever_den_lokale_halvdelen():
     umålt ledd er nøyaktig den lånte konklusjonen `bevismaalinger` finnes
     for å stoppe."""
     import yaml
+    from manifestskjema import KRAVGRENSER
     man = yaml.safe_load(
         (ROT / "platform/modules/m56_wcag_audit/manifest.yaml").read_text(
             encoding="utf-8"))
     p = man["staging_sjekkliste"]["syntetisk_datasett_likt_lokalt"]
-    assert p["status"] == "blokkert" and p.get("blokkert_av")
-    assert "artefakt" not in p and "bevismaalinger" not in p, \
-        "et blokkert punkt skal ikke bære en evidensbinding"
-    # Begrunnelsen må si hva som faktisk lukker gapet — ellers er
-    # `blokkert` bare et penere `nei`.
-    assert "lokal" in p["blokkert_av"].lower()
-    # Datasettet ER sjekket inn, så den lokale siden lar seg måle når
-    # noen kjører runden: stien i begrunnelsen skal finnes.
+    # Flippet 2026-08-22 med vei (b) fra blokkert-noten (som var spec-en):
+    # byte-bindingen. BEGGE leddene må stå som bevismålinger — staging-
+    # halvdelen (avvik mot fasit) OG den lokale halvdelen (datasett-sha
+    # skrevet i evidensstrømmen, holdt mot innsjekkede bytes av grensen).
+    # Et `ja` med bare den ene halvdelen er den lånte konklusjonen
+    # `bevismaalinger` finnes for å stoppe.
+    assert p["status"] == "ja" and p.get("krav_id") == "wcag-kontroll-v2"
+    bm = p.get("bevismaalinger") or []
+    assert "oppsett.datasett_sha256" in bm, \
+        "den lokale halvdelen (byte-bindingen) er ikke navngitt"
+    assert "maalt.avvik_mot_fasit" in bm, \
+        "staging-halvdelen er ikke navngitt"
+    # …og bindingen er ikke dekorasjon: grensen punktets krav_id peker på
+    # HOLDER sha-en mot de innsjekkede bytene ved hver kjøring.
+    assert KRAVGRENSER["wcag-kontroll-v2"].get(
+        "krev_datasett_sha_lik_innsjekket") is True
+    # Datasettet som måles mot er sjekket inn.
     assert (ROT / "platform/modules/m56_wcag_audit/testnettsted"
             / "fasit.json").exists()
 
