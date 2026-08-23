@@ -1176,19 +1176,33 @@ def test_den_kanoniske_handlingen_binder_oppdraget_til_eiermodulen():
 def test_m57_har_EN_modulidentitet_i_kontrakt_migrasjon_og_artefakt():
     """Codex P2 / Cursor P1: `m_ats` mot `m57_ats` var en splitt.
 
-    De tre stedene som må være enige om hvem som eier M-57-oppdragene:
+    De FIRE stedene som må være enige om hvem som eier M-57-oppdragene:
 
     * kontrakten (`eiermodul` — det som skrives i raden ved opprettelsen
       og det `claim_neste_oppdrag` filtrerer på),
     * 056s CHECK + `opprett_frigivelsesoppdrag` (utsendingsarmen), og
-    * akseptartefaktets `oppsett.modul` (hvem aksepten attesterer).
+    * akseptartefaktets `oppsett.modul` (hvem aksepten attesterer), og
+    * modulmanifestets egen `id` (Cursor P1) — den fjerde kanonen porten
+      IKKE målte, så `id: ats` sto uimotsagt ved siden av tre `m57_ats`.
 
     Var de uenige, kunne ingen modul claime BEGGE armene, og et
     skjemagyldig akseptartefakt ville attestert en annen identitet enn
     den som faktisk kjørte jobbene. Porten er statisk med vilje: den
     feller en splitt før noe kjøres.
+
+    HVA MANIFEST-ARMEN FAKTISK MÅLER: `registry`-id-en og
+    `auth.modul_id` er to forskjellige registre — det siste kommer fra
+    `modultoken`/`modulhode`, registrert ved onboarding, ikke fra
+    manifestet. M-56 kjører i produksjon med `id: wcag_audit` mot
+    `eiermodul='m_wcag_audit'`, så et hus-vidt krav om likhet ville vært
+    usant. Armen er derfor bundet til M-57s EGEN kanon: her skal de fire
+    stemme, fordi det er den som skal leses av et menneske som
+    registrerer modulen — og som alt har stavet den feil én gang.
     """
     import json
+
+    import yaml
+
     import oppdragskontrakt as ok
 
     kjerne = Path(__file__).resolve().parents[1]
@@ -1204,3 +1218,12 @@ def test_m57_har_EN_modulidentitet_i_kontrakt_migrasjon_og_artefakt():
         encoding="utf-8")
     assert f"eiermodul = '{kanonisk}'" in sql
     assert f"IS DISTINCT FROM '{kanonisk}'" in sql
+
+    manifest = yaml.safe_load(
+        (MODULROT / "manifest.yaml").read_text(encoding="utf-8"))
+    assert manifest["id"] == kanonisk, (
+        f"manifestet kaller modulen {manifest['id']!r}, kontrakten"
+        f" {kanonisk!r} — den fjerde kanonen er uenig med de tre andre")
+    # Og id-en er mappenavnet, som er `les_manifester` sitt eget fallback
+    # når `id` mangler: da kan de to aldri komme fra hverandre i stillhet.
+    assert manifest["id"] == MODULROT.name

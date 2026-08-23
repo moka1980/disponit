@@ -12,7 +12,16 @@
 # artefakter og ingenting utad. Utsendelsen er IRREVERSIBEL og skjer kun
 # fordi et menneske signerte; den er ikke et modulnoppdrag, men en
 # signaturbundet frigivelse gjennom 056-kjeden.
-id: ats
+# `m57_ats`, ikke `ats` (Cursor P1). Tre kanoner sier alt `m57_ats` —
+# kontraktens `eiermodul`, 056/057s CHECK-er og akseptartefaktets
+# `oppsett.modul` — og `registry.les_manifester` faller selv tilbake på
+# MAPPENAVNET når `id` mangler, altså `m57_ats`. En fjerde stavemåte her
+# er ikke en teknisk feil i dag (registerets id og `auth.modul_id` er to
+# forskjellige registre: det siste kommer fra `modultoken`/`modulhode`,
+# registrert ved onboarding), men den er nøyaktig fellen som alt har
+# kostet denne PR-en to runder som `m_ats`: den som skal registrere
+# modulen ved onboarding leser manifestet for å vite hva den heter.
+id: m57_ats
 navn: Rekrutteringsagent (ATS)
 versjon: 0.1.0
 status: under_utvikling        # aktiv | inaktiv | under_utvikling
