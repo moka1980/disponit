@@ -36,6 +36,9 @@ hører hjemme her og ikke bare i en PR-tråd.
 * 003–057 er bytene på `main` slik de sto ved 9893cb0 (mergen rett før
   denne hotfixen), med 056 tilbakestilt til bytene fra #140 — altså de
   bytene prod faktisk kjørte, ikke #153-varianten med kommentaren.
+  For 056 spesielt er ikke dette bare påstått: `KJORT_056` under binder
+  pinnen maskinelt mot en hash regnet fra `git show 2aaca01:<sti>`
+  (#140, kjøre-mergen), ikke bare mot disken i denne PR-en.
 
 * Drift-revisjon på `git log origin/main` per migrasjonsfil: av 57
   pinnede filer har nøyaktig FIRE noen gang fått en andre commit —
@@ -71,6 +74,17 @@ KATALOG = ROT / "db/migrations"
 
 
 HENDELSEN_056 = "056_m57_utsending.sql"
+
+# Regnet 2026-08-23 av implementator, IKKE skrevet for hånd:
+#   git show 2aaca01:platform/core/db/migrations/056_m57_utsending.sql \
+#     | sha256sum
+# 2aaca01 = "M-57 ATS: utsendingskjeden (CP1 — migrasjon 056 + SP-10)"
+# (#140) — mergen som faktisk kjørte 056 i prod, FØR #153-kommentaren.
+# Samme grep som REVIEWEDE_CHECKSUMS i migrasjon-bootstrap.py for
+# 001/002: fasit==disk alene beviser bare intern konsistens; denne
+# binder 056 i tillegg til kilde-commiten prod kjørte, uavhengig av om
+# fasiten og disken skulle drifte sammen til noe annet.
+KJORT_056 = "0603c65f996ff33ce24cfac9e7738f61be260ccc7d234849379a313abfdfd19d"
 
 
 def _bytefeil(les):
@@ -135,6 +149,28 @@ def test_kommentarlinje_etter_prod_felles_i_fasitporten():
     assert not _bytefeil(Path.read_bytes)
 
 
+def test_056_matcher_prodkjoringen_i_140():
+    """056 er ikke bare selvkonsistent (fasit==disk); den er bundet til
+    kilde-commiten prod faktisk kjørte — ikke bare en fasit som tilfeldigvis
+    stemmer med disken den ble regnet fra i samme commit.
+
+    Uten denne kunne en feil revert (f.eks. tilbake til en ANNEN historisk
+    variant enn den #140 faktisk kjørte) og en matchende, nyregnet fasit-pin
+    gitt grønn CI mens prod fortsatt sto med andre bytes — hotfixens
+    egentlige mål ville da vært umålt.
+
+    MUTASJONEN SOM DREPER DENNE: `KJORT_056` endres til noe annet enn
+    prod-bytene, eller 056 (fil/fasit) driftes bort fra dem igjen.
+    """
+    assert FASIT[HENDELSEN_056] == KJORT_056, (
+        f"fasit-pinnen for {HENDELSEN_056} er ikke lenger bytene #140"
+        " faktisk kjørte i prod")
+    faktisk = hashlib.sha256((KATALOG / HENDELSEN_056).read_bytes()).hexdigest()
+    assert faktisk == KJORT_056, (
+        f"{HENDELSEN_056} på disk er ikke lenger bytene #140 faktisk"
+        " kjørte i prod")
+
+
 def test_fasiten_dekker_alle_migrasjonene_i_treet():
     """Motsatt retning: HVER migrasjon i katalogen må stå i fasiten — et
     hull er en fil noen kan redigere usett.
@@ -162,24 +198,28 @@ def _git(*argv):
 
 
 def _basiscommit() -> str:
-    """`main` sin sha, om nødvendig hentet inn i den grunne utsjekkingen.
+    """`main` sin sha, alltid friskt hentet inn i den grunne utsjekkingen.
 
     Samme grep som proveniensporten i `test_aksept_projeksjon.py`:
     `actions/checkout` henter `refs/pull/<nr>/merge` på dybde 1, så
     basisgrenen er ikke nødvendigvis i objektbasen — en `--depth=1`-henting
     av `main` koster ett objektsett og utvider ikke historikken ellers.
 
+    Henter FØR den ser etter en lokal ref, ikke bare hvis den mangler: et
+    miljø som allerede har en `origin/main` liggende (f.eks. et
+    gjenbrukt arbeidstre) kan ha en FORELDET ref, og en tidlig retur uten
+    fetch ville latt append-only-porten måle mot den utdaterte verdien i
+    stedet for den ferske — stille, uten at noen mutasjon var involvert.
+
     INGEN fallback til `FETCH_HEAD`: i en PR-utsjekking i GHA er
     `FETCH_HEAD` som oftest PR-ens egen merge-ref, ikke `main` — feiler
-    fetchen under (f.eks. offline), ville et fall til `FETCH_HEAD` fått
+    fetchen (f.eks. offline), ville et fall til `FETCH_HEAD` fått
     `_basisfasit` til å lese PR-ens EGEN fasit som «basis», og
-    append-only-porten ville vært grønn mot seg selv. Etter fetch
-    verifiseres derfor bare `origin/main` på nytt; lykkes ikke det, er
-    basisen uløst, og porten under sier fra — den passerer ikke stille.
+    append-only-porten ville vært grønn mot seg selv. Feiler fetchen,
+    forsøkes `origin/main` likevel én gang (kan alt være tilstede fra en
+    tidligere fetch i samme miljø); lykkes ikke det heller, er basisen
+    uløst, og porten under sier fra — den passerer ikke stille.
     """
-    r = _git("rev-parse", "--verify", "--quiet", "origin/main^{commit}")
-    if r.returncode == 0:
-        return r.stdout.decode().strip()
     _git("fetch", "--quiet", "--depth=1", "origin", "main")
     r = _git("rev-parse", "--verify", "--quiet", "origin/main^{commit}")
     return r.stdout.decode().strip() if r.returncode == 0 else ""
@@ -192,10 +232,22 @@ def _basisfasit(commit: str) -> dict:
     i PR-en som føder den. Da er hver pin her ny, og porten under er
     riktignok stille — men den er ikke blind: den måler fra og med neste
     endring, som er den første som kan drifte.
+
+    Fravær og LESEFEIL er ikke samme ting. `cat-file -e` avgjør bare
+    OM stien finnes i treet på `commit`; finnes den ikke, er `{}` riktig
+    (fasiten er nyfødt her). Finnes den, men selve blob-lesingen feiler
+    (skadet objekt, avkuttet fetch), er det en uløst basis — IKKE en tom
+    en — og porten skal si fra, ikke bli vacuous-grønn for alltid.
     """
+    finnes = _git("cat-file", "-e", f"{commit}:{FASITSTI}")
+    if finnes.returncode != 0:
+        return {}
     blob = _git("cat-file", "blob", f"{commit}:{FASITSTI}")
-    return json.loads(blob.stdout.decode("utf-8")) \
-        if blob.returncode == 0 else {}
+    assert blob.returncode == 0, (
+        f"{FASITSTI!r} finnes på {commit[:12]}… men lot seg ikke lese —"
+        " basisen er da uløst, ikke tom; append-only-porten kan ikke"
+        " passere stille på en lesefeil")
+    return json.loads(blob.stdout.decode("utf-8"))
 
 
 def test_fasitstien_resolver_mot_HEAD():
@@ -275,26 +327,68 @@ def test_fasiten_er_append_only_mot_basisgrenen():
 
 
 def test_pin_endret_i_takt_med_filen_felles_mot_basisgrenen():
-    """Negativtesten for porten over: hendelsen den finnes for, spilt av.
+    """Negativtesten for porten over: hendelsen den finnes for, spilt av
+    gjennom SAMME WIRING som porten — ikke bare `_regresjon` for seg selv.
 
-    I PR-en som føder fasiten er basisen tom, og porten over er derfor
-    grønn uansett om den måler noe som helst. Angrepet spilles derfor av
-    i minnet: 23/8-kommentaren legges i 056 OG pinnen regnes om i takt,
-    slik en bidragsyter ville gjort for å få de tre andre portene grønne.
+    Cursor 19:13 på 77a7a7d: en tidligere versjon kalte `_regresjon(FASIT,
+    i_takt)` direkte, uten å gå via `_basiscommit`/`_basisfasit`. Da kunne
+    WIRINGEN mellom dem svekkes usett — `_basisfasit` gjort til å alltid
+    returnere `{}` (fail-open), eller porten over gjort til å sammenligne
+    fasiten mot seg selv (`_basisfasit(commit)` byttet med `FASIT`) — uten
+    at denne negativtesten merket noe, fordi den aldri rørte den koden.
+    En negativtest som gjenskaper sammenligningen sin egen vei beviser at
+    kopien virker, ikke at porten gjør det.
 
-    MUTASJONEN SOM DREPER DENNE: svekk `_regresjon` — fjern
-    verdisammenligningen, sammenlign bare nøklene, eller la basissiden
-    være arbeidstreets egen fasit. Da finner mutasjonen ingen avvik, og
-    denne blir rød.
+    Her kalles derfor de VIRKELIGE `_basiscommit()` og `_basisfasit()`
+    uendret; kun `_git` (den ene primitiven begge bygger på, samme
+    injeksjonspunkt som `_bytefeil(les)` over) er byttet med en falsk git
+    som svarer «main har den UENDREDE fasiten». Angrepet er: 23/8-
+    kommentaren legges i 056 OG pinnen regnes om i takt, slik en
+    bidragsyter ville gjort for å få de tre andre portene grønne.
+
+    MUTASJONEN SOM DREPER DENNE: svekk `_regresjon` (som før) — ELLER la
+    `_basisfasit`/`_basiscommit` fail-åpne til `{}`, hoppe over
+    `cat-file`, eller på annen måte slutte å bruke svaret fra `_git`.
+    Begge veier går nå gjennom nøyaktig denne løkken.
     """
+    global _git
     kommentaren = (b"\n-- AVGJORT (eier, 2026-08-23 i #153): pseudonymnokkel."
                    b"\n")
     endret = hashlib.sha256(
         (KATALOG / HENDELSEN_056).read_bytes() + kommentaren).hexdigest()
 
-    # Basis = fasiten slik den blir stående på main etter denne PR-en.
+    # "main" slik den var FØR angrepet: den uendrede fasiten.
     i_takt = {**FASIT, HENDELSEN_056: endret}
-    avvik = _regresjon(FASIT, i_takt)
+    basis_json = json.dumps(FASIT).encode("utf-8")
+    ekte_git = _git
+
+    class _Svar:
+        def __init__(self, returncode, stdout=b""):
+            self.returncode = returncode
+            self.stdout = stdout
+
+    def falsk_git(*argv):
+        if argv[0] == "fetch":
+            # `_basiscommit()` sitt eget fetch-kall — svaret brukes ikke,
+            # bare rev-parse-et etterpå. Simulerer et miljø der nettet
+            # virker; en negativtest for offline-stien dekkes ikke her.
+            return _Svar(0)
+        if argv[:2] == ("rev-parse", "--verify"):
+            return _Svar(0, b"f" * 40 + b"\n")
+        if argv[:2] == ("cat-file", "-e"):
+            return _Svar(0)
+        if argv[:2] == ("cat-file", "blob"):
+            return _Svar(0, basis_json)
+        raise AssertionError(f"uventet git-kall i negativtesten: {argv}")
+
+    _git = falsk_git
+    try:
+        commit = _basiscommit()
+        basis = _basisfasit(commit)
+        avvik = _regresjon(basis, i_takt)
+    finally:
+        _git = ekte_git
+
     assert len(avvik) == 1, (
         "angrepet skal treffe 056 og BARE 056 — porten fant "
         f"{len(avvik)} avvik: {avvik}")
