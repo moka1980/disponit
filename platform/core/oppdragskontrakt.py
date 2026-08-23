@@ -226,8 +226,23 @@ OPPDRAGSTYPER: dict[str, Oppdragstype] = {
         # sitt eget oppdrag. Prefikset uten punktum treffer både den
         # nøyaktige handlingen og et eventuelt senere `...evaluering.<noe>`.
         handlingsprefikser=("rekruttering.evaluering",),
+        # `slettefrist_dogn` er KUNDENS valg, ikke kallerens (Codex P1).
+        # 057 sier det ordrett: «fristen er kundevalgt 30–365 døgn
+        # (standard 90)», og basen har både CHECK-en og immutabiliteten.
+        # Men feltet fantes ikke i det lukkede settet, så `minimer` strøk
+        # det: en kunde som valgte 30 kunne ikke uttrykke valget noe sted
+        # bestillingen bærer det. `opprett_rekrutteringsprosess` tar
+        # fristen som et argument, og argumentet hadde ingen kilde i det
+        # signerte oppdraget — altså falt hver prosess tilbake på
+        # standarden, og en 30-dagers avtale ble stille til 90.
+        # VALGFRITT, ikke påkrevd: fraværet ER standardvalget (basens
+        # `DEFAULT 90`), og et påkrevd felt ville gjort hver eksisterende
+        # bestillingsvei ufullstendig for et valg de fleste ikke tar.
+        # Verdien er bundet i `FELTGRENSER` under — samme spennet som
+        # `prosess_frist_i_spennet`, målt der bestillingen tas imot.
         felter=frozenset({"stillingsprofil_ref", "soknadsbunt_ref",
-                          "antall_soknader", "omfang"}),
+                          "antall_soknader", "omfang",
+                          "slettefrist_dogn"}),
         paakrevde=frozenset({"stillingsprofil_ref", "soknadsbunt_ref",
                              "antall_soknader", "omfang"}),
         # `m57_ats`, ikke `m_ats` (Codex P2 / Cursor P1). Identiteten er
@@ -793,7 +808,16 @@ FELTGRENSER: dict[str, dict[str, tuple[int, int]]] = {
     # M-57-klarsignalet §4: 5000 er HARD — 5001 avvises ved validering,
     # aldri stille avkorting (katalogens løfte er «opptil 5000», og et
     # oppdrag som fikk 5001 har alt brutt det før parseren startet).
-    "rekruttering.evaluering": {"antall_soknader": (1, 5000)},
+    "rekruttering.evaluering": {
+        "antall_soknader": (1, 5000),
+        # Kandidatdatagrensen (klarsignalet §5 / 057:34): 30–365 døgn,
+        # samme spenn som `prosess_frist_i_spennet`. Tabellen står her og
+        # ikke bare i basen av samme grunn som `maks_sider`: en
+        # bestilling med `slettefrist_dogn: 3650` er dødfødt, og den skal
+        # avvises der den tas imot — ikke først når prosessfødselen
+        # feiler på en CHECK, etter at oppdraget er opprettet og claimet.
+        "slettefrist_dogn": (30, 365),
+    },
 }
 
 #: Felter som må være en IKKE-TOM STRENG, per type (Codex P2).

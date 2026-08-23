@@ -27,6 +27,11 @@
     },
     "omfang": {
       "const": "bunt"
+    },
+    "slettefrist_dogn": {
+      "type": "integer",
+      "minimum": 30,
+      "maximum": 365
     }
   }
 }

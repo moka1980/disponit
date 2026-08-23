@@ -6,6 +6,9 @@ Modulen er KUNDE av plattformen, aldri omvendt (m56-formen):
   med `stillingsprofil_ref` og `soknadsbunt_ref` (artefaktlageret),
   `antall_soknader` (1–5000, hard grense — 5001 avvises ved validering,
   aldri stille avkorting) og `omfang: bunt` (bærer 240-minuttersfristen).
+  Valgfritt: `slettefrist_dogn` (30–365, standard 90) — kundens
+  kandidatdatafrist, bundet i bestillingen fordi den ellers ikke har noe
+  sted å stå (§5).
 * **Ut**: ett artefakt per kandidat (rangering, funn med kildereferanse,
   intervjuspørsmål) og innstilte utsendingslister som VENTER på
   menneskelig signatur gjennom 056-kjeden. Ingen vei fra modellutdata til

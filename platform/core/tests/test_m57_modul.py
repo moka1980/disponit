@@ -17,7 +17,8 @@ import pytest
 
 from modules.m57_ats import blinding, evaluering, maler, parsing
 from modules.m57_ats.evaluering import Biasmaaling
-from oppdragskontrakt import bryter_feltkontrakten
+from oppdragskontrakt import (OPPDRAGSTYPER, bryter_feltkontrakten,
+                              mangler_paakrevde, minimer)
 
 ROT = Path(__file__).resolve().parents[3]
 MODULROT = ROT / "platform/modules/m57_ats"
@@ -913,6 +914,51 @@ def test_port27_5001_avvises_ved_validering():
     # fristbeslutning), aldri stillhet.
     assert bryter_feltkontrakten(
         "rekruttering.evaluering", payload | {"omfang": "alt"})
+
+
+def test_kundens_slettefrist_baeres_av_bestillingen():
+    """Codex P1: fristvalget hadde ingen plass i det signerte oppdraget.
+
+    057 sier «kundevalgt 30–365 døgn (standard 90)», men det lukkede
+    feltsettet hadde ingen fristkolonne — så `minimer` strøk feltet, og
+    `opprett_rekrutteringsprosess` fikk fristen som et kallerargument
+    uten kilde i bestillingen. En kunde som avtalte 30 døgn fikk 90.
+    """
+    import json
+    from pathlib import Path
+
+    payload = {"stillingsprofil_ref": "art-1", "soknadsbunt_ref": "art-2",
+               "antall_soknader": 10, "omfang": "bunt"}
+    # Feltet OVERLEVER minimeringen (det var her det forsvant).
+    minimert = minimer("rekruttering.evaluering",
+                       payload | {"slettefrist_dogn": 30})
+    assert minimert["slettefrist_dogn"] == 30
+    # … og spennet er basens eget: `prosess_frist_i_spennet` (30–365).
+    for lovlig in (30, 90, 365):
+        assert bryter_feltkontrakten(
+            "rekruttering.evaluering",
+            payload | {"slettefrist_dogn": lovlig}) == [], lovlig
+    for ulovlig in (29, 366, 0, -1, True, "90", 90.0):
+        assert "slettefrist_dogn" in bryter_feltkontrakten(
+            "rekruttering.evaluering",
+            payload | {"slettefrist_dogn": ulovlig}), ulovlig
+    # Fraværet ER standardvalget (basens `DEFAULT 90`), ikke et brudd:
+    # feltet er valgfritt, og et oppdrag uten det er komplett.
+    assert bryter_feltkontrakten("rekruttering.evaluering", payload) == []
+    assert mangler_paakrevde(
+        "rekruttering.evaluering",
+        minimer("rekruttering.evaluering", payload)) == []
+    # Modulens eget skjema må speile det lukkede settet: med
+    # `additionalProperties: false` ville utføreren ellers avvist nettopp
+    # den payloaden plattformen nå slipper gjennom.
+    skjema = json.loads(
+        (Path(__file__).resolve().parents[3]
+         / "platform/modules/m57_ats/kontrakt/payload-skjema.json")
+        .read_text(encoding="utf-8"))
+    assert set(skjema["properties"]) == set(
+        OPPDRAGSTYPER["rekruttering.evaluering"].felter)
+    assert skjema["properties"]["slettefrist_dogn"] == {
+        "type": "integer", "minimum": 30, "maximum": 365}
 
 
 def test_artefaktreferansene_ma_vaere_strenger_ved_opprettelsen():
