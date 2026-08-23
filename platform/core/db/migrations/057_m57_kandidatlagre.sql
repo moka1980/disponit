@@ -47,6 +47,27 @@ CREATE TABLE rekrutteringsprosess (
         CHECK (slettet_ts IS NULL OR lukket_ts IS NOT NULL)
 );
 
+-- Reap-timerens utvalg (Codex P2). Prosessraden BESTÅR reapingen — den
+-- er revisjonsevidensen om at dataene ble slettet — så tabellen vokser
+-- monotont med all historisk bruk, mens de UREAPEDE alltid er en liten
+-- hale. Uten en indeks betalte timeren hvert femte minutt et fullt skann
+-- pluss en sortering av hele den halen, og kostnaden vokste med bruk som
+-- for lengst var slettet. Da er det sletteFRISTEN som til slutt glipper:
+-- reaperen tar 50 rader per kall, og et skann som blir dyrere for hver
+-- måned skyver slettingen forbi tidspunktet kunden kjøpte.
+--
+-- Predikatet er reaperens eget, så indeksen inneholder BARE de ureapede;
+-- uttrykket er reaperens `coalesce(lukket_ts, opprettet)`, altså den
+-- enden fristen løper fra, så den samme indeksen gir både utvalget og
+-- ORDER BY-en uten sortering. Selve fristen (`base + slettefrist_dogn *
+-- interval '1 day'`) kan ikke indekseres: `timestamptz + interval` er
+-- STABLE, ikke IMMUTABLE, siden døgnleddet avhenger av tidssonen. Den
+-- gjenstår derfor som et radfilter — men bare over halen, i frist-
+-- rekkefølge, ikke over historikken.
+CREATE INDEX rekrutteringsprosess_ureapet_frist
+    ON rekrutteringsprosess (coalesce(lukket_ts, opprettet))
+    WHERE slettet_ts IS NULL;
+
 -- Radvakten (§5 + port 20): fødselen skjer på et levende, m57-eid
 -- evalueringsoppdrag og alltid ÅPEN, fristen er immutabel, lukking skjer
 -- én gang og aldri frem i tid, reap-merket settes én gang. Alt annet

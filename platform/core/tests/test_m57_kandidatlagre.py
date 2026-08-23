@@ -1763,6 +1763,53 @@ def test_innhold_sha256_utledes_av_payloaden_ikke_av_kalleren(migrator):
 
 
 @pg
+def test_reap_utvalget_er_indeksert_paa_de_ureapede(migrator):
+    """Codex P2: timerens utvalg hadde ingen indeks.
+
+    Prosessraden BESTÅR reapingen — den er evidensen om at dataene ble
+    slettet — så tabellen vokser monotont med all historisk bruk, mens de
+    ureapede alltid er en liten hale. Uten indeks betalte timeren hvert
+    femte minutt et fullt skann pluss en sortering av den halen, og
+    kostnaden vokste med bruk som for lengst var slettet. Det er
+    sletteFRISTEN som glipper til slutt: reaperen tar 50 rader per kall.
+
+    Porten måler KOBLINGEN, ikke indeksnavnet: det må finnes en indeks på
+    ankeret hvis partielle predikat er reaperens eget «ennå ikke reapet»,
+    og hvis nøkkeluttrykk er den enden reaperen både filtrerer og
+    sorterer på. Endrer reaperen uttrykket sitt, faller denne — det er
+    hele poenget, for da er indeksen ubrukelig uten at noe annet sier fra.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `CREATE INDEX
+    rekrutteringsprosess_ureapet_frist` fra 057, eller gjør den total ved
+    å droppe `WHERE slettet_ts IS NULL`."""
+    kilde = migrator.execute(
+        "SELECT pg_get_functiondef('reap_kandidatdata(int)'::regprocedure)"
+    ).fetchone()[0]
+    assert "coalesce(p.lukket_ts, p.opprettet)" in kilde, \
+        "reaperen regner ikke lenger fra coalesce(lukket_ts, opprettet)"
+    assert "p.slettet_ts IS NULL" in kilde, \
+        "reaperen velger ikke lenger på «ennå ikke reapet»"
+    indekser = migrator.execute(
+        "SELECT pg_get_expr(i.indpred, i.indrelid),"
+        "       pg_get_expr(i.indexprs, i.indrelid)"
+        "  FROM pg_index i"
+        " WHERE i.indrelid = 'rekrutteringsprosess'::regclass"
+        "   AND i.indpred IS NOT NULL").fetchall()
+    treff = [(pred, uttrykk) for pred, uttrykk in indekser
+             if pred is not None and "slettet_ts IS NULL" in pred]
+    assert treff, \
+        ("ingen PARTIELL indeks på de ureapede prosessene — timeren"
+         f" skanner hele historikken. Partielle indekser: {indekser}")
+    assert any(uttrykk is not None
+               and "COALESCE" in uttrykk.upper()
+               and "lukket_ts" in uttrykk and "opprettet" in uttrykk
+               for _pred, uttrykk in treff), \
+        ("den partielle indeksen bærer ikke fristbasen"
+         f" coalesce(lukket_ts, opprettet): {treff}")
+    migrator.rollback()
+
+
+@pg
 def test_kandidatlagrene_er_tenantisolert(migrator):
     """RLS-porten: en annen tenants kontekst ser ingen rader, og en
     INSERT på fremmed tenant avvises."""
