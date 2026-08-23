@@ -77,6 +77,23 @@ def _tekst(tekst_for, medlem, data, fremdrift):
     return tekst
 
 
+def _felter(kandidatfelter_for, medlem, fremdrift):
+    """Feltuttrekket er FREMMED kode på nøyaktig samme måte som
+    tekstuttrekket — og det er INJISERT av samme grunn (Codex P2).
+
+    Uten denne vakten falt et unntak fra den strukturerte søknaden helt
+    ned til catch-allen og kom ut som `modellfeil`. Da leste både
+    arbeiderens retry og driftsdiagnostikken at MODELLEN sviktet på et
+    inndatauttrekk som er rent deterministisk og aldri hadde vært i
+    nærheten av modellen: koden er utfallets eneste data (SP-3), og en
+    vranglest søknadsform skal ikke sende noen på leting etter modellen.
+    """
+    try:
+        return kandidatfelter_for(medlem)
+    except Exception as feil:
+        raise Kjoringsfeil("feltuttrekk_feilet", fremdrift) from feil
+
+
 def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
               biasmaalinger, blinding_av=False, auditrad=None):
     """-> {"rangering": [...], "artefakter": {kandidat_id: ...},
@@ -161,7 +178,7 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
             biter.setdefault(kandidat_id, []).append(
                 (navn, medlem.navn,
                  _tekst(tekst_for, medlem, data, fremdrift),
-                 kandidatfelter_for(medlem)))
+                 _felter(kandidatfelter_for, medlem, fremdrift)))
         for kandidat_id in sorted(biter):
             # Sortert på medlemsnavn: samme bunt gir samme tekst OG samme
             # feltrekkefølge, uansett hvilken rekkefølge arkivet leverte

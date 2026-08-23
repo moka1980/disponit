@@ -1875,6 +1875,41 @@ def test_lesefeil_paa_lageret_tilskrives_ikke_modellen(tmp_path, monkeypatch):
     assert e.value.kode == "modellfeil"
 
 
+def test_feltuttrekket_tilskrives_ikke_modellen(tmp_path):
+    """Codex P2: en vranglest strukturert søknad ble meldt som «modellfeil».
+
+    `kandidatfelter_for` er INJISERT fremmed kode på nøyaktig samme måte
+    som `tekst_for` — men bare `tekst_for` hadde vakt. Feilet feltuttrekket
+    på en søknadsform det ikke forsto, falt unntaket til catch-allen og kom
+    ut med modellens kode, selv om modellen aldri ble kalt. Da retryer
+    arbeideren mot en deterministisk inndatafeil, og driftsdiagnostikken
+    leter etter modellen som aldri kjørte.
+
+    MUTASJONEN SOM DREPER DENNE: kall `kandidatfelter_for(medlem)` direkte
+    i lesesløyfa igjen, uten `_felter`.
+    """
+    from modules.m57_ats import kjoring
+
+    arkiv = _bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>")])
+
+    def _doende_felter(medlem):
+        raise ValueError("ukjent søknadsform")
+
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
+                          kandidatfelter_for=_doende_felter,
+                          tekst_for=lambda m, d: d.decode("utf-8"),
+                          biasmaalinger=_MAALINGER)
+    assert e.value.kode == "feltuttrekk_feilet", (
+        "et feltuttrekk som feiler skal ikke bære modellens kode")
+    assert isinstance(e.value.__cause__, ValueError)
+    # Stoppen er FØR modellen — den ble aldri spurt.
+    assert modell.sett == []
+    # Evidensen står: medlemmet var lest da det røk.
+    assert e.value.fremdrift["filer_lest"] == 1
+
+
 def test_ugyldig_feltform_i_SENERE_fil_felles_ogsaa(tmp_path):
     """Codex P1: flettingen skjulte en ugyldig form bak en gyldig rad.
 
