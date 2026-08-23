@@ -668,7 +668,8 @@ def test_to_barn_av_samme_forelder_avvises(migrator):
 
 @pg
 def test_to_rotter_i_samme_serie_avvises(migrator):
-    """Port 11: nøyaktig én rot per serie."""
+    """Port 11: HØYST én rot per serie (indeksen er unik, ikke
+    tvingende — se `test_flerrads_sykel_er_dagens_tillatte_avvik`)."""
     oid, _ = _grunnlag(migrator)
     rot = _liste(migrator, oid, hash_="h-r1")
     _sett_kontekst(migrator, TENANT)
@@ -679,6 +680,54 @@ def test_to_rotter_i_samme_serie_avvises(migrator):
             " VALUES (%s, gen_random_uuid(), %s, %s,"
             " 'invitasjon','m@1','h-r2',3)", (TENANT, rot[1], oid))
     migrator.rollback()
+
+
+@pg
+def test_flerrads_sykel_er_dagens_tillatte_avvik(migrator):
+    """Codex P2 (runde 12 på #140), DOKUMENTERT AVVIK — ikke en port.
+
+    Testene over måler lineariteten rad for rad, og der holder den. Én
+    flerrads-`INSERT` gjør noe ingen av dem prøver: A får B som forelder
+    og B får A, i samme setning. Self-FK-en er oppfylt (RI-triggerne
+    fyrer etter setningen, og begge radene står), `ett_barn_per_versjon`
+    ser to ULIKE foreldre, `utsendingsliste_ikke_egen_forelder` ser to
+    ULIKE id-er, og `en_rot_per_serie` er UNIK og ikke tvingende — så
+    NULL røtter er ikke et brudd. Serien har da ingen opprinnelse, og
+    begge radene er fortsatt signerbare og frigivbare.
+
+    K2 (RUTINER §9) forbyr et fjerde formforsøk på lineagen; rotårsaken
+    står ved `en_rot_per_serie` i 056 §1 og er den samme som §-hodets:
+    den herdede døren og bakdøren har SAMME eier. Setningen under krever
+    `INSERT` på tabellen, altså `disponit_m37_claimer` eller eieren —
+    ingen ORDINÆR rolle (jf. `test_funksjonene_er_eneste_vei_...`).
+
+    DENNE TESTEN SKAL BLI RØD når #150 lander: da finnes ingen rolle noen
+    kan LOGGE INN som med den rettigheten, og avviket forsvinner med
+    eierskillet i stedet for med en femte lineage-constraint. Samme
+    form som `test_frigivelse_binder_ikke_payload_til_signert_innhold`
+    gjør for #149."""
+    import uuid
+    oid, _ = _grunnlag(migrator)
+    serie = uuid.uuid4()
+    a, b = uuid.uuid4(), uuid.uuid4()
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute(
+        "INSERT INTO utsendingsliste (tenant, liste_id, utkast_serie,"
+        " forrige_liste_id, oppdrag_id, listetype, malversjon,"
+        " innhold_hash, antall) VALUES"
+        " (%s,%s,%s,%s,%s,'invitasjon','m@1','h-syk-a',3),"
+        " (%s,%s,%s,%s,%s,'invitasjon','m@1','h-syk-b',3)",
+        (TENANT, a, serie, b, oid, TENANT, b, serie, a, oid))
+    rotter, rader = migrator.execute(
+        "SELECT count(*) FILTER (WHERE forrige_liste_id IS NULL),"
+        " count(*) FROM utsendingsliste WHERE tenant=%s AND utkast_serie=%s",
+        (TENANT, serie)).fetchone()
+    migrator.rollback()
+    assert rader == 2, "sykelen skal faktisk ha stått i basen"
+    assert rotter == 0, (
+        "avviket er nettopp at serien er ROTLØS — blir denne 1 eller"
+        " reiser INSERT-en, er avviket lukket og testen skal skrives om"
+        " til en port")
 
 
 @pg

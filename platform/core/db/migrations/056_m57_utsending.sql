@@ -52,6 +52,10 @@
 -- trukket), altså ny rigg i `oppsett-postgresql.sh`/`migrer.py`/SP-10 =
 -- ny maskin = egen PR (K1). Issue #150 bærer den, med Cursors tre funn
 -- (signert `antall`-tak, signatar-medlemskap, fristport) utsatt dit.
+-- ... og fra runde 12 også Codex' flerrads-sykel i lineagen: LINEARITET
+-- er schema-sann for en skriver som tar ÉN RAD OM GANGEN, men en enkelt
+-- flerrads-`INSERT` fra en rolle med `INSERT` kan lukke en rotløs
+-- 2-sykel. Se den fulle rotårsaken ved `en_rot_per_serie` i §1.
 
 -- ------------------------------------------------------------
 -- 1. Listeversjonene. Append-only: hele raden er innholdet signaturen
@@ -114,9 +118,39 @@ CREATE TABLE utsendingsliste (
     FOREIGN KEY (tenant, oppdrag_id) REFERENCES oppdrag (tenant, id));
 
 -- Lineær lineage (portene 10–11): høyst ETT barn per forelder, og
--- nøyaktig ÉN rot per serie. Samtidige redigeringer serialiseres av
+-- HØYST ÉN rot per serie. Samtidige redigeringer serialiseres av
 -- unik-bruddet — én vinner, taperen får konflikt og må lese vinnerens
 -- versjon før et nytt forsøk.
+--
+-- «HØYST», ikke «nøyaktig» (Codex P2, runde 12 på #140): indeksen under
+-- er UNIK, ikke tvingende, så NULL røtter er ikke et brudd. Det er
+-- vanligvis uinteressant — hver rad må jo ha en forelder som finnes —
+-- men ikke i ÉN setning: et flerrads `INSERT` kan legge inn A med B som
+-- forelder og B med A som forelder samtidig. Self-FK-en er da oppfylt
+-- (RI-triggerne fyrer etter setningen, og begge radene står),
+-- `ett_barn_per_versjon` ser to ULIKE foreldre, og `utsendingsliste_
+-- ikke_egen_forelder` ser to ULIKE id-er. Resultatet er en rotløs
+-- 2-sykel: begge radene er fortsatt signerbare og frigivbare, men
+-- serien har ingen opprinnelse — «denne versjonen avløser den» blir
+-- sirkulær.
+--
+-- HVORFOR DEN IKKE LUKKES HER, K2 (RUTINER §9): dette er FJERDE runde
+-- på lineage-mekanismen (runde 3: proveniensen sto i funksjonen; runde
+-- 5: egen-forelder; runde 6: sammensatt self-FK med `oppdrag_id`), og
+-- rotårsaken er den samme som §-hodet alt har skrevet ned for hele
+-- klassen: den herdede døren (`opprett_utsendingsliste`, som setter
+-- forelderen selv, én rad om gangen) og bakdøren (rå `INSERT`) har
+-- SAMME eier. Asyklisitet er en GRAFEGENSKAP, og ingen per-rad-
+-- constraint når den. Deklarativt finnes det én vei — en
+-- generasjonskolonne med en generert `generasjon - 1` og self-FK-en
+-- utvidet med den, så en sykel krever en uendelig synkende kjede — men
+-- det er en omskriving av lineage-nøkkelen, funksjonen og SP-10-seeden,
+-- altså NY MASKIN i en fiksrunde (K1). Og den ville duplisert jobben
+-- til #150: når claimerens `INSERT` trekkes, finnes ingen rolle noen
+-- kan LOGGE INN som med rettighet til setningen over. Funnet er derfor
+-- navngitt i #150, ikke avvist, og
+-- `test_flerrads_sykel_er_dagens_tillatte_avvik` dokumenterer avviket
+-- så regresjonen synes når eierskillet lander.
 CREATE UNIQUE INDEX ett_barn_per_versjon ON utsendingsliste
     (tenant, utkast_serie, forrige_liste_id)
     WHERE forrige_liste_id IS NOT NULL;
