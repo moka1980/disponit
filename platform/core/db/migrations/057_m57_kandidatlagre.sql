@@ -86,12 +86,24 @@ BEGIN
                 ' frem i tid — det ville forlenget maks levetid'
                 USING ERRCODE = 'insufficient_privilege';
         END IF;
-        IF NOT EXISTS (
-            SELECT 1 FROM public.oppdrag o
-             WHERE o.tenant = NEW.tenant AND o.id = NEW.oppdrag_id
-               AND o.oppdragstype = 'rekruttering.evaluering'
-               AND o.eiermodul = 'm57_ats'
-               AND o.status NOT IN ('feilet', 'kansellert')) THEN
+        -- LÅST lesning, som i funksjonen (Codex P2). Backstoppen leste
+        -- ULÅST, og en ulåst sjekk er en påstand om fortiden: under READ
+        -- COMMITTED kunne en samtidig overgang til `feilet`/`kansellert`
+        -- committe mellom sjekken og INSERT-en, og prosessen ble
+        -- født på et alt terminalt oppdrag. FK-en redder ikke: den tar
+        -- `FOR KEY SHARE`, som ikke er i konflikt med et UPDATE av
+        -- statuskolonnen. `FOR SHARE` er det, og PostgreSQL re-evaluerer
+        -- predikatet etter låsen — en rad som ble terminal under
+        -- ventingen faller ut av treffet i stedet for å bli lest fra et
+        -- gammelt snapshot. Vakten skal være minst like sterk som
+        -- funksjonen den er backstopp for; her var den svakere.
+        PERFORM 1 FROM public.oppdrag o
+            WHERE o.tenant = NEW.tenant AND o.id = NEW.oppdrag_id
+              AND o.oppdragstype = 'rekruttering.evaluering'
+              AND o.eiermodul = 'm57_ats'
+              AND o.status NOT IN ('feilet', 'kansellert')
+            FOR SHARE;
+        IF NOT FOUND THEN
             RAISE EXCEPTION 'rekrutteringsprosess: oppdrag % hos % er ikke'
                 ' et LEVENDE rekruttering.evaluering-oppdrag eid av'
                 ' m57_ats — fødselen går gjennom'

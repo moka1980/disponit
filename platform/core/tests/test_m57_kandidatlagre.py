@@ -620,6 +620,69 @@ def test_fodselsporten_gjelder_ogsa_claimeren(migrator):
     migrator.rollback()
 
 
+@pg
+def test_backstoppen_laser_oppdragsraden_som_funksjonen(migrator):
+    """Codex P2: backstoppen var svakere enn funksjonen den backstopper.
+
+    `opprett_rekrutteringsprosess` leser oppdraget `FOR SHARE`; vaktens
+    INSERT-gren leste det ULÅST. Under READ COMMITTED kunne et samtidig
+    UPDATE til `feilet`/`kansellert` committe mellom sjekken og INSERT-en,
+    og en direkte claimer-INSERT fødte prosessen på et alt terminalt
+    oppdrag. FK-en fanger det ikke: den tar `FOR KEY SHARE`, og et UPDATE
+    av statuskolonnen er ikke i konflikt med den låsen.
+
+    Samme oppsett som funksjonens kappløpstest: A holder en ucommittet
+    kansellering, B gjør claimer-INSERT-en direkte og skal BLOKKERE på
+    radlåsen. Etter As commit re-evaluerer PostgreSQL predikatet, raden
+    faller ut av treffet, og vakten avviser.
+
+    MUTASJONEN SOM DREPER DENNE: bytt `FOR SHARE`-lesningen i vaktens
+    INSERT-gren tilbake til et ulåst `EXISTS`."""
+    import threading
+
+    oid, _ = _grunnlag(migrator, oppdragstype="rekruttering.evaluering",
+                       status=None)
+    a = _rt()
+    b = _rt()
+    try:
+        _sett_kontekst(a, TENANT)
+        a.execute("UPDATE oppdrag SET status='kansellert' WHERE tenant=%s"
+                  " AND id=%s", (TENANT, oid))
+        resultat: dict = {}
+
+        def foedsel():
+            _sett_kontekst(b, TENANT)
+            try:
+                b.execute("SET LOCAL ROLE disponit_m37_claimer")
+                b.execute(
+                    "INSERT INTO rekrutteringsprosess (tenant, prosess_id,"
+                    " oppdrag_id, slettefrist_dogn) VALUES (%s,%s,%s,90)",
+                    (TENANT, uuid.uuid4(), oid))
+                b.commit()
+                resultat["kom_gjennom"] = True
+            except Exception as feil:
+                resultat["feil"] = feil
+                b.rollback()
+
+        t = threading.Thread(target=foedsel)
+        t.start()
+        t.join(timeout=2)
+        assert t.is_alive(), \
+            "B leste forbi As ucommittede kansellering i stedet for å låse"
+        a.commit()
+        t.join(timeout=10)
+        assert not t.is_alive(), "B kom aldri gjennom etter As commit"
+        assert isinstance(resultat.get("feil"),
+                          psycopg.errors.InsufficientPrivilege), resultat
+        _sett_kontekst(migrator, TENANT)
+        assert migrator.execute(
+            "SELECT count(*) FROM rekrutteringsprosess WHERE tenant=%s"
+            " AND oppdrag_id=%s", (TENANT, oid)).fetchone()[0] == 0
+        migrator.rollback()
+    finally:
+        a.close(); b.close()
+
+
 def test_057_navngir_disponit_kun_under_eksistensvakt():
     """Codex P1: `REVOKE ... FROM disponit` er en FEIL, ikke en no-op.
 
