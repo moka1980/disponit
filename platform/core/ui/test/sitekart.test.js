@@ -65,12 +65,14 @@ test("byggRuter: hver rute krever scopet API-et bak flaten krever", () => {
   // rapportene sine — `GET /v1/rapport/{id}` krever bare det. Med
   // mutasjonsscopet på hele oppføringen inndro sammenslåingen tilgang de
   // hadde før den.
-  // M-57: rekruttering står bak samme svakeste ledd som WCAG-flaten —
-  // lesingen av kandidatlisten krever bare `decisions:read`; blinding og
-  // signering gates INNE i flaten.
+  // M-57: rekruttering har med VILJE ingen rute før serverarmen finnes
+  // (Codex P1 / Cursor P1) — en oppføring til `/v1/rekruttering/*`, som
+  // ikke er registrert i `app.py`, ville bare vært en vei til feilflaten.
   assert.deepEqual(alle,
     ["oversikt", "nokkeltall", "policy", "beslutninger", "unntak",
-      "kundeadmin", "wcagkontroll", "rekruttering"]);
+      "kundeadmin", "wcagkontroll"]);
+  assert.ok(!alle.includes("rekruttering"),
+    "flaten er eksponert før endepunktene finnes");
   const medBestilling = byggRuter({ scopes: ["decisions:read",
     "bestilling:opprett"] }).map((r) => r.nokkel);
   assert.ok(medBestilling.includes("wcagkontroll"));
