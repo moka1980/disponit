@@ -914,6 +914,26 @@ UTFORELSESFRIST_VALG: dict[str, tuple[str, dict[object, int]]] = {
     # med porsjonsvis parsing. Tallet REVERIFISERES mot målt prøvekjøring
     # før modulen aksepteres; avviker det, oppdateres klarsignalet, aldri
     # porten (fristen svekkes ikke for å redde en treg kjøring).
+    #
+    # UTSATT, K1 → #165 — FRISTEN ER LENGRE ENN AUTORITETEN SOM DEKKER
+    # DEN (Codex P1). Eierleasen klemmes til 3600 s i `claim_neste_-
+    # oppdrag` (037), og opplastingskapabiliteten utstedes med
+    # `min(igjen, 3600)` i claim-endepunktet; noen fornyelsesvei finnes
+    # ikke (037 sier det selv om heartbeat). Reclaim-grenen krever bare
+    # `utforelsesfrist > now()`, og den er sann i tre timer ETTER at
+    # leasen er ute: en helt normal kjøring i det annonserte vinduet blir
+    # derfor reclaimet av en annen utfører på t+1t — dobbel evaluering av
+    # de samme persondataene — mens den opprinnelige utføreren verken kan
+    # laste opp eller kvittere. Det er nøyaktig skaden 037 ble skrevet
+    # for å lukke, bare i motsatt retning: 037 strekker leasen TIL
+    # fristen, opp til sitt eget tak, og her er fristen lengre enn taket.
+    #
+    # Ikke lukkbart i en fiksrunde: å heve taket er en ny migrasjon på
+    # bebodd base som flytter en PLATTFORMVID tillitsgrense (M-37 og
+    # M-56 deler den), en fornyelsesvei er en ny autentisert flate, og
+    # partisjonering endrer bestillingsformen. Fristen står som
+    # klarsignalet sier; #165 bærer valget, med hard sperre mot kjøringer
+    # over én time til den er merget (samme form som #163).
     "rekruttering.evaluering": ("omfang", {"bunt": 240 * 60}),
 }
 
