@@ -576,6 +576,21 @@ END $$;
 -- ingenting, og den kan bare RAISE. For en tenant-bundet skriver er
 -- radsettet det samme som før (WITH CHECK binder NEW.tenant til
 -- konteksten); det som forsvinner er muligheten for at porten er blind.
+--
+-- UTSATT, K2 → #163. Porten kjører FOR EACH ROW, én gang per endret rad —
+-- PostgreSQL tillater ikke FOR EACH STATEMENT på en utsatt constraint-
+-- trigger. En full prosess er 5000 kandidater × 6 lagre ≈ 30 000 rader,
+-- og hver av dem gjentar de samme prosessvide EXISTS-skannene: en
+-- PROSESSVID invariant håndhevet av en PER-RAD-krok, kvadratisk i
+-- kandidatantallet på nøyaktig den arbeidsmengden katalogen selger.
+-- Eiers dom (#163, B): merkingen degraderes til en billig per-rad-
+-- markering i en transaksjonslokal temptabell («denne prosessen ble
+-- rørt»), og selve EXISTS-sjekken flyttes til ÉN utsatt constraint-
+-- trigger på `rekrutteringsprosess`-ankeret — én gang per prosess, ikke
+-- én gang per rad. Porten her er KORREKT (den avviser blandingen den
+-- skal avvise) og forblir slik til #163 lander; den er bare dyr ved full
+-- last. #163 er en HARD forutsetning for å kjøre utførelsesarmen mot
+-- reelle bunter i 5000-klassen.
 SET LOCAL ROLE disponit_m37_claimer;
 CREATE OR REPLACE FUNCTION m57_lagrene_reapes_samlet()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
