@@ -385,6 +385,27 @@ def test_port15_funn_uten_kildereferanse():
              "kilde": gyldig["kilde"]}):
         with pytest.raises(evaluering.Evalueringsfeil):
             evaluering.valider_funn(funn, tekst)
+    # Codex P2: Python-snitt klager ALDRI, så et sitat kan stemme uten at
+    # offsetene er posisjoner i teksten. Negative indekser teller
+    # bakfra, `slutt` utenfor lengden avkortes stille, og `False`/`True`
+    # er lovlige int-er (bool er subklasse av int) som treffer tegn 0–1.
+    # En mottaker som markerer stedet ville pekt feil, eller utenfor.
+    bakfra = len(tekst) - 5
+    for kilde in (
+            {"start": bakfra - len(tekst), "slutt": len(tekst),
+             "sitat": tekst[bakfra:]},
+            {"start": 0, "slutt": len(tekst) + 99, "sitat": tekst},
+            {"start": False, "slutt": True, "sitat": tekst[0]},
+            {"start": 8, "slutt": 8, "sitat": ""},
+            {"start": 24, "slutt": 8, "sitat": ""}):
+        with pytest.raises(evaluering.Evalueringsfeil) as e:
+            evaluering.valider_funn(
+                {"kategori": "uklar_tidslinje", "kilde": kilde}, tekst)
+        assert e.value.kode == "uten_kildereferanse", kilde
+    # Positiv kontroll: hele teksten som sitat er en kanonisk referanse.
+    evaluering.valider_funn(
+        {"kategori": "uklar_tidslinje",
+         "kilde": {"start": 0, "slutt": len(tekst), "sitat": tekst}}, tekst)
     # Kategoriene beskriver dokumentasjon, aldri person — settet er
     # lukket og karaktertrekk finnes ikke i det.
     for kategori in evaluering.FUNN_KATEGORIER:

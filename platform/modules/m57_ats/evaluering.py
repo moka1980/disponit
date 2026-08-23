@@ -46,8 +46,18 @@ def valider_funn(funn: dict, soknadstekst: str) -> None:
         raise Evalueringsfeil("uten_kildereferanse")
     start, slutt, sitat = (kilde.get("start"), kilde.get("slutt"),
                            kilde.get("sitat"))
-    if (not isinstance(start, int) or not isinstance(slutt, int)
+    # Offsetene må være KANONISKE posisjoner, ikke bare noe som får
+    # snittet til å stemme (Codex P2). Python-snitt klager aldri: med
+    # `abcdef` validerer `start=-3, slutt=6` sitatet `def`, og `False`
+    # og `True` er lovlige int-er som validerer det første tegnet. En
+    # mottaker som bruker referansen til å markere stedet i teksten
+    # ville da peke et annet sted enn porten målte — eller et sted som
+    # ikke finnes. `bool` er dessuten en subklasse av `int`, så
+    # typesjekken alene slapp den gjennom.
+    if (not isinstance(start, int) or isinstance(start, bool)
+            or not isinstance(slutt, int) or isinstance(slutt, bool)
             or not isinstance(sitat, str) or not sitat
+            or not 0 <= start < slutt <= len(soknadstekst)
             or soknadstekst[start:slutt] != sitat):
         raise Evalueringsfeil("uten_kildereferanse")
 
