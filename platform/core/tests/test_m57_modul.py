@@ -532,7 +532,15 @@ def test_port13_ingen_vei_fra_modell_til_utsendingstekst():
     """Statisk (§6): malfila kjenner hverken evalueringen eller noe
     modellsymbol, og evalueringen kjenner ikke malene. Teksten i en
     utsendelse kan dermed bare komme fra malen + flettefeltene — og
-    funn refereres med ID, aldri med modellens prosa."""
+    funn refereres med ID, aldri med modellens prosa.
+
+    GRENSEN FOR HVA DENNE PORTEN BEVISER (Codex P2, #160): den måler
+    IMPORTGRAFEN. Den kan si at de to modulfilene ikke når hverandre;
+    den kan ikke se at en KALLER leser evalueringen og sender resultatet
+    videre som `firmatekst`. Det feltet er i dag en fri streng, så §6s
+    løfte er målt her og ikke i huset. Lukkingen er å binde feltet til
+    kundeeid, lagret tekst (#160) — ikke å utvide denne AST-en, som
+    aldri kan se en dataflyt den ikke har kildekoden til."""
     import ast
     maltre = ast.parse((MODULROT / "maler.py").read_text(encoding="utf-8"))
     evtre = ast.parse((MODULROT / "evaluering.py")

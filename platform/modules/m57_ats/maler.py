@@ -2,11 +2,19 @@
 kundeeid tone/firmatekst — og INGEN vei fra modellutdata til
 utsendingstekst.
 
-Det siste er en statisk port (port 13), og denne fila er hele beviset:
-den importerer aldri `evaluering` eller noe modellsymbol, og `flett` tar
-bare verdier for feltene malen selv deklarerer. Et funn refereres med
-funn-ID (sporbart), aldri med funnets tekst — teksten i utsendelsen er
-malens, ikke modellens.
+Det siste er en statisk port (port 13), og porten måler IMPORTGRAFEN:
+denne fila importerer aldri `evaluering` eller noe modellsymbol, og
+`flett` tar bare verdier for feltene malen selv deklarerer. Et funn
+refereres med funn-ID (sporbart), aldri med funnets tekst — teksten i
+utsendelsen er malens, ikke modellens.
+
+Det porten IKKE måler (Codex P2, #160): dataflyt gjennom en kaller.
+`firmatekst` tas i dag som en fri streng, så en orkestrator som sender
+modellutdata dit, får det ordrett ut i en invitasjon eller et avslag.
+Løftet «ingen vei fra modellutdata til utsendingstekst» (§6) er altså
+målt i denne fila, ikke i huset. Den ekte lukkingen er at feltet blir en
+REFERANSE til kundeeid, lagret tekst — nytt lager, rettighetsgrense,
+oppslag og forfatterflate — og den maskinen bor i #160, ikke her.
 """
 from __future__ import annotations
 
@@ -20,8 +28,11 @@ class Malfeil(Exception):
 
 
 #: Plattformens maler: lukket sett, lukkede flettefelt. `tekst` er
-#: strukturen; kundeeid tone kommer som `firmatekst` — et flettefelt som
-#: alle andre, satt av kunden i policyflaten, aldri av modellen.
+#: strukturen; kundeeid tone kommer som `firmatekst`. «Satt av kunden i
+#: policyflaten» er MÅLET (#160), ikke dagens tilstand: policyflaten
+#: finnes ikke ennå, og feltet er inntil videre en verdi kalleren
+#: oppgir — det er kallerens ansvar at den er kundens, og ingen port her
+#: kan si det for den.
 MALER: dict[str, dict] = {
     "invitasjon": {
         "malversjon": "invitasjon-v1",
