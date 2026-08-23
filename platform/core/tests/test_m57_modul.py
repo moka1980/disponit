@@ -1641,6 +1641,55 @@ def test_tekstuttrekket_er_containerens_aldri_en_utf8_dekoding(tmp_path):
     assert e.value.kode == "tekstuttrekk_feilet"
 
 
+def test_tomt_tekstuttrekk_er_kodet_feil_ikke_en_tom_vurdering(tmp_path):
+    """Codex P1: `isinstance(tekst, str)` slipper `""` og bare blanktegn.
+
+    En skannet pdf uten OCR, en docx uten lesbare avsnitt og en html som
+    bare er markup gir alle en STRENG — bare uten innhold. Modellen får
+    da ingenting å vurdere, svarer skjemakomplett «ingen krav oppfylt»,
+    og det blir en VELLYKKET artefakt: kandidaten rangeres nederst som om
+    søknaden hennes var tom, uten at noen får vite at det var uttrekket
+    som feilet. Kravet måles på den SAMLEDE teksten per kandidat, ikke
+    per fil: et tomt søknadsbrev ved siden av en full CV er en helt
+    normal mappe.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `if not tekst.strip()`-porten i
+    `kjor_bunt`.
+    """
+    from modules.m57_ats import kjoring
+
+    felter = lambda m: {"navn": ["Kandidat k1"]}
+    tomt = tmp_path / "tomt"
+    tomt.mkdir()
+    arkiv = _bunt(tomt, [("k1/soknad.html", b"<p>drift hos k1</p>")])
+
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
+                          kandidatfelter_for=felter,
+                          tekst_for=lambda m, d: "   \n\t ",
+                          biasmaalinger=_MAALINGER)
+    assert e.value.kode == "tekstuttrekk_feilet"
+    # Stoppen er FØR modellen: ingen tom vurdering ble laget.
+    assert modell.sett == []
+
+    # … men ett tomt medlem i en mappe som ellers har tekst, er ingen
+    # feil — kravet gjelder kandidaten, ikke fila.
+    delvis = tmp_path / "delvis"
+    delvis.mkdir()
+    arkiv2 = _bunt(delvis, [
+        ("k1/soknad.html", b"<p>tom</p>"),
+        ("k1/cv.html", b"<p>drift</p>"),
+    ])
+    ut = kjoring.kjor_bunt(
+        arkiv2, _Modell(), vekter={"drift": 3},
+        kandidatfelter_for=felter,
+        tekst_for=lambda m, d: ("" if m.navn.endswith("soknad.html")
+                                else "drift i CV-en"),
+        biasmaalinger=_MAALINGER)
+    assert set(ut["artefakter"]) == {"k1"}
+
+
 def test_ugyldig_feltform_i_SENERE_fil_felles_ogsaa(tmp_path):
     """Codex P1: flettingen skjulte en ugyldig form bak en gyldig rad.
 

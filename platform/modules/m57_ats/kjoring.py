@@ -129,6 +129,17 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
             # hvilken rekkefølge arkivet leverte medlemmene i.
             tekst = "\n\n".join(
                 tekst for _, tekst in sorted(biter[kandidat_id]))
+            # EN TOM SØKNAD ER IKKE EN DÅRLIG SØKNAD (Codex P1). Porten
+            # over måler bare at uttrekket ER en `str`, og en skannet pdf
+            # uten OCR, en docx uten lesbare avsnitt og en html som bare
+            # er markup gir alle `""` eller bare blanktegn. Da får
+            # modellen ingenting å vurdere — og den svarer skjemakomplett
+            # «ingen krav oppfylt», som blir en VELLYKKET artefakt og en
+            # plassering nederst i rangeringen. Kandidaten er dermed
+            # vurdert som om søknaden var tom, i stillhet, i stedet for
+            # at uttrekket meldes som det som feilet.
+            if not tekst.strip():
+                raise Kjoringsfeil("tekstuttrekk_feilet", fremdrift)
             resultat = evaluering.evaluer_kandidat(
                 modell, tekst, felter[kandidat_id], vekter,
                 biasmaalinger=biasmaalinger,
