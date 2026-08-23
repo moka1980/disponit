@@ -983,3 +983,20 @@ html[data-visning="landing"] .skall-hoved {
 .kpi-tilstand b{font-size:var(--fs-ingress);margin-right:var(--sp-1)}
 .kpi-kontroll{display:flex;gap:var(--sp-2);align-items:center;
   margin-bottom:var(--sp-2)}
+
+/* M-57 trafikklys (klarsignalet §8). Kategorien STÅR som tekst i cellen —
+   markupen er `<span class="trafikklys trafikklys-{status}">` med en
+   aria-hidden prikk foran ordet — og fargen legges oppå. Uten disse
+   reglene var «tekst + farge» bare tekst: hver kategori rendret likt, og
+   prikken var en tom span uten flate. Fargen er dermed en REDUNDANT
+   koding, aldri opplysningen selv (WCAG 1.4.1) — en monokrom skjerm og en
+   skjermleser får nøyaktig samme dom som en fargeskjerm. */
+.trafikklys{display:inline-flex;align-items:center;gap:var(--sp-2);
+  font-weight:600}
+/* Prikken arver tekstfargen, så det holder med én regel per status — og
+   en status uten egen regel blir ufarget (--ink), aldri usynlig. */
+.trafikklys-prikk{flex:none;width:.6em;height:.6em;
+  border-radius:var(--radius-pill);background:currentColor}
+.trafikklys-anbefalt{color:var(--auto)}
+.trafikklys-vurderes{color:var(--guard)}
+.trafikklys-innstilt_avslag{color:var(--danger)}

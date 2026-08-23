@@ -835,19 +835,32 @@ def test_liste_krever_fullfort_evalueringsoppdrag(migrator):
     ikke kunne promoteres. Retningsporten alene (opprinnelsen) slapp
     fortsatt gjennom feil oppdragstype, en kjøring som fortsatt går, og
     en som ble kansellert — og derfra bar kjeden videre gjennom signatur
-    og frigivelse."""
+    og frigivelse.
+
+    ALLE FIRE IKKE-`utfort`-TILSTANDENE MÅLES (Cursor P2, runde 5 på
+    #170). Testen dekket `opprettet` (som `gar_fortsatt`), `kansellert`
+    og feil type — men ikke de faktiske AVBRUDDStilstandene: `plukket`
+    (oppdraget er claimet og går NÅ) og `feilet` (terminal etter krasj).
+    Nettopp de to er kjøringene port 28 handler om, og en mutasjon som
+    slakket vakten til `o.status IN ('utfort','plukket')` — eller til
+    `o.status <> 'kansellert'` — ville sluppet en halvferdig evaluering
+    videre til signatur og utsending uten at en eneste test rødnet."""
     feil_type, _ = _grunnlag(migrator,
                              oppdragstype="kontroll.wcag.nettsted")
     gar_fortsatt, _ = _grunnlag(migrator,
                                 oppdragstype="rekruttering.evaluering",
                                 status=None)
+    plukket, _ = _grunnlag(migrator, oppdragstype="rekruttering.evaluering",
+                           status="plukket")
+    feilet, _ = _grunnlag(migrator, oppdragstype="rekruttering.evaluering",
+                          status="feilet")
     avbrutt, _ = _grunnlag(migrator, oppdragstype="rekruttering.evaluering",
                            status="kansellert")
     fullfort, _ = _evaluering(migrator)
     uuid = __import__("uuid")
     rt = _rt()
     try:
-        for oid in (feil_type, gar_fortsatt, avbrutt):
+        for oid in (feil_type, gar_fortsatt, plukket, feilet, avbrutt):
             _sett_kontekst(rt, TENANT)
             with pytest.raises(psycopg.errors.InvalidParameterValue):
                 rt.execute(
@@ -903,7 +916,13 @@ def test_promoteringen_er_skjemasann_ikke_bare_funksjonssann(migrator):
     helst annen. Klarsignalets bevisform er negativ; dette er den.
 
     MUTASJONEN SOM DREPER DENNE: fjern triggeren
-    `utsendingsliste_promotering` fra 056 §1."""
+    `utsendingsliste_promotering` fra 056 §1.
+
+    AVBRUDDStilstandene måles også her (Cursor P2, runde 5 på #170):
+    skjemaveien skal ikke være svakere enn funksjonsveien, så `plukket`
+    og `feilet` prøves mot direkte DML på samme måte som over. En vakt
+    som slapp `plukket` gjennom ville ellers stått ubevist på nettopp
+    den veien `disponit_m37_claimer` har `INSERT` på."""
     fullfort, payload = _evaluering(migrator)
     bid = _signatar(migrator)
     liste = _liste(migrator, fullfort)
@@ -917,7 +936,14 @@ def test_promoteringen_er_skjemasann_ikke_bare_funksjonssann(migrator):
     gar_fortsatt, _ = _grunnlag(migrator,
                                 oppdragstype="rekruttering.evaluering",
                                 status=None)
-    for oid in (frigivelsesoppdrag, wcag, avbrutt, gar_fortsatt):
+    plukket, _ = _grunnlag(migrator,
+                           oppdragstype="rekruttering.evaluering",
+                           status="plukket")
+    feilet, _ = _grunnlag(migrator,
+                          oppdragstype="rekruttering.evaluering",
+                          status="feilet")
+    for oid in (frigivelsesoppdrag, wcag, avbrutt, gar_fortsatt,
+                plukket, feilet):
         _sett_kontekst(migrator, TENANT)
         with pytest.raises(psycopg.errors.InvalidParameterValue):
             migrator.execute(
