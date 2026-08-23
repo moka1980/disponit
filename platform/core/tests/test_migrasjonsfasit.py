@@ -12,6 +12,42 @@ er KJØRT i prod. En ny migrasjon legges til fasiten i SAMME commit som
 den fødes (etter deploy er den kjørt); en endring i en pinnet fil er
 rød her — dokumentasjon av senere vedtak hører til i issuer, PR-tråder
 eller NYE filer, aldri i kjørt historikk.
+
+PROVENIENS — hvor pinnene kommer fra
+------------------------------------
+Fasiten er en backfill: den ble født med 57 pinner på én gang, ikke én
+per migrasjon slik regelen over foreskriver for fremtiden. Da er
+spørsmålet «hvilke bytes ble egentlig låst» ikke retorisk, og svaret
+hører hjemme her og ikke bare i en PR-tråd.
+
+* 001/002 er bundet til REVIEWEDE bytes, ikke til disk.
+  `deploy/staging/migrasjon-bootstrap.py` holder `REVIEWEDE_CHECKSUMS`
+  hentet med `git show 679ee9e:<sti> | sha256sum` fra PR-004-mergen, og
+  `test_bootstrap_checksums_stemmer_med_filene` binder de konstantene
+  til filene i treet. Sammen med porten under er kjeden lukket:
+  fasit == disk == reviewet. De to kan ikke drifte fra hverandre stille.
+
+* 003–057 er bytene på `main` slik de sto ved 9893cb0 (mergen rett før
+  denne hotfixen), med 056 tilbakestilt til bytene fra #140 — altså de
+  bytene prod faktisk kjørte, ikke #153-varianten med kommentaren.
+
+* Drift-revisjon på `git log origin/main` per migrasjonsfil: av 57
+  pinnede filer har nøyaktig FIRE noen gang fått en andre commit —
+  039 (#87), 041 (#102), 047 (#113) og 056 (#153). Resten er skrevet
+  én gang og aldri rørt, så for de 53 er «bytes på main» og «bytes ved
+  fødsel» det samme utsagnet. 056 er hendelsen denne porten finnes for.
+  For 039/041/047 sier commit-meldingene at deployet FEILET eller traff
+  kontrollene — altså at migrasjonen ikke var vellykket anvendt da den
+  ble rettet, som er lovlig. Det er en indikasjon, ikke et bevis.
+
+* IKKE avgjort i repoet: om noen av de fire faktisk rakk å bli
+  registrert i prod før de ble rettet. Det står bare i
+  `SELECT versjon, checksum FROM migrasjoner` i prod, som ingen test
+  her kan lese. Eier verifiserer de fire mot prod ved neste deploy; se
+  PR #171. Er en pin feil, er den feil på en fil som ikke har vært rørt
+  siden — porten låser den fast, og en avvikende prod-checksum vil vise
+  seg i kjøreren som før. Denne PR-en gjør ikke den risikoen større enn
+  den var; den gjør den bare målbar.
 """
 from __future__ import annotations
 
