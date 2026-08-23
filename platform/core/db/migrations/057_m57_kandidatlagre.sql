@@ -240,7 +240,8 @@ CREATE TABLE kandidat_avmaskering (
 -- ------------------------------------------------------------
 -- 3. Lagervakten: eneste lovlige UPDATE er reap-overgangen — payload til
 -- NULL, `slettet_ts` fra NULL til satt, alt annet uendret. DELETE og
--- TRUNCATE avvises. Én generisk vakt; payloadkolonnene står som
+-- TRUNCATE avvises. INSERT slippes gjennom, men bare på en LEVENDE
+-- prosess. Én generisk vakt; payloadkolonnene står som
 -- trigger-argumenter, så hvert lager navngir sine og resten måles som
 -- «uendret» via radens jsonb.
 CREATE OR REPLACE FUNCTION m57_kandidatlager_vakt()
@@ -248,6 +249,22 @@ RETURNS trigger LANGUAGE plpgsql
 SET search_path = pg_catalog AS $$
 DECLARE nj jsonb; oj jsonb; kol TEXT;
 BEGIN
+    -- Port 18, INSERT-siden (Codex P1): en reapet prosess tar ikke imot
+    -- ny payload. FK-en krever bare at prosessen FINNES, og reaperen
+    -- utelukker for alltid en prosess som alt har `slettet_ts` — så en
+    -- forsinket eller retriet skriver kunne gjenoppstå persondata på en
+    -- reapet prosess, uten noen vei til å slette dem igjen.
+    IF TG_OP = 'INSERT' THEN
+        IF EXISTS (SELECT 1 FROM public.rekrutteringsprosess p
+                    WHERE p.tenant = NEW.tenant
+                      AND p.prosess_id = NEW.prosess_id
+                      AND p.slettet_ts IS NOT NULL) THEN
+            RAISE EXCEPTION '%: prosessen er reapet — payload skrives'
+                ' ikke tilbake til en slettet prosess (klarsignalet §5)',
+                TG_TABLE_NAME USING ERRCODE = 'insufficient_privilege';
+        END IF;
+        RETURN NEW;
+    END IF;
     IF TG_OP <> 'UPDATE' THEN
         RAISE EXCEPTION '%: % avvist — kandidatrader reapes (payload til'
             ' NULL), de slettes aldri som rader', TG_TABLE_NAME, TG_OP
@@ -296,7 +313,7 @@ BEGIN
             'DROP TRIGGER IF EXISTS %I ON %I',
             par.tab || '_vakt', par.tab);
         EXECUTE format(
-            'CREATE TRIGGER %I BEFORE UPDATE OR DELETE ON %I'
+            'CREATE TRIGGER %I BEFORE INSERT OR UPDATE OR DELETE ON %I'
             ' FOR EACH ROW EXECUTE FUNCTION m57_kandidatlager_vakt(%s)',
             par.tab || '_vakt', par.tab,
             (SELECT string_agg(quote_literal(k), ', ')

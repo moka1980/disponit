@@ -383,6 +383,53 @@ def test_reaping_respekterer_fristen(migrator):
 
 
 @pg
+def test_port18_insert_etter_reap_avvises(migrator):
+    """Codex P1: FK-en krever bare at prosessen FINNES, og reaperen
+    utelukker for alltid en prosess med `slettet_ts`. Uten en INSERT-vakt
+    kunne en forsinket eller retriet skriver derfor gjenoppstå persondata
+    på en reapet prosess — uten noen vei til å slette dem igjen."""
+    rt = _rt()
+    rp = None
+    try:
+        _, pid = _prosess(migrator, rt, frist=30)
+        _fyll_lagrene(rt, pid)
+        rt.execute("SELECT lukk_rekrutteringsprosess(%s,%s,"
+                   " now() - interval '31 days')", (TENANT, pid))
+        rt.commit()
+        rp, _timerrolle = _reaperkobling()
+        rp.execute("SELECT * FROM reap_kandidatdata(50)")
+        rp.commit()
+        assert _tell_fixtur(migrator, pid) == 0
+        migrator.rollback()
+        # Den forsinkede skriveren, på hvert eneste lager.
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            _fyll_lagrene(rt, pid)
+        rt.rollback()
+        for tabell in LAGRE:
+            _sett_kontekst(rt, TENANT)
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                rt.execute(
+                    f"INSERT INTO {tabell} (tenant, prosess_id,"
+                    f" kandidat_id, innhold_sha256) VALUES (%s,%s,%s,'0')",
+                    (TENANT, pid, uuid.uuid4()))
+            rt.rollback()
+        assert _tell_fixtur(migrator, pid) == 0
+        migrator.rollback()
+        # Positiv kontroll: en ÅPEN, ikke-reapet prosess tar imot payload
+        # — vakten er en reap-port, ikke en skrivesperre.
+        _, pid2 = _prosess(migrator, rt)
+        _fyll_lagrene(rt, pid2)
+        rt.commit()
+        assert _tell_fixtur(migrator, pid2) == 9
+        migrator.rollback()
+    finally:
+        rt.close()
+        if rp is not None:
+            rp.close()
+
+
+@pg
 def test_port19_settet_av_lagre_er_maalt_mot_katalogen(migrator):
     """Port 19s virkelige form: «alle seks» er ikke en liste noen husker,
     men en MÅLING. Fasiten er katalogens — hver tabell med FK til
