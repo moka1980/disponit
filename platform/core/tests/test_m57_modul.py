@@ -1341,9 +1341,13 @@ def test_port28_avbrutt_kjoring_promoterer_ingenting(tmp_path):
                 raise RuntimeError("container døde")
             return super().vurder(tekst, vekter)
 
+    # Fail-closed-blindingen krever STRUKTURERTE felter per kandidat —
+    # et tomt sett er sin egen kodede stopp (målt til slutt i testen).
+    felter = lambda m: {"navn": [f"Kandidat {m.navn.split('/')[0]}"]}
+
     with pytest.raises(kjoring.Kjoringsfeil) as e:
         kjoring.kjor_bunt(arkiv, _Doende(), vekter={"drift": 3},
-                          kandidatfelter_for=lambda m: {},
+                          kandidatfelter_for=felter,
                           biasmaalinger=_MAALINGER)
     assert e.value.kode == "modellfeil"
     assert e.value.fremdrift, "fremdriften (evidensen) mangler i utfallet"
@@ -1353,8 +1357,16 @@ def test_port28_avbrutt_kjoring_promoterer_ingenting(tmp_path):
         {"kode", "fremdrift"}
 
     helt = kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
-                             kandidatfelter_for=lambda m: {},
+                             kandidatfelter_for=felter,
                              biasmaalinger=_MAALINGER)
     assert {k["kandidat_id"] for k in helt["rangering"]} == \
         {"k1", "k2", "k3"}
     assert helt["fremdrift"]["filer_lest"] == 3
+    # …og fail-closed-blindingen gjennom kjøringen er et KODET utfall:
+    # tomme strukturerte felter gir Kjoringsfeil, aldri rå Blindingsfeil
+    # og aldri en kjøring som "gikk" med ublindet tekst.
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
+                          kandidatfelter_for=lambda m: {},
+                          biasmaalinger=_MAALINGER)
+    assert e.value.kode == "blinding_uten_felter"

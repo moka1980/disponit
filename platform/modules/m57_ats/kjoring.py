@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from . import evaluering, parsing
+from . import blinding, evaluering, parsing
 
 
 @dataclass(frozen=True)
@@ -57,6 +57,11 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for,
     except parsing.Buntfeil as feil:
         raise Kjoringsfeil(feil.kode, fremdrift) from feil
     except evaluering.Evalueringsfeil as feil:
+        raise Kjoringsfeil(feil.kode, fremdrift) from feil
+    except blinding.Blindingsfeil as feil:
+        # Fail-closed-blindingen (K2-dommen 23/8) er også et RENT utfall:
+        # tomme strukturerte felter stopper kjøringen med kode, aldri
+        # med rå exception — og aldri med rå tekst videre i stillhet.
         raise Kjoringsfeil(feil.kode, fremdrift) from feil
     except Exception as feil:   # modellen er fremmed kode — også dens
         raise Kjoringsfeil("modellfeil", fremdrift) from feil
