@@ -445,12 +445,36 @@ BEGIN
             current_setting('transaction_isolation')
             USING ERRCODE = 'invalid_transaction_state';
     END IF;
+    -- MISLYKKET TERMINALSTATUS FØDER INGEN PROSESS (Cursor P2).
+    -- Fristen løper fra LUKKINGEN (§5), og lukkingen er noe kjøringen
+    -- gjør når den er ferdig. Et `feilet`- eller `kansellert`-oppdrag er
+    -- alt over: kjøringen som skulle lukket prosessen kommer aldri, så
+    -- persondataene ville blitt liggende til reaperens MAKS LEVETID fra
+    -- fødselen i stedet for fristen fra faktisk avslutning — svakere enn
+    -- §5 lover, og for data som aldri skulle vært skrevet.
+    --
+    -- Porten er NEGATIV, ikke `= 'utfort'` som promoteringsvakten (§7d).
+    -- Vaktens spørsmål er «kan denne listen promoteres», og da ER
+    -- kjøringen ferdig. Dette ankeret fødes MENS kjøringen står på —
+    -- modulen claimer oppdraget (`plukket`) og trenger et sted å legge
+    -- parset tekst og artefakter der og da. Et `utfort`-krav her ville
+    -- betydd at modulen måtte lagre alt den evaluerer ETTER at den var
+    -- ferdig å evaluere, altså snudd livsløpet.
+    --
+    -- Fødselsporten dekker ikke oppdrag som feiler ETTER at prosessen er
+    -- født; der er reaperens maks-levetid-arm grensen. Den ekte roten —
+    -- å lukke prosessen i SAMME transaksjon som terminalovergangen —
+    -- hører til utføreren, som ikke finnes ennå (K1, se PR-tråden).
     IF NOT EXISTS (
         SELECT 1 FROM public.oppdrag o
          WHERE o.tenant = p_tenant AND o.id = p_oppdrag_id
-           AND o.oppdragstype = 'rekruttering.evaluering') THEN
-        RAISE EXCEPTION 'rekrutteringsprosess: oppdrag % er ikke en'
-            ' rekruttering.evaluering hos %', p_oppdrag_id, p_tenant
+           AND o.oppdragstype = 'rekruttering.evaluering'
+           AND o.status NOT IN ('feilet', 'kansellert')) THEN
+        RAISE EXCEPTION 'rekrutteringsprosess: oppdrag % hos % er ikke en'
+            ' LEVENDE rekruttering.evaluering — en prosess fødes ikke på'
+            ' et oppdrag som er feilet eller kansellert (klarsignalet §5:'
+            ' fristen løper fra lukkingen, og den kommer aldri)',
+            p_oppdrag_id, p_tenant
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
     SELECT prosess_id, slettefrist_dogn INTO v_id, v_frist

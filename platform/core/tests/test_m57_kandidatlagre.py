@@ -205,6 +205,51 @@ def test_opprett_prosess_er_idempotent_under_kapplop(migrator):
 
 
 @pg
+def test_mislykket_terminalstatus_foder_ingen_prosess(migrator):
+    """Cursor P2: ankeret spurte bare om OPPDRAGSTYPEN, aldri om status.
+
+    Fristen løper fra LUKKINGEN (§5), og lukkingen er noe kjøringen gjør
+    når den er ferdig. Et `feilet`- eller `kansellert`-oppdrag er alt
+    over: kjøringen som skulle lukket prosessen kommer aldri, så
+    persondataene ville ligget til reaperens MAKS LEVETID fra fødselen i
+    stedet for fristen fra faktisk avslutning — og det for data som aldri
+    skulle vært skrevet.
+
+    Porten er NEGATIV, ikke `= 'utfort'` som promoteringsvakten:
+    ankeret fødes MENS kjøringen står på (modulen claimer oppdraget og
+    trenger et sted å legge parset tekst der og da). Derfor måler testen
+    BEGGE retninger — ellers ville et `utfort`-krav sett like grønt ut
+    her, samtidig som det snudde livsløpet og gjorde modulen ubrukelig.
+    """
+    for status in ("feilet", "kansellert"):
+        oid, _ = _grunnlag(migrator, oppdragstype="rekruttering.evaluering",
+                           status=status)
+        rt = _rt()
+        try:
+            _sett_kontekst(rt, TENANT)
+            with pytest.raises(psycopg.errors.InvalidParameterValue):
+                rt.execute("SELECT opprett_rekrutteringsprosess(%s,%s,90)",
+                           (TENANT, oid))
+            rt.rollback()
+        finally:
+            rt.close()
+    # Positiv kontroll — de LEVENDE statusene og den fullførte går. Uten
+    # denne halvdelen ville `AND o.status = 'utfort'` bestått testen.
+    for status in (None, "plukket", "utfort"):
+        oid, _ = _grunnlag(migrator, oppdragstype="rekruttering.evaluering",
+                           status=status)
+        rt = _rt()
+        try:
+            _sett_kontekst(rt, TENANT)
+            assert rt.execute(
+                "SELECT opprett_rekrutteringsprosess(%s,%s,90)",
+                (TENANT, oid)).fetchone()[0] is not None, status
+            rt.rollback()
+        finally:
+            rt.close()
+
+
+@pg
 def test_opprett_prosess_krever_read_committed(migrator):
     """Cursor P2: kappløpstesten over kjørte BARE under READ COMMITTED.
 
