@@ -809,14 +809,13 @@ FELTGRENSER: dict[str, dict[str, tuple[int, int]]] = {
     # aldri stille avkorting (katalogens løfte er «opptil 5000», og et
     # oppdrag som fikk 5001 har alt brutt det før parseren startet).
     #
-    # UTSATT, K1: grensen måler det BESTILLEREN OPPGIR, ikke bunten. Et
-    # oppdrag som sier `antall_soknader: 1` og peker på en zip med 5001
-    # CV-er passerer her, og arkivgaten teller katalogoppføringer
-    # (20 000), ikke søknader. Codex har målt spriket fra begge sider
-    # (runde 2 her, runde 11 i `parsing.py`); rotårsaken og eiers tre
-    # valg står i `inspiser_bunt`s docstring og i #153-tråden. Å binde
-    # tallet krever en kandidatform i parseren og et snitt som bærer det
-    # signerte tallet dit — ny maskin, egen PR.
+    # UTSATT, K1 → #161: grensen måler det BESTILLEREN OPPGIR, ikke
+    # bunten. Et oppdrag som sier `antall_soknader: 1` og peker på en zip
+    # med 5001 CV-er passerer her, og arkivgaten teller
+    # katalogoppføringer (20 000), ikke søknader. Eiers avgjørelse: B —
+    # bunten bærer et manifest (`soknader.json`), og utførelsesarmen
+    # avviser der `len(kandidater)` spriker fra dette tallet. Rotårsaken
+    # og B-formen står i `inspiser_bunt`s docstring og i #161.
     "rekruttering.evaluering": {
         "antall_soknader": (1, 5000),
         # Kandidatdatagrensen (klarsignalet §5 / 057:34): 30–365 døgn,

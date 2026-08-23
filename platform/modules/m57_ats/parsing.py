@@ -122,20 +122,25 @@ def inspiser_bunt(sti: str | Path) -> list[Medlem]:
     med 20 001 tomme mapper og én HTML-søknad gjennom nettopp det
     budsjettet grensen finnes for å holde.
 
-    UTSATT, K1 — SØKNADSANTALLET er IKKE bundet her. `MAKS_FILER` er
-    20 000 katalogoppføringer; `antall_soknader` (1–5000) valideres ved
-    bestillingen og leses aldri igjen. Codex har målt spriket to ganger,
-    fra hver sin side av snittet (runde 2 på `oppdragskontrakt.py`, runde
-    11 her), og ingen av sidene kan lukke det alene: gaten kjenner
-    MEDLEMMER, ikke søkere — én søknad kan være `cv.html` alene eller
-    `cv.html` + `vedlegg.docx`, og hvilken av delene det er, står ikke i
-    en zip-katalog. Å telle filer mot 5000 ville vært å gjette
-    grammatikken (SP-13/K4), og en `forventet_antall`-parameter ville
-    vært død kode: `les_porsjonsvis` har ingen kaller utenfor test — snittet
-    som skal bære oppdragets tall inn hit, kommer med utførelsesarmen.
-    Å lukke funnet krever en kandidatform i parseren OG det snittet, altså
-    ny maskin: eget issue + egen PR. Valget mellom formene er eiers og er
-    eskalert i #153-tråden.
+    UTSATT, K1 → #161 — SØKNADSANTALLET er IKKE bundet her. `MAKS_FILER`
+    er 20 000 katalogoppføringer; `antall_soknader` (1–5000) valideres ved
+    bestillingen og leses aldri igjen. Gaten kjenner MEDLEMMER, ikke
+    søkere — én søknad kan være `cv.html` alene eller `cv.html` +
+    `vedlegg.docx`, og hvilken av delene det er, står ikke i en
+    zip-katalog. Å telle filer mot 5000 ville vært å gjette grammatikken
+    (SP-13/K4): en kandidatform kan ikke gjettes ut av katalogen, den må
+    DEKLARERES.
+
+    Eiers avgjørelse: **B — bunten bærer et manifest.** Et lukket
+    `soknader.json` i buntens rot navngir hver kandidat og filene hens;
+    en ekte parser slår manifestet opp mot de faktiske medlemmene begge
+    veier (uadressert medlem og manglende medlem er like rødt), og
+    `len(kandidater)` må være == oppdragets `antall_soknader` og ≤ 5000
+    FØR innholdet parses — ekstern-lesing-doktrinen, samme grunn som
+    resten av denne gaten kjører før utpakking. `kjoring.py` (som ikke
+    finnes ennå — `les_porsjonsvis` har ingen kaller utenfor test) bytter
+    kandidat-utledning til manifestet i samme PR som snittet fra
+    utførelsesarmen. Ny maskin: eget issue (#161) + egen PR.
     """
     if not zipfile.is_zipfile(sti):
         raise Buntfeil("ikke_zip")
