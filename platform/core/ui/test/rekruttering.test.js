@@ -430,6 +430,33 @@ test("Rekruttering: signeringsnøkkel og «signert» overlever prosessbytte", as
     "listen ble sendt en gang til etter prosessbytte");
 });
 
+test("Rekruttering: «Detaljer» åpner panelet med funn, sitat og spørsmål", async () => {
+  // Codex P2: radhandlingen ble sendt som `utfor`, mens DataTabell binder
+  // `handling.paaKlikk`. En `undefined` lytter er ingen feil i nettleseren
+  // — den er ingenting. Knappen sto der, tok fokus, ble lest opp som
+  // knapp, og gjorde intet; funnene, kildesitatene og intervjuspørsmålene
+  // var utilgjengelige for ALLE. Tastaturgjennomgangens punkt 4 lover
+  // nettopp denne flyten.
+  //
+  // MUTASJONEN SOM DREPER DENNE: bytt `paaKlikk` tilbake til `utfor`.
+  const hoved = await tegnet();
+  const rad = [...hoved.querySelectorAll("tbody tr")]
+    .find((tr) => tr.querySelector("td").textContent === "K-2");
+  const detaljer = [...rad.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.detaljer"));
+  assert.ok(detaljer, "raden mangler detaljknappen");
+  detaljer.click();
+  const panel = document.querySelector('[role="dialog"]');
+  assert.ok(panel, "detaljknappen åpnet ingenting");
+  assert.ok(panel.textContent.includes("K-2"), "panelet gjelder feil kandidat");
+  assert.ok(panel.textContent.includes(
+    t("ui.rekruttering.funn.uklar_tidslinje")), "funnet mangler");
+  assert.ok(panel.querySelector("q").textContent === "2019",
+    "kildesitatet mangler");
+  assert.ok(panel.textContent.includes("Fortell om tidslinjen."),
+    "intervjuspørsmålet mangler");
+});
+
 test("Rekruttering: vektskyveren rommer vektene kontrakten godtar", async () => {
   // Codex P1: `evaluering.ranger` godtar ethvert ikke-negativt heltall,
   // men kontrollen sto på `max="10"`. Med en gyldig vekt på 20 regnet

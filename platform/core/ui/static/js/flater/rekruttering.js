@@ -136,9 +136,16 @@ function tegn(hoved, ctx, data, okt, valgtId) {
             t(`ui.rekruttering.status.${kandidat.status}`)),
         },
         sortverdi: { poeng },
+        // `paaKlikk`, ikke `utfor` (Codex P2): DataTabell binder radens
+        // handling med `b.addEventListener("click", h.paaKlikk)`, og en
+        // `undefined` lytter er ingen feil i nettleseren — den er bare
+        // ingenting. Knappen sto der, tok fokus, ble lest opp som knapp,
+        // og gjorde intet: funnene, kildesitatene og intervjuspørsmålene
+        // i detaljpanelet var utilgjengelige for alle. Navnet er tabellens,
+        // ikke flatens, og de øvrige kallerne bruker det.
         handling: {
           tekst: t("ui.rekruttering.detaljer"),
-          utfor: () => visDetalj(kandidat, poeng),
+          paaKlikk: () => visDetalj(kandidat, poeng),
         },
       })),
     }));
