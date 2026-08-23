@@ -89,9 +89,20 @@ def _felter(kandidatfelter_for, medlem, fremdrift):
     vranglest søknadsform skal ikke sende noen på leting etter modellen.
     """
     try:
-        return kandidatfelter_for(medlem)
+        felter = kandidatfelter_for(medlem)
     except Exception as feil:
         raise Kjoringsfeil("feltuttrekk_feilet", fremdrift) from feil
+    # EN UTTREKKER MELDER OGSÅ FEIL VED Å GI TILBAKE INGENTING (Codex P2).
+    # Vakten over fanget bare REISTE unntak. Signaliserer den strukturerte
+    # søknaden sin vranglesning ved å returnere `None` — eller noe annet
+    # som ikke er et kart — slapp verdien gjennom her, og først nede i
+    # `_flett_felter` røk `dict(nye)`. Det unntaket har ingen vakt over
+    # seg: det faller til catch-allen og kommer ut som `modellfeil`, altså
+    # nøyaktig den feilattribusjonen denne funksjonen ble laget for å
+    # hindre. Returtypen måles derfor her, som `_tekst` måler sin.
+    if not isinstance(felter, dict):
+        raise Kjoringsfeil("feltuttrekk_feilet", fremdrift)
+    return felter
 
 
 def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
