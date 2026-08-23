@@ -1902,29 +1902,33 @@ def test_frigivelsesoppdrag_maaler_fristen_mot_veggklokken(migrator):
         (TENANT, fid)).fetchone()[0] == 0, "dødfødt oppdrag ble laget"
 
 
-def test_056_granter_aldri_ubetinget_til_lokalnavnet():
-    """Codex P1 på #140 (runde 5): `disponit` er LOKAL-/TESTNAVNET på
-    runtime-rollen — `migrer.py` tar navnet som argument. En ubetinget
-    grant i migrasjonen har to utfall på en installasjon med et annet
-    navn: rollen finnes ikke og HELE 056 ruller tilbake før kjøreren
-    rekker `M37_RETTIGHETER_API`, eller den finnes som en urelatert/
-    utrangert innlogging og beholder EXECUTE for alltid (kjøreren
-    revoker aldri funksjonsgrants fra andre roller enn den konfigurerte).
+def test_056_navngir_aldri_runtime_rollen():
+    """Codex P1 på #140 (runde 13) — runde 5s `IF EXISTS`-form lukket bare
+    HALVE funnet, og denne testen målte bare den halvdelen.
 
-    Samme statiske port som 043 alt har
-    (`test_gate14b.py::…rettighetene_er_parameteriserte`): hver
-    `TO disponit;` i 056 må stå i en `IF EXISTS (… rolname = 'disponit')`.
+    `disponit` er LOKAL-/TESTNAVNET på runtime-rollen; `migrer.py` tar
+    navnet som ARGUMENT. Betingelsen fjernet utfall 1 (rollen finnes ikke
+    → hele 056 ruller tilbake før kjøreren rekker `M37_RETTIGHETER_API`),
+    men gjorde utfall 2 STILLE: finnes navnet som en urelatert eller
+    UTRANGERT innlogging, er betingelsen sann, og den innloggingen får
+    EXECUTE på opprettelsen og SIGNERINGEN — for alltid, fordi kjørerens
+    nullstilling gjelder den KONFIGURERTE rollen, ikke alle roller.
 
-    MUTASJONEN SOM DREPER DENNE: fjern én av `DO $$`-innpakningene rundt
-    grantene i §7/§8."""
+    Porten er derfor ikke lenger «betinget», men «ikke nevnt»: 056 skal
+    ikke inneholde ÉN grant til lokalnavnet. At fjerningen ikke er et TAP
+    av rettighet måles av naboen
+    `test_migrer_baerer_utsendingskjedens_rettigheter`, som krever de
+    samme grantene på `{rolle}`-form i kjøreren.
+
+    MUTASJONEN SOM DREPER DENNE: legg grant-blokken tilbake i §7 eller
+    §8."""
     sql = (ROT / "platform" / "core" / "db" / "migrations"
            / "056_m57_utsending.sql").read_text(encoding="utf-8")
     treff = list(re.finditer(r"TO disponit\b\s*;", sql))
-    assert treff, "fant ingen runtime-grant i 056 — er porten fortsatt reell?"
-    for t in treff:
-        foran = sql[max(0, t.start() - 600):t.start()]
-        assert "rolname = 'disponit'" in foran, (
-            "ubetinget grant til lokalnavnet: " + repr(foran[-160:]))
+    assert not treff, (
+        "056 navngir runtime-rollen ved lokalnavn — kjøreren er eneste "
+        "rettighetskilde: " + repr([
+            sql[max(0, t.start() - 120):t.end()][-120:] for t in treff]))
 
 
 def test_sp10_daekker_056():

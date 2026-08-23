@@ -1047,24 +1047,28 @@ REVOKE ALL ON FUNCTION frigi_utsendelse(TEXT, UUID, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION opprett_frigivelsesoppdrag(TEXT, UUID, TEXT, TEXT,
     TEXT, BYTEA, TEXT, BYTEA, TIMESTAMPTZ, TIMESTAMPTZ) FROM PUBLIC;
 
--- ... og `disponit` er LOKAL-/TESTNAVNET på runtime-rollen (Codex P1,
--- runde 5 — samme klasse 043 §14b skrev ned). `deploy/staging/migrer.py`
--- tar runtime-rollens navn som ARGUMENT: på en installasjon som kjører
--- med et annet navn er en literal grant her enten en hard feil (rollen
--- finnes ikke → hele 056 ruller tilbake, FØR kjøreren rekker
--- `M37_RETTIGHETER_API`), eller en STILLE feiltildeling — en urelatert
--- eller utrangert `disponit`-innlogging beholder EXECUTE på
--- signeringsveien, for kjøreren revoker aldri funksjonsgrants fra andre
--- roller enn den konfigurerte. Den autoritative granten er kjørerens
--- parameteriserte blokk; denne står betinget, med 043s form.
-DO $$ BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'disponit') THEN
-    GRANT EXECUTE ON FUNCTION opprett_utsendingsliste(TEXT, UUID, UUID,
-      BIGINT, TEXT, TEXT, TEXT, INT) TO disponit;
-    GRANT EXECUTE ON FUNCTION signer_utsendingsliste(TEXT, UUID, TEXT, TEXT)
-      TO disponit;
-  END IF;
-END $$;
+-- ... OG RUNTIME-ROLLEN NEVNES IKKE HER I DET HELE TATT (Codex P1, runde
+-- 13 på #140; runde 5 tok bare halve funnet). `disponit` er LOKAL-/
+-- TESTNAVNET på runtime-rollen, og `deploy/staging/migrer.py` tar navnet
+-- som ARGUMENT. En literal grant her har derfor to utfall på en
+-- installasjon med et annet navn:
+--   * rollen finnes ikke → hele 056 ruller tilbake, FØR kjøreren rekker
+--     `M37_RETTIGHETER_API`. Runde 5 lukket NØYAKTIG dette, med 043 §14bs
+--     `IF EXISTS`-form;
+--   * rollen finnes som en urelatert eller UTRANGERT `disponit`-
+--     innlogging → betingelsen er sann, og den innloggingen får EXECUTE
+--     på både liste-opprettelsen og SIGNERINGEN. Kjøreren tar den aldri
+--     igjen: `NULLSTILL`/REVOKE-blokkene gjelder den KONFIGURERTE rollen,
+--     ikke alle roller. Betingelsen gjorde altså feiltildelingen STILLE i
+--     stedet for å hindre den — en utrangert kreditt kan opprette og
+--     signere uforanderlige utsendingslister for alltid.
+-- Rotårsaken er at migrasjonen i det hele tatt navngir et
+-- installasjonsvalg. Den ENESTE rettighetskilden for runtime er kjørerens
+-- parameteriserte `M37_RETTIGHETER_API` (migrer.py: `GRANT EXECUTE ON
+-- FUNCTION opprett_utsendingsliste/signer_utsendingsliste TO {rolle}`),
+-- og den er autoritativ ved HVER kjøring. Speilingen er derfor fjernet,
+-- ikke gjort enda mer betinget; `test_056_navngir_aldri_runtime_rollen`
+-- holder den borte.
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'disponit_varselsender') THEN
@@ -1083,16 +1087,13 @@ RESET ROLE;
 --    og eieren av kjedefunksjonene; INSERT kun gjennom funksjonene.
 REVOKE ALL ON utsendingsliste, utsendingssignatur, utsendingsfrigivelse
     FROM PUBLIC;
--- Samme betingelse og samme grunn som funksjonsgrantene over: kjørerens
--- `M37_RETTIGHETER_API` eier lesetilgangen for den KONFIGURERTE
--- runtime-rollen (migrer.py §056-linjen), denne er lokal-/testnavnets
--- betingede speiling.
-DO $$ BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'disponit') THEN
-    GRANT SELECT ON utsendingsliste, utsendingssignatur,
-      utsendingsfrigivelse TO disponit;
-  END IF;
-END $$;
+-- Samme rotårsak og samme fjerning som funksjonsgrantene i §7: kjørerens
+-- `GRANT SELECT ON utsendingsliste, utsendingssignatur,
+-- utsendingsfrigivelse TO {rolle}` (migrer.py §056-linjen) er den
+-- autoritative lesetilgangen for den KONFIGURERTE runtime-rollen. En
+-- betinget speiling på lokalnavnet ga en utrangert `disponit`-innlogging
+-- varig SELECT på mottakerreferanser og signaturer — lavere alvor enn
+-- EXECUTE på signeringen, men nøyaktig samme klasse, så den går samme vei.
 GRANT SELECT, INSERT ON utsendingsliste, utsendingssignatur,
     utsendingsfrigivelse TO disponit_m37_claimer;
 -- Signaturporten (§7b) LÅSER signatarens medlemskap gjennom
