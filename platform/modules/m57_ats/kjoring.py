@@ -43,7 +43,17 @@ def _flett_felter(samlet, nye):
             # de to en form `blind` skal FELLE. Da settes den som den er,
             # og porten der nede måler den — flettingen skjuler aldri en
             # ugyldig maskeringsform bak et pent snitt.
-            if rad is None:
+            #
+            # EN UGYLDIG FORM SOM KOMMER SIST, VINNER (Codex P1). Sto det
+            # bare `rad is None` her, ble `{"kontakt": "annen@eksempel.no"}`
+            # i søknadsbrevet KASTET fordi CV-en alt hadde levert en gyldig
+            # liste for samme felt: `blind` fikk aldri se den ugyldige
+            # formen, kunne ikke felle den, og en personopplysning som bare
+            # sto i det senere dokumentet ble med i den samlede teksten til
+            # modellen umaskert. Fail-closed må måle DEN VERSTE formen
+            # feltet kom i, ikke den første — så en ugyldig verdi settes
+            # også over en gyldig rad, og porten der nede stopper kjøringen.
+            if rad is None or not isinstance(verdier, (list, tuple)):
                 samlet[felt] = (list(verdier)
                                 if isinstance(verdier, (list, tuple))
                                 else verdier)

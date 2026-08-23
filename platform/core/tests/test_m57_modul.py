@@ -1639,3 +1639,65 @@ def test_tekstuttrekket_er_containerens_aldri_en_utf8_dekoding(tmp_path):
                           tekst_for=lambda m, d: d,
                           biasmaalinger=_MAALINGER)
     assert e.value.kode == "tekstuttrekk_feilet"
+
+
+def test_ugyldig_feltform_i_SENERE_fil_felles_ogsaa(tmp_path):
+    """Codex P1: flettingen skjulte en ugyldig form bak en gyldig rad.
+
+    CV-en leverer `{"kontakt": ["k@eksempel.no"]}` — velformet, og raden
+    blir en liste. Søknadsbrevet leverer så SAMME felt som en bar streng,
+    `{"kontakt": "annen@eksempel.no"}`. Formen er nettopp den `blind`
+    skal felle (en streng er iterbar, så hvert TEGN ville blitt maskert),
+    men fordi raden alt fantes som liste, ble den senere verdien stille
+    forkastet: `blind` fikk aldri se den, kunne ikke reise
+    `ugyldig_maskeringsform`, og adressen som bare sto i søknadsbrevet ble
+    med UMASKERT inn i den samlede teksten til modellen. Fail-closed må
+    måle den VERSTE formen feltet kom i, ikke den første.
+
+    MUTASJONEN SOM DREPER DENNE: sett betingelsen tilbake til
+    `if rad is None:` i `_flett_felter`.
+    """
+    from modules.m57_ats import kjoring
+
+    forst = tmp_path / "forst"
+    forst.mkdir()
+    arkiv = _bunt(forst, [
+        ("k1/cv.html", b"<p>drift, k@eksempel.no</p>"),
+        ("k1/soknad.html", b"<p>drift, annen@eksempel.no</p>"),
+    ])
+
+    def felter(medlem):
+        if medlem.navn.endswith("cv.html"):
+            return {"kontakt": ["k@eksempel.no"]}
+        return {"kontakt": "annen@eksempel.no"}
+
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
+                          kandidatfelter_for=felter,
+                          tekst_for=lambda m, d: d.decode("utf-8"),
+                          biasmaalinger=_MAALINGER)
+    assert e.value.kode == "ugyldig_maskeringsform"
+    # Og stoppen er FØR modellen: ingen tekst forlot kjøringen.
+    assert modell.sett == []
+
+    # Rekkefølgen skal ikke avgjøre: den ugyldige formen FØRST felles
+    # like fullt, og en gyldig etterfølger vasker den ikke bort.
+    omvendt = tmp_path / "omvendt"
+    omvendt.mkdir()
+    arkiv2 = _bunt(omvendt, [
+        ("k1/a_soknad.html", b"<p>drift, annen@eksempel.no</p>"),
+        ("k1/b_cv.html", b"<p>drift, k@eksempel.no</p>"),
+    ])
+
+    def felter_omvendt(medlem):
+        if medlem.navn.endswith("b_cv.html"):
+            return {"kontakt": ["k@eksempel.no"]}
+        return {"kontakt": "annen@eksempel.no"}
+
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv2, _Modell(), vekter={"drift": 3},
+                          kandidatfelter_for=felter_omvendt,
+                          tekst_for=lambda m, d: d.decode("utf-8"),
+                          biasmaalinger=_MAALINGER)
+    assert e.value.kode == "ugyldig_maskeringsform"
