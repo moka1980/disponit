@@ -24,7 +24,7 @@
 id: wcag_audit
 navn: Automatisk WCAG-kontroll (controller)
 versjon: 0.1.0
-status: under_utvikling        # aktiv | inaktiv | under_utvikling
+status: aktiv                  # aktiv | inaktiv | under_utvikling
 # AKSEPTPORTEN: FIRE AV SEKS PUNKTER ER BUNDET — FLIPPEDRILLEN MÅ KJØRES
 # PÅ NYTT, OG DATASETTPUNKTET MANGLER SIN LOKALE HALVDEL (049, dokumentert
 # avvik fra akseptflipp-klarsignalet §4):
@@ -65,21 +65,20 @@ status: under_utvikling        # aktiv | inaktiv | under_utvikling
 # sjekklistepunktene under påberoper seg dette punktet; det er
 # akseptgrensen §12 som krever det.
 #
-# Blokkeren er registerets EGEN konsistensregel (registry.valider): en
-# `aktiv` modul kan ikke avhenge av en som ikke er aktiv, og
-# `m02_revisjonslogg` står `under_utvikling` med tre ubundne
-# sjekklistepunkter. Regelen gjør nøyaktig jobben sin — å flippe her
-# ville gjort registeret rødt i CI. Flippet (status → aktiv,
-# driftstilstand → produksjon, katalogetiketten via MODULSTATUS) skjer i
-# m02-aksept-arcen, som en to-linjers endring UTEN nye porter: alle
-# portene for m56 er bestått og bundet HER.
+# Flippet SKJEDDE 2026-08-23, i samme commit for begge modulene:
+# registerets konsistensregel (registry.valider — en `aktiv` modul kan
+# ikke avhenge av en som ikke er aktiv) holdt m56 tilbake til
+# m02-aksepten var skrevet. Begge aksepthendelsene står i basen (m56:
+# drill wcag-r23; m02: innholdsadressert mot commit 2aaca01 med
+# manifest-sha b69aec8f...), og statusen under er katalogens avlesning
+# av dem — alle portene for m56 var bestått og bundet FØR flippet.
 #
 # MILJØAKSEN (når flippet skjer): aksepthendelsen binder deploymentraden
 # SLIK DEN FAKTISK KJØRER — (staging, wcag-r13); det finnes ett miljø.
 # `driftstilstand: produksjon` er katalogens sannhet om BRUK, ikke om
 # miljøetiketten; et eget produksjonsmiljø krever egen aksept med egen
 # drill (port 14 i 049).
-driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+driftstilstand: produksjon     # ikke_i_drift | staging | produksjon
 avhengigheter:
   - m01_policy                 # bestilling og frekvens går gjennom policyporten
   - m02_revisjonslogg          # én skrivevei til evidenskjeden

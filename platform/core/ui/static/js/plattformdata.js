@@ -26,17 +26,17 @@ import { KATALOG_ANTALL } from "./katalog.js";
 // `i_drift`-liste — ikke i det kunden leser.
 export const MODULSTATUS = {
   1: "klargjort",   // m01_policy: status aktiv, driftstilstand staging
-  2: "bygges",      // m02_revisjonslogg: under_utvikling, ikke_i_drift
+  2: "i_drift",     // m02_revisjonslogg: aktiv, produksjon (akseptert
+                    // 2026-08-23, innholdsadressert @ 2aaca01 — grensen
+                    // m02-aksept-v1, alle punkter bundet)
   37: "bygges",     // m37_unntak: under_utvikling, ikke_i_drift
   38: "planlagt",   // ingen manifest i platform/modules/ ennå
-  // m56_wcag_audit: akseptporten ER bestått (049; alle seks punkter ja
-  // med bundet evidens, flippedrillen kjørt 2026-08-20, aksepthendelsen
-  // i basen) — men registerets konsistensregel holder flippet igjen til
-  // m02_revisjonslogg er akseptert (en aktiv modul kan ikke avhenge av
-  // en som ikke er det). Manifestet sier fortsatt
-  // under_utvikling/ikke_i_drift, og DEN aksen er denne flatens eneste
-  // kilde — «bygges» står til m02-aksept-arcen flipper begge.
-  56: "bygges",
+  // m56_wcag_audit: akseptert 2026-08-23 på wcag-r23 (r21-runden +
+  // flippedrillen 22/8, aksepthendelsen i basen) og flippet SAMMEN med
+  // m02 — konsistensregelen som holdt den igjen er nå oppfylt begge
+  // veier. Manifestet (denne flatens eneste kilde) sier
+  // aktiv/produksjon.
+  56: "i_drift",
 };
 
 // Status står IKKE her: modulene beskriver navn, fase og tekst, mens

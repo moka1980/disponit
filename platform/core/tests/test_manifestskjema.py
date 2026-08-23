@@ -902,12 +902,16 @@ def test_registeret_skiller_godkjent_fra_utrullet(m01):
     """
     from registry import les_manifester, valider
     st = valider(les_manifester(MODULROT))
-    # Verken wcag_audit eller m02 står her: begge har sjekklistepunkter som
-    # er MÅLT, men ikke bundet gjennom evidensporten — og et ubundet punkt
-    # er `nei`. m02 sto kort som aktiv i akseptrunden på #89; begrunnelsen
-    # var «alle punkter ja», og det gjaldt tre av seks (Codex P1, runde 2).
-    assert st.aktive == ["m01_policy"], st
-    assert st.i_drift == ["m01_policy"], (
+    # 2026-08-23: m56 og m02 er AKSEPTERT (hendelsene står i basen —
+    # m56 på wcag-r23 etter r21-runden + drillen, m02 innholdsadressert
+    # på 2aaca01) og flippet aktiv/produksjon sammen. Historien om
+    # #89-feilen (aktiv med tre av seks punkter) står i git — regelen
+    # den lærte oss håndheves fortsatt: et ubundet punkt er `nei`, og
+    # begge modulene kom hit ved å BINDE hvert punkt, ikke ved å love.
+    assert st.aktive == ["m01_policy", "m02_revisjonslogg",
+                         "wcag_audit"], st
+    assert st.i_drift == ["m01_policy", "m02_revisjonslogg",
+                          "wcag_audit"], (
         f"registeret er uenig med det som faktisk kjører: {st.i_drift}")
     assert st.feil == [], st.feil
 

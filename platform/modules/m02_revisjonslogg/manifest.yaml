@@ -3,7 +3,7 @@
 id: m02_revisjonslogg
 navn: Revisjonslogg (M-2)
 versjon: 0.1.0
-status: under_utvikling        # aktiv | inaktiv | under_utvikling
+status: aktiv                  # aktiv | inaktiv | under_utvikling
 # FLIPPET ER TATT TILBAKE (Codex P1 på #89, runde 2). M-2 ble satt `aktiv`
 # i akseptrunden med begrunnelsen «alle punkter ja, artefaktene bundet».
 # Det gjaldt tre av seks punkter. De tre første under står `nei` nå, og da
@@ -51,7 +51,7 @@ status: under_utvikling        # aktiv | inaktiv | under_utvikling
 # `registry.valider` + RUTINER.md, med den prisen at registeret slutter å
 # fange «kjører uten aksept». Det er en rutinebeslutning, ikke et
 # manifestfelt.
-driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+driftstilstand: produksjon     # ikke_i_drift | staging | produksjon
 avhengigheter: []              # loggen er lagringslaget — den avhenger av ingen
 kjerne: platform/core/policy_validator/audit.py
 i18n_prefiks: m02
