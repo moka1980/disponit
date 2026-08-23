@@ -82,6 +82,13 @@ def _krev_helt_svar(svar: object, vekter: dict[str, int]) -> dict:
                        ("intervjusporsmal", list)):
         if not isinstance(svar.get(felt), form):
             raise Evalueringsfeil("ufullstendig_modellsvar", felt)
+    # LISTEN var målt, ELEMENTENE ikke (Cursor P2). `valider_funn` leser
+    # funnet som en dict, så `[null]` eller `["tekst"]` fra modellen ga en
+    # rå `AttributeError` ut av modulen. Kontrakten er et KODET utfall
+    # (SP-3): en bibliotekfeil er ikke en avvisning, den er en 500 hos
+    # kalleren — og forskjellen avgjør om kjøringen kan retryes eller ei.
+    if any(not isinstance(f, dict) for f in svar["funn"]):
+        raise Evalueringsfeil("ufullstendig_modellsvar", "funn")
     if set(svar["oppfylt"]) != set(vekter):
         raise Evalueringsfeil(
             "ufullstendig_modellsvar",

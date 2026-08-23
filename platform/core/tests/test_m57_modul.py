@@ -591,6 +591,12 @@ def test_avkortet_modellsvar_er_en_feil_ikke_et_tomt_resultat():
             {k: v for k, v in hele.items() if k != "oppfylt"},
             {k: v for k, v in hele.items() if k != "intervjusporsmal"},
             hele | {"funn": None},
+            # Listen var målt, ELEMENTENE ikke (Cursor P2): `valider_funn`
+            # leser funnet som en dict, så disse ga en rå `AttributeError`
+            # ut av modulen i stedet for et kodet utfall (SP-3).
+            hele | {"funn": [None]},
+            hele | {"funn": ["tekst"]},
+            hele | {"funn": [True]},
             # Et krav profilen har, men modellen ikke svarte på, ble
             # stille til null poeng — speilbildet av `ranger`s avvisning
             # av krav UTENFOR profilen.
