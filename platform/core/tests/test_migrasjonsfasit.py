@@ -168,14 +168,21 @@ def _basiscommit() -> str:
     `actions/checkout` henter `refs/pull/<nr>/merge` på dybde 1, så
     basisgrenen er ikke nødvendigvis i objektbasen — en `--depth=1`-henting
     av `main` koster ett objektsett og utvider ikke historikken ellers.
+
+    INGEN fallback til `FETCH_HEAD`: i en PR-utsjekking i GHA er
+    `FETCH_HEAD` som oftest PR-ens egen merge-ref, ikke `main` — feiler
+    fetchen under (f.eks. offline), ville et fall til `FETCH_HEAD` fått
+    `_basisfasit` til å lese PR-ens EGEN fasit som «basis», og
+    append-only-porten ville vært grønn mot seg selv. Etter fetch
+    verifiseres derfor bare `origin/main` på nytt; lykkes ikke det, er
+    basisen uløst, og porten under sier fra — den passerer ikke stille.
     """
-    for ref in ("origin/main^{commit}", "FETCH_HEAD^{commit}"):
-        r = _git("rev-parse", "--verify", "--quiet", ref)
-        if r.returncode == 0:
-            return r.stdout.decode().strip()
-        if ref.startswith("origin/"):
-            _git("fetch", "--quiet", "--depth=1", "origin", "main")
-    return ""
+    r = _git("rev-parse", "--verify", "--quiet", "origin/main^{commit}")
+    if r.returncode == 0:
+        return r.stdout.decode().strip()
+    _git("fetch", "--quiet", "--depth=1", "origin", "main")
+    r = _git("rev-parse", "--verify", "--quiet", "origin/main^{commit}")
+    return r.stdout.decode().strip() if r.returncode == 0 else ""
 
 
 def _basisfasit(commit: str) -> dict:
@@ -189,6 +196,31 @@ def _basisfasit(commit: str) -> dict:
     blob = _git("cat-file", "blob", f"{commit}:{FASITSTI}")
     return json.loads(blob.stdout.decode("utf-8")) \
         if blob.returncode == 0 else {}
+
+
+def test_fasitstien_resolver_mot_HEAD():
+    """FASITSTI må faktisk peke på DENNE fasiten, sett fra repo-roten.
+
+    `_basisfasit` fail-åpner til `{}` for ENHVER `cat-file`-feil — også en
+    feilstavet FASITSTI. En tom basis gjør `_regresjon` vacuous
+    (løkken går over `basis.items()`), så append-only-porten ville da
+    vært stille for alltid uansett hva som skjer med fasiten videre — en
+    stille variant av nøyaktig samme feilklasse som Codex P1 (#154) i
+    denne fila. Testen sjekker konstanten direkte og statisk, uten å gå
+    via fail-open-stien i porten selv.
+
+    MUTASJONEN SOM DREPER DENNE: FASITSTI endres til en sti som ikke
+    lenger peker på denne fila.
+    """
+    blob = _git("cat-file", "blob", f"HEAD:{FASITSTI}")
+    assert blob.returncode == 0, (
+        f"FASITSTI={FASITSTI!r} løser ikke mot HEAD i git-treet — "
+        "`_basisfasit` vil fail-åpne til {} og append-only-porten blir"
+        " stille for alltid")
+    assert json.loads(blob.stdout.decode("utf-8")) == FASIT, (
+        "fasiten lest via `git cat-file` på HEAD stemmer ikke med FASIT"
+        " lest fra disk — FASITSTI peker et annet sted enn filen dette"
+        " testmodulet faktisk bruker")
 
 
 def _regresjon(basis, naa):
