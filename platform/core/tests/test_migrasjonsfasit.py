@@ -297,6 +297,24 @@ def _regresjon(basis, naa):
     return avvik
 
 
+def _append_only_avvik(naa=None):
+    """HELE append-only-løypa — basisfetch, basisfasit, sammenligning —
+    med arbeidstresiden injiserbar (Cursor P1 20:03: negativtesten må gå
+    gjennom NØYAKTIG portens kallsted, ellers beviser den en kopi).
+
+    MUTASJONEN SOM DREPER PARET: bytt `_basisfasit(commit)` med `FASIT`
+    her — eller hopp over `_basiscommit` — og negativtesten under faller,
+    fordi den kjører samme funksjon.
+    """
+    commit = _basiscommit()
+    assert commit, (
+        "basisgrenen `main` er verken i denne utsjekkingens historikk"
+        " eller hentbar fra `origin` — append-only kan da ikke måles."
+        " Kjør fra en utsjekking med nett eller full historikk"
+        " (`fetch-depth: 0`)")
+    return _regresjon(_basisfasit(commit), FASIT if naa is None else naa)
+
+
 def test_fasiten_er_append_only_mot_basisgrenen():
     """Basisen porten måler mot er `main`, ikke fasiten i denne grenen.
 
@@ -316,13 +334,7 @@ def test_fasiten_er_append_only_mot_basisgrenen():
     `test_aksept_projeksjon.py`, Codex P1 #154): er `main` uleselig, er
     påstanden umålt, og en umålt port er rød.
     """
-    commit = _basiscommit()
-    assert commit, (
-        "basisgrenen `main` er verken i denne utsjekkingens historikk"
-        " eller hentbar fra `origin` — append-only kan da ikke måles."
-        " Kjør fra en utsjekking med nett eller full historikk"
-        " (`fetch-depth: 0`)")
-    avvik = _regresjon(_basisfasit(commit), FASIT)
+    avvik = _append_only_avvik()
     assert not avvik, "\n".join(avvik)
 
 
@@ -383,9 +395,8 @@ def test_pin_endret_i_takt_med_filen_felles_mot_basisgrenen():
 
     _git = falsk_git
     try:
-        commit = _basiscommit()
-        basis = _basisfasit(commit)
-        avvik = _regresjon(basis, i_takt)
+        # Portens EGEN løype, ikke en rekonstruksjon (Cursor P1 20:03).
+        avvik = _append_only_avvik(i_takt)
     finally:
         _git = ekte_git
 
@@ -402,6 +413,70 @@ def test_pin_endret_i_takt_med_filen_felles_mot_basisgrenen():
 
     # Ny migrasjon er derimot LOVLIG: fasiten vokser, den skrives ikke om.
     assert not _regresjon(FASIT, {**FASIT, "058_ny.sql": "0" * 64})
+
+
+AKSEPTCOMMIT_056 = "2aaca01c7187dbf46d06f4e09a3688a79d367739"
+
+
+def _blobhash(commit: str, sti: str) -> str | None:
+    """sha256 over blobben `commit:sti` — None KUN når stien ikke finnes
+    på commiten (født her); enhver lesefeil er rød hos kalleren."""
+    finnes = _git("cat-file", "-e", f"{commit}:{sti}")
+    if finnes.returncode != 0:
+        return None
+    blob = _git("cat-file", "blob", f"{commit}:{sti}")
+    assert blob.returncode == 0, (
+        f"{sti} finnes på {commit[:12]}… men lot seg ikke lese — ankeret"
+        " er da uløst, ikke fraværende")
+    return hashlib.sha256(blob.stdout).hexdigest()
+
+
+def test_fasiten_er_ankret_utenfor_treet():
+    """Cursor P1 20:03 (P1-1): i PR-en som FØDER fasiten er append-only-
+    porten tom-mot-tom, og alle de andre portene måler tre mot tre — en
+    bidragsyter som endrer en kjørt migrasjon OG pinnen i samme commit
+    var grønn hele veien til deploy. Ankeret må ligge der grenen ikke kan
+    skrive:
+
+      * hver pinnet fil som FINNES på `main` må være byte-identisk med
+        blobben der (disk == fasit er alt målt; her måles fasit == main),
+      * 056 spesielt ankres til AKSEPTCOMMITEN `2aaca01…` — commiten
+        prod-kjøringen i #140 skjedde fra, pinnet også i
+        `manifestskjema.AKSEPTERTE_GENERASJONER` — fordi main akkurat nå
+        bærer #153s redigerte 056; det er jo derfor denne PR-en finnes.
+        `KJORT_056` blir dermed AVLEDET dokumentasjon, ikke en tredje
+        redigerbar kopi: porten krever at den er lik blob-hashen.
+
+    Porten HOPPER IKKE: får den ikke tak i ankeret (offline, strippet
+    historikk), er påstanden umålt og porten rød — 23/8 kostet to
+    minutters nedetid, en rød CI-kjøring er billigere.
+
+    MUTASJONEN SOM DREPER DENNE: muter en kjørt migrasjon og skriv pinnen
+    om i samme commit — disk == fasit blir grønn, men fasit ≠ main-blob
+    her. For 056: muter til #153-bytene og oppdater BÅDE fasiten og
+    `KJORT_056` — fortsatt rød, for `2aaca01`-blobben følger ikke med.
+    """
+    commit = _basiscommit()
+    assert commit, "main uhentbar — ankeret kan ikke måles (se over)"
+    _git("fetch", "--quiet", "--depth=1", "origin", AKSEPTCOMMIT_056)
+    hash_056 = _blobhash(AKSEPTCOMMIT_056,
+                         "platform/core/db/migrations/" + HENDELSEN_056)
+    assert hash_056 is not None, (
+        f"akseptcommiten {AKSEPTCOMMIT_056[:12]}… er ikke tilgjengelig —"
+        " 056-ankeret er umålt, og umålt er rødt")
+    assert FASIT[HENDELSEN_056] == hash_056 == KJORT_056, (
+        "056-pinnen er ikke akseptcommitens egne bytes — kjørt historikk"
+        " ankres i commiten prod faktisk kjørte fra, aldri i treet her")
+    for navn, pinnet in FASIT.items():
+        if navn == HENDELSEN_056:
+            continue
+        blob = _blobhash(commit, "platform/core/db/migrations/" + navn)
+        if blob is None:
+            continue          # født i denne grenen — pinnes idet den merges
+        assert pinnet == blob, (
+            f"{navn}: fasiten ({pinnet[:12]}…) er ikke main-blobben"
+            f" ({blob[:12]}…) — pinnen er skrevet om i takt med filen;"
+            " det er nøyaktig angrepet ankeret finnes for")
 
 
 def test_fasiten_er_regnet_ikke_skrevet():
