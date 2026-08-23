@@ -181,6 +181,42 @@ def test_port24_nostet_arkiv_avvises(tmp_path):
     assert len(list(parsing.les_porsjonsvis(ok))) == 1
 
 
+def test_port24_polyglot_pdf_med_pahengt_arkiv(tmp_path):
+    """Codex P2: begge armene av `nostet_arkiv`-porten målte en
+    BEGYNNELSE — endelsen i gaten, `_ARKIVMAGI` mot hodet i strømmen. En
+    zip identifiseres av sentralkatalogen SIST i fila, så en PDF som
+    begynner med `%PDF` og bærer en påhengt EOCD passerte
+    innholdstypeporten, og de indre oppføringene ble aldri målt mot
+    fil-, forholds- eller totalbudsjettet."""
+    indre = io.BytesIO()
+    with zipfile.ZipFile(indre, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("bombe.txt", b"A" * 100_000)
+    polyglot = _pdf() + indre.getvalue()
+    assert polyglot.startswith(b"%PDF")          # magiporten er fornøyd …
+    assert zipfile.is_zipfile(io.BytesIO(polyglot))   # … og det er en zip
+
+    arkiv = _bunt(tmp_path, [("cv.pdf", polyglot)])
+    parsing.inspiser_bunt(arkiv)   # gaten ser en lovlig endelse
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(arkiv))
+    assert e.value.kode == "nostet_arkiv"
+    arkiv.unlink()
+
+    # Samme hale i HTML-klær: hodet er lovlig HTML, så hodearmen ser
+    # ingenting — halen felles likevel.
+    arkiv = _bunt(tmp_path, [("cv.html", b"<p>CV</p>" + indre.getvalue())])
+    parsing.inspiser_bunt(arkiv)
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(arkiv))
+    assert e.value.kode == "nostet_arkiv"
+    arkiv.unlink()
+
+    # Positiv kontroll begge veier: en ærlig PDF og en ærlig docx går.
+    # Docx er unntatt fordi den ER en zip og har sin egen dør.
+    ok = _bunt(tmp_path, [("cv.pdf", _pdf()), ("vedlegg.docx", _docx())])
+    assert len(list(parsing.les_porsjonsvis(ok))) == 2
+
+
 def test_port24_docx_inspiseres_som_arkivet_den_er(tmp_path):
     """Codex P1: DOCX slapp gjennom på `PK`-magien og sin egen
     KOMPRIMERTE størrelse alene. En liten docx kan bære et indre medlem

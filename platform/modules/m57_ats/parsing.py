@@ -447,9 +447,29 @@ def les_porsjonsvis(sti: str | Path, *, porsjon: int = 200):
             total += lest
             if total > MAKS_TOTAL_UTPAKKET:
                 raise Buntfeil("total_for_stor", medlem.navn)
+            data = b"".join(biter)
+            # ET ARKIV KJENNES PÅ HALEN, IKKE PÅ HODET (Codex P2).
+            # `nostet_arkiv`-porten hadde to armer, og begge målte en
+            # BEGYNNELSE: endelsen i gaten, og `_ARKIVMAGI` mot hodet —
+            # sistnevnte inne i HTML-grenen, fordi HTML er den eneste
+            # endelsen uten egen magi. En zip identifiseres derimot av
+            # sentralkatalogen SIST i fila, så et medlem kan tilfredsstille
+            # `%PDF` i byte 0 og likevel være et komplett arkiv: en PDF med
+            # påhengt EOCD passerte innholdstypeporten, og de indre
+            # oppføringene ble aldri målt mot fil-, forholds- eller
+            # totalbudsjettet.
+            #
+            # Testen er derfor hele medlemmet, ikke et prefiks, og den er
+            # et EKTE oppslag: `is_zipfile` leter opp sentralkatalogen
+            # (K4/SP-13 — aldri en signaturliste som gjetter på formatet).
+            # Den AVVISER; den inspiserer ikke. DOCX er unntatt fordi det
+            # ER en zip, og den har sin egen dør i `_inspiser_docx`.
+            if (_endelse(medlem.navn) != ".docx"
+                    and zipfile.is_zipfile(io.BytesIO(data))):
+                raise Buntfeil("nostet_arkiv", medlem.navn)
             if _endelse(medlem.navn) == ".docx":
                 utpakket, indre = _inspiser_docx(
-                    medlem.navn, b"".join(biter),
+                    medlem.navn, data,
                     filer_brukt=filer, byte_brukt=total)
                 total += utpakket
                 filer += indre
@@ -459,4 +479,4 @@ def les_porsjonsvis(sti: str | Path, *, porsjon: int = 200):
                              "byte_lest": total}
             else:
                 fremdrift = None
-            yield fremdrift, medlem, b"".join(biter)
+            yield fremdrift, medlem, data
