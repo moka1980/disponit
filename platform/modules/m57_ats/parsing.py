@@ -188,6 +188,17 @@ def les_porsjonsvis(sti: str | Path, *, porsjon: int = 200):
             except zipfile.BadZipFile as feil:
                 raise Buntfeil("korrupt_bunt",
                                f"{medlem.navn}: {feil}") from feil
+            # Et passordbeskyttet medlem passerer katalogen, men `zf.open`
+            # kaster `RuntimeError: password required` — og en komprimering
+            # biblioteket ikke har (bzip2/lzma uten modul) kaster
+            # `NotImplementedError`. Begge slapp ut som RÅ exceptions forbi
+            # denne håndteringen (Codex P2). Kontrakten er et KODET utfall
+            # (SP-3), aldri en bibliotekfeil: en bunt vi ikke kan lese er
+            # avvist med grunn, ikke en 500.
+            except (RuntimeError, NotImplementedError) as feil:
+                raise Buntfeil("uleselig_medlem",
+                               f"{medlem.navn}: {type(feil).__name__}"
+                               ) from feil
             total += lest
             if nr % porsjon == 0 or nr == len(medlemmer):
                 fremdrift = {"filer_lest": nr,

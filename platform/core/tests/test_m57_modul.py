@@ -53,6 +53,19 @@ def _patch_deklarert(arkiv: Path, navn: bytes, ny_storrelse: int,
     raise AssertionError(f"{navn!r} ikke i sentralkatalogen")
 
 
+def _patch_kryptert(arkiv: Path) -> None:
+    """Setter kryptertbiten (0x1) i BEGGE hodene — zipfile skriver aldri
+    et passordbeskyttet arkiv selv, men leser gjerne et."""
+    data = bytearray(arkiv.read_bytes())
+    for sig, forskyvning in ((b"PK\x03\x04", 6), (b"PK\x01\x02", 8)):
+        i = data.find(sig)
+        while i != -1:
+            flagg = struct.unpack_from("<H", data, i + forskyvning)[0]
+            struct.pack_into("<H", data, i + forskyvning, flagg | 0x1)
+            i = data.find(sig, i + 4)
+    arkiv.write_bytes(bytes(data))
+
+
 def _pdf(n: int = 64) -> bytes:
     return b"%PDF-1.7\n" + b"x" * n
 
@@ -232,6 +245,20 @@ def test_en_lognaktig_katalog_er_en_korrupt_bunt(tmp_path):
     with pytest.raises(parsing.Buntfeil) as e:
         list(parsing.les_porsjonsvis(arkiv))
     assert e.value.kode == "korrupt_bunt"
+
+
+def test_passordbeskyttet_medlem_er_en_kodet_avvisning(tmp_path):
+    """Codex P2: et kryptert medlem passerer katalogen — grensene der er
+    like målbare som ellers — men `zf.open` kaster `RuntimeError:
+    password required`. Håndteringen fanget bare `BadZipFile`, så den rå
+    exceptionen slapp ut av generatoren. Kontrakten er et KODET utfall
+    (SP-3), aldri en bibliotekfeil."""
+    arkiv = _bunt(tmp_path, [("cv.pdf", _pdf())])
+    _patch_kryptert(arkiv)
+    parsing.inspiser_bunt(arkiv)
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(arkiv))
+    assert e.value.kode == "uleselig_medlem"
 
 
 def test_fremdriften_er_evidens(tmp_path):
