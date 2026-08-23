@@ -215,6 +215,9 @@ def test_rapportflaten_er_deklarert_aldri_utledet():
     spørre: hver eneste M-57-rapport ville feilet UNDER rendring, etter
     en 200.
 
+    At feltet DEKLARERES er halve saken; at leseveien DISPATCHER på
+    VERDIEN er den andre, og den står i nabotesten under.
+
     MUTASJONEN SOM DREPER DENNE: sett `rapportflate="wcag"` på
     `rekruttering.evaluering`, eller fjern `rapportflate`-leddet i
     `lesing.rapport_detalj`.
@@ -238,6 +241,69 @@ def test_rapportflaten_er_deklarert_aldri_utledet():
     par = {navn for navn, t in ok.OPPDRAGSTYPER.items()
            if t.rapport_artefakttype is not None
            and t.rapportflate is not None}
+    assert par == {"kontroll.wcag.nettsted"}, par
+
+
+def test_rapportflaten_er_en_diskriminator_ikke_en_boolsk():
+    """Codex P2: `/v1/rapport/{id}` spurte om flaten var SATT, ikke hvilken.
+
+    Nabotesten over måler at feltet DEKLARERES. Denne måler at leseveien
+    DISPATCHER på verdien. Forskjellen var usynlig så lenge M-57 er den
+    eneste andre rapportbærende typen og står uten flate: det var M-57s
+    tomme felt, ikke endepunktets valg, som holdt ATS-rapporten unna
+    WCAG-rendreren. Den dagen CP4 gir modulen sin egen flate (`"ats"`),
+    ville `rapport.js` fått den igjen — 200 og feil under rendring, med
+    den tauseste mulige utløseren: at en annen kontrakt fylte ut sitt
+    eget felt.
+
+    Selve SAMMENLIGNINGEN er det som må måles, og den finnes bare i
+    endepunktets kode: at `par`-settet i dag blir det samme uansett, er
+    nettopp funnet. `api.lesing` drar inn både driveren og webrammeverket,
+    så leddet leses med AST — samme valg som `_importer` over, og av
+    samme grunn: en tekstsøkning ville truffet ordet i en kommentar.
+
+    MUTASJONEN SOM DREPER DENNE: gjør `rapportflate`-leddet i
+    `lesing.rapport_detalj` boolsk igjen (`is not None`), eller pek
+    `lesing.RAPPORTFLATE` på en annen flate enn den `rapport.js` rendrer.
+    """
+    from dataclasses import replace
+    import oppdragskontrakt as ok
+    m57 = ok.OPPDRAGSTYPER["rekruttering.evaluering"]
+    wcag = ok.OPPDRAGSTYPER["kontroll.wcag.nettsted"]
+    tre = ast.parse((CORE / "api" / "lesing.py").read_text(encoding="utf-8"))
+    flate = next(
+        (n.value.value for n in tre.body
+         if isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant)
+         and any(isinstance(m, ast.Name) and m.id == "RAPPORTFLATE"
+                 for m in n.targets)), None)
+    assert flate == wcag.rapportflate, \
+        ("/v1/rapport serverer `rapport.js`, altså WCAG-formen —"
+         f" endepunktet navngir {flate!r}")
+    fn = next(n for n in tre.body if isinstance(n, ast.FunctionDef)
+              and n.name == "rapport_detalj")
+    ledd = [c for c in ast.walk(fn) if isinstance(c, ast.Compare)
+            and isinstance(c.left, ast.Attribute)
+            and c.left.attr == "rapportflate"]
+    assert ledd, "endepunktet spør ikke om `rapportflate` i det hele tatt"
+    for c in ledd:
+        assert (all(isinstance(o, ast.Eq) for o in c.ops)
+                and all(isinstance(k, ast.Name) and k.id == "RAPPORTFLATE"
+                        for k in c.comparators)), \
+            ("leseveien spør om flaten FINNES, ikke hvilken den er:"
+             f" {ast.unparse(c)}")
+    # Fremtiden porten finnes for: en kontrakt med rapportartefakttype og
+    # sin EGEN flate er lovlig, og hører likevel ikke til her.
+    ats = replace(m57, rapportflate="ats")
+    assert not ats.valider(), \
+        "en type med artefakttype OG flate er en lovlig kontrakt"
+    assert not (ats.rapport_artefakttype is not None
+                and ats.rapportflate == flate), \
+        "en fremmed leseflate ble servert av WCAG-endepunktet"
+    # … og kontroll på at leddet ikke bare er trivielt usant: WCAG-typen
+    # selv slipper gjennom, og endepunktets utvalg er fortsatt den ene.
+    par = {navn for navn, t in ok.OPPDRAGSTYPER.items()
+           if t.rapport_artefakttype is not None
+           and t.rapportflate == flate}
     assert par == {"kontroll.wcag.nettsted"}, par
 
 
