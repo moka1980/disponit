@@ -99,7 +99,16 @@ def main() -> int:
     #    commiten — identiteten måles, den påstås ikke (054s eget krav:
     #    verifikatorens attest må så bære samme digest).
     commit = ma.loes_akseptcommit(a.manifest_commit)
-    ci_commit = a.ci_commit.lower()
+    # Cursor P2 på #152: samme fail-fast som m56 — CI-commiten løses og
+    # måles mot akseptcommiten FØR GitHub-oppslag og attest-skriving;
+    # `aksepter_plattformmodul` avviser mismatch i basen uansett, men da
+    # først etter at operatøren har brukt kvoten og skrevet attester.
+    ci_commit = ma.loes_akseptcommit(a.ci_commit)
+    if ci_commit != commit:
+        raise SystemExit(
+            f"AVBRUTT: --ci-commit {ci_commit[:12]}… er ikke"
+            f" akseptcommiten {commit[:12]}… — suiten som var grønn og"
+            " manifestet som aksepteres må være SAMME commit")
     manifest_bytes = (REPO / MANIFEST_REL).read_bytes()
     manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
     ma.bind_til_commit(commit, MANIFEST_REL, manifest_sha)

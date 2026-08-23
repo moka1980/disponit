@@ -767,11 +767,17 @@ def _manifestgenerasjoner(commit: str) -> dict[str, str]:
     if r.returncode != 0:
         raise SystemExit(f"AVBRUTT: finner ingen historikk for"
                          f" {MANIFEST_REL} i {commit[:12]}…")
+    # Dobbeltnøklet (A-vedtaket): eldre releaserader bærer BYTE-hashen
+    # fra registreringen; nye bærer projeksjonen. Byte-nøkkelen legges
+    # først, så en (usannsynlig) kollisjon vinnes av den eksakte formen.
+    import manifestskjema as ms
     gen: dict[str, str] = {}
     for c in r.stdout.decode().split():
         b = _git("cat-file", "blob", f"{c}:{MANIFEST_REL}")
         if b.returncode == 0:
             gen.setdefault(hashlib.sha256(b.stdout).hexdigest(), c)
+            gen.setdefault(
+                ms.kanonisk_projeksjon(b.stdout.decode("utf-8")), c)
     return gen
 
 
@@ -782,8 +788,10 @@ def verifiser_registrert_manifest(conn, releaser: tuple[str, ...],
 
     Codex' P1 på PR #117 (runde 7): digestkjeden ble bundet hele veien —
     målt image = drillet image = registrert image — men manifestet gikk
-    fri. `modulrelease.manifest_hash` er sha256 av `manifest.yaml` slik
-    den så ut da releasen ble REGISTRERT (drillens fase 2), og
+    fri. `modulrelease.manifest_hash` er manifestets identitet slik den
+    så ut da releasen ble REGISTRERT (drillens fase 2) — den kanoniske
+    projeksjonen fra og med wcag-r24, sha256 over filens bytes før det,
+    og `_manifestgenerasjoner` er dobbeltnøklet nettopp derfor — og
     akseptraden peker på `manifest_commit`. Ingenting bandt de to. Og
     de divergerer med nødvendighet: drillartefaktet bindes INN i
     manifestet etter drillen, så akseptcommitens manifest er per
@@ -803,10 +811,12 @@ def verifiser_registrert_manifest(conn, releaser: tuple[str, ...],
          akseptcommitens egen historikk (ellers er den registrert fra et
          manifest ingen kan lese), og
       3. den må være identisk med akseptcommitens manifest utenfor
-         `staging_sjekkliste` — evidensbindingen er den ENE endringen
-         flyten selv krever mellom drill og aksept. Alt annet (`status`,
-         `driftstilstand`, `kjerne`, `avhengigheter`, …) er modulens
-         kjørende identitet, og en aksept som påstår en annen enn den
+         `staging_sjekkliste` og KATALOGAKSENE — evidensbindingen er
+         endringen flyten selv krever mellom drill og aksept, og
+         `status`/`driftstilstand` er katalogens AVLESNING av aksepten
+         (A-vedtaket på #152), ikke del av den drillede identiteten.
+         Alt strukturelt (`kjerne`, `avhengigheter`, `id`, …) ER
+         identiteten, og en aksept som påstår en annen enn den
          drillede, må stoppe her.
 
     -> commiten den registrerte generasjonen ble sjekket inn i.
@@ -848,9 +858,11 @@ def verifiser_registrert_manifest(conn, releaser: tuple[str, ...],
             f" deployment som kjører et manifest ingen kan lese.{grunn}")
     b = _git("cat-file", "blob", f"{kilde}:{MANIFEST_REL}")
     drillet_manifest = yaml.safe_load(b.stdout.decode("utf-8")) or {}
+    import manifestskjema as ms
+    tillatt = {"staging_sjekkliste", *ms.KATALOGAKSER}
     avvik = sorted(
         felt for felt in set(manifest) | set(drillet_manifest)
-        if felt != "staging_sjekkliste"
+        if felt not in tillatt
         and manifest.get(felt) != drillet_manifest.get(felt))
     if avvik:
         raise SystemExit(

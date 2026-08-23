@@ -78,7 +78,6 @@ from __future__ import annotations
 
 import argparse
 import atexit
-import hashlib
 import importlib.util
 import json
 import os
@@ -189,9 +188,19 @@ def _admin(m):
 
 
 def _manifest_hash() -> str:
-    """Manifestets hash slik `registrer-m-wcag-audit.py` regner den ut."""
-    return hashlib.sha256(
-        (REPO / MANIFEST_REL).read_bytes()).hexdigest()
+    """Manifestets hash slik `registrer-m-wcag-audit.py` regner den ut.
+
+    Det er den KANONISKE PROJEKSJONEN (A-vedtaket på #152), ikke bytene:
+    samme funksjon, ikke en kopi av regnestykket. Regnet drillen byte-
+    hashen mens registreringen skriver projeksjonen, ville de to formene
+    møttes to steder og begge er enveis — `krev_akseptbar_manifest-
+    generasjon` ville avvist en nyregistrert release før drillen, og
+    kandidatraden drillen selv skriver ville kollidert immutabelt med
+    fase 2s registrering av samme id (Codex P1, #154).
+    """
+    import manifestskjema
+    return manifestskjema.kanonisk_projeksjon(
+        (REPO / MANIFEST_REL).read_text(encoding="utf-8"))
 
 
 def _kjor_faser(release: str, evidens: Path, *, hva: str,
@@ -825,6 +834,16 @@ def krev_akseptbar_manifestgenerasjon(m, drillet: str) -> None:
 
     Porten står derfor foran alt: før registreringen, før bestillingen og
     lenge før rullingen.
+
+    LIKHETEN ER EKSAKT, OGSÅ OVER FORMSKIFTET (Cursor P2, #154). Rader
+    t.o.m. wcag-r23 bærer byte-hashen; fra wcag-r24 bærer de
+    projeksjonen. Å slippe gjennom BEGGE formene her ville vært å
+    gjenåpne runde 18: `verifiser_registrert_manifest` sammenligner de to
+    lagrede strengene tegn for tegn, så en byte-registrert drillet
+    release og en projeksjonsregistrert kandidatrad er ULIKE for
+    aksepten uansett hvor lik generasjonen er. Avbruddet er da ekte, ikke
+    falskt — og rettelsen er den samme som ellers: rull ut en ny release
+    fra dette manifestet og drill den.
     """
     rad = m.execute(
         "SELECT manifest_hash FROM modulrelease WHERE modul_id=%s"
@@ -848,6 +867,10 @@ def krev_akseptbar_manifestgenerasjon(m, drillet: str) -> None:
         " så hadde den kjørt, ville den drenert den levende deploymenten"
         " og brukt opp begge drill-id-ene for en aksept som aldri kunne"
         " skrives; radene er immutable og kan ikke rettes etterpå."
+        " (Er den claimende releasen wcag-r23 eller eldre, bærer raden"
+        " BYTE-hashen fra tiden før A-vedtaket på #152, mens drillen nå"
+        " regner den kanoniske projeksjonen — da er ingen utsjekking den"
+        " rette, og eneste vei er en ny release.)"
         " Kjør drillen fra utsjekket den claimende releasen ble"
         " registrert fra, eller rull ut en ny release fra dette"
         " manifestet først — og drill den.")

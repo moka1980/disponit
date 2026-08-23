@@ -1893,15 +1893,17 @@ def test_kontraktsdokumentet_er_frosset_pa_den_registrerte_hashen():
     assert "kontraktversjon 1" in md.read_text(encoding="utf-8")
 
 
-#: Release-id-en staging-runden registrerer, og sha256 over manifestet slik
-#: det står FOR den id-en. Paret hører sammen: `manifest_hash` er et felt på
-#: release-raden, og raden er immutabel.
+#: Release-id-en staging-runden registrerer, og manifestets KANONISKE
+#: PROJEKSJON slik den står FOR den id-en (A-vedtaket på #152: parset
+#: YAML minus katalogaksene — `manifestskjema.kanonisk_projeksjon`).
+#: Paret hører sammen: `manifest_hash` er et felt på release-raden, og
+#: raden er immutabel.
 RELEASE_ID = "wcag-r24"
 MANIFEST_HASH_FOR_RELEASE = \
-    "13e08fb1d9c1200341dd09bce972243b0a2784d1e0f6cc9de51f84365081cdb1"
+    "b2ea178fdab16783a4c626f14013353b51d63ec427cc0e73e9a5d830d5f30142"
 
 
-def test_release_id_folger_manifestets_bytes():
+def test_release_id_folger_manifestets_projeksjon():
     """Codex P1 på #109: manifestet ble både flyttet og endret, mens
     `fase2` fortsatt registrerte `wcag-r1`.
 
@@ -1922,11 +1924,16 @@ def test_release_id_folger_manifestets_bytes():
     Porten finnes for at NESTE manifestendring skal stoppe her, i CI, og
     ikke i en staging-runde ingen ser før den feiler. Rettelsen er alltid
     den samme to-linjers: ny `RELEASE`-default i sjekklisten og ny hash
-    her, i samme commit. Statusflippet til `aktiv` etter bestått aksept er
-    en slik endring — den gir også en ny release."""
-    import hashlib
+    her, i samme commit.
+
+    A-VEDTAKET (#152, K2): hashen er PROJEKSJONEN, ikke bytene.
+    Statusflippet etter bestått aksept og rene kommentarlinjer minter
+    dermed INGEN ny release — katalogaksene er en avlesning, og
+    formatering er ikke identitet. Alt strukturelt flytter fortsatt
+    hashen og krever ny release-id, som før."""
+    from manifestskjema import kanonisk_projeksjon
     manifest = ROT / "platform/modules/m56_wcag_audit/manifest.yaml"
-    assert hashlib.sha256(manifest.read_bytes()).hexdigest() == \
+    assert kanonisk_projeksjon(manifest.read_text(encoding="utf-8")) == \
         MANIFEST_HASH_FOR_RELEASE, (
             f"manifest.yaml er endret uten at release-id-en er flyttet fra"
             f" {RELEASE_ID} — neste staging-registrering vil feile med"

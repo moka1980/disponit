@@ -3450,12 +3450,11 @@ def test_evidensbindingen_er_den_ene_tillatte_manifestendringen(
     """…og drillen må ellers ha kjørt NØYAKTIG den aksepterte modulen.
 
     Mellom drill og aksept endres manifestet én gang, av flyten selv:
-    drillartefaktet bindes inn i `staging_sjekkliste`, og akseptcommitens
-    manifest er derfor en annen generasjon enn kandidatreleasens. Den ene
-    endringen skal slippe gjennom. Alt annet — `status`,
-    `driftstilstand`, `kjerne`, avhengigheter — er modulens kjørende
-    identitet, og en endring der er en NY release som må registreres og
-    drilles for seg.
+    drillartefaktet bindes inn i `staging_sjekkliste`. Den endringen —
+    og KATALOGAKSENE, som er akseptens egen avlesning (A-vedtaket på
+    #152) — slipper gjennom. Alt strukturelt (`kjerne`, avhengigheter,
+    `id`) er modulens identitet, og en endring der er en NY release som
+    må registreres og drilles for seg.
     """
     import yaml
     m = _aksept_skript()
@@ -3479,10 +3478,15 @@ def test_evidensbindingen_er_den_ene_tillatte_manifestendringen(
     # sier hvilken commit den ble sjekket inn i.
     assert m.verifiser_registrert_manifest(
         conn, releaser, akseptert, ny_sha, hode) == gammel_commit
+    # Katalogaksene er en avlesning — de flytter ikke identiteten, og
+    # porten slipper dem gjennom (A-vedtakets positive kontroll).
+    for akse, verdi in (("status", "aktiv"),
+                        ("driftstilstand", "produksjon")):
+        assert m.verifiser_registrert_manifest(
+            conn, releaser, dict(akseptert, **{akse: verdi}), ny_sha,
+            hode) == gammel_commit
     # Identiteten er flyttet: da er dette en annen modul enn den drillede.
-    for felt, verdi in (("status", "aktiv"),
-                        ("driftstilstand", "produksjon"),
-                        ("kjerne", "platform/modules/en_annen"),
+    for felt, verdi in (("kjerne", "platform/modules/en_annen"),
                         ("avhengigheter", [])):
         with pytest.raises(SystemExit) as ei:
             m.verifiser_registrert_manifest(
@@ -5280,6 +5284,40 @@ def test_drillen_nekter_en_annen_manifestgenerasjon_enn_den_drillede():
         encoding="utf-8")
     assert (tekst.index("krev_akseptbar_manifestgenerasjon(m, drillet)")
             < tekst.index("registrer_drillrelease(m, a.rullback_id"))
+
+
+def test_drillen_og_fase2_regner_manifesthashen_paa_samme_form():
+    """Codex' P1 (#154): de to leddene som skriver `manifest_hash` for
+    SAMME release-id må regne den likt.
+
+    `rollback-m56.py::_manifest_hash()` og
+    `registrer-m-wcag-audit.py::manifest_hash()` møtes to steder, og
+    begge er enveis. `krev_akseptbar_manifestgenerasjon` sammenligner
+    drillens tall med den drillede releasens registrerte rad — skrevet
+    av fase 2 — og drillens egen kandidatrad skrives med drillens tall
+    før fase 2 registrerer NØYAKTIG samme id med sitt. Divergerte de,
+    ville en nyregistrert release blitt avvist før drillen i det ene
+    tilfellet, og kandidatraden kollidert immutabelt i det andre — etter
+    at rullingen hadde drenert den levende deploymenten.
+
+    Formen er den kanoniske projeksjonen (A-vedtaket på #152), og den
+    måles her mot `manifestskjema` selv: da feller porten seg både om
+    ett av leddene faller tilbake til bytene, og om de to skulle bli
+    enige om en tredje form."""
+    import importlib.util
+
+    from manifestskjema import kanonisk_projeksjon
+    sti = ROT / "deploy/staging/registrer-m-wcag-audit.py"
+    spec = importlib.util.spec_from_file_location("registrer_m_wcag", sti)
+    fase2 = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fase2)
+    fasit = kanonisk_projeksjon(
+        (ROT / "platform/modules/m56_wcag_audit/manifest.yaml")
+        .read_text(encoding="utf-8"))
+    assert fase2.manifest_hash() == fasit, \
+        "fase 2 registrerer ikke manifestets kanoniske projeksjon"
+    assert _drillskript()._manifest_hash() == fasit, \
+        "drillen regner en annen manifesthash enn den fase 2 skriver"
 
 
 # ---------------------------------------------------------------------------

@@ -19,9 +19,11 @@ immutabilitetskonflikt, uten vei tilbake. Derfor:
 
   * rapportskjemaet — REGNES UT her (`rapportskjema.skjema_hash()`), det
     er modulens eget dokument og ligger i koden;
-  * manifestet — REGNES UT her fra `manifest.yaml` på disk, sha256 over
-    filens bytes (samme «manifest på disk = register»-disiplin som
-    deploy-porten, 014a §7);
+  * manifestet — REGNES UT her fra `manifest.yaml` på disk, som dens
+    KANONISKE PROJEKSJON (A-vedtaket på #152: parset YAML minus
+    katalogaksene, `manifestskjema.kanonisk_projeksjon`) — samme
+    «manifest på disk = register»-disiplin som deploy-porten (014a §7),
+    men på identiteten, ikke på formateringen;
   * payload- og kvitteringsskjemaet — TAS IMOT, de eies av
     release-materialet (014b) og plattformkontrakten (PR-006), ikke av
     denne fila. Formen valideres før noe skrives.
@@ -70,9 +72,16 @@ def _hex64(navn: str, verdi: str) -> str:
 
 
 def manifest_hash() -> str:
-    """sha256 over manifestets bytes på disk — manifestets EGEN hash, ikke
-    et annet dokuments."""
-    return hashlib.sha256((REPO / MANIFEST).read_bytes()).hexdigest()
+    """Manifestets KANONISKE PROJEKSJON (A-vedtaket på #152): parset
+    YAML minus katalogaksene. Raden er immutable, og med byte-hashen her
+    ville en ren kommentarlinje mellom to runder på samme release-id
+    dødd i «release er immutable» — identiteten releasen bærer er den
+    strukturelle, ikke formateringen. Eldre rader (t.o.m. wcag-r23)
+    bærer byte-hashen; akseptens oppslag er dobbeltnøklet og leser
+    begge formene."""
+    import manifestskjema
+    return manifestskjema.kanonisk_projeksjon(
+        (REPO / MANIFEST).read_text(encoding="utf-8"))
 
 
 def main() -> int:
