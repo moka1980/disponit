@@ -6,9 +6,17 @@
 # `feilet` uten kvittering — plattformens «ufullført», som lese-API-et
 # viser som `feil_aarsak: timeout`. M-37-oppdrag røres aldri.
 #
+#
+# 057 §5: samme kjøring tar OGSÅ kandidatdatagrensen
+# (`reap_kandidatdata(int)`) — kundens 30–365-døgnsfrist på de seks
+# kandidatlagrene. Ingen ny enhet: rollen, DSN-en og snittet er de samme,
+# og 057 grantet EXECUTE til nettopp denne rollen. De to reapene har hver
+# sin transaksjon og hvert sitt feilfelt i JSON-linja.
+#
 # Kjøres som drift-timer-rollen (`disponit_domener`, 019-presedensen):
-# den har EXECUTE på nøyaktig `reap_evidensfrister(int)` og ingen
-# bordtilgang — hele autoriteten står i basen, revidérbar på ett sted.
+# den har EXECUTE på nøyaktig `reap_evidensfrister(int)` og
+# `reap_kandidatdata(int)` og ingen bordtilgang — hele autoriteten står i
+# basen, revidérbar på ett sted.
 
 [Unit]
 Description=Disponit evidensfrist-reaper

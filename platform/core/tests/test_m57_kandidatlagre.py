@@ -855,6 +855,49 @@ def test_port18_reaping_tommer_alle_seks_lagrene(migrator):
 
 
 @pg
+def test_port18_kandidatreaperen_kalles_fra_driftsveien(migrator):
+    """Codex P1: `reap_kandidatdata` var definert, testet og GRANTet til
+    timerrollen — og kalt fra INGEN driftsvei.
+
+    Testene over kaller funksjonen direkte, og direktekallet beviser at
+    REGELEN virker, ikke at noen kjører den. Den deployede veien er
+    `disponit-evidensreaper.service` → `drift.kjor_evidensreaper` →
+    `evidensreaper.kjor`, og fram til nå kalte den bare
+    `reap_evidensfrister`: hver prosess forbi sin 30–365-døgnsfrist
+    beholdt alle seks lagrene i det uendelige.
+
+    Testen går derfor gjennom `evidensreaper.kjor` — samme funksjon
+    tjenesten kaller, over timerrollens egen forbindelse — i stedet for
+    å gjenta SQL-en.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `reap_kandidatdata`-blokken fra
+    `evidensreaper.kjor`. Alle direktekallende tester over er grønne."""
+    from drift import evidensreaper
+    rt = _rt()
+    rp = None
+    try:
+        _, pid = _prosess(migrator, rt, frist=30)
+        _fyll_lagrene(rt, pid)
+        rt.execute("SELECT lukk_rekrutteringsprosess(%s,%s,"
+                   " now() - interval '31 days')", (TENANT, pid))
+        rt.commit()
+        assert _tell_fixtur(migrator, pid) == 9, \
+            "positiv kontroll: fixturen skal stå i alle payloadfeltene"
+        migrator.rollback()
+        rp, _timerrolle = _reaperkobling()
+        r = evidensreaper.kjor(rp)
+        assert not r.kandidatdata_feilet, \
+            "timerrollen har EXECUTE — en nekt her er et rettighetshull"
+        assert (TENANT, str(pid)) in r.kandidatdata
+        assert _tell_fixtur(migrator, pid) == 0
+        migrator.rollback()
+    finally:
+        rt.close()
+        if rp is not None:
+            rp.close()
+
+
+@pg
 def test_reaping_respekterer_fristen(migrator):
     """Motstykket til port 18: en prosess som er lukket, men der fristen
     IKKE er løpt ut, røres ikke — et reap-kall er ikke en sletteknapp."""

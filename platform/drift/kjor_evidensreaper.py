@@ -1,5 +1,8 @@
 """Inngangspunkt for `disponit-evidensreaper.service`.
 
+Kjører BEGGE de databaseeide retensjonsreglene timerrollen har EXECUTE
+på: evidensfristene (038 §5) og kandidatdatagrensen (057 §5).
+
 Én JSON-linje per kjøring — samme kontrakt som de andre drift-jobbene:
 utfallet skal kunne leses av `journalctl` uten å kjenne koden. Exit 1 på
 feilet kjøring, så `systemctl status` og helsesjekken ser det.
@@ -44,12 +47,19 @@ def main() -> int:
             pass
     # Id-ene logges — de er referanser, aldri innhold (payloaden er og
     # forblir kryptert; klartekst finnes ikke i denne prosessen).
+    # Kandidatdatagrensen (057 §5) rapporteres i EGNE felter med sitt eget
+    # feilflagg: kjøringen bærer to uavhengige retensjonsplikter, og
+    # `journalctl` skal kunne se hvilken av dem som eventuelt feilet.
     print(json.dumps({"hendelse": "reaperkjoring",
                       "reapet": len(r.reapet),
                       "saker": [{"tenant": t, "oppdrag_id": o,
                                  "unntak_id": u} for t, o, u in r.reapet],
-                      "feilet": int(r.feilet)}))
-    return 1 if r.feilet else 0
+                      "feilet": int(r.feilet),
+                      "kandidatdata_reapet": len(r.kandidatdata),
+                      "prosesser": [{"tenant": t, "prosess_id": p}
+                                    for t, p in r.kandidatdata],
+                      "kandidatdata_feilet": int(r.kandidatdata_feilet)}))
+    return 1 if (r.feilet or r.kandidatdata_feilet) else 0
 
 
 if __name__ == "__main__":       # pragma: no cover
