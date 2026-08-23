@@ -430,6 +430,61 @@ test("Rekruttering: signeringsnøkkel og «signert» overlever prosessbytte", as
     "listen ble sendt en gang til etter prosessbytte");
 });
 
+test("Rekruttering: blindingen gjenbruker idempotensnøkkelen etter usikker feil", async () => {
+  // Cursor P2: signeringen fikk stabil nøkkel i forrige runde, blindingen
+  // ikke — og uten `idem` lager `api.js` en fersk per kall. Et tapt svar
+  // + nytt forsøk ble en NY auditert mutasjon i stedet for et replay: to
+  // revisjonsrader for ett valg, og klienten vet ikke om den første gikk.
+  //
+  // MUTASJONEN SOM DREPER DENNE: dropp `idem`-argumentet igjen.
+  const avslaatt = prosess();
+  avslaatt.prosesser[0].blinding_av = true;   // bryteren starter AV
+  KALL = [];
+  SVAR = (sti, opts) => (opts.method === "POST" ? 500 : avslaatt);
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")));
+  const bryter = hoved.querySelector("#rekrut-blinding");
+  assert.equal(bryter.checked, false);
+
+  // PÅ-veien går uten dialog: slå på, svaret går tapt …
+  const slaaPaa = async () => {
+    assert.ok(await vent(() => !bryter.disabled), "bryteren ble aldri åpen");
+    bryter.checked = true;
+    bryter.dispatchEvent(new window.Event("change", { bubbles: true }));
+  };
+  await slaaPaa();
+  assert.ok(await vent(() => KALL.some((k) => k.sti.endsWith("/blinding"))));
+  const forste = KALL.find((k) => k.sti.endsWith("/blinding"));
+  assert.ok(forste.hoder["Idempotency-Key"], "blindingen gikk uten nøkkel");
+  // … brukeren prøver igjen: SAMME nøkkel, så serveren kan replaye.
+  KALL = [];
+  SVAR = (sti, opts) => (opts.method === "POST" ? { ok: true } : avslaatt);
+  await slaaPaa();
+  assert.ok(await vent(() => KALL.some((k) => k.sti.endsWith("/blinding"))));
+  const andre = KALL.find((k) => k.sti.endsWith("/blinding"));
+  assert.equal(andre.hoder["Idempotency-Key"], forste.hoder["Idempotency-Key"],
+    "retryen bar en NY nøkkel — serveren ser en ny auditert mutasjon");
+  assert.ok(await vent(() => bryter.checked));
+
+  // …men et NYTT valg samme vei er en ny operasjon, ikke et replay av
+  // den forrige: skru av, og på igjen, og nøkkelen skal være en annen.
+  bryter.checked = false;
+  bryter.dispatchEvent(new window.Event("change", { bubbles: true }));
+  const dialog = document.querySelector('[role="alertdialog"]');
+  dialog.querySelector("textarea").value = "intern rekruttering";
+  [...dialog.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.blinding_av_bekreft"))
+    .click();
+  assert.ok(await vent(() => !bryter.checked), "avskruingen slo aldri igjennom");
+  KALL = [];
+  await slaaPaa();
+  assert.ok(await vent(() => KALL.some((k) => k.sti.endsWith("/blinding"))));
+  assert.notEqual(KALL.find((k) => k.sti.endsWith("/blinding"))
+    .hoder["Idempotency-Key"], forste.hoder["Idempotency-Key"],
+    "en ny beslutning ble sendt som replay av den forrige");
+});
+
 test("Rekruttering: «Detaljer» åpner panelet med funn, sitat og spørsmål", async () => {
   // Codex P2: radhandlingen ble sendt som `utfor`, mens DataTabell binder
   // `handling.paaKlikk`. En `undefined` lytter er ingen feil i nettleseren
