@@ -145,6 +145,44 @@ def test_prosessen_krever_evalueringsoppdrag(migrator):
 
 
 @pg
+def test_prosessen_krever_m57_eiermodul(migrator):
+    """Cursor P2: fødselsporten leste TYPEN, ikke eieren.
+
+    `claim_neste_oppdrag` plukker på `oppdrag.eiermodul`, så et oppdrag av
+    riktig type med en annen eiermodul kan aldri claimes av `m57_ats` —
+    men det fikk kandidatprosess og persondatalagre likevel. Ingen modul
+    kommer da for å lukke prosessen, og payloaden ligger til reaperens
+    maks levetid i stedet for fristen fra faktisk avslutning.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `o.eiermodul = 'm57_ats'` fra
+    fødselsporten."""
+    rt = _rt()
+    try:
+        feil_eier, _ = _grunnlag(migrator,
+                                 oppdragstype="rekruttering.evaluering",
+                                 eiermodul="m_wcag_audit")
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            rt.execute("SELECT opprett_rekrutteringsprosess(%s,%s,90)",
+                       (TENANT, feil_eier))
+        rt.rollback()
+        # ... og ingen prosess ble lagt igjen.
+        _sett_kontekst(migrator, TENANT)
+        assert migrator.execute(
+            "SELECT count(*) FROM rekrutteringsprosess WHERE tenant=%s"
+            " AND oppdrag_id=%s", (TENANT, feil_eier)).fetchone()[0] == 0
+        migrator.rollback()
+        # Positiv kontroll: riktig par går.
+        oid, _ = _evaluering(migrator)
+        _sett_kontekst(rt, TENANT)
+        assert rt.execute("SELECT opprett_rekrutteringsprosess(%s,%s,90)",
+                          (TENANT, oid)).fetchone()[0] is not None
+        rt.commit()
+    finally:
+        rt.close()
+
+
+@pg
 def test_prosessen_er_idempotent_men_fristen_er_materiell(migrator):
     """Samme oppdrag + samme frist → samme prosess. Samme oppdrag + NY
     frist → konflikt: «opprett på nytt» er ikke en vei rundt §5."""

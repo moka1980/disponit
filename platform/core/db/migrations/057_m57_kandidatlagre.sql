@@ -465,16 +465,26 @@ BEGIN
     -- født; der er reaperens maks-levetid-arm grensen. Den ekte roten —
     -- å lukke prosessen i SAMME transaksjon som terminalovergangen —
     -- hører til utføreren, som ikke finnes ennå (K1, se PR-tråden).
+    -- EIERMODULEN er en del av fødselsporten (Cursor P2). `claim_neste_-
+    -- oppdrag` plukker på `oppdrag.eiermodul`, så et oppdrag med riktig
+    -- TYPE men feil eier kan aldri claimes av `m57_ats`. Fødtes prosessen
+    -- likevel, ville persondataene ligget til reaperens maks levetid på et
+    -- oppdrag ingen modul kommer for å lukke — svakere enn §5, for data
+    -- som aldri skulle vært skrevet. Kontrakten binder paret ved
+    -- opprettelsen (`_eiermodul_for`), så et avvikende par er DML utenom
+    -- kontrakten, og det er nettopp da porten har arbeid å gjøre.
     IF NOT EXISTS (
         SELECT 1 FROM public.oppdrag o
          WHERE o.tenant = p_tenant AND o.id = p_oppdrag_id
            AND o.oppdragstype = 'rekruttering.evaluering'
+           AND o.eiermodul = 'm57_ats'
            AND o.status NOT IN ('feilet', 'kansellert')) THEN
-        RAISE EXCEPTION 'rekrutteringsprosess: oppdrag % hos % er ikke en'
-            ' LEVENDE rekruttering.evaluering — en prosess fødes ikke på'
-            ' et oppdrag som er feilet eller kansellert (klarsignalet §5:'
-            ' fristen løper fra lukkingen, og den kommer aldri)',
-            p_oppdrag_id, p_tenant
+        RAISE EXCEPTION 'rekrutteringsprosess: oppdrag % hos % er ikke et'
+            ' LEVENDE rekruttering.evaluering-oppdrag eid av m57_ats — en'
+            ' prosess fødes ikke på et oppdrag som er feilet eller'
+            ' kansellert (klarsignalet §5: fristen løper fra lukkingen, og'
+            ' den kommer aldri), og heller ikke på et oppdrag modulen'
+            ' aldri kan claime', p_oppdrag_id, p_tenant
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
     SELECT prosess_id, slettefrist_dogn INTO v_id, v_frist
