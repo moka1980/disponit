@@ -1197,6 +1197,74 @@ def test_enkeltfilgrensen_star_i_basen(migrator):
 
 
 @pg
+def test_innhold_sha256_utledes_av_payloaden_ikke_av_kalleren(migrator):
+    """Codex P2: hashen var kallerens PÅSTAND om innholdet.
+
+    `innhold_sha256` er den eneste evidensen som består etter reaping —
+    payloaden blir NULL, og raden står igjen som revisjonsspor. Ingen
+    CHECK og ingen trigger målte den mot `dokument`/`tekst`/`artefakt`,
+    så en skriver som satte tom, feil eller fremmed streng korrumperte
+    sporet PERMANENT: reap-overgangen er den eneste lovlige UPDATE, og
+    resten av raden er immutabel, så det finnes ingen vei til å rette
+    det igjen.
+
+    Porten måler EGENSKAPEN, ikke formelen: kallerens verdi overlever
+    ikke, lik payload gir lik hash, og ulik payload gir ulik.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `NEW.innhold_sha256 := ...` fra
+    INSERT-grenen i `m57_kandidatlager_vakt`."""
+    rt = _rt()
+    try:
+        _, pid = _prosess(migrator, rt)
+        _sett_kontekst(rt, TENANT)
+        kid_a, kid_b, kid_c = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+        logn = "0" * 64
+        for kid, tekst in ((kid_a, "samme tekst"), (kid_b, "samme tekst"),
+                           (kid_c, "en annen tekst")):
+            did = uuid.uuid4()
+            rt.execute(
+                "INSERT INTO kandidat_originaldokument (tenant,"
+                " prosess_id, kandidat_id, dokument_id, filnavn,"
+                " innholdstype, dokument, storrelse_bytes,"
+                " innhold_sha256) VALUES (%s,%s,%s,%s,'a.pdf','x',"
+                " %s,%s,%s)",
+                (TENANT, pid, kid, did, b"x", 1, logn))
+            rt.execute(
+                "INSERT INTO kandidat_parsettekst (tenant, prosess_id,"
+                " kandidat_id, dokument_id, tekst, innhold_sha256)"
+                " VALUES (%s,%s,%s,%s,%s,%s)",
+                (TENANT, pid, kid, did, tekst, logn))
+        rader = dict(rt.execute(
+            "SELECT kandidat_id::text, innhold_sha256 FROM"
+            " kandidat_parsettekst WHERE prosess_id=%s",
+            (pid,)).fetchall())
+        assert len(rader) == 3
+        assert logn not in rader.values(), \
+            "kallerens påstand overlevde — hashen er ikke utledet"
+        for sha in rader.values():
+            assert len(sha) == 64 and set(sha) <= set("0123456789abcdef")
+        assert rader[str(kid_a)] == rader[str(kid_b)], \
+            "samme payload må gi samme hash"
+        assert rader[str(kid_a)] != rader[str(kid_c)], \
+            "ulik payload må gi ulik hash"
+        # ... og den overlever reapingen, som revisjonsevidensen den er.
+        beholdt = rader[str(kid_c)]
+        rt.commit()
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute(
+            "UPDATE kandidat_parsettekst SET tekst=NULL, slettet_ts=now()"
+            " WHERE tenant=%s AND prosess_id=%s AND kandidat_id=%s",
+            (TENANT, pid, kid_c))
+        assert migrator.execute(
+            "SELECT innhold_sha256 FROM kandidat_parsettekst WHERE"
+            " tenant=%s AND prosess_id=%s AND kandidat_id=%s",
+            (TENANT, pid, kid_c)).fetchone()[0] == beholdt
+        migrator.rollback()
+    finally:
+        rt.close()
+
+
+@pg
 def test_kandidatlagrene_er_tenantisolert(migrator):
     """RLS-porten: en annen tenants kontekst ser ingen rader, og en
     INSERT på fremmed tenant avvises."""

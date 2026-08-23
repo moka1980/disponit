@@ -200,7 +200,9 @@ CREATE TRIGGER rekrutteringsprosess_ingen_truncate
 -- 2. De seks lagrene. Felles form: payloadkolonnene er nullable, og
 -- CHECK-en binder dem til `slettet_ts` BEGGE veier — en levende rad HAR
 -- payload, en reapet rad HAR IKKE. `innhold_sha256` består etter reaping
--- (minimal revisjonsevidens, §5).
+-- (minimal revisjonsevidens, §5) — og UTLEDES derfor av lagervakten ved
+-- INSERT, den mottas ikke fra kalleren: det som overlever payloaden kan
+-- ikke være en påstand om den.
 
 CREATE TABLE kandidat_originaldokument (
     tenant TEXT NOT NULL,
@@ -353,6 +355,7 @@ CREATE OR REPLACE FUNCTION m57_kandidatlager_vakt()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE nj jsonb; oj jsonb; kol TEXT; v_slettet TIMESTAMPTZ;
+        v_payload jsonb;
 BEGIN
     -- Port 18, INSERT-siden (Codex P1): en reapet prosess tar ikke imot
     -- ny payload. FK-en krever bare at prosessen FINNES, og reaperen
@@ -378,6 +381,25 @@ BEGIN
                 ' ikke tilbake til en slettet prosess (klarsignalet §5)',
                 TG_TABLE_NAME USING ERRCODE = 'insufficient_privilege';
         END IF;
+        -- `innhold_sha256` UTLEDES her, den mottas ikke (Codex P2).
+        -- Hashen er den ENESTE evidensen som består etter reaping:
+        -- payloaden blir NULL, og raden står igjen som revisjonsspor.
+        -- Verken en CHECK eller denne vakten målte den mot innholdet, så
+        -- en skriver som satte tom, feil eller fremmed streng kunne
+        -- korrumpere det sporet PERMANENT — det finnes ingen vei til å
+        -- rette det, siden reap-overgangen er den eneste lovlige UPDATE
+        -- og resten av raden er immutabel. Samme valg som
+        -- `storrelse_bytes = octet_length(dokument)` alt gjør i denne
+        -- fila: grensen måles på de LAGREDE bytene, ikke på påstanden om
+        -- dem. Payloadkolonnene er trigger-argumentene, så hvert lager
+        -- får sin egen kanoniske form uten at vakten kjenner tabellene.
+        nj := to_jsonb(NEW);
+        v_payload := '{}'::jsonb;
+        FOREACH kol IN ARRAY TG_ARGV LOOP
+            v_payload := v_payload || jsonb_build_object(kol, nj->kol);
+        END LOOP;
+        NEW.innhold_sha256 :=
+            encode(sha256(convert_to(v_payload::text, 'UTF8')), 'hex');
         -- Finnes ingen (synlig) prosess, avviser FK-en og RLS-en raden
         -- som før; vakten later ikke som den er den porten.
         RETURN NEW;
