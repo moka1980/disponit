@@ -431,6 +431,42 @@ def _blobhash(commit: str, sti: str) -> str | None:
     return hashlib.sha256(blob.stdout).hexdigest()
 
 
+def _anker_avvik():
+    """HELE ankerløypa — basisfetch, akseptfetch, blob-sammenligninger —
+    som portens ENESTE kallsted, med `_git` som injeksjonspunkt (samme
+    krav Cursor stilte for append-only 20:03, anvendt på ankeret 20:23).
+
+    MUTASJONEN SOM DREPER PARET: la `_blobhash` returnere pinnet verdi,
+    hopp over 056-armen, eller slutt å bruke `_git`-svaret — negativtesten
+    under går gjennom nøyaktig denne funksjonen og faller da.
+    """
+    avvik = []
+    commit = _basiscommit()
+    if not commit:
+        return ["main uhentbar — ankeret kan ikke måles"]
+    _git("fetch", "--quiet", "--depth=1", "origin", AKSEPTCOMMIT_056)
+    hash_056 = _blobhash(AKSEPTCOMMIT_056,
+                         "platform/core/db/migrations/" + HENDELSEN_056)
+    if hash_056 is None:
+        avvik.append(f"056-ankeret ({AKSEPTCOMMIT_056[:12]}…) er"
+                     " utilgjengelig — umålt er rødt")
+    elif not (FASIT[HENDELSEN_056] == hash_056 == KJORT_056):
+        avvik.append(
+            f"{HENDELSEN_056}: fasit/KJORT_056 er ikke akseptcommitens"
+            f" blob ({hash_056[:12]}…) — kjørt historikk ankres i"
+            " commiten prod kjørte fra, aldri i treet her")
+    for navn, pinnet in FASIT.items():
+        if navn == HENDELSEN_056:
+            continue
+        blob = _blobhash(commit, "platform/core/db/migrations/" + navn)
+        if blob is not None and pinnet != blob:
+            avvik.append(
+                f"{navn}: fasiten ({pinnet[:12]}…) er ikke main-blobben"
+                f" ({blob[:12]}…) — pinnen er skrevet om i takt med"
+                " filen; det er nøyaktig angrepet ankeret finnes for")
+    return avvik
+
+
 def test_fasiten_er_ankret_utenfor_treet():
     """Cursor P1 20:03 (P1-1): i PR-en som FØDER fasiten er append-only-
     porten tom-mot-tom, og alle de andre portene måler tre mot tre — en
@@ -456,27 +492,70 @@ def test_fasiten_er_ankret_utenfor_treet():
     her. For 056: muter til #153-bytene og oppdater BÅDE fasiten og
     `KJORT_056` — fortsatt rød, for `2aaca01`-blobben følger ikke med.
     """
-    commit = _basiscommit()
-    assert commit, "main uhentbar — ankeret kan ikke måles (se over)"
-    _git("fetch", "--quiet", "--depth=1", "origin", AKSEPTCOMMIT_056)
-    hash_056 = _blobhash(AKSEPTCOMMIT_056,
-                         "platform/core/db/migrations/" + HENDELSEN_056)
-    assert hash_056 is not None, (
-        f"akseptcommiten {AKSEPTCOMMIT_056[:12]}… er ikke tilgjengelig —"
-        " 056-ankeret er umålt, og umålt er rødt")
-    assert FASIT[HENDELSEN_056] == hash_056 == KJORT_056, (
-        "056-pinnen er ikke akseptcommitens egne bytes — kjørt historikk"
-        " ankres i commiten prod faktisk kjørte fra, aldri i treet her")
-    for navn, pinnet in FASIT.items():
-        if navn == HENDELSEN_056:
-            continue
-        blob = _blobhash(commit, "platform/core/db/migrations/" + navn)
-        if blob is None:
-            continue          # født i denne grenen — pinnes idet den merges
-        assert pinnet == blob, (
-            f"{navn}: fasiten ({pinnet[:12]}…) er ikke main-blobben"
-            f" ({blob[:12]}…) — pinnen er skrevet om i takt med filen;"
-            " det er nøyaktig angrepet ankeret finnes for")
+    avvik = _anker_avvik()
+    assert not avvik, "\n".join(avvik)
+
+
+def test_ankerporten_feller_i_takt_angrepet_gjennom_egen_loype():
+    """Negativen for ankerporten, gjennom NØYAKTIG dens kallsted: falsk
+    git svarer med main-blobber der 038 er UENDRET, mens fasiten i
+    arbeidstreet later som 038 fikk nye bytes med pinnen skrevet om i
+    takt. `_anker_avvik` skal felle 038 — og BARE 038."""
+    global _git, FASIT
+    ekte_git, ekte_fasit = _git, FASIT
+
+    class _Svar:
+        def __init__(self, returncode, stdout=b""):
+            self.returncode = returncode
+            self.stdout = stdout
+
+    blobber = {("platform/core/db/migrations/" + n): v
+               for n, v in FASIT.items()}
+
+    def falsk_git(*argv):
+        if argv[0] == "fetch":
+            return _Svar(0)
+        if argv[:2] == ("rev-parse", "--verify"):
+            return _Svar(0, b"f" * 40 + b"\n")
+        if argv[:2] == ("cat-file", "-e"):
+            return _Svar(0)
+        if argv[:2] == ("cat-file", "blob"):
+            sti = argv[2].split(":", 1)[1]
+            # blobben har de EKTE bytene — vi gir tilbake noe som hasher
+            # til fasitverdien ved å svare med et sentinel-innhold testen
+            # har regnet hash for: enklest er å svare med selve diskfila,
+            # som fasiten pinner.
+            return _Svar(0, (GITROT / sti).read_bytes())
+        raise AssertionError(f"uventet git-kall: {argv}")
+
+    _git = falsk_git
+    FASIT = {**ekte_fasit,
+             "038_outbox_bestilling.sql": "f" * 64}   # «i takt»-angrepet
+    try:
+        avvik = _anker_avvik()
+    finally:
+        _git, FASIT = ekte_git, ekte_fasit
+    assert len(avvik) == 1 and avvik[0].startswith("038_"), avvik
+    assert "i takt" in avvik[0]
+
+
+def test_fasit_og_bootstrap_krysspinner_hverandre():
+    """Cursor P2 20:23: fasiten og `REVIEWEDE_CHECKSUMS` i
+    migrasjon-bootstrap.py binder hver for seg mot disk — uten krysspin
+    kunne begge «oppdateres i takt». De pinnede versjonene der må stå
+    ORDRETT i fasiten."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "migrasjon_bootstrap",
+        GITROT / "deploy/staging/migrasjon-bootstrap.py")
+    modul = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(modul)
+    for versjon, forventet in modul.REVIEWEDE_CHECKSUMS.items():
+        navn = [n for n in FASIT if n.startswith(f"{versjon:03d}_")]
+        assert len(navn) == 1, (versjon, navn)
+        assert FASIT[navn[0]] == forventet, (
+            f"{navn[0]}: fasit ({FASIT[navn[0]][:12]}…) ≠ bootstrap"
+            f" ({forventet[:12]}…) — de to pinnene skal være samme tall")
 
 
 def test_fasiten_er_regnet_ikke_skrevet():
