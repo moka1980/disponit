@@ -602,6 +602,21 @@ def test_avkortet_modellsvar_er_en_feil_ikke_et_tomt_resultat():
                 _Avkortet(svar), "Kari søker.", {"navn": ["Kari"]},
                 vekter, biasmaalinger=_MAALINGER)
         assert e.value.kode == "ufullstendig_modellsvar", svar
+    # Oppfyllelsen er BOOLSK, og det måles der svaret LESES (Cursor P2).
+    # `ranger` avviser `"false"` — den vanligste JSON-feilen en modell
+    # gjør, og som streng er den sann — men den porten står lenger nede i
+    # løypa enn artefakten: uten denne sjekken ble svaret bygget som en
+    # vellykket evaluering, og feilen dukket opp ved rangeringen, eller
+    # aldri, om kalleren lagrer artefakten først.
+    for verdi in ("false", "true", 1, 0, None):
+        with pytest.raises(evaluering.Evalueringsfeil) as e:
+            evaluering.evaluer_kandidat(
+                _Avkortet(hele | {"oppfylt": {"drift": verdi,
+                                              "sikkerhet": False}}),
+                "Kari søker.", {"navn": ["Kari"]}, vekter,
+                biasmaalinger=_MAALINGER)
+        assert e.value.kode == "ikke_boolsk_oppfyllelse", verdi
+        assert "drift" in str(e.value)
     # Positiv kontroll: det HELE svaret går uendret gjennom.
     ut = evaluering.evaluer_kandidat(
         _Avkortet(hele), "Kari søker.", {"navn": ["Kari"]},

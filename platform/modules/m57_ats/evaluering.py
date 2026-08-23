@@ -87,6 +87,18 @@ def _krev_helt_svar(svar: object, vekter: dict[str, int]) -> dict:
             "ufullstendig_modellsvar",
             "oppfylt: " + ",".join(sorted(
                 set(vekter) ^ set(svar["oppfylt"]))))
+    # Nøklene var målt, verdiene ikke (Cursor P2). `ranger` avviser alt
+    # som ikke er `bool` — `"false"` er den vanligste JSON-feilen en
+    # modell gjør, og som streng er den SANN — men den porten står lenger
+    # nede i løypa enn artefakten. Et svar med `"drift": "false"` ble
+    # altså bygget som en VELLYKKET evaluering, og feilen dukket først opp
+    # ved rangeringen, eller aldri, om kalleren lagrer artefakten først.
+    # Kontrakten måles der svaret leses, ikke der det tilfeldigvis brukes.
+    ulovlige = [k for k, v in svar["oppfylt"].items()
+                if not isinstance(v, bool)]
+    if ulovlige:
+        raise Evalueringsfeil("ikke_boolsk_oppfyllelse",
+                              ",".join(sorted(ulovlige)))
     if any(not isinstance(s, str) or not s
            for s in svar["intervjusporsmal"]):
         raise Evalueringsfeil("ufullstendig_modellsvar",
