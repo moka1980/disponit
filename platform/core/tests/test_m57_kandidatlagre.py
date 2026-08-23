@@ -205,6 +205,61 @@ def test_opprett_prosess_er_idempotent_under_kapplop(migrator):
 
 
 @pg
+def test_opprett_prosess_krever_read_committed(migrator):
+    """Cursor P2: kappløpstesten over kjørte BARE under READ COMMITTED.
+
+    Idempotensløftet er utledet av en LESNING: `ON CONFLICT DO NOTHING`
+    svelger taperens unik-brudd uten feil, og gjenlesningen rett etter må
+    se VINNERENS rad. Under REPEATABLE READ står snapshotet fast fra
+    transaksjonens første setning, så gjenlesningen er blind for en
+    samtidig committet prosess — `v_id` blir NULL og et legitimt retry
+    får «kunne hverken opprettes eller leses» der kontrakten lover den
+    samme id-en tilbake. Samme klasse og samme ratifiserte form som
+    056s `frigi_utsendelse`/`signer_utsendingsliste`.
+
+    Testen måler nivåporten der den betyr noe: en konkurrent HAR
+    committet prosessen, og retryet kommer inn under et fastholdt
+    snapshot. Forventningen er `invalid_transaction_state` — en ærlig
+    avvisning — ikke `unique_violation` og ikke det stille feilsvaret.
+
+    MUTASJONEN SOM DREPER DENNE: slipp `serializable` gjennom porten
+    igjen."""
+    oid, _ = _evaluering(migrator)
+    vinner = _rt()
+    try:
+        _sett_kontekst(vinner, TENANT)
+        pid = vinner.execute("SELECT opprett_rekrutteringsprosess(%s,%s,90)",
+                             (TENANT, oid)).fetchone()[0]
+        vinner.commit()
+    finally:
+        vinner.close()
+    for niva in (psycopg.IsolationLevel.REPEATABLE_READ,
+                 psycopg.IsolationLevel.SERIALIZABLE):
+        rt = _rt()
+        try:
+            # Isolasjonsnivået kan bare byttes utenfor en åpen transaksjon.
+            rt.commit()
+            rt.isolation_level = niva
+            _sett_kontekst(rt, TENANT)
+            with pytest.raises(psycopg.errors.InvalidTransactionState):
+                rt.execute("SELECT opprett_rekrutteringsprosess(%s,%s,90)",
+                           (TENANT, oid))
+            rt.rollback()
+        finally:
+            rt.close()
+    # Positiv kontroll: READ COMMITTED-veien er uendret og fortsatt
+    # idempotent — porten avviser NIVÅET, ikke kallet.
+    rt = _rt()
+    try:
+        _sett_kontekst(rt, TENANT)
+        assert rt.execute("SELECT opprett_rekrutteringsprosess(%s,%s,90)",
+                          (TENANT, oid)).fetchone()[0] == pid
+        rt.rollback()
+    finally:
+        rt.close()
+
+
+@pg
 def test_fristen_utenfor_spennet_avvises(migrator):
     """§4: 30–365 døgn. Begge kantene utenfor felles av CHECK-en —
     og begge kantene INNENFOR går (grensetesten måler grensen, ikke

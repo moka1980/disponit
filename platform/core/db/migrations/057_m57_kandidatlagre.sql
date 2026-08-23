@@ -421,6 +421,30 @@ DECLARE v_id UUID; v_frist INT;
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant,
                                        'opprett_rekrutteringsprosess');
+    -- SNAPSHOTKRAVET (Cursor P2) — samme klasse og SAMME ratifiserte form
+    -- som 056s `frigi_utsendelse`, `signer_utsendingsliste` og
+    -- `opprett_frigivelsesoppdrag`; dette er ikke et nytt formforsøk, men
+    -- den samme porten på det gjenstående stedet.
+    --
+    -- Idempotensløftet («samme oppdrag ⇒ samme prosess-id») er utledet av
+    -- en LESNING: `ON CONFLICT DO NOTHING` svelger taperens unik-brudd
+    -- uten feil, og gjenlesningen rett etter må se VINNERENS rad. Under
+    -- REPEATABLE READ eller SERIALIZABLE står transaksjonens snapshot
+    -- fast fra første setning, så gjenlesningen er blind for en samtidig
+    -- committet prosess: `v_id` blir NULL, og et helt legitimt retry får
+    -- «kunne hverken opprettes eller leses» der kontrakten lover den
+    -- samme id-en tilbake. READ COMMITTED er det eneste nivået der hver
+    -- setning ser ferske data. `read uncommitted` er med fordi PostgreSQL
+    -- BEHANDLER det som READ COMMITTED (nivået finnes bare som synonym).
+    IF current_setting('transaction_isolation')
+       NOT IN ('read committed', 'read uncommitted') THEN
+        RAISE EXCEPTION 'opprett_rekrutteringsprosess: krever READ'
+            ' COMMITTED (fikk %) — idempotensløftet er utledet av en'
+            ' LESNING etter konflikt, og et fastholdt snapshot gjør den'
+            ' blind for en samtidig committet prosess',
+            current_setting('transaction_isolation')
+            USING ERRCODE = 'invalid_transaction_state';
+    END IF;
     IF NOT EXISTS (
         SELECT 1 FROM public.oppdrag o
          WHERE o.tenant = p_tenant AND o.id = p_oppdrag_id
