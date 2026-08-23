@@ -107,6 +107,13 @@ staging_sjekkliste:
   # Punktene under deler dét artefaktet, og `bevismaalinger` per punkt
   # sier hva NETTOPP det punktet henter ut — tredjelaget i
   # `valider_artefakter`, som skiller legitim deling fra lånt konklusjon.
+  # KORREKSJON SOM KOMMENTAR (A-porten): notatet under sier «den
+  # aksepterte wcag-r13» — faktisk riktig er wcag-r23 (akseptraden 23/8
+  # binder (m_wcag_audit, staging, wcag-r23)). Men notatet er DATA i den
+  # aksepterte generasjonen, og projeksjonsporten forbyr — med rette — å
+  # redigere akseptert evidens i etterkant. Ordet står som aksepten
+  # målte det; sannheten står her, i kommentarlaget som ikke er
+  # identitet. Rettes i neste aksepterte generasjon.
   tester_gronne_pa_staging:
     status: ja
     krav_id: wcag-kontroll-v1
@@ -118,7 +125,7 @@ staging_sjekkliste:
     notat: >-
       MÅLT 2026-08-18, BUNDET 2026-08-20 (049).
       På disponit-srv (release wcag-r1 — byte-identisk med den aksepterte
-      wcag-r23, alle m56-releaser deler artifact_digest af92b705…): ekte motor
+      wcag-r13, alle m56-releaser deler artifact_digest af92b705…): ekte motor
       (axe-core-4.10.3, Chromium 131.0.6778.33, docker, image
       sha256:af92b705…) gjennom hele produksjonskjeden bestilling→claim→
       motor→rapport→kvittering→promotert artefakt.
