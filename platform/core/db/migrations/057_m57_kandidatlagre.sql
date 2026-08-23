@@ -412,20 +412,41 @@ BEGIN
     SELECT prosess_id, slettefrist_dogn INTO v_id, v_frist
       FROM public.rekrutteringsprosess
      WHERE tenant = p_tenant AND oppdrag_id = p_oppdrag_id;
-    IF v_id IS NOT NULL THEN
-        IF v_frist IS DISTINCT FROM p_frist_dogn THEN
-            RAISE EXCEPTION 'rekrutteringsprosess: oppdrag % har alt en'
-                ' prosess med frist % døgn — fristen kan ikke endres ved'
-                ' å «opprette på nytt» (klarsignalet §5)',
-                p_oppdrag_id, v_frist
+    IF v_id IS NULL THEN
+        -- Kappløpet mellom SELECT-en over og INSERT-en her er ekte
+        -- (Codex P2): to samtidige retries av samme bestilling rakk
+        -- begge forbi lesingen, og taperen fikk en rå `unique_violation`
+        -- i stedet for den idempotente returen funksjonen lover.
+        -- ON CONFLICT DO NOTHING venter på vinneren i stedet, og
+        -- taperen leser vinnerens rad rett etter.
+        v_id := gen_random_uuid();
+        INSERT INTO public.rekrutteringsprosess
+            (tenant, prosess_id, oppdrag_id, slettefrist_dogn)
+        VALUES (p_tenant, v_id, p_oppdrag_id, p_frist_dogn)
+        ON CONFLICT ON CONSTRAINT prosess_en_per_oppdrag DO NOTHING
+        RETURNING prosess_id INTO v_id;
+        IF v_id IS NOT NULL THEN
+            RETURN v_id;
+        END IF;
+        SELECT prosess_id, slettefrist_dogn INTO v_id, v_frist
+          FROM public.rekrutteringsprosess
+         WHERE tenant = p_tenant AND oppdrag_id = p_oppdrag_id;
+        IF v_id IS NULL THEN
+            RAISE EXCEPTION 'rekrutteringsprosess: oppdrag % hos % kunne'
+                ' hverken opprettes eller leses', p_oppdrag_id, p_tenant
                 USING ERRCODE = 'unique_violation';
         END IF;
-        RETURN v_id;
     END IF;
-    v_id := gen_random_uuid();
-    INSERT INTO public.rekrutteringsprosess
-        (tenant, prosess_id, oppdrag_id, slettefrist_dogn)
-    VALUES (p_tenant, v_id, p_oppdrag_id, p_frist_dogn);
+    -- Materialiteten står uendret: SAMME frist er idempotent, en ANNEN
+    -- frist er en konflikt — også for kappløpstaperen. «Opprett på nytt»
+    -- er ikke en vei rundt §5.
+    IF v_frist IS DISTINCT FROM p_frist_dogn THEN
+        RAISE EXCEPTION 'rekrutteringsprosess: oppdrag % har alt en'
+            ' prosess med frist % døgn — fristen kan ikke endres ved'
+            ' å «opprette på nytt» (klarsignalet §5)',
+            p_oppdrag_id, v_frist
+            USING ERRCODE = 'unique_violation';
+    END IF;
     RETURN v_id;
 END $$;
 

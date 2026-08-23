@@ -164,6 +164,47 @@ def test_prosessen_er_idempotent_men_fristen_er_materiell(migrator):
 
 
 @pg
+def test_opprett_prosess_er_idempotent_under_kapplop(migrator):
+    """Codex P2: SELECT-så-INSERT lot kappløpstaperen dø på unik-bruddet.
+    Nå får taperen vinnerens prosess-id: A setter inn uten å committe;
+    B (egen tilkobling) kaller funksjonen og blokkerer på indeksen til A
+    committer — og skal da returnere A-radens id, ikke `unique_violation`.
+    Samme form som `test_frigi_er_idempotent_under_kapplop` (056)."""
+    import threading
+
+    oid, _ = _evaluering(migrator)
+    a = _rt()
+    b = _rt()
+    try:
+        _sett_kontekst(a, TENANT)
+        pid_a = a.execute("SELECT opprett_rekrutteringsprosess(%s,%s,90)",
+                          (TENANT, oid)).fetchone()[0]
+        resultat: dict = {}
+
+        def taper():
+            _sett_kontekst(b, TENANT)
+            try:
+                resultat["pid"] = b.execute(
+                    "SELECT opprett_rekrutteringsprosess(%s,%s,90)",
+                    (TENANT, oid)).fetchone()[0]
+                b.commit()
+            except Exception as feil:            # pragma: no cover
+                resultat["feil"] = feil
+
+        t = threading.Thread(target=taper)
+        t.start()
+        t.join(timeout=2)
+        assert t.is_alive(), "B skulle blokkere på As ucommittede rad"
+        a.commit()
+        t.join(timeout=10)
+        assert not t.is_alive(), "B kom aldri gjennom etter As commit"
+        assert "feil" not in resultat, resultat.get("feil")
+        assert resultat["pid"] == pid_a, "taperen fikk en ANNEN prosess"
+    finally:
+        a.close(); b.close()
+
+
+@pg
 def test_fristen_utenfor_spennet_avvises(migrator):
     """§4: 30–365 døgn. Begge kantene utenfor felles av CHECK-en —
     og begge kantene INNENFOR går (grensetesten måler grensen, ikke
