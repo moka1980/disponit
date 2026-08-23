@@ -192,6 +192,12 @@ def _inspiser_docx(navn: str, data: bytes, *,
     fordi den bare inneholdt de alt komprimerte docx-bytene, og bomben
     møtte først tekstuttrekket. Unntaket er at DOCX er en av de tre lovede
     innholdstypene — ikke at grensene ikke gjelder inni den.
+
+    UTSATT, K2 → #155. Sju runder har funnet sju ULIKE former og ÉN rot:
+    to implementasjoner av samme grense divergerer med nødvendighet.
+    Eier valgte A — én strømmende gate, brukt rekursivt — som eget issue
+    + egen PR. Denne funksjonen er den lappede tilstanden til den lander,
+    og hver lapp under er navngitt med runden som fant den.
     """
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as indre:

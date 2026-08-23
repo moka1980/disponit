@@ -299,6 +299,13 @@ CREATE TRIGGER utsendingssignatur_ingen_truncate
 --    eie funksjonen, rollen OG ta det spesifikasjonsvalget (durabel
 --    pseudonymnøkkel, eller at TTL-utløp stenger listen for videre
 --    frigivelse) — se diskusjonen på #140 for avveiningen.
+--
+--    AVGJORT (eier, 2026-08-23 i #153): pseudonymnøkkel. En
+--    deterministisk, ikke-reverserbar tenant-skopet HMAC over mottakeren
+--    står i `mottaker_ref`; klarteksten bor KUN i
+--    `kandidat_utsendingsdata` og dør med reapingen. Unikheten og
+--    append-only består. Egen PR — se #156; kolonnen står som her til
+--    den lander.
 CREATE TABLE utsendingsfrigivelse (
     tenant TEXT NOT NULL,
     frigivelse_id UUID NOT NULL,

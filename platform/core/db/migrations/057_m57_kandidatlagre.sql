@@ -215,6 +215,16 @@ CREATE TRIGGER rekrutteringsprosess_ingen_truncate
 -- (minimal revisjonsevidens, §5) — og UTLEDES derfor av lagervakten ved
 -- INSERT, den mottas ikke fra kalleren: det som overlever payloaden kan
 -- ikke være en påstand om den.
+--
+-- KANDIDATANKERET ER UTSATT, K1 → #157. Lagrene FK-er PROSESSEN, ikke
+-- kandidaten: `kandidat_id` er en fri UUID i seks tabeller, så ingenting
+-- i basen binder de seks til SAMME kandidat. Alternativet — fire
+-- eksistensvakter i triggere som sjekker at kandidaten finnes i et annet
+-- lager — er en FK skrevet for hånd, og huset avviser den formen. Eier
+-- valgte derfor en egen `kandidat`-tabell som anker, i egen migrasjon:
+-- ny tabell er ny maskin (§9 K1). Port 19s katalogmåling SKAL bli rød
+-- den dagen ankeret legges til uten at reaperen lærer det — det er
+-- beviset på at porten virker, og det måles i #157.
 
 CREATE TABLE kandidat_originaldokument (
     tenant TEXT NOT NULL,

@@ -11,8 +11,11 @@ En invariant som hviler på et SØK i fritekst kan ikke være absolutt:
 fire runder har målt lekkasje ut (delstrenger, versaler, NFC/NFD) og
 korrupsjon inn fra samme grense. Den absolutte formen er strukturell
 blinding — personfeltene finnes ikke i inputen i det hele tatt — og den
-er eiers ratifiserte mål (B-veien, eget issue + egen PR); til den lander
-er ordlyden over det ærlige løftet.
+er eiers ratifiserte mål (B-veien, #158); til den lander er ordlyden over
+det ærlige løftet.
+
+Avskruingen (port 16b) er en ANNEN maskin og står utsatt i #159:
+`auditrad` er i dag kallerens egen påstand om at handlingen er auditert.
 
 Av-maskeringstabellen er payload i `kandidat_avmaskering` (057) og
 reapes med resten.
@@ -103,6 +106,24 @@ def evalueringsinput(tekst: str, kandidatfelter: dict[str, list[str]], *,
     krever en auditrad med aktør, tidspunkt og begrunnelse — mangler
     den, finnes ikke input (port 16b)."""
     if blinding_av:
+        # UTSATT, K1 → #159. Codex har målt det samme to ganger, og
+        # funnet er riktig: denne porten er SELVATTESTERT. Den som ber om
+        # å skru av blindingen leverer selv beviset på at handlingen er
+        # auditert, og beviset er en dict med tre sanne verdier. Det
+        # finnes ingen produsent og ingen persisteringsvei for `auditrad`
+        # i repoet — «auditert» er altså en påstand fra kalleren, ikke en
+        # egenskap ved noe som overlever kallet.
+        #
+        # Det kan ikke lukkes her. En strengere formport (`ts` som gyldig
+        # ISO-8601, en `revisjon_id` som ser ut som en UUID) flytter bare
+        # påstanden ett hakk: en velformet UUID beviser ikke at en rad
+        # finnes. Den ekte lukkingen krever en varig, tenant-bundet
+        # revisjonshendelse — tabell, append-only-vakt, rettighetsgrense,
+        # skriver og oppslag — og kjernen har ingen slik tabell i dag.
+        # Ny maskin i en fiksrunde er nettopp det §9 K1 forbyr, så valget
+        # (bygg hendelsen, eller fjern døra til den finnes) ligger i
+        # #159. Formporten under er derfor uendret, og den leser bevisst
+        # ikke sterkere enn den måler.
         if not (isinstance(auditrad, dict)
                 and auditrad.get("aktor") and auditrad.get("ts")
                 and auditrad.get("begrunnelse")):
