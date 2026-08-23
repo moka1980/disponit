@@ -17,8 +17,6 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-import pytest
-
 from manifestskjema import (AKSEPTERTE_GENERASJONER, KATALOGAKSER,
                             kanonisk_projeksjon)
 
@@ -86,16 +84,44 @@ def _git_blob(commit: str, sti: str) -> str | None:
     return r.stdout.decode("utf-8") if r.returncode == 0 else None
 
 
+def _hent_commit(commit: str) -> None:
+    """Utdyper den grunne utsjekkingen med NØYAKTIG denne ene commiten.
+
+    `actions/checkout` henter `refs/pull/<nr>/merge` på dybde 1, så
+    akseptcommiten er ikke i objektbasen — men den er nåbar fra `main`,
+    og en `--depth=1`-henting av selve sha-en koster ett objektsett og
+    utvider ikke historikken ellers. Feiler den (offline), sier porten
+    under fra; den passerer ikke stille.
+    """
+    subprocess.run(["git", "-C", str(ROT), "fetch", "--quiet", "--depth=1",
+                    "origin", commit], capture_output=True)
+
+
 def test_pinnene_er_akseptcommitens_egne_projeksjoner():
     """Proveniensporten: pinnene i AKSEPTERTE_GENERASJONER er REGNET av
     akseptcommitens innsjekkede bytes, ikke skrevet etter hukommelsen.
-    Grunne utsjekkinger (CI depth<full) hopper — porten over måler
-    fortsatt HEAD, og denne kjøres der historikken finnes."""
+
+    Porten HOPPER IKKE (Codex P1, #154). Den gjorde det i grunne
+    utsjekkinger — og siden CI kjører suiten en gang til bak porten
+    «ingen tester ble hoppet over», felte hoppet hver eneste kjøring.
+    Verre var det at et hopp uansett ville gjort proveniensen umålt
+    NØYAKTIG der den betyr noe: en pin skrevet etter hukommelsen slipper
+    gjennom en CI som aldri leste akseptcommiten.
+
+    Mangler commiten, hentes den derfor — `--depth=1` på selve sha-en, som
+    er nåbar fra `main`. Er den fortsatt borte, er porten RØD: en pin som
+    ikke kan måles mot innsjekkede bytes er ikke en bevist pin."""
     for mod, info in AKSEPTERTE_GENERASJONER.items():
         blob = _git_blob(info["commit"], info["manifest"])
         if blob is None:
-            pytest.skip(f"akseptcommiten {info['commit'][:12]}… er ikke"
-                        " i denne utsjekkingens historikk (grunn klone)")
+            _hent_commit(info["commit"])
+            blob = _git_blob(info["commit"], info["manifest"])
+        assert blob is not None, (
+            f"{mod}: akseptcommiten {info['commit'][:12]}… er verken i"
+            " denne utsjekkingens historikk eller hentbar fra `origin`."
+            " Pinnen kan da ikke måles mot innsjekkede bytes — kjør fra"
+            " en utsjekking med nett eller full historikk"
+            " (`fetch-depth: 0`)")
         assert kanonisk_projeksjon(blob) == info["projeksjon"], (
             f"{mod}: pinnen stemmer ikke med akseptcommitens manifest")
 
