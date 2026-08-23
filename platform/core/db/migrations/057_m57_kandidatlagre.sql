@@ -467,6 +467,118 @@ BEGIN
     END LOOP;
 END $$;
 
+-- «ALDRI ETT LAGER ALENE» (port 19, §5) — målt ved COMMIT.
+--
+-- Lagervakten over ser ÉN RAD. Den kan derfor si at reap-overgangen er
+-- lovlig i formen, men ikke at de seks lagrene reapes SAMMEN: det er en
+-- påstand om seks tabeller samtidig, og tilstanden er dessuten lovlig
+-- MENS reaperen står midt i sin egen transaksjon. Atomisiteten var
+-- derfor bare dokumentert i `reap_kandidatdata`, ikke håndhevet — og
+-- `disponit_m37_claimer` har UPDATE på alle seks (den må, den er definer
+-- for reaperen). Direkte DML som claimer kunne dermed etterlate en varig
+-- halvtom prosess: ett lager reapet, resten levende, ankeret uten merke.
+-- Ankervakten fanger den motsatte retningen (merke uten tømte lagre);
+-- dette er den siste.
+--
+-- En UTSATT constraint-trigger er porten som kan stille spørsmålet på
+-- riktig tidspunkt: den kjører ved COMMIT, når reaperens seks UPDATE-er
+-- er ferdige, og den gjelder ENHVER rolle — også claimeren og eieren.
+-- Predikatet er tilstanden, ikke hvem som skrev den: for én prosess kan
+-- lagrene ikke bære både levende og reapet payload når transaksjonen er
+-- over. `EXISTS` på hver arm gjør prisen to indeksoppslag per arm, ikke
+-- en telling over hele prosessen.
+--
+-- INVOKER, ikke definer, og det er et valg: porten skal se NØYAKTIG de
+-- radene skriveren selv ser. Som definer ville den lest med migrators
+-- øyne, og siden FORCE RLS gjelder også eieren, ville reaperens
+-- kryss-tenant-transaksjon gjort den blind for alle prosesser unntatt
+-- den siste — en vakt som feiler åpent. Som invoker leser claimeren
+-- gjennom sin egen `m57_reaper`-policy og ser hele transaksjonen sin,
+-- mens enhver tenant-bundet skriver måles innenfor sin egen kontekst.
+-- Rollene som kan UPDATE-e disse tabellene i det hele tatt (claimeren og
+-- eieren) har begge SELECT på dem.
+CREATE OR REPLACE FUNCTION m57_lagrene_reapes_samlet()
+RETURNS trigger LANGUAGE plpgsql
+SET search_path = pg_catalog AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM public.kandidat_originaldokument k
+         WHERE k.tenant = NEW.tenant AND k.prosess_id = NEW.prosess_id
+           AND k.slettet_ts IS NULL
+        UNION ALL
+        SELECT 1 FROM public.kandidat_parsettekst k
+         WHERE k.tenant = NEW.tenant AND k.prosess_id = NEW.prosess_id
+           AND k.slettet_ts IS NULL
+        UNION ALL
+        SELECT 1 FROM public.kandidat_evalueringsartefakt k
+         WHERE k.tenant = NEW.tenant AND k.prosess_id = NEW.prosess_id
+           AND k.slettet_ts IS NULL
+        UNION ALL
+        SELECT 1 FROM public.kandidat_intervjusporsmal k
+         WHERE k.tenant = NEW.tenant AND k.prosess_id = NEW.prosess_id
+           AND k.slettet_ts IS NULL
+        UNION ALL
+        SELECT 1 FROM public.kandidat_utsendingsdata k
+         WHERE k.tenant = NEW.tenant AND k.prosess_id = NEW.prosess_id
+           AND k.slettet_ts IS NULL
+        UNION ALL
+        SELECT 1 FROM public.kandidat_avmaskering k
+         WHERE k.tenant = NEW.tenant AND k.prosess_id = NEW.prosess_id
+           AND k.slettet_ts IS NULL)
+       AND EXISTS (
+        SELECT 1 FROM public.kandidat_originaldokument k
+         WHERE k.tenant = NEW.tenant AND k.prosess_id = NEW.prosess_id
+           AND k.slettet_ts IS NOT NULL
+        UNION ALL
+        SELECT 1 FROM public.kandidat_parsettekst k
+         WHERE k.tenant = NEW.tenant AND k.prosess_id = NEW.prosess_id
+           AND k.slettet_ts IS NOT NULL
+        UNION ALL
+        SELECT 1 FROM public.kandidat_evalueringsartefakt k
+         WHERE k.tenant = NEW.tenant AND k.prosess_id = NEW.prosess_id
+           AND k.slettet_ts IS NOT NULL
+        UNION ALL
+        SELECT 1 FROM public.kandidat_intervjusporsmal k
+         WHERE k.tenant = NEW.tenant AND k.prosess_id = NEW.prosess_id
+           AND k.slettet_ts IS NOT NULL
+        UNION ALL
+        SELECT 1 FROM public.kandidat_utsendingsdata k
+         WHERE k.tenant = NEW.tenant AND k.prosess_id = NEW.prosess_id
+           AND k.slettet_ts IS NOT NULL
+        UNION ALL
+        SELECT 1 FROM public.kandidat_avmaskering k
+         WHERE k.tenant = NEW.tenant AND k.prosess_id = NEW.prosess_id
+           AND k.slettet_ts IS NOT NULL) THEN
+        RAISE EXCEPTION 'kandidatlagrene: prosess % hos % bærer både'
+            ' levende og reapet payload ved COMMIT — de seks lagrene'
+            ' reapes SAMLET, aldri ett alene (klarsignalet §5, port 19)',
+            NEW.prosess_id, NEW.tenant
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    RETURN NULL;
+END $$;
+
+DO $$
+DECLARE t TEXT;
+BEGIN
+    FOREACH t IN ARRAY ARRAY[
+        'kandidat_originaldokument', 'kandidat_parsettekst',
+        'kandidat_evalueringsartefakt', 'kandidat_intervjusporsmal',
+        'kandidat_utsendingsdata', 'kandidat_avmaskering'] LOOP
+        EXECUTE format('DROP TRIGGER IF EXISTS %I ON %I',
+                       t || '_reapes_samlet', t);
+        -- Bare UPDATE: en INSERT kan ikke lage blandingen. Lagervakten
+        -- avviser INSERT på en reapet prosess, og en prosess der lagrene
+        -- er reapet uten at ankeret er merket, er nettopp det denne
+        -- porten forbyr — så det finnes ingen tilstand å skrive inn i.
+        EXECUTE format(
+            'CREATE CONSTRAINT TRIGGER %I AFTER UPDATE ON %I'
+            ' DEFERRABLE INITIALLY DEFERRED'
+            ' FOR EACH ROW EXECUTE FUNCTION m57_lagrene_reapes_samlet()',
+            t || '_reapes_samlet', t);
+    END LOOP;
+END $$;
+
 -- ------------------------------------------------------------
 -- 4. Tenant-isolasjon — samme form som 038/056.
 DO $$
@@ -819,6 +931,7 @@ RESET ROLE;
 -- Vaktene og tabellene er migrators egne.
 REVOKE ALL ON FUNCTION rekrutteringsprosess_vakt() FROM PUBLIC;
 REVOKE ALL ON FUNCTION m57_kandidatlager_vakt() FROM PUBLIC;
+REVOKE ALL ON FUNCTION m57_lagrene_reapes_samlet() FROM PUBLIC;
 
 REVOKE ALL ON rekrutteringsprosess, kandidat_originaldokument,
     kandidat_parsettekst, kandidat_evalueringsartefakt,

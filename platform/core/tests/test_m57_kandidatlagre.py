@@ -1196,6 +1196,72 @@ def test_enkeltfilgrensen_star_i_basen(migrator):
         rt.close()
 
 
+#: Reap-formen per lager: payloadkolonnene som skal bli NULL.
+_REAP_SETNINGER = (
+    ("kandidat_originaldokument",
+     "dokument=NULL, filnavn=NULL, innholdstype=NULL"),
+    ("kandidat_parsettekst", "tekst=NULL"),
+    ("kandidat_evalueringsartefakt", "artefakt=NULL"),
+    ("kandidat_intervjusporsmal", "sporsmal=NULL"),
+    ("kandidat_utsendingsdata", "mottaker_ref=NULL, flettefelt=NULL"),
+    ("kandidat_avmaskering", "felter=NULL"),
+)
+
+
+@pg
+def test_port19_ett_lager_kan_ikke_reapes_alene(migrator):
+    """Cursor P2: «aldri ett lager alene» var dokumentert i reaperen, ikke
+    håndhevet på skrivetidspunkt.
+
+    Lagervakten ser ÉN RAD, og kan derfor si at reap-overgangen er lovlig
+    i formen — men ikke at de seks lagrene reapes SAMMEN. Claimeren har
+    UPDATE på alle seks (den MÅ, den er definer for reaperen), så direkte
+    DML kunne etterlate en varig halvtom prosess: ett lager reapet, resten
+    levende, ankeret uten merke. Ankervakten fanger den motsatte
+    retningen; dette er den siste.
+
+    Porten er en UTSATT constraint-trigger: den stiller spørsmålet ved
+    COMMIT, når reaperens seks UPDATE-er er ferdige — og gjelder enhver
+    rolle, også eieren.
+
+    MUTASJONEN SOM DREPER DENNE: fjern
+    `*_reapes_samlet`-constraint-triggerne i 057."""
+    rt = _rt()
+    try:
+        _, pid = _prosess(migrator, rt)
+        _fyll_lagrene(rt, pid)
+        rt.commit()
+        # ETT lager alene: setningen går, COMMIT-en gjør det ikke.
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute(
+            "UPDATE kandidat_parsettekst SET tekst=NULL, slettet_ts=now()"
+            " WHERE tenant=%s AND prosess_id=%s", (TENANT, pid))
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            migrator.commit()
+        migrator.rollback()
+        # Payloaden står urørt: transaksjonen ble aldri til noe.
+        _sett_kontekst(migrator, TENANT)
+        assert migrator.execute(
+            "SELECT count(*) FROM kandidat_parsettekst WHERE tenant=%s"
+            " AND prosess_id=%s AND tekst IS NOT NULL",
+            (TENANT, pid)).fetchone()[0] == 1
+        # Positiv kontroll: alle seks i SAMME transaksjon — reaperens
+        # egen form — går gjennom.
+        for tab, payload in _REAP_SETNINGER:
+            migrator.execute(
+                f"UPDATE {tab} SET {payload}, slettet_ts=now()"
+                " WHERE tenant=%s AND prosess_id=%s", (TENANT, pid))
+        migrator.commit()
+        _sett_kontekst(migrator, TENANT)
+        assert migrator.execute(
+            "SELECT count(*) FROM kandidat_parsettekst WHERE tenant=%s"
+            " AND prosess_id=%s AND slettet_ts IS NOT NULL",
+            (TENANT, pid)).fetchone()[0] == 1
+        migrator.rollback()
+    finally:
+        rt.close()
+
+
 @pg
 def test_innhold_sha256_utledes_av_payloaden_ikke_av_kalleren(migrator):
     """Codex P2: hashen var kallerens PÅSTAND om innholdet.
