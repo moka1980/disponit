@@ -658,6 +658,10 @@ def test_enkeltfilgrensen_star_i_basen(migrator):
     rt = _rt()
     try:
         _, pid = _prosess(migrator, rt)
+        # Prosessen må BESTÅ rollbacken under: hver negative form ruller
+        # tilbake, og uten commit her forsvinner forelderen med den
+        # første — og neste INSERT feller på FK i stedet for på grensen.
+        rt.commit()
         _sett_kontekst(rt, TENANT)
         with pytest.raises(psycopg.errors.CheckViolation):
             rt.execute(
