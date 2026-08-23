@@ -472,9 +472,19 @@ END $$;
 
 -- Lukking starter fristen. Aldri frem i tid (radvakten håndhever det
 -- også ved direkte DML); idempotent på identisk tidspunkt.
+--
+-- Standarden er NULL og ikke `now()` (Codex P2): med `now()` som default
+-- fikk hver RETRY et nytt tidspunkt, så den vanligste feilformen som
+-- finnes — kallet committet, men svaret gikk tapt — traff
+-- «alt lukket ved X, lukkingen flyttes ikke» og fikk `unique_violation`
+-- for en operasjon som hadde lykkes. NULL betyr «jeg har ikke noe
+-- tidspunkt å insistere på»: er prosessen alt lukket, er retryen
+-- idempotent og RØRER IKKE det lagrede tidspunktet; er den åpen, lukkes
+-- den nå. Et EKSPLISITT tidspunkt er fortsatt materielt, og et annet
+-- eksplisitt tidspunkt er fortsatt en konflikt.
 CREATE OR REPLACE FUNCTION lukk_rekrutteringsprosess(
     p_tenant TEXT, p_prosess_id UUID,
-    p_lukket_ts TIMESTAMPTZ DEFAULT now())
+    p_lukket_ts TIMESTAMPTZ DEFAULT NULL)
 RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE v_lukket TIMESTAMPTZ;
@@ -490,7 +500,8 @@ BEGIN
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
     IF v_lukket IS NOT NULL THEN
-        IF v_lukket IS DISTINCT FROM p_lukket_ts THEN
+        IF p_lukket_ts IS NOT NULL AND v_lukket IS DISTINCT FROM p_lukket_ts
+        THEN
             RAISE EXCEPTION 'rekrutteringsprosess: % er alt lukket ved % —'
                 ' lukkingen flyttes ikke', p_prosess_id, v_lukket
                 USING ERRCODE = 'unique_violation';
@@ -498,7 +509,7 @@ BEGIN
         RETURN;
     END IF;
     UPDATE public.rekrutteringsprosess
-       SET lukket_ts = p_lukket_ts
+       SET lukket_ts = coalesce(p_lukket_ts, pg_catalog.now())
      WHERE tenant = p_tenant AND prosess_id = p_prosess_id;
 END $$;
 

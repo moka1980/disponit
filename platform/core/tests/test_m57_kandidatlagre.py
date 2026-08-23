@@ -341,6 +341,49 @@ def test_port20_lukkingen_kan_ikke_sta_frem_i_tid(migrator):
 
 
 @pg
+def test_lukking_uten_tidspunkt_er_idempotent_ved_retry(migrator):
+    """Codex P2: med `now()` som DEFAULT fikk hver retry et nytt
+    tidspunkt, så den vanligste feilformen som finnes — kallet
+    committet, men svaret gikk tapt — traff «lukkingen flyttes ikke» og
+    fikk `unique_violation` for en operasjon som hadde lykkes. Uten et
+    eksplisitt tidspunkt insisterer kalleren ikke på noe, og retryen er
+    idempotent; et eksplisitt tidspunkt er fortsatt materielt."""
+    rt = _rt()
+    try:
+        _, pid = _prosess(migrator, rt)
+        rt.commit()
+        _sett_kontekst(rt, TENANT)
+        rt.execute("SELECT lukk_rekrutteringsprosess(%s,%s)", (TENANT, pid))
+        rt.commit()
+        _sett_kontekst(rt, TENANT)
+        forst = rt.execute(
+            "SELECT lukket_ts FROM rekrutteringsprosess WHERE prosess_id=%s",
+            (pid,)).fetchone()[0]
+        assert forst is not None
+        # Retryen: samme kall, ingen feil — og tidspunktet står stille.
+        rt.execute("SELECT lukk_rekrutteringsprosess(%s,%s)", (TENANT, pid))
+        rt.commit()
+        _sett_kontekst(rt, TENANT)
+        assert rt.execute(
+            "SELECT lukket_ts FROM rekrutteringsprosess WHERE prosess_id=%s",
+            (pid,)).fetchone()[0] == forst, \
+            "retryen flyttet lukkingen — fristen ville løpt på nytt"
+        # ... og et EKSPLISITT, annet tidspunkt er fortsatt en konflikt.
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            rt.execute("SELECT lukk_rekrutteringsprosess(%s,%s,"
+                       " now() - interval '2 hour')", (TENANT, pid))
+        rt.rollback()
+        # ... mens det SAMME eksplisitte tidspunktet fortsatt er idempotent.
+        _sett_kontekst(rt, TENANT)
+        rt.execute("SELECT lukk_rekrutteringsprosess(%s,%s,%s)",
+                   (TENANT, pid, forst))
+        rt.rollback()
+    finally:
+        rt.close()
+
+
+@pg
 def test_port18_reaping_tommer_alle_seks_lagrene(migrator):
     """Kjerneporten: fixture-strengen står i payloaden i alle seks lagre
     FØR reaping (positiv kontroll — en fraværstest uten den går grønn på
