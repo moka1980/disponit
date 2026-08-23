@@ -194,11 +194,13 @@ export const TILBUD = [
 
 // «Tilgjengelig» er et løfte til en BESØKENDE om at hen kan ta modulen i bruk
 // med sine egne data. Det løftet har TO ledd, ikke ett: modulen må være rullet
-// ut til kunder (`i_drift`), OG verten må kjøre i produksjonsmodus. Ingen av
-// dem holder i dag — M-1 kjører på staging, og `DISPONIT_MILJO` sier det samme
-// — men de kan bli oppfylt hver for seg, og da er ETT av dem ikke nok:
+// ut til kunder (`i_drift`), OG verten må kjøre i produksjonsmodus. Leddene
+// ble oppfylt hver for seg, slik denne kommentaren forutså: etter
+// akseptflippet holder det FØRSTE for M-2 og M-56, mens verten fortsatt er
+// staging og `DISPONIT_MILJO` sier det samme. Da er ETT av dem ikke nok —
 // policyene som binder beslutningene står `utkast` så lenge verten er staging,
-// uansett hvor koden er rullet ut.
+// uansett hvor koden er rullet ut, og `erTilgjengelig(2)` er derfor `false`
+// med `modulStatus(2) === "i_drift"`.
 //
 // Skillet er det samme manifestene gjør med `status` og `driftstilstand`:
 // kollapses to akser til ett ord, lover flaten mer enn den ene aksen bærer.
