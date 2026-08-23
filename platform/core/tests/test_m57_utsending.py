@@ -1242,11 +1242,16 @@ def test_runtime_kan_ikke_drive_frigivelsesoppdraget(migrator):
         rt.close()
     # ... og et BESLUTNINGSOPPDRAG står urørt: porten er snever på den
     # tredje opprinnelsen, ikke en generell innstramming av 038s grant.
+    # `_grunnlag` gir som standard et FULLFØRT oppdrag (det er det en
+    # liste kan promotere), og `utfort` er terminal — kontrollen trenger
+    # derfor sitt eget ferske oppdrag, ellers måler den statusmaskinen i
+    # stedet for porten.
+    ferskt, _ = _grunnlag(migrator, status=None)
     rt = koble(DSN)
     try:
         rt.execute("SELECT set_config('disponit.tenant',%s,true)", (TENANT,))
         rt.execute("UPDATE oppdrag SET status='kansellert'"
-                   " WHERE tenant=%s AND id=%s", (TENANT, oid))
+                   " WHERE tenant=%s AND id=%s", (TENANT, ferskt))
         rt.rollback()
     finally:
         rt.close()
