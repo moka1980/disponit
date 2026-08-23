@@ -32,46 +32,85 @@ avhengigheter:
 kjerne: platform/modules/m57_ats
 i18n_prefiks: m57ats
 
+# NOTATENES ORDLYD (eiers dom 14:33 på #153, C-armen til issue #166):
+# et notat sier hva punktet KREVER og hvilken måling som beviser det —
+# aldri mer enn porten faktisk måler. `_bevismaalinger_finnes` bekrefter
+# at en påberopt sti FINNES i artefaktet; den sier ingenting om at
+# målingen beviser NETTOPP dette punktet (den sier det selv i sin egen
+# docstring: «det er reviewansvar»). Fem av punktene under har derfor
+# ingen måling i `m57-v1` ennå, og notatet skal si det rett ut i stedet
+# for å love en akseptarc som skal bevise det. Punktbindingen som gjør
+# dette MEKANISK — et punkt uten erklærte målinger er uflippbart — er
+# #166; til den lander er ordlyden her den eneste ærligheten vi har.
+# «Et manifest skal aldri lese sterkere enn porten måler.»
 staging_sjekkliste:
   tester_gronne_pa_staging:
     status: nei
     krav_id: m57-v1
     notat: >-
-      Lukkes av M-57-akseptarcen: suitekjøring på staging med modulens
-      andel pinnet (m02-suite-formen), målt mot KRAVGRENSER['m57-v1'].
+      KREVER: suitekjøring på staging med modulens andel pinnet
+      (m02-suite-formen) — suitetotaler, feiltall, modulandel og
+      stagingidentitet bundet til den aksepterte revisjonen. MÅLINGEN
+      FINNES IKKE i `m57-v1`: grensen bærer invariantpar, to ja-punkter
+      og ytelsesparet, ingen suitemålinger og ingen stagingidentitet.
+      Punktet er derfor ikke flippbart på evidens ennå (#166).
   syntetisk_datasett_likt_lokalt:
     status: nei
     krav_id: m57-v1
     notat: >-
-      Syntetisk søknadsbunt med fasit-rangering, drevet både lokalt (CI)
-      og på staging — samme sett målt med samme sha (m02-fordelings-
-      formen).
+      KREVER: syntetisk søknadsbunt med fasit-rangering drevet både
+      lokalt (CI) og på staging, med BEGGE datasett-identitetene i
+      artefaktet og en byte-likhet mellom dem, målt sammen med
+      fasit-resultatet (m02-fordelingsformen). MÅLINGEN FINNES IKKE i
+      `m57-v1`: hverken lokal eller staging datasett-digest er med, og
+      grensen sammenlikner dem ikke. Ikke flippbart på evidens ennå
+      (#166).
   revisjonslogg_korrekt:
     status: nei
     krav_id: m57-v1
     notat: >-
-      Blinding-avskruinger, signaturhendelser og frigivelser står i
-      revisjonsloggen; måles i akseptarcen.
+      KREVER: at blinding-avskruinger, signaturhendelser og frigivelser
+      står i revisjonsloggen, målt som hendelser med identitet — ikke som
+      en påstand om at de gjør det. MÅLINGEN FINNES IKKE i `m57-v1`:
+      grensen bærer ingen revisjonsmålinger. Merk at avskruingsdøra selv
+      står utsatt i #159 (den er i dag selvattestert), så dette punktet
+      kan ikke bevises før #159 har gitt den en varig hendelse. Ikke
+      flippbart på evidens ennå (#166).
   feilinjisering_til_unntakskø:
     status: nei
     krav_id: m57-v1
     notat: >-
-      Avbrutt parsing/evaluering gir rent feilutfall uten promotert
-      liste (SP-3) og havner i unntakskøen; måles i akseptarcen.
+      KREVER: at en avbrutt parsing/evaluering gir rent feilutfall uten
+      promotert liste (SP-3) OG at den faktisk leverte en post i
+      unntakskøen — et talt eller navngitt køelement bundet til den
+      injiserte jobben. MÅLINGEN FINNES IKKE i `m57-v1` for andre
+      halvdel: `kjoring_delvis_resultat_promotert` beviser bare at noe
+      IKKE ble promotert, og en kjøring som mister feilen helt består
+      den like godt som en som køer den. Ikke flippbart på evidens ennå
+      (#166).
   ytelse_bestatt:
     status: nei
     krav_id: m57-v1
     notat: >-
-      Måles av `ytelse_full_bunt_soknader` (>= 5000, den fulle bunten) og
+      KREVER: `ytelse_full_bunt_soknader` (>= 5000, den fulle bunten) og
       `ytelse_full_bunt_minutter` (<= 240, §4s utførelsesfrist) i
       `m57-v1` — de to SAMMEN, siden en varighet uten last er en tom
       kjøring og en full bunt uten varighet bare er en påstand om at det
-      gikk. Punktet var tidligere uten målbar grense, altså nei etter
-      §10; nå er det pinnet før bygging (§0) som resten av grensen.
-      Avvik i prøvekjøringen oppdaterer klarsignalet, aldri porten.
+      gikk. MÅLINGEN FINNES: dette er det ene punktet med en ekte,
+      pinnet grense i `m57-v1` (§0, før bygging). Statusen er `nei` fordi
+      prøvekjøringen ikke er kjørt, ikke fordi grensen mangler. Avvik i
+      prøvekjøringen oppdaterer klarsignalet, aldri porten. Merk at
+      240-minuttersfristen selv står utsatt i #165 (den er lengre enn
+      lease-taket som dekker den).
   rollback_testet:
     status: nei
     krav_id: m57-v1
     notat: >-
-      049-flippedrillen for modulens release; ddl_begge_kjoringer_gronne
-      i m57-v1 bærer SP-10-målingen.
+      KREVER: 049-flippedrillen for modulens RELEASE — at forrige
+      M-57-release kan gjenoppta arbeid etter rollback, med
+      release-digest, drenering, claim og promotering målt, slik
+      `rollback-m56-v1` gjør det. MÅLINGEN FINNES IKKE i `m57-v1`: det
+      eneste M57-feltet som kan påberopes er
+      `ddl_begge_kjoringer_gronne`, og det er SP-10/DDL-idempotens — en
+      annen ting enn en releaseflipp. Ikke flippbart på evidens ennå
+      (#166).
