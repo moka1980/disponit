@@ -22,6 +22,8 @@ def _gront_artefakt() -> dict:
         maalt[f"{navn}_brudd"] = 0
     maalt["ui_tastaturgjennomgang_dokumentert"] = True
     maalt["ddl_begge_kjoringer_gronne"] = True
+    maalt["ytelse_full_bunt_soknader"] = 5000
+    maalt["ytelse_full_bunt_minutter"] = 212.5
     return {
         "krav_id": "m57-v1",
         "ts": "2026-08-23T00:00:00+00:00",
@@ -82,6 +84,55 @@ def test_ja_punktene_krever_bokstavelig_true():
                 (navn, verdi)
 
 
+def test_ytelsespunktet_er_en_maling_ikke_et_ja_punkt():
+    """Codex P1: `staging_sjekkliste.ytelse_bestatt` pekte på `m57-v1`,
+    men grensen bar bare invariantpar og to booleans. Et skjemagyldig,
+    grønt artefakt kunne dermed krysse av for ytelse uten at noen hadde
+    kjørt en eneste søknad — og en modul som ikke er levedyktig ville
+    passert aktiveringen.
+
+    De to tallene måles SAMMEN med vilje: en varighet uten last er en tom
+    kjøring, og en full bunt uten varighet er bare en påstand om at det
+    gikk. Begge retninger felles her, og skjemaet feller fraværet
+    uavhengig — samme to-lags-form som invariantene."""
+    g = KRAVGRENSER["m57-v1"]
+    # For lite last: en prøve på 4999 er ikke den fulle bunten.
+    art = _gront_artefakt()
+    art["maalt"]["ytelse_full_bunt_soknader"] = g["ytelse_min_soknader"] - 1
+    assert any("ytelse_full_bunt_soknader" in f
+               for f in _sjekk_grenser("m57-v1", art))
+    # For lang tid: ett minutt over §4s frist er ikke bestått.
+    art = _gront_artefakt()
+    art["maalt"]["ytelse_full_bunt_minutter"] = g["ytelse_maks_minutter"] + 1
+    assert any("ytelse_full_bunt_minutter" in f
+               for f in _sjekk_grenser("m57-v1", art))
+    # En kjøring som varte 0 minutter har ikke skjedd.
+    for verdi in (0, -1):
+        art = _gront_artefakt()
+        art["maalt"]["ytelse_full_bunt_minutter"] = verdi
+        assert any("ytelse_full_bunt_minutter" in f
+                   for f in _sjekk_grenser("m57-v1", art)), verdi
+    # Og fraværet felles av BEGGE lag, som for invariantene.
+    for felt in ("ytelse_full_bunt_soknader", "ytelse_full_bunt_minutter"):
+        art = _gront_artefakt()
+        del art["maalt"][felt]
+        assert valider_artefaktformat(art, "m57-v1") != [], felt
+        assert any(felt in f for f in _sjekk_grenser("m57-v1", art)), felt
+
+
+def test_ytelsesgrensen_er_klarsignalets_tall():
+    """Grensen skal være DE SAMME tallene kontrakten håndhever, ikke to
+    tall som ligner. `antall_soknader`-taket er den fulle bunten, og
+    `bunt`-fristen er de 240 minuttene (§4). Drifter de fra hverandre,
+    er det her det sier ifra — ikke i en akseptkjøring måneder senere."""
+    import oppdragskontrakt as ok
+    g = KRAVGRENSER["m57-v1"]
+    _, tak = ok.FELTGRENSER["rekruttering.evaluering"]["antall_soknader"]
+    assert g["ytelse_min_soknader"] == tak
+    _, frister = ok.UTFORELSESFRIST_VALG["rekruttering.evaluering"]
+    assert g["ytelse_maks_minutter"] * 60 == frister["bunt"]
+
+
 def test_utelatt_invariant_felles_av_begge_lag():
     """Et artefakt uten et av parfeltene: skjemaet feller det
     (`required`), og grensesjekken feller det uavhengig — to lag, samme
@@ -113,6 +164,7 @@ def test_skjemaets_feltsett_er_generert_fra_settet():
     felter = set(skjema["properties"]["maalt"]["properties"])
     ventet = {f"{n}_{s}" for n in M57_INVARIANTER for s in ("forsok", "brudd")}
     ventet |= {"ui_tastaturgjennomgang_dokumentert",
-               "ddl_begge_kjoringer_gronne"}
+               "ddl_begge_kjoringer_gronne",
+               "ytelse_full_bunt_soknader", "ytelse_full_bunt_minutter"}
     assert felter == ventet
     assert set(skjema["properties"]["maalt"]["required"]) == ventet

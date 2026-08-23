@@ -53,9 +53,13 @@ staging_sjekkliste:
     status: nei
     krav_id: m57-v1
     notat: >-
-      240-minuttersfristen (§4) reverifiseres mot målt prøvekjøring med
-      full bunt før merge av akseptflippet — avvik oppdaterer
-      klarsignalet, aldri porten.
+      Måles av `ytelse_full_bunt_soknader` (>= 5000, den fulle bunten) og
+      `ytelse_full_bunt_minutter` (<= 240, §4s utførelsesfrist) i
+      `m57-v1` — de to SAMMEN, siden en varighet uten last er en tom
+      kjøring og en full bunt uten varighet bare er en påstand om at det
+      gikk. Punktet var tidligere uten målbar grense, altså nei etter
+      §10; nå er det pinnet før bygging (§0) som resten av grensen.
+      Avvik i prøvekjøringen oppdaterer klarsignalet, aldri porten.
   rollback_testet:
     status: nei
     krav_id: m57-v1

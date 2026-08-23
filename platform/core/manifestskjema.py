@@ -325,6 +325,23 @@ KRAVGRENSER["m57-v1"] = {
     # De to ja-punktene: bokstavelig `true`, alt annet er nei.
     "krav_ja": ("ui_tastaturgjennomgang_dokumentert",
                 "ddl_begge_kjoringer_gronne"),
+    # YTELSEN ER EN MÅLING, IKKE ET JA-PUNKT (Codex P1).
+    # `staging_sjekkliste.ytelse_bestatt` peker på `m57-v1`, men grensen
+    # bar bare invariantpar og to booleans: et skjemagyldig, grønt
+    # artefakt kunne krysse av for ytelse uten at noen hadde kjørt en
+    # eneste søknad, og en modul som ikke er levedyktig ville passert
+    # aktiveringen. «Et punkt uten definert, målbar grense regnes som
+    # nei» (§10) — så punktet får sin grense her, FØR bygging (§0), som
+    # resten av `m57-v1`.
+    #
+    # De to tallene henger sammen og må måles sammen: en varighet uten
+    # last er en tom kjøring, og en last uten varighet er en påstand om
+    # at det gikk. 5000 er den lovede fulle bunten (§4, samme tak som
+    # `antall_soknader`); 240 minutter er utførelsesfristen for `bunt`
+    # (§4, samme tall som `UTFORELSESFRIST_VALG`). Drifter de to fra
+    # hverandre, sier `test_ytelsesgrensen_er_klarsignalets_tall` ifra.
+    "ytelse_min_soknader": 5000,
+    "ytelse_maks_minutter": 240,
 }
 
 #: Settdriveren begge ledd deler — bytene som ER settet.
@@ -1288,6 +1305,27 @@ def _grenser_m57(grense: dict, art: dict) -> list[str]:
         if m.get(navn) is not True:
             feil.append(f"{navn}={m.get(navn)!r}, krever bokstavelig true"
                         " — et punkt uten målbar grense regnes som nei")
+    # Ytelsen (§4): den fulle bunten OG tiden den tok, målt sammen.
+    # Hver for seg beviser de ingenting — en rask kjøring på ti søknader
+    # er ikke 240-minuttersløftet, og en full bunt uten varighet er bare
+    # en påstand om at det gikk.
+    soknader, f_ant = _teller(m, "maalt.ytelse_full_bunt_soknader",
+                              "ytelse_full_bunt_soknader")
+    if f_ant:
+        feil.append(f_ant)
+    elif soknader < grense["ytelse_min_soknader"]:
+        feil.append(
+            f"ytelse_full_bunt_soknader={soknader}, krever >="
+            f" {grense['ytelse_min_soknader']} — ytelsespunktet er den"
+            " FULLE bunten, ikke en prøve")
+    minutter, f_tid = _positiv(m, "maalt.ytelse_full_bunt_minutter",
+                               "ytelse_full_bunt_minutter")
+    if f_tid:
+        feil.append(f_tid)
+    elif minutter > grense["ytelse_maks_minutter"]:
+        feil.append(
+            f"ytelse_full_bunt_minutter={minutter:g}, krever <="
+            f" {grense['ytelse_maks_minutter']} (§4s utførelsesfrist)")
     return feil
 
 

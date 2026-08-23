@@ -4,7 +4,7 @@
   "additionalProperties": false,
   "$id": "https://disponit.no/skjema/m57artefakt-v1.json",
   "title": "M-57 akseptartefakt (m57-v1)",
-  "comment": "M-57-klarsignalet paragraf 10. Hver invariant er et par (forsok, brudd) - null brudd uten minst ett forsok er en port som aldri kjorte. Feltsettet er generert fra manifestskjema.M57_INVARIANTER, aldri for haand; grensene staar i KRAVGRENSER.",
+  "comment": "M-57-klarsignalet paragraf 10. Hver invariant er et par (forsok, brudd) - null brudd uten minst ett forsok er en port som aldri kjorte. Feltsettet er generert fra manifestskjema.M57_INVARIANTER, aldri for haand; grensene staar i KRAVGRENSER. Ytelsespunktet (paragraf 4) er en MALING, ikke et ja-punkt: den fulle bunten og tiden den tok, malt sammen - grensene staar i KRAVGRENSER m57-v1.",
   "required": [
     "krav_id",
     "ts",
@@ -91,7 +91,9 @@
         "utsending_modellgenerert_fritekst_brudd",
         "utsending_modellgenerert_fritekst_forsok",
         "utsending_uten_signaturkjede_brudd",
-        "utsending_uten_signaturkjede_forsok"
+        "utsending_uten_signaturkjede_forsok",
+        "ytelse_full_bunt_minutter",
+        "ytelse_full_bunt_soknader"
       ],
       "properties": {
         "utsending_uten_signaturkjede_forsok": {
@@ -251,6 +253,14 @@
         },
         "ddl_begge_kjoringer_gronne": {
           "type": "boolean"
+        },
+        "ytelse_full_bunt_soknader": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ytelse_full_bunt_minutter": {
+          "type": "number",
+          "exclusiveMinimum": 0
         }
       }
     }
