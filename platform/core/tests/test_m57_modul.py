@@ -143,9 +143,18 @@ def test_port24_docx_inspiseres_som_arkivet_den_er(tmp_path):
         list(parsing.les_porsjonsvis(bombe))
     assert e.value.kode == "komprimeringsforhold"
     bombe.unlink()
-    # Path traversal og nøstet arkiv INNI docx-en måles med samme koder.
+    # Path traversal, ABSOLUTTE stier og nøstet arkiv INNI docx-en måles
+    # med samme koder. De to absolutte formene er Codex P1: medlemsnavnet
+    # ble validert som `f"{ytre}/{info.filename}"`, og da ble
+    # `/tmp/escape.xml` til `cv.docx//tmp/escape.xml` og `C:/escape.xml`
+    # til `cv.docx/C:/escape.xml` — begge passerte gaten, fordi hverken
+    # «starter med /» eller «kolon i posisjon 1» traff den SAMMENSATTE
+    # strengen. `..` overlevde prefikset og var derfor grønn hele tiden;
+    # nettopp derfor er det de absolutte som feller mutasjonen.
     for indre, kode in (
             ([("../../unnslapp.xml", b"<x/>")], "sti_utenfor_bunten"),
+            ([("/tmp/escape.xml", b"<x/>")], "sti_utenfor_bunten"),
+            ([("C:/escape.xml", b"<x/>")], "sti_utenfor_bunten"),
             ([("word/indre.zip", b"<x/>")], "nostet_arkiv")):
         arkiv = _bunt(tmp_path, [("cv.docx", _docx(indre))])
         with pytest.raises(parsing.Buntfeil) as e:

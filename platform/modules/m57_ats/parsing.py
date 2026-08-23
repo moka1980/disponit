@@ -64,12 +64,22 @@ class Medlem:
     storrelse: int
 
 
-def _sjekk_navn(navn: str) -> None:
+def _sjekk_navn(navn: str, *, kontekst: str | None = None) -> None:
+    """Måler NAVNET arkivet oppgir — aldri en sammensatt visningsstreng.
+
+    `kontekst` er detaljen i feilen (hvilken ytre fil medlemmet satt i),
+    ikke det som vurderes. Skillet er funnet (Codex P1): det indre
+    DOCX-medlemmet ble validert som `f"{ytre}/{info.filename}"`, og et
+    absolutt medlemsnavn ble da til `cv.docx//tmp/escape.xml` eller
+    `cv.docx/C:/escape.xml` — hverken «starter med /» eller «kolon i
+    posisjon 1» traff lenger, så nøyaktig den stien porten finnes for å
+    avvise, slapp gjennom gaten før utpakking.
+    """
     ren = navn.replace("\\", "/")
     if ren.startswith("/") or (len(ren) > 1 and ren[1] == ":"):
-        raise Buntfeil("sti_utenfor_bunten", navn)
+        raise Buntfeil("sti_utenfor_bunten", kontekst or navn)
     if any(del_ == ".." for del_ in ren.split("/")):
-        raise Buntfeil("sti_utenfor_bunten", navn)
+        raise Buntfeil("sti_utenfor_bunten", kontekst or navn)
 
 
 def _endelse(navn: str) -> str:
@@ -165,7 +175,7 @@ def _inspiser_docx(navn: str, data: bytes) -> int:
         raise Buntfeil("for_mange_filer", f"{navn}: {len(infos)}")
     utpakket = 0
     for info in infos:
-        _sjekk_navn(f"{navn}/{info.filename}")
+        _sjekk_navn(info.filename, kontekst=f"{navn}/{info.filename}")
         if _endelse(info.filename) in ARKIVENDELSER:
             raise Buntfeil("nostet_arkiv", f"{navn}/{info.filename}")
         if info.file_size > 0 and (
