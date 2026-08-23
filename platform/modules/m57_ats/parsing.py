@@ -208,6 +208,13 @@ def _inspiser_docx(navn: str, data: bytes, *,
         if info.filename in sett:
             raise Buntfeil("duplikat_medlem", f"{navn}/{info.filename}")
         sett.add(info.filename)
+        # Symlenkeporten fra ytre gate gjelder også her (Cursor P3). En
+        # zip bærer filtypen i `external_attr`, og uttrekket skjer i
+        # containeren: en lenke inni en docx er samme klasse som en
+        # lenke i bunten, og den ene gaten kan ikke være strengere enn
+        # den andre uten at forskjellen er et hull.
+        if (info.external_attr >> 16) & 0o170000 == 0o120000:
+            raise Buntfeil("symlenke", f"{navn}/{info.filename}")
         if _endelse(info.filename) in ARKIVENDELSER:
             raise Buntfeil("nostet_arkiv", f"{navn}/{info.filename}")
         # 25 MB-grensen gjelder MEDLEMMET, også inni en docx (Codex P1).

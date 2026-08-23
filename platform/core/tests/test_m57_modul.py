@@ -80,15 +80,19 @@ def _docx(indre: list[tuple[str, bytes]] | None = None, *,
     forskjellen."""
     medlemmer = list(indre or [("word/document.xml", b"<w:t>CV</w:t>")])
     if pakke:
-        oppgitt = {navn for navn, _ in medlemmer}
+        oppgitt = {medlem[0] for medlem in medlemmer}
         medlemmer = [(navn, b"<Types/>" if navn.endswith(".xml")
                       else b"")
                      for navn in sorted(parsing.DOCX_PAKKEMEDLEMMER
                                         - oppgitt)] + medlemmer
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for navn, innhold in medlemmer:
-            zf.writestr(navn, innhold)
+        for navn, innhold, *attr in medlemmer:
+            info = zipfile.ZipInfo(navn)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            if attr:
+                info.external_attr = attr[0]
+            zf.writestr(info, innhold)
     return buf.getvalue()
 
 
@@ -115,6 +119,20 @@ def test_port23_symlenke_avvises(tmp_path):
                               (0o120777 << 16))])
     with pytest.raises(parsing.Buntfeil) as e:
         parsing.inspiser_bunt(arkiv)
+    assert e.value.kode == "symlenke"
+    arkiv.unlink()
+    # Cursor P3: … og INNI en docx. Uttrekket skjer i containeren, så en
+    # lenke i det indre arkivet er samme klasse som en i bunten; den ene
+    # gaten kan ikke være strengere enn den andre uten at forskjellen er
+    # et hull.
+    # MUTASJONEN SOM DREPER DENNE: fjern symlenkelinjen i
+    # `_inspiser_docx`.
+    docx = _docx([("word/document.xml", b"<w:t>CV</w:t>"),
+                  ("word/lenke.xml", b"/etc/passwd", (0o120777 << 16))])
+    arkiv = _bunt(tmp_path, [("cv.docx", docx)])
+    parsing.inspiser_bunt(arkiv)       # ytre gate ser en lovlig fil
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(arkiv))
     assert e.value.kode == "symlenke"
 
 
