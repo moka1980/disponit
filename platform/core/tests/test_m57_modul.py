@@ -221,9 +221,18 @@ def test_port25_html_er_en_form_ikke_en_denyliste(tmp_path):
         arkiv.unlink()
     # Positiv kontroll: de lovlige formene går — også med BOM, innledende
     # blanke og en doctype.
+    #
+    # Codex P2: hodet må være langt nok til at formen FINNES i det. Med
+    # åtte byte inneholdt hodet ingen `<` for et dokument som begynte med
+    # en BOM og et par linjeskift, eller med litt innrykk — fullt gyldig
+    # HTML ble avvist som feil innholdstype. Hodet er fortsatt BUNDET:
+    # porten leser et hode, aldri filen.
     for innhold in (b"<p>ok</p>", b"\xef\xbb\xbf<html></html>",
                     b"\n  <!DOCTYPE html>\n<html></html>",
-                    b"<!-- kommentar --><html></html>"):
+                    b"<!-- kommentar --><html></html>",
+                    b"\xef\xbb\xbf\r\n\r\n\r\n\r\n<html></html>",
+                    b" " * 64 + b"<html></html>",
+                    b"\n" * (parsing._HODEBYTE - 16) + b"<html></html>"):
         arkiv = _bunt(tmp_path, [("cv.html", innhold)])
         assert len(list(parsing.les_porsjonsvis(arkiv))) == 1, innhold[:8]
         arkiv.unlink()

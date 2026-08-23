@@ -41,6 +41,13 @@ _MAGI = {".pdf": (b"%PDF",), ".docx": (b"PK\x03\x04",)}
 #: en denyliste som ikke kjenner dem er en denyliste med hull.
 _ARKIVMAGI = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08", b"\x1f\x8b",
               b"7z\xbc\xaf", b"Rar!", b"BZh", b"\xfd7zXZ")
+#: Hodet innholdstypeporten måler. Magien bor i de første få bytene, men
+#: HTML har ingen magi — bare en FORM, og formen tåler lovlige
+#: innledende blanktegn (Codex P2). Et hode på åtte byte inneholdt ingen
+#: `<` for et dokument som begynte med en BOM og et par linjeskift, så
+#: fullt gyldig HTML ble avvist som feil innholdstype. Grensa er
+#: BUNDET: porten leser et hode, aldri filen.
+_HODEBYTE = 512
 
 
 class Buntfeil(Exception):
@@ -193,7 +200,7 @@ def les_porsjonsvis(sti: str | Path, *, porsjon: int = 200):
             lest = 0
             try:
                 with zf.open(medlem.navn) as f:
-                    hode = f.read(8)
+                    hode = f.read(_HODEBYTE)
                     endelse = _endelse(medlem.navn)
                     for magi in _MAGI.get(endelse, ()):
                         if not hode.startswith(magi):
@@ -208,7 +215,10 @@ def les_porsjonsvis(sti: str | Path, *, porsjon: int = 200):
                         # ikke i den, tross kommentaren som lovet det, så
                         # en PDF omdøpt til `cv.html` gikk rett gjennom
                         # (Codex P2). En positiv form fanger hele klassen
-                        # i stedet for de signaturene noen kom på.
+                        # i stedet for de signaturene noen kom på — og
+                        # hodet må være langt nok til at formen finnes i
+                        # det: åtte byte rommet ikke en BOM og et par
+                        # linjeskift før merket.
                         if not _ser_ut_som_html(hode):
                             raise Buntfeil("feil_innholdstype",
                                            medlem.navn)
