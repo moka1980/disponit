@@ -227,6 +227,13 @@ function tegn(hoved, ctx, data, okt, valgtId) {
           // på-veien får husets, via locale.
           await settRekrutteringBlinding(prosess.prosess_id, false,
             t("ui.rekruttering.blinding_pa_begrunnelse"));
+          // MODELLEN, IKKE BARE BRYTEREN (Codex P1). `prosess` er objektet
+          // i det hentede svaret, og det svaret er alt en ny tegning har å
+          // gå på: sto `blinding_av` igjen slik serveren svarte FØR
+          // mutasjonen, kunne et prosessbytte og tilbake vise en bryter som
+          // påstår PÅ mens serveren har AV. Det er feil revisjonsbilde rett
+          // før en evaluering, og bryteren skal aldri lyve om §6-valget.
+          prosess.blinding_av = false;
           bryter.checked = true;
           sett(utfall, t("ui.rekruttering.blinding_pa_utfall"));
         } catch (e) {
@@ -271,6 +278,7 @@ function tegn(hoved, ctx, data, okt, valgtId) {
         try {
           await settRekrutteringBlinding(prosess.prosess_id, true,
             begrunnelse.value.trim());
+          prosess.blinding_av = true;      // se PÅ-veien over
           bryter.checked = false;
           sett(utfall, t("ui.rekruttering.blinding_av_utfall"));
         } catch (e) {

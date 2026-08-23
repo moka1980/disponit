@@ -430,6 +430,68 @@ test("Rekruttering: signeringsnøkkel og «signert» overlever prosessbytte", as
     "listen ble sendt en gang til etter prosessbytte");
 });
 
+test("Rekruttering: blindingsvalget overlever prosessbytte", async () => {
+  // Codex P1 / Cursor P2: en vellykket mutasjon oppdaterte bare bryteren.
+  // `prosess.blinding_av` i det hentede svaret sto igjen slik serveren
+  // svarte FØR mutasjonen, og en ny tegning har bare det svaret å gå på —
+  // så et prosessbytte og tilbake viste en bryter som påsto PÅ mens
+  // serveren hadde AV. Feil revisjonsbilde rett før en evaluering.
+  //
+  // MUTASJONEN SOM DREPER DENNE: fjern `prosess.blinding_av = …`.
+  const to = prosess();
+  to.prosesser.push({
+    prosess_id: "p-2", navn: "Sykepleier vest", blinding_av: false,
+    vekter: { drift: 1 },
+    kandidater: [{ kandidat_id: "K-9", oppfylt: { drift: true },
+      status: "anbefalt", funn: [], intervjusporsmal: [] }],
+    lister: [],
+  });
+  KALL = [];
+  SVAR = (sti, opts) => (opts.method === "POST" ? { ok: true } : to);
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")));
+  const bytt = (id) => {
+    const velger = hoved.querySelector("#rekrut-prosessvelger");
+    velger.value = id;
+    velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  };
+
+  // Skru AV blindingen på p-1 …
+  const bryter = hoved.querySelector("#rekrut-blinding");
+  bryter.checked = false;
+  bryter.dispatchEvent(new window.Event("change", { bubbles: true }));
+  const dialog = document.querySelector('[role="alertdialog"]');
+  dialog.querySelector("textarea").value = "intern rekruttering";
+  [...dialog.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.blinding_av_bekreft"))
+    .click();
+  assert.ok(await vent(() => !hoved.querySelector("#rekrut-blinding").checked),
+    "avskruingen slo aldri igjennom");
+
+  // … og gå innom p-2 og tilbake: valget står, uten en ny runde på nettet.
+  bytt("p-2");
+  assert.equal(hoved.querySelector("#rekrut-blinding").checked, true,
+    "p-2 arvet p-1s blindingsvalg");
+  KALL = [];
+  bytt("p-1");
+  assert.equal(hoved.querySelector("#rekrut-blinding").checked, false,
+    "bryteren påsto PÅ mens serveren har AV");
+  assert.ok(!KALL.some((k) => k.metode === "POST"),
+    "prosessbyttet sendte en mutasjon");
+
+  // Samme vei tilbake: gjen-påslaget skal også feste seg i modellen.
+  const bryter2 = hoved.querySelector("#rekrut-blinding");
+  bryter2.checked = true;
+  bryter2.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.ok(await vent(() => hoved.querySelector("#rekrut-blinding").checked),
+    "gjen-påslaget slo aldri igjennom");
+  bytt("p-2");
+  bytt("p-1");
+  assert.equal(hoved.querySelector("#rekrut-blinding").checked, true,
+    "gjen-påslaget forsvant i tegningen");
+});
+
 test("Rekruttering: in-flight-lås — ingen andre mutasjon mens den første henger", async () => {
   // Cursor P2: dialogen lukkes ved bekreftelse og knappene sto åpne, så
   // et nytt klikk mens forrige POST hang ga to samtidige kall på en
