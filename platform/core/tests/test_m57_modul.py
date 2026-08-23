@@ -1910,6 +1910,34 @@ def test_feltuttrekket_tilskrives_ikke_modellen(tmp_path):
     assert e.value.fremdrift["filer_lest"] == 1
 
 
+def test_feltuttrekk_som_gir_ikkekart_tilskrives_ikke_modellen(tmp_path):
+    """Codex P2: vakten fanget bare REISTE unntak, ikke tomme returer.
+
+    En uttrekker kan melde en vranglest søknadsform ved å GI TILBAKE
+    ingenting i stedet for å reise. `_felter` slapp da verdien gjennom, og
+    først nede i `_flett_felter` røk `dict(nye)` på en `None` — det
+    unntaket har ingen vakt over seg og falt til catch-allen, altså ut med
+    `modellfeil` for et uttrekk modellen aldri var i nærheten av. Samme
+    feilattribusjon som forrige runde lukket, bare via den andre døren.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `isinstance(felter, dict)`-porten i
+    `_felter` — da blir koden `modellfeil` igjen.
+    """
+    from modules.m57_ats import kjoring
+
+    arkiv = _bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>")])
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
+                          kandidatfelter_for=lambda m: None,
+                          tekst_for=lambda m, d: d.decode("utf-8"),
+                          biasmaalinger=_MAALINGER)
+    assert e.value.kode == "feltuttrekk_feilet", (
+        "en uttrekker som gir tilbake noe annet enn et kart, feilet")
+    # Stoppen er FØR modellen — den ble aldri spurt.
+    assert modell.sett == []
+
+
 def test_bunt_uten_kandidater_er_kodet_feil_ikke_tomt_resultat(tmp_path):
     """Codex P2: en bunt uten medlemmer ble et VELLYKKET tomt utfall.
 
