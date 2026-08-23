@@ -4,53 +4,41 @@ id: m02_revisjonslogg
 navn: Revisjonslogg (M-2)
 versjon: 0.1.0
 status: aktiv                  # aktiv | inaktiv | under_utvikling
-# FLIPPET ER TATT TILBAKE (Codex P1 på #89, runde 2). M-2 ble satt `aktiv`
-# i akseptrunden med begrunnelsen «alle punkter ja, artefaktene bundet».
-# Det gjaldt tre av seks punkter. De tre første under står `nei` nå, og da
-# er sjekklisten ikke 100 % grønn — RUTINER.md pkt. 6 er kategorisk: «en
-# modul settes ikke til `aktiv` i registeret før alle sjekklistepunkter er
-# ja.»
+# FLIPPET ER TATT 2026-08-23, etter komplett binding. Alle seks
+# sjekklistepunkter under står `ja` med krav_id + innsjekket, sha256-bundet
+# artefakt + strukturerte `bevismaalinger` (bundet 2026-08-22), og
+# aksepthendelsen er skrevet i basen: `plattformmodulaksept`,
+# innholdsadressert mot commit 2aaca01 med manifest-sha b69aec8f…, grensen
+# `m02-aksept-v1`. Statusen her er katalogens avlesning av den raden, ikke
+# en mening om modulen.
 #
-# Grunnen flippet ble satt i det hele tatt, forsvant samtidig: m02 ble
-# aktivert fordi wcag_audit skulle bli `aktiv` og registeret krever at en
-# aktiv moduls avhengigheter selv er aktive. wcag_audits flipp er tatt
-# tilbake, så den avhengigheten finnes ikke lenger.
+# `driftstilstand` UNDER ER IKKE EN SELVSTENDIG PÅSTAND, og de to feltene
+# flyttes derfor SAMMEN: `registry.valider` gjør driftsaksen betinget —
+# `driftstilstand` ulik `ikke_i_drift` med `status` ulik `aktiv` gir «drift
+# krever aktiv», og CI (ci.yml, «register ok») avviser hele registeret på
+# det. Invarianten er pinnet i
+# `test_drift_uten_aktiv_status_er_en_registerfeil` og finnes nettopp for
+# tilstanden «kjører uten å ha bestått sin egen sjekkliste». Samme doktrine
+# står i m56_wcag_audit/manifest.yaml.
 #
-# Dette er IKKE en påstand om at loggen ikke virker: de tre bundne
-# punktene under er ekte, maskinelt verifiserte målinger, og koden
-# EKSEKVERER på staging. Det som mangler er bindingen for de tre andre —
-# se blokken over `staging_sjekkliste`.
+# HISTORIKK, så ingen leser «retter» flippet tilbake: M-2 ble satt `aktiv`
+# på #89 med begrunnelsen «alle punkter ja, artefaktene bundet» da det
+# gjaldt tre av seks, og flippet ble rullet tilbake i runde 2 (Codex P1).
+# Den grunnen finnes ikke lenger — de tre andre punktene fikk sine
+# artefakter og `bevismaalinger` 2026-08-22 (#147). Rekkefølgen denne
+# gangen er motsatt av #89: bindingen først, aksepthendelsen så, flippet
+# sist.
 #
-# OG DERFOR ER `driftstilstand` UNDER IKKE EN SELVSTENDIG PÅSTAND (Codex
-# P2, runde 3, som leste den forrige formuleringen «har vært i drift på
-# staging siden m01-kjeden» rett over `ikke_i_drift` — den motsigelsen
-# var reell og er skrevet om her). To ting som lett forveksles:
+# SAMTIDIGHETEN MED m56 ER REGISTERETS EGEN REGEL, ikke en snarvei: en
+# `aktiv` modul kan ikke avhenge av en som ikke er aktiv, og
+# `m56_wcag_audit` har m02 som avhengighet. Derfor står begge flippene i
+# samme commit.
 #
-#   * KODEN kjører. `kjerne` ligger i policy_validator/, altså inne i
-#     m01s tjeneste, og m01 er `aktiv` + `staging`. Hver hendelse m01
-#     avgjør skrives gjennom denne loggen — de 180 hendelsene i m01s egen
-#     evidens ER denne modulen i arbeid.
-#   * M-2 har likevel ingen EGEN utrulling å oppgi på registerets akse.
-#     `registry.valider` gjør aksen betinget: `driftstilstand` ulik
-#     `ikke_i_drift` med `status` ulik `aktiv` gir «drift krever aktiv»,
-#     og CI (ci.yml, «register ok») avviser hele registeret på det. Det
-#     er ikke en glipp — invarianten er pinnet i
-#     `test_drift_uten_aktiv_status_er_en_registerfeil`, og den finnes
-#     nettopp for tilstanden «kjører uten å ha bestått sin egen
-#     sjekkliste». Samme doktrine står i m56_wcag_audit/manifest.yaml: de to
-#     feltene flyttes SAMMEN, når porten faktisk er bestått.
-#
-# Feltet står derfor på `ikke_i_drift`, som er den verdien m02 hadde fra
-# #15 til akseptrunden på #89 — samme kode, samme eksekvering, samme
-# ubundne punkter. Aksept-nedgraderingen tar med seg driftsfeltet fordi
-# registeret KREVER det, ikke fordi noen påstår at loggen står stille.
-#
-# TIL @moka1980, om dette skal være annerledes: da er det invarianten som
-# må flytte seg, ikke dette manifestet. Å gjøre `driftstilstand` rent
-# beskrivende — «hvor står koden», uavhengig av aksept — er en endring i
-# `registry.valider` + RUTINER.md, med den prisen at registeret slutter å
-# fange «kjører uten aksept». Det er en rutinebeslutning, ikke et
-# manifestfelt.
+# ÅPENT MOT EIER (utsatt fra #152 etter K1, ikke lukket her): aksepten er
+# innholdsadressert mot bytene på 2aaca01, og flippet endrer nettopp de
+# bytene. m56 har et speil for dette — bare `staging_sjekkliste` får avvike
+# mellom drill og aksept — mens m02 mangler en tilsvarende «eneste tillatte
+# delta etter aksept»-port. Den porten er ny maskin og hører til egen PR.
 driftstilstand: produksjon     # ikke_i_drift | staging | produksjon
 avhengigheter: []              # loggen er lagringslaget — den avhenger av ingen
 kjerne: platform/core/policy_validator/audit.py
@@ -66,11 +54,12 @@ i18n_prefiks: m02
 # Uten den presiseringen ville deling vært et smutthull: «samme artefakt»
 # uten «samme måling» er å låne en konklusjon.
 #
-# ... OG NØYAKTIG DET GJALDT DE TRE FØRSTE PUNKTENE (Codex P1, runde 2).
-# Blokken over beskriver bindingen som om den var gjennomført for alle
-# seks. Den var gjennomført for tre: `feilinjisering_til_unntakskø`,
-# `ytelse_bestatt` og `rollback_testet` har krav_id + artefakt +
-# artefakt_sha256 + bevismaalinger. De tre første hadde ren fritekst.
+# HISTORIKK, LUKKET 2026-08-22 (#147) — OG NØYAKTIG DET GJALDT DE TRE
+# FØRSTE PUNKTENE (Codex P1, runde 2). Blokken over beskrev den gang
+# bindingen som om den var gjennomført for alle seks. Den var gjennomført
+# for tre: `feilinjisering_til_unntakskø`, `ytelse_bestatt` og
+# `rollback_testet` hadde krav_id + artefakt + artefakt_sha256 +
+# bevismaalinger. De tre første hadde ren fritekst.
 #
 # To av dem sa i sitt eget notat at de var m01-kjøringer — «Samme suite som
 # m01», «Den samme kjøringen på 180 hendelser». Det er delt evidens, og
@@ -87,13 +76,12 @@ i18n_prefiks: m02
 # port.»
 #
 # MÅLINGENE ER BEVART. Notatene under er ikke slettet — de sier hva
-# kjøringene faktisk viste, slik at den som binder evidensen slipper å måle
-# på nytt. Veien til `ja` er den samme for alle tre: pek på et artefakt i
-# deploy/staging/artefakter/ med et krav_id som har grenser i KRAVGRENSER,
-# og navngi målingen som beviser punktet FOR M-2. Ingen av de fem
-# artefaktene som ligger der i dag dekker «suiten er grønn» eller
-# «fordelingen er lik» — de målingene finnes bare i kjøringslogger utenfor
-# repoet, og et artefakt dikter jeg ikke opp.
+# kjøringene faktisk viste. Veien til `ja` var den samme for alle tre: pek
+# på et artefakt i deploy/staging/artefakter/ med et krav_id som har
+# grenser i KRAVGRENSER, og navngi målingen som beviser punktet FOR M-2.
+# Den veien er gått: alle tre har nå sitt eget artefakt (`m02-suite-v1`,
+# `m02-fordeling-v1`, `wcag-kontroll-v2`), og hvert notat under bærer både
+# bindingen og tilstanden før den, som historikk.
 #
 # ÅPENT SPØRSMÅL TIL EIER: m01 har de samme tre punktene `ja` med ren
 # fritekst, og m01 er `aktiv`. Forskjellen jeg har lagt til grunn er at m01
