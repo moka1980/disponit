@@ -576,6 +576,7 @@ def test_fodselsporten_gjelder_ogsa_claimeren(migrator):
     avbrutt, _ = _grunnlag(migrator, oppdragstype="rekruttering.evaluering",
                            status="kansellert")
     lovlig, _ = _evaluering(migrator)
+    bakover, _ = _evaluering(migrator)
     for oid, lukket in ((feil_type, None), (feil_eier, None),
                         (avbrutt, None), (lovlig, "now()")):
         _sett_kontekst(migrator, TENANT)
@@ -587,14 +588,35 @@ def test_fodselsporten_gjelder_ogsa_claimeren(migrator):
                 f" VALUES (%s,%s,%s,90,{lukket or 'NULL'})",
                 (TENANT, uuid.uuid4(), oid))
         migrator.rollback()
+    # `opprettet` er den ANDRE enden av fristen (Cursor P2): reaperens
+    # maks-levetid-arm regner fra `coalesce(lukket_ts, opprettet)`, og
+    # kolonnen er immutabel etterpå. En fødsel frem i tid ville skjøvet
+    # utløpet for en forlatt prosess stille — samme forlengelse som port
+    # 20 nekter, bare gjennom den andre kolonnen.
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        migrator.execute(
+            "INSERT INTO rekrutteringsprosess (tenant, prosess_id,"
+            " oppdrag_id, slettefrist_dogn, opprettet)"
+            " VALUES (%s,%s,%s,90, now() + interval '30 days')",
+            (TENANT, uuid.uuid4(), lovlig))
+    migrator.rollback()
     # Positiv kontroll: den lovlige, ÅPNE fødselen går — ellers ville en
-    # vakt som avviser alle INSERT sett like grønn ut her.
+    # vakt som avviser alle INSERT sett like grønn ut her. Bakover i tid
+    # er også lovlig: det KORTER levetiden (og er formen den forlatte
+    # prosessens reap-test bygger på).
     _sett_kontekst(migrator, TENANT)
     migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
     migrator.execute(
         "INSERT INTO rekrutteringsprosess (tenant, prosess_id,"
         " oppdrag_id, slettefrist_dogn) VALUES (%s,%s,%s,90)",
         (TENANT, uuid.uuid4(), lovlig))
+    migrator.execute(
+        "INSERT INTO rekrutteringsprosess (tenant, prosess_id,"
+        " oppdrag_id, slettefrist_dogn, opprettet)"
+        " VALUES (%s,%s,%s,90, now() - interval '30 days')",
+        (TENANT, uuid.uuid4(), bakover))
     migrator.rollback()
 
 

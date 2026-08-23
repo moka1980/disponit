@@ -74,6 +74,18 @@ BEGIN
                 ' lukking og reap-merke er egne, målte overganger'
                 USING ERRCODE = 'insufficient_privilege';
         END IF;
+        -- `opprettet` er den ANDRE enden av fristen (Cursor P2): reaperens
+        -- maks-levetid-arm regner fra `coalesce(lukket_ts, opprettet)`, og
+        -- kolonnen er immutabel etter fødselen. En fødsel med `opprettet`
+        -- frem i tid ville derfor skjøvet utløpet for en forlatt prosess
+        -- stille — nøyaktig den forlengelsen port 20 finnes for å nekte,
+        -- bare gjennom den andre kolonnen. Bakover er lovlig: det KORTER
+        -- levetiden, og det er retningen §5 tillater.
+        IF NEW.opprettet > pg_catalog.now() THEN
+            RAISE EXCEPTION 'rekrutteringsprosess: opprettet kan ikke stå'
+                ' frem i tid — det ville forlenget maks levetid'
+                USING ERRCODE = 'insufficient_privilege';
+        END IF;
         IF NOT EXISTS (
             SELECT 1 FROM public.oppdrag o
              WHERE o.tenant = NEW.tenant AND o.id = NEW.oppdrag_id
