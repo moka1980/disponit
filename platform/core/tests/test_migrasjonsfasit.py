@@ -25,20 +25,69 @@ FASIT = json.loads((ROT / "db/migrasjons-fasit.json").read_text(
 KATALOG = ROT / "db/migrations"
 
 
-def test_kjorte_migrasjoner_er_byte_identiske_med_fasiten():
+HENDELSEN_056 = "056_m57_utsending.sql"
+
+
+def _bytefeil(les):
+    """Selve målingen, med fil-leseren som parameter.
+
+    Grunnen til at den er utløst: negativtesten under må kunne spille av
+    23/8-hendelsen gjennom NØYAKTIG denne løkken uten å skrive til treet.
+    En negativtest som gjenskaper sammenligningen sin egen vei beviser at
+    kopien virker, ikke at porten gjør det.
+    """
     avvik = []
     for navn, ventet in FASIT.items():
         fil = KATALOG / navn
         if not fil.exists():
             avvik.append(f"{navn}: pinnet i fasiten, men borte fra treet")
             continue
-        faktisk = hashlib.sha256(fil.read_bytes()).hexdigest()
+        faktisk = hashlib.sha256(les(fil)).hexdigest()
         if faktisk != ventet:
             avvik.append(
                 f"{navn}: {faktisk[:12]}… ≠ fasit {ventet[:12]}… — "
                 "kjørt historikk er immutable; senere vedtak dokumenteres"
                 " i issuer/nye filer, aldri her")
-    assert not avvik, "\n".join(avvik)
+    return avvik
+
+
+def test_kjorte_migrasjoner_er_byte_identiske_med_fasiten():
+    assert not _bytefeil(Path.read_bytes), \
+        "\n".join(_bytefeil(Path.read_bytes))
+
+
+def test_kommentarlinje_etter_prod_felles_i_fasitporten():
+    """Negativtesten: hendelsen porten ble laget for, spilt av.
+
+    23/8 ble en REN KOMMENTAR lagt inn i 056 etter at den var kjørt i
+    prod. Positivtesten over er grønn i dag uansett om porten måler noe
+    som helst — det er først når mutasjonen gjør den rød at porten er
+    bevist. Hendelsen spilles derfor av i minnet: 056 leses med den
+    tilføyde kommentaren, resten av treet urørt.
+
+    MUTASJONEN SOM DREPER DENNE: svekk `_bytefeil` — fjern
+    sammenligningen, sammenlign noe annet enn bytene (tekst med
+    normaliserte linjeskift, lengde, mtime), eller la 056-pinnen falle ut
+    av fasiten. Da finner mutasjonen ingen avvik, og denne blir rød.
+    """
+    kommentaren = (b"\n-- AVGJORT (eier, 2026-08-23 i #153): pseudonymnokkel."
+                   b"\n")
+
+    def med_kommentaren(fil):
+        byte = fil.read_bytes()
+        return byte + kommentaren if fil.name == HENDELSEN_056 else byte
+
+    avvik = _bytefeil(med_kommentaren)
+
+    assert len(avvik) == 1, (
+        "hendelsen skal treffe 056 og BARE 056 — porten fant "
+        f"{len(avvik)} avvik: {avvik}")
+    assert avvik[0].startswith(HENDELSEN_056), avvik[0]
+    assert "immutable" in avvik[0], avvik[0]
+
+    # …og treet slik det faktisk står er fortsatt grønt: mutasjonen levde
+    # i minnet, den skrev ikke til disk.
+    assert not _bytefeil(Path.read_bytes)
 
 
 def test_fasiten_dekker_alle_migrasjonene_i_treet():
