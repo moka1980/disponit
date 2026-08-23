@@ -90,8 +90,14 @@ def inspiser_bunt(sti: str | Path) -> list[Medlem]:
                 raise Buntfeil("ukjent_innholdstype", info.filename)
             if info.file_size > MAKS_ENKELTFIL:
                 raise Buntfeil("enkeltfil_for_stor", info.filename)
-            if info.compress_size and (
-                    info.file_size / info.compress_size
+            # `compress_size = 0` på en fil som PÅSTÅR innhold er ikke en
+            # fil som ikke er komprimert — det er et uendelig forhold, og
+            # den gamle sannhetstesten hoppet over hele sjekken for
+            # nettopp den verdien (Cursor P2). En ondsinnet sentralkatalog
+            # kunne dermed deklarere stor `file_size` og null komprimert.
+            if info.file_size > 0 and (
+                    info.compress_size <= 0
+                    or info.file_size / info.compress_size
                     > MAKS_KOMPRIMERINGSFORHOLD):
                 raise Buntfeil("komprimeringsforhold", info.filename)
             total += info.file_size

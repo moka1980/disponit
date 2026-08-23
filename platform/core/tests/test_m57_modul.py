@@ -133,6 +133,23 @@ def test_port21_komprimeringsforhold(tmp_path):
     assert e.value.kode == "komprimeringsforhold"
 
 
+def test_port21_null_komprimert_er_ikke_fritak(tmp_path):
+    """Cursor P2: `if info.compress_size and ...` hoppet over hele
+    forholdssjekken når katalogen påsto null komprimert størrelse. En
+    deklarert stor fil med `compress_size = 0` er ikke ukomprimert — det
+    er et uendelig forhold, og den formen slapp forbi taket."""
+    arkiv = _bunt(tmp_path, [("cv.pdf", _pdf())])
+    _patch_deklarert(arkiv, b"cv.pdf", 24 * 1024 * 1024, komprimert=0)
+    with pytest.raises(parsing.Buntfeil) as e:
+        parsing.inspiser_bunt(arkiv)
+    assert e.value.kode == "komprimeringsforhold"
+    arkiv.unlink()
+    # Positiv kontroll: en TOM fil er lovlig — null ut av null er ikke
+    # en bombe, og porten skal ikke felle den.
+    tom = _bunt(tmp_path, [("tom.html", b"")])
+    assert [m.navn for m in parsing.inspiser_bunt(tom)] == ["tom.html"]
+
+
 def test_port21_totalgrensen_leses_fra_katalogen(tmp_path):
     """91 filer deklarert til 24 MB hver (under både enkeltfil- og
     forholdstaket, kompresjonsfeltet patchet konsistent) summerer forbi
