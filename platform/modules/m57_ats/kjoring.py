@@ -112,8 +112,16 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
     # kandidat, så resultatet bærer allerede hele buntens tekst. Selve
     # STRØMMINGEN er uendret: arkivgatens grenser måles fortsatt per
     # medlem under lesing, aldri på en utpakket bunt.
-    biter: dict[str, list[tuple[str, str]]] = {}
-    felter: dict[str, dict] = {}
+    #
+    # Biten er (medlemsnavn, tekst, felter): FELTENE FØLGER MEDLEMMET SITT
+    # HELE VEIEN (Codex P2). Teksten ble sortert på medlemsnavn her nede,
+    # men feltene ble flettet i lesesløyfa — altså i zip-rekkefølge. Bidro
+    # to filer for samme kandidat ulike verdier til samme maskerte felt,
+    # ga en ombyttet arkivrekkefølge en annen listerekkefølge, og
+    # `blinding.blind` nummererte tokenene ulikt: samme dokumenter, ulik
+    # `kildetekst`, ulik artefakt. Determinismen C2 innførte for teksten
+    # gjelder feltene like fullt.
+    biter: dict[str, list[tuple[str, str, object]]] = {}
     lest = 0
     try:
         for merke, medlem, data in parsing.les_porsjonsvis(sti):
@@ -132,14 +140,18 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
             navn = medlem.navn.replace("\\", "/")
             kandidat_id = navn.split("/")[0]
             biter.setdefault(kandidat_id, []).append(
-                (navn, _tekst(tekst_for, medlem, data, fremdrift)))
-            _flett_felter(felter.setdefault(kandidat_id, {}),
-                          kandidatfelter_for(medlem))
+                (navn, _tekst(tekst_for, medlem, data, fremdrift),
+                 kandidatfelter_for(medlem)))
         for kandidat_id in sorted(biter):
-            # Sortert på medlemsnavn: samme bunt gir samme tekst, uansett
-            # hvilken rekkefølge arkivet leverte medlemmene i.
-            tekst = "\n\n".join(
-                tekst for _, tekst in sorted(biter[kandidat_id]))
+            # Sortert på medlemsnavn: samme bunt gir samme tekst OG samme
+            # feltrekkefølge, uansett hvilken rekkefølge arkivet leverte
+            # medlemmene i. Nøkkelen er navnet alene — to biter kan ellers
+            # bli sammenlignet på feltdikten, som ikke har noen orden.
+            medlemmer = sorted(biter[kandidat_id], key=lambda bit: bit[0])
+            tekst = "\n\n".join(tekst for _, tekst, _ in medlemmer)
+            kandidatfelter: dict = {}
+            for _, _, nye in medlemmer:
+                _flett_felter(kandidatfelter, nye)
             # EN TOM SØKNAD ER IKKE EN DÅRLIG SØKNAD (Codex P1). Porten
             # over måler bare at uttrekket ER en `str`, og en skannet pdf
             # uten OCR, en docx uten lesbare avsnitt og en html som bare
@@ -152,7 +164,7 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
             if not tekst.strip():
                 raise Kjoringsfeil("tekstuttrekk_feilet", fremdrift)
             resultat = evaluering.evaluer_kandidat(
-                modell, tekst, felter[kandidat_id], vekter,
+                modell, tekst, kandidatfelter, vekter,
                 biasmaalinger=biasmaalinger,
                 blinding_av=blinding_av, auditrad=auditrad)
             artefakter[kandidat_id] = resultat

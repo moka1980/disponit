@@ -1690,6 +1690,51 @@ def test_tomt_tekstuttrekk_er_kodet_feil_ikke_en_tom_vurdering(tmp_path):
     assert set(ut["artefakter"]) == {"k1"}
 
 
+def test_feltene_flettes_i_medlemsrekkefolge_ikke_zip_rekkefolge(tmp_path):
+    """Codex P2: teksten var determinisert, feltene var det ikke.
+
+    C2 sorterte tekstbitene på medlemsnavn nettopp for at samme bunt skal
+    gi samme resultat uansett hvordan arkivet ble pakket. Feltene ble
+    likevel flettet i lesesløyfa — altså i ZIP-rekkefølge. Bidro to filer
+    for samme kandidat ulike verdier til samme maskerte felt, ga en
+    ombyttet arkivrekkefølge en annen listerekkefølge, og `blinding.blind`
+    nummererer tokenene etter listeposisjon: `[NAVN-1]`/`[NAVN-2]` byttet
+    plass, `kildetekst` ble en annen streng, og artefakten avhang igjen av
+    medlemsrekkefølgen.
+
+    MUTASJONEN SOM DREPER DENNE: flytt `_flett_felter` tilbake inn i
+    lesesløyfa.
+    """
+    from modules.m57_ats import kjoring
+
+    def felter(medlem):
+        return ({"navn": ["Kari"]} if medlem.navn.endswith("cv.html")
+                else {"navn": ["Ola"]})
+
+    def kjor(katalog, filer):
+        katalog.mkdir()
+        return kjoring.kjor_bunt(
+            _bunt(katalog, filer), _Modell(), vekter={"drift": 3},
+            kandidatfelter_for=felter,
+            tekst_for=lambda m, d: d.decode("utf-8"),
+            biasmaalinger=_MAALINGER)
+
+    a = ("k1/a_cv.html", b"<p>Kari kan drift</p>")
+    b = ("k1/b_soknad.html", b"<p>Ola anbefaler Kari</p>")
+    forst = kjor(tmp_path / "forst", [a, b])
+    omvendt = kjor(tmp_path / "omvendt", [b, a])
+
+    # Samme dokumenter, motsatt arkivrekkefølge — samme tokentildeling …
+    assert forst["artefakter"]["k1"]["avmaskering"] == {
+        "[NAVN-1]": "Kari", "[NAVN-2]": "Ola"}
+    assert (omvendt["artefakter"]["k1"]["avmaskering"]
+            == forst["artefakter"]["k1"]["avmaskering"])
+    # … og dermed nøyaktig samme kildetekst, som er strengen funnenes
+    # [start:slutt] indekserer.
+    assert (omvendt["artefakter"]["k1"]["kildetekst"]
+            == forst["artefakter"]["k1"]["kildetekst"])
+
+
 def test_fremdriften_teller_hvert_medlem_ikke_bare_sjekkpunktene(tmp_path):
     """Codex P2: evidensen løy om hvor langt kjøringen kom.
 
