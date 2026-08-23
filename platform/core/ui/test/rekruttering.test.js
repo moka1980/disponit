@@ -169,6 +169,62 @@ test("Rekruttering: avskruing av blinding krever alertdialog med begrunnelse", a
     .textContent.length > 0), "utfallet nådde aldri alert-området");
 });
 
+test("Rekruttering: gjen-påslag av blinding er en mutasjon, og uten scope er bryteren død", async () => {
+  // CodeRabbit (major, første pre-commit-pass): PÅ-igjen endret bare
+  // UI-tilstand — serveren fikk aldri vite det. Nå følger bryteren
+  // UTFALLET av kallet, begge veier.
+  const hoved = await tegnet();
+  const bryter = hoved.querySelector("#rekrut-blinding");
+  bryter.checked = false;
+  bryter.dispatchEvent(new window.Event("change", { bubbles: true }));
+  const dialog = document.querySelector('[role="alertdialog"]');
+  dialog.querySelector("textarea").value = "test";
+  SVAR["/v1/rekruttering/prosesser/p-1/blinding"] = { ok: true };
+  [...dialog.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.blinding_av_bekreft"))
+    .click();
+  await vent(() => !bryter.checked);
+  assert.equal(bryter.checked, false);
+  KALL = [];
+  // PÅ igjen → POST med av:false; bryteren PÅ først når svaret er der.
+  bryter.checked = true;
+  bryter.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.ok(await vent(() => KALL.some((k) =>
+    k.sti.endsWith("/blinding") && k.kropp.av === false)),
+    "gjen-påslaget nådde aldri serveren");
+  assert.ok(await vent(() => bryter.checked));
+  // …og feiler kallet, står bryteren AV (utfallet, ikke klikket).
+  bryter.checked = false;
+  bryter.dispatchEvent(new window.Event("change", { bubbles: true }));
+  const d2 = document.querySelector('[role="alertdialog"]');
+  d2.querySelector("textarea").value = "test";
+  [...d2.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.blinding_av_bekreft"))
+    .click();
+  await vent(() => !bryter.checked);
+  SVAR = (sti, opts) => (opts.method === "POST" ? 403
+    : { prosesser: [] });
+  bryter.checked = true;
+  bryter.dispatchEvent(new window.Event("change", { bubbles: true }));
+  await vent(() => hoved.querySelector('[role="alert"]')
+    .textContent === t("ui.rekruttering.feil_utfall"));
+  assert.equal(bryter.checked, false, "bryteren fulgte klikket, ikke utfallet");
+});
+
+test("Rekruttering: uten mutasjonsscope er blindingsbryteren deaktivert", async () => {
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": prosess() };
+  const hoved = nyHoved();
+  visRekruttering(hoved, { sprak: "nb", scopes: ["decisions:read"],
+    tenant: "acme", paaUautorisert: () => {} });
+  await vent(() => hoved.querySelector("table"));
+  assert.ok(hoved.querySelector("#rekrut-blinding").disabled,
+    "bryteren tilbys en rolle som bare kan få 403");
+  const signer = [...hoved.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.signer_knapp"));
+  assert.ok(signer.disabled, "signeringen var alt gatet — den skal stå");
+});
+
 test("Rekruttering: signaturdialogen sier antall, type, hashkortform — og «Kan ikke angres» (port 31)", async () => {
   const hoved = await tegnet();
   const knapp = [...hoved.querySelectorAll("button")]

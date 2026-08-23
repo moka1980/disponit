@@ -1,9 +1,12 @@
 # M-57 Rekruttering — manuell tastaturgjennomgang (klarsignalet §8)
 
-Gjennomført i flaten `#/rekruttering` (jsdom-portene i
-`rekruttering.test.js` binder hvert punkt; dette dokumentet er den
-menneskelige gjennomgangen porten `ui.tastaturgjennomgang_dokumentert`
-krever).
+Gjennomført i flaten `#/rekruttering`. Punktene 2, 5 og 6 er i
+tillegg PORTET i `rekruttering.test.js` (vektendring uten mus med
+kunngjøring, blindingsdialogen, signaturdialogen); punktene 1, 3 og 4
+(navigasjon, sorteringsknappens tastaturaktivering, fokusfella/Escape i
+detaljpanelet) er den MANUELLE gjennomgangen dette dokumentet er —
+fokusfella selv er portet der den bor, i dialogkomponentens egne tester.
+Dokumentet er det porten `ui.tastaturgjennomgang_dokumentert` krever.
 
 | # | Flyt | Tastene | Forventet — og observert |
 |---|---|---|---|

@@ -1068,6 +1068,7 @@
   "ui.rekruttering.blinding_begrunnelse_mangler": "The reason is missing — blinding stays on.",
   "ui.rekruttering.blinding_av_bekreft": "Turn off and log",
   "ui.rekruttering.blinding_av_utfall": "Blinding is turned off and the choice has been logged.",
+  "ui.rekruttering.blinding_pa_utfall": "Blinding is back on and the choice has been logged.",
   "ui.rekruttering.lister_tittel": "Proposed dispatches",
   "ui.rekruttering.listetype.invitasjon": "Invitation",
   "ui.rekruttering.listetype.avslag": "Rejection",

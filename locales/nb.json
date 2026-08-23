@@ -1068,6 +1068,7 @@
   "ui.rekruttering.blinding_begrunnelse_mangler": "Begrunnelsen mangler — blindingen står på.",
   "ui.rekruttering.blinding_av_bekreft": "Skru av og loggfør",
   "ui.rekruttering.blinding_av_utfall": "Blindingen er skrudd av og valget er loggført.",
+  "ui.rekruttering.blinding_pa_utfall": "Blindingen er slått på igjen og valget er loggført.",
   "ui.rekruttering.lister_tittel": "Innstilte utsendelser",
   "ui.rekruttering.listetype.invitasjon": "Invitasjon",
   "ui.rekruttering.listetype.avslag": "Avslag",

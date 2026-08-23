@@ -145,8 +145,27 @@ function tegn(hoved, ctx, data) {
   const blindingId = "rekrut-blinding";
   const bryter = el("input", { type: "checkbox", id: blindingId });
   bryter.checked = !prosess.blinding_av;
-  bryter.addEventListener("change", () => {
-    if (bryter.checked) return;           // PÅ igjen krever ingen dialog
+  // Samme scope-gate som signeringen (CodeRabbit major, første pass):
+  // en bruker uten mutasjonsscopet skal ikke engang tilbys valget —
+  // en bryter som bare kan gi 403 er et løfte flaten ikke kan holde.
+  if (!kanBestille) bryter.disabled = true;
+  bryter.addEventListener("change", async () => {
+    if (bryter.checked) {
+      // PÅ igjen er OGSÅ en mutasjon (CodeRabbit major: UI-tilstanden
+      // skiftet uten at serveren fikk vite det). Ingen dialog — å slå
+      // blindingen PÅ er standardtilstanden — men kallet må gå, og
+      // bryteren følger UTFALLET, aldri klikket.
+      bryter.checked = false;
+      try {
+        await settRekrutteringBlinding(prosess.prosess_id, false,
+          "blinding slått på igjen");
+        bryter.checked = true;
+        sett(utfall, t("ui.rekruttering.blinding_pa_utfall"));
+      } catch (e) {
+        sett(utfall, t("ui.rekruttering.feil_utfall"));
+      }
+      return;
+    }
     bryter.checked = true;                // står til dialogen bekrefter
     const begrunnelse = el("textarea", { id: "blinding-begrunnelse",
       rows: "3", required: true, "aria-required": "true" });
