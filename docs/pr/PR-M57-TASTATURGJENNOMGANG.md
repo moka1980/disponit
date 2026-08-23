@@ -17,7 +17,7 @@ ryker, **KOMPONENTPORTET** at mekanismen er portet der den bor (dialogens
 egne tester), og **UTESTÅENDE** at flyten hører til ruteren og først kan
 gjennomgås når ruten er inne.
 
-Sist gjennomgått: 23. august 2026, fiksrunde 2 (HEAD på `pr-m57-cp4-v2`).
+Sist gjennomgått: 23. august 2026, fiksrunde 3 (HEAD på `pr-m57-cp4-v2`).
 
 ## Flytene
 
@@ -27,7 +27,7 @@ Sist gjennomgått: 23. august 2026, fiksrunde 2 (HEAD på `pr-m57-cp4-v2`).
 | 2 | Endre **vekt** | `Tab` til range-kontrollen, `←`/`→` | Synlig verdi (output) følger; tabellen re-rangeres; ny rekkefølge annonseres i `aria-live="polite"` uten fokusflytting | **PORTET** — «vektendring uten mus re-rangerer og kunngjøres» |
 | 3 | **Sortere** tabellen | `Tab` til kolonneknappen «Poeng», `Enter` | `aria-sort` veksler ascending/descending; rekkefølgen snur | **KOMPONENTPORTET** — sorteringsknappen og `aria-sort` er `DataTabell`s egne tester; flaten porterer utgangssorteringen |
 | 4 | Kandidat**detaljer** | `Tab` til «Detaljer», `Enter` | Dialog med fokusfelle; `Tab` sirkler inne i panelet; `Esc` lukker og fokus RETURNERES til «Detaljer»-knappen | **PORTET** — «`Detaljer` åpner panelet med funn, sitat og spørsmål». Fokusfella og `Esc` er `Detaljpanel`/`aapneDialog` sine egne tester. NB: knappen var død fram til fiksrunde 2 (radhandlingen ble sendt som `utfor`, ikke `paaKlikk`); punktet sto som «observert» i dette dokumentet uten å være det. Nå er den portet, ikke påstått |
-| 5 | Skru av **blinding** | `Tab` til bryteren, `Space` | `alertdialog` åpnes med fokus i første felt; begrunnelsen er påkrevd og en tom begrunnelse lar dialogen STÅ; `Esc` avbryter og bryteren står PÅ | **PORTET** — «avskruing av blinding krever alertdialog med begrunnelse» |
+| 5 | Skru av **blinding** | `Tab` til bryteren, `Space` | `alertdialog` åpnes med fokus på dialogens **lukkeknapp** — `aapneDialog` fokuserer første fokuserbare i DOM-rekkefølge, og det er lukkeknappen i dialogtoppen, ikke begrunnelsesfeltet; `Tab` når feltet i neste steg. Begrunnelsen er påkrevd, og en tom begrunnelse lar dialogen STÅ; `Esc` avbryter og bryteren står PÅ | **PORTET** — «avskruing av blinding krever alertdialog med begrunnelse», og åpningsfokuset er nå ASSERTERT i samme test. NB: raden sto som «fokus i første felt» fram til fiksrunde 3 — det var en påstand, ikke en observasjon (Codex P2) |
 | 6 | **Signer**e en liste | `Tab` til «Signer og send», `Enter` | `alertdialog` med antall, listetype og hashens kortform + «Kan ikke angres»; `Tab` når Avbryt og Signer; utfallet leses fra `role="alert"` | **PORTET** — «signaturdialogen sier antall, type, hashkortform …» (port 31) |
 
 Ingen av flytene krever mus eller pekerpresisjon; ingen informasjon bæres

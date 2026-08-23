@@ -160,6 +160,16 @@ test("Rekruttering: avskruing av blinding krever alertdialog med begrunnelse", a
   assert.ok(dialog, "alertdialog mangler ved avskruing");
   assert.equal(bryter.checked, true,
     "bryteren skal stå PÅ til dialogen bekrefter");
+  // ÅPNINGSFOKUSET ER MÅLT, IKKE PÅSTÅTT (Codex P2). Tastaturdoket sa at
+  // dialogen åpner med fokus i første FELT; `aapneDialog` fokuserer
+  // `fokuserbare(dialog)[0]`, og det er lukkeknappen i dialogtoppen.
+  // Doket er evidens for port 32 og kan ikke love noe implementasjonen
+  // ikke gjør, så her står det som faktisk skjer — og testen holder doket
+  // og koden sammen: endres åpningsfokuset, feiler denne, og raden i
+  // doket må skrives om i samme runde.
+  assert.equal(document.activeElement,
+    dialog.querySelector(".dialog-lukk"),
+    "åpningsfokuset er ikke lukkeknappen — oppdater tastaturdoket");
   // Bekreft uten begrunnelse → avvist lokalt, ingen POST — og dialogen
   // BLIR STÅENDE (Codex P2): meldingen om det manglende feltet er verdiløs
   // hvis feltet forsvant idet den kom, og brukeren måtte da skru bryteren
