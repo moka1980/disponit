@@ -112,6 +112,21 @@ test("Rekruttering: trafikklyset er tekst, aldri bare farge (port 30)", async ()
   }
   assert.ok(lys.some((l) => l.textContent.includes(
     t("ui.rekruttering.status.anbefalt"))));
+  // …og FARGEN finnes faktisk (Codex P2): uten regler i stilarket rendret
+  // hver kategori likt, og prikken var en tom span uten flate — «tekst +
+  // farge» var bare tekst. Statusene hentes fra locale, ikke fra en liste
+  // her, så en ny kategori uten fargeregel feller porten.
+  const css = readFileSync(join(ROT,
+    "platform/core/ui/static/css/komponenter.css"), "utf-8");
+  assert.ok(css.includes(".trafikklys-prikk{"), "prikken er uten flate");
+  const statuser = Object.keys(NB)
+    .filter((k) => k.startsWith("ui.rekruttering.status."))
+    .map((k) => k.slice("ui.rekruttering.status.".length));
+  assert.ok(statuser.length >= 3, "locale mangler statuskategoriene");
+  for (const s of statuser) {
+    assert.ok(css.includes(`.trafikklys-${s}{`),
+      `ingen fargeregel for kategorien ${s}`);
+  }
 });
 
 test("Rekruttering: vektendring uten mus re-rangerer og kunngjøres (port 30)", async () => {
