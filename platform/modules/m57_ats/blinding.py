@@ -33,13 +33,23 @@ def blind(tekst: str, kandidatfelter: dict[str, list[str]]
     if ukjente:
         raise Blindingsfeil("ukjent_maskeringsfelt")
     avmaskering: dict[str, str] = {}
+    par: list[tuple[str, str]] = []
     for felt in MASKERTE_FELTER:
         for nr, verdi in enumerate(kandidatfelter.get(felt, ()), start=1):
             if not verdi:
                 continue
             token = f"[{felt.upper()}-{nr}]"
             avmaskering[token] = verdi
-            tekst = tekst.replace(verdi, token)
+            par.append((token, verdi))
+    # LENGSTE VERDI FØRST, på tvers av alle felter (Codex P1). Erstatning
+    # i feltrekkefølge var to lekkasjer i én: «Ola» før «Ola Nordmann» gir
+    # `[NAVN-1] Nordmann` — etternavnet når modellen — og «Ann» før
+    # «Ann@example.com» gir `[NAVN-1]@example.com`, som `krev_blindet`
+    # godtar fordi den HELE adressen ikke lenger står der. Token-
+    # nummereringen er fortsatt feltrekkefølgen, så den er uendret og
+    # deterministisk; bare erstatningsrekkefølgen er lengdestyrt.
+    for token, verdi in sorted(par, key=lambda p: -len(p[1])):
+        tekst = tekst.replace(verdi, token)
     return tekst, avmaskering
 
 

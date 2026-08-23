@@ -296,6 +296,28 @@ def test_port16_blindingen_maales_pa_faktisk_input():
     assert modell2.sett[-1] == tekst and ut2["avmaskering"] == {}
 
 
+def test_port16_overlappende_verdier_maskeres_lengste_forst():
+    """Codex P1: sekvensiell erstatning i FELTREKKEFØLGE lot en kortere
+    verdi spise starten av en lengre, slik at resten sto igjen i
+    modellinputen — og `krev_blindet` godtok det, fordi den måler hele
+    klartekstverdier og den HELE verdien ikke lenger fantes.
+
+    To former, begge målt: delvis navn (`Ola` før `Ola Nordmann`) og
+    kontakt som starter med navnet (`Ann@example.com`)."""
+    tekst = "Ola Nordmann søker. Kontakt: Ann@example.com. Hilsen Ola."
+    felter = {"navn": ["Ola", "Ola Nordmann", "Ann"],
+              "kontakt": ["Ann@example.com"]}
+    blindet, avmaskering = blinding.blind(tekst, felter)
+    for rest in ("Nordmann", "@example.com", "Ann", "Ola"):
+        assert rest not in blindet, (rest, blindet)
+    blinding.krev_blindet(blindet, avmaskering)
+    # Tokennummereringen følger fortsatt feltrekkefølgen — den skal være
+    # deterministisk for samme input, uavhengig av lengdesorteringen.
+    assert avmaskering["[NAVN-1]"] == "Ola"
+    assert avmaskering["[NAVN-2]"] == "Ola Nordmann"
+    assert avmaskering["[KONTAKT-1]"] == "Ann@example.com"
+
+
 def test_port17_imagebytte_uten_biasmaaling_blokkerer():
     modell = _Modell()
     modell.image_digest = "sha256:" + "b" * 64  # nytt image, ingen måling
