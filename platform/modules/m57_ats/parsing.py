@@ -29,6 +29,14 @@ MAKS_ENKELTFIL = 25 * 1024 * 1024              # 25 MB
 # arkivmagi eller arkivendelse felles. Unntaket gjelder TYPEN, ikke
 # grensene: `_inspiser_docx` måler det indre arkivet mot BUNTENS
 # budsjett — samme tall, samme teller, aldri et friskt sett per docx.
+#: OOXML-pakkens OBLIGATORISKE deler. En docx er ikke «en zip som heter
+#: .docx» — den er en OPC-pakke, og uten disse to finnes det ikke noe
+#: dokument å trekke tekst ut av (Codex P2). Uten kravet passerte enhver
+#: lesbar zip med riktig endelse innholdstypeporten og feilet først som
+#: en rå uttrekksfeil nede i containeren, i stedet for som portens egen
+#: `feil_innholdstype`.
+DOCX_PAKKEMEDLEMMER = frozenset({"[Content_Types].xml",
+                                 "word/document.xml"})
 ARKIVENDELSER = frozenset({
     ".zip", ".tar", ".gz", ".tgz", ".bz2", ".xz", ".7z", ".rar", ".jar"})
 TILLATTE_ENDELSER = frozenset({".pdf", ".docx", ".html", ".htm"})
@@ -220,6 +228,14 @@ def _inspiser_docx(navn: str, data: bytes, *,
         utpakket += info.file_size
         if byte_brukt + utpakket > MAKS_TOTAL_UTPAKKET:
             raise Buntfeil("total_for_stor", f"{navn}/{info.filename}")
+    # Innholdstypeporten måler PAKKEN, ikke endelsen (Codex P2). Sjekken
+    # står etter løkken med vilje: en docx med en sti utenfor bunten er
+    # avvist som nettopp det, ikke som feil innholdstype.
+    if not DOCX_PAKKEMEDLEMMER <= sett:
+        raise Buntfeil(
+            "feil_innholdstype",
+            f"{navn}: mangler "
+            + ", ".join(sorted(DOCX_PAKKEMEDLEMMER - sett)))
     return utpakket, len(infos)
 
 

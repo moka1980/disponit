@@ -68,14 +68,26 @@ def _patch_kryptert(arkiv: Path) -> None:
     arkiv.write_bytes(bytes(data))
 
 
-def _docx(indre: list[tuple[str, bytes]] | None = None) -> bytes:
-    """En EKTE docx — altså en zip — bygget i minnet. DOCX er unntaket
-    fra «ingen nøstede arkiver», og et unntak kan bare måles med den
-    ekte formen."""
+def _docx(indre: list[tuple[str, bytes]] | None = None, *,
+          pakke: bool = True) -> bytes:
+    """En EKTE docx — altså en OPC-pakke i en zip — bygget i minnet.
+    DOCX er unntaket fra «ingen nøstede arkiver», og et unntak kan bare
+    måles med den ekte formen.
+
+    `pakke=True` legger på de obligatoriske pakkemedlemmene som ikke alt
+    er oppgitt, slik at fixturen er en docx og ikke bare en zip med
+    riktig endelse. `pakke=False` er for testene som måler nettopp den
+    forskjellen."""
+    medlemmer = list(indre or [("word/document.xml", b"<w:t>CV</w:t>")])
+    if pakke:
+        oppgitt = {navn for navn, _ in medlemmer}
+        medlemmer = [(navn, b"<Types/>" if navn.endswith(".xml")
+                      else b"")
+                     for navn in sorted(parsing.DOCX_PAKKEMEDLEMMER
+                                        - oppgitt)] + medlemmer
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for navn, innhold in (indre or [("word/document.xml",
-                                         b"<w:t>CV</w:t>")]):
+        for navn, innhold in medlemmer:
             zf.writestr(navn, innhold)
     return buf.getvalue()
 
@@ -259,6 +271,31 @@ def test_port22_filbudsjettet_er_buntens_ikke_per_docx(tmp_path):
     smaa = _docx([("word/document.xml", b"<w:t>x</w:t>")] + fyll[:4000])
     ok = _bunt(tmp_path, [("a.docx", smaa), ("b.docx", smaa)])
     assert len(list(parsing.les_porsjonsvis(ok))) == 2
+
+
+def test_port25_docx_er_en_pakke_ikke_bare_en_zip(tmp_path):
+    """Codex P2: innholdstypeporten målte ENDELSEN og at zipen lot seg
+    lese — ikke at det fantes et dokument i den.
+
+    En zip med ett medlem `ikke-et-dokument.txt` passerte derfor gaten
+    og ble sendt videre til uttrekket, der de manglende OPC-delene ble
+    en sen, rå uttrekksfeil i stedet for portens kodede
+    `feil_innholdstype`.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `DOCX_PAKKEMEDLEMMER`-sjekken i
+    `_inspiser_docx`."""
+    for indre in ([("ikke-et-dokument.txt", b"hei")],
+                  [("[Content_Types].xml", b"<Types/>")],
+                  [("word/document.xml", b"<w:t>CV</w:t>")]):
+        arkiv = _bunt(tmp_path, [("cv.docx", _docx(indre, pakke=False))])
+        parsing.inspiser_bunt(arkiv)      # ytre gate ser en lovlig fil
+        with pytest.raises(parsing.Buntfeil) as e:
+            list(parsing.les_porsjonsvis(arkiv))
+        assert e.value.kode == "feil_innholdstype", indre
+        arkiv.unlink()
+    # Positiv kontroll: den EKTE pakken går gjennom.
+    ok = _bunt(tmp_path, [("cv.docx", _docx())])
+    assert len(list(parsing.les_porsjonsvis(ok))) == 1
 
 
 def test_port25_innholdstypen_er_en_paastand_begge_veier(tmp_path):
