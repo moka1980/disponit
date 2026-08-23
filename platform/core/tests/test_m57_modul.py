@@ -722,3 +722,36 @@ def test_den_kanoniske_handlingen_binder_oppdraget_til_eiermodulen():
     assert _eiermodul_for("rekruttering.evaluering") == t.eiermodul
     assert not _eiermodul_for(
         "rekruttering.evaluering").startswith("eiermodul:")
+
+
+def test_m57_har_EN_modulidentitet_i_kontrakt_migrasjon_og_artefakt():
+    """Codex P2 / Cursor P1: `m_ats` mot `m57_ats` var en splitt.
+
+    De tre stedene som må være enige om hvem som eier M-57-oppdragene:
+
+    * kontrakten (`eiermodul` — det som skrives i raden ved opprettelsen
+      og det `claim_neste_oppdrag` filtrerer på),
+    * 056s CHECK + `opprett_frigivelsesoppdrag` (utsendingsarmen), og
+    * akseptartefaktets `oppsett.modul` (hvem aksepten attesterer).
+
+    Var de uenige, kunne ingen modul claime BEGGE armene, og et
+    skjemagyldig akseptartefakt ville attestert en annen identitet enn
+    den som faktisk kjørte jobbene. Porten er statisk med vilje: den
+    feller en splitt før noe kjøres.
+    """
+    import json
+    import oppdragskontrakt as ok
+
+    kjerne = Path(__file__).resolve().parents[1]
+    kanonisk = ok.OPPDRAGSTYPER["rekruttering.evaluering"].eiermodul
+    assert kanonisk == "m57_ats"
+
+    skjema = json.loads(
+        (kjerne / "artefakt-m57-skjema.json").read_text(encoding="utf-8"))
+    assert (skjema["properties"]["oppsett"]["properties"]["modul"]["const"]
+            == kanonisk)
+
+    sql = (kjerne / "db/migrations/056_m57_utsending.sql").read_text(
+        encoding="utf-8")
+    assert f"eiermodul = '{kanonisk}'" in sql
+    assert f"IS DISTINCT FROM '{kanonisk}'" in sql

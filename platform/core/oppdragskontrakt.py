@@ -212,7 +212,18 @@ OPPDRAGSTYPER: dict[str, Oppdragstype] = {
                           "antall_soknader", "omfang"}),
         paakrevde=frozenset({"stillingsprofil_ref", "soknadsbunt_ref",
                              "antall_soknader", "omfang"}),
-        eiermodul="m_ats",
+        # `m57_ats`, ikke `m_ats` (Codex P2 / Cursor P1). Identiteten er
+        # ALLEREDE avgjort og støpt: 056 CHECK-binder utsendingsarmen til
+        # `eiermodul = 'm57_ats'`, `opprett_frigivelsesoppdrag` avviser alt
+        # annet, og akseptartefaktets `oppsett.modul` er `const m57_ats`.
+        # 056 er merget, så å flytte DEN siden er en ny migrasjon på
+        # bebodd base — altså ny maskin, ikke en fiks. `m_ats` fantes
+        # nøyaktig ett sted i repoet: her. Med to identiteter kunne én
+        # modul verken claime evalueringsoppdrag registrert som `m57_ats`
+        # eller utsendingsoppdrag registrert som `m_ats`, og
+        # akseptartefaktet ville attestert en annen eier enn den som
+        # faktisk kjørte jobbene.
+        eiermodul="m57_ats",
         produserer_artefakt=True,
         rapport_artefakttype="rekruttering.evalueringsrapport",
         beskrivelse=("M-57: leser og rangerer opptil 5000 søknader mot"
