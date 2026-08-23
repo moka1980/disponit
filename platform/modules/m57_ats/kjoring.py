@@ -30,7 +30,21 @@ class Kjoringsfeil(Exception):
         return f"{self.kode} ({self.fremdrift})"
 
 
-def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for,
+def _tekst(tekst_for, medlem, data, fremdrift):
+    """Uttrekket er FREMMED kode (containerens), og feiler det, er det et
+    kodet utfall — ikke en rå `PdfReadError` ut av modulen."""
+    try:
+        tekst = tekst_for(medlem, data)
+    except Exception as feil:
+        raise Kjoringsfeil("tekstuttrekk_feilet", fremdrift) from feil
+    if not isinstance(tekst, str):
+        # En uttrekker som gir tilbake bytene sine (eller None) er samme
+        # feil som den vi kom fra: da hadde modellen fått binærstøy igjen.
+        raise Kjoringsfeil("tekstuttrekk_feilet", fremdrift)
+    return tekst
+
+
+def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
               biasmaalinger, blinding_av=False, auditrad=None):
     """-> {"rangering": [...], "artefakter": {kandidat_id: ...},
     "fremdrift": {...}} — eller Kjoringsfeil, aldri noe imellom.
@@ -38,6 +52,18 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for,
     `kandidatfelter_for(medlem)` er innslaget fra den strukturerte
     søknaden (blindingens kilde); kandidat-id er medlemsstiens første
     ledd (én mappe per kandidat, m56-fasitformen).
+
+    `tekst_for(medlem, data)` ER TEKSTUTTREKKET, OG DET ER PÅKREVD
+    (Codex P1). To av de tre lovede innholdstypene er BINÆRE: en docx er
+    en komprimert OPC-pakke og en pdf har sin egen interne koding, så
+    `data.decode("utf-8", errors="replace")` ga ikke søknaden — den ga
+    modellen støy med U+FFFD, og en evaluering av støy er en evaluering
+    som ser gyldig ut og er verdiløs. Selve uttrekket hører hjemme i den
+    credential-frie, nettverksløse containeren (§7, port 24-formen, jf.
+    `parsing`-modulens egen dør), og kjøringen skal derfor FÅ det inn,
+    aldri gjette det: uten en uttrekker finnes det ingen kjøring. Feiler
+    uttrekket, er det et kodet utfall som alt annet
+    (`tekstuttrekk_feilet`), ikke en rå bibliotekfeil.
     """
     artefakter: dict[str, dict] = {}
     oppfylt: dict[str, dict] = {}
@@ -47,7 +73,7 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for,
             if merke:
                 fremdrift = merke
             kandidat_id = medlem.navn.replace("\\", "/").split("/")[0]
-            tekst = data.decode("utf-8", errors="replace")
+            tekst = _tekst(tekst_for, medlem, data, fremdrift)
             resultat = evaluering.evaluer_kandidat(
                 modell, tekst, kandidatfelter_for(medlem), vekter,
                 biasmaalinger=biasmaalinger,
@@ -62,6 +88,11 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for,
         # I arbeideren er det forskjellen på det rene SP-3-utfallet og en
         # uventet arbeiderfeil.
         rangering = evaluering.ranger(oppfylt, vekter)
+    except Kjoringsfeil:
+        # Alt som alt ER utfallet, går videre som seg selv: uten denne
+        # linjen ville catch-allen under pakket det inn på nytt som
+        # «modellfeil» og skjult koden det ble reist med.
+        raise
     except parsing.Buntfeil as feil:
         raise Kjoringsfeil(feil.kode, fremdrift) from feil
     except evaluering.Evalueringsfeil as feil:

@@ -1505,10 +1505,13 @@ def test_port28_avbrutt_kjoring_promoterer_ingenting(tmp_path):
     # Fail-closed-blindingen krever STRUKTURERTE felter per kandidat —
     # et tomt sett er sin egen kodede stopp (målt til slutt i testen).
     felter = lambda m: {"navn": [f"Kandidat {m.navn.split('/')[0]}"]}
+    # Tekstuttrekket er containerens (§7/port 24) og INJISERES; her er
+    # bunten ren HTML, så uttrekkeren er en dekoding.
+    uttrekk = lambda m, d: d.decode("utf-8")
 
     with pytest.raises(kjoring.Kjoringsfeil) as e:
         kjoring.kjor_bunt(arkiv, _Doende(), vekter={"drift": 3},
-                          kandidatfelter_for=felter,
+                          kandidatfelter_for=felter, tekst_for=uttrekk,
                           biasmaalinger=_MAALINGER)
     assert e.value.kode == "modellfeil"
     assert e.value.fremdrift, "fremdriften (evidensen) mangler i utfallet"
@@ -1518,7 +1521,7 @@ def test_port28_avbrutt_kjoring_promoterer_ingenting(tmp_path):
         {"kode", "fremdrift"}
 
     helt = kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
-                             kandidatfelter_for=felter,
+                             kandidatfelter_for=felter, tekst_for=uttrekk,
                              biasmaalinger=_MAALINGER)
     assert {k["kandidat_id"] for k in helt["rangering"]} == \
         {"k1", "k2", "k3"}
@@ -1529,6 +1532,7 @@ def test_port28_avbrutt_kjoring_promoterer_ingenting(tmp_path):
     with pytest.raises(kjoring.Kjoringsfeil) as e:
         kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
                           kandidatfelter_for=lambda m: {},
+                          tekst_for=uttrekk,
                           biasmaalinger=_MAALINGER)
     assert e.value.kode == "blinding_uten_felter"
     # RANGERINGEN er også innenfor utfallet (Codex P1): en ugyldig vekt
@@ -1538,6 +1542,59 @@ def test_port28_avbrutt_kjoring_promoterer_ingenting(tmp_path):
     # MUTASJONEN SOM DREPER DENNE: flytt `ranger`-kallet ut av `try`.
     with pytest.raises(kjoring.Kjoringsfeil) as e:
         kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": True},
-                          kandidatfelter_for=felter,
+                          kandidatfelter_for=felter, tekst_for=uttrekk,
                           biasmaalinger=_MAALINGER)
     assert e.value.kode == "ugyldige_vekter"
+
+
+def test_tekstuttrekket_er_containerens_aldri_en_utf8_dekoding(tmp_path):
+    """Codex P1: pdf og docx er BINÆRE — to av de tre lovede typene.
+
+    `data.decode("utf-8", errors="replace")` returnerte alltid en streng,
+    og strengen var nettopp derfor farlig: for en docx (komprimert
+    OPC-pakke) og en pdf ga den U+FFFD-støy som modellen evaluerte som om
+    det var en søknad. Uttrekket hører hjemme i den credential-frie
+    containeren (§7/port 24), og kjøringen KREVER det inn — den gjetter
+    aldri selv, og et uttrekk som feiler er et kodet utfall.
+
+    MUTASJONEN SOM DREPER DENNE: gi `tekst_for` en default som dekoder
+    `data` som UTF-8.
+    """
+    from modules.m57_ats import kjoring
+
+    arkiv = _bunt(tmp_path, [("k1/soknad.html", b"<p>drift hos k1</p>")])
+    felter = lambda m: {"navn": ["Kandidat k1"]}
+
+    # Uten uttrekker finnes det ingen kjøring — argumentet er påkrevd.
+    with pytest.raises(TypeError):
+        kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
+                          kandidatfelter_for=felter,
+                          biasmaalinger=_MAALINGER)
+
+    # Modellen ser NØYAKTIG det uttrekkeren ga — ikke bytene fra arkivet.
+    modell = _Modell()
+    kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
+                      kandidatfelter_for=felter,
+                      tekst_for=lambda m, d: "uttrukket drift-tekst",
+                      biasmaalinger=_MAALINGER)
+    assert modell.sett == ["uttrukket drift-tekst"]
+
+    # Et uttrekk som feiler (ødelagt pdf) er SP-3s kodede utfall, ikke en
+    # rå bibliotekfeil ut av modulen …
+    def _doende_uttrekk(medlem, data):
+        raise ValueError("pdf-en er ødelagt")
+
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
+                          kandidatfelter_for=felter,
+                          tekst_for=_doende_uttrekk,
+                          biasmaalinger=_MAALINGER)
+    assert e.value.kode == "tekstuttrekk_feilet"
+    # … og en uttrekker som gir tilbake bytene sine er samme feil: da
+    # hadde modellen fått binærstøyen igjen, bare via en annen dør.
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
+                          kandidatfelter_for=felter,
+                          tekst_for=lambda m, d: d,
+                          biasmaalinger=_MAALINGER)
+    assert e.value.kode == "tekstuttrekk_feilet"
