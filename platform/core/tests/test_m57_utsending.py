@@ -1060,6 +1060,77 @@ def test_funksjonene_er_eneste_vei_for_ordinaere_roller(migrator):
 
 
 @pg
+def test_runtime_kan_ikke_drive_frigivelsesoppdraget(migrator):
+    """Codex P1 (runde 12 på #140): grant-halvdelen over dekker
+    KJEDETABELLENE, men `oppdrag` er ikke en av dem — kjøreren gir
+    runtime-rollen `SELECT, UPDATE ON oppdrag` (PR-006 → 038), og den
+    granten kan ikke trekkes: de to eldre opprinnelsene er runtimes egne
+    jobber. Den tredje er det ikke. Uten porten i §6 kunne runtime, helt
+    uten EXECUTE på en eneste kjedefunksjon, enten SLUKKE en autorisert
+    utsending (`kansellert` på en rad frigivelsen aldri får en erstatning
+    for, jf. `oppdrag_en_per_frigivelse`) eller FALSK-KVITTERE den
+    (`plukket`→`utfort` med egne kvitteringsfelter).
+
+    Begge veiene måles her, og feilen skal være en PRIVILEGIEFEIL —
+    ikke statusmaskinens `RaiseException`, som ville betydd at raden var
+    runtimes og bare tok feil vei gjennom maskinen.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `OLD.opprinnelse = 'frigivelse'`-
+    blokken fra `oppdrag_kolonnelaas` i 056 §6 — da er begge UPDATE-ene
+    lovlige overganger og testen er rød i begge ender.
+
+    Eieren er UNNTATT med vilje: `disponit_m37_claimer` eier
+    `claim_neste_oppdrag` og `reap_evidensfrister`, som er de to lovlige
+    veiene i dag. Siste del av testen holder det unntaket ærlig — uten
+    det ville porten stanset reaperen og latt en utløpt utsending stå
+    ikke-terminal for alltid (Codex P2, runde 5)."""
+    from db.pg import koble
+    oid, payload = _grunnlag(migrator)
+    bid = _signatar(migrator)
+    liste = _liste(migrator, oid)
+    _signer(migrator, liste, bid)
+    fid = _frigi(migrator, liste)
+    aoid = _ats_oppdrag(migrator, fid, payload)
+    rt = koble(DSN)
+    try:
+        for sett in ("status='kansellert'", "status='plukket'"):
+            rt.execute("SELECT set_config('disponit.tenant',%s,true)",
+                       (TENANT,))
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                rt.execute("UPDATE oppdrag SET " + sett +
+                           " WHERE tenant=%s AND id=%s", (TENANT, aoid))
+            rt.rollback()
+    finally:
+        rt.close()
+    # ... og et BESLUTNINGSOPPDRAG står urørt: porten er snever på den
+    # tredje opprinnelsen, ikke en generell innstramming av 038s grant.
+    rt = koble(DSN)
+    try:
+        rt.execute("SELECT set_config('disponit.tenant',%s,true)", (TENANT,))
+        rt.execute("UPDATE oppdrag SET status='kansellert'"
+                   " WHERE tenant=%s AND id=%s", (TENANT, oid))
+        rt.rollback()
+    finally:
+        rt.close()
+    # Eieren slipper gjennom — ellers hadde reaperen (§10) vært stengt ute
+    # av sin egen port.
+    # `_sender()` duger ikke her: den kan være varselsenderens EGEN
+    # innlogging, og porten slipper bare kjedens eier gjennom. Rollen
+    # settes derfor eksplisitt, og `SET ROLE` må stå i SAMME transaksjon
+    # som UPDATE-en (en rollback tar rollen med seg).
+    eier = koble(MIGRATOR_DSN)
+    try:
+        eier.execute("SET ROLE disponit_m37_claimer")
+        eier.execute("SELECT set_config('disponit.tenant',%s,true)",
+                     (TENANT,))
+        eier.execute("UPDATE oppdrag SET status='plukket'"
+                     " WHERE tenant=%s AND id=%s", (TENANT, aoid))
+        eier.rollback()
+    finally:
+        eier.close()
+
+
+@pg
 def test_en_frigivelse_gir_ett_oppdrag(migrator):
     """Cursor P1 på #140: utsendelsen er irreversibel, så kardinaliteten
     én frigivelse -> ett oppdrag er en sikkerhetsinvariant — samme form

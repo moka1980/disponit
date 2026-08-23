@@ -415,6 +415,37 @@ BEGIN
         OR NEW.module_epoch    IS DISTINCT FROM OLD.module_epoch) THEN
         RAISE EXCEPTION 'oppdrag: kontraktbinding/epoch settes kun av claim-funksjonen';
     END IF;
+    -- ... OG DEN TREDJE OPPRINNELSEN ER IKKE RUNTIMES RAD I DET HELE TATT
+    -- (Codex P1, runde 12 på #140). `deploy/staging/migrer.py` gir
+    -- runtime-rollen `SELECT, UPDATE ON oppdrag` (PR-006 → 038), og for de
+    -- to ELDRE opprinnelsene er det riktig: runtime utfører dem selv, og
+    -- statusmaskinen over er hele porten den trenger. Den tredje er en
+    -- annen sak — autorisasjonen er en menneskelig signatur, utsendelsen
+    -- er IRREVERSIBEL, og `oppdrag_en_per_frigivelse` (§5) gir frigivelsen
+    -- NØYAKTIG ETT forsøk. Uten porten her kunne runtime, som med vilje
+    -- ikke har EXECUTE på en eneste kjedefunksjon, likevel med rå UPDATE:
+    --   * sette et ferskt frigivelsesoppdrag til `kansellert`/`feilet` —
+    --     den autoriserte e-posten forsvinner, og raden kan aldri
+    --     erstattes fordi frigivelsen alt har brukt sitt ene oppdrag;
+    --   * kjøre det `opprettet`→`plukket`→`utfort` og fylle de initielt
+    --     tomme kvitteringsfeltene selv — en utsending som ALDRI skjedde
+    --     ser sendt ut, og kvitteringen er uforanderlig når den er satt.
+    -- Begge er tap av selve påstanden kjeden finnes for, så porten dekker
+    -- ALLE endringer på slike rader, ikke bare status og kvittering.
+    -- Formen er en TILLATELSESLISTE, ikke en nektelsesliste: runtime-
+    -- rollens NAVN er et installasjonsvalg (kjøreren tar det som
+    -- argument), mens `disponit_m37_claimer` er husets faste eier av de to
+    -- veiene som ER lovlige i dag — `claim_neste_oppdrag` (049) og
+    -- `reap_evidensfrister` (§10), begge SECURITY DEFINER — og av
+    -- kvitteringsveien CP3 må legge til. Å nekte «disponit» ved navn ville
+    -- vært en port som forsvant på enhver installasjon med et annet navn.
+    IF OLD.opprinnelse = 'frigivelse'
+       AND current_user <> 'disponit_m37_claimer' THEN
+        RAISE EXCEPTION 'oppdrag: et frigivelsesoppdrag endres kun av'
+            ' kjedens egen eier (fikk %) — utsendelsen er irreversibel og'
+            ' frigivelsen har nøyaktig ett forsøk', current_user
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
     -- Write-once (gjelder også claim-funksjonen på en reclaim): satt → frosset.
     IF OLD.modul_id IS NOT NULL AND (
            NEW.modul_id        IS DISTINCT FROM OLD.modul_id
