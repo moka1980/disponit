@@ -533,12 +533,15 @@ def _lagersti(tenant, navn="x"):
 
 
 def _lastet(m, tenant, *, utloper="now() + interval '1 hour'",
-            eiermodul="m57_ats"):
+            eiermodul="m57_ats", jti=None, sha=None):
     """En ferdig `lastet` bunt — bindingens utgangspunkt. Returnerer
-    inndata_id."""
+    inndata_id.
+
+    `jti`/`sha` finnes for gjenspilltesten: den må laste opp MOT raden over
+    HTTP, og da er det nettopp de to verdiene kallet må treffe."""
     from db import kryptering
     key_id, _dek = kryptering.hent_eller_opprett_aktiv_dek(m, tenant)
-    jti = secrets.token_hex(32)
+    jti = jti or secrets.token_hex(32)
     return m.execute(
         "INSERT INTO inndata_artefakt (tenant, eiermodul, formaal,"
         " innholdstype, maks_bytes, faktiske_bytes, innhold_sha256,"
@@ -546,7 +549,7 @@ def _lastet(m, tenant, *, utloper="now() + interval '1 hour'",
         " idempotensnokkel, utloper, lastet_ts)"
         " VALUES (%s,%s,'soknadsbunt','application/zip',%s,10,%s,%s,%s,"
         f" %s,'lastet',%s,%s,{utloper},now()) RETURNING inndata_id",
-        (tenant, eiermodul, MAKS, "a" * 64, key_id, b"n" * 12,
+        (tenant, eiermodul, MAKS, sha or "a" * 64, key_id, b"n" * 12,
          _lagersti(tenant, jti), jti,
          secrets.token_hex(12))).fetchone()[0]
 
@@ -609,6 +612,59 @@ def test_utlopt_reservasjon_avvises_og_brenner_ingenting(klient, inndata_rot):
     assert rad == ("reservert", None)
     # … og ciphertexten API-et rakk å skrive før 058 sa nei, er ryddet.
     assert not sorted((inndata_rot / tenant).glob("*.bin"))
+
+
+@pg
+@dekker("inndata_reservasjon_ugyldig")
+def test_lastet_og_utlopt_kan_ikke_gjenspilles(klient, inndata_rot):
+    """Codex P2 / Cursor P2 runde 6: replay-grenen for `lastet` svarte 201
+    uten å se på `utloper`, mens `bind_inndata` avviser NØYAKTIG den samme
+    raden på den.
+
+    Utfallet var det verste av to verdener: klienten fikk «opplastingen
+    din står» tilbake, idempotensnøkkelen var låst til en lineage som
+    aldri kan bindes, og hver eneste bestilling som pekte på referansen
+    feilet siden. Et ærlig avslag ved opplasting er derimot en klient som
+    bare reserverer på nytt.
+
+    Testen måler BEGGE endene av mismatchen på den samme raden: gjenspillet
+    avvises, og bindingen som var grunnen til at det måtte avvises,
+    avviser den også.
+
+    MUTASJONEN SOM DREPER DENNE: fjern utløpssjekken i `lastet`-grenen i
+    `registrer_inndata_lastet` — da blir dette et 201 igjen."""
+    tenant, _bid, cookie, csrf = _rigg(klient)
+    kropp = _zipbytes()
+    sha = hashlib.sha256(kropp).hexdigest()
+    jti = secrets.token_hex(32)
+    m = _migrator(tenant)
+    try:
+        # En bunt som ALT er lastet med nøyaktig denne kroppens hash — det
+        # er tilstanden et tapt 201-svar etterlater — men utløpt.
+        inndata_id = _lastet(m, tenant, utloper="now() - interval '1 second'",
+                             jti=jti, sha=sha)
+        oppdrag = _oppdrag(m, tenant, "m57_ats")
+        m.commit()
+    finally:
+        m.close()
+    # Gjenspillet: samme jti, samme kropp, samme sha — og nå et ærlig
+    # avslag i stedet for et 201 på en ubrukelig referanse.
+    r = _opplast(klient, cookie, csrf, jti, kropp)
+    assert r.status_code == 409, r.text
+    assert r.json()["feil"] == "inndata_reservasjon_ugyldig"
+    # Ciphertexten API-et rakk å skrive før 058 sa nei, er ryddet — et
+    # avvist gjenspill skal ikke legge igjen en foreldreløs fil heller.
+    assert not sorted((inndata_rot / tenant).glob("*.bin"))
+    # Den andre enden: bindingen avviser den samme raden. Det er nettopp
+    # DENNE avvisningen gjenspillet ikke fikk lov å motsi.
+    c = _runtime(tenant)
+    try:
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            c.execute("SELECT bind_inndata(%s,%s,%s,%s)",
+                      (tenant, inndata_id, oppdrag, "m57_ats"))
+        c.rollback()
+    finally:
+        c.close()
 
 
 def _lagerfeil_paa(monkeypatch, navn, rot):

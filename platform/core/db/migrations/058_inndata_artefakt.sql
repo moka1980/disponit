@@ -425,6 +425,24 @@ BEGIN
             RAISE EXCEPTION 'inndata: reservasjonen er brukt for ANNET'
                 ' innhold' USING ERRCODE = 'unique_violation';
         END IF;
+        -- FRISTEN GJELDER OGSÅ GJENSPILLET (Codex P2 / Cursor P2, runde 6).
+        -- Denne grenen svarte 201 uten å se på `utloper`, mens
+        -- `bind_inndata` avviser NØYAKTIG den samme raden på den (509-512).
+        -- Et tapt 201-svar som ble retryet etter fristen fikk derfor
+        -- «gjenopprettet» tilbake på en bunt som aldri kan bindes: klienten
+        -- var fortalt at opplastingen sto, idempotensnøkkelen var låst til
+        -- den døde lineagen, og hver bestilling feilet siden. Et ærlig
+        -- avslag ved opplasting er en klient som kan reservere på nytt.
+        --
+        -- Samme errcode som utløpssjekken under, altså den kanoniske
+        -- `inndata_reservasjon_ugyldig` (409) — ikke en ny kode. Fristen
+        -- måles fra reservasjonen, ikke fra `lastet_ts`: å FORLENGE den her
+        -- ville gjort opplastingen til en frist-utsteder, og da er
+        -- `inndata_artefakt_utlop` ikke lenger reaperens fasit.
+        IF pg_catalog.now() > r.utloper THEN
+            RAISE EXCEPTION 'inndata: bunten er utløpt og kan ikke gjenspilles'
+                USING ERRCODE = 'invalid_parameter_value';
+        END IF;
         ut_inndata_id := r.inndata_id; ut_lager_sti := r.lager_sti;
         RETURN NEXT;
         RETURN;
