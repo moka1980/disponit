@@ -318,24 +318,50 @@ import hashlib, os, sys
 from pathlib import Path
 import psycopg
 kat = Path("platform/core/db/migrations")
-filer = {int(f.name[:3]): f for f in kat.glob("*.sql")}
+# Samme glob som kjorer.py: en `*.sql` uten tresifret prefiks ville felt
+# `int(f.name[:3])` her, mens kjøreren aldri så fila. Porten skal måle
+# NØYAKTIG det settet kjøreren kjører.
+filer = {int(f.name[:3]): f for f in kat.glob("[0-9][0-9][0-9]_*.sql")}
 with psycopg.connect(os.environ["DISPONIT_MIGRATOR_URL"]) as c:
     try:
         rader = c.execute(
-            "SELECT versjon, checksum FROM migrasjoner"
-            " WHERE checksum IS NOT NULL").fetchall()
+            "SELECT versjon, checksum FROM migrasjoner").fetchall()
     except psycopg.errors.UndefinedTable:
         print("fersk base — ingen historikk å verne"); sys.exit(0)
+    except psycopg.errors.UndefinedColumn:
+        # PR-004-æraens base: `migrasjoner` ble laget av 001_init.sql UTEN
+        # checksum-kolonne. Da finnes det ingen registrerte checksums å
+        # måle mot, og kjøreren er bygget for nettopp denne oppgraderingen:
+        # kjorer.py legger til kolonnen (ADD COLUMN IF NOT EXISTS) og
+        # migrasjon-bootstrap.herd_historikk backfiller de REVIEWEDE
+        # checksummene før 003. Et avbrudd her ville stoppet den eneste
+        # veien ut av tilstanden porten klager på.
+        print("historikken er ikke herdet ennå (ingen checksum-kolonne)"
+              " — migrer.py legger til kolonnen og backfiller")
+        sys.exit(0)
 avvik = []
+uherdet = []
 for versjon, checksum in rader:
     fil = filer.get(versjon)
     if fil is None:
         avvik.append(f"{versjon:03d}: kjørt i basen, borte fra treet")
+    elif checksum is None:
+        # Kjørt, men ikke herdet. Ikke et avvik: kjorer.py sammenligner kun
+        # når raden HAR en checksum, så en NULL-rad kan ikke felle steg 6 —
+        # herd_historikk fyller den fra REVIEWEDE_CHECKSUMS. Den telles og
+        # RAPPORTERES i stedet for å hoppes over stille, så en base som
+        # står halvveis i herdingen er synlig i deploy-loggen.
+        uherdet.append(versjon)
     elif hashlib.sha256(fil.read_bytes()).hexdigest() != checksum:
         avvik.append(f"{fil.name}: endret etter kjøring (checksum-avvik)")
 if avvik:
     print("\n".join(avvik)); sys.exit(1)
-print(f"{len(rader)} kjørte migrasjoner byte-identiske")
+melding = f"{len(rader) - len(uherdet)} kjørte migrasjoner byte-identiske"
+if uherdet:
+    melding += (f"; {len(uherdet)} uten checksum ("
+                + ", ".join(f"{v:03d}" for v in sorted(uherdet))
+                + ") — migrer.py herder dem")
+print(melding)
 PYPRE
       ); then
     echo "AVBRUTT ($base): checksum-preflighten er rød —"
