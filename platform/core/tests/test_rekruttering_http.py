@@ -119,10 +119,15 @@ def _post(klient, cookie, csrf, sti, kropp, idem=None):
                                     idem or secrets.token_urlsafe(24)})
 
 
-def _seed_prosess():
+def _seed_prosess(vekter=None):
     """Hele den ekte kjeden i miniatyr: loggpost → utfort
     evalueringsoppdrag → prosess → to kandidatartefakter → innstilt
-    liste (056-veien). -> (prosess_id, liste_id, innhold_hash)."""
+    liste (056-veien). -> (prosess_id, liste_id, innhold_hash).
+
+    `vekter` skriver vektsettet BEGGE artefaktene deklarerer. Det er den
+    eneste veien til å måle vektporten: valget er prosessvidt og tar det
+    FØRSTE lesbare settet, så et enkelt giftig artefakt ved siden av et
+    friskt bare hoppes over. Standard er det kanoniske settet."""
     from db import kryptering
     m = _migrator()
     try:
@@ -171,7 +176,8 @@ def _seed_prosess():
                     (TEN, pid, kid,
                      __import__("json").dumps({
                          "oppfylt": {"drift": poeng_ok, "sky": True},
-                         "vekter": {"drift": 3, "sky": 2},
+                         "vekter": ({"drift": 3, "sky": 2}
+                                    if vekter is None else vekter),
                          "funn": funn,
                          "intervjusporsmal": ["ARTEFAKTKOPI."]}),
                      hashlib.sha256(str(kid).encode()).hexdigest()))
@@ -610,6 +616,74 @@ def test_giftig_artefakttype_tar_ikke_ned_prosesslisten(klient):
     # …og vektene kom fra artefaktet, ikke fra reserven: et giftig
     # artefakt tidlig i rekkefølgen skal ikke gjøre huset til kilde.
     assert p["vekter_kilde"] == "evalueringsartefakt"
+
+
+def test_vektporten_er_skriveveiens_egen():
+    """Codex P2 (runde 9): `isinstance(v, dict)` spurte om FORMEN og
+    ikke om verdiene.
+
+    `evaluering.ranger` avviser et tomt vektsett og enhver verdi som
+    ikke er et ikke-negativt heltall (`ugyldige_vekter`) — men den
+    porten står i en funksjon runtime kan gå utenom med en rå INSERT i
+    `kandidat_evalueringsartefakt`, som 057 ikke formsjekker. Leseveien
+    målte derfor ikke det skriveveien måler.
+
+    Predikatet er rent og trenger ingen base — de fem avvisningene og
+    den ene godkjenningen ses her, HTTP-testen under viser at det
+    faktisk er koblet inn. Drepende mutasjon: bytt kroppen mot
+    `isinstance(v, dict)`.
+    """
+    from api.rekruttering import _vekter_lesbare
+    assert _vekter_lesbare({"drift": 3, "sky": 0})
+    assert not _vekter_lesbare({}), "tomt sett vekter ingenting"
+    assert not _vekter_lesbare({"drift": None}), "null er ingen vekt"
+    assert not _vekter_lesbare({"drift": -3}), "negativ vekt"
+    assert not _vekter_lesbare({"drift": True}), "bool er `int` i Python"
+    assert not _vekter_lesbare({"drift": "3"}), "streng blir NaN i flaten"
+    assert not _vekter_lesbare({"drift": 1.5}), "ranger krever heltall"
+    assert not _vekter_lesbare(["drift"]), "ikke engang et objekt"
+
+
+@pg
+def test_giftige_vekter_faller_til_reserven_ikke_til_flaten(klient):
+    """Codex P2 (runde 9): en vekting ingen kunne stå inne for, ble
+    likevel prosessens.
+
+    `{"drift": null}` er en lovlig INSERT i det uformsjekkede lageret, og
+    den gamle porten tok imot den fordi den var en `dict`. To ting fulgte
+    av det: trafikklyset måler `set(oppfylt) == set(vekter)` — bare
+    NØKLENE — så «Anbefalt» ble bevist mot tall som ikke fantes, og
+    flaten regner `Number(verdi)` på de samme verdiene og får `0` av
+    `null` (og `NaN` av en streng), så skyveren står ett sted mens tallet
+    ved siden av sier noe annet. Alt dette på flaten der den irreversible
+    signeringen skjer.
+
+    Er vektene ikke lesbare, er de INGEN opplysning: reserven (`3` per
+    krav) er svaret, og `vekter_kilde` sier «standard» — merknaden flaten
+    allerede viser. `sky` skiller de to kildene alene (2 fra artefaktet,
+    3 fra reserven).
+
+    Vektsettet skrives på BEGGE artefaktene: valget er prosessvidt og tar
+    det første LESBARE settet, så et giftig artefakt ved siden av et
+    friskt skal nettopp bare hoppes over.
+
+    Drepende mutasjon: bytt `_vekter_lesbare(...)` tilbake mot
+    `isinstance(art.get("vekter"), dict)` — da er kilden artefaktet og
+    `vekter["drift"]` er `None`.
+    """
+    pid, _lid, _ih = _seed_prosess(vekter={"drift": None, "sky": 2})
+    bid = _bruker("vekt-leser", ["leser"])
+    cookie, _ = _browsersesjon(bid)
+    r = _get(klient, cookie, "/v1/rekruttering/prosesser")
+    assert r.status_code == 200, r.text
+    p = [x for x in r.json()["prosesser"] if x["prosess_id"] == pid][0]
+    assert p["vekter_kilde"] == "standard", \
+        "en uleselig vekting ble utgitt for stillingsprofilens egen"
+    assert p["vekter"] == {"drift": 3, "sky": 3}, p["vekter"]
+    # Positiv kontroll: reserven er en ÆRLIG vekting, ikke en straff —
+    # kandidaten som oppfyller alt er fortsatt anbefalt.
+    lys = {k["kandidat_id"]: k["status"] for k in p["kandidater"]}
+    assert "anbefalt" in lys.values(), lys
 
 
 @pg

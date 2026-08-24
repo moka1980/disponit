@@ -116,6 +116,28 @@ def _leseauth_beslutninger(tjeneste, request, conn, rid):
     return auth.tenant, bid
 
 
+def _vekter_lesbare(v: object) -> bool:
+    """Skriveveiens egen vektport, lest på riktig side av lagringen.
+
+    `evaluering.ranger` avviser et tomt vektsett og enhver verdi som
+    ikke er et ikke-negativt heltall — `ugyldige_vekter`. `bool` er en
+    `int` i Python og måles derfor eksplisitt bort: `true` er ingen vekt.
+    Predikatet er skriveveiens, ikke en ny regel; API-laget importerer
+    aldri `modules.*` (ingen linje her gjør det), så det står som en
+    LESNING av samme dom, ikke som en delt maskin.
+
+    Den ekte lukkingen er formen ved LAGRINGSGRENSEN — eiers K2-dom
+    A (#176-tråden): CHECK/trigger på `kandidat_evalueringsartefakt.
+    artefakt`, og rå INSERT trukket tilbake fra runtime. Denne porten er
+    dybdeforsvaret som skal stå også etter A; det forbudte var at den
+    sto ALENE.
+    """
+    return (isinstance(v, dict) and bool(v)
+            and all(isinstance(k, str) for k in v)
+            and all(isinstance(x, int) and not isinstance(x, bool)
+                    and x >= 0 for x in v.values()))
+
+
 def _kandidater(conn, tenant, prosess_id):
     """Kandidatene i én prosess, lest RETT fra 057-lageret under RLS.
 
@@ -197,7 +219,24 @@ def _kandidater(conn, tenant, prosess_id):
         # bevise en anbefaling. Den faller til `vurderes`, samme fail-safe
         # som resten av trafikklyset.
         art = artefakt if isinstance(artefakt, dict) else {}
-        if vekter is None and isinstance(art.get("vekter"), dict):
+        # OG VEKTENE ER MER ENN EN DICT (Codex P2, runde 9). Porten
+        # spurte om FORMEN og ikke om verdiene, så `{"drift": null}`,
+        # `{"drift": -3}`, `{"drift": true}` og `{}` ble alle tatt imot
+        # som stillingsprofilens egne tall. Skriveveien avviser nøyaktig
+        # de fire (`ranger`: `ugyldige_vekter` — ikke-tom, ekte int, ikke
+        # bool, ikke negativ), men den porten står i en funksjon runtime
+        # kan gå utenom med en rå INSERT i lageret.
+        #
+        # De to sidene betaler ulikt. Trafikklyset måler `set(oppfylt) ==
+        # set(vekter)`, altså bare NØKLENE: en profil med ugyldige tall
+        # ga fortsatt «Anbefalt», med en vekting ingen kunne stå inne
+        # for. Flaten regner `Number(verdi)` på den samme verdien og får
+        # `0` av `null` og `NaN` av en streng — skyveren står ett sted og
+        # tallet ved siden av sier noe annet, på flaten der signeringen
+        # skjer. Er vektene ikke lesbare, er de INGEN opplysning, og
+        # reserven under (`{krav: 3}`) er det ærlige svaret — den er
+        # allerede merket i `vekter_kilde`, så flaten sier fra selv.
+        if vekter is None and _vekter_lesbare(art.get("vekter")):
             vekter, kilde = art["vekter"], "evalueringsartefakt"
         raa_funn, raa_oppfylt = art.get("funn"), art.get("oppfylt")
         funn = raa_funn if isinstance(raa_funn, list) else []
