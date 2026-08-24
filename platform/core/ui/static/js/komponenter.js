@@ -409,14 +409,31 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
   // før, bare i sonen eier flyttet den til.
   const erSynlig = (n) => MODULFLATE.has(n) || erTildelt(n);
 
+  // LENKETEKSTEN ER MÅLETS NAVN (Cursor P2). Raden med flate er en lenke, og
+  // en lenke skal hete det den åpner: flaten bærer `ui.wcag.tittel` = «WCAG
+  // kontroll» og `ui.rekruttering.tittel` = «Rekruttering» — samme strenger
+  // som `ui.nav.<rute>`, som er ordene 038 ratifiserte for oppføringen og som
+  // brukeren klikket på i toppnavigasjonen fram til nå. Med katalognavnet
+  // («Automatisk WCAG-kontroll») pekte den eneste inngangen på en flate som
+  // heter noe annet.
+  const navnFor = (n) => (MODULFLATE.has(n)
+    ? t(`ui.nav.${MODULFLATE.get(n)}`) : t(`site.katalog.m${n}.navn`));
+
+  // Søket ser BEGGE navnene. Modulen heter fortsatt «Automatisk WCAG-kontroll»
+  // i utrullingstabellen, på kundeflaten og i kontekstpanelet, og den som
+  // søker på det navnet skal finne raden sin — men den som søker på «WCAG
+  // kontroll» skal også det, og med bare ett av navnene i høystakken mistet
+  // alltid det ene av dem den eneste inngangen flaten har.
+  const sokenavn = (n) => [navnFor(n), t(`site.katalog.m${n}.navn`)];
+
   function tegnModuler(filter) {
     const q = (filter || "").trim().toLocaleLowerCase(valgtSprak || "nb");
     const grupper = [];
     modulknapper.clear();
     for (const omrade of OMRADER) {
       const treff = omrade.moduler.filter((n) => erSynlig(n)).filter((n) =>
-        !q || t(`site.katalog.m${n}.navn`).toLocaleLowerCase(valgtSprak || "nb")
-          .includes(q));
+        !q || sokenavn(n).some((s) =>
+          s.toLocaleLowerCase(valgtSprak || "nb").includes(q)));
       if (!treff.length) continue;
       grupper.push(el("section", { class: "skall-modulgruppe" },
         el("h3", { class: "skall-modulgruppe-navn",
@@ -436,7 +453,7 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
             // Knappen beholdes for moduler UTEN flate: der finnes det ingen
             // adresse å peke på, og panelet er en visning i samme side.
             const flate = MODULFLATE.get(n);
-            const navn = t(`site.katalog.m${n}.navn`);
+            const navn = navnFor(n);
             const kn = flate
               ? el("a", { class: "skall-modul", href: `#/${flate}`, text: navn })
               : el("button", { type: "button", class: "skall-modul",

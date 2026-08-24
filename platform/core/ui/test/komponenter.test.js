@@ -748,10 +748,16 @@ test("AppShell: modulkortet ER inngangen til flaten; toppnav bærer bare plattfo
   // «knapp» for den som hører flaten i stedet for å se den.
   const kort = (n) => [...brett.querySelectorAll(".skall-modul")]
     .find((e) => e.textContent === t(`site.katalog.m${n}.navn`));
-  assert.equal(kort(57).tagName, "A",
+  const flatekort = (rute) => brett.querySelector(`.skall-modul[href="#/${rute}"]`);
+  assert.equal(flatekort("rekruttering").tagName, "A",
     "modulkortet med flate er ikke en lenke");
-  assert.equal(kort(57).getAttribute("href"), "#/rekruttering",
-    "modulkortet peker ikke på flaten sin");
+  // ...og lenken heter det den ÅPNER (Cursor P2): flaten bærer
+  // `ui.rekruttering.tittel`, som er samme streng som `ui.nav.rekruttering` —
+  // ordet 038 ratifiserte, og det brukeren klikket på i toppnavigasjonen
+  // fram til nå. Katalognavnet pekte på en flate som het noe annet.
+  assert.equal(flatekort("rekruttering").textContent, t("ui.nav.rekruttering"));
+  assert.equal(kort(57), undefined,
+    "kortet står fortsatt med katalognavnet i stedet for flatens");
   // `href` er hele påstanden, og med vilje: fragmentnavigasjonen ved klikk er
   // nettleserens jobb nå, ikke vår, og jsdom utfører den ikke. Å legge en
   // klikk-handler oppå lenken bare for å kunne måle den her ville vært å
@@ -818,6 +824,32 @@ test("AppShell: flaten økten har rute til står i menyen, også utenfor tildeli
     "en økt uten ruten fikk likevel et kort som lover flaten");
 });
 
+test("AppShell: søket finner flateraden på begge navnene den har (Cursor P2)", () => {
+  // 🔴 Raden heter nå flaten sin («WCAG kontroll»), mens modulen fortsatt
+  // heter «Automatisk WCAG-kontroll» i utrullingstabellen, på kundeflaten og
+  // i kontekstpanelet. Med bare ett av navnene i høystakken mistet alltid det
+  // andre den eneste inngangen flaten har — og bindestreken gjør at det ene
+  // ikke er et delstreng-treff i det andre.
+  const brett = nyttBrett();
+  const { rot } = AppShell({ tenant: "acme",
+    ruter: byggRuter({ scopes: ["decisions:read"] }), aktiv: "oversikt",
+    sprak: "nb", moduler: [1, 2, 37], paaSprak: () => {}, paaLoggUt: () => {} });
+  brett.append(rot);
+  const felt = brett.querySelector("#skall-sok");
+  const sok = (q) => {
+    felt.value = q;
+    felt.dispatchEvent(new window.Event("input"));
+    return [...brett.querySelectorAll(".skall-modul")]
+      .map((e) => e.getAttribute("href"));
+  };
+  assert.deepEqual(sok(NB["ui.nav.wcagkontroll"]), ["#/wcagkontroll"],
+    "flatens eget navn finner ikke raden");
+  assert.deepEqual(sok(NB["site.katalog.m56.navn"]), ["#/wcagkontroll"],
+    "modulens katalognavn finner ikke raden");
+  // En flateløs modul er uendret: ett navn, og det er katalogens.
+  assert.equal(sok(NB["site.katalog.m37.navn"]).length, 1);
+});
+
 test("AppShell: den aktive modulflaten er merket i menyen som eier den", () => {
   // 🔴 HVOR ER JEG (Codex P2). `settAktiv` oppdaterer bare `lenker`, og
   // modulflatene er nettopp de rutene som er filtrert UT av den — mens
@@ -832,21 +864,23 @@ test("AppShell: den aktive modulflaten er merket i menyen som eier den", () => {
   brett.append(skall.rot);
   const kort = (n) => [...brett.querySelectorAll(".skall-modul")]
     .find((e) => e.textContent === t(`site.katalog.m${n}.navn`));
+  // Raden med flate heter flaten sin (Cursor P2), så den slås opp på adressen.
+  const flatekort = (rute) => brett.querySelector(`.skall-modul[href="#/${rute}"]`);
 
-  assert.equal(kort(57).getAttribute("aria-current"), null,
+  assert.equal(flatekort("rekruttering").getAttribute("aria-current"), null,
     "flaten er merket før noen har navigert til den");
   skall.settAktiv("rekruttering");
-  assert.equal(kort(57).getAttribute("aria-current"), "page",
+  assert.equal(flatekort("rekruttering").getAttribute("aria-current"), "page",
     "den aktive modulflaten er umerket i menyen som eier den");
   // Én om gangen, og ordet er «page» — samme som toppnavigasjonen bruker,
   // fordi det er samme slags opplysning.
   skall.settAktiv("wcagkontroll");
-  assert.equal(kort(56).getAttribute("aria-current"), "page");
-  assert.equal(kort(57).getAttribute("aria-current"), null,
+  assert.equal(flatekort("wcagkontroll").getAttribute("aria-current"), "page");
+  assert.equal(flatekort("rekruttering").getAttribute("aria-current"), null,
     "to modulflater står som aktive samtidig");
   // En plattformflate eier ingen modulrad: da skal ingen av dem være merket.
   skall.settAktiv("oversikt");
-  assert.equal(kort(56).getAttribute("aria-current"), null,
+  assert.equal(flatekort("wcagkontroll").getAttribute("aria-current"), null,
     "modulraden ble stående merket etter at brukeren forlot flaten");
 
   // Panelvalget lever ved siden av, og de to kolliderer ikke: en modul har
@@ -856,14 +890,14 @@ test("AppShell: den aktive modulflaten er merket i menyen som eier den", () => {
   skall.visKontekst(14, { fokuser: false });
   assert.equal(kort(14).getAttribute("aria-current"), "true",
     "panelvalget mistet markeringen sin");
-  assert.equal(kort(57).getAttribute("aria-current"), "page",
+  assert.equal(flatekort("rekruttering").getAttribute("aria-current"), "page",
     "flatemarkeringen forsvant da panelet ble fylt");
   // ...og markeringen overlever at søket tegner menyen på nytt, samme regel
   // som panelvalget alt hadde.
   const felt = brett.querySelector("#skall-sok");
-  felt.value = t("site.katalog.m57.navn");
+  felt.value = t("ui.nav.rekruttering");
   felt.dispatchEvent(new window.Event("input"));
-  assert.equal(kort(57).getAttribute("aria-current"), "page",
+  assert.equal(flatekort("rekruttering").getAttribute("aria-current"), "page",
     "flatemarkeringen forsvant da søket tegnet menyen på nytt");
 
   // DYPLENKEN ER FØRSTE TEGNING (Codex P2). Den som åpner `#/rekruttering`
@@ -872,8 +906,7 @@ test("AppShell: den aktive modulflaten er merket i menyen som eier den", () => {
   const dyp = AppShell({ tenant: "acme", ruter, aktiv: "rekruttering",
     sprak: "nb", moduler: [1, 57], paaSprak: () => {}, paaLoggUt: () => {} });
   nyttBrett().append(dyp.rot);
-  assert.equal([...dyp.rot.querySelectorAll(".skall-modul")]
-    .find((e) => e.textContent === t("site.katalog.m57.navn"))
+  assert.equal(dyp.rot.querySelector('.skall-modul[href="#/rekruttering"]')
     .getAttribute("aria-current"), "page",
   "en dyplenke inn i flaten er umerket i menyen");
 });
