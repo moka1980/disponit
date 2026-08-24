@@ -175,6 +175,18 @@ GRANT EXECUTE ON FUNCTION innlos_artefaktkapabilitet(TEXT, TEXT, TEXT, TEXT) TO 
 -- bevares (`direkte`-reversibilitet: resultatet forkastes, artefaktet
 -- ryddes). Samme eier som resten av artefaktveien, derfor samme blokk.
 GRANT EXECUTE ON FUNCTION verifiser_artefaktbinding(UUID, TEXT, BIGINT, TEXT) TO {rolle};
+-- 058: inndata-artefaktet (#162) — samme eier, derfor samme blokk. Codex P1:
+-- migrasjonen gir EXECUTE til `disponit` HARDKODET, som 017 gjør. På en
+-- installasjon som kaller dette skriptet med en annen runtime-rolle sto den
+-- rollen dermed uten EXECUTE — SELECT-en over var alt den fikk — og både
+-- reservasjonen og opplastingen svarte `permission denied`. Kjøreren er
+-- autoritativ for runtimerollens rettigheter (Cursor P1 på #140); en
+-- migrasjons grants overlever heller ikke en gjenoppbygging av skjemaet
+-- uten radene her. `bind_inndata` hører med: bestillingsveien kaller den i
+-- sin egen transaksjon, altså som runtimerollen.
+GRANT EXECUTE ON FUNCTION reserver_inndata(TEXT, TEXT, TEXT, BIGINT) TO {rolle};
+GRANT EXECUTE ON FUNCTION registrer_inndata_lastet(TEXT, TEXT, BIGINT, TEXT, TEXT, BYTEA, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION bind_inndata(TEXT, UUID, BIGINT, TEXT) TO {rolle};
 RESET ROLE;
 -- 035: modul-onboarding og modultokener. Hele denne veien er
 -- SECURITY DEFINER-funksjoner eid av `disponit_modul_eier`; runtime har

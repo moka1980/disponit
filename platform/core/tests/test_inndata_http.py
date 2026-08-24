@@ -569,3 +569,40 @@ def test_bundet_krever_krypto_og_lastet_ts(klient):
         m.rollback()
     finally:
         m.close()
+
+
+def test_execute_gis_ogsaa_til_kjorerens_konfigurerte_runtimerolle():
+    """Codex P1: 058 gir EXECUTE HARDKODET til `disponit`, som 017 gjør.
+
+    En installasjon som kaller `deploy/staging/migrer.py` med en annen
+    runtime-rolle fikk dermed bare `GRANT SELECT ON inndata_artefakt` fra
+    kjørerens `RETTIGHETER` — og både reservasjonen og opplastingen svarte
+    `permission denied`. Kjøreren er autoritativ for runtimerollens
+    rettigheter (Cursor P1 på #140), så hver dør migrasjonen åpner for
+    `disponit` må stå der med `{rolle}`.
+
+    Statisk port: den kjører uten base, og signaturene sammenlignes ORDRETT
+    — en signatur som gled ville gitt en stille WARNING i deploy, ikke en
+    feil."""
+    import re
+    from pathlib import Path
+    rot = Path(__file__).resolve().parents[3]
+    sql = (rot / "platform/core/db/migrations/058_inndata_artefakt.sql"
+           ).read_text(encoding="utf-8")
+    kjorer = (rot / "deploy/staging/migrer.py").read_text(encoding="utf-8")
+    rettigheter = kjorer.split('RETTIGHETER = """', 1)[1].split('"""', 1)[0]
+
+    def signaturer(tekst, mottaker):
+        # Nyliner i signaturen er lovlig SQL og finnes i 058; normaliser
+        # whitespace før sammenligning, ellers måler porten linjebrekk.
+        funnet = re.findall(
+            r"GRANT EXECUTE ON FUNCTION\s+(.*?)\s+TO %s\s*;" % mottaker,
+            tekst, re.S)
+        return {" ".join(s.split()) for s in funnet}
+
+    doerene = signaturer(sql, "disponit")
+    assert doerene, "058 gir ingen EXECUTE — porten ville vært blind"
+    mangler = doerene - signaturer(rettigheter, r"\{rolle\}")
+    assert not mangler, (
+        "058-dører uten grant i migrer.py sin RETTIGHETER-blokk: "
+        + ", ".join(sorted(mangler)))
