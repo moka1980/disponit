@@ -142,9 +142,15 @@ function tegn(hoved, ctx, data, okt, valgtId) {
   function poengFor(kandidat) {
     // Samme regel som evaluering.ranger: vekt teller når kravet er
     // oppfylt. `oppfylt` er serverens dom; vekten er brukerens valg.
+    // OPPFYLT ER `true`, IKKE «sant nok» (Cursor P1): `"false"` er en
+    // sann streng i JS akkurat som i Python, og da ga poengsummen
+    // kandidaten hele vekten mens trafikklyset — som nå måler `is True`
+    // — sa «Bør vurderes». To tall om samme kandidat på samme skjerm.
     let sum = 0;
     for (const [krav, vekt] of Object.entries(vekter)) {
-      if (kandidat.oppfylt && kandidat.oppfylt[krav]) sum += Number(vekt);
+      if (kandidat.oppfylt && kandidat.oppfylt[krav] === true) {
+        sum += Number(vekt);
+      }
     }
     return sum;
   }

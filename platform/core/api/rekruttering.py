@@ -157,13 +157,21 @@ def _kandidater(conn, tenant, prosess_id):
         "   AND i.kandidat_id = a.kandidat_id AND i.slettet_ts IS NULL"
         " WHERE a.tenant=%s AND a.prosess_id=%s AND a.slettet_ts IS NULL"
         " ORDER BY a.kandidat_id", (tenant, prosess_id)).fetchall()
-    kandidater, vekter, kilde = [], None, "standard"
+    kandidater, vekter, kilde, lest = [], None, "standard", []
     for kid, artefakt, sporsmal in rader:
         art = artefakt or {}
         if vekter is None and isinstance(art.get("vekter"), dict):
             vekter, kilde = art["vekter"], "evalueringsartefakt"
-        funn = art.get("funn") or []
-        oppfylt = art.get("oppfylt") or {}
+        lest.append((kid, art.get("funn") or [],
+                     art.get("oppfylt") or {}, sporsmal))
+    # VEKTENE ER ENDELIGE FØR TRAFIKKLYSET UTLEDES (Cursor P1). Reserven
+    # under leser HVER kandidats krav, så den kan ikke stå etter en
+    # dømming som må måle mot den — derfor to pass over de samme radene.
+    if vekter is None:
+        krav = sorted({k for _kid, _funn, oppfylt, _sp in lest
+                       for k in oppfylt})
+        vekter = {k: 3 for k in krav}
+    for kid, funn, oppfylt, sporsmal in lest:
         # ANBEFALINGEN ER OPPFYLTE KRAV, IKKE FRAVÆRET AV FUNN (Codex P1).
         # Den kanoniske evalueringsartefakten har ingen `status` i det hele
         # tatt (`evaluering.evaluer_kandidat` returnerer `funn`, `oppfylt`,
@@ -181,11 +189,30 @@ def _kandidater(conn, tenant, prosess_id):
         # foran reserven lot en produsent skrive «anbefalt» forbi hele
         # dømmingen. Kanonisk artefakt har ikke feltet; står det der, er
         # det nettopp derfor IKKE en kilde.
+        #
+        # …OG OPPFYLLELSEN MÅLES SOM SKRIVEVEIEN MÅLER DEN (Cursor P1,
+        # to ledd til). Dømmingen var `oppfylt and all(oppfylt.values())`,
+        # og den leste noe annet enn kilden den speiler:
+        #   * SANNHETSVERDIEN til hva som helst. `"false"` — den vanligste
+        #     JSON-feilen en modell gjør — er en SANN streng. Skriveveien
+        #     avviser den eksplisitt (`ikke_boolsk_oppfyllelse`, både i
+        #     `evaluer_kandidat` og i `ranger`), men leseveien tok imot
+        #     den som et ja og ga grønt lys. `is True`, ikke truthy.
+        #   * BARE DE KRAVENE SOM STO DER. `{"drift": true}` mot en profil
+        #     som krever drift OG sky ble «Anbefalt» fordi det ikke fantes
+        #     et `sky`-oppslag å feile på. `ranger` har begge speilportene
+        #     — `krav_utenfor_profilen` og krav som MANGLER — og de er
+        #     samme port: kravsettet skal være NØYAKTIG profilens. Målt
+        #     mot `vekter`, som nettopp derfor er endelige først.
+        # Ingen av de to er nye regler; de er skriveveiens egne, lest på
+        # riktig side av lagringen.
         status = ("innstilt_avslag" if any(
                       f.get("kategori") == "krav_ikke_dokumentert"
                       for f in funn)
-                  else "anbefalt" if not funn and oppfylt
-                  and all(oppfylt.values()) else "vurderes")
+                  else "anbefalt" if not funn and vekter
+                  and set(oppfylt) == set(vekter)
+                  and all(v is True for v in oppfylt.values())
+                  else "vurderes")
         kandidater.append({
             "kandidat_id": str(kid),
             "oppfylt": oppfylt,
@@ -193,9 +220,6 @@ def _kandidater(conn, tenant, prosess_id):
             "funn": funn,
             "intervjusporsmal": sporsmal or [],
         })
-    if vekter is None:
-        krav = sorted({k for kand in kandidater for k in kand["oppfylt"]})
-        vekter = {k: 3 for k in krav}
     return kandidater, vekter, kilde
 
 

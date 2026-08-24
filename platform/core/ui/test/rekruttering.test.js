@@ -332,6 +332,31 @@ test("Rekruttering: oppfunne vekter sier fra — begge veier", async () => {
     "evalueringens EGNE vekter ble stemplet som oppfunne");
 });
 
+test("Rekruttering: poengsummen teller `true`, ikke «sant nok»", async () => {
+  // Cursor P1 (10:01): serveren utleder trafikklyset med `v is True`,
+  // fordi `"false"` — den vanligste JSON-feilen en modell gjør — er en
+  // SANN streng, og begge skriveportene avviser ikke-boolske verdier.
+  // Flaten regnet poeng med en truthy-test, så den samme kandidaten fikk
+  // hele kravets vekt i poengkolonnen mens lyset ved siden av sa «Bør
+  // vurderes»: to tall om samme kandidat på samme skjerm.
+  //
+  // MUTASJONEN SOM DREPER DENNE: bytt `=== true` mot `` i `poengFor`.
+  KALL = [];
+  const data = prosess();
+  data.prosesser[0].kandidater = [
+    { kandidat_id: "K-1", oppfylt: { drift: "false", sky: true },
+      status: "vurderes", funn: [], intervjusporsmal: [] },
+  ];
+  SVAR = { "/v1/rekruttering/prosesser": data };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  await vent(() => hoved.querySelector("table"));
+  const celler = [...hoved.querySelectorAll("tbody tr td")]
+    .map((td) => td.textContent);
+  assert.equal(celler[1], "2",
+    "«false» som streng ga kandidaten drift-vekten på 3");
+});
+
 test("Rekruttering: serverens «signert» dreper knappen i en FERSK økt", async () => {
   // Codex P2: `okt.signerte` er ØKTENS hukommelse — den overlever et
   // prosessbytte, ikke en omlasting eller en ny fane. `liste.signert` er

@@ -340,10 +340,14 @@ def test_evalueringens_tilstand_folger_med_leseflaten(klient):
     assert kjorer in status
 
 
-def _artefakt(prosess_id: str, oppfylt: dict, funn=()) -> str:
+def _artefakt(prosess_id: str, oppfylt: dict, funn=(), ekstra=None) -> str:
     """En ekstra kandidatartefakt i en eksisterende prosess, på den
     KANONISKE formen: ingen `status`-nøkkel — den finnes ikke i
-    `evaluering.evaluer_kandidat`s returverdi. -> kandidat_id."""
+    `evaluering.evaluer_kandidat`s returverdi. -> kandidat_id.
+
+    `ekstra` skriver felter den kanoniske formen IKKE har — den eneste
+    veien til å måle at leseflaten avviser dem (runtime har INSERT på
+    lageret, så en produsent kan faktisk skrive dem)."""
     import json as _json
     from db.pg import koble, sett_kontekst
     rt = koble(DSN)
@@ -356,7 +360,8 @@ def _artefakt(prosess_id: str, oppfylt: dict, funn=()) -> str:
             (TEN, prosess_id, kid,
              _json.dumps({"oppfylt": oppfylt, "vekter": {"drift": 3,
                                                          "sky": 2},
-                          "funn": list(funn), "intervjusporsmal": []}),
+                          "funn": list(funn), "intervjusporsmal": [],
+                          **(ekstra or {})}),
              hashlib.sha256(str(kid).encode()).hexdigest()))
         rt.commit()
         return str(kid)
@@ -390,6 +395,49 @@ def test_anbefalingen_krever_oppfylte_krav_ikke_bare_tomme_funn(klient):
     assert lys[delvis] == "vurderes", \
         "delvis oppfyllelse er ikke en anbefaling"
     # …og porten stenger ikke for den kandidaten kravene FAKTISK bærer.
+    assert lys[alle] == "anbefalt"
+
+
+@pg
+def test_trafikklyset_er_fail_closed_paa_alle_tre_leddene(klient):
+    """Cursor P1 (10:01): utledningen er porten, og den tar bare imot det
+    skriveveien selv ville godtatt.
+
+    Tre ledd, tre ULIKE veier til et falskt grønt lys — alle på artefakter
+    runtime FAKTISK kan skrive (den har INSERT på lageret):
+
+    1. en skrevet `status: "anbefalt"` gikk foran hele dømmingen,
+    2. `"false"` er en SANN streng: kandidaten «oppfylte» kravet. Begge
+       skriveportene (`evaluer_kandidat` og `ranger`) avviser
+       ikke-boolske verdier med `ikke_boolsk_oppfyllelse`; leseveien tok
+       imot dem,
+    3. bare de kravene som STO der ble målt: `{"drift": true}` mot en
+       profil som krever drift OG sky ble «Anbefalt» fordi det ikke fantes
+       et `sky`-oppslag å feile på. `ranger` krever det EKSAKTE kravsettet.
+
+    MUTASJONENE SOM DREPER DENNE, én per ledd: legg `art.get("status") or`
+    tilbake foran utledningen; bytt `v is True` mot `v`; fjern
+    `set(oppfylt) == set(vekter)`.
+    """
+    pid, _lid, _ih = _seed_prosess()
+    pastand = _artefakt(pid, {"drift": False, "sky": False},
+                        ekstra={"status": "anbefalt"})
+    strenger = _artefakt(pid, {"drift": "false", "sky": "false"})
+    halvt_maalt = _artefakt(pid, {"drift": True})
+    alle = _artefakt(pid, {"drift": True, "sky": True})
+    bid = _bruker("lys-leser-2", ["leser"])
+    cookie, _ = _browsersesjon(bid)
+    r = _get(klient, cookie, "/v1/rekruttering/prosesser")
+    assert r.status_code == 200, r.text
+    p = [x for x in r.json()["prosesser"] if x["prosess_id"] == pid][0]
+    lys = {k["kandidat_id"]: k["status"] for k in p["kandidater"]}
+    assert lys[pastand] == "vurderes", \
+        "en skrevet status gikk forbi dømmingen"
+    assert lys[strenger] == "vurderes", \
+        "«false» som streng ble lest som oppfylt"
+    assert lys[halvt_maalt] == "vurderes", \
+        "et umålt krav i profilen ble til en anbefaling"
+    # Positiv kontroll: porten stenger ikke for den ekte anbefalingen.
     assert lys[alle] == "anbefalt"
 
 
