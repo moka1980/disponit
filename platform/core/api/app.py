@@ -847,6 +847,18 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def sesjon_logout(request: Request) -> Response:
         return sesjonmodul.sesjon_logout(tjeneste, request)
 
+    # M-57 utførelsesarmen: leseflaten + signeringen gjennom 056-kjeden.
+    from . import rekruttering as rekruttering_http
+
+    def rekruttering_prosesser(request: Request) -> Response:
+        return rekruttering_http.prosesser_endepunkt(tjeneste, request)
+
+    def rekruttering_signer(request: Request) -> Response:
+        return rekruttering_http.signer_endepunkt(tjeneste, request)
+
+    def rekruttering_blinding(request: Request) -> Response:
+        return rekruttering_http.blinding_endepunkt(tjeneste, request)
+
     # PR-013: policyadministrasjon — utkast-CRUD + aktivering (fire-øyne).
     from . import policyadmin_http
 
@@ -1026,6 +1038,12 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         # statisk serverte klientbunten der hvem som helst kunne lese hver
         # tenants plan og modultildeling.
         Route("/v1/utrulling", utrulling, methods=["GET"]),
+        Route("/v1/rekruttering/prosesser", rekruttering_prosesser,
+              methods=["GET"]),
+        Route("/v1/rekruttering/prosesser/{prosess_id}/blinding",
+              rekruttering_blinding, methods=["POST"]),
+        Route("/v1/rekruttering/lister/{liste_id:uuid}/signer",
+              rekruttering_signer, methods=["POST"]),
         # PR-013: policyadministrasjon. Kolleksjonsrutene FØR mønsterrutene, og
         # de spesifikke handlings-subrutene (.../valider osv.) er egne stier så
         # {utkast_id:str} aldri slukter dem.
@@ -1452,6 +1470,14 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("GET",  "/v1/policy/{policy_id:str}/diff"):      "policy:read",
     ("GET",  "/v1/policyadmin/editorgrunnlag"):       "policy:read",
     ("GET",  "/v1/policy/aktive"):           "policy:read",
+    # M-57 utførelsesarmen: lesingen bak flatens svakeste ledd; signering
+    # og blinding-avskruing bak mutasjonsscopet (056-kjeden + #159 gjør
+    # resten av dømmingen inne i endepunktene).
+    ("GET",  "/v1/rekruttering/prosesser"):  "decisions:read",
+    ("POST", "/v1/rekruttering/prosesser/{prosess_id}/blinding"):
+        "bestilling:opprett",
+    ("POST", "/v1/rekruttering/lister/{liste_id:uuid}/signer"):
+        "bestilling:opprett",
     # Utrullingsplanen: kundens egen flate, derfor `decisions:read` (som ALLE
     # kunderollene har). Kontrollplanet på tvers krever i tillegg
     # `platform:admin`, og det avgjøres inne i endepunktet — det er en
