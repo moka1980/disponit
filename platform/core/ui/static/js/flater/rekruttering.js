@@ -25,7 +25,28 @@ import { Detaljpanel, Bekreftelsesdialog } from "../dialog.js";
 import { Tidspunkt } from "../komponenter.js";
 import { medStatus, flateHode } from "./felles.js";
 
-function meldFeil(ctx, utfall, e) {
+function meldUtfall(hoved, okt, tekst) {
+  // KVITTERINGEN HØRER TIL ØKTEN, IKKE TIL ÉN TEGNING (Codex P2, runde
+  // 10). Utfallsområdet lages på nytt av hver `tegn`, og bytter brukeren
+  // prosess etter at hun bekreftet signeringen men før POST-en er
+  // besvart, lukker denne tilbakekallingen fortsatt om den GAMLE noden.
+  // Meldingen ble da skrevet til et frakoblet element: ingenting vist,
+  // ingenting kunngjort — for den ene handlingen på flaten som ikke kan
+  // gjøres om. Teksten legges derfor i økten og skrives til noden som
+  // står i visningen NÅ; `role="alert"` gjør at den også blir sagt.
+  //
+  // Den andre halvdelen av det samme vinduet — at et prosessbytte gir en
+  // levende «Signer»-knapp på en liste hvis POST er i lufta — er alt
+  // lukket: `okt.signeringsnokler` overlever tegningen, så et nytt klikk
+  // bærer SAMME `Idempotency-Key` og serveren replayer i stedet for å
+  // signere på nytt (056s egen arm; se `signer_endepunkt`). Det som sto
+  // åpent var meldingen.
+  okt.utfall = tekst;
+  const node = hoved.querySelector(".rekrut-utfall");
+  if (node) sett(node, tekst);
+}
+
+function meldFeil(ctx, hoved, okt, e) {
   // 401 ER IKKE EN HANDLINGSFEIL (Codex P1). Utløper økten mellom
   // lastingen av flaten og mutasjonen, kaster `api.js` UautorisertFeil —
   // og fanget den her som «noe gikk galt», ble brukeren stående i det
@@ -45,7 +66,7 @@ function meldFeil(ctx, utfall, e) {
   // ny forsøk replayer den samme operasjonen i stedet for å lage en ny.
   const status = (e && typeof e.status === "number") ? e.status : 0;
   const definitivt = status >= 400 && status < 500;
-  sett(utfall, t(definitivt ? "ui.rekruttering.feil_utfall"
+  meldUtfall(hoved, okt, t(definitivt ? "ui.rekruttering.feil_utfall"
     : "ui.rekruttering.usikkert_utfall"));
 }
 
@@ -90,7 +111,11 @@ export function visRekruttering(hoved, ctx) {
   // fram og tilbake både en fersk nøkkel (så en retry etter et tapt 2xx
   // ble en NY operasjon serveren ikke kan replaye) og en levende
   // «Signer»-knapp på en liste som alt var sendt. Begge holdes derfor her.
-  const okt = { signeringsnokler: new Map(), signerte: new Set() };
+  // `utfall` er kvitteringen for den irreversible handlingen, og hører
+  // til her av nøyaktig samme grunn som de to over: den skrives når
+  // POST-en svarer, og da kan tegningen som ba om den være borte.
+  const okt = { signeringsnokler: new Map(), signerte: new Set(),
+    utfall: null };
   medStatus(hoved, ctx,
     () => hentJson("/v1/rekruttering/prosesser"),
     (data) => tegn(hoved, ctx, data, okt));
@@ -134,7 +159,10 @@ function tegn(hoved, ctx, data, okt, valgtId) {
   const kanBestille = harScope(ctx, "bestilling:opprett");
 
   // Utfallsområdet: role=alert — signering og blinding melder hit.
+  // Meldingen bæres av økten, så en tegning som kommer ETTER svaret
+  // (prosessbytte) viser den fortsatt: `meldUtfall` er kilden.
   const utfall = el("div", { role: "alert", class: "rekrut-utfall" });
+  if (okt.utfall) sett(utfall, okt.utfall);
   // Re-rangeringens kunngjøring: høflig, aldri avbrytende.
   const kunngjoring = el("div", { "aria-live": "polite",
     class: "sr-only rekrut-kunngjoring" });
@@ -483,11 +511,11 @@ function tegn(hoved, ctx, data, okt, valgtId) {
             // — og merket ligger i ØKTEN, så heller ikke fra den neste.
             okt.signerte.add(listenokkel(liste));
             knapp.dataset.ferdig = "1";
-            sett(utfall, t("ui.rekruttering.signer_utfall")
+            meldUtfall(hoved, okt, t("ui.rekruttering.signer_utfall")
               .replaceAll("{hash}", kortHash(svar.innhold_hash
                 || liste.innhold_hash)));
           } catch (e) {
-            meldFeil(ctx, utfall, e);
+            meldFeil(ctx, hoved, okt, e);
           }
         }),
       });

@@ -675,6 +675,70 @@ test("Rekruttering: signeringsnøkkel og «signert» overlever prosessbytte", as
     "listen ble sendt en gang til etter prosessbytte");
 });
 
+test("Rekruttering: signeringens kvittering overlever et prosessbytte",
+  async () => {
+  // Codex P2 (runde 10): bytter brukeren prosess etter at hun bekreftet
+  // signeringen, men FØR POST-en er besvart, tegner `tegn` et nytt
+  // utfallsområde — mens tilbakekallingen fortsatt lukker om det gamle.
+  // Meldingen ble skrevet til en frakoblet node: ingenting vist,
+  // ingenting kunngjort, for den ene handlingen som ikke kan gjøres om.
+  //
+  // MUTASJONEN SOM DREPER DENNE: bytt `meldUtfall(hoved, okt, ...)` i
+  // signeringens `try` tilbake mot `sett(utfall, ...)`.
+  const to = prosess();
+  to.prosesser.push({
+    prosess_id: "p-2", navn: "Sykepleier vest", blinding_av: false,
+    vekter: { drift: 1 }, vekter_kilde: "evalueringsartefakt",
+    evaluering_status: "utfort",
+    kandidater: [{ kandidat_id: "K-9", oppfylt: { drift: true },
+      status: "anbefalt", funn: [], intervjusporsmal: [] }],
+    lister: [],
+  });
+  // POST-en henger til testen slipper den: nøyaktig vinduet funnet
+  // handler om. `json()` venter på løftet, så svaret kommer ETTER byttet.
+  let losPost;
+  const iLufta = new Promise((los) => { losPost = los; });
+  KALL = [];
+  SVAR = (sti, opts) => (opts.method === "POST" ? iLufta : to);
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")));
+  const bytt = (id) => {
+    const velger = hoved.querySelector("#rekrut-prosessvelger");
+    velger.value = id;
+    velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  };
+  const knapp = [...hoved.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.signer_knapp"));
+  assert.ok(await vent(() => !knapp.disabled), "knappen ble aldri åpen");
+  knapp.click();
+  [...document.querySelector('[role="alertdialog"]')
+    .querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.signer_bekreft"))
+    .click();
+  assert.ok(await vent(() => KALL.some((k) => k.metode === "POST")),
+    "signeringen ble aldri sendt");
+
+  const gammel = hoved.querySelector(".rekrut-utfall");
+  bytt("p-2");
+  assert.notEqual(hoved.querySelector(".rekrut-utfall"), gammel,
+    "prosessbyttet tegnet ikke et nytt utfallsområde — testen måler ikke"
+    + " lenger vinduet den ble skrevet for");
+  assert.equal(gammel.isConnected, false, "den gamle noden henger igjen");
+
+  losPost({ innhold_hash: HASH });
+  const ventet = t("ui.rekruttering.signer_utfall")
+    .replaceAll("{hash}", `${HASH.slice(0, 12)}…`);
+  assert.ok(await vent(() =>
+    hoved.querySelector(".rekrut-utfall").textContent === ventet),
+    "kvitteringen for en irreversibel signering ble skrevet til en"
+    + " frakoblet node");
+  // …og den blir stående når brukeren går tilbake: økten bærer den.
+  bytt("p-1");
+  assert.equal(hoved.querySelector(".rekrut-utfall").textContent, ventet,
+    "kvitteringen forsvant ved neste tegning");
+});
+
 test("Rekruttering: «Detaljer» åpner panelet med funn, sitat og spørsmål", async () => {
   // Codex P2: radhandlingen ble sendt som `utfor`, mens DataTabell binder
   // `handling.paaKlikk`. En `undefined` lytter er ingen feil i nettleseren
