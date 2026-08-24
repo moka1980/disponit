@@ -448,7 +448,12 @@ def test_p1_varsel_dsn_gates_for_forste_mutasjon():
 # derfor den som måles her.
 # ---------------------------------------------------------------------------
 
-CRED_START = "install -d -m 700 /etc/disponit/api"
+# Blokken starter på SNAPSHOTET, ikke på den første `install -d` (Codex P1,
+# runde 4): snapshotet av forrige releases credentials er en del av
+# materialiseringen — det er det eneste stedet «verdien før overskrivingen»
+# finnes — og det skal derfor kjøres av de samme atferdstestene, inkludert
+# den mot en fersk, tom rot.
+CRED_START = "CRED_FORVINDU=/etc/disponit/.forvindu"
 CRED_SLUTT = "skriv_cred domener DISPONIT_RESOLVERE"
 
 
@@ -687,6 +692,123 @@ def test_hver_feil_i_vinduet_kaller_selvrevers():
     assert vindu.count("selvrevers ") == 2, \
         "antall selvrevers-kall i vinduet har endret seg — er en ny " \
         "feilkilde lagt til uten reversering, eller en fjernet?"
+
+
+def _credgjenoppretting() -> str:
+    """Tilbakestillingen av credentials i `selvrevers()`, ordrett fra opp.sh.
+
+    Samme grep som `_credentialblokken()`: fragmentet testes der det bor.
+    """
+    opp = (ROT / "deploy/staging/opp.sh").read_text(encoding="utf-8")
+    blokk = opp[opp.index("selvrevers() {"):
+                opp.index("\n}\n", opp.index("selvrevers() {"))]
+    start = blokk.index('GJENOPPRETTET=""')
+    slutt = blokk.index("\n", blokk.index("done", start))
+    return blokk[start:slutt]
+
+
+def test_selvrevers_gjenoppretter_credentialene_fra_for_vinduet(tmp_path):
+    """Codex P1 (#178, runde 4): reverseringen skal starte forrige release på
+    forrige releases KONFIGURASJON, ikke bare på forrige releases binær.
+
+    Steg 4 overskriver `/etc/disponit/*` med kandidatens verdier, og
+    `LoadCredential` leser fila på nytt ved HVER aktivering. `selvrevers()`
+    starter så forrige release fra nøyaktig de filene. Skarpeste tilfellet er
+    `DISPONIT_SEMANTIKK_MILJO`: den regnes ut med KANDIDATENS kode (`$KILDE`)
+    og måles ved oppstart av FORRIGE releases egen
+    `verifiser_oppstartsmiljo()` — så en signaturform som endret seg mellom
+    releasene gjør at forrige release nekter å starte, på en verdi denne
+    utrullingen selv skrev. Samme klasse: en nøkkel rotert i miljøfila, eller
+    en DSN som peker et nytt sted.
+
+    De tre forrige rundene på denne funksjonen målte hvilke ENHETER som
+    startes. Denne måler tilstanden de startes MOT, og den måles som
+    ATFERD — en full rundtur: gammel verdi på disk → materialiseringen
+    overskriver → tilbakestillingen henter den tilbake.
+    """
+    rot = tmp_path / "etc-disponit"
+    (rot / "api").mkdir(parents=True)
+    (rot / "api/DISPONIT_SEMANTIKK_MILJO").write_text(
+        "signatur-fra-forrige-release", encoding="utf-8")
+    venv = tmp_path / "rot/.venv/bin"
+    venv.mkdir(parents=True)
+    (venv / "python").write_text("#!/bin/sh\necho signatur-fra-kandidaten\n",
+                                 encoding="utf-8")
+    (venv / "python").chmod(0o755)
+    env = {"ROT": str(tmp_path / "rot"), "KILDE": str(ROT),
+           "PATH": "/usr/bin:/bin"}
+    env.update({n: f"verdi-{n}" for n in (
+        "DATABASE_URL", "DISPONIT_KEK", "DISPONIT_TOKEN_PEPPER",
+        "DISPONIT_ATT_NOKLER", "DISPONIT_MAC_NOKLER",
+        "DISPONIT_TOKEN_ADMIN_URL", "DISPONIT_DOMAINS_URL",
+        "DISPONIT_VARSEL_URL", "DISPONIT_PLAN_URL")})
+    import subprocess
+
+    def kjor(fragment: str, ekstra: dict[str, str] | None = None):
+        return subprocess.run(
+            ["bash", "-c", "set -eu\n"
+             + fragment.replace("/etc/disponit", str(rot))],
+            capture_output=True, text=True, env={**env, **(ekstra or {})})
+
+    res = kjor(_credentialblokken())
+    assert res.returncode == 0, \
+        f"materialiseringen feilet:\n{res.stdout}\n{res.stderr}"
+    assert (rot / "api/DISPONIT_SEMANTIKK_MILJO").read_text(
+        encoding="utf-8") == "signatur-fra-kandidaten", \
+        "materialiseringen skrev ikke kandidatens verdi — testen måler ikke" \
+        " lenger tilfellet den er skrevet for"
+
+    res = kjor(_credgjenoppretting(),
+               {"CRED_FORVINDU": str(rot / ".forvindu")})
+    assert res.returncode == 0, \
+        f"tilbakestillingen feilet:\n{res.stdout}\n{res.stderr}"
+    assert (rot / "api/DISPONIT_SEMANTIKK_MILJO").read_text(
+        encoding="utf-8") == "signatur-fra-forrige-release", \
+        "selvrevers() starter forrige release på KANDIDATENS credentials —" \
+        " symlinken er urørt, men konfigurasjonen prosessen booter på er det" \
+        " ikke, og «SELVREVERSERT» lover det motsatte"
+    # Skriver over, rydder ikke: en credential kandidaten la til blir
+    # liggende. Forrige releases units laster bare det deres egen
+    # `LoadCredential` navngir, så den er inert — mens et `rm -rf` her ville
+    # lagt et destruktivt steg inn i selve feilhåndteringen.
+    assert (rot / "api/DISPONIT_KEK").exists(), \
+        "tilbakestillingen slettet en credential i stedet for å skrive over"
+
+
+def test_selvrevers_credentialsnapshotet_tas_for_forste_skriving():
+    """Og plasseringen, målt på kilden: snapshotet står FØR første
+    `skriv_cred`, og tilbakestillingen FØR første `systemctl start`.
+
+    Et snapshot tatt etter den første skrivingen måler kandidatens verdier og
+    kaller dem «før vinduet» — samme feilklasse som `is-enabled`-gjetningen i
+    runde 2. En tilbakestilling etter første start booter forrige release på
+    ny konfigurasjon og retter den først etterpå.
+
+    Snapshotet måles også som GENERISK: en enumerert liste over dagens
+    credential-kataloger drifter fra `skriv_cred` neste gang noen legger til
+    en, og det er nøyaktig hullet `test_p1_hver_skriv_cred_katalog_opprettes_forst`
+    finnes for på skrivesiden.
+    """
+    opp = "\n".join(
+        linje for linje in (ROT / "deploy/staging/opp.sh").read_text(
+            encoding="utf-8").splitlines()
+        if not linje.lstrip().startswith("#"))
+    snapshot = opp.index("CRED_FORVINDU=/etc/disponit/.forvindu")
+    assert snapshot < opp.index("skriv_cred api"), \
+        "credential-snapshotet tas ETTER at credentials er skrevet — da er" \
+        " det kandidatens verdier det bevarer, ikke forrige releases"
+    assert "for kat in /etc/disponit/*/" in opp, \
+        "snapshotet enumererer kataloger i stedet for å globbe — neste" \
+        " skriv_cred-katalog blir da stående ubevart uten at noen ser det"
+
+    blokk = opp[opp.index("selvrevers() {"):
+                opp.index("\n}\n", opp.index("selvrevers() {"))]
+    assert "$CRED_FORVINDU" in blokk, \
+        "selvrevers() rører ikke credentialene — den starter forrige" \
+        " release på kandidatens konfigurasjon"
+    assert blokk.index("$CRED_FORVINDU") < blokk.index("systemctl start"), \
+        "credentialene tilbakestilles ETTER første `systemctl start` — da" \
+        " har forrige release alt lastet kandidatens verdier"
 
 
 def _checksumporten() -> str:

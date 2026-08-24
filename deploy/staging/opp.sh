@@ -546,6 +546,33 @@ if [ "${DISPONIT_MILJO:-staging}" != "staging" ]; then
   echo "på nytt når $MILJOFIL står stille og sier 'staging'."
   exit 1
 fi
+# SNAPSHOT AV CREDENTIALENE FØR DE OVERSKRIVES (Codex P1, runde 4).
+#
+# Steg 4 materialiserer KANDIDATENS verdier i /etc/disponit/*, og
+# `selvrevers()` starter FORRIGE release fra nøyaktig de samme filene.
+# `LoadCredential` leser fila på nytt ved HVER aktivering, så uten et
+# snapshot booter reverseringen gammel binær på ny konfigurasjon — og
+# meldingen «symlinken er urørt» er sann om symlinken og usann om
+# tilstanden prosessen faktisk starter i.
+#
+# Skarpeste tilfellet er `DISPONIT_SEMANTIKK_MILJO`: den regnes ut nedenfor
+# med KANDIDATENS kode (`$KILDE`) og måles ved oppstart av FORRIGE releases
+# egen `verifiser_oppstartsmiljo()`. Endret signaturformen seg mellom de to
+# releasene, nekter forrige release å starte — på en verdi denne
+# utrullingen skrev. Samme klasse: en nøkkel rotert i miljøfila siden
+# forrige deploy, eller en DSN som peker et nytt sted.
+#
+# Snapshotet er GENERISK — hver underkatalog av /etc/disponit, ikke en
+# liste over dagens credential-kataloger — så neste `skriv_cred`-katalog er
+# dekket uten at noen husker det. Navnet har ledende punktum med vilje:
+# `*/` matcher ikke skjulte navn, så kopien kan ikke kopiere seg selv.
+CRED_FORVINDU=/etc/disponit/.forvindu
+rm -rf "$CRED_FORVINDU"
+install -d -m 700 "$CRED_FORVINDU"
+for kat in /etc/disponit/*/; do
+  [ -d "$kat" ] || continue        # fersk vert: ingen kataloger å bevare
+  cp -a "$kat" "$CRED_FORVINDU/"
+done
 # Hver katalog `skriv_cred` skriver i MÅ opprettes FØR den skrives i —
 # `skriv_cred` er en `printf >`-omdirigering, og uten katalogen feiler den i
 # den MUTERENDE fasen, etter at preflighten er passert. På en vert som har
@@ -741,6 +768,28 @@ selvrevers() {
     echo "release bærer. Deployen er avbrutt."
     exit 1
   fi
+  # Codex P1 (runde 4): CREDENTIALENE TILBAKE FØR GAMMEL KODE BOOTER PÅ DEM.
+  # De tre forrige rundene på denne funksjonen målte hvilke ENHETER som
+  # startes; dette er den tilstanden de startes MOT. Steg 4 skrev
+  # kandidatens verdier over forrige releases, `LoadCredential` leser fila
+  # på nytt ved hver aktivering, og `DISPONIT_SEMANTIKK_MILJO` er regnet ut
+  # med kandidatens kode mens forrige releases boot-port måler den mot sin
+  # egen. Uten denne tilbakestillingen er «forrige release kjører igjen» et
+  # utsagn om binæren, ikke om konfigurasjonen den kjører på.
+  #
+  # Tilbakestillingen SKRIVER OVER, den rydder ikke: en credential
+  # kandidaten la til og forrige release ikke kjenner, blir liggende. Det
+  # er med vilje — forrige releases units laster bare de filene deres egen
+  # `LoadCredential` navngir, så en ekstra fil er inert, mens et `rm -rf`
+  # her ville lagt et destruktivt steg inn i selve feilhåndteringen.
+  GJENOPPRETTET=""
+  for kat in "$CRED_FORVINDU"/*/; do
+    [ -d "$kat" ] || continue
+    cp -a "$kat" /etc/disponit/
+    GJENOPPRETTET="$GJENOPPRETTET $(basename "$kat")"
+  done
+  echo "credentials tilbakestilt til før vinduet:" \
+       "${GJENOPPRETTET:- ingen — /etc/disponit var tomt før steg 4}"
   # Snapshotet, i den rekkefølgen unitene avhenger av hverandre: socket og
   # API først (`disponit-wcag-audit.service` har `After=disponit-api.service`),
   # så resten. Rekkefølgen ligger i SELVREVERS_ENHETER, og snapshotet er
@@ -845,6 +894,15 @@ done
 
 # --- 7. Atomisk release-bytte + units --------------------------------------
 ln -sfn "$KILDE" "$AKTIV"
+# Feilsonen er passert: fra og med linjen over er symlinken byttet, og
+# `selvrevers()` kalles ikke lenger (`test_hver_feil_i_vinduet_kaller_selvrevers`
+# avgrenser sonen til nøyaktig dette intervallet). Credential-snapshotet har
+# ingen leser igjen, og det er en KOPI av hemmelighetene i /etc/disponit —
+# den skal ikke bli liggende som stabil tilstand på verten. Feiler deployen
+# før dette punktet, blir kopien liggende til neste kjøring rydder den; da
+# er den fortsatt 700/root, og fortsatt de samme hemmelighetene som allerede
+# ligger ved siden av.
+rm -rf "$CRED_FORVINDU"
 for u in $UNITS; do
   install -m 644 "$KILDE/deploy/staging/$u" "/etc/systemd/system/$u"
 done
