@@ -201,6 +201,59 @@ def test_prosesslisten_baerer_flatens_kontrakt(klient):
         and liste[0]["antall"] == 2 and liste[0]["signert"] is False
 
 
+def _artefakt(prosess_id: str, oppfylt: dict, funn=()) -> str:
+    """En ekstra kandidatartefakt i en eksisterende prosess, på den
+    KANONISKE formen: ingen `status`-nøkkel — den finnes ikke i
+    `evaluering.evaluer_kandidat`s returverdi. -> kandidat_id."""
+    import json as _json
+    from db.pg import koble, sett_kontekst
+    rt = koble(DSN)
+    try:
+        sett_kontekst(rt, TEN, "test", "r-art")
+        kid = uuid.uuid4()
+        rt.execute(
+            "INSERT INTO kandidat_evalueringsartefakt (tenant, prosess_id,"
+            " kandidat_id, artefakt, innhold_sha256) VALUES (%s,%s,%s,%s,%s)",
+            (TEN, prosess_id, kid,
+             _json.dumps({"oppfylt": oppfylt, "vekter": {"drift": 3,
+                                                         "sky": 2},
+                          "funn": list(funn), "intervjusporsmal": []}),
+             hashlib.sha256(str(kid).encode()).hexdigest()))
+        rt.commit()
+        return str(kid)
+    finally:
+        rt.close()
+
+
+@pg
+def test_anbefalingen_krever_oppfylte_krav_ikke_bare_tomme_funn(klient):
+    """Codex P1: trafikklyset er reservens verk for ENHVER kanonisk
+    artefakt (evalueringen returnerer ingen `status`), og funn og
+    kravoppfyllelse er uavhengige felt. En komplett evaluering med tom
+    `funn` og bare `false` i `oppfylt` — kandidaten oppfyller ikke ETT krav
+    — fikk «Anbefalt» utelukkende fordi ingen risiko var notert.
+
+    MUTASJONEN SOM DREPER DENNE: sett betingelsen tilbake til
+    `"vurderes" if funn else "anbefalt"`.
+    """
+    pid, _lid, _ih = _seed_prosess()
+    null_krav = _artefakt(pid, {"drift": False, "sky": False})
+    delvis = _artefakt(pid, {"drift": True, "sky": False})
+    alle = _artefakt(pid, {"drift": True, "sky": True})
+    bid = _bruker("lys-leser", ["leser"])
+    cookie, _ = _browsersesjon(bid)
+    r = _get(klient, cookie, "/v1/rekruttering/prosesser")
+    assert r.status_code == 200, r.text
+    p = [x for x in r.json()["prosesser"] if x["prosess_id"] == pid][0]
+    lys = {k["kandidat_id"]: k["status"] for k in p["kandidater"]}
+    assert lys[null_krav] == "vurderes", \
+        "null oppfylte krav og tomme funn ble til grønt lys"
+    assert lys[delvis] == "vurderes", \
+        "delvis oppfyllelse er ikke en anbefaling"
+    # …og porten stenger ikke for den kandidaten kravene FAKTISK bærer.
+    assert lys[alle] == "anbefalt"
+
+
 @pg
 def test_signering_gaar_gjennom_056_kjeden(klient):
     _pid, lid, ih = _seed_prosess()

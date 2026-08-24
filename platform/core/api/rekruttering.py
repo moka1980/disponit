@@ -58,13 +58,27 @@ def _kandidater(conn, tenant, prosess_id):
         if vekter is None and isinstance(art.get("vekter"), dict):
             vekter, kilde = art["vekter"], "evalueringsartefakt"
         funn = art.get("funn") or []
+        oppfylt = art.get("oppfylt") or {}
+        # ANBEFALINGEN ER OPPFYLTE KRAV, IKKE FRAVÆRET AV FUNN (Codex P1).
+        # Den kanoniske evalueringsartefakten har ingen `status` i det hele
+        # tatt (`evaluering.evaluer_kandidat` returnerer `funn`, `oppfylt`,
+        # `intervjusporsmal`, `avmaskering`, `kildetekst`), så det er ALLTID
+        # reserven som gir trafikklyset. Og funn og kravoppfyllelse er to
+        # uavhengige felt: `_krev_helt_svar` godtar et komplett svar med tom
+        # `funn` og bare `false` i `oppfylt` — en kandidat som ikke oppfyller
+        # ET ENESTE krav i stillingsprofilen. Den fikk «Anbefalt» utelukkende
+        # fordi ingen risiko var notert. Grønt lys må BEVISES av kravene:
+        # anbefalt krever at alle målte krav er oppfylt, og at det finnes
+        # krav å måle. Fail-safe: alt annet faller til «Bør vurderes», som er
+        # en oppfordring til å lese kandidaten, ikke en påstand om henne.
         status = art.get("status") or (
             "innstilt_avslag" if any(
                 f.get("kategori") == "krav_ikke_dokumentert" for f in funn)
-            else "vurderes" if funn else "anbefalt")
+            else "anbefalt" if not funn and oppfylt
+            and all(oppfylt.values()) else "vurderes")
         kandidater.append({
             "kandidat_id": str(kid),
-            "oppfylt": art.get("oppfylt") or {},
+            "oppfylt": oppfylt,
             "status": status,
             "funn": funn,
             "intervjusporsmal": art.get("intervjusporsmal") or [],
