@@ -21,6 +21,7 @@ import { hentJson, signerRekrutteringsliste,
 import { harScope } from "../sitekart.js";
 import { DataTabell } from "../tabell.js";
 import { Detaljpanel, Bekreftelsesdialog } from "../dialog.js";
+import { Tidspunkt } from "../komponenter.js";
 import { medStatus, flateHode } from "./felles.js";
 
 function meldFeil(ctx, utfall, e) {
@@ -45,6 +46,32 @@ function meldFeil(ctx, utfall, e) {
   const definitivt = status >= 400 && status < 500;
   sett(utfall, t(definitivt ? "ui.rekruttering.feil_utfall"
     : "ui.rekruttering.usikkert_utfall"));
+}
+
+function prosessetikett(p) {
+  // EN UUID ER IKKE ET GJENKJENNELIG VALG (Codex P2, runde 4). Velgeren
+  // leste `p.navn || p.prosess_id`, men serveren har aldri sendt `navn` —
+  // så med flere prosesser måtte brukeren velge mellom rå UUID-er før hun
+  // kunne lese kandidater eller signere en irreversibel utsendelse.
+  //
+  // Navnet — stillingens tittel — finnes ikke å hente ennå: prosessraden
+  // har ingen navnekolonne, oppdragets payload er kryptert og bærer bare
+  // en `stillingsprofil_ref`, og selve profilen er #162-kjeden. Å grave
+  // tittelen fram ville vært ny maskin i en fiksrunde (K1). Det som
+  // finnes, er STARTTIDSPUNKTET, og sammen med antall kandidater skiller
+  // det prosessene fra hverandre for et menneske.
+  //
+  // `p.navn` står først likevel: den dagen #162 gir tittelen, skal den
+  // vinne uten at denne linjen røres. Og faller begge — et svar uten
+  // `opprettet` — er UUID-en fortsatt bedre enn en tom oppføring.
+  if (p.navn) return p.navn;
+  if (!p.opprettet) return p.prosess_id;
+  // Datoformen er husets ene beslutning om tidspunkter (`Tidspunkt` i
+  // komponenter.js: leserens egen sone, ingen påstand om hvilken). Her
+  // trengs teksten, ikke elementet — `<option>` bærer ikke barn.
+  return t("ui.rekruttering.prosessetikett")
+    .replaceAll("{dato}", Tidspunkt(p.opprettet).textContent)
+    .replaceAll("{antall}", String((p.kandidater || []).length));
 }
 
 function kortHash(hash) {
@@ -90,7 +117,7 @@ function tegn(hoved, ctx, data, okt, valgtId) {
       ...prosesser.map((p) => el("option",
         { value: p.prosess_id,
           ...(p.prosess_id === prosess.prosess_id ? { selected: "" } : {}) },
-        p.navn || p.prosess_id)));
+        prosessetikett(p))));
     velger.value = prosess.prosess_id;
     velger.addEventListener("change", () => {
       tegn(hoved, ctx, data, okt, velger.value);

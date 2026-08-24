@@ -1042,6 +1042,7 @@
   "ui.rekruttering.tittel": "Recruitment",
   "ui.rekruttering.ingen_prosess": "No active recruitment process.",
   "ui.rekruttering.prosessvelger": "Recruitment process",
+  "ui.rekruttering.prosessetikett": "Started {dato} · candidates: {antall}",
   "ui.rekruttering.tabell_caption": "Candidates, ranked by points with the current weights",
   "ui.rekruttering.kol_kandidat": "Candidate",
   "ui.rekruttering.kol_poeng": "Points",

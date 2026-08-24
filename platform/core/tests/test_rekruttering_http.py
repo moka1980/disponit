@@ -211,6 +211,19 @@ def test_prosesslisten_baerer_flatens_kontrakt(klient):
     assert p["vekter_kilde"] == "evalueringsartefakt"
     assert p["evaluering_status"] == "utfort"
     assert p["blinding_av"] is False
+    # STARTTIDSPUNKTET FØLGER MED (Codex P2, runde 4): prosessvelgeren
+    # hadde bare `prosess_id` å sette på hver oppføring, så brukeren måtte
+    # velge mellom rå UUID-er før hun kunne signere en irreversibel
+    # utsendelse. Stillingens tittel finnes ikke å hente ennå (#162), men
+    # dette gjør — og det skiller prosessene fra hverandre.
+    #
+    # MUTASJONEN SOM DREPER DENNE: dropp `opprettet` fra svaret.
+    from datetime import datetime
+    assert datetime.fromisoformat(p["opprettet"]).tzinfo is not None, \
+        "et tidspunkt uten sone kan ikke formateres i leserens sone"
+    # …og serveren kaller det ALDRI et navn: flaten bruker `navn` når #162
+    # en dag gir tittelen, og et tidsstempel er ikke den tittelen.
+    assert "navn" not in p
     assert {k["status"] for k in p["kandidater"]} == \
         {"anbefalt", "innstilt_avslag"}
     assert all(set(k) >= {"kandidat_id", "oppfylt", "funn",

@@ -1042,6 +1042,7 @@
   "ui.rekruttering.tittel": "Rekruttering",
   "ui.rekruttering.ingen_prosess": "Ingen aktiv rekrutteringsprosess.",
   "ui.rekruttering.prosessvelger": "Rekrutteringsprosess",
+  "ui.rekruttering.prosessetikett": "Startet {dato} · kandidater: {antall}",
   "ui.rekruttering.tabell_caption": "Kandidater, rangert etter poeng med gjeldende vekter",
   "ui.rekruttering.kol_kandidat": "Kandidat",
   "ui.rekruttering.kol_poeng": "Poeng",

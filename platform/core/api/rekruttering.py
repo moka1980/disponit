@@ -186,8 +186,27 @@ def prosesser_endepunkt(tjeneste, request):
         # rekrutteringsprosess»), og oppdraget er dessuten den ENESTE
         # veien inn til å se at noe kjører. Joinen er trygg — `prosess_
         # oppdrag_fk` (057) garanterer nøyaktig én treffende rad.
-        for pid, oppdrag_id, status in conn.execute(
-                "SELECT p.prosess_id, p.oppdrag_id, o.status"
+        #
+        # ...OG DET GJØR STARTTIDSPUNKTET (Codex P2). Med flere prosesser
+        # tegner flaten en velger, og den hadde bare `prosess_id` å sette
+        # på hver oppføring: brukeren måtte velge mellom rå UUID-er før
+        # hun kunne lese kandidater eller signere en irreversibel
+        # utsendelse. Det NAVNET velgeren ber om — stillingens tittel —
+        # finnes ikke å hente: `rekrutteringsprosess` har ingen
+        # navnekolonne, og oppdragets payload er kryptert og bærer bare en
+        # `stillingsprofil_ref`. Selve tittelen bor i stillingsprofilen
+        # (#162-kjeden), som ikke finnes ennå; å grave den fram herfra
+        # ville krevd dekrypteringsvei og profiloppslag — ny maskin i en
+        # fiksrunde (K1).
+        #
+        # Det som FINNES i klartekst, og som skiller prosessene fra
+        # hverandre for et menneske, er når de startet. `p.opprettet` sto
+        # alt i ORDER BY-en; nå følger den med ut, og flaten setter «Startet
+        # <dato> · kandidater: N» på oppføringen. Feltet `navn` sendes
+        # bevisst ikke: flaten bruker `p.navn` når det en dag finnes, og
+        # serveren skal ikke kalle et tidsstempel for et navn.
+        for pid, oppdrag_id, status, opprettet in conn.execute(
+                "SELECT p.prosess_id, p.oppdrag_id, o.status, p.opprettet"
                 "  FROM rekrutteringsprosess p"
                 "  JOIN oppdrag o ON o.tenant = p.tenant"
                 "                AND o.id = p.oppdrag_id"
@@ -196,6 +215,7 @@ def prosesser_endepunkt(tjeneste, request):
             kandidater, vekter, kilde = _kandidater(conn, tenant, pid)
             prosesser.append({
                 "prosess_id": str(pid),
+                "opprettet": opprettet.isoformat(),
                 "blinding_av": False,   # avskruing finnes ikke før #159
                 "evaluering_status": status,
                 "vekter": vekter,

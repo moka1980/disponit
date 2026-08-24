@@ -11,6 +11,7 @@ import { NB, alvorligeBrudd, beskrivBrudd, nyttBrett } from "./hjelp.js";
 import { harNokkel, settI18nForTest, t } from "../static/js/i18n.js";
 import { visRekruttering } from "../static/js/flater/rekruttering.js";
 import { byggRuter } from "../static/js/sitekart.js";
+import { Tidspunkt } from "../static/js/komponenter.js";
 
 settI18nForTest(NB, "nb");
 
@@ -443,6 +444,50 @@ test("Rekruttering: hver prosess i svaret kan velges (ikke bare den første)", a
   visRekruttering(en, ctx());
   assert.ok(await vent(() => en.querySelector("table")));
   assert.equal(en.querySelector("#rekrut-prosessvelger"), null);
+});
+
+test("Rekruttering: velgeren navngir prosessen, aldri bare UUID-en", async () => {
+  // Codex P2 (runde 4): velgeren leste `p.navn || p.prosess_id`, men
+  // serveren har aldri sendt `navn` — stillingens tittel bor i #162-kjeden
+  // og finnes ikke å hente ennå. Med flere prosesser måtte brukeren derfor
+  // velge mellom rå UUID-er FØR hun kunne lese kandidater eller signere en
+  // irreversibel utsendelse. Starttidspunktet er det som finnes i
+  // klartekst, og det skiller prosessene fra hverandre for et menneske.
+  //
+  // MUTASJONEN SOM DREPER DENNE: sett `p.navn || p.prosess_id` tilbake.
+  const to = prosess();
+  to.prosesser[0].opprettet = "2026-08-24T06:10:00+00:00";
+  to.prosesser.push({
+    prosess_id: "p-2", opprettet: "2026-08-20T09:00:00+00:00",
+    blinding_av: false, vekter: { drift: 1 },
+    kandidater: [{ kandidat_id: "K-9", oppfylt: { drift: true },
+      status: "anbefalt", funn: [], intervjusporsmal: [] }],
+    lister: [],
+  });
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": to };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")));
+  const tekster = [...hoved.querySelector("#rekrut-prosessvelger").options]
+    .map((o) => o.textContent);
+  assert.ok(!tekster.some((x) => x === "p-1" || x === "p-2"),
+    `velgeren tilbyr fortsatt rå id-er: ${JSON.stringify(tekster)}`);
+  // Etiketten er husets datoform + antallet, og de to oppføringene skiller
+  // seg fra hverandre — det er hele poenget med å ha en etikett.
+  assert.equal(tekster[1], t("ui.rekruttering.prosessetikett")
+    .replaceAll("{dato}", Tidspunkt("2026-08-20T09:00:00+00:00").textContent)
+    .replaceAll("{antall}", "1"));
+  assert.notEqual(tekster[0], tekster[1]);
+  // …og den dagen #162 gir tittelen, vinner den uten at flaten røres.
+  to.prosesser[1].navn = "Sykepleier vest";
+  KALL = [];
+  const medNavn = nyHoved();
+  visRekruttering(medNavn, ctx());
+  assert.ok(await vent(() => medNavn.querySelector("table")));
+  assert.ok([...medNavn.querySelector("#rekrut-prosessvelger").options]
+    .some((o) => o.textContent === "Sykepleier vest"),
+    "navnet fra serveren tapte mot tidsstempelet");
 });
 
 test("Rekruttering: signeringen gjenbruker idempotensnøkkelen etter usikker feil", async () => {
