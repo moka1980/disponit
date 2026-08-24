@@ -436,6 +436,36 @@ def test_taket_avviser_for_stor_kropp(klient, inndata_rot, monkeypatch):
     assert r3.status_code == 201, r3.text
 
 
+@pg
+@dekker("body_for_stor")
+def test_content_length_avvises_for_ruten_i_det_hele_tatt_naas(
+        klient, inndata_rot, monkeypatch):
+    """Cursor P2: `_stroem` avviser en ÅPENBART for stor Content-Length
+    uten å lese en byte — men ingen test skilte den grenen fra telleren.
+
+    Testen over sender også en for stor kropp, og får 413 gjennom
+    NØYAKTIG den samme headeren; fjernes Content-Length-sjekken i
+    `_stroem`, teller middlewaren seg i stedet fram til det samme svaret
+    og den testen blir grønn likevel. Negativene som finnes for
+    `/v1/beslutning` (`test_api_porter`) måler hovedveien, ikke denne.
+
+    Skillet her er REKKEFØLGEN, ikke statuskoden: forespørselen har ingen
+    sesjon. Står sjekken, svarer middlewaren 413 før ruten i det hele tatt
+    kalles. Faller den bort, når forespørselen `_browserkontekst` — som
+    kjører et db-oppslag på en kropp ingen har lov til å sende — og svaret
+    blir 401/403.
+
+    MUTASJONEN SOM DREPER DENNE: fjern eller svekk Content-Length-armen i
+    `KroppsgrenseMiddleware._stroem`."""
+    from api import app as appmodul
+    monkeypatch.setattr(appmodul, "INNDATA_MAKS_FYSISK", 4096)
+    r = klient.put("/v1/inndata/opplast/" + "f" * 48,
+                   content=b"P" * 4097,
+                   headers={"content-type": "application/zip"})
+    assert r.status_code == 413, r.text
+    assert r.json()["feil"] == "body_for_stor"
+
+
 # --------------------------------------------------------------------------
 # Dørene i 058, målt direkte. Fiksrunde 1 lukket funn som HTTP-veien i PR-1
 # ikke kan nå (bindingen kalles først i PR-2), og en fiks uten en test som
