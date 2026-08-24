@@ -272,8 +272,19 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
     el("div", { class: "skall-hoyre" }, velger, loggUt));
 
   const lenker = new Map();
+  // HVILKEN FLATE STÅR JEG PÅ (Codex P2). `lenker` er det eneste `settAktiv`
+  // oppdaterte, og modulflatene er nettopp de rutene som er filtrert UT av
+  // den — så da oppføringen flyttet til venstremenyen, flyttet ikke
+  // markeringen med. Ruten holdes derfor som tilstand her, ved siden av
+  // lenkene, og navigasjonen som nå EIER modulflatene leser den samme
+  // verdien. Startverdien er `aktiv`, så en dyplenke rett inn i flaten er
+  // markert fra første tegning — ikke først ved neste navigasjon.
+  let aktivFlate = aktiv;
+  // Toppnavigasjonen er PLATTFORMFLATENE: modulflater (r.modulflate)
+  // bor i venstremenyen som selve inngangen (eiers vedtak 24/8). Ruten
+  // finnes fortsatt — dyplenker og bokmerker virker som før.
   const nav = el("nav", { class: "skall-nav", "aria-label": t("app.navn") },
-    ruter.map((r) => {
+    ruter.filter((r) => !r.modulflate).map((r) => {
       const attrs = { href: `#/${r.nokkel}`, text: t(`ui.nav.${r.nokkel}`) };
       if (r.nokkel === aktiv) attrs["aria-current"] = "page";
       const a = el("a", attrs);
@@ -285,12 +296,16 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
     tabindex: "-1" });
 
   // Oppdater aktiv nav-lenke på plass (aria-current) — rebygger ikke nav, så
-  // fokus og referanser holder.
+  // fokus og referanser holder. Modulmenyen merkes av samme kall: den er
+  // navigasjonen for modulflatene, og en navigasjon som ikke sier hvor du er
+  // er halvferdig uansett hvilken av de to sonene ruten bor i.
   function settAktiv(nokkel) {
     for (const [k, a] of lenker) {
       if (k === nokkel) a.setAttribute("aria-current", "page");
       else a.removeAttribute("aria-current");
     }
+    aktivFlate = nokkel;
+    merkValgt();
   }
 
   // §2.3 LAYOUT: topp (nav + søk) · venstre (modulmeny) · sentrum (dashboard)
@@ -321,10 +336,19 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
   // ut som en meny for den som ser den; det er hierarkiet som manglet, ikke
   // pynten. Sonen merkes av selve overskriften i stedet for av en kopi av
   // teksten: én kilde, og de to kan ikke komme fra hverandre.
+  // SONEN ER ET NAVIGASJONSLANDEMERKE, IKKE EN SIDESTILT BOKS (Cursor P2).
+  // Som `aside` var den riktig da radene bare byttet kontekstpanelet. Etter
+  // eiers vedtak 24/8 er den den eneste annonserte veien til 038 og M-57, og
+  // `nav.skall-nav` lister dem med vilje ikke — så den som hopper mellom
+  // navigasjonslandemerkene (den vanligste måten å orientere seg med
+  // skjermleser) traff bare plattformflatene og fant aldri modulflatene.
+  //
+  // To `nav`-landemerker krever hver sin etikett, og de har det: toppen bærer
+  // `aria-label`, denne bærer overskriften sin gjennom `aria-labelledby`.
   const modulliste = el("div", { class: "skall-modulliste" });
   const menytittel = el("h2", { class: "sr-only", id: "modulmeny-tittel",
     text: t("ui.shell.moduler") });
-  const venstre = el("aside", { class: "skall-venstre", id: "modulmeny",
+  const venstre = el("nav", { class: "skall-venstre", id: "modulmeny",
     "aria-labelledby": "modulmeny-tittel" }, menytittel, modulliste);
 
   // Søket filtrerer modulmenyen. Det er det eneste søket har å søke i her, og
@@ -335,6 +359,12 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
     el("label", { class: "sr-only", for: "skall-sok",
       text: t("ui.shell.sok_merkelapp") }), sokefelt);
 
+  // Modul → flate-ruten dens, UTLEDET av rutenes egen deklarasjon (aldri et
+  // håndholdt kart som kan drifte fra sitekartet). Kartet bærer bare ruter
+  // økten FAKTISK har: samme gating som toppmenyen hadde, ingen ny dør.
+  const MODULFLATE = new Map(
+    ruter.filter((r) => r.modulflate).map((r) => [r.modulflate, r.nokkel]));
+
   // HVILKEN MODUL SER JEG PÅ (Codex P2). Valget er en tilstand menyen bærer,
   // ikke en engangshendelse: knappene tegnes på nytt for hvert tastetrykk i
   // søket, og uten at valget er lagret her ville markeringen forsvunnet i det
@@ -342,9 +372,19 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
   let valgtModul = null;
   const modulknapper = new Map();
 
+  // To slags «her er du», fordi de to radene gjør to forskjellige ting: en
+  // modul med flate er NAVIGERT til (`aria-current="page"`, samme ord som
+  // toppnavigasjonen bruker), en modul uten flate er VALGT i panelet ved
+  // siden av (`aria-current="true"`). De kan ikke kollidere — en modul har
+  // enten en flate eller ikke — så begge markeringene kan stå samtidig, og
+  // det er riktig: brukeren kan lese om modul 14 i panelet mens hun står på
+  // rekrutteringsflaten.
   function merkValgt() {
     for (const [n, kn] of modulknapper) {
-      if (n === valgtModul) kn.setAttribute("aria-current", "true");
+      const her = MODULFLATE.has(n)
+        ? MODULFLATE.get(n) === aktivFlate : n === valgtModul;
+      if (her) kn.setAttribute("aria-current",
+        MODULFLATE.has(n) ? "page" : "true");
       else kn.removeAttribute("aria-current");
     }
   }
@@ -363,38 +403,88 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
   const tildelte = Array.isArray(moduler) ? new Set(moduler) : null;
   const erTildelt = (n) => tildelte !== null && tildelte.has(n);
 
+  // EN FLATE ØKTEN HAR RUTE TIL, MÅ STÅ I MENYEN SOM EIER DEN (Cursor P1).
+  // De to portene var uavhengige før og ble seriekoblet av flyttingen: ruten
+  // gates på SCOPE (`decisions:read`), mens menyraden gates på KATALOG-
+  // TILDELING. Ingen rad i `_UTRULLING` har 56 eller 57, og en ukjent tenant
+  // har ingen tildeling i det hele tatt — så i hver eneste ekte økt forsvant
+  // WCAG kontroll og rekruttering fra toppnavigasjonen uten å dukke opp i
+  // venstremenyen. Flatene ble uten annonsert inngang overhodet, og det er
+  // 038-regresjonen: «Én oppføring — WCAG kontroll» ble til ingen.
+  //
+  // Unionen er derfor ikke plattformkatalogen tilbake: `MODULFLATE` bærer
+  // bare ruter økten FAKTISK har fått av `byggRuter`, altså nøyaktig det
+  // toppnavigasjonen annonserte før flyttingen. Rekkevidden er den samme som
+  // før, bare i sonen eier flyttet den til.
+  const erSynlig = (n) => MODULFLATE.has(n) || erTildelt(n);
+
+  // LENKETEKSTEN ER MÅLETS NAVN (Cursor P2). Raden med flate er en lenke, og
+  // en lenke skal hete det den åpner: flaten bærer `ui.wcag.tittel` = «WCAG
+  // kontroll» og `ui.rekruttering.tittel` = «Rekruttering» — samme strenger
+  // som `ui.nav.<rute>`, som er ordene 038 ratifiserte for oppføringen og som
+  // brukeren klikket på i toppnavigasjonen fram til nå. Med katalognavnet
+  // («Automatisk WCAG-kontroll») pekte den eneste inngangen på en flate som
+  // heter noe annet.
+  const navnFor = (n) => (MODULFLATE.has(n)
+    ? t(`ui.nav.${MODULFLATE.get(n)}`) : t(`site.katalog.m${n}.navn`));
+
+  // Søket ser BEGGE navnene. Modulen heter fortsatt «Automatisk WCAG-kontroll»
+  // i utrullingstabellen, på kundeflaten og i kontekstpanelet, og den som
+  // søker på det navnet skal finne raden sin — men den som søker på «WCAG
+  // kontroll» skal også det, og med bare ett av navnene i høystakken mistet
+  // alltid det ene av dem den eneste inngangen flaten har.
+  const sokenavn = (n) => [navnFor(n), t(`site.katalog.m${n}.navn`)];
+
   function tegnModuler(filter) {
     const q = (filter || "").trim().toLocaleLowerCase(valgtSprak || "nb");
     const grupper = [];
     modulknapper.clear();
-    if (tildelte === null) {
-      sett(modulliste,
-        el("p", { class: "muted", text: t("ui.shell.moduler_ukjent") }));
-      return;
-    }
     for (const omrade of OMRADER) {
-      const treff = omrade.moduler.filter((n) => erTildelt(n)).filter((n) =>
-        !q || t(`site.katalog.m${n}.navn`).toLocaleLowerCase(valgtSprak || "nb")
-          .includes(q));
+      const treff = omrade.moduler.filter((n) => erSynlig(n)).filter((n) =>
+        !q || sokenavn(n).some((s) =>
+          s.toLocaleLowerCase(valgtSprak || "nb").includes(q)));
       if (!treff.length) continue;
       grupper.push(el("section", { class: "skall-modulgruppe" },
         el("h3", { class: "skall-modulgruppe-navn",
           text: t(`site.omrade.${omrade.id}`) }),
         el("ul", { class: "skall-modulgruppe-liste" },
           treff.map((n) => {
-            const kn = el("button", { type: "button", class: "skall-modul",
-              text: t(`site.katalog.m${n}.navn`) });
-            kn.addEventListener("click", () => visKontekst(n));
+            // EN NAVIGASJON ER EN LENKE (Codex P2). Kortet ER inngangen når
+            // modulen har en flate — og etter at oppføringen forsvant fra
+            // toppnavigasjonen er det den ENESTE annonserte inngangen. Som
+            // `<button>` med `location.hash` mistet den da alt en lenke har
+            // med seg: åpne i ny fane, kopier adressen, se hvor den peker før
+            // man klikker — og hjelpemidlene fikk «knapp» der brukeren står
+            // foran en navigasjon. Adressen er den samme som dyplenken, så
+            // `href` er ikke en ny mekanisme, bare den ærlige formen for den
+            // som alt fantes.
+            //
+            // Knappen beholdes for moduler UTEN flate: der finnes det ingen
+            // adresse å peke på, og panelet er en visning i samme side.
+            const flate = MODULFLATE.get(n);
+            const navn = navnFor(n);
+            const kn = flate
+              ? el("a", { class: "skall-modul", href: `#/${flate}`, text: navn })
+              : el("button", { type: "button", class: "skall-modul",
+                text: navn });
+            if (!flate) kn.addEventListener("click", () => visKontekst(n));
             modulknapper.set(n, kn);
             return el("li", {}, kn);
           }))));
     }
     // Et tomt søk skal SI at det er tomt, ikke bare vise ingenting — og en
     // tildeling uten moduler er noe annet enn et søk uten treff.
-    const tomNokkel = tildelte.size
-      ? "ui.shell.moduler_tomt" : "ui.shell.moduler_ingen";
-    sett(modulliste, grupper.length ? grupper
-      : el("p", { class: "muted", text: t(tomNokkel) }));
+    //
+    // «Vet ikke» står nå SAMMEN med flatekortene, ikke i stedet for dem: at
+    // tildelingen ikke kunne leses er en opplysning i seg selv, og uten den
+    // ville de to radene unionen gir framstått som hele svaret på hva økten
+    // har. Meldingen kommer først — den er forbeholdet lista skal leses med.
+    const melding = tildelte === null ? "ui.shell.moduler_ukjent"
+      : grupper.length ? null
+        : tildelte.size ? "ui.shell.moduler_tomt" : "ui.shell.moduler_ingen";
+    sett(modulliste,
+      melding ? el("p", { class: "muted", text: t(melding) }) : null,
+      ...grupper);
     merkValgt();
   }
 
@@ -418,7 +508,8 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
         el("dt", { text: t("ui.shell.kontekst_status") }),
         el("dd", {}, siteStatusMerke(status)),
         el("dt", { text: t("ui.shell.kontekst_fase") }),
-        el("dd", { text: String(faseFor(n)) })));
+        el("dd", { text: String(faseFor(n)) })),
+      null);
     // Fokus flyttes ETTER at innholdet står der, ellers leses det tomme
     // panelet. Da følger både skjermleseren og skjermbildet med — nettleseren
     // ruller til det fokuserte elementet, som er hele poenget når panelet
