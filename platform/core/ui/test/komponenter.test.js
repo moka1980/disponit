@@ -721,33 +721,32 @@ test("Faner: forrige/neste følger trinnene og stopper i endene", async () => {
 });
 
 
-test("AppShell: modul med arbeidsflate lenker dit fra kontekstpanelet", () => {
-  // Eiers UX-funn 24/8: venstremenyen er katalogen, men en modul som HAR
-  // en flate skal kunne åpnes derfra. Lenken følger RUTENE (samme gating
-  // som toppmenyen): finnes ruten ikke i brukerens sett, finnes lenken
-  // ikke — aldri en dør inn i en 403.
+test("AppShell: modulkortet ER inngangen til flaten; toppnav bærer bare plattformflatene", () => {
+  // Eiers arkitekturvedtak 24/8: venstre = modulnavigasjonen, topp =
+  // plattformflatene. Kort med flate navigerer; ruten står (dyplenker
+  // virker), men toppnav lister den ikke. Uten flate: panelet som før.
   const brett = nyttBrett();
   const { rot } = AppShell({ tenant: "acme",
-    ruter: [{ nokkel: "rekruttering" }], aktiv: "oversikt",
-    sprak: "nb", moduler: [57], paaSprak: () => {}, paaLoggUt: () => {} });
-  brett.append(rot);
-  const knapp = [...brett.querySelectorAll("button.skall-modul")]
-    .find((b) => b.textContent === t("site.katalog.m57.navn"));
-  assert.ok(knapp, "modul 57 mangler i venstremenyen");
-  knapp.click();
-  const lenke = brett.querySelector(
-    '.skall-kontekst a[href="#/rekruttering"]');
-  assert.ok(lenke, "kontekstpanelet mangler Åpne flaten-lenken");
-  assert.equal(lenke.textContent, t("ui.shell.kontekst_aapne"));
-  // …og uten ruten i settet finnes lenken ikke.
-  const brett2 = nyttBrett();
-  const { rot: rot2 } = AppShell({ tenant: "acme", ruter: [],
-    aktiv: "oversikt", sprak: "nb", moduler: [57],
+    ruter: [{ nokkel: "oversikt" },
+            { nokkel: "rekruttering", modulflate: 57 }],
+    aktiv: "oversikt", sprak: "nb", moduler: [1, 57],
     paaSprak: () => {}, paaLoggUt: () => {} });
-  brett2.append(rot2);
-  [...brett2.querySelectorAll("button.skall-modul")]
+  brett.append(rot);
+  // Toppnav: plattformflaten inne, modulflaten UTE.
+  assert.ok(rot.querySelector('nav a[href="#/oversikt"]'));
+  assert.equal(rot.querySelector('nav a[href="#/rekruttering"]'), null,
+    "modulflate i toppnav — den bor i venstremenyen nå");
+  // Kortet navigerer.
+  window.location.hash = "";
+  [...brett.querySelectorAll("button.skall-modul")]
     .find((b) => b.textContent === t("site.katalog.m57.navn")).click();
-  assert.equal(
-    brett2.querySelector('.skall-kontekst a[href="#/rekruttering"]'), null,
-    "lenke tilbudt uten rute — det er en dør inn i en 403");
+  assert.equal(window.location.hash, "#/rekruttering",
+    "modulkortet åpnet ikke flaten");
+  // Modul UTEN flate får panelet, aldri en død navigasjon.
+  [...brett.querySelectorAll("button.skall-modul")]
+    .find((b) => b.textContent === t("site.katalog.m1.navn")).click();
+  assert.ok(brett.querySelector(".skall-kontekst-tittel"),
+    "flateløs modul mistet kontekstpanelet");
+  assert.equal(window.location.hash, "#/rekruttering",
+    "flateløs modul endret adressen");
 });

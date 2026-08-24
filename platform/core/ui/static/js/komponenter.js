@@ -272,8 +272,11 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
     el("div", { class: "skall-hoyre" }, velger, loggUt));
 
   const lenker = new Map();
+  // Toppnavigasjonen er PLATTFORMFLATENE: modulflater (r.modulflate)
+  // bor i venstremenyen som selve inngangen (eiers vedtak 24/8). Ruten
+  // finnes fortsatt — dyplenker og bokmerker virker som før.
   const nav = el("nav", { class: "skall-nav", "aria-label": t("app.navn") },
-    ruter.map((r) => {
+    ruter.filter((r) => !r.modulflate).map((r) => {
       const attrs = { href: `#/${r.nokkel}`, text: t(`ui.nav.${r.nokkel}`) };
       if (r.nokkel === aktiv) attrs["aria-current"] = "page";
       const a = el("a", attrs);
@@ -384,7 +387,12 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
           treff.map((n) => {
             const kn = el("button", { type: "button", class: "skall-modul",
               text: t(`site.katalog.m${n}.navn`) });
-            kn.addEventListener("click", () => visKontekst(n));
+            kn.addEventListener("click", () => {
+              // Kortet ER inngangen når modulen har en flate; panelet
+              // er reserven for moduler som ennå ikke har noen.
+              if (MODULFLATE[n]) window.location.hash = `#/${MODULFLATE[n]}`;
+              else visKontekst(n);
+            });
             modulknapper.set(n, kn);
             return el("li", {}, kn);
           }))));
@@ -406,8 +414,10 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
   // flate skal kunne åpnes derfra. Kartet er PINNET her (to oppslag),
   // og lenken vises kun når ruten faktisk finnes i brukerens
   // tilgjengelige ruter — samme gating som toppmenyen, ingen ny dør.
-  const MODULFLATE = { 56: "wcagkontroll", 57: "rekruttering" };
-  const ruteFinnes = (nokkel) => ruter.some((r) => r.nokkel === nokkel);
+  // Modul → flate-ruten dens, UTLEDET av rutenes egen deklarasjon
+  // (aldri et håndholdt kart som kan drifte fra sitekartet).
+  const MODULFLATE = {};
+  for (const r of ruter) if (r.modulflate) MODULFLATE[r.modulflate] = r.nokkel;
 
   function visKontekst(n, { fokuser = true } = {}) {
     // Panelet er detaljvisningen til MENYEN, og skal ikke kunne brukes til å
@@ -427,10 +437,7 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
         el("dd", {}, siteStatusMerke(status)),
         el("dt", { text: t("ui.shell.kontekst_fase") }),
         el("dd", { text: String(faseFor(n)) })),
-      MODULFLATE[n] && ruteFinnes(MODULFLATE[n])
-        ? el("a", { class: "knapp", href: `#/${MODULFLATE[n]}`,
-            text: t("ui.shell.kontekst_aapne") })
-        : null);
+      null);
     // Fokus flyttes ETTER at innholdet står der, ellers leses det tomme
     // panelet. Da følger både skjermleseren og skjermbildet med — nettleseren
     // ruller til det fokuserte elementet, som er hele poenget når panelet

@@ -113,7 +113,11 @@ const BASISRUTER = [
   // krevende delen krever. At bestillings- og domenefanene MUTERER er en
   // sak for fanene, og den avgjøres inne på flaten (`visWcagKontroll`), der
   // det finnes noe å skjule — en rute kan bare være der eller ikke.
-  { nokkel: "wcagkontroll", scope: "decisions:read" },
+  // MODULFLATENE bor i VENSTREMENYEN (eiers arkitekturvedtak 24/8:
+  // venstre = modulnavigasjonen, topp = plattformflatene). Ruten består
+  // — adresser som virket skal fortsette å virke — men `modulflate`
+  // holder den ute av toppnavigasjonen; inngangen er modulkortet.
+  { nokkel: "wcagkontroll", scope: "decisions:read", modulflate: 56 },
   // M-57 (§8): ruten sto med VILJE ute mens flaten leste endepunkter som
   // ikke fantes (Codex P1 / Cursor P1) — en menyoppføring hadde da sendt
   // hver økt med `decisions:read` rett i feilflaten, og «Signer» ville
@@ -128,7 +132,7 @@ const BASISRUTER = [
   // oppføring her holder `tillatteFlater` også en håndskrevet
   // `#/rekruttering` ute — og demo-stien (`seed-rekruttering-demo.py`)
   // ber eier åpne nettopp den adressen.
-  { nokkel: "rekruttering", scope: "decisions:read" },
+  { nokkel: "rekruttering", scope: "decisions:read", modulflate: 57 },
   // 041: adjudikatorkøen viser sakenes PARTER på tvers av tenanter — den
   // finnes derfor KUN for adjudikasjonsscopet, aldri for en leserolle.
   { nokkel: "adjudikator", scope: "domains:adjudicate" },
