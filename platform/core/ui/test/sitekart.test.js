@@ -277,3 +277,33 @@ test("Hver rute byggRuter kan gi har en nav-etikett i BEGGE locale-sett", () => 
     }
   }
 });
+
+test("Modulflatens lenketekst og flatens egen tittel er samme streng", () => {
+  // 🔴 LÅST, IKKE BARE KOMMENTERT (Cursor P2). Modulkortet er den eneste
+  // annonserte inngangen til flaten, og det er `ui.nav.<rute>` som står på
+  // kortet mens flaten selv bærer sin egen tittelnøkkel. At de to er samme
+  // streng i dag er hele begrunnelsen for at kortet SKAL hete det — men uten
+  // en port var likheten en tilfeldighet to oversettere kunne bryte hver for
+  // seg, og da peker den eneste inngangen på en side som heter noe annet.
+  //
+  // Begge locale-sett, fordi en engelsk avvikelse er like usynlig herfra.
+  const par = [
+    ["ui.nav.wcagkontroll", "ui.wcag.tittel"],
+    ["ui.nav.rekruttering", "ui.rekruttering.tittel"],
+  ];
+  for (const navn of ["nb", "en"]) {
+    const tekster = locale(navn);
+    for (const [lenke, tittel] of par) {
+      assert.ok(tekster[lenke] && tekster[tittel],
+        `${navn}.json mangler ${lenke} eller ${tittel}`);
+      assert.equal(tekster[lenke], tekster[tittel],
+        `${navn}: kortet sier «${tekster[lenke]}», flaten «${tekster[tittel]}»`);
+    }
+  }
+  // Og parene skal dekke NØYAKTIG de rutene som er modulflater: får en ny
+  // flate `modulflate` uten en rad her, er den ikke låst av noe.
+  assert.deepEqual(byggRuter({ scopes: ["decisions:read"] })
+    .filter((r) => r.modulflate).map((r) => `ui.nav.${r.nokkel}`).sort(),
+  par.map(([lenke]) => lenke).sort(),
+  "en modulflate mangler i likhetsporten over");
+});

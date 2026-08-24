@@ -243,11 +243,14 @@ test("Site-komponenter: status/fase/modulkort rendrer trygt", async () => {
 });
 
 test("AppShell: landemerker, nav med aria-current, main#hovedinnhold", async () => {
+  // Rutene og tildelingen kommer fra produksjonsbyggeren her, så axe faktisk
+  // ser den LISTA skallet bygger i dag: modulmenyen blander nå lenker (moduler
+  // med arbeidsflate) og knapper (moduler som fyller kontekstpanelet), og en
+  // blandet liste var uprøvd av hel-side-reglene.
+  const ruter = byggRuter({ scopes: ["decisions:read"] });
   const { rot, hoved } = AppShell({
-    tenant: "Acme AS", sprak: "nb", aktiv: "oversikt",
-    ruter: [{ nokkel: "oversikt" }, { nokkel: "policy" },
-            { nokkel: "beslutninger" }, { nokkel: "unntak" }],
-    paaSprak: () => {}, paaLoggUt: () => {},
+    tenant: "Acme AS", sprak: "nb", aktiv: "oversikt", ruter,
+    moduler: [1, 2, 37], paaSprak: () => {}, paaLoggUt: () => {},
   });
   assert.ok(rot.querySelector("header"));
   assert.ok(rot.querySelector("nav"));
@@ -255,7 +258,21 @@ test("AppShell: landemerker, nav med aria-current, main#hovedinnhold", async () 
   assert.equal(rot.querySelector('a[aria-current="page"]').getAttribute("href"),
     "#/oversikt");
   assert.ok(rot.textContent.includes(t("ui.shell.undertittel")));
-  assert.ok(rot.textContent.includes(`4 · ${t("ui.shell.ruter")}`));
+  assert.ok(rot.textContent
+    .includes(`${ruter.length} · ${t("ui.shell.ruter")}`));
+
+  // HOPP-FORBI-LENKEN MÅ FORTSATT HOPPE FORBI NAVIGASJONEN (Cursor P2, WCAG
+  // 2.4.1 / #52). `.hoppelenke` i `index.html` peker på `#hovedinnhold`, og
+  // hele poenget er at navigasjonen ligger UTENFOR målet. Skallet har nå to
+  // navigasjonslandemerker, og venstre er den eneste annonserte veien til 038
+  // og M-57 — havner en av dem inne i `main`, lander hoppet på menyen igjen.
+  // Landingssiden porterer den samme relasjonen for `.site-hovednav`.
+  assert.equal(hoved.querySelector("nav"), null,
+    "navigasjonen ligger inne i hopp-målet — hoppelenken hopper ingensteds");
+  for (const n of rot.querySelectorAll("nav")) {
+    assert.ok(!hoved.contains(n), "et navigasjonslandemerke ligger inne i main");
+  }
+
   const b = await alvorligeBrudd(rot);   // hel-side-regler PÅ (har main+nav)
   assert.equal(b.length, 0, beskrivBrudd(b));
 });
@@ -754,8 +771,16 @@ test("AppShell: modulkortet ER inngangen til flaten; toppnav bærer bare plattfo
   // navigasjonslandemerke (Cursor P2) — og det er nettopp poenget: begge er
   // navigasjon, spørsmålet er hvilken av dem ruten hører til.
   assert.ok(rot.querySelector('nav.skall-nav a[href="#/oversikt"]'));
-  assert.equal(rot.querySelector('nav.skall-nav a[href="#/rekruttering"]'), null,
-    "modulflate i toppnav — den bor i venstremenyen nå");
+  // BEGGE modulflatene, ikke bare den ene (Cursor P2): vedtaket og 038 gjelder
+  // like mye for WCAG kontroll, og med bare rekrutteringsraden målt kunne
+  // `modulflate: 56` falle ut av sitekartet uten at suiten rødnet — 038 tilbake
+  // i feil sone, og to innganger hvis kortet ble stående.
+  for (const rute of ["rekruttering", "wcagkontroll"]) {
+    assert.equal(rot.querySelector(`nav.skall-nav a[href="#/${rute}"]`), null,
+      `modulflate i toppnav: ${rute} — den bor i venstremenyen nå`);
+    assert.equal(rot.querySelector(`.skall-modul[href="#/${rute}"]`).tagName, "A",
+      `${rute} mangler kortet som nå er inngangen`);
+  }
   // Kortet navigerer — og en navigasjon er en LENKE (Codex P2). Kortet er den
   // eneste annonserte inngangen etter at oppføringen forlot toppnavigasjonen,
   // så den må bære adressen sin: ny fane, kopier lenke, og «lenke» framfor
