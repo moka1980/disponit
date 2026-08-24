@@ -101,17 +101,28 @@ def main() -> int:
               " portalen én gang først, eller presiser", file=sys.stderr)
         return 2
     bid = rad[0][0]
-    medlemskap = m.execute(
-        "SELECT tenant, roller FROM brukermedlemskap"
-        " WHERE bruker_id=%s AND aktiv", (bid,)).fetchall()
+    # RLS: medlemskapstabellen er tenant-gatet — uten kontekst ser
+    # migrator INGENTING (målt på prod 24/8). Tenant-kandidatene hentes
+    # fra brukersesjon (ikke RLS-gatet), oppslaget gjøres MED kontekst.
     if a.tenant:
-        medlemskap = [r for r in medlemskap if r[0] == a.tenant]
+        kandidat_tenanter = [a.tenant]
+    else:
+        kandidat_tenanter = [r[0] for r in m.execute(
+            "SELECT DISTINCT tenant FROM brukersesjon WHERE bruker_id=%s",
+            (bid,)).fetchall()]
+    medlemskap = []
+    for t in kandidat_tenanter:
+        sett_kontekst(m, t, "seed-demo", "seed-0")
+        medlemskap += m.execute(
+            "SELECT tenant, roller FROM brukermedlemskap"
+            " WHERE bruker_id=%s AND aktiv", (bid,)).fetchall()
     if len(medlemskap) != 1:
         print(f"AVBRUTT: {len(medlemskap)} aktive medlemskap"
               f" ({[r[0] for r in medlemskap]}) — angi --tenant",
               file=sys.stderr)
         return 2
     tenant, roller = medlemskap[0]
+    sett_kontekst(m, tenant, "seed-demo", "seed-0b")
     if "admin" not in roller:
         m.execute(
             "UPDATE brukermedlemskap SET roller = roller || '{admin}',"
