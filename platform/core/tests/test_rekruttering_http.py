@@ -64,6 +64,47 @@ def _browsersesjon(bid: str):
         m.close()
 
 
+def _fremmed_okt(navn: str, roller):
+    """En EKTE browserøkt i en annen tenant enn `TEN` — `_bruker` og
+    `_browsersesjon` er bundet til den. -> (tenant, cookie, csrf).
+
+    Økten er komplett, ikke halv: den bærer et gyldig CSRF-token og de
+    rollene kalleren ber om, slik at en avvisning fra en muterende rute
+    er TENANTGRENSEN og ikke en manglende forutsetning lenger framme."""
+    from api import sesjon as sesjonmodul
+    from db.pg import koble, sett_kontekst
+    fremmed = "t-annen-" + secrets.token_hex(3)
+    cookie, csrf = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
+    m = koble(MIGRATOR_DSN)
+    try:
+        sett_kontekst(m, fremmed, "sys", "r0")
+        bid = m.execute(
+            "INSERT INTO brukeridentitet (issuer, sub) VALUES (%s,%s)"
+            " ON CONFLICT (issuer,sub) DO UPDATE SET sub=EXCLUDED.sub"
+            " RETURNING bruker_id",
+            ("https://idp.example", f"{fremmed}-{navn}")).fetchone()[0]
+        m.execute(
+            "INSERT INTO brukermedlemskap (tenant,bruker_id,roller)"
+            " VALUES (%s,%s,%s)"
+            " ON CONFLICT (tenant,bruker_id) DO UPDATE SET"
+            " roller=EXCLUDED.roller, aktiv=true",
+            (fremmed, bid, list(roller)))
+        ver = m.execute(
+            "SELECT authz_version FROM brukermedlemskap WHERE tenant=%s"
+            " AND bruker_id=%s", (fremmed, bid)).fetchone()[0]
+        m.execute(
+            "INSERT INTO brukersesjon (sesjon_id_hash, tenant, bruker_id,"
+            " authz_snapshot, csrf_hash, opprettet, siste_bruk, utloper,"
+            " tilbakekalt) VALUES (%s,%s,%s,%s,%s, now(), now(),"
+            " now()+interval '1 hour', false)",
+            (sesjonmodul._hash(cookie), fremmed, bid, ver,
+             sesjonmodul._hash(csrf)))
+        m.commit()
+        return fremmed, cookie, csrf
+    finally:
+        m.close()
+
+
 def _get(klient, cookie, sti):
     from api import sesjon as sesjonmodul
     return klient.get(sti, cookies={sesjonmodul.C_SESJON: cookie})
@@ -1077,39 +1118,56 @@ def test_scopene_gater_som_flaten_lover(klient):
 @pg
 def test_rls_skiller_tenantene_ogsaa_her(klient):
     _seed_prosess()
-    fremmed = "t-annen-" + secrets.token_hex(3)
-    from db.pg import koble, sett_kontekst
-    m = koble(MIGRATOR_DSN)
-    try:
-        sett_kontekst(m, fremmed, "sys", "r0")
-        bid = m.execute(
-            "INSERT INTO brukeridentitet (issuer, sub) VALUES (%s,%s)"
-            " ON CONFLICT (issuer,sub) DO UPDATE SET sub=EXCLUDED.sub"
-            " RETURNING bruker_id",
-            ("https://idp.example", f"{fremmed}-x")).fetchone()[0]
-        m.execute(
-            "INSERT INTO brukermedlemskap (tenant,bruker_id,roller)"
-            " VALUES (%s,%s,ARRAY['leser'])"
-            " ON CONFLICT (tenant,bruker_id) DO UPDATE SET aktiv=true",
-            (fremmed, bid))
-        from api import sesjon as sesjonmodul
-        cookie = secrets.token_urlsafe(24)
-        ver = m.execute(
-            "SELECT authz_version FROM brukermedlemskap WHERE tenant=%s"
-            " AND bruker_id=%s", (fremmed, bid)).fetchone()[0]
-        m.execute(
-            "INSERT INTO brukersesjon (sesjon_id_hash, tenant, bruker_id,"
-            " authz_snapshot, csrf_hash, opprettet, siste_bruk, utloper,"
-            " tilbakekalt) VALUES (%s,%s,%s,%s,%s, now(), now(),"
-            " now()+interval '1 hour', false)",
-            (sesjonmodul._hash(cookie), fremmed, bid, ver,
-             sesjonmodul._hash("x")))
-        m.commit()
-    finally:
-        m.close()
+    _fremmed, cookie, _csrf = _fremmed_okt("x", ["leser"])
     r = _get(klient, cookie, "/v1/rekruttering/prosesser")
     assert r.status_code == 200
     assert r.json()["prosesser"] == []
+
+
+@pg
+def test_signering_paa_tvers_av_tenanter_avvises(klient):
+    """Cursor P2 (10:29): tenantgrensen måles også på den IRREVERSIBLE
+    veien, ikke bare på lesningen.
+
+    GET har `test_rls_skiller_tenantene_ogsaa_her`. POST hadde 404 for en
+    tilfeldig UUID — men aldri for en liste som FINNES, hos noen andre,
+    med den korrekte innholdshashen. Det er den eneste formen som skiller
+    «id-en fantes ikke» fra «id-en fantes, og tenantgrensen holdt»: en
+    regresjon i tenant-leddet eller i gjenopprettingen av RLS-konteksten
+    ville ellers vært usynlig på nettopp den veien som brenner
+    `en_signert_versjon_per_serie` — én signatur per serie, aldri
+    tilbake.
+
+    Målt på tre ledd: statusen (404), koden (`liste_ukjent` — grensen
+    lekker ikke at raden finnes), og at signatur-sloten står UBRUKT
+    etterpå. Avvist er ikke det samme som skrev ingenting.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `AND l.tenant=%s` fra oppslaget OG
+    kjør det utenfor tenantkonteksten (f.eks. uten
+    `_gjenopprett_kontekst`). De to beltene bærer denne grensen sammen, og
+    testen måler utfallet kalleren møter — ikke ett av dem.
+    """
+    _pid, lid, ih = _seed_prosess()
+    _fremmed, cookie, csrf = _fremmed_okt("signerer", ["admin"])
+    sti = f"/v1/rekruttering/lister/{lid}/signer"
+    r = _post(klient, cookie, csrf, sti, {"innhold_hash": ih})
+    assert r.status_code == 404, r.text
+    assert r.json()["feil"] == "liste_ukjent"
+    m = _migrator()
+    try:
+        n = m.execute("SELECT count(*) FROM utsendingssignatur"
+                      " WHERE tenant=%s AND liste_id=%s",
+                      (TEN, lid)).fetchone()[0]
+        assert n == 0, "en fremmed tenant brente signatur-sloten"
+        m.rollback()
+    finally:
+        m.close()
+    # Positiv kontroll: listen ER signerbar, med den korrekte hashen —
+    # 404-en var tenantgrensen, ikke en ødelagt fixture.
+    egen = _bruker("sjef-tenantgrense", ["admin"])
+    c2, cs2 = _browsersesjon(egen)
+    ok = _post(klient, c2, cs2, sti, {"innhold_hash": ih})
+    assert ok.status_code == 201, ok.text
 
 
 @pg
