@@ -29,12 +29,17 @@ from __future__ import annotations
 import ast
 import pathlib
 
+import pytest
+
+from .test_api import DSN, MIGRATOR_DSN, migrator, miljo  # noqa: F401
 from .test_eierskap import _design_fra_sql
+from .test_pr010_db import _ctx, _identitet
 
 ROT = pathlib.Path(__file__).resolve().parents[3]
 KILDE = ROT / "deploy" / "staging" / "seed-rekruttering-demo.py"
 
 ROLLE = "SET LOCAL ROLE disponit_m37_claimer"
+pg = pytest.mark.skipif(not DSN, reason="DISPONIT_TEST_DSN ikke satt")
 
 
 def _claimereide_funksjoner() -> set[str]:
@@ -92,6 +97,139 @@ def test_claimerkall_star_under_claimerrollen():
                     " transaksjon — migrator har ingen EXECUTE, og"
                     " seeden krasjer med alt før dette committet")
     assert sett, "porten fant ingen claimer-kall i seeden — les kilden"
+
+
+def _kontekst_og_medlemskap_kall() -> list[tuple[int, str]]:
+    """(linje, merke) for hver `commit()`, hvert `sett_kontekst(`-kall, og
+    hvert `execute` som treffer `brukermedlemskap` eller `brukersesjon`.
+
+    Egen liste fra `_seedens_kall()`: den fanger ikke `sett_kontekst`, som
+    ikke er et attributt-kall (`m.execute(...)`) men et bart funksjonskall.
+
+    `brukersesjon` er med som NEGATIVT merke: seeden skal ikke røre den
+    tabellen i det hele tatt (se porten under).
+    """
+    tre = ast.parse(KILDE.read_text(encoding="utf-8"))
+    kall: list[tuple[int, str]] = []
+    for node in ast.walk(tre):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "commit":
+            kall.append((node.lineno, "COMMIT"))
+        elif (isinstance(node.func, ast.Name)
+              and node.func.id == "sett_kontekst"):
+            kall.append((node.lineno, "KONTEKST"))
+        elif (isinstance(node.func, ast.Attribute)
+              and node.func.attr == "execute" and node.args
+              and isinstance(node.args[0], ast.Constant)
+              and isinstance(node.args[0].value, str)):
+            sql = node.args[0].value
+            if "brukermedlemskap" in sql:
+                kall.append((node.lineno, "MEDLEMSKAP"))
+            elif "brukersesjon" in sql:
+                kall.append((node.lineno, "BRUKERSESJON"))
+    return sorted(kall)
+
+
+def test_medlemskapsoppslaget_gar_med_kontekst_og_gjetter_ikke_tenanten():
+    """RLS-porten Cursor-passet 24/8 etterlyste: seeden koblet som migrator
+    og leste `brukermedlemskap` UTEN tenantkontekst — tabellen har
+    ENABLE+FORCE RLS (`tenant_isolasjon`, 010 §8) og migrator er ikke
+    BYPASSRLS, så oppslaget var tomt hver gang. Prod 24/8 var nøyaktig det.
+
+    Drepende mutasjon: fjern `sett_kontekst(m, a.tenant, ...)` foran
+    medlemskaps-SELECTen. Uten porten er regressen usynlig i CI: SET LOCAL
+    dør ved COMMIT (`db/pg.py`), og funksjonen har ingen tidligere commit
+    som kunne latt en glemt kontekst overleve fra en annen bolk.
+
+    Andre halvdel er Codex' P1/P2 på `1231a893`: seeden skal ikke GJETTE
+    tenanten fra `brukersesjon`. Den tabellen er sesjonsHISTORIKK, ikke et
+    medlemskapsregister — en identitet som er aktiv i A og B, men bare
+    innlogget i A, ga kandidatlista [A] og dermed en «entydig» tenant som
+    slapp forbi flertydighetssjekken; og spørringen filtrerte på den
+    ikke-ledende `bruker_id` i `brukersesjon_bruker`
+    (tenant, bruker_id, opprettet, id) + DISTINCT, altså en full scan som
+    vokser med sesjonshistorikken. Drepende mutasjon: gjeninnfør
+    `SELECT DISTINCT tenant FROM brukersesjon ...`, eller sett `--tenant`
+    tilbake til valgfri.
+    """
+    kontekst_siden_commit = False
+    fant_medlemskap = False
+    for _linje, merke in _kontekst_og_medlemskap_kall():
+        if merke == "COMMIT":
+            kontekst_siden_commit = False
+        elif merke == "KONTEKST":
+            kontekst_siden_commit = True
+        elif merke == "BRUKERSESJON":
+            raise AssertionError(
+                "seeden spør `brukersesjon` — sesjonshistorikk er ikke et"
+                " medlemskapsregister (medlemskap uten sesjonsrad er"
+                " usynlig, så flertydighet blir borte), og oppslaget"
+                " treffer ingen indeks. Tenanten skal komme fra --tenant")
+        elif merke == "MEDLEMSKAP":
+            fant_medlemskap = True
+            assert kontekst_siden_commit, (
+                "seeden leser/skriver brukermedlemskap uten sett_kontekst i"
+                " samme transaksjon — RLS+FORCE gjør oppslaget tomt for"
+                " migrator (målt på prod 24/8)")
+    assert fant_medlemskap, "porten fant ingen brukermedlemskap-kall i seeden"
+    assert _tenantflagget_er_pakrevd(), (
+        "--tenant er ikke lenger required — da er seeden tilbake til å måtte"
+        " utlede tenanten selv, og migrator kan ikke det (FORCE RLS)")
+
+
+def _tenantflagget_er_pakrevd() -> bool:
+    """True hvis `add_argument("--tenant", ...)` har `required=True`."""
+    tre = ast.parse(KILDE.read_text(encoding="utf-8"))
+    for node in ast.walk(tre):
+        if (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "add_argument" and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value == "--tenant"):
+            return any(k.arg == "required"
+                       and isinstance(k.value, ast.Constant)
+                       and k.value.value is True
+                       for k in node.keywords)
+    raise AssertionError("porten fant ikke --tenant-flagget i seeden")
+
+
+@pg
+def test_medlemskapsoppslag_uten_kontekst_tomt_med_kontekst_funnet(migrator):
+    """Prod-symptomet 24/8, reprodusert mot ekte RLS — ikke bare gjettet fra
+    kildens linjerekkefølge slik porten over gjør. `brukermedlemskap` har
+    ENABLE+FORCE RLS (`tenant_isolasjon`, 010 §8): uten `disponit.tenant`
+    er oppslaget tomt for migrator uansett hvor mange rader som finnes; med
+    konteksten satt finner det raden.
+    """
+    from db.pg import sett_kontekst
+    t = "t-seed-rls-oppslag"
+    _ctx(migrator, t)
+    migrator.execute("DELETE FROM brukermedlemskap WHERE tenant=%s", (t,))
+    migrator.commit()
+    _ctx(migrator, t)
+    bid = _identitet(migrator)
+    migrator.execute(
+        "INSERT INTO brukermedlemskap (tenant, bruker_id, roller)"
+        " VALUES (%s,%s,ARRAY['leser'])", (t, bid))
+    migrator.commit()
+    # Uten kontekst: SET LOCAL fra INSERT-transaksjonen døde ved COMMIT
+    # over — nøyaktig det seed-demoen gjorde før denne PR-en.
+    tomt = migrator.execute(
+        "SELECT tenant, roller FROM brukermedlemskap"
+        " WHERE bruker_id=%s AND aktiv", (bid,)).fetchall()
+    assert tomt == [], (
+        "uten sett_kontekst skal RLS+FORCE gjøre brukermedlemskap-oppslaget"
+        " tomt for migrator — er raden synlig likevel, er ikke dette lenger"
+        " prod-symptomet fiksen retter, og AST-porten over måler ingenting")
+    sett_kontekst(migrator, t, "test", "test-rls-oppslag")
+    funnet = migrator.execute(
+        "SELECT tenant, roller FROM brukermedlemskap"
+        " WHERE bruker_id=%s AND aktiv", (bid,)).fetchall()
+    assert funnet == [(t, ["leser"])]
+    sett_kontekst(migrator, t, "test", "test-rls-oppslag-rydd")
+    migrator.execute("DELETE FROM brukermedlemskap WHERE tenant=%s", (t,))
+    migrator.commit()
 
 
 def _flettefeltene() -> set[str]:
