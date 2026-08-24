@@ -164,13 +164,48 @@ vurder_rollbackmaal() {  # <forrige-versjoner> <base-versjoner>
 
 # Leser de to versjonssettene og feller dommen. Skriver forklaringen til
 # stdout ved inkompatibilitet; returverdi 0 = forrige KAN boote.
+#
+# Cursor P2-1 (#178, runde 5): LESINGEN ER TIDSBEGRENSET, fordi den kalles
+# fra en FEILHÅNDTERER. #172 gjorde `selvrevers()` avhengig av denne dommen,
+# og reverseringen kjøres i nøyaktig det scenarioet der basen kan være treg
+# eller uoppnåelig. Uten tak venter `psql` på default-oppførselen (minutter),
+# og da står tjenestene nede så lenge — reverseringen henger i gaten som
+# skulle sluppet den fram. Taket er tosidig med vilje: `PGCONNECT_TIMEOUT`
+# stopper en oppkobling som aldri svarer og gir en NAVNGITT psql-feil,
+# `timeout` stopper også en spørring som kobler seg opp og så blokkerer på
+# lås (en parallell migrasjon holder nettopp `migrasjoner`). Overstyrbart,
+# så drift og porter kan stramme det ned; taket gjelder når ingen har valgt.
+# Blir lesingen kuttet, er `bv` tom — og «umålt er ikke kompatibelt» står.
+#
+# Cursor P2-2 (#178, runde 5): OG ÅRSAKEN BLIR MED. `2>/dev/null` svelget
+# hver psql-feil likt — autentisering, nett, DNS, manglende tabell — og alt
+# operatøren satt igjen med var «versjonssettene lot seg ikke lese». Dommen
+# var riktig (fail-closed), men uleselig: i reverseringskonteksten er det
+# nettopp ÅRSAKEN hen trenger, og hen trenger den NÅ, ikke etter en
+# reproduksjon mot en base som allerede har flyttet seg. stderr fanges
+# derfor og legges ved forklaringen. Den kan ikke gå til stdout direkte:
+# stdout ER dommen, og en psql-linje der ville blitt lest som en
+# inkompatibilitetsforklaring av kallstedene. Et tidsavbrudd navngis for
+# seg, siden `timeout` dreper stille og ellers ville sett ut som en base
+# som svarte tomt. psql skriver vert/port/bruker/base i feilene sine, aldri
+# passordet, så DSN-ets hemmelighet blir ikke med i deploy-loggen.
 rollbackmaal_kompatibelt() {  # <forrige-katalog> <runtime-migrator-url>
-  local forrige_kat=$1 url=$2 fv bv
+  local forrige_kat=$1 url=$2 fv bv feilfil psqlfeil psqlkode=0
   fv=$(ls "$forrige_kat/platform/core/db/migrations" 2>/dev/null        | sed -n 's/^\([0-9][0-9][0-9]\)_.*\.sql$/\1/p' | sort -n        | tr '
 ' ' ' | sed 's/ $//')
-  bv=$(psql "$url" -tAc        "SELECT string_agg(lpad(versjon::text, 3, '0'), ' ' ORDER BY versjon) FROM migrasjoner"        2>/dev/null | tr -d '')
+  feilfil=$(mktemp) || {
+    echo "fant ikke plass til psql-feilen (mktemp) — umålt er ikke kompatibelt"
+    return 1
+  }
+  bv=$(PGCONNECT_TIMEOUT=${PGCONNECT_TIMEOUT:-5} timeout 10 psql "$url" -tAc       "SELECT string_agg(lpad(versjon::text, 3, '0'), ' ' ORDER BY versjon) FROM migrasjoner"        2>"$feilfil") || psqlkode=$?
+  bv=${bv//$'\r'/}
+  psqlfeil=$(tr '\n\t' '  ' <"$feilfil" | sed 's/  */ /g; s/^ //; s/ $//')
+  rm -f "$feilfil"
+  if [ "$psqlkode" = 124 ] && [ -z "$psqlfeil" ]; then
+    psqlfeil="tidsavbrudd, basen svarte ikke innen taket"
+  fi
   if [ -z "$fv" ] || [ -z "$bv" ]; then
-    echo "versjonssettene lot seg ikke lese (forrige: '${fv:-tom}',"          "base: '${bv:-tom}') — umålt er ikke kompatibelt"
+    echo "versjonssettene lot seg ikke lese (forrige: '${fv:-tom}',"          "base: '${bv:-tom}') — umålt er ikke kompatibelt${psqlfeil:+ · psql: $psqlfeil}"
     return 1
   fi
   vurder_rollbackmaal "$fv" "$bv"
