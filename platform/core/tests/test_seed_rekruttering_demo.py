@@ -94,6 +94,36 @@ def test_claimerkall_star_under_claimerrollen():
     assert sett, "porten fant ingen claimer-kall i seeden — les kilden"
 
 
+def _flettefeltene() -> set[str]:
+    """Feltnavnene seeden legger i `flettefelt`, lest ut av kilden.
+
+    Verdiene er dels f-strenger (kandidatens tidsvalglenke) og kan ikke
+    evalueres statisk — men det er NØKKELSETTET malen måler, og det står
+    som rene konstanter.
+    """
+    tre = ast.parse(KILDE.read_text(encoding="utf-8"))
+    for node in ast.walk(tre):
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id == "flettefelt"
+                and isinstance(node.value, ast.Dict)):
+            return {n.value for n in node.value.keys
+                    if isinstance(n, ast.Constant)}
+    raise AssertionError("fant ingen `flettefelt` i seeden")
+
+
+def test_flettefeltene_er_noyaktig_invitasjonsmalens():
+    """Drepende mutasjon: fjern `tidsvalg_lenke` fra seedens dict.
+
+    `maler.flett` avviser et manglende felt (`flettefelt_mangler`) like
+    hardt som et fremmed, så en liste seedet med et utvalg kan SIGNERES
+    uten at en eneste invitasjon kan rendres — og seriens append-only
+    signaturslot er da brukt på en utsendelse som ikke går.
+    """
+    from modules.m57_ats import maler
+    assert _flettefeltene() == set(maler.MALER["invitasjon"]["felter"])
+
+
 def test_seeden_lukker_prosessen_i_utfort_transaksjonen():
     """Lukkingen og `utfort` er ÉN overgang (Codex P2, runde 8), og
     porten over ville vært fornøyd med en lukking som sto hvor som helst

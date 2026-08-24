@@ -180,9 +180,28 @@ def main() -> int:
         # signaturen skal stå for — se `innhold_hash` under. Predikatet er
         # leseflatens eget (`api/rekruttering.py`): tomme funn OG alle
         # krav oppfylt, boolsk.
+        # OG FLETTEFELTENE ER MALENS, IKKE ET UTVALG (Codex P2, runde 9).
+        # `invitasjon-v1` deklarerer NØYAKTIG fire felter, og `maler.flett`
+        # avviser et manglende felt like hardt som et fremmed
+        # (`flettefelt_mangler`, port 14) — en mal med hull er ingen
+        # utsendingstekst. Seeden skrev to av dem. Listen kunne altså
+        # signeres, men INGEN av invitasjonene kunne rendres etterpå, og
+        # signaturen er append-only: seriens ene slot ville vært brent på
+        # en utsendelse som ikke går. Nettopp det demoen finnes for å vise
+        # at ikke skjer.
+        #
+        # Flettingen kjøres her, på malens egen kode, og verdien kastes:
+        # poenget er PORTEN, ikke teksten — utsendelsen rendrer selv når
+        # den kommer. Da er det malen som sier fra i seeden, ikke en kopi
+        # av feltlisten som kan drifte fra den.
+        from modules.m57_ats import maler
         mottaker_ref = f"demo-kandidat-{n+1}@example.invalid"
         flettefelt = {"kandidatnavn": "[NAVN-1]",
-                      "stilling": "Demo-stilling"}
+                      "stilling": "Demo-stilling",
+                      "tidsvalg_lenke":
+                          f"https://tidsvalg.example.invalid/{kid}",
+                      "firmatekst": "Vennlig hilsen Demo-firma AS"}
+        maler.flett("invitasjon", flettefelt)
         if not funn and all(v is True for v in oppfylt.values()):
             mottakere.append({"kandidat_id": str(kid),
                               "mottaker_ref": mottaker_ref,
