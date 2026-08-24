@@ -601,6 +601,84 @@ def test_gjenbrukt_idempotensnokkel_er_409_ikke_500(klient):
 
 
 @pg
+def test_samtidig_nokkelkollisjon_er_konflikt_ikke_signert_serie(klient):
+    """Codex P2 (runde 6): den SAMTIDIGE halvdelen av testen over.
+
+    Sekvensielt ser `signer_utsendingsliste` den forrige nøkkelraden og
+    reiser `invalid_parameter_value`. Er kallene samtidige og signatarene
+    ULIKE, låser `laas_godkjenner` hver sin medlemskapsrad — de
+    serialiserer ikke hverandre — så begge passerer nøkkel-oppslaget mens
+    den andres rad er ucommittet. Taperen blokkerer på unik-indeksen og
+    får `unique_violation` på `(tenant, operasjonsnokkel)`.
+
+    Endepunktet dømte alle 23505 som `serien_alt_signert`. Taperens serie
+    er URØRT: svaret sa «denne utsendelsen er alt autorisert» om en
+    signatur som aldri ble skrevet, og en klient som tror på det slutter å
+    prøve på en utsendelse ingen har godkjent.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `_NOKKELBRUDD`-grenen i
+    `UniqueViolation`-armen — da blir svaret `serien_alt_signert` igjen.
+    """
+    import threading
+
+    from db.pg import koble, sett_kontekst
+
+    # To ULIKE serier: bare nøkkelen kan kollidere. Var listene i samme
+    # serie, ville PK-en/serie-indeksen brutt først, og testen målt en
+    # annen dom enn den den er skrevet for.
+    _pa, liste_a, _hash_a = _seed_prosess()
+    _pb, liste_b, hash_b = _seed_prosess()
+    sign_a = _bruker("sjef-kapp-a", ["admin"])
+    sign_b = _bruker("sjef-kapp-b", ["admin"])
+    cookie, csrf = _browsersesjon(sign_b)
+    nokkel = secrets.token_urlsafe(24)
+    svar: dict = {}
+
+    def signer_b():
+        svar["r"] = _post(klient, cookie, csrf,
+                          f"/v1/rekruttering/lister/{liste_b}/signer",
+                          {"innhold_hash": hash_b}, idem=nokkel)
+
+    a = koble(DSN)
+    try:
+        sett_kontekst(a, TEN, "test", "r-kapp")
+        a.execute("SELECT signer_utsendingsliste(%s,%s,%s,%s)",
+                  (TEN, liste_a, sign_a, nokkel))          # ikke committet
+        t = threading.Thread(target=signer_b)
+        t.start()
+        t.join(timeout=3)
+        assert t.is_alive(), \
+            "B skulle blokkere på As ucommittede nøkkelrad — uten den" \
+            " blokkeringen måler testen ikke kappløpet"
+        a.commit()                       # nå brister unik-kravet for B
+        t.join(timeout=20)
+        assert not t.is_alive(), "B kom aldri tilbake"
+    finally:
+        a.close()
+    m = _migrator()
+    try:
+        # NAVNET ROUTINGEN LESER, MÅLT MOT KATALOGEN — og målt FØR dommen,
+        # så et navneavvik peker på seg selv i stedet for å se ut som en
+        # manglende gren.
+        from api import rekruttering as rekrutteringsmodul
+        navn = [k[0] for k in m.execute(
+            "SELECT conname FROM pg_constraint WHERE conrelid ="
+            " 'public.utsendingssignatur'::regclass").fetchall()]
+        assert rekrutteringsmodul._NOKKELBRUDD in navn, navn
+        # …og Bs serie står fortsatt USIGNERT: dommen «alt signert» ville
+        # ikke bare vært feil navn på en riktig tilstand.
+        assert m.execute(
+            "SELECT count(*) FROM utsendingssignatur WHERE tenant=%s"
+            " AND liste_id=%s", (TEN, liste_b)).fetchone()[0] == 0
+        m.rollback()
+    finally:
+        m.close()
+    r = svar["r"]
+    assert r.status_code == 409, r.text
+    assert r.json()["feil"] == "idempotenskonflikt", r.text
+
+
+@pg
 def test_signering_krever_hashen_dialogen_viste(klient):
     _pid, lid, _ih = _seed_prosess()
     bid = _bruker("sjef2", ["admin"])

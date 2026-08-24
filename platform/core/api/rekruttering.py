@@ -42,6 +42,15 @@ from .autorisasjon import scopes_for_roller
 #: målingen sett på noe annet enn den første.
 _SIGNERINGSSCOPE = "bestilling:opprett"
 
+#: Unik-kravet SP-2-nøkkelen bor i: `UNIQUE (tenant, operasjonsnokkel)` på
+#: `utsendingssignatur` (056 §2). PostgreSQL navnga det selv — 056 er
+#: hash-pinnet, så navnet er like fast som resten av migrasjonen. Det
+#: leses fordi FIRE unike krav på samme tabell deler SQLSTATE 23505, og to
+#: av dem betyr motsatte ting for kalleren (se signeringens
+#: `UniqueViolation`-arm). Testen måler navnet mot katalogen, så et
+#: eventuelt avvik peker på seg selv i stedet for å falle stille tilbake.
+_NOKKELBRUDD = "utsendingssignatur_tenant_operasjonsnokkel_key"
+
 
 def _leseauth_beslutninger(tjeneste, request, conn, rid):
     """Som policyadmin_http._leseauth, men for `decisions:read` — flatens
@@ -457,6 +466,38 @@ def signer_endepunkt(tjeneste, request):
             raise _Avbrudd(_feil("signatar_uten_medlemskap", rid, 403)) \
                 from e
         except psycopg.errors.UniqueViolation as e:
+            # HVILKET unik-krav SOM BRAST ER TO ULIKE DOMMER (Codex P2,
+            # runde 6). Armen her dømte alle 23505 fra 056 som «serien er
+            # alt signert» — men `utsendingssignatur` bærer flere unike
+            # krav, og ett av dem er SP-2-nøkkelen: `UNIQUE (tenant,
+            # operasjonsnokkel)`.
+            #
+            # SEKVENSIELT nås det aldri: gjenbrukes nøkkelen på en annen
+            # liste, finner funksjonens eget nøkkel-oppslag den forrige
+            # raden og reiser `invalid_parameter_value` (armen under).
+            # SAMTIDIG kan det: to ULIKE signatarer låser hver sin
+            # medlemskapsrad, så `laas_godkjenner` serialiserer dem ikke
+            # mot hverandre, og begge passerer nøkkel-oppslaget mens den
+            # andres rad ennå er ucommittet. Taperen blokkerer på unik-
+            # indeksen, får 23505 når vinneren committer, og 056s egen
+            # exception-arm gjenleser: raden bærer en ANNEN liste, altså
+            # ikke et replay, og bruddet reises videre — som det skal.
+            # Da er dommen her feil: taperens serie er URØRT og fullt
+            # signerbar; det som kolliderte var `Idempotency-Key`-en.
+            # `serien_alt_signert` sier «denne utsendelsen er alt
+            # autorisert» — kalleren slutter å prøve på en signatur som
+            # aldri ble skrevet. Kanonisk svar er `idempotenskonflikt`:
+            # samme dom som den sekvensielle halvdelen, «nøkkelen din
+            # betyr noe annet — prøv igjen med en fersk».
+            #
+            # Skillet leses maskinelt av `diag.constraint_name` — samme
+            # form som `policyadmin.py` alt bruker for `policyer_pkey`,
+            # og av samme grunn: feilteksten er ikke et grensesnitt.
+            # Ukjent/uten navn beholder den gamle dommen: PK-en og
+            # serie-indeksen er de andre kildene til 23505 her, og begge
+            # ER «alt signert».
+            if e.diag.constraint_name == _NOKKELBRUDD:
+                raise _Avbrudd(_feil("idempotenskonflikt", rid, 409)) from e
             raise _Avbrudd(_feil("serien_alt_signert", rid, 409)) from e
         except psycopg.errors.InvalidParameterValue as e:
             # SP-2-KONFLIKTEN ER EN DOM, IKKE EN 500 (Codex P2). Gjenbrukes
