@@ -100,7 +100,15 @@ CREATE TABLE inndata_artefakt (
          AND key_id IS NOT NULL AND nonce IS NOT NULL
          AND lastet_ts IS NOT NULL
          AND oppdrag_id IS NOT NULL AND bundet_ts IS NOT NULL)
-     OR (status = 'forkastet')),
+     -- `forkastet` var en TOM gren (Cursor P2) — samme «CHECK som ikke er
+     -- total» som `bundet` hadde. En forkasting kunne derfor sette
+     -- `oppdrag_id` i samme UPDATE og STJELE plassen i
+     -- `inndata_artefakt_oppdrag` foran en ekte `bind_inndata`: bunten var
+     -- kastet, oppdraget hadde brukt opp sin ene bunteplass, og lineage
+     -- pekte på ingenting. Reaperen som skal skrive denne overgangen
+     -- kommer i egen PR — invarianten må stå før døren.
+     OR (status = 'forkastet' AND oppdrag_id IS NULL
+         AND bundet_ts IS NULL)),
     CONSTRAINT inndata_maaling_innenfor CHECK (
         faktiske_bytes IS NULL OR
         (faktiske_bytes > 0 AND faktiske_bytes <= maks_bytes)),
@@ -177,6 +185,17 @@ BEGIN
                                                       'forkastet'))) THEN
         RAISE EXCEPTION 'inndata_artefakt: overgang % -> % finnes ikke',
             OLD.status, NEW.status
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    -- Bindingen er BINDINGENS (Cursor P2): `oppdrag_id` var hverken
+    -- bindingsfelt eller write-once, så enhver skrivevei med UPDATE kunne
+    -- sette den — også en forkasting, som dermed kunne ta plassen i den
+    -- unike indeksen foran `bind_inndata`. Kolonnen kan nå bare endres i
+    -- nøyaktig den overgangen `bind_inndata` gjør.
+    IF NEW.oppdrag_id IS DISTINCT FROM OLD.oppdrag_id
+       AND NOT (OLD.status = 'lastet' AND NEW.status = 'bundet') THEN
+        RAISE EXCEPTION 'inndata_artefakt: oppdrag_id settes kun i'
+            ' overgangen lastet -> bundet'
             USING ERRCODE = 'insufficient_privilege';
     END IF;
     -- Målingene er write-once: satt ved 'lastet', aldri endret siden.

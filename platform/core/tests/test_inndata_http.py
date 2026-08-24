@@ -567,6 +567,59 @@ def test_kryptostrukturen_avvises_uten_a_brenne_jti(klient):
 
 
 @pg
+def test_forkasting_kan_ikke_stjele_oppdragets_bunteplass(klient):
+    """Cursor P2: `forkastet`-grenen i `inndata_tilstand_totalt` var TOM,
+    og `oppdrag_id` var hverken bindingsfelt eller write-once.
+
+    En forkasting kunne derfor sette `oppdrag_id` i samme UPDATE og ta
+    plassen i `inndata_artefakt_oppdrag` — som er UNIQUE på alle
+    ikke-NULL `oppdrag_id` uansett status. Resultatet: bunten kastet,
+    oppdraget hadde brukt opp sin ene bunteplass, og en ekte
+    `bind_inndata` på det oppdraget var blokkert for alltid. Reaperen som
+    skal skrive denne overgangen kommer i egen PR — invarianten må stå
+    før døren.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `oppdrag_id`-guarden i vakten
+    eller tøm `forkastet`-grenen igjen."""
+    tenant, _bid, _cookie, _csrf = _rigg(klient)
+    m = _migrator(tenant)
+    try:
+        offer = _lastet(m, tenant)
+        ekte = _lastet(m, tenant)
+        opp = _oppdrag(m, tenant, "m57_ats")
+        m.commit()
+        _kontekst(m, tenant)
+        # Vakten: `oppdrag_id` kan ikke endres i noen annen overgang.
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            m.execute("UPDATE inndata_artefakt SET status='forkastet',"
+                      " oppdrag_id=%s WHERE tenant=%s AND inndata_id=%s",
+                      (opp, tenant, offer))
+        m.rollback()
+        _kontekst(m, tenant)
+        # CHECKen: samme invariant på enhver skrivevei, også INSERT.
+        with pytest.raises(psycopg.errors.CheckViolation):
+            m.execute(
+                "INSERT INTO inndata_artefakt (tenant, eiermodul, formaal,"
+                " innholdstype, maks_bytes, status, reservasjon_jti,"
+                " idempotensnokkel, oppdrag_id, utloper)"
+                " VALUES (%s,'m57_ats','soknadsbunt','application/zip',"
+                "%s,'forkastet',%s,%s,%s,now()+interval '1 h')",
+                (tenant, MAKS, secrets.token_hex(32), secrets.token_hex(12),
+                 opp))
+        m.rollback()
+    finally:
+        m.close()
+    # … og plassen er fortsatt ledig for den ekte bindingen.
+    c = _runtime(tenant)
+    try:
+        c.execute("SELECT bind_inndata(%s,%s,%s,%s)",
+                  (tenant, ekte, opp, "m57_ats"))
+        c.commit()
+    finally:
+        c.close()
+
+
+@pg
 def test_innhold_sha256_maa_ha_hashens_form(klient):
     """Cursor P2 (049/053/054-klassen): `innhold_sha256` var bare NOT NULL
     i `lastet`-grenen, mens `registrer_inndata_lastet` tar verdien fra en
