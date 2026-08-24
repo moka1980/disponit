@@ -138,10 +138,21 @@ server {
     # callback-redaksjonen (v2 §5): ruten får et eget log_format der stien
     # er en KONSTANT etikett, ikke en variabel.
     #
+    # Codex P1 (runde 5): «auth først, kropp etterpå» i `opplast_endepunkt`
+    # gjelder BARE appen så lenge ingressen bufrer. Med nginx' default
+    # `proxy_request_buffering on` leses hele kroppen inn før noe sendes
+    # oppstrøms, så en klient uten gyldig sesjon får proxyen til å ta imot
+    # inntil 64 MiB per forespørsel — burst 100 i sonen — før API-et i det
+    # hele tatt får sjansen til å svare 401. Da er det nginx' temp-lager og
+    # I/O som er flaten, ikke API-prosessen fiksen i runde 1 vernet. Av
+    # samme grunn som den fiksen: uten bufring strømmer kroppen rett til
+    # socketen, og 401-en kommer mens klienten fortsatt sender.
+    #
     # Begge tallene og redaksjonen er bundet til appen av
     # `test_nginx_inndataruten_slipper_bunten_gjennom_og_redigerer_jtien`.
     location /v1/inndata/opplast/ {
         client_max_body_size 65536k;    # = INNDATA_MAKS_FYSISK (64 MiB)
+        proxy_request_buffering off;
         access_log /var/log/nginx/disponit-access.log disponit_opplast;
         limit_req zone=disponit_general burst=100 nodelay;
         limit_req_status 429;

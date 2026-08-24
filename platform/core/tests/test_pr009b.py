@@ -250,6 +250,12 @@ def test_nginx_inndataruten_slipper_bunten_gjennom_og_redigerer_jtien():
     assert "zone=disponit_general" in krop
     assert "proxy_pass http://unix:/run/disponit/api.sock;" in krop
 
+    # Runde 5: uten dette bufrer nginx hele kroppen FØR upstream ser den,
+    # og «auth først» i appen verner da bare appen — ingressen tar imot 64
+    # MiB fra en uautentisert klient uansett.
+    assert re.search(r"^\s*proxy_request_buffering\s+off;", krop, re.M), \
+        "opplastingsruten bufrer kroppen før appen får svare 401"
+
     # Redaksjonen: ruten overstyrer access_log, og formatet den peker på
     # bærer ikke stien. Begge ledd måles — et eget format som likevel
     # inneholder $uri ville vært redaksjon i navnet alene.
