@@ -257,8 +257,19 @@ def main() -> int:
     # etterlate nøyaktig den forlatte prosessen armen over beskriver.
     # Uten `p_lukket_ts`: NULL er 057s egen idempotensform — er
     # prosessen alt lukket, rører kallet ikke det lagrede tidspunktet.
-    # Kallet går som migrator, som EIER funksjonen; `SET LOCAL ROLE` i
-    # seed-2 falt bort med commiten over.
+    # OG ROLLEN MÅ SETTES PÅ NYTT (Codex P1 + Cursor P1-1, runde 9).
+    # Merknaden her sa at migrator «EIER funksjonen». Det gjør den ikke:
+    # `eierskap-reparasjon.sql` gir `lukk_rekrutteringsprosess` til
+    # `disponit_m37_claimer`, 057 §7 revoker PUBLIC, og `migrer.py` gir
+    # EXECUTE bare til runtime-rollen — migrator har `INHERIT FALSE` og
+    # står altså igjen med ingenting. `SET LOCAL ROLE` er LOCAL: den fra
+    # seed-2 døde med commiten over, akkurat som merknaden sa, men
+    # konklusjonen var motsatt av den riktige. Uten linjen under krasjer
+    # seeden her — ETTER at kandidatdataene og `utfort` er committet,
+    # FØR den signerbare listen finnes, altså nøyaktig på den halve
+    # overgangen avsnittet over finnes for å unngå. Samme mønster som
+    # seed-2 og seed-4: sett rollen, så kall claimerens funksjon.
+    m.execute("SET LOCAL ROLE disponit_m37_claimer")
     m.execute("SELECT lukk_rekrutteringsprosess(%s,%s)", (tenant, pid))
     m.commit()
 
