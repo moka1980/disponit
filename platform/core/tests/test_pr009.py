@@ -767,7 +767,16 @@ def test_p2_feilsonens_forutsetninger_gates_for_vinduet():
              "migrasjons-DSN-ene re-gates ikke på den autoritative lesingen"),
             ("command -v psql",
              "psql — som rullbakk-gaten i selvrevers() leser basen med —"
-             " sjekkes ikke før vinduet")):
+             " sjekkes ikke før vinduet"),
+            # Cursor P2 (runde 7): E1 (runde 5) la et `timeout 10`-tak rundt
+            # nettopp den psql-lesingen, og gjorde coreutils til samme klasse
+            # feilsone-avhengighet. Mangler `timeout`, feiler kommandoen, `bv`
+            # blir tom, dommen blir «umålt» — og fail-closed betyr at hver
+            # enhet blir stående stoppet. Taket kan ikke stå ugatet ved siden
+            # av porten det ble lagt oppå.
+            ("command -v timeout",
+             "timeout (coreutils) — som rullbakk-gatens psql-lesing kjøres"
+             " under — sjekkes ikke før vinduet")):
         assert gate in opp, hva
         assert opp.index(gate) < vindu, \
             f"{hva}: gaten står ETTER at vedlikeholdsvinduet har stoppet" \

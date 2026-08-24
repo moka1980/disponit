@@ -110,6 +110,24 @@ if ! command -v psql >/dev/null 2>&1; then
   echo "Systemet er urørt; forrige release kjører som før."
   exit 1
 fi
+# Cursor P2 (#178, runde 7): `timeout` er SAMME KLASSE avhengighet som `psql`.
+# E1 (runde 5) ga `rollbackmaal_kompatibelt` et tosidig tak —
+# `PGCONNECT_TIMEOUT` for oppkoblingen og `timeout 10` for en spørring som
+# blokkerer på lås — og gjorde dermed coreutils' `timeout` til en del av
+# feilsonen. Mangler den, feiler kommandoen, `bv` blir tom, dommen blir
+# «umålt», og fail-closed betyr at HVER enhet blir stående stoppet. `psql`
+# ble preflightet nettopp for å unngå at en manglende pakke gjør en
+# migrasjonsfeil om til full nedetid; taket som ble lagt oppå den kan ikke
+# stå ugatet ved siden av.
+if ! command -v timeout >/dev/null 2>&1; then
+  echo "AVBRUTT: timeout (coreutils) finnes ikke på verten."
+  echo "rollbackmaal_kompatibelt leser basen med 'timeout 10 psql' — uten"
+  echo "timeout feiler kommandoen, dommen blir umålt, og umålt er ikke"
+  echo "kompatibelt: en feil i vinduet ville latt HVER enhet bli stående"
+  echo "stoppet. Installer coreutils og kjør opp.sh igjen."
+  echo "Systemet er urørt; forrige release kjører som før."
+  exit 1
+fi
 # PR-015: driftstimerne over kaller funksjoner som migrasjon 019 kun granter
 # til `disponit_domains_admin` og `disponit_domener`. En EKSISTERENDE
 # installasjon har ingen DISPONIT_DOMAINS_URL før `oppsett-postgresql.sh` er
