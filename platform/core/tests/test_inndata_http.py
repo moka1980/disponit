@@ -295,10 +295,14 @@ def _lastet(m, tenant, *, utloper="now() + interval '1 hour'",
          f"/tmp/{jti}.bin", jti)).fetchone()[0]
 
 
-def _oppdrag(m, tenant, eiermodul):
+def _oppdrag(m, tenant, eiermodul, oppdragstype="rekruttering.evaluering"):
     """Et minimalt beslutningsoppdrag (samme form som
     `test_m57_utsending._grunnlag`): en TILLAT-loggpost hos tenanten er
-    alt `oppdrag_koblingsvakt` (038 §5) krever av beslutningsopphavet."""
+    alt `oppdrag_koblingsvakt` (038 §5) krever av beslutningsopphavet.
+
+    Typen er kontraktens KONSUMENT som default (`rekruttering.evaluering`
+    er den eneste hvis kontrakt krever `soknadsbunt_ref`) — `bind_inndata`
+    krever den. Argumentet finnes for negativtesten."""
     from db import kryptering
     logg = m.execute(
         "INSERT INTO revisjonslogg (tenant, aktor, kilde, input_hash,"
@@ -311,10 +315,11 @@ def _oppdrag(m, tenant, eiermodul):
         "INSERT INTO oppdrag (opprinnelse, tenant, beslutning_loggpost_id,"
         " oppdragstype, handling, eiermodul, payload_kryptert, key_id,"
         " nonce, utforelsesfrist, evidensfrist, koblingsstatus)"
-        " VALUES ('beslutning',%s,%s,'inndata.test','inndata.test',%s,%s,"
+        " VALUES ('beslutning',%s,%s,%s,%s,%s,%s,"
         " %s,%s,now()+interval '1 hour',now()+interval '1 day','KOBLET')"
         " RETURNING id",
-        (tenant, logg, eiermodul, ct, key_id, nonce)).fetchone()[0])
+        (tenant, logg, oppdragstype, oppdragstype, eiermodul, ct, key_id,
+         nonce)).fetchone()[0])
 
 
 @pg
@@ -549,6 +554,58 @@ def test_bindingen_avleder_eiermodulen_fra_oppdraget(klient):
         assert m.execute("SELECT status, oppdrag_id FROM inndata_artefakt"
                          " WHERE tenant=%s AND inndata_id=%s",
                          (tenant, bunt)).fetchone() == ("bundet", eget)
+        m.rollback()
+    finally:
+        m.close()
+
+
+@pg
+def test_bindingen_krever_formaalets_konsumerende_oppdragstype(klient):
+    """Codex P1: eierskap er ikke formål.
+
+    Eiersjekken over sier bare at oppdraget eies av samme modul som bunten
+    ble reservert for — men `m57_ats` eier flere oppdragstyper enn den ene
+    hvis kontrakt faktisk konsumerer en søknadsbunt (`soknadsbunt_ref` er
+    påkrevd i `rekruttering.evaluering` alene, `FELTSTRENGER`). En kaller
+    med EXECUTE kunne derfor bundet bunten til et vilkårlig annet
+    m57-oppdrag: engangsbunten forbrukt, det uskyldige oppdragets ENE
+    bunteplass brukt opp, og lineage pekende på en jobb som aldri skulle
+    lest den.
+
+    Angrepet spilles av ordrett: riktig tenant, riktig eiermodul, riktig
+    påstand — feil oppdragstype.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `v_konsument`-sjekken, eller la
+    kartet falle tilbake på å slippe gjennom et ukjent formål."""
+    tenant, _bid, _cookie, _csrf = _rigg(klient)
+    m = _migrator(tenant)
+    try:
+        bunt = _lastet(m, tenant)
+        # Eid av RIKTIG modul, men en type hvis kontrakt ikke leser bunter.
+        feil_type = _oppdrag(m, tenant, "m57_ats",
+                             oppdragstype="rekruttering.utsending")
+        riktig = _oppdrag(m, tenant, "m57_ats")
+        m.commit()
+    finally:
+        m.close()
+    c = _runtime(tenant)
+    try:
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            c.execute("SELECT bind_inndata(%s,%s,%s,%s)",
+                      (tenant, bunt, feil_type, "m57_ats"))
+        c.rollback()
+        _kontekst(c, tenant)
+        c.execute("SELECT bind_inndata(%s,%s,%s,%s)",
+                  (tenant, bunt, riktig, "m57_ats"))
+        c.commit()
+    finally:
+        c.close()
+    m = _migrator(tenant)
+    try:
+        # Bunten er urørt av det avviste forsøket og bundet til den ekte.
+        assert m.execute("SELECT status, oppdrag_id FROM inndata_artefakt"
+                         " WHERE tenant=%s AND inndata_id=%s",
+                         (tenant, bunt)).fetchone() == ("bundet", riktig)
         m.rollback()
     finally:
         m.close()

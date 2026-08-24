@@ -298,7 +298,8 @@ CREATE FUNCTION bind_inndata(
     p_eiermodul TEXT)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
-DECLARE r RECORD; v_oppdrag_eier TEXT;
+DECLARE r RECORD; v_oppdrag_eier TEXT; v_oppdragstype TEXT;
+        v_konsument TEXT;
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant, 'bind_inndata');
     SELECT * INTO r FROM public.inndata_artefakt
@@ -332,7 +333,9 @@ BEGIN
     -- (016) — å utvide den for en lås vi ikke trenger ville byttet ett
     -- funn mot et større. RLS gjelder også for denne definer-rollen;
     -- `krev_tenantkontekst` over har alt bundet `disponit.tenant`.
-    SELECT o.eiermodul INTO v_oppdrag_eier FROM public.oppdrag o
+    SELECT o.eiermodul, o.oppdragstype
+      INTO v_oppdrag_eier, v_oppdragstype
+      FROM public.oppdrag o
      WHERE o.tenant = p_tenant AND o.id = p_oppdrag_id;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'inndata: oppdrag % finnes ikke i tenant %',
@@ -344,6 +347,33 @@ BEGIN
         RAISE EXCEPTION 'inndata: bunten er reservert for %, oppdrag %'
             ' eies av % (kalleren påsto %)',
             r.eiermodul, p_oppdrag_id, v_oppdrag_eier, p_eiermodul
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- EIERSKAP ER IKKE FORMÅL (Codex P1). Sjekken over sier at oppdraget
+    -- eies av samme modul som bunten ble reservert for — men `m57_ats` eier
+    -- flere oppdragstyper enn den ene hvis kontrakt faktisk KONSUMERER en
+    -- søknadsbunt (`soknadsbunt_ref` er påkrevd i `rekruttering.evaluering`
+    -- alene, se `oppdragskontrakt.FELTSTRENGER`). En kaller med EXECUTE
+    -- kunne derfor bundet bunten til et vilkårlig annet m57-oppdrag i egen
+    -- tenant: engangsbunten ble forbrukt, det uskyldige oppdraget brukte
+    -- opp sin ENE bunteplass (`inndata_artefakt_oppdrag`), og lineage
+    -- pekte på en jobb som aldri skulle lest den.
+    --
+    -- Kartet er lukket og fail-closed: en ny `formaal` i en senere
+    -- migrasjon MÅ navngi sin konsument her, ellers er bindingen en feil —
+    -- ikke en stille passering. Samme vedtak som `eiermodul`-CHECKen: et
+    -- nytt formål er en kontraktsendring, ikke et kallargument.
+    v_konsument := CASE r.formaal
+                        WHEN 'soknadsbunt' THEN 'rekruttering.evaluering'
+                   END;
+    IF v_konsument IS NULL THEN
+        RAISE EXCEPTION 'inndata: formålet % har ingen konsumerende'
+            ' oppdragstype i denne kontrakten', r.formaal
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF v_oppdragstype IS DISTINCT FROM v_konsument THEN
+        RAISE EXCEPTION 'inndata: % konsumeres av %, men oppdrag % er %',
+            r.formaal, v_konsument, p_oppdrag_id, v_oppdragstype
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
     UPDATE public.inndata_artefakt
