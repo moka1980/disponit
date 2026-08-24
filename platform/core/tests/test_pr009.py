@@ -1186,3 +1186,48 @@ def test_backupen_dumper_som_postgres_ikke_migrator():
     assert "MIGRATOR_URL" not in skript.split("pg_dump", 1)[1].split("\n")[0] \
         and skript.count("sudo -u postgres pg_dump") == 2, \
         "backupen dumper ikke som postgres — kapabilitetstabellene blir utelatt"
+
+
+def test_backupen_far_backupnavnet_forst_etter_verifiseringen():
+    """En avbrutt dump skal ikke kunne ligne dagens backup.
+
+    Codex P1 (#178, runde 6): opp.sh steg 5 stopper
+    `disponit-backup.service` for å holde `pg_dump` unna et skjema i
+    bevegelse. Stoppen treffer hele cgruppen, også en dump som alt er i
+    gang — og skrev backupen direkte til `disponit-<stempel>.dump.age`,
+    ville SIGTERM etterlatt en AVKORTET fil med det ENDELIGE navnet.
+    Den ville vært katalogens nyeste treff, retention ville talt den som
+    en backup, og operatøren ville sett dagen dekket nettopp den dagen
+    deployen gikk galt.
+
+    Porten måler REKKEFØLGEN på kilden, som de andre skript-portene her:
+    dumpen skrives til arbeidsnavnet, og `mv` til backupnavnet skjer
+    etter BEGGE portene (gjenopprettingen og størrelsen). Et trap rydder
+    arbeidsfila, og det er installert FØR dumpen starter — er det først
+    etter, er nettopp avbruddsvinduet udekket.
+    """
+    skript = (ROT / "deploy/staging/backup-db.sh").read_text(encoding="utf-8")
+    linjer = [ln.strip() for ln in skript.splitlines()
+              if ln.strip() and not ln.lstrip().startswith("#")]
+
+    def indeks(bit):
+        for i, ln in enumerate(linjer):
+            if bit in ln:
+                return i
+        return -1
+
+    i_trap = indeks("trap opprydd EXIT")
+    i_dump = indeks('age -R "$MOTTAKER"')
+    i_tabeller = indeks("gjenoppretting ga bare")
+    i_storrelse = indeks("backupfilen er tom")
+    i_mv = indeks('mv "$DELVIS" "$FIL"')
+
+    assert i_dump > 0 and '> "$DELVIS"' in linjer[i_dump], \
+        "dumpen skrives rett til backupnavnet — et avbrudd etterlater en " \
+        "avkortet fil som ser ut som dagens backup"
+    assert 0 <= i_trap < i_dump, \
+        "opprydding av arbeidsfila er ikke på plass FØR dumpen starter"
+    assert i_mv > i_tabeller > 0 and i_mv > i_storrelse > 0, \
+        "backupnavnet settes før verifiseringsportene har svart"
+    assert 'rm -f "$DELVIS"' in skript, \
+        "arbeidsfila ryddes ikke ved avbrudd"
