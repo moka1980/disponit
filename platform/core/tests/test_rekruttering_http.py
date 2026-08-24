@@ -958,3 +958,68 @@ def test_rls_skiller_tenantene_ogsaa_her(klient):
     r = _get(klient, cookie, "/v1/rekruttering/prosesser")
     assert r.status_code == 200
     assert r.json()["prosesser"] == []
+
+
+@pg
+def test_deaktivert_m57_gir_definert_503_paa_alle_tre_rutene(miljo,
+                                                             monkeypatch):
+    """Rollback-kontrakten gjelder ALLE M-57s ruter (Codex P1).
+
+    `DISPONIT_INAKTIVE_MODULER` er veien en modul rulles tilbake på i
+    drift, og bare M-1s beslutningsvei leste den. Å deaktivere `m57_ats`
+    stanset derfor ikke rekrutteringsflaten — signeringen inkludert, som
+    er den irreversible handlingen en rollback finnes for å stoppe.
+
+    Målt i BEGGE retninger: med flagget svarer alle tre rutene 503
+    `modul_inaktiv` OG signatur-sloten står ubrukt; uten flagget signerer
+    den samme økten 201. Uten den andre halvdelen ville testen bestått
+    på et endepunkt som var permanent nede.
+
+    Avvisningen ligger FØR autentiseringen, og økten her er en ekte
+    admin-økt med gyldig CSRF: 503-en er da modulporten, ikke en 401 som
+    tilfeldigvis kom først.
+    """
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    _pid, lid, ih = _seed_prosess()
+    bid = _bruker("sjef-rollback", ["admin"])
+    cookie, csrf = _browsersesjon(bid)
+
+    monkeypatch.setenv("DISPONIT_INAKTIVE_MODULER", "m57_ats")
+    av = lag_app(DSN)
+    try:
+        with TestClient(av) as c:
+            svar = [
+                _get(c, cookie, "/v1/rekruttering/prosesser"),
+                _post(c, cookie, csrf,
+                      f"/v1/rekruttering/lister/{lid}/signer",
+                      {"innhold_hash": ih}),
+                _post(c, cookie, csrf,
+                      f"/v1/rekruttering/prosesser/{_pid}/blinding",
+                      {"av": True, "begrunnelse": "test"}),
+            ]
+            assert [r.status_code for r in svar] == [503, 503, 503], \
+                [r.text for r in svar]
+            assert {r.json()["feil"] for r in svar} == {"modul_inaktiv"}
+    finally:
+        av.tjeneste.pool.lukk()
+    m = _migrator()
+    try:
+        n = m.execute("SELECT count(*) FROM utsendingssignatur"
+                      " WHERE tenant=%s AND liste_id=%s",
+                      (TEN, lid)).fetchone()[0]
+        assert n == 0, "en deaktivert modul skrev en signatur"
+        m.rollback()
+    finally:
+        m.close()
+
+    monkeypatch.delenv("DISPONIT_INAKTIVE_MODULER")
+    paa = lag_app(DSN)
+    try:
+        with TestClient(paa) as c:
+            r = _post(c, cookie, csrf,
+                      f"/v1/rekruttering/lister/{lid}/signer",
+                      {"innhold_hash": ih})
+            assert r.status_code == 201, r.text
+    finally:
+        paa.tjeneste.pool.lukk()

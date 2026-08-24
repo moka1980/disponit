@@ -18,6 +18,11 @@ Tre ruter, formet av flatens kontrakt (flater/rekruttering.js):
   runde 4): bryteren der er et deaktivert tilstandsmerke. Ruten står
   igjen som det ærlige svaret til en direkte API-kaller.
 
+Alle tre bærer rollback-kontrakten: er `m57_ats` i
+`DISPONIT_INAKTIVE_MODULER`, svarer ruten 503 `modul_inaktiv` FØR
+tilkoblingen hentes (`_modul_inaktiv`) — deaktivering av M-57 skal stanse
+M-57, den irreversible signeringen først av alt.
+
 Vektene: den varige kilden er stillingsprofilen (#162-kjeden). Til den
 finnes leses vektene av evalueringsartefaktets `vekter`-felt (skrevet av
 kjøringen), med fall til vekt 3 per krav — flaten regner poeng
@@ -50,6 +55,40 @@ _SIGNERINGSSCOPE = "bestilling:opprett"
 #: `UniqueViolation`-arm). Testen måler navnet mot katalogen, så et
 #: eventuelt avvik peker på seg selv i stedet for å falle stille tilbake.
 _NOKKELBRUDD = "utsendingssignatur_tenant_operasjonsnokkel_key"
+
+#: Modulen disse rutene tilhører — samme form som `app.BESLUTNINGSMODUL`
+#: for M-1, og samme streng som `oppdrag.eiermodul` bærer for kjedens egne
+#: oppdrag (`m57_ats`, seeden og HTTP-testenes fixture).
+REKRUTTERINGSMODUL = "m57_ats"
+
+
+def _modul_inaktiv(tjeneste, rid):
+    """Er M-57 slått av? -> ferdig 503-svar, ellers None.
+
+    ROLLBACK-KONTRAKTEN GJELDER OGSÅ HER (Codex P1). `DISPONIT_INAKTIVE_
+    MODULER` er veien en modul rulles tilbake på i drift: registeret
+    settes inaktivt, tjenesten restartes, og API-et skal svare DEFINERT
+    (503 `modul_inaktiv`) i stedet for å utføre handlingen. Bare M-1s
+    beslutningsvei konsulterte `Tjeneste.inaktive_moduler`; de tre
+    rekrutteringsrutene gikk utenom. Å deaktivere `m57_ats` stanset
+    altså ikke M-57 — den irreversible signeringen inkludert, som er
+    nøyaktig den handlingen en rollback finnes for å stoppe.
+
+    FØR TILKOBLINGEN, av samme grunn som i `_beslutning`: en deaktivert
+    modul skal ikke bruke en poolplass, og ikke rekke å åpne en
+    transaksjon som må rulles. `halvferdige_transaksjoner = 0` i
+    rollback-artefaktet er en egenskap ved plasseringen.
+
+    Lest av `tjeneste.inaktive_moduler`, som er BOOT-lest — ingen
+    fillesing i request-path, og deaktivering restarter uansett
+    prosessen.
+    """
+    from .policyadmin_http import _feil
+    if REKRUTTERINGSMODUL not in tjeneste.inaktive_moduler:
+        return None
+    tjeneste.logg.hendelse("modul_inaktiv", rid, art="drift",
+                           modul=REKRUTTERINGSMODUL)
+    return _feil("modul_inaktiv", rid)
 
 
 def _leseauth_beslutninger(tjeneste, request, conn, rid):
@@ -210,6 +249,9 @@ def prosesser_endepunkt(tjeneste, request):
     from .app import _rid
     from .policyadmin_http import _med_conn, _ok
     rid = _rid(request)
+    av = _modul_inaktiv(tjeneste, rid)
+    if av is not None:
+        return av
 
     def kjor(conn):
         tenant, _bid = _leseauth_beslutninger(tjeneste, request, conn, rid)
@@ -291,6 +333,9 @@ def signer_endepunkt(tjeneste, request):
     from .policyadmin_http import (_Avbrudd, _browserkontekst, _feil,
                                    _krev_idem, _kropp, _med_conn, _ok)
     rid = _rid(request)
+    av = _modul_inaktiv(tjeneste, rid)
+    if av is not None:
+        return av
     # `:uuid`-konverteren i ruten avviser misformede id-er FØR basen
     # (CodeRabbit major, pre-commit-pass 24/8) — 404 fra ruteren, aldri
     # en psycopg-feil på en tekst som ikke er en UUID.
@@ -540,6 +585,9 @@ def blinding_endepunkt(tjeneste, request):
     from .app import _rid
     from .policyadmin_http import _browserkontekst, _feil, _med_conn
     rid = _rid(request)
+    av = _modul_inaktiv(tjeneste, rid)
+    if av is not None:
+        return av
 
     def kjor(conn):
         _browserkontekst(tjeneste, request, conn, rid, "bestilling:opprett")
