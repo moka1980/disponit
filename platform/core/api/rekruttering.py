@@ -169,6 +169,7 @@ def _kandidater(conn, tenant, prosess_id):
         "       CASE WHEN jsonb_typeof(a.artefakt) = 'object'"
         "            THEN a.artefakt - 'kildetekst' - 'avmaskering'"
         "                            - 'intervjusporsmal' END,"
+        "       jsonb_typeof(a.artefakt) = 'object',"
         "       i.sporsmal"
         "  FROM kandidat_evalueringsartefakt a"
         "  LEFT JOIN kandidat_intervjusporsmal i"
@@ -177,31 +178,42 @@ def _kandidater(conn, tenant, prosess_id):
         " WHERE a.tenant=%s AND a.prosess_id=%s AND a.slettet_ts IS NULL"
         " ORDER BY a.kandidat_id", (tenant, prosess_id)).fetchall()
     kandidater, vekter, kilde, lest = [], None, "standard", []
-    for kid, artefakt, sporsmal in rader:
+    for kid, artefakt, er_objekt, sporsmal in rader:
         # TYPEN ER OGSÅ EN PORT (Cursor P1). `x or {}` verner mot NULL og
         # tomt, aldri mot FEIL TYPE: `{...}` er en sann `funn`, `["drift"]`
         # er en sann `oppfylt`, og begge er `jsonb` runtime kan INSERTe
         # (057 har ingen formsjekk på `artefakt`). Ett giftig artefakt ga
         # da `AttributeError` inne i utledningen, og siden kalleren løper
         # over HVER prosess, ble svaret 500 for HELE tenantens
-        # prosessliste — signeringsflaten inkludert. Feil type er ikke en
-        # halv sannhet å tolke; den er ingen opplysning, og faller derfor
-        # til det samme som ingen opplysning: `vurderes`.
+        # prosessliste — signeringsflaten inkludert.
+        #
+        # OG Å NORMALISERE ER IKKE Å LESE. Å sette et ulesbart `funn` til
+        # `[]` gjør kandidaten GRØNNERE enn før — «ingen funn» er nettopp
+        # halve anbefalingen. Å verne mot krasjet uten dette leddet ville
+        # byttet en 500 mot et falskt grønt lys, som er den dyrere feilen
+        # foran en irreversibel utsendelse. Derfor bæres lesbarheten med:
+        # er artefaktet ikke et objekt, eller har ett av de to feltene feil
+        # type, er raden INGEN opplysning — og ingen opplysning kan ikke
+        # bevise en anbefaling. Den faller til `vurderes`, samme fail-safe
+        # som resten av trafikklyset.
         art = artefakt if isinstance(artefakt, dict) else {}
         if vekter is None and isinstance(art.get("vekter"), dict):
             vekter, kilde = art["vekter"], "evalueringsartefakt"
         raa_funn, raa_oppfylt = art.get("funn"), art.get("oppfylt")
-        lest.append((kid, raa_funn if isinstance(raa_funn, list) else [],
-                     raa_oppfylt if isinstance(raa_oppfylt, dict) else {},
-                     sporsmal))
+        funn = raa_funn if isinstance(raa_funn, list) else []
+        oppfylt = raa_oppfylt if isinstance(raa_oppfylt, dict) else {}
+        lesbart = (bool(er_objekt) and isinstance(raa_funn, list)
+                   and isinstance(raa_oppfylt, dict)
+                   and all(isinstance(f, dict) for f in funn))
+        lest.append((kid, funn, oppfylt, lesbart, sporsmal))
     # VEKTENE ER ENDELIGE FØR TRAFIKKLYSET UTLEDES (Cursor P1). Reserven
     # under leser HVER kandidats krav, så den kan ikke stå etter en
     # dømming som må måle mot den — derfor to pass over de samme radene.
     if vekter is None:
-        krav = sorted({k for _kid, _funn, oppfylt, _sp in lest
+        krav = sorted({k for _kid, _funn, oppfylt, _les, _sp in lest
                        for k in oppfylt})
         vekter = {k: 3 for k in krav}
-    for kid, funn, oppfylt, sporsmal in lest:
+    for kid, funn, oppfylt, lesbart, sporsmal in lest:
         # ANBEFALINGEN ER OPPFYLTE KRAV, IKKE FRAVÆRET AV FUNN (Codex P1).
         # Den kanoniske evalueringsartefakten har ingen `status` i det hele
         # tatt (`evaluering.evaluer_kandidat` returnerer `funn`, `oppfylt`,
@@ -236,11 +248,15 @@ def _kandidater(conn, tenant, prosess_id):
         #     mot `vekter`, som nettopp derfor er endelige først.
         # Ingen av de to er nye regler; de er skriveveiens egne, lest på
         # riktig side av lagringen.
+        #
+        # …OG ET ULESBART ARTEFAKT BEVISER INGENTING (`lesbart`, se over):
+        # grønt lys krever at raden faktisk var lesbar, ikke bare at det
+        # som ble lest ut av den så greit ut.
         status = ("innstilt_avslag" if any(
                       isinstance(f, dict)
                       and f.get("kategori") == "krav_ikke_dokumentert"
                       for f in funn)
-                  else "anbefalt" if not funn and vekter
+                  else "anbefalt" if lesbart and not funn and vekter
                   and set(oppfylt) == set(vekter)
                   and all(v is True for v in oppfylt.values())
                   else "vurderes")

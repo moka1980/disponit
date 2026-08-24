@@ -504,11 +504,22 @@ def test_giftig_artefakttype_tar_ikke_ned_prosesslisten(klient):
     som «svarte det samme». Den giftige kandidaten er `vurderes`, aldri
     grønt lys på data ingen kunne lese.
 
+    OG DET ANDRE LEDDET ER DET SOM KOSTER: å NORMALISERE et ulesbart
+    `funn` til `[]` gjør kandidaten GRØNNERE — «ingen funn» er halve
+    anbefalingen. `funn_objekt` under har perfekt `oppfylt` og et
+    uleselig `funn`; verner man bare mot krasjet, byttes 500-en mot et
+    falskt grønt lys foran en irreversibel utsendelse. Derfor bærer
+    lesningen `lesbart`, og en rad som ikke var lesbar kan ikke bevise
+    en anbefaling.
+
     MUTASJONENE SOM DREPER DENNE, én per ledd: bytt `isinstance(f, dict)
     and ...` mot `f.get(...)`; bytt de to `isinstance`-portene i `lest`
-    mot `or []` / `or {}`; fjern `jsonb_typeof(...) = 'object'`-CASEen.
+    mot `or []` / `or {}`; fjern `jsonb_typeof(...) = 'object'`-CASEen;
+    fjern `lesbart and` fra anbefalingen.
     """
     pid, _lid, _ih = _seed_prosess()
+    # Perfekt `oppfylt`, uleselig `funn`: den ENESTE forskjellen fra en
+    # ekte anbefaling er at funnene ikke kunne leses.
     funn_objekt = _artefakt(
         pid, {"drift": True, "sky": True},
         ekstra={"funn": {"kategori": "krav_ikke_dokumentert"}})
