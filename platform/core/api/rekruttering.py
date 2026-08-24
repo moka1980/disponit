@@ -378,6 +378,24 @@ def signer_endepunkt(tjeneste, request):
         # INNER: en 056-liste trenger ikke ha en 057-prosess bak seg, og en
         # liste uten prosess skal dømmes som før; `prosess_en_per_oppdrag`
         # (057) holder treffet på høyst én rad.
+        #
+        # ...MEN DEN PORTEN ER ULÅST — UTSATT TIL #180 (Codex P2, runde 5).
+        # Joinen over dømmer en reaping som var FERDIG da setningen leste.
+        # Starter `reap_kandidatdata` etterpå, låser den prosessraden,
+        # tømmer lagrene og committer mens denne forespørselen fortsetter
+        # ned i `signer_utsendingsliste` — og 201-et brenner seriens ene
+        # slot på data som ikke lenger finnes. Det er NØYAKTIG samme klasse
+        # som spissporten rett over: en ulåst lesning fulgt av en skriving,
+        # med samme to grunner til at den ikke kan lukkes herfra (runtime
+        # har ikke UPDATE-privilegiet enhver radlåsklausul krever, og
+        # motparten bor i hash-pinnet SQL). En etterlesning ville krympet
+        # vinduet uten å lukke det, og et halvt lukket kappløp som SER
+        # lukket ut er verre enn et navngitt åpent. Codex sier det samme:
+        # «signing and reaping need a shared database serialization
+        # mechanism» — den maskinen er #180s, ikke denne rundens (K1/K2).
+        # REACHABILITY: fristen er 90 døgn i seeden og settes per prosess;
+        # vinduet er de millisekundene reaperen og et signeringsklikk må
+        # treffe hverandre på, etter at fristen alt er løpt ut.
         replay = _fullfort_replay(conn, tenant, nokkel, liste_id, bid)
         if not replay and rad[3]:
             raise _Avbrudd(_feil("liste_utdatert", rid, 409))
