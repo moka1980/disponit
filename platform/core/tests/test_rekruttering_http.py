@@ -230,6 +230,41 @@ def test_signering_gaar_gjennom_056_kjeden(klient):
 
 
 @pg
+def test_signering_replay_samme_idempotency_key(klient):
+    """SP-2-kontrakten flaten LOVER brukeren, målt over HTTP (Cursor P2).
+
+    `ui.rekruttering.usikkert_utfall` ber brukeren prøve igjen etter et
+    tvetydig svar med løftet «et nytt forsøk gjentar den SAMME
+    operasjonen og lager ingen ny» — og `api.js` sender da samme
+    `Idempotency-Key`. `signer_utsendingsliste` (056) no-op-er på
+    identisk nøkkel + liste + signatar, men INGEN test viste at HTTP-
+    laget bærer løftet helt fram: at retryet blir 201 og ikke 409
+    `serien_alt_signert`, som er det svaret en ANNEN nøkkel får.
+    """
+    _pid, lid, ih = _seed_prosess()
+    bid = _bruker("sjef-replay", ["admin"])
+    cookie, csrf = _browsersesjon(bid)
+    nokkel = secrets.token_urlsafe(24)
+    svar = [_post(klient, cookie, csrf,
+                  f"/v1/rekruttering/lister/{lid}/signer",
+                  {"innhold_hash": ih}, idem=nokkel) for _ in range(2)]
+    assert [r.status_code for r in svar] == [201, 201], \
+        [r.text for r in svar]
+    assert svar[1].json()["innhold_hash"] == ih
+    # ÉN signatur i basen, med uendret signatar — replayet la ingen rad.
+    m = _migrator()
+    try:
+        rader = m.execute(
+            "SELECT signatar, operasjonsnokkel FROM utsendingssignatur"
+            " WHERE tenant=%s AND liste_id=%s", (TEN, lid)).fetchall()
+        assert len(rader) == 1, rader
+        assert rader[0][0] == bid and rader[0][1] == nokkel
+        m.rollback()
+    finally:
+        m.close()
+
+
+@pg
 def test_signering_krever_hashen_dialogen_viste(klient):
     _pid, lid, _ih = _seed_prosess()
     bid = _bruker("sjef2", ["admin"])
