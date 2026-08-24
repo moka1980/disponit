@@ -770,6 +770,54 @@ test("AppShell: modulkortet ER inngangen til flaten; toppnav bærer bare plattfo
     "flateløs modul endret adressen");
 });
 
+test("AppShell: flaten økten har rute til står i menyen, også utenfor tildelingen", () => {
+  // 🔴 TO PORTER SOM BLE SERIEKOBLET (Cursor P1). Ruten gates på SCOPE,
+  // menyraden på KATALOGTILDELING. Ingen rad i `_UTRULLING` har 56 eller 57,
+  // og en ukjent tenant har ingen tildeling i det hele tatt — så da
+  // oppføringen forlot toppnavigasjonen, forsvant WCAG kontroll og
+  // rekruttering fra hver eneste ekte økt uten å dukke opp noe annet sted.
+  // Testene så det ikke fordi de oppga `moduler: [1, 57]`; Nordvik har
+  // `(1, 2, 37)`.
+  const ruter = byggRuter({ scopes: ["decisions:read"] });
+  const kortene = (rot) => [...rot.querySelectorAll(".skall-modul")]
+    .map((e) => e.getAttribute("href"));
+
+  const nordvik = AppShell({ tenant: "Nordvik Regnskap AS", ruter,
+    aktiv: "oversikt", sprak: "nb", moduler: [1, 2, 37],
+    paaSprak: () => {}, paaLoggUt: () => {} });
+  nyttBrett().append(nordvik.rot);
+  assert.ok(kortene(nordvik.rot).includes("#/wcagkontroll"),
+    "WCAG kontroll har ingen inngang i det hele tatt for en ekte tenant");
+  assert.ok(kortene(nordvik.rot).includes("#/rekruttering"),
+    "rekruttering har ingen inngang i det hele tatt for en ekte tenant");
+  // Tildelingen står ved siden av, som før — unionen er ikke katalogen
+  // tilbake.
+  assert.equal(nordvik.rot.querySelectorAll(".skall-modul").length, 5,
+    "menyen viser mer enn tildelingen pluss flatene økten har rute til");
+
+  // En UKJENT tildeling («vet ikke») skal fortsatt nå flatene sine — og
+  // fortsatt si fra at den ikke vet, ellers framstår de to radene som hele
+  // svaret på hva økten har.
+  const ukjent = AppShell({ tenant: "Nordvik Regnskap AS", ruter,
+    aktiv: "oversikt", sprak: "nb", paaSprak: () => {}, paaLoggUt: () => {} });
+  nyttBrett().append(ukjent.rot);
+  assert.deepEqual(kortene(ukjent.rot).sort(),
+    ["#/rekruttering", "#/wcagkontroll"],
+    "en ukjent tildeling mistet flatene økten har rute til");
+  assert.ok(ukjent.rot.querySelector(".skall-venstre").textContent
+    .includes(NB["ui.shell.moduler_ukjent"]),
+  "menyen sier ikke lenger fra at tildelingen mangler");
+
+  // Og motsatt vei: uten scopet finnes ruten ikke, og da finnes heller ikke
+  // kortet. Unionen åpner ingen ny dør — den er de rutene `byggRuter` alt gav.
+  const uten = AppShell({ tenant: "Nordvik Regnskap AS",
+    ruter: byggRuter({ scopes: [] }), aktiv: "kundeadmin", sprak: "nb",
+    moduler: [1, 2, 37], paaSprak: () => {}, paaLoggUt: () => {} });
+  nyttBrett().append(uten.rot);
+  assert.deepEqual(kortene(uten.rot).filter(Boolean), [],
+    "en økt uten ruten fikk likevel et kort som lover flaten");
+});
+
 test("AppShell: den aktive modulflaten er merket i menyen som eier den", () => {
   // 🔴 HVOR ER JEG (Codex P2). `settAktiv` oppdaterer bare `lenker`, og
   // modulflatene er nettopp de rutene som er filtrert UT av den — mens

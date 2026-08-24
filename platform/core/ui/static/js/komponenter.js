@@ -394,17 +394,27 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
   const tildelte = Array.isArray(moduler) ? new Set(moduler) : null;
   const erTildelt = (n) => tildelte !== null && tildelte.has(n);
 
+  // EN FLATE ØKTEN HAR RUTE TIL, MÅ STÅ I MENYEN SOM EIER DEN (Cursor P1).
+  // De to portene var uavhengige før og ble seriekoblet av flyttingen: ruten
+  // gates på SCOPE (`decisions:read`), mens menyraden gates på KATALOG-
+  // TILDELING. Ingen rad i `_UTRULLING` har 56 eller 57, og en ukjent tenant
+  // har ingen tildeling i det hele tatt — så i hver eneste ekte økt forsvant
+  // WCAG kontroll og rekruttering fra toppnavigasjonen uten å dukke opp i
+  // venstremenyen. Flatene ble uten annonsert inngang overhodet, og det er
+  // 038-regresjonen: «Én oppføring — WCAG kontroll» ble til ingen.
+  //
+  // Unionen er derfor ikke plattformkatalogen tilbake: `MODULFLATE` bærer
+  // bare ruter økten FAKTISK har fått av `byggRuter`, altså nøyaktig det
+  // toppnavigasjonen annonserte før flyttingen. Rekkevidden er den samme som
+  // før, bare i sonen eier flyttet den til.
+  const erSynlig = (n) => MODULFLATE.has(n) || erTildelt(n);
+
   function tegnModuler(filter) {
     const q = (filter || "").trim().toLocaleLowerCase(valgtSprak || "nb");
     const grupper = [];
     modulknapper.clear();
-    if (tildelte === null) {
-      sett(modulliste,
-        el("p", { class: "muted", text: t("ui.shell.moduler_ukjent") }));
-      return;
-    }
     for (const omrade of OMRADER) {
-      const treff = omrade.moduler.filter((n) => erTildelt(n)).filter((n) =>
+      const treff = omrade.moduler.filter((n) => erSynlig(n)).filter((n) =>
         !q || t(`site.katalog.m${n}.navn`).toLocaleLowerCase(valgtSprak || "nb")
           .includes(q));
       if (!treff.length) continue;
@@ -438,10 +448,17 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
     }
     // Et tomt søk skal SI at det er tomt, ikke bare vise ingenting — og en
     // tildeling uten moduler er noe annet enn et søk uten treff.
-    const tomNokkel = tildelte.size
-      ? "ui.shell.moduler_tomt" : "ui.shell.moduler_ingen";
-    sett(modulliste, grupper.length ? grupper
-      : el("p", { class: "muted", text: t(tomNokkel) }));
+    //
+    // «Vet ikke» står nå SAMMEN med flatekortene, ikke i stedet for dem: at
+    // tildelingen ikke kunne leses er en opplysning i seg selv, og uten den
+    // ville de to radene unionen gir framstått som hele svaret på hva økten
+    // har. Meldingen kommer først — den er forbeholdet lista skal leses med.
+    const melding = tildelte === null ? "ui.shell.moduler_ukjent"
+      : grupper.length ? null
+        : tildelte.size ? "ui.shell.moduler_tomt" : "ui.shell.moduler_ingen";
+    sett(modulliste,
+      melding ? el("p", { class: "muted", text: t(melding) }) : null,
+      ...grupper);
     merkValgt();
   }
 
