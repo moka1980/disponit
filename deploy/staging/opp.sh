@@ -93,6 +93,23 @@ if ! "$ROT/.venv/bin/python" -c 'import dns.resolver' 2>/dev/null; then
   echo "Systemet er urørt; forrige release kjører som før."
   exit 1
 fi
+# Cursor P2-3 (#178, runde 4): `psql` er nå en FEILSONE-avhengighet.
+# `rollbackmaal_kompatibelt` (lib-opp.sh) leser basens anvendte versjoner med
+# `psql`, og #172 gjorde `selvrevers()` avhengig av nettopp den dommen. Er
+# klienten ikke installert, blir dommen «umålt» — og porten er fail-closed
+# med vilje, så INGEN enhet startes igjen. En manglende pakke ville dermed
+# gjort en migrasjonsfeil om til en full nedetid, oppdaget inne i vinduet.
+# Sjekken er lesende og hører derfor her: mangler klienten, avbrytes
+# utrullingen mens systemet beviselig er urørt.
+if ! command -v psql >/dev/null 2>&1; then
+  echo "AVBRUTT: psql finnes ikke på verten. rollbackmaal_kompatibelt bruker"
+  echo "den både i statusrapporten (steg 9) og i selv-reverseringens"
+  echo "rullbakk-gate — uten den er gaten umålt, og umålt er ikke"
+  echo "kompatibelt: en feil i vinduet ville latt HVER enhet bli stående"
+  echo "stoppet. Installer postgresql-client og kjør opp.sh igjen."
+  echo "Systemet er urørt; forrige release kjører som før."
+  exit 1
+fi
 # PR-015: driftstimerne over kaller funksjoner som migrasjon 019 kun granter
 # til `disponit_domains_admin` og `disponit_domener`. En EKSISTERENDE
 # installasjon har ingen DISPONIT_DOMAINS_URL før `oppsett-postgresql.sh` er
@@ -546,6 +563,29 @@ if [ "${DISPONIT_MILJO:-staging}" != "staging" ]; then
   echo "på nytt når $MILJOFIL står stille og sier 'staging'."
   exit 1
 fi
+# Cursor P2-2 (#178, runde 4): SAMME RE-GATE PÅ MIGRASJONS-DSN-ENE.
+# `DISPONIT_VARSEL_URL` og `DISPONIT_PLAN_URL` re-gates fordi preflighten
+# leste dem i en subshell og materialiseringen leser fila på nytt — men de
+# to migrasjons-DSN-ene ble lest på nøyaktig samme måte (checksum-porten,
+# i subshell) og BRUKT fra den autoritative lesingen over, uten en tilsvarende
+# gate. Er én av dem tom etter et filbytte, oppdages det først i steg 6 —
+# INNE i vedlikeholdsvinduet, etter tjenestestoppen — som en psycopg-feil
+# som går til `selvrevers()` i stedet for til en urørt avbrutt deploy.
+#
+# Begge måles, ikke bare runtime: de leses fra samme linje og brukes i
+# samme løkke, og å lukke halve klassen inviterer bare en runde til.
+# `set -u` stopper en FRAVÆRENDE variabel av seg selv; det er den TOMME
+# denne gaten finnes for.
+for dsn_navn in DISPONIT_MIGRATOR_URL DISPONIT_TEST_MIGRATOR_DSN; do
+  if [ -z "${!dsn_navn:-}" ]; then     # indirekte oppslag, ikke eval
+    echo "AVBRUTT: $dsn_navn forsvant fra $MILJOFIL mellom"
+    echo "checksum-preflighten og den autoritative lesingen — fila er byttet"
+    echo "eller redigert mens utrullingen kjørte. Ingen credential er"
+    echo "materialisert, ingen tjeneste er stoppet, og ingen migrasjon er"
+    echo "kjørt. Kjør opp.sh på nytt når $MILJOFIL står stille."
+    exit 1
+  fi
+done
 # SNAPSHOT AV CREDENTIALENE FØR DE OVERSKRIVES (Codex P1, runde 4).
 #
 # Steg 4 materialiserer KANDIDATENS verdier i /etc/disponit/*, og

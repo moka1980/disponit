@@ -694,6 +694,41 @@ def test_hver_feil_i_vinduet_kaller_selvrevers():
         "feilkilde lagt til uten reversering, eller en fjernet?"
 
 
+def test_p2_feilsonens_forutsetninger_gates_for_vinduet():
+    """Cursor P2-2/P2-3 (#178, runde 4): det vinduet TRENGER, måles før
+    vinduet åpnes.
+
+    To forutsetninger manglet en gate, og begge ville først vist seg INNE i
+    feilsonen — der utfallet ikke er «avbrutt med alt urørt», men en
+    reversering som selv er svekket:
+
+    * Migrasjons-DSN-ene. `DISPONIT_VARSEL_URL` og `DISPONIT_PLAN_URL`
+      re-gates fordi preflighten leser miljøfila i en SUBSHELL og den
+      autoritative lesingen leser den på nytt; de to migrasjons-DSN-ene ble
+      lest på nøyaktig samme måte, uten tilsvarende gate. En tom verdi etter
+      et filbytte feller steg 6 — etter tjenestestoppen.
+    * `psql`. #172 gjorde `selvrevers()` avhengig av
+      `rollbackmaal_kompatibelt`, som leser basen med `psql`. Mangler
+      klienten, er dommen «umålt», porten er fail-closed, og HVER enhet blir
+      stående stoppet. En manglende pakke ble dermed full nedetid.
+    """
+    opp = "\n".join(
+        linje for linje in (ROT / "deploy/staging/opp.sh").read_text(
+            encoding="utf-8").splitlines()
+        if not linje.lstrip().startswith("#"))
+    vindu = opp.index("systemctl stop")
+    for gate, hva in (
+            ("DISPONIT_MIGRATOR_URL DISPONIT_TEST_MIGRATOR_DSN",
+             "migrasjons-DSN-ene re-gates ikke på den autoritative lesingen"),
+            ("command -v psql",
+             "psql — som rullbakk-gaten i selvrevers() leser basen med —"
+             " sjekkes ikke før vinduet")):
+        assert gate in opp, hva
+        assert opp.index(gate) < vindu, \
+            f"{hva}: gaten står ETTER at vedlikeholdsvinduet har stoppet" \
+            f" tjenestene, og da er utfallet ikke lenger «alt urørt»"
+
+
 def _credgjenoppretting() -> str:
     """Tilbakestillingen av credentials i `selvrevers()`, ordrett fra opp.sh.
 
