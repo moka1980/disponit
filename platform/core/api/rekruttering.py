@@ -179,6 +179,28 @@ def signer_endepunkt(tjeneste, request):
         # signeres en foreldet versjon, er feil innhold irreversibelt
         # autorisert OG det nye utkastet permanent usignerbart. Samme
         # predikat som `_lister` bruker, målt i samme lesning.
+        #
+        # SEKVENSIELT, IKKE SERIALISERT — UTSATT TIL #180 (Codex P1 +
+        # Cursor P1, runde 2). Denne lesningen og `signer_utsendingsliste`
+        # er to steg i samme READ COMMITTED-transaksjon uten lås på
+        # serien, så en `opprett_utsendingsliste` som committer i
+        # mellomrommet er usynlig her. Å lukke det krever at BEGGE veier
+        # tar SAMME lås, og ingen av dem kan det i dag:
+        #   * signeringsveien kan ikke ta en radlås — PostgreSQL krever
+        #     UPDATE-privilegium for ENHVER radlåsklausul, også
+        #     `FOR SHARE` (019-grensen, sitert i 056 §7b som grunnen til
+        #     at medlemskapslåsen går gjennom `laas_godkjenner()`), og
+        #     runtime har kun SELECT på `utsendingsliste` (migrer.py).
+        #     Ellers hadde `FOR UPDATE` på forelderraden holdt: self-FK-en
+        #     gjør at barne-INSERT-en tar `FOR KEY SHARE` på nettopp den;
+        #   * `opprett_utsendingsliste` bor i 056, som er hash-pinnet til
+        #     akseptcommiten (`KJORT_056`) og ikke kan redigeres.
+        # Låsen krever altså en NY migrasjon — ny maskin i en fiksrunde
+        # (K1), samme dom som 056 selv felte over flerrads-sykelen.
+        # REACHABILITY, ærlig: ingen produksjonsvei oppretter en
+        # barnversjon ennå — rutene er lesing, en kodet blinding-
+        # avvisning og denne, og seeden lager en ROT. Vinduet åpner seg
+        # med redigeringsbenet, og #180 er den PR-en som må ta låsen.
         if rad[3]:
             raise _Avbrudd(_feil("liste_utdatert", rid, 409))
         if rad[0] != kropp["innhold_hash"]:
