@@ -802,12 +802,37 @@ selvrevers() {
   # runtime-basen — bootportens egen fasit, ikke en slutning fra hva denne
   # kjøringen rakk å migrere (#127-lærdommen). Er den rød, er «umålt» ikke
   # «kompatibelt»: ingenting startes.
+  #
+  # Codex P2 (runde 6): OG DEN MÅLES PÅ BASEN SOM FAKTISK BOOTES.
+  # F13 (runde 4) gjorde at forrige release starter på den TILBAKESTILTE
+  # `DATABASE_URL` fra snapshotet, ikke på kandidatens env. Dommen leste
+  # likevel `DISPONIT_MIGRATOR_URL` — kandidatens migrator-DSN. Peker de to
+  # på samme base (normaltilfellet), er de samme lesing gjennom to roller
+  # og dommen er uendret. Flyttet DENNE utrullingen basen — ny vert, ny
+  # base, et DSN-bytte i miljøfila — måler gaten kandidatens base mens
+  # kjøreren starter mot forrige releases: nekter reverseringen på et
+  # migrasjonssett ingen av de gjenopprettede enhetene noensinne vil se,
+  # og lar hver enhet stå stoppet selv om forrige release og forrige base
+  # kjørte sammen sekundet før vinduet.
+  #
+  # Kilden er `api/DATABASE_URL` fra snapshotet med vilje: det er NØYAKTIG
+  # fila `disponit-api.service` sin `LoadCredential` leser, og
+  # `krev_migrasjonstilstand` (eksakt samsvar) feller sin dom gjennom den.
+  # Gaten predikerer bootportens svar, så den må lese bootportens base.
+  # Mangler fila — fersk vert uten `/etc/disponit/api` før vinduet — er
+  # kandidatens migrator-DSN fortsatt det nærmeste vi har, og det er
+  # dagens oppførsel. Er DSN-en ubrukelig, feller `rollbackmaal_kompatibelt`
+  # «umålt er ikke kompatibelt», og det er riktig: en DSN forrige release
+  # ikke kan koble seg opp med, kan den heller ikke starte på.
   ROLLBACKDOM=""
+  ROLLBACKBASE="${DISPONIT_MIGRATOR_URL:-}"
+  if [ -s "$CRED_FORVINDU/api/DATABASE_URL" ]; then
+    ROLLBACKBASE=$(cat "$CRED_FORVINDU/api/DATABASE_URL")
+  fi
   if [ -z "$FORRIGE" ]; then
     ROLLBACKDOM="ingen forrige release å boote (aktiv-symlinken fantes ikke)"
   else
-    ROLLBACKDOM=$(rollbackmaal_kompatibelt "$FORRIGE" \
-        "${DISPONIT_MIGRATOR_URL:-}") || \
+    ROLLBACKDOM=$(rollbackmaal_kompatibelt "$FORRIGE" "$ROLLBACKBASE") || \
       ROLLBACKDOM="${ROLLBACKDOM:-rullbakkmålet lot seg ikke måle}"
   fi
   if [ -n "$ROLLBACKDOM" ]; then

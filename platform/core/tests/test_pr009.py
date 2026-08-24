@@ -664,6 +664,51 @@ def test_selvrevers_maler_rullbakk_for_forste_start():
         " likevel like etterpå"
 
 
+def test_rullbakkdommen_males_pa_basen_som_faktisk_bootes():
+    """Codex P2 (#178, runde 6): gaten og kjøreren skal lese samme base.
+
+    F13 (runde 4) gjorde at forrige release booter på den TILBAKESTILTE
+    `DATABASE_URL` fra credential-snapshotet. Dommen leste likevel
+    kandidatens `DISPONIT_MIGRATOR_URL`. Peker de to på samme base — som
+    de gjør når ingenting er flyttet — er det to roller mot samme rader
+    og dommen er den samme. Flyttet DENNE utrullingen basen, måler gaten
+    kandidatens base mens kjøreren starter mot forrige releases: hver
+    enhet blir stående stoppet på et migrasjonssett ingen av dem
+    noensinne vil se.
+
+    Porten måler KILDEN gaten leser, ikke bare at den finnes: DSN-en skal
+    komme fra snapshotet — `api/DATABASE_URL`, nøyaktig fila
+    `disponit-api.service` sin `LoadCredential` peker på og
+    `krev_migrasjonstilstand` feller sin dom gjennom — og lesingen skal
+    skje FØR dommen felles. Fallbacken til kandidatens migrator-DSN blir
+    stående for den ferske verten som ikke hadde noen credentials før
+    vinduet.
+    """
+    opp = "\n".join(
+        linje for linje in (ROT / "deploy/staging/opp.sh").read_text(
+            encoding="utf-8").splitlines()
+        if not linje.lstrip().startswith("#"))
+    blokk = opp[opp.index("selvrevers() {"):
+                opp.index("\n}\n", opp.index("selvrevers() {"))]
+    assert '$CRED_FORVINDU/api/DATABASE_URL' in blokk, \
+        "rullbakk-gaten leser ikke DSN-en fra credential-snapshotet — den" \
+        " måler en annen base enn den forrige release faktisk bootes mot"
+    i_kilde = blokk.index('$CRED_FORVINDU/api/DATABASE_URL')
+    i_dom = blokk.index("rollbackmaal_kompatibelt")
+    assert i_kilde < i_dom, \
+        "snapshot-DSN-en leses ETTER at dommen er felt — da er lesingen" \
+        " uten virkning på dommen"
+    kall = blokk[i_dom:blokk.index("\n", i_dom)]
+    assert "DISPONIT_MIGRATOR_URL" not in kall, \
+        "dommen felles fortsatt direkte mot kandidatens migrator-DSN"
+    # Fallbacken skal bestå: uten den står den ferske verten uten noen
+    # base å måle mot, og «umålt er ikke kompatibelt» ville nektet en
+    # reversering som i dag er tillatt.
+    assert "DISPONIT_MIGRATOR_URL" in blokk, \
+        "fallbacken til kandidatens migrator-DSN er borte — en fersk vert" \
+        " uten credentials før vinduet har da ingen base å måle mot"
+
+
 def test_hver_feil_i_vinduet_kaller_selvrevers():
     """Cursor P2 5: koblingen mellom vinduet og reverseringen måles.
 
