@@ -89,6 +89,21 @@ test("byggRuter: hver rute krever scopet API-et bak flaten krever", () => {
     .map((r) => r.nokkel).includes("wcagkontroll"));
 });
 
+test("byggRuter: modulflaten følger med ut av byggeren (Codex P1)", () => {
+  // 🔴 Mappingen plukket bare `nokkel`, og `byggRuter` er den ENESTE veien
+  // `visApp` gir skallet rutene sine. Vedtaket fra 24/8 sto altså i
+  // sitekartet uten å nå fram til en eneste ekte økt: modulflatene ble
+  // liggende i toppnav, og modulkortene åpnet panelet i stedet for flaten.
+  const ruter = byggRuter({ scopes: ["decisions:read"] });
+  assert.equal(ruter.find((r) => r.nokkel === "wcagkontroll").modulflate, 56);
+  assert.equal(ruter.find((r) => r.nokkel === "rekruttering").modulflate, 57);
+  // Plattformflatene har ingen — det er nettopp forskjellen skallet leser.
+  assert.equal(ruter.find((r) => r.nokkel === "oversikt").modulflate, undefined);
+  // `scope` blir derimot IGJEN: det er brukt opp i filteret over, og en rute
+  // som bærer det videre later som den fortsatt gates på noe.
+  assert.ok(ruter.every((r) => !("scope" in r)));
+});
+
 test("byggRuter: godkjenner får ikke policyruten den ikke kan lese", () => {
   // Kanonisk `godkjenner` i `autorisasjon.py`: unntakskøen, men INGEN
   // `policy:read`. Sto `policy` i basisrutene, tilbød både menyen og

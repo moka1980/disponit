@@ -9,6 +9,7 @@ import { settI18nForTest, t } from "../static/js/i18n.js";
 import { el } from "../static/js/dom.js";
 import { plattformTelling } from "../static/js/plattformdata.js";
 import { KATALOG } from "../static/js/katalog.js";
+import { byggRuter } from "../static/js/sitekart.js";
 import {
   BeslutningBadge, KategoriTag, Tidspunkt, BegrunnelseKjede, StatusTidslinje,
   Lasteskjelett, TomTilstand, Feiltilstand, TilgangsVakt, Uautorisert,
@@ -725,10 +726,15 @@ test("AppShell: modulkortet ER inngangen til flaten; toppnav bærer bare plattfo
   // Eiers arkitekturvedtak 24/8: venstre = modulnavigasjonen, topp =
   // plattformflatene. Kort med flate navigerer; ruten står (dyplenker
   // virker), men toppnav lister den ikke. Uten flate: panelet som før.
+  //
+  // RUTENE KOMMER FRA PRODUKSJONSBYGGEREN (Codex P1). Med et håndlaget
+  // ruteobjekt testet denne bare skallets halvdel av avtalen, og bommet
+  // derfor på at `byggRuter` kastet `modulflate` på vei ut — altså på at
+  // ingen ekte økt så noe av dette. `visApp` bygger rutene på nøyaktig
+  // denne ene måten, og da er det den måten testen skal bruke.
   const brett = nyttBrett();
   const { rot } = AppShell({ tenant: "acme",
-    ruter: [{ nokkel: "oversikt" },
-            { nokkel: "rekruttering", modulflate: 57 }],
+    ruter: byggRuter({ scopes: ["decisions:read"] }),
     aktiv: "oversikt", sprak: "nb", moduler: [1, 57],
     paaSprak: () => {}, paaLoggUt: () => {} });
   brett.append(rot);
