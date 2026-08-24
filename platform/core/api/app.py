@@ -54,10 +54,13 @@ MAKS_KROPP = 256 * 1024          # v2 Del 3.4
 # egentlige porten og sjekkes i handleren FØR lagring.
 MAKS_ARTEFAKT_KROPP = 6 * 1024 * 1024 + 64 * 1024
 STORE_KROPP_RUTER = frozenset({"/v1/artefakt"})
-#: #162: inndata-opplastingen STRØMMES — kroppen bufres aldri i minnet.
-#: Taket her er transportens absolutte (styrer middleware-tellingen);
-#: reservasjonens deklarerte `maks_bytes` håndhever den KONTRAKTUELLE
-#: grensen nedstrøms, og de to måles hver for seg.
+#: #162: inndata-opplastingen STRØMMES gjennom middlewaren — den teller og
+#: videresender chunks, og bufrer aldri. Endepunktet samler derimot opp til
+#: dette taket i minnet: v1 krypterer bunten i én operasjon (bevisst
+#: v1-grense, dokumentert i 058-headeren; chunket kryptering er egen maskin
+#: med eget issue). Taket her er transportens absolutte og styrer
+#: middleware-tellingen; reservasjonens deklarerte `maks_bytes` håndhever
+#: den KONTRAKTUELLE grensen nedstrøms, og de to måles hver for seg.
 INNDATA_MAKS_FYSISK = 64 * 1024 * 1024
 STROEM_RUTE_PREFIKS = "/v1/inndata/opplast/"
 
@@ -382,10 +385,10 @@ class KroppsgrenseMiddleware:
         rid = scope.setdefault("state", {}).get("request_id") or _nytt_request_id()
         scope["state"]["request_id"] = rid
 
-        # #162: inndata-strømmen bufres ALDRI — chunks telles og
-        # videresendes; taket avbryter midt i strømmen, aldri etter den.
+        # #162: inndata-strømmen bufres ALDRI i middlewaren — chunks telles
+        # og videresendes; taket avbryter midt i strømmen, aldri etter den.
         if scope.get("path", "").startswith(STROEM_RUTE_PREFIKS):
-            return await self._stroem(scope, receive, send, rid)
+            return await self._stroem(scope, receive, send, rid, headere)
         # PR-014b §7: opplastingsruten tåler en større kropp (1 MiB-artefakt).
         maks = (MAKS_ARTEFAKT_KROPP if scope.get("path") in STORE_KROPP_RUTER
                 else self.maks)
@@ -424,10 +427,22 @@ class KroppsgrenseMiddleware:
         scope["state"]["kropp"] = bytes(kropp)
         return await self.app(scope, replay, send)
 
-    async def _stroem(self, scope, receive, send, rid):
+    async def _stroem(self, scope, receive, send, rid, headere):
         """Tellende gjennomstrømming for inndata-ruten (#162): endepunktet
         leser `request.stream()` selv; her håndheves KUN det absolutte
         transporttaket, byte for byte, uten å samle kroppen."""
+        # Den ÅPENBART for store avvises uten å lese en eneste byte, som
+        # for alle andre ruter over (Cursor P2-5). Uten dette ville
+        # `Content-Length: 10**9` tvunget hele veien opp til 64 MiB-kuttet
+        # før klienten fikk et 413 den kunne fått med det samme. Samme
+        # `isdigit`-form som hovedveien: en Content-Length som ikke er et
+        # tall er en ugyldig forespørsel, ikke noe å gjette på.
+        oppgitt = headere.get("content-length")
+        if oppgitt is not None:
+            if not oppgitt.isdigit():
+                return await self._avvis(send, "body_lengde_ugyldig", rid)
+            if int(oppgitt) > INNDATA_MAKS_FYSISK:
+                return await self._avvis(send, "body_for_stor", rid)
         talt = 0
         avvist = False
 
