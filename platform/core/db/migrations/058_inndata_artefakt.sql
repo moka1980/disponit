@@ -26,7 +26,12 @@
 CREATE TABLE inndata_artefakt (
     tenant TEXT NOT NULL,
     inndata_id UUID NOT NULL DEFAULT gen_random_uuid(),
-    eiermodul TEXT NOT NULL,
+    -- Lukket sett også i SQL (Cursor P2-3): `formaal` var CHECKet,
+    -- `eiermodul` ikke — og `disponit` har EXECUTE på `reserver_inndata`,
+    -- så en annen (eller buggy) kaller kunne reservere en bunt for en
+    -- vilkårlig modulstreng. En ny eiermodul er en KONTRAKTSENDRING og
+    -- hører hjemme i en migrasjon, ikke i et kallargument.
+    eiermodul TEXT NOT NULL CHECK (eiermodul IN ('m57_ats')),
     formaal TEXT NOT NULL CHECK (formaal IN ('soknadsbunt')),
     innholdstype TEXT NOT NULL CHECK (innholdstype IN ('application/zip')),
     maks_bytes BIGINT NOT NULL CHECK (maks_bytes > 0
@@ -48,6 +53,15 @@ CREATE TABLE inndata_artefakt (
     CONSTRAINT inndata_jti_en_gang UNIQUE (tenant, reservasjon_jti),
     CONSTRAINT inndata_oppdrag_fk FOREIGN KEY (tenant, oppdrag_id)
         REFERENCES oppdrag (tenant, id),
+    -- DEK-referansen bindes som i 003/005/007/011/016 (Codex P2): uten
+    -- den kunne `registrer_inndata_lastet` — som tar `key_id` fra en
+    -- runtime-kaller — lande en `lastet` rad med en ukjent eller
+    -- KRYSSTENANT nøkkel-id. Raden ville sett komplett ut, og først
+    -- resolveren i PR-2 oppdaget at ciphertexten ikke kan dekrypteres av
+    -- noen. NULL i `key_id` (en `reservert` rad) håndheves ikke av en
+    -- sammensatt FK, som er nøyaktig riktig her.
+    CONSTRAINT inndata_dek_fk FOREIGN KEY (tenant, key_id)
+        REFERENCES tenant_nokler (tenant, key_id),
     -- Tilstanden bærer feltene sine, totalt (SP-5-formen): en lastet rad
     -- HAR måling+krypto+sti; en bundet rad HAR oppdraget; en reservert
     -- har ingen av delene.
@@ -61,13 +75,29 @@ CREATE TABLE inndata_artefakt (
          AND key_id IS NOT NULL AND nonce IS NOT NULL
          AND oppdrag_id IS NULL AND lastet_ts IS NOT NULL
          AND bundet_ts IS NULL)
+     -- `bundet` er en `lastet` som HAR fått et oppdrag — den mister ikke
+     -- krypto eller lastetidspunkt på veien (Cursor P2-1). Grenen krevde
+     -- dem ikke, så CHECKen var ikke «totalt» slik kommentaren lovte;
+     -- write-once-vakten lukket veien gjennom dørene, men en CHECK som
+     -- bare gjelder halve tilstandsrommet er 016-klassen om igjen.
      OR (status = 'bundet' AND faktiske_bytes IS NOT NULL
          AND innhold_sha256 IS NOT NULL AND lager_sti IS NOT NULL
+         AND key_id IS NOT NULL AND nonce IS NOT NULL
+         AND lastet_ts IS NOT NULL
          AND oppdrag_id IS NOT NULL AND bundet_ts IS NOT NULL)
      OR (status = 'forkastet')),
     CONSTRAINT inndata_maaling_innenfor CHECK (
         faktiske_bytes IS NULL OR
-        (faktiske_bytes > 0 AND faktiske_bytes <= maks_bytes))
+        (faktiske_bytes > 0 AND faktiske_bytes <= maks_bytes)),
+    -- Kryptostrukturen på TABELLEN (016:137/017:252-formen, Cursor P2-6):
+    -- `registrer_inndata_lastet` tar `nonce` og `lager_sti` fra en
+    -- runtime-kaller. Uten denne kunne et direkte kall lagre `nonce='\x'`
+    -- eller en avkortet nonce — verdier AES-GCM aldri kan dekryptere —
+    -- brenne jti-en og lande som `lastet`. Invarianten kommer fra
+    -- db/kryptering.py: 12-byte nonce, som overalt ellers i repoet.
+    CONSTRAINT inndata_krypto_struktur CHECK (
+        (nonce IS NULL OR octet_length(nonce) = 12)
+        AND (lager_sti IS NULL OR length(btrim(lager_sti)) > 0))
 );
 -- «Én bunt, ett oppdrag» er en INVARIANT, ikke en kommentar (Cursor P1-3):
 -- uten UNIQUE kunne to `lastet`-rader bindes til det samme oppdraget, og
@@ -158,6 +188,14 @@ SET search_path = pg_catalog AS $$
 DECLARE v_id UUID; v_jti TEXT;
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant, 'reserver_inndata');
+    -- Speiler tabellens CHECK, men med det kanoniske feilkontraktet i
+    -- stedet for check_violation (Cursor P2-3, 017-formen).
+    IF p_eiermodul IS DISTINCT FROM 'm57_ats'
+       OR p_formaal IS DISTINCT FROM 'soknadsbunt' THEN
+        RAISE EXCEPTION 'reserver_inndata: %/% er ikke kontraktens'
+            ' kombinasjon', p_eiermodul, p_formaal
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
     -- Kjerne-PG, ingen pgcrypto (kjørerens egen regel): to UUID-er gir
     -- 64 hex-tegn entropi for engangs-jti-en.
     v_jti := replace(pg_catalog.gen_random_uuid()::text, '-', '')
@@ -227,6 +265,20 @@ BEGIN
        OR p_faktiske_bytes > r.maks_bytes THEN
         RAISE EXCEPTION 'inndata: % byte bryter deklarasjonen (maks %)',
             p_faktiske_bytes, r.maks_bytes
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- Kryptostrukturen håndheves FØR forbruket, med det kanoniske
+    -- feilkontraktet (017:252-formen). `inndata_krypto_struktur` er samme
+    -- invariant på tabellen og fanger enhver annen skrivevei; her gir den
+    -- `inndata_reservasjon_ugyldig` i stedet for check_violation — og
+    -- reservasjonen blir stående som `reservert`, ikke brent på en nonce
+    -- som aldri kunne dekryptert (Cursor P2-6).
+    IF p_key_id IS NULL OR p_nonce IS NULL
+       OR octet_length(p_nonce) <> 12
+       OR p_sti IS NULL OR length(btrim(p_sti)) = 0
+       OR p_sha256 IS NULL THEN
+        RAISE EXCEPTION 'inndata: krypto/sti er strukturelt ugyldig'
+            ' (nonce=% B)', octet_length(p_nonce)
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
     UPDATE public.inndata_artefakt
