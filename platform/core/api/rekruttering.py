@@ -137,11 +137,16 @@ def _kandidater(conn, tenant, prosess_id):
         # anbefalt krever at alle målte krav er oppfylt, og at det finnes
         # krav å måle. Fail-safe: alt annet faller til «Bør vurderes», som er
         # en oppfordring til å lese kandidaten, ikke en påstand om henne.
-        status = art.get("status") or (
-            "innstilt_avslag" if any(
-                f.get("kategori") == "krav_ikke_dokumentert" for f in funn)
-            else "anbefalt" if not funn and oppfylt
-            and all(oppfylt.values()) else "vurderes")
+        # …og utledningen tar ALDRI imot en skrevet `status` (Cursor P1
+        # 10:01): runtime har INSERT på lageret, og `art.get("status")`
+        # foran reserven lot en produsent skrive «anbefalt» forbi hele
+        # dømmingen. Kanonisk artefakt har ikke feltet; står det der, er
+        # det nettopp derfor IKKE en kilde.
+        status = ("innstilt_avslag" if any(
+                      f.get("kategori") == "krav_ikke_dokumentert"
+                      for f in funn)
+                  else "anbefalt" if not funn and oppfylt
+                  and all(oppfylt.values()) else "vurderes")
         kandidater.append({
             "kandidat_id": str(kid),
             "oppfylt": oppfylt,
