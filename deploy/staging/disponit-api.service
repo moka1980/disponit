@@ -77,19 +77,32 @@ LogRateLimitBurst=1000
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-# #162: den ENESTE skrivbare stien under `strict`. Uten denne linjen gjør
-# `ProtectSystem=strict` hele hierarkiet utenom API-filsystemene
-# read-only (systemd.exec(5)), og `os.makedirs`/`open` i inndata-veien
-# feiler med EROFS — hver eneste opplasting hadde blitt en intern feil i
-# prod, mens `install -d` i opp.sh og eierskapet så helt riktig ut.
-# ReadWritePaths og ikke StateDirectory: /var/lib/disponit eies alt av
-# `disponit-artefaktrydding.service` sin StateDirectory (bruker
-# disponit-domener), og to units som krever hvert sitt eierskap på samme
-# katalog ville dratt den fram og tilbake. Katalogen opprettes av opp.sh
-# FØR release-byttet; mangler den, skal unit-en si fra høyt — en manglende
-# lagerrot er en deploy-feil, ikke noe som skal oppdages som ENOENT dypt
-# nede i en opplasting (samme vedtak som modulkommentaren i api/inndata.py).
-ReadWritePaths=/var/lib/disponit/inndata
+# #162: den ENESTE skrivbare stien under `strict`. Uten den gjør
+# `ProtectSystem=strict` hele hierarkiet utenom API-filsystemene read-only
+# (systemd.exec(5)), og `os.makedirs`/`open` i inndata-veien feiler med
+# EROFS — hver eneste opplasting hadde blitt en intern feil i prod, mens
+# `install -d` i opp.sh og eierskapet så helt riktig ut.
+#
+# EGEN state-katalog, ikke en gren under /var/lib/disponit (Codex P1,
+# andre runde på samme linje). Første forsøk var
+# `ReadWritePaths=/var/lib/disponit/inndata`. Det løser read-only, men ikke
+# UNIX-TRAVERSERING: /var/lib/disponit er `disponit-artefaktrydding.service`
+# sin StateDirectory, som systemd holder på `disponit-domener:0750` ved hver
+# start av den uniten. Denne prosessen er `disponit-api` og står verken som
+# eier eller i gruppa, så `open()` på et barn ville gitt EACCES på veien
+# NED — og `install -d -m 700 -o disponit-api` i opp.sh går motsatt vei: på
+# en fersk vert oppretter GNU install også den manglende FORELDEREN med de
+# oppgitte attributtene, og da er det ryddeuniten som mister katalogen sin.
+# To units som eier hvert sitt eierskap på samme tre drar den fram og
+# tilbake uansett hvilken vei man løser det.
+#
+# `StateDirectory=` fjerner hele kollisjonen: systemd oppretter
+# /var/lib/disponit-inndata som User=/Group= ved HVER start, gjør den
+# skrivbar under `strict` uten en egen ReadWritePaths-linje, og ingen annen
+# unit rører treet. 0700 fordi payloaden er tenant-DEK-kryptert og ingen
+# annen bruker har noe der å gjøre.
+StateDirectory=disponit-inndata
+StateDirectoryMode=0700
 ProtectHome=true
 ProtectKernelTunables=true
 ProtectKernelModules=true

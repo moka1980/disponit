@@ -24,10 +24,14 @@ import uuid as uuidlib
 import psycopg
 from starlette.concurrency import run_in_threadpool
 
-#: FS-roten. opp.sh oppretter den med api-brukerens eierskap; en
-#: manglende rot er en deploy-feil og skal si det, ikke ENOENT dypt nede.
+#: FS-roten. Api-unitens EGEN `StateDirectory=disponit-inndata` (Codex P1):
+#: /var/lib/disponit er ryddeunitens state-katalog, eid av
+#: `disponit-domener` med 0750, og en gren under den kunne API-brukeren
+#: verken tas eierskap over eller traverseres ned i. opp.sh oppretter den
+#: også ved førstegangsdeploy; en manglende rot er en deploy-feil og skal si
+#: det, ikke ENOENT dypt nede.
 INNDATA_ROT = os.environ.get("DISPONIT_INNDATA_ROT",
-                             "/var/lib/disponit/inndata")
+                             "/var/lib/disponit-inndata")
 
 
 def reserver_endepunkt(tjeneste, request):

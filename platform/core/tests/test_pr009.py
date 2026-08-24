@@ -1425,3 +1425,58 @@ def test_backupen_far_backupnavnet_forst_etter_verifiseringen():
         "backupnavnet settes før verifiseringsportene har svart"
     assert 'rm -f "$DELVIS"' in skript, \
         "arbeidsfila ryddes ikke ved avbrudd"
+
+
+def test_inndatalageret_er_api_unitens_egen_state_katalog():
+    """#162 (Codex P1, andre runde på samme linje): første forsøk la lageret
+    under /var/lib/disponit med `ReadWritePaths`. Den katalogen er
+    `disponit-artefaktrydding.service` sin StateDirectory — systemd holder
+    den på `disponit-domener:0750` ved hver start av den uniten, og API-et
+    kjører som `disponit-api`. `ReadWritePaths` løser read-only-mounten,
+    ikke Unix-traverseringen NED til barnet, så hver opplasting ville endt i
+    EACCES; og `install -d -m 700 -o disponit-api` i opp.sh går motsatt vei
+    og tar foreldrekatalogen fra ryddeuniten på en fersk vert.
+
+    Porten måler det som faktisk lukker funnet — at API-lageret er
+    api-unitens EGEN state-katalog — og binder de tre stedene stien står, så
+    de ikke kan gli fra hverandre."""
+    def les(sti):
+        """Direktivene, ikke kommentarene: nettopp DENNE fiksen forklarer den
+        forkastede formen i prosa, og en `not in`-assert over rå tekst ville
+        målt begrunnelsen i stedet for konfigurasjonen."""
+        return "\n".join(
+            ln for ln in (ROT / sti).read_text(encoding="utf-8").splitlines()
+            if not ln.lstrip().startswith("#"))
+
+    unit = les("deploy/staging/disponit-api.service")
+    opp = les("deploy/staging/opp.sh")
+    modul = les("platform/core/api/inndata.py")
+    rydding = les("deploy/staging/disponit-artefaktrydding.service")
+
+    navn = None
+    for linje in unit.splitlines():
+        if linje.startswith("StateDirectory="):
+            navn = linje.split("=", 1)[1].strip()
+    assert navn, "api-uniten har ingen StateDirectory for inndata-lageret"
+    rot = f"/var/lib/{navn}"
+
+    # Den gamle formen skal ikke stå igjen ved siden av den nye.
+    assert "ReadWritePaths=/var/lib/disponit/inndata" not in unit
+    assert "StateDirectoryMode=0700" in unit, \
+        "lageret bærer tenant-kryptert payload og skal ikke være lesbart" \
+        " for andre brukere"
+
+    # Ikke ryddeunitens tre — det er nettopp kollisjonen funnet handler om.
+    ryddekatalog = None
+    for linje in rydding.splitlines():
+        if linje.startswith("StateDirectory="):
+            ryddekatalog = "/var/lib/" + linje.split("=", 1)[1].strip()
+    assert ryddekatalog and not rot.startswith(ryddekatalog + "/"), \
+        f"{rot} ligger under {ryddekatalog}, som en annen unit eier"
+
+    # De to andre stedene stien står, sier det samme.
+    assert f'"{rot}"' in modul, f"api/inndata.py peker ikke på {rot}"
+    assert f"install -d -m 700 -o disponit-api -g disponit-api {rot}" in opp, \
+        f"opp.sh oppretter ikke {rot} med api-brukerens eierskap"
+    assert "/var/lib/disponit/inndata" not in opp + modul, \
+        "den gamle stien står igjen et sted og vil gli fra unit-en"
