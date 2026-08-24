@@ -1009,6 +1009,75 @@ def test_rls_skiller_tenantene_ogsaa_her(klient):
 
 
 @pg
+def test_signering_avviser_manglende_csrf_og_idempotensnokkel(klient):
+    """Cursor P2 (10:01): de to portene inngangen til den irreversible
+    handlingen faktisk har, målt PÅ den ruten.
+
+    `signer_endepunkt` går gjennom `_browserkontekst` (sesjon + CSRF) og
+    `_krev_idem`, men HTTP-suiten dekket scope, medlemskap, fullmakt,
+    hash, spiss, reaping, replay og kappløp — aldri at CSRF-porten og
+    SP-2-nøkkelporten avviser HER. En regresjon i rutevalget (f.eks.
+    bytte til `_autentiser` uten CSRF, eller et `_krev_idem` som ryker ut
+    når rekkefølgen på portene endres — noe denne stabelen har gjort i
+    fire runder) ville vært usynlig.
+
+    Målt med status OG feilkode OG at signatur-sloten står ubrukt:
+    «avvist» er ikke det samme som «skrev ingenting», og på en append-only
+    tabell med én slot per serie er det andre det som teller. Den ekte
+    signeringen til slutt er den positive kontrollen — uten den kunne
+    begge avvisningene kommet av en ødelagt fixture.
+    """
+    from api import sesjon as sesjonmodul
+    _pid, lid, ih = _seed_prosess()
+    bid = _bruker("sjef-porter", ["admin"])
+    cookie, csrf = _browsersesjon(bid)
+    sti = f"/v1/rekruttering/lister/{lid}/signer"
+
+    uten_csrf = klient.post(
+        sti, json={"innhold_hash": ih},
+        cookies={sesjonmodul.C_SESJON: cookie},
+        headers={"Idempotency-Key": secrets.token_urlsafe(24)})
+    assert uten_csrf.status_code == 403, uten_csrf.text
+    assert uten_csrf.json()["feil"] == "csrf_ugyldig"
+    # …og en TILSTEDEVÆRENDE, men feil token er samme dom: porten måler
+    # verdien, ikke om hodet finnes.
+    feil_csrf = klient.post(
+        sti, json={"innhold_hash": ih},
+        cookies={sesjonmodul.C_SESJON: cookie},
+        headers={"X-Disponit-CSRF": secrets.token_urlsafe(24),
+                 "Idempotency-Key": secrets.token_urlsafe(24)})
+    assert feil_csrf.status_code == 403, feil_csrf.text
+    assert feil_csrf.json()["feil"] == "csrf_ugyldig"
+
+    uten_idem = klient.post(
+        sti, json={"innhold_hash": ih},
+        cookies={sesjonmodul.C_SESJON: cookie},
+        headers={"X-Disponit-CSRF": csrf})
+    assert uten_idem.status_code == 400, uten_idem.text
+    assert uten_idem.json()["feil"] == "idempotensnokkel_mangler"
+    # …og en nøkkel som bare er mellomrom er ingen nøkkel.
+    blank_idem = klient.post(
+        sti, json={"innhold_hash": ih},
+        cookies={sesjonmodul.C_SESJON: cookie},
+        headers={"X-Disponit-CSRF": csrf, "Idempotency-Key": "   "})
+    assert blank_idem.status_code == 400, blank_idem.text
+    assert blank_idem.json()["feil"] == "idempotensnokkel_mangler"
+
+    m = _migrator()
+    try:
+        n = m.execute("SELECT count(*) FROM utsendingssignatur"
+                      " WHERE tenant=%s AND liste_id=%s",
+                      (TEN, lid)).fetchone()[0]
+        assert n == 0, "en avvist forespørsel skrev en signatur"
+        m.rollback()
+    finally:
+        m.close()
+    # Positiv kontroll: den samme økten, med BEGGE hodene, signerer.
+    ok = _post(klient, cookie, csrf, sti, {"innhold_hash": ih})
+    assert ok.status_code == 201, ok.text
+
+
+@pg
 def test_deaktivert_m57_gir_definert_503_paa_alle_tre_rutene(miljo,
                                                              monkeypatch):
     """Rollback-kontrakten gjelder ALLE M-57s ruter (Codex P1).
