@@ -286,6 +286,61 @@ def test_gjenspill_av_utlopt_reservasjon_laser_ikke_nokkelen(klient,
 
 @pg
 @dekker("idempotenskonflikt")
+def test_gjenspill_av_forkastet_reservasjon_laser_ikke_nokkelen(klient,
+                                                                inndata_rot):
+    """Cursor P2, runde 2 på gjenspillet: `forkastet` var ikke dekket.
+
+    Runde 1 tok `reservert` + over fristen og lot `forkastet` stå, med den
+    begrunnelsen at ingen dør i PR-1 skriver den statusen. Men vakten
+    TILLATER `reservert -> forkastet` og `lastet -> forkastet` — reaperen
+    i PR-2 er bare den første som skal bruke dem — og en `forkastet` rad
+    er død av nøyaktig samme grunn som den utløpte: jti-en avvises av
+    `registrer_inndata_lastet`, og UNIQUE på `(tenant, idempotensnokkel)`
+    sperrer en ny rad under den samme nøkkelen. Gjenspillet ville altså
+    svart 201 med en referanse til en kastet bunt.
+
+    Merk fristen her: raden er `forkastet` MED en frist i framtiden, så
+    utløps-armen fra runde 1 kan ikke være den som feller den. Det er
+    status alene som gjør raden død.
+
+    MUTASJONEN SOM DREPER DENNE: ta `forkastet` ut av dødtilstands-grenen
+    — da blir dette en 201 igjen."""
+    tenant, _bid, cookie, csrf = _rigg(klient)
+    nokkel = secrets.token_hex(12)
+    m = _migrator(tenant)
+    try:
+        _kontekst(m, tenant)
+        jti = _reservasjon(m, tenant, idem=nokkel)      # frist i framtiden
+        m.execute("UPDATE inndata_artefakt SET status='forkastet'"
+                  " WHERE tenant=%s AND reservasjon_jti=%s", (tenant, jti))
+        m.commit()
+    finally:
+        m.close()
+
+    r = _reserver(klient, cookie, csrf, idem=nokkel)
+    assert r.status_code == 409, r.text
+    assert r.json()["feil"] == "idempotenskonflikt"
+    # …og den forkastede raden er URØRT: konflikten gjenoppliver ingenting.
+    m = _migrator(tenant)
+    try:
+        _kontekst(m, tenant)
+        rad = m.execute(
+            "SELECT status, oppdrag_id FROM inndata_artefakt"
+            " WHERE tenant=%s AND reservasjon_jti=%s",
+            (tenant, jti)).fetchone()
+        m.rollback()
+    finally:
+        m.close()
+    assert rad == ("forkastet", None)
+
+    # En NY nøkkel er veien ut, og den virker.
+    ny = _reserver(klient, cookie, csrf)
+    assert ny.status_code == 201, ny.text
+    assert ny.json()["reservasjon_jti"] != jti
+
+
+@pg
+@dekker("idempotenskonflikt")
 def test_nokkel_brukt_for_annen_reservasjon_gir_idempotenskonflikt(
         klient, inndata_rot):
     """Cursor P2: `unique_violation` → 409 `idempotenskonflikt` var

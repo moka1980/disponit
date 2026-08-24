@@ -325,16 +325,34 @@ BEGIN
         -- den samme nøkkelen. Uten denne grenen svarte vi 201 med en jti
         -- som ikke kan brukes til noe, og klienten satt fast på nøkkelen
         -- sin uten noen vei ut — nettopp tapet gjenspillet finnes for å
-        -- redde. Konflikt er det ærlige svaret: nøkkelen er oppbrukt, ta
-        -- en ny. Samme errcode som den andre konfliktarmen, så API-et
-        -- svarer `idempotenskonflikt` uten en ny feilvei.
+        -- redde.
         --
-        -- MERK at dette er en SMAL gren: `lastet` og `bundet` gjenspilles
-        -- fortsatt uansett frist — der finnes bunten, og referansen er
-        -- det klienten mistet.
-        IF r.status = 'reservert' AND pg_catalog.now() > r.utloper THEN
-            RAISE EXCEPTION 'reserver_inndata: nøkkelen hører til en'
-                ' UTLØPT reservasjon (%)', r.utloper
+        -- Runde 1 av denne grenen tok bare `reservert` + over fristen, og
+        -- ba `forkastet` vente på reaperen som skriver den (Cursor P2,
+        -- runde 2). Det var å svare på FORMEN i stedet for på spørsmålet:
+        -- en `forkastet` rad er død av nøyaktig samme grunn — jti-en
+        -- avvises av `registrer_inndata_lastet`, nøkkelen er sperret av
+        -- UNIQUE — og en gren som må utvides hver gang en ny død tilstand
+        -- oppstår er en gren som kommer tilbake. Her klassifiseres derfor
+        -- HELE tilstandsrommet én gang, som CHECKen over gjør:
+        --
+        --   * `forkastet` — død uansett hvor den kom fra. Vakten tillater
+        --     både `reservert -> forkastet` og `lastet -> forkastet`, og
+        --     i begge tilfeller er bunten borte.
+        --   * `reservert` etter fristen — død: ingen kan laste på jti-en,
+        --     og ingen kan reservere på nytt under nøkkelen.
+        --   * `reservert` innenfor fristen, `lastet`, `bundet` — LEVENDE,
+        --     og gjenspilles uansett frist: der finnes bunten, og
+        --     referansen er det klienten mistet. En `lastet` som passerer
+        --     fristen mister ikke bytene sine.
+        --
+        -- Konflikt er det ærlige svaret på en død rad: nøkkelen er
+        -- oppbrukt, ta en ny. Samme errcode som den andre konfliktarmen,
+        -- så API-et svarer `idempotenskonflikt` uten en ny feilvei.
+        IF r.status = 'forkastet'
+           OR (r.status = 'reservert' AND pg_catalog.now() > r.utloper) THEN
+            RAISE EXCEPTION 'reserver_inndata: nøkkelen hører til en DØD'
+                ' reservasjon (%, utløper %)', r.status, r.utloper
                 USING ERRCODE = 'unique_violation';
         END IF;
         -- Gjenspill: samme svar som første gang. Reservasjonen kan i
