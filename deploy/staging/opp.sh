@@ -516,19 +516,62 @@ skriv_cred domener DISPONIT_RESOLVERE   "${DISPONIT_RESOLVERE:-}"
 # feller selv tilfellene der basen rakk å flytte seg (delvis kjørte NYE
 # migrasjoner): da nekter forrige kode å starte, og meldingen sier det
 # ærlig i stedet for å love en gjenoppretting som ikke finnes.
+#
+# Codex P1 (runde 1): en reversering som starter et UTVALG av det vinduet
+# stoppet, er ingen reversering. Steg 5 slår av elleve enheter; første
+# utgave startet fire av dem og målte dommen på API-et alene — altså kunne
+# skriptet skrive «SELVREVERSERT: forrige release kjører igjen» mens
+# varselsenderen, plan-materialisereren, evidensreaperen (038) og
+# domeneverifiseringen (039) sto stille på ubestemt tid. Køene ville bare
+# vokst, og ingenting hadde sagt fra. Listen under SPEILER derfor steg 5,
+# den er ikke et utvalg av den; `test_selvrevers_speiler_vedlikeholdsvinduet`
+# måler de to mot hverandre så et nytt stopp uten et nytt start blir rødt.
+#
+# Formen er steg 8s, ikke steg 5s: TIMERNE startes, ikke oneshot-tjenestene
+# bak dem — å starte en oneshot direkte er å kjøre jobben nå, mens timerens
+# jobb er å velge når. Vilkåret er `is-enabled` (samme som steg 8 bruker for
+# wcag-arbeideren): en enhet som ikke var enablet, kjørte heller ikke før
+# vinduet, og da er «start» en AKTIVERING utrullingen ikke har mandat til.
+# `enable` gjøres aldri her — reverseringen skal gjenopprette, ikke innføre.
+SELVREVERS_ENHETER="disponit-helse.timer disponit-varselsender.timer
+disponit-domenerevalidering.timer disponit-artefaktrydding.timer
+disponit-evidensreaper.timer disponit-plan.timer
+disponit-domeneverifisering.timer disponit-wcag-audit.service"
 selvrevers() {
   echo "AVBRUTT: $1 — forsøker selv-reversering (forrige release,"
   echo "symlinken er urørt: $FORRIGE)"
   systemctl start disponit-api.socket disponit-api.service \
-      disponit-m37.service disponit-helse.timer 2>/dev/null || true
+      disponit-m37.service 2>/dev/null || true
+  for enhet in $SELVREVERS_ENHETER; do
+    if systemctl is-enabled "$enhet" >/dev/null 2>&1; then
+      systemctl start "$enhet" 2>/dev/null || true
+    fi
+  done
   sleep 2
-  if systemctl is-active --quiet disponit-api.service; then
-    echo "SELVREVERSERT: forrige release kjører igjen. Feilen rettes"
-    echo "FREMOVER; deployen er avbrutt."
+  # Dommen måles på ALLE enhetene som skulle tilbake. `2>/dev/null || true`
+  # over sluker startfeil med vilje (en enhet som ikke finnes på verten skal
+  # ikke felle reverseringen), og nettopp derfor kan ikke suksess utledes av
+  # exit-koden — den må MÅLES. Samme `is-enabled`-vilkår som ved starten:
+  # det som ikke var i drift, kreves ikke tilbake i drift.
+  NEDE=""
+  for enhet in disponit-api.service disponit-m37.service; do
+    systemctl is-active --quiet "$enhet" || NEDE="$NEDE $enhet"
+  done
+  for enhet in $SELVREVERS_ENHETER; do
+    if systemctl is-enabled "$enhet" >/dev/null 2>&1; then
+      systemctl is-active --quiet "$enhet" || NEDE="$NEDE $enhet"
+    fi
+  done
+  if [ -z "$NEDE" ]; then
+    echo "SELVREVERSERT: forrige release kjører igjen — API, M-37 og hver"
+    echo "timer vinduet stoppet er aktive. Feilen rettes FREMOVER;"
+    echo "deployen er avbrutt."
   else
-    echo "SELV-REVERSERING FEILET: forrige kode kan ikke starte mot"
-    echo "basens migrasjonssett (bootportens dom). Tjenestene er STOPPET;"
-    echo "manuell fremoverrettet retting kreves NÅ."
+    echo "SELV-REVERSERING FEILET. Fortsatt nede:$NEDE"
+    echo "Er API-et blant dem, kan forrige kode ikke starte mot basens"
+    echo "migrasjonssett (bootportens dom). Uansett hvilke enheter det"
+    echo "gjelder: de er STOPPET av dette vinduet, og manuell"
+    echo "fremoverrettet retting kreves NÅ."
   fi
   exit 1
 }

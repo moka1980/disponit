@@ -514,6 +514,55 @@ def test_hver_installert_timer_blir_ogsa_startet():
                 f"{u} installeres, men blir aldri startet av opp.sh"
 
 
+def test_selvrevers_speiler_vedlikeholdsvinduet():
+    """Codex P1 (#178): reverseringen skal gjenopprette det vinduet stoppet
+    — HELE det, ikke et utvalg.
+
+    Søskenporten over dekker suksessløypa: en timer som installeres, må
+    også startes. Feilløypa hadde samme hull og ingen port: steg 5 stopper
+    elleve enheter, `selvrevers()` startet fire, og dommen ble felt på
+    `disponit-api.service` alene. Meldingen «SELVREVERSERT: forrige release
+    kjører igjen» kunne derfor være usann for varselsenderen, plan-
+    materialisereren, evidensreaperen og domeneverifiseringen samtidig.
+
+    Stopplista og reverseringslista sammenlignes maskinelt, så neste enhet
+    noen legger inn i vinduet er dekket uten at noen husker det.
+    Oneshot-tjenestene bak en timer er UNNTATT med vilje: de startes av
+    timeren sin, aldri direkte — det er formen steg 8 bruker, og å starte
+    en oneshot her ville kjørt jobben nå i stedet for å gjenopprette
+    timeplanen.
+    """
+    import re
+    opp = (ROT / "deploy/staging/opp.sh").read_text(encoding="utf-8")
+    opp = opp.replace("\\\n", " ")
+    stoppet = {e for liste in re.findall(r"systemctl stop (.*)", opp)
+               for e in liste.split() if e.startswith("disponit-")}
+    assert stoppet, "fant ingen `systemctl stop` — porten måler ingenting"
+
+    blokk = opp[opp.index("SELVREVERS_ENHETER="):
+                opp.index("\n}\n", opp.index("selvrevers() {"))]
+    reversert = {e for liste in re.findall(r"systemctl start (.*)", blokk)
+                 for e in liste.split() if e.startswith("disponit-")}
+    reversert.update(re.search(r'SELVREVERS_ENHETER="(.*?)"',
+                               blokk, re.S).group(1).split())
+
+    for enhet in stoppet:
+        if enhet.endswith(".service") and \
+                enhet[:-len(".service")] + ".timer" in stoppet:
+            continue    # oneshot bak en timer — timerens å starte
+        assert enhet in reversert, \
+            f"{enhet} stoppes av vedlikeholdsvinduet, men selvrevers() " \
+            f"starter den aldri igjen"
+
+    # Codex P1, andre halvdel: «SELVREVERSERT» skal ikke kunne skrives på
+    # API-et alene. Dommen måles på den samme lista.
+    maalt = blokk[blokk.index('NEDE=""'):blokk.index('if [ -z "$NEDE" ]')]
+    assert "disponit-m37.service" in maalt, \
+        "reverseringsdommen måler ikke M-37"
+    assert "$SELVREVERS_ENHETER" in maalt, \
+        "reverseringsdommen måler ikke enhetene den nettopp startet"
+
+
 @pg
 def test_rydd_pending_tar_kun_foreldede(migrator, miljo, monkeypatch,
                                         capsys):
