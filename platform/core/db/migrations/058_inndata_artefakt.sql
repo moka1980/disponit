@@ -158,7 +158,27 @@ CREATE TABLE inndata_artefakt (
             left(lager_sti, length(tenant) + 1) = tenant || '/'
             AND length(lager_sti) > length(tenant) + 1
             AND position('/' in substr(lager_sti, length(tenant) + 2)) = 0
-            AND position('..' in lager_sti) = 0))
+            AND position('..' in lager_sti) = 0)),
+    -- ÉN FIL, ÉN RAD (Codex P1). Navnerommet over sier hvor stien kan
+    -- peke, ikke at ingen andre rad peker samme sted. `disponit` har
+    -- SELECT på tabellen og EXECUTE på `registrer_inndata_lastet`, så en
+    -- kaller kunne lese en eksisterende rads sti, hash, key_id og nonce og
+    -- registrere sin EGEN reservasjon på nøyaktig dem. Da bar to
+    -- «engangs»-artefakter den samme fysiske bunten: de kan bindes til
+    -- hvert sitt oppdrag (indeksen under er per oppdrag, ikke per fil), og
+    -- ryddingen av den ene sletter ciphertexten den andre fortsatt
+    -- refererer. Aliaset er heller ikke synlig i noen av de andre
+    -- invariantene — begge radene ser komplette ut.
+    --
+    -- Dette er den ene invarianten som IKKE kan stå som en CHECK og
+    -- dermed heller ikke som en guard i funksjonen: en forhåndssjekk mot
+    -- de andre radene har et kappløpsvindu, mens UNIQUE er den samme
+    -- avgjørelsen tatt av indeksen. Kollisjonen når API-et som
+    -- `unique_violation`, altså den kanoniske `inndata_alt_lastet` (409),
+    -- og den ærlige veien treffer den aldri: stien er en fersk uuid per
+    -- kall. NULL-er er distinkte i Postgres, så reservasjoner uten sti er
+    -- like mange som før.
+    CONSTRAINT inndata_lagersti_unik UNIQUE (tenant, lager_sti)
 );
 -- «Én bunt, ett oppdrag» er en INVARIANT, ikke en kommentar (Cursor P1-3):
 -- uten UNIQUE kunne to `lastet`-rader bindes til det samme oppdraget, og

@@ -996,6 +996,59 @@ def test_lagerstien_maa_ligge_i_tenantens_eget_navnerom(klient):
 
 
 @pg
+def test_to_rader_kan_ikke_dele_den_samme_fysiske_bunten(klient):
+    """Codex P1: navnerommet sier HVOR stien kan peke, ikke at ingen
+    annen rad peker samme sted.
+
+    `disponit` har SELECT på tabellen og EXECUTE på
+    `registrer_inndata_lastet`, så en kaller kunne lese en eksisterende
+    rads sti, hash, key_id og nonce og registrere sin EGEN reservasjon på
+    nøyaktig dem. Da bar to «engangs»-artefakter den samme fysiske
+    bunten: de kan bindes til hvert sitt oppdrag — indeksen
+    `inndata_artefakt_oppdrag` er per oppdrag, ikke per fil — og
+    ryddingen av den ene sletter ciphertexten den andre fortsatt
+    refererer. Ingen av de øvrige invariantene ser aliaset; begge radene
+    er komplette.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `inndata_lagersti_unik`."""
+    from db import kryptering
+    tenant, _bid, _cookie, _csrf = _rigg(klient)
+    m = _migrator(tenant)
+    try:
+        forste, andre = _reservasjon(m, tenant), _reservasjon(m, tenant)
+        key_id, _dek = kryptering.hent_eller_opprett_aktiv_dek(m, tenant)
+        m.commit()
+    finally:
+        m.close()
+    delt = _lagersti(tenant, "delt")
+    c = _runtime(tenant)
+    try:
+        c.execute("SELECT * FROM registrer_inndata_lastet"
+                  "(%s,%s,%s,%s,%s,%s,%s)",
+                  (tenant, forste, 10, "a" * 64, key_id, b"n" * 12, delt))
+        c.commit()
+        _kontekst(c, tenant)
+        # Samme fil, en ANNEN reservasjon: aliaset avvises av indeksen —
+        # `unique_violation`, altså den kanoniske `inndata_alt_lastet`.
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            c.execute("SELECT * FROM registrer_inndata_lastet"
+                      "(%s,%s,%s,%s,%s,%s,%s)",
+                      (tenant, andre, 10, "a" * 64, key_id, b"n" * 12,
+                       delt))
+        c.rollback()
+        _kontekst(c, tenant)
+        # Den andre reservasjonen er UBRENT: en avvist registrering skal
+        # ikke koste kunden bunten. Og en EGEN sti går fortsatt igjennom.
+        c.execute("SELECT * FROM registrer_inndata_lastet"
+                  "(%s,%s,%s,%s,%s,%s,%s)",
+                  (tenant, andre, 10, "a" * 64, key_id, b"n" * 12,
+                   _lagersti(tenant, "egen")))
+        c.commit()
+    finally:
+        c.close()
+
+
+@pg
 def test_dek_referansen_er_bundet_til_tenantens_nokler(klient):
     """Codex P2: `key_id` kommer fra en runtime-kaller. Uten den
     sammensatte FK-en (003/005/007/011/016-formen) kunne en `lastet` rad
