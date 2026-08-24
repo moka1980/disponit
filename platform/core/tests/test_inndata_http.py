@@ -14,7 +14,7 @@ from io import BytesIO
 import psycopg
 import pytest
 
-from .test_api import DSN, MIGRATOR_DSN, app, klient, miljo  # noqa: F401
+from .test_api import DSN, MIGRATOR_DSN, app, dekker, klient, miljo  # noqa: F401,E501
 from .test_rekruttering_http import _browsersesjon as _sesjon_for
 from .test_rekruttering_http import _bruker as _bruker_for
 
@@ -67,6 +67,7 @@ def _rigg(klient):
 
 
 @pg
+@dekker("inndata_alt_lastet")
 def test_reservasjon_og_opplasting_ende_til_ende(klient, inndata_rot):
     tenant, _bid, cookie, csrf = _rigg(klient)
     r = _reserver(klient, cookie, csrf)
@@ -149,6 +150,7 @@ def test_reservasjon_og_opplasting_ende_til_ende(klient, inndata_rot):
 
 
 @pg
+@dekker("inndata_reservasjon_ugyldig")
 def test_ukjent_reservasjon_og_tom_kropp(klient, inndata_rot):
     _tenant, _bid, cookie, csrf = _rigg(klient)
     r = _opplast(klient, cookie, csrf, "f" * 48, _zipbytes())
@@ -230,6 +232,7 @@ def test_reservasjonen_er_replay_trygg_paa_idempotensnokkelen(klient,
 
 
 @pg
+@dekker("idempotenskonflikt")
 def test_gjenspill_av_utlopt_reservasjon_laser_ikke_nokkelen(klient,
                                                             inndata_rot):
     """Cursor P2: gjenspillet svarte 201 med en UBRUKELIG jti.
@@ -281,6 +284,7 @@ def test_gjenspill_av_utlopt_reservasjon_laser_ikke_nokkelen(klient,
 
 
 @pg
+@dekker("idempotenskonflikt")
 def test_nokkel_brukt_for_annen_reservasjon_gir_idempotenskonflikt(
         klient, inndata_rot):
     """Cursor P2: `unique_violation` → 409 `idempotenskonflikt` var
@@ -489,6 +493,7 @@ def _oppdrag(m, tenant, eiermodul, oppdragstype="rekruttering.evaluering"):
 
 
 @pg
+@dekker("inndata_reservasjon_ugyldig")
 def test_utlopt_reservasjon_avvises_og_brenner_ingenting(klient, inndata_rot):
     """Cursor P2-4: utløpet var KODET i 058, men ubevist. En fiksrunde på
     errcode-mappingen (`InvalidParameterValue` →

@@ -224,6 +224,24 @@ FEILVEIER: tuple[Feilvei, ...] = (
         " revisjonen er foreldet av en nyere overtakelse. Ingen sak — dette er"
         " den normale utgangen når en konflikt rekker å bli avløst av en"
         " nyere, og attestasjonsraden er allerede bevart som evidens.")),
+    # --- #162 PR-1: inndata-artefaktet, buntens vei INN ------------------
+    # Kodene ble brukt av `api/inndata.py` uten en rad her (Cursor P2).
+    # `_feil()` faller da tilbake på `_FEIL_HTTP.get(kode, 409)` og hopper
+    # over routingen helt: HTTP-svaret så riktig ut i testene, men
+    # sikkerhetslogg/metric fantes ikke, og «én test per rad» kunne ikke
+    # telle en rad som ikke var der.
+    Feilvei("inndata_reservasjon_ugyldig", 409, ("avvis",), None, notat=(
+        "Ukjent, utløpt eller alt forbrukt reservasjons-jti — og SAMME svar"
+        " for alle tre: et skille ville vært et orakel på hvilke jti-er som"
+        " finnes. Avvis og ikke sikkerhet: jti-en er en engangsreferanse"
+        " klienten selv nettopp fikk utstedt, og en tapt kappløp mot"
+        " fristen er en normal utgang, ikke et angrep.")),
+    Feilvei("inndata_alt_lastet", 409, ("avvis",), None, aggregert=True,
+            notat=(
+        "Reservasjonen er brukt for ANNET innhold. Et gjenspill med samme"
+        " kropp er derimot en 201 med det opprinnelige svaret — skillet går"
+        " på `innhold_sha256`, som i 017. Aggregert: en klient som retryer"
+        " en muterende kropp gjør det i serie.")),
 )
 
 FEIL: dict[str, Feilvei] = {f.kode: f for f in FEILVEIER}
