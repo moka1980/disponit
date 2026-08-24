@@ -702,6 +702,53 @@ test("Rekruttering: «Detaljer» åpner panelet med funn, sitat og spørsmål", 
     "intervjuspørsmålet mangler");
 });
 
+test("Rekruttering: et funn uten sitat åpner panelet og skjules ikke", async () => {
+  // Cursor P2: `f.kilde.sitat` uten vern. Skriveveien krever `kilde` på
+  // hvert funn, men runtime har INSERT på artefaktlageret, så formen kan
+  // faktisk komme inn — og da kastet oppbyggingen TypeError: dialogen
+  // åpnet ALDRI, og raden satt igjen med en «Detaljer»-knapp som ikke
+  // svarte. Nøyaktig den flyten tastaturgjennomgangens punkt 4 lover.
+  //
+  // Og funnet skal ikke gjemmes bort for å slippe unna: kategorien ER
+  // risikoopplysningen foran en irreversibel utsendelse. Panelet sier at
+  // belegget mangler — på locale-båret tekst, aldri en rå nøkkel.
+  //
+  // MUTASJONEN SOM DREPER DENNE: skriv `el("q", { text: f.kilde.sitat })`
+  // tilbake. Byttes plassholderen mot å droppe funnet, faller den også.
+  const uten = prosess();
+  uten.prosesser[0].kandidater[0].funn = [
+    { kategori: "uklar_tidslinje" },                 // ingen `kilde`
+    { kategori: "manglende_dokumentasjon", kilde: {} },  // kilde uten sitat
+    { kategori: "motstridende_opplysning", kilde: { sitat: "2019" } },
+  ];
+  SVAR = { "/v1/rekruttering/prosesser": uten };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  await vent(() => hoved.querySelector("table"));
+  const rad = [...hoved.querySelectorAll("tbody tr")]
+    .find((tr) => tr.querySelector("td").textContent === "K-2");
+  [...rad.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.detaljer")).click();
+  const panel = document.querySelector('[role="dialog"]');
+  assert.ok(panel, "detaljknappen åpnet ingenting");
+  // Alle tre funnene står der — de to uten belegg også.
+  for (const kategori of ["uklar_tidslinje", "manglende_dokumentasjon",
+    "motstridende_opplysning"]) {
+    assert.ok(panel.textContent.includes(t(`ui.rekruttering.funn.${kategori}`)),
+      `funnet ${kategori} forsvant fra panelet`);
+  }
+  const plassholdere = [...panel.querySelectorAll("em")]
+    .map((e) => e.textContent);
+  assert.deepEqual(plassholdere,
+    [t("ui.rekruttering.uten_sitat"), t("ui.rekruttering.uten_sitat")],
+    "de manglende sitatene ble ikke sagt fra om");
+  assert.ok(!plassholdere[0].startsWith("ui."),
+    "plassholderen falt til reservenøkkelen — locale mangler");
+  // …og det sitatet som FINNES står fortsatt som sitat.
+  assert.deepEqual([...panel.querySelectorAll("q")].map((q) => q.textContent),
+    ["2019"], "det ekte kildesitatet forsvant");
+});
+
 test("Rekruttering: vektskyveren rommer vektene kontrakten godtar", async () => {
   // Codex P1: `evaluering.ranger` godtar ethvert ikke-negativt heltall,
   // men kontrollen sto på `max="10"`. Med en gyldig vekt på 20 regnet

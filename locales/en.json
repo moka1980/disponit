@@ -1054,6 +1054,7 @@
   "ui.rekruttering.status.innstilt_avslag": "Proposed rejection",
   "ui.rekruttering.funn_tittel": "Findings (with source in the application)",
   "ui.rekruttering.ingen_funn": "No findings.",
+  "ui.rekruttering.uten_sitat": "no quotation from the application",
   "ui.rekruttering.sporsmal_tittel": "Suggested interview questions",
   "ui.rekruttering.ingen_sporsmal": "No suggestions.",
   "ui.rekruttering.funn.krav_ikke_dokumentert": "Requirement not documented",

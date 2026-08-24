@@ -252,11 +252,28 @@ function tegn(hoved, ctx, data, okt, valgtId) {
 
   function visDetalj(kandidat, poeng) {
     // Sidepanelet er en dialog med fokusfelle (Detaljpanel → aapneDialog).
-    const funn = (kandidat.funn || []).map((f) =>
-      el("li", {},
+    // SITATET ER DATA, IKKE EN GARANTI (Cursor P2). Skriveveien krever
+    // `kilde` på hvert funn, men runtime har INSERT på artefaktlageret, så
+    // et funn UTEN sitat er en form flaten faktisk kan få. `f.kilde.sitat`
+    // kastet da TypeError midt i oppbyggingen av panelet: dialogen åpnet
+    // aldri, og raden ble sittende igjen med en «Detaljer»-knapp som ikke
+    // svarte.
+    // Funnet SLETTES ikke når sitatet mangler. Kategorien er selve
+    // risikoopplysningen, og et skjult funn er verre enn et funn uten
+    // belegg — plassholderen SIER at belegget mangler, i stedet for å la
+    // funnet forsvinne fra en flate som skal vises før en irreversibel
+    // utsendelse. Teksten bor i locale (RUTINER §5), som resten.
+    const funn = (kandidat.funn || []).filter(Boolean).map((f) => {
+      const sitat = f.kilde && typeof f.kilde.sitat === "string"
+        ? f.kilde.sitat
+        : null;
+      return el("li", {},
         el("strong", { text: t(`ui.rekruttering.funn.${f.kategori}`) }),
         " — ",
-        el("q", { text: f.kilde.sitat })));
+        sitat === null
+          ? el("em", { text: t("ui.rekruttering.uten_sitat") })
+          : el("q", { text: sitat }));
+    });
     const sporsmal = (kandidat.intervjusporsmal || []).map((s) =>
       el("li", { text: s }));
     Detaljpanel({

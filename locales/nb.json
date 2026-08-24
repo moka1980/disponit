@@ -1054,6 +1054,7 @@
   "ui.rekruttering.status.innstilt_avslag": "Innstilt til avslag",
   "ui.rekruttering.funn_tittel": "Funn (med kilde i søknaden)",
   "ui.rekruttering.ingen_funn": "Ingen funn.",
+  "ui.rekruttering.uten_sitat": "uten sitat fra søknaden",
   "ui.rekruttering.sporsmal_tittel": "Forslag til intervjuspørsmål",
   "ui.rekruttering.ingen_sporsmal": "Ingen forslag.",
   "ui.rekruttering.funn.krav_ikke_dokumentert": "Krav ikke dokumentert",
