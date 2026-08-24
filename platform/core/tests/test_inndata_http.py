@@ -667,6 +667,62 @@ def test_lastet_og_utlopt_kan_ikke_gjenspilles(klient, inndata_rot):
         c.close()
 
 
+@pg
+@dekker("inndata_reservasjon_ugyldig")
+def test_forbrukt_reservasjon_er_ikke_et_jti_orakel(klient, inndata_rot):
+    """Cursor P2 runde 7: «alt forbrukt» reiste `unique_violation`.
+
+    `inndata.py` mapper den til `inndata_alt_lastet`, mens ukjent og
+    utløpt jti blir `inndata_reservasjon_ugyldig`. `feil.py:233-237` sier
+    ordrett at alle tre skal ha SAMME svar, fordi «et skille ville vært et
+    orakel på hvilke jti-er som finnes». Slik den sto, kunne en kaller med
+    gyldig sesjon lese ut om en jti hadde nådd minst `bundet`/`forkastet`
+    — og svaret var i tillegg usant, for innholdet var aldri det som
+    skilte.
+
+    Begge dødtilstandene måles, og med en kropp hvis sha MATCHER radens:
+    er hashen den samme, kan det ikke være hash-grenen som feller kallet.
+    `inndata_alt_lastet` beholder sin egen dekning i
+    ende-til-ende-testen (ANNEN kropp på en `lastet` rad) og i
+    `test_to_rader_kan_ikke_dele_den_samme_fysiske_bunten`.
+
+    MUTASJONEN SOM DREPER DENNE: sett `unique_violation` tilbake på
+    forbrukt-grenen i `registrer_inndata_lastet` — da svarer begge
+    `inndata_alt_lastet`."""
+    tenant, _bid, cookie, csrf = _rigg(klient)
+    kropp = _zipbytes()
+    sha = hashlib.sha256(kropp).hexdigest()
+    jti_bundet, jti_forkastet = secrets.token_hex(32), secrets.token_hex(32)
+    m = _migrator(tenant)
+    try:
+        bundet = _lastet(m, tenant, jti=jti_bundet, sha=sha)
+        _lastet(m, tenant, jti=jti_forkastet, sha=sha)
+        oppdrag = _oppdrag(m, tenant, "m57_ats")
+        m.commit()
+        _kontekst(m, tenant)
+        m.execute("UPDATE inndata_artefakt SET status='forkastet'"
+                  " WHERE tenant=%s AND reservasjon_jti=%s",
+                  (tenant, jti_forkastet))
+        m.commit()
+    finally:
+        m.close()
+    c = _runtime(tenant)
+    try:
+        c.execute("SELECT bind_inndata(%s,%s,%s,%s)",
+                  (tenant, bundet, oppdrag, "m57_ats"))
+        c.commit()
+    finally:
+        c.close()
+
+    for jti in (jti_bundet, jti_forkastet):
+        r = _opplast(klient, cookie, csrf, jti, kropp)
+        assert r.status_code == 409, r.text
+        assert r.json()["feil"] == "inndata_reservasjon_ugyldig", \
+            f"forbrukt jti lekker sin egen livssyklus: {r.json()}"
+    # Og ingen av de to avviste forsøkene la igjen en ciphertext.
+    assert not sorted((inndata_rot / tenant).glob("*.bin"))
+
+
 def _lagerfeil_paa(monkeypatch, navn, rot):
     """Full disk i ÉN `os`-operasjon, og bare på inndata-lagerets egne stier.
 

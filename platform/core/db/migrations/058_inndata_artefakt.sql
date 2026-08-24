@@ -447,9 +447,25 @@ BEGIN
         RETURN NEXT;
         RETURN;
     END IF;
+    -- FORBRUKT ER IKKE «BRUKT FOR ANNET INNHOLD» (Cursor P2, runde 7).
+    -- Denne grenen er alt som IKKE er `reservert` og ikke `lastet`, altså
+    -- `bundet`/`forkastet`. Den reiste `unique_violation`, og
+    -- `inndata.py:265` mapper den til `inndata_alt_lastet` — men
+    -- `feil.py:233-237` sier ordrett at ukjent, utløpt OG alt forbrukt
+    -- skal ha SAMME svar, «et skille ville vært et orakel på hvilke
+    -- jti-er som finnes». Slik den sto, svarte døren `alt_lastet` på en
+    -- jti som HAR nådd minst `bundet` og `reservasjon_ugyldig` på en som
+    -- aldri fantes: nøyaktig det orakelet, og i tillegg en løgn, for
+    -- innholdet var aldri det som skilte.
+    --
+    -- `unique_violation` beholdes der den er sann: hash-mismatch på
+    -- `lastet` (424-426), som ER «brukt for ANNET innhold», og den
+    -- virkelige `inndata_lagersti_unik`-kollisjonen. 017 skiller på samme
+    -- måte — replay/hash-konflikt mot utløpt/ugyldig — og «forbrukt uten
+    -- hash-match» hører i den siste leiren.
     IF r.status <> 'reservert' THEN
         RAISE EXCEPTION 'inndata: reservasjonen er alt forbrukt (%)',
-            r.status USING ERRCODE = 'unique_violation';
+            r.status USING ERRCODE = 'invalid_parameter_value';
     END IF;
     IF pg_catalog.now() > r.utloper THEN
         RAISE EXCEPTION 'inndata: reservasjonen er utløpt'
