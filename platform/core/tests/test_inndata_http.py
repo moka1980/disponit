@@ -338,6 +338,16 @@ def _reservasjon(m, tenant, *, utloper="now() + interval '1 hour'",
     return jti
 
 
+def _lagersti(tenant, navn="x"):
+    """En sti i TENANTENS eget navnerom — API-ets layout.
+
+    `inndata_lagersti_navnerom` (Cursor P1) krever den formen, så en test
+    som vil måle noe ANNET må sende en lovlig sti; ellers feller
+    sti-porten først og testen består av feil grunn."""
+    from api.inndata import INNDATA_ROT
+    return f"{INNDATA_ROT}/{tenant}/{navn}.bin"
+
+
 def _lastet(m, tenant, *, utloper="now() + interval '1 hour'",
             eiermodul="m57_ats"):
     """En ferdig `lastet` bunt — bindingens utgangspunkt. Returnerer
@@ -353,7 +363,8 @@ def _lastet(m, tenant, *, utloper="now() + interval '1 hour'",
         " VALUES (%s,%s,'soknadsbunt','application/zip',%s,10,%s,%s,%s,"
         f" %s,'lastet',%s,%s,{utloper},now()) RETURNING inndata_id",
         (tenant, eiermodul, MAKS, "a" * 64, key_id, b"n" * 12,
-         f"/tmp/{jti}.bin", jti, secrets.token_hex(12))).fetchone()[0]
+         _lagersti(tenant, jti), jti,
+         secrets.token_hex(12))).fetchone()[0]
 
 
 def _oppdrag(m, tenant, eiermodul, oppdragstype="rekruttering.evaluering"):
@@ -531,7 +542,8 @@ def test_kryptostrukturen_avvises_uten_a_brenne_jti(klient):
         with pytest.raises(psycopg.errors.InvalidParameterValue):
             c.execute(
                 "SELECT * FROM registrer_inndata_lastet(%s,%s,%s,%s,%s,%s,%s)",
-                (tenant, jti, 10, "a" * 64, key_id, b"\x01", "/tmp/x.bin"))
+                (tenant, jti, 10, "a" * 64, key_id, b"\x01",
+                 _lagersti(tenant)))
         c.rollback()
     finally:
         c.close()
@@ -555,6 +567,77 @@ def test_kryptostrukturen_avvises_uten_a_brenne_jti(klient):
 
 
 @pg
+def test_lagerstien_maa_ligge_i_tenantens_eget_navnerom(klient):
+    """Cursor P1: `lager_sti` hadde bare «ikke tom», mens
+    `registrer_inndata_lastet` tar den fra en runtime-kaller med EXECUTE.
+
+    En kaller kunne dermed lande en `lastet` rad som PEKER inn i en annen
+    tenants katalog — eller ut av lageret med `..`. Reaperen (egen PR),
+    hvis hele jobb er å `unlink` stien raden bærer, ville utført
+    slettingen. Nonce-hullet var udekrypterbare data; dette er
+    isolasjonsbrudd med sletting på enden.
+
+    Reservasjonen skal stå UBRENT etter et avvist forsøk, ellers har en
+    giftig sti likevel kostet kunden bunten.
+
+    MUTASJONEN SOM DREPER DENNE: fjern sti-guarden i funksjonen, eller
+    `inndata_lagersti_navnerom` på tabellen."""
+    from db import kryptering
+    tenant, _bid, _cookie, _csrf = _rigg(klient)
+    m = _migrator(tenant)
+    try:
+        jti = _reservasjon(m, tenant)
+        key_id, _dek = kryptering.hent_eller_opprett_aktiv_dek(m, tenant)
+        m.commit()
+    finally:
+        m.close()
+    rot = _lagersti(tenant).rsplit("/", 2)[0]
+    giftige = (
+        "/tmp/x.bin",                              # utenfor lageret
+        f"{rot}/en-annen-tenant/x.bin",            # FREMMED tenant
+        f"{rot}/{tenant}/../en-annen-tenant/x.bin",   # traversering
+        f"{tenant}/x.bin",                         # relativ
+    )
+    c = _runtime(tenant)
+    try:
+        for sti in giftige:
+            with pytest.raises(psycopg.errors.InvalidParameterValue):
+                c.execute("SELECT * FROM registrer_inndata_lastet"
+                          "(%s,%s,%s,%s,%s,%s,%s)",
+                          (tenant, jti, 10, "a" * 64, key_id, b"n" * 12,
+                           sti))
+            c.rollback()
+            _kontekst(c, tenant)
+        # Den ekte stien går fortsatt igjennom.
+        c.execute("SELECT * FROM registrer_inndata_lastet"
+                  "(%s,%s,%s,%s,%s,%s,%s)",
+                  (tenant, jti, 10, "a" * 64, key_id, b"n" * 12,
+                   _lagersti(tenant)))
+        c.commit()
+    finally:
+        c.close()
+    m = _migrator(tenant)
+    try:
+        _kontekst(m, tenant)
+        # Tabellen bærer den samme invarianten, uansett skrivevei.
+        with pytest.raises(psycopg.errors.CheckViolation):
+            m.execute(
+                "INSERT INTO inndata_artefakt (tenant, eiermodul, formaal,"
+                " innholdstype, maks_bytes, faktiske_bytes, innhold_sha256,"
+                " key_id, nonce, lager_sti, status, reservasjon_jti,"
+                " idempotensnokkel, utloper, lastet_ts)"
+                " VALUES (%s,'m57_ats','soknadsbunt','application/zip',"
+                "%s,10,%s,%s,%s,%s,'lastet',%s,%s,"
+                " now()+interval '1 h',now())",
+                (tenant, MAKS, "a" * 64, key_id, b"n" * 12,
+                 f"{rot}/en-annen-tenant/x.bin", secrets.token_hex(32),
+                 secrets.token_hex(12)))
+        m.rollback()
+    finally:
+        m.close()
+
+
+@pg
 def test_dek_referansen_er_bundet_til_tenantens_nokler(klient):
     """Codex P2: `key_id` kommer fra en runtime-kaller. Uten den
     sammensatte FK-en (003/005/007/011/016-formen) kunne en `lastet` rad
@@ -572,10 +655,10 @@ def test_dek_referansen_er_bundet_til_tenantens_nokler(klient):
                 " key_id, nonce, lager_sti, status, reservasjon_jti,"
                 " idempotensnokkel, utloper, lastet_ts)"
                 " VALUES (%s,'m57_ats','soknadsbunt',"
-                "'application/zip',%s,10,%s,'finnes-ikke',%s,'/tmp/x.bin',"
+                "'application/zip',%s,10,%s,'finnes-ikke',%s,%s,"
                 "'lastet',%s,%s,now()+interval '1 h',now())",
-                (tenant, MAKS, "a" * 64, b"n" * 12, secrets.token_hex(32),
-                 secrets.token_hex(12)))
+                (tenant, MAKS, "a" * 64, b"n" * 12, _lagersti(tenant),
+                 secrets.token_hex(32), secrets.token_hex(12)))
         m.rollback()
     finally:
         m.close()
@@ -753,10 +836,10 @@ def test_bundet_krever_krypto_og_lastet_ts(klient):
                 " lager_sti, status, reservasjon_jti, idempotensnokkel,"
                 " oppdrag_id, utloper, bundet_ts)"
                 " VALUES (%s,'m57_ats','soknadsbunt',"
-                "'application/zip',%s,10,%s,'/tmp/x.bin','bundet',%s,%s,%s,"
+                "'application/zip',%s,10,%s,%s,'bundet',%s,%s,%s,"
                 " now()+interval '1 h',now())",
-                (tenant, MAKS, "a" * 64, secrets.token_hex(32),
-                 secrets.token_hex(12), opp))
+                (tenant, MAKS, "a" * 64, _lagersti(tenant),
+                 secrets.token_hex(32), secrets.token_hex(12), opp))
         m.rollback()
     finally:
         m.close()

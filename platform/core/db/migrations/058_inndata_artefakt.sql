@@ -112,7 +112,21 @@ CREATE TABLE inndata_artefakt (
     -- db/kryptering.py: 12-byte nonce, som overalt ellers i repoet.
     CONSTRAINT inndata_krypto_struktur CHECK (
         (nonce IS NULL OR octet_length(nonce) = 12)
-        AND (lager_sti IS NULL OR length(btrim(lager_sti)) > 0))
+        AND (lager_sti IS NULL OR length(btrim(lager_sti)) > 0)),
+    -- FS-NAVNEROMMET er tenantens (Cursor P1). `lager_sti` hadde bare
+    -- «ikke tom», mens `registrer_inndata_lastet` tar den fra en
+    -- runtime-kaller med EXECUTE. En kaller kunne dermed lande en `lastet`
+    -- rad som PEKER inn i en annen tenants katalog — eller ut av lageret
+    -- med `..` — og reaperen (egen PR), hvis hele jobb er å `unlink`
+    -- stien raden bærer, ville utført slettingen. Nonce-hullet var
+    -- udekrypterbare data; dette er isolasjonsbrudd med sletting på
+    -- enden. Invarianten er API-ets egen layout:
+    -- `<rot>/<tenant>/<uuid>.bin`.
+    CONSTRAINT inndata_lagersti_navnerom CHECK (
+        lager_sti IS NULL OR (
+            lager_sti LIKE '/%'
+            AND position('..' in lager_sti) = 0
+            AND position('/' || tenant || '/' in lager_sti) > 0))
 );
 -- «Én bunt, ett oppdrag» er en INVARIANT, ikke en kommentar (Cursor P1-3):
 -- uten UNIQUE kunne to `lastet`-rader bindes til det samme oppdraget, og
@@ -341,6 +355,19 @@ BEGIN
        OR p_sha256 IS NULL THEN
         RAISE EXCEPTION 'inndata: krypto/sti er strukturelt ugyldig'
             ' (nonce=% B)', octet_length(p_nonce)
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- Stien må ligge i TENANTENS eget navnerom (Cursor P1). Samme
+    -- invariant som `inndata_lagersti_navnerom` på tabellen, men med det
+    -- kanoniske feilkontraktet: en giftig sti skal gi
+    -- `inndata_reservasjon_ugyldig` og la reservasjonen stå `reservert`,
+    -- ikke brenne jti-en på en peker inn i en fremmed katalog som
+    -- reaperen senere ville slettet.
+    IF p_sti NOT LIKE '/%'
+       OR position('..' in p_sti) > 0
+       OR position('/' || p_tenant || '/' in p_sti) = 0 THEN
+        RAISE EXCEPTION 'inndata: lagerstien % ligger utenfor tenantens'
+            ' navnerom', p_sti
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
     UPDATE public.inndata_artefakt
