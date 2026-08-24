@@ -148,10 +148,16 @@ def main() -> int:
                          "kilde": {"start": start,
                                    "slutt": start + len(sitat),
                                    "sitat": sitat}})
-        status = ("innstilt_avslag" if any(
-            f["kategori"] == "krav_ikke_dokumentert" for f in funn)
-            else "vurderes" if funn else "anbefalt")
-        if status == "anbefalt":
+        # TRAFIKKLYSET ER IKKE SEEDENS Å PÅSTÅ (Codex P1). Den kanoniske
+        # artefakten `evaluering.evaluer_kandidat` returnerer har ingen
+        # `status` i det hele tatt — flaten utleder den i
+        # `api/rekruttering.py`. Seeden skrev feltet likevel, med en KOPI
+        # av utledningen, og kopien bar nettopp feilen som ble rettet der:
+        # «ingen funn» ble til «Anbefalt» uavhengig av oppfylte krav, så
+        # «Søker uten sky» sto grønt i demoen. En demo som viser noe annet
+        # enn produksjonsveien er ikke en demo. Feltet utelates nå, og
+        # dermed er det ÉN utledning igjen — flatens egen.
+        if not funn and all(oppfylt.values()):
             antall_anbefalt += 1
         # Evidensen regnes av NØYAKTIG de lagrede bytene (CodeRabbit
         # major): dokumentet bygges én gang, og både størrelse og hash
@@ -176,7 +182,6 @@ def main() -> int:
             " VALUES (%s,%s,%s,%s,%s)",
             (tenant, pid, kid, json.dumps({
                 "oppfylt": oppfylt, "vekter": VEKTER, "funn": funn,
-                "status": status,
                 "intervjusporsmal":
                     [f"Fortell mer om erfaringen din med "
                      f"{k}." for k, v in oppfylt.items() if v]}), sha))
