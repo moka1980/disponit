@@ -175,6 +175,39 @@ def test_scopet_gater_reservasjonen(klient, inndata_rot):
 
 
 @pg
+def test_auth_avgjores_for_kroppen_leses(klient, inndata_rot, monkeypatch):
+    """Codex P1 / Cursor P1-2: hele kroppen — inntil 64 MiB — ble
+    strømmet, hashet og `join`-et FØR `_browserkontekst`. En avsender uten
+    lov til å laste opp kunne dermed binde hundrevis av MiB i
+    API-prosessen per samtidige forespørsel.
+
+    Statuskoden alene beviser ingen REKKEFØLGE: den gamle koden svarte
+    også 403, bare etter å ha bufret. Sensoren under måler ordenen — alt
+    som rører kroppen i endepunktet går gjennom `hashlib.sha256`.
+
+    MUTASJONEN SOM DREPER DENNE: flytt strøm-løkken tilbake foran
+    auth-kallet. Da konstrueres hasheren først, og sensoren svarer i
+    stedet for ruten."""
+    from api import inndata as inndatamodul
+
+    class _Sensor:
+        @staticmethod
+        def sha256(*_a, **_k):
+            raise AssertionError("kroppen ble hashet FØR auth var avgjort")
+
+    monkeypatch.setattr(inndatamodul, "hashlib", _Sensor)
+    from api import sesjon as sesjonmodul
+    bid = _bruker_for("innsyn", ["leser"])          # mangler bestilling:opprett
+    cookie, csrf = _sesjon_for(bid)
+    r = klient.put("/v1/inndata/opplast/" + "f" * 48,
+                   content=b"P" * (1024 * 1024),
+                   cookies={sesjonmodul.C_SESJON: cookie},
+                   headers={"X-Disponit-CSRF": csrf,
+                            "content-type": "application/zip"})
+    assert r.status_code in (401, 403), r.text
+
+
+@pg
 def test_taket_avviser_for_stor_kropp(klient, inndata_rot, monkeypatch):
     """Kontrakttaket i endepunktet (transport-taket i middleware deler
     tallet): én byte over → 413, og reservasjonen står UBRUKT — et
