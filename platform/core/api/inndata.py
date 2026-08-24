@@ -62,15 +62,35 @@ async def opplast_endepunkt(tjeneste, request):
     """PUT /v1/inndata/opplast/{jti} — rå zip-kropp, strømmet."""
     from .app import INNDATA_MAKS_FYSISK, _rid
     from .policyadmin_http import (_Avbrudd, _browserkontekst, _feil,
-                                   _med_conn, _ok)
+                                   _gjenopprett_kontekst, _med_conn, _ok)
     rid = _rid(request)
     jti = request.path_params["jti"]
 
-    # Strømmen leses FØR db-arbeidet: kroppen finnes bare én gang, og
-    # auth-rollback-dansen i _med_conn skal ikke stå mellom chunkene.
-    # Taket håndheves p.t. to steder med samme tall: middleware-telleren
-    # (transport) og samlingen her (kontrakt) — reservasjonens eget tak
-    # møter målingen i 058-funksjonen til slutt.
+    # AUTH FØRST, KROPP ETTERPÅ (Codex P1). Denne ruten tar imot inntil 64
+    # MiB, og strømmen ble tidligere lest, hashet og `join`-et FØR
+    # `_browserkontekst` — `join` dupliserer i tillegg bufferet et kort
+    # øyeblikk. En klient UTEN gyldig sesjon kunne dermed binde hundrevis
+    # av MiB i API-prosessen per samtidige forespørsel, mot ~256 KiB / ~6
+    # MiB for alle andre ruter: en uautentisert flate 10-250x større enn
+    # noen annen. Rate-grensen i `_autentiser` hjalp ikke, for den ligger
+    # BAK auth-en som ikke hadde skjedd ennå.
+    #
+    # Transaksjonen her ser kun headere og cookies, og slippes tilbake til
+    # poolen (rollback i `gi_tilbake`) før første byte av kroppen leses.
+    def autentiser(conn):
+        return _browserkontekst(tjeneste, request, conn, rid,
+                                "bestilling:opprett")
+
+    kontekst = _med_conn(tjeneste, rid, autentiser)
+    if not isinstance(kontekst, tuple):
+        return kontekst      # ferdig kodet feilsvar: 401/403/csrf/drift
+    tenant, bid = kontekst
+
+    # Kroppen finnes bare én gang, og leses først NÅ — etter at det er
+    # avgjort at avsenderen har lov til å sende den. Taket håndheves to
+    # steder med samme tall: middleware-telleren (transport) og samlingen
+    # her (kontrakt) — reservasjonens eget tak møter målingen i
+    # 058-funksjonen til slutt.
     hasher = hashlib.sha256()
     deler: list[bytes] = []
     lest = 0
@@ -89,8 +109,12 @@ async def opplast_endepunkt(tjeneste, request):
 
     def kjor(conn):
         from db import kryptering
-        tenant, _bid = _browserkontekst(tjeneste, request, conn, rid,
-                                        "bestilling:opprett")
+        # Auth er alt avgjort over. Her settes bare `disponit.*` på nytt:
+        # `sett_kontekst` er SET LOCAL og lever ikke på tvers av
+        # forbindelser, og dette er en ANNEN forbindelse enn auth-en
+        # brukte. Å kjøre `_browserkontekst` en gang til ville brent en
+        # ekstra rate-grense-enhet på den samme forespørselen.
+        _gjenopprett_kontekst(conn, tenant, bid, rid)
         # Reservasjonen slås opp via 058-funksjonen alene (den eier
         # engangs-semantikken); her trengs bare krypto + fil FØR kallet.
         key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(conn, tenant)
