@@ -98,6 +98,7 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'reserver_inndata(text,text,text,bigint)', 'disponit_domene_eier'),
     ('FUNCTION', 'registrer_inndata_lastet(text,text,bigint,text,text,bytea,text)', 'disponit_domene_eier'),
     ('FUNCTION', 'bind_inndata(text,uuid,bigint,text)',     'disponit_domene_eier'),
+    ('FUNCTION', 'hent_inndata_for_modul(uuid,text)',       'disponit_domene_eier'),
     -- 044: periodisk kontroll — planens herdede funksjoner eies av claimer
     -- (tabellene er migrator-eide med eksplisitte grants — runtime når dem
     -- KUN gjennom funksjonene, og CURRENT_USER-policyen ser på tvers).

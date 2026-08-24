@@ -890,6 +890,9 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     async def inndata_opplast(request: Request) -> Response:
         return await inndata_http.opplast_endepunkt(tjeneste, request)
 
+    def inndata_hent(request: Request) -> Response:
+        return inndata_http.hent_endepunkt(tjeneste, request)
+
     # M-57 utførelsesarmen: leseflaten + signeringen gjennom 056-kjeden.
     from . import rekruttering as rekruttering_http
 
@@ -1085,6 +1088,8 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               methods=["POST"]),
         Route("/v1/inndata/opplast/{jti:str}", inndata_opplast,
               methods=["PUT"]),
+        Route("/v1/inndata/hent/{inndata_id:uuid}", inndata_hent,
+              methods=["POST"]),
         Route("/v1/rekruttering/prosesser", rekruttering_prosesser,
               methods=["GET"]),
         Route("/v1/rekruttering/prosesser/{prosess_id}/blinding",
@@ -1523,6 +1528,9 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("GET",  "/v1/rekruttering/prosesser"):  "decisions:read",
     ("POST", "/v1/inndata/reserver"):        "bestilling:opprett",
     ("PUT",  "/v1/inndata/opplast/{jti:str}"): "bestilling:opprett",
+    # Modulveien: retten er CLAIMET (modultoken + plukket oppdrag), samme
+    # None-klasse som claim/kvittering — auth avgjøres i endepunktet.
+    ("POST", "/v1/inndata/hent/{inndata_id:uuid}"): ORDRESCOPE + "<prefiks>",
     ("POST", "/v1/rekruttering/prosesser/{prosess_id}/blinding"):
         "bestilling:opprett",
     ("POST", "/v1/rekruttering/lister/{liste_id:uuid}/signer"):
