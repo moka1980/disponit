@@ -89,6 +89,11 @@ APPEND_ONLY_TRIGGERE = (
     ("kandidat_intervjusporsmal", "kandidat_intervjusporsmal_vakt"),
     ("kandidat_utsendingsdata", "kandidat_utsendingsdata_vakt"),
     ("kandidat_avmaskering", "kandidat_avmaskering_vakt"),
+    # 058: inndata-artefaktet nekter DELETE på samme måte (vakten avviser
+    # alt som ikke er UPDATE). Uten linjen her velter oppryddingen på
+    # DELETE av `oppdrag`/`tenant_nokler`, som tabellen har FK til — den
+    # nøyaktige nabo-regresjonen 057-lagrene over ble registrert for.
+    ("inndata_artefakt", "inndata_artefakt_vakt"),
     ("reparasjonsoperasjoner", "reparasjon_vakt"),
     # PR-007: bevis og konflikt er append-only, generasjonen har
     # overgangsvakt. Alle tre nekter DELETE — som de skal.
@@ -173,6 +178,10 @@ RYDDETABELLER = ("bestillingsplan_tick", "bestillingsplan_vindu",
                  "kandidat_evalueringsartefakt", "kandidat_intervjusporsmal",
                  "kandidat_utsendingsdata", "kandidat_avmaskering",
                  "rekrutteringsprosess",
+                 # 058: inndata-artefaktet peker på BÅDE `oppdrag`
+                 # (bindingen) og `tenant_nokler` (DEK-referansen), så det
+                 # må ut før begge.
+                 "inndata_artefakt",
                  "oppdrag", "reparasjonsoperasjoner", "unntak",
                  "revisjonslogg", "attestasjon_jti", "idempotens",
                  # `policy_hode` FØR `policyer`: pekeren har FK dit.
