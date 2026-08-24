@@ -586,6 +586,58 @@ def test_signering_avvises_nar_kandidatdata_er_reapet(klient):
 
 
 @pg
+def test_replay_overlever_at_kandidatdata_ble_reapet(klient):
+    """Cursor P2 (08:51): speilet av testen over — reap-porten har det
+    SAMME `not replay`-unntaket som spissporten, og bare spissporten
+    hadde en test på det.
+
+    Unntaket er riktig og nødvendig: signerer eieren, og 201-et går tapt
+    på veien hjem, ber `ui.rekruttering.usikkert_utfall` henne prøve igjen
+    med løftet om at forsøket gjentar den SAMME operasjonen — og `api.js`
+    sender samme nøkkel. Løper slettefristen ut i mellomtiden, ville en
+    reap-port uten unntaket svart 409 `kandidatdata_slettet` på en
+    signatur som STÅR, og flaten leser 409 som et definitivt avslag.
+    Uten en test kan unntaket forsvinne i en omskriving av portstabelen
+    (fire runder til nå) uten at CI ser det.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `not replay and` fra
+    `kandidatdata_slettet`-porten, eller flytt `_fullfort_replay` ned
+    under den.
+    """
+    pid, rot, rot_hash = _seed_prosess()
+    bid = _bruker("sjef-reap-replay", ["admin"])
+    cookie, csrf = _browsersesjon(bid)
+    nokkel = secrets.token_urlsafe(24)
+    forste = _post(klient, cookie, csrf,
+                   f"/v1/rekruttering/lister/{rot}/signer",
+                   {"innhold_hash": rot_hash}, idem=nokkel)
+    assert forste.status_code == 201, forste.text
+    _reap(pid)
+    replay = _post(klient, cookie, csrf,
+                   f"/v1/rekruttering/lister/{rot}/signer",
+                   {"innhold_hash": rot_hash}, idem=nokkel)
+    assert replay.status_code == 201, replay.text
+    # …og replayet la ingen ny rad: det er den samme signaturen.
+    m = _migrator()
+    try:
+        rader = m.execute(
+            "SELECT operasjonsnokkel FROM utsendingssignatur"
+            " WHERE tenant=%s AND liste_id=%s", (TEN, rot)).fetchall()
+        assert rader == [(nokkel,)], rader
+        m.rollback()
+    finally:
+        m.close()
+    # …og porten står: en FERSK nøkkel etter reaping er fortsatt 409, og
+    # det er `kandidatdata_slettet` — ikke `serien_alt_signert`, som ville
+    # betydd at reap-porten aldri ble målt i det hele tatt.
+    fersk = _post(klient, cookie, csrf,
+                  f"/v1/rekruttering/lister/{rot}/signer",
+                  {"innhold_hash": rot_hash})
+    assert fersk.status_code == 409, fersk.text
+    assert fersk.json()["feil"] == "kandidatdata_slettet"
+
+
+@pg
 def test_replay_med_annen_hash_er_konflikt(klient):
     """Codex P2 (runde 4): forbigangen for et fullført replay hører til
     spissporten ALENE. Spissporten spør om radens tilstand, og det
