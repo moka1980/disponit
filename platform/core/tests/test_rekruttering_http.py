@@ -642,6 +642,15 @@ def test_vektporten_er_skriveveiens_egen():
     assert not _vekter_lesbare({"drift": "3"}), "streng blir NaN i flaten"
     assert not _vekter_lesbare({"drift": 1.5}), "ranger krever heltall"
     assert not _vekter_lesbare(["drift"]), "ikke engang et objekt"
+    # Codex P2 (runde 10): et heltall over `Number.MAX_SAFE_INTEGER` er
+    # avrundet ALT i flatens `JSON.parse` — den viste vekten er ikke
+    # lenger den rangerte. Stort nok blir det `Infinity`, og skyverens
+    # tak (utledet av de samme verdiene) står igjen på 10 mens poengene
+    # er uendelige. Grensen er inklusiv: det siste eksakte tallet er en
+    # lovlig vekt.
+    assert _vekter_lesbare({"drift": 2 ** 53 - 1}), "siste eksakte tall"
+    assert not _vekter_lesbare({"drift": 2 ** 53}), "avrundes i flaten"
+    assert not _vekter_lesbare({"drift": 10 ** 400}), "blir `Infinity`"
 
 
 @pg

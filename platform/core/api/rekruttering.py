@@ -126,6 +126,16 @@ def _vekter_lesbare(v: object) -> bool:
     aldri `modules.*` (ingen linje her gjør det), så det står som en
     LESNING av samme dom, ikke som en delt maskin.
 
+    …og taket er samme dom, lest samme sted (Codex P2, runde 10).
+    `ranger` avviser en vekt over `Number.MAX_SAFE_INTEGER` fordi et
+    heltall over det siste eksakte `double`-tallet er avrundet ALT i
+    flatens `JSON.parse`: den viste vekten og poengsummen den regnes
+    inn i er da ikke lenger evalueringens. Stort nok blir tallet
+    `Infinity`, og skyverens tak — som utledes av de samme verdiene —
+    står igjen på 10 mens poengene er uendelige. Porten står også her,
+    for det er HER svaret til flaten settes sammen: en vekt vi ikke kan
+    formidle er ingen opplysning, og faller til reserven under.
+
     Den ekte lukkingen er formen ved LAGRINGSGRENSEN — eiers K2-dom
     A (#176-tråden): CHECK/trigger på `kandidat_evalueringsartefakt.
     artefakt`, og rå INSERT trukket tilbake fra runtime. Denne porten er
@@ -135,7 +145,7 @@ def _vekter_lesbare(v: object) -> bool:
     return (isinstance(v, dict) and bool(v)
             and all(isinstance(k, str) for k in v)
             and all(isinstance(x, int) and not isinstance(x, bool)
-                    and x >= 0 for x in v.values()))
+                    and 0 <= x <= 2 ** 53 - 1 for x in v.values()))
 
 
 def _kandidater(conn, tenant, prosess_id):

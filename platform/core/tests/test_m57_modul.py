@@ -1307,6 +1307,20 @@ def test_rangeringen_er_poeng_med_synlige_vekter():
     # ikke en feil), og skal ikke felles av boolsk-porten.
     assert evaluering.ranger({"k": {"drift": True}},
                              {"drift": 0})[0]["poeng"] == 0
+    # Codex P2 (runde 10): Python teller vilkårlig stort, men vekten og
+    # nedbrytningen SKAL leses av et menneske foran en irreversibel
+    # signering — og leseren er en `double`. Over det siste eksakte
+    # heltallet er avrundingen alt skjedd i `JSON.parse`, så serverens
+    # poengsum og den viste er to ulike tall på samme vekt.
+    for vekt in (evaluering.VEKT_EKSAKT_MAKS + 1, 10 ** 400):
+        with pytest.raises(evaluering.Evalueringsfeil) as e:
+            evaluering.ranger({"k": {"drift": True}}, {"drift": vekt})
+        assert e.value.kode == "ugyldige_vekter", vekt
+    # Positiv kontroll: grensen er inklusiv, og poengsummen er vekten.
+    assert evaluering.ranger(
+        {"k": {"drift": True}},
+        {"drift": evaluering.VEKT_EKSAKT_MAKS},
+    )[0]["poeng"] == evaluering.VEKT_EKSAKT_MAKS
 
 
 def test_port27_5001_avvises_ved_validering():
