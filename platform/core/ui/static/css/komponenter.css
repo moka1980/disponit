@@ -844,8 +844,11 @@ html[data-visning="landing"] .skall-hoved {
 
 .skall-modulgruppe-liste { list-style: none; margin: 0; padding: 0; }
 
-/* Modulvalget er en knapp, ikke en lenke: den bytter kontekstpanelet, den
-   navigerer ikke. Tekstbasert, som §2.1 krever. */
+/* Modulvalget er en LENKE når modulen har en arbeidsflate å navigere til, og
+   en knapp når den bare bytter kontekstpanelet (Codex P2). De to ser like ut
+   — det er samme rad i samme meny — så regelen gjelder begge elementformene.
+   Tekstbasert, som §2.1 krever. Understrekingen er av av samme grunn som i
+   toppnavigasjonen: en meny der hver rad er strøket under blir en vegg. */
 .skall-modul {
   background: none;
   border: 0;
@@ -856,6 +859,7 @@ html[data-visning="landing"] .skall-hoved {
   font: inherit;
   padding: var(--sp-1) var(--sp-2);
   text-align: left;
+  text-decoration: none;
   width: 100%;
 }
 

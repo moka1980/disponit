@@ -338,6 +338,12 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
     el("label", { class: "sr-only", for: "skall-sok",
       text: t("ui.shell.sok_merkelapp") }), sokefelt);
 
+  // Modul → flate-ruten dens, UTLEDET av rutenes egen deklarasjon (aldri et
+  // håndholdt kart som kan drifte fra sitekartet). Kartet bærer bare ruter
+  // økten FAKTISK har: samme gating som toppmenyen hadde, ingen ny dør.
+  const MODULFLATE = new Map(
+    ruter.filter((r) => r.modulflate).map((r) => [r.modulflate, r.nokkel]));
+
   // HVILKEN MODUL SER JEG PÅ (Codex P2). Valget er en tilstand menyen bærer,
   // ikke en engangshendelse: knappene tegnes på nytt for hvert tastetrykk i
   // søket, og uten at valget er lagret her ville markeringen forsvunnet i det
@@ -385,14 +391,25 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
           text: t(`site.omrade.${omrade.id}`) }),
         el("ul", { class: "skall-modulgruppe-liste" },
           treff.map((n) => {
-            const kn = el("button", { type: "button", class: "skall-modul",
-              text: t(`site.katalog.m${n}.navn`) });
-            kn.addEventListener("click", () => {
-              // Kortet ER inngangen når modulen har en flate; panelet
-              // er reserven for moduler som ennå ikke har noen.
-              if (MODULFLATE[n]) window.location.hash = `#/${MODULFLATE[n]}`;
-              else visKontekst(n);
-            });
+            // EN NAVIGASJON ER EN LENKE (Codex P2). Kortet ER inngangen når
+            // modulen har en flate — og etter at oppføringen forsvant fra
+            // toppnavigasjonen er det den ENESTE annonserte inngangen. Som
+            // `<button>` med `location.hash` mistet den da alt en lenke har
+            // med seg: åpne i ny fane, kopier adressen, se hvor den peker før
+            // man klikker — og hjelpemidlene fikk «knapp» der brukeren står
+            // foran en navigasjon. Adressen er den samme som dyplenken, så
+            // `href` er ikke en ny mekanisme, bare den ærlige formen for den
+            // som alt fantes.
+            //
+            // Knappen beholdes for moduler UTEN flate: der finnes det ingen
+            // adresse å peke på, og panelet er en visning i samme side.
+            const flate = MODULFLATE.get(n);
+            const navn = t(`site.katalog.m${n}.navn`);
+            const kn = flate
+              ? el("a", { class: "skall-modul", href: `#/${flate}`, text: navn })
+              : el("button", { type: "button", class: "skall-modul",
+                text: navn });
+            if (!flate) kn.addEventListener("click", () => visKontekst(n));
             modulknapper.set(n, kn);
             return el("li", {}, kn);
           }))));
@@ -409,16 +426,6 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
   // `fokuser` er sant for brukerens eget klikk og usant for et programmatisk
   // oppslag: den som fyller panelet uten at brukeren ba om det, skal ikke rykke
   // fokus ut av der brukeren står.
-  // Modul → arbeidsflate (eiers UX-funn 24/8): venstremenyen er
-  // katalogen, toppnavigasjonen er flatene — men en modul som HAR en
-  // flate skal kunne åpnes derfra. Kartet er PINNET her (to oppslag),
-  // og lenken vises kun når ruten faktisk finnes i brukerens
-  // tilgjengelige ruter — samme gating som toppmenyen, ingen ny dør.
-  // Modul → flate-ruten dens, UTLEDET av rutenes egen deklarasjon
-  // (aldri et håndholdt kart som kan drifte fra sitekartet).
-  const MODULFLATE = {};
-  for (const r of ruter) if (r.modulflate) MODULFLATE[r.modulflate] = r.nokkel;
-
   function visKontekst(n, { fokuser = true } = {}) {
     // Panelet er detaljvisningen til MENYEN, og skal ikke kunne brukes til å
     // hente fram en modul kunden ikke har: den som kaller utenfra ser ikke

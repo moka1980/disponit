@@ -742,17 +742,30 @@ test("AppShell: modulkortet ER inngangen til flaten; toppnav bærer bare plattfo
   assert.ok(rot.querySelector('nav a[href="#/oversikt"]'));
   assert.equal(rot.querySelector('nav a[href="#/rekruttering"]'), null,
     "modulflate i toppnav — den bor i venstremenyen nå");
-  // Kortet navigerer.
-  window.location.hash = "";
-  [...brett.querySelectorAll("button.skall-modul")]
-    .find((b) => b.textContent === t("site.katalog.m57.navn")).click();
-  assert.equal(window.location.hash, "#/rekruttering",
-    "modulkortet åpnet ikke flaten");
-  // Modul UTEN flate får panelet, aldri en død navigasjon.
-  [...brett.querySelectorAll("button.skall-modul")]
-    .find((b) => b.textContent === t("site.katalog.m1.navn")).click();
+  // Kortet navigerer — og en navigasjon er en LENKE (Codex P2). Kortet er den
+  // eneste annonserte inngangen etter at oppføringen forlot toppnavigasjonen,
+  // så den må bære adressen sin: ny fane, kopier lenke, og «lenke» framfor
+  // «knapp» for den som hører flaten i stedet for å se den.
+  const kort = (n) => [...brett.querySelectorAll(".skall-modul")]
+    .find((e) => e.textContent === t(`site.katalog.m${n}.navn`));
+  assert.equal(kort(57).tagName, "A",
+    "modulkortet med flate er ikke en lenke");
+  assert.equal(kort(57).getAttribute("href"), "#/rekruttering",
+    "modulkortet peker ikke på flaten sin");
+  // `href` er hele påstanden, og med vilje: fragmentnavigasjonen ved klikk er
+  // nettleserens jobb nå, ikke vår, og jsdom utfører den ikke. Å legge en
+  // klikk-handler oppå lenken bare for å kunne måle den her ville vært å
+  // gjenreise mekanismen funnet ba oss fjerne. Adressen er den samme som
+  // dyplenken — `ruter.js` svarer på `#/rekruttering` — så det den peker på
+  // er alt dekket av rutertestene.
+  window.location.hash = "#/oversikt";
+  // Modul UTEN flate får panelet, aldri en død navigasjon — og skal fortsatt
+  // være en knapp: det finnes ingen adresse å peke på.
+  assert.equal(kort(1).tagName, "BUTTON",
+    "en flateløs modul utgir seg for å være en lenke");
+  kort(1).click();
   assert.ok(brett.querySelector(".skall-kontekst-tittel"),
     "flateløs modul mistet kontekstpanelet");
-  assert.equal(window.location.hash, "#/rekruttering",
+  assert.equal(window.location.hash, "#/oversikt",
     "flateløs modul endret adressen");
 });
