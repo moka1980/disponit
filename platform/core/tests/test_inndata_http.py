@@ -230,6 +230,91 @@ def test_reservasjonen_er_replay_trygg_paa_idempotensnokkelen(klient,
 
 
 @pg
+def test_gjenspill_av_utlopt_reservasjon_laser_ikke_nokkelen(klient,
+                                                            inndata_rot):
+    """Cursor P2: gjenspillet svarte 201 med en UBRUKELIG jti.
+
+    En reservasjon som fortsatt står `reservert` etter fristen er død:
+    `registrer_inndata_lastet` avviser jti-en på `utloper`, og UNIQUE på
+    `(tenant, idempotensnokkel)` sperrer en ny rad under den samme
+    nøkkelen. Klienten som mistet 201-et og prøver igjen etter fristen
+    fikk altså tilbake nøyaktig den jti-en som ikke lenger virker, og
+    hadde ingen vei videre — verken opplasting eller ny reservasjon.
+    Nettopp det tapet er grunnen til at gjenspillet finnes.
+
+    Konflikt er det ærlige svaret: nøkkelen er oppbrukt, ta en ny.
+
+    MUTASJONEN SOM DREPER DENNE: fjern utløps-grenen i gjenspillet — da
+    blir dette en 201 igjen."""
+    tenant, _bid, cookie, csrf = _rigg(klient)
+    nokkel = secrets.token_hex(12)
+    m = _migrator(tenant)
+    try:
+        _kontekst(m, tenant)
+        jti = _reservasjon(m, tenant, idem=nokkel,
+                           utloper="now() - interval '1 second'")
+        m.commit()
+    finally:
+        m.close()
+
+    r = _reserver(klient, cookie, csrf, idem=nokkel)
+    assert r.status_code == 409, r.text
+    assert r.json()["feil"] == "idempotenskonflikt"
+    # …og den utløpte raden er URØRT: konflikten forlenger ingenting og
+    # brenner ingenting. Reaperen (egen PR) er den som rydder den.
+    m = _migrator(tenant)
+    try:
+        _kontekst(m, tenant)
+        rad = m.execute(
+            "SELECT status, lager_sti FROM inndata_artefakt"
+            " WHERE tenant=%s AND reservasjon_jti=%s",
+            (tenant, jti)).fetchone()
+        m.rollback()
+    finally:
+        m.close()
+    assert rad == ("reservert", None)
+
+    # En NY nøkkel er veien ut, og den virker.
+    ny = _reserver(klient, cookie, csrf)
+    assert ny.status_code == 201, ny.text
+    assert ny.json()["reservasjon_jti"] != jti
+
+
+@pg
+def test_nokkel_brukt_for_annen_reservasjon_gir_idempotenskonflikt(
+        klient, inndata_rot):
+    """Cursor P2: `unique_violation` → 409 `idempotenskonflikt` var
+    umålt over HTTP.
+
+    058 reiser den når en nøkkel gjenbrukes for en ANNEN kombinasjon, og
+    `reserver_endepunkt` mapper den — men ingen test gikk gjennom ruten,
+    så en regresjon som gjorde mappingen til en 500 (eller til
+    `request_feilformet`, siden `InvalidParameterValue` fanges rett ved
+    siden av) ville passert CI. Nabokontrakten for bestilling måles i
+    `test_outbox_bestilling.py`.
+
+    HTTP-laget låser `eiermodul`/`formaal` til den ene lovlige
+    kombinasjonen, så den ANDRE reservasjonen fabrikkeres på `maks_bytes`
+    — det tredje feltet 058 sammenligner.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `except UniqueViolation` i
+    `reserver_endepunkt`, eller kombinasjonsvakten i 058."""
+    tenant, _bid, cookie, csrf = _rigg(klient)
+    nokkel = secrets.token_hex(12)
+    m = _migrator(tenant)
+    try:
+        _kontekst(m, tenant)
+        _reservasjon(m, tenant, idem=nokkel, maks=MAKS - 1)
+        m.commit()
+    finally:
+        m.close()
+
+    r = _reserver(klient, cookie, csrf, idem=nokkel)
+    assert r.status_code == 409, r.text
+    assert r.json()["feil"] == "idempotenskonflikt"
+
+
+@pg
 def test_scopet_gater_reservasjonen(klient, inndata_rot):
     from api import sesjon as sesjonmodul
     bid = _bruker_for("innsyn", ["leser"])
@@ -324,21 +409,25 @@ def _runtime(tenant):
 
 
 def _reservasjon(m, tenant, *, utloper="now() + interval '1 hour'",
-                 eiermodul="m57_ats"):
+                 eiermodul="m57_ats", idem=None, maks=None):
     """En reservasjon satt inn DIREKTE av migrator.
 
     Ikke via `reserver_inndata`: flere av testene under trenger en frist i
     fortiden, og `utloper` er bindingsfelt — `inndata_artefakt_vakt`
     nekter å endre den i ettertid, også for migrator. Vakten er BEFORE
     UPDATE OR DELETE, så innsettingen er den ene lovlige veien til en rad
-    som alt er utløpt, uten å skru av en trigger som skal stå på."""
+    som alt er utløpt, uten å skru av en trigger som skal stå på.
+
+    `idem`/`maks` er for testene som måler HTTP-gjenspillet: de trenger en
+    rad HTTP-ruten kan treffe med en KJENT nøkkel."""
     jti = secrets.token_hex(32)
     m.execute(
         "INSERT INTO inndata_artefakt (tenant, eiermodul, formaal,"
         " innholdstype, maks_bytes, reservasjon_jti, idempotensnokkel,"
         " utloper)"
         f" VALUES (%s,%s,'soknadsbunt','application/zip',%s,%s,%s,{utloper})",
-        (tenant, eiermodul, MAKS, jti, secrets.token_hex(12)))
+        (tenant, eiermodul, maks or MAKS, jti,
+         idem or secrets.token_hex(12)))
     return jti
 
 

@@ -318,6 +318,25 @@ BEGIN
                 r.eiermodul, r.formaal, r.maks_bytes
                 USING ERRCODE = 'unique_violation';
         END IF;
+        -- …men et gjenspill må gi et BRUKBART svar (Cursor P2). En
+        -- reservasjon som fortsatt står `reservert` etter fristen er død:
+        -- `registrer_inndata_lastet` avviser jti-en på `utloper`, og
+        -- UNIQUE på `(tenant, idempotensnokkel)` sperrer en ny rad under
+        -- den samme nøkkelen. Uten denne grenen svarte vi 201 med en jti
+        -- som ikke kan brukes til noe, og klienten satt fast på nøkkelen
+        -- sin uten noen vei ut — nettopp tapet gjenspillet finnes for å
+        -- redde. Konflikt er det ærlige svaret: nøkkelen er oppbrukt, ta
+        -- en ny. Samme errcode som den andre konfliktarmen, så API-et
+        -- svarer `idempotenskonflikt` uten en ny feilvei.
+        --
+        -- MERK at dette er en SMAL gren: `lastet` og `bundet` gjenspilles
+        -- fortsatt uansett frist — der finnes bunten, og referansen er
+        -- det klienten mistet.
+        IF r.status = 'reservert' AND pg_catalog.now() > r.utloper THEN
+            RAISE EXCEPTION 'reserver_inndata: nøkkelen hører til en'
+                ' UTLØPT reservasjon (%)', r.utloper
+                USING ERRCODE = 'unique_violation';
+        END IF;
         -- Gjenspill: samme svar som første gang. Reservasjonen kan i
         -- mellomtiden ha blitt `lastet` eller `bundet` — referansen og
         -- jti-en er like fullt de samme, og det er nettopp DEM klienten
