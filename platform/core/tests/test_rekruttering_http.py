@@ -436,6 +436,41 @@ def test_replay_overlever_at_serien_ble_redigert_videre(klient):
 
 
 @pg
+def test_replay_med_annen_hash_er_konflikt(klient):
+    """Codex P2 (runde 4): forbigangen for et fullført replay hører til
+    spissporten ALENE. Spissporten spør om radens tilstand, og det
+    spørsmålet er avlyst av at signaturen står; hashen spør om KROPPENS
+    påstand om hva signataren leste, og den påstanden er kallerens. Med
+    forbigangen på begge fikk samme nøkkel + liste + signatar med en ANNEN
+    `innhold_hash` 201: endepunktet bekreftet innhold kalleren aldri
+    signerte, og en gjenbrukt nøkkel med endret inndata slapp unna
+    konfliktregelen.
+
+    MUTASJONEN SOM DREPER DENNE: sett `not replay and` tilbake foran
+    hash-porten.
+    """
+    _pid, rot, rot_hash = _seed_prosess()
+    bid = _bruker("sjef-replay-hash", ["admin"])
+    cookie, csrf = _browsersesjon(bid)
+    nokkel = secrets.token_urlsafe(24)
+    forste = _post(klient, cookie, csrf,
+                   f"/v1/rekruttering/lister/{rot}/signer",
+                   {"innhold_hash": rot_hash}, idem=nokkel)
+    assert forste.status_code == 201, forste.text
+    # SAMME nøkkel, liste og signatar — men kroppen påstår et annet innhold.
+    r = _post(klient, cookie, csrf,
+              f"/v1/rekruttering/lister/{rot}/signer",
+              {"innhold_hash": "f" * 64}, idem=nokkel)
+    assert r.status_code == 409, r.text
+    assert r.json()["feil"] == "innhold_endret"
+    # …og det EKTE replayet — samme hash — går fortsatt igjennom.
+    igjen = _post(klient, cookie, csrf,
+                  f"/v1/rekruttering/lister/{rot}/signer",
+                  {"innhold_hash": rot_hash}, idem=nokkel)
+    assert igjen.status_code == 201, igjen.text
+
+
+@pg
 def test_gjenbrukt_idempotensnokkel_er_409_ikke_500(klient):
     """Codex P2: gjenbrukes nøkkelen på en ANNEN liste, reiser
     `signer_utsendingsliste` `invalid_parameter_value` (056 §7b) — ikke

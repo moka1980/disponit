@@ -295,10 +295,26 @@ def signer_endepunkt(tjeneste, request):
         # sitter igjen uten noen måte å vite om den irreversible
         # autorisasjonen gikk igjennom. Nøyaktig samme klasse som 056 selv
         # lukket i runde 12 på #140, bare ett lag lenger ut.
+        #
+        # ...MEN BARE SPISSPORTEN (Codex P2, runde 4). Runde 3 la
+        # forbigangen på BEGGE portene, og det var ett ledd for mye:
+        # spissporten spør om RADENS tilstand («er denne versjonen fortsatt
+        # den serien peker på?»), og det spørsmålet er avlyst av at
+        # signaturen står. Hashen spør om noe annet — den er
+        # INNHOLDSBINDINGEN, kroppens påstand om HVA signataren leste — og
+        # den påstanden er kallerens, ikke basens. Med forbigangen på
+        # begge fikk et replay med samme nøkkel, liste og signatar, men en
+        # ANNEN `innhold_hash`, 201: endepunktet bekreftet innhold kalleren
+        # aldri hadde signert, og brøt samtidig SP-2-regelen om at en
+        # gjenbrukt nøkkel med endret inndata er en konflikt.
+        # `utsendingsliste` er append-only (056: `utsendingsliste_append_
+        # only`), så radens hash kan ikke endre seg under en ekte
+        # gjentakelse — den lovlige replayen bærer alltid samme hash og
+        # merker ingenting til at porten er tilbake.
         replay = _fullfort_replay(conn, tenant, nokkel, liste_id, bid)
         if not replay and rad[3]:
             raise _Avbrudd(_feil("liste_utdatert", rid, 409))
-        if not replay and rad[0] != kropp["innhold_hash"]:
+        if rad[0] != kropp["innhold_hash"]:
             raise _Avbrudd(_feil("innhold_endret", rid, 409))
         # FULLMAKTEN MÅLES PÅ NYTT UNDER LÅSEN (Codex P1, runde 3).
         # `_browserkontekst` måler scopet mot sesjonens `authz_snapshot` ved
