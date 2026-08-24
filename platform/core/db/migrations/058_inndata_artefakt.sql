@@ -128,8 +128,23 @@ CREATE TABLE inndata_artefakt (
     -- med `..` — og reaperen (egen PR), hvis hele jobb er å `unlink`
     -- stien raden bærer, ville utført slettingen. Nonce-hullet var
     -- udekrypterbare data; dette er isolasjonsbrudd med sletting på
-    -- enden. Invarianten er API-ets egen layout:
-    -- `<rot>/<tenant>/<uuid>.bin`.
+    -- enden.
+    --
+    -- STIEN ER RELATIV: `<tenant>/<uuid>.bin`, uten rot (Cursor P1 runde
+    -- 2). Første forsøk lagret den absolutt og lette etter
+    -- `'/' || tenant || '/'` som DELSTRENG — og en delstreng har ingen
+    -- ende: `<rot>/<offer>/<tenant>/x.bin` inneholder `/<tenant>/` og
+    -- passerte, altså en peker ned i offerets katalog. Å bytte
+    -- delstrengen mot et prefiks krever at basen KJENNER roten, og roten
+    -- er `INNDATA_ROT` i API-et, ikke noe SQL har. Å flytte den hit ville
+    -- vært å bygge en ny maskin for en verdi bare kalleren eier.
+    --
+    -- Uten roten i raden finnes ikke spørsmålet: første ledd ER tenanten,
+    -- sammenlignet som streng (ikke LIKE — et tenantnavn med `_` er et
+    -- LIKE-jokertegn og ville sluppet naboen inn igjen), og etter det
+    -- ledd-skillet er det ingen flere `/`. En rad kan dermed ikke uttrykke
+    -- noe utenfor sin egen tenantkatalog, uansett hva roten er. API-et
+    -- setter roten på når det åpner filen, og reaperen gjør det samme.
     -- Målingen bærer sin egen form (Cursor P2, 049/053/054-klassen):
     -- `innhold_sha256` var bare NOT NULL i `lastet`-grenen, mens
     -- `registrer_inndata_lastet` tar verdien fra en runtime-kaller. `''`
@@ -140,9 +155,10 @@ CREATE TABLE inndata_artefakt (
         innhold_sha256 IS NULL OR innhold_sha256 ~ '^[0-9a-f]{64}$'),
     CONSTRAINT inndata_lagersti_navnerom CHECK (
         lager_sti IS NULL OR (
-            lager_sti LIKE '/%'
-            AND position('..' in lager_sti) = 0
-            AND position('/' || tenant || '/' in lager_sti) > 0))
+            left(lager_sti, length(tenant) + 1) = tenant || '/'
+            AND length(lager_sti) > length(tenant) + 1
+            AND position('/' in substr(lager_sti, length(tenant) + 2)) = 0
+            AND position('..' in lager_sti) = 0))
 );
 -- «Én bunt, ett oppdrag» er en INVARIANT, ikke en kommentar (Cursor P1-3):
 -- uten UNIQUE kunne to `lastet`-rader bindes til det samme oppdraget, og
@@ -389,10 +405,13 @@ BEGIN
     -- kanoniske feilkontraktet: en giftig sti skal gi
     -- `inndata_reservasjon_ugyldig` og la reservasjonen stå `reservert`,
     -- ikke brenne jti-en på en peker inn i en fremmed katalog som
-    -- reaperen senere ville slettet.
-    IF p_sti NOT LIKE '/%'
-       OR position('..' in p_sti) > 0
-       OR position('/' || p_tenant || '/' in p_sti) = 0 THEN
+    -- reaperen senere ville slettet. Formen er den relative
+    -- `<tenant>/<uuid>.bin` — se tabellens constraint for hvorfor roten
+    -- ikke er med.
+    IF left(p_sti, length(p_tenant) + 1) IS DISTINCT FROM p_tenant || '/'
+       OR length(p_sti) <= length(p_tenant) + 1
+       OR position('/' in substr(p_sti, length(p_tenant) + 2)) > 0
+       OR position('..' in p_sti) > 0 THEN
         RAISE EXCEPTION 'inndata: lagerstien % ligger utenfor tenantens'
             ' navnerom', p_sti
             USING ERRCODE = 'invalid_parameter_value';

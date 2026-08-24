@@ -97,9 +97,12 @@ def test_reservasjon_og_opplasting_ende_til_ende(klient, inndata_rot):
         assert rad and rad[0] == "lastet" and rad[1] == len(kropp) \
             and rad[2] == sha
         sti, key_id, nonce = rad[3], rad[4], rad[5]
+        # Raden bærer den RELATIVE stien, `<tenant>/<uuid>.bin` (Cursor P1
+        # runde 2) — roten er lesernes, og her er leseren testen.
+        assert sti.startswith(f"{tenant}/") and sti.endswith(".bin")
         # … og på DISKEN: kryptert (aldri klartekst-zip), og dekrypterer
         # til nøyaktig de sendte bytene.
-        raa_fil = open(sti, "rb").read()
+        raa_fil = (inndata_rot / sti).read_bytes()
         assert not raa_fil.startswith(b"PK"), \
             "payloaden ligger i KLARTEKST på disken"
         from db import kryptering
@@ -122,7 +125,8 @@ def test_reservasjon_og_opplasting_ende_til_ende(klient, inndata_rot):
     # 058 fortalte at raden alt fantes, og den orphanen ryddes.
     filer = sorted((inndata_rot / tenant).glob("*.bin"))
     assert len(filer) == 1, f"replayen etterlot {len(filer)} filer: {filer}"
-    assert str(filer[0]) == sti, "replayen byttet ut den lagrede filen"
+    assert filer[0] == inndata_rot / sti, \
+        "replayen byttet ut den lagrede filen"
 
     # En retry med ANNEN kropp er derimot en ekte konflikt — samme skille
     # som `bruk_artefaktkapabilitet` (017) gjør på hash.
@@ -341,11 +345,12 @@ def _reservasjon(m, tenant, *, utloper="now() + interval '1 hour'",
 def _lagersti(tenant, navn="x"):
     """En sti i TENANTENS eget navnerom — API-ets layout.
 
-    `inndata_lagersti_navnerom` (Cursor P1) krever den formen, så en test
-    som vil måle noe ANNET må sende en lovlig sti; ellers feller
-    sti-porten først og testen består av feil grunn."""
-    from api.inndata import INNDATA_ROT
-    return f"{INNDATA_ROT}/{tenant}/{navn}.bin"
+    RELATIV, uten rot: raden bærer `<tenant>/<uuid>.bin`, og API-et setter
+    `INNDATA_ROT` på først når det åpner filen (Cursor P1 runde 2).
+    `inndata_lagersti_navnerom` krever den formen, så en test som vil måle
+    noe ANNET må sende en lovlig sti; ellers feller sti-porten først og
+    testen består av feil grunn."""
+    return f"{tenant}/{navn}.bin"
 
 
 def _lastet(m, tenant, *, utloper="now() + interval '1 hour'",
@@ -691,6 +696,13 @@ def test_lagerstien_maa_ligge_i_tenantens_eget_navnerom(klient):
     Reservasjonen skal stå UBRENT etter et avvist forsøk, ellers har en
     giftig sti likevel kostet kunden bunten.
 
+    RUNDE 2 (Cursor P1): første form lette etter `/<tenant>/` som
+    DELSTRENG i en absolutt sti, og en delstreng har ingen ende —
+    `<rot>/<offer>/<tenant>/x.bin` inneholder den også, og peker like fullt
+    ned i offerets katalog. Angrepsstien står nederst i listen under og er
+    grunnen til at raden nå bærer den RELATIVE stien: uten rot er første
+    ledd tenanten, og «lenger ned hos naboen» kan ikke uttrykkes.
+
     MUTASJONEN SOM DREPER DENNE: fjern sti-guarden i funksjonen, eller
     `inndata_lagersti_navnerom` på tabellen."""
     from db import kryptering
@@ -702,12 +714,15 @@ def test_lagerstien_maa_ligge_i_tenantens_eget_navnerom(klient):
         m.commit()
     finally:
         m.close()
-    rot = _lagersti(tenant).rsplit("/", 2)[0]
     giftige = (
-        "/tmp/x.bin",                              # utenfor lageret
-        f"{rot}/en-annen-tenant/x.bin",            # FREMMED tenant
-        f"{rot}/{tenant}/../en-annen-tenant/x.bin",   # traversering
-        f"{tenant}/x.bin",                         # relativ
+        "/tmp/x.bin",                              # absolutt, utenfor
+        "en-annen-tenant/x.bin",                   # FREMMED tenant
+        f"{tenant}/../en-annen-tenant/x.bin",      # traversering
+        f"/var/lib/disponit-inndata/{tenant}/x.bin",   # rot i raden
+        f"{tenant}/",                              # tomt filnavn
+        # DELSTRENG-HULLET: under en FREMMED tenants katalog, men
+        # inneholder `/<tenant>/`. Runde 1 slapp denne igjennom.
+        f"en-annen-tenant/{tenant}/x.bin",
     )
     c = _runtime(tenant)
     try:
@@ -741,7 +756,7 @@ def test_lagerstien_maa_ligge_i_tenantens_eget_navnerom(klient):
                 "%s,10,%s,%s,%s,%s,'lastet',%s,%s,"
                 " now()+interval '1 h',now())",
                 (tenant, MAKS, "a" * 64, key_id, b"n" * 12,
-                 f"{rot}/en-annen-tenant/x.bin", secrets.token_hex(32),
+                 f"en-annen-tenant/{tenant}/x.bin", secrets.token_hex(32),
                  secrets.token_hex(12)))
         m.rollback()
     finally:

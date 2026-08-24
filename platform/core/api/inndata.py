@@ -164,7 +164,13 @@ async def opplast_endepunkt(tjeneste, request):
                                              formaal=b"inndata")
         katalog = os.path.join(INNDATA_ROT, tenant)
         os.makedirs(katalog, mode=0o700, exist_ok=True)
-        sti = os.path.join(katalog, f"{uuidlib.uuid4()}.bin")
+        # RADEN bærer den RELATIVE stien, `<tenant>/<uuid>.bin` (Cursor P1
+        # runde 2); roten settes på her og bare her. Med roten i raden
+        # måtte 058 kjent den for å kunne anker-sjekke navnerommet, og
+        # gjorde det ikke — den lette etter `/<tenant>/` som delstreng, som
+        # en sti ned i en FREMMED tenants katalog også inneholder.
+        rel = os.path.join(tenant, f"{uuidlib.uuid4()}.bin")
+        sti = os.path.join(INNDATA_ROT, rel)
         # Skriv-og-flytt: en halvskrevet fil skal aldri kunne bli en
         # gyldig referanse.
         tmp = sti + ".tmp"
@@ -208,7 +214,7 @@ async def opplast_endepunkt(tjeneste, request):
             rad = conn.execute(
                 "SELECT ut_inndata_id, ut_lager_sti FROM"
                 " registrer_inndata_lastet(%s,%s,%s,%s,%s,%s,%s)",
-                (tenant, jti, lest, sha, key_id, nonce, sti)).fetchone()
+                (tenant, jti, lest, sha, key_id, nonce, rel)).fetchone()
         except psycopg.errors.InvalidParameterValue as e:
             os.unlink(sti)
             raise _Avbrudd(_feil("inndata_reservasjon_ugyldig", rid, 409)) \
@@ -237,7 +243,7 @@ async def opplast_endepunkt(tjeneste, request):
         # samme (sha-en er den samme kroppen), men filen vår er en orphan
         # og ryddes her. En unlink som ikke går skal ikke gjøre en
         # vellykket opplasting til en 500; da er den reaperens jobb.
-        if rad[1] != sti:
+        if rad[1] != rel:
             try:
                 os.unlink(sti)
             except OSError:
