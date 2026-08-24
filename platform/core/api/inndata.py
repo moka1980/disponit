@@ -22,6 +22,7 @@ import os
 import uuid as uuidlib
 
 import psycopg
+from starlette.concurrency import run_in_threadpool
 
 #: FS-roten. opp.sh oppretter den med api-brukerens eierskap; en
 #: manglende rot er en deploy-feil og skal si det, ikke ENOENT dypt nede.
@@ -77,11 +78,20 @@ async def opplast_endepunkt(tjeneste, request):
     #
     # Transaksjonen her ser kun headere og cookies, og slippes tilbake til
     # poolen (rollback i `gi_tilbake`) før første byte av kroppen leses.
+    #
+    # `run_in_threadpool` av samme grunn som finaliseringen nederst (Codex
+    # P1): dette er den ENESTE `async def`-ruten i API-et, og alt db-
+    # arbeidet under er blokkerende (`pool.hent` venter med timeout,
+    # psycopg er synkron). Uten tråden ville en treg base stanset HELE
+    # event-loopen — også `/live` og alle andre samtidige forespørsler.
+    # Starlette kjører sync-ruter i threadpoolen selv; denne ruten er
+    # async fordi den må lese `request.stream()`, og betaler derfor for
+    # den vekslingen eksplisitt.
     def autentiser(conn):
         return _browserkontekst(tjeneste, request, conn, rid,
                                 "bestilling:opprett")
 
-    kontekst = _med_conn(tjeneste, rid, autentiser)
+    kontekst = await run_in_threadpool(_med_conn, tjeneste, rid, autentiser)
     if not isinstance(kontekst, tuple):
         return kontekst      # ferdig kodet feilsvar: 401/403/csrf/drift
     tenant, bid = kontekst
@@ -107,6 +117,13 @@ async def opplast_endepunkt(tjeneste, request):
         return _feil("request_feilformet", rid)
     sha = hasher.hexdigest()
 
+    # Finaliseringen: pool-uttak, DEK-oppslag, AES-GCM over hele bufferet
+    # (inntil 64 MiB), filskriving, to fsync-er og en sync-commit — alt
+    # blokkerende, og alt på den ENE event-loopen dersom den kalles
+    # direkte fra denne async-ruten (Codex P1). Én stor, vellykket
+    # opplasting ville da forsinket hver eneste samtidige forespørsel,
+    # `/live` inkludert. Den går derfor i threadpoolen, der Starlette
+    # uansett kjører alle sync-rutene i dette API-et.
     def kjor(conn):
         from db import kryptering
         # Auth er alt avgjort over. Her settes bare `disponit.*` på nytt:
@@ -186,4 +203,4 @@ async def opplast_endepunkt(tjeneste, request):
                     "innhold_sha256": sha, "faktiske_bytes": lest}, rid,
                    201)
 
-    return _med_conn(tjeneste, rid, kjor)
+    return await run_in_threadpool(_med_conn, tjeneste, rid, kjor)
