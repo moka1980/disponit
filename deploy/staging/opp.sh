@@ -616,14 +616,24 @@ skriv_cred domener DISPONIT_RESOLVERE   "${DISPONIT_RESOLVERE:-}"
 #
 # Formen er steg 8s, ikke steg 5s: TIMERNE startes, ikke oneshot-tjenestene
 # bak dem — å starte en oneshot direkte er å kjøre jobben nå, mens timerens
-# jobb er å velge når. Vilkåret er `is-enabled` (samme som steg 8 bruker for
-# wcag-arbeideren): en enhet som ikke var enablet, kjørte heller ikke før
-# vinduet, og da er «start» en AKTIVERING utrullingen ikke har mandat til.
-# `enable` gjøres aldri her — reverseringen skal gjenopprette, ikke innføre.
-SELVREVERS_ENHETER="disponit-helse.timer disponit-varselsender.timer
+# jobb er å velge når. `enable` gjøres aldri her: reverseringen skal
+# gjenopprette, ikke innføre.
+SELVREVERS_ENHETER="disponit-api.socket disponit-api.service
+disponit-m37.service disponit-helse.timer disponit-varselsender.timer
 disponit-domenerevalidering.timer disponit-artefaktrydding.timer
 disponit-evidensreaper.timer disponit-plan.timer
 disponit-domeneverifisering.timer disponit-wcag-audit.service"
+
+# Codex P2 (runde 2): vilkåret var `is-enabled`, og det måler UNIT-FILA,
+# ikke driften — `systemctl --help` skiller dem eksplisitt. En timer eller
+# wcag-arbeider en operatør bevisst hadde stoppet (uten å disable den) ville
+# derfor blitt AKTIVERT av en mislykket deploy, mens en enhet som kjørte
+# uten å være enablet ble stående nede. Begge er endringer utrullingen ikke
+# har mandat til: reverseringen skal gjenopprette tilstanden fra FØR vinduet,
+# og den tilstanden finnes bare ett sted — i driften, målt før steg 5 river
+# den. Settet snapshottes derfor der, og både startlista og dommen leser
+# NØYAKTIG det samme snapshotet.
+AKTIVE_FOR_VINDUET=""
 selvrevers() {
   echo "AVBRUTT: $1 — forsøker selv-reversering (forrige release,"
   echo "symlinken er urørt: $FORRIGE)"
@@ -657,42 +667,35 @@ selvrevers() {
     echo "kode ikke bootes mot dette skjemaet (bootportens dom). Enhetene"
     echo "blir STÅENDE STOPPET, med vilje — en gammel arbeider mot et nytt"
     echo "skjema er verre enn en stoppet arbeider, og M-37 og timerne har"
-    echo "ingen bootport som ville nektet for dem:"
-    for enhet in disponit-api.socket disponit-api.service \
-                 disponit-m37.service $SELVREVERS_ENHETER; do
-      echo "  - $enhet"
-    done
+    echo "ingen bootport som ville nektet for dem."
+    echo "STÅENDE STOPPET (var i drift før vinduet):" \
+         "${AKTIVE_FOR_VINDUET:- ingen — ingenting kjørte før vinduet}"
     echo "Rettingen er FREMOVER og den er NÅ: fullfør deployen mot et"
     echo "skjema begge basene deler, eller rull frem til et sett forrige"
     echo "release bærer. Deployen er avbrutt."
     exit 1
   fi
-  systemctl start disponit-api.socket disponit-api.service \
-      disponit-m37.service 2>/dev/null || true
-  for enhet in $SELVREVERS_ENHETER; do
-    if systemctl is-enabled "$enhet" >/dev/null 2>&1; then
-      systemctl start "$enhet" 2>/dev/null || true
-    fi
+  # Snapshotet, i den rekkefølgen unitene avhenger av hverandre: socket og
+  # API først (`disponit-wcag-audit.service` har `After=disponit-api.service`),
+  # så resten. Rekkefølgen ligger i SELVREVERS_ENHETER, og snapshotet er
+  # bygget i den rekkefølgen.
+  for enhet in $AKTIVE_FOR_VINDUET; do
+    systemctl start "$enhet" 2>/dev/null || true
   done
   sleep 2
-  # Dommen måles på ALLE enhetene som skulle tilbake. `2>/dev/null || true`
-  # over sluker startfeil med vilje (en enhet som ikke finnes på verten skal
-  # ikke felle reverseringen), og nettopp derfor kan ikke suksess utledes av
-  # exit-koden — den må MÅLES. Samme `is-enabled`-vilkår som ved starten:
-  # det som ikke var i drift, kreves ikke tilbake i drift.
+  # Dommen måles på NØYAKTIG det settet som ble startet — samme variabel,
+  # ikke en ny liste som kan drifte fra den. `2>/dev/null || true` over
+  # sluker startfeil med vilje (en enhet som ikke finnes på verten skal ikke
+  # felle reverseringen), og nettopp derfor kan ikke suksess utledes av
+  # exit-koden: den må MÅLES.
   NEDE=""
-  for enhet in disponit-api.service disponit-m37.service; do
+  for enhet in $AKTIVE_FOR_VINDUET; do
     systemctl is-active --quiet "$enhet" || NEDE="$NEDE $enhet"
   done
-  for enhet in $SELVREVERS_ENHETER; do
-    if systemctl is-enabled "$enhet" >/dev/null 2>&1; then
-      systemctl is-active --quiet "$enhet" || NEDE="$NEDE $enhet"
-    fi
-  done
   if [ -z "$NEDE" ]; then
-    echo "SELVREVERSERT: forrige release kjører igjen — API, M-37 og hver"
-    echo "timer vinduet stoppet er aktive. Feilen rettes FREMOVER;"
-    echo "deployen er avbrutt."
+    echo "SELVREVERSERT: forrige release kjører igjen — hver enhet som var i"
+    echo "drift før vinduet er aktiv igjen:$AKTIVE_FOR_VINDUET."
+    echo "Feilen rettes FREMOVER; deployen er avbrutt."
   else
     echo "SELV-REVERSERING FEILET. Fortsatt nede:$NEDE"
     echo "Er API-et blant dem, kan forrige kode ikke starte mot basens"
@@ -715,6 +718,21 @@ selvrevers() {
 # stoppes: å stoppe timeren alene avbryter ikke en kjøring som alt er i gang.
 # `systemctl stop` på en oneshot venter til prosessen er ute, så vinduet åpnes
 # først når begge arbeiderne faktisk er stille.
+#
+# SNAPSHOT FØRST (Codex P2, runde 2): hvilke enheter som var I DRIFT finnes
+# bare å lese HER — ett sekund senere har vinduet revet tilstanden, og da er
+# `is-enabled` det eneste som er igjen å gjette ut fra. Gjetningen er feil i
+# begge retninger: en enhet en operatør bevisst stoppet er fortsatt enablet,
+# og en enhet som kjørte trenger ikke være det. Snapshotet er reverseringens
+# eneste sannhet om hva «tilbake» betyr, og det skrives til loggen så
+# operatøren ser det samme settet skriptet vil gjenopprette.
+for enhet in $SELVREVERS_ENHETER; do
+  if systemctl is-active --quiet "$enhet"; then
+    AKTIVE_FOR_VINDUET="$AKTIVE_FOR_VINDUET $enhet"
+  fi
+done
+echo "vedlikeholdsvindu: i drift før stopp —" \
+     "${AKTIVE_FOR_VINDUET:- ingen}"
 systemctl stop disponit-helse.timer disponit-m37.service \
     disponit-api.service disponit-api.socket 2>/dev/null || true
 systemctl stop disponit-varselsender.timer disponit-varselsender.service \

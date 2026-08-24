@@ -573,12 +573,52 @@ def test_selvrevers_speiler_vedlikeholdsvinduet():
             f"starter den aldri igjen"
 
     # Codex P1, andre halvdel: «SELVREVERSERT» skal ikke kunne skrives på
-    # API-et alene. Dommen måles på den samme lista.
+    # API-et alene. Dommen måles på NØYAKTIG det settet som ble startet —
+    # samme variabel, ikke en parallell liste som kan drifte fra den.
+    startet = blokk[:blokk.index('NEDE=""')]
     maalt = blokk[blokk.index('NEDE=""'):blokk.index('if [ -z "$NEDE" ]')]
-    assert "disponit-m37.service" in maalt, \
-        "reverseringsdommen måler ikke M-37"
-    assert "$SELVREVERS_ENHETER" in maalt, \
-        "reverseringsdommen måler ikke enhetene den nettopp startet"
+    settet = "$AKTIVE_FOR_VINDUET"
+    assert settet in startet, \
+        "startlista leser ikke snapshotet av det som var i drift"
+    assert settet in maalt, \
+        "reverseringsdommen måler ikke det samme settet den nettopp startet"
+
+
+def test_selvrevers_gjenoppretter_settet_som_var_i_drift():
+    """Codex P2 (#178, runde 2): `is-enabled` er ikke «var i drift».
+
+    `systemctl --help` skiller de to eksplisitt: `is-enabled` sjekker
+    unit-FILEN, `is-active` kjøretilstanden. Reverseringen brukte den
+    første som proxy for den andre, og gjetningen er feil i BEGGE
+    retninger — en timer eller wcag-arbeider en operatør bevisst hadde
+    stoppet er fortsatt enablet og ble dermed AKTIVERT av en mislykket
+    deploy, mens en enhet som kjørte uten å være enablet ble stående nede.
+    Utrullingen har mandat til å gjenopprette, aldri til å innføre.
+
+    Tilstanden finnes bare ett sted, og bare før steg 5 river den: i
+    driften. Porten måler at snapshotet tas DER — før første `systemctl
+    stop` — og at reverseringen ikke lenger spør unit-fila om hva som
+    kjørte.
+    """
+    opp = "\n".join(
+        linje for linje in (ROT / "deploy/staging/opp.sh").read_text(
+            encoding="utf-8").splitlines()
+        if not linje.lstrip().startswith("#"))
+    i_snapshot = opp.index("AKTIVE_FOR_VINDUET=\"$AKTIVE_FOR_VINDUET")
+    assert i_snapshot < opp.index("systemctl stop"), \
+        "snapshotet tas ETTER at vinduet har stoppet enhetene — da måler" \
+        " det tilstanden vinduet selv lagde, ikke den det skal gjenopprette"
+    snapshot = opp[opp.rindex("for enhet in", 0, i_snapshot):i_snapshot]
+    assert "is-active" in snapshot, \
+        "snapshotet leser ikke kjøretilstanden (`is-active`)"
+
+    blokk = opp[opp.index("selvrevers() {"):
+                opp.index("\n}\n", opp.index("selvrevers() {"))]
+    assert "is-enabled" not in blokk, \
+        "selvrevers() spør fortsatt unit-fila (`is-enabled`) om hva som" \
+        " kjørte før vinduet — det er ikke den samme opplysningen"
+    assert "$AKTIVE_FOR_VINDUET" in blokk, \
+        "selvrevers() bruker ikke snapshotet i det hele tatt"
 
 
 def test_selvrevers_maler_rullbakk_for_forste_start():
