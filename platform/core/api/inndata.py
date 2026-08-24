@@ -147,24 +147,42 @@ async def opplast_endepunkt(tjeneste, request):
         # Skriv-og-flytt: en halvskrevet fil skal aldri kunne bli en
         # gyldig referanse.
         tmp = sti + ".tmp"
-        with open(tmp, "wb") as f:
-            f.write(ct)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, sti)
-        # Å fsync-e FILEN gjør ikke KATALOGOPPFØRINGEN varig (Codex P2):
-        # mister verten strømmen etter db-commiten, men før
-        # katalogmetadataen har nådd stabilt lager, står raden igjen som
-        # `lastet` mens den omdøpte ciphertexten er borte etter omstart.
-        # Samme grep som `kjor_artefaktrydding._skriv_feiltelling`, men
-        # IKKE best effort her: feiler den, har vi ennå ikke committet, og
-        # `except Exception` under rydder filen. En bunt vi ikke kan love
-        # er varig, skal ikke kvitteres som lastet.
-        kat = os.open(katalog, os.O_RDONLY)
+        # HELE I/O-en før registreringen rydder etter seg (Codex P2). Den lå
+        # utenfor `try`-en under, så en full disk (ENOSPC i `write`/`fsync`)
+        # reiste FØR ryddingen fantes og etterlot en delvis `.tmp`; en feil i
+        # katalog-fsyncen etter `os.replace` etterlot en komplett, foreldreløs
+        # `.bin`. Ingen av dem har en rad, ingen av dem har en eier, og en
+        # klient som prøver på nytt under den samme lagerfeilen legger på en
+        # ny for hvert forsøk — feilen som fylte disken spiser altså mer disk.
+        # `sti` er en fersk uuid i denne kallet, så begge navnene er våre
+        # alene; unlinken er best effort fordi den opprinnelige feilen er den
+        # som skal nå kalleren.
         try:
-            os.fsync(kat)
-        finally:
-            os.close(kat)
+            with open(tmp, "wb") as f:
+                f.write(ct)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, sti)
+            # Å fsync-e FILEN gjør ikke KATALOGOPPFØRINGEN varig (Codex P2):
+            # mister verten strømmen etter db-commiten, men før
+            # katalogmetadataen har nådd stabilt lager, står raden igjen som
+            # `lastet` mens den omdøpte ciphertexten er borte etter omstart.
+            # Samme grep som `kjor_artefaktrydding._skriv_feiltelling`, men
+            # IKKE best effort her: feiler den, har vi ennå ikke committet, og
+            # ryddingen her tar filen. En bunt vi ikke kan love er varig, skal
+            # ikke kvitteres som lastet.
+            kat = os.open(katalog, os.O_RDONLY)
+            try:
+                os.fsync(kat)
+            finally:
+                os.close(kat)
+        except Exception:
+            for spor in (tmp, sti):
+                try:
+                    os.unlink(spor)
+                except OSError:
+                    pass
+            raise
         try:
             rad = conn.execute(
                 "SELECT ut_inndata_id, ut_lager_sti FROM"

@@ -349,6 +349,73 @@ def test_utlopt_reservasjon_avvises_og_brenner_ingenting(klient, inndata_rot):
     assert not sorted((inndata_rot / tenant).glob("*.bin"))
 
 
+def _lagerfeil_paa(monkeypatch, navn, rot):
+    """Full disk i ÉN `os`-operasjon, og bare på inndata-lagerets egne stier.
+
+    En global sensor ville truffet alt annet i prosessen som rører samme
+    kall i det samme vinduet; her måles nøyaktig den ene veien."""
+    ekte = getattr(os, navn)
+
+    def sensor(sti, *a, **k):
+        if isinstance(sti, str) and sti.startswith(str(rot)):
+            raise OSError(28, "No space left on device")
+        return ekte(sti, *a, **k)
+
+    monkeypatch.setattr(os, navn, sensor)
+    # Egen tilbakestilling, ikke `monkeypatch.undo()`: den ville også rullet
+    # tilbake `inndata_rot`-fixturens INNDATA_ROT.
+    return lambda: monkeypatch.setattr(os, navn, ekte)
+
+
+@pg
+@pytest.mark.parametrize("kall,spor", [("replace", ".tmp"), ("open", ".bin")])
+def test_lagerfeil_for_registreringen_etterlater_ingen_fil(
+        klient, inndata_rot, monkeypatch, kall, spor):
+    """Codex P2: I/O-en FØR registreringen lå utenfor ryddingen.
+
+    Feilet noe i skriv-og-flytt — en full disk er den nære årsaken —
+    reiste det før `try`-en som rydder i det hele tatt var nådd, og `.tmp`
+    ble liggende. Feilet katalog-fsyncen ETTER `os.replace` (den åpner
+    katalogen med `os.open`, som ikke brukes til noe annet i denne veien),
+    ble en komplett, foreldreløs `.bin` liggende. Ingen av dem har en rad
+    og ingen av dem har en eier, så en klient som prøver igjen under den
+    samme lagerfeilen legger på en ny for hvert forsøk: feilen som fylte
+    disken spiser mer disk.
+
+    Begge halvdelene måles, for de etterlater hver sin sti å rydde.
+
+    MUTASJONEN SOM DREPER DENNE: la ryddingen dekke bare `tmp`, eller
+    snevre `try`-en inn til registreringen igjen."""
+    tenant, _bid, cookie, csrf = _rigg(klient)
+    m = _migrator(tenant)
+    try:
+        jti = _reservasjon(m, tenant)
+        m.commit()
+
+        tilbake = _lagerfeil_paa(monkeypatch, kall, inndata_rot)
+        with pytest.raises(OSError):
+            _opplast(klient, cookie, csrf, jti, _zipbytes())
+        tilbake()
+
+        # Ingen av de to sporene ligger igjen — heller ikke det denne
+        # varianten er navngitt etter.
+        katalog = inndata_rot / tenant
+        rester = sorted(p.name for p in katalog.glob("*")) \
+            if katalog.exists() else []
+        assert not rester, f"lagerfeilen etterlot {rester} (ventet ingen {spor})"
+
+        # … og reservasjonen er urørt: ingenting ble registrert.
+        _kontekst(m, tenant)
+        rad = m.execute(
+            "SELECT status, lager_sti FROM inndata_artefakt"
+            " WHERE tenant=%s AND reservasjon_jti=%s",
+            (tenant, jti)).fetchone()
+        m.rollback()
+    finally:
+        m.close()
+    assert rad == ("reservert", None)
+
+
 @pg
 def test_sql_lukker_eiermodulen_ikke_bare_http(klient):
     """Cursor P2-3: `formaal` var CHECKet, `eiermodul` ikke — og
