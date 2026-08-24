@@ -867,8 +867,11 @@ html[data-visning="landing"] .skall-hoved {
 
 /* Den valgte modulen skal SES, ikke bare ligge i panelet. Markeringen bæres av
    to kanaler — vekt og en kant — i tillegg til flaten, så den ikke er avhengig
-   av at forskjellen på to bakgrunner er synlig. */
-.skall-modul[aria-current="true"] {
+   av at forskjellen på to bakgrunner er synlig.
+   Attributtet uten verdi: raden er «her er du» både når den er navigert til
+   (`page`, modul med arbeidsflate) og når den er valgt i panelet (`true`) —
+   samme opplysning til brukeren, altså samme utseende. */
+.skall-modul[aria-current] {
   background: var(--paper);
   border-left: 3px solid var(--ink);
   font-weight: 600;

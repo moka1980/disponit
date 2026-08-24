@@ -272,6 +272,14 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
     el("div", { class: "skall-hoyre" }, velger, loggUt));
 
   const lenker = new Map();
+  // HVILKEN FLATE STÅR JEG PÅ (Codex P2). `lenker` er det eneste `settAktiv`
+  // oppdaterte, og modulflatene er nettopp de rutene som er filtrert UT av
+  // den — så da oppføringen flyttet til venstremenyen, flyttet ikke
+  // markeringen med. Ruten holdes derfor som tilstand her, ved siden av
+  // lenkene, og navigasjonen som nå EIER modulflatene leser den samme
+  // verdien. Startverdien er `aktiv`, så en dyplenke rett inn i flaten er
+  // markert fra første tegning — ikke først ved neste navigasjon.
+  let aktivFlate = aktiv;
   // Toppnavigasjonen er PLATTFORMFLATENE: modulflater (r.modulflate)
   // bor i venstremenyen som selve inngangen (eiers vedtak 24/8). Ruten
   // finnes fortsatt — dyplenker og bokmerker virker som før.
@@ -288,12 +296,16 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
     tabindex: "-1" });
 
   // Oppdater aktiv nav-lenke på plass (aria-current) — rebygger ikke nav, så
-  // fokus og referanser holder.
+  // fokus og referanser holder. Modulmenyen merkes av samme kall: den er
+  // navigasjonen for modulflatene, og en navigasjon som ikke sier hvor du er
+  // er halvferdig uansett hvilken av de to sonene ruten bor i.
   function settAktiv(nokkel) {
     for (const [k, a] of lenker) {
       if (k === nokkel) a.setAttribute("aria-current", "page");
       else a.removeAttribute("aria-current");
     }
+    aktivFlate = nokkel;
+    merkValgt();
   }
 
   // §2.3 LAYOUT: topp (nav + søk) · venstre (modulmeny) · sentrum (dashboard)
@@ -351,9 +363,19 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
   let valgtModul = null;
   const modulknapper = new Map();
 
+  // To slags «her er du», fordi de to radene gjør to forskjellige ting: en
+  // modul med flate er NAVIGERT til (`aria-current="page"`, samme ord som
+  // toppnavigasjonen bruker), en modul uten flate er VALGT i panelet ved
+  // siden av (`aria-current="true"`). De kan ikke kollidere — en modul har
+  // enten en flate eller ikke — så begge markeringene kan stå samtidig, og
+  // det er riktig: brukeren kan lese om modul 14 i panelet mens hun står på
+  // rekrutteringsflaten.
   function merkValgt() {
     for (const [n, kn] of modulknapper) {
-      if (n === valgtModul) kn.setAttribute("aria-current", "true");
+      const her = MODULFLATE.has(n)
+        ? MODULFLATE.get(n) === aktivFlate : n === valgtModul;
+      if (her) kn.setAttribute("aria-current",
+        MODULFLATE.has(n) ? "page" : "true");
       else kn.removeAttribute("aria-current");
     }
   }

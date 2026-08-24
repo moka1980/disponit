@@ -769,3 +769,63 @@ test("AppShell: modulkortet ER inngangen til flaten; toppnav bærer bare plattfo
   assert.equal(window.location.hash, "#/oversikt",
     "flateløs modul endret adressen");
 });
+
+test("AppShell: den aktive modulflaten er merket i menyen som eier den", () => {
+  // 🔴 HVOR ER JEG (Codex P2). `settAktiv` oppdaterer bare `lenker`, og
+  // modulflatene er nettopp de rutene som er filtrert UT av den — mens
+  // `valgtModul` bare settes av `visKontekst`, som flateklikket hopper over.
+  // Modulflatene hadde altså verken visuell eller `aria-current`-markering
+  // noe sted etter at oppføringen flyttet til venstremenyen.
+  const brett = nyttBrett();
+  const ruter = byggRuter({ scopes: ["decisions:read"] });
+  const skall = AppShell({ tenant: "acme", ruter, aktiv: "oversikt",
+    sprak: "nb", moduler: [1, 14, 56, 57],
+    paaSprak: () => {}, paaLoggUt: () => {} });
+  brett.append(skall.rot);
+  const kort = (n) => [...brett.querySelectorAll(".skall-modul")]
+    .find((e) => e.textContent === t(`site.katalog.m${n}.navn`));
+
+  assert.equal(kort(57).getAttribute("aria-current"), null,
+    "flaten er merket før noen har navigert til den");
+  skall.settAktiv("rekruttering");
+  assert.equal(kort(57).getAttribute("aria-current"), "page",
+    "den aktive modulflaten er umerket i menyen som eier den");
+  // Én om gangen, og ordet er «page» — samme som toppnavigasjonen bruker,
+  // fordi det er samme slags opplysning.
+  skall.settAktiv("wcagkontroll");
+  assert.equal(kort(56).getAttribute("aria-current"), "page");
+  assert.equal(kort(57).getAttribute("aria-current"), null,
+    "to modulflater står som aktive samtidig");
+  // En plattformflate eier ingen modulrad: da skal ingen av dem være merket.
+  skall.settAktiv("oversikt");
+  assert.equal(kort(56).getAttribute("aria-current"), null,
+    "modulraden ble stående merket etter at brukeren forlot flaten");
+
+  // Panelvalget lever ved siden av, og de to kolliderer ikke: en modul har
+  // enten en flate eller ikke. Brukeren skal kunne lese om modul 14 i panelet
+  // mens hun står på rekrutteringsflaten.
+  skall.settAktiv("rekruttering");
+  skall.visKontekst(14, { fokuser: false });
+  assert.equal(kort(14).getAttribute("aria-current"), "true",
+    "panelvalget mistet markeringen sin");
+  assert.equal(kort(57).getAttribute("aria-current"), "page",
+    "flatemarkeringen forsvant da panelet ble fylt");
+  // ...og markeringen overlever at søket tegner menyen på nytt, samme regel
+  // som panelvalget alt hadde.
+  const felt = brett.querySelector("#skall-sok");
+  felt.value = t("site.katalog.m57.navn");
+  felt.dispatchEvent(new window.Event("input"));
+  assert.equal(kort(57).getAttribute("aria-current"), "page",
+    "flatemarkeringen forsvant da søket tegnet menyen på nytt");
+
+  // DYPLENKEN ER FØRSTE TEGNING (Codex P2). Den som åpner `#/rekruttering`
+  // rett fra et bokmerke får skallet bygget med ruten som `aktiv`, og skal se
+  // hvor hun er med en gang — ikke først etter neste navigasjon.
+  const dyp = AppShell({ tenant: "acme", ruter, aktiv: "rekruttering",
+    sprak: "nb", moduler: [1, 57], paaSprak: () => {}, paaLoggUt: () => {} });
+  nyttBrett().append(dyp.rot);
+  assert.equal([...dyp.rot.querySelectorAll(".skall-modul")]
+    .find((e) => e.textContent === t("site.katalog.m57.navn"))
+    .getAttribute("aria-current"), "page",
+  "en dyplenke inn i flaten er umerket i menyen");
+});
