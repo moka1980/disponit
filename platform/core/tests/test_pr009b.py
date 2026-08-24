@@ -345,3 +345,51 @@ def test_rollbackdommen_maales_mot_bootportens_fasit_127():
     assert "rollbackmaal_kompatibelt" in opp
     assert "er fortsatt kompatibel med skjemaet" not in opp
     assert "UMÅLT, ikke lovet" in opp
+
+
+def test_rollbackmaalet_leses_med_tak_pa_tiden():
+    """Cursor P2-1 (#178, runde 5): dommen leses fra en FEILHÅNDTERER.
+    #172 gjorde `selvrevers()` avhengig av `rollbackmaal_kompatibelt`, og
+    reverseringen kjøres i nøyaktig det scenarioet der basen kan være treg
+    eller uoppnåelig. Uten tak venter `psql` på default-oppførselen, og da
+    står tjenestene nede så lenge — gaten som skulle sluppet reverseringen
+    fram henger i stedet.
+
+    Taket måles som ATFERD, ikke som tekst: `psql` byttes ut med et stubbet
+    skript som sover langt forbi taket, og funksjonen skal likevel komme
+    tilbake — fail-closed, med «umålt er ikke kompatibelt». En stub gir det
+    deterministisk uten nett, der en uoppnåelig vert ville vært flakete.
+    """
+    import os
+    import subprocess
+    import tempfile
+    import time
+    from pathlib import Path as P
+    lib = ROT / "deploy/staging/lib-opp.sh"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        kat = P(tmp) / "platform/core/db/migrations"
+        kat.mkdir(parents=True)
+        (kat / "001_init.sql").write_text("-- t", encoding="utf-8")
+        # `psql` som aldri svarer. 300 s er langt forbi både taket og enhver
+        # tålmodighet et vedlikeholdsvindu har.
+        bin_kat = P(tmp) / "bin"
+        bin_kat.mkdir()
+        stub = bin_kat / "psql"
+        stub.write_text("#!/bin/sh\nsleep 300\n", encoding="utf-8")
+        stub.chmod(0o755)
+
+        start = time.monotonic()
+        r = subprocess.run(
+            ["bash", "-c", f'. {lib}; rollbackmaal_kompatibelt "{tmp}" '
+                           '"postgresql:///uansett"'],
+            capture_output=True, text=True, timeout=120,
+            env=dict(os.environ,
+                     PATH=f"{bin_kat}:{os.environ['PATH']}"))
+        brukt = time.monotonic() - start
+
+    assert brukt < 60, \
+        f"lesingen har ikke tak på tiden — brukte {brukt:.1f} s"
+    assert r.returncode != 0, "en avkuttet lesing skal aldri godkjennes"
+    assert "umålt er ikke kompatibelt" in r.stdout, \
+        f"avkuttet lesing skal felles som umålt: {r.stdout!r}"
