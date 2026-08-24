@@ -240,6 +240,26 @@ def main() -> int:
     sett_kontekst(m, tenant, "seed-demo", "seed-3")
     m.execute("UPDATE oppdrag SET status='utfort' WHERE tenant=%s"
               " AND id=%s", (tenant, oid))
+    # EN FERDIG EVALUERING LUKKER PROSESSEN SIN (Codex P2, runde 8).
+    # Seeden førte oppdraget til `utfort`, men lot prosessen stå åpen med
+    # `lukket_ts = NULL` — og lukkingen er nettopp det 057 §5 definerer
+    # som FRISTSTARTEN for kandidatdataene. En demo som aldri lukket,
+    # løy derfor om hele retensjonshalvdelen den finnes for å vise:
+    # `reap_kandidatdata` faller tilbake på `coalesce(lukket_ts,
+    # opprettet)`, altså den armen som er ment for en FORLATT kjøring —
+    # en som krasjet eller ble kansellert. Slettefristen ble målt fra
+    # fødselen i stedet for fra ferdigstillelsen, og revisjonssporet
+    # etter reapingen ville båret fødselstidspunktet som syntetisk
+    # lukketid på et løp som faktisk ble fullført.
+    #
+    # I samme transaksjon som `utfort`: de to ER den ene overgangen
+    # «evalueringen er ferdig», og en seed som committer den halvt kan
+    # etterlate nøyaktig den forlatte prosessen armen over beskriver.
+    # Uten `p_lukket_ts`: NULL er 057s egen idempotensform — er
+    # prosessen alt lukket, rører kallet ikke det lagrede tidspunktet.
+    # Kallet går som migrator, som EIER funksjonen; `SET LOCAL ROLE` i
+    # seed-2 falt bort med commiten over.
+    m.execute("SELECT lukk_rekrutteringsprosess(%s,%s)", (tenant, pid))
     m.commit()
 
     sett_kontekst(m, tenant, "seed-demo", "seed-4")
