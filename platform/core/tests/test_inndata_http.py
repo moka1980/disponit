@@ -679,6 +679,52 @@ def test_lagerfeil_for_registreringen_etterlater_ingen_fil(
 
 
 @pg
+def test_begge_katalognivaaene_fsynces_for_commit(klient, inndata_rot,
+                                                  monkeypatch):
+    """Codex P2: fsyncen tok bare BARNET.
+
+    Første opplasting for en tenant oppretter `<rot>/<tenant>` her. En
+    fsync av den katalogen gjør filens oppføring I den varig — ikke
+    katalogens egen oppføring i `<rot>`. Mister verten strømmen etter
+    db-commiten, kunne dermed hele tenantkatalogen forsvinne og etterlate
+    den samme `lastet`-raden uten fil: nøyaktig hullet katalog-fsyncen fra
+    runde 1 skulle lukke, ett nivå opp.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `INNDATA_ROT` fra løkka, eller gjør
+    rot-fsyncen betinget av at `makedirs` skapte katalogen (to samtidige
+    førsteopplastinger ser hver sin halvdel av den betingelsen)."""
+    tenant, _bid, cookie, csrf = _rigg(klient)
+    rot = str(inndata_rot)
+    ekte_open, ekte_fsync = os.open, os.fsync
+    fd_sti, fsynket = {}, []
+
+    def spion_open(sti, *a, **k):
+        fd = ekte_open(sti, *a, **k)
+        if isinstance(sti, str) and sti.startswith(rot):
+            fd_sti[fd] = sti
+        return fd
+
+    def spion_fsync(fd):
+        # `pop`, ikke oppslag: en lukket fd gjenbrukes av neste `os.open`,
+        # og en gammel oppføring ville da tilskrevet feil sti.
+        if fd in fd_sti:
+            fsynket.append(fd_sti.pop(fd))
+        return ekte_fsync(fd)
+
+    monkeypatch.setattr(os, "open", spion_open)
+    monkeypatch.setattr(os, "fsync", spion_fsync)
+    r = _reserver(klient, cookie, csrf)
+    assert r.status_code == 201, r.text
+    r2 = _opplast(klient, cookie, csrf, r.json()["reservasjon_jti"],
+                  _zipbytes())
+    assert r2.status_code == 201, r2.text
+
+    # Barnet FØR roten: filens oppføring skal være varig før katalogens
+    # egen oppføring kvitteres.
+    assert fsynket == [os.path.join(rot, tenant), rot], fsynket
+
+
+@pg
 def test_sql_lukker_eiermodulen_ikke_bare_http(klient):
     """Cursor P2-3: `formaal` var CHECKet, `eiermodul` ikke — og
     `disponit` har EXECUTE på `reserver_inndata`. HTTP-laget lukket settet

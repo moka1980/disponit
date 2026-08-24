@@ -198,11 +198,22 @@ async def opplast_endepunkt(tjeneste, request):
             # IKKE best effort her: feiler den, har vi ennå ikke committet, og
             # ryddingen her tar filen. En bunt vi ikke kan love er varig, skal
             # ikke kvitteres som lastet.
-            kat = os.open(katalog, os.O_RDONLY)
-            try:
-                os.fsync(kat)
-            finally:
-                os.close(kat)
+            #
+            # BEGGE nivåene, ikke bare barnet (Codex P2 runde 5): første
+            # opplasting for en tenant OPPRETTER `katalog` her. Å fsync-e
+            # `katalog` gjør filens oppføring I den varig — ikke katalogens
+            # egen oppføring i `INNDATA_ROT`. Et strømbrudd etter commiten
+            # kunne dermed ta hele tenantkatalogen og etterlate den samme
+            # `lastet`-raden uten fil. Roten fsync-es ubetinget og ikke bare
+            # når `makedirs` skapte katalogen: to samtidige førsteopplastinger
+            # ser hver sin halvdel av den betingelsen, og en fsync av en
+            # uendret katalog koster ingenting mot 64 MiB ciphertext.
+            for kat_sti in (katalog, INNDATA_ROT):
+                kat = os.open(kat_sti, os.O_RDONLY)
+                try:
+                    os.fsync(kat)
+                finally:
+                    os.close(kat)
         except Exception:
             for spor in (tmp, sti):
                 try:
