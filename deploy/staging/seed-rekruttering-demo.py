@@ -18,7 +18,9 @@ Hva den gjør, i kjedens egen rekkefølge:
      blindede teksten; §5-fullstendighet er poenget, ikke pynt),
   4. `utfort`, og til slutt en innstilt invitasjonsliste gjennom
      `opprett_utsendingsliste` (056) — USIGNERT: signaturen er eierens
-     klikk i flaten, det er selve demoen.
+     klikk i flaten, det er selve demoen. Listens `innhold_hash` er
+     JCS-digesten av selve utsendelsen (mal + de anbefalte mottakerne med
+     flettedataene sine), så det eieren autoriserer ER de bytene.
 
 Demoen er LITEN (standard 6 kandidater) med vilje: full-last-sperrene
 (#155/#163/#164/#165/#173) gjelder reelle bunter, ikke denne.
@@ -148,7 +150,7 @@ def main() -> int:
     pid = m.execute("SELECT opprett_rekrutteringsprosess(%s,%s,90)",
                     (tenant, oid)).fetchone()[0]
 
-    antall_anbefalt = 0
+    mottakere = []
     for n, (navn, oppfylt, funnliste) in enumerate(
             KANDIDATER[:a.kandidater]):
         kid, did = uuid.uuid4(), uuid.uuid4()
@@ -173,8 +175,18 @@ def main() -> int:
         # «Søker uten sky» sto grønt i demoen. En demo som viser noe annet
         # enn produksjonsveien er ikke en demo. Feltet utelates nå, og
         # dermed er det ÉN utledning igjen — flatens egen.
-        if not funn and all(oppfylt.values()):
-            antall_anbefalt += 1
+        # MOTTAKERNE SAMLES, IKKE BARE TELLES (Codex P2). Invitasjonen går
+        # til de anbefalte kandidatene, og det er NØYAKTIG de radene
+        # signaturen skal stå for — se `innhold_hash` under. Predikatet er
+        # leseflatens eget (`api/rekruttering.py`): tomme funn OG alle
+        # krav oppfylt, boolsk.
+        mottaker_ref = f"demo-kandidat-{n+1}@example.invalid"
+        flettefelt = {"kandidatnavn": "[NAVN-1]",
+                      "stilling": "Demo-stilling"}
+        if not funn and all(v is True for v in oppfylt.values()):
+            mottakere.append({"kandidat_id": str(kid),
+                              "mottaker_ref": mottaker_ref,
+                              "flettefelt": flettefelt})
         # Evidensen regnes av NØYAKTIG de lagrede bytene (CodeRabbit
         # major): dokumentet bygges én gang, og både størrelse og hash
         # er avledet av det — aldri av en nabostreng pluss et påslag.
@@ -216,9 +228,7 @@ def main() -> int:
             "INSERT INTO kandidat_utsendingsdata (tenant, prosess_id,"
             " kandidat_id, mottaker_ref, flettefelt, innhold_sha256)"
             " VALUES (%s,%s,%s,%s,%s,%s)",
-            (tenant, pid, kid, f"demo-kandidat-{n+1}@example.invalid",
-             json.dumps({"kandidatnavn": "[NAVN-1]",
-                         "stilling": "Demo-stilling"}), sha))
+            (tenant, pid, kid, mottaker_ref, json.dumps(flettefelt), sha))
         m.execute(
             "INSERT INTO kandidat_avmaskering (tenant, prosess_id,"
             " kandidat_id, felter, innhold_sha256)"
@@ -234,13 +244,39 @@ def main() -> int:
 
     sett_kontekst(m, tenant, "seed-demo", "seed-4")
     m.execute("SET LOCAL ROLE disponit_m37_claimer")
-    innhold_hash = hashlib.sha256(
-        f"m57-demoliste:{pid}".encode()).hexdigest()
+    # HASHEN ER UTSENDELSENS BYTES, IKKE ET PROSESSTOKEN (Codex P2).
+    # `innhold_hash` er innholdsbindingen hele signeringskjeden hviler på:
+    # dialogen viser kortformen, kroppen ekker den, endepunktet avviser
+    # `innhold_endret` når den ikke stemmer, og 056 bærer den videre inn i
+    # `utsendingssignatur` og hver `utsendingsfrigivelse`. Seeden regnet
+    # den av strengen `m57-demoliste:<prosess-id>` — en unik verdi, og
+    # derfor lett å tro på, men den bandt INGEN av bytene: ikke malen,
+    # ikke mottakerne, ikke flettedataene. Demoen kunne altså ikke vise
+    # det den finnes for å vise — at mennesket autoriserte NØYAKTIG denne
+    # utsendelsen — og et avvik mellom listen og de seedede radene ville
+    # aldri blitt oppdaget.
+    #
+    # Representasjonen er JCS (RFC 8785, `policy_validator.jcs`) — husets
+    # egen kanonisering, den samme signerte bytes ellers regnes av. Ingen
+    # ny maskin: `json.dumps` ville gjort «kanonisk» til en påstand om
+    # flagg, og nøyaktig det er feilen 006 byttet bort. Mottakerne
+    # sorteres på kandidat-id så representasjonen er uavhengig av
+    # innsettingsrekkefølgen, og `antall` er nå LENGDEN av den samme
+    # listen — ikke et `max(…, 1)` som kunne love én mottaker det ikke
+    # fantes rad for.
+    from policy_validator import jcs
+    mottakere.sort(key=lambda mo: mo["kandidat_id"])
+    innhold_hash = hashlib.sha256(jcs.kanoniske_bytes({
+        "listetype": "invitasjon",
+        "malversjon": "invitasjon-v1",
+        "prosess_id": str(pid),
+        "mottakere": mottakere,
+    })).hexdigest()
     lid = m.execute(
         "SELECT opprett_utsendingsliste(%s,%s,NULL,%s,'invitasjon',"
         "'invitasjon-v1',%s,%s)",
         (tenant, uuid.uuid4(), oid, innhold_hash,
-         max(antall_anbefalt, 1))).fetchone()[0]
+         len(mottakere))).fetchone()[0]
     m.commit()
     # SPA-SKALLET ER `/`, IKKE `/ui/` (Codex P2). `/ui/`-stien proxes
     # uendret (nginx `location /ui/`), og `ui_asset` slår opp på
