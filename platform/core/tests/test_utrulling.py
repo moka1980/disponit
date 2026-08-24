@@ -127,3 +127,13 @@ def test_spraket_velger_tekst_men_aldri_rader():
 
 def test_egen_rad_oversettes_ogsa():
     assert egen_rad("granmo", "en")["neste"] != egen_rad("granmo", "nb")["neste"]
+
+
+def test_disponit_tenanten_har_modultildeling():
+    """Regresjon (målt 24/8): plattformens egen tenant manglet i tabellen, og
+    eierens innlogging ga «modultildelingen er ikke tilgjengelig» —
+    `moduler is None` og `ui.shell.moduler_ukjent` i klienten. `svar_for`
+    er hele autorisasjonsregelen, så raden er reelt dekket her uten HTTP."""
+    svar = svar_for("disponit", KUNDESCOPES)
+    assert svar["moduler"] is not None and svar["moduler"]
+    assert svar["tenanter"][0]["id"] == "disponit"
