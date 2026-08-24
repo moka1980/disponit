@@ -64,8 +64,24 @@ def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--epost", required=True)
     p.add_argument("--tenant")
-    p.add_argument("--kandidater", type=int, default=6)
+    p.add_argument("--kandidater", type=int, default=len(KANDIDATER),
+                   help=f"antall demokandidater, 1–{len(KANDIDATER)}")
     a = p.parse_args()
+    # TALLET MÅ KUNNE HOLDES (Codex P2). Slicen kan materialisere høyst de
+    # seks malene, men flagget tok imot hva som helst, og hver retning
+    # løy på sin måte: over 6 skrev `antall_soknader` i det krypterte
+    # oppdraget et større tall enn antallet kandidatrader som faktisk ble
+    # lagt inn — altså en proveniens som ikke stemmer med lagrene; under 0
+    # ga `KANDIDATER[:-2]` en helt annen delmengde enn den bestilte; og 0
+    # opprettet en invitasjonsliste med `antall=1` (`max(…, 1)`) på en
+    # prosess uten en eneste kandidat, altså en signerbar utsendelse til
+    # ingen. Grensen måles på malene, ikke på et hardkodet tall, så den
+    # følger listen om den vokser.
+    if not 1 <= a.kandidater <= len(KANDIDATER):
+        print(f"AVBRUTT: --kandidater må være mellom 1 og"
+              f" {len(KANDIDATER)} (demoen har {len(KANDIDATER)} maler)",
+              file=sys.stderr)
+        return 2
 
     from db.pg import koble, sett_kontekst
     url = os.environ.get("DISPONIT_MIGRATOR_URL")
