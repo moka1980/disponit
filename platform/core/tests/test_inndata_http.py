@@ -567,6 +567,64 @@ def test_kryptostrukturen_avvises_uten_a_brenne_jti(klient):
 
 
 @pg
+def test_innhold_sha256_maa_ha_hashens_form(klient):
+    """Cursor P2 (049/053/054-klassen): `innhold_sha256` var bare NOT NULL
+    i `lastet`-grenen, mens `registrer_inndata_lastet` tar verdien fra en
+    runtime-kaller med EXECUTE.
+
+    `''` eller `'nei'` kunne dermed brenne jti-en og lande som `lastet`
+    med en hash ingen resolver kan stole på — og replay-armen fra runde 1
+    sammenligner nettopp mot den, altså mot søppel: en retry med samme
+    kropp ville da fått `unique_violation` i stedet for gjenspill.
+
+    MUTASJONEN SOM DREPER DENNE: fjern regexen i funksjonsguarden eller
+    `inndata_sha256_format` på tabellen."""
+    from db import kryptering
+    tenant, _bid, _cookie, _csrf = _rigg(klient)
+    m = _migrator(tenant)
+    try:
+        jti = _reservasjon(m, tenant)
+        key_id, _dek = kryptering.hent_eller_opprett_aktiv_dek(m, tenant)
+        m.commit()
+    finally:
+        m.close()
+    c = _runtime(tenant)
+    try:
+        for sha in ("", "nei", "A" * 64, "a" * 63, "a" * 65):
+            with pytest.raises(psycopg.errors.InvalidParameterValue):
+                c.execute("SELECT * FROM registrer_inndata_lastet"
+                          "(%s,%s,%s,%s,%s,%s,%s)",
+                          (tenant, jti, 10, sha, key_id, b"n" * 12,
+                           _lagersti(tenant)))
+            c.rollback()
+            _kontekst(c, tenant)
+    finally:
+        c.close()
+    m = _migrator(tenant)
+    try:
+        _kontekst(m, tenant)
+        # … og reservasjonen står ubrent.
+        assert m.execute("SELECT status FROM inndata_artefakt WHERE"
+                         " tenant=%s AND reservasjon_jti=%s",
+                         (tenant, jti)).fetchone()[0] == "reservert"
+        # Tabellen bærer den samme invarianten, uansett skrivevei.
+        with pytest.raises(psycopg.errors.CheckViolation):
+            m.execute(
+                "INSERT INTO inndata_artefakt (tenant, eiermodul, formaal,"
+                " innholdstype, maks_bytes, faktiske_bytes, innhold_sha256,"
+                " key_id, nonce, lager_sti, status, reservasjon_jti,"
+                " idempotensnokkel, utloper, lastet_ts)"
+                " VALUES (%s,'m57_ats','soknadsbunt','application/zip',"
+                "%s,10,'nei',%s,%s,%s,'lastet',%s,%s,"
+                " now()+interval '1 h',now())",
+                (tenant, MAKS, key_id, b"n" * 12, _lagersti(tenant),
+                 secrets.token_hex(32), secrets.token_hex(12)))
+        m.rollback()
+    finally:
+        m.close()
+
+
+@pg
 def test_lagerstien_maa_ligge_i_tenantens_eget_navnerom(klient):
     """Cursor P1: `lager_sti` hadde bare «ikke tom», mens
     `registrer_inndata_lastet` tar den fra en runtime-kaller med EXECUTE.

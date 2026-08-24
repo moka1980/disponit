@@ -122,6 +122,14 @@ CREATE TABLE inndata_artefakt (
     -- udekrypterbare data; dette er isolasjonsbrudd med sletting på
     -- enden. Invarianten er API-ets egen layout:
     -- `<rot>/<tenant>/<uuid>.bin`.
+    -- Målingen bærer sin egen form (Cursor P2, 049/053/054-klassen):
+    -- `innhold_sha256` var bare NOT NULL i `lastet`-grenen, mens
+    -- `registrer_inndata_lastet` tar verdien fra en runtime-kaller. `''`
+    -- eller `'nei'` kunne dermed brenne jti-en og lande som `lastet` med
+    -- en hash ingen resolver kan stole på — og replay-armen sammenligner
+    -- nettopp mot den, altså mot søppel. Samme regex som søskentabellene.
+    CONSTRAINT inndata_sha256_format CHECK (
+        innhold_sha256 IS NULL OR innhold_sha256 ~ '^[0-9a-f]{64}$'),
     CONSTRAINT inndata_lagersti_navnerom CHECK (
         lager_sti IS NULL OR (
             lager_sti LIKE '/%'
@@ -352,8 +360,8 @@ BEGIN
     IF p_key_id IS NULL OR p_nonce IS NULL
        OR octet_length(p_nonce) <> 12
        OR p_sti IS NULL OR length(btrim(p_sti)) = 0
-       OR p_sha256 IS NULL THEN
-        RAISE EXCEPTION 'inndata: krypto/sti er strukturelt ugyldig'
+       OR p_sha256 IS NULL OR p_sha256 !~ '^[0-9a-f]{64}$' THEN
+        RAISE EXCEPTION 'inndata: krypto/sti/hash er strukturelt ugyldig'
             ' (nonce=% B)', octet_length(p_nonce)
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
