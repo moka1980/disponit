@@ -124,6 +124,25 @@ function tegn(hoved, ctx, data, okt, valgtId) {
 
   const tabellRot = el("div", { class: "rekrut-tabell" });
 
+  // EN DELVIS KANDIDATLISTE ER IKKE EN FERDIG RANGERING (Codex P2).
+  // Prosessen FØDES mens kjøringen står på (`plukket`), og artefaktene
+  // skrives inkrementelt: under en helt normal evaluering viser tabellen
+  // derfor de kandidatene som er vurdert SÅ LANGT, i en rekkefølge som
+  // ennå kan snu. Er kjøringen `feilet` eller `kansellert`, kommer resten
+  // aldri. Serveren sier tilstanden i `evaluering_status`; her sies den
+  // videre, over tabellen, der beslutningen tas.
+  //
+  // Fail-safe som `vekter_kilde`: merknaden vises med mindre svaret
+  // POSITIVT sier `utfort`. Et gammelt svar uten feltet er ikke et bevis
+  // på at evalueringen er ferdig.
+  const merknadRot = el("div", { class: "rekrut-evaluering" });
+  if (prosess.evaluering_status !== "utfort") {
+    merknadRot.append(el("p", { class: "rekrut-evaluering-status",
+      text: t(["feilet", "kansellert"].includes(prosess.evaluering_status)
+        ? "ui.rekruttering.evaluering_avbrutt"
+        : "ui.rekruttering.evaluering_pagar") }));
+  }
+
   // SORTERINGEN ER BRUKERENS VALG, IKKE TABELLENS UTGANGSPUNKT (Codex P2).
   // En vektendring KREVER en ny tabell — poengene er nye — og hver ny
   // `DataTabell` fikk «poeng, synkende» hardkodet inn. Hadde brukeren
@@ -505,6 +524,7 @@ function tegn(hoved, ctx, data, okt, valgtId) {
   }
 
   sett(hoved, flateHode(t("ui.rekruttering.tittel")), velgerRot,
-    utfall, kunngjoring, blindingRot, vektRot, tabellRot, listeRot);
+    utfall, kunngjoring, blindingRot, vektRot, merknadRot, tabellRot,
+    listeRot);
   tegnTabell();
 }

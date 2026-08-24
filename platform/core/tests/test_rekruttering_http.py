@@ -191,6 +191,7 @@ def test_prosesslisten_baerer_flatens_kontrakt(klient):
     p = pr[0]
     assert p["vekter"] == {"drift": 3, "sky": 2}
     assert p["vekter_kilde"] == "evalueringsartefakt"
+    assert p["evaluering_status"] == "utfort"
     assert p["blinding_av"] is False
     assert {k["status"] for k in p["kandidater"]} == \
         {"anbefalt", "innstilt_avslag"}
@@ -199,6 +200,75 @@ def test_prosesslisten_baerer_flatens_kontrakt(klient):
     liste = [l for l in p["lister"] if l["liste_id"] == lid]
     assert liste and liste[0]["innhold_hash"] == ih \
         and liste[0]["antall"] == 2 and liste[0]["signert"] is False
+
+
+def _prosess_under_kjoring() -> str:
+    """En prosess på et oppdrag som fortsatt står `plukket` — nøyaktig den
+    tilstanden 057s fødselsport KREVER, og der artefaktene skrives
+    inkrementelt. -> prosess_id."""
+    from db import kryptering
+    m = _migrator()
+    try:
+        logg = m.execute(
+            "INSERT INTO revisjonslogg (tenant, aktor, kilde, input_hash,"
+            " policy_id, beslutning, begrunnelse, idempotency_key)"
+            " VALUES (%s,'test','api_token','ih','p@1.0.0/x.y','TILLAT',"
+            " '[]',%s) RETURNING id", (TEN, secrets.token_hex(8))
+        ).fetchone()[0]
+        key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(m, TEN)
+        ct, nonce = kryptering.krypter(dek, {"demo": True}, TEN, key_id)
+        oid = m.execute(
+            "INSERT INTO oppdrag (opprinnelse, tenant,"
+            " beslutning_loggpost_id, oppdragstype, handling, eiermodul,"
+            " payload_kryptert, key_id, nonce, utforelsesfrist,"
+            " evidensfrist, koblingsstatus)"
+            " VALUES ('beslutning',%s,%s,'rekruttering.evaluering',"
+            " 'rekruttering.evaluering.bunt','m57_ats',%s,%s,%s,"
+            " now()+interval '4 hour', now()+interval '1 day','KOBLET')"
+            " RETURNING id", (TEN, logg, ct, key_id, nonce)).fetchone()[0]
+        m.execute("UPDATE oppdrag SET status='plukket' WHERE tenant=%s"
+                  " AND id=%s", (TEN, oid))
+        m.commit()
+    finally:
+        m.close()
+    from db.pg import koble, sett_kontekst
+    rt = koble(DSN)
+    try:
+        sett_kontekst(rt, TEN, "test", "r-kjorer")
+        pid = rt.execute("SELECT opprett_rekrutteringsprosess(%s,%s,90)",
+                         (TEN, oid)).fetchone()[0]
+        rt.commit()
+        return str(pid)
+    finally:
+        rt.close()
+
+
+@pg
+def test_evalueringens_tilstand_folger_med_leseflaten(klient):
+    """Codex P2: prosessen fødes MENS kjøringen står på (`plukket` — 057s
+    fødselsport), og kandidatartefaktene skrives inkrementelt etterpå.
+    Uten oppdragets status kunne flaten ikke skille en delvis
+    kandidatliste fra en ferdig rangering, og en `feilet`/`kansellert`
+    kjøring — der resten aldri kommer — så nøyaktig like ferdig ut.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `o.status` fra spørringen i
+    `prosesser_endepunkt`.
+    """
+    ferdig, _lid, _ih = _seed_prosess()
+    kjorer = _prosess_under_kjoring()
+    bid = _bruker("tilstand-leser", ["leser"])
+    cookie, _ = _browsersesjon(bid)
+    r = _get(klient, cookie, "/v1/rekruttering/prosesser")
+    assert r.status_code == 200, r.text
+    status = {p["prosess_id"]: p["evaluering_status"]
+              for p in r.json()["prosesser"]}
+    assert status[kjorer] == "plukket", \
+        "en evaluering midt i løpet ble meldt som en ferdig rangering"
+    assert status[ferdig] == "utfort"
+    # …og prosessen FORSVINNER ikke: å filtrere den bort ville vært sin
+    # egen løgn — «ingen aktiv rekrutteringsprosess» — og oppdraget er
+    # eneste vei inn til å se at noe kjører.
+    assert kjorer in status
 
 
 def _artefakt(prosess_id: str, oppfylt: dict, funn=()) -> str:

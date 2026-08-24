@@ -1060,6 +1060,8 @@
   "ui.rekruttering.funn.motstridende_opplysning": "Conflicting information",
   "ui.rekruttering.funn.uklar_tidslinje": "Unclear timeline",
   "ui.rekruttering.funn.utenfor_soknadsfrist": "Outside the application deadline",
+  "ui.rekruttering.evaluering_pagar": "The evaluation is not finished. The candidates below are the ones assessed so far — the list is incomplete, and the order is not final.",
+  "ui.rekruttering.evaluering_avbrutt": "The evaluation was interrupted and will not finish. The candidates below are the ones that were assessed — the rest are not coming.",
   "ui.rekruttering.vekter_tittel": "Weights per requirement",
   "ui.rekruttering.vekter_standard": "The weights below are the house defaults, not the role profile's: the evaluation did not record its own. The order is therefore computed from these weights, not from the evaluation's.",
   "ui.rekruttering.krav.drift": "Operations",

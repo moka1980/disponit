@@ -1060,6 +1060,8 @@
   "ui.rekruttering.funn.motstridende_opplysning": "Motstridende opplysning",
   "ui.rekruttering.funn.uklar_tidslinje": "Uklar tidslinje",
   "ui.rekruttering.funn.utenfor_soknadsfrist": "Utenfor søknadsfrist",
+  "ui.rekruttering.evaluering_pagar": "Evalueringen er ikke ferdig. Kandidatene under er de som er vurdert så langt — listen er ufullstendig, og rekkefølgen er ikke endelig.",
+  "ui.rekruttering.evaluering_avbrutt": "Evalueringen ble avbrutt og fullføres ikke. Kandidatene under er de som rakk å bli vurdert — resten kommer ikke.",
   "ui.rekruttering.vekter_tittel": "Vekter per krav",
   "ui.rekruttering.vekter_standard": "Vektene under er husets standardvekter, ikke stillingsprofilens: evalueringen lagret ikke sine egne. Rekkefølgen er derfor regnet av disse vektene, ikke av evalueringens.",
   "ui.rekruttering.krav.drift": "Drift",

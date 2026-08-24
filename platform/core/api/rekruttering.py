@@ -152,14 +152,32 @@ def prosesser_endepunkt(tjeneste, request):
     def kjor(conn):
         tenant, _bid = _leseauth_beslutninger(tjeneste, request, conn, rid)
         prosesser = []
-        for pid, oppdrag_id in conn.execute(
-                "SELECT prosess_id, oppdrag_id FROM rekrutteringsprosess"
-                " WHERE tenant=%s AND slettet_ts IS NULL"
-                " ORDER BY opprettet DESC", (tenant,)).fetchall():
+        # EVALUERINGENS TILSTAND FØLGER MED (Codex P2). Prosessen FØDES
+        # mens kjøringen står på (`plukket` — 057s fødselsport), og
+        # kandidatartefaktene skrives inkrementelt etterpå. Spørringen
+        # returnerte hver ureapet prosess uten et ord om oppdraget, så en
+        # evaluering midt i løpet ble presentert som en FERDIG rangering:
+        # kandidater som ennå ikke er vurdert, mangler rett og slett, og
+        # ingenting på skjermen sa det. Samme for en `feilet` eller
+        # `kansellert` kjøring — der kommer resten aldri.
+        #
+        # Statusen returneres i stedet for å filtreres: en prosess som
+        # forsvinner fra flaten er sin egen løgn («ingen aktiv
+        # rekrutteringsprosess»), og oppdraget er dessuten den ENESTE
+        # veien inn til å se at noe kjører. Joinen er trygg — `prosess_
+        # oppdrag_fk` (057) garanterer nøyaktig én treffende rad.
+        for pid, oppdrag_id, status in conn.execute(
+                "SELECT p.prosess_id, p.oppdrag_id, o.status"
+                "  FROM rekrutteringsprosess p"
+                "  JOIN oppdrag o ON o.tenant = p.tenant"
+                "                AND o.id = p.oppdrag_id"
+                " WHERE p.tenant=%s AND p.slettet_ts IS NULL"
+                " ORDER BY p.opprettet DESC", (tenant,)).fetchall():
             kandidater, vekter, kilde = _kandidater(conn, tenant, pid)
             prosesser.append({
                 "prosess_id": str(pid),
                 "blinding_av": False,   # avskruing finnes ikke før #159
+                "evaluering_status": status,
                 "vekter": vekter,
                 "vekter_kilde": kilde,
                 "kandidater": kandidater,

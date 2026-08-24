@@ -45,6 +45,11 @@ function prosess() {
     // huset måtte finne på dem. De øvrige testene handler om noe annet
     // og skal ikke tegne kilde-merknaden.
     vekter: { drift: 3, sky: 2 }, vekter_kilde: "evalueringsartefakt",
+    // Samme grunn for `evaluering_status`: serveren sender ALLTID
+    // oppdragets status, og «utfort» er den ferdige evalueringen de
+    // øvrige testene handler om — de skal ikke tegne ufullstendig-
+    // merknaden.
+    evaluering_status: "utfort",
     kandidater: [
       { kandidat_id: "K-2", oppfylt: { drift: true, sky: false },
         status: "vurderes",
@@ -330,6 +335,51 @@ test("Rekruttering: uten mutasjonsscope er blindingsbryteren deaktivert", async 
     .find((b) => b.textContent === t("ui.rekruttering.signer_knapp"));
   assert.ok(signer.disabled, "signeringen var alt gatet — den skal stå");
 });
+
+test("Rekruttering: en uferdig evaluering sier fra — alle tre veier",
+  async () => {
+    // Codex P2: prosessen fødes MENS kjøringen står på (`plukket`), og
+    // artefaktene skrives inkrementelt. Tabellen viste derfor en delvis
+    // kandidatliste som en ferdig rangering, uten et tegn på at noen
+    // manglet — og etter en `feilet`/`kansellert` kjøring kommer resten
+    // aldri.
+    //
+    // Målt alle tre veier, ellers er testen bare en påstand om at en <p>
+    // finnes: pågår, avbrutt, og ferdig (der merknaden IKKE skal stå).
+    //
+    // MUTASJONEN SOM DREPER DENNE: gjør betingelsen i `flater/
+    // rekruttering.js` konstant (alltid eller aldri).
+    const merknad = (h) => [...h.querySelectorAll(".rekrut-evaluering p")]
+      .map((p) => p.textContent);
+
+    const kjorer = prosess();
+    kjorer.prosesser[0].evaluering_status = "plukket";
+    SVAR = { "/v1/rekruttering/prosesser": kjorer };
+    const h1 = nyHoved();
+    visRekruttering(h1, ctx());
+    await vent(() => h1.querySelector("table"));
+    assert.deepEqual(merknad(h1), [t("ui.rekruttering.evaluering_pagar")],
+      "en delvis kandidatliste ble vist som en ferdig rangering");
+    // …og teksten er locale-båret, aldri en rå nøkkel (RUTINER §5).
+    assert.ok(!merknad(h1)[0].startsWith("ui."),
+      "merknaden falt til reservenøkkelen — locale mangler");
+
+    const avbrutt = prosess();
+    avbrutt.prosesser[0].evaluering_status = "kansellert";
+    SVAR = { "/v1/rekruttering/prosesser": avbrutt };
+    const h2 = nyHoved();
+    visRekruttering(h2, ctx());
+    await vent(() => h2.querySelector("table"));
+    assert.deepEqual(merknad(h2), [t("ui.rekruttering.evaluering_avbrutt")],
+      "en avbrutt kjøring lovet fortsatt at resten kommer");
+
+    SVAR = { "/v1/rekruttering/prosesser": prosess() };   // utfort
+    const h3 = nyHoved();
+    visRekruttering(h3, ctx());
+    await vent(() => h3.querySelector("table"));
+    assert.deepEqual(merknad(h3), [],
+      "en FERDIG evaluering ble stemplet som ufullstendig");
+  });
 
 test("Rekruttering: oppfunne vekter sier fra — begge veier", async () => {
   // Codex P1: er vektene husets reserve (3 per krav) og ikke
