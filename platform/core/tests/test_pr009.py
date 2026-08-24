@@ -581,6 +581,36 @@ def test_selvrevers_speiler_vedlikeholdsvinduet():
         "reverseringsdommen måler ikke enhetene den nettopp startet"
 
 
+def test_hver_feil_i_vinduet_kaller_selvrevers():
+    """Cursor P2 5: koblingen mellom vinduet og reverseringen måles.
+
+    `selvrevers()` kan være perfekt og likevel aldri kalles. Feilsonen er
+    avgrenset og kjent: fra `systemctl stop` (steg 5) til `ln -sfn` (steg 7,
+    release-byttet). Hver kommando som kan feile DER, må gå til reverseringen
+    — ellers etterlater et avbrudd tjenestene nede med symlinken pekende på
+    en release ingenting starter.
+
+    Steg 7 og utover er UTENFOR: der er symlinken alt byttet, og å starte
+    forrige release ville ikke lenger vært å boote den. Det er notert som
+    pre-existing og ligger utenfor #172s ramme.
+    """
+    opp = "\n".join(
+        linje for linje in (ROT / "deploy/staging/opp.sh").read_text(
+            encoding="utf-8").splitlines()
+        if not linje.lstrip().startswith("#"))
+    vindu = opp[opp.index("systemctl stop"):opp.index("ln -sfn")]
+    # Migrasjonene (steg 6) og deploy-porten (6b) er de to kommandoene i
+    # vinduet som kan feile. Begge skal ende i reverseringen.
+    assert "migrer.py" in vindu and "deployport-modultyper.py" in vindu, \
+        "vinduet inneholder ikke lenger de kommandoene porten er skrevet for"
+    for kall in ('selvrevers "migrasjon', 'selvrevers "deploy-port'):
+        assert kall in vindu, \
+            f"{kall}...\" mangler mellom vedlikeholdsvinduet og release-byttet"
+    assert vindu.count("selvrevers ") == 2, \
+        "antall selvrevers-kall i vinduet har endret seg — er en ny " \
+        "feilkilde lagt til uten reversering, eller en fjernet?"
+
+
 def _checksumporten() -> str:
     """Deploy-sidens checksum-preflight, ORDRETT fra opp.sh.
 
