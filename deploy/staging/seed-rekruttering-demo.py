@@ -216,8 +216,14 @@ def main() -> int:
         (tenant, uuid.uuid4(), oid, innhold_hash,
          max(antall_anbefalt, 1))).fetchone()[0]
     m.commit()
+    # SPA-SKALLET ER `/`, IKKE `/ui/` (Codex P2). `/ui/`-stien proxes
+    # uendret (nginx `location /ui/`), og `ui_asset` slår opp på
+    # FILENDELSEN: en tom `sti` har ingen, faller ut av `_CT` og svarer
+    # 404. `/ui/` er assets-treet, `/` er skallet som laster ruteren —
+    # og fragmentet går uansett aldri til serveren. Demo-anvisningen
+    # endte altså på en feilside i stedet for på Rekruttering.
     print(f"SEEDET: tenant={tenant} prosess={pid} liste={lid}"
-          f" innhold={innhold_hash[:12]}… — åpne /ui/#/rekruttering og"
+          f" innhold={innhold_hash[:12]}… — åpne /#/rekruttering og"
           " signer invitasjonen")
     return 0
 
