@@ -74,13 +74,25 @@ def _kandidater(conn, tenant, prosess_id):
 
 def _lister(conn, tenant, oppdrag_id):
     """Innstilte lister på evalueringsoppdraget: nyeste versjon per serie
-    (den uten barn), med signaturstatus."""
+    (den uten barn), med signaturstatus.
+
+    SIGNATURSTATUSEN ER SERIENS, IKKE RADENS (Codex P2). Signatur-sloten
+    er `en_signert_versjon_per_serie` (056) — UNIK på (tenant,
+    utkast_serie), altså én per SERIE. `opprett_utsendingsliste` hindrer
+    ikke at et barn lages etter at forelderen ble signert, og da er
+    barnet spissen denne spørringen returnerer. Med et eksakt
+    liste-treff meldte raden `signert: false`: flaten viste en
+    handlingsklar knapp på en versjon som ALDRI kan signeres — det
+    eneste mulige utfallet er `serien_alt_signert`. Joinen går derfor på
+    serien, som er der sloten faktisk bor; unik-indeksen holder treffet
+    på høyst én rad.
+    """
     rader = conn.execute(
         "SELECT l.liste_id, l.listetype, l.antall, l.innhold_hash,"
-        "       (s.liste_id IS NOT NULL) AS signert"
+        "       (s.utkast_serie IS NOT NULL) AS signert"
         "  FROM utsendingsliste l"
         "  LEFT JOIN utsendingssignatur s"
-        "    ON s.tenant = l.tenant AND s.liste_id = l.liste_id"
+        "    ON s.tenant = l.tenant AND s.utkast_serie = l.utkast_serie"
         " WHERE l.tenant=%s AND l.oppdrag_id=%s"
         "   AND NOT EXISTS (SELECT 1 FROM utsendingsliste b"
         "                    WHERE b.tenant=l.tenant"

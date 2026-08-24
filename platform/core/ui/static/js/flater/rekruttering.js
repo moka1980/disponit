@@ -429,7 +429,17 @@ function tegn(hoved, ctx, data, okt, valgtId) {
     // En liste som ER signert i denne økten, kommer tilbake død — også
     // etter et prosessbytte, der `data` fortsatt er det svaret som ble
     // hentet FØR signeringen og derfor viser listen som usignert.
-    if (okt.signerte.has(listenokkel(liste))) knapp.dataset.ferdig = "1";
+    //
+    // ... OG SERVERENS EGET SVAR TELLER (Codex P2). `okt.signerte` er
+    // ØKTENS hukommelse: den overlever et prosessbytte, ikke en
+    // omlasting eller en ny fane. `liste.signert` er seriens
+    // signatur-slot lest fra basen, og den overlever alt. Uten dette
+    // leddet fikk enhver ny økt en handlingsklar knapp på en serie som
+    // alt er signert, og klikket kunne bare ende i `serien_alt_signert`
+    // — flaten lovte en irreversibel handling den ikke kunne levere.
+    if (liste.signert || okt.signerte.has(listenokkel(liste))) {
+      knapp.dataset.ferdig = "1";
+    }
     if (!kanBestille || knapp.dataset.ferdig) {
       knapp.setAttribute("disabled", "");
     }

@@ -321,6 +321,46 @@ def test_signering_av_utdatert_listeversjon_avvises(klient):
 
 
 @pg
+def test_signaturstatusen_folger_serien_ikke_raden(klient):
+    """Codex P2: signatur-sloten er `en_signert_versjon_per_serie` — UNIK
+    på (tenant, utkast_serie), altså én per SERIE. `opprett_utsendingsliste`
+    hindrer ikke et barn etter at forelderen ble signert, og barnet er da
+    spissen `_lister` returnerer. Med et eksakt liste-treff meldte raden
+    `signert: false`: flaten viste en handlingsklar knapp på en versjon som
+    ALDRI kan signeres.
+
+    MUTASJONEN SOM DREPER DENNE: sett joinen i `_lister` tilbake til
+    `s.liste_id = l.liste_id`.
+    """
+    _pid, rot, rot_hash = _seed_prosess()
+    sjef = _bruker("sjef-serie2", ["admin"])
+    cookie, csrf = _browsersesjon(sjef)
+    r = _post(klient, cookie, csrf,
+              f"/v1/rekruttering/lister/{rot}/signer",
+              {"innhold_hash": rot_hash})
+    assert r.status_code == 201, r.text
+    # Serien redigeres videre ETTER signaturen — 056 tillater det.
+    barn, barn_hash = _ny_versjon(rot)
+    leser = _bruker("serie-leser", ["leser"])
+    lc, _ = _browsersesjon(leser)
+    rg = _get(klient, lc, "/v1/rekruttering/prosesser")
+    assert rg.status_code == 200, rg.text
+    spisser = [l for p in rg.json()["prosesser"] for l in p["lister"]]
+    spiss = [l for l in spisser if l["liste_id"] == barn]
+    assert spiss, "barnet er spissen, men kom ikke ut av leseflaten"
+    assert spiss[0]["signert"] is True, \
+        "spissen meldte usignert på en serie hvis signatur-slot er brukt"
+    assert not [l for l in spisser if l["liste_id"] == rot], \
+        "forelderen har et barn og skal ikke være spiss"
+    # …og påstanden bak statusen holder: barnet KAN ikke signeres.
+    r2 = _post(klient, cookie, csrf,
+               f"/v1/rekruttering/lister/{barn}/signer",
+               {"innhold_hash": barn_hash})
+    assert r2.status_code == 409, r2.text
+    assert r2.json()["feil"] == "serien_alt_signert"
+
+
+@pg
 def test_scopene_gater_som_flaten_lover(klient):
     _pid, lid, ih = _seed_prosess()
     leser = _bruker("bare-leser", ["leser"])

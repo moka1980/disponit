@@ -327,6 +327,37 @@ test("Rekruttering: uten mutasjonsscope er blindingsbryteren deaktivert", async 
   assert.ok(signer.disabled, "signeringen var alt gatet — den skal stå");
 });
 
+test("Rekruttering: serverens «signert» dreper knappen i en FERSK økt", async () => {
+  // Codex P2: `okt.signerte` er ØKTENS hukommelse — den overlever et
+  // prosessbytte, ikke en omlasting eller en ny fane. `liste.signert` er
+  // seriens signatur-slot lest fra basen, og den ble ikke lest i det hele
+  // tatt. En ny økt fikk derfor en handlingsklar Signer-knapp på en serie
+  // som ALT er signert, og klikket kunne bare ende i `serien_alt_signert`:
+  // flaten lovte en irreversibel handling den ikke kunne levere.
+  //
+  // MUTASJONEN SOM DREPER DENNE: fjern `liste.signert ||` fra
+  // ferdig-merket i `flater/rekruttering.js`.
+  KALL = [];
+  const data = prosess();
+  data.prosesser[0].lister[0].signert = true;
+  SVAR = { "/v1/rekruttering/prosesser": data };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());            // fersk økt: `signerte` er tom
+  await vent(() => hoved.querySelector("table"));
+  const knapp = [...hoved.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.signer_knapp"));
+  assert.ok(knapp, "listen forsvant helt — den skal vises, bare død");
+  assert.ok(knapp.disabled,
+    "en alt signert serie fikk en levende Signer-knapp i en ny økt");
+  // …og den døde knappen åpner ikke dialogen, så ingen POST kan oppstå.
+  knapp.click();
+  await vent(() => KALL.some((k) => k.metode === "POST"), 5);
+  assert.equal(document.querySelectorAll('[role="alertdialog"]').length, 0,
+    "den døde knappen åpnet signaturdialogen likevel");
+  assert.ok(!KALL.some((k) => k.metode === "POST"),
+    "flaten sendte en signering på en alt signert serie");
+});
+
 test("Rekruttering: signaturdialogen sier antall, type, hashkortform — og «Kan ikke angres» (port 31)", async () => {
   const hoved = await tegnet();
   const knapp = [...hoved.querySelectorAll("button")]
