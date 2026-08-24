@@ -202,7 +202,7 @@ def _basiscommit() -> str:
 
     Samme grep som proveniensporten i `test_aksept_projeksjon.py`:
     `actions/checkout` henter `refs/pull/<nr>/merge` på dybde 1, så
-    basisgrenen er ikke nødvendigvis i objektbasen — en `--depth=1`-henting
+    basisgrenen er ikke nødvendigvis i objektbasen — en full henting
     av `main` koster ett objektsett og utvider ikke historikken ellers.
 
     Henter FØR den ser etter en lokal ref, ikke bare hvis den mangler: et
@@ -220,7 +220,7 @@ def _basiscommit() -> str:
     tidligere fetch i samme miljø); lykkes ikke det heller, er basisen
     uløst, og porten under sier fra — den passerer ikke stille.
     """
-    _git("fetch", "--quiet", "--depth=1", "origin", "main")
+    _git("fetch", "--quiet", "origin", "main")
     r = _git("rev-parse", "--verify", "--quiet", "origin/main^{commit}")
     return r.stdout.decode().strip() if r.returncode == 0 else ""
 
@@ -444,7 +444,7 @@ def _anker_avvik():
     commit = _basiscommit()
     if not commit:
         return ["main uhentbar — ankeret kan ikke måles"]
-    _git("fetch", "--quiet", "--depth=1", "origin", AKSEPTCOMMIT_056)
+    _git("fetch", "--quiet", "origin", AKSEPTCOMMIT_056)
     hash_056 = _blobhash(AKSEPTCOMMIT_056,
                          "platform/core/db/migrations/" + HENDELSEN_056)
     if hash_056 is None:

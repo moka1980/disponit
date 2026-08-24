@@ -89,11 +89,11 @@ def _hent_commit(commit: str) -> None:
 
     `actions/checkout` henter `refs/pull/<nr>/merge` på dybde 1, så
     akseptcommiten er ikke i objektbasen — men den er nåbar fra `main`,
-    og en `--depth=1`-henting av selve sha-en koster ett objektsett og
+    og en henting av selve sha-en koster ett objektsett og
     utvider ikke historikken ellers. Feiler den (offline), sier porten
     under fra; den passerer ikke stille.
     """
-    subprocess.run(["git", "-C", str(ROT), "fetch", "--quiet", "--depth=1",
+    subprocess.run(["git", "-C", str(ROT), "fetch", "--quiet",
                     "origin", commit], capture_output=True)
 
 
@@ -108,7 +108,7 @@ def test_pinnene_er_akseptcommitens_egne_projeksjoner():
     NØYAKTIG der den betyr noe: en pin skrevet etter hukommelsen slipper
     gjennom en CI som aldri leste akseptcommiten.
 
-    Mangler commiten, hentes den derfor — `--depth=1` på selve sha-en, som
+    Mangler commiten, hentes den derfor — selve sha-en, som
     er nåbar fra `main`. Er den fortsatt borte, er porten RØD: en pin som
     ikke kan måles mot innsjekkede bytes er ikke en bevist pin."""
     for mod, info in AKSEPTERTE_GENERASJONER.items():
