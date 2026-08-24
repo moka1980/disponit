@@ -375,6 +375,62 @@ def test_nokkel_brukt_for_annen_reservasjon_gir_idempotenskonflikt(
 
 
 @pg
+def test_reservasjonen_krever_read_committed(klient):
+    """Cursor P2 runde 8: 058 manglet isolasjonsporten 056:821-827 og
+    057:879-886 har.
+
+    Idempotensløftet «samme nøkkel ⇒ samme reservasjon» er utledet av en
+    LESNING: `ON CONFLICT DO NOTHING` svelger taperens unik-brudd, og
+    gjenlesningen rett etter må se VINNERENS rad. Under REPEATABLE READ
+    eller SERIALIZABLE står snapshotet fast fra første setning, så
+    gjenlesningen er blind for en samtidig committet reservasjon — `v_id`
+    blir NULL, `NOT FOUND` treffer, og «idempotenskonflikt uten lesbar
+    rad» reises for en tilstand som ikke er den feilen beskriver.
+    `api/inndata.py` mapper den til 409 `idempotenskonflikt`, altså
+    «nøkkelen er brukt for en ANNEN reservasjon», der kontrakten lover
+    201 med den samme referansen.
+
+    Porten avviser NIVÅET, ikke kallet — derfor måles den positive
+    kontrollen på den samme nøkkelen etterpå: gjenspillet på READ
+    COMMITTED gir fortsatt den FØRSTE reservasjonen tilbake.
+
+    MUTASJONEN SOM DREPER DENNE: fjern isolasjonsporten i
+    `reserver_inndata`. Da svarer begge nivåene `unique_violation` i
+    stedet, og feilen er igjen usann."""
+    tenant, _bid, _cookie, _csrf = _rigg(klient)
+    nokkel = secrets.token_hex(12)
+    kall = ("SELECT inndata_id FROM reserver_inndata"
+            "(%s,'m57_ats','soknadsbunt',%s,%s)")
+    c = _runtime(tenant)
+    try:
+        forste = c.execute(kall, (tenant, MAKS, nokkel)).fetchone()[0]
+        c.commit()
+    finally:
+        c.close()
+    for niva in (psycopg.IsolationLevel.REPEATABLE_READ,
+                 psycopg.IsolationLevel.SERIALIZABLE):
+        c = _runtime(tenant)
+        try:
+            # Nivået kan bare byttes utenfor en åpen transaksjon, og
+            # `sett_kontekst` er SET LOCAL — den må settes på nytt etter.
+            c.commit()
+            c.isolation_level = niva
+            _kontekst(c, tenant)
+            with pytest.raises(psycopg.errors.InvalidTransactionState):
+                c.execute(kall, (tenant, MAKS, nokkel))
+            c.rollback()
+        finally:
+            c.close()
+    c = _runtime(tenant)
+    try:
+        assert c.execute(kall, (tenant, MAKS, nokkel)).fetchone()[0] \
+            == forste
+        c.rollback()
+    finally:
+        c.close()
+
+
+@pg
 def test_scopet_gater_reservasjonen(klient, inndata_rot):
     from api import sesjon as sesjonmodul
     bid = _bruker_for("innsyn", ["leser"])

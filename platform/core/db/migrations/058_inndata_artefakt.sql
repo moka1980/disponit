@@ -299,6 +299,37 @@ SET search_path = pg_catalog AS $$
 DECLARE v_id UUID; v_jti TEXT; r RECORD;
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant, 'reserver_inndata');
+    -- ISOLASJONSPORTEN (Cursor P2, runde 8) — samme som 056:821-827 og
+    -- 057:879-886, og den mangler her.
+    --
+    -- Idempotensløftet under («samme nøkkel ⇒ samme reservasjon») er
+    -- utledet av en LESNING: `ON CONFLICT DO NOTHING` svelger taperens
+    -- unik-brudd uten feil, og gjenlesningen rett etter MÅ se vinnerens
+    -- rad. Under REPEATABLE READ eller SERIALIZABLE står transaksjonens
+    -- snapshot fast fra første setning, så gjenlesningen er blind for en
+    -- samtidig committet reservasjon: `v_id` blir NULL, `NOT FOUND`
+    -- treffer, og «idempotenskonflikt uten lesbar rad» reises for en
+    -- tilstand som IKKE er den feilen beskriver. `api/inndata.py` mapper
+    -- `unique_violation` til 409 `idempotenskonflikt`, så et helt legitimt
+    -- retry får «nøkkelen er brukt for en ANNEN reservasjon» der
+    -- kontrakten lover 201 med den samme referansen tilbake.
+    --
+    -- READ COMMITTED er det eneste nivået der hver setning ser ferske
+    -- data. `read uncommitted` er med fordi PostgreSQL BEHANDLER det som
+    -- READ COMMITTED (nivået finnes bare som synonym). Poolen kjører i
+    -- dag på basens default, altså READ COMMITTED — porten er derfor
+    -- ingen oppførselsendring for HTTP-veien, men `disponit` har EXECUTE
+    -- her, og en fremtidig kaller som setter nivået selv skal møte en
+    -- ærlig feil framfor et brutt løfte.
+    IF current_setting('transaction_isolation')
+       NOT IN ('read committed', 'read uncommitted') THEN
+        RAISE EXCEPTION 'reserver_inndata: krever READ COMMITTED (fikk %)'
+            ' — idempotensløftet er utledet av en LESNING etter konflikt,'
+            ' og et fastholdt snapshot gjør den blind for en samtidig'
+            ' committet reservasjon',
+            current_setting('transaction_isolation')
+            USING ERRCODE = 'invalid_transaction_state';
+    END IF;
     -- Speiler tabellens CHECK, men med det kanoniske feilkontraktet i
     -- stedet for check_violation (Cursor P2-3, 017-formen).
     IF p_eiermodul IS DISTINCT FROM 'm57_ats'
