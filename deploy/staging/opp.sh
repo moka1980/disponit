@@ -715,6 +715,7 @@ SELVREVERS_ENHETER="disponit-api.socket disponit-api.service
 disponit-m37.service disponit-helse.timer disponit-varselsender.timer
 disponit-domenerevalidering.timer disponit-artefaktrydding.timer
 disponit-evidensreaper.timer disponit-plan.timer
+disponit-rydd-pending.timer disponit-backup.timer
 disponit-domeneverifisering.timer disponit-wcag-audit.service"
 
 # Codex P2 (runde 2): vilkåret var `is-enabled`, og det måler UNIT-FILA,
@@ -834,6 +835,15 @@ selvrevers() {
 # `systemctl stop` på en oneshot venter til prosessen er ute, så vinduet åpnes
 # først når begge arbeiderne faktisk er stille.
 #
+# Cursor P2-4/P2-5 (#178, runde 4): `disponit-rydd-pending` og
+# `disponit-backup` sto i `UNITS`, ble `enable --now`-et i steg 8 — og ble
+# ALDRI stoppet her. De to kjørte altså tvers gjennom vedlikeholdsvinduet,
+# mot nøyaktig det skjemaet i bevegelse avsnittet over er skrevet om:
+# ryddejobben gjør DELETE mot `api_tokener`, og `pg_dump` midt i et
+# forward-only-sett gir en dump som er halvt gammelt og halvt nytt skjema —
+# en backup som ikke kan restores er verre enn ingen backup, fordi den ser
+# ut som en.
+#
 # SNAPSHOT FØRST (Codex P2, runde 2): hvilke enheter som var I DRIFT finnes
 # bare å lese HER — ett sekund senere har vinduet revet tilstanden, og da er
 # `is-enabled` det eneste som er igjen å gjette ut fra. Gjetningen er feil i
@@ -861,6 +871,8 @@ systemctl stop disponit-domenerevalidering.timer \
     disponit-wcag-audit.service \
     disponit-domeneverifisering.timer \
     disponit-domeneverifisering.service 2>/dev/null || true
+systemctl stop disponit-rydd-pending.timer disponit-rydd-pending.service \
+    disponit-backup.timer disponit-backup.service 2>/dev/null || true
 
 # --- 6. Migrasjoner (begge baser) — FØR ny release aktiveres ---------------
 # P1 runde 1: hver base melder sitt til rapporten. Første utgave lot siste
