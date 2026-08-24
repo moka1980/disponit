@@ -93,6 +93,11 @@ INSERT INTO _design VALUES
     -- tenantkontekst i definer-veiene over. Opprettes i det samme
     -- SET ROLE-vinduet og hoerer derfor til den samme eieren.
     ('FUNCTION', 'krev_tenantkontekst(text,text)',                    'disponit_m37_claimer'),
+    -- 058: inndata-doerene (#162) — samme eier som artefakt-funksjonene
+    -- i 016/017 (domene_eier), samme grunn: kapabilitetsformen.
+    ('FUNCTION', 'reserver_inndata(text,text,text,bigint)', 'disponit_domene_eier'),
+    ('FUNCTION', 'registrer_inndata_lastet(text,text,bigint,text,text,bytea,text)', 'disponit_domene_eier'),
+    ('FUNCTION', 'bind_inndata(text,uuid,bigint,text)',     'disponit_domene_eier'),
     -- 044: periodisk kontroll — planens herdede funksjoner eies av claimer
     -- (tabellene er migrator-eide med eksplisitte grants — runtime når dem
     -- KUN gjennom funksjonene, og CURRENT_USER-policyen ser på tvers).

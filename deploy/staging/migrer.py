@@ -92,6 +92,9 @@ GRANT SELECT, INSERT ON kandidat_originaldokument,
     kandidat_parsettekst, kandidat_evalueringsartefakt,
     kandidat_intervjusporsmal, kandidat_utsendingsdata,
     kandidat_avmaskering TO {rolle};
+-- 058: inndata-artefaktet — runtime leser metadata (RLS-gated);
+-- skrivingene går KUN gjennom domene_eier-dørene (EXECUTE i 058).
+GRANT SELECT ON inndata_artefakt TO {rolle};
 -- Varsler: flaten leser og merker som lest; tjenesten oppretter. Senderen
 -- oppdaterer e-poststatus. Ingen DELETE — rydding er en driftsoppgave med
 -- egen rolle, ikke noe forespørselsveien skal kunne gjøre.

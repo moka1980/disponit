@@ -1083,6 +1083,11 @@ done
   selvrevers "deploy-port (014c §5) rød"
 }
 
+# #162: inndata-lageret — krypterte bunter på FS, eid av api-brukeren.
+# Opprettes FØR release-byttet så en fersk vert aldri ENOENT-er i
+# opplastingsveien; 0700 hele veien, payloaden er tenant-DEK-kryptert.
+install -d -m 700 -o disponit-api -g disponit-api /var/lib/disponit/inndata
+
 # --- 7. Atomisk release-bytte + units --------------------------------------
 ln -sfn "$KILDE" "$AKTIV"
 # Feilsonen er passert: fra og med linjen over er symlinken byttet, og

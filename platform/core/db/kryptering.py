@@ -197,6 +197,23 @@ def krypter(dek: bytes, payload: dict, tenant: str, key_id: str,
     return AESGCM(dek).encrypt(nonce, data, _aad(tenant, key_id, ekstra_aad)), nonce
 
 
+def krypter_bytes(dek: bytes, raa: bytes, tenant: str, key_id: str,
+                  *, formaal: bytes) -> tuple[bytes, bytes]:
+    """Binær variant (#162): rå bytes, ingen JSON-serialisering. `formaal`
+    er AAD-skille fra JSON-payloadene — en inndata-fil kan aldri dekodes
+    som en oppdrags-payload eller omvendt."""
+    nonce = os.urandom(12)
+    ct = AESGCM(dek).encrypt(nonce, bytes(raa),
+                             _aad(tenant, key_id, formaal))
+    return ct, nonce
+
+
+def dekrypter_bytes(dek: bytes, ct_og_tag: bytes, nonce: bytes,
+                    tenant: str, key_id: str, *, formaal: bytes) -> bytes:
+    return AESGCM(dek).decrypt(bytes(nonce), bytes(ct_og_tag),
+                               _aad(tenant, key_id, formaal))
+
+
 def dekrypter(dek: bytes, ct_og_tag: bytes, nonce: bytes, tenant: str,
               key_id: str, *, ekstra_aad: bytes | None = None) -> dict:
     return json.loads(AESGCM(dek).decrypt(bytes(nonce), bytes(ct_og_tag),
