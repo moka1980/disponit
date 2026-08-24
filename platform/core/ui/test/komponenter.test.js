@@ -719,3 +719,35 @@ test("Faner: forrige/neste følger trinnene og stopper i endene", async () => {
   assert.equal(neste.disabled, true, "«neste» er aktiv på siste trinn");
   assert.equal(forrige.disabled, false);
 });
+
+
+test("AppShell: modul med arbeidsflate lenker dit fra kontekstpanelet", () => {
+  // Eiers UX-funn 24/8: venstremenyen er katalogen, men en modul som HAR
+  // en flate skal kunne åpnes derfra. Lenken følger RUTENE (samme gating
+  // som toppmenyen): finnes ruten ikke i brukerens sett, finnes lenken
+  // ikke — aldri en dør inn i en 403.
+  const brett = nyttBrett();
+  const { rot } = AppShell({ tenant: "acme",
+    ruter: [{ nokkel: "rekruttering" }], aktiv: "oversikt",
+    sprak: "nb", moduler: [57], paaSprak: () => {}, paaLoggUt: () => {} });
+  brett.append(rot);
+  const knapp = [...brett.querySelectorAll("button.skall-modul")]
+    .find((b) => b.textContent === t("site.katalog.m57.navn"));
+  assert.ok(knapp, "modul 57 mangler i venstremenyen");
+  knapp.click();
+  const lenke = brett.querySelector(
+    '.skall-kontekst a[href="#/rekruttering"]');
+  assert.ok(lenke, "kontekstpanelet mangler Åpne flaten-lenken");
+  assert.equal(lenke.textContent, t("ui.shell.kontekst_aapne"));
+  // …og uten ruten i settet finnes lenken ikke.
+  const brett2 = nyttBrett();
+  const { rot: rot2 } = AppShell({ tenant: "acme", ruter: [],
+    aktiv: "oversikt", sprak: "nb", moduler: [57],
+    paaSprak: () => {}, paaLoggUt: () => {} });
+  brett2.append(rot2);
+  [...brett2.querySelectorAll("button.skall-modul")]
+    .find((b) => b.textContent === t("site.katalog.m57.navn")).click();
+  assert.equal(
+    brett2.querySelector('.skall-kontekst a[href="#/rekruttering"]'), null,
+    "lenke tilbudt uten rute — det er en dør inn i en 403");
+});

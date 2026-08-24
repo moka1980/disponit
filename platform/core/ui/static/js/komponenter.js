@@ -401,6 +401,14 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
   // `fokuser` er sant for brukerens eget klikk og usant for et programmatisk
   // oppslag: den som fyller panelet uten at brukeren ba om det, skal ikke rykke
   // fokus ut av der brukeren står.
+  // Modul → arbeidsflate (eiers UX-funn 24/8): venstremenyen er
+  // katalogen, toppnavigasjonen er flatene — men en modul som HAR en
+  // flate skal kunne åpnes derfra. Kartet er PINNET her (to oppslag),
+  // og lenken vises kun når ruten faktisk finnes i brukerens
+  // tilgjengelige ruter — samme gating som toppmenyen, ingen ny dør.
+  const MODULFLATE = { 56: "wcagkontroll", 57: "rekruttering" };
+  const ruteFinnes = (nokkel) => ruter.some((r) => r.nokkel === nokkel);
+
   function visKontekst(n, { fokuser = true } = {}) {
     // Panelet er detaljvisningen til MENYEN, og skal ikke kunne brukes til å
     // hente fram en modul kunden ikke har: den som kaller utenfra ser ikke
@@ -418,7 +426,11 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
         el("dt", { text: t("ui.shell.kontekst_status") }),
         el("dd", {}, siteStatusMerke(status)),
         el("dt", { text: t("ui.shell.kontekst_fase") }),
-        el("dd", { text: String(faseFor(n)) })));
+        el("dd", { text: String(faseFor(n)) })),
+      MODULFLATE[n] && ruteFinnes(MODULFLATE[n])
+        ? el("a", { class: "knapp", href: `#/${MODULFLATE[n]}`,
+            text: t("ui.shell.kontekst_aapne") })
+        : null);
     // Fokus flyttes ETTER at innholdet står der, ellers leses det tomme
     // panelet. Da følger både skjermleseren og skjermbildet med — nettleseren
     // ruller til det fokuserte elementet, som er hele poenget når panelet
