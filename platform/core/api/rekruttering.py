@@ -215,9 +215,31 @@ def signer_endepunkt(tjeneste, request):
         # barnversjon ennå — rutene er lesing, en kodet blinding-
         # avvisning og denne, og seeden lager en ROT. Vinduet åpner seg
         # med redigeringsbenet, og #180 er den PR-en som må ta låsen.
-        if rad[3]:
+        #
+        # ...MEN EN FULLFØRT SIGNATUR KJENNES IGJEN FØRST (Codex P1, runde
+        # 3). Portene under er TILSTANDSPORTER: de spør «kan denne raden
+        # signeres nå?». For et replay er det spørsmålet allerede besvart —
+        # signaturen STÅR. Tapte svaret veien hjem, ber
+        # `ui.rekruttering.usikkert_utfall` brukeren prøve igjen med løftet
+        # om at forsøket gjentar den SAMME operasjonen, og `api.js` sender
+        # samme nøkkel. Ble serien redigert videre i mellomtiden, svarte
+        # spissporten `liste_utdatert` (409) på en operasjon som var
+        # ferdig: flaten leser 409 som et definitivt avslag, og brukeren
+        # sitter igjen uten noen måte å vite om den irreversible
+        # autorisasjonen gikk igjennom. Nøyaktig samme klasse som 056 selv
+        # lukket i runde 12 på #140, bare ett lag lenger ut.
+        #
+        # Predikatet er 056s eget, med samme snevre likhet: bare den
+        # nøyaktig identiske operasjonen (nøkkel + liste + signatar) er et
+        # replay. En nøkkel som bærer ANNET innhold er ikke en gjentakelse
+        # av noe — den faller igjennom til portene og til 056s egen dom.
+        replay = conn.execute(
+            "SELECT 1 FROM utsendingssignatur WHERE tenant=%s"
+            " AND operasjonsnokkel=%s AND liste_id=%s AND signatar=%s",
+            (tenant, nokkel, liste_id, bid)).fetchone() is not None
+        if not replay and rad[3]:
             raise _Avbrudd(_feil("liste_utdatert", rid, 409))
-        if rad[0] != kropp["innhold_hash"]:
+        if not replay and rad[0] != kropp["innhold_hash"]:
             raise _Avbrudd(_feil("innhold_endret", rid, 409))
         try:
             conn.execute("SELECT signer_utsendingsliste(%s,%s,%s,%s)",

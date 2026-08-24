@@ -318,6 +318,54 @@ def test_signering_replay_samme_idempotency_key(klient):
 
 
 @pg
+def test_replay_overlever_at_serien_ble_redigert_videre(klient):
+    """Codex P1 (runde 3): spissporten er en TILSTANDSPORT — «kan denne
+    raden signeres nå?» — og for et replay er det spørsmålet alt besvart.
+    Committer signaturen mens svaret går tapt, og serien redigeres videre
+    før klienten prøver igjen med SAMME nøkkel, svarte porten
+    `liste_utdatert` (409) på en operasjon som var ferdig. Flaten leser
+    409 som definitivt avslag, og brukeren har da ingen måte å vite om den
+    irreversible autorisasjonen gikk igjennom — stikk i strid med løftet
+    i `ui.rekruttering.usikkert_utfall`.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `not replay and` foran
+    spissporten.
+    """
+    _pid, rot, rot_hash = _seed_prosess()
+    bid = _bruker("sjef-replay-spiss", ["admin"])
+    cookie, csrf = _browsersesjon(bid)
+    nokkel = secrets.token_urlsafe(24)
+    forste = _post(klient, cookie, csrf,
+                   f"/v1/rekruttering/lister/{rot}/signer",
+                   {"innhold_hash": rot_hash}, idem=nokkel)
+    assert forste.status_code == 201, forste.text
+    # Svaret gikk tapt for klienten; serien redigeres videre i mellomtiden.
+    _barn, _barn_hash = _ny_versjon(rot)
+    igjen = _post(klient, cookie, csrf,
+                  f"/v1/rekruttering/lister/{rot}/signer",
+                  {"innhold_hash": rot_hash}, idem=nokkel)
+    assert igjen.status_code == 201, igjen.text
+    assert igjen.json()["innhold_hash"] == rot_hash
+    # …og replayet la ingen ny rad: 056 no-op-er, porten bare slapp fram.
+    m = _migrator()
+    try:
+        assert m.execute(
+            "SELECT count(*) FROM utsendingssignatur WHERE tenant=%s"
+            " AND liste_id=%s", (TEN, rot)).fetchone()[0] == 1
+        m.rollback()
+    finally:
+        m.close()
+    # Porten står for alle ANDRE: en fersk nøkkel på den utdaterte raden
+    # er fortsatt 409 — replayet er et unntak for den ferdige operasjonen,
+    # ikke en åpning av spissporten.
+    fersk = _post(klient, cookie, csrf,
+                  f"/v1/rekruttering/lister/{rot}/signer",
+                  {"innhold_hash": rot_hash})
+    assert fersk.status_code == 409, fersk.text
+    assert fersk.json()["feil"] == "liste_utdatert"
+
+
+@pg
 def test_signering_krever_hashen_dialogen_viste(klient):
     _pid, lid, _ih = _seed_prosess()
     bid = _bruker("sjef2", ["admin"])
