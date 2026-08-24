@@ -14,7 +14,8 @@ from io import BytesIO
 import psycopg
 import pytest
 
-from .test_api import DSN, MIGRATOR_DSN, app, dekker, klient, miljo  # noqa: F401,E501
+from .test_api import (DSN, MIGRATOR_DSN, app, dekker,  # noqa: F401
+                       klient, miljo)
 from .test_rekruttering_http import _browsersesjon as _sesjon_for
 from .test_rekruttering_http import _bruker as _bruker_for
 
