@@ -176,17 +176,34 @@ def _reap(prosess_id: str):
     lukketid som alt ligger forbi slettefristen, og la
     `reap_kandidatdata` tømme de seks lagrene og merke ankeret
     `slettet_ts`. Ingen håndsatt kolonne — radvakten ville uansett avvist
-    et merke satt mens payload sto igjen."""
-    m = _migrator()
+    et merke satt mens payload sto igjen.
+
+    HVER FUNKSJON KALLES AV ROLLEN SOM EIER DEN, og ingen av dem er
+    migrator. 057 REVOKEr begge fra PUBLIC, og `lukk_rekruttering-
+    sprosess` grantes bare til runtime-rollen (`migrer.py`, M37_RETTIG-
+    HETER_API) — migratorkallet ga `InsufficientPrivilege` og gjorde
+    denne testen rød. Reaperen er kryss-tenant og hører til timerrollen
+    der den finnes: koblingsvalget deles med `_reaperkobling`, den samme
+    057-testene og evidensreaperen bruker, i stedet for å anta
+    lokaloppsettet. Og lukkingen krever tenantkontekst
+    (`krev_tenantkontekst`), som runtime-koblingen har og migrator ikke."""
+    from db.pg import koble, sett_kontekst
+    from .test_outbox_bestilling import _reaperkobling
+    rt = koble(DSN)
+    rp = None
     try:
-        m.execute("SELECT lukk_rekrutteringsprosess(%s,%s,"
-                  " now() - interval '91 days')", (TEN, prosess_id))
-        m.commit()
-        reapet = m.execute("SELECT * FROM reap_kandidatdata(50)").fetchall()
-        m.commit()
+        sett_kontekst(rt, TEN, "test", "r-lukk")
+        rt.execute("SELECT lukk_rekrutteringsprosess(%s,%s,"
+                   " now() - interval '91 days')", (TEN, prosess_id))
+        rt.commit()
+        rp, _timerrolle = _reaperkobling()
+        reapet = rp.execute("SELECT * FROM reap_kandidatdata(50)").fetchall()
+        rp.commit()
         assert prosess_id in [str(r[1]) for r in reapet], reapet
     finally:
-        m.close()
+        rt.close()
+        if rp is not None and rp is not rt:
+            rp.close()
 
 
 def _ny_versjon(liste_id: str):
