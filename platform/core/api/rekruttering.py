@@ -57,8 +57,28 @@ def _leseauth_beslutninger(tjeneste, request, conn, rid):
 
 
 def _kandidater(conn, tenant, prosess_id):
+    """Kandidatene i én prosess, lest RETT fra 057-lageret under RLS.
+
+    SVARET ER IKKE AVGRENSET — UTSATT TIL #183 (Codex P2, K1). Kalleren
+    løper over hver ureapet prosess, og hver prosess kan bære 5000
+    kandidater (katalogens harde løfte) i inntil 365 døgn. Å binde det
+    krever at endepunktet henter den VALGTE prosessen i stedet for alle,
+    og det er ny kontrakt på lesesvaret pluss ny hentelogikk i flaten —
+    ny maskin i en fiksrunde. Rotårsak, foreslått maskin og målingen som
+    skal drepe den står i #183.
+
+    Det som KAN gjøres uten en ny kontrakt, gjøres her: lesningen slutter
+    å hente det den kaster. `kildetekst` er hele den blindede
+    søknadsteksten, `avmaskering` er tokenkartet — ingen av dem leses av
+    noen linje under, og de er den desidert tyngste delen av artefaktet.
+    De ble likevel dratt ut av basen, over forbindelsen og inn i minnet,
+    for hver kandidat i hver prosess. Nøkkelsubtraksjon (`jsonb - text`)
+    og ikke en positiv projeksjon: da overlever ethvert felt en fremtidig
+    produsent legger til, `status` inkludert.
+    """
     rader = conn.execute(
-        "SELECT kandidat_id, artefakt FROM kandidat_evalueringsartefakt"
+        "SELECT kandidat_id, artefakt - 'kildetekst' - 'avmaskering'"
+        "  FROM kandidat_evalueringsartefakt"
         " WHERE tenant=%s AND prosess_id=%s AND slettet_ts IS NULL"
         " ORDER BY kandidat_id", (tenant, prosess_id)).fetchall()
     kandidater, vekter, kilde = [], None, "standard"
