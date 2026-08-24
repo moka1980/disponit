@@ -542,7 +542,50 @@ def signer_endepunkt(tjeneste, request):
         # REACHABILITY: fristen er 90 døgn i seeden og settes per prosess;
         # vinduet er de millisekundene reaperen og et signeringsklikk må
         # treffe hverandre på, etter at fristen alt er løpt ut.
+        #
+        # ...OG GJENKJENNINGEN MÅLES FØRST BAK VENTEPUNKTET (Codex P1,
+        # runde 8). De to lesningene over er tilstandsporter som spør «kan
+        # denne raden signeres nå?», og runde 3 avlyste det spørsmålet for
+        # et replay — men bare for et replay VI KUNNE SE. Originalen som
+        # har SATT INN signaturen sin og ennå ikke committet, er usynlig
+        # for `_fullfort_replay`: under READ COMMITTED finnes ikke en
+        # ucommittet rad. Retryen leste altså `replay = False` på en
+        # operasjon som var i ferd med å lykkes, og var serien redigert
+        # videre i mellomtiden, svarte spissporten `liste_utdatert` (409)
+        # rett foran låsen. Flaten leser 409 som et DEFINITIVT avslag på
+        # en irreversibel autorisasjon som sekunder senere står i basen —
+        # nøyaktig det idempotensløftet `ui.rekruttering.usikkert_utfall`
+        # gir når den ber brukeren prøve igjen med samme nøkkel.
+        #
+        # Codex ber om «a shared synchronization point» for
+        # gjenkjenningen og disse portene. Det punktet finnes ALLEREDE i
+        # håndtereren, og er ingen ny maskin (K1): et replay er per
+        # definisjon SAMME signatar — `_fullfort_replay` måler nettopp
+        # `signatar = bid` — og `laas_godkjenner` tar `FOR UPDATE` på
+        # nøyaktig den medlemskapsraden originalen holder til commit.
+        # Låsen var alt her, bare ETTER portene; den flyttes foran dem, og
+        # etteroppslaget som til nå bare vernet 403-armen blir det ENE
+        # ferske svaret alle portene måles mot. Retryen stiller seg i køen
+        # bak originalen, våkner til et snapshot der signaturen står, og
+        # svarer det den svarte.
+        #
+        # 403-armen blir stående under portene, så feilrekkefølgen er
+        # uendret: en foreldet eller reapet liste dømmes fortsatt som 409
+        # før fullmakten måles. `laast` bæres bare over de tre linjene.
+        #
+        # ÉN FLIS BLIR IGJEN, og den er 056s: er medlemskapet gjort
+        # INAKTIVT mellom originalens innsetting og retryen, finner låsen
+        # ingen rad, det finnes intet ventepunkt her, og portene dømmer
+        # ucommittet som før. Den dommen eier 056 — dens egen
+        # medlemskapsport låser og bærer sitt eget etteroppslag for
+        # replayet (§7b) — og veien dit går gjennom #180s felles
+        # serialisering, ikke gjennom en fjerde arm her.
         replay = _fullfort_replay(conn, tenant, nokkel, liste_id, bid)
+        laast = None
+        if not replay:
+            laast = conn.execute("SELECT roller FROM laas_godkjenner(%s,%s)",
+                                 (tenant, bid)).fetchone()
+            replay = _fullfort_replay(conn, tenant, nokkel, liste_id, bid)
         if not replay and rad[3]:
             raise _Avbrudd(_feil("liste_utdatert", rid, 409))
         if not replay and rad[4]:
@@ -586,15 +629,15 @@ def signer_endepunkt(tjeneste, request):
         # seg i køen; våkner det til en rolle som er trukket tilbake, ville
         # dommen vært 403 på en signatur som NÅ står. Under READ COMMITTED
         # får setningen et ferskt snapshot, så originalens rad er synlig.
-        if not replay:
-            laast = conn.execute("SELECT roller FROM laas_godkjenner(%s,%s)",
-                                 (tenant, bid)).fetchone()
-            if laast is not None and _SIGNERINGSSCOPE not in \
-                    scopes_for_roller(list(laast[0] or ())) \
-                    and not _fullfort_replay(conn, tenant, nokkel,
-                                             liste_id, bid):
-                tjeneste.logg.hendelse("signatar_avvist", rid)
-                raise _Avbrudd(_feil("signatar_uten_fullmakt", rid, 403))
+        # Etteroppslaget står nå OVER portene (runde 8) og er ett og det
+        # samme for alle tre: `replay` bærer det ferske svaret hit, og
+        # `laast` de låste rollene. At de to leddene er samme lesning er
+        # selve poenget — gjenkjenningen og tilstandsportene skal ikke
+        # kunne dømme fra hvert sitt tidspunkt.
+        if not replay and laast is not None and _SIGNERINGSSCOPE not in \
+                scopes_for_roller(list(laast[0] or ())):
+            tjeneste.logg.hendelse("signatar_avvist", rid)
+            raise _Avbrudd(_feil("signatar_uten_fullmakt", rid, 403))
         try:
             conn.execute("SELECT signer_utsendingsliste(%s,%s,%s,%s)",
                          (tenant, liste_id, bid, nokkel))
