@@ -323,11 +323,28 @@ fi
 # mutasjon er ingen preflight — samme dom som varselsender-DSN-en fikk på
 # #68. Den hører HER, sammen med resten av gaten, og lesingen skjer i
 # SUBSHELL som de andre, så miljøfila ikke lekker inn i preflighten.
+#
+# Codex P2 (runde 7): DSN-ene porten MÅLER er dermed lest i en subshell og
+# kastet, mens steg 4 leser fila på nytt og steg 6 migrerer DEN verdien. Blir
+# miljøfila byttet mellom de to lesingene, målte porten historikken til én
+# base og kjøreren migrerer en annen — og et checksum-avvik i den andre
+# oppdages først i steg 6, inne i vinduet. Verdien porten faktisk målte
+# beholdes derfor HER, i navngitte variabler, slik at re-gaten i steg 4 kan
+# sammenligne den med det som skal brukes. Lesingen står ute av løkka: da er
+# det ETT snapshot begge basene måles mot, og et filbytte midt i løkka kan
+# ikke gi runtime én fil-versjon og test en annen.
+PREFLIGHT_DISPONIT_MIGRATOR_URL=$( set -a; . "$MILJOFIL"; set +a
+    printf '%s' "${DISPONIT_MIGRATOR_URL:-}" )
+PREFLIGHT_DISPONIT_TEST_MIGRATOR_DSN=$( set -a; . "$MILJOFIL"; set +a
+    printf '%s' "${DISPONIT_TEST_MIGRATOR_DSN:-}" )
 for base in runtime test; do
   if ! CHECKSUMPREFLIGHT=$( set -a; . "$MILJOFIL"; set +a
+      # Snapshotet, ikke den nettopp sourcede verdien: porten skal måle
+      # NØYAKTIG den DSN-en steg 4 senere gates mot. `PREFLIGHT_*` finnes
+      # ikke i miljøfila, så en `. "$MILJOFIL"` kan ikke overskrive dem.
       case $base in
-        runtime) url=$DISPONIT_MIGRATOR_URL ;;
-        test)    url=$DISPONIT_TEST_MIGRATOR_DSN ;;
+        runtime) url=$PREFLIGHT_DISPONIT_MIGRATOR_URL ;;
+        test)    url=$PREFLIGHT_DISPONIT_TEST_MIGRATOR_DSN ;;
       esac
       cd "$KILDE" && DISPONIT_MIGRATOR_URL="$url" \
         "$ROT/.venv/bin/python" - 2>&1 <<'PYPRE'
@@ -591,6 +608,14 @@ fi
 # samme løkke, og å lukke halve klassen inviterer bare en runde til.
 # `set -u` stopper en FRAVÆRENDE variabel av seg selv; det er den TOMME
 # denne gaten finnes for.
+#
+# Codex P2 (runde 7): TOMHET ER IKKE NOK. Gaten fanget verdien som forsvant,
+# men ikke verdien som ble en ANNEN: en ny, ikke-tom DSN slapp gjennom, og
+# steg 6 migrerte da en base ingen port hadde sett historikken til. Gaten
+# måler derfor IDENTITET mot verdien checksum-porten faktisk målte —
+# tomhetssjekken står igjen foran, fordi den har en egen jobb: er BEGGE tomme,
+# er de identiske, men `psycopg.connect("")` faller tilbake på libpq-defaultene
+# og kan ha målt en helt annen base enn den tomme strengen ser ut som.
 for dsn_navn in DISPONIT_MIGRATOR_URL DISPONIT_TEST_MIGRATOR_DSN; do
   if [ -z "${!dsn_navn:-}" ]; then     # indirekte oppslag, ikke eval
     echo "AVBRUTT: $dsn_navn forsvant fra $MILJOFIL mellom"
@@ -598,6 +623,17 @@ for dsn_navn in DISPONIT_MIGRATOR_URL DISPONIT_TEST_MIGRATOR_DSN; do
     echo "eller redigert mens utrullingen kjørte. Ingen credential er"
     echo "materialisert, ingen tjeneste er stoppet, og ingen migrasjon er"
     echo "kjørt. Kjør opp.sh på nytt når $MILJOFIL står stille."
+    exit 1
+  fi
+  maalt_navn="PREFLIGHT_$dsn_navn"
+  if [ "${!dsn_navn}" != "${!maalt_navn:-}" ]; then
+    echo "AVBRUTT: $dsn_navn i $MILJOFIL peker et annet sted enn den basen"
+    echo "checksum-preflighten målte — fila er byttet eller redigert mens"
+    echo "utrullingen kjørte. Steg 6 ville da migrert en historikk ingen port"
+    echo "har lest, og et checksum-avvik ville vist seg først INNE i"
+    echo "vedlikeholdsvinduet, etter tjenestestoppen (23/8-klassen). Ingen"
+    echo "credential er materialisert, ingen tjeneste er stoppet, og ingen"
+    echo "migrasjon er kjørt. Kjør opp.sh på nytt når $MILJOFIL står stille."
     exit 1
   fi
 done

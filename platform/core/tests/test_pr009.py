@@ -774,6 +774,82 @@ def test_p2_feilsonens_forutsetninger_gates_for_vinduet():
             f" tjenestene, og da er utfallet ikke lenger «alt urørt»"
 
 
+def _migrasjonsdsn_regaten() -> str:
+    """Re-gaten på migrasjons-DSN-ene, ORDRETT fra opp.sh.
+
+    Samme grep som `_credentialblokken()`: fragmentet testes der det bor.
+    """
+    opp = (ROT / "deploy/staging/opp.sh").read_text(encoding="utf-8")
+    start = opp.index("for dsn_navn in DISPONIT_MIGRATOR_URL")
+    return opp[start:opp.index("\ndone\n", start) + len("\ndone\n")]
+
+
+def test_migrasjonsdsn_regaten_maler_identitet_ikke_bare_tomhet():
+    """Codex P2 (#178, runde 7): re-gaten skal binde migrasjonen til den
+    basen checksum-porten FAKTISK målte.
+
+    Runde 4 lukket den tomme verdien: forsvant en DSN i et filbytte mellom
+    preflightens subshell-lesing og den autoritative lesingen, ble det først
+    oppdaget i steg 6 — inne i vinduet. Men en konfigurasjonsstyring som
+    bytter fila skriver sjelden en TOM verdi; den skriver en ANNEN. Da var
+    gaten grønn, og steg 6 migrerte en base ingen port hadde lest historikken
+    til: nøyaktig 23/8-klassen (endret kjørt migrasjon) sluppet inn igjen bak
+    porten som finnes for å stoppe den, og oppdaget etter tjenestestoppen.
+
+    Beviset er atferd: fragmentet kjøres med en DSN som er ikke-tom og
+    forskjellig fra den målte. Tomhetssjekken alene ville vært grønn her.
+    """
+    import subprocess
+    gate = _migrasjonsdsn_regaten()
+    maalt = "postgresql://migrator@/disponit"
+    testdsn = "postgresql://migrator@/disponit_test"
+
+    def kjor(migrator_url):
+        return subprocess.run(
+            ["bash", "-c", "set -eu\n" + gate], capture_output=True, text=True,
+            env={"PATH": "/usr/bin:/bin",
+                 "MILJOFIL": "/etc/disponit/staging.env",
+                 "PREFLIGHT_DISPONIT_MIGRATOR_URL": maalt,
+                 "PREFLIGHT_DISPONIT_TEST_MIGRATOR_DSN": testdsn,
+                 "DISPONIT_MIGRATOR_URL": migrator_url,
+                 "DISPONIT_TEST_MIGRATOR_DSN": testdsn})
+
+    uendret = kjor(maalt)
+    assert uendret.returncode == 0, \
+        "gaten avbrøt en utrulling der miljøfila sto helt stille: " \
+        + uendret.stdout + uendret.stderr
+    byttet = kjor("postgresql://migrator@/en-helt-annen-base")
+    assert byttet.returncode != 0, \
+        "steg 6 ville migrert en base checksum-porten aldri leste"
+    assert "DISPONIT_MIGRATOR_URL" in byttet.stdout + byttet.stderr, \
+        "operatøren får ikke vite HVILKEN DSN som flyttet seg"
+    # Og den tomme, som runde 4 lukket, står fortsatt: den har en egen jobb.
+    # `psycopg.connect("")` faller tilbake på libpq-defaultene, så to tomme
+    # verdier er identiske uten å være den samme basen.
+    assert kjor("").returncode != 0, "en tom DSN slipper gjennom igjen"
+
+
+def test_checksumporten_maler_dsn_snapshotet_regaten_sammenligner_med():
+    """Samme funn, andre halvdel: identitetsgaten er bare verdt noe hvis
+    porten målte NØYAKTIG den verdien den sammenlignes med.
+
+    Leste checksum-løkka sin egen DSN rett fra miljøfila i subshellen, kunne
+    de to basene i løkka til og med vært lest fra hver sin fil-versjon. Målt
+    på kilden: snapshotet tas ÉN gang, før løkka, og løkka bruker det.
+    """
+    opp = (ROT / "deploy/staging/opp.sh").read_text(encoding="utf-8")
+    lokke = opp.index("for base in runtime test; do")
+    assert opp.index("PREFLIGHT_DISPONIT_MIGRATOR_URL=$(") < lokke, \
+        "DSN-snapshotet tas inne i løkka — da måles basene mot hver sin lesing"
+    blokk = opp[lokke:opp.index("\ndone\n", lokke)]
+    for var in ("DISPONIT_MIGRATOR_URL", "DISPONIT_TEST_MIGRATOR_DSN"):
+        assert f"url=$PREFLIGHT_{var}" in blokk, \
+            f"checksum-porten måler ikke snapshotet av {var}"
+        assert f"url=${var}" not in blokk, \
+            f"{var} leses på nytt i løkka — porten kan da måle en annen base" \
+            f" enn den re-gaten i steg 4 slipper videre"
+
+
 def _credgjenoppretting() -> str:
     """Tilbakestillingen av credentials i `selvrevers()`, ordrett fra opp.sh.
 
