@@ -7,10 +7,12 @@ lagene måles: gaten mot deklarasjonen, strømmen mot de faktiske bytene.
 """
 from __future__ import annotations
 
+import collections
 import errno
 import io
 import os
 import struct
+import types
 import zipfile
 from pathlib import Path
 
@@ -1875,6 +1877,41 @@ def test_lesefeil_paa_lageret_tilskrives_ikke_modellen(tmp_path, monkeypatch):
     assert e.value.kode == "modellfeil"
 
 
+def test_modellens_egen_nettverksfeil_er_ikke_en_driftssak(tmp_path):
+    """Codex P2: lagringshåndtereren dekket også modellkallet.
+
+    En `ConnectionResetError` fra modellklienten ER en `OSError` med errno,
+    akkurat som lesefeilen på lageret. Sto `except OSError` blant de øvrige
+    håndtererne, dekket den hele `try`-en — også `evaluer_kandidat` — og
+    modellens eget nettverksavbrudd ble meldt som `infrastrukturfeil`.
+    Forrige runde flyttet lagringsfeilen ut av modellkøen; uten
+    innsnevringen tok den modellens feil med seg samme vei, og driften
+    leter etter et lagringsavbrudd som aldri fant sted. Kilden avgjør
+    koden, og kilden er hvor unntaket oppsto.
+
+    MUTASJONEN SOM DREPER DENNE: flytt `except OSError`-grenen ut av den
+    indre `try`-en rundt arkivgaten og ned blant de øvrige igjen.
+    """
+    from modules.m57_ats import kjoring
+
+    class _ModellSomMisterForbindelsen(_Modell):
+        def vurder(self, tekst, vekter):
+            raise ConnectionResetError(errno.ECONNRESET, "Connection reset")
+
+    arkiv = _bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>")])
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, _ModellSomMisterForbindelsen(),
+                          vekter={"drift": 3},
+                          kandidatfelter_for=lambda m: {"navn": ["N"]},
+                          tekst_for=lambda m, d: d.decode("utf-8"),
+                          biasmaalinger=_MAALINGER)
+    assert e.value.kode == "modellfeil", (
+        "modellens eget avbrudd skal ikke sende driften på lagringssaken")
+    assert isinstance(e.value.__cause__, OSError)
+    # Arkivet ER lest ferdig — evidensen er ikke en lesefeil.
+    assert e.value.fremdrift["filer_lest"] == 1
+
+
 def test_feltuttrekket_tilskrives_ikke_modellen(tmp_path):
     """Codex P2: en vranglest strukturert søknad ble meldt som «modellfeil».
 
@@ -1908,6 +1945,65 @@ def test_feltuttrekket_tilskrives_ikke_modellen(tmp_path):
     assert modell.sett == []
     # Evidensen står: medlemmet var lest da det røk.
     assert e.value.fremdrift["filer_lest"] == 1
+
+
+def test_feltuttrekk_som_gir_ikkekart_tilskrives_ikke_modellen(tmp_path):
+    """Codex P2: vakten fanget bare REISTE unntak, ikke tomme returer.
+
+    En uttrekker kan melde en vranglest søknadsform ved å GI TILBAKE
+    ingenting i stedet for å reise. `_felter` slapp da verdien gjennom, og
+    først nede i `_flett_felter` røk `dict(nye)` på en `None` — det
+    unntaket har ingen vakt over seg og falt til catch-allen, altså ut med
+    `modellfeil` for et uttrekk modellen aldri var i nærheten av. Samme
+    feilattribusjon som forrige runde lukket, bare via den andre døren.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `isinstance(felter, dict)`-porten i
+    `_felter` — da blir koden `modellfeil` igjen.
+    """
+    from modules.m57_ats import kjoring
+
+    arkiv = _bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>")])
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
+                          kandidatfelter_for=lambda m: None,
+                          tekst_for=lambda m, d: d.decode("utf-8"),
+                          biasmaalinger=_MAALINGER)
+    assert e.value.kode == "feltuttrekk_feilet", (
+        "en uttrekker som gir tilbake noe annet enn et kart, feilet")
+    # Stoppen er FØR modellen — den ble aldri spurt.
+    assert modell.sett == []
+
+
+def test_feltuttrekk_som_gir_annet_kart_enn_dict_slipper_gjennom(tmp_path):
+    """Codex P2: vakten over målte ÉN implementasjon, ikke kontrakten.
+
+    `_flett_felter` normaliserer med `dict(nye)` og har derfor alltid tatt
+    imot et hvilket som helst kart. Sto det `isinstance(felter, dict)` i
+    `_felter`, avviste porten en `MappingProxyType` (formen du får når
+    uttrekkeren leverer en uforanderlig visning av sin egen tilstand) eller
+    en `UserDict` — et gyldig uttrekk ble et kodet feilutfall, og
+    kontrakten for den injiserte uttrekkeren ble snevret inn av en vakt som
+    bare skulle stanse `None` og annet som IKKE er et kart.
+
+    MUTASJONEN SOM DREPER DENNE: skriv `Mapping`-porten i `_felter` om til
+    `isinstance(felter, dict)` — da blir koden `feltuttrekk_feilet` for et
+    uttrekk som er helt i orden.
+    """
+    from modules.m57_ats import kjoring
+
+    arkiv = _bunt(tmp_path, [("k1/cv.html", b"<p>Kari kan drift</p>")])
+    for kart in (types.MappingProxyType({"navn": ["Kari"]}),
+                 collections.UserDict({"navn": ["Kari"]})):
+        modell = _Modell()
+        ut = kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
+                               kandidatfelter_for=lambda m, k=kart: k,
+                               tekst_for=lambda m, d: d.decode("utf-8"),
+                               biasmaalinger=_MAALINGER)
+        assert [r["kandidat_id"] for r in ut["rangering"]] == ["k1"], (
+            f"{type(kart).__name__} er et kart og skal evalueres")
+        # Blindingen fikk feltene: klarteksten nådde aldri modellen.
+        assert modell.sett and "Kari" not in modell.sett[0]
 
 
 def test_bunt_uten_kandidater_er_kodet_feil_ikke_tomt_resultat(tmp_path):

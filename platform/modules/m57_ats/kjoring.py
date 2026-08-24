@@ -9,6 +9,7 @@ delresultater holdes aldri varme.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from . import blinding, evaluering, parsing
@@ -89,9 +90,29 @@ def _felter(kandidatfelter_for, medlem, fremdrift):
     vranglest søknadsform skal ikke sende noen på leting etter modellen.
     """
     try:
-        return kandidatfelter_for(medlem)
+        felter = kandidatfelter_for(medlem)
     except Exception as feil:
         raise Kjoringsfeil("feltuttrekk_feilet", fremdrift) from feil
+    # EN UTTREKKER MELDER OGSÅ FEIL VED Å GI TILBAKE INGENTING (Codex P2).
+    # Vakten over fanget bare REISTE unntak. Signaliserer den strukturerte
+    # søknaden sin vranglesning ved å returnere `None` — eller noe annet
+    # som ikke er et kart — slapp verdien gjennom her, og først nede i
+    # `_flett_felter` røk `dict(nye)`. Det unntaket har ingen vakt over
+    # seg: det faller til catch-allen og kommer ut som `modellfeil`, altså
+    # nøyaktig den feilattribusjonen denne funksjonen ble laget for å
+    # hindre. Returtypen måles derfor her, som `_tekst` måler sin.
+    #
+    # PORTEN MÅLER KONTRAKTEN, IKKE ÉN IMPLEMENTASJON AV DEN (Codex P2).
+    # Sto det `isinstance(felter, dict)` her, avviste vakten en
+    # `MappingProxyType` eller en `UserDict` — former `_flett_felter` alt
+    # tok imot, fordi `dict(nye)` der nede normaliserer et hvilket som
+    # helst kart. Vakten skulle stanse `None` og annet som IKKE er et
+    # kart; i stedet snevret den inn kontrakten for den injiserte
+    # uttrekkeren og gjorde et gyldig uttrekk til et kodet feilutfall.
+    # `Mapping` er den kontrakten forbrukeren faktisk krever.
+    if not isinstance(felter, Mapping):
+        raise Kjoringsfeil("feltuttrekk_feilet", fremdrift)
+    return felter
 
 
 def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
@@ -160,25 +181,54 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
     biter: dict[str, list[tuple[str, str, str, object]]] = {}
     lest = 0
     try:
-        for merke, medlem, data in parsing.les_porsjonsvis(sti):
-            # FREMDRIFTEN TELLER MEDLEMMER, IKKE SJEKKPUNKTER (Codex P2).
-            # `les_porsjonsvis` leverer et merke bare hver 200. fil og på
-            # det siste medlemmet; sto `fremdrift` stille mellom dem, meldte
-            # et utfall på medlem 150 `filer_lest: 0` — og etter en
-            # porsjonsgrense kunne det underrapportere med opptil 199.
-            # Dette feltet er kontraktens EVIDENS for hvor langt kjøringen
-            # kom (§7), så det som telles må være det som faktisk er lest.
-            # `byte_lest`/`filer_totalt` er strømmens egne målinger og
-            # hentes fortsatt fra siste merke — de gjettes ikke her.
-            lest += 1
-            fremdrift = (dict(merke) if merke
-                         else {**fremdrift, "filer_lest": lest})
-            navn = medlem.navn.replace("\\", "/")
-            kandidat_id = navn.split("/")[0]
-            biter.setdefault(kandidat_id, []).append(
-                (navn, medlem.navn,
-                 _tekst(tekst_for, medlem, data, fremdrift),
-                 _felter(kandidatfelter_for, medlem, fremdrift)))
+        # LAGRINGSHÅNDTEREREN HØRER TIL LESINGEN, IKKE HELE KJØRINGEN
+        # (Codex P2). Denne indre `try`-en dekker BARE arkivgaten. Sto
+        # håndtereren nede blant de øvrige, dekket den også `modell.vurder`,
+        # og en `ConnectionResetError` fra modellklienten — en `OSError` MED
+        # errno som alle andre — ble meldt som `infrastrukturfeil`. Forrige
+        # runde flyttet lagringsfeilen ut av modellkøen; uten denne
+        # innsnevringen tok den modellens egne nettverksfeil med seg samme
+        # vei, og da leter driften etter et lagringsavbrudd som aldri fant
+        # sted. Kilden avgjør koden, og kilden er hvor unntaket oppsto.
+        try:
+            for merke, medlem, data in parsing.les_porsjonsvis(sti):
+                # FREMDRIFTEN TELLER MEDLEMMER, IKKE SJEKKPUNKTER (Codex P2).
+                # `les_porsjonsvis` leverer et merke bare hver 200. fil og på
+                # det siste medlemmet; sto `fremdrift` stille mellom dem,
+                # meldte et utfall på medlem 150 `filer_lest: 0` — og etter
+                # en porsjonsgrense kunne det underrapportere med opptil 199.
+                # Dette feltet er kontraktens EVIDENS for hvor langt
+                # kjøringen kom (§7), så det som telles må være det som
+                # faktisk er lest. `byte_lest`/`filer_totalt` er strømmens
+                # egne målinger og hentes fortsatt fra siste merke — de
+                # gjettes ikke her.
+                lest += 1
+                fremdrift = (dict(merke) if merke
+                             else {**fremdrift, "filer_lest": lest})
+                navn = medlem.navn.replace("\\", "/")
+                kandidat_id = navn.split("/")[0]
+                biter.setdefault(kandidat_id, []).append(
+                    (navn, medlem.navn,
+                     _tekst(tekst_for, medlem, data, fremdrift),
+                     _felter(kandidatfelter_for, medlem, fremdrift)))
+        except OSError as feil:
+            # LAGRINGEN ER IKKE MODELLEN (Codex P2). `les_porsjonsvis`
+            # slipper MED VILJE en `OSError` MED errno gjennom som seg selv:
+            # en lesefeil på disk eller nettlager er DRIFT, ikke en påstand
+            # om kundens bunt — å kalle den `korrupt_bunt` ville gjort vår
+            # feil til en kundeavvisning (parsing.py, «`OSError` MED errno
+            # er noe helt annet»). Catch-allen under pakket den likevel som
+            # «modellfeil», og da leste både arbeiderens retry og
+            # driftsdiagnostikken et lagringsavbrudd som at MODELLEN sviktet:
+            # feil kø, feil alarm, feil sak. Utfallet får derfor sin egen
+            # kode — fortsatt kodet, så SP-3 står, men riktig adressert.
+            #
+            # Den ERRNO-LØSE formen er dekompressorens («Invalid data
+            # stream»), og den er alt oversatt til `korrupt_bunt` før den
+            # kommer hit; kom den likevel, er den fremmed kode som alt annet.
+            if feil.errno is None:
+                raise Kjoringsfeil("modellfeil", fremdrift) from feil
+            raise Kjoringsfeil("infrastrukturfeil", fremdrift) from feil
         # EN BUNT UTEN KANDIDATER ER IKKE EN FULLFØRT EVALUERING (Codex P2).
         # Er zip-en tom, eller bærer den bare katalogoppføringer, yielder
         # `les_porsjonsvis` ingenting: `biter` blir tom, løkken under kjører
@@ -252,24 +302,6 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
         # tomme strukturerte felter stopper kjøringen med kode, aldri
         # med rå exception — og aldri med rå tekst videre i stillhet.
         raise Kjoringsfeil(feil.kode, fremdrift) from feil
-    except OSError as feil:
-        # LAGRINGEN ER IKKE MODELLEN (Codex P2). `les_porsjonsvis` slipper
-        # MED VILJE en `OSError` MED errno gjennom som seg selv: en lesefeil
-        # på disk eller nettlager er DRIFT, ikke en påstand om kundens bunt
-        # — å kalle den `korrupt_bunt` ville gjort vår feil til en
-        # kundeavvisning (parsing.py, «`OSError` MED errno er noe helt
-        # annet»). Catch-allen under pakket den likevel som «modellfeil»,
-        # og da leste både arbeiderens retry og driftsdiagnostikken et
-        # lagringsavbrudd som at MODELLEN sviktet: feil kø, feil alarm,
-        # feil sak. Utfallet får derfor sin egen kode — fortsatt kodet, så
-        # SP-3 står, men riktig adressert.
-        #
-        # Den ERRNO-LØSE formen er dekompressorens («Invalid data stream»),
-        # og den er alt oversatt til `korrupt_bunt` før den kommer hit; kom
-        # den likevel, er den fremmed kode som alt annet her nede.
-        if feil.errno is None:
-            raise Kjoringsfeil("modellfeil", fremdrift) from feil
-        raise Kjoringsfeil("infrastrukturfeil", fremdrift) from feil
     except Exception as feil:   # modellen er fremmed kode — også dens
         raise Kjoringsfeil("modellfeil", fremdrift) from feil
     return {"rangering": rangering,
