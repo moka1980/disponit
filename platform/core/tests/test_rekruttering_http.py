@@ -1147,9 +1147,20 @@ def test_deaktivert_m57_gir_definert_503_paa_alle_tre_rutene(miljo,
     Avvisningen ligger FØR autentiseringen, og økten her er en ekte
     admin-økt med gyldig CSRF: 503-en er da modulporten, ikke en 401 som
     tilfeldigvis kom først.
+
+    STATUSEN MÅLES MOT `feil.FEIL`, ikke mot tallet 503 skrevet her.
+    Modulen bruker ellers `policyadmin_http._feil`, som har sin EGEN
+    lokale statustabell og faller til 409 for koder den ikke kjenner —
+    første versjon av porten svarte derfor `modul_inaktiv` med 409, en
+    «konflikt, prøv noe annet» om en modul som er slått av. Leses tallet
+    fra kontrakten, peker et framtidig avvik på seg selv i stedet for å
+    bestå mot en kopi.
     """
     from starlette.testclient import TestClient
+    from api import feil as feiltabell
     from api.app import lag_app
+    forventet = feiltabell.FEIL["modul_inaktiv"].http
+    assert forventet == 503, "rollback-kontrakten er 503"
     _pid, lid, ih = _seed_prosess()
     bid = _bruker("sjef-rollback", ["admin"])
     cookie, csrf = _browsersesjon(bid)
@@ -1167,7 +1178,7 @@ def test_deaktivert_m57_gir_definert_503_paa_alle_tre_rutene(miljo,
                       f"/v1/rekruttering/prosesser/{_pid}/blinding",
                       {"av": True, "begrunnelse": "test"}),
             ]
-            assert [r.status_code for r in svar] == [503, 503, 503], \
+            assert [r.status_code for r in svar] == [forventet] * 3, \
                 [r.text for r in svar]
             assert {r.json()["feil"] for r in svar} == {"modul_inaktiv"}
     finally:

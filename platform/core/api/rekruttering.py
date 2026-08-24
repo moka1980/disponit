@@ -82,13 +82,22 @@ def _modul_inaktiv(tjeneste, rid):
     Lest av `tjeneste.inaktive_moduler`, som er BOOT-lest — ingen
     fillesing i request-path, og deaktivering restarter uansett
     prosessen.
+
+    SVARET BYGGES AV `app._feilsvar`, ikke av `policyadmin_http._feil`
+    som resten av modulen bruker. De to leser ULIKE tabeller: `_feilsvar`
+    slår opp i `feil.FEIL` — kontrakten som DATA, der `modul_inaktiv` står
+    med 503 — mens `_feil` har sin egen lokale `_FEIL_HTTP` for
+    policyadmins koder og faller til 409 for alt annet. Rollback-
+    kontrakten sier 503, og en 409 ville sagt «konflikt, prøv noe annet»
+    om en modul som er slått av. Det er samme helper `_beslutning` bruker
+    for nøyaktig denne koden.
     """
-    from .policyadmin_http import _feil
+    from .app import _feilsvar
     if REKRUTTERINGSMODUL not in tjeneste.inaktive_moduler:
         return None
     tjeneste.logg.hendelse("modul_inaktiv", rid, art="drift",
                            modul=REKRUTTERINGSMODUL)
-    return _feil("modul_inaktiv", rid)
+    return _feilsvar("modul_inaktiv", rid)
 
 
 def _leseauth_beslutninger(tjeneste, request, conn, rid):
