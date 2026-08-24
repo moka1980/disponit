@@ -336,10 +336,19 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
   // ut som en meny for den som ser den; det er hierarkiet som manglet, ikke
   // pynten. Sonen merkes av selve overskriften i stedet for av en kopi av
   // teksten: én kilde, og de to kan ikke komme fra hverandre.
+  // SONEN ER ET NAVIGASJONSLANDEMERKE, IKKE EN SIDESTILT BOKS (Cursor P2).
+  // Som `aside` var den riktig da radene bare byttet kontekstpanelet. Etter
+  // eiers vedtak 24/8 er den den eneste annonserte veien til 038 og M-57, og
+  // `nav.skall-nav` lister dem med vilje ikke — så den som hopper mellom
+  // navigasjonslandemerkene (den vanligste måten å orientere seg med
+  // skjermleser) traff bare plattformflatene og fant aldri modulflatene.
+  //
+  // To `nav`-landemerker krever hver sin etikett, og de har det: toppen bærer
+  // `aria-label`, denne bærer overskriften sin gjennom `aria-labelledby`.
   const modulliste = el("div", { class: "skall-modulliste" });
   const menytittel = el("h2", { class: "sr-only", id: "modulmeny-tittel",
     text: t("ui.shell.moduler") });
-  const venstre = el("aside", { class: "skall-venstre", id: "modulmeny",
+  const venstre = el("nav", { class: "skall-venstre", id: "modulmeny",
     "aria-labelledby": "modulmeny-tittel" }, menytittel, modulliste);
 
   // Søket filtrerer modulmenyen. Det er det eneste søket har å søke i her, og

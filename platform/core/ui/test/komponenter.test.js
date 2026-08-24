@@ -327,6 +327,17 @@ test("AppShell: fem soner etter §2.3, og statuslinja lover ikke drift", async (
   assert.ok(rot.querySelector(".skall-topp"), "topp mangler");
   assert.ok(rot.querySelector("main#hovedinnhold"), "sentrum mangler");
   assert.ok(rot.querySelector(".skall-venstre"), "modulmeny mangler");
+  // 🔴 Sonen er den eneste annonserte veien til modulflatene (Cursor P2), og
+  // toppnavigasjonen lister dem med vilje ikke. Som `aside` fant den som
+  // hopper mellom navigasjonslandemerker bare plattformflatene. To `nav`-er
+  // krever hver sin etikett — her: `aria-label` mot `aria-labelledby`.
+  assert.ok(rot.querySelector("nav#modulmeny"),
+    "modulmenyen er ikke et navigasjonslandemerke");
+  const navlandemerker = [...rot.querySelectorAll("nav")];
+  assert.equal(navlandemerker.length, 2);
+  assert.ok(navlandemerker.every((n) =>
+    n.getAttribute("aria-label") || n.getAttribute("aria-labelledby")),
+  "et navigasjonslandemerke står uten etikett");
   assert.ok(rot.querySelector(".skall-kontekst"), "kontekstpanel mangler");
   assert.ok(rot.querySelector(".skall-status"), "statuslinje mangler");
 
@@ -738,9 +749,12 @@ test("AppShell: modulkortet ER inngangen til flaten; toppnav bærer bare plattfo
     aktiv: "oversikt", sprak: "nb", moduler: [1, 57],
     paaSprak: () => {}, paaLoggUt: () => {} });
   brett.append(rot);
-  // Toppnav: plattformflaten inne, modulflaten UTE.
-  assert.ok(rot.querySelector('nav a[href="#/oversikt"]'));
-  assert.equal(rot.querySelector('nav a[href="#/rekruttering"]'), null,
+  // Toppnav: plattformflaten inne, modulflaten UTE. Selektoren peker på
+  // `.skall-nav` og ikke bare `nav`, for modulmenyen er nå selv et
+  // navigasjonslandemerke (Cursor P2) — og det er nettopp poenget: begge er
+  // navigasjon, spørsmålet er hvilken av dem ruten hører til.
+  assert.ok(rot.querySelector('nav.skall-nav a[href="#/oversikt"]'));
+  assert.equal(rot.querySelector('nav.skall-nav a[href="#/rekruttering"]'), null,
     "modulflate i toppnav — den bor i venstremenyen nå");
   // Kortet navigerer — og en navigasjon er en LENKE (Codex P2). Kortet er den
   // eneste annonserte inngangen etter at oppføringen forlot toppnavigasjonen,
