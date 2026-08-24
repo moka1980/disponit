@@ -471,6 +471,13 @@ test("Rekruttering: signaturdialogen sier antall, type, hashkortform — og «Ka
   assert.ok(tekst.includes(t("ui.rekruttering.listetype.invitasjon")));
   assert.ok(tekst.includes(HASH.slice(0, 12) + "…"), "hashkortformen mangler");
   assert.ok(tekst.includes("Kan ikke angres"), "irreversibiliteten er taus");
+  // Codex P1: knappen het «Signer og send» og teksten lovte «Dette sender
+  // N e-poster», men signeringen AUTORISERER bare — frigivelsen er
+  // `frigi_utsendelse` + en sendejobb, og den benen har ingen
+  // produksjonskaller (#151). Dialogen må si begge deler: irreversibel
+  // autorisasjon, OG at dette klikket ikke sender noe.
+  assert.ok(tekst.includes("sender ingen e-post"),
+    "dialogen lover fortsatt en utsendelse dette klikket ikke gjør");
   assert.ok(!tekst.includes(HASH), "fullhashen skal ikke ut i dialogen");
   // Signer → POST binder innholdshashen; utfallet står i role=alert.
   SVAR["/v1/rekruttering/lister/L-1/signer"] = { innhold_hash: HASH };

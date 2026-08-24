@@ -350,6 +350,14 @@ def signer_endepunkt(tjeneste, request):
             # igjen.
             raise _Avbrudd(_feil("idempotenskonflikt", rid, 409)) from e
         conn.commit()
+        # 201 BETYR AUTORISERT, IKKE SENDT (Codex P1). Det eneste som har
+        # skjedd, er at signaturraden står. Frigivelsen er en egen kjede —
+        # `frigi_utsendelse` per mottaker (056 §7c) og en jobb som sender —
+        # og den har ingen produksjonskaller i dag: den konsumerende benen
+        # er #151. Flaten lovet «Signer og send … Dette sender N e-poster»,
+        # og det løftet er trukket tilbake der det ble gitt (locales), ikke
+        # innfridd med ny maskin i en fiksrunde (K1). Kommer senderbenet,
+        # er det HER kvitteringsveien kobles på.
         return _ok({"innhold_hash": rad[0], "antall": rad[1],
                     "listetype": rad[2]}, rid, 201)
 

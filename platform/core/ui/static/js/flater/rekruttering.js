@@ -486,11 +486,21 @@ function tegn(hoved, ctx, data, okt, valgtId) {
         rolle: "alertdialog",
         farlig: true,
         tittel: t("ui.rekruttering.signer_tittel"),
-        // `replaceAll`, ikke `replace` (Cursor P1): `{antall}` står TO
-        // ganger i teksten — «… · 42 mottakere · … Dette sender {antall}
-        // e-poster» — og port 31 krever at setningen sier tallet, ikke
-        // plassholderen. Samme regel for de øvrige feltene: en tekst som
-        // gjentar et felt skal ikke avhenge av hvor i strengen det står.
+        // KNAPPEN LOVER DET HANDLINGEN GJØR (Codex P1). Teksten sa
+        // «Signer og send … Dette sender {antall} e-poster», men
+        // signeringen AUTORISERER bare: den skriver signaturraden gjennom
+        // 056. Selve frigivelsen er `frigi_utsendelse` per mottaker pluss
+        // en frigivelsesjobb, og den benen har ingen produksjonskaller —
+        // den er #151. Brukeren fikk altså en suksessmelding om N sendte
+        // e-poster som ikke gikk noe sted. Fiksen er ikke å bygge
+        // senderbenet inne i en fiksrunde (K1), men å slutte å love det:
+        // dialogen sier nå at signaturen autoriserer, at den ikke kan
+        // angres, og at dette klikket ikke sender e-post.
+        //
+        // `replaceAll`, ikke `replace` (Cursor P1): teksten kan gjenta et
+        // felt, og port 31 krever at setningen sier tallet, ikke
+        // plassholderen. En tekst som gjentar et felt skal ikke avhenge
+        // av hvor i strengen det står.
         tekst: t("ui.rekruttering.signer_tekst")
           .replaceAll("{antall}", String(liste.antall))
           .replaceAll("{listetype}",
