@@ -589,6 +589,40 @@ def test_selvrevers_speiler_vedlikeholdsvinduet():
         "reverseringsdommen måler ikke det samme settet den nettopp startet"
 
 
+def test_vinduet_stopper_oneshoten_bak_hver_timer_det_stopper():
+    """Cursor P2 (#178, runde 7): `systemctl stop <timer>` hindrer NESTE
+    aktivering, ikke den som alt løper.
+
+    Runde 4 lærte det på `rydd-pending` og `backup` og la oneshotene inn i
+    stopplista — men `disponit-helse.service` ble stående igjen, og den er
+    den farligste av dem: en helsesjekk som alt kjører, med teller ≥
+    MAKS_FEIL, kaller `disponit-restart-helper` på API-et og M-37 og
+    restarter dermed nøyaktig de tjenestene vinduet nettopp stoppet — inne i
+    migrasjonen, mot et skjema i bevegelse.
+
+    Porten er generell med vilje, som søsteren over: hver `.timer` vinduet
+    stopper skal ha sin `.service` i den samme stopplista, så neste timer
+    noen legger inn er dekket uten at noen husker det. Unntaket er en timer
+    som ikke HAR en oneshot — den måles mot unit-filene, ikke mot en liste
+    i testen.
+    """
+    import re
+    opp = (ROT / "deploy/staging/opp.sh").read_text(encoding="utf-8")
+    opp = opp.replace("\\\n", " ")
+    stoppet = {e for liste in re.findall(r"systemctl stop (.*)", opp)
+               for e in liste.split() if e.startswith("disponit-")}
+    timere = {e for e in stoppet if e.endswith(".timer")}
+    assert timere, "fant ingen timere i stopplista — porten måler ingenting"
+    for timer in sorted(timere):
+        oneshot = timer[:-len(".timer")] + ".service"
+        if not (ROT / "deploy/staging" / oneshot).exists():
+            continue        # timeren har ingen oneshot bak seg
+        assert oneshot in stoppet, \
+            f"{timer} stoppes av vedlikeholdsvinduet, men {oneshot} kan " \
+            f"alt være i gang — stopp av timeren treffer bare NESTE " \
+            f"aktivering, og jobben løper videre inne i migrasjonen"
+
+
 def test_selvrevers_gjenoppretter_settet_som_var_i_drift():
     """Codex P2 (#178, runde 2): `is-enabled` er ikke «var i drift».
 

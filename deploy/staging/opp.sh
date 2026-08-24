@@ -1027,7 +1027,17 @@ for enhet in $SELVREVERS_ENHETER; do
 done
 echo "vedlikeholdsvindu: i drift før stopp —" \
      "${AKTIVE_FOR_VINDUET:- ingen}"
-systemctl stop disponit-helse.timer disponit-m37.service \
+# Cursor P2 (#178, runde 7): OGSÅ `disponit-helse.service`. Å stoppe timeren
+# hindrer NESTE aktivering, ikke den som alt løper — samme lærdom som
+# rydd-pending og backup fikk i runde 4, og helsesjekken er den farligste av
+# dem: en pågående kjøring med teller ≥ MAKS_FEIL kaller
+# `disponit-restart-helper` på API-et og M-37, altså restarter nøyaktig de
+# tjenestene vinduet nettopp stoppet — midt i migrasjonen, mot et skjema i
+# bevegelse. Den hører derfor i den SAMME `systemctl stop` som timeren sin,
+# og IKKE i `SELVREVERS_ENHETER`: oneshoten er timerens å starte (steg 8s
+# form), og reverseringen skal gjenopprette timeplanen, ikke kjøre jobben nå.
+systemctl stop disponit-helse.timer disponit-helse.service \
+    disponit-m37.service \
     disponit-api.service disponit-api.socket 2>/dev/null || true
 systemctl stop disponit-varselsender.timer disponit-varselsender.service \
     2>/dev/null || true
