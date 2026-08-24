@@ -169,17 +169,29 @@ def test_ingen_tenantdata_i_offentlige_ressurser():
     `offentlige_ressurser.test.js` håndhever den samme grensen fra JS-siden,
     men bare mot mønstre. Denne porten leser de FAKTISKE radene registeret
     serverer, så et nytt kundenavn er dekket i det øyeblikket det legges
-    inn — uten at noen må huske å oppdatere et mønster."""
+    inn — uten at noen må huske å oppdatere et mønster.
+
+    Ett unntak: plattformens egen tenant-id ER merkenavnet (`disponit`), og
+    merkenavnet er chrome som lovlig ligger i det offentlige locale-settet
+    (`app.navn`, `__Host-disponit_csrf` osv., se `sesjon.py:167`). Unntaket
+    er en EKSAKT match mot `app.navn` lowercased — ikke en prefiks og ikke
+    hele raden — så `navn`-feltet («Disponit (plattform)») og alle andre
+    tenanters id/navn (nordvik, bjørkli, granmo) er fortsatt dekket."""
     from api.utrulling import _UTRULLING
 
+    locale_dir = Path(__file__).resolve().parents[3] / "locales"
+    merkenavn = json.loads((locale_dir / "nb.json")
+                           .read_text(encoding="utf-8"))["app.navn"].lower()
+
     offentlig = list(UI_JS.rglob("*.js"))
-    offentlig += sorted((Path(__file__).resolve().parents[3] / "locales")
-                        .glob("*.json"))
+    offentlig += sorted(locale_dir.glob("*.json"))
     assert offentlig, "fant ingen serverte ressurser å sjekke"
     for sti in offentlig:
         tekst = sti.read_text(encoding="utf-8").lower()
         for rad in _UTRULLING:
             for verdi in (rad["id"], rad["navn"]):
+                if verdi.lower() == merkenavn:
+                    continue
                 assert verdi.lower() not in tekst, (
                     f"tenantdata ({verdi!r}) ligger i {sti.name}, som serveres "
                     f"uten øktsjekk")
