@@ -30,6 +30,15 @@ import json
 
 import psycopg
 
+from .autorisasjon import scopes_for_roller
+
+#: Signeringens mutasjonsscope. ÉN konstant, fordi den måles to ganger:
+#: ved autentiseringen (`_browserkontekst`) og en gang til under
+#: medlemskapslåsen rett før den irreversible skrivingen (Codex P1). To
+#: strenglitteraler kunne drevet fra hverandre, og da ville den andre
+#: målingen sett på noe annet enn den første.
+_SIGNERINGSSCOPE = "bestilling:opprett"
+
 
 def _leseauth_beslutninger(tjeneste, request, conn, rid):
     """Som policyadmin_http._leseauth, men for `decisions:read` — flatens
@@ -120,6 +129,20 @@ def _lister(conn, tenant, oppdrag_id):
              "innhold_hash": r[3], "signert": bool(r[4])} for r in rader]
 
 
+def _fullfort_replay(conn, tenant, nokkel, liste_id, bid) -> bool:
+    """Står signaturen denne forespørselen ber om ALLEREDE?
+
+    Predikatet er `signer_utsendingsliste`s eget, med samme snevre likhet:
+    bare den nøyaktig identiske operasjonen — nøkkel + liste + signatar —
+    er et replay. En nøkkel som bærer annet innhold er ikke en gjentakelse
+    av noe, og faller til 056s egen dom.
+    """
+    return conn.execute(
+        "SELECT 1 FROM utsendingssignatur WHERE tenant=%s"
+        " AND operasjonsnokkel=%s AND liste_id=%s AND signatar=%s",
+        (tenant, nokkel, liste_id, bid)).fetchone() is not None
+
+
 def prosesser_endepunkt(tjeneste, request):
     """GET /v1/rekruttering/prosesser."""
     from .app import _rid
@@ -156,6 +179,12 @@ def signer_endepunkt(tjeneste, request):
     signataren faktisk leste — serie-spissen (ingen barn i serien) OG
     hash-ekkoet (kroppen bærer innholdshashen dialogen viste). Begge
     svarer 409; ingen av dem skriver noe.
+
+    Og fullmakten: 056 låser medlemskapet, men leser med vilje ikke
+    `roller` — «rolle- og scope-nivået hører til flatens egen
+    autorisasjon (CP3)» (§7b). Den målingen hører altså HIT, og den tas
+    under 056s egen lås rett før skrivingen (403). En FULLFØRT operasjon
+    passerer alle tre: et replay svarer det den svarte.
     """
     from .app import _rid
     from .policyadmin_http import (_Avbrudd, _browserkontekst, _feil,
@@ -168,7 +197,7 @@ def signer_endepunkt(tjeneste, request):
 
     def kjor(conn):
         tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
-                                       "bestilling:opprett")
+                                       _SIGNERINGSSCOPE)
         nokkel = _krev_idem(request, rid)
         kropp = _kropp(request)
         if not isinstance(kropp.get("innhold_hash"), str):
@@ -228,19 +257,57 @@ def signer_endepunkt(tjeneste, request):
         # sitter igjen uten noen måte å vite om den irreversible
         # autorisasjonen gikk igjennom. Nøyaktig samme klasse som 056 selv
         # lukket i runde 12 på #140, bare ett lag lenger ut.
-        #
-        # Predikatet er 056s eget, med samme snevre likhet: bare den
-        # nøyaktig identiske operasjonen (nøkkel + liste + signatar) er et
-        # replay. En nøkkel som bærer ANNET innhold er ikke en gjentakelse
-        # av noe — den faller igjennom til portene og til 056s egen dom.
-        replay = conn.execute(
-            "SELECT 1 FROM utsendingssignatur WHERE tenant=%s"
-            " AND operasjonsnokkel=%s AND liste_id=%s AND signatar=%s",
-            (tenant, nokkel, liste_id, bid)).fetchone() is not None
+        replay = _fullfort_replay(conn, tenant, nokkel, liste_id, bid)
         if not replay and rad[3]:
             raise _Avbrudd(_feil("liste_utdatert", rid, 409))
         if not replay and rad[0] != kropp["innhold_hash"]:
             raise _Avbrudd(_feil("innhold_endret", rid, 409))
+        # FULLMAKTEN MÅLES PÅ NYTT UNDER LÅSEN (Codex P1, runde 3).
+        # `_browserkontekst` måler scopet mot sesjonens `authz_snapshot` ved
+        # inngangen til forespørselen. 056s port låser medlemskapet, men
+        # spør bare om det er AKTIVT — den leser aldri `roller`, med vilje:
+        # «rolle- og scope-nivået hører til flatens egen autorisasjon
+        # (CP3)» (056 §7b). Ingen av de to målte altså rollen PÅ det
+        # tidspunktet signaturen ble skrevet. Fratas en administrator
+        # `bestilling:opprett` mellom autentiseringen og skrivingen, står
+        # medlemskapet fortsatt `aktiv`, og en tilbakekalt fullmakt kunne
+        # committe en irreversibel autorisasjon — i en append-only tabell
+        # som aldri kan rettes.
+        #
+        # Målingen tas gjennom SAMME lås som 056 bruker: `laas_godkjenner`
+        # (013) er SECURITY DEFINER og tar `FOR UPDATE` på medlemskapsraden
+        # — den låsen 019-grensen sier runtime ikke kan ta selv — og den
+        # RETURNERER de låste rollene, nettopp for denne sammenlikningen
+        # (`_reautoriser_godkjennere` i policyadmin bruker den slik).
+        # Låsen holdes ut transaksjonen, så 056s eget kall arver den, og en
+        # tilbakekalling kan hverken snike seg inn foran eller etter: den
+        # serialiseres bak oss.
+        #
+        # IKKE for et replay. En ferdig operasjon skal svare det den svarte
+        # — 056 selv slipper replayet forbi medlemskapsporten av nøyaktig
+        # den grunnen (runde 11/12 på #140), og en rolleendring etterpå
+        # gjør ikke en signatur som STÅR om til et avslag.
+        #
+        # MEDLEMSKAPET dømmes ikke her. Finner låsen ingen aktiv rad, faller
+        # kallet igjennom til 056s egen port — den EIER den dommen, og den
+        # bærer sitt eget etteroppslag for replayet som ble ferdig mens vi
+        # ventet. Her måles bare det 056 med vilje ikke måler: rollen.
+        #
+        # ...OG OPPSLAGET GJENTAS ETTER VENTINGEN, av samme grunn (056 §7b,
+        # runde 12 på #140): låsen er et VENTEPUNKT. Et replay som gjorde
+        # sitt tidlige oppslag mens originalen ennå var ucommittet, stiller
+        # seg i køen; våkner det til en rolle som er trukket tilbake, ville
+        # dommen vært 403 på en signatur som NÅ står. Under READ COMMITTED
+        # får setningen et ferskt snapshot, så originalens rad er synlig.
+        if not replay:
+            laast = conn.execute("SELECT roller FROM laas_godkjenner(%s,%s)",
+                                 (tenant, bid)).fetchone()
+            if laast is not None and _SIGNERINGSSCOPE not in \
+                    scopes_for_roller(list(laast[0] or ())) \
+                    and not _fullfort_replay(conn, tenant, nokkel,
+                                             liste_id, bid):
+                tjeneste.logg.hendelse("signatar_avvist", rid)
+                raise _Avbrudd(_feil("signatar_uten_fullmakt", rid, 403))
         try:
             conn.execute("SELECT signer_utsendingsliste(%s,%s,%s,%s)",
                          (tenant, liste_id, bid, nokkel))
