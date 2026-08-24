@@ -599,10 +599,10 @@ skriv_cred domener DISPONIT_RESOLVERE   "${DISPONIT_RESOLVERE:-}"
 
 # Selv-reversering (#172): i feilsonen mellom «tjenester stoppet» og
 # release-byttet peker symlinken FORTSATT på forrige release — å starte
-# unitene igjen ER å boote den. Bootportens eksakte migrasjonsmatch
-# feller selv tilfellene der basen rakk å flytte seg (delvis kjørte NYE
-# migrasjoner): da nekter forrige kode å starte, og meldingen sier det
-# ærlig i stedet for å love en gjenoppretting som ikke finnes.
+# unitene igjen ER å boote den. Men bare når basen står stille også: rakk
+# runtime-migrasjonen å flytte skjemaet før feilen, finnes det ingen
+# gjenoppretting å love, og reverseringen sier det i stedet for å starte
+# gamle arbeidere mot et nytt skjema (rullbakk-gaten først i funksjonen).
 #
 # Codex P1 (runde 1): en reversering som starter et UTVALG av det vinduet
 # stoppet, er ingen reversering. Steg 5 slår av elleve enheter; første
@@ -627,6 +627,46 @@ disponit-domeneverifisering.timer disponit-wcag-audit.service"
 selvrevers() {
   echo "AVBRUTT: $1 — forsøker selv-reversering (forrige release,"
   echo "symlinken er urørt: $FORRIGE)"
+  # Codex P1 (runde 2): symlinken er urørt, men BASEN er ikke nødvendigvis
+  # det. Steg 6 migrerer runtime-basen FØR testbasen, og steg 6b kjører
+  # etter begge: går runtime grønt og testbasen eller deploy-porten rødt,
+  # bærer runtime-basen alt kandidatens forward-only-sett mens `aktiv`
+  # peker på forrige release. Å starte enhetene da er ikke å gjenopprette
+  # — det er å sette GAMLE arbeidere på et NYTT skjema. API-et nekter selv
+  # (`krev_migrasjonstilstand`, eksakt samsvar), men M-37 og timerne har
+  # ingen slik bootport: de ville kjørt videre mot et skjema dette skriptet
+  # nettopp erklærte inkompatibelt, og feilgrenen stopper dem aldri igjen.
+  #
+  # Dommen felles derfor FØR første `systemctl start`, og den MÅLES:
+  # `rollbackmaal_kompatibelt` (lib-opp.sh, samme kall steg 9 bruker)
+  # leser forrige releases migrasjonsversjoner mot de FAKTISK anvendte i
+  # runtime-basen — bootportens egen fasit, ikke en slutning fra hva denne
+  # kjøringen rakk å migrere (#127-lærdommen). Er den rød, er «umålt» ikke
+  # «kompatibelt»: ingenting startes.
+  ROLLBACKDOM=""
+  if [ -z "$FORRIGE" ]; then
+    ROLLBACKDOM="ingen forrige release å boote (aktiv-symlinken fantes ikke)"
+  else
+    ROLLBACKDOM=$(rollbackmaal_kompatibelt "$FORRIGE" \
+        "${DISPONIT_MIGRATOR_URL:-}") || \
+      ROLLBACKDOM="${ROLLBACKDOM:-rullbakkmålet lot seg ikke måle}"
+  fi
+  if [ -n "$ROLLBACKDOM" ]; then
+    echo "SELV-REVERSERING NEKTET: $ROLLBACKDOM."
+    echo "Basen har flyttet seg forbi forrige release, og da kan forrige"
+    echo "kode ikke bootes mot dette skjemaet (bootportens dom). Enhetene"
+    echo "blir STÅENDE STOPPET, med vilje — en gammel arbeider mot et nytt"
+    echo "skjema er verre enn en stoppet arbeider, og M-37 og timerne har"
+    echo "ingen bootport som ville nektet for dem:"
+    for enhet in disponit-api.socket disponit-api.service \
+                 disponit-m37.service $SELVREVERS_ENHETER; do
+      echo "  - $enhet"
+    done
+    echo "Rettingen er FREMOVER og den er NÅ: fullfør deployen mot et"
+    echo "skjema begge basene deler, eller rull frem til et sett forrige"
+    echo "release bærer. Deployen er avbrutt."
+    exit 1
+  fi
   systemctl start disponit-api.socket disponit-api.service \
       disponit-m37.service 2>/dev/null || true
   for enhet in $SELVREVERS_ENHETER; do

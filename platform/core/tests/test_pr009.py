@@ -581,6 +581,44 @@ def test_selvrevers_speiler_vedlikeholdsvinduet():
         "reverseringsdommen måler ikke enhetene den nettopp startet"
 
 
+def test_selvrevers_maler_rullbakk_for_forste_start():
+    """Codex P1 (#178, runde 2): gamle arbeidere skal ikke startes mot et
+    nytt skjema.
+
+    Steg 6 migrerer runtime FØR test, og steg 6b kommer etter begge. Går
+    runtime grønt og noe etterpå rødt, står runtime-basen på kandidatens
+    forward-only-sett mens `aktiv` peker på forrige release. API-et nekter
+    selv (`krev_migrasjonstilstand`), men M-37 og timerne har ingen slik
+    bootport: de ville kjørt videre mot et skjema skriptet nettopp erklærte
+    inkompatibelt, og feilgrenen stopper dem aldri igjen.
+
+    Porten måler REKKEFØLGEN — dommen skal felles før første `systemctl
+    start`, ikke etterpå. En gate som ligger etter starten er ingen gate,
+    samme dom `test_p1_preflight_skjer_for_forste_mutasjon` feller for
+    preflighten.
+    """
+    opp = "\n".join(
+        linje for linje in (ROT / "deploy/staging/opp.sh").read_text(
+            encoding="utf-8").splitlines()
+        if not linje.lstrip().startswith("#"))
+    blokk = opp[opp.index("selvrevers() {"):
+                opp.index("\n}\n", opp.index("selvrevers() {"))]
+    assert "rollbackmaal_kompatibelt" in blokk, \
+        "selvrevers() måler ikke rullbakk-kompatibiliteten i det hele tatt" \
+        " — den ville startet gamle arbeidere mot et migrert skjema"
+    assert blokk.index("rollbackmaal_kompatibelt") \
+        < blokk.index("systemctl start"), \
+        "rullbakk-gaten ligger ETTER første `systemctl start` — da er" \
+        " arbeiderne alt i drift mot skjemaet gaten skulle nektet dem"
+    # Dommen skal AVBRYTE, ikke advare: en rød gate med exit 0 lar
+    # løypa fortsette ned i den samme starten.
+    gate = blokk[blokk.index("rollbackmaal_kompatibelt"):
+                 blokk.index("systemctl start")]
+    assert "exit 1" in gate, \
+        "rullbakk-gaten advarer, men avbryter ikke — enhetene startes" \
+        " likevel like etterpå"
+
+
 def test_hver_feil_i_vinduet_kaller_selvrevers():
     """Cursor P2 5: koblingen mellom vinduet og reverseringen måles.
 
