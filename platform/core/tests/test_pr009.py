@@ -765,52 +765,120 @@ def test_checksumporten_feller_endret_kjort_migrasjon(migrator, tmp_path):
         f"{rod.stdout}"
 
 
-@pg
-def test_checksumporten_slipper_uherdet_historikk(migrator, tmp_path):
-    """Codex P2: uherdet historikk er ikke et avvik.
+def _reviewede_versjoner() -> set:
+    """Versjonene `herd_historikk` faktisk kan backfille, fra herdingens
+    egen kilde — samme importvei som `migrer.last_bootstrap` bruker."""
+    import importlib.util
+    spek = importlib.util.spec_from_file_location(
+        "migrasjon_bootstrap", ROT / "deploy/staging/migrasjon-bootstrap.py")
+    modul = importlib.util.module_from_spec(spek)
+    spek.loader.exec_module(modul)
+    return set(modul.REVIEWEDE_CHECKSUMS)
 
-    En base fra PR-004-æraen har `migrasjoner` uten checksum-kolonne, og en
-    base midt i herdingen har rader med NULL. Begge er tilstander
-    `migrer.py` er BYGGET for å løse (kjøreren legger til kolonnen,
-    `herd_historikk` backfiller fra REVIEWEDE_CHECKSUMS). En port som
-    avbryter der, stenger den eneste veien ut av tilstanden den klager på.
 
-    NULL-raden måles her; den manglende KOLONNEN er dekket av
-    `test_kjorer_og_kryptering`-søsknene, som eier DDL-en for den
-    tilstanden.
-    """
+def _med_null_checksum(migrator, versjon):
+    """Kontekst: én kjørt rad står med NULL checksum, kolonnen nullable.
+    Gjenopprettes etterpå — de andre kjører-testene leser samme rader."""
+    import contextlib
+
+    @contextlib.contextmanager
+    def _kontekst():
+        fasit, = migrator.execute(
+            "SELECT checksum FROM migrasjoner WHERE versjon=%s",
+            (versjon,)).fetchone()
+        try:
+            migrator.execute("ALTER TABLE migrasjoner"
+                             " ALTER COLUMN checksum DROP NOT NULL")
+            migrator.execute("UPDATE migrasjoner SET checksum=NULL"
+                             " WHERE versjon=%s", (versjon,))
+            migrator.commit()
+            yield
+        finally:
+            migrator.execute(
+                "UPDATE migrasjoner SET checksum=%s WHERE versjon=%s",
+                (fasit, versjon))
+            migrator.execute("ALTER TABLE migrasjoner"
+                             " ALTER COLUMN checksum SET NOT NULL")
+            migrator.commit()
+    return _kontekst()
+
+
+def _kjor_checksumporten(tmp_path):
     import os
     import subprocess
     import sys
     port = tmp_path / "checksumport.py"
     port.write_text(_checksumporten(), encoding="utf-8")
+    return subprocess.run(
+        [sys.executable, str(port)], cwd=ROT, capture_output=True, text=True,
+        env={**os.environ, "DISPONIT_MIGRATOR_URL": MIGRATOR_DSN})
 
-    versjon, fasit = migrator.execute(
-        "SELECT versjon, checksum FROM migrasjoner"
-        " WHERE checksum IS NOT NULL ORDER BY versjon DESC LIMIT 1").fetchone()
-    try:
-        migrator.execute("ALTER TABLE migrasjoner"
-                         " ALTER COLUMN checksum DROP NOT NULL")
-        migrator.execute("UPDATE migrasjoner SET checksum=NULL"
-                         " WHERE versjon=%s", (versjon,))
-        migrator.commit()
-        res = subprocess.run(
-            [sys.executable, str(port)], cwd=ROT, capture_output=True,
-            text=True,
-            env={**os.environ, "DISPONIT_MIGRATOR_URL": MIGRATOR_DSN})
-    finally:
-        migrator.execute("UPDATE migrasjoner SET checksum=%s WHERE versjon=%s",
-                         (fasit, versjon))
-        migrator.execute("ALTER TABLE migrasjoner"
-                         " ALTER COLUMN checksum SET NOT NULL")
-        migrator.commit()
+
+@pg
+def test_checksumporten_slipper_uherdet_legacyhistorikk(migrator, tmp_path):
+    """Codex P2 (runde 1): uherdet LEGACY-historikk er ikke et avvik.
+
+    001/002 registrerte seg selv i sin egen SQL, uten checksum. En base midt
+    i herdingen har derfor NULL på nettopp de radene, og det er tilstanden
+    `migrer.py` er BYGGET for: `herd_historikk` backfiller dem fra
+    REVIEWEDE_CHECKSUMS før 003. En port som avbryter der, stenger den
+    eneste veien ut av tilstanden den klager på.
+
+    Versjonen hentes fra REVIEWEDE_CHECKSUMS, ikke som «nyeste rad» —
+    testen skrev opprinnelig NULL på den NYESTE migrasjonen og kodifiserte
+    dermed nøyaktig den feilen Codex felte i runde 2 (se søsterporten
+    under). Grensen porten skal måle er hva HERDINGEN kan fylle, og den
+    grensen bor i herdingens egen konstant.
+
+    Den manglende KOLONNEN er dekket av `test_kjorer_og_kryptering`-
+    søsknene, som eier DDL-en for den tilstanden.
+    """
+    versjon = min(_reviewede_versjoner())
+    with _med_null_checksum(migrator, versjon):
+        res = _kjor_checksumporten(tmp_path)
 
     assert res.returncode == 0, \
-        f"porten avbrøt på en uherdet rad og stengte legacy-oppgraderingen:\n" \
-        f"{res.stdout}{res.stderr}"
+        f"porten avbrøt på en uherdet LEGACY-rad ({versjon:03d}) og stengte" \
+        f" legacy-oppgraderingen:\n{res.stdout}{res.stderr}"
     # Ikke hoppet over STILLE: operatøren skal se at basen står halvveis.
     assert f"{versjon:03d}" in res.stdout and "uten checksum" in res.stdout, \
         f"den uherdede raden er usynlig i deploy-loggen:\n{res.stdout}"
+
+
+@pg
+def test_checksumporten_feller_uherdet_ikkelegacy_rad(migrator, tmp_path):
+    """Codex P2 (runde 2): en NULL herdingen ikke kan fylle, er et avvik.
+
+    Runde 1 slapp ALLE NULL-rader gjennom med den begrunnelsen at
+    `kjorer.py` bare sammenligner når raden HAR en checksum. Det er sant om
+    kjøreren, men det er ikke kjøreren som feller tilstanden: `migrer.py`
+    kaller `herd_historikk` UBETINGET, og den backfiller kun
+    REVIEWEDE_CHECKSUMS før den kaster `HerdingFeilet` på enhver NULL som
+    står igjen. En kjørt versjon utenfor det settet er derfor et GARANTERT
+    stopp i steg 6 — etter at tjenestene er stoppet. Det er 056-klassen
+    porten finnes for, og den skal felles før første mutasjon.
+
+    Kontrakten måles mot herdingens egen konstant, så et utvidet
+    REVIEWEDE_CHECKSUMS flytter porten med herdingen i stedet for å bli
+    motsagt av den.
+    """
+    versjon, = migrator.execute(
+        "SELECT versjon FROM migrasjoner ORDER BY versjon DESC LIMIT 1"
+    ).fetchone()
+    assert versjon not in _reviewede_versjoner(), \
+        "basen har ingen kjørt migrasjon utenfor REVIEWEDE_CHECKSUMS —" \
+        " testen måler ikke det den tror"
+
+    with _med_null_checksum(migrator, versjon):
+        res = _kjor_checksumporten(tmp_path)
+
+    assert res.returncode != 0, \
+        f"porten slapp gjennom en NULL-rad herdingen ikke kan fylle —" \
+        f" migrer.py ville stoppet deployen ETTER tjenestestoppen:\n" \
+        f"{res.stdout}{res.stderr}"
+    assert f"{versjon:03d}" in res.stdout, \
+        f"porten avbrøt, men navngir ikke versjonen operatøren må se på:\n" \
+        f"{res.stdout}"
 
 
 @pg

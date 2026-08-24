@@ -314,7 +314,7 @@ for base in runtime test; do
       esac
       cd "$KILDE" && DISPONIT_MIGRATOR_URL="$url" \
         "$ROT/.venv/bin/python" - 2>&1 <<'PYPRE'
-import hashlib, os, sys
+import hashlib, importlib.util, os, sys
 from pathlib import Path
 import psycopg
 kat = Path("platform/core/db/migrations")
@@ -322,6 +322,16 @@ kat = Path("platform/core/db/migrations")
 # `int(f.name[:3])` her, mens kjøreren aldri så fila. Porten skal måle
 # NØYAKTIG det settet kjøreren kjører.
 filer = {int(f.name[:3]): f for f in kat.glob("[0-9][0-9][0-9]_*.sql")}
+# Hvilke NULL-rader herdingen FAKTISK kan fylle, lest fra herdingens egen
+# kilde. Tallene {1, 2} står ALDRI hardkodet her: legger noen en versjon til
+# eller fjerner en fra REVIEWEDE_CHECKSUMS, skal porten flytte seg med
+# herdingen, ikke motsi den. (Samme importvei som migrer.last_bootstrap —
+# filnavnet har bindestrek og kan ikke importeres vanlig.)
+_spek = importlib.util.spec_from_file_location(
+    "migrasjon_bootstrap", "deploy/staging/migrasjon-bootstrap.py")
+_boot = importlib.util.module_from_spec(_spek)
+_spek.loader.exec_module(_boot)
+herdbare = set(_boot.REVIEWEDE_CHECKSUMS)
 with psycopg.connect(os.environ["DISPONIT_MIGRATOR_URL"]) as c:
     try:
         rader = c.execute(
@@ -329,6 +339,7 @@ with psycopg.connect(os.environ["DISPONIT_MIGRATOR_URL"]) as c:
     except psycopg.errors.UndefinedTable:
         print("fersk base — ingen historikk å verne"); sys.exit(0)
     except psycopg.errors.UndefinedColumn:
+        c.rollback()
         # PR-004-æraens base: `migrasjoner` ble laget av 001_init.sql UTEN
         # checksum-kolonne. Da finnes det ingen registrerte checksums å
         # måle mot, og kjøreren er bygget for nettopp denne oppgraderingen:
@@ -336,6 +347,21 @@ with psycopg.connect(os.environ["DISPONIT_MIGRATOR_URL"]) as c:
         # migrasjon-bootstrap.herd_historikk backfiller de REVIEWEDE
         # checksummene før 003. Et avbrudd her ville stoppet den eneste
         # veien ut av tilstanden porten klager på.
+        #
+        # Men bare så langt herdingen rekker: kolonnen legges til NULL for
+        # HVER registrert versjon, og `herd_historikk` fyller kun de
+        # reviewede. Er det registrert en versjon herdingen ikke kjenner,
+        # er dette ikke en oppgradering migrer.py kan fullføre — samme dom
+        # som NULL-grenen under, og den hører her av samme grunn.
+        ukjente = sorted(v for (v,) in c.execute(
+            "SELECT versjon FROM migrasjoner").fetchall()
+            if v not in herdbare)
+        if ukjente:
+            print("ingen checksum-kolonne, og registrerte versjoner ("
+                  + ", ".join(f"{v:03d}" for v in ukjente)
+                  + ") som herdingen ikke kan fylle — migrer.py ville"
+                  " feilet i vedlikeholdsvinduet")
+            sys.exit(1)
         print("historikken er ikke herdet ennå (ingen checksum-kolonne)"
               " — migrer.py legger til kolonnen og backfiller")
         sys.exit(0)
@@ -345,13 +371,29 @@ for versjon, checksum in rader:
     fil = filer.get(versjon)
     if fil is None:
         avvik.append(f"{versjon:03d}: kjørt i basen, borte fra treet")
-    elif checksum is None:
-        # Kjørt, men ikke herdet. Ikke et avvik: kjorer.py sammenligner kun
-        # når raden HAR en checksum, så en NULL-rad kan ikke felle steg 6 —
-        # herd_historikk fyller den fra REVIEWEDE_CHECKSUMS. Den telles og
-        # RAPPORTERES i stedet for å hoppes over stille, så en base som
-        # står halvveis i herdingen er synlig i deploy-loggen.
+    elif checksum is None and versjon in herdbare:
+        # Kjørt, men ikke herdet — og herdingen KAN fylle nettopp denne:
+        # `herd_historikk` backfiller den fra REVIEWEDE_CHECKSUMS før 003.
+        # Da er raden ikke et avvik, men den telles og RAPPORTERES i stedet
+        # for å hoppes over stille, så en base som står halvveis i herdingen
+        # er synlig i deploy-loggen.
         uherdet.append(versjon)
+    elif checksum is None:
+        # Codex P2 (runde 2): og HER tok runde 1 feil. Begrunnelsen den gang
+        # målte `kjorer.py`, som bare sammenligner når raden HAR en checksum
+        # — sant, men det er ikke kjøreren som feller denne tilstanden.
+        # `migrer.py` kaller `herd_historikk` UBETINGET, og den backfiller
+        # kun REVIEWEDE_CHECKSUMS (001/002) før den kaster `HerdingFeilet`
+        # på enhver NULL som står igjen. En kjørt versjon uten checksum som
+        # herdingen ikke kjenner, er altså ikke en tilstand migrer.py kan
+        # løse: den feller steg 6 GARANTERT — etter at tjenestene er
+        # stoppet. Det er nøyaktig 056-klassen denne porten finnes for, og
+        # den hører derfor blant avvikene, målt før første mutasjon.
+        avvik.append(
+            f"{versjon:03d}: kjørt uten checksum, og herdingen kan ikke fylle"
+            f" den (reviewede: "
+            + ", ".join(f"{v:03d}" for v in sorted(herdbare))
+            + ") — migrer.py ville feilet i vedlikeholdsvinduet")
     elif hashlib.sha256(fil.read_bytes()).hexdigest() != checksum:
         avvik.append(f"{fil.name}: endret etter kjøring (checksum-avvik)")
 if avvik:
