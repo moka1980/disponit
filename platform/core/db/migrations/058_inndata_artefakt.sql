@@ -69,7 +69,12 @@ CREATE TABLE inndata_artefakt (
         faktiske_bytes IS NULL OR
         (faktiske_bytes > 0 AND faktiske_bytes <= maks_bytes))
 );
-CREATE INDEX inndata_artefakt_oppdrag
+-- «Én bunt, ett oppdrag» er en INVARIANT, ikke en kommentar (Cursor P1-3):
+-- uten UNIQUE kunne to `lastet`-rader bindes til det samme oppdraget, og
+-- lineage forgrenet seg — to bunter bak én bestilling, uten at noe sier
+-- hvilken som gjelder. Partial fordi `oppdrag_id` er NULL helt til
+-- bindingen skjer, og reservasjoner/ubundne bunter er mange.
+CREATE UNIQUE INDEX inndata_artefakt_oppdrag
     ON inndata_artefakt (tenant, oppdrag_id) WHERE oppdrag_id IS NOT NULL;
 -- Reaperens utvalg (ubundne som løp ut): partial på status+utloper.
 CREATE INDEX inndata_artefakt_utlop
@@ -173,10 +178,18 @@ END $$;
 CREATE FUNCTION registrer_inndata_lastet(
     p_tenant TEXT, p_jti TEXT, p_faktiske_bytes BIGINT,
     p_sha256 TEXT, p_key_id TEXT, p_nonce BYTEA, p_sti TEXT)
-RETURNS UUID LANGUAGE plpgsql SECURITY DEFINER
+RETURNS TABLE (ut_inndata_id UUID, ut_lager_sti TEXT)
+LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE r RECORD;
 BEGIN
+    -- 017:201 / 016:779-formen: svaret ack-es ikke før WAL-en står på
+    -- disk. Uten denne kunne et vertskrasj rulle raden tilbake til
+    -- `reservert` ETTER at klienten hadde fått 201 — jti-en ville da vært
+    -- «ubrukt» igjen, filen en orphan, og klienten trodd bunten var
+    -- lastet. Filen fsync-es i API-et; raden må ha samme garanti
+    -- (Cursor P1-4).
+    SET LOCAL synchronous_commit = on;
     PERFORM public.krev_tenantkontekst(p_tenant, 'registrer_inndata_lastet');
     SELECT * INTO r FROM public.inndata_artefakt
      WHERE tenant = p_tenant AND reservasjon_jti = p_jti
@@ -184,6 +197,23 @@ BEGIN
     IF NOT FOUND THEN
         RAISE EXCEPTION 'inndata: ukjent reservasjon'
             USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- Engangs-jti, men IKKE engangs-SVAR (Cursor P1-1, 017-regresjonen):
+    -- `bruk_artefaktkapabilitet` returnerer den eksisterende id-en når
+    -- samme hash kommer igjen, og konflikter kun ved ANNEN hash. Gikk 201-
+    -- svaret tapt på veien ut, er klientens retry med SAMME kropp den
+    -- samme forespørselen — ikke et nytt forsøk på å brenne reservasjonen.
+    -- Uten denne grenen var et tapt svar et PERMANENT tap av bunten.
+    -- `ut_lager_sti` er den LAGREDE stien: kalleren som fikk en annen sti
+    -- tilbake enn den skrev, vet at den nettopp skrev en orphan og rydder.
+    IF r.status = 'lastet' THEN
+        IF r.innhold_sha256 IS DISTINCT FROM p_sha256 THEN
+            RAISE EXCEPTION 'inndata: reservasjonen er brukt for ANNET'
+                ' innhold' USING ERRCODE = 'unique_violation';
+        END IF;
+        ut_inndata_id := r.inndata_id; ut_lager_sti := r.lager_sti;
+        RETURN NEXT;
+        RETURN;
     END IF;
     IF r.status <> 'reservert' THEN
         RAISE EXCEPTION 'inndata: reservasjonen er alt forbrukt (%)',
@@ -204,7 +234,8 @@ BEGIN
            innhold_sha256 = p_sha256, key_id = p_key_id, nonce = p_nonce,
            lager_sti = p_sti, lastet_ts = pg_catalog.now()
      WHERE tenant = p_tenant AND inndata_id = r.inndata_id;
-    RETURN r.inndata_id;
+    ut_inndata_id := r.inndata_id; ut_lager_sti := p_sti;
+    RETURN NEXT;
 END $$;
 
 -- Bindingen: kalles i BESTILLINGENS transaksjon. Én bunt, ett oppdrag,
@@ -215,7 +246,7 @@ CREATE FUNCTION bind_inndata(
     p_eiermodul TEXT)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
-DECLARE r RECORD;
+DECLARE r RECORD; v_oppdrag_eier TEXT;
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant, 'bind_inndata');
     SELECT * INTO r FROM public.inndata_artefakt
@@ -225,9 +256,42 @@ BEGIN
         RAISE EXCEPTION 'inndata: % er ikke en lastet bunt',
             p_inndata_id USING ERRCODE = 'invalid_parameter_value';
     END IF;
-    IF r.eiermodul IS DISTINCT FROM p_eiermodul THEN
-        RAISE EXCEPTION 'inndata: bunten er reservert for %, ikke %',
-            r.eiermodul, p_eiermodul
+    -- Utløpet gjelder også HER (Cursor P2-2): `inndata_artefakt_utlop`
+    -- lover at en `lastet` bunt løper ut, og `registrer_inndata_lastet`
+    -- håndhever det. Uten samme sjekk i bindingen kunne en utgått bunt
+    -- bindes for alltid — fristen ville da vært en påstand som bare gjaldt
+    -- fram til reaperen (som kommer i en senere PR) faktisk fantes.
+    IF pg_catalog.now() > r.utloper THEN
+        RAISE EXCEPTION 'inndata: bunten % er utløpt', p_inndata_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- Eierskapet AVLEDES av oppdraget, ikke av kallerens påstand
+    -- (Codex P1). `p_eiermodul` kom fra kalleren, og `disponit` har
+    -- EXECUTE her: en kaller som kjenner buntens eiermodul kunne ekko-e
+    -- den tilbake og samtidig peke på et HVILKET SOM HELST oppdrag i egen
+    -- tenant — en bunt reservert for én modul ble da bundet til en
+    -- fremmed jobb. Sannheten om hvem som eier jobben står i `oppdrag`.
+    --
+    -- Ingen `FOR UPDATE` på oppdraget: `oppdrag.eiermodul` er
+    -- kolonnelåst i `oppdrag_kolonnelaas()` (005) og raden kan ikke
+    -- slettes (`oppdrag_ingen_sletting`), så verdien kan ikke endre seg
+    -- under oss. En lås ville dessuten krevd UPDATE-rettighet på
+    -- `oppdrag` for `disponit_domene_eier`, som i dag har KUN SELECT
+    -- (016) — å utvide den for en lås vi ikke trenger ville byttet ett
+    -- funn mot et større. RLS gjelder også for denne definer-rollen;
+    -- `krev_tenantkontekst` over har alt bundet `disponit.tenant`.
+    SELECT o.eiermodul INTO v_oppdrag_eier FROM public.oppdrag o
+     WHERE o.tenant = p_tenant AND o.id = p_oppdrag_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'inndata: oppdrag % finnes ikke i tenant %',
+            p_oppdrag_id, p_tenant
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF r.eiermodul IS DISTINCT FROM v_oppdrag_eier
+       OR r.eiermodul IS DISTINCT FROM p_eiermodul THEN
+        RAISE EXCEPTION 'inndata: bunten er reservert for %, oppdrag %'
+            ' eies av % (kalleren påsto %)',
+            r.eiermodul, p_oppdrag_id, v_oppdrag_eier, p_eiermodul
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
     UPDATE public.inndata_artefakt

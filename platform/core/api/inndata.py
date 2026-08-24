@@ -109,7 +109,8 @@ async def opplast_endepunkt(tjeneste, request):
         os.replace(tmp, sti)
         try:
             rad = conn.execute(
-                "SELECT registrer_inndata_lastet(%s,%s,%s,%s,%s,%s,%s)",
+                "SELECT ut_inndata_id, ut_lager_sti FROM"
+                " registrer_inndata_lastet(%s,%s,%s,%s,%s,%s,%s)",
                 (tenant, jti, lest, sha, key_id, nonce, sti)).fetchone()
             conn.commit()
         except psycopg.errors.InvalidParameterValue as e:
@@ -122,6 +123,16 @@ async def opplast_endepunkt(tjeneste, request):
         except Exception:
             os.unlink(sti)
             raise
+        # Replay: 058 svarte med en ANNEN sti enn den vi nettopp skrev,
+        # altså sto raden alt som `lastet` med samme sha — svaret er det
+        # samme (sha-en er den samme kroppen), men filen vår er en orphan
+        # og ryddes her. En unlink som ikke går skal ikke gjøre en
+        # vellykket opplasting til en 500; da er den reaperens jobb.
+        if rad[1] != sti:
+            try:
+                os.unlink(sti)
+            except OSError:
+                pass
         return _ok({"inndata_ref": f"inndata:{rad[0]}",
                     "innhold_sha256": sha, "faktiske_bytes": lest}, rid,
                    201)
