@@ -113,7 +113,11 @@ const BASISRUTER = [
   // krevende delen krever. At bestillings- og domenefanene MUTERER er en
   // sak for fanene, og den avgjøres inne på flaten (`visWcagKontroll`), der
   // det finnes noe å skjule — en rute kan bare være der eller ikke.
-  { nokkel: "wcagkontroll", scope: "decisions:read" },
+  // MODULFLATENE bor i VENSTREMENYEN (eiers arkitekturvedtak 24/8:
+  // venstre = modulnavigasjonen, topp = plattformflatene). Ruten består
+  // — adresser som virket skal fortsette å virke — men `modulflate`
+  // holder den ute av toppnavigasjonen; inngangen er modulkortet.
+  { nokkel: "wcagkontroll", scope: "decisions:read", modulflate: 56 },
   // M-57 (§8): ruten sto med VILJE ute mens flaten leste endepunkter som
   // ikke fantes (Codex P1 / Cursor P1) — en menyoppføring hadde da sendt
   // hver økt med `decisions:read` rett i feilflaten, og «Signer» ville
@@ -128,7 +132,7 @@ const BASISRUTER = [
   // oppføring her holder `tillatteFlater` også en håndskrevet
   // `#/rekruttering` ute — og demo-stien (`seed-rekruttering-demo.py`)
   // ber eier åpne nettopp den adressen.
-  { nokkel: "rekruttering", scope: "decisions:read" },
+  { nokkel: "rekruttering", scope: "decisions:read", modulflate: 57 },
   // 041: adjudikatorkøen viser sakenes PARTER på tvers av tenanter — den
   // finnes derfor KUN for adjudikasjonsscopet, aldri for en leserolle.
   { nokkel: "adjudikator", scope: "domains:adjudicate" },
@@ -170,10 +174,18 @@ export function arvetMaal(rute, mal) {
   return { rute: arvet.rute, mal: mal || arvet.mal };
 }
 
+// `modulflate` FØLGER MED UT (Codex P1). Mappingen plukket bare `nokkel`, og
+// siden dette er den ENESTE veien `visApp` bygger ruter på, så skallet aldri
+// et eneste `modulflate` i produksjon: hele vedtaket fra 24/8 — venstremenyen
+// som modulnavigasjon — sto igjen i sitekartet uten å nå fram. WCAG kontroll
+// og rekruttering ble liggende i toppnav, og modulkortene åpnet panelet i
+// stedet for flaten. `scope` er det ENE feltet som med vilje blir igjen: det
+// er brukt opp her, i filteret over, og en rute som bærer det videre inviterer
+// leseren til å tro at det fortsatt gates på noe.
 export function byggRuter(sesjon) {
   const ruter = BASISRUTER
     .filter((r) => !r.scope || harScope(sesjon, r.scope))
-    .map((r) => ({ nokkel: r.nokkel }));
+    .map(({ scope, ...rute }) => rute);
   if (kanForvaltePolicy(sesjon)) ruter.push({ nokkel: "policyadmin" });
   // Varsler krever ikke fullmakt til å ENDRE noe — å se at noe venter på deg
   // er en leserettighet. Ruten hører derfor MOTTAKEREN til, og etter 044 er

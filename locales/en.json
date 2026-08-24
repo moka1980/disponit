@@ -689,6 +689,7 @@
   "ui.shell.kontekst_omrade": "Area",
   "ui.shell.kontekst_status": "Status",
   "ui.shell.kontekst_fase": "Phase",
+  "ui.shell.kontekst_aapne": "Open the workspace",
   "ui.shell.sok_merkelapp": "Search modules",
   "ui.shell.sok_plassholder": "Search modules",
   "ui.shell.skjul_meny": "Hide module menu",

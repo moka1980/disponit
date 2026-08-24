@@ -9,6 +9,14 @@ oppføringen `{ nokkel: "rekruttering", scope: "decisions:read" }` er
 derfor tilbake i `BASISRUTER` — i samme deployerbare endring, som
 kommentaren lovet.
 
+**Menyveien går gjennom VENSTREMENYEN fra og med #185** (eiers
+arkitekturvedtak 24/8: venstre er modulnavigasjonen, toppen bærer
+plattformflatene). Oppføringen er den samme og heter det samme —
+`ui.nav.rekruttering` — men den er nå et modulkort med `href`, ikke en
+toppnav-lenke, og den står der for enhver økt som HAR ruten, uavhengig av
+katalogtildelingen. Adressen er uendret, så rad 1 er den samme flyten i
+en annen sone.
+
 Menyveien er dermed gåbar, og rad 1 under er endret fra UTESTÅENDE til
 PORTET. Den er portet på det som faktisk er MÅLT, og ikke mer:
 `sitekart.test.js` porterer begge leddene som gjorde adressen uåpnbar —
@@ -35,7 +43,7 @@ Sist gjennomgått: 24. august 2026, Cursor-fiksrunde 1 på #176 (HEAD på
 
 | # | Flyt | Tastene | Forventet — og observert | Status |
 |---|---|---|---|---|
-| 1 | Nå flaten | `Tab` fra menyen → «Rekruttering», `Enter` | Menyoppføringen finnes for en `decisions:read`-økt, og `#/rekruttering` rendrer rekrutteringsflaten — ikke reserveflaten. Fokus lander i hovedinnholdet; overskriften leses | **PORTET** — `sitekart.test.js`: «byggRuter: hver rute krever scopet API-et bak flaten krever» asserterer både at ruten er i `byggRuter` for leseøkten og at `tillatteFlater` slipper flaten gjennom. NB: raden sto som UTESTÅENDE fram til utførelsesarmen (#176) — ruten var ute mens `/v1/rekruttering/*` ikke fantes, og flyten var da umulig å gå. Fokusflyttingen selv er ruterens generelle atferd (`ruter.js`), delt av alle ruter |
+| 1 | Nå flaten | `Tab` til «Rekruttering» i **modulmenyen** (venstre), `Enter` | Menyoppføringen finnes for en `decisions:read`-økt, og `#/rekruttering` rendrer rekrutteringsflaten — ikke reserveflaten. Fokus lander i hovedinnholdet; overskriften leses | **PORTET** — `sitekart.test.js`: «byggRuter: hver rute krever scopet API-et bak flaten krever» asserterer både at ruten er i `byggRuter` for leseøkten og at `tillatteFlater` slipper flaten gjennom. Oppføringen SELV er portet i `komponenter.test.js` («flaten økten har rute til står i menyen…»), som måler kortet på tildelingene `/v1/utrulling` faktisk sender. NB: raden sto som UTESTÅENDE fram til utførelsesarmen (#176) — ruten var ute mens `/v1/rekruttering/*` ikke fantes, og flyten var da umulig å gå. Fokusflyttingen selv er ruterens generelle atferd (`ruter.js`), delt av alle ruter |
 | 2 | Endre **vekt** | `Tab` til range-kontrollen, `←`/`→` | Synlig verdi (output) følger; tabellen re-rangeres; ny rekkefølge annonseres i `aria-live="polite"` uten fokusflytting | **PORTET** — «vektendring uten mus re-rangerer og kunngjøres» |
 | 3 | **Sortere** tabellen | `Tab` til kolonneknappen «Poeng», `Enter` | `aria-sort` veksler ascending/descending; rekkefølgen snur | **KOMPONENTPORTET** — sorteringsknappen og `aria-sort` er `DataTabell`s egne tester; flaten porterer utgangssorteringen |
 | 4 | Kandidat**detaljer** | `Tab` til «Detaljer», `Enter` | Dialog med fokusfelle; `Tab` sirkler inne i panelet; `Esc` lukker og fokus RETURNERES til «Detaljer»-knappen | **PORTET** — «`Detaljer` åpner panelet med funn, sitat og spørsmål». Fokusfella og `Esc` er `Detaljpanel`/`aapneDialog` sine egne tester. NB: knappen var død fram til fiksrunde 2 (radhandlingen ble sendt som `utfor`, ikke `paaKlikk`); punktet sto som «observert» i dette dokumentet uten å være det. Nå er den portet, ikke påstått |
