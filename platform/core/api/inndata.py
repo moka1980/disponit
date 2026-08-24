@@ -131,12 +131,24 @@ async def opplast_endepunkt(tjeneste, request):
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, sti)
+        # Å fsync-e FILEN gjør ikke KATALOGOPPFØRINGEN varig (Codex P2):
+        # mister verten strømmen etter db-commiten, men før
+        # katalogmetadataen har nådd stabilt lager, står raden igjen som
+        # `lastet` mens den omdøpte ciphertexten er borte etter omstart.
+        # Samme grep som `kjor_artefaktrydding._skriv_feiltelling`, men
+        # IKKE best effort her: feiler den, har vi ennå ikke committet, og
+        # `except Exception` under rydder filen. En bunt vi ikke kan love
+        # er varig, skal ikke kvitteres som lastet.
+        kat = os.open(katalog, os.O_RDONLY)
+        try:
+            os.fsync(kat)
+        finally:
+            os.close(kat)
         try:
             rad = conn.execute(
                 "SELECT ut_inndata_id, ut_lager_sti FROM"
                 " registrer_inndata_lastet(%s,%s,%s,%s,%s,%s,%s)",
                 (tenant, jti, lest, sha, key_id, nonce, sti)).fetchone()
-            conn.commit()
         except psycopg.errors.InvalidParameterValue as e:
             os.unlink(sti)
             raise _Avbrudd(_feil("inndata_reservasjon_ugyldig", rid, 409)) \
@@ -147,6 +159,19 @@ async def opplast_endepunkt(tjeneste, request):
         except Exception:
             os.unlink(sti)
             raise
+        # `commit()` står UTENFOR ryddingen over (Codex P1). En commit som
+        # reiser er TVETYDIG: forbindelsen kan ha falt etter at Postgres
+        # tok imot COMMIT, men før kvitteringen kom tilbake. Lå unlinken i
+        # den samme except-en, ville en committet `lastet` rad blitt
+        # stående og pekt på en ciphertext vi nettopp slettet — en
+        # vellykket opplasting permanent tapt. Feilene over er derimot
+        # ENTYDIGE: setningen selv feilet, transaksjonen er abortert, og
+        # ingenting ble committet — der er filen trygt en orphan.
+        #
+        # Prisen er motsatt vei: ruller commiten likevel tilbake, ligger
+        # en foreldreløs `.bin` igjen. Det er reaperens arbeid (egen PR),
+        # og en orphan-fil er en billigere feil enn tapte data.
+        conn.commit()
         # Replay: 058 svarte med en ANNEN sti enn den vi nettopp skrev,
         # altså sto raden alt som `lastet` med samme sha — svaret er det
         # samme (sha-en er den samme kroppen), men filen vår er en orphan
