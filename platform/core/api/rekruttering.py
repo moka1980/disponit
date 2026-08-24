@@ -154,11 +154,21 @@ def _kandidater(conn, tenant, prosess_id):
     spørsmålslager bærer `sporsmal = NULL` og skal ikke fjerne kandidaten
     fra svaret. Primærnøkkelen (tenant, prosess_id, kandidat_id) holder
     treffet på høyst én rad.
+
+    OG SUBTRAKSJONEN GJØRES BARE PÅ ET OBJEKT (Cursor P1). `jsonb - text`
+    er definert for objekt og array; mot en JSON-SKALAR feiler den i
+    BASEN (`cannot delete from scalar`, 22023) — før noen Python-linje
+    ser verdien. 057 har ingen formsjekk på `artefakt`, så `'3'::jsonb`
+    er en lovlig INSERT for runtime, og ett slikt artefakt ville tatt ned
+    hele tenantens prosessliste. `jsonb_typeof(...) = 'object'` er porten
+    der subtraksjonen står; alt annet kommer ut som NULL og møter
+    type-porten under på samme form som et reapet artefakt.
     """
     rader = conn.execute(
         "SELECT a.kandidat_id,"
-        "       a.artefakt - 'kildetekst' - 'avmaskering'"
-        "                 - 'intervjusporsmal',"
+        "       CASE WHEN jsonb_typeof(a.artefakt) = 'object'"
+        "            THEN a.artefakt - 'kildetekst' - 'avmaskering'"
+        "                            - 'intervjusporsmal' END,"
         "       i.sporsmal"
         "  FROM kandidat_evalueringsartefakt a"
         "  LEFT JOIN kandidat_intervjusporsmal i"
@@ -168,11 +178,22 @@ def _kandidater(conn, tenant, prosess_id):
         " ORDER BY a.kandidat_id", (tenant, prosess_id)).fetchall()
     kandidater, vekter, kilde, lest = [], None, "standard", []
     for kid, artefakt, sporsmal in rader:
-        art = artefakt or {}
+        # TYPEN ER OGSÅ EN PORT (Cursor P1). `x or {}` verner mot NULL og
+        # tomt, aldri mot FEIL TYPE: `{...}` er en sann `funn`, `["drift"]`
+        # er en sann `oppfylt`, og begge er `jsonb` runtime kan INSERTe
+        # (057 har ingen formsjekk på `artefakt`). Ett giftig artefakt ga
+        # da `AttributeError` inne i utledningen, og siden kalleren løper
+        # over HVER prosess, ble svaret 500 for HELE tenantens
+        # prosessliste — signeringsflaten inkludert. Feil type er ikke en
+        # halv sannhet å tolke; den er ingen opplysning, og faller derfor
+        # til det samme som ingen opplysning: `vurderes`.
+        art = artefakt if isinstance(artefakt, dict) else {}
         if vekter is None and isinstance(art.get("vekter"), dict):
             vekter, kilde = art["vekter"], "evalueringsartefakt"
-        lest.append((kid, art.get("funn") or [],
-                     art.get("oppfylt") or {}, sporsmal))
+        raa_funn, raa_oppfylt = art.get("funn"), art.get("oppfylt")
+        lest.append((kid, raa_funn if isinstance(raa_funn, list) else [],
+                     raa_oppfylt if isinstance(raa_oppfylt, dict) else {},
+                     sporsmal))
     # VEKTENE ER ENDELIGE FØR TRAFIKKLYSET UTLEDES (Cursor P1). Reserven
     # under leser HVER kandidats krav, så den kan ikke stå etter en
     # dømming som må måle mot den — derfor to pass over de samme radene.
@@ -216,7 +237,8 @@ def _kandidater(conn, tenant, prosess_id):
         # Ingen av de to er nye regler; de er skriveveiens egne, lest på
         # riktig side av lagringen.
         status = ("innstilt_avslag" if any(
-                      f.get("kategori") == "krav_ikke_dokumentert"
+                      isinstance(f, dict)
+                      and f.get("kategori") == "krav_ikke_dokumentert"
                       for f in funn)
                   else "anbefalt" if not funn and vekter
                   and set(oppfylt) == set(vekter)

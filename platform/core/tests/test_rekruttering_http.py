@@ -340,28 +340,31 @@ def test_evalueringens_tilstand_folger_med_leseflaten(klient):
     assert kjorer in status
 
 
-def _artefakt(prosess_id: str, oppfylt: dict, funn=(), ekstra=None) -> str:
+def _artefakt(prosess_id: str, oppfylt: dict, funn=(), ekstra=None,
+              raa=None) -> str:
     """En ekstra kandidatartefakt i en eksisterende prosess, på den
     KANONISKE formen: ingen `status`-nøkkel — den finnes ikke i
     `evaluering.evaluer_kandidat`s returverdi. -> kandidat_id.
 
     `ekstra` skriver felter den kanoniske formen IKKE har — den eneste
     veien til å måle at leseflaten avviser dem (runtime har INSERT på
-    lageret, så en produsent kan faktisk skrive dem)."""
+    lageret, så en produsent kan faktisk skrive dem). `raa` skriver
+    artefaktet i sin helhet, også når det ikke er et objekt: 057 har
+    ingen formsjekk på kolonnen, så `[]` og `3` er lovlige INSERTer."""
     import json as _json
     from db.pg import koble, sett_kontekst
     rt = koble(DSN)
     try:
         sett_kontekst(rt, TEN, "test", "r-art")
         kid = uuid.uuid4()
+        innhold = (raa if raa is not None else
+                   {"oppfylt": oppfylt, "vekter": {"drift": 3, "sky": 2},
+                    "funn": list(funn), "intervjusporsmal": [],
+                    **(ekstra or {})})
         rt.execute(
             "INSERT INTO kandidat_evalueringsartefakt (tenant, prosess_id,"
             " kandidat_id, artefakt, innhold_sha256) VALUES (%s,%s,%s,%s,%s)",
-            (TEN, prosess_id, kid,
-             _json.dumps({"oppfylt": oppfylt, "vekter": {"drift": 3,
-                                                         "sky": 2},
-                          "funn": list(funn), "intervjusporsmal": [],
-                          **(ekstra or {})}),
+            (TEN, prosess_id, kid, _json.dumps(innhold),
              hashlib.sha256(str(kid).encode()).hexdigest()))
         rt.commit()
         return str(kid)
@@ -439,6 +442,55 @@ def test_trafikklyset_er_fail_closed_paa_alle_tre_leddene(klient):
         "et umålt krav i profilen ble til en anbefaling"
     # Positiv kontroll: porten stenger ikke for den ekte anbefalingen.
     assert lys[alle] == "anbefalt"
+
+
+@pg
+def test_giftig_artefakttype_tar_ikke_ned_prosesslisten(klient):
+    """Cursor P1 (10:29): FEIL TYPE er ikke en halv sannhet — og den var
+    ikke en 500 heller.
+
+    `x or {}` verner mot NULL og tomt, aldri mot type: `funn` som objekt
+    ga `AttributeError` på `f.get`, `oppfylt` som liste eller tall ga
+    `AttributeError`/`TypeError` på `.values()`, og et artefakt som ikke
+    er et objekt i det hele tatt fikk basen til å feile på `jsonb - text`
+    (`cannot delete from scalar`) FØR Python. Alle tre er lovlige
+    INSERTer for runtime — 057 har ingen formsjekk på kolonnen. Og fordi
+    lesningen løper over HVER prosess, tok ett giftig artefakt ned hele
+    tenantens prosessliste, signeringsflaten inkludert.
+
+    Målt på BEGGE ledd: at svaret er 200 (ingen 500), og at de øvrige
+    kandidatene fortsatt står i det — «kom seg gjennom» er ikke det samme
+    som «svarte det samme». Den giftige kandidaten er `vurderes`, aldri
+    grønt lys på data ingen kunne lese.
+
+    MUTASJONENE SOM DREPER DENNE, én per ledd: bytt `isinstance(f, dict)
+    and ...` mot `f.get(...)`; bytt de to `isinstance`-portene i `lest`
+    mot `or []` / `or {}`; fjern `jsonb_typeof(...) = 'object'`-CASEen.
+    """
+    pid, _lid, _ih = _seed_prosess()
+    funn_objekt = _artefakt(
+        pid, {"drift": True, "sky": True},
+        ekstra={"funn": {"kategori": "krav_ikke_dokumentert"}})
+    oppfylt_liste = _artefakt(pid, {}, ekstra={"oppfylt": ["drift", "sky"]})
+    oppfylt_tall = _artefakt(pid, {}, ekstra={"oppfylt": 1, "funn": "nei"})
+    skalar = _artefakt(pid, {}, raa=3)
+    array = _artefakt(pid, {}, raa=["ikke et objekt"])
+    alle = _artefakt(pid, {"drift": True, "sky": True})
+    bid = _bruker("lys-leser-3", ["leser"])
+    cookie, _ = _browsersesjon(bid)
+    r = _get(klient, cookie, "/v1/rekruttering/prosesser")
+    assert r.status_code == 200, r.text
+    p = [x for x in r.json()["prosesser"] if x["prosess_id"] == pid][0]
+    lys = {k["kandidat_id"]: k["status"] for k in p["kandidater"]}
+    for kid in (funn_objekt, oppfylt_liste, oppfylt_tall, skalar, array):
+        assert lys[kid] == "vurderes", \
+            f"{kid} fikk en dom av data ingen kunne lese"
+    # Positiv kontroll: de andre kandidatene overlevde nabomaten, og den
+    # ekte anbefalingen er fortsatt en anbefaling.
+    assert lys[alle] == "anbefalt"
+    # …og vektene kom fra artefaktet, ikke fra reserven: et giftig
+    # artefakt tidlig i rekkefølgen skal ikke gjøre huset til kilde.
+    assert p["vekter_kilde"] == "evalueringsartefakt"
 
 
 @pg
