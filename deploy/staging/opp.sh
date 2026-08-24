@@ -321,7 +321,31 @@ kat = Path("platform/core/db/migrations")
 # Samme glob som kjorer.py: en `*.sql` uten tresifret prefiks ville felt
 # `int(f.name[:3])` her, mens kjøreren aldri så fila. Porten skal måle
 # NØYAKTIG det settet kjøreren kjører.
-filer = {int(f.name[:3]): f for f in kat.glob("[0-9][0-9][0-9]_*.sql")}
+#
+# Codex P2 (runde 3): et dict-oppslag er ETT navn per versjon, men treet er
+# ikke det. To filer med samme tresifrede prefiks lot den siste overskrive
+# den første her — stille — mens kjøreren (`kjorer.py`: `sorted(glob(...))`)
+# kjører BEGGE. Porten ville da godkjent treet etter å ha målt én av dem, og
+# verre: `api.app.forventede_migrasjoner()` beholder begge tallene, så
+# `krev_migrasjonstilstand` sammenligner en liste MED duplikat mot basens
+# `versjon`-kolonne, som er PRIMARY KEY og derfor unik. `faktisk !=
+# forventet` kunne aldri blitt usann igjen — API-et permanent bootnektet,
+# oppdaget i steg 6/8, etter at tjenestene var stoppet. Duplikatet felles
+# derfor HER, før første mutasjon, og det måles mens kartet bygges.
+filer = {}
+duplikater = []
+for f in sorted(kat.glob("[0-9][0-9][0-9]_*.sql")):
+    versjon = int(f.name[:3])
+    if versjon in filer:
+        duplikater.append(f"{versjon:03d}: {filer[versjon].name} og {f.name}")
+    filer[versjon] = f
+if duplikater:
+    print("to migrasjonsfiler deler versjonsnummer —\n"
+          + "\n".join(duplikater)
+          + "\nkjøreren kjører begge, og forventede_migrasjoner() ville"
+            " talt versjonen to ganger mot en unik versjon-kolonne:"
+            " API-et kunne ikke bootet igjen")
+    sys.exit(1)
 # Hvilke NULL-rader herdingen FAKTISK kan fylle, lest fra herdingens egen
 # kilde. Tallene {1, 2} står ALDRI hardkodet her: legger noen en versjon til
 # eller fjerner en fra REVIEWEDE_CHECKSUMS, skal porten flytte seg med

@@ -918,6 +918,61 @@ def test_checksumporten_feller_migrasjon_borte_fra_treet(migrator, tmp_path):
         f"{res.stdout}"
 
 
+def test_checksumporten_feller_to_filer_med_samme_versjon(tmp_path):
+    """Codex P2 (#178, runde 3): duplikat versjonsprefiks felles i porten.
+
+    Porten bygde versjonskartet som en dict-comprehension, og da vinner den
+    siste fila stille. Kjøreren gjør ikke det: `kjorer.py` itererer
+    `sorted(glob(...))` og kjører BEGGE filene, og
+    `api.app.forventede_migrasjoner()` beholder begge tallene. Mot basens
+    `versjon`-kolonne — PRIMARY KEY, altså unik — kan `faktisk != forventet`
+    i `krev_migrasjonstilstand` da aldri bli usann igjen: API-et er permanent
+    bootnektet, oppdaget i steg 6/8, ETTER at tjenestene er stoppet. Det er
+    samme klasse som resten av denne porten finnes for, og den hører før
+    første mutasjon.
+
+    Treet fabrikkeres i en tmp-cwd i stedet for at en duplikatfil legges i
+    det ekte: treet deles med de andre portene i samme kjøring. Det går fordi
+    duplikatsjekken felles FØR porten importerer herdingen og før den åpner
+    basen — testen trenger derfor verken Postgres eller `@pg`. At det ekte
+    treet er duplikatfritt måles allerede av den grønne halvdelen i
+    `test_checksumporten_feller_endret_kjort_migrasjon`.
+    """
+    import os
+    import subprocess
+    import sys
+
+    def kjor_mot(kat_filer, navn):
+        rot = tmp_path / navn
+        kat = rot / "platform/core/db/migrations"
+        kat.mkdir(parents=True)
+        for filnavn in kat_filer:
+            (kat / filnavn).write_text("SELECT 1;\n", encoding="utf-8")
+        port = rot / "checksumport.py"
+        port.write_text(_checksumporten(), encoding="utf-8")
+        return subprocess.run(
+            [sys.executable, str(port)], cwd=rot, capture_output=True,
+            text=True, env={**os.environ, "DISPONIT_MIGRATOR_URL": "x"})
+
+    # Grønn først: distinkte prefikser skal ikke felles av denne grenen.
+    # Porten går videre og feiler senere (ingen herdingsmodul i tmp-treet),
+    # og det er nettopp det som skiller de to.
+    ok = kjor_mot(["001_a.sql", "002_b.sql"], "unik")
+    assert "deler versjonsnummer" not in ok.stdout, \
+        f"porten feller et duplikatfritt tre:\n{ok.stdout}{ok.stderr}"
+
+    rod = kjor_mot(["007_alfa.sql", "007_beta.sql"], "duplikat")
+    assert rod.returncode != 0, \
+        f"porten godkjente et tre der to filer deler versjonsnummer —" \
+        f" API-et kunne ikke bootet igjen etter deployen:\n" \
+        f"{rod.stdout}{rod.stderr}"
+    assert "deler versjonsnummer" in rod.stdout, \
+        f"porten avbrøt, men ikke på duplikatet:\n{rod.stdout}{rod.stderr}"
+    assert "007_alfa.sql" in rod.stdout and "007_beta.sql" in rod.stdout, \
+        f"porten navngir ikke begge filene operatøren må velge mellom:\n" \
+        f"{rod.stdout}"
+
+
 @pg
 def test_rydd_pending_tar_kun_foreldede(migrator, miljo, monkeypatch,
                                         capsys):
