@@ -5,12 +5,13 @@ innstilt utsendelse i flaten på disponit.com.
 Kjøres på serveren som migrator:
 
     DISPONIT_MIGRATOR_URL=... python deploy/staging/seed-rekruttering-demo.py \
-        --epost <eiers-innloggingsepost> [--tenant T] [--kandidater 6]
+        --epost <eiers-innloggingsepost> --tenant T [--kandidater 6]
 
 Hva den gjør, i kjedens egen rekkefølge:
-  1. finner eierens identitet (profil-epost) og tenant (aktivt medlemskap;
-     flere → --tenant er påkrevd), og sørger for `admin`-rollen
-     (bestilling:opprett — signeringsknappen) idempotent,
+  1. finner eierens identitet (profil-epost), verifiserer at den har et
+     aktivt medlemskap i --tenant (oppslaget gjøres MED tenantkontekst;
+     tenanten kan ikke utledes — se `--tenant` under), og sørger for
+     `admin`-rollen (bestilling:opprett — signeringsknappen) idempotent,
   2. loggpost → beslutningsoppdrag `rekruttering.evaluering` (m57_ats),
      `plukket` (fødselsporten: ankeret fødes MENS kjøringen står på),
   3. prosess + ALLE SEKS kandidatlagre per kandidat (blindede tekster med
@@ -65,7 +66,23 @@ KANDIDATER = [
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--epost", required=True)
-    p.add_argument("--tenant")
+    # TENANTEN KAN IKKE UTLEDES (Codex P1/P2). `brukermedlemskap` har
+    # ENABLE+FORCE RLS (`tenant_isolasjon`, 010 §8) og migrator er ikke
+    # BYPASSRLS: det finnes ingen spørring som gir migrator det FULLE
+    # medlemskapsbildet for en identitet. Seeden gjettet seg til det fra
+    # `brukersesjon`, og det er sesjonsHISTORIKK, ikke et medlemskaps-
+    # register: er eieren aktiv i A og B men bare innlogget i A, ble
+    # kandidatlista [A], `len(medlemskap)` ble 1, og seeden ga admin og
+    # seedet i A i stedet for å kreve at eier presiserte. Samme spørring
+    # var dessuten en voksende full scan — `brukersesjon_bruker` er
+    # (tenant, bruker_id, opprettet, id), og et filter på bare den
+    # ikke-ledende `bruker_id` + DISTINCT treffer ingen indeks. Å bygge
+    # den fullstendige enumereringen krever BYPASSRLS eller en ny
+    # SECURITY DEFINER-funksjon; det er ikke seedens jobb. Eier oppgir
+    # tenanten, og seeden VERIFISERER medlemskapet i den.
+    p.add_argument("--tenant", required=True,
+                   help="tenanten demoen seedes i — påkrevd: migrator kan"
+                        " ikke enumerere medlemskap (FORCE RLS)")
     p.add_argument("--kandidater", type=int, default=len(KANDIDATER),
                    help=f"antall demokandidater, 1–{len(KANDIDATER)}")
     a = p.parse_args()
@@ -102,27 +119,21 @@ def main() -> int:
         return 2
     bid = rad[0][0]
     # RLS: medlemskapstabellen er tenant-gatet — uten kontekst ser
-    # migrator INGENTING (målt på prod 24/8). Tenant-kandidatene hentes
-    # fra brukersesjon (ikke RLS-gatet), oppslaget gjøres MED kontekst.
-    if a.tenant:
-        kandidat_tenanter = [a.tenant]
-    else:
-        kandidat_tenanter = [r[0] for r in m.execute(
-            "SELECT DISTINCT tenant FROM brukersesjon WHERE bruker_id=%s",
-            (bid,)).fetchall()]
-    medlemskap = []
-    for t in kandidat_tenanter:
-        sett_kontekst(m, t, "seed-demo", "seed-0")
-        medlemskap += m.execute(
-            "SELECT tenant, roller FROM brukermedlemskap"
-            " WHERE bruker_id=%s AND aktiv", (bid,)).fetchall()
+    # migrator INGENTING (målt på prod 24/8). Konteksten settes til den
+    # OPPGITTE tenanten før oppslaget; policyen gjør da SELECTen til et
+    # ja/nei på «har denne identiteten et aktivt medlemskap HER», som er
+    # nøyaktig det seeden trenger å vite (PK er (tenant, bruker_id), så
+    # svaret er høyst én rad).
+    sett_kontekst(m, a.tenant, "seed-demo", "seed-0")
+    medlemskap = m.execute(
+        "SELECT tenant, roller FROM brukermedlemskap"
+        " WHERE bruker_id=%s AND aktiv", (bid,)).fetchall()
     if len(medlemskap) != 1:
-        print(f"AVBRUTT: {len(medlemskap)} aktive medlemskap"
-              f" ({[r[0] for r in medlemskap]}) — angi --tenant",
-              file=sys.stderr)
+        print(f"AVBRUTT: fant ikke ett aktivt medlemskap for {a.epost} i"
+              f" {a.tenant} ({len(medlemskap)} rader) — sjekk --tenant,"
+              " eller at eier er aktivt medlem der", file=sys.stderr)
         return 2
     tenant, roller = medlemskap[0]
-    sett_kontekst(m, tenant, "seed-demo", "seed-0b")
     if "admin" not in roller:
         m.execute(
             "UPDATE brukermedlemskap SET roller = roller || '{admin}',"
