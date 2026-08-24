@@ -510,6 +510,73 @@ install -d -m 700 /etc/disponit/domener
 skriv_cred domener DISPONIT_DOMAINS_URL "$DISPONIT_DOMAINS_URL"
 skriv_cred domener DISPONIT_RESOLVERE   "${DISPONIT_RESOLVERE:-}"
 
+# Selv-reversering (#172): i feilsonen mellom «tjenester stoppet» og
+# release-byttet peker symlinken FORTSATT på forrige release — å starte
+# unitene igjen ER å boote den. Bootportens eksakte migrasjonsmatch
+# feller selv tilfellene der basen rakk å flytte seg (delvis kjørte NYE
+# migrasjoner): da nekter forrige kode å starte, og meldingen sier det
+# ærlig i stedet for å love en gjenoppretting som ikke finnes.
+selvrevers() {
+  echo "AVBRUTT: $1 — forsøker selv-reversering (forrige release,"
+  echo "symlinken er urørt: $FORRIGE)"
+  systemctl start disponit-api.socket disponit-api.service \
+      disponit-m37.service disponit-helse.timer 2>/dev/null || true
+  sleep 2
+  if systemctl is-active --quiet disponit-api.service; then
+    echo "SELVREVERSERT: forrige release kjører igjen. Feilen rettes"
+    echo "FREMOVER; deployen er avbrutt."
+  else
+    echo "SELV-REVERSERING FEILET: forrige kode kan ikke starte mot"
+    echo "basens migrasjonssett (bootportens dom). Tjenestene er STOPPET;"
+    echo "manuell fremoverrettet retting kreves NÅ."
+  fi
+  exit 1
+}
+
+# --- 4z. PREFLIGHT: kjørt historikk er byte-identisk (#172) ----------------
+# 23/8: en kommentarlinje i en KJØRT migrasjon ble oppdaget av kjøreren i
+# steg 6 — ETTER at tjenestene var stoppet. Prod sto nede på en
+# dokumentasjonsendring. Sammenligningen er read-only og koster ingenting:
+# den hører hjemme HER, før vinduet åpnes. (CI-porten i
+# test_migrasjonsfasit feller klassen før merge; denne er deploy-sidens
+# halvdel — siste skanse, målt mot BASENS egne rader, per base.)
+for par in "runtime:$DISPONIT_MIGRATOR_URL" "test:$DISPONIT_TEST_MIGRATOR_DSN"; do
+  base=${par%%:*}; url=${par#*:}
+  if ! CHECKSUMPREFLIGHT=$(cd "$KILDE" && DISPONIT_MIGRATOR_URL="$url" \
+      "$ROT/.venv/bin/python" - <<'PYPRE'
+import hashlib, os, sys
+from pathlib import Path
+import psycopg
+kat = Path("platform/core/db/migrations")
+filer = {int(f.name[:3]): f for f in kat.glob("*.sql")}
+with psycopg.connect(os.environ["DISPONIT_MIGRATOR_URL"]) as c:
+    try:
+        rader = c.execute(
+            "SELECT versjon, checksum FROM migrasjoner"
+            " WHERE checksum IS NOT NULL").fetchall()
+    except psycopg.errors.UndefinedTable:
+        print("fersk base — ingen historikk å verne"); sys.exit(0)
+avvik = []
+for versjon, checksum in rader:
+    fil = filer.get(versjon)
+    if fil is None:
+        avvik.append(f"{versjon:03d}: kjørt i basen, borte fra treet")
+    elif hashlib.sha256(fil.read_bytes()).hexdigest() != checksum:
+        avvik.append(f"{fil.name}: endret etter kjøring (checksum-avvik)")
+if avvik:
+    print("\n".join(avvik)); sys.exit(1)
+print(f"{len(rader)} kjørte migrasjoner byte-identiske")
+PYPRE
+  ); then
+    echo "AVBRUTT ($base): kjørt migrasjonshistorikk er endret i treet:"
+    echo "$CHECKSUMPREFLIGHT"
+    echo "Ingenting er stoppet; forrige release kjører som før. Historikk"
+    echo "rettes FREMOVER (056-hendelsen 23/8) — aldri ved å redigere den."
+    exit 1
+  fi
+  echo "checksum-preflight ($base): $CHECKSUMPREFLIGHT"
+done
+
 # --- 5. VEDLIKEHOLDSVINDU: stopp tjenester OG helsetimer (V1) --------------
 # Timeren stoppes også: den skal verken telle feil mot stoppede tjenester
 # eller utløse en restart midt i migrasjonsvinduet.
@@ -547,9 +614,7 @@ for par in "runtime:$DISPONIT_MIGRATOR_URL" "test:$DISPONIT_TEST_MIGRATOR_DSN"; 
   (cd "$KILDE" && DISPONIT_MIGRATOR_URL="$url" \
      "$ROT/.venv/bin/python" deploy/staging/migrer.py disponit) \
      | tee "$RAPPORT_KATALOG/$base" || {
-    echo "AVBRUTT: migrasjon ($base) feilet — tjenestene er STOPPET og"
-    echo "forrige release står urørt på $FORRIGE. Fremoverrettet retting."
-    exit 1
+    selvrevers "migrasjon ($base) feilet"
   }
 done
 
@@ -565,9 +630,7 @@ done
 # de syntetiske hashene i testbasen har ingen skjemaer å registrere.
 (cd "$KILDE" && DATABASE_URL="$DATABASE_URL" DISPONIT_REPO="$KILDE" \
    "$ROT/.venv/bin/python" deploy/staging/deployport-modultyper.py) || {
-  echo "AVBRUTT: deploy-port (014c §5) rød — tjenestene er STOPPET og"
-  echo "forrige release står urørt på $FORRIGE. Rett registeret/typen først."
-  exit 1
+  selvrevers "deploy-port (014c §5) rød"
 }
 
 # --- 7. Atomisk release-bytte + units --------------------------------------
