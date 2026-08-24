@@ -576,15 +576,25 @@ def _reservasjon(m, tenant, *, utloper="now() + interval '1 hour'",
     return jti
 
 
-def _lagersti(tenant, navn="x"):
+def _lagersti(tenant, navn=None):
     """En sti i TENANTENS eget navnerom — API-ets layout.
 
     RELATIV, uten rot: raden bærer `<tenant>/<uuid>.bin`, og API-et setter
     `INNDATA_ROT` på først når det åpner filen (Cursor P1 runde 2).
     `inndata_lagersti_navnerom` krever den formen, så en test som vil måle
     noe ANNET må sende en lovlig sti; ellers feller sti-porten først og
-    testen består av feil grunn."""
-    return f"{tenant}/{navn}.bin"
+    testen består av feil grunn.
+
+    Navnet er FRISKT per kall når det ikke er oppgitt. Defaulten var
+    konstant, og siden `inndata_lagersti_unik` (runde 5d) er «én fil, én
+    rad» en INVARIANT: to tester i samme tenant som begge tok defaulten
+    kolliderte da på STIEN i stedet for på det de faktisk målte — og
+    `test_dek_referansen_er_bundet_til_tenantens_nokler` fikk
+    `UniqueViolation` der den ventet `ForeignKeyViolation`, fordi
+    unikhetsindeksen treffer før FK-triggeren. Utfallet avhang av
+    kjørerekkefølgen, ikke av koden den skulle måle. Testene som VIL dele
+    en sti sier det eksplisitt (`"delt"`/`"egen"`)."""
+    return f"{tenant}/{navn or secrets.token_hex(8)}.bin"
 
 
 def _lastet(m, tenant, *, utloper="now() + interval '1 hour'",
