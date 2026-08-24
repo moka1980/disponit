@@ -10,7 +10,7 @@ Gjelder alle i pipelinen. Avvik fra rutinene er selv en review-feil.
 | **Claude.ai** | Arkitekt og produktleder | Bestemmer struktur og spesifikasjon, lager drafts, koordinerer reviews, tar beslutninger på vegne av Eier der det trengs. Avslutter **alltid** med NÅ/NESTE-blokken (se pkt. 3). |
 | **ChatGPT** | Spesifikasjonsreview | Reviewer drafts mot de tre faste spørsmålene (se docs/README-arbeidsflyt.md). Svar limes inn i PR-beskrivelsen. |
 | **Claude Code** | Implementering | Skriver kode i repoet, kjører tester lokalt og på staging-serveren. Deployer aldri til produksjon direkte. |
-| **Cursor** | Pre-Codex-angriper | Kjører automatisk på GitHub (`.github/workflows/cursor-pre-codex.yml`) før Codex. Poster én batched funnliste eller PASS. Merger aldri. |
+| **Cursor** | Pre-Codex-angriper | Kjører automatisk på GitHub (`.github/workflows/cursor-pre-codex.yml`, poster som `github-actions[bot]`) før Codex. Poster én batched funnliste eller PASS. Merger aldri. **Ikke** Cursor Bugbot-appen — den er avslått i dette repoet, se §10. |
 | **Codex** | Kodereview og merge | Håndhever de fire merge-portene. Merger kun grønt. |
 
 ## 2. Modulrutine — én modul om gangen, helt ferdig
@@ -139,6 +139,24 @@ Formål: kutte Codex-rundene fra 10–18 ned mot 2–3 ved å angripe PR-en
 
 **Hard stop:** to Cursor-FUNN-runder på samme mekanisme uten konvergens →
 K2 gjelder; eskaler i PR-tråden, ikke et tredje formforsøk via Cursor.
+
+**KANALEN ER WORKFLOWEN, IKKE BUGBOT** (målt 24/8, eiervedtak i #178).
+`@cursor review` treffer to helt forskjellige mottakere, og bare den ene
+lever:
+
+* **Cursor Bugbot** — GitHub-appen som svarer direkte på mentionen. Den
+  svarer i dag «Bugbot is disabled for this repository». Den er IKKE
+  kanalen, og et svar derfra er ikke en review.
+* **`Cursor pre-Codex`-workflowen** (`.github/workflows/cursor-pre-codex.yml`,
+  poster som `github-actions[bot]`) — dette er kanalen som faktisk leverer
+  funnlistene. Det er den `@cursor review` skal trigge, og den som teller
+  som PASS/FUNN i punkt 5–6 over.
+
+Praktisk følge: en «Bugbot is disabled»-melding er en KANALFEIL, ikke en
+PASS. Er det den eneste responsen, står PR-en og venter — den regnes aldri
+som Cursor-PASS, og gir dermed heller ikke adgang til `@codex review`.
+Se også stående Cursor-ute-regel: feiler transporten (f.eks. «Connection
+lost») på et forsøk til, gå rett på `@codex review` og noter det i tråden.
 
 **Secret:** `CURSOR_API_KEY` må ligge i repo-secrets (Cursor Dashboard →
 API Keys). GitHub App-installasjonen gir repo-tilgang; Actions trenger

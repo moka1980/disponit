@@ -29,6 +29,37 @@ install -d -m 700 "$KATALOG"
 STEMPEL=$(date -u +%Y%m%dT%H%M%S)
 FIL="$KATALOG/disponit-$STEMPEL.dump.age"
 
+# Codex P1 (#178, runde 6): BACKUPNAVNET FÅS FØRST NÅR BACKUPEN ER SANN.
+# opp.sh steg 5 stopper `disponit-backup.service` for å holde `pg_dump`
+# unna et skjema i bevegelse (#178 runde 4). Stoppen er riktig, men den
+# treffer hele cgruppen — også en dump som alt er i gang. Skrev vi da
+# direkte til `$FIL`, ville SIGTERM etterlatt en AVKORTET fil med det
+# endelige navnet: nyeste treff i katalogen, nyeste treff for globben,
+# og null verifisering bak seg. En backup som ikke kan restores er verre
+# enn ingen backup, fordi den ser ut som en — og dagen ville sett dekket
+# ut nettopp den dagen deployen gikk galt.
+#
+# Derfor bærer fila et arbeidsnavn til BEGGE portene under (gjenoppretting
+# og størrelse) har svart, og `mv` er atomisk innenfor katalogen. `.delvis`
+# matcher hverken `disponit-*.dump.age` eller retention-globben, så en
+# rest kan verken forveksles med en backup eller slettes som en.
+DELVIS="$FIL.delvis"
+# Ett felles trap fra og med HER, ikke etter dumpen: det er nettopp
+# intervallet før den gamle `trap`-linjen som er avbruddsvinduet. `VERIF`
+# er tom til engangsbasen finnes, så oppryddingen dekker begge fasene uten
+# å kalle `dropdb` på et navn som aldri ble opprettet.
+VERIF=""
+opprydd() {
+  rm -f "$DELVIS"
+  [ -z "$VERIF" ] || sudo -u postgres dropdb --if-exists "$VERIF"
+}
+trap opprydd EXIT
+# En rest fra en kjøring som ble drept før traps rakk å kjøre (SIGKILL,
+# strømbrudd) ville ellers blitt liggende for alltid: retention rører den
+# ikke, og katalogen fylles av dumper. `flock` over garanterer at ingen
+# annen kjøring eier en `.delvis` akkurat nå.
+rm -f "$KATALOG"/disponit-*.dump.age.delvis
+
 # pg_dump i custom-format som POSTGRES, ikke migrator. «Eier skjemaet, ser
 # alt» sluttet å være sant da kapabilitetstabellene fikk egen eier uten
 # grants (PR-009-modellen, bevist av test_m37): pg_dump som migrator døde på
@@ -37,8 +68,8 @@ FIL="$KATALOG/disponit-$STEMPEL.dump.age"
 # set_role` finnes for å forby. Uniten kjører som root; superbrukeren ser alt
 # uten at rettighetsmodellen røres.
 sudo -u postgres pg_dump --format=custom --dbname=disponit \
-  | age -R "$MOTTAKER" > "$FIL"
-chmod 600 "$FIL"
+  | age -R "$MOTTAKER" > "$DELVIS"
+chmod 600 "$DELVIS"
 
 # Gjenopprettingsverifisering: restore til en ISOLERT engangsbase.
 # Verifiseringen bruker en UKRYPTERT strøm direkte fra pg_dump — den
@@ -47,8 +78,6 @@ chmod 600 "$FIL"
 # gjenopprettbar, og at den krypterte filen ble skrevet i sin helhet.
 VERIF="disponit_backup_verif_$$"
 sudo -u postgres createdb "$VERIF"
-opprydd() { sudo -u postgres dropdb --if-exists "$VERIF"; }
-trap opprydd EXIT
 sudo -u postgres pg_dump --format=custom --dbname=disponit \
   | sudo -u postgres pg_restore --dbname="$VERIF" --no-owner --role=postgres
 TABELLER=$(sudo -u postgres psql -Atd "$VERIF" -c \
@@ -57,8 +86,12 @@ TABELLER=$(sudo -u postgres psql -Atd "$VERIF" -c \
   echo "AVBRUTT: gjenoppretting ga bare $TABELLER tabeller" >&2
   exit 1
 }
-STORRELSE=$(stat -c%s "$FIL")
+STORRELSE=$(stat -c%s "$DELVIS")
 [ "$STORRELSE" -gt 1024 ] || { echo "AVBRUTT: backupfilen er tom" >&2; exit 1; }
+# Begge portene har svart. FØRST nå får fila backupnavnet, og fra og med
+# denne linjen er den dagens backup — for retention, for operatøren og for
+# den som en dag skal restore.
+mv "$DELVIS" "$FIL"
 
 # Retention: 30 dager, og slettingen TELLES — en glob som ikke treffer
 # noe ser ellers ut som en som ikke hadde noe å slette.
