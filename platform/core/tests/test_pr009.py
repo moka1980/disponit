@@ -882,6 +882,43 @@ def test_checksumporten_feller_uherdet_ikkelegacy_rad(migrator, tmp_path):
 
 
 @pg
+def test_checksumporten_feller_migrasjon_borte_fra_treet(migrator, tmp_path):
+    """Cursor P2 (#178, runde 2): `fil is None`-grenen hadde ingen test.
+
+    De to søskenportene dekker checksum-AVVIK og uherdet historikk. Den
+    tredje avvisningsgrenen — en versjon som er kjørt i basen, men som
+    kandidat-treet ikke har fila til — sto umålt, og en regresjon der ville
+    passert grønt mens deployen fortsatt stopper tjenestene i steg 6 på
+    samme tilstand (bootportens EKSAKTE match feller den).
+
+    Raden fabrikkeres i stedet for at en fil flyttes: treet er delt med de
+    andre portene i samme kjøring, og en `rename` der ville vært en
+    sidevirkning utenfor testens egen tilstand. Versjonen velges høyere enn
+    alt som finnes, så den ikke kan kollidere med en fremtidig migrasjon.
+    """
+    kat = ROT / "platform/core/db/migrations"
+    versjon = 999
+    assert not list(kat.glob(f"{versjon:03d}_*.sql")), \
+        f"{versjon:03d} finnes i treet — testen måler ikke det den tror"
+    try:
+        migrator.execute("INSERT INTO migrasjoner (versjon, checksum)"
+                         " VALUES (%s, %s)", (versjon, "0" * 64))
+        migrator.commit()
+        res = _kjor_checksumporten(tmp_path)
+    finally:
+        migrator.execute("DELETE FROM migrasjoner WHERE versjon=%s",
+                         (versjon,))
+        migrator.commit()
+
+    assert res.returncode != 0, \
+        f"porten slapp gjennom en versjon som er kjørt i basen men mangler" \
+        f" i treet:\n{res.stdout}{res.stderr}"
+    assert "borte fra treet" in res.stdout and f"{versjon:03d}" in res.stdout, \
+        f"porten avbrøt, men sier ikke hvilken versjon som mangler:\n" \
+        f"{res.stdout}"
+
+
+@pg
 def test_rydd_pending_tar_kun_foreldede(migrator, miljo, monkeypatch,
                                         capsys):
     """V3: timeren rydder PENDING eldre enn TTL — aldri ferske, aldri
