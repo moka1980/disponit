@@ -156,6 +156,29 @@ def _seed_prosess():
         m.close()
 
 
+def _ny_versjon(liste_id: str):
+    """En NY versjon i samme utkast_serie: serien redigeres videre, og
+    `liste_id` blir spissens forelder. -> (barn_liste_id, barn_hash)."""
+    from db.pg import koble, sett_kontekst
+    rt = koble(DSN)
+    try:
+        sett_kontekst(rt, TEN, "test", "r-versjon")
+        serie, oid = rt.execute(
+            "SELECT utkast_serie, oppdrag_id FROM utsendingsliste"
+            " WHERE tenant=%s AND liste_id=%s",
+            (TEN, liste_id)).fetchone()
+        barn_hash = hashlib.sha256(
+            f"demoliste-v2:{liste_id}".encode()).hexdigest()
+        barn = rt.execute(
+            "SELECT opprett_utsendingsliste(%s,%s,%s,%s,"
+            " 'invitasjon','invitasjon-v1',%s,3)",
+            (TEN, serie, liste_id, oid, barn_hash)).fetchone()[0]
+        rt.commit()
+        return str(barn), barn_hash
+    finally:
+        rt.close()
+
+
 @pg
 def test_prosesslisten_baerer_flatens_kontrakt(klient):
     pid, lid, ih = _seed_prosess()
@@ -219,6 +242,47 @@ def test_signering_krever_hashen_dialogen_viste(klient):
                f"/v1/rekruttering/lister/{uuid.uuid4()}/signer",
                {"innhold_hash": "f" * 64})
     assert r2.status_code == 404
+
+
+@pg
+def test_signering_av_utdatert_listeversjon_avvises(klient):
+    """Cursor P1: `_lister` viser bare serie-spissen, men et `liste_id`
+    overlever redigeringen (åpen dialog, parallell editor, direkte kall).
+    Hashen fanger det ikke — den GAMLE radens hash er uendret — og serien
+    har nøyaktig én signatur-slot: rot-signaturen ville låst feil innhold
+    OG gjort det nye utkastet usignerbart for alltid."""
+    _pid, rot, rot_hash = _seed_prosess()
+    barn, barn_hash = _ny_versjon(rot)
+    bid = _bruker("sjef-serie", ["admin"])
+    cookie, csrf = _browsersesjon(bid)
+    r = _post(klient, cookie, csrf,
+              f"/v1/rekruttering/lister/{rot}/signer",
+              {"innhold_hash": rot_hash})
+    assert r.status_code == 409, r.text
+    assert r.json()["feil"] == "liste_utdatert"
+    # …og avvisningen SKREV INGENTING: signatur-sloten står ubrukt.
+    m = _migrator()
+    try:
+        assert m.execute(
+            "SELECT count(*) FROM utsendingssignatur WHERE tenant=%s"
+            " AND liste_id IN (%s,%s)", (TEN, rot, barn)).fetchone()[0] == 0
+        m.rollback()
+    finally:
+        m.close()
+    # Spissen selv signeres som før.
+    r2 = _post(klient, cookie, csrf,
+               f"/v1/rekruttering/lister/{barn}/signer",
+               {"innhold_hash": barn_hash})
+    assert r2.status_code == 201, r2.text
+    m = _migrator()
+    try:
+        rad = m.execute(
+            "SELECT signatar FROM utsendingssignatur WHERE tenant=%s"
+            " AND liste_id=%s", (TEN, barn)).fetchone()
+        assert rad and rad[0] == bid
+        m.rollback()
+    finally:
+        m.close()
 
 
 @pg

@@ -123,9 +123,10 @@ def signer_endepunkt(tjeneste, request):
 
     Signeringen er den irreversible handlingen i M-57, og endepunktet
     legger ingenting til kjeden: medlemskaps- og materialitetsportene bor
-    i `signer_utsendingsliste` (056). Det ene laget HER er hash-ekkoet:
-    kroppen bærer innholdshashen dialogen viste, og en liste som har fått
-    en NY versjon i mellomtiden er ikke listen signataren leste (409).
+    i `signer_utsendingsliste` (056). Laget HER er at raden er den
+    signataren faktisk leste — serie-spissen (ingen barn i serien) OG
+    hash-ekkoet (kroppen bærer innholdshashen dialogen viste). Begge
+    svarer 409; ingen av dem skriver noe.
     """
     from .app import _rid
     from .policyadmin_http import (_Avbrudd, _browserkontekst, _feil,
@@ -144,11 +145,27 @@ def signer_endepunkt(tjeneste, request):
         if not isinstance(kropp.get("innhold_hash"), str):
             raise _Avbrudd(_feil("request_feilformet", rid))
         rad = conn.execute(
-            "SELECT innhold_hash, antall, listetype FROM utsendingsliste"
-            " WHERE tenant=%s AND liste_id=%s",
+            "SELECT l.innhold_hash, l.antall, l.listetype,"
+            "       EXISTS (SELECT 1 FROM utsendingsliste b"
+            "                WHERE b.tenant=l.tenant"
+            "                  AND b.utkast_serie=l.utkast_serie"
+            "                  AND b.forrige_liste_id=l.liste_id)"
+            "  FROM utsendingsliste l"
+            " WHERE l.tenant=%s AND l.liste_id=%s",
             (tenant, liste_id)).fetchone()
         if rad is None:
             raise _Avbrudd(_feil("liste_ukjent", rid, 404))
+        # SERIE-SPISSEN, IKKE BARE ET LISTE-ID (Cursor P1). `_lister`
+        # viser kun versjonen UTEN barn, men et `liste_id` overlever
+        # redigeringen: en dialog som sto åpen, en parallell editor, et
+        # direkte API-kall. Hashen alene fanger det ikke — den GAMLE
+        # radens hash er uendret, så ekkoet stemmer fortsatt. Serien har
+        # nøyaktig én signatur-slot (`en_signert_versjon_per_serie`, 056):
+        # signeres en foreldet versjon, er feil innhold irreversibelt
+        # autorisert OG det nye utkastet permanent usignerbart. Samme
+        # predikat som `_lister` bruker, målt i samme lesning.
+        if rad[3]:
+            raise _Avbrudd(_feil("liste_utdatert", rid, 409))
         if rad[0] != kropp["innhold_hash"]:
             raise _Avbrudd(_feil("innhold_endret", rid, 409))
         try:
