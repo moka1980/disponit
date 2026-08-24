@@ -36,6 +36,34 @@ INNDATA_ROT = os.environ.get("DISPONIT_INNDATA_ROT",
                              "/var/lib/disponit-inndata")
 
 
+def _stikomponent(tenant: str) -> str:
+    """Tenant-ID-en som ÉN trygg stikomponent, ellers stopp (Codex P2).
+
+    `brukermedlemskap.tenant` er ubegrenset `TEXT`, og dette er det eneste
+    stedet i repoet der tenant-strengen blir til en FILSTI — alle andre
+    bruk (`kryptering._aad`, `pg.policylasnokkel`, idempotensnøkler) legger
+    den i en streng der form ikke betyr noe. Starter den med `/`, kaster
+    `os.path.join(INNDATA_ROT, tenant)` roten, og den samme `rel`/`sti`-
+    konstruksjonen under gjør det igjen: bunten havner UTENFOR unitens
+    state-katalog og kan forsvinne uavhengig av basen.
+
+    Navnerom-CHECKen i 058 fanger det ikke, og kan ikke: den sammenligner
+    `lager_sti` mot NØYAKTIG den samme tenant-strengen stien ble bygget av
+    (`left(lager_sti, length(tenant)+1) = tenant||'/'`), så `/tmp/acme`
+    + `/tmp/acme/<uuid>.bin` passerer. En vakt som måler en verdi mot
+    strengen den selv er avledet fra, kan ikke se at strengen rømmer.
+
+    Positiv form, ikke svarteliste: komponenten må være seg selv etter
+    `basename`. Det avviser `/`, tomt, `.`, `..` og NUL i ett uttrykk.
+    Feilen er en provisjoneringsfeil, ikke en klientfeil — den skal aldri
+    kunne skrive noe, derfor reises den FØR all I/O.
+    """
+    if not tenant or "\x00" in tenant or tenant in (".", "..") \
+            or os.path.basename(tenant) != tenant:
+        raise ValueError("inndata: tenant-ID er ikke en trygg stikomponent")
+    return tenant
+
+
 def reserver_endepunkt(tjeneste, request):
     """POST /v1/inndata/reserver — {eiermodul, formaal} + Idempotency-Key."""
     from .app import INNDATA_MAKS_FYSISK, _rid
@@ -162,14 +190,18 @@ async def opplast_endepunkt(tjeneste, request):
         key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(conn, tenant)
         ct, nonce = kryptering.krypter_bytes(dek, raa, tenant, key_id,
                                              formaal=b"inndata")
-        katalog = os.path.join(INNDATA_ROT, tenant)
+        # FØR første I/O: tenant-strengen må være én trygg stikomponent.
+        # `komp` brukes i BEGGE sammensetningene under — den rå `tenant`
+        # skal ikke nå `os.path.join` noe sted i denne funksjonen.
+        komp = _stikomponent(tenant)
+        katalog = os.path.join(INNDATA_ROT, komp)
         os.makedirs(katalog, mode=0o700, exist_ok=True)
         # RADEN bærer den RELATIVE stien, `<tenant>/<uuid>.bin` (Cursor P1
         # runde 2); roten settes på her og bare her. Med roten i raden
         # måtte 058 kjent den for å kunne anker-sjekke navnerommet, og
         # gjorde det ikke — den lette etter `/<tenant>/` som delstreng, som
         # en sti ned i en FREMMED tenants katalog også inneholder.
-        rel = os.path.join(tenant, f"{uuidlib.uuid4()}.bin")
+        rel = os.path.join(komp, f"{uuidlib.uuid4()}.bin")
         sti = os.path.join(INNDATA_ROT, rel)
         # Skriv-og-flytt: en halvskrevet fil skal aldri kunne bli en
         # gyldig referanse.

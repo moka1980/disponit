@@ -914,6 +914,43 @@ def test_innhold_sha256_maa_ha_hashens_form(klient):
         m.close()
 
 
+def test_tenant_iden_maa_vaere_en_trygg_stikomponent():
+    """Codex P2 runde 6: `brukermedlemskap.tenant` er ubegrenset `TEXT`, og
+    opplastingen var det eneste stedet i repoet der den strengen ble til en
+    FILSTI.
+
+    `os.path.join(rot, "/tmp/acme")` KASTER roten — bunten havnet utenfor
+    unitens state-katalog og kunne forsvinne uavhengig av basen. 058s
+    `inndata_lagersti_navnerom` fanget det ikke og KAN ikke: den måler
+    `lager_sti` mot nøyaktig den samme tenant-strengen stien ble bygget av,
+    så `/tmp/acme` + `/tmp/acme/<uuid>.bin` passerer den. Derfor står
+    vakten i API-et, FØR første I/O — ikke som enda en CHECK.
+
+    Ingen `@pg`: dette er en ren strengavgjørelse, og den skal måles selv
+    når suiten kjører uten base.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `_stikomponent`-kallet i
+    `opplast_endepunkt`, eller la `rel` bygges av rå `tenant` igjen."""
+    from api import inndata
+    giftige = ("/tmp/acme", "", ".", "..", "a/b", "acme/", "a\x00b",
+               "/", "../acme")
+    for t in giftige:
+        with pytest.raises(ValueError):
+            inndata._stikomponent(t)
+    for t in ("acme", "t-rhttp-abc123", "a.b-c_d"):
+        assert inndata._stikomponent(t) == t
+    # Vakten er ikke bare en påstand om strengen: den er grunnen til at
+    # sammensetningen under ikke kan rømme roten.
+    assert os.path.dirname(
+        os.path.join("/rot", inndata._stikomponent("acme"))) == "/rot"
+    # Og den rå tenant-strengen skal ikke lenger nå NOEN `os.path.join` i
+    # opplastingsveien — `komp` gjør det, i begge sammensetningene.
+    import inspect
+    kilde = inspect.getsource(inndata.opplast_endepunkt)
+    assert "os.path.join(INNDATA_ROT, tenant)" not in kilde
+    assert "os.path.join(tenant," not in kilde
+
+
 @pg
 def test_lagerstien_maa_ligge_i_tenantens_eget_navnerom(klient):
     """Cursor P1: `lager_sti` hadde bare «ikke tom», mens
