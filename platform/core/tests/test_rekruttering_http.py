@@ -125,9 +125,11 @@ def _seed_prosess(vekter=None):
     liste (056-veien). -> (prosess_id, liste_id, innhold_hash).
 
     `vekter` skriver vektsettet BEGGE artefaktene deklarerer. Det er den
-    eneste veien til å måle vektporten: valget er prosessvidt og tar det
-    FØRSTE lesbare settet, så et enkelt giftig artefakt ved siden av et
-    friskt bare hoppes over. Standard er det kanoniske settet."""
+    eneste veien til å måle vektporten: valget er prosessvidt og krever
+    at de lesbare settene er ENIGE, så et enkelt giftig artefakt ved
+    siden av et friskt bare hoppes over — mens et lesbart sett som sier
+    noe ANNET feller hele vektingen til reserven. Standard er det
+    kanoniske settet."""
     from db import kryptering
     m = _migrator()
     try:
@@ -672,9 +674,9 @@ def test_giftige_vekter_faller_til_reserven_ikke_til_flaten(klient):
     allerede viser. `sky` skiller de to kildene alene (2 fra artefaktet,
     3 fra reserven).
 
-    Vektsettet skrives på BEGGE artefaktene: valget er prosessvidt og tar
-    det første LESBARE settet, så et giftig artefakt ved siden av et
-    friskt skal nettopp bare hoppes over.
+    Vektsettet skrives på BEGGE artefaktene: valget er prosessvidt og
+    krever at de LESBARE settene er enige, så et giftig artefakt ved
+    siden av et friskt skal nettopp bare hoppes over.
 
     Drepende mutasjon: bytt `_vekter_lesbare(...)` tilbake mot
     `isinstance(art.get("vekter"), dict)` — da er kilden artefaktet og
@@ -693,6 +695,54 @@ def test_giftige_vekter_faller_til_reserven_ikke_til_flaten(klient):
     # kandidaten som oppfyller alt er fortsatt anbefalt.
     lys = {k["kandidat_id"]: k["status"] for k in p["kandidater"]}
     assert "anbefalt" in lys.values(), lys
+
+
+@pg
+def test_motstridende_vekter_er_ingen_vekting(klient):
+    """Cursor P2 (runde 10): første lesbare vektsett vant, avgjort av en
+    UUID.
+
+    Vekten er STILLINGENS, ikke kandidatens, så to lesbare artefakter som
+    deklarerer ULIKE sett er ikke et valg mellom to kilder — det er
+    beviset på at ingen av dem kan tas for prosessens. Runtime har INSERT
+    på det uformsjekkede lageret, og valget sto på `ORDER BY
+    a.kandidat_id`: et smalt, gyldig sett på lav UUID ble prosessens
+    vekting. Trafikklyset måler `set(oppfylt) == set(vekter)`, så nettopp
+    et SMALERE sett gjør «Anbefalt» lettere å oppnå — foran den
+    irreversible signeringen.
+
+    Seeden skriver `{drift: 3, sky: 2}` på begge sine artefakter; det
+    tredje deklarerer `{drift: 3}` og oppfyller bare `drift`.
+
+    Drepende mutasjon: sett betingelsen tilbake til «første lesbare sett
+    vinner». Da er `vekter_kilde` «evalueringsartefakt» uansett hvilken
+    av de to settene UUID-rekkefølgen plukket — dommen her er derfor
+    uavhengig av rekkefølgen, slik den må være.
+    """
+    pid, _lid, _ih = _seed_prosess()
+    smal = _artefakt(pid, {"drift": True}, ekstra={"vekter": {"drift": 3}})
+    bid = _bruker("vekt-uenig", ["leser"])
+    cookie, _ = _browsersesjon(bid)
+    r = _get(klient, cookie, "/v1/rekruttering/prosesser")
+    assert r.status_code == 200, r.text
+    p = [x for x in r.json()["prosesser"] if x["prosess_id"] == pid][0]
+    assert p["vekter_kilde"] == "standard", \
+        "et vektsett ingen av artefaktene var enige om ble prosessens"
+    assert p["vekter"] == {"drift": 3, "sky": 3}, p["vekter"]
+    # …og kandidaten det smale settet ville gjort grønn, er det ikke:
+    # hun er ikke målt mot `sky` i det hele tatt.
+    lys = {k["kandidat_id"]: k["status"] for k in p["kandidater"]}
+    assert lys[smal] == "vurderes", \
+        "«Anbefalt» ble bevist mot et kravsett som ikke er profilens"
+    # Positiv kontroll: ENIGE lesbare sett er fortsatt artefaktets, så
+    # dommen over feller uenighet — ikke det å ha flere artefakter.
+    pid2, _l2, _h2 = _seed_prosess()
+    _artefakt(pid2, {"drift": True, "sky": True})
+    r2 = _get(klient, cookie, "/v1/rekruttering/prosesser")
+    assert r2.status_code == 200, r2.text
+    p2 = [x for x in r2.json()["prosesser"] if x["prosess_id"] == pid2][0]
+    assert p2["vekter_kilde"] == "evalueringsartefakt", p2["vekter_kilde"]
+    assert p2["vekter"] == {"drift": 3, "sky": 2}, p2["vekter"]
 
 
 @pg

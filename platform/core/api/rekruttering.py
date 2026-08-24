@@ -210,6 +210,7 @@ def _kandidater(conn, tenant, prosess_id):
         " WHERE a.tenant=%s AND a.prosess_id=%s AND a.slettet_ts IS NULL"
         " ORDER BY a.kandidat_id", (tenant, prosess_id)).fetchall()
     kandidater, vekter, kilde, lest = [], None, "standard", []
+    lesbare_vekter = []
     for kid, artefakt, er_objekt, sporsmal in rader:
         # TYPEN ER OGSÅ EN PORT (Cursor P1). `x or {}` verner mot NULL og
         # tomt, aldri mot FEIL TYPE: `{...}` er en sann `funn`, `["drift"]`
@@ -246,8 +247,8 @@ def _kandidater(conn, tenant, prosess_id):
         # skjer. Er vektene ikke lesbare, er de INGEN opplysning, og
         # reserven under (`{krav: 3}`) er det ærlige svaret — den er
         # allerede merket i `vekter_kilde`, så flaten sier fra selv.
-        if vekter is None and _vekter_lesbare(art.get("vekter")):
-            vekter, kilde = art["vekter"], "evalueringsartefakt"
+        if _vekter_lesbare(art.get("vekter")):
+            lesbare_vekter.append(art["vekter"])
         raa_funn, raa_oppfylt = art.get("funn"), art.get("oppfylt")
         funn = raa_funn if isinstance(raa_funn, list) else []
         oppfylt = raa_oppfylt if isinstance(raa_oppfylt, dict) else {}
@@ -274,6 +275,24 @@ def _kandidater(conn, tenant, prosess_id):
     # VEKTENE ER ENDELIGE FØR TRAFIKKLYSET UTLEDES (Cursor P1). Reserven
     # under leser HVER kandidats krav, så den kan ikke stå etter en
     # dømming som må måle mot den — derfor to pass over de samme radene.
+    #
+    # OG PROSESSENS VEKTING MÅ ARTEFAKTENE VÆRE ENIGE OM (Cursor P2,
+    # runde 10). Valget var «første LESBARE sett i `kandidat_id`-
+    # rekkefølge» — altså avgjort av en UUID. Vekten er stillingens, ikke
+    # kandidatens, så to artefakter som sier ULIKE ting er ikke et valg
+    # mellom to kilder; det er beviset på at ingen av dem kan tas for
+    # prosessens. Runtime har INSERT på det uformsjekkede lageret (eiers
+    # K2-dom A / #162), så et smalt, gyldig sett på lav UUID vant over
+    # profilens eget — og trafikklyset måler `set(oppfylt) ==
+    # set(vekter)`, så nettopp et SMALERE sett gjør «Anbefalt» lettere å
+    # oppnå, foran en irreversibel signering. Uenighet felles derfor til
+    # reserven med `vekter_kilde="standard"`, samme fail-safe som et
+    # uleselig sett får: ingen entydig opplysning er ingen opplysning.
+    # Uleselige sett hoppes fortsatt over uten å telle som uenighet —
+    # de er ikke et motstridende svar, de er intet svar.
+    if lesbare_vekter and all(v == lesbare_vekter[0]
+                              for v in lesbare_vekter[1:]):
+        vekter, kilde = lesbare_vekter[0], "evalueringsartefakt"
     if vekter is None:
         krav = sorted({k for _kid, _funn, oppfylt, _les, _sp in lest
                        for k in oppfylt})
