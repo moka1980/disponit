@@ -931,6 +931,36 @@ def test_selvrevers_gjenoppretter_credentialene_fra_for_vinduet(tmp_path):
         "tilbakestillingen slettet en credential i stedet for å skrive over"
 
 
+def test_selvrevers_gjenoppretter_credentialene_ogsa_pa_nektet_grenen():
+    """Cursor P1 (#178, runde 7): tilbakestillingen står før HVER exit i
+    `selvrevers()`, ikke bare før den som starter enheter.
+
+    Runde 4 la den etter rullbakk-gaten, altså kun på stien som booter
+    forrige release. NEKTET-grenen `exit 1`-er før den, og etterlot
+    kandidatens credentials som den levende konfigurasjonen på en vert der
+    `aktiv` peker på forrige release. Det verste er ikke øyeblikket, men
+    neste kjøring: steg 4 gjør `rm -rf "$CRED_FORVINDU"` og snapshotter da
+    den FORURENSEDE tilstanden som «før vinduet» — siste kopi av forrige
+    releases konfigurasjon er borte, og både en manuell start og en senere
+    (grønn) reversering booter gammel binær på ny konfig. Målt på kilden,
+    som de andre rekkefølgeportene i denne fila.
+    """
+    opp = (ROT / "deploy/staging/opp.sh").read_text(encoding="utf-8")
+    kropp = opp[opp.index("selvrevers() {"):opp.index("\n}\n",
+                                                     opp.index("selvrevers"
+                                                               "() {"))]
+    gjenoppretting = kropp.index('GJENOPPRETTET=""')
+    for exit_punkt, hva in (
+            ("SELV-REVERSERING NEKTET",
+             "rullbakk-gaten nekter og avslutter"),
+            ("systemctl start",
+             "første enhet startes")):
+        assert gjenoppretting < kropp.index(exit_punkt), \
+            f"credentialene tilbakestilles ETTER at {hva}: " \
+            f"kandidatens konfigurasjon blir stående som den levende, og " \
+            f"neste kjørings snapshot forevigier den"
+
+
 def test_selvrevers_credentialsnapshotet_tas_for_forste_skriving():
     """Og plasseringen, målt på kilden: snapshotet står FØR første
     `skriv_cred`, og tilbakestillingen FØR første `systemctl start`.

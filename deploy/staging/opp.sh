@@ -822,6 +822,44 @@ AKTIVE_FOR_VINDUET=""
 selvrevers() {
   echo "AVBRUTT: $1 — forsøker selv-reversering (forrige release,"
   echo "symlinken er urørt: $FORRIGE)"
+  # Codex P1 (runde 4): CREDENTIALENE TILBAKE FØR GAMMEL KODE BOOTER PÅ DEM.
+  # De tre forrige rundene på denne funksjonen målte hvilke ENHETER som
+  # startes; dette er den tilstanden de startes MOT. Steg 4 skrev
+  # kandidatens verdier over forrige releases, `LoadCredential` leser fila
+  # på nytt ved hver aktivering, og `DISPONIT_SEMANTIKK_MILJO` er regnet ut
+  # med kandidatens kode mens forrige releases boot-port måler den mot sin
+  # egen. Uten denne tilbakestillingen er «forrige release kjører igjen» et
+  # utsagn om binæren, ikke om konfigurasjonen den kjører på.
+  #
+  # Cursor P1 (runde 7): TILBAKESTILLINGEN SKJER FØRST — FØR RULLBAKK-GATEN.
+  # Den sto etter gaten, altså bare på stien som faktisk STARTER enheter.
+  # NEKTET-grenen `exit 1`-er før den, og etterlot kandidatens credentials
+  # som den levende konfigurasjonen på en vert der `aktiv` peker på forrige
+  # release og alt er stoppet. Verre enn øyeblikket: snapshotet lever bare
+  # til neste kjøring, og steg 4 gjør `rm -rf "$CRED_FORVINDU"` og
+  # snapshotter så DEN FORURENSEDE tilstanden som «før vinduet». Da er
+  # forrige releases konfigurasjon borte for godt, og en operatør som
+  # starter enhetene manuelt mot den «urørte» symlinken booter gammel binær
+  # på ny konfig — nøyaktig klassen runde 4 lukket, gjennom den ene stien
+  # runde 4 ikke dekket. Gjenopprettingen hører derfor før hver `exit` i
+  # funksjonen: den er billig, idempotent, og starter ingenting.
+  #
+  # Tilbakestillingen SKRIVER OVER, den rydder ikke: en credential
+  # kandidaten la til og forrige release ikke kjenner, blir liggende. Det
+  # er med vilje — forrige releases units laster bare de filene deres egen
+  # `LoadCredential` navngir, så en ekstra fil er inert, mens et `rm -rf`
+  # her ville lagt et destruktivt steg inn i selve feilhåndteringen.
+  #
+  # Snapshotet ($CRED_FORVINDU) røres ikke av kopieringen, så rullbakk-gaten
+  # under leser fortsatt forrige releases `api/DATABASE_URL` derfra.
+  GJENOPPRETTET=""
+  for kat in "$CRED_FORVINDU"/*/; do
+    [ -d "$kat" ] || continue
+    cp -a "$kat" /etc/disponit/
+    GJENOPPRETTET="$GJENOPPRETTET $(basename "$kat")"
+  done
+  echo "credentials tilbakestilt til før vinduet:" \
+       "${GJENOPPRETTET:- ingen — /etc/disponit var tomt før steg 4}"
   # Codex P1 (runde 2): symlinken er urørt, men BASEN er ikke nødvendigvis
   # det. Steg 6 migrerer runtime-basen FØR testbasen, og steg 6b kjører
   # etter begge: går runtime grønt og testbasen eller deploy-porten rødt,
@@ -880,33 +918,14 @@ selvrevers() {
     echo "ingen bootport som ville nektet for dem."
     echo "STÅENDE STOPPET (var i drift før vinduet):" \
          "${AKTIVE_FOR_VINDUET:- ingen — ingenting kjørte før vinduet}"
+    echo "Credentialene er likevel tilbakestilt til før vinduet, så en"
+    echo "manuell start mot den urørte symlinken booter forrige release på"
+    echo "forrige releases konfigurasjon — men SKJEMAET er fortsatt fremme."
     echo "Rettingen er FREMOVER og den er NÅ: fullfør deployen mot et"
     echo "skjema begge basene deler, eller rull frem til et sett forrige"
     echo "release bærer. Deployen er avbrutt."
     exit 1
   fi
-  # Codex P1 (runde 4): CREDENTIALENE TILBAKE FØR GAMMEL KODE BOOTER PÅ DEM.
-  # De tre forrige rundene på denne funksjonen målte hvilke ENHETER som
-  # startes; dette er den tilstanden de startes MOT. Steg 4 skrev
-  # kandidatens verdier over forrige releases, `LoadCredential` leser fila
-  # på nytt ved hver aktivering, og `DISPONIT_SEMANTIKK_MILJO` er regnet ut
-  # med kandidatens kode mens forrige releases boot-port måler den mot sin
-  # egen. Uten denne tilbakestillingen er «forrige release kjører igjen» et
-  # utsagn om binæren, ikke om konfigurasjonen den kjører på.
-  #
-  # Tilbakestillingen SKRIVER OVER, den rydder ikke: en credential
-  # kandidaten la til og forrige release ikke kjenner, blir liggende. Det
-  # er med vilje — forrige releases units laster bare de filene deres egen
-  # `LoadCredential` navngir, så en ekstra fil er inert, mens et `rm -rf`
-  # her ville lagt et destruktivt steg inn i selve feilhåndteringen.
-  GJENOPPRETTET=""
-  for kat in "$CRED_FORVINDU"/*/; do
-    [ -d "$kat" ] || continue
-    cp -a "$kat" /etc/disponit/
-    GJENOPPRETTET="$GJENOPPRETTET $(basename "$kat")"
-  done
-  echo "credentials tilbakestilt til før vinduet:" \
-       "${GJENOPPRETTET:- ingen — /etc/disponit var tomt før steg 4}"
   # Snapshotet, i den rekkefølgen unitene avhenger av hverandre: socket og
   # API først (`disponit-wcag-audit.service` har `After=disponit-api.service`),
   # så resten. Rekkefølgen ligger i SELVREVERS_ENHETER, og snapshotet er
