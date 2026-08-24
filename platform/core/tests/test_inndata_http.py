@@ -37,13 +37,16 @@ def inndata_rot(tmp_path, monkeypatch):
     return tmp_path / "inndata"
 
 
-def _reserver(klient, cookie, csrf):
+def _reserver(klient, cookie, csrf, idem=None, **kropp):
     from api import sesjon as sesjonmodul
-    return klient.post("/v1/inndata/reserver",
-                       json={"eiermodul": "m57_ats",
-                             "formaal": "soknadsbunt"},
+    data = {"eiermodul": "m57_ats", "formaal": "soknadsbunt"}
+    data.update(kropp)
+    hoder = {"X-Disponit-CSRF": csrf}
+    if idem is not False:                       # False = utelat den bevisst
+        hoder["Idempotency-Key"] = idem or secrets.token_hex(12)
+    return klient.post("/v1/inndata/reserver", json=data,
                        cookies={sesjonmodul.C_SESJON: cookie},
-                       headers={"X-Disponit-CSRF": csrf})
+                       headers=hoder)
 
 
 def _opplast(klient, cookie, csrf, jti, kropp: bytes):
@@ -159,10 +162,67 @@ def test_reservasjonen_krever_kontraktens_kombinasjon(klient, inndata_rot):
     for kropp in ({"eiermodul": "m_wcag_audit", "formaal": "soknadsbunt"},
                   {"eiermodul": "m57_ats", "formaal": "noe_annet"},
                   {}):
+        # MED idempotensnøkkel: uten den ville alle tre svart 400 på
+        # nøkkelen i stedet, og porten målt noe annet enn den lover.
         r = klient.post("/v1/inndata/reserver", json=kropp,
                         cookies={sesjonmodul.C_SESJON: cookie},
-                        headers={"X-Disponit-CSRF": csrf})
+                        headers={"X-Disponit-CSRF": csrf,
+                                 "Idempotency-Key": secrets.token_hex(12)})
         assert r.status_code == 400, kropp
+        assert r.json()["feil"] == "request_feilformet", kropp
+
+
+@pg
+def test_reservasjonen_er_replay_trygg_paa_idempotensnokkelen(klient,
+                                                              inndata_rot):
+    """Codex P2: reservasjonen er en opprettelse som IKKE er naturlig
+    idempotent.
+
+    Gikk 201-svaret tapt på veien ut — eller ga `commit()` en tvetydig
+    forbindelsesfeil — hadde klienten ingenting å slå den genererte
+    `inndata_ref` og jti-en opp med. En retry laget da en ANDRE levende
+    reservasjon med en annen referanse, mens den første lå uleselig for
+    alle til reaperen (egen PR) tok den.
+
+    Tre halvdeler måles: nøkkelen er påkrevd, samme nøkkel gjenspiller
+    NØYAKTIG det første svaret, og forskjellige nøkler er forskjellige
+    reservasjoner.
+
+    MUTASJONEN SOM DREPER DENNE: la `reserver_inndata` sette inn uten
+    `ON CONFLICT`, eller la gjenspillet utstede en ny jti."""
+    tenant, _bid, cookie, csrf = _rigg(klient)
+
+    # 1) Påkrevd.
+    r = _reserver(klient, cookie, csrf, idem=False)
+    assert r.status_code == 400
+    assert r.json()["feil"] == "idempotensnokkel_mangler"
+
+    # 2) Gjenspill: samme nøkkel, samme svar — ikke en ny reservasjon.
+    nokkel = secrets.token_hex(12)
+    forste = _reserver(klient, cookie, csrf, idem=nokkel)
+    assert forste.status_code == 201, forste.text
+    igjen = _reserver(klient, cookie, csrf, idem=nokkel)
+    assert igjen.status_code == 201, igjen.text
+    assert igjen.json() == forste.json()
+
+    # 3) Ny nøkkel = ny reservasjon.
+    ny = _reserver(klient, cookie, csrf)
+    assert ny.status_code == 201, ny.text
+    assert ny.json()["reservasjon_jti"] != forste.json()["reservasjon_jti"]
+
+    # … og basen har nøyaktig to rader for de to nøklene, ikke tre.
+    m = _migrator(tenant)
+    try:
+        _kontekst(m, tenant)
+        antall = m.execute(
+            "SELECT count(*) FROM inndata_artefakt WHERE tenant=%s AND"
+            " reservasjon_jti IN (%s,%s)",
+            (tenant, forste.json()["reservasjon_jti"],
+             ny.json()["reservasjon_jti"])).fetchone()[0]
+        m.rollback()
+    finally:
+        m.close()
+    assert antall == 2
 
 
 @pg
@@ -271,9 +331,10 @@ def _reservasjon(m, tenant, *, utloper="now() + interval '1 hour'",
     jti = secrets.token_hex(32)
     m.execute(
         "INSERT INTO inndata_artefakt (tenant, eiermodul, formaal,"
-        " innholdstype, maks_bytes, reservasjon_jti, utloper)"
-        f" VALUES (%s,%s,'soknadsbunt','application/zip',%s,%s,{utloper})",
-        (tenant, eiermodul, MAKS, jti))
+        " innholdstype, maks_bytes, reservasjon_jti, idempotensnokkel,"
+        " utloper)"
+        f" VALUES (%s,%s,'soknadsbunt','application/zip',%s,%s,%s,{utloper})",
+        (tenant, eiermodul, MAKS, jti, secrets.token_hex(12)))
     return jti
 
 
@@ -287,12 +348,12 @@ def _lastet(m, tenant, *, utloper="now() + interval '1 hour'",
     return m.execute(
         "INSERT INTO inndata_artefakt (tenant, eiermodul, formaal,"
         " innholdstype, maks_bytes, faktiske_bytes, innhold_sha256,"
-        " key_id, nonce, lager_sti, status, reservasjon_jti, utloper,"
-        " lastet_ts)"
+        " key_id, nonce, lager_sti, status, reservasjon_jti,"
+        " idempotensnokkel, utloper, lastet_ts)"
         " VALUES (%s,%s,'soknadsbunt','application/zip',%s,10,%s,%s,%s,"
-        f" %s,'lastet',%s,{utloper},now()) RETURNING inndata_id",
+        f" %s,'lastet',%s,%s,{utloper},now()) RETURNING inndata_id",
         (tenant, eiermodul, MAKS, "a" * 64, key_id, b"n" * 12,
-         f"/tmp/{jti}.bin", jti)).fetchone()[0]
+         f"/tmp/{jti}.bin", jti, secrets.token_hex(12))).fetchone()[0]
 
 
 def _oppdrag(m, tenant, eiermodul, oppdragstype="rekruttering.evaluering"):
@@ -483,9 +544,11 @@ def test_kryptostrukturen_avvises_uten_a_brenne_jti(klient):
         with pytest.raises(psycopg.errors.CheckViolation):
             m.execute("INSERT INTO inndata_artefakt (tenant, eiermodul,"
                       " formaal, innholdstype, maks_bytes, reservasjon_jti,"
-                      " utloper, nonce) VALUES (%s,'m57_ats','soknadsbunt',"
-                      "'application/zip',%s,%s,now()+interval '1 h',%s)",
-                      (tenant, MAKS, secrets.token_hex(32), b"\x01"))
+                      " idempotensnokkel, utloper, nonce)"
+                      " VALUES (%s,'m57_ats','soknadsbunt',"
+                      "'application/zip',%s,%s,%s,now()+interval '1 h',%s)",
+                      (tenant, MAKS, secrets.token_hex(32),
+                       secrets.token_hex(12), b"\x01"))
         m.rollback()
     finally:
         m.close()
@@ -507,10 +570,12 @@ def test_dek_referansen_er_bundet_til_tenantens_nokler(klient):
                 "INSERT INTO inndata_artefakt (tenant, eiermodul, formaal,"
                 " innholdstype, maks_bytes, faktiske_bytes, innhold_sha256,"
                 " key_id, nonce, lager_sti, status, reservasjon_jti,"
-                " utloper, lastet_ts) VALUES (%s,'m57_ats','soknadsbunt',"
+                " idempotensnokkel, utloper, lastet_ts)"
+                " VALUES (%s,'m57_ats','soknadsbunt',"
                 "'application/zip',%s,10,%s,'finnes-ikke',%s,'/tmp/x.bin',"
-                "'lastet',%s,now()+interval '1 h',now())",
-                (tenant, MAKS, "a" * 64, b"n" * 12, secrets.token_hex(32)))
+                "'lastet',%s,%s,now()+interval '1 h',now())",
+                (tenant, MAKS, "a" * 64, b"n" * 12, secrets.token_hex(32),
+                 secrets.token_hex(12)))
         m.rollback()
     finally:
         m.close()
@@ -685,11 +750,13 @@ def test_bundet_krever_krypto_og_lastet_ts(klient):
             m.execute(
                 "INSERT INTO inndata_artefakt (tenant, eiermodul, formaal,"
                 " innholdstype, maks_bytes, faktiske_bytes, innhold_sha256,"
-                " lager_sti, status, reservasjon_jti, oppdrag_id, utloper,"
-                " bundet_ts) VALUES (%s,'m57_ats','soknadsbunt',"
-                "'application/zip',%s,10,%s,'/tmp/x.bin','bundet',%s,%s,"
+                " lager_sti, status, reservasjon_jti, idempotensnokkel,"
+                " oppdrag_id, utloper, bundet_ts)"
+                " VALUES (%s,'m57_ats','soknadsbunt',"
+                "'application/zip',%s,10,%s,'/tmp/x.bin','bundet',%s,%s,%s,"
                 " now()+interval '1 h',now())",
-                (tenant, MAKS, "a" * 64, secrets.token_hex(32), opp))
+                (tenant, MAKS, "a" * 64, secrets.token_hex(32),
+                 secrets.token_hex(12), opp))
         m.rollback()
     finally:
         m.close()

@@ -3,9 +3,11 @@ opplasting).
 
 To ruter, speilet av 017s utdata-form i motsatt retning:
 
-* POST /v1/inndata/reserver (browserkontekst, `bestilling:opprett`):
-  utsteder en engangs-reservasjon FØR opplasting. Taket er KONTRAKTENS
-  (`INNDATA_MAKS_FYSISK` i denne v1-en) — klienten ber aldri om et tall.
+* POST /v1/inndata/reserver (browserkontekst, `bestilling:opprett`,
+  `Idempotency-Key` PÅKREVD): utsteder en engangs-reservasjon FØR
+  opplasting. Taket er KONTRAKTENS (`INNDATA_MAKS_FYSISK` i denne v1-en)
+  — klienten ber aldri om et tall. Nøkkelen bæres av RADEN (058), så en
+  retry etter et tapt 201 får den samme referansen og jti-en tilbake.
 * PUT /v1/inndata/opplast/{jti} (samme auth): rå zip-kropp, STRØMMET —
   middleware teller uten å bufre, endepunktet hasher og samler opp til
   reservasjonens deklarerte tak, krypterer med tenant-DEK
@@ -35,15 +37,24 @@ INNDATA_ROT = os.environ.get("DISPONIT_INNDATA_ROT",
 
 
 def reserver_endepunkt(tjeneste, request):
-    """POST /v1/inndata/reserver — {eiermodul, formaal}."""
+    """POST /v1/inndata/reserver — {eiermodul, formaal} + Idempotency-Key."""
     from .app import INNDATA_MAKS_FYSISK, _rid
     from .policyadmin_http import (_Avbrudd, _browserkontekst, _feil,
-                                   _kropp, _med_conn, _ok)
+                                   _krev_idem, _kropp, _med_conn, _ok)
     rid = _rid(request)
 
     def kjor(conn):
         tenant, _bid = _browserkontekst(tjeneste, request, conn, rid,
                                         "bestilling:opprett")
+        # `Idempotency-Key` er PÅKREVD (Codex P2). Reservasjonen er en
+        # opprettelse som ikke er naturlig idempotent: gikk 201-svaret tapt
+        # på veien ut — eller ga `commit()` en tvetydig forbindelsesfeil —
+        # hadde klienten ingenting å slå den genererte `inndata_ref` og
+        # jti-en opp med, og en retry laget en ANDRE levende reservasjon
+        # med en annen referanse mens den første lå uleselig til reaperen
+        # tok den. Samme krav som de andre opprettelsesrutene, samme
+        # helper.
+        idem = _krev_idem(request, rid)
         kropp = _kropp(request)
         eiermodul, formaal = kropp.get("eiermodul"), kropp.get("formaal")
         # Lukket sett: i v1 finnes nøyaktig én lovlig kombinasjon, og en
@@ -51,10 +62,20 @@ def reserver_endepunkt(tjeneste, request):
         # det samme — dette er bare den tidlige, lesbare avvisningen).
         if (eiermodul, formaal) != ("m57_ats", "soknadsbunt"):
             raise _Avbrudd(_feil("request_feilformet", rid))
-        rad = conn.execute(
-            "SELECT inndata_id, reservasjon_jti FROM"
-            " reserver_inndata(%s,%s,%s,%s)",
-            (tenant, eiermodul, formaal, INNDATA_MAKS_FYSISK)).fetchone()
+        try:
+            rad = conn.execute(
+                "SELECT inndata_id, reservasjon_jti FROM"
+                " reserver_inndata(%s,%s,%s,%s,%s)",
+                (tenant, eiermodul, formaal, INNDATA_MAKS_FYSISK,
+                 idem)).fetchone()
+        except psycopg.errors.UniqueViolation as e:
+            # Nøkkelen er brukt for en ANNEN reservasjon. Gjenspill av den
+            # SAMME svarer 058 med den opprinnelige raden, så det er bare
+            # kollisjonen som når hit.
+            raise _Avbrudd(_feil("idempotenskonflikt", rid)) from e
+        except psycopg.errors.InvalidParameterValue as e:
+            # Nøkkellengde/kombinasjon avvist av kontrakten i SQL.
+            raise _Avbrudd(_feil("request_feilformet", rid)) from e
         conn.commit()
         return _ok({"inndata_ref": f"inndata:{rad[0]}",
                     "reservasjon_jti": rad[1],

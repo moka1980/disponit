@@ -184,7 +184,7 @@ GRANT EXECUTE ON FUNCTION verifiser_artefaktbinding(UUID, TEXT, BIGINT, TEXT) TO
 -- migrasjons grants overlever heller ikke en gjenoppbygging av skjemaet
 -- uten radene her. `bind_inndata` hører med: bestillingsveien kaller den i
 -- sin egen transaksjon, altså som runtimerollen.
-GRANT EXECUTE ON FUNCTION reserver_inndata(TEXT, TEXT, TEXT, BIGINT) TO {rolle};
+GRANT EXECUTE ON FUNCTION reserver_inndata(TEXT, TEXT, TEXT, BIGINT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION registrer_inndata_lastet(TEXT, TEXT, BIGINT, TEXT, TEXT, BYTEA, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION bind_inndata(TEXT, UUID, BIGINT, TEXT) TO {rolle};
 RESET ROLE;

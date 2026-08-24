@@ -44,6 +44,18 @@ CREATE TABLE inndata_artefakt (
     status TEXT NOT NULL DEFAULT 'reservert'
         CHECK (status IN ('reservert', 'lastet', 'bundet', 'forkastet')),
     reservasjon_jti TEXT NOT NULL CHECK (reservasjon_jti ~ '^[0-9a-f]{32,}$'),
+    -- Klientens idempotensnøkkel (Codex P2). Reservasjonen er en
+    -- OPPRETTELSE som ikke er naturlig idempotent: gikk 201-svaret tapt på
+    -- veien ut — eller ga `conn.commit()` en tvetydig forbindelsesfeil —
+    -- hadde klienten ingenting å slå opp den genererte `inndata_ref` og
+    -- jti-en med. En retry laget da en ANDRE levende reservasjon med en
+    -- annen referanse, mens den første ble uleselig for alle helt til
+    -- reaperen tok den. Nøkkelen er derfor RADENS, ikke en sidetabells:
+    -- hele svaret er utledbart av raden (id, jti, maks_bytes), så et
+    -- lagret svarobjekt ville vært en andre representasjon av det samme.
+    -- Grensene speiler `bestilling_idempotens` (038 §3).
+    idempotensnokkel TEXT NOT NULL CHECK (length(idempotensnokkel)
+                                          BETWEEN 8 AND 200),
     oppdrag_id BIGINT,
     opprettet TIMESTAMPTZ NOT NULL DEFAULT now(),
     utloper TIMESTAMPTZ NOT NULL,
@@ -51,6 +63,9 @@ CREATE TABLE inndata_artefakt (
     bundet_ts TIMESTAMPTZ,
     CONSTRAINT inndata_artefakt_pk PRIMARY KEY (tenant, inndata_id),
     CONSTRAINT inndata_jti_en_gang UNIQUE (tenant, reservasjon_jti),
+    -- Én nøkkel, én reservasjon — per tenant. Dette er også konfliktmålet
+    -- `reserver_inndata` bruker, så gjenspill og kappløp går samme vei.
+    CONSTRAINT inndata_idempotens_unik UNIQUE (tenant, idempotensnokkel),
     CONSTRAINT inndata_oppdrag_fk FOREIGN KEY (tenant, oppdrag_id)
         REFERENCES oppdrag (tenant, id),
     -- DEK-referansen bindes som i 003/005/007/011/016 (Codex P2): uten
@@ -128,6 +143,7 @@ BEGIN
        OR NEW.innholdstype IS DISTINCT FROM OLD.innholdstype
        OR NEW.maks_bytes IS DISTINCT FROM OLD.maks_bytes
        OR NEW.reservasjon_jti IS DISTINCT FROM OLD.reservasjon_jti
+       OR NEW.idempotensnokkel IS DISTINCT FROM OLD.idempotensnokkel
        OR NEW.opprettet IS DISTINCT FROM OLD.opprettet
        OR NEW.utloper IS DISTINCT FROM OLD.utloper THEN
         RAISE EXCEPTION 'inndata_artefakt: bindingsfeltene er immutable'
@@ -181,11 +197,12 @@ SET LOCAL ROLE disponit_domene_eier;
 -- Reservasjonen: utstedes av bestillingsflaten FØR opplasting. Taket er
 -- kontraktens — kunden ber aldri om et tall, hun får kontraktens.
 CREATE FUNCTION reserver_inndata(
-    p_tenant TEXT, p_eiermodul TEXT, p_formaal TEXT, p_maks_bytes BIGINT)
+    p_tenant TEXT, p_eiermodul TEXT, p_formaal TEXT, p_maks_bytes BIGINT,
+    p_idempotensnokkel TEXT)
 RETURNS TABLE (inndata_id UUID, reservasjon_jti TEXT)
 LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
-DECLARE v_id UUID; v_jti TEXT;
+DECLARE v_id UUID; v_jti TEXT; r RECORD;
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant, 'reserver_inndata');
     -- Speiler tabellens CHECK, men med det kanoniske feilkontraktet i
@@ -196,16 +213,61 @@ BEGIN
             ' kombinasjon', p_eiermodul, p_formaal
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
+    IF p_idempotensnokkel IS NULL
+       OR length(p_idempotensnokkel) NOT BETWEEN 8 AND 200 THEN
+        RAISE EXCEPTION 'reserver_inndata: idempotensnøkkelen mangler eller'
+            ' er utenfor 8..200'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
     -- Kjerne-PG, ingen pgcrypto (kjørerens egen regel): to UUID-er gir
     -- 64 hex-tegn entropi for engangs-jti-en.
     v_jti := replace(pg_catalog.gen_random_uuid()::text, '-', '')
              || replace(pg_catalog.gen_random_uuid()::text, '-', '');
+    -- `ON CONFLICT ... DO NOTHING` og ikke et oppslag FØRST (038-formen,
+    -- Codex P2): oppslag-så-insert har et vindu mellom de to der to
+    -- samtidige retryer begge ser «ingen rad» og begge oppretter. Med
+    -- konflikten som port taper nøyaktig én av dem, og taperen leser
+    -- vinnerens rad under. Målet er navngitt, så en jti-kollisjon (som
+    -- ikke kan skje med 128 bit entropi, men som ville vært en ekte feil)
+    -- fortsatt reiser i stedet for å bli stille gjenspilt.
     INSERT INTO public.inndata_artefakt
         (tenant, eiermodul, formaal, innholdstype, maks_bytes,
-         reservasjon_jti, utloper)
+         reservasjon_jti, idempotensnokkel, utloper)
     VALUES (p_tenant, p_eiermodul, p_formaal, 'application/zip',
-            p_maks_bytes, v_jti, pg_catalog.now() + interval '1 hour')
+            p_maks_bytes, v_jti, p_idempotensnokkel,
+            pg_catalog.now() + interval '1 hour')
+    ON CONFLICT ON CONSTRAINT inndata_idempotens_unik DO NOTHING
     RETURNING public.inndata_artefakt.inndata_id INTO v_id;
+    IF v_id IS NULL THEN
+        SELECT * INTO r FROM public.inndata_artefakt
+         WHERE tenant = p_tenant
+           AND idempotensnokkel = p_idempotensnokkel;
+        IF NOT FOUND THEN
+            -- Konflikten fantes, men raden er usynlig: da er tenantkonteksten
+            -- ikke den vi tror, og et stille «ny reservasjon» ville vært
+            -- verre enn en feil.
+            RAISE EXCEPTION 'reserver_inndata: idempotenskonflikt uten'
+                ' lesbar rad' USING ERRCODE = 'unique_violation';
+        END IF;
+        -- Samme nøkkel må bety samme BESTILLING (038-formen): en nøkkel
+        -- gjenbrukt for en annen kombinasjon er en konflikt, ikke et
+        -- gjenspill. I v1 finnes bare én lovlig kombinasjon, så dette er
+        -- en vakt for kontraktsendringen som utvider settet — ikke pynt.
+        IF r.eiermodul IS DISTINCT FROM p_eiermodul
+           OR r.formaal IS DISTINCT FROM p_formaal
+           OR r.maks_bytes IS DISTINCT FROM p_maks_bytes THEN
+            RAISE EXCEPTION 'reserver_inndata: nøkkelen er brukt for en'
+                ' ANNEN reservasjon (%/%/%)',
+                r.eiermodul, r.formaal, r.maks_bytes
+                USING ERRCODE = 'unique_violation';
+        END IF;
+        -- Gjenspill: samme svar som første gang. Reservasjonen kan i
+        -- mellomtiden ha blitt `lastet` eller `bundet` — referansen og
+        -- jti-en er like fullt de samme, og det er nettopp DEM klienten
+        -- mistet. Å utstede en ny her ville vært å svare noe annet på den
+        -- samme forespørselen.
+        v_id := r.inndata_id; v_jti := r.reservasjon_jti;
+    END IF;
     inndata_id := v_id; reservasjon_jti := v_jti;
     RETURN NEXT;
 END $$;
@@ -382,12 +444,12 @@ BEGIN
      WHERE tenant = p_tenant AND inndata_id = p_inndata_id;
 END $$;
 
-REVOKE ALL ON FUNCTION reserver_inndata(TEXT, TEXT, TEXT, BIGINT)
+REVOKE ALL ON FUNCTION reserver_inndata(TEXT, TEXT, TEXT, BIGINT, TEXT)
     FROM PUBLIC;
 REVOKE ALL ON FUNCTION registrer_inndata_lastet(TEXT, TEXT, BIGINT, TEXT,
     TEXT, BYTEA, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION bind_inndata(TEXT, UUID, BIGINT, TEXT) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION reserver_inndata(TEXT, TEXT, TEXT, BIGINT)
+GRANT EXECUTE ON FUNCTION reserver_inndata(TEXT, TEXT, TEXT, BIGINT, TEXT)
     TO disponit;
 GRANT EXECUTE ON FUNCTION registrer_inndata_lastet(TEXT, TEXT, BIGINT,
     TEXT, TEXT, BYTEA, TEXT) TO disponit;
