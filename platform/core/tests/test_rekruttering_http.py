@@ -321,6 +321,70 @@ def test_signering_av_utdatert_listeversjon_avvises(klient):
 
 
 @pg
+def test_signering_avviser_medlemskap_som_faller_bort_underveis(klient):
+    """Cursor P2: `signer_endepunkt` mapper `InsufficientPrivilege` fra
+    056s medlemskapsport til 403 `signatar_uten_medlemskap`, men HTTP-laget
+    hadde ingen negativ test på den armen — bare scope-gatingen. DB-porten
+    er dekket i `test_m57_utsending`; det som ikke var dekket, er at
+    PRODUKSJONSVEIEN oversetter dommen i stedet for å la den escape som en
+    500.
+
+    Deaktivering FØR forespørselen når aldri hit: `sesjon.py` krever
+    `aktiv` medlemskap og svarer 401. Armen kan bare nås der Cursor peker
+    — mellom autentiseringen og signeringen — så kappløpet er testens
+    eneste vei inn, og det gjøres deterministisk med en lås i stedet for
+    med tid: deaktiveringen står UCOMMITTET, så enhver ren leser (også
+    autentiseringen) ser fortsatt et aktivt medlemskap, mens
+    `laas_godkjenner`s `FOR UPDATE` stiller seg i kø bak den. Vi commiter
+    først når forespørselen beviselig står i køen.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `except
+    psycopg.errors.InsufficientPrivilege`-armen i `signer_endepunkt` —
+    dommen blir da en 500.
+    """
+    import threading
+
+    _pid, lid, ih = _seed_prosess()
+    bid = _bruker("sjef-faller-bort", ["admin"])
+    cookie, csrf = _browsersesjon(bid)
+    svar: dict = {}
+    rev = _migrator()
+    try:
+        rev.execute("UPDATE brukermedlemskap SET aktiv=false"
+                    " WHERE tenant=%s AND bruker_id=%s", (TEN, bid))
+
+        def post():
+            svar["r"] = _post(klient, cookie, csrf,
+                              f"/v1/rekruttering/lister/{lid}/signer",
+                              {"innhold_hash": ih})
+
+        tp = threading.Thread(target=post)
+        tp.start()
+        tp.join(timeout=2)
+        assert tp.is_alive(), (
+            "forespørselen stoppet FØR medlemskapslåsen — da måler testen"
+            " noe annet enn armen den er skrevet for")
+        rev.commit()                  # deaktiveringen lander, låsen slippes
+        tp.join(timeout=10)
+        assert not tp.is_alive(), "forespørselen kom aldri ut av låskøen"
+    finally:
+        rev.rollback()
+        rev.close()
+    r = svar["r"]
+    assert r.status_code == 403, r.text
+    assert r.json()["feil"] == "signatar_uten_medlemskap"
+    # …og avvisningen SKREV INGENTING: signatur-sloten står ubrukt.
+    m = _migrator()
+    try:
+        assert m.execute(
+            "SELECT count(*) FROM utsendingssignatur WHERE tenant=%s"
+            " AND liste_id=%s", (TEN, lid)).fetchone()[0] == 0
+        m.rollback()
+    finally:
+        m.close()
+
+
+@pg
 def test_signaturstatusen_folger_serien_ikke_raden(klient):
     """Codex P2: signatur-sloten er `en_signert_versjon_per_serie` — UNIK
     på (tenant, utkast_serie), altså én per SERIE. `opprett_utsendingsliste`
