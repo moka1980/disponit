@@ -214,9 +214,10 @@ def signer_endepunkt(tjeneste, request):
     Signeringen er den irreversible handlingen i M-57, og endepunktet
     legger ingenting til kjeden: medlemskaps- og materialitetsportene bor
     i `signer_utsendingsliste` (056). Laget HER er at raden er den
-    signataren faktisk leste — serie-spissen (ingen barn i serien) OG
-    hash-ekkoet (kroppen bærer innholdshashen dialogen viste). Begge
-    svarer 409; ingen av dem skriver noe.
+    signataren faktisk leste — serie-spissen (ingen barn i serien),
+    hash-ekkoet (kroppen bærer innholdshashen dialogen viste) og at
+    kandidatdataene bak utsendelsen ikke er reapet bort. Alle svarer 409;
+    ingen av dem skriver noe.
 
     Og fullmakten: 056 låser medlemskapet, men leser med vilje ikke
     `roller` — «rolle- og scope-nivået hører til flatens egen
@@ -245,8 +246,11 @@ def signer_endepunkt(tjeneste, request):
             "       EXISTS (SELECT 1 FROM utsendingsliste b"
             "                WHERE b.tenant=l.tenant"
             "                  AND b.utkast_serie=l.utkast_serie"
-            "                  AND b.forrige_liste_id=l.liste_id)"
+            "                  AND b.forrige_liste_id=l.liste_id),"
+            "       (p.slettet_ts IS NOT NULL) AS reapet"
             "  FROM utsendingsliste l"
+            "  LEFT JOIN rekrutteringsprosess p"
+            "    ON p.tenant = l.tenant AND p.oppdrag_id = l.oppdrag_id"
             " WHERE l.tenant=%s AND l.liste_id=%s",
             (tenant, liste_id)).fetchone()
         if rad is None:
@@ -311,9 +315,26 @@ def signer_endepunkt(tjeneste, request):
         # only`), så radens hash kan ikke endre seg under en ekte
         # gjentakelse — den lovlige replayen bærer alltid samme hash og
         # merker ingenting til at porten er tilbake.
+        #
+        # ...OG MOTTAKERDATAENE MÅ FORTSATT FINNES (Codex P2, runde 4).
+        # `reap_kandidatdata` (057) er timerens sletting: når slettefristen
+        # løper ut settes `slettet_ts` på prosessen og kandidat- og
+        # mottakerdataene tømmes. Listeraden i 056 overlever — den er
+        # append-only — og oppslaget over spurte bare etter tenant og
+        # liste_id. En flate eller en bekreftelsesdialog som sto åpen over
+        # fristen kunne derfor signere en utsendelse hvis mottakere ikke
+        # lenger finnes: 201 på en autorisasjon uten innhold, og seriens
+        # ENE signatur-slot brent for godt. Prosessen er lesesvarets eget
+        # filter (`slettet_ts IS NULL`), så flaten viser den aldri — dette
+        # er nettopp vinduet mellom lesningen og klikket. LEFT JOIN, ikke
+        # INNER: en 056-liste trenger ikke ha en 057-prosess bak seg, og en
+        # liste uten prosess skal dømmes som før; `prosess_en_per_oppdrag`
+        # (057) holder treffet på høyst én rad.
         replay = _fullfort_replay(conn, tenant, nokkel, liste_id, bid)
         if not replay and rad[3]:
             raise _Avbrudd(_feil("liste_utdatert", rid, 409))
+        if not replay and rad[4]:
+            raise _Avbrudd(_feil("kandidatdata_slettet", rid, 409))
         if rad[0] != kropp["innhold_hash"]:
             raise _Avbrudd(_feil("innhold_endret", rid, 409))
         # FULLMAKTEN MÅLES PÅ NYTT UNDER LÅSEN (Codex P1, runde 3).

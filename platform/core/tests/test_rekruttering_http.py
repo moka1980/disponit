@@ -156,6 +156,24 @@ def _seed_prosess():
         m.close()
 
 
+def _reap(prosess_id: str):
+    """Timerens sletting, den EKTE veien (057): lukk prosessen med en
+    lukketid som alt ligger forbi slettefristen, og la
+    `reap_kandidatdata` tømme de seks lagrene og merke ankeret
+    `slettet_ts`. Ingen håndsatt kolonne — radvakten ville uansett avvist
+    et merke satt mens payload sto igjen."""
+    m = _migrator()
+    try:
+        m.execute("SELECT lukk_rekrutteringsprosess(%s,%s,"
+                  " now() - interval '91 days')", (TEN, prosess_id))
+        m.commit()
+        reapet = m.execute("SELECT * FROM reap_kandidatdata(50)").fetchall()
+        m.commit()
+        assert prosess_id in [str(r[1]) for r in reapet], reapet
+    finally:
+        m.close()
+
+
 def _ny_versjon(liste_id: str):
     """En NY versjon i samme utkast_serie: serien redigeres videre, og
     `liste_id` blir spissens forelder. -> (barn_liste_id, barn_hash)."""
@@ -433,6 +451,39 @@ def test_replay_overlever_at_serien_ble_redigert_videre(klient):
                   {"innhold_hash": rot_hash})
     assert fersk.status_code == 409, fersk.text
     assert fersk.json()["feil"] == "liste_utdatert"
+
+
+@pg
+def test_signering_avvises_nar_kandidatdata_er_reapet(klient):
+    """Codex P2 (runde 4): `reap_kandidatdata` (057) tømmer kandidat- og
+    mottakerdataene og merker prosessen `slettet_ts` når slettefristen
+    løper ut. Listeraden i 056 overlever — den er append-only — og
+    oppslaget i signeringen spurte bare etter tenant og liste_id. En flate
+    eller en bekreftelsesdialog som sto åpen over fristen kunne derfor
+    autorisere en utsendelse hvis mottakere ikke lenger finnes, og brenne
+    seriens ENE signatur-slot på den.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `kandidatdata_slettet`-porten (og
+    dermed `reapet`-leddet i oppslaget).
+    """
+    pid, rot, rot_hash = _seed_prosess()
+    bid = _bruker("sjef-reapet", ["admin"])
+    cookie, csrf = _browsersesjon(bid)
+    _reap(pid)
+    r = _post(klient, cookie, csrf,
+              f"/v1/rekruttering/lister/{rot}/signer",
+              {"innhold_hash": rot_hash})
+    assert r.status_code == 409, r.text
+    assert r.json()["feil"] == "kandidatdata_slettet"
+    # …og avvisningen SKREV INGENTING: signatur-sloten står ubrukt.
+    m = _migrator()
+    try:
+        assert m.execute(
+            "SELECT count(*) FROM utsendingssignatur WHERE tenant=%s"
+            " AND liste_id=%s", (TEN, rot)).fetchone()[0] == 0
+        m.rollback()
+    finally:
+        m.close()
 
 
 @pg
