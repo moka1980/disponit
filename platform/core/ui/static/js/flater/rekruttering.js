@@ -16,7 +16,7 @@
 // egen sannhet.
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
-import { hentJson, settRekrutteringBlinding, signerRekrutteringsliste,
+import { hentJson, signerRekrutteringsliste,
          nyIdempotensnokkel, UautorisertFeil } from "../api.js";
 import { harScope } from "../sitekart.js";
 import { DataTabell } from "../tabell.js";
@@ -62,8 +62,7 @@ export function visRekruttering(hoved, ctx) {
   // fram og tilbake både en fersk nøkkel (så en retry etter et tapt 2xx
   // ble en NY operasjon serveren ikke kan replaye) og en levende
   // «Signer»-knapp på en liste som alt var sendt. Begge holdes derfor her.
-  const okt = { signeringsnokler: new Map(), signerte: new Set(),
-    blindingsnokler: new Map() };
+  const okt = { signeringsnokler: new Map(), signerte: new Set() };
   medStatus(hoved, ctx,
     () => hentJson("/v1/rekruttering/prosesser"),
     (data) => tegn(hoved, ctx, data, okt));
@@ -295,21 +294,41 @@ function tegn(hoved, ctx, data, okt, valgtId) {
       range, visning));
   }
 
-  // Blindingsbryteren: PÅ er standard. AVSKRUING åpner alertdialog med
-  // påkrevd begrunnelse — valget auditeres på serveren (§6).
+  // BLINDINGEN ER EN TILSTAND HER, IKKE ET VALG (Codex P2, runde 4).
+  // Bryteren sto handlingsklar for enhver administrator, og etiketten
+  // lovte at valget «loggføres med hvem, når og hvorfor» — men
+  // `blinding_endepunkt` autentiserer og svarer så en KODET avvisning
+  // (409 `blinding_avskruing_krever_159`) uten å se på prosessen og uten
+  // å skrive et eneste spor, begge veier. Hvert gyldige forsøk på å skru
+  // av — eller på igjen — endte altså i en generisk avvisning, på et
+  // løfte om revisjonsevidens.
+  //
+  // Evidensdesignet for avskruing er #159 (K2: selvattestert avskruing er
+  // ikke evidens), og å bygge det her ville vært ny maskin i en fiksrunde
+  // (K1). Da gjelder samme svar som for «Signer og send»: løftet trekkes
+  // der det ble gitt. Bryteren står som deaktivert TILSTANDSMERKE — den
+  // viser at blindingen er på — med en merknad ved siden om at avskruing
+  // ikke er tilgjengelig ennå. Mutasjonsbenet (alertdialogen, den
+  // påkrevde begrunnelsen, idempotensnøklene, `settRekrutteringBlinding`)
+  // er tatt ut SAMMEN med løftet i stedet for å bli stående som død kode:
+  // #159 er PR-en som bringer det tilbake, med en skriving som faktisk
+  // etterlater sporet etiketten lover.
   const blindingId = "rekrut-blinding";
   const bryter = el("input", { type: "checkbox", id: blindingId });
   bryter.checked = !prosess.blinding_av;
-  // Samme scope-gate som signeringen (CodeRabbit major, første pass):
-  // en bruker uten mutasjonsscopet skal ikke engang tilbys valget —
-  // en bryter som bare kan gi 403 er et løfte flaten ikke kan holde.
-  if (!kanBestille) bryter.disabled = true;
-  // IN-FLIGHT-LÅS (Cursor P2). Blinding og signering er auditerte,
-  // henholdsvis irreversible handlinger, og uten lås kunne brukeren fyre
-  // av nummer to mens nummer én hang: to POST-er på samme valg, og
-  // bryteren som følger det svaret som tilfeldigvis kom sist. Låsen er
-  // per kontroll, ikke per flate, og løftes alltid — også ved feil, så en
-  // mislykket runde ikke etterlater en død bryter.
+  bryter.disabled = true;
+  const blindingRot = el("div", { class: "rekrut-blinding" },
+    bryter,
+    el("label", { for: blindingId,
+      text: t("ui.rekruttering.blinding_etikett") }),
+    el("p", { class: "rekrut-merknad",
+      text: t("ui.rekruttering.blinding_avskruing_utilgjengelig") }));
+
+  // IN-FLIGHT-LÅS (Cursor P2). Signeringen er irreversibel, og uten lås
+  // kunne brukeren fyre av nummer to mens nummer én hang: to POST-er på
+  // samme liste, og flaten som følger det svaret som tilfeldigvis kom
+  // sist. Låsen er per kontroll, ikke per flate, og løftes alltid — også
+  // ved feil, så en mislykket runde ikke etterlater en død knapp.
   async function laast(kontroll, arbeid) {
     if (kontroll.disabled) return;
     kontroll.disabled = true;
@@ -319,110 +338,6 @@ function tegn(hoved, ctx, data, okt, valgtId) {
       if (kanBestille && !kontroll.dataset.ferdig) kontroll.disabled = false;
     }
   }
-  // BLINDINGEN ER OGSÅ EN OPERASJON SOM MÅ KUNNE REPLAYES (Cursor P2).
-  // Signeringen fikk stabil nøkkel i forrige runde; blindingen kalte
-  // fortsatt uten `idem`, og da lager `api.js` en fersk per kall. Et tapt
-  // svar + et nytt forsøk ble derfor en NY auditert mutasjon i stedet for
-  // et replay av den forrige — to revisjonsrader for ett valg, og
-  // klienten kan ikke avgjøre om den første gikk igjennom.
-  //
-  // Nøkkelen er per HENSIKT: prosess, retning og den begrunnelsen som
-  // faktisk sendes. Retter brukeren begrunnelsen før hun prøver igjen, er
-  // det et annet revisjonsinnhold og dermed en annen operasjon. Ved
-  // definitivt svar slippes nøkkelen: neste omslag samme vei er en ny
-  // beslutning, ikke et replay av den forrige.
-  function blindingsnokkel(av, begrunnelse) {
-    const id = `${prosess.prosess_id}|${av ? 1 : 0}|${begrunnelse}`;
-    if (!okt.blindingsnokler.has(id)) {
-      okt.blindingsnokler.set(id, nyIdempotensnokkel());
-    }
-    return { id, nokkel: okt.blindingsnokler.get(id) };
-  }
-  bryter.addEventListener("change", async () => {
-    if (bryter.checked) {
-      // PÅ igjen er OGSÅ en mutasjon (CodeRabbit major: UI-tilstanden
-      // skiftet uten at serveren fikk vite det). Ingen dialog — å slå
-      // blindingen PÅ er standardtilstanden — men kallet må gå, og
-      // bryteren følger UTFALLET, aldri klikket.
-      bryter.checked = false;
-      await laast(bryter, async () => {
-        try {
-          // Begrunnelsen er REVISJONSINNHOLD, men den er også tekst
-          // koden skriver (Cursor P2 / port 32): hardkodet sto den norsk
-          // også i en engelsk UI. Av-veien får brukerens egne ord;
-          // på-veien får husets, via locale.
-          const paa = blindingsnokkel(false,
-            t("ui.rekruttering.blinding_pa_begrunnelse"));
-          await settRekrutteringBlinding(prosess.prosess_id, false,
-            t("ui.rekruttering.blinding_pa_begrunnelse"), paa.nokkel);
-          okt.blindingsnokler.delete(paa.id);
-          // MODELLEN, IKKE BARE BRYTEREN (Codex P1). `prosess` er objektet
-          // i det hentede svaret, og det svaret er alt en ny tegning har å
-          // gå på: sto `blinding_av` igjen slik serveren svarte FØR
-          // mutasjonen, kunne et prosessbytte og tilbake vise en bryter som
-          // påstår PÅ mens serveren har AV. Det er feil revisjonsbilde rett
-          // før en evaluering, og bryteren skal aldri lyve om §6-valget.
-          prosess.blinding_av = false;
-          bryter.checked = true;
-          sett(utfall, t("ui.rekruttering.blinding_pa_utfall"));
-        } catch (e) {
-          meldFeil(ctx, utfall, e);
-        }
-      });
-      return;
-    }
-    bryter.checked = true;                // står til dialogen bekrefter
-    const begrunnelse = el("textarea", { id: "blinding-begrunnelse",
-      rows: "3", required: true, "aria-required": "true" });
-    // Meldingen om manglende begrunnelse hører hjemme INNE i dialogen
-    // (Codex P2): utfallsområdet på flaten ligger bak `inert`-bakgrunnen
-    // og fokusfella mens dialogen står, så der ville brukeren verken se
-    // eller høre den.
-    const dialogfeil = el("p", { role: "alert", class: "dialog-feil" });
-    Bekreftelsesdialog({
-      rolle: "alertdialog",
-      tittel: t("ui.rekruttering.blinding_av_tittel"),
-      tekst: t("ui.rekruttering.blinding_av_tekst"),
-      detaljer: el("div", {},
-        el("label", { for: "blinding-begrunnelse",
-          text: t("ui.rekruttering.blinding_begrunnelse") }),
-        begrunnelse, dialogfeil),
-      farlig: true,
-      primarTekst: t("ui.rekruttering.blinding_av_bekreft"),
-      // Porten står FØR lukkingen: begrunnelsen er påkrevd, og et
-      // tomt felt skal kunne rettes der brukeren står.
-      valider: () => {
-        if (begrunnelse.value.trim()) {
-          begrunnelse.removeAttribute("aria-invalid");
-          dialogfeil.textContent = "";
-          return true;
-        }
-        begrunnelse.setAttribute("aria-invalid", "true");
-        dialogfeil.textContent =
-          t("ui.rekruttering.blinding_begrunnelse_mangler");
-        begrunnelse.focus();
-        return false;
-      },
-      paaPrimar: () => laast(bryter, async () => {
-        try {
-          const av = blindingsnokkel(true, begrunnelse.value.trim());
-          await settRekrutteringBlinding(prosess.prosess_id, true,
-            begrunnelse.value.trim(), av.nokkel);
-          okt.blindingsnokler.delete(av.id);
-          prosess.blinding_av = true;      // se PÅ-veien over
-          bryter.checked = false;
-          sett(utfall, t("ui.rekruttering.blinding_av_utfall"));
-        } catch (e) {
-          meldFeil(ctx, utfall, e);
-        }
-      }),
-    });
-  });
-  const blindingRot = el("div", { class: "rekrut-blinding" },
-    bryter,
-    el("label", { for: blindingId,
-      text: t("ui.rekruttering.blinding_etikett") }));
-
   // Innstilte lister: signering er den irreversible handlingen, og
   // dialogen sier nøyaktig hva som skjer (§8) — antall, listetype,
   // hashens kortform, «Kan ikke angres».

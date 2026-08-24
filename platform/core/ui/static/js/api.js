@@ -148,13 +148,15 @@ async function _muter(sti, metode, kropp, idempotensnokkel) {
 // genereres en fersk (for engangs-klikk der duplikat ikke er en risiko).
 export const hentMaler = () => hentJson("/v1/policymaler");
 
-// M-57 (§6/§8): blinding av/på er en AUDITERT handling — begrunnelsen er
-// del av kroppen, og serveren skriver revisjonsraden. Signeringen binder
-// INNHOLDSHASHEN, aldri bare listen: signataren skal signere nøyaktig de
-// bytene dialogen viste kortformen av (056s signer_utsendingsliste-form).
-export const settRekrutteringBlinding = (prosessId, av, begrunnelse, idem) =>
-  _muter(`/v1/rekruttering/prosesser/${encodeURIComponent(prosessId)}/blinding`,
-         "POST", { av, begrunnelse }, idem || nyIdempotensnokkel());
+// M-57 (§8): signeringen binder INNHOLDSHASHEN, aldri bare listen —
+// signataren skal signere nøyaktig de bytene dialogen viste kortformen av
+// (056s `signer_utsendingsliste`-form).
+//
+// Blindingsklienten er tatt ut igjen (Codex P2, runde 4): avskruing er en
+// auditert handling, og `blinding_endepunkt` kan ikke skrive revisjonsraden
+// før #159 har evidensdesignet — den svarer en kodet 409 begge veier. En
+// klientfunksjon for en mutasjon ingen kan utføre er død kode; #159 er
+// PR-en som bringer den tilbake sammen med skrivingen.
 export const signerRekrutteringsliste = (listeId, innholdHash, idem) =>
   _muter(`/v1/rekruttering/lister/${encodeURIComponent(listeId)}/signer`,
          "POST", { innhold_hash: innholdHash }, idem || nyIdempotensnokkel());
