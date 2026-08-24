@@ -138,6 +138,16 @@ server {
     # callback-redaksjonen (v2 §5): ruten får et eget log_format der stien
     # er en KONSTANT etikett, ikke en variabel.
     #
+    # Codex P2 (runde 5): redaksjonen over tok bare `access_log`. Ruten
+    # arvet serverens `error_log ... warn`, og nginx' egen 413-linje
+    # («client intended to send too large body») skrives på `error`-nivå
+    # MED hele request-linja — altså jti-en, i klartekst, i den delte
+    # `disponit-error.log`. Verre enn access-lekkasjen: den utløses av en
+    # forespørsel som ble AVVIST, så reservasjonen er fortsatt ubrukt når
+    # den lander i loggen. Samme grep som callbacken (v2 §5): egen fil og
+    # `crit`, som ligger OVER `error` og dermed ikke skriver linja i det
+    # hele tatt.
+    #
     # Codex P1 (runde 5): «auth først, kropp etterpå» i `opplast_endepunkt`
     # gjelder BARE appen så lenge ingressen bufrer. Med nginx' default
     # `proxy_request_buffering on` leses hele kroppen inn før noe sendes
@@ -154,6 +164,7 @@ server {
         client_max_body_size 65536k;    # = INNDATA_MAKS_FYSISK (64 MiB)
         proxy_request_buffering off;
         access_log /var/log/nginx/disponit-access.log disponit_opplast;
+        error_log  /var/log/nginx/disponit-opplast-error.log crit;
         limit_req zone=disponit_general burst=100 nodelay;
         limit_req_status 429;
         proxy_pass http://unix:/run/disponit/api.sock;

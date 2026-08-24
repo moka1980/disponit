@@ -273,6 +273,17 @@ def test_nginx_inndataruten_slipper_bunten_gjennom_og_redigerer_jtien():
         assert not re.search(r"\$%s\b" % variabel, fmt.group(1)), (
             f"{navn} inneholder ${variabel} — jti-en havner i loggen likevel")
 
+    # Runde 5: FEIL-loggen bærer den samme stien. nginx skriver sin egen
+    # 413-linje på `error`-nivå med hele request-linja, så en arvet
+    # `error_log ... warn` gir jti-en bort selv om access-formatet er
+    # redigert — og forespørselen som utløser den ble AVVIST, altså er
+    # reservasjonen fortsatt ubrukt. `crit` ligger over `error`.
+    m = re.search(r"^\s*error_log\s+\S+\s+(\w+);", krop, re.M)
+    assert m, "opplastingsruten arver serverens error_log og logger jti-en"
+    assert m.group(1) == "crit", (
+        f"error_log-nivået er {m.group(1)}; 413-linja med jti-en skrives "
+        f"på error-nivå og må ligge under terskelen")
+
 
 # ---------------------------------------------------------------------------
 # ACME-tilstandsmaskinen: rekkefølge og idempotens (v2 §3)
