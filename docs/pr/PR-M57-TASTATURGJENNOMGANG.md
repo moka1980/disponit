@@ -2,13 +2,24 @@
 
 ## Hvor gjennomgangen faktisk er gjort
 
-**Flaten står IKKE i sitekartet.** Rekrutteringsruten er bevisst tatt ut
-til serverendepunktene `/v1/rekruttering/*` finnes (Codex P1 / Cursor P1,
-fiksrunde 1), og `tillatteFlater` holder også en håndskrevet
-`#/rekruttering` ute. Det finnes altså ingen menyvei til flaten i dag, og
-dokumentet skal ikke påstå en.
+**Flaten står i sitekartet fra og med utførelsesarmen (#176).** Ruten var
+bevisst tatt ut til serverendepunktene `/v1/rekruttering/*` fantes (Codex
+P1 / Cursor P1, fiksrunde 1). De er registrert i `api/app.py` nå, og
+oppføringen `{ nokkel: "rekruttering", scope: "decisions:read" }` er
+derfor tilbake i `BASISRUTER` — i samme deployerbare endring, som
+kommentaren lovet.
 
-Gjennomgangen er derfor gjort på **flatens egen modul i jsdom-brettet**
+Menyveien er dermed gåbar, og rad 1 under er endret fra UTESTÅENDE til
+PORTET. Den er portet på det som faktisk er MÅLT, og ikke mer:
+`sitekart.test.js` porterer begge leddene som gjorde adressen uåpnbar —
+at `byggRuter` gir en leseøkt ruten, og at `tillatteFlater` slipper
+flaten gjennom for den økten (uten begge lander `#/rekruttering` på
+reserveflaten Oversikt). Selve fokusflyttingen inn i hovedinnholdet er
+ruterens generelle atferd (`ruter.js`, `hoved.focus()` ved hver
+navigasjon som ikke er første tegning) — den er delt av samtlige ruter og
+hører ikke denne flaten til.
+
+Resten av gjennomgangen er gjort på **flatens egen modul i jsdom-brettet**
 (`platform/core/ui/test/rekruttering.test.js`), der `visRekruttering`
 monteres direkte i et `<main id="hovedinnhold">` med stubbet transport —
 samme tre som en økt ville fått, uten ruteren foran. Flytene under er
@@ -17,13 +28,14 @@ ryker, **KOMPONENTPORTET** at mekanismen er portet der den bor (dialogens
 egne tester), og **UTESTÅENDE** at flyten hører til ruteren og først kan
 gjennomgås når ruten er inne.
 
-Sist gjennomgått: 23. august 2026, fiksrunde 3 (HEAD på `pr-m57-cp4-v2`).
+Sist gjennomgått: 24. august 2026, Cursor-fiksrunde 1 på #176 (HEAD på
+`m57-utforelsesarm`).
 
 ## Flytene
 
 | # | Flyt | Tastene | Forventet — og observert | Status |
 |---|---|---|---|---|
-| 1 | Nå flaten | `Tab` fra menyen → «Rekruttering», `Enter` | Fokus lander i hovedinnholdet; overskriften leses | **UTESTÅENDE** — ruten står ikke i sitekartet (`sitekart.test.js` porterer at den er ute). Gjennomgås når serverarmen lander |
+| 1 | Nå flaten | `Tab` fra menyen → «Rekruttering», `Enter` | Menyoppføringen finnes for en `decisions:read`-økt, og `#/rekruttering` rendrer rekrutteringsflaten — ikke reserveflaten. Fokus lander i hovedinnholdet; overskriften leses | **PORTET** — `sitekart.test.js`: «byggRuter: hver rute krever scopet API-et bak flaten krever» asserterer både at ruten er i `byggRuter` for leseøkten og at `tillatteFlater` slipper flaten gjennom. NB: raden sto som UTESTÅENDE fram til utførelsesarmen (#176) — ruten var ute mens `/v1/rekruttering/*` ikke fantes, og flyten var da umulig å gå. Fokusflyttingen selv er ruterens generelle atferd (`ruter.js`), delt av alle ruter |
 | 2 | Endre **vekt** | `Tab` til range-kontrollen, `←`/`→` | Synlig verdi (output) følger; tabellen re-rangeres; ny rekkefølge annonseres i `aria-live="polite"` uten fokusflytting | **PORTET** — «vektendring uten mus re-rangerer og kunngjøres» |
 | 3 | **Sortere** tabellen | `Tab` til kolonneknappen «Poeng», `Enter` | `aria-sort` veksler ascending/descending; rekkefølgen snur | **KOMPONENTPORTET** — sorteringsknappen og `aria-sort` er `DataTabell`s egne tester; flaten porterer utgangssorteringen |
 | 4 | Kandidat**detaljer** | `Tab` til «Detaljer», `Enter` | Dialog med fokusfelle; `Tab` sirkler inne i panelet; `Esc` lukker og fokus RETURNERES til «Detaljer»-knappen | **PORTET** — «`Detaljer` åpner panelet med funn, sitat og spørsmål». Fokusfella og `Esc` er `Detaljpanel`/`aapneDialog` sine egne tester. NB: knappen var død fram til fiksrunde 2 (radhandlingen ble sendt som `utfor`, ikke `paaKlikk`); punktet sto som «observert» i dette dokumentet uten å være det. Nå er den portet, ikke påstått |

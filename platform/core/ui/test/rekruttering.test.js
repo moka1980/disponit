@@ -847,22 +847,34 @@ test("Rekruttering: ingen hardkodet visningstekst, og tastaturgjennomgangen er d
     assert.ok(dok.toLowerCase().includes(flyt),
       `tastaturgjennomgangen dekker ikke ${flyt}-flyten`);
   }
-  // …OG DEN PÅSTÅR IKKE MER ENN DEN MÅLTE (Cursor P2). Doket beskrev
-  // «`Tab` fra menyen → Rekruttering» som observert, mens `sitekart`
-  // bevisst holder ruten ute til serverarmen finnes: flyten var umulig å
-  // gå. En gjennomgang som sier «observert» om noe ingen kan gjøre, er
-  // falsk evidens for port 32 — verre enn ingen gjennomgang, fordi den
-  // ser ut som dekning. Kravet henger på rutetabellen selv, ikke på en
-  // liste her, så det løftes av seg selv den dagen ruten kommer inn.
+  // …OG DEN PÅSTÅR VERKEN MER ELLER MINDRE ENN DEN MÅLTE (Cursor P2, og
+  // P2 igjen på #176). Doket beskrev en gang «`Tab` fra menyen →
+  // Rekruttering» som observert mens `sitekart` holdt ruten ute: flyten
+  // var umulig å gå, og «observert» om noe ingen kan gjøre er falsk
+  // evidens for port 32 — verre enn ingen gjennomgang, fordi det ser ut
+  // som dekning. Nå er ruten inne, og doket skal si DET.
   //
-  // MUTASJONEN SOM DREPER DENNE: sett menyraden tilbake som observert.
+  // Kravet henger på rutetabellen selv, ikke på en liste her, så det
+  // følger `byggRuter` i BEGGE retninger: rulles ruten ut igjen uten at
+  // doket følger med, faller testen — og motsatt.
+  //
+  // MUTASJONEN SOM DREPER DENNE: la doket stå på UTESTÅENDE mens ruten
+  // er inne (eller sett menyraden tilbake som observert etter en
+  // utrulling).
   const ruter = byggRuter({ scopes: ["decisions:read", "exceptions:read",
     "policy:read", "bestilling:opprett", "domains:adjudicate"] })
     .map((r) => r.nokkel);
-  if (!ruter.includes("rekruttering")) {
+  const menyraden = dok.split("\n").find((l) => /^\| 1 \|/.test(l));
+  assert.ok(menyraden, "menyflyten (rad 1) står ikke i flyttabellen");
+  if (ruter.includes("rekruttering")) {
+    assert.ok(/\*\*PORTET\*\*/.test(menyraden),
+      "ruten er inne, men doket holder menyflyten som ikke gjennomgått");
+    assert.ok(!/ikke i sitekartet/i.test(dok),
+      "doket påstår fortsatt at ruten er ute av sitekartet");
+  } else {
     assert.ok(/ikke i sitekartet/i.test(dok),
       "doket sier ikke fra om at ruten er ute, men beskriver menyveien");
-    assert.ok(dok.includes("UTESTÅENDE"),
+    assert.ok(/\*\*UTESTÅENDE\*\*/.test(menyraden),
       "menyflyten står som gjennomgått mens ruten er stengt");
   }
 });
