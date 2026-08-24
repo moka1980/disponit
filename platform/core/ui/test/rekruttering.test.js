@@ -40,7 +40,11 @@ const HASH = "a1b2c3d4e5f60718293a4b5c6d7e8f90"
 function prosess() {
   return { prosesser: [{
     prosess_id: "p-1", blinding_av: false,
-    vekter: { drift: 3, sky: 2 },
+    // `vekter_kilde` står i fixturen fordi serveren ALLTID sender det:
+    // «evalueringsartefakt» når artefaktet bar vektene, «standard» når
+    // huset måtte finne på dem. De øvrige testene handler om noe annet
+    // og skal ikke tegne kilde-merknaden.
+    vekter: { drift: 3, sky: 2 }, vekter_kilde: "evalueringsartefakt",
     kandidater: [
       { kandidat_id: "K-2", oppfylt: { drift: true, sky: false },
         status: "vurderes",
@@ -325,6 +329,42 @@ test("Rekruttering: uten mutasjonsscope er blindingsbryteren deaktivert", async 
   const signer = [...hoved.querySelectorAll("button")]
     .find((b) => b.textContent === t("ui.rekruttering.signer_knapp"));
   assert.ok(signer.disabled, "signeringen var alt gatet — den skal stå");
+});
+
+test("Rekruttering: oppfunne vekter sier fra — begge veier", async () => {
+  // Codex P1: er vektene husets reserve (3 per krav) og ikke
+  // evalueringens, viser tabellen en rangering evalueringen aldri
+  // produserte. Serveren har hele tiden sagt det i `vekter_kilde`;
+  // flaten leste ikke feltet, så substitusjonen var STILLE.
+  //
+  // Målt BEGGE veier, ellers er testen bare en påstand om at en <p>
+  // finnes: merknaden skal stå når kilden er reserven, og den skal IKKE
+  // stå når vektene faktisk er artefaktets — en merknad som alltid står,
+  // sier ingenting.
+  //
+  // MUTASJONEN SOM DREPER DENNE: gjør betingelsen i `flater/
+  // rekruttering.js` konstant (alltid eller aldri).
+  const merknad = (h) => [...h.querySelectorAll("fieldset.rekrut-vekter p")]
+    .map((p) => p.textContent);
+
+  const std = prosess();
+  std.prosesser[0].vekter_kilde = "standard";
+  SVAR = { "/v1/rekruttering/prosesser": std };
+  const h1 = nyHoved();
+  visRekruttering(h1, ctx());
+  await vent(() => h1.querySelector("table"));
+  assert.deepEqual(merknad(h1), [t("ui.rekruttering.vekter_standard")],
+    "husets reservevekter ble presentert uten et ord om opphavet");
+  // …og teksten er locale-båret, aldri en rå nøkkel (RUTINER §5).
+  assert.ok(!merknad(h1)[0].startsWith("ui."),
+    "merknaden falt til reservenøkkelen — locale mangler");
+
+  SVAR = { "/v1/rekruttering/prosesser": prosess() };  // evalueringsartefakt
+  const h2 = nyHoved();
+  visRekruttering(h2, ctx());
+  await vent(() => h2.querySelector("table"));
+  assert.deepEqual(merknad(h2), [],
+    "evalueringens EGNE vekter ble stemplet som oppfunne");
 });
 
 test("Rekruttering: serverens «signert» dreper knappen i en FERSK økt", async () => {

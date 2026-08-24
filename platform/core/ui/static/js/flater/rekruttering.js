@@ -240,6 +240,25 @@ function tegn(hoved, ctx, data, okt, valgtId) {
   }, VEKT_MAKS_STANDARD);
   const vektRot = el("fieldset", { class: "rekrut-vekter" },
     el("legend", { text: t("ui.rekruttering.vekter_tittel") }));
+  // OPPHAVET STÅR PÅ SKJERMEN, IKKE BARE I SVARET (Codex P1). Serveren
+  // har hele tiden sagt sannheten i `vekter_kilde`: enten er vektene
+  // evalueringsartefaktets egne, eller de er husets reserve (3 per krav,
+  // `api/rekruttering.py`). Flaten leste aldri feltet. For en
+  // stillingsprofil med UJEVNE vekter ble hvert krav dermed stilt til 3,
+  // og tabellen viste en rangering som ikke er den evalueringen faktisk
+  // produserte — uten et eneste tegn på at tallene var oppfunnet.
+  //
+  // Vektene ER en brukerkontroll her (re-rangeringen er rent klientarbeid
+  // på nedbrytningen), så reserven kan bli stående som UTGANGSPUNKT. Det
+  // som ikke kan bli stående, er stillheten. Fail-safe: merknaden vises
+  // med mindre svaret POSITIVT sier at vektene kom fra artefaktet.
+  //
+  // Den VARIGE kilden er stillingsprofilen, og å lagre den hører til
+  // #162-kjeden — ny maskin (lager + skriver), ikke en fiksrunde (K1).
+  if (prosess.vekter_kilde !== "evalueringsartefakt") {
+    vektRot.append(el("p", { class: "rekrut-vekter-kilde",
+      text: t("ui.rekruttering.vekter_standard") }));
+  }
   for (const [krav, verdi] of Object.entries(vekter)) {
     const id = `vekt-${krav}`;
     const visning = el("output", { for: id, text: String(verdi) });

@@ -1061,6 +1061,7 @@
   "ui.rekruttering.funn.uklar_tidslinje": "Unclear timeline",
   "ui.rekruttering.funn.utenfor_soknadsfrist": "Outside the application deadline",
   "ui.rekruttering.vekter_tittel": "Weights per requirement",
+  "ui.rekruttering.vekter_standard": "The weights below are the house defaults, not the role profile's: the evaluation did not record its own. The order is therefore computed from these weights, not from the evaluation's.",
   "ui.rekruttering.krav.drift": "Operations",
   "ui.rekruttering.krav.sky": "Cloud",
   "ui.rekruttering.krav.skytjenester": "Cloud services",

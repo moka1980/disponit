@@ -19,7 +19,10 @@ Vektene: den varige kilden er stillingsprofilen (#162-kjeden). Til den
 finnes leses vektene av evalueringsartefaktets `vekter`-felt (skrevet av
 kjøringen), med fall til vekt 3 per krav — flaten regner poeng
 klientsidig av nedbrytningen uansett, og serveren lyver aldri om
-opphavet: feltet `vekter_kilde` sier hvilken vei som ga tallene.
+opphavet: feltet `vekter_kilde` sier hvilken vei som ga tallene. Og
+flaten SIER det nå videre (Codex P1): reserven er et utgangspunkt
+brukeren kan skyve på, aldri en stille påstand om at rekkefølgen er
+evalueringens.
 """
 from __future__ import annotations
 
