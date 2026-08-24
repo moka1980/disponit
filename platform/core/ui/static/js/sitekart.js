@@ -114,20 +114,21 @@ const BASISRUTER = [
   // sak for fanene, og den avgjøres inne på flaten (`visWcagKontroll`), der
   // det finnes noe å skjule — en rute kan bare være der eller ikke.
   { nokkel: "wcagkontroll", scope: "decisions:read" },
-  // M-57 (§8): RUTEN STÅR IKKE HER ENNÅ, OG DET ER MED VILJE (Codex P1 /
-  // Cursor P1). Flaten (`flater/rekruttering.js`) leser
-  // `GET /v1/rekruttering/prosesser` og muterer mot `…/blinding` og
-  // `…/lister/{id}/signer`, og ingen av de tre finnes som `Route` i
-  // `api/app.py`. En menyoppføring for hver økt med `decisions:read`
-  // ville derfor sendt brukeren rett i feilflaten — og «Signer» ville
-  // vært teater på en irreversibel handling.
+  // M-57 (§8): ruten sto med VILJE ute mens flaten leste endepunkter som
+  // ikke fantes (Codex P1 / Cursor P1) — en menyoppføring hadde da sendt
+  // hver økt med `decisions:read` rett i feilflaten, og «Signer» ville
+  // vært teater på en irreversibel handling. Betingelsen den ventet på er
+  // innfridd i SAMME deployerbare endring som denne linjen: `api/app.py`
+  // registrerer nå `GET /v1/rekruttering/prosesser`,
+  // `POST …/prosesser/{id}/blinding` og `POST …/lister/{id}/signer`.
   //
-  // Serverarmen er ny maskin og hører til utførelsesarcen (#162-kjeden),
-  // ikke til en fiksrunde (RUTINER §9 K1). Oppføringen legges inn igjen
-  // i samme deployerbare endring som endepunktene, med scopet flatens
-  // svakeste ledd krever (`decisions:read`; mutasjonene er alt gatet
-  // inne i flaten på `bestilling:opprett`). Uten rute holder
-  // `tillatteFlater` også en håndskrevet `#/rekruttering` ute.
+  // Scopet er flatens SVAKESTE ledd, samme regel som wcagkontroll over:
+  // lesingen krever `decisions:read`, og mutasjonene er alt gatet både
+  // inne i flaten og i `RUTESCOPE` på `bestilling:opprett`. Uten
+  // oppføring her holder `tillatteFlater` også en håndskrevet
+  // `#/rekruttering` ute — og demo-stien (`seed-rekruttering-demo.py`)
+  // ber eier åpne nettopp den adressen.
+  { nokkel: "rekruttering", scope: "decisions:read" },
   // 041: adjudikatorkøen viser sakenes PARTER på tvers av tenanter — den
   // finnes derfor KUN for adjudikasjonsscopet, aldri for en leserolle.
   { nokkel: "adjudikator", scope: "domains:adjudicate" },

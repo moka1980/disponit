@@ -8,9 +8,10 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { NB, alvorligeBrudd, beskrivBrudd, nyttBrett } from "./hjelp.js";
-import { settI18nForTest, t } from "../static/js/i18n.js";
+import { harNokkel, settI18nForTest, t } from "../static/js/i18n.js";
 import { visRekruttering } from "../static/js/flater/rekruttering.js";
 import { byggRuter } from "../static/js/sitekart.js";
+import { Tidspunkt } from "../static/js/komponenter.js";
 
 settI18nForTest(NB, "nb");
 
@@ -40,7 +41,16 @@ const HASH = "a1b2c3d4e5f60718293a4b5c6d7e8f90"
 function prosess() {
   return { prosesser: [{
     prosess_id: "p-1", blinding_av: false,
-    vekter: { drift: 3, sky: 2 },
+    // `vekter_kilde` står i fixturen fordi serveren ALLTID sender det:
+    // «evalueringsartefakt» når artefaktet bar vektene, «standard» når
+    // huset måtte finne på dem. De øvrige testene handler om noe annet
+    // og skal ikke tegne kilde-merknaden.
+    vekter: { drift: 3, sky: 2 }, vekter_kilde: "evalueringsartefakt",
+    // Samme grunn for `evaluering_status`: serveren sender ALLTID
+    // oppdragets status, og «utfort» er den ferdige evalueringen de
+    // øvrige testene handler om — de skal ikke tegne ufullstendig-
+    // merknaden.
+    evaluering_status: "utfort",
     kandidater: [
       { kandidat_id: "K-2", oppfylt: { drift: true, sky: false },
         status: "vurderes",
@@ -150,6 +160,32 @@ test("Rekruttering: vektendring uten mus re-rangerer og kunngjøres (port 30)", 
   assert.equal(visning.textContent, "0");
 });
 
+test("Rekruttering: vektkontrollens kravnavn bæres av locale, ikke av rå id (port 32)", async () => {
+  // Cursor P2: `t("ui.rekruttering.krav.<krav>", krav)` faller til reserven
+  // — den RÅ kravnøkkelen — når locale mangler oppføringen, og en
+  // skyver merket «skytjenester» er hardkodet visningstekst i praksis
+  // (RUTINER §5). Kravene demoen og seeden faktisk viser skal ha tekst i
+  // BEGGE språkene.
+  //
+  // Listen står her og ikke lest ut av `seed-rekruttering-demo.py`: en
+  // JS-test som hand-parser Python for en dict er nettopp den fremmede
+  // grammatikken K4/SP-13 forbyr. Endres seedens VEKTER, feiler denne.
+  const en = JSON.parse(readFileSync(join(ROT, "locales", "en.json"), "utf-8"));
+  for (const krav of ["drift", "sky", "skytjenester", "norsk"]) {
+    const n = `ui.rekruttering.krav.${krav}`;
+    assert.ok(harNokkel(n), `nb mangler ${n}`);
+    assert.ok(typeof en[n] === "string" && en[n].length, `en mangler ${n}`);
+  }
+  // …og etiketten i DOM-en er teksten, ikke reserven.
+  const hoved = await tegnet();
+  const etikett = hoved.querySelector('label[for="vekt-skytjenester"]')
+    || hoved.querySelector('label[for="vekt-sky"]');
+  assert.equal(etikett.textContent, t("ui.rekruttering.krav.sky"));
+  assert.notEqual(etikett.textContent, "sky");
+  // MUTASJONEN SOM DREPER DENNE: fjern nøkkelen fra nb.json — da blir
+  // etiketten «sky», og linjen over faller.
+});
+
 test("Rekruttering: brukerens sortering overlever en vektendring (port 30)", async () => {
   // Codex P2: vektendringen KREVER en ny tabell, og hver nye `DataTabell`
   // fikk «poeng, synkende» hardkodet. Vendte brukeren kolonnen stigende for
@@ -185,120 +221,171 @@ test("Rekruttering: brukerens sortering overlever en vektendring (port 30)", asy
     .includes("K-2"), "kunngjøringen navnga en annen rad enn den øverste");
 });
 
-test("Rekruttering: avskruing av blinding krever alertdialog med begrunnelse", async () => {
-  const hoved = await tegnet();
-  const bryter = hoved.querySelector("#rekrut-blinding");
-  assert.equal(bryter.checked, true, "blinding er standard PÅ");
-  bryter.checked = false;
-  bryter.dispatchEvent(new window.Event("change", { bubbles: true }));
-  const dialog = document.querySelector('[role="alertdialog"]');
-  assert.ok(dialog, "alertdialog mangler ved avskruing");
-  assert.equal(bryter.checked, true,
-    "bryteren skal stå PÅ til dialogen bekrefter");
-  // ÅPNINGSFOKUSET ER MÅLT, IKKE PÅSTÅTT (Codex P2). Tastaturdoket sa at
-  // dialogen åpner med fokus i første FELT; `aapneDialog` fokuserer
-  // `fokuserbare(dialog)[0]`, og det er lukkeknappen i dialogtoppen.
-  // Doket er evidens for port 32 og kan ikke love noe implementasjonen
-  // ikke gjør, så her står det som faktisk skjer — og testen holder doket
-  // og koden sammen: endres åpningsfokuset, feiler denne, og raden i
-  // doket må skrives om i samme runde.
-  assert.equal(document.activeElement,
-    dialog.querySelector(".dialog-lukk"),
-    "åpningsfokuset er ikke lukkeknappen — oppdater tastaturdoket");
-  // Bekreft uten begrunnelse → avvist lokalt, ingen POST — og dialogen
-  // BLIR STÅENDE (Codex P2): meldingen om det manglende feltet er verdiløs
-  // hvis feltet forsvant idet den kom, og brukeren måtte da skru bryteren
-  // om igjen for å rette seg.
-  const primar = [...dialog.querySelectorAll("button")]
-    .find((b) => b.textContent === t("ui.rekruttering.blinding_av_bekreft"));
-  primar.click();
-  await vent(() => KALL.some((k) => k.metode === "POST"), 5);
-  assert.ok(!KALL.some((k) => k.metode === "POST"),
-    "POST gikk uten begrunnelse");
-  assert.ok(document.body.contains(dialog),
-    "dialogen lukket seg, og feilmeldingen gjaldt et felt som var borte");
-  assert.equal(dialog.querySelector("textarea").getAttribute("aria-invalid"),
-    "true");
-  assert.ok([...dialog.querySelectorAll('[role="alert"]')]
-    .some((n) => n.textContent ===
-      t("ui.rekruttering.blinding_begrunnelse_mangler")),
-    "feilen ble aldri meldt inne i dialogen");
-  // Med begrunnelse i SAMME dialog → POST med begrunnelsen i kroppen.
-  const dialog2 = dialog;
-  dialog2.querySelector("textarea").value = "intern rekruttering";
-  SVAR["/v1/rekruttering/prosesser/p-1/blinding"] = { ok: true };
-  [...dialog2.querySelectorAll("button")]
-    .find((b) => b.textContent === t("ui.rekruttering.blinding_av_bekreft"))
-    .click();
-  assert.ok(await vent(() => KALL.some((k) =>
-    k.sti === "/v1/rekruttering/prosesser/p-1/blinding")), "POST kom aldri");
-  const post = KALL.find((k) => k.sti.endsWith("/blinding"));
-  assert.equal(post.kropp.begrunnelse, "intern rekruttering");
-  assert.ok(post.hoder["Idempotency-Key"], "skrivevei uten idempotensnøkkel");
-  assert.ok(await vent(() => hoved.querySelector('[role="alert"]')
-    .textContent.length > 0), "utfallet nådde aldri alert-området");
+test("Rekruttering: blindingen er et tilstandsmerke, ikke et valg, uten #159",
+  async () => {
+    // Codex P2 (runde 4): bryteren sto handlingsklar for enhver
+    // administrator, og etiketten lovte at valget «loggføres med hvem, når
+    // og hvorfor» — men `blinding_endepunkt` svarer en kodet 409 uten å se
+    // på prosessen og uten å skrive et spor, begge veier. Hvert gyldige
+    // forsøk endte altså i en generisk avvisning på et løfte om
+    // revisjonsevidens. Løftet er trukket der det ble gitt: bryteren viser
+    // TILSTANDEN (blindingen er på), er død, og merknaden sier hvorfor.
+    //
+    // MUTASJONEN SOM DREPER DENNE: fjern `bryter.disabled = true`.
+    const hoved = await tegnet();
+    const bryter = hoved.querySelector("#rekrut-blinding");
+    assert.equal(bryter.checked, true, "blinding er standard PÅ");
+    assert.ok(bryter.disabled,
+      "bryteren tilbyr en mutasjon endepunktet ikke kan utføre");
+    assert.ok([...hoved.querySelectorAll("p")].some((n) => n.textContent ===
+      t("ui.rekruttering.blinding_avskruing_utilgjengelig")),
+      "merknaden om at avskruing mangler, står ikke på flaten");
+    // …og ingen vei ut av flaten går til blinding-ruten.
+    KALL = [];
+    bryter.checked = false;
+    bryter.dispatchEvent(new window.Event("change", { bubbles: true }));
+    await vent(() => KALL.some((k) => k.metode === "POST"), 5);
+    assert.ok(!KALL.some((k) => k.sti.endsWith("/blinding")),
+      "flaten kalte fortsatt blinding-ruten");
+    assert.ok(!document.querySelector('[role="alertdialog"]'),
+      "avskruingsdialogen åpnet seg fra en død bryter");
+  });
+
+test("Rekruttering: en uferdig evaluering sier fra — alle tre veier",
+  async () => {
+    // Codex P2: prosessen fødes MENS kjøringen står på (`plukket`), og
+    // artefaktene skrives inkrementelt. Tabellen viste derfor en delvis
+    // kandidatliste som en ferdig rangering, uten et tegn på at noen
+    // manglet — og etter en `feilet`/`kansellert` kjøring kommer resten
+    // aldri.
+    //
+    // Målt alle tre veier, ellers er testen bare en påstand om at en <p>
+    // finnes: pågår, avbrutt, og ferdig (der merknaden IKKE skal stå).
+    //
+    // MUTASJONEN SOM DREPER DENNE: gjør betingelsen i `flater/
+    // rekruttering.js` konstant (alltid eller aldri).
+    const merknad = (h) => [...h.querySelectorAll(".rekrut-evaluering p")]
+      .map((p) => p.textContent);
+
+    const kjorer = prosess();
+    kjorer.prosesser[0].evaluering_status = "plukket";
+    SVAR = { "/v1/rekruttering/prosesser": kjorer };
+    const h1 = nyHoved();
+    visRekruttering(h1, ctx());
+    await vent(() => h1.querySelector("table"));
+    assert.deepEqual(merknad(h1), [t("ui.rekruttering.evaluering_pagar")],
+      "en delvis kandidatliste ble vist som en ferdig rangering");
+    // …og teksten er locale-båret, aldri en rå nøkkel (RUTINER §5).
+    assert.ok(!merknad(h1)[0].startsWith("ui."),
+      "merknaden falt til reservenøkkelen — locale mangler");
+
+    const avbrutt = prosess();
+    avbrutt.prosesser[0].evaluering_status = "kansellert";
+    SVAR = { "/v1/rekruttering/prosesser": avbrutt };
+    const h2 = nyHoved();
+    visRekruttering(h2, ctx());
+    await vent(() => h2.querySelector("table"));
+    assert.deepEqual(merknad(h2), [t("ui.rekruttering.evaluering_avbrutt")],
+      "en avbrutt kjøring lovet fortsatt at resten kommer");
+
+    SVAR = { "/v1/rekruttering/prosesser": prosess() };   // utfort
+    const h3 = nyHoved();
+    visRekruttering(h3, ctx());
+    await vent(() => h3.querySelector("table"));
+    assert.deepEqual(merknad(h3), [],
+      "en FERDIG evaluering ble stemplet som ufullstendig");
+  });
+
+test("Rekruttering: oppfunne vekter sier fra — begge veier", async () => {
+  // Codex P1: er vektene husets reserve (3 per krav) og ikke
+  // evalueringens, viser tabellen en rangering evalueringen aldri
+  // produserte. Serveren har hele tiden sagt det i `vekter_kilde`;
+  // flaten leste ikke feltet, så substitusjonen var STILLE.
+  //
+  // Målt BEGGE veier, ellers er testen bare en påstand om at en <p>
+  // finnes: merknaden skal stå når kilden er reserven, og den skal IKKE
+  // stå når vektene faktisk er artefaktets — en merknad som alltid står,
+  // sier ingenting.
+  //
+  // MUTASJONEN SOM DREPER DENNE: gjør betingelsen i `flater/
+  // rekruttering.js` konstant (alltid eller aldri).
+  const merknad = (h) => [...h.querySelectorAll("fieldset.rekrut-vekter p")]
+    .map((p) => p.textContent);
+
+  const std = prosess();
+  std.prosesser[0].vekter_kilde = "standard";
+  SVAR = { "/v1/rekruttering/prosesser": std };
+  const h1 = nyHoved();
+  visRekruttering(h1, ctx());
+  await vent(() => h1.querySelector("table"));
+  assert.deepEqual(merknad(h1), [t("ui.rekruttering.vekter_standard")],
+    "husets reservevekter ble presentert uten et ord om opphavet");
+  // …og teksten er locale-båret, aldri en rå nøkkel (RUTINER §5).
+  assert.ok(!merknad(h1)[0].startsWith("ui."),
+    "merknaden falt til reservenøkkelen — locale mangler");
+
+  SVAR = { "/v1/rekruttering/prosesser": prosess() };  // evalueringsartefakt
+  const h2 = nyHoved();
+  visRekruttering(h2, ctx());
+  await vent(() => h2.querySelector("table"));
+  assert.deepEqual(merknad(h2), [],
+    "evalueringens EGNE vekter ble stemplet som oppfunne");
 });
 
-test("Rekruttering: gjen-påslag av blinding er en mutasjon, og uten scope er bryteren død", async () => {
-  // CodeRabbit (major, første pre-commit-pass): PÅ-igjen endret bare
-  // UI-tilstand — serveren fikk aldri vite det. Nå følger bryteren
-  // UTFALLET av kallet, begge veier.
-  const hoved = await tegnet();
-  const bryter = hoved.querySelector("#rekrut-blinding");
-  bryter.checked = false;
-  bryter.dispatchEvent(new window.Event("change", { bubbles: true }));
-  const dialog = document.querySelector('[role="alertdialog"]');
-  dialog.querySelector("textarea").value = "test";
-  SVAR["/v1/rekruttering/prosesser/p-1/blinding"] = { ok: true };
-  [...dialog.querySelectorAll("button")]
-    .find((b) => b.textContent === t("ui.rekruttering.blinding_av_bekreft"))
-    .click();
-  await vent(() => !bryter.checked);
-  assert.equal(bryter.checked, false);
+test("Rekruttering: poengsummen teller `true`, ikke «sant nok»", async () => {
+  // Cursor P1 (10:01): serveren utleder trafikklyset med `v is True`,
+  // fordi `"false"` — den vanligste JSON-feilen en modell gjør — er en
+  // SANN streng, og begge skriveportene avviser ikke-boolske verdier.
+  // Flaten regnet poeng med en truthy-test, så den samme kandidaten fikk
+  // hele kravets vekt i poengkolonnen mens lyset ved siden av sa «Bør
+  // vurderes»: to tall om samme kandidat på samme skjerm.
+  //
+  // MUTASJONEN SOM DREPER DENNE: bytt `=== true` mot `` i `poengFor`.
   KALL = [];
-  // PÅ igjen → POST med av:false; bryteren PÅ først når svaret er der.
-  bryter.checked = true;
-  bryter.dispatchEvent(new window.Event("change", { bubbles: true }));
-  assert.ok(await vent(() => KALL.some((k) =>
-    k.sti.endsWith("/blinding") && k.kropp.av === false)),
-    "gjen-påslaget nådde aldri serveren");
-  // Cursor P2 / port 32: begrunnelsen er revisjonsinnhold OG tekst koden
-  // skriver — hardkodet ble den norsk også i en engelsk UI.
-  assert.equal(
-    KALL.find((k) => k.sti.endsWith("/blinding")).kropp.begrunnelse,
-    t("ui.rekruttering.blinding_pa_begrunnelse"),
-    "auditbegrunnelsen kommer ikke fra locale");
-  assert.ok(await vent(() => bryter.checked));
-  // …og feiler kallet, står bryteren AV (utfallet, ikke klikket).
-  bryter.checked = false;
-  bryter.dispatchEvent(new window.Event("change", { bubbles: true }));
-  const d2 = document.querySelector('[role="alertdialog"]');
-  d2.querySelector("textarea").value = "test";
-  [...d2.querySelectorAll("button")]
-    .find((b) => b.textContent === t("ui.rekruttering.blinding_av_bekreft"))
-    .click();
-  await vent(() => !bryter.checked);
-  SVAR = (sti, opts) => (opts.method === "POST" ? 403
-    : { prosesser: [] });
-  bryter.checked = true;
-  bryter.dispatchEvent(new window.Event("change", { bubbles: true }));
-  await vent(() => hoved.querySelector('[role="alert"]')
-    .textContent === t("ui.rekruttering.feil_utfall"));
-  assert.equal(bryter.checked, false, "bryteren fulgte klikket, ikke utfallet");
-});
-
-test("Rekruttering: uten mutasjonsscope er blindingsbryteren deaktivert", async () => {
-  KALL = [];
-  SVAR = { "/v1/rekruttering/prosesser": prosess() };
+  const data = prosess();
+  data.prosesser[0].kandidater = [
+    { kandidat_id: "K-1", oppfylt: { drift: "false", sky: true },
+      status: "vurderes", funn: [], intervjusporsmal: [] },
+  ];
+  SVAR = { "/v1/rekruttering/prosesser": data };
   const hoved = nyHoved();
-  visRekruttering(hoved, { sprak: "nb", scopes: ["decisions:read"],
-    tenant: "acme", paaUautorisert: () => {} });
+  visRekruttering(hoved, ctx());
   await vent(() => hoved.querySelector("table"));
-  assert.ok(hoved.querySelector("#rekrut-blinding").disabled,
-    "bryteren tilbys en rolle som bare kan få 403");
-  const signer = [...hoved.querySelectorAll("button")]
+  const celler = [...hoved.querySelectorAll("tbody tr td")]
+    .map((td) => td.textContent);
+  assert.equal(celler[1], "2",
+    "«false» som streng ga kandidaten drift-vekten på 3");
+});
+
+test("Rekruttering: serverens «signert» dreper knappen i en FERSK økt", async () => {
+  // Codex P2: `okt.signerte` er ØKTENS hukommelse — den overlever et
+  // prosessbytte, ikke en omlasting eller en ny fane. `liste.signert` er
+  // seriens signatur-slot lest fra basen, og den ble ikke lest i det hele
+  // tatt. En ny økt fikk derfor en handlingsklar Signer-knapp på en serie
+  // som ALT er signert, og klikket kunne bare ende i `serien_alt_signert`:
+  // flaten lovte en irreversibel handling den ikke kunne levere.
+  //
+  // MUTASJONEN SOM DREPER DENNE: fjern `liste.signert ||` fra
+  // ferdig-merket i `flater/rekruttering.js`.
+  KALL = [];
+  const data = prosess();
+  data.prosesser[0].lister[0].signert = true;
+  SVAR = { "/v1/rekruttering/prosesser": data };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());            // fersk økt: `signerte` er tom
+  await vent(() => hoved.querySelector("table"));
+  const knapp = [...hoved.querySelectorAll("button")]
     .find((b) => b.textContent === t("ui.rekruttering.signer_knapp"));
-  assert.ok(signer.disabled, "signeringen var alt gatet — den skal stå");
+  assert.ok(knapp, "listen forsvant helt — den skal vises, bare død");
+  assert.ok(knapp.disabled,
+    "en alt signert serie fikk en levende Signer-knapp i en ny økt");
+  // …og den døde knappen åpner ikke dialogen, så ingen POST kan oppstå.
+  knapp.click();
+  await vent(() => KALL.some((k) => k.metode === "POST"), 5);
+  assert.equal(document.querySelectorAll('[role="alertdialog"]').length, 0,
+    "den døde knappen åpnet signaturdialogen likevel");
+  assert.ok(!KALL.some((k) => k.metode === "POST"),
+    "flaten sendte en signering på en alt signert serie");
 });
 
 test("Rekruttering: signaturdialogen sier antall, type, hashkortform — og «Kan ikke angres» (port 31)", async () => {
@@ -324,6 +411,13 @@ test("Rekruttering: signaturdialogen sier antall, type, hashkortform — og «Ka
   assert.ok(tekst.includes(t("ui.rekruttering.listetype.invitasjon")));
   assert.ok(tekst.includes(HASH.slice(0, 12) + "…"), "hashkortformen mangler");
   assert.ok(tekst.includes("Kan ikke angres"), "irreversibiliteten er taus");
+  // Codex P1: knappen het «Signer og send» og teksten lovte «Dette sender
+  // N e-poster», men signeringen AUTORISERER bare — frigivelsen er
+  // `frigi_utsendelse` + en sendejobb, og den benen har ingen
+  // produksjonskaller (#151). Dialogen må si begge deler: irreversibel
+  // autorisasjon, OG at dette klikket ikke sender noe.
+  assert.ok(tekst.includes("sender ingen e-post"),
+    "dialogen lover fortsatt en utsendelse dette klikket ikke gjør");
   assert.ok(!tekst.includes(HASH), "fullhashen skal ikke ut i dialogen");
   // Signer → POST binder innholdshashen; utfallet står i role=alert.
   SVAR["/v1/rekruttering/lister/L-1/signer"] = { innhold_hash: HASH };
@@ -375,6 +469,50 @@ test("Rekruttering: hver prosess i svaret kan velges (ikke bare den første)", a
   visRekruttering(en, ctx());
   assert.ok(await vent(() => en.querySelector("table")));
   assert.equal(en.querySelector("#rekrut-prosessvelger"), null);
+});
+
+test("Rekruttering: velgeren navngir prosessen, aldri bare UUID-en", async () => {
+  // Codex P2 (runde 4): velgeren leste `p.navn || p.prosess_id`, men
+  // serveren har aldri sendt `navn` — stillingens tittel bor i #162-kjeden
+  // og finnes ikke å hente ennå. Med flere prosesser måtte brukeren derfor
+  // velge mellom rå UUID-er FØR hun kunne lese kandidater eller signere en
+  // irreversibel utsendelse. Starttidspunktet er det som finnes i
+  // klartekst, og det skiller prosessene fra hverandre for et menneske.
+  //
+  // MUTASJONEN SOM DREPER DENNE: sett `p.navn || p.prosess_id` tilbake.
+  const to = prosess();
+  to.prosesser[0].opprettet = "2026-08-24T06:10:00+00:00";
+  to.prosesser.push({
+    prosess_id: "p-2", opprettet: "2026-08-20T09:00:00+00:00",
+    blinding_av: false, vekter: { drift: 1 },
+    kandidater: [{ kandidat_id: "K-9", oppfylt: { drift: true },
+      status: "anbefalt", funn: [], intervjusporsmal: [] }],
+    lister: [],
+  });
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": to };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")));
+  const tekster = [...hoved.querySelector("#rekrut-prosessvelger").options]
+    .map((o) => o.textContent);
+  assert.ok(!tekster.some((x) => x === "p-1" || x === "p-2"),
+    `velgeren tilbyr fortsatt rå id-er: ${JSON.stringify(tekster)}`);
+  // Etiketten er husets datoform + antallet, og de to oppføringene skiller
+  // seg fra hverandre — det er hele poenget med å ha en etikett.
+  assert.equal(tekster[1], t("ui.rekruttering.prosessetikett")
+    .replaceAll("{dato}", Tidspunkt("2026-08-20T09:00:00+00:00").textContent)
+    .replaceAll("{antall}", "1"));
+  assert.notEqual(tekster[0], tekster[1]);
+  // …og den dagen #162 gir tittelen, vinner den uten at flaten røres.
+  to.prosesser[1].navn = "Sykepleier vest";
+  KALL = [];
+  const medNavn = nyHoved();
+  visRekruttering(medNavn, ctx());
+  assert.ok(await vent(() => medNavn.querySelector("table")));
+  assert.ok([...medNavn.querySelector("#rekrut-prosessvelger").options]
+    .some((o) => o.textContent === "Sykepleier vest"),
+    "navnet fra serveren tapte mot tidsstempelet");
 });
 
 test("Rekruttering: signeringen gjenbruker idempotensnøkkelen etter usikker feil", async () => {
@@ -537,59 +675,68 @@ test("Rekruttering: signeringsnøkkel og «signert» overlever prosessbytte", as
     "listen ble sendt en gang til etter prosessbytte");
 });
 
-test("Rekruttering: blindingen gjenbruker idempotensnøkkelen etter usikker feil", async () => {
-  // Cursor P2: signeringen fikk stabil nøkkel i forrige runde, blindingen
-  // ikke — og uten `idem` lager `api.js` en fersk per kall. Et tapt svar
-  // + nytt forsøk ble en NY auditert mutasjon i stedet for et replay: to
-  // revisjonsrader for ett valg, og klienten vet ikke om den første gikk.
+test("Rekruttering: signeringens kvittering overlever et prosessbytte",
+  async () => {
+  // Codex P2 (runde 10): bytter brukeren prosess etter at hun bekreftet
+  // signeringen, men FØR POST-en er besvart, tegner `tegn` et nytt
+  // utfallsområde — mens tilbakekallingen fortsatt lukker om det gamle.
+  // Meldingen ble skrevet til en frakoblet node: ingenting vist,
+  // ingenting kunngjort, for den ene handlingen som ikke kan gjøres om.
   //
-  // MUTASJONEN SOM DREPER DENNE: dropp `idem`-argumentet igjen.
-  const avslaatt = prosess();
-  avslaatt.prosesser[0].blinding_av = true;   // bryteren starter AV
+  // MUTASJONEN SOM DREPER DENNE: bytt `meldUtfall(hoved, okt, ...)` i
+  // signeringens `try` tilbake mot `sett(utfall, ...)`.
+  const to = prosess();
+  to.prosesser.push({
+    prosess_id: "p-2", navn: "Sykepleier vest", blinding_av: false,
+    vekter: { drift: 1 }, vekter_kilde: "evalueringsartefakt",
+    evaluering_status: "utfort",
+    kandidater: [{ kandidat_id: "K-9", oppfylt: { drift: true },
+      status: "anbefalt", funn: [], intervjusporsmal: [] }],
+    lister: [],
+  });
+  // POST-en henger til testen slipper den: nøyaktig vinduet funnet
+  // handler om. `json()` venter på løftet, så svaret kommer ETTER byttet.
+  let losPost;
+  const iLufta = new Promise((los) => { losPost = los; });
   KALL = [];
-  SVAR = (sti, opts) => (opts.method === "POST" ? 500 : avslaatt);
+  SVAR = (sti, opts) => (opts.method === "POST" ? iLufta : to);
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelector("table")));
-  const bryter = hoved.querySelector("#rekrut-blinding");
-  assert.equal(bryter.checked, false);
-
-  // PÅ-veien går uten dialog: slå på, svaret går tapt …
-  const slaaPaa = async () => {
-    assert.ok(await vent(() => !bryter.disabled), "bryteren ble aldri åpen");
-    bryter.checked = true;
-    bryter.dispatchEvent(new window.Event("change", { bubbles: true }));
+  const bytt = (id) => {
+    const velger = hoved.querySelector("#rekrut-prosessvelger");
+    velger.value = id;
+    velger.dispatchEvent(new window.Event("change", { bubbles: true }));
   };
-  await slaaPaa();
-  assert.ok(await vent(() => KALL.some((k) => k.sti.endsWith("/blinding"))));
-  const forste = KALL.find((k) => k.sti.endsWith("/blinding"));
-  assert.ok(forste.hoder["Idempotency-Key"], "blindingen gikk uten nøkkel");
-  // … brukeren prøver igjen: SAMME nøkkel, så serveren kan replaye.
-  KALL = [];
-  SVAR = (sti, opts) => (opts.method === "POST" ? { ok: true } : avslaatt);
-  await slaaPaa();
-  assert.ok(await vent(() => KALL.some((k) => k.sti.endsWith("/blinding"))));
-  const andre = KALL.find((k) => k.sti.endsWith("/blinding"));
-  assert.equal(andre.hoder["Idempotency-Key"], forste.hoder["Idempotency-Key"],
-    "retryen bar en NY nøkkel — serveren ser en ny auditert mutasjon");
-  assert.ok(await vent(() => bryter.checked));
-
-  // …men et NYTT valg samme vei er en ny operasjon, ikke et replay av
-  // den forrige: skru av, og på igjen, og nøkkelen skal være en annen.
-  bryter.checked = false;
-  bryter.dispatchEvent(new window.Event("change", { bubbles: true }));
-  const dialog = document.querySelector('[role="alertdialog"]');
-  dialog.querySelector("textarea").value = "intern rekruttering";
-  [...dialog.querySelectorAll("button")]
-    .find((b) => b.textContent === t("ui.rekruttering.blinding_av_bekreft"))
+  const knapp = [...hoved.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.signer_knapp"));
+  assert.ok(await vent(() => !knapp.disabled), "knappen ble aldri åpen");
+  knapp.click();
+  [...document.querySelector('[role="alertdialog"]')
+    .querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.signer_bekreft"))
     .click();
-  assert.ok(await vent(() => !bryter.checked), "avskruingen slo aldri igjennom");
-  KALL = [];
-  await slaaPaa();
-  assert.ok(await vent(() => KALL.some((k) => k.sti.endsWith("/blinding"))));
-  assert.notEqual(KALL.find((k) => k.sti.endsWith("/blinding"))
-    .hoder["Idempotency-Key"], forste.hoder["Idempotency-Key"],
-    "en ny beslutning ble sendt som replay av den forrige");
+  assert.ok(await vent(() => KALL.some((k) => k.metode === "POST")),
+    "signeringen ble aldri sendt");
+
+  const gammel = hoved.querySelector(".rekrut-utfall");
+  bytt("p-2");
+  assert.notEqual(hoved.querySelector(".rekrut-utfall"), gammel,
+    "prosessbyttet tegnet ikke et nytt utfallsområde — testen måler ikke"
+    + " lenger vinduet den ble skrevet for");
+  assert.equal(gammel.isConnected, false, "den gamle noden henger igjen");
+
+  losPost({ innhold_hash: HASH });
+  const ventet = t("ui.rekruttering.signer_utfall")
+    .replaceAll("{hash}", `${HASH.slice(0, 12)}…`);
+  assert.ok(await vent(() =>
+    hoved.querySelector(".rekrut-utfall").textContent === ventet),
+    "kvitteringen for en irreversibel signering ble skrevet til en"
+    + " frakoblet node");
+  // …og den blir stående når brukeren går tilbake: økten bærer den.
+  bytt("p-1");
+  assert.equal(hoved.querySelector(".rekrut-utfall").textContent, ventet,
+    "kvitteringen forsvant ved neste tegning");
 });
 
 test("Rekruttering: «Detaljer» åpner panelet med funn, sitat og spørsmål", async () => {
@@ -617,6 +764,53 @@ test("Rekruttering: «Detaljer» åpner panelet med funn, sitat og spørsmål", 
     "kildesitatet mangler");
   assert.ok(panel.textContent.includes("Fortell om tidslinjen."),
     "intervjuspørsmålet mangler");
+});
+
+test("Rekruttering: et funn uten sitat åpner panelet og skjules ikke", async () => {
+  // Cursor P2: `f.kilde.sitat` uten vern. Skriveveien krever `kilde` på
+  // hvert funn, men runtime har INSERT på artefaktlageret, så formen kan
+  // faktisk komme inn — og da kastet oppbyggingen TypeError: dialogen
+  // åpnet ALDRI, og raden satt igjen med en «Detaljer»-knapp som ikke
+  // svarte. Nøyaktig den flyten tastaturgjennomgangens punkt 4 lover.
+  //
+  // Og funnet skal ikke gjemmes bort for å slippe unna: kategorien ER
+  // risikoopplysningen foran en irreversibel utsendelse. Panelet sier at
+  // belegget mangler — på locale-båret tekst, aldri en rå nøkkel.
+  //
+  // MUTASJONEN SOM DREPER DENNE: skriv `el("q", { text: f.kilde.sitat })`
+  // tilbake. Byttes plassholderen mot å droppe funnet, faller den også.
+  const uten = prosess();
+  uten.prosesser[0].kandidater[0].funn = [
+    { kategori: "uklar_tidslinje" },                 // ingen `kilde`
+    { kategori: "manglende_dokumentasjon", kilde: {} },  // kilde uten sitat
+    { kategori: "motstridende_opplysning", kilde: { sitat: "2019" } },
+  ];
+  SVAR = { "/v1/rekruttering/prosesser": uten };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  await vent(() => hoved.querySelector("table"));
+  const rad = [...hoved.querySelectorAll("tbody tr")]
+    .find((tr) => tr.querySelector("td").textContent === "K-2");
+  [...rad.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.detaljer")).click();
+  const panel = document.querySelector('[role="dialog"]');
+  assert.ok(panel, "detaljknappen åpnet ingenting");
+  // Alle tre funnene står der — de to uten belegg også.
+  for (const kategori of ["uklar_tidslinje", "manglende_dokumentasjon",
+    "motstridende_opplysning"]) {
+    assert.ok(panel.textContent.includes(t(`ui.rekruttering.funn.${kategori}`)),
+      `funnet ${kategori} forsvant fra panelet`);
+  }
+  const plassholdere = [...panel.querySelectorAll("em")]
+    .map((e) => e.textContent);
+  assert.deepEqual(plassholdere,
+    [t("ui.rekruttering.uten_sitat"), t("ui.rekruttering.uten_sitat")],
+    "de manglende sitatene ble ikke sagt fra om");
+  assert.ok(!plassholdere[0].startsWith("ui."),
+    "plassholderen falt til reservenøkkelen — locale mangler");
+  // …og det sitatet som FINNES står fortsatt som sitat.
+  assert.deepEqual([...panel.querySelectorAll("q")].map((q) => q.textContent),
+    ["2019"], "det ekte kildesitatet forsvant");
 });
 
 test("Rekruttering: vektskyveren rommer vektene kontrakten godtar", async () => {
@@ -656,72 +850,11 @@ test("Rekruttering: vektskyveren rommer vektene kontrakten godtar", async () => 
     "10");
 });
 
-test("Rekruttering: blindingsvalget overlever prosessbytte", async () => {
-  // Codex P1 / Cursor P2: en vellykket mutasjon oppdaterte bare bryteren.
-  // `prosess.blinding_av` i det hentede svaret sto igjen slik serveren
-  // svarte FØR mutasjonen, og en ny tegning har bare det svaret å gå på —
-  // så et prosessbytte og tilbake viste en bryter som påsto PÅ mens
-  // serveren hadde AV. Feil revisjonsbilde rett før en evaluering.
-  //
-  // MUTASJONEN SOM DREPER DENNE: fjern `prosess.blinding_av = …`.
-  const to = prosess();
-  to.prosesser.push({
-    prosess_id: "p-2", navn: "Sykepleier vest", blinding_av: false,
-    vekter: { drift: 1 },
-    kandidater: [{ kandidat_id: "K-9", oppfylt: { drift: true },
-      status: "anbefalt", funn: [], intervjusporsmal: [] }],
-    lister: [],
-  });
-  KALL = [];
-  SVAR = (sti, opts) => (opts.method === "POST" ? { ok: true } : to);
-  const hoved = nyHoved();
-  visRekruttering(hoved, ctx());
-  assert.ok(await vent(() => hoved.querySelector("table")));
-  const bytt = (id) => {
-    const velger = hoved.querySelector("#rekrut-prosessvelger");
-    velger.value = id;
-    velger.dispatchEvent(new window.Event("change", { bubbles: true }));
-  };
-
-  // Skru AV blindingen på p-1 …
-  const bryter = hoved.querySelector("#rekrut-blinding");
-  bryter.checked = false;
-  bryter.dispatchEvent(new window.Event("change", { bubbles: true }));
-  const dialog = document.querySelector('[role="alertdialog"]');
-  dialog.querySelector("textarea").value = "intern rekruttering";
-  [...dialog.querySelectorAll("button")]
-    .find((b) => b.textContent === t("ui.rekruttering.blinding_av_bekreft"))
-    .click();
-  assert.ok(await vent(() => !hoved.querySelector("#rekrut-blinding").checked),
-    "avskruingen slo aldri igjennom");
-
-  // … og gå innom p-2 og tilbake: valget står, uten en ny runde på nettet.
-  bytt("p-2");
-  assert.equal(hoved.querySelector("#rekrut-blinding").checked, true,
-    "p-2 arvet p-1s blindingsvalg");
-  KALL = [];
-  bytt("p-1");
-  assert.equal(hoved.querySelector("#rekrut-blinding").checked, false,
-    "bryteren påsto PÅ mens serveren har AV");
-  assert.ok(!KALL.some((k) => k.metode === "POST"),
-    "prosessbyttet sendte en mutasjon");
-
-  // Samme vei tilbake: gjen-påslaget skal også feste seg i modellen.
-  const bryter2 = hoved.querySelector("#rekrut-blinding");
-  bryter2.checked = true;
-  bryter2.dispatchEvent(new window.Event("change", { bubbles: true }));
-  assert.ok(await vent(() => hoved.querySelector("#rekrut-blinding").checked),
-    "gjen-påslaget slo aldri igjennom");
-  bytt("p-2");
-  bytt("p-1");
-  assert.equal(hoved.querySelector("#rekrut-blinding").checked, true,
-    "gjen-påslaget forsvant i tegningen");
-});
-
 test("Rekruttering: in-flight-lås — ingen andre mutasjon mens den første henger", async () => {
   // Cursor P2: dialogen lukkes ved bekreftelse og knappene sto åpne, så
-  // et nytt klikk mens forrige POST hang ga to samtidige kall på en
-  // irreversibel (signering) og en auditert (blinding) handling.
+  // et nytt klikk mens forrige POST hang ga to samtidige kall på den
+  // irreversible signeringen. (Blindingshalvdelen av denne testen falt
+  // med mutasjonsbenet i runde 4 — se «tilstandsmerke, ikke et valg».)
   const hoved = await tegnet();
   const ekte = globalThis.fetch;
   let poster = 0;
@@ -746,22 +879,6 @@ test("Rekruttering: in-flight-lås — ingen andre mutasjon mens den første hen
     assert.equal(document.querySelectorAll('[role="alertdialog"]').length, 0,
       "et nytt klikk åpnet dialogen igjen midt i en pågående signering");
     assert.equal(poster, 1, "to signeringer av samme liste");
-
-    // Samme lås på blindingen: bryteren er død mens kallet henger.
-    const bryter = hoved.querySelector("#rekrut-blinding");
-    bryter.checked = false;
-    bryter.dispatchEvent(new window.Event("change", { bubbles: true }));
-    const dialog = document.querySelector('[role="alertdialog"]');
-    dialog.querySelector("textarea").value = "intern rekruttering";
-    [...dialog.querySelectorAll("button")]
-      .find((b) => b.textContent === t("ui.rekruttering.blinding_av_bekreft"))
-      .click();
-    assert.ok(await vent(() => poster === 2), "blindingskallet gikk aldri");
-    assert.ok(bryter.disabled, "bryteren sto åpen mens kallet hang");
-    bryter.checked = true;
-    bryter.dispatchEvent(new window.Event("change", { bubbles: true }));
-    await vent(() => poster === 3, 5);
-    assert.equal(poster, 2, "gjen-påslaget gikk mens avskruingen hang");
   } finally {
     globalThis.fetch = ekte;
   }
@@ -771,7 +888,7 @@ test("Rekruttering: 401 i mutasjonene er innlogging, ikke en handlingsfeil", asy
   // Codex P1: en utløpt økt ble fanget som «noe gikk galt», og brukeren
   // ble stående i det innloggede skallet uten økt bak seg. 401 er global
   // i resten av klienten (V2: 401 → innlogging, 403 → ingen tilgang).
-  for (const flyt of ["blinding", "signer"]) {
+  for (const flyt of ["signer"]) {
     KALL = [];
     SVAR = { "/v1/rekruttering/prosesser": prosess() };
     let uautorisert = 0;
@@ -781,24 +898,13 @@ test("Rekruttering: 401 i mutasjonene er innlogging, ikke en handlingsfeil", asy
       paaUautorisert: () => { uautorisert += 1; } });
     await vent(() => hoved.querySelector("table"));
     SVAR = (sti, opts) => (opts.method === "POST" ? 401 : prosess());
-    if (flyt === "blinding") {
-      const bryter = hoved.querySelector("#rekrut-blinding");
-      bryter.checked = false;
-      bryter.dispatchEvent(new window.Event("change", { bubbles: true }));
-      const dialog = document.querySelector('[role="alertdialog"]');
-      dialog.querySelector("textarea").value = "intern rekruttering";
-      [...dialog.querySelectorAll("button")]
-        .find((b) => b.textContent === t("ui.rekruttering.blinding_av_bekreft"))
-        .click();
-    } else {
-      [...hoved.querySelectorAll("button")]
-        .find((b) => b.textContent === t("ui.rekruttering.signer_knapp"))
-        .click();
-      const dialog = document.querySelector('[role="alertdialog"]');
-      [...dialog.querySelectorAll("button")]
-        .find((b) => b.textContent === t("ui.rekruttering.signer_bekreft"))
-        .click();
-    }
+    [...hoved.querySelectorAll("button")]
+      .find((b) => b.textContent === t("ui.rekruttering.signer_knapp"))
+      .click();
+    const dialog = document.querySelector('[role="alertdialog"]');
+    [...dialog.querySelectorAll("button")]
+      .find((b) => b.textContent === t("ui.rekruttering.signer_bekreft"))
+      .click();
     assert.ok(await vent(() => uautorisert === 1),
       `${flyt}: 401 nådde aldri paaUautorisert`);
     assert.equal(hoved.querySelector('[role="alert"]').textContent, "",
@@ -821,22 +927,34 @@ test("Rekruttering: ingen hardkodet visningstekst, og tastaturgjennomgangen er d
     assert.ok(dok.toLowerCase().includes(flyt),
       `tastaturgjennomgangen dekker ikke ${flyt}-flyten`);
   }
-  // …OG DEN PÅSTÅR IKKE MER ENN DEN MÅLTE (Cursor P2). Doket beskrev
-  // «`Tab` fra menyen → Rekruttering» som observert, mens `sitekart`
-  // bevisst holder ruten ute til serverarmen finnes: flyten var umulig å
-  // gå. En gjennomgang som sier «observert» om noe ingen kan gjøre, er
-  // falsk evidens for port 32 — verre enn ingen gjennomgang, fordi den
-  // ser ut som dekning. Kravet henger på rutetabellen selv, ikke på en
-  // liste her, så det løftes av seg selv den dagen ruten kommer inn.
+  // …OG DEN PÅSTÅR VERKEN MER ELLER MINDRE ENN DEN MÅLTE (Cursor P2, og
+  // P2 igjen på #176). Doket beskrev en gang «`Tab` fra menyen →
+  // Rekruttering» som observert mens `sitekart` holdt ruten ute: flyten
+  // var umulig å gå, og «observert» om noe ingen kan gjøre er falsk
+  // evidens for port 32 — verre enn ingen gjennomgang, fordi det ser ut
+  // som dekning. Nå er ruten inne, og doket skal si DET.
   //
-  // MUTASJONEN SOM DREPER DENNE: sett menyraden tilbake som observert.
+  // Kravet henger på rutetabellen selv, ikke på en liste her, så det
+  // følger `byggRuter` i BEGGE retninger: rulles ruten ut igjen uten at
+  // doket følger med, faller testen — og motsatt.
+  //
+  // MUTASJONEN SOM DREPER DENNE: la doket stå på UTESTÅENDE mens ruten
+  // er inne (eller sett menyraden tilbake som observert etter en
+  // utrulling).
   const ruter = byggRuter({ scopes: ["decisions:read", "exceptions:read",
     "policy:read", "bestilling:opprett", "domains:adjudicate"] })
     .map((r) => r.nokkel);
-  if (!ruter.includes("rekruttering")) {
+  const menyraden = dok.split("\n").find((l) => /^\| 1 \|/.test(l));
+  assert.ok(menyraden, "menyflyten (rad 1) står ikke i flyttabellen");
+  if (ruter.includes("rekruttering")) {
+    assert.ok(/\*\*PORTET\*\*/.test(menyraden),
+      "ruten er inne, men doket holder menyflyten som ikke gjennomgått");
+    assert.ok(!/ikke i sitekartet/i.test(dok),
+      "doket påstår fortsatt at ruten er ute av sitekartet");
+  } else {
     assert.ok(/ikke i sitekartet/i.test(dok),
       "doket sier ikke fra om at ruten er ute, men beskriver menyveien");
-    assert.ok(dok.includes("UTESTÅENDE"),
+    assert.ok(/\*\*UTESTÅENDE\*\*/.test(menyraden),
       "menyflyten står som gjennomgått mens ruten er stengt");
   }
 });

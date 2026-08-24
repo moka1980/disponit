@@ -29,10 +29,10 @@ const FLATER = {
   varsler: visVarsler,
   admin: visAdmin,
   wcagkontroll: visWcagKontroll,
-  // M-57: flaten er registrert, men `sitekart.js` har med vilje ingen
-  // rekrutteringsrute før serverendepunktene finnes — og `tillatteFlater`
-  // slipper bare gjennom flater som HAR en rute økten fikk, så
-  // oppføringen her er ikke i seg selv en vei inn.
+  // M-57: ruten står i `sitekart.js` nå som serverendepunktene finnes.
+  // Oppføringen her er uansett ikke i seg selv en vei inn —
+  // `tillatteFlater` slipper bare gjennom flater som HAR en rute økten
+  // fikk, så scope-gaten bor ett sted.
   rekruttering: visRekruttering,
   adjudikator: visAdjudikator,
 };

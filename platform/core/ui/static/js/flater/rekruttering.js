@@ -1,8 +1,9 @@
 // M-57 Rekruttering (klarsignalet §8). Flaten viser ÉN prosess om gangen:
 // kandidatlisten som <table> med caption/scope/aria-sort, vektene som
 // range-kontroller med synlig verdi og ny rekkefølge annonsert i
-// aria-live="polite", blindingsbryteren med alertdialog ved AVSKRUING
-// (valget auditeres på serveren), detaljpanelet som dialog med fokusfelle,
+// aria-live="polite", blindingens tilstand som et deaktivert merke
+// (avskruing er en auditert mutasjon og hører til #159), detaljpanelet
+// som dialog med fokusfelle,
 // og signaturdialogen som sier antall, listetype og hashens kortform før
 // den irreversible utsendelsen. Utfall meldes i role="alert".
 //
@@ -16,14 +17,36 @@
 // egen sannhet.
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
-import { hentJson, settRekrutteringBlinding, signerRekrutteringsliste,
+import { hentJson, signerRekrutteringsliste,
          nyIdempotensnokkel, UautorisertFeil } from "../api.js";
 import { harScope } from "../sitekart.js";
 import { DataTabell } from "../tabell.js";
 import { Detaljpanel, Bekreftelsesdialog } from "../dialog.js";
+import { Tidspunkt } from "../komponenter.js";
 import { medStatus, flateHode } from "./felles.js";
 
-function meldFeil(ctx, utfall, e) {
+function meldUtfall(hoved, okt, tekst) {
+  // KVITTERINGEN HØRER TIL ØKTEN, IKKE TIL ÉN TEGNING (Codex P2, runde
+  // 10). Utfallsområdet lages på nytt av hver `tegn`, og bytter brukeren
+  // prosess etter at hun bekreftet signeringen men før POST-en er
+  // besvart, lukker denne tilbakekallingen fortsatt om den GAMLE noden.
+  // Meldingen ble da skrevet til et frakoblet element: ingenting vist,
+  // ingenting kunngjort — for den ene handlingen på flaten som ikke kan
+  // gjøres om. Teksten legges derfor i økten og skrives til noden som
+  // står i visningen NÅ; `role="alert"` gjør at den også blir sagt.
+  //
+  // Den andre halvdelen av det samme vinduet — at et prosessbytte gir en
+  // levende «Signer»-knapp på en liste hvis POST er i lufta — er alt
+  // lukket: `okt.signeringsnokler` overlever tegningen, så et nytt klikk
+  // bærer SAMME `Idempotency-Key` og serveren replayer i stedet for å
+  // signere på nytt (056s egen arm; se `signer_endepunkt`). Det som sto
+  // åpent var meldingen.
+  okt.utfall = tekst;
+  const node = hoved.querySelector(".rekrut-utfall");
+  if (node) sett(node, tekst);
+}
+
+function meldFeil(ctx, hoved, okt, e) {
   // 401 ER IKKE EN HANDLINGSFEIL (Codex P1). Utløper økten mellom
   // lastingen av flaten og mutasjonen, kaster `api.js` UautorisertFeil —
   // og fanget den her som «noe gikk galt», ble brukeren stående i det
@@ -43,8 +66,34 @@ function meldFeil(ctx, utfall, e) {
   // ny forsøk replayer den samme operasjonen i stedet for å lage en ny.
   const status = (e && typeof e.status === "number") ? e.status : 0;
   const definitivt = status >= 400 && status < 500;
-  sett(utfall, t(definitivt ? "ui.rekruttering.feil_utfall"
+  meldUtfall(hoved, okt, t(definitivt ? "ui.rekruttering.feil_utfall"
     : "ui.rekruttering.usikkert_utfall"));
+}
+
+function prosessetikett(p) {
+  // EN UUID ER IKKE ET GJENKJENNELIG VALG (Codex P2, runde 4). Velgeren
+  // leste `p.navn || p.prosess_id`, men serveren har aldri sendt `navn` —
+  // så med flere prosesser måtte brukeren velge mellom rå UUID-er før hun
+  // kunne lese kandidater eller signere en irreversibel utsendelse.
+  //
+  // Navnet — stillingens tittel — finnes ikke å hente ennå: prosessraden
+  // har ingen navnekolonne, oppdragets payload er kryptert og bærer bare
+  // en `stillingsprofil_ref`, og selve profilen er #162-kjeden. Å grave
+  // tittelen fram ville vært ny maskin i en fiksrunde (K1). Det som
+  // finnes, er STARTTIDSPUNKTET, og sammen med antall kandidater skiller
+  // det prosessene fra hverandre for et menneske.
+  //
+  // `p.navn` står først likevel: den dagen #162 gir tittelen, skal den
+  // vinne uten at denne linjen røres. Og faller begge — et svar uten
+  // `opprettet` — er UUID-en fortsatt bedre enn en tom oppføring.
+  if (p.navn) return p.navn;
+  if (!p.opprettet) return p.prosess_id;
+  // Datoformen er husets ene beslutning om tidspunkter (`Tidspunkt` i
+  // komponenter.js: leserens egen sone, ingen påstand om hvilken). Her
+  // trengs teksten, ikke elementet — `<option>` bærer ikke barn.
+  return t("ui.rekruttering.prosessetikett")
+    .replaceAll("{dato}", Tidspunkt(p.opprettet).textContent)
+    .replaceAll("{antall}", String((p.kandidater || []).length));
 }
 
 function kortHash(hash) {
@@ -62,8 +111,11 @@ export function visRekruttering(hoved, ctx) {
   // fram og tilbake både en fersk nøkkel (så en retry etter et tapt 2xx
   // ble en NY operasjon serveren ikke kan replaye) og en levende
   // «Signer»-knapp på en liste som alt var sendt. Begge holdes derfor her.
+  // `utfall` er kvitteringen for den irreversible handlingen, og hører
+  // til her av nøyaktig samme grunn som de to over: den skrives når
+  // POST-en svarer, og da kan tegningen som ba om den være borte.
   const okt = { signeringsnokler: new Map(), signerte: new Set(),
-    blindingsnokler: new Map() };
+    utfall: null };
   medStatus(hoved, ctx,
     () => hentJson("/v1/rekruttering/prosesser"),
     (data) => tegn(hoved, ctx, data, okt));
@@ -91,7 +143,7 @@ function tegn(hoved, ctx, data, okt, valgtId) {
       ...prosesser.map((p) => el("option",
         { value: p.prosess_id,
           ...(p.prosess_id === prosess.prosess_id ? { selected: "" } : {}) },
-        p.navn || p.prosess_id)));
+        prosessetikett(p))));
     velger.value = prosess.prosess_id;
     velger.addEventListener("change", () => {
       tegn(hoved, ctx, data, okt, velger.value);
@@ -107,7 +159,10 @@ function tegn(hoved, ctx, data, okt, valgtId) {
   const kanBestille = harScope(ctx, "bestilling:opprett");
 
   // Utfallsområdet: role=alert — signering og blinding melder hit.
+  // Meldingen bæres av økten, så en tegning som kommer ETTER svaret
+  // (prosessbytte) viser den fortsatt: `meldUtfall` er kilden.
   const utfall = el("div", { role: "alert", class: "rekrut-utfall" });
+  if (okt.utfall) sett(utfall, okt.utfall);
   // Re-rangeringens kunngjøring: høflig, aldri avbrytende.
   const kunngjoring = el("div", { "aria-live": "polite",
     class: "sr-only rekrut-kunngjoring" });
@@ -115,14 +170,39 @@ function tegn(hoved, ctx, data, okt, valgtId) {
   function poengFor(kandidat) {
     // Samme regel som evaluering.ranger: vekt teller når kravet er
     // oppfylt. `oppfylt` er serverens dom; vekten er brukerens valg.
+    // OPPFYLT ER `true`, IKKE «sant nok» (Cursor P1): `"false"` er en
+    // sann streng i JS akkurat som i Python, og da ga poengsummen
+    // kandidaten hele vekten mens trafikklyset — som nå måler `is True`
+    // — sa «Bør vurderes». To tall om samme kandidat på samme skjerm.
     let sum = 0;
     for (const [krav, vekt] of Object.entries(vekter)) {
-      if (kandidat.oppfylt && kandidat.oppfylt[krav]) sum += Number(vekt);
+      if (kandidat.oppfylt && kandidat.oppfylt[krav] === true) {
+        sum += Number(vekt);
+      }
     }
     return sum;
   }
 
   const tabellRot = el("div", { class: "rekrut-tabell" });
+
+  // EN DELVIS KANDIDATLISTE ER IKKE EN FERDIG RANGERING (Codex P2).
+  // Prosessen FØDES mens kjøringen står på (`plukket`), og artefaktene
+  // skrives inkrementelt: under en helt normal evaluering viser tabellen
+  // derfor de kandidatene som er vurdert SÅ LANGT, i en rekkefølge som
+  // ennå kan snu. Er kjøringen `feilet` eller `kansellert`, kommer resten
+  // aldri. Serveren sier tilstanden i `evaluering_status`; her sies den
+  // videre, over tabellen, der beslutningen tas.
+  //
+  // Fail-safe som `vekter_kilde`: merknaden vises med mindre svaret
+  // POSITIVT sier `utfort`. Et gammelt svar uten feltet er ikke et bevis
+  // på at evalueringen er ferdig.
+  const merknadRot = el("div", { class: "rekrut-evaluering" });
+  if (prosess.evaluering_status !== "utfort") {
+    merknadRot.append(el("p", { class: "rekrut-evaluering-status",
+      text: t(["feilet", "kansellert"].includes(prosess.evaluering_status)
+        ? "ui.rekruttering.evaluering_avbrutt"
+        : "ui.rekruttering.evaluering_pagar") }));
+  }
 
   // SORTERINGEN ER BRUKERENS VALG, IKKE TABELLENS UTGANGSPUNKT (Codex P2).
   // En vektendring KREVER en ny tabell — poengene er nye — og hver ny
@@ -200,11 +280,28 @@ function tegn(hoved, ctx, data, okt, valgtId) {
 
   function visDetalj(kandidat, poeng) {
     // Sidepanelet er en dialog med fokusfelle (Detaljpanel → aapneDialog).
-    const funn = (kandidat.funn || []).map((f) =>
-      el("li", {},
+    // SITATET ER DATA, IKKE EN GARANTI (Cursor P2). Skriveveien krever
+    // `kilde` på hvert funn, men runtime har INSERT på artefaktlageret, så
+    // et funn UTEN sitat er en form flaten faktisk kan få. `f.kilde.sitat`
+    // kastet da TypeError midt i oppbyggingen av panelet: dialogen åpnet
+    // aldri, og raden ble sittende igjen med en «Detaljer»-knapp som ikke
+    // svarte.
+    // Funnet SLETTES ikke når sitatet mangler. Kategorien er selve
+    // risikoopplysningen, og et skjult funn er verre enn et funn uten
+    // belegg — plassholderen SIER at belegget mangler, i stedet for å la
+    // funnet forsvinne fra en flate som skal vises før en irreversibel
+    // utsendelse. Teksten bor i locale (RUTINER §5), som resten.
+    const funn = (kandidat.funn || []).filter(Boolean).map((f) => {
+      const sitat = f.kilde && typeof f.kilde.sitat === "string"
+        ? f.kilde.sitat
+        : null;
+      return el("li", {},
         el("strong", { text: t(`ui.rekruttering.funn.${f.kategori}`) }),
         " — ",
-        el("q", { text: f.kilde.sitat })));
+        sitat === null
+          ? el("em", { text: t("ui.rekruttering.uten_sitat") })
+          : el("q", { text: sitat }));
+    });
     const sporsmal = (kandidat.intervjusporsmal || []).map((s) =>
       el("li", { text: s }));
     Detaljpanel({
@@ -240,6 +337,25 @@ function tegn(hoved, ctx, data, okt, valgtId) {
   }, VEKT_MAKS_STANDARD);
   const vektRot = el("fieldset", { class: "rekrut-vekter" },
     el("legend", { text: t("ui.rekruttering.vekter_tittel") }));
+  // OPPHAVET STÅR PÅ SKJERMEN, IKKE BARE I SVARET (Codex P1). Serveren
+  // har hele tiden sagt sannheten i `vekter_kilde`: enten er vektene
+  // evalueringsartefaktets egne, eller de er husets reserve (3 per krav,
+  // `api/rekruttering.py`). Flaten leste aldri feltet. For en
+  // stillingsprofil med UJEVNE vekter ble hvert krav dermed stilt til 3,
+  // og tabellen viste en rangering som ikke er den evalueringen faktisk
+  // produserte — uten et eneste tegn på at tallene var oppfunnet.
+  //
+  // Vektene ER en brukerkontroll her (re-rangeringen er rent klientarbeid
+  // på nedbrytningen), så reserven kan bli stående som UTGANGSPUNKT. Det
+  // som ikke kan bli stående, er stillheten. Fail-safe: merknaden vises
+  // med mindre svaret POSITIVT sier at vektene kom fra artefaktet.
+  //
+  // Den VARIGE kilden er stillingsprofilen, og å lagre den hører til
+  // #162-kjeden — ny maskin (lager + skriver), ikke en fiksrunde (K1).
+  if (prosess.vekter_kilde !== "evalueringsartefakt") {
+    vektRot.append(el("p", { class: "rekrut-vekter-kilde",
+      text: t("ui.rekruttering.vekter_standard") }));
+  }
   for (const [krav, verdi] of Object.entries(vekter)) {
     const id = `vekt-${krav}`;
     const visning = el("output", { for: id, text: String(verdi) });
@@ -257,21 +373,41 @@ function tegn(hoved, ctx, data, okt, valgtId) {
       range, visning));
   }
 
-  // Blindingsbryteren: PÅ er standard. AVSKRUING åpner alertdialog med
-  // påkrevd begrunnelse — valget auditeres på serveren (§6).
+  // BLINDINGEN ER EN TILSTAND HER, IKKE ET VALG (Codex P2, runde 4).
+  // Bryteren sto handlingsklar for enhver administrator, og etiketten
+  // lovte at valget «loggføres med hvem, når og hvorfor» — men
+  // `blinding_endepunkt` autentiserer og svarer så en KODET avvisning
+  // (409 `blinding_avskruing_krever_159`) uten å se på prosessen og uten
+  // å skrive et eneste spor, begge veier. Hvert gyldige forsøk på å skru
+  // av — eller på igjen — endte altså i en generisk avvisning, på et
+  // løfte om revisjonsevidens.
+  //
+  // Evidensdesignet for avskruing er #159 (K2: selvattestert avskruing er
+  // ikke evidens), og å bygge det her ville vært ny maskin i en fiksrunde
+  // (K1). Da gjelder samme svar som for «Signer og send»: løftet trekkes
+  // der det ble gitt. Bryteren står som deaktivert TILSTANDSMERKE — den
+  // viser at blindingen er på — med en merknad ved siden om at avskruing
+  // ikke er tilgjengelig ennå. Mutasjonsbenet (alertdialogen, den
+  // påkrevde begrunnelsen, idempotensnøklene, `settRekrutteringBlinding`)
+  // er tatt ut SAMMEN med løftet i stedet for å bli stående som død kode:
+  // #159 er PR-en som bringer det tilbake, med en skriving som faktisk
+  // etterlater sporet etiketten lover.
   const blindingId = "rekrut-blinding";
   const bryter = el("input", { type: "checkbox", id: blindingId });
   bryter.checked = !prosess.blinding_av;
-  // Samme scope-gate som signeringen (CodeRabbit major, første pass):
-  // en bruker uten mutasjonsscopet skal ikke engang tilbys valget —
-  // en bryter som bare kan gi 403 er et løfte flaten ikke kan holde.
-  if (!kanBestille) bryter.disabled = true;
-  // IN-FLIGHT-LÅS (Cursor P2). Blinding og signering er auditerte,
-  // henholdsvis irreversible handlinger, og uten lås kunne brukeren fyre
-  // av nummer to mens nummer én hang: to POST-er på samme valg, og
-  // bryteren som følger det svaret som tilfeldigvis kom sist. Låsen er
-  // per kontroll, ikke per flate, og løftes alltid — også ved feil, så en
-  // mislykket runde ikke etterlater en død bryter.
+  bryter.disabled = true;
+  const blindingRot = el("div", { class: "rekrut-blinding" },
+    bryter,
+    el("label", { for: blindingId,
+      text: t("ui.rekruttering.blinding_etikett") }),
+    el("p", { class: "rekrut-merknad",
+      text: t("ui.rekruttering.blinding_avskruing_utilgjengelig") }));
+
+  // IN-FLIGHT-LÅS (Cursor P2). Signeringen er irreversibel, og uten lås
+  // kunne brukeren fyre av nummer to mens nummer én hang: to POST-er på
+  // samme liste, og flaten som følger det svaret som tilfeldigvis kom
+  // sist. Låsen er per kontroll, ikke per flate, og løftes alltid — også
+  // ved feil, så en mislykket runde ikke etterlater en død knapp.
   async function laast(kontroll, arbeid) {
     if (kontroll.disabled) return;
     kontroll.disabled = true;
@@ -281,110 +417,6 @@ function tegn(hoved, ctx, data, okt, valgtId) {
       if (kanBestille && !kontroll.dataset.ferdig) kontroll.disabled = false;
     }
   }
-  // BLINDINGEN ER OGSÅ EN OPERASJON SOM MÅ KUNNE REPLAYES (Cursor P2).
-  // Signeringen fikk stabil nøkkel i forrige runde; blindingen kalte
-  // fortsatt uten `idem`, og da lager `api.js` en fersk per kall. Et tapt
-  // svar + et nytt forsøk ble derfor en NY auditert mutasjon i stedet for
-  // et replay av den forrige — to revisjonsrader for ett valg, og
-  // klienten kan ikke avgjøre om den første gikk igjennom.
-  //
-  // Nøkkelen er per HENSIKT: prosess, retning og den begrunnelsen som
-  // faktisk sendes. Retter brukeren begrunnelsen før hun prøver igjen, er
-  // det et annet revisjonsinnhold og dermed en annen operasjon. Ved
-  // definitivt svar slippes nøkkelen: neste omslag samme vei er en ny
-  // beslutning, ikke et replay av den forrige.
-  function blindingsnokkel(av, begrunnelse) {
-    const id = `${prosess.prosess_id}|${av ? 1 : 0}|${begrunnelse}`;
-    if (!okt.blindingsnokler.has(id)) {
-      okt.blindingsnokler.set(id, nyIdempotensnokkel());
-    }
-    return { id, nokkel: okt.blindingsnokler.get(id) };
-  }
-  bryter.addEventListener("change", async () => {
-    if (bryter.checked) {
-      // PÅ igjen er OGSÅ en mutasjon (CodeRabbit major: UI-tilstanden
-      // skiftet uten at serveren fikk vite det). Ingen dialog — å slå
-      // blindingen PÅ er standardtilstanden — men kallet må gå, og
-      // bryteren følger UTFALLET, aldri klikket.
-      bryter.checked = false;
-      await laast(bryter, async () => {
-        try {
-          // Begrunnelsen er REVISJONSINNHOLD, men den er også tekst
-          // koden skriver (Cursor P2 / port 32): hardkodet sto den norsk
-          // også i en engelsk UI. Av-veien får brukerens egne ord;
-          // på-veien får husets, via locale.
-          const paa = blindingsnokkel(false,
-            t("ui.rekruttering.blinding_pa_begrunnelse"));
-          await settRekrutteringBlinding(prosess.prosess_id, false,
-            t("ui.rekruttering.blinding_pa_begrunnelse"), paa.nokkel);
-          okt.blindingsnokler.delete(paa.id);
-          // MODELLEN, IKKE BARE BRYTEREN (Codex P1). `prosess` er objektet
-          // i det hentede svaret, og det svaret er alt en ny tegning har å
-          // gå på: sto `blinding_av` igjen slik serveren svarte FØR
-          // mutasjonen, kunne et prosessbytte og tilbake vise en bryter som
-          // påstår PÅ mens serveren har AV. Det er feil revisjonsbilde rett
-          // før en evaluering, og bryteren skal aldri lyve om §6-valget.
-          prosess.blinding_av = false;
-          bryter.checked = true;
-          sett(utfall, t("ui.rekruttering.blinding_pa_utfall"));
-        } catch (e) {
-          meldFeil(ctx, utfall, e);
-        }
-      });
-      return;
-    }
-    bryter.checked = true;                // står til dialogen bekrefter
-    const begrunnelse = el("textarea", { id: "blinding-begrunnelse",
-      rows: "3", required: true, "aria-required": "true" });
-    // Meldingen om manglende begrunnelse hører hjemme INNE i dialogen
-    // (Codex P2): utfallsområdet på flaten ligger bak `inert`-bakgrunnen
-    // og fokusfella mens dialogen står, så der ville brukeren verken se
-    // eller høre den.
-    const dialogfeil = el("p", { role: "alert", class: "dialog-feil" });
-    Bekreftelsesdialog({
-      rolle: "alertdialog",
-      tittel: t("ui.rekruttering.blinding_av_tittel"),
-      tekst: t("ui.rekruttering.blinding_av_tekst"),
-      detaljer: el("div", {},
-        el("label", { for: "blinding-begrunnelse",
-          text: t("ui.rekruttering.blinding_begrunnelse") }),
-        begrunnelse, dialogfeil),
-      farlig: true,
-      primarTekst: t("ui.rekruttering.blinding_av_bekreft"),
-      // Porten står FØR lukkingen: begrunnelsen er påkrevd, og et
-      // tomt felt skal kunne rettes der brukeren står.
-      valider: () => {
-        if (begrunnelse.value.trim()) {
-          begrunnelse.removeAttribute("aria-invalid");
-          dialogfeil.textContent = "";
-          return true;
-        }
-        begrunnelse.setAttribute("aria-invalid", "true");
-        dialogfeil.textContent =
-          t("ui.rekruttering.blinding_begrunnelse_mangler");
-        begrunnelse.focus();
-        return false;
-      },
-      paaPrimar: () => laast(bryter, async () => {
-        try {
-          const av = blindingsnokkel(true, begrunnelse.value.trim());
-          await settRekrutteringBlinding(prosess.prosess_id, true,
-            begrunnelse.value.trim(), av.nokkel);
-          okt.blindingsnokler.delete(av.id);
-          prosess.blinding_av = true;      // se PÅ-veien over
-          bryter.checked = false;
-          sett(utfall, t("ui.rekruttering.blinding_av_utfall"));
-        } catch (e) {
-          meldFeil(ctx, utfall, e);
-        }
-      }),
-    });
-  });
-  const blindingRot = el("div", { class: "rekrut-blinding" },
-    bryter,
-    el("label", { for: blindingId,
-      text: t("ui.rekruttering.blinding_etikett") }));
-
   // Innstilte lister: signering er den irreversible handlingen, og
   // dialogen sier nøyaktig hva som skjer (§8) — antall, listetype,
   // hashens kortform, «Kan ikke angres».
@@ -429,7 +461,17 @@ function tegn(hoved, ctx, data, okt, valgtId) {
     // En liste som ER signert i denne økten, kommer tilbake død — også
     // etter et prosessbytte, der `data` fortsatt er det svaret som ble
     // hentet FØR signeringen og derfor viser listen som usignert.
-    if (okt.signerte.has(listenokkel(liste))) knapp.dataset.ferdig = "1";
+    //
+    // ... OG SERVERENS EGET SVAR TELLER (Codex P2). `okt.signerte` er
+    // ØKTENS hukommelse: den overlever et prosessbytte, ikke en
+    // omlasting eller en ny fane. `liste.signert` er seriens
+    // signatur-slot lest fra basen, og den overlever alt. Uten dette
+    // leddet fikk enhver ny økt en handlingsklar knapp på en serie som
+    // alt er signert, og klikket kunne bare ende i `serien_alt_signert`
+    // — flaten lovte en irreversibel handling den ikke kunne levere.
+    if (liste.signert || okt.signerte.has(listenokkel(liste))) {
+      knapp.dataset.ferdig = "1";
+    }
     if (!kanBestille || knapp.dataset.ferdig) {
       knapp.setAttribute("disabled", "");
     }
@@ -438,11 +480,21 @@ function tegn(hoved, ctx, data, okt, valgtId) {
         rolle: "alertdialog",
         farlig: true,
         tittel: t("ui.rekruttering.signer_tittel"),
-        // `replaceAll`, ikke `replace` (Cursor P1): `{antall}` står TO
-        // ganger i teksten — «… · 42 mottakere · … Dette sender {antall}
-        // e-poster» — og port 31 krever at setningen sier tallet, ikke
-        // plassholderen. Samme regel for de øvrige feltene: en tekst som
-        // gjentar et felt skal ikke avhenge av hvor i strengen det står.
+        // KNAPPEN LOVER DET HANDLINGEN GJØR (Codex P1). Teksten sa
+        // «Signer og send … Dette sender {antall} e-poster», men
+        // signeringen AUTORISERER bare: den skriver signaturraden gjennom
+        // 056. Selve frigivelsen er `frigi_utsendelse` per mottaker pluss
+        // en frigivelsesjobb, og den benen har ingen produksjonskaller —
+        // den er #151. Brukeren fikk altså en suksessmelding om N sendte
+        // e-poster som ikke gikk noe sted. Fiksen er ikke å bygge
+        // senderbenet inne i en fiksrunde (K1), men å slutte å love det:
+        // dialogen sier nå at signaturen autoriserer, at den ikke kan
+        // angres, og at dette klikket ikke sender e-post.
+        //
+        // `replaceAll`, ikke `replace` (Cursor P1): teksten kan gjenta et
+        // felt, og port 31 krever at setningen sier tallet, ikke
+        // plassholderen. En tekst som gjentar et felt skal ikke avhenge
+        // av hvor i strengen det står.
         tekst: t("ui.rekruttering.signer_tekst")
           .replaceAll("{antall}", String(liste.antall))
           .replaceAll("{listetype}",
@@ -459,11 +511,11 @@ function tegn(hoved, ctx, data, okt, valgtId) {
             // — og merket ligger i ØKTEN, så heller ikke fra den neste.
             okt.signerte.add(listenokkel(liste));
             knapp.dataset.ferdig = "1";
-            sett(utfall, t("ui.rekruttering.signer_utfall")
+            meldUtfall(hoved, okt, t("ui.rekruttering.signer_utfall")
               .replaceAll("{hash}", kortHash(svar.innhold_hash
                 || liste.innhold_hash)));
           } catch (e) {
-            meldFeil(ctx, utfall, e);
+            meldFeil(ctx, hoved, okt, e);
           }
         }),
       });
@@ -476,6 +528,7 @@ function tegn(hoved, ctx, data, okt, valgtId) {
   }
 
   sett(hoved, flateHode(t("ui.rekruttering.tittel")), velgerRot,
-    utfall, kunngjoring, blindingRot, vektRot, tabellRot, listeRot);
+    utfall, kunngjoring, blindingRot, vektRot, merknadRot, tabellRot,
+    listeRot);
   tegnTabell();
 }

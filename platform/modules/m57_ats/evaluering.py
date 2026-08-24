@@ -27,6 +27,13 @@ FUNN_KATEGORIER = frozenset({
 })
 
 
+#: Største vekt som overlever transporten helt fram til leseren:
+#: `Number.MAX_SAFE_INTEGER`, det siste heltallet en IEEE-754 `double`
+#: bærer eksakt. Over dette leser flaten et ANNET tall enn det som ble
+#: rangert — se porten i `ranger`.
+VEKT_EKSAKT_MAKS = 2 ** 53 - 1
+
+
 class Evalueringsfeil(Exception):
     def __init__(self, kode: str, detalj: str = ""):
         self.kode = kode
@@ -173,8 +180,19 @@ def ranger(kandidater: dict[str, dict[str, bool]],
     # vekten 1, og `false` vekten 0 — rangeringen endret seg stille, og
     # ingen port sa fra. Feltkontrakten i kjernen avviser boolske tall
     # eksplisitt; her måles det samme.
+    #
+    # …OG EN VEKT SOM IKKE OVERLEVER TRANSPORTEN ER INGEN VEKT (Codex P2,
+    # runde 10). Python teller vilkårlig stort; JSON-tallet leses av
+    # flaten som en `double`. Over `Number.MAX_SAFE_INTEGER` har
+    # avrundingen alt skjedd i `JSON.parse` — poengsummen serveren regner
+    # og den flaten viser er da to ulike tall på samme vekt, uten at noe
+    # sier fra. Rangeringen her er ikke et internt regnestykke: den
+    # SKAL leses av et menneske foran en irreversibel signering, og
+    # nedbrytningen som følger med hvert innslag er nettopp beviset.
+    # Taket er derfor kontraktens, ikke plattformens.
     if not vekter or any(not isinstance(v, int) or isinstance(v, bool)
-                         or v < 0 for v in vekter.values()):
+                         or v < 0 or v > VEKT_EKSAKT_MAKS
+                         for v in vekter.values()):
         raise Evalueringsfeil("ugyldige_vekter")
     ut = []
     for kandidat_id, oppfylt in kandidater.items():
