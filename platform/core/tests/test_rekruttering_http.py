@@ -413,6 +413,73 @@ def _artefakt(prosess_id: str, oppfylt: dict, funn=(), ekstra=None,
         rt.close()
 
 
+def _sporsmalslager(prosess_id: str, kandidat_id: str, verdi):
+    """En rad i 057s eget spørsmålslager, med `verdi` skrevet RÅTT.
+    Kolonnen er `jsonb NOT NULL` og ingenting mer, så en skalar, et objekt
+    eller en blandet liste er lovlige INSERTer for runtime."""
+    import json as _json
+    from db.pg import koble, sett_kontekst
+    rt = koble(DSN)
+    try:
+        sett_kontekst(rt, TEN, "test", "r-spm")
+        rt.execute(
+            "INSERT INTO kandidat_intervjusporsmal (tenant, prosess_id,"
+            " kandidat_id, sporsmal, innhold_sha256) VALUES (%s,%s,%s,%s,%s)",
+            (TEN, prosess_id, kandidat_id, _json.dumps(verdi),
+             hashlib.sha256(str(kandidat_id).encode()).hexdigest()))
+        rt.commit()
+    finally:
+        rt.close()
+
+
+@pg
+def test_giftig_sporsmalstype_tar_ikke_ned_detaljpanelet(klient):
+    """Codex P2 (runde 8): `kandidat_intervjusporsmal.sporsmal` er `jsonb
+    NOT NULL` i 057 og ingenting mer — `3`, `"hei"` og `{"a": 1}` er alle
+    lovlige INSERTer for runtime. Verdien ble sendt RÅ ut, og flaten gjør
+    `(kandidat.intervjusporsmal || []).map(...)`: en ikke-array er sann,
+    så `||` verner ikke, og `.map` finnes ikke på den. Én slik rad tok
+    HELE detaljpanelet ned med en `TypeError`.
+
+    Elementene måles også: en liste med et objekt i ville rendret
+    `[object Object]` som et intervjuspørsmål.
+
+    Til forskjell fra `funn` bæres det IKKE i `lesbart` — spørsmålene er
+    ren visning og inngår ikke i trafikklyset, så et tomt spørsmålsfelt
+    gjør ingen kandidat grønnere enn hun er. Den positive kontrollen
+    under måler nettopp det: den giftige kandidaten har perfekt `oppfylt`
+    og ingen funn, og er fortsatt `anbefalt`.
+
+    MUTASJONEN SOM DREPER DENNE: bytt `rene`-porten i `_kandidater` mot
+    `sporsmal or []`.
+    """
+    pid, _lid, _ih = _seed_prosess()
+    perfekt = {"drift": True, "sky": True}
+    skalar = _artefakt(pid, perfekt)
+    _sporsmalslager(pid, skalar, 3)
+    objekt = _artefakt(pid, perfekt)
+    _sporsmalslager(pid, objekt, {"a": 1})
+    blandet = _artefakt(pid, perfekt)
+    _sporsmalslager(pid, blandet, ["Fortell om drift.", {"a": 1}])
+    ekte = _artefakt(pid, perfekt)
+    _sporsmalslager(pid, ekte, ["Fortell om drift."])
+    bid = _bruker("lys-leser-spm", ["leser"])
+    cookie, _ = _browsersesjon(bid)
+    r = _get(klient, cookie, "/v1/rekruttering/prosesser")
+    assert r.status_code == 200, r.text
+    p = [x for x in r.json()["prosesser"] if x["prosess_id"] == pid][0]
+    spm = {k["kandidat_id"]: k["intervjusporsmal"] for k in p["kandidater"]}
+    for kid in (skalar, objekt, blandet):
+        assert spm[kid] == [], \
+            f"{kid} sendte en form flaten ikke kan kalle .map() på"
+    # Positiv kontroll, begge ledd: den ekte listen kommer uendret ut, og
+    # porten er ren visning — trafikklyset er urørt av den.
+    assert spm[ekte] == ["Fortell om drift."]
+    lys = {k["kandidat_id"]: k["status"] for k in p["kandidater"]}
+    assert all(lys[kid] == "anbefalt"
+               for kid in (skalar, objekt, blandet, ekte)), lys
+
+
 @pg
 def test_anbefalingen_krever_oppfylte_krav_ikke_bare_tomme_funn(klient):
     """Codex P1: trafikklyset er reservens verk for ENHVER kanonisk
@@ -654,6 +721,77 @@ def test_replay_overlever_at_serien_ble_redigert_videre(klient):
                   {"innhold_hash": rot_hash})
     assert fersk.status_code == 409, fersk.text
     assert fersk.json()["feil"] == "liste_utdatert"
+
+
+@pg
+def test_replay_venter_pa_originalen_i_flukt_i_stedet_for_a_avvise(klient):
+    """Codex P1 (runde 8): runde 3 avlyste spissporten for et replay — men
+    bare for et replay VI KUNNE SE. Originalen som har SATT INN signaturen
+    sin og ennå ikke committet, er usynlig for `_fullfort_replay` (READ
+    COMMITTED), så retryen leste `replay = False` på en operasjon som var
+    i ferd med å lykkes. Var serien redigert videre i mellomtiden, svarte
+    spissporten `liste_utdatert` (409) rett FORAN låsen — et definitivt
+    avslag på en irreversibel autorisasjon som sekunder senere står i
+    basen.
+
+    Formen er medlemskaps- og fullmaktstestenes: originalens transaksjon
+    står UCOMMITTET, og `signer_utsendingsliste` har selv tatt
+    medlemskapslåsen gjennom `laas_godkjenner` (056 §7b). Låsen som
+    holdes er altså nøyaktig den retryen må gjennom — og et replay er per
+    definisjon samme signatar, så de to møtes på samme rad.
+
+    MUTASJONEN SOM DREPER DENNE: flytt `laas_godkjenner`-blokka med
+    etteroppslaget tilbake ned under portene i `signer_endepunkt`.
+    """
+    import threading
+
+    from db.pg import koble, sett_kontekst
+
+    _pid, rot, rot_hash = _seed_prosess()
+    bid = _bruker("sjef-replay-flukt", ["admin"])
+    cookie, csrf = _browsersesjon(bid)
+    nokkel = secrets.token_urlsafe(24)
+    svar: dict = {}
+    orig = koble(DSN)
+    try:
+        sett_kontekst(orig, TEN, "test", "r-original")
+        orig.execute("SELECT signer_utsendingsliste(%s,%s,%s,%s)",
+                     (TEN, rot, bid, nokkel))
+        # Serien redigeres videre MENS originalen står: uten fiksen er det
+        # spissporten som svarer retryen, foran låsen.
+        _barn, _barn_hash = _ny_versjon(rot)
+
+        def post():
+            svar["r"] = _post(klient, cookie, csrf,
+                              f"/v1/rekruttering/lister/{rot}/signer",
+                              {"innhold_hash": rot_hash}, idem=nokkel)
+
+        tp = threading.Thread(target=post)
+        tp.start()
+        tp.join(timeout=2)
+        assert tp.is_alive(), (
+            "retryen svarte FØR medlemskapslåsen — da dømte en"
+            " tilstandsport en operasjon som var i ferd med å lykkes")
+        orig.commit()                # originalen lander, låsen slippes
+        tp.join(timeout=10)
+        assert not tp.is_alive(), "retryen kom aldri ut av låskøen"
+    finally:
+        orig.close()
+    r = svar["r"]
+    assert r.status_code == 201, r.text
+    assert r.json()["innhold_hash"] == rot_hash
+    # …og replayet la ingen ny rad: originalens signatur er den ene, og
+    # seriens ene slot er brukt nøyaktig én gang.
+    m = _migrator()
+    try:
+        rader = m.execute(
+            "SELECT signatar, operasjonsnokkel FROM utsendingssignatur"
+            " WHERE tenant=%s AND liste_id=%s", (TEN, rot)).fetchall()
+        assert len(rader) == 1, rader
+        assert rader[0][0] == bid and rader[0][1] == nokkel
+        m.rollback()
+    finally:
+        m.close()
 
 
 @pg
