@@ -1145,6 +1145,76 @@ def test_lagerstien_maa_ligge_i_tenantens_eget_navnerom(klient):
 
 
 @pg
+def test_tenant_med_to_punktum_er_lovlig_og_traversering_er_det_ikke(klient):
+    """Codex P2 runde 7: guarden lette etter `..` i HELE den sammensatte
+    stien.
+
+    `brukermedlemskap.tenant` er ubegrenset TEXT, og `_stikomponent` i
+    API-et godtar `acme..corp` — det ER én trygg stikomponent. Men
+    `<tenant>/<uuid>.bin` inneholder da `..`, og både funksjonsguarden og
+    `inndata_lagersti_navnerom` avviste den. Utfallet for en slik tenant
+    var at reservasjonen gikk gjennom, mens HVER opplasting ble skrevet,
+    slettet igjen og besvart med `inndata_reservasjon_ugyldig`: en kunde
+    som aldri kunne laste opp noe, av en grunn ingen feilmelding pekte på.
+
+    Traverseringen kan bare komme fra ett av de to leddene, og begge
+    måles der de bor. Testen beviser BEGGE retningene på den SAMME
+    tenanten, ellers kunne en fiks som bare åpner opp bestått halvparten.
+
+    MUTASJONEN SOM DREPER DENNE: sett `position('..' in ...)` tilbake på
+    den sammensatte strengen — da feiler den lovlige halvdelen. Fjern
+    filnavn-guarden — da består den giftige."""
+    from db import kryptering
+    _rigg(klient)
+    tenant = f"acme..corp-{secrets.token_hex(6)}"
+    m = _migrator(tenant)
+    try:
+        jti = _reservasjon(m, tenant)
+        key_id, _dek = kryptering.hent_eller_opprett_aktiv_dek(m, tenant)
+        m.commit()
+    finally:
+        m.close()
+    c = _runtime(tenant)
+    try:
+        # GIFTIG, for den samme tenanten: traversering i FILNAVN-leddet.
+        for sti in (f"{tenant}/..", f"{tenant}/../x.bin", f"{tenant}/."):
+            with pytest.raises(psycopg.errors.InvalidParameterValue):
+                c.execute("SELECT * FROM registrer_inndata_lastet"
+                          "(%s,%s,%s,%s,%s,%s,%s)",
+                          (tenant, jti, 10, "a" * 64, key_id, b"n" * 12,
+                           sti))
+            c.rollback()
+            _kontekst(c, tenant)
+        # LOVLIG: den ekte stien for nøyaktig den samme tenanten. Denne
+        # var før fiksen umulig for en tenant med to punktum i ID-en.
+        c.execute("SELECT * FROM registrer_inndata_lastet"
+                  "(%s,%s,%s,%s,%s,%s,%s)",
+                  (tenant, jti, 10, "a" * 64, key_id, b"n" * 12,
+                   _lagersti(tenant)))
+        c.commit()
+    finally:
+        c.close()
+    m = _migrator(tenant)
+    try:
+        # Tabellen bærer det samme skillet, uansett skrivevei.
+        with pytest.raises(psycopg.errors.CheckViolation):
+            m.execute(
+                "INSERT INTO inndata_artefakt (tenant, eiermodul, formaal,"
+                " innholdstype, maks_bytes, faktiske_bytes, innhold_sha256,"
+                " key_id, nonce, lager_sti, status, reservasjon_jti,"
+                " idempotensnokkel, utloper, lastet_ts)"
+                " VALUES (%s,'m57_ats','soknadsbunt','application/zip',"
+                "%s,10,%s,%s,%s,%s,'lastet',%s,%s,"
+                " now()+interval '1 h',now())",
+                (tenant, MAKS, "a" * 64, key_id, b"n" * 12,
+                 f"{tenant}/..", secrets.token_hex(32),
+                 secrets.token_hex(12)))
+        m.rollback()
+    finally:
+        m.close()
+
+
+@pg
 def test_to_rader_kan_ikke_dele_den_samme_fysiske_bunten(klient):
     """Codex P1: navnerommet sier HVOR stien kan peke, ikke at ingen
     annen rad peker samme sted.

@@ -153,12 +153,29 @@ CREATE TABLE inndata_artefakt (
     -- nettopp mot den, altså mot søppel. Samme regex som søskentabellene.
     CONSTRAINT inndata_sha256_format CHECK (
         innhold_sha256 IS NULL OR innhold_sha256 ~ '^[0-9a-f]{64}$'),
+    -- Traverseringen måles på KOMPONENTENE, ikke på den sammensatte
+    -- strengen (Codex P2, runde 7). `position('..' in lager_sti) = 0`
+    -- forbød `..` hvor som helst — også inne i en helt lovlig tenant-ID
+    -- som `acme..corp`, som `brukermedlemskap.tenant` (ubegrenset TEXT)
+    -- tillater og `api/inndata.py:_stikomponent` godtar som én trygg
+    -- stikomponent. Reservasjonen gikk da gjennom mens hver opplasting
+    -- ble slettet igjen og svarte `inndata_reservasjon_ugyldig`: tenanten
+    -- kunne aldri laste opp noe.
+    --
+    -- Formen er `<tenant>/<filnavn>`, og traversering kan bare komme fra
+    -- ett av de to leddene: tenanten selv (`../x` ville flyttet hele
+    -- navnerommet) eller filnavnet (`..`). Begge måles der de bor. Samme
+    -- positive form som `_stikomponent` i API-et; NUL kan ikke finnes i
+    -- Postgres' TEXT.
     CONSTRAINT inndata_lagersti_navnerom CHECK (
         lager_sti IS NULL OR (
-            left(lager_sti, length(tenant) + 1) = tenant || '/'
+            tenant NOT IN ('.', '..')
+            AND position('/' in tenant) = 0
+            AND left(lager_sti, length(tenant) + 1) = tenant || '/'
             AND length(lager_sti) > length(tenant) + 1
             AND position('/' in substr(lager_sti, length(tenant) + 2)) = 0
-            AND position('..' in lager_sti) = 0)),
+            AND substr(lager_sti, length(tenant) + 2)
+                NOT IN ('.', '..'))),
     -- ÉN FIL, ÉN RAD (Codex P1). Navnerommet over sier hvor stien kan
     -- peke, ikke at ingen andre rad peker samme sted. `disponit` har
     -- SELECT på tabellen og EXECUTE på `registrer_inndata_lastet`, så en
@@ -498,11 +515,16 @@ BEGIN
     -- ikke brenne jti-en på en peker inn i en fremmed katalog som
     -- reaperen senere ville slettet. Formen er den relative
     -- `<tenant>/<uuid>.bin` — se tabellens constraint for hvorfor roten
-    -- ikke er med.
-    IF left(p_sti, length(p_tenant) + 1) IS DISTINCT FROM p_tenant || '/'
+    -- ikke er med, og for hvorfor traverseringen måles på KOMPONENTENE
+    -- og ikke på den sammensatte strengen (Codex P2, runde 7).
+    -- `p_tenant` er her allerede kallerens egen tenantkontekst:
+    -- `krev_tenantkontekst` over avviser alt annet, og den avviser også
+    -- NULL og tom streng.
+    IF p_tenant IN ('.', '..') OR position('/' in p_tenant) > 0
+       OR left(p_sti, length(p_tenant) + 1) IS DISTINCT FROM p_tenant || '/'
        OR length(p_sti) <= length(p_tenant) + 1
        OR position('/' in substr(p_sti, length(p_tenant) + 2)) > 0
-       OR position('..' in p_sti) > 0 THEN
+       OR substr(p_sti, length(p_tenant) + 2) IN ('.', '..') THEN
         RAISE EXCEPTION 'inndata: lagerstien % ligger utenfor tenantens'
             ' navnerom', p_sti
             USING ERRCODE = 'invalid_parameter_value';
