@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { NB, alvorligeBrudd, beskrivBrudd, nyttBrett } from "./hjelp.js";
-import { settI18nForTest, t } from "../static/js/i18n.js";
+import { harNokkel, settI18nForTest, t } from "../static/js/i18n.js";
 import { visRekruttering } from "../static/js/flater/rekruttering.js";
 import { byggRuter } from "../static/js/sitekart.js";
 
@@ -148,6 +148,32 @@ test("Rekruttering: vektendring uten mus re-rangerer og kunngjøres (port 30)", 
   // Synlig verdi følger kontrollen.
   const visning = hoved.querySelector('output[for="vekt-sky"]');
   assert.equal(visning.textContent, "0");
+});
+
+test("Rekruttering: vektkontrollens kravnavn bæres av locale, ikke av rå id (port 32)", async () => {
+  // Cursor P2: `t("ui.rekruttering.krav.<krav>", krav)` faller til reserven
+  // — den RÅ kravnøkkelen — når locale mangler oppføringen, og en
+  // skyver merket «skytjenester» er hardkodet visningstekst i praksis
+  // (RUTINER §5). Kravene demoen og seeden faktisk viser skal ha tekst i
+  // BEGGE språkene.
+  //
+  // Listen står her og ikke lest ut av `seed-rekruttering-demo.py`: en
+  // JS-test som hand-parser Python for en dict er nettopp den fremmede
+  // grammatikken K4/SP-13 forbyr. Endres seedens VEKTER, feiler denne.
+  const en = JSON.parse(readFileSync(join(ROT, "locales", "en.json"), "utf-8"));
+  for (const krav of ["drift", "sky", "skytjenester", "norsk"]) {
+    const n = `ui.rekruttering.krav.${krav}`;
+    assert.ok(harNokkel(n), `nb mangler ${n}`);
+    assert.ok(typeof en[n] === "string" && en[n].length, `en mangler ${n}`);
+  }
+  // …og etiketten i DOM-en er teksten, ikke reserven.
+  const hoved = await tegnet();
+  const etikett = hoved.querySelector('label[for="vekt-skytjenester"]')
+    || hoved.querySelector('label[for="vekt-sky"]');
+  assert.equal(etikett.textContent, t("ui.rekruttering.krav.sky"));
+  assert.notEqual(etikett.textContent, "sky");
+  // MUTASJONEN SOM DREPER DENNE: fjern nøkkelen fra nb.json — da blir
+  // etiketten «sky», og linjen over faller.
 });
 
 test("Rekruttering: brukerens sortering overlever en vektendring (port 30)", async () => {
