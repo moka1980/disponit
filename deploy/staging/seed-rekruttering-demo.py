@@ -192,21 +192,26 @@ def main() -> int:
             " kandidat_id, dokument_id, tekst, innhold_sha256)"
             " VALUES (%s,%s,%s,%s,%s,%s)",
             (tenant, pid, kid, did, blindet, sha))
+        # SPØRSMÅLENE SKRIVES ÉN GANG, TIL SITT EGET LAGER (Codex P2,
+        # runde 5). Seeden skrev to ULIKE lister: én kopi i artefaktet og
+        # én i 057-lageret — og den i lageret bar kandidatens EKTE navn,
+        # på en flate hvis hele poeng er at navnet er blindet. Demoen er
+        # den eneste produsenten som finnes ennå, så det den skriver er
+        # det formatet resten leses etter. Den skriver derfor lageret, og
+        # artefaktet bærer ikke lenger duplikatet.
         m.execute(
             "INSERT INTO kandidat_evalueringsartefakt (tenant, prosess_id,"
             " kandidat_id, artefakt, innhold_sha256)"
             " VALUES (%s,%s,%s,%s,%s)",
             (tenant, pid, kid, json.dumps({
-                "oppfylt": oppfylt, "vekter": VEKTER, "funn": funn,
-                "intervjusporsmal":
-                    [f"Fortell mer om erfaringen din med "
-                     f"{k}." for k, v in oppfylt.items() if v]}), sha))
+                "oppfylt": oppfylt, "vekter": VEKTER, "funn": funn}), sha))
         m.execute(
             "INSERT INTO kandidat_intervjusporsmal (tenant, prosess_id,"
             " kandidat_id, sporsmal, innhold_sha256)"
             " VALUES (%s,%s,%s,%s,%s)",
             (tenant, pid, kid,
-             json.dumps([f"Spørsmål til {navn} (blindet i flaten)"]), sha))
+             json.dumps([f"Fortell mer om erfaringen din med "
+                         f"{k}." for k, v in oppfylt.items() if v]), sha))
         m.execute(
             "INSERT INTO kandidat_utsendingsdata (tenant, prosess_id,"
             " kandidat_id, mottaker_ref, flettefelt, innhold_sha256)"

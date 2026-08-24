@@ -132,8 +132,23 @@ def _seed_prosess():
                          "oppfylt": {"drift": poeng_ok, "sky": True},
                          "vekter": {"drift": 3, "sky": 2},
                          "funn": funn,
-                         "intervjusporsmal": ["Fortell om drift."]}),
+                         "intervjusporsmal": ["ARTEFAKTKOPI."]}),
                      hashlib.sha256(str(kid).encode()).hexdigest()))
+                # 057-LAGERET EIER SPØRSMÅLENE, IKKE ARTEFAKTKOPIEN
+                # (Codex P2, runde 5). Artefaktet over bærer med vilje en
+                # ANNEN liste enn lageret: leser flaten kopien, sier
+                # svaret «ARTEFAKTKOPI.» og testen faller. Og bare den
+                # FØRSTE kandidaten får en rad — lagrene fylles
+                # inkrementelt mens kjøringen står på, og den andre skal
+                # fortsatt vises, med tom liste.
+                if n == 0:
+                    rt.execute(
+                        "INSERT INTO kandidat_intervjusporsmal (tenant,"
+                        " prosess_id, kandidat_id, sporsmal,"
+                        " innhold_sha256) VALUES (%s,%s,%s,%s,%s)",
+                        (TEN, pid, kid,
+                         __import__("json").dumps(["Fortell om drift."]),
+                         hashlib.sha256(str(kid).encode()).hexdigest()))
             rt.commit()
             from db.pg import sett_kontekst as _sk
             _sk(m, TEN, "sys", "r3")   # konteksten døde i forrige commit
@@ -228,6 +243,12 @@ def test_prosesslisten_baerer_flatens_kontrakt(klient):
         {"anbefalt", "innstilt_avslag"}
     assert all(set(k) >= {"kandidat_id", "oppfylt", "funn",
                           "intervjusporsmal"} for k in p["kandidater"])
+    # …og spørsmålene kommer fra LAGERET: den anbefalte kandidaten er den
+    # som fikk en 057-rad, og teksten er lagerets — ikke artefaktkopien.
+    # Den andre har ingen rad ennå og skal likevel være med, med tom liste.
+    spm = {k["status"]: k["intervjusporsmal"] for k in p["kandidater"]}
+    assert spm == {"anbefalt": ["Fortell om drift."],
+                   "innstilt_avslag": []}, spm
     liste = [l for l in p["lister"] if l["liste_id"] == lid]
     assert liste and liste[0]["innhold_hash"] == ih \
         and liste[0]["antall"] == 2 and liste[0]["signert"] is False

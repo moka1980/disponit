@@ -78,14 +78,39 @@ def _kandidater(conn, tenant, prosess_id):
     for hver kandidat i hver prosess. Nøkkelsubtraksjon (`jsonb - text`)
     og ikke en positiv projeksjon: da overlever ethvert felt en fremtidig
     produsent legger til, `status` inkludert.
+
+    INTERVJUSPØRSMÅLENE HAR SITT EGET LAGER (Codex P2, runde 5). 057
+    modellerer dem som `kandidat_intervjusporsmal` — egen tabell, egen
+    `innhold_sha256`, egen rad i reaperens sletteliste. Lesningen tok dem
+    likevel fra en KOPI inne i evalueringsartefakten, og en kopi og et
+    lager kan si to ting: PR-ens egen demo-seed skrev to ULIKE
+    spørsmålslister til de to stedene, og flaten viste artefaktkopien. En
+    normalisert produsent — den 057 beskriver, som skriver lageret og
+    dropper duplikatet i artefaktet — ville gitt flaten INGEN spørsmål.
+    Lageret er kilden; `intervjusporsmal` subtraheres derfor ut av
+    artefaktet sammen med det andre denne lesningen ikke leser.
+
+    LEFT JOIN, ikke INNER: en kandidat kan ha artefakt uten at spørsmål
+    er skrevet ennå (lagrene fylles inkrementelt mens kjøringen står på),
+    og hun skal fortsatt vises — med tom liste, som er det sanne svaret.
+    `slettet_ts IS NULL` i join-leddet, ikke i WHERE: et reapet
+    spørsmålslager bærer `sporsmal = NULL` og skal ikke fjerne kandidaten
+    fra svaret. Primærnøkkelen (tenant, prosess_id, kandidat_id) holder
+    treffet på høyst én rad.
     """
     rader = conn.execute(
-        "SELECT kandidat_id, artefakt - 'kildetekst' - 'avmaskering'"
-        "  FROM kandidat_evalueringsartefakt"
-        " WHERE tenant=%s AND prosess_id=%s AND slettet_ts IS NULL"
-        " ORDER BY kandidat_id", (tenant, prosess_id)).fetchall()
+        "SELECT a.kandidat_id,"
+        "       a.artefakt - 'kildetekst' - 'avmaskering'"
+        "                 - 'intervjusporsmal',"
+        "       i.sporsmal"
+        "  FROM kandidat_evalueringsartefakt a"
+        "  LEFT JOIN kandidat_intervjusporsmal i"
+        "    ON i.tenant = a.tenant AND i.prosess_id = a.prosess_id"
+        "   AND i.kandidat_id = a.kandidat_id AND i.slettet_ts IS NULL"
+        " WHERE a.tenant=%s AND a.prosess_id=%s AND a.slettet_ts IS NULL"
+        " ORDER BY a.kandidat_id", (tenant, prosess_id)).fetchall()
     kandidater, vekter, kilde = [], None, "standard"
-    for kid, artefakt in rader:
+    for kid, artefakt, sporsmal in rader:
         art = artefakt or {}
         if vekter is None and isinstance(art.get("vekter"), dict):
             vekter, kilde = art["vekter"], "evalueringsartefakt"
@@ -113,7 +138,7 @@ def _kandidater(conn, tenant, prosess_id):
             "oppfylt": oppfylt,
             "status": status,
             "funn": funn,
-            "intervjusporsmal": art.get("intervjusporsmal") or [],
+            "intervjusporsmal": sporsmal or [],
         })
     if vekter is None:
         krav = sorted({k for kand in kandidater for k in kand["oppfylt"]})
