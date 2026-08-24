@@ -345,3 +345,101 @@ def test_rollbackdommen_maales_mot_bootportens_fasit_127():
     assert "rollbackmaal_kompatibelt" in opp
     assert "er fortsatt kompatibel med skjemaet" not in opp
     assert "UMÅLT, ikke lovet" in opp
+
+
+def test_rollbackmaalet_leses_med_tak_pa_tiden():
+    """Cursor P2-1 (#178, runde 5): dommen leses fra en FEILHÅNDTERER.
+    #172 gjorde `selvrevers()` avhengig av `rollbackmaal_kompatibelt`, og
+    reverseringen kjøres i nøyaktig det scenarioet der basen kan være treg
+    eller uoppnåelig. Uten tak venter `psql` på default-oppførselen, og da
+    står tjenestene nede så lenge — gaten som skulle sluppet reverseringen
+    fram henger i stedet.
+
+    Taket måles som ATFERD, ikke som tekst: `psql` byttes ut med et stubbet
+    skript som sover langt forbi taket, og funksjonen skal likevel komme
+    tilbake — fail-closed, med «umålt er ikke kompatibelt». En stub gir det
+    deterministisk uten nett, der en uoppnåelig vert ville vært flakete.
+    """
+    import os
+    import subprocess
+    import tempfile
+    import time
+    from pathlib import Path as P
+    lib = ROT / "deploy/staging/lib-opp.sh"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        kat = P(tmp) / "platform/core/db/migrations"
+        kat.mkdir(parents=True)
+        (kat / "001_init.sql").write_text("-- t", encoding="utf-8")
+        # `psql` som aldri svarer. 300 s er langt forbi både taket og enhver
+        # tålmodighet et vedlikeholdsvindu har.
+        bin_kat = P(tmp) / "bin"
+        bin_kat.mkdir()
+        stub = bin_kat / "psql"
+        stub.write_text("#!/bin/sh\nsleep 300\n", encoding="utf-8")
+        stub.chmod(0o755)
+
+        start = time.monotonic()
+        r = subprocess.run(
+            ["bash", "-c", f'. {lib}; rollbackmaal_kompatibelt "{tmp}" '
+                           '"postgresql:///uansett"'],
+            capture_output=True, text=True, timeout=120,
+            env=dict(os.environ,
+                     PATH=f"{bin_kat}:{os.environ['PATH']}"))
+        brukt = time.monotonic() - start
+
+    assert brukt < 60, \
+        f"lesingen har ikke tak på tiden — brukte {brukt:.1f} s"
+    assert r.returncode != 0, "en avkuttet lesing skal aldri godkjennes"
+    assert "umålt er ikke kompatibelt" in r.stdout, \
+        f"avkuttet lesing skal felles som umålt: {r.stdout!r}"
+    # Et tidsavbrudd navngis for seg: `timeout` dreper stille, og uten det
+    # ville en drept lesing sett ut som en base som svarte tomt.
+    assert "tidsavbrudd" in r.stdout, \
+        f"et avkuttet kall skal navngis som tidsavbrudd: {r.stdout!r}"
+
+
+def test_rollbackmaalet_tar_med_psql_feilen_i_dommen():
+    """Cursor P2-2 (#178, runde 5): `2>/dev/null` svelget hver psql-feil
+    likt — autentisering, nett, DNS, manglende tabell — og operatøren satt
+    igjen med «versjonssettene lot seg ikke lese». Dommen var riktig
+    (fail-closed), men uleselig, i nøyaktig det øyeblikket under en
+    reversering der årsaken er det hen trenger.
+
+    Målt gjennom funksjonen som kjører: en stubbet `psql` skriver en kjent
+    linje til stderr og feiler, og linjen skal stå i dommen. Dommen selv
+    skal fortsatt være fail-closed — feilteksten er et TILLEGG til
+    «umålt er ikke kompatibelt», ikke en erstatning for den."""
+    import os
+    import subprocess
+    import tempfile
+    from pathlib import Path as P
+    lib = ROT / "deploy/staging/lib-opp.sh"
+    kjennemerke = "FATAL: password authentication failed for user"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        kat = P(tmp) / "platform/core/db/migrations"
+        kat.mkdir(parents=True)
+        (kat / "001_init.sql").write_text("-- t", encoding="utf-8")
+        bin_kat = P(tmp) / "bin"
+        bin_kat.mkdir()
+        stub = bin_kat / "psql"
+        stub.write_text(f'#!/bin/sh\necho "psql: error: {kjennemerke} \\"x\\""'
+                        " >&2\nexit 2\n", encoding="utf-8")
+        stub.chmod(0o755)
+
+        r = subprocess.run(
+            ["bash", "-c", f'. {lib}; rollbackmaal_kompatibelt "{tmp}" '
+                           '"postgresql:///uansett"'],
+            capture_output=True, text=True, timeout=60,
+            env=dict(os.environ, PATH=f"{bin_kat}:{os.environ['PATH']}"))
+
+    assert r.returncode != 0, "en mislykket lesing skal aldri godkjennes"
+    assert "umålt er ikke kompatibelt" in r.stdout, \
+        f"dommen skal fortsatt være fail-closed: {r.stdout!r}"
+    assert kjennemerke in r.stdout, \
+        f"psql-feilen skal stå i dommen, ikke svelges: {r.stdout!r}"
+    # Dommen er ÉN linje: kallstedene fanger den i `$( )` og skriver den
+    # inn i en setning. En flerlinjes psql-feil må derfor foldes.
+    assert len(r.stdout.strip().splitlines()) == 1, \
+        f"dommen skal være énlinjes: {r.stdout!r}"

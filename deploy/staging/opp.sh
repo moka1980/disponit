@@ -93,6 +93,41 @@ if ! "$ROT/.venv/bin/python" -c 'import dns.resolver' 2>/dev/null; then
   echo "Systemet er urørt; forrige release kjører som før."
   exit 1
 fi
+# Cursor P2-3 (#178, runde 4): `psql` er nå en FEILSONE-avhengighet.
+# `rollbackmaal_kompatibelt` (lib-opp.sh) leser basens anvendte versjoner med
+# `psql`, og #172 gjorde `selvrevers()` avhengig av nettopp den dommen. Er
+# klienten ikke installert, blir dommen «umålt» — og porten er fail-closed
+# med vilje, så INGEN enhet startes igjen. En manglende pakke ville dermed
+# gjort en migrasjonsfeil om til en full nedetid, oppdaget inne i vinduet.
+# Sjekken er lesende og hører derfor her: mangler klienten, avbrytes
+# utrullingen mens systemet beviselig er urørt.
+if ! command -v psql >/dev/null 2>&1; then
+  echo "AVBRUTT: psql finnes ikke på verten. rollbackmaal_kompatibelt bruker"
+  echo "den både i statusrapporten (steg 9) og i selv-reverseringens"
+  echo "rullbakk-gate — uten den er gaten umålt, og umålt er ikke"
+  echo "kompatibelt: en feil i vinduet ville latt HVER enhet bli stående"
+  echo "stoppet. Installer postgresql-client og kjør opp.sh igjen."
+  echo "Systemet er urørt; forrige release kjører som før."
+  exit 1
+fi
+# Cursor P2 (#178, runde 7): `timeout` er SAMME KLASSE avhengighet som `psql`.
+# E1 (runde 5) ga `rollbackmaal_kompatibelt` et tosidig tak —
+# `PGCONNECT_TIMEOUT` for oppkoblingen og `timeout 10` for en spørring som
+# blokkerer på lås — og gjorde dermed coreutils' `timeout` til en del av
+# feilsonen. Mangler den, feiler kommandoen, `bv` blir tom, dommen blir
+# «umålt», og fail-closed betyr at HVER enhet blir stående stoppet. `psql`
+# ble preflightet nettopp for å unngå at en manglende pakke gjør en
+# migrasjonsfeil om til full nedetid; taket som ble lagt oppå den kan ikke
+# stå ugatet ved siden av.
+if ! command -v timeout >/dev/null 2>&1; then
+  echo "AVBRUTT: timeout (coreutils) finnes ikke på verten."
+  echo "rollbackmaal_kompatibelt leser basen med 'timeout 10 psql' — uten"
+  echo "timeout feiler kommandoen, dommen blir umålt, og umålt er ikke"
+  echo "kompatibelt: en feil i vinduet ville latt HVER enhet bli stående"
+  echo "stoppet. Installer coreutils og kjør opp.sh igjen."
+  echo "Systemet er urørt; forrige release kjører som før."
+  exit 1
+fi
 # PR-015: driftstimerne over kaller funksjoner som migrasjon 019 kun granter
 # til `disponit_domains_admin` og `disponit_domener`. En EKSISTERENDE
 # installasjon har ingen DISPONIT_DOMAINS_URL før `oppsett-postgresql.sh` er
@@ -287,6 +322,191 @@ if ! ( set -a; . "$MILJOFIL"; set +a
   echo "Systemet er urørt; forrige release kjører som før."
   exit 1
 fi
+# CHECKSUM-PORTEN: kjørt historikk er byte-identisk (#172).
+# 23/8: en kommentarlinje i en KJØRT migrasjon ble oppdaget av kjøreren i
+# steg 6 — ETTER at tjenestene var stoppet. Prod sto nede på en
+# dokumentasjonsendring. (CI-porten i test_migrasjonsfasit feller klassen
+# før merge; denne er deploy-sidens halvdel — siste skanse, målt mot
+# BASENS egne rader, per base.)
+#
+# Codex P1 (runde 1): porten sto først som «steg 4z», etter steg 3–4. Den
+# var da FØR vinduet, men ETTER at `useradd` hadde opprettet identiteter og
+# `skriv_cred` hadde overskrevet /etc/disponit/*/ med KANDIDATENS verdier —
+# mens avbruddsmeldingen sa at forrige release kjører som før. De kjørende
+# prosessene beholder riktignok sine innlastede credentials, men neste
+# timeraktivering eller restart av forrige release ville lastet kandidatens
+# konfigurasjon mens `aktiv` fortsatt pekte på den gamle koden: roterte
+# nøkler eller ny konfigurasjon kunne dermed felle nettopp den releasen
+# meldingen lovet var uberørt. En port som først kan feile etter første
+# mutasjon er ingen preflight — samme dom som varselsender-DSN-en fikk på
+# #68. Den hører HER, sammen med resten av gaten, og lesingen skjer i
+# SUBSHELL som de andre, så miljøfila ikke lekker inn i preflighten.
+#
+# Codex P2 (runde 7): DSN-ene porten MÅLER er dermed lest i en subshell og
+# kastet, mens steg 4 leser fila på nytt og steg 6 migrerer DEN verdien. Blir
+# miljøfila byttet mellom de to lesingene, målte porten historikken til én
+# base og kjøreren migrerer en annen — og et checksum-avvik i den andre
+# oppdages først i steg 6, inne i vinduet. Verdien porten faktisk målte
+# beholdes derfor HER, i navngitte variabler, slik at re-gaten i steg 4 kan
+# sammenligne den med det som skal brukes. Lesingen står ute av løkka: da er
+# det ETT snapshot begge basene måles mot, og et filbytte midt i løkka kan
+# ikke gi runtime én fil-versjon og test en annen.
+PREFLIGHT_DISPONIT_MIGRATOR_URL=$( set -a; . "$MILJOFIL"; set +a
+    printf '%s' "${DISPONIT_MIGRATOR_URL:-}" )
+PREFLIGHT_DISPONIT_TEST_MIGRATOR_DSN=$( set -a; . "$MILJOFIL"; set +a
+    printf '%s' "${DISPONIT_TEST_MIGRATOR_DSN:-}" )
+for base in runtime test; do
+  if ! CHECKSUMPREFLIGHT=$( set -a; . "$MILJOFIL"; set +a
+      # Snapshotet, ikke den nettopp sourcede verdien: porten skal måle
+      # NØYAKTIG den DSN-en steg 4 senere gates mot. `PREFLIGHT_*` finnes
+      # ikke i miljøfila, så en `. "$MILJOFIL"` kan ikke overskrive dem.
+      case $base in
+        runtime) url=$PREFLIGHT_DISPONIT_MIGRATOR_URL ;;
+        test)    url=$PREFLIGHT_DISPONIT_TEST_MIGRATOR_DSN ;;
+      esac
+      cd "$KILDE" && DISPONIT_MIGRATOR_URL="$url" \
+        "$ROT/.venv/bin/python" - 2>&1 <<'PYPRE'
+import hashlib, importlib.util, os, sys
+from pathlib import Path
+import psycopg
+kat = Path("platform/core/db/migrations")
+# Samme glob som kjorer.py: en `*.sql` uten tresifret prefiks ville felt
+# `int(f.name[:3])` her, mens kjøreren aldri så fila. Porten skal måle
+# NØYAKTIG det settet kjøreren kjører.
+#
+# Codex P2 (runde 3): et dict-oppslag er ETT navn per versjon, men treet er
+# ikke det. To filer med samme tresifrede prefiks lot den siste overskrive
+# den første her — stille — mens kjøreren (`kjorer.py`: `sorted(glob(...))`)
+# kjører BEGGE. Porten ville da godkjent treet etter å ha målt én av dem, og
+# verre: `api.app.forventede_migrasjoner()` beholder begge tallene, så
+# `krev_migrasjonstilstand` sammenligner en liste MED duplikat mot basens
+# `versjon`-kolonne, som er PRIMARY KEY og derfor unik. `faktisk !=
+# forventet` kunne aldri blitt usann igjen — API-et permanent bootnektet,
+# oppdaget i steg 6/8, etter at tjenestene var stoppet. Duplikatet felles
+# derfor HER, før første mutasjon, og det måles mens kartet bygges.
+filer = {}
+duplikater = []
+for f in sorted(kat.glob("[0-9][0-9][0-9]_*.sql")):
+    versjon = int(f.name[:3])
+    if versjon in filer:
+        duplikater.append(f"{versjon:03d}: {filer[versjon].name} og {f.name}")
+    filer[versjon] = f
+if duplikater:
+    print("to migrasjonsfiler deler versjonsnummer —\n"
+          + "\n".join(duplikater)
+          + "\nkjøreren kjører begge, og forventede_migrasjoner() ville"
+            " talt versjonen to ganger mot en unik versjon-kolonne:"
+            " API-et kunne ikke bootet igjen")
+    sys.exit(1)
+# Hvilke NULL-rader herdingen FAKTISK kan fylle, lest fra herdingens egen
+# kilde. Tallene {1, 2} står ALDRI hardkodet her: legger noen en versjon til
+# eller fjerner en fra REVIEWEDE_CHECKSUMS, skal porten flytte seg med
+# herdingen, ikke motsi den. (Samme importvei som migrer.last_bootstrap —
+# filnavnet har bindestrek og kan ikke importeres vanlig.)
+_spek = importlib.util.spec_from_file_location(
+    "migrasjon_bootstrap", "deploy/staging/migrasjon-bootstrap.py")
+_boot = importlib.util.module_from_spec(_spek)
+_spek.loader.exec_module(_boot)
+herdbare = set(_boot.REVIEWEDE_CHECKSUMS)
+with psycopg.connect(os.environ["DISPONIT_MIGRATOR_URL"]) as c:
+    try:
+        rader = c.execute(
+            "SELECT versjon, checksum FROM migrasjoner").fetchall()
+    except psycopg.errors.UndefinedTable:
+        print("fersk base — ingen historikk å verne"); sys.exit(0)
+    except psycopg.errors.UndefinedColumn:
+        c.rollback()
+        # PR-004-æraens base: `migrasjoner` ble laget av 001_init.sql UTEN
+        # checksum-kolonne. Da finnes det ingen registrerte checksums å
+        # måle mot, og kjøreren er bygget for nettopp denne oppgraderingen:
+        # kjorer.py legger til kolonnen (ADD COLUMN IF NOT EXISTS) og
+        # migrasjon-bootstrap.herd_historikk backfiller de REVIEWEDE
+        # checksummene før 003. Et avbrudd her ville stoppet den eneste
+        # veien ut av tilstanden porten klager på.
+        #
+        # Men bare så langt herdingen rekker: kolonnen legges til NULL for
+        # HVER registrert versjon, og `herd_historikk` fyller kun de
+        # reviewede. Er det registrert en versjon herdingen ikke kjenner,
+        # er dette ikke en oppgradering migrer.py kan fullføre — samme dom
+        # som NULL-grenen under, og den hører her av samme grunn.
+        ukjente = sorted(v for (v,) in c.execute(
+            "SELECT versjon FROM migrasjoner").fetchall()
+            if v not in herdbare)
+        if ukjente:
+            print("ingen checksum-kolonne, og registrerte versjoner ("
+                  + ", ".join(f"{v:03d}" for v in ukjente)
+                  + ") som herdingen ikke kan fylle — migrer.py ville"
+                  " feilet i vedlikeholdsvinduet")
+            sys.exit(1)
+        print("historikken er ikke herdet ennå (ingen checksum-kolonne)"
+              " — migrer.py legger til kolonnen og backfiller")
+        sys.exit(0)
+# KJENT GRENSE — se #181 (eiervalg A, K2 fra #178).
+#
+# Porten løkker over BASENS rader. `migrasjon-bootstrap.herd_historikk`
+# løkker over `REVIEWEDE_CHECKSUMS` og måler hver fil UBETINGET — uansett om
+# raden er NULL, og uansett om versjonen er registrert i basen i det hele
+# tatt. De to løkkene har altså forskjellig definisjonsmengde, og ingen
+# lapp på grenene under kan forene dem: en base som er FERDIG herdet, med en
+# endret 001-fil OG en rad-checksum som følger den endrede fila, går grønt
+# her og rødt i `herd_historikk` — inne i vedlikeholdsvinduet.
+#
+# Porten er derfor siste skanse, ikke et bevis. Den tar klassen den ble
+# laget for (056-hendelsen 23/8: endret fil vs. basens egen rad), og
+# herdingsfeil som bare herdingen ser, står igjen. #181 flytter målingen dit
+# den hører hjemme: `herd_historikk(conn, torrkjor=True)` som ÉN kilde,
+# kalt herfra i stedet for speilet her.
+avvik = []
+uherdet = []
+for versjon, checksum in rader:
+    fil = filer.get(versjon)
+    if fil is None:
+        avvik.append(f"{versjon:03d}: kjørt i basen, borte fra treet")
+    elif checksum is None and versjon in herdbare:
+        # Kjørt, men ikke herdet — og herdingen KAN fylle nettopp denne:
+        # `herd_historikk` backfiller den fra REVIEWEDE_CHECKSUMS før 003.
+        # Da er raden ikke et avvik, men den telles og RAPPORTERES i stedet
+        # for å hoppes over stille, så en base som står halvveis i herdingen
+        # er synlig i deploy-loggen.
+        uherdet.append(versjon)
+    elif checksum is None:
+        # Codex P2 (runde 2): og HER tok runde 1 feil. Begrunnelsen den gang
+        # målte `kjorer.py`, som bare sammenligner når raden HAR en checksum
+        # — sant, men det er ikke kjøreren som feller denne tilstanden.
+        # `migrer.py` kaller `herd_historikk` UBETINGET, og den backfiller
+        # kun REVIEWEDE_CHECKSUMS (001/002) før den kaster `HerdingFeilet`
+        # på enhver NULL som står igjen. En kjørt versjon uten checksum som
+        # herdingen ikke kjenner, er altså ikke en tilstand migrer.py kan
+        # løse: den feller steg 6 GARANTERT — etter at tjenestene er
+        # stoppet. Det er nøyaktig 056-klassen denne porten finnes for, og
+        # den hører derfor blant avvikene, målt før første mutasjon.
+        avvik.append(
+            f"{versjon:03d}: kjørt uten checksum, og herdingen kan ikke fylle"
+            f" den (reviewede: "
+            + ", ".join(f"{v:03d}" for v in sorted(herdbare))
+            + ") — migrer.py ville feilet i vedlikeholdsvinduet")
+    elif hashlib.sha256(fil.read_bytes()).hexdigest() != checksum:
+        avvik.append(f"{fil.name}: endret etter kjøring (checksum-avvik)")
+if avvik:
+    print("\n".join(avvik)); sys.exit(1)
+melding = f"{len(rader) - len(uherdet)} kjørte migrasjoner byte-identiske"
+if uherdet:
+    melding += (f"; {len(uherdet)} uten checksum ("
+                + ", ".join(f"{v:03d}" for v in sorted(uherdet))
+                + ") — migrer.py herder dem")
+print(melding)
+PYPRE
+      ); then
+    echo "AVBRUTT ($base): checksum-preflighten er rød —"
+    echo "$CHECKSUMPREFLIGHT"
+    echo "Systemet er urørt: ingen tjeneste er stoppet, ingen identitet"
+    echo "opprettet og ingen credential skrevet; forrige release kjører som"
+    echo "før. Er avviket en endret migrasjon, rettes historikk FREMOVER"
+    echo "(056-hendelsen 23/8) — aldri ved å redigere den."
+    exit 1
+  fi
+  echo "checksum-preflight ($base): $CHECKSUMPREFLIGHT"
+done
 
 # ============================================================
 # HERFRA MUTERES SYSTEMET — gaten over er passert.
@@ -393,6 +613,75 @@ if [ "${DISPONIT_MILJO:-staging}" != "staging" ]; then
   echo "på nytt når $MILJOFIL står stille og sier 'staging'."
   exit 1
 fi
+# Cursor P2-2 (#178, runde 4): SAMME RE-GATE PÅ MIGRASJONS-DSN-ENE.
+# `DISPONIT_VARSEL_URL` og `DISPONIT_PLAN_URL` re-gates fordi preflighten
+# leste dem i en subshell og materialiseringen leser fila på nytt — men de
+# to migrasjons-DSN-ene ble lest på nøyaktig samme måte (checksum-porten,
+# i subshell) og BRUKT fra den autoritative lesingen over, uten en tilsvarende
+# gate. Er én av dem tom etter et filbytte, oppdages det først i steg 6 —
+# INNE i vedlikeholdsvinduet, etter tjenestestoppen — som en psycopg-feil
+# som går til `selvrevers()` i stedet for til en urørt avbrutt deploy.
+#
+# Begge måles, ikke bare runtime: de leses fra samme linje og brukes i
+# samme løkke, og å lukke halve klassen inviterer bare en runde til.
+# `set -u` stopper en FRAVÆRENDE variabel av seg selv; det er den TOMME
+# denne gaten finnes for.
+#
+# Codex P2 (runde 7): TOMHET ER IKKE NOK. Gaten fanget verdien som forsvant,
+# men ikke verdien som ble en ANNEN: en ny, ikke-tom DSN slapp gjennom, og
+# steg 6 migrerte da en base ingen port hadde sett historikken til. Gaten
+# måler derfor IDENTITET mot verdien checksum-porten faktisk målte —
+# tomhetssjekken står igjen foran, fordi den har en egen jobb: er BEGGE tomme,
+# er de identiske, men `psycopg.connect("")` faller tilbake på libpq-defaultene
+# og kan ha målt en helt annen base enn den tomme strengen ser ut som.
+for dsn_navn in DISPONIT_MIGRATOR_URL DISPONIT_TEST_MIGRATOR_DSN; do
+  if [ -z "${!dsn_navn:-}" ]; then     # indirekte oppslag, ikke eval
+    echo "AVBRUTT: $dsn_navn forsvant fra $MILJOFIL mellom"
+    echo "checksum-preflighten og den autoritative lesingen — fila er byttet"
+    echo "eller redigert mens utrullingen kjørte. Ingen credential er"
+    echo "materialisert, ingen tjeneste er stoppet, og ingen migrasjon er"
+    echo "kjørt. Kjør opp.sh på nytt når $MILJOFIL står stille."
+    exit 1
+  fi
+  maalt_navn="PREFLIGHT_$dsn_navn"
+  if [ "${!dsn_navn}" != "${!maalt_navn:-}" ]; then
+    echo "AVBRUTT: $dsn_navn i $MILJOFIL peker et annet sted enn den basen"
+    echo "checksum-preflighten målte — fila er byttet eller redigert mens"
+    echo "utrullingen kjørte. Steg 6 ville da migrert en historikk ingen port"
+    echo "har lest, og et checksum-avvik ville vist seg først INNE i"
+    echo "vedlikeholdsvinduet, etter tjenestestoppen (23/8-klassen). Ingen"
+    echo "credential er materialisert, ingen tjeneste er stoppet, og ingen"
+    echo "migrasjon er kjørt. Kjør opp.sh på nytt når $MILJOFIL står stille."
+    exit 1
+  fi
+done
+# SNAPSHOT AV CREDENTIALENE FØR DE OVERSKRIVES (Codex P1, runde 4).
+#
+# Steg 4 materialiserer KANDIDATENS verdier i /etc/disponit/*, og
+# `selvrevers()` starter FORRIGE release fra nøyaktig de samme filene.
+# `LoadCredential` leser fila på nytt ved HVER aktivering, så uten et
+# snapshot booter reverseringen gammel binær på ny konfigurasjon — og
+# meldingen «symlinken er urørt» er sann om symlinken og usann om
+# tilstanden prosessen faktisk starter i.
+#
+# Skarpeste tilfellet er `DISPONIT_SEMANTIKK_MILJO`: den regnes ut nedenfor
+# med KANDIDATENS kode (`$KILDE`) og måles ved oppstart av FORRIGE releases
+# egen `verifiser_oppstartsmiljo()`. Endret signaturformen seg mellom de to
+# releasene, nekter forrige release å starte — på en verdi denne
+# utrullingen skrev. Samme klasse: en nøkkel rotert i miljøfila siden
+# forrige deploy, eller en DSN som peker et nytt sted.
+#
+# Snapshotet er GENERISK — hver underkatalog av /etc/disponit, ikke en
+# liste over dagens credential-kataloger — så neste `skriv_cred`-katalog er
+# dekket uten at noen husker det. Navnet har ledende punktum med vilje:
+# `*/` matcher ikke skjulte navn, så kopien kan ikke kopiere seg selv.
+CRED_FORVINDU=/etc/disponit/.forvindu
+rm -rf "$CRED_FORVINDU"
+install -d -m 700 "$CRED_FORVINDU"
+for kat in /etc/disponit/*/; do
+  [ -d "$kat" ] || continue        # fersk vert: ingen kataloger å bevare
+  cp -a "$kat" "$CRED_FORVINDU/"
+done
 # Hver katalog `skriv_cred` skriver i MÅ opprettes FØR den skrives i —
 # `skriv_cred` er en `printf >`-omdirigering, og uten katalogen feiler den i
 # den MUTERENDE fasen, etter at preflighten er passert. På en vert som har
@@ -510,6 +799,198 @@ install -d -m 700 /etc/disponit/domener
 skriv_cred domener DISPONIT_DOMAINS_URL "$DISPONIT_DOMAINS_URL"
 skriv_cred domener DISPONIT_RESOLVERE   "${DISPONIT_RESOLVERE:-}"
 
+# Selv-reversering (#172): i feilsonen mellom «tjenester stoppet» og
+# release-byttet peker symlinken FORTSATT på forrige release — å starte
+# unitene igjen ER å boote den. Men bare når basen står stille også: rakk
+# runtime-migrasjonen å flytte skjemaet før feilen, finnes det ingen
+# gjenoppretting å love, og reverseringen sier det i stedet for å starte
+# gamle arbeidere mot et nytt skjema (rullbakk-gaten først i funksjonen).
+#
+# Codex P1 (runde 1): en reversering som starter et UTVALG av det vinduet
+# stoppet, er ingen reversering. Steg 5 slår av elleve enheter; første
+# utgave startet fire av dem og målte dommen på API-et alene — altså kunne
+# skriptet skrive «SELVREVERSERT: forrige release kjører igjen» mens
+# varselsenderen, plan-materialisereren, evidensreaperen (038) og
+# domeneverifiseringen (039) sto stille på ubestemt tid. Køene ville bare
+# vokst, og ingenting hadde sagt fra. Listen under SPEILER derfor steg 5,
+# den er ikke et utvalg av den; `test_selvrevers_speiler_vedlikeholdsvinduet`
+# måler de to mot hverandre så et nytt stopp uten et nytt start blir rødt.
+#
+# Formen er steg 8s, ikke steg 5s: TIMERNE startes, ikke oneshot-tjenestene
+# bak dem — å starte en oneshot direkte er å kjøre jobben nå, mens timerens
+# jobb er å velge når. `enable` gjøres aldri her: reverseringen skal
+# gjenopprette, ikke innføre.
+SELVREVERS_ENHETER="disponit-api.socket disponit-api.service
+disponit-m37.service disponit-helse.timer disponit-varselsender.timer
+disponit-domenerevalidering.timer disponit-artefaktrydding.timer
+disponit-evidensreaper.timer disponit-plan.timer
+disponit-rydd-pending.timer disponit-backup.timer
+disponit-domeneverifisering.timer disponit-wcag-audit.service"
+
+# Codex P2 (runde 2): vilkåret var `is-enabled`, og det måler UNIT-FILA,
+# ikke driften — `systemctl --help` skiller dem eksplisitt. En timer eller
+# wcag-arbeider en operatør bevisst hadde stoppet (uten å disable den) ville
+# derfor blitt AKTIVERT av en mislykket deploy, mens en enhet som kjørte
+# uten å være enablet ble stående nede. Begge er endringer utrullingen ikke
+# har mandat til: reverseringen skal gjenopprette tilstanden fra FØR vinduet,
+# og den tilstanden finnes bare ett sted — i driften, målt før steg 5 river
+# den. Settet snapshottes derfor der, og både startlista og dommen leser
+# NØYAKTIG det samme snapshotet.
+AKTIVE_FOR_VINDUET=""
+selvrevers() {
+  echo "AVBRUTT: $1 — forsøker selv-reversering (forrige release,"
+  echo "symlinken er urørt: $FORRIGE)"
+  # Codex P1 (runde 4): CREDENTIALENE TILBAKE FØR GAMMEL KODE BOOTER PÅ DEM.
+  # De tre forrige rundene på denne funksjonen målte hvilke ENHETER som
+  # startes; dette er den tilstanden de startes MOT. Steg 4 skrev
+  # kandidatens verdier over forrige releases, `LoadCredential` leser fila
+  # på nytt ved hver aktivering, og `DISPONIT_SEMANTIKK_MILJO` er regnet ut
+  # med kandidatens kode mens forrige releases boot-port måler den mot sin
+  # egen. Uten denne tilbakestillingen er «forrige release kjører igjen» et
+  # utsagn om binæren, ikke om konfigurasjonen den kjører på.
+  #
+  # Cursor P1 (runde 7): TILBAKESTILLINGEN SKJER FØRST — FØR RULLBAKK-GATEN.
+  # Den sto etter gaten, altså bare på stien som faktisk STARTER enheter.
+  # NEKTET-grenen `exit 1`-er før den, og etterlot kandidatens credentials
+  # som den levende konfigurasjonen på en vert der `aktiv` peker på forrige
+  # release og alt er stoppet. Verre enn øyeblikket: snapshotet lever bare
+  # til neste kjøring, og steg 4 gjør `rm -rf "$CRED_FORVINDU"` og
+  # snapshotter så DEN FORURENSEDE tilstanden som «før vinduet». Da er
+  # forrige releases konfigurasjon borte for godt, og en operatør som
+  # starter enhetene manuelt mot den «urørte» symlinken booter gammel binær
+  # på ny konfig — nøyaktig klassen runde 4 lukket, gjennom den ene stien
+  # runde 4 ikke dekket. Gjenopprettingen hører derfor før hver `exit` i
+  # funksjonen: den er billig, idempotent, og starter ingenting.
+  #
+  # Tilbakestillingen SKRIVER OVER, den rydder ikke: en credential
+  # kandidaten la til og forrige release ikke kjenner, blir liggende. Det
+  # er med vilje — forrige releases units laster bare de filene deres egen
+  # `LoadCredential` navngir, så en ekstra fil er inert, mens et `rm -rf`
+  # her ville lagt et destruktivt steg inn i selve feilhåndteringen.
+  #
+  # Snapshotet ($CRED_FORVINDU) røres ikke av kopieringen, så rullbakk-gaten
+  # under leser fortsatt forrige releases `api/DATABASE_URL` derfra.
+  GJENOPPRETTET=""
+  for kat in "$CRED_FORVINDU"/*/; do
+    [ -d "$kat" ] || continue
+    cp -a "$kat" /etc/disponit/
+    GJENOPPRETTET="$GJENOPPRETTET $(basename "$kat")"
+  done
+  echo "credentials tilbakestilt til før vinduet:" \
+       "${GJENOPPRETTET:- ingen — /etc/disponit var tomt før steg 4}"
+  # Codex P1 (runde 2): symlinken er urørt, men BASEN er ikke nødvendigvis
+  # det. Steg 6 migrerer runtime-basen FØR testbasen, og steg 6b kjører
+  # etter begge: går runtime grønt og testbasen eller deploy-porten rødt,
+  # bærer runtime-basen alt kandidatens forward-only-sett mens `aktiv`
+  # peker på forrige release. Å starte enhetene da er ikke å gjenopprette
+  # — det er å sette GAMLE arbeidere på et NYTT skjema. API-et nekter selv
+  # (`krev_migrasjonstilstand`, eksakt samsvar), men M-37 og timerne har
+  # ingen slik bootport: de ville kjørt videre mot et skjema dette skriptet
+  # nettopp erklærte inkompatibelt, og feilgrenen stopper dem aldri igjen.
+  #
+  # Dommen felles derfor FØR første `systemctl start`, og den MÅLES:
+  # `rollbackmaal_kompatibelt` (lib-opp.sh, samme kall steg 9 bruker)
+  # leser forrige releases migrasjonsversjoner mot de FAKTISK anvendte i
+  # runtime-basen — bootportens egen fasit, ikke en slutning fra hva denne
+  # kjøringen rakk å migrere (#127-lærdommen). Er den rød, er «umålt» ikke
+  # «kompatibelt»: ingenting startes.
+  #
+  # Codex P2 (runde 6): OG DEN MÅLES PÅ BASEN SOM FAKTISK BOOTES.
+  # F13 (runde 4) gjorde at forrige release starter på den TILBAKESTILTE
+  # `DATABASE_URL` fra snapshotet, ikke på kandidatens env. Dommen leste
+  # likevel `DISPONIT_MIGRATOR_URL` — kandidatens migrator-DSN. Peker de to
+  # på samme base (normaltilfellet), er de samme lesing gjennom to roller
+  # og dommen er uendret. Flyttet DENNE utrullingen basen — ny vert, ny
+  # base, et DSN-bytte i miljøfila — måler gaten kandidatens base mens
+  # kjøreren starter mot forrige releases: nekter reverseringen på et
+  # migrasjonssett ingen av de gjenopprettede enhetene noensinne vil se,
+  # og lar hver enhet stå stoppet selv om forrige release og forrige base
+  # kjørte sammen sekundet før vinduet.
+  #
+  # Kilden er `api/DATABASE_URL` fra snapshotet med vilje: det er NØYAKTIG
+  # fila `disponit-api.service` sin `LoadCredential` leser, og
+  # `krev_migrasjonstilstand` (eksakt samsvar) feller sin dom gjennom den.
+  # Gaten predikerer bootportens svar, så den må lese bootportens base.
+  # Mangler fila — fersk vert uten `/etc/disponit/api` før vinduet — er
+  # kandidatens migrator-DSN fortsatt det nærmeste vi har, og det er
+  # dagens oppførsel. Er DSN-en ubrukelig, feller `rollbackmaal_kompatibelt`
+  # «umålt er ikke kompatibelt», og det er riktig: en DSN forrige release
+  # ikke kan koble seg opp med, kan den heller ikke starte på.
+  ROLLBACKDOM=""
+  ROLLBACKBASE="${DISPONIT_MIGRATOR_URL:-}"
+  if [ -s "$CRED_FORVINDU/api/DATABASE_URL" ]; then
+    ROLLBACKBASE=$(cat "$CRED_FORVINDU/api/DATABASE_URL")
+  fi
+  if [ -z "$FORRIGE" ]; then
+    ROLLBACKDOM="ingen forrige release å boote (aktiv-symlinken fantes ikke)"
+  else
+    ROLLBACKDOM=$(rollbackmaal_kompatibelt "$FORRIGE" "$ROLLBACKBASE") || \
+      ROLLBACKDOM="${ROLLBACKDOM:-rullbakkmålet lot seg ikke måle}"
+  fi
+  if [ -n "$ROLLBACKDOM" ]; then
+    echo "SELV-REVERSERING NEKTET: $ROLLBACKDOM."
+    echo "Basen har flyttet seg forbi forrige release, og da kan forrige"
+    echo "kode ikke bootes mot dette skjemaet (bootportens dom). Enhetene"
+    echo "blir STÅENDE STOPPET, med vilje — en gammel arbeider mot et nytt"
+    echo "skjema er verre enn en stoppet arbeider, og M-37 og timerne har"
+    echo "ingen bootport som ville nektet for dem."
+    echo "STÅENDE STOPPET (var i drift før vinduet):" \
+         "${AKTIVE_FOR_VINDUET:- ingen — ingenting kjørte før vinduet}"
+    echo "Credentialene er likevel tilbakestilt til før vinduet, så en"
+    echo "manuell start mot den urørte symlinken booter forrige release på"
+    echo "forrige releases konfigurasjon — men SKJEMAET er fortsatt fremme."
+    echo "Rettingen er FREMOVER og den er NÅ: fullfør deployen mot et"
+    echo "skjema begge basene deler, eller rull frem til et sett forrige"
+    echo "release bærer. Deployen er avbrutt."
+    exit 1
+  fi
+  # Snapshotet, i den rekkefølgen unitene avhenger av hverandre: socket og
+  # API først (`disponit-wcag-audit.service` har `After=disponit-api.service`),
+  # så resten. Rekkefølgen ligger i SELVREVERS_ENHETER, og snapshotet er
+  # bygget i den rekkefølgen.
+  for enhet in $AKTIVE_FOR_VINDUET; do
+    systemctl start "$enhet" 2>/dev/null || true
+  done
+  sleep 2
+  # Dommen måles på NØYAKTIG det settet som ble startet — samme variabel,
+  # ikke en ny liste som kan drifte fra den. `2>/dev/null || true` over
+  # sluker startfeil med vilje (en enhet som ikke finnes på verten skal ikke
+  # felle reverseringen), og nettopp derfor kan ikke suksess utledes av
+  # exit-koden: den må MÅLES.
+  #
+  # KJENT GRENSE — se #182 (eiervalg A, K2 fra #178).
+  # `is-active` måler at PROSESSEN lever, ikke at den svarer.
+  # `disponit-api.service` er `Type=simple`, så et API som henger i
+  # oppstart — eller som samples mellom to feil i en restart-løkke — gir
+  # `SELVREVERSERT` på et API som ikke serverer. Steg 8 eier den
+  # autoritative klarhetsporten (30 × `curl --unix-socket .../ready`), og
+  # grunnen til at den ikke brukes her er kun at de to stegene ikke deler
+  # noen hjelper. #182 trekker den ut som `vent_paa_ready()` i lib-opp.sh
+  # og lar begge stedene kalle den.
+  #
+  # DRIFTSVEDTAKET (eier, 24/8) er at terskelen da blir HETEROGEN med
+  # vilje: API-et er SELVREVERSERT først når `/ready` svarer over socketen,
+  # mens M-37 og timerne måles med `is-active` til de har et eget
+  # klarhetssignal. De har ingen `/ready`, og heartbeaten som kunne blitt
+  # ett er en senere maskin — ikke en utvidelse av #182.
+  NEDE=""
+  for enhet in $AKTIVE_FOR_VINDUET; do
+    systemctl is-active --quiet "$enhet" || NEDE="$NEDE $enhet"
+  done
+  if [ -z "$NEDE" ]; then
+    echo "SELVREVERSERT: forrige release kjører igjen — hver enhet som var i"
+    echo "drift før vinduet er aktiv igjen:$AKTIVE_FOR_VINDUET."
+    echo "Feilen rettes FREMOVER; deployen er avbrutt."
+  else
+    echo "SELV-REVERSERING FEILET. Fortsatt nede:$NEDE"
+    echo "Er API-et blant dem, kan forrige kode ikke starte mot basens"
+    echo "migrasjonssett (bootportens dom). Uansett hvilke enheter det"
+    echo "gjelder: de er STOPPET av dette vinduet, og manuell"
+    echo "fremoverrettet retting kreves NÅ."
+  fi
+  exit 1
+}
+
 # --- 5. VEDLIKEHOLDSVINDU: stopp tjenester OG helsetimer (V1) --------------
 # Timeren stoppes også: den skal verken telle feil mot stoppede tjenester
 # eller utløse en restart midt i migrasjonsvinduet.
@@ -522,7 +1003,41 @@ skriv_cred domener DISPONIT_RESOLVERE   "${DISPONIT_RESOLVERE:-}"
 # stoppes: å stoppe timeren alene avbryter ikke en kjøring som alt er i gang.
 # `systemctl stop` på en oneshot venter til prosessen er ute, så vinduet åpnes
 # først når begge arbeiderne faktisk er stille.
-systemctl stop disponit-helse.timer disponit-m37.service \
+#
+# Cursor P2-4/P2-5 (#178, runde 4): `disponit-rydd-pending` og
+# `disponit-backup` sto i `UNITS`, ble `enable --now`-et i steg 8 — og ble
+# ALDRI stoppet her. De to kjørte altså tvers gjennom vedlikeholdsvinduet,
+# mot nøyaktig det skjemaet i bevegelse avsnittet over er skrevet om:
+# ryddejobben gjør DELETE mot `api_tokener`, og `pg_dump` midt i et
+# forward-only-sett gir en dump som er halvt gammelt og halvt nytt skjema —
+# en backup som ikke kan restores er verre enn ingen backup, fordi den ser
+# ut som en.
+#
+# SNAPSHOT FØRST (Codex P2, runde 2): hvilke enheter som var I DRIFT finnes
+# bare å lese HER — ett sekund senere har vinduet revet tilstanden, og da er
+# `is-enabled` det eneste som er igjen å gjette ut fra. Gjetningen er feil i
+# begge retninger: en enhet en operatør bevisst stoppet er fortsatt enablet,
+# og en enhet som kjørte trenger ikke være det. Snapshotet er reverseringens
+# eneste sannhet om hva «tilbake» betyr, og det skrives til loggen så
+# operatøren ser det samme settet skriptet vil gjenopprette.
+for enhet in $SELVREVERS_ENHETER; do
+  if systemctl is-active --quiet "$enhet"; then
+    AKTIVE_FOR_VINDUET="$AKTIVE_FOR_VINDUET $enhet"
+  fi
+done
+echo "vedlikeholdsvindu: i drift før stopp —" \
+     "${AKTIVE_FOR_VINDUET:- ingen}"
+# Cursor P2 (#178, runde 7): OGSÅ `disponit-helse.service`. Å stoppe timeren
+# hindrer NESTE aktivering, ikke den som alt løper — samme lærdom som
+# rydd-pending og backup fikk i runde 4, og helsesjekken er den farligste av
+# dem: en pågående kjøring med teller ≥ MAKS_FEIL kaller
+# `disponit-restart-helper` på API-et og M-37, altså restarter nøyaktig de
+# tjenestene vinduet nettopp stoppet — midt i migrasjonen, mot et skjema i
+# bevegelse. Den hører derfor i den SAMME `systemctl stop` som timeren sin,
+# og IKKE i `SELVREVERS_ENHETER`: oneshoten er timerens å starte (steg 8s
+# form), og reverseringen skal gjenopprette timeplanen, ikke kjøre jobben nå.
+systemctl stop disponit-helse.timer disponit-helse.service \
+    disponit-m37.service \
     disponit-api.service disponit-api.socket 2>/dev/null || true
 systemctl stop disponit-varselsender.timer disponit-varselsender.service \
     2>/dev/null || true
@@ -535,6 +1050,8 @@ systemctl stop disponit-domenerevalidering.timer \
     disponit-wcag-audit.service \
     disponit-domeneverifisering.timer \
     disponit-domeneverifisering.service 2>/dev/null || true
+systemctl stop disponit-rydd-pending.timer disponit-rydd-pending.service \
+    disponit-backup.timer disponit-backup.service 2>/dev/null || true
 
 # --- 6. Migrasjoner (begge baser) — FØR ny release aktiveres ---------------
 # P1 runde 1: hver base melder sitt til rapporten. Første utgave lot siste
@@ -547,9 +1064,7 @@ for par in "runtime:$DISPONIT_MIGRATOR_URL" "test:$DISPONIT_TEST_MIGRATOR_DSN"; 
   (cd "$KILDE" && DISPONIT_MIGRATOR_URL="$url" \
      "$ROT/.venv/bin/python" deploy/staging/migrer.py disponit) \
      | tee "$RAPPORT_KATALOG/$base" || {
-    echo "AVBRUTT: migrasjon ($base) feilet — tjenestene er STOPPET og"
-    echo "forrige release står urørt på $FORRIGE. Fremoverrettet retting."
-    exit 1
+    selvrevers "migrasjon ($base) feilet"
   }
 done
 
@@ -565,13 +1080,20 @@ done
 # de syntetiske hashene i testbasen har ingen skjemaer å registrere.
 (cd "$KILDE" && DATABASE_URL="$DATABASE_URL" DISPONIT_REPO="$KILDE" \
    "$ROT/.venv/bin/python" deploy/staging/deployport-modultyper.py) || {
-  echo "AVBRUTT: deploy-port (014c §5) rød — tjenestene er STOPPET og"
-  echo "forrige release står urørt på $FORRIGE. Rett registeret/typen først."
-  exit 1
+  selvrevers "deploy-port (014c §5) rød"
 }
 
 # --- 7. Atomisk release-bytte + units --------------------------------------
 ln -sfn "$KILDE" "$AKTIV"
+# Feilsonen er passert: fra og med linjen over er symlinken byttet, og
+# `selvrevers()` kalles ikke lenger (`test_hver_feil_i_vinduet_kaller_selvrevers`
+# avgrenser sonen til nøyaktig dette intervallet). Credential-snapshotet har
+# ingen leser igjen, og det er en KOPI av hemmelighetene i /etc/disponit —
+# den skal ikke bli liggende som stabil tilstand på verten. Feiler deployen
+# før dette punktet, blir kopien liggende til neste kjøring rydder den; da
+# er den fortsatt 700/root, og fortsatt de samme hemmelighetene som allerede
+# ligger ved siden av.
+rm -rf "$CRED_FORVINDU"
 for u in $UNITS; do
   install -m 644 "$KILDE/deploy/staging/$u" "/etc/systemd/system/$u"
 done
