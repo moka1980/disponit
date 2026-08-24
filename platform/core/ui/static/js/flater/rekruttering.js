@@ -1,8 +1,9 @@
 // M-57 Rekruttering (klarsignalet §8). Flaten viser ÉN prosess om gangen:
 // kandidatlisten som <table> med caption/scope/aria-sort, vektene som
 // range-kontroller med synlig verdi og ny rekkefølge annonsert i
-// aria-live="polite", blindingsbryteren med alertdialog ved AVSKRUING
-// (valget auditeres på serveren), detaljpanelet som dialog med fokusfelle,
+// aria-live="polite", blindingens tilstand som et deaktivert merke
+// (avskruing er en auditert mutasjon og hører til #159), detaljpanelet
+// som dialog med fokusfelle,
 // og signaturdialogen som sier antall, listetype og hashens kortform før
 // den irreversible utsendelsen. Utfall meldes i role="alert".
 //

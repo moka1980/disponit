@@ -14,6 +14,9 @@ Tre ruter, formet av flatens kontrakt (flater/rekruttering.js):
   AUDITERT handling med varig revisjonsevidens, og evidensdesignet er
   #159 (K2: selvattestert avskruing er ikke evidens). Til #159 lander,
   svarer ruten en KODET avvisning — aldri en stille suksess uten spor.
+  Og flaten TILBYR ikke handlingen så lenge det er svaret (Codex P2,
+  runde 4): bryteren der er et deaktivert tilstandsmerke. Ruten står
+  igjen som det ærlige svaret til en direkte API-kaller.
 
 Vektene: den varige kilden er stillingsprofilen (#162-kjeden). Til den
 finnes leses vektene av evalueringsartefaktets `vekter`-felt (skrevet av
