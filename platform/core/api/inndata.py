@@ -141,12 +141,49 @@ async def opplast_endepunkt(tjeneste, request):
     # async fordi den må lese `request.stream()`, og betaler derfor for
     # den vekslingen eksplisitt.
     def autentiser(conn):
-        return _browserkontekst(tjeneste, request, conn, rid,
-                                "bestilling:opprett")
+        tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
+                                       "bestilling:opprett")
+        # RESERVASJONEN SEES OGSÅ FØR KROPPEN (Codex P2, runde 8). Auth
+        # avgjorde at avsenderen har LOV til å sende 64 MiB; den sa
+        # ingenting om at det finnes noe å sende dem TIL. En ukjent,
+        # utløpt eller alt forbrukt jti — en gammel lenke, en retry etter
+        # fristen, en avkortet token — ble derfor strømmet, hashet,
+        # kryptert, skrevet, fsynket i to katalognivåer, og FØRST DA
+        # avvist av `registrer_inndata_lastet`. Den mest forutsigbare
+        # feilen på ruten var samtidig den dyreste: full pris i minne,
+        # CPU og disk-I/O for et svar vi kunne gitt på ett indeksoppslag.
+        #
+        # Sjekken FORBRUKER ingenting og AVGJØR ingenting: 058 eier
+        # fortsatt engangs-semantikken, låser raden `FOR UPDATE` og gjør
+        # den samme vurderingen om igjen ved registreringen — kappløpet
+        # mellom denne lesningen og den låste skrivingen er nettopp
+        # derfor ufarlig. Dette er en billig FORHÅNDSAVVISNING, ikke en
+        # ny port. Den kan bare si nei til det 058 uansett sier nei til.
+        #
+        # Grensesnittet er ett ord: `inndata_reservasjon_ugyldig`, det
+        # samme som døren gir for alle tre dødtilstandene
+        # (`feil.py:233-237`: «ukjent, utløpt eller alt forbrukt» skal ha
+        # SAMME svar, ellers er svaret et orakel på hvilke jti-er som
+        # finnes). `lastet` slipper igjennom fordi et gjenspill med samme
+        # kropp er en LOVLIG forespørsel — hash-grenen krever kroppen og
+        # blir liggende der den er.
+        #
+        # RLS (`tenant_isolasjon`, 058:278) snevrer lesningen til
+        # kallerens egen tenant; `tenant`-predikatet står likevel
+        # eksplisitt, både fordi det treffer `inndata_jti_en_gang`-
+        # indeksen og fordi en tenantvakt ikke skal være usynlig.
+        rad = conn.execute(
+            "SELECT status, pg_catalog.now() > utloper"
+            "  FROM inndata_artefakt"
+            " WHERE tenant = %s AND reservasjon_jti = %s",
+            (tenant, jti)).fetchone()
+        if rad is None or rad[1] or rad[0] not in ("reservert", "lastet"):
+            raise _Avbrudd(_feil("inndata_reservasjon_ugyldig", rid, 409))
+        return tenant, bid
 
     kontekst = await run_in_threadpool(_med_conn, tjeneste, rid, autentiser)
     if not isinstance(kontekst, tuple):
-        return kontekst      # ferdig kodet feilsvar: 401/403/csrf/drift
+        return kontekst      # ferdig kodet feilsvar: 401/403/csrf/409/drift
     tenant, bid = kontekst
 
     # Kroppen finnes bare én gang, og leses først NÅ — etter at det er

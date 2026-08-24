@@ -417,6 +417,61 @@ def test_auth_avgjores_for_kroppen_leses(klient, inndata_rot, monkeypatch):
 
 
 @pg
+@dekker("inndata_reservasjon_ugyldig")
+def test_ugyldig_reservasjon_avvises_for_kroppen_leses(klient, inndata_rot,
+                                                      monkeypatch):
+    """Codex P2 runde 8: en ugyldig reservasjon ble oppdaget FØRST i
+    `registrer_inndata_lastet` — etter at inntil 64 MiB var strømmet,
+    hashet, kryptert, skrevet og fsynket i to katalognivåer.
+
+    Statuskoden alene beviser ingenting her: den gamle koden svarte også
+    409 på alle tre dødtilstandene, bare etter å ha betalt full pris i
+    minne, CPU og disk for en helt forutsigbar avvisning. Sensoren måler
+    REKKEFØLGEN — alt som rører kroppen i endepunktet går gjennom
+    `hashlib.sha256`, akkurat som i auth-rekkefølgetesten over.
+
+    Alle tre dødtilstandene `feil.py:233-237` krever det samme svaret for
+    — ukjent, utløpt, forbrukt — måles hver for seg: en forhåndssjekk som
+    bare kjente «ukjent» ville sendt utløp og forbruk ned den dyre veien
+    igjen, og skillet i pris ville dessuten vært det jti-orakelet runde 7
+    lukket i selve svaret.
+
+    MUTASJONEN SOM DREPER DENNE: fjern forhåndssjekken i `autentiser`
+    (eller snevre den til `rad is None`). Da konstrueres hasheren først,
+    og sensoren svarer i stedet for ruten."""
+    from api import inndata as inndatamodul
+
+    tenant, _bid, cookie, csrf = _rigg(klient)
+    m = _migrator(tenant)
+    try:
+        utlopt = _reservasjon(m, tenant, utloper="now() - interval '1 second'")
+        jti_forkastet = secrets.token_hex(32)
+        _lastet(m, tenant, jti=jti_forkastet)
+        m.commit()
+        _kontekst(m, tenant)
+        m.execute("UPDATE inndata_artefakt SET status='forkastet'"
+                  " WHERE tenant=%s AND reservasjon_jti=%s",
+                  (tenant, jti_forkastet))
+        m.commit()
+    finally:
+        m.close()
+
+    class _Sensor:
+        @staticmethod
+        def sha256(*_a, **_k):
+            raise AssertionError("kroppen ble hashet FØR reservasjonen"
+                                 " var slått opp")
+
+    monkeypatch.setattr(inndatamodul, "hashlib", _Sensor)
+    for jti in ("f" * 48, utlopt, jti_forkastet):
+        r = _opplast(klient, cookie, csrf, jti, b"P" * (1024 * 1024))
+        assert r.status_code == 409, r.text
+        assert r.json()["feil"] == "inndata_reservasjon_ugyldig", r.text
+    # Ingen av de tre forsøkene rakk å skrive en ciphertext heller.
+    assert not sorted((inndata_rot / tenant).glob("*.bin"))
+
+
+@pg
 def test_taket_avviser_for_stor_kropp(klient, inndata_rot, monkeypatch):
     """Kontrakttaket i endepunktet (transport-taket i middleware deler
     tallet): én byte over → 413, og reservasjonen står UBRUKT — et
