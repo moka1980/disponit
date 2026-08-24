@@ -581,6 +581,130 @@ def test_selvrevers_speiler_vedlikeholdsvinduet():
         "reverseringsdommen måler ikke enhetene den nettopp startet"
 
 
+def _checksumporten() -> str:
+    """Deploy-sidens checksum-preflight, ORDRETT fra opp.sh.
+
+    Samme grep som `_credentialblokken()`: koden testes der den bor, ikke i
+    en kopi som kan drifte fra den. Interpreteren byttes (suitens, ikke
+    `$ROT/.venv/bin/python`) — det er harnesset, ikke koden.
+    """
+    import re
+    opp = (ROT / "deploy/staging/opp.sh").read_text(encoding="utf-8")
+    return re.search(r"<<'PYPRE'\n(.*?)\nPYPRE\n", opp, re.S).group(1)
+
+
+@pg
+def test_checksumporten_feller_endret_kjort_migrasjon(migrator, tmp_path):
+    """056-hendelsen (23/8) spilt av mot en EKTE base, gjennom samme kode
+    deployen kjører.
+
+    CI-porten i `test_migrasjonsfasit` feller klassen før merge, målt mot
+    fasitfila. Denne halvdelen måles mot BASENS egne rader og er den siste
+    skansen: den er det som skal ha stoppet deployen 23/8, før tjenestene
+    ble stoppet på en kommentarlinje. Inline-Python i en heredoc hadde ingen
+    negativ test i det hele tatt — samme hullklasse som runde 1s inline
+    bash.
+
+    Rekkefølgen er grønn først, så rød: en negativ test alene beviser ikke
+    at porten kan si ja, og en port som alltid sier nei ville vært like
+    ubrukelig.
+    """
+    import hashlib
+    import os
+    import subprocess
+    import sys
+    port = tmp_path / "checksumport.py"
+    port.write_text(_checksumporten(), encoding="utf-8")
+
+    def kjor():
+        return subprocess.run(
+            [sys.executable, str(port)], cwd=ROT, capture_output=True,
+            text=True,
+            env={**os.environ, "DISPONIT_MIGRATOR_URL": MIGRATOR_DSN})
+
+    gronn = kjor()
+    assert gronn.returncode == 0, \
+        f"porten er rød på en base CI selv har migrert fra treet:\n" \
+        f"{gronn.stdout}{gronn.stderr}"
+    assert "byte-identiske" in gronn.stdout, gronn.stdout
+
+    # Den nyeste kjørte migrasjonen: minst sannsynlig å bli kjørt om av en
+    # annen test i vinduet der checksummen står feil.
+    versjon, fasit = migrator.execute(
+        "SELECT versjon, checksum FROM migrasjoner"
+        " WHERE checksum IS NOT NULL ORDER BY versjon DESC LIMIT 1").fetchone()
+    fil = next((ROT / "platform/core/db/migrations").glob(f"{versjon:03d}_*.sql"))
+    assert hashlib.sha256(fil.read_bytes()).hexdigest() == fasit, \
+        f"{fil.name} er alt i utakt med basen — testen måler ikke det den tror"
+    try:
+        # Basen sier én ting, fila en annen: nøyaktig 056-tilstanden.
+        # Gjenopprettes i `finally` — de andre kjører-testene leser samme rad
+        # (samme mønster som test_endret_historisk_migrasjon_avvises).
+        migrator.execute("UPDATE migrasjoner SET checksum=%s WHERE versjon=%s",
+                         ("0" * 64, versjon))
+        migrator.commit()
+        rod = kjor()
+    finally:
+        migrator.execute("UPDATE migrasjoner SET checksum=%s WHERE versjon=%s",
+                         (fasit, versjon))
+        migrator.commit()
+
+    assert rod.returncode != 0, \
+        f"porten slapp gjennom en kjørt migrasjon som ikke matcher basen:\n" \
+        f"{rod.stdout}"
+    assert fil.name in rod.stdout and "checksum-avvik" in rod.stdout, \
+        f"porten avbrøt, men navngir ikke fila operatøren må se på:\n" \
+        f"{rod.stdout}"
+
+
+@pg
+def test_checksumporten_slipper_uherdet_historikk(migrator, tmp_path):
+    """Codex P2: uherdet historikk er ikke et avvik.
+
+    En base fra PR-004-æraen har `migrasjoner` uten checksum-kolonne, og en
+    base midt i herdingen har rader med NULL. Begge er tilstander
+    `migrer.py` er BYGGET for å løse (kjøreren legger til kolonnen,
+    `herd_historikk` backfiller fra REVIEWEDE_CHECKSUMS). En port som
+    avbryter der, stenger den eneste veien ut av tilstanden den klager på.
+
+    NULL-raden måles her; den manglende KOLONNEN er dekket av
+    `test_kjorer_og_kryptering`-søsknene, som eier DDL-en for den
+    tilstanden.
+    """
+    import os
+    import subprocess
+    import sys
+    port = tmp_path / "checksumport.py"
+    port.write_text(_checksumporten(), encoding="utf-8")
+
+    versjon, fasit = migrator.execute(
+        "SELECT versjon, checksum FROM migrasjoner"
+        " WHERE checksum IS NOT NULL ORDER BY versjon DESC LIMIT 1").fetchone()
+    try:
+        migrator.execute("ALTER TABLE migrasjoner"
+                         " ALTER COLUMN checksum DROP NOT NULL")
+        migrator.execute("UPDATE migrasjoner SET checksum=NULL"
+                         " WHERE versjon=%s", (versjon,))
+        migrator.commit()
+        res = subprocess.run(
+            [sys.executable, str(port)], cwd=ROT, capture_output=True,
+            text=True,
+            env={**os.environ, "DISPONIT_MIGRATOR_URL": MIGRATOR_DSN})
+    finally:
+        migrator.execute("UPDATE migrasjoner SET checksum=%s WHERE versjon=%s",
+                         (fasit, versjon))
+        migrator.execute("ALTER TABLE migrasjoner"
+                         " ALTER COLUMN checksum SET NOT NULL")
+        migrator.commit()
+
+    assert res.returncode == 0, \
+        f"porten avbrøt på en uherdet rad og stengte legacy-oppgraderingen:\n" \
+        f"{res.stdout}{res.stderr}"
+    # Ikke hoppet over STILLE: operatøren skal se at basen står halvveis.
+    assert f"{versjon:03d}" in res.stdout and "uten checksum" in res.stdout, \
+        f"den uherdede raden er usynlig i deploy-loggen:\n{res.stdout}"
+
+
 @pg
 def test_rydd_pending_tar_kun_foreldede(migrator, miljo, monkeypatch,
                                         capsys):
