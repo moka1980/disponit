@@ -505,13 +505,19 @@ def test_sql_lukker_eiermodulen_ikke_bare_http(klient):
     i `reserver_endepunkt`, men en annen kaller går ikke gjennom HTTP.
 
     MUTASJONEN SOM DREPER DENNE: fjern CHECKen på kolonnen ELLER guarden
-    i funksjonen — begge armene måles."""
+    i funksjonen — begge armene måles.
+
+    NB (Cursor P2): kallet var firearguments etter at `reserver_inndata`
+    fikk `p_idempotensnokkel`. Da reiser Postgres `UndefinedFunction`, og
+    en `raises(InvalidParameterValue)` rundt den måler at funksjonen ikke
+    finnes — ikke guarden testen sier den dekker."""
     tenant, _bid, _cookie, _csrf = _rigg(klient)
     c = _runtime(tenant)
     try:
         with pytest.raises(psycopg.errors.InvalidParameterValue):
-            c.execute("SELECT * FROM reserver_inndata(%s,%s,%s,%s)",
-                      (tenant, "m_wcag_audit", "soknadsbunt", MAKS))
+            c.execute("SELECT * FROM reserver_inndata(%s,%s,%s,%s,%s)",
+                      (tenant, "m_wcag_audit", "soknadsbunt", MAKS,
+                       secrets.token_hex(12)))
         c.rollback()
     finally:
         c.close()
