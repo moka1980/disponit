@@ -635,6 +635,36 @@ def signer_endepunkt(tjeneste, request):
             laast = conn.execute("SELECT roller FROM laas_godkjenner(%s,%s)",
                                  (tenant, bid)).fetchone()
             replay = _fullfort_replay(conn, tenant, nokkel, liste_id, bid)
+        # ...OG `rad` SELV ER LEST FØR VENTEPUNKTET — UTSATT TIL #180
+        # (Cursor P1, runde 10). Portene under måler `rad[3]`/`rad[4]` fra
+        # SELECT-en over `_fullfort_replay`, altså fra FØR låsen. Runde 8
+        # flyttet `laas_godkjenner` foran portene, og det gjorde vinduet
+        # mellom lesningen og dommen sekunder langt i stedet for
+        # mikrosekunder: køen på medlemskapsraden er nå en ventetid en
+        # `opprett_utsendingsliste` eller en `reap_kandidatdata` kan
+        # committe inni. Vinduet er altså UTVIDET av denne PR-en, og det
+        # skal stå her — #180 arver det med åpne øyne.
+        #
+        # Det er likevel samme klasse som de to utsettelsene over, og
+        # eiers forhåndsdom (#176-tråden, 24/8) felte nettopp den:
+        # «reises replay-vs-porter-klassen en fjerde gang i denne
+        # håndtereren, er svaret allerede felt — utsett til #180 ...
+        # ulåste forhåndslesninger inkludert». To grunner bærer den her:
+        #   * EN ETTERLESNING LUKKER IKKE. Etter et ferskt `SELECT` løper
+        #     forespørselen fortsatt videre ned i `signer_utsendingsliste`
+        #     uten felles lås på serien eller prosessen, så motparten kan
+        #     committe der i stedet. Vinduet krymper til det det var før
+        #     runde 8; det forsvinner ikke. Huset felte alt den formen på
+        #     reap-porten over: et halvt lukket kappløp som SER lukket ut
+        #     er verre enn et navngitt åpent.
+        #   * OG BREDDEN ER IKKE DET SOM AVGJØR HER. Begge bitene vinduet
+        #     kan snu mangler en produsent i drift — ingen rute oppretter
+        #     barnversjoner (redigeringsbenet er #180-sperret), og reapen
+        #     krever en prosess forbi slettefristen i signeringsøyeblikket
+        #     (seeden setter 90 døgn). Det er samme reachability eiers
+        #     merge-vedtak (K2-dommen 09:35Z) hviler på, og den endres
+        #     ikke av at ventepunktet gjør vinduet lengre.
+        # #180 tar låsen for hele klassen; til da er dette navngitt åpent.
         if not replay and rad[3]:
             raise _Avbrudd(_feil("liste_utdatert", rid, 409))
         if not replay and rad[4]:
