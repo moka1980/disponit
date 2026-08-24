@@ -509,7 +509,7 @@ CREATE FUNCTION bind_inndata(
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE r RECORD; v_oppdrag_eier TEXT; v_oppdragstype TEXT;
-        v_konsument TEXT;
+        v_oppdrag_status TEXT; v_konsument TEXT;
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant, 'bind_inndata');
     SELECT * INTO r FROM public.inndata_artefakt
@@ -543,13 +543,35 @@ BEGIN
     -- (016) — å utvide den for en lås vi ikke trenger ville byttet ett
     -- funn mot et større. RLS gjelder også for denne definer-rollen;
     -- `krev_tenantkontekst` over har alt bundet `disponit.tenant`.
-    SELECT o.eiermodul, o.oppdragstype
-      INTO v_oppdrag_eier, v_oppdragstype
+    SELECT o.eiermodul, o.oppdragstype, o.status
+      INTO v_oppdrag_eier, v_oppdragstype, v_oppdrag_status
       FROM public.oppdrag o
      WHERE o.tenant = p_tenant AND o.id = p_oppdrag_id;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'inndata: oppdrag % finnes ikke i tenant %',
             p_oppdrag_id, p_tenant
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- LIVSSYKLUSEN ER OGSÅ EN PORT (Cursor P2, runde 6). Eierskap og
+    -- formål over sier HVEM og HVA, ikke NÅR: uten denne kunne en kaller
+    -- med EXECUTE binde en lastet bunt til et TERMINALT oppdrag
+    -- (`utfort`/`feilet`/`kansellert`). Engangsbunten ble da forbrukt, det
+    -- terminale oppdraget brukte opp sin ENE bunteplass
+    -- (`inndata_artefakt_oppdrag` er unik og har ingen vei tilbake — 005s
+    -- vakt tillater ingen overgang UT av terminal), og lineage pekte på en
+    -- jobb som var ferdig før bunten fantes.
+    --
+    -- Det AKTIVE settet er 038s (`opprettet`,`plukket`), ikke bare
+    -- `opprettet`: bindingen skjer i bestillingens transaksjon og treffer
+    -- i praksis `opprettet`, men å snevre inn til nøyaktig den ene ville
+    -- vært å binde PR-2s bestillingsvei til en rekkefølge denne
+    -- migrasjonen ikke får bestemme. Porten er fail-closed på det som er
+    -- galt uansett rekkefølge: en jobb utenfor sin egen livssyklus.
+    -- 017:110-111 gjør det samme strammere (`plukket` alene) fordi en
+    -- kapabilitet utstedes ETTER claim; her er det motsatt ende av løpet.
+    IF v_oppdrag_status NOT IN ('opprettet', 'plukket') THEN
+        RAISE EXCEPTION 'inndata: oppdrag % er % og kan ikke binde inndata',
+            p_oppdrag_id, v_oppdrag_status
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
     IF r.eiermodul IS DISTINCT FROM v_oppdrag_eier

@@ -1264,6 +1264,61 @@ def test_bindingen_krever_formaalets_konsumerende_oppdragstype(klient):
 
 
 @pg
+@pytest.mark.parametrize("terminal", ["kansellert", "feilet"])
+def test_bindingen_avviser_terminalt_oppdrag(klient, terminal):
+    """Cursor P2 runde 6: eierskap og formål sier HVEM og HVA, ikke NÅR.
+
+    `bind_inndata` slo opp `oppdrag.eiermodul` og `oppdragstype`, men aldri
+    `oppdrag.status`. En kaller med EXECUTE kunne derfor binde en lastet
+    bunt til et TERMINALT oppdrag: engangsbunten forbrukt, det terminale
+    oppdragets ENE bunteplass (`inndata_artefakt_oppdrag`) brukt opp for
+    alltid — 005s vakt tillater ingen overgang UT av terminal, så plassen
+    kommer aldri tilbake — og lineage pekende på en jobb som var ferdig før
+    bunten fantes. Nabolaget gjør dette: 017:110-111 krever `plukket`, 038s
+    reaper regner (`opprettet`,`plukket`) som det aktive settet.
+
+    `utfort` er den samme grenen, men krever `plukket` først; de to
+    ett-stegs-terminalene måler porten uten å dra inn claim-veien.
+
+    MUTASJONEN SOM DREPER DENNE: fjern statusporten i `bind_inndata`, eller
+    utvid settet til å inkludere en terminaltilstand."""
+    tenant, _bid, _cookie, _csrf = _rigg(klient)
+    m = _migrator(tenant)
+    try:
+        dod, levende = _lastet(m, tenant), _lastet(m, tenant)
+        opp_dod = _oppdrag(m, tenant, "m57_ats")
+        opp_levende = _oppdrag(m, tenant, "m57_ats")
+        m.execute("UPDATE oppdrag SET status=%s WHERE tenant=%s AND id=%s",
+                  (terminal, tenant, opp_dod))
+        m.commit()
+    finally:
+        m.close()
+    c = _runtime(tenant)
+    try:
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            c.execute("SELECT bind_inndata(%s,%s,%s,%s)",
+                      (tenant, dod, opp_dod, "m57_ats"))
+        c.rollback()
+        _kontekst(c, tenant)
+        # Kontrollarmen: porten stenger det terminale, ikke den ekte veien.
+        c.execute("SELECT bind_inndata(%s,%s,%s,%s)",
+                  (tenant, levende, opp_levende, "m57_ats"))
+        c.commit()
+        _kontekst(c, tenant)
+        rader = dict(
+            (r[0], r[1:]) for r in c.execute(
+                "SELECT inndata_id, status, oppdrag_id FROM inndata_artefakt"
+                " WHERE tenant=%s AND inndata_id = ANY(%s)",
+                (tenant, [dod, levende])).fetchall())
+        c.rollback()
+    finally:
+        c.close()
+    # Den avviste bunten står UBRENT — et avvist forsøk koster ingenting.
+    assert rader[dod] == ("lastet", None)
+    assert rader[levende] == ("bundet", opp_levende)
+
+
+@pg
 def test_en_bunt_ett_oppdrag(klient):
     """Cursor P1-3: kommentaren i 058 lovte 1:1, men indeksen var ikke
     UNIQUE. To `lastet`-rader kunne bindes til samme oppdrag, og lineage
