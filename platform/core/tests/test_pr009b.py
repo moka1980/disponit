@@ -223,6 +223,51 @@ def test_nginx_artefaktrute_slipper_gjennom_appens_kroppsgrense():
         assert "proxy_pass http://unix:/run/disponit/api.sock;" in krop
 
 
+def test_nginx_inndataruten_slipper_bunten_gjennom_og_redigerer_jtien():
+    """#162, to Codex-funn i samme location.
+
+    P1: opplastingsruten annonserer og reserverer `INNDATA_MAKS_FYSISK`
+    (64 MiB), men traff den server-vide `client_max_body_size 256k` — nginx
+    svarte 413 på hver bunt over 256 KiB, altså på alle bunter ruten finnes
+    for, før appens strømmetelling så en byte.
+
+    P2: `disponit_main` logger `$uri`, og på DENNE ruten er `$uri`
+    reservasjonens engangs-jti. Loggen ville båret hver utestående
+    reservasjon i klartekst. Ruten må derfor bruke et log_format som ikke
+    inneholder `$uri`/`$request`/`$request_uri`."""
+    from api.app import INNDATA_MAKS_FYSISK, STROEM_RUTE_PREFIKS
+    https = _https()
+    blokk = re.search(r"location %s \{(.*?)\n    \}"
+                      % re.escape(STROEM_RUTE_PREFIKS), https, re.S)
+    assert blokk, f"ingen egen nginx-location for {STROEM_RUTE_PREFIKS}"
+    krop = blokk.group(1)
+    m = re.search(r"client_max_body_size\s+(\d+)([kKmM]?);", krop)
+    assert m, "opplastingsruten mangler egen client_max_body_size"
+    grense = int(m.group(1)) * _ENHET[m.group(2).lower()]
+    assert grense >= INNDATA_MAKS_FYSISK, (
+        f"nginx slipper {grense} B på {STROEM_RUTE_PREFIKS}, appen tillater "
+        f"{INNDATA_MAKS_FYSISK} B — proxyen avviser med 413 først")
+    assert "zone=disponit_general" in krop
+    assert "proxy_pass http://unix:/run/disponit/api.sock;" in krop
+
+    # Redaksjonen: ruten overstyrer access_log, og formatet den peker på
+    # bærer ikke stien. Begge ledd måles — et eget format som likevel
+    # inneholder $uri ville vært redaksjon i navnet alene.
+    m = re.search(r"^\s*access_log\s+\S+\s+(\w+);", krop, re.M)
+    assert m, "opplastingsruten arver disponit_main og logger jti-en"
+    navn = m.group(1)
+    assert navn != "disponit_main"
+    soner = (NGINX / "rate-soner.conf").read_text(encoding="utf-8")
+    fmt = re.search(r"log_format %s (.*?);\n" % re.escape(navn), soner, re.S)
+    assert fmt, f"log_format {navn} finnes ikke i rate-soner.conf"
+    # `\b` og ikke `in`: `$request_method` er lovlig og inneholder `$request`
+    # som ren delstreng — en naiv sjekk ville forbudt metoden i stedet for
+    # stien.
+    for variabel in ("uri", "request_uri", "args", "request"):
+        assert not re.search(r"\$%s\b" % variabel, fmt.group(1)), (
+            f"{navn} inneholder ${variabel} — jti-en havner i loggen likevel")
+
+
 # ---------------------------------------------------------------------------
 # ACME-tilstandsmaskinen: rekkefølge og idempotens (v2 §3)
 # ---------------------------------------------------------------------------

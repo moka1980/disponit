@@ -120,6 +120,34 @@ server {
         proxy_pass http://unix:/run/disponit/api.sock;
     }
 
+    # #162: inndata-opplastingen — samme klasse som artefaktruten over, men
+    # to størrelsesordener større, og med en jti i STIEN.
+    #
+    # Codex P1: kontrakten reserverer og annonserer 64 MiB
+    # (`INNDATA_MAKS_FYSISK`), men uten denne blokken traff ruten den
+    # server-vide `client_max_body_size 256k` — nginx hadde svart 413 på
+    # hver eneste bunt over 256 KiB, altså på alle bunter ruten finnes for,
+    # lenge før appens egen strømmetelling så en byte. Prefiks-location og
+    # ikke `=`, fordi stien bærer `{jti}`.
+    #
+    # Codex P2: `disponit_main` logger `$uri`, og `$uri` ER jti-en her.
+    # Hver utstedte engangsreservasjon ville dermed stått i klartekst i
+    # `disponit-access.log`; den som kunne lese loggen og hadde en
+    # tenant-sesjon med `bestilling:opprett` kunne forbruke en utestående
+    # reservasjon før klienten den ble utstedt til. Samme grep som
+    # callback-redaksjonen (v2 §5): ruten får et eget log_format der stien
+    # er en KONSTANT etikett, ikke en variabel.
+    #
+    # Begge tallene og redaksjonen er bundet til appen av
+    # `test_nginx_inndataruten_slipper_bunten_gjennom_og_redigerer_jtien`.
+    location /v1/inndata/opplast/ {
+        client_max_body_size 65536k;    # = INNDATA_MAKS_FYSISK (64 MiB)
+        access_log /var/log/nginx/disponit-access.log disponit_opplast;
+        limit_req zone=disponit_general burst=100 nodelay;
+        limit_req_status 429;
+        proxy_pass http://unix:/run/disponit/api.sock;
+    }
+
     # PR-011: M-1 kundeflate. UI-svar trenger en ÅPNERE CSP enn API-ets
     # `default-src 'none'` (klarsignal V4) — den ville ellers blokkert egne
     # ressurser. Appen setter UI-CSP-en selv (målbar i CI, gate 5); her
