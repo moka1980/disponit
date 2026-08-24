@@ -287,6 +287,67 @@ if ! ( set -a; . "$MILJOFIL"; set +a
   echo "Systemet er urørt; forrige release kjører som før."
   exit 1
 fi
+# CHECKSUM-PORTEN: kjørt historikk er byte-identisk (#172).
+# 23/8: en kommentarlinje i en KJØRT migrasjon ble oppdaget av kjøreren i
+# steg 6 — ETTER at tjenestene var stoppet. Prod sto nede på en
+# dokumentasjonsendring. (CI-porten i test_migrasjonsfasit feller klassen
+# før merge; denne er deploy-sidens halvdel — siste skanse, målt mot
+# BASENS egne rader, per base.)
+#
+# Codex P1 (runde 1): porten sto først som «steg 4z», etter steg 3–4. Den
+# var da FØR vinduet, men ETTER at `useradd` hadde opprettet identiteter og
+# `skriv_cred` hadde overskrevet /etc/disponit/*/ med KANDIDATENS verdier —
+# mens avbruddsmeldingen sa at forrige release kjører som før. De kjørende
+# prosessene beholder riktignok sine innlastede credentials, men neste
+# timeraktivering eller restart av forrige release ville lastet kandidatens
+# konfigurasjon mens `aktiv` fortsatt pekte på den gamle koden: roterte
+# nøkler eller ny konfigurasjon kunne dermed felle nettopp den releasen
+# meldingen lovet var uberørt. En port som først kan feile etter første
+# mutasjon er ingen preflight — samme dom som varselsender-DSN-en fikk på
+# #68. Den hører HER, sammen med resten av gaten, og lesingen skjer i
+# SUBSHELL som de andre, så miljøfila ikke lekker inn i preflighten.
+for base in runtime test; do
+  if ! CHECKSUMPREFLIGHT=$( set -a; . "$MILJOFIL"; set +a
+      case $base in
+        runtime) url=$DISPONIT_MIGRATOR_URL ;;
+        test)    url=$DISPONIT_TEST_MIGRATOR_DSN ;;
+      esac
+      cd "$KILDE" && DISPONIT_MIGRATOR_URL="$url" \
+        "$ROT/.venv/bin/python" - 2>&1 <<'PYPRE'
+import hashlib, os, sys
+from pathlib import Path
+import psycopg
+kat = Path("platform/core/db/migrations")
+filer = {int(f.name[:3]): f for f in kat.glob("*.sql")}
+with psycopg.connect(os.environ["DISPONIT_MIGRATOR_URL"]) as c:
+    try:
+        rader = c.execute(
+            "SELECT versjon, checksum FROM migrasjoner"
+            " WHERE checksum IS NOT NULL").fetchall()
+    except psycopg.errors.UndefinedTable:
+        print("fersk base — ingen historikk å verne"); sys.exit(0)
+avvik = []
+for versjon, checksum in rader:
+    fil = filer.get(versjon)
+    if fil is None:
+        avvik.append(f"{versjon:03d}: kjørt i basen, borte fra treet")
+    elif hashlib.sha256(fil.read_bytes()).hexdigest() != checksum:
+        avvik.append(f"{fil.name}: endret etter kjøring (checksum-avvik)")
+if avvik:
+    print("\n".join(avvik)); sys.exit(1)
+print(f"{len(rader)} kjørte migrasjoner byte-identiske")
+PYPRE
+      ); then
+    echo "AVBRUTT ($base): checksum-preflighten er rød —"
+    echo "$CHECKSUMPREFLIGHT"
+    echo "Systemet er urørt: ingen tjeneste er stoppet, ingen identitet"
+    echo "opprettet og ingen credential skrevet; forrige release kjører som"
+    echo "før. Er avviket en endret migrasjon, rettes historikk FREMOVER"
+    echo "(056-hendelsen 23/8) — aldri ved å redigere den."
+    exit 1
+  fi
+  echo "checksum-preflight ($base): $CHECKSUMPREFLIGHT"
+done
 
 # ============================================================
 # HERFRA MUTERES SYSTEMET — gaten over er passert.
@@ -575,50 +636,6 @@ selvrevers() {
   fi
   exit 1
 }
-
-# --- 4z. PREFLIGHT: kjørt historikk er byte-identisk (#172) ----------------
-# 23/8: en kommentarlinje i en KJØRT migrasjon ble oppdaget av kjøreren i
-# steg 6 — ETTER at tjenestene var stoppet. Prod sto nede på en
-# dokumentasjonsendring. Sammenligningen er read-only og koster ingenting:
-# den hører hjemme HER, før vinduet åpnes. (CI-porten i
-# test_migrasjonsfasit feller klassen før merge; denne er deploy-sidens
-# halvdel — siste skanse, målt mot BASENS egne rader, per base.)
-for par in "runtime:$DISPONIT_MIGRATOR_URL" "test:$DISPONIT_TEST_MIGRATOR_DSN"; do
-  base=${par%%:*}; url=${par#*:}
-  if ! CHECKSUMPREFLIGHT=$(cd "$KILDE" && DISPONIT_MIGRATOR_URL="$url" \
-      "$ROT/.venv/bin/python" - <<'PYPRE'
-import hashlib, os, sys
-from pathlib import Path
-import psycopg
-kat = Path("platform/core/db/migrations")
-filer = {int(f.name[:3]): f for f in kat.glob("*.sql")}
-with psycopg.connect(os.environ["DISPONIT_MIGRATOR_URL"]) as c:
-    try:
-        rader = c.execute(
-            "SELECT versjon, checksum FROM migrasjoner"
-            " WHERE checksum IS NOT NULL").fetchall()
-    except psycopg.errors.UndefinedTable:
-        print("fersk base — ingen historikk å verne"); sys.exit(0)
-avvik = []
-for versjon, checksum in rader:
-    fil = filer.get(versjon)
-    if fil is None:
-        avvik.append(f"{versjon:03d}: kjørt i basen, borte fra treet")
-    elif hashlib.sha256(fil.read_bytes()).hexdigest() != checksum:
-        avvik.append(f"{fil.name}: endret etter kjøring (checksum-avvik)")
-if avvik:
-    print("\n".join(avvik)); sys.exit(1)
-print(f"{len(rader)} kjørte migrasjoner byte-identiske")
-PYPRE
-  ); then
-    echo "AVBRUTT ($base): kjørt migrasjonshistorikk er endret i treet:"
-    echo "$CHECKSUMPREFLIGHT"
-    echo "Ingenting er stoppet; forrige release kjører som før. Historikk"
-    echo "rettes FREMOVER (056-hendelsen 23/8) — aldri ved å redigere den."
-    exit 1
-  fi
-  echo "checksum-preflight ($base): $CHECKSUMPREFLIGHT"
-done
 
 # --- 5. VEDLIKEHOLDSVINDU: stopp tjenester OG helsetimer (V1) --------------
 # Timeren stoppes også: den skal verken telle feil mot stoppede tjenester

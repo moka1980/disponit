@@ -337,9 +337,27 @@ def test_p1_preflight_gater_og_er_sideeffektfri(tmp_path):
 def test_p1_preflight_skjer_for_forste_mutasjon():
     """Rekkefølgen ER kontrakten (runde 2): preflight-kallet i opp.sh står
     FØR hver muterende kommando — målt på kilden, så en omflytting ikke
-    kan skje stille."""
-    opp = (ROT / "deploy/staging/opp.sh").read_text(encoding="utf-8")
-    gate = opp.index("preflight_units")
+    kan skje stille.
+
+    #178 (Codex P1): checksum-porten måles av SAMME regel. Den sto først som
+    «steg 4z» — før vedlikeholdsvinduet, men etter `useradd` og `skriv_cred`
+    — mens avbruddsmeldingen lovet at forrige release kjørte som før. Gaten
+    her er derfor den SISTE av de to portene: alt som muterer skal ligge etter
+    begge. Ankeret er den kjørende linja, ikke kommentaroverskriften, så en
+    port kan ikke flyttes ned med overskriften stående igjen.
+
+    Kommentarlinjene fjernes før målingen. Porten leste tidligere hele fila,
+    og da var en KOMMENTAR som nevner `useradd` nok til å felle den — den
+    målte omtale, ikke kjøring. Det er ikke en strengere port, bare en
+    upresis: den ville tvunget kommentarer til å unngå ordene de forklarer.
+    """
+    opp = "\n".join(
+        linje for linje in (ROT / "deploy/staging/opp.sh").read_text(
+            encoding="utf-8").splitlines()
+        if not linje.lstrip().startswith("#"))
+    sjekksumport = opp.index("for base in runtime test; do")
+    gate = max(opp.index("preflight_units"),
+               opp.index("\ndone\n", sjekksumport))
     for mutasjon in ("groupadd", "useradd", "usermod", "skriv_cred api",
                      "systemctl stop", "install -m 755", "install -m 644",
                      "install -m 440", "ln -sfn"):
