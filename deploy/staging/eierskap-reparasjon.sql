@@ -95,7 +95,18 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'krev_tenantkontekst(text,text)',                    'disponit_m37_claimer'),
     -- 058: inndata-doerene (#162) — samme eier som artefakt-funksjonene
     -- i 016/017 (domene_eier), samme grunn: kapabilitetsformen.
-    ('FUNCTION', 'reserver_inndata(text,text,text,bigint)', 'disponit_domene_eier'),
+    -- IDENTITETEN ER SIGNATUREN (Codex P1): raden her matcher paa
+    -- navn+argumenttyper, ikke paa navn. `reserver_inndata` fikk
+    -- `p_idempotensnokkel` som femte argument i denne PR-en, og en
+    -- fire-argumentet rad ville derfor ikke funnet den ekte funksjonen.
+    -- Det er ikke en tom rad: steg 2 klassifiserer alt SECURITY DEFINER
+    -- som IKKE staar her som udesignet og gir det til `disponit_migrator`
+    -- — foerste rerun av `oppsett-postgresql.sh` etter at 058 er kjoert
+    -- ville altsaa flyttet doeren bort fra `disponit_domene_eier`, mens
+    -- 058 hoppes over som allerede anvendt. Migratoren har `WITH INHERIT
+    -- FALSE`, saa `krev_tenantkontekst` (grantet til domene_eier) ville
+    -- feilet med `permission denied` paa hver eneste reservasjon.
+    ('FUNCTION', 'reserver_inndata(text,text,text,bigint,text)', 'disponit_domene_eier'),
     ('FUNCTION', 'registrer_inndata_lastet(text,text,bigint,text,text,bytea,text)', 'disponit_domene_eier'),
     ('FUNCTION', 'bind_inndata(text,uuid,bigint,text)',     'disponit_domene_eier'),
     -- 044: periodisk kontroll — planens herdede funksjoner eies av claimer
