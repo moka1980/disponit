@@ -205,7 +205,23 @@ def _kandidater(conn, tenant, prosess_id):
         lesbart = (bool(er_objekt) and isinstance(raa_funn, list)
                    and isinstance(raa_oppfylt, dict)
                    and all(isinstance(f, dict) for f in funn))
-        lest.append((kid, funn, oppfylt, lesbart, sporsmal))
+        # SPØRSMÅLSLAGERET HAR SAMME TYPEPORT SOM ARTEFAKTET (Codex P2,
+        # runde 8). `sporsmal` er `jsonb NOT NULL` i 057 og ingenting mer:
+        # `'3'`, `'"hei"'` og `'{"a":1}'` er alle lovlige INSERTs for
+        # runtime. Verdien ble sendt rå ut, og flaten gjør
+        # `(kandidat.intervjusporsmal || []).map(...)` — en ikke-array er
+        # sann, så `||` verner ikke, og `.map` finnes ikke på den: én slik
+        # rad tok ned HELE detaljpanelet med en `TypeError`. Samme dom som
+        # `funn`/`oppfylt` over får: feil form er INGEN opplysning, og
+        # ingen opplysning vises som ingenting. Elementene måles også —
+        # en liste med et objekt i ville rendret `[object Object]` som et
+        # intervjuspørsmål. Til forskjell fra `funn` bæres det ikke i
+        # `lesbart`: spørsmålene er ren visning og inngår ikke i
+        # trafikklyset, så et tomt spørsmålsfelt gjør ingen kandidat
+        # grønnere enn hun er.
+        rene = (sporsmal if isinstance(sporsmal, list)
+                and all(isinstance(s, str) for s in sporsmal) else [])
+        lest.append((kid, funn, oppfylt, lesbart, rene))
     # VEKTENE ER ENDELIGE FØR TRAFIKKLYSET UTLEDES (Cursor P1). Reserven
     # under leser HVER kandidats krav, så den kan ikke stå etter en
     # dømming som må måle mot den — derfor to pass over de samme radene.
