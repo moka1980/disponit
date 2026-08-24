@@ -366,6 +366,34 @@ def test_replay_overlever_at_serien_ble_redigert_videre(klient):
 
 
 @pg
+def test_gjenbrukt_idempotensnokkel_er_409_ikke_500(klient):
+    """Codex P2: gjenbrukes nøkkelen på en ANNEN liste, reiser
+    `signer_utsendingsliste` `invalid_parameter_value` (056 §7b) — ikke
+    `unique_violation`. Uoversatt escaper den `_med_conn`, som bare kjenner
+    `_Avbrudd`/`Aktiveringsfeil`, og klienten fikk en 500 der plattformens
+    kanoniske svar er 409 `idempotenskonflikt`.
+
+    MUTASJONEN SOM DREPER DENNE: fjern
+    `except psycopg.errors.InvalidParameterValue`-armen.
+    """
+    _pid, rot, rot_hash = _seed_prosess()
+    bid = _bruker("sjef-nokkel", ["admin"])
+    cookie, csrf = _browsersesjon(bid)
+    nokkel = secrets.token_urlsafe(24)
+    forste = _post(klient, cookie, csrf,
+                   f"/v1/rekruttering/lister/{rot}/signer",
+                   {"innhold_hash": rot_hash}, idem=nokkel)
+    assert forste.status_code == 201, forste.text
+    # SAMME nøkkel, ANNEN liste: ikke et replay — en konflikt.
+    barn, barn_hash = _ny_versjon(rot)
+    r = _post(klient, cookie, csrf,
+              f"/v1/rekruttering/lister/{barn}/signer",
+              {"innhold_hash": barn_hash}, idem=nokkel)
+    assert r.status_code == 409, r.text
+    assert r.json()["feil"] == "idempotenskonflikt"
+
+
+@pg
 def test_signering_krever_hashen_dialogen_viste(klient):
     _pid, lid, _ih = _seed_prosess()
     bid = _bruker("sjef2", ["admin"])

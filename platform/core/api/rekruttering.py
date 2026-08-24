@@ -317,6 +317,20 @@ def signer_endepunkt(tjeneste, request):
                 from e
         except psycopg.errors.UniqueViolation as e:
             raise _Avbrudd(_feil("serien_alt_signert", rid, 409)) from e
+        except psycopg.errors.InvalidParameterValue as e:
+            # SP-2-KONFLIKTEN ER EN DOM, IKKE EN 500 (Codex P2). Gjenbrukes
+            # en `Idempotency-Key` på en ANNEN liste eller signatar, reiser
+            # `signer_utsendingsliste` `invalid_parameter_value` (056 §7b) —
+            # den ENESTE kilden til den koden i funksjonen (`krev_
+            # tenantkontekst` reiser `insufficient_privilege`, og
+            # isolasjonsporten `invalid_transaction_state`). Uoversatt
+            # escaper den `_med_conn`, som bare kjenner `_Avbrudd` og
+            # `Aktiveringsfeil`, og blir en 500: klienten ser en serverfeil
+            # der plattformens kanoniske svar er 409 `idempotenskonflikt`,
+            # og kan ikke skille «nøkkelen din betyr noe annet» fra «vi er
+            # nede» — den ene skal rettes av kalleren, den andre prøves om
+            # igjen.
+            raise _Avbrudd(_feil("idempotenskonflikt", rid, 409)) from e
         conn.commit()
         return _ok({"innhold_hash": rad[0], "antall": rad[1],
                     "listetype": rad[2]}, rid, 201)
