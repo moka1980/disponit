@@ -15,8 +15,8 @@ claim ER veien til 'plukket' bevises av claim-suitene; resolverens
 predikat er modul-match + plukket med LEVENDE LEASE + SAMME DEPLOYMENT +
 bundet, og det er DET som måles her. Negativene: opprettet 404, feil
 modul 404, ubundet 404, utløpt/manglende lease 404, terminalt oppdrag med
-intakt claim 404, fremmed deployment av samme modul 404, browser 401 —
-samme svar uansett årsak.
+intakt claim 404, fremmed deployment av samme modul 404, samme release i
+annet miljø 404, browser 401 — samme svar uansett årsak.
 """
 import hashlib
 import secrets
@@ -80,6 +80,38 @@ def _m57_deployment(conn, miljo_="staging", tvang_ny=False):
         "INSERT INTO modulrelease (modul_id,release_id,kontraktversjon,"
         "kontrakt_hash,manifest_hash,artifact_digest)"
         " VALUES ('m57_ats',%s,%s,%s,'mh','ad')", (rel, versjon, khash))
+    conn.execute(
+        "INSERT INTO moduldeployment (modul_id,release_id,kontraktversjon,"
+        "kontrakt_hash,miljo,livslop)"
+        " VALUES ('m57_ats',%s,%s,%s,%s,'claiming')",
+        (rel, versjon, khash, miljo_))
+    conn.commit()
+    return rel
+
+
+def _samme_release_i_annet_miljo(conn, rel, miljo_="produksjon"):
+    """Deploy en EKSISTERENDE release i ETT miljø til — samme `release_id`,
+    ny `moduldeployment`-rad.
+
+    PK-en er `(modul_id, miljo, release_id)` og `en_claiming_per_kontrakt`
+    er per miljø (014:90,95), så én release kan kjøre claiming i BÅDE
+    staging og produksjon. Det er 035s egen normaltilstand («samme release
+    i staging og produksjon»), og den eneste tilstanden der 060s
+    `claim_miljo`-ledd står ALENE om avvisningen: `claim_release_id`
+    matcher på begge sider, så bare miljøet skiller.
+
+    Idempotent på samme måte som `_m57_deployment` (samme miljø + release
+    finnes alt → gjenbruk), men UTEN `ON CONFLICT`: kolliderer raden med en
+    ANNEN claiming-deployment under samme kontrakt, skal testen dø høyt i
+    stedet for stille å miste sitt eget premiss."""
+    if conn.execute("SELECT 1 FROM moduldeployment WHERE modul_id='m57_ats'"
+                    " AND miljo=%s AND release_id=%s",
+                    (miljo_, rel)).fetchone():
+        conn.commit()
+        return rel
+    versjon, khash = conn.execute(
+        "SELECT kontraktversjon, kontrakt_hash FROM modulrelease"
+        " WHERE modul_id='m57_ats' AND release_id=%s", (rel,)).fetchone()
     conn.execute(
         "INSERT INTO moduldeployment (modul_id,release_id,kontraktversjon,"
         "kontrakt_hash,miljo,livslop)"
@@ -732,6 +764,50 @@ def test_annen_release_i_samme_miljo_far_ingenting(klient, migrator,
                      headers={"authorization": f"Bearer {mtk_a}"})
     assert r2.status_code == 200, r2.text
     assert r2.content == kropp
+
+
+@pg
+def test_samme_release_i_annet_miljo_far_ingenting(klient, migrator,
+                                                   miljo, inndata_rot):
+    """Cursor P2 (#202, passet på `dbe388e`): `claim_miljo`-leddet var umålt.
+
+    Søster til `test_annen_release_…` rett over og til
+    `test_fremmed_deployment_…`: BEGGE de eksisterende negativene har
+    ulike `release_id` på de to sidene (`assert rel_a != rel_b`), så
+    `claim_release_id`-leddet alene avviser dem. Strykes `AND
+    o.claim_miljo = p_miljo` fra 060, blir suiten grønn likevel — mens et
+    token for SAMME release i annet miljø (035: «samme release i staging
+    og produksjon», PK `(modul_id, miljo, release_id)`) pluss et lekket
+    `owner_claim_id` henter bunten.
+
+    Her deles derfor ÉN release mellom staging og produksjon. Claimet er
+    stemplet staging; produksjonstokenet er ekte og gyldig, og BARE
+    miljøleddet skiller det fra det som får svar. Mutasjon: fjern
+    `claim_miljo`-leddet i 060 → produksjonskallet blir 200 og testen rød."""
+    rel = _m57_deployment(migrator, tvang_ny=True)
+    _samme_release_i_annet_miljo(migrator, rel, "produksjon")
+    kropp, tenant, oid = _bundet_bunt(klient, migrator)
+    claim = _pluk(migrator, tenant, oid, rel, "staging")
+
+    # Samme modul, samme release, lekket kapabilitet — feil miljø: 404,
+    # og ingen bytes.
+    mtk_p, _ = _onboard_token(klient, migrator, "m57_ats", rel,
+                              miljo_="produksjon")
+    r_p = klient.post(f"/v1/inndata/hent-for-oppdrag/{oid}",
+                      json={"owner_claim_id": claim},
+                      headers={"authorization": f"Bearer {mtk_p}"})
+    assert r_p.status_code == 404, r_p.text
+    assert kropp not in r_p.content
+
+    # Den som faktisk holder claimet — samme release, riktig miljø: 200.
+    # Uten dette leddet ville en hvilken som helst 404-årsak (f.eks. at
+    # v2-releasen ikke nådde resolveren i det hele tatt) bestått testen.
+    mtk_s, _ = _onboard_token(klient, migrator, "m57_ats", rel)
+    r_s = klient.post(f"/v1/inndata/hent-for-oppdrag/{oid}",
+                      json={"owner_claim_id": claim},
+                      headers={"authorization": f"Bearer {mtk_s}"})
+    assert r_s.status_code == 200, r_s.text
+    assert r_s.content == kropp
 
 
 @pg
