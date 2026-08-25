@@ -279,6 +279,76 @@ def test_samtidig_idempotens_gir_replay_ikke_400(klient, miljo):
 
 
 @pg
+def test_taperen_faar_replay_naar_vinneren_committer_sent(klient, miljo):
+    """Cursor P2-2 (runde 3) MÅLT, ikke resonnert: påstanden var at
+    taperens re-kall kunne treffe INSERT igjen — «vinnerens rad ennå
+    ikke committet» — og bli dømt 409 for en ren SP-2-gjenspilling.
+
+    Her holdes vinneren ÅPEN (dørkall uten commit) mens taperen sendes
+    over HTTP: taperen blokkerer i unike-indeksen (`_bt_check_unique`
+    venter på vinnerens transaksjon), vinneren committer FØRST etterpå.
+    Det er nøyaktig vinduet påstanden gjelder, og dommen skal være 201
+    med vinnerens egen profil_id/versjon — aldri 409, aldri en ny rad.
+
+    Grunnen til at armen holder: 23505 på `stillingsprofil_idem` KAN
+    ikke reises mens motparten er uavklart — indeksen venter på at
+    transaksjonen ender. Rullet den tilbake, går INSERT gjennom; committet
+    den, ser taperens ferske snapshot (ny transaksjon etter rollback,
+    READ COMMITTED) raden i GJENSPILL. 409-armen innenfor re-kallet er
+    derfor et fail-closed bunnstykke, ikke en nåbar dom for samme
+    nøkkel + samme innhold."""
+    import json
+    import threading
+    import time
+
+    from db.pg import koble, sett_kontekst
+
+    from .test_rekruttering_http import TEN
+
+    bid = _bruker(f"pv-{secrets.token_hex(3)}", ["admin"])
+    cookie, csrf = _browsersesjon(bid)
+    idem = secrets.token_hex(12)
+    krav = [{"kravnavn": "K", "vekt": 2}]
+    kropp = {"navn": "Sen commit", "krav": krav}
+    svar = []
+    taper = threading.Thread(
+        target=lambda: svar.append(_post(klient, cookie, csrf, kropp,
+                                         idem=idem)))
+
+    vinner = koble(DSN)
+    try:
+        sett_kontekst(vinner, TEN, bid, "r-sen")
+        rad = vinner.execute(
+            "SELECT ut_profil_id, ut_versjon FROM"
+            " opprett_stillingsprofil_versjon(%s,%s,%s,%s,%s::jsonb,%s)",
+            (TEN, None, kropp["navn"], bid, json.dumps(krav),
+             idem)).fetchone()
+        # Raden er skrevet, men IKKE committet: taperen slippes løs inn
+        # i nøyaktig det vinduet.
+        taper.start()
+        time.sleep(0.5)          # taperen rekker fram til unike-indeksen
+        vinner.commit()
+    finally:
+        vinner.close()
+    taper.join(15)
+
+    assert len(svar) == 1, "taperen kom aldri tilbake"
+    assert svar[0].status_code == 201, svar[0].text
+    assert svar[0].json()["profil_id"] == str(rad[0])
+    assert svar[0].json()["versjon"] == rad[1]
+    m = koble(MIGRATOR_DSN)
+    try:
+        sett_kontekst(m, TEN, "test", "r-sen2")
+        n = m.execute("SELECT count(*) FROM stillingsprofil"
+                      " WHERE tenant=%s AND operasjonsnokkel=%s",
+                      (TEN, idem)).fetchone()[0]
+        m.rollback()
+    finally:
+        m.close()
+    assert n == 1
+
+
+@pg
 def test_lagring_krever_bestillingsscope(klient, miljo):
     """Cursor P2-2 (runde 2): POST-ruten krever `bestilling:opprett` —
     `leser` (kun `decisions:read`) skal dømmes 403 FØR noe skrives, med
