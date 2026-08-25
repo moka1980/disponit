@@ -496,7 +496,23 @@ def test_head_leses_paa_nytt_rett_foer_merge_i_alle_forsok():
 
 
 def test_pr_fillisten_har_stengt_vakt():
-    """Cursor P2-4 runde 12 (#198): snittets ANDRE side (PR-fillisten)
-    må ha samme stengte trunkeringvakt som compare-siden."""
-    r1 = " ".join(_fiksforsok()[0].split())
-    assert "PR-fillisten har samme stengte vakt" in r1
+    """Cursor P2-4 runde 12 + P2-2 runde 13 (#198): snittets ANDRE side
+    (PR-fillisten) må ha samme stengte trunkeringvakt som compare-siden
+    — i ALLE forsøk og i §11.1, ikke bare runde 1 (fortynningsklassen)."""
+    for i, forsok in enumerate(_fiksforsok(), 1):
+        norm = " ".join(forsok.split())
+        assert "PR-fillisten" in norm, (
+            f"forsøk {i} mangler PR-filliste-vakten")
+    assert "PR-filliste som er" in RUTINER or "PR-fillisten" in RUTINER
+
+
+def test_dirty_grenen_loser_aldri_konflikten():
+    """Cursor P1 runde 13 (#198): en konfliktløsning endrer HEAD-innhold
+    verdiktet aldri bandt — DIRTY parkeres til eier i alle forsøk, aldri
+    «løs hvis triviell»."""
+    for i, forsok in enumerate(_fiksforsok(), 1):
+        norm = " ".join(forsok.split())
+        if "DIRTY" in norm:
+            assert "Løs konflikten" not in norm, (
+                f"forsøk {i}: DIRTY-grenen løser selv")
+            assert "ALDRI selv" in norm or "ikke tving" in norm

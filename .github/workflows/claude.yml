@@ -237,9 +237,12 @@ jobs:
                      utelatt overlapp ville gitt falskt tomt snitt —
                      behandle det som ikke-tomt snitt: porten feiler
                      stengt.)
-                   * `DIRTY` (ekte konflikt) → ikke tving. Løs konflikten
-                     hvis den er triviell og i denne PR-ens egne filer,
-                     ellers kommenter til eier hva som kolliderer.
+                   * `DIRTY` (ekte konflikt) → ikke tving, og løs den
+                     ALDRI selv: en konfliktløsning endrer HEAD-innhold
+                     verdiktet aldri bandt — samme klasse som brukt
+                     verdikt etter head-flytting. Kommenter til eier hva
+                     som kolliderer, og stopp; kommer en konflikt-push
+                     senere, er verdiktet BRUKT OPP (`@codex review`).
                    * `BLOCKED`/`UNSTABLE` → checks er ikke ferdige ennå;
                      fortsett til 3b.
                3b. GRØNN CI. `gh pr checks <nr> --watch --fail-fast`.
@@ -328,10 +331,12 @@ jobs:
                `gh pr update-branch <nr>` (ikke rebase/force-push), og
                VERDIKT-REKKEVIDDEN (§11.1): snitt fillisten fra
                `gh api repos/${{ github.repository }}/compare/<gammel-head>...<ny-head>`
-               mot PR-ens egne filer — ikke-tomt snitt, en måling som
-               feiler, eller et compare-svar med 300+ filer/manglende
-               files-liste (trunkering gir falskt tomt snitt), betyr at
-               verdiktet er BRUKT OPP: post
+               mot PR-ens egne filer — og PR-fillisten har samme
+               stengte vakt som compare-siden (uventet tom eller ved
+               sidegrense/100+ ⇒ ikke-tomt snitt). Ikke-tomt snitt, en
+               måling som feiler, eller et compare-svar med 300+
+               filer/manglende files-liste (trunkering gir falskt tomt
+               snitt), betyr at verdiktet er BRUKT OPP: post
                `@codex review` og stopp; `DIRTY`
                → ikke tving, kommenter til eier; (b)
                `gh pr checks <nr> --watch --fail-fast`, og vent på den NYE
@@ -390,8 +395,9 @@ jobs:
             må være `moka1980`, og mekanisme og utfall må ordrett dekke
             punktet — ellers parkér, ikke merge) → branch à jour med VERDIKT-REKKEVIDDEN (§11.1:
             filsnittet fra `compare/<gammel-head>...<ny-head>` mot PR-ens
-            filer; ikke-tomt snitt, målefeil eller trunkert liste (300+
-            filer) → nytt `@codex review`, ikke merge) → grønn CI →
+            filer; ikke-tomt snitt, målefeil eller trunkert liste på
+            NOEN av sidene — compare 300+, PR-fillisten uventet
+            tom/sidegrense — → nytt `@codex review`, ikke merge) → grønn CI →
             `gh pr merge --squash --delete-branch` — og bare på et rent
             verdikt.
 

@@ -217,7 +217,9 @@ aldri et vindu der dokumentet lover en port maskinen mangler
    noe nytt er reviewet. Grensen er trukket der risikoen faktisk bor:
    filsnittet. Compare-svar med 300+ filer eller manglende liste regnes
    som ikke-tomt snitt — GitHub trunkerer ved 300, og porten feiler
-   stengt.)
+   stengt; det samme gjelder snittets andre side: en PR-filliste som er
+   uventet tom eller treffer sidegrensen (100+) regnes også som
+   ikke-tomt snitt.)
 
    **Asymmetrien mot §10s pass-binding er BEVISST** (avgjort under
    delegasjonen, runde 10 på #198): Cursor-PASSET er bundet til eksakt
