@@ -367,11 +367,22 @@ jobs:
 
   mention:
     name: Svar @claude
+    # EKSPLISITT hendelses-allowlist (Cursor P2-1 på #195, målt i run
+    # 32820229936): den gamle formen («alt som ikke er pull_request_review»)
+    # falt igjennom også på workflow_run — mention startet PARALLELT med
+    # cursor-pass-fulgt på samme PR, uten delt concurrency. Kroppsvakten
+    # på `@claude` speiler action-ens egen standardfrase; codex-eksklusjonen
+    # står fordi verdikter har sin egen jobb.
     if: >-
-      github.event_name != 'pull_request_review' &&
+      (github.event_name == 'issue_comment' ||
+       github.event_name == 'pull_request_review_comment') &&
+      contains(github.event.comment.body, '@claude') &&
       !contains(github.event.comment.user.login, 'codex')
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    concurrency:
+      group: claude-mention-${{ github.event.issue.number || github.event.pull_request.number }}
+      cancel-in-progress: false
     permissions:
       contents: write
       pull-requests: write
