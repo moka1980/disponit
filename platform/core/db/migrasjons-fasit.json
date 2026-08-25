@@ -58,5 +58,6 @@
   "057_m57_kandidatlagre.sql": "b1dd6407a88e1a8b2a6566a79a7c39e7ae747fdc6eebf543296a212673a0d64e",
   "058_inndata_artefakt.sql": "97e6ddff35eb3f3f9ec963329ff2c82ef4c35a7b76a4da91ab3abae0ef6d74e4",
   "059_b_maskinen.sql": "b4b2a0d4598d76a0e1bb159bbfe3c3c6fd800d16f7cad602252b89270734e5f6",
-  "060_inndata_resolver.sql": "020c2394a1beed4caf53a3a658de49af16856046e9fdc23866edeb98eceb83dc"
+  "060_inndata_resolver.sql": "020c2394a1beed4caf53a3a658de49af16856046e9fdc23866edeb98eceb83dc",
+  "062_modultoken_klokke.sql": "f0f8b7bd2a6d207b10a1bc92c3115261e6e27d21be9879c27990c690835a366b"
 }
