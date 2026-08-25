@@ -107,6 +107,34 @@ DECLARE
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant,
                                        'opprett_stillingsprofil_versjon');
+    -- SNAPSHOTKRAVET (Cursor P2-1, runde 4) — samme klasse og samme
+    -- ratifiserte form som 056 (`signer_utsendingsliste`), 057, 058
+    -- (`reserver_inndata`) og 059; dette er porten på det gjenstående
+    -- stedet, ikke et nytt formforsøk. Gjenspill-løftet under («samme
+    -- nøkkel + samme innhold ⇒ samme svar») er utledet av en LESNING:
+    -- nøkkel-oppslaget rett under. PostgreSQL oversetter ikke et
+    -- unik-brudd mot en samtidig COMMITTET rad til en serialiseringsfeil
+    -- — taperen får 23505 på `stillingsprofil_idem` også under
+    -- REPEATABLE READ og SERIALIZABLE. HTTP-lagets kappløpsarm ruller
+    -- da tilbake og kjører døren én gang til, men transaksjonens
+    -- snapshot står fast fra første setning: gjenspill-SELECTen er
+    -- blind for vinnerens rad, armen faller til `idempotenskonflikt`,
+    -- og et helt legitimt replay får 409 der kontrakten lover 201 med
+    -- vinnerens profil_id/versjon. `read uncommitted` er med av samme
+    -- grunn som i 058: PostgreSQL behandler nivået som READ COMMITTED.
+    -- Poolen kjører i dag på basens default, så porten er ingen
+    -- oppførselsendring for HTTP-veien — men `disponit` har EXECUTE her,
+    -- og en fremtidig kaller som setter nivået selv skal møte en ærlig
+    -- feil framfor et brutt løfte.
+    IF current_setting('transaction_isolation')
+       NOT IN ('read committed', 'read uncommitted') THEN
+        RAISE EXCEPTION 'opprett_stillingsprofil_versjon: krever READ'
+            ' COMMITTED (fikk %) — gjenspill-løftet er utledet av en'
+            ' LESNING, og et fastholdt snapshot gjør den blind for en'
+            ' samtidig committet versjon',
+            current_setting('transaction_isolation')
+            USING ERRCODE = 'invalid_transaction_state';
+    END IF;
     -- Kanonisk innholdshash for idempotensbindingen: jsonb::text er
     -- nøkkelordnet og dedupet, så samme logiske kravsett hasher likt.
     v_hash := md5(coalesce(p_profil_id::text, '') || '·'

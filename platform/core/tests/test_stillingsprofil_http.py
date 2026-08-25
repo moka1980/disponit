@@ -357,6 +357,70 @@ def test_taperen_faar_replay_naar_vinneren_committer_sent(klient, miljo):
 
 
 @pg
+def test_doren_krever_read_committed(klient, miljo):
+    """Cursor P2-1 (runde 4): gjenspill-løftet er utledet av en LESNING.
+
+    Nøkkel-oppslaget først i `opprett_stillingsprofil_versjon` MÅ se en
+    samtidig committet versjon. Under REPEATABLE READ/SERIALIZABLE står
+    transaksjonens snapshot fast fra første setning: oppslaget er blindt,
+    INSERT treffer `stillingsprofil_idem`, og HTTP-lagets kappløpsarm —
+    som ruller tilbake og kjører døren én gang til på SAMME tilkobling,
+    altså samme nivå — er like blind i andre forsøk. Dommen blir 409
+    `idempotenskonflikt` der kontrakten lover 201 med vinnerens
+    profil_id/versjon. Samme klasse og samme ratifiserte form som
+    056/057/058/059.
+
+    Målt mot en EKTE runtime-tilkobling på hvert nivå, ikke mot en
+    attrapp: det er Postgres' egen `transaction_isolation` porten leser,
+    og `disponit` er rollen som faktisk har EXECUTE på døren.
+
+    MUTASJONEN SOM DREPER DENNE: fjern nivåporten i 061, eller utvid
+    settet med `repeatable read`/`serializable`."""
+    import json
+
+    import psycopg
+
+    from db.pg import koble, sett_kontekst
+
+    from .test_rekruttering_http import TEN
+
+    bid = _bruker(f"pn-{secrets.token_hex(3)}", ["admin"])
+    cookie, csrf = _browsersesjon(bid)
+    idem = secrets.token_hex(12)
+    krav = [{"kravnavn": "K", "vekt": 2}]
+    # Vinneren HAR committet: det er nettopp raden et fastholdt snapshot
+    # ville vært blindt for.
+    r = _post(klient, cookie, csrf, {"navn": "Nivå", "krav": krav},
+              idem=idem)
+    assert r.status_code == 201, r.text
+
+    for niva in (psycopg.IsolationLevel.REPEATABLE_READ,
+                 psycopg.IsolationLevel.SERIALIZABLE):
+        rt = koble(DSN)
+        try:
+            # Isolasjonsnivået kan bare byttes utenfor en åpen transaksjon.
+            rt.rollback()
+            rt.isolation_level = niva
+            sett_kontekst(rt, TEN, bid, "r-niva")
+            with pytest.raises(psycopg.errors.InvalidTransactionState):
+                rt.execute(
+                    "SELECT ut_profil_id, ut_versjon FROM"
+                    " opprett_stillingsprofil_versjon(%s,%s,%s,%s,"
+                    "%s::jsonb,%s)",
+                    (TEN, None, "Nivå", bid, json.dumps(krav), idem))
+            rt.rollback()
+        finally:
+            rt.close()
+
+    # Positiv kontroll: READ COMMITTED-veien er uendret og fortsatt
+    # gjenspillende — porten avviser NIVÅET, ikke kallet.
+    r2 = _post(klient, cookie, csrf, {"navn": "Nivå", "krav": krav},
+               idem=idem)
+    assert r2.status_code == 201, r2.text
+    assert r2.json() == r.json()
+
+
+@pg
 def test_lagring_krever_bestillingsscope(klient, miljo):
     """Cursor P2-2 (runde 2): POST-ruten krever `bestilling:opprett` —
     `leser` (kun `decisions:read`) skal dømmes 403 FØR noe skrives, med
