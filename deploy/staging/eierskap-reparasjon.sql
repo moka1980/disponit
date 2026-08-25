@@ -125,6 +125,9 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'bind_inndata(text,uuid,bigint,text)',     'disponit_domene_eier'),
     -- 061 (#189): stillingsprofilens produsent — samme eier.
     ('FUNCTION', 'opprett_stillingsprofil_versjon(text,uuid,text,text,jsonb,text)', 'disponit_domene_eier'),
+    -- 060 (#162 PR-2, B-formen fra #200): modulens lesevei — samme eier
+    -- som de andre inndata-doerene.
+    ('FUNCTION', 'hent_inndata_for_oppdrag(bigint,text,text,text,text)', 'disponit_domene_eier'),
     -- 044: periodisk kontroll — planens herdede funksjoner eies av claimer
     -- (tabellene er migrator-eide med eksplisitte grants — runtime når dem
     -- KUN gjennom funksjonene, og CURRENT_USER-policyen ser på tvers).

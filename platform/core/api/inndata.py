@@ -1,7 +1,7 @@
-"""#162: inndata-artefaktet — buntens vei INN, PR-1 (reservasjon +
-opplasting).
+"""#162: inndata-artefaktet — buntens vei INN og UT igjen.
 
-To ruter, speilet av 017s utdata-form i motsatt retning:
+Tre ruter: PR-1s to (reservasjon + opplasting), speilet av 017s
+utdata-form i motsatt retning, og PR-2s resolver:
 
 * POST /v1/inndata/reserver (browserkontekst, `bestilling:opprett`,
   `Idempotency-Key` PÅKREVD): utsteder en engangs-reservasjon FØR
@@ -14,8 +14,13 @@ To ruter, speilet av 017s utdata-form i motsatt retning:
   (binær-AAD `inndata`) og skriver til FS-lageret; `registrer_inndata_
   lastet` (058) møter målingen mot deklarasjonen og forbruker jti-en.
 
-Resolveren (modulens lesevei) og bestillingsbindingen er PR-2 — én dør
-per PR, K3-lærdommen fra #153/#176.
+* POST /v1/inndata/hent-for-oppdrag/{oppdrag_id} (modultoken, 060):
+  modulens LESEVEI. Autorisasjonen er claimet, og oppslaget går via
+  modulens eget oppdrag (#200 valg B) — bindingsraden er den eneste
+  sannheten om hvilken bunt oppdraget eier.
+
+Bestillingsbindingen (bunten inn i bestillingens fødselstransaksjon) er
+PR-3 — én dør per PR, K3-lærdommen fra #153/#176.
 """
 from __future__ import annotations
 
@@ -33,6 +38,12 @@ from starlette.concurrency import run_in_threadpool
 #: det, ikke ENOENT dypt nede.
 INNDATA_ROT = os.environ.get("DISPONIT_INNDATA_ROT",
                              "/var/lib/disponit-inndata")
+
+#: AES-GCM-taggen, i bytes. `kryptering.krypter_bytes` legger den — og
+#: INGENTING annet — til klarteksten; nonce-en bor i sin egen kolonne. En
+#: `.bin` har derfor nøyaktig én lovlig lengde: `faktiske_bytes + 16`.
+#: Resolveren bruker den som tak for lesningen (Codex P2).
+GCM_TAG = 16
 
 
 def _stikomponent(tenant: str) -> str:
@@ -410,3 +421,297 @@ async def opplast_endepunkt(tjeneste, request):
                    201)
 
     return await run_in_threadpool(_med_conn, tjeneste, rid, kjor)
+
+
+def hent_endepunkt(tjeneste, request, kropp):
+    """POST /v1/inndata/hent-for-oppdrag/{oppdrag_id} — modulens
+    lesevei (060, B-formen fra #200).
+
+    POST, ikke GET: kapabiliteten (`owner_claim_id`) er en HEMMELIGHET og
+    hører i kroppen, ikke i en URL som havner i tilgangslogger, Referer
+    og proxy-historikk. Ruten hører derfor til ORDRESCOPE-klassen som
+    claim/kvittering. Hentingen forbruker ingenting — den kan gjentas så
+    lenge claimet holdes, akkurat som en lesning skal kunne.
+
+    Autorisasjonen er CLAIMET, og oppslaget går via modulens EGET
+    oppdrag: bindingsraden er den eneste sannheten om hvilken bunt
+    oppdraget eier (#200 valg B) — ingen payload-referanse finnes.
+    Bytene dekrypteres og SHA-verifiseres mot radens måling FØR de
+    forlater huset: en fil som har driftet fra sin egen deklarasjon
+    serveres aldri.
+    """
+    import hashlib as _h
+    import os
+
+    import psycopg
+    from starlette.responses import Response
+
+    from .app import (ModulAutentisert, _feilsvar, _modultoken_revalidert,
+                      _rid, preauth)
+    rid = _rid(request)
+    oppdrag_id = request.path_params["oppdrag_id"]
+    # Claimet er en KAPABILITET (CodeRabbit major): kalleren må
+    # presentere owner_claim_id-en claim-svaret ga — to deployments av
+    # samme modul skal ikke kunne hente hverandres bunter.
+    #
+    # `isinstance(..., dict)`, ikke `kropp or {}` (Codex P2): ruten tar
+    # imot vilkårlig JSON, og `[1]`/`"x"`/`3`/`true` er alle sanne og
+    # uten `.get` — `AttributeError` fløy da ut FØR autentiseringen og
+    # ble en ufanget 500 i stedet for kontraktens 400. Samme form som
+    # kvitteringsveien alt bruker (app.py: `isinstance(kvittering, dict)`).
+    # Selve verdien valideres først etter auth, som før: en uautentisert
+    # kaller skal ikke kunne skille «feil kropp» fra «feil token».
+    owner_claim = kropp.get("owner_claim_id") if isinstance(kropp, dict) \
+        else None
+    try:
+        conn = tjeneste.pool.hent()
+    except (TimeoutError, psycopg.Error):
+        tjeneste.logg.hendelse("db_utilgjengelig", rid, art="drift")
+        return _feilsvar("db_utilgjengelig", rid)
+    from db import kryptering
+    from db.pg import sett_kontekst
+    # BASEFASEN er avgrenset, og forbindelsen forlater den (Codex P2 +
+    # Cursor P2-2). To ting kommer ut av avgrensningen:
+    #
+    # 1. `psycopg.Error` ETTER `pool.hent()` — en frakoblet base under
+    #    pre-auth, revalidering, resolveroppslaget eller nøkkellesningen —
+    #    fanges og blir endepunktets `db_utilgjengelig`, som på hver
+    #    annen modulvei (app.py: `_ingest_kvittering`). Uten dette var en
+    #    helt ordinær driftshendelse en generisk 500 uten hendelsen.
+    # 2. Forbindelsen leveres TILBAKE til poolen før fil-I/O og
+    #    dekryptering. Å holde en pool-forbindelse gjennom inntil 64 MiB
+    #    `read` + AES-GCM er samme klasse som opplastveien alt lukket:
+    #    under samtidige hent tømmes poolen, og andre forespørsler får
+    #    `db_utilgjengelig` av en årsak som ikke har noe med basen å gjøre.
+    grunnlag = None
+    try:
+        try:
+            auth = preauth(tjeneste, conn,
+                           request.headers.get("authorization"), rid)
+            if not isinstance(auth, ModulAutentisert):
+                tjeneste.logg.hendelse("token_ugyldig", rid)
+                return _feilsvar("token_ugyldig", rid)
+            # Samme to porter som hver annen modulvei: raten, og
+            # REVALIDERINGEN — et nødstoppet token skal ikke kunne hente
+            # bunter over transaksjonsgrensen.
+            if not tjeneste.rate.slipp_gjennom(auth.token_id):
+                tjeneste.logg.hendelse("rate_grense", rid, auth.tenant)
+                return _feilsvar("rate_grense", rid)
+            revalidering = _modultoken_revalidert(tjeneste, conn, auth, rid)
+            if revalidering is not None:
+                return revalidering
+            if not isinstance(owner_claim, str) or not owner_claim:
+                return _feilsvar("request_feilformet", rid)
+            # ID-EN MÅ FÅ PLASS I `bigint` FØR DEN BINDES (Codex P2).
+            # Starlettes `:int`-konverter er `[0-9]+` UTEN øvre grense, så
+            # `/hent-for-oppdrag/9223372036854775808` gir et fullgodt
+            # Python-heltall som først `%s::bigint` avviser — med
+            # `NumericValueOutOfRange`, altså en `psycopg.Error`. Den ble
+            # fanget av basefase-vakten under og rapportert som
+            # `db_utilgjengelig`: feilformet klientinput ble et FALSKT
+            # driftssignal (503 + `art="drift"`-hendelse om at basen er nede
+            # når den ikke er det). Samme klasse som artefakt_id-valideringen
+            # på kvitteringsveien — valider verdien FØR den bindes mot en
+            # typet kolonne — og samme svar som resten av de feilformede
+            # feltene på denne ruten: 400, etter auth, så en uautentisert
+            # kaller fortsatt ikke kan skille «feil input» fra «feil token».
+            if not -2**63 <= oppdrag_id < 2**63:
+                return _feilsvar("request_feilformet", rid)
+            # Deploymenten kommer fra TOKENET, aldri fra kroppen (Codex
+            # P1): `auth.release_id`/`auth.miljo` er det verifiserte
+            # modultokenets egen identitet (035), og 060 møter dem mot
+            # claim-portens stempel på oppdraget. Uten dem var
+            # kapabiliteten «en hvilken som helst deployment av modulen
+            # som kjenner claim-strengen».
+            rad = conn.execute(
+                "SELECT tenant, lager_sti, key_id, nonce, innhold_sha256,"
+                "       faktiske_bytes FROM"
+                "       hent_inndata_for_oppdrag(%s::bigint,%s,%s,%s,%s)",
+                (oppdrag_id, auth.modul_id, owner_claim,
+                 auth.release_id, auth.miljo)).fetchone()
+            if rad is None:
+                # Samme svar uansett årsak — finnes-ikke, feil modul,
+                # ikke claimet, ubundet: et oppslagsverk over andres
+                # oppdrag skal ikke finnes.
+                return _feilsvar("ikke_funnet", rid)
+            tenant, rel, key_id, nonce, sha, faktiske = rad
+            sett_kontekst(conn, tenant, auth.aktor, rid)
+            nokkelrad = conn.execute(
+                "SELECT wrapped_dek FROM tenant_nokler"
+                " WHERE tenant=%s AND key_id=%s",
+                (tenant, key_id)).fetchone()
+            # ALLE autorisasjons- og oppslagslesningene over deler ÉN
+            # transaksjon (CodeRabbit major: en mellom-rollback slapp
+            # revalideringens garanti før oppslaget var gjort). Først NÅR
+            # basen er ferdig spurt, slippes transaksjonen — fil-I/O og
+            # dekryptering skal ikke holde den.
+            conn.rollback()
+            if nokkelrad is None or nokkelrad[0] is None:
+                return _feilsvar("tenantnokkel_mangler", rid)
+            # KEK-unwrap er samme feilkontrakt som bunt-dekrypten under
+            # (Cursor P2): en tuklet/for kort wrapped_dek eller feil AAD
+            # skal gi sanert intern_feil med sikkerhetslogg — aldri en
+            # rammeverks-500.
+            try:
+                dek = kryptering._pakk_ut((key_id, nokkelrad[0]),
+                                          tenant)[1]
+            except Exception:
+                tjeneste.logg.hendelse("inndata_dekunwrap_feil", rid,
+                                       tenant, art="sikkerhet")
+                return _feilsvar("intern_feil", rid)
+            grunnlag = (tenant, rel, key_id, nonce, sha, faktiske, dek)
+        except psycopg.Error as e:
+            # Rull tilbake her, som de andre modulveiene — men SKJERMET:
+            # den vanligste årsaken til at vi står her er nettopp en død
+            # forbindelse, og en `rollback()` som selv kaster ville gjort
+            # driftshendelsen om til den 500-en dette funnet handler om.
+            # `gi_tilbake` under rydder uansett (app.py:206-222).
+            try:
+                conn.rollback()
+            except psycopg.Error:
+                pass
+            tjeneste.logg.hendelse("db_utilgjengelig", rid, art="drift",
+                                   feiltype=type(e).__name__)
+            return _feilsvar("db_utilgjengelig", rid)
+    finally:
+        tjeneste.pool.gi_tilbake(conn)
+
+    # HERFRA HOLDER VI INGEN BASEFORBINDELSE.
+    tenant, rel, key_id, nonce, sha, faktiske, dek = grunnlag
+    # Radens sti er RELATIV (B-maskinen: <tenant>/<inndata_id>.bin);
+    # roten settes på her, med komponentvakten som forsvar i dybden.
+    komp = _stikomponent(tenant)
+    if not rel or not rel.startswith(komp + "/"):
+        tjeneste.logg.hendelse("inndata_sti_avvik", rid, tenant,
+                               art="sikkerhet")
+        return _feilsvar("intern_feil", rid)
+    # LESNINGEN ER BEGRENSET AV RADEN (Codex P2). `f.read()` leste til EOF
+    # uansett hva raden sa, og gjorde dermed størrelsen på en fil vi
+    # allerede vet størrelsen på til en angriper-/driftsstyrt allokering:
+    # en `.bin` som har vokst (feilskriving, byttet fil, lagerdrift) kunne
+    # ta minnet til API-arbeideren FØR SHA-verifiseringen i det hele tatt
+    # fikk se noe. Ciphertexten har nøyaktig én lovlig lengde — AES-GCM
+    # legger bare taggen til klarteksten, og nonce-en bor i kolonnen — så
+    # `faktiske_bytes + GCM_TAG` er både taket og fasiten. Vi ber om ÉN
+    # byte mer enn det: er filen større, ser vi det uten å lese resten.
+    ventet = int(faktiske) + GCM_TAG
+    try:
+        with open(os.path.join(INNDATA_ROT, rel), "rb") as f:
+            ct = f.read(ventet + 1)
+    except OSError:
+        tjeneste.logg.hendelse("inndata_fil_borte", rid, tenant,
+                               art="drift")
+        return _feilsvar("intern_feil", rid)
+    if len(ct) != ventet:
+        # Både for kort og for lang: filen er ikke den raden beskriver.
+        # Samme klasse som `inndata_sha_avvik` — lageret har driftet fra
+        # sin egen deklarasjon — og utad samme intetsigende `intern_feil`.
+        tjeneste.logg.hendelse("inndata_storrelsesavvik", rid, tenant,
+                               art="sikkerhet")
+        return _feilsvar("intern_feil", rid)
+    # DEKRYPTERINGEN KAN FEILE, OG DET ER EN SIKKERHETSSAK (Codex P2).
+    # Har ciphertexten, nonce-en, AAD-bindingen (tenant/key_id/formål)
+    # eller nøkkelmetadataen driftet, reiser AES-GCM `InvalidTag` HER —
+    # altså før SHA-porten under, som ellers ville vært stedet
+    # `inndata_sha_avvik` ble skrevet. Ufanget forlot den endepunktet som
+    # en rammeverksavhengig 500: tukling med lageret ble uklassifisert,
+    # og feilformen kunne skille seg fra hver annen feil på ruten.
+    # `ValueError` hører med — en nonce-kolonne med feil lengde er samme
+    # drift, bare et annet sted i den. Ingen detaljer utad.
+    from cryptography.exceptions import InvalidTag
+    try:
+        raa = kryptering.dekrypter_bytes(dek, ct, bytes(nonce), tenant,
+                                         key_id, formaal=b"inndata")
+    except (InvalidTag, ValueError):
+        tjeneste.logg.hendelse("inndata_dekrypt_feil", rid, tenant,
+                               art="sikkerhet")
+        return _feilsvar("intern_feil", rid)
+    if _h.sha256(raa).hexdigest() != sha:
+        tjeneste.logg.hendelse("inndata_sha_avvik", rid, tenant,
+                               art="sikkerhet")
+        return _feilsvar("intern_feil", rid)
+    # RETTEN RE-MÅLES VED LEVERANSEN (Cursor P1, andre pass): dommen
+    # over ble felt FØR inntil 64 MiB lesing+dekryptering, og i det
+    # vinduet kan leasen løpe ut med reclaim til ny holder, eller
+    # modulen nødstoppes. 060-predikatet skal være sant når bytene
+    # FORLATER huset, ikke bare da de ble funnet — så hele porten
+    # (revalidering + dør) kjøres igjen i en KORT transaksjon, uten
+    # bytes i hendene på en rett som døde underveis.
+    try:
+        conn2 = tjeneste.pool.hent()
+    except (TimeoutError, psycopg.Error):
+        tjeneste.logg.hendelse("db_utilgjengelig", rid, art="drift")
+        return _feilsvar("db_utilgjengelig", rid)
+    try:
+        revalidering = _modultoken_revalidert(tjeneste, conn2, auth, rid)
+        if revalidering is not None:
+            return revalidering
+        fortsatt = conn2.execute(
+            "SELECT 1 FROM hent_inndata_for_oppdrag(%s::bigint,%s,%s,"
+            "%s,%s)",
+            (oppdrag_id, auth.modul_id, owner_claim,
+             auth.release_id, auth.miljo)).fetchone()
+        # NØKKELEN ER TREDJE LEDD I SAMME PORT (Codex P1). DEK-en ble
+        # pakket ut FØR lesing+dekrypt av inntil 64 MiB, og i det vinduet
+        # kan en crypto-shredding committe: `destruer` nuller
+        # `wrapped_dek`, men requesten holder alt den utpakkede DEK-en i
+        # `grunnlag` og ville servert PII som nettopp ER slettet — den
+        # eneste slettingen plattformen har for data den ikke kan
+        # DELETE-e. Retten og tokenet re-måles her; nøkkelens LIV hørte i
+        # samme port, av nøyaktig samme grunn.
+        sett_kontekst(conn2, tenant, auth.aktor, rid)
+        nokkel_lever = conn2.execute(
+            "SELECT 1 FROM tenant_nokler"
+            " WHERE tenant=%s AND key_id=%s AND wrapped_dek IS NOT NULL",
+            (tenant, key_id)).fetchone()
+        conn2.rollback()
+    except psycopg.Error:
+        try:
+            conn2.rollback()
+        except psycopg.Error:
+            pass
+        tjeneste.logg.hendelse("db_utilgjengelig", rid, art="drift")
+        return _feilsvar("db_utilgjengelig", rid)
+    finally:
+        tjeneste.pool.gi_tilbake(conn2)
+    if fortsatt is None:
+        tjeneste.logg.hendelse("inndata_rett_dod_ved_leveranse", rid,
+                               tenant, art="sikkerhet")
+        return _feilsvar("ikke_funnet", rid)
+    if nokkel_lever is None:
+        # Sletting slår autorisasjon: bytene finnes fortsatt på disk, men
+        # de er juridisk borte i det nøkkelen er det. Samme intetsigende
+        # svar som hver annen negativ på ruten.
+        tjeneste.logg.hendelse("inndata_nokkel_destruert_ved_leveranse",
+                               rid, tenant, art="sikkerhet")
+        return _feilsvar("ikke_funnet", rid)
+    # RESTVINDU (kjent, utsatt til #204 — eiervedtak i PR #202-tråden,
+    # 2026-08-25, "valg 1"): gjerdet over stopper ved `conn2.rollback()`.
+    # Fra her til Starlette har sendt siste byte av `Response` holder vi
+    # ingen radlås — `hent_inndata_for_oppdrag` er et rent SELECT uten
+    # FOR UPDATE (060:73-89) — og body-sendet er klient-tempo, altså
+    # vilkårlig strekkbart. En reclaim kan committe i det vinduet og gi
+    # duplikatlevering av samme bunt til samme modulklasse (Codex P1,
+    # pullrequestreview-5020606939, `inndata.py:639`) — ikke en
+    # privilegie-eskalering, men en rest av nøyaktig samme mekanisme
+    # re-målingen over lukker. K2 (tre runder på samme mekanisme) stopper
+    # en fjerde punktfiks her: lukkingen krever en fencing-primitiv som
+    # binder LEVERANSEN til gjeldende `oppdrag.owner_generation` (finnes
+    # alt, 005_m37_behandling.sql:317/872, og fencer alt i
+    # utsted_kvitteringskapabilitet :985-1001) gjennom hele body-sendet —
+    # ny maskin (K1): den bygges i #204, ikke her.
+    #
+    # NØKKELEN HAR SAMME REST, og den hører til SAMME utsatte punkt: en
+    # `destruer()` som committer mellom `conn2.rollback()` og siste byte
+    # møter ingen delt livstidslås herfra, fordi `_livslas` er
+    # transaksjonsbundet (kryptering.py:45-68) og vår transaksjon er
+    # sluppet. Å holde den gjennom body-sendet er den samme
+    # fencing-primitiven — ikke enda et ledd i predikatet. Merk at
+    # UGJERDET LESING AV DEK er plattformens tilstand fra før og ikke noe
+    # denne PR-en innfører: `_livslas(eksklusiv=False)` tas kun av
+    # SKRIVEveien (`hent_eller_opprett_aktiv_dek`), mens hver eneste
+    # leseveien — `hent_dek` i app.py:3102, unntaksbehandling.py:396/530,
+    # lesing.py:456 — leser uten den.
+    return Response(raa, media_type="application/zip",
+                    headers={"x-request-id": rid,
+                             "x-innhold-sha256": sha})

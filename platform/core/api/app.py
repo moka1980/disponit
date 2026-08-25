@@ -902,6 +902,18 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def inndata_reserver(request: Request) -> Response:
         return inndata_http.reserver_endepunkt(tjeneste, request)
 
+    async def inndata_hent(request: Request) -> Response:
+        # Kroppen (owner_claim_id-kapabiliteten) leses async; selve
+        # arbeidet (pool, dekryptering, fil) går i threadpoolen som de
+        # andre sync-veiene.
+        from starlette.concurrency import run_in_threadpool
+        try:
+            kropp = await request.json()
+        except Exception:
+            kropp = None
+        return await run_in_threadpool(
+            inndata_http.hent_endepunkt, tjeneste, request, kropp)
+
     async def inndata_opplast(request: Request) -> Response:
         return await inndata_http.opplast_endepunkt(tjeneste, request)
 
@@ -1104,6 +1116,8 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         # statisk serverte klientbunten der hvem som helst kunne lese hver
         # tenants plan og modultildeling.
         Route("/v1/utrulling", utrulling, methods=["GET"]),
+        Route("/v1/inndata/hent-for-oppdrag/{oppdrag_id:int}",
+              inndata_hent, methods=["POST"]),
         Route("/v1/inndata/reserver", inndata_reserver,
               methods=["POST"]),
         Route("/v1/inndata/opplast/{jti:str}", inndata_opplast,
@@ -1552,6 +1566,10 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # Skriving av profilen er kundens/adminens bestillingsmyndighet —
     # samme scope som signeringen og inndata-reservasjonen.
     ("POST", "/v1/rekruttering/stillingsprofiler"): "bestilling:opprett",
+    # Modulveien (060): retten er CLAIMET — ORDRESCOPE-klassen som
+    # claim/kvittering; auth avgjøres i endepunktet (modultoken).
+    ("POST", "/v1/inndata/hent-for-oppdrag/{oppdrag_id:int}"):
+        ORDRESCOPE + "<prefiks>",
     ("POST", "/v1/inndata/reserver"):        "bestilling:opprett",
     ("PUT",  "/v1/inndata/opplast/{jti:str}"): "bestilling:opprett",
     ("POST", "/v1/rekruttering/prosesser/{prosess_id}/blinding"):

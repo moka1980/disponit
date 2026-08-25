@@ -193,6 +193,7 @@ GRANT EXECUTE ON FUNCTION reserver_inndata(TEXT, TEXT, TEXT, BIGINT, TEXT) TO {r
 GRANT EXECUTE ON FUNCTION registrer_inndata_lastet(TEXT, TEXT, BIGINT, TEXT, TEXT, BYTEA) TO {rolle};
 GRANT EXECUTE ON FUNCTION bind_inndata(TEXT, UUID, BIGINT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION opprett_stillingsprofil_versjon(TEXT, UUID, TEXT, TEXT, JSONB, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION hent_inndata_for_oppdrag(BIGINT, TEXT, TEXT, TEXT, TEXT) TO {rolle};
 RESET ROLE;
 -- 035: modul-onboarding og modultokener. Hele denne veien er
 -- SECURITY DEFINER-funksjoner eid av `disponit_modul_eier`; runtime har
