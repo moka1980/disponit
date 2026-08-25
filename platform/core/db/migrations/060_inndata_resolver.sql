@@ -61,6 +61,21 @@
 -- retten til å holde claimet» (over) er da bare sann så lenge holdet
 -- varer, og leddet under er nøyaktig det. Fail-closed mot NULL: en rad
 -- uten lease har ingen holdefrist å vise til.
+--
+-- VEGGKLOKKE, IKKE TRANSAKSJONSSTART (Codex P2, #202). Leddet over måler
+-- «lever holdet NÅ», og `now()` er ikke nå — den er fastfrosset ved
+-- transaksjonens START. Det er ikke akademisk her: begge kallstedene
+-- (`inndata.py`, basefasen og leveranse-re-målingen) kjører
+-- `modultoken_fortsatt_autorisert` FØR denne spørringen, og den tar
+-- delt advisory-lås på `modul:<id>` (035:789) — står en nødstopp/
+-- tilbakekalling med den eksklusive låsen, blokkerer revalideringen
+-- vilkårlig lenge, og `now()` peker fortsatt på tiden før ventingen.
+-- En lease som døde UNDER ventingen ville da bestått porten, altså
+-- nøyaktig hullet leddet over ble lagt inn for å lukke.
+-- `clock_timestamp()` leses på nytt ved evalueringen og måler den
+-- faktiske leveransetiden. Retningen er trygg: den er alltid ≥ `now()`,
+-- så porten kan bare bli strengere — aldri servere en bunt en
+-- reclaimer (som selv måler med `now()`, 005:894-895) alt har tatt.
 
 SET LOCAL ROLE disponit_domene_eier;
 
@@ -83,7 +98,7 @@ SET search_path = pg_catalog AS $$
        AND o.status = 'plukket'
        AND o.owner_claim_id = p_owner_claim_id
        AND o.owner_lease_utloper IS NOT NULL
-       AND o.owner_lease_utloper > pg_catalog.now()
+       AND o.owner_lease_utloper > pg_catalog.clock_timestamp()
        AND o.claim_release_id = p_release_id
        AND o.claim_miljo = p_miljo;
 $$;

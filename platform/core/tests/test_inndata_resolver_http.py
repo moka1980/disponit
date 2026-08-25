@@ -254,6 +254,59 @@ def test_utlopt_lease_er_ikke_lenger_en_rett(klient, migrator, miljo,
 
 
 @pg
+def test_leasen_males_mot_veggklokken_ikke_transaksjonsstart(
+        klient, migrator, miljo, inndata_rot):
+    """Codex P2 (#202): `now()` er `transaction_timestamp()` — frosset
+    ved transaksjonens FØRSTE setning, ikke ved predikatets.
+
+    Begge kallstedene (`inndata.py`, basefasen og leveranse-re-målingen)
+    kjører `modultoken_fortsatt_autorisert` FØR resolveren i samme
+    transaksjon, og den tar DELT advisory-lås på `modul:<id>`
+    (035:789). Holder en nødstopp/tilbakekalling den eksklusive låsen,
+    venter revalideringen vilkårlig lenge — og en lease som døde under
+    ventingen ville fortsatt bestått porten over, altså nøyaktig det
+    hullet den ble lagt inn for å lukke.
+
+    Målt uten å bygge lås-kappløpet (K1): predikatet kalles TO ganger i
+    SAMME transaksjon, med veggklokken flyttet imellom. At de to svarene
+    er forskjellige er i seg selv beviset — under `now()` er de like,
+    for da er tiden den samme begge ganger. Samme form som
+    `test_frigivelsesoppdrag_maaler_fristen_mot_veggklokken`
+    (test_m57_utsending.py) alt bruker for denne klassen.
+
+    MUTASJONEN SOM DREPER DENNE: sett `clock_timestamp()` tilbake til
+    `now()` i 060s lease-ledd."""
+    rel = _m57_deployment(migrator)
+    _kropp, tenant, oid = _bundet_bunt(klient, migrator)
+    claim = _pluk(migrator, tenant, oid, rel)
+
+    # Leasen dør om to sekunder — altså ETTER at transaksjonen under er
+    # åpnet, og FØR den er ferdig.
+    from db.pg import sett_kontekst
+    sett_kontekst(migrator, tenant, "test", "r-klokke")
+    migrator.execute("UPDATE oppdrag SET owner_lease_utloper="
+                     "clock_timestamp()+interval '2 seconds'"
+                     " WHERE tenant=%s AND id=%s", (tenant, oid))
+    migrator.commit()
+
+    kall = ("SELECT 1 FROM hent_inndata_for_oppdrag(%s::bigint,'m57_ats',"
+            "%s,%s,'staging')")
+    arg = (oid, claim, rel)
+    # Funksjonen er SECURITY DEFINER og eies av domene_eier; rollen her
+    # gir bare EXECUTE (grantet til `disponit` i drift) — ingen egen
+    # tenantkontekst trengs, avgjørelsen er kryss-tenant.
+    migrator.execute("SET LOCAL ROLE disponit_domene_eier")  # now() fryses
+    for_ = migrator.execute(kall, arg).fetchone()
+    migrator.execute("SELECT pg_sleep(3)")   # veggklokken går, now() står
+    etter = migrator.execute(kall, arg).fetchone()
+    migrator.rollback()
+
+    assert for_ is not None, "retten skulle levd ved transaksjonsstart"
+    assert etter is None, ("leasen døde under transaksjonen, men"
+                           " predikatet svarte fortsatt ja")
+
+
+@pg
 def test_fremmed_deployment_av_samme_modul_far_ingenting(klient, migrator,
                                                          miljo, inndata_rot):
     """Codex P1: kapabiliteten binder DEPLOYMENTEN, ikke bare modulen.
