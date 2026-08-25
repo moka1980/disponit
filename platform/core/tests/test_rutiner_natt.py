@@ -89,13 +89,28 @@ def test_verdikt_rekkevidden_er_speilet_begge_veier():
 
 
 def test_dom_klasse_porten_i_alle_tre_forsokene():
-    """Cursor P2-1/P2-5 på #198: dom-klasse-porten må stå i hvert av de
-    tre forsøkene — et utsatt punkt skal parkere PR-en uansett hvilket
-    forsøk som når merge-steget."""
+    """Cursor P2-1/P2-5 på #198 + P2-2 runde 6: dom-klasse-porten må stå
+    i hvert av de tre forsøkene MED SAMME STYRKE — sitatlinje, åpnet og
+    lest dom, ordrett mekanisme/utfall, og forfatterkravet (P1-1 runde
+    6: formen er billig å forfalske, forfatteren gjør den umulig). En
+    timeout skal aldri fortynne porten."""
     for i, forsok in enumerate(_fiksforsok(), 1):
         assert "DOM-KLASSE-PORTEN" in forsok, f"forsøk {i} mangler porten"
         assert "dom-klasse: <id> · felt i #<nr> · <URL>" in forsok, (
             f"forsøk {i} mangler sitatlinje-formen")
+        # prompt-tekst brytes over linjer — normaliser før substrings
+        norm = " ".join(forsok.lower().split())
+        assert "åpne" in norm and "les dommen" in norm, (
+            f"forsøk {i} mangler lese-kravet")
+        assert "mekanisme" in forsok and "utfall" in forsok, (
+            f"forsøk {i} mangler treff-kravet")
+        assert "`user.login`" in forsok and "moka1980" in forsok, (
+            f"forsøk {i} mangler forfatterkravet")
+    # …og broens steg 5 bærer det samme forfatterkravet.
+    fulgt = _jobb("cursor-pass-fulgt")
+    assert "`user.login` er `moka1980`" in fulgt
+    assert "annen forfatter" in fulgt
+    assert "user.login" in RUTINER and "forfatter" in RUTINER
 
 
 def test_broen_er_per_pr_og_feiler_hoyt():
@@ -159,11 +174,10 @@ def test_pass_ekvivalensregelen_er_ratifisert_der_den_brukes():
     assert "test-negativer" in RUTINER
 
 
-def test_broen_rekoer_avbrutte_pass():
-    """Cursor P2-3 runde 2 (#198): cursor-pre-codex har
-    cancel-in-progress, så et nytt `@cursor review` avbryter forrige
-    pass — broen må re-køe `cancelled`, aldri lese et ELDRE pass som om
-    det gjaldt denne HEAD."""
+def test_broen_har_cancelled_gren():
+    """Cursor P2-3 runde 2 (#198): et avbrutt pass har ingen funnliste —
+    broen må ha en eksplisitt cancelled-gren (semantikken er skjerpet i
+    runde 6: alltid stille stopp, se egen port)."""
     assert "cancelled" in _jobb("cursor-pass-fulgt"), (
         "bro-prompten mangler cancelled-grenen")
 
@@ -226,13 +240,13 @@ def test_broen_validerer_ikke_tom_artifakt():
         "pr-fra-pass mangler ikke-tom-validering")
 
 
-def test_cancelled_broen_viker_for_nyere_run():
-    """Cursor P2-2 runde 3 (#198): en sen cancelled-bro skal aldri
-    duplisere oppfølgingen etter at et nyere pass alt har fullført —
-    steg 2 må sjekke for nyere run før re-kø."""
+def test_cancelled_broen_dupliserer_aldri():
+    """Cursor P2-2 runde 3 → P2-1 runde 6 (#198): først «sjekk for nyere
+    run», så målte runde 6 at selve oppslaget hadde et race-vindu —
+    sluttformen er at cancelled ALDRI re-køer (egen port under)."""
     fulgt = _jobb("cursor-pass-fulgt")
-    assert "NYERE" in fulgt and "stopp stille, ingen re-kø" in fulgt
     assert "re-køes alltid" not in fulgt
+    assert "kaskaden" in fulgt
 
 
 def test_sha_bindingen_sjekkes_ogsaa_etter_ci_ventingen():
@@ -313,9 +327,13 @@ def test_passet_er_bundet_til_forfatteren():
     assert "ALDRI et pass" in fulgt
 
 
-def test_cancelled_viker_ogsaa_for_kjorende_run():
-    """Cursor P2-1 runde 5 (#198): et nytt `@cursor review` mens et
-    nyere run kjører ville kansellert det (cancel-in-progress) og
-    startet en kaskade — kjørende/køede run eier også oppfølgingen."""
+def test_cancelled_stopper_alltid_stille():
+    """Cursor P2-1 runde 6 (#198, avløser runde 5-varianten): selv
+    `gh run list`-oppslaget hadde et race-vindu — en cancelled-bro skal
+    ALDRI re-køe. Re-kø er transportfeilens verktøy alene."""
     fulgt = _jobb("cursor-pass-fulgt")
-    assert "in_progress/queued" in fulgt
+    assert "stopp STILLE, alltid" in fulgt
+    assert "Re-kø gjelder KUN transportfeil" in fulgt
+    # negativt: cancelled-grenen skal ikke lenger koble seg til re-kø
+    steg2 = fulgt.split("stopp STILLE, alltid")[0]
+    assert "re-kø med én kommentar" not in steg2.split("cancelled")[-1]
