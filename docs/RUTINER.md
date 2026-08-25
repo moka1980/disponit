@@ -161,3 +161,30 @@ lost») på et forsøk til, gå rett på `@codex review` og noter det i tråden.
 **Secret:** `CURSOR_API_KEY` må ligge i repo-secrets (Cursor Dashboard →
 API Keys). GitHub App-installasjonen gir repo-tilgang; Actions trenger
 nøkkelen for å starte agenten.
+
+## 11. Nattregler (ratifisert av eier 25/8 — «beslutninger tas uten meg om natta»)
+
+Om natten sover både eier og Claude Codes lokale økt; skyen er alene.
+Denne paragrafen fikk tre regler i eierens ratifisering; her står den ene
+som er selvbærende og i kraft i dag. §11.1 (dom-klasse-gjenbruk) og
+§11.3 (nattkjedens form) er ratifisert i innhold, men åpner begge en vei
+`claude.yml` i dag ikke har noen port for — de landes derfor i ÉN egen
+PR sammen med selve speilingen i `.github/workflows/claude.yml`, slik at
+regel og håndhevelse blir samme commit og det aldri finnes et vindu der
+dokumentet lover en port maskinen mangler (K2-eskaleringen i #193,
+avgjort under eiers delegasjon 25/8).
+
+2. **Mandater bor i KOMMENTARER, og omtalen er `@claude`.** En ordre i en
+   issue-KROPP trigger ingen kjøring (samme utløser-klasse som §10s
+   Bugbot-notat). Ethvert nattmandat legges som egen kommentar — og
+   omtalen må være bokstavelig `@claude`, ikke en hvilken som helst
+   @-omtale. Handleren er `mention`-jobben (`Svar @claude`) i
+   `.github/workflows/claude.yml`, som kjører `claude-code-action` uten
+   egen `trigger_phrase` og derfor lytter på standardfrasen `@claude` —
+   samme frase workflowens egen omstart-instruks ber om. En kommentar som
+   bare nevner `@moka1980` eller `@codex` oppfyller ikke regelen: den lar
+   mandatet ligge ubehandlet, eller vekker feil tjeneste.
+
+Nummereringen (§11.2 uten §11.1/§11.3 rundt seg) er beholdt med vilje:
+referansene i PR-tråder og sløyfeinstrukser peker på nummeret, og
+nummeret skal ikke bety noe annet den dagen naboreglene lander.
