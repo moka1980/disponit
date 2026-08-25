@@ -622,17 +622,24 @@ jobs:
             --repo "${{ github.repository }}" --name pr-nummer \
             --dir /tmp/pr-art || { echo "::error::Cursor-passet (run ${{ github.event.workflow_run.id }}) KJØRTE men etterlot ingen pr-nummer-artifakt — oppfølgingen kan ikke rutes og feiler RØDT med vilje"; exit 1; }
           # ARTIFAKTET BINDES TIL PASSETS IDENTITET (Cursor P2-3 runde
-          # 20): innholdet kommer fra oppstrøms-kjøringen, og en
-          # samme-repo-PR som muterte opplastingssteget kunne ellers
-          # peke broen på en ANNEN PR (forvirret stedfortreder). PR-en
-          # artifaktet navngir må faktisk være PR-en for
-          # workflow_run-ens head_sha.
-          FAKTISK=$(gh pr view "$(cat /tmp/pr-art/pr-nummer.txt)" \
-            --repo "${{ github.repository }}" \
-            --json headRefOid -q .headRefOid || true)
-          if [ "$FAKTISK" != "${{ github.event.workflow_run.head_sha }}" ]; then
-            echo "::error::pr-nummer-artifaktet peker på en PR hvis head ($FAKTISK) ikke er passets head_sha (${{ github.event.workflow_run.head_sha }}) — mulig omdirigering; feiler RØDT"
-            exit 1
+          # 20, RETTET etter målt brudd i run 32902684841): for
+          # PULL_REQUEST-utløste pass er workflow_runs head_sha PR-ens
+          # egen head og bindingen er eksakt. For KOMMENTAR-utløste pass
+          # er head_sha DEFAULT-GRENENS head — å kreve likhet der drepte
+          # broen på hvert kommentar-utløst pass (main != PR-head, per
+          # konstruksjon). Skallbindingen gjelder derfor bare
+          # pull_request-veien; kommentar-veien bindes av bro-promptens
+          # egne porter (passets forfatter github-actions[bot] + SHA-linje
+          # == headRefOid, steg 3–4), som er den faktiske
+          # innholdsbindingen uansett vei.
+          if [ "${{ github.event.workflow_run.event }}" = "pull_request" ]; then
+            FAKTISK=$(gh pr view "$(cat /tmp/pr-art/pr-nummer.txt)" \
+              --repo "${{ github.repository }}" \
+              --json headRefOid -q .headRefOid || true)
+            if [ "$FAKTISK" != "${{ github.event.workflow_run.head_sha }}" ]; then
+              echo "::error::pr-nummer-artifaktet peker på en PR hvis head ($FAKTISK) ikke er passets head_sha (${{ github.event.workflow_run.head_sha }}) — mulig omdirigering; feiler RØDT"
+              exit 1
+            fi
           fi
           # Tom fil er samme feilklasse som manglende artifakt (Cursor
           # P2-3 runde 3): tom output → oppfølgingsjobben hoppes over →

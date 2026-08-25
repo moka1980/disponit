@@ -638,3 +638,8 @@ def test_artifaktet_bindes_til_passets_head():
     hent = _jobb("pr-fra-pass")
     assert "workflow_run.head_sha" in hent
     assert "headRefOid" in hent
+    # Målt i run 32902684841: for kommentar-utløste pass er head_sha
+    # DEFAULT-grenens — skallbindingen må være pull_request-vaktet,
+    # ellers dreper den broen på hvert kommentar-utløst pass.
+    assert "workflow_run.event }}\" = \"pull_request\"" in hent.replace(
+        "'", "\"") or 'workflow_run.event }}" = "pull_request"' in hent
