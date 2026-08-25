@@ -178,7 +178,17 @@ Tre regler gjør natten produktiv uten at noen ringer på:
 2. **Mandater bor i KOMMENTARER.** En ordre i en issue-KROPP trigger
    ingen kjøring (samme utløser-klasse som §10s Bugbot-notat). Ethvert
    nattmandat legges som egen kommentar med @-omtale.
-3. **Codex-only om natten.** Cursor-passene kan ikke vekke sløyfa
-   (#188) før PAT-fiksen er merget; om natten går kjeden implementer →
-   CI → `@codex review` → fiks → verdikt → merge, og Cursor tar igjen
-   hele flaten på dagtid med et catch-up-pass per merget PR.
+3. **Codex-only om natten — PENDING sløyfeinstruksen.** Cursor-passene
+   kan ikke vekke sløyfa (#188) før PAT-fiksen er merget. Nattkjeden
+   skal derfor være implementer → CI → `@codex review` → fiks →
+   verdikt → merge, uten Cursor-port, og Cursor tar igjen flaten på
+   dagtid med et catch-up-pass.
+
+   Regelen er ratifisert, men **ikke i kraft**. Sløyfeinstruksen i
+   `.github/workflows/claude.yml` sier fortsatt «ALDRI `@codex review`
+   før Cursor har PASS», og prompten vinner over dokumentet i praksis:
+   en nattkjøring som følger §11.3 mot en uendret prompt ender i den
+   samme #188-blindveien regelen skulle fjerne. §11.3 gjelder først fra
+   det øyeblikket eier har håndmerget den speilingen inn i `claude.yml`
+   — sløyfa redigerer ikke workflow-filer selv. Inntil da gjelder
+   §2.4/§2.5 og §10.5–6 uendret, også om natten.
