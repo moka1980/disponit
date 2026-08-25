@@ -559,3 +559,29 @@ def test_cancel_in_progress_false_er_portet():
         jobb = _uttrykk(_jobb(navn))
         assert "cancel-in-progress: false" in jobb, (
             f"{navn}: cancel-in-progress-false mangler/flippet")
+
+
+def test_mergen_pinner_baseline_atomisk():
+    """Cursor P1-1 runde 17 (#198): å måle headRefOid og så merge er
+    sjekk-deretter-handle — pinnen (--match-head-commit) gjør det
+    atomisk, i alle tre forsøkene og i §11.1."""
+    for i, forsok in enumerate(_fiksforsok(), 1):
+        assert "match-head-commit" in forsok, (
+            f"forsøk {i} mangler den atomiske pinnen")
+    assert "--match-head-commit" in RUTINER
+
+
+def test_mention_og_broen_mangler_merge_kapasitet():
+    """Cursor P1-2 runde 17 (#198): MERGE ALDRI var prosa mens ACL-en
+    tillot `gh pr merge` — nå er verktøyflaten smal (eksplisitte
+    pr-underkommandoer uten merge) og API-veien navngitt i forbudet.
+    Fikserjobben beholder den brede flaten + pinnen."""
+    for navn in ("mention", "cursor-pass-fulgt"):
+        jobb = _jobb(navn)
+        assert "Bash(gh pr:*)" not in jobb, (
+            f"{navn}: bred pr-flate er tilbake (merge-kapasitet)")
+        assert "Bash(gh pr view:*)" in jobb
+        norm = " ".join(jobb.split())
+        assert "pulls/.../merge" in norm.replace("`", ""), (
+            f"{navn}: API-vei-forbudet mangler")
+    assert "Bash(gh pr:*)" in _jobb("fiks-og-merge")
