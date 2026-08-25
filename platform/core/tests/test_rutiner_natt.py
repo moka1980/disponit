@@ -414,3 +414,31 @@ def test_codex_grenen_krever_pull_request():
     ren issue skal aldri starte en skrivende agent."""
     fiks = _uttrykk(_jobb("fiks-og-merge").split("steps:")[0])
     assert "github.event.issue.pull_request" in fiks
+
+
+def test_broen_avviser_fork_repo():
+    """Codex P1-1 runde 10 (#198): workflow_run-kjøringen bærer
+    base-repoets secrets — et pass fra en fork-PR skal aldri nå den
+    privilegerte broen. Head-repoet må være vårt eget."""
+    hent = _uttrykk(_jobb("pr-fra-pass").split("steps:")[0])
+    assert ("workflow_run.head_repository.full_name == github.repository"
+            in hent), "fork-vakten mangler"
+
+
+def test_compare_trunkering_feiler_stengt():
+    """Codex P2 runde 10 (#198): GitHub trunkerer compare-fillisten ved
+    300 — et utelatt overlapp ville gitt falskt tomt snitt og bevart et
+    brukt verdikt. Alle tre forsøkene og RUTINER bærer vakten."""
+    for i, forsok in enumerate(_fiksforsok(), 1):
+        norm = " ".join(forsok.split())
+        assert "300+" in norm, f"forsøk {i} mangler trunkering-vakten"
+    assert "300+ filer" in RUTINER
+
+
+def test_asymmetrien_pass_vs_verdikt_er_dokumentert():
+    """Codex P1-3 runde 10 (#198): §10s eksakte pass-SHA og §11.1s
+    filsnitt-rekkevidde er BEVISST asymmetri (fornyelsesprisen er ulik)
+    — dokumentert, ikke en motsigelse."""
+    assert "Asymmetrien mot §10s pass-binding er BEVISST" in RUTINER
+    assert "billig og kvotefritt" in RUTINER
+    assert "dyr og kvotebelagt" in RUTINER

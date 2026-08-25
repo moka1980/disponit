@@ -222,7 +222,10 @@ jobs:
                      Tomt snitt → verdiktet står, fortsett til 3b.
                      Ikke-tomt snitt → verdiktet er BRUKT OPP: post
                      `@codex review` på den nye head-en og stopp — merge
-                     aldri på det gamle. (Skulle sammenligningen feile,
+                     aldri på det gamle. (Feiler sammenligningen, ELLER
+                     har compare-svaret 300+ filer / manglende
+                     `files`-liste — GitHub trunkerer ved 300, og et
+                     utelatt overlapp ville gitt falskt tomt snitt —
                      behandle det som ikke-tomt snitt: porten feiler
                      stengt.)
                    * `DIRTY` (ekte konflikt) → ikke tving. Løs konflikten
@@ -310,8 +313,10 @@ jobs:
                `gh pr update-branch <nr>` (ikke rebase/force-push), og
                VERDIKT-REKKEVIDDEN (§11.1): snitt fillisten fra
                `gh api repos/${{ github.repository }}/compare/<gammel-head>...<ny-head>`
-               mot PR-ens egne filer — ikke-tomt snitt, eller en måling
-               som feiler, betyr at verdiktet er BRUKT OPP: post
+               mot PR-ens egne filer — ikke-tomt snitt, en måling som
+               feiler, eller et compare-svar med 300+ filer/manglende
+               files-liste (trunkering gir falskt tomt snitt), betyr at
+               verdiktet er BRUKT OPP: post
                `@codex review` og stopp; `DIRTY`
                → ikke tving, kommenter til eier; (b)
                `gh pr checks <nr> --watch --fail-fast`, og vent på den NYE
@@ -365,8 +370,8 @@ jobs:
             må være `moka1980`, og mekanisme og utfall må ordrett dekke
             punktet — ellers parkér, ikke merge) → branch à jour med VERDIKT-REKKEVIDDEN (§11.1:
             filsnittet fra `compare/<gammel-head>...<ny-head>` mot PR-ens
-            filer; ikke-tomt snitt eller målefeil → nytt `@codex review`,
-            ikke merge) → grønn CI →
+            filer; ikke-tomt snitt, målefeil eller trunkert liste (300+
+            filer) → nytt `@codex review`, ikke merge) → grønn CI →
             `gh pr merge --squash --delete-branch` — og bare på et rent
             verdikt.
 
@@ -479,8 +484,15 @@ jobs:
     # utløsningen alt portet av write-tilgang i cursor-pre-codex, og
     # actoren kan legitimt være enhver skriver — å blokkere dem lot
     # §10-automatikken stoppe stille (runde 5 overkorrigerte).
+    # + FORK-VAKTEN (Codex P1-1 runde 10): workflow_run-kjøringen får
+    # base-repoets secrets og write-token uansett hvor passet kom fra —
+    # et fork-PR-pass (ready_for_review fra en fork) skal ALDRI nå den
+    # privilegerte broen. Head-repoet må være vårt eget; sammen med
+    # actor-allowlisten for kommentar-utløste pass er begge veiene
+    # portet.
     if: >-
       github.event_name == 'workflow_run' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
       (github.event.workflow_run.event == 'pull_request' ||
        github.event.workflow_run.actor.login == 'moka1980' ||
        github.event.workflow_run.actor.login == 'claude[bot]')

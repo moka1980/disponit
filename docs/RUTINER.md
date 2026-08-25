@@ -215,7 +215,18 @@ aldri et vindu der dokumentet lover en port maskinen mangler
    formen gjeninnfører nøyaktig BEHIND-parkeringen steg 3a ble bygget
    for å fjerne, og brenner en Codex-runde per naboskaps-merge uten at
    noe nytt er reviewet. Grensen er trukket der risikoen faktisk bor:
-   filsnittet.)
+   filsnittet. Compare-svar med 300+ filer eller manglende liste regnes
+   som ikke-tomt snitt — GitHub trunkerer ved 300, og porten feiler
+   stengt.)
+
+   **Asymmetrien mot §10s pass-binding er BEVISST** (avgjort under
+   delegasjonen, runde 10 på #198): Cursor-PASSET er bundet til eksakt
+   SHA fordi et nytt pass er billig og kvotefritt — å fornye det etter
+   en head-flytting koster minutter; Codex-VERDIKTET får filsnitt-
+   rekkevidde fordi en ny Codex-runde er dyr og kvotebelagt. Samme
+   risiko, ulik fornyelsespris — derav ulik regel. De to portene
+   gjelder hver sin adgang (pass → Codex-bestilling; verdikt → merge)
+   og står ikke i konflikt.
 
 2. **Mandater bor i KOMMENTARER, og omtalen er `@claude`.** En ordre i en
    issue-KROPP trigger ingen kjøring (samme utløser-klasse som §10s
