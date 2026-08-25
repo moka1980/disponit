@@ -439,7 +439,16 @@ def hent_endepunkt(tjeneste, request, kropp):
     # Claimet er en KAPABILITET (CodeRabbit major): kalleren må
     # presentere owner_claim_id-en claim-svaret ga — to deployments av
     # samme modul skal ikke kunne hente hverandres bunter.
-    owner_claim = (kropp or {}).get("owner_claim_id")
+    #
+    # `isinstance(..., dict)`, ikke `kropp or {}` (Codex P2): ruten tar
+    # imot vilkårlig JSON, og `[1]`/`"x"`/`3`/`true` er alle sanne og
+    # uten `.get` — `AttributeError` fløy da ut FØR autentiseringen og
+    # ble en ufanget 500 i stedet for kontraktens 400. Samme form som
+    # kvitteringsveien alt bruker (app.py: `isinstance(kvittering, dict)`).
+    # Selve verdien valideres først etter auth, som før: en uautentisert
+    # kaller skal ikke kunne skille «feil kropp» fra «feil token».
+    owner_claim = kropp.get("owner_claim_id") if isinstance(kropp, dict) \
+        else None
     try:
         conn = tjeneste.pool.hent()
     except (TimeoutError, psycopg.Error):

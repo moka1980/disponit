@@ -173,6 +173,13 @@ def test_resolveren_krever_plukket_oppdrag(klient, migrator, miljo,
     r400 = klient.post(f"/v1/inndata/hent-for-oppdrag/{oid}", json={},
                        headers={"authorization": f"Bearer {mtk}"})
     assert r400.status_code == 400, r400.text
+    # …og en kropp som er gyldig JSON, men ikke et OBJEKT (Codex P2):
+    # samme 400, ikke en ufanget 500 fra `.get` på en liste/streng/tall.
+    for ikke_objekt in ([{"owner_claim_id": claim}], "x", 3, True):
+        rj = klient.post(f"/v1/inndata/hent-for-oppdrag/{oid}",
+                         json=ikke_objekt,
+                         headers={"authorization": f"Bearer {mtk}"})
+        assert rj.status_code == 400, (ikke_objekt, rj.status_code, rj.text)
     # FEIL kapabilitet (riktig modul, riktig oppdrag): samme 404.
     rfeil = klient.post(f"/v1/inndata/hent-for-oppdrag/{oid}",
                         json={"owner_claim_id": secrets.token_hex(16)},
