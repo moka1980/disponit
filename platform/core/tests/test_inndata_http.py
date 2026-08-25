@@ -1759,6 +1759,41 @@ def test_execute_gis_ogsaa_til_kjorerens_konfigurerte_runtimerolle():
         + ", ".join(sorted(mangler)))
 
 
+def test_sp10_daekker_059():
+    """Cursor P1-2 på #196: 059 er en BACKFILL-migrasjon, og backfiller
+    krever bebodd prøvekjøring (SP-10, `ARKITEKTUR-STAENDE-PORTER.md`).
+
+    059 gjør to masse-skrivinger tom-base-CI ikke kan se: fødselsstien
+    backfilles på levende `reservert`-rader med `DISABLE TRIGGER` +
+    `NO FORCE ROW LEVEL SECURITY` (FORCE RLS uten tenantkontekst gjør
+    UPDATEN stille TOM, mens `ADD CONSTRAINT` skanner HELE tabellen), og
+    `ADD COLUMN fodt_xid ... DEFAULT pg_current_xact_id()` skriver om
+    hver eksisterende oppdragsrad. Uten seed måler prøvekjøringen at
+    setningene parser.
+
+    Porten speiler `test_sp10_daekker_049`/`_056`, men måler foreløpig
+    BARE skript-siden: CI-pekeren (`sp10-provekjoring.py 59` i
+    `ci.yml`s SP-10-steg) er den ene linja implementørmandatet ikke lar
+    meg skrive — `.github/workflows` er utenfor. Den er flagget til eier
+    i PR-tråden, og når den står, strammes denne porten til å kreve den,
+    slik 049/056 gjør."""
+    import re
+    from pathlib import Path
+    rot = Path(__file__).resolve().parents[3]
+    sp10 = (rot / "deploy" / "staging" / "sp10-provekjoring.py").read_text(
+        encoding="utf-8")
+    assert "59: (_seed_059, _mal_059)" in sp10, (
+        "059 har ingen registrert seed+måling i SEEDS")
+    # Seedet må FAKTISK bebo de to klassene 059 kan felles av: en levende
+    # reservasjon uten sti, og en i en tenant som ikke kan bære en sti.
+    for merke in ("sp10-059-reservert", "sp10-059-utrygg",
+                  "sp10-059-lastet", "sp10-059-bundet"):
+        assert merke in sp10, f"SP-10-seedet for 059 mangler {merke}"
+    assert re.search(r"UTRYGG_TEN\s*=\s*[\"'][^\"']*/", sp10), (
+        "SP-10-seedet for 059 må bebo en tenant-ID som ikke er en lovlig"
+        " stikomponent — det er raden backfillen ville felt alt på")
+
+
 @pg
 def test_opplastingen_krever_ferskt_snapshot():
     """Codex P1 på #196: advisory-låsen er verdiløs uten READ COMMITTED.
