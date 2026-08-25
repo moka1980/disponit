@@ -63,6 +63,46 @@ def _stikomponent(tenant: str) -> str:
     return tenant
 
 
+def _krev_ferskt_snapshot(conn) -> str:
+    """Opplastingens transaksjon må se FERSKE data (Codex P1 på #196).
+
+    Finaliseringen avgjør skriv-eller-gjenspill på en lesning gjort UNDER
+    advisory-låsen på jti-en — hele poenget med den låsen. Men lesningen
+    er bare fersk i READ COMMITTED. Under `REPEATABLE READ`/`SERIALIZABLE`
+    fikserer den FØRSTE setningen i transaksjonen (DEK-oppslaget) hele
+    snapshotet, og gjenlesningen etter låsen svarer da fra det samme
+    fastfrosne bildet:
+
+      1. To opplastinger på samme jti starter mens raden står `reservert`.
+      2. Den første tar låsen, skriver den kanoniske filen, committer.
+      3. Den andre får låsen, ser fortsatt `reservert` i sitt gamle
+         snapshot, og skriver SIN ciphertext over den førstes fil.
+      4. `registrer_inndata_lastet` låser raden `FOR UPDATE`, oppdager at
+         den er endret, og reiser serialiseringsfeil — hvorpå
+         opprydningen unlinker nettopp den kanoniske filen.
+
+    Resultatet er en committet `lastet` rad uten fil: en vellykket
+    opplasting permanent tapt. Låsen var aldri feilen — snapshotet var.
+
+    `reserver_inndata` avviser de samme nivåene av samme grunn (059), og
+    poolen kjører på basens default (READ COMMITTED), så porten er ingen
+    oppførselsendring — den er fail-closed mot en fremtidig kaller eller
+    en pool-konfigurasjon som setter nivået selv. `read uncommitted` er
+    med fordi PostgreSQL BEHANDLER det som READ COMMITTED.
+
+    Provisjoneringsfeil, ikke klientfeil — samme klasse som
+    `_stikomponent`, og derfor `ValueError` FØR all I/O.
+    """
+    niva = conn.execute("SHOW transaction_isolation").fetchone()[0]
+    if niva not in ("read committed", "read uncommitted"):
+        raise ValueError(
+            f"inndata: opplastingen krever READ COMMITTED (fikk {niva})"
+            " — skriv-eller-gjenspill avgjøres av en lesning under"
+            " advisory-låsen, og et fastholdt snapshot gjør den blind for"
+            " en samtidig committet opplasting")
+    return niva
+
+
 def reserver_endepunkt(tjeneste, request):
     """POST /v1/inndata/reserver — {eiermodul, formaal} + Idempotency-Key."""
     from .app import INNDATA_MAKS_FYSISK, _rid
@@ -215,6 +255,11 @@ async def opplast_endepunkt(tjeneste, request):
     # uansett kjører alle sync-rutene i dette API-et.
     def kjor(conn):
         from db import kryptering
+        # FØR ALT ANNET: gjenlesningen under låsen lenger nede er bare
+        # fersk i READ COMMITTED, og et fastholdt snapshot fikseres av
+        # den FØRSTE setningen i transaksjonen. Porten må derfor stå her,
+        # foran DEK-oppslaget — se `_krev_ferskt_snapshot`.
+        _krev_ferskt_snapshot(conn)
         # Auth er alt avgjort over. Her settes bare `disponit.*` på nytt:
         # `sett_kontekst` er SET LOCAL og lever ikke på tvers av
         # forbindelser, og dette er en ANNEN forbindelse enn auth-en

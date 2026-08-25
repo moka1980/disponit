@@ -1757,3 +1757,38 @@ def test_execute_gis_ogsaa_til_kjorerens_konfigurerte_runtimerolle():
     assert not mangler, (
         "059-dører uten grant i migrer.py sin RETTIGHETER-blokk: "
         + ", ".join(sorted(mangler)))
+
+
+@pg
+def test_opplastingen_krever_ferskt_snapshot():
+    """Codex P1 på #196: advisory-låsen er verdiløs uten READ COMMITTED.
+
+    Gjenlesningen under låsen (`api/inndata.py`) er det som avgjør
+    skriv-eller-gjenspill. Under `REPEATABLE READ`/`SERIALIZABLE` fikserer
+    DEK-oppslaget hele transaksjonens snapshot, og gjenlesningen svarer da
+    fra det samme fastfrosne bildet: to opplastinger på samme jti ser
+    begge `reservert`, nummer to overskriver nummer éns kanoniske fil, og
+    når `registrer_inndata_lastet` felles av serialiseringsfeilen unlinker
+    opprydningen nettopp den filen — en committet `lastet` rad står igjen
+    uten fil.
+
+    Målt mot en EKTE tilkobling på hvert nivå, ikke mot en attrapp: det er
+    Postgres' egen `transaction_isolation` porten leser.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `_krev_ferskt_snapshot`-kallet i
+    `kjor`, eller utvid settet med `repeatable read`."""
+    from api.inndata import _krev_ferskt_snapshot
+    from db.pg import koble
+    c = koble(DSN)
+    try:
+        # Poolens nivå i dag — porten er ingen oppførselsendring.
+        assert _krev_ferskt_snapshot(c) == "read committed"
+        c.rollback()
+        for niva in (psycopg.IsolationLevel.REPEATABLE_READ,
+                     psycopg.IsolationLevel.SERIALIZABLE):
+            c.isolation_level = niva
+            with pytest.raises(ValueError, match="READ COMMITTED"):
+                _krev_ferskt_snapshot(c)
+            c.rollback()
+    finally:
+        c.close()
