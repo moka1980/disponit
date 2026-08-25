@@ -533,7 +533,17 @@ def hent_endepunkt(tjeneste, request, kropp):
             conn.rollback()
             if nokkelrad is None or nokkelrad[0] is None:
                 return _feilsvar("tenantnokkel_mangler", rid)
-            dek = kryptering._pakk_ut((key_id, nokkelrad[0]), tenant)[1]
+            # KEK-unwrap er samme feilkontrakt som bunt-dekrypten under
+            # (Cursor P2): en tuklet/for kort wrapped_dek eller feil AAD
+            # skal gi sanert intern_feil med sikkerhetslogg — aldri en
+            # rammeverks-500.
+            try:
+                dek = kryptering._pakk_ut((key_id, nokkelrad[0]),
+                                          tenant)[1]
+            except Exception:
+                tjeneste.logg.hendelse("inndata_dekunwrap_feil", rid,
+                                       tenant, art="sikkerhet")
+                return _feilsvar("intern_feil", rid)
             grunnlag = (tenant, rel, key_id, nonce, sha, faktiske, dek)
         except psycopg.Error as e:
             # Rull tilbake her, som de andre modulveiene — men SKJERMET:

@@ -381,3 +381,32 @@ def test_feil_modul_og_ubundet_gir_samme_ingenting(klient, migrator,
                      json={"owner_claim_id": claim2},
                      headers={"authorization": f"Bearer {mtk}"})
     assert r2.status_code == 404, r2.text
+
+
+@pg
+def test_tuklet_wrapped_dek_er_intern_feil(klient, migrator, miljo,
+                                           monkeypatch, inndata_rot):
+    """Cursor P2 (#202, verifiseringspass): KEK-unwrap er samme
+    feilkontrakt som bunt-dekrypten — en unwrap som avviser (tuklet
+    wrap, feil AAD, for kort blob) gir sanert intern_feil, aldri
+    rammeverks-500.
+
+    `wrapped_dek` er destruksjons-vaktet i basen (kan aldri BYTTES), så
+    avvisningen injiseres i selve unwrap-funksjonen — det er nøyaktig
+    unntaksveien porten fanger, uansett hvilken byte som var tuklet."""
+    rel = _m57_deployment(migrator)
+    kropp, tenant, oid = _bundet_bunt(klient, migrator)
+    claim = _pluk(migrator, tenant, oid, rel)
+    mtk, _ = _onboard_token(klient, migrator, "m57_ats", rel)
+
+    from db import kryptering as kryptmodul
+
+    def _avvis(*_a, **_k):
+        raise ValueError("tuklet wrap")
+
+    monkeypatch.setattr(kryptmodul, "_pakk_ut", _avvis)
+    r = klient.post(f"/v1/inndata/hent-for-oppdrag/{oid}",
+                    json={"owner_claim_id": claim},
+                    headers={"authorization": f"Bearer {mtk}"})
+    assert r.status_code == 500, r.text
+    assert r.json()["feil"] == "intern_feil"

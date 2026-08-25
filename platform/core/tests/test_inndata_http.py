@@ -1905,6 +1905,11 @@ def test_execute_gis_ogsaa_til_kjorerens_konfigurerte_runtimerolle():
     # for en signatur som ikke lenger finnes.
     sql = (rot / "platform/core/db/migrations/059_b_maskinen.sql"
            ).read_text(encoding="utf-8")
+    # 060 la til henteveien med egne grants — porten leser UNIONEN, så
+    # en dør fra en senere migrasjon ikke kan miste {rolle}-speilet sitt
+    # stille (Cursor P2 på #202).
+    sql += (rot / "platform/core/db/migrations/060_inndata_resolver.sql"
+            ).read_text(encoding="utf-8")
     kjorer = (rot / "deploy/staging/migrer.py").read_text(encoding="utf-8")
     rettigheter = kjorer.split('RETTIGHETER = """', 1)[1].split('"""', 1)[0]
 
