@@ -468,8 +468,269 @@ def _mal_056(conn) -> list[str]:
     return feil
 
 
+#: En tenant-ID med `/` i seg. 058 lot den reservere fritt (`lager_sti`
+#: sto NULL mens raden var `reservert`, så `inndata_lagersti_navnerom`
+#: sov), og `init-tenant.sh` tar tenant-argumentet uten stikomponent-
+#: sjekk. Den er nøyaktig raden 059s backfill ville felt hele
+#: migrasjonen på — Codex P1 på #196.
+UTRYGG_TEN = "t/sp10"
+
+
+def _seed_059(conn):
+    """Bebodd 058-tilstand for 059 (B-maskinen): backfillen av
+    fødselsstien PLUSS constraint-swappen, med hver arm bebodd.
+
+    Seks rader, én per ting 059 kan ødelegge:
+
+    - `reservert` UTEN sti, i en lovlig tenant — 058s eneste form for en
+      levende reservasjon, og den ene backfillen faktisk skal bære over.
+    - `reservert` UTEN sti i en tenant hvis ID ikke er en lovlig
+      stikomponent. Å gi den `<tenant>/<uuid>.bin` bryter
+      `inndata_lagersti_navnerom` og RULLER HELE 059 TILBAKE — for alle
+      tenanter, inne i vedlikeholdsvinduet. Tom-base-CI kan per
+      konstruksjon ikke se den.
+    - `reservert` UTEN sti hvis fødselssti alt er OPPTATT av en `lastet`
+      rad. 058 lot kalleren velge filnavnet, så aliaset kan bygges med
+      vilje; backfillen ville felt `inndata_lagersti_unik` og dermed
+      hele 059. Paret er to rader: reservasjonen og squatteren.
+    - `lastet` og `bundet` i produksjonsform, som skal stå ORDRETT
+      gjennom swappen av `inndata_tilstand_totalt`.
+
+    `oppdrag` er dessuten BEBODD her, og det er 059s andre masse-
+    skriving: `ADD COLUMN fodt_xid ... DEFAULT pg_current_xact_id()` er
+    et volatilt default, altså en full tabellomskriving. På tom base
+    måler CI at setningen parser."""
+    import os
+    import secrets
+    import uuid
+    # Engangsbasen har ingen driftshemmeligheter (samme mønster som
+    # _seed_056): nøkkelen finnes bare for at radene skal ha
+    # produksjonsFORM.
+    os.environ.setdefault("DISPONIT_KEK", "ab" * 32)
+    from db import kryptering
+    from db.pg import sett_kontekst
+    sett_kontekst(conn, TEN, "sp10:seed", "r-sp10-059")
+    key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(conn, TEN)
+    ct, nonce = kryptering.krypter(dek, {"sp10": "059"}, TEN, key_id)
+
+    # (1) Levende reservasjon, 058-form: stien er NULL og skal fødes av
+    #     backfillen som NØYAKTIG <tenant>/<inndata_id>.bin.
+    conn.execute(
+        "INSERT INTO inndata_artefakt (tenant, eiermodul, formaal,"
+        " innholdstype, maks_bytes, reservasjon_jti, idempotensnokkel,"
+        " utloper) VALUES (%s,'m57_ats','soknadsbunt','application/zip',"
+        " 1024,%s,'sp10-059-reservert', now() + interval '1 hour')",
+        (TEN, secrets.token_hex(32)))
+
+    # (2) Samme form, men i en tenant som ikke kan bære en sti.
+    sett_kontekst(conn, UTRYGG_TEN, "sp10:seed", "r-sp10-059-utrygg")
+    conn.execute(
+        "INSERT INTO inndata_artefakt (tenant, eiermodul, formaal,"
+        " innholdstype, maks_bytes, reservasjon_jti, idempotensnokkel,"
+        " utloper) VALUES (%s,'m57_ats','soknadsbunt','application/zip',"
+        " 1024,%s,'sp10-059-utrygg', now() + interval '1 hour')",
+        (UTRYGG_TEN, secrets.token_hex(32)))
+    sett_kontekst(conn, TEN, "sp10:seed", "r-sp10-059-2")
+
+    # (3) Lastet, full produksjonsform (måling + krypto + sti).
+    lid = uuid.uuid4()
+    conn.execute(
+        "INSERT INTO inndata_artefakt (tenant, inndata_id, eiermodul,"
+        " formaal, innholdstype, maks_bytes, faktiske_bytes,"
+        " innhold_sha256, key_id, nonce, lager_sti, status,"
+        " reservasjon_jti, idempotensnokkel, utloper, lastet_ts)"
+        " VALUES (%s,%s,'m57_ats','soknadsbunt','application/zip',1024,10,"
+        " %s,%s,%s,%s,'lastet',%s,'sp10-059-lastet',"
+        " now() + interval '1 hour', now())",
+        (TEN, lid, "a" * 64, key_id, nonce, f"{TEN}/{lid}.bin",
+         secrets.token_hex(32)))
+
+    # (4) Bundet: en lastet som HAR fått oppdraget sitt. Oppdraget er
+    #     beslutningsveiens form, ordrett fra _seed_056 — `bind_inndata`
+    #     kjøres ikke her, seedet skal bære 058-TILSTANDEN, ikke dørens
+    #     vei til den.
+    logg = conn.execute(
+        "INSERT INTO revisjonslogg (tenant, aktor, kilde, input_hash,"
+        " policy_id, beslutning, begrunnelse, idempotency_key)"
+        " VALUES (%s,'sp10','api_token','ih','p@1.0.0/x.y','TILLAT','[]',%s)"
+        " RETURNING id", (TEN, "sp10-059-b")).fetchone()[0]
+    oid = conn.execute(
+        "INSERT INTO oppdrag (opprinnelse, tenant, beslutning_loggpost_id,"
+        " oppdragstype, handling, eiermodul, payload_kryptert, key_id,"
+        " nonce, utforelsesfrist, evidensfrist, koblingsstatus)"
+        " VALUES ('beslutning',%s,%s,'kontroll.wcag.nettsted',"
+        "'kontroll.wcag.nettsted','m_wcag_audit',%s,%s,%s,"
+        " now()+interval '1 hour', now()+interval '1 day','KOBLET')"
+        " RETURNING id", (TEN, logg, ct, key_id, nonce)).fetchone()[0]
+    bid = uuid.uuid4()
+    conn.execute(
+        "INSERT INTO inndata_artefakt (tenant, inndata_id, eiermodul,"
+        " formaal, innholdstype, maks_bytes, faktiske_bytes,"
+        " innhold_sha256, key_id, nonce, lager_sti, status, oppdrag_id,"
+        " reservasjon_jti, idempotensnokkel, utloper, lastet_ts,"
+        " bundet_ts)"
+        " VALUES (%s,%s,'m57_ats','soknadsbunt','application/zip',1024,10,"
+        " %s,%s,%s,%s,'bundet',%s,%s,'sp10-059-bundet',"
+        " now() + interval '1 hour', now(), now())",
+        (TEN, bid, "b" * 64, key_id, nonce, f"{TEN}/{bid}.bin", oid,
+         secrets.token_hex(32)))
+    # (5) STIEN ER ALT OPPTATT (Codex P1, runde 2 på #196). Under 058 tok
+    #     `registrer_inndata_lastet` filnavnet fra kalleren (`p_sti`,
+    #     058:440-441), og runtime har SELECT på tabellen — en kaller
+    #     kunne lese en synlig reservasjons id og laste opp SIN bunt på
+    #     nøyaktig reservasjonens fremtidige fødselssti. Backfillen ville
+    #     delt ut den samme strengen og felt `inndata_lagersti_unik`,
+    #     altså hele 059. Reservasjonen skal vike, aliaset skal stå.
+    #     Formen er uoppnåelig på en base som alt står på 059 (6-arg-
+    #     døren utleder stien), så bare SP-10 kan bebo den.
+    aid = uuid.uuid4()
+    conn.execute(
+        "INSERT INTO inndata_artefakt (tenant, inndata_id, eiermodul,"
+        " formaal, innholdstype, maks_bytes, reservasjon_jti,"
+        " idempotensnokkel, utloper)"
+        " VALUES (%s,%s,'m57_ats','soknadsbunt','application/zip',1024,%s,"
+        " 'sp10-059-alias-res', now() + interval '1 hour')",
+        (TEN, aid, secrets.token_hex(32)))
+    sid = uuid.uuid4()
+    conn.execute(
+        "INSERT INTO inndata_artefakt (tenant, inndata_id, eiermodul,"
+        " formaal, innholdstype, maks_bytes, faktiske_bytes,"
+        " innhold_sha256, key_id, nonce, lager_sti, status,"
+        " reservasjon_jti, idempotensnokkel, utloper, lastet_ts)"
+        " VALUES (%s,%s,'m57_ats','soknadsbunt','application/zip',1024,10,"
+        " %s,%s,%s,%s,'lastet',%s,'sp10-059-alias-sti',"
+        " now() + interval '1 hour', now())",
+        (TEN, sid, "c" * 64, key_id, nonce, f"{TEN}/{aid}.bin",
+         secrets.token_hex(32)))
+    conn.commit()
+
+
+def _mal_059(conn) -> list[str]:
+    """Etter 059: fødselsstien er delt ut til de radene som KAN bære en,
+    de som ikke kan er terminert i stedet for å felle migrasjonen, de
+    ferdige radene står ordrett, og begge vaktene er tilbake."""
+    import psycopg
+    from db.pg import sett_kontekst
+    sett_kontekst(conn, TEN, "sp10:fasit", "r-sp10-059-f")
+    feil = []
+
+    rader = dict(conn.execute(
+        "SELECT idempotensnokkel, (status, lager_sti)::text"
+        "  FROM inndata_artefakt WHERE tenant = %s", (TEN,)).fetchall())
+    fodt = conn.execute(
+        "SELECT status, lager_sti = tenant || '/' || inndata_id::text"
+        " || '.bin' FROM inndata_artefakt"
+        " WHERE tenant = %s AND idempotensnokkel = 'sp10-059-reservert'",
+        (TEN,)).fetchone()
+    if fodt != ("reservert", True):
+        feil.append("den levende reservasjonen fikk ikke dørens egen"
+                    f" fødselssti: {fodt}")
+    for nokkel, ventet in (("sp10-059-lastet", "lastet"),
+                           ("sp10-059-bundet", "bundet")):
+        if nokkel not in rader:
+            feil.append(f"{nokkel}: raden er borte etter 059")
+        elif not rader[nokkel].startswith(f"({ventet},"):
+            feil.append(f"{nokkel}: {rader[nokkel]}, ventet {ventet}")
+
+    # Sti-aliaset: reservasjonen vek, aliaset står ORDRETT. Måles på
+    # stien og ikke bare på statusen — hadde backfillen tatt aliaset i
+    # stedet, ville en `lastet` bunt mistet filen sin.
+    alias = conn.execute(
+        "SELECT status, lager_sti FROM inndata_artefakt"
+        " WHERE tenant = %s AND idempotensnokkel = 'sp10-059-alias-res'",
+        (TEN,)).fetchone()
+    if alias != ("forkastet", None):
+        feil.append("reservasjonen hvis fødselssti alt var opptatt skulle"
+                    f" stått forkastet uten sti: {alias}")
+    squatter = conn.execute(
+        "SELECT status, lager_sti = %s || '/' || (SELECT inndata_id::text"
+        "   FROM inndata_artefakt WHERE tenant = %s"
+        "    AND idempotensnokkel = 'sp10-059-alias-res') || '.bin'"
+        "  FROM inndata_artefakt WHERE tenant = %s"
+        "   AND idempotensnokkel = 'sp10-059-alias-sti'",
+        (TEN, TEN, TEN)).fetchone()
+    if squatter != ("lastet", True):
+        feil.append("raden som eide stien skulle stått urørt som lastet"
+                    f" på nøyaktig den stien: {squatter}")
+
+    # Den ulovlige tenanten: terminert, uten sti — og fortsatt der, så
+    # ingen rad ble slettet i det stille.
+    sett_kontekst(conn, UTRYGG_TEN, "sp10:fasit", "r-sp10-059-u")
+    utrygg = conn.execute(
+        "SELECT status, lager_sti FROM inndata_artefakt"
+        " WHERE tenant = %s AND idempotensnokkel = 'sp10-059-utrygg'",
+        (UTRYGG_TEN,)).fetchone()
+    if utrygg != ("forkastet", None):
+        feil.append("reservasjonen i tenanten med ulovlig stikomponent"
+                    f" skulle stått forkastet uten sti: {utrygg}")
+
+    # CHECKen er AKTIV, ikke bare tilstede: en reservasjon uten sti kan
+    # ikke lenger skrives. Savepoint, ellers tar den feilede setningen
+    # resten av målingen med seg.
+    sett_kontekst(conn, TEN, "sp10:fasit", "r-sp10-059-c")
+    conn.execute("SAVEPOINT p")
+    try:
+        conn.execute(
+            "INSERT INTO inndata_artefakt (tenant, eiermodul, formaal,"
+            " innholdstype, maks_bytes, reservasjon_jti,"
+            " idempotensnokkel, utloper)"
+            " VALUES (%s,'m57_ats','soknadsbunt','application/zip',1024,"
+            " %s,'sp10-059-etterpaa', now() + interval '1 hour')",
+            (TEN, "c" * 32))
+        feil.append("reservert UTEN lager_sti gikk gjennom etter 059 —"
+                    " inndata_tilstand_totalt er ikke aktiv")
+        conn.execute("ROLLBACK TO SAVEPOINT p")
+    except psycopg.errors.CheckViolation:
+        conn.execute("ROLLBACK TO SAVEPOINT p")
+
+    # Vaktene backfillen måtte slippe: begge tilbake i samme transaksjon.
+    vakt, force = conn.execute(
+        "SELECT (SELECT tgenabled FROM pg_trigger"
+        "         WHERE tgrelid = 'inndata_artefakt'::regclass"
+        "           AND tgname = 'inndata_artefakt_vakt'),"
+        "       (SELECT relforcerowsecurity FROM pg_class"
+        "         WHERE oid = 'inndata_artefakt'::regclass)").fetchone()
+    if vakt != "O":
+        feil.append(f"inndata_artefakt_vakt står tgenabled={vakt!r},"
+                    " ikke 'O' — backfillen slo den ikke på igjen")
+    if not force:
+        feil.append("FORCE ROW LEVEL SECURITY er ikke slått på igjen")
+
+    # X1s fødselsattest på en BEBODD oppdragstabell: kolonnen er skrevet
+    # for hver eksisterende rad (volatilt default = full omskriving), og
+    # attesten er uforanderlig etterpå.
+    n, arvet_naa = conn.execute(
+        "SELECT count(*), count(*) FILTER (WHERE fodt_xid ="
+        " pg_catalog.pg_current_xact_id() AND fodt_oppstart ="
+        " pg_catalog.pg_postmaster_start_time())"
+        " FROM oppdrag WHERE tenant = %s", (TEN,)).fetchone()
+    if n != 1:
+        feil.append(f"seedet oppdrag: {n} rader, ventet 1")
+    if arvet_naa:
+        feil.append(f"{arvet_naa} arvede oppdrag bærer DENNE"
+                    " transaksjonens attest — X1 ville sluppet dem inn")
+    # Begge leddene er uforanderlige. `fodt_oppstart` er clusterens
+    # inkarnasjon (Codex P1, runde 2): uten den ville en `fodt_xid` fra en
+    # gjenopprettet dump vært gyldig i den nye clusteren.
+    for kolonne, verdi in (
+            ("fodt_xid", "pg_catalog.pg_current_xact_id()"),
+            ("fodt_oppstart", "pg_catalog.pg_postmaster_start_time()"
+                              " - interval '1 day'")):
+        conn.execute("SAVEPOINT q")
+        try:
+            conn.execute(f"UPDATE oppdrag SET {kolonne} = {verdi}"
+                         " WHERE tenant = %s", (TEN,))
+            feil.append(f"{kolonne} lot seg skrive om — fødselsattesten"
+                        " er ingen attest")
+            conn.execute("ROLLBACK TO SAVEPOINT q")
+        except psycopg.errors.RaiseException:
+            conn.execute("ROLLBACK TO SAVEPOINT q")
+    conn.rollback()
+    return feil
+
+
 SEEDS = {48: (_seed_048, _mal_048), 49: (_seed_049, _mal_049),
-         56: (_seed_056, _mal_056)}
+         56: (_seed_056, _mal_056), 59: (_seed_059, _mal_059)}
 
 
 def main(argv: list[str] | None = None) -> int:

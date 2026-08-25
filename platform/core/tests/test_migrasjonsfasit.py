@@ -197,6 +197,21 @@ def _git(*argv):
                           capture_output=True)
 
 
+def _dybde() -> list[str]:
+    """`--depth=1` KUN når repoet alt er grunt (CI-utsjekkingen).
+
+    Dybdeflagget er BETINGET (målt 24-25/8, to ganger): mot en FULL klon
+    skriver `fetch --depth=1` en `.git/shallow`-fil og gjør hele det delte
+    objektlageret grunt — lokale worktrees mistet nåbare objekter og
+    bundle-backupen døde med «remote did not send all necessary objects».
+    I CI-utsjekkingen (som alt ER grunn) beholdes dybde 1; i et fullt
+    miljø hentes uten flagg, som ikke koster mer der historikken alt
+    finnes.
+    """
+    from tests._git_dybde import dybde
+    return dybde(_git)
+
+
 def _basiscommit() -> str:
     """`main` sin sha, alltid friskt hentet inn i den grunne utsjekkingen.
 
@@ -220,9 +235,64 @@ def _basiscommit() -> str:
     tidligere fetch i samme miljø); lykkes ikke det heller, er basisen
     uløst, og porten under sier fra — den passerer ikke stille.
     """
-    _git("fetch", "--quiet", "--depth=1", "origin", "main")
+    _git("fetch", "--quiet", *_dybde(), "origin", "main")
     r = _git("rev-parse", "--verify", "--quiet", "origin/main^{commit}")
     return r.stdout.decode().strip() if r.returncode == 0 else ""
+
+
+def test_dybdevalget_korrumperer_ikke_full_klon():
+    """Cursor P2-1 (#199): betingelsen i `_dybde` er bare målbar i det
+    miljøet der fiksen faktisk skiller seg — en regresjon til ubetinget
+    `--depth=1` ville vært grønn i CI (som ER grunn) mens fullklon-
+    korrumperingen kom tilbake lokalt. Porten sporer fetch-argv gjennom
+    `_basiscommit()` i begge grener.
+
+    BEGGE fetch-stiene måles (Cursor P2 runde 2 på #199): basisfetchen i
+    `_basiscommit` OG akseptfetchen i `_anker_avvik` — en mutasjon som
+    hardkoder dybden bare på 056-linja ville ellers overlevd CI, som ER
+    grunn, og gjenskapt korrumperingen lokalt.
+
+    MUTASJONEN SOM DREPER DENNE: `return ["--depth=1"]` ubetinget i
+    `_dybde`, eller et glemt/hardkodet `_dybde()`-kall i en av de to
+    fetch-linjene."""
+    global _git
+    ekte_git = _git
+
+    class _Svar:
+        def __init__(self, returncode, stdout=b""):
+            self.returncode = returncode
+            self.stdout = stdout
+
+    for grunn, ventet in ((b"false\n", False), (b"true\n", True)):
+        hentinger = []
+
+        def falsk_git(*argv, _h=hentinger, _g=grunn):
+            if argv[:2] == ("rev-parse", "--is-shallow-repository"):
+                return _Svar(0, _g)
+            if argv[0] == "fetch":
+                _h.append(argv)
+                return _Svar(0)
+            if argv[:2] == ("rev-parse", "--verify"):
+                return _Svar(0, b"f" * 40 + b"\n")
+            if argv[:2] == ("cat-file", "-e"):
+                return _Svar(0)
+            if argv[:2] == ("cat-file", "blob"):
+                sti = argv[2].split(":", 1)[1]
+                return _Svar(0, (GITROT / sti).read_bytes())
+            raise AssertionError(f"uventet git-kall: {argv}")
+
+        _git = falsk_git
+        try:
+            _anker_avvik()
+        finally:
+            _git = ekte_git
+        # Løypa gjør NØYAKTIG to fetch: basisgrenen og akseptcommiten —
+        # og dybdevalget må følge miljøet i begge.
+        assert len(hentinger) == 2, hentinger
+        assert AKSEPTCOMMIT_056 in hentinger[1], hentinger
+        for henting in hentinger:
+            assert ("--depth=1" in henting) is ventet, (
+                f"grunt={ventet}: fetch-argv {henting}")
 
 
 def _basisfasit(commit: str) -> dict:
@@ -385,6 +455,10 @@ def test_pin_endret_i_takt_med_filen_felles_mot_basisgrenen():
             # bare rev-parse-et etterpå. Simulerer et miljø der nettet
             # virker; en negativtest for offline-stien dekkes ikke her.
             return _Svar(0)
+        if argv[:2] == ("rev-parse", "--is-shallow-repository"):
+            # `_dybde()` sin miljøsjekk — svaret styrer bare om fetch-en
+            # over får `--depth=1`; begge veiene ender i samme fetch-gren.
+            return _Svar(0, b"false\n")
         if argv[:2] == ("rev-parse", "--verify"):
             return _Svar(0, b"f" * 40 + b"\n")
         if argv[:2] == ("cat-file", "-e"):
@@ -444,7 +518,7 @@ def _anker_avvik():
     commit = _basiscommit()
     if not commit:
         return ["main uhentbar — ankeret kan ikke måles"]
-    _git("fetch", "--quiet", "--depth=1", "origin", AKSEPTCOMMIT_056)
+    _git("fetch", "--quiet", *_dybde(), "origin", AKSEPTCOMMIT_056)
     hash_056 = _blobhash(AKSEPTCOMMIT_056,
                          "platform/core/db/migrations/" + HENDELSEN_056)
     if hash_056 is None:
@@ -515,6 +589,10 @@ def test_ankerporten_feller_i_takt_angrepet_gjennom_egen_loype():
     def falsk_git(*argv):
         if argv[0] == "fetch":
             return _Svar(0)
+        if argv[:2] == ("rev-parse", "--is-shallow-repository"):
+            # `_dybde()` sin miljøsjekk — svaret styrer bare om fetch-en
+            # over får `--depth=1`; begge veiene ender i samme fetch-gren.
+            return _Svar(0, b"false\n")
         if argv[:2] == ("rev-parse", "--verify"):
             return _Svar(0, b"f" * 40 + b"\n")
         if argv[:2] == ("cat-file", "-e"):
