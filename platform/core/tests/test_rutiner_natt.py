@@ -501,8 +501,12 @@ def test_head_leses_paa_nytt_rett_foer_merge_i_alle_forsok():
         # parkert hvert rent verdikt (boten poster aldri formell review).
         assert "issue_comment" in norm, (
             f"forsøk {i} mangler kanaldelt baseline-kilde")
-        assert "FØRSTE handling" in norm, (
-            f"forsøk {i} mangler først-i-steg-3-kravet")
+        # Runde 20: baselinen er verdiktets EGEN deklarasjon — aldri en
+        # live headRefOid, som pre-capture-push kunne flyttet.
+        assert "Reviewed commit" in norm, (
+            f"forsøk {i} mangler verdikt-deklarasjonen som kilde")
+        assert "ldri" in norm and "live" in norm, (
+            f"forsøk {i} mangler live-headRefOid-forbudet")
     assert "baseline-SHA" in RUTINER
 
 
@@ -616,3 +620,21 @@ def test_cursor_allowlisten_er_dokumentert_i_p10():
         if "## 2. " in RUTINER else p10
     assert "moka1980" in tekst and "claude[bot]" in tekst, (
         "allowlisten for @cursor review er ikke speilet i prosa")
+
+
+def test_merge_forbudet_dekker_graphql():
+    """Cursor P2-2 runde 20 (#198): REST-stien alene var forbudt —
+    GraphQL-mutasjonene må navngis i begge skrivende jobber."""
+    for navn in ("mention", "cursor-pass-fulgt"):
+        norm = " ".join(_jobb(navn).split())
+        assert "mergePullRequest" in norm, f"{navn} mangler GraphQL-forbud"
+        assert "enablePullRequestAutoMerge" in norm
+
+
+def test_artifaktet_bindes_til_passets_head():
+    """Cursor P2-3 runde 20 (#198): pr-nummer-artifaktet må bevises å
+    tilhøre workflow_run-ens head_sha — en mutert opplasting skal ikke
+    kunne omdirigere broen til en annen PR."""
+    hent = _jobb("pr-fra-pass")
+    assert "workflow_run.head_sha" in hent
+    assert "headRefOid" in hent

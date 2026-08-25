@@ -234,9 +234,11 @@ aldri et vindu der dokumentet lover en port maskinen mangler
    `@codex review`. Selve mergen PINNER baseline-SHA-en atomisk
    (`--match-head-commit`): å måle før og handle etterpå er et vindu,
    pinnen lukker det. Baseline-kilden følger kanalen: en formell review
-   bærer `commit_id`; verdikt-kommentarer (den målte kanalen) gjør
-   ikke, og der ER baselinen `headRefOid` lest som første handling i
-   merge-stien, før noe kan mutere.
+   bærer `commit_id`; verdikt-kommentarer (den målte kanalen)
+   DEKLARERER sin egen SHA («Reviewed commit») og DEN er baselinen —
+   aldri en live `headRefOid`, som en push i vinduet før lesningen
+   kunne ha flyttet (TOCTOU før capture). Verdikt uten deklarasjon
+   parkeres.
 
 2. **Mandater bor i KOMMENTARER, og omtalen er `@claude`.** En ordre i en
    issue-KROPP trigger ingen kjøring (samme utløser-klasse som §10s
