@@ -558,6 +558,11 @@ function tegn(hoved, ctx, data, okt, valgtId) {
 // når det åpnes.
 function profilSeksjon(hoved, ctx, data, okt) {
   const profiler = (data && data.profiler) || [];
+  // Cursor P2-1 (runde 2): flaten er lesbar med decisions:read, men
+  // POST-ruten krever bestilling:opprett (app.py) — skrive-UI uten
+  // scopet er en blindvei som først dør server-side. Samme port som
+  // kanBestille i bestillingsdelen.
+  const kanSkrive = harScope(ctx, "bestilling:opprett");
   const rot = el("section", { "aria-labelledby": "profil-tittel" });
   const utfall = el("div", { role: "alert", class: "utfall" });
   const liste = el("div");
@@ -694,30 +699,37 @@ function profilSeksjon(hoved, ctx, data, okt) {
 
   const tegnListe = () => {
     const rader = profiler.map((p) => {
-      const rediger = el("button", { type: "button",
-        text: t("ui.rekruttering.profiler.rediger") });
-      rediger.addEventListener("click", () => aapneSkjema(p));
-      return el("li", {},
+      const deler = [
         el("strong", { text: p.navn }), " — ",
         t("ui.rekruttering.profiler.versjon")
           .replace("{versjon}", String(p.versjon)),
         " · ",
         p.krav.map((k) => `${k.kravnavn} ${k.vekt}`).join(", "),
-        " ", rediger);
+      ];
+      if (kanSkrive) {
+        const rediger = el("button", { type: "button",
+          text: t("ui.rekruttering.profiler.rediger") });
+        rediger.addEventListener("click", () => aapneSkjema(p));
+        deler.push(" ", rediger);
+      }
+      return el("li", {}, ...deler);
     });
     sett(liste, profiler.length
       ? el("ul", {}, rader)
       : el("p", { text: t("ui.rekruttering.profiler.ingen") }));
   };
 
-  const ny = el("button", { type: "button",
-    text: t("ui.rekruttering.profiler.ny") });
-  ny.addEventListener("click", () => aapneSkjema(null));
-
   tegnListe();
+  const bunn = el("p", {});
+  if (kanSkrive) {
+    const ny = el("button", { type: "button",
+      text: t("ui.rekruttering.profiler.ny") });
+    ny.addEventListener("click", () => aapneSkjema(null));
+    bunn.append(ny);
+  }
   sett(rot,
     el("h2", { id: "profil-tittel",
       text: t("ui.rekruttering.profiler.tittel") }),
-    utfall, liste, el("p", {}, ny), skjemaRot);
+    utfall, liste, bunn, skjemaRot);
   return rot;
 }

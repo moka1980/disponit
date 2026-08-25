@@ -170,9 +170,13 @@ BEGIN
     FOR r IN SELECT elem FROM jsonb_array_elements(p_krav) AS t(elem)
     LOOP
         v_i := v_i + 1;
-        IF jsonb_typeof(r.elem) <> 'object'
-           OR jsonb_typeof(r.elem->'kravnavn') <> 'string'
-           OR jsonb_typeof(r.elem->'vekt') <> 'number' THEN
+        -- IS DISTINCT FROM, ikke <> (CodeRabbit): for et MANGLENDE
+        -- felt gir jsonb_typeof(NULL) NULL, og `NULL <> 'string'` er
+        -- NULL — vakta hoppes over og feilen ble en CheckViolation
+        -- lenger nede i stedet for denne dommen.
+        IF jsonb_typeof(r.elem) IS DISTINCT FROM 'object'
+           OR jsonb_typeof(r.elem->'kravnavn') IS DISTINCT FROM 'string'
+           OR jsonb_typeof(r.elem->'vekt') IS DISTINCT FROM 'number' THEN
             RAISE EXCEPTION 'stillingsprofil: krav % må ha kravnavn'
                 ' (tekst) og vekt (tall)', v_i
                 USING ERRCODE = 'invalid_parameter_value';

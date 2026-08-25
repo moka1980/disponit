@@ -1067,6 +1067,34 @@ async function tegnetMedProfiler() {
   return hoved;
 }
 
+test("Profiler: uten bestilling:opprett finnes ingen skriveknapper (P2-1)", async () => {
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": prosess(),
+           "/v1/rekruttering/stillingsprofiler": profiler() };
+  const hoved = nyHoved();
+  const leser = ctx();
+  leser.scopes = ["decisions:read"];
+  visRekruttering(hoved, leser);
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const seksjon = hoved.querySelector("section[aria-labelledby=profil-tittel]");
+  assert.ok(seksjon, "profilseksjonen mangler — lesing skal stå åpen");
+  assert.match(seksjon.textContent, /Driftskonsulent/);
+  const tekster = [...seksjon.querySelectorAll("button")].map((b) => b.textContent);
+  assert.ok(!tekster.includes(t("ui.rekruttering.profiler.ny")),
+    "Ny-knappen finnes uten skrive-scope");
+  assert.ok(!tekster.includes(t("ui.rekruttering.profiler.rediger")),
+    "Rediger-knappen finnes uten skrive-scope");
+  // …og med scopet finnes begge (positiv kontroll — fraværstesten alene
+  // ville gått grønn på en tom seksjon).
+  const hoved2 = nyHoved();
+  visRekruttering(hoved2, ctx());
+  assert.ok(await vent(() => hoved2.querySelector("table")), "flaten kom aldri");
+  const s2 = hoved2.querySelector("section[aria-labelledby=profil-tittel]");
+  const t2 = [...s2.querySelectorAll("button")].map((b) => b.textContent);
+  assert.ok(t2.includes(t("ui.rekruttering.profiler.ny")));
+  assert.ok(t2.includes(t("ui.rekruttering.profiler.rediger")));
+});
+
 test("Profiler: listen viser navn, versjon og krav — og axe rent", async () => {
   const hoved = await tegnetMedProfiler();
   const seksjon = hoved.querySelector("section[aria-labelledby=profil-tittel]");

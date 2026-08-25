@@ -101,6 +101,12 @@ def test_ugyldige_kravsett_avvises_uten_spor(klient, miljo):
         {"navn": "", "krav": [{"kravnavn": "A", "vekt": 2}]},
         {"navn": "X", "krav": [{"kravnavn": "", "vekt": 2}]},
         {"navn": "X", "krav": "ikke-liste"},
+        # MANGLENDE nøkkel, ikke bare feil type (CodeRabbit): med `<>`
+        # var jsonb_typeof(NULL) <> 'string' NULL og vakta i 061 hoppet
+        # over — dommen ble en CheckViolation i stedet for
+        # invalid_parameter_value. IS DISTINCT FROM feller begge.
+        {"navn": "X", "krav": [{"vekt": 2}]},
+        {"navn": "X", "krav": [{"kravnavn": "A"}]},
         {"navn": "X", "krav": [{"kravnavn": "A", "vekt": 2}],
          "profil_id": "ikke-uuid"},
         {"navn": "X", "krav": [{"kravnavn": "A", "vekt": 2}],
@@ -265,3 +271,84 @@ def test_samtidig_idempotens_gir_replay_ikke_400(klient, miljo):
     finally:
         m.close()
     assert n == 1
+
+
+@pg
+def test_lagring_krever_bestillingsscope(klient, miljo):
+    """Cursor P2-2 (runde 2): POST-ruten krever `bestilling:opprett` —
+    `leser` (kun `decisions:read`) skal dømmes 403 FØR noe skrives, med
+    gyldig CSRF og nøkkel, så porten som måles er scopet alene."""
+    cookie, csrf = _browsersesjon(_bruker(f"ps-{secrets.token_hex(3)}",
+                                          ["leser"]))
+    r = _post(klient, cookie, csrf,
+              {"navn": "Uten fullmakt",
+               "krav": [{"kravnavn": "A", "vekt": 2}]})
+    assert r.status_code == 403, r.text
+    assert r.json()["feil"] == "scope_mangler"
+    # …og lesing står åpen for samme bruker: porten er PER RUTE.
+    assert _hent(klient, cookie).status_code == 200
+    from db.pg import koble, sett_kontekst
+    from .test_rekruttering_http import TEN
+    m = koble(MIGRATOR_DSN)
+    try:
+        sett_kontekst(m, TEN, "test", "r-scope")
+        n = m.execute("SELECT count(*) FROM stillingsprofil"
+                      " WHERE tenant=%s AND navn=%s",
+                      (TEN, "Uten fullmakt")).fetchone()[0]
+        m.rollback()
+    finally:
+        m.close()
+    assert n == 0
+
+
+@pg
+def test_post_krever_csrf_og_idempotensnokkel(klient, miljo):
+    """Cursor P2-3 (runde 2): #189-ruten går via `_browserkontekst`
+    (CSRF + nøkkel), men porten var ubevist for DENNE ruten. Uten hodet,
+    med feil token, uten nøkkel og med blank nøkkel — og ingen rad."""
+    import secrets as _s
+
+    from api import sesjon as sesjonmodul
+    cookie, csrf = _browsersesjon(_bruker(f"pc-{_s.token_hex(3)}",
+                                          ["admin"]))
+    kropp = {"navn": "CSRF-spor", "krav": [{"kravnavn": "A", "vekt": 2}]}
+    sti = "/v1/rekruttering/stillingsprofiler"
+
+    uten_csrf = klient.post(sti, json=kropp,
+                            cookies={sesjonmodul.C_SESJON: cookie},
+                            headers={"Idempotency-Key": _s.token_hex(12)})
+    assert uten_csrf.status_code == 403, uten_csrf.text
+    assert uten_csrf.json()["feil"] == "csrf_ugyldig"
+
+    feil_csrf = klient.post(sti, json=kropp,
+                            cookies={sesjonmodul.C_SESJON: cookie},
+                            headers={"X-Disponit-CSRF": _s.token_hex(24),
+                                     "Idempotency-Key": _s.token_hex(12)})
+    assert feil_csrf.status_code == 403, feil_csrf.text
+    assert feil_csrf.json()["feil"] == "csrf_ugyldig"
+
+    uten_idem = klient.post(sti, json=kropp,
+                            cookies={sesjonmodul.C_SESJON: cookie},
+                            headers={"X-Disponit-CSRF": csrf})
+    assert uten_idem.status_code == 400, uten_idem.text
+    assert uten_idem.json()["feil"] == "idempotensnokkel_mangler"
+
+    blank_idem = klient.post(sti, json=kropp,
+                             cookies={sesjonmodul.C_SESJON: cookie},
+                             headers={"X-Disponit-CSRF": csrf,
+                                      "Idempotency-Key": "   "})
+    assert blank_idem.status_code == 400, blank_idem.text
+    assert blank_idem.json()["feil"] == "idempotensnokkel_mangler"
+
+    from db.pg import koble, sett_kontekst
+    from .test_rekruttering_http import TEN
+    m = koble(MIGRATOR_DSN)
+    try:
+        sett_kontekst(m, TEN, "test", "r-csrf")
+        n = m.execute("SELECT count(*) FROM stillingsprofil"
+                      " WHERE tenant=%s AND navn=%s",
+                      (TEN, "CSRF-spor")).fetchone()[0]
+        m.rollback()
+    finally:
+        m.close()
+    assert n == 0
