@@ -502,6 +502,21 @@ def hent_endepunkt(tjeneste, request, kropp):
                 return revalidering
             if not isinstance(owner_claim, str) or not owner_claim:
                 return _feilsvar("request_feilformet", rid)
+            # ID-EN MÅ FÅ PLASS I `bigint` FØR DEN BINDES (Codex P2).
+            # Starlettes `:int`-konverter er `[0-9]+` UTEN øvre grense, så
+            # `/hent-for-oppdrag/9223372036854775808` gir et fullgodt
+            # Python-heltall som først `%s::bigint` avviser — med
+            # `NumericValueOutOfRange`, altså en `psycopg.Error`. Den ble
+            # fanget av basefase-vakten under og rapportert som
+            # `db_utilgjengelig`: feilformet klientinput ble et FALSKT
+            # driftssignal (503 + `art="drift"`-hendelse om at basen er nede
+            # når den ikke er det). Samme klasse som artefakt_id-valideringen
+            # på kvitteringsveien — valider verdien FØR den bindes mot en
+            # typet kolonne — og samme svar som resten av de feilformede
+            # feltene på denne ruten: 400, etter auth, så en uautentisert
+            # kaller fortsatt ikke kan skille «feil input» fra «feil token».
+            if not -2**63 <= oppdrag_id < 2**63:
+                return _feilsvar("request_feilformet", rid)
             # Deploymenten kommer fra TOKENET, aldri fra kroppen (Codex
             # P1): `auth.release_id`/`auth.miljo` er det verifiserte
             # modultokenets egen identitet (035), og 060 møter dem mot

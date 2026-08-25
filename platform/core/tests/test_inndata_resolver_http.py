@@ -662,3 +662,48 @@ def test_annen_release_i_samme_miljo_far_ingenting(klient, migrator,
                      headers={"authorization": f"Bearer {mtk_a}"})
     assert r2.status_code == 200, r2.text
     assert r2.content == kropp
+
+
+@pg
+def test_oppdrag_id_utenfor_bigint_er_feilformet_ikke_driftsavvik(
+        klient, migrator, miljo, inndata_rot):
+    """Codex-P2 (#202): en id utenfor `bigint` ble et FALSKT driftssignal.
+
+    Starlettes `:int`-konverter er `[0-9]+` uten øvre grense, så
+    `/hent-for-oppdrag/9223372036854775808` ruter fint og gir et fullgodt
+    Python-heltall. Først `%s::bigint` avviser det — med
+    `NumericValueOutOfRange`, som er en `psycopg.Error` og derfor ble
+    slukt av basefase-vakten og rapportert som `db_utilgjengelig`: 503 og
+    en `art="drift"`-hendelse som sier at basen er nede, på ren
+    klientinput. Kontrakten sier 400.
+
+    Mutasjon: stryk grensesjekken i `hent_endepunkt` → 503 i stedet for
+    400, og testen er rød.
+    """
+    rel = _m57_deployment(migrator)
+    kropp, tenant, oid = _bundet_bunt(klient, migrator)
+    mtk, _ = _onboard_token(klient, migrator, "m57_ats", rel)
+    claim = _pluk(migrator, tenant, oid, rel)
+
+    # Kontroll: den EKTE id-en henter fortsatt bunten. Uten den ville en
+    # 400 fra en ødelagt rigg sett ut som bestått.
+    ok = klient.post(f"/v1/inndata/hent-for-oppdrag/{oid}",
+                     json={"owner_claim_id": claim},
+                     headers={"authorization": f"Bearer {mtk}"})
+    assert ok.status_code == 200, ok.text
+    assert ok.content == kropp
+
+    # `2**63` er første verdi utenfor, `2**64+1` er godt forbi den:
+    # begge er feilformet input, ingen av dem er en driftshendelse.
+    for utenfor in (2**63, 2**64 + 1):
+        r = klient.post(f"/v1/inndata/hent-for-oppdrag/{utenfor}",
+                        json={"owner_claim_id": claim},
+                        headers={"authorization": f"Bearer {mtk}"})
+        assert (r.status_code, r.json()["feil"]) == \
+            (400, "request_feilformet"), (utenfor, r.status_code, r.text)
+
+    # Og den blir IKKE et oraklet: uten token svarer ruten fortsatt på
+    # token-en først, ikke på at id-en var for stor.
+    ru = klient.post(f"/v1/inndata/hent-for-oppdrag/{2**63}",
+                     json={"owner_claim_id": claim})
+    assert ru.status_code == 401, ru.text
