@@ -485,14 +485,18 @@ def test_rekkevidden_maales_foer_3b_i_runde_1():
 
 
 def test_head_leses_paa_nytt_rett_foer_merge_i_alle_forsok():
-    """Cursor P1-2 runde 12 (#198): CI-ventingen er et vindu også i
-    fikserjobben — headRefOid må leses på nytt rett før selve mergen, i
-    alle tre forsøkene."""
+    """Cursor P1-2 runde 12 + P1 runde 16 (#198): CI-ventingen er et
+    vindu også i fikserjobben — og omlesingen er verdiløs uten en MÅLT
+    baseline: på CLEAN-stien finnes ingen update-branch-notering, så
+    verdiktets egen commit_id må captures ved inngang til steg 3."""
     for i, forsok in enumerate(_fiksforsok(), 1):
         norm = " ".join(forsok.split())
         assert "PÅ NYTT RETT FØR" in norm or "PÅ NYTT rett før" in norm, (
             f"forsøk {i} mangler omlesingen før merge")
         assert "headRefOid" in norm, f"forsøk {i} mangler capture/omlesing"
+        assert "commit_id" in norm, f"forsøk {i} mangler baseline-capture"
+        assert "aseline" in norm, f"forsøk {i} mangler baseline-begrepet"
+    assert "baseline-SHA" in RUTINER
 
 
 def test_pr_fillisten_har_stengt_vakt():
@@ -503,6 +507,8 @@ def test_pr_fillisten_har_stengt_vakt():
         norm = " ".join(forsok.split())
         assert "PR-fillisten" in norm, (
             f"forsøk {i} mangler PR-filliste-vakten")
+        assert "100+" in norm, (
+            f"forsøk {i} mangler den målbare 100+-terskelen")
     assert "PR-filliste som er" in RUTINER or "PR-fillisten" in RUTINER
 
 

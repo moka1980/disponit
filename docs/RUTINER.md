@@ -228,7 +228,10 @@ aldri et vindu der dokumentet lover en port maskinen mangler
    rekkevidde fordi en ny Codex-runde er dyr og kvotebelagt. Samme
    risiko, ulik fornyelsespris — derav ulik regel. De to portene
    gjelder hver sin adgang (pass → Codex-bestilling; verdikt → merge)
-   og står ikke i konflikt.
+   og står ikke i konflikt. En push på PR-SIDEN utenom `update-branch`
+   dekkes ikke av filsnittet: mergen måles alltid mot verdiktets egen
+   baseline-SHA (eller 3a-målingens merge-commit) — alt annet er nytt
+   `@codex review`.
 
 2. **Mandater bor i KOMMENTARER, og omtalen er `@claude`.** En ordre i en
    issue-KROPP trigger ingen kjøring (samme utløser-klasse som §10s

@@ -179,6 +179,14 @@ jobs:
                issues») eller godkjenning: da skal PR-en MERGES, og det er
                tre ting som må stemme — i denne rekkefølgen.
 
+               FØRST, VED INNGANG TIL STEG 3 — BASELINE: noter SHA-en
+               verdiktet gjelder (`${{ github.event.review.commit_id }}`
+               når review-utløst; ellers `commit_id` fra siste
+               Codex-review via `gh api`, og finnes ingen: parkér).
+               3c sammenligner mot NØYAKTIG denne (eller 3a-målingens
+               egen merge-commit) — uten baseline er «uventet avvik»
+               umålbart, og en push på CLEAN-stien usynlig.
+
                DOM-KLASSE-PORTEN (RUTINER §11.1). Står det i verdiktet
                eller tråden punkter som er UTSATT i påvente av en
                eier-dom, er PR-en normalt parkert til eier har dømt.
@@ -228,7 +236,7 @@ jobs:
                      `gh pr view <nr> --json files -q '.files[].path'`
                      — og PR-fillisten har samme stengte vakt som
                      compare-siden: ser den trunkert ut (uventet tom,
-                     eller ved API-ets sidegrense), behandle snittet som
+                     eller ved sidegrensen 100+), behandle snittet som
                      ikke-tomt.
                      Tomt snitt → verdiktet står, fortsett til 3b.
                      Ikke-tomt snitt → verdiktet er BRUKT OPP: post
@@ -326,7 +334,10 @@ jobs:
                `@cursor review` og STOPP — passets fullføring vekker
                cursor-pass-fulgt via workflow_run-broen (§10.4), som
                eier Codex-adgangen; aldri `@codex review` herfra.
-            3. Er verdiktet rent / godkjent: FØRST DOM-KLASSE-PORTEN
+            3. Er verdiktet rent / godkjent: noter FØRST baseline-SHA-en
+               verdiktet gjelder (`commit_id` fra reviewen/`gh api`;
+               mangler den: parkér) — mergen i (c) måles mot den. Så
+               DOM-KLASSE-PORTEN
                (RUTINER §11.1), samme som runde 1: utsatte punkter i
                verdiktet/tråden krever sitatlinje
                `dom-klasse: <id> · felt i #<nr> · <URL>` — åpne URL-en og
@@ -406,7 +417,9 @@ jobs:
             Merging følger samme rekkefølge som før — og `DIRTY`
             (ekte konflikt) parkeres ALLTID: løs den ALDRI selv,
             kommenter til eier og STOPP; en konflikt-push betyr verdikt
-            BRUKT OPP (`@codex review`). Ellers: (noter
+            BRUKT OPP (`@codex review`). Baseline: noter verdiktets
+            egen SHA (`commit_id` via `gh api`; mangler: parkér) — den
+            er målestokken for omlesingen før merge. Ellers: (noter
             `headRefOid` FØR `update-branch` — compare trenger den ekte
             gamle head-en — og les den PÅ NYTT rett før selve mergen;
             uventet avvik → `@codex review`, stopp) — DOM-KLASSE-PORTEN
@@ -418,7 +431,8 @@ jobs:
             filsnittet fra `compare/<gammel-head>...<ny-head>` mot PR-ens
             filer; ikke-tomt snitt, målefeil eller trunkert liste på
             NOEN av sidene — compare 300+, PR-fillisten uventet
-            tom/sidegrense — → nytt `@codex review`, ikke merge) → grønn CI →
+            tom eller ved sidegrensen 100+ — → nytt `@codex review`,
+            ikke merge) → grønn CI →
             `gh pr merge --squash --delete-branch` — og bare på et rent
             verdikt.
 
