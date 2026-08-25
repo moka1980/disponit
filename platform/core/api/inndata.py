@@ -462,10 +462,17 @@ def hent_endepunkt(tjeneste, request, kropp):
             return revalidering
         if not isinstance(owner_claim, str) or not owner_claim:
             return _feilsvar("request_feilformet", rid)
+        # Deploymenten kommer fra TOKENET, aldri fra kroppen (Codex P1):
+        # `auth.release_id`/`auth.miljo` er det verifiserte modultokenets
+        # egen identitet (035), og 060 møter dem mot claim-portens
+        # stempel på oppdraget. Uten dem var kapabiliteten «en hvilken
+        # som helst deployment av modulen som kjenner claim-strengen».
         rad = conn.execute(
             "SELECT tenant, lager_sti, key_id, nonce, innhold_sha256,"
-            "       faktiske_bytes FROM hent_inndata_for_oppdrag(%s::bigint,%s,%s)",
-            (oppdrag_id, auth.modul_id, owner_claim)).fetchone()
+            "       faktiske_bytes FROM"
+            "       hent_inndata_for_oppdrag(%s::bigint,%s,%s,%s,%s)",
+            (oppdrag_id, auth.modul_id, owner_claim,
+             auth.release_id, auth.miljo)).fetchone()
         if rad is None:
             # Samme svar uansett årsak — finnes-ikke, feil modul, ikke
             # claimet, ubundet: et oppslagsverk over andres oppdrag skal
