@@ -174,6 +174,14 @@ regel og håndhevelse blir samme commit og det aldri finnes et vindu der
 dokumentet lover en port maskinen mangler (K2-eskaleringen i #193,
 avgjort under eiers delegasjon 25/8).
 
+1. **Dom-klasse-gjenbruk — IKKE I KRAFT.** Landes sammen med
+   workflow-speilingen. Inntil da dekker en henvisning til
+   «dom-klasse»/«RUTINER §11» i `claude.yml` INGENTING: et punkt som
+   trenger eier-dom parkeres til @moka1980, alltid — også når en
+   klasse-ID eller presedens er oppgitt. (Cursor P2 på #195:
+   `cursor-pass-fulgt`-promptens §11-oppslag må aldri kunne resolvere
+   til nattmandat-regelen under og leses som dekning.)
+
 2. **Mandater bor i KOMMENTARER, og omtalen er `@claude`.** En ordre i en
    issue-KROPP trigger ingen kjøring (samme utløser-klasse som §10s
    Bugbot-notat). Ethvert nattmandat legges som egen kommentar — og
