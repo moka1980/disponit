@@ -454,77 +454,111 @@ def hent_endepunkt(tjeneste, request, kropp):
     except (TimeoutError, psycopg.Error):
         tjeneste.logg.hendelse("db_utilgjengelig", rid, art="drift")
         return _feilsvar("db_utilgjengelig", rid)
+    from db import kryptering
+    from db.pg import sett_kontekst
+    # BASEFASEN er avgrenset, og forbindelsen forlater den (Codex P2 +
+    # Cursor P2-2). To ting kommer ut av avgrensningen:
+    #
+    # 1. `psycopg.Error` ETTER `pool.hent()` — en frakoblet base under
+    #    pre-auth, revalidering, resolveroppslaget eller nøkkellesningen —
+    #    fanges og blir endepunktets `db_utilgjengelig`, som på hver
+    #    annen modulvei (app.py: `_ingest_kvittering`). Uten dette var en
+    #    helt ordinær driftshendelse en generisk 500 uten hendelsen.
+    # 2. Forbindelsen leveres TILBAKE til poolen før fil-I/O og
+    #    dekryptering. Å holde en pool-forbindelse gjennom inntil 64 MiB
+    #    `read` + AES-GCM er samme klasse som opplastveien alt lukket:
+    #    under samtidige hent tømmes poolen, og andre forespørsler får
+    #    `db_utilgjengelig` av en årsak som ikke har noe med basen å gjøre.
+    grunnlag = None
     try:
-        auth = preauth(tjeneste, conn,
-                       request.headers.get("authorization"), rid)
-        if not isinstance(auth, ModulAutentisert):
-            tjeneste.logg.hendelse("token_ugyldig", rid)
-            return _feilsvar("token_ugyldig", rid)
-        # Samme to porter som hver annen modulvei: raten, og
-        # REVALIDERINGEN — et nødstoppet token skal ikke kunne hente
-        # bunter over transaksjonsgrensen.
-        if not tjeneste.rate.slipp_gjennom(auth.token_id):
-            tjeneste.logg.hendelse("rate_grense", rid, auth.tenant)
-            return _feilsvar("rate_grense", rid)
-        revalidering = _modultoken_revalidert(tjeneste, conn, auth, rid)
-        if revalidering is not None:
-            return revalidering
-        if not isinstance(owner_claim, str) or not owner_claim:
-            return _feilsvar("request_feilformet", rid)
-        # Deploymenten kommer fra TOKENET, aldri fra kroppen (Codex P1):
-        # `auth.release_id`/`auth.miljo` er det verifiserte modultokenets
-        # egen identitet (035), og 060 møter dem mot claim-portens
-        # stempel på oppdraget. Uten dem var kapabiliteten «en hvilken
-        # som helst deployment av modulen som kjenner claim-strengen».
-        rad = conn.execute(
-            "SELECT tenant, lager_sti, key_id, nonce, innhold_sha256,"
-            "       faktiske_bytes FROM"
-            "       hent_inndata_for_oppdrag(%s::bigint,%s,%s,%s,%s)",
-            (oppdrag_id, auth.modul_id, owner_claim,
-             auth.release_id, auth.miljo)).fetchone()
-        if rad is None:
-            # Samme svar uansett årsak — finnes-ikke, feil modul, ikke
-            # claimet, ubundet: et oppslagsverk over andres oppdrag skal
-            # ikke finnes.
-            return _feilsvar("ikke_funnet", rid)
-        tenant, rel, key_id, nonce, sha, _byte = rad
-        from db import kryptering
-        from db.pg import sett_kontekst
-        sett_kontekst(conn, tenant, auth.aktor, rid)
-        nokkelrad = conn.execute(
-            "SELECT wrapped_dek FROM tenant_nokler"
-            " WHERE tenant=%s AND key_id=%s", (tenant, key_id)).fetchone()
-        # ALLE autorisasjons- og oppslagslesningene over deler ÉN
-        # transaksjon (CodeRabbit major: en mellom-rollback slapp
-        # revalideringens garanti før oppslaget var gjort). Først NÅR
-        # basen er ferdig spurt, slippes transaksjonen — fil-I/O og
-        # dekryptering skal ikke holde den.
-        conn.rollback()
-        if nokkelrad is None or nokkelrad[0] is None:
-            return _feilsvar("tenantnokkel_mangler", rid)
-        dek = kryptering._pakk_ut((key_id, nokkelrad[0]), tenant)[1]
-        # Radens sti er RELATIV (B-maskinen: <tenant>/<inndata_id>.bin);
-        # roten settes på her, med komponentvakten som forsvar i dybden.
-        komp = _stikomponent(tenant)
-        if not rel or not rel.startswith(komp + "/"):
-            tjeneste.logg.hendelse("inndata_sti_avvik", rid, tenant,
-                                   art="sikkerhet")
-            return _feilsvar("intern_feil", rid)
         try:
-            with open(os.path.join(INNDATA_ROT, rel), "rb") as f:
-                ct = f.read()
-        except OSError:
-            tjeneste.logg.hendelse("inndata_fil_borte", rid, tenant,
-                                   art="drift")
-            return _feilsvar("intern_feil", rid)
-        raa = kryptering.dekrypter_bytes(dek, ct, bytes(nonce), tenant,
-                                         key_id, formaal=b"inndata")
-        if _h.sha256(raa).hexdigest() != sha:
-            tjeneste.logg.hendelse("inndata_sha_avvik", rid, tenant,
-                                   art="sikkerhet")
-            return _feilsvar("intern_feil", rid)
-        return Response(raa, media_type="application/zip",
-                        headers={"x-request-id": rid,
-                                 "x-innhold-sha256": sha})
+            auth = preauth(tjeneste, conn,
+                           request.headers.get("authorization"), rid)
+            if not isinstance(auth, ModulAutentisert):
+                tjeneste.logg.hendelse("token_ugyldig", rid)
+                return _feilsvar("token_ugyldig", rid)
+            # Samme to porter som hver annen modulvei: raten, og
+            # REVALIDERINGEN — et nødstoppet token skal ikke kunne hente
+            # bunter over transaksjonsgrensen.
+            if not tjeneste.rate.slipp_gjennom(auth.token_id):
+                tjeneste.logg.hendelse("rate_grense", rid, auth.tenant)
+                return _feilsvar("rate_grense", rid)
+            revalidering = _modultoken_revalidert(tjeneste, conn, auth, rid)
+            if revalidering is not None:
+                return revalidering
+            if not isinstance(owner_claim, str) or not owner_claim:
+                return _feilsvar("request_feilformet", rid)
+            # Deploymenten kommer fra TOKENET, aldri fra kroppen (Codex
+            # P1): `auth.release_id`/`auth.miljo` er det verifiserte
+            # modultokenets egen identitet (035), og 060 møter dem mot
+            # claim-portens stempel på oppdraget. Uten dem var
+            # kapabiliteten «en hvilken som helst deployment av modulen
+            # som kjenner claim-strengen».
+            rad = conn.execute(
+                "SELECT tenant, lager_sti, key_id, nonce, innhold_sha256,"
+                "       faktiske_bytes FROM"
+                "       hent_inndata_for_oppdrag(%s::bigint,%s,%s,%s,%s)",
+                (oppdrag_id, auth.modul_id, owner_claim,
+                 auth.release_id, auth.miljo)).fetchone()
+            if rad is None:
+                # Samme svar uansett årsak — finnes-ikke, feil modul,
+                # ikke claimet, ubundet: et oppslagsverk over andres
+                # oppdrag skal ikke finnes.
+                return _feilsvar("ikke_funnet", rid)
+            tenant, rel, key_id, nonce, sha, faktiske = rad
+            sett_kontekst(conn, tenant, auth.aktor, rid)
+            nokkelrad = conn.execute(
+                "SELECT wrapped_dek FROM tenant_nokler"
+                " WHERE tenant=%s AND key_id=%s",
+                (tenant, key_id)).fetchone()
+            # ALLE autorisasjons- og oppslagslesningene over deler ÉN
+            # transaksjon (CodeRabbit major: en mellom-rollback slapp
+            # revalideringens garanti før oppslaget var gjort). Først NÅR
+            # basen er ferdig spurt, slippes transaksjonen — fil-I/O og
+            # dekryptering skal ikke holde den.
+            conn.rollback()
+            if nokkelrad is None or nokkelrad[0] is None:
+                return _feilsvar("tenantnokkel_mangler", rid)
+            dek = kryptering._pakk_ut((key_id, nokkelrad[0]), tenant)[1]
+            grunnlag = (tenant, rel, key_id, nonce, sha, faktiske, dek)
+        except psycopg.Error as e:
+            # Rull tilbake her, som de andre modulveiene — men SKJERMET:
+            # den vanligste årsaken til at vi står her er nettopp en død
+            # forbindelse, og en `rollback()` som selv kaster ville gjort
+            # driftshendelsen om til den 500-en dette funnet handler om.
+            # `gi_tilbake` under rydder uansett (app.py:206-222).
+            try:
+                conn.rollback()
+            except psycopg.Error:
+                pass
+            tjeneste.logg.hendelse("db_utilgjengelig", rid, art="drift",
+                                   feiltype=type(e).__name__)
+            return _feilsvar("db_utilgjengelig", rid)
     finally:
         tjeneste.pool.gi_tilbake(conn)
+
+    # HERFRA HOLDER VI INGEN BASEFORBINDELSE.
+    tenant, rel, key_id, nonce, sha, faktiske, dek = grunnlag
+    # Radens sti er RELATIV (B-maskinen: <tenant>/<inndata_id>.bin);
+    # roten settes på her, med komponentvakten som forsvar i dybden.
+    komp = _stikomponent(tenant)
+    if not rel or not rel.startswith(komp + "/"):
+        tjeneste.logg.hendelse("inndata_sti_avvik", rid, tenant,
+                               art="sikkerhet")
+        return _feilsvar("intern_feil", rid)
+    try:
+        with open(os.path.join(INNDATA_ROT, rel), "rb") as f:
+            ct = f.read()
+    except OSError:
+        tjeneste.logg.hendelse("inndata_fil_borte", rid, tenant,
+                               art="drift")
+        return _feilsvar("intern_feil", rid)
+    raa = kryptering.dekrypter_bytes(dek, ct, bytes(nonce), tenant,
+                                     key_id, formaal=b"inndata")
+    if _h.sha256(raa).hexdigest() != sha:
+        tjeneste.logg.hendelse("inndata_sha_avvik", rid, tenant,
+                               art="sikkerhet")
+        return _feilsvar("intern_feil", rid)
+    return Response(raa, media_type="application/zip",
+                    headers={"x-request-id": rid,
+                             "x-innhold-sha256": sha})
