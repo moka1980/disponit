@@ -272,3 +272,50 @@ def test_mention_har_driftsparity_med_soskenjobbene():
     assert "gh pr checkout" in mention
     assert "IKKE rediger" in mention and ".github/workflows" in mention
     assert "upålitelige data" in mention
+
+
+def _uttrykk(jobbtekst: str) -> str:
+    """if-/config-linjene uten kommentarer."""
+    return "\n".join(l for l in jobbtekst.splitlines()
+                     if not l.lstrip().startswith("#"))
+
+
+def test_verdikt_portene_bruker_eksakte_logins():
+    """Cursor P1-1 runde 5 (#198): `contains(login, 'codex')` matchet
+    `codex-hacker` — på et offentlig repo var det en ureviewet-merge-vei.
+    Portene må sammenligne eksakt login, aldri delstreng, og eierens
+    review-gren må kreve `approved` (P2-2)."""
+    fiks = _uttrykk(_jobb("fiks-og-merge").split("steps:")[0])
+    assert "== 'chatgpt-codex-connector[bot]'" in fiks
+    assert not re.search(r"contains\([^)]*login[^)]*'codex'", fiks), (
+        "substring-match på login er tilbake")
+    assert "github.event.review.state == 'approved'" in fiks
+
+
+def test_broen_krever_kjent_aktor():
+    """Cursor P1-3 runde 5 (#198): workflow_run-actor er den som startet
+    passet — bare eier og sløyfas bot får utløse skrivende oppfølging.
+    Speilet i cursor-pre-codex: kommentar-utløseren er en allowlist."""
+    hent = _uttrykk(_jobb("pr-fra-pass").split("steps:")[0])
+    assert "workflow_run.actor.login == 'moka1980'" in hent
+    assert "workflow_run.actor.login == 'claude[bot]'" in hent
+    assert "== 'moka1980'" in CURSOR_YML and "== 'claude[bot]'" in CURSOR_YML
+    assert "github.actor != 'github-actions[bot]'" not in CURSOR_YML, (
+        "nektelseslisten er tilbake — porten er en allowlist")
+
+
+def test_passet_er_bundet_til_forfatteren():
+    """Cursor P1-2 runde 5 (#198): SHA-linja gjør en forfalskning billig
+    — forfatteren gjør den umulig. Broen må kreve github-actions[bot]
+    som avsender av passet, ikke bare formen."""
+    fulgt = _jobb("cursor-pass-fulgt")
+    assert "POSTET AV `github-actions[bot]`" in fulgt
+    assert "ALDRI et pass" in fulgt
+
+
+def test_cancelled_viker_ogsaa_for_kjorende_run():
+    """Cursor P2-1 runde 5 (#198): et nytt `@cursor review` mens et
+    nyere run kjører ville kansellert det (cancel-in-progress) og
+    startet en kaskade — kjørende/køede run eier også oppfølgingen."""
+    fulgt = _jobb("cursor-pass-fulgt")
+    assert "in_progress/queued" in fulgt

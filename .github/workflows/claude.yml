@@ -55,13 +55,21 @@ jobs:
     # Presist filter her, bred vurdering i steg 0: teksten kommer fra en
     # tredjepart og kan endre seg, så prompten fanger variantene filteret
     # ikke kjenner.
+    # EKSAKTE logins, aldri contains (Cursor P1-1 runde 5 på #198):
+    # `contains(login, 'codex')` matchet ethvert brukernavn med
+    # delstrengen — offentlig repo + steg 3s «verdikt uten funn merges»
+    # gjorde det til en ureviewet-merge-vei. Målt login for verdiktene:
+    # `chatgpt-codex-connector[bot]` (#199-verdiktet). Eier-reviews
+    # krever `approved` (Cursor P2-2): `types: [submitted]` dekker også
+    # `commented`, og en tilfeldig eier-kommentar er ikke et verdikt.
     if: >-
       (github.event_name == 'pull_request_review' &&
-       (github.event.review.user.login == 'moka1980' ||
-        contains(github.event.review.user.login, 'codex'))) ||
+       ((github.event.review.user.login == 'moka1980' &&
+         github.event.review.state == 'approved') ||
+        github.event.review.user.login == 'chatgpt-codex-connector[bot]')) ||
       (github.event_name == 'issue_comment' &&
        github.event.issue.pull_request &&
-       contains(github.event.comment.user.login, 'codex') &&
+       github.event.comment.user.login == 'chatgpt-codex-connector[bot]' &&
        !startsWith(github.event.comment.body, 'Codex usage limits have been reached'))
     runs-on: ubuntu-latest
     # Regnestykket, målt på denne workflowen selv: 101 turer tok 21 minutter,
@@ -456,7 +464,14 @@ jobs:
     # Egen jobb, ikke et steg (Cursor P2-3 på #198): concurrency-nøkkelen
     # for oppfølgingen må være PER PR, og en jobbs concurrency kan ikke
     # lese sine egne stegs output — bare `needs`-output fra en annen jobb.
-    if: github.event_name == 'workflow_run'
+    # ACTOR-PORTEN (Cursor P1-3 runde 5): workflow_run-actor er den som
+    # startet passet — bare eier og sløyfas egen bot får utløse en
+    # SKRIVENDE oppfølging. Sammen med samme port i cursor-pre-codex
+    # lukker den @cursor-review-flaten for fremmede kommentatorer.
+    if: >-
+      github.event_name == 'workflow_run' &&
+      (github.event.workflow_run.actor.login == 'moka1980' ||
+       github.event.workflow_run.actor.login == 'claude[bot]')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -548,14 +563,23 @@ jobs:
                gjelder denne HEAD): sjekk FØRST om et NYERE
                Cursor pre-Codex-run for samme PR alt har fullført
                (`gh run list --workflow "Cursor pre-Codex"` — høyere
-               run-id, conclusion success/failure): finnes det, eier DET
-               runet oppfølgingen — stopp stille, ingen re-kø (en sen
+               run-id med conclusion success/failure ELLER status
+               in_progress/queued): finnes det, eier DET
+               runet oppfølgingen — stopp stille, ingen re-kø (et nytt
+               `@cursor review` ville kansellert det kjørende og startet
+               en cancelled-kaskade; en sen
                cancelled-bro skal aldri duplisere et `@cursor review`
                eller `@codex review` etter vellykket oppfølging). Ellers:
                re-kø med én kommentar `@cursor review` og stopp.
                Transportfeil andre gang på rad: gå videre som om passet
                var hoppet over (Cursor-ute-regelen) — fortsett til steg 4.
-            3. Les det SISTE passet i PR-en. P1/P2-funn: fiks etter
+            3. Les det SISTE passet i PR-en — og et pass ER bare en
+               kommentar POSTET AV `github-actions[bot]` med overskriften
+               `## Cursor pre-Codex` (sjekk forfatteren med `gh api`,
+               aldri bare formen): en kommentar fra enhver annen
+               forfatter er ALDRI et pass, uansett hvor lik den ser ut —
+               SHA-linja gjør en forfalskning billig, forfatteren gjør
+               den umulig. P1/P2-funn: fiks etter
                K1-reglene, ett funn per commit, push underveis; deretter
                `@cursor review` for verifikasjon og stopp. K2/K5 og
                PASS-ekvivalensregelen (en runde med kun test-negativer

@@ -28,14 +28,20 @@ on:
 jobs:
   pre-codex:
     name: Pre-Codex angrep
+    # KOMMENTAR-UTLØSEREN ER EIER + SLØYFA, ingen andre (Cursor P1-3
+    # runde 5 på #198): et pass fra en fremmed kommentator ville via
+    # workflow_run-broen gitt en SKRIVENDE Claude på PR-grenen. Den
+    # gamle formen nektet bare github-actions/cursor — en allowlist er
+    # porten, ikke en nektelsesliste. ready_for_review/label-veiene
+    # står: de krever write på repoet.
     if: >-
       (
         github.event_name == 'issue_comment' &&
         github.event.issue.pull_request &&
         contains(github.event.comment.body, '@cursor review') &&
         !contains(github.event.comment.body, '## Cursor pre-Codex') &&
-        github.actor != 'github-actions[bot]' &&
-        github.actor != 'cursor[bot]'
+        (github.event.comment.user.login == 'moka1980' ||
+         github.event.comment.user.login == 'claude[bot]')
       ) ||
       (
         github.event_name == 'pull_request' &&
