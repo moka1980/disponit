@@ -1,7 +1,7 @@
-"""#162: inndata-artefaktet — buntens vei INN, PR-1 (reservasjon +
-opplasting).
+"""#162: inndata-artefaktet — buntens vei INN og UT igjen.
 
-To ruter, speilet av 017s utdata-form i motsatt retning:
+Tre ruter: PR-1s to (reservasjon + opplasting), speilet av 017s
+utdata-form i motsatt retning, og PR-2s resolver:
 
 * POST /v1/inndata/reserver (browserkontekst, `bestilling:opprett`,
   `Idempotency-Key` PÅKREVD): utsteder en engangs-reservasjon FØR
@@ -14,8 +14,13 @@ To ruter, speilet av 017s utdata-form i motsatt retning:
   (binær-AAD `inndata`) og skriver til FS-lageret; `registrer_inndata_
   lastet` (058) møter målingen mot deklarasjonen og forbruker jti-en.
 
-Resolveren (modulens lesevei) og bestillingsbindingen er PR-2 — én dør
-per PR, K3-lærdommen fra #153/#176.
+* POST /v1/inndata/hent-for-oppdrag/{oppdrag_id} (modultoken, 060):
+  modulens LESEVEI. Autorisasjonen er claimet, og oppslaget går via
+  modulens eget oppdrag (#200 valg B) — bindingsraden er den eneste
+  sannheten om hvilken bunt oppdraget eier.
+
+Bestillingsbindingen (bunten inn i bestillingens fødselstransaksjon) er
+PR-3 — én dør per PR, K3-lærdommen fra #153/#176.
 """
 from __future__ import annotations
 
@@ -422,8 +427,11 @@ def hent_endepunkt(tjeneste, request, kropp):
     """POST /v1/inndata/hent-for-oppdrag/{oppdrag_id} — modulens
     lesevei (060, B-formen fra #200).
 
-    POST, ikke GET (rutescope-regelen: modulveien er ORDRESCOPE-klassen
-    som claim/kvittering — hentingen FORBRUKER deploymentens autoritet).
+    POST, ikke GET: kapabiliteten (`owner_claim_id`) er en HEMMELIGHET og
+    hører i kroppen, ikke i en URL som havner i tilgangslogger, Referer
+    og proxy-historikk. Ruten hører derfor til ORDRESCOPE-klassen som
+    claim/kvittering. Hentingen forbruker ingenting — den kan gjentas så
+    lenge claimet holdes, akkurat som en lesning skal kunne.
 
     Autorisasjonen er CLAIMET, og oppslaget går via modulens EGET
     oppdrag: bindingsraden er den eneste sannheten om hvilken bunt
