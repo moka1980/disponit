@@ -193,3 +193,46 @@ def test_cursor_workflowens_kontrakt_beskriver_broen():
     assert "workflow_run" in CURSOR_YML
     assert "mention) våkner" not in CURSOR_YML
     assert "cursor-pass-fulgt" in CURSOR_YML
+
+
+def test_mention_har_samme_verktoyflate_som_broen():
+    """Cursor P1 runde 3 (#198) — klassen fra run 32822713282, andre
+    instans: broen fikk verktøyflaten i runde 1, mention ble stående
+    naken. En handler uten verktøy er en no-op med grønn hake."""
+    mention = _jobb("mention")
+    assert "--allowedTools" in mention, "mention mangler verktøyflaten"
+    assert "claude_args" in mention
+
+
+def test_mention_forbyr_codex_review():
+    """Cursor P2-4 runde 3 (#198): mention er §11.2-handleren, aldri
+    Cursor-broen — en kommentar som LIGNER en PASS-footer skal ikke
+    kunne gi Codex-adgang utenom SHA-bindingen i cursor-pass-fulgt."""
+    mention = _jobb("mention")
+    assert "ALDRI `@codex review`" in mention
+
+
+def test_broen_validerer_ikke_tom_artifakt():
+    """Cursor P2-3 runde 3 (#198): en TOM pr-nummer-fil ga tom output →
+    oppfølgingsjobben hoppet over → grønn kjøring uten oppfølging.
+    Valideringen må felle tomhet like høyt som fravær."""
+    hent = _jobb("pr-fra-pass")
+    assert "tr -d" in hent and "::error::" in hent, (
+        "pr-fra-pass mangler ikke-tom-validering")
+
+
+def test_cancelled_broen_viker_for_nyere_run():
+    """Cursor P2-2 runde 3 (#198): en sen cancelled-bro skal aldri
+    duplisere oppfølgingen etter at et nyere pass alt har fullført —
+    steg 2 må sjekke for nyere run før re-kø."""
+    fulgt = _jobb("cursor-pass-fulgt")
+    assert "NYERE" in fulgt and "stopp stille, ingen re-kø" in fulgt
+    assert "re-køes alltid" not in fulgt
+
+
+def test_sha_bindingen_sjekkes_ogsaa_etter_ci_ventingen():
+    """Cursor P2-5 runde 3 (#198): CI-ventingen er et vindu — SHA-en må
+    leses PÅ NYTT rett før `@codex review`, ellers binder passet en
+    HEAD som alt er forlatt."""
+    fulgt = _jobb("cursor-pass-fulgt")
+    assert "PÅ NYTT" in fulgt and "RETT FØR" in fulgt
