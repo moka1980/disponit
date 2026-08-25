@@ -1531,7 +1531,7 @@ def test_deaktivert_m57_gir_definert_503_paa_alle_tre_rutene(miljo,
     stanset derfor ikke rekrutteringsflaten — signeringen inkludert, som
     er den irreversible handlingen en rollback finnes for å stoppe.
 
-    Målt i BEGGE retninger: med flagget svarer alle tre rutene 503
+    Målt i BEGGE retninger: med flagget svarer alle fem rutene 503
     `modul_inaktiv` OG signatur-sloten står ubrukt; uten flagget signerer
     den samme økten 201. Uten den andre halvdelen ville testen bestått
     på et endepunkt som var permanent nede.
@@ -1569,8 +1569,15 @@ def test_deaktivert_m57_gir_definert_503_paa_alle_tre_rutene(miljo,
                 _post(c, cookie, csrf,
                       f"/v1/rekruttering/prosesser/{_pid}/blinding",
                       {"av": True, "begrunnelse": "test"}),
+                # #189-rutene hører til samme modul og samme rollback-
+                # kontrakt (Cursor P2-5 på #206).
+                _get(c, cookie, "/v1/rekruttering/stillingsprofiler"),
+                _post(c, cookie, csrf,
+                      "/v1/rekruttering/stillingsprofiler",
+                      {"navn": "R",
+                       "krav": [{"kravnavn": "K", "vekt": 1}]}),
             ]
-            assert [r.status_code for r in svar] == [forventet] * 3, \
+            assert [r.status_code for r in svar] == [forventet] * 5, \
                 [r.text for r in svar]
             assert {r.json()["feil"] for r in svar} == {"modul_inaktiv"}
     finally:

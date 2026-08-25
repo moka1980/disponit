@@ -611,6 +611,11 @@ function profilSeksjon(hoved, ctx, data, okt) {
 
   const aapneSkjema = (profil) => {
     teller = 0;
+    // SP-2: nøkkelen hører til DETTE skjemaforsøket og holdes til et
+    // DEFINITIVT svar (Cursor P1-1/P2-4): et tapt 2xx + nytt klikk skal
+    // være samme operasjon — serveren replayer på nøkkelen. Først når
+    // svaret kom (uansett utfall serveren har dømt), byttes den.
+    let idem = nyIdempotensnokkel();
     const navnId = "profil-navn";
     const navnInp = el("input", { type: "text", id: navnId,
       maxlength: "200", required: true,
@@ -665,13 +670,20 @@ function profilSeksjon(hoved, ctx, data, okt) {
       lagre.disabled = true;
       try {
         const svar = await lagreStillingsprofil(
-          profil ? profil.profil_id : null, navnInp.value.trim(), krav);
+          profil ? profil.profil_id : null, navnInp.value.trim(), krav,
+          idem);
+        idem = nyIdempotensnokkel();   // definitivt svar → ny operasjon
         sett(utfall, t("ui.rekruttering.profiler.lagret")
           .replace("{navn}", navnInp.value.trim())
           .replace("{versjon}", String(svar.versjon)));
         await oppdaterListe();
       } catch (e) {
         if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+        if (e && e.status >= 400 && e.status < 500) {
+          // Serveren DØMTE operasjonen — en retry er en NY operasjon.
+          idem = nyIdempotensnokkel();
+        }
+        // Nettverk/5xx: nøkkelen beholdes — retry er SAMME operasjon.
         lagre.disabled = false;
         sett(utfall, t("ui.rekruttering.profiler.feil"));
       }

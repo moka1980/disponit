@@ -108,6 +108,19 @@ def test_ugyldige_kravsett_avvises_uten_spor(klient, miljo):
     ):
         r = _post(klient, cookie, csrf, kropp)
         assert r.status_code == 400, (kropp, r.text)
+    # «uten spor» BEVISES (Cursor P2-6): ingen av avvisningene skrev.
+    from db.pg import koble, sett_kontekst
+    from .test_rekruttering_http import TEN
+    m = koble(MIGRATOR_DSN)
+    try:
+        sett_kontekst(m, TEN, "test", "r-spor")
+        n = m.execute("SELECT count(*) FROM stillingsprofil"
+                      " WHERE tenant=%s AND navn IN ('X','')",
+                      (TEN,)).fetchone()[0]
+        m.rollback()
+    finally:
+        m.close()
+    assert n == 0
 
 
 @pg
@@ -199,3 +212,56 @@ def test_desimalvekt_avvises(klient, miljo):
     r = _post(klient, cookie, csrf,
               {"navn": "D", "krav": [{"kravnavn": "K", "vekt": 2.7}]})
     assert r.status_code == 400, r.text
+
+
+@pg
+def test_idempotenskonflikt_annet_innhold(klient, miljo):
+    """Cursor P1-2: samme nøkkel med ANNET innhold er en kollisjon —
+    409 idempotenskonflikt, aldri stille replay av noe annet enn det
+    kalleren ba om — og ingen ny rad."""
+    cookie, csrf = _browsersesjon(_bruker(f"pk-{secrets.token_hex(3)}",
+                                          ["admin"]))
+    idem = secrets.token_hex(12)
+    r1 = _post(klient, cookie, csrf,
+               {"navn": "A", "krav": [{"kravnavn": "K", "vekt": 2}]},
+               idem=idem)
+    assert r1.status_code == 201, r1.text
+    r2 = _post(klient, cookie, csrf,
+               {"navn": "B", "krav": [{"kravnavn": "K", "vekt": 9}]},
+               idem=idem)
+    assert r2.status_code == 409, r2.text
+    assert r2.json()["feil"] == "idempotenskonflikt"
+
+
+@pg
+def test_samtidig_idempotens_gir_replay_ikke_400(klient, miljo):
+    """Cursor P1-3: to samtidige POST med samme nøkkel og samme kropp —
+    taperen får vinnerens svar (201, samme JSON), aldri 400; nøyaktig
+    én profil skrives."""
+    import threading
+
+    cookie, csrf = _browsersesjon(_bruker(f"pr-{secrets.token_hex(3)}",
+                                          ["admin"]))
+    idem = secrets.token_hex(12)
+    kropp = {"navn": "Kappløp", "krav": [{"kravnavn": "K", "vekt": 2}]}
+    svar = []
+
+    def lagre():
+        svar.append(_post(klient, cookie, csrf, kropp, idem=idem))
+
+    t1, t2 = threading.Thread(target=lagre), threading.Thread(target=lagre)
+    t1.start(); t2.start(); t1.join(10); t2.join(10)
+    assert [x.status_code for x in svar] == [201, 201],         [x.text for x in svar]
+    assert svar[0].json() == svar[1].json()
+    from db.pg import koble, sett_kontekst
+    from .test_rekruttering_http import TEN
+    m = koble(MIGRATOR_DSN)
+    try:
+        sett_kontekst(m, TEN, "test", "r-kapp")
+        n = m.execute("SELECT count(*) FROM stillingsprofil"
+                      " WHERE tenant=%s AND operasjonsnokkel=%s",
+                      (TEN, idem)).fetchone()[0]
+        m.rollback()
+    finally:
+        m.close()
+    assert n == 1

@@ -159,9 +159,10 @@ export const hentMaler = () => hentJson("/v1/policymaler");
 // PR-en som bringer den tilbake sammen med skrivingen.
 // Stillingsprofilen (#189): lagring er ALLTID en ny, komplett versjon —
 // `profilId` null oppretter en ny profil.
-export const lagreStillingsprofil = (profilId, navn, krav) =>
+export const lagreStillingsprofil = (profilId, navn, krav, idem) =>
   _muter("/v1/rekruttering/stillingsprofiler", "POST",
-         { profil_id: profilId, navn, krav });
+         { profil_id: profilId, navn, krav },
+         idem || nyIdempotensnokkel());
 
 export const signerRekrutteringsliste = (listeId, innholdHash, idem) =>
   _muter(`/v1/rekruttering/lister/${encodeURIComponent(listeId)}/signer`,

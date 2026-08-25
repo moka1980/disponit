@@ -922,8 +922,32 @@ def stillingsprofil_lagre_endepunkt(tjeneste, request):
             # navn) håndheves av 061-CHECKene — samme 400-kontrakt.
             raise _Avbrudd(_feil("request_feilformet", rid)) from e
         except psycopg.errors.UniqueViolation as e:
-            # Samme kravnavn to ganger i settet.
-            raise _Avbrudd(_feil("request_feilformet", rid)) from e
+            # TRE betydninger deler SQLSTATE 23505 (Cursor P1-3, samme
+            # klasse som signeringens _NOKKELBRUDD): (a) kappløp på
+            # idempotensnøkkelen — taperen SKAL få vinnerens svar, så
+            # døren kjøres én gang til og treffer replay-armen; (b)
+            # nøkkelen brukt for ANNET innhold (dørens egen RAISE, uten
+            # constraint-navn) → 409 idempotenskonflikt; (c) duplikat
+            # kravnavn i settet → 400.
+            if getattr(e.diag, "constraint_name", None) ==                     "stillingsprofil_idem":
+                # Rollbacken tok SET LOCAL-konteksten — settes på nytt
+                # før dørens andre kjøring.
+                conn.rollback()
+                from db.pg import sett_kontekst
+                sett_kontekst(conn, tenant, bid, rid)
+                try:
+                    rad = conn.execute(
+                        "SELECT ut_profil_id, ut_versjon FROM"
+                        " opprett_stillingsprofil_versjon(%s,%s,%s,%s,"
+                        "%s::jsonb,%s)",
+                        (tenant, profil_id, navn, bid,
+                         json.dumps(krav), nokkel)).fetchone()
+                except psycopg.errors.UniqueViolation as e2:
+                    raise _Avbrudd(_feil("idempotenskonflikt", rid))                         from e2
+            elif getattr(e.diag, "constraint_name", None) is None:
+                raise _Avbrudd(_feil("idempotenskonflikt", rid)) from e
+            else:
+                raise _Avbrudd(_feil("request_feilformet", rid)) from e
         conn.commit()
         return _ok({"profil_id": str(rad[0]), "versjon": rad[1]},
                    rid, 201)

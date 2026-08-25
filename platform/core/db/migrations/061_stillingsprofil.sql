@@ -29,6 +29,10 @@ CREATE TABLE stillingsprofil (
     -- og får det opprinnelige svaret.
     operasjonsnokkel TEXT NOT NULL CHECK (length(operasjonsnokkel)
                                           BETWEEN 8 AND 128),
+    -- Innholdsbindingen (Cursor P1-2): gjenspill er bare lovlig for
+    -- SAMME operasjon — nøkkelen alene ville latt et annet innhold få
+    -- første operasjons svar stille. 056-signeringens mønster.
+    innhold_hash TEXT NOT NULL,
     PRIMARY KEY (tenant, profil_id, versjon),
     CONSTRAINT stillingsprofil_idem UNIQUE (tenant, operasjonsnokkel)
 );
@@ -99,19 +103,33 @@ LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE
     v_id UUID; v_versjon INT; v_n INT; r RECORD; v_i INT := 0;
+    v_hash TEXT; v_lagret TEXT;
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant,
                                        'opprett_stillingsprofil_versjon');
+    -- Kanonisk innholdshash for idempotensbindingen: jsonb::text er
+    -- nøkkelordnet og dedupet, så samme logiske kravsett hasher likt.
+    v_hash := md5(coalesce(p_profil_id::text, '') || '·'
+                  || coalesce(btrim(p_navn), '') || '·'
+                  || coalesce(p_krav::text, ''));
     IF p_navn IS NULL OR length(btrim(p_navn)) NOT BETWEEN 1 AND 200 THEN
         RAISE EXCEPTION 'stillingsprofil: navnet må være 1–200 tegn'
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
-    -- GJENSPILL FØRST: samme nøkkel = samme operasjon = samme svar.
-    SELECT s.profil_id, s.versjon INTO ut_profil_id, ut_versjon
+    -- GJENSPILL FØRST: samme nøkkel + SAMME innhold = samme svar.
+    -- Annet innhold på en brukt nøkkel er en KOLLISJON (Cursor P1-2) —
+    -- aldri et stille replay av noe annet enn det kalleren ba om.
+    SELECT s.profil_id, s.versjon, s.innhold_hash
+      INTO ut_profil_id, ut_versjon, v_lagret
       FROM public.stillingsprofil s
      WHERE s.tenant = p_tenant
        AND s.operasjonsnokkel = p_operasjonsnokkel;
     IF FOUND THEN
+        IF v_lagret IS DISTINCT FROM v_hash THEN
+            RAISE EXCEPTION 'stillingsprofil: nøkkelen er brukt for'
+                ' ANNET innhold'
+                USING ERRCODE = 'unique_violation';
+        END IF;
         RETURN NEXT;
         RETURN;
     END IF;
@@ -146,9 +164,9 @@ BEGIN
     END IF;
     INSERT INTO public.stillingsprofil
         (tenant, profil_id, versjon, navn, opprettet_av,
-         operasjonsnokkel)
+         operasjonsnokkel, innhold_hash)
     VALUES (p_tenant, v_id, v_versjon, btrim(p_navn), p_opprettet_av,
-            p_operasjonsnokkel);
+            p_operasjonsnokkel, v_hash);
     FOR r IN SELECT elem FROM jsonb_array_elements(p_krav) AS t(elem)
     LOOP
         v_i := v_i + 1;

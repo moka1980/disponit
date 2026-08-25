@@ -1123,4 +1123,47 @@ test("Profiler: lagring poster hele kravsettet og melder i alert", async () => {
   assert.deepEqual(post.kropp.krav[0],
     { kravnavn: "Drift og beredskap", vekt: 3 });
   assert.equal(post.kropp.krav.length, 2);
+  // SP-2 (Cursor P1-1/P2-7): nøkkelen er med, og kvitteringen står i
+  // alerten ETTER at listen er oppdatert.
+  assert.ok(post.hoder["Idempotency-Key"],
+    "Idempotency-Key mangler i lagringen");
+  const seksjon2 = hoved.querySelector(
+    "section[aria-labelledby=profil-tittel]");
+  assert.ok(await vent(() => {
+    const alert = seksjon2.querySelector("[role=alert]");
+    return alert && /lagret/.test(alert.textContent);
+  }), "kvitteringen kom aldri i alerten");
+});
+
+test("Profiler: tapt svar → retry sender SAMME nøkkel (SP-2)", async () => {
+  const hoved = await tegnetMedProfiler();
+  const seksjon = hoved.querySelector(
+    "section[aria-labelledby=profil-tittel]");
+  const rediger = [...seksjon.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.profiler.rediger"));
+  rediger.click();
+  const skjema = seksjon.querySelector("form");
+  // Første forsøk: nettverket dør (fetch kaster → ApiFeil(0)).
+  KALL = [];
+  SVAR = (sti, opts) => {
+    if ((opts.method || "GET") === "POST") throw new Error("nett");
+    return sti.includes("stillingsprofiler") ? profiler() : prosess();
+  };
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() => KALL.some((k) => k.metode === "POST")),
+    "første POST gikk aldri");
+  const forste = KALL.find((k) => k.metode === "POST");
+  // Andre forsøk: samme operasjon — samme nøkkel.
+  SVAR = { "/v1/rekruttering/prosesser": prosess(),
+           "/v1/rekruttering/stillingsprofiler": profiler() };
+  KALL = [];
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() => KALL.some((k) => k.metode === "POST")),
+    "andre POST gikk aldri");
+  const andre = KALL.find((k) => k.metode === "POST");
+  assert.equal(andre.hoder["Idempotency-Key"],
+    forste.hoder["Idempotency-Key"],
+    "retry etter tapt svar byttet nøkkel — serveren kan ikke replaye");
 });
