@@ -574,7 +574,7 @@ def test_mergen_pinner_baseline_atomisk():
         # FORVENTET, og en pin mot baseline alene falskt-konsumerer.
         assert "baseline-eller-" in norm, (
             f"forsøk {i} pinner bare baseline")
-        assert ("forventet" in norm.lower()
+        assert ("forvente" in norm.lower()
                 or "som ikke er 3a-målingens egen" in norm), (
             f"forsøk {i} mangler 3a-unntaket i omlesingen")
         assert ("maks to" in norm.lower() or "maks TO" in norm), (
