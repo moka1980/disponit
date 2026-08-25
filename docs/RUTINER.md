@@ -19,8 +19,8 @@ Gjelder alle i pipelinen. Avvik fra rutinene er selv en review-feil.
 2. **Spesifikasjonsreview (ChatGPT) — OBLIGATORISK for alle PR-er som rører `platform/`, `policies/` eller `deploy/`.** Claude.ai sender draften (spesifikasjon eller kode) til ChatGPT FØR Claude Code starter implementering. Review-svaret limes inn i PR-beskrivelsen. Kun PR-er som utelukkende endrer `docs/` kan hoppe over porten, og da skal PR-beskrivelsen si det eksplisitt med begrunnelse.
    *Historikk: porten ble hoppet over i PR-003 (forsvarlig, ren docs) og PR-004 (ikke forsvarlig — tillitsankerets tilstandslag). Codex og Claude Code fanget tolv P1 i PR-004-rundene, men porten foran skal redusere antallet som når dit. Denne presiseringen finnes fordi arkitekten brøt sin egen rutine; regelen gjelder Claude.ai mest av alle.*
 3. **Implementering** (Claude Code): kode + tester, inkludert obligatoriske negative policytester.
-4. **Pre-Codex** (Cursor, automatisk): når PR er `ready_for_review`, merket `pre-codex`, eller noen kommenterer `@cursor review`. Cursor poster én batched funnliste (P1/P2/P3) eller PASS, og vekker Claude med `@claude`. Claude fikser P1/P2 og ber om nytt `@cursor review` til PASS. **Ingen `@codex review` før Cursor-PASS.** Eneste unntak er §11.3 (Codex-only om natten) — og det unntaket er ikke i kraft før eier har speilet det inn i `claude.yml`. Finnes ingen slik navngitt unntakspeker, gjelder setningen over bokstavelig.
-5. **Kodereview** (Codex): fire porter, merge til main — først etter Cursor-PASS (unntak: §11.3, når den er i kraft).
+4. **Pre-Codex** (Cursor, automatisk): når PR er `ready_for_review`, merket `pre-codex`, eller noen kommenterer `@cursor review`. Cursor poster én batched funnliste (P1/P2/P3) eller PASS, og vekker Claude med `@claude`. Claude fikser P1/P2 og ber om nytt `@cursor review` til PASS. **Ingen `@codex review` før Cursor-PASS.** Det finnes nøyaktig to navngitte unntak: (a) transport-uta i §10 — feiler Cursor-transporten på et forsøk til, gå rett på `@codex review` og noter det i tråden; den gjelder i dag. (b) §11.3 (Codex-only om natten), som ikke er i kraft før eier har speilet den inn i `claude.yml`. Finnes ingen slik navngitt unntakspeker, gjelder setningen over bokstavelig.
+5. **Kodereview** (Codex): fire porter, merge til main — først etter Cursor-PASS (unntak: transport-uta i §10, som gjelder i dag, og §11.3, når den er i kraft).
 6. **Staging-test** (Claude Code): modulen kjøres på staging-serveren — ekte server, syntetiske data, sandkasse-integrasjoner. Hele sjekklisten i modulens manifest må bestå 100 %.
 7. **Aksept** (Claude.ai bekrefter, Eier informeres): modulstatus settes til `aktiv`. Først nå starter neste modul.
 
@@ -134,9 +134,9 @@ Formål: kutte Codex-rundene fra 10–18 ned mot 2–3 ved å angripe PR-en
 3. Cursor kjører i `--mode ask` (read-only), poster én kommentar med P1/P2/P3 eller PASS
 4. Footer vekker Claude (`@claude`) — `claude.yml` mention-jobben fikser
 5. Etter fiks: Claude kommenterer `@cursor review` (verifisering)
-6. Først ved Cursor-PASS: Claude kommenterer `@codex review` — eneste
-   unntak er §11.3, og den er ikke i kraft før eier har speilet den inn
-   i `claude.yml`
+6. Først ved Cursor-PASS: Claude kommenterer `@codex review` — to
+   navngitte unntak: transport-uta nedenfor (gjelder i dag) og §11.3,
+   som ikke er i kraft før eier har speilet den inn i `claude.yml`
 7. Codex forblir eneste merge-autoritet
 
 **Hard stop:** to Cursor-FUNN-runder på samme mekanisme uten konvergens →
