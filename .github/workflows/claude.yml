@@ -208,7 +208,9 @@ jobs:
                      date» / «Base branch was modified») → noter FØRST
                      nåværende head
                      (`gh pr view <nr> --json headRefOid -q .headRefOid`),
-                     så `gh pr update-branch <nr>`, og gå tilbake til 3b.
+                     så `gh pr update-branch <nr>` — og IKKE til 3b
+                     ennå: VERDIKT-REKKEVIDDEN under måles først, og
+                     tomt snitt er eneste lovlige vei videre.
                      Bruk `update-branch`, ikke lokal rebase + force-push:
                      den skriver ikke om historikk Codex alt har reviewet
                      mot en SHA, og fletter kun `main` inn i PR-grenen.
@@ -221,7 +223,11 @@ jobs:
                      denne PR-ens egne filer. Mål det, aldri anta:
                      `gh api repos/${{ github.repository }}/compare/<gammel-head>...<ny-head>`
                      gir fillisten som kom inn; snitt den mot
-                     `gh pr view <nr> --json files -q '.files[].path'`.
+                     `gh pr view <nr> --json files -q '.files[].path'`
+                     — og PR-fillisten har samme stengte vakt som
+                     compare-siden: ser den trunkert ut (uventet tom,
+                     eller ved API-ets sidegrense), behandle snittet som
+                     ikke-tomt.
                      Tomt snitt → verdiktet står, fortsett til 3b.
                      Ikke-tomt snitt → verdiktet er BRUKT OPP: post
                      `@codex review` på den nye head-en og stopp — merge
@@ -241,7 +247,13 @@ jobs:
                    nytt — vent da på den NYE kjøringen, ikke den gamle.
                    Rød → fiks årsaken hvis den er i denne PR-en; ellers
                    kommenter til eier hva som feilet.
-               3c. MERGE. `gh pr merge <nr> --squash --delete-branch`.
+               3c. MERGE — men les `headRefOid` PÅ NYTT RETT FØR
+                   kommandoen og sammenlign med head-en verdiktet/3a-
+                   målingen gjaldt: CI-ventingen i 3b er et vindu, og en
+                   push der (utenfor mutexen) ville merget en SHA
+                   verdiktet aldri bandt. Avvik som ikke er 3a-målingens
+                   egen merge-commit → `@codex review` og stopp.
+                   Deretter `gh pr merge <nr> --squash --delete-branch`.
                    Avvises den likevel fordi base flyttet seg i mellomtiden,
                    gjenta fra 3a — men maks to ganger, så en travel `main`
                    ikke gir en evig løkke. Etter to forsøk: kommenter til
@@ -323,7 +335,9 @@ jobs:
                `@codex review` og stopp; `DIRTY`
                → ikke tving, kommenter til eier; (b)
                `gh pr checks <nr> --watch --fail-fast`, og vent på den NYE
-               kjøringen hvis (a) flyttet HEAD; (c)
+               kjøringen hvis (a) flyttet HEAD; (c) les `headRefOid`
+               PÅ NYTT RETT FØR merge (CI-vinduet, som i runde 1s 3c;
+               uventet avvik → `@codex review` og stopp), så
                `gh pr merge <nr> --squash --delete-branch`, maks to
                omganger fra (a) hvis base flytter seg.
             4. Sløyfevern: samme funn i 3 runder → stopp og oppsummer til
@@ -366,7 +380,10 @@ jobs:
                med nøyaktig hvilke funn som gjenstår og hvor arbeidet står,
                så sløyfa kan startes igjen med en `@claude`-kommentar. En
                stille PR er det eneste uakseptable utfallet.
-            Merging følger samme rekkefølge som før — DOM-KLASSE-PORTEN
+            Merging følger samme rekkefølge som før (noter
+            `headRefOid` FØR `update-branch` — compare trenger den ekte
+            gamle head-en — og les den PÅ NYTT rett før selve mergen;
+            uventet avvik → `@codex review`, stopp) — DOM-KLASSE-PORTEN
             (§11.1, SAMME styrke som runde 1: utsatte punkter krever
             sitatlinje `dom-klasse: <id> · felt i #<nr> · <URL>`; åpne
             URL-en og les dommen; den siterte kommentarens `user.login`

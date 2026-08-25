@@ -472,3 +472,31 @@ def test_broen_forbyr_merge_som_mention():
     fulgt = " ".join(_jobb("cursor-pass-fulgt").split())
     assert "MERGE ALDRI" in fulgt
     assert "gh pr merge` er forbudt" in fulgt
+
+
+def test_rekkevidden_maales_foer_3b_i_runde_1():
+    """Cursor P1-1 runde 12 (#198): «gå tilbake til 3b» sto FØR
+    rekkevidde-målingen — porten ble rådgivende prosa. Tomt snitt er
+    eneste lovlige vei til 3b etter head-flytting."""
+    r1 = _fiksforsok()[0]
+    assert "gå tilbake til 3b" not in r1
+    assert "IKKE til 3b" in " ".join(r1.split()).replace("\n", " ") or \
+        "IKKE til 3b" in r1
+
+
+def test_head_leses_paa_nytt_rett_foer_merge_i_alle_forsok():
+    """Cursor P1-2 runde 12 (#198): CI-ventingen er et vindu også i
+    fikserjobben — headRefOid må leses på nytt rett før selve mergen, i
+    alle tre forsøkene."""
+    for i, forsok in enumerate(_fiksforsok(), 1):
+        norm = " ".join(forsok.split())
+        assert "PÅ NYTT RETT FØR" in norm or "PÅ NYTT rett før" in norm, (
+            f"forsøk {i} mangler omlesingen før merge")
+        assert "headRefOid" in norm, f"forsøk {i} mangler capture/omlesing"
+
+
+def test_pr_fillisten_har_stengt_vakt():
+    """Cursor P2-4 runde 12 (#198): snittets ANDRE side (PR-fillisten)
+    må ha samme stengte trunkeringvakt som compare-siden."""
+    r1 = " ".join(_fiksforsok()[0].split())
+    assert "PR-fillisten har samme stengte vakt" in r1
