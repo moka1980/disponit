@@ -469,6 +469,72 @@ def test_rett_som_dor_under_leveransen_gir_ingenting(klient, migrator,
 
 
 @pg
+def test_token_som_dor_under_leveransen_gir_ingen_bytes(klient, migrator,
+                                                        miljo, monkeypatch,
+                                                        inndata_rot):
+    """Cursor P2 (#202, tredje pass): leveranse-re-målingen er TO ledd, og
+    bare det ene var målt.
+
+    Kommentaren over re-målingen lover at HELE porten kjøres igjen —
+    `_modultoken_revalidert` (er deploymenten fortsatt autorisert?) OG
+    060-predikatet (holder claimet fortsatt?). Testen over muterer bare
+    `owner_claim_id`, og dreper dermed kun det andre leddet: fjernet man
+    `_modultoken_revalidert(...)` fra leveranseblokken og lot resten stå,
+    forble suiten grønn — mens et nødstopp eller en tilbakekalling felt
+    ETTER den første dommen fortsatt slapp PII ut av huset.
+
+    Her dør TOKENET, ikke claimet: claimet er urørt hele veien, så
+    060-oppslaget svarer fortsatt «ja», og bare revalideringen kan stoppe
+    dette. Samme sidekanalmønster som testen over — tilbakekallingen
+    committes fra en EGEN forbindelse inne i `dekrypter_bytes`, altså
+    nøyaktig i vinduet mellom dom og leveranse.
+
+    Svaret er `token_ugyldig` (401), det SAMME hver annen modulvei gir for
+    et dødt token: den samme hendelsen skal se lik ut uansett dør.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `_modultoken_revalidert(...)` fra
+    leveranseblokken i `hent_endepunkt`."""
+    rel = _m57_deployment(migrator)
+    kropp, tenant, oid = _bundet_bunt(klient, migrator)
+    claim = _pluk(migrator, tenant, oid, rel)
+    mtk, _ = _onboard_token(klient, migrator, "m57_ats", rel)
+    # Wire-formatet er `mtk_<token_id>.<secret>` (modulonboarding.py:16) —
+    # id-en er tokenets egen, ikke noe testen finner på.
+    token_id = mtk.split(".")[0][4:]
+
+    from db import kryptering as kryptmodul
+    ekte = kryptmodul.dekrypter_bytes
+    fra_test = {"truffet": False}
+
+    def _dekrypt_med_tilbakekalling(*a, **k):
+        if not fra_test["truffet"]:
+            fra_test["truffet"] = True
+            from db.pg import koble
+            # Runtime-rollen er den som eier tilbakekallingsveien i
+            # produksjon (035: EXECUTE gis til runtime i migrer.py).
+            rt = koble(DSN)
+            try:
+                rt.execute(
+                    "SELECT tilbakekall_modultoken(%s::uuid,%s,'test')",
+                    (token_id, "tilbakekalt i leveransevinduet"))
+                rt.commit()
+            finally:
+                rt.close()
+        return ekte(*a, **k)
+
+    monkeypatch.setattr(kryptmodul, "dekrypter_bytes",
+                        _dekrypt_med_tilbakekalling)
+    r = klient.post(f"/v1/inndata/hent-for-oppdrag/{oid}",
+                    json={"owner_claim_id": claim},
+                    headers={"authorization": f"Bearer {mtk}"})
+    assert fra_test["truffet"], "leveransevinduet ble aldri truffet"
+    # 401/`token_ugyldig`, ikke 404: claimet er urørt, så 060-leddet
+    # svarer fortsatt «ja» og ville gitt 404. At svaret er 401 er derfor
+    # i seg selv beviset på at det var REVALIDERINGEN som stoppet bytene.
+    assert (r.status_code, r.json()["feil"]) == (401, "token_ugyldig"), r.text
+
+
+@pg
 def test_annen_release_i_samme_miljo_far_ingenting(klient, migrator,
                                                    miljo, inndata_rot):
     """Cursor P2 (#202, andre pass): miljø-negativen alene lot en
