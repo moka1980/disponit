@@ -112,8 +112,13 @@ def test_broen_er_per_pr_og_feiler_hoyt():
     assert "needs.pr-fra-pass.outputs.nummer" in fulgt
     assert not re.search(r"group:\s*claude-cursorfulgt-\$\{\{\s*github\.event\.workflow_run\.id",
                          fulgt), "workflow_run.id som eneste nøkkel"
-    assert "exit 1" in hent and "exit 0" not in hent, (
-        "artefakt-mangel må feile rødt")
+    assert "exit 1" in hent, "artefakt-mangel må feile rødt"
+    # `exit 0` er lovlig i NØYAKTIG én gren (Cursor P2-3 runde 4): når
+    # pass-jobben ble hoppet over — da finnes det per konstruksjon ingen
+    # artifakt og ingenting å følge opp. Grenen må være vaktet av en
+    # faktisk skipped-sjekk, ikke stå fritt.
+    assert "skipped" in hent, "skipped-oppstrøm-grenen mangler"
+    assert hent.count("exit 0") == 1, "bare skipped-grenen får exit 0"
     assert "--allowedTools" in fulgt, "broen mangler verktøyflaten"
     # Uttrykkslinjene alene — #197s forklarende kommentar NEVNER flagget.
     uttrykk = "\n".join(l for l in fulgt.splitlines()
@@ -236,3 +241,34 @@ def test_sha_bindingen_sjekkes_ogsaa_etter_ci_ventingen():
     HEAD som alt er forlatt."""
     fulgt = _jobb("cursor-pass-fulgt")
     assert "PÅ NYTT" in fulgt and "RETT FØR" in fulgt
+
+
+def test_mention_krever_eier_som_avsender():
+    """Cursor P1-1 runde 4 (#198): offentlig repo + skrivende agent =
+    forfatter-porten er selve sikkerheten. BEVISST uten
+    `issue.pull_request`-krav: §11.2-mandater bor også på rene issues —
+    eier-porten alene lukker angrepsflaten."""
+    mention = _jobb("mention")
+    uttrykk = "\n".join(l for l in mention.split("steps:")[0].splitlines()
+                        if not l.lstrip().startswith("#"))
+    assert "github.event.comment.user.login == 'moka1980'" in uttrykk, (
+        "mention-if mangler forfatter-porten")
+    assert "contains(github.event.comment.body, '@claude')" in uttrykk
+
+
+def test_mention_forbyr_merge():
+    """Cursor P1-2 runde 4 (#198): merge eies av fiks-og-merge alene —
+    et nattmandat («merg denne») skal aldri kunne hoppe over §10-kjeden
+    via mention-jobbens verktøyflate."""
+    mention = _jobb("mention")
+    assert "MERGE ALDRI" in mention
+    assert "gh pr merge` er forbudt" in mention
+
+
+def test_mention_har_driftsparity_med_soskenjobbene():
+    """Cursor P2-4 runde 4 (#198): samme tre vern som søskenjobbene —
+    utsjekk, workflow-forbud, upålitelige data."""
+    mention = _jobb("mention")
+    assert "gh pr checkout" in mention
+    assert "IKKE rediger" in mention and ".github/workflows" in mention
+    assert "upålitelige data" in mention
