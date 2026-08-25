@@ -248,12 +248,20 @@ def test_terminalt_oppdrag_med_intakt_claim_gir_ingenting(klient, migrator,
                          " WHERE tenant=%s AND id=%s",
                          (terminal, tenant, oid))
         migrator.commit()
-        # …og det er ikke en antakelse: raden sier det selv.
+        # …og det er ikke en antakelse: raden sier det selv. Konteksten må
+        # settes PÅ NYTT først: `sett_kontekst` skriver alle tre variablene
+        # med `set_config(..., true)` — SET LOCAL — så commit-en over tok
+        # `disponit.tenant` med seg. `oppdrag` står med FORCE ROW LEVEL
+        # SECURITY (008:94), og uten tenant i sesjonen filtrerer RLS raden
+        # bort: `fetchone()` gir None, ikke en rad som motsier oss.
+        sett_kontekst(migrator, tenant, "test", "r-terminal")
         rad = migrator.execute(
             "SELECT status, owner_claim_id,"
             " owner_lease_utloper > now() AS lever"
             " FROM oppdrag WHERE tenant=%s AND id=%s",
             (tenant, oid)).fetchone()
+        migrator.commit()
+        assert rad is not None, (terminal, "raden er borte for tenanten")
         assert tuple(rad) == (terminal, claim, True), (terminal, rad)
 
         r = klient.post(f"/v1/inndata/hent-for-oppdrag/{oid}",
