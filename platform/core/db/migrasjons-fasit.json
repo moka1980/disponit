@@ -57,5 +57,6 @@
   "056_m57_utsending.sql": "0603c65f996ff33ce24cfac9e7738f61be260ccc7d234849379a313abfdfd19d",
   "057_m57_kandidatlagre.sql": "b1dd6407a88e1a8b2a6566a79a7c39e7ae747fdc6eebf543296a212673a0d64e",
   "058_inndata_artefakt.sql": "97e6ddff35eb3f3f9ec963329ff2c82ef4c35a7b76a4da91ab3abae0ef6d74e4",
-  "059_b_maskinen.sql": "b4b2a0d4598d76a0e1bb159bbfe3c3c6fd800d16f7cad602252b89270734e5f6"
+  "059_b_maskinen.sql": "b4b2a0d4598d76a0e1bb159bbfe3c3c6fd800d16f7cad602252b89270734e5f6",
+  "061_stillingsprofil.sql": "fb8672c6f39cbbfe99f90e22c11dc237db3eac696bf7aacb8af7244625b8e28d"
 }

@@ -1044,3 +1044,83 @@ test("Rekruttering: hver detaljknapp har sitt eget tilgjengelige navn (port 29)"
   const brudd2 = await alvorligeBrudd(hoved);
   assert.equal(brudd2.length, 0, beskrivBrudd(brudd2));
 });
+
+// ------------------------------------------------------------------
+// Stillingsprofil-editoren (#189).
+
+function profiler() {
+  return { profiler: [{
+    profil_id: "prof-1", versjon: 2, navn: "Driftskonsulent",
+    opprettet: "2026-08-25T10:00:00Z", opprettet_av: "b-1",
+    krav: [{ kravnavn: "Drift", vekt: 3 }, { kravnavn: "Norsk", vekt: 1 }],
+  }] };
+}
+
+async function tegnetMedProfiler() {
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": prosess(),
+           "/v1/rekruttering/stillingsprofiler": profiler() };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")),
+    "flaten kom aldri");
+  return hoved;
+}
+
+test("Profiler: listen viser navn, versjon og krav — og axe rent", async () => {
+  const hoved = await tegnetMedProfiler();
+  const seksjon = hoved.querySelector("section[aria-labelledby=profil-tittel]");
+  assert.ok(seksjon, "profilseksjonen mangler");
+  const tekst = seksjon.textContent;
+  assert.match(tekst, /Driftskonsulent/);
+  assert.match(tekst, /Drift 3/);
+  assert.match(tekst, /Norsk 1/);
+  const brudd = await alvorligeBrudd(hoved);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
+test("Profiler: editoren har label, caption og tallfeltets grenser", async () => {
+  const hoved = await tegnetMedProfiler();
+  const seksjon = hoved.querySelector("section[aria-labelledby=profil-tittel]");
+  const knapper = [...seksjon.querySelectorAll("button")];
+  const ny = knapper.find((b) => b.textContent === t("ui.rekruttering.profiler.ny"));
+  assert.ok(ny, "Ny profil-knappen mangler");
+  ny.click();
+  const skjema = seksjon.querySelector("form");
+  assert.ok(skjema, "skjemaet åpnet ikke");
+  const navnLabel = skjema.querySelector("label[for=profil-navn]");
+  assert.ok(navnLabel && navnLabel.textContent.length, "navnelabelen mangler");
+  assert.ok(skjema.querySelector("table caption"), "kravtabellen mangler caption");
+  const vekt = skjema.querySelector("input[type=number]");
+  assert.equal(vekt.getAttribute("min"), "0");
+  assert.equal(vekt.getAttribute("max"), "10");
+  const brudd = await alvorligeBrudd(hoved);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
+test("Profiler: lagring poster hele kravsettet og melder i alert", async () => {
+  const hoved = await tegnetMedProfiler();
+  SVAR = { "/v1/rekruttering/prosesser": prosess(),
+           "/v1/rekruttering/stillingsprofiler":
+             (KALL.length, profiler()) };
+  const seksjon = hoved.querySelector("section[aria-labelledby=profil-tittel]");
+  const rediger = [...seksjon.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.profiler.rediger"));
+  rediger.click();
+  const skjema = seksjon.querySelector("form");
+  // Rediger-skjemaet er forhåndsutfylt fra profilen.
+  const felt = [...skjema.querySelectorAll("tbody input[type=text]")];
+  assert.equal(felt[0].value, "Drift");
+  felt[0].value = "Drift og beredskap";
+  KALL = [];
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() => KALL.some((k) => k.metode === "POST")),
+    "POST-en gikk aldri");
+  const post = KALL.find((k) => k.metode === "POST");
+  assert.equal(post.sti, "/v1/rekruttering/stillingsprofiler");
+  assert.equal(post.kropp.profil_id, "prof-1");
+  assert.deepEqual(post.kropp.krav[0],
+    { kravnavn: "Drift og beredskap", vekt: 3 });
+  assert.equal(post.kropp.krav.length, 2);
+});
