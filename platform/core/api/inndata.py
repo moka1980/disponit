@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import uuid as uuidlib
 
 import psycopg
 from starlette.concurrency import run_in_threadpool
@@ -227,19 +226,55 @@ async def opplast_endepunkt(tjeneste, request):
         key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(conn, tenant)
         ct, nonce = kryptering.krypter_bytes(dek, raa, tenant, key_id,
                                              formaal=b"inndata")
-        # FØR første I/O: tenant-strengen må være én trygg stikomponent.
-        # `komp` brukes i BEGGE sammensetningene under — den rå `tenant`
-        # skal ikke nå `os.path.join` noe sted i denne funksjonen.
+        # B-maskinen (059): raden BÆRER den relative stien fra fødselen —
+        # API-et velger aldri. Fast sti gjør samtidige opplastinger på
+        # samme jti til et EKTE kappløp om én fil, så skriverne
+        # serialiseres med en advisory-transaksjonslås på jti-en (låses
+        # her, slippes av commit/rollback i _med_conn). Gjenspill
+        # (`lastet`) skriver ALDRI: filen på disk hører til radens nonce,
+        # og en overskriving med ny nonce hadde korruptert den — døren
+        # validerer sha-en og svarer med det som står.
+        conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))",
+                     (f"inndata:{tenant}:{jti}",))
+        # Status og sti leses PÅ NYTT her, UNDER låsen — forsjekken i auth
+        # gikk på en annen forbindelse før kroppen ble strømmet, og en
+        # samtidig opplasting på samme jti kan ha fullført i mellomtiden.
+        # Å avgjøre skriv-eller-gjenspill på den foreldede lesningen var
+        # nettopp overskrivingen låsen skal hindre.
+        rad = conn.execute(
+            "SELECT status, lager_sti FROM inndata_artefakt"
+            " WHERE tenant = %s AND reservasjon_jti = %s",
+            (tenant, jti)).fetchone()
+        if rad is None or rad[0] not in ("reservert", "lastet"):
+            raise _Avbrudd(_feil("inndata_reservasjon_ugyldig", rid, 409))
+        status_naa, rel = rad
+        # Forsvar i dybden: komponentsjekken består selv om stien nå er
+        # dørens — en rad noen ANNEN skrev skal fortsatt aldri nå join.
         komp = _stikomponent(tenant)
+        if not rel or not rel.startswith(komp + "/"):
+            raise _Avbrudd(_feil("intern_feil", rid, 500))
         katalog = os.path.join(INNDATA_ROT, komp)
         os.makedirs(katalog, mode=0o700, exist_ok=True)
-        # RADEN bærer den RELATIVE stien, `<tenant>/<uuid>.bin` (Cursor P1
-        # runde 2); roten settes på her og bare her. Med roten i raden
-        # måtte 058 kjent den for å kunne anker-sjekke navnerommet, og
-        # gjorde det ikke — den lette etter `/<tenant>/` som delstreng, som
-        # en sti ned i en FREMMED tenants katalog også inneholder.
-        rel = os.path.join(komp, f"{uuidlib.uuid4()}.bin")
         sti = os.path.join(INNDATA_ROT, rel)
+        if status_naa == "lastet":
+            # Samme errcode-kart som hovedveien under — gjenspillet kan
+            # felles av utløpet (`invalid_parameter_value`) eller av en
+            # ANNEN kropp på samme jti (`unique_violation`), og ingen av
+            # dem skal bli en 500.
+            try:
+                rad = conn.execute(
+                    "SELECT ut_inndata_id, ut_lager_sti FROM"
+                    " registrer_inndata_lastet(%s,%s,%s,%s,%s,%s)",
+                    (tenant, jti, lest, sha, key_id, nonce)).fetchone()
+            except psycopg.errors.InvalidParameterValue as e:
+                raise _Avbrudd(_feil("inndata_reservasjon_ugyldig", rid,
+                                     409)) from e
+            except psycopg.errors.UniqueViolation as e:
+                raise _Avbrudd(_feil("inndata_alt_lastet", rid, 409)) from e
+            conn.commit()
+            return _ok({"inndata_ref": f"inndata:{rad[0]}",
+                        "innhold_sha256": sha, "faktiske_bytes": lest},
+                       rid, 201)
         # Skriv-og-flytt: en halvskrevet fil skal aldri kunne bli en
         # gyldig referanse.
         tmp = sti + ".tmp"
@@ -250,9 +285,10 @@ async def opplast_endepunkt(tjeneste, request):
         # `.bin`. Ingen av dem har en rad, ingen av dem har en eier, og en
         # klient som prøver på nytt under den samme lagerfeilen legger på en
         # ny for hvert forsøk — feilen som fylte disken spiser altså mer disk.
-        # `sti` er en fersk uuid i denne kallet, så begge navnene er våre
-        # alene; unlinken er best effort fordi den opprinnelige feilen er den
-        # som skal nå kalleren.
+        # `sti` er radens faste navn, men advisory-låsen over gjør oss til
+        # eneste skriver på den akkurat nå, så begge navnene er våre alene;
+        # unlinken er best effort fordi den opprinnelige feilen er den som
+        # skal nå kalleren.
         try:
             with open(tmp, "wb") as f:
                 f.write(ct)
@@ -293,8 +329,8 @@ async def opplast_endepunkt(tjeneste, request):
         try:
             rad = conn.execute(
                 "SELECT ut_inndata_id, ut_lager_sti FROM"
-                " registrer_inndata_lastet(%s,%s,%s,%s,%s,%s,%s)",
-                (tenant, jti, lest, sha, key_id, nonce, rel)).fetchone()
+                " registrer_inndata_lastet(%s,%s,%s,%s,%s,%s)",
+                (tenant, jti, lest, sha, key_id, nonce)).fetchone()
         except psycopg.errors.InvalidParameterValue as e:
             os.unlink(sti)
             raise _Avbrudd(_feil("inndata_reservasjon_ugyldig", rid, 409)) \
@@ -318,16 +354,12 @@ async def opplast_endepunkt(tjeneste, request):
         # en foreldreløs `.bin` igjen. Det er reaperens arbeid (egen PR),
         # og en orphan-fil er en billigere feil enn tapte data.
         conn.commit()
-        # Replay: 058 svarte med en ANNEN sti enn den vi nettopp skrev,
-        # altså sto raden alt som `lastet` med samme sha — svaret er det
-        # samme (sha-en er den samme kroppen), men filen vår er en orphan
-        # og ryddes her. En unlink som ikke går skal ikke gjøre en
-        # vellykket opplasting til en 500; da er den reaperens jobb.
-        if rad[1] != rel:
-            try:
-                os.unlink(sti)
-            except OSError:
-                pass
+        # Under B er `ut_lager_sti` per konstruksjon radens fødselssti —
+        # den samme `rel` vi nettopp leste under låsen og skrev til. 058s
+        # orphan-rydding her («døren svarte med en annen sti») er derfor
+        # borte: et avvik ville betydd at DØREN var i utakt med sin egen
+        # rad, og da er en unlink av den kanoniske stien sletting av en
+        # nettopp committet fil — verre enn enhver orphan.
         return _ok({"inndata_ref": f"inndata:{rad[0]}",
                     "innhold_sha256": sha, "faktiske_bytes": lest}, rid,
                    201)

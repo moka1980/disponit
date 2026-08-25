@@ -276,7 +276,9 @@ def test_gjenspill_av_utlopt_reservasjon_laser_ikke_nokkelen(klient,
         m.rollback()
     finally:
         m.close()
-    assert rad == ("reservert", None)
+    # B (059): stien står på raden fra FØDSELEN — at den finnes uten fil
+    # er ingen løgn før raden er `lastet`; lagerfeilen brant ingenting.
+    assert rad[0] == "reservert" and rad[1], rad
 
     # En NY nøkkel er veien ut, og den virker.
     ny = _reserver(klient, cookie, csrf)
@@ -625,10 +627,11 @@ def _reservasjon(m, tenant, *, utloper="now() + interval '1 hour'",
     m.execute(
         "INSERT INTO inndata_artefakt (tenant, eiermodul, formaal,"
         " innholdstype, maks_bytes, reservasjon_jti, idempotensnokkel,"
-        " utloper)"
-        f" VALUES (%s,%s,'soknadsbunt','application/zip',%s,%s,%s,{utloper})",
+        " lager_sti, utloper)"
+        f" VALUES (%s,%s,'soknadsbunt','application/zip',%s,%s,%s,%s,"
+        f"{utloper})",
         (tenant, eiermodul, maks or MAKS, jti,
-         idem or secrets.token_hex(12)))
+         idem or secrets.token_hex(12), _lagersti(tenant)))
     return jti
 
 
@@ -654,7 +657,7 @@ def _lagersti(tenant, navn=None):
 
 
 def _lastet(m, tenant, *, utloper="now() + interval '1 hour'",
-            eiermodul="m57_ats", jti=None, sha=None):
+            eiermodul="m57_ats", jti=None, sha=None, sti=None):
     """En ferdig `lastet` bunt — bindingens utgangspunkt. Returnerer
     inndata_id.
 
@@ -671,7 +674,7 @@ def _lastet(m, tenant, *, utloper="now() + interval '1 hour'",
         " VALUES (%s,%s,'soknadsbunt','application/zip',%s,10,%s,%s,%s,"
         f" %s,'lastet',%s,%s,{utloper},now()) RETURNING inndata_id",
         (tenant, eiermodul, MAKS, sha or "a" * 64, key_id, b"n" * 12,
-         _lagersti(tenant, jti), jti,
+         sti or _lagersti(tenant, jti), jti,
          secrets.token_hex(12))).fetchone()[0]
 
 
@@ -702,6 +705,27 @@ def _oppdrag(m, tenant, eiermodul, oppdragstype="rekruttering.evaluering"):
          nonce)).fetchone()[0])
 
 
+def _bind(m, tenant, inndata_id, oppdrag, p_eiermodul="m57_ats"):
+    """`bind_inndata` i oppdragets EGEN fødselstransaksjon — X1 (#192).
+
+    059 krever `pg_catalog.age(o.xmin) = 0`: vinduet der et oppdrag står
+    plukkbart uten bunt kan ikke finnes, for bindingen skjer FØR commiten
+    som gjør oppdraget synlig. Testene må derfor kalle denne i SAMME
+    transaksjon som `_oppdrag`, aldri etter en commit.
+
+    Rollen: bare bestillingsveiens runtime-rolle har EXECUTE, men runtime
+    kan ikke sette inn `oppdrag`-raden direkte (den fødes av definer-
+    døren i produksjon). Migrator kan sette inn raden, og kan
+    `SET LOCAL ROLE` til dørens EIER — funksjonen er SECURITY DEFINER, så
+    kroppen kjører uansett som `disponit_domene_eier`; kallet måler
+    nøyaktig samme kode. Ved feil er transaksjonen abortert og SET LOCAL
+    dør med rollback-en — derfor ingen RESET i en finally."""
+    m.execute("SET LOCAL ROLE disponit_domene_eier")
+    m.execute("SELECT bind_inndata(%s,%s,%s,%s)",
+              (tenant, inndata_id, oppdrag, p_eiermodul))
+    m.execute("RESET ROLE")
+
+
 @pg
 @dekker("inndata_reservasjon_ugyldig")
 def test_utlopt_reservasjon_avvises_og_brenner_ingenting(klient, inndata_rot):
@@ -730,7 +754,9 @@ def test_utlopt_reservasjon_avvises_og_brenner_ingenting(klient, inndata_rot):
         m.rollback()
     finally:
         m.close()
-    assert rad == ("reservert", None)
+    # B (059): stien står på raden fra FØDSELEN — at den finnes uten fil
+    # er ingen løgn før raden er `lastet`; ingenting ble brent.
+    assert rad[0] == "reservert" and rad[1], rad
     # … og ciphertexten API-et rakk å skrive før 058 sa nei, er ryddet.
     assert not sorted((inndata_rot / tenant).glob("*.bin"))
 
@@ -764,7 +790,6 @@ def test_lastet_og_utlopt_kan_ikke_gjenspilles(klient, inndata_rot):
         # er tilstanden et tapt 201-svar etterlater — men utløpt.
         inndata_id = _lastet(m, tenant, utloper="now() - interval '1 second'",
                              jti=jti, sha=sha)
-        oppdrag = _oppdrag(m, tenant, "m57_ats")
         m.commit()
     finally:
         m.close()
@@ -776,16 +801,18 @@ def test_lastet_og_utlopt_kan_ikke_gjenspilles(klient, inndata_rot):
     # Ciphertexten API-et rakk å skrive før 058 sa nei, er ryddet — et
     # avvist gjenspill skal ikke legge igjen en foreldreløs fil heller.
     assert not sorted((inndata_rot / tenant).glob("*.bin"))
-    # Den andre enden: bindingen avviser den samme raden. Det er nettopp
-    # DENNE avvisningen gjenspillet ikke fikk lov å motsi.
-    c = _runtime(tenant)
+    # Den andre enden: bindingen avviser den samme raden — i oppdragets
+    # egen fødselstransaksjon (X1), så det er UTLØPET som feller, ikke
+    # transaksjonsporten. Det er nettopp DENNE avvisningen gjenspillet
+    # ikke fikk lov å motsi.
+    m = _migrator(tenant)
     try:
+        oppdrag = _oppdrag(m, tenant, "m57_ats")
         with pytest.raises(psycopg.errors.InvalidParameterValue):
-            c.execute("SELECT bind_inndata(%s,%s,%s,%s)",
-                      (tenant, inndata_id, oppdrag, "m57_ats"))
-        c.rollback()
+            _bind(m, tenant, inndata_id, oppdrag)
+        m.rollback()
     finally:
-        c.close()
+        m.close()
 
 
 @pg
@@ -818,22 +845,18 @@ def test_forbrukt_reservasjon_er_ikke_et_jti_orakel(klient, inndata_rot):
     try:
         bundet = _lastet(m, tenant, jti=jti_bundet, sha=sha)
         _lastet(m, tenant, jti=jti_forkastet, sha=sha)
-        oppdrag = _oppdrag(m, tenant, "m57_ats")
         m.commit()
         _kontekst(m, tenant)
         m.execute("UPDATE inndata_artefakt SET status='forkastet'"
                   " WHERE tenant=%s AND reservasjon_jti=%s",
                   (tenant, jti_forkastet))
         m.commit()
+        _kontekst(m, tenant)
+        oppdrag = _oppdrag(m, tenant, "m57_ats")
+        _bind(m, tenant, bundet, oppdrag)
+        m.commit()
     finally:
         m.close()
-    c = _runtime(tenant)
-    try:
-        c.execute("SELECT bind_inndata(%s,%s,%s,%s)",
-                  (tenant, bundet, oppdrag, "m57_ats"))
-        c.commit()
-    finally:
-        c.close()
 
     for jti in (jti_bundet, jti_forkastet):
         r = _opplast(klient, cookie, csrf, jti, kropp)
@@ -908,7 +931,9 @@ def test_lagerfeil_for_registreringen_etterlater_ingen_fil(
         m.rollback()
     finally:
         m.close()
-    assert rad == ("reservert", None)
+    # B (059): stien står på raden fra FØDSELEN — at den finnes uten fil
+    # er ingen løgn før raden er `lastet`; ingenting ble brent.
+    assert rad[0] == "reservert" and rad[1], rad
 
 
 @pg
@@ -1011,9 +1036,8 @@ def test_kryptostrukturen_avvises_uten_a_brenne_jti(klient):
     try:
         with pytest.raises(psycopg.errors.InvalidParameterValue):
             c.execute(
-                "SELECT * FROM registrer_inndata_lastet(%s,%s,%s,%s,%s,%s,%s)",
-                (tenant, jti, 10, "a" * 64, key_id, b"\x01",
-                 _lagersti(tenant)))
+                "SELECT * FROM registrer_inndata_lastet(%s,%s,%s,%s,%s,%s)",
+                (tenant, jti, 10, "a" * 64, key_id, b"\x01"))
         c.rollback()
     finally:
         c.close()
@@ -1079,14 +1103,19 @@ def test_forkasting_kan_ikke_stjele_oppdragets_bunteplass(klient):
         m.rollback()
     finally:
         m.close()
-    # … og plassen er fortsatt ledig for den ekte bindingen.
-    c = _runtime(tenant)
+    # … og en ekte binding går fortsatt: begge de avviste forsøkene over
+    # rullet tilbake uten å okkupere noen bunteplass. X1 (#192) gjør at
+    # bindingen må skje i et oppdrags fødselstransaksjon, så den ekte
+    # veien måles med et ferskt oppdrag — `opp` over var aldri lovlig å
+    # binde i ettertid, og scenariet vakten dekker (reaperens forkasting
+    # som SETTER `oppdrag_id`) er uendret.
+    m = _migrator(tenant)
     try:
-        c.execute("SELECT bind_inndata(%s,%s,%s,%s)",
-                  (tenant, ekte, opp, "m57_ats"))
-        c.commit()
+        opp2 = _oppdrag(m, tenant, "m57_ats")
+        _bind(m, tenant, ekte, opp2)
+        m.commit()
     finally:
-        c.close()
+        m.close()
 
 
 @pg
@@ -1116,9 +1145,8 @@ def test_innhold_sha256_maa_ha_hashens_form(klient):
         for sha in ("", "nei", "A" * 64, "a" * 63, "a" * 65):
             with pytest.raises(psycopg.errors.InvalidParameterValue):
                 c.execute("SELECT * FROM registrer_inndata_lastet"
-                          "(%s,%s,%s,%s,%s,%s,%s)",
-                          (tenant, jti, 10, sha, key_id, b"n" * 12,
-                           _lagersti(tenant)))
+                          "(%s,%s,%s,%s,%s,%s)",
+                          (tenant, jti, 10, sha, key_id, b"n" * 12))
             c.rollback()
             _kontekst(c, tenant)
     finally:
@@ -1186,206 +1214,164 @@ def test_tenant_iden_maa_vaere_en_trygg_stikomponent():
 
 @pg
 def test_lagerstien_maa_ligge_i_tenantens_eget_navnerom(klient):
-    """Cursor P1: `lager_sti` hadde bare «ikke tom», mens
-    `registrer_inndata_lastet` tar den fra en runtime-kaller med EXECUTE.
+    """Cursor P1 (runde 1-2, 058) + B-maskinen (#192, 059).
 
-    En kaller kunne dermed lande en `lastet` rad som PEKER inn i en annen
-    tenants katalog — eller ut av lageret med `..`. Reaperen (egen PR),
-    hvis hele jobb er å `unlink` stien raden bærer, ville utført
-    slettingen. Nonce-hullet var udekrypterbare data; dette er
-    isolasjonsbrudd med sletting på enden.
+    Under 058 tok `registrer_inndata_lastet` stien fra en runtime-kaller
+    med EXECUTE, og to runder herdet guarden mot fremmede tenanters
+    kataloger, `..`-traversering og delstreng-hullet
+    (`en-annen-tenant/<tenant>/x.bin`). B-maskinen fjernet hele
+    angrepsflaten: stien FØDES av `reserver_inndata` som
+    `<tenant>/<inndata_id>.bin`, og ingen dør tar lenger en sti utenfra.
 
-    Reservasjonen skal stå UBRENT etter et avvist forsøk, ellers har en
-    giftig sti likevel kostet kunden bunten.
+    Det som består og måles er derfor to ting: (1) dørens EGEN generering
+    lander ordrett på formen navnerommet lover, og (2)
+    `inndata_lagersti_navnerom` på TABELLEN feller hver av de gamle
+    angrepsstiene på enhver annen skrivevei — vakter i dybden er ikke
+    død kode selv om døren foran dem ble trygg per konstruksjon.
 
-    RUNDE 2 (Cursor P1): første form lette etter `/<tenant>/` som
-    DELSTRENG i en absolutt sti, og en delstreng har ingen ende —
-    `<rot>/<offer>/<tenant>/x.bin` inneholder den også, og peker like fullt
-    ned i offerets katalog. Angrepsstien står nederst i listen under og er
-    grunnen til at raden nå bærer den RELATIVE stien: uten rot er første
-    ledd tenanten, og «lenger ned hos naboen» kan ikke uttrykkes.
-
-    MUTASJONEN SOM DREPER DENNE: fjern sti-guarden i funksjonen, eller
-    `inndata_lagersti_navnerom` på tabellen."""
-    from db import kryptering
+    MUTASJONEN SOM DREPER DENNE: la `reserver_inndata` bygge stien av noe
+    annet enn tenant + inndata_id, eller fjern
+    `inndata_lagersti_navnerom`."""
     tenant, _bid, _cookie, _csrf = _rigg(klient)
-    m = _migrator(tenant)
+    c = _runtime(tenant)
     try:
-        jti = _reservasjon(m, tenant)
-        key_id, _dek = kryptering.hent_eller_opprett_aktiv_dek(m, tenant)
-        m.commit()
+        rad = c.execute(
+            "SELECT inndata_id, lager_sti FROM reserver_inndata"
+            "(%s,%s,%s,%s,%s)",
+            (tenant, "m57_ats", "soknadsbunt", MAKS,
+             secrets.token_hex(12))).fetchone()
+        c.commit()
     finally:
-        m.close()
+        c.close()
+    # Fødselsstien er EKSAKT kontraktens form — ikke bare «inne i
+    # navnerommet», for enhver annen form ville vært en ny kontrakt.
+    assert rad[1] == f"{tenant}/{rad[0]}.bin", rad
     giftige = (
         "/tmp/x.bin",                              # absolutt, utenfor
         "en-annen-tenant/x.bin",                   # FREMMED tenant
         f"{tenant}/../en-annen-tenant/x.bin",      # traversering
         f"/var/lib/disponit-inndata/{tenant}/x.bin",   # rot i raden
         f"{tenant}/",                              # tomt filnavn
-        # DELSTRENG-HULLET: under en FREMMED tenants katalog, men
-        # inneholder `/<tenant>/`. Runde 1 slapp denne igjennom.
+        # DELSTRENG-HULLET fra 058-runde 1: under en FREMMED tenants
+        # katalog, men inneholder `/<tenant>/`.
         f"en-annen-tenant/{tenant}/x.bin",
     )
-    c = _runtime(tenant)
-    try:
-        for sti in giftige:
-            with pytest.raises(psycopg.errors.InvalidParameterValue):
-                c.execute("SELECT * FROM registrer_inndata_lastet"
-                          "(%s,%s,%s,%s,%s,%s,%s)",
-                          (tenant, jti, 10, "a" * 64, key_id, b"n" * 12,
-                           sti))
-            c.rollback()
-            _kontekst(c, tenant)
-        # Den ekte stien går fortsatt igjennom.
-        c.execute("SELECT * FROM registrer_inndata_lastet"
-                  "(%s,%s,%s,%s,%s,%s,%s)",
-                  (tenant, jti, 10, "a" * 64, key_id, b"n" * 12,
-                   _lagersti(tenant)))
-        c.commit()
-    finally:
-        c.close()
     m = _migrator(tenant)
     try:
-        _kontekst(m, tenant)
-        # Tabellen bærer den samme invarianten, uansett skrivevei.
-        with pytest.raises(psycopg.errors.CheckViolation):
-            m.execute(
-                "INSERT INTO inndata_artefakt (tenant, eiermodul, formaal,"
-                " innholdstype, maks_bytes, faktiske_bytes, innhold_sha256,"
-                " key_id, nonce, lager_sti, status, reservasjon_jti,"
-                " idempotensnokkel, utloper, lastet_ts)"
-                " VALUES (%s,'m57_ats','soknadsbunt','application/zip',"
-                "%s,10,%s,%s,%s,%s,'lastet',%s,%s,"
-                " now()+interval '1 h',now())",
-                (tenant, MAKS, "a" * 64, key_id, b"n" * 12,
-                 f"en-annen-tenant/{tenant}/x.bin", secrets.token_hex(32),
-                 secrets.token_hex(12)))
-        m.rollback()
+        for sti in giftige:
+            with pytest.raises(psycopg.errors.CheckViolation):
+                m.execute(
+                    "INSERT INTO inndata_artefakt (tenant, eiermodul,"
+                    " formaal, innholdstype, maks_bytes, reservasjon_jti,"
+                    " idempotensnokkel, lager_sti, utloper)"
+                    " VALUES (%s,'m57_ats','soknadsbunt','application/zip',"
+                    "%s,%s,%s,%s,now()+interval '1 h')",
+                    (tenant, MAKS, secrets.token_hex(32),
+                     secrets.token_hex(12), sti))
+            m.rollback()
+            _kontekst(m, tenant)
     finally:
         m.close()
 
 
 @pg
 def test_tenant_med_to_punktum_er_lovlig_og_traversering_er_det_ikke(klient):
-    """Codex P2 runde 7: guarden lette etter `..` i HELE den sammensatte
-    stien.
+    """Codex P2 runde 7 (058) + B-maskinen (#192, 059).
 
-    `brukermedlemskap.tenant` er ubegrenset TEXT, og `_stikomponent` i
-    API-et godtar `acme..corp` — det ER én trygg stikomponent. Men
-    `<tenant>/<uuid>.bin` inneholder da `..`, og både funksjonsguarden og
-    `inndata_lagersti_navnerom` avviste den. Utfallet for en slik tenant
-    var at reservasjonen gikk gjennom, mens HVER opplasting ble skrevet,
-    slettet igjen og besvart med `inndata_reservasjon_ugyldig`: en kunde
-    som aldri kunne laste opp noe, av en grunn ingen feilmelding pekte på.
+    `brukermedlemskap.tenant` er ubegrenset TEXT, og `acme..corp` ER én
+    trygg stikomponent — men `<tenant>/<uuid>.bin` inneholder da `..`,
+    og en guard som leter etter `..` i den SAMMENSATTE strengen gjør
+    tenanten permanent ute av stand til å laste opp. Skillet bor i
+    navnerommets to ledd: tenant-leddet må få inneholde punktum-par,
+    filnavn-leddet må aldri VÆRE `..`/`.`.
 
-    Traverseringen kan bare komme fra ett av de to leddene, og begge
-    måles der de bor. Testen beviser BEGGE retningene på den SAMME
-    tenanten, ellers kunne en fiks som bare åpner opp bestått halvparten.
+    Under B fødes stien av `reserver_inndata`; begge retningene måles
+    derfor der de nå bor: døren skal FØDE en lovlig sti for nettopp denne
+    tenanten, og tabellens `inndata_lagersti_navnerom` skal fortsatt
+    felle traversering i filnavn-leddet på enhver annen skrivevei.
 
     MUTASJONEN SOM DREPER DENNE: sett `position('..' in ...)` tilbake på
-    den sammensatte strengen — da feiler den lovlige halvdelen. Fjern
-    filnavn-guarden — da består den giftige."""
-    from db import kryptering
+    den sammensatte strengen i CHECKen — da feiler den lovlige halvdelen
+    (dørens INSERT feller på fødselen). Fjern filnavn-guarden — da består
+    den giftige."""
     _rigg(klient)
     tenant = f"acme..corp-{secrets.token_hex(6)}"
-    m = _migrator(tenant)
-    try:
-        jti = _reservasjon(m, tenant)
-        key_id, _dek = kryptering.hent_eller_opprett_aktiv_dek(m, tenant)
-        m.commit()
-    finally:
-        m.close()
     c = _runtime(tenant)
     try:
-        # GIFTIG, for den samme tenanten: traversering i FILNAVN-leddet.
-        for sti in (f"{tenant}/..", f"{tenant}/../x.bin", f"{tenant}/."):
-            with pytest.raises(psycopg.errors.InvalidParameterValue):
-                c.execute("SELECT * FROM registrer_inndata_lastet"
-                          "(%s,%s,%s,%s,%s,%s,%s)",
-                          (tenant, jti, 10, "a" * 64, key_id, b"n" * 12,
-                           sti))
-            c.rollback()
-            _kontekst(c, tenant)
-        # LOVLIG: den ekte stien for nøyaktig den samme tenanten. Denne
-        # var før fiksen umulig for en tenant med to punktum i ID-en.
-        c.execute("SELECT * FROM registrer_inndata_lastet"
-                  "(%s,%s,%s,%s,%s,%s,%s)",
-                  (tenant, jti, 10, "a" * 64, key_id, b"n" * 12,
-                   _lagersti(tenant)))
+        rad = c.execute(
+            "SELECT inndata_id, lager_sti FROM reserver_inndata"
+            "(%s,%s,%s,%s,%s)",
+            (tenant, "m57_ats", "soknadsbunt", MAKS,
+             secrets.token_hex(12))).fetchone()
         c.commit()
     finally:
         c.close()
+    # Den lovlige halvdelen: fødselen gikk, og på kontraktens form.
+    assert rad[1] == f"{tenant}/{rad[0]}.bin", rad
     m = _migrator(tenant)
     try:
-        # Tabellen bærer det samme skillet, uansett skrivevei.
-        with pytest.raises(psycopg.errors.CheckViolation):
-            m.execute(
-                "INSERT INTO inndata_artefakt (tenant, eiermodul, formaal,"
-                " innholdstype, maks_bytes, faktiske_bytes, innhold_sha256,"
-                " key_id, nonce, lager_sti, status, reservasjon_jti,"
-                " idempotensnokkel, utloper, lastet_ts)"
-                " VALUES (%s,'m57_ats','soknadsbunt','application/zip',"
-                "%s,10,%s,%s,%s,%s,'lastet',%s,%s,"
-                " now()+interval '1 h',now())",
-                (tenant, MAKS, "a" * 64, key_id, b"n" * 12,
-                 f"{tenant}/..", secrets.token_hex(32),
-                 secrets.token_hex(12)))
-        m.rollback()
+        # Den giftige: traversering i FILNAVN-leddet, samme tenant.
+        for sti in (f"{tenant}/..", f"{tenant}/../x.bin", f"{tenant}/."):
+            with pytest.raises(psycopg.errors.CheckViolation):
+                m.execute(
+                    "INSERT INTO inndata_artefakt (tenant, eiermodul,"
+                    " formaal, innholdstype, maks_bytes, reservasjon_jti,"
+                    " idempotensnokkel, lager_sti, utloper)"
+                    " VALUES (%s,'m57_ats','soknadsbunt','application/zip',"
+                    "%s,%s,%s,%s,now()+interval '1 h')",
+                    (tenant, MAKS, secrets.token_hex(32),
+                     secrets.token_hex(12), sti))
+            m.rollback()
+            _kontekst(m, tenant)
     finally:
         m.close()
 
 
 @pg
 def test_to_rader_kan_ikke_dele_den_samme_fysiske_bunten(klient):
-    """Codex P1: navnerommet sier HVOR stien kan peke, ikke at ingen
-    annen rad peker samme sted.
+    """Codex P1 (058) + B-maskinen (#192, 059): navnerommet sier HVOR
+    stien kan peke, ikke at ingen annen rad peker samme sted.
 
-    `disponit` har SELECT på tabellen og EXECUTE på
-    `registrer_inndata_lastet`, så en kaller kunne lese en eksisterende
-    rads sti, hash, key_id og nonce og registrere sin EGEN reservasjon på
-    nøyaktig dem. Da bar to «engangs»-artefakter den samme fysiske
-    bunten: de kan bindes til hvert sitt oppdrag — indeksen
-    `inndata_artefakt_oppdrag` er per oppdrag, ikke per fil — og
-    ryddingen av den ene sletter ciphertexten den andre fortsatt
-    refererer. Ingen av de øvrige invariantene ser aliaset; begge radene
-    er komplette.
+    Under 058 kunne en kaller med EXECUTE lese en eksisterende rads sti
+    og registrere sin egen reservasjon på nøyaktig den — to
+    «engangs»-artefakter bar samme fysiske bunt, og ryddingen av den ene
+    slettet ciphertexten den andre refererte. B-maskinen lukket den døren:
+    stien fødes som `<tenant>/<inndata_id>.bin`, og `inndata_id` er
+    PRIMARY KEY, så dørens stier KAN ikke kollidere.
 
-    MUTASJONEN SOM DREPER DENNE: fjern `inndata_lagersti_unik`."""
-    from db import kryptering
+    `inndata_lagersti_unik` består som vakt i dybden mot enhver annen
+    skrivevei, og begge lagene måles: dørens fødsler er parvis ulike, og
+    indeksen feller et direkte alias.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `inndata_lagersti_unik`, eller la
+    fødselsstien bygges av noe som kan gjenta seg."""
     tenant, _bid, _cookie, _csrf = _rigg(klient)
-    m = _migrator(tenant)
-    try:
-        forste, andre = _reservasjon(m, tenant), _reservasjon(m, tenant)
-        key_id, _dek = kryptering.hent_eller_opprett_aktiv_dek(m, tenant)
-        m.commit()
-    finally:
-        m.close()
-    delt = _lagersti(tenant, "delt")
     c = _runtime(tenant)
     try:
-        c.execute("SELECT * FROM registrer_inndata_lastet"
-                  "(%s,%s,%s,%s,%s,%s,%s)",
-                  (tenant, forste, 10, "a" * 64, key_id, b"n" * 12, delt))
-        c.commit()
-        _kontekst(c, tenant)
-        # Samme fil, en ANNEN reservasjon: aliaset avvises av indeksen —
-        # `unique_violation`, altså den kanoniske `inndata_alt_lastet`.
-        with pytest.raises(psycopg.errors.UniqueViolation):
-            c.execute("SELECT * FROM registrer_inndata_lastet"
-                      "(%s,%s,%s,%s,%s,%s,%s)",
-                      (tenant, andre, 10, "a" * 64, key_id, b"n" * 12,
-                       delt))
-        c.rollback()
-        _kontekst(c, tenant)
-        # Den andre reservasjonen er UBRENT: en avvist registrering skal
-        # ikke koste kunden bunten. Og en EGEN sti går fortsatt igjennom.
-        c.execute("SELECT * FROM registrer_inndata_lastet"
-                  "(%s,%s,%s,%s,%s,%s,%s)",
-                  (tenant, andre, 10, "a" * 64, key_id, b"n" * 12,
-                   _lagersti(tenant, "egen")))
+        stier = [c.execute(
+            "SELECT lager_sti FROM reserver_inndata(%s,%s,%s,%s,%s)",
+            (tenant, "m57_ats", "soknadsbunt", MAKS,
+             secrets.token_hex(12))).fetchone()[0] for _ in range(2)]
         c.commit()
     finally:
         c.close()
+    assert stier[0] != stier[1], "to fødsler delte sti"
+    delt = _lagersti(tenant, "delt")
+    m = _migrator(tenant)
+    try:
+        _lastet(m, tenant, sti=delt)
+        m.commit()
+        _kontekst(m, tenant)
+        # Aliaset: en ANNEN rad på samme fysiske fil avvises av indeksen.
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            _lastet(m, tenant, sti=delt)
+        m.rollback()
+        _kontekst(m, tenant)
+        # …og en EGEN sti går fortsatt igjennom.
+        _lastet(m, tenant, sti=_lagersti(tenant, "egen"))
+        m.commit()
+    finally:
+        m.close()
 
 
 @pg
@@ -1430,26 +1416,20 @@ def test_bindingen_avleder_eiermodulen_fra_oppdraget(klient):
     m = _migrator(tenant)
     try:
         bunt = _lastet(m, tenant)
-        fremmed = _oppdrag(m, tenant, "m_wcag_audit")
-        eget = _oppdrag(m, tenant, "m57_ats")
         m.commit()
-    finally:
-        m.close()
-    c = _runtime(tenant)
-    try:
+        # Angrepet i oppdragets fødselstransaksjon (X1), så det er
+        # eiermodul-avledningen som feller — ikke transaksjonsporten.
+        _kontekst(m, tenant)
+        fremmed = _oppdrag(m, tenant, "m_wcag_audit")
         with pytest.raises(psycopg.errors.InvalidParameterValue):
-            c.execute("SELECT bind_inndata(%s,%s,%s,%s)",
-                      (tenant, bunt, fremmed, "m57_ats"))
-        c.rollback()
+            _bind(m, tenant, bunt, fremmed, "m57_ats")
+        m.rollback()
         # …og den ekte kombinasjonen går fortsatt igjennom.
-        _kontekst(c, tenant)
-        c.execute("SELECT bind_inndata(%s,%s,%s,%s)",
-                  (tenant, bunt, eget, "m57_ats"))
-        c.commit()
-    finally:
-        c.close()
-    m = _migrator(tenant)
-    try:
+        _kontekst(m, tenant)
+        eget = _oppdrag(m, tenant, "m57_ats")
+        _bind(m, tenant, bunt, eget)
+        m.commit()
+        _kontekst(m, tenant)
         assert m.execute("SELECT status, oppdrag_id FROM inndata_artefakt"
                          " WHERE tenant=%s AND inndata_id=%s",
                          (tenant, bunt)).fetchone() == ("bundet", eget)
@@ -1480,27 +1460,21 @@ def test_bindingen_krever_formaalets_konsumerende_oppdragstype(klient):
     m = _migrator(tenant)
     try:
         bunt = _lastet(m, tenant)
-        # Eid av RIKTIG modul, men en type hvis kontrakt ikke leser bunter.
+        m.commit()
+        # Eid av RIKTIG modul, men en type hvis kontrakt ikke leser bunter
+        # — i oppdragets fødselstransaksjon (X1), så det er
+        # konsument-porten som feller.
+        _kontekst(m, tenant)
         feil_type = _oppdrag(m, tenant, "m57_ats",
                              oppdragstype="rekruttering.utsending")
-        riktig = _oppdrag(m, tenant, "m57_ats")
-        m.commit()
-    finally:
-        m.close()
-    c = _runtime(tenant)
-    try:
         with pytest.raises(psycopg.errors.InvalidParameterValue):
-            c.execute("SELECT bind_inndata(%s,%s,%s,%s)",
-                      (tenant, bunt, feil_type, "m57_ats"))
-        c.rollback()
-        _kontekst(c, tenant)
-        c.execute("SELECT bind_inndata(%s,%s,%s,%s)",
-                  (tenant, bunt, riktig, "m57_ats"))
-        c.commit()
-    finally:
-        c.close()
-    m = _migrator(tenant)
-    try:
+            _bind(m, tenant, bunt, feil_type)
+        m.rollback()
+        _kontekst(m, tenant)
+        riktig = _oppdrag(m, tenant, "m57_ats")
+        _bind(m, tenant, bunt, riktig)
+        m.commit()
+        _kontekst(m, tenant)
         # Bunten er urørt av det avviste forsøket og bundet til den ekte.
         assert m.execute("SELECT status, oppdrag_id FROM inndata_artefakt"
                          " WHERE tenant=%s AND inndata_id=%s",
@@ -1533,33 +1507,31 @@ def test_bindingen_avviser_terminalt_oppdrag(klient, terminal):
     m = _migrator(tenant)
     try:
         dod, levende = _lastet(m, tenant), _lastet(m, tenant)
+        m.commit()
+        # Terminalen settes i SAMME transaksjon som oppdraget fødes (X1):
+        # `age(xmin)` teller innsettingens transaksjon, så statusporten er
+        # fortsatt den som feller — ikke transaksjonsporten.
+        _kontekst(m, tenant)
         opp_dod = _oppdrag(m, tenant, "m57_ats")
-        opp_levende = _oppdrag(m, tenant, "m57_ats")
         m.execute("UPDATE oppdrag SET status=%s WHERE tenant=%s AND id=%s",
                   (terminal, tenant, opp_dod))
-        m.commit()
-    finally:
-        m.close()
-    c = _runtime(tenant)
-    try:
         with pytest.raises(psycopg.errors.InvalidParameterValue):
-            c.execute("SELECT bind_inndata(%s,%s,%s,%s)",
-                      (tenant, dod, opp_dod, "m57_ats"))
-        c.rollback()
-        _kontekst(c, tenant)
+            _bind(m, tenant, dod, opp_dod)
+        m.rollback()
+        _kontekst(m, tenant)
         # Kontrollarmen: porten stenger det terminale, ikke den ekte veien.
-        c.execute("SELECT bind_inndata(%s,%s,%s,%s)",
-                  (tenant, levende, opp_levende, "m57_ats"))
-        c.commit()
-        _kontekst(c, tenant)
+        opp_levende = _oppdrag(m, tenant, "m57_ats")
+        _bind(m, tenant, levende, opp_levende)
+        m.commit()
+        _kontekst(m, tenant)
         rader = dict(
-            (r[0], r[1:]) for r in c.execute(
+            (r[0], r[1:]) for r in m.execute(
                 "SELECT inndata_id, status, oppdrag_id FROM inndata_artefakt"
                 " WHERE tenant=%s AND inndata_id = ANY(%s)",
                 (tenant, [dod, levende])).fetchall())
-        c.rollback()
+        m.rollback()
     finally:
-        c.close()
+        m.close()
     # Den avviste bunten står UBRENT — et avvist forsøk koster ingenting.
     assert rader[dod] == ("lastet", None)
     assert rader[levende] == ("bundet", opp_levende)
@@ -1578,22 +1550,29 @@ def test_en_bunt_ett_oppdrag(klient):
     m = _migrator(tenant)
     try:
         en, to = _lastet(m, tenant), _lastet(m, tenant)
-        opp = _oppdrag(m, tenant, "m57_ats")
         m.commit()
+        # Begge bindingene i oppdragets fødselstransaksjon (X1) — det er
+        # den ENESTE transaksjonen der to bunter overhodet kan forsøkes
+        # mot samme oppdrag, og indeksen skal felle den andre der.
+        _kontekst(m, tenant)
+        opp = _oppdrag(m, tenant, "m57_ats")
+        _bind(m, tenant, en, opp)
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            _bind(m, tenant, to, opp)
+        m.rollback()
+        # Rollbacken over tok også den første bindingen — den ekte veien
+        # bekreftes committet, ellers målte armen bare abort-økonomien.
+        _kontekst(m, tenant)
+        opp = _oppdrag(m, tenant, "m57_ats")
+        _bind(m, tenant, en, opp)
+        m.commit()
+        _kontekst(m, tenant)
+        assert m.execute("SELECT status, oppdrag_id FROM inndata_artefakt"
+                         " WHERE tenant=%s AND inndata_id=%s",
+                         (tenant, en)).fetchone() == ("bundet", opp)
+        m.rollback()
     finally:
         m.close()
-    c = _runtime(tenant)
-    try:
-        c.execute("SELECT bind_inndata(%s,%s,%s,%s)",
-                  (tenant, en, opp, "m57_ats"))
-        c.commit()
-        _kontekst(c, tenant)
-        with pytest.raises(psycopg.errors.UniqueViolation):
-            c.execute("SELECT bind_inndata(%s,%s,%s,%s)",
-                      (tenant, to, opp, "m57_ats"))
-        c.rollback()
-    finally:
-        c.close()
 
 
 @pg
@@ -1608,18 +1587,50 @@ def test_bindingen_avviser_utlopt_bunt(klient):
     m = _migrator(tenant)
     try:
         bunt = _lastet(m, tenant, utloper="now() - interval '1 second'")
-        opp = _oppdrag(m, tenant, "m57_ats")
         m.commit()
+        # I fødselstransaksjonen (X1), så det er utløpet som feller.
+        _kontekst(m, tenant)
+        opp = _oppdrag(m, tenant, "m57_ats")
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            _bind(m, tenant, bunt, opp)
+        m.rollback()
     finally:
         m.close()
-    c = _runtime(tenant)
+
+
+@pg
+def test_bindingen_krever_oppdragets_fodselstransaksjon(klient):
+    """X1-serialiseringen (#192): bindingen kan BARE skje i oppdragets
+    egen fødselstransaksjon.
+
+    058-kjedens runde 6 aksepterte vinduet der et committet oppdrag sto
+    plukkbart uten bunten sin; B-maskinen fjerner det ved konstruksjon —
+    `pg_catalog.age(o.xmin) = 0` betyr at oppdraget aldri har vært synlig
+    for noen andre når bunten festes, så «plukket uten bunt» kan ikke
+    observeres. Et oppdrag som alt er committet er dermed for alltid
+    utenfor bindingens rekkevidde, og et avvist forsøk skal ikke koste
+    kunden bunten.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `age(o.xmin) = 0`-porten i
+    `bind_inndata`."""
+    tenant, _bid, _cookie, _csrf = _rigg(klient)
+    m = _migrator(tenant)
     try:
+        bunt = _lastet(m, tenant)
+        opp = _oppdrag(m, tenant, "m57_ats")
+        m.commit()          # oppdraget er født og synlig — for sent.
+        _kontekst(m, tenant)
         with pytest.raises(psycopg.errors.InvalidParameterValue):
-            c.execute("SELECT bind_inndata(%s,%s,%s,%s)",
-                      (tenant, bunt, opp, "m57_ats"))
-        c.rollback()
+            _bind(m, tenant, bunt, opp)
+        m.rollback()
+        _kontekst(m, tenant)
+        # Bunten står UBRENT etter avvisningen.
+        assert m.execute("SELECT status, oppdrag_id FROM inndata_artefakt"
+                         " WHERE tenant=%s AND inndata_id=%s",
+                         (tenant, bunt)).fetchone() == ("lastet", None)
+        m.rollback()
     finally:
-        c.close()
+        m.close()
 
 
 @pg
@@ -1667,7 +1678,11 @@ def test_execute_gis_ogsaa_til_kjorerens_konfigurerte_runtimerolle():
     import re
     from pathlib import Path
     rot = Path(__file__).resolve().parents[3]
-    sql = (rot / "platform/core/db/migrations/058_inndata_artefakt.sql"
+    # 059 (B-maskinen) DROPper og gjenskaper dørene med nye signaturer og
+    # re-granter dem — det er DEN filen som eier kontrakten nå. En port
+    # som fortsatt leste 058 ville krevd at migrer.py beholdt en grant
+    # for en signatur som ikke lenger finnes.
+    sql = (rot / "platform/core/db/migrations/059_b_maskinen.sql"
            ).read_text(encoding="utf-8")
     kjorer = (rot / "deploy/staging/migrer.py").read_text(encoding="utf-8")
     rettigheter = kjorer.split('RETTIGHETER = """', 1)[1].split('"""', 1)[0]
@@ -1681,8 +1696,8 @@ def test_execute_gis_ogsaa_til_kjorerens_konfigurerte_runtimerolle():
         return {" ".join(s.split()) for s in funnet}
 
     doerene = signaturer(sql, "disponit")
-    assert doerene, "058 gir ingen EXECUTE — porten ville vært blind"
+    assert doerene, "059 gir ingen EXECUTE — porten ville vært blind"
     mangler = doerene - signaturer(rettigheter, r"\{rolle\}")
     assert not mangler, (
-        "058-dører uten grant i migrer.py sin RETTIGHETER-blokk: "
+        "059-dører uten grant i migrer.py sin RETTIGHETER-blokk: "
         + ", ".join(sorted(mangler)))
