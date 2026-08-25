@@ -84,6 +84,45 @@ def _git_blob(commit: str, sti: str) -> str | None:
     return r.stdout.decode("utf-8") if r.returncode == 0 else None
 
 
+def _kjor_git(*argv):
+    """Modulnivå-kjører så porter kan patche og spore argv (P2-2, #199)."""
+    return subprocess.run(["git", "-C", str(ROT), *argv],
+                          capture_output=True)
+
+
+def test_dybdevalget_korrumperer_ikke_full_klon():
+    """Speilet fra fasit-porten (Cursor P2-1/P2-2, #199): projeksjons-
+    portens fetch går gjennom `_kjor_git`, og dybdeflagget må følge
+    miljøet — aldri stå ubetinget."""
+    global _kjor_git
+    ekte = _kjor_git
+
+    class _Svar:
+        def __init__(self, stdout=b""):
+            self.returncode = 0
+            self.stdout = stdout
+
+    for grunn, ventet in ((b"false\n", False), (b"true\n", True)):
+        hentinger = []
+
+        def falsk(*argv, _h=hentinger, _g=grunn):
+            if argv[:2] == ("rev-parse", "--is-shallow-repository"):
+                return _Svar(_g)
+            if argv[0] == "fetch":
+                _h.append(argv)
+                return _Svar()
+            raise AssertionError(f"uventet git-kall: {argv}")
+
+        _kjor_git = falsk
+        try:
+            _hent_commit("f" * 40)
+        finally:
+            _kjor_git = ekte
+        assert len(hentinger) == 1, hentinger
+        assert ("--depth=1" in hentinger[0]) is ventet, (
+            f"grunt={ventet}: fetch-argv {hentinger[0]}")
+
+
 def _hent_commit(commit: str) -> None:
     """Utdyper den grunne utsjekkingen med NØYAKTIG denne ene commiten.
 
@@ -92,9 +131,17 @@ def _hent_commit(commit: str) -> None:
     og en `--depth=1`-henting av selve sha-en koster ett objektsett og
     utvider ikke historikken ellers. Feiler den (offline), sier porten
     under fra; den passerer ikke stille.
+
+    Dybdeflagget er BETINGET (målt 24-25/8, to ganger): mot en FULL klon
+    skriver `fetch --depth=1` en `.git/shallow`-fil og gjør hele det delte
+    objektlageret grunt — lokale worktrees mistet nåbare objekter og
+    bundle-backupen døde med «remote did not send all necessary objects».
+    I CI-utsjekkingen (som alt ER grunn) beholdes dybde 1; i et fullt
+    miljø hentes uten flagg, som ikke koster mer der historikken alt
+    finnes.
     """
-    subprocess.run(["git", "-C", str(ROT), "fetch", "--quiet", "--depth=1",
-                    "origin", commit], capture_output=True)
+    from tests._git_dybde import dybde
+    _kjor_git("fetch", "--quiet", *dybde(_kjor_git), "origin", commit)
 
 
 def test_pinnene_er_akseptcommitens_egne_projeksjoner():
@@ -108,7 +155,7 @@ def test_pinnene_er_akseptcommitens_egne_projeksjoner():
     NØYAKTIG der den betyr noe: en pin skrevet etter hukommelsen slipper
     gjennom en CI som aldri leste akseptcommiten.
 
-    Mangler commiten, hentes den derfor — `--depth=1` på selve sha-en, som
+    Mangler commiten, hentes den derfor — BETINGET `--depth=1` (se over), som
     er nåbar fra `main`. Er den fortsatt borte, er porten RØD: en pin som
     ikke kan måles mot innsjekkede bytes er ikke en bevist pin."""
     for mod, info in AKSEPTERTE_GENERASJONER.items():
