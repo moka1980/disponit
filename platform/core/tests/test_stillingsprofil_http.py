@@ -95,6 +95,11 @@ def test_ugyldige_kravsett_avvises_uten_spor(klient, miljo):
     for kropp in (
         {"navn": "X", "krav": [{"kravnavn": "A", "vekt": 11}]},
         {"navn": "X", "krav": [{"kravnavn": "A", "vekt": -1}]},
+        # Cursor P2-1: utenfor PostgreSQLs `integer` traff `::int`-
+        # casten i døren FØR CHECKen — 22003 er ikke mappet i HTTP-
+        # laget, så dommen ble 500. Skalasjekken i døren feller den nå.
+        {"navn": "X", "krav": [{"kravnavn": "A", "vekt": 99999999999}]},
+        {"navn": "X", "krav": [{"kravnavn": "A", "vekt": -99999999999}]},
         {"navn": "X", "krav": [{"kravnavn": "A", "vekt": 2},
                                {"kravnavn": "A", "vekt": 3}]},
         {"navn": "X", "krav": []},

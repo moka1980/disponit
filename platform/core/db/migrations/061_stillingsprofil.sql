@@ -181,12 +181,19 @@ BEGIN
                 ' (tekst) og vekt (tall)', v_i
                 USING ERRCODE = 'invalid_parameter_value';
         END IF;
-        -- HELTALL, ikke avrunding (CodeRabbit major): 2.7 skal avvises,
-        -- aldri stille bli 3 — vekten er kundens eksplisitte valg.
+        -- HELTALL OG I SKALAEN (CodeRabbit major + Cursor P2-1): 2.7
+        -- skal avvises, aldri stille bli 3 — vekten er kundens
+        -- eksplisitte valg. Skalaen dømmes HER, ikke bare av CHECKen
+        -- på kolonnen: `::numeric::int` under kjører FØR CHECKen, så en
+        -- vekt utenfor int-området (99999999999) ga 22003
+        -- (numeric_value_out_of_range) — en SQLSTATE HTTP-laget ikke
+        -- mapper, altså 500 der kontrakten er 400. CHECKen står igjen
+        -- som dybdeforsvar for skrivere utenom døren.
         IF (r.elem->>'vekt')::numeric <> trunc((r.elem->>'vekt')::numeric)
+           OR (r.elem->>'vekt')::numeric NOT BETWEEN 0 AND 10
         THEN
             RAISE EXCEPTION 'stillingsprofil: vekten i krav % må være et'
-                ' heltall', v_i
+                ' heltall 0–10', v_i
                 USING ERRCODE = 'invalid_parameter_value';
         END IF;
         INSERT INTO public.stillingsprofil_krav
