@@ -197,6 +197,21 @@ def _git(*argv):
                           capture_output=True)
 
 
+def _dybde() -> list[str]:
+    """`--depth=1` KUN når repoet alt er grunt (CI-utsjekkingen).
+
+    Dybdeflagget er BETINGET (målt 24-25/8, to ganger): mot en FULL klon
+    skriver `fetch --depth=1` en `.git/shallow`-fil og gjør hele det delte
+    objektlageret grunt — lokale worktrees mistet nåbare objekter og
+    bundle-backupen døde med «remote did not send all necessary objects».
+    I CI-utsjekkingen (som alt ER grunn) beholdes dybde 1; i et fullt
+    miljø hentes uten flagg, som ikke koster mer der historikken alt
+    finnes.
+    """
+    r = _git("rev-parse", "--is-shallow-repository")
+    return ["--depth=1"] if r.stdout.decode().strip() == "true" else []
+
+
 def _basiscommit() -> str:
     """`main` sin sha, alltid friskt hentet inn i den grunne utsjekkingen.
 
@@ -220,7 +235,7 @@ def _basiscommit() -> str:
     tidligere fetch i samme miljø); lykkes ikke det heller, er basisen
     uløst, og porten under sier fra — den passerer ikke stille.
     """
-    _git("fetch", "--quiet", "--depth=1", "origin", "main")
+    _git("fetch", "--quiet", *_dybde(), "origin", "main")
     r = _git("rev-parse", "--verify", "--quiet", "origin/main^{commit}")
     return r.stdout.decode().strip() if r.returncode == 0 else ""
 
@@ -385,6 +400,10 @@ def test_pin_endret_i_takt_med_filen_felles_mot_basisgrenen():
             # bare rev-parse-et etterpå. Simulerer et miljø der nettet
             # virker; en negativtest for offline-stien dekkes ikke her.
             return _Svar(0)
+        if argv[:2] == ("rev-parse", "--is-shallow-repository"):
+            # `_dybde()` sin miljøsjekk — svaret styrer bare om fetch-en
+            # over får `--depth=1`; begge veiene ender i samme fetch-gren.
+            return _Svar(0, b"false\n")
         if argv[:2] == ("rev-parse", "--verify"):
             return _Svar(0, b"f" * 40 + b"\n")
         if argv[:2] == ("cat-file", "-e"):
@@ -444,7 +463,7 @@ def _anker_avvik():
     commit = _basiscommit()
     if not commit:
         return ["main uhentbar — ankeret kan ikke måles"]
-    _git("fetch", "--quiet", "--depth=1", "origin", AKSEPTCOMMIT_056)
+    _git("fetch", "--quiet", *_dybde(), "origin", AKSEPTCOMMIT_056)
     hash_056 = _blobhash(AKSEPTCOMMIT_056,
                          "platform/core/db/migrations/" + HENDELSEN_056)
     if hash_056 is None:
@@ -515,6 +534,10 @@ def test_ankerporten_feller_i_takt_angrepet_gjennom_egen_loype():
     def falsk_git(*argv):
         if argv[0] == "fetch":
             return _Svar(0)
+        if argv[:2] == ("rev-parse", "--is-shallow-repository"):
+            # `_dybde()` sin miljøsjekk — svaret styrer bare om fetch-en
+            # over får `--depth=1`; begge veiene ender i samme fetch-gren.
+            return _Svar(0, b"false\n")
         if argv[:2] == ("rev-parse", "--verify"):
             return _Svar(0, b"f" * 40 + b"\n")
         if argv[:2] == ("cat-file", "-e"):

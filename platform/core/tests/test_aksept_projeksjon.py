@@ -92,8 +92,20 @@ def _hent_commit(commit: str) -> None:
     og en `--depth=1`-henting av selve sha-en koster ett objektsett og
     utvider ikke historikken ellers. Feiler den (offline), sier porten
     under fra; den passerer ikke stille.
+
+    Dybdeflagget er BETINGET (målt 24-25/8, to ganger): mot en FULL klon
+    skriver `fetch --depth=1` en `.git/shallow`-fil og gjør hele det delte
+    objektlageret grunt — lokale worktrees mistet nåbare objekter og
+    bundle-backupen døde med «remote did not send all necessary objects».
+    I CI-utsjekkingen (som alt ER grunn) beholdes dybde 1; i et fullt
+    miljø hentes uten flagg, som ikke koster mer der historikken alt
+    finnes.
     """
-    subprocess.run(["git", "-C", str(ROT), "fetch", "--quiet", "--depth=1",
+    grunn = subprocess.run(
+        ["git", "-C", str(ROT), "rev-parse", "--is-shallow-repository"],
+        capture_output=True).stdout.decode().strip() == "true"
+    dybde = ["--depth=1"] if grunn else []
+    subprocess.run(["git", "-C", str(ROT), "fetch", "--quiet", *dybde,
                     "origin", commit], capture_output=True)
 
 
