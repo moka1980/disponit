@@ -35,8 +35,45 @@ ALTER TABLE inndata_artefakt DROP CONSTRAINT inndata_tilstand_totalt;
 --   CONSTRAINT skanner HELE tabellen — porten hadde altså feilet på rader
 --   ingen migrasjonssetning kunne se. (`sett tilstanden testen krever`-
 --   klassen, bare i SQL.)
+--
+-- MEN IKKE ENHVER TENANT KAN FÅ EN STI (Codex P1 på #196). `lager_sti`
+-- er fortsatt bevoktet av `inndata_lagersti_navnerom` (058:170-178), og
+-- den CHECKen måler TENANTLEDDET: `tenant NOT IN ('.','..')` og
+-- `position('/' in tenant) = 0`. Under 058 var stien NULL mens raden sto
+-- `reservert`, så CHECKen sov — en tenant-ID med `/` i seg (eller
+-- nøyaktig `.`/`..`) kunne reservere fritt, og `deploy/staging/
+-- init-tenant.sh` tar argumentet uten stikomponent-sjekk. Å gi den raden
+-- `<tenant>/<uuid>.bin` her ville brutt navneroms-CHECKen umiddelbart og
+-- RULLET HELE 059 TILBAKE — inne i vedlikeholdsvinduet, for ALLE
+-- tenanter, på grunn av én ubrukelig. En backfill som kan felle
+-- oppgraderingen for alle andre er ikke en backfill, den er en mine.
+--
+-- De radene er dessuten alt døde og har alltid vært det: under 058 skrev
+-- `registrer_inndata_lastet` den samme stien, så opplastingen deres
+-- traff nøyaktig den samme CHECKen og ble avvist hver gang (058:157-163
+-- beskriver klassen). De kan ikke lastes, og med 059s reservert-arm kan
+-- de heller ikke stå. `forkastet` er den ærlige terminalen — den er den
+-- ENE tilstanden som verken krever sti eller krypto, og reaperen
+-- behandler den alt som død. Ingen tenant mister noe som kunne blitt
+-- brukt; det ubrukelige navnerommet er tenantens egen feil å rette, og
+-- rettes den, virker neste reservasjon.
 ALTER TABLE inndata_artefakt DISABLE TRIGGER inndata_artefakt_vakt;
 ALTER TABLE inndata_artefakt NO FORCE ROW LEVEL SECURITY;
+DO $$
+DECLARE v_ulovlige INT;
+BEGIN
+    UPDATE public.inndata_artefakt
+       SET status = 'forkastet'
+     WHERE status = 'reservert' AND lager_sti IS NULL
+       AND (tenant IN ('.', '..') OR position('/' in tenant) > 0);
+    GET DIAGNOSTICS v_ulovlige = ROW_COUNT;
+    IF v_ulovlige > 0 THEN
+        RAISE NOTICE '059: % reservasjon(er) i tenanter med ulovlig'
+            ' stikomponent forkastet — de kunne aldri lastes opp under'
+            ' 058 heller, og en fødselssti til dem ville felt hele'
+            ' migrasjonen', v_ulovlige;
+    END IF;
+END $$;
 UPDATE inndata_artefakt
    SET lager_sti = tenant || '/' || inndata_id::text || '.bin'
  WHERE status = 'reservert' AND lager_sti IS NULL;
