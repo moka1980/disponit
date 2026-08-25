@@ -11,7 +11,7 @@
 ## Cursor pre-Codex (steg 4) — før Codex
 - [ ] `@cursor review` kjørt (eller PR markert ready_for_review / label `pre-codex`)
 - [ ] Cursor-PASS, eller alle P1/P2 fra Cursor lukket + verifiseringspass
-- [ ] Ingen `@codex review` før Cursor-PASS
+- [ ] Ingen `@codex review` før Cursor-PASS (eneste unntak: RUTINER §11.3, ikke i kraft ennå)
 
 ## Codex merge-porter (steg 5)
 - [ ] CI grønn — inkludert negative policytester (ingen fjernet/svekket)
