@@ -62,11 +62,14 @@ jobs:
     # `chatgpt-codex-connector[bot]` (#199-verdiktet). Eier-reviews
     # krever `approved` (Cursor P2-2): `types: [submitted]` dekker også
     # `commented`, og en tilfeldig eier-kommentar er ikke et verdikt.
+    # Review-grenen er KUN eier+approved (Cursor P1-1 runde 11): botens
+    # verdikter kommer som issue_comment (målt — se kvote-notatet over),
+    # og en bar login-match på review-kanalen sto uten kvote-filter og
+    # uten state-krav. Kanalen bot-en faktisk bruker bærer filteret.
     if: >-
       (github.event_name == 'pull_request_review' &&
-       ((github.event.review.user.login == 'moka1980' &&
-         github.event.review.state == 'approved') ||
-        github.event.review.user.login == 'chatgpt-codex-connector[bot]')) ||
+       github.event.review.user.login == 'moka1980' &&
+       github.event.review.state == 'approved') ||
       (github.event_name == 'issue_comment' &&
        github.event.issue.pull_request &&
        github.event.comment.user.login == 'chatgpt-codex-connector[bot]' &&
@@ -632,7 +635,9 @@ jobs:
                (CI-ventingen er et vindu; en push der gir Codex en HEAD
                Cursor aldri bandt til passet). Fortsatt samme SHA → post
                `@codex review`. Flyttet → `@cursor review` i stedet.
-               Stopp.
+               Stopp. MERGE ALDRI fra denne jobben (`gh pr merge` er
+               forbudt her, som i mention): merge eies av fiks-og-merge
+               alene, etter rent verdikt gjennom §10-kjeden.
             5. Eskaleringer som trenger eier-dom: en alt FELT dom-klasse
                dekker punktet BARE med sitatlinje i PR-tråden på formen
                `dom-klasse: <id> · felt i #<nr> · <URL>` (RUTINER §11.1)

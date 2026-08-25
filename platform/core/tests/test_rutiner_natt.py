@@ -442,3 +442,33 @@ def test_asymmetrien_pass_vs_verdikt_er_dokumentert():
     assert "Asymmetrien mot §10s pass-binding er BEVISST" in RUTINER
     assert "billig og kvotefritt" in RUTINER
     assert "dyr og kvotebelagt" in RUTINER
+
+
+def test_kvoten_filteret_er_prefiks_ikke_contains():
+    """Cursor P2-2 runde 11 (#198): filteret som stopper ureviewet merge
+    ved tom lommebok (målt 2026-08-15) hadde ingen port — en «harmløs»
+    cleanup kunne fjernet det med grønn CI. Prefiks-formen er kravet:
+    contains ville også kastet ekte verdikter som DISKUTERER kvoter."""
+    fiks = _uttrykk(_jobb("fiks-og-merge").split("steps:")[0])
+    assert ("startsWith(github.event.comment.body, 'Codex usage limits"
+            " have been reached')" in fiks), "kvote-filteret mangler"
+    assert "contains(github.event.comment.body, 'usage limits')" not in fiks
+
+
+def test_review_grenen_er_kun_eier_approved():
+    """Cursor P1-1 runde 11 (#198): botens verdikter kommer som
+    issue_comment — review-grenen skal ikke bære en bar login-match uten
+    kvote-filter og state-krav."""
+    fiks = _uttrykk(_jobb("fiks-og-merge").split("steps:")[0])
+    review = fiks.split("pull_request_review'")[1].split("issue_comment")[0]
+    assert "chatgpt-codex-connector" not in review, (
+        "boten er tilbake på review-kanalen uten filter")
+    assert "approved" in review
+
+
+def test_broen_forbyr_merge_som_mention():
+    """Cursor P2-1 runde 11 (#198): broen vekkes automatisk og har
+    write + gh pr:* — merge-forbudet fra mention må speiles."""
+    fulgt = " ".join(_jobb("cursor-pass-fulgt").split())
+    assert "MERGE ALDRI" in fulgt
+    assert "gh pr merge` er forbudt" in fulgt
