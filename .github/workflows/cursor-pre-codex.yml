@@ -188,3 +188,19 @@ jobs:
         if: always()
         run: |
           gh pr edit "$PR" --remove-label pre-codex 2>/dev/null || true
+
+      # #188: passets kommentar postes med GITHUB_TOKEN, og GitHub
+      # undertrykker events fra den — @claude-omtalen vekker aldri
+      # sløyfa. Broen er workflow_run: claude.yml lytter på at DENNE
+      # workflowen fullfører, og trenger PR-nummeret — det reiser som
+      # artifakt (payloaden for workflow_run bærer det ikke for
+      # kommentar-utløste kjøringer).
+      - name: PR-nummer som artifakt (workflow_run-broen, #188)
+        if: always()
+        run: printf '%s' "$PR" > /tmp/pr-nummer.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr-nummer
+          path: /tmp/pr-nummer.txt
+          retention-days: 1
