@@ -161,3 +161,24 @@ lost») på et forsøk til, gå rett på `@codex review` og noter det i tråden.
 **Secret:** `CURSOR_API_KEY` må ligge i repo-secrets (Cursor Dashboard →
 API Keys). GitHub App-installasjonen gir repo-tilgang; Actions trenger
 nøkkelen for å starte agenten.
+
+## 11. Nattregler (ratifisert av eier 25/8 — «beslutninger tas uten meg om natta»)
+
+Om natten sover både eier og Claude Codes lokale økt; skyen er alene.
+Tre regler gjør natten produktiv uten at noen ringer på:
+
+1. **Dom-klasse-regelen.** Et utsatt punkt som ordrett matcher en
+   ALLEREDE FELT dom-klasse (samme mekanisme, samme utfall — f.eks. «inn
+   i B-PR-en» for bindings-familien) trenger ingen fersk eier-dom.
+   Sløyfa noterer klassereferansen i sjekklisten og merger på rent
+   verdikt + grønn CI på eksakt head. Et punkt UTEN matchende klasse
+   parkerer PR-en som før — det er en ny dom, og nye dommer tas om
+   dagen. (Bakgrunn: natt 24→25/8 sto et vunnet verdikt uinnløst i åtte
+   timer fordi Z1 ventet på en dom som alt var felt for X1.)
+2. **Mandater bor i KOMMENTARER.** En ordre i en issue-KROPP trigger
+   ingen kjøring (samme utløser-klasse som §10s Bugbot-notat). Ethvert
+   nattmandat legges som egen kommentar med @-omtale.
+3. **Codex-only om natten.** Cursor-passene kan ikke vekke sløyfa
+   (#188) før PAT-fiksen er merget; om natten går kjeden implementer →
+   CI → `@codex review` → fiks → verdikt → merge, og Cursor tar igjen
+   hele flaten på dagtid med et catch-up-pass per merget PR.
