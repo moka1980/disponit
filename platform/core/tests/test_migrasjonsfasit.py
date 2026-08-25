@@ -208,8 +208,8 @@ def _dybde() -> list[str]:
     miljø hentes uten flagg, som ikke koster mer der historikken alt
     finnes.
     """
-    r = _git("rev-parse", "--is-shallow-repository")
-    return ["--depth=1"] if r.stdout.decode().strip() == "true" else []
+    from tests._git_dybde import dybde
+    return dybde(_git)
 
 
 def _basiscommit() -> str:
@@ -238,6 +238,46 @@ def _basiscommit() -> str:
     _git("fetch", "--quiet", *_dybde(), "origin", "main")
     r = _git("rev-parse", "--verify", "--quiet", "origin/main^{commit}")
     return r.stdout.decode().strip() if r.returncode == 0 else ""
+
+
+def test_dybdevalget_korrumperer_ikke_full_klon():
+    """Cursor P2-1 (#199): betingelsen i `_dybde` er bare målbar i det
+    miljøet der fiksen faktisk skiller seg — en regresjon til ubetinget
+    `--depth=1` ville vært grønn i CI (som ER grunn) mens fullklon-
+    korrumperingen kom tilbake lokalt. Porten sporer fetch-argv gjennom
+    `_basiscommit()` i begge grener.
+
+    MUTASJONEN SOM DREPER DENNE: `return ["--depth=1"]` ubetinget i
+    `_dybde`, eller et glemt `_dybde()`-kall i fetch-linjen."""
+    global _git
+    ekte_git = _git
+
+    class _Svar:
+        def __init__(self, returncode, stdout=b""):
+            self.returncode = returncode
+            self.stdout = stdout
+
+    for grunn, ventet in ((b"false\n", False), (b"true\n", True)):
+        hentinger = []
+
+        def falsk_git(*argv, _h=hentinger, _g=grunn):
+            if argv[:2] == ("rev-parse", "--is-shallow-repository"):
+                return _Svar(0, _g)
+            if argv[0] == "fetch":
+                _h.append(argv)
+                return _Svar(0)
+            if argv[:2] == ("rev-parse", "--verify"):
+                return _Svar(0, b"f" * 40 + b"\n")
+            raise AssertionError(f"uventet git-kall: {argv}")
+
+        _git = falsk_git
+        try:
+            _basiscommit()
+        finally:
+            _git = ekte_git
+        assert len(hentinger) == 1, hentinger
+        assert ("--depth=1" in hentinger[0]) is ventet, (
+            f"grunt={ventet}: fetch-argv {hentinger[0]}")
 
 
 def _basisfasit(commit: str) -> dict:
