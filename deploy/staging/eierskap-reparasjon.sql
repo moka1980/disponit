@@ -107,6 +107,20 @@ INSERT INTO _design VALUES
     -- FALSE`, saa `krev_tenantkontekst` (grantet til domene_eier) ville
     -- feilet med `permission denied` paa hver eneste reservasjon.
     ('FUNCTION', 'reserver_inndata(text,text,text,bigint,text)', 'disponit_domene_eier'),
+    -- 059 (B-maskinen, #192): `registrer_inndata_lastet` MISTET
+    -- `p_lager_sti` — stien foedes av doeren selv. Identiteten er
+    -- signaturen, saa raden foelger den nye formen. En rad paa den gamle
+    -- sju-argumenters formen hadde vaert toemt for mening: funksjonen
+    -- finnes ikke, og den EKTE doeren ville blitt klassifisert som
+    -- udesignet og flyttet til migratoren ved neste rerun.
+    ('FUNCTION', 'registrer_inndata_lastet(text,text,bigint,text,text,bytea)', 'disponit_domene_eier'),
+    -- 058->059 transitorisk (samme moenster som 015/052-radene): kjoerer
+    -- reparasjonen paa en base som ennaa staar paa 058, er det den GAMLE
+    -- sju-argumenters formen som finnes. Uten raden her ville steg 2
+    -- klassifisert den som udesignet og gitt den til migratoren — og 059,
+    -- som DROPper den under SET LOCAL ROLE disponit_domene_eier, ville
+    -- feilet paa eierskap. Etter 059 finnes ikke formen, og designrader
+    -- uten objekt hoppes stille over.
     ('FUNCTION', 'registrer_inndata_lastet(text,text,bigint,text,text,bytea,text)', 'disponit_domene_eier'),
     ('FUNCTION', 'bind_inndata(text,uuid,bigint,text)',     'disponit_domene_eier'),
     -- 044: periodisk kontroll — planens herdede funksjoner eies av claimer
