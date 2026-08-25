@@ -133,7 +133,11 @@ def test_broen_er_per_pr_og_feiler_hoyt():
     # artifakt og ingenting å følge opp. Grenen må være vaktet av en
     # faktisk skipped-sjekk, ikke stå fritt.
     assert "skipped" in hent, "skipped-oppstrøm-grenen mangler"
-    assert hent.count("exit 0") == 1, "bare skipped-grenen får exit 0"
+    # tell bare i UTTRYKKSLINJENE — forklarende kommentarer nevner exit 0
+    hent_uttrykk = "\n".join(l for l in hent.splitlines()
+                             if not l.lstrip().startswith("#"))
+    assert hent_uttrykk.count("exit 0") == 1, (
+        "bare skipped-grenen får exit 0")
     assert "--allowedTools" in fulgt, "broen mangler verktøyflaten"
     # Uttrykkslinjene alene — #197s forklarende kommentar NEVNER flagget.
     uttrykk = "\n".join(l for l in fulgt.splitlines()
@@ -352,3 +356,38 @@ def test_cancelled_stopper_alltid_stille():
     # negativt: cancelled-grenen skal ikke lenger koble seg til re-kø
     steg2 = fulgt.split("stopp STILLE, alltid")[0]
     assert "re-kø med én kommentar" not in steg2.split("cancelled")[-1]
+
+
+def test_mandatutstederen_er_speilet_begge_veier():
+    """Cursor P2-1 runde 8 (#198): maskinporten (kun moka1980) må stå i
+    §11.2 også — regel og port glir ellers fra hverandre (#193-klassen)."""
+    assert "KUN eier (`moka1980`)" in RUTINER
+    mention = _uttrykk(_jobb("mention").split("steps:")[0])
+    assert "github.event.comment.user.login == 'moka1980'" in mention
+
+
+def test_cursor_ute_regelen_har_samme_semantikk_begge_steder():
+    """Cursor P2-2 runde 8 (#198): §10 og bro-steg 2/4 må være enige —
+    re-kø én gang, andre transportfeil går rett på @codex review uten
+    pass/SHA-binding (det finnes intet pass å binde)."""
+    fulgt = " ".join(_jobb("cursor-pass-fulgt").split())
+    assert "RETT på `@codex review`" in fulgt
+    assert "intet pass å binde" in fulgt
+    r10 = " ".join(RUTINER.split())
+    assert "re-køes passet ÉN gang" in r10
+    assert "intet pass å binde" in r10
+
+
+def test_skipped_sjekken_krever_ikketom_jobbliste():
+    """Cursor P2-3 runde 8 (#198): jq-ens all() er true for tom liste —
+    en feilet run-view ville gitt stille exit 0 (#188-klassen)."""
+    hent = _jobb("pr-fra-pass")
+    assert "(.jobs | length) > 0" in hent
+
+
+def test_codex_grenen_krever_pull_request():
+    """Cursor P2-4 runde 8 (#198): issue_comment-grenen i fiks-og-merge
+    må kreve at kommentaren står på en PR — en codex-formet kommentar på
+    ren issue skal aldri starte en skrivende agent."""
+    fiks = _uttrykk(_jobb("fiks-og-merge").split("steps:")[0])
+    assert "github.event.issue.pull_request" in fiks

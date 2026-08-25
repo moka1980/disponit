@@ -166,8 +166,11 @@ lever:
 Praktisk følge: en «Bugbot is disabled»-melding er en KANALFEIL, ikke en
 PASS. Er det den eneste responsen, står PR-en og venter — den regnes aldri
 som Cursor-PASS, og gir dermed heller ikke adgang til `@codex review`.
-Se også stående Cursor-ute-regel: feiler transporten (f.eks. «Connection
-lost») på et forsøk til, gå rett på `@codex review` og noter det i tråden.
+Se også stående Cursor-ute-regel: ved transportfeil re-køes passet ÉN
+gang; feiler transporten også på nytt forsøk, går broen rett på
+`@codex review` med et kort notat i tråden — uten pass/SHA-binding, for
+det finnes intet pass å binde (samme semantikk i `cursor-pass-fulgt`
+steg 2/4).
 
 **Secret:** `CURSOR_API_KEY` må ligge i repo-secrets (Cursor Dashboard →
 API Keys). GitHub App-installasjonen gir repo-tilgang; Actions trenger
@@ -218,7 +221,10 @@ aldri et vindu der dokumentet lover en port maskinen mangler
    issue-KROPP trigger ingen kjøring (samme utløser-klasse som §10s
    Bugbot-notat). Ethvert nattmandat legges som egen kommentar — og
    omtalen må være bokstavelig `@claude`, ikke en hvilken som helst
-   @-omtale. Handleren er `mention`-jobben (`Svar @claude`) i
+   @-omtale. Mandater utstedes av KUN eier (`moka1980`): mention-jobben
+   krever eierens login i workflow-if-en, så andres `@claude` trigger
+   ingenting — på et offentlig repo er forfatter-porten selve
+   sikkerheten (speilet i `claude.yml`). Handleren er `mention`-jobben (`Svar @claude`) i
    `.github/workflows/claude.yml`, som kjører `claude-code-action` uten
    egen `trigger_phrase` og derfor lytter på standardfrasen `@claude` —
    samme frase workflowens egen omstart-instruks ber om. En kommentar som
