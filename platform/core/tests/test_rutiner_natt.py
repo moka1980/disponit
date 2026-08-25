@@ -333,7 +333,7 @@ def test_bro_prompt_har_failure_gren():
     fulgt = _jobb("cursor-pass-fulgt")
     norm = " ".join(fulgt.split())
     assert "GENERISK `failure`" in fulgt
-    assert "aldri en generisk failure" in norm
+    assert "aldri generisk failure" in norm
     assert "nås ALDRI uten et ekte pass" in norm
 
 
@@ -347,15 +347,11 @@ def test_passet_er_bundet_til_forfatteren():
 
 
 def test_cancelled_stopper_alltid_stille():
-    """Cursor P2-1 runde 6 (#198, avløser runde 5-varianten): selv
-    `gh run list`-oppslaget hadde et race-vindu — en cancelled-bro skal
-    ALDRI re-køe. Re-kø er transportfeilens verktøy alene."""
-    fulgt = _jobb("cursor-pass-fulgt")
-    assert "stopp STILLE, alltid" in fulgt
-    assert "Re-kø gjelder KUN transportfeil" in fulgt
-    # negativt: cancelled-grenen skal ikke lenger koble seg til re-kø
-    steg2 = fulgt.split("stopp STILLE, alltid")[0]
-    assert "re-kø med én kommentar" not in steg2.split("cancelled")[-1]
+    """Cursor P2-1 runde 6 → P1-1 runde 9 (#198): cancelled-grenen (2a)
+    stopper stille og re-køer aldri; re-kø bor i transportgrenen (2b)
+    alene — se de disjunkte gren-portene."""
+    g = _steg2_grener()
+    assert "stopp STILLE" in g["2a"] and "aldri re-kø" in g["2a"]
 
 
 def test_mandatutstederen_er_speilet_begge_veier():
@@ -366,8 +362,35 @@ def test_mandatutstederen_er_speilet_begge_veier():
     assert "github.event.comment.user.login == 'moka1980'" in mention
 
 
+def _steg2_grener() -> dict:
+    """De fire disjunkte grenene i bro-steg 2 (P1-1 runde 9: transport og
+    cancelled delte én setning og motsatte seg selv — grenene må være
+    separate og entydige)."""
+    fulgt = _jobb("cursor-pass-fulgt")
+    grener = {}
+    for navn in ("2a", "2b", "2c", "2d"):
+        m = re.search(rf"{navn}\. (.*?)(?=2[a-d]\. |Ute-regelen \(2c\))",
+                      " ".join(fulgt.split()))
+        assert m, f"gren {navn} mangler i steg 2"
+        grener[navn] = m.group(1)
+    return grener
+
+
+def test_steg2_grenene_er_disjunkte_og_entydige():
+    """Cursor P1-1 runde 9 (#198): cancelled må aldri dele setning med
+    transport; transport re-køer første gang, går ute-veien andre gang;
+    cancelled re-køer aldri."""
+    g = _steg2_grener()
+    assert "cancelled" in g["2a"] and "aldri re-kø" in g["2a"]
+    assert "FØRSTE gang" in g["2b"] and "@cursor review" in g["2b"]
+    assert "cancelled" not in g["2b"]
+    assert "ANDRE gang" in g["2c"] and "@codex review" in g["2c"]
+    assert "intet pass å binde" in g["2c"]
+    assert "failure" in g["2d"] and "@moka1980" in g["2d"]
+
+
 def test_cursor_ute_regelen_har_samme_semantikk_begge_steder():
-    """Cursor P2-2 runde 8 (#198): §10 og bro-steg 2/4 må være enige —
+    """Cursor P2-2 runde 8 (#198): §10 og bro-steg 2 må være enige —
     re-kø én gang, andre transportfeil går rett på @codex review uten
     pass/SHA-binding (det finnes intet pass å binde)."""
     fulgt = " ".join(_jobb("cursor-pass-fulgt").split())

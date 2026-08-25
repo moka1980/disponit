@@ -570,32 +570,34 @@ jobs:
             `gh pr checkout ${{ needs.pr-fra-pass.outputs.nummer }}`.
 
             1. Er PR-en alt MERGET eller LUKKET: stopp stille.
-            2. Feilet passet på transport (exit 1, «Connection lost»
-               o.l.) ELLER er konklusjonen `cancelled` (cursor-pre-codex
-               har cancel-in-progress, så et nytt `@cursor review` avbryter
-               forrige pass — et avbrutt pass har ingen funnliste, og den
-               siste kommentaren i tråden er da et ELDRE pass som ikke
-               gjelder denne HEAD): stopp STILLE, alltid — ingen re-kø.
-               Med cancel-in-progress skyldes nesten enhver `cancelled`
-               et NYERE `@cursor review` som alt eier oppfølgingen, og
-               selv et `gh run list`-oppslag har et race-vindu der det
-               nye runet ennå ikke synes — et nytt `@cursor review`
-               herfra ville kansellert det og startet nøyaktig kaskaden
-               grenen skal hindre. Det nyere runet (eller eiers manuelle
-               ping) vekker broen. Re-kø gjelder KUN transportfeil,
-               første gang; andre gang på rad: gå videre som om passet
-               var hoppet over (Cursor-ute-regelen): gå da RETT på
-               `@codex review` med et kort notat om transport-uta —
-               steg 4s pass/SHA-binding gjelder ikke, for det finnes
-               intet pass å binde (§10s ute-regel, samme semantikk
-               begge steder). GENERISK `failure` er sin egen gren: endte passet
-               `failure` og tråden IKKE har en fersk pass-kommentar fra
-               `github-actions[bot]` for nettopp denne kjøringen/HEAD-en,
-               finnes det ingenting å følge opp — stopp med én kort
-               kommentar om at passet feilet uten funnliste (adressér
-               @moka1980). Cursor-ute-regelen gjelder KUN dokumentert
-               transportfeil i tråden, aldri en generisk failure — steg
-               3/4 nås ALDRI uten et ekte pass knyttet til kjøringen.
+            2. Passet fullførte ikke normalt? FIRE disjunkte grener —
+               finn den ENE som gjelder, gjør nøyaktig dens handling:
+
+               2a. Konklusjon `cancelled` → stopp STILLE, aldri re-kø.
+                   cursor-pre-codex har cancel-in-progress: nesten
+                   enhver `cancelled` skyldes et NYERE `@cursor review`
+                   som alt eier oppfølgingen, og selv et `gh run
+                   list`-oppslag har et race-vindu der det nye runet
+                   ennå ikke synes — et re-kø herfra ville kansellert
+                   det og startet nøyaktig kaskaden grenen skal hindre.
+                   Det nyere runet (eller eiers ping) vekker broen.
+               2b. DOKUMENTERT transportfeil (exit 1, «Connection lost»
+                   o.l. i loggen/tråden), FØRSTE gang i tråden → re-kø
+                   med én kommentar `@cursor review`, og stopp.
+               2c. Dokumentert transportfeil ANDRE gang på rad →
+                   Cursor-ute-regelen (§10): gå RETT på `@codex review`
+                   med et kort ute-notat — steg 4s pass/SHA-binding
+                   gjelder ikke, for det finnes intet pass å binde.
+               2d. GENERISK `failure` (ingen dokumentert transportfeil,
+                   ingen fersk pass-kommentar fra `github-actions[bot]`
+                   for denne kjøringen/HEAD-en) → ingenting å følge opp:
+                   stopp med én kort kommentar om at passet feilet uten
+                   funnliste (adressér @moka1980).
+
+               Ute-regelen (2c) gjelder KUN dokumentert transportfeil —
+               aldri `cancelled` (2a) og aldri generisk failure (2d).
+               Steg 3/4 nås ALDRI uten et ekte pass knyttet til
+               kjøringen.
             3. Les det SISTE passet i PR-en — og et pass ER bare en
                kommentar POSTET AV `github-actions[bot]` med overskriften
                `## Cursor pre-Codex` (sjekk forfatteren med `gh api`,
