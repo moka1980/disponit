@@ -169,9 +169,13 @@ nøkkelen for å starte agenten.
 ## 11. Nattregler (ratifisert av eier 25/8 — «beslutninger tas uten meg om natta»)
 
 Om natten sover både eier og Claude Codes lokale økt; skyen er alene.
-Tre regler gjør natten produktiv uten at noen ringer på:
+Tre regler gjør natten produktiv uten at noen ringer på. Av dem er bare
+§11.2 i kraft i dag: §11.1 og §11.3 er ratifisert, men slår ikke inn før
+eier har speilet dem inn i `.github/workflows/claude.yml` — se
+markeringen i hver av dem.
 
-1. **Dom-klasse-regelen.** Et utsatt punkt som ordrett matcher en
+1. **Dom-klasse-regelen — PENDING sløyfeinstruksen, som §11.3.** Et
+   utsatt punkt som ordrett matcher en
    ALLEREDE FELT dom-klasse (samme mekanisme, samme utfall) trenger
    ingen fersk eier-dom. Klassen må da siteres oppslagbart i
    sjekklisten, på nøyaktig denne formen:
@@ -180,7 +184,8 @@ Tre regler gjør natten produktiv uten at noen ringer på:
 
    URL-en ER klasseregisteret: dommen bor der eier faktisk felte den, og
    sløyfa åpner den og leser mekanisme og utfall før den bruker klassen.
-   Treffer den ordrett, merges det på rent verdikt + grønn CI. Uten
+   Treffer den ordrett, merges det på rent verdikt + grønn CI — når
+   regelen er i kraft, se markeringen nedenfor. Uten
    sitatlinje finnes klassen ikke for sløyfa — nær-lik formulering,
    husket presedens eller en klasse-ID uten lenke er ikke et treff.
    Et punkt uten matchende klasse parkerer PR-en som før — det er en ny
@@ -190,6 +195,19 @@ Tre regler gjør natten produktiv uten at noen ringer på:
    den klassen — «inn i B-PR-en» for bindings-familien — ennå ikke har
    noen sitatlinje noe sted i repoet, og derfor ikke kan brukes før
    noen fører den inn. Eksempelet i bakgrunnen er ikke en hjemmel.)
+
+   **Bypassen er ikke i kraft ennå — bare den trygge halvdelen er.**
+   Regelen over åpner en vei rundt eiers dom, og den veien har ingen
+   port bak seg: `claude.yml` går på rent verdikt + grønn CI rett til
+   merge uten noe sted å lese eller validere en `dom-klasse`-linje. En
+   uovervåket sløyfe kan altså påberope seg klassen uten at noen
+   maskin sjekker at sitatlinja finnes eller peker på en dom som
+   faktisk er felt. Som §11.3 gjelder §11.1 derfor først fra det
+   øyeblikket eier har håndmerget den inn i sløyfeinstruksen i
+   `.github/workflows/claude.yml`. **Inntil da: et utsatt punkt
+   parkerer PR-en, alltid** — også når en sitatlinje er oppgitt.
+   Sitatformen står her fordi den er kravet speilingen skal håndheve,
+   ikke fordi den alt gir adgang.
 
    **«Eksakt head» er én SHA, og grønn CI erstatter ikke verdiktet.**
    Et verdikt gjelder den head-SHA-en det ble avsagt på — ikke PR-en.
