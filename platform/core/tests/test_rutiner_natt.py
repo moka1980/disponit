@@ -566,8 +566,19 @@ def test_mergen_pinner_baseline_atomisk():
     sjekk-deretter-handle — pinnen (--match-head-commit) gjør det
     atomisk, i alle tre forsøkene og i §11.1."""
     for i, forsok in enumerate(_fiksforsok(), 1):
-        assert "match-head-commit" in forsok, (
+        norm = " ".join(forsok.split())
+        assert "match-head-commit" in norm, (
             f"forsøk {i} mangler den atomiske pinnen")
+        # Runde 18: pin-målet er baseline ELLER oppdaterings-merge-commit
+        # — etter legitim BEHIND-oppdatering er head ≠ baseline
+        # FORVENTET, og en pin mot baseline alene falskt-konsumerer.
+        assert "baseline-eller-" in norm, (
+            f"forsøk {i} pinner bare baseline")
+        assert ("forventet" in norm.lower()
+                or "som ikke er 3a-målingens egen" in norm), (
+            f"forsøk {i} mangler 3a-unntaket i omlesingen")
+        assert ("maks to" in norm.lower() or "maks TO" in norm), (
+            f"forsøk {i} mangler taket på oppdaterings-omganger")
     assert "--match-head-commit" in RUTINER
 
 

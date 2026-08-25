@@ -368,9 +368,12 @@ jobs:
                `gh pr checks <nr> --watch --fail-fast`, og vent på den NYE
                kjøringen hvis (a) flyttet HEAD; (c) les `headRefOid`
                PÅ NYTT RETT FØR merge (CI-vinduet, som i runde 1s 3c;
-               uventet avvik → `@codex review` og stopp), så
+               etter en (a)-oppdatering med tomt snitt er (a)-målingens
+               EGEN merge-commit det forventede svaret — bare avvik som
+               ikke er den → `@codex review` og stopp), så
                `gh pr merge <nr> --squash --delete-branch
-               --match-head-commit <baseline-eller-a-sha>` (atomisk pin;
+               --match-head-commit <baseline-eller-a-sha>` (atomisk pin
+               mot baseline ELLER (a)-merge-commiten;
                mismatch → `@codex review`, stopp), maks to
                omganger fra (a) hvis base flytter seg.
             4. Sløyfevern: samme funn i 3 runder → stopp og oppsummer til
@@ -427,7 +430,11 @@ jobs:
             er målestokken for omlesingen før merge. Ellers: (noter
             `headRefOid` FØR `update-branch` — compare trenger den ekte
             gamle head-en — og les den PÅ NYTT rett før selve mergen;
-            uventet avvik → `@codex review`, stopp) — DOM-KLASSE-PORTEN
+            etter en oppdatering med tomt snitt er update-branch-ens
+            EGEN merge-commit forventet — bare andre avvik →
+            `@codex review`, stopp; og maks TO omganger hvis base
+            flytter seg igjen, deretter kommentar til eier) —
+            DOM-KLASSE-PORTEN
             (§11.1, SAMME styrke som runde 1: utsatte punkter krever
             sitatlinje `dom-klasse: <id> · felt i #<nr> · <URL>`; åpne
             URL-en og les dommen; den siterte kommentarens `user.login`
@@ -439,8 +446,10 @@ jobs:
             tom eller ved sidegrensen 100+ — → nytt `@codex review`,
             ikke merge) → grønn CI →
             `gh pr merge --squash --delete-branch
-            --match-head-commit <baseline-sha>` (atomisk pin; mismatch →
-            `@codex review`, stopp) — og bare på et rent verdikt.
+            --match-head-commit <baseline-eller-oppdaterings-sha>`
+            (atomisk pin mot baseline ELLER update-branch-merge-commiten;
+            mismatch → `@codex review`, stopp) — og bare på et rent
+            verdikt.
 
             IKKE rediger .github/workflows, .env eller hemmeligheter.
             KONVERGENSREGLENE (RUTINER.md §9) gjelder også siste forsøk:
