@@ -496,6 +496,13 @@ def test_head_leses_paa_nytt_rett_foer_merge_i_alle_forsok():
         assert "headRefOid" in norm, f"forsøk {i} mangler capture/omlesing"
         assert "commit_id" in norm, f"forsøk {i} mangler baseline-capture"
         assert "aseline" in norm, f"forsøk {i} mangler baseline-begrepet"
+        # Runde 19: den MÅLTE verdiktkanalen er issue_comment — uten en
+        # eksplisitt headRefOid-kilde der ville en compliant agent
+        # parkert hvert rent verdikt (boten poster aldri formell review).
+        assert "issue_comment" in norm, (
+            f"forsøk {i} mangler kanaldelt baseline-kilde")
+        assert "FØRSTE handling" in norm, (
+            f"forsøk {i} mangler først-i-steg-3-kravet")
     assert "baseline-SHA" in RUTINER
 
 
@@ -583,10 +590,12 @@ def test_mergen_pinner_baseline_atomisk():
 
 
 def test_mention_og_broen_mangler_merge_kapasitet():
-    """Cursor P1-2 runde 17 (#198): MERGE ALDRI var prosa mens ACL-en
-    tillot `gh pr merge` — nå er verktøyflaten smal (eksplisitte
-    pr-underkommandoer uten merge) og API-veien navngitt i forbudet.
-    Fikserjobben beholder den brede flaten + pinnen."""
+    """Cursor P1-2 runde 17 + P2-3 runde 19 (#198): `gh pr merge` er
+    fjernet fra ACL-en (eksplisitte pr-underkommandoer). PRESISJON:
+    `Bash(gh api:*)` består for lesing, og API-merge er dermed
+    PROMPT-forbudt, ikke ACL-umulig — porten under krever at forbudet
+    navngir API-veien i begge jobbene, og at pr-merge-kommandoen ikke
+    kan uttrykkes. Fikserjobben beholder den brede flaten + pinnen."""
     for navn in ("mention", "cursor-pass-fulgt"):
         jobb = _jobb(navn)
         assert "Bash(gh pr:*)" not in jobb, (
@@ -596,3 +605,14 @@ def test_mention_og_broen_mangler_merge_kapasitet():
         assert "pulls/.../merge" in norm.replace("`", ""), (
             f"{navn}: API-vei-forbudet mangler")
     assert "Bash(gh pr:*)" in _jobb("fiks-og-merge")
+
+
+def test_cursor_allowlisten_er_dokumentert_i_p10():
+    """Cursor P2-2 runde 19 (#198): §10 sa «noen kommenterer» mens
+    YAML-en bare slipper eier og sløyfas bot — #193-klassen."""
+    m = re.search(r"^## 10\. .*?(?=^## \d)", RUTINER, re.S | re.M)
+    p10 = m.group(0) if m else ""
+    tekst = p10 + RUTINER.split("## 2. ")[1].split("## 3.")[0] \
+        if "## 2. " in RUTINER else p10
+    assert "moka1980" in tekst and "claude[bot]" in tekst, (
+        "allowlisten for @cursor review er ikke speilet i prosa")

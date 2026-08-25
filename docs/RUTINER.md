@@ -19,7 +19,7 @@ Gjelder alle i pipelinen. Avvik fra rutinene er selv en review-feil.
 2. **Spesifikasjonsreview (ChatGPT) — OBLIGATORISK for alle PR-er som rører `platform/`, `policies/` eller `deploy/`.** Claude.ai sender draften (spesifikasjon eller kode) til ChatGPT FØR Claude Code starter implementering. Review-svaret limes inn i PR-beskrivelsen. Kun PR-er som utelukkende endrer `docs/` kan hoppe over porten, og da skal PR-beskrivelsen si det eksplisitt med begrunnelse.
    *Historikk: porten ble hoppet over i PR-003 (forsvarlig, ren docs) og PR-004 (ikke forsvarlig — tillitsankerets tilstandslag). Codex og Claude Code fanget tolv P1 i PR-004-rundene, men porten foran skal redusere antallet som når dit. Denne presiseringen finnes fordi arkitekten brøt sin egen rutine; regelen gjelder Claude.ai mest av alle.*
 3. **Implementering** (Claude Code): kode + tester, inkludert obligatoriske negative policytester.
-4. **Pre-Codex** (Cursor, automatisk): når PR er `ready_for_review`, merket `pre-codex`, eller noen kommenterer `@cursor review`. Cursor poster én batched funnliste (P1/P2/P3) eller PASS; oppfølgingen vekkes av passets fullføring (`workflow_run`-broen, §10.4) — footerens `@claude` er signatur, ikke vekker. Claude fikser P1/P2 og ber om nytt `@cursor review` til PASS. **Ingen `@codex review` før Cursor-PASS.**
+4. **Pre-Codex** (Cursor, automatisk): når PR er `ready_for_review`, merket `pre-codex`, eller eier (`moka1980`) eller sløyfas bot (`claude[bot]`) kommenterer `@cursor review` — kommentar-utløseren er en allowlist (speilet i `cursor-pre-codex.yml`); ready/label er write-portet av GitHub selv. Cursor poster én batched funnliste (P1/P2/P3) eller PASS; oppfølgingen vekkes av passets fullføring (`workflow_run`-broen, §10.4) — footerens `@claude` er signatur, ikke vekker. Claude fikser P1/P2 og ber om nytt `@cursor review` til PASS. **Ingen `@codex review` før Cursor-PASS.**
 5. **Kodereview** (Codex): fire porter, merge til main — først etter Cursor-PASS.
 6. **Staging-test** (Claude Code): modulen kjøres på staging-serveren — ekte server, syntetiske data, sandkasse-integrasjoner. Hele sjekklisten i modulens manifest må bestå 100 %.
 7. **Aksept** (Claude.ai bekrefter, Eier informeres): modulstatus settes til `aktiv`. Først nå starter neste modul.
@@ -233,7 +233,10 @@ aldri et vindu der dokumentet lover en port maskinen mangler
    baseline-SHA (eller 3a-målingens merge-commit) — alt annet er nytt
    `@codex review`. Selve mergen PINNER baseline-SHA-en atomisk
    (`--match-head-commit`): å måle før og handle etterpå er et vindu,
-   pinnen lukker det.
+   pinnen lukker det. Baseline-kilden følger kanalen: en formell review
+   bærer `commit_id`; verdikt-kommentarer (den målte kanalen) gjør
+   ikke, og der ER baselinen `headRefOid` lest som første handling i
+   merge-stien, før noe kan mutere.
 
 2. **Mandater bor i KOMMENTARER, og omtalen er `@claude`.** En ordre i en
    issue-KROPP trigger ingen kjøring (samme utløser-klasse som §10s
