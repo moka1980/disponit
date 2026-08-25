@@ -177,6 +177,16 @@ Tre regler gjør natten produktiv uten at noen ringer på:
    parkerer PR-en som før — det er en ny dom, og nye dommer tas om
    dagen. (Bakgrunn: natt 24→25/8 sto et vunnet verdikt uinnløst i åtte
    timer fordi Z1 ventet på en dom som alt var felt for X1.)
+
+   **«Eksakt head» er én SHA, og grønn CI erstatter ikke verdiktet.**
+   Et verdikt gjelder den head-SHA-en det ble avsagt på — ikke PR-en.
+   Lander en annen PR i mellomtiden, blir denne `BEHIND`, og
+   `gh pr update-branch` legger på en merge-commit fra ny base: head
+   flytter seg, og SHA-en som merges er ikke lenger den som ble
+   reviewet. CI kjøres riktignok på nytt, men CI er en av portene, ikke
+   verdiktet. Etter enhver head-flytting er det gamle verdiktet brukt
+   opp: nytt `@codex review` på den nye head-en før merge. Selve
+   grenoppdateringen er mekanikk og teller ikke som funnrunde mot §9.
 2. **Mandater bor i KOMMENTARER.** En ordre i en issue-KROPP trigger
    ingen kjøring (samme utløser-klasse som §10s Bugbot-notat). Ethvert
    nattmandat legges som egen kommentar med @-omtale.
