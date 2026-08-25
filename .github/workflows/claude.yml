@@ -157,10 +157,12 @@ jobs:
                kjør det du kan lokalt (python -m compileall, målrettede
                tester), commit med forklarende melding på norsk, push til
                PR-branchen. CURSOR-PORT (RUTINER §10): kommenter deretter
-               `@cursor review` — ALDRI `@codex review` før Cursor har
-               PASS på denne HEAD. Cursor poster FUNN/PASS og vekker deg
-               med `@claude`. Ved FUNN: fiks P1/P2, push, nytt
-               `@cursor review`. Ved PASS: først da `@codex review`.
+               `@cursor review` — ALDRI `@codex review` fra denne jobben:
+               passets FULLFØRING vekker cursor-pass-fulgt via
+               workflow_run-broen (§10.4), som eier FUNN/PASS-tolkingen
+               og Codex-adgangen med SHA- og forfatterbinding. Etter
+               `@cursor review`: STOPP — Cursor/Claude-sløyfa
+               fortsetter i broen, ikke her.
                To Cursor-FUNN uten konvergens → K2, eskaler. IKKE rediger
                .github/workflows, .env eller hemmeligheter.
 
@@ -321,8 +323,9 @@ jobs:
                ferdig mens funnene treffer PR-intern portkode → foreslå
                deling; K4/SP-13 aldri hand-parse fremmed grammatikk.
             2. Er alle funn adressert: CURSOR-PORT (RUTINER §10) — kommenter
-               `@cursor review` (ikke `@codex review` før Cursor-PASS på
-               denne HEAD). Stopp; Cursor/Claude-sløyfa fortsetter.
+               `@cursor review` og STOPP — passets fullføring vekker
+               cursor-pass-fulgt via workflow_run-broen (§10.4), som
+               eier Codex-adgangen; aldri `@codex review` herfra.
             3. Er verdiktet rent / godkjent: FØRST DOM-KLASSE-PORTEN
                (RUTINER §11.1), samme som runde 1: utsatte punkter i
                verdiktet/tråden krever sitatlinje
@@ -392,8 +395,10 @@ jobs:
             rekkefølgen:
             1. Push alt arbeid som er i nærheten av ferdig, ett funn per
                commit.
-            2. Er alle funn adressert: kommenter `@cursor review` (RUTINER
-               §10 — Codex først etter Cursor-PASS).
+            2. Er alle funn adressert: kommenter `@cursor review` og
+               STOPP (RUTINER §10.4): passets fullføring vekker
+               cursor-pass-fulgt via workflow_run-broen, som eier
+               Codex-adgangen — aldri `@codex review` herfra.
             3. Rekker du ikke resten: skriv EN kommentar adressert til eier
                med nøyaktig hvilke funn som gjenstår og hvor arbeidet står,
                så sløyfa kan startes igjen med en `@claude`-kommentar. En

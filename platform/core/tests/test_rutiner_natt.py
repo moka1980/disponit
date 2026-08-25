@@ -529,3 +529,27 @@ def test_steg_0_verdiktporten_i_alle_tre_forsokene():
     for i, forsok in enumerate(_fiksforsok(), 1):
         assert "ER DETTE I DET HELE TATT ET" in forsok, (
             f"forsøk {i} mangler steg 0-porten")
+
+
+def test_cursor_porten_stopper_og_broen_eier_fortsettelsen():
+    """Cursor P1 runde 15 (#198): runde 1/3 sa «vekker deg med @claude»
+    og «Ved PASS: først da @codex review» — GITHUB_TOKEN-pass vekker
+    ikke mention, og Codex-adgangen eies av broen (SHA-/forfatter-
+    binding). Alle forsøk stopper etter @cursor review."""
+    fiks = _jobb("fiks-og-merge")
+    assert "vekker deg med `@claude`" not in fiks
+    assert "Ved PASS: først da" not in fiks
+    for i, forsok in enumerate(_fiksforsok(), 1):
+        norm = " ".join(forsok.split())
+        assert "workflow_run-broen" in norm or "cursor-pass-fulgt" in norm, (
+            f"forsøk {i} peker ikke på broen")
+
+
+def test_cancel_in_progress_false_er_portet():
+    """Cursor P2 runde 15 (#198): fortrengnings-semantikken (#201) er
+    dokumentert design — cancel-in-progress: false skal stå i alle tre
+    skrivende jobber, og en flip til true skal bli rød."""
+    for navn in ("fiks-og-merge", "mention", "cursor-pass-fulgt"):
+        jobb = _uttrykk(_jobb(navn))
+        assert "cancel-in-progress: false" in jobb, (
+            f"{navn}: cancel-in-progress-false mangler/flippet")
