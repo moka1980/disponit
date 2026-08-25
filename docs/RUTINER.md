@@ -159,6 +159,8 @@ PASS. Er det den eneste responsen, står PR-en og venter — den regnes aldri
 som Cursor-PASS, og gir dermed heller ikke adgang til `@codex review`.
 Se også stående Cursor-ute-regel: feiler transporten (f.eks. «Connection
 lost») på et forsøk til, gå rett på `@codex review` og noter det i tråden.
+Utover den transport-uta er §11.3 eneste unntak — og heller ikke den før
+eier har speilet den inn i `claude.yml`.
 
 **Secret:** `CURSOR_API_KEY` må ligge i repo-secrets (Cursor Dashboard →
 API Keys). GitHub App-installasjonen gir repo-tilgang; Actions trenger
