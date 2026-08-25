@@ -387,12 +387,20 @@ jobs:
           echo "nummer=$(cat /tmp/pr-art/pr-nummer.txt)" >> "$GITHUB_OUTPUT"
       - id: runde-cursor
         if: steps.pr.outputs.nummer != ''
-        continue-on-error: true
+        # INGEN continue-on-error her (målt 25/8, run 32820229936): den
+        # maskerte actionens EGEN avvisning som jobb-success, og broen døde
+        # stille i 299 ms — nøyaktig feilklassen (#188) den ble bygget for
+        # å fjerne. En rød kjøring er et signal noen ser; en grønn no-op er
+        # ingenting.
         timeout-minutes: 95
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          allowed_bots: "chatgpt-codex-connector,codex"
+          # `claude` MÅ stå her (målt 25/8): workflow_run-hendelsens actor
+          # er den som startet PASS-workflowen, og i designet flyt ER det
+          # claude[bot] — sløyfa poster selv `@cursor review`. Uten den
+          # avviste broen sitt eget oppstrøms-ledd som «non-human actor».
+          allowed_bots: "chatgpt-codex-connector,codex,claude"
           prompt: |
             Rolle: du er IMPLEMENTØREN i disponit (RUTINER §9/§10 er
             bindende). Et Cursor pre-Codex-pass fullførte nettopp
