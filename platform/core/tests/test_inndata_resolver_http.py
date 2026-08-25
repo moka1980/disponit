@@ -252,11 +252,12 @@ def test_fremmed_deployment_av_samme_modul_far_ingenting(klient, migrator,
                                                          miljo, inndata_rot):
     """Codex P1: kapabiliteten binder DEPLOYMENTEN, ikke bare modulen.
 
-    To levende deployments av `m57_ats` (staging og produksjon — 035s normaltilstand).
-    Staging claimer og henter. Produksjonsdeploymenten, med sitt EGET gyldige
-    modultoken og med staging-claimets `owner_claim_id` i kroppen (lekket,
-    misrutet — 060 skal ikke anta at strengen er hemmelig for søsknene),
-    får samme ingenting som en fremmed modul."""
+    To levende deployments av `m57_ats` (staging og produksjon — 035s
+    normaltilstand). Staging claimer og henter. Produksjonsdeploymenten,
+    med sitt EGET gyldige modultoken og med staging-claimets
+    `owner_claim_id` i kroppen (lekket, misrutet — 060 skal ikke anta at
+    strengen er hemmelig for søsknene), får samme ingenting som en
+    fremmed modul."""
     rel_a = _m57_deployment(migrator, "staging")
     rel_b = _m57_deployment(migrator, "produksjon")
     assert rel_a != rel_b, "to miljøer må gi to ulike releaser"
@@ -293,6 +294,61 @@ def test_fremmed_deployment_av_samme_modul_far_ingenting(klient, migrator,
                          json={"owner_claim_id": claim},
                          headers={"authorization": f"Bearer {mtk_a}"})
     assert r_null.status_code == 404, r_null.text
+
+
+def _bunten_pa_disk(migrator, tenant, oid, inndata_rot):
+    """Stien til den bundne buntens `.bin` under testens FS-rot."""
+    from db.pg import sett_kontekst
+    sett_kontekst(migrator, tenant, "test", "r-sti")
+    sti = migrator.execute(
+        "SELECT lager_sti FROM inndata_artefakt"
+        " WHERE tenant=%s AND oppdrag_id=%s", (tenant, oid)).fetchone()[0]
+    migrator.rollback()
+    return inndata_rot / sti
+
+
+@pg
+def test_lagerdrift_gir_intern_feil_ikke_ufanget_500(klient, migrator,
+                                                     miljo, inndata_rot):
+    """Codex P2 x2: en `.bin` som har driftet fra sin egen rad skal gi
+    endepunktets sanerte `intern_feil` — aldri en ufanget 500, og aldri
+    en ubegrenset lesning.
+
+    Tre former for drift, samme svar utad: for stor fil (lesningen er
+    begrenset av `faktiske_bytes` + GCM-taggen, så den store filen blir
+    aldri lastet inn), for kort fil, og riktig lengde men ødelagte bytes
+    (AES-GCM `InvalidTag` — den fanges, og `inndata_sha_avvik` under
+    ville uansett aldri blitt nådd)."""
+    rel = _m57_deployment(migrator)
+    kropp, tenant, oid = _bundet_bunt(klient, migrator)
+    claim = _pluk(migrator, tenant, oid, rel)
+    mtk, _ = _onboard_token(klient, migrator, "m57_ats", rel)
+    hoder = {"authorization": f"Bearer {mtk}"}
+    sti = _bunten_pa_disk(migrator, tenant, oid, inndata_rot)
+    ekte = sti.read_bytes()
+
+    # Kontroll: urørt fil er 200.
+    r_ok = klient.post(f"/v1/inndata/hent-for-oppdrag/{oid}",
+                       json={"owner_claim_id": claim}, headers=hoder)
+    assert r_ok.status_code == 200, r_ok.text
+    assert r_ok.content == kropp
+
+    for navn, bytes_ in (("for stor", ekte + b"\x00" * 4096),
+                         ("for kort", ekte[:-1]),
+                         ("ødelagt", bytes(b ^ 0xFF for b in ekte))):
+        sti.write_bytes(bytes_)
+        r = klient.post(f"/v1/inndata/hent-for-oppdrag/{oid}",
+                        json={"owner_claim_id": claim}, headers=hoder)
+        assert r.status_code == 500, (navn, r.status_code, r.text)
+        assert r.json()["feil"] == "intern_feil", (navn, r.text)
+
+    # Og filen tilbake på plass er 200 igjen — driften var i lageret,
+    # ikke i raden.
+    sti.write_bytes(ekte)
+    r_igjen = klient.post(f"/v1/inndata/hent-for-oppdrag/{oid}",
+                          json={"owner_claim_id": claim}, headers=hoder)
+    assert r_igjen.status_code == 200, r_igjen.text
+    assert r_igjen.content == kropp
 
 
 @pg

@@ -34,6 +34,12 @@ from starlette.concurrency import run_in_threadpool
 INNDATA_ROT = os.environ.get("DISPONIT_INNDATA_ROT",
                              "/var/lib/disponit-inndata")
 
+#: AES-GCM-taggen, i bytes. `kryptering.krypter_bytes` legger den — og
+#: INGENTING annet — til klarteksten; nonce-en bor i sin egen kolonne. En
+#: `.bin` har derfor nøyaktig én lovlig lengde: `faktiske_bytes + 16`.
+#: Resolveren bruker den som tak for lesningen (Codex P2).
+GCM_TAG = 16
+
 
 def _stikomponent(tenant: str) -> str:
     """Tenant-ID-en som ÉN trygg stikomponent, ellers stopp (Codex P2).
@@ -546,15 +552,47 @@ def hent_endepunkt(tjeneste, request, kropp):
         tjeneste.logg.hendelse("inndata_sti_avvik", rid, tenant,
                                art="sikkerhet")
         return _feilsvar("intern_feil", rid)
+    # LESNINGEN ER BEGRENSET AV RADEN (Codex P2). `f.read()` leste til EOF
+    # uansett hva raden sa, og gjorde dermed størrelsen på en fil vi
+    # allerede vet størrelsen på til en angriper-/driftsstyrt allokering:
+    # en `.bin` som har vokst (feilskriving, byttet fil, lagerdrift) kunne
+    # ta minnet til API-arbeideren FØR SHA-verifiseringen i det hele tatt
+    # fikk se noe. Ciphertexten har nøyaktig én lovlig lengde — AES-GCM
+    # legger bare taggen til klarteksten, og nonce-en bor i kolonnen — så
+    # `faktiske_bytes + GCM_TAG` er både taket og fasiten. Vi ber om ÉN
+    # byte mer enn det: er filen større, ser vi det uten å lese resten.
+    ventet = int(faktiske) + GCM_TAG
     try:
         with open(os.path.join(INNDATA_ROT, rel), "rb") as f:
-            ct = f.read()
+            ct = f.read(ventet + 1)
     except OSError:
         tjeneste.logg.hendelse("inndata_fil_borte", rid, tenant,
                                art="drift")
         return _feilsvar("intern_feil", rid)
-    raa = kryptering.dekrypter_bytes(dek, ct, bytes(nonce), tenant,
-                                     key_id, formaal=b"inndata")
+    if len(ct) != ventet:
+        # Både for kort og for lang: filen er ikke den raden beskriver.
+        # Samme klasse som `inndata_sha_avvik` — lageret har driftet fra
+        # sin egen deklarasjon — og utad samme intetsigende `intern_feil`.
+        tjeneste.logg.hendelse("inndata_storrelsesavvik", rid, tenant,
+                               art="sikkerhet")
+        return _feilsvar("intern_feil", rid)
+    # DEKRYPTERINGEN KAN FEILE, OG DET ER EN SIKKERHETSSAK (Codex P2).
+    # Har ciphertexten, nonce-en, AAD-bindingen (tenant/key_id/formål)
+    # eller nøkkelmetadataen driftet, reiser AES-GCM `InvalidTag` HER —
+    # altså før SHA-porten under, som ellers ville vært stedet
+    # `inndata_sha_avvik` ble skrevet. Ufanget forlot den endepunktet som
+    # en rammeverksavhengig 500: tukling med lageret ble uklassifisert,
+    # og feilformen kunne skille seg fra hver annen feil på ruten.
+    # `ValueError` hører med — en nonce-kolonne med feil lengde er samme
+    # drift, bare et annet sted i den. Ingen detaljer utad.
+    from cryptography.exceptions import InvalidTag
+    try:
+        raa = kryptering.dekrypter_bytes(dek, ct, bytes(nonce), tenant,
+                                         key_id, formaal=b"inndata")
+    except (InvalidTag, ValueError):
+        tjeneste.logg.hendelse("inndata_dekrypt_feil", rid, tenant,
+                               art="sikkerhet")
+        return _feilsvar("intern_feil", rid)
     if _h.sha256(raa).hexdigest() != sha:
         tjeneste.logg.hendelse("inndata_sha_avvik", rid, tenant,
                                art="sikkerhet")
