@@ -218,9 +218,16 @@ markeringen i hver av dem.
    verdiktet. Etter enhver head-flytting er det gamle verdiktet brukt
    opp: nytt `@codex review` på den nye head-en før merge. Selve
    grenoppdateringen er mekanikk og teller ikke som funnrunde mot §9.
-2. **Mandater bor i KOMMENTARER.** En ordre i en issue-KROPP trigger
-   ingen kjøring (samme utløser-klasse som §10s Bugbot-notat). Ethvert
-   nattmandat legges som egen kommentar med @-omtale.
+2. **Mandater bor i KOMMENTARER, og omtalen er `@claude`.** En ordre i en
+   issue-KROPP trigger ingen kjøring (samme utløser-klasse som §10s
+   Bugbot-notat). Ethvert nattmandat legges som egen kommentar — og
+   omtalen må være bokstavelig `@claude`, ikke en hvilken som helst
+   @-omtale. Handleren er `mention`-jobben (`Svar @claude`) i
+   `.github/workflows/claude.yml`, som kjører `claude-code-action` uten
+   egen `trigger_phrase` og derfor lytter på standardfrasen `@claude` —
+   samme frase workflowens egen omstart-instruks ber om. En kommentar som
+   bare nevner `@moka1980` eller `@codex` oppfyller ikke regelen: den lar
+   mandatet ligge ubehandlet, eller vekker feil tjeneste.
 3. **Codex-only om natten — PENDING sløyfeinstruksen.** Cursor-passene
    kan ikke vekke sløyfa (#188) før PAT-fiksen er merget. Nattkjeden
    skal derfor være implementer → CI → `@codex review` → fiks →
