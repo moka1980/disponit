@@ -304,6 +304,11 @@ jobs:
             igjen fikser som allerede er pushet.
 
             Fullfør så jobben etter samme regler som forrige forsøk:
+            0. ER DETTE I DET HELE TATT ET VERDIKT? Samme port som
+               forsøk 1: kvote-/feil-/statusmeldinger fra bottet
+               («usage limits», «add credits», integrasjonsfeil) er
+               IKKE en review — ikke fiks, ikke merge; én kommentar til
+               eier om at kanalen er nede, og stopp.
             1. Gjenstående reelle funn (P1/P2) fra Codex-verdiktet og
                inline-kommentarene (`gh api` mot pulls/<nr>/comments): fiks
                i roten, ETT AV GANGEN — fiks, commit på norsk, push. Alt som
@@ -338,7 +343,11 @@ jobs:
                filer/manglende files-liste (trunkering gir falskt tomt
                snitt), betyr at verdiktet er BRUKT OPP: post
                `@codex review` og stopp; `DIRTY`
-               → ikke tving, kommenter til eier; (b)
+               → ikke tving, og løs konflikten ALDRI selv (den endrer
+               HEAD-innhold verdiktet aldri bandt): kommenter til eier
+               hva som kolliderer og STOPP — DIRTY faller aldri videre
+               til (b)/(c), og en senere konflikt-push betyr verdikt
+               BRUKT OPP (`@codex review`); (b)
                `gh pr checks <nr> --watch --fail-fast`, og vent på den NYE
                kjøringen hvis (a) flyttet HEAD; (c) les `headRefOid`
                PÅ NYTT RETT FØR merge (CI-vinduet, som i runde 1s 3c;
@@ -376,7 +385,11 @@ jobs:
             `gh pr view <nr> --comments`) og gjør IKKE om igjen pushet
             arbeid.
 
-            Dette er siste forsøk. Prioriter i denne rekkefølgen:
+            Dette er siste forsøk. FØRST: ER DETTE I DET HELE TATT ET
+            VERDIKT? Samme port som forsøk 1 — kvote-/feil-/status-
+            meldinger er ikke en review: ikke fiks, ikke merge, én
+            kommentar til eier, stopp. Prioriter deretter i denne
+            rekkefølgen:
             1. Push alt arbeid som er i nærheten av ferdig, ett funn per
                commit.
             2. Er alle funn adressert: kommenter `@cursor review` (RUTINER
@@ -385,7 +398,10 @@ jobs:
                med nøyaktig hvilke funn som gjenstår og hvor arbeidet står,
                så sløyfa kan startes igjen med en `@claude`-kommentar. En
                stille PR er det eneste uakseptable utfallet.
-            Merging følger samme rekkefølge som før (noter
+            Merging følger samme rekkefølge som før — og `DIRTY`
+            (ekte konflikt) parkeres ALLTID: løs den ALDRI selv,
+            kommenter til eier og STOPP; en konflikt-push betyr verdikt
+            BRUKT OPP (`@codex review`). Ellers: (noter
             `headRefOid` FØR `update-branch` — compare trenger den ekte
             gamle head-en — og les den PÅ NYTT rett før selve mergen;
             uventet avvik → `@codex review`, stopp) — DOM-KLASSE-PORTEN

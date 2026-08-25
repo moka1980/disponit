@@ -512,7 +512,20 @@ def test_dirty_grenen_loser_aldri_konflikten():
     «løs hvis triviell»."""
     for i, forsok in enumerate(_fiksforsok(), 1):
         norm = " ".join(forsok.split())
-        if "DIRTY" in norm:
-            assert "Løs konflikten" not in norm, (
-                f"forsøk {i}: DIRTY-grenen løser selv")
-            assert "ALDRI selv" in norm or "ikke tving" in norm
+        # UBETINGET (runde 14: den betingede formen lot forsøk 3 slippe
+        # uten DIRTY-gren i det hele tatt — hul port)
+        assert "DIRTY" in norm, f"forsøk {i} mangler DIRTY-grenen"
+        assert "Løs konflikten hvis" not in norm, (
+            f"forsøk {i}: DIRTY-grenen løser selv")
+        assert "ALDRI selv" in norm, f"forsøk {i} mangler ALDRI-selv"
+        assert "BRUKT OPP" in norm
+
+
+def test_steg_0_verdiktporten_i_alle_tre_forsokene():
+    """Cursor P2 runde 14 (#198): kvote-/statusmeldinger som slipper
+    forbi jobb-if-ens prefiksfilter må felles av steg 0 i HVERT forsøk —
+    ellers kan forsøk 2/3 lese «ingen funn» og merge på en tom
+    lommebok."""
+    for i, forsok in enumerate(_fiksforsok(), 1):
+        assert "ER DETTE I DET HELE TATT ET" in forsok, (
+            f"forsøk {i} mangler steg 0-porten")
