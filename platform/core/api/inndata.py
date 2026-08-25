@@ -650,6 +650,20 @@ def hent_endepunkt(tjeneste, request, kropp):
         tjeneste.logg.hendelse("inndata_rett_dod_ved_leveranse", rid,
                                tenant, art="sikkerhet")
         return _feilsvar("ikke_funnet", rid)
+    # RESTVINDU (kjent, utsatt — eiervedtak i PR #202-tråden, 2026-08-25,
+    # "valg 1"): gjerdet over stopper ved `conn2.rollback()` rett over.
+    # Fra her til Starlette har sendt siste byte av `Response` holder vi
+    # ingen radlås — `hent_inndata_for_oppdrag` er et rent SELECT uten
+    # FOR UPDATE (060:73-89) — og body-sendet er klient-tempo, altså
+    # vilkårlig strekkbart. En reclaim kan committe i det vinduet og gi
+    # duplikatlevering av samme bunt til samme modulklasse (Codex P1,
+    # pullrequestreview-5020606939, `inndata.py:639`) — ikke en
+    # privilegie-eskalering, men en rest av nøyaktig samme mekanisme
+    # re-målingen over lukker. K2 (tre runder på samme mekanisme) stopper
+    # en fjerde punktfiks her: lukkingen krever en fencing-primitiv som
+    # binder LEVERANSEN til gjeldende `oppdrag.owner_generation` (finnes
+    # alt, 005_m37_behandling.sql:317/872) gjennom hele body-sendet — ny
+    # maskin (K1), eget issue/PR, ikke denne.
     return Response(raa, media_type="application/zip",
                     headers={"x-request-id": rid,
                              "x-innhold-sha256": sha})
