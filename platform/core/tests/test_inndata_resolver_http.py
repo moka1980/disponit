@@ -641,6 +641,68 @@ def test_token_som_dor_under_leveransen_gir_ingen_bytes(klient, migrator,
 
 
 @pg
+def test_nokkel_destruert_under_leveransen_gir_ingen_pii(klient, migrator,
+                                                         miljo, monkeypatch,
+                                                         inndata_rot):
+    """Codex P1 (#202): leveranse-re-målingen målte RETTEN, ikke NØKKELEN.
+
+    DEK-en pakkes ut i basefasen, altså FØR lesing+dekrypt av inntil
+    64 MiB. Committer en crypto-shredding i det vinduet, er `wrapped_dek`
+    nullet og dataene juridisk slettet — men requesten holder fortsatt den
+    utpakkede DEK-en i `grunnlag`, og serverte PII som nettopp var slettet.
+    Verken claim- eller token-leddet ser det: begge er urørt her, så begge
+    svarer «ja» hele veien.
+
+    Samme sidekanalmønster som de to testene over — destruksjonen committes
+    fra en EGEN forbindelse inne i `dekrypter_bytes`, nøyaktig i vinduet
+    mellom dom og leveranse. `destruer()` tar den eksklusive
+    livstidslåsen; endepunktet holder ingen forbindelse der, så det er
+    ingen lås å vente på — som er nettopp hullet.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `nokkel_lever`-leddet fra
+    leveranseblokken i `hent_endepunkt` → 200 med sletta PII."""
+    rel = _m57_deployment(migrator)
+    kropp, tenant, oid = _bundet_bunt(klient, migrator)
+    claim = _pluk(migrator, tenant, oid, rel)
+    mtk, _ = _onboard_token(klient, migrator, "m57_ats", rel)
+
+    from db.pg import sett_kontekst
+    sett_kontekst(migrator, tenant, "test", "r-key")
+    key_id = migrator.execute(
+        "SELECT key_id FROM inndata_artefakt"
+        " WHERE tenant=%s AND oppdrag_id=%s", (tenant, oid)).fetchone()[0]
+    migrator.rollback()
+
+    from db import kryptering as kryptmodul
+    ekte = kryptmodul.dekrypter_bytes
+    fra_test = {"truffet": False}
+
+    def _dekrypt_med_shredding(*a, **k):
+        if not fra_test["truffet"]:
+            fra_test["truffet"] = True
+            from db.pg import koble
+            # Runtime-rollen er den som eier slettingsveien i produksjon,
+            # og den som `test_kjorer_og_kryptering` alt shredder med.
+            rt = koble(DSN)
+            try:
+                kryptmodul.destruer(rt, tenant, key_id)
+                rt.commit()
+            finally:
+                rt.close()
+        return ekte(*a, **k)
+
+    monkeypatch.setattr(kryptmodul, "dekrypter_bytes", _dekrypt_med_shredding)
+    r = klient.post(f"/v1/inndata/hent-for-oppdrag/{oid}",
+                    json={"owner_claim_id": claim},
+                    headers={"authorization": f"Bearer {mtk}"})
+    assert fra_test["truffet"], "leveransevinduet ble aldri truffet"
+    # 404, og INGEN bytes: klarteksten var i hendene våre, men retten til
+    # å sende den døde med nøkkelen.
+    assert (r.status_code, r.json()["feil"]) == (404, "ikke_funnet"), r.text
+    assert kropp not in r.content
+
+
+@pg
 def test_annen_release_i_samme_miljo_far_ingenting(klient, migrator,
                                                    miljo, inndata_rot):
     """Cursor P2 (#202, andre pass): miljø-negativen alene lot en

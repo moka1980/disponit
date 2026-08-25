@@ -651,6 +651,19 @@ def hent_endepunkt(tjeneste, request, kropp):
             "%s,%s)",
             (oppdrag_id, auth.modul_id, owner_claim,
              auth.release_id, auth.miljo)).fetchone()
+        # NØKKELEN ER TREDJE LEDD I SAMME PORT (Codex P1). DEK-en ble
+        # pakket ut FØR lesing+dekrypt av inntil 64 MiB, og i det vinduet
+        # kan en crypto-shredding committe: `destruer` nuller
+        # `wrapped_dek`, men requesten holder alt den utpakkede DEK-en i
+        # `grunnlag` og ville servert PII som nettopp ER slettet — den
+        # eneste slettingen plattformen har for data den ikke kan
+        # DELETE-e. Retten og tokenet re-måles her; nøkkelens LIV hørte i
+        # samme port, av nøyaktig samme grunn.
+        sett_kontekst(conn2, tenant, auth.aktor, rid)
+        nokkel_lever = conn2.execute(
+            "SELECT 1 FROM tenant_nokler"
+            " WHERE tenant=%s AND key_id=%s AND wrapped_dek IS NOT NULL",
+            (tenant, key_id)).fetchone()
         conn2.rollback()
     except psycopg.Error:
         try:
@@ -664,6 +677,13 @@ def hent_endepunkt(tjeneste, request, kropp):
     if fortsatt is None:
         tjeneste.logg.hendelse("inndata_rett_dod_ved_leveranse", rid,
                                tenant, art="sikkerhet")
+        return _feilsvar("ikke_funnet", rid)
+    if nokkel_lever is None:
+        # Sletting slår autorisasjon: bytene finnes fortsatt på disk, men
+        # de er juridisk borte i det nøkkelen er det. Samme intetsigende
+        # svar som hver annen negativ på ruten.
+        tjeneste.logg.hendelse("inndata_nokkel_destruert_ved_leveranse",
+                               rid, tenant, art="sikkerhet")
         return _feilsvar("ikke_funnet", rid)
     # RESTVINDU (kjent, utsatt til #204 — eiervedtak i PR #202-tråden,
     # 2026-08-25, "valg 1"): gjerdet over stopper ved `conn2.rollback()`.
@@ -680,6 +700,18 @@ def hent_endepunkt(tjeneste, request, kropp):
     # alt, 005_m37_behandling.sql:317/872, og fencer alt i
     # utsted_kvitteringskapabilitet :985-1001) gjennom hele body-sendet —
     # ny maskin (K1): den bygges i #204, ikke her.
+    #
+    # NØKKELEN HAR SAMME REST, og den hører til SAMME utsatte punkt: en
+    # `destruer()` som committer mellom `conn2.rollback()` og siste byte
+    # møter ingen delt livstidslås herfra, fordi `_livslas` er
+    # transaksjonsbundet (kryptering.py:45-68) og vår transaksjon er
+    # sluppet. Å holde den gjennom body-sendet er den samme
+    # fencing-primitiven — ikke enda et ledd i predikatet. Merk at
+    # UGJERDET LESING AV DEK er plattformens tilstand fra før og ikke noe
+    # denne PR-en innfører: `_livslas(eksklusiv=False)` tas kun av
+    # SKRIVEveien (`hent_eller_opprett_aktiv_dek`), mens hver eneste
+    # leseveien — `hent_dek` i app.py:3102, unntaksbehandling.py:396/530,
+    # lesing.py:456 — leser uten den.
     return Response(raa, media_type="application/zip",
                     headers={"x-request-id": rid,
                              "x-innhold-sha256": sha})
