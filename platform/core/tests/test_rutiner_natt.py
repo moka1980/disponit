@@ -12,6 +12,8 @@ from pathlib import Path
 ROT = Path(__file__).resolve().parents[3]
 YML = (ROT / ".github" / "workflows" / "claude.yml").read_text(
     encoding="utf-8")
+CURSOR_YML = (ROT / ".github" / "workflows" / "cursor-pre-codex.yml"
+              ).read_text(encoding="utf-8")
 RUTINER = (ROT / "docs" / "RUTINER.md").read_text(encoding="utf-8")
 
 
@@ -106,7 +108,7 @@ def test_broen_er_per_pr_og_feiler_hoyt():
       uten `--allowedTools` var broen en no-op med grønn hake."""
     fulgt = _jobb("cursor-pass-fulgt")
     hent = _jobb("pr-fra-pass")
-    assert "claude-cursorfulgt-pr-" in fulgt, "concurrency må være per PR"
+    assert "claude-pr-" in fulgt, "concurrency må være per PR"
     assert "needs.pr-fra-pass.outputs.nummer" in fulgt
     assert not re.search(r"group:\s*claude-cursorfulgt-\$\{\{\s*github\.event\.workflow_run\.id",
                          fulgt), "workflow_run.id som eneste nøkkel"
@@ -138,3 +140,56 @@ def test_nattmandat_regelen_matcher_handleren():
     assert "omtalen er `@claude`" in RUTINER
     mention = _jobb("mention")
     assert "contains(github.event.comment.body, '@claude')" in mention
+
+
+def test_pass_ekvivalensregelen_er_ratifisert_der_den_brukes():
+    """Cursor P2-2 runde 2 (#198): regelen sto bare i bro-prompten —
+    en agent kunne behandle FUNN som PASS etter en uratifisert regel.
+    Nå må strengen finnes i BÅDE RUTINER §10 og bro-prompten, eller i
+    ingen av dem."""
+    i_rutiner = "PASS-ekvivalensregelen" in RUTINER
+    i_broen = "PASS-ekvivalensregelen" in _jobb("cursor-pass-fulgt")
+    assert i_rutiner == i_broen, "regelen finnes bare på én av flatene"
+    assert i_rutiner, "regelen er fjernet begge steder — da må også"         " §10-porten og bro-steg 3 skrives om"
+    assert "test-negativer" in RUTINER
+
+
+def test_broen_rekoer_avbrutte_pass():
+    """Cursor P2-3 runde 2 (#198): cursor-pre-codex har
+    cancel-in-progress, så et nytt `@cursor review` avbryter forrige
+    pass — broen må re-køe `cancelled`, aldri lese et ELDRE pass som om
+    det gjaldt denne HEAD."""
+    assert "cancelled" in _jobb("cursor-pass-fulgt"), (
+        "bro-prompten mangler cancelled-grenen")
+
+
+def test_broen_binder_passet_til_head_sha():
+    """Cursor P2-4 runde 2 (#198): et PASS gjelder commiten det ble
+    kjørt på. Steg 4 må sammenligne pass-kommentarens SHA-linje med
+    `headRefOid` før `@codex review` — ellers kan en push i vinduet
+    sende Codex kode Cursor aldri så."""
+    fulgt = _jobb("cursor-pass-fulgt")
+    assert "headRefOid" in fulgt, "steg 4 mangler SHA-sammenligningen"
+    assert "SHA-linje" in fulgt or "SHA: " in fulgt
+
+
+def test_alle_skrivende_claude_jobber_deler_pr_mutex():
+    """Cursor P2-5 runde 2 (#198): tre disjunkte concurrency-grupper lot
+    to skrivende Claude-instanser kjøre parallelt på samme PR. Alle tre
+    jobbene må dele `claude-pr-<nummer>`-gruppen."""
+    for navn in ("fiks-og-merge", "mention", "cursor-pass-fulgt"):
+        jobb = _jobb(navn)
+        m = re.search(r"group:\s*(\S+)", jobb)
+        assert m, f"{navn} mangler concurrency-gruppe"
+        assert m.group(1).startswith("claude-pr-"), (
+            f"{navn} står utenfor felles-mutexen: {m.group(1)}")
+
+
+def test_cursor_workflowens_kontrakt_beskriver_broen():
+    """Cursor P2-1 runde 2 (#198) + P3: kontraktkommentaren i
+    cursor-pre-codex.yml hevdet at footeren vekker mention-jobben.
+    Filen må beskrive workflow_run-broen — og aldri gjeninnføre
+    mention-påstanden."""
+    assert "workflow_run" in CURSOR_YML
+    assert "mention) våkner" not in CURSOR_YML
+    assert "cursor-pass-fulgt" in CURSOR_YML

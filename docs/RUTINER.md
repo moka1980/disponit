@@ -142,6 +142,12 @@ Formål: kutte Codex-rundene fra 10–18 ned mot 2–3 ved å angripe PR-en
 6. Først ved Cursor-PASS: Claude kommenterer `@codex review`
 7. Codex forblir eneste merge-autoritet
 
+**PASS-ekvivalensregelen** (felt av eier på #185, ratifisert her): en
+verifiseringsrunde hvis funn UTELUKKENDE er test-negativer — endringer i
+PR-ens egne tester/porter, null endringer i produktkode — teller som
+PASS for §10s Cursor-port. Et funn som rører produktkode, uansett hvor
+lite, er ikke ekvivalent.
+
 **Hard stop:** to Cursor-FUNN-runder på samme mekanisme uten konvergens →
 K2 gjelder; eskaler i PR-tråden, ikke et tredje formforsøk via Cursor.
 

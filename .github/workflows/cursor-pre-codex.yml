@@ -10,7 +10,10 @@ name: Cursor pre-Codex
 # Kontrakt:
 #   - Cursor poster ÉN batched funnliste (P1/P2/P3) eller PASS
 #   - Cursor merger aldri og pusher aldri til PR-grenen
-#   - Avslutter alltid med `@claude` slik at claude.yml (mention) våkner
+#   - Avslutter med `@claude` som lesbar signatur — den FAKTISKE vekkingen
+#     er workflow_run-broen: passets fullføring trigger cursor-pass-fulgt
+#     i claude.yml via pr-nummer-artifakten (#194; GITHUB_TOKEN-kommentarer
+#     sender ingen hendelser mention-jobben kan se)
 #   - Claude Code fikser → `@cursor review` (verifisering) → PASS → først da `@codex review`
 #
 # Krever repo-secret: CURSOR_API_KEY

@@ -75,7 +75,10 @@ jobs:
     # ubuntu-latest sin grense).
     timeout-minutes: 330
     concurrency:
-      group: claude-fiks-${{ github.event.pull_request.number || github.event.issue.number }}
+      # FELLES per-PR-mutex med mention og cursor-pass-fulgt (Cursor P2-5
+      # på #198): tre disjunkte grupper lot to skrivende Claude-instanser
+      # kjøre parallelt på samme PR — doble push, tapte commits.
+      group: claude-pr-${{ github.event.pull_request.number || github.event.issue.number }}
       cancel-in-progress: false
     permissions:
       contents: write
@@ -398,7 +401,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     concurrency:
-      group: claude-mention-${{ github.event.issue.number || github.event.pull_request.number }}
+      group: claude-pr-${{ github.event.issue.number || github.event.pull_request.number }}
       cancel-in-progress: false
     permissions:
       contents: write
@@ -455,7 +458,7 @@ jobs:
     # kø etter hverandre, ikke gi to parallelle instanser som begge pusher
     # eller poster `@codex review`.
     concurrency:
-      group: claude-cursorfulgt-pr-${{ needs.pr-fra-pass.outputs.nummer }}
+      group: claude-pr-${{ needs.pr-fra-pass.outputs.nummer }}
       cancel-in-progress: false
     permissions:
       contents: write
@@ -491,16 +494,27 @@ jobs:
 
             1. Er PR-en alt MERGET eller LUKKET: stopp stille.
             2. Feilet passet på transport (exit 1, «Connection lost»
-               o.l.): re-kø med én kommentar `@cursor review` og stopp.
-               Andre gang på rad: gå videre som om passet var hoppet
-               over (Cursor-ute-regelen) — fortsett til steg 4.
+               o.l.) ELLER er konklusjonen `cancelled` (cursor-pre-codex
+               har cancel-in-progress, så et nytt `@cursor review` avbryter
+               forrige pass — et avbrutt pass har ingen funnliste, og den
+               siste kommentaren i tråden er da et ELDRE pass som ikke
+               gjelder denne HEAD): re-kø med én kommentar `@cursor review`
+               og stopp. Transportfeil andre gang på rad: gå videre som om
+               passet var hoppet over (Cursor-ute-regelen) — fortsett til
+               steg 4. `cancelled` re-køes alltid.
             3. Les det SISTE passet i PR-en. P1/P2-funn: fiks etter
                K1-reglene, ett funn per commit, push underveis; deretter
                `@cursor review` for verifikasjon og stopp. K2/K5 og
                PASS-ekvivalensregelen (en runde med kun test-negativer
                teller som PASS) gjelder.
-            4. PASS (eller pass-ekvivalent): verifiser grønn CI på
-               nøyaktig HEAD, og post `@codex review`. Stopp.
+            4. PASS (eller pass-ekvivalent): verifiser FØRST at
+               pass-kommentarens egen SHA-linje (`SHA: ...`) er identisk
+               med `gh pr view <nr> --json headRefOid -q .headRefOid` —
+               et pass gjelder commiten det ble kjørt på, og en push i
+               vinduet mellom pass og bro ville ellers sendt Codex kode
+               Cursor aldri så. Mismatch → `@cursor review` og stopp.
+               Deretter grønn CI på nøyaktig samme HEAD, og post
+               `@codex review`. Stopp.
             5. Eskaleringer som trenger eier-dom: en alt FELT dom-klasse
                dekker punktet BARE med sitatlinje i PR-tråden på formen
                `dom-klasse: <id> · felt i #<nr> · <URL>` (RUTINER §11.1)
