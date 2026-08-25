@@ -247,8 +247,14 @@ def test_dybdevalget_korrumperer_ikke_full_klon():
     korrumperingen kom tilbake lokalt. Porten sporer fetch-argv gjennom
     `_basiscommit()` i begge grener.
 
+    BEGGE fetch-stiene måles (Cursor P2 runde 2 på #199): basisfetchen i
+    `_basiscommit` OG akseptfetchen i `_anker_avvik` — en mutasjon som
+    hardkoder dybden bare på 056-linja ville ellers overlevd CI, som ER
+    grunn, og gjenskapt korrumperingen lokalt.
+
     MUTASJONEN SOM DREPER DENNE: `return ["--depth=1"]` ubetinget i
-    `_dybde`, eller et glemt `_dybde()`-kall i fetch-linjen."""
+    `_dybde`, eller et glemt/hardkodet `_dybde()`-kall i en av de to
+    fetch-linjene."""
     global _git
     ekte_git = _git
 
@@ -268,16 +274,25 @@ def test_dybdevalget_korrumperer_ikke_full_klon():
                 return _Svar(0)
             if argv[:2] == ("rev-parse", "--verify"):
                 return _Svar(0, b"f" * 40 + b"\n")
+            if argv[:2] == ("cat-file", "-e"):
+                return _Svar(0)
+            if argv[:2] == ("cat-file", "blob"):
+                sti = argv[2].split(":", 1)[1]
+                return _Svar(0, (GITROT / sti).read_bytes())
             raise AssertionError(f"uventet git-kall: {argv}")
 
         _git = falsk_git
         try:
-            _basiscommit()
+            _anker_avvik()
         finally:
             _git = ekte_git
-        assert len(hentinger) == 1, hentinger
-        assert ("--depth=1" in hentinger[0]) is ventet, (
-            f"grunt={ventet}: fetch-argv {hentinger[0]}")
+        # Løypa gjør NØYAKTIG to fetch: basisgrenen og akseptcommiten —
+        # og dybdevalget må følge miljøet i begge.
+        assert len(hentinger) == 2, hentinger
+        assert AKSEPTCOMMIT_056 in hentinger[1], hentinger
+        for henting in hentinger:
+            assert ("--depth=1" in henting) is ventet, (
+                f"grunt={ventet}: fetch-argv {henting}")
 
 
 def _basisfasit(commit: str) -> dict:
