@@ -1787,10 +1787,13 @@ def test_sp10_daekker_059():
         encoding="utf-8")
     assert "59: (_seed_059, _mal_059)" in sp10, (
         "059 har ingen registrert seed+måling i SEEDS")
-    # Seedet må FAKTISK bebo de to klassene 059 kan felles av: en levende
-    # reservasjon uten sti, og en i en tenant som ikke kan bære en sti.
+    # Seedet må FAKTISK bebo de tre klassene 059 kan felles av: en levende
+    # reservasjon uten sti, en i en tenant som ikke kan bære en sti, og en
+    # hvis fødselssti alt er opptatt av en legacy-rad (058 lot kalleren
+    # velge filnavnet, så aliaset ville felt inndata_lagersti_unik).
     for merke in ("sp10-059-reservert", "sp10-059-utrygg",
-                  "sp10-059-lastet", "sp10-059-bundet"):
+                  "sp10-059-lastet", "sp10-059-bundet",
+                  "sp10-059-alias-res", "sp10-059-alias-sti"):
         assert merke in sp10, f"SP-10-seedet for 059 mangler {merke}"
     assert re.search(r"UTRYGG_TEN\s*=\s*[\"'][^\"']*/", sp10), (
         "SP-10-seedet for 059 må bebo en tenant-ID som ikke er en lovlig"

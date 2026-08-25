@@ -480,7 +480,7 @@ def _seed_059(conn):
     """Bebodd 058-tilstand for 059 (B-maskinen): backfillen av
     fødselsstien PLUSS constraint-swappen, med hver arm bebodd.
 
-    Fire rader, én per ting 059 kan ødelegge:
+    Seks rader, én per ting 059 kan ødelegge:
 
     - `reservert` UTEN sti, i en lovlig tenant — 058s eneste form for en
       levende reservasjon, og den ene backfillen faktisk skal bære over.
@@ -489,6 +489,10 @@ def _seed_059(conn):
       `inndata_lagersti_navnerom` og RULLER HELE 059 TILBAKE — for alle
       tenanter, inne i vedlikeholdsvinduet. Tom-base-CI kan per
       konstruksjon ikke se den.
+    - `reservert` UTEN sti hvis fødselssti alt er OPPTATT av en `lastet`
+      rad. 058 lot kalleren velge filnavnet, så aliaset kan bygges med
+      vilje; backfillen ville felt `inndata_lagersti_unik` og dermed
+      hele 059. Paret er to rader: reservasjonen og squatteren.
     - `lastet` og `bundet` i produksjonsform, som skal stå ORDRETT
       gjennom swappen av `inndata_tilstand_totalt`.
 
@@ -570,6 +574,34 @@ def _seed_059(conn):
         " now() + interval '1 hour', now(), now())",
         (TEN, bid, "b" * 64, key_id, nonce, f"{TEN}/{bid}.bin", oid,
          secrets.token_hex(32)))
+    # (5) STIEN ER ALT OPPTATT (Codex P1, runde 2 på #196). Under 058 tok
+    #     `registrer_inndata_lastet` filnavnet fra kalleren (`p_sti`,
+    #     058:440-441), og runtime har SELECT på tabellen — en kaller
+    #     kunne lese en synlig reservasjons id og laste opp SIN bunt på
+    #     nøyaktig reservasjonens fremtidige fødselssti. Backfillen ville
+    #     delt ut den samme strengen og felt `inndata_lagersti_unik`,
+    #     altså hele 059. Reservasjonen skal vike, aliaset skal stå.
+    #     Formen er uoppnåelig på en base som alt står på 059 (6-arg-
+    #     døren utleder stien), så bare SP-10 kan bebo den.
+    aid = uuid.uuid4()
+    conn.execute(
+        "INSERT INTO inndata_artefakt (tenant, inndata_id, eiermodul,"
+        " formaal, innholdstype, maks_bytes, reservasjon_jti,"
+        " idempotensnokkel, utloper)"
+        " VALUES (%s,%s,'m57_ats','soknadsbunt','application/zip',1024,%s,"
+        " 'sp10-059-alias-res', now() + interval '1 hour')",
+        (TEN, aid, secrets.token_hex(32)))
+    sid = uuid.uuid4()
+    conn.execute(
+        "INSERT INTO inndata_artefakt (tenant, inndata_id, eiermodul,"
+        " formaal, innholdstype, maks_bytes, faktiske_bytes,"
+        " innhold_sha256, key_id, nonce, lager_sti, status,"
+        " reservasjon_jti, idempotensnokkel, utloper, lastet_ts)"
+        " VALUES (%s,%s,'m57_ats','soknadsbunt','application/zip',1024,10,"
+        " %s,%s,%s,%s,'lastet',%s,'sp10-059-alias-sti',"
+        " now() + interval '1 hour', now())",
+        (TEN, sid, "c" * 64, key_id, nonce, f"{TEN}/{aid}.bin",
+         secrets.token_hex(32)))
     conn.commit()
 
 
@@ -599,6 +631,27 @@ def _mal_059(conn) -> list[str]:
             feil.append(f"{nokkel}: raden er borte etter 059")
         elif not rader[nokkel].startswith(f"({ventet},"):
             feil.append(f"{nokkel}: {rader[nokkel]}, ventet {ventet}")
+
+    # Sti-aliaset: reservasjonen vek, aliaset står ORDRETT. Måles på
+    # stien og ikke bare på statusen — hadde backfillen tatt aliaset i
+    # stedet, ville en `lastet` bunt mistet filen sin.
+    alias = conn.execute(
+        "SELECT status, lager_sti FROM inndata_artefakt"
+        " WHERE tenant = %s AND idempotensnokkel = 'sp10-059-alias-res'",
+        (TEN,)).fetchone()
+    if alias != ("forkastet", None):
+        feil.append("reservasjonen hvis fødselssti alt var opptatt skulle"
+                    f" stått forkastet uten sti: {alias}")
+    squatter = conn.execute(
+        "SELECT status, lager_sti = %s || '/' || (SELECT inndata_id::text"
+        "   FROM inndata_artefakt WHERE tenant = %s"
+        "    AND idempotensnokkel = 'sp10-059-alias-res') || '.bin'"
+        "  FROM inndata_artefakt WHERE tenant = %s"
+        "   AND idempotensnokkel = 'sp10-059-alias-sti'",
+        (TEN, TEN, TEN)).fetchone()
+    if squatter != ("lastet", True):
+        feil.append("raden som eide stien skulle stått urørt som lastet"
+                    f" på nøyaktig den stien: {squatter}")
 
     # Den ulovlige tenanten: terminert, uten sti — og fortsatt der, så
     # ingen rad ble slettet i det stille.

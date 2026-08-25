@@ -74,6 +74,49 @@ BEGIN
             ' migrasjonen', v_ulovlige;
     END IF;
 END $$;
+-- OG STIEN KAN ALT VÆRE OPPTATT (Codex P1, runde 2 på #196). Navnerommet
+-- over sier hvor fødselsstien KAN peke; `inndata_lagersti_unik`
+-- (`058:196`) sier at ingen annen rad peker samme sted, og den er en ren
+-- UNIQUE på `(tenant, lager_sti)` — den bryr seg ikke om status.
+--
+-- At `inndata_id` er PRIMARY KEY beviser bare at to RESERVASJONER får
+-- hver sin fødselssti. Det sier ingenting om `lastet`/`bundet`-radene,
+-- for under 058 kom stien deres fra kalleren: `registrer_inndata_lastet`
+-- tok `p_sti TEXT` som sjuende argument (`058:440-441`), og runtime har
+-- `SELECT` på `inndata_artefakt`. En kaller kunne altså lese en synlig
+-- reservasjons `inndata_id` og laste opp SIN egen bunt på nøyaktig
+-- `<tenant>/<den id-en>.bin`. Ærlige opplastinger traff aldri dette —
+-- 058-API-et brukte en fersk uuid per kall — så en kollisjon her er alltid
+-- en bevisst squatting, men den er fullt reproduserbar på en 058-base.
+--
+-- Backfillen under ville da delt ut nøyaktig den opptatte strengen,
+-- unikheten hadde felt setningen, og hele 059 rullet tilbake for ALLE
+-- tenanter. Samme mine som avsnittet over, bare en annen CHECK.
+--
+-- Reservasjonen må vike, ikke aliaset: aliaset er en ferdig `lastet`/
+-- `bundet` bunt med en fil bak seg, mens reservasjonen er tom, kortlivet
+-- og har sin egen `utloper` — den er laget for å kunne gå tapt. Å gi den
+-- en ANNEN sti er ikke et alternativ; at stien er en ren funksjon av
+-- (tenant, inndata_id) ER B-maskinen. `forkastet` er derfor terminalen
+-- her også, og tenanten reserverer bare på nytt.
+DO $$
+DECLARE v_alias INT;
+BEGIN
+    UPDATE public.inndata_artefakt r
+       SET status = 'forkastet'
+     WHERE r.status = 'reservert' AND r.lager_sti IS NULL
+       AND EXISTS (SELECT 1 FROM public.inndata_artefakt a
+                    WHERE a.tenant = r.tenant
+                      AND a.lager_sti = r.tenant || '/'
+                          || r.inndata_id::text || '.bin');
+    GET DIAGNOSTICS v_alias = ROW_COUNT;
+    IF v_alias > 0 THEN
+        RAISE NOTICE '059: % reservasjon(er) forkastet fordi fødselsstien'
+            ' alt var opptatt av en annen rad — 058 lot kalleren velge'
+            ' filnavnet, og aliaset ville felt inndata_lagersti_unik og'
+            ' dermed hele migrasjonen', v_alias;
+    END IF;
+END $$;
 UPDATE inndata_artefakt
    SET lager_sti = tenant || '/' || inndata_id::text || '.bin'
  WHERE status = 'reservert' AND lager_sti IS NULL;
