@@ -1588,6 +1588,12 @@ def test_deaktivert_m57_gir_definert_503_paa_alle_tre_rutene(miljo,
                       " WHERE tenant=%s AND liste_id=%s",
                       (TEN, lid)).fetchone()[0]
         assert n == 0, "en deaktivert modul skrev en signatur"
+        # …og #189-ruten måles med SAMME negative bevis (Cursor P2-3):
+        # 503 alene sier bare hva klienten SÅ, ikke at basen står urørt.
+        p = m.execute("SELECT count(*) FROM stillingsprofil"
+                      " WHERE tenant=%s AND navn='R'",
+                      (TEN,)).fetchone()[0]
+        assert p == 0, "en deaktivert modul skrev en stillingsprofil"
         m.rollback()
     finally:
         m.close()
