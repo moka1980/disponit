@@ -236,6 +236,20 @@ markeringen i hver av dem.
    — sløyfa redigerer ikke workflow-filer selv. Inntil da gjelder
    §2.4/§2.5 og §10.5–6 uendret, også om natten.
 
+   **Speilingen må også gjøre «om natten» maskinlesbart.** Regelen deler
+   verden i dag og natt, men `mention`- og fikser-jobbene i `claude.yml`
+   får nøyaktig samme hendelsestyper døgnet rundt: ingen tidssone, intet
+   vindu, ingen label og ingen markør skiller et dagtids-`@claude` som
+   fortsatt krever Cursor, fra et nattmandat som skal hoppe over porten.
+   Uten et slikt skille er «om natten» ikke et vilkår sløyfa kan avgjøre,
+   bare noe den kan anta — og en feil antakelse gir Codex-only midt på
+   dagen. Eier avgjør formen, og valget er en forutsetning for
+   aktivering, ikke noe som fastsettes i en fiksrunde: enten en eksplisitt
+   mandatmarkør i selve kommentaren (§11.2-formen, som sløyfa kan lese
+   ordrett) eller et presist tidssonefestet vindu (Europe/Oslo, med
+   angitte klokkeslett). Er ingen av delene definert i speilingen, er
+   §11.3 ikke aktivert, og alt behandles som dagtid.
+
    **Catch-up-passet går mot `main`, ikke mot PR-grenen.** Nattmergen er
    `gh pr merge --squash --delete-branch`, som sletter head-grenen både
    lokalt og på remote. `cursor-pre-codex.yml` sjekker ut PR-ens
