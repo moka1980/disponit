@@ -119,6 +119,13 @@ def test_ugyldige_kravsett_avvises_uten_spor(klient, miljo):
         # invalid_parameter_value. IS DISTINCT FROM feller begge.
         {"navn": "X", "krav": [{"vekt": 2}]},
         {"navn": "X", "krav": [{"kravnavn": "A"}]},
+        # JSON-BOOL som vekt (Cursor P2-3, runde 4): samme feilklasse som
+        # 2.7 — det er ikke kundens heltallsvalg. Typeporten i 061
+        # (`jsonb_typeof … IS DISTINCT FROM 'number'`) feller den alt,
+        # men bindingen manglet: en regresjon til en løsere port ville
+        # gitt stille tolkning i stedet for 400.
+        {"navn": "X", "krav": [{"kravnavn": "A", "vekt": True}]},
+        {"navn": "X", "krav": [{"kravnavn": "A", "vekt": False}]},
         {"navn": "X", "krav": [{"kravnavn": "A", "vekt": 2}],
          "profil_id": "ikke-uuid"},
         {"navn": "X", "krav": [{"kravnavn": "A", "vekt": 2}],
