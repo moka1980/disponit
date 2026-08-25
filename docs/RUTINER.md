@@ -215,3 +215,13 @@ Tre regler gjør natten produktiv uten at noen ringer på:
    det øyeblikket eier har håndmerget den speilingen inn i `claude.yml`
    — sløyfa redigerer ikke workflow-filer selv. Inntil da gjelder
    §2.4/§2.5 og §10.5–6 uendret, også om natten.
+
+   **Catch-up-passet går mot `main`, ikke mot PR-grenen.** Nattmergen er
+   `gh pr merge --squash --delete-branch`, som sletter head-grenen både
+   lokalt og på remote. `cursor-pre-codex.yml` sjekker ut PR-ens
+   `headRefName`, så et catch-up-pass «per merget PR» ville feilet på en
+   ref som ikke finnes — og en P1 funnet etterpå ville uansett ikke hatt
+   noen gren å fikses på. Dagpasset leser derfor squash-commitene på
+   `main` for natten som gikk, og funn der blir en egen hotfix-PR med
+   vanlig §10-løype. Den hotfix-PR-en skal være merget før neste
+   nattmandat gis.
