@@ -62,13 +62,73 @@ def test_dom_klasse_oppslaget_krever_sitatlinjen():
         " ikke I KRAFT — flatene har glidd fra hverandre")
 
 
+def _fiksforsok() -> list[str]:
+    """De tre forsøksromptene i fikserjobben (runde 1, 2 og 3).
+
+    Cursor P2-1 på #198: §11.1-portene sto bare i runde 1 — et forsøk
+    som fortsatte etter timeout kunne merge uten dem. Splitten her gjør
+    hvert forsøk til sin egen målbare flate."""
+    fiks = _jobb("fiks-og-merge")
+    deler = re.split(r"FORTSETTELSESFORSØK", fiks)
+    assert len(deler) == 3, "ventet runde 1 + to fortsettelsesforsøk"
+    return deler
+
+
 def test_verdikt_rekkevidden_er_speilet_begge_veier():
     """§11.1s verdikt-rekkevidde: RUTINER beskriver filsnitt-målingen,
-    steg 3a i fikserjobben utfører den. Begge flatene må bære den."""
-    fiks = _jobb("fiks-og-merge")
-    assert "VERDIKT-REKKEVIDDEN" in fiks
-    assert "compare/" in fiks, "3a må måle filsnittet, ikke anta det"
+    fikserjobben utfører den — i ALLE TRE forsøkene (Cursor P2-1 på
+    #198: runde 2/3 kunne ellers merge på et brukt verdikt etter en
+    timeout i runde 1)."""
+    for i, forsok in enumerate(_fiksforsok(), 1):
+        assert "VERDIKT-REKKEVIDDEN" in forsok, f"forsøk {i} mangler porten"
+        assert "compare/" in forsok, (
+            f"forsøk {i} må måle filsnittet, ikke anta det")
     assert "Verdikt-rekkevidden etter grenoppdatering" in RUTINER
+
+
+def test_dom_klasse_porten_i_alle_tre_forsokene():
+    """Cursor P2-1/P2-5 på #198: dom-klasse-porten må stå i hvert av de
+    tre forsøkene — et utsatt punkt skal parkere PR-en uansett hvilket
+    forsøk som når merge-steget."""
+    for i, forsok in enumerate(_fiksforsok(), 1):
+        assert "DOM-KLASSE-PORTEN" in forsok, f"forsøk {i} mangler porten"
+        assert "dom-klasse: <id> · felt i #<nr> · <URL>" in forsok, (
+            f"forsøk {i} mangler sitatlinje-formen")
+
+
+def test_broen_er_per_pr_og_feiler_hoyt():
+    """Cursor P2-3/P2-4 på #198 + målt no-op (run 32822713282):
+
+    * concurrency må være PER PR (needs-output), aldri per workflow_run-id
+      alene — to pass på samme PR skal køes, ikke kjøre parallelt;
+    * artefakt-mangel skal feile RØDT, aldri `exit 0` til grønn no-op;
+    * runde-cursor-steget må bære samme verktøyflate som fikserjobben —
+      uten `--allowedTools` var broen en no-op med grønn hake."""
+    fulgt = _jobb("cursor-pass-fulgt")
+    hent = _jobb("pr-fra-pass")
+    assert "claude-cursorfulgt-pr-" in fulgt, "concurrency må være per PR"
+    assert "needs.pr-fra-pass.outputs.nummer" in fulgt
+    assert not re.search(r"group:\s*claude-cursorfulgt-\$\{\{\s*github\.event\.workflow_run\.id",
+                         fulgt), "workflow_run.id som eneste nøkkel"
+    assert "exit 1" in hent and "exit 0" not in hent, (
+        "artefakt-mangel må feile rødt")
+    assert "--allowedTools" in fulgt, "broen mangler verktøyflaten"
+    # Uttrykkslinjene alene — #197s forklarende kommentar NEVNER flagget.
+    uttrykk = "\n".join(l for l in fulgt.splitlines()
+                        if not l.lstrip().startswith("#"))
+    assert "continue-on-error" not in uttrykk
+
+
+def test_paragraf_10_beskriver_broen_ikke_mention():
+    """Cursor P2-2 på #198: §10 hevdet at footeren vekker mention-jobben —
+    men GITHUB_TOKEN-kommentarer sender ingen hendelser den kan se
+    (#188). Dokumentet må peke på workflow_run-broen."""
+    m = re.search(r"^## 10\. .*?(?=^## \d)", RUTINER, re.S | re.M)
+    assert m, "§10 finnes ikke"
+    p10 = m.group(0)
+    assert "workflow_run" in p10 and "cursor-pass-fulgt" in p10
+    assert "Footer vekker Claude" not in p10, (
+        "§10 påstår fortsatt at footeren/mention er broen")
 
 
 def test_nattmandat_regelen_matcher_handleren():
