@@ -26,8 +26,20 @@
 -- er kryss-tenant med definer-eieren (domene_eier, 016/019-formen:
 -- avgjørelsen er iboende kryss-tenant), og hele predikatet står i én
 -- spørring: bundet inndata ∧ samme eiermodul begge sider ∧ oppdraget
--- PLUKKET. Ingen rad → ingenting, samme svar uansett årsak (et
--- oppslagsverk over andres bunter skal ikke finnes).
+-- PLUKKET MED LEVENDE LEASE. Ingen rad → ingenting, samme svar uansett
+-- årsak (et oppslagsverk over andres bunter skal ikke finnes).
+--
+-- LEASEN ER EN DEL AV RETTEN (Codex P1, #202). `plukket` alene er ikke
+-- holdet: etter `owner_lease_utloper` er raden reclaimbar (015:198-199,
+-- 037:105-106, 005:894-895 — `plukket AND owner_lease_utloper < now()`),
+-- men status og `owner_claim_id` står urørt til noen faktisk tar den.
+-- I det vinduet ville en kapabilitet fra en død holder fortsatt hentet
+-- PII, og hvis ingen reclaimer noen gang kommer, ville den gjort det for
+-- alltid. Verre: mellom utløpet og reclaimen kunne BÅDE den gamle
+-- holderen og den nye claimeren lese samme bunt. «Retten til bunten er
+-- retten til å holde claimet» (over) er da bare sann så lenge holdet
+-- varer, og leddet under er nøyaktig det. Fail-closed mot NULL: en rad
+-- uten lease har ingen holdefrist å vise til.
 
 SET LOCAL ROLE disponit_domene_eier;
 
@@ -47,7 +59,9 @@ SET search_path = pg_catalog AS $$
        AND i.eiermodul = p_eiermodul
        AND o.eiermodul = p_eiermodul
        AND o.status = 'plukket'
-       AND o.owner_claim_id = p_owner_claim_id;
+       AND o.owner_claim_id = p_owner_claim_id
+       AND o.owner_lease_utloper IS NOT NULL
+       AND o.owner_lease_utloper > pg_catalog.now();
 $$;
 
 REVOKE ALL ON FUNCTION hent_inndata_for_oppdrag(BIGINT, TEXT, TEXT) FROM PUBLIC;

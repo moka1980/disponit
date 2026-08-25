@@ -12,9 +12,9 @@ migrator i stedet for HTTP-claim: claim-endepunktet plukker «neste» på
 tvers av alt basen har liggende, og et kappløp med andre suiters
 etterlatte oppdrag ville målt kjørerekkefølgen, ikke resolveren. At
 claim ER veien til 'plukket' bevises av claim-suitene; resolverens
-predikat er modul-match + plukket + bundet, og det er DET som måles her.
-Negativene: opprettet 404, feil modul 404, ubundet 404, browser 401 —
-samme svar uansett årsak.
+predikat er modul-match + plukket med LEVENDE LEASE + bundet, og det er
+DET som måles her. Negativene: opprettet 404, feil modul 404, ubundet
+404, utløpt/manglende lease 404, browser 401 — samme svar uansett årsak.
 """
 import hashlib
 import secrets
@@ -122,12 +122,20 @@ def _bundet_bunt(klient, migrator, *, bind=True):
 def _pluk(migrator, tenant, oid):
     """Flipper til plukket og stempler claim-KAPABILITETEN (owner_claim_id
     — kolonnen er ikke claim-vaktens; formatkravet er claim-dørens
-    ^[0-9a-f]{32,}$). Returnerer kapabiliteten kalleren må presentere."""
+    ^[0-9a-f]{32,}$). Returnerer kapabiliteten kalleren må presentere.
+
+    LEASEN SETTES OGSÅ (Codex P1, #202): claim-porten skriver alltid
+    `owner_lease_utloper` (015:277, 037:192, 049:288), og resolveren
+    krever nå at holdet fortsatt varer. En positiv sti som lot leasen
+    stå NULL ville målt en tilstand claim-døren aldri produserer — og
+    skjult nøyaktig det leddet den skal bevise."""
     from db.pg import sett_kontekst
     claim = secrets.token_hex(16)
     sett_kontekst(migrator, tenant, "test", "r-pluk")
     migrator.execute("UPDATE oppdrag SET status='plukket',"
-                     " owner_claim_id=%s WHERE tenant=%s AND id=%s",
+                     " owner_claim_id=%s,"
+                     " owner_lease_utloper=now()+interval '1 hour'"
+                     " WHERE tenant=%s AND id=%s",
                      (claim, tenant, oid))
     migrator.commit()
     return claim
@@ -173,6 +181,50 @@ def test_resolveren_krever_plukket_oppdrag(klient, migrator, miljo,
                      json={"owner_claim_id": claim},
                      cookies={sesjonmodul.C_SESJON: cookie})
     assert r3.status_code == 401
+
+
+@pg
+def test_utlopt_lease_er_ikke_lenger_en_rett(klient, migrator, miljo,
+                                             inndata_rot):
+    """Codex P1: etter `owner_lease_utloper` er raden reclaimbar, men
+    `plukket`/`owner_claim_id` står urørt til noen tar den. I det
+    vinduet skal den gamle holderens kapabilitet ikke lenger hente
+    noe — samme 404 som «ikke claimet», ikke en egen feilklasse."""
+    rel = _m57_deployment(migrator)
+    kropp, tenant, oid = _bundet_bunt(klient, migrator)
+    claim = _pluk(migrator, tenant, oid)
+    mtk, _ = _onboard_token(klient, migrator, "m57_ats", rel)
+
+    # Kontroll: med levende lease er dette 200 og byte-likt.
+    r_ok = klient.post(f"/v1/inndata/hent-for-oppdrag/{oid}",
+                       json={"owner_claim_id": claim},
+                       headers={"authorization": f"Bearer {mtk}"})
+    assert r_ok.status_code == 200, r_ok.text
+    assert r_ok.content == kropp
+
+    # Leasen løper ut. Ingenting annet endres — status og kapabilitet
+    # er nøyaktig de samme som i 200-svaret over.
+    from db.pg import sett_kontekst
+    sett_kontekst(migrator, tenant, "test", "r-utlop")
+    migrator.execute("UPDATE oppdrag SET"
+                     " owner_lease_utloper=now()-interval '1 second'"
+                     " WHERE tenant=%s AND id=%s", (tenant, oid))
+    migrator.commit()
+    r = klient.post(f"/v1/inndata/hent-for-oppdrag/{oid}",
+                    json={"owner_claim_id": claim},
+                    headers={"authorization": f"Bearer {mtk}"})
+    assert r.status_code == 404, r.text
+
+    # Og en rad uten lease i det hele tatt: fail-closed, ikke «ingen
+    # frist = ingen utløp».
+    sett_kontekst(migrator, tenant, "test", "r-utlop")
+    migrator.execute("UPDATE oppdrag SET owner_lease_utloper=NULL"
+                     " WHERE tenant=%s AND id=%s", (tenant, oid))
+    migrator.commit()
+    r2 = klient.post(f"/v1/inndata/hent-for-oppdrag/{oid}",
+                     json={"owner_claim_id": claim},
+                     headers={"authorization": f"Bearer {mtk}"})
+    assert r2.status_code == 404, r2.text
 
 
 @pg
