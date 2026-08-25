@@ -615,6 +615,41 @@ def hent_endepunkt(tjeneste, request, kropp):
         tjeneste.logg.hendelse("inndata_sha_avvik", rid, tenant,
                                art="sikkerhet")
         return _feilsvar("intern_feil", rid)
+    # RETTEN RE-MÅLES VED LEVERANSEN (Cursor P1, andre pass): dommen
+    # over ble felt FØR inntil 64 MiB lesing+dekryptering, og i det
+    # vinduet kan leasen løpe ut med reclaim til ny holder, eller
+    # modulen nødstoppes. 060-predikatet skal være sant når bytene
+    # FORLATER huset, ikke bare da de ble funnet — så hele porten
+    # (revalidering + dør) kjøres igjen i en KORT transaksjon, uten
+    # bytes i hendene på en rett som døde underveis.
+    try:
+        conn2 = tjeneste.pool.hent()
+    except (TimeoutError, psycopg.Error):
+        tjeneste.logg.hendelse("db_utilgjengelig", rid, art="drift")
+        return _feilsvar("db_utilgjengelig", rid)
+    try:
+        revalidering = _modultoken_revalidert(tjeneste, conn2, auth, rid)
+        if revalidering is not None:
+            return revalidering
+        fortsatt = conn2.execute(
+            "SELECT 1 FROM hent_inndata_for_oppdrag(%s::bigint,%s,%s,"
+            "%s,%s)",
+            (oppdrag_id, auth.modul_id, owner_claim,
+             auth.release_id, auth.miljo)).fetchone()
+        conn2.rollback()
+    except psycopg.Error:
+        try:
+            conn2.rollback()
+        except psycopg.Error:
+            pass
+        tjeneste.logg.hendelse("db_utilgjengelig", rid, art="drift")
+        return _feilsvar("db_utilgjengelig", rid)
+    finally:
+        tjeneste.pool.gi_tilbake(conn2)
+    if fortsatt is None:
+        tjeneste.logg.hendelse("inndata_rett_dod_ved_leveranse", rid,
+                               tenant, art="sikkerhet")
+        return _feilsvar("ikke_funnet", rid)
     return Response(raa, media_type="application/zip",
                     headers={"x-request-id": rid,
                              "x-innhold-sha256": sha})

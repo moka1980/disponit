@@ -31,7 +31,7 @@ from .test_modul_onboarding_http import _onboard_token
 pg = pytest.mark.skipif(not DSN, reason="DISPONIT_TEST_DSN ikke satt")
 
 
-def _m57_deployment(conn, miljo_="staging"):
+def _m57_deployment(conn, miljo_="staging", tvang_ny=False):
     """En onboardbar deployment for den EKTE modulen `m57_ats`.
 
     Hodet og kontrakten er idempotente på tvers av kjøringer
@@ -44,28 +44,33 @@ def _m57_deployment(conn, miljo_="staging"):
     `test_fremmed_deployment_...` under."""
     conn.execute("INSERT INTO modulhode (modul_id,status)"
                  " VALUES ('m57_ats','aktiv') ON CONFLICT DO NOTHING")
+    # `tvang_ny` gir en ANDRE claiming-release i SAMME miljø: 035
+    # tillater det bare under en annen kontraktversjon
+    # (en_claiming_per_kontrakt) — versjon 2, egen hash.
+    versjon = 2 if tvang_ny else 1
     conn.execute(
         "INSERT INTO modulkontrakt (modul_id,kontraktversjon,kontrakt_hash,"
         "payload_schema_hash,kvittering_schema_hash,sideeffektklasse,"
-        "reversibilitet) VALUES ('m57_ats',1,%s,'p','k','krever_outbox',"
+        "reversibilitet) VALUES ('m57_ats',%s,%s,'p','k','krever_outbox',"
         "'kompenserende') ON CONFLICT DO NOTHING",
-        ("k-" + secrets.token_hex(8),))
+        (versjon, "k-" + secrets.token_hex(8)))
     khash = conn.execute(
         "SELECT kontrakt_hash FROM modulkontrakt"
-        " WHERE modul_id='m57_ats' AND kontraktversjon=1").fetchone()[0]
+        " WHERE modul_id='m57_ats' AND kontraktversjon=%s",
+        (versjon,)).fetchone()[0]
     # Onboardingen krever en registrert oppdragstype under releasens
     # kontrakt; registeret er append-only, så navnet er ferskt per kall.
     conn.execute(
         "INSERT INTO oppdragstype_register (oppdragstype,eiermodul,"
-        "kontraktversjon,kontrakt_hash) VALUES (%s,'m57_ats',1,%s)",
-        (f"rekr.res.{secrets.token_hex(4)}", khash))
+        "kontraktversjon,kontrakt_hash) VALUES (%s,'m57_ats',%s,%s)",
+        (f"rekr.res.{secrets.token_hex(4)}", versjon, khash))
     # `en_claiming_per_kontrakt` tillater NØYAKTIG én claiming-deployment
     # per (modul, miljø, versjon, hash) — finnes den, gjenbrukes den.
     rad = conn.execute(
         "SELECT release_id FROM moduldeployment"
         " WHERE modul_id='m57_ats' AND miljo=%s"
-        " AND kontraktversjon=1 AND kontrakt_hash=%s"
-        " AND livslop='claiming'", (miljo_, khash)).fetchone()
+        " AND kontraktversjon=%s AND kontrakt_hash=%s"
+        " AND livslop='claiming'", (miljo_, versjon, khash)).fetchone()
     if rad:
         conn.commit()
         return rad[0]
@@ -73,11 +78,12 @@ def _m57_deployment(conn, miljo_="staging"):
     conn.execute(
         "INSERT INTO modulrelease (modul_id,release_id,kontraktversjon,"
         "kontrakt_hash,manifest_hash,artifact_digest)"
-        " VALUES ('m57_ats',%s,1,%s,'mh','ad')", (rel, khash))
+        " VALUES ('m57_ats',%s,%s,%s,'mh','ad')", (rel, versjon, khash))
     conn.execute(
         "INSERT INTO moduldeployment (modul_id,release_id,kontraktversjon,"
         "kontrakt_hash,miljo,livslop)"
-        " VALUES ('m57_ats',%s,1,%s,%s,'claiming')", (rel, khash, miljo_))
+        " VALUES ('m57_ats',%s,%s,%s,%s,'claiming')",
+        (rel, versjon, khash, miljo_))
     conn.commit()
     return rel
 
@@ -410,3 +416,77 @@ def test_tuklet_wrapped_dek_er_intern_feil(klient, migrator, miljo,
                     headers={"authorization": f"Bearer {mtk}"})
     assert r.status_code == 500, r.text
     assert r.json()["feil"] == "intern_feil"
+
+
+@pg
+def test_rett_som_dor_under_leveransen_gir_ingenting(klient, migrator,
+                                                     miljo, monkeypatch,
+                                                     inndata_rot):
+    """Cursor P1 (#202, andre pass): dommen felles FØR lesing+dekrypt av
+    inntil 64 MiB — i det vinduet kan leasen løpe ut og en NY holder
+    reclaime. Retten re-måles ved leveransen: den gamle requesten får
+    404, aldri bytes fra en rett som døde underveis.
+
+    Vinduet treffes deterministisk: dekrypteringen får en sideeffekt som
+    utløper leasen og reclaimer til ny claim-id FØR den slipper videre.
+
+    MUTASJONEN SOM DREPER DENNE: fjern leveranse-re-målingen i
+    hent_endepunkt."""
+    rel = _m57_deployment(migrator)
+    kropp, tenant, oid = _bundet_bunt(klient, migrator)
+    claim = _pluk(migrator, tenant, oid, rel)
+    mtk, _ = _onboard_token(klient, migrator, "m57_ats", rel)
+
+    from db import kryptering as kryptmodul
+    ekte = kryptmodul.dekrypter_bytes
+    fra_test = {"truffet": False}
+
+    def _dekrypt_med_kappløp(*a, **k):
+        # Kjøres i requestens vindu mellom dom og leveranse: leasen
+        # utløper og en annen holder reclaimer.
+        if not fra_test["truffet"]:
+            fra_test["truffet"] = True
+            from db.pg import koble, sett_kontekst
+            m2 = koble(MIGRATOR_DSN)
+            try:
+                sett_kontekst(m2, tenant, "test", "r-race")
+                m2.execute(
+                    "UPDATE oppdrag SET owner_claim_id=%s"
+                    " WHERE tenant=%s AND id=%s",
+                    (secrets.token_hex(16), tenant, oid))
+                m2.commit()
+            finally:
+                m2.close()
+        return ekte(*a, **k)
+
+    monkeypatch.setattr(kryptmodul, "dekrypter_bytes",
+                        _dekrypt_med_kappløp)
+    r = klient.post(f"/v1/inndata/hent-for-oppdrag/{oid}",
+                    json={"owner_claim_id": claim},
+                    headers={"authorization": f"Bearer {mtk}"})
+    assert fra_test["truffet"], "kappløpsvinduet ble aldri truffet"
+    assert r.status_code == 404, r.text
+
+
+@pg
+def test_annen_release_i_samme_miljo_far_ingenting(klient, migrator,
+                                                   miljo, inndata_rot):
+    """Cursor P2 (#202, andre pass): miljø-negativen alene lot en
+    regresjon som droppet claim_release_id-leddet være grønn — to
+    releaser kan leve i SAMME miljø (035). Claim stemplet med A;
+    token for B + lekket kapabilitet → 404; A → 200."""
+    rel_a = _m57_deployment(migrator)
+    kropp, tenant, oid = _bundet_bunt(klient, migrator)
+    claim = _pluk(migrator, tenant, oid, rel_a)
+    rel_b = _m57_deployment(migrator, tvang_ny=True)
+    mtk_b, _ = _onboard_token(klient, migrator, "m57_ats", rel_b)
+    r = klient.post(f"/v1/inndata/hent-for-oppdrag/{oid}",
+                    json={"owner_claim_id": claim},
+                    headers={"authorization": f"Bearer {mtk_b}"})
+    assert r.status_code == 404, r.text
+    mtk_a, _ = _onboard_token(klient, migrator, "m57_ats", rel_a)
+    r2 = klient.post(f"/v1/inndata/hent-for-oppdrag/{oid}",
+                     json={"owner_claim_id": claim},
+                     headers={"authorization": f"Bearer {mtk_a}"})
+    assert r2.status_code == 200, r2.text
+    assert r2.content == kropp
