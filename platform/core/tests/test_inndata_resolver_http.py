@@ -14,8 +14,9 @@ etterlatte oppdrag ville målt kjørerekkefølgen, ikke resolveren. At
 claim ER veien til 'plukket' bevises av claim-suitene; resolverens
 predikat er modul-match + plukket med LEVENDE LEASE + SAMME DEPLOYMENT +
 bundet, og det er DET som måles her. Negativene: opprettet 404, feil
-modul 404, ubundet 404, utløpt/manglende lease 404, fremmed deployment
-av samme modul 404, browser 401 — samme svar uansett årsak.
+modul 404, ubundet 404, utløpt/manglende lease 404, terminalt oppdrag med
+intakt claim 404, fremmed deployment av samme modul 404, browser 401 —
+samme svar uansett årsak.
 """
 import hashlib
 import secrets
@@ -207,6 +208,58 @@ def test_resolveren_krever_plukket_oppdrag(klient, migrator, miljo,
                      json={"owner_claim_id": claim},
                      cookies={sesjonmodul.C_SESJON: cookie})
     assert r3.status_code == 401
+
+
+@pg
+def test_terminalt_oppdrag_med_intakt_claim_gir_ingenting(klient, migrator,
+                                                          miljo, inndata_rot):
+    """Cursor-P2 (#202): `o.status = 'plukket'` er lastbærende, men ingen
+    negativ drepte mutasjonen. `test_resolveren_krever_plukket_oppdrag`
+    måler bare FØR plukk, og der står `owner_claim_id`/leasen NULL — 404-en
+    der kommer fra claim- og lease-leddene, ikke fra statusleddet. Stryker
+    man `AND o.status = 'plukket'` ut av 060, forblir suiten grønn.
+
+    Hullet leddet faktisk lukker: terminaliseringen rører ikke claim-
+    stemplet. Kolonnelåsen (`056:529-535`) tillater `plukket` →
+    `utfort`/`feilet` og lar `owner_*` stå — så et ferdig oppdrag beholder
+    både kapabiliteten og en levende lease, og holderen (eller en lekket
+    kapabilitet i samme deployment) kunne hentet PII resten av leasens
+    løpetid. Begge terminalene måles: en mutasjon til `o.status <>
+    'utfort'` ville overlevd en test som bare kjente den ene."""
+    rel = _m57_deployment(migrator)
+    mtk, _ = _onboard_token(klient, migrator, "m57_ats", rel)
+
+    from db.pg import sett_kontekst
+    for terminal in ("utfort", "feilet"):
+        kropp, tenant, oid = _bundet_bunt(klient, migrator)
+        claim = _pluk(migrator, tenant, oid, rel)
+
+        # Kontroll: plukket, levende lease, samme deployment → 200.
+        r_ok = klient.post(f"/v1/inndata/hent-for-oppdrag/{oid}",
+                           json={"owner_claim_id": claim},
+                           headers={"authorization": f"Bearer {mtk}"})
+        assert r_ok.status_code == 200, (terminal, r_ok.text)
+        assert r_ok.content == kropp
+
+        # Oppdraget termineres, og INGENTING annet endres — kapabiliteten,
+        # leasen og deployment-stemplet står som i 200-svaret over.
+        sett_kontekst(migrator, tenant, "test", "r-terminal")
+        migrator.execute("UPDATE oppdrag SET status=%s"
+                         " WHERE tenant=%s AND id=%s",
+                         (terminal, tenant, oid))
+        migrator.commit()
+        # …og det er ikke en antakelse: raden sier det selv.
+        rad = migrator.execute(
+            "SELECT status, owner_claim_id,"
+            " owner_lease_utloper > now() AS lever"
+            " FROM oppdrag WHERE tenant=%s AND id=%s",
+            (tenant, oid)).fetchone()
+        assert tuple(rad) == (terminal, claim, True), (terminal, rad)
+
+        r = klient.post(f"/v1/inndata/hent-for-oppdrag/{oid}",
+                        json={"owner_claim_id": claim},
+                        headers={"authorization": f"Bearer {mtk}"})
+        assert r.status_code == 404, (terminal, r.text)
 
 
 @pg
