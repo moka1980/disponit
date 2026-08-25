@@ -472,13 +472,17 @@ jobs:
     # Egen jobb, ikke et steg (Cursor P2-3 på #198): concurrency-nøkkelen
     # for oppfølgingen må være PER PR, og en jobbs concurrency kan ikke
     # lese sine egne stegs output — bare `needs`-output fra en annen jobb.
-    # ACTOR-PORTEN (Cursor P1-3 runde 5): workflow_run-actor er den som
-    # startet passet — bare eier og sløyfas egen bot får utløse en
-    # SKRIVENDE oppfølging. Sammen med samme port i cursor-pre-codex
-    # lukker den @cursor-review-flaten for fremmede kommentatorer.
+    # ACTOR-PORTEN, EVENT-DELT (Cursor P1-3 runde 5 + P2-1 runde 7):
+    # for KOMMENTAR-utløste pass er actoren kommentatoren — allowlisten
+    # (eier + sløyfas bot) lukker @cursor-review-flaten for fremmede.
+    # For pull_request-utløste pass (ready_for_review / label) er
+    # utløsningen alt portet av write-tilgang i cursor-pre-codex, og
+    # actoren kan legitimt være enhver skriver — å blokkere dem lot
+    # §10-automatikken stoppe stille (runde 5 overkorrigerte).
     if: >-
       github.event_name == 'workflow_run' &&
-      (github.event.workflow_run.actor.login == 'moka1980' ||
+      (github.event.workflow_run.event == 'pull_request' ||
+       github.event.workflow_run.actor.login == 'moka1980' ||
        github.event.workflow_run.actor.login == 'claude[bot]')
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -578,7 +582,14 @@ jobs:
                ping) vekker broen. Re-kø gjelder KUN transportfeil,
                første gang; andre gang på rad: gå videre som om passet
                var hoppet over (Cursor-ute-regelen) — fortsett til
-               steg 4.
+               steg 4. GENERISK `failure` er sin egen gren: endte passet
+               `failure` og tråden IKKE har en fersk pass-kommentar fra
+               `github-actions[bot]` for nettopp denne kjøringen/HEAD-en,
+               finnes det ingenting å følge opp — stopp med én kort
+               kommentar om at passet feilet uten funnliste (adressér
+               @moka1980). Cursor-ute-regelen gjelder KUN dokumentert
+               transportfeil i tråden, aldri en generisk failure — steg
+               3/4 nås ALDRI uten et ekte pass knyttet til kjøringen.
             3. Les det SISTE passet i PR-en — og et pass ER bare en
                kommentar POSTET AV `github-actions[bot]` med overskriften
                `## Cursor pre-Codex` (sjekk forfatteren med `gh api`,

@@ -306,16 +306,31 @@ def test_verdikt_portene_bruker_eksakte_logins():
     assert "github.event.review.state == 'approved'" in fiks
 
 
-def test_broen_krever_kjent_aktor():
-    """Cursor P1-3 runde 5 (#198): workflow_run-actor er den som startet
-    passet — bare eier og sløyfas bot får utløse skrivende oppfølging.
-    Speilet i cursor-pre-codex: kommentar-utløseren er en allowlist."""
+def test_broen_krever_kjent_aktor_men_slipper_pr_utloste_pass():
+    """Cursor P1-3 runde 5 + P2-1 runde 7 (#198): kommentar-utløste pass
+    portes på actor-allowlisten (eier + sløyfas bot); pull_request-
+    utløste pass (ready_for_review/label — alt portet av write-tilgang)
+    skal ALLTID rutes, ellers stopper §10-automatikken stille for
+    legitime skrivere."""
     hent = _uttrykk(_jobb("pr-fra-pass").split("steps:")[0])
     assert "workflow_run.actor.login == 'moka1980'" in hent
     assert "workflow_run.actor.login == 'claude[bot]'" in hent
+    assert "workflow_run.event == 'pull_request'" in hent, (
+        "pull_request-utløste pass må forbi actor-porten")
     assert "== 'moka1980'" in CURSOR_YML and "== 'claude[bot]'" in CURSOR_YML
     assert "github.actor != 'github-actions[bot]'" not in CURSOR_YML, (
         "nektelseslisten er tilbake — porten er en allowlist")
+
+
+def test_bro_prompt_har_failure_gren():
+    """Cursor P2-2 runde 7 (#198): et pass som endte generisk `failure`
+    uten funnliste skal aldri la agenten nå steg 3/4 — stopp med
+    kommentar; Cursor-ute-regelen krever DOKUMENTERT transportfeil."""
+    fulgt = _jobb("cursor-pass-fulgt")
+    norm = " ".join(fulgt.split())
+    assert "GENERISK `failure`" in fulgt
+    assert "aldri en generisk failure" in norm
+    assert "nås ALDRI uten et ekte pass" in norm
 
 
 def test_passet_er_bundet_til_forfatteren():
