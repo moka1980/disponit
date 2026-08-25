@@ -170,13 +170,24 @@ Om natten sover både eier og Claude Codes lokale økt; skyen er alene.
 Tre regler gjør natten produktiv uten at noen ringer på:
 
 1. **Dom-klasse-regelen.** Et utsatt punkt som ordrett matcher en
-   ALLEREDE FELT dom-klasse (samme mekanisme, samme utfall — f.eks. «inn
-   i B-PR-en» for bindings-familien) trenger ingen fersk eier-dom.
-   Sløyfa noterer klassereferansen i sjekklisten og merger på rent
-   verdikt + grønn CI på eksakt head. Et punkt UTEN matchende klasse
-   parkerer PR-en som før — det er en ny dom, og nye dommer tas om
-   dagen. (Bakgrunn: natt 24→25/8 sto et vunnet verdikt uinnløst i åtte
-   timer fordi Z1 ventet på en dom som alt var felt for X1.)
+   ALLEREDE FELT dom-klasse (samme mekanisme, samme utfall) trenger
+   ingen fersk eier-dom. Klassen må da siteres oppslagbart i
+   sjekklisten, på nøyaktig denne formen:
+
+   `dom-klasse: <id> · felt i #<PR/issue-nr> · <URL til kommentaren med dommen>`
+
+   URL-en ER klasseregisteret: dommen bor der eier faktisk felte den, og
+   sløyfa åpner den og leser mekanisme og utfall før den bruker klassen.
+   Treffer den ordrett, merges det på rent verdikt + grønn CI. Uten
+   sitatlinje finnes klassen ikke for sløyfa — nær-lik formulering,
+   husket presedens eller en klasse-ID uten lenke er ikke et treff.
+   Et punkt uten matchende klasse parkerer PR-en som før — det er en ny
+   dom, og nye dommer tas om dagen. Ved tvil: parkér.
+   (Bakgrunn: natt 24→25/8 sto et vunnet verdikt uinnløst i åtte timer
+   fordi Z1 ventet på en dom som alt var felt for X1. Merk at nettopp
+   den klassen — «inn i B-PR-en» for bindings-familien — ennå ikke har
+   noen sitatlinje noe sted i repoet, og derfor ikke kan brukes før
+   noen fører den inn. Eksempelet i bakgrunnen er ikke en hjemmel.)
 
    **«Eksakt head» er én SHA, og grønn CI erstatter ikke verdiktet.**
    Et verdikt gjelder den head-SHA-en det ble avsagt på — ikke PR-en.
