@@ -89,8 +89,9 @@ def test_profil_opprettes_versjoneres_og_leses(klient, miljo):
 @pg
 def test_ugyldige_kravsett_avvises_uten_spor(klient, miljo):
     """Feilkontrakten: vekt utenfor 0–10 (også utenfor `integer`),
-    duplikatkrav, tomt sett, for mange krav, for langt navn, ukjent
-    profil-id og misformet id gir 400 — og ingenting skrives."""
+    duplikatkrav, tomt sett, for mange krav, for langt navn, for langt
+    eller tomt kravnavn, ukjent profil-id og misformet id gir 400 — og
+    ingenting skrives."""
     cookie, csrf = _browsersesjon(_bruker(f"pg-{secrets.token_hex(3)}",
                                           ["admin"]))
     for kropp in (
@@ -106,6 +107,11 @@ def test_ugyldige_kravsett_avvises_uten_spor(klient, miljo):
         {"navn": "X", "krav": []},
         {"navn": "", "krav": [{"kravnavn": "A", "vekt": 2}]},
         {"navn": "X", "krav": [{"kravnavn": "", "vekt": 2}]},
+        # KRAVNAVNETS grense (Cursor P2-2, runde 4): 061 sier 1–120 tegn
+        # ETTER btrim, men bare det tomme navnet var bevist — verken 121
+        # tegn eller ren whitespace, som btrim gjør tomt.
+        {"navn": "X", "krav": [{"kravnavn": "K" * 121, "vekt": 2}]},
+        {"navn": "X", "krav": [{"kravnavn": "   ", "vekt": 2}]},
         {"navn": "X", "krav": "ikke-liste"},
         # MANGLENDE nøkkel, ikke bare feil type (CodeRabbit): med `<>`
         # var jsonb_typeof(NULL) <> 'string' NULL og vakta i 061 hoppet
