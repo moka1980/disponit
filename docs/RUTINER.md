@@ -165,22 +165,40 @@ nøkkelen for å starte agenten.
 ## 11. Nattregler (ratifisert av eier 25/8 — «beslutninger tas uten meg om natta»)
 
 Om natten sover både eier og Claude Codes lokale økt; skyen er alene.
-Denne paragrafen fikk tre regler i eierens ratifisering; her står den ene
-som er selvbærende og i kraft i dag. §11.1 (dom-klasse-gjenbruk) og
-§11.3 (nattkjedens form) er ratifisert i innhold, men åpner begge en vei
-`claude.yml` i dag ikke har noen port for — de landes derfor i ÉN egen
-PR sammen med selve speilingen i `.github/workflows/claude.yml`, slik at
-regel og håndhevelse blir samme commit og det aldri finnes et vindu der
-dokumentet lover en port maskinen mangler (K2-eskaleringen i #193,
-avgjort under eiers delegasjon 25/8).
+Reglene her landet i samme commit som speilingen sin i
+`.github/workflows/claude.yml` — regel og port er alltid samme commit,
+aldri et vindu der dokumentet lover en port maskinen mangler
+(K2-eskaleringen i #193, avgjort under eiers delegasjon 25/8).
 
-1. **Dom-klasse-gjenbruk — IKKE I KRAFT.** Landes sammen med
-   workflow-speilingen. Inntil da dekker en henvisning til
-   «dom-klasse»/«RUTINER §11» i `claude.yml` INGENTING: et punkt som
-   trenger eier-dom parkeres til @moka1980, alltid — også når en
-   klasse-ID eller presedens er oppgitt. (Cursor P2 på #195:
-   `cursor-pass-fulgt`-promptens §11-oppslag må aldri kunne resolvere
-   til nattmandat-regelen under og leses som dekning.)
+1. **Dom-klasse-gjenbruk — I KRAFT (speilet i `claude.yml` steg 3).**
+   Et utsatt punkt som ordrett matcher en ALLEREDE FELT dom-klasse
+   (samme mekanisme, samme utfall) trenger ingen fersk eier-dom.
+   Klassen må siteres oppslagbart i PR-tråden, på nøyaktig denne formen:
+
+   `dom-klasse: <id> · felt i #<PR/issue-nr> · <URL til kommentaren med dommen>`
+
+   URL-en ER klasseregisteret: dommen bor der eier faktisk felte den, og
+   sløyfa ÅPNER lenken og leser mekanisme og utfall før klassen brukes.
+   Uten sitatlinje, med død lenke, eller når dommen gjelder en annen
+   mekanisme, finnes klassen ikke: punktet parkeres til eier — nær-lik
+   formulering, husket presedens eller en klasse-ID uten lenke er ikke
+   et treff. Ved tvil: parkér.
+
+   **Verdikt-rekkevidden etter grenoppdatering (speilet i steg 3a).**
+   Et verdikt gjelder innholdet det ble avsagt over. `gh pr
+   update-branch` flytter head uten å endre PR-ens eget innhold — ren
+   mekanikk bruker ikke verdiktet opp, MEN bare så lenge mains
+   mellomkomne endringer ikke berører PR-ens egne filer. Sløyfa MÅLER
+   det (fillisten i `compare/<gammel-head>...<ny-head>` snittes mot
+   PR-ens filer): tomt snitt → verdiktet står; ikke-tomt snitt →
+   verdiktet er brukt opp og nytt `@codex review` kreves på den nye
+   head-en; feiler målingen, behandles den som ikke-tomt snitt.
+   (Avvik fra ratifiseringens absolutte «etter enhver head-flytting er
+   verdiktet brukt opp», besluttet under delegasjonen: den absolutte
+   formen gjeninnfører nøyaktig BEHIND-parkeringen steg 3a ble bygget
+   for å fjerne, og brenner en Codex-runde per naboskaps-merge uten at
+   noe nytt er reviewet. Grensen er trukket der risikoen faktisk bor:
+   filsnittet.)
 
 2. **Mandater bor i KOMMENTARER, og omtalen er `@claude`.** En ordre i en
    issue-KROPP trigger ingen kjøring (samme utløser-klasse som §10s
@@ -193,6 +211,14 @@ avgjort under eiers delegasjon 25/8).
    bare nevner `@moka1980` eller `@codex` oppfyller ikke regelen: den lar
    mandatet ligge ubehandlet, eller vekker feil tjeneste.
 
-Nummereringen (§11.2 uten §11.1/§11.3 rundt seg) er beholdt med vilje:
-referansene i PR-tråder og sløyfeinstrukser peker på nummeret, og
-nummeret skal ikke bety noe annet den dagen naboreglene lander.
+3. **Nattkjedens form — OPPLØST med #194 (workflow_run-broen).**
+   Ratifiseringens §11.3 (Codex-only om natten, natt-markør, dagtids
+   catch-up-pass) hvilte på ÉN premiss: Cursor-passene kunne ikke vekke
+   sløyfa (#188). Den premissen døde da #194 merget — passets fullføring
+   trigger nå `cursor-pass-fulgt` døgnet rundt (herdet i #197: broen
+   slipper inn claude[bot] som oppstrøms-actor og feiler HØYT i stedet
+   for stille). Det finnes derfor ingen nattmodus å markere: natten
+   kjører NØYAKTIG samme §10-kjede som dagen, og hele familien av
+   dag/natt-skiller, markører og catch-up-pass utgår. (Beslutning under
+   eiers delegasjon 25/8 — å speile en regel bygget for en død premiss
+   hadde vært formfiksing, #193-rundenes defektklasse.)

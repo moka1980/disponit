@@ -163,6 +163,20 @@ jobs:
                issues») eller godkjenning: da skal PR-en MERGES, og det er
                tre ting som må stemme — i denne rekkefølgen.
 
+               DOM-KLASSE-PORTEN (RUTINER §11.1). Står det i verdiktet
+               eller tråden punkter som er UTSATT i påvente av en
+               eier-dom, er PR-en normalt parkert til eier har dømt.
+               Unntaket krever en sitatlinje i PR-tråden på nøyaktig
+               formen
+               `dom-klasse: <id> · felt i #<nr> · <URL>` —
+               åpne URL-en (`gh api` / `gh pr view --comments`) og LES
+               dommen: bare når mekanismen OG utfallet der ordrett
+               dekker det utsatte punktet, teller punktet som avgjort og
+               verdiktet som rent. Uten sitatlinje, med død lenke, eller
+               når dommen gjelder en annen mekanisme: parkér som før og
+               adresser eier — nær-lik formulering eller husket
+               presedens er ikke et treff. Ved tvil: parkér.
+
                3a. À JOUR MED MAIN. `main` har branch protection med
                    `strict: true`: en gren som ligger bak base kan ikke
                    merges, uansett hvor grønn CI er, og `enforce_admins` er
@@ -173,12 +187,29 @@ jobs:
                    Sjekk derfor FØRST:
                    `gh pr view <nr> --json mergeStateStatus -q .mergeStateStatus`
                    * `BEHIND` (eller merge avvises senere med «not up to
-                     date» / «Base branch was modified») →
-                     `gh pr update-branch <nr>`, og gå tilbake til 3b.
+                     date» / «Base branch was modified») → noter FØRST
+                     nåværende head
+                     (`gh pr view <nr> --json headRefOid -q .headRefOid`),
+                     så `gh pr update-branch <nr>`, og gå tilbake til 3b.
                      Bruk `update-branch`, ikke lokal rebase + force-push:
                      den skriver ikke om historikk Codex alt har reviewet
                      mot en SHA, og fletter kun `main` inn i PR-grenen.
                      Sluttmergen er `--squash`, så `main` forblir lineær.
+
+                     VERDIKT-REKKEVIDDEN (RUTINER §11.1): verdiktet ble
+                     avsagt på head-en du noterte; `update-branch` flytter
+                     den. Ren mekanikk bruker ikke verdiktet opp — men
+                     bare så lenge mains mellomkomne endringer ikke rører
+                     denne PR-ens egne filer. Mål det, aldri anta:
+                     `gh api repos/${{ github.repository }}/compare/<gammel-head>...<ny-head>`
+                     gir fillisten som kom inn; snitt den mot
+                     `gh pr view <nr> --json files -q '.files[].path'`.
+                     Tomt snitt → verdiktet står, fortsett til 3b.
+                     Ikke-tomt snitt → verdiktet er BRUKT OPP: post
+                     `@codex review` på den nye head-en og stopp — merge
+                     aldri på det gamle. (Skulle sammenligningen feile,
+                     behandle det som ikke-tomt snitt: porten feiler
+                     stengt.)
                    * `DIRTY` (ekte konflikt) → ikke tving. Løs konflikten
                      hvis den er triviell og i denne PR-ens egne filer,
                      ellers kommenter til eier hva som kolliderer.
@@ -420,7 +451,10 @@ jobs:
                teller som PASS) gjelder.
             4. PASS (eller pass-ekvivalent): verifiser grønn CI på
                nøyaktig HEAD, og post `@codex review`. Stopp.
-            5. Eskaleringer som trenger eier-dom: sjekk først om en alt
-               FELT dom-klasse dekker punktet (RUTINER §11) — da noteres
-               klassen og runden fortsetter; ellers parker med tydelig
-               kommentar til @moka1980.
+            5. Eskaleringer som trenger eier-dom: en alt FELT dom-klasse
+               dekker punktet BARE med sitatlinje i PR-tråden på formen
+               `dom-klasse: <id> · felt i #<nr> · <URL>` (RUTINER §11.1)
+               — åpne URL-en og les dommen; ordrett treff på mekanisme og
+               utfall → noter klassen og fortsett. Uten sitatlinje, med
+               død lenke eller annen mekanisme: parker med tydelig
+               kommentar til @moka1980. Ved tvil: parkér.
