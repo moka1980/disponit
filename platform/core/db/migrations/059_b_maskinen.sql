@@ -146,6 +146,80 @@ ALTER TABLE inndata_artefakt ADD CONSTRAINT inndata_tilstand_totalt CHECK (
  OR (status = 'forkastet' AND oppdrag_id IS NULL
      AND bundet_ts IS NULL));
 
+-- `lager_sti` ER ET BINDINGSFELT (Cursor P2-2, tredje pass): 058-vaktens
+-- write-once gjaldt bare fra `lastet` og utover — i overgangen
+-- `reservert -> lastet` kunne en dør med UPDATE fortsatt bytte
+-- fødselsstien, og B-maskinen hadde fjernet kall-argumentet uten å låse
+-- kolonnen. Vakten er 058 ORDRETT med to endringer: `lager_sti` står i
+-- bindingsfelt-grenen (immutabel fra fødselen — den SETTES aldri i noen
+-- UPDATE lenger; backfillen kjører med vakten avslått), og er derfor
+-- fjernet fra målingsgrenen der den nå var uoppnåelig død dekning.
+CREATE OR REPLACE FUNCTION inndata_artefakt_vakt()
+RETURNS trigger LANGUAGE plpgsql
+SET search_path = pg_catalog AS $$
+BEGIN
+    IF TG_OP <> 'UPDATE' THEN
+        RAISE EXCEPTION 'inndata_artefakt: % avvist', TG_OP
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    IF NEW.tenant IS DISTINCT FROM OLD.tenant
+       OR NEW.inndata_id IS DISTINCT FROM OLD.inndata_id
+       OR NEW.eiermodul IS DISTINCT FROM OLD.eiermodul
+       OR NEW.formaal IS DISTINCT FROM OLD.formaal
+       OR NEW.innholdstype IS DISTINCT FROM OLD.innholdstype
+       OR NEW.maks_bytes IS DISTINCT FROM OLD.maks_bytes
+       OR NEW.reservasjon_jti IS DISTINCT FROM OLD.reservasjon_jti
+       OR NEW.idempotensnokkel IS DISTINCT FROM OLD.idempotensnokkel
+       OR NEW.opprettet IS DISTINCT FROM OLD.opprettet
+       OR NEW.utloper IS DISTINCT FROM OLD.utloper
+       OR NEW.lager_sti IS DISTINCT FROM OLD.lager_sti THEN
+        RAISE EXCEPTION 'inndata_artefakt: bindingsfeltene er immutable'
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    IF NOT ((OLD.status = 'reservert' AND NEW.status IN ('lastet',
+                                                         'forkastet'))
+         OR (OLD.status = 'lastet' AND NEW.status IN ('bundet',
+                                                      'forkastet'))) THEN
+        RAISE EXCEPTION 'inndata_artefakt: overgang % -> % finnes ikke',
+            OLD.status, NEW.status
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    -- Bindingen er BINDINGENS (Cursor P2): `oppdrag_id` var hverken
+    -- bindingsfelt eller write-once, så enhver skrivevei med UPDATE kunne
+    -- sette den — også en forkasting, som dermed kunne ta plassen i den
+    -- unike indeksen foran `bind_inndata`. Kolonnen kan nå bare endres i
+    -- nøyaktig den overgangen `bind_inndata` gjør.
+    IF NEW.oppdrag_id IS DISTINCT FROM OLD.oppdrag_id
+       AND NOT (OLD.status = 'lastet' AND NEW.status = 'bundet') THEN
+        RAISE EXCEPTION 'inndata_artefakt: oppdrag_id settes kun i'
+            ' overgangen lastet -> bundet'
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    -- Målingene er write-once: satt ved 'lastet', aldri endret siden.
+    IF OLD.status <> 'reservert' AND (
+           NEW.faktiske_bytes IS DISTINCT FROM OLD.faktiske_bytes
+        OR NEW.innhold_sha256 IS DISTINCT FROM OLD.innhold_sha256
+        OR NEW.key_id IS DISTINCT FROM OLD.key_id
+        OR NEW.nonce IS DISTINCT FROM OLD.nonce
+        OR NEW.lastet_ts IS DISTINCT FROM OLD.lastet_ts) THEN
+        RAISE EXCEPTION 'inndata_artefakt: målingene er write-once'
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    RETURN NEW;
+END $$;
+
+-- FØDSELSSTI-FORMEN PÅ LAGRINGEN (Cursor P2-1, tredje pass): B-maskinen
+-- lover at stien er en REN funksjon av (tenant, inndata_id) — men løftet
+-- bodde bare i døren. En direkte skrivevei kunne fortsatt sette inn en
+-- reservasjon med vilkårlig navn i eget navnerom, og «strukturelt
+-- umulig» var da en funksjonspåstand, ikke en lagringspåstand (016-
+-- klassen). Kun LEVENDE reservasjoner strammes: 058-arvens
+-- `lastet`/`bundet` bærer kallervalgte navn og skal stå uendret, og
+-- G1-forkastingene over har sti NULL og treffes ikke.
+ALTER TABLE inndata_artefakt ADD CONSTRAINT inndata_fodselssti_kanonisk
+    CHECK (status <> 'reservert'
+        OR lager_sti = tenant || '/' || inndata_id::text || '.bin');
+
 -- X1s FØDSELSATTEST (Codex P1 + Cursor P1-1 på #196). Første form målte
 -- `pg_catalog.age(o.xmin) = 0` og trodde det var radens fødsel. `xmin` er
 -- TUPPELVERSJONENS fødsel: enhver UPDATE lager en ny versjon med den

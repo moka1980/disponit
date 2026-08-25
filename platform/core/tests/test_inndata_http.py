@@ -622,16 +622,23 @@ def _reservasjon(m, tenant, *, utloper="now() + interval '1 hour'",
     som alt er utløpt, uten å skru av en trigger som skal stå på.
 
     `idem`/`maks` er for testene som måler HTTP-gjenspillet: de trenger en
-    rad HTTP-ruten kan treffe med en KJENT nøkkel."""
+    rad HTTP-ruten kan treffe med en KJENT nøkkel.
+
+    Stien er KANONISK, ikke `_lagersti` (tredje pass, Cursor P2-1):
+    `inndata_fodselssti_kanonisk` krever `<tenant>/<inndata_id>.bin` for
+    hver levende reservasjon, så id-en genereres her og sendes eksplisitt
+    — nøyaktig det `reserver_inndata` gjør."""
+    import uuid as uuidlib
     jti = secrets.token_hex(32)
+    iid = uuidlib.uuid4()
     m.execute(
-        "INSERT INTO inndata_artefakt (tenant, eiermodul, formaal,"
-        " innholdstype, maks_bytes, reservasjon_jti, idempotensnokkel,"
-        " lager_sti, utloper)"
-        f" VALUES (%s,%s,'soknadsbunt','application/zip',%s,%s,%s,%s,"
+        "INSERT INTO inndata_artefakt (tenant, inndata_id, eiermodul,"
+        " formaal, innholdstype, maks_bytes, reservasjon_jti,"
+        " idempotensnokkel, lager_sti, utloper)"
+        f" VALUES (%s,%s,%s,'soknadsbunt','application/zip',%s,%s,%s,%s,"
         f"{utloper})",
-        (tenant, eiermodul, maks or MAKS, jti,
-         idem or secrets.token_hex(12), _lagersti(tenant)))
+        (tenant, iid, eiermodul, maks or MAKS, jti,
+         idem or secrets.token_hex(12), f"{tenant}/{iid}.bin"))
     return jti
 
 
@@ -1397,6 +1404,79 @@ def test_dek_referansen_er_bundet_til_tenantens_nokler(klient):
                 (tenant, MAKS, "a" * 64, b"n" * 12, _lagersti(tenant),
                  secrets.token_hex(32), secrets.token_hex(12)))
         m.rollback()
+    finally:
+        m.close()
+
+
+
+@pg
+def test_fodselssti_formen_er_lagringshandhevet(klient):
+    """Cursor P2-1 (tredje pass på #196): «strukturelt umulig» må være en
+    LAGRINGSpåstand, ikke bare dørens. En levende reservasjon med
+    ikke-kanonisk sti i eget navnerom avvises av
+    `inndata_fodselssti_kanonisk` — mens 058-arvens `lastet` med
+    kallervalgt navn fortsatt er insertbar (constrainten strammer bare
+    `reservert`).
+
+    MUTASJONEN SOM DREPER DENNE: fjern constrainten, eller utvid den til
+    alle statuser (da faller `_lastet`-arven og SP-10-aliaset)."""
+    tenant, _bid, _cookie, _csrf = _rigg(klient)
+    m = _migrator(tenant)
+    try:
+        with pytest.raises(psycopg.errors.CheckViolation):
+            m.execute(
+                "INSERT INTO inndata_artefakt (tenant, eiermodul, formaal,"
+                " innholdstype, maks_bytes, reservasjon_jti,"
+                " idempotensnokkel, lager_sti, utloper)"
+                " VALUES (%s,'m57_ats','soknadsbunt','application/zip',"
+                "%s,%s,%s,%s,now()+interval '1 h')",
+                (tenant, MAKS, secrets.token_hex(32),
+                 secrets.token_hex(12), f"{tenant}/nei.bin"))
+        m.rollback()
+        _kontekst(m, tenant)
+        # Kanonisk fødsel består — og arven (lastet, kallervalgt navn) òg.
+        _reservasjon(m, tenant)
+        _lastet(m, tenant, sti=_lagersti(tenant, "arv"))
+        m.commit()
+    finally:
+        m.close()
+
+
+@pg
+def test_fodselsstien_er_bindingsfelt_i_vakten(klient):
+    """Cursor P2-2 (tredje pass på #196): 058-vaktens write-once gjaldt
+    først FRA `lastet` — i `reservert -> lastet` kunne en dør med UPDATE
+    bytte fødselsstien. `lager_sti` er nå bindingsfelt: immutabel fra
+    fødselen, i samme gren som `utloper`/jti.
+
+    MUTASJONEN SOM DREPER DENNE: flytt `lager_sti` tilbake til
+    målingsgrenen i vakten."""
+    from db import kryptering
+    tenant, _bid, _cookie, _csrf = _rigg(klient)
+    m = _migrator(tenant)
+    try:
+        jti = _reservasjon(m, tenant)
+        key_id, _dek = kryptering.hent_eller_opprett_aktiv_dek(m, tenant)
+        m.commit()
+        _kontekst(m, tenant)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            m.execute(
+                "UPDATE inndata_artefakt SET status='lastet',"
+                " faktiske_bytes=10, innhold_sha256=%s, key_id=%s,"
+                " nonce=%s, lastet_ts=now(), lager_sti=%s"
+                " WHERE tenant=%s AND reservasjon_jti=%s",
+                ("a" * 64, key_id, b"n" * 12, _lagersti(tenant, "byttet"),
+                 tenant, jti))
+        m.rollback()
+        _kontekst(m, tenant)
+        # Samme overgang UTEN sti-bytte er fortsatt lovlig.
+        m.execute(
+            "UPDATE inndata_artefakt SET status='lastet',"
+            " faktiske_bytes=10, innhold_sha256=%s, key_id=%s,"
+            " nonce=%s, lastet_ts=now()"
+            " WHERE tenant=%s AND reservasjon_jti=%s",
+            ("a" * 64, key_id, b"n" * 12, tenant, jti))
+        m.commit()
     finally:
         m.close()
 
