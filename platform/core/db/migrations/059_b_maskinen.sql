@@ -110,12 +110,11 @@ ALTER TABLE inndata_artefakt ADD CONSTRAINT inndata_tilstand_totalt CHECK (
 -- kunne gjøres «nyfødt» på ett steg. Veien er åpen i dag — runtime har
 -- `GRANT SELECT, UPDATE ON oppdrag` (`deploy/staging/migrer.py:221`) og
 -- `oppdrag_kolonnelaas` tillater eksplisitt `OLD.status = NEW.status`
--- (`056:529-532`), altså en no-op UPDATE som ingen annen vakt ser:
---
---     BEGIN;
---     UPDATE oppdrag SET status = status WHERE tenant=$t AND id=$opp;
---     SELECT bind_inndata(...);   -- age(xmin) = 0 slapp gjennom
---     COMMIT;
+-- (`056:529-532`), altså en no-op UPDATE som ingen annen vakt ser. Hele
+-- angrepet var to setninger i én transaksjon: `UPDATE oppdrag SET status
+-- = status` på et for lengst committet oppdrag, og så `bind_inndata` —
+-- den ferske tuppelversjonen ga `age(xmin) = 0`, og porten slapp den
+-- gjennom.
 --
 -- Da var vinduet «synlig, plukkbart oppdrag uten bunt» tilbake, og Z1
 -- (payloadens `soknadsbunt_ref` skrevet i samme transaksjon) falt med.
