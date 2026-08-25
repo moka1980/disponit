@@ -701,23 +701,30 @@ def _mal_059(conn) -> list[str]:
     # attesten er uforanderlig etterpå.
     n, arvet_naa = conn.execute(
         "SELECT count(*), count(*) FILTER (WHERE fodt_xid ="
-        " pg_catalog.pg_current_xact_id()) FROM oppdrag WHERE tenant = %s",
-        (TEN,)).fetchone()
+        " pg_catalog.pg_current_xact_id() AND fodt_oppstart ="
+        " pg_catalog.pg_postmaster_start_time())"
+        " FROM oppdrag WHERE tenant = %s", (TEN,)).fetchone()
     if n != 1:
         feil.append(f"seedet oppdrag: {n} rader, ventet 1")
     if arvet_naa:
         feil.append(f"{arvet_naa} arvede oppdrag bærer DENNE"
-                    " transaksjonens xid — X1 ville sluppet dem inn")
-    conn.execute("SAVEPOINT q")
-    try:
-        conn.execute(
-            "UPDATE oppdrag SET fodt_xid = pg_catalog.pg_current_xact_id()"
-            " WHERE tenant = %s", (TEN,))
-        feil.append("fodt_xid lot seg skrive om — fødselsattesten er"
-                    " ingen attest")
-        conn.execute("ROLLBACK TO SAVEPOINT q")
-    except psycopg.errors.RaiseException:
-        conn.execute("ROLLBACK TO SAVEPOINT q")
+                    " transaksjonens attest — X1 ville sluppet dem inn")
+    # Begge leddene er uforanderlige. `fodt_oppstart` er clusterens
+    # inkarnasjon (Codex P1, runde 2): uten den ville en `fodt_xid` fra en
+    # gjenopprettet dump vært gyldig i den nye clusteren.
+    for kolonne, verdi in (
+            ("fodt_xid", "pg_catalog.pg_current_xact_id()"),
+            ("fodt_oppstart", "pg_catalog.pg_postmaster_start_time()"
+                              " - interval '1 day'")):
+        conn.execute("SAVEPOINT q")
+        try:
+            conn.execute(f"UPDATE oppdrag SET {kolonne} = {verdi}"
+                         " WHERE tenant = %s", (TEN,))
+            feil.append(f"{kolonne} lot seg skrive om — fødselsattesten"
+                        " er ingen attest")
+            conn.execute("ROLLBACK TO SAVEPOINT q")
+        except psycopg.errors.RaiseException:
+            conn.execute("ROLLBACK TO SAVEPOINT q")
     conn.rollback()
     return feil
 

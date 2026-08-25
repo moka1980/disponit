@@ -1690,6 +1690,91 @@ def test_fodselsattesten_kan_ikke_forfalskes_med_en_update(klient):
 
 
 @pg
+def test_fodselsattesten_gjelder_bare_i_sin_egen_cluster(klient):
+    """Codex P1, runde 2 på #196: et transaksjonsnummer er clusterlokalt.
+
+    `deploy/staging/backup-db.sh` er `pg_dump --format=custom` +
+    `pg_restore`, og en gjenoppretting etter havari går inn i en FRISK
+    cluster. Triggere ligger i POST-DATA, så radene kommer inn med COPY
+    før `oppdrag_fodselsattest` finnes — `fodt_xid` blir liggende ordrett,
+    med tall fra den GAMLE clusterens teller. Den nye telleren starter
+    lavt og klatrer, og den dagen den passerer et gjenopprettet oppdrags
+    `fodt_xid`, var `fodt_xid = pg_current_xact_id()` ALENE sann for et
+    for lengst committet oppdrag. Da var X1-vinduet tilbake, uten at noen
+    hadde gjort noe galt.
+
+    Testen bygger nøyaktig den raden, og bygger den slik restoren gjør
+    det: med brukertriggerne av, altså POST-DATA-vinduet. Første halvdel
+    er angrepet — attesten bærer en ANNEN inkarnasjon, og bindingen
+    avvises. Andre halvdel er kontrollen: identisk rigg, men attesten
+    bærer DENNE inkarnasjonen, og da binder den. Uten kontrollen målte
+    testen like gjerne at riggen var ødelagt.
+
+    MUTASJONEN SOM DREPER DENNE: ta `fodt_oppstart`-leddet ut av
+    X1-porten i `bind_inndata` (første halvdel), eller la
+    `oppdrag_fodselsattest()` slippe en UPDATE av `fodt_oppstart` (den
+    ville da bare flyttet angrepet ett felt bort)."""
+    tenant, _bid, _cookie, _csrf = _rigg(klient)
+    m = _migrator(tenant)
+
+    def gjenopprett(opp, *, fremmed):
+        """Radens attest skrevet som `pg_restore` skriver den: i
+        DATA-seksjonen, før triggerne finnes. `fodt_xid` settes til DENNE
+        transaksjonens — det er nøyaktig sammentreffet den nye clusterens
+        teller før eller siden produserer."""
+        m.execute("ALTER TABLE oppdrag DISABLE TRIGGER USER")
+        m.execute(
+            "UPDATE oppdrag SET fodt_xid ="
+            " pg_catalog.pg_current_xact_id(), fodt_oppstart ="
+            " pg_catalog.pg_postmaster_start_time()"
+            + (" - interval '1 day'" if fremmed else "")
+            + " WHERE tenant=%s AND id=%s", (tenant, opp))
+        m.execute("ALTER TABLE oppdrag ENABLE TRIGGER USER")
+
+    try:
+        # ANGREPET: attesten er fra en annen inkarnasjon.
+        bunt = _lastet(m, tenant)
+        opp = _oppdrag(m, tenant, "m57_ats")
+        m.commit()          # oppdraget er født, synlig og committet.
+        _kontekst(m, tenant)
+        gjenopprett(opp, fremmed=True)
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            _bind(m, tenant, bunt, opp)
+        m.rollback()
+        _kontekst(m, tenant)
+        assert m.execute("SELECT status, oppdrag_id FROM inndata_artefakt"
+                         " WHERE tenant=%s AND inndata_id=%s",
+                         (tenant, bunt)).fetchone() == ("lastet", None)
+        m.rollback()
+
+        # KONTROLLEN: samme rigg, egen inkarnasjon — bindingen går.
+        _kontekst(m, tenant)
+        bunt2 = _lastet(m, tenant)
+        opp2 = _oppdrag(m, tenant, "m57_ats")
+        m.commit()
+        _kontekst(m, tenant)
+        gjenopprett(opp2, fremmed=False)
+        _bind(m, tenant, bunt2, opp2)
+        assert m.execute("SELECT status, oppdrag_id FROM inndata_artefakt"
+                         " WHERE tenant=%s AND inndata_id=%s",
+                         (tenant, bunt2)).fetchone() == ("bundet", opp2)
+        m.rollback()
+
+        # Og attesten selv er ikke skrivbar med vakten PÅ — ellers ville
+        # angrepet ikke trengt restoren i det hele tatt.
+        _kontekst(m, tenant)
+        with pytest.raises(psycopg.errors.RaiseException,
+                           match="fødselsattest"):
+            m.execute("UPDATE oppdrag SET fodt_oppstart ="
+                      " pg_catalog.pg_postmaster_start_time()"
+                      " - interval '1 day' WHERE tenant=%s AND id=%s",
+                      (tenant, opp))
+        m.rollback()
+    finally:
+        m.close()
+
+
+@pg
 def test_bundet_krever_krypto_og_lastet_ts(klient):
     """Cursor P2-1: `inndata_tilstand_totalt` het «totalt», men
     `bundet`-grenen krevde verken `key_id`, `nonce` eller `lastet_ts`. En

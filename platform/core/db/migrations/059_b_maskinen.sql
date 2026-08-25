@@ -166,8 +166,9 @@ ALTER TABLE inndata_artefakt ADD CONSTRAINT inndata_tilstand_totalt CHECK (
 -- triggeren under ved INSERT og kan aldri endres etterpå. Da er
 -- `fodt_xid = pg_current_xact_id()` nøyaktig påstanden X1 trenger — «denne
 -- raden ble født i DENNE transaksjonen» — og ingen UPDATE kan produsere
--- den. `xid8` er 64-bit og teller ikke rundt, så to fødsler kan aldri dele
--- attest.
+-- den. `xid8` er 64-bit og teller ikke rundt, så to fødsler i SAMME
+-- cluster kan aldri dele attest — på tvers av clustere holder ikke den
+-- påstanden, og det er hva `fodt_oppstart` under er til for.
 --
 -- Eksisterende rader får migrasjonens egen xid av det volatile defaultet
 -- (én verdi for hele omskrivingen). Den er per definisjon en ANNEN
@@ -175,6 +176,36 @@ ALTER TABLE inndata_artefakt ADD CONSTRAINT inndata_tilstand_totalt CHECK (
 -- dem kan bindes, hvilket er nøyaktig det X1 sier om et committet oppdrag.
 ALTER TABLE oppdrag ADD COLUMN fodt_xid xid8 NOT NULL
     DEFAULT pg_catalog.pg_current_xact_id();
+
+-- MEN ET TRANSAKSJONSNUMMER GJELDER BARE I SIN EGEN CLUSTER (Codex P1,
+-- runde 2 på #196). `deploy/staging/backup-db.sh:70-82` er
+-- `pg_dump --format=custom` + `pg_restore`, og en gjenoppretting etter
+-- havari går inn i en FRISK cluster. Triggere ligger i POST-DATA, så
+-- radene kommer inn med COPY før `oppdrag_fodselsattest` finnes:
+-- `fodt_xid` blir liggende ORDRETT, med tall fra den gamle clusterens
+-- teller. Den nye telleren starter på sitt eget lave tall og klatrer, og
+-- den dagen den passerer en gjenopprettet rads `fodt_xid`, er
+-- `fodt_xid = pg_current_xact_id()` sann for et for lengst committet
+-- oppdrag. Da er X1-vinduet tilbake, uten at noen har gjort noe galt.
+--
+-- «Ingen fødsler deler attest» holder altså bare innenfor ÉN inkarnasjon
+-- av databasen. Attesten må derfor navngi inkarnasjonen sin, og
+-- `pg_postmaster_start_time()` ER den: den er clusterens egen oppstart, den
+-- gjenskapes aldri av en restore (den nye postmasteren startet et annet
+-- mikrosekund), og den er lesbar for enhver rolle — i motsetning til
+-- `pg_control_system()`, som er superbruker-begrenset og måtte vært
+-- åpnet med et GRANT for å brukes her.
+--
+-- Paret er nøyaktig sterkt nok, ingen av leddene er overflødige:
+-- * SAMME inkarnasjon: `xid8` teller monotont og aldri rundt, så en
+--   verdi som er brukt kan ikke komme igjen. `fodt_xid` alene avgjør.
+-- * ANNEN inkarnasjon (restore, PITR, promotert standby, eller bare en
+--   omstart): oppstartstiden er en annen enn den raden bærer, og hver
+--   eneste gammel attest er ugyldig. Det er riktig svar — de radene ble
+--   født i en tidligere transaksjon, hvilket er akkurat det X1 nekter.
+-- Fail-closed begge veier: en attest kan miste gyldighet, aldri få den.
+ALTER TABLE oppdrag ADD COLUMN fodt_oppstart timestamptz NOT NULL
+    DEFAULT pg_catalog.pg_postmaster_start_time();
 
 -- Egen trigger, ikke et nytt ledd i `oppdrag_kolonnelaas` — samme vedtak
 -- som 049s `oppdrag_claim_release_vakt`: den funksjonen bor i 056 og
@@ -192,11 +223,13 @@ RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog AS $$
 BEGIN
     IF TG_OP = 'INSERT' THEN
         NEW.fodt_xid := pg_catalog.pg_current_xact_id();
+        NEW.fodt_oppstart := pg_catalog.pg_postmaster_start_time();
         RETURN NEW;
     END IF;
-    IF NEW.fodt_xid IS DISTINCT FROM OLD.fodt_xid THEN
-        RAISE EXCEPTION 'oppdrag: fodt_xid er radens fødselsattest og kan'
-            ' aldri endres';
+    IF NEW.fodt_xid IS DISTINCT FROM OLD.fodt_xid
+       OR NEW.fodt_oppstart IS DISTINCT FROM OLD.fodt_oppstart THEN
+        RAISE EXCEPTION 'oppdrag: fodt_xid/fodt_oppstart er radens'
+            ' fødselsattest og kan aldri endres';
     END IF;
     RETURN NEW;
 END $$;
@@ -559,9 +592,11 @@ BEGIN
     END IF;
     -- X1-SERIALISERINGEN (B-maskinen, #192 — overstyrer runde 6-notatet
     -- om å ikke binde rekkefølgen): bindingen skjer i oppdragets EGEN
-    -- fødselstransaksjon, målt med radens `fodt_xid` (se fødselsattesten
-    -- over — `age(xmin)` målte tuppelversjonen og lot en no-op UPDATE
-    -- forfalske fødselen). Da FINNES ikke vinduet
+    -- fødselstransaksjon, målt med radens `fodt_xid` OG `fodt_oppstart`
+    -- (se fødselsattesten over — `age(xmin)` målte tuppelversjonen og lot
+    -- en no-op UPDATE forfalske fødselen, og en `fodt_xid` alene ville
+    -- vært et tall fra en annen clusters teller etter en restore). Da
+    -- FINNES ikke vinduet
     -- Codex målte (status terminal mellom lesning og UPDATE): raden er
     -- usynlig for alle andre til transaksjonen committer, og ingen
     -- statusovergang kan flettes inn. Rekkefølgen ER kontrakten —
@@ -572,7 +607,8 @@ BEGIN
     -- committes hver for seg.
     PERFORM 1 FROM public.oppdrag o
      WHERE o.tenant = p_tenant AND o.id = p_oppdrag_id
-       AND o.fodt_xid = pg_catalog.pg_current_xact_id();
+       AND o.fodt_xid = pg_catalog.pg_current_xact_id()
+       AND o.fodt_oppstart = pg_catalog.pg_postmaster_start_time();
     IF NOT FOUND THEN
         RAISE EXCEPTION 'inndata: bindingen må skje i oppdragets egen'
             ' fødselstransaksjon (X1-serialiseringen, #192)'
