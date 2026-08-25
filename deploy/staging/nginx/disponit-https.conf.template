@@ -120,6 +120,56 @@ server {
         proxy_pass http://unix:/run/disponit/api.sock;
     }
 
+    # #162: inndata-opplastingen — samme klasse som artefaktruten over, men
+    # to størrelsesordener større, og med en jti i STIEN.
+    #
+    # Codex P1: kontrakten reserverer og annonserer 64 MiB
+    # (`INNDATA_MAKS_FYSISK`), men uten denne blokken traff ruten den
+    # server-vide `client_max_body_size 256k` — nginx hadde svart 413 på
+    # hver eneste bunt over 256 KiB, altså på alle bunter ruten finnes for,
+    # lenge før appens egen strømmetelling så en byte. Prefiks-location og
+    # ikke `=`, fordi stien bærer `{jti}`.
+    #
+    # Codex P2: `disponit_main` logger `$uri`, og `$uri` ER jti-en her.
+    # Hver utstedte engangsreservasjon ville dermed stått i klartekst i
+    # `disponit-access.log`; den som kunne lese loggen og hadde en
+    # tenant-sesjon med `bestilling:opprett` kunne forbruke en utestående
+    # reservasjon før klienten den ble utstedt til. Samme grep som
+    # callback-redaksjonen (v2 §5): ruten får et eget log_format der stien
+    # er en KONSTANT etikett, ikke en variabel.
+    #
+    # Codex P2 (runde 5): redaksjonen over tok bare `access_log`. Ruten
+    # arvet serverens `error_log ... warn`, og nginx' egen 413-linje
+    # («client intended to send too large body») skrives på `error`-nivå
+    # MED hele request-linja — altså jti-en, i klartekst, i den delte
+    # `disponit-error.log`. Verre enn access-lekkasjen: den utløses av en
+    # forespørsel som ble AVVIST, så reservasjonen er fortsatt ubrukt når
+    # den lander i loggen. Samme grep som callbacken (v2 §5): egen fil og
+    # `crit`, som ligger OVER `error` og dermed ikke skriver linja i det
+    # hele tatt.
+    #
+    # Codex P1 (runde 5): «auth først, kropp etterpå» i `opplast_endepunkt`
+    # gjelder BARE appen så lenge ingressen bufrer. Med nginx' default
+    # `proxy_request_buffering on` leses hele kroppen inn før noe sendes
+    # oppstrøms, så en klient uten gyldig sesjon får proxyen til å ta imot
+    # inntil 64 MiB per forespørsel — burst 100 i sonen — før API-et i det
+    # hele tatt får sjansen til å svare 401. Da er det nginx' temp-lager og
+    # I/O som er flaten, ikke API-prosessen fiksen i runde 1 vernet. Av
+    # samme grunn som den fiksen: uten bufring strømmer kroppen rett til
+    # socketen, og 401-en kommer mens klienten fortsatt sender.
+    #
+    # Begge tallene og redaksjonen er bundet til appen av
+    # `test_nginx_inndataruten_slipper_bunten_gjennom_og_redigerer_jtien`.
+    location /v1/inndata/opplast/ {
+        client_max_body_size 65536k;    # = INNDATA_MAKS_FYSISK (64 MiB)
+        proxy_request_buffering off;
+        access_log /var/log/nginx/disponit-access.log disponit_opplast;
+        error_log  /var/log/nginx/disponit-opplast-error.log crit;
+        limit_req zone=disponit_general burst=100 nodelay;
+        limit_req_status 429;
+        proxy_pass http://unix:/run/disponit/api.sock;
+    }
+
     # PR-011: M-1 kundeflate. UI-svar trenger en ÅPNERE CSP enn API-ets
     # `default-src 'none'` (klarsignal V4) — den ville ellers blokkert egne
     # ressurser. Appen setter UI-CSP-en selv (målbar i CI, gate 5); her

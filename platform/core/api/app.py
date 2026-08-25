@@ -54,6 +54,15 @@ MAKS_KROPP = 256 * 1024          # v2 Del 3.4
 # egentlige porten og sjekkes i handleren FØR lagring.
 MAKS_ARTEFAKT_KROPP = 6 * 1024 * 1024 + 64 * 1024
 STORE_KROPP_RUTER = frozenset({"/v1/artefakt"})
+#: #162: inndata-opplastingen STRØMMES gjennom middlewaren — den teller og
+#: videresender chunks, og bufrer aldri. Endepunktet samler derimot opp til
+#: dette taket i minnet: v1 krypterer bunten i én operasjon (bevisst
+#: v1-grense, dokumentert i 058-headeren; chunket kryptering er egen maskin
+#: med eget issue). Taket her er transportens absolutte og styrer
+#: middleware-tellingen; reservasjonens deklarerte `maks_bytes` håndhever
+#: den KONTRAKTUELLE grensen nedstrøms, og de to måles hver for seg.
+INNDATA_MAKS_FYSISK = 64 * 1024 * 1024
+STROEM_RUTE_PREFIKS = "/v1/inndata/opplast/"
 
 #: Ytelsesporten perf-m01-v1 krever 100 beslutninger/sekund vedvarende fra
 #: ÉN klient. Standard rate-grense må derfor ligge over 6 000/minutt, ellers
@@ -376,6 +385,10 @@ class KroppsgrenseMiddleware:
         rid = scope.setdefault("state", {}).get("request_id") or _nytt_request_id()
         scope["state"]["request_id"] = rid
 
+        # #162: inndata-strømmen bufres ALDRI i middlewaren — chunks telles
+        # og videresendes; taket avbryter midt i strømmen, aldri etter den.
+        if scope.get("path", "").startswith(STROEM_RUTE_PREFIKS):
+            return await self._stroem(scope, receive, send, rid, headere)
         # PR-014b §7: opplastingsruten tåler en større kropp (1 MiB-artefakt).
         maks = (MAKS_ARTEFAKT_KROPP if scope.get("path") in STORE_KROPP_RUTER
                 else self.maks)
@@ -413,6 +426,41 @@ class KroppsgrenseMiddleware:
 
         scope["state"]["kropp"] = bytes(kropp)
         return await self.app(scope, replay, send)
+
+    async def _stroem(self, scope, receive, send, rid, headere):
+        """Tellende gjennomstrømming for inndata-ruten (#162): endepunktet
+        leser `request.stream()` selv; her håndheves KUN det absolutte
+        transporttaket, byte for byte, uten å samle kroppen."""
+        # Den ÅPENBART for store avvises uten å lese en eneste byte, som
+        # for alle andre ruter over (Cursor P2-5). Uten dette ville
+        # `Content-Length: 10**9` tvunget hele veien opp til 64 MiB-kuttet
+        # før klienten fikk et 413 den kunne fått med det samme. Samme
+        # `isdigit`-form som hovedveien: en Content-Length som ikke er et
+        # tall er en ugyldig forespørsel, ikke noe å gjette på.
+        oppgitt = headere.get("content-length")
+        if oppgitt is not None:
+            if not oppgitt.isdigit():
+                return await self._avvis(send, "body_lengde_ugyldig", rid)
+            if int(oppgitt) > INNDATA_MAKS_FYSISK:
+                return await self._avvis(send, "body_for_stor", rid)
+        talt = 0
+        avvist = False
+
+        async def tellende():
+            nonlocal talt, avvist
+            melding = await receive()
+            if melding["type"] == "http.request":
+                talt += len(melding.get("body", b""))
+                if talt > INNDATA_MAKS_FYSISK:
+                    avvist = True
+                    # Endepunktet ser strømmen slutte og leser `avvist`
+                    # via scope-state — det svarer med den kodede feilen.
+                    scope["state"]["inndata_for_stor"] = True
+                    return {"type": "http.request", "body": b"",
+                            "more_body": False}
+            return melding
+
+        return await self.app(scope, tellende, send)
 
     async def _avvis(self, send, kode: str, rid: str):
         if self.logg is not None:
@@ -847,6 +895,16 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def sesjon_logout(request: Request) -> Response:
         return sesjonmodul.sesjon_logout(tjeneste, request)
 
+    # #162: inndata-artefaktet — buntens vei inn (PR-1: reservasjon +
+    # opplasting; resolver og bestillingsbinding er PR-2).
+    from . import inndata as inndata_http
+
+    def inndata_reserver(request: Request) -> Response:
+        return inndata_http.reserver_endepunkt(tjeneste, request)
+
+    async def inndata_opplast(request: Request) -> Response:
+        return await inndata_http.opplast_endepunkt(tjeneste, request)
+
     # M-57 utførelsesarmen: leseflaten + signeringen gjennom 056-kjeden.
     from . import rekruttering as rekruttering_http
 
@@ -1038,6 +1096,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         # statisk serverte klientbunten der hvem som helst kunne lese hver
         # tenants plan og modultildeling.
         Route("/v1/utrulling", utrulling, methods=["GET"]),
+        Route("/v1/inndata/reserver", inndata_reserver,
+              methods=["POST"]),
+        Route("/v1/inndata/opplast/{jti:str}", inndata_opplast,
+              methods=["PUT"]),
         Route("/v1/rekruttering/prosesser", rekruttering_prosesser,
               methods=["GET"]),
         Route("/v1/rekruttering/prosesser/{prosess_id}/blinding",
@@ -1474,6 +1536,8 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # og blinding-avskruing bak mutasjonsscopet (056-kjeden + #159 gjør
     # resten av dømmingen inne i endepunktene).
     ("GET",  "/v1/rekruttering/prosesser"):  "decisions:read",
+    ("POST", "/v1/inndata/reserver"):        "bestilling:opprett",
+    ("PUT",  "/v1/inndata/opplast/{jti:str}"): "bestilling:opprett",
     ("POST", "/v1/rekruttering/prosesser/{prosess_id}/blinding"):
         "bestilling:opprett",
     ("POST", "/v1/rekruttering/lister/{liste_id:uuid}/signer"):

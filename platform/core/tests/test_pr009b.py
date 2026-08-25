@@ -223,6 +223,68 @@ def test_nginx_artefaktrute_slipper_gjennom_appens_kroppsgrense():
         assert "proxy_pass http://unix:/run/disponit/api.sock;" in krop
 
 
+def test_nginx_inndataruten_slipper_bunten_gjennom_og_redigerer_jtien():
+    """#162, to Codex-funn i samme location.
+
+    P1: opplastingsruten annonserer og reserverer `INNDATA_MAKS_FYSISK`
+    (64 MiB), men traff den server-vide `client_max_body_size 256k` — nginx
+    svarte 413 på hver bunt over 256 KiB, altså på alle bunter ruten finnes
+    for, før appens strømmetelling så en byte.
+
+    P2: `disponit_main` logger `$uri`, og på DENNE ruten er `$uri`
+    reservasjonens engangs-jti. Loggen ville båret hver utestående
+    reservasjon i klartekst. Ruten må derfor bruke et log_format som ikke
+    inneholder `$uri`/`$request`/`$request_uri`."""
+    from api.app import INNDATA_MAKS_FYSISK, STROEM_RUTE_PREFIKS
+    https = _https()
+    blokk = re.search(r"location %s \{(.*?)\n    \}"
+                      % re.escape(STROEM_RUTE_PREFIKS), https, re.S)
+    assert blokk, f"ingen egen nginx-location for {STROEM_RUTE_PREFIKS}"
+    krop = blokk.group(1)
+    m = re.search(r"client_max_body_size\s+(\d+)([kKmM]?);", krop)
+    assert m, "opplastingsruten mangler egen client_max_body_size"
+    grense = int(m.group(1)) * _ENHET[m.group(2).lower()]
+    assert grense >= INNDATA_MAKS_FYSISK, (
+        f"nginx slipper {grense} B på {STROEM_RUTE_PREFIKS}, appen tillater "
+        f"{INNDATA_MAKS_FYSISK} B — proxyen avviser med 413 først")
+    assert "zone=disponit_general" in krop
+    assert "proxy_pass http://unix:/run/disponit/api.sock;" in krop
+
+    # Runde 5: uten dette bufrer nginx hele kroppen FØR upstream ser den,
+    # og «auth først» i appen verner da bare appen — ingressen tar imot 64
+    # MiB fra en uautentisert klient uansett.
+    assert re.search(r"^\s*proxy_request_buffering\s+off;", krop, re.M), \
+        "opplastingsruten bufrer kroppen før appen får svare 401"
+
+    # Redaksjonen: ruten overstyrer access_log, og formatet den peker på
+    # bærer ikke stien. Begge ledd måles — et eget format som likevel
+    # inneholder $uri ville vært redaksjon i navnet alene.
+    m = re.search(r"^\s*access_log\s+\S+\s+(\w+);", krop, re.M)
+    assert m, "opplastingsruten arver disponit_main og logger jti-en"
+    navn = m.group(1)
+    assert navn != "disponit_main"
+    soner = (NGINX / "rate-soner.conf").read_text(encoding="utf-8")
+    fmt = re.search(r"log_format %s (.*?);\n" % re.escape(navn), soner, re.S)
+    assert fmt, f"log_format {navn} finnes ikke i rate-soner.conf"
+    # `\b` og ikke `in`: `$request_method` er lovlig og inneholder `$request`
+    # som ren delstreng — en naiv sjekk ville forbudt metoden i stedet for
+    # stien.
+    for variabel in ("uri", "request_uri", "args", "request"):
+        assert not re.search(r"\$%s\b" % variabel, fmt.group(1)), (
+            f"{navn} inneholder ${variabel} — jti-en havner i loggen likevel")
+
+    # Runde 5: FEIL-loggen bærer den samme stien. nginx skriver sin egen
+    # 413-linje på `error`-nivå med hele request-linja, så en arvet
+    # `error_log ... warn` gir jti-en bort selv om access-formatet er
+    # redigert — og forespørselen som utløser den ble AVVIST, altså er
+    # reservasjonen fortsatt ubrukt. `crit` ligger over `error`.
+    m = re.search(r"^\s*error_log\s+\S+\s+(\w+);", krop, re.M)
+    assert m, "opplastingsruten arver serverens error_log og logger jti-en"
+    assert m.group(1) == "crit", (
+        f"error_log-nivået er {m.group(1)}; 413-linja med jti-en skrives "
+        f"på error-nivå og må ligge under terskelen")
+
+
 # ---------------------------------------------------------------------------
 # ACME-tilstandsmaskinen: rekkefølge og idempotens (v2 §3)
 # ---------------------------------------------------------------------------

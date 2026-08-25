@@ -1083,6 +1083,22 @@ done
   selvrevers "deploy-port (014c §5) rød"
 }
 
+# #162: inndata-lageret — krypterte bunter på FS, eid av api-brukeren.
+# Opprettes FØR release-byttet så en fersk vert aldri ENOENT-er i
+# opplastingsveien; 0700 hele veien, payloaden er tenant-DEK-kryptert.
+#
+# EGEN rot, ikke /var/lib/disponit/inndata (Codex P1): den katalogen er
+# `disponit-artefaktrydding.service` sin StateDirectory, eid av
+# `disponit-domener` med 0750. Denne linjen ville på en fersk vert
+# opprettet også FORELDEREN som `disponit-api:0700` (GNU install -d gir
+# hver komponent den oppretter de oppgitte attributtene) og tatt katalogen
+# fra ryddeuniten — og på en vert der ryddeuniten alt hadde kjørt, ville
+# API-et ikke kunnet TRAVERSERE ned til barnet. `StateDirectory=` i
+# api-uniten eier nå denne katalogen; linjen her står igjen som
+# førstegangsopprettelsen, med nøyaktig samme eier og modus som systemd
+# setter, så de to aldri drar den fram og tilbake.
+install -d -m 700 -o disponit-api -g disponit-api /var/lib/disponit-inndata
+
 # --- 7. Atomisk release-bytte + units --------------------------------------
 ln -sfn "$KILDE" "$AKTIV"
 # Feilsonen er passert: fra og med linjen over er symlinken byttet, og
