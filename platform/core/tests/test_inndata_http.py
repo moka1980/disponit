@@ -708,7 +708,7 @@ def _oppdrag(m, tenant, eiermodul, oppdragstype="rekruttering.evaluering"):
 def _bind(m, tenant, inndata_id, oppdrag, p_eiermodul="m57_ats"):
     """`bind_inndata` i oppdragets EGEN fødselstransaksjon — X1 (#192).
 
-    059 krever `pg_catalog.age(o.xmin) = 0`: vinduet der et oppdrag står
+    059 krever `o.fodt_xid = pg_current_xact_id()`: vinduet der et oppdrag står
     plukkbart uten bunt kan ikke finnes, for bindingen skjer FØR commiten
     som gjør oppdraget synlig. Testene må derfor kalle denne i SAMME
     transaksjon som `_oppdrag`, aldri etter en commit.
@@ -1509,7 +1509,7 @@ def test_bindingen_avviser_terminalt_oppdrag(klient, terminal):
         dod, levende = _lastet(m, tenant), _lastet(m, tenant)
         m.commit()
         # Terminalen settes i SAMME transaksjon som oppdraget fødes (X1):
-        # `age(xmin)` teller innsettingens transaksjon, så statusporten er
+        # `fodt_xid` er stemplet av innsettingen her, så statusporten er
         # fortsatt den som feller — ikke transaksjonsporten.
         _kontekst(m, tenant)
         opp_dod = _oppdrag(m, tenant, "m57_ats")
@@ -1605,13 +1605,13 @@ def test_bindingen_krever_oppdragets_fodselstransaksjon(klient):
 
     058-kjedens runde 6 aksepterte vinduet der et committet oppdrag sto
     plukkbart uten bunten sin; B-maskinen fjerner det ved konstruksjon —
-    `pg_catalog.age(o.xmin) = 0` betyr at oppdraget aldri har vært synlig
-    for noen andre når bunten festes, så «plukket uten bunt» kan ikke
-    observeres. Et oppdrag som alt er committet er dermed for alltid
+    `o.fodt_xid = pg_current_xact_id()` betyr at oppdraget aldri har vært
+    synlig for noen andre når bunten festes, så «plukket uten bunt» kan
+    ikke observeres. Et oppdrag som alt er committet er dermed for alltid
     utenfor bindingens rekkevidde, og et avvist forsøk skal ikke koste
     kunden bunten.
 
-    MUTASJONEN SOM DREPER DENNE: fjern `age(o.xmin) = 0`-porten i
+    MUTASJONEN SOM DREPER DENNE: fjern `fodt_xid`-porten i
     `bind_inndata`."""
     tenant, _bid, _cookie, _csrf = _rigg(klient)
     m = _migrator(tenant)
@@ -1625,6 +1625,62 @@ def test_bindingen_krever_oppdragets_fodselstransaksjon(klient):
         m.rollback()
         _kontekst(m, tenant)
         # Bunten står UBRENT etter avvisningen.
+        assert m.execute("SELECT status, oppdrag_id FROM inndata_artefakt"
+                         " WHERE tenant=%s AND inndata_id=%s",
+                         (tenant, bunt)).fetchone() == ("lastet", None)
+        m.rollback()
+    finally:
+        m.close()
+
+
+@pg
+def test_fodselsattesten_kan_ikke_forfalskes_med_en_update(klient):
+    """Codex P1 + Cursor P1-1 på #196: X1 må måle RADENS fødsel, ikke
+    tuppelversjonens.
+
+    Første form av porten var `pg_catalog.age(o.xmin) = 0`. `xmin` bærer
+    den transaksjonen som skrev DEN VERSJONEN av raden, så én UPDATE i
+    bindings-transaksjonen gjorde et for lengst committet oppdrag
+    «nyfødt». Veien var åpen: runtime har `GRANT SELECT, UPDATE ON
+    oppdrag`, og `oppdrag_kolonnelaas` tillater eksplisitt
+    `OLD.status = NEW.status` — en no-op ingen annen vakt reagerer på.
+    Da var vinduet «synlig, plukkbart oppdrag uten bunt» tilbake, og det
+    er nøyaktig vinduet B-maskinen finnes for å fjerne.
+
+    Testen kjører angrepet ordrett: commit oppdraget, no-op-oppdater det i
+    en ny transaksjon, bind. Med `fodt_xid` står attesten på raden og
+    følger ikke versjonen, så bindingen avvises — og attesten kan heller
+    ikke skrives om direkte.
+
+    MUTASJONEN SOM DREPER DENNE: bytt X1-porten i `bind_inndata` tilbake
+    til `pg_catalog.age(o.xmin) = 0` (første halvdel), eller ta
+    UPDATE-grenen ut av `oppdrag_fodselsattest()` (andre halvdel)."""
+    tenant, _bid, _cookie, _csrf = _rigg(klient)
+    m = _migrator(tenant)
+    try:
+        bunt = _lastet(m, tenant)
+        opp = _oppdrag(m, tenant, "m57_ats")
+        m.commit()          # oppdraget er født, synlig og committet.
+        _kontekst(m, tenant)
+        # Nøyaktig no-op-en `oppdrag_kolonnelaas` slipper gjennom. Den
+        # LYKKES — poenget er at den ikke lenger kjøper noe.
+        assert m.execute("UPDATE oppdrag SET status = status"
+                         " WHERE tenant=%s AND id=%s",
+                         (tenant, opp)).rowcount == 1
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            _bind(m, tenant, bunt, opp)
+        m.rollback()
+        # Og attesten selv er ikke skrivbar — ellers ville angrepet bare
+        # flyttet seg ett felt bort.
+        _kontekst(m, tenant)
+        with pytest.raises(psycopg.errors.RaiseException,
+                           match="fødselsattest"):
+            m.execute("UPDATE oppdrag SET fodt_xid ="
+                      " pg_catalog.pg_current_xact_id()"
+                      " WHERE tenant=%s AND id=%s", (tenant, opp))
+        m.rollback()
+        _kontekst(m, tenant)
+        # Bunten står ubrent etter begge forsøkene.
         assert m.execute("SELECT status, oppdrag_id FROM inndata_artefakt"
                          " WHERE tenant=%s AND inndata_id=%s",
                          (tenant, bunt)).fetchone() == ("lastet", None)

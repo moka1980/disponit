@@ -66,6 +66,65 @@ ALTER TABLE inndata_artefakt ADD CONSTRAINT inndata_tilstand_totalt CHECK (
  OR (status = 'forkastet' AND oppdrag_id IS NULL
      AND bundet_ts IS NULL));
 
+-- X1s FØDSELSATTEST (Codex P1 + Cursor P1-1 på #196). Første form målte
+-- `pg_catalog.age(o.xmin) = 0` og trodde det var radens fødsel. `xmin` er
+-- TUPPELVERSJONENS fødsel: enhver UPDATE lager en ny versjon med den
+-- oppdaterende transaksjonens `xmin`, så et for lengst committet oppdrag
+-- kunne gjøres «nyfødt» på ett steg. Veien er åpen i dag — runtime har
+-- `GRANT SELECT, UPDATE ON oppdrag` (`deploy/staging/migrer.py:221`) og
+-- `oppdrag_kolonnelaas` tillater eksplisitt `OLD.status = NEW.status`
+-- (`056:529-532`), altså en no-op UPDATE som ingen annen vakt ser:
+--
+--     BEGIN;
+--     UPDATE oppdrag SET status = status WHERE tenant=$t AND id=$opp;
+--     SELECT bind_inndata(...);   -- age(xmin) = 0 slapp gjennom
+--     COMMIT;
+--
+-- Da var vinduet «synlig, plukkbart oppdrag uten bunt» tilbake, og Z1
+-- (payloadens `soknadsbunt_ref` skrevet i samme transaksjon) falt med.
+--
+-- Fødselen må derfor stå på RADEN, ikke på versjonen: `fodt_xid` settes av
+-- triggeren under ved INSERT og kan aldri endres etterpå. Da er
+-- `fodt_xid = pg_current_xact_id()` nøyaktig påstanden X1 trenger — «denne
+-- raden ble født i DENNE transaksjonen» — og ingen UPDATE kan produsere
+-- den. `xid8` er 64-bit og teller ikke rundt, så to fødsler kan aldri dele
+-- attest.
+--
+-- Eksisterende rader får migrasjonens egen xid av det volatile defaultet
+-- (én verdi for hele omskrivingen). Den er per definisjon en ANNEN
+-- transaksjon enn enhver senere kaller, så arven er fail-closed: ingen av
+-- dem kan bindes, hvilket er nøyaktig det X1 sier om et committet oppdrag.
+ALTER TABLE oppdrag ADD COLUMN fodt_xid xid8 NOT NULL
+    DEFAULT pg_catalog.pg_current_xact_id();
+
+-- Egen trigger, ikke et nytt ledd i `oppdrag_kolonnelaas` — samme vedtak
+-- som 049s `oppdrag_claim_release_vakt`: den funksjonen bor i 056 og
+-- måtte vært kopiert hit i sin helhet for ett ledd. To BEFORE ROW-triggere
+-- fyrer i navnerekkefølge og må begge passere; leddet her er uavhengig av
+-- statusmaskinen, så rekkefølgen betyr ingenting.
+--
+-- INSERT-grenen SETTER verdien i stedet for å validere den. Et default
+-- kan overstyres av den som skriver raden, og selv om ingen runtime-rolle
+-- har INSERT på `oppdrag` i dag (038, port 7: begge opphavsveiene går
+-- gjennom herdede funksjoner), er en attest kalleren kan fylle ut selv
+-- ingen attest. Døren skriver den, som B-maskinen ellers gjør.
+CREATE OR REPLACE FUNCTION oppdrag_fodselsattest()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        NEW.fodt_xid := pg_catalog.pg_current_xact_id();
+        RETURN NEW;
+    END IF;
+    IF NEW.fodt_xid IS DISTINCT FROM OLD.fodt_xid THEN
+        RAISE EXCEPTION 'oppdrag: fodt_xid er radens fødselsattest og kan'
+            ' aldri endres';
+    END IF;
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS oppdrag_fodselsattest ON oppdrag;
+CREATE TRIGGER oppdrag_fodselsattest BEFORE INSERT OR UPDATE ON oppdrag
+    FOR EACH ROW EXECUTE FUNCTION oppdrag_fodselsattest();
+
 SET LOCAL ROLE disponit_domene_eier;
 
 -- Returtypen utvides (lager_sti) — CREATE OR REPLACE kan ikke endre den,
@@ -421,7 +480,9 @@ BEGIN
     END IF;
     -- X1-SERIALISERINGEN (B-maskinen, #192 — overstyrer runde 6-notatet
     -- om å ikke binde rekkefølgen): bindingen skjer i oppdragets EGEN
-    -- fødselstransaksjon, målt med age(xmin) = 0. Da FINNES ikke vinduet
+    -- fødselstransaksjon, målt med radens `fodt_xid` (se fødselsattesten
+    -- over — `age(xmin)` målte tuppelversjonen og lot en no-op UPDATE
+    -- forfalske fødselen). Da FINNES ikke vinduet
     -- Codex målte (status terminal mellom lesning og UPDATE): raden er
     -- usynlig for alle andre til transaksjonen committer, og ingen
     -- statusovergang kan flettes inn. Rekkefølgen ER kontrakten —
@@ -432,7 +493,7 @@ BEGIN
     -- committes hver for seg.
     PERFORM 1 FROM public.oppdrag o
      WHERE o.tenant = p_tenant AND o.id = p_oppdrag_id
-       AND pg_catalog.age(o.xmin) = 0;
+       AND o.fodt_xid = pg_catalog.pg_current_xact_id();
     IF NOT FOUND THEN
         RAISE EXCEPTION 'inndata: bindingen må skje i oppdragets egen'
             ' fødselstransaksjon (X1-serialiseringen, #192)'
