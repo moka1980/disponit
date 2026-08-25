@@ -1771,15 +1771,18 @@ def test_sp10_daekker_059():
     hver eksisterende oppdragsrad. Uten seed måler prøvekjøringen at
     setningene parser.
 
-    Porten speiler `test_sp10_daekker_049`/`_056`, men måler foreløpig
-    BARE skript-siden: CI-pekeren (`sp10-provekjoring.py 59` i
-    `ci.yml`s SP-10-steg) er den ene linja implementørmandatet ikke lar
-    meg skrive — `.github/workflows` er utenfor. Den er flagget til eier
-    i PR-tråden, og når den står, strammes denne porten til å kreve den,
-    slik 049/056 gjør."""
+    Porten speiler `test_sp10_daekker_049`/`_056`: CI-pekeren
+    (`sp10-provekjoring.py 59` i `ci.yml`s SP-10-steg) er nå på plass
+    (eierdelegert commit på #196), så porten krever den her på samme
+    måte som 049/056 gjør — uten linja kjører seedet aldri i pipelinen,
+    og en rød `_mal_059` ville ikke stoppet merge."""
     import re
     from pathlib import Path
     rot = Path(__file__).resolve().parents[3]
+    ci = (rot / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8")
+    assert re.search(r"sp10-provekjoring\.py 59\b", ci), (
+        "SP-10-prøvekjøringen for 059 mangler i CI")
     sp10 = (rot / "deploy" / "staging" / "sp10-provekjoring.py").read_text(
         encoding="utf-8")
     assert "59: (_seed_059, _mal_059)" in sp10, (

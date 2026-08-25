@@ -145,7 +145,7 @@ ALTER TABLE oppdrag ADD COLUMN fodt_xid xid8 NOT NULL
 -- gjennom herdede funksjoner), er en attest kalleren kan fylle ut selv
 -- ingen attest. Døren skriver den, som B-maskinen ellers gjør.
 CREATE OR REPLACE FUNCTION oppdrag_fodselsattest()
-RETURNS trigger LANGUAGE plpgsql AS $$
+RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog AS $$
 BEGIN
     IF TG_OP = 'INSERT' THEN
         NEW.fodt_xid := pg_catalog.pg_current_xact_id();
