@@ -88,8 +88,9 @@ def test_profil_opprettes_versjoneres_og_leses(klient, miljo):
 
 @pg
 def test_ugyldige_kravsett_avvises_uten_spor(klient, miljo):
-    """Feilkontrakten: vekt utenfor 0–10, duplikatkrav, tomt sett,
-    ukjent profil-id og misformet id gir 400 — og ingenting skrives."""
+    """Feilkontrakten: vekt utenfor 0–10 (også utenfor `integer`),
+    duplikatkrav, tomt sett, for mange krav, for langt navn, ukjent
+    profil-id og misformet id gir 400 — og ingenting skrives."""
     cookie, csrf = _browsersesjon(_bruker(f"pg-{secrets.token_hex(3)}",
                                           ["admin"]))
     for kropp in (
@@ -116,6 +117,12 @@ def test_ugyldige_kravsett_avvises_uten_spor(klient, miljo):
          "profil_id": "ikke-uuid"},
         {"navn": "X", "krav": [{"kravnavn": "A", "vekt": 2}],
          "profil_id": "00000000-0000-4000-8000-000000000000"},
+        # GRENSENE døren faktisk håndhever (Cursor P2-4): taket på 50
+        # krav og navnets 1–200 tegn var spesifisert, men ubevist — en
+        # spesifisert port uten negativ test er ingen port.
+        {"navn": "X", "krav": [{"kravnavn": f"K{i}", "vekt": 1}
+                               for i in range(51)]},
+        {"navn": "L" * 201, "krav": [{"kravnavn": "A", "vekt": 2}]},
     ):
         r = _post(klient, cookie, csrf, kropp)
         assert r.status_code == 400, (kropp, r.text)
@@ -126,7 +133,8 @@ def test_ugyldige_kravsett_avvises_uten_spor(klient, miljo):
     try:
         sett_kontekst(m, TEN, "test", "r-spor")
         n = m.execute("SELECT count(*) FROM stillingsprofil"
-                      " WHERE tenant=%s AND navn IN ('X','')",
+                      " WHERE tenant=%s AND (navn IN ('X','')"
+                      " OR navn LIKE 'LLL%%')",
                       (TEN,)).fetchone()[0]
         m.rollback()
     finally:
