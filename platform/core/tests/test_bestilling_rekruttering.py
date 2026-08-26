@@ -676,6 +676,16 @@ def test_committet_dom_gjenopprettes_selv_om_bunten_dode(
     assert (r3.status_code, r3.json()["feil"]) == (
         409, "idempotenskonflikt"), r3.text
     assert _beslutninger(migrator) == 0
+    # …og heller ikke PROFILPORTEN får dømme først (Codex P2, runde 4):
+    # annen intensjon med en velformet, ikke-eksisterende profilref er
+    # fortsatt samme konflikt — aldri 404.
+    kropp3 = dict(kropp)
+    kropp3["stillingsprofil_ref"] = \
+        "00000000-0000-4000-8000-000000000000@1"
+    r4 = _bestill(klient, cookie, csrf, kropp3, nokkel)
+    assert (r4.status_code, r4.json()["feil"]) == (
+        409, "idempotenskonflikt"), r4.text
+    assert _beslutninger(migrator) == 0
 
 
 @pg

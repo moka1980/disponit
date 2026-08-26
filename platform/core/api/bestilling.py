@@ -610,7 +610,11 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                 "   AND eiermodul='m57_ats' AND formaal='soknadsbunt'",
                 (tenant, norm["inndata_id"])).fetchone()
             conn.rollback()
-            if prad is None:
+            # BEGGE referanseportene vaktes (Codex P2, runde 4): runde 3
+            # vaktet bare buntporten, og en annen-intensjon-retry med en
+            # velformet, men IKKE-EKSISTERENDE profilref falt i 404 her
+            # før konfliktdommen. Prefiks funnet → nedstrøms eier dommen.
+            if prad is None and not gjenopprettbar:
                 tjeneste.logg.hendelse("stillingsprofil_ukjent", rid,
                                        tenant, art="sikkerhet")
                 return ("feil", "stillingsprofil_ukjent")
