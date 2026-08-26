@@ -2596,8 +2596,10 @@ def test_deklarert_medlem_som_aldri_strommes_stopper_kjoringen(tmp_path,
     assert set(_kjor(arkiv, _Modell())["artefakter"]) == {"k1"}
 
     # Strømmen mister ett DEKLARERT medlem etter bindingen. Kandidaten
-    # står igjen med én fil, så både `tom_bunt` og kandidattallportene ser
-    # en gyldig bunt — det er nettopp den stille veien porten finnes for.
+    # står igjen med én fil, så kandidattallporten ser en gyldig bunt —
+    # det er nettopp den stille veien porten finnes for. (Denne testen
+    # måler DELVIS tap; totalt tap måles i
+    # `test_bunt_uten_kandidater_er_kodet_feil_ikke_tomt_resultat`.)
     ekte = parsing.les_porsjonsvis
     monkeypatch.setattr(
         parsing, "les_porsjonsvis",
@@ -2612,7 +2614,8 @@ def test_deklarert_medlem_som_aldri_strommes_stopper_kjoringen(tmp_path,
     assert modell.sett == [], "modellen så et halvt dokumentsett"
 
 
-def test_bunt_uten_kandidater_er_kodet_feil_ikke_tomt_resultat(tmp_path):
+def test_bunt_uten_kandidater_er_kodet_feil_ikke_tomt_resultat(tmp_path,
+                                                               monkeypatch):
     """Codex P2: en bunt uten medlemmer ble et VELLYKKET tomt utfall.
 
     En tom zip — og en som bare bærer katalogoppføringer — passerer hele
@@ -2624,7 +2627,15 @@ def test_bunt_uten_kandidater_er_kodet_feil_ikke_tomt_resultat(tmp_path):
     1–5000, så null kandidater er per definisjon en ugyldig bunt, og en
     ugyldig bunt er SP-3s kodede utfall.
 
-    MUTASJONEN SOM DREPER DENNE: fjern `if not biter`-porten i `kjor_bunt`.
+    Klassen har nå TO porter, og `tom_bunt` er ingen av dem (eierdom,
+    K2-kjennelsen på #216 — valg B): en bunt uten deklarasjon felles av
+    `manifest_mangler` FØR strømmen, og forsvinner deklarerte medlemmer
+    etterpå, eier `lest != len(kart)` divergensen. Vakten som sto imellom
+    kunne per konstruksjon aldri fyre riktig, og er fjernet.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `lest != len(kart)`-porten i
+    `kjor_bunt` — da blir TOTALT tap `kandidattall_avvik` (defensen bak),
+    ikke `manifest_medlem_mangler`.
     """
     from modules.m57_ats import kjoring
 
@@ -2642,7 +2653,7 @@ def test_bunt_uten_kandidater_er_kodet_feil_ikke_tomt_resultat(tmp_path):
         _kjor(tom, modell)
     # #161: en bunt uten deklarasjon felles som `manifest_mangler` FØR
     # strømmen — strengere enn gamle `tom_bunt`, samme klasse (aldri et
-    # vellykket tomt utfall). `tom_bunt`-porten står som defense.
+    # vellykket tomt utfall), og nå frontdøren alene.
     assert e.value.kode == "manifest_mangler"
     # Utfallet bærer ingen halv liste — evidensen er alt Kjoringsfeil har.
     assert not hasattr(e.value, "rangering")
@@ -2659,8 +2670,21 @@ def test_bunt_uten_kandidater_er_kodet_feil_ikke_tomt_resultat(tmp_path):
     assert e.value.kode == "manifest_mangler"
 
     # … og én kandidat er nok: porten måler NULL, ikke «få».
-    ut = _kjor(_bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>")]), _Modell())
-    assert set(ut["artefakter"]) == {"k1"}
+    hel = _bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>")])
+    assert set(_kjor(hel, _Modell())["artefakter"]) == {"k1"}
+
+    # TOTALT TAP ETTER BINDINGEN er den veien `tom_bunt` stjal (Cursor P2,
+    # runde 5): deklarasjonen er lest og bundet, og så yielder strømmen
+    # ingenting i det hele tatt. `biter` blir tom uten at bunten var tom —
+    # den DEKLARERTE én kandidat. Utfallet er derfor
+    # `manifest_medlem_mangler`, koden porten alt eier for «deklarert uten
+    # medlem», og ikke et ord om en tomhet manifestet motsier.
+    monkeypatch.setattr(parsing, "les_porsjonsvis", lambda sti: iter(()))
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        _kjor(hel, modell)
+    assert e.value.kode == "manifest_medlem_mangler", e.value.kode
+    assert modell.sett == [], "modellen så en bunt som aldri ble strømmet"
 
 
 def test_ugyldig_feltform_i_SENERE_fil_felles_ogsaa(tmp_path):

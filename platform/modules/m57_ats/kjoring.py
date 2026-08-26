@@ -272,18 +272,21 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
             if feil.errno is None:
                 raise Kjoringsfeil("modellfeil", fremdrift) from feil
             raise Kjoringsfeil("infrastrukturfeil", fremdrift) from feil
-        # EN BUNT UTEN KANDIDATER ER IKKE EN FULLFØRT EVALUERING (Codex P2).
-        # Er zip-en tom, eller bærer den bare katalogoppføringer, yielder
-        # `les_porsjonsvis` ingenting: `biter` blir tom, løkken under kjører
-        # aldri, `ranger({}, ...)` gir en tom liste — og kjøringen returnerte
-        # et VELLYKKET utfall med tom rangering og tomt artefaktkart. Da har
-        # oppdraget «lyktes» uten at én eneste søknad ble vurdert, og
-        # promoteringsvakten i 056 får en gyldig, tom liste å slippe videre.
-        # Kontrakten sier `antall_soknader` er 1–5000 (payload-skjemaet), så
-        # null kandidater er per definisjon en ugyldig bunt — og en ugyldig
-        # bunt er SP-3s kodede utfall, aldri et resultat.
-        if not biter:
-            raise Kjoringsfeil("tom_bunt", fremdrift)
+        # `tom_bunt` ER FJERNET — EIERDOM (K2-kjennelse på #216, valg B).
+        # Tre uavhengige vakter leste samme tilstand etter strømløkken, så
+        # det var REKKEFØLGEN, ikke tilstedeværelsen, som avgjorde hvilket
+        # ord en divergens fikk. Forsvant ALLE deklarerte medlemmer mellom
+        # bindingen og `les_porsjonsvis`, ble `biter` tom, og `if not biter`
+        # stjal utfallet fra vakten under: en bunt som DEKLARERTE
+        # kandidater ble meldt «tom» i stedet for `manifest_medlem_mangler`.
+        # Vakten var dessuten alt død for sitt opprinnelige formål — #161
+        # feller tom zip og bare-kataloger som `manifest_mangler` FØR
+        # strømmen — og en vakt som per konstruksjon aldri kan fyre riktig
+        # er ikke et vern, det er støy. Dommen fjerner overlappet i stedet
+        # for å stokke det: manifestporten er frontdøren mot «aldri et
+        # vellykket tomt utfall», `lest != len(kart)` eier divergensen, og
+        # `len(biter) != antall_soknader` står som eneste defense bak den.
+        #
         # TOVEIS MIDT I FLUKT VAR BARE ÉN VEI (Cursor P2). Oppslaget over
         # feller et medlem strømmen har og kartet mangler; den OMVENDTE
         # divergensen — kartet deklarerer filer strømmen aldri yielder —
