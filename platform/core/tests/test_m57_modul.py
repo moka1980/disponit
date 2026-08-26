@@ -1996,6 +1996,49 @@ def test_lesefeil_paa_lageret_tilskrives_ikke_modellen(tmp_path, monkeypatch):
     assert e.value.kode == "modellfeil"
 
 
+def test_lesefeil_under_deklarasjonen_er_ogsaa_drift(tmp_path, monkeypatch):
+    """Cursor P1 (runde 4) på #161: lagringsutfallet gjaldt bare strømmen.
+
+    #161 la arkivlesing FORAN strømmen — `inspiser_bunt` + `les_manifest`
+    — men utenfor den indre `try`-en som oversetter `OSError` MED errno
+    til `infrastrukturfeil`. `les_manifest` slipper den formen rått ut med
+    vilje (drift, ikke bunt), så en EIO under lesing av `soknader.json`
+    fant ingen håndterer og falt til catch-allen: `modellfeil` om en bunt
+    modellen aldri fikk se. Nøyaktig klassen
+    `test_lesefeil_paa_lageret_tilskrives_ikke_modellen` lukket for
+    strømmen, gjenåpnet av den nye porten foran den.
+
+    MUTASJONEN SOM DREPER DENNE: flytt `les_manifest`-linja ut av den
+    indre `try`-en i `kjor_bunt` igjen.
+    """
+    from modules.m57_ats import kjoring
+
+    ekte_read = zipfile.ZipFile.read
+
+    def _lageret_roeyker(self, navn, pwd=None):
+        # Bare deklarasjonen røyker: gaten foran den har alt lest
+        # katalogen, så feilen treffer nøyaktig den nye lesingen.
+        if getattr(navn, "filename", navn) == parsing.MANIFESTNAVN:
+            raise OSError(errno.EIO, "Input/output error")
+        return ekte_read(self, navn, pwd)
+
+    monkeypatch.setattr(zipfile.ZipFile, "read", _lageret_roeyker)
+    modell = _Modell()
+    arkiv = _bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>")])
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
+                          kandidatfelter_for=lambda m: {"navn": ["N"]},
+                          tekst_for=lambda m, d: d.decode("utf-8"),
+                          biasmaalinger=_MAALINGER, antall_soknader=1)
+    assert e.value.kode == "infrastrukturfeil", (
+        "en lesefeil under deklarasjonen er drift, ikke modellens feil")
+    assert isinstance(e.value.__cause__, OSError)
+    assert e.value.__cause__.errno == errno.EIO
+    # Bunten nådde aldri modellen — evidensen skal si det samme.
+    assert modell.sett == []
+    assert e.value.fremdrift["filer_lest"] == 0
+
+
 def test_modellens_egen_nettverksfeil_er_ikke_en_driftssak(tmp_path):
     """Codex P2: lagringshåndtereren dekket også modellkallet.
 

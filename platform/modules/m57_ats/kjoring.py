@@ -183,15 +183,6 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
     biter: dict[str, list[tuple[str, str, str, object]]] = {}
     lest = 0
     try:
-        # #161 (eiers B): kandidatene DEKLARERES av buntens eget
-        # `soknader.json` og bindes toveis mot katalogen FØR én byte
-        # innhold pakkes ut — «den så ut som en søknad» er ikke en
-        # inspeksjon. Deklarert kandidattall måles mot oppdragets
-        # signerte tall her, foran strømmen: et avvik er en ugyldig
-        # bunt, aldri et resultat.
-        kart = parsing.les_manifest(sti, parsing.inspiser_bunt(sti))
-        if len(set(kart.values())) != antall_soknader:
-            raise Kjoringsfeil("kandidattall_avvik", fremdrift)
         # LAGRINGSHÅNDTEREREN HØRER TIL LESINGEN, IKKE HELE KJØRINGEN
         # (Codex P2). Denne indre `try`-en dekker BARE arkivgaten. Sto
         # håndtereren nede blant de øvrige, dekket den også `modell.vurder`,
@@ -201,7 +192,29 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
         # innsnevringen tok den modellens egne nettverksfeil med seg samme
         # vei, og da leter driften etter et lagringsavbrudd som aldri fant
         # sted. Kilden avgjør koden, og kilden er hvor unntaket oppsto.
+        #
+        # …OG DEKLARASJONEN ER NÅ DEL AV ARKIVGATEN (Cursor P1, runde 4).
+        # #161 la arkivlesing FORAN strømmen — `inspiser_bunt` og
+        # `les_manifest` åpner begge bunten på lageret — men lot de to
+        # linjene stå UTENFOR denne `try`-en. `les_manifest` slipper med
+        # vilje en `OSError` MED errno rått ut, av nøyaktig samme grunn
+        # som `les_porsjonsvis` gjør det: en lesefeil på disk eller
+        # nettlager er DRIFT, ikke buntens skyld. Utenfor gaten hadde den
+        # ingen håndterer å lande i, og catch-allen nederst meldte den
+        # som `modellfeil` — feil kø og feil alarm for en bunt modellen
+        # aldri fikk se, altså samme klasse som allerede er lukket for
+        # strømmen. Gaten flyttes ikke og oversettelsen dupliseres ikke:
+        # lesingen flyttes inn i håndtereren som alt eier den.
         try:
+            # #161 (eiers B): kandidatene DEKLARERES av buntens eget
+            # `soknader.json` og bindes toveis mot katalogen FØR én byte
+            # innhold pakkes ut — «den så ut som en søknad» er ikke en
+            # inspeksjon. Deklarert kandidattall måles mot oppdragets
+            # signerte tall her, foran strømmen: et avvik er en ugyldig
+            # bunt, aldri et resultat.
+            kart = parsing.les_manifest(sti, parsing.inspiser_bunt(sti))
+            if len(set(kart.values())) != antall_soknader:
+                raise Kjoringsfeil("kandidattall_avvik", fremdrift)
             for merke, medlem, data in parsing.les_porsjonsvis(sti):
                 # FREMDRIFTEN TELLER MEDLEMMER, IKKE SJEKKPUNKTER (Codex P2).
                 # `les_porsjonsvis` leverer et merke bare hver 200. fil og på
