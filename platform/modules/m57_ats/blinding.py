@@ -33,14 +33,8 @@ MASKERTE_FELTER: tuple[str, ...] = (
 #: Grensene for en deklarert personverdi: bundet lengde og antall — en
 #: deklarasjon er korte kanoniske verdier, aldri fritekst.
 #:
-#: De BOR her, ikke i `parsing` (Cursor P2). Kontrakten lover maks 10
-#: verdier à 200 tegn, men bare deklarasjonsdøra målte det:
-#: `les_manifest` talte og målte, mens `blind` — som tar imot felter fra
-#: en INJISERT `kandidatfelter_for` og dermed går utenom manifestporten
-#: — bare målte type og `verdiform_lukket`. Samme dobbeltdør-doktrine
-#: som padding/Cf-fiksen: én definisjon, to dører, ingen vei inn som
-#: måler mindre enn den andre. `parsing` importerer dem herfra (motsatt
-#: retning ville vært en syklus).
+#: De BOR her, ikke i `parsing` (Cursor P2), sammen med predikatet som
+#: bruker dem (`feltverdier_lukket`).
 MAKS_FELTVERDIER = 10
 MAKS_FELTVERDI_TEGN = 200
 
@@ -69,6 +63,48 @@ def verdiform_lukket(verdi: str) -> bool:
     for et menneske og for dokumentet."""
     return verdi == verdi.strip() and not any(
         unicodedata.category(tegn) in ("Cc", "Cf") for tegn in verdi)
+
+
+def feltverdier_lukket(verdier: object) -> bool:
+    """HELE grensesettet for ett felts deklarerte verdier, ETT sted —
+    type, tomhet, antall, lengde og verdiens egen skrivemåte.
+
+    EIERDOM, K2-kjennelse runde 4 på #217 (valg A). Grensene fantes før
+    som to HÅNDSKREVNE opptellinger over samme sett: `les_manifest` talte
+    sine i én løkke, `blind`s formløkke sine i en annen, og ingen av dem
+    var avledet av den andre. Da må hver ny grense skrives to steder, og
+    fire Cursor-runder på rad fant nøyaktig én grense som sto på den ene
+    døra og manglet på den andre:
+
+        1. padding / Cf-Cc          (P1, `7b8fa66`)
+        2. lengde / antall          (P2, `4568cf09`)
+        3. ukjent feltnavn          (P2, `be6fdd32` — negativen manglet)
+        4. tom liste / tom streng   (P2, `f6887ce`)
+
+    Runde 4 var den vonde: `all([])` er `True` og `verdiform_lukket("")`
+    er `True`, så `{"navn": []}` og `{"navn": ["Kari", ""]}` passerte
+    `blind` mens deklarasjonsdøra felte dem — og en tom avmaskerings-
+    tabell gjør `krev_blindet` VAKUØS: kjøringen telles som blindet mens
+    klartekstnavnet står i modellinputen. Enumerasjonen er endelig, men
+    ikke tom, og et femte formforsøk er nettopp det §9 forbyr.
+
+    Så: ETT predikat, to kallesteder. `les_manifest` kaller denne i
+    stedet for sin egen løkke og beholder sin egen feilkode
+    (`manifest_feilformet` mot `ugyldig_maskeringsform`) — kodene skiller
+    hvilken DØR som felte, aldri hvilken grense som gjaldt. En femte
+    grense skrives nå ett sted, og runde 5 på denne aksen er strukturelt
+    umulig.
+
+    En sekvens: `list` eller `tuple`, aldri et `set` (tokennummereringen
+    skal være deterministisk for samme input) og aldri en bar streng (den
+    er iterbar, så «Ann» ville blitt tegnene `A`, `n`, `n` og maskert
+    hver eneste `A` og `n` i søknaden)."""
+    return (isinstance(verdier, (list, tuple)) and bool(verdier)
+            and len(verdier) <= MAKS_FELTVERDIER
+            and all(isinstance(verdi, str) and bool(verdi)
+                    and len(verdi) <= MAKS_FELTVERDI_TEGN
+                    and verdiform_lukket(verdi)
+                    for verdi in verdier))
 
 
 def _monster(verdi: str) -> re.Pattern[str]:
@@ -101,49 +137,22 @@ def blind(tekst: str, kandidatfelter: dict[str, list[str]]
         raise Blindingsfeil("ukjent_maskeringsfelt")
     # FORMEN MÅLES, den tas ikke på ord (Codex P2). Typeannotasjonen sier
     # `{felt: [verdier]}`, men uttrekket er en FREMMED produsent — en
-    # modell eller en parser — og en annotasjon er ingen port. To former
-    # er velformet JSON og begge er farlige:
+    # modell eller en parser — og en annotasjon er ingen port. `blind`
+    # tar dessuten imot felter fra en INJISERT `kandidatfelter_for`, og
+    # den veien går utenom manifestporten helt.
     #
-    #   * `{"navn": "Ann"}` — en streng er iterbar, så løkka under fikk
-    #     tegnene `A`, `n`, `n`. Hver eneste `A` og `n` i HELE søknaden
-    #     ble maskert, `krev_blindet` godkjente resultatet (den leter
-    #     etter de samme tegnene, og de er borte), og modellen fikk
-    #     korrupt tekst som input til både kravfunn og rangering.
-    #   * `{"alder": [42]}` — `re.escape(42)` er en rå `TypeError` ut av
-    #     modulen, ikke et kodet blindingsavvik kalleren kan behandle.
-    #
-    # Grensen er kontrakten `blind` ALT er skrevet for: en sekvens av
-    # strenger per felt. Dette er ikke et femte maskeringsforsøk (#158)
-    # — mønsteret og porten er uendret — det er inndatasiden av samme
-    # fail-closed regel som `blinding_uten_felter`: et umålt utfall er et
-    # avvist utfall (SP-3). Et `set` avvises med vilje sammen med de
-    # andre: tokennummereringen skal være deterministisk for samme input,
-    # og en uordnet samling gir den ikke.
-    #
-    # FORMEN ER OGSÅ VERDIENS EGEN (`verdiform_lukket`, Cursor P1):
-    # manifestet avviser padding og Cf/Cc på vei inn, men `blind` tar
-    # imot felter fra en INJISERT `kandidatfelter_for` også, og den veien
-    # går utenom manifestporten. Grensen står derfor begge steder, med én
-    # definisjon.
-    #
-    # OG DET SAMME GJELDER LENGDE OG ANTALL (Cursor P2). Kontrakten lover
-    # maks 10 verdier à 200 tegn, men bare deklarasjonsdøra talte og
-    # målte; den injiserte veien slapp fritekst inn i det som skal være
-    # korte kanoniske verdier. Døra som måler minst er den døra som
-    # gjelder, så begge måler nå det samme.
+    # Grensesettet er `feltverdier_lukket` — DEN SAMME `les_manifest`
+    # kaller (eierdom, K2-kjennelse runde 4 på #217). Dette er ikke et
+    # femte maskeringsforsøk (#158) — mønsteret og porten er uendret —
+    # det er inndatasiden av samme fail-closed regel som
+    # `blinding_uten_felter`: et umålt utfall er et avvist utfall (SP-3).
     for verdier in kandidatfelter.values():
-        if not isinstance(verdier, (list, tuple)) \
-                or len(verdier) > MAKS_FELTVERDIER or not all(
-                isinstance(verdi, str) and verdiform_lukket(verdi)
-                and len(verdi) <= MAKS_FELTVERDI_TEGN
-                for verdi in verdier):
+        if not feltverdier_lukket(verdier):
             raise Blindingsfeil("ugyldig_maskeringsform")
     avmaskering: dict[str, str] = {}
     par: list[tuple[str, str]] = []
     for felt in MASKERTE_FELTER:
         for nr, verdi in enumerate(kandidatfelter.get(felt, ()), start=1):
-            if not verdi:
-                continue
             token = f"[{felt.upper()}-{nr}]"
             avmaskering[token] = verdi
             par.append((token, verdi))

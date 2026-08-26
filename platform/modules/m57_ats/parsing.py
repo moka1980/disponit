@@ -607,17 +607,6 @@ class Manifestet:
     felter: dict[str, dict[str, list[str]]]
 
 
-#: Grensene for deklarerte personfeltverdier: bundet lengde og antall —
-#: en deklarasjon er korte kanoniske verdier, aldri fritekst.
-#:
-#: Definisjonen BOR i `blinding` (Cursor P2), fordi den injiserte veien
-#: (`kandidatfelter_for` → `blind`) går utenom lesingen her og skal måle
-#: nøyaktig det samme. Navnene beholdes i `parsing` som den lokale
-#: lesbarheten de var — men de er nå ett tall, ikke to like.
-MAKS_FELTVERDIER = blinding.MAKS_FELTVERDIER
-MAKS_FELTVERDI_TEGN = blinding.MAKS_FELTVERDI_TEGN
-
-
 def les_manifest(sti: str | Path,
                  medlemmer: list[Medlem]) -> Manifestet:
     """#161 (eiers B): les og bind `soknader.json` mot katalogen, BEGGE
@@ -763,24 +752,20 @@ def les_manifest(sti: str | Path,
                 raise Buntfeil("manifest_feilformet", f"felter for {kid}")
             rene: dict[str, list[str]] = {}
             for felt, verdier in fd.items():
-                if not isinstance(verdier, list) or not verdier \
-                        or len(verdier) > MAKS_FELTVERDIER:
+                # ETT PREDIKAT, TO DØRER (eierdom, K2-kjennelse runde 4
+                # på #217, valg A). Grensesettet — type, tomhet, antall,
+                # lengde, verdiens egen skrivemåte — telles ikke opp her.
+                # Det EIES av `blinding.feltverdier_lukket`, som `blind`
+                # kaller på den injiserte veien (`kandidatfelter_for`,
+                # som går utenom denne lesingen). To håndskrevne
+                # opptellinger over samme sett ga fire Cursor-runder på
+                # rad, én manglende grense per runde; med ett predikat
+                # kan de to dørene ikke divergere. Bare FEILKODEN er
+                # vår egen: den sier hvilken dør som felte, aldri
+                # hvilken grense som gjaldt.
+                if not blinding.feltverdier_lukket(verdier):
                     raise Buntfeil("manifest_feilformet",
                                    f"felter.{felt} for {kid}")
-                # VERDIEN ER SIN EGEN SKRIVEMÅTE (Cursor P1). Porten
-                # målte før `strip()` og lagret RÅVERDIEN, så `"Kari "`
-                # og `"Kari<U+200B>"` var lovlige deklarasjoner som ikke
-                # maskerer noe i en tekst som skriver navnet uten hale —
-                # og `krev_blindet` leter etter den samme padda formen,
-                # så den godkjenner lekkasjen. `verdiform_lukket` er den
-                # samme dommen `blind` feller (én definisjon, to veier
-                # inn), og den dekker blank-only-tilfellet også.
-                for v in verdier:
-                    if not isinstance(v, str) or not v.strip() \
-                            or not blinding.verdiform_lukket(v) \
-                            or len(v) > MAKS_FELTVERDI_TEGN:
-                        raise Buntfeil("manifest_feilformet",
-                                       f"felter.{felt} for {kid}")
                 rene[felt] = list(verdier)
             felter_ut[kid] = rene
     uadressert = navnene - set(kart) - {MANIFESTNAVN}

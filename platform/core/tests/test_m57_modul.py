@@ -1045,18 +1045,32 @@ def test_port16_blinding_uten_felter_feiler_lukket():
     MUTASJONEN SOM DREPER DENNE: fjern `if not avmaskering`-armen i
     `evalueringsinput`.
 
+    GRENSEN MOT FORMPORTEN (eierdom, K2-kjennelse runde 4 på #217): kun
+    den TOMME deklarasjonen (`{}`) er «ingenting å maskere». En
+    deklarasjon som NEVNER et felt uten å gi det verdier — `{"navn": []}`
+    eller `{"navn": [""]}` — er en ugyldig FORM, ikke et fravær, og
+    `feltverdier_lukket` feller den før vi kommer hit. Begge er
+    fail-closed og modellen kalles aldri; koden skiller bare hvilken port
+    som felte.
+
     ÆRLIG OM DEKNINGEN: dette er det DEGENERERTE tilfellet. Det delvise
     (`navn` uten `adresse`) passerer fortsatt og venter på B-veien —
     målt eksplisitt i den siste asserten her, så ingen tror porten er
     sterkere enn den er."""
     tekst = "Kari Nordmann, 44 år, søker."
-    for tomme in ({}, {"navn": []}, {"navn": [""], "alder": []}):
+    modell = _Modell()
+    with pytest.raises(blinding.Blindingsfeil) as e:
+        evaluering.evaluer_kandidat(
+            modell, tekst, {}, {"drift": 3}, biasmaalinger=_MAALINGER)
+    assert e.value.kode == "blinding_uten_felter"
+    assert not modell.sett
+    for tomme in ({"navn": []}, {"navn": [""], "alder": ["44"]}):
         modell = _Modell()
         with pytest.raises(blinding.Blindingsfeil) as e:
             evaluering.evaluer_kandidat(
                 modell, tekst, tomme, {"drift": 3},
                 biasmaalinger=_MAALINGER)
-        assert e.value.kode == "blinding_uten_felter", tomme
+        assert e.value.kode == "ugyldig_maskeringsform", tomme
         assert not modell.sett, tomme
     # Positiv kontroll: ett ekte felt, og veien er åpen som før.
     modell = _Modell()
@@ -2351,10 +2365,11 @@ def test_manifestfeltenes_lukkede_form(tmp_path):
         {"ukjent_felt": ["x"]},
         {"navn": "ikke-liste"},
         {"navn": []},
-        {"navn": ["x"] * (parsing.MAKS_FELTVERDIER + 1)},
+        {"navn": [""]},
+        {"navn": ["x"] * (blinding.MAKS_FELTVERDIER + 1)},
         {"navn": ["   "]},
         {"navn": [7]},
-        {"navn": ["x" * (parsing.MAKS_FELTVERDI_TEGN + 1)]},
+        {"navn": ["x" * (blinding.MAKS_FELTVERDI_TEGN + 1)]},
         # Verdien er sin egen skrivemåte (Cursor P1/P2): en hale, en
         # ledende blank eller et usynlig Cf/Cc-tegn gjør maskeringen og
         # porten enige om noe som ikke står i dokumentet.
@@ -2380,37 +2395,65 @@ def test_manifestfeltenes_lukkede_form(tmp_path):
     assert m.felter == {"k1": {"navn": ["Kari"]}}
 
 
-def test_feltgrensene_staar_i_begge_doerer(tmp_path):
-    """Cursor P2: kontrakten lover maks 10 verdier à 200 tegn, men bare
-    DEKLARASJONSDØRA målte det.
+def test_feltgrensesettet_er_ett_predikat_begge_doerer(tmp_path):
+    """Eierdom (K2-kjennelse runde 4 på #217, valg A): ETT predikat eier
+    hele grensesettet, og begge dørene kaller det.
 
-    `blind` tar imot felter fra en injisert `kandidatfelter_for` også, og
-    den veien går utenom `les_manifest`. Den målte type og
-    `verdiform_lukket`, men verken lengde eller antall — så fritekst
-    kunne komme inn i det som per kontrakt er korte kanoniske verdier.
-    Samme dobbeltdør-doktrine som padding/Cf-fiksen: døra som måler
-    minst, er den døra som gjelder.
+    Grensene sto før som to HÅNDSKREVNE opptellinger over samme sett —
+    `les_manifest` talte sine i én løkke, `blind`s formløkke sine i en
+    annen — og ingen av dem var avledet av den andre. Fire Cursor-runder
+    på rad fant nøyaktig én grense som sto på den ene døra og manglet på
+    den andre: padding/Cf (`7b8fa66`), lengde/antall (`4568cf09`), ukjent
+    feltnavn (`be6fdd32`), tom liste/tom verdi (`f6887ce`). Den siste var
+    den vonde: `all([])` og `verdiform_lukket("")` er begge `True`, så en
+    tom deklarasjon ga en TOM avmaskeringstabell, og da løper
+    `krev_blindet` null runder — kjøringen telles som blindet mens
+    klarteksten står i modellinputen.
 
-    MUTASJONEN SOM DREPER DENNE: fjern `len(verdier) > MAKS_FELTVERDIER`
-    eller `len(verdi) <= MAKS_FELTVERDI_TEGN` fra `blind`s formløkke."""
+    Denne testen enumererer grensesettet ÉN gang og krever samme dom på
+    BEGGE dørene for hver rad: den injiserte veien (`blind` direkte og
+    gjennom `kjor_bunt`) og deklarasjonsveien (`soknader.json`). Bare
+    feilkoden skiller dem — `ugyldig_maskeringsform` mot
+    `manifest_feilformet` sier hvilken dør som felte, aldri hvilken
+    grense som gjaldt.
+
+    MUTASJONEN SOM DREPER DENNE: fjern ÉN grense fra
+    `blinding.feltverdier_lukket` — `bool(verdier)`, `bool(verdi)`,
+    `len(verdier) <= MAKS_FELTVERDIER`, `len(verdi) <=
+    MAKS_FELTVERDI_TEGN`, `isinstance`-leddene eller
+    `verdiform_lukket`-kallet. Da blir raden rød på BEGGE dører samtidig,
+    som er hele poenget: det finnes ikke lenger en dør som kan måle
+    mindre enn den andre."""
+    import json as _json
+
     from modules.m57_ats import kjoring
 
-    # Ett tall, ikke to like: grensene BOR i `blinding`, og `parsing`
-    # måler nøyaktig de samme.
-    assert parsing.MAKS_FELTVERDIER is blinding.MAKS_FELTVERDIER
-    assert parsing.MAKS_FELTVERDI_TEGN is blinding.MAKS_FELTVERDI_TEGN
-
-    for ugyldig in ({"navn": ["x" * (blinding.MAKS_FELTVERDI_TEGN + 1)]},
-                    {"navn": ["x"] * (blinding.MAKS_FELTVERDIER + 1)}):
-        with pytest.raises(blinding.Blindingsfeil) as e:
-            blinding.blind("Kari kan drift.", ugyldig)
-        assert e.value.kode == "ugyldig_maskeringsform", ugyldig
-
-    # Den INJISERTE veien ender i samme dom, og modellen kalles aldri.
     cv = b"<p>Kari Testdal kan drift.</p>"
-    for i, ugyldig in enumerate(
-            ({"navn": ["x" * (blinding.MAKS_FELTVERDI_TEGN + 1)]},
-             {"navn": ["x"] * (blinding.MAKS_FELTVERDIER + 1)})):
+    GRENSER = (
+        ("type: bar streng er iterbar", {"navn": "Kari"}),
+        ("type: uordnet samling", {"navn": {"Kari"}}),
+        ("type: verdien er ikke tekst", {"navn": [7]}),
+        ("tomhet: tom liste", {"navn": []}),
+        ("tomhet: tom verdi ved siden av en gyldig",
+         {"navn": ["Kari", ""]}),
+        ("tomhet: blank-only", {"navn": ["   "]}),
+        ("antall: én over taket",
+         {"navn": ["x"] * (blinding.MAKS_FELTVERDIER + 1)}),
+        ("lengde: ett tegn over taket",
+         {"navn": ["x" * (blinding.MAKS_FELTVERDI_TEGN + 1)]}),
+        ("skrivemåte: hale", {"navn": ["Kari "]}),
+        ("skrivemåte: usynlig Cf", {"navn": ["Kari\u200b"]}),
+    )
+
+    for i, (grense, felter) in enumerate(GRENSER):
+        # Predikatet selv — den ene definisjonen begge dører deler.
+        assert not blinding.feltverdier_lukket(felter["navn"]), grense
+
+        # DØR 1, den injiserte (`kandidatfelter_for` → `blind`): den går
+        # utenom manifestlesingen helt.
+        with pytest.raises(blinding.Blindingsfeil) as e:
+            blinding.blind("Kari Testdal kan drift.", felter)
+        assert e.value.kode == "ugyldig_maskeringsform", grense
         (tmp_path / f"i{i}").mkdir()
         arkiv = _bunt(tmp_path / f"i{i}", [("k1/cv.html", cv)])
         modell = _Modell()
@@ -2419,16 +2462,51 @@ def test_feltgrensene_staar_i_begge_doerer(tmp_path):
                 arkiv, modell, vekter={"drift": 3},
                 tekst_for=lambda m, d: d.decode("utf-8"),
                 biasmaalinger=_MAALINGER, antall_soknader=1,
-                kandidatfelter_for=lambda m, f=ugyldig: f)
-        assert e.value.kode == "ugyldig_maskeringsform", ugyldig
-        assert not modell.sett, ugyldig
+                kandidatfelter_for=lambda m, f=felter: f)
+        assert e.value.kode == "ugyldig_maskeringsform", grense
+        assert not modell.sett, grense
 
-    # Positiv kontroll: nøyaktig PÅ grensen er lovlig — porten avviser
-    # det som er over, ikke det kontrakten lover.
+        # DØR 2, deklarasjonen. Et `set` finnes ikke i JSON, så den raden
+        # kan ikke NÅ denne døra — den hoppes over her framfor å bli
+        # skrevet om til noe annet enn grensen den måler.
+        try:
+            manifest = _json.dumps({"soknader": [
+                {"kandidat_id": "k1", "filer": ["k1/cv.html"],
+                 "felter": felter}]})
+        except TypeError:
+            continue
+        (tmp_path / f"d{i}").mkdir()
+        arkiv = _bunt(tmp_path / f"d{i}", [("k1/cv.html", cv)],
+                      manifest=manifest)
+        modell = _Modell()
+        with pytest.raises(kjoring.Kjoringsfeil) as e:
+            kjoring.kjor_bunt(
+                arkiv, modell, vekter={"drift": 3},
+                tekst_for=lambda m, d: d.decode("utf-8"),
+                biasmaalinger=_MAALINGER, antall_soknader=1)
+        assert e.value.kode == "manifest_feilformet", grense
+        # Avvisningen skjer i LESINGEN: ingen byte nådde modellen.
+        assert not modell.sett, grense
+
+    # POSITIV KONTROLL: nøyaktig PÅ grensen er lovlig — predikatet
+    # avviser det som er over, ikke det kontrakten lover. Begge
+    # sekvensformene går, og maskeringen skjer som før.
+    assert blinding.feltverdier_lukket(("Kari",))
+    assert blinding.feltverdier_lukket(
+        ["x" * blinding.MAKS_FELTVERDI_TEGN] * blinding.MAKS_FELTVERDIER)
     blindet, avmaskering = blinding.blind(
         "Kari kan drift.",
         {"navn": ["Kari"] + ["y"] * (blinding.MAKS_FELTVERDIER - 1)})
     assert avmaskering["[NAVN-1]"] == "Kari" and "Kari" not in blindet
+
+    # … og deklarasjonsdøra leser den samme formen ut slik den står.
+    (tmp_path / "ok").mkdir()
+    arkiv = _bunt(tmp_path / "ok", [("k1/cv.html", cv)],
+                  manifest=_json.dumps({"soknader": [
+                      {"kandidat_id": "k1", "filer": ["k1/cv.html"],
+                       "felter": {"navn": ["Kari Testdal"]}}]}))
+    m = parsing.les_manifest(arkiv, parsing.inspiser_bunt(arkiv))
+    assert m.felter == {"k1": {"navn": ["Kari Testdal"]}}
 
 
 def test_en_bokstavs_deklarasjon_er_lovlig(tmp_path):

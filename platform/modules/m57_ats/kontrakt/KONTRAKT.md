@@ -36,9 +36,23 @@ Modulen er KUNDE av plattformen, aldri omvendt (m56-formen):
   `"Kari Testdal "` mot en tekst som skriver navnet uten hale gjør
   porten vakuøs uten å gjøre den tom. Alt annet er `manifest_feilformet`
   (og `ugyldig_maskeringsform` på den injiserte veien) — vi avviser, vi
-  kanoniserer ikke. Det samme gjelder de to TALLGRENSENE: 10 verdier à
-  200 tegn måles på BEGGE veier inn, ikke bare i manifestlesingen — én
-  definisjon, to dører, og døra som måler minst er den som gjelder.
+  kanoniserer ikke.
+
+  HELE GRENSESETTET ER ÉTT PREDIKAT, og det måles på BEGGE veier inn
+  (eierdom, K2-kjennelse runde 4 på
+  [#217](https://github.com/moka1980/disponit/pull/217), valg A):
+  `blinding.feltverdier_lukket` eier type (en sekvens av strenger — en
+  bar streng og et `set` avvises), tomhet (verken tom liste eller tom
+  verdi), antall (maks 10) og lengde (maks 200 tegn), og
+  manifestlesingen KALLER den i stedet for å telle opp sine egne. De to
+  dørene skilles bare av feilkoden — `manifest_feilformet` mot
+  `ugyldig_maskeringsform` sier hvilken dør som felte, aldri hvilken
+  grense som gjaldt. Grunnen står i fire målte runder: så lenge
+  grensesettet var to håndskrevne opptellinger, fant hver Cursor-runde
+  nøyaktig én grense som sto på den ene døra og manglet på den andre
+  (padding/Cf, så lengde/antall, så ukjent feltnavn, så tom
+  liste/tom verdi). Døra som måler minst er den som gjelder — derfor
+  finnes den ikke lenger som egen dør.
 
   KJENT GRENSE — TOKENKOLLISJONEN, og den er FAIL-CLOSED. En deklarert
   verdi som er delstreng av et token maskeringen selv produserer (`"K"`
