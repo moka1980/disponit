@@ -609,8 +609,13 @@ class Manifestet:
 
 #: Grensene for deklarerte personfeltverdier: bundet lengde og antall —
 #: en deklarasjon er korte kanoniske verdier, aldri fritekst.
-MAKS_FELTVERDIER = 10
-MAKS_FELTVERDI_TEGN = 200
+#:
+#: Definisjonen BOR i `blinding` (Cursor P2), fordi den injiserte veien
+#: (`kandidatfelter_for` → `blind`) går utenom lesingen her og skal måle
+#: nøyaktig det samme. Navnene beholdes i `parsing` som den lokale
+#: lesbarheten de var — men de er nå ett tall, ikke to like.
+MAKS_FELTVERDIER = blinding.MAKS_FELTVERDIER
+MAKS_FELTVERDI_TEGN = blinding.MAKS_FELTVERDI_TEGN
 
 
 def les_manifest(sti: str | Path,

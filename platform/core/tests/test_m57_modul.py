@@ -2380,6 +2380,57 @@ def test_manifestfeltenes_lukkede_form(tmp_path):
     assert m.felter == {"k1": {"navn": ["Kari"]}}
 
 
+def test_feltgrensene_staar_i_begge_doerer(tmp_path):
+    """Cursor P2: kontrakten lover maks 10 verdier à 200 tegn, men bare
+    DEKLARASJONSDØRA målte det.
+
+    `blind` tar imot felter fra en injisert `kandidatfelter_for` også, og
+    den veien går utenom `les_manifest`. Den målte type og
+    `verdiform_lukket`, men verken lengde eller antall — så fritekst
+    kunne komme inn i det som per kontrakt er korte kanoniske verdier.
+    Samme dobbeltdør-doktrine som padding/Cf-fiksen: døra som måler
+    minst, er den døra som gjelder.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `len(verdier) > MAKS_FELTVERDIER`
+    eller `len(verdi) <= MAKS_FELTVERDI_TEGN` fra `blind`s formløkke."""
+    from modules.m57_ats import kjoring
+
+    # Ett tall, ikke to like: grensene BOR i `blinding`, og `parsing`
+    # måler nøyaktig de samme.
+    assert parsing.MAKS_FELTVERDIER is blinding.MAKS_FELTVERDIER
+    assert parsing.MAKS_FELTVERDI_TEGN is blinding.MAKS_FELTVERDI_TEGN
+
+    for ugyldig in ({"navn": ["x" * (blinding.MAKS_FELTVERDI_TEGN + 1)]},
+                    {"navn": ["x"] * (blinding.MAKS_FELTVERDIER + 1)}):
+        with pytest.raises(blinding.Blindingsfeil) as e:
+            blinding.blind("Kari kan drift.", ugyldig)
+        assert e.value.kode == "ugyldig_maskeringsform", ugyldig
+
+    # Den INJISERTE veien ender i samme dom, og modellen kalles aldri.
+    cv = b"<p>Kari Testdal kan drift.</p>"
+    for i, ugyldig in enumerate(
+            ({"navn": ["x" * (blinding.MAKS_FELTVERDI_TEGN + 1)]},
+             {"navn": ["x"] * (blinding.MAKS_FELTVERDIER + 1)})):
+        (tmp_path / f"i{i}").mkdir()
+        arkiv = _bunt(tmp_path / f"i{i}", [("k1/cv.html", cv)])
+        modell = _Modell()
+        with pytest.raises(kjoring.Kjoringsfeil) as e:
+            kjoring.kjor_bunt(
+                arkiv, modell, vekter={"drift": 3},
+                tekst_for=lambda m, d: d.decode("utf-8"),
+                biasmaalinger=_MAALINGER, antall_soknader=1,
+                kandidatfelter_for=lambda m, f=ugyldig: f)
+        assert e.value.kode == "ugyldig_maskeringsform", ugyldig
+        assert not modell.sett, ugyldig
+
+    # Positiv kontroll: nøyaktig PÅ grensen er lovlig — porten avviser
+    # det som er over, ikke det kontrakten lover.
+    blindet, avmaskering = blinding.blind(
+        "Kari kan drift.",
+        {"navn": ["Kari"] + ["y"] * (blinding.MAKS_FELTVERDIER - 1)})
+    assert avmaskering["[NAVN-1]"] == "Kari" and "Kari" not in blindet
+
+
 def test_manifestets_lukkede_form_avviser_alt_annet(tmp_path):
     """#161: en deklarasjon vi ikke forstår FULLT UT er ingen
     deklarasjon — ukjente nøkler, feil typer, duplikater, tomme og

@@ -30,6 +30,20 @@ import unicodedata
 MASKERTE_FELTER: tuple[str, ...] = (
     "navn", "kjonn", "alder", "adresse", "bilde", "kontakt")
 
+#: Grensene for en deklarert personverdi: bundet lengde og antall — en
+#: deklarasjon er korte kanoniske verdier, aldri fritekst.
+#:
+#: De BOR her, ikke i `parsing` (Cursor P2). Kontrakten lover maks 10
+#: verdier à 200 tegn, men bare deklarasjonsdøra målte det:
+#: `les_manifest` talte og målte, mens `blind` — som tar imot felter fra
+#: en INJISERT `kandidatfelter_for` og dermed går utenom manifestporten
+#: — bare målte type og `verdiform_lukket`. Samme dobbeltdør-doktrine
+#: som padding/Cf-fiksen: én definisjon, to dører, ingen vei inn som
+#: måler mindre enn den andre. `parsing` importerer dem herfra (motsatt
+#: retning ville vært en syklus).
+MAKS_FELTVERDIER = 10
+MAKS_FELTVERDI_TEGN = 200
+
 
 class Blindingsfeil(Exception):
     def __init__(self, kode: str):
@@ -111,9 +125,17 @@ def blind(tekst: str, kandidatfelter: dict[str, list[str]]
     # imot felter fra en INJISERT `kandidatfelter_for` også, og den veien
     # går utenom manifestporten. Grensen står derfor begge steder, med én
     # definisjon.
+    #
+    # OG DET SAMME GJELDER LENGDE OG ANTALL (Cursor P2). Kontrakten lover
+    # maks 10 verdier à 200 tegn, men bare deklarasjonsdøra talte og
+    # målte; den injiserte veien slapp fritekst inn i det som skal være
+    # korte kanoniske verdier. Døra som måler minst er den døra som
+    # gjelder, så begge måler nå det samme.
     for verdier in kandidatfelter.values():
-        if not isinstance(verdier, (list, tuple)) or not all(
+        if not isinstance(verdier, (list, tuple)) \
+                or len(verdier) > MAKS_FELTVERDIER or not all(
                 isinstance(verdi, str) and verdiform_lukket(verdi)
+                and len(verdi) <= MAKS_FELTVERDI_TEGN
                 for verdi in verdier):
             raise Blindingsfeil("ugyldig_maskeringsform")
     avmaskering: dict[str, str] = {}
