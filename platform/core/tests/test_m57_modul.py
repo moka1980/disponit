@@ -2538,6 +2538,59 @@ def test_manifest_som_forsvant_mellom_lesningene_er_kodet(tmp_path,
     assert modell.sett == [], "modellen så en bunt uten deklarasjon"
 
 
+def test_medlem_som_forsvant_mellom_lesningene_er_kodet(tmp_path,
+                                                        monkeypatch):
+    """Cursor P1 på #161: SISTE stedet i klassen `les_manifest`s
+    `KeyError`-port og `kart.get` i `kjoring.py` alt lukker.
+
+    `inspiser_bunt` bygger medlemslista fra ÉN åpning av arkivet, og
+    `les_porsjonsvis` åpner det PÅ NYTT og slår `medlem.navn` opp i DET
+    navnekartet. Divergerer de to — fila byttet i vinduet mellom dem —
+    reiser `zf.open` en rå `KeyError`, og ingen av medlems-armene kjente
+    den: de fanger `BadZipFile`, zlib/LZMA, `OSError` og
+    `RuntimeError`/`NotImplementedError`. Den falt dermed til
+    `kjor_bunt`s catch-all og ble `modellfeil` — feil kø, feil alarm, om
+    en bunt modellen aldri fikk se.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `except KeyError`-porten i
+    `les_porsjonsvis` — da blir utfallet `modellfeil`.
+    """
+    from modules.m57_ats import kjoring
+
+    arkiv = _bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>")])
+    ekte_open = zipfile.ZipFile.open
+
+    def _borte(self, navn, *a, **kw):
+        # Bare UTTREKKET av medlemmet forsvinner. `infolist()` og
+        # `zf.read(MANIFESTNAVN)` står urørt, så deklarasjonen leses og
+        # bindes som normalt — divergensen finnes bare i strømmens
+        # navnekart, nøyaktig slik et bytte i vinduet ser ut.
+        if navn == "k1/cv.html":
+            raise KeyError(
+                "There is no item named 'k1/cv.html' in the archive")
+        return ekte_open(self, navn, *a, **kw)
+
+    monkeypatch.setattr(zipfile.ZipFile, "open", _borte)
+
+    # Direkte på strømmen: kodet utfall, aldri en rå `KeyError`.
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(arkiv))
+    assert e.value.kode == "manifest_medlem_mangler", e.value.kode
+
+    # …og hele veien gjennom kjøringen: fremdriften står som evidens, og
+    # modellen ser ingenting.
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(
+            arkiv, modell, vekter={"drift": 3},
+            kandidatfelter_for=lambda m: {"navn": ["N"]},
+            tekst_for=lambda m, d: d.decode("utf-8"),
+            biasmaalinger=_MAALINGER, antall_soknader=1)
+    assert e.value.kode == "manifest_medlem_mangler", e.value.kode
+    assert modell.sett == [], "modellen så en bunt uten medlemsbyte"
+    assert e.value.fremdrift, "utfallet bar ingen fremdrift som evidens"
+
+
 def test_manifestlesingen_er_kodet_utfall_ikke_modellfeil(tmp_path):
     """Cursor P1 på #161: `les_manifest` leste `soknader.json` UTEN
     SP-3-oversetteren `les_porsjonsvis` har. En CRC-skadet eller kryptert

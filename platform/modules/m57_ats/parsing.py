@@ -491,6 +491,20 @@ def les_porsjonsvis(sti: str | Path, *, porsjon: int = 200):
                         if total + lest > MAKS_TOTAL_UTPAKKET:
                             raise Buntfeil("total_for_stor", medlem.navn)
                         biter.append(bit)
+            # OG NAVNET SLÅS OPP DER UTTREKKET SKJER (Cursor P1). Dette er
+            # SISTE stedet i klassen `les_manifest`s `KeyError`-port og
+            # `kart.get` i `kjoring.py` alt lukker: `inspiser_bunt` bygde
+            # `medlemmer` fra ÉN åpning av arkivet, og løkken her slår
+            # navnet opp i navnekartet til en ANNEN. Divergerer de to —
+            # fila byttet i vinduet mellom dem — reiser `zipfile` en rå
+            # `KeyError` som ingen av armene under kjente, og den falt til
+            # `kjor_bunt`s catch-all: `modellfeil` om en bunt modellen
+            # aldri fikk se. Et deklarert medlem vi ikke finner ved
+            # uttrekk ER `manifest_medlem_mangler` — samme ord som
+            # toveisbindingen bruker for nøyaktig samme fravær.
+            except KeyError as feil:
+                raise Buntfeil("manifest_medlem_mangler",
+                               medlem.navn) from feil
             except zipfile.BadZipFile as feil:
                 raise Buntfeil("korrupt_bunt",
                                f"{medlem.navn}: {feil}") from feil
