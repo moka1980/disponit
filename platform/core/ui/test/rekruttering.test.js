@@ -1197,6 +1197,48 @@ test("Bestilling: 5xx beholder nøkkel OG opplastet bunt — 4xx roterer nøkkel
     "4xx-dommen skulle rotert nøkkelen");
 });
 
+test("Bestilling: den første profilen låser opp bestillingsskjemaet (P1-1)", async () => {
+  KALL = [];
+  let profilsvar = { profiler: [] };
+  SVAR = (sti, opts = {}) => {
+    if (sti === "/v1/rekruttering/prosesser") return prosess();
+    if (sti === "/v1/rekruttering/stillingsprofiler") {
+      if ((opts.method || "GET") === "POST") {
+        profilsvar = profiler();
+        return { profil_id: "prof-1", versjon: 2 };
+      }
+      return profilsvar;
+    }
+    return undefined;
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  // Seksjonen re-tegnes, så noden må hentes på nytt hver gang.
+  const bestill = () =>
+    hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  assert.ok(bestill(), "bestillingsseksjonen mangler");
+  assert.equal(bestill().querySelector("form"), null,
+    "bestillingsskjemaet sto der uten en eneste profil");
+  const profilDel =
+    hoved.querySelector("section[aria-labelledby=profil-tittel]");
+  const ny = [...profilDel.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.profiler.ny"));
+  assert.ok(ny, "Ny profil-knappen mangler");
+  ny.click();
+  const skjema = profilDel.querySelector("form");
+  skjema.querySelector("#profil-navn").value = "Driftskonsulent";
+  skjema.querySelector('input[type=text][id^="profil-krav"]').value = "Drift";
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() => bestill().querySelector("form"), 40),
+    "bestillingsskjemaet våknet aldri etter den første profilen");
+  assert.ok(bestill().querySelector("select#bestill-profil option"),
+    "profilvelgeren står tom etter at profilen ble lagret");
+  const brudd = await alvorligeBrudd(hoved);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
 test("Profiler: listen viser navn, versjon og krav — og axe rent", async () => {
   const hoved = await tegnetMedProfiler();
   const seksjon = hoved.querySelector("section[aria-labelledby=profil-tittel]");

@@ -143,8 +143,28 @@ export function visRekruttering(hoved, ctx) {
 
 function tegn(hoved, ctx, data, okt, valgtId) {
   const prosesser = (data && data.prosesser) || [];
-  const profilDel = profilSeksjon(hoved, ctx, data, okt);
-  const bestillDel = bestillSeksjon(hoved, ctx, data, okt);
+  // DEN FØRSTE PROFILEN LÅSER OPP BESTILLINGEN (Cursor P1-1). Uten
+  // profiler tegner `bestillSeksjon` en «opprett en profil først»-tekst
+  // og returnerer — og profileditorens `oppdaterListe` tegner BARE
+  // profillisten på nytt. Lagret brukeren sin aller første profil, sto
+  // hun altså igjen med oppfordringen hun nettopp hadde etterkommet, og
+  // kjeden «profil → bestilling» var brutt til omlasting eller
+  // prosessbytte. Seksjonen får derfor en egen rot editoren kan tegne om.
+  //
+  // Om-tegningen skjer BARE når seksjonen står uten skjema: et skjema som
+  // finnes, kan ha en valgt fil, en alert midt i en opplasting og en
+  // POST i lufta — å rive det ned fordi en profil ble lagret, ville vært
+  // nøyaktig den frakoblede noden `meldUtfall` finnes for å unngå.
+  const bestillRot = el("div", { class: "rekrut-bestill" });
+  const tegnBestilling = () => {
+    const del = bestillSeksjon(hoved, ctx, data, okt);
+    sett(bestillRot, ...(del ? [del] : []));
+  };
+  tegnBestilling();
+  const profilDel = profilSeksjon(hoved, ctx, data, okt, () => {
+    if (!bestillRot.querySelector("form")) tegnBestilling();
+  });
+  const bestillDel = bestillRot.firstChild ? bestillRot : null;
   if (!prosesser.length) {
     sett(hoved, flateHode(t("ui.rekruttering.tittel")),
       el("p", { text: t("ui.rekruttering.ingen_prosess") }),
@@ -686,7 +706,7 @@ function bestillSeksjon(hoved, ctx, data, okt) {
 }
 
 
-function profilSeksjon(hoved, ctx, data, okt) {
+function profilSeksjon(hoved, ctx, data, okt, paaProfilendring) {
   const profiler = (data && data.profiler) || [];
   // Cursor P2-1 (runde 2): flaten er lesbar med decisions:read, men
   // POST-ruten krever bestilling:opprett (app.py) — skrive-UI uten
@@ -712,6 +732,10 @@ function profilSeksjon(hoved, ctx, data, okt) {
     }
     tegnListe();
     sett(skjemaRot);
+    // Bestillingen leser SAMME `profiler`-array (mutert i stedet for
+    // byttet over): gikk listen fra tom til ikke-tom, skal seksjonen
+    // våkne. `tegn` eier vurderingen av når det er trygt.
+    if (paaProfilendring) paaProfilendring();
   };
 
   const kravRad = (kropp, krav) => {
