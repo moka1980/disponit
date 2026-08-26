@@ -18,7 +18,7 @@ def _ktx(migrator, claim):
 pg = pytest.mark.skipif(not DSN, reason="DISPONIT_TEST_DSN ikke satt")
 
 
-def _kjede_og_claim(migrator, monkeypatch):
+def _kjede_og_claim(migrator, monkeypatch, **kjede):
     """WCAG-kjeden er den etablerte claim-riggen (modul + release +
     oppdrag + modultoken) — fornyelsen er typeagnostisk, så veien inn er
     likegyldig; det som måles er claim-livssyklusen."""
@@ -27,7 +27,7 @@ def _kjede_og_claim(migrator, monkeypatch):
     from .test_modul_onboarding_http import _onboard_token
     from .test_wcag_kontroll import _wcag_kjede
 
-    modul, rel, opp = _wcag_kjede(migrator, monkeypatch)
+    modul, rel, opp = _wcag_kjede(migrator, monkeypatch, **kjede)
     a = lag_app(DSN)
     c = TestClient(a)
     c.__enter__()
@@ -97,6 +97,65 @@ def test_fornyelsen_holder_leasen_og_reutsteder_kapabiliteten(
                 "claimen fikk kapabilitet, fornyelsen skal også"
             assert opl["jti"] != claim["opplasting"]["jti"], \
                 "fornyelsen resirkulerte claimens jti"
+    finally:
+        c.__exit__(None, None, None)
+
+
+@pg
+def test_fornyelsen_kjeder_grant_over_taket_uten_reclaim(
+        migrator, miljo, monkeypatch):
+    """#165s EGET scenario, som ellers ingen test rører: en frist LENGRE
+    enn ett grant-vindu.
+
+    Riggens standardfrist ligger innenfor `UTSTEDT_AUTORITET_S`, så
+    testene rundt måler bare at fornyelsen ikke SKADER — ikke at den
+    virker. Her fødes oppdraget med en frist langt forbi taket (fristene
+    er immutable, så den kan ikke skrues på i etterkant), leasen settes
+    nær utløp — nøyaktig tilstanden en levende utfører står i mot slutten
+    av et vindu — og heartbeatet skal kjede autoriteten videre: leasen
+    FRAM, aldri forbi taket eller fristen, og køen forblir stengt for alle
+    andre så lenge leasen lever. Uten denne porten kunne både
+    UPDATE-formelen og grant-kjeden regrere grønt.
+    """
+    import oppdragskontrakt as ok
+    tak = ok.UTSTEDT_AUTORITET_S
+    c, hode, claim = _kjede_og_claim(migrator, monkeypatch, frist_s=tak * 4)
+    try:
+        _ktx(migrator, claim)
+        # Claimen tok hele taket (037 strekker mot fristen); spol fram til
+        # vindusslutt. Owner-feltene er de eneste `oppdrag_kolonnelaas`
+        # slipper gjennom — fristen er det ikke, og det er derfor riggen
+        # måtte føde den.
+        migrator.execute(
+            "UPDATE oppdrag SET owner_lease_utloper = now()+interval '30 s'"
+            " WHERE id=%s", (claim["oppdrag_id"],))
+        migrator.commit()
+        _ktx(migrator, claim)
+        for_lease = migrator.execute(
+            "SELECT owner_lease_utloper FROM oppdrag WHERE id=%s",
+            (claim["oppdrag_id"],)).fetchone()[0]
+        migrator.rollback()
+
+        r = _forny(c, hode, claim, lease_s=600)
+        assert r.status_code == 200, r.text
+        _ktx(migrator, claim)
+        rad = migrator.execute(
+            "SELECT utforelsesfrist > now() + %s * interval '1 s',"
+            " owner_lease_utloper > %s,"
+            " owner_lease_utloper <= now() + interval '600 s',"
+            " owner_lease_utloper <= utforelsesfrist"
+            " FROM oppdrag WHERE id=%s",
+            (tak, for_lease, claim["oppdrag_id"])).fetchone()
+        migrator.rollback()
+        assert rad[0], "riggen fødte ikke en frist forbi grant-taket"
+        assert rad[1], "heartbeatet kjedet ikke autoriteten videre"
+        assert rad[2], "fornyelsen ga mer enn det bedte vinduet"
+        assert rad[3], "fornyelsen gikk forbi utførelsesfristen"
+        # …og ingen ANNEN utfører kommer inn mens leasen lever: riggen
+        # bærer ett oppdrag, reclaim-grenen krever en DØD lease, og køen
+        # svarer derfor 204 (tom) — ikke raden vi nettopp fornyet.
+        p = c.post("/v1/oppdrag/claim", json={}, headers=hode)
+        assert p.status_code == 204, p.text
     finally:
         c.__exit__(None, None, None)
 
