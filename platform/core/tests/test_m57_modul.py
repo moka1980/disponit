@@ -2227,6 +2227,87 @@ def test_manifestet_er_deklarasjonen_og_binder_toveis(tmp_path):
     assert e.value.kode == "kandidattall_avvik"
 
 
+def test_manifestfeltene_er_blindingens_kilde(tmp_path):
+    """#158s strukturelle retning: personfeltene DEKLARERES i manifestet
+    og driver blindingen — uten callback, uten fritekst-søk. En kandidat
+    uten deklarerte felter er et kodet stopp, aldri en ublindet
+    evaluering."""
+    import json as _json
+
+    from modules.m57_ats import kjoring
+
+    def _kjor(arkiv):
+        modell = _Modell()
+        ut = kjoring.kjor_bunt(
+            arkiv, modell, vekter={"drift": 3},
+            tekst_for=lambda m, d: d.decode("utf-8"),
+            biasmaalinger=_MAALINGER, antall_soknader=1)
+        return ut, modell
+
+    (tmp_path / "a").mkdir()
+    arkiv = _bunt(tmp_path / "a",
+                  [("k1/cv.html", b"<p>Kari Testdal kan drift, "
+                                  b"kari@eksempel.no</p>")],
+                  manifest=_json.dumps({"soknader": [
+                      {"kandidat_id": "k1", "filer": ["k1/cv.html"],
+                       "felter": {"navn": ["Kari Testdal"],
+                                  "kontakt": ["kari@eksempel.no"]}}]}))
+    ut, modell = _kjor(arkiv)
+    assert set(ut["artefakter"]) == {"k1"}
+    # Modellen så ALDRI de deklarerte verdiene — masken erstattet dem.
+    assert modell.sett, "modellen ble aldri kalt"
+    for tekst in modell.sett:
+        assert "Kari Testdal" not in tekst, "navnet lakk til modellen"
+        assert "kari@eksempel.no" not in tekst, "kontakten lakk"
+        assert "[NAVN-1]" in tekst, "masken mangler"
+
+    # Uten deklarerte felter: fail-closed, kodet.
+    (tmp_path / "b").mkdir()
+    arkiv = _bunt(tmp_path / "b", [("k1/cv.html", b"<p>drift</p>")])
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        _kjor(arkiv)
+    assert e.value.kode == "blinding_uten_felter"
+
+
+def test_manifestfeltenes_lukkede_form(tmp_path):
+    """Feltdeklarasjonen er like LUKKET som resten av manifestet: ukjent
+    feltnavn, feil typer, tomme og overfylte lister, og for lange
+    verdier er alle `manifest_feilformet`."""
+    import json as _json
+
+    def _sjekk(felter, undermappe):
+        (tmp_path / undermappe).mkdir()
+        arkiv = _bunt(tmp_path / undermappe,
+                      [("k1/cv.html", b"<p>x</p>")],
+                      manifest=_json.dumps({"soknader": [
+                          {"kandidat_id": "k1", "filer": ["k1/cv.html"],
+                           "felter": felter}]}))
+        with pytest.raises(parsing.Buntfeil) as e:
+            parsing.les_manifest(arkiv, parsing.inspiser_bunt(arkiv))
+        assert e.value.kode == "manifest_feilformet", felter
+    for i, felter in enumerate((
+        "ikke-dict",
+        {},
+        {"ukjent_felt": ["x"]},
+        {"navn": "ikke-liste"},
+        {"navn": []},
+        {"navn": ["x"] * (parsing.MAKS_FELTVERDIER + 1)},
+        {"navn": ["   "]},
+        {"navn": [7]},
+        {"navn": ["x" * (parsing.MAKS_FELTVERDI_TEGN + 1)]},
+    )):
+        _sjekk(felter, f"f{i}")
+
+    # Positiv kontroll: gyldige felter leses ut som deklarert.
+    (tmp_path / "ok").mkdir()
+    arkiv = _bunt(tmp_path / "ok", [("k1/cv.html", b"<p>x</p>")],
+                  manifest=_json.dumps({"soknader": [
+                      {"kandidat_id": "k1", "filer": ["k1/cv.html"],
+                       "felter": {"navn": ["Kari"]}}]}))
+    m = parsing.les_manifest(arkiv, parsing.inspiser_bunt(arkiv))
+    assert m.felter == {"k1": {"navn": ["Kari"]}}
+
+
 def test_manifestets_lukkede_form_avviser_alt_annet(tmp_path):
     """#161: en deklarasjon vi ikke forstår FULLT UT er ingen
     deklarasjon — ukjente nøkler, feil typer, duplikater, tomme og
@@ -2361,8 +2442,8 @@ def test_manifestets_lukkede_form_avviser_alt_annet(tmp_path):
                   manifest=_json.dumps({"soknader": [
                       {"kandidat_id": "K-1.v2_a",
                        "filer": ["k1/cv.html"]}]}))
-    assert parsing.les_manifest(arkiv, parsing.inspiser_bunt(arkiv)) == {
-        "k1/cv.html": "K-1.v2_a"}
+    assert parsing.les_manifest(arkiv, parsing.inspiser_bunt(arkiv)).kart \
+        == {"k1/cv.html": "K-1.v2_a"}
 
     # …og de to identitetene for samme kandidat, side om side: uten
     # porten er dette en LOVLIG deklarasjon med to kandidater, og
@@ -2467,7 +2548,7 @@ def test_manifesttaket_maales_paa_bytene_ikke_bare_paastanden(tmp_path):
     paa = kropp + " " * (parsing.MAKS_MANIFESTBYTES - len(kropp))
     arkiv = _bunt(tmp_path / "taket", [("k1/cv.html", b"<p>drift</p>")],
                   manifest=paa)
-    assert parsing.les_manifest(arkiv, pastand) == {"k1/cv.html": "k1"}
+    assert parsing.les_manifest(arkiv, pastand).kart == {"k1/cv.html": "k1"}
 
 
 def test_manifestet_har_ikke_fritak_fra_null_komprimert(tmp_path):
@@ -2674,11 +2755,15 @@ def test_umatchet_medlem_i_strommen_er_kodet_ikke_modellfeil(tmp_path,
     # Tallporten foran strømmen ser fortsatt én kandidat og slipper
     # gjennom; divergensen dukker først opp per medlem.
     ekte = parsing.les_manifest
-    monkeypatch.setattr(
-        parsing, "les_manifest",
-        lambda sti, medlemmer: {navn: kid
-                                for navn, kid in ekte(sti, medlemmer).items()
-                                if navn != "k1/brev.html"})
+
+    def _amputert(sti, medlemmer):
+        m = ekte(sti, medlemmer)
+        return parsing.Manifestet(
+            kart={n: k for n, k in m.kart.items()
+                  if n != "k1/brev.html"},
+            felter=m.felter)
+
+    monkeypatch.setattr(parsing, "les_manifest", _amputert)
     modell = _Modell()
     with pytest.raises(kjoring.Kjoringsfeil) as e:
         _kjor(arkiv, modell)

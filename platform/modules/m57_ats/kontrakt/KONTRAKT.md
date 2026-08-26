@@ -21,6 +21,15 @@ Modulen er KUNDE av plattformen, aldri omvendt (m56-formen):
   oppdragets `antall_soknader` FØR én byte innhold pakkes ut. En
   kandidatform gjettes aldri ut av katalogen.
 
+  Kandidaten KAN i tillegg deklarere `felter` — de strukturerte
+  personverdiene (`navn`, `kjonn`, `alder`, `adresse`, `bilde`,
+  `kontakt`; lukket sett, maks 10 verdier à 200 tegn per felt) — og de
+  er BLINDINGENS kilde (#158s strukturelle retning): maskeringen bruker
+  de deklarerte verdiene, aldri et fritekst-søk. En kandidat uten
+  deklarerte felter kan ikke blindes og felles som
+  `blinding_uten_felter` — et kodet utfall, aldri en ublindet
+  evaluering.
+
   `kandidat_id` er ASCII og LUKKET:
   `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` — ikke-tom, maks 64 tegn, starter
   alfanumerisk. Alt annet er `manifest_feilformet`. Kanonen er en

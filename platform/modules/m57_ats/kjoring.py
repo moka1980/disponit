@@ -115,9 +115,9 @@ def _felter(kandidatfelter_for, medlem, fremdrift):
     return felter
 
 
-def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
-              biasmaalinger, antall_soknader, blinding_av=False,
-              auditrad=None):
+def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
+              antall_soknader, kandidatfelter_for=None,
+              blinding_av=False, auditrad=None):
     """-> {"rangering": [...], "artefakter": {kandidat_id: ...},
     "fremdrift": {...}} — eller Kjoringsfeil, aldri noe imellom.
 
@@ -212,9 +212,21 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
             # inspeksjon. Deklarert kandidattall måles mot oppdragets
             # signerte tall her, foran strømmen: et avvik er en ugyldig
             # bunt, aldri et resultat.
-            kart = parsing.les_manifest(sti, parsing.inspiser_bunt(sti))
+            manifestet = parsing.les_manifest(
+                sti, parsing.inspiser_bunt(sti))
+            kart = manifestet.kart
             if len(set(kart.values())) != antall_soknader:
                 raise Kjoringsfeil("kandidattall_avvik", fremdrift)
+            if kandidatfelter_for is None:
+                # Blindingens kilde er DEKLARASJONEN (#158s strukturelle
+                # retning): manifestets `felter` per kandidat. En
+                # kandidat uten deklarerte felter blindes ikke — og
+                # felles da av fail-closed-porten som
+                # `blinding_uten_felter`, aldri av et fritekst-søk etter
+                # personalia.
+                def kandidatfelter_for(medlem):
+                    return manifestet.felter.get(
+                        kart.get(medlem.navn, ""), {})
             for merke, medlem, data in parsing.les_porsjonsvis(sti):
                 # FREMDRIFTEN TELLER MEDLEMMER, IKKE SJEKKPUNKTER (Codex P2).
                 # `les_porsjonsvis` leverer et merke bare hver 200. fil og på
