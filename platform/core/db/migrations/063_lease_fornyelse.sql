@@ -19,9 +19,11 @@
 --   * fornyelsen gir aldri mer enn ett nytt grant-vindu (3600 s-taket
 --     står), og aldri lenger enn oppdragets egen utforelsesfrist —
 --     etter fristen er arbeidet uansett dødt (037s reclaim-vilkår).
---   * modulepoch måles UNDER radlåsen, som ved claim (port 24): en
---     deployment som er rullet forbi skal ikke kunne holde liv i et
---     gammelt claim med friske heartbeats.
+--   * modulepoch måles under claims EGEN modul-lås (delt, port
+--     24-formen): en deployment som er rullet forbi skal ikke kunne
+--     holde liv i et gammelt claim med friske heartbeats. Oppdragets
+--     radlås gjerder andre UTFØRERE; den gjerder ikke nødstoppet, som
+--     aldri rører `oppdrag`.
 --
 -- Eierskap og rolle er claim-veiens egne (disponit_m37_claimer, samme
 -- som 015/037/049): fornyelsen ER et claim-livssyklussteg.
@@ -78,16 +80,36 @@ BEGIN
         RAISE EXCEPTION 'forny_oppdragslease: utforelsesfristen er ute'
             USING ERRCODE = 'object_not_in_prerequisite_state';
     END IF;
-    -- Epoken måles mot LEVENDE modulhode under radlåsen (port 24-formen
-    -- fra claim): en deployment som er rullet forbi — nøddeaktivering
-    -- løfter epoken — skal ikke kunne holde liv i et gammelt claim med
-    -- friske heartbeats. Kalleren sender ingenting; serveren VET.
+    -- Epoken måles mot LEVENDE modulhode, og målingen tar claims EGEN
+    -- modul-lås først (015:250/037:149 — Cursor P1). Radlåsen på
+    -- `oppdrag` er IKKE gjerdet her: `noddeaktiver_modul` rører aldri
+    -- `oppdrag`, den tar modul-låsen EKSKLUSIVT og løfter epoken i
+    -- `modulhode`. Uten den delte låsen er lesingen under en ulåst
+    -- TOCTOU — et nødstopp som committer i vinduet mellom radlåsen og
+    -- lesingen blir usynlig, og heartbeatet forlenger leasen på et claim
+    -- plattformen nettopp drepte: reclaim blokkert et helt grant-vindu
+    -- etter unntakstilstanden, stikk i strid med port 24-kontrakten.
+    -- DELT og ikke eksklusiv, av claims grunn: heartbeats serialiseres
+    -- mot OVERGANGENE (nødstopp/status/releasebytte tar den eksklusivt),
+    -- ikke mot hverandre. Låsen venter til et samtidig nødstopp har
+    -- committet, så lesingen under er FERSK.
+    -- App-lagets `_modultoken_revalidert` tetter HTTP-veien, men døren er
+    -- SECURITY DEFINER med EXECUTE til runtime, og legacy-token hopper
+    -- over revalideringen: gjerdet må stå i døren selv.
+    -- Kalleren sender ingenting; serveren VET.
     -- Legacy-claims (module_epoch IS NULL) bar aldri epokebindingen og
     -- måles ikke — som ved claim.
     IF r.module_epoch IS NOT NULL THEN
+        PERFORM pg_advisory_xact_lock_shared(hashtextextended(
+            'modul:' || coalesce(r.modul_id, r.eiermodul), 0));
+        -- `status = 'aktiv'` i SAMME lesing, som ved claim: et
+        -- nødstoppet modulhode gir ingen rad, v_epoch blir NULL, og
+        -- predikatet under feller heartbeatet — også den dagen en
+        -- overgang stopper modulen uten å løfte epoken.
         SELECT h.module_epoch INTO v_epoch
           FROM public.modulhode h
-         WHERE h.modul_id = coalesce(r.modul_id, r.eiermodul);
+         WHERE h.modul_id = coalesce(r.modul_id, r.eiermodul)
+           AND h.status = 'aktiv';
         IF v_epoch IS DISTINCT FROM r.module_epoch THEN
             -- EGEN SQLSTATE (CodeRabbit): en rullet epoch er en
             -- AUTORISASJONSDOM (28000 → `modulepoch_utdatert`, 403),
