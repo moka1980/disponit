@@ -2290,6 +2290,75 @@ def test_manifestfeltene_er_blindingens_kilde(tmp_path):
     assert e.value.kode == "blinding_uten_felter"
 
 
+def test_manglende_felter_felles_for_stroemmen(tmp_path, monkeypatch):
+    """Codex P2 `3864238384` (eierdom 26/8 pkt. 2): utfallet var kjent
+    rett etter `les_manifest`, men ble felt først i `evaluer_kandidat`.
+
+    Prisen var ikke feil KODE, men feil REKKEFØLGE: hele arkivet ble
+    pakket ut og beholdt i `biter` før dommen falt, og fordi kandidatene
+    evalueres `sorted(biter)`, kunne en TIDLIGERE kandidat ha vært hos
+    modellen før en SENERE kandidats manglende felter stoppet kjøringen.
+    En stor bunt kunne dessuten treffe minnegrensen først og komme ut
+    med en annen kode enn den avgjorte.
+
+    Riggen måler nøyaktig det: `k1` er fullt deklarert og sorterer
+    FØRST, `k2` mangler `felter`. Uttrekksteller er `les_porsjonsvis`
+    selv — porten står foran strømmen, så generatoren skal aldri kalles.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `if not blinding_av`-løkken i
+    `kjor_bunt` — koden blir fortsatt `blinding_uten_felter`, men
+    `strommet` blir sann og modellen har sett `k1`.
+
+    GRENSEN (samme dom, andre retning): porten flytter utfallet, den
+    utvider det ikke. Med blindingen avskrudd finnes det ingen
+    `blinding_uten_felter` nede i veien heller, og en kandidat uten
+    deklarerte felter er da lovlig — siste del måler at den fortsatt
+    kjører helt gjennom."""
+    import json as _json
+
+    from modules.m57_ats import kjoring, parsing
+
+    strommet: list[str] = []
+    ekte = parsing.les_porsjonsvis
+
+    def teller(sti, **kw):
+        strommet.append(str(sti))
+        return ekte(sti, **kw)
+
+    monkeypatch.setattr(kjoring.parsing, "les_porsjonsvis", teller)
+
+    manifest = _json.dumps({"soknader": [
+        {"kandidat_id": "k1", "filer": ["k1/cv.html"],
+         "felter": {"navn": ["Kari Testdal"]}},
+        {"kandidat_id": "k2", "filer": ["k2/cv.html"]}]})
+    arkiv = _bunt(tmp_path,
+                  [("k1/cv.html", b"<p>Kari Testdal kan drift</p>"),
+                   ("k2/cv.html", b"<p>Ola Testdal kan drift</p>")],
+                  manifest=manifest)
+
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(
+            arkiv, modell, vekter={"drift": 3},
+            tekst_for=lambda m, d: d.decode("utf-8"),
+            biasmaalinger=_MAALINGER, antall_soknader=2)
+    assert e.value.kode == "blinding_uten_felter"
+    assert modell.sett == [], "en tidligere kandidat nådde modellen"
+    assert strommet == [], "arkivet ble strømmet før den avgjorte dommen"
+
+    # Avskrudd blinding: samme bunt, ingen port — utfallet flyttes,
+    # ikke utvides.
+    modell = _Modell()
+    ut = kjoring.kjor_bunt(
+        arkiv, modell, vekter={"drift": 3},
+        tekst_for=lambda m, d: d.decode("utf-8"),
+        biasmaalinger=_MAALINGER, antall_soknader=2, blinding_av=True,
+        auditrad={"aktor": "drift", "ts": "2026-08-26T20:00:00Z",
+                  "begrunnelse": "manuell kontroll"})
+    assert set(ut["artefakter"]) == {"k1", "k2"}
+    assert strommet, "strømmen skulle gått når porten ikke gjelder"
+
+
 def test_padda_feltverdi_er_ingen_deklarasjon(tmp_path):
     """Cursor P1: deklarasjonen er BÅDE det som maskeres og det porten
     leter etter, så en verdi som ikke kan stå i dokumentet gjør port 16

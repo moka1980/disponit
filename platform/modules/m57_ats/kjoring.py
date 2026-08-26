@@ -224,6 +224,34 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
                 # felles da av fail-closed-porten som
                 # `blinding_uten_felter`, aldri av et fritekst-søk etter
                 # personalia.
+                #
+                # …MEN UTFALLET ER KJENT HER, OG FELLES DERFOR HER (Codex
+                # P2, eierdom 26/8 pkt. 2). Porten er den samme
+                # fail-closed-dommen, bare målt på det tidspunktet den
+                # faktisk er avgjort: `manifestet.felter` er lest, så en
+                # deklarert kandidat uten `felter` KAN ikke ende noe
+                # annet sted enn `blinding_uten_felter`. Sto målingen
+                # igjen nede i `evaluer_kandidat`, betalte bunten først
+                # hele uttrekket — hvert medlem pakket ut og beholdt i
+                # `biter` — og fordi kandidatene evalueres `sorted`,
+                # kunne TIDLIGERE kandidater ha vært hos modellen før
+                # utfallet ble reist for en senere. En stor bunt kunne
+                # dessuten treffe minnegrensen først og komme ut med feil
+                # kode. Dette er ikke en ny grense: det er samme økonomi
+                # som kandidattallporten over — det som er avgjort før
+                # strømmen, felles før strømmen.
+                #
+                # Betingelsen speiler `evalueringsinput` NØYAKTIG: er
+                # blindingen avskrudd (`blinding_av`), finnes det ingen
+                # `blinding_uten_felter` nede i veien heller, og en
+                # kandidat uten deklarerte felter er da lovlig. Porten
+                # skal flytte utfallet, aldri utvide det.
+                if not blinding_av:
+                    for kid in sorted(set(kart.values())):
+                        if not manifestet.felter.get(kid):
+                            raise Kjoringsfeil("blinding_uten_felter",
+                                               fremdrift)
+
                 def kandidatfelter_for(medlem):
                     return manifestet.felter.get(
                         kart.get(medlem.navn, ""), {})
