@@ -126,7 +126,8 @@ class _Stubklient:
 
     def __init__(self, kvitteringsstatus=200, *, opplastingsstatus=200,
                  kvitteringskropp=..., payload=..., opplasting=...,
-                 buntstatus=200, frist_om_s=30 * 60, forny=None):
+                 buntstatus=200, frist_om_s=30 * 60, forny=None,
+                 artefaktkropp=...):
         from datetime import datetime, timedelta, timezone
         naa = datetime.now(timezone.utc)
         self.utforelsesfrist = (
@@ -141,6 +142,9 @@ class _Stubklient:
                             "utloper": self.utforelsesfrist}
                            if opplasting is ... else opplasting)
         self.buntstatus = buntstatus
+        #: `...` = det vanlige 2xx-svaret; alt annet settes rått, så en
+        #: uleselig kropp kan prøves på en 200.
+        self.artefaktkropp = artefaktkropp
         #: Kallbar som gir `/v1/oppdrag/forny`-svaret. None = 200 uten
         #: fersk kapabilitet. Med standardintervallet (240 s) rekker
         #: pulsen aldri å slå i en test — den må skrus ned med vilje.
@@ -176,6 +180,8 @@ class _Stubklient:
         if sti == "/v1/artefakt":
             if self.opplastingsstatus != 200:
                 return _Svar(self.opplastingsstatus, {})
+            if self.artefaktkropp is not ...:
+                return _Svar(200, self.artefaktkropp)
             return _Svar(200, {"artefakt_id": "a-1",
                                "klartekst_sha256": "b" * 64})
         assert sti == "/v1/oppdrag/kvittering", sti
@@ -306,6 +312,173 @@ def test_tom_ko_er_tomt_utfall():
 
     res = controller.kjor_en(_K(), "tk", None, None, {}, lambda k: k)
     assert res == {"utfall": "tomt"}
+
+
+def test_manglende_opplastingskapabilitet_stopper_for_bunten():
+    """m56s port: en levering vi VET er umulig skal ikke koste
+    persondata. Gir claim-API-et bevisst ingen `opplasting` — fordi
+    artefakttypen mangler, er tvetydig eller er filtrert bort for
+    deploymenten — kan rapporten aldri leveres, og bunten skal da ikke
+    hentes ut av lageret i det hele tatt."""
+    for uten in (None, {}):
+        modell = _Modell()
+        k = _Stubklient(opplasting=uten)
+        res = _kjor(k, modell=modell)
+        assert modell.sett == [], uten
+        assert k.stier == ["/v1/oppdrag/claim", "/v1/oppdrag/kvittering"]
+        assert res["utfall"] == "avbrutt", res
+        assert res["grunn"] == "ingen_kapabilitet", res
+        assert k.kvitteringer[0]["feilkode"] == \
+            "ingen_opplastingskapabilitet"
+
+
+def test_kvitteringen_gjentas_ved_forbigaaende_feil(monkeypatch):
+    """m56s port: idempotensen er bygget for retry, og skal BRUKES.
+
+    Ingen kaller retryer `kjor_en`, returverdien bærer hverken
+    `kvittering_jti`, eiergenerasjonen eller den signerte kroppen som
+    skal til for å bygge forespørselen på nytt, og leasen sperrer et
+    ferskt claim frem til utførelsesfristen. Ett tapt svar koster altså
+    hele oppdraget — her inkludert en ferdig evaluering av opptil 5000
+    søknader."""
+    from modules.m57_ats import controller
+
+    monkeypatch.setattr(controller, "_sov", lambda s: None)
+
+    class _FeilerForst(_Stubklient):
+        def __init__(self, feil_antall, **kw):
+            super().__init__(200, **kw)
+            self.feil_igjen = feil_antall
+
+        def _kvitteringssvar(self, sendt):
+            if self.feil_igjen:
+                self.feil_igjen -= 1
+                return _Svar(503, {})
+            return super()._kvitteringssvar(sendt)
+
+    k = _FeilerForst(2)
+    res = _kjor(k)
+    assert res["utfall"] == "utfort", res
+    assert len(k.kvitteringer) == 3, k.kvitteringer
+    # KROPPEN ER IDENTISK hver gang. Det er hele grunnen til at retryen
+    # er trygg: samme `kvittering_jti`, samme signerte bytes, så
+    # plattformen ser én gjentatt kvittering og ikke tre forskjellige.
+    assert k.kvitteringer[0] == k.kvitteringer[1] == k.kvitteringer[2]
+
+    class _Mister(_Stubklient):
+        def __init__(self, mist_antall, **kw):
+            super().__init__(200, **kw)
+            self.mist_igjen = mist_antall
+            self.forsok = 0
+
+        def post(self, sti, json=None, headers=None):
+            if sti == "/v1/oppdrag/kvittering":
+                self.forsok += 1
+                if self.mist_igjen:
+                    self.mist_igjen -= 1
+                    raise ConnectionError("svaret kom aldri")
+            return super().post(sti, json=json, headers=headers)
+
+    m = _Mister(1)
+    assert _kjor(m)["utfall"] == "utfort"
+    assert m.forsok == 2, m.forsok
+
+    # Gir ALLE forsøkene tapt svar, er utfallet `ukvittert` med en ærlig
+    # `kvittering_status: 0` — ikke et unntak ut av kjøreløkka som
+    # etterlater oppdraget claimet uten et ord til plattformen.
+    m = _Mister(controller.LEVERINGSFORSOK)
+    res = _kjor(m)
+    assert res["utfall"] == "ukvittert", res
+    assert res["kvittering_status"] == 0, res
+    assert m.forsok == controller.LEVERINGSFORSOK, m.forsok
+
+    # 4xx retryes ALDRI: 409 er plattformens overlagte avvisning
+    # (fencing, hashavvik), ikke en forbigående feil, og å gjenta den er
+    # å mase om et svar som ikke endrer seg.
+    for status in (400, 409, 422):
+        k = _Stubklient(status)
+        res = _kjor(k)
+        assert res["utfall"] == "ukvittert", (status, res)
+        assert len(k.kvitteringer) == 1, (status, k.kvitteringer)
+
+
+def test_gjentatt_kvittering_leses_som_det_den_forrige_gjorde():
+    """m56s port: `idempotent` er en dokumentert SUKSESSVEI — en utfører
+    som mistet svaret skal kunne sende NØYAKTIG den samme kvitteringen på
+    nytt, og plattformen svarer 200 `idempotent`.
+
+    Men ordet betyr to ting (`_idempotent_svar` i `api.app`): en
+    gjentakelse av en SEN kvittering treffer samme gren, og der står
+    oppdraget bevisst ufullført. Begge sidene holdes fast her — også på
+    feilveien, som leser den samme regelen gjennom `_feilutfall`."""
+    assert _kjor(_Stubklient(200, kvitteringskropp={
+        "status": "idempotent", "oppdrag_id": 1}))["utfall"] == "utfort"
+    assert _kjor(_Stubklient(200, kvitteringskropp={
+        "status": "idempotent_uten_statusendring",
+        "oppdrag_id": 1}))["utfall"] == "ukvittert"
+
+    assert _kjor(_Stubklient(200, buntstatus=404, kvitteringskropp={
+        "status": "idempotent", "oppdrag_id": 1}))["utfall"] == "avbrutt"
+    assert _kjor(_Stubklient(200, buntstatus=404, kvitteringskropp={
+        "status": "idempotent_uten_statusendring",
+        "oppdrag_id": 1}))["utfall"] == "ukvittert"
+
+
+def test_avvist_opplasting_gir_feilkvittering(monkeypatch):
+    """m56s port: plattformen avviste artefaktet (400/413 på taket, 409
+    på fencing, 5xx). Plattformen skal da FÅ VITE det — taushet lar
+    oppdraget stå claimet til fristen — og 5xx skal gjentas med samme
+    kropp mens 4xx sendes én gang."""
+    from modules.m57_ats import controller
+
+    monkeypatch.setattr(controller, "_sov", lambda s: None)
+    for status in (400, 409, 413, 500):
+        k = _Stubklient(200, opplastingsstatus=status)
+        res = _kjor(k)
+        assert res["utfall"] == "avbrutt", res
+        assert res["opplasting_status"] == status
+        assert res["kvittert"] is True
+        assert len(k.kvitteringer) == 1
+        assert k.kvitteringer[0]["resultat"] == "feilet"
+        assert k.kvitteringer[0]["feilkode"] == "opplasting_avvist"
+        # Aldri et artefakt-id: det finnes ikke noe artefakt å vise til.
+        assert "artefakt_id" not in res
+        forsok = len([s for s in k.stier if s == "/v1/artefakt"])
+        assert forsok == (controller.LEVERINGSFORSOK
+                          if status == 500 else 1), (status, forsok)
+
+
+def test_uleselig_opplastingssvar_er_ingen_kvitteringsgrunn():
+    """2xx med en kropp vi ikke kan lese er ingen kvitteringsgrunn: uten
+    `artefakt_id` og hashen finnes det ikke en `utfort`-kvittering å
+    signere. Den nakne feilen ville ellers gått ut av kjøreløkka."""
+    for kropp in (None, {"artefakt_id": "a-1"}):
+        k = _Stubklient(200, artefaktkropp=kropp)
+        res = _kjor(k)
+        assert res["utfall"] == "avbrutt", (kropp, res)
+        assert res["grunn"].startswith("opplasting_uleselig:"), res
+        assert k.kvitteringer[0]["feilkode"] == "opplasting_avvist"
+
+
+def test_vinduet_leses_per_forsok():
+    """`_vindu_apent` er predikatet retryen stanser på. Det er UNDERVEIS
+    i en lang evaluering vinduet lukker seg — et claim som alt er utløpt
+    når det leses, stoppes av `_evalueringsfrist` lenge før — så
+    predikatet prøves direkte."""
+    from datetime import datetime, timedelta, timezone
+
+    from modules.m57_ats import controller
+
+    naa = datetime.now(timezone.utc)
+    assert controller._vindu_apent(
+        (naa + timedelta(seconds=60)).isoformat())
+    assert not controller._vindu_apent(
+        (naa - timedelta(seconds=1)).isoformat())
+    # En naiv ISO-form leses som UTC — plattformens tider ER UTC — i
+    # stedet for å felle sammenligningen med TypeError.
+    assert controller._vindu_apent("2099-01-01T00:00:00")
+    for uleselig in (None, "i morgen", 42, {}):
+        assert not controller._vindu_apent(uleselig), uleselig
 
 
 def test_http_frist_passer_innenfor_avslutningsmargin():
