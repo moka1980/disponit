@@ -690,6 +690,33 @@ def test_arbeideren_bruker_den_avledede_fristen():
     assert "KlientHTTP(api, controller.http_frist_s())" in kilde
 
 
+def test_oppstarten_nekter_for_claim_lokka():
+    """m56s `wcag_audit_arbeider`-port, speilet (Cursor P2, runde 2):
+    m57 validerte nøkkel og biasmålinger i riktig rekkefølge i KODEN,
+    men ingen port holdt rekkefølgen fast.
+
+    Den er hele poenget. Blir en av sjekkene flyttet ned i løkka — eller
+    faller bort — leaser arbeideren oppdrag den ikke kan avslutte:
+    kvitteringer ingen kan verifisere (nøkkelen), eller en evaluering
+    kjørt på en modell uten biasmåling knyttet til sin digest. Prisen
+    betales da ett CLAIMET oppdrag om gangen, med persondata alt utlevert
+    — i stedet for én gang, før noe hentes (port 17-økonomien).
+
+    Statisk, som m56s: en importtest ville krevd hele driftsmiljøet."""
+    from pathlib import Path
+
+    kilde = (Path(__file__).resolve().parents[2]
+             / "drift/m57_arbeider.py").read_text(encoding="utf-8")
+    lokka = kilde.index("while True:")
+    # Alle tre nektene skjer FØR løkka, og de nekter med exit-kode.
+    assert "oppstart_nektet" in kilde
+    assert kilde.index("nokkelfeil(nk)") < lokka
+    assert kilde.index("krev_biasmaaling(digest, biasmaalinger)") < lokka
+    assert kilde.index("oppstart_nektet") < lokka
+    # ... og nekten er en RETUR, ikke en advarsel som lar løkka starte.
+    assert kilde.count("return 2") >= 3, kilde.count("return 2")
+
+
 def test_payloaden_maales_mot_plattformens_kontrakt():
     """m56s `_kontraktsbrudd`, speilet: utføreren leser den SAMME
     tabellen (`oppdragskontrakt`) som stoppet oppdraget ved
