@@ -708,6 +708,16 @@ function bestillSeksjon(hoved, ctx, data, okt) {
         // reservert bunt beholdes: dommen gjaldt bestillingen, ikke
         // opplastingen.
         tilstand.bestillIdem = null;
+        // EN DØD RESERVASJON MÅ KUNNE SLIPPES (Cursor P1-3). Kom dommen
+        // FØR `inndataRef` ble satt, traff den reservasjonen eller
+        // opplastingen — og 058 sier at en brukt/utløpt reservasjon
+        // krever en NY nøkkel: den gamle svarer `idempotenskonflikt` i
+        // det uendelige. Klienten satt da fast på en død nøkkel til
+        // brukeren tilfeldigvis byttet fil, som er den ene handlingen
+        // ingenting på skjermen ba henne om. Bare 4xx: ved status 0/5xx
+        // er utfallet ukjent, og da er retry med SAMME nøkkel nettopp
+        // det SP-2 finnes for.
+        if (tilstand.inndataRef == null) tilstand.reserverIdem = null;
       }
       // Nettverk/5xx: begge nøklene beholdes — retry er SAMME operasjon.
       sett(utfall, t("ui.rekruttering.bestill.feil"));

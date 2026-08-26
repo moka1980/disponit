@@ -1240,6 +1240,57 @@ test("Bestilling: endret kropp etter usikkert svar gir NY nøkkel (P1-2)", async
     "feltendringen reserverte bunten på nytt");
 });
 
+test("Bestilling: 4xx på reservasjon/opplast slipper den døde nøkkelen (P1-3)", async () => {
+  KALL = [];
+  let reserversvar = 409;
+  let opplastsvar = {};
+  SVAR = (sti) => {
+    if (sti === "/v1/rekruttering/prosesser") return prosess();
+    if (sti === "/v1/rekruttering/stillingsprofiler") return profiler();
+    if (sti === "/v1/inndata/reserver") return reserversvar;
+    if (sti === "/v1/inndata/opplast/j-1") return opplastsvar;
+    if (sti === "/v1/bestilling") return { beslutning: "tillat", oppdrag_id: 5 };
+    return undefined;
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const seksjon = hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  const skjema = seksjon.querySelector("form");
+  const send = skjema.querySelector("button[type=submit]");
+  Object.defineProperty(skjema.querySelector("input[type=file]"), "files",
+    { configurable: true, value: [{ name: "bunt.zip",
+        arrayBuffer: async () => new ArrayBuffer(16) }] });
+  // Runden er ferdig når låsen er løftet igjen — teksten testes andre
+  // steder, og å vente på den ville bundet denne testen til ordlyden.
+  const runde = async () => {
+    skjema.dispatchEvent(new window.Event("submit",
+      { bubbles: true, cancelable: true }));
+    assert.ok(await vent(() => !send.disabled, 40), "runden ble aldri ferdig");
+  };
+  const reservasjoner = () =>
+    KALL.filter((k) => k.sti === "/v1/inndata/reserver");
+  // 1) Serveren DØMMER reservasjonen (409): nøkkelen er død, og uten fil-
+  //    bytte er det ingenting brukeren kan gjøre for å få en ny.
+  await runde();
+  assert.equal(reservasjoner().length, 1);
+  // 2) Reservasjonen går gjennom, men opplastingen svarer 5xx: utfallet
+  //    er UKJENT, og retry skal være SAMME operasjon.
+  reserversvar = { reservasjon_jti: "j-1", inndata_ref: "inndata:u-1" };
+  opplastsvar = 500;
+  await runde();
+  assert.equal(reservasjoner().length, 2);
+  // 3) Opplastingen går gjennom, kjeden fullfører.
+  opplastsvar = {};
+  await runde();
+  assert.equal(reservasjoner().length, 3);
+  const [r1, r2, r3] = reservasjoner().map((k) => k.hoder["Idempotency-Key"]);
+  assert.notEqual(r1, r2, "4xx-dommen etterlot klienten på en død nøkkel");
+  assert.equal(r2, r3, "et usikkert utfall roterte reservasjonsnøkkelen");
+  await vent(() => seksjon.querySelector("[role=alert]")
+    .textContent.includes("5"), 20);
+});
+
 test("Bestilling: den første profilen låser opp bestillingsskjemaet (P1-1)", async () => {
   KALL = [];
   let profilsvar = { profiler: [] };
