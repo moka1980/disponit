@@ -294,6 +294,125 @@ def test_rullet_modulepoch_feller_heartbeatet(migrator, miljo, monkeypatch):
 
 
 @pg
+def test_nodstopp_i_fornyelsesvinduet_gjerdes_av_modullasen(
+        migrator, miljo, monkeypatch):
+    """TOCTOU-en over epoke-porten, som testen over IKKE måler: der
+    bumpes epoken FØR kallet, og den beviser bare den synkrone grenen.
+
+    Her committer nødstoppet MENS fornyelsen står i døren. Radlåsen på
+    `oppdrag` gjerder andre UTFØRERE, ikke `noddeaktiver_modul` — den
+    rører aldri `oppdrag`; den tar modul-låsen EKSKLUSIVT og løfter
+    epoken i `modulhode`. Uten claims delte modul-lås foran epoke-
+    lesingen (Cursor P1) var lesingen derfor ulåst: et nødstopp som
+    committet i vinduet ble usynlig, og heartbeatet forlenget leasen på
+    et claim plattformen nettopp hadde drept — reclaim blokkert et helt
+    grant-vindu ETTER unntakstilstanden.
+
+    Døren kalles DIREKTE som runtimerollen, uten app-lagets
+    `_modultoken_revalidert`: den er ikke gjerdet (SECURITY DEFINER med
+    EXECUTE til runtime/arbeider, og legacy-token hopper over
+    revalideringen), så gjerdet må stå i døren selv.
+
+    Vinneren er avgjort på forhånd: nødstoppet står ÅPENT når
+    heartbeatet starter, så låsen må vente på det. Riggen bærer en frist
+    forbi taket og en lease nær utløp — der er fornyelsen en EKTE
+    forlengelse, og «leasen står stille» er derfor et utsagn med innhold.
+
+    MUTASJONEN SOM DREPER DENNE: fjern
+    `pg_advisory_xact_lock_shared('modul:' || …)` fra 063. Da venter
+    ikke heartbeatet, det leser den gamle (committede) epoken, og
+    fornyelsen går gjennom midt i nødstoppet.
+    """
+    import threading
+
+    import psycopg
+
+    import oppdragskontrakt as ok
+    from db.pg import koble
+
+    tak = ok.UTSTEDT_AUTORITET_S
+    c, hode, claim = _kjede_og_claim(migrator, monkeypatch, frist_s=tak * 4)
+    utfall: list = []
+    startet = threading.Event()
+    try:
+        _ktx(migrator, claim)
+        # Identiteten døren matcher er `eiermodul`; modulhodet den LESER
+        # er `coalesce(modul_id, eiermodul)`. De er samme modul i dag, og
+        # det er nettopp derfor de holdes fra hverandre her.
+        modul, hode_modul, epoch = migrator.execute(
+            "SELECT eiermodul, coalesce(modul_id, eiermodul), module_epoch"
+            " FROM oppdrag WHERE id=%s", (claim["oppdrag_id"],)).fetchone()
+        if epoch is None:
+            migrator.rollback()
+            pytest.skip("claimen bar ingen epoch (legacy-vei)")
+        # Vindusslutt: her FLYTTER en vellykket fornyelse leasen.
+        migrator.execute(
+            "UPDATE oppdrag SET owner_lease_utloper = now()+interval '30 s'"
+            " WHERE id=%s", (claim["oppdrag_id"],))
+        migrator.commit()
+        _ktx(migrator, claim)
+        for_lease = migrator.execute(
+            "SELECT owner_lease_utloper FROM oppdrag WHERE id=%s",
+            (claim["oppdrag_id"],)).fetchone()[0]
+        migrator.rollback()
+
+        def heartbeat():
+            d = koble(DSN)
+            try:
+                d.execute("SELECT set_config('disponit.aktor','test',true),"
+                          " set_config('disponit.request_id','r-race',true)")
+                startet.set()
+                d.execute(
+                    "SELECT owner_lease_utloper"
+                    " FROM forny_oppdragslease(%s,%s,%s,%s,600)",
+                    (claim["oppdrag_id"], modul, claim["owner_claim_id"],
+                     claim["owner_generation"])).fetchone()
+                d.commit()
+                utfall.append("fornyet")
+            except Exception as e:                       # noqa: BLE001
+                d.rollback()
+                utfall.append(e)
+            finally:
+                d.close()
+
+        traad = threading.Thread(target=heartbeat, daemon=True)
+        nodstopp = psycopg.connect(MIGRATOR_DSN)
+        try:
+            nodstopp.execute("SET ROLE disponit_modules_admin")
+            nodstopp.execute(
+                "SELECT noddeaktiver_modul(%s,'nodstopp i"
+                " fornyelsesvinduet','test')", (hode_modul,))
+            # IKKE committet: transaksjonen holder modul-låsen EKSKLUSIVT,
+            # og epoke-bumpen er usynlig for alle andre lesere.
+            traad.start()
+            assert startet.wait(30), "heartbeat-tråden kom aldri i gang"
+            traad.join(timeout=2.0)
+            assert traad.is_alive() and not utfall, (
+                "døren leste modulhode UTEN modul-låsen — nødstoppet i"
+                f" vinduet var usynlig, og heartbeatet gikk gjennom: {utfall}")
+            nodstopp.commit()
+        finally:
+            nodstopp.rollback()
+            nodstopp.close()
+        traad.join(timeout=30)
+        assert utfall, \
+            "heartbeatet slapp aldri løs etter at nødstoppet committet"
+        assert isinstance(
+            utfall[0], psycopg.errors.InvalidAuthorizationSpecification), \
+            f"nødstoppet felte ikke heartbeatet: {utfall[0]!r}"
+        # …og leasen står stille: fornyelsen skrev ingenting.
+        _ktx(migrator, claim)
+        etter = migrator.execute(
+            "SELECT owner_lease_utloper FROM oppdrag WHERE id=%s",
+            (claim["oppdrag_id"],)).fetchone()[0]
+        migrator.rollback()
+        assert etter == for_lease, \
+            "heartbeatet forlenget leasen på et nødstoppet claim"
+    finally:
+        c.__exit__(None, None, None)
+
+
+@pg
 def test_fornyelsen_leser_en_og_samme_klokke(migrator):
     """Sjekk og skriving må lese SAMME klokke — ellers er heartbeatet
     selv TOCTOU-en.
