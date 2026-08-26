@@ -1777,6 +1777,100 @@ test("Bestilling: en ny profilversjon når velgeren uten å rive skjemaet (P2-2)
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
 });
 
+test("Bestilling: ingen profilversjon forsvinner i bestillingsvinduet (P2-1)",
+  async () => {
+  // P2-2 lot en ny profilversjon nå velgeren uten å rive skjemaet — men
+  // hoppet over HELE oppdateringen mens en bestilling var i lufta, og
+  // hentet den aldri inn igjen. Lagret brukeren versjon 3 i det vinduet,
+  // sto velgeren på erstattet `@2` etterpå, og neste bestilling gikk mot
+  // en versjon som ikke lenger var den nyeste.
+  //
+  // A-dommen fjerner vinduet i stedet for å lappe det: «Lagre» tar den
+  // SAMME låsen som kjeden, så de to mutasjonene aldri er i lufta
+  // samtidig — og da kan `oppdaterProfilvalg` kjøre ubetinget.
+  //
+  // MUTASJONEN SOM DREPER DENNE: sett `!okt.bestilling.paagaaende &&`
+  // tilbake foran `oppdaterProfilvalg` i `paaProfilendring`.
+  KALL = [];
+  let slippBestilling;
+  const bestillingssvar = new Promise((r) => {
+    slippBestilling = () => r({ beslutning: "stopp", begrunnelse: [] });
+  });
+  let profilsvar = profiler();
+  SVAR = (sti, opts = {}) => {
+    if (sti === "/v1/rekruttering/prosesser") return prosess();
+    if (sti === "/v1/rekruttering/stillingsprofiler") {
+      if ((opts.method || "GET") === "POST") {
+        const ny = profiler();
+        ny.profiler[0].versjon = 3;
+        profilsvar = ny;
+        return { profil_id: "prof-1", versjon: 3 };
+      }
+      return profilsvar;
+    }
+    if (sti === "/v1/inndata/reserver") {
+      return { reservasjon_jti: "j-1", inndata_ref: "inndata:u-1" };
+    }
+    if (sti.startsWith("/v1/inndata/opplast/")) return {};
+    if (sti === "/v1/bestilling") return bestillingssvar;
+    return undefined;
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const bestill = () =>
+    hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  const profilDel =
+    hoved.querySelector("section[aria-labelledby=profil-tittel]");
+  const skjema = bestill().querySelector("form");
+  const send = skjema.querySelector("button[type=submit]");
+  const filInp = skjema.querySelector("input[type=file]");
+  Object.defineProperty(filInp, "files", { configurable: true,
+    value: [{ name: "bunt.zip",
+              arrayBuffer: async () => new ArrayBuffer(16) }] });
+  filInp.dispatchEvent(new window.Event("change", { bubbles: true }));
+  // Brukeren åpner profileditoren FØRST, så knappen finnes når kjeden
+  // starter — den er kontrollen låsen skal ta.
+  [...profilDel.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.profiler.rediger")).click();
+  const profilSkjema = profilDel.querySelector("form");
+  const lagre = profilSkjema.querySelector("button[type=submit]");
+  assert.equal(lagre.disabled, false, "testen antar en åpen editor");
+  // Bestillingen henger.
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() => KALL.some((k) => k.sti === "/v1/bestilling"), 20),
+    "bestillingen ble aldri sendt");
+  // «Lagre» er frosset — og sier det. Et forsøk poster ingenting.
+  assert.equal(lagre.disabled, true,
+    "profileditoren sto handlingsklar mens en bestilling var i lufta");
+  assert.equal(profilSkjema.getAttribute("aria-busy"), "true");
+  profilSkjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  await vent(() => false, 5);
+  assert.equal(KALL.filter((k) => k.metode === "POST"
+    && k.sti === "/v1/rekruttering/stillingsprofiler").length, 0,
+    "en profilversjon ble skrevet midt i en bestilling");
+  // STOPP: bunten står, kjeden slipper låsen — og NÅ lagrer brukeren.
+  slippBestilling();
+  assert.ok(await vent(() => !send.disabled, 40), "kjeden ble aldri ferdig");
+  assert.equal(lagre.disabled, false, "editoren ble stående frosset");
+  assert.equal(profilSkjema.hasAttribute("aria-busy"), false);
+  profilSkjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  // Velgeren kjenner den nye versjonen FØR neste innsending.
+  assert.ok(await vent(() => [...bestill()
+    .querySelectorAll("#bestill-profil option")]
+    .some((o) => o.value === "prof-1@3"), 40),
+    "velgeren står igjen på en erstattet profilversjon");
+  assert.equal(bestill().querySelector("#bestill-profil").value, "prof-1@3");
+  // ... og skjemaet ble ikke revet: bunten fra STOPP-runden står igjen.
+  assert.equal(bestill().querySelector("form"), skjema);
+  assert.match(bestill().textContent, /bunt\.zip/);
+  const brudd = await alvorligeBrudd(hoved);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
 test("Profiler: listen viser navn, versjon og krav — og axe rent", async () => {
   const hoved = await tegnetMedProfiler();
   const seksjon = hoved.querySelector("section[aria-labelledby=profil-tittel]");
@@ -1864,6 +1958,12 @@ test("Profiler: tapt svar → retry sender SAMME nøkkel (SP-2)", async () => {
   assert.ok(await vent(() => KALL.some((k) => k.metode === "POST")),
     "første POST gikk aldri");
   const forste = KALL.find((k) => k.metode === "POST");
+  // Retryen er brukerens NESTE klikk, ikke et andre klikk midt i det
+  // første: flaten holder ÉN mutasjon om gangen (A-dommen, #212), og
+  // «Lagre» står frosset til runden er ferdig. Det er nøkkelen som er
+  // under måling her, ikke låsen.
+  const lagre = skjema.querySelector("button[type=submit]");
+  assert.ok(await vent(() => !lagre.disabled, 40), "runden ble aldri ferdig");
   // Andre forsøk: samme operasjon — samme nøkkel.
   SVAR = { "/v1/rekruttering/prosesser": prosess(),
            "/v1/rekruttering/stillingsprofiler": profiler() };
@@ -1940,6 +2040,10 @@ test("Profiler: endret innhold etter tapt svar gir NY nøkkel (P2-5)", async () 
   assert.ok(await vent(() => KALL.some((k) => k.metode === "POST")),
     "første POST gikk aldri");
   const forste = KALL.find((k) => k.metode === "POST");
+  // Runden må være ferdig før brukeren rører skjemaet igjen: flaten
+  // holder ÉN mutasjon om gangen (A-dommen, #212).
+  const lagre = skjema.querySelector("button[type=submit]");
+  assert.ok(await vent(() => !lagre.disabled, 40), "runden ble aldri ferdig");
   // ... men brukeren endrer navnet. Da er neste lagring en ANNEN
   // profilversjon, og den gamle nøkkelen ville enten kollidert eller
   // fått serveren til å replaye den forrige.

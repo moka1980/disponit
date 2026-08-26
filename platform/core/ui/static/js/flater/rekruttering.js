@@ -123,7 +123,9 @@ export function visRekruttering(hoved, ctx) {
     // miste en alt opplastet bunt.
     // ... OG DET GJØR KJEDEN SOM ER I LUFTA (Cursor P1-2). En opplasting
     // varer lenge nok til at brukeren rekker å bytte fil under den.
-    // `paagaaende` er låsen som holder det med ÉN kjede om gangen;
+    // `paagaaende` er låsen som holder det med ÉN mutasjon om gangen i
+    // kjeden — bestillingen OG profillagringen tar den (A-dommen, #212),
+    // fordi de deler både profillisten og velgeren de bestiller mot;
     // `generasjon` er kjedens intensjon, så en flygende opplasting ikke
     // kan skrive sin `inndata_ref` inn i en bunt brukeren alt har byttet
     // ut. Filvelgeren kan ikke fryses med `readOnly`, så `generasjon` blir
@@ -174,8 +176,10 @@ function tegn(hoved, ctx, data, okt, valgtId) {
   // levende ut og ikke gjør noe. Prisen — ingen prosessbytte under en
   // pågående opplasting — er dommens egen: brukeren har en irreversibel
   // operasjon i flukt, og velgeren skal SI det.
+  // Navngitte plasser, ikke en liste: en seksjon som tegnes på nytt
+  // ERSTATTER sin egen kontroll i stedet for å legge igjen en frakoblet
+  // node ingen låser opp.
   const utlosere = { velger: null, send: null, lagre: null };
-  let frosset = false;
   const frysEn = (kontroll, paa) => {
     if (!kontroll) return;
     kontroll.disabled = paa;
@@ -188,14 +192,15 @@ function tegn(hoved, ctx, data, okt, valgtId) {
   };
   const laas = {
     frys: (paa) => {
-      frosset = paa;
       for (const k of Object.values(utlosere)) frysEn(k, paa);
     },
     // Kontrollene fødes til ulik tid — profilskjemaet åpnes på et klikk —
     // så en som meldes mens flaten er frosset, fryses med det samme.
+    // `paagaaende` ER den tilstanden; en egen `frosset`-kopi ville bare
+    // vært en til å holde i takt.
     meld: (navn, kontroll) => {
       utlosere[navn] = kontroll;
-      if (frosset) frysEn(kontroll, true);
+      if (okt.bestilling.paagaaende) frysEn(kontroll, true);
     },
   };
   // DEN FØRSTE PROFILEN LÅSER OPP BESTILLINGEN (Cursor P1-1). Uten
@@ -226,11 +231,20 @@ function tegn(hoved, ctx, data, okt, valgtId) {
     sett(bestillRot, ...(del ? [del] : []));
   };
   tegnBestilling();
-  const profilDel = profilSeksjon(hoved, ctx, data, okt, () => {
+  const profilDel = profilSeksjon(hoved, ctx, data, okt, laas, () => {
     if (!bestillRot.querySelector("form")) { tegnBestilling(); return; }
-    if (!okt.bestilling.paagaaende && okt.bestilling.oppdaterProfilvalg) {
-      okt.bestilling.oppdaterProfilvalg();
-    }
+    // FULL SKIP UNDER `paagaaende` ER BORTE (A-dommen, #212, Cursor
+    // P2-1). Skipen fantes fordi et bytte av alternativene under en
+    // bestilling som er underveis ville endret kroppen brukeren ser og
+    // forkastet `bestillIdem` midt i flukten — men den ble aldri
+    // innhentet etterpå, så en versjon lagret i vinduet nådde ALDRI
+    // `#bestill-profil`: velgeren sto igjen på en erstattet versjon, og
+    // neste bestilling gikk mot den. Fiksen er ikke å hente den inn i en
+    // `finally` (enda en indireksjon, enda et vindu) — det er å fjerne
+    // vinduet: profileditorens «Lagre» tar den SAMME låsen som kjeden,
+    // så de to mutasjonene aldri er i lufta samtidig. Da kan denne
+    // linjen bare gjøre jobben sin.
+    if (okt.bestilling.oppdaterProfilvalg) okt.bestilling.oppdaterProfilvalg();
   });
   const bestillDel = bestillRot.firstChild ? bestillRot : null;
   if (!prosesser.length) {
@@ -977,7 +991,7 @@ function bestillSeksjon(hoved, ctx, data, okt, laas) {
 }
 
 
-function profilSeksjon(hoved, ctx, data, okt, paaProfilendring) {
+function profilSeksjon(hoved, ctx, data, okt, laas, paaProfilendring) {
   const profiler = (data && data.profiler) || [];
   // Cursor P2-1 (runde 2): flaten er lesbar med decisions:read, men
   // POST-ruten krever bestilling:opprett (app.py) — skrive-UI uten
@@ -1102,11 +1116,27 @@ function profilSeksjon(hoved, ctx, data, okt, paaProfilendring) {
         el("label", { for: navnId,
           text: t("ui.rekruttering.profiler.navn") }), " ", navnInp),
       tabell, el("p", {}, leggTil, " ", lagre, " ", avbryt));
+    // «Lagre» er den ANDRE veien inn i bestillingsseksjonen (A-dommen,
+    // #212): den ender i `oppdaterListe` → `paaProfilendring`, som enten
+    // tegner seksjonen på nytt eller bytter velgerens alternativer. Den
+    // meldes derfor som utløser og fryses av samme `laas` som
+    // prosessvelgeren — og fordi skjemaet åpnes på et klikk, kan den
+    // fødes mens flaten alt er frosset. `laas.meld` fryser den da med det
+    // samme; frysen eier `lagre.disabled` alene, så ingen feilsti kan
+    // låse opp en knapp låsen holder.
+    laas.meld("lagre", lagre);
     // Én lytter på skjemaet dekker navnet, hvert kravnavn og hver vekt —
     // også radene som legges til senere, siden `input` bobler.
     skjema.addEventListener("input", nyIntensjon);
     skjema.addEventListener("submit", async (ev) => {
       ev.preventDefault();
+      // ÉN MUTASJON OM GANGEN I EVALUERINGSKJEDEN (A-dommen, #212).
+      // Samme vakt som bestillingens egen, og av samme grunn: `disabled`
+      // er brukerens vei, men invarianten skal kunne måles. Uten den er
+      // vinduet igjen åpent — en profillagring som lander midt i en
+      // bestilling ville byttet velgerens alternativer og forkastet
+      // `bestillIdem` mens POST-en fortsatt sto ubesvart.
+      if (okt.bestilling.paagaaende) return;
       const krav = [];
       for (const rad of kropp.querySelectorAll("tr")) {
         const [ninp, vinp] = rad.querySelectorAll("input");
@@ -1118,7 +1148,11 @@ function profilSeksjon(hoved, ctx, data, okt, paaProfilendring) {
         sett(utfall, t("ui.rekruttering.profiler.tomt_krav"));
         return;
       }
-      lagre.disabled = true;
+      // Låsen er FLATENS, ikke knappens: den stenger også prosessvelgeren
+      // og bestillingens «Send» mens versjonen skrives, så ingen av dem
+      // kan starte noe mot en profilliste som er i ferd med å endre seg.
+      okt.bestilling.paagaaende = true;
+      laas.frys(true);
       // Nøkkelen fødes her, med innholdet den skal binde: står den fra
       // et tidligere forsøk med SAMME innhold, gjenbrukes den — det er
       // hele SP-2-replayen.
@@ -1140,7 +1174,6 @@ function profilSeksjon(hoved, ctx, data, okt, paaProfilendring) {
           nyIntensjon();
         }
         // Nettverk/5xx: nøkkelen beholdes — retry er SAMME operasjon.
-        lagre.disabled = false;
         // ... OG DA ER «KUNNE IKKE LAGRE» EN FALSK SETNING (Cursor P2-1).
         // Nøkkeløkonomien over skiller alt 4xx fra resten, men teksten
         // gjorde det ikke: ved status 0 nådde POST-en kanskje aldri fram
@@ -1153,6 +1186,12 @@ function profilSeksjon(hoved, ctx, data, okt, paaProfilendring) {
         // den tredje mutasjonen på flaten, og den siste som løy.
         sett(utfall, t(definitivt ? "ui.rekruttering.profiler.feil"
           : "ui.rekruttering.usikkert_utfall"));
+      } finally {
+        // Løftes ALLTID — også på 401-veien over, som returnerer tidlig:
+        // en flate som er på vei til innlogging skal ikke etterlate seg
+        // en lås ingen kan se og ingen kan løfte.
+        okt.bestilling.paagaaende = false;
+        laas.frys(false);
       }
     });
     sett(skjemaRot, skjema);
