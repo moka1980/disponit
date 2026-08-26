@@ -127,13 +127,16 @@ def test_ytelsesgrensen_er_klarsignalets_tall():
 
     ORDREFRISTEN er derimot ikke konvolutten (Codex P1 på #210): den er
     løftet til KUNDEN, og et løfte utover autoriteten som faktisk
-    utstedes (claim-leasen/opplastingskapabilitetens 3600 s, uten
-    fornyelsesvei før #165) kunne ingen holde — etter første time kunne
-    en annen kontrollør reclaime og duplisere evalueringen av samme
-    persondatabunt. Fristen er derfor min(konvolutt, autoritet), og
-    porten her er skrevet slik at #165 (fornyelsen) GJENÅPNER 240
-    automatisk: når autoritetstaket heves, faller min() tilbake på
-    konvolutten, og dette spesialtilfellet dør av seg selv."""
+    utstedes (claim-leasen/opplastingskapabilitetens 3600 s) kunne ingen
+    holde — etter første time kunne en annen kontrollør reclaime og
+    duplisere evalueringen av samme persondatabunt. 063 (#165) bygger
+    fornyelsesveien som KAN kjede grants forbi taket, men en dør er ikke
+    en pust: ingen utfører kaller den ennå (Cursor P1, runde 2), så
+    klemmen står. Fristen er derfor fortsatt min(konvolutt, autoritet),
+    og porten her er skrevet slik at den dagen kallstedet finnes,
+    gjenåpnes 240 ved å fjerne klemmen — og
+    `test_frist_over_ett_grant_krever_fornyelsesveien` krever da BÅDE
+    døren i basen og kallstedet."""
     import oppdragskontrakt as ok
     g = KRAVGRENSER["m57-v1"]
     _, tak = ok.FELTGRENSER["rekruttering.evaluering"]["antall_soknader"]
@@ -141,9 +144,7 @@ def test_ytelsesgrensen_er_klarsignalets_tall():
     _, frister = ok.UTFORELSESFRIST_VALG["rekruttering.evaluering"]
     # Autoriteten leses fra PRODUKSJONSKONTRAKTEN (Codex P2, runde 2):
     # et testlokalt 3600 kunne flyttes uten at noen runtime-mekanisme
-    # fulgte med. Nå endres porten kun MED mekanismen: #165 hever
-    # `UTSTEDT_AUTORITET_S` (som også klemmer kapabiliteten i `app.py`),
-    # og min() gjenåpner konvolutten av seg selv.
+    # fulgte med.
     assert frister["bunt"] == min(g["ytelse_maks_minutter"] * 60,
                                   ok.UTSTEDT_AUTORITET_S)
 

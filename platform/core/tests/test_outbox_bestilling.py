@@ -1551,10 +1551,76 @@ def test_bestillingstyper_arver_kontraktens_frist():
                 bt.oppdragstype, {"omfang": omfang})
             assert frist is not None, \
                 f"{navn}/{omfang}: ingen frist deklarert på kontrakten"
-            assert 0 < frist <= TAK_S, \
-                (f"{navn}/{omfang}: {frist} s overstiger claim-leasens og"
-                 f" opplastingskapabilitetens tak på {TAK_S} s — det er"
-                 " ingen fornyelsesvei for noen av dem")
+            if frist <= TAK_S:
+                assert frist > 0
+                continue
+            # 063 (#165): en frist OVER ett grant-vindu er lovlig KUN
+            # fordi en LEVENDE utfører kjeder grants gjennom fristen. At
+            # DØREN finnes er ikke nok — den må KALLES (Cursor P1, runde
+            # 2). Uten en pust står reclaim-grenen (`plukket` ∧ død lease
+            # ∧ frist i framtiden) åpen resten av fristen, og det er
+            # #210s egen skadeklasse. Fjerner noen klemmen i kontrakten
+            # uten at et kallsted finnes, felles det her.
+            assert _fornyelseskallsteder(), (
+                f"{navn}/{omfang}: {frist} s er lengre enn ett grant"
+                f" ({TAK_S} s), og INGEN utfører kaller"
+                " /v1/oppdrag/forny — fristen er da et løfte ingen kan"
+                " holde (#210). Klem fristen, eller ship pusten.")
+
+
+def _fornyelseskallsteder() -> list[str]:
+    """Hvem PUSTER? Filer under `platform/modules/` og `platform/drift/`
+    som faktisk nevner `/v1/oppdrag/forny`.
+
+    Eksistenssjekk, ikke parsing (K4): spørsmålet er om endepunktet
+    finnes i en utførers kode i det hele tatt. Det er det SVAKESTE
+    kravet som likevel felles av tilstanden portene finnes for — «døren
+    er bygget, ingen kaller den».
+    """
+    import pathlib
+    rot = pathlib.Path(__file__).resolve().parents[3]
+    return sorted(
+        str(f.relative_to(rot))
+        for kat in ("platform/modules", "platform/drift")
+        for f in (rot / kat).rglob("*.py")
+        if "/v1/oppdrag/forny" in f.read_text(encoding="utf-8"))
+
+
+@pg
+def test_frist_over_ett_grant_krever_fornyelsesveien(migrator):
+    """063/#165: en frist over ett grant-vindu hviler på TO ting, ikke
+    én — at `forny_oppdragslease` er installert og claimer-eid, OG at
+    noen faktisk kaller den.
+
+    Første utgave målte bare `pg_proc`-eksistens, og var tannløs mot
+    «dør uten puster» (Cursor P2, runde 2): en senere migrasjon kunne
+    droppe kallstiene — eller de kunne aldri innføres — mens fristen sto
+    på 240 min, og porten forble grønn. Det er nøyaktig «løfte uten
+    autoritet»-klassen porten sier den stenger.
+
+    I dag er `over` tom fordi klemmen står (#210s `min()` er tilbake til
+    en utfører puster). Porten er derfor LADD, ikke aktiv: den dagen
+    noen hever fristen, kreves både døren og kallstedet — og ingen av
+    dem kan leveres alene."""
+    import oppdragskontrakt
+    from api.bestilling import BESTILLINGSTYPER
+    over = [f"{bt.oppdragstype}/{omfang}"
+            for bt in BESTILLINGSTYPER.values() for omfang in bt.omfang
+            if (oppdragskontrakt.utforelsesfrist_s(
+                    bt.oppdragstype, {"omfang": omfang}) or 0)
+            > oppdragskontrakt.UTSTEDT_AUTORITET_S]
+    if not over:
+        return
+    assert _fornyelseskallsteder(), (
+        f"frister over ett grant ({over}) uten en eneste kaller av"
+        " /v1/oppdrag/forny — døren puster ikke av seg selv")
+    rad = migrator.execute(
+        "SELECT r.rolname FROM pg_proc p"
+        "  JOIN pg_roles r ON r.oid = p.proowner"
+        " WHERE p.proname = 'forny_oppdragslease'").fetchone()
+    assert rad is not None, \
+        f"frister over ett grant ({over}) uten fornyelsesdør i basen"
+    assert rad[0] == "disponit_m37_claimer", rad[0]
 
 
 # ==========================================================================

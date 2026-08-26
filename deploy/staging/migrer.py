@@ -289,6 +289,9 @@ GRANT EXECUTE ON FUNCTION reserver_kapabilitet(TEXT, TEXT, INT) TO {rolle};
 GRANT EXECUTE ON FUNCTION bruk_kapabilitet(TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION frigi_hengende_kapabiliteter() TO {rolle};
 GRANT EXECUTE ON FUNCTION claim_neste_oppdrag(TEXT, TEXT[], TEXT, INT, TEXT, TEXT, BIGINT) TO {rolle};
+-- 063 (#165): fornyelsesveien — heartbeat er et claim-livssyklussteg og
+-- kalles av API-et som runtimerollen, som claim selv.
+GRANT EXECUTE ON FUNCTION forny_oppdragslease(BIGINT, TEXT, TEXT, INT, INT) TO {rolle};
 -- PR-007: tofaseprotokollen.
 GRANT EXECUTE ON FUNCTION registrer_verifikasjonsbevis(BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT, INT, INT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION start_verifikasjonsgenerasjon(TEXT, BIGINT, TEXT, INT, JSONB, TEXT, TEXT, TEXT) TO {rolle};

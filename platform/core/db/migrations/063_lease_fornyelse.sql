@@ -1,0 +1,165 @@
+-- ============================================================
+-- 063: fornyelsesveien (#165) — heartbeat fra utføreren.
+--
+-- 037 sa det selv: «En ekte fornyelsesvei (heartbeat fra utføreren)
+-- ville gitt begge deler, men den er en ny autentisert endepunktsflate
+-- med egen spec-runde.» Dette er den runden. Uten den var autoriteten
+-- én time (lease-taket + opplastingskapabilitetens klemme), og enhver
+-- ordrefrist utover det var et løfte ingen kunne holde — #210 klemte
+-- derfor rekrutteringsfristen ned til taket. Med fornyelsen kan en
+-- LEVENDE utfører holde autoriteten sin gjennom hele oppdragets frist,
+-- og fristen kan gå tilbake til klarsignalets tall.
+--
+-- FORMEN ER 037s EGEN, én rad om gangen:
+--   * bare den SITTENDE eieren kan fornye — raden må matche
+--     (modul, claim_id, generation) nøyaktig, og leasen må være I LIVE.
+--     En død lease kan ALDRI fornyes: etter utløp kan en annen utfører
+--     lovlig ha reclaimet, og en gjenoppstandelse ville slåss med
+--     fencing-generasjonen i stedet for å respektere den.
+--   * fornyelsen gir aldri mer enn ett nytt grant-vindu (3600 s-taket
+--     står), og aldri lenger enn oppdragets egen utforelsesfrist —
+--     etter fristen er arbeidet uansett dødt (037s reclaim-vilkår).
+--   * modulepoch måles under claims EGEN modul-lås (delt, port
+--     24-formen): en deployment som er rullet forbi skal ikke kunne
+--     holde liv i et gammelt claim med friske heartbeats. Oppdragets
+--     radlås gjerder andre UTFØRERE; den gjerder ikke nødstoppet, som
+--     aldri rører `oppdrag`.
+--
+-- Eierskap og rolle er claim-veiens egne (disponit_m37_claimer, samme
+-- som 015/037/049): fornyelsen ER et claim-livssyklussteg.
+-- ============================================================
+
+SET LOCAL ROLE disponit_m37_claimer;
+CREATE FUNCTION forny_oppdragslease(
+    p_oppdrag_id BIGINT, p_modul_id TEXT, p_claim_id TEXT,
+    p_generation INT, p_lease_s INT DEFAULT 300)
+RETURNS TABLE (owner_lease_utloper TIMESTAMPTZ, tenant TEXT,
+               modul_id TEXT, kontraktversjon INT, kontrakt_hash TEXT,
+               module_epoch BIGINT, evidensfrist TIMESTAMPTZ)
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog
+AS $$
+DECLARE
+    v_lease INT := least(greatest(coalesce(p_lease_s, 300), 30), 3600);
+    v_epoch BIGINT;
+    r RECORD;
+BEGIN
+    IF p_modul_id IS NULL OR p_claim_id IS NULL OR p_oppdrag_id IS NULL
+       OR p_generation IS NULL THEN
+        RAISE EXCEPTION 'forny_oppdragslease: identiteten er ufullstendig'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- Radlåsen først: epoch-målingen og fornyelsen skjer mot samme
+    -- øyeblikksbilde, som ved claim.
+    SELECT o.id, o.tenant, o.eiermodul, o.modul_id, o.kontraktversjon,
+           o.kontrakt_hash, o.module_epoch, o.evidensfrist,
+           o.utforelsesfrist, o.status, o.owner_claim_id,
+           o.owner_generation, o.owner_lease_utloper
+      INTO r
+      FROM public.oppdrag o
+     WHERE o.id = p_oppdrag_id
+       FOR UPDATE;
+    IF NOT FOUND
+       OR r.status <> 'plukket'
+       OR r.eiermodul IS DISTINCT FROM p_modul_id
+       OR r.owner_claim_id IS DISTINCT FROM p_claim_id
+       OR r.owner_generation IS DISTINCT FROM p_generation THEN
+        -- ÉN kode for alle identitetsavvik: et oppslagsverk over andres
+        -- claims skal ikke finnes (058-formen).
+        RAISE EXCEPTION 'forny_oppdragslease: ingen fornybar lease'
+            USING ERRCODE = 'no_data_found';
+    END IF;
+    IF r.owner_lease_utloper IS NULL
+       OR r.owner_lease_utloper <= clock_timestamp() THEN
+        -- Død lease: aldri gjenoppstandelse. Egen kode — dette er den
+        -- ENE grenen utføreren kan handle på (arbeidet er tapt, slutt).
+        RAISE EXCEPTION 'forny_oppdragslease: leasen er utløpt'
+            USING ERRCODE = 'object_not_in_prerequisite_state';
+    END IF;
+    IF r.utforelsesfrist <= clock_timestamp() THEN
+        RAISE EXCEPTION 'forny_oppdragslease: utforelsesfristen er ute'
+            USING ERRCODE = 'object_not_in_prerequisite_state';
+    END IF;
+    -- Epoken måles mot LEVENDE modulhode, og målingen tar claims EGEN
+    -- modul-lås først (015:250/037:149 — Cursor P1). Radlåsen på
+    -- `oppdrag` er IKKE gjerdet her: `noddeaktiver_modul` rører aldri
+    -- `oppdrag`, den tar modul-låsen EKSKLUSIVT og løfter epoken i
+    -- `modulhode`. Uten den delte låsen er lesingen under en ulåst
+    -- TOCTOU — et nødstopp som committer i vinduet mellom radlåsen og
+    -- lesingen blir usynlig, og heartbeatet forlenger leasen på et claim
+    -- plattformen nettopp drepte: reclaim blokkert et helt grant-vindu
+    -- etter unntakstilstanden, stikk i strid med port 24-kontrakten.
+    -- DELT og ikke eksklusiv, av claims grunn: heartbeats serialiseres
+    -- mot OVERGANGENE (nødstopp/status/releasebytte tar den eksklusivt),
+    -- ikke mot hverandre. Låsen venter til et samtidig nødstopp har
+    -- committet, så lesingen under er FERSK.
+    -- App-lagets `_modultoken_revalidert` tetter HTTP-veien, men døren er
+    -- SECURITY DEFINER med EXECUTE til runtime, og legacy-token hopper
+    -- over revalideringen: gjerdet må stå i døren selv.
+    -- Kalleren sender ingenting; serveren VET.
+    -- Legacy-claims (module_epoch IS NULL) bar aldri epokebindingen og
+    -- måles ikke — som ved claim.
+    IF r.module_epoch IS NOT NULL THEN
+        PERFORM pg_advisory_xact_lock_shared(hashtextextended(
+            'modul:' || coalesce(r.modul_id, r.eiermodul), 0));
+        -- `status = 'aktiv'` i SAMME lesing, som ved claim: et
+        -- nødstoppet modulhode gir ingen rad, v_epoch blir NULL, og
+        -- predikatet under feller heartbeatet — også den dagen en
+        -- overgang stopper modulen uten å løfte epoken.
+        SELECT h.module_epoch INTO v_epoch
+          FROM public.modulhode h
+         WHERE h.modul_id = coalesce(r.modul_id, r.eiermodul)
+           AND h.status = 'aktiv';
+        IF v_epoch IS DISTINCT FROM r.module_epoch THEN
+            -- EGEN SQLSTATE (CodeRabbit): en rullet epoch er en
+            -- AUTORISASJONSDOM (28000 → `modulepoch_utdatert`, 403),
+            -- ikke driftens «arbeidet er tapt» — de to skal kunne
+            -- skilles av kalleren uten å parse meldingstekst.
+            RAISE EXCEPTION 'forny_oppdragslease: modulepoken er rullet'
+                USING ERRCODE = 'invalid_authorization_specification';
+        END IF;
+    END IF;
+    -- MONOTON: leasen går ALDRI bakover i tid (Cursor P1). 037 strekker
+    -- leasen TIL `utforelsesfrist` ved claim, så på et oppdrag med frist
+    -- innenfor taket ER leasen alt fristen. Et heartbeat som skrev
+    -- `now() + v_lease` rått KORTET da eksklusiviteten fra «til fristen»
+    -- til «ett vindu», og åpnet nøyaktig det reclaim-vinduet 037 lukket
+    -- (`plukket` ∧ `owner_lease_utloper < now()` ∧ `utforelsesfrist >
+    -- now()`): en annen utfører kunne plukke raden MIDT i den første
+    -- eierens lovlige arbeid — dobbeltarbeidet 037 finnes for.
+    -- `greatest(o.owner_lease_utloper, …)` gjør fornyelsen til det den
+    -- heter: den FORLENGER der vinduet trengs (frist forbi taket — hele
+    -- #165), og er en no-op der 037 alt dekker fristen. Taket og fristen
+    -- står, så et heartbeat gir aldri mer enn ett vindu fram: en utfører
+    -- som slutter å puste mister fortsatt autoriteten ved neste vindu —
+    -- der det finnes et neste vindu å miste.
+    --
+    -- ÉN KLOKKE HELE VEIEN (Cursor P2): sjekkene over leser veggklokken,
+    -- og skrivingen må lese den samme. Blandet — `clock_timestamp()` i
+    -- sjekk, `now()` i skriving — kan en TX som har LEVD en stund (og
+    -- radlåsen over er nettopp der en fornyelse venter) få sjekken til å
+    -- si «leasen lever» mens UPDATE skriver en utløper som alt ligger
+    -- bak veggklokken: commit av en død lease, altså et reclaim-vindu
+    -- åpnet av heartbeatet selv. VALGET er veggklokken, ikke `now()`:
+    -- 062/#205 felte nøyaktig denne defektklassen for
+    -- `modultoken_fortsatt_autorisert`, og 060:101 måler claim-leasen på
+    -- samme klokke — å flytte sjekkene HIT ned til `now()` ville rullet
+    -- den dommen tilbake på lease-siden.
+    UPDATE public.oppdrag o
+       SET owner_lease_utloper = least(
+               clock_timestamp() + '3600 seconds'::INTERVAL,
+               least(o.utforelsesfrist,
+                     greatest(o.owner_lease_utloper,
+                              clock_timestamp()
+                                  + (v_lease || ' seconds')::INTERVAL)))
+     WHERE o.id = p_oppdrag_id;
+    SELECT o.owner_lease_utloper INTO owner_lease_utloper
+      FROM public.oppdrag o WHERE o.id = p_oppdrag_id;
+    tenant := r.tenant; modul_id := r.modul_id;
+    kontraktversjon := r.kontraktversjon;
+    kontrakt_hash := r.kontrakt_hash; module_epoch := r.module_epoch;
+    evidensfrist := r.evidensfrist;
+    RETURN NEXT;
+END $$;
+REVOKE ALL ON FUNCTION forny_oppdragslease(BIGINT, TEXT, TEXT, INT, INT) FROM PUBLIC;
+RESET ROLE;
