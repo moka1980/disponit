@@ -2261,6 +2261,37 @@ def test_manifestets_lukkede_form_avviser_alt_annet(tmp_path):
     assert e.value.kode == "manifest_mangler"
 
 
+def test_manifesttaket_er_en_maalt_port_ikke_bare_en_linje(tmp_path):
+    """Cursor P2 på #161: `MAKS_MANIFESTBYTES` sto i gaten uten én eneste
+    negativ test — mutasjonen som sletter `file_size`-sjekken for
+    `soknader.json` overlevde hele suiten, mens naboportene
+    (`komprimeringsforhold`, `null compress`) har sine egne. En port
+    ingen måler er en port som forsvinner i neste refaktorering.
+
+    Taket måles på KATALOGENS påstand, som resten av gaten: det er den
+    som avgjør om vi i det hele tatt trekker bytene ut.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `info.file_size >
+    MAKS_MANIFESTBYTES`-sjekken i `inspiser_bunt`.
+    """
+    filer = [("k1/cv.html", b"<p>drift</p>")]
+
+    # Én byte over taket: avvist ved deklarasjonen, aldri utpakket.
+    arkiv = _bunt(tmp_path, filer)
+    _patch_deklarert(arkiv, b"soknader.json",
+                     parsing.MAKS_MANIFESTBYTES + 1)
+    with pytest.raises(parsing.Buntfeil) as e:
+        parsing.inspiser_bunt(arkiv)
+    assert e.value.kode == "manifest_feilformet", e.value.kode
+
+    # Kontroll: NØYAKTIG taket er grønt — porten måler «over», ikke «nær».
+    (tmp_path / "taket").mkdir()
+    arkiv = _bunt(tmp_path / "taket", filer)
+    _patch_deklarert(arkiv, b"soknader.json", parsing.MAKS_MANIFESTBYTES)
+    assert any(m.navn == "soknader.json"
+               for m in parsing.inspiser_bunt(arkiv))
+
+
 def test_manifest_som_forsvant_mellom_lesningene_er_kodet(tmp_path,
                                                           monkeypatch):
     """Cursor P1 (runde 2) på #161: `les_manifest` måler `manifest_mangler`
