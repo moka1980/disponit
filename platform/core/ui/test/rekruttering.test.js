@@ -1665,6 +1665,93 @@ test("Bestilling: den første profilen låser opp bestillingsskjemaet (P1-1)", a
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
 });
 
+test("Bestilling: en ny profilversjon når velgeren uten å rive skjemaet (P2-2)",
+  async () => {
+  // P1-1-vakten («ikke tegn om et skjema som finnes») gjorde skjemaet
+  // urørlig, og da ble den bevarte tilstanden feil på et annet punkt:
+  // «lagret (versjon 3)» sto ved siden av en velger som fortsatt bare
+  // kjente `prof-1@2`, og bestillingen gikk mot en erstattet versjon.
+  KALL = [];
+  let profilsvar = profiler();
+  let bestillingssvar = 500;
+  SVAR = (sti, opts = {}) => {
+    if (sti === "/v1/rekruttering/prosesser") return prosess();
+    if (sti === "/v1/rekruttering/stillingsprofiler") {
+      if ((opts.method || "GET") === "POST") {
+        const ny = profiler();
+        ny.profiler[0].versjon = 3;
+        profilsvar = ny;
+        return { profil_id: "prof-1", versjon: 3 };
+      }
+      return profilsvar;
+    }
+    if (sti === "/v1/inndata/reserver") {
+      return { reservasjon_jti: "j-1", inndata_ref: "inndata:u-1" };
+    }
+    if (sti.startsWith("/v1/inndata/opplast/")) return {};
+    if (sti === "/v1/bestilling") return bestillingssvar;
+    return undefined;
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const bestill = () =>
+    hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  const skjema = bestill().querySelector("form");
+  const send = skjema.querySelector("button[type=submit]");
+  const antall = skjema.querySelector("#bestill-antall");
+  antall.value = "4";
+  antall.dispatchEvent(new window.Event("input", { bubbles: true }));
+  const filInp = skjema.querySelector("input[type=file]");
+  Object.defineProperty(filInp, "files", { configurable: true,
+    value: [{ name: "bunt.zip",
+              arrayBuffer: async () => new ArrayBuffer(16) }] });
+  filInp.dispatchEvent(new window.Event("change", { bubbles: true }));
+  // Bunten lastes opp; bestillingen svarer 5xx, så referansen står i økten.
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() => !send.disabled, 40), "runden ble aldri ferdig");
+  assert.equal(bestill().querySelector("#bestill-profil").value, "prof-1@2");
+  // Brukeren lagrer en ny versjon av den samme profilen.
+  const profilDel =
+    hoved.querySelector("section[aria-labelledby=profil-tittel]");
+  [...profilDel.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.profiler.rediger")).click();
+  const profilSkjema = profilDel.querySelector("form");
+  profilSkjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() => [...bestill()
+    .querySelectorAll("#bestill-profil option")]
+    .some((o) => o.value === "prof-1@3"), 40),
+    "velgeren kjenner bare den erstattede versjonen");
+  // Skjemaet ble IKKE revet: samme noder, samme antall, samme bunt.
+  assert.equal(bestill().querySelector("form"), skjema,
+    "bestillingsskjemaet ble revet ned av en profillagring");
+  assert.equal(bestill().querySelector("#bestill-antall").value, "4",
+    "brukerens antall forsvant med profillagringen");
+  assert.match(bestill().textContent, /bunt\.zip/,
+    "den opplastede bunten forsvant med profillagringen");
+  // ... og bestillingen går mot den NYE versjonen, på den samme bunten.
+  bestillingssvar = { beslutning: "tillat", oppdrag_id: 21 };
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() =>
+    KALL.filter((k) => k.sti === "/v1/bestilling").length === 2, 40),
+    "bestillingen kom aldri");
+  const [b1, b2] = KALL.filter((k) => k.sti === "/v1/bestilling");
+  assert.equal(b1.kropp.stillingsprofil_ref, "prof-1@2");
+  assert.equal(b2.kropp.stillingsprofil_ref, "prof-1@3",
+    "bestillingen gikk mot en erstattet profilversjon");
+  assert.equal(b2.kropp.inndata_ref, "inndata:u-1");
+  assert.equal(KALL.filter((k) => k.sti === "/v1/inndata/reserver").length, 1,
+    "bunten ble reservert på nytt etter profillagringen");
+  // En annen kropp er en annen intensjon: nøkkelen fulgte med.
+  assert.notEqual(b1.hoder["Idempotency-Key"], b2.hoder["Idempotency-Key"],
+    "den nye profilversjonen bar den forrige intensjonens nøkkel");
+  const brudd = await alvorligeBrudd(hoved);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
 test("Profiler: listen viser navn, versjon og krav — og axe rent", async () => {
   const hoved = await tegnetMedProfiler();
   const seksjon = hoved.querySelector("section[aria-labelledby=profil-tittel]");

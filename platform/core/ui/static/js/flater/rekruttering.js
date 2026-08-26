@@ -131,7 +131,8 @@ export function visRekruttering(hoved, ctx) {
     // løftes der brukeren ser den — samme grunn som `meldUtfall`.
     bestilling: { reserverIdem: null, bestillIdem: null,
                   inndataRef: null, filnavn: null,
-                  paagaaende: false, generasjon: 0, laasOpp: null } };
+                  paagaaende: false, generasjon: 0, laasOpp: null,
+                  oppdaterProfilvalg: null } };
   medStatus(hoved, ctx,
     async () => {
       // Profilene er TILLEGGSDATA (samme politikk som
@@ -164,6 +165,16 @@ function tegn(hoved, ctx, data, okt, valgtId) {
   // finnes, kan ha en valgt fil, en alert midt i en opplasting og en
   // POST i lufta — å rive det ned fordi en profil ble lagret, ville vært
   // nøyaktig den frakoblede noden `meldUtfall` finnes for å unngå.
+  //
+  // ... MEN VELGEREN MÅ LIKEVEL FØLGE LISTEN (Cursor P2-2). Vakten over
+  // gjorde skjemaet urørlig, og da ble den bevarte tilstanden feil på et
+  // annet punkt: lagret brukeren en ny profilVERSJON mens skjemaet sto,
+  // fikk hun kvitteringen «lagret (versjon 3)» ved siden av en velger som
+  // fortsatt bare kjente `prof-1@2` — og bestilte mot en versjon hun
+  // nettopp hadde erstattet. Fiksen river ikke skjemaet; den bytter bare
+  // ut alternativene, så filvalget, antallet og en alt opplastet bunt
+  // står. Full skip beholdes for kjeder i lufta: der ville et bytte av
+  // alternativene endret kroppen under en bestilling som er underveis.
   const bestillRot = el("div", { class: "rekrut-bestill" });
   const tegnBestilling = () => {
     const del = bestillSeksjon(hoved, ctx, data, okt);
@@ -171,7 +182,10 @@ function tegn(hoved, ctx, data, okt, valgtId) {
   };
   tegnBestilling();
   const profilDel = profilSeksjon(hoved, ctx, data, okt, () => {
-    if (!bestillRot.querySelector("form")) tegnBestilling();
+    if (!bestillRot.querySelector("form")) { tegnBestilling(); return; }
+    if (!okt.bestilling.paagaaende && okt.bestilling.oppdaterProfilvalg) {
+      okt.bestilling.oppdaterProfilvalg();
+    }
   });
   const bestillDel = bestillRot.firstChild ? bestillRot : null;
   if (!prosesser.length) {
@@ -662,12 +676,30 @@ function bestillSeksjon(hoved, ctx, data, okt) {
     nyIntensjon();
     visBunt();
   });
-  const profilVelger = el("select", { id: "bestill-profil", required: true },
-    ...profiler.map((pr) => el("option",
+  const profilVelger = el("select", { id: "bestill-profil", required: true });
+  // ALTERNATIVENE ER LISTEN, IKKE ET ØYEBLIKKSBILDE AV DEN (Cursor P2-2).
+  // `profiler` er editorens EGET array (det mutéres, ikke byttes), så en
+  // ny versjon lagret mens skjemaet står, er allerede her — velgeren
+  // hadde bare aldri en vei til å si det. Byggingen bor derfor i en
+  // funksjon `tegn` kan kalle igjen, uten å rive skjemaet.
+  const tegnProfilvalg = () => {
+    const valgt = profilVelger.value;
+    sett(profilVelger, ...profiler.map((pr) => el("option",
       { value: `${pr.profil_id}@${pr.versjon}` },
       t("ui.rekruttering.bestill.profilvalg")
         .replace("{navn}", pr.navn)
         .replace("{versjon}", String(pr.versjon)))));
+    if (valgt && [...profilVelger.options].some((o) => o.value === valgt)) {
+      // Valget er brukerens, og det overlever en oppfriskning av listen.
+      profilVelger.value = valgt;
+    } else if (valgt) {
+      // Versjonen brukeren pekte på, finnes ikke lenger: velgeren faller
+      // til første oppføring, og det er en ANNEN kropp — nøkkelen hørte
+      // til den forrige intensjonen.
+      nyIntensjon();
+    }
+  };
+  tegnProfilvalg();
   const antallInp = el("input", { type: "number", id: "bestill-antall",
     min: "1", max: "5000", step: "1", required: true, value: "1" });
   const fristInp = el("input", { type: "number", id: "bestill-frist",
@@ -870,6 +902,8 @@ function bestillSeksjon(hoved, ctx, data, okt) {
   // låsen gjelder, og det er de som skal låses opp når svaret kommer.
   tilstand.laasOpp = () => frys(false);
   frys(tilstand.paagaaende);
+  // ... og det er DENNE velgeren en ny profilversjon skal nå (P2-2).
+  tilstand.oppdaterProfilvalg = tegnProfilvalg;
   sett(rot, el("h2", { id: "bestill-tittel",
     text: t("ui.rekruttering.bestill.tittel") }),
     utfall, skjema);
