@@ -812,3 +812,91 @@ def test_avvist_fornyelse_stopper_pulsen(monkeypatch):
         _t.sleep(0.3)
     assert puls.tapt == "lease_utlopt"
     assert len(kall) == 1, "pulsen fortsatte etter en terminal avvisning"
+
+
+def test_stum_fornyelse_taper_leasen_og_stopper_leveransen(monkeypatch):
+    """Cursor P2, runde 2: TAUSHET ER OGSÅ TAP. En 4xx sier «oppdraget er
+    ikke ditt»; en 5xx eller et tapt svar sier ingenting — men leasen
+    løper ut like fullt. Pulsen fortsatte tidligere i det uendelige på
+    5xx/transport, så en lang evaluering kunne kjøre ferdig på en DØD
+    lease: hele bunten parset, modellen kalt, artefaktet staget — og
+    autoritetstapet oppdaget først på opplastingen eller kvitteringen.
+
+    Plattformen fencer riktignok kvitteringen, så ingenting blir GALT.
+    Kostnaden er poenget: persondata og regnekraft brukt på et oppdrag
+    plattformen alt kunne ha gitt til noen andre — samme regnestykke som
+    `_payloadbrudd`, kapabilitetssjekken og fristsjekken stopper FØR
+    arbeidet for.
+
+    Kontroll: fjern `stumme`-telleren i `_lopp`, så laster denne opp."""
+    import threading
+
+    from modules.m57_ats import controller
+
+    monkeypatch.setattr(controller, "FORNY_INTERVALL_S", 0.01)
+    slo = threading.Event()
+    forsok = []
+
+    def forny():
+        forsok.append(1)
+        if len(forsok) >= controller.FORNY_TAPT_ETTER:
+            slo.set()           # slipper evalueringen fram til utgangen
+        return _Svar(503, {})
+
+    k = _Stubklient(forny=forny)
+    res = _kjor(k, modell=_VenterModell(slo))
+    assert res["utfall"] == "avbrutt", res
+    assert res["grunn"] == "lease_tapt", res
+    #: Koden skiller de to tapsveiene: plattformen SA fra (4xx) versus
+    #: plattformen svarte ikke (5xx/transport). Driftsloggen trenger
+    #: forskjellen — den ene er et eierskifte, den andre en nedetid.
+    assert res["lease_tapt"] == "forny_utilgjengelig", res
+    assert k.kvitteringer[0]["feilkode"] == "lease_tapt"
+    assert "/v1/artefakt" not in k.stier
+    # Pulsen ga seg da terskelen var nådd, den fortsatte ikke å banke.
+    assert len(forsok) == controller.FORNY_TAPT_ETTER, forsok
+
+
+def test_stumme_pulser_nullstilles_av_en_bekreftet_fornyelse(monkeypatch):
+    """Terskelen teller PÅFØLGENDE taushet, ikke taushet totalt.
+
+    Uten nullstillingen ville porten over vært en ny skade: to
+    forbigående blip timer fra hverandre — en 503 under en deploy, et
+    tapt svar under en nettverkshikke — ville avbrutt en evaluering som
+    hele tiden hadde gyldig lease. Terskelen er avledet av forholdet
+    mellom `FORNY_LEASE_S` og `FORNY_INTERVALL_S` nettopp fordi den skal
+    treffe der leasen FAKTISK er brukt opp.
+
+    Kontroll: fjern `stumme = 0` på 2xx-grenen, så feller denne."""
+    import threading
+
+    from modules.m57_ats import controller
+
+    assert controller.FORNY_TAPT_ETTER >= 2, (
+        "med terskel 1 finnes ingen nullstilling å bevise — leasen tåler"
+        " da ikke én eneste stum puls, og det er et annet vedtak enn det"
+        " denne porten dekker")
+    monkeypatch.setattr(controller, "FORNY_INTERVALL_S", 0.01)
+    #: Én stum puls FÆRRE enn terskelen, så en bekreftet fornyelse —
+    #: gjentatt. Både 5xx og tapt transport er med: begge er «stum».
+    runde = ["transport"] + [503] * (controller.FORNY_TAPT_ETTER - 2) + [200]
+    plan = runde * 3
+    sett = []
+    ferdig = threading.Event()
+
+    class _K:
+        def post(self, sti, json=None, headers=None):
+            assert sti == "/v1/oppdrag/forny", sti
+            steg = plan[len(sett)] if len(sett) < len(plan) else 200
+            sett.append(steg)
+            if len(sett) >= len(plan):
+                ferdig.set()
+            if steg == "transport":
+                raise ConnectionError("intet svar")
+            return _Svar(steg, {})
+
+    with controller._Heartbeat(_K(), {}, {"oppdrag_id": 1,
+                                          "owner_claim_id": "c" * 22,
+                                          "owner_generation": 1}) as puls:
+        assert ferdig.wait(10), f"pulsen kom aldri gjennom planen: {sett}"
+    assert puls.tapt is None, (puls.tapt, sett)

@@ -37,6 +37,13 @@ LEVERINGSPAUSE_S = 5.0
 #: puste mister autoriteten raskt (063s egen doktrine).
 FORNY_INTERVALL_S = 240.0
 FORNY_LEASE_S = 600
+#: Hvor mange PÅFØLGENDE stumme fornyelser (5xx/transport) som får passere
+#: før autoriteten regnes som tapt. AVLEDET, ikke valgt: etter k stumme
+#: pulser er det gått `k * FORNY_INTERVALL_S` siden siste bekreftede
+#: fornyelse, og leasen varer `FORNY_LEASE_S`. Er neste puls uansett
+#: utenfor det vinduet, finnes det ingen lease igjen å redde — da er det
+#: å fortsette bare arbeid uten autoritet.
+FORNY_TAPT_ETTER = int(FORNY_LEASE_S // FORNY_INTERVALL_S)
 #: Margin reservert til rapportbygging + levering + kvittering.
 AVSLUTNINGSMARGIN_S = 120.0
 #: `lever` kjøres TO ganger i en avslutning: opplastingen og kvitteringen.
@@ -267,7 +274,17 @@ class _Heartbeat:
     betyr at autoriteten er tapt — tråden stopper og taper-koden står
     igjen til utfallsrapporten; selve leveringsforsøket avgjøres uansett
     av plattformens egne porter (ærlig avvisning der, aldri gjetting
-    her)."""
+    her).
+
+    TAUSHET ER OGSÅ TAP (Cursor P2, runde 2): en fornyelse som aldri får
+    svar — 5xx eller transportfeil — sier ingenting om hvem som eier
+    oppdraget, men leasen løper ut like fullt. Etter `FORNY_TAPT_ETTER`
+    påfølgende stumme pulser er det ingen lease igjen å fornye, og
+    tråden melder tap på samme måte som ved 4xx. Uten det fortsatte
+    evalueringen til ende på en død lease: persondata og regnekraft
+    brukt på et oppdrag plattformen alt kunne ha gitt til noen andre —
+    nøyaktig kostnaden fristsjekken og kapabilitetssjekken finnes for å
+    slippe."""
 
     def __init__(self, klient, hode, claim):
         self._klient = klient
@@ -290,14 +307,24 @@ class _Heartbeat:
         self._traad.join(timeout=http_frist_s() * 2 + 1)
 
     def _lopp(self):
+        stumme = 0                      # påfølgende pulser uten svar
         while not self._stopp.wait(FORNY_INTERVALL_S):
             try:
                 r = self._klient.post("/v1/oppdrag/forny",
                                       json=self._kropp,
                                       headers=self._hode)
             except Exception:                       # noqa: BLE001
-                continue                # transport: neste puls prøver igjen
+                r = None                            # transport: intet svar
+            if r is None or r.status_code >= 500:
+                stumme += 1
+                if stumme >= FORNY_TAPT_ETTER:
+                    # Leasen fra siste bekreftede fornyelse er brukt opp;
+                    # neste puls ville uansett vært utenfor vinduet.
+                    self.tapt = "forny_utilgjengelig"
+                    return
+                continue                # ennå innenfor: neste puls prøver
             if 200 <= r.status_code < 300:
+                stumme = 0              # leasen er bekreftet fornyet
                 try:
                     opp = r.json().get("opplasting")
                 except ValueError:
