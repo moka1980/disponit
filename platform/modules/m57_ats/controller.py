@@ -33,6 +33,15 @@ FORNY_LEASE_S = 600
 #: Margin reservert til rapportbygging + levering + kvittering.
 AVSLUTNINGSMARGIN_S = 120.0
 
+#: Kroppsstatusene som betyr at plattformen FAKTISK skiftet status på
+#: oppdraget — de `/v1/oppdrag/kvittering` gir sammen med 2xx.
+#: `idempotent` er med fordi en RETRY av en kvittering som allerede
+#: avsluttet oppdraget er den dokumenterte suksessveien, ikke et avvik.
+#: Endepunktet er plattformens felles kvitteringsvei, delt med m56 —
+#: ordene er derfor de samme (`api.app`: `status: "utfort"|"feilet"` ved
+#: statusskifte, `idempotent` ved gjenkjent gjentakelse).
+_STATUSSKIFTE = ("utfort", "feilet", "idempotent")
+
 
 def http_frist_s(margin_s: float = AVSLUTNINGSMARGIN_S) -> float:
     """Transportfristen per kall, avledet av avslutningsbudsjettet delt
@@ -73,7 +82,27 @@ def _vindu_apent(raa: object) -> bool:
 
 
 def _kvittert(rk) -> bool:
-    return 200 <= getattr(rk, "status_code", 0) < 300
+    """Skiftet plattformen status på oppdraget?
+
+    2xx alene er IKKE nok (m56s Codex P1, speilet). Fullføres kjøringen
+    etter `utforelsesfrist` men før evidensfristen, svarer
+    `/v1/oppdrag/kvittering` 202 med `status:
+    "lagret_uten_statusendring"`: evidensen bevares, og det er HELE det
+    som skjedde — oppdraget står bevisst ufullført hos plattformen. Å
+    lese den 202-en som en kvittering ga `utfall: "utfort"` for et
+    oppdrag plattformen selv regner som uferdig, og planleggeren som tror
+    på modulens ord slutter da å følge opp noe som aldri ble avsluttet.
+
+    En kropp vi ikke kan lese (ikke JSON, ikke et objekt) er heller ingen
+    bekreftelse: da vet vi ikke hva som skjedde, og «vet ikke» skal
+    behandles som uferdig — fail-closed, aldri ferdig."""
+    if not 200 <= getattr(rk, "status_code", 0) < 300:
+        return False
+    try:
+        kropp = rk.json()
+    except (ValueError, TypeError):
+        return False
+    return isinstance(kropp, dict) and kropp.get("status") in _STATUSSKIFTE
 
 
 def _feilutfall(rk, grunn: str, **ekstra) -> dict:

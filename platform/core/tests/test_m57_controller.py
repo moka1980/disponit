@@ -88,6 +88,148 @@ def _registrer_rapporttypen(m):
     m.commit()
 
 
+# --------------------------------------------------------------------------
+# Stubklienten (m56s `_Stubklient`-form, speilet): hele kjeden — claim →
+# resolver → heartbeat → artefakt → kvittering — uten Postgres, med
+# valgbar status i hvert ledd. Testene under leser `stier` for å bevise
+# hva som IKKE skjedde.
+# --------------------------------------------------------------------------
+
+class _Svar:
+    def __init__(self, status, kropp=None, content=None):
+        self.status_code, self._kropp = status, kropp
+        self.content = content
+
+    def json(self):
+        if self._kropp is None:
+            raise ValueError("ikke JSON")
+        return self._kropp
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise AssertionError(f"uventet {self.status_code}")
+
+
+def _payload(**endringer):
+    return {"stillingsprofil_ref": "p@1",
+            "stillingsprofil": {"profil_id": "p", "versjon": 1,
+                                "navn": "N",
+                                "krav": [{"kravnavn": "drift", "vekt": 3}]},
+            "antall_soknader": 1, "omfang": "bunt", **endringer}
+
+
+class _Stubklient:
+    """Kvitteringskroppen speiler det EKTE endepunktet (`api.app`): 200
+    bærer `status: "utfort"|"feilet"` — statusskiftet skjedde — mens sen
+    evidens gir 202 med `lagret_uten_statusendring`. Kroppen er ikke pynt
+    her: controlleren leser den nettopp for å skille de to."""
+
+    def __init__(self, kvitteringsstatus=200, *, opplastingsstatus=200,
+                 kvitteringskropp=..., payload=..., opplasting=...,
+                 buntstatus=200, frist_om_s=30 * 60, forny=None):
+        from datetime import datetime, timedelta, timezone
+        naa = datetime.now(timezone.utc)
+        self.utforelsesfrist = (
+            None if frist_om_s is None
+            else (naa + timedelta(seconds=frist_om_s)).isoformat())
+        self.kvittering_utloper = self.utforelsesfrist
+        self.kvitteringsstatus = kvitteringsstatus
+        self.opplastingsstatus = opplastingsstatus
+        self.kvitteringskropp = kvitteringskropp
+        self.payload = _payload() if payload is ... else payload
+        self.opplasting = ({"jti": "kap",
+                            "utloper": self.utforelsesfrist}
+                           if opplasting is ... else opplasting)
+        self.buntstatus = buntstatus
+        #: `/v1/oppdrag/forny`-svaret pulsen får, eller None for «aldri
+        #: spurt» (intervallet er langt nok til at den ikke rekker det).
+        self.forny = forny
+        self.kvitteringer = []
+        self.stier = []
+
+    def _kvitteringssvar(self, sendt):
+        if self.kvitteringskropp is not ...:
+            return _Svar(self.kvitteringsstatus, self.kvitteringskropp)
+        if self.kvitteringsstatus == 200:
+            return _Svar(200, {"status": sendt.get("resultat"),
+                               "oppdrag_id": 1})
+        return _Svar(self.kvitteringsstatus, {})
+
+    def post(self, sti, json=None, headers=None):
+        self.stier.append(sti)
+        if sti == "/v1/oppdrag/claim":
+            return _Svar(200, {
+                "oppdrag_id": 1, "tenant": TENANT, "kvittering_jti": "j",
+                "repair_operation_id": "r", "owner_claim_id": "o" * 22,
+                "owner_generation": 0,
+                "utforelsesfrist": self.utforelsesfrist,
+                "kvittering_utloper": self.kvittering_utloper,
+                "payload": self.payload,
+                "opplasting": self.opplasting})
+        if sti.startswith("/v1/inndata/hent-for-oppdrag/"):
+            if self.buntstatus != 200:
+                return _Svar(self.buntstatus, {"feil": "x"})
+            return _Svar(200, content=_buntbytes())
+        if sti == "/v1/oppdrag/forny":
+            return self.forny
+        if sti == "/v1/artefakt":
+            if self.opplastingsstatus != 200:
+                return _Svar(self.opplastingsstatus, {})
+            return _Svar(200, {"artefakt_id": "a-1",
+                               "klartekst_sha256": "b" * 64})
+        assert sti == "/v1/oppdrag/kvittering", sti
+        self.kvitteringer.append(json)
+        return self._kvitteringssvar(json or {})
+
+
+def _kjor(klient):
+    from modules.m57_ats import controller
+    return controller.kjor_en(klient, "tk", _Modell(), _Uttrekker(),
+                              _MAALINGER, lambda k: k)
+
+
+def test_avvist_kvittering_er_ikke_utfort(monkeypatch):
+    """m56s Codex P1, speilet: 409 (fencing, hashavvik, avvist
+    promotering) eller 5xx betyr at oppdraget står IGJEN uferdig hos
+    plattformen. Meldte controlleren `utfort` uansett, ville en
+    planlegger tro at kjøringen var i havn — modulens ord mot
+    plattformens tilstand."""
+    from modules.m57_ats import controller
+
+    monkeypatch.setattr(controller, "_sov", lambda s: None)
+    for status in (409, 500):
+        res = _kjor(_Stubklient(status))
+        assert res["utfall"] == "ukvittert", res
+        assert res["kvittering_status"] == status
+        # Artefaktet ER lastet opp — utfallet skjuler ikke det, det nekter
+        # bare å kalle kjøringen ferdig.
+        assert res["artefakt_id"] == "a-1"
+    ok = _kjor(_Stubklient(200))
+    assert ok["utfall"] == "utfort", ok
+
+
+def test_sen_evidens_202_er_ikke_utfort():
+    """m56s Codex P1, speilet: `2xx` alene er ikke bevis for at oppdraget
+    ble ferdig. Fullføres kjøringen etter `utforelsesfrist` men før
+    evidensfristen, svarer endepunktet 202 med
+    `lagret_uten_statusendring` — evidensen bevares, `oppdrag.status`
+    står urørt."""
+    k = _Stubklient(202, kvitteringskropp={
+        "status": "lagret_uten_statusendring", "oppdrag_id": 1})
+    res = _kjor(k)
+    assert res["utfall"] == "ukvittert", res
+    assert res["kvittering_status"] == 202
+
+
+def test_uleselig_kvitteringskropp_er_ikke_utfort():
+    """Fail-closed: 200 med en kropp vi ikke kan lese sier ingenting om
+    hva plattformen gjorde, og «vet ikke» er ikke «ferdig»."""
+    assert _kjor(_Stubklient(200, kvitteringskropp=None))["utfall"] == \
+        "ukvittert"
+    assert _kjor(_Stubklient(200, kvitteringskropp=["utfort"]))["utfall"] \
+        == "ukvittert"
+
+
 @pg
 def test_controlleren_hele_veien(migrator, miljo, inndata_rot,
                                  monkeypatch):
