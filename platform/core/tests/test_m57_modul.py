@@ -2327,8 +2327,12 @@ def test_padda_feltverdi_er_ingen_deklarasjon(tmp_path):
 
 def test_manifestfeltenes_lukkede_form(tmp_path):
     """Feltdeklarasjonen er like LUKKET som resten av manifestet: ukjent
-    feltnavn, feil typer, tomme og overfylte lister, og for lange
-    verdier er alle `manifest_feilformet`."""
+    feltnavn, feil typer, tomme og overfylte lister, for lange verdier og
+    verdier som ikke er sin egen skrivemåte (padding, Cf/Cc) er alle
+    `manifest_feilformet`.
+
+    Cursor P2: enumerasjonen dekket alt UNNTATT den formen P1 levde i —
+    uten negativen her regresserer `verdiform_lukket` stille."""
     import json as _json
 
     def _sjekk(felter, undermappe):
@@ -2351,6 +2355,18 @@ def test_manifestfeltenes_lukkede_form(tmp_path):
         {"navn": ["   "]},
         {"navn": [7]},
         {"navn": ["x" * (parsing.MAKS_FELTVERDI_TEGN + 1)]},
+        # Verdien er sin egen skrivemåte (Cursor P1/P2): en hale, en
+        # ledende blank eller et usynlig Cf/Cc-tegn gjør maskeringen og
+        # porten enige om noe som ikke står i dokumentet.
+        {"navn": [" Kari"]},
+        {"navn": ["Kari "]},
+        {"navn": ["Kari\u200b"]},
+        {"navn": ["Kari\u202e"]},
+        {"navn": ["Kari\nTestdal"]},
+        # Én ugyldig verdi feller hele deklarasjonen, også med gyldige
+        # naboer i samme liste og i et annet felt.
+        {"navn": ["Kari", "Testdal "]},
+        {"navn": ["Kari"], "adresse": ["Gata 1\u200b"]},
     )):
         _sjekk(felter, f"f{i}")
 
