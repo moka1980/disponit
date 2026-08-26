@@ -2100,6 +2100,75 @@ test("Profiler: en editor som åpnes midt i en bestilling fødes frosset",
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
 });
 
+test("Profiler: en profillagring i lufta fryser bestillingskroppen (P2-2)",
+  async () => {
+  // SPEILET AV «profilen er låst mens kroppen er underveis» (Cursor P2-2).
+  // Testene dekket bare den ene retningen — bestilling ⇒ profil/prosess/
+  // «Lagre» frosset. Motsatt vei sto umålt, og der var låsen halv: en
+  // profillagring tok `laas.frys` alene, som eier `tegn`-utløserne, mens
+  // bestillingens KROPP — profil, antall, frist — eies av seksjonens egen
+  // `frys`. Skjemaet fikk `aria-busy` gjennom `send` og tok input likevel,
+  // og profilvelgerens `change`-vakt rullet tilbake til `frossetProfil`,
+  // som ingen hadde satt: valget ble TØMT i stedet for bevart.
+  //
+  // MUTASJONEN SOM DREPER DENNE: sett `laas.frys` tilbake alene i
+  // profil-submit (begge stedene, `finally` inkludert).
+  KALL = [];
+  let slippProfil;
+  const profilPost = new Promise((r) => {
+    slippProfil = () => r({ profil_id: "prof-1", versjon: 3 });
+  });
+  SVAR = (sti, opts = {}) => {
+    if (sti === "/v1/rekruttering/prosesser") return prosess();
+    if (sti === "/v1/rekruttering/stillingsprofiler") {
+      return (opts.method || "GET") === "POST" ? profilPost : profiler();
+    }
+    return undefined;
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const profilDel =
+    hoved.querySelector("section[aria-labelledby=profil-tittel]");
+  const skjema = hoved
+    .querySelector("section[aria-labelledby=bestill-tittel] form");
+  const profilVelger = skjema.querySelector("#bestill-profil");
+  const antall = skjema.querySelector("#bestill-antall");
+  const frist = skjema.querySelector("#bestill-frist");
+  assert.equal(profilVelger.value, "prof-1@2", "testen antar et valgt utgangspunkt");
+  // Brukeren lagrer en ny versjon; POST-en henger.
+  [...profilDel.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.profiler.rediger")).click();
+  const profilSkjema = profilDel.querySelector("form");
+  profilSkjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() => KALL.some((k) => k.metode === "POST"
+    && k.sti === "/v1/rekruttering/stillingsprofiler"), 20),
+    "profilversjonen ble aldri sendt");
+  // Hele bestillingen er frosset — ikke bare utløserne den deler med `laas`.
+  assert.equal(profilVelger.disabled, true,
+    "profilvelgeren tok input mens en profilversjon ble skrevet");
+  assert.equal(antall.readOnly, true, "antallet sto åpent under profillagringen");
+  assert.equal(frist.readOnly, true, "slettefristen sto åpen under profillagringen");
+  assert.equal(skjema.getAttribute("aria-busy"), "true");
+  assert.equal(skjema.querySelector("button[type=submit]").disabled, true);
+  // ... og et bytte som slipper gjennom `disabled` BEVARER valget.
+  // Uten kroppsfrysen er `frossetProfil` `null` her, og velgeren tømmes.
+  profilVelger.value = "";
+  profilVelger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.equal(profilVelger.value, "prof-1@2",
+    "valget ble tømt i stedet for rullet tilbake til profilen kroppen bæres av");
+  // Låsen løftes når versjonen er skrevet — på de samme kontrollene.
+  slippProfil();
+  assert.ok(await vent(() => !profilVelger.disabled, 40),
+    "kroppen ble stående frosset etter profillagringen");
+  assert.equal(antall.readOnly, false);
+  assert.equal(frist.readOnly, false);
+  assert.equal(skjema.hasAttribute("aria-busy"), false);
+  const brudd = await alvorligeBrudd(hoved);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
 test("Profiler: listen viser navn, versjon og krav — og axe rent", async () => {
   const hoved = await tegnetMedProfiler();
   const seksjon = hoved.querySelector("section[aria-labelledby=profil-tittel]");
