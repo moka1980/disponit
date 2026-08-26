@@ -1935,7 +1935,7 @@ def test_fremdriften_teller_hvert_medlem_ikke_bare_sjekkpunktene(tmp_path):
 
     with pytest.raises(kjoring.Kjoringsfeil) as e:
         kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
-                          kandidatfelter_for=lambda m: {"navn": ["N"]},
+                          kandidatfelter_for=lambda m: {"navn": ["Nordmann"]},
                           tekst_for=_uttrekk, biasmaalinger=_MAALINGER, antall_soknader=4)
     assert e.value.kode == "tekstuttrekk_feilet"
     assert e.value.fremdrift["filer_lest"] == 3, (
@@ -1969,7 +1969,7 @@ def test_lesefeil_paa_lageret_tilskrives_ikke_modellen(tmp_path, monkeypatch):
     arkiv = _bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>")])
     with pytest.raises(kjoring.Kjoringsfeil) as e:
         kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
-                          kandidatfelter_for=lambda m: {"navn": ["N"]},
+                          kandidatfelter_for=lambda m: {"navn": ["Nordmann"]},
                           tekst_for=lambda m, d: d.decode("utf-8"),
                           biasmaalinger=_MAALINGER, antall_soknader=1)
     assert e.value.kode == "infrastrukturfeil", (
@@ -1990,7 +1990,7 @@ def test_lesefeil_paa_lageret_tilskrives_ikke_modellen(tmp_path, monkeypatch):
                         _strom_uten_errno)
     with pytest.raises(kjoring.Kjoringsfeil) as e:
         kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
-                          kandidatfelter_for=lambda m: {"navn": ["N"]},
+                          kandidatfelter_for=lambda m: {"navn": ["Nordmann"]},
                           tekst_for=lambda m, d: d.decode("utf-8"),
                           biasmaalinger=_MAALINGER, antall_soknader=1)
     assert e.value.kode == "modellfeil"
@@ -2027,7 +2027,7 @@ def test_lesefeil_under_deklarasjonen_er_ogsaa_drift(tmp_path, monkeypatch):
     arkiv = _bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>")])
     with pytest.raises(kjoring.Kjoringsfeil) as e:
         kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
-                          kandidatfelter_for=lambda m: {"navn": ["N"]},
+                          kandidatfelter_for=lambda m: {"navn": ["Nordmann"]},
                           tekst_for=lambda m, d: d.decode("utf-8"),
                           biasmaalinger=_MAALINGER, antall_soknader=1)
     assert e.value.kode == "infrastrukturfeil", (
@@ -2064,7 +2064,7 @@ def test_modellens_egen_nettverksfeil_er_ikke_en_driftssak(tmp_path):
     with pytest.raises(kjoring.Kjoringsfeil) as e:
         kjoring.kjor_bunt(arkiv, _ModellSomMisterForbindelsen(),
                           vekter={"drift": 3},
-                          kandidatfelter_for=lambda m: {"navn": ["N"]},
+                          kandidatfelter_for=lambda m: {"navn": ["Nordmann"]},
                           tekst_for=lambda m, d: d.decode("utf-8"),
                           biasmaalinger=_MAALINGER, antall_soknader=1)
     assert e.value.kode == "modellfeil", (
@@ -2179,7 +2179,7 @@ def test_manifestet_er_deklarasjonen_og_binder_toveis(tmp_path):
     def _kjor(arkiv, antall=1):
         return kjoring.kjor_bunt(
             arkiv, _Modell(), vekter={"drift": 3},
-            kandidatfelter_for=lambda m: {"navn": ["N"]},
+            kandidatfelter_for=lambda m: {"navn": ["Nordmann"]},
             tekst_for=lambda m, d: d.decode("utf-8"),
             biasmaalinger=_MAALINGER, antall_soknader=antall)
 
@@ -2429,6 +2429,65 @@ def test_feltgrensene_staar_i_begge_doerer(tmp_path):
         "Kari kan drift.",
         {"navn": ["Kari"] + ["y"] * (blinding.MAKS_FELTVERDIER - 1)})
     assert avmaskering["[NAVN-1]"] == "Kari" and "Kari" not in blindet
+
+
+def test_feltverdien_er_ikke_sin_egen_maske(tmp_path):
+    """Cursor P2: en deklarasjon som er DELSTRENG av tokenalfabetet
+    feller porten på en tekst der verdien faktisk er borte.
+
+    Etter erstatning står `[NAVN-1]` / `[ALDER-1]` / … i modellinputen,
+    og `krev_blindet` søker klarteksten i HELE strengen — tokenene
+    inkludert. `"NA"` treffer `NAVN`, `"1"` treffer halen, `"KO"`
+    treffer `KONTAKT`: maskeringen lyktes, og porten sier likevel
+    `maskert_felt_i_modellinput`. PR-en gjør kundens `felter` til primær
+    kilde, så dette er kontraktflate, ikke bare injisert testkode.
+
+    MUTASJONEN SOM DREPER DENNE: fjern tokensonden i `verdiform_lukket`
+    — da slipper kollisjonene inn i `blind`, og koden blir
+    `maskert_felt_i_modellinput` i stedet for et avvist inndataavvik."""
+    import json as _json
+
+    from modules.m57_ats import kjoring
+
+    # MEKANISMEN, målt på porten selv: teksten «NA kan drift.» ER blindet
+    # — verdien står ikke igjen — men `krev_blindet` finner den i sitt
+    # eget token. Det er den vakuøse felleren sonden fjerner grunnlaget
+    # for, og den er ekte uansett hvor deklarasjonen kom fra.
+    with pytest.raises(blinding.Blindingsfeil) as e:
+        blinding.krev_blindet("[NAVN-1] kan drift.", {"[NAVN-1]": "NA"})
+    assert e.value.kode == "maskert_felt_i_modellinput"
+
+    # Derfor er kollisjonen ingen lovlig deklarasjon — vi avviser den på
+    # vei inn, vi kanoniserer ikke. Ett tilfelle per akse: feltnavnet,
+    # nummerhalen, klammene.
+    for ugyldig in ({"navn": ["NA"]}, {"alder": ["1"]},
+                    {"kontakt": ["ko"]}, {"navn": ["[NAVN-1]"]}):
+        with pytest.raises(blinding.Blindingsfeil) as e:
+            blinding.blind("NA kan drift, 1 år, ko.", ugyldig)
+        assert e.value.kode == "ugyldig_maskeringsform", ugyldig
+
+    # Deklarasjonsdøra feller den samme verdien som manifestfeil, og
+    # modellen ser aldri kandidaten.
+    cv = b"<p>NA kan drift, kari@eksempel.no</p>"
+    arkiv = _bunt(tmp_path, [("k1/cv.html", cv)],
+                  manifest=_json.dumps({"soknader": [
+                      {"kandidat_id": "k1", "filer": ["k1/cv.html"],
+                       "felter": {"navn": ["NA"]}}]}))
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(
+            arkiv, modell, vekter={"drift": 3},
+            tekst_for=lambda m, d: d.decode("utf-8"),
+            biasmaalinger=_MAALINGER, antall_soknader=1)
+    assert e.value.kode == "manifest_feilformet"
+    assert not modell.sett
+
+    # Positiv kontroll: en verdi som IKKE er sin egen maske går som før,
+    # og tokenet står i modellinputen.
+    blindet, avmaskering = blinding.blind(
+        "Kari kan drift.", {"navn": ["Kari"]})
+    assert blindet == "[NAVN-1] kan drift." and "Kari" not in blindet
+    blinding.krev_blindet(blindet, avmaskering)
 
 
 def test_manifestets_lukkede_form_avviser_alt_annet(tmp_path):
@@ -2735,7 +2794,7 @@ def test_manifest_som_forsvant_mellom_lesningene_er_kodet(tmp_path,
     with pytest.raises(kjoring.Kjoringsfeil) as e:
         kjoring.kjor_bunt(
             arkiv, modell, vekter={"drift": 3},
-            kandidatfelter_for=lambda m: {"navn": ["N"]},
+            kandidatfelter_for=lambda m: {"navn": ["Nordmann"]},
             tekst_for=lambda m, d: d.decode("utf-8"),
             biasmaalinger=_MAALINGER, antall_soknader=1)
     assert e.value.kode == "manifest_mangler", e.value.kode
@@ -2787,7 +2846,7 @@ def test_medlem_som_forsvant_mellom_lesningene_er_kodet(tmp_path,
     with pytest.raises(kjoring.Kjoringsfeil) as e:
         kjoring.kjor_bunt(
             arkiv, modell, vekter={"drift": 3},
-            kandidatfelter_for=lambda m: {"navn": ["N"]},
+            kandidatfelter_for=lambda m: {"navn": ["Nordmann"]},
             tekst_for=lambda m, d: d.decode("utf-8"),
             biasmaalinger=_MAALINGER, antall_soknader=1)
     assert e.value.kode == "manifest_medlem_mangler", e.value.kode
@@ -2806,7 +2865,7 @@ def test_manifestlesingen_er_kodet_utfall_ikke_modellfeil(tmp_path):
     def _kjor(arkiv, modell):
         return kjoring.kjor_bunt(
             arkiv, modell, vekter={"drift": 3},
-            kandidatfelter_for=lambda m: {"navn": ["N"]},
+            kandidatfelter_for=lambda m: {"navn": ["Nordmann"]},
             tekst_for=lambda m, d: d.decode("utf-8"),
             biasmaalinger=_MAALINGER, antall_soknader=1)
 
@@ -2864,7 +2923,7 @@ def test_umatchet_medlem_i_strommen_er_kodet_ikke_modellfeil(tmp_path,
     def _kjor(arkiv, modell):
         return kjoring.kjor_bunt(
             arkiv, modell, vekter={"drift": 3},
-            kandidatfelter_for=lambda m: {"navn": ["N"]},
+            kandidatfelter_for=lambda m: {"navn": ["Nordmann"]},
             tekst_for=lambda m, d: d.decode("utf-8"),
             biasmaalinger=_MAALINGER, antall_soknader=1)
 
@@ -2913,7 +2972,7 @@ def test_deklarert_medlem_som_aldri_strommes_stopper_kjoringen(tmp_path,
     def _kjor(arkiv, modell):
         return kjoring.kjor_bunt(
             arkiv, modell, vekter={"drift": 3},
-            kandidatfelter_for=lambda m: {"navn": ["N"]},
+            kandidatfelter_for=lambda m: {"navn": ["Nordmann"]},
             tekst_for=lambda m, d: d.decode("utf-8"),
             biasmaalinger=_MAALINGER, antall_soknader=1)
 
@@ -2968,7 +3027,7 @@ def test_bunt_uten_kandidater_er_kodet_feil_ikke_tomt_resultat(tmp_path,
 
     def _kjor(arkiv, modell):
         return kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
-                                 kandidatfelter_for=lambda m: {"navn": ["N"]},
+                                 kandidatfelter_for=lambda m: {"navn": ["Nordmann"]},
                                  tekst_for=lambda m, d: d.decode("utf-8"),
                                  biasmaalinger=_MAALINGER, antall_soknader=1)
 

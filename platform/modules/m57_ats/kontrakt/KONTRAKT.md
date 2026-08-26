@@ -40,6 +40,12 @@ Modulen er KUNDE av plattformen, aldri omvendt (m56-formen):
   200 tegn måles på BEGGE veier inn, ikke bare i manifestlesingen — én
   definisjon, to dører, og døra som måler minst er den som gjelder.
 
+  Verdien kan heller ikke være SIN EGEN MASKE: en verdi som er delstreng
+  av et token maskeringen produserer (`[NAVN-1]`, `[ALDER-1]`, … — altså
+  `"NA"`, `"KO"`, `"1"`) er `manifest_feilformet`. Port 16 søker
+  klarteksten i hele modellinputen, tokenene inkludert, så en slik
+  deklarasjon felles på en tekst der verdien faktisk er borte.
+
   `kandidat_id` er ASCII og LUKKET:
   `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` — ikke-tom, maks 64 tegn, starter
   alfanumerisk. Alt annet er `manifest_feilformet`. Kanonen er en
