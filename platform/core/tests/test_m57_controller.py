@@ -1238,3 +1238,127 @@ def test_stumme_pulser_nullstilles_av_en_bekreftet_fornyelse(monkeypatch):
                                           "owner_generation": 1}) as puls:
         assert ferdig.wait(10), f"pulsen kom aldri gjennom planen: {sett}"
     assert puls.tapt is None, (puls.tapt, sett)
+
+
+def _om(sekunder):
+    from datetime import datetime, timedelta, timezone
+    return (datetime.now(timezone.utc)
+            + timedelta(seconds=sekunder)).isoformat()
+
+
+def test_serverens_horisont_slaar_den_avledede_telleren(monkeypatch):
+    """Cursor P2, runde 5: telleren felte leasen FØR den var brukt opp.
+
+    `FORNY_TAPT_ETTER` er 600 // 240 = 2, så to stumme pulser (480 s)
+    erklærte tap mens grant-vinduet ennå hadde 120 s igjen. Verre er
+    forutsetningen under tallet: 063 skriver `owner_lease_utloper` med
+    `greatest(gammel, nå + lease_s)`, og på et claim der 037 alt strakk
+    leasen til `utforelsesfrist`, er fornyelsen en no-op og horisonten
+    ligger TIMER fram — akkurat tilfellet #165 finnes for. Et avledet
+    tall kan ikke vite det; serverens eget felt kan.
+
+    Porten: én bekreftet fornyelse som oppgir en horisont langt fram,
+    deretter mer taushet enn den gamle terskelen tålte. Autoriteten
+    lever, evalueringen får kjøre ferdig, og oppdraget blir UTFØRT.
+
+    Kontroll: sett `_horisont` tilbake til en teller — altså la
+    `_utlopt` returnere `stumme >= FORNY_TAPT_ETTER` uansett — så
+    kvitterer denne `lease_tapt` i stedet."""
+    import threading
+
+    from modules.m57_ats import controller
+
+    monkeypatch.setattr(controller, "FORNY_INTERVALL_S", 0.01)
+    slo = threading.Event()
+    forsok = []
+
+    def forny():
+        forsok.append(1)
+        if len(forsok) == 1:
+            #: Bekreftet fornyelse: horisonten er serverens, og den
+            #: rekker langt utover det telleren ville tålt.
+            return _Svar(200, {"owner_lease_utloper": _om(3600)})
+        #: Godt forbi den gamle terskelen — leasen lever like fullt.
+        if len(forsok) >= controller.FORNY_TAPT_ETTER + 3:
+            slo.set()           # slipper evalueringen fram til utgangen
+        return _Svar(503, {})
+
+    k = _Stubklient(forny=forny)
+    res = _kjor(k, modell=_VenterModell(slo))
+    assert res["utfall"] == "utfort", res
+    assert res.get("lease_tapt") is None, res
+    assert "/v1/artefakt" in k.stier
+
+
+def test_passert_horisont_taper_leasen_paa_forste_stumme_puls(monkeypatch):
+    """Den andre halvdelen av samme dom: horisonten skal ikke bare være
+    romsligere enn telleren, den skal være SANN begge veier.
+
+    Oppgir serveren en horisont som alt er passert, er det ingen lease
+    igjen å redde — og da venter pulsen ikke på en teller som ennå ikke
+    har talt ferdig. Uten dette ville fiksen over vært en ren
+    oppmykning: fail-open der porten skal felle.
+
+    Kontroll: bytt `datetime.now(timezone.utc) >= self._horisont` mot
+    `stumme >= FORNY_TAPT_ETTER`, så trengs det flere pulser og denne
+    feller på antallet."""
+    import threading
+
+    from modules.m57_ats import controller
+
+    assert controller.FORNY_TAPT_ETTER >= 2, (
+        "med terskel 1 skiller ikke denne porten horisonten fra"
+        " telleren — begge ville felt på første stumme puls")
+    monkeypatch.setattr(controller, "FORNY_INTERVALL_S", 0.01)
+    stoppet = threading.Event()
+    forsok = []
+
+    def forny():
+        forsok.append(1)
+        if len(forsok) == 1:
+            return _Svar(200, {"owner_lease_utloper": _om(-1)})
+        stoppet.set()
+        return _Svar(503, {})
+
+    with controller._Heartbeat(_Stubklient(forny=forny), {},
+                               {"oppdrag_id": 1,
+                                "owner_claim_id": "c" * 22,
+                                "owner_generation": 1}) as puls:
+        assert stoppet.wait(10), "den stumme pulsen kom aldri"
+    assert puls.tapt == "forny_utilgjengelig", (puls.tapt, forsok)
+    #: ÉN stum puls holdt — telleren ville krevd `FORNY_TAPT_ETTER`.
+    assert len(forsok) == 2, forsok
+
+
+def test_uleselig_horisont_faller_tilbake_paa_telleren(monkeypatch):
+    """En `owner_lease_utloper` vi ikke kan lese — feilformet, eller uten
+    tidssone — er ingen horisont, og skal ikke late som den er det.
+
+    Fail-closed på samme måte som `_evalueringsfrist`: uten et lesbart
+    tidspunkt gjelder den avledede telleren, ikke et gjettet vindu."""
+    import threading
+
+    from modules.m57_ats import controller
+
+    monkeypatch.setattr(controller, "FORNY_INTERVALL_S", 0.01)
+    stoppet = threading.Event()
+    forsok = []
+
+    def forny():
+        forsok.append(1)
+        if len(forsok) == 1:
+            #: Uten UTC-offset: plattformen sender alltid sone, så dette
+            #: er et brudd — ikke noe å tolke.
+            return _Svar(200, {"owner_lease_utloper": "2099-01-01T00:00:00"})
+        if len(forsok) >= controller.FORNY_TAPT_ETTER + 1:
+            stoppet.set()
+        return _Svar(503, {})
+
+    with controller._Heartbeat(_Stubklient(forny=forny), {},
+                               {"oppdrag_id": 1,
+                                "owner_claim_id": "c" * 22,
+                                "owner_generation": 1}) as puls:
+        assert stoppet.wait(10), "pulsen kom aldri gjennom planen"
+    assert puls.tapt == "forny_utilgjengelig", (puls.tapt, forsok)
+    #: Telleren startet på nytt etter den bekreftede fornyelsen.
+    assert len(forsok) == 1 + controller.FORNY_TAPT_ETTER, forsok

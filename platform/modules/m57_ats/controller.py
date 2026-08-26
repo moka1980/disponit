@@ -14,6 +14,7 @@ import hashlib
 import tempfile
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import os
@@ -38,9 +39,12 @@ LEVERINGSPAUSE_S = 5.0
 FORNY_INTERVALL_S = 240.0
 FORNY_LEASE_S = 600
 #: Hvor mange PÅFØLGENDE stumme fornyelser (5xx/transport) som får passere
-#: før autoriteten regnes som tapt. AVLEDET, ikke valgt: etter k stumme
-#: pulser er det gått `k * FORNY_INTERVALL_S` siden siste bekreftede
-#: fornyelse, og leasen varer `FORNY_LEASE_S`. Er neste puls uansett
+#: før autoriteten regnes som tapt — men BARE før den første bekreftede
+#: fornyelsen. Etter den er horisonten serverens egen
+#: (`owner_lease_utloper`), ikke et avledet tall her; se `_Heartbeat._utlopt`.
+#: Avledningen står som den er for det ene vinduet den fortsatt gjelder:
+#: etter k stumme pulser er det gått `k * FORNY_INTERVALL_S` siden tråden
+#: startet, og et grant-vindu varer `FORNY_LEASE_S`. Er neste puls uansett
 #: utenfor det vinduet, finnes det ingen lease igjen å redde — da er det
 #: å fortsette bare arbeid uten autoritet.
 FORNY_TAPT_ETTER = int(FORNY_LEASE_S // FORNY_INTERVALL_S)
@@ -175,6 +179,20 @@ def _feilutfall(rk, grunn: str, **ekstra) -> dict:
             "kvittering_status": getattr(rk, "status_code", 0), **ekstra}
 
 
+def _tidspunkt(raa: object) -> datetime | None:
+    """Et ISO-tidspunkt fra plattformen, eller None om det ikke er lesbart.
+
+    En frist uten tidssone gir None: å gjette sonen er timer feil vei, og
+    plattformen sender alltid UTC-offset."""
+    if raa is None:
+        return None
+    try:
+        t = datetime.fromisoformat(str(raa))
+    except ValueError:
+        return None
+    return t if t.tzinfo is not None else None
+
+
 def _evalueringsfrist(claim: dict) -> int | None:
     """Sekundene evalueringen FAKTISK har på seg — eller None når claimet
     ikke bærer et lesbart vindu (m56s `_skannefrist`, speilet).
@@ -210,18 +228,14 @@ def _evalueringsfrist(claim: dict) -> int | None:
     `dom-klasse: kjoring-avbrudd-og-frist`."""
     if claim.get("utforelsesfrist") is None:
         return None
-    from datetime import datetime, timezone
     grenser = []
     for raa in (claim.get("utforelsesfrist"),
                 claim.get("kvittering_utloper"),
                 (claim.get("opplasting") or {}).get("utloper")):
         if raa is None:
             continue
-        try:
-            t = datetime.fromisoformat(str(raa))
-        except ValueError:
-            return None
-        if t.tzinfo is None:
+        t = _tidspunkt(raa)
+        if t is None:
             return None
         grenser.append(t)
     igjen = (min(grenser) - datetime.now(timezone.utc)).total_seconds()
@@ -285,13 +299,15 @@ class _Heartbeat:
 
     TAUSHET ER OGSÅ TAP (Cursor P2, runde 2): en fornyelse som aldri får
     svar — 5xx eller transportfeil — sier ingenting om hvem som eier
-    oppdraget, men leasen løper ut like fullt. Etter `FORNY_TAPT_ETTER`
-    påfølgende stumme pulser er det ingen lease igjen å fornye, og
-    tråden melder tap på samme måte som ved 4xx. Uten det fortsatte
-    evalueringen til ende på en død lease: persondata og regnekraft
-    brukt på et oppdrag plattformen alt kunne ha gitt til noen andre —
-    nøyaktig kostnaden fristsjekken og kapabilitetssjekken finnes for å
-    slippe."""
+    oppdraget, men leasen løper ut like fullt. Når det ikke er noen lease
+    igjen å fornye, melder tråden tap på samme måte som ved 4xx. Uten det
+    fortsatte evalueringen til ende på en død lease: persondata og
+    regnekraft brukt på et oppdrag plattformen alt kunne ha gitt til noen
+    andre — nøyaktig kostnaden fristsjekken og kapabilitetssjekken finnes
+    for å slippe.
+
+    NÅR leasen er ute er serverens svar, ikke vår aritmetikk (Cursor P2,
+    runde 5) — se `_utlopt`."""
 
     def __init__(self, klient, hode, claim):
         self._klient = klient
@@ -302,6 +318,10 @@ class _Heartbeat:
                        "lease_s": FORNY_LEASE_S}
         self._stopp = threading.Event()
         self._traad = threading.Thread(target=self._lopp, daemon=True)
+        #: Siste horisont SERVEREN har oppgitt (`owner_lease_utloper`).
+        #: None til første bekreftede fornyelse — claim-svaret bærer den
+        #: ikke.
+        self._horisont: datetime | None = None
         self.fersk_opplasting = None
         self.tapt: str | None = None
 
@@ -312,6 +332,33 @@ class _Heartbeat:
     def __exit__(self, *unntak):
         self._stopp.set()
         self._traad.join(timeout=http_frist_s() * 2 + 1)
+
+    def _utlopt(self, stumme: int) -> bool:
+        """Er autoriteten borte etter `stumme` påfølgende stumme pulser?
+
+        HORISONTEN ER SERVERENS, IKKE VÅR (Cursor P2, runde 5). Hver
+        bekreftede fornyelse svarer med `owner_lease_utloper`, og 063
+        skriver den som `least(tak, least(utforelsesfrist,
+        greatest(gammel, nå + lease_s)))`. Den er derfor ALDRI bare
+        «siste bekreftede fornyelse + `FORNY_LEASE_S`»: på et claim der
+        037 alt strakk leasen til `utforelsesfrist`, er fornyelsen en
+        no-op og horisonten ligger timer fram — nøyaktig tilfellet #165
+        finnes for. En avledet teller kan ikke vite det. Den gamle felte
+        leasen ett puls-vindu FØR den var brukt opp (to stumme pulser =
+        480 s mot et vindu på 600 s), og kastet en evaluering som
+        fortsatt hadde gyldig autoritet: falsk `lease_tapt`, full bunt
+        evaluert, rapporten kastet.
+
+        Før den FØRSTE bekreftede fornyelsen finnes ingen horisont fra
+        serveren — claim-svaret bærer ikke `owner_lease_utloper` — og da
+        gjelder telleren som før. Å regne den ut selv ville vært å speile
+        037s formel i klienten: en annen kilde til sannhet om det samme,
+        som driver fra hverandre ved neste migrasjon. Det hullet lukkes
+        der det bor (claim-svaret må bære feltet fornyelsen alt
+        returnerer), ikke med ny maskin her — K1, egen sak."""
+        if self._horisont is None:
+            return stumme >= FORNY_TAPT_ETTER
+        return datetime.now(timezone.utc) >= self._horisont
 
     def _lopp(self):
         stumme = 0                      # påfølgende pulser uten svar
@@ -324,18 +371,23 @@ class _Heartbeat:
                 r = None                            # transport: intet svar
             if r is None or r.status_code >= 500:
                 stumme += 1
-                if stumme >= FORNY_TAPT_ETTER:
-                    # Leasen fra siste bekreftede fornyelse er brukt opp;
-                    # neste puls ville uansett vært utenfor vinduet.
+                if self._utlopt(stumme):
+                    # Ingen lease igjen å fornye; å fortsette er arbeid
+                    # uten autoritet.
                     self.tapt = "forny_utilgjengelig"
                     return
                 continue                # ennå innenfor: neste puls prøver
             if 200 <= r.status_code < 300:
                 stumme = 0              # leasen er bekreftet fornyet
                 try:
-                    opp = r.json().get("opplasting")
+                    kropp = r.json()
                 except ValueError:
                     continue
+                #: Horisonten holdes til en NYERE lesning avløser den: et
+                #: 2xx uten feltet sier ikke at leasen ble kortere.
+                self._horisont = (_tidspunkt(kropp.get("owner_lease_utloper"))
+                                  or self._horisont)
+                opp = kropp.get("opplasting")
                 if opp:
                     self.fersk_opplasting = opp
             elif 400 <= r.status_code < 500:
