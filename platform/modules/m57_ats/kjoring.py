@@ -12,7 +12,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from . import blinding, evaluering, parsing
+from . import blinding
+from . import modell as modellklient
+from . import uttrekk, evaluering, parsing
 
 
 @dataclass(frozen=True)
@@ -459,6 +461,14 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
         # «modellfeil» og skjult koden det ble reist med.
         raise
     except parsing.Buntfeil as feil:
+        raise Kjoringsfeil(feil.kode, fremdrift) from feil
+    except uttrekk.Uttrekksfeil as feil:
+        # Uttrekket er FILENS/KONFIGURASJONENS feil, aldri modellens —
+        # samme misattribusjonsklasse som lagring/dekompresjon.
+        raise Kjoringsfeil(feil.kode, fremdrift) from feil
+    except modellklient.Modellfeil as feil:
+        # Transport mot modellserveren er DRIFT med egen kode — «modellen
+        # svarte galt» og «modellen var nede» er to ulike ord.
         raise Kjoringsfeil(feil.kode, fremdrift) from feil
     except evaluering.Evalueringsfeil as feil:
         raise Kjoringsfeil(feil.kode, fremdrift) from feil
