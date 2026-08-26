@@ -21,15 +21,37 @@ let KALL;
 let SVAR;
 globalThis.fetch = async (url, opts = {}) => {
   const sti = url.split("?")[0];
-  KALL.push({ sti, metode: opts.method || "GET",
-    kropp: opts.body ? JSON.parse(opts.body) : null,
+  let kropp = null;
+  if (opts.body) {
+    // Opplastingen sender RÅ bytes (ArrayBuffer) — de er ikke JSON og
+    // registreres som binær størrelse i stedet.
+    try { kropp = JSON.parse(opts.body); }
+    catch { kropp = { binaer: opts.body.byteLength || 0 }; }
+  }
+  KALL.push({ sti, metode: opts.method || "GET", kropp,
     hoder: opts.headers || {} });
-  const svar = (typeof SVAR === "function") ? SVAR(sti, opts) : SVAR[sti];
+  const raatt = (typeof SVAR === "function") ? SVAR(sti, opts) : SVAR[sti];
+  // Et `SVAR` som er et LØFTE henger hele kallet til testen slipper det, og
+  // utfallet avgjøres først DA. Uten dette sto `ok` klar før løftet var
+  // løst, så et hengende kall kunne bare ende i suksess — og vinduet
+  // «POST-en henger og feiler så med 5xx» var umålbart. Bare løfter ventes
+  // på: et vanlig svar går nøyaktig samme vei som før, på samme tikk, så
+  // ingen eksisterende test får ny timing.
+  const svar = (raatt && typeof raatt.then === "function") ? await raatt : raatt;
   if (svar === undefined) {
     return { ok: false, status: 404, json: async () => ({ feil: "ikke_funnet" }) };
   }
   if (typeof svar === "number") {
     return { ok: false, status: svar, json: async () => ({ feil: "x" }) };
+  }
+  // `__status`/`__kropp` — husets form (`adjudikator.test.js:27`): et tall
+  // sier bare statusen, og flaten skiller på KODEN. En 409
+  // `idempotenskonflikt` fra bestillingen betyr «nøkkelen er opptatt av et
+  // forsøk som fortsatt går», og det er en annen sak enn en 409 uten kode.
+  if (svar && svar.__status) {
+    const kropp = svar.__kropp !== undefined ? svar.__kropp : svar;
+    return { ok: svar.__status < 400, status: svar.__status,
+      json: async () => kropp };
   }
   return { ok: true, status: opts.method === "POST" ? 201 : 200,
     json: async () => svar };
@@ -1095,6 +1117,1364 @@ test("Profiler: uten bestilling:opprett finnes ingen skriveknapper (P2-1)", asyn
   assert.ok(t2.includes(t("ui.rekruttering.profiler.rediger")));
 });
 
+test("Bestilling: uten bestilling:opprett finnes ingen bestillingsseksjon (P2-7)", async () => {
+  // Speilet av profilenes P2-1-test: POST-rutene bak kjeden krever
+  // `bestilling:opprett` (app.py), og et skjema uten scopet er en
+  // blindvei som først dør server-side.
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": prosess(),
+           "/v1/rekruttering/stillingsprofiler": profiler() };
+  const hoved = nyHoved();
+  const leser = ctx();
+  leser.scopes = ["decisions:read"];
+  visRekruttering(hoved, leser);
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  assert.equal(hoved.querySelector("section[aria-labelledby=bestill-tittel]"),
+    null, "bestillingsseksjonen sto der uten bestilling:opprett");
+  assert.equal(hoved.querySelector("#bestill-fil"), null,
+    "filvelgeren sto der uten bestilling:opprett");
+  assert.equal(hoved.textContent.includes(t("ui.rekruttering.bestill.send")),
+    false, "bestillingsknappen sto der uten bestilling:opprett");
+  // ... og med scopet står den der.
+  const hoved2 = nyHoved();
+  visRekruttering(hoved2, ctx());
+  assert.ok(await vent(() => hoved2.querySelector("table")), "flaten kom aldri");
+  assert.ok(hoved2.querySelector("section[aria-labelledby=bestill-tittel] form"),
+    "bestillingsskjemaet mangler med bestilling:opprett");
+});
+
+test("Bestilling: hele kjeden — reserver, opplast, bestill (SP-2)", async () => {
+  KALL = [];
+  const basis = { "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/inndata/reserver": { reservasjon_jti: "j-1",
+                              inndata_ref: "inndata:u-1" },
+    "/v1/inndata/opplast/j-1": {} };
+  let bestillingssvar = { beslutning: "tillat", oppdrag_id: 42 };
+  SVAR = (sti) => sti === "/v1/bestilling" ? bestillingssvar : basis[sti];
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const seksjon = hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  assert.ok(seksjon, "bestillingsseksjonen mangler");
+  const skjema = seksjon.querySelector("form");
+  const filInp = skjema.querySelector("input[type=file]");
+  Object.defineProperty(filInp, "files", { configurable: true,
+    value: [{ name: "bunt.zip",
+              arrayBuffer: async () => new ArrayBuffer(16) }] });
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  await vent(() => seksjon.querySelector("[role=alert]")
+    .textContent.includes("42"), 20);
+  const stier = KALL.filter((k) => k.metode !== "GET").map((k) => k.sti);
+  assert.deepEqual(stier, ["/v1/inndata/reserver",
+    "/v1/inndata/opplast/j-1", "/v1/bestilling"]);
+  const [res, opp, best] = KALL.filter((k) => k.metode !== "GET");
+  assert.ok(res.hoder["Idempotency-Key"], "reservasjonen mangler nøkkel");
+  assert.equal(opp.metode, "PUT");
+  assert.equal(opp.hoder["content-type"], "application/zip");
+  assert.equal(opp.kropp.binaer, 16, "opplastingen sendte ikke bytene");
+  assert.ok(best.hoder["Idempotency-Key"], "bestillingen mangler nøkkel");
+  assert.deepEqual(best.kropp, { bestillingstype: "rekruttering.evaluering",
+    inndata_ref: "inndata:u-1", stillingsprofil_ref: "prof-1@2",
+    antall_soknader: 1, omfang: "bunt" });
+  const brudd = await alvorligeBrudd(hoved);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
+test("Bestilling: 5xx beholder nøkkel OG opplastet bunt — 4xx roterer nøkkelen", async () => {
+  KALL = [];
+  const basis = { "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/inndata/reserver": { reservasjon_jti: "j-1",
+                              inndata_ref: "inndata:u-1" },
+    "/v1/inndata/opplast/j-1": {} };
+  let bestillingssvar = 500;
+  SVAR = (sti) => sti === "/v1/bestilling" ? bestillingssvar : basis[sti];
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const seksjon = hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  const skjema = seksjon.querySelector("form");
+  const filInp = skjema.querySelector("input[type=file]");
+  Object.defineProperty(filInp, "files", { configurable: true,
+    value: [{ name: "bunt.zip",
+              arrayBuffer: async () => new ArrayBuffer(16) }] });
+  const send = () => skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  const bestillinger = () =>
+    KALL.filter((k) => k.sti === "/v1/bestilling");
+  send();
+  await vent(() => bestillinger().length === 1, 20);
+  bestillingssvar = { beslutning: "tillat", oppdrag_id: 7 };
+  send();
+  await vent(() => bestillinger().length === 2, 20);
+  // 5xx: retry er SAMME operasjon — samme nøkkel, og bunten lastes ALDRI
+  // opp på nytt (én reservasjon totalt).
+  const [b1, b2] = bestillinger();
+  assert.equal(b1.hoder["Idempotency-Key"], b2.hoder["Idempotency-Key"],
+    "5xx-retry roterte nøkkelen");
+  assert.equal(KALL.filter((k) => k.sti === "/v1/inndata/reserver").length,
+    1, "retryen reserverte bunten på nytt");
+  await vent(() => seksjon.querySelector("[role=alert]")
+    .textContent.includes("7"), 20);
+  // 4xx: serveren DØMTE — neste forsøk er en NY operasjon (ny nøkkel),
+  // og en NY bunt (skjemaet er nullstilt etter suksessen over).
+  Object.defineProperty(skjema.querySelector("input[type=file]"), "files",
+    { configurable: true, value: [{ name: "b2.zip",
+        arrayBuffer: async () => new ArrayBuffer(8) }] });
+  bestillingssvar = 409;
+  send();
+  await vent(() => bestillinger().length === 3, 20);
+  // Vent til CATCHEN har dømt (feilteksten står) — kallet logges i det
+  // fetch STARTER, og å sende b4 før b3s dom er et kappløp i testen,
+  // ikke i flaten.
+  await vent(() => seksjon.querySelector("[role=alert]")
+    .textContent === t("ui.rekruttering.bestill.feil"), 20);
+  bestillingssvar = { beslutning: "tillat", oppdrag_id: 8 };
+  send();
+  await vent(() => bestillinger().length === 4, 20);
+  const [, , b3, b4] = bestillinger();
+  assert.notEqual(b3.hoder["Idempotency-Key"], b4.hoder["Idempotency-Key"],
+    "4xx-dommen skulle rotert nøkkelen");
+});
+
+test("Bestilling: 409 «nøkkelen er opptatt» beholder nøkkelen (Codex P1)",
+  async () => {
+    KALL = [];
+    const basis = { "/v1/rekruttering/prosesser": prosess(),
+      "/v1/rekruttering/stillingsprofiler": profiler(),
+      "/v1/inndata/reserver": { reservasjon_jti: "j-1",
+                                inndata_ref: "inndata:u-1" },
+      "/v1/inndata/opplast/j-1": {} };
+    // `utfor_bestilling` fant nøkkelen OPPTATT av en forespørsel som
+    // fortsatt går (`bestilling.py:478-485`) og svarer den samme 409
+    // `idempotenskonflikt` som en ekte intensjonskonflikt
+    // (`:1135-1139`) — men uten dom og uten kvotetrekk: det FØRSTE
+    // forsøket kan committe like etter.
+    let bestillingssvar = { __status: 409,
+      __kropp: { feil: "idempotenskonflikt" } };
+    SVAR = (sti) => sti === "/v1/bestilling" ? bestillingssvar : basis[sti];
+    const hoved = nyHoved();
+    visRekruttering(hoved, ctx());
+    assert.ok(await vent(() => hoved.querySelector("table")),
+      "flaten kom aldri");
+    const seksjon =
+      hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+    const skjema = seksjon.querySelector("form");
+    Object.defineProperty(skjema.querySelector("input[type=file]"), "files",
+      { configurable: true, value: [{ name: "bunt.zip",
+          arrayBuffer: async () => new ArrayBuffer(16) }] });
+    const send = () => skjema.dispatchEvent(new window.Event("submit",
+      { bubbles: true, cancelable: true }));
+    const bestillinger = () => KALL.filter((k) => k.sti === "/v1/bestilling");
+    send();
+    await vent(() => bestillinger().length === 1, 20);
+    // Teksten sier det serveren sier: ingenting er avgjort. «Bestillingen
+    // feilet» ville vært den samme løgnklassen som `usikkert_utfall` alt
+    // lukket for 0/5xx.
+    assert.ok(await vent(() => seksjon.querySelector("[role=alert]")
+      .textContent === t("ui.rekruttering.bestill.opptatt"), 20),
+    "en opptatt nøkkel ble meldt som en dom");
+    bestillingssvar = { beslutning: "tillat", oppdrag_id: 9 };
+    send();
+    await vent(() => bestillinger().length === 2, 20);
+    const [b1, b2] = bestillinger();
+    assert.equal(b2.hoder["Idempotency-Key"], b1.hoder["Idempotency-Key"],
+      "retryen bar en FERSK nøkkel: den første bestillingen kunne da "
+      + "committe som nummer to — to oppdrag på samme bunt");
+    assert.equal(KALL.filter((k) => k.sti === "/v1/inndata/reserver").length,
+      1, "bunten ble reservert på nytt");
+  });
+
+test("Bestilling: 409 fra RESERVASJONEN er en død nøkkel, ikke en opptatt",
+  async () => {
+    KALL = [];
+    const basis = { "/v1/rekruttering/prosesser": prosess(),
+      "/v1/rekruttering/stillingsprofiler": profiler(),
+      "/v1/inndata/opplast/j-1": {} };
+    // Grensen for regelen over: kom 409-en FØR `inndataRef` ble satt,
+    // traff den reservasjonen — og 058 sier at en brukt/utløpt
+    // reservasjon krever en NY nøkkel (P1-3). Koden er den samme;
+    // stedet i kjeden er det som skiller.
+    let reserversvar = { __status: 409,
+      __kropp: { feil: "idempotenskonflikt" } };
+    SVAR = (sti) => sti === "/v1/inndata/reserver" ? reserversvar : basis[sti];
+    const hoved = nyHoved();
+    visRekruttering(hoved, ctx());
+    assert.ok(await vent(() => hoved.querySelector("table")),
+      "flaten kom aldri");
+    const seksjon =
+      hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+    const skjema = seksjon.querySelector("form");
+    Object.defineProperty(skjema.querySelector("input[type=file]"), "files",
+      { configurable: true, value: [{ name: "bunt.zip",
+          arrayBuffer: async () => new ArrayBuffer(16) }] });
+    const send = () => skjema.dispatchEvent(new window.Event("submit",
+      { bubbles: true, cancelable: true }));
+    const reservasjoner = () =>
+      KALL.filter((k) => k.sti === "/v1/inndata/reserver");
+    send();
+    await vent(() => reservasjoner().length === 1, 20);
+    await vent(() => seksjon.querySelector("[role=alert]")
+      .textContent === t("ui.rekruttering.bestill.feil"), 20);
+    reserversvar = { reservasjon_jti: "j-1", inndata_ref: "inndata:u-1" };
+    send();
+    await vent(() => reservasjoner().length === 2, 20);
+    const [r1, r2] = reservasjoner();
+    assert.notEqual(r2.hoder["Idempotency-Key"], r1.hoder["Idempotency-Key"],
+      "den døde reservasjonsnøkkelen ble beholdt — den svarer konflikt "
+      + "i det uendelige");
+  });
+
+test("Bestilling: 409 «bunten er ubrukelig» er ikke feltene (eierdom (c))",
+  async () => {
+    KALL = [];
+    const basis = { "/v1/rekruttering/prosesser": prosess(),
+      "/v1/rekruttering/stillingsprofiler": profiler(),
+      "/v1/inndata/reserver": { reservasjon_jti: "j-1",
+                                inndata_ref: "inndata:u-1" },
+      "/v1/inndata/opplast/j-1": {} };
+    // 058-formen: ETT svar for alle årsakene — ukjent, utløpt, ikke
+    // ferdig lastet, alt bundet, ELLER holdt av en samtidig bestilling
+    // (`INNDATA_OPPTATT`, kollapset til denne koden i `KLIENTKODE`).
+    // Ingen av dem står i et felt brukeren kan rette.
+    let bestillingssvar = { __status: 409,
+      __kropp: { feil: "inndata_ubrukelig" } };
+    SVAR = (sti) => sti === "/v1/bestilling" ? bestillingssvar : basis[sti];
+    const hoved = nyHoved();
+    visRekruttering(hoved, ctx());
+    assert.ok(await vent(() => hoved.querySelector("table")),
+      "flaten kom aldri");
+    const seksjon =
+      hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+    const skjema = seksjon.querySelector("form");
+    Object.defineProperty(skjema.querySelector("input[type=file]"), "files",
+      { configurable: true, value: [{ name: "bunt.zip",
+          arrayBuffer: async () => new ArrayBuffer(16) }] });
+    const send = () => skjema.dispatchEvent(new window.Event("submit",
+      { bubbles: true, cancelable: true }));
+    const bestillinger = () => KALL.filter((k) => k.sti === "/v1/bestilling");
+    send();
+    await vent(() => bestillinger().length === 1, 20);
+    assert.ok(await vent(() => seksjon.querySelector("[role=alert]")
+      .textContent === t("ui.rekruttering.bestill.bunt_ubrukelig"), 20),
+    "buntens 409 ble meldt som en feil i skjemafeltene");
+    assert.notEqual(seksjon.querySelector("[role=alert]").textContent,
+      t("ui.rekruttering.bestill.feil"));
+    // NØKKELØKONOMIEN ER URØRT (eierdom (c): sannhets-fiks, ikke ny form).
+    // Ledningen bærer ikke skillet forbigående/terminal — `KLIENTKODE`
+    // kollapser det, og husets port sier `not er_forbigaende(
+    // "inndata_ubrukelig")`. Nøkkelen roterer derfor som før; å beholde
+    // den her krever den distinkte utadkoden, som er eierdom (b)s eget
+    // issue. Denne assertionen er grensevakten: gjør en senere runde
+    // teksten om til en nøkkelfiks uten kontraktsendringen, dør den.
+    bestillingssvar = { beslutning: "tillat", oppdrag_id: 11 };
+    send();
+    await vent(() => bestillinger().length === 2, 20);
+    const [b1, b2] = bestillinger();
+    assert.notEqual(b2.hoder["Idempotency-Key"], b1.hoder["Idempotency-Key"],
+      "den terminale koden beholdt nøkkelen — det er kontraktsendringen "
+      + "i (b), ikke tekstfiksen i (c)");
+  });
+
+test("Bestilling: endret kropp etter usikkert svar gir NY nøkkel (P1-2)", async () => {
+  KALL = [];
+  const basis = { "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/inndata/reserver": { reservasjon_jti: "j-1",
+                              inndata_ref: "inndata:u-1" },
+    "/v1/inndata/opplast/j-1": {} };
+  let bestillingssvar = 500;
+  SVAR = (sti) => sti === "/v1/bestilling" ? bestillingssvar : basis[sti];
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const seksjon = hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  const skjema = seksjon.querySelector("form");
+  const filInp = skjema.querySelector("input[type=file]");
+  Object.defineProperty(filInp, "files", { configurable: true,
+    value: [{ name: "bunt.zip",
+              arrayBuffer: async () => new ArrayBuffer(16) }] });
+  const send = () => skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  const bestillinger = () => KALL.filter((k) => k.sti === "/v1/bestilling");
+  send();
+  await vent(() => bestillinger().length === 1, 20);
+  // Usikkert utfall (5xx): nøkkelen står — helt til brukeren endrer
+  // kroppen. Da er neste innsending en ANNEN intensjon, og å bære den
+  // gamle nøkkelen ville enten kollidert eller replayet den forrige.
+  const antall = skjema.querySelector("#bestill-antall");
+  antall.value = "3";
+  antall.dispatchEvent(new window.Event("input", { bubbles: true }));
+  bestillingssvar = { beslutning: "tillat", oppdrag_id: 9 };
+  send();
+  await vent(() => bestillinger().length === 2, 20);
+  const [b1, b2] = bestillinger();
+  assert.equal(b1.kropp.antall_soknader, 1);
+  assert.equal(b2.kropp.antall_soknader, 3);
+  assert.notEqual(b1.hoder["Idempotency-Key"], b2.hoder["Idempotency-Key"],
+    "endret kropp bar fortsatt den gamle intensjonens nøkkel");
+  // Bunten er den samme: feltendringen roterer bestillingsnøkkelen, ikke
+  // reservasjonen.
+  assert.equal(KALL.filter((k) => k.sti === "/v1/inndata/reserver").length, 1,
+    "feltendringen reserverte bunten på nytt");
+});
+
+test("Bestilling: en FORLATT bestilling lover ikke «samme operasjon» (Cursor P2)",
+  async () => {
+    // Filvelgeren er den ENE kontrollen `frys` ikke tar: et bunt-bytte
+    // under den flygende POST-en bumper `generasjon` og nullstiller
+    // `bestillIdem` — og det er riktig, en ny bunt er en ny kropp. Men
+    // teksten for det uvisse utfallet lovte fortsatt at et nytt forsøk
+    // gjentar SAMME operasjon, og den nøkkelen fantes ikke lenger: et
+    // «prøv igjen» ville lagt bestilling nummer to oppå en som ved 0/5xx
+    // godt kan være committet.
+    KALL = [];
+    let slippBestilling;
+    let bestillingssvar = new Promise((r) => { slippBestilling = r; });
+    let reservasjon = { reservasjon_jti: "j-1", inndata_ref: "inndata:u-1" };
+    SVAR = (sti) => {
+      if (sti === "/v1/rekruttering/prosesser") return prosess();
+      if (sti === "/v1/rekruttering/stillingsprofiler") return profiler();
+      if (sti === "/v1/inndata/reserver") return reservasjon;
+      if (sti.startsWith("/v1/inndata/opplast/")) return {};
+      if (sti === "/v1/bestilling") return bestillingssvar;
+      return undefined;
+    };
+    const hoved = nyHoved();
+    visRekruttering(hoved, ctx());
+    assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+    const seksjon =
+      hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+    const skjema = seksjon.querySelector("form");
+    const send = skjema.querySelector("button[type=submit]");
+    const filInp = skjema.querySelector("input[type=file]");
+    const velgFil = (navn) => {
+      Object.defineProperty(filInp, "files", { configurable: true,
+        value: [{ name: navn, arrayBuffer: async () => new ArrayBuffer(16) }] });
+      filInp.dispatchEvent(new window.Event("change", { bubbles: true }));
+    };
+    const bestillinger = () => KALL.filter((k) => k.sti === "/v1/bestilling");
+    const bestill = () => skjema.dispatchEvent(new window.Event("submit",
+      { bubbles: true, cancelable: true }));
+    velgFil("bunt.zip");
+    bestill();
+    assert.ok(await vent(() => bestillinger().length === 1, 40),
+      "bestillingen kom aldri");
+    // Brukeren bytter bunt mens bestillingen står UBESVART: intensjonen er
+    // forlatt, og nøkkelen med den.
+    reservasjon = { reservasjon_jti: "j-2", inndata_ref: "inndata:u-2" };
+    velgFil("bunt2.zip");
+    slippBestilling(500);
+    assert.ok(await vent(() => !send.disabled, 40), "kjeden ble aldri ferdig");
+    const melding = seksjon.querySelector("[role=alert]").textContent;
+    assert.notEqual(melding, t("ui.rekruttering.usikkert_utfall"),
+      "en forlatt intensjon lovte fortsatt at retry er SAMME operasjon");
+    assert.notEqual(melding, t("ui.rekruttering.bestill.avbrutt"),
+      "teksten lovte at ingenting er bestilt — det vet vi ikke her");
+    // `t()` faller tilbake til nøkkelen selv når den mangler, og da ville
+    // linjen under målt seg selv: begge sider hadde vært samme streng.
+    assert.notEqual(melding, "ui.rekruttering.bestill.forlatt_usikkert",
+      "locale mangler nøkkelen — brukeren fikk en rå identifikator");
+    assert.equal(melding, t("ui.rekruttering.bestill.forlatt_usikkert"));
+    // ... og neste Send ER en ny operasjon: ny bunt, ny reservasjon, ny
+    // nøkkel. Teksten over er den eneste grunnen brukeren har til å vite
+    // det før hun trykker.
+    bestillingssvar = { beslutning: "tillat", oppdrag_id: 12 };
+    bestill();
+    assert.ok(await vent(() => bestillinger().length === 2, 40),
+      "den nye bestillingen kom aldri");
+    const [b1, b2] = bestillinger();
+    assert.equal(b1.kropp.inndata_ref, "inndata:u-1");
+    assert.equal(b2.kropp.inndata_ref, "inndata:u-2",
+      "den nye bestillingen gikk på den forlatte bunten");
+    assert.notEqual(b2.hoder["Idempotency-Key"], b1.hoder["Idempotency-Key"],
+      "en ny kropp bar den forlatte intensjonens nøkkel");
+    // MUTASJONEN SOM DREPER DENNE: la `forlatt`-armen falle tilbake til
+    // `usikkert_utfall`.
+  });
+
+test("Bestilling: kvitteringen navngir bunten som ble sendt (Cursor P2)",
+  async () => {
+    // Samme vindu som testen over, men på det VISSE utfallet: svaret er
+    // `tillat`, oppdraget ER committet — og nettopp derfor er «Bestillingen
+    // er levert: tillat, oppdrag N» for lite. Skjemaet står alt med den nye
+    // bunten (nullstillingen hoppes over, riktig), så kvitteringen ble lest
+    // mot en fil den ikke gjaldt. Feilarmen fikk speilingen sin i
+    // `forlatt_usikkert`; dette er den for suksessarmen.
+    KALL = [];
+    let slippBestilling;
+    let bestillingssvar = new Promise((r) => { slippBestilling = r; });
+    let reservasjon = { reservasjon_jti: "j-1", inndata_ref: "inndata:u-1" };
+    SVAR = (sti) => {
+      if (sti === "/v1/rekruttering/prosesser") return prosess();
+      if (sti === "/v1/rekruttering/stillingsprofiler") return profiler();
+      if (sti === "/v1/inndata/reserver") return reservasjon;
+      if (sti.startsWith("/v1/inndata/opplast/")) return {};
+      if (sti === "/v1/bestilling") return bestillingssvar;
+      return undefined;
+    };
+    const hoved = nyHoved();
+    visRekruttering(hoved, ctx());
+    assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+    const seksjon =
+      hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+    const skjema = seksjon.querySelector("form");
+    const send = skjema.querySelector("button[type=submit]");
+    const filInp = skjema.querySelector("input[type=file]");
+    const velgFil = (navn) => {
+      Object.defineProperty(filInp, "files", { configurable: true,
+        value: [{ name: navn, arrayBuffer: async () => new ArrayBuffer(16) }] });
+      filInp.dispatchEvent(new window.Event("change", { bubbles: true }));
+    };
+    const bestillinger = () => KALL.filter((k) => k.sti === "/v1/bestilling");
+    const bestill = () => skjema.dispatchEvent(new window.Event("submit",
+      { bubbles: true, cancelable: true }));
+    velgFil("bunt.zip");
+    bestill();
+    assert.ok(await vent(() => bestillinger().length === 1, 40),
+      "bestillingen kom aldri");
+    // Bunt-bytte mens bestillingen står ubesvart — og DA svarer serveren
+    // `tillat` på den forrige bunten.
+    reservasjon = { reservasjon_jti: "j-2", inndata_ref: "inndata:u-2" };
+    velgFil("bunt2.zip");
+    slippBestilling({ beslutning: "tillat", oppdrag_id: 77 });
+    assert.ok(await vent(() => !send.disabled, 40), "kjeden ble aldri ferdig");
+    const melding = seksjon.querySelector("[role=alert]").textContent;
+    assert.notEqual(melding, t("ui.rekruttering.bestill.sendt")
+      .replace("{oppdrag}", "77").replace("{beslutning}", "tillat"),
+    "kvitteringen sa AT noe ble levert, ikke HVA — uten buntbinding");
+    // `t()` faller tilbake til nøkkelen selv når den mangler: uten denne
+    // hadde linjen under kunnet passere på en rå identifikator.
+    assert.ok(!melding.includes("ui.rekruttering.bestill.sendt_forlatt_bunt"),
+      "locale mangler nøkkelen — brukeren fikk en rå identifikator");
+    assert.ok(melding.includes(t("ui.rekruttering.bestill.sendt_forlatt_bunt")
+      .replaceAll("{filnavn}", "bunt.zip")),
+    "kvitteringen bandt ikke oppdraget til den SENDTE bunten");
+    // Den harde kjernen: navnet er kjedens eget, fanget før `await` — ikke
+    // det filvelgeren viser når svaret lander.
+    assert.ok(melding.includes("bunt.zip"), "den sendte bunten er ikke navngitt");
+    assert.ok(!melding.includes("bunt2.zip"),
+      "kvitteringen navnga filen brukeren nettopp valgte, ikke den bestilte");
+    // ... og brukerens ferske valg overlevde: neste Send er en NY
+    // bestilling på den nye bunten, med fersk nøkkel — ingen replay av
+    // oppdrag 77.
+    bestillingssvar = { beslutning: "tillat", oppdrag_id: 78 };
+    bestill();
+    assert.ok(await vent(() => bestillinger().length === 2, 40),
+      "den nye bestillingen kom aldri");
+    const [b1, b2] = bestillinger();
+    assert.equal(b1.kropp.inndata_ref, "inndata:u-1");
+    assert.equal(b2.kropp.inndata_ref, "inndata:u-2",
+      "den nye bestillingen gikk på den forlatte bunten");
+    assert.notEqual(b2.hoder["Idempotency-Key"], b1.hoder["Idempotency-Key"],
+      "en ny kropp bar den forlatte intensjonens nøkkel");
+    // MUTASJONEN SOM DREPER DENNE: les `tilstand.filnavn` ETTER `await`
+    // (da blir navnet «bunt2.zip»), eller la `tillat`-armen falle tilbake
+    // til ren `bestill.sendt` uten speilingen.
+  });
+
+test("Bestilling: STOPP/unntak lover ikke «bunten står klar» når den er forlatt (Cursor P2)",
+  async () => {
+    // Tredje og siste arm i samme løgnklasse som `sendt_forlatt_bunt`
+    // (tillat) og `forlatt_usikkert` (0/5xx): `stoppet`/`unntak` lover at
+    // bunten ikke er brukt opp og står klar. Byttet brukeren fil mens
+    // dommen var underveis, er DEN bunten ute av skjemaet — `change`
+    // nullet `inndataRef` — så løftet peker på en fil som verken er
+    // reservert eller lastet opp.
+    KALL = [];
+    let slippBestilling;
+    let bestillingssvar = new Promise((r) => { slippBestilling = r; });
+    let reservasjon = { reservasjon_jti: "j-1", inndata_ref: "inndata:u-1" };
+    SVAR = (sti) => {
+      if (sti === "/v1/rekruttering/prosesser") return prosess();
+      if (sti === "/v1/rekruttering/stillingsprofiler") return profiler();
+      if (sti === "/v1/inndata/reserver") return reservasjon;
+      if (sti.startsWith("/v1/inndata/opplast/")) return {};
+      if (sti === "/v1/bestilling") return bestillingssvar;
+      return undefined;
+    };
+    const hoved = nyHoved();
+    visRekruttering(hoved, ctx());
+    assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+    const seksjon =
+      hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+    const skjema = seksjon.querySelector("form");
+    const send = skjema.querySelector("button[type=submit]");
+    const filInp = skjema.querySelector("input[type=file]");
+    const velgFil = (navn) => {
+      Object.defineProperty(filInp, "files", { configurable: true,
+        value: [{ name: navn, arrayBuffer: async () => new ArrayBuffer(16) }] });
+      filInp.dispatchEvent(new window.Event("change", { bubbles: true }));
+    };
+    const bestillinger = () => KALL.filter((k) => k.sti === "/v1/bestilling");
+    const alert = () => seksjon.querySelector("[role=alert]").textContent;
+    // ARM 1 — STOPP med forlatt bunt.
+    velgFil("bunt.zip");
+    skjema.dispatchEvent(new window.Event("submit",
+      { bubbles: true, cancelable: true }));
+    assert.ok(await vent(() => bestillinger().length === 1, 40),
+      "bestillingen kom aldri");
+    reservasjon = { reservasjon_jti: "j-2", inndata_ref: "inndata:u-2" };
+    velgFil("bunt2.zip");
+    slippBestilling({ beslutning: "stopp", begrunnelse: [], oppdrag_id: null });
+    assert.ok(await vent(() => !send.disabled, 40), "kjeden ble aldri ferdig");
+    assert.ok(!alert().includes(t("ui.rekruttering.bestill.stoppet")),
+      "STOPP lovet fortsatt at den forlatte bunten «står klar»");
+    // `t()` faller tilbake til nøkkelen selv: uten denne kunne linjen
+    // under passere på en rå identifikator.
+    assert.ok(!alert().includes("ui.rekruttering.bestill.stoppet_forlatt"),
+      "locale mangler nøkkelen — brukeren fikk en rå identifikator");
+    assert.ok(alert().includes("bunt.zip"), "dommens egen bunt er ikke navngitt");
+    assert.ok(!alert().includes("bunt2.zip"),
+      "dommen ble tilskrevet filen brukeren nettopp valgte");
+    // ARM 2 — unntakskøen, samme vindu.
+    bestillingssvar = new Promise((r) => { slippBestilling = r; });
+    reservasjon = { reservasjon_jti: "j-3", inndata_ref: "inndata:u-3" };
+    skjema.dispatchEvent(new window.Event("submit",
+      { bubbles: true, cancelable: true }));
+    assert.ok(await vent(() => bestillinger().length === 2, 40),
+      "den andre bestillingen kom aldri");
+    reservasjon = { reservasjon_jti: "j-4", inndata_ref: "inndata:u-4" };
+    velgFil("bunt3.zip");
+    slippBestilling({ beslutning: "brudd", begrunnelse: [], unntak_id: 5 });
+    assert.ok(await vent(() => !send.disabled, 40), "andre kjede ble aldri ferdig");
+    assert.notEqual(alert(), t("ui.rekruttering.bestill.unntak"),
+      "unntakskøen lovet fortsatt at den forlatte bunten «står klar»");
+    assert.ok(!alert().includes("ui.rekruttering.bestill.unntak_forlatt"),
+      "locale mangler nøkkelen — brukeren fikk en rå identifikator");
+    assert.ok(alert().includes("bunt2.zip"), "saken er ikke bundet til sin bunt");
+    assert.ok(!alert().includes("bunt3.zip"),
+      "saken ble tilskrevet filen brukeren nettopp valgte");
+    const brudd = await alvorligeBrudd(hoved);
+    assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+    // MUTASJONEN SOM DREPER DENNE: la `else`-grenen falle tilbake til ren
+    // `bestill.stoppet`/`bestill.unntak` uten `forlatt`-vurderingen.
+  });
+
+test("Bestilling: profilen er låst mens kroppen er underveis (Cursor P1)", async () => {
+  // `stillingsprofil_ref` var det ENESTE kroppsfeltet uten lås. To vinduer
+  // sto åpne: i opplastingsvinduet (før `kropp` bygges) kunne profilen gli
+  // fra den brukeren trykket Send på, og under den flygende POST-en kastet
+  // `change`-handlerens `nyIntensjon()` nøkkelen kallet eide — så retryen
+  // `usikkert_utfall` lover er «SAMME operasjon», bar en fersk nøkkel.
+  KALL = [];
+  const toProfiler = profiler();
+  toProfiler.profiler.push({ ...toProfiler.profiler[0],
+    profil_id: "prof-2", versjon: 1, navn: "Rådgiver" });
+  let slippOpplast;
+  let opplastsvar = new Promise((r) => { slippOpplast = r; });
+  let slippBestilling;
+  let bestillingssvar = new Promise((r) => { slippBestilling = r; });
+  const basis = { "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": toProfiler,
+    "/v1/inndata/reserver": { reservasjon_jti: "j-1",
+                              inndata_ref: "inndata:u-1" } };
+  SVAR = (sti) => {
+    if (sti === "/v1/inndata/opplast/j-1") return opplastsvar;
+    if (sti === "/v1/bestilling") return bestillingssvar;
+    return basis[sti];
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const seksjon = hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  const skjema = seksjon.querySelector("form");
+  const send = skjema.querySelector("button[type=submit]");
+  const profil = skjema.querySelector("#bestill-profil");
+  assert.equal(profil.options.length, 2, "testen trenger noe å bytte TIL");
+  Object.defineProperty(skjema.querySelector("input[type=file]"), "files",
+    { configurable: true, value: [{ name: "bunt.zip",
+        arrayBuffer: async () => new ArrayBuffer(16) }] });
+  const bestillinger = () => KALL.filter((k) => k.sti === "/v1/bestilling");
+  // Et bytte er et bytte enten det kommer fra en finger eller fra en
+  // syntetisk `change`: nettleseren sperrer det første, låsen det andre.
+  const forsokBytte = (verdi) => {
+    profil.value = verdi;
+    profil.dispatchEvent(new window.Event("change", { bubbles: true }));
+  };
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  // VINDU 1 — opplastingen henger, kroppen er ikke bygget ennå.
+  assert.ok(await vent(() =>
+    KALL.some((k) => k.sti === "/v1/inndata/opplast/j-1"), 20),
+    "opplastingen startet aldri");
+  assert.equal(profil.disabled, true,
+    "profilen kunne byttes midt i en pågående opplasting");
+  assert.equal(skjema.getAttribute("aria-busy"), "true");
+  forsokBytte("prof-2@1");
+  assert.equal(profil.value, "prof-1@2",
+    "det låste valget gled under opplastingen");
+  slippOpplast({});
+  // VINDU 2 — bestillingen henger, og NÅ eier kallet en nøkkel.
+  assert.ok(await vent(() => bestillinger().length === 1, 20),
+    "bestillingen kom aldri");
+  assert.equal(profil.disabled, true,
+    "profilen kunne byttes mens bestillingen sto ubesvart");
+  forsokBytte("prof-2@1");
+  assert.equal(profil.value, "prof-1@2",
+    "det låste valget gled under bestillingen");
+  // 5xx: utfallet er ukjent, og da er retry med SAMME nøkkel nettopp det
+  // SP-2 finnes for.
+  slippBestilling(500);
+  assert.ok(await vent(() => !send.disabled, 40), "kjeden ble aldri ferdig");
+  assert.equal(seksjon.querySelector("[role=alert]").textContent,
+    t("ui.rekruttering.usikkert_utfall"));
+  assert.equal(profil.disabled, false, "profilen ble stående frosset");
+  assert.equal(skjema.hasAttribute("aria-busy"), false);
+  bestillingssvar = { beslutning: "tillat", oppdrag_id: 11 };
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() => bestillinger().length === 2, 40),
+    "retryen kom aldri");
+  const [b1, b2] = bestillinger();
+  assert.equal(b1.kropp.stillingsprofil_ref, "prof-1@2",
+    "kroppen bar en annen profil enn den Send ble trykket på");
+  assert.equal(b2.kropp.stillingsprofil_ref, b1.kropp.stillingsprofil_ref,
+    "retryen bestilte på en annen profil enn den første");
+  assert.equal(b2.hoder["Idempotency-Key"], b1.hoder["Idempotency-Key"],
+    "retryen etter et usikkert utfall bar en FERSK nøkkel");
+  // Bunten lastes aldri opp på nytt: retryen er samme operasjon hele veien.
+  assert.equal(KALL.filter((k) => k.sti === "/v1/inndata/reserver").length, 1,
+    "retryen reserverte bunten på nytt");
+  // MUTASJONEN SOM DREPER DENNE: fjern `profilVelger.disabled = paa` i
+  // `frys` (vindu 1 faller), eller `paagaaende`-vakten i profilvelgerens
+  // `change` (begge vinduene faller).
+});
+
+test("Bestilling: en opplastet bunt overlever prosessbyttet SYNLIG (P2-6)", async () => {
+  KALL = [];
+  const to = prosess();
+  to.prosesser.push({ ...to.prosesser[0], prosess_id: "p-2" });
+  const basis = { "/v1/rekruttering/prosesser": to,
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/inndata/reserver": { reservasjon_jti: "j-1",
+                              inndata_ref: "inndata:u-1" },
+    "/v1/inndata/opplast/j-1": {} };
+  let bestillingssvar = 500;
+  SVAR = (sti) => sti === "/v1/bestilling" ? bestillingssvar : basis[sti];
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const bestill = () =>
+    hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  const skjema = bestill().querySelector("form");
+  const send = skjema.querySelector("button[type=submit]");
+  const fil = skjema.querySelector("input[type=file]");
+  Object.defineProperty(fil, "files", { configurable: true,
+    value: [{ name: "bunt.zip",
+              arrayBuffer: async () => new ArrayBuffer(16) }] });
+  // Nettleseren melder valget som `change` — det er der flaten fanger
+  // filnavnet, og navnet er hele poenget med denne testen.
+  fil.dispatchEvent(new window.Event("change", { bubbles: true }));
+  // Bunten kommer opp, men bestillingen svarer 5xx: buntens referanse
+  // står i økten.
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() => !send.disabled, 40), "runden ble aldri ferdig");
+  assert.equal(KALL.filter((k) => k.sti === "/v1/bestilling").length, 1);
+  // Brukeren bytter prosess — hele flaten tegnes på nytt, og fil-inputen
+  // er tom igjen.
+  const velger = hoved.querySelector("#rekrut-prosessvelger");
+  velger.value = "p-2";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  const nyttSkjema = bestill().querySelector("form");
+  const nyFil = nyttSkjema.querySelector("input[type=file]");
+  assert.equal(nyFil.files.length, 0, "testen antar en tom filvelger");
+  assert.match(bestill().textContent, /bunt\.zip/,
+    "den opplastede bunten står ikke navngitt i skjemaet");
+  assert.equal(nyFil.hasAttribute("required"), false,
+    "filen kreves fortsatt, selv om bunten alt er lastet opp");
+  // ... og bestillingen går på den lagrede bunten, uten en ny opplasting.
+  bestillingssvar = { beslutning: "tillat", oppdrag_id: 11 };
+  nyttSkjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  await vent(() => KALL.filter((k) => k.sti === "/v1/bestilling").length === 2,
+    40);
+  const siste = KALL.filter((k) => k.sti === "/v1/bestilling").pop();
+  assert.equal(siste.kropp.inndata_ref, "inndata:u-1");
+  assert.equal(KALL.filter((k) => k.sti === "/v1/inndata/reserver").length, 1,
+    "bunten ble reservert på nytt etter prosessbyttet");
+  // Kvitteringen nullstiller: bunten er forbrukt, og filen kreves igjen.
+  await vent(() => bestill().querySelector("[role=alert]")
+    .textContent.includes("11"), 20);
+  assert.doesNotMatch(bestill().textContent, /bunt\.zip/,
+    "den forbrukte bunten står fortsatt navngitt");
+  assert.equal(
+    bestill().querySelector("input[type=file]").hasAttribute("required"), true);
+  const brudd = await alvorligeBrudd(hoved);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
+test("Bestilling: et tapt svar meldes som uvisst, ikke som «feilet» (P2-4)", async () => {
+  KALL = [];
+  const basis = { "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/inndata/reserver": { reservasjon_jti: "j-1",
+                              inndata_ref: "inndata:u-1" },
+    "/v1/inndata/opplast/j-1": {} };
+  let bestillingssvar = 500;
+  SVAR = (sti) => sti === "/v1/bestilling" ? bestillingssvar : basis[sti];
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const seksjon = hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  const skjema = seksjon.querySelector("form");
+  const send = skjema.querySelector("button[type=submit]");
+  const alert = seksjon.querySelector("[role=alert]");
+  Object.defineProperty(skjema.querySelector("input[type=file]"), "files",
+    { configurable: true, value: [{ name: "bunt.zip",
+        arrayBuffer: async () => new ArrayBuffer(16) }] });
+  const runde = async () => {
+    skjema.dispatchEvent(new window.Event("submit",
+      { bubbles: true, cancelable: true }));
+    assert.ok(await vent(() => !send.disabled, 40), "runden ble aldri ferdig");
+  };
+  await runde();
+  assert.equal(alert.textContent, t("ui.rekruttering.usikkert_utfall"),
+    "5xx ble meldt som en definitiv feil");
+  // Serverens egen dom er derimot definitiv — og sier det.
+  bestillingssvar = 409;
+  await runde();
+  assert.equal(alert.textContent, t("ui.rekruttering.bestill.feil"));
+});
+
+test("Bestilling: en bunt byttet under opplastingen binder aldri feil bunt (P1-2)", async () => {
+  // Skjemaet står åpent mens en stor ZIP går opp. Byttet brukeren fil,
+  // nullstilte `change` referansen — men den flygende handleren skrev
+  // likevel SIN `inndata_ref` inn etterpå, mens skjermen viste den nye
+  // filen: neste bestilling gikk på bunt A under navnet B.
+  KALL = [];
+  let slippOpplast;
+  let opplastsvar = new Promise((r) => { slippOpplast = r; });
+  let reservasjon = { reservasjon_jti: "j-1", inndata_ref: "inndata:u-1" };
+  SVAR = (sti) => {
+    if (sti === "/v1/rekruttering/prosesser") return prosess();
+    if (sti === "/v1/rekruttering/stillingsprofiler") return profiler();
+    if (sti === "/v1/inndata/reserver") return reservasjon;
+    if (sti.startsWith("/v1/inndata/opplast/")) return opplastsvar;
+    if (sti === "/v1/bestilling") return { beslutning: "tillat", oppdrag_id: 3 };
+    return undefined;
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const seksjon = hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  const skjema = seksjon.querySelector("form");
+  const send = skjema.querySelector("button[type=submit]");
+  const filInp = skjema.querySelector("input[type=file]");
+  const velgFil = (navn) => {
+    Object.defineProperty(filInp, "files", { configurable: true,
+      value: [{ name: navn, arrayBuffer: async () => new ArrayBuffer(16) }] });
+    filInp.dispatchEvent(new window.Event("change", { bubbles: true }));
+  };
+  velgFil("bunt.zip");
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() =>
+    KALL.some((k) => k.sti.startsWith("/v1/inndata/opplast/")), 20),
+    "opplastingen startet aldri");
+  // Kroppen er låst mens den er underveis (readOnly, ikke disabled).
+  assert.equal(skjema.querySelector("#bestill-antall").readOnly, true,
+    "antall kunne skrives om midt i en pågående kjede");
+  assert.equal(send.disabled, true);
+  // Midt i opplastingen bytter brukeren bunt.
+  velgFil("bunt2.zip");
+  reservasjon = { reservasjon_jti: "j-2", inndata_ref: "inndata:u-2" };
+  slippOpplast({});
+  assert.ok(await vent(() => !send.disabled, 40), "kjeden ble aldri ferdig");
+  // Kjeden tilhørte bunt A og er forlatt: INGEN bestilling er sendt, og
+  // A-referansen ble aldri skrevet inn under B-navnet.
+  assert.equal(KALL.filter((k) => k.sti === "/v1/bestilling").length, 0,
+    "en forlatt kjede bestilte likevel");
+  assert.equal(seksjon.querySelector("[role=alert]").textContent,
+    t("ui.rekruttering.bestill.avbrutt"));
+  assert.doesNotMatch(seksjon.textContent, /inndata:u-1/);
+  assert.equal(filInp.hasAttribute("required"), true,
+    "flaten tror den har en bunt etter en forlatt opplasting");
+  // Neste innsending går på den NYE bunten — egen reservasjon, egen ref.
+  opplastsvar = {};
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() =>
+    KALL.filter((k) => k.sti === "/v1/bestilling").length === 1, 40),
+    "bestillingen kom aldri");
+  const best = KALL.find((k) => k.sti === "/v1/bestilling");
+  assert.equal(best.kropp.inndata_ref, "inndata:u-2",
+    "bestillingen bar den forlatte buntens referanse");
+  assert.match(seksjon.textContent, /bunt2\.zip|inndata:u-2|3/);
+});
+
+test("Bestilling: prosessvelgeren er frosset mens kjeden er i lufta (A-dommen)", async () => {
+  // A-DOMMEN (#212): GENERATOREN, IKKE INSTANSENE. Låsen lå først i ÉN
+  // knapp, så i `paagaaende`/`generasjon`/`laasOpp` — men om-tegningen
+  // SELV sto igjen, og hver binding submit-handleren lukker over (alerten,
+  // skjemaet, `visBunt`) ble en frakoblet node ved et prosessbytte midt i
+  // kjeden. Runde tre fant den fjerde, femte og sjette bindingen; runde
+  // fire ville funnet den syvende.
+  //
+  // Nå fryses utløseren i stedet: velgeren er `disabled` med `aria-busy`
+  // så lenge kjeden er i lufta, seksjonen kan ikke rives, og kvitteringen
+  // treffer den alerten brukeren faktisk ser.
+  //
+  // TO MUTASJONER, BEGGE MÅLT: fjern `laas.meld("velger", velger)` → den
+  // synlige frysen faller («prosessvelgeren sto handlingsklar»); fjern
+  // `paagaaende`-vakten i velgerens `change` → seksjonen rives igjen
+  // («bestillingsseksjonen ble revet»). Begge må stå: den ene er det
+  // brukeren SER, den andre er invarianten koden selv holder.
+  KALL = [];
+  let slippBestilling;
+  // Bestillingen henger: bunten er ALT lastet opp, så et skjema tegnet i
+  // dette vinduet har alt den trenger for å sende bestilling nummer to —
+  // på nøyaktig den bestillingen som står ubesvart.
+  const bestillingssvar = new Promise((r) => {
+    slippBestilling = () => r({ beslutning: "tillat", oppdrag_id: 8 });
+  });
+  const to = prosess();
+  to.prosesser.push({ ...to.prosesser[0], prosess_id: "p-2" });
+  SVAR = (sti) => {
+    if (sti === "/v1/rekruttering/prosesser") return to;
+    if (sti === "/v1/rekruttering/stillingsprofiler") return profiler();
+    if (sti === "/v1/inndata/reserver") {
+      return { reservasjon_jti: "j-1", inndata_ref: "inndata:u-1" };
+    }
+    if (sti.startsWith("/v1/inndata/opplast/")) return {};
+    if (sti === "/v1/bestilling") return bestillingssvar;
+    return undefined;
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const bestill = () =>
+    hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  const filInp = bestill().querySelector("input[type=file]");
+  Object.defineProperty(filInp, "files", { configurable: true,
+    value: [{ name: "bunt.zip",
+              arrayBuffer: async () => new ArrayBuffer(16) }] });
+  filInp.dispatchEvent(new window.Event("change", { bubbles: true }));
+  bestill().querySelector("form").dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() =>
+    KALL.some((k) => k.sti === "/v1/bestilling"), 20),
+    "bestillingen ble aldri sendt");
+  // Utløseren er frosset — og den SIER det, den later ikke som ingenting.
+  const skjema = bestill().querySelector("form");
+  const send = skjema.querySelector("button[type=submit]");
+  const velger = hoved.querySelector("#rekrut-prosessvelger");
+  assert.equal(velger.disabled, true,
+    "prosessvelgeren sto handlingsklar mens kjeden var i lufta");
+  assert.equal(velger.parentElement.getAttribute("aria-busy"), "true",
+    "velgeren er låst uten å si hvorfor");
+  assert.equal(send.disabled, true);
+  assert.equal(skjema.getAttribute("aria-busy"), "true");
+  assert.equal(skjema.querySelector("#bestill-antall").readOnly, true);
+  // Et bytteforsøk river ikke seksjonen: samme skjema, samme knapp.
+  velger.value = "p-2";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.equal(bestill().querySelector("form"), skjema,
+    "bestillingsseksjonen ble revet mens kjeden var i lufta");
+  assert.equal(KALL.filter((k) => k.sti === "/v1/bestilling").length, 1,
+    "om-tegningen startet en parallell kjede");
+  slippBestilling();
+  // Kjeden fullfører — og kvitteringen treffer alerten brukeren SER,
+  // uten en eneste peker mot «det som er synlig nå».
+  assert.ok(await vent(() =>
+    bestill().querySelector("[role=alert]").textContent.includes("8"), 40),
+    "kvitteringen nådde aldri den synlige alerten");
+  assert.doesNotMatch(bestill().textContent, /bunt\.zip/,
+    "den forbrukte bunten står fortsatt navngitt i det synlige skjemaet");
+  assert.equal(bestill().querySelector("input[type=file]")
+    .hasAttribute("required"), true,
+    "det synlige skjemaet ble aldri nullstilt etter kvitteringen");
+  // ... og frysen løftes: velgeren er brukbar igjen, uten `aria-busy`.
+  assert.ok(await vent(() => !send.disabled, 20),
+    "skjemaet ble stående låst etter at svaret kom");
+  assert.equal(velger.disabled, false, "velgeren ble stående frosset");
+  assert.equal(velger.parentElement.hasAttribute("aria-busy"), false);
+  assert.equal(skjema.hasAttribute("aria-busy"), false);
+  assert.equal(skjema.querySelector("#bestill-antall").readOnly, false);
+  // ... og NÅ går prosessbyttet, som før.
+  velger.value = "p-2";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.equal(hoved.querySelector("#rekrut-prosessvelger").value, "p-2");
+  const brudd = await alvorligeBrudd(hoved);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
+test("Bestilling: STOPP er ingen leveranse — bunten står igjen (P1-1)", async () => {
+  // Serveren svarer `200` også på STOPP og unntak, uten oppdrag, og lar
+  // bunten stå `lastet` (`test_stopp_binder_ikke_bunten`). Sa flaten
+  // «Bestillingen er levert» og nullstilte kjeden, løy den om utfallet OG
+  // kastet en bunt serveren fortsatt holder fri.
+  KALL = [];
+  const basis = { "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/inndata/reserver": { reservasjon_jti: "j-1",
+                              inndata_ref: "inndata:u-1" },
+    "/v1/inndata/opplast/j-1": {} };
+  let bestillingssvar = { beslutning: "stopp", oppdrag_id: null,
+    begrunnelse: ["bestilling_policy_stopp"] };
+  SVAR = (sti) => sti === "/v1/bestilling" ? bestillingssvar : basis[sti];
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const seksjon = hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  const skjema = seksjon.querySelector("form");
+  const send = skjema.querySelector("button[type=submit]");
+  const alert = seksjon.querySelector("[role=alert]");
+  const filInp = skjema.querySelector("input[type=file]");
+  Object.defineProperty(filInp, "files", { configurable: true,
+    value: [{ name: "bunt.zip",
+              arrayBuffer: async () => new ArrayBuffer(16) }] });
+  filInp.dispatchEvent(new window.Event("change", { bubbles: true }));
+  const runde = async () => {
+    skjema.dispatchEvent(new window.Event("submit",
+      { bubbles: true, cancelable: true }));
+    assert.ok(await vent(() => !send.disabled, 40), "runden ble aldri ferdig");
+  };
+  const bestillinger = () => KALL.filter((k) => k.sti === "/v1/bestilling");
+  await runde();
+  assert.equal(bestillinger().length, 1);
+  assert.ok(!alert.textContent.includes(
+    t("ui.rekruttering.bestill.sendt_uten_oppdrag")
+      .replace("{beslutning}", "stopp")),
+    "en STOPP ble meldt som en levert bestilling");
+  assert.ok(alert.textContent.startsWith(t("ui.rekruttering.bestill.stoppet")),
+    `STOPP-teksten mangler: ${alert.textContent}`);
+  assert.ok(alert.textContent.includes(
+    t("kode.bestilling_policy_stopp", "bestilling_policy_stopp")),
+    "STOPP-årsaken står ikke i alerten (§7)");
+  // Bunten er ikke forbrukt: den står navngitt, filen kreves ikke, og
+  // neste forsøk går på SAMME reservasjon — ingen ny opplasting.
+  assert.match(seksjon.textContent, /bunt\.zip/,
+    "den frie bunten ble kastet ut av økten");
+  assert.equal(filInp.hasAttribute("required"), false);
+  bestillingssvar = { beslutning: "tillat", oppdrag_id: 77 };
+  await runde();
+  assert.equal(KALL.filter((k) => k.sti === "/v1/inndata/reserver").length, 1,
+    "bunten ble reservert på nytt etter en STOPP");
+  const [b1, b2] = bestillinger();
+  assert.equal(b2.kropp.inndata_ref, "inndata:u-1");
+  // Serveren har DØMT den forrige kroppen: samme nøkkel ville bare fått
+  // den samme STOPP-en replayet.
+  assert.notEqual(b1.hoder["Idempotency-Key"], b2.hoder["Idempotency-Key"],
+    "et nytt forsøk bar nøkkelen til den alt dømte intensjonen");
+  await vent(() => alert.textContent.includes("77"), 20);
+  // ... og unntakskøen har sin egen tekst, ikke stopp-teksten.
+  bestillingssvar = { beslutning: "brudd", oppdrag_id: null,
+    begrunnelse: [], unntak_id: 5 };
+  Object.defineProperty(filInp, "files", { configurable: true,
+    value: [{ name: "bunt2.zip",
+              arrayBuffer: async () => new ArrayBuffer(16) }] });
+  filInp.dispatchEvent(new window.Event("change", { bubbles: true }));
+  await runde();
+  assert.equal(alert.textContent, t("ui.rekruttering.bestill.unntak"));
+  const brudd = await alvorligeBrudd(hoved);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
+test("Bestilling: 4xx på reservasjon/opplast slipper den døde nøkkelen (P1-3)", async () => {
+  KALL = [];
+  let reserversvar = 409;
+  let opplastsvar = {};
+  SVAR = (sti) => {
+    if (sti === "/v1/rekruttering/prosesser") return prosess();
+    if (sti === "/v1/rekruttering/stillingsprofiler") return profiler();
+    if (sti === "/v1/inndata/reserver") return reserversvar;
+    if (sti === "/v1/inndata/opplast/j-1") return opplastsvar;
+    if (sti === "/v1/bestilling") return { beslutning: "tillat", oppdrag_id: 5 };
+    return undefined;
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const seksjon = hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  const skjema = seksjon.querySelector("form");
+  const send = skjema.querySelector("button[type=submit]");
+  Object.defineProperty(skjema.querySelector("input[type=file]"), "files",
+    { configurable: true, value: [{ name: "bunt.zip",
+        arrayBuffer: async () => new ArrayBuffer(16) }] });
+  // Runden er ferdig når låsen er løftet igjen — teksten testes andre
+  // steder, og å vente på den ville bundet denne testen til ordlyden.
+  const runde = async () => {
+    skjema.dispatchEvent(new window.Event("submit",
+      { bubbles: true, cancelable: true }));
+    assert.ok(await vent(() => !send.disabled, 40), "runden ble aldri ferdig");
+  };
+  const reservasjoner = () =>
+    KALL.filter((k) => k.sti === "/v1/inndata/reserver");
+  // 1) Serveren DØMMER reservasjonen (409): nøkkelen er død, og uten fil-
+  //    bytte er det ingenting brukeren kan gjøre for å få en ny.
+  await runde();
+  assert.equal(reservasjoner().length, 1);
+  // 2) Reservasjonen går gjennom, men opplastingen svarer 5xx: utfallet
+  //    er UKJENT, og retry skal være SAMME operasjon.
+  reserversvar = { reservasjon_jti: "j-1", inndata_ref: "inndata:u-1" };
+  opplastsvar = 500;
+  await runde();
+  assert.equal(reservasjoner().length, 2);
+  // 3) Opplastingen går gjennom, kjeden fullfører.
+  opplastsvar = {};
+  await runde();
+  assert.equal(reservasjoner().length, 3);
+  const [r1, r2, r3] = reservasjoner().map((k) => k.hoder["Idempotency-Key"]);
+  assert.notEqual(r1, r2, "4xx-dommen etterlot klienten på en død nøkkel");
+  assert.equal(r2, r3, "et usikkert utfall roterte reservasjonsnøkkelen");
+  await vent(() => seksjon.querySelector("[role=alert]")
+    .textContent.includes("5"), 20);
+});
+
+test("Bestilling: den første profilen låser opp bestillingsskjemaet (P1-1)", async () => {
+  KALL = [];
+  let profilsvar = { profiler: [] };
+  SVAR = (sti, opts = {}) => {
+    if (sti === "/v1/rekruttering/prosesser") return prosess();
+    if (sti === "/v1/rekruttering/stillingsprofiler") {
+      if ((opts.method || "GET") === "POST") {
+        profilsvar = profiler();
+        return { profil_id: "prof-1", versjon: 2 };
+      }
+      return profilsvar;
+    }
+    return undefined;
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  // Seksjonen re-tegnes, så noden må hentes på nytt hver gang.
+  const bestill = () =>
+    hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  assert.ok(bestill(), "bestillingsseksjonen mangler");
+  assert.equal(bestill().querySelector("form"), null,
+    "bestillingsskjemaet sto der uten en eneste profil");
+  const profilDel =
+    hoved.querySelector("section[aria-labelledby=profil-tittel]");
+  const ny = [...profilDel.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.profiler.ny"));
+  assert.ok(ny, "Ny profil-knappen mangler");
+  ny.click();
+  const skjema = profilDel.querySelector("form");
+  skjema.querySelector("#profil-navn").value = "Driftskonsulent";
+  skjema.querySelector('input[type=text][id^="profil-krav"]').value = "Drift";
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() => bestill().querySelector("form"), 40),
+    "bestillingsskjemaet våknet aldri etter den første profilen");
+  assert.ok(bestill().querySelector("select#bestill-profil option"),
+    "profilvelgeren står tom etter at profilen ble lagret");
+  const brudd = await alvorligeBrudd(hoved);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
+test("Bestilling: en ny profilversjon når velgeren uten å rive skjemaet (P2-2)",
+  async () => {
+  // P1-1-vakten («ikke tegn om et skjema som finnes») gjorde skjemaet
+  // urørlig, og da ble den bevarte tilstanden feil på et annet punkt:
+  // «lagret (versjon 3)» sto ved siden av en velger som fortsatt bare
+  // kjente `prof-1@2`, og bestillingen gikk mot en erstattet versjon.
+  KALL = [];
+  let profilsvar = profiler();
+  let bestillingssvar = 500;
+  SVAR = (sti, opts = {}) => {
+    if (sti === "/v1/rekruttering/prosesser") return prosess();
+    if (sti === "/v1/rekruttering/stillingsprofiler") {
+      if ((opts.method || "GET") === "POST") {
+        const ny = profiler();
+        ny.profiler[0].versjon = 3;
+        profilsvar = ny;
+        return { profil_id: "prof-1", versjon: 3 };
+      }
+      return profilsvar;
+    }
+    if (sti === "/v1/inndata/reserver") {
+      return { reservasjon_jti: "j-1", inndata_ref: "inndata:u-1" };
+    }
+    if (sti.startsWith("/v1/inndata/opplast/")) return {};
+    if (sti === "/v1/bestilling") return bestillingssvar;
+    return undefined;
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const bestill = () =>
+    hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  const skjema = bestill().querySelector("form");
+  const send = skjema.querySelector("button[type=submit]");
+  const antall = skjema.querySelector("#bestill-antall");
+  antall.value = "4";
+  antall.dispatchEvent(new window.Event("input", { bubbles: true }));
+  const filInp = skjema.querySelector("input[type=file]");
+  Object.defineProperty(filInp, "files", { configurable: true,
+    value: [{ name: "bunt.zip",
+              arrayBuffer: async () => new ArrayBuffer(16) }] });
+  filInp.dispatchEvent(new window.Event("change", { bubbles: true }));
+  // Bunten lastes opp; bestillingen svarer 5xx, så referansen står i økten.
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() => !send.disabled, 40), "runden ble aldri ferdig");
+  assert.equal(bestill().querySelector("#bestill-profil").value, "prof-1@2");
+  // Brukeren lagrer en ny versjon av den samme profilen.
+  const profilDel =
+    hoved.querySelector("section[aria-labelledby=profil-tittel]");
+  [...profilDel.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.profiler.rediger")).click();
+  const profilSkjema = profilDel.querySelector("form");
+  profilSkjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() => [...bestill()
+    .querySelectorAll("#bestill-profil option")]
+    .some((o) => o.value === "prof-1@3"), 40),
+    "velgeren kjenner bare den erstattede versjonen");
+  // Skjemaet ble IKKE revet: samme noder, samme antall, samme bunt.
+  assert.equal(bestill().querySelector("form"), skjema,
+    "bestillingsskjemaet ble revet ned av en profillagring");
+  assert.equal(bestill().querySelector("#bestill-antall").value, "4",
+    "brukerens antall forsvant med profillagringen");
+  assert.match(bestill().textContent, /bunt\.zip/,
+    "den opplastede bunten forsvant med profillagringen");
+  // ... og bestillingen går mot den NYE versjonen, på den samme bunten.
+  bestillingssvar = { beslutning: "tillat", oppdrag_id: 21 };
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() =>
+    KALL.filter((k) => k.sti === "/v1/bestilling").length === 2, 40),
+    "bestillingen kom aldri");
+  const [b1, b2] = KALL.filter((k) => k.sti === "/v1/bestilling");
+  assert.equal(b1.kropp.stillingsprofil_ref, "prof-1@2");
+  assert.equal(b2.kropp.stillingsprofil_ref, "prof-1@3",
+    "bestillingen gikk mot en erstattet profilversjon");
+  assert.equal(b2.kropp.inndata_ref, "inndata:u-1");
+  assert.equal(KALL.filter((k) => k.sti === "/v1/inndata/reserver").length, 1,
+    "bunten ble reservert på nytt etter profillagringen");
+  // En annen kropp er en annen intensjon: nøkkelen fulgte med.
+  assert.notEqual(b1.hoder["Idempotency-Key"], b2.hoder["Idempotency-Key"],
+    "den nye profilversjonen bar den forrige intensjonens nøkkel");
+  const brudd = await alvorligeBrudd(hoved);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
+test("Bestilling: ingen profilversjon forsvinner i bestillingsvinduet (P2-1)",
+  async () => {
+  // P2-2 lot en ny profilversjon nå velgeren uten å rive skjemaet — men
+  // hoppet over HELE oppdateringen mens en bestilling var i lufta, og
+  // hentet den aldri inn igjen. Lagret brukeren versjon 3 i det vinduet,
+  // sto velgeren på erstattet `@2` etterpå, og neste bestilling gikk mot
+  // en versjon som ikke lenger var den nyeste.
+  //
+  // A-dommen fjerner vinduet i stedet for å lappe det: «Lagre» tar den
+  // SAMME låsen som kjeden, så de to mutasjonene aldri er i lufta
+  // samtidig — og da kan `oppdaterProfilvalg` kjøre ubetinget.
+  //
+  // MUTASJONEN SOM DREPER DENNE: sett `!okt.bestilling.paagaaende &&`
+  // tilbake foran `oppdaterProfilvalg` i `paaProfilendring`.
+  KALL = [];
+  let slippBestilling;
+  const bestillingssvar = new Promise((r) => {
+    slippBestilling = () => r({ beslutning: "stopp", begrunnelse: [] });
+  });
+  let profilsvar = profiler();
+  SVAR = (sti, opts = {}) => {
+    if (sti === "/v1/rekruttering/prosesser") return prosess();
+    if (sti === "/v1/rekruttering/stillingsprofiler") {
+      if ((opts.method || "GET") === "POST") {
+        const ny = profiler();
+        ny.profiler[0].versjon = 3;
+        profilsvar = ny;
+        return { profil_id: "prof-1", versjon: 3 };
+      }
+      return profilsvar;
+    }
+    if (sti === "/v1/inndata/reserver") {
+      return { reservasjon_jti: "j-1", inndata_ref: "inndata:u-1" };
+    }
+    if (sti.startsWith("/v1/inndata/opplast/")) return {};
+    if (sti === "/v1/bestilling") return bestillingssvar;
+    return undefined;
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const bestill = () =>
+    hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  const profilDel =
+    hoved.querySelector("section[aria-labelledby=profil-tittel]");
+  const skjema = bestill().querySelector("form");
+  const send = skjema.querySelector("button[type=submit]");
+  const filInp = skjema.querySelector("input[type=file]");
+  Object.defineProperty(filInp, "files", { configurable: true,
+    value: [{ name: "bunt.zip",
+              arrayBuffer: async () => new ArrayBuffer(16) }] });
+  filInp.dispatchEvent(new window.Event("change", { bubbles: true }));
+  // Brukeren åpner profileditoren FØRST, så knappen finnes når kjeden
+  // starter — den er kontrollen låsen skal ta.
+  [...profilDel.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.profiler.rediger")).click();
+  const profilSkjema = profilDel.querySelector("form");
+  const lagre = profilSkjema.querySelector("button[type=submit]");
+  assert.equal(lagre.disabled, false, "testen antar en åpen editor");
+  // Bestillingen henger.
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() => KALL.some((k) => k.sti === "/v1/bestilling"), 20),
+    "bestillingen ble aldri sendt");
+  // «Lagre» er frosset — og sier det. Et forsøk poster ingenting.
+  assert.equal(lagre.disabled, true,
+    "profileditoren sto handlingsklar mens en bestilling var i lufta");
+  assert.equal(profilSkjema.getAttribute("aria-busy"), "true");
+  profilSkjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  await vent(() => false, 5);
+  assert.equal(KALL.filter((k) => k.metode === "POST"
+    && k.sti === "/v1/rekruttering/stillingsprofiler").length, 0,
+    "en profilversjon ble skrevet midt i en bestilling");
+  // STOPP: bunten står, kjeden slipper låsen — og NÅ lagrer brukeren.
+  slippBestilling();
+  assert.ok(await vent(() => !send.disabled, 40), "kjeden ble aldri ferdig");
+  assert.equal(lagre.disabled, false, "editoren ble stående frosset");
+  assert.equal(profilSkjema.hasAttribute("aria-busy"), false);
+  profilSkjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  // Velgeren kjenner den nye versjonen FØR neste innsending.
+  assert.ok(await vent(() => [...bestill()
+    .querySelectorAll("#bestill-profil option")]
+    .some((o) => o.value === "prof-1@3"), 40),
+    "velgeren står igjen på en erstattet profilversjon");
+  assert.equal(bestill().querySelector("#bestill-profil").value, "prof-1@3");
+  // ... og skjemaet ble ikke revet: bunten fra STOPP-runden står igjen.
+  assert.equal(bestill().querySelector("form"), skjema);
+  assert.match(bestill().textContent, /bunt\.zip/);
+  const brudd = await alvorligeBrudd(hoved);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
+test("Profiler: en editor som åpnes midt i en bestilling fødes frosset",
+  async () => {
+  // Frysen tar kontrollene som FINNES. Profilskjemaet åpnes på et klikk,
+  // så «Lagre» kan fødes etter at låsen ble tatt — og en knapp som slipper
+  // unna frysen er hele P2-1-vinduet på nytt, bare gjennom en annen dør.
+  //
+  // MUTASJONEN SOM DREPER DENNE: fjern
+  // `if (okt.bestilling.paagaaende) frysEn(kontroll, true)` fra
+  // `laas.meld`.
+  KALL = [];
+  let slippBestilling;
+  const bestillingssvar = new Promise((r) => {
+    slippBestilling = () => r({ beslutning: "stopp", begrunnelse: [] });
+  });
+  SVAR = (sti) => {
+    if (sti === "/v1/rekruttering/prosesser") return prosess();
+    if (sti === "/v1/rekruttering/stillingsprofiler") return profiler();
+    if (sti === "/v1/inndata/reserver") {
+      return { reservasjon_jti: "j-1", inndata_ref: "inndata:u-1" };
+    }
+    if (sti.startsWith("/v1/inndata/opplast/")) return {};
+    if (sti === "/v1/bestilling") return bestillingssvar;
+    return undefined;
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const profilDel =
+    hoved.querySelector("section[aria-labelledby=profil-tittel]");
+  const skjema = hoved
+    .querySelector("section[aria-labelledby=bestill-tittel] form");
+  const send = skjema.querySelector("button[type=submit]");
+  const filInp = skjema.querySelector("input[type=file]");
+  Object.defineProperty(filInp, "files", { configurable: true,
+    value: [{ name: "bunt.zip",
+              arrayBuffer: async () => new ArrayBuffer(16) }] });
+  filInp.dispatchEvent(new window.Event("change", { bubbles: true }));
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() => KALL.some((k) => k.sti === "/v1/bestilling"), 20),
+    "bestillingen ble aldri sendt");
+  // FØRST NÅ åpnes editoren — knappen finnes ikke før dette klikket.
+  [...profilDel.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.profiler.ny")).click();
+  const profilSkjema = profilDel.querySelector("form");
+  const lagre = profilSkjema.querySelector("button[type=submit]");
+  assert.equal(lagre.disabled, true,
+    "en editor åpnet midt i en bestilling ga en handlingsklar «Lagre»");
+  assert.equal(profilSkjema.getAttribute("aria-busy"), "true");
+  // ... og den åpnes når kjeden slipper, som enhver annen utløser.
+  slippBestilling();
+  assert.ok(await vent(() => !send.disabled, 40), "kjeden ble aldri ferdig");
+  assert.equal(lagre.disabled, false, "editoren ble stående frosset");
+  assert.equal(profilSkjema.hasAttribute("aria-busy"), false);
+  const brudd = await alvorligeBrudd(hoved);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
+test("Profiler: en profillagring i lufta fryser bestillingskroppen (P2-2)",
+  async () => {
+  // SPEILET AV «profilen er låst mens kroppen er underveis» (Cursor P2-2).
+  // Testene dekket bare den ene retningen — bestilling ⇒ profil/prosess/
+  // «Lagre» frosset. Motsatt vei sto umålt, og der var låsen halv: en
+  // profillagring tok `laas.frys` alene, som eier `tegn`-utløserne, mens
+  // bestillingens KROPP — profil, antall, frist — eies av seksjonens egen
+  // `frys`. Skjemaet fikk `aria-busy` gjennom `send` og tok input likevel,
+  // og profilvelgerens `change`-vakt rullet tilbake til `frossetProfil`,
+  // som ingen hadde satt: valget ble TØMT i stedet for bevart.
+  //
+  // MUTASJONEN SOM DREPER DENNE: sett `laas.frys` tilbake alene i
+  // profil-submit (begge stedene, `finally` inkludert).
+  KALL = [];
+  let slippProfil;
+  const profilPost = new Promise((r) => {
+    slippProfil = () => r({ profil_id: "prof-1", versjon: 3 });
+  });
+  SVAR = (sti, opts = {}) => {
+    if (sti === "/v1/rekruttering/prosesser") return prosess();
+    if (sti === "/v1/rekruttering/stillingsprofiler") {
+      return (opts.method || "GET") === "POST" ? profilPost : profiler();
+    }
+    return undefined;
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const profilDel =
+    hoved.querySelector("section[aria-labelledby=profil-tittel]");
+  const skjema = hoved
+    .querySelector("section[aria-labelledby=bestill-tittel] form");
+  const profilVelger = skjema.querySelector("#bestill-profil");
+  const antall = skjema.querySelector("#bestill-antall");
+  const frist = skjema.querySelector("#bestill-frist");
+  assert.equal(profilVelger.value, "prof-1@2", "testen antar et valgt utgangspunkt");
+  // Brukeren lagrer en ny versjon; POST-en henger.
+  [...profilDel.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.profiler.rediger")).click();
+  const profilSkjema = profilDel.querySelector("form");
+  profilSkjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() => KALL.some((k) => k.metode === "POST"
+    && k.sti === "/v1/rekruttering/stillingsprofiler"), 20),
+    "profilversjonen ble aldri sendt");
+  // Hele bestillingen er frosset — ikke bare utløserne den deler med `laas`.
+  assert.equal(profilVelger.disabled, true,
+    "profilvelgeren tok input mens en profilversjon ble skrevet");
+  assert.equal(antall.readOnly, true, "antallet sto åpent under profillagringen");
+  assert.equal(frist.readOnly, true, "slettefristen sto åpen under profillagringen");
+  assert.equal(skjema.getAttribute("aria-busy"), "true");
+  assert.equal(skjema.querySelector("button[type=submit]").disabled, true);
+  // ... og et bytte som slipper gjennom `disabled` BEVARER valget.
+  // Uten kroppsfrysen er `frossetProfil` `null` her, og velgeren tømmes.
+  profilVelger.value = "";
+  profilVelger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.equal(profilVelger.value, "prof-1@2",
+    "valget ble tømt i stedet for rullet tilbake til profilen kroppen bæres av");
+  // Låsen løftes når versjonen er skrevet — på de samme kontrollene.
+  slippProfil();
+  assert.ok(await vent(() => !profilVelger.disabled, 40),
+    "kroppen ble stående frosset etter profillagringen");
+  assert.equal(antall.readOnly, false);
+  assert.equal(frist.readOnly, false);
+  assert.equal(skjema.hasAttribute("aria-busy"), false);
+  const brudd = await alvorligeBrudd(hoved);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
 test("Profiler: listen viser navn, versjon og krav — og axe rent", async () => {
   const hoved = await tegnetMedProfiler();
   const seksjon = hoved.querySelector("section[aria-labelledby=profil-tittel]");
@@ -1163,6 +2543,54 @@ test("Profiler: lagring poster hele kravsettet og melder i alert", async () => {
   }), "kvitteringen kom aldri i alerten");
 });
 
+test("Profiler: kvitteringen navngir profilen som ble lagret (Cursor P2-1)",
+  async () => {
+    // Samme vindu som bestillingens buntbinding (`:1350`), på profilens
+    // suksessarm: `laas` fryser utløserne og bestillingskroppen — men
+    // ikke `#profil-navn`. Feltet står åpent mens POST-en henger, og
+    // kvitteringen leste det ETTER svaret mens kroppen bar navnet fra
+    // kallstart. Alerten kunne dermed navngi en profil serveren aldri
+    // så. (At feltet ikke fryses er frys-klassen, dom-klasse
+    // `p2-1-og-p2-2-utsatt-til-214` — bindingen her er en annen sak.)
+    const hoved = await tegnetMedProfiler();
+    const seksjon = hoved.querySelector(
+      "section[aria-labelledby=profil-tittel]");
+    const rediger = [...seksjon.querySelectorAll("button")]
+      .find((b) => b.textContent === t("ui.rekruttering.profiler.rediger"));
+    rediger.click();
+    const skjema = seksjon.querySelector("form");
+    const navnInp = skjema.querySelector("#profil-navn");
+    assert.equal(navnInp.value, "Driftskonsulent", "editoren var ikke fylt");
+    navnInp.value = "Driftskonsulent II";
+    let slipp;
+    KALL = [];
+    SVAR = (sti, opts) => {
+      if ((opts.method || "GET") === "POST") {
+        return new Promise((r) => { slipp = r; });
+      }
+      return sti.includes("stillingsprofiler") ? profiler() : prosess();
+    };
+    skjema.dispatchEvent(new window.Event("submit",
+      { bubbles: true, cancelable: true }));
+    assert.ok(await vent(() => KALL.some((k) => k.metode === "POST")),
+      "POST-en gikk aldri");
+    assert.equal(KALL.find((k) => k.metode === "POST").kropp.navn,
+      "Driftskonsulent II", "kroppen bar ikke navnet fra kallstart");
+    // Brukeren skriver videre mens POST-en står ubesvart — DA lander 2xx
+    // på det navnet som faktisk ble sendt.
+    navnInp.value = "En helt annen profil";
+    slipp({ profil_id: "prof-1", versjon: 3 });
+    const lagre = skjema.querySelector("button[type=submit]");
+    assert.ok(await vent(() => !lagre.disabled, 40), "runden ble aldri ferdig");
+    const melding = seksjon.querySelector("[role=alert]").textContent;
+    assert.ok(melding.includes("Driftskonsulent II"),
+      "kvitteringen navnga ikke profilen som faktisk ble lagret");
+    assert.ok(!melding.includes("En helt annen profil"),
+      "kvitteringen navnga navnet brukeren nettopp skrev, ikke det sendte");
+    // MUTASJONEN SOM DREPER DENNE: les `navnInp.value` etter `await` igjen
+    // (da blir navnet «En helt annen profil»).
+  });
+
 test("Profiler: tapt svar → retry sender SAMME nøkkel (SP-2)", async () => {
   const hoved = await tegnetMedProfiler();
   const seksjon = hoved.querySelector(
@@ -1182,6 +2610,12 @@ test("Profiler: tapt svar → retry sender SAMME nøkkel (SP-2)", async () => {
   assert.ok(await vent(() => KALL.some((k) => k.metode === "POST")),
     "første POST gikk aldri");
   const forste = KALL.find((k) => k.metode === "POST");
+  // Retryen er brukerens NESTE klikk, ikke et andre klikk midt i det
+  // første: flaten holder ÉN mutasjon om gangen (A-dommen, #212), og
+  // «Lagre» står frosset til runden er ferdig. Det er nøkkelen som er
+  // under måling her, ikke låsen.
+  const lagre = skjema.querySelector("button[type=submit]");
+  assert.ok(await vent(() => !lagre.disabled, 40), "runden ble aldri ferdig");
   // Andre forsøk: samme operasjon — samme nøkkel.
   SVAR = { "/v1/rekruttering/prosesser": prosess(),
            "/v1/rekruttering/stillingsprofiler": profiler() };
@@ -1194,4 +2628,90 @@ test("Profiler: tapt svar → retry sender SAMME nøkkel (SP-2)", async () => {
   assert.equal(andre.hoder["Idempotency-Key"],
     forste.hoder["Idempotency-Key"],
     "retry etter tapt svar byttet nøkkel — serveren kan ikke replaye");
+});
+
+test("Profiler: et tapt svar meldes som uvisst, ikke som «kunne ikke lagre» (P2-1)", async () => {
+  // Nøkkeløkonomien skiller alt 4xx fra resten (nøkkelen står ved 0/5xx),
+  // men teksten gjorde det ikke: en profilversjon kan stå lagret mens
+  // svaret gikk tapt, og «sjekk kravene» er da falsk trygghet.
+  const hoved = await tegnetMedProfiler();
+  const seksjon = hoved.querySelector(
+    "section[aria-labelledby=profil-tittel]");
+  const alert = seksjon.querySelector("[role=alert]");
+  const rediger = [...seksjon.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.profiler.rediger"));
+  rediger.click();
+  const skjema = seksjon.querySelector("form");
+  const lagre = [...skjema.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.profiler.lagre"));
+  const runde = async () => {
+    skjema.dispatchEvent(new window.Event("submit",
+      { bubbles: true, cancelable: true }));
+    assert.ok(await vent(() => !lagre.disabled, 40), "runden ble aldri ferdig");
+  };
+  // Nettet dør: fetch kaster → ApiFeil(0). Utfallet er UKJENT.
+  SVAR = (sti, opts) => {
+    if ((opts.method || "GET") === "POST") throw new Error("nett");
+    return sti.includes("stillingsprofiler") ? profiler() : prosess();
+  };
+  await runde();
+  assert.equal(alert.textContent, t("ui.rekruttering.usikkert_utfall"),
+    "et tapt svar ble meldt som en definitiv lagringsfeil");
+  // 5xx er like uvisst — serveren kan ha skrevet versjonen.
+  SVAR = (sti, opts) => {
+    if ((opts.method || "GET") === "POST") return 500;
+    return sti.includes("stillingsprofiler") ? profiler() : prosess();
+  };
+  await runde();
+  assert.equal(alert.textContent, t("ui.rekruttering.usikkert_utfall"));
+  // Serverens egen dom er derimot definitiv — og sier det.
+  SVAR = (sti, opts) => {
+    if ((opts.method || "GET") === "POST") return 409;
+    return sti.includes("stillingsprofiler") ? profiler() : prosess();
+  };
+  await runde();
+  assert.equal(alert.textContent, t("ui.rekruttering.profiler.feil"));
+});
+
+test("Profiler: endret innhold etter tapt svar gir NY nøkkel (P2-5)", async () => {
+  const hoved = await tegnetMedProfiler();
+  const seksjon = hoved.querySelector(
+    "section[aria-labelledby=profil-tittel]");
+  const rediger = [...seksjon.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.profiler.rediger"));
+  rediger.click();
+  const skjema = seksjon.querySelector("form");
+  // Første forsøk: nettverket dør — utfallet er ukjent, nøkkelen står.
+  KALL = [];
+  SVAR = (sti, opts) => {
+    if ((opts.method || "GET") === "POST") throw new Error("nett");
+    return sti.includes("stillingsprofiler") ? profiler() : prosess();
+  };
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() => KALL.some((k) => k.metode === "POST")),
+    "første POST gikk aldri");
+  const forste = KALL.find((k) => k.metode === "POST");
+  // Runden må være ferdig før brukeren rører skjemaet igjen: flaten
+  // holder ÉN mutasjon om gangen (A-dommen, #212).
+  const lagre = skjema.querySelector("button[type=submit]");
+  assert.ok(await vent(() => !lagre.disabled, 40), "runden ble aldri ferdig");
+  // ... men brukeren endrer navnet. Da er neste lagring en ANNEN
+  // profilversjon, og den gamle nøkkelen ville enten kollidert eller
+  // fått serveren til å replaye den forrige.
+  const navn = skjema.querySelector("#profil-navn");
+  navn.value = "Driftsarkitekt";
+  navn.dispatchEvent(new window.Event("input", { bubbles: true }));
+  SVAR = { "/v1/rekruttering/prosesser": prosess(),
+           "/v1/rekruttering/stillingsprofiler": profiler() };
+  KALL = [];
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() => KALL.some((k) => k.metode === "POST")),
+    "andre POST gikk aldri");
+  const andre = KALL.find((k) => k.metode === "POST");
+  assert.equal(andre.kropp.navn, "Driftsarkitekt");
+  assert.notEqual(andre.hoder["Idempotency-Key"],
+    forste.hoder["Idempotency-Key"],
+    "endret innhold bar fortsatt den gamle intensjonens nøkkel");
 });

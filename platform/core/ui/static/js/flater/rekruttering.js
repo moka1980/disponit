@@ -18,6 +18,7 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { hentJson, signerRekrutteringsliste, lagreStillingsprofil,
+         reserverBunt, lastOppBunt, bestillEvaluering,
          nyIdempotensnokkel, UautorisertFeil } from "../api.js";
 import { harScope } from "../sitekart.js";
 import { DataTabell } from "../tabell.js";
@@ -115,7 +116,35 @@ export function visRekruttering(hoved, ctx) {
   // til her av nøyaktig samme grunn som de to over: den skrives når
   // POST-en svarer, og da kan tegningen som ba om den være borte.
   const okt = { signeringsnokler: new Map(), signerte: new Set(),
-    utfall: null };
+    utfall: null,
+    // Evalueringskjeden (#162): den opplastede bunten og begge
+    // SP-2-nøklene hører til den lastede flaten, ikke én tegning — et
+    // prosessbytte skal ikke gjøre en retry til en NY operasjon eller
+    // miste en alt opplastet bunt.
+    // ... OG DET GJØR KJEDEN SOM ER I LUFTA (Cursor P1-2). En opplasting
+    // varer lenge nok til at brukeren rekker å bytte fil under den.
+    // `paagaaende` er låsen som holder det med ÉN mutasjon om gangen i
+    // kjeden — bestillingen OG profillagringen tar den (A-dommen, #212),
+    // fordi de deler både profillisten og velgeren de bestiller mot;
+    // `generasjon` er kjedens intensjon, så en flygende opplasting ikke
+    // kan skrive sin `inndata_ref` inn i en bunt brukeren alt har byttet
+    // ut. Filvelgeren kan ikke fryses med `readOnly`, så `generasjon` blir
+    // stående: den vokter et vindu som ikke har noe med om-tegning å gjøre.
+    //
+    // `laasOpp` er derimot BORTE (A-dommen, #212). Den pekte på
+    // «kontrollene som står i visningen» fordi en om-tegning kunne komme
+    // midt i kjeden. Nå kan den ikke det — `tegn`-utløserne er frosset så
+    // lenge `paagaaende` står — og da er kontrollene kjeden låste de samme
+    // som skal låses opp.
+    //
+    // `frysSkjema` er bestillingsseksjonens egen `frys`, lagt der
+    // profillagringen kan nå den (eierdom B, #212 runde 6): kroppen —
+    // profil, antall, frist — eies av seksjonen, så en lås som bare går
+    // gjennom `laas` fryser utløserne og lar feltene stå åpne.
+    bestilling: { reserverIdem: null, bestillIdem: null,
+                  inndataRef: null, filnavn: null,
+                  paagaaende: false, generasjon: 0,
+                  oppdaterProfilvalg: null, frysSkjema: null } };
   medStatus(hoved, ctx,
     async () => {
       // Profilene er TILLEGGSDATA (samme politikk som
@@ -136,11 +165,97 @@ export function visRekruttering(hoved, ctx) {
 
 function tegn(hoved, ctx, data, okt, valgtId) {
   const prosesser = (data && data.prosesser) || [];
-  const profilDel = profilSeksjon(hoved, ctx, data, okt);
+  // A-DOMMEN (#212): GENERATOREN FJERNES, IKKE INSTANSENE. Tre runder med
+  // Cursor-funn på samme mekanisme hadde samme rot: `tegn` river og bygger
+  // bestillingsseksjonen på nytt mens en async kjede eier den, og hver
+  // eneste binding kjeden lukker over — alerten, skjemaet, `visBunt`,
+  // knappen — blir en frakoblet node. Botemiddelet var én indireksjon per
+  // binding, oppdaget én om gangen, og flaten vokste 865 → 982 → 1131
+  // linjer mens den ble «lukket». Runde fire ville funnet den syvende
+  // bindingen.
+  //
+  // Eierens dom er A: frys `tegn`-utløserne mens kjeden er i lufta. Da kan
+  // seksjonen ikke rives, og alle bindingene forblir tilkoblet — uten en
+  // eneste ny peker mot «det som er synlig nå». Husmønsteret er
+  // `bestilling.js`: `frys` + `aria-busy`, aldri en kontroll som ser
+  // levende ut og ikke gjør noe. Prisen — ingen prosessbytte under en
+  // pågående opplasting — er dommens egen: brukeren har en irreversibel
+  // operasjon i flukt, og velgeren skal SI det.
+  // Navngitte plasser, ikke en liste: en seksjon som tegnes på nytt
+  // ERSTATTER sin egen kontroll i stedet for å legge igjen en frakoblet
+  // node ingen låser opp.
+  const utlosere = { velger: null, send: null, lagre: null };
+  const frysEn = (kontroll, paa) => {
+    if (!kontroll) return;
+    kontroll.disabled = paa;
+    // `aria-busy` hører til OMRÅDET som er opptatt, ikke til knappen:
+    // skjemaet for kontrollene som står i et, velgerens egen rot ellers.
+    const rot = kontroll.form || kontroll.parentElement;
+    if (!rot) return;
+    if (paa) rot.setAttribute("aria-busy", "true");
+    else rot.removeAttribute("aria-busy");
+  };
+  const laas = {
+    frys: (paa) => {
+      for (const k of Object.values(utlosere)) frysEn(k, paa);
+    },
+    // Kontrollene fødes til ulik tid — profilskjemaet åpnes på et klikk —
+    // så en som meldes mens flaten er frosset, fryses med det samme.
+    // `paagaaende` ER den tilstanden; en egen `frosset`-kopi ville bare
+    // vært en til å holde i takt.
+    meld: (navn, kontroll) => {
+      utlosere[navn] = kontroll;
+      if (okt.bestilling.paagaaende) frysEn(kontroll, true);
+    },
+  };
+  // DEN FØRSTE PROFILEN LÅSER OPP BESTILLINGEN (Cursor P1-1). Uten
+  // profiler tegner `bestillSeksjon` en «opprett en profil først»-tekst
+  // og returnerer — og profileditorens `oppdaterListe` tegner BARE
+  // profillisten på nytt. Lagret brukeren sin aller første profil, sto
+  // hun altså igjen med oppfordringen hun nettopp hadde etterkommet, og
+  // kjeden «profil → bestilling» var brutt til omlasting eller
+  // prosessbytte. Seksjonen får derfor en egen rot editoren kan tegne om.
+  //
+  // Om-tegningen skjer BARE når seksjonen står uten skjema: et skjema som
+  // finnes, kan ha en valgt fil, en alert midt i en opplasting og en
+  // POST i lufta — å rive det ned fordi en profil ble lagret, ville vært
+  // nøyaktig den frakoblede noden `meldUtfall` finnes for å unngå.
+  //
+  // ... MEN VELGEREN MÅ LIKEVEL FØLGE LISTEN (Cursor P2-2). Vakten over
+  // gjorde skjemaet urørlig, og da ble den bevarte tilstanden feil på et
+  // annet punkt: lagret brukeren en ny profilVERSJON mens skjemaet sto,
+  // fikk hun kvitteringen «lagret (versjon 3)» ved siden av en velger som
+  // fortsatt bare kjente `prof-1@2` — og bestilte mot en versjon hun
+  // nettopp hadde erstattet. Fiksen river ikke skjemaet; den bytter bare
+  // ut alternativene, så filvalget, antallet og en alt opplastet bunt
+  // står. Full skip beholdes for kjeder i lufta: der ville et bytte av
+  // alternativene endret kroppen under en bestilling som er underveis.
+  const bestillRot = el("div", { class: "rekrut-bestill" });
+  const tegnBestilling = () => {
+    const del = bestillSeksjon(hoved, ctx, data, okt, laas);
+    sett(bestillRot, ...(del ? [del] : []));
+  };
+  tegnBestilling();
+  const profilDel = profilSeksjon(hoved, ctx, data, okt, laas, () => {
+    if (!bestillRot.querySelector("form")) { tegnBestilling(); return; }
+    // FULL SKIP UNDER `paagaaende` ER BORTE (A-dommen, #212, Cursor
+    // P2-1). Skipen fantes fordi et bytte av alternativene under en
+    // bestilling som er underveis ville endret kroppen brukeren ser og
+    // forkastet `bestillIdem` midt i flukten — men den ble aldri
+    // innhentet etterpå, så en versjon lagret i vinduet nådde ALDRI
+    // `#bestill-profil`: velgeren sto igjen på en erstattet versjon, og
+    // neste bestilling gikk mot den. Fiksen er ikke å hente den inn i en
+    // `finally` (enda en indireksjon, enda et vindu) — det er å fjerne
+    // vinduet: profileditorens «Lagre» tar den SAMME låsen som kjeden,
+    // så de to mutasjonene aldri er i lufta samtidig. Da kan denne
+    // linjen bare gjøre jobben sin.
+    if (okt.bestilling.oppdaterProfilvalg) okt.bestilling.oppdaterProfilvalg();
+  });
+  const bestillDel = bestillRot.firstChild ? bestillRot : null;
   if (!prosesser.length) {
     sett(hoved, flateHode(t("ui.rekruttering.tittel")),
       el("p", { text: t("ui.rekruttering.ingen_prosess") }),
-      profilDel);
+      profilDel, ...(bestillDel ? [bestillDel] : []));
     return;
   }
   // FLERE PROSESSER ER TILGJENGELIGE, IKKE BARE DEN FØRSTE (Codex P2).
@@ -161,6 +276,17 @@ function tegn(hoved, ctx, data, okt, valgtId) {
         prosessetikett(p))));
     velger.value = prosess.prosess_id;
     velger.addEventListener("change", () => {
+      // FROSSET ER FROSSET (A-dommen, #212). `disabled` er brukerens vei:
+      // nettleseren sender ingen `change` fra en låst kontroll. Men hele
+      // poenget med A er at om-tegningen ikke SKJER mens kjeden eier
+      // seksjonen, og en invariant som bare hviler på nettleserens
+      // oppførsel kan verken måles eller mutasjonstestes. Dommen står
+      // derfor også her, ett sted fra: låsen spørres, valget rulles
+      // tilbake til den prosessen som faktisk vises.
+      if (okt.bestilling.paagaaende) {
+        velger.value = prosess.prosess_id;
+        return;
+      }
       tegn(hoved, ctx, data, okt, velger.value);
       const ny = hoved.querySelector(`#${velgerId}`);
       if (ny) ny.focus();
@@ -169,6 +295,9 @@ function tegn(hoved, ctx, data, okt, valgtId) {
       el("label", { for: velgerId,
         text: t("ui.rekruttering.prosessvelger") }),
       velger);
+    // ... og HER er `tegn`-utløseren A-dommen navngir: den ene kontrollen
+    // på flaten som river bestillingsseksjonen og bygger den på nytt.
+    laas.meld("velger", velger);
   }
   const vekter = { ...prosess.vekter };
   const kanBestille = harScope(ctx, "bestilling:opprett");
@@ -544,7 +673,7 @@ function tegn(hoved, ctx, data, okt, valgtId) {
 
   sett(hoved, flateHode(t("ui.rekruttering.tittel")), velgerRot,
     utfall, kunngjoring, blindingRot, vektRot, merknadRot, tabellRot,
-    listeRot, profilDel);
+    listeRot, profilDel, ...(bestillDel ? [bestillDel] : []));
   tegnTabell();
 }
 
@@ -556,13 +685,494 @@ function tegn(hoved, ctx, data, okt, valgtId) {
 // skjemaform etter §8: ekte <label for>, tallfelt med min/maks, knapper
 // som <button>, utfall i role="alert", og fokus flyttes inn i skjemaet
 // når det åpnes.
-function profilSeksjon(hoved, ctx, data, okt) {
+// Evalueringsbestillingen (#162, hele kjeden klikkbar): velg ZIP-bunt,
+// profilversjon og antall — flaten reserverer, laster opp og bestiller.
+// SP-2 hele veien: bunten er engangs (ny fil = ny reservasjon), og
+// bestillingsnøkkelen holdes til et DEFINITIVT svar. Skjemaform etter
+// §8: ekte <label for>, tallfelt med min/maks, utfall i role="alert".
+function bestillSeksjon(hoved, ctx, data, okt, laas) {
+  if (!harScope(ctx, "bestilling:opprett")) return null;
+  const profiler = (data && data.profiler) || [];
+  const rot = el("section", { "aria-labelledby": "bestill-tittel" });
+  const utfall = el("div", { role: "alert", class: "utfall" });
+  const tilstand = okt.bestilling;
+
+  if (!profiler.length) {
+    sett(rot, el("h2", { id: "bestill-tittel",
+      text: t("ui.rekruttering.bestill.tittel") }),
+      el("p", { text: t("ui.rekruttering.bestill.ingen_profil") }));
+    return rot;
+  }
+
+  // NØKKELEN HØRER TIL INTENSJONEN, IKKE TIL FLATEN (Cursor P1-2).
+  // `bestillIdem` holdes til et DEFINITIVT svar — det er SP-2 og riktig
+  // — men den ble bare nullstilt av serverens egen dom. Endret brukeren
+  // kroppen etter et usikkert svar (nett/5xx), bar neste innsending
+  // fortsatt nøkkelen til den FORRIGE intensjonen: enten `idempotens-
+  // konflikt` på et endret felt, eller — verre — en replay av den gamle
+  // bestillingen hvis den første POST-en faktisk commitet, slik at
+  // brukeren fikk kvittering for en bestilling hun nettopp endret.
+  // Husmønsteret er `bestilling.js`: første endring i et felt gjør neste
+  // innsending til en ny intensjon, altså en ny nøkkel.
+  const nyIntensjon = () => { tilstand.bestillIdem = null; };
+  const filInp = el("input", { type: "file", id: "bestill-fil",
+    accept: ".zip,application/zip", required: true });
+  // EN OPPLASTET BUNT MÅ SYNES (Cursor P2-6). `inndataRef` hører til
+  // ØKTEN og overlever et prosessbytte — men fil-inputen gjør ikke det:
+  // etter en om-tegning sto skjemaet med tom filvelger og en bunt
+  // serveren for lengst har fått, og en innsending bestilte da på en fil
+  // brukeren ikke lenger kunne se. Motsatt vei var den `required`
+  // filvelgeren en blindvei: nettleseren blokkerte innsendingen for en
+  // fil som IKKE trengs, uten at noe på skjermen sa hvorfor.
+  // Bunten står derfor navngitt over velgeren så lenge den finnes, og
+  // filen kreves bare når det ikke er noen bunt å bestille på.
+  const buntNotis = el("p", { class: "rekrut-bestill-bunt" });
+  const visBunt = () => {
+    if (tilstand.inndataRef) {
+      filInp.removeAttribute("required");
+      sett(buntNotis, t("ui.rekruttering.bestill.lagret_bunt")
+        .replaceAll("{filnavn}", tilstand.filnavn
+          || t("ui.rekruttering.bestill.bunt_uten_navn")));
+    } else {
+      filInp.setAttribute("required", "");
+      sett(buntNotis);
+    }
+  };
+  filInp.addEventListener("change", () => {
+    // Ny fil = NY bunt: en alt reservert/opplastet bunt forkastes ved å
+    // glemme referansen — serveren rydder utløpte reservasjoner selv.
+    tilstand.inndataRef = null;
+    tilstand.reserverIdem = null;
+    tilstand.filnavn = filInp.files[0] ? filInp.files[0].name : null;
+    // ... og en kjede som er i lufta for den GAMLE bunten, er ikke lenger
+    // noens intensjon (Cursor P1-2): generasjonen skiller dem, så den
+    // flygende opplastingen ikke skriver sin referanse inn under et
+    // filnavn brukeren nettopp byttet.
+    tilstand.generasjon += 1;
+    // ... og en ny bunt er en ny bestilling: `inndata_ref` er et felt i
+    // kroppen som alle de andre.
+    nyIntensjon();
+    visBunt();
+  });
+  const profilVelger = el("select", { id: "bestill-profil", required: true });
+  // ALTERNATIVENE ER LISTEN, IKKE ET ØYEBLIKKSBILDE AV DEN (Cursor P2-2).
+  // `profiler` er editorens EGET array (det mutéres, ikke byttes), så en
+  // ny versjon lagret mens skjemaet står, er allerede her — velgeren
+  // hadde bare aldri en vei til å si det. Byggingen bor derfor i en
+  // funksjon `tegn` kan kalle igjen, uten å rive skjemaet.
+  const tegnProfilvalg = () => {
+    const valgt = profilVelger.value;
+    sett(profilVelger, ...profiler.map((pr) => el("option",
+      { value: `${pr.profil_id}@${pr.versjon}` },
+      t("ui.rekruttering.bestill.profilvalg")
+        .replace("{navn}", pr.navn)
+        .replace("{versjon}", String(pr.versjon)))));
+    if (valgt && [...profilVelger.options].some((o) => o.value === valgt)) {
+      // Valget er brukerens, og det overlever en oppfriskning av listen.
+      profilVelger.value = valgt;
+    } else if (valgt) {
+      // Versjonen brukeren pekte på, finnes ikke lenger: velgeren faller
+      // til første oppføring, og det er en ANNEN kropp — nøkkelen hørte
+      // til den forrige intensjonen.
+      nyIntensjon();
+    }
+  };
+  tegnProfilvalg();
+  const antallInp = el("input", { type: "number", id: "bestill-antall",
+    min: "1", max: "5000", step: "1", required: true, value: "1" });
+  const fristInp = el("input", { type: "number", id: "bestill-frist",
+    min: "30", max: "365", step: "1" });
+  // FROSSET ER FROSSET (samme grep som prosessvelgeren, A-dommen #212).
+  // `disabled` er brukerens vei — nettleseren sender ingen `change` fra en
+  // låst kontroll — men en invariant som bare hviler på nettleserens
+  // oppførsel kan verken måles eller mutasjonstestes. Låsen spørres derfor
+  // også her, og valget rulles tilbake til den profilen kroppen ble bygget
+  // på, så `stillingsprofil_ref` og det brukeren ser er samme profil.
+  profilVelger.addEventListener("change", () => {
+    if (tilstand.paagaaende) { profilVelger.value = frossetProfil; return; }
+    nyIntensjon();
+  });
+  antallInp.addEventListener("input", nyIntensjon);
+  fristInp.addEventListener("input", nyIntensjon);
+  const send = el("button", { type: "submit",
+    text: t("ui.rekruttering.bestill.send") });
+  // KROPPEN SKAL IKKE KUNNE ENDRES MENS DEN ER UNDERVEIS (Cursor P1-2).
+  // Bare knappen var låst, så antall og slettefrist kunne skrives om midt
+  // i en lang opplasting og utfallet vises under NYE tall. Frysen er
+  // `readOnly` og ikke `disabled`, av samme grunn som `bestilling.js`
+  // sier det: et låst felt beholder fokus og lesbarhet, et deaktivert
+  // felt under fingeren flytter fokus og forsvinner for skjermleseren.
+  //
+  // ... OG PROFILEN ER ET FELT I DEN KROPPEN (Cursor P1). `stillingsprofil_ref`
+  // sto igjen som det ENESTE kroppsfeltet uten lås, på en antakelse om at
+  // `generasjon` dekket den — men `generasjon` bumpes bare av fil-`change`,
+  // aldri av profil. Vinduet var åpent i begge ender: et bytte FØR `kropp`
+  // bygges bestilte på en annen profil enn den brukeren trykket Send på, og
+  // `change`-handlerens `nyIntensjon()` kastet `bestillIdem` mens POST-en
+  // fortsatt sto ubesvart — da bar den retryen `usikkert_utfall` lover er
+  // «samme operasjon», en FERSK nøkkel, og kunne bestille en gang til på
+  // toppen av en som kanskje alt var committet. En `select` har ingen
+  // `readOnly`, så låsen er `disabled`, som for knappene.
+  //
+  // Filvelgeren står igjen som den ene ufryste: `readOnly` gjelder ikke
+  // for den heller, og der gjør nabo-flaten det samme valget som her —
+  // kjeden bærer sin egen intensjon i stedet (`generasjon`), så et bytte
+  // under opplasting avbryter kjeden i stedet for å binde feil bunt.
+  //
+  // Knappene og prosessvelgeren eies av flatens `laas` (A-dommen, #212):
+  // det er den samme frysen, bare utvidet til `tegn`-utløserne, og den
+  // setter `aria-busy` på DETTE skjemaet fordi `send` hører til det.
+  let frossetProfil = null;
+  const frys = (paa) => {
+    antallInp.readOnly = paa;
+    fristInp.readOnly = paa;
+    profilVelger.disabled = paa;
+    // Valget slik det sto da kjeden tok låsen: det er DENNE profilen
+    // `kropp` bygges med, og den `change`-vakten over ruller tilbake til.
+    frossetProfil = paa ? profilVelger.value : null;
+    laas.frys(paa);
+  };
+
+  const skjema = el("form", {},
+    buntNotis,
+    el("p", {}, el("label", { for: "bestill-fil",
+      text: t("ui.rekruttering.bestill.fil") }), " ", filInp),
+    el("p", {}, el("label", { for: "bestill-profil",
+      text: t("ui.rekruttering.bestill.profil") }), " ", profilVelger),
+    el("p", {}, el("label", { for: "bestill-antall",
+      text: t("ui.rekruttering.bestill.antall") }), " ", antallInp),
+    el("p", {}, el("label", { for: "bestill-frist",
+      text: t("ui.rekruttering.bestill.slettefrist") }), " ", fristInp),
+    el("p", {}, send));
+  // Først nå har `send` et skjema — og det er skjemaet `aria-busy` hører
+  // til. Meldingen fryser knappen med det samme hvis flaten alt er frosset.
+  laas.meld("send", send);
+
+  skjema.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    // ÉN KJEDE OM GANGEN — OGSÅ ETTER EN OM-TEGNING (Cursor P1-2).
+    // Låsen lå i `send.disabled`, altså i ÉN knapp: byttet brukeren
+    // prosess mens opplastingen sto på, bygget `tegn` et helt nytt skjema
+    // med en fersk, handlingsklar knapp, og et klikk der startet kjede
+    // nummer to mot den samme delte tilstanden — to reservasjoner, to
+    // bestillinger, og flaten som følger det svaret som tilfeldigvis kom
+    // sist. Låsen hører derfor til ØKTEN, som nøklene og bunten.
+    if (tilstand.paagaaende) return;
+    const fil = filInp.files[0];
+    if (!fil && !tilstand.inndataRef) {
+      sett(utfall, t("ui.rekruttering.bestill.mangler_fil"));
+      return;
+    }
+    // Denne kjedens intensjon. Byttes bunten under opplastingen, flytter
+    // `generasjon` seg og kjeden vet at den ikke lenger er noens.
+    const min = ++tilstand.generasjon;
+    tilstand.paagaaende = true;
+    frys(true);
+    try {
+      if (!tilstand.inndataRef) {
+        sett(utfall, t("ui.rekruttering.bestill.laster"));
+        if (!tilstand.reserverIdem) {
+          tilstand.reserverIdem = nyIdempotensnokkel();
+        }
+        const res = await reserverBunt(tilstand.reserverIdem);
+        const bytes = await fil.arrayBuffer();
+        await lastOppBunt(res.reservasjon_jti, bytes);
+        // BUNTEN KAN VÆRE BYTTET UNDER OPPLASTINGEN (Cursor P1-2).
+        // Skjemaet står åpent mens en stor ZIP går opp, og `change`
+        // nullstiller referansen — men den flygende handleren skrev
+        // likevel SIN `inndata_ref` inn etterpå, mens skjermen viste den
+        // nye filen. Neste innsending bestilte da på bunt A under navnet
+        // B. Kjeden tilhører intensjonen den startet på: er den forlatt,
+        // stopper den her, FØR noen bestilling er sendt. Reservasjonen
+        // etterlates til serverens egen opprydding, som ved enhver annen
+        // avbrutt opplasting.
+        if (tilstand.generasjon !== min) {
+          sett(utfall, t("ui.rekruttering.bestill.avbrutt"));
+          return;
+        }
+        // Referansen settes først når BEGGE stegene er i mål: feiler
+        // opplastingen, er reservasjonen brukt/utløpende og neste
+        // forsøk skal reservere på nytt (fersk nøkkel).
+        tilstand.inndataRef = res.inndata_ref;
+        visBunt();
+      }
+      if (!tilstand.bestillIdem) {
+        tilstand.bestillIdem = nyIdempotensnokkel();
+      }
+      const kropp = { bestillingstype: "rekruttering.evaluering",
+        inndata_ref: tilstand.inndataRef,
+        stillingsprofil_ref: profilVelger.value,
+        antall_soknader: Number(antallInp.value), omfang: "bunt" };
+      if (fristInp.value !== "") {
+        kropp.slettefrist_dogn = Number(fristInp.value);
+      }
+      // BUNTEN KVITTERINGEN GJELDER, FANGET FØR `await` (Cursor P2,
+      // eierdom (b)): `tilstand.filnavn` er øktens, ikke kjedens, og
+      // fil-`change` skriver den om mens POST-en står i lufta. Leses den
+      // etter svaret, navngir kvitteringen filen brukeren nettopp valgte
+      // — ikke den som faktisk ble bestilt. `kropp.inndata_ref` er alt
+      // fanget (den er et felt i kroppen) og er fallback når økten arvet
+      // en opplastet bunt uten filnavn, samme valg som `visBunt`.
+      const sendtBunt = tilstand.filnavn || kropp.inndata_ref;
+      const svar = await bestillEvaluering(kropp, tilstand.bestillIdem);
+      // ET `200` ER IKKE EN LEVERANSE (Cursor P1-1). Beslutningsveien
+      // svarer `200` også når policyen sier STOPP eller sender saken til
+      // unntakskøen — uten oppdrag — og serveren lar da bunten stå
+      // `lastet` med `oppdrag_id IS NULL`, altså fortsatt fri til å bli
+      // bestilt av en lovlig bestilling (`test_stopp_binder_ikke_bunten`).
+      // Flaten nullstilte likevel hele kjeden og sa «Bestillingen er
+      // levert»: to usannheter i samme setning — leveransen som ikke
+      // skjedde, og den frie bunten som ble kastet ut av økten så
+      // brukeren måtte laste opp den samme ZIP-en på nytt. Nabo-flaten
+      // for WCAG-bestilling (`bestilling.js: visUtfall`) har hele tiden
+      // skilt de tre armene, og denne er den samme beslutningen.
+      if (svar.beslutning === "tillat") {
+        // Definitivt svar: kjeden er fullført — alt nullstilles, en ny
+        // bestilling er en ny operasjon med ny bunt. MUTERES i eget
+        // objekt, byttes aldri: handleren (og en senere tegning) holder
+        // referansen til DETTE objektet — et bytte ga en stale binding
+        // der gamle nøkler og en alt FORBRUKT bunt overlevde suksessen.
+        //
+        // ... men bare hvis kjeden fortsatt ER økten sin (Cursor P1-2):
+        // rakk brukeren å velge en ny bunt mens bestillingen sto i lufta,
+        // er tilstanden alt satt for DEN, og en nullstilling her ville
+        // tømt hennes ferske valg — `skjema.reset()` tar filvelgeren med
+        // seg. Kvitteringen skrives uansett: oppdraget er committet, og
+        // det skal brukeren få vite.
+        //
+        // ... MEN «FÅ VITE» ER HVA, IKKE BARE AT (Cursor P2, eierdom (b)).
+        // Er intensjonen forlatt, står skjemaet alt med den NYE bunten
+        // mens kvitteringen gjaldt den forrige — og `bestill.sendt` sier
+        // bare «levert: tillat, oppdrag N». Brukeren leste den mot filen
+        // hun så, og bestilte i god tro en gang til på en bunt som enten
+        // var eller ikke var den leverte. Feilarmen fikk speilingen sin i
+        // `forlatt_usikkert` (`:1031`); dette er den samme setningen for
+        // det VISSE utfallet: kvitteringen navngir bunten som ble sendt.
+        const forlatt = tilstand.generasjon !== min;
+        if (!forlatt) {
+          tilstand.reserverIdem = null;
+          tilstand.bestillIdem = null;
+          tilstand.inndataRef = null;
+          tilstand.filnavn = null;
+          skjema.reset();
+          visBunt();
+        }
+        const kvittering = (svar.oppdrag_id
+          ? t("ui.rekruttering.bestill.sendt")
+              .replace("{oppdrag}", String(svar.oppdrag_id))
+          : t("ui.rekruttering.bestill.sendt_uten_oppdrag"))
+          .replace("{beslutning}", String(svar.beslutning));
+        sett(utfall, forlatt
+          ? `${kvittering} ${t("ui.rekruttering.bestill.sendt_forlatt_bunt")
+            .replaceAll("{filnavn}", sendtBunt)}`
+          : kvittering);
+      } else {
+        // STOPP/unntak: bunten er URØRT og blir stående i skjemaet, så
+        // neste forsøk går på den samme reservasjonen. Det ENESTE som er
+        // brukt opp, er intensjonen: serveren har dømt nøyaktig denne
+        // kroppen, og et nytt forsøk under den samme nøkkelen ville bare
+        // fått den samme dommen replayet. (Byttet brukeren bunt mens
+        // dommen var underveis, er nøkkelen alt forkastet av `change` —
+        // å sette den til `null` igjen er den samme `null`.)
+        tilstand.bestillIdem = null;
+        // STOPP-årsaken skal LESES OPP, ikke bare vises (§7) — samme
+        // grep som `bestilling.js`: kodene er serverens strukturerte
+        // begrunnelse, og faller en kode utenfor locale, står koden selv.
+        const koder = (svar.begrunnelse || [])
+          .map((k) => t(`kode.${k}`, k)).join(". ");
+        // ... MEN «BUNTEN STÅR KLAR» ER USANT NÅR INTENSJONEN ER FORLATT
+        // (Cursor P2, tredje og siste arm). Begge tekstene lover at
+        // bunten ikke er brukt opp og står klar til et nytt forsøk — sant
+        // for bunten dommen GJALDT, men byttet brukeren fil mens dommen
+        // var underveis, er den bunten ute av skjemaet: `change` nullet
+        // `inndataRef` og bumpet `generasjon`. Da peker «den står klar»
+        // på en fil som verken er reservert eller lastet opp. Samme
+        // løgnklasse som `sendt_forlatt_bunt` (tillat-armen) og
+        // `forlatt_usikkert` (0/5xx-armen), og samme måling: `forlatt` er
+        // generasjonssammenligningen de alt gjør, og `sendtBunt` (`:916`)
+        // er alt fanget før `await` — ingen ny tilstand, ingen ny maskin.
+        const forlatt = tilstand.generasjon !== min;
+        const dom = svar.beslutning === "stopp"
+          ? `${t(forlatt ? "ui.rekruttering.bestill.stoppet_forlatt"
+            : "ui.rekruttering.bestill.stoppet")} ${koder}`.trim()
+          : t(forlatt ? "ui.rekruttering.bestill.unntak_forlatt"
+            : "ui.rekruttering.bestill.unntak");
+        sett(utfall, dom.replaceAll("{filnavn}", sendtBunt));
+      }
+    } catch (e) {
+      if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+      const definitivt = !!e && e.status >= 400 && e.status < 500;
+      // ... MEN ÉN 4xx ER INGEN DOM: NØKKELEN ER BARE OPPTATT (Codex P1).
+      // `utfor_bestilling` tar en SESJONSLÅS på nøkkelen med
+      // `pg_try_advisory_lock` og svarer den lokale koden `OPPTATT` når
+      // noen andre holder den (`bestilling.py:478-485`); endepunktet
+      // oversetter den til `idempotenskonflikt` utad (`:1135-1139`) —
+      // samme 409 som en ekte intensjonskonflikt. Serverens egen
+      // kommentar sier hva den betyr: «ingen beslutning tas, ingen kvote
+      // brennes», altså er det FØRSTE forsøket fortsatt i arbeid. Kaster
+      // flaten nøkkelen her, bærer neste Send en FERSK nøkkel mens den
+      // første POST-en kan committe: to oppdrag på samme bunt, to
+      // kvotetrekk, eller to unntakssaker — nøyaktig det nøkkelen finnes
+      // for å hindre. Flaten kan skille de to 409-ene uten å se noe
+      // serveren ikke sier: den mynter aldri en nøkkel på nytt innhold
+      // (`nyIntensjon` kaster den ved HVER kroppsendring), så en konflikt
+      // på HENNES nøkkel er alltid den forbigående. Nøkkelen står, og
+      // neste forsøk møter enten gjenspillet eller den samme låsen.
+      //
+      // `inndataRef != null` er STEDET, og det er en forutsetning, ikke en
+      // målt gren: catchen dekker tre forespørsler, og reservasjonens egen
+      // 409 bærer den samme koden med MOTSATT betydning — 058 sier at en
+      // brukt/utløpt reservasjon svarer konflikt i det uendelige, så DEN
+      // nøkkelen må slippes (P1-3, linjen under). Uten stedet ville
+      // setningen «denne 409-en er forbigående» vært usann for
+      // reservasjonsarmen. At `bestillIdem` uansett er `null` før bunten
+      // er i mål (den myntes først etter opplastingen, `:899`, og kastes
+      // av hver kroppsendring) gjør ikke setningen sann — den gjør bare
+      // dagens feil ubemerket. Grensen er pinnet fra den andre siden av
+      // reservasjonsarmens egen test.
+      const opptattNokkel = definitivt && e.status === 409
+        && e.kode === "idempotenskonflikt" && tilstand.inndataRef != null;
+      if (definitivt) {
+        // Serveren DØMTE operasjonen — retry er en NY operasjon. En
+        // reservert bunt beholdes: dommen gjaldt bestillingen, ikke
+        // opplastingen.
+        if (!opptattNokkel) tilstand.bestillIdem = null;
+        // EN DØD RESERVASJON MÅ KUNNE SLIPPES (Cursor P1-3). Kom dommen
+        // FØR `inndataRef` ble satt, traff den reservasjonen eller
+        // opplastingen — og 058 sier at en brukt/utløpt reservasjon
+        // krever en NY nøkkel: den gamle svarer `idempotenskonflikt` i
+        // det uendelige. Klienten satt da fast på en død nøkkel til
+        // brukeren tilfeldigvis byttet fil, som er den ene handlingen
+        // ingenting på skjermen ba henne om. Bare 4xx: ved status 0/5xx
+        // er utfallet ukjent, og da er retry med SAMME nøkkel nettopp
+        // det SP-2 finnes for.
+        if (tilstand.inndataRef == null) tilstand.reserverIdem = null;
+      }
+      // Nettverk/5xx: begge nøklene beholdes — retry er SAMME operasjon.
+      //
+      // ... OG DA ER «BESTILLINGEN FEILET» EN FALSK SETNING (Cursor
+      // P2-4). Samme klasse som alt er lukket for signeringen (`meldFeil`
+      // over): ved status 0 nådde forespørselen kanskje aldri fram —
+      // eller svaret gikk tapt ETTER at serveren commitet — og ved 5xx er
+      // commit-status ukjent. Bare 4xx er serverens egen avvisning før
+      // commit. Teksten for det uvisse er husets egen, ordrett den
+      // signeringen bruker: den sier at utfallet er ukjent, at en ny
+      // forsøk gjentar SAMME operasjon (nøkkelen står, se over), og at
+      // en omlasting viser serverens tilstand.
+      //
+      // ... MEN «SAMME OPERASJON» ER USANT NÅR INTENSJONEN ER FORLATT
+      // (Cursor P2). Filvelgeren er den ene kontrollen `frys` ikke tar, og
+      // et bunt-bytte under den flygende POST-en bumper `generasjon` og
+      // nullstiller `bestillIdem` — det er RIKTIG, en ny bunt er en ny
+      // kropp. Men da lover `usikkert_utfall` noe flaten ikke lenger kan
+      // holde: neste Send bærer en FERSK nøkkel, så et «prøv igjen» her
+      // gjør den forrige bestillingen — som ved 0/5xx godt kan være
+      // committet — til nummer to. Nøkkeløkonomien og teksten sier nå det
+      // samme. `bestill.avbrutt` (opplastingsarmen over) duger ikke: den
+      // lover at INGENTING er bestilt, og det er nettopp det vi ikke vet
+      // når kallet alt var i lufta.
+      //
+      // ... og «bestillingen feilet» er den samme løgnen for en opptatt
+      // nøkkel: ingenting feilet, det første forsøket er ikke ferdig.
+      // `usikkert_utfall` duger ikke her — den åpner med at vi ikke fikk
+      // svar fra serveren, og det fikk vi (409). Teksten sier derfor det
+      // serveren sier: ingen dom, ingen kvote, og et nytt forsøk er den
+      // SAMME operasjonen (nøkkelen står, se over).
+      //
+      // ... og «SJEKK FELTENE» ER LØGN NÅR DET ER BUNTEN (Cursor P2-1,
+      // eierdom (c) 11:38). `inndata_ubrukelig` er ikke en dom over
+      // kroppen: 058 gir ETT svar for alle årsakene — bunten er ukjent,
+      // utløpt, ikke ferdig lastet, alt bundet til et annet oppdrag,
+      // ELLER holdt av en samtidig bestilling akkurat nå
+      // (`INNDATA_OPPTATT`, kollapset til den samme koden utad i
+      // `bestilling.py:71-81`). Ingen av dem står i et felt brukeren kan
+      // rette, så «Sjekk feltene og prøv igjen» sender henne til feil
+      // sted.
+      //
+      // DETTE ER EN SANNHETS-FIKS, IKKE EN NØKKELFIKS: `bestillIdem`
+      // roterer som før (`opptattNokkel` er usann her), for ledningen
+      // bærer ikke skillet forbigående/terminal — `KLIENTKODE` kollapser
+      // det, og husets egen port sier `not er_forbigaende(
+      // "inndata_ubrukelig")` (`test_bestilling_rekruttering.py:350`).
+      // Å beholde nøkkelen på den koden ville lovet «prøv igjen, samme
+      // operasjon» til en bruker som står mot en død bunt. Det ekte
+      // skillet er en distinkt utadkode — kontraktsendring, eget issue
+      // (eierdom (b)). Teksten lover derfor INGENTING om retry: den sier
+      // hva som er sant for begge årsakene, og navngir den ene utveien
+      // som virker uansett — en ny fil. (`875de8f` er grunnen til at den
+      // utveien må STÅ på skjermen: en bruker som må gjette seg til
+      // filbytte er nøyaktig hullet den lukket.)
+      //
+      // Koden alene er stedet her, uten `inndataRef`-vakten
+      // `opptattNokkel` trenger: `idempotenskonflikt` har motsatt
+      // betydning i reservasjonsarmen, mens `inndata_ubrukelig` er
+      // bestillingsendepunktets alene — `inndata.py` svarer
+      // `inndata_reservasjon_ugyldig`/`inndata_alt_lastet` på sine egne
+      // 409-er, aldri denne.
+      const buntUbrukelig = definitivt && e.status === 409
+        && e.kode === "inndata_ubrukelig";
+      const forlatt = tilstand.generasjon !== min;
+      sett(utfall, t(opptattNokkel ? "ui.rekruttering.bestill.opptatt"
+        : buntUbrukelig ? "ui.rekruttering.bestill.bunt_ubrukelig"
+          : definitivt ? "ui.rekruttering.bestill.feil"
+            : forlatt ? "ui.rekruttering.bestill.forlatt_usikkert"
+              : "ui.rekruttering.usikkert_utfall"));
+    } finally {
+      tilstand.paagaaende = false;
+      // Låsen løftes på de SAMME kontrollene som tok den (A-dommen,
+      // #212): `tegn`-utløserne sto frosset hele veien, så ingen
+      // om-tegning rakk å gjøre `send` — eller alerten, skjemaet,
+      // `visBunt` — til en frakoblet node underveis.
+      frys(false);
+    }
+  });
+
+  // Seksjonen kan tegnes midt i en økt der bunten alt er lastet opp
+  // (prosessbytte): tilstanden bestemmer hva skjemaet sier, ikke
+  // rekkefølgen den ble bygget i.
+  visBunt();
+  // Seksjonen kan derimot IKKE lenger tegnes midt i en kjede (A-dommen,
+  // #212): utløseren som gjorde det er frosset så lenge `paagaaende`
+  // står. Derfor er det ingen tilstand å gjenopprette her — `laas.meld`
+  // over dekker det ene tilfellet som er igjen, en kontroll som fødes
+  // mens flaten er frosset.
+  // ... og det er DENNE velgeren en ny profilversjon skal nå (P2-2).
+  tilstand.oppdaterProfilvalg = tegnProfilvalg;
+  // ... og det er DENNE frysen den ANDRE mutasjonen i kjeden skal ta
+  // (Cursor P2-1, eierdom B): `laas` eier utløserne, seksjonen eier
+  // kroppen. Låsen er hel bare når profillagringen når begge.
+  tilstand.frysSkjema = frys;
+  sett(rot, el("h2", { id: "bestill-tittel",
+    text: t("ui.rekruttering.bestill.tittel") }),
+    utfall, skjema);
+  return rot;
+}
+
+
+function profilSeksjon(hoved, ctx, data, okt, laas, paaProfilendring) {
   const profiler = (data && data.profiler) || [];
   // Cursor P2-1 (runde 2): flaten er lesbar med decisions:read, men
   // POST-ruten krever bestilling:opprett (app.py) — skrive-UI uten
   // scopet er en blindvei som først dør server-side. Samme port som
   // kanBestille i bestillingsdelen.
   const kanSkrive = harScope(ctx, "bestilling:opprett");
+  // ÉN LÅS FOR BEGGE MUTASJONENE I KJEDEN (Cursor P2-1, eierdom B i
+  // runde 6). A-dommen lover én lås for bestilling OG profillagring, men
+  // `laas.frys` tar bare `tegn`-utløserne: bestillingens KROPP — profil,
+  // antall, frist — eies av seksjonens egen `frys`. Profilarmen frøs
+  // derfor utløserne og lot feltene stå åpne, samtidig som `laas.frys`
+  // satte `aria-busy` på bestillingsskjemaet gjennom `send`: skjemaet
+  // PÅSTO opptatt og tok input. Verst traff det profilvelgeren, som ruller
+  // et bytte tilbake til `frossetProfil` — en verdi bare seksjonens `frys`
+  // setter, så under en profillagring rullet den tilbake til `null` og
+  // TØMTE valget i stedet for å bevare det. Seksjonen eksponerer nå sin
+  // egen `frys` på økten, og armen her tar hele låsen gjennom den.
+  // Uten bestillingsseksjon — ingen profiler ennå, altså den aller første
+  // lagringen — er `laas` alt som finnes å låse.
+  const frysKjeden = (paa) => {
+    if (okt.bestilling.frysSkjema) okt.bestilling.frysSkjema(paa);
+    else laas.frys(paa);
+  };
   const rot = el("section", { "aria-labelledby": "profil-tittel" });
   const utfall = el("div", { role: "alert", class: "utfall" });
   const liste = el("div");
@@ -582,9 +1192,13 @@ function profilSeksjon(hoved, ctx, data, okt) {
     }
     tegnListe();
     sett(skjemaRot);
+    // Bestillingen leser SAMME `profiler`-array (mutert i stedet for
+    // byttet over): gikk listen fra tom til ikke-tom, skal seksjonen
+    // våkne. `tegn` eier vurderingen av når det er trygt.
+    if (paaProfilendring) paaProfilendring();
   };
 
-  const kravRad = (kropp, krav) => {
+  const kravRad = (kropp, krav, paaEndring) => {
     teller += 1;
     const kid = `profil-krav-${teller}`;
     const vid = `profil-vekt-${teller}`;
@@ -608,7 +1222,12 @@ function profilSeksjon(hoved, ctx, data, okt) {
         .replace("{navn}", navnInp.value || "?"));
     settEtikett();
     navnInp.addEventListener("input", settEtikett);
-    fjern.addEventListener("click", () => rad.remove());
+    // En fjernet rad er en annen kravliste, altså en annen intensjon
+    // (Cursor P2-5) — feltene selv dekkes av lytteren på skjemaet.
+    fjern.addEventListener("click", () => {
+      rad.remove();
+      if (paaEndring) paaEndring();
+    });
     rad.append(el("td", {}, fjern));
     kropp.append(rad);
     return navnInp;
@@ -620,7 +1239,19 @@ function profilSeksjon(hoved, ctx, data, okt) {
     // DEFINITIVT svar (Cursor P1-1/P2-4): et tapt 2xx + nytt klikk skal
     // være samme operasjon — serveren replayer på nøkkelen. Først når
     // svaret kom (uansett utfall serveren har dømt), byttes den.
-    let idem = nyIdempotensnokkel();
+    //
+    // ... OG NØKKELEN BINDER INNHOLDET, IKKE SKJEMAET (Cursor P2-5).
+    // Etter et USIKKERT svar sto nøkkelen — riktig — men den sto også
+    // når brukeren endret navnet eller vektene i mellomtiden: neste
+    // lagring var en annen profilversjon under den forrige intensjonens
+    // nøkkel, og serveren ville enten dømt `idempotenskonflikt` eller
+    // replayet den GAMLE versjonen som om den nye var lagret. Nøkkelen
+    // lages derfor ved innsending og forkastes ved enhver endring —
+    // felt, ny kravrad eller fjernet kravrad — akkurat som i
+    // `bestilling.js`. `null` betyr «neste innsending er en ny
+    // intensjon», og `nyIntensjon` er navnet på den ene setningen.
+    let idem = null;
+    const nyIntensjon = () => { idem = null; };
     const navnId = "profil-navn";
     const navnInp = el("input", { type: "text", id: navnId,
       maxlength: "200", required: true,
@@ -637,14 +1268,15 @@ function profilSeksjon(hoved, ctx, data, okt) {
           text: t("ui.rekruttering.profiler.fjern") }))),
       kropp);
     if (profil && profil.krav.length) {
-      for (const k of profil.krav) kravRad(kropp, k);
+      for (const k of profil.krav) kravRad(kropp, k, nyIntensjon);
     } else {
-      kravRad(kropp, null);
+      kravRad(kropp, null, nyIntensjon);
     }
     const leggTil = el("button", { type: "button",
       text: t("ui.rekruttering.profiler.leggtil") });
     leggTil.addEventListener("click", () => {
-      const inp = kravRad(kropp, null);
+      const inp = kravRad(kropp, null, nyIntensjon);
+      nyIntensjon();
       inp.focus();
     });
     const lagre = el("button", { type: "submit",
@@ -659,8 +1291,27 @@ function profilSeksjon(hoved, ctx, data, okt) {
         el("label", { for: navnId,
           text: t("ui.rekruttering.profiler.navn") }), " ", navnInp),
       tabell, el("p", {}, leggTil, " ", lagre, " ", avbryt));
+    // «Lagre» er den ANDRE veien inn i bestillingsseksjonen (A-dommen,
+    // #212): den ender i `oppdaterListe` → `paaProfilendring`, som enten
+    // tegner seksjonen på nytt eller bytter velgerens alternativer. Den
+    // meldes derfor som utløser og fryses av samme `laas` som
+    // prosessvelgeren — og fordi skjemaet åpnes på et klikk, kan den
+    // fødes mens flaten alt er frosset. `laas.meld` fryser den da med det
+    // samme; frysen eier `lagre.disabled` alene, så ingen feilsti kan
+    // låse opp en knapp låsen holder.
+    laas.meld("lagre", lagre);
+    // Én lytter på skjemaet dekker navnet, hvert kravnavn og hver vekt —
+    // også radene som legges til senere, siden `input` bobler.
+    skjema.addEventListener("input", nyIntensjon);
     skjema.addEventListener("submit", async (ev) => {
       ev.preventDefault();
+      // ÉN MUTASJON OM GANGEN I EVALUERINGSKJEDEN (A-dommen, #212).
+      // Samme vakt som bestillingens egen, og av samme grunn: `disabled`
+      // er brukerens vei, men invarianten skal kunne måles. Uten den er
+      // vinduet igjen åpent — en profillagring som lander midt i en
+      // bestilling ville byttet velgerens alternativer og forkastet
+      // `bestillIdem` mens POST-en fortsatt sto ubesvart.
+      if (okt.bestilling.paagaaende) return;
       const krav = [];
       for (const rad of kropp.querySelectorAll("tr")) {
         const [ninp, vinp] = rad.querySelectorAll("input");
@@ -672,25 +1323,59 @@ function profilSeksjon(hoved, ctx, data, okt) {
         sett(utfall, t("ui.rekruttering.profiler.tomt_krav"));
         return;
       }
-      lagre.disabled = true;
+      // Låsen er FLATENS, ikke knappens: den stenger også prosessvelgeren,
+      // bestillingens «Send» OG bestillingskroppen mens versjonen skrives,
+      // så ingen av dem kan starte noe — eller endres — mot en profilliste
+      // som er i ferd med å endre seg.
+      okt.bestilling.paagaaende = true;
+      frysKjeden(true);
+      // Nøkkelen fødes her, med innholdet den skal binde: står den fra
+      // et tidligere forsøk med SAMME innhold, gjenbrukes den — det er
+      // hele SP-2-replayen.
+      if (!idem) idem = nyIdempotensnokkel();
       try {
+        // NAVNET KVITTERINGEN GJELDER, FANGET FØR `await` (Cursor P2-1) —
+        // samme klasse som bestillingens `sendtBunt` (`:916`): live DOM ≠
+        // sendt intensjon. `laas` fryser utløserne og bestillingskroppen,
+        // ikke `#profil-navn`, så feltet står åpent mens POST-en er i
+        // lufta. Kroppen bar navnet fra kallstart, men alerten leste det
+        // PÅ NYTT etter svaret — redigerte brukeren i vinduet, navnga
+        // kvitteringen en profil serveren aldri lagret. Ett uttrykk
+        // dekker begge lesningene, så de ikke kan gli fra hverandre igjen.
+        const sendtNavn = navnInp.value.trim();
         const svar = await lagreStillingsprofil(
-          profil ? profil.profil_id : null, navnInp.value.trim(), krav,
-          idem);
-        idem = nyIdempotensnokkel();   // definitivt svar → ny operasjon
+          profil ? profil.profil_id : null, sendtNavn, krav, idem);
+        nyIntensjon();                 // definitivt svar → ny operasjon
         sett(utfall, t("ui.rekruttering.profiler.lagret")
-          .replace("{navn}", navnInp.value.trim())
+          .replace("{navn}", sendtNavn)
           .replace("{versjon}", String(svar.versjon)));
         await oppdaterListe();
       } catch (e) {
         if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
-        if (e && e.status >= 400 && e.status < 500) {
+        const definitivt = !!e && e.status >= 400 && e.status < 500;
+        if (definitivt) {
           // Serveren DØMTE operasjonen — en retry er en NY operasjon.
-          idem = nyIdempotensnokkel();
+          nyIntensjon();
         }
         // Nettverk/5xx: nøkkelen beholdes — retry er SAMME operasjon.
-        lagre.disabled = false;
-        sett(utfall, t("ui.rekruttering.profiler.feil"));
+        // ... OG DA ER «KUNNE IKKE LAGRE» EN FALSK SETNING (Cursor P2-1).
+        // Nøkkeløkonomien over skiller alt 4xx fra resten, men teksten
+        // gjorde det ikke: ved status 0 nådde POST-en kanskje aldri fram
+        // — eller svaret gikk tapt ETTER at versjonen ble skrevet — og
+        // ved 5xx er commit-status ukjent. Brukeren fikk beskjed om å
+        // «sjekke kravene» for en profilversjon som kunne stå lagret,
+        // og et nytt forsøk så ut som en ny versjon i stedet for det
+        // gjenspillet det faktisk er. Samme klasse er alt lukket for
+        // signeringen (`meldFeil`) og for bestillingen (P2-4); dette er
+        // den tredje mutasjonen på flaten, og den siste som løy.
+        sett(utfall, t(definitivt ? "ui.rekruttering.profiler.feil"
+          : "ui.rekruttering.usikkert_utfall"));
+      } finally {
+        // Løftes ALLTID — også på 401-veien over, som returnerer tidlig:
+        // en flate som er på vei til innlogging skal ikke etterlate seg
+        // en lås ingen kan se og ingen kan løfte.
+        okt.bestilling.paagaaende = false;
+        frysKjeden(false);
       }
     });
     sett(skjemaRot, skjema);

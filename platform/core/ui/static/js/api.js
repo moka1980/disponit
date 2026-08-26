@@ -164,6 +164,36 @@ export const lagreStillingsprofil = (profilId, navn, krav, idem) =>
          { profil_id: profilId, navn, krav },
          idem || nyIdempotensnokkel());
 
+// Evalueringskjeden (#162): reserver bunteplass → last opp ZIP-en rå →
+// bestill. Reservasjonen og bestillingen bærer hver sin SP-2-nøkkel
+// (stabil per forsøk, holdt av flaten); opplastingen er engangs per
+// reservasjon og identifiseres av reservasjonens jti alene.
+export const reserverBunt = (idem) =>
+  _muter("/v1/inndata/reserver", "POST",
+         { eiermodul: "m57_ats", formaal: "soknadsbunt" }, idem);
+
+export async function lastOppBunt(jti, bytes) {
+  const csrf = lesCookie("__Host-disponit_csrf");
+  let r;
+  try {
+    r = await fetch(`/v1/inndata/opplast/${encodeURIComponent(jti)}`, {
+      method: "PUT", credentials: "same-origin",
+      headers: { "content-type": "application/zip",
+                 ...(csrf ? { "X-Disponit-CSRF": csrf } : {}) },
+      body: bytes, redirect: "error",
+    });
+  } catch (e) {
+    throw new ApiFeil(0, "nettverk");
+  }
+  let b = null;
+  try { b = await r.json(); } catch { b = null; }
+  if (!r.ok) _kast(r.status, b && b.feil, b && b.detaljer);
+  return b;
+}
+
+export const bestillEvaluering = (kropp, idem) =>
+  _muter("/v1/bestilling", "POST", kropp, idem);
+
 export const signerRekrutteringsliste = (listeId, innholdHash, idem) =>
   _muter(`/v1/rekruttering/lister/${encodeURIComponent(listeId)}/signer`,
          "POST", { innhold_hash: innholdHash }, idem || nyIdempotensnokkel());
