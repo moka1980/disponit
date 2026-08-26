@@ -369,6 +369,35 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
         # dette aldri passere stille.
         if len(biter) != antall_soknader:
             raise Kjoringsfeil("kandidattall_avvik", fremdrift)
+        # TO PASS: BLINDINGPORTEN FOR HELE BUNTEN FØR NOEN KANDIDAT NÅR
+        # MODELLEN (Cursor P2). Dette er samme REKKEFØLGEPRIS som porten
+        # foran strømmen over, bare ett hakk senere i veien: den porten
+        # feller det som er avgjort av DEKLARASJONEN alene (`felter`
+        # mangler), mens vakuøsiteten — en deklarasjon som ikke traff
+        # dokumentet, `ugyldig_maskeringsform` — krever teksten og er
+        # derfor først avgjort her, når `biter` er komplett.
+        #
+        # Sto blindingen igjen inne i evalueringsløkka, betalte bunten
+        # prisen kandidatene evalueres `sorted` for: med `k1` gyldig og
+        # `k2` vakuøs var `k1` ALT hos modellen når `k2` felte kjøringen.
+        # NBSP/NFD-deklarasjoner passerer `les_manifest`/
+        # `feltverdier_lukket` med vilje (eierdom, K2-kjennelse runde 5,
+        # valg B), så de er lovlige helt hit — nettopp derfor er det her
+        # de må måles, og for ALLE, før det første modellkallet.
+        #
+        # Ingen ny maskin: porten er `blinding.evalueringsinput`, uendret
+        # og fortsatt den ENESTE veien til modellinput. Den kalles to
+        # ganger per kandidat — her som port, og inne i
+        # `evaluer_kandidat` som input — og det er et bevisst valg
+        # fremfor å cache resultatet gjennom en ny parameter: en
+        # `modellinput=`-dør inn i `evaluer_kandidat` ville åpnet en vei
+        # utenom `blinding_uten_felter`, eller tvunget den fail-closed-
+        # regelen ut i en ANDRE opptelling — nøyaktig divergensen
+        # K2-kjennelsen runde 4 lukket («ETT predikat, to kallesteder»).
+        # `blind` er en ren funksjon av `(tekst, kandidatfelter)`, så de
+        # to kallene er per konstruksjon samme verdi; prisen er
+        # regex-arbeid som uansett forsvinner i modellkallet ved siden av.
+        klargjort: dict[str, tuple[str, dict]] = {}
         for kandidat_id in sorted(biter):
             # Sortert på medlemsnavn: samme bunt gir samme tekst OG samme
             # feltrekkefølge, uansett hvilken rekkefølge arkivet leverte
@@ -402,6 +431,14 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
             # at uttrekket meldes som det som feilet.
             if not tekst.strip():
                 raise Kjoringsfeil("tekstuttrekk_feilet", fremdrift)
+            blinding.evalueringsinput(
+                tekst, kandidatfelter,
+                blinding_av=blinding_av, auditrad=auditrad)
+            klargjort[kandidat_id] = (tekst, kandidatfelter)
+        # `klargjort` er fylt i `sorted`-rekkefølge, og dict beholder
+        # innsettingsrekkefølgen: evalueringen går fortsatt i samme,
+        # deterministiske orden som før.
+        for kandidat_id, (tekst, kandidatfelter) in klargjort.items():
             resultat = evaluering.evaluer_kandidat(
                 modell, tekst, kandidatfelter, vekter,
                 biasmaalinger=biasmaalinger,

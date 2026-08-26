@@ -2359,6 +2359,68 @@ def test_manglende_felter_felles_for_stroemmen(tmp_path, monkeypatch):
     assert strommet, "strømmen skulle gått når porten ikke gjelder"
 
 
+def test_vakuos_deklarasjon_felles_for_forste_modellkall(tmp_path):
+    """Cursor P2: samme REKKEFØLGEPRIS som `blinding_uten_felter`, bare
+    ett hakk senere i veien.
+
+    `blinding_uten_felter` er avgjort av deklarasjonen alene og felles
+    derfor foran strømmen. VAKUØSITETEN — en deklarasjon som ikke traff
+    dokumentet — krever teksten, og var målt først inne i
+    `evaluer_kandidat`, altså ETTER `modell.vurder` for hver tidligere
+    kandidat. NBSP/NFD-deklarasjoner passerer `les_manifest`/
+    `feltverdier_lukket` med vilje (eierdom, K2-kjennelse runde 5, valg
+    B), så de lever helt frem til evalueringsløkka: med `k1` gyldig og
+    `k2` vakuøs — og kandidatene evaluert `sorted` — hadde `k1` alt vært
+    hos modellen når `k2` felte kjøringen.
+
+    Riggen måler nøyaktig det: `k1` er gyldig og sorterer FØRST, `k2`
+    deklarerer `Kari<NBSP>Testdal` mot en CV som skriver vanlig
+    mellomrom. Blindingporten kjøres nå for HELE bunten før det første
+    modellkallet, så `modell.sett` skal være tom.
+
+    MUTASJONEN SOM DREPER DENNE: slå de to passene i `kjor_bunt` sammen
+    igjen — koden blir fortsatt `ugyldig_maskeringsform`, men `k1` har
+    nådd modellen.
+
+    Kontrollen til slutt bytter NBSP-en mot et vanlig mellomrom og
+    kjører samme bunt gjennom: da er utfallet rent. Uten den kunne
+    testen bestått på en rigg som var ugyldig av en helt annen grunn.
+    """
+    import json as _json
+
+    from modules.m57_ats import kjoring
+
+    def _arkiv(katalog: str, mellomrom: str):
+        mappe = tmp_path / katalog
+        mappe.mkdir()
+        manifest = _json.dumps({"soknader": [
+            {"kandidat_id": "k1", "filer": ["k1/cv.html"],
+             "felter": {"navn": ["Ola Testdal"]}},
+            {"kandidat_id": "k2", "filer": ["k2/cv.html"],
+             "felter": {"navn": [f"Kari{mellomrom}Testdal"]}}]})
+        return _bunt(mappe,
+                     [("k1/cv.html", b"<p>Ola Testdal kan drift</p>"),
+                      ("k2/cv.html", b"<p>Kari Testdal kan drift</p>")],
+                     manifest=manifest)
+
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(
+            _arkiv("nbsp", "\u00a0"), modell, vekter={"drift": 3},
+            tekst_for=lambda m, d: d.decode("utf-8"),
+            biasmaalinger=_MAALINGER, antall_soknader=2)
+    assert e.value.kode == "ugyldig_maskeringsform"
+    assert modell.sett == [], "en tidligere kandidat nådde modellen"
+
+    modell = _Modell()
+    ut = kjoring.kjor_bunt(
+        _arkiv("vanlig", " "), modell, vekter={"drift": 3},
+        tekst_for=lambda m, d: d.decode("utf-8"),
+        biasmaalinger=_MAALINGER, antall_soknader=2)
+    assert set(ut["artefakter"]) == {"k1", "k2"}
+    assert len(modell.sett) == 2, "riggen var ugyldig av en annen grunn"
+
+
 def test_arkivinstansen_binder_deklarasjon_og_innhold(tmp_path, monkeypatch):
     """Codex P1 `3866252992` (eierdom 26/8 pkt. 1: K2-kjennelse runde 7,
     valg B i INODE-form): deklarasjonen og innholdet kom fra to
