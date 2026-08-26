@@ -44,6 +44,15 @@ globalThis.fetch = async (url, opts = {}) => {
   if (typeof svar === "number") {
     return { ok: false, status: svar, json: async () => ({ feil: "x" }) };
   }
+  // `__status`/`__kropp` — husets form (`adjudikator.test.js:27`): et tall
+  // sier bare statusen, og flaten skiller på KODEN. En 409
+  // `idempotenskonflikt` fra bestillingen betyr «nøkkelen er opptatt av et
+  // forsøk som fortsatt går», og det er en annen sak enn en 409 uten kode.
+  if (svar && svar.__status) {
+    const kropp = svar.__kropp !== undefined ? svar.__kropp : svar;
+    return { ok: svar.__status < 400, status: svar.__status,
+      json: async () => kropp };
+  }
   return { ok: true, status: opts.method === "POST" ? 201 : 200,
     json: async () => svar };
 };
@@ -1229,6 +1238,94 @@ test("Bestilling: 5xx beholder nøkkel OG opplastet bunt — 4xx roterer nøkkel
   assert.notEqual(b3.hoder["Idempotency-Key"], b4.hoder["Idempotency-Key"],
     "4xx-dommen skulle rotert nøkkelen");
 });
+
+test("Bestilling: 409 «nøkkelen er opptatt» beholder nøkkelen (Codex P1)",
+  async () => {
+    KALL = [];
+    const basis = { "/v1/rekruttering/prosesser": prosess(),
+      "/v1/rekruttering/stillingsprofiler": profiler(),
+      "/v1/inndata/reserver": { reservasjon_jti: "j-1",
+                                inndata_ref: "inndata:u-1" },
+      "/v1/inndata/opplast/j-1": {} };
+    // `utfor_bestilling` fant nøkkelen OPPTATT av en forespørsel som
+    // fortsatt går (`bestilling.py:478-485`) og svarer den samme 409
+    // `idempotenskonflikt` som en ekte intensjonskonflikt
+    // (`:1135-1139`) — men uten dom og uten kvotetrekk: det FØRSTE
+    // forsøket kan committe like etter.
+    let bestillingssvar = { __status: 409,
+      __kropp: { feil: "idempotenskonflikt" } };
+    SVAR = (sti) => sti === "/v1/bestilling" ? bestillingssvar : basis[sti];
+    const hoved = nyHoved();
+    visRekruttering(hoved, ctx());
+    assert.ok(await vent(() => hoved.querySelector("table")),
+      "flaten kom aldri");
+    const seksjon =
+      hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+    const skjema = seksjon.querySelector("form");
+    Object.defineProperty(skjema.querySelector("input[type=file]"), "files",
+      { configurable: true, value: [{ name: "bunt.zip",
+          arrayBuffer: async () => new ArrayBuffer(16) }] });
+    const send = () => skjema.dispatchEvent(new window.Event("submit",
+      { bubbles: true, cancelable: true }));
+    const bestillinger = () => KALL.filter((k) => k.sti === "/v1/bestilling");
+    send();
+    await vent(() => bestillinger().length === 1, 20);
+    // Teksten sier det serveren sier: ingenting er avgjort. «Bestillingen
+    // feilet» ville vært den samme løgnklassen som `usikkert_utfall` alt
+    // lukket for 0/5xx.
+    assert.ok(await vent(() => seksjon.querySelector("[role=alert]")
+      .textContent === t("ui.rekruttering.bestill.opptatt"), 20),
+    "en opptatt nøkkel ble meldt som en dom");
+    bestillingssvar = { beslutning: "tillat", oppdrag_id: 9 };
+    send();
+    await vent(() => bestillinger().length === 2, 20);
+    const [b1, b2] = bestillinger();
+    assert.equal(b2.hoder["Idempotency-Key"], b1.hoder["Idempotency-Key"],
+      "retryen bar en FERSK nøkkel: den første bestillingen kunne da "
+      + "committe som nummer to — to oppdrag på samme bunt");
+    assert.equal(KALL.filter((k) => k.sti === "/v1/inndata/reserver").length,
+      1, "bunten ble reservert på nytt");
+  });
+
+test("Bestilling: 409 fra RESERVASJONEN er en død nøkkel, ikke en opptatt",
+  async () => {
+    KALL = [];
+    const basis = { "/v1/rekruttering/prosesser": prosess(),
+      "/v1/rekruttering/stillingsprofiler": profiler(),
+      "/v1/inndata/opplast/j-1": {} };
+    // Grensen for regelen over: kom 409-en FØR `inndataRef` ble satt,
+    // traff den reservasjonen — og 058 sier at en brukt/utløpt
+    // reservasjon krever en NY nøkkel (P1-3). Koden er den samme;
+    // stedet i kjeden er det som skiller.
+    let reserversvar = { __status: 409,
+      __kropp: { feil: "idempotenskonflikt" } };
+    SVAR = (sti) => sti === "/v1/inndata/reserver" ? reserversvar : basis[sti];
+    const hoved = nyHoved();
+    visRekruttering(hoved, ctx());
+    assert.ok(await vent(() => hoved.querySelector("table")),
+      "flaten kom aldri");
+    const seksjon =
+      hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+    const skjema = seksjon.querySelector("form");
+    Object.defineProperty(skjema.querySelector("input[type=file]"), "files",
+      { configurable: true, value: [{ name: "bunt.zip",
+          arrayBuffer: async () => new ArrayBuffer(16) }] });
+    const send = () => skjema.dispatchEvent(new window.Event("submit",
+      { bubbles: true, cancelable: true }));
+    const reservasjoner = () =>
+      KALL.filter((k) => k.sti === "/v1/inndata/reserver");
+    send();
+    await vent(() => reservasjoner().length === 1, 20);
+    await vent(() => seksjon.querySelector("[role=alert]")
+      .textContent === t("ui.rekruttering.bestill.feil"), 20);
+    reserversvar = { reservasjon_jti: "j-1", inndata_ref: "inndata:u-1" };
+    send();
+    await vent(() => reservasjoner().length === 2, 20);
+    const [r1, r2] = reservasjoner();
+    assert.notEqual(r2.hoder["Idempotency-Key"], r1.hoder["Idempotency-Key"],
+      "den døde reservasjonsnøkkelen ble beholdt — den svarer konflikt "
+      + "i det uendelige");
+  });
 
 test("Bestilling: endret kropp etter usikkert svar gir NY nøkkel (P1-2)", async () => {
   KALL = [];

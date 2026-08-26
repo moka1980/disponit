@@ -1002,11 +1002,41 @@ function bestillSeksjon(hoved, ctx, data, okt, laas) {
     } catch (e) {
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
       const definitivt = !!e && e.status >= 400 && e.status < 500;
+      // ... MEN ÉN 4xx ER INGEN DOM: NØKKELEN ER BARE OPPTATT (Codex P1).
+      // `utfor_bestilling` tar en SESJONSLÅS på nøkkelen med
+      // `pg_try_advisory_lock` og svarer den lokale koden `OPPTATT` når
+      // noen andre holder den (`bestilling.py:478-485`); endepunktet
+      // oversetter den til `idempotenskonflikt` utad (`:1135-1139`) —
+      // samme 409 som en ekte intensjonskonflikt. Serverens egen
+      // kommentar sier hva den betyr: «ingen beslutning tas, ingen kvote
+      // brennes», altså er det FØRSTE forsøket fortsatt i arbeid. Kaster
+      // flaten nøkkelen her, bærer neste Send en FERSK nøkkel mens den
+      // første POST-en kan committe: to oppdrag på samme bunt, to
+      // kvotetrekk, eller to unntakssaker — nøyaktig det nøkkelen finnes
+      // for å hindre. Flaten kan skille de to 409-ene uten å se noe
+      // serveren ikke sier: den mynter aldri en nøkkel på nytt innhold
+      // (`nyIntensjon` kaster den ved HVER kroppsendring), så en konflikt
+      // på HENNES nøkkel er alltid den forbigående. Nøkkelen står, og
+      // neste forsøk møter enten gjenspillet eller den samme låsen.
+      //
+      // `inndataRef != null` er STEDET, og det er en forutsetning, ikke en
+      // målt gren: catchen dekker tre forespørsler, og reservasjonens egen
+      // 409 bærer den samme koden med MOTSATT betydning — 058 sier at en
+      // brukt/utløpt reservasjon svarer konflikt i det uendelige, så DEN
+      // nøkkelen må slippes (P1-3, linjen under). Uten stedet ville
+      // setningen «denne 409-en er forbigående» vært usann for
+      // reservasjonsarmen. At `bestillIdem` uansett er `null` før bunten
+      // er i mål (den myntes først etter opplastingen, `:899`, og kastes
+      // av hver kroppsendring) gjør ikke setningen sann — den gjør bare
+      // dagens feil ubemerket. Grensen er pinnet fra den andre siden av
+      // reservasjonsarmens egen test.
+      const opptattNokkel = definitivt && e.status === 409
+        && e.kode === "idempotenskonflikt" && tilstand.inndataRef != null;
       if (definitivt) {
         // Serveren DØMTE operasjonen — retry er en NY operasjon. En
         // reservert bunt beholdes: dommen gjaldt bestillingen, ikke
         // opplastingen.
-        tilstand.bestillIdem = null;
+        if (!opptattNokkel) tilstand.bestillIdem = null;
         // EN DØD RESERVASJON MÅ KUNNE SLIPPES (Cursor P1-3). Kom dommen
         // FØR `inndataRef` ble satt, traff den reservasjonen eller
         // opplastingen — og 058 sier at en brukt/utløpt reservasjon
@@ -1041,10 +1071,18 @@ function bestillSeksjon(hoved, ctx, data, okt, laas) {
       // samme. `bestill.avbrutt` (opplastingsarmen over) duger ikke: den
       // lover at INGENTING er bestilt, og det er nettopp det vi ikke vet
       // når kallet alt var i lufta.
+      //
+      // ... og «bestillingen feilet» er den samme løgnen for en opptatt
+      // nøkkel: ingenting feilet, det første forsøket er ikke ferdig.
+      // `usikkert_utfall` duger ikke her — den åpner med at vi ikke fikk
+      // svar fra serveren, og det fikk vi (409). Teksten sier derfor det
+      // serveren sier: ingen dom, ingen kvote, og et nytt forsøk er den
+      // SAMME operasjonen (nøkkelen står, se over).
       const forlatt = tilstand.generasjon !== min;
-      sett(utfall, t(definitivt ? "ui.rekruttering.bestill.feil"
-        : forlatt ? "ui.rekruttering.bestill.forlatt_usikkert"
-          : "ui.rekruttering.usikkert_utfall"));
+      sett(utfall, t(opptattNokkel ? "ui.rekruttering.bestill.opptatt"
+        : definitivt ? "ui.rekruttering.bestill.feil"
+          : forlatt ? "ui.rekruttering.bestill.forlatt_usikkert"
+            : "ui.rekruttering.usikkert_utfall"));
     } finally {
       tilstand.paagaaende = false;
       // Låsen løftes på de SAMME kontrollene som tok den (A-dommen,

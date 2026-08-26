@@ -1078,6 +1078,7 @@
   "ui.rekruttering.bestill.unntak": "The order was placed in the exception queue and awaits review. The bundle has not been used — it is still ready.",
   "ui.rekruttering.bestill.unntak_forlatt": "The order was placed in the exception queue and awaits review. It is about the bundle “{filnavn}” — not the file now shown in the form: you switched bundles while the case was in flight. The new bundle has not been ordered.",
   "ui.rekruttering.bestill.feil": "The order failed. Check the fields and try again.",
+  "ui.rekruttering.bestill.opptatt": "The previous attempt at this order is still being processed by the server. Nothing has been decided, and no quota has been used. Try again in a moment — a new attempt repeats the SAME operation and does not create another one.",
   "ui.rekruttering.profiler.tabell": "The requirements in the profile, with a weight per requirement",
   "ui.rekruttering.profiler.tomt_krav": "The profile needs at least one requirement.",
   "ui.rekruttering.ingen_prosess": "No active recruitment process.",
