@@ -22,7 +22,7 @@ from .test_api import (DSN, MIGRATOR_DSN, POLICIES, TENANT, app,  # noqa: F401
 from .test_inndata_http import inndata_rot  # noqa: F401
 from .test_m37 import _sett_kontekst
 from .test_api import dekker
-from .test_outbox_bestilling import _adminsesjon
+from .test_outbox_bestilling import _adminsesjon, _kjernenokkel
 
 pg = pytest.mark.skipif(not DSN, reason="DISPONIT_TEST_DSN ikke satt")
 
@@ -593,3 +593,80 @@ def test_krasj_mellom_beslutning_og_binding_fullfores_av_retryen(
     assert _buntrad(migrator, ref) == ("bundet", oid)
     assert _beslutninger(migrator) == 1, \
         "retryen tok en NY beslutning i stedet for å gjenspille den gamle"
+
+
+@pg
+def test_bindefeil_etter_beslutningen_gir_stabil_retry(
+        klient, migrator, miljo, inndata_rot, monkeypatch):
+    """Cursor P2 (3): feiler `bind_inndata` ETTER en committet TILLAT,
+    skrives ingen `bestilling_idempotens`-rad — og nøkkelens kontrakt må
+    likevel være ENTYDIG.
+
+    Buntlåsen (P1) fjerner kappløpstapet som årsak; det som står igjen er
+    at bunten kan dø av seg selv i vinduet. Utløp lar seg ikke iscenesette
+    — `utloper` er et BINDINGSFELT i `inndata_artefakt_vakt()` og kan ikke
+    endres på en levende rad — så terminalen måles med den andre veien inn
+    i nøyaktig samme `bind_inndata`-raise: `lastet -> forkastet`, satt av
+    en annen forbindelse mellom beslutningen og bindingen. Utløpet er
+    samme funksjon fem linjer lenger ned.
+
+    Kravet er at svaret er ENDELIG og BILLIG: én kode, kvoten brent
+    nøyaktig én gang (prisen for en beslutning som ble tatt), og retryen
+    med samme nøkkel svarer det samme uten å ta en ny beslutning — den
+    stoppes av forhåndsporten, ikke av kjernen. Den foreldreløse TILLAT-en
+    i `idempotens` er den KJENTE resten, og står her som en måling og ikke
+    som en antakelse.
+    """
+    from api import kjerne as kjernemodul
+    from db.pg import koble
+    _rekr_policy(migrator)
+    cookie, csrf = _adminsesjon()
+    ref = _bunt(klient, migrator, cookie, csrf)
+    profilref = _profil(migrator)
+    kropp = _evalkropp(ref, profilref)
+    nokkel = "n-" + secrets.token_hex(8)
+    ekte = kjernemodul.behandle
+
+    def river_bunten_etter_beslutningen(*a, **kw):
+        svar = ekte(*a, **kw)          # beslutningen er nå COMMITTET
+        c = koble(MIGRATOR_DSN)
+        try:
+            _sett_kontekst(c, TENANT)
+            c.execute("UPDATE inndata_artefakt SET status='forkastet'"
+                      " WHERE tenant=%s AND inndata_id=%s",
+                      (TENANT, ref.split(":", 1)[1]))
+            c.commit()
+        finally:
+            c.close()
+        return svar
+
+    with monkeypatch.context() as mp:
+        mp.setattr(kjernemodul, "behandle",
+                   river_bunten_etter_beslutningen)
+        r = _bestill(klient, cookie, csrf, kropp, nokkel)
+    assert (r.status_code, r.json()["feil"]) == (
+        409, "inndata_ubrukelig"), r.text
+    assert _beslutninger(migrator) == 1
+    _sett_kontekst(migrator, TENANT)
+    assert migrator.execute(
+        "SELECT count(*) FROM oppdrag WHERE tenant=%s AND"
+        " oppdragstype='rekruttering.evaluering'",
+        (TENANT,)).fetchone()[0] == 0, "oppdraget ble ikke rullet tilbake"
+    assert migrator.execute(
+        "SELECT count(*) FROM bestilling_idempotens WHERE tenant=%s AND"
+        " idempotensnokkel=%s", (TENANT, nokkel)).fetchone()[0] == 0
+    # Den KJENTE resten: kjernens egen rad står igjen som en TILLAT uten
+    # oppdrag. Kvoten er brent én gang, og det er hele prisen.
+    assert migrator.execute(
+        "SELECT count(*) FROM idempotens WHERE tenant=%s AND nokkel=%s"
+        " AND status='ferdig'",
+        (TENANT, _kjernenokkel(nokkel, kropp))).fetchone()[0] == 1
+    migrator.rollback()
+
+    # Retryen er STABIL: samme kode, og forhåndsporten stopper den før
+    # kjernen — ingen andre kvoteplass.
+    r2 = _bestill(klient, cookie, csrf, kropp, nokkel)
+    assert (r2.status_code, r2.json()["feil"]) == (
+        409, "inndata_ubrukelig"), r2.text
+    assert _beslutninger(migrator) == 1, \
+        "retryen tok en ny beslutning på en bunt som ikke kan bindes"
