@@ -58,6 +58,20 @@ Modulen er KUNDE av plattformen, aldri omvendt (m56-formen):
   og deklarasjonen presset mot færre varianter, som er feil fortegn for
   personvern.
 
+  MÅLINGEN SKJER PÅ ORIGINALTEKSTEN, FØR NOEN ERSTATNING (eierdom,
+  K2-kjennelse runde 6 på
+  [#217](https://github.com/moka1980/disponit/pull/217), valg A). Det er
+  runde-5-dommens egen semantikk — traff deklarasjonen DOKUMENTET — og
+  ikke en ny regel. Telte man treffene underveis i maskeringen, målte
+  man mot tokener maskeringen selv nettopp hadde skrevet: med
+  `{"navn": ["Al"], "alder": ["forty-two"]}` mot en tekst som skriver
+  navnet i FULLBREDDE (`Ａｌ`, som ikke er ASCII-`Al` under Unicodes
+  enkle case-folding) ble `forty-two` erstattet først, og `Al` traff
+  deretter `AL` inni `[ALDER-1]`. Feltet talte som truffet uten å ha
+  truffet dokumentet, porten sa god, og fullbredde-navnet gikk i
+  klartekst til modellen mens kjøringen telte som blindet. Søket før
+  erstatningen fjerner den omgåelsen: tokenene finnes ikke ennå.
+
   Grunnen til at dette IKKE er en tegnliste til: skrivemåteporten var en
   håndskrevet svarteliste over Unicode-kategorier (`Cc`/`Cf`), og en
   svarteliste er ufullstendig i ett predikat like fullt som i to. NBSP
@@ -117,6 +131,20 @@ Modulen er KUNDE av plattformen, aldri omvendt (m56-formen):
   tokenalfabet som er DISJUNKT fra verdirommet, og den eies av
   [#158](https://github.com/moka1980/disponit/issues/158) — ikke av en
   formport her.
+
+  SAMME KOLLISJON KAN OGSÅ KORRUPTERE MASKERINGEN, og det skal stå
+  eksplisitt: erstatningen kan skrive inn i et token den selv har lagt
+  igjen. Med `{"navn": ["Al"], "alder": ["forty-two"]}` mot «Al is
+  forty-two» blir resultatet `[NAVN-1] is [[NAVN-1]DER-1]` — `[ALDER-1]`
+  er spist innenfra, og avmaskeringstabellen er ikke lenger reversibel.
+  Port 16 passerer, for klarteksten ER borte: utfallet er KORRUPT
+  modellinput, ikke en lekkasje, og korrupt input kan endre både
+  kravfunn og rangering. Dette er en KJENT GRENSE til det disjunkte
+  tokenalfabetet lander, og den eies av
+  [#158](https://github.com/moka1980/disponit/issues/158) (eierdom,
+  K2-kjennelse runde 6 på #217, valg A):
+
+  `dom-klasse: tokenkollisjon-korrupsjon · felt i #217 · https://github.com/moka1980/disponit/pull/217#issuecomment-5430381316`
 
   `kandidat_id` er ASCII og LUKKET:
   `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` — ikke-tom, maks 64 tegn, starter

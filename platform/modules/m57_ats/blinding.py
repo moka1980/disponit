@@ -143,8 +143,9 @@ def blind(tekst: str, kandidatfelter: dict[str, list[str]]
     IKKE lovet her — løftet er de navngitte feltene.
 
     To porter, og den andre måler EFFEKT: formen inn
-    (`feltverdier_lukket`), og — etter maskeringen — at hvert deklarert
-    felt faktisk traff dokumentteksten. Begge er `ugyldig_maskeringsform`.
+    (`feltverdier_lukket`), og — målt på ORIGINALTEKSTEN, før noen
+    erstatning — at hvert deklarert felt faktisk traff dokumentteksten.
+    Begge er `ugyldig_maskeringsform`.
     """
     # Vakten gir PRESISJON, ikke lenger sikkerheten alene (målt i runde
     # 5): et ukjent felt kan per konstruksjon aldri treffe, siden løkka
@@ -176,6 +177,64 @@ def blind(tekst: str, kandidatfelter: dict[str, list[str]]
             token = f"[{felt.upper()}-{nr}]"
             avmaskering[token] = verdi
             par.append((felt, token, verdi))
+    # VAKUØSITETEN MÅLES PÅ EFFEKT, PER FELT (eierdom, K2-kjennelse
+    # runde 5 på #217, valg B) — OG MÅLINGEN SKJER PÅ ORIGINALTEKSTEN,
+    # FØR NOEN ERSTATNING (eierdom, K2-kjennelse runde 6, valg A).
+    #
+    # Et deklarert felt der INGEN av verdiene traff dokumentteksten er en
+    # vakuøs deklarasjon: den fyller avmaskeringstabellen med noe
+    # `krev_blindet` aldri kan finne, så porten løper sine runder uten å
+    # måle noe — og kjøringen telles som blindet mens klartekstnavnet står
+    # i modellinputen. Det er samme lekkasje som `"Kari Testdal "` i
+    # `7b8fa66`, bare med et annet tegn hver runde: NBSP (`Zs`), `U+2010`
+    # (`Pd`), en NFD-dekomponert `å`.
+    #
+    # Dette er ikke en sjette tegnliste — det er målingen som gjør
+    # tegnlister overflødige: vi trenger ikke vite HVILKET tegn som
+    # gjorde at deklarasjonen bommet, bare at den bommet.
+    #
+    # PER FELT, IKKE PER VERDI, og fortegnet er hele grunnen: en enkelt
+    # VERDI uten treff er lovlig så lenge en søsterverdi i samme felt
+    # traff. Ellers blir defensive varianter (`["Kari Testdal", "Kari"]`)
+    # selvmotsigende farlige, og deklarasjonen presses mot FÆRRE
+    # varianter — feil fortegn for personvern.
+    #
+    # PÅ ORIGINALTEKSTEN, og det er runde-5-dommens EGEN semantikk
+    # («traff deklarasjonen DOKUMENTET»): å telle treff med `subn` inne i
+    # erstatningsløkka målte mot en tekst maskeringen selv nettopp hadde
+    # skrevet i, altså mot sine egne tokener. Målt (Codex P1, review
+    # 19:38 på `13e7110`):
+    #
+    #     tekst  = "Ａｌ is forty-two"        # fullbredde Ａｌ
+    #     felter = {"navn": ["Al"], "alder": ["forty-two"]}
+    #
+    # `forty-two` erstattes først (lengste først), og `Al` traff så `AL`
+    # inni `[ALDER-1]` — `_monster` er `re.IGNORECASE`. `traff["navn"]`
+    # ble sann uten at navnet noen gang traff dokumentet, porten sa god,
+    # og fullbredde-navnet gikk i klartekst til modellen mens kjøringen
+    # telte som blindet. Søket her skjer FØR løkka, mot teksten slik den
+    # kom inn: da finnes kollisjonen ikke i målingen, for tokenene er
+    # ikke skrevet ennå.
+    #
+    # RESTKLASSEN, ærlig: en forekomst i teksten som ingen deklarert
+    # verdi matcher mens en ANNEN verdi i samme felt traff, er
+    # udetekterbar uten NER. Den står i `KONTRAKT.md` som kjent grense
+    # eid av #158 (strukturell blinding), ikke som noe denne porten
+    # lover.
+    #
+    # UTSATT, K1 → #158 (disjunkt tokenalfabet). Målingen over lukker
+    # PORT-omgåelsen, ikke tokenkollisjonen som sådan: erstatningen kan
+    # fortsatt skrive inn i et token den selv har lagt igjen
+    # (`[[NAVN-1]DER-1]`), og da er avmaskeringstabellen ikke lenger
+    # reversibel. Utfallet er korrupt modellinput, ikke klartekst ut —
+    # `krev_blindet` søker fortsatt hele inputen.
+    #   dom-klasse: tokenkollisjon-korrupsjon · felt i #217 ·
+    #   https://github.com/moka1980/disponit/pull/217#issuecomment-5430381316
+    traff: dict[str, bool] = {
+        felt: any(_monster(verdi).search(tekst) for verdi in verdier)
+        for felt, verdier in kandidatfelter.items()}
+    if not all(traff.values()):
+        raise Blindingsfeil("ugyldig_maskeringsform")
     # LENGSTE VERDI FØRST, på tvers av alle felter (Codex P1). Erstatning
     # i feltrekkefølge var to lekkasjer i én: «Ola» før «Ola Nordmann» gir
     # `[NAVN-1] Nordmann` — etternavnet når modellen — og «Ann» før
@@ -202,49 +261,13 @@ def blind(tekst: str, kandidatfelter: dict[str, list[str]]
     # blinding: personfeltene finnes ikke i inputen i det hele tatt)
     # nettopp fordi en invariant som hviler på et fritekstsøk ikke kan
     # være absolutt i noen av retningene.
-    traff: dict[str, bool] = {felt: False for felt in kandidatfelter}
-    for felt, token, verdi in sorted(par, key=lambda p: -len(p[2])):
+    for _felt, token, verdi in sorted(par, key=lambda p: -len(p[2])):
         # Erstatningen er en funksjon, ikke en mal: tokenet skal stå
         # ordrett, aldri tolkes som `re`-referanser. Avmaskeringstabellen
         # bærer den STRUKTURERTE skrivemåten — en avmaskering gir altså
         # `Kari` tilbake der dokumentet skrev `KARI`, og det er riktig:
         # feltverdien er kilden, dokumentets versaler er formatering.
-        tekst, antall = _monster(verdi).subn(
-            lambda _t, tok=token: tok, tekst)
-        traff[felt] = traff[felt] or bool(antall)
-    # VAKUØSITETEN MÅLES PÅ EFFEKT, PER FELT (eierdom, K2-kjennelse
-    # runde 5 på #217, valg B). Et deklarert felt der INGEN av verdiene
-    # traff dokumentteksten er en vakuøs deklarasjon: den fyller
-    # avmaskeringstabellen med noe `krev_blindet` aldri kan finne, så
-    # porten løper sine runder uten å måle noe — og kjøringen telles som
-    # blindet mens klartekstnavnet står i modellinputen. Det er samme
-    # lekkasje som `"Kari Testdal "` i `7b8fa66`, bare med et annet tegn
-    # hver runde: NBSP (`Zs`), `U+2010` (`Pd`), en NFD-dekomponert `å`.
-    #
-    # Dette er ikke en sjette tegnliste — det er målingen som gjør
-    # tegnlister overflødige: vi trenger ikke vite HVILKET tegn som
-    # gjorde at deklarasjonen bommet, bare at den bommet.
-    #
-    # PER FELT, IKKE PER VERDI, og fortegnet er hele grunnen: en enkelt
-    # VERDI uten treff er lovlig så lenge en søsterverdi i samme felt
-    # traff. Ellers blir defensive varianter (`["Kari Testdal", "Kari"]`)
-    # selvmotsigende farlige, og deklarasjonen presses mot FÆRRE
-    # varianter — feil fortegn for personvern.
-    #
-    # RESTKLASSEN, ærlig: en forekomst i teksten som ingen deklarert
-    # verdi matcher mens en ANNEN verdi i samme felt traff, er
-    # udetekterbar uten NER. Den står i `KONTRAKT.md` som kjent grense
-    # eid av #158 (strukturell blinding), ikke som noe denne porten
-    # lover.
-    #
-    # OG DEN ANDRE VEIEN, like ærlig: står et felts eneste forekomst
-    # INNI et lengre felt som erstattes først (`adresse: ["Testdal"]`
-    # der teksten bare skriver «Kari Testdal»), er feltet vakuøst etter
-    # målingen og kjøringen felles. Det er fail-closed — en nektet
-    # evaluering, aldri klartekst videre — og det er samme
-    # delstrengsklasse som #158 eier.
-    if not all(traff.values()):
-        raise Blindingsfeil("ugyldig_maskeringsform")
+        tekst = _monster(verdi).sub(lambda _t, tok=token: tok, tekst)
     return tekst, avmaskering
 
 

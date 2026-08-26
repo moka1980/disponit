@@ -2480,14 +2480,20 @@ def test_vakuos_deklarasjon_felles_paa_effekt_per_felt(tmp_path):
             blinding.blind(tekst, {"navn": [verdi]})
         assert e.value.kode == "ugyldig_maskeringsform", merke
 
-    # POSITIV VARIANTKONTROLL: en søsterverdi som treffer holder feltet
-    # oppe, selv om den andre varianten ikke treffer noe (den lengste
-    # erstattes først og spiser forekomsten). Defensive varianter skal
-    # ikke straffes — de er riktig fortegn for personvern.
+    # POSITIV VARIANTKONTROLL: en søsterverdi som ikke treffer noe i det
+    # hele tatt holder ikke feltet nede, så lenge en annen variant traff.
+    # Defensive varianter skal ikke straffes — de er riktig fortegn for
+    # personvern.
     blindet, avmaskering = blinding.blind(
         CV, {"navn": ["Kari Testdal", "Kari"]})
     assert avmaskering == {"[NAVN-1]": "Kari Testdal", "[NAVN-2]": "Kari"}
     assert "Kari" not in blindet and "[NAVN-1]" in blindet
+    # … og med en variant som er en ren bom (feilstavingen står ingen
+    # steder i dokumentet), som er den skarpe formen av samme kontroll
+    # etter at målingen flyttet til originalteksten (runde 6).
+    blindet, _ = blinding.blind(CV, {"navn": ["Kari Testdahl",
+                                              "Kari Testdal"]})
+    assert "Kari Testdal" not in blindet and "[NAVN-2]" in blindet
 
     # … og NFD-formen er lovlig når det er DOKUMENTET som skriver den:
     # porten måler treffet, ikke normaliseringsformen.
@@ -2545,6 +2551,93 @@ def test_vakuos_deklarasjon_felles_paa_effekt_per_felt(tmp_path):
     assert set(ut["artefakter"]) == {"k1"}
     for sett in modell.sett:
         assert "Kari Testdal" not in sett and "[NAVN-1]" in sett
+
+
+def test_vakuositeten_maales_paa_originalteksten(tmp_path):
+    """EIERDOM, K2-kjennelse runde 6 på #217 (valg A): `traff` måles mot
+    ORIGINALTEKSTEN — søket skjer FØR noen erstatning.
+
+    Runde 5 felte at hvert deklarert felt må treffe DOKUMENTET. Koden
+    talte treffene med `subn` inne i erstatningsløkka, altså mot en tekst
+    maskeringen selv nettopp hadde skrevet tokener inn i — en
+    implementasjonsglipp av dommen, ikke en egen mekanisme. Følgen er en
+    PORT-OMGÅELSE, målt av Codex (P1, review 19:38 på `13e7110`):
+
+        tekst  = "Ａｌ is forty-two"        # fullbredde Ａｌ
+        felter = {"navn": ["Al"], "alder": ["forty-two"]}
+
+        -> "forty-two" erstattes først (lengste først)
+        -> "Al" treffer så "AL" inni "[ALDER-1]" (`re.IGNORECASE`)
+        -> traff["navn"] blir sann UTEN at navnet traff dokumentet
+        -> porten sier god, og fullbredde-navnet står i klartekst i
+           modellinputen mens kjøringen telles som blindet.
+
+    Fullbredde-`Ａｌ` er ikke ASCII-`Al` under Unicodes enkle
+    case-folding (`"Ａ".lower()` er `"ａ"`, ikke `"a"`), så deklarasjonen
+    bommet — nøyaktig den vakuøsiteten runde 5 skulle felle.
+
+    De to formene under er de to eier ba om regresjon på: omgåelsen
+    (dokumentet skriver fullbredde-formen) og den rene bommen (`Al` står
+    ikke i dokumentet i det hele tatt). Begge er nå
+    `ugyldig_maskeringsform`.
+
+    MUTASJONEN SOM DREPER DENNE: flytt `traff`-målingen i
+    `blinding.blind` ned i erstatningsløkka igjen (`subn` mot `tekst`).
+    """
+    import json as _json
+
+    from modules.m57_ats import kjoring
+
+    FULLBREDDE = chr(0xFF21) + chr(0xFF4C)          # Ａｌ
+    assert FULLBREDDE != "Al" and FULLBREDDE.lower() != "al"
+
+    # FORM 1 — omgåelsen, ordrett slik den ble målt.
+    with pytest.raises(blinding.Blindingsfeil) as e:
+        blinding.blind(FULLBREDDE + " is forty-two",
+                       {"navn": ["Al"], "alder": ["forty-two"]})
+    assert e.value.kode == "ugyldig_maskeringsform"
+
+    # FORM 2 — samme deklarasjon uten noe `Al` i teksten overhodet.
+    with pytest.raises(blinding.Blindingsfeil) as e:
+        blinding.blind("is forty-two",
+                       {"navn": ["Al"], "alder": ["forty-two"]})
+    assert e.value.kode == "ugyldig_maskeringsform"
+
+    # E2E på omgåelsen: kjøringen stopper kodet, og fullbredde-navnet
+    # forlot aldri kjøringen. Det er dette funnet handlet om — ikke
+    # feilkoden, men at klarteksten ikke når modellen.
+    (tmp_path / "omgaaelse").mkdir()
+    cv = ("<p>" + FULLBREDDE + " is forty-two og kan drift</p>"
+          ).encode("utf-8")
+    arkiv = _bunt(tmp_path / "omgaaelse", [("k1/cv.html", cv)],
+                  manifest=_json.dumps({"soknader": [
+                      {"kandidat_id": "k1", "filer": ["k1/cv.html"],
+                       "felter": {"navn": ["Al"],
+                                  "alder": ["forty-two"]}}]}))
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
+                          tekst_for=lambda m, d: d.decode("utf-8"),
+                          biasmaalinger=_MAALINGER, antall_soknader=1)
+    assert e.value.kode == "ugyldig_maskeringsform"
+    assert modell.sett == [], "fullbredde-navnet nadde modellen"
+
+    # DEN LOVLIGE NABOEN: skriver dokumentet `Al`, traff deklarasjonen
+    # dokumentet, og målingen skal ikke felle den.
+    blindet, avmaskering = blinding.blind(
+        "Al is forty-two", {"navn": ["Al"], "alder": ["forty-two"]})
+    assert avmaskering == {"[NAVN-1]": "Al", "[ALDER-1]": "forty-two"}
+
+    # … OG DA STÅR KORRUPSJONEN IGJEN, målt i stedet for bare beskrevet.
+    # Erstatningen skriver inn i et token den selv la igjen, så
+    # `[ALDER-1]` blir `[[NAVN-1]DER-1]` og avmaskeringstabellen er ikke
+    # lenger reversibel. Port 16 passerer — klarteksten ER borte — så
+    # utfallet er KORRUPT modellinput, ikke en lekkasje. Klassen er
+    # UTSATT til #158 (disjunkt tokenalfabet), eierdom runde 6:
+    #   dom-klasse: tokenkollisjon-korrupsjon · felt i #217 ·
+    #   https://github.com/moka1980/disponit/pull/217#issuecomment-5430381316
+    assert blindet == "[NAVN-1] is [[NAVN-1]DER-1]"
+    blinding.krev_blindet(blindet, avmaskering)
 
 
 def test_duplikate_manifestnokler_er_ingen_deklarasjon(tmp_path):
