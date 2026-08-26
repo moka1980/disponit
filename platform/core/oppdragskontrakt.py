@@ -1007,28 +1007,48 @@ UTFORELSESFRIST_VALG: dict[str, tuple[str, dict[object, int]]] = {
     # partisjonering endrer bestillingsformen — #165 valgte FORNYELSEN.
     #
     # 063 ER fornyelsesveien (heartbeat fra utføreren, 037s egen
-    # blåkopi): en LEVENDE utfører holder nå autoriteten sin gjennom
+    # blåkopi): en LEVENDE utfører kan holde autoriteten sin gjennom
     # hele fristen — leasen fornyes vindu for vindu (aldri over
     # `UTSTEDT_AUTORITET_S` per grant), og fornyelsen re-utsteder
-    # opplastingskapabiliteten. Fristen står derfor igjen på
-    # klarsignalets 240 min: løftet dekkes ikke lenger av ETT grant,
-    # men av kjeden av dem — og en utfører som slutter å puste mister
-    # autoriteten ved neste vindu, som er nøyaktig det reclaim-fencing
-    # alltid har krevd. #210s min()-klemme var den harde sperren TIL
-    # denne mekanismen fantes; nå finnes den, og sperren er avløst av
-    # porten `test_frist_over_ett_grant_krever_fornyelsesveien`.
-    "rekruttering.evaluering": ("omfang", {"bunt": 240 * 60}),
+    # opplastingskapabiliteten.
+    #
+    # MEN DØREN ER IKKE EN PUST (Cursor P1, runde 2): fristen hviler
+    # ikke på at mekanismen FINNES, den hviler på at noen KALLER den.
+    # Det gjør ingen i dag — `/v1/oppdrag/forny` har null kallsteder
+    # under `platform/modules/` og `platform/drift/`, og M-57s egen
+    # evalueringsutfører finnes ikke ennå. Hevet vi fristen nå, ville
+    # et claimet `rekruttering.evaluering`-oppdrag fått 240 min frist og
+    # ~1 t lease, og reclaim-grenen (`plukket` ∧ død lease ∧ frist i
+    # framtiden) stått åpen i tre timer: nøyaktig #210s skadeklasse,
+    # gjenåpnet av et løfte om en pust som ikke finnes.
+    #
+    # Klemmen står derfor TIL en utfører faktisk puster — og å bygge den
+    # utføreren her ville vært ny maskin i en fiksrunde (K1). Å heve
+    # tallet er ett tegn den dagen kallstedet finnes; porten
+    # `test_frist_over_ett_grant_krever_fornyelsesveien` krever da BÅDE
+    # døren i basen og et kallsted, så ingen kan heve fristen på døren
+    # alene.
+    "rekruttering.evaluering": ("omfang",
+                                {"bunt": None}),  # settes under, av min()
 }
 
 #: PER-GRANT-TAKET, med produksjonsnavn: claim-leasen (037/049),
 #: opplastingskapabiliteten (017, `app.py`) og HVERT fornyelsesvindu
-#: (063) klemmes alle hit. Etter #165 er dette ikke lenger totalens
-#: autoritet — fornyelsen kjeder grants gjennom hele fristen — men
-#: taket for hvor lenge én taus utfører beholder den.
+#: (063) klemmes alle hit. Med 063 er dette ikke lenger nødvendigvis
+#: totalens autoritet — fornyelsen KAN kjede grants gjennom hele
+#: fristen — men det er taket for hvor lenge én TAUS utfører beholder
+#: den, og uten et kallsted er taus alt vi har.
 #: SQL-siden (037/049/063) pinnes av outbox-portens `TAK_S`.
 UTSTEDT_AUTORITET_S = 3600
 
-
+#: Akseptkonvolutten er klarsignalets 240 min (§4, `manifestskjema`);
+#: LØFTET til kunden er aldri mer enn autoriteten som faktisk utstedes
+#: og fornyes. `min()` og ikke tallet direkte (Codex P2 på #210): den
+#: dagen en utfører puster gjennom `/v1/oppdrag/forny`, faller fristen
+#: tilbake på konvolutten ved å fjerne klemmen — og porten over krever
+#: kallstedet i samme grep.
+UTFORELSESFRIST_VALG["rekruttering.evaluering"][1]["bunt"] = \
+    min(240 * 60, UTSTEDT_AUTORITET_S)
 
 
 def utforelsesfrist_s(oppdragstype: str, minimert: dict) -> int | None:
