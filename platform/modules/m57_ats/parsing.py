@@ -607,6 +607,37 @@ class Manifestet:
     felter: dict[str, dict[str, list[str]]]
 
 
+def _uten_duplikatnokler(par: list[tuple[str, object]]) -> dict:
+    """`json`s objektbygger, men en DUPLIKATNØKKEL er `manifest_feilformet`
+    (Codex P1, review 15:20 på `7b8fa66`).
+
+    Standardoppførselen er stille «siste vinner»:
+    `{"navn": ["Kari"], "navn": ["Ola"]}` blir `{"navn": ["Ola"]}`, og
+    `Kari` — en personverdi kunden faktisk DEKLARERTE — finnes ikke
+    lenger for blindingen. Navnet står fortsatt i CV-en, det maskeres
+    ikke, og `krev_blindet` leter bare etter det som ER i
+    avmaskeringstabellen; porten godkjenner altså en modellinput med
+    klartekstnavnet i, og kjøringen telles som blindet. Det er en
+    LEKKASJE, ikke en formfeil — og den er usynlig for hver eneste port
+    nedstrøms, fordi tapet skjer FØR noen av dem får se dokumentet.
+
+    Porten gjelder HELE manifestdokumentet, ikke bare `felter`: en
+    duplisert `soknader`, `kandidat_id` eller `filer` taper like stille
+    en deklarasjon vi da aldri får bundet toveis mot katalogen.
+    Nøkkelnavnet trenger vi ikke gjette mellom — vi avviser, vi velger
+    ikke: en deklarasjon som sier to ting om samme nøkkel er ingen
+    deklarasjon. Samme dom som den lukkede toppformen og
+    `KANDIDAT_ID_KANON`, og samme retning som resten av lesingen: én vei
+    inn, og bunten som mente `Kari` sier `Kari`."""
+    ut: dict = {}
+    for nokkel, verdi in par:
+        if nokkel in ut:
+            raise Buntfeil("manifest_feilformet",
+                           f"duplikatnøkkel {nokkel!r}")
+        ut[nokkel] = verdi
+    return ut
+
+
 def les_manifest(sti: str | Path,
                  medlemmer: list[Medlem]) -> Manifestet:
     """#161 (eiers B): les og bind `soknader.json` mot katalogen, BEGGE
@@ -688,7 +719,14 @@ def les_manifest(sti: str | Path,
     if len(raa) > MAKS_MANIFESTBYTES:
         raise Buntfeil("manifest_feilformet", "for stort")
     try:
-        data = json.loads(raa.decode("utf-8"))
+        data = json.loads(raa.decode("utf-8"),
+                          object_pairs_hook=_uten_duplikatnokler)
+    except Buntfeil:
+        # Hookens egen dom er ALLEREDE kodet (duplikatnøkkel). Den er
+        # ingen `ValueError`, så den ville flydd forbi klausulen under
+        # av seg selv — linja står her for at det skal være et VALG og
+        # ikke en tilfeldighet ved klassehierarkiet.
+        raise
     # JSON-DYBDE ER OGSÅ EN FORM (Cursor P1, runde 2). `json` melder
     # SYNTAKS som `ValueError`, men NØSTING som `RecursionError` — og den
     # er ingen `ValueError`. Noen tusen `[` innenfor `MAKS_MANIFESTBYTES`

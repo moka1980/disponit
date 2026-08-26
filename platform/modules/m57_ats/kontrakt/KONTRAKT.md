@@ -21,6 +21,15 @@ Modulen er KUNDE av plattformen, aldri omvendt (m56-formen):
   oppdragets `antall_soknader` FØR én byte innhold pakkes ut. En
   kandidatform gjettes aldri ut av katalogen.
 
+  EN NØKKEL FÅR STÅ ÉN GANG per JSON-objekt i dokumentet.
+  `{"navn": [...], "navn": [...]}` er `manifest_feilformet`, ikke
+  «siste vinner»: JSONs standardoppførsel taper den første verdien
+  stille, og taper den FØR noen port ser dokumentet. En deklarert
+  personverdi som forsvinner der, blir aldri maskert, og port 16 leter
+  bare etter det som ER i avmaskeringstabellen — utfallet ville vært
+  klartekst til modellen i en kjøring som telles som blindet. Vi
+  avviser, vi velger ikke.
+
   Kandidaten KAN i tillegg deklarere `felter` — de strukturerte
   personverdiene (`navn`, `kjonn`, `alder`, `adresse`, `bilde`,
   `kontakt`; lukket sett, maks 10 verdier à 200 tegn per felt) — og de

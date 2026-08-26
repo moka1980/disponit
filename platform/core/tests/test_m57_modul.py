@@ -2395,6 +2395,86 @@ def test_manifestfeltenes_lukkede_form(tmp_path):
     assert m.felter == {"k1": {"navn": ["Kari"]}}
 
 
+def test_duplikate_manifestnokler_er_ingen_deklarasjon(tmp_path):
+    """Codex P1 (review 15:20 på `7b8fa66`) — en LEKKASJE, ikke en
+    formfeil, og den var aldri lukket før nå.
+
+    `json.loads` lar den SISTE av to like nøkler vinne, stille. En
+    deklarasjon som skriver `"navn"` to ganger taper altså den første
+    verdien FØR noen port får se dokumentet: `Kari` står fortsatt i
+    CV-en, hun finnes ikke i avmaskeringstabellen, og `krev_blindet`
+    leter bare etter det som ER i tabellen. Modellen får dermed
+    klartekstnavnet mens kjøringen telles som blindet — nøyaktig den
+    vakuøse porten padding-P1-en handlet om, men med tapet ett hakk
+    lenger opp.
+
+    `object_pairs_hook` avviser duplikater i HELE manifestdokumentet, og
+    det er med vilje bredere enn `felter`: en duplisert `kandidat_id`
+    eller `filer` taper like stille en deklarasjon som skulle vært
+    bundet toveis mot katalogen.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `object_pairs_hook`-argumentet i
+    `les_manifest` (eller `if nokkel in ut`-armen i hooken)."""
+    import json as _json
+
+    from modules.m57_ats import kjoring
+
+    cv = b"<p>Kari Testdal og Ola Nordmann kan drift.</p>"
+
+    def _kjor(arkiv):
+        modell = _Modell()
+        with pytest.raises(kjoring.Kjoringsfeil) as e:
+            kjoring.kjor_bunt(
+                arkiv, modell, vekter={"drift": 3},
+                tekst_for=lambda m, d: d.decode("utf-8"),
+                biasmaalinger=_MAALINGER, antall_soknader=1)
+        return e.value, modell
+
+    # NØYAKTIG formen Codex målte: samme feltnøkkel to ganger.
+    duplisert_felt = (
+        '{"soknader": [{"kandidat_id": "k1", "filer": ["k1/cv.html"],'
+        ' "felter": {"navn": ["Kari Testdal"],'
+        ' "navn": ["Ola Nordmann"]}}]}')
+
+    # MEKANISMEN, målt og ikke bare påstått: uten porten er `Kari` borte
+    # fra deklarasjonen allerede når `json` er ferdig.
+    tapt = _json.loads(duplisert_felt)["soknader"][0]["felter"]
+    assert tapt == {"navn": ["Ola Nordmann"]}, tapt
+
+    # Porten: hele bunten felles, og modellen ser ingenting.
+    for i, raa in enumerate((
+        duplisert_felt,
+        # … og resten av dokumentet, ikke bare `felter`:
+        ('{"soknader": [{"kandidat_id": "k1", "kandidat_id": "k2",'
+         ' "filer": ["k1/cv.html"]}]}'),
+        ('{"soknader": [{"kandidat_id": "k1", "filer": ["k1/cv.html"],'
+         ' "filer": ["k1/cv.html"]}]}'),
+        ('{"soknader": [{"kandidat_id": "k1", "filer": ["k1/cv.html"]}],'
+         ' "soknader": [{"kandidat_id": "k1", "filer": ["k1/cv.html"]}]}'),
+    )):
+        (tmp_path / f"d{i}").mkdir()
+        arkiv = _bunt(tmp_path / f"d{i}", [("k1/cv.html", cv)],
+                      manifest=raa)
+        feil, modell = _kjor(arkiv)
+        assert feil.kode == "manifest_feilformet", raa
+        assert not modell.sett, raa
+
+    # POSITIV KONTROLL: porten er PER OBJEKT. To kandidater bærer hver
+    # sin `kandidat_id` og `filer` — like nøkler i ULIKE objekter — og
+    # det er en helt vanlig deklarasjon som fortsatt leses ut.
+    (tmp_path / "ok").mkdir()
+    arkiv = _bunt(tmp_path / "ok",
+                  [("k1/cv.html", cv), ("k2/cv.html", cv)],
+                  manifest=_json.dumps({"soknader": [
+                      {"kandidat_id": "k1", "filer": ["k1/cv.html"],
+                       "felter": {"navn": ["Kari Testdal"]}},
+                      {"kandidat_id": "k2", "filer": ["k2/cv.html"],
+                       "felter": {"navn": ["Ola Nordmann"]}}]}))
+    m = parsing.les_manifest(arkiv, parsing.inspiser_bunt(arkiv))
+    assert m.felter == {"k1": {"navn": ["Kari Testdal"]},
+                        "k2": {"navn": ["Ola Nordmann"]}}
+
+
 def test_feltgrensesettet_er_ett_predikat_begge_doerer(tmp_path):
     """Eierdom (K2-kjennelse runde 4 på #217, valg A): ETT predikat eier
     hele grensesettet, og begge dørene kaller det.
