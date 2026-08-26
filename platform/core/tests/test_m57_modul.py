@@ -2843,6 +2843,82 @@ def test_en_bokstavs_deklarasjon_er_lovlig(tmp_path):
     assert "K" not in "[KJONN-1], drift.".replace("[KJONN-1]", "")
 
 
+def test_ukjent_maskeringsfelt_er_en_maalt_negativ(tmp_path):
+    """Cursor P2: `ukjent_maskeringsfelt` fantes KUN i sin egen `raise`.
+
+    Ingen test i repoet traff koden. Maskeringsløkka itererer bare
+    `MASKERTE_FELTER`, så uten `ukjente`-vakten går
+    `{"navn": [...], "personnummer": [...]}` gjennom: bare `navn`
+    maskeres, personnummeret blir stående i klartekst, og `krev_blindet`
+    ser bare avmaskeringstabellen — altså det som FAKTISK ble maskert.
+    Kjøringen telles som blindet med fødselsnummeret i modellinputen.
+
+    Lukket sett betyr lukket: et felt vi ikke har lovet å maskere, er
+    ingen deklarasjon vi kan oppfylle. Vi avviser, vi ignorerer ikke.
+
+    MUTASJONEN SOM DREPER DENNE: slett `ukjente`-vakten i
+    `blinding.blind` — da blir denne testen rød, og ingen annen i suiten.
+
+    OG ÆRLIG OM HVA MUTASJONEN VISER, fordi det ble MÅLT og ikke antatt:
+    lekkasjen over er historisk. Etter runde 5 er et ukjent felt per
+    konstruksjon et felt som aldri kan treffe — maskeringsløkka rører
+    bare `MASKERTE_FELTER` — så vakuøsitetsporten feller det samme kartet
+    som `ugyldig_maskeringsform` selv uten vakten. Målt:
+
+        umutert:                ukjent_maskeringsfelt   | modellinput: -
+        uten `ukjente`-vakten:  ugyldig_maskeringsform  | modellinput: -
+
+    Vakten er altså ikke lenger det som stopper lekkasjen; den er det som
+    gjør utfallet PRESIST. Koden sier «du deklarerte et felt vi ikke
+    maskerer», ikke «deklarasjonen din traff ingenting» — og en drift som
+    skal rette buntsiden trenger den forskjellen. Negativen her låser
+    både koden og det lukkede settet.
+    """
+    import json as _json
+
+    from modules.m57_ats import kjoring
+
+    BLANDET = {"navn": ["Kari Testdal"], "personnummer": ["01012012345"]}
+    CV = b"<p>Kari Testdal, 01012012345, kan drift</p>"
+
+    with pytest.raises(blinding.Blindingsfeil) as e:
+        blinding.blind(CV.decode("utf-8"), BLANDET)
+    assert e.value.kode == "ukjent_maskeringsfelt"
+
+    # Den INJISERTE veien går utenom manifestet, og porten står der òg —
+    # som et KODET utfall gjennom kjøringen, aldri en rå Blindingsfeil.
+    (tmp_path / "inj").mkdir()
+    arkiv = _bunt(tmp_path / "inj", [("k1/cv.html", CV)])
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
+                          kandidatfelter_for=lambda m: BLANDET,
+                          tekst_for=lambda m, d: d.decode("utf-8"),
+                          biasmaalinger=_MAALINGER, antall_soknader=1)
+    assert e.value.kode == "ukjent_maskeringsfelt"
+    assert modell.sett == [], "personnummeret nadde modellen"
+
+    # Deklarasjonsdøra feller samme kart med sin egen kode — koden sier
+    # hvilken DØR som felte, aldri hvilken grense som gjaldt.
+    (tmp_path / "dek").mkdir()
+    arkiv = _bunt(tmp_path / "dek", [("k1/cv.html", CV)],
+                  manifest=_json.dumps({"soknader": [
+                      {"kandidat_id": "k1", "filer": ["k1/cv.html"],
+                       "felter": BLANDET}]}))
+    with pytest.raises(parsing.Buntfeil) as e:
+        parsing.les_manifest(arkiv, parsing.inspiser_bunt(arkiv))
+    assert e.value.kode == "manifest_feilformet"
+
+    # POSITIV KONTROLL: hvert felt i det lukkede settet er lovlig alene,
+    # så porten avviser det UKJENTE og ikke det katalogen lover.
+    for felt in blinding.MASKERTE_FELTER:
+        _, avmaskering = blinding.blind(
+            "verdi-for-" + felt + " i teksten",
+            {felt: ["verdi-for-" + felt]})
+        assert avmaskering == {"[" + felt.upper() + "-1]":
+                               "verdi-for-" + felt}
+
+
 def test_manifestets_lukkede_form_avviser_alt_annet(tmp_path):
     """#161: en deklarasjon vi ikke forstår FULLT UT er ingen
     deklarasjon — ukjente nøkler, feil typer, duplikater, tomme og
