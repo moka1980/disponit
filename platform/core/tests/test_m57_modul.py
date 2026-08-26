@@ -2221,6 +2221,46 @@ def test_manifestets_lukkede_form_avviser_alt_annet(tmp_path):
     assert e.value.kode == "manifest_mangler"
 
 
+def test_manifestlesingen_er_kodet_utfall_ikke_modellfeil(tmp_path):
+    """Cursor P1 på #161: `les_manifest` leste `soknader.json` UTEN
+    SP-3-oversetteren `les_porsjonsvis` har. En CRC-skadet eller kryptert
+    deklarasjon feller `zf.read` med bibliotekets egen form, og den boblet
+    rå til `kjor_bunt`s catch-all — altså `modellfeil`, om en bunt
+    modellen aldri fikk se. Lagring/dekompresjon er ikke modellen."""
+    from modules.m57_ats import kjoring
+
+    def _kjor(arkiv, modell):
+        return kjoring.kjor_bunt(
+            arkiv, modell, vekter={"drift": 3},
+            kandidatfelter_for=lambda m: {"navn": ["N"]},
+            tekst_for=lambda m, d: d.decode("utf-8"),
+            biasmaalinger=_MAALINGER, antall_soknader=1)
+
+    filer = [(f"k1/{n}.html", b"<p>drift</p>") for n in ("cv", "brev")]
+
+    # Skaden ligger i MANIFESTETS komprimerte strøm — søknadene er hele,
+    # og katalogen lyver ikke, så gaten slipper bunten inn som før.
+    arkiv = _bunt(tmp_path, filer)
+    _skad_payload(arkiv, b"soknader.json")
+    parsing.inspiser_bunt(arkiv)
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        _kjor(arkiv, modell)
+    assert e.value.kode == "korrupt_bunt", e.value.kode
+    assert modell.sett == [], "modellen så en bunt vi aldri kunne lese"
+
+    # Et kryptert manifest er ULESELIG, ikke korrupt — og fortsatt kodet.
+    (tmp_path / "kryptert").mkdir()
+    arkiv = _bunt(tmp_path / "kryptert", filer)
+    _patch_kryptert(arkiv)
+    parsing.inspiser_bunt(arkiv)
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        _kjor(arkiv, modell)
+    assert e.value.kode == "uleselig_medlem", e.value.kode
+    assert modell.sett == []
+
+
 def test_bunt_uten_kandidater_er_kodet_feil_ikke_tomt_resultat(tmp_path):
     """Codex P2: en bunt uten medlemmer ble et VELLYKKET tomt utfall.
 

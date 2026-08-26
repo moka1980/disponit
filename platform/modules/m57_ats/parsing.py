@@ -578,8 +578,40 @@ def les_manifest(sti: str | Path,
     navnene = {m.navn for m in medlemmer}
     if MANIFESTNAVN not in navnene:
         raise Buntfeil("manifest_mangler")
-    with _apne_katalog(sti) as zf:
-        raa = zf.read(MANIFESTNAVN)
+    # LESINGEN AV MANIFESTET ER EN LESING SOM ALLE ANDRE (Cursor P1).
+    # `_apne_katalog` dekker ÅPNINGEN av sentralkatalogen, ikke uttrekket
+    # av et medlem: en CRC-skadet, kryptert eller uleselig `soknader.json`
+    # feller `zf.read` med bibliotekets egne former — `BadZipFile`,
+    # dekompressorens `zlib.error`/`lzma.LZMAError`/errno-løse `OSError`,
+    # og `RuntimeError`/`NotImplementedError` for passord og manglende
+    # komprimering. Alle gikk rå forbi denne linja til `kjor_bunt`s
+    # catch-all og ble meldt som `modellfeil` — samme klasse som
+    # «lagring/dekompresjon ≠ modell»: en bunt vi ikke kan lese er kundens
+    # avviste bunt med kode (SP-3), aldri en påstand om at MODELLEN sviktet.
+    # `OSError` MED errno slipper gjennom som seg selv av samme grunn som i
+    # `les_porsjonsvis`: en lesefeil på disk eller nettlager er DRIFT, ikke
+    # buntens skyld.
+    #
+    # At oversettelsen nå står to steder er den kjente divergensrisikoen
+    # (`_inspiser_docx`, ni runder): den konsolideres når #155 gjør gaten
+    # til én strømmende vei brukt rekursivt — ikke som ny maskin i en
+    # fiksrunde (K1).
+    try:
+        with _apne_katalog(sti) as zf:
+            raa = zf.read(MANIFESTNAVN)
+    except zipfile.BadZipFile as feil:
+        raise Buntfeil("korrupt_bunt", f"{MANIFESTNAVN}: {feil}") from feil
+    except (zlib.error, lzma.LZMAError) as feil:
+        raise Buntfeil("korrupt_bunt",
+                       f"{MANIFESTNAVN}: {type(feil).__name__}") from feil
+    except OSError as feil:
+        if feil.errno is not None:
+            raise
+        raise Buntfeil("korrupt_bunt",
+                       f"{MANIFESTNAVN}: {type(feil).__name__}") from feil
+    except (RuntimeError, NotImplementedError) as feil:
+        raise Buntfeil("uleselig_medlem",
+                       f"{MANIFESTNAVN}: {type(feil).__name__}") from feil
     try:
         data = json.loads(raa.decode("utf-8"))
     except (UnicodeDecodeError, ValueError) as feil:
