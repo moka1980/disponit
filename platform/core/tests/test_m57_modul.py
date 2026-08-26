@@ -1562,7 +1562,11 @@ def test_m57_har_EN_modulidentitet_i_kontrakt_migrasjon_og_artefakt():
 def test_deklarert_antall_bindes_til_buntens_kandidater(tmp_path):
     """Codex P1 på #210: `antall_soknader` er bestillingens signerte tall
     og ble aldri lest i kjøringen — deklarer 1, lever 2, og policyens
-    arbeidsmengde-dom var forbigått. Avvik = kodet stopp, begge veier."""
+    arbeidsmengde-dom var forbigått. Avvik = kodet stopp, begge veier.
+
+    Og etter #161 faller dommen FØR STRØMMEN: manifestet deklarerer
+    kandidatene, så tallet måles mot det signerte uten at én byte innhold
+    er pakket ut."""
     from modules.m57_ats import kjoring
 
     arkiv = _bunt(tmp_path, [
@@ -1585,11 +1589,14 @@ def test_deklarert_antall_bindes_til_buntens_kandidater(tmp_path):
                               antall_soknader=deklarert)
         assert e.value.kode == "kandidattall_avvik"
         assert e.value.fremdrift, "evidensen mangler i utfallet"
-        if deklarert == 1:
-            # …og dommen faller I STRØMMEN (Codex P2, runde 2): kandidat
-            # nr. deklarert+1 skal felles FØR uttrekket hans — «deklarer
-            # 1, lever 20 000» skal aldri få tvunget uttrekk av alt.
-            assert len(uttrukket) <= 1, uttrukket
+        # PORTEN ER FORAN STRØMMEN, IKKE I DEN (Cursor P2 på #161).
+        # `len(uttrukket) <= 1` var runde 2s port på in-strøm-tellingen,
+        # og den er AVLØST: #161 måler deklarert mot signert på
+        # manifestet, før uttrekket i det hele tatt starter. Under den
+        # gamle grensen slapp en regresjon som leser én fil før stopp
+        # gjennom — og «deklarer 1, lever 20 000» skal ikke koste én fil
+        # heller. Målingen er derfor null, begge veier.
+        assert uttrukket == [], uttrukket
     # Positiv kontroll: riktig deklarasjon kjører helt igjennom.
     helt = kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
                              kandidatfelter_for=felter, tekst_for=uttrekk,
