@@ -1598,10 +1598,10 @@ def test_frist_over_ett_grant_krever_fornyelsesveien(migrator):
     på 240 min, og porten forble grønn. Det er nøyaktig «løfte uten
     autoritet»-klassen porten sier den stenger.
 
-    I dag er `over` tom fordi klemmen står (#210s `min()` er tilbake til
-    en utfører puster). Porten er derfor LADD, ikke aktiv: den dagen
-    noen hever fristen, kreves både døren og kallstedet — og ingen av
-    dem kan leveres alene."""
+    Porten er nå AKTIV, ikke ladd: M-57s `bunt` står på 240 min — over
+    ett grant — fordi `m57_ats.controller._Heartbeat` puster (Cursor P1,
+    runde 2 på #218). Forsvinner enten døren eller kallstedet mens
+    fristen blir stående, felles det her."""
     import oppdragskontrakt
     from api.bestilling import BESTILLINGSTYPER
     over = [f"{bt.oppdragstype}/{omfang}"
