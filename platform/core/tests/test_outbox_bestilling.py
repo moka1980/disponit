@@ -1551,10 +1551,44 @@ def test_bestillingstyper_arver_kontraktens_frist():
                 bt.oppdragstype, {"omfang": omfang})
             assert frist is not None, \
                 f"{navn}/{omfang}: ingen frist deklarert på kontrakten"
-            assert 0 < frist <= TAK_S, \
-                (f"{navn}/{omfang}: {frist} s overstiger claim-leasens og"
-                 f" opplastingskapabilitetens tak på {TAK_S} s — det er"
-                 " ingen fornyelsesvei for noen av dem")
+            if frist <= TAK_S:
+                assert frist > 0
+                continue
+            # 063 (#165): en frist OVER ett grant-vindu er lovlig KUN
+            # fordi fornyelsesveien kjeder grants gjennom hele fristen —
+            # og bare opp til utstedt autoritet per vindu. Kontrakten
+            # (Python) og døren (SQL) holdes sammen av den DB-baserte
+            # porten `test_frist_over_ett_grant_krever_fornyelsesveien`
+            # rett under; her måles bare at ingen frist går forbi
+            # konvolutten noen har signert for typen.
+            assert frist <= oppdragskontrakt.UTSTEDT_AUTORITET_S * 4, \
+                (f"{navn}/{omfang}: {frist} s har ingen signert konvolutt"
+                 " — selv fornyelsesveien er ikke en blancofullmakt")
+
+
+@pg
+def test_frist_over_ett_grant_krever_fornyelsesveien(migrator):
+    """063/#165: kontraktens 240-minuttersfrist hviler på at
+    `forny_oppdragslease` faktisk er installert og claimer-eid. Uten
+    denne koblingen kunne noen droppe døren i en senere migrasjon mens
+    fristen ble stående — og da er vi tilbake i #210s klasse: et løfte
+    uten autoritet. Porten er DB-målt, ikke antatt."""
+    import oppdragskontrakt
+    from api.bestilling import BESTILLINGSTYPER
+    over = [f"{bt.oppdragstype}/{omfang}"
+            for bt in BESTILLINGSTYPER.values() for omfang in bt.omfang
+            if (oppdragskontrakt.utforelsesfrist_s(
+                    bt.oppdragstype, {"omfang": omfang}) or 0)
+            > oppdragskontrakt.UTSTEDT_AUTORITET_S]
+    if not over:
+        return
+    rad = migrator.execute(
+        "SELECT r.rolname FROM pg_proc p"
+        "  JOIN pg_roles r ON r.oid = p.proowner"
+        " WHERE p.proname = 'forny_oppdragslease'").fetchone()
+    assert rad is not None, \
+        f"frister over ett grant ({over}) uten fornyelsesdør i basen"
+    assert rad[0] == "disponit_m37_claimer", rad[0]
 
 
 # ==========================================================================

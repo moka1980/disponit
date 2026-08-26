@@ -123,29 +123,17 @@ def test_ytelsespunktet_er_en_maling_ikke_et_ja_punkt():
 def test_ytelsesgrensen_er_klarsignalets_tall():
     """Grensen skal være DE SAMME tallene kontrakten håndhever, ikke to
     tall som ligner. `antall_soknader`-taket er den fulle bunten, og
-    akseptkonvolutten er klarsignalets 240 minutter (§4).
-
-    ORDREFRISTEN er derimot ikke konvolutten (Codex P1 på #210): den er
-    løftet til KUNDEN, og et løfte utover autoriteten som faktisk
-    utstedes (claim-leasen/opplastingskapabilitetens 3600 s, uten
-    fornyelsesvei før #165) kunne ingen holde — etter første time kunne
-    en annen kontrollør reclaime og duplisere evalueringen av samme
-    persondatabunt. Fristen er derfor min(konvolutt, autoritet), og
-    porten her er skrevet slik at #165 (fornyelsen) GJENÅPNER 240
-    automatisk: når autoritetstaket heves, faller min() tilbake på
-    konvolutten, og dette spesialtilfellet dør av seg selv."""
+    `bunt`-fristen er akseptkonvoluttens 240 minutter (§4). #210 klemte
+    fristen til ett grant-vindu som hard sperre; 063 (#165) er
+    fornyelsesveien som avløste sperren, og likheten er gjenopprettet —
+    koblingen frist↔dør måles i
+    `test_frist_over_ett_grant_krever_fornyelsesveien`."""
     import oppdragskontrakt as ok
     g = KRAVGRENSER["m57-v1"]
     _, tak = ok.FELTGRENSER["rekruttering.evaluering"]["antall_soknader"]
     assert g["ytelse_min_soknader"] == tak
     _, frister = ok.UTFORELSESFRIST_VALG["rekruttering.evaluering"]
-    # Autoriteten leses fra PRODUKSJONSKONTRAKTEN (Codex P2, runde 2):
-    # et testlokalt 3600 kunne flyttes uten at noen runtime-mekanisme
-    # fulgte med. Nå endres porten kun MED mekanismen: #165 hever
-    # `UTSTEDT_AUTORITET_S` (som også klemmer kapabiliteten i `app.py`),
-    # og min() gjenåpner konvolutten av seg selv.
-    assert frister["bunt"] == min(g["ytelse_maks_minutter"] * 60,
-                                  ok.UTSTEDT_AUTORITET_S)
+    assert g["ytelse_maks_minutter"] * 60 == frister["bunt"]
 
 
 def test_utelatt_invariant_felles_av_begge_lag():

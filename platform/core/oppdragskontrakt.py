@@ -1004,36 +1004,31 @@ UTFORELSESFRIST_VALG: dict[str, tuple[str, dict[object, int]]] = {
     # Ikke lukkbart i en fiksrunde: å heve taket er en ny migrasjon på
     # bebodd base som flytter en PLATTFORMVID tillitsgrense (M-37 og
     # M-56 deler den), en fornyelsesvei er en ny autentisert flate, og
-    # partisjonering endrer bestillingsformen. #165 bærer valget.
+    # partisjonering endrer bestillingsformen — #165 valgte FORNYELSEN.
     #
-    # DEN HARDE SPERREN ER FRISTEN SELV (Codex P1 på #210): klarsignalets
-    # 240 min sto her mens eierleasen (049) og opplastingskapabiliteten
-    # (min(igjen, 3600)) begge er 3 600 s — etter første time kunne en
-    # annen kontrollør reclaime og DUPLISERE evalueringen av samme
-    # persondatabunt, mens originalen ikke lenger fikk lastet opp
-    # resultatet. En deklarert frist utover autoriteten som faktisk
-    # utstedes er et løfte ingen kan holde. Fristen følger derfor leasen
-    # til #165 (fornyelsesveien) er merget — da, og først da, kan den
-    # utvides til klarsignalets 240 min i samme PR som fornyelsen.
-    # `min()` og ikke tallet direkte (Codex P2, runde 2): når #165 hever
-    # `UTSTEDT_AUTORITET_S`, faller min() tilbake på konvolutten av seg
-    # selv — fristen kan aldri endres uten mekanismen den hviler på.
-    "rekruttering.evaluering": ("omfang",
-                                {"bunt": None}),  # settes under, av min()
+    # 063 ER fornyelsesveien (heartbeat fra utføreren, 037s egen
+    # blåkopi): en LEVENDE utfører holder nå autoriteten sin gjennom
+    # hele fristen — leasen fornyes vindu for vindu (aldri over
+    # `UTSTEDT_AUTORITET_S` per grant), og fornyelsen re-utsteder
+    # opplastingskapabiliteten. Fristen står derfor igjen på
+    # klarsignalets 240 min: løftet dekkes ikke lenger av ETT grant,
+    # men av kjeden av dem — og en utfører som slutter å puste mister
+    # autoriteten ved neste vindu, som er nøyaktig det reclaim-fencing
+    # alltid har krevd. #210s min()-klemme var den harde sperren TIL
+    # denne mekanismen fantes; nå finnes den, og sperren er avløst av
+    # porten `test_frist_over_ett_grant_krever_fornyelsesveien`.
+    "rekruttering.evaluering": ("omfang", {"bunt": 240 * 60}),
 }
 
-#: DEN UTSTEDTE AUTORITETEN, med produksjonsnavn (Codex P2 på #210):
-#: claim-leasen (037/049) og opplastingskapabiliteten (017, `app.py`)
-#: klemmes begge til dette taket, og ordrefristen kan aldri love mer.
-#: #165 (fornyelsesveien) hever DETTE tallet i samme PR som mekanismen
-#: — da gjenåpner min() under klarsignalets 240 min av seg selv.
-#: SQL-siden (049) pinnes av outbox-portens `TAK_S`.
+#: PER-GRANT-TAKET, med produksjonsnavn: claim-leasen (037/049),
+#: opplastingskapabiliteten (017, `app.py`) og HVERT fornyelsesvindu
+#: (063) klemmes alle hit. Etter #165 er dette ikke lenger totalens
+#: autoritet — fornyelsen kjeder grants gjennom hele fristen — men
+#: taket for hvor lenge én taus utfører beholder den.
+#: SQL-siden (037/049/063) pinnes av outbox-portens `TAK_S`.
 UTSTEDT_AUTORITET_S = 3600
 
-#: Akseptkonvolutten er klarsignalets 240 min (§4, `manifestskjema`);
-#: LØFTET til kunden er aldri mer enn autoriteten som faktisk utstedes.
-UTFORELSESFRIST_VALG["rekruttering.evaluering"][1]["bunt"] = \
-    min(240 * 60, UTSTEDT_AUTORITET_S)
+
 
 
 def utforelsesfrist_s(oppdragstype: str, minimert: dict) -> int | None:

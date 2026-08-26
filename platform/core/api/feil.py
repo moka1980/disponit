@@ -39,6 +39,12 @@ FEILVEIER: tuple[Feilvei, ...] = (
         "Ingen tenant-sak, ingen policylasting: tenanten er ukjent, og en"
         " sak hos feil tenant er verre enn ingen sak.")),
     Feilvei("scope_mangler", 403, ("sikkerhet",), None),
+    # 063 (#165): fornyelsesveien. Identitetsavvik er ÉN kode uten
+    # detaljer (et oppslagsverk over andres claims skal ikke finnes);
+    # utløpt lease/frist/rullet epoch er den ENE grenen utføreren kan
+    # handle på (arbeidet er tapt — slutt å jobbe, ikke prøv igjen).
+    Feilvei("lease_ikke_fornybar", 404, ("sikkerhet",), None),
+    Feilvei("lease_utlopt", 409, ("drift",), None),
     Feilvei("idempotensnokkel_mangler", 400, ("avvis",), None),
     Feilvei("idempotenskonflikt", 409, ("avvis",), None, aggregert=True),
     # 044: planovergang i ulovlig tilstand (aktivere en aktiv, gjenoppta
