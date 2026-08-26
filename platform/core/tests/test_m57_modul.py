@@ -27,8 +27,25 @@ ROT = Path(__file__).resolve().parents[3]
 MODULROT = ROT / "platform/modules/m57_ats"
 
 
+def _manifest(filer: list[tuple]) -> str:
+    """#161: buntens deklarasjon, utledet av RIGGENS egen filliste —
+    testen deklarerer (topmappe = kandidat, riggens etablerte form);
+    produksjonen gjetter aldri. Poster uten mappeprefiks (angreps-/
+    grensefixturer) adresseres som sin egen kandidat."""
+    import json as _json
+    kandidater: dict[str, list[str]] = {}
+    for navn, _innhold, *_a in filer:
+        if navn.endswith("/"):
+            continue
+        kid = navn.replace("\\", "/").split("/")[0]
+        kandidater.setdefault(kid, []).append(navn)
+    return _json.dumps({"soknader": [
+        {"kandidat_id": k, "filer": v} for k, v in kandidater.items()]})
+
+
 def _bunt(sti: Path, filer: list[tuple], *,
-          metode: int = zipfile.ZIP_DEFLATED, **zipkw) -> Path:
+          metode: int = zipfile.ZIP_DEFLATED,
+          manifest: str | None | bool = True, **zipkw) -> Path:
     arkiv = sti / "bunt.zip"
     with zipfile.ZipFile(arkiv, "w", metode, **zipkw) as zf:
         for navn, innhold, *attr in filer:
@@ -37,6 +54,12 @@ def _bunt(sti: Path, filer: list[tuple], *,
             if attr:
                 info.external_attr = attr[0]
             zf.writestr(info, innhold)
+        # #161: manifest=True → riggen deklarerer; manifest=<str> → rå
+        # innhold (negativer); manifest=None → utelatt med vilje.
+        if manifest is True:
+            zf.writestr("soknader.json", _manifest(filer))
+        elif isinstance(manifest, str):
+            zf.writestr("soknader.json", manifest)
     return arkiv
 
 
@@ -139,7 +162,7 @@ def test_port22_sti_utenfor_bunten(tmp_path):
     # Positiv kontroll: en lovlig undermappe-sti går.
     ok = _bunt(tmp_path, [("kandidat1/cv.pdf", _pdf())])
     assert [m.navn for m in parsing.inspiser_bunt(ok)] == \
-        ["kandidat1/cv.pdf"]
+        ["kandidat1/cv.pdf", "soknader.json"]
     ok.unlink()
     # Codex P2 (runde 20): en MAPPEOPPFØRING er også en oppføring. Porten
     # måler katalogen, ikke utvalget vi pakker ut — mappene ble filtrert
@@ -169,7 +192,7 @@ def test_port22_sti_utenfor_bunten(tmp_path):
     # funn, og den skal fortsatt ikke telle som en søknad.
     ok = _bunt(tmp_path, [("kandidat1/", b""), ("kandidat1/cv.pdf", _pdf())])
     assert [m.navn for m in parsing.inspiser_bunt(ok)] == \
-        ["kandidat1/cv.pdf"]
+        ["kandidat1/cv.pdf", "soknader.json"]
 
 
 def test_port23_symlenke_avvises(tmp_path):
@@ -511,7 +534,10 @@ def test_port26_mapper_teller_i_filbudsjettet(tmp_path):
     MUTASJONEN SOM DREPER DENNE: mål `len(infos)` (de filtrerte) i
     stedet for `len(alle)` i `inspiser_bunt`."""
     mapper = [(f"m{n}/", b"") for n in range(parsing.MAKS_FILER)]
-    arkiv = _bunt(tmp_path, mapper + [("cv.html", b"<p>x</p>")])
+    # manifest=None: porten måler KATALOGARBEIDET, og fixturet står
+    # nøyaktig på taket — deklarasjonen er ikke det som måles her.
+    arkiv = _bunt(tmp_path, mapper + [("cv.html", b"<p>x</p>")],
+                  manifest=None)
     with pytest.raises(parsing.Buntfeil) as e:
         parsing.inspiser_bunt(arkiv)
     assert e.value.kode == "for_mange_filer"
@@ -519,7 +545,8 @@ def test_port26_mapper_teller_i_filbudsjettet(tmp_path):
     # Positiv kontroll: samme form, én oppføring under taket — mappene
     # er fortsatt ikke medlemmer, de er bare betalt for.
     faerre = mapper[:parsing.MAKS_FILER - 1]
-    ok = _bunt(tmp_path, faerre + [("cv.html", b"<p>x</p>")])
+    ok = _bunt(tmp_path, faerre + [("cv.html", b"<p>x</p>")],
+               manifest=None)
     assert [m.navn for m in parsing.inspiser_bunt(ok)] == ["cv.html"]
 
 
@@ -563,7 +590,7 @@ def test_port21_null_komprimert_er_ikke_fritak(tmp_path):
     arkiv.unlink()
     # Positiv kontroll: en TOM fil er lovlig — null ut av null er ikke
     # en bombe, og porten skal ikke felle den.
-    tom = _bunt(tmp_path, [("tom.html", b"")])
+    tom = _bunt(tmp_path, [("tom.html", b"")], manifest=None)
     assert [m.navn for m in parsing.inspiser_bunt(tom)] == ["tom.html"]
 
 
@@ -666,7 +693,8 @@ def test_en_ulesbar_ytre_katalog_er_et_kodet_utfall(tmp_path, skade, kode):
     begynner inne i medlemssløyfa. Kontrakten er et KODET utfall (SP-3),
     aldri en uventet arbeiderfeil, og porten måler BEGGE de ytre
     åpningsstedene: gaten og strømmen."""
-    arkiv = _bunt(tmp_path, [("a.html", b"<p>a</p>"), ("b.html", b"<p>b</p>")])
+    arkiv = _bunt(tmp_path, [("a.html", b"<p>a</p>"), ("b.html", b"<p>b</p>")],
+                  manifest=None)
     assert len(parsing.inspiser_bunt(arkiv)) == 2   # positiv kontroll
     _patch_katalogpost(arkiv, b"b.html", skade)
     # Forutsetningen funnet hviler på: porten over sier fortsatt JA, så
@@ -2090,6 +2118,109 @@ def test_feltuttrekk_som_gir_annet_kart_enn_dict_slipper_gjennom(tmp_path):
         assert modell.sett and "Kari" not in modell.sett[0]
 
 
+def test_manifestet_er_deklarasjonen_og_binder_toveis(tmp_path):
+    """#161 (eiers B): kandidatene deklareres av `soknader.json`, bindes
+    toveis mot katalogen, og manifestet — ikke mappenavnet — eier
+    kandidat-identiteten."""
+    import json as _json
+
+    from modules.m57_ats import kjoring
+
+    def _kjor(arkiv, antall=1):
+        return kjoring.kjor_bunt(
+            arkiv, _Modell(), vekter={"drift": 3},
+            kandidatfelter_for=lambda m: {"navn": ["N"]},
+            tekst_for=lambda m, d: d.decode("utf-8"),
+            biasmaalinger=_MAALINGER, antall_soknader=antall)
+
+    # Manifestet er AUTORITETEN: en fil i «feil» mappe hører til den
+    # kandidaten deklarasjonen sier — mappenavnet betyr ingenting.
+    (tmp_path / "a").mkdir()
+    arkiv = _bunt(tmp_path / "a",
+                  [("k1/cv.html", b"<p>drift</p>"),
+                   ("annet/brev.html", b"<p>mer drift</p>")],
+                  manifest=_json.dumps({"soknader": [
+                      {"kandidat_id": "kari",
+                       "filer": ["k1/cv.html", "annet/brev.html"]}]}))
+    ut = _kjor(arkiv)
+    assert set(ut["artefakter"]) == {"kari"}, \
+        "mappenavnet vant over deklarasjonen"
+
+    # Toveis: deklarert fil uten medlem er rød …
+    (tmp_path / "b").mkdir()
+    arkiv = _bunt(tmp_path / "b", [("k1/cv.html", b"<p>x</p>")],
+                  manifest=_json.dumps({"soknader": [
+                      {"kandidat_id": "k1",
+                       "filer": ["k1/cv.html", "k1/finnes_ikke.pdf"]}]}))
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        _kjor(arkiv)
+    assert e.value.kode == "manifest_medlem_mangler"
+
+    # … og medlem uten deklarasjon er like rødt.
+    (tmp_path / "c").mkdir()
+    arkiv = _bunt(tmp_path / "c",
+                  [("k1/cv.html", b"<p>x</p>"),
+                   ("smugler/ekstra.html", b"<p>y</p>")],
+                  manifest=_json.dumps({"soknader": [
+                      {"kandidat_id": "k1", "filer": ["k1/cv.html"]}]}))
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        _kjor(arkiv)
+    assert e.value.kode == "medlem_uadressert"
+
+    # Deklarert tall mot signert tall måles FØR strømmen.
+    (tmp_path / "d").mkdir()
+    arkiv = _bunt(tmp_path / "d",
+                  [("k1/cv.html", b"<p>x</p>"),
+                   ("k2/cv.html", b"<p>y</p>")])
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        _kjor(arkiv, antall=1)
+    assert e.value.kode == "kandidattall_avvik"
+
+
+def test_manifestets_lukkede_form_avviser_alt_annet(tmp_path):
+    """#161: en deklarasjon vi ikke forstår FULLT UT er ingen
+    deklarasjon — ukjente nøkler, feil typer, duplikater, tomme og
+    overfylte lister er alle `manifest_feilformet`."""
+    import json as _json
+
+    def _sjekk(manifest, undermappe):
+        (tmp_path / undermappe).mkdir()
+        arkiv = _bunt(tmp_path / undermappe,
+                      [("k1/cv.html", b"<p>x</p>")], manifest=manifest)
+        medlemmer = parsing.inspiser_bunt(arkiv)
+        with pytest.raises(parsing.Buntfeil) as e:
+            parsing.les_manifest(arkiv, medlemmer)
+        return e.value.kode
+
+    god = {"kandidat_id": "k1", "filer": ["k1/cv.html"]}
+    for i, (manifest, ventet) in enumerate((
+        ("ikke json i det hele tatt", "manifest_feilformet"),
+        (_json.dumps(["liste"]), "manifest_feilformet"),
+        (_json.dumps({"soknader": [], "ekstra": 1}), "manifest_feilformet"),
+        (_json.dumps({"soknader": []}), "manifest_feilformet"),
+        (_json.dumps({"soknader": [{**god, "ekstra": 1}]}),
+         "manifest_feilformet"),
+        (_json.dumps({"soknader": [{"kandidat_id": "", "filer":
+                                    ["k1/cv.html"]}]}),
+         "manifest_feilformet"),
+        (_json.dumps({"soknader": [god, god]}), "manifest_feilformet"),
+        (_json.dumps({"soknader": [{"kandidat_id": "k1", "filer": []}]}),
+         "manifest_feilformet"),
+        (_json.dumps({"soknader": [{"kandidat_id": "k1",
+                                    "filer": ["soknader.json"]}]}),
+         "manifest_feilformet"),
+    )):
+        assert _sjekk(manifest, f"m{i}") == ventet, (i, manifest)
+
+    # …og fraværet har sin egen kode.
+    (tmp_path / "uten").mkdir()
+    arkiv = _bunt(tmp_path / "uten", [("k1/cv.html", b"<p>x</p>")],
+                  manifest=None)
+    with pytest.raises(parsing.Buntfeil) as e:
+        parsing.les_manifest(arkiv, parsing.inspiser_bunt(arkiv))
+    assert e.value.kode == "manifest_mangler"
+
+
 def test_bunt_uten_kandidater_er_kodet_feil_ikke_tomt_resultat(tmp_path):
     """Codex P2: en bunt uten medlemmer ble et VELLYKKET tomt utfall.
 
@@ -2118,7 +2249,10 @@ def test_bunt_uten_kandidater_er_kodet_feil_ikke_tomt_resultat(tmp_path):
     modell = _Modell()
     with pytest.raises(kjoring.Kjoringsfeil) as e:
         _kjor(tom, modell)
-    assert e.value.kode == "tom_bunt"
+    # #161: en bunt uten deklarasjon felles som `manifest_mangler` FØR
+    # strømmen — strengere enn gamle `tom_bunt`, samme klasse (aldri et
+    # vellykket tomt utfall). `tom_bunt`-porten står som defense.
+    assert e.value.kode == "manifest_mangler"
     # Utfallet bærer ingen halv liste — evidensen er alt Kjoringsfeil har.
     assert not hasattr(e.value, "rangering")
     assert modell.sett == []
@@ -2131,7 +2265,7 @@ def test_bunt_uten_kandidater_er_kodet_feil_ikke_tomt_resultat(tmp_path):
         zf.writestr(zipfile.ZipInfo("k2/"), b"")
     with pytest.raises(kjoring.Kjoringsfeil) as e:
         _kjor(bare_kataloger, _Modell())
-    assert e.value.kode == "tom_bunt"
+    assert e.value.kode == "manifest_mangler"
 
     # … og én kandidat er nok: porten måler NULL, ikke «få».
     ut = _kjor(_bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>")]), _Modell())

@@ -14,6 +14,7 @@ plattform-sidens dør inn og slipper bare gjennom det gaten har målt.
 from __future__ import annotations
 
 import io
+import json
 import lzma
 import zipfile
 import zlib
@@ -42,6 +43,13 @@ DOCX_PAKKEMEDLEMMER = frozenset({"[Content_Types].xml",
 ARKIVENDELSER = frozenset({
     ".zip", ".tar", ".gz", ".tgz", ".bz2", ".xz", ".7z", ".rar", ".jar"})
 TILLATTE_ENDELSER = frozenset({".pdf", ".docx", ".html", ".htm"})
+
+#: #161 (eiers B): bunten BÆRER sin egen deklarasjon — et lukket
+#: `soknader.json` i roten navngir hver kandidat og filene hens.
+#: Grensene er klarsignalets §4: 1–5000 kandidater.
+MANIFESTNAVN = "soknader.json"
+MAKS_KANDIDATER = 5000
+MAKS_MANIFESTBYTES = 4 * 1024 * 1024
 
 #: Magi per endelse: deklarasjonen og innholdet må være SAMME påstand
 #: («feil innholdstype»-porten).
@@ -157,14 +165,12 @@ def inspiser_bunt(sti: str | Path) -> list[Medlem]:
     med 20 001 tomme mapper og én HTML-søknad gjennom nettopp det
     budsjettet grensen finnes for å holde.
 
-    UTSATT, K1 → #161 — SØKNADSANTALLET er IKKE bundet her. `MAKS_FILER`
-    er 20 000 katalogoppføringer; `antall_soknader` (1–5000) valideres ved
-    bestillingen og leses aldri igjen. Gaten kjenner MEDLEMMER, ikke
-    søkere — én søknad kan være `cv.html` alene eller `cv.html` +
-    `vedlegg.docx`, og hvilken av delene det er, står ikke i en
-    zip-katalog. Å telle filer mot 5000 ville vært å gjette grammatikken
-    (SP-13/K4): en kandidatform kan ikke gjettes ut av katalogen, den må
-    DEKLARERES.
+    LUKKET av #161 (eiers B): søknadsantallet bindes IKKE her — gaten
+    kjenner MEDLEMMER, ikke søkere, og en kandidatform kan ikke gjettes
+    ut av en katalog (SP-13/K4). Den DEKLARERES: `les_manifest` binder
+    buntens eget `soknader.json` toveis mot katalogen, og
+    utførelsesarmen måler deklarert kandidattall mot oppdragets signerte
+    tall FØR strømmen.
 
     UTSATT, K1 → #162 — `MAKS_FILER` måles ETTER at `infolist()` har
     materialisert hver eneste `ZipInfo` (Codex P2). En kompakt zip med
@@ -223,6 +229,18 @@ def inspiser_bunt(sti: str | Path) -> list[Medlem]:
             if info.filename in sett:
                 raise Buntfeil("duplikat_medlem", info.filename)
             sett.add(info.filename)
+            if info.filename == MANIFESTNAVN:
+                # Manifestet er DEKLARASJONEN, ikke en søknad: det er den
+                # ene lovlige .json-en, bor i roten, og størrelses-
+                # begrenses her — resten av gaten (endelse/magi) gjelder
+                # søknadsinnhold og skal ikke se det.
+                if info.file_size > MAKS_MANIFESTBYTES:
+                    raise Buntfeil("manifest_feilformet", "for stort")
+                total += info.file_size
+                if total > MAKS_TOTAL_UTPAKKET:
+                    raise Buntfeil("total_for_stor", info.filename)
+                medlemmer.append(Medlem(info.filename, info.file_size))
+                continue
             endelse = _endelse(info.filename)
             if endelse in ARKIVENDELSER:
                 raise Buntfeil("nostet_arkiv", info.filename)
@@ -401,7 +419,11 @@ def les_porsjonsvis(sti: str | Path, *, porsjon: int = 200):
         # medlemmene — ellers finansierte hver mappe i den ytre bunten
         # et indre docx-medlem gratis (Codex P2).
         filer = len(zf.infolist())
-        for nr, medlem in enumerate(medlemmer, start=1):
+        # Manifestet er DEKLARASJON, ikke søknadsinnhold (#161): det
+        # leses av `les_manifest`, aldri av innholdsstrømmen — teller
+        # hverken som fremdrift eller tekst.
+        innhold = [m for m in medlemmer if m.navn != MANIFESTNAVN]
+        for nr, medlem in enumerate(innhold, start=1):
             biter: list[bytes] = []
             lest = 0
             try:
@@ -525,10 +547,71 @@ def les_porsjonsvis(sti: str | Path, *, porsjon: int = 200):
                     filer_brukt=filer, byte_brukt=total)
                 total += utpakket
                 filer += indre
-            if nr % porsjon == 0 or nr == len(medlemmer):
+            if nr % porsjon == 0 or nr == len(innhold):
                 fremdrift = {"filer_lest": nr,
-                             "filer_totalt": len(medlemmer),
+                             "filer_totalt": len(innhold),
                              "byte_lest": total}
             else:
                 fremdrift = None
             yield fremdrift, medlem, data
+
+
+def les_manifest(sti: str | Path,
+                 medlemmer: list[Medlem]) -> dict[str, str]:
+    """#161 (eiers B): les og bind `soknader.json` mot katalogen, BEGGE
+    veier, før én byte søknadsinnhold pakkes ut.
+
+    -> {medlemsnavn: kandidat_id} for hvert innholdsmedlem.
+
+    Lukket form: toppobjekt med NØYAKTIG nøkkelen `soknader`, en liste
+    (1–MAKS_KANDIDATER) av objekter med NØYAKTIG `kandidat_id` (ikke-tom
+    tekst, unik) og `filer` (ikke-tom liste av tekst, globalt unike).
+    Alt annet — ukjente nøkler, feil typer, duplikater — er
+    `manifest_feilformet`: en deklarasjon vi ikke forstår fullt ut er
+    ingen deklarasjon.
+
+    Toveisbindingen er dommen fra #153: et manifest-navn uten medlem
+    (`manifest_medlem_mangler`) og et medlem uten manifest-linje
+    (`medlem_uadressert`) er like røde — «den så ut som en søknad» er
+    ikke en inspeksjon. Manifestet adresserer aldri seg selv.
+    """
+    navnene = {m.navn for m in medlemmer}
+    if MANIFESTNAVN not in navnene:
+        raise Buntfeil("manifest_mangler")
+    with _apne_katalog(sti) as zf:
+        raa = zf.read(MANIFESTNAVN)
+    try:
+        data = json.loads(raa.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as feil:
+        raise Buntfeil("manifest_feilformet", "uleselig json") from feil
+    if not isinstance(data, dict) or set(data) != {"soknader"} \
+            or not isinstance(data["soknader"], list):
+        raise Buntfeil("manifest_feilformet", "lukket form")
+    soknader = data["soknader"]
+    if not 1 <= len(soknader) <= MAKS_KANDIDATER:
+        raise Buntfeil("manifest_feilformet",
+                       f"kandidattall {len(soknader)}")
+    kart: dict[str, str] = {}
+    sett_kandidater: set[str] = set()
+    for rad in soknader:
+        if not isinstance(rad, dict) or set(rad) != {"kandidat_id",
+                                                     "filer"}:
+            raise Buntfeil("manifest_feilformet", "lukket kandidatform")
+        kid, filer = rad["kandidat_id"], rad["filer"]
+        if not isinstance(kid, str) or not kid.strip() \
+                or kid in sett_kandidater:
+            raise Buntfeil("manifest_feilformet", "kandidat_id")
+        sett_kandidater.add(kid)
+        if not isinstance(filer, list) or not filer:
+            raise Buntfeil("manifest_feilformet", f"filer for {kid}")
+        for navn in filer:
+            if not isinstance(navn, str) or navn in kart \
+                    or navn == MANIFESTNAVN:
+                raise Buntfeil("manifest_feilformet", str(navn))
+            if navn not in navnene:
+                raise Buntfeil("manifest_medlem_mangler", navn)
+            kart[navn] = kid
+    uadressert = navnene - set(kart) - {MANIFESTNAVN}
+    if uadressert:
+        raise Buntfeil("medlem_uadressert", sorted(uadressert)[0])
+    return kart

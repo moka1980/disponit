@@ -122,8 +122,9 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
     "fremdrift": {...}} — eller Kjoringsfeil, aldri noe imellom.
 
     `kandidatfelter_for(medlem)` er innslaget fra den strukturerte
-    søknaden (blindingens kilde); kandidat-id er medlemsstiens første
-    ledd (én mappe per kandidat, m56-fasitformen).
+    søknaden (blindingens kilde); kandidat-identiteten er MANIFESTETS
+    (#161, `soknader.json` — `les_manifest`-kartet), aldri medlemsstiens
+    mappenavn.
 
     `tekst_for(medlem, data)` ER TEKSTUTTREKKET, OG DET ER PÅKREVD
     (Codex P1). To av de tre lovede innholdstypene er BINÆRE: en docx er
@@ -182,6 +183,15 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
     biter: dict[str, list[tuple[str, str, str, object]]] = {}
     lest = 0
     try:
+        # #161 (eiers B): kandidatene DEKLARERES av buntens eget
+        # `soknader.json` og bindes toveis mot katalogen FØR én byte
+        # innhold pakkes ut — «den så ut som en søknad» er ikke en
+        # inspeksjon. Deklarert kandidattall måles mot oppdragets
+        # signerte tall her, foran strømmen: et avvik er en ugyldig
+        # bunt, aldri et resultat.
+        kart = parsing.les_manifest(sti, parsing.inspiser_bunt(sti))
+        if len(set(kart.values())) != antall_soknader:
+            raise Kjoringsfeil("kandidattall_avvik", fremdrift)
         # LAGRINGSHÅNDTEREREN HØRER TIL LESINGEN, IKKE HELE KJØRINGEN
         # (Codex P2). Denne indre `try`-en dekker BARE arkivgaten. Sto
         # håndtereren nede blant de øvrige, dekket den også `modell.vurder`,
@@ -207,16 +217,14 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
                 fremdrift = (dict(merke) if merke
                              else {**fremdrift, "filer_lest": lest})
                 navn = medlem.navn.replace("\\", "/")
-                kandidat_id = navn.split("/")[0]
-                # OVERSKYTENDE FELLES I STRØMMEN (Codex P2): dommen ved
-                # strømslutt alene lot «deklarer 1, lever 20 000» tvinge
-                # uttrekk og akkumulering av alt FØR den kodede stoppen
-                # — med udokumentert minne kunne det bli OOM i stedet.
-                # Motsatt avvik (færre enn deklarert) kan bare måles ved
-                # slutt og står der det sto.
-                if kandidat_id not in biter \
-                        and len(biter) >= antall_soknader:
-                    raise Kjoringsfeil("kandidattall_avvik", fremdrift)
+                # Kandidaten er MANIFESTETS dom, aldri mappenavnets
+                # (#161): toveisbindingen over garanterer at hvert
+                # strømmet medlem har nøyaktig én linje i kartet, og
+                # tallporten foran strømmen har alt målt deklarert mot
+                # signert — in-strøm-tellingen fra #210 er dermed
+                # AVLØST, ikke fjernet: dens jobb gjøres nå før uttrekk
+                # i det hele tatt starter.
+                kandidat_id = kart[medlem.navn]
                 biter.setdefault(kandidat_id, []).append(
                     (navn, medlem.navn,
                      _tekst(tekst_for, medlem, data, fremdrift),
@@ -251,13 +259,9 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
         # bunt er SP-3s kodede utfall, aldri et resultat.
         if not biter:
             raise Kjoringsfeil("tom_bunt", fremdrift)
-        # DEKLARERT == UTLEDET (Codex P1 på #210): `antall_soknader` er
-        # bestillingens signerte tall og var frem til nå aldri lest igjen
-        # — en kaller kunne deklarere 1 og levere tusenvis, forbi både
-        # policyens arbeidsmengde-dom og 5000-taket. Kandidatutledningen
-        # (én toppmappe per kandidat) er buntens faktiske innhold; et
-        # avvik er en ugyldig bunt, aldri et resultat. #161s manifest
-        # ERSTATTER utledningen — invarianten her består.
+        # Sluttporten står som DEFENSE (mekanismen er nå manifestets
+        # toveisbinding + tallporten foran strømmen): faller de, skal
+        # dette aldri passere stille.
         if len(biter) != antall_soknader:
             raise Kjoringsfeil("kandidattall_avvik", fremdrift)
         for kandidat_id in sorted(biter):

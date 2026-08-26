@@ -3,12 +3,23 @@
 Modulen er KUNDE av plattformen, aldri omvendt (m56-formen):
 
 * **Inn**: ett `rekruttering.evaluering`-oppdrag gjennom beslutningsveien
-  med `stillingsprofil_ref` og `soknadsbunt_ref` (artefaktlageret),
-  `antall_soknader` (1–5000, hard grense — 5001 avvises ved validering,
-  aldri stille avkorting) og `omfang: bunt` (bærer 240-minuttersfristen).
+  med `stillingsprofil_ref` og server-bygget `stillingsprofil`-snapshot
+  (#200 valg B: payloaden navngir ALDRI bunten — bindingsraden
+  `inndata_artefakt.oppdrag_id` er eneste sannhet, og modulen henter
+  bunten via `hent_inndata_for_oppdrag`, 060), `antall_soknader`
+  (1–5000, hard grense — 5001 avvises ved validering, aldri stille
+  avkorting) og `omfang: bunt` (bærer 240-minuttersfristen).
   Valgfritt: `slettefrist_dogn` (30–365, standard 90) — kundens
   kandidatdatafrist, bundet i bestillingen fordi den ellers ikke har noe
   sted å stå (§5).
+
+  BUNTEN BÆRER SIN EGEN DEKLARASJON (#161, eiers B): et lukket
+  `soknader.json` i roten navngir hver kandidat (`kandidat_id`) og
+  filene hens (`filer`), 1–5000 kandidater. Parseren binder manifestet
+  toveis mot katalogen — deklarert fil uten medlem og medlem uten
+  deklarasjon er like røde — og deklarert kandidattall må være lik
+  oppdragets `antall_soknader` FØR én byte innhold pakkes ut. En
+  kandidatform gjettes aldri ut av katalogen.
 * **Ut**: ÉN promotert rapport per oppdrag —
   `rekruttering.evaluering.rapport`, den rangerte kandidatlisten med
   begrunnede funn (kildereferanse), poeng med nedbrytning og
