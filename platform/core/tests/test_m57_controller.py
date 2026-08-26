@@ -141,8 +141,9 @@ class _Stubklient:
                             "utloper": self.utforelsesfrist}
                            if opplasting is ... else opplasting)
         self.buntstatus = buntstatus
-        #: `/v1/oppdrag/forny`-svaret pulsen får, eller None for «aldri
-        #: spurt» (intervallet er langt nok til at den ikke rekker det).
+        #: Kallbar som gir `/v1/oppdrag/forny`-svaret. None = 200 uten
+        #: fersk kapabilitet. Med standardintervallet (240 s) rekker
+        #: pulsen aldri å slå i en test — den må skrus ned med vilje.
         self.forny = forny
         self.kvitteringer = []
         self.stier = []
@@ -171,7 +172,7 @@ class _Stubklient:
                 return _Svar(self.buntstatus, {"feil": "x"})
             return _Svar(200, content=_buntbytes())
         if sti == "/v1/oppdrag/forny":
-            return self.forny
+            return self.forny() if self.forny else _Svar(200, {})
         if sti == "/v1/artefakt":
             if self.opplastingsstatus != 200:
                 return _Svar(self.opplastingsstatus, {})
@@ -182,10 +183,10 @@ class _Stubklient:
         return self._kvitteringssvar(json or {})
 
 
-def _kjor(klient):
+def _kjor(klient, modell=None):
     from modules.m57_ats import controller
-    return controller.kjor_en(klient, "tk", _Modell(), _Uttrekker(),
-                              _MAALINGER, lambda k: k)
+    return controller.kjor_en(klient, "tk", modell or _Modell(),
+                              _Uttrekker(), _MAALINGER, lambda k: k)
 
 
 def test_avvist_kvittering_er_ikke_utfort(monkeypatch):
@@ -305,6 +306,54 @@ def test_tom_ko_er_tomt_utfall():
 
     res = controller.kjor_en(_K(), "tk", None, None, {}, lambda k: k)
     assert res == {"utfall": "tomt"}
+
+
+class _VenterModell(_Modell):
+    """Holder evalueringen i gang til pulsen HAR slått, slik at
+    fornyelsessvaret rekker å nå controlleren mens arbeidet pågår —
+    uten en sanntidspause å vente på.
+
+    Kappløpet er lukket av `_Heartbeat.__exit__`, ikke av timing: den
+    setter stoppflagget og JOINER tråden, så `tapt` er ferdig skrevet før
+    `with`-blokken slipper."""
+
+    def __init__(self, slo):
+        super().__init__()
+        self._slo = slo
+
+    def vurder(self, tekst, vekter):
+        assert self._slo.wait(10), "pulsen slo aldri"
+        return super().vurder(tekst, vekter)
+
+
+def test_tapt_lease_stopper_for_opplastingen(monkeypatch):
+    """En terminal 4xx på `/v1/oppdrag/forny` betyr at autoriteten er
+    borte: plattformen har gitt oppdraget til noen andre eller lukket
+    det. Evalueringen ble ferdig uten gyldig lease, og da skal rapporten
+    ikke lastes opp i det hele tatt — `tapt` ble tidligere bare med som
+    et ekstra felt PÅ vei ut av en opplasting som allerede hadde feilet.
+
+    Kontroll: fjern `puls.tapt`-porten i `kjor_en`, så laster denne opp
+    et artefakt fra en utfører som ikke lenger eier oppdraget."""
+    import threading
+
+    from modules.m57_ats import controller
+
+    monkeypatch.setattr(controller, "FORNY_INTERVALL_S", 0.01)
+    slo = threading.Event()
+
+    def forny():
+        slo.set()
+        return _Svar(409, {"feil": "lease_utlopt"})
+
+    k = _Stubklient(forny=forny)
+    res = _kjor(k, modell=_VenterModell(slo))
+    assert res["utfall"] == "avbrutt", res
+    assert res["grunn"] == "lease_tapt", res
+    assert res["lease_tapt"] == "lease_utlopt", res
+    assert k.kvitteringer[0]["feilkode"] == "lease_tapt"
+    # Rapporten ble ALDRI sendt.
+    assert "/v1/artefakt" not in k.stier
 
 
 def test_umulig_frist_stopper_for_bunten_hentes():

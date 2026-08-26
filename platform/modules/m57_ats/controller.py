@@ -367,6 +367,27 @@ def kjor_en(klient, token: str, modell, uttrekker, biasmaalinger,
                 return _feilutfall(rk, "rapport_ugyldig")
             finally:
                 os.close(fd)
+        if puls.tapt:
+            # AUTORITETEN ER TAPT, OG DA LEVERES DET IKKE. En terminal
+            # 4xx på `/v1/oppdrag/forny` betyr at plattformen har gitt
+            # oppdraget til noen andre eller lukket det: leasen er ikke
+            # vår lenger, `owner_generation` er utdatert, og evalueringen
+            # ble ferdig uten gyldig autoritet.
+            #
+            # Uten denne porten ble taperen stående og laste opp likevel
+            # — og resultatet var enten en avvisning på plattformens egne
+            # porter (samme utfall, men etter at rapporten var sendt) —
+            # eller, om vinduet så vidt holdt, et artefakt fra en utfører
+            # som ikke lenger eier oppdraget. `tapt` ble bare rapportert
+            # som et ekstra felt PÅ vei ut av en opplasting som allerede
+            # hadde feilet; nå stopper den før den.
+            #
+            # Kvitteringen sendes uansett: taushet er det §10 forbyr, og
+            # feilkoden navngir nettopp at det var autoriteten som falt
+            # bort, ikke arbeidet.
+            rk = kvitter({**kvittering_basis, "resultat": "feilet",
+                          "feilkode": "lease_tapt"})
+            return _feilutfall(rk, "lease_tapt", lease_tapt=puls.tapt)
         if puls.fersk_opplasting:
             # Fornyelsen re-utstedte leveringsretten — claimens
             # opprinnelige kan være død av sitt eget grant-vindu.
@@ -378,9 +399,11 @@ def kjor_en(klient, token: str, modell, uttrekker, biasmaalinger,
     if not 200 <= ro.status_code < 300:
         rk = kvitter({**kvittering_basis, "resultat": "feilet",
                       "feilkode": "opplasting_avvist"})
+        # `lease_tapt` sto her som et ekstra felt. Porten rett over
+        # returnerer nå FØR opplastingen når leasen er tapt, så feltet
+        # kunne per konstruksjon aldri være annet enn None her.
         return _feilutfall(rk, "opplasting_avvist",
-                           opplasting_status=ro.status_code,
-                           lease_tapt=puls.tapt)
+                           opplasting_status=ro.status_code)
     try:
         artefakt = ro.json()
         artefakt_id = artefakt["artefakt_id"]
