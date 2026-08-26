@@ -307,6 +307,54 @@ def test_tom_ko_er_tomt_utfall():
     assert res == {"utfall": "tomt"}
 
 
+def test_umulig_frist_stopper_for_bunten_hentes():
+    """m56s Codex P1, speilet: et claim uten brukbart vindu kan aldri bli
+    et AVSLUTTET oppdrag. m57s versjon av regnestykket er strengere enn
+    m56s — det som spares er ikke trafikk ut, men utleveringen av
+    søknadsbunten (persondata) inn i containeren, og modellkallene på
+    den.
+
+    Kontroll: fjern `_evalueringsfrist`-porten, så henter denne bunten og
+    kjører modellen for et oppdrag ingen kvittering kan avslutte."""
+    from modules.m57_ats import controller
+
+    for frist_om_s in (-60, 0, int(controller.AVSLUTNINGSMARGIN_S)):
+        k = _Stubklient(frist_om_s=frist_om_s)
+        res = _kjor(k)
+        assert res["utfall"] == "avbrutt", (frist_om_s, res)
+        assert res["grunn"] == "frist_utilstrekkelig", res
+        assert k.kvitteringer[0]["feilkode"] == "frist_utilstrekkelig"
+        # Bunten ble ALDRI hentet, og modellen aldri rørt.
+        assert not [s for s in k.stier
+                    if s.startswith("/v1/inndata/hent-for-oppdrag/")]
+        assert "/v1/artefakt" not in k.stier
+
+
+def test_uleselig_frist_er_ingen_frist():
+    """Mangler `utforelsesfrist`, eller kommer den uten tidssone, har
+    modulen intet vindu å kjøre innenfor — og et gjett på sonen er timer
+    feil vei. Fail-closed, aldri fallback til taket."""
+    for endring in ({"utforelsesfrist": None},
+                    {"utforelsesfrist": "2099-01-01T00:00:00"},
+                    {"utforelsesfrist": "i morgen"}):
+        k = _Stubklient()
+        for felt, verdi in endring.items():
+            setattr(k, felt, verdi)
+        res = _kjor(k)
+        assert res["grunn"] == "frist_utilstrekkelig", (endring, res)
+        assert res["frist_s"] is None, res
+
+
+def test_opplastingens_utlop_er_ogsaa_en_frist():
+    """Vinduet er den TIDLIGSTE av de tre grensene claimet navngir — en
+    romslig `utforelsesfrist` redder ikke en kapabilitet som løper ut
+    først."""
+    k = _Stubklient(frist_om_s=4 * 60 * 60)
+    k.opplasting = {"jti": "kap", "utloper": "2000-01-01T00:00:00+00:00"}
+    res = _kjor(k)
+    assert res["grunn"] == "frist_utilstrekkelig", res
+
+
 def test_avvist_feilkvittering_er_heller_ikke_ferdig(monkeypatch):
     """m56s Codex P1, speilet på feilveien: bunten er uhentbar, men
     plattformen tok heller ikke imot FEIL-kvitteringen (409/5xx/tapt
@@ -360,6 +408,11 @@ def test_uhentbar_bunt_kvitteres_feilet(monkeypatch):
                  "krav": [{"kravnavn": "drift", "vekt": 3}]},
                  "antall_soknader": 1, "omfang": "bunt"},
              "opplasting": {"jti": "oj", "utloper": "2099-01-01T00:00:00+00:00"},
+             # Fristene er en del av det EKTE claim-svaret, og
+             # `_evalueringsfrist` regner vinduet ut av dem: uten
+             # `utforelsesfrist` her ville stubben bevist noe endepunktet
+             # aldri sender.
+             "utforelsesfrist": "2099-01-01T00:00:00+00:00",
              "kvittering_utloper": "2099-01-01T00:00:00+00:00"}
 
     class _R:

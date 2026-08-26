@@ -127,6 +127,52 @@ def _feilutfall(rk, grunn: str, **ekstra) -> dict:
             "kvittering_status": getattr(rk, "status_code", 0), **ekstra}
 
 
+def _evalueringsfrist(claim: dict) -> int | None:
+    """Sekundene evalueringen FAKTISK har på seg — eller None når claimet
+    ikke bærer et lesbart vindu (m56s `_skannefrist`, speilet).
+
+    Vinduet er den TIDLIGSTE av grensene claimet selv navngir:
+
+      * `utforelsesfrist` — etter den kan ikke kvitteringen lenger
+        avslutte oppdraget (endepunktet svarer 202
+        `lagret_uten_statusendring`),
+      * `opplasting.utloper` — etter den kan rapporten ikke lastes opp,
+      * `kvittering_utloper` — etter den kan kvitteringen ikke sendes.
+
+    Alle tre er absolutte, så den første som inntreffer er den som
+    gjelder. `AVSLUTNINGSMARGIN_S` trekkes fra: rapportbygging,
+    opplasting og signert kvittering er det som gjør et fullført arbeid
+    til et AVSLUTTET oppdrag, og en evaluering som får bruke helt frem
+    til grensen leverer ingenting.
+
+    En frist uten tidssone gir None: å gjette sonen er timer feil vei, og
+    plattformen sender alltid UTC-offset.
+
+    PORTEN, IKKE ET BUDSJETT (K1): tallet brukes til å AVVISE et claim
+    som er dødfødt før bunten hentes. Å stoppe en evaluering som ble
+    startet i tide, men løper forbi vinduet, krever en frist HELT NED i
+    `kjoring.kjor_bunt` og modellklienten — ny maskin, ikke en fiks. Det
+    heartbeatet (063) fornyer er leasen, ikke disse grensene."""
+    if claim.get("utforelsesfrist") is None:
+        return None
+    from datetime import datetime, timezone
+    grenser = []
+    for raa in (claim.get("utforelsesfrist"),
+                claim.get("kvittering_utloper"),
+                (claim.get("opplasting") or {}).get("utloper")):
+        if raa is None:
+            continue
+        try:
+            t = datetime.fromisoformat(str(raa))
+        except ValueError:
+            return None
+        if t.tzinfo is None:
+            return None
+        grenser.append(t)
+    igjen = (min(grenser) - datetime.now(timezone.utc)).total_seconds()
+    return int(igjen) - int(AVSLUTNINGSMARGIN_S)
+
+
 def _payloadbrudd(payload: dict) -> str | None:
     """Bestillingens gjennomførbarhet, lest FØR noe arbeid: profilen og
     tallet må være der kontrakten (payload-skjemaet) lover."""
@@ -258,6 +304,19 @@ def kjor_en(klient, token: str, modell, uttrekker, biasmaalinger,
         rk = kvitter({**kvittering_basis, "resultat": "feilet",
                       "feilkode": "ingen_opplastingskapabilitet"})
         return _feilutfall(rk, "ingen_kapabilitet")
+
+    frist_s = _evalueringsfrist(claim)
+    if frist_s is None or frist_s <= 0:
+        # FRISTEN ER EN DEL AV BESTILLINGEN (m56s Codex P1, speilet). Er
+        # vinduet uleselig eller alt oppbrukt, kan denne kjøringen aldri
+        # bli et avsluttet oppdrag — og da skal den ikke koste
+        # PERSONDATA og modellkall, av samme grunn som `_payloadbrudd` og
+        # kapabilitetssjekken over. m57s versjon av m56-doktrinen: der
+        # skaden er den unødvendige forespørselen ut, er den her den
+        # unødvendige utleveringen av søknadsbunten INN i containeren.
+        rk = kvitter({**kvittering_basis, "resultat": "feilet",
+                      "feilkode": "frist_utilstrekkelig"})
+        return _feilutfall(rk, "frist_utilstrekkelig", frist_s=frist_s)
 
     # BUNTEN: 060-resolveren — payloaden navngir den aldri (#200 valg B);
     # retten er claimet selv.
