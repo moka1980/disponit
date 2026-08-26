@@ -1009,24 +1009,28 @@ UTFORELSESFRIST_VALG: dict[str, tuple[str, dict[object, int]]] = {
     # `UTSTEDT_AUTORITET_S` per grant), og fornyelsen re-utsteder
     # opplastingskapabiliteten.
     #
-    # MEN DØREN ER IKKE EN PUST (Cursor P1, runde 2): fristen hviler
-    # ikke på at mekanismen FINNES, den hviler på at noen KALLER den.
-    # Det gjør ingen i dag — `/v1/oppdrag/forny` har null kallsteder
-    # under `platform/modules/` og `platform/drift/`, og M-57s egen
-    # evalueringsutfører finnes ikke ennå. Hevet vi fristen nå, ville
-    # et claimet `rekruttering.evaluering`-oppdrag fått 240 min frist og
-    # ~1 t lease, og reclaim-grenen (`plukket` ∧ død lease ∧ frist i
-    # framtiden) stått åpen i tre timer: nøyaktig #210s skadeklasse,
-    # gjenåpnet av et løfte om en pust som ikke finnes.
+    # OG NÅ PUSTER NOEN (Cursor P1, runde 2 på #218): fristen hviler
+    # ikke på at mekanismen FINNES, den hviler på at noen KALLER den —
+    # og kallstedet finnes fra og med M-57s utførerkjede.
+    # `m57_ats.controller._Heartbeat` puster mot `/v1/oppdrag/forny`
+    # hvert `FORNY_INTERVALL_S` gjennom hele evalueringen og bytter til
+    # den fornyede opplastingskapabiliteten. Klemmen som sto TIL en
+    # utfører faktisk pustet, er derfor løftet her: `bunt` er
+    # klarsignalets 240 min, ikke per-grant-taket.
     #
-    # Klemmen står derfor TIL en utfører faktisk puster — og å bygge den
-    # utføreren her ville vært ny maskin i en fiksrunde (K1). Å heve
-    # tallet er ett tegn den dagen kallstedet finnes; porten
-    # `test_frist_over_ett_grant_krever_fornyelsesveien` krever da BÅDE
-    # døren i basen og et kallsted, så ingen kan heve fristen på døren
-    # alene.
+    # Reclaim-grenen (`plukket` ∧ død lease ∧ frist i framtiden) er
+    # dermed ikke lenger #210s skadeklasse, men 063s tilsiktede
+    # oppførsel: en LEVENDE utfører kjeder grants og blir aldri
+    # reclaimet, en DØD slipper leasen innen ett grant-vindu og skal
+    # reclaimes. Det er nettopp forskjellen pusten gjør målbar.
+    #
+    # Portene holder begge sidene: `test_frist_over_ett_grant_krever_-
+    # fornyelsesveien` krever BÅDE døren i basen (063,
+    # `forny_oppdragslease`, claimer-eid) og et kallsted under
+    # `platform/modules/`|`platform/drift/`, så forsvinner utføreren,
+    # felles fristen her igjen.
     "rekruttering.evaluering": ("omfang",
-                                {"bunt": None}),  # settes under, av min()
+                                {"bunt": None}),  # settes under
 }
 
 #: PER-GRANT-TAKET, med produksjonsnavn: claim-leasen (037/049),
@@ -1034,18 +1038,18 @@ UTFORELSESFRIST_VALG: dict[str, tuple[str, dict[object, int]]] = {
 #: (063) klemmes alle hit. Med 063 er dette ikke lenger nødvendigvis
 #: totalens autoritet — fornyelsen KAN kjede grants gjennom hele
 #: fristen — men det er taket for hvor lenge én TAUS utfører beholder
-#: den, og uten et kallsted er taus alt vi har.
+#: den.
 #: SQL-siden (037/049/063) pinnes av outbox-portens `TAK_S`.
 UTSTEDT_AUTORITET_S = 3600
 
-#: Akseptkonvolutten er klarsignalets 240 min (§4, `manifestskjema`);
-#: LØFTET til kunden er aldri mer enn autoriteten som faktisk utstedes
-#: og fornyes. `min()` og ikke tallet direkte (Codex P2 på #210): den
-#: dagen en utfører puster gjennom `/v1/oppdrag/forny`, faller fristen
-#: tilbake på konvolutten ved å fjerne klemmen — og porten over krever
-#: kallstedet i samme grep.
-UTFORELSESFRIST_VALG["rekruttering.evaluering"][1]["bunt"] = \
-    min(240 * 60, UTSTEDT_AUTORITET_S)
+#: Akseptkonvolutten er klarsignalets 240 min (§4, `manifestskjema`), og
+#: fra og med M-57s heartbeat er den også LØFTET til kunden: fornyelsen
+#: (063) kjeder grants gjennom hele fristen, så autoriteten dekker den.
+#: `min(..., UTSTEDT_AUTORITET_S)` sto her mens ingen pustet (Codex P2 på
+#: #210); klemmen falt da kallstedet kom (Cursor P1, runde 2 på #218).
+#: Per-grant-taket gjelder fortsatt HVERT vindu — det er summen, ikke
+#: vinduet, som nå får være lengre enn ett grant.
+UTFORELSESFRIST_VALG["rekruttering.evaluering"][1]["bunt"] = 240 * 60
 
 
 def utforelsesfrist_s(oppdragstype: str, minimert: dict) -> int | None:

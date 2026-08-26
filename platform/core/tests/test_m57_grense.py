@@ -125,28 +125,29 @@ def test_ytelsesgrensen_er_klarsignalets_tall():
     tall som ligner. `antall_soknader`-taket er den fulle bunten, og
     akseptkonvolutten er klarsignalets 240 minutter (§4).
 
-    ORDREFRISTEN er derimot ikke konvolutten (Codex P1 på #210): den er
-    løftet til KUNDEN, og et løfte utover autoriteten som faktisk
+    ORDREFRISTEN var lenge KLEMT under konvolutten (Codex P1 på #210):
+    den er løftet til KUNDEN, og et løfte utover autoriteten som faktisk
     utstedes (claim-leasen/opplastingskapabilitetens 3600 s) kunne ingen
     holde — etter første time kunne en annen kontrollør reclaime og
-    duplisere evalueringen av samme persondatabunt. 063 (#165) bygger
-    fornyelsesveien som KAN kjede grants forbi taket, men en dør er ikke
-    en pust: ingen utfører kaller den ennå (Cursor P1, runde 2), så
-    klemmen står. Fristen er derfor fortsatt min(konvolutt, autoritet),
-    og porten her er skrevet slik at den dagen kallstedet finnes,
-    gjenåpnes 240 ved å fjerne klemmen — og
-    `test_frist_over_ett_grant_krever_fornyelsesveien` krever da BÅDE
-    døren i basen og kallstedet."""
+    duplisere evalueringen av samme persondatabunt. 063 (#165) bygde
+    fornyelsesveien som kjeder grants forbi taket, men en dør er ikke en
+    pust, så klemmen sto til noen KALTE den (Cursor P1, runde 2).
+
+    M-57s utførerkjede er den kalleren, og klemmen er dermed løftet:
+    fristen er konvolutten selv, 240 min. Porten måler nå det tallet
+    direkte — og `test_frist_over_ett_grant_krever_fornyelsesveien`
+    holder den andre halvdelen: hever noen fristen forbi ett grant uten
+    at både døren i basen og kallstedet finnes, felles det der."""
     import oppdragskontrakt as ok
     g = KRAVGRENSER["m57-v1"]
     _, tak = ok.FELTGRENSER["rekruttering.evaluering"]["antall_soknader"]
     assert g["ytelse_min_soknader"] == tak
     _, frister = ok.UTFORELSESFRIST_VALG["rekruttering.evaluering"]
-    # Autoriteten leses fra PRODUKSJONSKONTRAKTEN (Codex P2, runde 2):
-    # et testlokalt 3600 kunne flyttes uten at noen runtime-mekanisme
-    # fulgte med.
-    assert frister["bunt"] == min(g["ytelse_maks_minutter"] * 60,
-                                  ok.UTSTEDT_AUTORITET_S)
+    assert frister["bunt"] == g["ytelse_maks_minutter"] * 60
+    # ...og fristen er nå FAKTISK lengre enn ett grant — porten over er
+    # dermed AKTIV, ikke ladd. Står denne igjen som usann, er klemmen
+    # sneket inn igjen uten at kallstedet forsvant.
+    assert frister["bunt"] > ok.UTSTEDT_AUTORITET_S
 
 
 def test_utelatt_invariant_felles_av_begge_lag():

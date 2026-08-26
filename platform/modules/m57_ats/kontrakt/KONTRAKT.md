@@ -234,6 +234,68 @@ Modulen er KUNDE av plattformen, aldri omvendt (m56-formen):
 * **Parsing** (§4/§7): i credential-fri, nettverksløs container;
   arkivgrensene håndheves FØR utpakking (`parsing.py`), porsjonsvis med
   fremdrift som evidens. Avbrutt kjøring → ingen promotert liste.
+* **Kjøringens varighet** bindes ved LEVERING, ikke underveis.
+  Controlleren måler vinduet FØR bunten hentes (`_evalueringsfrist`:
+  den tidligste av `utforelsesfrist`, `opplasting.utloper` og
+  `kvittering_utloper`, minus `AVSLUTNINGSMARGIN_S`) og avviser et
+  claim som er dødfødt. Er claimet levedyktig, løper `kjor_bunt` uten
+  internt tak: `frist_s` sendes ikke inn i kandidatløkka, og
+  `puls.tapt` leses først når `with _Heartbeat`-blokken slipper. En
+  evaluering som ble startet i tide, men løper forbi vinduet — eller
+  mister leasen midtveis — fullfører derfor arbeidet, og stoppes først
+  på LEVERINGSPORTENE: `lease_tapt` før opplasting, og kvitteringens
+  eget statusskifte, som etter fristen svarer 202
+  `lagret_uten_statusendring` → `ukvittert`. Utfallet er aldri et
+  falskt `utfort`; prisen er persondata og modellkall brukt utenfor
+  det annonserte vinduet.
+
+  KJENT BEGRENSNING, OG DEN ER UTSATT TIL
+  [#173](https://github.com/moka1980/disponit/issues/173) (eierdom,
+  K2-kjennelse på #218, valg 1). Både det løpende fristtaket og et
+  lease-avbrudd midt i evalueringen vil ha DET SAMME: et budsjett- og
+  avbruddssignal tredd inn i `kjor_bunt`s per-kandidat-løkke, og et
+  avbrudd der er en ny returkontrakt på funksjonen — ny maskin, som
+  K1 sender til egen PR. Løkka er nøyaktig den #173 skriver om
+  (artefaktene strømmes til kandidatlagrene, retur blir referanser +
+  rangering), så avbruddssemantikk skrevet nå ville blitt skrevet to
+  ganger. Samme klasse som minnegrensen `kjor_bunt` alt bærer: 23/8-
+  dommen legger HARD SPERRE mot kjøring på reelle bunter i full
+  størrelse før #173 er landet, og det er den sperren som holder
+  varigheten nede i mellomtiden.
+
+  `dom-klasse: kjoring-avbrudd-og-frist · felt i #218 · https://github.com/moka1980/disponit/pull/218#issuecomment-5431892763`
+* **Lease-horisonten er serverens** — men først fra den FØRSTE
+  bekreftede fornyelsen. `_Heartbeat._utlopt` feller autoriteten på
+  `owner_lease_utloper` slik 063 skriver den; i vinduet før det svaret
+  har kommet, finnes ingen horisont fra serveren (`/v1/oppdrag/claim`
+  returnerer `utforelsesfrist`, ikke `owner_lease_utloper`), og
+  tilbakefallet er telleren: `FORNY_TAPT_ETTER` ×
+  `FORNY_INTERVALL_S` = 480 s. 037 skrev den initielle leasen som
+  `least(nå + 3600 s, greatest(nå + lease_s, utforelsesfrist))` — for
+  `bunt` (frist 240 min) altså 3600 s. Telleren kan derfor felle en
+  lease som fortsatt er gyldig.
+
+  KJENT BEGRENSNING, PARKERT AV EIER (K2-kjennelse på #218, valg 3),
+  med fiksen utsatt til
+  [#219](https://github.com/moka1980/disponit/issues/219): claim-svaret
+  skal bære `owner_lease_utloper` — feltet basen alt skriver i samme
+  UPDATE. Det er ÉN kilde på riktig sted, men `/v1/oppdrag/claim` er
+  plattformens delte claim-flate (m56 claimer gjennom den), altså egen
+  sak og egen PR — slik 037 selv sa om fornyelsesveien. De to andre
+  veiene er formene rundene alt har avvist: å seede horisonten fra
+  `utforelsesfrist` klemt med `UTSTEDT_AUTORITET_S` er 037s formel
+  skrevet en gang til i klienten — nøyaktig den dobbeltsannheten
+  `dom-klasse: kjoring-avbrudd-og-frist`-runden fjernet, og to kilder
+  som driver fra hverandre ved neste migrasjon.
+
+  MÅLT KONSEKVENS i mellomtiden, så begrensningen bæres på tall og ikke
+  på uro: den krever at plattformen er SAMMENHENGENDE utilgjengelig
+  gjennom hele de første ~8 minuttene av en kjøring, FØR den første
+  vellykkede fornyelsen. Utfallet er fail-closed — en falsk
+  `lease_tapt` (evalueringen kastes, feil-kvittering sendes), aldri et
+  falskt `utfort`.
+
+  `dom-klasse: lease-horisont-foer-foerste-fornyelse · felt i #218 · https://github.com/moka1980/disponit/pull/218#issuecomment-5432174987`
 * **Kandidatdata** (§5): alt payload bor i de seks 057-lagrene og reapes
   ved fristen; modulen kan ikke forlenge den. Unntaket er den promoterte
   rapporten over, som i dag bærer den samme payloaden uten å arve

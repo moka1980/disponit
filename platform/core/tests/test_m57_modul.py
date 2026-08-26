@@ -1783,6 +1783,63 @@ def test_tekstuttrekket_er_containerens_aldri_en_utf8_dekoding(tmp_path):
     assert e.value.kode == "tekstuttrekk_feilet"
 
 
+def test_uttrekkerens_egen_kode_overlever_ut_av_kjoringen(tmp_path):
+    """Cursor P2, runde 6: uttrekkerens SP-3-kode ble spist av `_tekst`.
+
+    `_tekst` fanget `Exception` — og `uttrekk.Uttrekksfeil` er en av dem
+    — så `uttrekk_ustottet`/`uttrekk_uleselig` kom ut av `kjor_bunt` som
+    den generiske `tekstuttrekk_feilet`. Følgen sto å lese rett over i
+    fila: `kjor_bunt`s egen `except uttrekk.Uttrekksfeil` var DØD kode.
+    `Uttrekksfeil` reises bare i `uttrekk.py`, og eneste vei derfra inn i
+    kjøringen går gjennom `_tekst`, så oversetteren ble aldri nådd.
+
+    Prisen er feilattribusjon i drift: en deployment uten `pdftotext`, en
+    docx-bombe og en html i feil koding er tre ULIKE svar til den som
+    står med driftsloggen — den første er en konfigurasjon som mangler,
+    de to andre er filer som er noe annet enn de utgir seg for. Alle tre
+    ble rapportert som «tekstuttrekket feilet», og `kjoring_avbrutt:
+    <kode>` i controller-utfallet pekte bort fra det som faktisk skjedde.
+
+    Testen kjører den EKTE `Uttrekker`. Det er poenget: hullet fikk stå
+    fordi porten over reiser `ValueError` fra en stub, og en `ValueError`
+    SKAL bli `tekstuttrekk_feilet`. Bare produksjonsuttrekkeren bærer
+    kodene som forsvant.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `except uttrekk.Uttrekksfeil:
+    raise` i `_tekst` — eller `except uttrekk.Uttrekksfeil`-grenen i
+    `kjor_bunt` den bærer koden fram til.
+    """
+    from modules.m57_ats import kjoring, uttrekk
+
+    felter = lambda m: {"navn": ["Kandidat k1"]}
+    # Tom `pdf_kommando`: PDF-uttrekk er utilgjengelig i DENNE
+    # deploymenten — ikke en ødelagt fil.
+    ekte = uttrekk.Uttrekker("")
+
+    def kjor(arkiv):
+        return kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
+                                 kandidatfelter_for=felter,
+                                 tekst_for=ekte.tekst_for,
+                                 biasmaalinger=_MAALINGER,
+                                 antall_soknader=1)
+
+    # 1) `uttrekk_ustottet`: bunten er lovlig, uttrekkeren kan bare ikke
+    #    lese den her. Det er en driftskonfigurasjon som mangler.
+    ustottet = tmp_path / "ustottet"
+    ustottet.mkdir()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjor(_bunt(ustottet, [("k1/cv.pdf", b"%PDF-1.4 en ekte pdf")]))
+    assert e.value.kode == "uttrekk_ustottet", e.value.kode
+
+    # 2) `uttrekk_uleselig`: html-en passerer buntgaten (den SER ut som
+    #    html), og først dekodingen finner at bytene ikke er UTF-8.
+    uleselig = tmp_path / "uleselig"
+    uleselig.mkdir()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjor(_bunt(uleselig, [("k1/soknad.html", b"<p>drift \xff\xfe</p>")]))
+    assert e.value.kode == "uttrekk_uleselig", e.value.kode
+
+
 def test_tomt_tekstuttrekk_er_kodet_feil_ikke_en_tom_vurdering(tmp_path):
     """Codex P1: `isinstance(tekst, str)` slipper `""` og bare blanktegn.
 

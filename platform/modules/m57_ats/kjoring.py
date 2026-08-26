@@ -12,7 +12,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from . import blinding, evaluering, parsing
+from . import blinding
+from . import modell as modellklient
+from . import uttrekk, evaluering, parsing
 
 
 @dataclass(frozen=True)
@@ -66,9 +68,28 @@ def _flett_felter(samlet, nye):
 
 def _tekst(tekst_for, medlem, data, fremdrift):
     """Uttrekket er FREMMED kode (containerens), og feiler det, er det et
-    kodet utfall — ikke en rå `PdfReadError` ut av modulen."""
+    kodet utfall — ikke en rå `PdfReadError` ut av modulen.
+
+    MEN EN `Uttrekksfeil` ER ALT UTFALLET (Cursor P2, runde 6). Vakten
+    under fanget `Exception`, altså også uttrekkerens egne SP-3-koder, og
+    `uttrekk_ustottet`/`uttrekk_uleselig` kom ut som den generiske
+    `tekstuttrekk_feilet`. Følgen sto å lese i `kjor_bunt`: dens
+    `except uttrekk.Uttrekksfeil` var DØD kode — `Uttrekksfeil` reises
+    bare i `uttrekk.py`, og eneste vei derfra hit går gjennom denne
+    linjen, så ingen nådde noensinne fram til oversetteren. En pdf uten
+    `pdftotext` i deploymenten, en docx-bombe og en ugyldig UTF-8-html
+    ble alle rapportert som «tekstuttrekket feilet generisk», og både
+    driftsloggen og `kjoring_avbrutt:<kode>` pekte bort fra det som
+    faktisk gikk galt.
+
+    Koden bæres derfor videre urørt til `kjor_bunt`s egen oversetter, der
+    den alt hører hjemme. Ingen ny oversettelse her: to steder som gjør
+    om `Uttrekksfeil` til `Kjoringsfeil` er to kilder til samme sannhet.
+    """
     try:
         tekst = tekst_for(medlem, data)
+    except uttrekk.Uttrekksfeil:
+        raise
     except Exception as feil:
         raise Kjoringsfeil("tekstuttrekk_feilet", fremdrift) from feil
     if not isinstance(tekst, str):
@@ -150,6 +171,19 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
     promoteringsvakten som alt står i 056. Det er ny maskin, og K1 sier
     egen PR. Eierens K2-dom (23/8) er valg 1, og den bærer HARD SPERRE:
     ingen kjøring mot reelle bunter i full størrelse før #173 er landet.
+
+    KJENT BEGRENSNING — INTET INTERNT TAK, VERKEN PÅ TID ELLER AUTORITET
+    (utsatt til #173, samme klasse og samme sperre). Løkka under tar
+    verken en `frist_s` eller et avbruddssignal: den evaluerer hver
+    kandidat til bunten er tom. Kjøringens varighet bindes derfor ved
+    LEVERING — kalleren måler vinduet FØR bunten hentes og avviser et
+    dødfødt claim, og leveringsportene (`lease_tapt` før opplasting,
+    kvitteringens statusskifte etter) stopper et resultat som ble
+    ferdig for sent eller uten lease. Begge takene vil ha DET SAMME
+    signalet tredd inn her, og et avbrudd midt i løkka er en ny
+    returkontrakt på denne funksjonen — ny maskin, ikke en fiks (K1) —
+    i nøyaktig den løkka #173 skriver om. Se KONTRAKT.md,
+    `dom-klasse: kjoring-avbrudd-og-frist`.
 
     `sti` MÅ VÆRE INSTANSBUNDET NÅR DEN ER DELBAR — det er kallerens
     ansvar (Codex P1, eierdom K2-kjennelse runde 7 på #217, valg B i
@@ -459,6 +493,17 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
         # «modellfeil» og skjult koden det ble reist med.
         raise
     except parsing.Buntfeil as feil:
+        raise Kjoringsfeil(feil.kode, fremdrift) from feil
+    except uttrekk.Uttrekksfeil as feil:
+        # Uttrekket er FILENS/KONFIGURASJONENS feil, aldri modellens —
+        # samme misattribusjonsklasse som lagring/dekompresjon. Denne
+        # grenen sto DØD til Cursor P2 runde 6: `_tekst` er eneste vei
+        # fra `uttrekk` inn hit, og dens catch-all spiste koden før den
+        # kom så langt. Den er oversettelsens ENE sted igjen.
+        raise Kjoringsfeil(feil.kode, fremdrift) from feil
+    except modellklient.Modellfeil as feil:
+        # Transport mot modellserveren er DRIFT med egen kode — «modellen
+        # svarte galt» og «modellen var nede» er to ulike ord.
         raise Kjoringsfeil(feil.kode, fremdrift) from feil
     except evaluering.Evalueringsfeil as feil:
         raise Kjoringsfeil(feil.kode, fremdrift) from feil
