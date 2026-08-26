@@ -1078,11 +1078,45 @@ function bestillSeksjon(hoved, ctx, data, okt, laas) {
       // svar fra serveren, og det fikk vi (409). Teksten sier derfor det
       // serveren sier: ingen dom, ingen kvote, og et nytt forsøk er den
       // SAMME operasjonen (nøkkelen står, se over).
+      //
+      // ... og «SJEKK FELTENE» ER LØGN NÅR DET ER BUNTEN (Cursor P2-1,
+      // eierdom (c) 11:38). `inndata_ubrukelig` er ikke en dom over
+      // kroppen: 058 gir ETT svar for alle årsakene — bunten er ukjent,
+      // utløpt, ikke ferdig lastet, alt bundet til et annet oppdrag,
+      // ELLER holdt av en samtidig bestilling akkurat nå
+      // (`INNDATA_OPPTATT`, kollapset til den samme koden utad i
+      // `bestilling.py:71-81`). Ingen av dem står i et felt brukeren kan
+      // rette, så «Sjekk feltene og prøv igjen» sender henne til feil
+      // sted.
+      //
+      // DETTE ER EN SANNHETS-FIKS, IKKE EN NØKKELFIKS: `bestillIdem`
+      // roterer som før (`opptattNokkel` er usann her), for ledningen
+      // bærer ikke skillet forbigående/terminal — `KLIENTKODE` kollapser
+      // det, og husets egen port sier `not er_forbigaende(
+      // "inndata_ubrukelig")` (`test_bestilling_rekruttering.py:350`).
+      // Å beholde nøkkelen på den koden ville lovet «prøv igjen, samme
+      // operasjon» til en bruker som står mot en død bunt. Det ekte
+      // skillet er en distinkt utadkode — kontraktsendring, eget issue
+      // (eierdom (b)). Teksten lover derfor INGENTING om retry: den sier
+      // hva som er sant for begge årsakene, og navngir den ene utveien
+      // som virker uansett — en ny fil. (`875de8f` er grunnen til at den
+      // utveien må STÅ på skjermen: en bruker som må gjette seg til
+      // filbytte er nøyaktig hullet den lukket.)
+      //
+      // Koden alene er stedet her, uten `inndataRef`-vakten
+      // `opptattNokkel` trenger: `idempotenskonflikt` har motsatt
+      // betydning i reservasjonsarmen, mens `inndata_ubrukelig` er
+      // bestillingsendepunktets alene — `inndata.py` svarer
+      // `inndata_reservasjon_ugyldig`/`inndata_alt_lastet` på sine egne
+      // 409-er, aldri denne.
+      const buntUbrukelig = definitivt && e.status === 409
+        && e.kode === "inndata_ubrukelig";
       const forlatt = tilstand.generasjon !== min;
       sett(utfall, t(opptattNokkel ? "ui.rekruttering.bestill.opptatt"
-        : definitivt ? "ui.rekruttering.bestill.feil"
-          : forlatt ? "ui.rekruttering.bestill.forlatt_usikkert"
-            : "ui.rekruttering.usikkert_utfall"));
+        : buntUbrukelig ? "ui.rekruttering.bestill.bunt_ubrukelig"
+          : definitivt ? "ui.rekruttering.bestill.feil"
+            : forlatt ? "ui.rekruttering.bestill.forlatt_usikkert"
+              : "ui.rekruttering.usikkert_utfall"));
     } finally {
       tilstand.paagaaende = false;
       // Låsen løftes på de SAMME kontrollene som tok den (A-dommen,
