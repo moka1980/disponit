@@ -1871,6 +1871,64 @@ test("Bestilling: ingen profilversjon forsvinner i bestillingsvinduet (P2-1)",
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
 });
 
+test("Profiler: en editor som åpnes midt i en bestilling fødes frosset",
+  async () => {
+  // Frysen tar kontrollene som FINNES. Profilskjemaet åpnes på et klikk,
+  // så «Lagre» kan fødes etter at låsen ble tatt — og en knapp som slipper
+  // unna frysen er hele P2-1-vinduet på nytt, bare gjennom en annen dør.
+  //
+  // MUTASJONEN SOM DREPER DENNE: fjern
+  // `if (okt.bestilling.paagaaende) frysEn(kontroll, true)` fra
+  // `laas.meld`.
+  KALL = [];
+  let slippBestilling;
+  const bestillingssvar = new Promise((r) => {
+    slippBestilling = () => r({ beslutning: "stopp", begrunnelse: [] });
+  });
+  SVAR = (sti) => {
+    if (sti === "/v1/rekruttering/prosesser") return prosess();
+    if (sti === "/v1/rekruttering/stillingsprofiler") return profiler();
+    if (sti === "/v1/inndata/reserver") {
+      return { reservasjon_jti: "j-1", inndata_ref: "inndata:u-1" };
+    }
+    if (sti.startsWith("/v1/inndata/opplast/")) return {};
+    if (sti === "/v1/bestilling") return bestillingssvar;
+    return undefined;
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const profilDel =
+    hoved.querySelector("section[aria-labelledby=profil-tittel]");
+  const skjema = hoved
+    .querySelector("section[aria-labelledby=bestill-tittel] form");
+  const send = skjema.querySelector("button[type=submit]");
+  const filInp = skjema.querySelector("input[type=file]");
+  Object.defineProperty(filInp, "files", { configurable: true,
+    value: [{ name: "bunt.zip",
+              arrayBuffer: async () => new ArrayBuffer(16) }] });
+  filInp.dispatchEvent(new window.Event("change", { bubbles: true }));
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() => KALL.some((k) => k.sti === "/v1/bestilling"), 20),
+    "bestillingen ble aldri sendt");
+  // FØRST NÅ åpnes editoren — knappen finnes ikke før dette klikket.
+  [...profilDel.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.profiler.ny")).click();
+  const profilSkjema = profilDel.querySelector("form");
+  const lagre = profilSkjema.querySelector("button[type=submit]");
+  assert.equal(lagre.disabled, true,
+    "en editor åpnet midt i en bestilling ga en handlingsklar «Lagre»");
+  assert.equal(profilSkjema.getAttribute("aria-busy"), "true");
+  // ... og den åpnes når kjeden slipper, som enhver annen utløser.
+  slippBestilling();
+  assert.ok(await vent(() => !send.disabled, 40), "kjeden ble aldri ferdig");
+  assert.equal(lagre.disabled, false, "editoren ble stående frosset");
+  assert.equal(profilSkjema.hasAttribute("aria-busy"), false);
+  const brudd = await alvorligeBrudd(hoved);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
 test("Profiler: listen viser navn, versjon og krav — og axe rent", async () => {
   const hoved = await tegnetMedProfiler();
   const seksjon = hoved.querySelector("section[aria-labelledby=profil-tittel]");
