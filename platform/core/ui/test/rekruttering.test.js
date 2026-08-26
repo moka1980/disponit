@@ -30,7 +30,14 @@ globalThis.fetch = async (url, opts = {}) => {
   }
   KALL.push({ sti, metode: opts.method || "GET", kropp,
     hoder: opts.headers || {} });
-  const svar = (typeof SVAR === "function") ? SVAR(sti, opts) : SVAR[sti];
+  const raatt = (typeof SVAR === "function") ? SVAR(sti, opts) : SVAR[sti];
+  // Et `SVAR` som er et LØFTE henger hele kallet til testen slipper det, og
+  // utfallet avgjøres først DA. Uten dette sto `ok` klar før løftet var
+  // løst, så et hengende kall kunne bare ende i suksess — og vinduet
+  // «POST-en henger og feiler så med 5xx» var umålbart. Bare løfter ventes
+  // på: et vanlig svar går nøyaktig samme vei som før, på samme tikk, så
+  // ingen eksisterende test får ny timing.
+  const svar = (raatt && typeof raatt.then === "function") ? await raatt : raatt;
   if (svar === undefined) {
     return { ok: false, status: 404, json: async () => ({ feil: "ikke_funnet" }) };
   }
@@ -1264,6 +1271,96 @@ test("Bestilling: endret kropp etter usikkert svar gir NY nøkkel (P1-2)", async
   // reservasjonen.
   assert.equal(KALL.filter((k) => k.sti === "/v1/inndata/reserver").length, 1,
     "feltendringen reserverte bunten på nytt");
+});
+
+test("Bestilling: profilen er låst mens kroppen er underveis (Cursor P1)", async () => {
+  // `stillingsprofil_ref` var det ENESTE kroppsfeltet uten lås. To vinduer
+  // sto åpne: i opplastingsvinduet (før `kropp` bygges) kunne profilen gli
+  // fra den brukeren trykket Send på, og under den flygende POST-en kastet
+  // `change`-handlerens `nyIntensjon()` nøkkelen kallet eide — så retryen
+  // `usikkert_utfall` lover er «SAMME operasjon», bar en fersk nøkkel.
+  KALL = [];
+  const toProfiler = profiler();
+  toProfiler.profiler.push({ ...toProfiler.profiler[0],
+    profil_id: "prof-2", versjon: 1, navn: "Rådgiver" });
+  let slippOpplast;
+  let opplastsvar = new Promise((r) => { slippOpplast = r; });
+  let slippBestilling;
+  let bestillingssvar = new Promise((r) => { slippBestilling = r; });
+  const basis = { "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": toProfiler,
+    "/v1/inndata/reserver": { reservasjon_jti: "j-1",
+                              inndata_ref: "inndata:u-1" } };
+  SVAR = (sti) => {
+    if (sti === "/v1/inndata/opplast/j-1") return opplastsvar;
+    if (sti === "/v1/bestilling") return bestillingssvar;
+    return basis[sti];
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const seksjon = hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  const skjema = seksjon.querySelector("form");
+  const send = skjema.querySelector("button[type=submit]");
+  const profil = skjema.querySelector("#bestill-profil");
+  assert.equal(profil.options.length, 2, "testen trenger noe å bytte TIL");
+  Object.defineProperty(skjema.querySelector("input[type=file]"), "files",
+    { configurable: true, value: [{ name: "bunt.zip",
+        arrayBuffer: async () => new ArrayBuffer(16) }] });
+  const bestillinger = () => KALL.filter((k) => k.sti === "/v1/bestilling");
+  // Et bytte er et bytte enten det kommer fra en finger eller fra en
+  // syntetisk `change`: nettleseren sperrer det første, låsen det andre.
+  const forsokBytte = (verdi) => {
+    profil.value = verdi;
+    profil.dispatchEvent(new window.Event("change", { bubbles: true }));
+  };
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  // VINDU 1 — opplastingen henger, kroppen er ikke bygget ennå.
+  assert.ok(await vent(() =>
+    KALL.some((k) => k.sti === "/v1/inndata/opplast/j-1"), 20),
+    "opplastingen startet aldri");
+  assert.equal(profil.disabled, true,
+    "profilen kunne byttes midt i en pågående opplasting");
+  assert.equal(skjema.getAttribute("aria-busy"), "true");
+  forsokBytte("prof-2@1");
+  assert.equal(profil.value, "prof-1@2",
+    "det låste valget gled under opplastingen");
+  slippOpplast({});
+  // VINDU 2 — bestillingen henger, og NÅ eier kallet en nøkkel.
+  assert.ok(await vent(() => bestillinger().length === 1, 20),
+    "bestillingen kom aldri");
+  assert.equal(profil.disabled, true,
+    "profilen kunne byttes mens bestillingen sto ubesvart");
+  forsokBytte("prof-2@1");
+  assert.equal(profil.value, "prof-1@2",
+    "det låste valget gled under bestillingen");
+  // 5xx: utfallet er ukjent, og da er retry med SAMME nøkkel nettopp det
+  // SP-2 finnes for.
+  slippBestilling(500);
+  assert.ok(await vent(() => !send.disabled, 40), "kjeden ble aldri ferdig");
+  assert.equal(seksjon.querySelector("[role=alert]").textContent,
+    t("ui.rekruttering.usikkert_utfall"));
+  assert.equal(profil.disabled, false, "profilen ble stående frosset");
+  assert.equal(skjema.hasAttribute("aria-busy"), false);
+  bestillingssvar = { beslutning: "tillat", oppdrag_id: 11 };
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() => bestillinger().length === 2, 40),
+    "retryen kom aldri");
+  const [b1, b2] = bestillinger();
+  assert.equal(b1.kropp.stillingsprofil_ref, "prof-1@2",
+    "kroppen bar en annen profil enn den Send ble trykket på");
+  assert.equal(b2.kropp.stillingsprofil_ref, b1.kropp.stillingsprofil_ref,
+    "retryen bestilte på en annen profil enn den første");
+  assert.equal(b2.hoder["Idempotency-Key"], b1.hoder["Idempotency-Key"],
+    "retryen etter et usikkert utfall bar en FERSK nøkkel");
+  // Bunten lastes aldri opp på nytt: retryen er samme operasjon hele veien.
+  assert.equal(KALL.filter((k) => k.sti === "/v1/inndata/reserver").length, 1,
+    "retryen reserverte bunten på nytt");
+  // MUTASJONEN SOM DREPER DENNE: fjern `profilVelger.disabled = paa` i
+  // `frys` (vindu 1 faller), eller `paagaaende`-vakten i profilvelgerens
+  // `change` (begge vinduene faller).
 });
 
 test("Bestilling: en opplastet bunt overlever prosessbyttet SYNLIG (P2-6)", async () => {

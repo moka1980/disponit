@@ -777,7 +777,16 @@ function bestillSeksjon(hoved, ctx, data, okt, laas) {
     min: "1", max: "5000", step: "1", required: true, value: "1" });
   const fristInp = el("input", { type: "number", id: "bestill-frist",
     min: "30", max: "365", step: "1" });
-  profilVelger.addEventListener("change", nyIntensjon);
+  // FROSSET ER FROSSET (samme grep som prosessvelgeren, A-dommen #212).
+  // `disabled` er brukerens vei — nettleseren sender ingen `change` fra en
+  // låst kontroll — men en invariant som bare hviler på nettleserens
+  // oppførsel kan verken måles eller mutasjonstestes. Låsen spørres derfor
+  // også her, og valget rulles tilbake til den profilen kroppen ble bygget
+  // på, så `stillingsprofil_ref` og det brukeren ser er samme profil.
+  profilVelger.addEventListener("change", () => {
+    if (tilstand.paagaaende) { profilVelger.value = frossetProfil; return; }
+    nyIntensjon();
+  });
   antallInp.addEventListener("input", nyIntensjon);
   fristInp.addEventListener("input", nyIntensjon);
   const send = el("button", { type: "submit",
@@ -788,17 +797,34 @@ function bestillSeksjon(hoved, ctx, data, okt, laas) {
   // `readOnly` og ikke `disabled`, av samme grunn som `bestilling.js`
   // sier det: et låst felt beholder fokus og lesbarhet, et deaktivert
   // felt under fingeren flytter fokus og forsvinner for skjermleseren.
-  // Fil og profil KAN ikke fryses slik — `readOnly` gjelder ikke for dem
-  // — og der gjør nabo-flaten det samme valget som her: kjeden bærer sin
-  // egen intensjon i stedet (`generasjon`), så et bytte under opplasting
-  // avbryter kjeden i stedet for å binde feil bunt.
+  //
+  // ... OG PROFILEN ER ET FELT I DEN KROPPEN (Cursor P1). `stillingsprofil_ref`
+  // sto igjen som det ENESTE kroppsfeltet uten lås, på en antakelse om at
+  // `generasjon` dekket den — men `generasjon` bumpes bare av fil-`change`,
+  // aldri av profil. Vinduet var åpent i begge ender: et bytte FØR `kropp`
+  // bygges bestilte på en annen profil enn den brukeren trykket Send på, og
+  // `change`-handlerens `nyIntensjon()` kastet `bestillIdem` mens POST-en
+  // fortsatt sto ubesvart — da bar den retryen `usikkert_utfall` lover er
+  // «samme operasjon», en FERSK nøkkel, og kunne bestille en gang til på
+  // toppen av en som kanskje alt var committet. En `select` har ingen
+  // `readOnly`, så låsen er `disabled`, som for knappene.
+  //
+  // Filvelgeren står igjen som den ene ufryste: `readOnly` gjelder ikke
+  // for den heller, og der gjør nabo-flaten det samme valget som her —
+  // kjeden bærer sin egen intensjon i stedet (`generasjon`), så et bytte
+  // under opplasting avbryter kjeden i stedet for å binde feil bunt.
   //
   // Knappene og prosessvelgeren eies av flatens `laas` (A-dommen, #212):
   // det er den samme frysen, bare utvidet til `tegn`-utløserne, og den
   // setter `aria-busy` på DETTE skjemaet fordi `send` hører til det.
+  let frossetProfil = null;
   const frys = (paa) => {
     antallInp.readOnly = paa;
     fristInp.readOnly = paa;
+    profilVelger.disabled = paa;
+    // Valget slik det sto da kjeden tok låsen: det er DENNE profilen
+    // `kropp` bygges med, og den `change`-vakten over ruller tilbake til.
+    frossetProfil = paa ? profilVelger.value : null;
     laas.frys(paa);
   };
 
