@@ -1247,12 +1247,20 @@ function profilSeksjon(hoved, ctx, data, okt, laas, paaProfilendring) {
       // hele SP-2-replayen.
       if (!idem) idem = nyIdempotensnokkel();
       try {
+        // NAVNET KVITTERINGEN GJELDER, FANGET FØR `await` (Cursor P2-1) —
+        // samme klasse som bestillingens `sendtBunt` (`:916`): live DOM ≠
+        // sendt intensjon. `laas` fryser utløserne og bestillingskroppen,
+        // ikke `#profil-navn`, så feltet står åpent mens POST-en er i
+        // lufta. Kroppen bar navnet fra kallstart, men alerten leste det
+        // PÅ NYTT etter svaret — redigerte brukeren i vinduet, navnga
+        // kvitteringen en profil serveren aldri lagret. Ett uttrykk
+        // dekker begge lesningene, så de ikke kan gli fra hverandre igjen.
+        const sendtNavn = navnInp.value.trim();
         const svar = await lagreStillingsprofil(
-          profil ? profil.profil_id : null, navnInp.value.trim(), krav,
-          idem);
+          profil ? profil.profil_id : null, sendtNavn, krav, idem);
         nyIntensjon();                 // definitivt svar → ny operasjon
         sett(utfall, t("ui.rekruttering.profiler.lagret")
-          .replace("{navn}", navnInp.value.trim())
+          .replace("{navn}", sendtNavn)
           .replace("{versjon}", String(svar.versjon)));
         await oppdaterListe();
       } catch (e) {

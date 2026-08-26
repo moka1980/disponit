@@ -2317,6 +2317,54 @@ test("Profiler: lagring poster hele kravsettet og melder i alert", async () => {
   }), "kvitteringen kom aldri i alerten");
 });
 
+test("Profiler: kvitteringen navngir profilen som ble lagret (Cursor P2-1)",
+  async () => {
+    // Samme vindu som bestillingens buntbinding (`:1350`), på profilens
+    // suksessarm: `laas` fryser utløserne og bestillingskroppen — men
+    // ikke `#profil-navn`. Feltet står åpent mens POST-en henger, og
+    // kvitteringen leste det ETTER svaret mens kroppen bar navnet fra
+    // kallstart. Alerten kunne dermed navngi en profil serveren aldri
+    // så. (At feltet ikke fryses er frys-klassen, dom-klasse
+    // `p2-1-og-p2-2-utsatt-til-214` — bindingen her er en annen sak.)
+    const hoved = await tegnetMedProfiler();
+    const seksjon = hoved.querySelector(
+      "section[aria-labelledby=profil-tittel]");
+    const rediger = [...seksjon.querySelectorAll("button")]
+      .find((b) => b.textContent === t("ui.rekruttering.profiler.rediger"));
+    rediger.click();
+    const skjema = seksjon.querySelector("form");
+    const navnInp = skjema.querySelector("#profil-navn");
+    assert.equal(navnInp.value, "Driftskonsulent", "editoren var ikke fylt");
+    navnInp.value = "Driftskonsulent II";
+    let slipp;
+    KALL = [];
+    SVAR = (sti, opts) => {
+      if ((opts.method || "GET") === "POST") {
+        return new Promise((r) => { slipp = r; });
+      }
+      return sti.includes("stillingsprofiler") ? profiler() : prosess();
+    };
+    skjema.dispatchEvent(new window.Event("submit",
+      { bubbles: true, cancelable: true }));
+    assert.ok(await vent(() => KALL.some((k) => k.metode === "POST")),
+      "POST-en gikk aldri");
+    assert.equal(KALL.find((k) => k.metode === "POST").kropp.navn,
+      "Driftskonsulent II", "kroppen bar ikke navnet fra kallstart");
+    // Brukeren skriver videre mens POST-en står ubesvart — DA lander 2xx
+    // på det navnet som faktisk ble sendt.
+    navnInp.value = "En helt annen profil";
+    slipp({ profil_id: "prof-1", versjon: 3 });
+    const lagre = skjema.querySelector("button[type=submit]");
+    assert.ok(await vent(() => !lagre.disabled, 40), "runden ble aldri ferdig");
+    const melding = seksjon.querySelector("[role=alert]").textContent;
+    assert.ok(melding.includes("Driftskonsulent II"),
+      "kvitteringen navnga ikke profilen som faktisk ble lagret");
+    assert.ok(!melding.includes("En helt annen profil"),
+      "kvitteringen navnga navnet brukeren nettopp skrev, ikke det sendte");
+    // MUTASJONEN SOM DREPER DENNE: les `navnInp.value` etter `await` igjen
+    // (da blir navnet «En helt annen profil»).
+  });
+
 test("Profiler: tapt svar → retry sender SAMME nøkkel (SP-2)", async () => {
   const hoved = await tegnetMedProfiler();
   const seksjon = hoved.querySelector(
