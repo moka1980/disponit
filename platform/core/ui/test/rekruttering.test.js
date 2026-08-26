@@ -1427,6 +1427,84 @@ test("Bestilling: kvitteringen navngir bunten som ble sendt (Cursor P2)",
     // til ren `bestill.sendt` uten speilingen.
   });
 
+test("Bestilling: STOPP/unntak lover ikke «bunten står klar» når den er forlatt (Cursor P2)",
+  async () => {
+    // Tredje og siste arm i samme løgnklasse som `sendt_forlatt_bunt`
+    // (tillat) og `forlatt_usikkert` (0/5xx): `stoppet`/`unntak` lover at
+    // bunten ikke er brukt opp og står klar. Byttet brukeren fil mens
+    // dommen var underveis, er DEN bunten ute av skjemaet — `change`
+    // nullet `inndataRef` — så løftet peker på en fil som verken er
+    // reservert eller lastet opp.
+    KALL = [];
+    let slippBestilling;
+    let bestillingssvar = new Promise((r) => { slippBestilling = r; });
+    let reservasjon = { reservasjon_jti: "j-1", inndata_ref: "inndata:u-1" };
+    SVAR = (sti) => {
+      if (sti === "/v1/rekruttering/prosesser") return prosess();
+      if (sti === "/v1/rekruttering/stillingsprofiler") return profiler();
+      if (sti === "/v1/inndata/reserver") return reservasjon;
+      if (sti.startsWith("/v1/inndata/opplast/")) return {};
+      if (sti === "/v1/bestilling") return bestillingssvar;
+      return undefined;
+    };
+    const hoved = nyHoved();
+    visRekruttering(hoved, ctx());
+    assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+    const seksjon =
+      hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+    const skjema = seksjon.querySelector("form");
+    const send = skjema.querySelector("button[type=submit]");
+    const filInp = skjema.querySelector("input[type=file]");
+    const velgFil = (navn) => {
+      Object.defineProperty(filInp, "files", { configurable: true,
+        value: [{ name: navn, arrayBuffer: async () => new ArrayBuffer(16) }] });
+      filInp.dispatchEvent(new window.Event("change", { bubbles: true }));
+    };
+    const bestillinger = () => KALL.filter((k) => k.sti === "/v1/bestilling");
+    const alert = () => seksjon.querySelector("[role=alert]").textContent;
+    // ARM 1 — STOPP med forlatt bunt.
+    velgFil("bunt.zip");
+    skjema.dispatchEvent(new window.Event("submit",
+      { bubbles: true, cancelable: true }));
+    assert.ok(await vent(() => bestillinger().length === 1, 40),
+      "bestillingen kom aldri");
+    reservasjon = { reservasjon_jti: "j-2", inndata_ref: "inndata:u-2" };
+    velgFil("bunt2.zip");
+    slippBestilling({ beslutning: "stopp", begrunnelse: [], oppdrag_id: null });
+    assert.ok(await vent(() => !send.disabled, 40), "kjeden ble aldri ferdig");
+    assert.ok(!alert().includes(t("ui.rekruttering.bestill.stoppet")),
+      "STOPP lovet fortsatt at den forlatte bunten «står klar»");
+    // `t()` faller tilbake til nøkkelen selv: uten denne kunne linjen
+    // under passere på en rå identifikator.
+    assert.ok(!alert().includes("ui.rekruttering.bestill.stoppet_forlatt"),
+      "locale mangler nøkkelen — brukeren fikk en rå identifikator");
+    assert.ok(alert().includes("bunt.zip"), "dommens egen bunt er ikke navngitt");
+    assert.ok(!alert().includes("bunt2.zip"),
+      "dommen ble tilskrevet filen brukeren nettopp valgte");
+    // ARM 2 — unntakskøen, samme vindu.
+    bestillingssvar = new Promise((r) => { slippBestilling = r; });
+    reservasjon = { reservasjon_jti: "j-3", inndata_ref: "inndata:u-3" };
+    skjema.dispatchEvent(new window.Event("submit",
+      { bubbles: true, cancelable: true }));
+    assert.ok(await vent(() => bestillinger().length === 2, 40),
+      "den andre bestillingen kom aldri");
+    reservasjon = { reservasjon_jti: "j-4", inndata_ref: "inndata:u-4" };
+    velgFil("bunt3.zip");
+    slippBestilling({ beslutning: "brudd", begrunnelse: [], unntak_id: 5 });
+    assert.ok(await vent(() => !send.disabled, 40), "andre kjede ble aldri ferdig");
+    assert.notEqual(alert(), t("ui.rekruttering.bestill.unntak"),
+      "unntakskøen lovet fortsatt at den forlatte bunten «står klar»");
+    assert.ok(!alert().includes("ui.rekruttering.bestill.unntak_forlatt"),
+      "locale mangler nøkkelen — brukeren fikk en rå identifikator");
+    assert.ok(alert().includes("bunt2.zip"), "saken er ikke bundet til sin bunt");
+    assert.ok(!alert().includes("bunt3.zip"),
+      "saken ble tilskrevet filen brukeren nettopp valgte");
+    const brudd = await alvorligeBrudd(hoved);
+    assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+    // MUTASJONEN SOM DREPER DENNE: la `else`-grenen falle tilbake til ren
+    // `bestill.stoppet`/`bestill.unntak` uten `forlatt`-vurderingen.
+  });
+
 test("Bestilling: profilen er låst mens kroppen er underveis (Cursor P1)", async () => {
   // `stillingsprofil_ref` var det ENESTE kroppsfeltet uten lås. To vinduer
   // sto åpne: i opplastingsvinduet (før `kropp` bygges) kunne profilen gli

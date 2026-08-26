@@ -980,9 +980,24 @@ function bestillSeksjon(hoved, ctx, data, okt, laas) {
         // begrunnelse, og faller en kode utenfor locale, står koden selv.
         const koder = (svar.begrunnelse || [])
           .map((k) => t(`kode.${k}`, k)).join(". ");
-        sett(utfall, svar.beslutning === "stopp"
-          ? `${t("ui.rekruttering.bestill.stoppet")} ${koder}`.trim()
-          : t("ui.rekruttering.bestill.unntak"));
+        // ... MEN «BUNTEN STÅR KLAR» ER USANT NÅR INTENSJONEN ER FORLATT
+        // (Cursor P2, tredje og siste arm). Begge tekstene lover at
+        // bunten ikke er brukt opp og står klar til et nytt forsøk — sant
+        // for bunten dommen GJALDT, men byttet brukeren fil mens dommen
+        // var underveis, er den bunten ute av skjemaet: `change` nullet
+        // `inndataRef` og bumpet `generasjon`. Da peker «den står klar»
+        // på en fil som verken er reservert eller lastet opp. Samme
+        // løgnklasse som `sendt_forlatt_bunt` (tillat-armen) og
+        // `forlatt_usikkert` (0/5xx-armen), og samme måling: `forlatt` er
+        // generasjonssammenligningen de alt gjør, og `sendtBunt` (`:916`)
+        // er alt fanget før `await` — ingen ny tilstand, ingen ny maskin.
+        const forlatt = tilstand.generasjon !== min;
+        const dom = svar.beslutning === "stopp"
+          ? `${t(forlatt ? "ui.rekruttering.bestill.stoppet_forlatt"
+            : "ui.rekruttering.bestill.stoppet")} ${koder}`.trim()
+          : t(forlatt ? "ui.rekruttering.bestill.unntak_forlatt"
+            : "ui.rekruttering.bestill.unntak");
+        sett(utfall, dom.replaceAll("{filnavn}", sendtBunt));
       }
     } catch (e) {
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
