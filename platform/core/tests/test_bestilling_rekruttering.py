@@ -27,10 +27,15 @@ from .test_outbox_bestilling import _adminsesjon
 pg = pytest.mark.skipif(not DSN, reason="DISPONIT_TEST_DSN ikke satt")
 
 
-def _rekr_policy(migrator_):
+def _rekr_policy(migrator_, *, ved_brudd="unntakskø",
+                 tillatt_for=("bestiller",)):
     """Aktiv policy med rekrutteringshandlingen — bransjemalen +
     `rekruttering.evaluering` (modus auto, persondata tillatt: det er
-    CV-er, og klassen skal være et EKSPLISITT policyvalg)."""
+    CV-er, og klassen skal være et EKSPLISITT policyvalg).
+
+    `ved_brudd`/`tillatt_for` er parametre av samme grunn som i
+    `_wcag_policy`: STOPP-veien er en egen port og må kunne måles uten en
+    andre kopi av riggen."""
     from api import policyregister
     p = _yaml.safe_load(
         (POLICIES / "bransjemal-tjenestebedrift.yaml")
@@ -39,8 +44,8 @@ def _rekr_policy(migrator_):
                         "beskrivelse": "Bestiller evalueringer"})
     p["handlinger"].append({
         "id": "rekruttering.evaluering", "modul": "M-57",
-        "modus": "auto", "ved_brudd": "unntakskø",
-        "tillatt_for": ["bestiller"],
+        "modus": "auto", "ved_brudd": ved_brudd,
+        "tillatt_for": list(tillatt_for),
         "dataklasser_tillatt": ["persondata"],
         "reversering": {"type": "direkte"}})
     policyregister.registrer(migrator_, TENANT, p, p["meta"]["status"])
@@ -468,3 +473,123 @@ def test_to_samtidige_bestillinger_paa_bunten_brenner_en_kvote(
         " oppdragstype='rekruttering.evaluering'", (TENANT,)).fetchone()[0]
     migrator.rollback()
     assert n == 1, "to oppdrag på én engangsbunt"
+
+
+@pg
+def test_gjenspill_av_evalueringsbestillingen_binder_ikke_paa_nytt(
+        klient, migrator, miljo, inndata_rot):
+    """Cursor P2 (b): en retry som mistet svaret får BESLUTNINGEN sin
+    igjen — ikke en ny.
+
+    Formen er outbox-suitens `test_gjenspill_...`, målt på den nye armen:
+    `idempotent-replay: 1`, HELE svaret byte for byte, samme
+    `oppdrag_id`, bunten fortsatt bundet til nøyaktig det oppdraget, og
+    fortsatt bare ÉN committet beslutning. Gjenspillet leses ut av
+    `bestilling_idempotens` FØR forhåndsporten, og det er nettopp derfor
+    en bunt som nå står `bundet` ikke gjør retryen til en 409: porten er
+    en OPPRETTELSES-regel, og et gjenspill oppretter ingenting.
+    """
+    _rekr_policy(migrator)
+    cookie, csrf = _adminsesjon()
+    ref = _bunt(klient, migrator, cookie, csrf)
+    profilref = _profil(migrator)
+    kropp = _evalkropp(ref, profilref)
+    nokkel = "n-" + secrets.token_hex(8)
+
+    r = _bestill(klient, cookie, csrf, kropp, nokkel)
+    assert r.status_code == 200, r.text
+    oid = r.json()["oppdrag_id"]
+    assert r.headers.get("idempotent-replay") is None
+
+    r2 = _bestill(klient, cookie, csrf, kropp, nokkel)
+    assert r2.status_code == 200, r2.text
+    assert r2.headers.get("idempotent-replay") == "1", dict(r2.headers)
+    assert {k: v for k, v in r2.json().items() if k != "request_id"} == \
+        {k: v for k, v in r.json().items() if k != "request_id"}, r2.text
+    assert r2.json()["oppdrag_id"] == oid
+    assert _buntrad(migrator, ref) == ("bundet", oid)
+    assert _beslutninger(migrator) == 1, \
+        "gjenspillet tok en ny beslutning og brente en kvoteplass til"
+
+
+@pg
+def test_stopp_binder_ikke_bunten(klient, migrator, miljo, inndata_rot):
+    """Cursor P2 (c): en beslutning som IKKE er TILLAT rører aldri bunten.
+
+    Bindingen bor i TILLAT-armen, og det er lett å tro at det holder å
+    lese koden. Her måles det: policyen tillater ikke bestilleren og
+    svarer `stopp_og_varsle` → STOPP med strukturert kode, intet oppdrag,
+    og bunten står igjen `lastet` med `oppdrag_id IS NULL` — altså
+    fortsatt fri til å bli bestilt av en lovlig bestilling. Ble den
+    bundet her, var engangsbunten forbrukt av et avslag.
+    """
+    _rekr_policy(migrator, tillatt_for=("konsulent",),
+                 ved_brudd="stopp_og_varsle")
+    cookie, csrf = _adminsesjon()
+    ref = _bunt(klient, migrator, cookie, csrf)
+    profilref = _profil(migrator)
+
+    r = _bestill(klient, cookie, csrf, _evalkropp(ref, profilref))
+    assert r.status_code == 200, r.text
+    svar = r.json()
+    assert svar["beslutning"] == "stopp" and svar["oppdrag_id"] is None, svar
+    assert svar["begrunnelse"], "STOPP uten strukturert kode"
+    assert _buntrad(migrator, ref) == ("lastet", None), \
+        "et avslag forbrukte engangsbunten"
+    _sett_kontekst(migrator, TENANT)
+    n = migrator.execute(
+        "SELECT count(*) FROM oppdrag WHERE tenant=%s AND"
+        " oppdragstype='rekruttering.evaluering'", (TENANT,)).fetchone()[0]
+    migrator.rollback()
+    assert n == 0
+
+
+@pg
+def test_krasj_mellom_beslutning_og_binding_fullfores_av_retryen(
+        klient, migrator, miljo, inndata_rot, monkeypatch):
+    """Cursor P2 (d): dør halen ETTER at kjernen har committet, men FØR
+    oppdraget og bindingen, er bunten fortsatt fri — og retryen fullfører
+    den beslutningen som alt er tatt.
+
+    Krasjet simuleres med den ene veien som allerede ruller tilbake etter
+    kjernens commit (outbox-suitens form): en oppdragstype uten deklarert
+    frist gir 500 og ingen bokføring. Da står kjernens egen idempotensrad
+    som det eneste sporet av forsøket, og gjenopprettingslesingen på
+    klientnøkkelens prefiks er det som får bestillingen i mål.
+
+    Det som måles er kvoteøkonomien: ÉN beslutning totalt, ikke to.
+    Tok retryen en ny beslutning, ville et krasj i dette vinduet kostet
+    kunden to frekvensplasser for én evaluering.
+    """
+    import oppdragskontrakt
+    _rekr_policy(migrator)
+    cookie, csrf = _adminsesjon()
+    ref = _bunt(klient, migrator, cookie, csrf)
+    profilref = _profil(migrator)
+    kropp = _evalkropp(ref, profilref)
+    nokkel = "n-" + secrets.token_hex(8)
+
+    with monkeypatch.context() as mp:
+        mp.setattr(oppdragskontrakt, "utforelsesfrist_s",
+                   lambda *a, **k: None)
+        r = _bestill(klient, cookie, csrf, kropp, nokkel)
+    assert (r.status_code, r.json()["feil"]) == (500, "intern_feil"), r.text
+    assert _beslutninger(migrator) == 1, \
+        "beslutningen skulle vært committet av kjernen"
+    # Bunten er URØRT: bindingen skjer i oppdragets fødselstransaksjon, og
+    # den transaksjonen ble rullet tilbake.
+    assert _buntrad(migrator, ref) == ("lastet", None)
+    _sett_kontekst(migrator, TENANT)
+    assert migrator.execute(
+        "SELECT count(*) FROM bestilling_idempotens WHERE tenant=%s AND"
+        " idempotensnokkel=%s", (TENANT, nokkel)).fetchone()[0] == 0
+    migrator.rollback()
+
+    r2 = _bestill(klient, cookie, csrf, kropp, nokkel)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["beslutning"] == "tillat", r2.text
+    oid = r2.json()["oppdrag_id"]
+    assert oid, r2.text
+    assert _buntrad(migrator, ref) == ("bundet", oid)
+    assert _beslutninger(migrator) == 1, \
+        "retryen tok en NY beslutning i stedet for å gjenspille den gamle"
