@@ -354,8 +354,22 @@ class _Heartbeat:
         gjelder telleren som før. Å regne den ut selv ville vært å speile
         037s formel i klienten: en annen kilde til sannhet om det samme,
         som driver fra hverandre ved neste migrasjon. Det hullet lukkes
-        der det bor (claim-svaret må bære feltet fornyelsen alt
-        returnerer), ikke med ny maskin her — K1, egen sak."""
+        der det bor: claim-svaret må bære feltet fornyelsen alt
+        returnerer — egen sak, egen PR, fordi `/v1/oppdrag/claim` er
+        plattformens DELTE flate (m56 claimer gjennom den) →
+        [#219](https://github.com/moka1980/disponit/issues/219).
+
+        KJENT BEGRENSNING I MELLOMTIDEN, PARKERT AV EIER (K2-kjennelse
+        på #218, valg 3). Telleren feller leasen etter
+        `FORNY_TAPT_ETTER` × `FORNY_INTERVALL_S` = 480 s, mens 037 skrev
+        den initielle leasen som `least(nå + 3600 s, greatest(nå +
+        lease_s, utforelsesfrist))` — for `bunt` (frist 240 min) altså
+        3600 s. MÅLT KONSEKVENS: det kreves at plattformen er
+        SAMMENHENGENDE utilgjengelig gjennom hele de første ~8
+        minuttene av en kjøring, FØR den første vellykkede fornyelsen.
+        Utfallet er fail-closed — en falsk `lease_tapt`, aldri et falskt
+        `utfort`. Se KONTRAKT.md,
+        `dom-klasse: lease-horisont-foer-foerste-fornyelse`."""
         if self._horisont is None:
             return stumme >= FORNY_TAPT_ETTER
         return datetime.now(timezone.utc) >= self._horisont
