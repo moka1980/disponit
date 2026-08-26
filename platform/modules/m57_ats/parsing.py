@@ -14,7 +14,9 @@ plattform-sidens dør inn og slipper bare gjennom det gaten har målt.
 from __future__ import annotations
 
 import io
+import json
 import lzma
+import re
 import zipfile
 import zlib
 from dataclasses import dataclass
@@ -42,6 +44,25 @@ DOCX_PAKKEMEDLEMMER = frozenset({"[Content_Types].xml",
 ARKIVENDELSER = frozenset({
     ".zip", ".tar", ".gz", ".tgz", ".bz2", ".xz", ".7z", ".rar", ".jar"})
 TILLATTE_ENDELSER = frozenset({".pdf", ".docx", ".html", ".htm"})
+
+#: #161 (eiers B): bunten BÆRER sin egen deklarasjon — et lukket
+#: `soknader.json` i roten navngir hver kandidat og filene hens.
+#: Grensene er klarsignalets §4: 1–5000 kandidater.
+MANIFESTNAVN = "soknader.json"
+MAKS_KANDIDATER = 5000
+MAKS_MANIFESTBYTES = 4 * 1024 * 1024
+#: KANDIDAT-ID-ENS LUKKEDE ASCII-KANON (eierdom, K2-kjennelsen på #216 —
+#: valg A). Porten telte før opp TEGNKLASSER å avvise, én runde per
+#: klasse: blanktegn (runde 3), Cf/ZWSP (runde 5), og etter dem sto
+#: RTL-markører, NFKC-ekvivalenter og homoglyfer (`а` U+0430 mot `a`) i
+#: kø. En LUKKET grammatikk dreper hele «to ID-er som ser like ut for et
+#: menneske»-klassen i én dom — og den unngår håndrullede regler over en
+#: fremmed grammatikk (Unicode), som er K4s nabolag. Formen er
+#: KONTRAKT, ikke en fiksdetalj: den står i `kontrakt/KONTRAKT.md`.
+#: Ikke-tom, maks 64 tegn, starter alfanumerisk; alt annet er
+#: `manifest_feilformet`. `fullmatch` gjør at `$`-ens nylinjesmutthull
+#: aldri oppstår.
+KANDIDAT_ID_KANON = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 
 #: Magi per endelse: deklarasjonen og innholdet må være SAMME påstand
 #: («feil innholdstype»-porten).
@@ -157,14 +178,12 @@ def inspiser_bunt(sti: str | Path) -> list[Medlem]:
     med 20 001 tomme mapper og én HTML-søknad gjennom nettopp det
     budsjettet grensen finnes for å holde.
 
-    UTSATT, K1 → #161 — SØKNADSANTALLET er IKKE bundet her. `MAKS_FILER`
-    er 20 000 katalogoppføringer; `antall_soknader` (1–5000) valideres ved
-    bestillingen og leses aldri igjen. Gaten kjenner MEDLEMMER, ikke
-    søkere — én søknad kan være `cv.html` alene eller `cv.html` +
-    `vedlegg.docx`, og hvilken av delene det er, står ikke i en
-    zip-katalog. Å telle filer mot 5000 ville vært å gjette grammatikken
-    (SP-13/K4): en kandidatform kan ikke gjettes ut av katalogen, den må
-    DEKLARERES.
+    LUKKET av #161 (eiers B): søknadsantallet bindes IKKE her — gaten
+    kjenner MEDLEMMER, ikke søkere, og en kandidatform kan ikke gjettes
+    ut av en katalog (SP-13/K4). Den DEKLARERES: `les_manifest` binder
+    buntens eget `soknader.json` toveis mot katalogen, og
+    utførelsesarmen måler deklarert kandidattall mot oppdragets signerte
+    tall FØR strømmen.
 
     UTSATT, K1 → #162 — `MAKS_FILER` måles ETTER at `infolist()` har
     materialisert hver eneste `ZipInfo` (Codex P2). En kompakt zip med
@@ -223,6 +242,29 @@ def inspiser_bunt(sti: str | Path) -> list[Medlem]:
             if info.filename in sett:
                 raise Buntfeil("duplikat_medlem", info.filename)
             sett.add(info.filename)
+            if info.filename == MANIFESTNAVN:
+                # Manifestet er DEKLARASJONEN, ikke en søknad: det er den
+                # ene lovlige .json-en, bor i roten, og størrelses-
+                # begrenses her — resten av gaten (endelse/magi) gjelder
+                # søknadsinnhold og skal ikke se det.
+                if info.file_size > MAKS_MANIFESTBYTES:
+                    raise Buntfeil("manifest_feilformet", "for stort")
+                # …MEN NULL KOMPRIMERT ER ET UENDELIG FORHOLD OGSÅ HER
+                # (Cursor P2, runde 3). `continue` under hoppet over hele
+                # bombe-armen nedenfor, så deklarasjonen var den ene
+                # oppføringen som kunne påstå innhold med `compress_size
+                # = 0` og likevel slippe gaten — nøyaktig hullet den
+                # armen ble skrevet for å lukke, gjenåpnet for fila det
+                # er BILLIGST å forme ondsinnet. Bare null-armen speiles:
+                # ærlig JSON komprimerer over 100:1, og 4 MiB-taket over
+                # binder skaden et ekte forholdstak ikke trengs for.
+                if info.file_size > 0 and info.compress_size <= 0:
+                    raise Buntfeil("komprimeringsforhold", info.filename)
+                total += info.file_size
+                if total > MAKS_TOTAL_UTPAKKET:
+                    raise Buntfeil("total_for_stor", info.filename)
+                medlemmer.append(Medlem(info.filename, info.file_size))
+                continue
             endelse = _endelse(info.filename)
             if endelse in ARKIVENDELSER:
                 raise Buntfeil("nostet_arkiv", info.filename)
@@ -401,7 +443,11 @@ def les_porsjonsvis(sti: str | Path, *, porsjon: int = 200):
         # medlemmene — ellers finansierte hver mappe i den ytre bunten
         # et indre docx-medlem gratis (Codex P2).
         filer = len(zf.infolist())
-        for nr, medlem in enumerate(medlemmer, start=1):
+        # Manifestet er DEKLARASJON, ikke søknadsinnhold (#161): det
+        # leses av `les_manifest`, aldri av innholdsstrømmen — teller
+        # hverken som fremdrift eller tekst.
+        innhold = [m for m in medlemmer if m.navn != MANIFESTNAVN]
+        for nr, medlem in enumerate(innhold, start=1):
             biter: list[bytes] = []
             lest = 0
             try:
@@ -445,6 +491,20 @@ def les_porsjonsvis(sti: str | Path, *, porsjon: int = 200):
                         if total + lest > MAKS_TOTAL_UTPAKKET:
                             raise Buntfeil("total_for_stor", medlem.navn)
                         biter.append(bit)
+            # OG NAVNET SLÅS OPP DER UTTREKKET SKJER (Cursor P1). Dette er
+            # SISTE stedet i klassen `les_manifest`s `KeyError`-port og
+            # `kart.get` i `kjoring.py` alt lukker: `inspiser_bunt` bygde
+            # `medlemmer` fra ÉN åpning av arkivet, og løkken her slår
+            # navnet opp i navnekartet til en ANNEN. Divergerer de to —
+            # fila byttet i vinduet mellom dem — reiser `zipfile` en rå
+            # `KeyError` som ingen av armene under kjente, og den falt til
+            # `kjor_bunt`s catch-all: `modellfeil` om en bunt modellen
+            # aldri fikk se. Et deklarert medlem vi ikke finner ved
+            # uttrekk ER `manifest_medlem_mangler` — samme ord som
+            # toveisbindingen bruker for nøyaktig samme fravær.
+            except KeyError as feil:
+                raise Buntfeil("manifest_medlem_mangler",
+                               medlem.navn) from feil
             except zipfile.BadZipFile as feil:
                 raise Buntfeil("korrupt_bunt",
                                f"{medlem.navn}: {feil}") from feil
@@ -525,10 +585,148 @@ def les_porsjonsvis(sti: str | Path, *, porsjon: int = 200):
                     filer_brukt=filer, byte_brukt=total)
                 total += utpakket
                 filer += indre
-            if nr % porsjon == 0 or nr == len(medlemmer):
+            if nr % porsjon == 0 or nr == len(innhold):
                 fremdrift = {"filer_lest": nr,
-                             "filer_totalt": len(medlemmer),
+                             "filer_totalt": len(innhold),
                              "byte_lest": total}
             else:
                 fremdrift = None
             yield fremdrift, medlem, data
+
+
+def les_manifest(sti: str | Path,
+                 medlemmer: list[Medlem]) -> dict[str, str]:
+    """#161 (eiers B): les og bind `soknader.json` mot katalogen, BEGGE
+    veier, før én byte søknadsinnhold pakkes ut.
+
+    -> {medlemsnavn: kandidat_id} for hvert innholdsmedlem.
+
+    Lukket form: toppobjekt med NØYAKTIG nøkkelen `soknader`, en liste
+    (1–MAKS_KANDIDATER) av objekter med NØYAKTIG `kandidat_id` (unik, og
+    på `KANDIDAT_ID_KANON`s lukkede ASCII-form) og `filer` (ikke-tom
+    liste av tekst, globalt unike). Alt annet — ukjente nøkler, feil
+    typer, duplikater — er `manifest_feilformet`: en deklarasjon vi ikke
+    forstår fullt ut er ingen deklarasjon.
+
+    Toveisbindingen er dommen fra #153: et manifest-navn uten medlem
+    (`manifest_medlem_mangler`) og et medlem uten manifest-linje
+    (`medlem_uadressert`) er like røde — «den så ut som en søknad» er
+    ikke en inspeksjon. Manifestet adresserer aldri seg selv.
+    """
+    navnene = {m.navn for m in medlemmer}
+    if MANIFESTNAVN not in navnene:
+        raise Buntfeil("manifest_mangler")
+    # LESINGEN AV MANIFESTET ER EN LESING SOM ALLE ANDRE (Cursor P1).
+    # `_apne_katalog` dekker ÅPNINGEN av sentralkatalogen, ikke uttrekket
+    # av et medlem: en CRC-skadet, kryptert eller uleselig `soknader.json`
+    # feller `zf.read` med bibliotekets egne former — `BadZipFile`,
+    # dekompressorens `zlib.error`/`lzma.LZMAError`/errno-løse `OSError`,
+    # og `RuntimeError`/`NotImplementedError` for passord og manglende
+    # komprimering. Alle gikk rå forbi denne linja til `kjor_bunt`s
+    # catch-all og ble meldt som `modellfeil` — samme klasse som
+    # «lagring/dekompresjon ≠ modell»: en bunt vi ikke kan lese er kundens
+    # avviste bunt med kode (SP-3), aldri en påstand om at MODELLEN sviktet.
+    # `OSError` MED errno slipper gjennom som seg selv av samme grunn som i
+    # `les_porsjonsvis`: en lesefeil på disk eller nettlager er DRIFT, ikke
+    # buntens skyld.
+    #
+    # At oversettelsen nå står to steder er den kjente divergensrisikoen
+    # (`_inspiser_docx`, ni runder): den konsolideres når #155 gjør gaten
+    # til én strømmende vei brukt rekursivt — ikke som ny maskin i en
+    # fiksrunde (K1).
+    try:
+        with _apne_katalog(sti) as zf:
+            raa = zf.read(MANIFESTNAVN)
+    except KeyError as feil:
+        # …OG FRAVÆRET MÅLES DER UTTREKKET SKJER (Cursor P1, runde 2).
+        # Linja over slår opp `MANIFESTNAVN` i `medlemmer` — en katalog
+        # ANDRE leste — mens `zf.read` åpner arkivet PÅ NYTT og slår opp i
+        # sitt eget navnekart. Divergerer de to (fila byttet i vinduet
+        # mellom `inspiser_bunt` og her, eller en `medlemmer`-liste som
+        # ikke kom fra denne bunten), reiser `zipfile` en `KeyError` som
+        # gikk rå til `kjor_bunt`s catch-all: `modellfeil` om en bunt
+        # modellen aldri fikk se. Samme klasse som `kart.get` i
+        # `kjoring.py` — en garanti målt ett sted er ingen garanti det
+        # andre. En deklarasjon vi ikke finner, ER `manifest_mangler`.
+        raise Buntfeil("manifest_mangler", MANIFESTNAVN) from feil
+    except zipfile.BadZipFile as feil:
+        raise Buntfeil("korrupt_bunt", f"{MANIFESTNAVN}: {feil}") from feil
+    except (zlib.error, lzma.LZMAError) as feil:
+        raise Buntfeil("korrupt_bunt",
+                       f"{MANIFESTNAVN}: {type(feil).__name__}") from feil
+    except OSError as feil:
+        if feil.errno is not None:
+            raise
+        raise Buntfeil("korrupt_bunt",
+                       f"{MANIFESTNAVN}: {type(feil).__name__}") from feil
+    except (RuntimeError, NotImplementedError) as feil:
+        raise Buntfeil("uleselig_medlem",
+                       f"{MANIFESTNAVN}: {type(feil).__name__}") from feil
+    # TAKET MÅLES PÅ BYTENE, IKKE BARE PÅ PÅSTANDEN (Cursor P2, runde 4).
+    # `inspiser_bunt` håndhever `MAKS_MANIFESTBYTES` på `info.file_size`,
+    # og det er KATALOGENS påstand — nøyaktig det strømmen ikke stoler på
+    # for søknadsinnhold, der `lest > MAKS_ENKELTFIL` måles på de faktiske
+    # bytene av samme grunn. Deklarasjonsarmen manglet den speilingen:
+    # katalogen `inspiser_bunt` leste er ikke nødvendigvis den `zf.read`
+    # åpner (fila byttet i vinduet, eller en `medlemmer`-liste fra en
+    # annen lesning — samme divergens `manifest_mangler`-porten over
+    # finnes for), og da var taket bare en påstand vi hadde tatt for god
+    # fisk. Vi måler det vi faktisk holder.
+    if len(raa) > MAKS_MANIFESTBYTES:
+        raise Buntfeil("manifest_feilformet", "for stort")
+    try:
+        data = json.loads(raa.decode("utf-8"))
+    # JSON-DYBDE ER OGSÅ EN FORM (Cursor P1, runde 2). `json` melder
+    # SYNTAKS som `ValueError`, men NØSTING som `RecursionError` — og den
+    # er ingen `ValueError`. Noen tusen `[` innenfor `MAKS_MANIFESTBYTES`
+    # (4 MiB rommer millioner) feller dermed dekoderen med et unntak som
+    # gikk rått til `kjor_bunt`s catch-all og ble meldt som `modellfeil`.
+    # Deklarasjonen er den delen av bunten som er BILLIGST å forme
+    # ondsinnet, så feil kø her er feil kø for et angrep: en deklarasjon
+    # vi ikke kan lese, er `manifest_feilformet` — uansett om det er
+    # tegnene eller dybden vi ikke kommer gjennom.
+    except (UnicodeDecodeError, ValueError, RecursionError) as feil:
+        raise Buntfeil("manifest_feilformet", "uleselig json") from feil
+    if not isinstance(data, dict) or set(data) != {"soknader"} \
+            or not isinstance(data["soknader"], list):
+        raise Buntfeil("manifest_feilformet", "lukket form")
+    soknader = data["soknader"]
+    if not 1 <= len(soknader) <= MAKS_KANDIDATER:
+        raise Buntfeil("manifest_feilformet",
+                       f"kandidattall {len(soknader)}")
+    kart: dict[str, str] = {}
+    sett_kandidater: set[str] = set()
+    for rad in soknader:
+        if not isinstance(rad, dict) or set(rad) != {"kandidat_id",
+                                                     "filer"}:
+            raise Buntfeil("manifest_feilformet", "lukket kandidatform")
+        kid, filer = rad["kandidat_id"], rad["filer"]
+        # ÉN LUKKET KANON, IKKE ÉN TEGNKLASSE PER RUNDE (eierdom, valg A
+        # på #216). Porten sto før som `not kid.strip() or kid !=
+        # kid.strip()` — den avviste blanktegn, men U+200B og resten av
+        # Cf er lovlige, ULIKE nøkler `strip()` ikke rører, så `"k1"` og
+        # `"k1<U+200B>"` var to lovlige kandidater i samme deklarasjon.
+        # Klassen «to ID-er som ser like ut for et menneske» er ubundet
+        # så lenge vi teller opp hva vi avviser; den er lukket i det
+        # øyeblikket vi sier hva vi GODTAR. `KANDIDAT_ID_KANON` erstatter
+        # begge betingelsene (flaten krymper), og vi avviser fortsatt i
+        # stedet for å kanonisere: én vei inn, og bunten som mente `"k1"`
+        # sier `"k1"`.
+        if not isinstance(kid, str) \
+                or not KANDIDAT_ID_KANON.fullmatch(kid) \
+                or kid in sett_kandidater:
+            raise Buntfeil("manifest_feilformet", "kandidat_id")
+        sett_kandidater.add(kid)
+        if not isinstance(filer, list) or not filer:
+            raise Buntfeil("manifest_feilformet", f"filer for {kid}")
+        for navn in filer:
+            if not isinstance(navn, str) or navn in kart \
+                    or navn == MANIFESTNAVN:
+                raise Buntfeil("manifest_feilformet", str(navn))
+            if navn not in navnene:
+                raise Buntfeil("manifest_medlem_mangler", navn)
+            kart[navn] = kid
+    uadressert = navnene - set(kart) - {MANIFESTNAVN}
+    if uadressert:
+        raise Buntfeil("medlem_uadressert", sorted(uadressert)[0])
+    return kart

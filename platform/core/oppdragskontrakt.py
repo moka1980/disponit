@@ -902,13 +902,10 @@ FELTGRENSER: dict[str, dict[str, tuple[int, int]]] = {
     # aldri stille avkorting (katalogens løfte er «opptil 5000», og et
     # oppdrag som fikk 5001 har alt brutt det før parseren startet).
     #
-    # UTSATT, K1 → #161: grensen måler det BESTILLEREN OPPGIR, ikke
-    # bunten. Et oppdrag som sier `antall_soknader: 1` og peker på en zip
-    # med 5001 CV-er passerer her, og arkivgaten teller
-    # katalogoppføringer (20 000), ikke søknader. Eiers avgjørelse: B —
-    # bunten bærer et manifest (`soknader.json`), og utførelsesarmen
-    # avviser der `len(kandidater)` spriker fra dette tallet. Rotårsaken
-    # og B-formen står i `inspiser_bunt`s docstring og i #161.
+    # LUKKET av #161 (eiers B): grensen her måler det BESTILLEREN
+    # OPPGIR; bunten bindes av sitt eget manifest (`soknader.json`,
+    # `les_manifest` — toveis mot katalogen), og utførelsesarmen avviser
+    # der deklarert kandidattall spriker fra dette tallet, før strømmen.
     "rekruttering.evaluering": {
         "antall_soknader": (1, 5000),
         # Kandidatdatagrensen (klarsignalet §5 / 057:34): 30–365 døgn,

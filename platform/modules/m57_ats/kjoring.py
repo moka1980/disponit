@@ -122,8 +122,9 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
     "fremdrift": {...}} — eller Kjoringsfeil, aldri noe imellom.
 
     `kandidatfelter_for(medlem)` er innslaget fra den strukturerte
-    søknaden (blindingens kilde); kandidat-id er medlemsstiens første
-    ledd (én mappe per kandidat, m56-fasitformen).
+    søknaden (blindingens kilde); kandidat-identiteten er MANIFESTETS
+    (#161, `soknader.json` — `les_manifest`-kartet), aldri medlemsstiens
+    mappenavn.
 
     `tekst_for(medlem, data)` ER TEKSTUTTREKKET, OG DET ER PÅKREVD
     (Codex P1). To av de tre lovede innholdstypene er BINÆRE: en docx er
@@ -191,7 +192,29 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
         # innsnevringen tok den modellens egne nettverksfeil med seg samme
         # vei, og da leter driften etter et lagringsavbrudd som aldri fant
         # sted. Kilden avgjør koden, og kilden er hvor unntaket oppsto.
+        #
+        # …OG DEKLARASJONEN ER NÅ DEL AV ARKIVGATEN (Cursor P1, runde 4).
+        # #161 la arkivlesing FORAN strømmen — `inspiser_bunt` og
+        # `les_manifest` åpner begge bunten på lageret — men lot de to
+        # linjene stå UTENFOR denne `try`-en. `les_manifest` slipper med
+        # vilje en `OSError` MED errno rått ut, av nøyaktig samme grunn
+        # som `les_porsjonsvis` gjør det: en lesefeil på disk eller
+        # nettlager er DRIFT, ikke buntens skyld. Utenfor gaten hadde den
+        # ingen håndterer å lande i, og catch-allen nederst meldte den
+        # som `modellfeil` — feil kø og feil alarm for en bunt modellen
+        # aldri fikk se, altså samme klasse som allerede er lukket for
+        # strømmen. Gaten flyttes ikke og oversettelsen dupliseres ikke:
+        # lesingen flyttes inn i håndtereren som alt eier den.
         try:
+            # #161 (eiers B): kandidatene DEKLARERES av buntens eget
+            # `soknader.json` og bindes toveis mot katalogen FØR én byte
+            # innhold pakkes ut — «den så ut som en søknad» er ikke en
+            # inspeksjon. Deklarert kandidattall måles mot oppdragets
+            # signerte tall her, foran strømmen: et avvik er en ugyldig
+            # bunt, aldri et resultat.
+            kart = parsing.les_manifest(sti, parsing.inspiser_bunt(sti))
+            if len(set(kart.values())) != antall_soknader:
+                raise Kjoringsfeil("kandidattall_avvik", fremdrift)
             for merke, medlem, data in parsing.les_porsjonsvis(sti):
                 # FREMDRIFTEN TELLER MEDLEMMER, IKKE SJEKKPUNKTER (Codex P2).
                 # `les_porsjonsvis` leverer et merke bare hver 200. fil og på
@@ -207,16 +230,26 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
                 fremdrift = (dict(merke) if merke
                              else {**fremdrift, "filer_lest": lest})
                 navn = medlem.navn.replace("\\", "/")
-                kandidat_id = navn.split("/")[0]
-                # OVERSKYTENDE FELLES I STRØMMEN (Codex P2): dommen ved
-                # strømslutt alene lot «deklarer 1, lever 20 000» tvinge
-                # uttrekk og akkumulering av alt FØR den kodede stoppen
-                # — med udokumentert minne kunne det bli OOM i stedet.
-                # Motsatt avvik (færre enn deklarert) kan bare måles ved
-                # slutt og står der det sto.
-                if kandidat_id not in biter \
-                        and len(biter) >= antall_soknader:
-                    raise Kjoringsfeil("kandidattall_avvik", fremdrift)
+                # Kandidaten er MANIFESTETS dom, aldri mappenavnets
+                # (#161): toveisbindingen over garanterer at hvert
+                # strømmet medlem har nøyaktig én linje i kartet, og
+                # tallporten foran strømmen har alt målt deklarert mot
+                # signert — in-strøm-tellingen fra #210 er dermed
+                # AVLØST, ikke fjernet: dens jobb gjøres nå før uttrekk
+                # i det hele tatt starter.
+                #
+                # …men OPPSLAGET FEILER KODET, IKKE MED KeyError (Cursor
+                # P2). `kart[...]` leste garantien som om den var målt
+                # her: bindingen skjedde mot `inspiser_bunt`s katalog, og
+                # `les_porsjonsvis` åpner arkivet PÅ NYTT. Byttes fila i
+                # vinduet mellom dem — eller divergerer de to lesningene
+                # av en annen grunn — er et umatchet medlem nøyaktig det
+                # `medlem_uadressert` finnes for; `KeyError` ga i stedet
+                # catch-allens `modellfeil`, altså feil kø og feil alarm
+                # for en bunt modellen aldri fikk se.
+                kandidat_id = kart.get(medlem.navn)
+                if kandidat_id is None:
+                    raise Kjoringsfeil("medlem_uadressert", fremdrift)
                 biter.setdefault(kandidat_id, []).append(
                     (navn, medlem.navn,
                      _tekst(tekst_for, medlem, data, fremdrift),
@@ -239,25 +272,42 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
             if feil.errno is None:
                 raise Kjoringsfeil("modellfeil", fremdrift) from feil
             raise Kjoringsfeil("infrastrukturfeil", fremdrift) from feil
-        # EN BUNT UTEN KANDIDATER ER IKKE EN FULLFØRT EVALUERING (Codex P2).
-        # Er zip-en tom, eller bærer den bare katalogoppføringer, yielder
-        # `les_porsjonsvis` ingenting: `biter` blir tom, løkken under kjører
-        # aldri, `ranger({}, ...)` gir en tom liste — og kjøringen returnerte
-        # et VELLYKKET utfall med tom rangering og tomt artefaktkart. Da har
-        # oppdraget «lyktes» uten at én eneste søknad ble vurdert, og
-        # promoteringsvakten i 056 får en gyldig, tom liste å slippe videre.
-        # Kontrakten sier `antall_soknader` er 1–5000 (payload-skjemaet), så
-        # null kandidater er per definisjon en ugyldig bunt — og en ugyldig
-        # bunt er SP-3s kodede utfall, aldri et resultat.
-        if not biter:
-            raise Kjoringsfeil("tom_bunt", fremdrift)
-        # DEKLARERT == UTLEDET (Codex P1 på #210): `antall_soknader` er
-        # bestillingens signerte tall og var frem til nå aldri lest igjen
-        # — en kaller kunne deklarere 1 og levere tusenvis, forbi både
-        # policyens arbeidsmengde-dom og 5000-taket. Kandidatutledningen
-        # (én toppmappe per kandidat) er buntens faktiske innhold; et
-        # avvik er en ugyldig bunt, aldri et resultat. #161s manifest
-        # ERSTATTER utledningen — invarianten her består.
+        # `tom_bunt` ER FJERNET — EIERDOM (K2-kjennelse på #216, valg B).
+        # Tre uavhengige vakter leste samme tilstand etter strømløkken, så
+        # det var REKKEFØLGEN, ikke tilstedeværelsen, som avgjorde hvilket
+        # ord en divergens fikk. Forsvant ALLE deklarerte medlemmer mellom
+        # bindingen og `les_porsjonsvis`, ble `biter` tom, og `if not biter`
+        # stjal utfallet fra vakten under: en bunt som DEKLARERTE
+        # kandidater ble meldt «tom» i stedet for `manifest_medlem_mangler`.
+        # Vakten var dessuten alt død for sitt opprinnelige formål — #161
+        # feller tom zip og bare-kataloger som `manifest_mangler` FØR
+        # strømmen — og en vakt som per konstruksjon aldri kan fyre riktig
+        # er ikke et vern, det er støy. Dommen fjerner overlappet i stedet
+        # for å stokke det: manifestporten er frontdøren mot «aldri et
+        # vellykket tomt utfall», `lest != len(kart)` eier divergensen, og
+        # `len(biter) != antall_soknader` står som eneste defense bak den.
+        #
+        # TOVEIS MIDT I FLUKT VAR BARE ÉN VEI (Cursor P2). Oppslaget over
+        # feller et medlem strømmen har og kartet mangler; den OMVENDTE
+        # divergensen — kartet deklarerer filer strømmen aldri yielder —
+        # hadde ingen måling i det hele tatt. Mister arkivet et deklarert
+        # medlem i vinduet mellom bindingen og `les_porsjonsvis`, mens
+        # hver kandidat beholder minst én fil, treffer `len(biter)`
+        # fortsatt `antall_soknader`: kjøringen LYKKES, og en kandidat
+        # evalueres på et halvt dokumentsett uten at noen sa fra.
+        #
+        # `les_porsjonsvis` yielder nøyaktig innholdsmedlemmene
+        # (manifestet er filtrert bort der), så `lest` og `len(kart)` er
+        # samme tall i en hel bunt. Koden er `les_manifest`s egen for
+        # nettopp denne retningen — deklarert navn uten medlem — så de to
+        # veiene beholder hvert sitt ord uansett hvor divergensen dukker
+        # opp: `medlem_uadressert` den ene veien, `manifest_medlem_mangler`
+        # den andre.
+        if lest != len(kart):
+            raise Kjoringsfeil("manifest_medlem_mangler", fremdrift)
+        # Sluttporten står som DEFENSE (mekanismen er nå manifestets
+        # toveisbinding + tallporten foran strømmen): faller de, skal
+        # dette aldri passere stille.
         if len(biter) != antall_soknader:
             raise Kjoringsfeil("kandidattall_avvik", fremdrift)
         for kandidat_id in sorted(biter):

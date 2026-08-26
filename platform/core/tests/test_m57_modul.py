@@ -27,8 +27,25 @@ ROT = Path(__file__).resolve().parents[3]
 MODULROT = ROT / "platform/modules/m57_ats"
 
 
+def _manifest(filer: list[tuple]) -> str:
+    """#161: buntens deklarasjon, utledet av RIGGENS egen filliste —
+    testen deklarerer (topmappe = kandidat, riggens etablerte form);
+    produksjonen gjetter aldri. Poster uten mappeprefiks (angreps-/
+    grensefixturer) adresseres som sin egen kandidat."""
+    import json as _json
+    kandidater: dict[str, list[str]] = {}
+    for navn, _innhold, *_a in filer:
+        if navn.endswith("/"):
+            continue
+        kid = navn.replace("\\", "/").split("/")[0]
+        kandidater.setdefault(kid, []).append(navn)
+    return _json.dumps({"soknader": [
+        {"kandidat_id": k, "filer": v} for k, v in kandidater.items()]})
+
+
 def _bunt(sti: Path, filer: list[tuple], *,
-          metode: int = zipfile.ZIP_DEFLATED, **zipkw) -> Path:
+          metode: int = zipfile.ZIP_DEFLATED,
+          manifest: str | None | bool = True, **zipkw) -> Path:
     arkiv = sti / "bunt.zip"
     with zipfile.ZipFile(arkiv, "w", metode, **zipkw) as zf:
         for navn, innhold, *attr in filer:
@@ -37,6 +54,12 @@ def _bunt(sti: Path, filer: list[tuple], *,
             if attr:
                 info.external_attr = attr[0]
             zf.writestr(info, innhold)
+        # #161: manifest=True → riggen deklarerer; manifest=<str> → rå
+        # innhold (negativer); manifest=None → utelatt med vilje.
+        if manifest is True:
+            zf.writestr("soknader.json", _manifest(filer))
+        elif isinstance(manifest, str):
+            zf.writestr("soknader.json", manifest)
     return arkiv
 
 
@@ -139,7 +162,7 @@ def test_port22_sti_utenfor_bunten(tmp_path):
     # Positiv kontroll: en lovlig undermappe-sti går.
     ok = _bunt(tmp_path, [("kandidat1/cv.pdf", _pdf())])
     assert [m.navn for m in parsing.inspiser_bunt(ok)] == \
-        ["kandidat1/cv.pdf"]
+        ["kandidat1/cv.pdf", "soknader.json"]
     ok.unlink()
     # Codex P2 (runde 20): en MAPPEOPPFØRING er også en oppføring. Porten
     # måler katalogen, ikke utvalget vi pakker ut — mappene ble filtrert
@@ -169,7 +192,7 @@ def test_port22_sti_utenfor_bunten(tmp_path):
     # funn, og den skal fortsatt ikke telle som en søknad.
     ok = _bunt(tmp_path, [("kandidat1/", b""), ("kandidat1/cv.pdf", _pdf())])
     assert [m.navn for m in parsing.inspiser_bunt(ok)] == \
-        ["kandidat1/cv.pdf"]
+        ["kandidat1/cv.pdf", "soknader.json"]
 
 
 def test_port23_symlenke_avvises(tmp_path):
@@ -511,7 +534,10 @@ def test_port26_mapper_teller_i_filbudsjettet(tmp_path):
     MUTASJONEN SOM DREPER DENNE: mål `len(infos)` (de filtrerte) i
     stedet for `len(alle)` i `inspiser_bunt`."""
     mapper = [(f"m{n}/", b"") for n in range(parsing.MAKS_FILER)]
-    arkiv = _bunt(tmp_path, mapper + [("cv.html", b"<p>x</p>")])
+    # manifest=None: porten måler KATALOGARBEIDET, og fixturet står
+    # nøyaktig på taket — deklarasjonen er ikke det som måles her.
+    arkiv = _bunt(tmp_path, mapper + [("cv.html", b"<p>x</p>")],
+                  manifest=None)
     with pytest.raises(parsing.Buntfeil) as e:
         parsing.inspiser_bunt(arkiv)
     assert e.value.kode == "for_mange_filer"
@@ -519,7 +545,8 @@ def test_port26_mapper_teller_i_filbudsjettet(tmp_path):
     # Positiv kontroll: samme form, én oppføring under taket — mappene
     # er fortsatt ikke medlemmer, de er bare betalt for.
     faerre = mapper[:parsing.MAKS_FILER - 1]
-    ok = _bunt(tmp_path, faerre + [("cv.html", b"<p>x</p>")])
+    ok = _bunt(tmp_path, faerre + [("cv.html", b"<p>x</p>")],
+               manifest=None)
     assert [m.navn for m in parsing.inspiser_bunt(ok)] == ["cv.html"]
 
 
@@ -563,7 +590,7 @@ def test_port21_null_komprimert_er_ikke_fritak(tmp_path):
     arkiv.unlink()
     # Positiv kontroll: en TOM fil er lovlig — null ut av null er ikke
     # en bombe, og porten skal ikke felle den.
-    tom = _bunt(tmp_path, [("tom.html", b"")])
+    tom = _bunt(tmp_path, [("tom.html", b"")], manifest=None)
     assert [m.navn for m in parsing.inspiser_bunt(tom)] == ["tom.html"]
 
 
@@ -666,7 +693,8 @@ def test_en_ulesbar_ytre_katalog_er_et_kodet_utfall(tmp_path, skade, kode):
     begynner inne i medlemssløyfa. Kontrakten er et KODET utfall (SP-3),
     aldri en uventet arbeiderfeil, og porten måler BEGGE de ytre
     åpningsstedene: gaten og strømmen."""
-    arkiv = _bunt(tmp_path, [("a.html", b"<p>a</p>"), ("b.html", b"<p>b</p>")])
+    arkiv = _bunt(tmp_path, [("a.html", b"<p>a</p>"), ("b.html", b"<p>b</p>")],
+                  manifest=None)
     assert len(parsing.inspiser_bunt(arkiv)) == 2   # positiv kontroll
     _patch_katalogpost(arkiv, b"b.html", skade)
     # Forutsetningen funnet hviler på: porten over sier fortsatt JA, så
@@ -1534,7 +1562,11 @@ def test_m57_har_EN_modulidentitet_i_kontrakt_migrasjon_og_artefakt():
 def test_deklarert_antall_bindes_til_buntens_kandidater(tmp_path):
     """Codex P1 på #210: `antall_soknader` er bestillingens signerte tall
     og ble aldri lest i kjøringen — deklarer 1, lever 2, og policyens
-    arbeidsmengde-dom var forbigått. Avvik = kodet stopp, begge veier."""
+    arbeidsmengde-dom var forbigått. Avvik = kodet stopp, begge veier.
+
+    Og etter #161 faller dommen FØR STRØMMEN: manifestet deklarerer
+    kandidatene, så tallet måles mot det signerte uten at én byte innhold
+    er pakket ut."""
     from modules.m57_ats import kjoring
 
     arkiv = _bunt(tmp_path, [
@@ -1557,11 +1589,14 @@ def test_deklarert_antall_bindes_til_buntens_kandidater(tmp_path):
                               antall_soknader=deklarert)
         assert e.value.kode == "kandidattall_avvik"
         assert e.value.fremdrift, "evidensen mangler i utfallet"
-        if deklarert == 1:
-            # …og dommen faller I STRØMMEN (Codex P2, runde 2): kandidat
-            # nr. deklarert+1 skal felles FØR uttrekket hans — «deklarer
-            # 1, lever 20 000» skal aldri få tvunget uttrekk av alt.
-            assert len(uttrukket) <= 1, uttrukket
+        # PORTEN ER FORAN STRØMMEN, IKKE I DEN (Cursor P2 på #161).
+        # `len(uttrukket) <= 1` var runde 2s port på in-strøm-tellingen,
+        # og den er AVLØST: #161 måler deklarert mot signert på
+        # manifestet, før uttrekket i det hele tatt starter. Under den
+        # gamle grensen slapp en regresjon som leser én fil før stopp
+        # gjennom — og «deklarer 1, lever 20 000» skal ikke koste én fil
+        # heller. Målingen er derfor null, begge veier.
+        assert uttrukket == [], uttrukket
     # Positiv kontroll: riktig deklarasjon kjører helt igjennom.
     helt = kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
                              kandidatfelter_for=felter, tekst_for=uttrekk,
@@ -1961,6 +1996,49 @@ def test_lesefeil_paa_lageret_tilskrives_ikke_modellen(tmp_path, monkeypatch):
     assert e.value.kode == "modellfeil"
 
 
+def test_lesefeil_under_deklarasjonen_er_ogsaa_drift(tmp_path, monkeypatch):
+    """Cursor P1 (runde 4) på #161: lagringsutfallet gjaldt bare strømmen.
+
+    #161 la arkivlesing FORAN strømmen — `inspiser_bunt` + `les_manifest`
+    — men utenfor den indre `try`-en som oversetter `OSError` MED errno
+    til `infrastrukturfeil`. `les_manifest` slipper den formen rått ut med
+    vilje (drift, ikke bunt), så en EIO under lesing av `soknader.json`
+    fant ingen håndterer og falt til catch-allen: `modellfeil` om en bunt
+    modellen aldri fikk se. Nøyaktig klassen
+    `test_lesefeil_paa_lageret_tilskrives_ikke_modellen` lukket for
+    strømmen, gjenåpnet av den nye porten foran den.
+
+    MUTASJONEN SOM DREPER DENNE: flytt `les_manifest`-linja ut av den
+    indre `try`-en i `kjor_bunt` igjen.
+    """
+    from modules.m57_ats import kjoring
+
+    ekte_read = zipfile.ZipFile.read
+
+    def _lageret_roeyker(self, navn, pwd=None):
+        # Bare deklarasjonen røyker: gaten foran den har alt lest
+        # katalogen, så feilen treffer nøyaktig den nye lesingen.
+        if getattr(navn, "filename", navn) == parsing.MANIFESTNAVN:
+            raise OSError(errno.EIO, "Input/output error")
+        return ekte_read(self, navn, pwd)
+
+    monkeypatch.setattr(zipfile.ZipFile, "read", _lageret_roeyker)
+    modell = _Modell()
+    arkiv = _bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>")])
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
+                          kandidatfelter_for=lambda m: {"navn": ["N"]},
+                          tekst_for=lambda m, d: d.decode("utf-8"),
+                          biasmaalinger=_MAALINGER, antall_soknader=1)
+    assert e.value.kode == "infrastrukturfeil", (
+        "en lesefeil under deklarasjonen er drift, ikke modellens feil")
+    assert isinstance(e.value.__cause__, OSError)
+    assert e.value.__cause__.errno == errno.EIO
+    # Bunten nådde aldri modellen — evidensen skal si det samme.
+    assert modell.sett == []
+    assert e.value.fremdrift["filer_lest"] == 0
+
+
 def test_modellens_egen_nettverksfeil_er_ikke_en_driftssak(tmp_path):
     """Codex P2: lagringshåndtereren dekket også modellkallet.
 
@@ -2090,7 +2168,573 @@ def test_feltuttrekk_som_gir_annet_kart_enn_dict_slipper_gjennom(tmp_path):
         assert modell.sett and "Kari" not in modell.sett[0]
 
 
-def test_bunt_uten_kandidater_er_kodet_feil_ikke_tomt_resultat(tmp_path):
+def test_manifestet_er_deklarasjonen_og_binder_toveis(tmp_path):
+    """#161 (eiers B): kandidatene deklareres av `soknader.json`, bindes
+    toveis mot katalogen, og manifestet — ikke mappenavnet — eier
+    kandidat-identiteten."""
+    import json as _json
+
+    from modules.m57_ats import kjoring
+
+    def _kjor(arkiv, antall=1):
+        return kjoring.kjor_bunt(
+            arkiv, _Modell(), vekter={"drift": 3},
+            kandidatfelter_for=lambda m: {"navn": ["N"]},
+            tekst_for=lambda m, d: d.decode("utf-8"),
+            biasmaalinger=_MAALINGER, antall_soknader=antall)
+
+    # Manifestet er AUTORITETEN: en fil i «feil» mappe hører til den
+    # kandidaten deklarasjonen sier — mappenavnet betyr ingenting.
+    (tmp_path / "a").mkdir()
+    arkiv = _bunt(tmp_path / "a",
+                  [("k1/cv.html", b"<p>drift</p>"),
+                   ("annet/brev.html", b"<p>mer drift</p>")],
+                  manifest=_json.dumps({"soknader": [
+                      {"kandidat_id": "kari",
+                       "filer": ["k1/cv.html", "annet/brev.html"]}]}))
+    ut = _kjor(arkiv)
+    assert set(ut["artefakter"]) == {"kari"}, \
+        "mappenavnet vant over deklarasjonen"
+
+    # Toveis: deklarert fil uten medlem er rød …
+    (tmp_path / "b").mkdir()
+    arkiv = _bunt(tmp_path / "b", [("k1/cv.html", b"<p>x</p>")],
+                  manifest=_json.dumps({"soknader": [
+                      {"kandidat_id": "k1",
+                       "filer": ["k1/cv.html", "k1/finnes_ikke.pdf"]}]}))
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        _kjor(arkiv)
+    assert e.value.kode == "manifest_medlem_mangler"
+
+    # … og medlem uten deklarasjon er like rødt.
+    (tmp_path / "c").mkdir()
+    arkiv = _bunt(tmp_path / "c",
+                  [("k1/cv.html", b"<p>x</p>"),
+                   ("smugler/ekstra.html", b"<p>y</p>")],
+                  manifest=_json.dumps({"soknader": [
+                      {"kandidat_id": "k1", "filer": ["k1/cv.html"]}]}))
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        _kjor(arkiv)
+    assert e.value.kode == "medlem_uadressert"
+
+    # Deklarert tall mot signert tall måles FØR strømmen.
+    (tmp_path / "d").mkdir()
+    arkiv = _bunt(tmp_path / "d",
+                  [("k1/cv.html", b"<p>x</p>"),
+                   ("k2/cv.html", b"<p>y</p>")])
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        _kjor(arkiv, antall=1)
+    assert e.value.kode == "kandidattall_avvik"
+
+
+def test_manifestets_lukkede_form_avviser_alt_annet(tmp_path):
+    """#161: en deklarasjon vi ikke forstår FULLT UT er ingen
+    deklarasjon — ukjente nøkler, feil typer, duplikater, tomme og
+    overfylte lister er alle `manifest_feilformet`.
+
+    `kandidat_id` er i tillegg LUKKET (eierdom, K2-kjennelsen på #216 —
+    valg A): `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`. En port som teller opp
+    tegnklasser å avvise, lukker aldri «to ID-er som ser like ut»; en
+    som sier hva den GODTAR, gjør det i én dom.
+
+    MUTASJONEN SOM DREPER DENNE: bytt `KANDIDAT_ID_KANON.fullmatch(kid)`
+    tilbake til `kid.strip() and kid == kid.strip()` — ZWSP-, RTL-,
+    æøå-, homoglyf- og lengderadene blir da lovlige deklarasjoner.
+    """
+    import json as _json
+
+    def _sjekk(manifest, undermappe):
+        (tmp_path / undermappe).mkdir()
+        arkiv = _bunt(tmp_path / undermappe,
+                      [("k1/cv.html", b"<p>x</p>")], manifest=manifest)
+        medlemmer = parsing.inspiser_bunt(arkiv)
+        with pytest.raises(parsing.Buntfeil) as e:
+            parsing.les_manifest(arkiv, medlemmer)
+        return e.value.kode
+
+    god = {"kandidat_id": "k1", "filer": ["k1/cv.html"]}
+    for i, (manifest, ventet) in enumerate((
+        ("ikke json i det hele tatt", "manifest_feilformet"),
+        (_json.dumps(["liste"]), "manifest_feilformet"),
+        (_json.dumps({"soknader": [], "ekstra": 1}), "manifest_feilformet"),
+        (_json.dumps({"soknader": []}), "manifest_feilformet"),
+        (_json.dumps({"soknader": [{**god, "ekstra": 1}]}),
+         "manifest_feilformet"),
+        (_json.dumps({"soknader": [{"kandidat_id": "", "filer":
+                                    ["k1/cv.html"]}]}),
+         "manifest_feilformet"),
+        (_json.dumps({"soknader": [god, god]}), "manifest_feilformet"),
+        (_json.dumps({"soknader": [{"kandidat_id": "k1", "filer": []}]}),
+         "manifest_feilformet"),
+        (_json.dumps({"soknader": [{"kandidat_id": "k1",
+                                    "filer": ["soknader.json"]}]}),
+         "manifest_feilformet"),
+        # BLANKTEGN ER IKKE EN IDENTITET: `strip()`-porten står i koden,
+        # men den tomme strengen var eneste rad som målte den.
+        (_json.dumps({"soknader": [{"kandidat_id": "   ",
+                                    "filer": ["k1/cv.html"]}]}),
+         "manifest_feilformet"),
+        # Øvre kandidatgrense: 5001 er avvist ved deklarasjonen, aldri
+        # stille avkortet (samme hardhet som `antall_soknader` i
+        # bestillingen). Radene måles ikke — tallporten står foran dem.
+        (_json.dumps({"soknader": [{"kandidat_id": f"k{n}",
+                                    "filer": [f"k{n}/cv.html"]}
+                                   for n in range(5001)]}),
+         "manifest_feilformet"),
+        # Duplikat INNI én rad: `navn in kart` er global, så den samme
+        # fila to ganger for samme kandidat er like feilformet som delt
+        # mellom to kandidater.
+        (_json.dumps({"soknader": [{"kandidat_id": "k1", "filer":
+                                    ["k1/cv.html", "k1/cv.html"]}]}),
+         "manifest_feilformet"),
+        # TYPENE ER EN DEL AV DEN LUKKEDE FORMEN: en `kandidat_id` som
+        # tall, en `filer` som streng (som ville itererert TEGNVIS), og
+        # et filnavn som tall.
+        (_json.dumps({"soknader": [{"kandidat_id": 1,
+                                    "filer": ["k1/cv.html"]}]}),
+         "manifest_feilformet"),
+        (_json.dumps({"soknader": [{"kandidat_id": "k1",
+                                    "filer": "k1/cv.html"}]}),
+         "manifest_feilformet"),
+        (_json.dumps({"soknader": [{"kandidat_id": "k1", "filer": [1]}]}),
+         "manifest_feilformet"),
+        # DYBDE ER OGSÅ FORM: `json` melder syntaks som `ValueError`, men
+        # nøsting som `RecursionError` — som ikke er en `ValueError`. Noen
+        # tusen `[` er 200 kB, godt innenfor det 4 MiB-taket.
+        ("[" * 100_000 + "]" * 100_000, "manifest_feilformet"),
+        # BLANKTEGN RUNDT EN IDENTITET ER OGSÅ BLANKTEGN: porten målte
+        # `kid.strip()`, men lagret råverdien, så `"k1 "` var en egen
+        # lovlig kandidat ved siden av `"k1"`. Vi avviser, ikke
+        # kanoniserer — én vei inn.
+        (_json.dumps({"soknader": [{"kandidat_id": "k1 ",
+                                    "filer": ["k1/cv.html"]}]}),
+         "manifest_feilformet"),
+        # DEN LUKKEDE ASCII-KANONEN (eierdom, valg A på #216). `strip()`
+        # rører ikke Cf, så U+200B var et lovlig tegn i en lovlig ID —
+        # og etter den sto RTL, NFKC og homoglyfer i kø. Kanonen sier
+        # hva vi GODTAR, og lukker dermed hele klassen: usynlige
+        # format-tegn, høyre-mot-venstre-markør, æøå og kyrillisk `а`
+        # (U+0430, homoglyf for `a`) er alle utenfor.
+        (_json.dumps({"soknader": [{"kandidat_id": "k1\u200b",
+                                    "filer": ["k1/cv.html"]}]}),
+         "manifest_feilformet"),
+        (_json.dumps({"soknader": [{"kandidat_id": "k1\u202e",
+                                    "filer": ["k1/cv.html"]}]}),
+         "manifest_feilformet"),
+        (_json.dumps({"soknader": [{"kandidat_id": "kå1",
+                                    "filer": ["k1/cv.html"]}]}),
+         "manifest_feilformet"),
+        (_json.dumps({"soknader": [{"kandidat_id": "а1",
+                                    "filer": ["k1/cv.html"]}]}),
+         "manifest_feilformet"),
+        # …og formens tre egne kanter: første tegn må være alfanumerisk
+        # (ellers er `.`/`-`/`_` en sti- eller flaggform i forkledning),
+        # skilletegn utenfor `._-` er ute, og 65 tegn er ett for mange.
+        (_json.dumps({"soknader": [{"kandidat_id": ".k1",
+                                    "filer": ["k1/cv.html"]}]}),
+         "manifest_feilformet"),
+        (_json.dumps({"soknader": [{"kandidat_id": "-k1",
+                                    "filer": ["k1/cv.html"]}]}),
+         "manifest_feilformet"),
+        (_json.dumps({"soknader": [{"kandidat_id": "k1/k2",
+                                    "filer": ["k1/cv.html"]}]}),
+         "manifest_feilformet"),
+        (_json.dumps({"soknader": [{"kandidat_id": "k" * 65,
+                                    "filer": ["k1/cv.html"]}]}),
+         "manifest_feilformet"),
+        # NYLINJE ER IKKE EN AVSLUTNING: `$` ville godtatt `"k1\n"` som
+        # en lovlig ID (og gitt oss `"k1"`-tvillingen tilbake gjennom
+        # bakdøren). Porten bruker `fullmatch`, så den finnes ikke.
+        (_json.dumps({"soknader": [{"kandidat_id": "k1\n",
+                                    "filer": ["k1/cv.html"]}]}),
+         "manifest_feilformet"),
+    )):
+        assert _sjekk(manifest, f"m{i}") == ventet, (i, manifest)
+
+    # POSITIV KONTROLL PÅ KANONEN: en port som avviser alt er ingen
+    # port. Hele det lovede tegnsettet, akkurat 64 tegn, og et
+    # skilletegn i hver lovlig form.
+    for lovlig in ("k1", "K-1.v2_a", "9" + "a" * 63):
+        assert parsing.KANDIDAT_ID_KANON.fullmatch(lovlig), lovlig
+    (tmp_path / "lovlig").mkdir()
+    arkiv = _bunt(tmp_path / "lovlig", [("k1/cv.html", b"<p>x</p>")],
+                  manifest=_json.dumps({"soknader": [
+                      {"kandidat_id": "K-1.v2_a",
+                       "filer": ["k1/cv.html"]}]}))
+    assert parsing.les_manifest(arkiv, parsing.inspiser_bunt(arkiv)) == {
+        "k1/cv.html": "K-1.v2_a"}
+
+    # …og de to identitetene for samme kandidat, side om side: uten
+    # porten er dette en LOVLIG deklarasjon med to kandidater, og
+    # `antall_soknader = 2` ville stemt (Cursor P2, runde 3 og 5 —
+    # blanktegnstvillingen og ZWSP-tvillingen er samme klasse, og
+    # kanonen feller dem begge).
+    for nr, tvilling_id in enumerate(("k1 ", "k1\u200b")):
+        (tmp_path / f"tvilling{nr}").mkdir()
+        tvilling = _bunt(tmp_path / f"tvilling{nr}",
+                         [("k1/cv.html", b"<p>x</p>"),
+                          ("k1/brev.html", b"<p>y</p>")],
+                         manifest=_json.dumps({"soknader": [
+                             {"kandidat_id": "k1", "filer": ["k1/cv.html"]},
+                             {"kandidat_id": tvilling_id,
+                              "filer": ["k1/brev.html"]}]}))
+        with pytest.raises(parsing.Buntfeil) as e:
+            parsing.les_manifest(tvilling, parsing.inspiser_bunt(tvilling))
+        assert e.value.kode == "manifest_feilformet", (tvilling_id,
+                                                       e.value.kode)
+
+    # …og fraværet har sin egen kode.
+    (tmp_path / "uten").mkdir()
+    arkiv = _bunt(tmp_path / "uten", [("k1/cv.html", b"<p>x</p>")],
+                  manifest=None)
+    with pytest.raises(parsing.Buntfeil) as e:
+        parsing.les_manifest(arkiv, parsing.inspiser_bunt(arkiv))
+    assert e.value.kode == "manifest_mangler"
+
+
+def test_manifesttaket_er_en_maalt_port_ikke_bare_en_linje(tmp_path):
+    """Cursor P2 på #161: `MAKS_MANIFESTBYTES` sto i gaten uten én eneste
+    negativ test — mutasjonen som sletter `file_size`-sjekken for
+    `soknader.json` overlevde hele suiten, mens naboportene
+    (`komprimeringsforhold`, `null compress`) har sine egne. En port
+    ingen måler er en port som forsvinner i neste refaktorering.
+
+    Taket måles på KATALOGENS påstand, som resten av gaten: det er den
+    som avgjør om vi i det hele tatt trekker bytene ut.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `info.file_size >
+    MAKS_MANIFESTBYTES`-sjekken i `inspiser_bunt`.
+    """
+    filer = [("k1/cv.html", b"<p>drift</p>")]
+
+    # Én byte over taket: avvist ved deklarasjonen, aldri utpakket.
+    arkiv = _bunt(tmp_path, filer)
+    _patch_deklarert(arkiv, b"soknader.json",
+                     parsing.MAKS_MANIFESTBYTES + 1)
+    with pytest.raises(parsing.Buntfeil) as e:
+        parsing.inspiser_bunt(arkiv)
+    assert e.value.kode == "manifest_feilformet", e.value.kode
+
+    # Kontroll: NØYAKTIG taket er grønt — porten måler «over», ikke «nær».
+    (tmp_path / "taket").mkdir()
+    arkiv = _bunt(tmp_path / "taket", filer)
+    _patch_deklarert(arkiv, b"soknader.json", parsing.MAKS_MANIFESTBYTES)
+    assert any(m.navn == "soknader.json"
+               for m in parsing.inspiser_bunt(arkiv))
+
+
+def test_manifesttaket_maales_paa_bytene_ikke_bare_paastanden(tmp_path):
+    """Cursor P2 (runde 4) på #161: taket sto BARE på katalogpåstanden.
+
+    `inspiser_bunt` måler `info.file_size`; `les_manifest` gjorde
+    `zf.read` uten å måle det den faktisk fikk. For SØKNADSINNHOLD stoler
+    strømmen bevisst ikke på katalogen — `lest > MAKS_ENKELTFIL` måles på
+    de utpakkede bytene — og deklarasjonsarmen manglet den speilingen.
+
+    Katalogen `inspiser_bunt` leste er ikke nødvendigvis den `zf.read`
+    åpner: fila kan være byttet i vinduet, eller `medlemmer` komme fra en
+    annen lesning. Det er samme divergens `manifest_mangler`-porten
+    finnes for, og her er formen målt med samme rigg — en medlemsliste
+    som PÅSTÅR en liten deklarasjon over en bunt som bærer en for stor.
+
+    (En katalog som bare lyver NEDOVER er alt dekket: `zipfile` trunkerer
+    da strømmen på den deklarerte lengden og feller CRC-en, altså
+    `korrupt_bunt` — se `test_en_lognaktig_katalog_er_en_korrupt_bunt`.
+    Denne porten er den som står igjen når bytene faktisk kommer ut.)
+
+    MUTASJONEN SOM DREPER DENNE: fjern `len(raa) > MAKS_MANIFESTBYTES`
+    i `les_manifest` — da er den for store deklarasjonen en LOVLIG bunt.
+    """
+    import json as _json
+
+    # Ærlig, gyldig JSON — bare for stor. Uten porten går den rett
+    # gjennom og returnerer et kart, så mutasjonen har ingen annen død.
+    kropp = _json.dumps({"soknader": [{"kandidat_id": "k1",
+                                       "filer": ["k1/cv.html"]}]})
+    over = kropp + " " * (parsing.MAKS_MANIFESTBYTES + 1 - len(kropp))
+    arkiv = _bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>")],
+                  manifest=over)
+    # Medlemslista er en ANNEN lesnings katalog: den påstår en
+    # deklarasjon innenfor taket, så gatens egen sjekk aldri feller den.
+    pastand = [parsing.Medlem("soknader.json", 64),
+               parsing.Medlem("k1/cv.html", 12)]
+    with pytest.raises(parsing.Buntfeil) as e:
+        parsing.les_manifest(arkiv, pastand)
+    assert e.value.kode == "manifest_feilformet", e.value.kode
+
+    # Kontroll: NØYAKTIG taket er grønt — porten måler «over», ikke «nær».
+    (tmp_path / "taket").mkdir()
+    paa = kropp + " " * (parsing.MAKS_MANIFESTBYTES - len(kropp))
+    arkiv = _bunt(tmp_path / "taket", [("k1/cv.html", b"<p>drift</p>")],
+                  manifest=paa)
+    assert parsing.les_manifest(arkiv, pastand) == {"k1/cv.html": "k1"}
+
+
+def test_manifestet_har_ikke_fritak_fra_null_komprimert(tmp_path):
+    """Cursor P2 (runde 3) på #161: manifest-armen målte bare taket og
+    gikk `continue` — bombe-armen som feller `compress_size = 0` sto
+    NEDENFOR, og deklarasjonen var dermed den ene oppføringen i bunten
+    som kunne påstå innhold uten komprimert størrelse. Samme hull som
+    `test_port21_null_komprimert_er_ikke_fritak` lukket for søknadene,
+    gjenåpnet for fila som er billigst å forme ondsinnet.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `compress_size <= 0`-armen på
+    manifest-grenen i `inspiser_bunt`.
+    """
+    filer = [("k1/cv.html", b"<p>drift</p>")]
+
+    # Under taket, men null komprimert: uendelig forhold, ikke en
+    # ukomprimert fil.
+    arkiv = _bunt(tmp_path, filer)
+    _patch_deklarert(arkiv, b"soknader.json", 1024, komprimert=0)
+    with pytest.raises(parsing.Buntfeil) as e:
+        parsing.inspiser_bunt(arkiv)
+    assert e.value.kode == "komprimeringsforhold", e.value.kode
+
+    # Kontroll: den ÆRLIGE deklarasjonen komprimerer godt over 100:1 og
+    # skal fortsatt gjennom — det er null-armen som speiles, ikke taket.
+    (tmp_path / "aerlig").mkdir()
+    arkiv = _bunt(tmp_path / "aerlig", filer)
+    _patch_deklarert(arkiv, b"soknader.json", 1024 * 1024, komprimert=1)
+    assert any(m.navn == "soknader.json"
+               for m in parsing.inspiser_bunt(arkiv))
+
+
+def test_manifest_som_forsvant_mellom_lesningene_er_kodet(tmp_path,
+                                                          monkeypatch):
+    """Cursor P1 (runde 2) på #161: `les_manifest` måler `manifest_mangler`
+    mot `medlemmer` — en katalog EN ANNEN lesning laget — men trekker
+    bytene ut av et arkiv den åpner PÅ NYTT. Er `soknader.json` borte der
+    (fila byttet i vinduet, eller en medlemsliste fra en annen bunt),
+    reiste `zf.read` en rå `KeyError` som `kjor_bunt`s catch-all meldte
+    som `modellfeil` — feil kø, feil alarm, om en bunt modellen aldri fikk
+    se. Fraværet av en deklarasjon er `manifest_mangler`, uansett hvilken
+    av de to lesningene som oppdager det.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `except KeyError`-porten.
+    """
+    from modules.m57_ats import kjoring
+
+    # Bunten har INGEN deklarasjon; medlemslista påstår at den har det.
+    arkiv = _bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>")],
+                  manifest=None)
+    pastand = [parsing.Medlem("soknader.json", 64),
+               *parsing.inspiser_bunt(arkiv)]
+    with pytest.raises(parsing.Buntfeil) as e:
+        parsing.les_manifest(arkiv, pastand)
+    assert e.value.kode == "manifest_mangler", e.value.kode
+
+    # …og hele veien gjennom kjøringen: kodet utfall, aldri `modellfeil`,
+    # og modellen ser ingenting.
+    monkeypatch.setattr(parsing, "inspiser_bunt", lambda sti: pastand)
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(
+            arkiv, modell, vekter={"drift": 3},
+            kandidatfelter_for=lambda m: {"navn": ["N"]},
+            tekst_for=lambda m, d: d.decode("utf-8"),
+            biasmaalinger=_MAALINGER, antall_soknader=1)
+    assert e.value.kode == "manifest_mangler", e.value.kode
+    assert modell.sett == [], "modellen så en bunt uten deklarasjon"
+
+
+def test_medlem_som_forsvant_mellom_lesningene_er_kodet(tmp_path,
+                                                        monkeypatch):
+    """Cursor P1 på #161: SISTE stedet i klassen `les_manifest`s
+    `KeyError`-port og `kart.get` i `kjoring.py` alt lukker.
+
+    `inspiser_bunt` bygger medlemslista fra ÉN åpning av arkivet, og
+    `les_porsjonsvis` åpner det PÅ NYTT og slår `medlem.navn` opp i DET
+    navnekartet. Divergerer de to — fila byttet i vinduet mellom dem —
+    reiser `zf.open` en rå `KeyError`, og ingen av medlems-armene kjente
+    den: de fanger `BadZipFile`, zlib/LZMA, `OSError` og
+    `RuntimeError`/`NotImplementedError`. Den falt dermed til
+    `kjor_bunt`s catch-all og ble `modellfeil` — feil kø, feil alarm, om
+    en bunt modellen aldri fikk se.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `except KeyError`-porten i
+    `les_porsjonsvis` — da blir utfallet `modellfeil`.
+    """
+    from modules.m57_ats import kjoring
+
+    arkiv = _bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>")])
+    ekte_open = zipfile.ZipFile.open
+
+    def _borte(self, navn, *a, **kw):
+        # Bare UTTREKKET av medlemmet forsvinner. `infolist()` og
+        # `zf.read(MANIFESTNAVN)` står urørt, så deklarasjonen leses og
+        # bindes som normalt — divergensen finnes bare i strømmens
+        # navnekart, nøyaktig slik et bytte i vinduet ser ut.
+        if navn == "k1/cv.html":
+            raise KeyError(
+                "There is no item named 'k1/cv.html' in the archive")
+        return ekte_open(self, navn, *a, **kw)
+
+    monkeypatch.setattr(zipfile.ZipFile, "open", _borte)
+
+    # Direkte på strømmen: kodet utfall, aldri en rå `KeyError`.
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(arkiv))
+    assert e.value.kode == "manifest_medlem_mangler", e.value.kode
+
+    # …og hele veien gjennom kjøringen: fremdriften står som evidens, og
+    # modellen ser ingenting.
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(
+            arkiv, modell, vekter={"drift": 3},
+            kandidatfelter_for=lambda m: {"navn": ["N"]},
+            tekst_for=lambda m, d: d.decode("utf-8"),
+            biasmaalinger=_MAALINGER, antall_soknader=1)
+    assert e.value.kode == "manifest_medlem_mangler", e.value.kode
+    assert modell.sett == [], "modellen så en bunt uten medlemsbyte"
+    assert e.value.fremdrift, "utfallet bar ingen fremdrift som evidens"
+
+
+def test_manifestlesingen_er_kodet_utfall_ikke_modellfeil(tmp_path):
+    """Cursor P1 på #161: `les_manifest` leste `soknader.json` UTEN
+    SP-3-oversetteren `les_porsjonsvis` har. En CRC-skadet eller kryptert
+    deklarasjon feller `zf.read` med bibliotekets egen form, og den boblet
+    rå til `kjor_bunt`s catch-all — altså `modellfeil`, om en bunt
+    modellen aldri fikk se. Lagring/dekompresjon er ikke modellen."""
+    from modules.m57_ats import kjoring
+
+    def _kjor(arkiv, modell):
+        return kjoring.kjor_bunt(
+            arkiv, modell, vekter={"drift": 3},
+            kandidatfelter_for=lambda m: {"navn": ["N"]},
+            tekst_for=lambda m, d: d.decode("utf-8"),
+            biasmaalinger=_MAALINGER, antall_soknader=1)
+
+    filer = [(f"k1/{n}.html", b"<p>drift</p>") for n in ("cv", "brev")]
+
+    # Skaden ligger i MANIFESTETS komprimerte strøm — søknadene er hele,
+    # og katalogen lyver ikke, så gaten slipper bunten inn som før.
+    arkiv = _bunt(tmp_path, filer)
+    _skad_payload(arkiv, b"soknader.json")
+    parsing.inspiser_bunt(arkiv)
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        _kjor(arkiv, modell)
+    assert e.value.kode == "korrupt_bunt", e.value.kode
+    assert modell.sett == [], "modellen så en bunt vi aldri kunne lese"
+
+    # Et kryptert manifest er ULESELIG, ikke korrupt — og fortsatt kodet.
+    (tmp_path / "kryptert").mkdir()
+    arkiv = _bunt(tmp_path / "kryptert", filer)
+    _patch_kryptert(arkiv)
+    parsing.inspiser_bunt(arkiv)
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        _kjor(arkiv, modell)
+    assert e.value.kode == "uleselig_medlem", e.value.kode
+    assert modell.sett == []
+
+    # …og en DYBDE vi ikke kommer gjennom er samme sak: `json` melder
+    # nøsting som `RecursionError`, ikke `ValueError`, så den gikk rått
+    # forbi formporten til catch-allen. Deklarasjonen er den billigste
+    # delen av bunten å forme ondsinnet — feil kø her er feil kø for et
+    # angrep. Gaten slipper den inn (200 kB mot et tak på 4 MiB).
+    # MUTASJONEN SOM DREPER DENNE: fjern `RecursionError` fra fangsten.
+    (tmp_path / "dyp").mkdir()
+    arkiv = _bunt(tmp_path / "dyp", filer,
+                  manifest="[" * 100_000 + "]" * 100_000)
+    parsing.inspiser_bunt(arkiv)
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        _kjor(arkiv, modell)
+    assert e.value.kode == "manifest_feilformet", e.value.kode
+    assert modell.sett == []
+
+
+def test_umatchet_medlem_i_strommen_er_kodet_ikke_modellfeil(tmp_path,
+                                                             monkeypatch):
+    """Cursor P2 på #161: toveisbindingen måles mot `inspiser_bunt`s
+    katalog, mens `les_porsjonsvis` åpner arkivet PÅ NYTT. Divergerer de to
+    lesningene — TOCTOU på fila, eller intern inkonsistens — traff
+    `kart[medlem.navn]` en `KeyError`, og catch-allen meldte `modellfeil`
+    om en bunt modellen aldri fikk se. Et umatchet medlem er nettopp det
+    `medlem_uadressert` finnes for."""
+    from modules.m57_ats import kjoring
+
+    def _kjor(arkiv, modell):
+        return kjoring.kjor_bunt(
+            arkiv, modell, vekter={"drift": 3},
+            kandidatfelter_for=lambda m: {"navn": ["N"]},
+            tekst_for=lambda m, d: d.decode("utf-8"),
+            biasmaalinger=_MAALINGER, antall_soknader=1)
+
+    arkiv = _bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>"),
+                             ("k1/brev.html", b"<p>mer drift</p>")])
+    # Positiv kontroll: bunten er hel, og begge medlemmene er adressert.
+    assert set(_kjor(arkiv, _Modell())["artefakter"]) == {"k1"}
+
+    # Kartet mister ett medlem ETTER bindingen — nøyaktig det strømmen
+    # ville sett om arkivet ble byttet i vinduet mellom de to lesningene.
+    # Tallporten foran strømmen ser fortsatt én kandidat og slipper
+    # gjennom; divergensen dukker først opp per medlem.
+    ekte = parsing.les_manifest
+    monkeypatch.setattr(
+        parsing, "les_manifest",
+        lambda sti, medlemmer: {navn: kid
+                                for navn, kid in ekte(sti, medlemmer).items()
+                                if navn != "k1/brev.html"})
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        _kjor(arkiv, modell)
+    assert e.value.kode == "medlem_uadressert", e.value.kode
+    assert e.value.fremdrift, "evidensen mangler i utfallet"
+    assert modell.sett == [], "modellen så en bunt vi ikke kunne adressere"
+
+
+def test_deklarert_medlem_som_aldri_strommes_stopper_kjoringen(tmp_path,
+                                                               monkeypatch):
+    """Cursor P2 på #161: toveisbindingen var TOVEIS ved lesing, men bare
+    ÉN vei midt i flukt. Et medlem strømmen har og kartet mangler ble
+    felt; det OMVENDTE — kartet deklarerer filer strømmen aldri yielder —
+    hadde ingen måling. Mister arkivet et deklarert medlem i vinduet
+    mellom bindingen og `les_porsjonsvis`, mens hver kandidat beholder
+    minst én fil, treffer `len(biter)` fortsatt `antall_soknader`:
+    kjøringen LYKTES, og kandidaten ble evaluert på et halvt
+    dokumentsett. Et ufullstendig dokumentsett er ikke et resultat.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `lest != len(kart)`-porten.
+    """
+    from modules.m57_ats import kjoring
+
+    def _kjor(arkiv, modell):
+        return kjoring.kjor_bunt(
+            arkiv, modell, vekter={"drift": 3},
+            kandidatfelter_for=lambda m: {"navn": ["N"]},
+            tekst_for=lambda m, d: d.decode("utf-8"),
+            biasmaalinger=_MAALINGER, antall_soknader=1)
+
+    arkiv = _bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>"),
+                             ("k1/brev.html", b"<p>mer drift</p>")])
+    # Positiv kontroll: hel bunt, begge medlemmene strømmes, porten tier.
+    assert set(_kjor(arkiv, _Modell())["artefakter"]) == {"k1"}
+
+    # Strømmen mister ett DEKLARERT medlem etter bindingen. Kandidaten
+    # står igjen med én fil, så kandidattallporten ser en gyldig bunt —
+    # det er nettopp den stille veien porten finnes for. (Denne testen
+    # måler DELVIS tap; totalt tap måles i
+    # `test_bunt_uten_kandidater_er_kodet_feil_ikke_tomt_resultat`.)
+    ekte = parsing.les_porsjonsvis
+    monkeypatch.setattr(
+        parsing, "les_porsjonsvis",
+        lambda sti: ((merke, medlem, data)
+                     for merke, medlem, data in ekte(sti)
+                     if medlem.navn != "k1/brev.html"))
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        _kjor(arkiv, modell)
+    assert e.value.kode == "manifest_medlem_mangler", e.value.kode
+    assert e.value.fremdrift, "evidensen mangler i utfallet"
+    assert modell.sett == [], "modellen så et halvt dokumentsett"
+
+
+def test_bunt_uten_kandidater_er_kodet_feil_ikke_tomt_resultat(tmp_path,
+                                                               monkeypatch):
     """Codex P2: en bunt uten medlemmer ble et VELLYKKET tomt utfall.
 
     En tom zip — og en som bare bærer katalogoppføringer — passerer hele
@@ -2102,7 +2746,15 @@ def test_bunt_uten_kandidater_er_kodet_feil_ikke_tomt_resultat(tmp_path):
     1–5000, så null kandidater er per definisjon en ugyldig bunt, og en
     ugyldig bunt er SP-3s kodede utfall.
 
-    MUTASJONEN SOM DREPER DENNE: fjern `if not biter`-porten i `kjor_bunt`.
+    Klassen har nå TO porter, og `tom_bunt` er ingen av dem (eierdom,
+    K2-kjennelsen på #216 — valg B): en bunt uten deklarasjon felles av
+    `manifest_mangler` FØR strømmen, og forsvinner deklarerte medlemmer
+    etterpå, eier `lest != len(kart)` divergensen. Vakten som sto imellom
+    kunne per konstruksjon aldri fyre riktig, og er fjernet.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `lest != len(kart)`-porten i
+    `kjor_bunt` — da blir TOTALT tap `kandidattall_avvik` (defensen bak),
+    ikke `manifest_medlem_mangler`.
     """
     from modules.m57_ats import kjoring
 
@@ -2118,7 +2770,10 @@ def test_bunt_uten_kandidater_er_kodet_feil_ikke_tomt_resultat(tmp_path):
     modell = _Modell()
     with pytest.raises(kjoring.Kjoringsfeil) as e:
         _kjor(tom, modell)
-    assert e.value.kode == "tom_bunt"
+    # #161: en bunt uten deklarasjon felles som `manifest_mangler` FØR
+    # strømmen — strengere enn gamle `tom_bunt`, samme klasse (aldri et
+    # vellykket tomt utfall), og nå frontdøren alene.
+    assert e.value.kode == "manifest_mangler"
     # Utfallet bærer ingen halv liste — evidensen er alt Kjoringsfeil har.
     assert not hasattr(e.value, "rangering")
     assert modell.sett == []
@@ -2131,11 +2786,24 @@ def test_bunt_uten_kandidater_er_kodet_feil_ikke_tomt_resultat(tmp_path):
         zf.writestr(zipfile.ZipInfo("k2/"), b"")
     with pytest.raises(kjoring.Kjoringsfeil) as e:
         _kjor(bare_kataloger, _Modell())
-    assert e.value.kode == "tom_bunt"
+    assert e.value.kode == "manifest_mangler"
 
     # … og én kandidat er nok: porten måler NULL, ikke «få».
-    ut = _kjor(_bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>")]), _Modell())
-    assert set(ut["artefakter"]) == {"k1"}
+    hel = _bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>")])
+    assert set(_kjor(hel, _Modell())["artefakter"]) == {"k1"}
+
+    # TOTALT TAP ETTER BINDINGEN er den veien `tom_bunt` stjal (Cursor P2,
+    # runde 5): deklarasjonen er lest og bundet, og så yielder strømmen
+    # ingenting i det hele tatt. `biter` blir tom uten at bunten var tom —
+    # den DEKLARERTE én kandidat. Utfallet er derfor
+    # `manifest_medlem_mangler`, koden porten alt eier for «deklarert uten
+    # medlem», og ikke et ord om en tomhet manifestet motsier.
+    monkeypatch.setattr(parsing, "les_porsjonsvis", lambda sti: iter(()))
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        _kjor(hel, modell)
+    assert e.value.kode == "manifest_medlem_mangler", e.value.kode
+    assert modell.sett == [], "modellen så en bunt som aldri ble strømmet"
 
 
 def test_ugyldig_feltform_i_SENERE_fil_felles_ogsaa(tmp_path):
