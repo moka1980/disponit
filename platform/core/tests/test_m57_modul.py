@@ -2269,6 +2269,62 @@ def test_manifestfeltene_er_blindingens_kilde(tmp_path):
     assert e.value.kode == "blinding_uten_felter"
 
 
+def test_padda_feltverdi_er_ingen_deklarasjon(tmp_path):
+    """Cursor P1: deklarasjonen er BÅDE det som maskeres og det porten
+    leter etter, så en verdi som ikke kan stå i dokumentet gjør port 16
+    vakuøs uten å gjøre den tom.
+
+    `"Kari Testdal "` (hale) og `"Kari Testdal\\u200b"` passerte den
+    gamle porten — den målte `strip()`, men LAGRET råverdien — og
+    `krev_blindet` lette etter nøyaktig den padda formen. CV-en skriver
+    navnet uten hale, så ingenting ble maskert OG ingenting ble funnet:
+    klartekstnavnet gikk til modellen mens kjøringen telte som blindet.
+    Samme klasse som `kandidat_id` før ASCII-kanonen.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `verdiform_lukket`-kallet i
+    `les_manifest` (E2E-delen) eller i `blind`s formløkke (den injiserte
+    veien under)."""
+    import json as _json
+
+    from modules.m57_ats import kjoring
+
+    cv = b"<p>Kari Testdal kan drift, kari@eksempel.no</p>"
+    for i, verdi in enumerate(("Kari Testdal ", " Kari Testdal",
+                               "Kari Testdal\u200b", "Kari\u202eTestdal")):
+        (tmp_path / f"p{i}").mkdir()
+        arkiv = _bunt(tmp_path / f"p{i}", [("k1/cv.html", cv)],
+                      manifest=_json.dumps({"soknader": [
+                          {"kandidat_id": "k1", "filer": ["k1/cv.html"],
+                           "felter": {"navn": [verdi]}}]}))
+        modell = _Modell()
+        with pytest.raises(kjoring.Kjoringsfeil) as e:
+            kjoring.kjor_bunt(
+                arkiv, modell, vekter={"drift": 3},
+                tekst_for=lambda m, d: d.decode("utf-8"),
+                biasmaalinger=_MAALINGER, antall_soknader=1)
+        assert e.value.kode == "manifest_feilformet", verdi
+        # Avvisningen skjer i LESINGEN: navnet nådde aldri modellen.
+        assert not modell.sett, verdi
+
+    # Den INJISERTE veien (`kandidatfelter_for`) går utenom manifestet,
+    # så grensen står i `blind` også — med samme definisjon.
+    (tmp_path / "inj").mkdir()
+    arkiv = _bunt(tmp_path / "inj", [("k1/cv.html", cv)])
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(
+            arkiv, modell, vekter={"drift": 3},
+            tekst_for=lambda m, d: d.decode("utf-8"),
+            biasmaalinger=_MAALINGER, antall_soknader=1,
+            kandidatfelter_for=lambda m: {"navn": ["Kari Testdal "]})
+    assert e.value.kode == "ugyldig_maskeringsform"
+    assert not modell.sett
+    for padda in ("Kari Testdal ", "Kari\u200b"):
+        with pytest.raises(blinding.Blindingsfeil) as e:
+            blinding.blind("Kari Testdal kan drift.", {"navn": [padda]})
+        assert e.value.kode == "ugyldig_maskeringsform", padda
+
+
 def test_manifestfeltenes_lukkede_form(tmp_path):
     """Feltdeklarasjonen er like LUKKET som resten av manifestet: ukjent
     feltnavn, feil typer, tomme og overfylte lister, og for lange

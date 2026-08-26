@@ -30,6 +30,14 @@ Modulen er KUNDE av plattformen, aldri omvendt (m56-formen):
   `blinding_uten_felter` — et kodet utfall, aldri en ublindet
   evaluering.
 
+  Feltverdien er SIN EGEN skrivemåte: ingen ledende/avsluttende
+  blanktegn, ingen Cc/Cf-tegn (`U+200B`, RTL-markørene, kontrolltegn).
+  Verdien er både det som maskeres og det port 16 leter etter, så
+  `"Kari Testdal "` mot en tekst som skriver navnet uten hale gjør
+  porten vakuøs uten å gjøre den tom. Alt annet er `manifest_feilformet`
+  (og `ugyldig_maskeringsform` på den injiserte veien) — vi avviser, vi
+  kanoniserer ikke.
+
   `kandidat_id` er ASCII og LUKKET:
   `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` — ikke-tom, maks 64 tegn, starter
   alfanumerisk. Alt annet er `manifest_feilformet`. Kanonen er en

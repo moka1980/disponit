@@ -762,8 +762,17 @@ def les_manifest(sti: str | Path,
                         or len(verdier) > MAKS_FELTVERDIER:
                     raise Buntfeil("manifest_feilformet",
                                    f"felter.{felt} for {kid}")
+                # VERDIEN ER SIN EGEN SKRIVEMÅTE (Cursor P1). Porten
+                # målte før `strip()` og lagret RÅVERDIEN, så `"Kari "`
+                # og `"Kari<U+200B>"` var lovlige deklarasjoner som ikke
+                # maskerer noe i en tekst som skriver navnet uten hale —
+                # og `krev_blindet` leter etter den samme padda formen,
+                # så den godkjenner lekkasjen. `verdiform_lukket` er den
+                # samme dommen `blind` feller (én definisjon, to veier
+                # inn), og den dekker blank-only-tilfellet også.
                 for v in verdier:
                     if not isinstance(v, str) or not v.strip() \
+                            or not blinding.verdiform_lukket(v) \
                             or len(v) > MAKS_FELTVERDI_TEGN:
                         raise Buntfeil("manifest_feilformet",
                                        f"felter.{felt} for {kid}")

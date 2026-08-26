@@ -23,6 +23,7 @@ reapes med resten.
 from __future__ import annotations
 
 import re
+import unicodedata
 
 #: Katalogens løfte, ordrett — settet er LUKKET og rekkefølgen stabil
 #: (tokennummereringen skal være deterministisk for samme input).
@@ -34,6 +35,26 @@ class Blindingsfeil(Exception):
     def __init__(self, kode: str):
         self.kode = kode
         super().__init__(kode)
+
+
+def verdiform_lukket(verdi: str) -> bool:
+    """Er personverdien SIN EGEN skrivemåte? (Cursor P1)
+
+    Verdien er både det som maskeres og det `krev_blindet` leter etter,
+    så en verdi som ikke kan stå i dokumentet gjør porten vakuøs uten å
+    gjøre den tom: `"Kari Testdal "` maskerer ingenting i en tekst som
+    skriver navnet uten hale, og `krev_blindet` finner heller ikke den
+    padda formen — kjøringen telles som blindet mens klartekstnavnet går
+    til modellen. Samme klasse som `kandidat_id` før ASCII-kanonen: en
+    port som MÅLER `strip()` men LAGRER råverdien, måler noe annet enn
+    det den lagrer.
+
+    Vi avviser, vi kanoniserer ikke: én vei inn, og en deklarasjon som
+    mente `Kari` sier `Kari`. Cc/Cf (`U+200B`, RTL-markørene, kontroll-
+    tegn) er samme sak i usynlig form — de skiller to verdier som er én
+    for et menneske og for dokumentet."""
+    return verdi == verdi.strip() and not any(
+        unicodedata.category(tegn) in ("Cc", "Cf") for tegn in verdi)
 
 
 def _monster(verdi: str) -> re.Pattern[str]:
@@ -84,9 +105,16 @@ def blind(tekst: str, kandidatfelter: dict[str, list[str]]
     # avvist utfall (SP-3). Et `set` avvises med vilje sammen med de
     # andre: tokennummereringen skal være deterministisk for samme input,
     # og en uordnet samling gir den ikke.
+    #
+    # FORMEN ER OGSÅ VERDIENS EGEN (`verdiform_lukket`, Cursor P1):
+    # manifestet avviser padding og Cf/Cc på vei inn, men `blind` tar
+    # imot felter fra en INJISERT `kandidatfelter_for` også, og den veien
+    # går utenom manifestporten. Grensen står derfor begge steder, med én
+    # definisjon.
     for verdier in kandidatfelter.values():
         if not isinstance(verdier, (list, tuple)) or not all(
-                isinstance(verdi, str) for verdi in verdier):
+                isinstance(verdi, str) and verdiform_lukket(verdi)
+                for verdi in verdier):
             raise Blindingsfeil("ugyldig_maskeringsform")
     avmaskering: dict[str, str] = {}
     par: list[tuple[str, str]] = []
