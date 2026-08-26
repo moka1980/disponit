@@ -49,6 +49,8 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'bruk_kapabilitet(text,text)',                      'disponit_m37_claimer'),
     ('FUNCTION', 'bruk_kvitteringskapabilitet(text,text)',           'disponit_m37_claimer'),
     ('FUNCTION', 'claim_neste_oppdrag(text,text[],text,integer,text,text,bigint)', 'disponit_m37_claimer'),
+    -- 063 (#165): fornyelsesveien — claim-livssyklussteg, claimers eie.
+    ('FUNCTION', 'forny_oppdragslease(bigint,text,text,integer,integer)', 'disponit_m37_claimer'),
     -- 005→015 (Codex P1): den GAMLE 4-args-signaturen står her til den er borte
     -- overalt. Reparasjonen kjører FØR migrer.py (oppsett-postgresql.sh) og som
     -- superbruker: på en base som ennå ikke har kjørt 015 ville steg 2

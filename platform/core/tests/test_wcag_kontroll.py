@@ -2210,10 +2210,17 @@ class FakeMotor:
         return self.resultat
 
 
-def _wcag_kjede(migrator_, monkeypatch):
+def _wcag_kjede(migrator_, monkeypatch, *, frist_s: int = 1800):
     """Modulkjede + oppdrag for et ALIAS av wcag-typen (unike navn per
     kjøring — den delte testbasen tåler ikke det globale navnet; den EKTE
-    registreringen gjøres av deploy-skriptet og prøves på staging)."""
+    registreringen gjøres av deploy-skriptet og prøves på staging).
+
+    `frist_s` er utførelses- OG evidensfristen i sekunder; standarden er
+    de 30 minuttene riggen alltid har hatt. Den finnes fordi fristene er
+    IMMUTABLE etter innsetting (`oppdrag_kolonnelaas`, 056) — en test som
+    trenger en frist forbi lease-taket (063/#165) kan ikke skrive den i
+    etterkant, den må fødes med den.
+    """
     import oppdragskontrakt as ok
     from modules.m56_wcag_audit import rapportskjema
     u = secrets.token_hex(4)
@@ -2295,10 +2302,10 @@ def _wcag_kjede(migrator_, monkeypatch):
         " payload_kryptert, key_id, nonce, utforelsesfrist, evidensfrist,"
         " beslutning_loggpost_id, koblingsstatus)"
         " VALUES ('m37_reparasjon',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
-        " now()+interval '30 minutes', now()+interval '30 minutes',"
+        " now()+%s*interval '1 second', now()+%s*interval '1 second',"
         " %s,'KOBLET') RETURNING id",
         (TENANT, sak, logg, rid, typenavn, handling, modul, ct, key_id,
-         nonce, beslutning)).fetchone()[0]
+         nonce, frist_s, frist_s, beslutning)).fetchone()[0]
     migrator_.commit()
     return modul, rel, int(opp)
 

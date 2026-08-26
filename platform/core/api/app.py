@@ -825,6 +825,9 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def oppdrag_kvittering(request: Request) -> Response:
         return _oppdrag_kvittering(tjeneste, request)
 
+    def oppdrag_forny(request: Request) -> Response:
+        return _oppdrag_forny(tjeneste, request)
+
     def artefakt_upload(request: Request) -> Response:
         return _artefakt_upload(tjeneste, request)
 
@@ -1085,6 +1088,7 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/modul/token/tilbakekall", mo_tilbakekall,
               methods=["POST"]),
         Route("/v1/oppdrag/kvittering", oppdrag_kvittering, methods=["POST"]),
+        Route("/v1/oppdrag/forny", oppdrag_forny, methods=["POST"]),
         Route("/v1/artefakt", artefakt_upload, methods=["POST"]),
         # PR-008: rent lesende kundeflate. Merk rekkefølgen: den statiske
         # `/v1/policy/aktiv` registreres FØR mønsterruter kunne ha slukt
@@ -1540,6 +1544,9 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("GET",  "/v1/unntak"):                  "exceptions:read",
     ("POST", "/v1/oppdrag/claim"):           ORDRESCOPE + "<prefiks>",
     ("POST", "/v1/oppdrag/kvittering"):      ORDRESCOPE + "<prefiks>",
+    # 063 (#165): fornyelsen autentiseres som claim/kvittering —
+    # modultoken + claimets egen identitet i kroppen.
+    ("POST", "/v1/oppdrag/forny"):           ORDRESCOPE + "<prefiks>",
     ("POST", "/v1/artefakt"):                "artifacts:upload",
     ("GET",  "/v1/oversikt"):                "decisions:read",
     ("GET",  "/v1/nokkeltall"):              "decisions:read",
@@ -1651,6 +1658,149 @@ def _modulscope(auth: Autentisert) -> list[str]:
     """
     return sorted(s[len(ORDRESCOPE):] for s in auth.scopes
                   if s.startswith(ORDRESCOPE) and len(s) > len(ORDRESCOPE))
+
+
+def _utled_opplastingskapabilitet(conn, auth, tenant: str,
+                                  opp_id: int, ef):
+    """Utsteder opplastingskapabiliteten for et claimet oppdrag — delt av
+    claim (015/017) og fornyelsen (063/#165). Bindingen er
+    SERVERKONTEKSTENS (tenant · oppdrag · modul · release · kontrakt ·
+    epoch · artefakttype); modulen ber aldri om felt. Alle
+    fail-closed-reglene (tvetydig release/type, test.-prefikset i
+    produksjon, evidensfrist-klemmen) bor HER, én gang. -> dict | None.
+    Kalles i claimens/fornyelsens egen transaksjon; committer aldri selv.
+    """
+    opplasting = None
+    oppdragsrad = conn.execute(
+        "SELECT o.modul_id, ("
+        "  SELECT string_agg(DISTINCT d.release_id, ',')"
+        "    FROM moduldeployment d"
+        "   WHERE d.modul_id = o.modul_id AND d.livslop = 'claiming'"
+        "     AND d.kontraktversjon = o.kontraktversjon"
+        "     AND d.kontrakt_hash = o.kontrakt_hash),"
+        " o.kontraktversjon, o.kontrakt_hash, o.module_epoch"
+        " FROM oppdrag o WHERE o.tenant=%s AND o.id=%s",
+        (tenant, opp_id)).fetchone()
+    #
+    # Codex (P2): utledningen over er for LEGACY-api-tokener, som
+    # ikke bærer noen deployment i det hele tatt. Et modultoken
+    # BÆRER sin — release og miljø ble bundet ved onboardingen, og
+    # claimen har alt verifisert at nettopp den deploymenten er
+    # `claiming` med gjeldende epoch. Da er et oppslag som ikke kan
+    # skille staging fra produksjon både unødvendig og feil: er
+    # samme kontrakt deployet i BEGGE miljøer, ga det «tvetydig
+    # release» (ingen kapabilitet) eller — verre — produksjonssvaret
+    # på et staging-token, se `er_produksjon` under.
+    if isinstance(auth, ModulAutentisert):
+        autentisert_release, autentisert_miljo = (auth.release_id,
+                                                  auth.miljo)
+    else:
+        autentisert_release = autentisert_miljo = None
+    if oppdragsrad is not None and oppdragsrad[0] is not None \
+            and (autentisert_release is not None
+                 or (oppdragsrad[1] is not None
+                     and "," not in oppdragsrad[1])):
+        (o_modul, o_release, o_kv, o_khash, o_epoch) = oppdragsrad
+        if autentisert_release is not None:
+            o_release = autentisert_release
+        # Artefakttypen hentes fra REGISTERET, bundet til nøyaktig denne
+        # modulen + kontrakten. Finnes ingen registrert type, utstedes
+        # INGEN opplastingskapabilitet — og claimen lykkes fortsatt.
+        # En modul som ikke skal laste opp, får ikke lov (port 22).
+        #
+        # Codex (P2): `LIMIT 1` plukket den alfabetisk FØRSTE typen
+        # stille når kontrakten registrerer FLERE — svaret bar da en
+        # kapabilitet for feil type uten at noe sa fra. Responsen har
+        # ETT `opplasting`-felt, ikke en liste, og v1 har bevisst
+        # ingen on-demand-utstedelse (se docstringen over) — samme
+        # fail-closed regel som RELEASE-tvetydigheten over: er valget
+        # tvetydig, utstedes ingen kapabilitet, ikke en gjettet én.
+        # `test.`-prefikset er reservert (035 §8): det utledes
+        # ALDRI når DENNE claimen kommer fra produksjon —
+        # selvtest-artefakter skal ikke kunne bære kundedata, og en
+        # testtype i produksjonskjeden er en konfigurasjonsfeil,
+        # ikke en fullmakt. Filteret står i SQL-en så «nøyaktig én
+        # type»-regelen teller de typene som faktisk kan utstedes.
+        #
+        # Codex (P2): porten spør om DEN AUTENTISERTE claimens
+        # miljø, ikke om kontrakten finnes i produksjon et sted.
+        # Med et modultoken står miljøet i tokenet. Uten et
+        # modultoken finnes ingen autentisert deployment å spørre,
+        # og da er «finnes den i produksjon» det nærmeste
+        # fail-closed svaret — et legacy-token er miljøløst, og å
+        # anta staging for det ville vært å gjette den veien som
+        # slipper mest ut.
+        if autentisert_miljo is not None:
+            er_produksjon = autentisert_miljo == "produksjon"
+        else:
+            er_produksjon = bool(conn.execute(
+                "SELECT EXISTS (SELECT 1 FROM moduldeployment dp"
+                " WHERE dp.modul_id=%s AND dp.livslop='claiming'"
+                "   AND dp.kontraktversjon=%s AND dp.kontrakt_hash=%s"
+                "   AND dp.miljo='produksjon')",
+                (o_modul, o_kv, o_khash)).fetchone()[0])
+        typerader = conn.execute(
+            "SELECT artefakttype FROM artefakttype_register"
+            " WHERE eiermodul=%s AND kontraktversjon=%s"
+            "   AND kontrakt_hash=%s"
+            "   AND NOT (artefakttype LIKE 'test.%%' AND %s)"
+            " ORDER BY artefakttype LIMIT 2",
+            (o_modul, o_kv, o_khash, er_produksjon)).fetchall()
+        typerad = typerader[0] if len(typerader) == 1 else None
+        if typerad is not None:
+            # Levetid = evidensfristen, ALDRI lengre (port 23). 017
+            # klemmer levetiden til [60, 3600]; er det under et minutt
+            # igjen til fristen, ville klemmen gitt et token som lever
+            # LENGER enn evidensen det er til for. Da utstedes ingen —
+            # å runde oppover her hadde vært å bryte grensen i det
+            # stille, og oppdraget er uansett tapt før opplastingen.
+            #
+            # Codex (P2): resttiden regnes av DATABASENS klokke, ikke
+            # API-vertens. `utsted_artefaktkapabilitet()` setter
+            # `utloper = now() + levetid` med basens `now()` og
+            # sammenligner ALDRI med evidensfristen selv; ligger
+            # API-vertens klokke etter basens, ble `igjen`
+            # overestimert og kapabiliteten levde forbi fristen den er
+            # hardt bundet av. `now()` er transaksjonens starttid og er
+            # den SAMME i begge kall — dette er én transaksjon — så
+            # `utloper = now() + min(igjen, oppdragskontrakt.UTSTEDT_AUTORITET_S) <= evidensfrist`
+            # holder eksakt, ikke omtrentlig.
+            igjen = int(conn.execute(
+                "SELECT floor(extract(epoch FROM (%s::timestamptz"
+                " - now())))::INT", (ef,)).fetchone()[0])
+            if igjen >= 60:
+                opplasting_jti = secrets.token_hex(16)
+                # Epoch kontrolleres UNDER oppdragslåsen: dette kallet
+                # ligger i samme transaksjon som claimen, som holder
+                # raden. Endret epoch mellom claim og utstedelse gir
+                # ingen kapabilitet (port 24) — funksjonen matcher
+                # o.module_epoch og feiler.
+                #
+                # Codex P1: kapabiliteten stemples med DEPLOYMENTENS
+                # miljø når claimen kom fra et modultoken, så
+                # innløsningen kan kreve hele den autentiserte
+                # deploymenten (`_artefakt_upload`). Et legacy-token
+                # har ingen — da står miljøet NULL, som før.
+                orad = conn.execute(
+                    "SELECT jti, utloper FROM utsted_artefaktkapabilitet("
+                    "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (tenant, opp_id, o_modul, o_release, o_kv, o_khash,
+                     o_epoch, typerad[0], opplasting_jti,
+                     min(igjen, oppdragskontrakt.UTSTEDT_AUTORITET_S), autentisert_miljo)).fetchone()
+                # Grensen HÅNDHEVES, den forutsettes ikke. Utledningen
+                # over gjør `utloper <= evidensfrist` til en identitet,
+                # men den identiteten hviler på 017s klemming — og en
+                # kapabilitet som overlever evidensen den er til for
+                # skal ikke kunne slippe ut fordi et ledd endret seg et
+                # annet sted. Går den likevel over, utstedes ingen
+                # `opplasting` i svaret: jti-en er da aldri utlevert og
+                # kan ikke innløses.
+                if orad is not None and orad[1] <= ef:
+                    opplasting = {"jti": orad[0],
+                                  "utloper": orad[1].isoformat(),
+                                  "artefakttype": typerad[0]}
+
+    return opplasting
 
 
 def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
@@ -1954,135 +2104,11 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
             # Er den tvetydig eller fraværende, utstedes ingen kapabilitet:
             # å gjette en release ville tilskrevet artefaktet en opprinnelse
             # serveren ikke kan bevise.
-            opplasting = None
-            oppdragsrad = conn.execute(
-                "SELECT o.modul_id, ("
-                "  SELECT string_agg(DISTINCT d.release_id, ',')"
-                "    FROM moduldeployment d"
-                "   WHERE d.modul_id = o.modul_id AND d.livslop = 'claiming'"
-                "     AND d.kontraktversjon = o.kontraktversjon"
-                "     AND d.kontrakt_hash = o.kontrakt_hash),"
-                " o.kontraktversjon, o.kontrakt_hash, o.module_epoch"
-                " FROM oppdrag o WHERE o.tenant=%s AND o.id=%s",
-                (tenant, opp_id)).fetchone()
-            #
-            # Codex (P2): utledningen over er for LEGACY-api-tokener, som
-            # ikke bærer noen deployment i det hele tatt. Et modultoken
-            # BÆRER sin — release og miljø ble bundet ved onboardingen, og
-            # claimen har alt verifisert at nettopp den deploymenten er
-            # `claiming` med gjeldende epoch. Da er et oppslag som ikke kan
-            # skille staging fra produksjon både unødvendig og feil: er
-            # samme kontrakt deployet i BEGGE miljøer, ga det «tvetydig
-            # release» (ingen kapabilitet) eller — verre — produksjonssvaret
-            # på et staging-token, se `er_produksjon` under.
-            if isinstance(auth, ModulAutentisert):
-                autentisert_release, autentisert_miljo = (auth.release_id,
-                                                          auth.miljo)
-            else:
-                autentisert_release = autentisert_miljo = None
-            if oppdragsrad is not None and oppdragsrad[0] is not None \
-                    and (autentisert_release is not None
-                         or (oppdragsrad[1] is not None
-                             and "," not in oppdragsrad[1])):
-                (o_modul, o_release, o_kv, o_khash, o_epoch) = oppdragsrad
-                if autentisert_release is not None:
-                    o_release = autentisert_release
-                # Artefakttypen hentes fra REGISTERET, bundet til nøyaktig denne
-                # modulen + kontrakten. Finnes ingen registrert type, utstedes
-                # INGEN opplastingskapabilitet — og claimen lykkes fortsatt.
-                # En modul som ikke skal laste opp, får ikke lov (port 22).
-                #
-                # Codex (P2): `LIMIT 1` plukket den alfabetisk FØRSTE typen
-                # stille når kontrakten registrerer FLERE — svaret bar da en
-                # kapabilitet for feil type uten at noe sa fra. Responsen har
-                # ETT `opplasting`-felt, ikke en liste, og v1 har bevisst
-                # ingen on-demand-utstedelse (se docstringen over) — samme
-                # fail-closed regel som RELEASE-tvetydigheten over: er valget
-                # tvetydig, utstedes ingen kapabilitet, ikke en gjettet én.
-                # `test.`-prefikset er reservert (035 §8): det utledes
-                # ALDRI når DENNE claimen kommer fra produksjon —
-                # selvtest-artefakter skal ikke kunne bære kundedata, og en
-                # testtype i produksjonskjeden er en konfigurasjonsfeil,
-                # ikke en fullmakt. Filteret står i SQL-en så «nøyaktig én
-                # type»-regelen teller de typene som faktisk kan utstedes.
-                #
-                # Codex (P2): porten spør om DEN AUTENTISERTE claimens
-                # miljø, ikke om kontrakten finnes i produksjon et sted.
-                # Med et modultoken står miljøet i tokenet. Uten et
-                # modultoken finnes ingen autentisert deployment å spørre,
-                # og da er «finnes den i produksjon» det nærmeste
-                # fail-closed svaret — et legacy-token er miljøløst, og å
-                # anta staging for det ville vært å gjette den veien som
-                # slipper mest ut.
-                if autentisert_miljo is not None:
-                    er_produksjon = autentisert_miljo == "produksjon"
-                else:
-                    er_produksjon = bool(conn.execute(
-                        "SELECT EXISTS (SELECT 1 FROM moduldeployment dp"
-                        " WHERE dp.modul_id=%s AND dp.livslop='claiming'"
-                        "   AND dp.kontraktversjon=%s AND dp.kontrakt_hash=%s"
-                        "   AND dp.miljo='produksjon')",
-                        (o_modul, o_kv, o_khash)).fetchone()[0])
-                typerader = conn.execute(
-                    "SELECT artefakttype FROM artefakttype_register"
-                    " WHERE eiermodul=%s AND kontraktversjon=%s"
-                    "   AND kontrakt_hash=%s"
-                    "   AND NOT (artefakttype LIKE 'test.%%' AND %s)"
-                    " ORDER BY artefakttype LIMIT 2",
-                    (o_modul, o_kv, o_khash, er_produksjon)).fetchall()
-                typerad = typerader[0] if len(typerader) == 1 else None
-                if typerad is not None:
-                    # Levetid = evidensfristen, ALDRI lengre (port 23). 017
-                    # klemmer levetiden til [60, 3600]; er det under et minutt
-                    # igjen til fristen, ville klemmen gitt et token som lever
-                    # LENGER enn evidensen det er til for. Da utstedes ingen —
-                    # å runde oppover her hadde vært å bryte grensen i det
-                    # stille, og oppdraget er uansett tapt før opplastingen.
-                    #
-                    # Codex (P2): resttiden regnes av DATABASENS klokke, ikke
-                    # API-vertens. `utsted_artefaktkapabilitet()` setter
-                    # `utloper = now() + levetid` med basens `now()` og
-                    # sammenligner ALDRI med evidensfristen selv; ligger
-                    # API-vertens klokke etter basens, ble `igjen`
-                    # overestimert og kapabiliteten levde forbi fristen den er
-                    # hardt bundet av. `now()` er transaksjonens starttid og er
-                    # den SAMME i begge kall — dette er én transaksjon — så
-                    # `utloper = now() + min(igjen, oppdragskontrakt.UTSTEDT_AUTORITET_S) <= evidensfrist`
-                    # holder eksakt, ikke omtrentlig.
-                    igjen = int(conn.execute(
-                        "SELECT floor(extract(epoch FROM (%s::timestamptz"
-                        " - now())))::INT", (ef,)).fetchone()[0])
-                    if igjen >= 60:
-                        opplasting_jti = secrets.token_hex(16)
-                        # Epoch kontrolleres UNDER oppdragslåsen: dette kallet
-                        # ligger i samme transaksjon som claimen, som holder
-                        # raden. Endret epoch mellom claim og utstedelse gir
-                        # ingen kapabilitet (port 24) — funksjonen matcher
-                        # o.module_epoch og feiler.
-                        #
-                        # Codex P1: kapabiliteten stemples med DEPLOYMENTENS
-                        # miljø når claimen kom fra et modultoken, så
-                        # innløsningen kan kreve hele den autentiserte
-                        # deploymenten (`_artefakt_upload`). Et legacy-token
-                        # har ingen — da står miljøet NULL, som før.
-                        orad = conn.execute(
-                            "SELECT jti, utloper FROM utsted_artefaktkapabilitet("
-                            "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                            (tenant, opp_id, o_modul, o_release, o_kv, o_khash,
-                             o_epoch, typerad[0], opplasting_jti,
-                             min(igjen, oppdragskontrakt.UTSTEDT_AUTORITET_S), autentisert_miljo)).fetchone()
-                        # Grensen HÅNDHEVES, den forutsettes ikke. Utledningen
-                        # over gjør `utloper <= evidensfrist` til en identitet,
-                        # men den identiteten hviler på 017s klemming — og en
-                        # kapabilitet som overlever evidensen den er til for
-                        # skal ikke kunne slippe ut fordi et ledd endret seg et
-                        # annet sted. Går den likevel over, utstedes ingen
-                        # `opplasting` i svaret: jti-en er da aldri utlevert og
-                        # kan ikke innløses.
-                        if orad is not None and orad[1] <= ef:
-                            opplasting = {"jti": orad[0],
-                                          "utloper": orad[1].isoformat(),
-                                          "artefakttype": typerad[0]}
+            # Utledningen er DELT med fornyelsesveien (#165): nøyaktig
+            # samme serverkontekst-binding, samme fail-closed-regler —
+            # se `_utled_opplastingskapabilitet`.
+            opplasting = _utled_opplastingskapabilitet(
+                conn, auth, tenant, opp_id, ef)
             conn.commit()
         except psycopg.Error as e:
             conn.rollback()
@@ -2164,6 +2190,127 @@ def _resultathash(kvittering: dict) -> str:
     return hashlib.sha256(json.dumps(
         kjerne_felt, sort_keys=True, ensure_ascii=False,
         separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _oppdrag_forny(tjeneste: Tjeneste, request: Request) -> Response:
+    """Fornyelsesveien (063/#165): heartbeat fra den SITTENDE utføreren.
+
+    Autentiseringen er kvitteringens form: et modultoken svarer på hvilken
+    deployment dette er, og fullmakten er CLAIMETS — kroppen må bære
+    nøyaktig (oppdrag_id, owner_claim_id, owner_generation), og døren
+    matcher raden radlåst. En død lease kan aldri fornyes (fencing), og
+    en rullet modulepoch feller fornyelsen (port 24-formen, målt i døren
+    mot levende modulhode).
+
+    Svaret bærer ny leaseutløper OG en FERSK opplastingskapabilitet
+    (samme serverkontekst-utledning som claim — den gamle kapabiliteten
+    var klemt til sitt eget grant-vindu og kan være død): en utfører som
+    lever forbi første time mister ellers leveringsretten midt i lovlig
+    arbeid. Kvitteringskapabiliteten lever til evidensfristen og trenger
+    aldri fornyelse.
+    """
+    rid = _rid(request)
+    try:
+        conn = tjeneste.pool.hent()
+    except (TimeoutError, psycopg.Error):
+        tjeneste.logg.hendelse("db_utilgjengelig", rid, art="drift")
+        return _feilsvar("db_utilgjengelig", rid)
+    try:
+        auth = preauth(tjeneste, conn, request.headers.get("authorization"), rid)
+        if auth is None or auth.kapabilitet is not None:
+            tjeneste.logg.hendelse("token_ugyldig", rid)
+            return _feilsvar("token_ugyldig", rid)
+        # Samme unntak som kvitteringen (035): modultokenet bærer ingen
+        # scopes — fullmakten er claimets, og bindingen under er smalere
+        # enn noe scope kunne vært.
+        if not isinstance(auth, ModulAutentisert) and not _modulscope(auth):
+            tjeneste.logg.hendelse("scope_mangler", rid, auth.tenant,
+                                   scope=ORDRESCOPE + "<prefiks>")
+            return _feilsvar("scope_mangler", rid)
+        # Samme ratebudsjett som claim/upload (CodeRabbit): et heartbeat
+        # i løkke er billig for kalleren og skal ikke være gratis her.
+        if not tjeneste.rate.slipp_gjennom(auth.token_id):
+            tjeneste.logg.hendelse("rate_grense", rid, auth.tenant)
+            return _feilsvar("rate_grense", rid)
+        # Revalideringen (CodeRabbit, kritisk): `noddeaktiver_modul`
+        # terminerer tokenfamilien ØYEBLIKKELIG, og fornyelsen er
+        # nøyaktig veien et drept token ville brukt til å holde liv i
+        # claimet sitt — samme port som claim/kvittering/upload.
+        if isinstance(auth, ModulAutentisert):
+            revalidering = _modultoken_revalidert(tjeneste, conn, auth, rid)
+            if revalidering is not None:
+                return revalidering
+
+        raa = request.scope.get("state", {}).get("kropp", b"")
+        try:
+            kropp = json.loads(raa.decode("utf-8"))
+        except Exception:
+            kropp = None
+        opp_id = kropp.get("oppdrag_id") if isinstance(kropp, dict) else None
+        claim_id = kropp.get("owner_claim_id") \
+            if isinstance(kropp, dict) else None
+        generasjon = kropp.get("owner_generation") \
+            if isinstance(kropp, dict) else None
+        lease_s = kropp.get("lease_s", 300) if isinstance(kropp, dict) else 300
+        if not isinstance(opp_id, int) or isinstance(opp_id, bool) \
+                or not isinstance(claim_id, str) or not claim_id \
+                or not isinstance(generasjon, int) \
+                or isinstance(generasjon, bool) \
+                or not isinstance(lease_s, int) or isinstance(lease_s, bool):
+            tjeneste.logg.hendelse("request_feilformet", rid, auth.tenant)
+            return _feilsvar("request_feilformet", rid)
+
+        modul = auth.modul_id if isinstance(auth, ModulAutentisert) \
+            else auth.rolle
+        try:
+            rad = conn.execute(
+                "SELECT owner_lease_utloper, tenant, modul_id,"
+                " kontraktversjon, kontrakt_hash, module_epoch, evidensfrist"
+                " FROM forny_oppdragslease(%s,%s,%s,%s,%s)",
+                (opp_id, modul, claim_id, generasjon, lease_s)).fetchone()
+        except psycopg.errors.NoDataFound:
+            conn.rollback()
+            tjeneste.logg.hendelse("lease_ikke_fornybar", rid, auth.tenant,
+                                   art="sikkerhet", oppdrag_id=opp_id)
+            return _feilsvar("lease_ikke_fornybar", rid)
+        except psycopg.errors.ObjectNotInPrerequisiteState:
+            conn.rollback()
+            tjeneste.logg.hendelse("lease_utlopt", rid, auth.tenant, art="drift",
+                                   oppdrag_id=opp_id)
+            return _feilsvar("lease_utlopt", rid)
+        except psycopg.errors.InvalidAuthorizationSpecification:
+            conn.rollback()
+            tjeneste.logg.hendelse("modulepoch_utdatert", rid, auth.tenant,
+                                   art="sikkerhet", oppdrag_id=opp_id)
+            return _feilsvar("modulepoch_utdatert", rid)
+        except psycopg.errors.InvalidParameterValue:
+            conn.rollback()
+            tjeneste.logg.hendelse("request_feilformet", rid, auth.tenant)
+            return _feilsvar("request_feilformet", rid)
+
+        # Fersk opplastingskapabilitet i SAMME transaksjon som
+        # fornyelsen: radlåsen fra døren holder til commit, så epoken
+        # kapabiliteten stemples med er den fornyelsen målte.
+        # RLS-konteksten settes til OPPDRAGETS tenant (dørens svar, aldri
+        # kallerens påstand) — utledningen leser `oppdrag` som runtime.
+        sett_kontekst(conn, rad[1], auth.aktor, rid)
+        opplasting = _utled_opplastingskapabilitet(
+            conn, auth, rad[1], opp_id, rad[6])
+        conn.commit()
+        tjeneste.logg.hendelse("lease_fornyet", rid, rad[1], art="drift",
+                               oppdrag_id=opp_id)
+        return kanonisk_json({
+            "oppdrag_id": opp_id,
+            "owner_lease_utloper": rad[0].isoformat(),
+            "opplasting": opplasting,
+            "request_id": rid}, 200, {"x-request-id": rid})
+    except psycopg.Error as e:
+        conn.rollback()
+        tjeneste.logg.hendelse("db_utilgjengelig", rid, art="drift",
+                               feiltype=type(e).__name__)
+        return _feilsvar("db_utilgjengelig", rid)
+    finally:
+        tjeneste.pool.gi_tilbake(conn)
 
 
 def _oppdrag_kvittering(tjeneste: Tjeneste, request: Request) -> Response:
