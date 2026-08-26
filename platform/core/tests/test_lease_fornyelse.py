@@ -240,6 +240,43 @@ def test_rullet_modulepoch_feller_heartbeatet(migrator, miljo, monkeypatch):
 
 
 @pg
+def test_fornyelsen_leser_en_og_samme_klokke(migrator):
+    """Sjekk og skriving må lese SAMME klokke — ellers er heartbeatet
+    selv TOCTOU-en.
+
+    Blandet (`clock_timestamp()` i sjekken, `now()` i skrivingen) kan en
+    TX som har levd en stund — og radlåsen i døren er nettopp der en
+    fornyelse venter — få sjekken til å si «leasen lever» mens UPDATE
+    skriver en utløper som alt ligger bak veggklokken: commit av en død
+    lease, altså et reclaim-vindu åpnet av veien som skulle holde
+    autoriteten.
+
+    Klokka er veggklokken, ikke `now()`: 062/#205 felte defektklassen for
+    `modultoken_fortsatt_autorisert`, og 060:101 måler claim-leasen på
+    samme klokke. Porten måles på den UTRULLEDE kroppen — filen kan ligge
+    der uavspilt, og det er formen basen kjører som holder leasen.
+
+    Repro-veien Cursor foreslo (åpen TX + `pg_sleep` forbi `v_lease`)
+    krever at API-transaksjonen selv gjøres treg, altså ny maskin i en
+    fiksrunde (K1). Invarianten pinnes derfor der den bor.
+    """
+    import re
+    kropp = migrator.execute(
+        "SELECT pg_get_functiondef('public.forny_oppdragslease"
+        "(bigint,text,text,int,int)'::regprocedure)").fetchone()[0]
+    migrator.rollback()
+    # Kommentarene i kroppen SITERER 037s `now()`-predikat med vilje, så
+    # de strykes før målingen. Linjekommentarer er entydige her: ingen
+    # strengliteral i funksjonen inneholder «--».
+    kode = re.sub(r"--[^\n]*", "", kropp)
+    assert "now()" not in kode.lower(), \
+        ("fornyelsen blander klokker — `now()` i den utrullede kroppen:\n"
+         + kropp)
+    assert kode.lower().count("clock_timestamp()") >= 3, \
+        ("veggklokken mangler i sjekk eller skriving:\n" + kropp)
+
+
+@pg
 def test_uautentisert_heartbeat_avvises(klient, miljo):
     """Uten modultoken finnes ingen deployment å spørre — 401 før noe
     leses."""

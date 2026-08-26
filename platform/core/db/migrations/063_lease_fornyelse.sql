@@ -111,12 +111,25 @@ BEGIN
     -- står, så et heartbeat gir aldri mer enn ett vindu fram: en utfører
     -- som slutter å puste mister fortsatt autoriteten ved neste vindu —
     -- der det finnes et neste vindu å miste.
+    --
+    -- ÉN KLOKKE HELE VEIEN (Cursor P2): sjekkene over leser veggklokken,
+    -- og skrivingen må lese den samme. Blandet — `clock_timestamp()` i
+    -- sjekk, `now()` i skriving — kan en TX som har LEVD en stund (og
+    -- radlåsen over er nettopp der en fornyelse venter) få sjekken til å
+    -- si «leasen lever» mens UPDATE skriver en utløper som alt ligger
+    -- bak veggklokken: commit av en død lease, altså et reclaim-vindu
+    -- åpnet av heartbeatet selv. VALGET er veggklokken, ikke `now()`:
+    -- 062/#205 felte nøyaktig denne defektklassen for
+    -- `modultoken_fortsatt_autorisert`, og 060:101 måler claim-leasen på
+    -- samme klokke — å flytte sjekkene HIT ned til `now()` ville rullet
+    -- den dommen tilbake på lease-siden.
     UPDATE public.oppdrag o
        SET owner_lease_utloper = least(
-               now() + '3600 seconds'::INTERVAL,
+               clock_timestamp() + '3600 seconds'::INTERVAL,
                least(o.utforelsesfrist,
                      greatest(o.owner_lease_utloper,
-                              now() + (v_lease || ' seconds')::INTERVAL)))
+                              clock_timestamp()
+                                  + (v_lease || ' seconds')::INTERVAL)))
      WHERE o.id = p_oppdrag_id;
     SELECT o.owner_lease_utloper INTO owner_lease_utloper
       FROM public.oppdrag o WHERE o.id = p_oppdrag_id;
