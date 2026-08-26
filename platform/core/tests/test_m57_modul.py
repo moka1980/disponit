@@ -2245,6 +2245,10 @@ def test_manifestets_lukkede_form_avviser_alt_annet(tmp_path):
          "manifest_feilformet"),
         (_json.dumps({"soknader": [{"kandidat_id": "k1", "filer": [1]}]}),
          "manifest_feilformet"),
+        # DYBDE ER OGSÅ FORM: `json` melder syntaks som `ValueError`, men
+        # nøsting som `RecursionError` — som ikke er en `ValueError`. Noen
+        # tusen `[` er 200 kB, godt innenfor det 4 MiB-taket.
+        ("[" * 100_000 + "]" * 100_000, "manifest_feilformet"),
     )):
         assert _sjekk(manifest, f"m{i}") == ventet, (i, manifest)
 
@@ -2332,6 +2336,22 @@ def test_manifestlesingen_er_kodet_utfall_ikke_modellfeil(tmp_path):
     with pytest.raises(kjoring.Kjoringsfeil) as e:
         _kjor(arkiv, modell)
     assert e.value.kode == "uleselig_medlem", e.value.kode
+    assert modell.sett == []
+
+    # …og en DYBDE vi ikke kommer gjennom er samme sak: `json` melder
+    # nøsting som `RecursionError`, ikke `ValueError`, så den gikk rått
+    # forbi formporten til catch-allen. Deklarasjonen er den billigste
+    # delen av bunten å forme ondsinnet — feil kø her er feil kø for et
+    # angrep. Gaten slipper den inn (200 kB mot et tak på 4 MiB).
+    # MUTASJONEN SOM DREPER DENNE: fjern `RecursionError` fra fangsten.
+    (tmp_path / "dyp").mkdir()
+    arkiv = _bunt(tmp_path / "dyp", filer,
+                  manifest="[" * 100_000 + "]" * 100_000)
+    parsing.inspiser_bunt(arkiv)
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        _kjor(arkiv, modell)
+    assert e.value.kode == "manifest_feilformet", e.value.kode
     assert modell.sett == []
 
 

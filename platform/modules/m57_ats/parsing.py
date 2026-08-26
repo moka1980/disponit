@@ -626,7 +626,16 @@ def les_manifest(sti: str | Path,
                        f"{MANIFESTNAVN}: {type(feil).__name__}") from feil
     try:
         data = json.loads(raa.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError) as feil:
+    # JSON-DYBDE ER OGSÅ EN FORM (Cursor P1, runde 2). `json` melder
+    # SYNTAKS som `ValueError`, men NØSTING som `RecursionError` — og den
+    # er ingen `ValueError`. Noen tusen `[` innenfor `MAKS_MANIFESTBYTES`
+    # (4 MiB rommer millioner) feller dermed dekoderen med et unntak som
+    # gikk rått til `kjor_bunt`s catch-all og ble meldt som `modellfeil`.
+    # Deklarasjonen er den delen av bunten som er BILLIGST å forme
+    # ondsinnet, så feil kø her er feil kø for et angrep: en deklarasjon
+    # vi ikke kan lese, er `manifest_feilformet` — uansett om det er
+    # tegnene eller dybden vi ikke kommer gjennom.
+    except (UnicodeDecodeError, ValueError, RecursionError) as feil:
         raise Buntfeil("manifest_feilformet", "uleselig json") from feil
     if not isinstance(data, dict) or set(data) != {"soknader"} \
             or not isinstance(data["soknader"], list):
