@@ -20,6 +20,23 @@ Modulen er KUNDE av plattformen, aldri omvendt (m56-formen):
   deklarasjon er like røde — og deklarert kandidattall må være lik
   oppdragets `antall_soknader` FØR én byte innhold pakkes ut. En
   kandidatform gjettes aldri ut av katalogen.
+
+  `kandidat_id` er ASCII og LUKKET:
+  `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` — ikke-tom, maks 64 tegn, starter
+  alfanumerisk. Alt annet er `manifest_feilformet`. Kanonen er en
+  eierdom (K2-kjennelse på #216, valg A), og den er en KONTRAKT mot
+  kunden, ikke en valideringsdetalj: uten en lukket grammatikk er
+  «to ID-er som ser like ut for et menneske» en ubundet klasse — vi
+  avviste blanktegn i én runde, Cf/ZWSP i den neste, og RTL-markører,
+  NFKC-ekvivalenter og homoglyfer (`а` U+0430 mot `a`) sto i kø etter
+  dem. Én dom lukker hele klassen, og vi avviser i stedet for å
+  kanonisere: bunten som mente `k1` sier `k1`. Æøå, mellomrom og
+  skilletegn utenfor `._-` hører hjemme i kandidatens NAVN, ikke i
+  identiteten hens. Kanonen er samtidig veien mot
+  [#157](https://github.com/moka1980/disponit/issues/157) — når 057s
+  UUID-anker eier kandidatidentiteten, strammes denne formen inn til
+  ankeret; ASCII-kanonen er dermed et FREMTIDIG anker den peker på, og
+  ikke en utsettelse: porten står lukket her og nå.
 * **Ut**: ÉN promotert rapport per oppdrag —
   `rekruttering.evaluering.rapport`, den rangerte kandidatlisten med
   begrunnede funn (kildereferanse), poeng med nedbrytning og

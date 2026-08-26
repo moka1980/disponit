@@ -2230,7 +2230,17 @@ def test_manifestet_er_deklarasjonen_og_binder_toveis(tmp_path):
 def test_manifestets_lukkede_form_avviser_alt_annet(tmp_path):
     """#161: en deklarasjon vi ikke forstår FULLT UT er ingen
     deklarasjon — ukjente nøkler, feil typer, duplikater, tomme og
-    overfylte lister er alle `manifest_feilformet`."""
+    overfylte lister er alle `manifest_feilformet`.
+
+    `kandidat_id` er i tillegg LUKKET (eierdom, K2-kjennelsen på #216 —
+    valg A): `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`. En port som teller opp
+    tegnklasser å avvise, lukker aldri «to ID-er som ser like ut»; en
+    som sier hva den GODTAR, gjør det i én dom.
+
+    MUTASJONEN SOM DREPER DENNE: bytt `KANDIDAT_ID_KANON.fullmatch(kid)`
+    tilbake til `kid.strip() and kid == kid.strip()` — ZWSP-, RTL-,
+    æøå-, homoglyf- og lengderadene blir da lovlige deklarasjoner.
+    """
     import json as _json
 
     def _sjekk(manifest, undermappe):
@@ -2299,23 +2309,79 @@ def test_manifestets_lukkede_form_avviser_alt_annet(tmp_path):
         (_json.dumps({"soknader": [{"kandidat_id": "k1 ",
                                     "filer": ["k1/cv.html"]}]}),
          "manifest_feilformet"),
+        # DEN LUKKEDE ASCII-KANONEN (eierdom, valg A på #216). `strip()`
+        # rører ikke Cf, så U+200B var et lovlig tegn i en lovlig ID —
+        # og etter den sto RTL, NFKC og homoglyfer i kø. Kanonen sier
+        # hva vi GODTAR, og lukker dermed hele klassen: usynlige
+        # format-tegn, høyre-mot-venstre-markør, æøå og kyrillisk `а`
+        # (U+0430, homoglyf for `a`) er alle utenfor.
+        (_json.dumps({"soknader": [{"kandidat_id": "k1\u200b",
+                                    "filer": ["k1/cv.html"]}]}),
+         "manifest_feilformet"),
+        (_json.dumps({"soknader": [{"kandidat_id": "k1\u202e",
+                                    "filer": ["k1/cv.html"]}]}),
+         "manifest_feilformet"),
+        (_json.dumps({"soknader": [{"kandidat_id": "kå1",
+                                    "filer": ["k1/cv.html"]}]}),
+         "manifest_feilformet"),
+        (_json.dumps({"soknader": [{"kandidat_id": "а1",
+                                    "filer": ["k1/cv.html"]}]}),
+         "manifest_feilformet"),
+        # …og formens tre egne kanter: første tegn må være alfanumerisk
+        # (ellers er `.`/`-`/`_` en sti- eller flaggform i forkledning),
+        # skilletegn utenfor `._-` er ute, og 65 tegn er ett for mange.
+        (_json.dumps({"soknader": [{"kandidat_id": ".k1",
+                                    "filer": ["k1/cv.html"]}]}),
+         "manifest_feilformet"),
+        (_json.dumps({"soknader": [{"kandidat_id": "-k1",
+                                    "filer": ["k1/cv.html"]}]}),
+         "manifest_feilformet"),
+        (_json.dumps({"soknader": [{"kandidat_id": "k1/k2",
+                                    "filer": ["k1/cv.html"]}]}),
+         "manifest_feilformet"),
+        (_json.dumps({"soknader": [{"kandidat_id": "k" * 65,
+                                    "filer": ["k1/cv.html"]}]}),
+         "manifest_feilformet"),
+        # NYLINJE ER IKKE EN AVSLUTNING: `$` ville godtatt `"k1\n"` som
+        # en lovlig ID (og gitt oss `"k1"`-tvillingen tilbake gjennom
+        # bakdøren). Porten bruker `fullmatch`, så den finnes ikke.
+        (_json.dumps({"soknader": [{"kandidat_id": "k1\n",
+                                    "filer": ["k1/cv.html"]}]}),
+         "manifest_feilformet"),
     )):
         assert _sjekk(manifest, f"m{i}") == ventet, (i, manifest)
 
+    # POSITIV KONTROLL PÅ KANONEN: en port som avviser alt er ingen
+    # port. Hele det lovede tegnsettet, akkurat 64 tegn, og et
+    # skilletegn i hver lovlig form.
+    for lovlig in ("k1", "K-1.v2_a", "9" + "a" * 63):
+        assert parsing.KANDIDAT_ID_KANON.fullmatch(lovlig), lovlig
+    (tmp_path / "lovlig").mkdir()
+    arkiv = _bunt(tmp_path / "lovlig", [("k1/cv.html", b"<p>x</p>")],
+                  manifest=_json.dumps({"soknader": [
+                      {"kandidat_id": "K-1.v2_a",
+                       "filer": ["k1/cv.html"]}]}))
+    assert parsing.les_manifest(arkiv, parsing.inspiser_bunt(arkiv)) == {
+        "k1/cv.html": "K-1.v2_a"}
+
     # …og de to identitetene for samme kandidat, side om side: uten
     # porten er dette en LOVLIG deklarasjon med to kandidater, og
-    # `antall_soknader = 2` ville stemt (Cursor P2, runde 3).
-    (tmp_path / "tvilling").mkdir()
-    tvilling = _bunt(tmp_path / "tvilling",
-                     [("k1/cv.html", b"<p>x</p>"),
-                      ("k1/brev.html", b"<p>y</p>")],
-                     manifest=_json.dumps({"soknader": [
-                         {"kandidat_id": "k1", "filer": ["k1/cv.html"]},
-                         {"kandidat_id": "k1 ",
-                          "filer": ["k1/brev.html"]}]}))
-    with pytest.raises(parsing.Buntfeil) as e:
-        parsing.les_manifest(tvilling, parsing.inspiser_bunt(tvilling))
-    assert e.value.kode == "manifest_feilformet", e.value.kode
+    # `antall_soknader = 2` ville stemt (Cursor P2, runde 3 og 5 —
+    # blanktegnstvillingen og ZWSP-tvillingen er samme klasse, og
+    # kanonen feller dem begge).
+    for nr, tvilling_id in enumerate(("k1 ", "k1\u200b")):
+        (tmp_path / f"tvilling{nr}").mkdir()
+        tvilling = _bunt(tmp_path / f"tvilling{nr}",
+                         [("k1/cv.html", b"<p>x</p>"),
+                          ("k1/brev.html", b"<p>y</p>")],
+                         manifest=_json.dumps({"soknader": [
+                             {"kandidat_id": "k1", "filer": ["k1/cv.html"]},
+                             {"kandidat_id": tvilling_id,
+                              "filer": ["k1/brev.html"]}]}))
+        with pytest.raises(parsing.Buntfeil) as e:
+            parsing.les_manifest(tvilling, parsing.inspiser_bunt(tvilling))
+        assert e.value.kode == "manifest_feilformet", (tvilling_id,
+                                                       e.value.kode)
 
     # …og fraværet har sin egen kode.
     (tmp_path / "uten").mkdir()

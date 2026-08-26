@@ -16,6 +16,7 @@ from __future__ import annotations
 import io
 import json
 import lzma
+import re
 import zipfile
 import zlib
 from dataclasses import dataclass
@@ -50,6 +51,18 @@ TILLATTE_ENDELSER = frozenset({".pdf", ".docx", ".html", ".htm"})
 MANIFESTNAVN = "soknader.json"
 MAKS_KANDIDATER = 5000
 MAKS_MANIFESTBYTES = 4 * 1024 * 1024
+#: KANDIDAT-ID-ENS LUKKEDE ASCII-KANON (eierdom, K2-kjennelsen på #216 —
+#: valg A). Porten telte før opp TEGNKLASSER å avvise, én runde per
+#: klasse: blanktegn (runde 3), Cf/ZWSP (runde 5), og etter dem sto
+#: RTL-markører, NFKC-ekvivalenter og homoglyfer (`а` U+0430 mot `a`) i
+#: kø. En LUKKET grammatikk dreper hele «to ID-er som ser like ut for et
+#: menneske»-klassen i én dom — og den unngår håndrullede regler over en
+#: fremmed grammatikk (Unicode), som er K4s nabolag. Formen er
+#: KONTRAKT, ikke en fiksdetalj: den står i `kontrakt/KONTRAKT.md`.
+#: Ikke-tom, maks 64 tegn, starter alfanumerisk; alt annet er
+#: `manifest_feilformet`. `fullmatch` gjør at `$`-ens nylinjesmutthull
+#: aldri oppstår.
+KANDIDAT_ID_KANON = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 
 #: Magi per endelse: deklarasjonen og innholdet må være SAMME påstand
 #: («feil innholdstype»-porten).
@@ -575,11 +588,11 @@ def les_manifest(sti: str | Path,
     -> {medlemsnavn: kandidat_id} for hvert innholdsmedlem.
 
     Lukket form: toppobjekt med NØYAKTIG nøkkelen `soknader`, en liste
-    (1–MAKS_KANDIDATER) av objekter med NØYAKTIG `kandidat_id` (ikke-tom
-    tekst, unik) og `filer` (ikke-tom liste av tekst, globalt unike).
-    Alt annet — ukjente nøkler, feil typer, duplikater — er
-    `manifest_feilformet`: en deklarasjon vi ikke forstår fullt ut er
-    ingen deklarasjon.
+    (1–MAKS_KANDIDATER) av objekter med NØYAKTIG `kandidat_id` (unik, og
+    på `KANDIDAT_ID_KANON`s lukkede ASCII-form) og `filer` (ikke-tom
+    liste av tekst, globalt unike). Alt annet — ukjente nøkler, feil
+    typer, duplikater — er `manifest_feilformet`: en deklarasjon vi ikke
+    forstår fullt ut er ingen deklarasjon.
 
     Toveisbindingen er dommen fra #153: et manifest-navn uten medlem
     (`manifest_medlem_mangler`) og et medlem uten manifest-linje
@@ -674,15 +687,20 @@ def les_manifest(sti: str | Path,
                                                      "filer"}:
             raise Buntfeil("manifest_feilformet", "lukket kandidatform")
         kid, filer = rad["kandidat_id"], rad["filer"]
-        # PORTEN MÅLTE `strip()`, MEN LAGRET RÅVERDIEN (Cursor P2, runde
-        # 3). `not kid.strip()` avviste bare den blanke ID-en; `"k1 "`
-        # gikk uendret videre til `sett_kandidater` og returkartet, så
-        # `"k1"` og `"k1 "` var to lovlige, ULIKE kandidater i samme
-        # deklarasjon — samme «validering ≠ kanon»-brudd som porten
-        # finnes for å hindre. Vi avviser i stedet for å kanonisere: én
-        # vei inn, og bunten som mente `"k1"` sier `"k1"`.
-        if not isinstance(kid, str) or not kid.strip() \
-                or kid != kid.strip() or kid in sett_kandidater:
+        # ÉN LUKKET KANON, IKKE ÉN TEGNKLASSE PER RUNDE (eierdom, valg A
+        # på #216). Porten sto før som `not kid.strip() or kid !=
+        # kid.strip()` — den avviste blanktegn, men U+200B og resten av
+        # Cf er lovlige, ULIKE nøkler `strip()` ikke rører, så `"k1"` og
+        # `"k1<U+200B>"` var to lovlige kandidater i samme deklarasjon.
+        # Klassen «to ID-er som ser like ut for et menneske» er ubundet
+        # så lenge vi teller opp hva vi avviser; den er lukket i det
+        # øyeblikket vi sier hva vi GODTAR. `KANDIDAT_ID_KANON` erstatter
+        # begge betingelsene (flaten krymper), og vi avviser fortsatt i
+        # stedet for å kanonisere: én vei inn, og bunten som mente `"k1"`
+        # sier `"k1"`.
+        if not isinstance(kid, str) \
+                or not KANDIDAT_ID_KANON.fullmatch(kid) \
+                or kid in sett_kandidater:
             raise Buntfeil("manifest_feilformet", "kandidat_id")
         sett_kandidater.add(kid)
         if not isinstance(filer, list) or not filer:
