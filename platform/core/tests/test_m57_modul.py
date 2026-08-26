@@ -2216,6 +2216,35 @@ def test_manifestets_lukkede_form_avviser_alt_annet(tmp_path):
         (_json.dumps({"soknader": [{"kandidat_id": "k1",
                                     "filer": ["soknader.json"]}]}),
          "manifest_feilformet"),
+        # BLANKTEGN ER IKKE EN IDENTITET: `strip()`-porten står i koden,
+        # men den tomme strengen var eneste rad som målte den.
+        (_json.dumps({"soknader": [{"kandidat_id": "   ",
+                                    "filer": ["k1/cv.html"]}]}),
+         "manifest_feilformet"),
+        # Øvre kandidatgrense: 5001 er avvist ved deklarasjonen, aldri
+        # stille avkortet (samme hardhet som `antall_soknader` i
+        # bestillingen). Radene måles ikke — tallporten står foran dem.
+        (_json.dumps({"soknader": [{"kandidat_id": f"k{n}",
+                                    "filer": [f"k{n}/cv.html"]}
+                                   for n in range(5001)]}),
+         "manifest_feilformet"),
+        # Duplikat INNI én rad: `navn in kart` er global, så den samme
+        # fila to ganger for samme kandidat er like feilformet som delt
+        # mellom to kandidater.
+        (_json.dumps({"soknader": [{"kandidat_id": "k1", "filer":
+                                    ["k1/cv.html", "k1/cv.html"]}]}),
+         "manifest_feilformet"),
+        # TYPENE ER EN DEL AV DEN LUKKEDE FORMEN: en `kandidat_id` som
+        # tall, en `filer` som streng (som ville itererert TEGNVIS), og
+        # et filnavn som tall.
+        (_json.dumps({"soknader": [{"kandidat_id": 1,
+                                    "filer": ["k1/cv.html"]}]}),
+         "manifest_feilformet"),
+        (_json.dumps({"soknader": [{"kandidat_id": "k1",
+                                    "filer": "k1/cv.html"}]}),
+         "manifest_feilformet"),
+        (_json.dumps({"soknader": [{"kandidat_id": "k1", "filer": [1]}]}),
+         "manifest_feilformet"),
     )):
         assert _sjekk(manifest, f"m{i}") == ventet, (i, manifest)
 
