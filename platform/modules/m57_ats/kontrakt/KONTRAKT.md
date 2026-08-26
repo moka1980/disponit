@@ -40,11 +40,22 @@ Modulen er KUNDE av plattformen, aldri omvendt (m56-formen):
   200 tegn måles på BEGGE veier inn, ikke bare i manifestlesingen — én
   definisjon, to dører, og døra som måler minst er den som gjelder.
 
-  Verdien kan heller ikke være SIN EGEN MASKE: en verdi som er delstreng
-  av et token maskeringen produserer (`[NAVN-1]`, `[ALDER-1]`, … — altså
-  `"NA"`, `"KO"`, `"1"`) er `manifest_feilformet`. Port 16 søker
-  klarteksten i hele modellinputen, tokenene inkludert, så en slik
-  deklarasjon felles på en tekst der verdien faktisk er borte.
+  KJENT GRENSE — TOKENKOLLISJONEN, og den er FAIL-CLOSED. En deklarert
+  verdi som er delstreng av et token maskeringen selv produserer (`"K"`
+  i `[KJONN-1]`, `"1"` i nummerhalen, `"NA"` i `[NAVN-1]`) står igjen
+  inni sin egen maske. Port 16 søker klarteksten i HELE modellinputen,
+  tokenene inkludert, og feller derfor `maskert_felt_i_modellinput` på
+  en tekst der verdien faktisk ER borte. Utfallet er en NEKTET
+  evaluering — aldri en lekkasje — og tilfellet er sjeldent.
+  Deklarasjonen er dermed LOVLIG (eierdom, K2-kjennelse på
+  [#217](https://github.com/moka1980/disponit/pull/217), valg A): å
+  avvise den på vei inn ville gjort `kjonn: ["K"]` ulovlig mens `["M"]`
+  er lovlig og bannlyst én-bokstavs initialer — systematisk,
+  diskriminerende skade i normaltilfellet for å hindre et sjeldent
+  fail-closed utfall. Den ekte lukkingen er strukturell blinding med et
+  tokenalfabet som er DISJUNKT fra verdirommet, og den eies av
+  [#158](https://github.com/moka1980/disponit/issues/158) — ikke av en
+  formport her.
 
   `kandidat_id` er ASCII og LUKKET:
   `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` — ikke-tom, maks 64 tegn, starter

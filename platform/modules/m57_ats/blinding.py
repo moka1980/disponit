@@ -44,14 +44,6 @@ MASKERTE_FELTER: tuple[str, ...] = (
 MAKS_FELTVERDIER = 10
 MAKS_FELTVERDI_TEGN = 200
 
-#: TOKENALFABETET — hvert token maskeringen kan produsere, ordrett.
-#: Settet er endelig fordi begge aksene er lukket: feltene av
-#: `MASKERTE_FELTER`, nummereringen av `MAKS_FELTVERDIER`.
-_MULIGE_TOKEN: tuple[str, ...] = tuple(
-    f"[{felt.upper()}-{nr}]"
-    for felt in MASKERTE_FELTER
-    for nr in range(1, MAKS_FELTVERDIER + 1))
-
 
 class Blindingsfeil(Exception):
     def __init__(self, kode: str):
@@ -74,26 +66,9 @@ def verdiform_lukket(verdi: str) -> bool:
     Vi avviser, vi kanoniserer ikke: én vei inn, og en deklarasjon som
     mente `Kari` sier `Kari`. Cc/Cf (`U+200B`, RTL-markørene, kontroll-
     tegn) er samme sak i usynlig form — de skiller to verdier som er én
-    for et menneske og for dokumentet.
-
-    OG VERDIEN MÅ IKKE VÆRE SIN EGEN MASKE (Cursor P2). Etter erstatning
-    står tokenene selv i modellinputen, og `krev_blindet` søker
-    klarteksten i HELE strengen — tokenene inkludert. En lovlig
-    deklarasjon som er delstreng av tokenalfabetet (`"NA"` i `[NAVN-1]`,
-    `"KO"` i `[KONTAKT-1]`, `"1"` i halen) treffer altså sin egen maske:
-    porten feller `maskert_felt_i_modellinput` på en tekst der verdien
-    faktisk ER borte. Sonden er nøyaktig den samme testen porten kjører
-    (`_monster`, IGNORECASE), så de to kan ikke divergere — og igjen:
-    avvis, ikke kanoniser. Tomme verdier probes ikke; de får aldri noe
-    token (og `_monster("")` ville truffet alt), og den tomme
-    deklarasjonen felles av `blinding_uten_felter`, ikke her."""
-    if verdi != verdi.strip() or any(
-            unicodedata.category(tegn) in ("Cc", "Cf") for tegn in verdi):
-        return False
-    if not verdi:
-        return True
-    monster = _monster(verdi)
-    return not any(monster.search(token) for token in _MULIGE_TOKEN)
+    for et menneske og for dokumentet."""
+    return verdi == verdi.strip() and not any(
+        unicodedata.category(tegn) in ("Cc", "Cf") for tegn in verdi)
 
 
 def _monster(verdi: str) -> re.Pattern[str]:
