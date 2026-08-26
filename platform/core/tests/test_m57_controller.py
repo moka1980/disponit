@@ -308,6 +308,48 @@ def test_tom_ko_er_tomt_utfall():
     assert res == {"utfall": "tomt"}
 
 
+def test_payloaden_maales_mot_plattformens_kontrakt():
+    """m56s `_kontraktsbrudd`, speilet: utføreren leser den SAMME
+    tabellen (`oppdragskontrakt`) som stoppet oppdraget ved
+    opprettelsen. Den håndrullede sjekken var en annen port enn den —
+    `antall_soknader: 5001` (klarsignalet §4, HARD grense),
+    `omfang: "alt"`, en `stillingsprofil_ref` som ikke er en referanse og
+    en `slettefrist_dogn` utenfor 30–365 slapp alle gjennom her.
+
+    Kontroll: fjern kontraktsoppslaget, så henter denne bunten og kjører
+    modellen på en bestilling plattformen selv kaller ulovlig."""
+    for endring, felt in (({"antall_soknader": 5001}, "antall_soknader"),
+                          ({"antall_soknader": 0}, "antall_soknader"),
+                          ({"omfang": "alt"}, "omfang"),
+                          ({"stillingsprofil_ref": 123},
+                           "stillingsprofil_ref"),
+                          ({"slettefrist_dogn": 3650},
+                           "slettefrist_dogn")):
+        k = _Stubklient(payload=_payload(**endring))
+        res = _kjor(k)
+        assert res["utfall"] == "avbrutt", (endring, res)
+        assert res["grunn"] == f"oppdrag_ugyldig:{felt}", res
+        assert k.kvitteringer[0]["feilkode"] == "oppdrag_ugyldig"
+        # Bunten ble ALDRI hentet: persondata koster, og en bestilling
+        # ingen rapport kan oppfylle skal ikke koste dem.
+        assert not [s for s in k.stier
+                    if s.startswith("/v1/inndata/hent-for-oppdrag/")]
+
+
+def test_profilens_indre_form_er_fortsatt_modulens_egen():
+    """Kontrakten krever at `stillingsprofil` FINNES; det er
+    controlleren som leser `krav[].kravnavn/vekt` ut til vektkartet. Den
+    sjekken blir derfor stående ved siden av kontraktsoppslaget."""
+    for profil, felt in (({"profil_id": "p", "versjon": 1, "navn": "N",
+                           "krav": []}, "krav"),
+                         ({"profil_id": "p", "versjon": 1, "navn": "N",
+                           "krav": [{"kravnavn": "drift", "vekt": True}]},
+                          "krav"),
+                         ("ikke et objekt", "stillingsprofil")):
+        k = _Stubklient(payload=_payload(stillingsprofil=profil))
+        assert _kjor(k)["grunn"] == f"oppdrag_ugyldig:{felt}", profil
+
+
 class _VenterModell(_Modell):
     """Holder evalueringen i gang til pulsen HAR slått, slik at
     fornyelsessvaret rekker å nå controlleren mens arbeidet pågår —
@@ -452,10 +494,11 @@ def test_uhentbar_bunt_kvitteres_feilet(monkeypatch):
     claim = {"oppdrag_id": 7, "tenant": "t-x",
              "kvittering_jti": "kj", "repair_operation_id": "r",
              "owner_claim_id": "c" * 22, "owner_generation": 1,
-             "payload": {"stillingsprofil": {
-                 "profil_id": "p", "versjon": 1, "navn": "N",
-                 "krav": [{"kravnavn": "drift", "vekt": 3}]},
-                 "antall_soknader": 1, "omfang": "bunt"},
+             "payload": {"stillingsprofil_ref": "p@1",
+                         "stillingsprofil": {
+                             "profil_id": "p", "versjon": 1, "navn": "N",
+                             "krav": [{"kravnavn": "drift", "vekt": 3}]},
+                         "antall_soknader": 1, "omfang": "bunt"},
              "opplasting": {"jti": "oj", "utloper": "2099-01-01T00:00:00+00:00"},
              # Fristene er en del av det EKTE claim-svaret, og
              # `_evalueringsfrist` regner vinduet ut av dem: uten

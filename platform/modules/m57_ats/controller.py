@@ -22,6 +22,13 @@ import jsonschema
 
 from . import kjoring, rapportskjema
 
+#: Modulens ene oppdragstype — nøkkelen inn i plattformens
+#: `OPPDRAGSTYPER`, som eier både feltbredden og verdikontrakten.
+#: Modulen gjentar ingen av delene, den slår dem opp (m56s `OPPDRAGSTYPE`,
+#: samme rolle): to sett regler ville betydd at bestillingsveien og
+#: utføreren kunne vært uenige om hva et lovlig oppdrag er.
+OPPDRAGSTYPE = "rekruttering.evaluering"
+
 #: m56-formen: leveringsforsøk og pause per steg.
 LEVERINGSFORSOK = 4
 LEVERINGSPAUSE_S = 5.0
@@ -174,10 +181,36 @@ def _evalueringsfrist(claim: dict) -> int | None:
 
 
 def _payloadbrudd(payload: dict) -> str | None:
-    """Bestillingens gjennomførbarhet, lest FØR noe arbeid: profilen og
-    tallet må være der kontrakten (payload-skjemaet) lover."""
+    """Bestillingens gjennomførbarhet, lest FØR noe arbeid — eller None.
+
+    KONTRAKTEN ER PLATTFORMENS, IKKE MODULENS (m56s `_kontraktsbrudd`,
+    speilet). Den håndrullede sjekken her leste bare profilen og at
+    `antall_soknader >= 1`, og var dermed en ANNEN port enn den som
+    slapp oppdraget gjennom ved opprettelsen: `oppdragskontrakt` binder
+    også `omfang` til «bunt», `antall_soknader` til 1–5000 (klarsignalet
+    §4 — 5001 avvises, aldri stille avkorting), `slettefrist_dogn` til
+    30–365 og `stillingsprofil_ref` til en ikke-tom streng. Et eldre
+    eller korrupt claim med `antall_soknader: 5001` kunne derfor hentes
+    og evalueres av utføreren selv om bestillingsveien ville avvist det.
+
+    To sett regler betyr at de to sidene kan være uenige om hva et lovlig
+    oppdrag er. Den samme tabellen leses nå begge steder. Porten står
+    likevel HER og ikke bare der: raden kan være skrevet av en eldre
+    release, og en utfører som stoler på at noen andre har sjekket,
+    sjekker ikke.
+
+    Profilens INDRE form er modulens egen og blir stående ved siden av:
+    kontrakten krever at `stillingsprofil` finnes, mens det er
+    controlleren som leser `krav[].kravnavn/vekt` ut til vektkartet.
+    Bare feltNAVN rapporteres videre, aldri verdier — grunnen havner i
+    driftsloggen, og en søknadsbestilling er saksdata."""
     if not isinstance(payload, dict):
         return "payload"
+    from oppdragskontrakt import bryter_feltkontrakten, mangler_paakrevde
+    brudd = sorted({*mangler_paakrevde(OPPDRAGSTYPE, payload),
+                    *bryter_feltkontrakten(OPPDRAGSTYPE, payload)})
+    if brudd:
+        return ",".join(brudd)
     profil = payload.get("stillingsprofil")
     if not isinstance(profil, dict):
         return "stillingsprofil"
@@ -190,10 +223,6 @@ def _payloadbrudd(payload: dict) -> str | None:
                 or not isinstance(rad.get("vekt"), int) \
                 or isinstance(rad.get("vekt"), bool):
             return "krav"
-    antall = payload.get("antall_soknader")
-    if not isinstance(antall, int) or isinstance(antall, bool) \
-            or antall < 1:
-        return "antall_soknader"
     return None
 
 
