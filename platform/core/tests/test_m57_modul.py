@@ -3026,10 +3026,11 @@ def test_bunt_uten_kandidater_er_kodet_feil_ikke_tomt_resultat(tmp_path,
     from modules.m57_ats import kjoring
 
     def _kjor(arkiv, modell):
-        return kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
-                                 kandidatfelter_for=lambda m: {"navn": ["Nordmann"]},
-                                 tekst_for=lambda m, d: d.decode("utf-8"),
-                                 biasmaalinger=_MAALINGER, antall_soknader=1)
+        return kjoring.kjor_bunt(
+            arkiv, modell, vekter={"drift": 3},
+            kandidatfelter_for=lambda m: {"navn": ["Nordmann"]},
+            tekst_for=lambda m, d: d.decode("utf-8"),
+            biasmaalinger=_MAALINGER, antall_soknader=1)
 
     tom = tmp_path / "tom.zip"
     with zipfile.ZipFile(tom, "w") as zf:
