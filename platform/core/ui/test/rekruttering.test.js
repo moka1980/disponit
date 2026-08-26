@@ -1273,6 +1273,80 @@ test("Bestilling: endret kropp etter usikkert svar gir NY nøkkel (P1-2)", async
     "feltendringen reserverte bunten på nytt");
 });
 
+test("Bestilling: en FORLATT bestilling lover ikke «samme operasjon» (Cursor P2)",
+  async () => {
+    // Filvelgeren er den ENE kontrollen `frys` ikke tar: et bunt-bytte
+    // under den flygende POST-en bumper `generasjon` og nullstiller
+    // `bestillIdem` — og det er riktig, en ny bunt er en ny kropp. Men
+    // teksten for det uvisse utfallet lovte fortsatt at et nytt forsøk
+    // gjentar SAMME operasjon, og den nøkkelen fantes ikke lenger: et
+    // «prøv igjen» ville lagt bestilling nummer to oppå en som ved 0/5xx
+    // godt kan være committet.
+    KALL = [];
+    let slippBestilling;
+    let bestillingssvar = new Promise((r) => { slippBestilling = r; });
+    let reservasjon = { reservasjon_jti: "j-1", inndata_ref: "inndata:u-1" };
+    SVAR = (sti) => {
+      if (sti === "/v1/rekruttering/prosesser") return prosess();
+      if (sti === "/v1/rekruttering/stillingsprofiler") return profiler();
+      if (sti === "/v1/inndata/reserver") return reservasjon;
+      if (sti.startsWith("/v1/inndata/opplast/")) return {};
+      if (sti === "/v1/bestilling") return bestillingssvar;
+      return undefined;
+    };
+    const hoved = nyHoved();
+    visRekruttering(hoved, ctx());
+    assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+    const seksjon =
+      hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+    const skjema = seksjon.querySelector("form");
+    const send = skjema.querySelector("button[type=submit]");
+    const filInp = skjema.querySelector("input[type=file]");
+    const velgFil = (navn) => {
+      Object.defineProperty(filInp, "files", { configurable: true,
+        value: [{ name: navn, arrayBuffer: async () => new ArrayBuffer(16) }] });
+      filInp.dispatchEvent(new window.Event("change", { bubbles: true }));
+    };
+    const bestillinger = () => KALL.filter((k) => k.sti === "/v1/bestilling");
+    const bestill = () => skjema.dispatchEvent(new window.Event("submit",
+      { bubbles: true, cancelable: true }));
+    velgFil("bunt.zip");
+    bestill();
+    assert.ok(await vent(() => bestillinger().length === 1, 40),
+      "bestillingen kom aldri");
+    // Brukeren bytter bunt mens bestillingen står UBESVART: intensjonen er
+    // forlatt, og nøkkelen med den.
+    reservasjon = { reservasjon_jti: "j-2", inndata_ref: "inndata:u-2" };
+    velgFil("bunt2.zip");
+    slippBestilling(500);
+    assert.ok(await vent(() => !send.disabled, 40), "kjeden ble aldri ferdig");
+    const melding = seksjon.querySelector("[role=alert]").textContent;
+    assert.notEqual(melding, t("ui.rekruttering.usikkert_utfall"),
+      "en forlatt intensjon lovte fortsatt at retry er SAMME operasjon");
+    assert.notEqual(melding, t("ui.rekruttering.bestill.avbrutt"),
+      "teksten lovte at ingenting er bestilt — det vet vi ikke her");
+    // `t()` faller tilbake til nøkkelen selv når den mangler, og da ville
+    // linjen under målt seg selv: begge sider hadde vært samme streng.
+    assert.notEqual(melding, "ui.rekruttering.bestill.forlatt_usikkert",
+      "locale mangler nøkkelen — brukeren fikk en rå identifikator");
+    assert.equal(melding, t("ui.rekruttering.bestill.forlatt_usikkert"));
+    // ... og neste Send ER en ny operasjon: ny bunt, ny reservasjon, ny
+    // nøkkel. Teksten over er den eneste grunnen brukeren har til å vite
+    // det før hun trykker.
+    bestillingssvar = { beslutning: "tillat", oppdrag_id: 12 };
+    bestill();
+    assert.ok(await vent(() => bestillinger().length === 2, 40),
+      "den nye bestillingen kom aldri");
+    const [b1, b2] = bestillinger();
+    assert.equal(b1.kropp.inndata_ref, "inndata:u-1");
+    assert.equal(b2.kropp.inndata_ref, "inndata:u-2",
+      "den nye bestillingen gikk på den forlatte bunten");
+    assert.notEqual(b2.hoder["Idempotency-Key"], b1.hoder["Idempotency-Key"],
+      "en ny kropp bar den forlatte intensjonens nøkkel");
+    // MUTASJONEN SOM DREPER DENNE: la `forlatt`-armen falle tilbake til
+    // `usikkert_utfall`.
+  });
+
 test("Bestilling: profilen er låst mens kroppen er underveis (Cursor P1)", async () => {
   // `stillingsprofil_ref` var det ENESTE kroppsfeltet uten lås. To vinduer
   // sto åpne: i opplastingsvinduet (før `kropp` bygges) kunne profilen gli

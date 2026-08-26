@@ -987,8 +987,22 @@ function bestillSeksjon(hoved, ctx, data, okt, laas) {
       // signeringen bruker: den sier at utfallet er ukjent, at en ny
       // forsøk gjentar SAMME operasjon (nøkkelen står, se over), og at
       // en omlasting viser serverens tilstand.
+      //
+      // ... MEN «SAMME OPERASJON» ER USANT NÅR INTENSJONEN ER FORLATT
+      // (Cursor P2). Filvelgeren er den ene kontrollen `frys` ikke tar, og
+      // et bunt-bytte under den flygende POST-en bumper `generasjon` og
+      // nullstiller `bestillIdem` — det er RIKTIG, en ny bunt er en ny
+      // kropp. Men da lover `usikkert_utfall` noe flaten ikke lenger kan
+      // holde: neste Send bærer en FERSK nøkkel, så et «prøv igjen» her
+      // gjør den forrige bestillingen — som ved 0/5xx godt kan være
+      // committet — til nummer to. Nøkkeløkonomien og teksten sier nå det
+      // samme. `bestill.avbrutt` (opplastingsarmen over) duger ikke: den
+      // lover at INGENTING er bestilt, og det er nettopp det vi ikke vet
+      // når kallet alt var i lufta.
+      const forlatt = tilstand.generasjon !== min;
       sett(utfall, t(definitivt ? "ui.rekruttering.bestill.feil"
-        : "ui.rekruttering.usikkert_utfall"));
+        : forlatt ? "ui.rekruttering.bestill.forlatt_usikkert"
+          : "ui.rekruttering.usikkert_utfall"));
     } finally {
       tilstand.paagaaende = false;
       // Låsen løftes på de SAMME kontrollene som tok den (A-dommen,
