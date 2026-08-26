@@ -39,13 +39,44 @@ Modulen er KUNDE av plattformen, aldri omvendt (m56-formen):
   `blinding_uten_felter` — et kodet utfall, aldri en ublindet
   evaluering.
 
-  Feltverdien er SIN EGEN skrivemåte: ingen ledende/avsluttende
-  blanktegn, ingen Cc/Cf-tegn (`U+200B`, RTL-markørene, kontrolltegn).
-  Verdien er både det som maskeres og det port 16 leter etter, så
-  `"Kari Testdal "` mot en tekst som skriver navnet uten hale gjør
-  porten vakuøs uten å gjøre den tom. Alt annet er `manifest_feilformet`
-  (og `ugyldig_maskeringsform` på den injiserte veien) — vi avviser, vi
+  Feltverdien er SIN EGEN skrivemåte: ingen ledende eller avsluttende
+  blanktegn. Verdien er både det som maskeres og det port 16 leter
+  etter, så `"Kari Testdal "` mot en tekst som skriver navnet uten hale
+  gjør porten vakuøs uten å gjøre den tom. Grensen er STRUKTURELL —
+  `verdi == verdi.strip()` — og alt annet er `manifest_feilformet` (og
+  `ugyldig_maskeringsform` på den injiserte veien); vi avviser, vi
   kanoniserer ikke.
+
+  VAKUØSITETEN MÅLES PÅ EFFEKT, PER FELT, og det er dén porten som eier
+  usynlige og forvekslingsbare tegn (eierdom, K2-kjennelse runde 5 på
+  [#217](https://github.com/moka1980/disponit/pull/217), valg B): i
+  `blind` må HVERT deklarert felt treffe dokumentteksten minst én gang.
+  Et felt der ingen verdi traff er en vakuøs deklarasjon →
+  `ugyldig_maskeringsform`. En enkelt VERDI uten treff er derimot lovlig
+  når en søsterverdi i samme felt traff — ellers ville defensive
+  varianter (`["Kari Testdal", "Kari"]`) blitt selvmotsigende farlige,
+  og deklarasjonen presset mot færre varianter, som er feil fortegn for
+  personvern.
+
+  Grunnen til at dette IKKE er en tegnliste til: skrivemåteporten var en
+  håndskrevet svarteliste over Unicode-kategorier (`Cc`/`Cf`), og en
+  svarteliste er ufullstendig i ett predikat like fullt som i to. NBSP
+  (`Zs`), `U+2010` (`Pd`) og en NFD-dekomponert `å` er ingen av
+  kategoriene, og hver av dem gir samme vakuum: maskeringen treffer
+  ingenting, avmaskeringstabellen er likevel ikke tom, port 16 leter
+  etter en form som ikke står i dokumentet — og kjøringen telles som
+  blindet mens klartekstnavnet går til modellen. Det er en LEKKASJE, og
+  den lukkes ved å måle at deklarasjonen VIRKET, ikke ved å vite hvilket
+  tegn som gjorde at den bommet.
+
+  KJENT GRENSE — RESTKLASSEN, og den er eid av
+  [#158](https://github.com/moka1980/disponit/issues/158): en forekomst
+  i teksten som ingen deklarert verdi matcher, MENS en annen verdi i
+  samme felt traff, er udetekterbar uten navnegjenkjenning i fritekst.
+  Porten her måler at feltet virket minst én gang, ikke at det virket
+  overalt. Fullstendighet kommer med strukturell blinding — der finnes
+  personfeltene ikke i inputen i det hele tatt — ikke med en port til
+  på denne veien.
 
   HELE GRENSESETTET ER ÉTT PREDIKAT, og det måles på BEGGE veier inn
   (eierdom, K2-kjennelse runde 4 på
@@ -62,6 +93,13 @@ Modulen er KUNDE av plattformen, aldri omvendt (m56-formen):
   (padding/Cf, så lengde/antall, så ukjent feltnavn, så tom
   liste/tom verdi). Døra som måler minst er den som gjelder — derfor
   finnes den ikke lenger som egen dør.
+
+  Presisering etter runde 5: ett predikat lukket DIVERGENSEN mellom de
+  to dørene, og den aksen er reelt død. Det lukket aldri
+  UFULLSTENDIGHET i grensesettet — en ufullstendig tegnliste lever like
+  godt i ett predikat som i to, og runde 5 kom nettopp der. Delt
+  predikat eier derfor det begge dørene KAN måle uten dokumentteksten;
+  det som bare kan måles MOT teksten, eies av vakuøsitetsporten over.
 
   KJENT GRENSE — TOKENKOLLISJONEN, og den er FAIL-CLOSED. En deklarert
   verdi som er delstreng av et token maskeringen selv produserer (`"K"`

@@ -1583,9 +1583,11 @@ def test_deklarert_antall_bindes_til_buntens_kandidater(tmp_path):
     er pakket ut."""
     from modules.m57_ats import kjoring
 
+    # Deklarasjonen STÅR i teksten: en deklarasjon som ikke treffer er
+    # vakuøs og felles av `blind` (eierdom, K2-kjennelse runde 5, valg B).
     arkiv = _bunt(tmp_path, [
-        ("k1/soknad.html", b"<p>drift hos k1</p>"),
-        ("k2/soknad.html", b"<p>drift hos k2</p>"),
+        ("k1/soknad.html", b"<p>Kandidat k1 vil ha drift hos k1</p>"),
+        ("k2/soknad.html", b"<p>Kandidat k2 vil ha drift hos k2</p>"),
     ])
     felter = lambda m: {"navn": [f"Kandidat {m.navn.split('/')[0]}"]}
     uttrukket = []
@@ -1625,10 +1627,13 @@ def test_port28_avbrutt_kjoring_promoterer_ingenting(tmp_path):
     Positiv kontroll i samme test: samme bunt uten feilen gir helheten."""
     from modules.m57_ats import kjoring
 
+    # «hos kN» står IGJEN etter maskeringen (det er «Kandidat kN» som er
+    # deklarert), så modellen under kjenner fortsatt igjen kandidat 2 —
+    # og deklarasjonen treffer, som `blind`s vakuøsitetsport krever.
     arkiv = _bunt(tmp_path, [
-        ("k1/soknad.html", b"<p>drift hos k1</p>"),
-        ("k2/soknad.html", b"<p>drift hos k2</p>"),
-        ("k3/soknad.html", b"<p>drift hos k3</p>"),
+        ("k1/soknad.html", b"<p>Kandidat k1 vil ha drift hos k1</p>"),
+        ("k2/soknad.html", b"<p>Kandidat k2 vil ha drift hos k2</p>"),
+        ("k3/soknad.html", b"<p>Kandidat k3 vil ha drift hos k3</p>"),
     ])
 
     class _Doende(_Modell):
@@ -1747,13 +1752,15 @@ def test_tekstuttrekket_er_containerens_aldri_en_utf8_dekoding(tmp_path):
                           kandidatfelter_for=felter,
                           biasmaalinger=_MAALINGER, antall_soknader=1)
 
-    # Modellen ser NØYAKTIG det uttrekkeren ga — ikke bytene fra arkivet.
+    # Modellen ser NØYAKTIG det uttrekkeren ga — ikke bytene fra arkivet
+    # — med blindingen som eneste bearbeiding på veien.
     modell = _Modell()
     kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
                       kandidatfelter_for=felter,
-                      tekst_for=lambda m, d: "uttrukket drift-tekst",
+                      tekst_for=lambda m, d: "uttrukket drift-tekst "
+                                             "for Kandidat k1",
                       biasmaalinger=_MAALINGER, antall_soknader=1)
-    assert modell.sett == ["uttrukket drift-tekst"]
+    assert modell.sett == ["uttrukket drift-tekst for [NAVN-1]"]
 
     # Et uttrekk som feiler (ødelagt pdf) er SP-3s kodede utfall, ikke en
     # rå bibliotekfeil ut av modulen …
@@ -1820,7 +1827,7 @@ def test_tomt_tekstuttrekk_er_kodet_feil_ikke_en_tom_vurdering(tmp_path):
         arkiv2, _Modell(), vekter={"drift": 3},
         kandidatfelter_for=felter,
         tekst_for=lambda m, d: ("" if m.navn.endswith("soknad.html")
-                                else "drift i CV-en"),
+                                else "Kandidat k1 kan drift i CV-en"),
         biasmaalinger=_MAALINGER, antall_soknader=1)
     assert set(ut["artefakter"]) == {"k1"}
 
@@ -2074,11 +2081,11 @@ def test_modellens_egen_nettverksfeil_er_ikke_en_driftssak(tmp_path):
         def vurder(self, tekst, vekter):
             raise ConnectionResetError(errno.ECONNRESET, "Connection reset")
 
-    arkiv = _bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>")])
+    arkiv = _bunt(tmp_path, [("k1/cv.html", b"<p>Kari kan drift</p>")])
     with pytest.raises(kjoring.Kjoringsfeil) as e:
         kjoring.kjor_bunt(arkiv, _ModellSomMisterForbindelsen(),
                           vekter={"drift": 3},
-                          kandidatfelter_for=lambda m: {"navn": ["N"]},
+                          kandidatfelter_for=lambda m: {"navn": ["Kari"]},
                           tekst_for=lambda m, d: d.decode("utf-8"),
                           biasmaalinger=_MAALINGER, antall_soknader=1)
     assert e.value.kode == "modellfeil", (
@@ -2193,7 +2200,7 @@ def test_manifestet_er_deklarasjonen_og_binder_toveis(tmp_path):
     def _kjor(arkiv, antall=1):
         return kjoring.kjor_bunt(
             arkiv, _Modell(), vekter={"drift": 3},
-            kandidatfelter_for=lambda m: {"navn": ["N"]},
+            kandidatfelter_for=lambda m: {"navn": ["Kari"]},
             tekst_for=lambda m, d: d.decode("utf-8"),
             biasmaalinger=_MAALINGER, antall_soknader=antall)
 
@@ -2201,7 +2208,7 @@ def test_manifestet_er_deklarasjonen_og_binder_toveis(tmp_path):
     # kandidaten deklarasjonen sier — mappenavnet betyr ingenting.
     (tmp_path / "a").mkdir()
     arkiv = _bunt(tmp_path / "a",
-                  [("k1/cv.html", b"<p>drift</p>"),
+                  [("k1/cv.html", b"<p>Kari kan drift</p>"),
                    ("annet/brev.html", b"<p>mer drift</p>")],
                   manifest=_json.dumps({"soknader": [
                       {"kandidat_id": "kari",
@@ -2295,16 +2302,21 @@ def test_padda_feltverdi_er_ingen_deklarasjon(tmp_path):
     klartekstnavnet gikk til modellen mens kjøringen telte som blindet.
     Samme klasse som `kandidat_id` før ASCII-kanonen.
 
+    ETTER RUNDE 5 MÅLER DENNE BARE DEN STRUKTURELLE FORMEN — `verdi ==
+    verdi.strip()`. Tegnkategoriene (`Cc`/`Cf`) er borte fra predikatet,
+    og de USYNLIGE formene hører hjemme i
+    `test_vakuos_deklarasjon_felles_paa_effekt_per_felt`: de er ikke en
+    tegnliste å utvide, men en bom som måles på EFFEKT.
+
     MUTASJONEN SOM DREPER DENNE: fjern `verdiform_lukket`-kallet i
-    `les_manifest` (E2E-delen) eller i `blind`s formløkke (den injiserte
-    veien under)."""
+    `blinding.feltverdier_lukket` — da slipper begge dørene raden."""
     import json as _json
 
     from modules.m57_ats import kjoring
 
     cv = b"<p>Kari Testdal kan drift, kari@eksempel.no</p>"
     for i, verdi in enumerate(("Kari Testdal ", " Kari Testdal",
-                               "Kari Testdal\u200b", "Kari\u202eTestdal")):
+                               "Kari Testdal\n", "\tKari Testdal")):
         (tmp_path / f"p{i}").mkdir()
         arkiv = _bunt(tmp_path / f"p{i}", [("k1/cv.html", cv)],
                       manifest=_json.dumps({"soknader": [
@@ -2333,7 +2345,7 @@ def test_padda_feltverdi_er_ingen_deklarasjon(tmp_path):
             kandidatfelter_for=lambda m: {"navn": ["Kari Testdal "]})
     assert e.value.kode == "ugyldig_maskeringsform"
     assert not modell.sett
-    for padda in ("Kari Testdal ", "Kari\u200b"):
+    for padda in ("Kari Testdal ", " Kari", "Kari\n"):
         with pytest.raises(blinding.Blindingsfeil) as e:
             blinding.blind("Kari Testdal kan drift.", {"navn": [padda]})
         assert e.value.kode == "ugyldig_maskeringsform", padda
@@ -2342,7 +2354,7 @@ def test_padda_feltverdi_er_ingen_deklarasjon(tmp_path):
 def test_manifestfeltenes_lukkede_form(tmp_path):
     """Feltdeklarasjonen er like LUKKET som resten av manifestet: ukjent
     feltnavn, feil typer, tomme og overfylte lister, for lange verdier og
-    verdier som ikke er sin egen skrivemåte (padding, Cf/Cc) er alle
+    verdier som ikke er sin egen skrivemåte (padding) er alle
     `manifest_feilformet`.
 
     Cursor P2: enumerasjonen dekket alt UNNTATT den formen P1 levde i —
@@ -2370,18 +2382,19 @@ def test_manifestfeltenes_lukkede_form(tmp_path):
         {"navn": ["   "]},
         {"navn": [7]},
         {"navn": ["x" * (blinding.MAKS_FELTVERDI_TEGN + 1)]},
-        # Verdien er sin egen skrivemåte (Cursor P1/P2): en hale, en
-        # ledende blank eller et usynlig Cf/Cc-tegn gjør maskeringen og
-        # porten enige om noe som ikke står i dokumentet.
+        # Verdien er sin egen skrivemåte (Cursor P1/P2): en hale eller en
+        # ledende blank gjør maskeringen og porten enige om noe som ikke
+        # står i dokumentet. Grensen er STRUKTURELL, ikke en tegnliste —
+        # de usynlige formene måles på EFFEKT (eierdom, runde 5, valg B),
+        # se `test_vakuos_deklarasjon_felles_paa_effekt_per_felt`.
         {"navn": [" Kari"]},
         {"navn": ["Kari "]},
-        {"navn": ["Kari\u200b"]},
-        {"navn": ["Kari\u202e"]},
-        {"navn": ["Kari\nTestdal"]},
+        {"navn": ["Kari\n"]},
+        {"navn": ["\tKari"]},
         # Én ugyldig verdi feller hele deklarasjonen, også med gyldige
         # naboer i samme liste og i et annet felt.
         {"navn": ["Kari", "Testdal "]},
-        {"navn": ["Kari"], "adresse": ["Gata 1\u200b"]},
+        {"navn": ["Kari"], "adresse": ["Gata 1 "]},
     )):
         _sjekk(felter, f"f{i}")
 
@@ -2393,6 +2406,145 @@ def test_manifestfeltenes_lukkede_form(tmp_path):
                        "felter": {"navn": ["Kari"]}}]}))
     m = parsing.les_manifest(arkiv, parsing.inspiser_bunt(arkiv))
     assert m.felter == {"k1": {"navn": ["Kari"]}}
+
+
+def test_vakuos_deklarasjon_felles_paa_effekt_per_felt(tmp_path):
+    """EIERDOM, K2-kjennelse runde 5 på #217 (valg B): vakuøsitet måles
+    på EFFEKT, med per-FELT-semantikk.
+
+    Rotårsaken fem runder aldri traff: `verdiform_lukket` var en
+    HÅNDSKREVET SVARTELISTE over Unicode-kategorier (`Cc`/`Cf`), og en
+    svarteliste er ufullstendig i ett predikat like fullt som i to.
+    Runde 4 gjorde grensesettet til ETT predikat — den aksen er reelt
+    død — men NBSP (`Zs`), U+2010 (`Pd`) og en NFD-dekomponert `å` er
+    ingen av kategoriene, og hver av dem gir nøyaktig samme vakuum som
+    en padda verdi gjorde i `7b8fa66`:
+
+        deklarert  = "Kari" + NBSP + "Testdal"
+        dokumentet = "Kari Testdal"   (vanlig mellomrom)
+        -> maskeringen treffer ingenting
+        -> `avmaskering` er IKKE tom, så `blinding_uten_felter` tier
+        -> `krev_blindet` leter etter NBSP-formen og finner den ikke
+        -> kjøringen telles som BLINDET mens klartekstnavnet går til
+           modellen. Det er en LEKKASJE, ikke en fail-closed feller.
+
+    Porten teller derfor ikke tegn: den måler at hvert DEKLARERT FELT
+    traff dokumentteksten minst én gang. Da spiller det ingen rolle
+    hvilket tegn som gjorde at deklarasjonen bommet — runde 6 på
+    tegnaksen finnes ikke, fordi aksen ikke finnes.
+
+    PER FELT, IKKE PER VERDI, og fortegnet er hele grunnen: en enkelt
+    verdi uten treff er lovlig når en søsterverdi i samme felt traff.
+    Ellers blir defensive varianter (`["Kari Testdal", "Kari"]`)
+    selvmotsigende farlige, og deklarasjonen presses mot FÆRRE
+    varianter — feil fortegn for personvern.
+
+    KJENT RESTKLASSE (KONTRAKT.md, eid av #158): en forekomst i teksten
+    som ingen deklarert verdi matcher MENS en annen verdi i samme felt
+    traff, er udetekterbar uten NER. Den lukkes av strukturell blinding,
+    ikke av en port her.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `if not all(traff.values())` i
+    `blinding.blind`. Da blir hver bom-rad grønn, og E2E-delen nederst
+    sender navnet i klartekst til modellen.
+    """
+    import json as _json
+    import unicodedata as _ud
+
+    from modules.m57_ats import kjoring
+
+    # Tegnene bygges med `chr`, ikke som literaler: et usynlig tegn i en
+    # testkilde er nettopp den forvekslingen porten handler om.
+    NBSP, EMSP, HYPHEN = chr(0x00A0), chr(0x2003), chr(0x2010)
+    ZWSP, RTL = chr(0x200B), chr(0x202E)
+    KARE = "K" + chr(0x00E5) + "re Testdal"
+
+    CV = "Soknad fra Kari Testdal, erfaren radgiver i Storgata 1."
+    tekst = CV + " Kari-Testdal og " + KARE + " er referansene."
+    BOM = (
+        ("NBSP (Zs)", "Kari" + NBSP + "Testdal"),
+        ("EM SPACE (Zs)", "Kari" + EMSP + "Testdal"),
+        ("HYPHEN U+2010 (Pd) mot ASCII-bindestrek",
+         "Kari" + HYPHEN + "Testdal"),
+        ("ZWSP midt i (Cf)", "Kari" + ZWSP + "Testdal"),
+        ("RTL-markor midt i (Cf)", "Kari" + RTL + "Testdal"),
+        ("NFD-dekomponert mot NFC i dokumentet",
+         _ud.normalize("NFD", KARE)),
+        ("ren bom: verdien star ikke i teksten", "Ola Nordmann"),
+    )
+    for merke, verdi in BOM:
+        # FORMPORTEN SLIPPER DEM GJENNOM — det er nettopp poenget: den
+        # er strukturell, ikke en tegnliste. Det er EFFEKTEN som feller.
+        assert blinding.feltverdier_lukket([verdi]), merke
+        with pytest.raises(blinding.Blindingsfeil) as e:
+            blinding.blind(tekst, {"navn": [verdi]})
+        assert e.value.kode == "ugyldig_maskeringsform", merke
+
+    # POSITIV VARIANTKONTROLL: en søsterverdi som treffer holder feltet
+    # oppe, selv om den andre varianten ikke treffer noe (den lengste
+    # erstattes først og spiser forekomsten). Defensive varianter skal
+    # ikke straffes — de er riktig fortegn for personvern.
+    blindet, avmaskering = blinding.blind(
+        CV, {"navn": ["Kari Testdal", "Kari"]})
+    assert avmaskering == {"[NAVN-1]": "Kari Testdal", "[NAVN-2]": "Kari"}
+    assert "Kari" not in blindet and "[NAVN-1]" in blindet
+
+    # … og NFD-formen er lovlig når det er DOKUMENTET som skriver den:
+    # porten måler treffet, ikke normaliseringsformen.
+    nfd = _ud.normalize("NFD", KARE)
+    blindet, _ = blinding.blind("Soknad fra " + nfd + ".", {"navn": [nfd]})
+    assert blindet == "Soknad fra [NAVN-1]."
+
+    # PER FELT: `navn` treffer, `adresse` bommer — og da er DEKLARASJONEN
+    # vakuøs, ikke bare den ene verdien. Uten dette kunne et felt ri
+    # gratis på et annet felts treff.
+    with pytest.raises(blinding.Blindingsfeil) as e:
+        blinding.blind("Soknad fra Kari Testdal.",
+                       {"navn": ["Kari Testdal"],
+                        "adresse": ["Storgata 1"]})
+    assert e.value.kode == "ugyldig_maskeringsform"
+    # Treffer begge, er samme kart lovlig.
+    blindet, _ = blinding.blind(
+        CV, {"navn": ["Kari Testdal"], "adresse": ["Storgata 1"]})
+    assert "Kari Testdal" not in blindet and "Storgata 1" not in blindet
+
+    # DEKLARASJONSDØRA SER DEN IKKE, og skal ikke se den: `les_manifest`
+    # har ingen dokumenttekst å måle mot. Formen er lovlig der …
+    (tmp_path / "les").mkdir()
+    cv_bytes = b"<p>Kari Testdal kan drift, kari@eksempel.no</p>"
+    padda = "Kari" + NBSP + "Testdal"
+    arkiv = _bunt(tmp_path / "les", [("k1/cv.html", cv_bytes)],
+                  manifest=_json.dumps({"soknader": [
+                      {"kandidat_id": "k1", "filer": ["k1/cv.html"],
+                       "felter": {"navn": [padda]}}]}))
+    m = parsing.les_manifest(arkiv, parsing.inspiser_bunt(arkiv))
+    assert m.felter == {"k1": {"navn": [padda]}}
+
+    # … og E2E felles den likevel, FØR modellen: kjøringen stopper
+    # kodet, og navnet forlot aldri kjøringen.
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
+                          tekst_for=lambda mm, d: d.decode("utf-8"),
+                          biasmaalinger=_MAALINGER, antall_soknader=1)
+    assert e.value.kode == "ugyldig_maskeringsform"
+    assert modell.sett == [], "navnet nadde modellen"
+
+    # Positiv E2E-kontroll på samme bunt: med den formen dokumentet
+    # faktisk skriver, kjører den igjennom og masken står i inputen.
+    (tmp_path / "e2e").mkdir()
+    arkiv = _bunt(tmp_path / "e2e", [("k1/cv.html", cv_bytes)],
+                  manifest=_json.dumps({"soknader": [
+                      {"kandidat_id": "k1", "filer": ["k1/cv.html"],
+                       "felter": {"navn": ["Kari Testdal"],
+                                  "kontakt": ["kari@eksempel.no"]}}]}))
+    modell = _Modell()
+    ut = kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
+                           tekst_for=lambda mm, d: d.decode("utf-8"),
+                           biasmaalinger=_MAALINGER, antall_soknader=1)
+    assert set(ut["artefakter"]) == {"k1"}
+    for sett in modell.sett:
+        assert "Kari Testdal" not in sett and "[NAVN-1]" in sett
 
 
 def test_duplikate_manifestnokler_er_ingen_deklarasjon(tmp_path):
@@ -2497,6 +2649,14 @@ def test_feltgrensesettet_er_ett_predikat_begge_doerer(tmp_path):
     `manifest_feilformet` sier hvilken dør som felte, aldri hvilken
     grense som gjaldt.
 
+    RUNDE 5 FLYTTET ÉN AKSE UT AV DENNE TESTEN, og det er en presisering
+    av hva den noen gang målte: DIVERGENS mellom to dører, aldri
+    fullstendighet i grensesettet. `verdiform_lukket`s tegnliste var
+    ufullstendig i ett predikat like fullt som i to (NBSP, `U+2010`,
+    NFD), og den lukkes bare der dokumentteksten finnes — se
+    `test_vakuos_deklarasjon_felles_paa_effekt_per_felt`. Det som står
+    igjen her er grensene begge dørene KAN måle uten teksten.
+
     MUTASJONEN SOM DREPER DENNE: fjern ÉN grense fra
     `blinding.feltverdier_lukket` — `bool(verdier)`, `bool(verdi)`,
     `len(verdier) <= MAKS_FELTVERDIER`, `len(verdi) <=
@@ -2522,7 +2682,13 @@ def test_feltgrensesettet_er_ett_predikat_begge_doerer(tmp_path):
         ("lengde: ett tegn over taket",
          {"navn": ["x" * (blinding.MAKS_FELTVERDI_TEGN + 1)]}),
         ("skrivemåte: hale", {"navn": ["Kari "]}),
-        ("skrivemåte: usynlig Cf", {"navn": ["Kari\u200b"]}),
+        # Skrivemåten er STRUKTURELL etter runde 5 (valg B):
+        # predikatet måler `verdi == verdi.strip()`, ikke
+        # Unicode-kategorier. De usynlige formene er ikke borte — de
+        # er flyttet til porten som faktisk lukker klassen, og den kan
+        # bare måles der DOKUMENTTEKSTEN finnes:
+        # `test_vakuos_deklarasjon_felles_paa_effekt_per_felt`.
+        ("skrivemåte: ledende blank", {"navn": [" Kari"]}),
     )
 
     for i, (grense, felter) in enumerate(GRENSER):
@@ -2630,11 +2796,18 @@ def test_en_bokstavs_deklarasjon_er_lovlig(tmp_path):
     assert m.felter == {"k1": ENBOKSTAVS}
 
     # Den injiserte døra sier det samme: formløkka slipper alle tre inn,
-    # og hver av dem får sitt token.
-    blindet, avmaskering = blinding.blind("drift.", ENBOKSTAVS)
+    # og hver av dem får sitt token. Teksten SKRIVER dem, for etter runde
+    # 5 er en deklarasjon som ikke treffer noe en vakuøs deklarasjon.
+    #
+    # De nøstede tokenene under er tokenkollisjonen selv, målt i stedet
+    # for bare beskrevet: `1` treffer nummerhalen i tokenene nabofeltene
+    # nettopp la inn. Utfallet er `maskert_felt_i_modellinput` nederst i
+    # testen — en NEKTET evaluering, aldri en lekkasje — og klassen eies
+    # av #158 (disjunkt tokenalfabet), ikke av en formport her.
+    blindet, avmaskering = blinding.blind("N K 1 drift.", ENBOKSTAVS)
     assert avmaskering == {"[NAVN-1]": "N", "[KJONN-1]": "K",
                            "[ALDER-1]": "1"}
-    assert blindet == "drift."
+    assert blindet == "[NAVN-[ALDER-1]] [KJONN-[ALDER-1]] [ALDER-1] drift."
 
     # Og verdien maskeres faktisk der den står. (Ett felt om gangen: at
     # `1` også treffer nummerhalen i et token nabofeltet nettopp la inn,
@@ -2642,14 +2815,22 @@ def test_en_bokstavs_deklarasjon_er_lovlig(tmp_path):
     blindet, _ = blinding.blind("K, drift.", {"kjonn": ["K"]})
     assert blindet == "[KJONN-1], drift."
 
-    # Hele veien igjennom: en bunt deklarert med én-bokstavs verdier
-    # evalueres, den stopper ikke i porten.
+    # Hele veien igjennom: en bunt deklarert med en én-bokstavs verdi
+    # evalueres, den stopper ikke i porten. Bokstaven er `M` — like mye
+    # én bokstav som `K`, men UTENFOR tokenalfabetet, så E2E måler
+    # lovligheten og ikke kollisjonen (den står målt rett under).
+    (tmp_path / "e").mkdir()
+    e2e = _bunt(tmp_path / "e", [("k1/cv.html", b"<p>M kan drift</p>")],
+                manifest=_json.dumps({"soknader": [
+                    {"kandidat_id": "k1", "filer": ["k1/cv.html"],
+                     "felter": {"navn": ["M"]}}]}))
     modell = _Modell()
     ut = kjoring.kjor_bunt(
-        arkiv, modell, vekter={"drift": 3},
+        e2e, modell, vekter={"drift": 3},
         tekst_for=lambda m, d: d.decode("utf-8"),
         biasmaalinger=_MAALINGER, antall_soknader=1)
     assert set(ut["artefakter"]) == {"k1"} and modell.sett
+    assert all("[NAVN-1]" in t for t in modell.sett)
 
     # GRENSEN, målt så fortegnet er dokumentert (KONTRAKT.md, #158):
     # står verdien igjen INNI sitt eget token, feller port 16 en tekst
@@ -3095,11 +3276,11 @@ def test_umatchet_medlem_i_strommen_er_kodet_ikke_modellfeil(tmp_path,
     def _kjor(arkiv, modell):
         return kjoring.kjor_bunt(
             arkiv, modell, vekter={"drift": 3},
-            kandidatfelter_for=lambda m: {"navn": ["N"]},
+            kandidatfelter_for=lambda m: {"navn": ["Kari"]},
             tekst_for=lambda m, d: d.decode("utf-8"),
             biasmaalinger=_MAALINGER, antall_soknader=1)
 
-    arkiv = _bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>"),
+    arkiv = _bunt(tmp_path, [("k1/cv.html", b"<p>Kari kan drift</p>"),
                              ("k1/brev.html", b"<p>mer drift</p>")])
     # Positiv kontroll: bunten er hel, og begge medlemmene er adressert.
     assert set(_kjor(arkiv, _Modell())["artefakter"]) == {"k1"}
@@ -3144,11 +3325,11 @@ def test_deklarert_medlem_som_aldri_strommes_stopper_kjoringen(tmp_path,
     def _kjor(arkiv, modell):
         return kjoring.kjor_bunt(
             arkiv, modell, vekter={"drift": 3},
-            kandidatfelter_for=lambda m: {"navn": ["N"]},
+            kandidatfelter_for=lambda m: {"navn": ["Kari"]},
             tekst_for=lambda m, d: d.decode("utf-8"),
             biasmaalinger=_MAALINGER, antall_soknader=1)
 
-    arkiv = _bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>"),
+    arkiv = _bunt(tmp_path, [("k1/cv.html", b"<p>Kari kan drift</p>"),
                              ("k1/brev.html", b"<p>mer drift</p>")])
     # Positiv kontroll: hel bunt, begge medlemmene strømmes, porten tier.
     assert set(_kjor(arkiv, _Modell())["artefakter"]) == {"k1"}
@@ -3198,10 +3379,11 @@ def test_bunt_uten_kandidater_er_kodet_feil_ikke_tomt_resultat(tmp_path,
     from modules.m57_ats import kjoring
 
     def _kjor(arkiv, modell):
-        return kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
-                                 kandidatfelter_for=lambda m: {"navn": ["N"]},
-                                 tekst_for=lambda m, d: d.decode("utf-8"),
-                                 biasmaalinger=_MAALINGER, antall_soknader=1)
+        return kjoring.kjor_bunt(
+            arkiv, modell, vekter={"drift": 3},
+            kandidatfelter_for=lambda m: {"navn": ["Kari"]},
+            tekst_for=lambda m, d: d.decode("utf-8"),
+            biasmaalinger=_MAALINGER, antall_soknader=1)
 
     tom = tmp_path / "tom.zip"
     with zipfile.ZipFile(tom, "w") as zf:
@@ -3228,7 +3410,7 @@ def test_bunt_uten_kandidater_er_kodet_feil_ikke_tomt_resultat(tmp_path,
     assert e.value.kode == "manifest_mangler"
 
     # … og én kandidat er nok: porten måler NULL, ikke «få».
-    hel = _bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>")])
+    hel = _bunt(tmp_path, [("k1/cv.html", b"<p>Kari kan drift</p>")])
     assert set(_kjor(hel, _Modell())["artefakter"]) == {"k1"}
 
     # TOTALT TAP ETTER BINDINGEN er den veien `tom_bunt` stjal (Cursor P2,
