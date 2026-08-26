@@ -902,8 +902,15 @@ FELTGRENSER: dict[str, dict[str, tuple[int, int]]] = {
         # avvises der den tas imot — ikke først når prosessfødselen
         # feiler på en CHECK, etter at oppdraget er opprettet og claimet.
         "slettefrist_dogn": (30, 365),
+        # (Standardvalget 90 er navngitt under — IKKE en grense.)
     },
 }
+
+#: Basens `DEFAULT 90` (057) med navn: kanoniseringens ene kilde.
+#: Fraværet ER standardvalget, så en EKSPLISITT 90 normaliseres til
+#: fravær der bestillingen tas imot — to skrivemåter av samme intensjon
+#: skal gi samme intensjonshash (Codex P2 på #210).
+SLETTEFRIST_STANDARD_DOGN = 90
 
 #: Felter som må være en IKKE-TOM STRENG, per type (Codex P2).
 #:
@@ -981,10 +988,18 @@ UTFORELSESFRIST_VALG: dict[str, tuple[str, dict[object, int]]] = {
     # Ikke lukkbart i en fiksrunde: å heve taket er en ny migrasjon på
     # bebodd base som flytter en PLATTFORMVID tillitsgrense (M-37 og
     # M-56 deler den), en fornyelsesvei er en ny autentisert flate, og
-    # partisjonering endrer bestillingsformen. Fristen står som
-    # klarsignalet sier; #165 bærer valget, med hard sperre mot kjøringer
-    # over én time til den er merget (samme form som #163).
-    "rekruttering.evaluering": ("omfang", {"bunt": 240 * 60}),
+    # partisjonering endrer bestillingsformen. #165 bærer valget.
+    #
+    # DEN HARDE SPERREN ER FRISTEN SELV (Codex P1 på #210): klarsignalets
+    # 240 min sto her mens eierleasen (049) og opplastingskapabiliteten
+    # (min(igjen, 3600)) begge er 3 600 s — etter første time kunne en
+    # annen kontrollør reclaime og DUPLISERE evalueringen av samme
+    # persondatabunt, mens originalen ikke lenger fikk lastet opp
+    # resultatet. En deklarert frist utover autoriteten som faktisk
+    # utstedes er et løfte ingen kan holde. Fristen følger derfor leasen
+    # til #165 (fornyelsesveien) er merget — da, og først da, kan den
+    # utvides til klarsignalets 240 min i samme PR som fornyelsen.
+    "rekruttering.evaluering": ("omfang", {"bunt": 60 * 60}),
 }
 
 

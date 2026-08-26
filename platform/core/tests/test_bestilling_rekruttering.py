@@ -275,6 +275,27 @@ def test_referanser_som_ikke_kan_brukes_avvises_for_beslutningen(
         assert rf.status_code == 400, (kropp, rf.text)
 
 
+def test_eksplisitt_standardfrist_er_samme_intensjon_som_fravaer():
+    """Codex P2: utelatt `slettefrist_dogn` og eksplisitt 90 er samme
+    kundevalg (057 `DEFAULT 90`) — de skal gi SAMME intensjonshash, ellers
+    dømmes retry med utfylt standard `idempotenskonflikt` mot sin egen
+    første bestilling. En IKKE-standard verdi skal fortsatt skille seg."""
+    import uuid as _uuid
+
+    from api.bestilling import intensjonshash, normaliser
+    basis = {"bestillingstype": "rekruttering.evaluering",
+             "inndata_ref": f"inndata:{_uuid.uuid4()}",
+             "stillingsprofil_ref": f"{_uuid.uuid4()}@1",
+             "antall_soknader": 3, "omfang": "bunt"}
+    uten = normaliser("t-x", dict(basis))
+    med90 = normaliser("t-x", {**basis, "slettefrist_dogn": 90})
+    assert "slettefrist_dogn" not in med90,         "eksplisitt standard skal kanoniseres til fravær"
+    assert intensjonshash(uten) == intensjonshash(med90)
+    annen = normaliser("t-x", {**basis, "slettefrist_dogn": 30})
+    assert annen["slettefrist_dogn"] == 30
+    assert intensjonshash(annen) != intensjonshash(uten)
+
+
 def test_uhashbar_bestillingstype_er_400_ikke_500():
     """CodeRabbit major: `BESTILLINGSTYPER.get(liste)` reiser TypeError
     (uhashbar) — kroppen er klientens feil og skal dømmes 400, aldri 500."""

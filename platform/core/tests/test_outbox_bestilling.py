@@ -1545,23 +1545,12 @@ def test_bestillingstyper_arver_kontraktens_frist():
     TAK_S = 3600
     assert not hasattr(next(iter(BESTILLINGSTYPER.values())), "frister_s"), \
         "bestillingsflaten har fått sin egen fristtabell tilbake"
-    #: KJENT, SPORET unntak — aldri et stille et (#165):
-    #: rekruttering.evaluering deklarerer 240 min (kontraktens eget tall,
-    #: reverifiseres mot prøvekjøring), mens lease/kapabilitet fortsatt
-    #: klemmes til 3600 s uten fornyelsesvei. Gapet er Codex-funnet
-    #: kontrakten selv dokumenterer (UTSATT → #165) og lukkes DER —
-    #: porten her skal hindre NYE uspoede gap, ikke tvinge fristen ned
-    #: under det kontrakten og klarsignalet lover.
-    KJENTE_GAP = {"rekruttering.evaluering"}
     for navn, bt in BESTILLINGSTYPER.items():
         for omfang in bt.omfang:
             frist = oppdragskontrakt.utforelsesfrist_s(
                 bt.oppdragstype, {"omfang": omfang})
             assert frist is not None, \
                 f"{navn}/{omfang}: ingen frist deklarert på kontrakten"
-            if bt.oppdragstype in KJENTE_GAP:
-                assert frist > 0
-                continue
             assert 0 < frist <= TAK_S, \
                 (f"{navn}/{omfang}: {frist} s overstiger claim-leasens og"
                  f" opplastingskapabilitetens tak på {TAK_S} s — det er"

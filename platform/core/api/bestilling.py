@@ -249,6 +249,12 @@ def _normaliser_rekruttering(tenant: str, bt: Bestillingstype,
         if isinstance(frist, bool) or not isinstance(frist, int) \
                 or not f_lo <= frist <= f_hi:
             raise Bestillingsfeil("request_feilformet")
+        # Kanonisering, ikke default-innsetting (Codex P2): fraværet ER
+        # standardvalget (057 `DEFAULT 90`), så en eksplisitt standard er
+        # samme intensjon i en annen skrivemåte — uten dette ga retry med
+        # utfylt 90 `idempotenskonflikt` mot sin egen første bestilling.
+        if frist == oppdragskontrakt.SLETTEFRIST_STANDARD_DOGN:
+            frist = None
     norm = {"tenant": tenant, "bestillingstype": data["bestillingstype"],
             "inndata_id": inndata_id,
             "stillingsprofil_ref": data["stillingsprofil_ref"],
