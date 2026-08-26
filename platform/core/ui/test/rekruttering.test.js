@@ -1347,6 +1347,86 @@ test("Bestilling: en FORLATT bestilling lover ikke «samme operasjon» (Cursor P
     // `usikkert_utfall`.
   });
 
+test("Bestilling: kvitteringen navngir bunten som ble sendt (Cursor P2)",
+  async () => {
+    // Samme vindu som testen over, men på det VISSE utfallet: svaret er
+    // `tillat`, oppdraget ER committet — og nettopp derfor er «Bestillingen
+    // er levert: tillat, oppdrag N» for lite. Skjemaet står alt med den nye
+    // bunten (nullstillingen hoppes over, riktig), så kvitteringen ble lest
+    // mot en fil den ikke gjaldt. Feilarmen fikk speilingen sin i
+    // `forlatt_usikkert`; dette er den for suksessarmen.
+    KALL = [];
+    let slippBestilling;
+    let bestillingssvar = new Promise((r) => { slippBestilling = r; });
+    let reservasjon = { reservasjon_jti: "j-1", inndata_ref: "inndata:u-1" };
+    SVAR = (sti) => {
+      if (sti === "/v1/rekruttering/prosesser") return prosess();
+      if (sti === "/v1/rekruttering/stillingsprofiler") return profiler();
+      if (sti === "/v1/inndata/reserver") return reservasjon;
+      if (sti.startsWith("/v1/inndata/opplast/")) return {};
+      if (sti === "/v1/bestilling") return bestillingssvar;
+      return undefined;
+    };
+    const hoved = nyHoved();
+    visRekruttering(hoved, ctx());
+    assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+    const seksjon =
+      hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+    const skjema = seksjon.querySelector("form");
+    const send = skjema.querySelector("button[type=submit]");
+    const filInp = skjema.querySelector("input[type=file]");
+    const velgFil = (navn) => {
+      Object.defineProperty(filInp, "files", { configurable: true,
+        value: [{ name: navn, arrayBuffer: async () => new ArrayBuffer(16) }] });
+      filInp.dispatchEvent(new window.Event("change", { bubbles: true }));
+    };
+    const bestillinger = () => KALL.filter((k) => k.sti === "/v1/bestilling");
+    const bestill = () => skjema.dispatchEvent(new window.Event("submit",
+      { bubbles: true, cancelable: true }));
+    velgFil("bunt.zip");
+    bestill();
+    assert.ok(await vent(() => bestillinger().length === 1, 40),
+      "bestillingen kom aldri");
+    // Bunt-bytte mens bestillingen står ubesvart — og DA svarer serveren
+    // `tillat` på den forrige bunten.
+    reservasjon = { reservasjon_jti: "j-2", inndata_ref: "inndata:u-2" };
+    velgFil("bunt2.zip");
+    slippBestilling({ beslutning: "tillat", oppdrag_id: 77 });
+    assert.ok(await vent(() => !send.disabled, 40), "kjeden ble aldri ferdig");
+    const melding = seksjon.querySelector("[role=alert]").textContent;
+    assert.notEqual(melding, t("ui.rekruttering.bestill.sendt")
+      .replace("{oppdrag}", "77").replace("{beslutning}", "tillat"),
+    "kvitteringen sa AT noe ble levert, ikke HVA — uten buntbinding");
+    // `t()` faller tilbake til nøkkelen selv når den mangler: uten denne
+    // hadde linjen under kunnet passere på en rå identifikator.
+    assert.ok(!melding.includes("ui.rekruttering.bestill.sendt_forlatt_bunt"),
+      "locale mangler nøkkelen — brukeren fikk en rå identifikator");
+    assert.ok(melding.includes(t("ui.rekruttering.bestill.sendt_forlatt_bunt")
+      .replaceAll("{filnavn}", "bunt.zip")),
+    "kvitteringen bandt ikke oppdraget til den SENDTE bunten");
+    // Den harde kjernen: navnet er kjedens eget, fanget før `await` — ikke
+    // det filvelgeren viser når svaret lander.
+    assert.ok(melding.includes("bunt.zip"), "den sendte bunten er ikke navngitt");
+    assert.ok(!melding.includes("bunt2.zip"),
+      "kvitteringen navnga filen brukeren nettopp valgte, ikke den bestilte");
+    // ... og brukerens ferske valg overlevde: neste Send er en NY
+    // bestilling på den nye bunten, med fersk nøkkel — ingen replay av
+    // oppdrag 77.
+    bestillingssvar = { beslutning: "tillat", oppdrag_id: 78 };
+    bestill();
+    assert.ok(await vent(() => bestillinger().length === 2, 40),
+      "den nye bestillingen kom aldri");
+    const [b1, b2] = bestillinger();
+    assert.equal(b1.kropp.inndata_ref, "inndata:u-1");
+    assert.equal(b2.kropp.inndata_ref, "inndata:u-2",
+      "den nye bestillingen gikk på den forlatte bunten");
+    assert.notEqual(b2.hoder["Idempotency-Key"], b1.hoder["Idempotency-Key"],
+      "en ny kropp bar den forlatte intensjonens nøkkel");
+    // MUTASJONEN SOM DREPER DENNE: les `tilstand.filnavn` ETTER `await`
+    // (da blir navnet «bunt2.zip»), eller la `tillat`-armen falle tilbake
+    // til ren `bestill.sendt` uten speilingen.
+  });
+
 test("Bestilling: profilen er låst mens kroppen er underveis (Cursor P1)", async () => {
   // `stillingsprofil_ref` var det ENESTE kroppsfeltet uten lås. To vinduer
   // sto åpne: i opplastingsvinduet (før `kropp` bygges) kunne profilen gli

@@ -906,6 +906,14 @@ function bestillSeksjon(hoved, ctx, data, okt, laas) {
       if (fristInp.value !== "") {
         kropp.slettefrist_dogn = Number(fristInp.value);
       }
+      // BUNTEN KVITTERINGEN GJELDER, FANGET FØR `await` (Cursor P2,
+      // eierdom (b)): `tilstand.filnavn` er øktens, ikke kjedens, og
+      // fil-`change` skriver den om mens POST-en står i lufta. Leses den
+      // etter svaret, navngir kvitteringen filen brukeren nettopp valgte
+      // — ikke den som faktisk ble bestilt. `kropp.inndata_ref` er alt
+      // fanget (den er et felt i kroppen) og er fallback når økten arvet
+      // en opplastet bunt uten filnavn, samme valg som `visBunt`.
+      const sendtBunt = tilstand.filnavn || kropp.inndata_ref;
       const svar = await bestillEvaluering(kropp, tilstand.bestillIdem);
       // ET `200` ER IKKE EN LEVERANSE (Cursor P1-1). Beslutningsveien
       // svarer `200` også når policyen sier STOPP eller sender saken til
@@ -931,7 +939,17 @@ function bestillSeksjon(hoved, ctx, data, okt, laas) {
         // tømt hennes ferske valg — `skjema.reset()` tar filvelgeren med
         // seg. Kvitteringen skrives uansett: oppdraget er committet, og
         // det skal brukeren få vite.
-        if (tilstand.generasjon === min) {
+        //
+        // ... MEN «FÅ VITE» ER HVA, IKKE BARE AT (Cursor P2, eierdom (b)).
+        // Er intensjonen forlatt, står skjemaet alt med den NYE bunten
+        // mens kvitteringen gjaldt den forrige — og `bestill.sendt` sier
+        // bare «levert: tillat, oppdrag N». Brukeren leste den mot filen
+        // hun så, og bestilte i god tro en gang til på en bunt som enten
+        // var eller ikke var den leverte. Feilarmen fikk speilingen sin i
+        // `forlatt_usikkert` (`:1031`); dette er den samme setningen for
+        // det VISSE utfallet: kvitteringen navngir bunten som ble sendt.
+        const forlatt = tilstand.generasjon !== min;
+        if (!forlatt) {
           tilstand.reserverIdem = null;
           tilstand.bestillIdem = null;
           tilstand.inndataRef = null;
@@ -939,11 +957,15 @@ function bestillSeksjon(hoved, ctx, data, okt, laas) {
           skjema.reset();
           visBunt();
         }
-        sett(utfall, (svar.oppdrag_id
+        const kvittering = (svar.oppdrag_id
           ? t("ui.rekruttering.bestill.sendt")
               .replace("{oppdrag}", String(svar.oppdrag_id))
           : t("ui.rekruttering.bestill.sendt_uten_oppdrag"))
-          .replace("{beslutning}", String(svar.beslutning)));
+          .replace("{beslutning}", String(svar.beslutning));
+        sett(utfall, forlatt
+          ? `${kvittering} ${t("ui.rekruttering.bestill.sendt_forlatt_bunt")
+            .replaceAll("{filnavn}", sendtBunt)}`
+          : kvittering);
       } else {
         // STOPP/unntak: bunten er URØRT og blir stående i skjemaet, så
         // neste forsøk går på den samme reservasjonen. Det ENESTE som er
