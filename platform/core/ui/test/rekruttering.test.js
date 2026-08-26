@@ -1240,6 +1240,70 @@ test("Bestilling: endret kropp etter usikkert svar gir NY nøkkel (P1-2)", async
     "feltendringen reserverte bunten på nytt");
 });
 
+test("Bestilling: en opplastet bunt overlever prosessbyttet SYNLIG (P2-6)", async () => {
+  KALL = [];
+  const to = prosess();
+  to.prosesser.push({ ...to.prosesser[0], prosess_id: "p-2" });
+  const basis = { "/v1/rekruttering/prosesser": to,
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/inndata/reserver": { reservasjon_jti: "j-1",
+                              inndata_ref: "inndata:u-1" },
+    "/v1/inndata/opplast/j-1": {} };
+  let bestillingssvar = 500;
+  SVAR = (sti) => sti === "/v1/bestilling" ? bestillingssvar : basis[sti];
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const bestill = () =>
+    hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  const skjema = bestill().querySelector("form");
+  const send = skjema.querySelector("button[type=submit]");
+  const fil = skjema.querySelector("input[type=file]");
+  Object.defineProperty(fil, "files", { configurable: true,
+    value: [{ name: "bunt.zip",
+              arrayBuffer: async () => new ArrayBuffer(16) }] });
+  // Nettleseren melder valget som `change` — det er der flaten fanger
+  // filnavnet, og navnet er hele poenget med denne testen.
+  fil.dispatchEvent(new window.Event("change", { bubbles: true }));
+  // Bunten kommer opp, men bestillingen svarer 5xx: buntens referanse
+  // står i økten.
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() => !send.disabled, 40), "runden ble aldri ferdig");
+  assert.equal(KALL.filter((k) => k.sti === "/v1/bestilling").length, 1);
+  // Brukeren bytter prosess — hele flaten tegnes på nytt, og fil-inputen
+  // er tom igjen.
+  const velger = hoved.querySelector("#rekrut-prosessvelger");
+  velger.value = "p-2";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  const nyttSkjema = bestill().querySelector("form");
+  const nyFil = nyttSkjema.querySelector("input[type=file]");
+  assert.equal(nyFil.files.length, 0, "testen antar en tom filvelger");
+  assert.match(bestill().textContent, /bunt\.zip/,
+    "den opplastede bunten står ikke navngitt i skjemaet");
+  assert.equal(nyFil.hasAttribute("required"), false,
+    "filen kreves fortsatt, selv om bunten alt er lastet opp");
+  // ... og bestillingen går på den lagrede bunten, uten en ny opplasting.
+  bestillingssvar = { beslutning: "tillat", oppdrag_id: 11 };
+  nyttSkjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  await vent(() => KALL.filter((k) => k.sti === "/v1/bestilling").length === 2,
+    40);
+  const siste = KALL.filter((k) => k.sti === "/v1/bestilling").pop();
+  assert.equal(siste.kropp.inndata_ref, "inndata:u-1");
+  assert.equal(KALL.filter((k) => k.sti === "/v1/inndata/reserver").length, 1,
+    "bunten ble reservert på nytt etter prosessbyttet");
+  // Kvitteringen nullstiller: bunten er forbrukt, og filen kreves igjen.
+  await vent(() => bestill().querySelector("[role=alert]")
+    .textContent.includes("11"), 20);
+  assert.doesNotMatch(bestill().textContent, /bunt\.zip/,
+    "den forbrukte bunten står fortsatt navngitt");
+  assert.equal(
+    bestill().querySelector("input[type=file]").hasAttribute("required"), true);
+  const brudd = await alvorligeBrudd(hoved);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
 test("Bestilling: et tapt svar meldes som uvisst, ikke som «feilet» (P2-4)", async () => {
   KALL = [];
   const basis = { "/v1/rekruttering/prosesser": prosess(),

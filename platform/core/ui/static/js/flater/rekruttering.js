@@ -616,6 +616,27 @@ function bestillSeksjon(hoved, ctx, data, okt) {
   const nyIntensjon = () => { tilstand.bestillIdem = null; };
   const filInp = el("input", { type: "file", id: "bestill-fil",
     accept: ".zip,application/zip", required: true });
+  // EN OPPLASTET BUNT MÅ SYNES (Cursor P2-6). `inndataRef` hører til
+  // ØKTEN og overlever et prosessbytte — men fil-inputen gjør ikke det:
+  // etter en om-tegning sto skjemaet med tom filvelger og en bunt
+  // serveren for lengst har fått, og en innsending bestilte da på en fil
+  // brukeren ikke lenger kunne se. Motsatt vei var den `required`
+  // filvelgeren en blindvei: nettleseren blokkerte innsendingen for en
+  // fil som IKKE trengs, uten at noe på skjermen sa hvorfor.
+  // Bunten står derfor navngitt over velgeren så lenge den finnes, og
+  // filen kreves bare når det ikke er noen bunt å bestille på.
+  const buntNotis = el("p", { class: "rekrut-bestill-bunt" });
+  const visBunt = () => {
+    if (tilstand.inndataRef) {
+      filInp.removeAttribute("required");
+      sett(buntNotis, t("ui.rekruttering.bestill.lagret_bunt")
+        .replaceAll("{filnavn}", tilstand.filnavn
+          || t("ui.rekruttering.bestill.bunt_uten_navn")));
+    } else {
+      filInp.setAttribute("required", "");
+      sett(buntNotis);
+    }
+  };
   filInp.addEventListener("change", () => {
     // Ny fil = NY bunt: en alt reservert/opplastet bunt forkastes ved å
     // glemme referansen — serveren rydder utløpte reservasjoner selv.
@@ -625,6 +646,7 @@ function bestillSeksjon(hoved, ctx, data, okt) {
     // ... og en ny bunt er en ny bestilling: `inndata_ref` er et felt i
     // kroppen som alle de andre.
     nyIntensjon();
+    visBunt();
   });
   const profilVelger = el("select", { id: "bestill-profil", required: true },
     ...profiler.map((pr) => el("option",
@@ -643,6 +665,7 @@ function bestillSeksjon(hoved, ctx, data, okt) {
     text: t("ui.rekruttering.bestill.send") });
 
   const skjema = el("form", {},
+    buntNotis,
     el("p", {}, el("label", { for: "bestill-fil",
       text: t("ui.rekruttering.bestill.fil") }), " ", filInp),
     el("p", {}, el("label", { for: "bestill-profil",
@@ -674,6 +697,7 @@ function bestillSeksjon(hoved, ctx, data, okt) {
         // opplastingen, er reservasjonen brukt/utløpende og neste
         // forsøk skal reservere på nytt (fersk nøkkel).
         tilstand.inndataRef = res.inndata_ref;
+        visBunt();
       }
       if (!tilstand.bestillIdem) {
         tilstand.bestillIdem = nyIdempotensnokkel();
@@ -696,6 +720,7 @@ function bestillSeksjon(hoved, ctx, data, okt) {
       tilstand.inndataRef = null;
       tilstand.filnavn = null;
       skjema.reset();
+      visBunt();
       sett(utfall, (svar.oppdrag_id
         ? t("ui.rekruttering.bestill.sendt")
             .replace("{oppdrag}", String(svar.oppdrag_id))
@@ -738,6 +763,10 @@ function bestillSeksjon(hoved, ctx, data, okt) {
     }
   });
 
+  // Seksjonen kan tegnes midt i en økt der bunten alt er lastet opp
+  // (prosessbytte): tilstanden bestemmer hva skjemaet sier, ikke
+  // rekkefølgen den ble bygget i.
+  visBunt();
   sett(rot, el("h2", { id: "bestill-tittel",
     text: t("ui.rekruttering.bestill.tittel") }),
     utfall, skjema);

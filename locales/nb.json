@@ -1066,6 +1066,8 @@
   "ui.rekruttering.bestill.laster": "Laster opp bunten …",
   "ui.rekruttering.bestill.ingen_profil": "Opprett en stillingsprofil først — bestillingen trenger en.",
   "ui.rekruttering.bestill.mangler_fil": "Velg ZIP-filen med søknadsbunten.",
+  "ui.rekruttering.bestill.lagret_bunt": "Bunten «{filnavn}» er alt lastet opp og brukes i denne bestillingen. Velg en ny fil for å bytte den ut.",
+  "ui.rekruttering.bestill.bunt_uten_navn": "søknadsbunten",
   "ui.rekruttering.bestill.sendt": "Bestillingen er levert: {beslutning}, oppdrag {oppdrag}.",
   "ui.rekruttering.bestill.sendt_uten_oppdrag": "Bestillingen er levert: {beslutning}.",
   "ui.rekruttering.bestill.feil": "Bestillingen feilet. Sjekk feltene og prøv igjen.",
