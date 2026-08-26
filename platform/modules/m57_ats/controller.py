@@ -106,7 +106,24 @@ def _kvittert(rk) -> bool:
 
 
 def _feilutfall(rk, grunn: str, **ekstra) -> dict:
-    return {"utfall": "avbrutt", "grunn": grunn,
+    """Utfallet for en kjøring som feilet — AVLEDET av `_kvittert`, ikke
+    antatt (m56s Codex P1, speilet).
+
+    Feilgrenene meldte `avbrutt` uansett hva plattformen svarte på
+    feil-kvitteringen. `avbrutt` betyr «oppdraget er FERDIG mislykket»,
+    og det er nettopp det plattformen ikke har bekreftet når kvitteringen
+    ble avvist med 409/5xx, tapt i transporten (`_Uteblitt`, status 0)
+    eller lagret som sen evidens med 202: da står oppdraget fortsatt
+    claimet og uferdig der, akkurat som når en SUKSESS-kvittering blir
+    avvist. Suksessgrenen leste `_kvittert`; feilgrenene gjorde det ikke,
+    og forskjellen var vilkårlig — en planlegger som tror på `avbrutt`
+    slutter å følge et oppdrag som aldri ble avsluttet.
+
+    `grunn` og `kvittering_status` blir stående uansett utfall: hvorfor
+    kjøringen feilet er like sant om kvitteringen kom frem eller ikke."""
+    kvittert = _kvittert(rk)
+    return {"utfall": "avbrutt" if kvittert else "ukvittert",
+            "grunn": grunn, "kvittert": kvittert,
             "kvittering_status": getattr(rk, "status_code", 0), **ekstra}
 
 

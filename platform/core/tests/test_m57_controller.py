@@ -307,6 +307,45 @@ def test_tom_ko_er_tomt_utfall():
     assert res == {"utfall": "tomt"}
 
 
+def test_avvist_feilkvittering_er_heller_ikke_ferdig(monkeypatch):
+    """m56s Codex P1, speilet på feilveien: bunten er uhentbar, men
+    plattformen tok heller ikke imot FEIL-kvitteringen (409/5xx/tapt
+    svar). Da er oppdraget verken utført eller avsluttet — det står
+    claimet og uferdig, og `avbrutt` ville vært modulens ord mot
+    plattformens tilstand.
+
+    Kontroll: la `_feilutfall` returnere `avbrutt` fast igjen, så blir
+    denne rød."""
+    from modules.m57_ats import controller
+
+    monkeypatch.setattr(controller, "_sov", lambda s: None)
+    for status in (409, 500):
+        k = _Stubklient(status, buntstatus=404)
+        res = _kjor(k)
+        assert res["utfall"] == "ukvittert", res
+        assert res["kvittert"] is False
+        # Grunnen overlever utfallet: HVORFOR kjøringen feilet er like
+        # sant om kvitteringen kom frem eller ikke.
+        assert res["grunn"] == "bunt_uhentbar"
+        assert res["kvittering_status"] == status
+        assert "/v1/artefakt" not in k.stier
+
+    # ... og en feil-kvittering plattformen FAKTISK tok imot er `avbrutt`.
+    k = _Stubklient(200, buntstatus=404)
+    res = _kjor(k)
+    assert res["utfall"] == "avbrutt", res
+    assert res["kvittert"] is True
+
+
+def test_sen_evidens_paa_feilkvitteringen_er_ikke_avbrutt():
+    """202 `lagret_uten_statusendring` på feil-kvitteringen: evidensen er
+    bevart, men `oppdrag.status` står urørt — oppdraget er ikke
+    terminert."""
+    k = _Stubklient(202, buntstatus=404, kvitteringskropp={
+        "status": "lagret_uten_statusendring", "oppdrag_id": 1})
+    assert _kjor(k)["utfall"] == "ukvittert"
+
+
 def test_uhentbar_bunt_kvitteres_feilet(monkeypatch):
     """Resolveren sier nei → feilkvittering med kode, aldri taushet —
     og modellen ble aldri rørt (persondata-økonomien)."""
@@ -344,7 +383,12 @@ def test_uhentbar_bunt_kvitteres_feilet(monkeypatch):
                 return _R(404, {"feil": "x"})
             if sti == "/v1/oppdrag/kvittering":
                 kvitteringer.append(json)
-                return _R(200, {})
+                # Kroppen det EKTE endepunktet sender ved statusskifte.
+                # Den sto tom her, og en tom kropp er ikke en kvittering
+                # (`_kvittert`): stubben beviste `avbrutt` på et svar
+                # plattformen aldri gir, og skjulte at feilveien meldte
+                # `avbrutt` uten å ha lest svaret i det hele tatt.
+                return _R(200, {"status": "feilet", "oppdrag_id": 7})
             raise AssertionError(sti)
 
     res = controller.kjor_en(_K(), "tk", None, None, {}, lambda k: k)
