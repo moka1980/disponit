@@ -519,6 +519,8 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                                     "oppdrag_id": rad[3]}
                 return ("ok", lagret, True)
         verifisert_ts = None
+        gjenopprettbar = False
+        terminal_dom = False
         if hostname is not None:
             verifisert_ts = _verifisert_hostname(conn, tenant, hostname)
             if verifisert_ts is None:
@@ -585,18 +587,34 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
             # ferdig kjernerad under klientnøkkelen, eier nedstrøms-
             # logikken dommen (gjenspill eller konflikt) — samme
             # collation-frie prefiksform som gjenopprettingslesingen.
-            gjenopprettbar = False
+            # …OG KLASSEN LUKKES VED Å KLASSIFISERE DOMMEN HER (Codex
+            # P2, runde 6): en TERMINAL utgang (STOPP/BRUDD-gjenspill,
+            # eller konflikt fordi eksakt intensjon ikke matcher) skal
+            # forbi ALLE muterbare porter — buntlås, referanser og
+            # claim-tilstand — for svaret er alt bestemt. Et gjenspilt
+            # TILLAT skal derimot fortsatt gjennom oppdrag+binding, og
+            # det er nettopp kappløpet buntlåsen finnes for: det RE-TAR
+            # låsen (opptatt → forbigående kode, ingen kvote i fare —
+            # dommen er alt committet).
             if nokkel:
                 pfx = kjernenokkelprefiks(nokkel)
-                gjenopprettbar = conn.execute(
-                    "SELECT 1 FROM idempotens WHERE tenant=%s"
-                    "   AND left(nokkel, %s) = %s AND status='ferdig'"
-                    " LIMIT 1",
-                    (tenant, len(pfx), pfx)).fetchone() is not None
+                rader = conn.execute(
+                    "SELECT nokkel, respons FROM idempotens"
+                    " WHERE tenant=%s AND left(nokkel, %s) = %s"
+                    "   AND status='ferdig'",
+                    (tenant, len(pfx), pfx)).fetchall()
+                gjenopprettbar = bool(rader)
+                eksakt = dict(rader).get(kjernenokkel_for(nokkel, hash_))
+                # Kjernen lagrer beslutningen i VERSALER («TILLAT») —
+                # målt i testbasen, ikke antatt; casefold, ikke likhet.
+                terminal_dom = gjenopprettbar and (
+                    eksakt is None
+                    or str((eksakt or {}).get("beslutning")
+                           or "").lower() != "tillat")
             conn.rollback()
             navn = inndata_laasenavn_for(tenant, norm["inndata_id"])
             fikk = True
-            if not gjenopprettbar:
+            if not terminal_dom:
                 fikk = conn.execute(
                     "SELECT pg_try_advisory_lock(hashtextextended(%s, 0))",
                     (navn,)).fetchone()[0]
@@ -680,7 +698,13 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
             "  LEFT JOIN modulhode h ON h.modul_id = r.eiermodul"
             " WHERE r.oppdragstype = %s",
             (gjeldende_miljo(), bt.oppdragstype)).fetchone()
-        if (registrert is None or registrert[0] != bt.eiermodul
+        # …med mindre dommen alt er tatt (Codex P2, runde 6): claim-
+        # tilstanden er MUTERBAR (draining/nøddeaktivert), og et
+        # committet STOPP/BRUDD eller en konflikt skal svares uansett —
+        # et gjenspill trenger ingen NY claimbar modul.
+        if gjenopprettbar:
+            conn.rollback()
+        elif (registrert is None or registrert[0] != bt.eiermodul
                 or registrert[1] != "aktiv" or not registrert[2]):
             conn.rollback()
             tjeneste.logg.hendelse(

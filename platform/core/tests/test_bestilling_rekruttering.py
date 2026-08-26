@@ -606,6 +606,30 @@ def test_krasj_mellom_beslutning_og_binding_fullfores_av_retryen(
         " idempotensnokkel=%s", (TENANT, nokkel)).fetchone()[0] == 0
     migrator.rollback()
 
+    # Et gjenspilt TILLAT skal GJENNOM oppdrag+binding og RE-TAR derfor
+    # buntlåsen (Codex P2, runde 6): holder en annen forespørsel den, er
+    # svaret den FORBIGÅENDE koden — aldri en binding forbi låsen, og
+    # aldri en ny beslutning.
+    from api.bestilling import inndata_laasenavn_for
+    from db.pg import koble as _koble
+    holder = _koble(MIGRATOR_DSN)
+    try:
+        holder.execute(
+            "SELECT pg_advisory_lock(hashtextextended(%s, 0))",
+            (inndata_laasenavn_for(TENANT, ref.split(":", 1)[1]),))
+        r_laast = _bestill(klient, cookie, csrf, kropp, nokkel)
+    finally:
+        holder.rollback()
+        holder.close()
+    assert r_laast.status_code == 409, \
+        f"FIKK {r_laast.status_code}: {r_laast.text[:400]}"
+    # Utad er busy-låsen buntens 409 (`KLIENTKODE[INNDATA_OPPTATT]`) —
+    # forbigående: r2 under beviser at samme kall lykkes når låsen er fri.
+    assert r_laast.json()["feil"] == "inndata_ubrukelig", r_laast.text
+    assert _buntrad(migrator, ref) == ("lastet", None), \
+        "gjenspillet bandt forbi en holdt buntlås"
+    assert _beslutninger(migrator) == 1
+
     r2 = _bestill(klient, cookie, csrf, kropp, nokkel)
     assert r2.status_code == 200, r2.text
     assert r2.json()["beslutning"] == "tillat", r2.text
@@ -678,6 +702,23 @@ def test_committet_dom_gjenopprettes_selv_om_bunten_dode(
     # synes som en revisjonsrad — og som en kvoteplass.
     assert _beslutninger(migrator) == 0, \
         "gjenopprettingen tok en NY beslutning i stedet for den plantede"
+
+    # …OG FORBI CLAIM-PORTEN (Codex P2, runde 6): claim-tilstanden er
+    # muterbar (draining/nøddeaktivering), og den committede dommen skal
+    # svares uansett — et gjenspill trenger ingen NY claimbar modul.
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute("UPDATE modulhode SET status='nodeaktivert'"
+                     " WHERE modul_id='m57_ats'")
+    migrator.commit()
+    try:
+        r_nede = _bestill(klient, cookie, csrf, kropp, nokkel)
+        assert r_nede.status_code == 200, r_nede.text
+        assert r_nede.json()["beslutning"] == "stopp", r_nede.text
+    finally:
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute("UPDATE modulhode SET status='aktiv'"
+                         " WHERE modul_id='m57_ats'")
+        migrator.commit()
 
     # SAMME nøkkel, ANNEN intensjon (Codex P2, runde 3): løftet er
     # `idempotenskonflikt` — og det skal ikke avhenge av at retry-kroppens
