@@ -48,26 +48,48 @@ def _forny(c, hode, claim, **over):
 
 
 @pg
-def test_fornyelsen_forlener_leasen_og_reutsteder_kapabiliteten(
+def test_fornyelsen_holder_leasen_og_reutsteder_kapabiliteten(
         migrator, miljo, monkeypatch):
-    """Happy path: ny leaseutløper i framtiden (aldri over per-grant-
-    taket, aldri forbi fristen) og en FERSK opplastingskapabilitet —
-    claimens egen var klemt til sitt vindu og skal ikke være svaret."""
+    """Happy path: leasen står i framtiden, aldri forbi fristen, og gikk
+    ALDRI bakover — pluss en FERSK opplastingskapabilitet (claimens egen
+    var klemt til sitt eget vindu og skal ikke være svaret).
+
+    Riggens frist ligger INNENFOR grant-taket, så 037 strakk leasen helt
+    til fristen ved claim. Da er heartbeatet en no-op, og det er selve
+    porten: en fornyelse som skrev `now() + lease_s` rått ville KORTET
+    eksklusiviteten fra «til fristen» til «ett vindu» og åpnet reclaim
+    midt i eierens lovlige arbeid (Cursor P1). Den EKTE forlengelsen —
+    frist forbi taket — måles i
+    `test_fornyelsen_kjeder_grant_over_taket_uten_reclaim`.
+    """
     c, hode, claim = _kjede_og_claim(migrator, monkeypatch)
     try:
+        _ktx(migrator, claim)
+        for_lease, frist = migrator.execute(
+            "SELECT owner_lease_utloper, utforelsesfrist"
+            " FROM oppdrag WHERE id=%s",
+            (claim["oppdrag_id"],)).fetchone()
+        migrator.rollback()
+        # Premisset, uttalt: uten 037-strekket måler testen under noe
+        # annet enn den tror.
+        assert for_lease == frist, \
+            "riggen bærer ikke 037-strekket — porten under er tannløs"
         r = _forny(c, hode, claim)
         assert r.status_code == 200, r.text
         svar = r.json()
         _ktx(migrator, claim)
         rad = migrator.execute(
-            "SELECT owner_lease_utloper, utforelsesfrist,"
+            "SELECT owner_lease_utloper,"
             " owner_lease_utloper > now(),"
-            " owner_lease_utloper <= now() + interval '600 seconds'"
+            " owner_lease_utloper <= utforelsesfrist,"
+            " owner_lease_utloper >= %s"
             " FROM oppdrag WHERE id=%s",
-            (claim["oppdrag_id"],)).fetchone()
+            (for_lease, claim["oppdrag_id"])).fetchone()
         migrator.rollback()
-        assert rad[2], "leasen ble ikke fornyet inn i framtiden"
-        assert rad[3], "fornyelsen ga mer enn det bedte vinduet"
+        assert rad[1], "leasen ble ikke fornyet inn i framtiden"
+        assert rad[2], "fornyelsen gikk forbi utførelsesfristen"
+        assert rad[3], \
+            "fornyelsen KORTET leasen 037 alt hadde strukket til fristen"
         assert svar["owner_lease_utloper"] == rad[0].isoformat()
         opl = svar["opplasting"]
         if claim.get("opplasting"):

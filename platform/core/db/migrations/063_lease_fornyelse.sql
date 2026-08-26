@@ -97,16 +97,27 @@ BEGIN
                 USING ERRCODE = 'invalid_authorization_specification';
         END IF;
     END IF;
+    -- MONOTON: leasen går ALDRI bakover i tid (Cursor P1). 037 strekker
+    -- leasen TIL `utforelsesfrist` ved claim, så på et oppdrag med frist
+    -- innenfor taket ER leasen alt fristen. Et heartbeat som skrev
+    -- `now() + v_lease` rått KORTET da eksklusiviteten fra «til fristen»
+    -- til «ett vindu», og åpnet nøyaktig det reclaim-vinduet 037 lukket
+    -- (`plukket` ∧ `owner_lease_utloper < now()` ∧ `utforelsesfrist >
+    -- now()`): en annen utfører kunne plukke raden MIDT i den første
+    -- eierens lovlige arbeid — dobbeltarbeidet 037 finnes for.
+    -- `greatest(o.owner_lease_utloper, …)` gjør fornyelsen til det den
+    -- heter: den FORLENGER der vinduet trengs (frist forbi taket — hele
+    -- #165), og er en no-op der 037 alt dekker fristen. Taket og fristen
+    -- står, så et heartbeat gir aldri mer enn ett vindu fram: en utfører
+    -- som slutter å puste mister fortsatt autoriteten ved neste vindu —
+    -- der det finnes et neste vindu å miste.
     UPDATE public.oppdrag o
        SET owner_lease_utloper = least(
                now() + '3600 seconds'::INTERVAL,
-               least(now() + (v_lease || ' seconds')::INTERVAL,
-                     o.utforelsesfrist))
+               least(o.utforelsesfrist,
+                     greatest(o.owner_lease_utloper,
+                              now() + (v_lease || ' seconds')::INTERVAL)))
      WHERE o.id = p_oppdrag_id;
-    -- 037 strakk leasen TIL fristen ved claim (greatest); fornyelsen
-    -- gjør det MOTSATTE (least): hvert heartbeat er et lite vindu, og
-    -- det er selve poenget — en utfører som slutter å puste mister
-    -- autoriteten ved neste vindu, ikke ved fristen.
     SELECT o.owner_lease_utloper INTO owner_lease_utloper
       FROM public.oppdrag o WHERE o.id = p_oppdrag_id;
     tenant := r.tenant; modul_id := r.modul_id;
