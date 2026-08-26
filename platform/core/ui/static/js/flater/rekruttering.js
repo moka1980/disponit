@@ -777,7 +777,7 @@ function profilSeksjon(hoved, ctx, data, okt, paaProfilendring) {
     if (paaProfilendring) paaProfilendring();
   };
 
-  const kravRad = (kropp, krav) => {
+  const kravRad = (kropp, krav, paaEndring) => {
     teller += 1;
     const kid = `profil-krav-${teller}`;
     const vid = `profil-vekt-${teller}`;
@@ -801,7 +801,12 @@ function profilSeksjon(hoved, ctx, data, okt, paaProfilendring) {
         .replace("{navn}", navnInp.value || "?"));
     settEtikett();
     navnInp.addEventListener("input", settEtikett);
-    fjern.addEventListener("click", () => rad.remove());
+    // En fjernet rad er en annen kravliste, altså en annen intensjon
+    // (Cursor P2-5) — feltene selv dekkes av lytteren på skjemaet.
+    fjern.addEventListener("click", () => {
+      rad.remove();
+      if (paaEndring) paaEndring();
+    });
     rad.append(el("td", {}, fjern));
     kropp.append(rad);
     return navnInp;
@@ -813,7 +818,19 @@ function profilSeksjon(hoved, ctx, data, okt, paaProfilendring) {
     // DEFINITIVT svar (Cursor P1-1/P2-4): et tapt 2xx + nytt klikk skal
     // være samme operasjon — serveren replayer på nøkkelen. Først når
     // svaret kom (uansett utfall serveren har dømt), byttes den.
-    let idem = nyIdempotensnokkel();
+    //
+    // ... OG NØKKELEN BINDER INNHOLDET, IKKE SKJEMAET (Cursor P2-5).
+    // Etter et USIKKERT svar sto nøkkelen — riktig — men den sto også
+    // når brukeren endret navnet eller vektene i mellomtiden: neste
+    // lagring var en annen profilversjon under den forrige intensjonens
+    // nøkkel, og serveren ville enten dømt `idempotenskonflikt` eller
+    // replayet den GAMLE versjonen som om den nye var lagret. Nøkkelen
+    // lages derfor ved innsending og forkastes ved enhver endring —
+    // felt, ny kravrad eller fjernet kravrad — akkurat som i
+    // `bestilling.js`. `null` betyr «neste innsending er en ny
+    // intensjon», og `nyIntensjon` er navnet på den ene setningen.
+    let idem = null;
+    const nyIntensjon = () => { idem = null; };
     const navnId = "profil-navn";
     const navnInp = el("input", { type: "text", id: navnId,
       maxlength: "200", required: true,
@@ -830,14 +847,15 @@ function profilSeksjon(hoved, ctx, data, okt, paaProfilendring) {
           text: t("ui.rekruttering.profiler.fjern") }))),
       kropp);
     if (profil && profil.krav.length) {
-      for (const k of profil.krav) kravRad(kropp, k);
+      for (const k of profil.krav) kravRad(kropp, k, nyIntensjon);
     } else {
-      kravRad(kropp, null);
+      kravRad(kropp, null, nyIntensjon);
     }
     const leggTil = el("button", { type: "button",
       text: t("ui.rekruttering.profiler.leggtil") });
     leggTil.addEventListener("click", () => {
-      const inp = kravRad(kropp, null);
+      const inp = kravRad(kropp, null, nyIntensjon);
+      nyIntensjon();
       inp.focus();
     });
     const lagre = el("button", { type: "submit",
@@ -852,6 +870,9 @@ function profilSeksjon(hoved, ctx, data, okt, paaProfilendring) {
         el("label", { for: navnId,
           text: t("ui.rekruttering.profiler.navn") }), " ", navnInp),
       tabell, el("p", {}, leggTil, " ", lagre, " ", avbryt));
+    // Én lytter på skjemaet dekker navnet, hvert kravnavn og hver vekt —
+    // også radene som legges til senere, siden `input` bobler.
+    skjema.addEventListener("input", nyIntensjon);
     skjema.addEventListener("submit", async (ev) => {
       ev.preventDefault();
       const krav = [];
@@ -866,11 +887,15 @@ function profilSeksjon(hoved, ctx, data, okt, paaProfilendring) {
         return;
       }
       lagre.disabled = true;
+      // Nøkkelen fødes her, med innholdet den skal binde: står den fra
+      // et tidligere forsøk med SAMME innhold, gjenbrukes den — det er
+      // hele SP-2-replayen.
+      if (!idem) idem = nyIdempotensnokkel();
       try {
         const svar = await lagreStillingsprofil(
           profil ? profil.profil_id : null, navnInp.value.trim(), krav,
           idem);
-        idem = nyIdempotensnokkel();   // definitivt svar → ny operasjon
+        nyIntensjon();                 // definitivt svar → ny operasjon
         sett(utfall, t("ui.rekruttering.profiler.lagret")
           .replace("{navn}", navnInp.value.trim())
           .replace("{versjon}", String(svar.versjon)));
@@ -879,7 +904,7 @@ function profilSeksjon(hoved, ctx, data, okt, paaProfilendring) {
         if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
         if (e && e.status >= 400 && e.status < 500) {
           // Serveren DØMTE operasjonen — en retry er en NY operasjon.
-          idem = nyIdempotensnokkel();
+          nyIntensjon();
         }
         // Nettverk/5xx: nøkkelen beholdes — retry er SAMME operasjon.
         lagre.disabled = false;

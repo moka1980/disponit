@@ -1466,3 +1466,42 @@ test("Profiler: tapt svar → retry sender SAMME nøkkel (SP-2)", async () => {
     forste.hoder["Idempotency-Key"],
     "retry etter tapt svar byttet nøkkel — serveren kan ikke replaye");
 });
+
+test("Profiler: endret innhold etter tapt svar gir NY nøkkel (P2-5)", async () => {
+  const hoved = await tegnetMedProfiler();
+  const seksjon = hoved.querySelector(
+    "section[aria-labelledby=profil-tittel]");
+  const rediger = [...seksjon.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.profiler.rediger"));
+  rediger.click();
+  const skjema = seksjon.querySelector("form");
+  // Første forsøk: nettverket dør — utfallet er ukjent, nøkkelen står.
+  KALL = [];
+  SVAR = (sti, opts) => {
+    if ((opts.method || "GET") === "POST") throw new Error("nett");
+    return sti.includes("stillingsprofiler") ? profiler() : prosess();
+  };
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() => KALL.some((k) => k.metode === "POST")),
+    "første POST gikk aldri");
+  const forste = KALL.find((k) => k.metode === "POST");
+  // ... men brukeren endrer navnet. Da er neste lagring en ANNEN
+  // profilversjon, og den gamle nøkkelen ville enten kollidert eller
+  // fått serveren til å replaye den forrige.
+  const navn = skjema.querySelector("#profil-navn");
+  navn.value = "Driftsarkitekt";
+  navn.dispatchEvent(new window.Event("input", { bubbles: true }));
+  SVAR = { "/v1/rekruttering/prosesser": prosess(),
+           "/v1/rekruttering/stillingsprofiler": profiler() };
+  KALL = [];
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() => KALL.some((k) => k.metode === "POST")),
+    "andre POST gikk aldri");
+  const andre = KALL.find((k) => k.metode === "POST");
+  assert.equal(andre.kropp.navn, "Driftsarkitekt");
+  assert.notEqual(andre.hoder["Idempotency-Key"],
+    forste.hoder["Idempotency-Key"],
+    "endret innhold bar fortsatt den gamle intensjonens nøkkel");
+});
