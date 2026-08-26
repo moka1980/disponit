@@ -122,16 +122,21 @@ export function visRekruttering(hoved, ctx) {
     // prosessbytte skal ikke gjøre en retry til en NY operasjon eller
     // miste en alt opplastet bunt.
     // ... OG DET GJØR KJEDEN SOM ER I LUFTA (Cursor P1-2). En opplasting
-    // varer lenge nok til at brukeren rekker å bytte fil eller prosess
-    // under den. `paagaaende` er låsen som holder det med ÉN kjede om
-    // gangen, også når en om-tegning har bygget et helt nytt skjema;
+    // varer lenge nok til at brukeren rekker å bytte fil under den.
+    // `paagaaende` er låsen som holder det med ÉN kjede om gangen;
     // `generasjon` er kjedens intensjon, så en flygende opplasting ikke
     // kan skrive sin `inndata_ref` inn i en bunt brukeren alt har byttet
-    // ut; `laasOpp` peker på KONTROLLENE SOM STÅR I VISNINGEN, så låsen
-    // løftes der brukeren ser den — samme grunn som `meldUtfall`.
+    // ut. Filvelgeren kan ikke fryses med `readOnly`, så `generasjon` blir
+    // stående: den vokter et vindu som ikke har noe med om-tegning å gjøre.
+    //
+    // `laasOpp` er derimot BORTE (A-dommen, #212). Den pekte på
+    // «kontrollene som står i visningen» fordi en om-tegning kunne komme
+    // midt i kjeden. Nå kan den ikke det — `tegn`-utløserne er frosset så
+    // lenge `paagaaende` står — og da er kontrollene kjeden låste de samme
+    // som skal låses opp.
     bestilling: { reserverIdem: null, bestillIdem: null,
                   inndataRef: null, filnavn: null,
-                  paagaaende: false, generasjon: 0, laasOpp: null,
+                  paagaaende: false, generasjon: 0,
                   oppdaterProfilvalg: null } };
   medStatus(hoved, ctx,
     async () => {
@@ -153,6 +158,46 @@ export function visRekruttering(hoved, ctx) {
 
 function tegn(hoved, ctx, data, okt, valgtId) {
   const prosesser = (data && data.prosesser) || [];
+  // A-DOMMEN (#212): GENERATOREN FJERNES, IKKE INSTANSENE. Tre runder med
+  // Cursor-funn på samme mekanisme hadde samme rot: `tegn` river og bygger
+  // bestillingsseksjonen på nytt mens en async kjede eier den, og hver
+  // eneste binding kjeden lukker over — alerten, skjemaet, `visBunt`,
+  // knappen — blir en frakoblet node. Botemiddelet var én indireksjon per
+  // binding, oppdaget én om gangen, og flaten vokste 865 → 982 → 1131
+  // linjer mens den ble «lukket». Runde fire ville funnet den syvende
+  // bindingen.
+  //
+  // Eierens dom er A: frys `tegn`-utløserne mens kjeden er i lufta. Da kan
+  // seksjonen ikke rives, og alle bindingene forblir tilkoblet — uten en
+  // eneste ny peker mot «det som er synlig nå». Husmønsteret er
+  // `bestilling.js`: `frys` + `aria-busy`, aldri en kontroll som ser
+  // levende ut og ikke gjør noe. Prisen — ingen prosessbytte under en
+  // pågående opplasting — er dommens egen: brukeren har en irreversibel
+  // operasjon i flukt, og velgeren skal SI det.
+  const utlosere = { velger: null, send: null, lagre: null };
+  let frosset = false;
+  const frysEn = (kontroll, paa) => {
+    if (!kontroll) return;
+    kontroll.disabled = paa;
+    // `aria-busy` hører til OMRÅDET som er opptatt, ikke til knappen:
+    // skjemaet for kontrollene som står i et, velgerens egen rot ellers.
+    const rot = kontroll.form || kontroll.parentElement;
+    if (!rot) return;
+    if (paa) rot.setAttribute("aria-busy", "true");
+    else rot.removeAttribute("aria-busy");
+  };
+  const laas = {
+    frys: (paa) => {
+      frosset = paa;
+      for (const k of Object.values(utlosere)) frysEn(k, paa);
+    },
+    // Kontrollene fødes til ulik tid — profilskjemaet åpnes på et klikk —
+    // så en som meldes mens flaten er frosset, fryses med det samme.
+    meld: (navn, kontroll) => {
+      utlosere[navn] = kontroll;
+      if (frosset) frysEn(kontroll, true);
+    },
+  };
   // DEN FØRSTE PROFILEN LÅSER OPP BESTILLINGEN (Cursor P1-1). Uten
   // profiler tegner `bestillSeksjon` en «opprett en profil først»-tekst
   // og returnerer — og profileditorens `oppdaterListe` tegner BARE
@@ -177,7 +222,7 @@ function tegn(hoved, ctx, data, okt, valgtId) {
   // alternativene endret kroppen under en bestilling som er underveis.
   const bestillRot = el("div", { class: "rekrut-bestill" });
   const tegnBestilling = () => {
-    const del = bestillSeksjon(hoved, ctx, data, okt);
+    const del = bestillSeksjon(hoved, ctx, data, okt, laas);
     sett(bestillRot, ...(del ? [del] : []));
   };
   tegnBestilling();
@@ -212,6 +257,17 @@ function tegn(hoved, ctx, data, okt, valgtId) {
         prosessetikett(p))));
     velger.value = prosess.prosess_id;
     velger.addEventListener("change", () => {
+      // FROSSET ER FROSSET (A-dommen, #212). `disabled` er brukerens vei:
+      // nettleseren sender ingen `change` fra en låst kontroll. Men hele
+      // poenget med A er at om-tegningen ikke SKJER mens kjeden eier
+      // seksjonen, og en invariant som bare hviler på nettleserens
+      // oppførsel kan verken måles eller mutasjonstestes. Dommen står
+      // derfor også her, ett sted fra: låsen spørres, valget rulles
+      // tilbake til den prosessen som faktisk vises.
+      if (okt.bestilling.paagaaende) {
+        velger.value = prosess.prosess_id;
+        return;
+      }
       tegn(hoved, ctx, data, okt, velger.value);
       const ny = hoved.querySelector(`#${velgerId}`);
       if (ny) ny.focus();
@@ -220,6 +276,9 @@ function tegn(hoved, ctx, data, okt, valgtId) {
       el("label", { for: velgerId,
         text: t("ui.rekruttering.prosessvelger") }),
       velger);
+    // ... og HER er `tegn`-utløseren A-dommen navngir: den ene kontrollen
+    // på flaten som river bestillingsseksjonen og bygger den på nytt.
+    laas.meld("velger", velger);
   }
   const vekter = { ...prosess.vekter };
   const kanBestille = harScope(ctx, "bestilling:opprett");
@@ -612,7 +671,7 @@ function tegn(hoved, ctx, data, okt, valgtId) {
 // SP-2 hele veien: bunten er engangs (ny fil = ny reservasjon), og
 // bestillingsnøkkelen holdes til et DEFINITIVT svar. Skjemaform etter
 // §8: ekte <label for>, tallfelt med min/maks, utfall i role="alert".
-function bestillSeksjon(hoved, ctx, data, okt) {
+function bestillSeksjon(hoved, ctx, data, okt, laas) {
   if (!harScope(ctx, "bestilling:opprett")) return null;
   const profiler = (data && data.profiler) || [];
   const rot = el("section", { "aria-labelledby": "bestill-tittel" });
@@ -719,10 +778,14 @@ function bestillSeksjon(hoved, ctx, data, okt) {
   // — og der gjør nabo-flaten det samme valget som her: kjeden bærer sin
   // egen intensjon i stedet (`generasjon`), så et bytte under opplasting
   // avbryter kjeden i stedet for å binde feil bunt.
+  //
+  // Knappene og prosessvelgeren eies av flatens `laas` (A-dommen, #212):
+  // det er den samme frysen, bare utvidet til `tegn`-utløserne, og den
+  // setter `aria-busy` på DETTE skjemaet fordi `send` hører til det.
   const frys = (paa) => {
     antallInp.readOnly = paa;
     fristInp.readOnly = paa;
-    send.disabled = paa;
+    laas.frys(paa);
   };
 
   const skjema = el("form", {},
@@ -736,6 +799,9 @@ function bestillSeksjon(hoved, ctx, data, okt) {
     el("p", {}, el("label", { for: "bestill-frist",
       text: t("ui.rekruttering.bestill.slettefrist") }), " ", fristInp),
     el("p", {}, send));
+  // Først nå har `send` et skjema — og det er skjemaet `aria-busy` hører
+  // til. Meldingen fryser knappen med det samme hvis flaten alt er frosset.
+  laas.meld("send", send);
 
   skjema.addEventListener("submit", async (ev) => {
     ev.preventDefault();
@@ -885,12 +951,11 @@ function bestillSeksjon(hoved, ctx, data, okt) {
         : "ui.rekruttering.usikkert_utfall"));
     } finally {
       tilstand.paagaaende = false;
-      // Låsen løftes på det skjemaet som STÅR i visningen, ikke på det
-      // som ba om den (Cursor P1-2): kom det en om-tegning mens kjeden
-      // var i lufta, er `send` her en frakoblet knapp ingen ser, og de
-      // synlige kontrollene ville blitt stående låst for alltid. Samme
-      // vindu som `meldUtfall` finnes for.
-      if (tilstand.laasOpp) tilstand.laasOpp();
+      // Låsen løftes på de SAMME kontrollene som tok den (A-dommen,
+      // #212): `tegn`-utløserne sto frosset hele veien, så ingen
+      // om-tegning rakk å gjøre `send` — eller alerten, skjemaet,
+      // `visBunt` — til en frakoblet node underveis.
+      frys(false);
     }
   });
 
@@ -898,10 +963,11 @@ function bestillSeksjon(hoved, ctx, data, okt) {
   // (prosessbytte): tilstanden bestemmer hva skjemaet sier, ikke
   // rekkefølgen den ble bygget i.
   visBunt();
-  // ... og midt i en KJEDE som er i lufta: da er det disse kontrollene
-  // låsen gjelder, og det er de som skal låses opp når svaret kommer.
-  tilstand.laasOpp = () => frys(false);
-  frys(tilstand.paagaaende);
+  // Seksjonen kan derimot IKKE lenger tegnes midt i en kjede (A-dommen,
+  // #212): utløseren som gjorde det er frosset så lenge `paagaaende`
+  // står. Derfor er det ingen tilstand å gjenopprette her — `laas.meld`
+  // over dekker det ene tilfellet som er igjen, en kontroll som fødes
+  // mens flaten er frosset.
   // ... og det er DENNE velgeren en ny profilversjon skal nå (P2-2).
   tilstand.oppdaterProfilvalg = tegnProfilvalg;
   sett(rot, el("h2", { id: "bestill-tittel",

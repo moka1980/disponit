@@ -1429,11 +1429,23 @@ test("Bestilling: en bunt byttet under opplastingen binder aldri feil bunt (P1-2
   assert.match(seksjon.textContent, /bunt2\.zip|inndata:u-2|3/);
 });
 
-test("Bestilling: en om-tegning midt i kjeden starter ingen kjede nummer to (P1-2)", async () => {
-  // Låsen lå i ÉN knapp. Byttet brukeren prosess mens opplastingen sto
-  // på, bygget `tegn` et nytt skjema med en fersk, handlingsklar knapp
-  // mot den SAMME delte tilstanden — to kjeder, og flaten som følger det
-  // svaret som tilfeldigvis kom sist.
+test("Bestilling: prosessvelgeren er frosset mens kjeden er i lufta (A-dommen)", async () => {
+  // A-DOMMEN (#212): GENERATOREN, IKKE INSTANSENE. Låsen lå først i ÉN
+  // knapp, så i `paagaaende`/`generasjon`/`laasOpp` — men om-tegningen
+  // SELV sto igjen, og hver binding submit-handleren lukker over (alerten,
+  // skjemaet, `visBunt`) ble en frakoblet node ved et prosessbytte midt i
+  // kjeden. Runde tre fant den fjerde, femte og sjette bindingen; runde
+  // fire ville funnet den syvende.
+  //
+  // Nå fryses utløseren i stedet: velgeren er `disabled` med `aria-busy`
+  // så lenge kjeden er i lufta, seksjonen kan ikke rives, og kvitteringen
+  // treffer den alerten brukeren faktisk ser.
+  //
+  // TO MUTASJONER, BEGGE MÅLT: fjern `laas.meld("velger", velger)` → den
+  // synlige frysen faller («prosessvelgeren sto handlingsklar»); fjern
+  // `paagaaende`-vakten i velgerens `change` → seksjonen rives igjen
+  // («bestillingsseksjonen ble revet»). Begge må stå: den ene er det
+  // brukeren SER, den andre er invarianten koden selv holder.
   KALL = [];
   let slippBestilling;
   // Bestillingen henger: bunten er ALT lastet opp, så et skjema tegnet i
@@ -1469,33 +1481,46 @@ test("Bestilling: en om-tegning midt i kjeden starter ingen kjede nummer to (P1-
   assert.ok(await vent(() =>
     KALL.some((k) => k.sti === "/v1/bestilling"), 20),
     "bestillingen ble aldri sendt");
-  // Prosessbytte midt i kjeden: nytt skjema, nye kontroller.
+  // Utløseren er frosset — og den SIER det, den later ikke som ingenting.
+  const skjema = bestill().querySelector("form");
+  const send = skjema.querySelector("button[type=submit]");
   const velger = hoved.querySelector("#rekrut-prosessvelger");
+  assert.equal(velger.disabled, true,
+    "prosessvelgeren sto handlingsklar mens kjeden var i lufta");
+  assert.equal(velger.parentElement.getAttribute("aria-busy"), "true",
+    "velgeren er låst uten å si hvorfor");
+  assert.equal(send.disabled, true);
+  assert.equal(skjema.getAttribute("aria-busy"), "true");
+  assert.equal(skjema.querySelector("#bestill-antall").readOnly, true);
+  // Et bytteforsøk river ikke seksjonen: samme skjema, samme knapp.
   velger.value = "p-2";
   velger.dispatchEvent(new window.Event("change", { bubbles: true }));
-  const nyttSkjema = bestill().querySelector("form");
-  const nySend = nyttSkjema.querySelector("button[type=submit]");
-  assert.equal(nySend.disabled, true,
-    "det nye skjemaet sto handlingsklart mens kjeden var i lufta");
-  assert.equal(nyttSkjema.querySelector("#bestill-antall").readOnly, true);
-  // ... og et klikk der starter ingen kjede nummer to. Bunten står i
-  // økten, så uten låsen ville dette blitt bestilling nummer to på den
-  // samme bunten mens den første fortsatt sto ubesvart.
-  assert.match(bestill().textContent, /bunt\.zip/, "testen antar en lagret bunt");
-  nyttSkjema.dispatchEvent(new window.Event("submit",
-    { bubbles: true, cancelable: true }));
-  await vent(() => false, 5);
+  assert.equal(bestill().querySelector("form"), skjema,
+    "bestillingsseksjonen ble revet mens kjeden var i lufta");
   assert.equal(KALL.filter((k) => k.sti === "/v1/bestilling").length, 1,
     "om-tegningen startet en parallell kjede");
   slippBestilling();
-  // Den ENE kjeden fullfører — og låsen løftes på kontrollene som STÅR i
-  // visningen, ikke på den frakoblede knappen som ba om den.
+  // Kjeden fullfører — og kvitteringen treffer alerten brukeren SER,
+  // uten en eneste peker mot «det som er synlig nå».
   assert.ok(await vent(() =>
-    KALL.filter((k) => k.sti === "/v1/bestilling").length === 1, 40),
-    "kjeden fullførte aldri");
-  assert.ok(await vent(() => !nySend.disabled, 20),
-    "det synlige skjemaet ble stående låst etter at svaret kom");
-  assert.equal(nyttSkjema.querySelector("#bestill-antall").readOnly, false);
+    bestill().querySelector("[role=alert]").textContent.includes("8"), 40),
+    "kvitteringen nådde aldri den synlige alerten");
+  assert.doesNotMatch(bestill().textContent, /bunt\.zip/,
+    "den forbrukte bunten står fortsatt navngitt i det synlige skjemaet");
+  assert.equal(bestill().querySelector("input[type=file]")
+    .hasAttribute("required"), true,
+    "det synlige skjemaet ble aldri nullstilt etter kvitteringen");
+  // ... og frysen løftes: velgeren er brukbar igjen, uten `aria-busy`.
+  assert.ok(await vent(() => !send.disabled, 20),
+    "skjemaet ble stående låst etter at svaret kom");
+  assert.equal(velger.disabled, false, "velgeren ble stående frosset");
+  assert.equal(velger.parentElement.hasAttribute("aria-busy"), false);
+  assert.equal(skjema.hasAttribute("aria-busy"), false);
+  assert.equal(skjema.querySelector("#bestill-antall").readOnly, false);
+  // ... og NÅ går prosessbyttet, som før.
+  velger.value = "p-2";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.equal(hoved.querySelector("#rekrut-prosessvelger").value, "p-2");
   const brudd = await alvorligeBrudd(hoved);
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
 });
