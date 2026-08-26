@@ -139,12 +139,13 @@ def test_ytelsesgrensen_er_klarsignalets_tall():
     _, tak = ok.FELTGRENSER["rekruttering.evaluering"]["antall_soknader"]
     assert g["ytelse_min_soknader"] == tak
     _, frister = ok.UTFORELSESFRIST_VALG["rekruttering.evaluering"]
-    #: Samme tak som outbox-portens `TAK_S` (claim-lease 037/049 og
-    #: opplastingskapabilitet 017) — heves av #165, ett sted om gangen
-    #: er umulig: begge portene feller den som glemmes.
-    AUTORITET_S = 3600
+    # Autoriteten leses fra PRODUKSJONSKONTRAKTEN (Codex P2, runde 2):
+    # et testlokalt 3600 kunne flyttes uten at noen runtime-mekanisme
+    # fulgte med. Nå endres porten kun MED mekanismen: #165 hever
+    # `UTSTEDT_AUTORITET_S` (som også klemmer kapabiliteten i `app.py`),
+    # og min() gjenåpner konvolutten av seg selv.
     assert frister["bunt"] == min(g["ytelse_maks_minutter"] * 60,
-                                  AUTORITET_S)
+                                  ok.UTSTEDT_AUTORITET_S)
 
 
 def test_utelatt_invariant_felles_av_begge_lag():

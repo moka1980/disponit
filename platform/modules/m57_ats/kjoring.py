@@ -208,6 +208,15 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
                              else {**fremdrift, "filer_lest": lest})
                 navn = medlem.navn.replace("\\", "/")
                 kandidat_id = navn.split("/")[0]
+                # OVERSKYTENDE FELLES I STRØMMEN (Codex P2): dommen ved
+                # strømslutt alene lot «deklarer 1, lever 20 000» tvinge
+                # uttrekk og akkumulering av alt FØR den kodede stoppen
+                # — med udokumentert minne kunne det bli OOM i stedet.
+                # Motsatt avvik (færre enn deklarert) kan bare måles ved
+                # slutt og står der det sto.
+                if kandidat_id not in biter \
+                        and len(biter) >= antall_soknader:
+                    raise Kjoringsfeil("kandidattall_avvik", fremdrift)
                 biter.setdefault(kandidat_id, []).append(
                     (navn, medlem.navn,
                      _tekst(tekst_for, medlem, data, fremdrift),

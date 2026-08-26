@@ -2047,7 +2047,7 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
                     # overestimert og kapabiliteten levde forbi fristen den er
                     # hardt bundet av. `now()` er transaksjonens starttid og er
                     # den SAMME i begge kall — dette er én transaksjon — så
-                    # `utloper = now() + min(igjen, 3600) <= evidensfrist`
+                    # `utloper = now() + min(igjen, oppdragskontrakt.UTSTEDT_AUTORITET_S) <= evidensfrist`
                     # holder eksakt, ikke omtrentlig.
                     igjen = int(conn.execute(
                         "SELECT floor(extract(epoch FROM (%s::timestamptz"
@@ -2070,7 +2070,7 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
                             "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                             (tenant, opp_id, o_modul, o_release, o_kv, o_khash,
                              o_epoch, typerad[0], opplasting_jti,
-                             min(igjen, 3600), autentisert_miljo)).fetchone()
+                             min(igjen, oppdragskontrakt.UTSTEDT_AUTORITET_S), autentisert_miljo)).fetchone()
                         # Grensen HÅNDHEVES, den forutsettes ikke. Utledningen
                         # over gjør `utloper <= evidensfrist` til en identitet,
                         # men den identiteten hviler på 017s klemming — og en

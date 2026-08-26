@@ -999,8 +999,25 @@ UTFORELSESFRIST_VALG: dict[str, tuple[str, dict[object, int]]] = {
     # utstedes er et løfte ingen kan holde. Fristen følger derfor leasen
     # til #165 (fornyelsesveien) er merget — da, og først da, kan den
     # utvides til klarsignalets 240 min i samme PR som fornyelsen.
-    "rekruttering.evaluering": ("omfang", {"bunt": 60 * 60}),
+    # `min()` og ikke tallet direkte (Codex P2, runde 2): når #165 hever
+    # `UTSTEDT_AUTORITET_S`, faller min() tilbake på konvolutten av seg
+    # selv — fristen kan aldri endres uten mekanismen den hviler på.
+    "rekruttering.evaluering": ("omfang",
+                                {"bunt": None}),  # settes under, av min()
 }
+
+#: DEN UTSTEDTE AUTORITETEN, med produksjonsnavn (Codex P2 på #210):
+#: claim-leasen (037/049) og opplastingskapabiliteten (017, `app.py`)
+#: klemmes begge til dette taket, og ordrefristen kan aldri love mer.
+#: #165 (fornyelsesveien) hever DETTE tallet i samme PR som mekanismen
+#: — da gjenåpner min() under klarsignalets 240 min av seg selv.
+#: SQL-siden (049) pinnes av outbox-portens `TAK_S`.
+UTSTEDT_AUTORITET_S = 3600
+
+#: Akseptkonvolutten er klarsignalets 240 min (§4, `manifestskjema`);
+#: LØFTET til kunden er aldri mer enn autoriteten som faktisk utstedes.
+UTFORELSESFRIST_VALG["rekruttering.evaluering"][1]["bunt"] = \
+    min(240 * 60, UTSTEDT_AUTORITET_S)
 
 
 def utforelsesfrist_s(oppdragstype: str, minimert: dict) -> int | None:

@@ -574,6 +574,22 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                 return ("feil", INNDATA_OPPTATT)
             laaser.append(navn)
             sett_kontekst(conn, tenant, aktor, rid)
+            # GJENOPPRETTBAR DOM FØR BUNTPORTEN (Codex P2 på #210): dør
+            # prosessen etter at kjernen committet STOPP/BRUDD men før
+            # `bestilling_idempotens` ble skrevet, står bunten ubundet —
+            # og utløper den før klienten retryer, dømte porten under
+            # `inndata_ubrukelig` FØR gjenopprettingen (656→) rakk å
+            # svare med den beslutningen som alt er tatt. Buntens
+            # tilstand er muterbar; dommen er det ikke. Finnes en ferdig
+            # kjernerad for NØYAKTIG denne nøkkelen+intensjonen, hoppes
+            # forhåndsporten over og gjenopprettingen svarer.
+            gjenopprettbar = False
+            if nokkel:
+                gjenopprettbar = conn.execute(
+                    "SELECT 1 FROM idempotens WHERE tenant=%s"
+                    "   AND nokkel=%s AND status='ferdig'",
+                    (tenant, kjernenokkel_for(nokkel, hash_))
+                ).fetchone() is not None
             pm = _PROFIL_REF.fullmatch(norm["stillingsprofil_ref"])
             prad = conn.execute(
                 "SELECT 1 FROM stillingsprofil"
@@ -590,8 +606,9 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                 tjeneste.logg.hendelse("stillingsprofil_ukjent", rid,
                                        tenant, art="sikkerhet")
                 return ("feil", "stillingsprofil_ukjent")
-            if irad is None or irad[1] or irad[0] != "lastet" \
-                    or irad[2] is not None:
+            if not gjenopprettbar and (
+                    irad is None or irad[1] or irad[0] != "lastet"
+                    or irad[2] is not None):
                 # Samme svar for ukjent/utløpt/ulastet/alt bundet — et
                 # oppslagsverk over bunter skal ikke finnes (058-formen).
                 tjeneste.logg.hendelse("inndata_ubrukelig", rid, tenant,

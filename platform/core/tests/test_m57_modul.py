@@ -1516,8 +1516,14 @@ def test_deklarert_antall_bindes_til_buntens_kandidater(tmp_path):
         ("k2/soknad.html", b"<p>drift hos k2</p>"),
     ])
     felter = lambda m: {"navn": [f"Kandidat {m.navn.split('/')[0]}"]}
-    uttrekk = lambda m, d: d.decode("utf-8")
+    uttrukket = []
+
+    def uttrekk(m, d):
+        uttrukket.append(m.navn)
+        return d.decode("utf-8")
+
     for deklarert in (1, 3):
+        uttrukket.clear()
         with pytest.raises(kjoring.Kjoringsfeil) as e:
             kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
                               kandidatfelter_for=felter, tekst_for=uttrekk,
@@ -1525,6 +1531,11 @@ def test_deklarert_antall_bindes_til_buntens_kandidater(tmp_path):
                               antall_soknader=deklarert)
         assert e.value.kode == "kandidattall_avvik"
         assert e.value.fremdrift, "evidensen mangler i utfallet"
+        if deklarert == 1:
+            # …og dommen faller I STRØMMEN (Codex P2, runde 2): kandidat
+            # nr. deklarert+1 skal felles FØR uttrekket hans — «deklarer
+            # 1, lever 20 000» skal aldri få tvunget uttrekk av alt.
+            assert len(uttrukket) <= 1, uttrukket
     # Positiv kontroll: riktig deklarasjon kjører helt igjennom.
     helt = kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
                              kandidatfelter_for=felter, tekst_for=uttrekk,

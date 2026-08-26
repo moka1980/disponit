@@ -617,6 +617,56 @@ def test_krasj_mellom_beslutning_og_binding_fullfores_av_retryen(
 
 
 @pg
+def test_committet_dom_gjenopprettes_selv_om_bunten_dode(
+        klient, migrator, miljo, inndata_rot):
+    """Codex P2 (runde 2): dør prosessen etter at kjernen committet en
+    STOPP, men før `bestilling_idempotens` ble skrevet, står bunten
+    ubundet — og dør DEN så (utløp/forkasting) før klienten retryer,
+    dømte forhåndsporten `inndata_ubrukelig` FØR gjenopprettingen rakk å
+    svare med dommen som alt er tatt. Buntens tilstand er muterbar;
+    dommen er det ikke.
+
+    Krasjvinduet plantes direkte (migrator er basens eier — kalleveien
+    kan ikke plante, se `test_kaller_kan_ikke_plante_raden_…`): en ferdig
+    kjernerad med STOPP under nøyaktig kjernenøkkelen, ingen
+    `bestilling_idempotens`-rad, og en bunt som er forkastet.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `gjenopprettbar`-porten foran
+    buntdommen i `bestilling.py`, så svarer retryen 409 i stedet for den
+    committede dommen."""
+    import json as _json
+
+    _rekr_policy(migrator)
+    cookie, csrf = _adminsesjon()
+    ref = _bunt(klient, migrator, cookie, csrf)
+    profilref = _profil(migrator)
+    kropp = _evalkropp(ref, profilref)
+    nokkel = "n-" + secrets.token_hex(8)
+
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute("UPDATE inndata_artefakt SET status='forkastet'"
+                     " WHERE tenant=%s AND inndata_id=%s",
+                     (TENANT, ref.split(":", 1)[1]))
+    migrator.execute(
+        "INSERT INTO idempotens (tenant, nokkel, input_hash, status,"
+        " respons) VALUES (%s,%s,%s,'ferdig',%s)",
+        (TENANT, _kjernenokkel(nokkel, kropp), "plantet-krasjvindu",
+         _json.dumps({"http": 200, "beslutning": "stopp",
+                      "begrunnelse": "plantet dom"})))
+    migrator.commit()
+
+    r = _bestill(klient, cookie, csrf, kropp, nokkel)
+    assert r.status_code == 200, r.text
+    assert r.json()["beslutning"] == "stopp", r.text
+    # …og gjenopprettingen tok ingen NY beslutning: ingen loggpost ble
+    # noensinne skrevet (dommen var plantet, aldri tatt her), så en
+    # gjenoppretting som i det stille hadde kjørt kjernen på nytt ville
+    # synes som en revisjonsrad — og som en kvoteplass.
+    assert _beslutninger(migrator) == 0, \
+        "gjenopprettingen tok en NY beslutning i stedet for den plantede"
+
+
+@pg
 def test_bindefeil_etter_beslutningen_gir_stabil_retry(
         klient, migrator, miljo, inndata_rot, monkeypatch):
     """Cursor P2 (3): feiler `bind_inndata` ETTER en committet TILLAT,
