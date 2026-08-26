@@ -1197,6 +1197,49 @@ test("Bestilling: 5xx beholder nøkkel OG opplastet bunt — 4xx roterer nøkkel
     "4xx-dommen skulle rotert nøkkelen");
 });
 
+test("Bestilling: endret kropp etter usikkert svar gir NY nøkkel (P1-2)", async () => {
+  KALL = [];
+  const basis = { "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/inndata/reserver": { reservasjon_jti: "j-1",
+                              inndata_ref: "inndata:u-1" },
+    "/v1/inndata/opplast/j-1": {} };
+  let bestillingssvar = 500;
+  SVAR = (sti) => sti === "/v1/bestilling" ? bestillingssvar : basis[sti];
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const seksjon = hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  const skjema = seksjon.querySelector("form");
+  const filInp = skjema.querySelector("input[type=file]");
+  Object.defineProperty(filInp, "files", { configurable: true,
+    value: [{ name: "bunt.zip",
+              arrayBuffer: async () => new ArrayBuffer(16) }] });
+  const send = () => skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  const bestillinger = () => KALL.filter((k) => k.sti === "/v1/bestilling");
+  send();
+  await vent(() => bestillinger().length === 1, 20);
+  // Usikkert utfall (5xx): nøkkelen står — helt til brukeren endrer
+  // kroppen. Da er neste innsending en ANNEN intensjon, og å bære den
+  // gamle nøkkelen ville enten kollidert eller replayet den forrige.
+  const antall = skjema.querySelector("#bestill-antall");
+  antall.value = "3";
+  antall.dispatchEvent(new window.Event("input", { bubbles: true }));
+  bestillingssvar = { beslutning: "tillat", oppdrag_id: 9 };
+  send();
+  await vent(() => bestillinger().length === 2, 20);
+  const [b1, b2] = bestillinger();
+  assert.equal(b1.kropp.antall_soknader, 1);
+  assert.equal(b2.kropp.antall_soknader, 3);
+  assert.notEqual(b1.hoder["Idempotency-Key"], b2.hoder["Idempotency-Key"],
+    "endret kropp bar fortsatt den gamle intensjonens nøkkel");
+  // Bunten er den samme: feltendringen roterer bestillingsnøkkelen, ikke
+  // reservasjonen.
+  assert.equal(KALL.filter((k) => k.sti === "/v1/inndata/reserver").length, 1,
+    "feltendringen reserverte bunten på nytt");
+});
+
 test("Bestilling: den første profilen låser opp bestillingsskjemaet (P1-1)", async () => {
   KALL = [];
   let profilsvar = { profiler: [] };

@@ -603,6 +603,17 @@ function bestillSeksjon(hoved, ctx, data, okt) {
     return rot;
   }
 
+  // NØKKELEN HØRER TIL INTENSJONEN, IKKE TIL FLATEN (Cursor P1-2).
+  // `bestillIdem` holdes til et DEFINITIVT svar — det er SP-2 og riktig
+  // — men den ble bare nullstilt av serverens egen dom. Endret brukeren
+  // kroppen etter et usikkert svar (nett/5xx), bar neste innsending
+  // fortsatt nøkkelen til den FORRIGE intensjonen: enten `idempotens-
+  // konflikt` på et endret felt, eller — verre — en replay av den gamle
+  // bestillingen hvis den første POST-en faktisk commitet, slik at
+  // brukeren fikk kvittering for en bestilling hun nettopp endret.
+  // Husmønsteret er `bestilling.js`: første endring i et felt gjør neste
+  // innsending til en ny intensjon, altså en ny nøkkel.
+  const nyIntensjon = () => { tilstand.bestillIdem = null; };
   const filInp = el("input", { type: "file", id: "bestill-fil",
     accept: ".zip,application/zip", required: true });
   filInp.addEventListener("change", () => {
@@ -611,6 +622,9 @@ function bestillSeksjon(hoved, ctx, data, okt) {
     tilstand.inndataRef = null;
     tilstand.reserverIdem = null;
     tilstand.filnavn = filInp.files[0] ? filInp.files[0].name : null;
+    // ... og en ny bunt er en ny bestilling: `inndata_ref` er et felt i
+    // kroppen som alle de andre.
+    nyIntensjon();
   });
   const profilVelger = el("select", { id: "bestill-profil", required: true },
     ...profiler.map((pr) => el("option",
@@ -622,6 +636,9 @@ function bestillSeksjon(hoved, ctx, data, okt) {
     min: "1", max: "5000", step: "1", required: true, value: "1" });
   const fristInp = el("input", { type: "number", id: "bestill-frist",
     min: "30", max: "365", step: "1" });
+  profilVelger.addEventListener("change", nyIntensjon);
+  antallInp.addEventListener("input", nyIntensjon);
+  fristInp.addEventListener("input", nyIntensjon);
   const send = el("button", { type: "submit",
     text: t("ui.rekruttering.bestill.send") });
 
