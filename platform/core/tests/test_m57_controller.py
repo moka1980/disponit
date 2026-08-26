@@ -448,6 +448,177 @@ def test_avvist_opplasting_gir_feilkvittering(monkeypatch):
                           if status == 500 else 1), (status, forsok)
 
 
+def test_opplastingen_gjentas_som_kvitteringen(monkeypatch):
+    """m56s `test_opplastingen_gjentas_som_kvitteringen`, speilet (Cursor
+    P2, runde 2): m57 målte bare ANTALL forsøk ved 500. Suksess etter et
+    forbigående avslag, og tapt transport på opplastingen, var udekket —
+    og det er nettopp der en ferdig evaluering kan kastes ETT steg før
+    kvitteringen.
+
+    Endepunktet er idempotent på `kapabilitet_jti` og den kanoniske
+    rapporten, nettopp for at en utfører som mistet svaret skal kunne
+    spørre igjen. Kroppen er derfor IDENTISK hvert forsøk — det er hele
+    grunnen til at plattformen kjenner den igjen framfor å lage et nytt
+    artefakt av samme persondatabunt.
+
+    Kontroll: bytt `lever("/v1/artefakt", ...)` mot et enkelt
+    `klient.post(...)`, så blir hver gren under rød."""
+    from modules.m57_ats import controller
+
+    monkeypatch.setattr(controller, "_sov", lambda s: None)
+
+    class _MisterOpplasting(_Stubklient):
+        """Opplastingen committer hos plattformen, men svaret tapes."""
+
+        def __init__(self, mist_antall, **kw):
+            super().__init__(200, **kw)
+            self.mist_igjen = mist_antall
+            self.opplastinger = []
+
+        def post(self, sti, json=None, headers=None):
+            if sti == "/v1/artefakt":
+                self.opplastinger.append(json)
+                if self.mist_igjen:
+                    self.mist_igjen -= 1
+                    raise ConnectionError("svaret kom aldri")
+            return super().post(sti, json=json, headers=headers)
+
+    # 1) Et tapt svar gjentas, og lykkes det, er oppdraget UTFØRT — ikke
+    # et unntak ut av kjøreløkka med bunten alt evaluert.
+    k = _MisterOpplasting(2)
+    res = _kjor(k)
+    assert res["utfall"] == "utfort", res
+    assert len(k.opplastinger) == 3, k.opplastinger
+    assert k.opplastinger[0] == k.opplastinger[1] == k.opplastinger[2]
+
+    # 2) Gir ALLE forsøkene tapt svar, blir det en ærlig feilkvittering
+    # med status 0: plattformen får vite at kjøringen ikke ble avsluttet,
+    # framfor at oppdraget står claimet og tyst til fristen.
+    k = _MisterOpplasting(controller.LEVERINGSFORSOK)
+    res = _kjor(k)
+    assert res["utfall"] == "avbrutt", res
+    assert res["opplasting_status"] == 0, res
+    assert len(k.opplastinger) == controller.LEVERINGSFORSOK
+    assert k.kvitteringer[0]["feilkode"] == "opplasting_avvist"
+
+    # 3) Et forbigående 503 gjentas også, og lykkes det, er rapporten
+    # LEVERT — ikke kvittert `feilet` for en bunt som alt er evaluert.
+    class _FeilerForstOpplasting(_Stubklient):
+        def __init__(self, feil_antall, **kw):
+            super().__init__(200, **kw)
+            self.feil_igjen = feil_antall
+            self.opplastinger = 0
+
+        def post(self, sti, json=None, headers=None):
+            if sti == "/v1/artefakt":
+                self.opplastinger += 1
+                if self.feil_igjen:
+                    self.feil_igjen -= 1
+                    return _Svar(503, {})
+            return super().post(sti, json=json, headers=headers)
+
+    k = _FeilerForstOpplasting(2)
+    res = _kjor(k)
+    assert res["utfall"] == "utfort", res
+    assert k.opplastinger == 3, k.opplastinger
+
+
+def test_opplastingsretryen_stanser_ikke_ved_nominelt_utlop(monkeypatch):
+    """m56s port, speilet: retryen skal IKKE gi opp på nøyaktig det
+    kappløpet plattformen har en gjenspillingsvei for.
+
+    Mister utføreren svaret på en opplasting som ALLEREDE er committet,
+    og passerer `opplasting.utloper` imens, sier databasen at artefaktet
+    kan hentes inn igjen: `innlos_artefaktkapabilitet` (035) tar
+    `k.status = 'brukt' OR k.utloper > now()`, og `lagre_artefakt_staged`
+    (017) gir det opprinnelige `artefakt_id` for samme hash. Uten
+    `gjenlosbar_etter_utlop` ville controlleren kvittert
+    `opplasting_avvist` — «rapporten kom ikke frem» — for et artefakt som
+    lå staget på plattformen, og hele evalueringen av persondatabunten
+    måtte gjøres om.
+
+    Asymmetrien er ekte og går bare den ene veien:
+    `innlos_kvitteringskapabilitet` (035) krever `utloper > now()` uten
+    unntak, så KVITTERINGEN stanser fortsatt ved sitt eget utløp.
+
+    AVVIK FRA m56s FORM, med vilje: m56 flytter klokka via en
+    `controller.datetime`-patch. m57 importerer `datetime` inne i
+    `_vindu_apent` og `_evalueringsfrist`, så den patchen ville ikke
+    bitt. Vinduet lukkes derfor på predikatet selv — det er nøyaktig det
+    `lever` spør, og porten måler dermed samme gren. Utløpet må uansett
+    passere UNDERVEIS: et claim hvis kapabilitet alt er utløpt når det
+    leses, stoppes av `_evalueringsfrist` før bunten hentes.
+
+    Kontroll: fjern `gjenlosbar_etter_utlop=True` fra `lever`-kallet på
+    `/v1/artefakt`, så blir gren 1 rød; fjern `gjenlosbar_etter_utlop`
+    fra guarden i `lever`, så blir gren 3 rød."""
+    from modules.m57_ats import controller
+
+    monkeypatch.setattr(controller, "_sov", lambda s: None)
+    apent = {"na": True}
+    monkeypatch.setattr(controller, "_vindu_apent",
+                        lambda raa: apent["na"])
+
+    class _MisterForstOpplasting(_Stubklient):
+        """Første opplasting committer; svaret tapes, og imens passerer
+        kapabilitetens utløp."""
+
+        def __init__(self, **kw):
+            super().__init__(200, **kw)
+            self.opplastinger = []
+
+        def post(self, sti, json=None, headers=None):
+            if sti == "/v1/artefakt":
+                self.opplastinger.append(json)
+                if len(self.opplastinger) == 1:
+                    apent["na"] = False        # utløpet passerte imens
+                    raise ConnectionError("svaret kom aldri")
+            return super().post(sti, json=json, headers=headers)
+
+    # 1) Utløpet passerte mens svaret var borte: retryen fortsetter
+    # likevel, plattformen gjenspiller det staged artefaktet, og
+    # oppdraget er UTFØRT.
+    k = _MisterForstOpplasting()
+    res = _kjor(k)
+    assert res["utfall"] == "utfort", res
+    assert res["artefakt_id"] == "a-1", res
+    assert len(k.opplastinger) == 2, k.opplastinger
+    # Identisk kropp — grunnen til at gjenspillingen gir SAMME artefakt.
+    assert k.opplastinger[0] == k.opplastinger[1]
+
+    # 2) Var kapabiliteten IKKE forbrukt, finner innløsningen ingen rad
+    # og endepunktet svarer `kapabilitet_ugyldig` (401). Det er en 4xx, så
+    # løkka bryter på første forsøk: prisen for å prøve forbi utløpet er
+    # ÉN forespørsel mot vår egen plattform.
+    apent["na"] = True
+    k = _Stubklient(200, opplastingsstatus=401)
+    res = _kjor(k)
+    assert res["utfall"] == "avbrutt", res
+    assert res["opplasting_status"] == 401, res
+    assert len([s for s in k.stier if s == "/v1/artefakt"]) == 1, k.stier
+    assert k.kvitteringer[0]["feilkode"] == "opplasting_avvist"
+
+    # 3) KVITTERINGEN har ingen slik gjenspillingsvei og stanser fortsatt
+    # ved sitt eget utløp. Flagget gjelder KUN opplastingen.
+    class _MisterKvittering(_Stubklient):
+        def __init__(self, **kw):
+            super().__init__(200, **kw)
+            self.forsok = 0
+
+        def post(self, sti, json=None, headers=None):
+            if sti == "/v1/oppdrag/kvittering":
+                self.forsok += 1
+                apent["na"] = False
+                raise ConnectionError("svaret kom aldri")
+            return super().post(sti, json=json, headers=headers)
+
+    apent["na"] = True
+    k = _MisterKvittering()
+    res = _kjor(k)
+    assert res["utfall"] == "ukvittert", res
+    assert k.forsok == 1, k.forsok
+
+
 def test_uleselig_opplastingssvar_er_ingen_kvitteringsgrunn():
     """2xx med en kropp vi ikke kan lese er ingen kvitteringsgrunn: uten
     `artefakt_id` og hashen finnes det ikke en `utfort`-kvittering å
