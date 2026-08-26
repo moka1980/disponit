@@ -10,7 +10,6 @@ skal kunne si «denne FILEN kunne ikke leses», ikke «modellen feilet».
 from __future__ import annotations
 
 import io
-import re
 import shlex
 import subprocess
 import zipfile
@@ -52,9 +51,6 @@ def _html(data: bytes) -> str:
     except UnicodeDecodeError as feil:
         raise Uttrekksfeil("uttrekk_uleselig", "html-koding") from feil
     return "\n".join(p.biter)
-
-
-_XML_TAG = re.compile(r"<[^>]+>")
 
 
 #: Taket for utpakket dokument-XML: en docx-bombe skal felles her, ikke
