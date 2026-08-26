@@ -999,6 +999,98 @@ def test_uhentbar_bunt_kvitteres_feilet(monkeypatch):
     assert kvitteringer and kvitteringer[0]["feilkode"] == "bunt_uhentbar"
 
 
+def test_tom_bunt_er_uhentbar_og_naar_aldri_modellen():
+    """Cursor P2-2, runde 3: resolveren kan svare 200 med TOM kropp —
+    et 0-byte-svar, en trunkert overføring, et objekt som forsvant
+    mellom katalogoppslaget og utleveringen. Grenen finnes i
+    `kjor_en` (`raa` er falsy), men ingen port sto på den, og 200-veien
+    er nettopp den som fører VIDERE: uten porten skrives null byte til
+    `bunt.zip` og `kjor_bunt` møter en «zip» uten sentralkatalog.
+
+    Grunnen skiller seg fra `bunt_uhentbar` med vilje — status var 200,
+    så driften skal se at det var INNHOLDET som manglet — mens
+    feilkoden til plattformen er den samme: bunten kom ikke frem.
+
+    Kontroll: fjern `if not raa`-porten i `kjor_en`, så faller denne på
+    `kjoring_avbrutt` i stedet, med bunten alt skrevet til disk."""
+    class _TomBunt(_Stubklient):
+        def post(self, sti, json=None, headers=None):
+            if sti.startswith("/v1/inndata/hent-for-oppdrag/"):
+                self.stier.append(sti)
+                return _Svar(200, content=b"")
+            return super().post(sti, json=json, headers=headers)
+
+    k, modell = _TomBunt(), _Modell()
+    res = _kjor(k, modell=modell)
+    assert res["utfall"] == "avbrutt", res
+    assert res["grunn"] == "bunt_tom", res
+    assert k.kvitteringer[0]["feilkode"] == "bunt_uhentbar", k.kvitteringer
+    # Persondata-økonomien: ingenting ble evaluert, ingenting lastet opp.
+    assert modell.sett == [], modell.sett
+    assert "/v1/artefakt" not in k.stier
+
+
+def test_kjoringsfeil_kvitteres_med_sin_egen_kode(monkeypatch):
+    """Cursor P2-2, runde 3: `Kjoringsfeil` er kjøringens ENE feilutfall
+    (`kjoring.py`: «eller Kjoringsfeil, aldri noe imellom»), og
+    controllerens gren for den var udekket.
+
+    To ting skilles her, og begge er kontrakt. Plattformen får den
+    grovkornede `kjoring_avbrutt` — den er et kvitteringsfelt med lukket
+    verdisett — mens driften får `kjoring_avbrutt:<kode>` i utfallet, med
+    kjøringens egen kode intakt. Uten den ville `manifest_feilformet`
+    (kundens bunt) og `modellfeil` (vår modellserver) sett like ut i
+    driftsloggen.
+
+    Kontroll: la grenen kaste videre, så blir oppdraget stående claimet
+    uten kvittering i det hele tatt — taushet er det §10 forbyr."""
+    from modules.m57_ats import controller, kjoring
+
+    def eksploder(*a, **kw):
+        raise kjoring.Kjoringsfeil("modellfeil", {"filer_lest": 1})
+
+    monkeypatch.setattr(kjoring, "kjor_bunt", eksploder)
+    k = _Stubklient()
+    res = controller.kjor_en(k, "tk", _Modell(), _Uttrekker(),
+                             _MAALINGER, lambda x: x)
+    assert res["utfall"] == "avbrutt", res
+    # Kjøringens egen kode overlever helt ut i utfallet …
+    assert res["grunn"] == "kjoring_avbrutt:modellfeil", res
+    # … mens plattformen får det lukkede ordet.
+    assert k.kvitteringer[0]["feilkode"] == "kjoring_avbrutt", k.kvitteringer
+    assert "/v1/artefakt" not in k.stier
+
+
+def test_rapport_som_bryter_skjemaet_lastes_aldri_opp(monkeypatch):
+    """Cursor P2-2, runde 3: skjemavalideringen er den siste porten før
+    rapporten forlater containeren, og grenen for et BRUDD var udekket.
+
+    Porten er ikke seremoni: artefaktet promoteres mot
+    `artefakttype_register`s `skjema_hash`, så en rapport som bryter
+    formen ville uansett blitt avvist — men først ETTER at den var
+    kryptert, lastet opp og staged hos plattformen. Her stoppes den før
+    `/v1/artefakt` overhodet kalles, og oppdraget kvitteres feilet med
+    en gang.
+
+    Validatoren kjøres ekte: `bygg` byttes ut, ikke porten. En test som
+    hadde patchet selve validatoren ville bevist at controlleren fanger
+    `ValidationError`, ikke at skjemaet faktisk måler rapporten.
+
+    Kontroll: fjern `except jsonschema.ValidationError`-grenen, så slår
+    unntaket ut av `kjor_en` og oppdraget står claimet uten kvittering."""
+    from modules.m57_ats import controller, rapportskjema
+
+    monkeypatch.setattr(rapportskjema, "bygg",
+                        lambda *a, **kw: {"rangering": "ikke en liste"})
+    k = _Stubklient()
+    res = controller.kjor_en(k, "tk", _Modell(), _Uttrekker(),
+                             _MAALINGER, lambda x: x)
+    assert res["utfall"] == "avbrutt", res
+    assert res["grunn"] == "rapport_ugyldig", res
+    assert k.kvitteringer[0]["feilkode"] == "kjoring_avbrutt", k.kvitteringer
+    assert "/v1/artefakt" not in k.stier
+
+
 def test_heartbeatet_fornyer_og_bytter_kapabilitet(monkeypatch):
     """Pulsen poster fornyelsen med claimets identitet, og en FERSK
     opplastingskapabilitet fra fornyelsen erstatter claimens."""
