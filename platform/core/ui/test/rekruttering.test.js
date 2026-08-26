@@ -1363,6 +1363,143 @@ test("Bestilling: et tapt svar meldes som uvisst, ikke som «feilet» (P2-4)", a
   assert.equal(alert.textContent, t("ui.rekruttering.bestill.feil"));
 });
 
+test("Bestilling: en bunt byttet under opplastingen binder aldri feil bunt (P1-2)", async () => {
+  // Skjemaet står åpent mens en stor ZIP går opp. Byttet brukeren fil,
+  // nullstilte `change` referansen — men den flygende handleren skrev
+  // likevel SIN `inndata_ref` inn etterpå, mens skjermen viste den nye
+  // filen: neste bestilling gikk på bunt A under navnet B.
+  KALL = [];
+  let slippOpplast;
+  let opplastsvar = new Promise((r) => { slippOpplast = r; });
+  let reservasjon = { reservasjon_jti: "j-1", inndata_ref: "inndata:u-1" };
+  SVAR = (sti) => {
+    if (sti === "/v1/rekruttering/prosesser") return prosess();
+    if (sti === "/v1/rekruttering/stillingsprofiler") return profiler();
+    if (sti === "/v1/inndata/reserver") return reservasjon;
+    if (sti.startsWith("/v1/inndata/opplast/")) return opplastsvar;
+    if (sti === "/v1/bestilling") return { beslutning: "tillat", oppdrag_id: 3 };
+    return undefined;
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const seksjon = hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  const skjema = seksjon.querySelector("form");
+  const send = skjema.querySelector("button[type=submit]");
+  const filInp = skjema.querySelector("input[type=file]");
+  const velgFil = (navn) => {
+    Object.defineProperty(filInp, "files", { configurable: true,
+      value: [{ name: navn, arrayBuffer: async () => new ArrayBuffer(16) }] });
+    filInp.dispatchEvent(new window.Event("change", { bubbles: true }));
+  };
+  velgFil("bunt.zip");
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() =>
+    KALL.some((k) => k.sti.startsWith("/v1/inndata/opplast/")), 20),
+    "opplastingen startet aldri");
+  // Kroppen er låst mens den er underveis (readOnly, ikke disabled).
+  assert.equal(skjema.querySelector("#bestill-antall").readOnly, true,
+    "antall kunne skrives om midt i en pågående kjede");
+  assert.equal(send.disabled, true);
+  // Midt i opplastingen bytter brukeren bunt.
+  velgFil("bunt2.zip");
+  reservasjon = { reservasjon_jti: "j-2", inndata_ref: "inndata:u-2" };
+  slippOpplast({});
+  assert.ok(await vent(() => !send.disabled, 40), "kjeden ble aldri ferdig");
+  // Kjeden tilhørte bunt A og er forlatt: INGEN bestilling er sendt, og
+  // A-referansen ble aldri skrevet inn under B-navnet.
+  assert.equal(KALL.filter((k) => k.sti === "/v1/bestilling").length, 0,
+    "en forlatt kjede bestilte likevel");
+  assert.equal(seksjon.querySelector("[role=alert]").textContent,
+    t("ui.rekruttering.bestill.avbrutt"));
+  assert.doesNotMatch(seksjon.textContent, /inndata:u-1/);
+  assert.equal(filInp.hasAttribute("required"), true,
+    "flaten tror den har en bunt etter en forlatt opplasting");
+  // Neste innsending går på den NYE bunten — egen reservasjon, egen ref.
+  opplastsvar = {};
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() =>
+    KALL.filter((k) => k.sti === "/v1/bestilling").length === 1, 40),
+    "bestillingen kom aldri");
+  const best = KALL.find((k) => k.sti === "/v1/bestilling");
+  assert.equal(best.kropp.inndata_ref, "inndata:u-2",
+    "bestillingen bar den forlatte buntens referanse");
+  assert.match(seksjon.textContent, /bunt2\.zip|inndata:u-2|3/);
+});
+
+test("Bestilling: en om-tegning midt i kjeden starter ingen kjede nummer to (P1-2)", async () => {
+  // Låsen lå i ÉN knapp. Byttet brukeren prosess mens opplastingen sto
+  // på, bygget `tegn` et nytt skjema med en fersk, handlingsklar knapp
+  // mot den SAMME delte tilstanden — to kjeder, og flaten som følger det
+  // svaret som tilfeldigvis kom sist.
+  KALL = [];
+  let slippBestilling;
+  // Bestillingen henger: bunten er ALT lastet opp, så et skjema tegnet i
+  // dette vinduet har alt den trenger for å sende bestilling nummer to —
+  // på nøyaktig den bestillingen som står ubesvart.
+  const bestillingssvar = new Promise((r) => {
+    slippBestilling = () => r({ beslutning: "tillat", oppdrag_id: 8 });
+  });
+  const to = prosess();
+  to.prosesser.push({ ...to.prosesser[0], prosess_id: "p-2" });
+  SVAR = (sti) => {
+    if (sti === "/v1/rekruttering/prosesser") return to;
+    if (sti === "/v1/rekruttering/stillingsprofiler") return profiler();
+    if (sti === "/v1/inndata/reserver") {
+      return { reservasjon_jti: "j-1", inndata_ref: "inndata:u-1" };
+    }
+    if (sti.startsWith("/v1/inndata/opplast/")) return {};
+    if (sti === "/v1/bestilling") return bestillingssvar;
+    return undefined;
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const bestill = () =>
+    hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  const filInp = bestill().querySelector("input[type=file]");
+  Object.defineProperty(filInp, "files", { configurable: true,
+    value: [{ name: "bunt.zip",
+              arrayBuffer: async () => new ArrayBuffer(16) }] });
+  filInp.dispatchEvent(new window.Event("change", { bubbles: true }));
+  bestill().querySelector("form").dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() =>
+    KALL.some((k) => k.sti === "/v1/bestilling"), 20),
+    "bestillingen ble aldri sendt");
+  // Prosessbytte midt i kjeden: nytt skjema, nye kontroller.
+  const velger = hoved.querySelector("#rekrut-prosessvelger");
+  velger.value = "p-2";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  const nyttSkjema = bestill().querySelector("form");
+  const nySend = nyttSkjema.querySelector("button[type=submit]");
+  assert.equal(nySend.disabled, true,
+    "det nye skjemaet sto handlingsklart mens kjeden var i lufta");
+  assert.equal(nyttSkjema.querySelector("#bestill-antall").readOnly, true);
+  // ... og et klikk der starter ingen kjede nummer to. Bunten står i
+  // økten, så uten låsen ville dette blitt bestilling nummer to på den
+  // samme bunten mens den første fortsatt sto ubesvart.
+  assert.match(bestill().textContent, /bunt\.zip/, "testen antar en lagret bunt");
+  nyttSkjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  await vent(() => false, 5);
+  assert.equal(KALL.filter((k) => k.sti === "/v1/bestilling").length, 1,
+    "om-tegningen startet en parallell kjede");
+  slippBestilling();
+  // Den ENE kjeden fullfører — og låsen løftes på kontrollene som STÅR i
+  // visningen, ikke på den frakoblede knappen som ba om den.
+  assert.ok(await vent(() =>
+    KALL.filter((k) => k.sti === "/v1/bestilling").length === 1, 40),
+    "kjeden fullførte aldri");
+  assert.ok(await vent(() => !nySend.disabled, 20),
+    "det synlige skjemaet ble stående låst etter at svaret kom");
+  assert.equal(nyttSkjema.querySelector("#bestill-antall").readOnly, false);
+  const brudd = await alvorligeBrudd(hoved);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
 test("Bestilling: STOPP er ingen leveranse — bunten står igjen (P1-1)", async () => {
   // Serveren svarer `200` også på STOPP og unntak, uten oppdrag, og lar
   // bunten stå `lastet` (`test_stopp_binder_ikke_bunten`). Sa flaten

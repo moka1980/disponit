@@ -121,8 +121,17 @@ export function visRekruttering(hoved, ctx) {
     // SP-2-nøklene hører til den lastede flaten, ikke én tegning — et
     // prosessbytte skal ikke gjøre en retry til en NY operasjon eller
     // miste en alt opplastet bunt.
+    // ... OG DET GJØR KJEDEN SOM ER I LUFTA (Cursor P1-2). En opplasting
+    // varer lenge nok til at brukeren rekker å bytte fil eller prosess
+    // under den. `paagaaende` er låsen som holder det med ÉN kjede om
+    // gangen, også når en om-tegning har bygget et helt nytt skjema;
+    // `generasjon` er kjedens intensjon, så en flygende opplasting ikke
+    // kan skrive sin `inndata_ref` inn i en bunt brukeren alt har byttet
+    // ut; `laasOpp` peker på KONTROLLENE SOM STÅR I VISNINGEN, så låsen
+    // løftes der brukeren ser den — samme grunn som `meldUtfall`.
     bestilling: { reserverIdem: null, bestillIdem: null,
-                  inndataRef: null, filnavn: null } };
+                  inndataRef: null, filnavn: null,
+                  paagaaende: false, generasjon: 0, laasOpp: null } };
   medStatus(hoved, ctx,
     async () => {
       // Profilene er TILLEGGSDATA (samme politikk som
@@ -643,6 +652,11 @@ function bestillSeksjon(hoved, ctx, data, okt) {
     tilstand.inndataRef = null;
     tilstand.reserverIdem = null;
     tilstand.filnavn = filInp.files[0] ? filInp.files[0].name : null;
+    // ... og en kjede som er i lufta for den GAMLE bunten, er ikke lenger
+    // noens intensjon (Cursor P1-2): generasjonen skiller dem, så den
+    // flygende opplastingen ikke skriver sin referanse inn under et
+    // filnavn brukeren nettopp byttet.
+    tilstand.generasjon += 1;
     // ... og en ny bunt er en ny bestilling: `inndata_ref` er et felt i
     // kroppen som alle de andre.
     nyIntensjon();
@@ -663,6 +677,21 @@ function bestillSeksjon(hoved, ctx, data, okt) {
   fristInp.addEventListener("input", nyIntensjon);
   const send = el("button", { type: "submit",
     text: t("ui.rekruttering.bestill.send") });
+  // KROPPEN SKAL IKKE KUNNE ENDRES MENS DEN ER UNDERVEIS (Cursor P1-2).
+  // Bare knappen var låst, så antall og slettefrist kunne skrives om midt
+  // i en lang opplasting og utfallet vises under NYE tall. Frysen er
+  // `readOnly` og ikke `disabled`, av samme grunn som `bestilling.js`
+  // sier det: et låst felt beholder fokus og lesbarhet, et deaktivert
+  // felt under fingeren flytter fokus og forsvinner for skjermleseren.
+  // Fil og profil KAN ikke fryses slik — `readOnly` gjelder ikke for dem
+  // — og der gjør nabo-flaten det samme valget som her: kjeden bærer sin
+  // egen intensjon i stedet (`generasjon`), så et bytte under opplasting
+  // avbryter kjeden i stedet for å binde feil bunt.
+  const frys = (paa) => {
+    antallInp.readOnly = paa;
+    fristInp.readOnly = paa;
+    send.disabled = paa;
+  };
 
   const skjema = el("form", {},
     buntNotis,
@@ -678,12 +707,24 @@ function bestillSeksjon(hoved, ctx, data, okt) {
 
   skjema.addEventListener("submit", async (ev) => {
     ev.preventDefault();
+    // ÉN KJEDE OM GANGEN — OGSÅ ETTER EN OM-TEGNING (Cursor P1-2).
+    // Låsen lå i `send.disabled`, altså i ÉN knapp: byttet brukeren
+    // prosess mens opplastingen sto på, bygget `tegn` et helt nytt skjema
+    // med en fersk, handlingsklar knapp, og et klikk der startet kjede
+    // nummer to mot den samme delte tilstanden — to reservasjoner, to
+    // bestillinger, og flaten som følger det svaret som tilfeldigvis kom
+    // sist. Låsen hører derfor til ØKTEN, som nøklene og bunten.
+    if (tilstand.paagaaende) return;
     const fil = filInp.files[0];
     if (!fil && !tilstand.inndataRef) {
       sett(utfall, t("ui.rekruttering.bestill.mangler_fil"));
       return;
     }
-    send.disabled = true;
+    // Denne kjedens intensjon. Byttes bunten under opplastingen, flytter
+    // `generasjon` seg og kjeden vet at den ikke lenger er noens.
+    const min = ++tilstand.generasjon;
+    tilstand.paagaaende = true;
+    frys(true);
     try {
       if (!tilstand.inndataRef) {
         sett(utfall, t("ui.rekruttering.bestill.laster"));
@@ -693,6 +734,19 @@ function bestillSeksjon(hoved, ctx, data, okt) {
         const res = await reserverBunt(tilstand.reserverIdem);
         const bytes = await fil.arrayBuffer();
         await lastOppBunt(res.reservasjon_jti, bytes);
+        // BUNTEN KAN VÆRE BYTTET UNDER OPPLASTINGEN (Cursor P1-2).
+        // Skjemaet står åpent mens en stor ZIP går opp, og `change`
+        // nullstiller referansen — men den flygende handleren skrev
+        // likevel SIN `inndata_ref` inn etterpå, mens skjermen viste den
+        // nye filen. Neste innsending bestilte da på bunt A under navnet
+        // B. Kjeden tilhører intensjonen den startet på: er den forlatt,
+        // stopper den her, FØR noen bestilling er sendt. Reservasjonen
+        // etterlates til serverens egen opprydding, som ved enhver annen
+        // avbrutt opplasting.
+        if (tilstand.generasjon !== min) {
+          sett(utfall, t("ui.rekruttering.bestill.avbrutt"));
+          return;
+        }
         // Referansen settes først når BEGGE stegene er i mål: feiler
         // opplastingen, er reservasjonen brukt/utløpende og neste
         // forsøk skal reservere på nytt (fersk nøkkel).
@@ -727,12 +781,21 @@ function bestillSeksjon(hoved, ctx, data, okt) {
         // objekt, byttes aldri: handleren (og en senere tegning) holder
         // referansen til DETTE objektet — et bytte ga en stale binding
         // der gamle nøkler og en alt FORBRUKT bunt overlevde suksessen.
-        tilstand.reserverIdem = null;
-        tilstand.bestillIdem = null;
-        tilstand.inndataRef = null;
-        tilstand.filnavn = null;
-        skjema.reset();
-        visBunt();
+        //
+        // ... men bare hvis kjeden fortsatt ER økten sin (Cursor P1-2):
+        // rakk brukeren å velge en ny bunt mens bestillingen sto i lufta,
+        // er tilstanden alt satt for DEN, og en nullstilling her ville
+        // tømt hennes ferske valg — `skjema.reset()` tar filvelgeren med
+        // seg. Kvitteringen skrives uansett: oppdraget er committet, og
+        // det skal brukeren få vite.
+        if (tilstand.generasjon === min) {
+          tilstand.reserverIdem = null;
+          tilstand.bestillIdem = null;
+          tilstand.inndataRef = null;
+          tilstand.filnavn = null;
+          skjema.reset();
+          visBunt();
+        }
         sett(utfall, (svar.oppdrag_id
           ? t("ui.rekruttering.bestill.sendt")
               .replace("{oppdrag}", String(svar.oppdrag_id))
@@ -743,7 +806,9 @@ function bestillSeksjon(hoved, ctx, data, okt) {
         // neste forsøk går på den samme reservasjonen. Det ENESTE som er
         // brukt opp, er intensjonen: serveren har dømt nøyaktig denne
         // kroppen, og et nytt forsøk under den samme nøkkelen ville bare
-        // fått den samme dommen replayet.
+        // fått den samme dommen replayet. (Byttet brukeren bunt mens
+        // dommen var underveis, er nøkkelen alt forkastet av `change` —
+        // å sette den til `null` igjen er den samme `null`.)
         tilstand.bestillIdem = null;
         // STOPP-årsaken skal LESES OPP, ikke bare vises (§7) — samme
         // grep som `bestilling.js`: kodene er serverens strukturerte
@@ -787,7 +852,13 @@ function bestillSeksjon(hoved, ctx, data, okt) {
       sett(utfall, t(definitivt ? "ui.rekruttering.bestill.feil"
         : "ui.rekruttering.usikkert_utfall"));
     } finally {
-      send.disabled = false;
+      tilstand.paagaaende = false;
+      // Låsen løftes på det skjemaet som STÅR i visningen, ikke på det
+      // som ba om den (Cursor P1-2): kom det en om-tegning mens kjeden
+      // var i lufta, er `send` her en frakoblet knapp ingen ser, og de
+      // synlige kontrollene ville blitt stående låst for alltid. Samme
+      // vindu som `meldUtfall` finnes for.
+      if (tilstand.laasOpp) tilstand.laasOpp();
     }
   });
 
@@ -795,6 +866,10 @@ function bestillSeksjon(hoved, ctx, data, okt) {
   // (prosessbytte): tilstanden bestemmer hva skjemaet sier, ikke
   // rekkefølgen den ble bygget i.
   visBunt();
+  // ... og midt i en KJEDE som er i lufta: da er det disse kontrollene
+  // låsen gjelder, og det er de som skal låses opp når svaret kommer.
+  tilstand.laasOpp = () => frys(false);
+  frys(tilstand.paagaaende);
   sett(rot, el("h2", { id: "bestill-tittel",
     text: t("ui.rekruttering.bestill.tittel") }),
     utfall, skjema);

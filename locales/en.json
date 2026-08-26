@@ -1070,6 +1070,7 @@
   "ui.rekruttering.bestill.bunt_uten_navn": "the application bundle",
   "ui.rekruttering.bestill.sendt": "Order delivered: {beslutning}, job {oppdrag}.",
   "ui.rekruttering.bestill.sendt_uten_oppdrag": "Order delivered: {beslutning}.",
+  "ui.rekruttering.bestill.avbrutt": "The upload was cancelled because you chose a new bundle. Nothing was ordered — order again with the new file.",
   "ui.rekruttering.bestill.stoppet": "The order was stopped by your policy. The bundle has not been used — it is ready for a new order.",
   "ui.rekruttering.bestill.unntak": "The order was placed in the exception queue and awaits review. The bundle has not been used — it is still ready.",
   "ui.rekruttering.bestill.feil": "The order failed. Check the fields and try again.",
