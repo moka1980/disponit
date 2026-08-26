@@ -16,6 +16,8 @@ import threading
 import time
 from pathlib import Path
 
+import os
+
 import jsonschema
 
 from . import kjoring, rapportskjema
@@ -230,8 +232,14 @@ def kjor_en(klient, token: str, modell, uttrekker, biasmaalinger,
     vekter = {rad["kravnavn"]: rad["vekt"] for rad in profil["krav"]}
 
     with tempfile.TemporaryDirectory(prefix="m57-bunt-") as katalog:
-        sti = Path(katalog) / "bunt.zip"
-        sti.write_bytes(raa)
+        filsti = Path(katalog) / "bunt.zip"
+        filsti.write_bytes(raa)
+        # INSTANSBINDING VIA INODE (eierdom #217 runde 7): kjøringen får
+        # /proc/self/fd-stien til VÅR åpne fd — alle parsingens åpninger
+        # treffer da samme inode, og et stibytte i vinduet mellom
+        # manifest- og innholdslesing kan per konstruksjon ikke nå den.
+        fd = os.open(filsti, os.O_RDONLY)
+        sti = f"/proc/self/fd/{fd}"
         with _Heartbeat(klient, hode, claim) as puls:
             try:
                 resultat = kjoring.kjor_bunt(
@@ -252,6 +260,8 @@ def kjor_en(klient, token: str, modell, uttrekker, biasmaalinger,
                 rk = kvitter({**kvittering_basis, "resultat": "feilet",
                               "feilkode": "kjoring_avbrutt"})
                 return _feilutfall(rk, "rapport_ugyldig")
+            finally:
+                os.close(fd)
         if puls.fersk_opplasting:
             # Fornyelsen re-utstedte leveringsretten — claimens
             # opprinnelige kan være død av sitt eget grant-vindu.
