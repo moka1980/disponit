@@ -68,8 +68,17 @@ IDEMPOTENSNOKKEL_MAKS = 200
 #: Koden når aldri ut av prosessen og hører derfor ikke hjemme i
 #: feilveitabellen — den ER `idempotenskonflikt` utad.
 OPPTATT = "idempotens_opptatt"
+#: LOKAL kode for «bunten er OPPTATT akkurat nå» (Cursor P1). Samme klasse
+#: som `OPPTATT`, én knapp ressurs lenger inn: en annen bestilling holder
+#: engangsbunten og er i ferd med å binde den. Utad er den
+#: `inndata_ubrukelig` som før — 409, ingen beslutning, ingen kvote, og ett
+#: svar for alle årsakene (058-formen) — men den er FORBIGÅENDE, ikke en
+#: dom: taperen kan lovlig lykkes med en annen bunt, og planveien skal
+#: derfor ikke pause permanent på den.
+INNDATA_OPPTATT = "inndata_opptatt"
 #: Kodene endepunktet oversetter tilbake til klientens kontrakt.
-KLIENTKODE = {OPPTATT: "idempotenskonflikt"}
+KLIENTKODE = {OPPTATT: "idempotenskonflikt",
+              INNDATA_OPPTATT: "inndata_ubrukelig"}
 
 
 @dataclass(frozen=True)
@@ -79,6 +88,13 @@ class Bestillingstype:
     eiermodul: str
     kravsett: tuple[str, ...]
     omfang: tuple[str, ...]
+    #: Lukket kropp og intensjonsfelt PER TYPE (#162 PR-3): WCAG-formen
+    #: (hostname/sti/kravsett) og rekrutteringsformen (referanser) deler
+    #: ingen felter, og ett globalt skjema ville tvunget den ene formens
+    #: navn på den andre. Modulnivå-konstantene under står igjen som
+    #: WCAG-typens (den statiske porten 21f leser dem fortsatt).
+    skjemafelt: frozenset = frozenset()
+    intensjonsfelt: tuple = ()
 
 
 #: Kodefestet og lukket (port 13); deploy-porten krysser mot
@@ -107,8 +123,36 @@ BESTILLINGSTYPER: dict[str, Bestillingstype] = {
         oppdragstype="kontroll.wcag.nettsted",
         eiermodul="m_wcag_audit",
         kravsett=("wcag21_aa",),
-        omfang=("enkeltside", "nettsted")),
+        omfang=("enkeltside", "nettsted"),
+        skjemafelt=frozenset({"bestillingstype", "hostname", "sti",
+                              "kravsett", "omfang", "maks_sider"}),
+        intensjonsfelt=("tenant", "bestillingstype", "mal_url",
+                        "kravsett", "omfang", "maks_sider")),
+    # #162 PR-3: evalueringsbestillingen. Kroppen bærer REFERANSER —
+    # bunten (PR-1-opplastingen, bindes i oppdragets fødselstransaksjon)
+    # og profilversjonen (061, append-only). Grensene (antall 1–5000,
+    # slettefrist 30–365) er KONTRAKTENS (`oppdragskontrakt.FELTGRENSER`)
+    # og leses derfra i normaliseringen — aldri en lokal kopi.
+    "rekruttering.evaluering": Bestillingstype(
+        handling="rekruttering.evaluering",
+        oppdragstype="rekruttering.evaluering",
+        eiermodul="m57_ats",
+        kravsett=(),
+        omfang=("bunt",),
+        skjemafelt=frozenset({"bestillingstype", "inndata_ref",
+                              "stillingsprofil_ref", "antall_soknader",
+                              "omfang", "slettefrist_dogn"}),
+        intensjonsfelt=("tenant", "bestillingstype", "inndata_id",
+                        "stillingsprofil_ref", "antall_soknader",
+                        "omfang", "slettefrist_dogn")),
 }
+
+_INNDATA_REF = re.compile(
+    r"^inndata:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}"
+    r"-[0-9a-f]{12}$")
+_PROFIL_REF = re.compile(
+    r"^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"
+    r"@([1-9][0-9]{0,5})$")
 
 _HOSTNAME = re.compile(
     r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?"
@@ -126,12 +170,26 @@ class Bestillingsfeil(Exception):
 
 
 def normaliser(tenant: str, data: dict) -> dict:
-    """Lukket kropp → normalisert intensjon. Kaster Bestillingsfeil."""
-    if not isinstance(data, dict) or set(data) - SKJEMAFELT:
+    """Lukket kropp → normalisert intensjon. Kaster Bestillingsfeil.
+
+    Typen velges FØR skjemasjekken (per-type lukket kropp, #162 PR-3):
+    et ukjent felt for DENNE typen er like feilformet som før, men
+    hvilke felter som finnes, eier typen selv.
+    """
+    if not isinstance(data, dict):
         raise Bestillingsfeil("request_feilformet")
-    bt = BESTILLINGSTYPER.get(data.get("bestillingstype"))
+    typenavn = data.get("bestillingstype")
+    # Uhashbar type (liste/dict) i feltet ville ellers reist TypeError i
+    # dict-oppslaget — en 500 for noe som er klientens feilformede kropp.
+    if not isinstance(typenavn, str):
+        raise Bestillingsfeil("request_feilformet")
+    bt = BESTILLINGSTYPER.get(typenavn)
     if bt is None:
         raise Bestillingsfeil("request_feilformet")
+    if set(data) - bt.skjemafelt:
+        raise Bestillingsfeil("request_feilformet")
+    if bt.oppdragstype == "rekruttering.evaluering":
+        return _normaliser_rekruttering(tenant, bt, data)
     host = data.get("hostname")
     if not isinstance(host, str) or "@" in host or ":" in host \
             or "/" in host or not _HOSTNAME.fullmatch(host.lower()) \
@@ -161,11 +219,58 @@ def normaliser(tenant: str, data: dict) -> dict:
             "maks_sider": maks}
 
 
+def _normaliser_rekruttering(tenant: str, bt: Bestillingstype,
+                             data: dict) -> dict:
+    """Referanseformene og kontraktgrensene — aldri innhold.
+
+    Grensene leses fra `oppdragskontrakt.FELTGRENSER` (én kilde, samme
+    som utførerens skjema); referansene valideres som FORM her og som
+    TILSTAND i forhåndsportene/`bind_inndata` senere.
+    """
+    import oppdragskontrakt
+    m = _INNDATA_REF.fullmatch(str(data.get("inndata_ref") or ""))
+    if m is None:
+        raise Bestillingsfeil("request_feilformet")
+    inndata_id = m.group(0).split(":", 1)[1]
+    pm = _PROFIL_REF.fullmatch(str(data.get("stillingsprofil_ref") or ""))
+    if pm is None:
+        raise Bestillingsfeil("request_feilformet")
+    grenser = oppdragskontrakt.FELTGRENSER["rekruttering.evaluering"]
+    antall = data.get("antall_soknader")
+    n_lo, n_hi = grenser["antall_soknader"]
+    if isinstance(antall, bool) or not isinstance(antall, int) \
+            or not n_lo <= antall <= n_hi:
+        raise Bestillingsfeil("request_feilformet")
+    if data.get("omfang") not in bt.omfang:
+        raise Bestillingsfeil("request_feilformet")
+    frist = data.get("slettefrist_dogn")
+    if frist is not None:
+        f_lo, f_hi = grenser["slettefrist_dogn"]
+        if isinstance(frist, bool) or not isinstance(frist, int) \
+                or not f_lo <= frist <= f_hi:
+            raise Bestillingsfeil("request_feilformet")
+        # Kanonisering, ikke default-innsetting (Codex P2): fraværet ER
+        # standardvalget (057 `DEFAULT 90`), så en eksplisitt standard er
+        # samme intensjon i en annen skrivemåte — uten dette ga retry med
+        # utfylt 90 `idempotenskonflikt` mot sin egen første bestilling.
+        if frist == oppdragskontrakt.SLETTEFRIST_STANDARD_DOGN:
+            frist = None
+    norm = {"tenant": tenant, "bestillingstype": data["bestillingstype"],
+            "inndata_id": inndata_id,
+            "stillingsprofil_ref": data["stillingsprofil_ref"],
+            "antall_soknader": antall, "omfang": data["omfang"]}
+    if frist is not None:
+        norm["slettefrist_dogn"] = frist
+    return norm
+
+
 def intensjonshash(normalisert: dict) -> str:
     """SHA-256(JCS(normalisert intensjon)) — ETTER normalisering, aldri på
     rå request: to ekvivalente skrivemåter er samme intensjon."""
     from policy_validator import jcs
-    intensjon = {k: normalisert[k] for k in INTENSJONSFELT}
+    bt = BESTILLINGSTYPER[normalisert["bestillingstype"]]
+    intensjon = {k: normalisert[k] for k in bt.intensjonsfelt
+                 if k in normalisert}
     return hashlib.sha256(jcs.kanoniske_bytes(intensjon)).hexdigest()
 
 
@@ -197,6 +302,21 @@ def laasenavn_for(tenant: str, nokkel: str) -> str:
     danne en syklus.
     """
     return f"{tenant}\x1fbestillingsnokkel\x1f{nokkel}"
+
+
+def inndata_laasenavn_for(tenant: str, inndata_id: str) -> str:
+    """Navnet på advisory-låsen som serialiserer ENGANGSBUNTEN.
+
+    Samme form og samme separator som `laasenavn_for`, men et annet
+    andreledd, så de to navnerommene ikke kan kollapse.
+
+    Låsen tas ALLTID etter nøkkellåsen (fast rekkefølge, og begge er
+    `try`-låser), og den låser noe nøkkellåsen ikke kan nå: to
+    bestillinger med ULIKE `Idempotency-Key` — eller helt uten nøkkel —
+    peker lovlig på samme `inndata_id`, og bunten kan bare bindes én
+    gang.
+    """
+    return f"{tenant}\x1finndata\x1f{inndata_id}"
 
 
 def kjernenokkel_for(nokkel: str, hash_: str) -> str:
@@ -288,9 +408,10 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
     eller "plan:<plan_id>").
     """
     from . import kjerne
-    #: Sesjonslåsen på klientens idempotensnøkkel, satt når den er tatt —
-    #: se serialiseringen under og opprydningen i `finally`.
-    laasenavn = None
+    #: Sesjonslåsene som er TATT, i den rekkefølgen de ble tatt (nøkkelen
+    #: først, så engangsbunten) — se serialiseringene under og
+    #: opprydningen i `finally`.
+    laaser: list[str] = []
     try:
         try:
             norm = normaliser(tenant, data)
@@ -299,7 +420,10 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                                    flate="bestilling")
             return ("feil", f.kode)
         bt = BESTILLINGSTYPER[norm["bestillingstype"]]
-        hostname = norm["mal_url"].split("://", 1)[1].split("/", 1)[0]
+        # `hostname` finnes bare i WCAG-formen; rekrutteringsformens
+        # målautorisasjon er referansene (egne porter under).
+        hostname = (norm["mal_url"].split("://", 1)[1].split("/", 1)[0]
+                    if "mal_url" in norm else None)
 
         hash_ = intensjonshash(norm)
         # LENGDEN VALIDERES FØR BESLUTNINGEN (Codex P2). Lagringen krever
@@ -359,7 +483,7 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
             conn.rollback()
             if not fikk:
                 return ("feil", OPPTATT)
-            laasenavn = navn
+            laaser.append(navn)
 
         from db.pg import sett_kontekst
         sett_kontekst(conn, tenant, aktor, rid)
@@ -394,13 +518,146 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                 lagret = rad[1] or {"beslutning": rad[2],
                                     "oppdrag_id": rad[3]}
                 return ("ok", lagret, True)
-        verifisert_ts = _verifisert_hostname(conn, tenant, hostname)
-        if verifisert_ts is None:
+        verifisert_ts = None
+        gjenopprettbar = False
+        terminal_dom = False
+        if hostname is not None:
+            verifisert_ts = _verifisert_hostname(conn, tenant, hostname)
+            if verifisert_ts is None:
+                conn.rollback()
+                tjeneste.logg.hendelse("bestilling_hostname_uverifisert",
+                                       rid, tenant, art="sikkerhet",
+                                       hostname=hostname)
+                return ("feil", "bestilling_hostname_uverifisert")
+        else:
+            # REKRUTTERINGSFORMENS MÅLPORTER (#162 PR-3): referansene må
+            # peke på noe tenanten faktisk EIER, målt før beslutningen
+            # brenner kvote — samme økonomi som hostname-porten. Dørene
+            # (061-oppslaget ved payloadbygging, `bind_inndata` i
+            # fødselstransaksjonen) feller uansett til slutt; dette er
+            # den billige, ærlige forhåndsavvisningen.
+            #
+            # ... MEN EN FORHÅNDSPORT UTEN LÅS ER ET TOCTOU (Cursor P1).
+            # Nøkkellåsen over serialiserer `Idempotency-Key`, og bunten
+            # er ikke nøkkelen: to samtidige bestillinger med ULIKE
+            # nøkler (eller helt uten) på samme `inndata_id` passerte
+            # begge porten under, tok begge en TILLAT-beslutning — to
+            # frekvenskvoter, to committede beslutninger — og bare den
+            # ene vant `bind_inndata` i fødselstransaksjonen. Taperen
+            # rullet oppdraget tilbake og svarte `inndata_ubrukelig`,
+            # men beslutningen sto igjen committet: en kvoteplass brent
+            # uten en eneste jobb. Vinduet er ikke smalt slik
+            # `logging_feilet`-armen er smal — det er hele veien fra
+            # lesingen her til bindingen, med policyevalueringen imellom.
+            #
+            # Bunten serialiseres derfor på SEG SELV, med samme mønster
+            # som nøkkelen: en sesjons-`try`-lås tatt FØR forhåndsporten
+            # leser, holdt gjennom beslutningen og bindingen, sluppet i
+            # `finally`. Da er lesingen under gyldig helt fram til
+            # bindingen, og en taper møter låsen FØR beslutningen —
+            # ingen kvote brent i det hele tatt.
+            #
+            # `try` og ikke en ventende lås, av samme grunn som over: en
+            # bunt som er opptatt NÅ har en bestilling i arbeid, og
+            # svaret er forbigående. Og fordi begge låsene er `try`-låser
+            # tatt i fast rekkefølge, kan de ikke danne en syklus.
+            sett_kontekst(conn, tenant, aktor, rid)
+            # GJENOPPRETTBAR DOM FØR BUNTPORTEN (Codex P2 på #210): dør
+            # prosessen etter at kjernen committet STOPP/BRUDD men før
+            # `bestilling_idempotens` ble skrevet, står bunten ubundet —
+            # og utløper den før klienten retryer, dømte porten under
+            # `inndata_ubrukelig` FØR gjenopprettingen (656→) rakk å
+            # svare med den beslutningen som alt er tatt. Buntens
+            # tilstand er muterbar; dommen er det ikke.
+            #
+            # …OG FØR BUNTLÅSEN (Codex P2, runde 5): lå proben bak
+            # låsen, kunne en retry i krasjvinduet møte en annen
+            # forespørsels lås og få den FORBIGÅENDE buntkoden i
+            # stedet for den IMMUTABLE dommen (eller konflikten).
+            # Er dommen alt tatt, trengs ingen buntlås for å svare
+            # — gjenspillet tar ingen ny beslutning, og et TILLAT-
+            # gjenspills binding vernes terminalt av dørens egen
+            # FOR UPDATE.
+            #
+            # PREFIKSET, ikke den eksakte nøkkelen (Codex P2, runde 3):
+            # med eksakt nøkkel+intensjon fanget porten bare retryen med
+            # SAMME kropp — en retry med samme klientnøkkel og en ANNEN
+            # intensjon er lovet `idempotenskonflikt` (748→), men falt i
+            # 404/409 fra de muterbare portene her først. Finnes NOEN
+            # ferdig kjernerad under klientnøkkelen, eier nedstrøms-
+            # logikken dommen (gjenspill eller konflikt) — samme
+            # collation-frie prefiksform som gjenopprettingslesingen.
+            # …OG KLASSEN LUKKES VED Å KLASSIFISERE DOMMEN HER (Codex
+            # P2, runde 6): en TERMINAL utgang (STOPP/BRUDD-gjenspill,
+            # eller konflikt fordi eksakt intensjon ikke matcher) skal
+            # forbi ALLE muterbare porter — buntlås, referanser og
+            # claim-tilstand — for svaret er alt bestemt. Et gjenspilt
+            # TILLAT skal derimot fortsatt gjennom oppdrag+binding, og
+            # det er nettopp kappløpet buntlåsen finnes for: det RE-TAR
+            # låsen (opptatt → forbigående kode, ingen kvote i fare —
+            # dommen er alt committet).
+            if nokkel:
+                pfx = kjernenokkelprefiks(nokkel)
+                rader = conn.execute(
+                    "SELECT nokkel, respons FROM idempotens"
+                    " WHERE tenant=%s AND left(nokkel, %s) = %s"
+                    "   AND status='ferdig'",
+                    (tenant, len(pfx), pfx)).fetchall()
+                gjenopprettbar = bool(rader)
+                eksakt = dict(rader).get(kjernenokkel_for(nokkel, hash_))
+                # Kjernen lagrer beslutningen i VERSALER («TILLAT») —
+                # målt i testbasen, ikke antatt; casefold, ikke likhet.
+                terminal_dom = gjenopprettbar and (
+                    eksakt is None
+                    or str((eksakt or {}).get("beslutning")
+                           or "").lower() != "tillat")
             conn.rollback()
-            tjeneste.logg.hendelse("bestilling_hostname_uverifisert", rid,
-                                   tenant, art="sikkerhet",
-                                   hostname=hostname)
-            return ("feil", "bestilling_hostname_uverifisert")
+            navn = inndata_laasenavn_for(tenant, norm["inndata_id"])
+            fikk = True
+            if not terminal_dom:
+                fikk = conn.execute(
+                    "SELECT pg_try_advisory_lock(hashtextextended(%s, 0))",
+                    (navn,)).fetchone()[0]
+                conn.rollback()
+                if fikk:
+                    laaser.append(navn)
+            if not fikk:
+                # IKKE `inndata_ubrukelig` innover (Cursor P1): den er
+                # terminal, og planveien gjør en terminal kode om til en
+                # pause bare et menneske kan oppheve. Utad er de samme
+                # 409 — se `KLIENTKODE`.
+                tjeneste.logg.hendelse(INNDATA_OPPTATT, rid, tenant,
+                                       art="drift")
+                return ("feil", INNDATA_OPPTATT)
+            sett_kontekst(conn, tenant, aktor, rid)
+            pm = _PROFIL_REF.fullmatch(norm["stillingsprofil_ref"])
+            prad = conn.execute(
+                "SELECT 1 FROM stillingsprofil"
+                " WHERE tenant=%s AND profil_id=%s AND versjon=%s",
+                (tenant, pm.group(1), int(pm.group(2)))).fetchone()
+            irad = conn.execute(
+                "SELECT status, pg_catalog.now() > utloper, oppdrag_id"
+                "  FROM inndata_artefakt"
+                " WHERE tenant=%s AND inndata_id=%s"
+                "   AND eiermodul='m57_ats' AND formaal='soknadsbunt'",
+                (tenant, norm["inndata_id"])).fetchone()
+            conn.rollback()
+            # BEGGE referanseportene vaktes (Codex P2, runde 4): runde 3
+            # vaktet bare buntporten, og en annen-intensjon-retry med en
+            # velformet, men IKKE-EKSISTERENDE profilref falt i 404 her
+            # før konfliktdommen. Prefiks funnet → nedstrøms eier dommen.
+            if prad is None and not gjenopprettbar:
+                tjeneste.logg.hendelse("stillingsprofil_ukjent", rid,
+                                       tenant, art="sikkerhet")
+                return ("feil", "stillingsprofil_ukjent")
+            if not gjenopprettbar and (
+                    irad is None or irad[1] or irad[0] != "lastet"
+                    or irad[2] is not None):
+                # Samme svar for ukjent/utløpt/ulastet/alt bundet — et
+                # oppslagsverk over bunter skal ikke finnes (058-formen).
+                tjeneste.logg.hendelse("inndata_ubrukelig", rid, tenant,
+                                       art="sikkerhet")
+                return ("feil", "inndata_ubrukelig")
         # Typen må kunne CLAIMES før noen beslutning tas: et TILLAT for et
         # oppdrag ingen modul kan plukke ser vellykket ut mens arbeidet dør
         # stille i køen — det utløper på `utforelsesfrist` uten at noen
@@ -441,7 +698,13 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
             "  LEFT JOIN modulhode h ON h.modul_id = r.eiermodul"
             " WHERE r.oppdragstype = %s",
             (gjeldende_miljo(), bt.oppdragstype)).fetchone()
-        if (registrert is None or registrert[0] != bt.eiermodul
+        # …med mindre dommen alt er tatt (Codex P2, runde 6): claim-
+        # tilstanden er MUTERBAR (draining/nøddeaktivert), og et
+        # committet STOPP/BRUDD eller en konflikt skal svares uansett —
+        # et gjenspill trenger ingen NY claimbar modul.
+        if gjenopprettbar:
+            conn.rollback()
+        elif (registrert is None or registrert[0] != bt.eiermodul
                 or registrert[1] != "aktiv" or not registrert[2]):
             conn.rollback()
             tjeneste.logg.hendelse(
@@ -572,14 +835,27 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                 return ("feil", "policy_ukjent")
             policy_id = prad[0][0]
 
-            # `ressurs_id` er MALBINDINGSFELT: `malbindingsbrudd` krever at
-            # den ER det normaliserte vertsnavnet fra `mal_url`, ikke URL-en.
-            event = {"handling": bt.handling, "ressurs_id": hostname,
-                     "mal_url": norm["mal_url"], "kravsett": norm["kravsett"],
-                     "omfang": norm["omfang"],
-                     "maks_sider": norm["maks_sider"],
-                     "dataklasser": ["offentlig"],
-                     "dataklasser_kilde": "connector"}
+            # `ressurs_id` er MALBINDINGSFELT for WCAG-formen:
+            # `malbindingsbrudd` krever at den ER det normaliserte
+            # vertsnavnet fra `mal_url`. Rekrutteringsformens ressurs er
+            # bunt-referansen, og dataklassen er PERSONDATA — det er
+            # CV-er, og policyen må eksplisitt tillate klassen for
+            # handlingen (aldri en stille «offentlig»).
+            if hostname is not None:
+                event = {"handling": bt.handling, "ressurs_id": hostname,
+                         "mal_url": norm["mal_url"],
+                         "kravsett": norm["kravsett"],
+                         "omfang": norm["omfang"],
+                         "maks_sider": norm["maks_sider"],
+                         "dataklasser": ["offentlig"],
+                         "dataklasser_kilde": "connector"}
+            else:
+                event = {"handling": bt.handling,
+                         "ressurs_id": "inndata:" + norm["inndata_id"],
+                         "omfang": norm["omfang"],
+                         "antall_soknader": norm["antall_soknader"],
+                         "dataklasser": ["persondata"],
+                         "dataklasser_kilde": "connector"}
             # PLATTFORMEN ATTESTERER SIN EGEN DOMENEKONTROLL.
             # Aktiveringsporten (036) KREVER at en ekstern_lesing-handling
             # bærer et registrert målautorisasjonsvilkår
@@ -598,7 +874,7 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
             # registeret, mintes ingenting — beslutningen tar da vilkårsveien
             # den alltid tok (unntakskø), og driftsloggen navngir hvorfor.
             dk_nokler = (tjeneste.nokler or {}).get("v_domenekontroll") or {}
-            if dk_nokler:
+            if hostname is not None and dk_nokler:
                 # DETERMINISTISK, forankret i selve verifikasjonen:
                 # `utstedt` er domenekontrollens
                 # `siste_vellykkede_revalidering` og `utloper` dens
@@ -632,7 +908,7 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                             jti_grunnlag.encode("utf-8")).hexdigest()[:32],
                         "resultat": True,
                     }, nid, dk_nokler[nid])}
-            else:
+            elif hostname is not None:
                 tjeneste.logg.hendelse(
                     "domenekontroll_attestasjon_utilgjengelig", rid, tenant,
                     art="drift")
@@ -665,8 +941,58 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
             from db import kryptering
             key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(conn,
                                                                   tenant)
-            payload = {k: norm[k] for k in ("mal_url", "kravsett", "omfang",
-                                            "maks_sider")}
+            if hostname is not None:
+                payload = {k: norm[k] for k in ("mal_url", "kravsett",
+                                                "omfang", "maks_sider")}
+            else:
+                # Profil-ØYEBLIKKSBILDET bygges SERVER-SIDE fra 061 nå,
+                # under samme transaksjonsvindu som oppdraget fødes i —
+                # versjonen er append-only, så kopien kan aldri drifte.
+                # Klientens innhold når aldri payloaden; bare referansen.
+                pm = _PROFIL_REF.fullmatch(norm["stillingsprofil_ref"])
+                prof = conn.execute(
+                    "SELECT navn FROM stillingsprofil"
+                    " WHERE tenant=%s AND profil_id=%s AND versjon=%s",
+                    (tenant, pm.group(1), int(pm.group(2)))).fetchone()
+                if prof is None:
+                    # Slettet/aldri fantes mellom forhåndsporten og nå —
+                    # append-only gjør dette nær-umulig, men porten
+                    # feiler ærlig, ikke med en KeyError.
+                    conn.rollback()
+                    return ("feil", "stillingsprofil_ukjent")
+                krav = [{"kravnavn": kn, "vekt": v} for kn, v in
+                        conn.execute(
+                            "SELECT kravnavn, vekt FROM"
+                            " stillingsprofil_krav WHERE tenant=%s AND"
+                            " profil_id=%s AND versjon=%s"
+                            " ORDER BY rekkefolge",
+                            (tenant, pm.group(1),
+                             int(pm.group(2)))).fetchall()]
+                payload = {"stillingsprofil_ref":
+                               norm["stillingsprofil_ref"],
+                           "stillingsprofil": {
+                               "profil_id": pm.group(1),
+                               "versjon": int(pm.group(2)),
+                               "navn": prof[0], "krav": krav},
+                           "antall_soknader": norm["antall_soknader"],
+                           "omfang": norm["omfang"]}
+                if "slettefrist_dogn" in norm:
+                    payload["slettefrist_dogn"] = norm["slettefrist_dogn"]
+                # Kontraktens egne porter, målt FØR noe skrives — samme
+                # tabeller utføreren validerer mot (én kilde).
+                import oppdragskontrakt
+                minimert = oppdragskontrakt.minimer(bt.oppdragstype,
+                                                    payload)
+                if (oppdragskontrakt.mangler_paakrevde(bt.oppdragstype,
+                                                       minimert)
+                        or oppdragskontrakt.bryter_feltkontrakten(
+                            bt.oppdragstype, minimert)):
+                    conn.rollback()
+                    tjeneste.logg.hendelse("intern_feil", rid, tenant,
+                                           art="drift",
+                                           grunn="payloadkontrakt_brutt")
+                    return ("feil", "intern_feil")
+                payload = minimert
             ct, nonce = kryptering.krypter(dek, payload, tenant, key_id)
             # Typens EGEN frist, fra kontrakten — samme oppslag og samme
             # tabell som arbeiderveien bruker (Codex P1). `payload` er
@@ -700,13 +1026,40 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
             except psycopg.errors.UniqueViolation:
                 # `oppdrag_en_per_beslutning` (008): en retry som mistet
                 # svaret ETTER at oppdraget ble skrevet — vinnerens rad er
-                # svaret, aldri et oppdrag nummer to (21/21-lik).
+                # svaret, aldri et oppdrag nummer to (21/21-lik). Var
+                # dette rekrutteringsformen, bandt vinnerens transaksjon
+                # også bunten (atomisk med oppdraget), så replayet har
+                # ingenting å binde.
                 conn.rollback()
                 sett_kontekst(conn, tenant, aktor, rid)
                 oppdrag_id = int(conn.execute(
                     "SELECT id FROM oppdrag WHERE tenant=%s AND"
                     " beslutning_loggpost_id=%s", (tenant,
                                                    logg[0])).fetchone()[0])
+            else:
+                if hostname is None:
+                    # X1 (#192): bindingen skjer i oppdragets EGEN
+                    # fødselstransaksjon — `bind_inndata` krever
+                    # fødselsattesten, og nettopp derfor kan vinduet
+                    # «synlig oppdrag uten bunt» ikke finnes. Feiler
+                    # bindingen (utløpt/kapret/opptatt i mellomtiden),
+                    # rulles OGSÅ oppdraget tilbake: en evaluering uten
+                    # bunt skal aldri fødes. Beslutningen er da alt
+                    # committet (kvote brent) — samme økonomi som
+                    # `logging_feilet`-armen, og forhåndsporten over gjør
+                    # vinduet smalt.
+                    try:
+                        conn.execute(
+                            "SELECT bind_inndata(%s,%s,%s,%s)",
+                            (tenant, norm["inndata_id"], oppdrag_id,
+                             "m57_ats"))
+                    except (psycopg.errors.InvalidParameterValue,
+                            psycopg.errors.UniqueViolation) as e:
+                        conn.rollback()
+                        tjeneste.logg.hendelse(
+                            "inndata_ubrukelig", rid, tenant,
+                            art="sikkerhet", grunn=type(e).__name__)
+                        return ("feil", "inndata_ubrukelig")
         # Svaret bygges FØR bokføringen, så det som lagres er nøyaktig det
         # som sendes — ikke en andre konstruksjon av den samme formen.
         # `request_id` er UTENFOR kroppen: det er forespørselens, ikke
@@ -732,20 +1085,24 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
         conn.commit()
         return ("ok", kropp, False)
     finally:
-        # SESJONSLÅSEN SLIPPES HER, ELLER SÅ BÆRER TILKOBLINGEN EN
+        # SESJONSLÅSENE SLIPPES HER, ELLER SÅ BÆRER TILKOBLINGEN EN
         # FREMMED LÅS TILBAKE TIL KALLEREN — se endepunktets kommentar.
-        if laasenavn is not None:
+        # Slippes i motsatt rekkefølge av tagningen, og en tilkobling som
+        # ikke fikk sluppet, LUKKES: da faller resten av låsene dens med
+        # sesjonen, og det er nettopp derfor sløyfa kan stoppe der.
+        for navn in reversed(laaser):
             try:
                 conn.rollback()
                 conn.execute(
                     "SELECT pg_advisory_unlock(hashtextextended(%s, 0))",
-                    (laasenavn,))
+                    (navn,))
                 conn.rollback()
             except Exception:
                 try:
                     conn.close()
                 except Exception:
                     pass
+                break
 
 
 def bestill_endepunkt(tjeneste, request: Request) -> Response:

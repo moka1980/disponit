@@ -153,6 +153,18 @@ FEILVEIER: tuple[Feilvei, ...] = (
         "positivt autorisert mål er ikke policyens ansvar, det er "
         "opprettelsens. Sikkerhetslogg: noen ba plattformen lese et mål "
         "de ikke eier.")),
+    Feilvei("stillingsprofil_ukjent", 404, ("sikkerhet",), None, notat=(
+        "Bestillingens stillingsprofil_ref peker på en profilversjon "
+        "tenanten ikke har (#189/061). 404, ikke 400: referanseFORMEN "
+        "var gyldig, målet finnes bare ikke — og siden oppslaget er "
+        "RLS-gated til egen tenant, lekker svaret ingenting om andres "
+        "profiler.")),
+    Feilvei("inndata_ubrukelig", 409, ("sikkerhet",), None, notat=(
+        "Bestillingens inndata_ref kan ikke bindes: ukjent, utløpt, "
+        "ikke ferdig lastet, eller alt bundet til et annet oppdrag — "
+        "ETT svar for alle årsakene (058-formen: et oppslagsverk over "
+        "bunter skal ikke finnes). Avvist billig i forhåndsporten, og "
+        "endelig av bind_inndata i fødselstransaksjonen.")),
     Feilvei("bestillingstype_utilgjengelig", 503, ("drift",), None, notat=(
         "Bestillingstypen er kodefestet, men oppdragstypen dens kan ikke "
         "CLAIMES nå: raden mangler i oppdragstype_register, har feil "

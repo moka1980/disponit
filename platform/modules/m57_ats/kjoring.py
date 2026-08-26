@@ -116,7 +116,8 @@ def _felter(kandidatfelter_for, medlem, fremdrift):
 
 
 def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
-              biasmaalinger, blinding_av=False, auditrad=None):
+              biasmaalinger, antall_soknader, blinding_av=False,
+              auditrad=None):
     """-> {"rangering": [...], "artefakter": {kandidat_id: ...},
     "fremdrift": {...}} — eller Kjoringsfeil, aldri noe imellom.
 
@@ -207,6 +208,15 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
                              else {**fremdrift, "filer_lest": lest})
                 navn = medlem.navn.replace("\\", "/")
                 kandidat_id = navn.split("/")[0]
+                # OVERSKYTENDE FELLES I STRØMMEN (Codex P2): dommen ved
+                # strømslutt alene lot «deklarer 1, lever 20 000» tvinge
+                # uttrekk og akkumulering av alt FØR den kodede stoppen
+                # — med udokumentert minne kunne det bli OOM i stedet.
+                # Motsatt avvik (færre enn deklarert) kan bare måles ved
+                # slutt og står der det sto.
+                if kandidat_id not in biter \
+                        and len(biter) >= antall_soknader:
+                    raise Kjoringsfeil("kandidattall_avvik", fremdrift)
                 biter.setdefault(kandidat_id, []).append(
                     (navn, medlem.navn,
                      _tekst(tekst_for, medlem, data, fremdrift),
@@ -241,6 +251,15 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
         # bunt er SP-3s kodede utfall, aldri et resultat.
         if not biter:
             raise Kjoringsfeil("tom_bunt", fremdrift)
+        # DEKLARERT == UTLEDET (Codex P1 på #210): `antall_soknader` er
+        # bestillingens signerte tall og var frem til nå aldri lest igjen
+        # — en kaller kunne deklarere 1 og levere tusenvis, forbi både
+        # policyens arbeidsmengde-dom og 5000-taket. Kandidatutledningen
+        # (én toppmappe per kandidat) er buntens faktiske innhold; et
+        # avvik er en ugyldig bunt, aldri et resultat. #161s manifest
+        # ERSTATTER utledningen — invarianten her består.
+        if len(biter) != antall_soknader:
+            raise Kjoringsfeil("kandidattall_avvik", fremdrift)
         for kandidat_id in sorted(biter):
             # Sortert på medlemsnavn: samme bunt gir samme tekst OG samme
             # feltrekkefølge, uansett hvilken rekkefølge arkivet leverte

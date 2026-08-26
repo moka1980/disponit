@@ -56,6 +56,11 @@ _FORBIGAENDE = frozenset({
     # konsumerte det andre forsøket vinduet OG pauset planen permanent,
     # enda det første forsøket kunne lykkes sekundet etter.
     "idempotens_opptatt",
+    # Samme klasse, én knapp ressurs lenger inn (Cursor P1 på #210): en
+    # annen bestilling holder engangsbunten og er i ferd med å binde den.
+    # Utad er den `inndata_ubrukelig` (409), men taperen har ikke fått noen
+    # dom — den møtte en lås, og ingen beslutning ble tatt.
+    "inndata_opptatt",
 })
 
 

@@ -241,24 +241,27 @@ OPPDRAGSTYPER: dict[str, Oppdragstype] = {
         # Verdien er bundet i `FELTGRENSER` under — samme spennet som
         # `prosess_frist_i_spennet`, målt der bestillingen tas imot.
         #
-        # UTSATT, K1 → #162: `soknadsbunt_ref` er PÅKREVD, men det finnes
-        # ingen produsent, ingen resolver og ingen binær artefaktvei i
-        # repoet (Codex P1). Den ene opplastingsflaten,
-        # `api/app.py::_artefakt_upload`, tar et JSON-`rapport`-objekt,
-        # autoriseres av en UTDATA-kapabilitet utstedt etter claim, og er
-        # kanonisert (JCS) — den kan hverken bære en zip inn eller gi
-        # modulen noe å hente. Hver ekte bestilling når altså modulen med
-        # en streng ingen kan slå opp, og `inspiser_bunt` har ingen fil å
-        # inspisere. Lukkingen er en INNDATA-artefaktkontrakt: en bundet
-        # binær vei inn med deklarert maksimal fysisk størrelse, utstedt
-        # før claim, med resolver modulen kaller. Det er en maskin —
-        # opplastingsflate, kapabilitetsform, lager og oppslag — ikke en
-        # lapp i en frozenset, og den bærer også manifestet fra #161 og
-        # katalogbudsjettet fra `inspiser_bunt`s docstring.
-        felter=frozenset({"stillingsprofil_ref", "soknadsbunt_ref",
+        # #200 VALG B (avløser den gamle UTSATT-noten om soknadsbunt_ref):
+        # payloaden NAVNGIR IKKE bunten. Bindingsraden
+        # (`inndata_artefakt.oppdrag_id`, UNIK — skrevet av `bind_inndata`
+        # i oppdragets fødselstransaksjon) er den ENESTE sannheten om
+        # hvilken bunt oppdraget eier, og modulen henter den via
+        # `hent_inndata_for_oppdrag` (060) med sitt claimede oppdrag —
+        # aldri via en payload-streng. En `soknadsbunt_ref` her ville
+        # vært en duplisert sannhet basen ikke kan lese (kryptert
+        # app-side) og derfor aldri kan holde i sync; klassen ble målt av
+        # Codex på #196-mergen og fjernet ved eierdom.
+        #
+        # `stillingsprofil` er profil-ØYEBLIKKSBILDET (navn + krav/vekter)
+        # av den versjonen `stillingsprofil_ref` peker på: versjonene er
+        # append-only (061), så kopien kan aldri drifte fra kilden — og
+        # modulen slipper en egen profil-resolver for å kunne evaluere.
+        # Bestillingsveien bygger det SERVER-SIDE fra 061; klientinnhold
+        # når det aldri.
+        felter=frozenset({"stillingsprofil_ref", "stillingsprofil",
                           "antall_soknader", "omfang",
                           "slettefrist_dogn"}),
-        paakrevde=frozenset({"stillingsprofil_ref", "soknadsbunt_ref",
+        paakrevde=frozenset({"stillingsprofil_ref", "stillingsprofil",
                              "antall_soknader", "omfang"}),
         # `m57_ats`, ikke `m_ats` (Codex P2 / Cursor P1). Identiteten er
         # ALLEREDE avgjort og støpt: 056 CHECK-binder utsendingsarmen til
@@ -791,6 +794,52 @@ def minimer(oppdragstype: str, payload: dict) -> dict:
             rene = [v for v in verdi if isinstance(v, str) and v.strip()]
             if rene:
                 ut[felt] = sorted(rene)
+        elif felt == "stillingsprofil" and isinstance(verdi, dict):
+            # Profil-ØYEBLIKKSBILDET (#200 valg B / #189): bygget
+            # server-side av bestillingsveien fra 061s append-only
+            # versjon, aldri av klienten — og INSPISERT her, felt for
+            # felt, av samme grunn som `kildereferanser` under: denne
+            # modulen kan ikke vite hvem som skrev raden den leser.
+            # Alt utenfor den lukkede formen droppes; en kopi uten
+            # gyldige krav droppes helt (og felles da av
+            # `mangler_paakrevde`).
+            # `krav` må VÆRE en liste før iterasjonen (Codex P2): en
+            # skalar (5, true) overlevde `or []` og ga TypeError — en
+            # 500 i claim-veien for noe minimeringen lover å droppe.
+            kravliste = verdi.get("krav")
+            if not isinstance(kravliste, list):
+                kravliste = []
+            krav = [{"kravnavn": str(k["kravnavn"]).strip(),
+                     "vekt": k["vekt"]}
+                    for k in kravliste
+                    if isinstance(k, dict)
+                    and isinstance(k.get("kravnavn"), str)
+                    and k["kravnavn"].strip()
+                    and isinstance(k.get("vekt"), int)
+                    and not isinstance(k.get("vekt"), bool)
+                    and 0 <= k["vekt"] <= 10]
+            if (krav and len(krav) <= 50
+                    and isinstance(verdi.get("profil_id"), str)
+                    and verdi["profil_id"].strip()
+                    and isinstance(verdi.get("versjon"), int)
+                    and not isinstance(verdi.get("versjon"), bool)
+                    and verdi["versjon"] >= 1
+                    and isinstance(verdi.get("navn"), str)
+                    and verdi["navn"].strip()
+                    # SNAPSHOTEN MÅ VÆRE REFERANSENS (Codex P2, runde
+                    # 5): et velformet snapshot med en ANNEN profil/
+                    # versjon enn `stillingsprofil_ref` lot utføreren
+                    # evaluere mot én profil mens oppdraget og revisjonen
+                    # navnga en annen. Paret må rekonstruere referansen
+                    # nøyaktig — ellers droppes snapshoten og
+                    # `mangler_paakrevde` feller payloaden.
+                    and (f"{verdi['profil_id']}@{verdi['versjon']}"
+                         == str(payload.get("stillingsprofil_ref")
+                                 or ""))):
+                ut[felt] = {"profil_id": verdi["profil_id"],
+                            "versjon": verdi["versjon"],
+                            "navn": verdi["navn"].strip(),
+                            "krav": krav}
         elif felt == "kildereferanser" and isinstance(verdi, list):
             # Kildereferanser er allerede normalisert til nøyaktig tre
             # nøkler av `api.minimering._kildereferanser`. Vi gjentar
@@ -869,8 +918,15 @@ FELTGRENSER: dict[str, dict[str, tuple[int, int]]] = {
         # avvises der den tas imot — ikke først når prosessfødselen
         # feiler på en CHECK, etter at oppdraget er opprettet og claimet.
         "slettefrist_dogn": (30, 365),
+        # (Standardvalget 90 er navngitt under — IKKE en grense.)
     },
 }
+
+#: Basens `DEFAULT 90` (057) med navn: kanoniseringens ene kilde.
+#: Fraværet ER standardvalget, så en EKSPLISITT 90 normaliseres til
+#: fravær der bestillingen tas imot — to skrivemåter av samme intensjon
+#: skal gi samme intensjonshash (Codex P2 på #210).
+SLETTEFRIST_STANDARD_DOGN = 90
 
 #: Felter som må være en IKKE-TOM STRENG, per type (Codex P2).
 #:
@@ -882,7 +938,7 @@ FELTGRENSER: dict[str, dict[str, tuple[int, int]]] = {
 #: bestillingen tas imot, ikke der den utføres — samme begrunnelse som
 #: `FELTGRENSER` har for `maks_sider`.
 FELTSTRENGER: dict[str, tuple[str, ...]] = {
-    "rekruttering.evaluering": ("stillingsprofil_ref", "soknadsbunt_ref"),
+    "rekruttering.evaluering": ("stillingsprofil_ref",),
 }
 
 #: URL-felter hvis RAPPORTFORM (`rapporturl`) har en lengdegrense, per
@@ -948,11 +1004,36 @@ UTFORELSESFRIST_VALG: dict[str, tuple[str, dict[object, int]]] = {
     # Ikke lukkbart i en fiksrunde: å heve taket er en ny migrasjon på
     # bebodd base som flytter en PLATTFORMVID tillitsgrense (M-37 og
     # M-56 deler den), en fornyelsesvei er en ny autentisert flate, og
-    # partisjonering endrer bestillingsformen. Fristen står som
-    # klarsignalet sier; #165 bærer valget, med hard sperre mot kjøringer
-    # over én time til den er merget (samme form som #163).
-    "rekruttering.evaluering": ("omfang", {"bunt": 240 * 60}),
+    # partisjonering endrer bestillingsformen. #165 bærer valget.
+    #
+    # DEN HARDE SPERREN ER FRISTEN SELV (Codex P1 på #210): klarsignalets
+    # 240 min sto her mens eierleasen (049) og opplastingskapabiliteten
+    # (min(igjen, 3600)) begge er 3 600 s — etter første time kunne en
+    # annen kontrollør reclaime og DUPLISERE evalueringen av samme
+    # persondatabunt, mens originalen ikke lenger fikk lastet opp
+    # resultatet. En deklarert frist utover autoriteten som faktisk
+    # utstedes er et løfte ingen kan holde. Fristen følger derfor leasen
+    # til #165 (fornyelsesveien) er merget — da, og først da, kan den
+    # utvides til klarsignalets 240 min i samme PR som fornyelsen.
+    # `min()` og ikke tallet direkte (Codex P2, runde 2): når #165 hever
+    # `UTSTEDT_AUTORITET_S`, faller min() tilbake på konvolutten av seg
+    # selv — fristen kan aldri endres uten mekanismen den hviler på.
+    "rekruttering.evaluering": ("omfang",
+                                {"bunt": None}),  # settes under, av min()
 }
+
+#: DEN UTSTEDTE AUTORITETEN, med produksjonsnavn (Codex P2 på #210):
+#: claim-leasen (037/049) og opplastingskapabiliteten (017, `app.py`)
+#: klemmes begge til dette taket, og ordrefristen kan aldri love mer.
+#: #165 (fornyelsesveien) hever DETTE tallet i samme PR som mekanismen
+#: — da gjenåpner min() under klarsignalets 240 min av seg selv.
+#: SQL-siden (049) pinnes av outbox-portens `TAK_S`.
+UTSTEDT_AUTORITET_S = 3600
+
+#: Akseptkonvolutten er klarsignalets 240 min (§4, `manifestskjema`);
+#: LØFTET til kunden er aldri mer enn autoriteten som faktisk utstedes.
+UTFORELSESFRIST_VALG["rekruttering.evaluering"][1]["bunt"] = \
+    min(240 * 60, UTSTEDT_AUTORITET_S)
 
 
 def utforelsesfrist_s(oppdragstype: str, minimert: dict) -> int | None:

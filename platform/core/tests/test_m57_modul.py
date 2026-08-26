@@ -1324,7 +1324,9 @@ def test_rangeringen_er_poeng_med_synlige_vekter():
 
 
 def test_port27_5001_avvises_ved_validering():
-    payload = {"stillingsprofil_ref": "art-1", "soknadsbunt_ref": "art-2",
+    payload = {"stillingsprofil_ref": "p-1@1",
+               "stillingsprofil": {"profil_id": "p-1", "versjon": 1, "navn": "N",
+                          "krav": [{"kravnavn": "K", "vekt": 3}]},
                "antall_soknader": 5000, "omfang": "bunt"}
     assert bryter_feltkontrakten("rekruttering.evaluering", payload) == []
     for antall in (5001, 0, -1):
@@ -1338,6 +1340,32 @@ def test_port27_5001_avvises_ved_validering():
         "rekruttering.evaluering", payload | {"omfang": "alt"})
 
 
+def test_snapshoten_maa_vaere_referansens():
+    """Codex P2 (runde 5 på #210): et velformet snapshot med en ANNEN
+    profil/versjon enn `stillingsprofil_ref` lot utføreren evaluere mot
+    én profil mens oppdraget og revisjonen navnga en annen. Paret må
+    rekonstruere referansen nøyaktig — ellers droppes snapshoten og
+    `mangler_paakrevde` feller payloaden."""
+    snap = {"profil_id": "p-1", "versjon": 1, "navn": "N",
+            "krav": [{"kravnavn": "K", "vekt": 3}]}
+    basis = {"stillingsprofil_ref": "p-1@1", "stillingsprofil": snap,
+             "antall_soknader": 1, "omfang": "bunt"}
+    assert "stillingsprofil" in minimer("rekruttering.evaluering", basis)
+    for gal_ref in ("p-1@2", "p-2@1", "art-1"):
+        m = minimer("rekruttering.evaluering",
+                    basis | {"stillingsprofil_ref": gal_ref})
+        assert "stillingsprofil" not in m, gal_ref
+        assert "stillingsprofil" in mangler_paakrevde(
+            "rekruttering.evaluering", m)
+    # …og `krav` som ikke er en LISTE droppes uten TypeError (Codex P2):
+    # en skalar overlevde `or []` og ga 500 i claim-veien.
+    for galt_krav in (5, True, "K", {"kravnavn": "K", "vekt": 3}):
+        m = minimer("rekruttering.evaluering",
+                    basis | {"stillingsprofil": {**snap,
+                                                 "krav": galt_krav}})
+        assert "stillingsprofil" not in m, galt_krav
+
+
 def test_kundens_slettefrist_baeres_av_bestillingen():
     """Codex P1: fristvalget hadde ingen plass i det signerte oppdraget.
 
@@ -1349,7 +1377,9 @@ def test_kundens_slettefrist_baeres_av_bestillingen():
     import json
     from pathlib import Path
 
-    payload = {"stillingsprofil_ref": "art-1", "soknadsbunt_ref": "art-2",
+    payload = {"stillingsprofil_ref": "p-1@1",
+               "stillingsprofil": {"profil_id": "p-1", "versjon": 1, "navn": "N",
+                          "krav": [{"kravnavn": "K", "vekt": 3}]},
                "antall_soknader": 10, "omfang": "bunt"}
     # Feltet OVERLEVER minimeringen (det var her det forsvant).
     minimert = minimer("rekruttering.evaluering",
@@ -1390,10 +1420,12 @@ def test_artefaktreferansene_ma_vaere_strenger_ved_opprettelsen():
     payload-skjema krever `string, minLength 1` — men det kjører først
     når utførelsen har startet, altså etter at oppdraget var opprettet,
     claimet og talt. Referansen måles nå der bestillingen tas imot."""
-    payload = {"stillingsprofil_ref": "art-1", "soknadsbunt_ref": "art-2",
+    payload = {"stillingsprofil_ref": "p-1@1",
+               "stillingsprofil": {"profil_id": "p-1", "versjon": 1, "navn": "N",
+                          "krav": [{"kravnavn": "K", "vekt": 3}]},
                "antall_soknader": 10, "omfang": "bunt"}
     assert bryter_feltkontrakten("rekruttering.evaluering", payload) == []
-    for felt in ("stillingsprofil_ref", "soknadsbunt_ref"):
+    for felt in ("stillingsprofil_ref",):
         for verdi in (123, True, "", "   ", None, 4.5):
             brudd = bryter_feltkontrakten(
                 "rekruttering.evaluering", payload | {felt: verdi})
@@ -1499,6 +1531,44 @@ def test_m57_har_EN_modulidentitet_i_kontrakt_migrasjon_og_artefakt():
     assert manifest["id"] == MODULROT.name
 
 
+def test_deklarert_antall_bindes_til_buntens_kandidater(tmp_path):
+    """Codex P1 på #210: `antall_soknader` er bestillingens signerte tall
+    og ble aldri lest i kjøringen — deklarer 1, lever 2, og policyens
+    arbeidsmengde-dom var forbigått. Avvik = kodet stopp, begge veier."""
+    from modules.m57_ats import kjoring
+
+    arkiv = _bunt(tmp_path, [
+        ("k1/soknad.html", b"<p>drift hos k1</p>"),
+        ("k2/soknad.html", b"<p>drift hos k2</p>"),
+    ])
+    felter = lambda m: {"navn": [f"Kandidat {m.navn.split('/')[0]}"]}
+    uttrukket = []
+
+    def uttrekk(m, d):
+        uttrukket.append(m.navn)
+        return d.decode("utf-8")
+
+    for deklarert in (1, 3):
+        uttrukket.clear()
+        with pytest.raises(kjoring.Kjoringsfeil) as e:
+            kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
+                              kandidatfelter_for=felter, tekst_for=uttrekk,
+                              biasmaalinger=_MAALINGER,
+                              antall_soknader=deklarert)
+        assert e.value.kode == "kandidattall_avvik"
+        assert e.value.fremdrift, "evidensen mangler i utfallet"
+        if deklarert == 1:
+            # …og dommen faller I STRØMMEN (Codex P2, runde 2): kandidat
+            # nr. deklarert+1 skal felles FØR uttrekket hans — «deklarer
+            # 1, lever 20 000» skal aldri få tvunget uttrekk av alt.
+            assert len(uttrukket) <= 1, uttrukket
+    # Positiv kontroll: riktig deklarasjon kjører helt igjennom.
+    helt = kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
+                             kandidatfelter_for=felter, tekst_for=uttrekk,
+                             biasmaalinger=_MAALINGER, antall_soknader=2)
+    assert {k["kandidat_id"] for k in helt["rangering"]} == {"k1", "k2"}
+
+
 def test_port28_avbrutt_kjoring_promoterer_ingenting(tmp_path):
     """SP-3-porten på hele kjøringen: en modell som dør på kandidat 2
     gir et KODET feilutfall med fremdrift som evidens — og ingen
@@ -1528,7 +1598,7 @@ def test_port28_avbrutt_kjoring_promoterer_ingenting(tmp_path):
     with pytest.raises(kjoring.Kjoringsfeil) as e:
         kjoring.kjor_bunt(arkiv, _Doende(), vekter={"drift": 3},
                           kandidatfelter_for=felter, tekst_for=uttrekk,
-                          biasmaalinger=_MAALINGER)
+                          biasmaalinger=_MAALINGER, antall_soknader=3)
     assert e.value.kode == "modellfeil"
     assert e.value.fremdrift, "fremdriften (evidensen) mangler i utfallet"
     # Feilutfallet KAN ikke bære et delresultat — målt på typen, ikke på
@@ -1538,7 +1608,7 @@ def test_port28_avbrutt_kjoring_promoterer_ingenting(tmp_path):
 
     helt = kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
                              kandidatfelter_for=felter, tekst_for=uttrekk,
-                             biasmaalinger=_MAALINGER)
+                             biasmaalinger=_MAALINGER, antall_soknader=3)
     assert {k["kandidat_id"] for k in helt["rangering"]} == \
         {"k1", "k2", "k3"}
     assert helt["fremdrift"]["filer_lest"] == 3
@@ -1549,7 +1619,7 @@ def test_port28_avbrutt_kjoring_promoterer_ingenting(tmp_path):
         kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
                           kandidatfelter_for=lambda m: {},
                           tekst_for=uttrekk,
-                          biasmaalinger=_MAALINGER)
+                          biasmaalinger=_MAALINGER, antall_soknader=3)
     assert e.value.kode == "blinding_uten_felter"
     # RANGERINGEN er også innenfor utfallet (Codex P1): en ugyldig vekt
     # feller `evaluering.ranger` etter at hver kandidat er evaluert, og
@@ -1559,7 +1629,7 @@ def test_port28_avbrutt_kjoring_promoterer_ingenting(tmp_path):
     with pytest.raises(kjoring.Kjoringsfeil) as e:
         kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": True},
                           kandidatfelter_for=felter, tekst_for=uttrekk,
-                          biasmaalinger=_MAALINGER)
+                          biasmaalinger=_MAALINGER, antall_soknader=3)
     assert e.value.kode == "ugyldige_vekter"
 
 
@@ -1592,7 +1662,7 @@ def test_flere_filer_under_samme_kandidat_blir_EN_evaluering(tmp_path):
     ut = kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
                            kandidatfelter_for=felter,
                            tekst_for=lambda m, d: d.decode("utf-8"),
-                           biasmaalinger=_MAALINGER)
+                           biasmaalinger=_MAALINGER, antall_soknader=2)
     # Tre filer lest, TO kandidater evaluert — én evaluering per mappe.
     assert ut["fremdrift"]["filer_lest"] == 3
     assert set(ut["artefakter"]) == {"k1", "k2"}
@@ -1626,14 +1696,14 @@ def test_tekstuttrekket_er_containerens_aldri_en_utf8_dekoding(tmp_path):
     with pytest.raises(TypeError):
         kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
                           kandidatfelter_for=felter,
-                          biasmaalinger=_MAALINGER)
+                          biasmaalinger=_MAALINGER, antall_soknader=1)
 
     # Modellen ser NØYAKTIG det uttrekkeren ga — ikke bytene fra arkivet.
     modell = _Modell()
     kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
                       kandidatfelter_for=felter,
                       tekst_for=lambda m, d: "uttrukket drift-tekst",
-                      biasmaalinger=_MAALINGER)
+                      biasmaalinger=_MAALINGER, antall_soknader=1)
     assert modell.sett == ["uttrukket drift-tekst"]
 
     # Et uttrekk som feiler (ødelagt pdf) er SP-3s kodede utfall, ikke en
@@ -1645,7 +1715,7 @@ def test_tekstuttrekket_er_containerens_aldri_en_utf8_dekoding(tmp_path):
         kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
                           kandidatfelter_for=felter,
                           tekst_for=_doende_uttrekk,
-                          biasmaalinger=_MAALINGER)
+                          biasmaalinger=_MAALINGER, antall_soknader=1)
     assert e.value.kode == "tekstuttrekk_feilet"
     # … og en uttrekker som gir tilbake bytene sine er samme feil: da
     # hadde modellen fått binærstøyen igjen, bare via en annen dør.
@@ -1653,7 +1723,7 @@ def test_tekstuttrekket_er_containerens_aldri_en_utf8_dekoding(tmp_path):
         kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
                           kandidatfelter_for=felter,
                           tekst_for=lambda m, d: d,
-                          biasmaalinger=_MAALINGER)
+                          biasmaalinger=_MAALINGER, antall_soknader=1)
     assert e.value.kode == "tekstuttrekk_feilet"
 
 
@@ -1684,7 +1754,7 @@ def test_tomt_tekstuttrekk_er_kodet_feil_ikke_en_tom_vurdering(tmp_path):
         kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
                           kandidatfelter_for=felter,
                           tekst_for=lambda m, d: "   \n\t ",
-                          biasmaalinger=_MAALINGER)
+                          biasmaalinger=_MAALINGER, antall_soknader=1)
     assert e.value.kode == "tekstuttrekk_feilet"
     # Stoppen er FØR modellen: ingen tom vurdering ble laget.
     assert modell.sett == []
@@ -1702,7 +1772,7 @@ def test_tomt_tekstuttrekk_er_kodet_feil_ikke_en_tom_vurdering(tmp_path):
         kandidatfelter_for=felter,
         tekst_for=lambda m, d: ("" if m.navn.endswith("soknad.html")
                                 else "drift i CV-en"),
-        biasmaalinger=_MAALINGER)
+        biasmaalinger=_MAALINGER, antall_soknader=1)
     assert set(ut["artefakter"]) == {"k1"}
 
 
@@ -1733,7 +1803,7 @@ def test_feltene_flettes_i_medlemsrekkefolge_ikke_zip_rekkefolge(tmp_path):
             _bunt(katalog, filer), _Modell(), vekter={"drift": 3},
             kandidatfelter_for=felter,
             tekst_for=lambda m, d: d.decode("utf-8"),
-            biasmaalinger=_MAALINGER)
+            biasmaalinger=_MAALINGER, antall_soknader=1)
 
     a = ("k1/a_cv.html", b"<p>Kari kan drift</p>")
     b = ("k1/b_soknad.html", b"<p>Ola anbefaler Kari</p>")
@@ -1781,7 +1851,7 @@ def test_skraastrekaliaser_avgjores_paa_raanavnet_ikke_arkivrekkefolgen(
             _bunt(katalog, filer), _Modell(), vekter={"drift": 3},
             kandidatfelter_for=felter,
             tekst_for=lambda m, d: d.decode("utf-8"),
-            biasmaalinger=_MAALINGER)
+            biasmaalinger=_MAALINGER, antall_soknader=1)
 
     skraa = ("k1/cv.html", b"<p>Kari kan drift</p>")
     bakover = ("k1\\cv.html", b"<p>Ola anbefaler Kari</p>")
@@ -1831,7 +1901,7 @@ def test_fremdriften_teller_hvert_medlem_ikke_bare_sjekkpunktene(tmp_path):
     with pytest.raises(kjoring.Kjoringsfeil) as e:
         kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
                           kandidatfelter_for=lambda m: {"navn": ["N"]},
-                          tekst_for=_uttrekk, biasmaalinger=_MAALINGER)
+                          tekst_for=_uttrekk, biasmaalinger=_MAALINGER, antall_soknader=4)
     assert e.value.kode == "tekstuttrekk_feilet"
     assert e.value.fremdrift["filer_lest"] == 3, (
         "evidensen skal si at tre medlemmer var lest da det røk, ikke 0")
@@ -1866,7 +1936,7 @@ def test_lesefeil_paa_lageret_tilskrives_ikke_modellen(tmp_path, monkeypatch):
         kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
                           kandidatfelter_for=lambda m: {"navn": ["N"]},
                           tekst_for=lambda m, d: d.decode("utf-8"),
-                          biasmaalinger=_MAALINGER)
+                          biasmaalinger=_MAALINGER, antall_soknader=1)
     assert e.value.kode == "infrastrukturfeil", (
         "en lesefeil på lageret skal ikke bære modellens kode")
     assert isinstance(e.value.__cause__, OSError)
@@ -1887,7 +1957,7 @@ def test_lesefeil_paa_lageret_tilskrives_ikke_modellen(tmp_path, monkeypatch):
         kjoring.kjor_bunt(arkiv, _Modell(), vekter={"drift": 3},
                           kandidatfelter_for=lambda m: {"navn": ["N"]},
                           tekst_for=lambda m, d: d.decode("utf-8"),
-                          biasmaalinger=_MAALINGER)
+                          biasmaalinger=_MAALINGER, antall_soknader=1)
     assert e.value.kode == "modellfeil"
 
 
@@ -1918,7 +1988,7 @@ def test_modellens_egen_nettverksfeil_er_ikke_en_driftssak(tmp_path):
                           vekter={"drift": 3},
                           kandidatfelter_for=lambda m: {"navn": ["N"]},
                           tekst_for=lambda m, d: d.decode("utf-8"),
-                          biasmaalinger=_MAALINGER)
+                          biasmaalinger=_MAALINGER, antall_soknader=1)
     assert e.value.kode == "modellfeil", (
         "modellens eget avbrudd skal ikke sende driften på lagringssaken")
     assert isinstance(e.value.__cause__, OSError)
@@ -1951,7 +2021,7 @@ def test_feltuttrekket_tilskrives_ikke_modellen(tmp_path):
         kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
                           kandidatfelter_for=_doende_felter,
                           tekst_for=lambda m, d: d.decode("utf-8"),
-                          biasmaalinger=_MAALINGER)
+                          biasmaalinger=_MAALINGER, antall_soknader=1)
     assert e.value.kode == "feltuttrekk_feilet", (
         "et feltuttrekk som feiler skal ikke bære modellens kode")
     assert isinstance(e.value.__cause__, ValueError)
@@ -1982,7 +2052,7 @@ def test_feltuttrekk_som_gir_ikkekart_tilskrives_ikke_modellen(tmp_path):
         kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
                           kandidatfelter_for=lambda m: None,
                           tekst_for=lambda m, d: d.decode("utf-8"),
-                          biasmaalinger=_MAALINGER)
+                          biasmaalinger=_MAALINGER, antall_soknader=1)
     assert e.value.kode == "feltuttrekk_feilet", (
         "en uttrekker som gir tilbake noe annet enn et kart, feilet")
     # Stoppen er FØR modellen — den ble aldri spurt.
@@ -2013,7 +2083,7 @@ def test_feltuttrekk_som_gir_annet_kart_enn_dict_slipper_gjennom(tmp_path):
         ut = kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
                                kandidatfelter_for=lambda m, k=kart: k,
                                tekst_for=lambda m, d: d.decode("utf-8"),
-                               biasmaalinger=_MAALINGER)
+                               biasmaalinger=_MAALINGER, antall_soknader=1)
         assert [r["kandidat_id"] for r in ut["rangering"]] == ["k1"], (
             f"{type(kart).__name__} er et kart og skal evalueres")
         # Blindingen fikk feltene: klarteksten nådde aldri modellen.
@@ -2040,7 +2110,7 @@ def test_bunt_uten_kandidater_er_kodet_feil_ikke_tomt_resultat(tmp_path):
         return kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
                                  kandidatfelter_for=lambda m: {"navn": ["N"]},
                                  tekst_for=lambda m, d: d.decode("utf-8"),
-                                 biasmaalinger=_MAALINGER)
+                                 biasmaalinger=_MAALINGER, antall_soknader=1)
 
     tom = tmp_path / "tom.zip"
     with zipfile.ZipFile(tom, "w") as zf:
@@ -2103,7 +2173,7 @@ def test_ugyldig_feltform_i_SENERE_fil_felles_ogsaa(tmp_path):
         kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
                           kandidatfelter_for=felter,
                           tekst_for=lambda m, d: d.decode("utf-8"),
-                          biasmaalinger=_MAALINGER)
+                          biasmaalinger=_MAALINGER, antall_soknader=1)
     assert e.value.kode == "ugyldig_maskeringsform"
     # Og stoppen er FØR modellen: ingen tekst forlot kjøringen.
     assert modell.sett == []
@@ -2126,5 +2196,5 @@ def test_ugyldig_feltform_i_SENERE_fil_felles_ogsaa(tmp_path):
         kjoring.kjor_bunt(arkiv2, _Modell(), vekter={"drift": 3},
                           kandidatfelter_for=felter_omvendt,
                           tekst_for=lambda m, d: d.decode("utf-8"),
-                          biasmaalinger=_MAALINGER)
+                          biasmaalinger=_MAALINGER, antall_soknader=1)
     assert e.value.kode == "ugyldig_maskeringsform"

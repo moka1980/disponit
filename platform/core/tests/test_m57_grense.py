@@ -123,14 +123,29 @@ def test_ytelsespunktet_er_en_maling_ikke_et_ja_punkt():
 def test_ytelsesgrensen_er_klarsignalets_tall():
     """Grensen skal være DE SAMME tallene kontrakten håndhever, ikke to
     tall som ligner. `antall_soknader`-taket er den fulle bunten, og
-    `bunt`-fristen er de 240 minuttene (§4). Drifter de fra hverandre,
-    er det her det sier ifra — ikke i en akseptkjøring måneder senere."""
+    akseptkonvolutten er klarsignalets 240 minutter (§4).
+
+    ORDREFRISTEN er derimot ikke konvolutten (Codex P1 på #210): den er
+    løftet til KUNDEN, og et løfte utover autoriteten som faktisk
+    utstedes (claim-leasen/opplastingskapabilitetens 3600 s, uten
+    fornyelsesvei før #165) kunne ingen holde — etter første time kunne
+    en annen kontrollør reclaime og duplisere evalueringen av samme
+    persondatabunt. Fristen er derfor min(konvolutt, autoritet), og
+    porten her er skrevet slik at #165 (fornyelsen) GJENÅPNER 240
+    automatisk: når autoritetstaket heves, faller min() tilbake på
+    konvolutten, og dette spesialtilfellet dør av seg selv."""
     import oppdragskontrakt as ok
     g = KRAVGRENSER["m57-v1"]
     _, tak = ok.FELTGRENSER["rekruttering.evaluering"]["antall_soknader"]
     assert g["ytelse_min_soknader"] == tak
     _, frister = ok.UTFORELSESFRIST_VALG["rekruttering.evaluering"]
-    assert g["ytelse_maks_minutter"] * 60 == frister["bunt"]
+    # Autoriteten leses fra PRODUKSJONSKONTRAKTEN (Codex P2, runde 2):
+    # et testlokalt 3600 kunne flyttes uten at noen runtime-mekanisme
+    # fulgte med. Nå endres porten kun MED mekanismen: #165 hever
+    # `UTSTEDT_AUTORITET_S` (som også klemmer kapabiliteten i `app.py`),
+    # og min() gjenåpner konvolutten av seg selv.
+    assert frister["bunt"] == min(g["ytelse_maks_minutter"] * 60,
+                                  ok.UTSTEDT_AUTORITET_S)
 
 
 def test_utelatt_invariant_felles_av_begge_lag():

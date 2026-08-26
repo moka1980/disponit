@@ -1498,6 +1498,20 @@ def test_feltparitet_mellom_skjema_og_intensjonshash():
     assert dekket == set(SKJEMAFELT), (
         f"skjemafelt utenfor intensjonshashen: {set(SKJEMAFELT) - dekket}")
     assert set(FELTDEKNING) == set(INTENSJONSFELT)
+    # …og PER TYPE (#162 PR-3): hvert skjemafelt i typen dekkes av
+    # intensjonsfeltene — rekrutteringsformens `inndata_ref` kollapser
+    # til `inndata_id`, resten er 1:1.
+    from api.bestilling import BESTILLINGSTYPER
+    DEKNING = {"inndata_ref": "inndata_id"}
+    for navn, bt in BESTILLINGSTYPER.items():
+        kilde = {DEKNING.get(f, f) for f in bt.skjemafelt
+                 if f != "bestillingstype"}
+        kilde |= {"tenant", "bestillingstype"}
+        if navn == "kontroll.wcag.nettsted":
+            kilde -= {"hostname", "sti"}
+            kilde |= {"mal_url"}
+        assert kilde == set(bt.intensjonsfelt), (
+            navn, kilde ^ set(bt.intensjonsfelt))
     # ... og hashen er normaliseringens, ikke skrivemåtens:
     a = normaliser("t", {"bestillingstype": "kontroll.wcag.nettsted",
                          "hostname": "x.example", "kravsett": "wcag21_aa",
@@ -1836,13 +1850,15 @@ def test_uregistrert_type_nektes_for_beslutningen(migrator, klient,
     import api.bestilling as bm
     _wcag_policy(migrator)
     _verifiser_domene(migrator, "kunde.example")
+    # `replace`, ikke en håndbygd type: testen mener bare å endre
+    # oppdragstypen — resten (inkl. per-type-skjemaet, #162 PR-3) skal
+    # være den ekte typens.
+    import dataclasses
     monkeypatch.setitem(
         bm.BESTILLINGSTYPER, "kontroll.wcag.nettsted",
-        bm.Bestillingstype(
-            handling="kontroll.wcag.nettsted",
-            oppdragstype="kontroll.uregistrert." + secrets.token_hex(4),
-            eiermodul="m_wcag_audit",
-            kravsett=("wcag21_aa",), omfang=("enkeltside", "nettsted")))
+        dataclasses.replace(
+            bm.BESTILLINGSTYPER["kontroll.wcag.nettsted"],
+            oppdragstype="kontroll.uregistrert." + secrets.token_hex(4)))
     cookie, csrf = _adminsesjon()
     nokkel = "n-" + secrets.token_hex(8)
     r = _bestill(klient, cookie, csrf, _gyldig_kropp(), nokkel)
@@ -1905,12 +1921,12 @@ def _bestill_mot(migrator_, klient_, monkeypatch, modul, oppdragstype):
     policyveien er nøyaktig den samme som i den grønne bestillingen — det
     eneste som varierer er om utføreren kan claime."""
     import api.bestilling as bm
+    import dataclasses
     monkeypatch.setitem(
         bm.BESTILLINGSTYPER, "kontroll.wcag.nettsted",
-        bm.Bestillingstype(
-            handling="kontroll.wcag.nettsted", oppdragstype=oppdragstype,
-            eiermodul=modul, kravsett=("wcag21_aa",),
-            omfang=("enkeltside", "nettsted")))
+        dataclasses.replace(
+            bm.BESTILLINGSTYPER["kontroll.wcag.nettsted"],
+            oppdragstype=oppdragstype, eiermodul=modul))
     cookie, csrf = _adminsesjon()
     nokkel = "n-" + secrets.token_hex(8)
     r = _bestill(klient_, cookie, csrf, _gyldig_kropp(), nokkel)
