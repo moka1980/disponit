@@ -136,10 +136,15 @@ export function visRekruttering(hoved, ctx) {
     // midt i kjeden. Nå kan den ikke det — `tegn`-utløserne er frosset så
     // lenge `paagaaende` står — og da er kontrollene kjeden låste de samme
     // som skal låses opp.
+    //
+    // `frysSkjema` er bestillingsseksjonens egen `frys`, lagt der
+    // profillagringen kan nå den (eierdom B, #212 runde 6): kroppen —
+    // profil, antall, frist — eies av seksjonen, så en lås som bare går
+    // gjennom `laas` fryser utløserne og lar feltene stå åpne.
     bestilling: { reserverIdem: null, bestillIdem: null,
                   inndataRef: null, filnavn: null,
                   paagaaende: false, generasjon: 0,
-                  oppdaterProfilvalg: null } };
+                  oppdaterProfilvalg: null, frysSkjema: null } };
   medStatus(hoved, ctx,
     async () => {
       // Profilene er TILLEGGSDATA (samme politikk som
@@ -1024,6 +1029,10 @@ function bestillSeksjon(hoved, ctx, data, okt, laas) {
   // mens flaten er frosset.
   // ... og det er DENNE velgeren en ny profilversjon skal nå (P2-2).
   tilstand.oppdaterProfilvalg = tegnProfilvalg;
+  // ... og det er DENNE frysen den ANDRE mutasjonen i kjeden skal ta
+  // (Cursor P2-1, eierdom B): `laas` eier utløserne, seksjonen eier
+  // kroppen. Låsen er hel bare når profillagringen når begge.
+  tilstand.frysSkjema = frys;
   sett(rot, el("h2", { id: "bestill-tittel",
     text: t("ui.rekruttering.bestill.tittel") }),
     utfall, skjema);
@@ -1038,6 +1047,23 @@ function profilSeksjon(hoved, ctx, data, okt, laas, paaProfilendring) {
   // scopet er en blindvei som først dør server-side. Samme port som
   // kanBestille i bestillingsdelen.
   const kanSkrive = harScope(ctx, "bestilling:opprett");
+  // ÉN LÅS FOR BEGGE MUTASJONENE I KJEDEN (Cursor P2-1, eierdom B i
+  // runde 6). A-dommen lover én lås for bestilling OG profillagring, men
+  // `laas.frys` tar bare `tegn`-utløserne: bestillingens KROPP — profil,
+  // antall, frist — eies av seksjonens egen `frys`. Profilarmen frøs
+  // derfor utløserne og lot feltene stå åpne, samtidig som `laas.frys`
+  // satte `aria-busy` på bestillingsskjemaet gjennom `send`: skjemaet
+  // PÅSTO opptatt og tok input. Verst traff det profilvelgeren, som ruller
+  // et bytte tilbake til `frossetProfil` — en verdi bare seksjonens `frys`
+  // setter, så under en profillagring rullet den tilbake til `null` og
+  // TØMTE valget i stedet for å bevare det. Seksjonen eksponerer nå sin
+  // egen `frys` på økten, og armen her tar hele låsen gjennom den.
+  // Uten bestillingsseksjon — ingen profiler ennå, altså den aller første
+  // lagringen — er `laas` alt som finnes å låse.
+  const frysKjeden = (paa) => {
+    if (okt.bestilling.frysSkjema) okt.bestilling.frysSkjema(paa);
+    else laas.frys(paa);
+  };
   const rot = el("section", { "aria-labelledby": "profil-tittel" });
   const utfall = el("div", { role: "alert", class: "utfall" });
   const liste = el("div");
@@ -1188,11 +1214,12 @@ function profilSeksjon(hoved, ctx, data, okt, laas, paaProfilendring) {
         sett(utfall, t("ui.rekruttering.profiler.tomt_krav"));
         return;
       }
-      // Låsen er FLATENS, ikke knappens: den stenger også prosessvelgeren
-      // og bestillingens «Send» mens versjonen skrives, så ingen av dem
-      // kan starte noe mot en profilliste som er i ferd med å endre seg.
+      // Låsen er FLATENS, ikke knappens: den stenger også prosessvelgeren,
+      // bestillingens «Send» OG bestillingskroppen mens versjonen skrives,
+      // så ingen av dem kan starte noe — eller endres — mot en profilliste
+      // som er i ferd med å endre seg.
       okt.bestilling.paagaaende = true;
-      laas.frys(true);
+      frysKjeden(true);
       // Nøkkelen fødes her, med innholdet den skal binde: står den fra
       // et tidligere forsøk med SAMME innhold, gjenbrukes den — det er
       // hele SP-2-replayen.
@@ -1231,7 +1258,7 @@ function profilSeksjon(hoved, ctx, data, okt, laas, paaProfilendring) {
         // en flate som er på vei til innlogging skal ikke etterlate seg
         // en lås ingen kan se og ingen kan løfte.
         okt.bestilling.paagaaende = false;
-        laas.frys(false);
+        frysKjeden(false);
       }
     });
     sett(skjemaRot, skjema);
