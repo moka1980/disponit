@@ -2249,8 +2249,30 @@ def test_manifestets_lukkede_form_avviser_alt_annet(tmp_path):
         # nøsting som `RecursionError` — som ikke er en `ValueError`. Noen
         # tusen `[` er 200 kB, godt innenfor det 4 MiB-taket.
         ("[" * 100_000 + "]" * 100_000, "manifest_feilformet"),
+        # BLANKTEGN RUNDT EN IDENTITET ER OGSÅ BLANKTEGN: porten målte
+        # `kid.strip()`, men lagret råverdien, så `"k1 "` var en egen
+        # lovlig kandidat ved siden av `"k1"`. Vi avviser, ikke
+        # kanoniserer — én vei inn.
+        (_json.dumps({"soknader": [{"kandidat_id": "k1 ",
+                                    "filer": ["k1/cv.html"]}]}),
+         "manifest_feilformet"),
     )):
         assert _sjekk(manifest, f"m{i}") == ventet, (i, manifest)
+
+    # …og de to identitetene for samme kandidat, side om side: uten
+    # porten er dette en LOVLIG deklarasjon med to kandidater, og
+    # `antall_soknader = 2` ville stemt (Cursor P2, runde 3).
+    (tmp_path / "tvilling").mkdir()
+    tvilling = _bunt(tmp_path / "tvilling",
+                     [("k1/cv.html", b"<p>x</p>"),
+                      ("k1/brev.html", b"<p>y</p>")],
+                     manifest=_json.dumps({"soknader": [
+                         {"kandidat_id": "k1", "filer": ["k1/cv.html"]},
+                         {"kandidat_id": "k1 ",
+                          "filer": ["k1/brev.html"]}]}))
+    with pytest.raises(parsing.Buntfeil) as e:
+        parsing.les_manifest(tvilling, parsing.inspiser_bunt(tvilling))
+    assert e.value.kode == "manifest_feilformet", e.value.kode
 
     # …og fraværet har sin egen kode.
     (tmp_path / "uten").mkdir()

@@ -662,8 +662,15 @@ def les_manifest(sti: str | Path,
                                                      "filer"}:
             raise Buntfeil("manifest_feilformet", "lukket kandidatform")
         kid, filer = rad["kandidat_id"], rad["filer"]
+        # PORTEN MÅLTE `strip()`, MEN LAGRET RÅVERDIEN (Cursor P2, runde
+        # 3). `not kid.strip()` avviste bare den blanke ID-en; `"k1 "`
+        # gikk uendret videre til `sett_kandidater` og returkartet, så
+        # `"k1"` og `"k1 "` var to lovlige, ULIKE kandidater i samme
+        # deklarasjon — samme «validering ≠ kanon»-brudd som porten
+        # finnes for å hindre. Vi avviser i stedet for å kanonisere: én
+        # vei inn, og bunten som mente `"k1"` sier `"k1"`.
         if not isinstance(kid, str) or not kid.strip() \
-                or kid in sett_kandidater:
+                or kid != kid.strip() or kid in sett_kandidater:
             raise Buntfeil("manifest_feilformet", "kandidat_id")
         sett_kandidater.add(kid)
         if not isinstance(filer, list) or not filer:
