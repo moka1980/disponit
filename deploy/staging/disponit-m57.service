@@ -1,0 +1,41 @@
+# m57_ats-arbeideren: claimer rekruttering.evaluering-oppdrag over API-et
+# med modultokenet fra onboarding (035), henter bunten via 060-resolveren,
+# evaluerer BLINDET med den LOKALE modellen (eiers valg 26/8: persondata
+# forlater aldri verten), holder leasen med 063-heartbeat, laster opp
+# rapporten og kvitterer signert.
+#
+# TILLITSSNITTET (m56-formen): prosessen har modultoken + kvitteringsnøkkel
+# — men INGEN DB-tilgang, ingen KEK, ingen tenant-nøkler. Modellserveren
+# (ollama) lytter kun på 127.0.0.1 og har ikke prosessens miljø.
+# Enables FØRST når modulen er aktiv — før det ville claim svart 403 og
+# uniten bare pollet seg varm.
+#
+# Installasjon: kopier til /etc/systemd/system/, opprett bruker
+# disponit-m57, fyll /etc/disponit/m57/{konfig,DISPONIT_MODULTOKEN,
+# kvitteringsnokkel.json,biasmaalinger.json} (0600), daemon-reload.
+[Unit]
+Description=Disponit M-57 evalueringsarbeider (m57_ats)
+After=network-online.target disponit-api.service ollama.service
+Wants=network-online.target
+
+[Service]
+User=disponit-m57
+Group=disponit-m57
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core:/opt/disponit/aktiv/platform
+EnvironmentFile=-/etc/disponit/m57/konfig
+LoadCredential=DISPONIT_MODULTOKEN:/etc/disponit/m57/DISPONIT_MODULTOKEN
+RuntimeDirectory=disponit-m57
+Environment=XDG_RUNTIME_DIR=/run/disponit-m57
+ExecStart=/opt/disponit/.venv/bin/python -m drift.m57_arbeider
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadOnlyPaths=/opt/disponit
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target
