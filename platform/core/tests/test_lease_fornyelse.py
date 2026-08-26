@@ -213,6 +213,60 @@ def test_dod_lease_kan_aldri_fornyes(migrator, miljo, monkeypatch):
 
 
 @pg
+@dekker("lease_utlopt")
+def test_utforelsesfrist_ute_er_lease_utlopt(migrator, miljo, monkeypatch):
+    """Frist-grenen, isolert: leasen LEVER, men fristen er ute.
+
+    Begge grener kaster samme SQLSTATE og mappes til samme 409, og bare
+    lease-grenen var dekket. Den dagen mappingen splittes — eller noen
+    svelger unntaket — er frist-grenen usynlig uten denne porten: et
+    heartbeat kunne holde autoriteten i live på arbeid plattformen alt
+    har erklært dødt (037s reclaim-vilkår er nettopp `utforelsesfrist >
+    now()`).
+
+    Fristen er immutable etter innsetting, så den fødes ute. Da er raden
+    uclaimbar (`claim_neste_oppdrag` krever en frist i framtiden), og
+    eierskapet settes derfor rett på raden — status og owner-feltene er
+    de eneste `oppdrag_kolonnelaas` slipper gjennom, og det er nettopp
+    dem et claim ville skrevet.
+    """
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    from .test_api import TENANT
+    from .test_modul_onboarding_http import _onboard_token
+    from .test_wcag_kontroll import _wcag_kjede
+
+    modul, rel, opp = _wcag_kjede(migrator, monkeypatch, frist_s=-1)
+    claim_id = "f" * 32
+    sett_kontekst(migrator, TENANT, "test", "r-lease")
+    migrator.execute(
+        "UPDATE oppdrag SET status='plukket', owner_claim_id=%s,"
+        " owner_generation=1, owner_lease_utloper=now()+interval '300 s'"
+        " WHERE id=%s", (claim_id, opp))
+    migrator.commit()
+    c = TestClient(lag_app(DSN))
+    c.__enter__()
+    try:
+        mtk, _ = _onboard_token(c, migrator, modul, rel)
+        r = c.post("/v1/oppdrag/forny",
+                   headers={"authorization": f"Bearer {mtk}"},
+                   json={"oppdrag_id": opp, "owner_claim_id": claim_id,
+                         "owner_generation": 1, "lease_s": 600})
+        assert r.status_code == 409, r.text
+        assert r.json()["feil"] == "lease_utlopt", r.text
+        # …og raden står URØRT: den LEVENDE leasen ble ikke skrevet.
+        sett_kontekst(migrator, TENANT, "test", "r-lease")
+        rad = migrator.execute(
+            "SELECT owner_lease_utloper > now(), owner_generation"
+            " FROM oppdrag WHERE id=%s", (opp,)).fetchone()
+        migrator.rollback()
+        assert rad[0], "avvisningen rørte den levende leasen"
+        assert rad[1] == 1, "avvisningen flyttet fencing-generasjonen"
+    finally:
+        c.__exit__(None, None, None)
+
+
+@pg
 def test_rullet_modulepoch_feller_heartbeatet(migrator, miljo, monkeypatch):
     """Port 24-formen: nøddeaktivering løfter modulhode.module_epoch, og
     en deployment som er rullet forbi skal ikke kunne holde liv i et
