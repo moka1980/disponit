@@ -20,6 +20,8 @@ import re
 import zipfile
 import zlib
 from dataclasses import dataclass
+
+from . import blinding
 from pathlib import Path
 
 #: §4, ordrett. Heltall i byte der det gjelder byte.
@@ -594,12 +596,54 @@ def les_porsjonsvis(sti: str | Path, *, porsjon: int = 200):
             yield fremdrift, medlem, data
 
 
+@dataclass(frozen=True)
+class Manifestet:
+    """Buntens deklarasjon, lest og toveisbundet: `kart` er
+    {medlemsnavn: kandidat_id}; `felter` er kandidatens STRUKTURERTE
+    personfelter ({kandidat_id: {felt: [verdier]}}) — blindingens kilde
+    (#158s strukturelle retning: personfeltene DEKLARERES, de søkes
+    aldri opp i fritekst)."""
+    kart: dict[str, str]
+    felter: dict[str, dict[str, list[str]]]
+
+
+def _uten_duplikatnokler(par: list[tuple[str, object]]) -> dict:
+    """`json`s objektbygger, men en DUPLIKATNØKKEL er `manifest_feilformet`
+    (Codex P1, review 15:20 på `7b8fa66`).
+
+    Standardoppførselen er stille «siste vinner»:
+    `{"navn": ["Kari"], "navn": ["Ola"]}` blir `{"navn": ["Ola"]}`, og
+    `Kari` — en personverdi kunden faktisk DEKLARERTE — finnes ikke
+    lenger for blindingen. Navnet står fortsatt i CV-en, det maskeres
+    ikke, og `krev_blindet` leter bare etter det som ER i
+    avmaskeringstabellen; porten godkjenner altså en modellinput med
+    klartekstnavnet i, og kjøringen telles som blindet. Det er en
+    LEKKASJE, ikke en formfeil — og den er usynlig for hver eneste port
+    nedstrøms, fordi tapet skjer FØR noen av dem får se dokumentet.
+
+    Porten gjelder HELE manifestdokumentet, ikke bare `felter`: en
+    duplisert `soknader`, `kandidat_id` eller `filer` taper like stille
+    en deklarasjon vi da aldri får bundet toveis mot katalogen.
+    Nøkkelnavnet trenger vi ikke gjette mellom — vi avviser, vi velger
+    ikke: en deklarasjon som sier to ting om samme nøkkel er ingen
+    deklarasjon. Samme dom som den lukkede toppformen og
+    `KANDIDAT_ID_KANON`, og samme retning som resten av lesingen: én vei
+    inn, og bunten som mente `Kari` sier `Kari`."""
+    ut: dict = {}
+    for nokkel, verdi in par:
+        if nokkel in ut:
+            raise Buntfeil("manifest_feilformet",
+                           f"duplikatnøkkel {nokkel!r}")
+        ut[nokkel] = verdi
+    return ut
+
+
 def les_manifest(sti: str | Path,
-                 medlemmer: list[Medlem]) -> dict[str, str]:
+                 medlemmer: list[Medlem]) -> Manifestet:
     """#161 (eiers B): les og bind `soknader.json` mot katalogen, BEGGE
     veier, før én byte søknadsinnhold pakkes ut.
 
-    -> {medlemsnavn: kandidat_id} for hvert innholdsmedlem.
+    -> `Manifestet` (kart + deklarerte personfelter).
 
     Lukket form: toppobjekt med NØYAKTIG nøkkelen `soknader`, en liste
     (1–MAKS_KANDIDATER) av objekter med NØYAKTIG `kandidat_id` (unik, og
@@ -675,7 +719,14 @@ def les_manifest(sti: str | Path,
     if len(raa) > MAKS_MANIFESTBYTES:
         raise Buntfeil("manifest_feilformet", "for stort")
     try:
-        data = json.loads(raa.decode("utf-8"))
+        data = json.loads(raa.decode("utf-8"),
+                          object_pairs_hook=_uten_duplikatnokler)
+    except Buntfeil:
+        # Hookens egen dom er ALLEREDE kodet (duplikatnøkkel). Den er
+        # ingen `ValueError`, så den ville flydd forbi klausulen under
+        # av seg selv — linja står her for at det skal være et VALG og
+        # ikke en tilfeldighet ved klassehierarkiet.
+        raise
     # JSON-DYBDE ER OGSÅ EN FORM (Cursor P1, runde 2). `json` melder
     # SYNTAKS som `ValueError`, men NØSTING som `RecursionError` — og den
     # er ingen `ValueError`. Noen tusen `[` innenfor `MAKS_MANIFESTBYTES`
@@ -695,10 +746,16 @@ def les_manifest(sti: str | Path,
         raise Buntfeil("manifest_feilformet",
                        f"kandidattall {len(soknader)}")
     kart: dict[str, str] = {}
+    felter_ut: dict[str, dict[str, list[str]]] = {}
     sett_kandidater: set[str] = set()
     for rad in soknader:
-        if not isinstance(rad, dict) or set(rad) != {"kandidat_id",
-                                                     "filer"}:
+        # `felter` er VALGFRITT per kandidat (#158-retningen): uten
+        # deklarerte personfelter kan kandidaten ikke blindes, og
+        # kjøringen feller det som `blinding_uten_felter` — et kodet
+        # utfall, aldri en gjettet NER over fritekst.
+        if not isinstance(rad, dict) or set(rad) not in (
+                {"kandidat_id", "filer"},
+                {"kandidat_id", "filer", "felter"}):
             raise Buntfeil("manifest_feilformet", "lukket kandidatform")
         kid, filer = rad["kandidat_id"], rad["filer"]
         # ÉN LUKKET KANON, IKKE ÉN TEGNKLASSE PER RUNDE (eierdom, valg A
@@ -726,7 +783,30 @@ def les_manifest(sti: str | Path,
             if navn not in navnene:
                 raise Buntfeil("manifest_medlem_mangler", navn)
             kart[navn] = kid
+        if "felter" in rad:
+            fd = rad["felter"]
+            if not isinstance(fd, dict) or not fd \
+                    or not set(fd) <= set(blinding.MASKERTE_FELTER):
+                raise Buntfeil("manifest_feilformet", f"felter for {kid}")
+            rene: dict[str, list[str]] = {}
+            for felt, verdier in fd.items():
+                # ETT PREDIKAT, TO DØRER (eierdom, K2-kjennelse runde 4
+                # på #217, valg A). Grensesettet — type, tomhet, antall,
+                # lengde, verdiens egen skrivemåte — telles ikke opp her.
+                # Det EIES av `blinding.feltverdier_lukket`, som `blind`
+                # kaller på den injiserte veien (`kandidatfelter_for`,
+                # som går utenom denne lesingen). To håndskrevne
+                # opptellinger over samme sett ga fire Cursor-runder på
+                # rad, én manglende grense per runde; med ett predikat
+                # kan de to dørene ikke divergere. Bare FEILKODEN er
+                # vår egen: den sier hvilken dør som felte, aldri
+                # hvilken grense som gjaldt.
+                if not blinding.feltverdier_lukket(verdier):
+                    raise Buntfeil("manifest_feilformet",
+                                   f"felter.{felt} for {kid}")
+                rene[felt] = list(verdier)
+            felter_ut[kid] = rene
     uadressert = navnene - set(kart) - {MANIFESTNAVN}
     if uadressert:
         raise Buntfeil("medlem_uadressert", sorted(uadressert)[0])
-    return kart
+    return Manifestet(kart=kart, felter=felter_ut)

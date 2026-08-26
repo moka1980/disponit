@@ -29,11 +29,92 @@ import re
 MASKERTE_FELTER: tuple[str, ...] = (
     "navn", "kjonn", "alder", "adresse", "bilde", "kontakt")
 
+#: Grensene for en deklarert personverdi: bundet lengde og antall — en
+#: deklarasjon er korte kanoniske verdier, aldri fritekst.
+#:
+#: De BOR her, ikke i `parsing` (Cursor P2), sammen med predikatet som
+#: bruker dem (`feltverdier_lukket`).
+MAKS_FELTVERDIER = 10
+MAKS_FELTVERDI_TEGN = 200
+
 
 class Blindingsfeil(Exception):
     def __init__(self, kode: str):
         self.kode = kode
         super().__init__(kode)
+
+
+def verdiform_lukket(verdi: str) -> bool:
+    """Er personverdien SIN EGEN skrivemåte? (Cursor P1)
+
+    STRUKTURELL grense, og bare det: verdien er lik seg selv strippet.
+    Den måler at deklarasjonen ikke bærer en hale den selv ikke mener —
+    `"Kari Testdal "` erstatter «Kari Testdal » og lar «Kari Testdal,»
+    stå, altså KORRUPT input der den treffer og ingenting der den ikke
+    gjør det. Samme klasse som `kandidat_id` før ASCII-kanonen: en port
+    som MÅLER `strip()` men LAGRER råverdien, måler noe annet enn det
+    den lagrer. Vi avviser, vi kanoniserer ikke: en deklarasjon som
+    mente `Kari` sier `Kari`.
+
+    TEGNLISTA ER BORTE (eierdom, K2-kjennelse runde 5 på #217, valg B).
+    Predikatet bannlyste før `Cc`/`Cf` (`U+200B`, RTL-markørene,
+    kontrolltegn) — en ENUMERASJON over Unicode-kategorier, og den var
+    per konstruksjon ufullstendig: `U+00A0` (Zs), `U+2010` (Pd) og en
+    NFD-dekomponert `å` er verken Cc eller Cf, og hver av dem gir samme
+    vakuum. Fem runder målte fem nye tegn; en sjette lå ferdig på bordet
+    før den femte var skrevet. Klassen lukkes ikke ved å telle tegn, men
+    ved å måle EFFEKTEN — se `blind`s vakuøsitetsport."""
+    return verdi == verdi.strip()
+
+
+def feltverdier_lukket(verdier: object) -> bool:
+    """HELE grensesettet for ett felts deklarerte verdier, ETT sted —
+    type, tomhet, antall, lengde og verdiens egen skrivemåte.
+
+    EIERDOM, K2-kjennelse runde 4 på #217 (valg A). Grensene fantes før
+    som to HÅNDSKREVNE opptellinger over samme sett: `les_manifest` talte
+    sine i én løkke, `blind`s formløkke sine i en annen, og ingen av dem
+    var avledet av den andre. Da må hver ny grense skrives to steder, og
+    fire Cursor-runder på rad fant nøyaktig én grense som sto på den ene
+    døra og manglet på den andre:
+
+        1. padding / Cf-Cc          (P1, `7b8fa66`)
+        2. lengde / antall          (P2, `4568cf09`)
+        3. ukjent feltnavn          (P2, `be6fdd32` — negativen manglet)
+        4. tom liste / tom streng   (P2, `f6887ce`)
+
+    Runde 4 var den vonde: `all([])` er `True` og `verdiform_lukket("")`
+    er `True`, så `{"navn": []}` og `{"navn": ["Kari", ""]}` passerte
+    `blind` mens deklarasjonsdøra felte dem — og en tom avmaskerings-
+    tabell gjør `krev_blindet` VAKUØS: kjøringen telles som blindet mens
+    klartekstnavnet står i modellinputen. Enumerasjonen er endelig, men
+    ikke tom, og et femte formforsøk er nettopp det §9 forbyr.
+
+    Så: ETT predikat, to kallesteder. `les_manifest` kaller denne i
+    stedet for sin egen løkke og beholder sin egen feilkode
+    (`manifest_feilformet` mot `ugyldig_maskeringsform`) — kodene skiller
+    hvilken DØR som felte, aldri hvilken grense som gjaldt.
+
+    RETTELSE (runde 5). Denne docstringen lovet at «en femte grense
+    skrives nå ett sted, og runde 5 på denne aksen er strukturelt
+    umulig». Første halvdel stemmer; andre halvdel gjorde ikke det.
+    Divergens var aldri det som slapp NBSP inn — UFULLSTENDIGHET var
+    det, og en ufullstendig enumerasjon lever like godt i ett predikat
+    som i to. Runde 5 kom, og den kom på `verdiform_lukket`s
+    tegnkategorier. Det som lukker dén aksen er ikke en grense til her
+    inne, men målingen i `blind`: en deklarasjon som ikke traff noe er
+    vakuøs, uansett hvilket tegn som gjorde at den bommet.
+
+    En sekvens: `list` eller `tuple`, aldri et `set` (tokennummereringen
+    skal være deterministisk for samme input) og aldri en bar streng (den
+    er iterbar, så «Ann» ville blitt tegnene `A`, `n`, `n` og maskert
+    hver eneste `A` og `n` i søknaden)."""
+    return (isinstance(verdier, (list, tuple)) and bool(verdier)
+            and len(verdier) <= MAKS_FELTVERDIER
+            and all(isinstance(verdi, str) and bool(verdi)
+                    and len(verdi) <= MAKS_FELTVERDI_TEGN
+                    and verdiform_lukket(verdi)
+                    for verdi in verdier))
 
 
 def _monster(verdi: str) -> re.Pattern[str]:
@@ -60,43 +141,100 @@ def blind(tekst: str, kandidatfelter: dict[str, list[str]]
     `kandidatfelter` er de STRUKTURERTE verdiene fra søknaden
     ({felt: [verdier]}); fritekst-gjenkjenning av personalia er bevisst
     IKKE lovet her — løftet er de navngitte feltene.
+
+    To porter, og den andre måler EFFEKT: formen inn
+    (`feltverdier_lukket`), og — målt på ORIGINALTEKSTEN, før noen
+    erstatning — at hvert deklarert felt faktisk traff dokumentteksten.
+    Begge er `ugyldig_maskeringsform`.
     """
+    # Vakten gir PRESISJON, ikke lenger sikkerheten alene (målt i runde
+    # 5): et ukjent felt kan per konstruksjon aldri treffe, siden løkka
+    # under bare rører `MASKERTE_FELTER` — så vakuøsitetsporten nederst
+    # feller det samme kartet uansett. Forskjellen er hva utfallet SIER:
+    # «feltet er utenfor det lukkede settet», ikke «deklarasjonen traff
+    # ingenting». Driften som skal rette buntsiden trenger den.
     ukjente = set(kandidatfelter) - set(MASKERTE_FELTER)
     if ukjente:
         raise Blindingsfeil("ukjent_maskeringsfelt")
     # FORMEN MÅLES, den tas ikke på ord (Codex P2). Typeannotasjonen sier
     # `{felt: [verdier]}`, men uttrekket er en FREMMED produsent — en
-    # modell eller en parser — og en annotasjon er ingen port. To former
-    # er velformet JSON og begge er farlige:
+    # modell eller en parser — og en annotasjon er ingen port. `blind`
+    # tar dessuten imot felter fra en INJISERT `kandidatfelter_for`, og
+    # den veien går utenom manifestporten helt.
     #
-    #   * `{"navn": "Ann"}` — en streng er iterbar, så løkka under fikk
-    #     tegnene `A`, `n`, `n`. Hver eneste `A` og `n` i HELE søknaden
-    #     ble maskert, `krev_blindet` godkjente resultatet (den leter
-    #     etter de samme tegnene, og de er borte), og modellen fikk
-    #     korrupt tekst som input til både kravfunn og rangering.
-    #   * `{"alder": [42]}` — `re.escape(42)` er en rå `TypeError` ut av
-    #     modulen, ikke et kodet blindingsavvik kalleren kan behandle.
-    #
-    # Grensen er kontrakten `blind` ALT er skrevet for: en sekvens av
-    # strenger per felt. Dette er ikke et femte maskeringsforsøk (#158)
-    # — mønsteret og porten er uendret — det er inndatasiden av samme
-    # fail-closed regel som `blinding_uten_felter`: et umålt utfall er et
-    # avvist utfall (SP-3). Et `set` avvises med vilje sammen med de
-    # andre: tokennummereringen skal være deterministisk for samme input,
-    # og en uordnet samling gir den ikke.
+    # Grensesettet er `feltverdier_lukket` — DEN SAMME `les_manifest`
+    # kaller (eierdom, K2-kjennelse runde 4 på #217). Dette er ikke et
+    # femte maskeringsforsøk (#158) — mønsteret og porten er uendret —
+    # det er inndatasiden av samme fail-closed regel som
+    # `blinding_uten_felter`: et umålt utfall er et avvist utfall (SP-3).
     for verdier in kandidatfelter.values():
-        if not isinstance(verdier, (list, tuple)) or not all(
-                isinstance(verdi, str) for verdi in verdier):
+        if not feltverdier_lukket(verdier):
             raise Blindingsfeil("ugyldig_maskeringsform")
     avmaskering: dict[str, str] = {}
-    par: list[tuple[str, str]] = []
+    par: list[tuple[str, str, str]] = []
     for felt in MASKERTE_FELTER:
         for nr, verdi in enumerate(kandidatfelter.get(felt, ()), start=1):
-            if not verdi:
-                continue
             token = f"[{felt.upper()}-{nr}]"
             avmaskering[token] = verdi
-            par.append((token, verdi))
+            par.append((felt, token, verdi))
+    # VAKUØSITETEN MÅLES PÅ EFFEKT, PER FELT (eierdom, K2-kjennelse
+    # runde 5 på #217, valg B) — OG MÅLINGEN SKJER PÅ ORIGINALTEKSTEN,
+    # FØR NOEN ERSTATNING (eierdom, K2-kjennelse runde 6, valg A).
+    #
+    # Et deklarert felt der INGEN av verdiene traff dokumentteksten er en
+    # vakuøs deklarasjon: den fyller avmaskeringstabellen med noe
+    # `krev_blindet` aldri kan finne, så porten løper sine runder uten å
+    # måle noe — og kjøringen telles som blindet mens klartekstnavnet står
+    # i modellinputen. Det er samme lekkasje som `"Kari Testdal "` i
+    # `7b8fa66`, bare med et annet tegn hver runde: NBSP (`Zs`), `U+2010`
+    # (`Pd`), en NFD-dekomponert `å`.
+    #
+    # Dette er ikke en sjette tegnliste — det er målingen som gjør
+    # tegnlister overflødige: vi trenger ikke vite HVILKET tegn som
+    # gjorde at deklarasjonen bommet, bare at den bommet.
+    #
+    # PER FELT, IKKE PER VERDI, og fortegnet er hele grunnen: en enkelt
+    # VERDI uten treff er lovlig så lenge en søsterverdi i samme felt
+    # traff. Ellers blir defensive varianter (`["Kari Testdal", "Kari"]`)
+    # selvmotsigende farlige, og deklarasjonen presses mot FÆRRE
+    # varianter — feil fortegn for personvern.
+    #
+    # PÅ ORIGINALTEKSTEN, og det er runde-5-dommens EGEN semantikk
+    # («traff deklarasjonen DOKUMENTET»): å telle treff med `subn` inne i
+    # erstatningsløkka målte mot en tekst maskeringen selv nettopp hadde
+    # skrevet i, altså mot sine egne tokener. Målt (Codex P1, review
+    # 19:38 på `13e7110`):
+    #
+    #     tekst  = "Ａｌ is forty-two"        # fullbredde Ａｌ
+    #     felter = {"navn": ["Al"], "alder": ["forty-two"]}
+    #
+    # `forty-two` erstattes først (lengste først), og `Al` traff så `AL`
+    # inni `[ALDER-1]` — `_monster` er `re.IGNORECASE`. `traff["navn"]`
+    # ble sann uten at navnet noen gang traff dokumentet, porten sa god,
+    # og fullbredde-navnet gikk i klartekst til modellen mens kjøringen
+    # telte som blindet. Søket her skjer FØR løkka, mot teksten slik den
+    # kom inn: da finnes kollisjonen ikke i målingen, for tokenene er
+    # ikke skrevet ennå.
+    #
+    # RESTKLASSEN, ærlig: en forekomst i teksten som ingen deklarert
+    # verdi matcher mens en ANNEN verdi i samme felt traff, er
+    # udetekterbar uten NER. Den står i `KONTRAKT.md` som kjent grense
+    # eid av #158 (strukturell blinding), ikke som noe denne porten
+    # lover.
+    #
+    # UTSATT, K1 → #158 (disjunkt tokenalfabet). Målingen over lukker
+    # PORT-omgåelsen, ikke tokenkollisjonen som sådan: erstatningen kan
+    # fortsatt skrive inn i et token den selv har lagt igjen
+    # (`[[NAVN-1]DER-1]`), og da er avmaskeringstabellen ikke lenger
+    # reversibel. Utfallet er korrupt modellinput, ikke klartekst ut —
+    # `krev_blindet` søker fortsatt hele inputen.
+    #   dom-klasse: tokenkollisjon-korrupsjon · felt i #217 ·
+    #   https://github.com/moka1980/disponit/pull/217#issuecomment-5430381316
+    traff: dict[str, bool] = {
+        felt: any(_monster(verdi).search(tekst) for verdi in verdier)
+        for felt, verdier in kandidatfelter.items()}
+    if not all(traff.values()):
+        raise Blindingsfeil("ugyldig_maskeringsform")
     # LENGSTE VERDI FØRST, på tvers av alle felter (Codex P1). Erstatning
     # i feltrekkefølge var to lekkasjer i én: «Ola» før «Ola Nordmann» gir
     # `[NAVN-1] Nordmann` — etternavnet når modellen — og «Ann» før
@@ -123,7 +261,7 @@ def blind(tekst: str, kandidatfelter: dict[str, list[str]]
     # blinding: personfeltene finnes ikke i inputen i det hele tatt)
     # nettopp fordi en invariant som hviler på et fritekstsøk ikke kan
     # være absolutt i noen av retningene.
-    for token, verdi in sorted(par, key=lambda p: -len(p[1])):
+    for _felt, token, verdi in sorted(par, key=lambda p: -len(p[2])):
         # Erstatningen er en funksjon, ikke en mal: tokenet skal stå
         # ordrett, aldri tolkes som `re`-referanser. Avmaskeringstabellen
         # bærer den STRUKTURERTE skrivemåten — en avmaskering gir altså

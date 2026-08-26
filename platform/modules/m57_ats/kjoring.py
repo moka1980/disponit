@@ -115,9 +115,9 @@ def _felter(kandidatfelter_for, medlem, fremdrift):
     return felter
 
 
-def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
-              biasmaalinger, antall_soknader, blinding_av=False,
-              auditrad=None):
+def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
+              antall_soknader, kandidatfelter_for=None,
+              blinding_av=False, auditrad=None):
     """-> {"rangering": [...], "artefakter": {kandidat_id: ...},
     "fremdrift": {...}} — eller Kjoringsfeil, aldri noe imellom.
 
@@ -150,6 +150,25 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
     promoteringsvakten som alt står i 056. Det er ny maskin, og K1 sier
     egen PR. Eierens K2-dom (23/8) er valg 1, og den bærer HARD SPERRE:
     ingen kjøring mot reelle bunter i full størrelse før #173 er landet.
+
+    `sti` MÅ VÆRE INSTANSBUNDET NÅR DEN ER DELBAR — det er kallerens
+    ansvar (Codex P1, eierdom K2-kjennelse runde 7 på #217, valg B i
+    inode-form). Stien åpnes flere uavhengige ganger: `les_manifest`
+    henter DEKLARASJONEN (blindingens kilde), `les_porsjonsvis` henter
+    INNHOLDET. Byttes fila i vinduet mellom dem med et
+    TOPOLOGI-BEVARENDE bytte — samme medlemsnavn, samme antall —
+    blindes arkiv A-s deklarasjon inn i arkiv B-s dokument: A-s
+    verdier maskeres og TREFFER (så vakuøsitetsporten tier), en
+    personverdi som bare står i B er ikke deklarert (så port 16 har
+    ingenting å lete etter), og kjøringen fullfører som blindet med
+    klartekst hos modellen. De eksisterende portene tar bare det
+    topologi-ENDRENDE byttet. Kalleren holder derfor bunten åpen og gir
+    en instansbundet sti — `/proc/self/fd/<fd>` — når stien kan deles
+    med andre skrivere; da går alle åpningene gjennom samme inode, og
+    byttet kan per konstruksjon ikke nå kjøringen. Kontrolleren er
+    eneste produksjonskaller og eier fila den selv skrev. En kaller som
+    gir en delbar filsti bærer klassen selv; se KONTRAKT.md,
+    `dom-klasse: arkivinstans-toctou`.
     """
     artefakter: dict[str, dict] = {}
     oppfylt: dict[str, dict] = {}
@@ -212,9 +231,49 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
             # inspeksjon. Deklarert kandidattall måles mot oppdragets
             # signerte tall her, foran strømmen: et avvik er en ugyldig
             # bunt, aldri et resultat.
-            kart = parsing.les_manifest(sti, parsing.inspiser_bunt(sti))
+            manifestet = parsing.les_manifest(
+                sti, parsing.inspiser_bunt(sti))
+            kart = manifestet.kart
             if len(set(kart.values())) != antall_soknader:
                 raise Kjoringsfeil("kandidattall_avvik", fremdrift)
+            if kandidatfelter_for is None:
+                # Blindingens kilde er DEKLARASJONEN (#158s strukturelle
+                # retning): manifestets `felter` per kandidat. En
+                # kandidat uten deklarerte felter blindes ikke — og
+                # felles da av fail-closed-porten som
+                # `blinding_uten_felter`, aldri av et fritekst-søk etter
+                # personalia.
+                #
+                # …MEN UTFALLET ER KJENT HER, OG FELLES DERFOR HER (Codex
+                # P2, eierdom 26/8 pkt. 2). Porten er den samme
+                # fail-closed-dommen, bare målt på det tidspunktet den
+                # faktisk er avgjort: `manifestet.felter` er lest, så en
+                # deklarert kandidat uten `felter` KAN ikke ende noe
+                # annet sted enn `blinding_uten_felter`. Sto målingen
+                # igjen nede i `evaluer_kandidat`, betalte bunten først
+                # hele uttrekket — hvert medlem pakket ut og beholdt i
+                # `biter` — og fordi kandidatene evalueres `sorted`,
+                # kunne TIDLIGERE kandidater ha vært hos modellen før
+                # utfallet ble reist for en senere. En stor bunt kunne
+                # dessuten treffe minnegrensen først og komme ut med feil
+                # kode. Dette er ikke en ny grense: det er samme økonomi
+                # som kandidattallporten over — det som er avgjort før
+                # strømmen, felles før strømmen.
+                #
+                # Betingelsen speiler `evalueringsinput` NØYAKTIG: er
+                # blindingen avskrudd (`blinding_av`), finnes det ingen
+                # `blinding_uten_felter` nede i veien heller, og en
+                # kandidat uten deklarerte felter er da lovlig. Porten
+                # skal flytte utfallet, aldri utvide det.
+                if not blinding_av:
+                    for kid in sorted(set(kart.values())):
+                        if not manifestet.felter.get(kid):
+                            raise Kjoringsfeil("blinding_uten_felter",
+                                               fremdrift)
+
+                def kandidatfelter_for(medlem):
+                    return manifestet.felter.get(
+                        kart.get(medlem.navn, ""), {})
             for merke, medlem, data in parsing.les_porsjonsvis(sti):
                 # FREMDRIFTEN TELLER MEDLEMMER, IKKE SJEKKPUNKTER (Codex P2).
                 # `les_porsjonsvis` leverer et merke bare hver 200. fil og på
@@ -310,6 +369,35 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
         # dette aldri passere stille.
         if len(biter) != antall_soknader:
             raise Kjoringsfeil("kandidattall_avvik", fremdrift)
+        # TO PASS: BLINDINGPORTEN FOR HELE BUNTEN FØR NOEN KANDIDAT NÅR
+        # MODELLEN (Cursor P2). Dette er samme REKKEFØLGEPRIS som porten
+        # foran strømmen over, bare ett hakk senere i veien: den porten
+        # feller det som er avgjort av DEKLARASJONEN alene (`felter`
+        # mangler), mens vakuøsiteten — en deklarasjon som ikke traff
+        # dokumentet, `ugyldig_maskeringsform` — krever teksten og er
+        # derfor først avgjort her, når `biter` er komplett.
+        #
+        # Sto blindingen igjen inne i evalueringsløkka, betalte bunten
+        # prisen kandidatene evalueres `sorted` for: med `k1` gyldig og
+        # `k2` vakuøs var `k1` ALT hos modellen når `k2` felte kjøringen.
+        # NBSP/NFD-deklarasjoner passerer `les_manifest`/
+        # `feltverdier_lukket` med vilje (eierdom, K2-kjennelse runde 5,
+        # valg B), så de er lovlige helt hit — nettopp derfor er det her
+        # de må måles, og for ALLE, før det første modellkallet.
+        #
+        # Ingen ny maskin: porten er `blinding.evalueringsinput`, uendret
+        # og fortsatt den ENESTE veien til modellinput. Den kalles to
+        # ganger per kandidat — her som port, og inne i
+        # `evaluer_kandidat` som input — og det er et bevisst valg
+        # fremfor å cache resultatet gjennom en ny parameter: en
+        # `modellinput=`-dør inn i `evaluer_kandidat` ville åpnet en vei
+        # utenom `blinding_uten_felter`, eller tvunget den fail-closed-
+        # regelen ut i en ANDRE opptelling — nøyaktig divergensen
+        # K2-kjennelsen runde 4 lukket («ETT predikat, to kallesteder»).
+        # `blind` er en ren funksjon av `(tekst, kandidatfelter)`, så de
+        # to kallene er per konstruksjon samme verdi; prisen er
+        # regex-arbeid som uansett forsvinner i modellkallet ved siden av.
+        klargjort: dict[str, tuple[str, dict]] = {}
         for kandidat_id in sorted(biter):
             # Sortert på medlemsnavn: samme bunt gir samme tekst OG samme
             # feltrekkefølge, uansett hvilken rekkefølge arkivet leverte
@@ -343,6 +431,14 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
             # at uttrekket meldes som det som feilet.
             if not tekst.strip():
                 raise Kjoringsfeil("tekstuttrekk_feilet", fremdrift)
+            blinding.evalueringsinput(
+                tekst, kandidatfelter,
+                blinding_av=blinding_av, auditrad=auditrad)
+            klargjort[kandidat_id] = (tekst, kandidatfelter)
+        # `klargjort` er fylt i `sorted`-rekkefølge, og dict beholder
+        # innsettingsrekkefølgen: evalueringen går fortsatt i samme,
+        # deterministiske orden som før.
+        for kandidat_id, (tekst, kandidatfelter) in klargjort.items():
             resultat = evaluering.evaluer_kandidat(
                 modell, tekst, kandidatfelter, vekter,
                 biasmaalinger=biasmaalinger,
