@@ -750,6 +750,54 @@ class _VenterModell(_Modell):
         return super().vurder(tekst, vekter)
 
 
+def test_fersk_kapabilitet_brukes_faktisk_i_opplastingen(monkeypatch):
+    """Cursor P2, runde 2: at `_Heartbeat` PLUKKER OPP en fersk
+    kapabilitet var bevist isolert (`test_heartbeatet_fornyer_og_bytter_-
+    kapabilitet`), men ingen port fulgte den helt ut på `/v1/artefakt`.
+
+    Det er det siste steget som betyr noe. Claimets opprinnelige
+    `opplasting.jti` er utstedt med `min(igjen, UTSTEDT_AUTORITET_S)` og
+    kan være DØD lenge før en 240-minutters evaluering er ferdig — det er
+    hele grunnen til at fornyelsen re-utsteder den. Brukte opplastingen
+    likevel claimets jti, ville en lang, ellers vellykket evaluering blitt
+    avvist på kapabiliteten, og bunten måttet evalueres om igjen.
+
+    Kontroll: fjern `opplasting = puls.fersk_opplasting` i `kjor_en`, så
+    står `kap` igjen i kroppen og porten feller."""
+    import threading
+
+    from modules.m57_ats import controller
+
+    monkeypatch.setattr(controller, "FORNY_INTERVALL_S", 0.01)
+    slo = threading.Event()
+
+    def forny():
+        slo.set()
+        return _Svar(200, {"opplasting": {
+            "jti": "fersk-jti",
+            "utloper": "2099-01-01T00:00:00+00:00"}})
+
+    class _Registrerer(_Stubklient):
+        def __init__(self, **kw):
+            super().__init__(200, **kw)
+            self.opplastinger = []
+
+        def post(self, sti, json=None, headers=None):
+            if sti == "/v1/artefakt":
+                self.opplastinger.append(json)
+            return super().post(sti, json=json, headers=headers)
+
+    k = _Registrerer(forny=forny)
+    res = _kjor(k, modell=_VenterModell(slo))
+    assert res["utfall"] == "utfort", res
+    assert k.opplastinger, "artefaktet ble aldri lastet opp"
+    assert k.opplastinger[0]["kapabilitet_jti"] == "fersk-jti", \
+        k.opplastinger
+    # ... og claimets egen — den som kan være død — sto uendret i
+    # stubben, så porten sammenligner faktisk to FORSKJELLIGE verdier.
+    assert k.opplasting["jti"] == "kap"
+
+
 def test_tapt_lease_stopper_for_opplastingen(monkeypatch):
     """En terminal 4xx på `/v1/oppdrag/forny` betyr at autoriteten er
     borte: plattformen har gitt oppdraget til noen andre eller lukket
