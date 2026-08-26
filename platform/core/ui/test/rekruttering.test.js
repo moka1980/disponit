@@ -1101,6 +1101,32 @@ test("Profiler: uten bestilling:opprett finnes ingen skriveknapper (P2-1)", asyn
   assert.ok(t2.includes(t("ui.rekruttering.profiler.rediger")));
 });
 
+test("Bestilling: uten bestilling:opprett finnes ingen bestillingsseksjon (P2-7)", async () => {
+  // Speilet av profilenes P2-1-test: POST-rutene bak kjeden krever
+  // `bestilling:opprett` (app.py), og et skjema uten scopet er en
+  // blindvei som først dør server-side.
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": prosess(),
+           "/v1/rekruttering/stillingsprofiler": profiler() };
+  const hoved = nyHoved();
+  const leser = ctx();
+  leser.scopes = ["decisions:read"];
+  visRekruttering(hoved, leser);
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  assert.equal(hoved.querySelector("section[aria-labelledby=bestill-tittel]"),
+    null, "bestillingsseksjonen sto der uten bestilling:opprett");
+  assert.equal(hoved.querySelector("#bestill-fil"), null,
+    "filvelgeren sto der uten bestilling:opprett");
+  assert.equal(hoved.textContent.includes(t("ui.rekruttering.bestill.send")),
+    false, "bestillingsknappen sto der uten bestilling:opprett");
+  // ... og med scopet står den der.
+  const hoved2 = nyHoved();
+  visRekruttering(hoved2, ctx());
+  assert.ok(await vent(() => hoved2.querySelector("table")), "flaten kom aldri");
+  assert.ok(hoved2.querySelector("section[aria-labelledby=bestill-tittel] form"),
+    "bestillingsskjemaet mangler med bestilling:opprett");
+});
+
 test("Bestilling: hele kjeden — reserver, opplast, bestill (SP-2)", async () => {
   KALL = [];
   const basis = { "/v1/rekruttering/prosesser": prosess(),
