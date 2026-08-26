@@ -10,6 +10,7 @@ soknadsbunt_ref.
 """
 import json
 import secrets
+import threading
 import uuid
 
 import psycopg
@@ -132,6 +133,36 @@ def _bunt(klient, m, cookie, csrf):
                              "content-type": "application/zip"})
     assert r2.status_code == 201, r2.text
     return ref
+
+
+def _evalkropp(ref, profilref, antall=1):
+    return {"bestillingstype": "rekruttering.evaluering",
+            "inndata_ref": ref, "stillingsprofil_ref": profilref,
+            "antall_soknader": antall, "omfang": "bunt"}
+
+
+def _beslutninger(m):
+    """Hvor mange bestillingsbeslutninger som er COMMITTET for tenanten.
+
+    Én rad = én evaluering = én frekvensplass brent. Prefikset er
+    `kjernenokkelprefiks`-formen, så opplastings-/reservasjonsveiens egne
+    loggposter ikke telles med."""
+    _sett_kontekst(m, TENANT)
+    n = m.execute(
+        "SELECT count(*) FROM revisjonslogg WHERE tenant=%s AND"
+        " idempotency_key LIKE 'bestilling:%%'", (TENANT,)).fetchone()[0]
+    m.rollback()
+    return n
+
+
+def _buntrad(m, ref):
+    _sett_kontekst(m, TENANT)
+    rad = m.execute(
+        "SELECT status, oppdrag_id FROM inndata_artefakt"
+        " WHERE tenant=%s AND inndata_id=%s",
+        (TENANT, ref.split(":", 1)[1])).fetchone()
+    m.rollback()
+    return rad
 
 
 def _bestill(klient, cookie, csrf, kropp, idem=None):
@@ -270,3 +301,170 @@ def test_en_bunt_kan_bare_bestilles_en_gang(klient, migrator, miljo, inndata_rot
                    "antall_soknader": 2, "omfang": "bunt"})
     assert r2.status_code == 409, r2.text
     assert r2.json()["feil"] == "inndata_ubrukelig"
+
+
+def test_opptatt_bunt_er_forbigaende_ikke_dom():
+    """Cursor P1: taperen i kappløpet om bunten har ikke fått en DOM.
+
+    `inndata_ubrukelig` er terminal — ukjent, utløpt, forkastet, alt
+    bundet — og planveien gjør en terminal kode om til en pause bare et
+    menneske kan oppheve. «En annen bestilling holder bunten akkurat nå»
+    er derimot et sammenstøt i tid, nøyaktig samme klasse som en opptatt
+    idempotensnøkkel. Utad er de fortsatt den samme 409-en.
+
+    MUTASJONEN SOM DREPER DENNE: la låsegrenen returnere
+    `inndata_ubrukelig` igjen, eller fjern koden fra `_FORBIGAENDE`.
+    """
+    from api.bestilling import INNDATA_OPPTATT, KLIENTKODE
+    from plan.materialiser import _FORBIGAENDE, _tick_utfall, er_forbigaende
+    assert INNDATA_OPPTATT in _FORBIGAENDE
+    assert er_forbigaende(INNDATA_OPPTATT)
+    assert _tick_utfall(("feil", INNDATA_OPPTATT))[0] is None
+    assert KLIENTKODE[INNDATA_OPPTATT] == "inndata_ubrukelig"
+    assert not er_forbigaende("inndata_ubrukelig")
+
+
+def test_buntlaasen_og_nokkellaasen_deler_ikke_navnerom():
+    """De to låsene låser to forskjellige ting og må aldri kollapse:
+    separatoren er `\\x1f`, og andreleddet skiller navnerommene."""
+    from api.bestilling import inndata_laasenavn_for, laasenavn_for
+    assert inndata_laasenavn_for("t", "x") != laasenavn_for("t", "x")
+    assert inndata_laasenavn_for("t", "x") == "t\x1finndata\x1fx"
+
+
+@pg
+def test_opptatt_bunt_avvises_for_beslutningen(klient, migrator, miljo,
+                                               inndata_rot):
+    """Cursor P1, deterministisk: holdes buntlåsen av en ANNEN bestilling,
+    stopper forespørselen FØR kjernen — ingen beslutning, ingen kvote.
+
+    Låsen holdes av en tredje forbindelse — nøyaktig formen en bestilling
+    som fortsatt arbeider har — og `utfor_bestilling` er den EKTE
+    funksjonen her: det er dens egen `pg_try_advisory_lock` som avgjør.
+    Og når låsen slippes, går NØYAKTIG den samme forespørselen gjennom:
+    låsen er en serialisering, ikke en permanent stenging.
+    """
+    from api import bestilling as bm
+    _rekr_policy(migrator)
+    cookie, csrf = _adminsesjon()
+    ref = _bunt(klient, migrator, cookie, csrf)
+    profilref = _profil(migrator)
+    kropp = _evalkropp(ref, profilref)
+    nokkel = "n-" + secrets.token_hex(8)
+
+    laas = psycopg.connect(DSN)
+    try:
+        navn = bm.inndata_laasenavn_for(TENANT, ref.split(":", 1)[1])
+        assert laas.execute(
+            "SELECT pg_try_advisory_lock(hashtextextended(%s, 0))",
+            (navn,)).fetchone()[0] is True
+        r = _bestill(klient, cookie, csrf, kropp, nokkel)
+        assert (r.status_code, r.json()["feil"]) == (
+            409, "inndata_ubrukelig"), r.text
+        assert _beslutninger(migrator) == 0, \
+            "en forespørsel uten buntlåsen tok likevel en beslutning"
+        assert _buntrad(migrator, ref) == ("lastet", None)
+    finally:
+        laas.execute("SELECT pg_advisory_unlock_all()")
+        laas.close()
+
+    r2 = _bestill(klient, cookie, csrf, kropp, nokkel)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["beslutning"] == "tillat"
+    assert _buntrad(migrator, ref) == ("bundet", r2.json()["oppdrag_id"])
+
+
+@pg
+def test_to_samtidige_bestillinger_paa_bunten_brenner_en_kvote(
+        klient, app, migrator, miljo, inndata_rot, monkeypatch):
+    """Cursor P1, den BINDENDE testen: to tråder, samme lastede bunt,
+    ULIKE idempotensnøkler.
+
+    Nøkkellåsen serialiserer klientens nøkkel, og to ulike nøkler er to
+    ulike låser — bunten var dermed uvoktet. Begge passerte
+    forhåndsporten, begge committet en TILLAT-beslutning, og bare den ene
+    vant `bind_inndata`: taperen rullet oppdraget tilbake og svarte
+    `inndata_ubrukelig`, men beslutningen sto igjen committet. To
+    kvoteplasser brent, én jobb.
+
+    Kravet er tre tall på én gang: nøyaktig ett `tillat`, nøyaktig ETT
+    beslutningsoppdrag, og nøyaktig ÉN revisjonsrad. Det siste alene er
+    hele funnet — en implementasjon som avviste taperen ETTER beslutningen
+    ville bestått de to første.
+
+    `kjerne.behandle` synkroniseres med vilje: uten det kunne testen
+    bestått på flaks fordi den ene tråden rakk hele veien gjennom før den
+    andre leste forhåndsporten. Med barrieren er begge trådene garantert
+    forbi porten før noen av dem bestemmer seg — og da er det bare låsen
+    som kan holde dem fra hverandre.
+
+    MUTASJONEN SOM DREPER DENNE: fjern buntlåsen → to TILLAT, to
+    kvoteplasser.
+    """
+    from api import bestilling as bm
+    from api import kjerne as kjernemodul
+    from db.pg import koble
+    _rekr_policy(migrator)
+    cookie, csrf = _adminsesjon()
+    ref = _bunt(klient, migrator, cookie, csrf)
+    profilref = _profil(migrator)
+    assert _beslutninger(migrator) == 0
+
+    midt = threading.Barrier(2)
+    ekte = kjernemodul.behandle
+
+    def synkronisert(*a, **kw):
+        # Med låsen på plass kommer BARE den ene hit; ventetiden løper ut
+        # og barrieren brekker — som er nøyaktig svaret vi vil ha.
+        try:
+            midt.wait(3.0)
+        except threading.BrokenBarrierError:
+            pass
+        return ekte(*a, **kw)
+
+    monkeypatch.setattr(kjernemodul, "behandle", synkronisert)
+
+    start = threading.Barrier(2)
+    svar: list = []
+    laas = threading.Lock()
+
+    def kjor(i):
+        c = koble(DSN)
+        try:
+            start.wait(30)
+            res = bm.utfor_bestilling(
+                app.tjeneste, c, TENANT, "bruker:samtidig",
+                _evalkropp(ref, profilref, antall=i + 1),
+                f"n-{i}-" + secrets.token_hex(6), f"rid-{i}")
+        except Exception as e:                       # pragma: no cover
+            res = ("unntak", repr(e))
+        finally:
+            c.close()
+        with laas:
+            svar.append(res)
+
+    traader = [threading.Thread(target=kjor, args=(i,)) for i in range(2)]
+    for t in traader:
+        t.start()
+    for t in traader:
+        t.join(90)
+
+    assert len(svar) == 2, svar
+    ok = [s for s in svar if s[0] == "ok"]
+    feil = [s for s in svar if s[0] == "feil"]
+    assert len(ok) == 1 and len(feil) == 1, svar
+    assert ok[0][1]["beslutning"] == "tillat", svar
+    # Taperen møtte LÅSEN, ikke bindingen: den forbigående koden, ikke den
+    # terminale.
+    assert feil[0][1] == bm.INNDATA_OPPTATT, svar
+
+    oid = ok[0][1]["oppdrag_id"]
+    assert _buntrad(migrator, ref) == ("bundet", oid)
+    assert _beslutninger(migrator) == 1, \
+        "taperen brente en frekvensplass uten å få en jobb ut av den"
+    _sett_kontekst(migrator, TENANT)
+    n = migrator.execute(
+        "SELECT count(*) FROM oppdrag WHERE tenant=%s AND"
+        " oppdragstype='rekruttering.evaluering'", (TENANT,)).fetchone()[0]
+    migrator.rollback()
+    assert n == 1, "to oppdrag på én engangsbunt"

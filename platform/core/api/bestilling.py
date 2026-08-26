@@ -68,8 +68,17 @@ IDEMPOTENSNOKKEL_MAKS = 200
 #: Koden når aldri ut av prosessen og hører derfor ikke hjemme i
 #: feilveitabellen — den ER `idempotenskonflikt` utad.
 OPPTATT = "idempotens_opptatt"
+#: LOKAL kode for «bunten er OPPTATT akkurat nå» (Cursor P1). Samme klasse
+#: som `OPPTATT`, én knapp ressurs lenger inn: en annen bestilling holder
+#: engangsbunten og er i ferd med å binde den. Utad er den
+#: `inndata_ubrukelig` som før — 409, ingen beslutning, ingen kvote, og ett
+#: svar for alle årsakene (058-formen) — men den er FORBIGÅENDE, ikke en
+#: dom: taperen kan lovlig lykkes med en annen bunt, og planveien skal
+#: derfor ikke pause permanent på den.
+INNDATA_OPPTATT = "inndata_opptatt"
 #: Kodene endepunktet oversetter tilbake til klientens kontrakt.
-KLIENTKODE = {OPPTATT: "idempotenskonflikt"}
+KLIENTKODE = {OPPTATT: "idempotenskonflikt",
+              INNDATA_OPPTATT: "inndata_ubrukelig"}
 
 
 @dataclass(frozen=True)
@@ -289,6 +298,21 @@ def laasenavn_for(tenant: str, nokkel: str) -> str:
     return f"{tenant}\x1fbestillingsnokkel\x1f{nokkel}"
 
 
+def inndata_laasenavn_for(tenant: str, inndata_id: str) -> str:
+    """Navnet på advisory-låsen som serialiserer ENGANGSBUNTEN.
+
+    Samme form og samme separator som `laasenavn_for`, men et annet
+    andreledd, så de to navnerommene ikke kan kollapse.
+
+    Låsen tas ALLTID etter nøkkellåsen (fast rekkefølge, og begge er
+    `try`-låser), og den låser noe nøkkellåsen ikke kan nå: to
+    bestillinger med ULIKE `Idempotency-Key` — eller helt uten nøkkel —
+    peker lovlig på samme `inndata_id`, og bunten kan bare bindes én
+    gang.
+    """
+    return f"{tenant}\x1finndata\x1f{inndata_id}"
+
+
 def kjernenokkel_for(nokkel: str, hash_: str) -> str:
     """Kjernens idempotensnøkkel — BÆRER INTENSJONEN (Codex P1).
 
@@ -378,9 +402,10 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
     eller "plan:<plan_id>").
     """
     from . import kjerne
-    #: Sesjonslåsen på klientens idempotensnøkkel, satt når den er tatt —
-    #: se serialiseringen under og opprydningen i `finally`.
-    laasenavn = None
+    #: Sesjonslåsene som er TATT, i den rekkefølgen de ble tatt (nøkkelen
+    #: først, så engangsbunten) — se serialiseringene under og
+    #: opprydningen i `finally`.
+    laaser: list[str] = []
     try:
         try:
             norm = normaliser(tenant, data)
@@ -452,7 +477,7 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
             conn.rollback()
             if not fikk:
                 return ("feil", OPPTATT)
-            laasenavn = navn
+            laaser.append(navn)
 
         from db.pg import sett_kontekst
         sett_kontekst(conn, tenant, aktor, rid)
@@ -504,6 +529,45 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
             # (061-oppslaget ved payloadbygging, `bind_inndata` i
             # fødselstransaksjonen) feller uansett til slutt; dette er
             # den billige, ærlige forhåndsavvisningen.
+            #
+            # ... MEN EN FORHÅNDSPORT UTEN LÅS ER ET TOCTOU (Cursor P1).
+            # Nøkkellåsen over serialiserer `Idempotency-Key`, og bunten
+            # er ikke nøkkelen: to samtidige bestillinger med ULIKE
+            # nøkler (eller helt uten) på samme `inndata_id` passerte
+            # begge porten under, tok begge en TILLAT-beslutning — to
+            # frekvenskvoter, to committede beslutninger — og bare den
+            # ene vant `bind_inndata` i fødselstransaksjonen. Taperen
+            # rullet oppdraget tilbake og svarte `inndata_ubrukelig`,
+            # men beslutningen sto igjen committet: en kvoteplass brent
+            # uten en eneste jobb. Vinduet er ikke smalt slik
+            # `logging_feilet`-armen er smal — det er hele veien fra
+            # lesingen her til bindingen, med policyevalueringen imellom.
+            #
+            # Bunten serialiseres derfor på SEG SELV, med samme mønster
+            # som nøkkelen: en sesjons-`try`-lås tatt FØR forhåndsporten
+            # leser, holdt gjennom beslutningen og bindingen, sluppet i
+            # `finally`. Da er lesingen under gyldig helt fram til
+            # bindingen, og en taper møter låsen FØR beslutningen —
+            # ingen kvote brent i det hele tatt.
+            #
+            # `try` og ikke en ventende lås, av samme grunn som over: en
+            # bunt som er opptatt NÅ har en bestilling i arbeid, og
+            # svaret er forbigående. Og fordi begge låsene er `try`-låser
+            # tatt i fast rekkefølge, kan de ikke danne en syklus.
+            navn = inndata_laasenavn_for(tenant, norm["inndata_id"])
+            fikk = conn.execute(
+                "SELECT pg_try_advisory_lock(hashtextextended(%s, 0))",
+                (navn,)).fetchone()[0]
+            conn.rollback()
+            if not fikk:
+                # IKKE `inndata_ubrukelig` innover (Cursor P1): den er
+                # terminal, og planveien gjør en terminal kode om til en
+                # pause bare et menneske kan oppheve. Utad er de samme
+                # 409 — se `KLIENTKODE`.
+                tjeneste.logg.hendelse(INNDATA_OPPTATT, rid, tenant,
+                                       art="drift")
+                return ("feil", INNDATA_OPPTATT)
+            laaser.append(navn)
             sett_kontekst(conn, tenant, aktor, rid)
             pm = _PROFIL_REF.fullmatch(norm["stillingsprofil_ref"])
             prad = conn.execute(
@@ -949,20 +1013,24 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
         conn.commit()
         return ("ok", kropp, False)
     finally:
-        # SESJONSLÅSEN SLIPPES HER, ELLER SÅ BÆRER TILKOBLINGEN EN
+        # SESJONSLÅSENE SLIPPES HER, ELLER SÅ BÆRER TILKOBLINGEN EN
         # FREMMED LÅS TILBAKE TIL KALLEREN — se endepunktets kommentar.
-        if laasenavn is not None:
+        # Slippes i motsatt rekkefølge av tagningen, og en tilkobling som
+        # ikke fikk sluppet, LUKKES: da faller resten av låsene dens med
+        # sesjonen, og det er nettopp derfor sløyfa kan stoppe der.
+        for navn in reversed(laaser):
             try:
                 conn.rollback()
                 conn.execute(
                     "SELECT pg_advisory_unlock(hashtextextended(%s, 0))",
-                    (laasenavn,))
+                    (navn,))
                 conn.rollback()
             except Exception:
                 try:
                     conn.close()
                 except Exception:
                     pass
+                break
 
 
 def bestill_endepunkt(tjeneste, request: Request) -> Response:
