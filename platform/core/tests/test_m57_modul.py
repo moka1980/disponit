@@ -2395,6 +2395,50 @@ def test_umatchet_medlem_i_strommen_er_kodet_ikke_modellfeil(tmp_path,
     assert modell.sett == [], "modellen så en bunt vi ikke kunne adressere"
 
 
+def test_deklarert_medlem_som_aldri_strommes_stopper_kjoringen(tmp_path,
+                                                               monkeypatch):
+    """Cursor P2 på #161: toveisbindingen var TOVEIS ved lesing, men bare
+    ÉN vei midt i flukt. Et medlem strømmen har og kartet mangler ble
+    felt; det OMVENDTE — kartet deklarerer filer strømmen aldri yielder —
+    hadde ingen måling. Mister arkivet et deklarert medlem i vinduet
+    mellom bindingen og `les_porsjonsvis`, mens hver kandidat beholder
+    minst én fil, treffer `len(biter)` fortsatt `antall_soknader`:
+    kjøringen LYKTES, og kandidaten ble evaluert på et halvt
+    dokumentsett. Et ufullstendig dokumentsett er ikke et resultat.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `lest != len(kart)`-porten.
+    """
+    from modules.m57_ats import kjoring
+
+    def _kjor(arkiv, modell):
+        return kjoring.kjor_bunt(
+            arkiv, modell, vekter={"drift": 3},
+            kandidatfelter_for=lambda m: {"navn": ["N"]},
+            tekst_for=lambda m, d: d.decode("utf-8"),
+            biasmaalinger=_MAALINGER, antall_soknader=1)
+
+    arkiv = _bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>"),
+                             ("k1/brev.html", b"<p>mer drift</p>")])
+    # Positiv kontroll: hel bunt, begge medlemmene strømmes, porten tier.
+    assert set(_kjor(arkiv, _Modell())["artefakter"]) == {"k1"}
+
+    # Strømmen mister ett DEKLARERT medlem etter bindingen. Kandidaten
+    # står igjen med én fil, så både `tom_bunt` og kandidattallportene ser
+    # en gyldig bunt — det er nettopp den stille veien porten finnes for.
+    ekte = parsing.les_porsjonsvis
+    monkeypatch.setattr(
+        parsing, "les_porsjonsvis",
+        lambda sti: ((merke, medlem, data)
+                     for merke, medlem, data in ekte(sti)
+                     if medlem.navn != "k1/brev.html"))
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        _kjor(arkiv, modell)
+    assert e.value.kode == "manifest_medlem_mangler", e.value.kode
+    assert e.value.fremdrift, "evidensen mangler i utfallet"
+    assert modell.sett == [], "modellen så et halvt dokumentsett"
+
+
 def test_bunt_uten_kandidater_er_kodet_feil_ikke_tomt_resultat(tmp_path):
     """Codex P2: en bunt uten medlemmer ble et VELLYKKET tomt utfall.
 

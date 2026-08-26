@@ -271,6 +271,24 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
         # bunt er SP-3s kodede utfall, aldri et resultat.
         if not biter:
             raise Kjoringsfeil("tom_bunt", fremdrift)
+        # TOVEIS MIDT I FLUKT VAR BARE ÉN VEI (Cursor P2). Oppslaget over
+        # feller et medlem strømmen har og kartet mangler; den OMVENDTE
+        # divergensen — kartet deklarerer filer strømmen aldri yielder —
+        # hadde ingen måling i det hele tatt. Mister arkivet et deklarert
+        # medlem i vinduet mellom bindingen og `les_porsjonsvis`, mens
+        # hver kandidat beholder minst én fil, treffer `len(biter)`
+        # fortsatt `antall_soknader`: kjøringen LYKKES, og en kandidat
+        # evalueres på et halvt dokumentsett uten at noen sa fra.
+        #
+        # `les_porsjonsvis` yielder nøyaktig innholdsmedlemmene
+        # (manifestet er filtrert bort der), så `lest` og `len(kart)` er
+        # samme tall i en hel bunt. Koden er `les_manifest`s egen for
+        # nettopp denne retningen — deklarert navn uten medlem — så de to
+        # veiene beholder hvert sitt ord uansett hvor divergensen dukker
+        # opp: `medlem_uadressert` den ene veien, `manifest_medlem_mangler`
+        # den andre.
+        if lest != len(kart):
+            raise Kjoringsfeil("manifest_medlem_mangler", fremdrift)
         # Sluttporten står som DEFENSE (mekanismen er nå manifestets
         # toveisbinding + tallporten foran strømmen): faller de, skal
         # dette aldri passere stille.
