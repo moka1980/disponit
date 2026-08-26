@@ -39,6 +39,12 @@ FORNY_INTERVALL_S = 240.0
 FORNY_LEASE_S = 600
 #: Margin reservert til rapportbygging + levering + kvittering.
 AVSLUTNINGSMARGIN_S = 120.0
+#: `lever` kjøres TO ganger i en avslutning: opplastingen og kvitteringen.
+LEVERINGSRUNDER = 2
+#: Arbeidet MELLOM kallene — bygging og skjemavalidering av rapporten, og
+#: signeringen av kvitteringen. Grovt, og med vilje romslig: det som
+#: trekkes fra her blir ikke brukt på en HTTP-frist.
+AVSLUTNINGSARBEID_S = 20.0
 
 #: Kroppsstatusene som betyr at plattformen FAKTISK skiftet status på
 #: oppdraget — de `/v1/oppdrag/kvittering` gir sammen med 2xx.
@@ -51,9 +57,37 @@ _STATUSSKIFTE = ("utfort", "feilet", "idempotent")
 
 
 def http_frist_s(margin_s: float = AVSLUTNINGSMARGIN_S) -> float:
-    """Transportfristen per kall, avledet av avslutningsbudsjettet delt
-    på kallene som faktisk gjøres (m56-formen)."""
-    return margin_s / (2 * LEVERINGSFORSOK)
+    """Den lengste ETT HTTP-kall kan få og likevel holde hele
+    avslutningens VERSTEFALL innenfor lukkevinduet (m56s formel,
+    speilet).
+
+    Fristen var `margin / (2 * LEVERINGSFORSOK)` — altså delt på kallene
+    ALENE. PAUSENE mellom forsøkene sto utenfor budsjettet, og de er
+    store her: `LEVERINGSPAUSE_S = 5.0` gir 0+5+10+15 = 30 sekunder per
+    runde, 60 over begge. Med de gamle 15 sekundene per kall ble
+    verstefallet 8·15 + 60 = 180 sekunder mot de 120 marginen ga hele
+    avslutningen — en plattform som tar imot forbindelsen og så tier
+    kunne dermed la kvitteringsvinduet løpe ut MIDT i retryen, og
+    oppdraget sto ufullført.
+
+    Fristen avledes derfor av marginen i stedet for å stå ved siden av
+    den: åtte kall, pausene mellom dem, og arbeidet i mellom skal til
+    sammen få plass. Skrus `LEVERINGSFORSOK` eller `LEVERINGSPAUSE_S`
+    opp, krymper hvert kall — budsjettet er det samme, og at det er
+    trangt blir dermed synlig her i stedet for å bli oppdaget som et
+    utløpt vindu i drift.
+
+    Fristen er en SOCKET-frist hos arbeideren (`urllib`s `timeout`), ikke
+    et tak på hele overføringen: det den måler er taushet, og en
+    plattform som sender jevnt bruker den aldri opp.
+
+    Gulvet på ett sekund finnes for at en absurd liten margin skal gi en
+    kort frist og ikke en negativ: et kall som ikke kan tas er ikke en
+    innstramming."""
+    pauser = LEVERINGSRUNDER * sum(LEVERINGSPAUSE_S * f
+                                   for f in range(LEVERINGSFORSOK))
+    kall = LEVERINGSFORSOK * LEVERINGSRUNDER
+    return max(1.0, (margin_s - AVSLUTNINGSARBEID_S - pauser) / kall)
 
 
 def _sov(sekunder: float) -> None:

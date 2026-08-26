@@ -308,6 +308,44 @@ def test_tom_ko_er_tomt_utfall():
     assert res == {"utfall": "tomt"}
 
 
+def test_http_frist_passer_innenfor_avslutningsmargin():
+    """m56s `test_http_frist_passer_innenfor_avslutningsmargin`, portert
+    for m57s konstanter: verstefallet av retryen skal få plass i den
+    marginen `_evalueringsfrist` har reservert til avslutningen.
+
+    Fristen var `margin / (2 * LEVERINGSFORSOK)` og lot PAUSENE stå
+    utenfor budsjettet — med `LEVERINGSPAUSE_S = 5.0` er de 60 sekunder
+    av 120. Testen regner verstefallet av de SAMME konstantene koden
+    bruker: skrus `LEVERINGSFORSOK` eller pausen opp, eller marginen ned,
+    uten at fristen følger med, blir denne rød."""
+    from modules.m57_ats import controller
+
+    frist = controller.http_frist_s()
+    kall = controller.LEVERINGSFORSOK * controller.LEVERINGSRUNDER
+    pauser = controller.LEVERINGSRUNDER * sum(
+        controller.LEVERINGSPAUSE_S * f
+        for f in range(controller.LEVERINGSFORSOK))
+    verstefall = kall * frist + pauser + controller.AVSLUTNINGSARBEID_S
+    assert verstefall <= controller.AVSLUTNINGSMARGIN_S, (verstefall, frist)
+    # ... og fristen skal være det marginen faktisk gir, ikke et vilkårlig
+    # mindre tall: hele budsjettet er til for å BRUKES når plattformen er
+    # treg, bare ikke til å overskrides.
+    assert verstefall == pytest.approx(controller.AVSLUTNINGSMARGIN_S)
+    # Gulvet: en absurd liten margin gir en kort frist, ikke en negativ.
+    assert controller.http_frist_s(margin_s=1) == 1.0
+
+
+def test_arbeideren_bruker_den_avledede_fristen():
+    """Fristen er ingen port hvis arbeideren setter sin egen ved siden
+    av: klienten skal få `controller.http_frist_s()`, aldri et fast
+    tall."""
+    from pathlib import Path
+
+    kilde = (Path(__file__).resolve().parents[2]
+             / "drift/m57_arbeider.py").read_text(encoding="utf-8")
+    assert "KlientHTTP(api, controller.http_frist_s())" in kilde
+
+
 def test_payloaden_maales_mot_plattformens_kontrakt():
     """m56s `_kontraktsbrudd`, speilet: utføreren leser den SAMME
     tabellen (`oppdragskontrakt`) som stoppet oppdraget ved
