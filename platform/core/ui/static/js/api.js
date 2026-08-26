@@ -157,6 +157,13 @@ export const hentMaler = () => hentJson("/v1/policymaler");
 // før #159 har evidensdesignet — den svarer en kodet 409 begge veier. En
 // klientfunksjon for en mutasjon ingen kan utføre er død kode; #159 er
 // PR-en som bringer den tilbake sammen med skrivingen.
+// Stillingsprofilen (#189): lagring er ALLTID en ny, komplett versjon —
+// `profilId` null oppretter en ny profil.
+export const lagreStillingsprofil = (profilId, navn, krav, idem) =>
+  _muter("/v1/rekruttering/stillingsprofiler", "POST",
+         { profil_id: profilId, navn, krav },
+         idem || nyIdempotensnokkel());
+
 export const signerRekrutteringsliste = (listeId, innholdHash, idem) =>
   _muter(`/v1/rekruttering/lister/${encodeURIComponent(listeId)}/signer`,
          "POST", { innhold_hash: innholdHash }, idem || nyIdempotensnokkel());

@@ -17,7 +17,7 @@
 // egen sannhet.
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
-import { hentJson, signerRekrutteringsliste,
+import { hentJson, signerRekrutteringsliste, lagreStillingsprofil,
          nyIdempotensnokkel, UautorisertFeil } from "../api.js";
 import { harScope } from "../sitekart.js";
 import { DataTabell } from "../tabell.js";
@@ -117,15 +117,30 @@ export function visRekruttering(hoved, ctx) {
   const okt = { signeringsnokler: new Map(), signerte: new Set(),
     utfall: null };
   medStatus(hoved, ctx,
-    () => hentJson("/v1/rekruttering/prosesser"),
+    async () => {
+      // Profilene er TILLEGGSDATA (samme politikk som
+      // `hentUtrullingForSkall`): faller de, står prosessflaten likevel
+      // — editoren viser sin egen tomtilstand. 401 er kvalitativt annet
+      // og skal nå innloggingsveien, som overalt ellers.
+      const [pros, prof] = await Promise.all([
+        hentJson("/v1/rekruttering/prosesser"),
+        hentJson("/v1/rekruttering/stillingsprofiler").catch((e) => {
+          if (e instanceof UautorisertFeil) throw e;
+          return { profiler: [] };
+        }),
+      ]);
+      return { ...pros, profiler: (prof && prof.profiler) || [] };
+    },
     (data) => tegn(hoved, ctx, data, okt));
 }
 
 function tegn(hoved, ctx, data, okt, valgtId) {
   const prosesser = (data && data.prosesser) || [];
+  const profilDel = profilSeksjon(hoved, ctx, data, okt);
   if (!prosesser.length) {
     sett(hoved, flateHode(t("ui.rekruttering.tittel")),
-      el("p", { text: t("ui.rekruttering.ingen_prosess") }));
+      el("p", { text: t("ui.rekruttering.ingen_prosess") }),
+      profilDel);
     return;
   }
   // FLERE PROSESSER ER TILGJENGELIGE, IKKE BARE DEN FØRSTE (Codex P2).
@@ -529,6 +544,192 @@ function tegn(hoved, ctx, data, okt, valgtId) {
 
   sett(hoved, flateHode(t("ui.rekruttering.tittel")), velgerRot,
     utfall, kunngjoring, blindingRot, vektRot, merknadRot, tabellRot,
-    listeRot);
+    listeRot, profilDel);
   tegnTabell();
+}
+
+
+// ------------------------------------------------------------------
+// Stillingsprofilene (#189): kundens/adminens egen kravliste — navn +
+// vekt per krav, alltid lagret som en NY versjon (append-only i basen;
+// en kjørt evaluering peker på profilen slik den var). Editoren er
+// skjemaform etter §8: ekte <label for>, tallfelt med min/maks, knapper
+// som <button>, utfall i role="alert", og fokus flyttes inn i skjemaet
+// når det åpnes.
+function profilSeksjon(hoved, ctx, data, okt) {
+  const profiler = (data && data.profiler) || [];
+  // Cursor P2-1 (runde 2): flaten er lesbar med decisions:read, men
+  // POST-ruten krever bestilling:opprett (app.py) — skrive-UI uten
+  // scopet er en blindvei som først dør server-side. Samme port som
+  // kanBestille i bestillingsdelen.
+  const kanSkrive = harScope(ctx, "bestilling:opprett");
+  const rot = el("section", { "aria-labelledby": "profil-tittel" });
+  const utfall = el("div", { role: "alert", class: "utfall" });
+  const liste = el("div");
+  const skjemaRot = el("div");
+  let teller = 0;
+
+  const oppdaterListe = async () => {
+    // KUN profildelen hentes på nytt (CodeRabbit minor): en full
+    // re-tegning av flaten ville visket ut kvitteringen i alerten før
+    // brukeren rakk å lese den. Prosessdelen står som den sto.
+    try {
+      const prof = await hentJson("/v1/rekruttering/stillingsprofiler");
+      profiler.length = 0;
+      for (const p of (prof && prof.profiler) || []) profiler.push(p);
+    } catch (e) {
+      if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+    }
+    tegnListe();
+    sett(skjemaRot);
+  };
+
+  const kravRad = (kropp, krav) => {
+    teller += 1;
+    const kid = `profil-krav-${teller}`;
+    const vid = `profil-vekt-${teller}`;
+    const navnInp = el("input", { type: "text", id: kid, maxlength: "120",
+      required: true, value: krav ? krav.kravnavn : "" });
+    const vektInp = el("input", { type: "number", id: vid, min: "0",
+      max: "10", step: "1", required: true,
+      value: krav ? String(krav.vekt) : "3" });
+    const rad = el("tr", {},
+      el("td", {}, el("label", { for: kid, class: "sr-only",
+        text: t("ui.rekruttering.profiler.krav") }), navnInp),
+      el("td", {}, el("label", { for: vid, class: "sr-only",
+        text: t("ui.rekruttering.profiler.vekt") }), vektInp));
+    const fjern = el("button", { type: "button",
+      text: t("ui.rekruttering.profiler.fjern") });
+    // Etiketten settes ved OPPRETTELSEN og følger feltet (CodeRabbit
+    // minor): en skjermleser skal høre hvilket krav knappen fjerner FØR
+    // den aktiveres, ikke etterpå.
+    const settEtikett = () => fjern.setAttribute("aria-label",
+      t("ui.rekruttering.profiler.fjern_krav")
+        .replace("{navn}", navnInp.value || "?"));
+    settEtikett();
+    navnInp.addEventListener("input", settEtikett);
+    fjern.addEventListener("click", () => rad.remove());
+    rad.append(el("td", {}, fjern));
+    kropp.append(rad);
+    return navnInp;
+  };
+
+  const aapneSkjema = (profil) => {
+    teller = 0;
+    // SP-2: nøkkelen hører til DETTE skjemaforsøket og holdes til et
+    // DEFINITIVT svar (Cursor P1-1/P2-4): et tapt 2xx + nytt klikk skal
+    // være samme operasjon — serveren replayer på nøkkelen. Først når
+    // svaret kom (uansett utfall serveren har dømt), byttes den.
+    let idem = nyIdempotensnokkel();
+    const navnId = "profil-navn";
+    const navnInp = el("input", { type: "text", id: navnId,
+      maxlength: "200", required: true,
+      value: profil ? profil.navn : "" });
+    const kropp = el("tbody");
+    const tabell = el("table", {},
+      el("caption", { text: t("ui.rekruttering.profiler.tabell") }),
+      el("thead", {}, el("tr", {},
+        el("th", { scope: "col",
+          text: t("ui.rekruttering.profiler.krav") }),
+        el("th", { scope: "col",
+          text: t("ui.rekruttering.profiler.vekt") }),
+        el("th", { scope: "col",
+          text: t("ui.rekruttering.profiler.fjern") }))),
+      kropp);
+    if (profil && profil.krav.length) {
+      for (const k of profil.krav) kravRad(kropp, k);
+    } else {
+      kravRad(kropp, null);
+    }
+    const leggTil = el("button", { type: "button",
+      text: t("ui.rekruttering.profiler.leggtil") });
+    leggTil.addEventListener("click", () => {
+      const inp = kravRad(kropp, null);
+      inp.focus();
+    });
+    const lagre = el("button", { type: "submit",
+      text: t("ui.rekruttering.profiler.lagre") });
+    const avbryt = el("button", { type: "button",
+      text: t("ui.rekruttering.profiler.avbryt") });
+    avbryt.addEventListener("click", () => {
+      sett(skjemaRot);
+    });
+    const skjema = el("form", {},
+      el("p", {},
+        el("label", { for: navnId,
+          text: t("ui.rekruttering.profiler.navn") }), " ", navnInp),
+      tabell, el("p", {}, leggTil, " ", lagre, " ", avbryt));
+    skjema.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const krav = [];
+      for (const rad of kropp.querySelectorAll("tr")) {
+        const [ninp, vinp] = rad.querySelectorAll("input");
+        if (!ninp) continue;
+        krav.push({ kravnavn: ninp.value.trim(),
+                    vekt: Number(vinp.value) });
+      }
+      if (!krav.length) {
+        sett(utfall, t("ui.rekruttering.profiler.tomt_krav"));
+        return;
+      }
+      lagre.disabled = true;
+      try {
+        const svar = await lagreStillingsprofil(
+          profil ? profil.profil_id : null, navnInp.value.trim(), krav,
+          idem);
+        idem = nyIdempotensnokkel();   // definitivt svar → ny operasjon
+        sett(utfall, t("ui.rekruttering.profiler.lagret")
+          .replace("{navn}", navnInp.value.trim())
+          .replace("{versjon}", String(svar.versjon)));
+        await oppdaterListe();
+      } catch (e) {
+        if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+        if (e && e.status >= 400 && e.status < 500) {
+          // Serveren DØMTE operasjonen — en retry er en NY operasjon.
+          idem = nyIdempotensnokkel();
+        }
+        // Nettverk/5xx: nøkkelen beholdes — retry er SAMME operasjon.
+        lagre.disabled = false;
+        sett(utfall, t("ui.rekruttering.profiler.feil"));
+      }
+    });
+    sett(skjemaRot, skjema);
+    navnInp.focus();
+  };
+
+  const tegnListe = () => {
+    const rader = profiler.map((p) => {
+      const deler = [
+        el("strong", { text: p.navn }), " — ",
+        t("ui.rekruttering.profiler.versjon")
+          .replace("{versjon}", String(p.versjon)),
+        " · ",
+        p.krav.map((k) => `${k.kravnavn} ${k.vekt}`).join(", "),
+      ];
+      if (kanSkrive) {
+        const rediger = el("button", { type: "button",
+          text: t("ui.rekruttering.profiler.rediger") });
+        rediger.addEventListener("click", () => aapneSkjema(p));
+        deler.push(" ", rediger);
+      }
+      return el("li", {}, ...deler);
+    });
+    sett(liste, profiler.length
+      ? el("ul", {}, rader)
+      : el("p", { text: t("ui.rekruttering.profiler.ingen") }));
+  };
+
+  tegnListe();
+  const bunn = el("p", {});
+  if (kanSkrive) {
+    const ny = el("button", { type: "button",
+      text: t("ui.rekruttering.profiler.ny") });
+    ny.addEventListener("click", () => aapneSkjema(null));
+    bunn.append(ny);
+  }
+  sett(rot,
+    el("h2", { id: "profil-tittel",
+      text: t("ui.rekruttering.profiler.tittel") }),
+    utfall, liste, bunn, skjemaRot);
+  return rot;
 }

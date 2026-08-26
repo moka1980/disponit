@@ -59,5 +59,6 @@
   "058_inndata_artefakt.sql": "97e6ddff35eb3f3f9ec963329ff2c82ef4c35a7b76a4da91ab3abae0ef6d74e4",
   "059_b_maskinen.sql": "b4b2a0d4598d76a0e1bb159bbfe3c3c6fd800d16f7cad602252b89270734e5f6",
   "060_inndata_resolver.sql": "020c2394a1beed4caf53a3a658de49af16856046e9fdc23866edeb98eceb83dc",
+  "061_stillingsprofil.sql": "94aefa1dad4139af22f85337f02e617d2aa2bf71750119794d98ccc3716841f7",
   "062_modultoken_klokke.sql": "f0f8b7bd2a6d207b10a1bc92c3115261e6e27d21be9879c27990c690835a366b"
 }

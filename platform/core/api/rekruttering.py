@@ -822,3 +822,134 @@ def blinding_endepunkt(tjeneste, request):
         return _feil("blinding_avskruing_krever_159", rid, 409)
 
     return _med_conn(tjeneste, rid, kjor)
+
+
+def stillingsprofiler_endepunkt(tjeneste, request):
+    """GET /v1/rekruttering/stillingsprofiler — kundens kravlister (#189).
+
+    Leseflaten viser SISTE versjon av hver profil, med hele kravsettet
+    (navn + vekt) i lagret rekkefølge. Historikken er append-only i
+    basen (061); eldre versjoner er oppslagbare via `?alle=1` den dagen
+    flaten trenger dem — inntil da holdes svaret på det editoren viser.
+    """
+    from .app import _rid
+    from .policyadmin_http import _med_conn, _ok
+    rid = _rid(request)
+    av = _modul_inaktiv(tjeneste, rid)
+    if av is not None:
+        return av
+
+    def kjor(conn):
+        tenant, _bid = _leseauth_beslutninger(tjeneste, request, conn, rid)
+        profiler = []
+        for pid, versjon, navn, opprettet, av_ in conn.execute(
+                "SELECT s.profil_id, s.versjon, s.navn, s.opprettet,"
+                "       s.opprettet_av"
+                "  FROM stillingsprofil s"
+                " WHERE s.tenant=%s"
+                "   AND s.versjon = (SELECT max(i.versjon)"
+                "                      FROM stillingsprofil i"
+                "                     WHERE i.tenant=s.tenant"
+                "                       AND i.profil_id=s.profil_id)"
+                " ORDER BY s.opprettet DESC", (tenant,)).fetchall():
+            krav = [{"kravnavn": kn, "vekt": v}
+                    for kn, v in conn.execute(
+                        "SELECT kravnavn, vekt FROM stillingsprofil_krav"
+                        " WHERE tenant=%s AND profil_id=%s AND versjon=%s"
+                        " ORDER BY rekkefolge",
+                        (tenant, pid, versjon)).fetchall()]
+            profiler.append({
+                "profil_id": str(pid), "versjon": versjon, "navn": navn,
+                "opprettet": opprettet.isoformat(),
+                "opprettet_av": av_, "krav": krav,
+            })
+        return _ok({"profiler": profiler}, rid)
+
+    return _med_conn(tjeneste, rid, kjor)
+
+
+def stillingsprofil_lagre_endepunkt(tjeneste, request):
+    """POST /v1/rekruttering/stillingsprofiler — ny profil ELLER ny
+    versjon (#189).
+
+    Kroppen: `{"navn": ..., "krav": [{"kravnavn": ..., "vekt": 0-10},
+    ...]}` + valgfri `"profil_id"` for å versjonere en eksisterende.
+    Redigering er ALDRI en mutasjon: døren (061) skriver en ny,
+    komplett versjon atomisk — en kjørt evaluering peker på profilen
+    slik den var. Valideringen bor i døren og CHECKene; her mappes bare
+    feilkontrakten (invalid_parameter_value/CheckViolation/
+    UniqueViolation → 400 med sanert melding).
+    """
+    import uuid as uuidlib
+
+    from .app import _rid
+    from .policyadmin_http import (_Avbrudd, _browserkontekst, _feil,
+                                   _krev_idem, _kropp, _med_conn, _ok)
+    rid = _rid(request)
+    av = _modul_inaktiv(tjeneste, rid)
+    if av is not None:
+        return av
+
+    def kjor(conn):
+        tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
+                                       _SIGNERINGSSCOPE)
+        # Opprettelsen er ikke naturlig idempotent (CodeRabbit major):
+        # et tapt 201 + retry ville laget en NY profil/versjon. Nøkkelen
+        # er PÅKREVD, og døren gjenspiller samme svar på samme nøkkel.
+        nokkel = _krev_idem(request, rid)
+        kropp = _kropp(request)
+        profil_id = kropp.get("profil_id")
+        if profil_id is not None:
+            # Formfeil er 400 her, ikke en psycopg-feil i døren.
+            try:
+                profil_id = uuidlib.UUID(str(profil_id))
+            except ValueError:
+                raise _Avbrudd(_feil("request_feilformet", rid))
+        navn, krav = kropp.get("navn"), kropp.get("krav")
+        if not isinstance(navn, str) or not isinstance(krav, list):
+            raise _Avbrudd(_feil("request_feilformet", rid))
+        try:
+            rad = conn.execute(
+                "SELECT ut_profil_id, ut_versjon FROM"
+                " opprett_stillingsprofil_versjon(%s,%s,%s,%s,"
+                "%s::jsonb,%s)",
+                (tenant, profil_id, navn, bid,
+                 json.dumps(krav), nokkel)).fetchone()
+        except psycopg.errors.InvalidParameterValue as e:
+            raise _Avbrudd(_feil("request_feilformet", rid)) from e
+        except psycopg.errors.CheckViolation as e:
+            # Range-/lengdebrudd (vekt utenfor 0–10, tomt/for langt
+            # navn) håndheves av 061-CHECKene — samme 400-kontrakt.
+            raise _Avbrudd(_feil("request_feilformet", rid)) from e
+        except psycopg.errors.UniqueViolation as e:
+            # TRE betydninger deler SQLSTATE 23505 (Cursor P1-3, samme
+            # klasse som signeringens _NOKKELBRUDD): (a) kappløp på
+            # idempotensnøkkelen — taperen SKAL få vinnerens svar, så
+            # døren kjøres én gang til og treffer replay-armen; (b)
+            # nøkkelen brukt for ANNET innhold (dørens egen RAISE, uten
+            # constraint-navn) → 409 idempotenskonflikt; (c) duplikat
+            # kravnavn i settet → 400.
+            if getattr(e.diag, "constraint_name", None) ==                     "stillingsprofil_idem":
+                # Rollbacken tok SET LOCAL-konteksten — settes på nytt
+                # før dørens andre kjøring.
+                conn.rollback()
+                from db.pg import sett_kontekst
+                sett_kontekst(conn, tenant, bid, rid)
+                try:
+                    rad = conn.execute(
+                        "SELECT ut_profil_id, ut_versjon FROM"
+                        " opprett_stillingsprofil_versjon(%s,%s,%s,%s,"
+                        "%s::jsonb,%s)",
+                        (tenant, profil_id, navn, bid,
+                         json.dumps(krav), nokkel)).fetchone()
+                except psycopg.errors.UniqueViolation as e2:
+                    raise _Avbrudd(_feil("idempotenskonflikt", rid))                         from e2
+            elif getattr(e.diag, "constraint_name", None) is None:
+                raise _Avbrudd(_feil("idempotenskonflikt", rid)) from e
+            else:
+                raise _Avbrudd(_feil("request_feilformet", rid)) from e
+        conn.commit()
+        return _ok({"profil_id": str(rad[0]), "versjon": rad[1]},
+                   rid, 201)
+
+    return _med_conn(tjeneste, rid, kjor)

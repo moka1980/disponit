@@ -929,6 +929,14 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def rekruttering_blinding(request: Request) -> Response:
         return rekruttering_http.blinding_endepunkt(tjeneste, request)
 
+    def rekruttering_profiler(request: Request) -> Response:
+        return rekruttering_http.stillingsprofiler_endepunkt(
+            tjeneste, request)
+
+    def rekruttering_profil_lagre(request: Request) -> Response:
+        return rekruttering_http.stillingsprofil_lagre_endepunkt(
+            tjeneste, request)
+
     # PR-013: policyadministrasjon — utkast-CRUD + aktivering (fire-øyne).
     from . import policyadmin_http
 
@@ -1116,6 +1124,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               methods=["PUT"]),
         Route("/v1/rekruttering/prosesser", rekruttering_prosesser,
               methods=["GET"]),
+        Route("/v1/rekruttering/stillingsprofiler", rekruttering_profiler,
+              methods=["GET"]),
+        Route("/v1/rekruttering/stillingsprofiler",
+              rekruttering_profil_lagre, methods=["POST"]),
         Route("/v1/rekruttering/prosesser/{prosess_id}/blinding",
               rekruttering_blinding, methods=["POST"]),
         Route("/v1/rekruttering/lister/{liste_id:uuid}/signer",
@@ -1550,6 +1562,10 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # og blinding-avskruing bak mutasjonsscopet (056-kjeden + #159 gjør
     # resten av dømmingen inne i endepunktene).
     ("GET",  "/v1/rekruttering/prosesser"):  "decisions:read",
+    ("GET",  "/v1/rekruttering/stillingsprofiler"): "decisions:read",
+    # Skriving av profilen er kundens/adminens bestillingsmyndighet —
+    # samme scope som signeringen og inndata-reservasjonen.
+    ("POST", "/v1/rekruttering/stillingsprofiler"): "bestilling:opprett",
     # Modulveien (060): retten er CLAIMET — ORDRESCOPE-klassen som
     # claim/kvittering; auth avgjøres i endepunktet (modultoken).
     ("POST", "/v1/inndata/hent-for-oppdrag/{oppdrag_id:int}"):
