@@ -2357,6 +2357,53 @@ def test_manifesttaket_er_en_maalt_port_ikke_bare_en_linje(tmp_path):
                for m in parsing.inspiser_bunt(arkiv))
 
 
+def test_manifesttaket_maales_paa_bytene_ikke_bare_paastanden(tmp_path):
+    """Cursor P2 (runde 4) på #161: taket sto BARE på katalogpåstanden.
+
+    `inspiser_bunt` måler `info.file_size`; `les_manifest` gjorde
+    `zf.read` uten å måle det den faktisk fikk. For SØKNADSINNHOLD stoler
+    strømmen bevisst ikke på katalogen — `lest > MAKS_ENKELTFIL` måles på
+    de utpakkede bytene — og deklarasjonsarmen manglet den speilingen.
+
+    Katalogen `inspiser_bunt` leste er ikke nødvendigvis den `zf.read`
+    åpner: fila kan være byttet i vinduet, eller `medlemmer` komme fra en
+    annen lesning. Det er samme divergens `manifest_mangler`-porten
+    finnes for, og her er formen målt med samme rigg — en medlemsliste
+    som PÅSTÅR en liten deklarasjon over en bunt som bærer en for stor.
+
+    (En katalog som bare lyver NEDOVER er alt dekket: `zipfile` trunkerer
+    da strømmen på den deklarerte lengden og feller CRC-en, altså
+    `korrupt_bunt` — se `test_en_lognaktig_katalog_er_en_korrupt_bunt`.
+    Denne porten er den som står igjen når bytene faktisk kommer ut.)
+
+    MUTASJONEN SOM DREPER DENNE: fjern `len(raa) > MAKS_MANIFESTBYTES`
+    i `les_manifest` — da er den for store deklarasjonen en LOVLIG bunt.
+    """
+    import json as _json
+
+    # Ærlig, gyldig JSON — bare for stor. Uten porten går den rett
+    # gjennom og returnerer et kart, så mutasjonen har ingen annen død.
+    kropp = _json.dumps({"soknader": [{"kandidat_id": "k1",
+                                       "filer": ["k1/cv.html"]}]})
+    over = kropp + " " * (parsing.MAKS_MANIFESTBYTES + 1 - len(kropp))
+    arkiv = _bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>")],
+                  manifest=over)
+    # Medlemslista er en ANNEN lesnings katalog: den påstår en
+    # deklarasjon innenfor taket, så gatens egen sjekk aldri feller den.
+    pastand = [parsing.Medlem("soknader.json", 64),
+               parsing.Medlem("k1/cv.html", 12)]
+    with pytest.raises(parsing.Buntfeil) as e:
+        parsing.les_manifest(arkiv, pastand)
+    assert e.value.kode == "manifest_feilformet", e.value.kode
+
+    # Kontroll: NØYAKTIG taket er grønt — porten måler «over», ikke «nær».
+    (tmp_path / "taket").mkdir()
+    paa = kropp + " " * (parsing.MAKS_MANIFESTBYTES - len(kropp))
+    arkiv = _bunt(tmp_path / "taket", [("k1/cv.html", b"<p>drift</p>")],
+                  manifest=paa)
+    assert parsing.les_manifest(arkiv, pastand) == {"k1/cv.html": "k1"}
+
+
 def test_manifestet_har_ikke_fritak_fra_null_komprimert(tmp_path):
     """Cursor P2 (runde 3) på #161: manifest-armen målte bare taket og
     gikk `continue` — bombe-armen som feller `compress_size = 0` sto

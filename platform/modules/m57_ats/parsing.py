@@ -635,6 +635,18 @@ def les_manifest(sti: str | Path,
     except (RuntimeError, NotImplementedError) as feil:
         raise Buntfeil("uleselig_medlem",
                        f"{MANIFESTNAVN}: {type(feil).__name__}") from feil
+    # TAKET MÅLES PÅ BYTENE, IKKE BARE PÅ PÅSTANDEN (Cursor P2, runde 4).
+    # `inspiser_bunt` håndhever `MAKS_MANIFESTBYTES` på `info.file_size`,
+    # og det er KATALOGENS påstand — nøyaktig det strømmen ikke stoler på
+    # for søknadsinnhold, der `lest > MAKS_ENKELTFIL` måles på de faktiske
+    # bytene av samme grunn. Deklarasjonsarmen manglet den speilingen:
+    # katalogen `inspiser_bunt` leste er ikke nødvendigvis den `zf.read`
+    # åpner (fila byttet i vinduet, eller en `medlemmer`-liste fra en
+    # annen lesning — samme divergens `manifest_mangler`-porten over
+    # finnes for), og da var taket bare en påstand vi hadde tatt for god
+    # fisk. Vi måler det vi faktisk holder.
+    if len(raa) > MAKS_MANIFESTBYTES:
+        raise Buntfeil("manifest_feilformet", "for stort")
     try:
         data = json.loads(raa.decode("utf-8"))
     # JSON-DYBDE ER OGSÅ EN FORM (Cursor P1, runde 2). `json` melder
