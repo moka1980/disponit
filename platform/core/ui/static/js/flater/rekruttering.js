@@ -703,7 +703,8 @@ function bestillSeksjon(hoved, ctx, data, okt) {
         .replace("{beslutning}", String(svar.beslutning)));
     } catch (e) {
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
-      if (e && e.status >= 400 && e.status < 500) {
+      const definitivt = !!e && e.status >= 400 && e.status < 500;
+      if (definitivt) {
         // Serveren DØMTE operasjonen — retry er en NY operasjon. En
         // reservert bunt beholdes: dommen gjaldt bestillingen, ikke
         // opplastingen.
@@ -720,7 +721,18 @@ function bestillSeksjon(hoved, ctx, data, okt) {
         if (tilstand.inndataRef == null) tilstand.reserverIdem = null;
       }
       // Nettverk/5xx: begge nøklene beholdes — retry er SAMME operasjon.
-      sett(utfall, t("ui.rekruttering.bestill.feil"));
+      //
+      // ... OG DA ER «BESTILLINGEN FEILET» EN FALSK SETNING (Cursor
+      // P2-4). Samme klasse som alt er lukket for signeringen (`meldFeil`
+      // over): ved status 0 nådde forespørselen kanskje aldri fram —
+      // eller svaret gikk tapt ETTER at serveren commitet — og ved 5xx er
+      // commit-status ukjent. Bare 4xx er serverens egen avvisning før
+      // commit. Teksten for det uvisse er husets egen, ordrett den
+      // signeringen bruker: den sier at utfallet er ukjent, at en ny
+      // forsøk gjentar SAMME operasjon (nøkkelen står, se over), og at
+      // en omlasting viser serverens tilstand.
+      sett(utfall, t(definitivt ? "ui.rekruttering.bestill.feil"
+        : "ui.rekruttering.usikkert_utfall"));
     } finally {
       send.disabled = false;
     }

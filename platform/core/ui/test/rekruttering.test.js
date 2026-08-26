@@ -1240,6 +1240,39 @@ test("Bestilling: endret kropp etter usikkert svar gir NY nøkkel (P1-2)", async
     "feltendringen reserverte bunten på nytt");
 });
 
+test("Bestilling: et tapt svar meldes som uvisst, ikke som «feilet» (P2-4)", async () => {
+  KALL = [];
+  const basis = { "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/inndata/reserver": { reservasjon_jti: "j-1",
+                              inndata_ref: "inndata:u-1" },
+    "/v1/inndata/opplast/j-1": {} };
+  let bestillingssvar = 500;
+  SVAR = (sti) => sti === "/v1/bestilling" ? bestillingssvar : basis[sti];
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const seksjon = hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  const skjema = seksjon.querySelector("form");
+  const send = skjema.querySelector("button[type=submit]");
+  const alert = seksjon.querySelector("[role=alert]");
+  Object.defineProperty(skjema.querySelector("input[type=file]"), "files",
+    { configurable: true, value: [{ name: "bunt.zip",
+        arrayBuffer: async () => new ArrayBuffer(16) }] });
+  const runde = async () => {
+    skjema.dispatchEvent(new window.Event("submit",
+      { bubbles: true, cancelable: true }));
+    assert.ok(await vent(() => !send.disabled, 40), "runden ble aldri ferdig");
+  };
+  await runde();
+  assert.equal(alert.textContent, t("ui.rekruttering.usikkert_utfall"),
+    "5xx ble meldt som en definitiv feil");
+  // Serverens egen dom er derimot definitiv — og sier det.
+  bestillingssvar = 409;
+  await runde();
+  assert.equal(alert.textContent, t("ui.rekruttering.bestill.feil"));
+});
+
 test("Bestilling: 4xx på reservasjon/opplast slipper den døde nøkkelen (P1-3)", async () => {
   KALL = [];
   let reserversvar = 409;
