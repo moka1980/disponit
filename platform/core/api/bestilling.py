@@ -559,20 +559,6 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
             # bunt som er opptatt NÅ har en bestilling i arbeid, og
             # svaret er forbigående. Og fordi begge låsene er `try`-låser
             # tatt i fast rekkefølge, kan de ikke danne en syklus.
-            navn = inndata_laasenavn_for(tenant, norm["inndata_id"])
-            fikk = conn.execute(
-                "SELECT pg_try_advisory_lock(hashtextextended(%s, 0))",
-                (navn,)).fetchone()[0]
-            conn.rollback()
-            if not fikk:
-                # IKKE `inndata_ubrukelig` innover (Cursor P1): den er
-                # terminal, og planveien gjør en terminal kode om til en
-                # pause bare et menneske kan oppheve. Utad er de samme
-                # 409 — se `KLIENTKODE`.
-                tjeneste.logg.hendelse(INNDATA_OPPTATT, rid, tenant,
-                                       art="drift")
-                return ("feil", INNDATA_OPPTATT)
-            laaser.append(navn)
             sett_kontekst(conn, tenant, aktor, rid)
             # GJENOPPRETTBAR DOM FØR BUNTPORTEN (Codex P2 på #210): dør
             # prosessen etter at kjernen committet STOPP/BRUDD men før
@@ -581,6 +567,15 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
             # `inndata_ubrukelig` FØR gjenopprettingen (656→) rakk å
             # svare med den beslutningen som alt er tatt. Buntens
             # tilstand er muterbar; dommen er det ikke.
+            #
+            # …OG FØR BUNTLÅSEN (Codex P2, runde 5): lå proben bak
+            # låsen, kunne en retry i krasjvinduet møte en annen
+            # forespørsels lås og få den FORBIGÅENDE buntkoden i
+            # stedet for den IMMUTABLE dommen (eller konflikten).
+            # Er dommen alt tatt, trengs ingen buntlås for å svare
+            # — gjenspillet tar ingen ny beslutning, og et TILLAT-
+            # gjenspills binding vernes terminalt av dørens egen
+            # FOR UPDATE.
             #
             # PREFIKSET, ikke den eksakte nøkkelen (Codex P2, runde 3):
             # med eksakt nøkkel+intensjon fanget porten bare retryen med
@@ -598,6 +593,25 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                     "   AND left(nokkel, %s) = %s AND status='ferdig'"
                     " LIMIT 1",
                     (tenant, len(pfx), pfx)).fetchone() is not None
+            conn.rollback()
+            navn = inndata_laasenavn_for(tenant, norm["inndata_id"])
+            fikk = True
+            if not gjenopprettbar:
+                fikk = conn.execute(
+                    "SELECT pg_try_advisory_lock(hashtextextended(%s, 0))",
+                    (navn,)).fetchone()[0]
+                conn.rollback()
+                if fikk:
+                    laaser.append(navn)
+            if not fikk:
+                # IKKE `inndata_ubrukelig` innover (Cursor P1): den er
+                # terminal, og planveien gjør en terminal kode om til en
+                # pause bare et menneske kan oppheve. Utad er de samme
+                # 409 — se `KLIENTKODE`.
+                tjeneste.logg.hendelse(INNDATA_OPPTATT, rid, tenant,
+                                       art="drift")
+                return ("feil", INNDATA_OPPTATT)
+            sett_kontekst(conn, tenant, aktor, rid)
             pm = _PROFIL_REF.fullmatch(norm["stillingsprofil_ref"])
             prad = conn.execute(
                 "SELECT 1 FROM stillingsprofil"

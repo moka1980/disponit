@@ -655,7 +655,21 @@ def test_committet_dom_gjenopprettes_selv_om_bunten_dode(
                       "begrunnelse": "plantet dom"})))
     migrator.commit()
 
-    r = _bestill(klient, cookie, csrf, kropp, nokkel)
+    # …og dommen svarer SELV NÅR en annen forespørsel holder buntlåsen
+    # (Codex P2, runde 5): lå prefiks-proben bak låsen, fikk retryen den
+    # FORBIGÅENDE buntkoden i stedet for den immutable dommen. Låsen
+    # holdes av en egen forbindelse gjennom hele kallet.
+    from api.bestilling import inndata_laasenavn_for
+    from db.pg import koble
+    holder = koble(MIGRATOR_DSN)
+    try:
+        holder.execute(
+            "SELECT pg_advisory_lock(hashtextextended(%s, 0))",
+            (inndata_laasenavn_for(TENANT, ref.split(":", 1)[1]),))
+        r = _bestill(klient, cookie, csrf, kropp, nokkel)
+    finally:
+        holder.rollback()
+        holder.close()               # sesjonslåsen dør med forbindelsen
     assert r.status_code == 200, r.text
     assert r.json()["beslutning"] == "stopp", r.text
     # …og gjenopprettingen tok ingen NY beslutning: ingen loggpost ble

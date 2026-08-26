@@ -803,9 +803,15 @@ def minimer(oppdragstype: str, payload: dict) -> dict:
             # Alt utenfor den lukkede formen droppes; en kopi uten
             # gyldige krav droppes helt (og felles da av
             # `mangler_paakrevde`).
+            # `krav` må VÆRE en liste før iterasjonen (Codex P2): en
+            # skalar (5, true) overlevde `or []` og ga TypeError — en
+            # 500 i claim-veien for noe minimeringen lover å droppe.
+            kravliste = verdi.get("krav")
+            if not isinstance(kravliste, list):
+                kravliste = []
             krav = [{"kravnavn": str(k["kravnavn"]).strip(),
                      "vekt": k["vekt"]}
-                    for k in (verdi.get("krav") or [])
+                    for k in kravliste
                     if isinstance(k, dict)
                     and isinstance(k.get("kravnavn"), str)
                     and k["kravnavn"].strip()
@@ -819,7 +825,17 @@ def minimer(oppdragstype: str, payload: dict) -> dict:
                     and not isinstance(verdi.get("versjon"), bool)
                     and verdi["versjon"] >= 1
                     and isinstance(verdi.get("navn"), str)
-                    and verdi["navn"].strip()):
+                    and verdi["navn"].strip()
+                    # SNAPSHOTEN MÅ VÆRE REFERANSENS (Codex P2, runde
+                    # 5): et velformet snapshot med en ANNEN profil/
+                    # versjon enn `stillingsprofil_ref` lot utføreren
+                    # evaluere mot én profil mens oppdraget og revisjonen
+                    # navnga en annen. Paret må rekonstruere referansen
+                    # nøyaktig — ellers droppes snapshoten og
+                    # `mangler_paakrevde` feller payloaden.
+                    and (f"{verdi['profil_id']}@{verdi['versjon']}"
+                         == str(payload.get("stillingsprofil_ref")
+                                 or ""))):
                 ut[felt] = {"profil_id": verdi["profil_id"],
                             "versjon": verdi["versjon"],
                             "navn": verdi["navn"].strip(),

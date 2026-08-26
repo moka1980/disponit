@@ -1324,7 +1324,7 @@ def test_rangeringen_er_poeng_med_synlige_vekter():
 
 
 def test_port27_5001_avvises_ved_validering():
-    payload = {"stillingsprofil_ref": "art-1",
+    payload = {"stillingsprofil_ref": "p-1@1",
                "stillingsprofil": {"profil_id": "p-1", "versjon": 1, "navn": "N",
                           "krav": [{"kravnavn": "K", "vekt": 3}]},
                "antall_soknader": 5000, "omfang": "bunt"}
@@ -1340,6 +1340,32 @@ def test_port27_5001_avvises_ved_validering():
         "rekruttering.evaluering", payload | {"omfang": "alt"})
 
 
+def test_snapshoten_maa_vaere_referansens():
+    """Codex P2 (runde 5 på #210): et velformet snapshot med en ANNEN
+    profil/versjon enn `stillingsprofil_ref` lot utføreren evaluere mot
+    én profil mens oppdraget og revisjonen navnga en annen. Paret må
+    rekonstruere referansen nøyaktig — ellers droppes snapshoten og
+    `mangler_paakrevde` feller payloaden."""
+    snap = {"profil_id": "p-1", "versjon": 1, "navn": "N",
+            "krav": [{"kravnavn": "K", "vekt": 3}]}
+    basis = {"stillingsprofil_ref": "p-1@1", "stillingsprofil": snap,
+             "antall_soknader": 1, "omfang": "bunt"}
+    assert "stillingsprofil" in minimer("rekruttering.evaluering", basis)
+    for gal_ref in ("p-1@2", "p-2@1", "art-1"):
+        m = minimer("rekruttering.evaluering",
+                    basis | {"stillingsprofil_ref": gal_ref})
+        assert "stillingsprofil" not in m, gal_ref
+        assert "stillingsprofil" in mangler_paakrevde(
+            "rekruttering.evaluering", m)
+    # …og `krav` som ikke er en LISTE droppes uten TypeError (Codex P2):
+    # en skalar overlevde `or []` og ga 500 i claim-veien.
+    for galt_krav in (5, True, "K", {"kravnavn": "K", "vekt": 3}):
+        m = minimer("rekruttering.evaluering",
+                    basis | {"stillingsprofil": {**snap,
+                                                 "krav": galt_krav}})
+        assert "stillingsprofil" not in m, galt_krav
+
+
 def test_kundens_slettefrist_baeres_av_bestillingen():
     """Codex P1: fristvalget hadde ingen plass i det signerte oppdraget.
 
@@ -1351,7 +1377,7 @@ def test_kundens_slettefrist_baeres_av_bestillingen():
     import json
     from pathlib import Path
 
-    payload = {"stillingsprofil_ref": "art-1",
+    payload = {"stillingsprofil_ref": "p-1@1",
                "stillingsprofil": {"profil_id": "p-1", "versjon": 1, "navn": "N",
                           "krav": [{"kravnavn": "K", "vekt": 3}]},
                "antall_soknader": 10, "omfang": "bunt"}
@@ -1394,7 +1420,7 @@ def test_artefaktreferansene_ma_vaere_strenger_ved_opprettelsen():
     payload-skjema krever `string, minLength 1` — men det kjører først
     når utførelsen har startet, altså etter at oppdraget var opprettet,
     claimet og talt. Referansen måles nå der bestillingen tas imot."""
-    payload = {"stillingsprofil_ref": "art-1",
+    payload = {"stillingsprofil_ref": "p-1@1",
                "stillingsprofil": {"profil_id": "p-1", "versjon": 1, "navn": "N",
                           "krav": [{"kravnavn": "K", "vekt": 3}]},
                "antall_soknader": 10, "omfang": "bunt"}
