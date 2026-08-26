@@ -1766,6 +1766,49 @@ test("Profiler: tapt svar → retry sender SAMME nøkkel (SP-2)", async () => {
     "retry etter tapt svar byttet nøkkel — serveren kan ikke replaye");
 });
 
+test("Profiler: et tapt svar meldes som uvisst, ikke som «kunne ikke lagre» (P2-1)", async () => {
+  // Nøkkeløkonomien skiller alt 4xx fra resten (nøkkelen står ved 0/5xx),
+  // men teksten gjorde det ikke: en profilversjon kan stå lagret mens
+  // svaret gikk tapt, og «sjekk kravene» er da falsk trygghet.
+  const hoved = await tegnetMedProfiler();
+  const seksjon = hoved.querySelector(
+    "section[aria-labelledby=profil-tittel]");
+  const alert = seksjon.querySelector("[role=alert]");
+  const rediger = [...seksjon.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.profiler.rediger"));
+  rediger.click();
+  const skjema = seksjon.querySelector("form");
+  const lagre = [...skjema.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.profiler.lagre"));
+  const runde = async () => {
+    skjema.dispatchEvent(new window.Event("submit",
+      { bubbles: true, cancelable: true }));
+    assert.ok(await vent(() => !lagre.disabled, 40), "runden ble aldri ferdig");
+  };
+  // Nettet dør: fetch kaster → ApiFeil(0). Utfallet er UKJENT.
+  SVAR = (sti, opts) => {
+    if ((opts.method || "GET") === "POST") throw new Error("nett");
+    return sti.includes("stillingsprofiler") ? profiler() : prosess();
+  };
+  await runde();
+  assert.equal(alert.textContent, t("ui.rekruttering.usikkert_utfall"),
+    "et tapt svar ble meldt som en definitiv lagringsfeil");
+  // 5xx er like uvisst — serveren kan ha skrevet versjonen.
+  SVAR = (sti, opts) => {
+    if ((opts.method || "GET") === "POST") return 500;
+    return sti.includes("stillingsprofiler") ? profiler() : prosess();
+  };
+  await runde();
+  assert.equal(alert.textContent, t("ui.rekruttering.usikkert_utfall"));
+  // Serverens egen dom er derimot definitiv — og sier det.
+  SVAR = (sti, opts) => {
+    if ((opts.method || "GET") === "POST") return 409;
+    return sti.includes("stillingsprofiler") ? profiler() : prosess();
+  };
+  await runde();
+  assert.equal(alert.textContent, t("ui.rekruttering.profiler.feil"));
+});
+
 test("Profiler: endret innhold etter tapt svar gir NY nøkkel (P2-5)", async () => {
   const hoved = await tegnetMedProfiler();
   const seksjon = hoved.querySelector(

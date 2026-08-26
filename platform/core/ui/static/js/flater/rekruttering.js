@@ -1034,13 +1034,25 @@ function profilSeksjon(hoved, ctx, data, okt, paaProfilendring) {
         await oppdaterListe();
       } catch (e) {
         if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
-        if (e && e.status >= 400 && e.status < 500) {
+        const definitivt = !!e && e.status >= 400 && e.status < 500;
+        if (definitivt) {
           // Serveren DØMTE operasjonen — en retry er en NY operasjon.
           nyIntensjon();
         }
         // Nettverk/5xx: nøkkelen beholdes — retry er SAMME operasjon.
         lagre.disabled = false;
-        sett(utfall, t("ui.rekruttering.profiler.feil"));
+        // ... OG DA ER «KUNNE IKKE LAGRE» EN FALSK SETNING (Cursor P2-1).
+        // Nøkkeløkonomien over skiller alt 4xx fra resten, men teksten
+        // gjorde det ikke: ved status 0 nådde POST-en kanskje aldri fram
+        // — eller svaret gikk tapt ETTER at versjonen ble skrevet — og
+        // ved 5xx er commit-status ukjent. Brukeren fikk beskjed om å
+        // «sjekke kravene» for en profilversjon som kunne stå lagret,
+        // og et nytt forsøk så ut som en ny versjon i stedet for det
+        // gjenspillet det faktisk er. Samme klasse er alt lukket for
+        // signeringen (`meldFeil`) og for bestillingen (P2-4); dette er
+        // den tredje mutasjonen på flaten, og den siste som løy.
+        sett(utfall, t(definitivt ? "ui.rekruttering.profiler.feil"
+          : "ui.rekruttering.usikkert_utfall"));
       }
     });
     sett(skjemaRot, skjema);
