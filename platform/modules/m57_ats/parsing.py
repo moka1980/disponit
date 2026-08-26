@@ -599,6 +599,18 @@ def les_manifest(sti: str | Path,
     try:
         with _apne_katalog(sti) as zf:
             raa = zf.read(MANIFESTNAVN)
+    except KeyError as feil:
+        # …OG FRAVÆRET MÅLES DER UTTREKKET SKJER (Cursor P1, runde 2).
+        # Linja over slår opp `MANIFESTNAVN` i `medlemmer` — en katalog
+        # ANDRE leste — mens `zf.read` åpner arkivet PÅ NYTT og slår opp i
+        # sitt eget navnekart. Divergerer de to (fila byttet i vinduet
+        # mellom `inspiser_bunt` og her, eller en `medlemmer`-liste som
+        # ikke kom fra denne bunten), reiser `zipfile` en `KeyError` som
+        # gikk rå til `kjor_bunt`s catch-all: `modellfeil` om en bunt
+        # modellen aldri fikk se. Samme klasse som `kart.get` i
+        # `kjoring.py` — en garanti målt ett sted er ingen garanti det
+        # andre. En deklarasjon vi ikke finner, ER `manifest_mangler`.
+        raise Buntfeil("manifest_mangler", MANIFESTNAVN) from feil
     except zipfile.BadZipFile as feil:
         raise Buntfeil("korrupt_bunt", f"{MANIFESTNAVN}: {feil}") from feil
     except (zlib.error, lzma.LZMAError) as feil:

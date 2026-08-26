@@ -2257,6 +2257,44 @@ def test_manifestets_lukkede_form_avviser_alt_annet(tmp_path):
     assert e.value.kode == "manifest_mangler"
 
 
+def test_manifest_som_forsvant_mellom_lesningene_er_kodet(tmp_path,
+                                                          monkeypatch):
+    """Cursor P1 (runde 2) på #161: `les_manifest` måler `manifest_mangler`
+    mot `medlemmer` — en katalog EN ANNEN lesning laget — men trekker
+    bytene ut av et arkiv den åpner PÅ NYTT. Er `soknader.json` borte der
+    (fila byttet i vinduet, eller en medlemsliste fra en annen bunt),
+    reiste `zf.read` en rå `KeyError` som `kjor_bunt`s catch-all meldte
+    som `modellfeil` — feil kø, feil alarm, om en bunt modellen aldri fikk
+    se. Fraværet av en deklarasjon er `manifest_mangler`, uansett hvilken
+    av de to lesningene som oppdager det.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `except KeyError`-porten.
+    """
+    from modules.m57_ats import kjoring
+
+    # Bunten har INGEN deklarasjon; medlemslista påstår at den har det.
+    arkiv = _bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>")],
+                  manifest=None)
+    pastand = [parsing.Medlem("soknader.json", 64),
+               *parsing.inspiser_bunt(arkiv)]
+    with pytest.raises(parsing.Buntfeil) as e:
+        parsing.les_manifest(arkiv, pastand)
+    assert e.value.kode == "manifest_mangler", e.value.kode
+
+    # …og hele veien gjennom kjøringen: kodet utfall, aldri `modellfeil`,
+    # og modellen ser ingenting.
+    monkeypatch.setattr(parsing, "inspiser_bunt", lambda sti: pastand)
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(
+            arkiv, modell, vekter={"drift": 3},
+            kandidatfelter_for=lambda m: {"navn": ["N"]},
+            tekst_for=lambda m, d: d.decode("utf-8"),
+            biasmaalinger=_MAALINGER, antall_soknader=1)
+    assert e.value.kode == "manifest_mangler", e.value.kode
+    assert modell.sett == [], "modellen så en bunt uten deklarasjon"
+
+
 def test_manifestlesingen_er_kodet_utfall_ikke_modellfeil(tmp_path):
     """Cursor P1 på #161: `les_manifest` leste `soknader.json` UTEN
     SP-3-oversetteren `les_porsjonsvis` har. En CRC-skadet eller kryptert
