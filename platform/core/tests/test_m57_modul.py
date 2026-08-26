@@ -2297,6 +2297,46 @@ def test_manifestlesingen_er_kodet_utfall_ikke_modellfeil(tmp_path):
     assert modell.sett == []
 
 
+def test_umatchet_medlem_i_strommen_er_kodet_ikke_modellfeil(tmp_path,
+                                                             monkeypatch):
+    """Cursor P2 på #161: toveisbindingen måles mot `inspiser_bunt`s
+    katalog, mens `les_porsjonsvis` åpner arkivet PÅ NYTT. Divergerer de to
+    lesningene — TOCTOU på fila, eller intern inkonsistens — traff
+    `kart[medlem.navn]` en `KeyError`, og catch-allen meldte `modellfeil`
+    om en bunt modellen aldri fikk se. Et umatchet medlem er nettopp det
+    `medlem_uadressert` finnes for."""
+    from modules.m57_ats import kjoring
+
+    def _kjor(arkiv, modell):
+        return kjoring.kjor_bunt(
+            arkiv, modell, vekter={"drift": 3},
+            kandidatfelter_for=lambda m: {"navn": ["N"]},
+            tekst_for=lambda m, d: d.decode("utf-8"),
+            biasmaalinger=_MAALINGER, antall_soknader=1)
+
+    arkiv = _bunt(tmp_path, [("k1/cv.html", b"<p>drift</p>"),
+                             ("k1/brev.html", b"<p>mer drift</p>")])
+    # Positiv kontroll: bunten er hel, og begge medlemmene er adressert.
+    assert set(_kjor(arkiv, _Modell())["artefakter"]) == {"k1"}
+
+    # Kartet mister ett medlem ETTER bindingen — nøyaktig det strømmen
+    # ville sett om arkivet ble byttet i vinduet mellom de to lesningene.
+    # Tallporten foran strømmen ser fortsatt én kandidat og slipper
+    # gjennom; divergensen dukker først opp per medlem.
+    ekte = parsing.les_manifest
+    monkeypatch.setattr(
+        parsing, "les_manifest",
+        lambda sti, medlemmer: {navn: kid
+                                for navn, kid in ekte(sti, medlemmer).items()
+                                if navn != "k1/brev.html"})
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        _kjor(arkiv, modell)
+    assert e.value.kode == "medlem_uadressert", e.value.kode
+    assert e.value.fremdrift, "evidensen mangler i utfallet"
+    assert modell.sett == [], "modellen så en bunt vi ikke kunne adressere"
+
+
 def test_bunt_uten_kandidater_er_kodet_feil_ikke_tomt_resultat(tmp_path):
     """Codex P2: en bunt uten medlemmer ble et VELLYKKET tomt utfall.
 

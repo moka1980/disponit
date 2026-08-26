@@ -224,7 +224,19 @@ def kjor_bunt(sti, modell, *, vekter, kandidatfelter_for, tekst_for,
                 # signert — in-strøm-tellingen fra #210 er dermed
                 # AVLØST, ikke fjernet: dens jobb gjøres nå før uttrekk
                 # i det hele tatt starter.
-                kandidat_id = kart[medlem.navn]
+                #
+                # …men OPPSLAGET FEILER KODET, IKKE MED KeyError (Cursor
+                # P2). `kart[...]` leste garantien som om den var målt
+                # her: bindingen skjedde mot `inspiser_bunt`s katalog, og
+                # `les_porsjonsvis` åpner arkivet PÅ NYTT. Byttes fila i
+                # vinduet mellom dem — eller divergerer de to lesningene
+                # av en annen grunn — er et umatchet medlem nøyaktig det
+                # `medlem_uadressert` finnes for; `KeyError` ga i stedet
+                # catch-allens `modellfeil`, altså feil kø og feil alarm
+                # for en bunt modellen aldri fikk se.
+                kandidat_id = kart.get(medlem.navn)
+                if kandidat_id is None:
+                    raise Kjoringsfeil("medlem_uadressert", fremdrift)
                 biter.setdefault(kandidat_id, []).append(
                     (navn, medlem.navn,
                      _tekst(tekst_for, medlem, data, fremdrift),
