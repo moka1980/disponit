@@ -153,6 +153,19 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
     egen PR. Eierens K2-dom (23/8) er valg 1, og den bærer HARD SPERRE:
     ingen kjøring mot reelle bunter i full størrelse før #173 er landet.
 
+    KJENT BEGRENSNING — INTET INTERNT TAK, VERKEN PÅ TID ELLER AUTORITET
+    (utsatt til #173, samme klasse og samme sperre). Løkka under tar
+    verken en `frist_s` eller et avbruddssignal: den evaluerer hver
+    kandidat til bunten er tom. Kjøringens varighet bindes derfor ved
+    LEVERING — kalleren måler vinduet FØR bunten hentes og avviser et
+    dødfødt claim, og leveringsportene (`lease_tapt` før opplasting,
+    kvitteringens statusskifte etter) stopper et resultat som ble
+    ferdig for sent eller uten lease. Begge takene vil ha DET SAMME
+    signalet tredd inn her, og et avbrudd midt i løkka er en ny
+    returkontrakt på denne funksjonen — ny maskin, ikke en fiks (K1) —
+    i nøyaktig den løkka #173 skriver om. Se KONTRAKT.md,
+    `dom-klasse: kjoring-avbrudd-og-frist`.
+
     `sti` MÅ VÆRE INSTANSBUNDET NÅR DEN ER DELBAR — det er kallerens
     ansvar (Codex P1, eierdom K2-kjennelse runde 7 på #217, valg B i
     inode-form). Stien åpnes flere uavhengige ganger: `les_manifest`

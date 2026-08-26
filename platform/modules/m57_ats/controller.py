@@ -200,7 +200,14 @@ def _evalueringsfrist(claim: dict) -> int | None:
     som er dødfødt før bunten hentes. Å stoppe en evaluering som ble
     startet i tide, men løper forbi vinduet, krever en frist HELT NED i
     `kjoring.kjor_bunt` og modellklienten — ny maskin, ikke en fiks. Det
-    heartbeatet (063) fornyer er leasen, ikke disse grensene."""
+    heartbeatet (063) fornyer er leasen, ikke disse grensene.
+
+    En kjøring som løper forbi vinduet stoppes derfor først ved
+    LEVERING: kvitteringen svarer 202 `lagret_uten_statusendring` etter
+    fristen, og `_kvittert` leser det som `ukvittert` — aldri et falskt
+    `utfort`. Utsatt til #173 sammen med lease-avbruddet, som vil ha
+    samme signal inn i samme løkke; se KONTRAKT.md,
+    `dom-klasse: kjoring-avbrudd-og-frist`."""
     if claim.get("utforelsesfrist") is None:
         return None
     from datetime import datetime, timezone
@@ -475,6 +482,13 @@ def kjor_en(klient, token: str, modell, uttrekker, biasmaalinger,
             # Kvitteringen sendes uansett: taushet er det §10 forbyr, og
             # feilkoden navngir nettopp at det var autoriteten som falt
             # bort, ikke arbeidet.
+            #
+            # Porten står HER, etter `with`-blokka, og ikke inni
+            # evalueringsløkka: et tap midtveis stopper leveransen, men
+            # ikke arbeidet som alt er i gang. Å polle `tapt` per
+            # kandidat krever samme avbruddssignal inn i `kjor_bunt` som
+            # det løpende fristtaket — utsatt til #173, se KONTRAKT.md,
+            # `dom-klasse: kjoring-avbrudd-og-frist`.
             rk = kvitter({**kvittering_basis, "resultat": "feilet",
                           "feilkode": "lease_tapt"})
             return _feilutfall(rk, "lease_tapt", lease_tapt=puls.tapt)

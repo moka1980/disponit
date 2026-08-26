@@ -234,6 +234,36 @@ Modulen er KUNDE av plattformen, aldri omvendt (m56-formen):
 * **Parsing** (§4/§7): i credential-fri, nettverksløs container;
   arkivgrensene håndheves FØR utpakking (`parsing.py`), porsjonsvis med
   fremdrift som evidens. Avbrutt kjøring → ingen promotert liste.
+* **Kjøringens varighet** bindes ved LEVERING, ikke underveis.
+  Controlleren måler vinduet FØR bunten hentes (`_evalueringsfrist`:
+  den tidligste av `utforelsesfrist`, `opplasting.utloper` og
+  `kvittering_utloper`, minus `AVSLUTNINGSMARGIN_S`) og avviser et
+  claim som er dødfødt. Er claimet levedyktig, løper `kjor_bunt` uten
+  internt tak: `frist_s` sendes ikke inn i kandidatløkka, og
+  `puls.tapt` leses først når `with _Heartbeat`-blokken slipper. En
+  evaluering som ble startet i tide, men løper forbi vinduet — eller
+  mister leasen midtveis — fullfører derfor arbeidet, og stoppes først
+  på LEVERINGSPORTENE: `lease_tapt` før opplasting, og kvitteringens
+  eget statusskifte, som etter fristen svarer 202
+  `lagret_uten_statusendring` → `ukvittert`. Utfallet er aldri et
+  falskt `utfort`; prisen er persondata og modellkall brukt utenfor
+  det annonserte vinduet.
+
+  KJENT BEGRENSNING, OG DEN ER UTSATT TIL
+  [#173](https://github.com/moka1980/disponit/issues/173) (eierdom,
+  K2-kjennelse på #218, valg 1). Både det løpende fristtaket og et
+  lease-avbrudd midt i evalueringen vil ha DET SAMME: et budsjett- og
+  avbruddssignal tredd inn i `kjor_bunt`s per-kandidat-løkke, og et
+  avbrudd der er en ny returkontrakt på funksjonen — ny maskin, som
+  K1 sender til egen PR. Løkka er nøyaktig den #173 skriver om
+  (artefaktene strømmes til kandidatlagrene, retur blir referanser +
+  rangering), så avbruddssemantikk skrevet nå ville blitt skrevet to
+  ganger. Samme klasse som minnegrensen `kjor_bunt` alt bærer: 23/8-
+  dommen legger HARD SPERRE mot kjøring på reelle bunter i full
+  størrelse før #173 er landet, og det er den sperren som holder
+  varigheten nede i mellomtiden.
+
+  `dom-klasse: kjoring-avbrudd-og-frist · felt i #218 · https://github.com/moka1980/disponit/pull/218#issuecomment-5431892763`
 * **Kandidatdata** (§5): alt payload bor i de seks 057-lagrene og reapes
   ved fristen; modulen kan ikke forlenge den. Unntaket er den promoterte
   rapporten over, som i dag bærer den samme payloaden uten å arve
