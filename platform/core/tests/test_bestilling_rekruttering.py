@@ -665,6 +665,18 @@ def test_committet_dom_gjenopprettes_selv_om_bunten_dode(
     assert _beslutninger(migrator) == 0, \
         "gjenopprettingen tok en NY beslutning i stedet for den plantede"
 
+    # SAMME nøkkel, ANNEN intensjon (Codex P2, runde 3): løftet er
+    # `idempotenskonflikt` — og det skal ikke avhenge av at retry-kroppens
+    # referanser fortsatt er i live. Bunten er alt forkastet; med den
+    # eksakte nøkkelformen i porten falt denne i 409 `inndata_ubrukelig`
+    # før prefikslesingen rakk å se den committede dommen.
+    kropp2 = dict(kropp)
+    kropp2["antall_soknader"] = int(kropp["antall_soknader"]) + 1
+    r3 = _bestill(klient, cookie, csrf, kropp2, nokkel)
+    assert (r3.status_code, r3.json()["feil"]) == (
+        409, "idempotenskonflikt"), r3.text
+    assert _beslutninger(migrator) == 0
+
 
 @pg
 def test_bindefeil_etter_beslutningen_gir_stabil_retry(

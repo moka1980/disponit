@@ -580,16 +580,24 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
             # og utløper den før klienten retryer, dømte porten under
             # `inndata_ubrukelig` FØR gjenopprettingen (656→) rakk å
             # svare med den beslutningen som alt er tatt. Buntens
-            # tilstand er muterbar; dommen er det ikke. Finnes en ferdig
-            # kjernerad for NØYAKTIG denne nøkkelen+intensjonen, hoppes
-            # forhåndsporten over og gjenopprettingen svarer.
+            # tilstand er muterbar; dommen er det ikke.
+            #
+            # PREFIKSET, ikke den eksakte nøkkelen (Codex P2, runde 3):
+            # med eksakt nøkkel+intensjon fanget porten bare retryen med
+            # SAMME kropp — en retry med samme klientnøkkel og en ANNEN
+            # intensjon er lovet `idempotenskonflikt` (748→), men falt i
+            # 404/409 fra de muterbare portene her først. Finnes NOEN
+            # ferdig kjernerad under klientnøkkelen, eier nedstrøms-
+            # logikken dommen (gjenspill eller konflikt) — samme
+            # collation-frie prefiksform som gjenopprettingslesingen.
             gjenopprettbar = False
             if nokkel:
+                pfx = kjernenokkelprefiks(nokkel)
                 gjenopprettbar = conn.execute(
                     "SELECT 1 FROM idempotens WHERE tenant=%s"
-                    "   AND nokkel=%s AND status='ferdig'",
-                    (tenant, kjernenokkel_for(nokkel, hash_))
-                ).fetchone() is not None
+                    "   AND left(nokkel, %s) = %s AND status='ferdig'"
+                    " LIMIT 1",
+                    (tenant, len(pfx), pfx)).fetchone() is not None
             pm = _PROFIL_REF.fullmatch(norm["stillingsprofil_ref"])
             prad = conn.execute(
                 "SELECT 1 FROM stillingsprofil"
