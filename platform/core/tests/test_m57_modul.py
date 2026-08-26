@@ -1324,7 +1324,9 @@ def test_rangeringen_er_poeng_med_synlige_vekter():
 
 
 def test_port27_5001_avvises_ved_validering():
-    payload = {"stillingsprofil_ref": "art-1", "soknadsbunt_ref": "art-2",
+    payload = {"stillingsprofil_ref": "art-1",
+               "stillingsprofil": {"profil_id": "p-1", "versjon": 1, "navn": "N",
+                          "krav": [{"kravnavn": "K", "vekt": 3}]},
                "antall_soknader": 5000, "omfang": "bunt"}
     assert bryter_feltkontrakten("rekruttering.evaluering", payload) == []
     for antall in (5001, 0, -1):
@@ -1349,7 +1351,9 @@ def test_kundens_slettefrist_baeres_av_bestillingen():
     import json
     from pathlib import Path
 
-    payload = {"stillingsprofil_ref": "art-1", "soknadsbunt_ref": "art-2",
+    payload = {"stillingsprofil_ref": "art-1",
+               "stillingsprofil": {"profil_id": "p-1", "versjon": 1, "navn": "N",
+                          "krav": [{"kravnavn": "K", "vekt": 3}]},
                "antall_soknader": 10, "omfang": "bunt"}
     # Feltet OVERLEVER minimeringen (det var her det forsvant).
     minimert = minimer("rekruttering.evaluering",
@@ -1390,10 +1394,12 @@ def test_artefaktreferansene_ma_vaere_strenger_ved_opprettelsen():
     payload-skjema krever `string, minLength 1` — men det kjører først
     når utførelsen har startet, altså etter at oppdraget var opprettet,
     claimet og talt. Referansen måles nå der bestillingen tas imot."""
-    payload = {"stillingsprofil_ref": "art-1", "soknadsbunt_ref": "art-2",
+    payload = {"stillingsprofil_ref": "art-1",
+               "stillingsprofil": {"profil_id": "p-1", "versjon": 1, "navn": "N",
+                          "krav": [{"kravnavn": "K", "vekt": 3}]},
                "antall_soknader": 10, "omfang": "bunt"}
     assert bryter_feltkontrakten("rekruttering.evaluering", payload) == []
-    for felt in ("stillingsprofil_ref", "soknadsbunt_ref"):
+    for felt in ("stillingsprofil_ref",):
         for verdi in (123, True, "", "   ", None, 4.5):
             brudd = bryter_feltkontrakten(
                 "rekruttering.evaluering", payload | {felt: verdi})

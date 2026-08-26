@@ -241,24 +241,27 @@ OPPDRAGSTYPER: dict[str, Oppdragstype] = {
         # Verdien er bundet i `FELTGRENSER` under — samme spennet som
         # `prosess_frist_i_spennet`, målt der bestillingen tas imot.
         #
-        # UTSATT, K1 → #162: `soknadsbunt_ref` er PÅKREVD, men det finnes
-        # ingen produsent, ingen resolver og ingen binær artefaktvei i
-        # repoet (Codex P1). Den ene opplastingsflaten,
-        # `api/app.py::_artefakt_upload`, tar et JSON-`rapport`-objekt,
-        # autoriseres av en UTDATA-kapabilitet utstedt etter claim, og er
-        # kanonisert (JCS) — den kan hverken bære en zip inn eller gi
-        # modulen noe å hente. Hver ekte bestilling når altså modulen med
-        # en streng ingen kan slå opp, og `inspiser_bunt` har ingen fil å
-        # inspisere. Lukkingen er en INNDATA-artefaktkontrakt: en bundet
-        # binær vei inn med deklarert maksimal fysisk størrelse, utstedt
-        # før claim, med resolver modulen kaller. Det er en maskin —
-        # opplastingsflate, kapabilitetsform, lager og oppslag — ikke en
-        # lapp i en frozenset, og den bærer også manifestet fra #161 og
-        # katalogbudsjettet fra `inspiser_bunt`s docstring.
-        felter=frozenset({"stillingsprofil_ref", "soknadsbunt_ref",
+        # #200 VALG B (avløser den gamle UTSATT-noten om soknadsbunt_ref):
+        # payloaden NAVNGIR IKKE bunten. Bindingsraden
+        # (`inndata_artefakt.oppdrag_id`, UNIK — skrevet av `bind_inndata`
+        # i oppdragets fødselstransaksjon) er den ENESTE sannheten om
+        # hvilken bunt oppdraget eier, og modulen henter den via
+        # `hent_inndata_for_oppdrag` (060) med sitt claimede oppdrag —
+        # aldri via en payload-streng. En `soknadsbunt_ref` her ville
+        # vært en duplisert sannhet basen ikke kan lese (kryptert
+        # app-side) og derfor aldri kan holde i sync; klassen ble målt av
+        # Codex på #196-mergen og fjernet ved eierdom.
+        #
+        # `stillingsprofil` er profil-ØYEBLIKKSBILDET (navn + krav/vekter)
+        # av den versjonen `stillingsprofil_ref` peker på: versjonene er
+        # append-only (061), så kopien kan aldri drifte fra kilden — og
+        # modulen slipper en egen profil-resolver for å kunne evaluere.
+        # Bestillingsveien bygger det SERVER-SIDE fra 061; klientinnhold
+        # når det aldri.
+        felter=frozenset({"stillingsprofil_ref", "stillingsprofil",
                           "antall_soknader", "omfang",
                           "slettefrist_dogn"}),
-        paakrevde=frozenset({"stillingsprofil_ref", "soknadsbunt_ref",
+        paakrevde=frozenset({"stillingsprofil_ref", "stillingsprofil",
                              "antall_soknader", "omfang"}),
         # `m57_ats`, ikke `m_ats` (Codex P2 / Cursor P1). Identiteten er
         # ALLEREDE avgjort og støpt: 056 CHECK-binder utsendingsarmen til
@@ -791,6 +794,36 @@ def minimer(oppdragstype: str, payload: dict) -> dict:
             rene = [v for v in verdi if isinstance(v, str) and v.strip()]
             if rene:
                 ut[felt] = sorted(rene)
+        elif felt == "stillingsprofil" and isinstance(verdi, dict):
+            # Profil-ØYEBLIKKSBILDET (#200 valg B / #189): bygget
+            # server-side av bestillingsveien fra 061s append-only
+            # versjon, aldri av klienten — og INSPISERT her, felt for
+            # felt, av samme grunn som `kildereferanser` under: denne
+            # modulen kan ikke vite hvem som skrev raden den leser.
+            # Alt utenfor den lukkede formen droppes; en kopi uten
+            # gyldige krav droppes helt (og felles da av
+            # `mangler_paakrevde`).
+            krav = [{"kravnavn": str(k["kravnavn"]).strip(),
+                     "vekt": k["vekt"]}
+                    for k in (verdi.get("krav") or [])
+                    if isinstance(k, dict)
+                    and isinstance(k.get("kravnavn"), str)
+                    and k["kravnavn"].strip()
+                    and isinstance(k.get("vekt"), int)
+                    and not isinstance(k.get("vekt"), bool)
+                    and 0 <= k["vekt"] <= 10]
+            if (krav and len(krav) <= 50
+                    and isinstance(verdi.get("profil_id"), str)
+                    and verdi["profil_id"].strip()
+                    and isinstance(verdi.get("versjon"), int)
+                    and not isinstance(verdi.get("versjon"), bool)
+                    and verdi["versjon"] >= 1
+                    and isinstance(verdi.get("navn"), str)
+                    and verdi["navn"].strip()):
+                ut[felt] = {"profil_id": verdi["profil_id"],
+                            "versjon": verdi["versjon"],
+                            "navn": verdi["navn"].strip(),
+                            "krav": krav}
         elif felt == "kildereferanser" and isinstance(verdi, list):
             # Kildereferanser er allerede normalisert til nøyaktig tre
             # nøkler av `api.minimering._kildereferanser`. Vi gjentar
@@ -882,7 +915,7 @@ FELTGRENSER: dict[str, dict[str, tuple[int, int]]] = {
 #: bestillingen tas imot, ikke der den utføres — samme begrunnelse som
 #: `FELTGRENSER` har for `maks_sider`.
 FELTSTRENGER: dict[str, tuple[str, ...]] = {
-    "rekruttering.evaluering": ("stillingsprofil_ref", "soknadsbunt_ref"),
+    "rekruttering.evaluering": ("stillingsprofil_ref",),
 }
 
 #: URL-felter hvis RAPPORTFORM (`rapporturl`) har en lengdegrense, per
