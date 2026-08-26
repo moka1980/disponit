@@ -513,7 +513,6 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                                     "oppdrag_id": rad[3]}
                 return ("ok", lagret, True)
         verifisert_ts = None
-        profil_snapshot = None
         if hostname is not None:
             verifisert_ts = _verifisert_hostname(conn, tenant, hostname)
             if verifisert_ts is None:
