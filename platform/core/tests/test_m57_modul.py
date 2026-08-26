@@ -2359,6 +2359,97 @@ def test_manglende_felter_felles_for_stroemmen(tmp_path, monkeypatch):
     assert strommet, "strømmen skulle gått når porten ikke gjelder"
 
 
+def test_arkivinstansen_binder_deklarasjon_og_innhold(tmp_path, monkeypatch):
+    """Codex P1 `3866252992` (eierdom 26/8 pkt. 1: K2-kjennelse runde 7,
+    valg B i INODE-form): deklarasjonen og innholdet kom fra to
+    uavhengige åpninger av samme STI.
+
+    `les_manifest` henter blindingens kilde, `les_porsjonsvis` henter
+    teksten — og byttes fila i vinduet mellom dem med et
+    TOPOLOGI-BEVARENDE bytte (samme medlemsnavn, samme antall), blindes
+    arkiv A-s deklarasjon inn i arkiv B-s dokument. De eksisterende
+    portene ser det ikke: `medlem_uadressert`/`manifest_medlem_mangler`
+    /`kandidattall_avvik` tar bare det topologi-ENDRENDE byttet,
+    vakuøsitetsporten tier fordi A-s `Kari` FAKTISK traff B-s tekst, og
+    port 16 leter bare etter deklarerte verdier — `Ola` er ikke
+    deklarert i A.
+
+    Testen er derfor TO målinger av samme bytte, og forskjellen er
+    stien kalleren ga:
+
+    * vanlig sti → klassen, DOKUMENTERT: kjøringen fullfører som
+      blindet og `Ola` går i klartekst til modellen. Denne halvdelen er
+      med vilje en måling av et hull, ikke av en port — lukkes klassen
+      noen gang inne i modulen, SKAL den bli rød og tvinge fram en ny
+      dom.
+    * instansbundet sti (`/proc/self/fd/<fd>`) → LUKKINGEN, BEVIST:
+      alle fire åpningene går gjennom samme inode, byttet når aldri
+      kjøringen, og modellen ser A-s tekst fullt maskert.
+
+    Inodebindingen ER beviset — ikke en `st_ino`-sammenligning, som
+    hadde vært en heuristikk. Kallformen bor hos kontrolleren (PR-B),
+    som er eneste produksjonskaller og eier fila den selv skrev; porten
+    og kravet står her. Se KONTRAKT.md, `dom-klasse:
+    arkivinstans-toctou`.
+
+    Siste assert måler at byttet FAKTISK skjedde i begge løpene — uten
+    den kunne fd-halvdelen vært grønn av at ingenting hendte."""
+    import json as _json
+    import os
+
+    from modules.m57_ats import kjoring, parsing
+
+    def _lag(mappe, felter, cv):
+        mappe.mkdir()
+        return _bunt(mappe, [("k1/cv.html", cv)], manifest=_json.dumps(
+            {"soknader": [{"kandidat_id": "k1", "filer": ["k1/cv.html"],
+                           "felter": felter}]}))
+
+    a = _lag(tmp_path / "a", {"navn": ["Kari Testdal"]},
+             b"<p>Kari Testdal kan drift</p>")
+    b = _lag(tmp_path / "b", {"navn": ["Ola Testdal"]},
+             b"<p>Kari Testdal og Ola Testdal kan drift</p>")
+    original, byttet = a.read_bytes(), b.read_bytes()
+
+    ekte = parsing.les_manifest
+
+    def bytt_etter_lesing(sti, medlemmer):
+        manifestet = ekte(sti, medlemmer)
+        # Byttet er en ERSTATNING av stien (ny inode), slik en angriper
+        # eller en samtidig skriver ville gjort det — ikke en skriving
+        # inn i den åpne fila.
+        (tmp_path / "ny.zip").write_bytes(byttet)
+        os.replace(tmp_path / "ny.zip", a)
+        return manifestet
+
+    monkeypatch.setattr(kjoring.parsing, "les_manifest", bytt_etter_lesing)
+
+    def _kjor(sti):
+        modell = _Modell()
+        ut = kjoring.kjor_bunt(
+            sti, modell, vekter={"drift": 3},
+            tekst_for=lambda m, d: d.decode("utf-8"),
+            biasmaalinger=_MAALINGER, antall_soknader=1)
+        return ut, modell
+
+    # 1. Vanlig sti: klassen, dokumentert.
+    ut, modell = _kjor(a)
+    assert set(ut["artefakter"]) == {"k1"}
+    assert modell.sett, "modellen ble aldri kalt"
+    assert "Ola Testdal" in modell.sett[0], (
+        "byttet nådde ikke kjøringen — riggen måler ikke klassen")
+    assert "Kari Testdal" not in modell.sett[0]
+
+    # 2. Instansbundet sti: samme bytte, lukket per konstruksjon.
+    a.write_bytes(original)
+    with open(a, "rb") as fd:
+        ut, modell = _kjor(f"/proc/self/fd/{fd.fileno()}")
+    assert set(ut["artefakter"]) == {"k1"}
+    assert modell.sett == ["<p>[NAVN-1] kan drift</p>"], (
+        "innholdet kom ikke fra deklarasjonens egen arkivinstans")
+    assert a.read_bytes() == byttet, "byttet skjedde ikke i det hele tatt"
+
+
 def test_padda_feltverdi_er_ingen_deklarasjon(tmp_path):
     """Cursor P1: deklarasjonen er BÅDE det som maskeres og det porten
     leter etter, så en verdi som ikke kan stå i dokumentet gjør port 16

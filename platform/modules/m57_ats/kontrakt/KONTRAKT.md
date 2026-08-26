@@ -146,6 +146,33 @@ Modulen er KUNDE av plattformen, aldri omvendt (m56-formen):
 
   `dom-klasse: tokenkollisjon-korrupsjon · felt i #217 · https://github.com/moka1980/disponit/pull/217#issuecomment-5430381316`
 
+  KJENT GRENSE — ARKIVINSTANSEN I VINDUET, og den er en LEKKASJE, ikke
+  en nektelse. Kjøringen åpner buntstien flere uavhengige ganger:
+  deklarasjonen leses av `les_manifest`, innholdet av `les_porsjonsvis`
+  — to åpninger av samme STI. Byttes fila i vinduet mellom dem med et
+  TOPOLOGI-BEVARENDE bytte (samme medlemsnavn, samme antall), blindes
+  arkiv A-s deklarasjon inn i arkiv B-s dokument. A deklarerer `Kari`,
+  B-s CV skriver «Kari og Ola»: `Kari` maskeres og TREFFER, så
+  vakuøsitetsporten tier; `Ola` er ikke deklarert i A, så port 16 har
+  ingenting å lete etter; kjøringen fullfører som blindet med `Ola` i
+  klartekst hos modellen. De eksisterende portene tar bare det
+  topologi-ENDRENDE byttet (`medlem_uadressert`,
+  `manifest_medlem_mangler`, `kandidattall_avvik`).
+
+  LUKKINGEN ER KALLERENS, OG DEN ER EN INSTANSBINDING (eierdom,
+  K2-kjennelse runde 7 på
+  [#217](https://github.com/moka1980/disponit/pull/217), valg B i
+  inode-form): kalleren holder én åpen fd på bunten og gir `kjor_bunt`
+  stien `/proc/self/fd/<fd>`. Da går ALLE åpningene gjennom samme
+  inode, og et stibytte i vinduet kan per konstruksjon ikke nå
+  kjøringen. Inodebindingen er et BEVIS, ikke en heuristikk — en
+  `st_ino`-sammenligning ville vært det siste. Kontrolleren er eneste
+  produksjonskaller og eier fila den selv skrev, så kallformen bor der;
+  en kaller som gir en DELBAR filsti bærer klassen selv, og
+  `kjor_bunt`-docstringen krever derfor den instansbundne stien.
+
+  `dom-klasse: arkivinstans-toctou · felt i #217 · https://github.com/moka1980/disponit/pull/217#issuecomment-5430767580`
+
   `kandidat_id` er ASCII og LUKKET:
   `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` — ikke-tom, maks 64 tegn, starter
   alfanumerisk. Alt annet er `manifest_feilformet`. Kanonen er en

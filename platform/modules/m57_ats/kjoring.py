@@ -150,6 +150,25 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
     promoteringsvakten som alt står i 056. Det er ny maskin, og K1 sier
     egen PR. Eierens K2-dom (23/8) er valg 1, og den bærer HARD SPERRE:
     ingen kjøring mot reelle bunter i full størrelse før #173 er landet.
+
+    `sti` MÅ VÆRE INSTANSBUNDET NÅR DEN ER DELBAR — det er kallerens
+    ansvar (Codex P1, eierdom K2-kjennelse runde 7 på #217, valg B i
+    inode-form). Stien åpnes flere uavhengige ganger: `les_manifest`
+    henter DEKLARASJONEN (blindingens kilde), `les_porsjonsvis` henter
+    INNHOLDET. Byttes fila i vinduet mellom dem med et
+    TOPOLOGI-BEVARENDE bytte — samme medlemsnavn, samme antall —
+    blindes arkiv A-s deklarasjon inn i arkiv B-s dokument: A-s
+    verdier maskeres og TREFFER (så vakuøsitetsporten tier), en
+    personverdi som bare står i B er ikke deklarert (så port 16 har
+    ingenting å lete etter), og kjøringen fullfører som blindet med
+    klartekst hos modellen. De eksisterende portene tar bare det
+    topologi-ENDRENDE byttet. Kalleren holder derfor bunten åpen og gir
+    en instansbundet sti — `/proc/self/fd/<fd>` — når stien kan deles
+    med andre skrivere; da går alle åpningene gjennom samme inode, og
+    byttet kan per konstruksjon ikke nå kjøringen. Kontrolleren er
+    eneste produksjonskaller og eier fila den selv skrev. En kaller som
+    gir en delbar filsti bærer klassen selv; se KONTRAKT.md,
+    `dom-klasse: arkivinstans-toctou`.
     """
     artefakter: dict[str, dict] = {}
     oppfylt: dict[str, dict] = {}
