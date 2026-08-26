@@ -1070,6 +1070,8 @@
   "ui.rekruttering.bestill.bunt_uten_navn": "søknadsbunten",
   "ui.rekruttering.bestill.sendt": "Bestillingen er levert: {beslutning}, oppdrag {oppdrag}.",
   "ui.rekruttering.bestill.sendt_uten_oppdrag": "Bestillingen er levert: {beslutning}.",
+  "ui.rekruttering.bestill.stoppet": "Bestillingen ble stoppet av policyen. Bunten er ikke brukt opp — den står klar til en ny bestilling.",
+  "ui.rekruttering.bestill.unntak": "Bestillingen er lagt i unntakskøen og venter på behandling. Bunten er ikke brukt opp — den står klar.",
   "ui.rekruttering.bestill.feil": "Bestillingen feilet. Sjekk feltene og prøv igjen.",
   "ui.rekruttering.profiler.tabell": "Kravene i profilen, med vekt per krav",
   "ui.rekruttering.profiler.tomt_krav": "Profilen må ha minst ett krav.",

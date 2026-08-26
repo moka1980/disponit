@@ -710,22 +710,50 @@ function bestillSeksjon(hoved, ctx, data, okt) {
         kropp.slettefrist_dogn = Number(fristInp.value);
       }
       const svar = await bestillEvaluering(kropp, tilstand.bestillIdem);
-      // Definitivt svar: kjeden er fullført — alt nullstilles, en ny
-      // bestilling er en ny operasjon med ny bunt. MUTERES i eget
-      // objekt, byttes aldri: handleren (og en senere tegning) holder
-      // referansen til DETTE objektet — et bytte ga en stale binding
-      // der gamle nøkler og en alt FORBRUKT bunt overlevde suksessen.
-      tilstand.reserverIdem = null;
-      tilstand.bestillIdem = null;
-      tilstand.inndataRef = null;
-      tilstand.filnavn = null;
-      skjema.reset();
-      visBunt();
-      sett(utfall, (svar.oppdrag_id
-        ? t("ui.rekruttering.bestill.sendt")
-            .replace("{oppdrag}", String(svar.oppdrag_id))
-        : t("ui.rekruttering.bestill.sendt_uten_oppdrag"))
-        .replace("{beslutning}", String(svar.beslutning)));
+      // ET `200` ER IKKE EN LEVERANSE (Cursor P1-1). Beslutningsveien
+      // svarer `200` også når policyen sier STOPP eller sender saken til
+      // unntakskøen — uten oppdrag — og serveren lar da bunten stå
+      // `lastet` med `oppdrag_id IS NULL`, altså fortsatt fri til å bli
+      // bestilt av en lovlig bestilling (`test_stopp_binder_ikke_bunten`).
+      // Flaten nullstilte likevel hele kjeden og sa «Bestillingen er
+      // levert»: to usannheter i samme setning — leveransen som ikke
+      // skjedde, og den frie bunten som ble kastet ut av økten så
+      // brukeren måtte laste opp den samme ZIP-en på nytt. Nabo-flaten
+      // for WCAG-bestilling (`bestilling.js: visUtfall`) har hele tiden
+      // skilt de tre armene, og denne er den samme beslutningen.
+      if (svar.beslutning === "tillat") {
+        // Definitivt svar: kjeden er fullført — alt nullstilles, en ny
+        // bestilling er en ny operasjon med ny bunt. MUTERES i eget
+        // objekt, byttes aldri: handleren (og en senere tegning) holder
+        // referansen til DETTE objektet — et bytte ga en stale binding
+        // der gamle nøkler og en alt FORBRUKT bunt overlevde suksessen.
+        tilstand.reserverIdem = null;
+        tilstand.bestillIdem = null;
+        tilstand.inndataRef = null;
+        tilstand.filnavn = null;
+        skjema.reset();
+        visBunt();
+        sett(utfall, (svar.oppdrag_id
+          ? t("ui.rekruttering.bestill.sendt")
+              .replace("{oppdrag}", String(svar.oppdrag_id))
+          : t("ui.rekruttering.bestill.sendt_uten_oppdrag"))
+          .replace("{beslutning}", String(svar.beslutning)));
+      } else {
+        // STOPP/unntak: bunten er URØRT og blir stående i skjemaet, så
+        // neste forsøk går på den samme reservasjonen. Det ENESTE som er
+        // brukt opp, er intensjonen: serveren har dømt nøyaktig denne
+        // kroppen, og et nytt forsøk under den samme nøkkelen ville bare
+        // fått den samme dommen replayet.
+        tilstand.bestillIdem = null;
+        // STOPP-årsaken skal LESES OPP, ikke bare vises (§7) — samme
+        // grep som `bestilling.js`: kodene er serverens strukturerte
+        // begrunnelse, og faller en kode utenfor locale, står koden selv.
+        const koder = (svar.begrunnelse || [])
+          .map((k) => t(`kode.${k}`, k)).join(". ");
+        sett(utfall, svar.beslutning === "stopp"
+          ? `${t("ui.rekruttering.bestill.stoppet")} ${koder}`.trim()
+          : t("ui.rekruttering.bestill.unntak"));
+      }
     } catch (e) {
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
       const definitivt = !!e && e.status >= 400 && e.status < 500;

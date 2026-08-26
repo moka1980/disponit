@@ -1363,6 +1363,78 @@ test("Bestilling: et tapt svar meldes som uvisst, ikke som «feilet» (P2-4)", a
   assert.equal(alert.textContent, t("ui.rekruttering.bestill.feil"));
 });
 
+test("Bestilling: STOPP er ingen leveranse — bunten står igjen (P1-1)", async () => {
+  // Serveren svarer `200` også på STOPP og unntak, uten oppdrag, og lar
+  // bunten stå `lastet` (`test_stopp_binder_ikke_bunten`). Sa flaten
+  // «Bestillingen er levert» og nullstilte kjeden, løy den om utfallet OG
+  // kastet en bunt serveren fortsatt holder fri.
+  KALL = [];
+  const basis = { "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/inndata/reserver": { reservasjon_jti: "j-1",
+                              inndata_ref: "inndata:u-1" },
+    "/v1/inndata/opplast/j-1": {} };
+  let bestillingssvar = { beslutning: "stopp", oppdrag_id: null,
+    begrunnelse: ["bestilling_policy_stopp"] };
+  SVAR = (sti) => sti === "/v1/bestilling" ? bestillingssvar : basis[sti];
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const seksjon = hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  const skjema = seksjon.querySelector("form");
+  const send = skjema.querySelector("button[type=submit]");
+  const alert = seksjon.querySelector("[role=alert]");
+  const filInp = skjema.querySelector("input[type=file]");
+  Object.defineProperty(filInp, "files", { configurable: true,
+    value: [{ name: "bunt.zip",
+              arrayBuffer: async () => new ArrayBuffer(16) }] });
+  filInp.dispatchEvent(new window.Event("change", { bubbles: true }));
+  const runde = async () => {
+    skjema.dispatchEvent(new window.Event("submit",
+      { bubbles: true, cancelable: true }));
+    assert.ok(await vent(() => !send.disabled, 40), "runden ble aldri ferdig");
+  };
+  const bestillinger = () => KALL.filter((k) => k.sti === "/v1/bestilling");
+  await runde();
+  assert.equal(bestillinger().length, 1);
+  assert.ok(!alert.textContent.includes(
+    t("ui.rekruttering.bestill.sendt_uten_oppdrag")
+      .replace("{beslutning}", "stopp")),
+    "en STOPP ble meldt som en levert bestilling");
+  assert.ok(alert.textContent.startsWith(t("ui.rekruttering.bestill.stoppet")),
+    `STOPP-teksten mangler: ${alert.textContent}`);
+  assert.ok(alert.textContent.includes(
+    t("kode.bestilling_policy_stopp", "bestilling_policy_stopp")),
+    "STOPP-årsaken står ikke i alerten (§7)");
+  // Bunten er ikke forbrukt: den står navngitt, filen kreves ikke, og
+  // neste forsøk går på SAMME reservasjon — ingen ny opplasting.
+  assert.match(seksjon.textContent, /bunt\.zip/,
+    "den frie bunten ble kastet ut av økten");
+  assert.equal(filInp.hasAttribute("required"), false);
+  bestillingssvar = { beslutning: "tillat", oppdrag_id: 77 };
+  await runde();
+  assert.equal(KALL.filter((k) => k.sti === "/v1/inndata/reserver").length, 1,
+    "bunten ble reservert på nytt etter en STOPP");
+  const [b1, b2] = bestillinger();
+  assert.equal(b2.kropp.inndata_ref, "inndata:u-1");
+  // Serveren har DØMT den forrige kroppen: samme nøkkel ville bare fått
+  // den samme STOPP-en replayet.
+  assert.notEqual(b1.hoder["Idempotency-Key"], b2.hoder["Idempotency-Key"],
+    "et nytt forsøk bar nøkkelen til den alt dømte intensjonen");
+  await vent(() => alert.textContent.includes("77"), 20);
+  // ... og unntakskøen har sin egen tekst, ikke stopp-teksten.
+  bestillingssvar = { beslutning: "brudd", oppdrag_id: null,
+    begrunnelse: [], unntak_id: 5 };
+  Object.defineProperty(filInp, "files", { configurable: true,
+    value: [{ name: "bunt2.zip",
+              arrayBuffer: async () => new ArrayBuffer(16) }] });
+  filInp.dispatchEvent(new window.Event("change", { bubbles: true }));
+  await runde();
+  assert.equal(alert.textContent, t("ui.rekruttering.bestill.unntak"));
+  const brudd = await alvorligeBrudd(hoved);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
 test("Bestilling: 4xx på reservasjon/opplast slipper den døde nøkkelen (P1-3)", async () => {
   KALL = [];
   let reserversvar = 409;
