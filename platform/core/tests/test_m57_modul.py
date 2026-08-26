@@ -2292,6 +2292,36 @@ def test_manifesttaket_er_en_maalt_port_ikke_bare_en_linje(tmp_path):
                for m in parsing.inspiser_bunt(arkiv))
 
 
+def test_manifestet_har_ikke_fritak_fra_null_komprimert(tmp_path):
+    """Cursor P2 (runde 3) på #161: manifest-armen målte bare taket og
+    gikk `continue` — bombe-armen som feller `compress_size = 0` sto
+    NEDENFOR, og deklarasjonen var dermed den ene oppføringen i bunten
+    som kunne påstå innhold uten komprimert størrelse. Samme hull som
+    `test_port21_null_komprimert_er_ikke_fritak` lukket for søknadene,
+    gjenåpnet for fila som er billigst å forme ondsinnet.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `compress_size <= 0`-armen på
+    manifest-grenen i `inspiser_bunt`.
+    """
+    filer = [("k1/cv.html", b"<p>drift</p>")]
+
+    # Under taket, men null komprimert: uendelig forhold, ikke en
+    # ukomprimert fil.
+    arkiv = _bunt(tmp_path, filer)
+    _patch_deklarert(arkiv, b"soknader.json", 1024, komprimert=0)
+    with pytest.raises(parsing.Buntfeil) as e:
+        parsing.inspiser_bunt(arkiv)
+    assert e.value.kode == "komprimeringsforhold", e.value.kode
+
+    # Kontroll: den ÆRLIGE deklarasjonen komprimerer godt over 100:1 og
+    # skal fortsatt gjennom — det er null-armen som speiles, ikke taket.
+    (tmp_path / "aerlig").mkdir()
+    arkiv = _bunt(tmp_path / "aerlig", filer)
+    _patch_deklarert(arkiv, b"soknader.json", 1024 * 1024, komprimert=1)
+    assert any(m.navn == "soknader.json"
+               for m in parsing.inspiser_bunt(arkiv))
+
+
 def test_manifest_som_forsvant_mellom_lesningene_er_kodet(tmp_path,
                                                           monkeypatch):
     """Cursor P1 (runde 2) på #161: `les_manifest` måler `manifest_mangler`

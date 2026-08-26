@@ -236,6 +236,17 @@ def inspiser_bunt(sti: str | Path) -> list[Medlem]:
                 # søknadsinnhold og skal ikke se det.
                 if info.file_size > MAKS_MANIFESTBYTES:
                     raise Buntfeil("manifest_feilformet", "for stort")
+                # …MEN NULL KOMPRIMERT ER ET UENDELIG FORHOLD OGSÅ HER
+                # (Cursor P2, runde 3). `continue` under hoppet over hele
+                # bombe-armen nedenfor, så deklarasjonen var den ene
+                # oppføringen som kunne påstå innhold med `compress_size
+                # = 0` og likevel slippe gaten — nøyaktig hullet den
+                # armen ble skrevet for å lukke, gjenåpnet for fila det
+                # er BILLIGST å forme ondsinnet. Bare null-armen speiles:
+                # ærlig JSON komprimerer over 100:1, og 4 MiB-taket over
+                # binder skaden et ekte forholdstak ikke trengs for.
+                if info.file_size > 0 and info.compress_size <= 0:
+                    raise Buntfeil("komprimeringsforhold", info.filename)
                 total += info.file_size
                 if total > MAKS_TOTAL_UTPAKKET:
                     raise Buntfeil("total_for_stor", info.filename)
