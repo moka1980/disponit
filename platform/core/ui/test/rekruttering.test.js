@@ -21,8 +21,14 @@ let KALL;
 let SVAR;
 globalThis.fetch = async (url, opts = {}) => {
   const sti = url.split("?")[0];
-  KALL.push({ sti, metode: opts.method || "GET",
-    kropp: opts.body ? JSON.parse(opts.body) : null,
+  let kropp = null;
+  if (opts.body) {
+    // Opplastingen sender RÅ bytes (ArrayBuffer) — de er ikke JSON og
+    // registreres som binær størrelse i stedet.
+    try { kropp = JSON.parse(opts.body); }
+    catch { kropp = { binaer: opts.body.byteLength || 0 }; }
+  }
+  KALL.push({ sti, metode: opts.method || "GET", kropp,
     hoder: opts.headers || {} });
   const svar = (typeof SVAR === "function") ? SVAR(sti, opts) : SVAR[sti];
   if (svar === undefined) {
@@ -1093,6 +1099,102 @@ test("Profiler: uten bestilling:opprett finnes ingen skriveknapper (P2-1)", asyn
   const t2 = [...s2.querySelectorAll("button")].map((b) => b.textContent);
   assert.ok(t2.includes(t("ui.rekruttering.profiler.ny")));
   assert.ok(t2.includes(t("ui.rekruttering.profiler.rediger")));
+});
+
+test("Bestilling: hele kjeden — reserver, opplast, bestill (SP-2)", async () => {
+  KALL = [];
+  const basis = { "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/inndata/reserver": { reservasjon_jti: "j-1",
+                              inndata_ref: "inndata:u-1" },
+    "/v1/inndata/opplast/j-1": {} };
+  let bestillingssvar = { beslutning: "tillat", oppdrag_id: 42 };
+  SVAR = (sti) => sti === "/v1/bestilling" ? bestillingssvar : basis[sti];
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const seksjon = hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  assert.ok(seksjon, "bestillingsseksjonen mangler");
+  const skjema = seksjon.querySelector("form");
+  const filInp = skjema.querySelector("input[type=file]");
+  Object.defineProperty(filInp, "files", { configurable: true,
+    value: [{ name: "bunt.zip",
+              arrayBuffer: async () => new ArrayBuffer(16) }] });
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  await vent(() => seksjon.querySelector("[role=alert]")
+    .textContent.includes("42"), 20);
+  const stier = KALL.filter((k) => k.metode !== "GET").map((k) => k.sti);
+  assert.deepEqual(stier, ["/v1/inndata/reserver",
+    "/v1/inndata/opplast/j-1", "/v1/bestilling"]);
+  const [res, opp, best] = KALL.filter((k) => k.metode !== "GET");
+  assert.ok(res.hoder["Idempotency-Key"], "reservasjonen mangler nøkkel");
+  assert.equal(opp.metode, "PUT");
+  assert.equal(opp.hoder["content-type"], "application/zip");
+  assert.equal(opp.kropp.binaer, 16, "opplastingen sendte ikke bytene");
+  assert.ok(best.hoder["Idempotency-Key"], "bestillingen mangler nøkkel");
+  assert.deepEqual(best.kropp, { bestillingstype: "rekruttering.evaluering",
+    inndata_ref: "inndata:u-1", stillingsprofil_ref: "prof-1@2",
+    antall_soknader: 1, omfang: "bunt" });
+  const brudd = await alvorligeBrudd(hoved);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
+test("Bestilling: 5xx beholder nøkkel OG opplastet bunt — 4xx roterer nøkkelen", async () => {
+  KALL = [];
+  const basis = { "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/inndata/reserver": { reservasjon_jti: "j-1",
+                              inndata_ref: "inndata:u-1" },
+    "/v1/inndata/opplast/j-1": {} };
+  let bestillingssvar = 500;
+  SVAR = (sti) => sti === "/v1/bestilling" ? bestillingssvar : basis[sti];
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const seksjon = hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  const skjema = seksjon.querySelector("form");
+  const filInp = skjema.querySelector("input[type=file]");
+  Object.defineProperty(filInp, "files", { configurable: true,
+    value: [{ name: "bunt.zip",
+              arrayBuffer: async () => new ArrayBuffer(16) }] });
+  const send = () => skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  const bestillinger = () =>
+    KALL.filter((k) => k.sti === "/v1/bestilling");
+  send();
+  await vent(() => bestillinger().length === 1, 20);
+  bestillingssvar = { beslutning: "tillat", oppdrag_id: 7 };
+  send();
+  await vent(() => bestillinger().length === 2, 20);
+  // 5xx: retry er SAMME operasjon — samme nøkkel, og bunten lastes ALDRI
+  // opp på nytt (én reservasjon totalt).
+  const [b1, b2] = bestillinger();
+  assert.equal(b1.hoder["Idempotency-Key"], b2.hoder["Idempotency-Key"],
+    "5xx-retry roterte nøkkelen");
+  assert.equal(KALL.filter((k) => k.sti === "/v1/inndata/reserver").length,
+    1, "retryen reserverte bunten på nytt");
+  await vent(() => seksjon.querySelector("[role=alert]")
+    .textContent.includes("7"), 20);
+  // 4xx: serveren DØMTE — neste forsøk er en NY operasjon (ny nøkkel),
+  // og en NY bunt (skjemaet er nullstilt etter suksessen over).
+  Object.defineProperty(skjema.querySelector("input[type=file]"), "files",
+    { configurable: true, value: [{ name: "b2.zip",
+        arrayBuffer: async () => new ArrayBuffer(8) }] });
+  bestillingssvar = 409;
+  send();
+  await vent(() => bestillinger().length === 3, 20);
+  // Vent til CATCHEN har dømt (feilteksten står) — kallet logges i det
+  // fetch STARTER, og å sende b4 før b3s dom er et kappløp i testen,
+  // ikke i flaten.
+  await vent(() => seksjon.querySelector("[role=alert]")
+    .textContent === t("ui.rekruttering.bestill.feil"), 20);
+  bestillingssvar = { beslutning: "tillat", oppdrag_id: 8 };
+  send();
+  await vent(() => bestillinger().length === 4, 20);
+  const [, , b3, b4] = bestillinger();
+  assert.notEqual(b3.hoder["Idempotency-Key"], b4.hoder["Idempotency-Key"],
+    "4xx-dommen skulle rotert nøkkelen");
 });
 
 test("Profiler: listen viser navn, versjon og krav — og axe rent", async () => {

@@ -18,6 +18,7 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { hentJson, signerRekrutteringsliste, lagreStillingsprofil,
+         reserverBunt, lastOppBunt, bestillEvaluering,
          nyIdempotensnokkel, UautorisertFeil } from "../api.js";
 import { harScope } from "../sitekart.js";
 import { DataTabell } from "../tabell.js";
@@ -115,7 +116,13 @@ export function visRekruttering(hoved, ctx) {
   // til her av nøyaktig samme grunn som de to over: den skrives når
   // POST-en svarer, og da kan tegningen som ba om den være borte.
   const okt = { signeringsnokler: new Map(), signerte: new Set(),
-    utfall: null };
+    utfall: null,
+    // Evalueringskjeden (#162): den opplastede bunten og begge
+    // SP-2-nøklene hører til den lastede flaten, ikke én tegning — et
+    // prosessbytte skal ikke gjøre en retry til en NY operasjon eller
+    // miste en alt opplastet bunt.
+    bestilling: { reserverIdem: null, bestillIdem: null,
+                  inndataRef: null, filnavn: null } };
   medStatus(hoved, ctx,
     async () => {
       // Profilene er TILLEGGSDATA (samme politikk som
@@ -137,10 +144,11 @@ export function visRekruttering(hoved, ctx) {
 function tegn(hoved, ctx, data, okt, valgtId) {
   const prosesser = (data && data.prosesser) || [];
   const profilDel = profilSeksjon(hoved, ctx, data, okt);
+  const bestillDel = bestillSeksjon(hoved, ctx, data, okt);
   if (!prosesser.length) {
     sett(hoved, flateHode(t("ui.rekruttering.tittel")),
       el("p", { text: t("ui.rekruttering.ingen_prosess") }),
-      profilDel);
+      profilDel, ...(bestillDel ? [bestillDel] : []));
     return;
   }
   // FLERE PROSESSER ER TILGJENGELIGE, IKKE BARE DEN FØRSTE (Codex P2).
@@ -544,7 +552,7 @@ function tegn(hoved, ctx, data, okt, valgtId) {
 
   sett(hoved, flateHode(t("ui.rekruttering.tittel")), velgerRot,
     utfall, kunngjoring, blindingRot, vektRot, merknadRot, tabellRot,
-    listeRot, profilDel);
+    listeRot, profilDel, ...(bestillDel ? [bestillDel] : []));
   tegnTabell();
 }
 
@@ -556,6 +564,128 @@ function tegn(hoved, ctx, data, okt, valgtId) {
 // skjemaform etter §8: ekte <label for>, tallfelt med min/maks, knapper
 // som <button>, utfall i role="alert", og fokus flyttes inn i skjemaet
 // når det åpnes.
+// Evalueringsbestillingen (#162, hele kjeden klikkbar): velg ZIP-bunt,
+// profilversjon og antall — flaten reserverer, laster opp og bestiller.
+// SP-2 hele veien: bunten er engangs (ny fil = ny reservasjon), og
+// bestillingsnøkkelen holdes til et DEFINITIVT svar. Skjemaform etter
+// §8: ekte <label for>, tallfelt med min/maks, utfall i role="alert".
+function bestillSeksjon(hoved, ctx, data, okt) {
+  if (!harScope(ctx, "bestilling:opprett")) return null;
+  const profiler = (data && data.profiler) || [];
+  const rot = el("section", { "aria-labelledby": "bestill-tittel" });
+  const utfall = el("div", { role: "alert", class: "utfall" });
+  const tilstand = okt.bestilling;
+
+  if (!profiler.length) {
+    sett(rot, el("h2", { id: "bestill-tittel",
+      text: t("ui.rekruttering.bestill.tittel") }),
+      el("p", { text: t("ui.rekruttering.bestill.ingen_profil") }));
+    return rot;
+  }
+
+  const filInp = el("input", { type: "file", id: "bestill-fil",
+    accept: ".zip,application/zip", required: true });
+  filInp.addEventListener("change", () => {
+    // Ny fil = NY bunt: en alt reservert/opplastet bunt forkastes ved å
+    // glemme referansen — serveren rydder utløpte reservasjoner selv.
+    tilstand.inndataRef = null;
+    tilstand.reserverIdem = null;
+    tilstand.filnavn = filInp.files[0] ? filInp.files[0].name : null;
+  });
+  const profilVelger = el("select", { id: "bestill-profil", required: true },
+    ...profiler.map((pr) => el("option",
+      { value: `${pr.profil_id}@${pr.versjon}` },
+      t("ui.rekruttering.bestill.profilvalg")
+        .replace("{navn}", pr.navn)
+        .replace("{versjon}", String(pr.versjon)))));
+  const antallInp = el("input", { type: "number", id: "bestill-antall",
+    min: "1", max: "5000", step: "1", required: true, value: "1" });
+  const fristInp = el("input", { type: "number", id: "bestill-frist",
+    min: "30", max: "365", step: "1" });
+  const send = el("button", { type: "submit",
+    text: t("ui.rekruttering.bestill.send") });
+
+  const skjema = el("form", {},
+    el("p", {}, el("label", { for: "bestill-fil",
+      text: t("ui.rekruttering.bestill.fil") }), " ", filInp),
+    el("p", {}, el("label", { for: "bestill-profil",
+      text: t("ui.rekruttering.bestill.profil") }), " ", profilVelger),
+    el("p", {}, el("label", { for: "bestill-antall",
+      text: t("ui.rekruttering.bestill.antall") }), " ", antallInp),
+    el("p", {}, el("label", { for: "bestill-frist",
+      text: t("ui.rekruttering.bestill.slettefrist") }), " ", fristInp),
+    el("p", {}, send));
+
+  skjema.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const fil = filInp.files[0];
+    if (!fil && !tilstand.inndataRef) {
+      sett(utfall, t("ui.rekruttering.bestill.mangler_fil"));
+      return;
+    }
+    send.disabled = true;
+    try {
+      if (!tilstand.inndataRef) {
+        sett(utfall, t("ui.rekruttering.bestill.laster"));
+        if (!tilstand.reserverIdem) {
+          tilstand.reserverIdem = nyIdempotensnokkel();
+        }
+        const res = await reserverBunt(tilstand.reserverIdem);
+        const bytes = await fil.arrayBuffer();
+        await lastOppBunt(res.reservasjon_jti, bytes);
+        // Referansen settes først når BEGGE stegene er i mål: feiler
+        // opplastingen, er reservasjonen brukt/utløpende og neste
+        // forsøk skal reservere på nytt (fersk nøkkel).
+        tilstand.inndataRef = res.inndata_ref;
+      }
+      if (!tilstand.bestillIdem) {
+        tilstand.bestillIdem = nyIdempotensnokkel();
+      }
+      const kropp = { bestillingstype: "rekruttering.evaluering",
+        inndata_ref: tilstand.inndataRef,
+        stillingsprofil_ref: profilVelger.value,
+        antall_soknader: Number(antallInp.value), omfang: "bunt" };
+      if (fristInp.value !== "") {
+        kropp.slettefrist_dogn = Number(fristInp.value);
+      }
+      const svar = await bestillEvaluering(kropp, tilstand.bestillIdem);
+      // Definitivt svar: kjeden er fullført — alt nullstilles, en ny
+      // bestilling er en ny operasjon med ny bunt. MUTERES i eget
+      // objekt, byttes aldri: handleren (og en senere tegning) holder
+      // referansen til DETTE objektet — et bytte ga en stale binding
+      // der gamle nøkler og en alt FORBRUKT bunt overlevde suksessen.
+      tilstand.reserverIdem = null;
+      tilstand.bestillIdem = null;
+      tilstand.inndataRef = null;
+      tilstand.filnavn = null;
+      skjema.reset();
+      sett(utfall, (svar.oppdrag_id
+        ? t("ui.rekruttering.bestill.sendt")
+            .replace("{oppdrag}", String(svar.oppdrag_id))
+        : t("ui.rekruttering.bestill.sendt_uten_oppdrag"))
+        .replace("{beslutning}", String(svar.beslutning)));
+    } catch (e) {
+      if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+      if (e && e.status >= 400 && e.status < 500) {
+        // Serveren DØMTE operasjonen — retry er en NY operasjon. En
+        // reservert bunt beholdes: dommen gjaldt bestillingen, ikke
+        // opplastingen.
+        tilstand.bestillIdem = null;
+      }
+      // Nettverk/5xx: begge nøklene beholdes — retry er SAMME operasjon.
+      sett(utfall, t("ui.rekruttering.bestill.feil"));
+    } finally {
+      send.disabled = false;
+    }
+  });
+
+  sett(rot, el("h2", { id: "bestill-tittel",
+    text: t("ui.rekruttering.bestill.tittel") }),
+    utfall, skjema);
+  return rot;
+}
+
+
 function profilSeksjon(hoved, ctx, data, okt) {
   const profiler = (data && data.profiler) || [];
   // Cursor P2-1 (runde 2): flaten er lesbar med decisions:read, men
