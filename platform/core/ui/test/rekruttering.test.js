@@ -1754,6 +1754,64 @@ test("Evalueringer: auto-lastingen kjører ÉN gang per økt — "
     "rapporten forsvant i prosessbyttet — cachen re-bygges ikke");
 });
 
+test("Evalueringer: en stille auto-feil bruker ikke opp økten", async () => {
+  KALL = [];
+  // Pass-funn, andre halvdel: `autoKjort` settes FØR utfallet er kjent.
+  // Cachen redder den VELLYKKEDE runden, men feilet auto-hentingen
+  // (liste og detalj divergerer i vinduet mellom dem — frist/TOCTOU/
+  // 404/5xx), sto flaten tom for resten av økten: feilen er med rette
+  // stille (alert hører til klikket), og latchen sørget for at
+  // auto-stien aldri prøvde igjen. Latchen slippes derfor når runden
+  // er over uten at noe ble tegnet.
+  const to = prosess();
+  to.prosesser.push({
+    prosess_id: "p-2", navn: "Sykepleier vest", blinding_av: false,
+    vekter: { drift: 1 },
+    kandidater: [{ kandidat_id: "K-9", oppfylt: { drift: true },
+      status: "anbefalt", funn: [], intervjusporsmal: [] }],
+    lister: [],
+  });
+  let rapportSvar; // undefined ⇒ 404 fra fetch-stubben
+  SVAR = (sti) => ({
+    "/v1/rekruttering/prosesser": to,
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
+    "/v1/rekruttering/rapport/96": rapportSvar,
+  })[sti];
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => KALL.some(
+    (k) => k.sti === "/v1/rekruttering/rapport/96")),
+    "auto-lastingen prøvde aldri");
+  await new Promise((r) => setTimeout(r, 20));
+  const seksjon = hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  assert.ok([...seksjon.querySelectorAll('[role="alert"]')]
+    .every((a) => !a.textContent.includes(
+      t("ui.rekruttering.evalueringer.rapportfeil"))),
+    "auto-feilen malte en usolicited alert");
+  // ... og ØKTEN ER IKKE BRUKT OPP: er rapporten der ved neste mount,
+  // henter auto-stien den. Mutasjonen som dreper denne: la latchen stå
+  // etter en mislykket runde — alerten mangler fortsatt (riktig), men
+  // produktet kommer aldri.
+  rapportSvar = { oppdrag_id: 96, rapport: {
+    rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+    profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
+    antall_soknader: 1,
+    rangering: [{ kandidat_id: "kandidat-01", poeng: 5,
+      nedbrytning: { drift: 5 } }],
+    kandidater: { "kandidat-01": { funn: [] } },
+    fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+  } };
+  const velger = hoved.querySelector("#rekrut-prosessvelger");
+  velger.value = "p-2";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.ok(await vent(() => hoved.textContent.includes("kandidat-01")),
+    "den stille auto-feilen latchet økten — produktet kom aldri tilbake");
+});
+
 test("Evalueringer: en rapport som lander etter et prosessbytte tegner "
   + "i den MONTERTE seksjonen", async () => {
   KALL = [];

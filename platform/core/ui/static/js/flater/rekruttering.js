@@ -1083,7 +1083,17 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
     }
   } else if (klarRad && rHent && !rHent.autoKjort) {
     rHent.autoKjort = true;
-    visRapport(klarRad.oppdrag_id, { fokus: false });
+    // ... men LATCHEN ER IKKE PERMANENT FØR SUKSESS (pass-funn). Den
+    // settes før utfallet er kjent, og finnes for å hindre en DOBBELT
+    // auto-henting — ikke for å bruke opp økten. Feilet runden (liste og
+    // detalj kan divergere i vinduet mellom dem: frist/TOCTOU/404/5xx),
+    // er auto-feilen med rette stille — men da sto flaten tom for resten
+    // av økten, uten alert og uten at auto-stien noen gang prøvde igjen.
+    // `rHent.siste` er kvitteringen for at noe FAKTISK ble tegnet: står
+    // den tom når runden er over, slippes latchen og neste mount får
+    // prøve. Suksess trenger ingen latch — cachen over kortslutter.
+    visRapport(klarRad.oppdrag_id, { fokus: false })
+      .then(() => { if (!rHent.siste) rHent.autoKjort = false; });
   }
   // Bestillingsseksjonen melder fra etter et definitivt `tillat` — da
   // hentes listen på nytt så det ferske oppdraget faktisk vises. Feiler
