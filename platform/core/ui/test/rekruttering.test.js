@@ -1547,6 +1547,81 @@ test("Evalueringer: auto-visningen tar den FERSKESTE klare rapporten, "
   // `seedListe.find((e2) => e2.rapport_klar)` — stigende seed viser 96.
 });
 
+test("Evalueringer: hopplenke forbi rangeringen til prosess og signering "
+  + "— og den rører ikke ruterens hash", async () => {
+  // Cursor P2: «produktet først» + null klikk mounter én fokusbar
+  // `<summary>` per kandidat FORAN prosessvelger, vekter og signering.
+  // Tastaturveien til de irreversible handlingene ble dermed like lang som
+  // kandidatlisten (skjemaet tillater 5000). `<summary>`-ene beholder
+  // tab-rekkefølgen sin — å ta dem ut ville stengt tastaturveien INN i
+  // detaljene — og veien forbi er WCAG 2.4.1s egen: en hopplenke.
+  KALL = [];
+  const to = prosess();
+  to.prosesser.push({
+    prosess_id: "p-2", navn: "Sykepleier vest", blinding_av: false,
+    vekter: { drift: 1 },
+    kandidater: [{ kandidat_id: "K-9", oppfylt: { drift: true },
+      status: "anbefalt", funn: [], intervjusporsmal: [] }],
+    lister: [],
+  });
+  const kandidater = ["kandidat-01", "kandidat-02", "kandidat-03"];
+  SVAR = {
+    "/v1/rekruttering/prosesser": to,
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
+    "/v1/rekruttering/rapport/96": { oppdrag_id: 96, rapport: {
+      rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+      profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
+      antall_soknader: 3,
+      rangering: kandidater.map((id, i) => ({ kandidat_id: id,
+        poeng: 9 - i, nedbrytning: { drift: 9 - i } })),
+      kandidater: Object.fromEntries(kandidater.map((id) => [id, { funn: [] }])),
+      fremdrift: { filer_lest: 3, filer_totalt: 3, byte_lest: 150 },
+    } },
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("h3[tabindex='-1']")),
+    "rapporten rendret ikke av seg selv");
+  const sammendrag = [...hoved.querySelectorAll("details > summary")];
+  assert.ok(sammendrag.length >= 3,
+    `rangeringen ga bare ${sammendrag.length} detaljbokser`);
+  const hopp = hoved.querySelector("a.hoppelenke");
+  assert.ok(hopp, "hopplenken over rangeringen mangler");
+  const maal = hoved.querySelector(hopp.getAttribute("href"));
+  assert.ok(maal, "hopplenken peker på et anker som ikke finnes i flaten");
+  // Dokumentrekkefølge: ankeret ligger ETTER alle detaljboksene og FØR
+  // prosesskontrollen — altså er det nettopp rangeringen som hoppes over.
+  const alle = [...hoved.querySelectorAll("*")];
+  const velger = hoved.querySelector("#rekrut-prosessvelger");
+  assert.ok(velger, "prosessvelgeren mangler i riggen");
+  assert.ok(alle.indexOf(maal) > alle.indexOf(sammendrag[sammendrag.length - 1]),
+    "ankeret ligger foran detaljboksene — da hoppes ingenting over");
+  assert.ok(alle.indexOf(maal) < alle.indexOf(velger),
+    "ankeret ligger etter prosessvelgeren — hoppet lander for langt ned");
+  assert.ok(alle.indexOf(hopp) < alle.indexOf(sammendrag[0]),
+    "hopplenken står ikke foran rangeringen den skal hoppe over");
+  // ... og hoppet er et FOKUSHOPP, ikke en navigasjon: hash-en eies av
+  // `ruter.js` (`#/<rute>`), og en ukjent rute sender brukeren til
+  // reserveflaten — altså ut av rekrutteringen lenken skulle hoppe inne i.
+  // Målt på HENDELSEN, ikke på `location.hash`: jsdom følger ikke
+  // fragmentlenker, så en hash-sammenligning ville stått grønn uansett —
+  // en port som ikke kan feile. `defaultPrevented` er selve forsvaret.
+  const klikk = new window.MouseEvent("click",
+    { bubbles: true, cancelable: true });
+  hopp.dispatchEvent(klikk);
+  assert.equal(hoved.ownerDocument.activeElement, maal,
+    "hopplenken flyttet ikke fokus til ankeret");
+  assert.ok(klikk.defaultPrevented,
+    "fragmentnavigasjonen gikk videre til ruteren — den leser hashen som "
+    + "`#/<rute>` og sender brukeren til reserveflaten");
+  // MUTASJONEN SOM DREPER DENNE: fjern hopplenken fra rapporten, flytt
+  // ankeret foran evalueringsseksjonen, eller slipp klikket videre til
+  // nettleserens egen fragmentnavigasjon.
+});
+
 test("Evalueringer: en rapport som lander etter et prosessbytte tegner "
   + "i den MONTERTE seksjonen", async () => {
   KALL = [];

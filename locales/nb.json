@@ -1080,6 +1080,7 @@
   "ui.rekruttering.evalueringer.ingen_funn": "Ingen funn.",
   "ui.rekruttering.evalueringer.rapportfeil": "Rapporten kunne ikke hentes.",
   "ui.rekruttering.evalueringer.blindet": "Kandidatene er blindet i evalueringen — personverdier vises som masker (f.eks. [NAVN-1]).",
+  "ui.rekruttering.evalueringer.hopp_prosess": "Hopp over rangeringen til prosess og signering",
   "ui.rekruttering.bestill.tittel": "Bestill evaluering",
   "ui.rekruttering.bestill.fil": "Søknadsbunt (ZIP-fil)",
   "ui.rekruttering.bestill.profil": "Stillingsprofil",

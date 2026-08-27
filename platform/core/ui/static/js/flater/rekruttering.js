@@ -198,6 +198,12 @@ export function visRekruttering(hoved, ctx) {
     });
 }
 
+// Landingspunktet for hopplenken over rangeringen (Cursor P2). Ankeret
+// eies av `tegn` — det er DEN som vet hva som kommer etter
+// evalueringsseksjonen — mens lenken selv står i rapporten som skaper
+// behovet for den. Id-en er kontrakten mellom de to.
+const HOPP_ANKER = "rekrut-etter-evaluering";
+
 function tegn(hoved, ctx, data, okt, valgtId) {
   const prosesser = (data && data.prosesser) || [];
   // A-DOMMEN (#212): GENERATOREN FJERNES, IKKE INSTANSENE. Tre runder med
@@ -288,10 +294,20 @@ function tegn(hoved, ctx, data, okt, valgtId) {
   });
   const bestillDel = bestillRot.firstChild ? bestillRot : null;
   const evalDel = evalueringSeksjon(hoved, ctx, data, okt);
+  // HOPPLENKENS LANDINGSPUNKT (Cursor P2). «Produktet først» legger en
+  // auto-rendret rangering — én fokusbar `<summary>` per kandidat, opp
+  // mot 5000 — foran prosessvelger, vekter og signering. Tastaturveien
+  // til de irreversible handlingene ble dermed like lang som
+  // kandidatlisten. Å ta `<summary>`-ene ut av tab-rekkefølgen ville
+  // stengt tastaturveien INN i detaljene, så løsningen er WCAG 2.4.1s
+  // egen: et anker rett etter seksjonen, og en hopplenke til det øverst
+  // i rapporten. Ankeret står i begge grenene — profileditoren og
+  // bestillingen ligger etter rangeringen også når ingen prosess finnes.
+  const hoppAnker = el("div", { id: HOPP_ANKER, tabindex: "-1" });
   if (!prosesser.length) {
     // PRODUKTET FØRST (eiers UX-prinsipp 27/8: færrest mulig klikk
     // til produktet): rapportene øverst, administrasjonen under.
-    sett(hoved, flateHode(t("ui.rekruttering.tittel")), evalDel,
+    sett(hoved, flateHode(t("ui.rekruttering.tittel")), evalDel, hoppAnker,
       el("p", { text: t("ui.rekruttering.ingen_prosess") }),
       profilDel, ...(bestillDel ? [bestillDel] : []));
     return;
@@ -711,7 +727,8 @@ function tegn(hoved, ctx, data, okt, valgtId) {
 
   // PRODUKTET FØRST (eiers UX-prinsipp 27/8): evalueringene og den
   // ferdige rapporten øverst — prosessdypdykk og administrasjon under.
-  sett(hoved, flateHode(t("ui.rekruttering.tittel")), evalDel, velgerRot,
+  sett(hoved, flateHode(t("ui.rekruttering.tittel")), evalDel, hoppAnker,
+    velgerRot,
     utfall, kunngjoring, blindingRot, vektRot, merknadRot, tabellRot,
     listeRot, profilDel, ...(bestillDel ? [bestillDel] : []));
   tegnTabell();
@@ -846,7 +863,27 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
         text: t("ui.rekruttering.evalueringer.rangering")
           .replace("{navn}", rapport.profil.navn)
           .replace("{versjon}", String(rapport.profil.versjon)) });
-      rHent.tegn(null, [overskrift,
+      // Hopplenken FØRST i rapporten: den er tastaturbrukerens vei forbi
+      // rangeringens N `<summary>` og ned til prosess, vekter og
+      // signering (Cursor P2). Husets `.hoppelenke` — usynlig til den
+      // får fokus, som «Hopp til innhold» i skallet.
+      const hoppLenke = el("a", { class: "hoppelenke", href: `#${HOPP_ANKER}`,
+        text: t("ui.rekruttering.evalueringer.hopp_prosess") });
+      // ADRESSEN EIES AV RUTEREN, som leser den som `#/<rute>`. Lot vi
+      // nettleseren følge fragmentet, fyrte `hashchange` med en ukjent
+      // rute — og `ruter.js` faller da tilbake til reserveflaten: lenken
+      // hadde FORLATT rekrutteringen i stedet for å hoppe inne i den.
+      // Lenkeformen består (hjelpemidlene skal si «lenke», og målet er
+      // lesbart før klikk), men fokusflyttingen — nøyaktig det
+      // nettleseren selv ville gjort — skjer her, uten å røre hashen.
+      hoppLenke.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        const maal = hoved.querySelector(`#${HOPP_ANKER}`);
+        if (maal) maal.focus();
+      });
+      rHent.tegn(null, [
+        hoppLenke,
+        overskrift,
         el("p", { text: t("ui.rekruttering.evalueringer.blindet") }),
         el("div", { class: "tablewrap" }, tabell), ...detaljer]);
       // Fokus KUN på eksplisitt klikk — auto-visningen ved sidelasting
