@@ -218,16 +218,26 @@ def test_rapportflaten_er_deklarert_aldri_utledet():
     At feltet DEKLARERES er halve saken; at leseveien DISPATCHER på
     VERDIEN er den andre, og den står i nabotesten under.
 
+    CP4 ER LANDET: M-57 har nå sin EGEN flate ("ats" →
+    `/v1/rekruttering/rapport/{id}` + evalueringsseksjonen). Invarianten
+    porten verner er den samme som før, i sin ferdige form: flaten er en
+    DISKRIMINATOR, aldri en boolsk — M-57 må aldri peke på WCAG-rendrerens
+    verdi, og begge leseveiene dispatcher på hver sin.
+
     MUTASJONEN SOM DREPER DENNE: sett `rapportflate="wcag"` på
     `rekruttering.evaluering`, eller fjern `rapportflate`-leddet i
-    `lesing.rapport_detalj`.
+    `lesing.rapport_detalj`/`lesing.rekrutteringsrapport_detalj`.
     """
     import oppdragskontrakt as ok
+    from api import lesing
     m57 = ok.OPPDRAGSTYPER["rekruttering.evaluering"]
     assert m57.rapport_artefakttype is not None, \
         "uten navngitt type får modulen `opplasting: null` ved claim"
-    assert m57.rapportflate is None, \
-        "M-57-rapporten har ingen flate før CP4 — 404 er det ærlige svaret"
+    assert m57.rapportflate == lesing.RAPPORTFLATE_ATS, \
+        "M-57s rapport hører til ats-flaten — aldri WCAG-rendrerens"
+    assert m57.rapportflate != lesing.RAPPORTFLATE, \
+        "diskriminatorene MÅ være disjunkte — ellers arver flatene" \
+        " hverandres former"
     wcag = ok.OPPDRAGSTYPER["kontroll.wcag.nettsted"]
     assert wcag.rapportflate == "wcag"
     # Kontraktporten: en flate uten artefakttype er en flate som viser en
@@ -238,10 +248,11 @@ def test_rapportflaten_er_deklarert_aldri_utledet():
                        rapport_artefakttype=None,
                        rapportflate="wcag").valider())
     # … og leseveiens PAR er utledet av begge feltene, ikke bare det ene.
+    # Etter CP4 bærer BEGGE typene komplette par — hver mot sin flate.
     par = {navn for navn, t in ok.OPPDRAGSTYPER.items()
            if t.rapport_artefakttype is not None
            and t.rapportflate is not None}
-    assert par == {"kontroll.wcag.nettsted"}, par
+    assert par == {"kontroll.wcag.nettsted", "rekruttering.evaluering"}, par
 
 
 def test_rapportflaten_er_en_diskriminator_ikke_en_boolsk():
@@ -305,6 +316,99 @@ def test_rapportflaten_er_en_diskriminator_ikke_en_boolsk():
            if t.rapport_artefakttype is not None
            and t.rapportflate == flate}
     assert par == {"kontroll.wcag.nettsted"}, par
+
+
+def test_ats_ruten_dispatcher_ogsaa_paa_verdien():
+    """Cursor P2: porten over var ENSIDIG — den målte bare WCAG-veien.
+
+    CP4 landet M-57s egen rute, og med den den andre halvdelen av samme
+    risiko: `rekrutteringsrapport_detalj` kan degenerere til «har flaten
+    en verdi?» like stille som WCAG-veien kunne. Mutasjonen er nøyaktig
+    speilvendt — `rapportflate is not None` her serverer WCAG-formen på
+    `/v1/rekruttering/rapport/{id}`, og `evalueringSeksjon` dereferer
+    `rapport.rangering`/`profil` med en gang: 200, og feil under rendring
+    hos klienten. Isolasjonen er bare bevist når BEGGE rutene måles.
+
+    MUTASJONEN SOM DREPER DENNE: gjør `rapportflate`-leddet i
+    `lesing.rekrutteringsrapport_detalj` boolsk (`is not None`), eller pek
+    `lesing.RAPPORTFLATE_ATS` på en annen flate enn den `rekruttering.js`
+    rendrer.
+    """
+    import oppdragskontrakt as ok
+    m57 = ok.OPPDRAGSTYPER["rekruttering.evaluering"]
+    tre = ast.parse((CORE / "api" / "lesing.py").read_text(encoding="utf-8"))
+    flate = next(
+        (n.value.value for n in tre.body
+         if isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant)
+         and any(isinstance(m, ast.Name) and m.id == "RAPPORTFLATE_ATS"
+                 for m in n.targets)), None)
+    assert flate == m57.rapportflate, \
+        ("/v1/rekruttering/rapport serverer `rekruttering.js`, altså"
+         f" ats-formen — endepunktet navngir {flate!r}")
+    fn = next(n for n in tre.body if isinstance(n, ast.FunctionDef)
+              and n.name == "rekrutteringsrapport_detalj")
+    ledd = [c for c in ast.walk(fn) if isinstance(c, ast.Compare)
+            and isinstance(c.left, ast.Attribute)
+            and c.left.attr == "rapportflate"]
+    assert ledd, "ats-ruten spør ikke om `rapportflate` i det hele tatt"
+    for c in ledd:
+        assert (all(isinstance(o, ast.Eq) for o in c.ops)
+                and all(isinstance(k, ast.Name) and k.id == "RAPPORTFLATE_ATS"
+                        for k in c.comparators)), \
+            ("ats-ruten spør om flaten FINNES, ikke hvilken den er:"
+             f" {ast.unparse(c)}")
+    # De to flatene deler ingen type: hver rute serverer sin egen form, og
+    # WCAG-typen er ikke lesbar her — 404, ikke 200-og-feiler-hos-klienten.
+    par = {navn for navn, t in ok.OPPDRAGSTYPER.items()
+           if t.rapport_artefakttype is not None
+           and t.rapportflate == flate}
+    assert par == {"rekruttering.evaluering"}, par
+
+
+def test_evalueringslisten_leser_kontrakten_ikke_en_literal():
+    """Cursor P2: listen hardkodet paret detaljruten UTLEDER.
+
+    `rekrutteringsrapport_detalj` bygger `(oppdragstype, artefakttype)`
+    fra `OPPDRAGSTYPER` + `RAPPORTFLATE_ATS`; `rekrutteringsevalueringer`
+    skrev de samme to strengene rett inn i SQL-en. Så lenge strengene er
+    like, er divergensen usynlig — og nettopp derfor er den farlig: endrer
+    kontrakten sin `rapport_artefakttype`, følger detaljruten etter mens
+    listen blir stående. Da sier listen `rapport_klar: false` for en
+    rapport detaljruten svarer 200 på, og flaten skjuler «Vis»-knappen for
+    evidens som finnes.
+
+    Målt med AST og ikke grep, av samme grunn som nabotesten over: en
+    tekstsøkning ville truffet artefakttypen i en kommentar eller i
+    detaljrutens helt legitime bruk.
+
+    MUTASJONEN SOM DREPER DENNE: skriv artefakttypen eller oppdragstypen
+    tilbake som literal i listespørringen, eller fjern
+    `rapportflate`-leddet så listen slutter å følge kontraktens flate.
+    """
+    import oppdragskontrakt as ok
+    tre = ast.parse((CORE / "api" / "lesing.py").read_text(encoding="utf-8"))
+    fn = next(n for n in tre.body if isinstance(n, ast.FunctionDef)
+              and n.name == "rekrutteringsevalueringer")
+    # Kontraktens egne navn er de eneste literalene som betyr noe her:
+    # står ett av dem i funksjonen, er kilden kopiert og ikke lest.
+    kontraktsnavn = set(ok.OPPDRAGSTYPER) | {
+        t.rapport_artefakttype for t in ok.OPPDRAGSTYPER.values()
+        if t.rapport_artefakttype is not None}
+    funnet = {c.value for c in ast.walk(fn) if isinstance(c, ast.Constant)
+              and isinstance(c.value, str)} & kontraktsnavn
+    assert not funnet, \
+        f"listespørringen hardkoder kontraktsnavn i stedet for å lese dem: {funnet}"
+    # … og den leser dem faktisk: samme diskriminatorledd som detaljruten.
+    ledd = [c for c in ast.walk(fn) if isinstance(c, ast.Compare)
+            and isinstance(c.left, ast.Attribute)
+            and c.left.attr == "rapportflate"]
+    assert ledd, "listen filtrerer ikke på `rapportflate` i det hele tatt"
+    for c in ledd:
+        assert (all(isinstance(o, ast.Eq) for o in c.ops)
+                and all(isinstance(k, ast.Name) and k.id == "RAPPORTFLATE_ATS"
+                        for k in c.comparators)), \
+            ("listen spør om flaten FINNES, ikke hvilken den er:"
+             f" {ast.unparse(c)}")
 
 
 def test_lengste_prefiks_vinner_over_dict_rekkefolgen():

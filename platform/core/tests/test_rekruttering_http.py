@@ -255,6 +255,127 @@ def _reap(prosess_id: str):
             rp.close()
 
 
+def _forbi_frist(prosess_id: str):
+    """Kundens frist er ute, men reaperen har IKKE rukket batchen sin:
+    samme lukking som `_reap` (`now() - 91 dager` mot seedens 90 døgn),
+    uten `reap_kandidatdata`. `slettet_ts` står altså NULL og kandidat-
+    og mottakerlagrene er urørte.
+
+    Det er nøyaktig vinduet en batchet reaper etterlater — og det ENESTE
+    tilstandsbildet der «måler reaperens merke» og «måler kundens frist»
+    gir ulike svar. En port som bare leser merket går grønn på alt annet.
+    Kallerne bekrefter selv at merket fortsatt er NULL (`_merket`), så en
+    reaper som en dag skulle kjøre synkront ikke gjør testene vakuøse."""
+    from db.pg import koble, sett_kontekst
+    rt = koble(DSN)
+    try:
+        sett_kontekst(rt, TEN, "test", "r-frist")
+        rt.execute("SELECT lukk_rekrutteringsprosess(%s,%s,"
+                   " now() - interval '91 days')", (TEN, prosess_id))
+        rt.commit()
+    finally:
+        rt.close()
+
+
+def _merket(prosess_id: str) -> bool:
+    """Har reaperen satt `slettet_ts` på ankeret?"""
+    m = _migrator()
+    try:
+        rad = m.execute(
+            "SELECT slettet_ts IS NOT NULL FROM rekrutteringsprosess"
+            " WHERE tenant=%s AND prosess_id=%s",
+            (TEN, prosess_id)).fetchone()[0]
+        m.rollback()
+        return rad
+    finally:
+        m.close()
+
+
+@pg
+def test_fristen_stenger_ogsaa_prosessflaten(klient):
+    """Cursor P1 (#220): rapportveien og evalueringslisten håndhever
+    `now() < coalesce(lukket_ts, opprettet) + slettefrist_dogn`, men
+    `GET /v1/rekruttering/prosesser` filtrerte bare `slettet_ts IS NULL`
+    — altså på når reaperens BATCH rakk å kjøre.
+
+    I vinduet mellom fristen og batchen sa listen `slettet: true` /
+    `rapport_klar: false`, mens DENNE flaten fortsatt serverte funn,
+    sitater og intervjuspørsmål for hver kandidat. Claim-fødselen fyller
+    nettopp denne flaten for hver evaluering, så vinduet er ikke en
+    kuriositet.
+
+    MUTASJONEN SOM DREPER DENNE: fjern fristleddet fra prosess-SELECT-en
+    i `prosesser_endepunkt` (tilbake til `slettet_ts IS NULL` alene)."""
+    pid, _lid, _ih = _seed_prosess()
+    bid = _bruker("leser-frist", ["leser"])
+    cookie, _ = _browsersesjon(bid)
+
+    # POSITIV KONTROLL FØRST: med levende frist ER prosessen der, med
+    # kandidatene sine. Uten dette leddet ville en fraværstest gått
+    # grønn på en flate som aldri viste noe.
+    r = _get(klient, cookie, "/v1/rekruttering/prosesser")
+    assert r.status_code == 200, r.text
+    fore = [p for p in r.json()["prosesser"] if p["prosess_id"] == pid]
+    assert len(fore) == 1, "levende prosess skal stå i velgeren"
+    assert fore[0]["kandidater"], "…og bære kandidatene sine"
+
+    _forbi_frist(pid)
+    assert not _merket(pid), (
+        "positiv kontroll: reaperen skal IKKE ha kjørt — det er nettopp"
+        " merket-vs-fristen denne testen skiller")
+
+    r2 = _get(klient, cookie, "/v1/rekruttering/prosesser")
+    assert r2.status_code == 200, r2.text
+    etter = [p for p in r2.json()["prosesser"] if p["prosess_id"] == pid]
+    assert etter == [], (
+        "utløpt frist skal stenge prosessflaten FØR reaperen rekker det —"
+        " ellers serverer den kandidatdata rapportflaten alt kaller"
+        " slettet")
+
+
+@pg
+def test_signering_avvises_naar_fristen_er_ute_foer_reaperen(klient):
+    """Cursor P2 (#220): `kandidatdata_slettet` målte bare `slettet_ts`,
+    og det merket settes av `reap_kandidatdata` i BATCHER. Foran den
+    irreversible handlingen betydde det 201 på en utsendelse hvis
+    mottakerdata er forbi kundens frist — seriens ene signatur-slot
+    brent, mens rapportflaten alt behandlet oppdraget som slettet.
+
+    MUTASJONEN SOM DREPER DENNE: snevre `reapet`-leddet i signeringens
+    oppslag tilbake til `p.slettet_ts IS NOT NULL`."""
+    # POSITIV KONTROLL, på sin EGEN serie: signering er irreversibel og
+    # serien har nøyaktig én signatur-slot, så 201-armen kan ikke deles
+    # med 409-armen.
+    frisk_pid, frisk_rot, frisk_hash = _seed_prosess()
+    sjef = _bruker("sjef-frist", ["admin"])
+    cookie, csrf = _browsersesjon(sjef)
+    ok = _post(klient, cookie, csrf,
+               f"/v1/rekruttering/lister/{frisk_rot}/signer",
+               {"innhold_hash": frisk_hash})
+    assert ok.status_code == 201, ok.text
+    assert not _merket(frisk_pid)
+
+    pid, rot, rot_hash = _seed_prosess()
+    _forbi_frist(pid)
+    assert not _merket(pid), (
+        "positiv kontroll: reaperen skal IKKE ha kjørt — porten måles på"
+        " fristen alene")
+    r = _post(klient, cookie, csrf,
+              f"/v1/rekruttering/lister/{rot}/signer",
+              {"innhold_hash": rot_hash})
+    assert r.status_code == 409, r.text
+    assert r.json()["feil"] == "kandidatdata_slettet"
+    # …og avvisningen SKREV INGENTING: signatur-sloten står ubrukt.
+    m = _migrator()
+    try:
+        assert m.execute(
+            "SELECT count(*) FROM utsendingssignatur WHERE tenant=%s"
+            " AND liste_id=%s", (TEN, rot)).fetchone()[0] == 0
+        m.rollback()
+    finally:
+        m.close()
+
+
 def _ny_versjon(liste_id: str):
     """En NY versjon i samme utkast_serie: serien redigeres videre, og
     `liste_id` blir spissens forelder. -> (barn_liste_id, barn_hash)."""
@@ -359,6 +480,68 @@ def _prosess_under_kjoring() -> str:
         return str(pid)
     finally:
         rt.close()
+
+
+def _terminer(prosess_id: str, status: str) -> str:
+    """Løpet ENDER uten at et eneste kandidatlager ble skrevet — den
+    skipede controllerens signatur. Bare `utfort`/`feilet` er lovlige fra
+    `plukket` (056s statusvakt); `kansellert` nås kun fra `opprettet`, og
+    da er prosessen aldri født. -> prosess_id (uendret).
+
+    Oppslaget av oppdraget tas på RUNTIME-koblingen, ikke migrator:
+    ankeret leses av leseveiens egen rolle under tenantkontekst
+    (`_reap`-formen), mens selve statusskiftet hører til migrator som i
+    `_seed_prosess`."""
+    from db.pg import koble, sett_kontekst
+    rt = koble(DSN)
+    try:
+        sett_kontekst(rt, TEN, "test", "r-term")
+        oid = rt.execute(
+            "SELECT oppdrag_id FROM rekrutteringsprosess"
+            " WHERE tenant=%s AND prosess_id=%s",
+            (TEN, prosess_id)).fetchone()[0]
+    finally:
+        rt.close()
+    m = _migrator()
+    try:
+        n = m.execute("UPDATE oppdrag SET status=%s WHERE tenant=%s"
+                      " AND id=%s", (status, TEN, oid)).rowcount
+        assert n == 1, "terminalovergangen traff ikke oppdraget"
+        m.commit()
+        return prosess_id
+    finally:
+        m.close()
+
+
+@pg
+def test_terminal_tom_retensjonsanker_holdes_ute_av_prosessvelgeren(klient):
+    """Codex P2/#220: claimen føder et retensjonsanker for HVER
+    evaluering, men den skipede controlleren skriver ingen kandidatlagre.
+    Et terminalt løp med tom prosess har derfor ingenting velgeren kan
+    vise — og ville fortrengt en ekte prosess som standardvalg i 30–365
+    døgn, siden ankeret lever ut slettefristen. Grensen går ved
+    TERMINAL: en pågående tom prosess vises fortsatt (evalueringens
+    tilstand-doktrine), for der kommer kandidatene ennå.
+
+    MUTASJONENE SOM DREPER DENNE: fjern `OR EXISTS (...)`-armen (den
+    ekte, ferdige prosessen forsvinner), eller hele tilleggspredikatet
+    (de tomme ankrene er tilbake i velgeren).
+    """
+    ekte, _lid, _ih = _seed_prosess()
+    tom_utfort = _terminer(_prosess_under_kjoring(), "utfort")
+    tom_feilet = _terminer(_prosess_under_kjoring(), "feilet")
+    kjorer = _prosess_under_kjoring()
+    bid = _bruker("velger-leser", ["leser"])
+    cookie, _ = _browsersesjon(bid)
+    r = _get(klient, cookie, "/v1/rekruttering/prosesser")
+    assert r.status_code == 200, r.text
+    ider = {p["prosess_id"] for p in r.json()["prosesser"]}
+    assert tom_utfort not in ider, \
+        "et terminalt tomt retensjonsanker fortrenger ekte prosesser"
+    assert tom_feilet not in ider, \
+        "et feilet tomt retensjonsanker fortrenger ekte prosesser"
+    assert ekte in ider, "den ferdige prosessen med kandidater falt ut"
+    assert kjorer in ider, "en pågående tom prosess skal fortsatt vises"
 
 
 @pg
@@ -1521,6 +1704,12 @@ def test_signering_avviser_manglende_csrf_og_idempotensnokkel(klient):
     assert ok.status_code == 201, ok.text
 
 
+#: En oppdrag-id som ikke finnes. Rapportruta slår opp på den, så den er
+#: målestokken for at modulporten ligger FØR oppslaget: 503 med flagget,
+#: 404 uten.
+_UKJENT_OID = 987654321
+
+
 @pg
 def test_deaktivert_m57_gir_definert_503_paa_alle_tre_rutene(miljo,
                                                              monkeypatch):
@@ -1531,10 +1720,11 @@ def test_deaktivert_m57_gir_definert_503_paa_alle_tre_rutene(miljo,
     stanset derfor ikke rekrutteringsflaten — signeringen inkludert, som
     er den irreversible handlingen en rollback finnes for å stoppe.
 
-    Målt i BEGGE retninger: med flagget svarer alle fem rutene 503
+    Målt i BEGGE retninger: med flagget svarer alle sju rutene 503
     `modul_inaktiv` OG signatur-sloten står ubrukt; uten flagget signerer
-    den samme økten 201. Uten den andre halvdelen ville testen bestått
-    på et endepunkt som var permanent nede.
+    den samme økten 201 og de to leserutene svarer sitt eget (200/404).
+    Uten den andre halvdelen ville testen bestått på et endepunkt som var
+    permanent nede.
 
     Avvisningen ligger FØR autentiseringen, og økten her er en ekte
     admin-økt med gyldig CSRF: 503-en er da modulporten, ikke en 401 som
@@ -1576,8 +1766,15 @@ def test_deaktivert_m57_gir_definert_503_paa_alle_tre_rutene(miljo,
                       "/v1/rekruttering/stillingsprofiler",
                       {"navn": "R",
                        "krav": [{"kravnavn": "K", "vekt": 1}]}),
+                # M-57s EGEN rapportflate (#220) hører til samme modul og
+                # samme rollback-kontrakt (Codex P1). Rutene bor i
+                # `lesing.py`, ikke i `rekruttering.py`, og gikk derfor
+                # utenom porten: en rollback stanset resten av flaten mens
+                # historikken og de DEKRYPTERTE rapportene sto åpne.
+                _get(c, cookie, "/v1/rekruttering/evalueringer"),
+                _get(c, cookie, f"/v1/rekruttering/rapport/{_UKJENT_OID}"),
             ]
-            assert [r.status_code for r in svar] == [forventet] * 5, \
+            assert [r.status_code for r in svar] == [forventet] * 7, \
                 [r.text for r in svar]
             assert {r.json()["feil"] for r in svar} == {"modul_inaktiv"}
     finally:
@@ -1606,5 +1803,17 @@ def test_deaktivert_m57_gir_definert_503_paa_alle_tre_rutene(miljo,
                       f"/v1/rekruttering/lister/{lid}/signer",
                       {"innhold_hash": ih})
             assert r.status_code == 201, r.text
+            # ...og de to leserutene svarer sitt EGNE svar uten flagget:
+            # listen 200, den ukjente rapporten 404 `ikke_funnet`. Uten
+            # denne halvdelen ville 503-armen over bestått på to ruter som
+            # var permanent nede — og 404-en er dessuten beviset på at
+            # porten ligger FØR oppslaget: med flagget svarte NØYAKTIG
+            # samme id 503, altså uten å ha rørt basen.
+            liste = _get(c, cookie, "/v1/rekruttering/evalueringer")
+            assert liste.status_code == 200, liste.text
+            ukjent = _get(c, cookie,
+                          f"/v1/rekruttering/rapport/{_UKJENT_OID}")
+            assert ukjent.status_code == 404, ukjent.text
+            assert ukjent.json()["feil"] == "ikke_funnet"
     finally:
         paa.tjeneste.pool.lukk()

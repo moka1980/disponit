@@ -19,6 +19,7 @@ import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { hentJson, signerRekrutteringsliste, lagreStillingsprofil,
          reserverBunt, lastOppBunt, bestillEvaluering,
+         hentEvalueringer, hentEvalueringsrapport,
          nyIdempotensnokkel, UautorisertFeil } from "../api.js";
 import { harScope } from "../sitekart.js";
 import { DataTabell } from "../tabell.js";
@@ -144,23 +145,57 @@ export function visRekruttering(hoved, ctx) {
     bestilling: { reserverIdem: null, bestillIdem: null,
                   inndataRef: null, filnavn: null,
                   paagaaende: false, generasjon: 0,
-                  oppdaterProfilvalg: null, frysSkjema: null } };
+                  oppdaterProfilvalg: null, frysSkjema: null },
+    // Evalueringslisten hører til ØKTEN av samme grunn som bunten over
+    // (Cursor P1): den er tenant-global, ikke prosessbundet, men `tegn`
+    // bygger seksjonen på nytt ved hvert prosessbytte og seedet lå i
+    // `data`-snapshoten fra sidelastingen. Oppfriskningen etter et
+    // levert oppdrag tegnet bare DOM, så oppdraget forsvant i det neste
+    // bytte — nøyaktig det Codex-løftet «levert oppdrag synlig uten
+    // omlasting» lovte bort. `undefined` betyr «ingen oppfriskning
+    // ennå»; `null` er listefeil og en ekte verdi. `nr` er
+    // oppfriskningens generasjon og `tegn` den for tiden monterte
+    // seksjonens tegner — begge hører til listen, ikke til instansen
+    // som tilfeldigvis viser den.
+    evalueringer: { liste: undefined, flere: false, nr: 0, tegn: null },
+    // Rapporthentingen deler prosessbytte-risikoen med listen (Codex
+    // P2): generasjon og tegner hører til ØKTEN, og hver mount melder
+    // seg som tegner — et svar som lander etter et bytte tegner i den
+    // MONTERTE seksjonen, aldri i en frakoblet.
+    rapportHenting: { nr: 0, tegn: null } };
   medStatus(hoved, ctx,
     async () => {
       // Profilene er TILLEGGSDATA (samme politikk som
       // `hentUtrullingForSkall`): faller de, står prosessflaten likevel
       // — editoren viser sin egen tomtilstand. 401 er kvalitativt annet
       // og skal nå innloggingsveien, som overalt ellers.
-      const [pros, prof] = await Promise.all([
+      const [pros, prof, evals] = await Promise.all([
         hentJson("/v1/rekruttering/prosesser"),
         hentJson("/v1/rekruttering/stillingsprofiler").catch((e) => {
           if (e instanceof UautorisertFeil) throw e;
           return { profiler: [] };
         }),
+        hentEvalueringer().catch((e) => {
+          if (e instanceof UautorisertFeil) throw e;
+          // `null` er FEIL, ikke tom historikk: en utilgjengelig liste
+          // skal aldri rendres som «ingen evalueringer bestilt».
+          return null;
+        }),
       ]);
-      return { ...pros, profiler: (prof && prof.profiler) || [] };
+      return { ...pros, profiler: (prof && prof.profiler) || [],
+               evalueringer: evals ? (evals.evalueringer || []) : null,
+               evalueringerFlere: !!(evals && evals.flere) };
     },
-    (data) => tegn(hoved, ctx, data, okt));
+    (data) => {
+      // En fersk full lasting ER sannheten — også «Prøv igjen» etter en
+      // feilet lasting. Oppfriskningscachen fra forrige lasting skal
+      // aldri vinne over den, og en oppfriskning som fortsatt er i lufta
+      // skal ikke lande oppå den ferske listen: generasjonen bumpes.
+      okt.evalueringer.liste = undefined;
+      okt.evalueringer.flere = false;
+      okt.evalueringer.nr += 1;
+      tegn(hoved, ctx, data, okt);
+    });
 }
 
 function tegn(hoved, ctx, data, okt, valgtId) {
@@ -252,10 +287,11 @@ function tegn(hoved, ctx, data, okt, valgtId) {
     if (okt.bestilling.oppdaterProfilvalg) okt.bestilling.oppdaterProfilvalg();
   });
   const bestillDel = bestillRot.firstChild ? bestillRot : null;
+  const evalDel = evalueringSeksjon(hoved, ctx, data, okt);
   if (!prosesser.length) {
     sett(hoved, flateHode(t("ui.rekruttering.tittel")),
       el("p", { text: t("ui.rekruttering.ingen_prosess") }),
-      profilDel, ...(bestillDel ? [bestillDel] : []));
+      profilDel, ...(bestillDel ? [bestillDel] : []), evalDel);
     return;
   }
   // FLERE PROSESSER ER TILGJENGELIGE, IKKE BARE DEN FØRSTE (Codex P2).
@@ -673,7 +709,7 @@ function tegn(hoved, ctx, data, okt, valgtId) {
 
   sett(hoved, flateHode(t("ui.rekruttering.tittel")), velgerRot,
     utfall, kunngjoring, blindingRot, vektRot, merknadRot, tabellRot,
-    listeRot, profilDel, ...(bestillDel ? [bestillDel] : []));
+    listeRot, profilDel, ...(bestillDel ? [bestillDel] : []), evalDel);
   tegnTabell();
 }
 
@@ -690,6 +726,253 @@ function tegn(hoved, ctx, data, okt, valgtId) {
 // SP-2 hele veien: bunten er engangs (ny fil = ny reservasjon), og
 // bestillingsnøkkelen holdes til et DEFINITIVT svar. Skjemaform etter
 // §8: ekte <label for>, tallfelt med min/maks, utfall i role="alert".
+// M-57s egen rapportflate ("ats"): bestilte evalueringer med status,
+// og den promoterte, blindede rangeringsrapporten — lesbar for alle med
+// decisions:read (evidensen bak en beslutning tenanten selv bestilte).
+function evalueringSeksjon(hoved, ctx, data, okt) {
+  const rot = el("section", { "aria-labelledby": "evaluering-tittel" });
+  const utfall = el("div", { role: "alert", class: "utfall" });
+  const rapportRot = el("div");
+  // To raske klikk må ikke la det TREGESTE svaret vinne: bare den sist
+  // bestilte hentingen får rendre (eller melde feil). Generasjonen og
+  // tegneren bor på ØKTEN (samme form som listen, Codex P2): en lokal
+  // teller nullstilt av prosessbyttet vokter ingenting på tvers av dem,
+  // og `sett(rapportRot, …)` i en frakoblet instans er et stille tap.
+  const rHent = (okt && okt.rapportHenting) || { nr: 0, tegn: null };
+  rHent.tegn = (utfallTekst, noder) => {
+    sett(utfall, ...(utfallTekst ? [utfallTekst] : []));
+    sett(rapportRot, ...(noder || []));
+  };
+  // Listeoppfriskningen bærer NØYAKTIG samme risiko (Cursor P2):
+  // `paagaaende` slipper opp før den fire-and-forget `oppdater()` er
+  // ferdig, så to raske bestillinger gir to hentinger i lufta samtidig.
+  // Uten generasjon kan det treGE eldre svaret tegne over den nyeste
+  // listen og fjerne oppdraget brukeren nettopp leverte.
+  //
+  // Generasjonen bor på ØKTEN, ikke i instansen (Codex P2): listen er
+  // øktens, og en teller som nullstilles av hvert prosessbytte vokter
+  // ingenting på tvers av dem — en frakoblet instans' trege svar hadde
+  // fortsatt `min === listeNr` i SIN teller og kunne skrive seg inn i
+  // øktens liste etter et ferskere svar.
+
+  const visRapport = async (oppdragId) => {
+    // Tøm FØR henting: et feilet kall skal aldri la forrige rapport stå
+    // igjen under en feilmelding som gjelder en annen.
+    rHent.tegn(null, []);
+    const min = ++rHent.nr;
+    let svar;
+    try {
+      svar = await hentEvalueringsrapport(oppdragId);
+    } catch (e) {
+      if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+      if (min !== rHent.nr) return;
+      rHent.tegn(t("ui.rekruttering.evalueringer.rapportfeil"), []);
+      return;
+    }
+    if (min !== rHent.nr) return;
+    // RENDRINGEN LIGGER INNE I `try` (Cursor P2). 200 er ikke det samme
+    // som rendrbar: mangler `rangering`, `profil` eller `nedbrytning`,
+    // kastet dereferansen HER — etter at `utfall` og `rapportRot` alt var
+    // tømt. Resultatet var en stille tom seksjon uten `role="alert"`,
+    // samme «200-og-feiler-under-rendring»-klasse som diskriminator-
+    // portene verner serversiden mot. WCAG-flaten rendrer inne i `try`;
+    // ats-veien gjør nå det samme, og lander i den ærlige feiltilstanden.
+    try {
+      const rapport = svar.rapport;
+      const kropp = el("tbody", {}, ...rapport.rangering.map((rad) =>
+        el("tr", {},
+          el("th", { scope: "row", text: rad.kandidat_id }),
+          el("td", { text: String(rad.poeng) }),
+          el("td", { text: Object.entries(rad.nedbrytning)
+            .map(([k, v]) => `${t(`ui.rekruttering.krav.${k}`, k)}: ${v}`)
+            .join(", ") }))));
+      const tabell = el("table", {},
+        el("caption", { text: t("ui.rekruttering.evalueringer.rangering")
+          .replace("{navn}", rapport.profil.navn)
+          .replace("{versjon}", String(rapport.profil.versjon)) }),
+        el("thead", {}, el("tr", {},
+          el("th", { scope: "col",
+            text: t("ui.rekruttering.evalueringer.kandidat") }),
+          el("th", { scope: "col",
+            text: t("ui.rekruttering.evalueringer.poeng") }),
+          el("th", { scope: "col",
+            text: t("ui.rekruttering.evalueringer.nedbrytning") }))),
+        kropp);
+      // Skjemaet tillater 5000 kandidater à 100 funn + 20 spørsmål — en
+      // gyldig maksrapport ville bygget hundretusener av noder opp front.
+      // Kroppen bygges derfor først når leseren åpner den.
+      const detaljer = rapport.rangering.map((rad) => {
+        const boks = el("details", {},
+          el("summary", { text: t("ui.rekruttering.evalueringer.detaljer")
+            .replace("{kandidat}", rad.kandidat_id) }));
+        let bygget = false;
+        boks.addEventListener("toggle", () => {
+          if (bygget || !boks.open) return;
+          bygget = true;
+          const k = rapport.kandidater[rad.kandidat_id] || {};
+          // Sitatløse funn beholdes med plassholder — speilet fra
+          // prosesspanelets funnliste (`:448`): kategorien er selve
+          // risikoopplysningen, og et skjult funn er verre enn et uten belegg.
+          const funn = (k.funn || []).filter(Boolean).length
+            ? el("ul", {}, ...(k.funn || []).filter(Boolean).map((f) => {
+                const sitat = f.kilde && typeof f.kilde.sitat === "string"
+                  ? f.kilde.sitat
+                  : null;
+                return el("li", {},
+                  el("strong", { text: t(`ui.rekruttering.funn.${f.kategori}`) }),
+                  " — ",
+                  sitat === null
+                    ? el("em", { text: t("ui.rekruttering.uten_sitat") })
+                    : el("q", { text: sitat }));
+              }))
+            : el("p", { text: t("ui.rekruttering.evalueringer.ingen_funn") });
+          boks.append(
+            el("h4", { text: t("ui.rekruttering.evalueringer.funn") }), funn);
+          if ((k.intervjusporsmal || []).length) {
+            boks.append(el("h4", {
+              text: t("ui.rekruttering.evalueringer.sporsmal") }),
+              el("ol", {}, ...(k.intervjusporsmal || []).map((sp) =>
+                el("li", { text: sp }))));
+          }
+        });
+        return boks;
+      });
+      // Rapporten settes inn ETTER tabellen brukeren sto i — fokusér
+      // overskriften, ellers får tastatur/skjermleser aldri vite at
+      // lastingen ble ferdig.
+      const overskrift = el("h3", { tabindex: "-1",
+        text: t("ui.rekruttering.evalueringer.rangering")
+          .replace("{navn}", rapport.profil.navn)
+          .replace("{versjon}", String(rapport.profil.versjon)) });
+      rHent.tegn(null, [overskrift,
+        el("p", { text: t("ui.rekruttering.evalueringer.blindet") }),
+        el("div", { class: "tablewrap" }, tabell), ...detaljer]);
+      overskrift.focus();
+    } catch (e) {
+      if (min !== rHent.nr) return;
+      // Halv DOM er verre enn ingen: en delvis bygget rapport ser ekte ut.
+      rHent.tegn(t("ui.rekruttering.evalueringer.rapportfeil"), []);
+    }
+  };
+
+  const tegnListe = (evalueringer, flere) => {
+    const tittel = el("h2", { id: "evaluering-tittel",
+      text: t("ui.rekruttering.evalueringer.tittel") });
+    // `null` er FEIL-tilstanden fra hentingen — en utilgjengelig
+    // historikk er ikke en tom historikk.
+    if (evalueringer === null) {
+      sett(rot, tittel,
+        el("p", { text: t("ui.rekruttering.evalueringer.listefeil") }),
+        utfall, rapportRot);
+      return;
+    }
+    if (!evalueringer.length) {
+      sett(rot, tittel,
+        el("p", { text: t("ui.rekruttering.evalueringer.ingen") }),
+        utfall, rapportRot);
+      return;
+    }
+    const rader = evalueringer.map((e2) => {
+      const handling = el("td");
+      if (e2.rapport_klar) {
+        const knapp = el("button", { type: "button",
+          text: t("ui.rekruttering.evalueringer.vis") });
+        knapp.setAttribute("aria-label",
+          t("ui.rekruttering.evalueringer.vis")
+          + " — " + t("ui.rekruttering.evalueringer.oppdrag")
+          + " " + e2.oppdrag_id);
+        knapp.addEventListener("click", () => visRapport(e2.oppdrag_id));
+        handling.append(knapp);
+      }
+      // Terminale statuser er sine egne sannheter — "venter" er bare for
+      // oppdrag som faktisk kan bli klare. En reapet evaluering er
+      // hverken klar eller underveis: fristen har makulert den (Codex
+      // P2 — uten dette sto et `utfort` oppdrag som «under arbeid» i
+      // det uendelige etter retensjonsgrensen).
+      // «venter» er KUN for løp som kan bli klare (opprettet/plukket).
+      // Et utfort oppdrag uten lesbar rapport (intet retensjonsanker —
+      // eldre enn anker-fødselen) er utilgjengelig, ikke underveis.
+      const statusTekst = e2.slettet
+        ? t("ui.rekruttering.evalueringer.slettet")
+        : e2.rapport_klar
+          ? t("ui.rekruttering.evalueringer.klar")
+          : (e2.status === "feilet" || e2.status === "kansellert")
+            ? t("ui.rekruttering.evalueringer." + e2.status)
+            : e2.status === "utfort"
+              ? t("ui.rekruttering.evalueringer.utilgjengelig")
+              : t("ui.rekruttering.evalueringer.venter");
+      return el("tr", {},
+        el("th", { scope: "row", text: String(e2.oppdrag_id) }),
+        el("td", {}, Tidspunkt(e2.opprettet || "")),
+        el("td", { text: statusTekst }),
+        handling);
+    });
+    const liste = el("table", {},
+      el("caption", { text: t("ui.rekruttering.evalueringer.tabell") }),
+      el("thead", {}, el("tr", {},
+        el("th", { scope: "col",
+          text: t("ui.rekruttering.evalueringer.oppdrag") }),
+        el("th", { scope: "col",
+          text: t("ui.rekruttering.evalueringer.bestilt") }),
+        el("th", { scope: "col",
+          text: t("ui.rekruttering.evalueringer.status") }),
+        el("th", { scope: "col",
+          text: t("ui.rekruttering.evalueringer.vis") }))),
+      el("tbody", {}, ...rader));
+    sett(rot, tittel, utfall,
+      el("div", { class: "tablewrap" }, liste),
+      // Et fullt vindu KAN bety flere — aldri stille avkorting. Selve
+      // pagineringen bor i #221; her sies det bare fra.
+      ...(flere ? [el("p",
+        { text: t("ui.rekruttering.evalueringer.flere") })] : []),
+      rapportRot);
+  };
+
+  // Seedet kommer fra ØKTEN når en oppfriskning har vært kjørt, ellers
+  // fra lastingens egen liste: et prosessbytte er en om-tegning, ikke en
+  // ny lasting, og seksjonen henter ikke selv ved mount. `flere` følger
+  // listen den beskriver, uansett kilde.
+  const eval_ = okt ? okt.evalueringer : null;
+  if (eval_ && eval_.liste !== undefined) {
+    tegnListe(eval_.liste, !!eval_.flere);
+  } else {
+    tegnListe(data ? data.evalueringer : [],
+      !!(data && data.evalueringerFlere));
+  }
+  // Bestillingsseksjonen melder fra etter et definitivt `tillat` — da
+  // hentes listen på nytt så det ferske oppdraget faktisk vises. Feiler
+  // hentingen beholdes listen som står; dette er en oppfriskning, ikke
+  // en sannhetskilde.
+  if (eval_) {
+    // DEN MONTERTE seksjonen er den som tegner (Codex P2). Et svar som
+    // lander etter et prosessbytte tilhørte før en frakoblet DOM og ble
+    // stille sluppet — da sto det leverte oppdraget usynlig til NESTE
+    // bytte, selv om økten hadde det. Instansen melder seg her i stedet
+    // for å bli spurt om `isConnected`: siste `tegn` vinner, og den
+    // vakten trengs ikke lenger.
+    eval_.tegn = tegnListe;
+    okt.evaluering = { oppdater: async () => {
+      const min = ++eval_.nr;
+      let svar;
+      try {
+        svar = await hentEvalueringer();
+      } catch (e) {
+        if (e instanceof UautorisertFeil) ctx.paaUautorisert();
+        return;
+      }
+      // Samme regel som rapporthentingen: bare den SISTE oppfriskningen
+      // får tegne — og et tregt eldre svar skal heller ikke skrive seg
+      // inn i økten.
+      if (min !== eval_.nr) return;
+      eval_.liste = (svar && svar.evalueringer) || [];
+      eval_.flere = !!(svar && svar.flere);
+      eval_.tegn(eval_.liste, eval_.flere);
+    } };
+  }
+  return rot;
+}
+
+
 function bestillSeksjon(hoved, ctx, data, okt, laas) {
   if (!harScope(ctx, "bestilling:opprett")) return null;
   const profiler = (data && data.profiler) || [];
@@ -966,6 +1249,9 @@ function bestillSeksjon(hoved, ctx, data, okt, laas) {
           ? `${kvittering} ${t("ui.rekruttering.bestill.sendt_forlatt_bunt")
             .replaceAll("{filnavn}", sendtBunt)}`
           : kvittering);
+        // Det leverte oppdraget skal ikke kreve en side-omlasting for å
+        // vises i evalueringslisten.
+        if (okt.evaluering) okt.evaluering.oppdater();
       } else {
         // STOPP/unntak: bunten er URØRT og blir stående i skjemaet, så
         // neste forsøk går på den samme reservasjonen. Det ENESTE som er

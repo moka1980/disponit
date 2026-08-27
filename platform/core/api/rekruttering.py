@@ -444,12 +444,40 @@ def prosesser_endepunkt(tjeneste, request):
         # <dato> · kandidater: N» på oppføringen. Feltet `navn` sendes
         # bevisst ikke: flaten bruker `p.navn` når det en dag finnes, og
         # serveren skal ikke kalle et tidsstempel for et navn.
+        # RETENSJONSANKRE UTEN INNHOLD HOLDES UTE AV VELGEREN (Codex
+        # P2, #220). Claimen føder nå en prosess for HVER evaluering,
+        # men den skipede controlleren skriver ingen kandidatlagre — et
+        # terminalt oppdrag med tom prosess har derfor ingenting denne
+        # flaten kan vise, og ville fortrengt en ekte prosess som
+        # standardvalg i 30–365 døgn. En PÅGÅENDE tom prosess vises
+        # fortsatt (evalueringens tilstand-doktrine over); et terminalt
+        # løps status og rapport bor i evalueringsseksjonen.
+        #
+        # OG FRISTEN HÅNDHEVES HER OGSÅ, IKKE BARE REAPERENS MERKE
+        # (Cursor P1, #220). `slettet_ts IS NULL` alene måler når
+        # `reap_kandidatdata` RAKK å kjøre, ikke når kundens frist gikk
+        # ut — og reaperen er en batch. I vinduet mellom fristen og
+        # batchen sa rapportveien (`rekrutteringsrapport_detalj`,
+        # `_anker_lever`) og evalueringslisten alt `slettet: true` /
+        # `rapport_klar: false`, mens DENNE flaten fortsatt serverte
+        # funn, sitater og intervjuspørsmål for hver kandidat gjennom
+        # `_kandidater`. Samme grense som reaperen og som leseveiene:
+        # lukket_ts (avslutningen) eller opprettet (forlatt-fallbacken)
+        # pluss kundens døgn. Prosessen faller UT av velgeren når
+        # fristen er ute — `_kandidater` kalles aldri for den, så det er
+        # samme port ett ledd tidligere, ikke en ny.
         for pid, oppdrag_id, status, opprettet in conn.execute(
                 "SELECT p.prosess_id, p.oppdrag_id, o.status, p.opprettet"
                 "  FROM rekrutteringsprosess p"
                 "  JOIN oppdrag o ON o.tenant = p.tenant"
                 "                AND o.id = p.oppdrag_id"
                 " WHERE p.tenant=%s AND p.slettet_ts IS NULL"
+                "   AND now() < coalesce(p.lukket_ts, p.opprettet)"
+                "               + p.slettefrist_dogn * interval '1 day'"
+                "   AND (o.status IN ('opprettet','plukket')"
+                "        OR EXISTS (SELECT 1 FROM kandidat_evalueringsartefakt k"
+                "             WHERE k.tenant = p.tenant"
+                "               AND k.prosess_id = p.prosess_id))"
                 " ORDER BY p.opprettet DESC", (tenant,)).fetchall():
             kandidater, vekter, kilde = _kandidater(conn, tenant, pid)
             prosesser.append({
@@ -509,7 +537,22 @@ def signer_endepunkt(tjeneste, request):
             "                WHERE b.tenant=l.tenant"
             "                  AND b.utkast_serie=l.utkast_serie"
             "                  AND b.forrige_liste_id=l.liste_id),"
-            "       (p.slettet_ts IS NOT NULL) AS reapet"
+            # REAPET MÅLES PÅ FRISTEN, IKKE PÅ MERKET (Cursor P2, #220).
+            # `slettet_ts` settes av `reap_kandidatdata` i batcher; leser
+            # denne porten bare merket, står vinduet mellom kundens frist
+            # og batchen åpent foran den IRREVERSIBLE handlingen: 201 på
+            # en utsendelse hvis mottakerdata rapportflaten alt behandler
+            # som slettet, og seriens ene signatur-slot brent på den.
+            # Samme formel som evalueringslistens `slettet`-felt
+            # (`lesing.py`) — merket ELLER fristen, samme grense sett fra
+            # kunden. `coalesce(..., false)`: LEFT JOIN-en gir NULL-rader
+            # for en 056-liste uten 057-prosess bak seg, og den skal
+            # dømmes NØYAKTIG som før (`NULL IS NOT NULL` var false, mens
+            # `now() >= NULL` er NULL) — porten utvides, den flyttes ikke.
+            "       coalesce(p.slettet_ts IS NOT NULL"
+            "                OR now() >= coalesce(p.lukket_ts, p.opprettet)"
+            "                    + p.slettefrist_dogn * interval '1 day',"
+            "                false) AS reapet"
             "  FROM utsendingsliste l"
             "  LEFT JOIN rekrutteringsprosess p"
             "    ON p.tenant = l.tenant AND p.oppdrag_id = l.oppdrag_id"

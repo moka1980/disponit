@@ -850,6 +850,12 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def rapport_detalj(request: Request) -> Response:
         return lesing.rapport_detalj(tjeneste, request)
 
+    def rekrutteringsrapport_detalj(request: Request) -> Response:
+        return lesing.rekrutteringsrapport_detalj(tjeneste, request)
+
+    def rekrutteringsevalueringer(request: Request) -> Response:
+        return lesing.rekrutteringsevalueringer(tjeneste, request)
+
     def unntak_detalj(request: Request) -> Response:
         return lesing.unntak_detalj(tjeneste, request)
 
@@ -1099,6 +1105,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/beslutninger", beslutninger, methods=["GET"]),
         Route("/v1/beslutninger/{id:int}", beslutning_detalj, methods=["GET"]),
         Route("/v1/rapport/{id:int}", rapport_detalj, methods=["GET"]),
+        Route("/v1/rekruttering/rapport/{id:int}",
+              rekrutteringsrapport_detalj, methods=["GET"]),
+        Route("/v1/rekruttering/evalueringer", rekrutteringsevalueringer,
+              methods=["GET"]),
         Route("/v1/unntak/{id:int}", unntak_detalj, methods=["GET"]),
         Route("/v1/unntak/{id:int}/historikk", unntak_historikk,
               methods=["GET"]),
@@ -1569,6 +1579,10 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # og blinding-avskruing bak mutasjonsscopet (056-kjeden + #159 gjør
     # resten av dømmingen inne i endepunktene).
     ("GET",  "/v1/rekruttering/prosesser"):  "decisions:read",
+    # M-57s egen rapportflate ("ats"-diskriminatoren): evidens bak en
+    # beslutning tenanten selv bestilte — samme scope som WCAG-rapporten.
+    ("GET",  "/v1/rekruttering/rapport/{id:int}"): "decisions:read",
+    ("GET",  "/v1/rekruttering/evalueringer"): "decisions:read",
     ("GET",  "/v1/rekruttering/stillingsprofiler"): "decisions:read",
     # Skriving av profilen er kundens/adminens bestillingsmyndighet —
     # samme scope som signeringen og inndata-reservasjonen.
@@ -2049,6 +2063,35 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
             # Verifikatoren må kunne binde attestasjonen til NØYAKTIG den
             # generasjonen som bestilte den — ellers kunne et bevis fra en
             # gammel runde bli akseptert i en ny.
+            # RETENSJONSANKERET FØDES I CLAIM-TRANSAKSJONEN (Codex P1,
+            # #220). 057-kontrakten sier at kandidatprosessen fødes mens
+            # oppdraget er aktivt claimet, og claim-rollen bærer
+            # INSERT-grantet nettopp for dette — men ingen kalte døren,
+            # så lesegrensens reap-predikat var vakuøst sant for alltid:
+            # rapporten kunne aldri bli reap-bar. Døren er idempotent
+            # (samme oppdrag ⇒ samme prosess-id), så re-claim etter tapt
+            # lease er trygt. Fristen er kundens valg fra det signerte
+            # oppdraget; fraværet ER standardvalget (basens DEFAULT 90).
+            # Feiler fødselen, finnes ingen claim — et claimet oppdrag
+            # uten retensjonsanker er nøyaktig tilstanden Codex målte.
+            if oppdragstype == "rekruttering.evaluering":
+                frist = (minimert or {}).get("slettefrist_dogn")
+                try:
+                    if frist is None:
+                        conn.execute(
+                            "SELECT opprett_rekrutteringsprosess(%s,%s)",
+                            (tenant, opp_id))
+                    else:
+                        conn.execute(
+                            "SELECT opprett_rekrutteringsprosess(%s,%s,%s)",
+                            (tenant, opp_id, frist))
+                except psycopg.Error:
+                    conn.rollback()
+                    tjeneste.logg.hendelse("intern_feil", rid, tenant,
+                                           art="drift",
+                                           oppdrag=str(opp_id))
+                    return _feilsvar("intern_feil", rid)
+
             verifikasjonsgen = None
             if oppdragstype == "verifikasjon":
                 vg = conn.execute(
@@ -3317,6 +3360,23 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
         (json.dumps(kvittering, ensure_ascii=False),
          (kvittering.get("signatur") or {}).get("verdi"), ny_hash,
          "utfort" if vellykket else "feilet", tenant, oppdrag_id))
+    # RETENSJONSANKERET LUKKES VED DET FAKTISKE STATUSSKIFTET (Codex P2
+    # ×3, #220). 057: kundens frist løper fra AVSLUTNINGEN — uten
+    # lukkingen falt evalueringen til reaperens forlatt-frist målt fra
+    # `opprettet`. Stedet er linjen OVER, ikke kapabilitetsbruken:
+    # `brukt` kan ende i avvist promotering (skjema/epoch/binding), som
+    # committer avvisningen med jobben fortsatt `plukket` og gjenlosbar
+    # — en lukking der hadde startet fristen på et løp som ikke er
+    # ferdig, og døren nekter å flytte en satt lukking når den EKTE
+    # kvitteringen kommer. `sen_evidens`-veien når aldri hit. Oppslaget
+    # er type-agnostisk: bare M-57-oppdrag HAR et anker.
+    rad_p = conn.execute(
+        "SELECT prosess_id FROM rekrutteringsprosess"
+        " WHERE tenant=%s AND oppdrag_id=%s AND lukket_ts IS NULL",
+        (tenant, oppdrag_id)).fetchone()
+    if rad_p is not None:
+        conn.execute("SELECT lukk_rekrutteringsprosess(%s,%s, now())",
+                     (tenant, rad_p[0]))
     # 038 §5 (Codex P1): et BESLUTNINGSOPPDRAG har ingen sak — det er hele
     # poenget med opprinnelsen. Den avsluttende bokføringen under er
     # M-37-veiens saksbokføring, og `unntak_historikk.unntak_id` er NOT NULL:

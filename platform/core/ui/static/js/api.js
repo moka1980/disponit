@@ -194,6 +194,12 @@ export async function lastOppBunt(jti, bytes) {
 export const bestillEvaluering = (kropp, idem) =>
   _muter("/v1/bestilling", "POST", kropp, idem);
 
+// M-57s egen rapportflate ("ats"): listen og den promoterte rapporten.
+export const hentEvalueringer = () =>
+  hentJson("/v1/rekruttering/evalueringer");
+export const hentEvalueringsrapport = (oppdragId) =>
+  hentJson(`/v1/rekruttering/rapport/${encodeURIComponent(oppdragId)}`);
+
 export const signerRekrutteringsliste = (listeId, innholdHash, idem) =>
   _muter(`/v1/rekruttering/lister/${encodeURIComponent(listeId)}/signer`,
          "POST", { innhold_hash: innholdHash }, idem || nyIdempotensnokkel());

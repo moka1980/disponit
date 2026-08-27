@@ -316,14 +316,12 @@ OPPDRAGSTYPER: dict[str, Oppdragstype] = {
         # kandidatpayload eller bare beslutningssporet — så et skjema
         # skrevet nå ville avgjort #168 for hånd.
         rapport_artefakttype="rekruttering.evaluering.rapport",
-        # INGEN `rapportflate` (Codex P2). Typen må navngis for at
-        # modulen skal få laste opp rapporten sin, men den generiske
-        # `/v1/rapport/{id}` mater `rapport.js`, som dereferer WCAG-formens
-        # `sammendrag` og `sider_kontrollert` uten å spørre — hver eneste
-        # M-57-rapport ville feilet UNDER rendring, etter en 200. Flaten
-        # for evalueringsrapporten er CP4s arbeid; til den finnes, er
-        # 404 det ærlige svaret.
-        rapportflate=None,
+        # `"ats"` — M-57s EGEN leseflate (CP4-arbeidet, landet nå):
+        # diskriminatoren ruter rapporten til
+        # `/v1/rekruttering/rapport/{id}` og evalueringsseksjonen i
+        # rekrutteringsflaten — aldri til den generiske WCAG-rendreren
+        # (`rapport_detalj` filtrerer på SIN flate, denne på sin).
+        rapportflate="ats",
         beskrivelse=("M-57: leser og rangerer opptil 5000 søknader mot"
                      " stillingens krav i isolert container — ingen"
                      " ekstern trafikk, ingen mutasjon; utsendelse er en"

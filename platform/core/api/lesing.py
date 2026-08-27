@@ -474,6 +474,221 @@ def rapport_detalj(tjeneste, request: Request) -> Response:
     return _les(tjeneste, request, "decisions:read", _fn)
 
 
+RAPPORTFLATE_ATS = "ats"
+
+
+def _m57_avslatt(tjeneste, request: Request):
+    """Er `m57_ats` rullet tilbake? -> ferdig 503-svar, ellers None.
+
+    ROLLBACK-KONTRAKTEN GJELDER OGSÅ LESEVEIEN (Codex P1). De skrivende og
+    lesende M-57-rutene i `rekruttering.py` avviser med 503 `modul_inaktiv`
+    når `DISPONIT_INAKTIVE_MODULER` navngir modulen; de to rutene her gikk
+    rett i `_les`. Å deaktivere `m57_ats` i drift stanset dermed resten av
+    flaten mens evalueringshistorikken og de DEKRYPTERTE rapportene sto
+    åpne — og rapporten er den formen med mest kandidatdata i seg.
+
+    SAMME PORT, IKKE EN KOPI: `rekruttering._modul_inaktiv` er kilden, så
+    modulnavnet, loggformen og statusoppslaget i `feil.FEIL` ikke kan
+    divergere mellom de to filene. Importen er lokal — `rekruttering`
+    importerer `app`, som importerer oss.
+
+    FØR TILKOBLINGEN, av samme grunn som der: en deaktivert modul skal
+    ikke bruke en poolplass eller åpne en transaksjon som må rulles.
+    `_rid` er idempotent (den cacher på `request.scope["state"]`), så
+    503-svaret bærer samme request-id som `_les` ville gitt.
+    """
+    from . import rekruttering
+    return rekruttering._modul_inaktiv(tjeneste, _rid(request))
+
+
+def _anker_lever(conn, tenant, oppdrag_id) -> bool:
+    """Lever retensjonsankeret NÅ? Re-sjekken bak TOCTOU-dommen (#220,
+    eierdom): hovedspørringens EXISTS(levende anker) og payloadleveransen
+    er to tidspunkter, og en reap kan committe i vinduet mellom dem.
+    Denne leses rett før 200, ETTER dekrypteringen, i samme transaksjon
+    (READ COMMITTED tar ferskt snapshot per setning) — payloaden forlater
+    aldri prosessen etter en reap som var committet da beslutningen ble
+    tatt. VINDUSINNSNEVRING, ikke lås: FOR SHARE fra leseveien ville
+    krevd UPDATE-rett på retensjonsankeret for en READ-rute — et felt
+    rettighetsvedtak (migrer.py:86-95) denne dommen nekter å reversere.
+    Den interleavede bevisriggen bor i eget issue."""
+    # `clock_timestamp()`, ikke `now()` (Codex P2): `now()` er
+    # transaksjonens STARTTID og identisk i hovedspørringen og her — en
+    # dekryptering som drar forbi fristen ville bestått re-sjekken med
+    # det samme klokkeslettet den alt besto med. Re-sjekkens hele poeng
+    # er et FERSKERE tidspunkt.
+    return conn.execute(
+        "SELECT EXISTS (SELECT 1 FROM rekrutteringsprosess p"
+        "  WHERE p.tenant=%s AND p.oppdrag_id=%s"
+        "    AND p.slettet_ts IS NULL"
+        "    AND clock_timestamp() < coalesce(p.lukket_ts, p.opprettet)"
+        "                + p.slettefrist_dogn * interval '1 day')",
+        (tenant, oppdrag_id)).fetchone()[0]
+
+
+def rekrutteringsrapport_detalj(tjeneste, request: Request) -> Response:
+    """GET /v1/rekruttering/rapport/{oppdrag_id} — den promoterte
+    evalueringsrapporten. M-57s EGEN leseflate (kontraktens
+    `rapportflate="ats"`): samme dekrypterings- og 404-doktrine som
+    WCAG-rapporten (`rapport_detalj`), men med SIN diskriminator — de to
+    flatene kan aldri servere hverandres former (200-og-feiler-under-
+    rendring-klassen)."""
+    av = _m57_avslatt(tjeneste, request)
+    if av is not None:
+        return av
+
+    def _fn(conn, auth, rid):
+        import oppdragskontrakt
+        oid = request.path_params["id"]
+        # Starlettes `:int` er ubegrenset Python-int; forbi bigint dør
+        # bindingen i basen som en driftsfeil. En id ingen rad kan ha ER
+        # «ikke funnet» (Codex P2) — samme svar, før tilkoblingsbruk.
+        if not 0 <= oid <= 9223372036854775807:
+            return _feilsvar("ikke_funnet", rid)
+        par = [(navn, t.rapport_artefakttype)
+               for navn, t in oppdragskontrakt.OPPDRAGSTYPER.items()
+               if t.rapport_artefakttype is not None
+               and t.rapportflate == RAPPORTFLATE_ATS]
+        rad = conn.execute(
+            "SELECT a.artefakt_id, a.ciphertext, a.nonce, a.dek_ref,"
+            " a.promotert_ts, a.artefakttype"
+            "  FROM artefakt a JOIN oppdrag o"
+            "    ON o.tenant = a.tenant AND o.id = a.oppdrag_id"
+            " WHERE a.tenant=%s AND a.oppdrag_id=%s"
+            "   AND a.tilstand='promotert'"
+            "   AND (o.oppdragstype, a.artefakttype) IN"
+            "       (SELECT * FROM unnest(%s::text[], %s::text[]))"
+            # SLETTEGRENSEN GJELDER OGSÅ RAPPORTEN (Codex P1 ×2, felt
+            # stengt): rapporten serveres bare med et LEVENDE
+            # retensjonsanker. Kravet er EXISTS(ureapet prosess), ikke
+            # NOT EXISTS(reapet): claimen føder ankeret (057-døren i
+            # claim-transaksjonen), så en rapport UTEN prosess er et
+            # oppdrag utenfor retensjonskontrakten og serveres ikke —
+            # identisk 404, samme svar som før promotering. Etter
+            # reaping faller den samme veien.
+            # ... og FRISTEN håndheves her, ikke bare reaperens merke
+            # (Codex P1): `slettet_ts` skrives asynkront i batcher — en
+            # forsinket reaper skal aldri forlenge tilgangen til
+            # kandidatdata forbi kundens frist. Samme grense som
+            # reaperen: lukket_ts (avslutningen) eller opprettet
+            # (forlatt-fallbacken) pluss kundens døgn.
+            "   AND EXISTS (SELECT 1 FROM rekrutteringsprosess p"
+            "        WHERE p.tenant = o.tenant AND p.oppdrag_id = o.id"
+            "          AND p.slettet_ts IS NULL"
+            "          AND now() < coalesce(p.lukket_ts, p.opprettet)"
+            "                      + p.slettefrist_dogn * interval '1 day')"
+            " ORDER BY a.promotert_ts DESC LIMIT 1",
+            (auth.tenant, oid, [p[0] for p in par],
+             [p[1] for p in par])).fetchone()
+        if rad is None:
+            return _feilsvar("ikke_funnet", rid)
+        art_id, ct, nonce, dek_ref, ts, artefakttype = rad
+        from db import kryptering
+        try:
+            dek = kryptering.hent_dek(conn, auth.tenant, dek_ref)
+            rapport = kryptering.dekrypter(dek, ct, nonce, auth.tenant,
+                                           dek_ref)
+        except Exception:
+            tjeneste.logg.hendelse("intern_feil", rid, auth.tenant,
+                                   art="drift", artefakt=str(art_id))
+            return _feilsvar("intern_feil", rid)
+        if not _anker_lever(conn, auth.tenant, oid):
+            return _feilsvar("ikke_funnet", rid)
+        # LESNINGEN SERVERER IKKE DET FLATEN KASTER (Codex P2 — samme
+        # doktrine som `_kandidater`s nøkkelsubtraksjon): `kildetekst` er
+        # hele den blindede søknadsteksten per kandidat, og ingen
+        # konsument av denne ruten leser den — funnene bærer sine egne
+        # sitater. Den desidert tyngste delen av payloaden strippes før
+        # svaret; artefaktet selv er urørt.
+        for _k in (rapport.get("kandidater") or {}).values():
+            if isinstance(_k, dict):
+                _k.pop("kildetekst", None)
+        return kanonisk_json({
+            "oppdrag_id": oid,
+            "artefakt_id": str(art_id),
+            "artefakttype": artefakttype,
+            "promotert_ts": ts.isoformat() if ts else None,
+            "rapport": rapport,
+            "request_id": rid,
+        }, 200, {"x-request-id": rid})
+    return _les(tjeneste, request, "decisions:read", _fn)
+
+
+def rekrutteringsevalueringer(tjeneste, request: Request) -> Response:
+    """GET /v1/rekruttering/evalueringer — tenantens evalueringsoppdrag,
+    nyeste først: id, status, tidspunkt, og om rapporten er klar
+    (promotert artefakt finnes). Ingen payload-dekryptering på
+    listeveien — innholdet hører til detaljruten."""
+    av = _m57_avslatt(tjeneste, request)
+    if av is not None:
+        return av
+
+    def _fn(conn, auth, rid):
+        import oppdragskontrakt
+        # SAMME KILDE SOM DETALJRUTEN (Cursor P2). Listen hardkodet paret
+        # (`'rekruttering.evaluering'`, `'rekruttering.evaluering.rapport'`)
+        # mens `rekrutteringsrapport_detalj` utleder det fra kontrakten.
+        # To kilder for ETT spørsmål er en stille divergens: endrer en
+        # kontrakt sin `rapport_artefakttype`, sier listen `rapport_klar:
+        # false` mens detaljruten fortsatt svarer 200 (eller omvendt) — og
+        # flaten skjuler «Vis»-knappen for en rapport som finnes. Samme
+        # `par`-filter begge steder gjør divergensen umulig, og en ny
+        # ats-flatet kontrakt blir listbar ved å DEKLARERE seg.
+        par = [(navn, t.rapport_artefakttype)
+               for navn, t in oppdragskontrakt.OPPDRAGSTYPER.items()
+               if t.rapport_artefakttype is not None
+               and t.rapportflate == RAPPORTFLATE_ATS]
+        typer, arter = [p[0] for p in par], [p[1] for p in par]
+        rader = conn.execute(
+            "SELECT o.id, o.status, o.opprettet,"
+            " EXISTS (SELECT 1 FROM artefakt a"
+            "          WHERE a.tenant = o.tenant AND a.oppdrag_id = o.id"
+            "            AND a.tilstand='promotert'"
+            "            AND (o.oppdragstype, a.artefakttype) IN"
+            "                (SELECT * FROM unnest(%s::text[], %s::text[])))"
+            # … og listen reklamerer bare med et LEVENDE anker (samme
+            # EXISTS-form som detaljruten — Codex P1 ×2).
+            " AND EXISTS (SELECT 1 FROM rekrutteringsprosess p"
+            "      WHERE p.tenant = o.tenant AND p.oppdrag_id = o.id"
+            "        AND p.slettet_ts IS NULL"
+            "        AND now() < coalesce(p.lukket_ts, p.opprettet)"
+            "                    + p.slettefrist_dogn * interval '1 day'),"
+            # … og reapingen NAVNGIS (Codex P2): et `utfort` oppdrag med
+            # `rapport_klar: false` fordi fristen har makulert det er
+            # ikke «under arbeid» — uten dette feltet ville flaten vist
+            # det slik i det uendelige.
+            # `slettet` er sant fra FRISTEN, ikke først fra reaperens
+            # batch — merket og fristen er samme grense sett fra kunden.
+            " EXISTS (SELECT 1 FROM rekrutteringsprosess p"
+            "      WHERE p.tenant = o.tenant AND p.oppdrag_id = o.id"
+            "        AND (p.slettet_ts IS NOT NULL"
+            "             OR now() >= coalesce(p.lukket_ts, p.opprettet)"
+            "                 + p.slettefrist_dogn * interval '1 day'))"
+            " AS slettet"
+            "  FROM oppdrag o"
+            " WHERE o.tenant=%s AND o.oppdragstype = ANY(%s::text[])"
+            # HENTER ÉN OVER VINDUET (Codex P2). `LIMIT 100` + `flere =
+            # len(rader) == 100` PÅSTÅR eldre rader ved nøyaktig 100 uten
+            # å ha sett én — flaten sier da «det finnes eldre» om en
+            # komplett historikk. Den 101. raden er beviset; den sendes
+            # aldri ut, den avgjør bare `flere`.
+            " ORDER BY o.id DESC LIMIT 101",
+            (typer, arter, auth.tenant, typer)).fetchall()
+        return kanonisk_json({
+            "evalueringer": [
+                {"oppdrag_id": r[0], "status": r[1],
+                 "opprettet": r[2].isoformat() if r[2] else None,
+                 "rapport_klar": r[3],
+                 "slettet": r[4]} for r in rader[:100]],
+            # Aldri stille avkorting: finnes rad 101, MELDER flaten det i
+            # stedet for å presentere de nyeste 100 som alt.
+            # Cursor (#220 P2-3, eierdom); selve pagineringen bor i #221.
+            "flere": len(rader) > 100,
+            "request_id": rid,
+        }, 200, {"x-request-id": rid})
+    return _les(tjeneste, request, "decisions:read", _fn)
+
+
 def beslutning_detalj(tjeneste, request: Request) -> Response:
     def _fn(conn, auth, rid):
         try:
