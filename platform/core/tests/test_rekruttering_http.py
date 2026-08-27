@@ -1521,6 +1521,12 @@ def test_signering_avviser_manglende_csrf_og_idempotensnokkel(klient):
     assert ok.status_code == 201, ok.text
 
 
+#: En oppdrag-id som ikke finnes. Rapportruta slår opp på den, så den er
+#: målestokken for at modulporten ligger FØR oppslaget: 503 med flagget,
+#: 404 uten.
+_UKJENT_OID = 987654321
+
+
 @pg
 def test_deaktivert_m57_gir_definert_503_paa_alle_tre_rutene(miljo,
                                                              monkeypatch):
@@ -1531,10 +1537,11 @@ def test_deaktivert_m57_gir_definert_503_paa_alle_tre_rutene(miljo,
     stanset derfor ikke rekrutteringsflaten — signeringen inkludert, som
     er den irreversible handlingen en rollback finnes for å stoppe.
 
-    Målt i BEGGE retninger: med flagget svarer alle fem rutene 503
+    Målt i BEGGE retninger: med flagget svarer alle sju rutene 503
     `modul_inaktiv` OG signatur-sloten står ubrukt; uten flagget signerer
-    den samme økten 201. Uten den andre halvdelen ville testen bestått
-    på et endepunkt som var permanent nede.
+    den samme økten 201 og de to leserutene svarer sitt eget (200/404).
+    Uten den andre halvdelen ville testen bestått på et endepunkt som var
+    permanent nede.
 
     Avvisningen ligger FØR autentiseringen, og økten her er en ekte
     admin-økt med gyldig CSRF: 503-en er da modulporten, ikke en 401 som
@@ -1576,8 +1583,15 @@ def test_deaktivert_m57_gir_definert_503_paa_alle_tre_rutene(miljo,
                       "/v1/rekruttering/stillingsprofiler",
                       {"navn": "R",
                        "krav": [{"kravnavn": "K", "vekt": 1}]}),
+                # M-57s EGEN rapportflate (#220) hører til samme modul og
+                # samme rollback-kontrakt (Codex P1). Rutene bor i
+                # `lesing.py`, ikke i `rekruttering.py`, og gikk derfor
+                # utenom porten: en rollback stanset resten av flaten mens
+                # historikken og de DEKRYPTERTE rapportene sto åpne.
+                _get(c, cookie, "/v1/rekruttering/evalueringer"),
+                _get(c, cookie, f"/v1/rekruttering/rapport/{_UKJENT_OID}"),
             ]
-            assert [r.status_code for r in svar] == [forventet] * 5, \
+            assert [r.status_code for r in svar] == [forventet] * 7, \
                 [r.text for r in svar]
             assert {r.json()["feil"] for r in svar} == {"modul_inaktiv"}
     finally:
@@ -1606,5 +1620,17 @@ def test_deaktivert_m57_gir_definert_503_paa_alle_tre_rutene(miljo,
                       f"/v1/rekruttering/lister/{lid}/signer",
                       {"innhold_hash": ih})
             assert r.status_code == 201, r.text
+            # ...og de to leserutene svarer sitt EGNE svar uten flagget:
+            # listen 200, den ukjente rapporten 404 `ikke_funnet`. Uten
+            # denne halvdelen ville 503-armen over bestått på to ruter som
+            # var permanent nede — og 404-en er dessuten beviset på at
+            # porten ligger FØR oppslaget: med flagget svarte NØYAKTIG
+            # samme id 503, altså uten å ha rørt basen.
+            liste = _get(c, cookie, "/v1/rekruttering/evalueringer")
+            assert liste.status_code == 200, liste.text
+            ukjent = _get(c, cookie,
+                          f"/v1/rekruttering/rapport/{_UKJENT_OID}")
+            assert ukjent.status_code == 404, ukjent.text
+            assert ukjent.json()["feil"] == "ikke_funnet"
     finally:
         paa.tjeneste.pool.lukk()

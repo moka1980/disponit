@@ -477,6 +477,30 @@ def rapport_detalj(tjeneste, request: Request) -> Response:
 RAPPORTFLATE_ATS = "ats"
 
 
+def _m57_avslatt(tjeneste, request: Request):
+    """Er `m57_ats` rullet tilbake? -> ferdig 503-svar, ellers None.
+
+    ROLLBACK-KONTRAKTEN GJELDER OGSÅ LESEVEIEN (Codex P1). De skrivende og
+    lesende M-57-rutene i `rekruttering.py` avviser med 503 `modul_inaktiv`
+    når `DISPONIT_INAKTIVE_MODULER` navngir modulen; de to rutene her gikk
+    rett i `_les`. Å deaktivere `m57_ats` i drift stanset dermed resten av
+    flaten mens evalueringshistorikken og de DEKRYPTERTE rapportene sto
+    åpne — og rapporten er den formen med mest kandidatdata i seg.
+
+    SAMME PORT, IKKE EN KOPI: `rekruttering._modul_inaktiv` er kilden, så
+    modulnavnet, loggformen og statusoppslaget i `feil.FEIL` ikke kan
+    divergere mellom de to filene. Importen er lokal — `rekruttering`
+    importerer `app`, som importerer oss.
+
+    FØR TILKOBLINGEN, av samme grunn som der: en deaktivert modul skal
+    ikke bruke en poolplass eller åpne en transaksjon som må rulles.
+    `_rid` er idempotent (den cacher på `request.scope["state"]`), så
+    503-svaret bærer samme request-id som `_les` ville gitt.
+    """
+    from . import rekruttering
+    return rekruttering._modul_inaktiv(tjeneste, _rid(request))
+
+
 def rekrutteringsrapport_detalj(tjeneste, request: Request) -> Response:
     """GET /v1/rekruttering/rapport/{oppdrag_id} — den promoterte
     evalueringsrapporten. M-57s EGEN leseflate (kontraktens
@@ -484,6 +508,10 @@ def rekrutteringsrapport_detalj(tjeneste, request: Request) -> Response:
     WCAG-rapporten (`rapport_detalj`), men med SIN diskriminator — de to
     flatene kan aldri servere hverandres former (200-og-feiler-under-
     rendring-klassen)."""
+    av = _m57_avslatt(tjeneste, request)
+    if av is not None:
+        return av
+
     def _fn(conn, auth, rid):
         import oppdragskontrakt
         oid = request.path_params["id"]
@@ -531,6 +559,10 @@ def rekrutteringsevalueringer(tjeneste, request: Request) -> Response:
     nyeste først: id, status, tidspunkt, og om rapporten er klar
     (promotert artefakt finnes). Ingen payload-dekryptering på
     listeveien — innholdet hører til detaljruten."""
+    av = _m57_avslatt(tjeneste, request)
+    if av is not None:
+        return av
+
     def _fn(conn, auth, rid):
         import oppdragskontrakt
         # SAMME KILDE SOM DETALJRUTEN (Cursor P2). Listen hardkodet paret
