@@ -322,6 +322,11 @@ def kandidater(conn, minutt_fra: int, minutt_til: int, K: int
     sett én tenant om gangen og regnet budsjettet på feil nevner. Der ligger
     også `LIMIT`, slik at K-invarianten ikke kan brytes av en endring i denne
     orkestreringen.
+
+    Siden 064 filtrerer utvalget bort navn under reserverte TLD-er (RFC 6761:
+    `.test`, `.example`, `.invalid`, `.localhost`). De kan aldri resolves, så
+    de er verken kandidater eller bevis om resolvernes helse — sto de igjen,
+    bodde de permanent i kø 1 og utgjorde hele alarmens nevner (#209).
     """
     return conn.execute(
         "SELECT tenant, hostname, ko FROM revalideringskandidater(%s,%s,%s,%s,%s)",
@@ -330,7 +335,12 @@ def kandidater(conn, minutt_fra: int, minutt_til: int, K: int
 
 
 def budsjett(conn) -> tuple[int, int]:
-    """(N, K). K = ceil(0.10 * N), hardt tak for kø 2 + kø 3 SAMLET."""
+    """(N, K). K = ceil(0.10 * N), hardt tak for kø 2 + kø 3 SAMLET.
+
+    N teller det PLUKKBARE: reserverte TLD-er er ute av nevneren siden 064,
+    samme predikat som utvalget. Ellers ville K vært et tak over rader som
+    ikke finnes.
+    """
     N = int(conn.execute("SELECT revalideringspopulasjon()").fetchone()[0])
     return N, math.ceil(TAK_ANDEL * N)
 
