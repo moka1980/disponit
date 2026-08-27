@@ -170,7 +170,11 @@ export function visRekruttering(hoved, ctx) {
     // rapport. Auto fyrer når begge er tomme — en feilet runde
     // etterlater dem tomme, og neste mount får prøve, uten noen latch å
     // slippe eller gjenåpne.
-    rapportHenting: { nr: 0, tegn: null, siste: null, aktiv: null } };
+    // `aktive` er NØKLET (Codex P2, A→B→A): et raskt gjenvalg av A skal
+    // finne As eget løfte selv om B startet imellom — fortsatt samme to
+    // tilstandsarter (in-flight + cache), bare per rapport-id.
+    rapportHenting: { nr: 0, tegn: null, siste: null,
+                      aktive: new Map() } };
   medStatus(hoved, ctx,
     async () => {
       // Profilene er TILLEGGSDATA (samme politikk som
@@ -927,16 +931,16 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       // mens auto-lastingen av SAMME rapport står i lufta, deles
       // løftet — generasjonen avgjør hvem som får rendre (klikket),
       // og fokus-semantikken er kallerens.
-      if (rHent.aktiv && rHent.aktiv.id === oppdragId) {
-        svar = await rHent.aktiv.lofte;
+      if (rHent.aktive.has(oppdragId)) {
+        svar = await rHent.aktive.get(oppdragId);
       } else {
         const lofte = hentEvalueringsrapport(oppdragId);
-        rHent.aktiv = { id: oppdragId, lofte };
+        rHent.aktive.set(oppdragId, lofte);
         try {
           svar = await lofte;
         } finally {
-          if (rHent.aktiv && rHent.aktiv.lofte === lofte) {
-            rHent.aktiv = null;
+          if (rHent.aktive.get(oppdragId) === lofte) {
+            rHent.aktive.delete(oppdragId);
           }
         }
       }
@@ -1102,7 +1106,7 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
     } catch (e) {
       // Stille: cachen kan være foreldet i form; listen er sannheten.
     }
-  } else if (klarRad && rHent && !rHent.aktiv) {
+  } else if (klarRad && rHent && rHent.aktive.size === 0) {
     // Auto-vilkåret er AVLEDET, aldri latchet (eierdom, K2-dommen):
     // ingen cache (`siste` — grenen over kortslutter) og ingenting i
     // lufta (`aktiv`) betyr at denne mounten har noe å hente. En feilet

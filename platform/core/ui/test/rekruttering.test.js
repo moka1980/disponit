@@ -1773,6 +1773,65 @@ test("Evalueringer: auto-lastingen kjører ÉN gang per økt — "
     "rapporten forsvant i prosessbyttet — cachen re-bygges ikke");
 });
 
+test("Evalueringer: A→B→A gjenbruker As løfte — aldri to nedlastinger "
+  + "av samme rapport", async () => {
+  KALL = [];
+  // Codex P2: in-flight-markøren er nøklet per rapport-id.
+  let slippA, slippB;
+  const tregA = new Promise((res) => { slippA = res; });
+  const tregB = new Promise((res) => { slippB = res; });
+  SVAR = (sti) => ({
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 97, status: "utfort",
+        opprettet: "2026-08-27T01:00:00+00:00", rapport_klar: true },
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
+    "/v1/rekruttering/rapport/97": tregA,
+    "/v1/rekruttering/rapport/96": tregB,
+  })[sti] ?? 500;
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelectorAll(
+    "section[aria-labelledby=evaluering-tittel] button").length === 2));
+  const seksjon = () => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  const knappFor = (id) => [...seksjon().querySelectorAll("button")]
+    .find((b) => b.closest("tr").textContent.includes(String(id)));
+  // Auto tok alt 97 (A). Brukeren: B (96), så A (97) igjen — mens
+  // BEGGE henger.
+  knappFor(96).click();
+  knappFor(97).click();
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(KALL.filter(
+    (k) => k.sti === "/v1/rekruttering/rapport/97").length, 1,
+    "gjenvalget av A lastet den ned på nytt mens As løfte hang");
+  // Slipp begge: siste valg (A/97) vinner rendringen.
+  slippB({ oppdrag_id: 96, rapport: {
+    rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+    profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
+    antall_soknader: 1,
+    rangering: [{ kandidat_id: "kandidat-01", poeng: 5,
+      nedbrytning: { drift: 5 } }],
+    kandidater: { "kandidat-01": { funn: [] } },
+    fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+  } });
+  slippA({ oppdrag_id: 97, rapport: {
+    rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+    profil: { profil_id: "p-1", versjon: 2, navn: "Sikkerhetsleder" },
+    antall_soknader: 1,
+    rangering: [{ kandidat_id: "kandidat-02", poeng: 4,
+      nedbrytning: { drift: 4 } }],
+    kandidater: { "kandidat-02": { funn: [] } },
+    fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+  } });
+  assert.ok(await vent(() => seksjon().textContent.includes("Sikkerhetsleder")),
+    "brukerens siste valg (A) rendret aldri");
+  assert.ok(!seksjon().textContent.includes("Driftskonsulent"),
+    "det forbigåtte B-svaret ble stående");
+});
+
 test("Evalueringer: et sent auto-svar kan aldri restarte auto-stien — "
   + "brukerens valg står", async () => {
   KALL = [];
