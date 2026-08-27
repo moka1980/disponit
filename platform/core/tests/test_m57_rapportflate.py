@@ -22,7 +22,7 @@ pg = pytest.mark.skipif(not DSN, reason="DISPONIT_TEST_DSN ikke satt")
 TENANT = "t-api"
 
 
-def _utfort_oppdrag(migrator, klient_ubrukt, monkeypatch):
+def _utfort_oppdrag(migrator, klient_ubrukt, monkeypatch, ekstra=None):
     """Hele kjeden til promotert rapport — controllertestens rigg."""
     from starlette.testclient import TestClient
     from api.app import lag_app
@@ -43,8 +43,10 @@ def _utfort_oppdrag(migrator, klient_ubrukt, monkeypatch):
     cookie, csrf = _adminsesjon()
     ref = _bunt_via_http(c, cookie, csrf)
     profilref = _profil(migrator)
-    r = _bestill(c, cookie, csrf, _evalkropp(ref, profilref),
-                 "n-" + secrets.token_hex(8))
+    kropp = _evalkropp(ref, profilref)
+    if ekstra:
+        kropp.update(ekstra)
+    r = _bestill(c, cookie, csrf, kropp, "n-" + secrets.token_hex(8))
     assert r.status_code == 200 and r.json()["beslutning"] == "tillat", r.text
     oppdrag_id = r.json()["oppdrag_id"]
     mtk, _ = _onboard_token(c, migrator, "m57_ats", rel)
@@ -621,3 +623,57 @@ def test_ankersjekken_staar_etter_dekrypteringen(migrator, miljo):
     svar = kilde.index("kanonisk_json")
     assert dekryptering < sjekk < svar, \
         "re-sjekken skal stå ETTER dekrypteringen og FØR 200-svaret"
+
+
+@pg
+def test_claimfoedselen_baerer_kundens_frist(migrator, miljo, inndata_rot,
+                                             monkeypatch):
+    """Claim-fødselen med EKSPLISITT `slettefrist_dogn` (pass-P2):
+    kundens 31 skal ikke stille bli basens DEFAULT 90 — feltet er
+    valgfritt i kontrakten, og nettopp da er den eneste beviste veien
+    standardveien.
+
+    MUTASJONEN SOM DREPER DENNE: slutt å lese `slettefrist_dogn` av det
+    minimerte oppdraget i claim-fødselen (fall alltid til default)."""
+    c, cookie, csrf, oid = _utfort_oppdrag(migrator, klient, monkeypatch,
+                                           ekstra={"slettefrist_dogn": 31})
+    try:
+        _sett_kontekst(migrator, TENANT)
+        rad = migrator.execute(
+            "SELECT slettefrist_dogn, lukket_ts IS NOT NULL"
+            "  FROM rekrutteringsprosess"
+            " WHERE tenant=%s AND oppdrag_id=%s", (TENANT, oid)).fetchone()
+        migrator.rollback()
+        assert rad is not None, "claimen skal ha født ankeret"
+        assert rad[0] == 31, \
+            "kundens frist skal bæres fra det signerte oppdraget"
+        assert rad[1], "terminal kvittering skal ha lukket ankeret"
+    finally:
+        c.__exit__(None, None, None)
+
+
+def test_ankerlukkingen_hoerer_til_statusskiftet():
+    """`sen_evidens` skal aldri lukke ankeret (pass-P2, regresjonsport):
+    lukkingen bor ETTER det faktiske statusskiftet i `_ingest_kvittering`
+    — kapabilitetsbruk-stedet (`brukt`/`sen_evidens`) kan ende i avvist
+    promotering med jobben fortsatt plukket. Porten måles i KILDEN
+    (samme valg som AST-portene i test_m37, og av samme grunn); den
+    interleavede sen_evidens-riggen på et m57-oppdrag hører til #223-
+    klassen.
+
+    MUTASJONEN SOM DREPER DENNE: flytt lukkingen tilbake til
+    kapabilitetsbruken, eller legg inn en lukking nr. 2 der."""
+    import inspect
+
+    from api import app as appmod
+
+    kilde = inspect.getsource(appmod)
+    kall = "SELECT lukk_rekrutteringsprosess("
+    assert kilde.count(kall) == 1, \
+        "nøyaktig ÉN lukking — en ekstra er en ny vei fristen kan starte på"
+    posisjon = kilde.index(kall)
+    terminal = kilde.index('"utfort" if vellykket else "feilet"')
+    kapabilitet = kilde.index('in ("brukt", "sen_evidens")')
+    assert posisjon > terminal > kapabilitet, \
+        "lukkingen skal stå etter det faktiske statusskiftet, aldri ved" \
+        " kapabilitetsbruken"

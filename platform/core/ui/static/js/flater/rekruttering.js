@@ -157,7 +157,12 @@ export function visRekruttering(hoved, ctx) {
     // oppfriskningens generasjon og `tegn` den for tiden monterte
     // seksjonens tegner — begge hører til listen, ikke til instansen
     // som tilfeldigvis viser den.
-    evalueringer: { liste: undefined, flere: false, nr: 0, tegn: null } };
+    evalueringer: { liste: undefined, flere: false, nr: 0, tegn: null },
+    // Rapporthentingen deler prosessbytte-risikoen med listen (Codex
+    // P2): generasjon og tegner hører til ØKTEN, og hver mount melder
+    // seg som tegner — et svar som lander etter et bytte tegner i den
+    // MONTERTE seksjonen, aldri i en frakoblet.
+    rapportHenting: { nr: 0, tegn: null } };
   medStatus(hoved, ctx,
     async () => {
       // Profilene er TILLEGGSDATA (samme politikk som
@@ -729,8 +734,15 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
   const utfall = el("div", { role: "alert", class: "utfall" });
   const rapportRot = el("div");
   // To raske klikk må ikke la det TREGESTE svaret vinne: bare den sist
-  // bestilte hentingen får rendre (eller melde feil).
-  let hentingNr = 0;
+  // bestilte hentingen får rendre (eller melde feil). Generasjonen og
+  // tegneren bor på ØKTEN (samme form som listen, Codex P2): en lokal
+  // teller nullstilt av prosessbyttet vokter ingenting på tvers av dem,
+  // og `sett(rapportRot, …)` i en frakoblet instans er et stille tap.
+  const rHent = (okt && okt.rapportHenting) || { nr: 0, tegn: null };
+  rHent.tegn = (utfallTekst, noder) => {
+    sett(utfall, ...(utfallTekst ? [utfallTekst] : []));
+    sett(rapportRot, ...(noder || []));
+  };
   // Listeoppfriskningen bærer NØYAKTIG samme risiko (Cursor P2):
   // `paagaaende` slipper opp før den fire-and-forget `oppdater()` er
   // ferdig, så to raske bestillinger gir to hentinger i lufta samtidig.
@@ -746,19 +758,18 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
   const visRapport = async (oppdragId) => {
     // Tøm FØR henting: et feilet kall skal aldri la forrige rapport stå
     // igjen under en feilmelding som gjelder en annen.
-    sett(utfall);
-    sett(rapportRot);
-    const min = ++hentingNr;
+    rHent.tegn(null, []);
+    const min = ++rHent.nr;
     let svar;
     try {
       svar = await hentEvalueringsrapport(oppdragId);
     } catch (e) {
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
-      if (min !== hentingNr) return;
-      sett(utfall, t("ui.rekruttering.evalueringer.rapportfeil"));
+      if (min !== rHent.nr) return;
+      rHent.tegn(t("ui.rekruttering.evalueringer.rapportfeil"), []);
       return;
     }
-    if (min !== hentingNr) return;
+    if (min !== rHent.nr) return;
     // RENDRINGEN LIGGER INNE I `try` (Cursor P2). 200 er ikke det samme
     // som rendrbar: mangler `rangering`, `profil` eller `nedbrytning`,
     // kastet dereferansen HER — etter at `utfall` og `rapportRot` alt var
@@ -833,15 +844,14 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
         text: t("ui.rekruttering.evalueringer.rangering")
           .replace("{navn}", rapport.profil.navn)
           .replace("{versjon}", String(rapport.profil.versjon)) });
-      sett(rapportRot, overskrift,
+      rHent.tegn(null, [overskrift,
         el("p", { text: t("ui.rekruttering.evalueringer.blindet") }),
-        el("div", { class: "tablewrap" }, tabell), ...detaljer);
+        el("div", { class: "tablewrap" }, tabell), ...detaljer]);
       overskrift.focus();
     } catch (e) {
-      if (min !== hentingNr) return;
+      if (min !== rHent.nr) return;
       // Halv DOM er verre enn ingen: en delvis bygget rapport ser ekte ut.
-      sett(rapportRot);
-      sett(utfall, t("ui.rekruttering.evalueringer.rapportfeil"));
+      rHent.tegn(t("ui.rekruttering.evalueringer.rapportfeil"), []);
     }
   };
 
