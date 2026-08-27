@@ -318,6 +318,52 @@ def test_rapportflaten_er_en_diskriminator_ikke_en_boolsk():
     assert par == {"kontroll.wcag.nettsted"}, par
 
 
+def test_evalueringslisten_leser_kontrakten_ikke_en_literal():
+    """Cursor P2: listen hardkodet paret detaljruten UTLEDER.
+
+    `rekrutteringsrapport_detalj` bygger `(oppdragstype, artefakttype)`
+    fra `OPPDRAGSTYPER` + `RAPPORTFLATE_ATS`; `rekrutteringsevalueringer`
+    skrev de samme to strengene rett inn i SQL-en. Så lenge strengene er
+    like, er divergensen usynlig — og nettopp derfor er den farlig: endrer
+    kontrakten sin `rapport_artefakttype`, følger detaljruten etter mens
+    listen blir stående. Da sier listen `rapport_klar: false` for en
+    rapport detaljruten svarer 200 på, og flaten skjuler «Vis»-knappen for
+    evidens som finnes.
+
+    Målt med AST og ikke grep, av samme grunn som nabotesten over: en
+    tekstsøkning ville truffet artefakttypen i en kommentar eller i
+    detaljrutens helt legitime bruk.
+
+    MUTASJONEN SOM DREPER DENNE: skriv artefakttypen eller oppdragstypen
+    tilbake som literal i listespørringen, eller fjern
+    `rapportflate`-leddet så listen slutter å følge kontraktens flate.
+    """
+    import oppdragskontrakt as ok
+    tre = ast.parse((CORE / "api" / "lesing.py").read_text(encoding="utf-8"))
+    fn = next(n for n in tre.body if isinstance(n, ast.FunctionDef)
+              and n.name == "rekrutteringsevalueringer")
+    # Kontraktens egne navn er de eneste literalene som betyr noe her:
+    # står ett av dem i funksjonen, er kilden kopiert og ikke lest.
+    kontraktsnavn = set(ok.OPPDRAGSTYPER) | {
+        t.rapport_artefakttype for t in ok.OPPDRAGSTYPER.values()
+        if t.rapport_artefakttype is not None}
+    funnet = {c.value for c in ast.walk(fn) if isinstance(c, ast.Constant)
+              and isinstance(c.value, str)} & kontraktsnavn
+    assert not funnet, \
+        f"listespørringen hardkoder kontraktsnavn i stedet for å lese dem: {funnet}"
+    # … og den leser dem faktisk: samme diskriminatorledd som detaljruten.
+    ledd = [c for c in ast.walk(fn) if isinstance(c, ast.Compare)
+            and isinstance(c.left, ast.Attribute)
+            and c.left.attr == "rapportflate"]
+    assert ledd, "listen filtrerer ikke på `rapportflate` i det hele tatt"
+    for c in ledd:
+        assert (all(isinstance(o, ast.Eq) for o in c.ops)
+                and all(isinstance(k, ast.Name) and k.id == "RAPPORTFLATE_ATS"
+                        for k in c.comparators)), \
+            ("listen spør om flaten FINNES, ikke hvilken den er:"
+             f" {ast.unparse(c)}")
+
+
 def test_lengste_prefiks_vinner_over_dict_rekkefolgen():
     """WCAG-kontrollen eier `kontroll.wcag.`, `verifikasjon` resten.
 

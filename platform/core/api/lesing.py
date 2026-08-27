@@ -532,17 +532,32 @@ def rekrutteringsevalueringer(tjeneste, request: Request) -> Response:
     (promotert artefakt finnes). Ingen payload-dekryptering på
     listeveien — innholdet hører til detaljruten."""
     def _fn(conn, auth, rid):
+        import oppdragskontrakt
+        # SAMME KILDE SOM DETALJRUTEN (Cursor P2). Listen hardkodet paret
+        # (`'rekruttering.evaluering'`, `'rekruttering.evaluering.rapport'`)
+        # mens `rekrutteringsrapport_detalj` utleder det fra kontrakten.
+        # To kilder for ETT spørsmål er en stille divergens: endrer en
+        # kontrakt sin `rapport_artefakttype`, sier listen `rapport_klar:
+        # false` mens detaljruten fortsatt svarer 200 (eller omvendt) — og
+        # flaten skjuler «Vis»-knappen for en rapport som finnes. Samme
+        # `par`-filter begge steder gjør divergensen umulig, og en ny
+        # ats-flatet kontrakt blir listbar ved å DEKLARERE seg.
+        par = [(navn, t.rapport_artefakttype)
+               for navn, t in oppdragskontrakt.OPPDRAGSTYPER.items()
+               if t.rapport_artefakttype is not None
+               and t.rapportflate == RAPPORTFLATE_ATS]
+        typer, arter = [p[0] for p in par], [p[1] for p in par]
         rader = conn.execute(
             "SELECT o.id, o.status, o.opprettet,"
             " EXISTS (SELECT 1 FROM artefakt a"
             "          WHERE a.tenant = o.tenant AND a.oppdrag_id = o.id"
             "            AND a.tilstand='promotert'"
-            "            AND a.artefakttype ="
-            "                'rekruttering.evaluering.rapport')"
+            "            AND (o.oppdragstype, a.artefakttype) IN"
+            "                (SELECT * FROM unnest(%s::text[], %s::text[])))"
             "  FROM oppdrag o"
-            " WHERE o.tenant=%s AND o.oppdragstype='rekruttering.evaluering'"
+            " WHERE o.tenant=%s AND o.oppdragstype = ANY(%s::text[])"
             " ORDER BY o.id DESC LIMIT 100",
-            (auth.tenant,)).fetchall()
+            (typer, arter, auth.tenant, typer)).fetchall()
         return kanonisk_json({
             "evalueringer": [
                 {"oppdrag_id": r[0], "status": r[1],
