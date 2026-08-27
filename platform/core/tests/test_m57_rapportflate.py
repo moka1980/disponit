@@ -214,6 +214,7 @@ def test_rapporten_leses_paa_sin_egen_flate(migrator, miljo, inndata_rot,
         assert not [e for e in rn.json()["evalueringer"]
                     if e["oppdrag_id"] in (oid, oid2)], \
             "en annen tenants evalueringer sto i listen"
+
     finally:
         c.__exit__(None, None, None)
 
@@ -368,3 +369,97 @@ def test_listen_avkorter_aldri_stille(migrator, miljo):
             "svaret skal aldri lekke den 101. beviseraden"
         assert kropp["flere"] is True, \
             "med rad 101 seedet skal avkortingen MELDES"
+
+
+@pg
+def test_reapet_prosess_stenger_rapporten(migrator, miljo):
+    """SLETTEGRENSEN (Codex P1): det promoterte artefaktet er immutabelt
+    og bærer funn, sitater og blindet kildetekst — men når prosessen er
+    reapet skal rapporten være UTILGJENGELIG: identisk 404 på
+    detaljruten, og listen slutter å reklamere (`rapport_klar: false`).
+
+    Riggen er kandidatlagre-testenes (claimet oppdrag + prosess gjennom
+    den herdede veien) pluss et direkte promotert artefakt — samme
+    dømmekraft som `_promoter_kopi`: det er koblingen prosess→oppdrag
+    leseveien dømmer på, ikke payloaden.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `NOT EXISTS(reapet prosess)`-leddet
+    i én av de to spørringene."""
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    from api import sesjon as sesjonmodul
+    from db import kryptering
+    from .test_m57_kandidatlagre import _prosess, _reaperkobling
+    from .test_m57_utsending import _rt as _rekrutt_rt
+
+    rt = _rekrutt_rt()
+    try:
+        oid, pid = _prosess(migrator, rt, frist=30)
+        rt.commit()
+        _sett_kontekst(migrator, TENANT)
+        key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(migrator,
+                                                              TENANT)
+        rapport = {"rapporttype": "rekruttering.evaluering.rapport"}
+        ct, nonce = kryptering.krypter(dek, rapport, TENANT, key_id)
+        kh = migrator.execute(
+            "SELECT kontrakt_hash FROM modulkontrakt"
+            " WHERE modul_id='m57_ats' AND kontraktversjon=1").fetchone()[0]
+        rel = migrator.execute(
+            "SELECT release_id FROM moduldeployment"
+            " WHERE modul_id='m57_ats' AND livslop='claiming'"
+            " LIMIT 1").fetchone()[0]
+        epoch = migrator.execute(
+            "SELECT module_epoch FROM modulhode"
+            " WHERE modul_id='m57_ats'").fetchone()[0]
+        migrator.execute(
+            "INSERT INTO artefakt (tenant, oppdrag_id, artefakttype,"
+            " modul_id, release_id, kontraktversjon, kontrakt_hash,"
+            " module_epoch, tilstand, storrelse_bytes, klartekst_sha256,"
+            " ciphertext, nonce, dek_ref, kapabilitet_jti, promotert_ts)"
+            " VALUES (%s,%s,'rekruttering.evaluering.rapport','m57_ats',"
+            "%s,1,%s,%s,'promotert',10,'h',%s,%s,%s,%s, now())",
+            (TENANT, oid, rel, kh, epoch, ct, nonce, key_id,
+             "jti-" + secrets.token_hex(8)))
+        migrator.commit()
+
+        a = lag_app(DSN)
+        with TestClient(a) as c:
+            cookie, _csrf = _adminsesjon()
+            ck = {sesjonmodul.C_SESJON: cookie}
+            # Positiv kontroll: FØR reaping er rapporten lesbar og listet
+            # som klar — en fraværstest uten den går grønn på søppel.
+            assert c.get(f"/v1/rekruttering/rapport/{oid}",
+                         cookies=ck).status_code == 200
+            rad = next(e for e in c.get("/v1/rekruttering/evalueringer",
+                                        cookies=ck).json()["evalueringer"]
+                       if e["oppdrag_id"] == oid)
+            assert rad["rapport_klar"] is True
+
+            _sett_kontekst(rt, TENANT)
+            rt.execute("SELECT lukk_rekrutteringsprosess(%s,%s,"
+                       " now() - interval '31 days')", (TENANT, pid))
+            rt.commit()
+            rp, _timer = _reaperkobling()
+            try:
+                rp.execute("SELECT * FROM reap_kandidatdata(50)")
+                rp.commit()
+            finally:
+                rp.close()
+            _sett_kontekst(migrator, TENANT)
+            reapet = migrator.execute(
+                "SELECT slettet_ts IS NOT NULL FROM rekrutteringsprosess"
+                " WHERE tenant=%s AND prosess_id=%s",
+                (TENANT, pid)).fetchone()[0]
+            migrator.rollback()
+            assert reapet, "positiv kontroll: prosessen skal være reapet"
+
+            assert c.get(f"/v1/rekruttering/rapport/{oid}",
+                         cookies=ck).status_code == 404, \
+                "rapporten skal være borte etter retensjonsgrensen"
+            rad2 = next(e for e in c.get("/v1/rekruttering/evalueringer",
+                                         cookies=ck).json()["evalueringer"]
+                        if e["oppdrag_id"] == oid)
+            assert rad2["rapport_klar"] is False, \
+                "listen skal slutte å reklamere for en reapet rapport"
+    finally:
+        rt.close()

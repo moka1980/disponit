@@ -528,6 +528,15 @@ def rekrutteringsrapport_detalj(tjeneste, request: Request) -> Response:
             "   AND a.tilstand='promotert'"
             "   AND (o.oppdragstype, a.artefakttype) IN"
             "       (SELECT * FROM unnest(%s::text[], %s::text[]))"
+            # SLETTEGRENSEN GJELDER OGSÅ RAPPORTEN (Codex P1). `reap_
+            # kandidatdata` nuller kandidatlagrene når retensjonsfristen
+            # løper ut, men det promoterte artefaktet er immutabelt og
+            # bærer de samme funnene, sitatene og den blindede
+            # kildeteksten. En reapet prosess gjør rapporten UTILGJENGELIG
+            # — identisk 404, samme svar som før promotering.
+            "   AND NOT EXISTS (SELECT 1 FROM rekrutteringsprosess p"
+            "        WHERE p.tenant = o.tenant AND p.oppdrag_id = o.id"
+            "          AND p.slettet_ts IS NOT NULL)"
             " ORDER BY a.promotert_ts DESC LIMIT 1",
             (auth.tenant, oid, [p[0] for p in par],
              [p[1] for p in par])).fetchone()
@@ -586,6 +595,11 @@ def rekrutteringsevalueringer(tjeneste, request: Request) -> Response:
             "            AND a.tilstand='promotert'"
             "            AND (o.oppdragstype, a.artefakttype) IN"
             "                (SELECT * FROM unnest(%s::text[], %s::text[])))"
+            # … og listen slutter å reklamere for den når prosessen er
+            # reapet (samme grense som detaljruten — Codex P1).
+            " AND NOT EXISTS (SELECT 1 FROM rekrutteringsprosess p"
+            "      WHERE p.tenant = o.tenant AND p.oppdrag_id = o.id"
+            "        AND p.slettet_ts IS NOT NULL)"
             "  FROM oppdrag o"
             " WHERE o.tenant=%s AND o.oppdragstype = ANY(%s::text[])"
             # HENTER ÉN OVER VINDUET (Codex P2). `LIMIT 100` + `flere =
