@@ -6,7 +6,8 @@ import secrets
 
 import pytest
 
-from .test_api import DSN, MIGRATOR_DSN, klient, migrator, miljo  # noqa: F401
+from .test_api import (ANNEN_TENANT, DSN, MIGRATOR_DSN,  # noqa: F401
+                       _lag_token, klient, migrator, miljo)
 from .test_bestilling_rekruttering import (_adminsesjon, _bestill,
                                            _evalkropp, _profil,
                                            _rekr_policy,
@@ -159,8 +160,72 @@ def test_rapporten_leses_paa_sin_egen_flate(migrator, miljo, inndata_rot,
                                      cookies=ck).json()["evalueringer"]
                     if e["oppdrag_id"] == oid2)
         assert rad2["rapport_klar"] is False
+
+        # IDENTISK 404 FOR UKJENT OG ANNEN TENANTS OPPDRAG (Cursor P2,
+        # PR-008-porten for lese-API). RLS og `auth.tenant`-leddet finnes
+        # i spørringen, men var ubevist for denne flaten: uten porten er
+        # detaljruten et orakel over andres oppdragsnumre — «404 ikke
+        # funnet» mot «404 finnes, men ikke for deg» skiller seg i det
+        # øyeblikket de to svarene ikke er byte-like. `oid` er her et
+        # oppdrag som beviselig svarer 200 for SIN tenant, så et 404 til
+        # naboen kan bare komme fra tenantfilteret.
+        annen, _ = _lag_token(migrator, ANNEN_TENANT, "bruker",
+                              ["decisions:read"])
+        # Naboen er en MASKINPRINSIPAL, og de to prinsipalveiene er
+        # gjensidig utelukkende (`dobbel_principal`, v2 §8): en
+        # sesjonskake liggende i klientens krukke ville gjort svaret 400
+        # i stedet for det 404-et testen måler. Krukken tømmes derfor
+        # eksplisitt — browserøkten er ferdig brukt her.
+        c.cookies.clear()
+        hode = {"authorization": f"Bearer {annen}"}
+        ukjent = c.get("/v1/rekruttering/rapport/999999999", headers=hode)
+        fremmed = c.get(f"/v1/rekruttering/rapport/{oid}", headers=hode)
+        assert ukjent.status_code == fremmed.status_code == 404, \
+            (ukjent.text, fremmed.text)
+        a1, a2 = ukjent.json(), fremmed.json()
+        a1.pop("request_id"), a2.pop("request_id")
+        assert a1 == a2 == {"feil": "ikke_funnet"}
+        # ... og listen lekker ikke naboens oppdrag inn i egen historikk.
+        rn = c.get("/v1/rekruttering/evalueringer", headers=hode)
+        assert rn.status_code == 200, rn.text
+        assert not [e for e in rn.json()["evalueringer"]
+                    if e["oppdrag_id"] in (oid, oid2)], \
+            "en annen tenants evalueringer sto i listen"
     finally:
         c.__exit__(None, None, None)
+
+
+@pg
+def test_leserutene_krever_decisions_read(migrator, miljo):
+    """Begge de nye rutene bærer dekryptert evalueringspayload
+    (detaljen) og oppdragsmeta (listen) under `decisions:read` — og
+    porten er ubevist så lenge suitene bare kjører happy path.
+
+    Kontroll: fjern scope-deklarasjonen for en av rutene i `app.py`, så
+    blir denne rød."""
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+
+    # `exceptions:read` er et EKTE lesescope: tokenet er gyldig og
+    # rollen riktig, det er nøyaktig `decisions:read` som mangler.
+    uten, _ = _lag_token(migrator, TENANT, "bruker", ["exceptions:read"])
+    med, _ = _lag_token(migrator, TENANT, "bruker", ["decisions:read"])
+    a = lag_app(DSN)
+    with TestClient(a) as c:
+        for sti in ("/v1/rekruttering/rapport/999999999",
+                    "/v1/rekruttering/evalueringer"):
+            r = c.get(sti, headers={"authorization": f"Bearer {uten}"})
+            assert (r.status_code, r.json()["feil"]) \
+                == (403, "scope_mangler"), f"{sti}: {r.text}"
+            # Uten prinsipal i det hele tatt finnes ingen lesevei.
+            ru = c.get(sti)
+            assert (ru.status_code, ru.json()["feil"]) \
+                == (401, "token_ugyldig"), f"{sti}: {ru.text}"
+            # ... og MED scopet slipper den samme forespørselen forbi
+            # porten (404/200, aldri 403) — ellers ville negativene over
+            # kunne bestå av feil grunn.
+            rm = c.get(sti, headers={"authorization": f"Bearer {med}"})
+            assert rm.status_code != 403, f"{sti}: {rm.text}"
 
 
 @pg
