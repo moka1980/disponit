@@ -24,7 +24,7 @@ import { hentJson, signerRekrutteringsliste, lagreStillingsprofil,
 import { harScope } from "../sitekart.js";
 import { DataTabell } from "../tabell.js";
 import { Detaljpanel, Bekreftelsesdialog } from "../dialog.js";
-import { Tidspunkt } from "../komponenter.js";
+import { Tidspunkt, meldLive } from "../komponenter.js";
 import { medStatus, flateHode } from "./felles.js";
 
 function meldUtfall(hoved, okt, tekst) {
@@ -851,7 +851,16 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
         el("div", { class: "tablewrap" }, tabell), ...detaljer]);
       // Fokus KUN på eksplisitt klikk — auto-visningen ved sidelasting
       // skal aldri stjele fokus fra der brukeren er (a11y).
+      //
+      // ... men STILLE er ikke det samme som skånsom (Cursor P2): uten
+      // fokusflyttingen sto auto-stien helt uten annonsering, så
+      // skjermleseren fikk aldri vite at produktet dukket opp. Fokus
+      // hører fortsatt til klikket; beskjeden går i den høflige
+      // live-regionen i stedet — samme grep som WCAG-søskenet
+      // (`rapport.js`, «rapporten er klar»), bare med rangeringens egen
+      // overskrift som tekst.
       if (fokus) overskrift.focus();
+      else meldLive(overskrift.textContent);
     } catch (e) {
       if (min !== rHent.nr) return;
       // Halv DOM er verre enn ingen: en delvis bygget rapport ser ekte ut.

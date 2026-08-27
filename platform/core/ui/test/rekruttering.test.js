@@ -1493,6 +1493,15 @@ test("Evalueringer: produktet først og null klikk — ferskeste klare "
   assert.ok(overskrift, "rapportoverskriften mangler");
   assert.notEqual(hoved.ownerDocument.activeElement, overskrift,
     "auto-visningen stjal fokus — fokus hører til eksplisitt klikk");
+  // 3) ... og stille er ikke det samme som skånsom (Cursor P2): uten
+  //    fokusflytting er den høflige live-regionen det ENESTE sporet som
+  //    sier fra at produktet dukket opp.
+  const live = hoved.ownerDocument.body
+    .querySelector('[role=status][aria-live=polite]');
+  assert.ok(live, "den høflige live-regionen finnes ikke");
+  assert.equal(live.textContent, overskrift.textContent,
+    "auto-visningen meldte ikke rangeringen til skjermleseren");
+  // MUTASJONEN SOM DREPER DENNE: fjern `meldLive(...)` fra `!fokus`-grenen.
 });
 
 test("Evalueringer: auto-visningen tar den FERSKESTE klare rapporten, "
