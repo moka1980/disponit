@@ -24,7 +24,7 @@ import { hentJson, signerRekrutteringsliste, lagreStillingsprofil,
 import { harScope } from "../sitekart.js";
 import { DataTabell } from "../tabell.js";
 import { Detaljpanel, Bekreftelsesdialog } from "../dialog.js";
-import { Tidspunkt } from "../komponenter.js";
+import { Tidspunkt, meldLive } from "../komponenter.js";
 import { medStatus, flateHode } from "./felles.js";
 
 function meldUtfall(hoved, okt, tekst) {
@@ -162,7 +162,23 @@ export function visRekruttering(hoved, ctx) {
     // P2): generasjon og tegner hører til ØKTEN, og hver mount melder
     // seg som tegner — et svar som lander etter et bytte tegner i den
     // MONTERTE seksjonen, aldri i en frakoblet.
-    rapportHenting: { nr: 0, tegn: null } };
+    // FORENKLINGEN (eierdom, K2-dommen i #224): auto-latchen og det
+    // delte løftet var to tilstander med hver sine overganger, og fem
+    // runder med funn var interleavings mellom dem. Nå AVLEDES latchen:
+    // `aktiv` er den ENE in-flight-markøren (deler løftet ved samme id,
+    // hindrer dobbel auto), `siste` er den ENE kvitteringen for tegnet
+    // rapport. Auto fyrer når begge er tomme — en feilet runde
+    // etterlater dem tomme, og neste mount får prøve, uten noen latch å
+    // slippe eller gjenåpne.
+    // `aktive` er NØKLET (Codex P2, A→B→A): et raskt gjenvalg av A skal
+    // finne As eget løfte selv om B startet imellom — fortsatt samme to
+    // tilstandsarter (in-flight + cache), bare per rapport-id.
+    rapportHenting: { nr: 0, tegn: null, siste: null,
+                      aktive: new Map() },
+    // Evalueringsseksjonens NODE (remount-dommen): bygges én gang per
+    // rute-inngang, gjenbrukes ved prosessbytte, nullstilles ved full
+    // lasting.
+    evalDel: null };
   medStatus(hoved, ctx,
     async () => {
       // Profilene er TILLEGGSDATA (samme politikk som
@@ -194,9 +210,20 @@ export function visRekruttering(hoved, ctx) {
       okt.evalueringer.liste = undefined;
       okt.evalueringer.flere = false;
       okt.evalueringer.nr += 1;
+      // ... og rapport-cachen følger listen: en fersk lasting er
+      // sannheten for begge (auto-lastingen får kjøre på nytt).
+      okt.rapportHenting.nr += 1;
+      okt.rapportHenting.siste = null;
+      okt.evalDel = null;
       tegn(hoved, ctx, data, okt);
     });
 }
+
+// Landingspunktet for hopplenken over rangeringen (Cursor P2). Ankeret
+// eies av `tegn` — det er DEN som vet hva som kommer etter
+// evalueringsseksjonen — mens lenken selv står i rapporten som skaper
+// behovet for den. Id-en er kontrakten mellom de to.
+const HOPP_ANKER = "rekrut-etter-evaluering";
 
 function tegn(hoved, ctx, data, okt, valgtId) {
   const prosesser = (data && data.prosesser) || [];
@@ -287,11 +314,33 @@ function tegn(hoved, ctx, data, okt, valgtId) {
     if (okt.bestilling.oppdaterProfilvalg) okt.bestilling.oppdaterProfilvalg();
   });
   const bestillDel = bestillRot.firstChild ? bestillRot : null;
-  const evalDel = evalueringSeksjon(hoved, ctx, data, okt);
+  // SEKSJONEN OVERLEVER BYTTET SOM NODE (eierdom, remount-dommen —
+  // dom-klasse `remount-av-tenantglobal-seksjon`, søster til A-dommen i
+  // #212): fem av åtte funn i denne PR-en hadde samme rot — `tegn` rev
+  // og bygde en tenant-global seksjon på nytt ved hvert prosessbytte,
+  // og hver hengende callback fikk et vindu å dø i. Noden bygges nå én
+  // gang per rute-inngang og GJENBRUKES; `sett(hoved, …)` flytter den
+  // synkront (replaceChildren + append), så ingen callback kan lande i
+  // et vindu. Full lasting nullstiller den sammen med resten.
+  const evalDel = okt.evalDel
+    || (okt.evalDel = evalueringSeksjon(hoved, ctx, data, okt));
+  // HOPPLENKENS LANDINGSPUNKT (Cursor P2). «Produktet først» legger en
+  // auto-rendret rangering — én fokusbar `<summary>` per kandidat, opp
+  // mot 5000 — foran prosessvelger, vekter og signering. Tastaturveien
+  // til de irreversible handlingene ble dermed like lang som
+  // kandidatlisten. Å ta `<summary>`-ene ut av tab-rekkefølgen ville
+  // stengt tastaturveien INN i detaljene, så løsningen er WCAG 2.4.1s
+  // egen: et anker rett etter seksjonen, og en hopplenke til det øverst
+  // i rapporten. Ankeret står i begge grenene — profileditoren og
+  // bestillingen ligger etter rangeringen også når ingen prosess finnes.
+  const hoppAnker = el("div", { id: HOPP_ANKER, tabindex: "-1", role: "group",
+    "aria-label": t("ui.rekruttering.evalueringer.hopp_maal") });
   if (!prosesser.length) {
-    sett(hoved, flateHode(t("ui.rekruttering.tittel")),
+    // PRODUKTET FØRST (eiers UX-prinsipp 27/8: færrest mulig klikk
+    // til produktet): rapportene øverst, administrasjonen under.
+    sett(hoved, flateHode(t("ui.rekruttering.tittel")), evalDel, hoppAnker,
       el("p", { text: t("ui.rekruttering.ingen_prosess") }),
-      profilDel, ...(bestillDel ? [bestillDel] : []), evalDel);
+      profilDel, ...(bestillDel ? [bestillDel] : []));
     return;
   }
   // FLERE PROSESSER ER TILGJENGELIGE, IKKE BARE DEN FØRSTE (Codex P2).
@@ -482,18 +531,16 @@ function tegn(hoved, ctx, data, okt, valgtId) {
           ? el("em", { text: t("ui.rekruttering.uten_sitat") })
           : el("q", { text: sitat }));
     });
-    const sporsmal = (kandidat.intervjusporsmal || []).map((s) =>
-      el("li", { text: s }));
+    // Ingen intervjuspørsmål i detaljpanelet (eiers produktbeslutning
+    // 27/8): de hører til innkallingen av de beste, ikke utvelgelsen.
+    // Lageret består; shortlist-arcen (#225) henter derfra.
     Detaljpanel({
       tittel: `${t("ui.rekruttering.kandidat")} ${kandidat.kandidat_id}`,
       innhold: el("div", {},
         el("p", { text: `${t("ui.rekruttering.kol_poeng")}: ${poeng}` }),
         el("h3", { text: t("ui.rekruttering.funn_tittel") }),
         funn.length ? el("ul", {}, ...funn)
-          : el("p", { text: t("ui.rekruttering.ingen_funn") }),
-        el("h3", { text: t("ui.rekruttering.sporsmal_tittel") }),
-        sporsmal.length ? el("ul", {}, ...sporsmal)
-          : el("p", { text: t("ui.rekruttering.ingen_sporsmal") })),
+          : el("p", { text: t("ui.rekruttering.ingen_funn") })),
     });
   }
 
@@ -707,9 +754,12 @@ function tegn(hoved, ctx, data, okt, valgtId) {
       knapp));
   }
 
-  sett(hoved, flateHode(t("ui.rekruttering.tittel")), velgerRot,
+  // PRODUKTET FØRST (eiers UX-prinsipp 27/8): evalueringene og den
+  // ferdige rapporten øverst — prosessdypdykk og administrasjon under.
+  sett(hoved, flateHode(t("ui.rekruttering.tittel")), evalDel, hoppAnker,
+    velgerRot,
     utfall, kunngjoring, blindingRot, vektRot, merknadRot, tabellRot,
-    listeRot, profilDel, ...(bestillDel ? [bestillDel] : []), evalDel);
+    listeRot, profilDel, ...(bestillDel ? [bestillDel] : []));
   tegnTabell();
 }
 
@@ -740,8 +790,15 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
   // og `sett(rapportRot, …)` i en frakoblet instans er et stille tap.
   const rHent = (okt && okt.rapportHenting) || { nr: 0, tegn: null };
   rHent.tegn = (utfallTekst, noder) => {
+    // FORLATT RUTE ER IKKE ET LERRET (Codex P2): et svar som lander
+    // etter at brukeren forlot rekrutteringen ville tegnet i frakoblet
+    // DOM og (verre) annonsert et produkt fra en annen flate i den
+    // GLOBALE live-regionen. Frakoblet mål = ingen tegning, og kalleren
+    // leser svaret før den annonserer.
+    if (!rapportRot.isConnected) return false;
     sett(utfall, ...(utfallTekst ? [utfallTekst] : []));
     sett(rapportRot, ...(noder || []));
+    return true;
   };
   // Listeoppfriskningen bærer NØYAKTIG samme risiko (Cursor P2):
   // `paagaaende` slipper opp før den fire-and-forget `oppdater()` er
@@ -755,29 +812,10 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
   // fortsatt `min === listeNr` i SIN teller og kunne skrive seg inn i
   // øktens liste etter et ferskere svar.
 
-  const visRapport = async (oppdragId) => {
-    // Tøm FØR henting: et feilet kall skal aldri la forrige rapport stå
-    // igjen under en feilmelding som gjelder en annen.
-    rHent.tegn(null, []);
-    const min = ++rHent.nr;
-    let svar;
-    try {
-      svar = await hentEvalueringsrapport(oppdragId);
-    } catch (e) {
-      if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
-      if (min !== rHent.nr) return;
-      rHent.tegn(t("ui.rekruttering.evalueringer.rapportfeil"), []);
-      return;
-    }
-    if (min !== rHent.nr) return;
-    // RENDRINGEN LIGGER INNE I `try` (Cursor P2). 200 er ikke det samme
-    // som rendrbar: mangler `rangering`, `profil` eller `nedbrytning`,
-    // kastet dereferansen HER — etter at `utfall` og `rapportRot` alt var
-    // tømt. Resultatet var en stille tom seksjon uten `role="alert"`,
-    // samme «200-og-feiler-under-rendring»-klasse som diskriminator-
-    // portene verner serversiden mot. WCAG-flaten rendrer inne i `try`;
-    // ats-veien gjør nå det samme, og lander i den ærlige feiltilstanden.
-    try {
+  // Bygger rapportens DOM fra et svar — deles av hentestien og
+  // økt-cachen (Codex P2: rapporten skal OVERLEVE et prosessbytte uten
+  // ny henting; cachen re-bygges inn i den nye seksjonens rot).
+  const byggRapport = (svar) => {
       const rapport = svar.rapport;
       const kropp = el("tbody", {}, ...rapport.rangering.map((rad) =>
         el("tr", {},
@@ -826,14 +864,12 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
                     : el("q", { text: sitat }));
               }))
             : el("p", { text: t("ui.rekruttering.evalueringer.ingen_funn") });
+          // Ingen intervjuspørsmål i RANGERINGEN (eiers produktbeslutning
+          // 27/8): de hører til innkallingen av de 5–10 beste, ikke til
+          // utvelgelsen blant mange. Lageret består; shortlist-arcen
+          // henter derfra.
           boks.append(
             el("h4", { text: t("ui.rekruttering.evalueringer.funn") }), funn);
-          if ((k.intervjusporsmal || []).length) {
-            boks.append(el("h4", {
-              text: t("ui.rekruttering.evalueringer.sporsmal") }),
-              el("ol", {}, ...(k.intervjusporsmal || []).map((sp) =>
-                el("li", { text: sp }))));
-          }
         });
         return boks;
       });
@@ -844,14 +880,140 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
         text: t("ui.rekruttering.evalueringer.rangering")
           .replace("{navn}", rapport.profil.navn)
           .replace("{versjon}", String(rapport.profil.versjon)) });
-      rHent.tegn(null, [overskrift,
-        el("p", { text: t("ui.rekruttering.evalueringer.blindet") }),
-        el("div", { class: "tablewrap" }, tabell), ...detaljer]);
-      overskrift.focus();
+      // Hopplenken FØRST i rapporten: den er tastaturbrukerens vei forbi
+      // rangeringens N `<summary>` og ned til prosess, vekter og
+      // signering (Cursor P2). Husets `.hoppelenke` — usynlig til den
+      // får fokus, som «Hopp til innhold» i skallet.
+      // EGEN klasse (pass-funn): husets `.hoppelenke` er viewport-
+      // absolute for sidetoppen — midt i flaten teleporterte fokuset
+      // brukeren bort fra rangeringen lenken betjener. `.rekrut-hopp`
+      // er in-flow, sr-only til fokus.
+      const hoppLenke = el("a", { class: "rekrut-hopp", href: `#${HOPP_ANKER}`,
+        text: t("ui.rekruttering.evalueringer.hopp_prosess") });
+      // ADRESSEN EIES AV RUTEREN, som leser den som `#/<rute>`. Lot vi
+      // nettleseren følge fragmentet, fyrte `hashchange` med en ukjent
+      // rute — og `ruter.js` faller da tilbake til reserveflaten: lenken
+      // hadde FORLATT rekrutteringen i stedet for å hoppe inne i den.
+      // Lenkeformen består (hjelpemidlene skal si «lenke», og målet er
+      // lesbart før klikk), men fokusflyttingen — nøyaktig det
+      // nettleseren selv ville gjort — skjer her, uten å røre hashen.
+      hoppLenke.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        const maal = hoved.querySelector(`#${HOPP_ANKER}`);
+        if (maal) maal.focus();
+      });
+    // Hopplenken ETTER overskriften (Codex P2): eksplisitt klikk
+    // fokuserer overskriften, og tab framover derfra skal møte
+    // bypass-en FØR rangeringens N `<summary>` — sto lenken foran,
+    // var den utabbar fra det eneste stedet fokus faktisk står.
+    return { overskrift, noder: [
+      overskrift,
+      hoppLenke,
+      el("p", { text: t("ui.rekruttering.evalueringer.blindet") }),
+      el("div", { class: "tablewrap" }, tabell), ...detaljer] };
+  };
+
+  const visRapport = async (oppdragId, { fokus = true } = {}) => {
+    // Auto-stien (fokus=false) og klikk-stien deler suksessvei, men
+    // ALDRI feilform (pass-funn): listen og detaljen kan divergere i
+    // vinduet mellom dem (frist/TOCTOU/transient), og en usolicited
+    // `role="alert"` på hver sidelasting er falsk alarm. Auto-feil er
+    // stille — rapportområdet står tomt, listen er fortsatt sannheten.
+    // CACHE-TREFF FØRST (Codex P2): et promotert artefakt er immutabelt,
+    // så et klikk på rapporten som alt står i `siste` er aldri en grunn
+    // til å laste ned og dekryptere 5000 kandidater på nytt — den
+    // re-bygges, og klikket beholder fokus-semantikken sin.
+    if (rHent.siste && rHent.siste.oppdrag_id === oppdragId) {
+      // ALT VIST? Ikke bygg på nytt (Codex P2): en rebuild kollapser
+      // åpne detaljbokser og kaster leserens posisjon — rapporten står
+      // jo der. Klikket får bare fokus-semantikken sin.
+      const vist = rapportRot.querySelector("h3[tabindex='-1']");
+      if (vist) {
+        if (fokus) vist.focus();
+        return;
+      }
+      try {
+        const { overskrift, noder } = byggRapport(rHent.siste);
+        if (rHent.tegn(null, noder) && fokus) overskrift.focus();
+        return;
+      } catch (e) {
+        // Uforventet form i cachen: fall til ekte henting.
+        rHent.siste = null;
+      }
+    }
+    // Tøm FØR henting: et feilet kall skal aldri la forrige rapport stå
+    // igjen under en feilmelding som gjelder en annen — og CACHEN følger
+    // DOM-en (Codex P2): sto den igjen, gjenoppsto den gamle rapporten
+    // ved neste prosessbytte selv om brukeren nettopp forlot den.
+    rHent.tegn(null, []);
+    rHent.siste = null;
+    const min = ++rHent.nr;
+    let svar;
+    try {
+      // ÉN henting per rapport-id (Codex P2): klikker brukeren «Vis»
+      // mens auto-lastingen av SAMME rapport står i lufta, deles
+      // løftet — generasjonen avgjør hvem som får rendre (klikket),
+      // og fokus-semantikken er kallerens.
+      if (rHent.aktive.has(oppdragId)) {
+        svar = await rHent.aktive.get(oppdragId);
+      } else {
+        const lofte = hentEvalueringsrapport(oppdragId);
+        rHent.aktive.set(oppdragId, lofte);
+        try {
+          svar = await lofte;
+        } finally {
+          if (rHent.aktive.get(oppdragId) === lofte) {
+            rHent.aktive.delete(oppdragId);
+          }
+        }
+      }
+    } catch (e) {
+      if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+      if (min !== rHent.nr) return;
+      // Ryddingen av live-regionen er også EIERSKAPS-vaktet (Codex P2):
+      // etter et rutebytte kan en ANNEN flate nettopp ha annonsert der,
+      // og vår tømming ville slettet dens beskjed.
+      if (rapportRot.isConnected) meldLive("");
+      if (fokus) rHent.tegn(t("ui.rekruttering.evalueringer.rapportfeil"), []);
+      return;
+    }
+    if (min !== rHent.nr) return;
+    // FORLATT RUTE SJEKKES FØR BYGGING (Codex P2): `rHent.tegn` dropper
+    // riktignok frakoblede mål, men da hadde vi alt bygget hele
+    // rapport-DOM-en (opptil 5000 rader + detaljbokser) for søpla.
+    // Samme eierskapstest, bare FØR arbeidet.
+    if (!rapportRot.isConnected) return;
+    // RENDRINGEN LIGGER INNE I `try` (Cursor P2). 200 er ikke det samme
+    // som rendrbar: mangler `rangering`, `profil` eller `nedbrytning`,
+    // kastet dereferansen HER — etter at `utfall` og `rapportRot` alt var
+    // tømt. Resultatet var en stille tom seksjon uten `role="alert"`,
+    // samme «200-og-feiler-under-rendring»-klasse som diskriminator-
+    // portene verner serversiden mot. WCAG-flaten rendrer inne i `try`;
+    // ats-veien gjør nå det samme, og lander i den ærlige feiltilstanden.
+    try {
+      const { overskrift, noder } = byggRapport(svar);
+      const tegnet = rHent.tegn(null, noder);
+      if (!tegnet) return;
+      rHent.siste = svar;
+      // Fokus KUN på eksplisitt klikk — auto-visningen ved sidelasting
+      // skal aldri stjele fokus fra der brukeren er (a11y).
+      //
+      // ... men STILLE er ikke det samme som skånsom (Cursor P2): uten
+      // fokusflyttingen sto auto-stien helt uten annonsering, så
+      // skjermleseren fikk aldri vite at produktet dukket opp. Fokus
+      // hører fortsatt til klikket; beskjeden går i den høflige
+      // live-regionen i stedet — samme grep som WCAG-søskenet
+      // (`rapport.js`, «rapporten er klar»), bare med rangeringens egen
+      // overskrift som tekst.
+      if (fokus) overskrift.focus();
+      else meldLive(overskrift.textContent);
     } catch (e) {
       if (min !== rHent.nr) return;
-      // Halv DOM er verre enn ingen: en delvis bygget rapport ser ekte ut.
-      rHent.tegn(t("ui.rekruttering.evalueringer.rapportfeil"), []);
+      // Halv DOM er verre enn ingen: en delvis bygget rapport ser ekte
+      // ut — og en TIDLIGERE auto-annonsering skal ikke bli stående og
+      // beskrive en rapport som ikke vises (CodeRabbit).
+      if (rapportRot.isConnected) meldLive("");
+      if (fokus) rHent.tegn(t("ui.rekruttering.evalueringer.rapportfeil"), []);
     }
   };
 
@@ -939,6 +1101,36 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
     tegnListe(data ? data.evalueringer : [],
       !!(data && data.evalueringerFlere));
   }
+  // NULL KLIKK TIL PRODUKTET (eiers UX-prinsipp 27/8): finnes en ferdig
+  // rapport, rendres den ferskeste med en gang — uten fokus-tyveri.
+  // Kun ved mount, aldri ved oppfriskning: en levert bestilling skal
+  // ikke rive lesingen av en annen rapport.
+  //
+  // FERSKEST ER HØYESTE OPPDRAG, IKKE FØRSTE RAD (Cursor P2). `find`
+  // leste «ferskeste» ut av listens rekkefølge — en skjult kontrakt med
+  // `ORDER BY o.id DESC` i `lesing.py`, som flaten selv ikke binder.
+  // Kom listen noen gang i en annen rekkefølge (annen sortering, en
+  // oppfrisket liste satt sammen et annet sted), viste auto-stien en
+  // ELDRE rapport uten at noe feilet. Valget står derfor her, eksplisitt.
+  const seedListe = (eval_ && eval_.liste !== undefined)
+    ? eval_.liste : (data ? data.evalueringer : []);
+  const klarRad = (seedListe || []).reduce((beste, e2) =>
+    (e2.rapport_klar && (!beste || e2.oppdrag_id > beste.oppdrag_id))
+      ? e2 : beste, null);
+  // ... og kun ÉN gang per økt (Codex P2): listen er tenant-global og
+  // uavhengig av valgt prosess — hvert prosessbytte bygger seksjonen på
+  // nytt, og en ubetinget auto-lasting hadde re-fetchet og re-rendret
+  // rapporten for hver eneste veksling. En ALT lastet rapport skal
+  // likevel OVERLEVE byttet (Codex P2): den re-bygges fra øktens cache
+  // inn i den nye rota — ingen henting, ingen annonsering, samme
+  // rapport brukeren sto i.
+  // Auto ved RUTE-INNGANG (remount-dommen): mount skjer nå bare der og
+  // ved full lasting, så vilkåret er rent — finnes en klar rapport,
+  // hentes den. `siste` består KUN som cache-treff for klikk
+  // (immutabelt artefakt), `aktive` KUN som delt løfte per id; ingen
+  // mount-rebuild og ingen aktive-logikk her, for noden — og dermed
+  // enhver hengende hentings mål — overlever prosessbyttene.
+  if (klarRad) visRapport(klarRad.oppdrag_id, { fokus: false });
   // Bestillingsseksjonen melder fra etter et definitivt `tillat` — da
   // hentes listen på nytt så det ferske oppdraget faktisk vises. Feiler
   // hentingen beholdes listen som står; dette er en oppfriskning, ikke

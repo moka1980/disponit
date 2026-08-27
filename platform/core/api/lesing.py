@@ -600,9 +600,17 @@ def rekrutteringsrapport_detalj(tjeneste, request: Request) -> Response:
         # konsument av denne ruten leser den — funnene bærer sine egne
         # sitater. Den desidert tyngste delen av payloaden strippes før
         # svaret; artefaktet selv er urørt.
+        #
+        # `intervjusporsmal` strippes av samme grunn PLUSS eiers
+        # produktbeslutning (27/8): spørsmål hører til INNKALLINGEN av de
+        # 5–10 beste, ikke til rangeringen av alle søkere — rekrutterer
+        # velger kandidater først, intervjuer skjer manuelt etterpå.
+        # Lageret (kandidat_intervjusporsmal) og artefaktet består;
+        # shortlist-arcen henter derfra når den kommer.
         for _k in (rapport.get("kandidater") or {}).values():
             if isinstance(_k, dict):
                 _k.pop("kildetekst", None)
+                _k.pop("intervjusporsmal", None)
         return kanonisk_json({
             "oppdrag_id": oid,
             "artefakt_id": str(art_id),

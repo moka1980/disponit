@@ -160,6 +160,11 @@ def test_rapporten_leses_paa_sin_egen_flate(migrator, miljo, inndata_rot,
         assert all("kildetekst" not in kand
                    for kand in rapport["kandidater"].values()), \
             "kildeteksten skal strippes fra lesesvaret"
+        # ... og intervjuspørsmålene (eiers produktbeslutning 27/8):
+        # de hører til innkallingen av de beste, ikke rangeringen.
+        assert all("intervjusporsmal" not in kand
+                   for kand in rapport["kandidater"].values()), \
+            "intervjuspørsmål skal ikke serveres i rangeringssvaret"
         assert rapport["rapporttype"] == "rekruttering.evaluering.rapport"
         assert rapport["rangering"][0]["kandidat_id"] == "k1"
         # Lageret er kryptert i ro, og dekrypteringen skjer på serveren —
