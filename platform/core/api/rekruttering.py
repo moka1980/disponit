@@ -444,12 +444,24 @@ def prosesser_endepunkt(tjeneste, request):
         # <dato> · kandidater: N» på oppføringen. Feltet `navn` sendes
         # bevisst ikke: flaten bruker `p.navn` når det en dag finnes, og
         # serveren skal ikke kalle et tidsstempel for et navn.
+        # RETENSJONSANKRE UTEN INNHOLD HOLDES UTE AV VELGEREN (Codex
+        # P2, #220). Claimen føder nå en prosess for HVER evaluering,
+        # men den skipede controlleren skriver ingen kandidatlagre — et
+        # terminalt oppdrag med tom prosess har derfor ingenting denne
+        # flaten kan vise, og ville fortrengt en ekte prosess som
+        # standardvalg i 30–365 døgn. En PÅGÅENDE tom prosess vises
+        # fortsatt (evalueringens tilstand-doktrine over); et terminalt
+        # løps status og rapport bor i evalueringsseksjonen.
         for pid, oppdrag_id, status, opprettet in conn.execute(
                 "SELECT p.prosess_id, p.oppdrag_id, o.status, p.opprettet"
                 "  FROM rekrutteringsprosess p"
                 "  JOIN oppdrag o ON o.tenant = p.tenant"
                 "                AND o.id = p.oppdrag_id"
                 " WHERE p.tenant=%s AND p.slettet_ts IS NULL"
+                "   AND (o.status IN ('opprettet','plukket')"
+                "        OR EXISTS (SELECT 1 FROM kandidat_evalueringsartefakt k"
+                "             WHERE k.tenant = p.tenant"
+                "               AND k.prosess_id = p.prosess_id))"
                 " ORDER BY p.opprettet DESC", (tenant,)).fetchall():
             kandidater, vekter, kilde = _kandidater(conn, tenant, pid)
             prosesser.append({

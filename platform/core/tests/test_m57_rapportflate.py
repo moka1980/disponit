@@ -122,6 +122,16 @@ def test_rapporten_leses_paa_sin_egen_flate(migrator, miljo, inndata_rot,
     c, cookie, csrf, oid = _utfort_oppdrag(migrator, klient, monkeypatch)
     try:
         ck = {sesjonmodul.C_SESJON: cookie}
+        # Retensjonsankeret: claimet fødte prosessen, og den terminale
+        # kvitteringen LUKKET den — kundens frist løper fra avslutningen,
+        # ikke fra claimet (Codex P2).
+        _sett_kontekst(migrator, TENANT)
+        anker = migrator.execute(
+            "SELECT lukket_ts IS NOT NULL FROM rekrutteringsprosess"
+            " WHERE tenant=%s AND oppdrag_id=%s", (TENANT, oid)).fetchone()
+        migrator.rollback()
+        assert anker is not None, "claimen skal ha født retensjonsankeret"
+        assert anker[0], "terminal kvittering skal ha lukket ankeret"
         r = c.get(f"/v1/rekruttering/rapport/{oid}", cookies=ck)
         assert r.status_code == 200, r.text
         k = r.json()

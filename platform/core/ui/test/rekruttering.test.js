@@ -1106,6 +1106,8 @@ test("Evalueringer: liste med status, og rapporten rendres blindet", async () =>
         slettet: true },
       { oppdrag_id: 89, status: "kansellert",
         opprettet: "2026-08-19T10:00:00+00:00", rapport_klar: false },
+      { oppdrag_id: 88, status: "utfort",
+        opprettet: "2026-08-18T10:00:00+00:00", rapport_klar: false },
     ], flere: true },
     "/v1/rekruttering/rapport/96": { oppdrag_id: 96, rapport: {
       rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
@@ -1147,6 +1149,10 @@ test("Evalueringer: liste med status, og rapporten rendres blindet", async () =>
   // … og kansellert-stien er bevist, ikke bare skrevet (pass-P3).
   assert.match(tekst,
     new RegExp(t("ui.rekruttering.evalueringer.kansellert")));
+  // Et utfort oppdrag uten lesbar rapport (intet anker) er
+  // «utilgjengelig» — aldri «under arbeid» for alltid (Codex P2).
+  assert.match(tekst,
+    new RegExp(t("ui.rekruttering.evalueringer.utilgjengelig")));
   // Fullt vindu: avkortingen SIES, aldri stille (Cursor P2-3; #221 tar
   // selve pagineringen).
   assert.match(tekst,

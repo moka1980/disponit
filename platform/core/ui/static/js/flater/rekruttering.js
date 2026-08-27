@@ -879,13 +879,18 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       // hverken klar eller underveis: fristen har makulert den (Codex
       // P2 — uten dette sto et `utfort` oppdrag som «under arbeid» i
       // det uendelige etter retensjonsgrensen).
+      // «venter» er KUN for løp som kan bli klare (opprettet/plukket).
+      // Et utfort oppdrag uten lesbar rapport (intet retensjonsanker —
+      // eldre enn anker-fødselen) er utilgjengelig, ikke underveis.
       const statusTekst = e2.slettet
         ? t("ui.rekruttering.evalueringer.slettet")
         : e2.rapport_klar
           ? t("ui.rekruttering.evalueringer.klar")
           : (e2.status === "feilet" || e2.status === "kansellert")
             ? t("ui.rekruttering.evalueringer." + e2.status)
-            : t("ui.rekruttering.evalueringer.venter");
+            : e2.status === "utfort"
+              ? t("ui.rekruttering.evalueringer.utilgjengelig")
+              : t("ui.rekruttering.evalueringer.venter");
       return el("tr", {},
         el("th", { scope: "row", text: String(e2.oppdrag_id) }),
         el("td", {}, Tidspunkt(e2.opprettet || "")),

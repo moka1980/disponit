@@ -2547,6 +2547,23 @@ def _forbruk_kapabilitet(tjeneste: Tjeneste, conn, jti: str, ny_hash: str, *,
         utfall = conn.execute("SELECT bruk_kvitteringskapabilitet(%s,%s)",
                               (jti, ny_hash)).fetchone()[0]
     if utfall in ("brukt", "sen_evidens"):
+        # RETENSJONSANKERET LUKKES VED TERMINAL KVITTERING (Codex P2,
+        # #220). 057 dokumenterer at kundens frist løper fra
+        # AVSLUTNINGEN; uten lukkingen falt hver evaluering til reaperens
+        # forlatt-frist målt fra `opprettet`, og rapporten kunne
+        # makuleres for tidlig med hele kjøretiden. Samme transaksjon
+        # som statusskiftet. Kansellert-veien har ingen promotert rapport
+        # å verne og tas av forlatt-fristen. Oppslaget er type-agnostisk:
+        # bare M-57-oppdrag HAR et anker, og et alt lukket anker røres
+        # ikke (døren nekter å flytte en satt lukking).
+        rad_p = conn.execute(
+            "SELECT prosess_id FROM rekrutteringsprosess"
+            " WHERE tenant=%s AND oppdrag_id=%s AND lukket_ts IS NULL",
+            (tenant, oppdrag_id)).fetchone()
+        if rad_p is not None:
+            conn.execute(
+                "SELECT lukk_rekrutteringsprosess(%s,%s, now())",
+                (tenant, rad_p[0]))
         return None
 
     if utfall == "idempotent":

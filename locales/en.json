@@ -1070,6 +1070,7 @@
   "ui.rekruttering.evalueringer.feilet": "Failed",
   "ui.rekruttering.evalueringer.kansellert": "Cancelled",
   "ui.rekruttering.evalueringer.slettet": "Deleted after the retention period",
+  "ui.rekruttering.evalueringer.utilgjengelig": "Report unavailable",
   "ui.rekruttering.evalueringer.nedbrytning": "Score breakdown",
   "ui.rekruttering.evalueringer.rangering": "Ranking — {navn} (version {versjon})",
   "ui.rekruttering.evalueringer.kandidat": "Candidate",
