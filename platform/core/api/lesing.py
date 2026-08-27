@@ -528,15 +528,17 @@ def rekrutteringsrapport_detalj(tjeneste, request: Request) -> Response:
             "   AND a.tilstand='promotert'"
             "   AND (o.oppdragstype, a.artefakttype) IN"
             "       (SELECT * FROM unnest(%s::text[], %s::text[]))"
-            # SLETTEGRENSEN GJELDER OGSÅ RAPPORTEN (Codex P1). `reap_
-            # kandidatdata` nuller kandidatlagrene når retensjonsfristen
-            # løper ut, men det promoterte artefaktet er immutabelt og
-            # bærer de samme funnene, sitatene og den blindede
-            # kildeteksten. En reapet prosess gjør rapporten UTILGJENGELIG
-            # — identisk 404, samme svar som før promotering.
-            "   AND NOT EXISTS (SELECT 1 FROM rekrutteringsprosess p"
+            # SLETTEGRENSEN GJELDER OGSÅ RAPPORTEN (Codex P1 ×2, felt
+            # stengt): rapporten serveres bare med et LEVENDE
+            # retensjonsanker. Kravet er EXISTS(ureapet prosess), ikke
+            # NOT EXISTS(reapet): claimen føder ankeret (057-døren i
+            # claim-transaksjonen), så en rapport UTEN prosess er et
+            # oppdrag utenfor retensjonskontrakten og serveres ikke —
+            # identisk 404, samme svar som før promotering. Etter
+            # reaping faller den samme veien.
+            "   AND EXISTS (SELECT 1 FROM rekrutteringsprosess p"
             "        WHERE p.tenant = o.tenant AND p.oppdrag_id = o.id"
-            "          AND p.slettet_ts IS NOT NULL)"
+            "          AND p.slettet_ts IS NULL)"
             " ORDER BY a.promotert_ts DESC LIMIT 1",
             (auth.tenant, oid, [p[0] for p in par],
              [p[1] for p in par])).fetchone()
@@ -595,11 +597,11 @@ def rekrutteringsevalueringer(tjeneste, request: Request) -> Response:
             "            AND a.tilstand='promotert'"
             "            AND (o.oppdragstype, a.artefakttype) IN"
             "                (SELECT * FROM unnest(%s::text[], %s::text[])))"
-            # … og listen slutter å reklamere for den når prosessen er
-            # reapet (samme grense som detaljruten — Codex P1).
-            " AND NOT EXISTS (SELECT 1 FROM rekrutteringsprosess p"
+            # … og listen reklamerer bare med et LEVENDE anker (samme
+            # EXISTS-form som detaljruten — Codex P1 ×2).
+            " AND EXISTS (SELECT 1 FROM rekrutteringsprosess p"
             "      WHERE p.tenant = o.tenant AND p.oppdrag_id = o.id"
-            "        AND p.slettet_ts IS NOT NULL),"
+            "        AND p.slettet_ts IS NULL),"
             # … og reapingen NAVNGIS (Codex P2): et `utfort` oppdrag med
             # `rapport_klar: false` fordi fristen har makulert det er
             # ikke «under arbeid» — uten dette feltet ville flaten vist

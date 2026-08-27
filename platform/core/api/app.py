@@ -2063,6 +2063,35 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
             # Verifikatoren må kunne binde attestasjonen til NØYAKTIG den
             # generasjonen som bestilte den — ellers kunne et bevis fra en
             # gammel runde bli akseptert i en ny.
+            # RETENSJONSANKERET FØDES I CLAIM-TRANSAKSJONEN (Codex P1,
+            # #220). 057-kontrakten sier at kandidatprosessen fødes mens
+            # oppdraget er aktivt claimet, og claim-rollen bærer
+            # INSERT-grantet nettopp for dette — men ingen kalte døren,
+            # så lesegrensens reap-predikat var vakuøst sant for alltid:
+            # rapporten kunne aldri bli reap-bar. Døren er idempotent
+            # (samme oppdrag ⇒ samme prosess-id), så re-claim etter tapt
+            # lease er trygt. Fristen er kundens valg fra det signerte
+            # oppdraget; fraværet ER standardvalget (basens DEFAULT 90).
+            # Feiler fødselen, finnes ingen claim — et claimet oppdrag
+            # uten retensjonsanker er nøyaktig tilstanden Codex målte.
+            if oppdragstype == "rekruttering.evaluering":
+                frist = (minimert or {}).get("slettefrist_dogn")
+                try:
+                    if frist is None:
+                        conn.execute(
+                            "SELECT opprett_rekrutteringsprosess(%s,%s)",
+                            (tenant, opp_id))
+                    else:
+                        conn.execute(
+                            "SELECT opprett_rekrutteringsprosess(%s,%s,%s)",
+                            (tenant, opp_id, frist))
+                except psycopg.Error:
+                    conn.rollback()
+                    tjeneste.logg.hendelse("intern_feil", rid, tenant,
+                                           art="drift",
+                                           oppdrag=str(opp_id))
+                    return _feilsvar("intern_feil", rid)
+
             verifikasjonsgen = None
             if oppdragstype == "verifikasjon":
                 vg = conn.execute(

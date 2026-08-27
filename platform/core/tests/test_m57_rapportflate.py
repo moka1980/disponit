@@ -392,10 +392,14 @@ def test_reapet_prosess_stenger_rapporten(migrator, miljo):
     from .test_m57_kandidatlagre import _prosess, _reaperkobling
     from .test_m57_utsending import _rt as _rekrutt_rt
 
+    from .test_m57_kandidatlagre import _claimet
     rt = _rekrutt_rt()
     try:
-        oid, pid = _prosess(migrator, rt, frist=30)
-        rt.commit()
+        # Fødselen deles opp: claimet oppdrag + artefakt FØRST, så måles
+        # at en rapport UTEN retensjonsanker ikke serveres (EXISTS-formen
+        # — mutasjonen tilbake til NOT EXISTS(reapet) rødner her), FØR
+        # prosessen fødes og 200-armen tar over.
+        oid, _ = _claimet(migrator)
         _sett_kontekst(migrator, TENANT)
         key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(migrator,
                                                               TENANT)
@@ -426,6 +430,22 @@ def test_reapet_prosess_stenger_rapporten(migrator, miljo):
         with TestClient(a) as c:
             cookie, _csrf = _adminsesjon()
             ck = {sesjonmodul.C_SESJON: cookie}
+            # UTEN anker: ikke funnet, og listen reklamerer ikke.
+            assert c.get(f"/v1/rekruttering/rapport/{oid}",
+                         cookies=ck).status_code == 404, \
+                "en rapport uten retensjonsanker skal ikke serveres"
+            rad0 = next(e for e in c.get("/v1/rekruttering/evalueringer",
+                                         cookies=ck).json()["evalueringer"]
+                        if e["oppdrag_id"] == oid)
+            assert rad0["rapport_klar"] is False
+
+            # Ankeret fødes (057-døren; claimet oppdrag er kravet).
+            _sett_kontekst(rt, TENANT)
+            pid = rt.execute(
+                "SELECT opprett_rekrutteringsprosess(%s,%s,%s)",
+                (TENANT, oid, 30)).fetchone()[0]
+            rt.commit()
+
             # Positiv kontroll: FØR reaping er rapporten lesbar og listet
             # som klar — en fraværstest uten den går grønn på søppel.
             assert c.get(f"/v1/rekruttering/rapport/{oid}",
