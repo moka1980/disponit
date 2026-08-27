@@ -2547,30 +2547,6 @@ def _forbruk_kapabilitet(tjeneste: Tjeneste, conn, jti: str, ny_hash: str, *,
         utfall = conn.execute("SELECT bruk_kvitteringskapabilitet(%s,%s)",
                               (jti, ny_hash)).fetchone()[0]
     if utfall in ("brukt", "sen_evidens"):
-        # RETENSJONSANKERET LUKKES VED TERMINAL KVITTERING (Codex P2,
-        # #220). 057 dokumenterer at kundens frist løper fra
-        # AVSLUTNINGEN; uten lukkingen falt hver evaluering til reaperens
-        # forlatt-frist målt fra `opprettet`, og rapporten kunne
-        # makuleres for tidlig med hele kjøretiden. Samme transaksjon
-        # som statusskiftet. Kansellert-veien har ingen promotert rapport
-        # å verne og tas av forlatt-fristen. Oppslaget er type-agnostisk:
-        # bare M-57-oppdrag HAR et anker, og et alt lukket anker røres
-        # ikke (døren nekter å flytte en satt lukking).
-        #
-        # KUN «brukt» (Codex P2 runde 2): `sen_evidens` er en UTLØPT
-        # eiers evidens etter at en NY generasjon har reclaimet — jobben
-        # står `plukket` hos den nye eieren, og hans levende anker skal
-        # ikke lukkes av forgjengerens etterslep. Fristen hans ville
-        # ellers startet før løpet hans var ferdig.
-        if utfall == "brukt":
-            rad_p = conn.execute(
-                "SELECT prosess_id FROM rekrutteringsprosess"
-                " WHERE tenant=%s AND oppdrag_id=%s AND lukket_ts IS NULL",
-                (tenant, oppdrag_id)).fetchone()
-            if rad_p is not None:
-                conn.execute(
-                    "SELECT lukk_rekrutteringsprosess(%s,%s, now())",
-                    (tenant, rad_p[0]))
         return None
 
     if utfall == "idempotent":
@@ -3384,6 +3360,23 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
         (json.dumps(kvittering, ensure_ascii=False),
          (kvittering.get("signatur") or {}).get("verdi"), ny_hash,
          "utfort" if vellykket else "feilet", tenant, oppdrag_id))
+    # RETENSJONSANKERET LUKKES VED DET FAKTISKE STATUSSKIFTET (Codex P2
+    # ×3, #220). 057: kundens frist løper fra AVSLUTNINGEN — uten
+    # lukkingen falt evalueringen til reaperens forlatt-frist målt fra
+    # `opprettet`. Stedet er linjen OVER, ikke kapabilitetsbruken:
+    # `brukt` kan ende i avvist promotering (skjema/epoch/binding), som
+    # committer avvisningen med jobben fortsatt `plukket` og gjenlosbar
+    # — en lukking der hadde startet fristen på et løp som ikke er
+    # ferdig, og døren nekter å flytte en satt lukking når den EKTE
+    # kvitteringen kommer. `sen_evidens`-veien når aldri hit. Oppslaget
+    # er type-agnostisk: bare M-57-oppdrag HAR et anker.
+    rad_p = conn.execute(
+        "SELECT prosess_id FROM rekrutteringsprosess"
+        " WHERE tenant=%s AND oppdrag_id=%s AND lukket_ts IS NULL",
+        (tenant, oppdrag_id)).fetchone()
+    if rad_p is not None:
+        conn.execute("SELECT lukk_rekrutteringsprosess(%s,%s, now())",
+                     (tenant, rad_p[0]))
     # 038 §5 (Codex P1): et BESLUTNINGSOPPDRAG har ingen sak — det er hele
     # poenget med opprinnelsen. Den avsluttende bokføringen under er
     # M-37-veiens saksbokføring, og `unntak_historikk.unntak_id` er NOT NULL:
