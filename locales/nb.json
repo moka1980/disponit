@@ -1058,6 +1058,7 @@
   "ui.rekruttering.profiler.versjon": "versjon {versjon}",
   "ui.rekruttering.evalueringer.tittel": "Evalueringer",
   "ui.rekruttering.evalueringer.ingen": "Ingen evalueringer bestilt ennå.",
+  "ui.rekruttering.evalueringer.listefeil": "Evalueringslisten kunne ikke hentes. Last siden på nytt for å prøve igjen.",
   "ui.rekruttering.evalueringer.tabell": "Bestilte evalueringer med status",
   "ui.rekruttering.evalueringer.oppdrag": "Oppdrag",
   "ui.rekruttering.evalueringer.bestilt": "Bestilt",

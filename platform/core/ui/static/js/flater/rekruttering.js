@@ -160,11 +160,13 @@ export function visRekruttering(hoved, ctx) {
         }),
         hentEvalueringer().catch((e) => {
           if (e instanceof UautorisertFeil) throw e;
-          return { evalueringer: [] };
+          // `null` er FEIL, ikke tom historikk: en utilgjengelig liste
+          // skal aldri rendres som «ingen evalueringer bestilt».
+          return null;
         }),
       ]);
       return { ...pros, profiler: (prof && prof.profiler) || [],
-               evalueringer: (evals && evals.evalueringer) || [] };
+               evalueringer: evals ? (evals.evalueringer || []) : null };
     },
     (data) => tegn(hoved, ctx, data, okt));
 }
@@ -258,7 +260,7 @@ function tegn(hoved, ctx, data, okt, valgtId) {
     if (okt.bestilling.oppdaterProfilvalg) okt.bestilling.oppdaterProfilvalg();
   });
   const bestillDel = bestillRot.firstChild ? bestillRot : null;
-  const evalDel = evalueringSeksjon(hoved, ctx, data);
+  const evalDel = evalueringSeksjon(hoved, ctx, data, okt);
   if (!prosesser.length) {
     sett(hoved, flateHode(t("ui.rekruttering.tittel")),
       el("p", { text: t("ui.rekruttering.ingen_prosess") }),
@@ -700,25 +702,30 @@ function tegn(hoved, ctx, data, okt, valgtId) {
 // M-57s egen rapportflate ("ats"): bestilte evalueringer med status,
 // og den promoterte, blindede rangeringsrapporten — lesbar for alle med
 // decisions:read (evidensen bak en beslutning tenanten selv bestilte).
-function evalueringSeksjon(hoved, ctx, data) {
-  const evalueringer = (data && data.evalueringer) || [];
+function evalueringSeksjon(hoved, ctx, data, okt) {
   const rot = el("section", { "aria-labelledby": "evaluering-tittel" });
   const utfall = el("div", { role: "alert", class: "utfall" });
   const rapportRot = el("div");
+  // To raske klikk må ikke la det TREGESTE svaret vinne: bare den sist
+  // bestilte hentingen får rendre (eller melde feil).
+  let hentingNr = 0;
 
   const visRapport = async (oppdragId) => {
     // Tøm FØR henting: et feilet kall skal aldri la forrige rapport stå
     // igjen under en feilmelding som gjelder en annen.
     sett(utfall);
     sett(rapportRot);
+    const min = ++hentingNr;
     let svar;
     try {
       svar = await hentEvalueringsrapport(oppdragId);
     } catch (e) {
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+      if (min !== hentingNr) return;
       sett(utfall, t("ui.rekruttering.evalueringer.rapportfeil"));
       return;
     }
+    if (min !== hentingNr) return;
     const rapport = svar.rapport;
     const kropp = el("tbody", {}, ...rapport.rangering.map((rad) =>
       el("tr", {},
@@ -739,77 +746,137 @@ function evalueringSeksjon(hoved, ctx, data) {
         el("th", { scope: "col",
           text: t("ui.rekruttering.evalueringer.nedbrytning") }))),
       kropp);
+    // Skjemaet tillater 5000 kandidater à 100 funn + 20 spørsmål — en
+    // gyldig maksrapport ville bygget hundretusener av noder opp front.
+    // Kroppen bygges derfor først når leseren åpner den.
     const detaljer = rapport.rangering.map((rad) => {
-      const k = rapport.kandidater[rad.kandidat_id] || {};
-      const funn = (k.funn || []).length
-        ? el("ul", {}, ...(k.funn || []).map((f) =>
-            el("li", {},
-              el("strong", { text: t(`ui.rekruttering.funn.${f.kategori}`) }),
-              " — ", el("q", { text: f.kilde.sitat }))))
-        : el("p", { text: t("ui.rekruttering.evalueringer.ingen_funn") });
-      const sporsmal = (k.intervjusporsmal || []).length
-        ? el("ol", {}, ...(k.intervjusporsmal || []).map((sp) =>
-            el("li", { text: sp })))
-        : null;
-      return el("details", {},
+      const boks = el("details", {},
         el("summary", { text: t("ui.rekruttering.evalueringer.detaljer")
-          .replace("{kandidat}", rad.kandidat_id) }),
-        el("h4", { text: t("ui.rekruttering.evalueringer.funn") }), funn,
-        ...(sporsmal ? [el("h4", {
-          text: t("ui.rekruttering.evalueringer.sporsmal") }), sporsmal]
-          : []));
+          .replace("{kandidat}", rad.kandidat_id) }));
+      let bygget = false;
+      boks.addEventListener("toggle", () => {
+        if (bygget || !boks.open) return;
+        bygget = true;
+        const k = rapport.kandidater[rad.kandidat_id] || {};
+        // Sitatløse funn beholdes med plassholder — speilet fra
+        // prosesspanelets funnliste (`:448`): kategorien er selve
+        // risikoopplysningen, og et skjult funn er verre enn et uten belegg.
+        const funn = (k.funn || []).filter(Boolean).length
+          ? el("ul", {}, ...(k.funn || []).filter(Boolean).map((f) => {
+              const sitat = f.kilde && typeof f.kilde.sitat === "string"
+                ? f.kilde.sitat
+                : null;
+              return el("li", {},
+                el("strong", { text: t(`ui.rekruttering.funn.${f.kategori}`) }),
+                " — ",
+                sitat === null
+                  ? el("em", { text: t("ui.rekruttering.uten_sitat") })
+                  : el("q", { text: sitat }));
+            }))
+          : el("p", { text: t("ui.rekruttering.evalueringer.ingen_funn") });
+        boks.append(
+          el("h4", { text: t("ui.rekruttering.evalueringer.funn") }), funn);
+        if ((k.intervjusporsmal || []).length) {
+          boks.append(el("h4", {
+            text: t("ui.rekruttering.evalueringer.sporsmal") }),
+            el("ol", {}, ...(k.intervjusporsmal || []).map((sp) =>
+              el("li", { text: sp }))));
+        }
+      });
+      return boks;
     });
-    sett(rapportRot,
+    // Rapporten settes inn ETTER tabellen brukeren sto i — fokusér
+    // overskriften, ellers får tastatur/skjermleser aldri vite at
+    // lastingen ble ferdig.
+    const overskrift = el("h3", { tabindex: "-1",
+      text: t("ui.rekruttering.evalueringer.rangering")
+        .replace("{navn}", rapport.profil.navn)
+        .replace("{versjon}", String(rapport.profil.versjon)) });
+    sett(rapportRot, overskrift,
       el("p", { text: t("ui.rekruttering.evalueringer.blindet") }),
-      tabell, ...detaljer);
+      el("div", { class: "tablewrap" }, tabell), ...detaljer);
+    overskrift.focus();
   };
 
-  if (!evalueringer.length) {
-    sett(rot, el("h2", { id: "evaluering-tittel",
-      text: t("ui.rekruttering.evalueringer.tittel") }),
-      el("p", { text: t("ui.rekruttering.evalueringer.ingen") }));
-    return rot;
-  }
-  const rader = evalueringer.map((e2) => {
-    const handling = el("td");
-    if (e2.rapport_klar) {
-      const knapp = el("button", { type: "button",
-        text: t("ui.rekruttering.evalueringer.vis") });
-      knapp.setAttribute("aria-label",
-        t("ui.rekruttering.evalueringer.vis")
-        + " — " + t("ui.rekruttering.evalueringer.oppdrag")
-        + " " + e2.oppdrag_id);
-      knapp.addEventListener("click", () => visRapport(e2.oppdrag_id));
-      handling.append(knapp);
+  const tegnListe = (evalueringer) => {
+    const tittel = el("h2", { id: "evaluering-tittel",
+      text: t("ui.rekruttering.evalueringer.tittel") });
+    // `null` er FEIL-tilstanden fra hentingen — en utilgjengelig
+    // historikk er ikke en tom historikk.
+    if (evalueringer === null) {
+      sett(rot, tittel,
+        el("p", { text: t("ui.rekruttering.evalueringer.listefeil") }),
+        utfall, rapportRot);
+      return;
     }
-    // Terminale statuser er sine egne sannheter — "venter" er bare for
-    // oppdrag som faktisk kan bli klare.
-    const statusTekst = e2.rapport_klar
-      ? t("ui.rekruttering.evalueringer.klar")
-      : (e2.status === "feilet" || e2.status === "kansellert")
-        ? t("ui.rekruttering.evalueringer." + e2.status)
-        : t("ui.rekruttering.evalueringer.venter");
-    return el("tr", {},
-      el("th", { scope: "row", text: String(e2.oppdrag_id) }),
-      el("td", {}, Tidspunkt(e2.opprettet || "")),
-      el("td", { text: statusTekst }),
-      handling);
-  });
-  const liste = el("table", {},
-    el("caption", { text: t("ui.rekruttering.evalueringer.tabell") }),
-    el("thead", {}, el("tr", {},
-      el("th", { scope: "col",
-        text: t("ui.rekruttering.evalueringer.oppdrag") }),
-      el("th", { scope: "col",
-        text: t("ui.rekruttering.evalueringer.bestilt") }),
-      el("th", { scope: "col",
-        text: t("ui.rekruttering.evalueringer.status") }),
-      el("th", { scope: "col",
-        text: t("ui.rekruttering.evalueringer.vis") }))),
-    el("tbody", {}, ...rader));
-  sett(rot, el("h2", { id: "evaluering-tittel",
-    text: t("ui.rekruttering.evalueringer.tittel") }),
-    utfall, liste, rapportRot);
+    if (!evalueringer.length) {
+      sett(rot, tittel,
+        el("p", { text: t("ui.rekruttering.evalueringer.ingen") }),
+        utfall, rapportRot);
+      return;
+    }
+    const rader = evalueringer.map((e2) => {
+      const handling = el("td");
+      if (e2.rapport_klar) {
+        const knapp = el("button", { type: "button",
+          text: t("ui.rekruttering.evalueringer.vis") });
+        knapp.setAttribute("aria-label",
+          t("ui.rekruttering.evalueringer.vis")
+          + " — " + t("ui.rekruttering.evalueringer.oppdrag")
+          + " " + e2.oppdrag_id);
+        knapp.addEventListener("click", () => visRapport(e2.oppdrag_id));
+        handling.append(knapp);
+      }
+      // Terminale statuser er sine egne sannheter — "venter" er bare for
+      // oppdrag som faktisk kan bli klare.
+      const statusTekst = e2.rapport_klar
+        ? t("ui.rekruttering.evalueringer.klar")
+        : (e2.status === "feilet" || e2.status === "kansellert")
+          ? t("ui.rekruttering.evalueringer." + e2.status)
+          : t("ui.rekruttering.evalueringer.venter");
+      return el("tr", {},
+        el("th", { scope: "row", text: String(e2.oppdrag_id) }),
+        el("td", {}, Tidspunkt(e2.opprettet || "")),
+        el("td", { text: statusTekst }),
+        handling);
+    });
+    const liste = el("table", {},
+      el("caption", { text: t("ui.rekruttering.evalueringer.tabell") }),
+      el("thead", {}, el("tr", {},
+        el("th", { scope: "col",
+          text: t("ui.rekruttering.evalueringer.oppdrag") }),
+        el("th", { scope: "col",
+          text: t("ui.rekruttering.evalueringer.bestilt") }),
+        el("th", { scope: "col",
+          text: t("ui.rekruttering.evalueringer.status") }),
+        el("th", { scope: "col",
+          text: t("ui.rekruttering.evalueringer.vis") }))),
+      el("tbody", {}, ...rader));
+    sett(rot, tittel, utfall,
+      el("div", { class: "tablewrap" }, liste), rapportRot);
+  };
+
+  tegnListe(data ? data.evalueringer : []);
+  // Bestillingsseksjonen melder fra etter et definitivt `tillat` — da
+  // hentes listen på nytt så det ferske oppdraget faktisk vises. Feiler
+  // hentingen beholdes listen som står; dette er en oppfriskning, ikke
+  // en sannhetskilde.
+  if (okt) {
+    okt.evaluering = { oppdater: async () => {
+      let svar;
+      try {
+        svar = await hentEvalueringer();
+      } catch (e) {
+        if (e instanceof UautorisertFeil) ctx.paaUautorisert();
+        return;
+      }
+      // Rakk en omtegning å erstatte seksjonen mens hentingen sto i
+      // lufta, tilhører svaret en frakoblet DOM — den nye instansen har
+      // alt hentet ferskt selv.
+      if (!rot.isConnected) return;
+      tegnListe((svar && svar.evalueringer) || []);
+    } };
+  }
   return rot;
 }
 
@@ -1090,6 +1157,9 @@ function bestillSeksjon(hoved, ctx, data, okt, laas) {
           ? `${kvittering} ${t("ui.rekruttering.bestill.sendt_forlatt_bunt")
             .replaceAll("{filnavn}", sendtBunt)}`
           : kvittering);
+        // Det leverte oppdraget skal ikke kreve en side-omlasting for å
+        // vises i evalueringslisten.
+        if (okt.evaluering) okt.evaluering.oppdater();
       } else {
         // STOPP/unntak: bunten er URØRT og blir stående i skjemaet, så
         // neste forsøk går på den samme reservasjonen. Det ENESTE som er

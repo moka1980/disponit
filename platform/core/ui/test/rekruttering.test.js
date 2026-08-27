@@ -1114,7 +1114,8 @@ test("Evalueringer: liste med status, og rapporten rendres blindet", async () =>
       ],
       kandidater: {
         "kandidat-01": { funn: [{ kategori: "uklar_tidslinje",
-          kilde: { start: 0, slutt: 9, sitat: "[NAVN-1] har" } }],
+          kilde: { start: 0, slutt: 9, sitat: "[NAVN-1] har" } },
+          { kategori: "manglende_dokumentasjon" }],   // uten `kilde`
           intervjusporsmal: ["Fortell om driftserfaringen."],
           kildetekst: "[NAVN-1] har drift" },
         "kandidat-02": { funn: [], intervjusporsmal: [],
@@ -1144,14 +1145,38 @@ test("Evalueringer: liste med status, og rapporten rendres blindet", async () =>
   const etter = seksjon.textContent;
   assert.match(etter, /kandidat-01/);
   // FLATEN SNAKKER NORSK, OGSÅ HER (RUTINER §5, Cursor P2). Rapporten
-  // rendret rå maskinkoder — funnkategorien og kravnøklene i
-  // nedbrytningen — mens prosesspanelet i samme fil oversatte begge.
-  assert.match(etter, new RegExp(t("ui.rekruttering.funn.uklar_tidslinje")));
-  assert.doesNotMatch(etter, /uklar_tidslinje/);
+  // rendret rå maskinkoder — kravnøklene i nedbrytningen — mens
+  // prosesspanelet i samme fil oversatte dem.
   assert.match(etter, new RegExp(`${t("ui.rekruttering.krav.drift")}: 3`));
   assert.doesNotMatch(etter, /drift:/);
-  assert.match(etter, /\[NAVN-1\] har/);       // sitatet, blindet form
-  assert.match(etter, /Fortell om driftserfaringen/);
+  // Fokus flyttes til rapportoverskriften — tastatur og skjermleser skal
+  // få vite at lastingen ble ferdig (Codex P2).
+  const overskrift = seksjon.querySelector("h3[tabindex='-1']");
+  assert.ok(overskrift && overskrift.textContent.includes("Driftskonsulent"),
+    "rapportoverskriften mangler");
+  assert.equal(seksjon.ownerDocument.activeElement, overskrift,
+    "fokus ble ikke flyttet til rapporten");
+  // Detaljkroppen bygges LAT (Codex P2: skjemaet tillater 5000 kandidater
+  // à 100 funn) — før åpning finnes verken funn eller spørsmål i DOM.
+  assert.doesNotMatch(etter, /\[NAVN-1\] har/);
+  assert.doesNotMatch(etter, /Fortell om driftserfaringen/);
+  const boks = seksjon.querySelector("details");
+  boks.open = true;
+  boks.dispatchEvent(new (seksjon.ownerDocument.defaultView.Event)("toggle"));
+  const aapnet = seksjon.textContent;
+  assert.match(aapnet, new RegExp(t("ui.rekruttering.funn.uklar_tidslinje")));
+  assert.doesNotMatch(aapnet, /uklar_tidslinje/);
+  assert.match(aapnet, /\[NAVN-1\] har/);       // sitatet, blindet form
+  // Et funn uten `kilde` beholdes med plassholder (speilet fra
+  // prosesspanelet) — det skal aldri velte åpningen av detaljene.
+  assert.match(aapnet,
+    new RegExp(t("ui.rekruttering.funn.manglende_dokumentasjon")));
+  assert.match(aapnet, new RegExp(t("ui.rekruttering.uten_sitat")));
+  assert.match(aapnet, /Fortell om driftserfaringen/);
+  // Begge tabellene står i rullbar container (Codex P2: 50 krav à 120
+  // tegn i nedbrytningscellen skal ikke velte siden).
+  assert.ok(seksjon.querySelectorAll(".tablewrap").length >= 2,
+    "tabellene mangler .tablewrap");
   // Nedbrytningskolonnen bærer sin EGEN etikett, ikke funnenes.
   assert.match(etter,
     new RegExp(t("ui.rekruttering.evalueringer.nedbrytning")));
@@ -1200,6 +1225,70 @@ test("Evalueringer: feilet rapporthenting melder i alert, ikke stille", async ()
     t("ui.rekruttering.evalueringer.rapportfeil"));
   assert.ok(!seksjon.textContent.includes("Driftskonsulent"),
     "den gamle rapporten ble stående etter feilet henting");
+});
+
+test("Evalueringer: det siste klikket vinner — et tregt eldre svar forkastes", async () => {
+  KALL = [];
+  // Rapport 96 HENGER til testen slipper den; 97 svarer straks. Slippes
+  // 96 etterpå, skal det trege svaret forkastes — ikke erstatte 97.
+  let slippFoerste;
+  const treg = new Promise((res) => { slippFoerste = res; });
+  const rapportFor = (navn) => ({ oppdrag_id: 0, rapport: {
+    rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+    profil: { profil_id: "p-1", versjon: 2, navn },
+    antall_soknader: 1,
+    rangering: [{ kandidat_id: "kandidat-01", poeng: 5,
+      nedbrytning: { drift: 5 } }],
+    kandidater: { "kandidat-01": { funn: [], intervjusporsmal: [],
+      kildetekst: "[NAVN-1]" } },
+    fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+  } });
+  SVAR = (sti) => ({
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true },
+      { oppdrag_id: 97, status: "utfort",
+        opprettet: "2026-08-27T01:00:00+00:00", rapport_klar: true }] },
+    "/v1/rekruttering/rapport/96": treg,
+    "/v1/rekruttering/rapport/97": rapportFor("Sikkerhetsleder"),
+  })[sti] ?? 500;
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelectorAll(
+    "section[aria-labelledby=evaluering-tittel] button").length === 2));
+  const seksjon = hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  const [knapp96, knapp97] = seksjon.querySelectorAll("button");
+  knapp96.click();
+  knapp97.click();
+  assert.ok(await vent(() => seksjon.textContent.includes("Sikkerhetsleder")),
+    "97-rapporten rendret aldri");
+  slippFoerste(rapportFor("Driftskonsulent"));
+  await new Promise((r) => setTimeout(r, 30));
+  assert.ok(seksjon.textContent.includes("Sikkerhetsleder"),
+    "det ferske svaret forsvant");
+  assert.ok(!seksjon.textContent.includes("Driftskonsulent"),
+    "det TREGE eldre svaret vant over brukerens siste valg");
+});
+
+test("Evalueringer: utilgjengelig liste er en feiltilstand, ikke tom historikk", async () => {
+  KALL = [];
+  SVAR = (sti) => sti === "/v1/rekruttering/evalueringer" ? 500 : ({
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+  })[sti];
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]")), "seksjonen kom aldri");
+  const seksjon = hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  assert.match(seksjon.textContent,
+    new RegExp(t("ui.rekruttering.evalueringer.listefeil").slice(0, 25)));
+  assert.doesNotMatch(seksjon.textContent,
+    new RegExp(t("ui.rekruttering.evalueringer.ingen")));
 });
 
 test("Profiler: uten bestilling:opprett finnes ingen skriveknapper (P2-1)", async () => {
@@ -1262,6 +1351,7 @@ test("Bestilling: hele kjeden — reserver, opplast, bestill (SP-2)", async () =
   KALL = [];
   const basis = { "/v1/rekruttering/prosesser": prosess(),
     "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [] },
     "/v1/inndata/reserver": { reservasjon_jti: "j-1",
                               inndata_ref: "inndata:u-1" },
     "/v1/inndata/opplast/j-1": {} };
@@ -1270,6 +1360,11 @@ test("Bestilling: hele kjeden — reserver, opplast, bestill (SP-2)", async () =
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  // Mount hentet en TOM liste; fra nå av finnes oppdrag 42 på serveren —
+  // det er OPPFRISKNINGEN etter `tillat` som skal få det på skjermen.
+  basis["/v1/rekruttering/evalueringer"] = { evalueringer: [
+    { oppdrag_id: 42, status: "opprettet",
+      opprettet: "2026-08-27T07:00:00+00:00", rapport_klar: false }] };
   const seksjon = hoved.querySelector("section[aria-labelledby=bestill-tittel]");
   assert.ok(seksjon, "bestillingsseksjonen mangler");
   const skjema = seksjon.querySelector("form");
@@ -1293,6 +1388,17 @@ test("Bestilling: hele kjeden — reserver, opplast, bestill (SP-2)", async () =
   assert.deepEqual(best.kropp, { bestillingstype: "rekruttering.evaluering",
     inndata_ref: "inndata:u-1", stillingsprofil_ref: "prof-1@2",
     antall_soknader: 1, omfang: "bunt" });
+  // Codex P2 (minste bit av #221): et definitivt `tillat` oppfrisker
+  // evalueringslisten — det leverte oppdraget vises uten side-omlasting.
+  const evalSeksjon = hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  assert.ok(await vent(() => evalSeksjon.textContent.includes("42")),
+    "det leverte oppdraget kom aldri inn i evalueringslisten");
+  assert.match(evalSeksjon.textContent,
+    new RegExp(t("ui.rekruttering.evalueringer.venter")));
+  assert.equal(KALL.filter(
+    (k) => k.sti === "/v1/rekruttering/evalueringer").length, 2,
+    "listen ble ikke hentet på nytt etter tillat");
   const brudd = await alvorligeBrudd(hoved);
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
 });
