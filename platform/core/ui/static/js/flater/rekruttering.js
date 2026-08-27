@@ -900,6 +900,20 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
     // vinduet mellom dem (frist/TOCTOU/transient), og en usolicited
     // `role="alert"` på hver sidelasting er falsk alarm. Auto-feil er
     // stille — rapportområdet står tomt, listen er fortsatt sannheten.
+    // CACHE-TREFF FØRST (Codex P2): et promotert artefakt er immutabelt,
+    // så et klikk på rapporten som alt står i `siste` er aldri en grunn
+    // til å laste ned og dekryptere 5000 kandidater på nytt — den
+    // re-bygges, og klikket beholder fokus-semantikken sin.
+    if (rHent.siste && rHent.siste.oppdrag_id === oppdragId) {
+      try {
+        const { overskrift, noder } = byggRapport(rHent.siste);
+        if (rHent.tegn(null, noder) && fokus) overskrift.focus();
+        return;
+      } catch (e) {
+        // Uforventet form i cachen: fall til ekte henting.
+        rHent.siste = null;
+      }
+    }
     // Tøm FØR henting: et feilet kall skal aldri la forrige rapport stå
     // igjen under en feilmelding som gjelder en annen — og CACHEN følger
     // DOM-en (Codex P2): sto den igjen, gjenoppsto den gamle rapporten

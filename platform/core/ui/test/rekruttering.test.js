@@ -1236,20 +1236,25 @@ test("Evalueringer: feilet rapporthenting melder i alert, ikke stille", async ()
     "/v1/rekruttering/stillingsprofiler": profiler(),
     "/v1/rekruttering/evalueringer": { evalueringer: [
       { oppdrag_id: 96, status: "utfort",
-        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true },
+      { oppdrag_id: 97, status: "utfort",
+        opprettet: "2026-08-27T01:00:00+00:00", rapport_klar: true }] },
     "/v1/rekruttering/rapport/96": rapportSvar,
+    "/v1/rekruttering/rapport/97": rapportSvar,
   })[sti] ?? 500;
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
-  assert.ok(await vent(() => hoved.querySelector(
-    "section[aria-labelledby=evaluering-tittel] button")));
+  assert.ok(await vent(() => hoved.querySelectorAll(
+    "section[aria-labelledby=evaluering-tittel] button").length === 2));
   const seksjon = hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
-  seksjon.querySelector("button").click();
+  const knappFor = (id) => [...seksjon.querySelectorAll("button")]
+    .find((b) => b.closest("tr").textContent.includes(String(id)));
+  knappFor(96).click();
   assert.ok(await vent(() => seksjon.textContent.includes("Driftskonsulent")),
     "rapporten rendret aldri");
-  rapportSvar = undefined; // ?? 500 tar over
-  seksjon.querySelector("button").click();
+  rapportSvar = undefined; // ?? 500 tar over — 97 er IKKE i cachen
+  knappFor(97).click();
   await vent(() => seksjon.querySelector("[role=alert]").textContent
     === t("ui.rekruttering.evalueringer.rapportfeil"));
   assert.equal(seksjon.querySelector("[role=alert]").textContent,
@@ -1495,6 +1500,19 @@ test("Evalueringer: produktet først og null klikk — ferskeste klare "
   assert.ok(overskrift, "rapportoverskriften mangler");
   assert.notEqual(hoved.ownerDocument.activeElement, overskrift,
     "auto-visningen stjal fokus — fokus hører til eksplisitt klikk");
+  // Klikk på rapporten som ALT står der: cache-treff (immutabelt
+  // artefakt) — ingen ny henting, men klikkets fokus-semantikk.
+  const hentingerFoer = KALL.filter(
+    (k) => k.sti === "/v1/rekruttering/rapport/96").length;
+  hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel] button").click();
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(KALL.filter(
+    (k) => k.sti === "/v1/rekruttering/rapport/96").length, hentingerFoer,
+    "klikk på cachet rapport lastet den ned på nytt");
+  const overskrift2 = hoved.querySelector("h3[tabindex='-1']");
+  assert.equal(hoved.ownerDocument.activeElement, overskrift2,
+    "cache-treffet ga ikke klikkets fokus");
   // 3) ... og stille er ikke det samme som skånsom (Cursor P2): uten
   //    fokusflytting er den høflige live-regionen det ENESTE sporet som
   //    sier fra at produktet dukket opp.
@@ -1700,9 +1718,10 @@ test("Evalueringer: auto-feil er stille — alert hører til klikket", async () 
     "auto-feilen malte en usolicited alert");
   // ... og KLIKKET får feilmeldingen som før (positiv kontroll).
   seksjon.querySelector("button").click();
-  await vent(() => [...seksjon.querySelectorAll('[role="alert"]')]
+  assert.ok(await vent(() => [...seksjon.querySelectorAll('[role="alert"]')]
     .some((a) => a.textContent
-      === t("ui.rekruttering.evalueringer.rapportfeil")));
+      === t("ui.rekruttering.evalueringer.rapportfeil"))),
+    "klikket ga aldri feilmeldingen (positiv kontroll)");
 });
 
 test("Evalueringer: auto-lastingen kjører ÉN gang per økt — "
