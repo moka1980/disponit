@@ -112,6 +112,22 @@ def _promoter_kopi(migrator, fra_oid, til_oid, artefakttype):
     migrator.commit()
 
 
+def _ankere(m, oid) -> tuple:
+    """(alle, levende) retensjonsankere for oppdraget — leseveiens egen
+    målestokk (`slettet_ts IS NULL` er nøyaktig EXISTS-leddet i
+    `rekrutteringsrapport_detalj`). Egen transaksjon: claimen committet i
+    appens pool, og en åpen migrator-transaksjon ville lest et snapshot
+    fra før den."""
+    m.rollback()
+    _sett_kontekst(m, TENANT)
+    rad = m.execute(
+        "SELECT count(*), count(*) FILTER (WHERE slettet_ts IS NULL)"
+        "  FROM rekrutteringsprosess WHERE tenant=%s AND oppdrag_id=%s",
+        (TENANT, oid)).fetchone()
+    m.rollback()
+    return (rad[0], rad[1])
+
+
 @pg
 def test_rapporten_leses_paa_sin_egen_flate(migrator, miljo, inndata_rot,
                                             monkeypatch):
@@ -498,3 +514,57 @@ def test_reapet_prosess_stenger_rapporten(migrator, miljo):
                 "en levende evaluering skal ikke merkes slettet"
     finally:
         rt.close()
+
+
+@pg
+def test_claimen_foder_retensjonsankeret(migrator, miljo, inndata_rot):
+    """CLAIM ⇒ LEVENDE RETENSJONSANKER (Cursor P2), målt der den fødes.
+
+    Lesegrensen over er `EXISTS(ureapet prosess)`. Den er bare en TTL-port
+    så lenge NOEN faktisk føder ankeret, og eneste produksjonsvei dit er
+    claim-transaksjonen i `app.py`. Invarianten sto til nå bare implisitt
+    i den tunge rapport-e2e-en (`_utfort_oppdrag` → 200): fjernes
+    fødselsblokka, kan claimen fortsatt lykkes, controllertestene uten
+    rapportlesing blir grønne, og bare e2e-en rødner — lett å miste i en
+    smal fiksrunde. Porten her spør rett etter claimen, uten resten av
+    kjeden.
+
+    Bestillingen bærer ingen `slettefrist_dogn`, så det er DEFAULT-armen
+    (basens 90) som måles — den claimen faktisk går gjennom.
+
+    MUTASJONEN SOM DREPER DENNE: slett `opprett_rekrutteringsprosess`-
+    blokka i `app.py`s claim-transaksjon."""
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    from .test_modul_onboarding_http import _onboard_token
+
+    _rekr_policy(migrator)
+    _sikre_m57_claimbar(migrator)
+    rel = migrator.execute(
+        "SELECT release_id FROM moduldeployment WHERE modul_id='m57_ats'"
+        " AND livslop='claiming' LIMIT 1").fetchone()[0]
+    migrator.rollback()
+    a = lag_app(DSN)
+    with TestClient(a) as c:
+        cookie, csrf = _adminsesjon()
+        ref = _bunt_via_http(c, cookie, csrf)
+        profilref = _profil(migrator)
+        r = _bestill(c, cookie, csrf, _evalkropp(ref, profilref),
+                     "n-" + secrets.token_hex(8))
+        assert r.status_code == 200, r.text
+        oid = r.json()["oppdrag_id"]
+
+        # Positiv kontroll: FØR claimen finnes ikke ankeret. Uten den
+        # ville en test som bare teller rader gå grønn på en prosess
+        # bestillingen tilfeldigvis hadde laget.
+        assert _ankere(migrator, oid) == (0, 0), \
+            "positiv kontroll: bestillingen alene føder ikke ankeret"
+
+        mtk, _ = _onboard_token(c, migrator, "m57_ats", rel)
+        rc = c.post("/v1/oppdrag/claim", json={},
+                    headers={"authorization": f"Bearer {mtk}"})
+        assert rc.status_code == 200, rc.text
+        assert rc.json()["oppdrag_id"] == oid, rc.text
+
+        assert _ankere(migrator, oid) == (1, 1), \
+            "claimen skal etterlate nøyaktig ett LEVENDE retensjonsanker"
