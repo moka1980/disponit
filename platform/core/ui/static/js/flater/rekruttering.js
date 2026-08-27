@@ -947,9 +947,18 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
   // rapport, rendres den ferskeste med en gang — uten fokus-tyveri.
   // Kun ved mount, aldri ved oppfriskning: en levert bestilling skal
   // ikke rive lesingen av en annen rapport.
+  //
+  // FERSKEST ER HØYESTE OPPDRAG, IKKE FØRSTE RAD (Cursor P2). `find`
+  // leste «ferskeste» ut av listens rekkefølge — en skjult kontrakt med
+  // `ORDER BY o.id DESC` i `lesing.py`, som flaten selv ikke binder.
+  // Kom listen noen gang i en annen rekkefølge (annen sortering, en
+  // oppfrisket liste satt sammen et annet sted), viste auto-stien en
+  // ELDRE rapport uten at noe feilet. Valget står derfor her, eksplisitt.
   const seedListe = (eval_ && eval_.liste !== undefined)
     ? eval_.liste : (data ? data.evalueringer : []);
-  const klarRad = (seedListe || []).find((e2) => e2.rapport_klar);
+  const klarRad = (seedListe || []).reduce((beste, e2) =>
+    (e2.rapport_klar && (!beste || e2.oppdrag_id > beste.oppdrag_id))
+      ? e2 : beste, null);
   if (klarRad) visRapport(klarRad.oppdrag_id, { fokus: false });
   // Bestillingsseksjonen melder fra etter et definitivt `tillat` — da
   // hentes listen på nytt så det ferske oppdraget faktisk vises. Feiler

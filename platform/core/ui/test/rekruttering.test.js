@@ -1495,6 +1495,49 @@ test("Evalueringer: produktet først og null klikk — ferskeste klare "
     "auto-visningen stjal fokus — fokus hører til eksplisitt klikk");
 });
 
+test("Evalueringer: auto-visningen tar den FERSKESTE klare rapporten, "
+  + "uansett rekkefølgen listen kommer i", async () => {
+  // Cursor P2: `find(e => e.rapport_klar)` leste «ferskeste» ut av
+  // listens rekkefølge — altså ut av `ORDER BY o.id DESC` i `lesing.py`,
+  // en sortering flaten hverken eier eller binder. Testen kjører BEGGE
+  // rekkefølgene: stigende seed dreper den gamle formen, synkende seed
+  // er motprøven som sier at valget ikke bare snudde en antagelse.
+  const rapport = (navn) => ({ rapport: {
+    rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+    profil: { profil_id: "p-1", versjon: 2, navn },
+    antall_soknader: 1,
+    rangering: [{ kandidat_id: "kandidat-01", poeng: 5,
+      nedbrytning: { drift: 5 } }],
+    kandidater: { "kandidat-01": { funn: [] } },
+    fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+  } });
+  const rad = (oid) => ({ oppdrag_id: oid, status: "utfort",
+    opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true });
+  for (const seed of [[rad(96), rad(97)], [rad(97), rad(96)]]) {
+    KALL = [];
+    SVAR = {
+      "/v1/rekruttering/prosesser": prosess(),
+      "/v1/rekruttering/stillingsprofiler": profiler(),
+      "/v1/rekruttering/evalueringer": { evalueringer: seed },
+      "/v1/rekruttering/rapport/96": rapport("Eldre rangering"),
+      "/v1/rekruttering/rapport/97": rapport("Ferskere rangering"),
+    };
+    const hoved = nyHoved();
+    visRekruttering(hoved, ctx());
+    const rekkefolge = seed.map((e) => e.oppdrag_id).join(",");
+    assert.ok(await vent(() => hoved.querySelector("h3[tabindex='-1']")),
+      `rapporten rendret ikke av seg selv (seed ${rekkefolge})`);
+    assert.ok(hoved.textContent.includes("Ferskere rangering"),
+      `auto-visningen viste ikke det høyeste oppdraget (seed ${rekkefolge})`);
+    assert.ok(!hoved.textContent.includes("Eldre rangering"),
+      `den eldre rapporten ble vist (seed ${rekkefolge})`);
+    assert.ok(!KALL.some((k) => k.sti === "/v1/rekruttering/rapport/96"),
+      `flaten hentet den eldre rapporten (seed ${rekkefolge})`);
+  }
+  // MUTASJONEN SOM DREPER DENNE: bytt reduksjonen tilbake til
+  // `seedListe.find((e2) => e2.rapport_klar)` — stigende seed viser 96.
+});
+
 test("Evalueringer: en rapport som lander etter et prosessbytte tegner "
   + "i den MONTERTE seksjonen", async () => {
   KALL = [];
