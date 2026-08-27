@@ -1059,6 +1059,7 @@
   "ui.rekruttering.evalueringer.tittel": "Evaluations",
   "ui.rekruttering.evalueringer.ingen": "No evaluations ordered yet.",
   "ui.rekruttering.evalueringer.listefeil": "The evaluation list could not be loaded. Reload the page to try again.",
+  "ui.rekruttering.evalueringer.flere": "The list shows the 100 most recent evaluations — older ones exist that are not shown here.",
   "ui.rekruttering.evalueringer.tabell": "Ordered evaluations with status",
   "ui.rekruttering.evalueringer.oppdrag": "Job",
   "ui.rekruttering.evalueringer.bestilt": "Ordered",

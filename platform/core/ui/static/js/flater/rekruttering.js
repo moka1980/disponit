@@ -157,7 +157,7 @@ export function visRekruttering(hoved, ctx) {
     // oppfriskningens generasjon og `tegn` den for tiden monterte
     // seksjonens tegner — begge hører til listen, ikke til instansen
     // som tilfeldigvis viser den.
-    evalueringer: { liste: undefined, nr: 0, tegn: null } };
+    evalueringer: { liste: undefined, flere: false, nr: 0, tegn: null } };
   medStatus(hoved, ctx,
     async () => {
       // Profilene er TILLEGGSDATA (samme politikk som
@@ -178,7 +178,8 @@ export function visRekruttering(hoved, ctx) {
         }),
       ]);
       return { ...pros, profiler: (prof && prof.profiler) || [],
-               evalueringer: evals ? (evals.evalueringer || []) : null };
+               evalueringer: evals ? (evals.evalueringer || []) : null,
+               evalueringerFlere: !!(evals && evals.flere) };
     },
     (data) => {
       // En fersk full lasting ER sannheten — også «Prøv igjen» etter en
@@ -186,6 +187,7 @@ export function visRekruttering(hoved, ctx) {
       // aldri vinne over den, og en oppfriskning som fortsatt er i lufta
       // skal ikke lande oppå den ferske listen: generasjonen bumpes.
       okt.evalueringer.liste = undefined;
+      okt.evalueringer.flere = false;
       okt.evalueringer.nr += 1;
       tegn(hoved, ctx, data, okt);
     });
@@ -843,7 +845,7 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
     }
   };
 
-  const tegnListe = (evalueringer) => {
+  const tegnListe = (evalueringer, flere) => {
     const tittel = el("h2", { id: "evaluering-tittel",
       text: t("ui.rekruttering.evalueringer.tittel") });
     // `null` er FEIL-tilstanden fra hentingen — en utilgjengelig
@@ -898,16 +900,25 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
           text: t("ui.rekruttering.evalueringer.vis") }))),
       el("tbody", {}, ...rader));
     sett(rot, tittel, utfall,
-      el("div", { class: "tablewrap" }, liste), rapportRot);
+      el("div", { class: "tablewrap" }, liste),
+      // Et fullt vindu KAN bety flere — aldri stille avkorting. Selve
+      // pagineringen bor i #221; her sies det bare fra.
+      ...(flere ? [el("p",
+        { text: t("ui.rekruttering.evalueringer.flere") })] : []),
+      rapportRot);
   };
 
   // Seedet kommer fra ØKTEN når en oppfriskning har vært kjørt, ellers
   // fra lastingens egen liste: et prosessbytte er en om-tegning, ikke en
-  // ny lasting, og seksjonen henter ikke selv ved mount.
+  // ny lasting, og seksjonen henter ikke selv ved mount. `flere` følger
+  // listen den beskriver, uansett kilde.
   const eval_ = okt ? okt.evalueringer : null;
-  tegnListe(eval_ && eval_.liste !== undefined
-    ? eval_.liste
-    : (data ? data.evalueringer : []));
+  if (eval_ && eval_.liste !== undefined) {
+    tegnListe(eval_.liste, !!eval_.flere);
+  } else {
+    tegnListe(data ? data.evalueringer : [],
+      !!(data && data.evalueringerFlere));
+  }
   // Bestillingsseksjonen melder fra etter et definitivt `tillat` — da
   // hentes listen på nytt så det ferske oppdraget faktisk vises. Feiler
   // hentingen beholdes listen som står; dette er en oppfriskning, ikke
@@ -934,7 +945,8 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       // inn i økten.
       if (min !== eval_.nr) return;
       eval_.liste = (svar && svar.evalueringer) || [];
-      eval_.tegn(eval_.liste);
+      eval_.flere = !!(svar && svar.flere);
+      eval_.tegn(eval_.liste, eval_.flere);
     } };
   }
   return rot;

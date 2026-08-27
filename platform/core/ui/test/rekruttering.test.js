@@ -1101,7 +1101,7 @@ test("Evalueringer: liste med status, og rapporten rendres blindet", async () =>
         opprettet: "2026-08-27T07:00:00+00:00", rapport_klar: false },
       { oppdrag_id: 95, status: "feilet",
         opprettet: "2026-08-26T22:00:00+00:00", rapport_klar: false },
-    ] },
+    ], flere: true },
     "/v1/rekruttering/rapport/96": { oppdrag_id: 96, rapport: {
       rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
       profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
@@ -1135,6 +1135,10 @@ test("Evalueringer: liste med status, og rapporten rendres blindet", async () =>
   assert.match(tekst, new RegExp(t("ui.rekruttering.evalueringer.venter")));
   // Terminal status er sin egen sannhet — aldri "under arbeid".
   assert.match(tekst, new RegExp(t("ui.rekruttering.evalueringer.feilet")));
+  // Fullt vindu: avkortingen SIES, aldri stille (Cursor P2-3; #221 tar
+  // selve pagineringen).
+  assert.match(tekst,
+    new RegExp(t("ui.rekruttering.evalueringer.flere").slice(0, 25)));
   // Kun den ferdige raden har en Vis-knapp.
   const knapper = [...seksjon.querySelectorAll("button")]
     .filter((b) => b.textContent === t("ui.rekruttering.evalueringer.vis"));
@@ -1225,6 +1229,9 @@ test("Evalueringer: feilet rapporthenting melder i alert, ikke stille", async ()
     t("ui.rekruttering.evalueringer.rapportfeil"));
   assert.ok(!seksjon.textContent.includes("Driftskonsulent"),
     "den gamle rapporten ble stående etter feilet henting");
+  // Negativ kontroll for `flere`-merknaden: uten flagget finnes den ikke.
+  assert.doesNotMatch(seksjon.textContent,
+    new RegExp(t("ui.rekruttering.evalueringer.flere").slice(0, 25)));
 });
 
 test("Evalueringer: 200 med urendrbar rapport lander i alert, ikke tom seksjon", async () => {

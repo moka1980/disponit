@@ -55,14 +55,37 @@ def _utfort_oppdrag(migrator, klient_ubrukt, monkeypatch):
 
 
 def _fremmed_artefakttype(migrator) -> str:
-    """En registrert artefakttype som IKKE er kontraktens rapporttype,
-    bundet til samme m57-kontrakt (så konvolutten under kan gjenbrukes)."""
-    from .test_wcag_kontroll import _streng_type
-    kh = migrator.execute(
+    """En registrert artefakttype som IKKE er kontraktens rapporttype.
+
+    Bundet til en EGEN kontraktversjon (2), aldri claimens (v1):
+    opplastingskapabiliteten utstedes bare når claim-kontrakten har
+    NØYAKTIG ÉN registrert type (fail-closed, `app.py` `LIMIT 2`/
+    `len==1`), og `artefakttype_register` er append-only — en fremmed
+    type på v1 ville overlevd sesjonen og stille drept kapabiliteten i
+    NESTE kjøring av riggen."""
+    from .test_wcag_kontroll import STRENGT, _mk_admin, _registrer_skjema
+    migrator.execute(
+        "INSERT INTO modulkontrakt (modul_id,kontraktversjon,"
+        "kontrakt_hash,payload_schema_hash,kvittering_schema_hash,"
+        "sideeffektklasse,reversibilitet)"
+        " VALUES ('m57_ats',2,%s,'p','k','krever_outbox','kompenserende')"
+        " ON CONFLICT DO NOTHING", ("k2-" + secrets.token_hex(8),))
+    migrator.commit()
+    kh2 = migrator.execute(
         "SELECT kontrakt_hash FROM modulkontrakt"
-        " WHERE modul_id='m57_ats' AND kontraktversjon=1").fetchone()[0]
+        " WHERE modul_id='m57_ats' AND kontraktversjon=2").fetchone()[0]
     migrator.rollback()
-    return _streng_type(migrator, "m57_ats", kh)
+    # `_streng_type` hardkoder versjon 1 — samme form, men mot v2.
+    h = _registrer_skjema(STRENGT)
+    at = f"kontroll.t{secrets.token_hex(4)}.rapport"
+    da = _mk_admin("disponit_domains_admin")
+    try:
+        da.execute("SELECT registrer_artefakttype(%s,'m57_ats',2,%s,%s,"
+                   "'test')", (at, kh2, h))
+        da.commit()
+    finally:
+        da.close()
+    return at
 
 
 def _promoter_kopi(migrator, fra_oid, til_oid, artefakttype):
@@ -255,8 +278,62 @@ def test_listeveien_viser_ogsaa_uferdige(migrator, miljo, inndata_rot,
             rad = next(e for e in rl.json()["evalueringer"]
                        if e["oppdrag_id"] == oid)
             assert rad["rapport_klar"] is False
+            # Under vinduet: ingen avkorting å melde.
+            assert rl.json()["flere"] is False
             assert c.get(f"/v1/rekruttering/rapport/{oid}",
                          cookies={sesjonmodul.C_SESJON: cookie}
                          ).status_code == 404
     finally:
         pass
+
+
+@pg
+def test_listen_avkorter_aldri_stille(migrator, miljo):
+    """Et fullt vindu (`LIMIT 100`) melder `flere: true` — flaten skal
+    kunne si at eldre evalueringer finnes, aldri presentere de nyeste
+    100 som alt (Cursor #220 P2-3). Selve pagineringen bor i #221.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `flere`-leddet, eller regn det av
+    noe annet enn radtallet mot vinduet."""
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    from api import sesjon as sesjonmodul
+    from db import kryptering
+
+    _sikre_m57_claimbar(migrator)
+    _sett_kontekst(migrator, TENANT)
+    key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(migrator, TENANT)
+    ct, nonce = kryptering.krypter(dek, {"x": 1}, TENANT, key_id)
+    for _ in range(101):
+        # `oppdrag_en_per_beslutning`: hvert oppdrag krever sin egen
+        # beslutningsloggpost.
+        logg = migrator.execute(
+            "INSERT INTO revisjonslogg (tenant, aktor, kilde, input_hash,"
+            " policy_id, beslutning, begrunnelse, idempotency_key)"
+            " VALUES (%s,'test','api_token','ih','p@1.0.0/x.y','TILLAT',"
+            "'[]',%s) RETURNING id",
+            (TENANT, secrets.token_hex(8))).fetchone()[0]
+        migrator.execute(
+            "INSERT INTO oppdrag (opprinnelse, tenant,"
+            " beslutning_loggpost_id, oppdragstype, handling, eiermodul,"
+            " payload_kryptert, key_id, nonce, utforelsesfrist,"
+            " evidensfrist, koblingsstatus, status)"
+            " VALUES ('beslutning',%s,%s,'rekruttering.evaluering',"
+            "'rekruttering.evaluering','m57_ats',%s,%s,%s,"
+            " now()+interval '4 hour', now()+interval '1 day','KOBLET',"
+            # Terminal fra fødselen: seedingen skal fylle VINDUET, aldri
+            # bli claimet av en annen tests controller.
+            "'kansellert')",
+            (TENANT, logg, ct, key_id, nonce))
+    migrator.commit()
+    a = lag_app(DSN)
+    with TestClient(a) as c:
+        cookie, _csrf = _adminsesjon()
+        r = c.get("/v1/rekruttering/evalueringer",
+                  cookies={sesjonmodul.C_SESJON: cookie})
+        assert r.status_code == 200, r.text
+        kropp = r.json()
+        assert len(kropp["evalueringer"]) == 100, \
+            "vinduet skal være nøyaktig LIMIT-en"
+        assert kropp["flere"] is True, \
+            "et fullt vindu skal MELDE at det kan finnes flere"

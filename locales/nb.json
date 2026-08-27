@@ -1059,6 +1059,7 @@
   "ui.rekruttering.evalueringer.tittel": "Evalueringer",
   "ui.rekruttering.evalueringer.ingen": "Ingen evalueringer bestilt ennå.",
   "ui.rekruttering.evalueringer.listefeil": "Evalueringslisten kunne ikke hentes. Last siden på nytt for å prøve igjen.",
+  "ui.rekruttering.evalueringer.flere": "Listen viser de 100 nyeste evalueringene — det finnes eldre som ikke vises her.",
   "ui.rekruttering.evalueringer.tabell": "Bestilte evalueringer med status",
   "ui.rekruttering.evalueringer.oppdrag": "Oppdrag",
   "ui.rekruttering.evalueringer.bestilt": "Bestilt",

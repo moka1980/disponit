@@ -563,6 +563,10 @@ def rekrutteringsevalueringer(tjeneste, request: Request) -> Response:
                 {"oppdrag_id": r[0], "status": r[1],
                  "opprettet": r[2].isoformat() if r[2] else None,
                  "rapport_klar": r[3]} for r in rader],
+            # Aldri stille avkorting: et fullt vindu KAN bety flere — flaten
+            # sier det, i stedet for å presentere de nyeste 100 som alt.
+            # Cursor (#220 P2-3, eierdom); selve pagineringen bor i #221.
+            "flere": len(rader) == 100,
             "request_id": rid,
         }, 200, {"x-request-id": rid})
     return _les(tjeneste, request, "decisions:read", _fn)
