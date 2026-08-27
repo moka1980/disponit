@@ -310,6 +310,13 @@ def test_listen_avkorter_aldri_stille(migrator, miljo):
     ct, nonce = kryptering.krypter(dek, {"x": 1}, TENANT, key_id)
 
     def _seed(antall):
+        # Konteksten er TRANSAKSJONSLOKAL (`set_config(...,true)`), og
+        # `commit()` nedenfor avslutter transaksjonen den ble satt i.
+        # Andre kall til `_seed` starter derfor en NY transaksjon uten
+        # `disponit.tenant`, og RLS avviser da innsettingen i
+        # `revisjonslogg`. Konteksten hører hjemme i hver seedende
+        # transaksjon, ikke bare i den første.
+        _sett_kontekst(migrator, TENANT)
         for _ in range(antall):
             # `oppdrag_en_per_beslutning`: hvert oppdrag krever sin egen
             # beslutningsloggpost.
