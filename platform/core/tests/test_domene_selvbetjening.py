@@ -44,7 +44,7 @@ def test_bekreft_krever_beviset_i_txt(migrator):
     """DB-en holder beviset: feil TXT → exception (ingen påstand om
     suksess); riktig TXT → verifisert; nytt kall → idempotent 'verifisert'
     (dobbeltplukk er et JA, aldri en dobbel overgang)."""
-    vert = f"kunde{secrets.token_hex(3)}.example"
+    vert = f"kunde{secrets.token_hex(3)}.example.com"
     token = _utsted(migrator, vert)
     _sett_kontekst(migrator, TENANT)
     with pytest.raises(psycopg.errors.InvalidParameterValue):
@@ -72,7 +72,7 @@ def test_bekreft_krever_beviset_i_txt(migrator):
 
 @pg
 def test_utlopt_challenge_beviser_ingenting(migrator):
-    vert = f"gammel{secrets.token_hex(3)}.example"
+    vert = f"gammel{secrets.token_hex(3)}.example.com"
     token = _utsted(migrator, vert)
     _sett_kontekst(migrator, TENANT)
     migrator.execute("UPDATE domenekontroll SET"
@@ -91,7 +91,7 @@ def test_bekreft_overstyrer_aldri_en_avklaring(migrator):
     """En rad utenfor `ventende` (her: tilbakekalt) flyttes ALDRI av et
     DNS-bevis — bare M-37-avgjørelsen kan det. Svaret er status, ikke en
     overgang."""
-    vert = f"laast{secrets.token_hex(3)}.example"
+    vert = f"laast{secrets.token_hex(3)}.example.com"
     token = _utsted(migrator, vert)
     _sett_kontekst(migrator, TENANT)
     migrator.execute("UPDATE domenekontroll SET status='tilbakekalt'"
@@ -111,8 +111,8 @@ def test_bekreft_overstyrer_aldri_en_avklaring(migrator):
 
 @pg
 def test_ventende_plukket_er_ferskt_og_lukket(migrator):
-    v1 = f"fersk{secrets.token_hex(3)}.example"
-    v2 = f"utgatt{secrets.token_hex(3)}.example"
+    v1 = f"fersk{secrets.token_hex(3)}.example.com"
+    v2 = f"utgatt{secrets.token_hex(3)}.example.com"
     _utsted(migrator, v1)
     _utsted(migrator, v2)
     _sett_kontekst(migrator, TENANT)
@@ -149,7 +149,7 @@ def test_plukket_roterer_forbi_ubesvarte_utfordringer(migrator):
     migrator.execute("RESET ROLE")
     migrator.commit()
 
-    verter = [f"rot{i}{secrets.token_hex(3)}.example" for i in range(3)]
+    verter = [f"rot{i}{secrets.token_hex(3)}.example.com" for i in range(3)]
     for v in verter:
         _utsted(migrator, v)
     # Ingen av dem publiserer noe: hver runde plukker ÉN, og over tre runder
@@ -188,10 +188,33 @@ def _alle_ventende(migrator_):
 
 
 @pg
+def test_209_reservert_tld_koes_aldri_i_verifiseringspasset(migrator):
+    """#209, andre halvdel: samme klasse i utfordringskøen.
+
+    Verifiseringspasset regner sin egen `uenige / vurdert > 0.20` med samme
+    terskel som revalideringen, og en ventende utfordring på et navn som
+    aldri kan resolves ville dratt den nevneren på nøyaktig samme måte. At
+    det ikke blør i dag er en egenskap ved dagens fixturdata, ikke ved
+    koden — så porten står her før hendelsen, ikke etter.
+
+    Den ekte verten i samme kø er porten mot overfiksing: køen skal
+    fortsatt levere den.
+    """
+    reservert = f"fasit{secrets.token_hex(3)}.test"
+    ekte = f"kunde{secrets.token_hex(3)}.example.com"
+    _utsted(migrator, reservert)
+    _utsted(migrator, ekte)
+    verter = {h for _, h in _alle_ventende(migrator)}
+    assert ekte in verter, "den ekte utfordringen forsvant ut av køen"
+    assert reservert not in verter, (
+        f"reservert navn køet for verifisering: {reservert}")
+
+
+@pg
 def test_runtime_kan_utstede_men_aldri_bekrefte(migrator):
     """Sikkerhetssnittet: API-et (runtime) genererte tokenet og skal
     derfor ALDRI kunne bekrefte det — ellers var DNS-beviset valgfritt."""
-    vert = f"snitt{secrets.token_hex(3)}.example"
+    vert = f"snitt{secrets.token_hex(3)}.example.com"
     token = secrets.token_hex(32)
     h = hashlib.sha256(token.encode()).hexdigest()
     rt = _rt()
@@ -227,7 +250,7 @@ def test_utstedelsen_er_bundet_til_kallerens_tenantkontekst(migrator):
     MUTASJONEN SOM DREPER DENNE: fjern `krev_tenantkontekst`-kallet fra
     `utsted_challenge_selvbetjent`, eller gi runtime den rå formen tilbake.
     """
-    vert = f"kryss{secrets.token_hex(3)}.example"
+    vert = f"kryss{secrets.token_hex(3)}.example.com"
     h = hashlib.sha256(secrets.token_hex(32).encode()).hexdigest()
     rt = _rt()
     try:
@@ -272,7 +295,7 @@ def test_http_utsted_og_liste(migrator, klient):
     from api import sesjon as sesjonmodul
     from drift import domenerevalidering as dr
     cookie, csrf = _adminsesjon()
-    vert = f"selv{secrets.token_hex(3)}.example"
+    vert = f"selv{secrets.token_hex(3)}.example.com"
     r = klient.post("/v1/domener", json={"hostname": vert.upper()},
                     headers={"X-Disponit-CSRF": csrf},
                     cookies={sesjonmodul.C_SESJON: cookie})
@@ -343,9 +366,9 @@ def test_listen_svarer_den_EFFEKTIVE_autorisasjonen(migrator, klient):
     from api import sesjon as sesjonmodul
 
     cookie, _ = _adminsesjon()
-    ferskt = f"fersk{secrets.token_hex(3)}.example"
-    foreldet = f"gml{secrets.token_hex(3)}.example"
-    utlopt = f"utl{secrets.token_hex(3)}.example"
+    ferskt = f"fersk{secrets.token_hex(3)}.example.com"
+    foreldet = f"gml{secrets.token_hex(3)}.example.com"
+    utlopt = f"utl{secrets.token_hex(3)}.example.com"
     a = _admin()
     try:
         for v in (ferskt, foreldet, utlopt):
@@ -403,9 +426,9 @@ def test_listen_svarer_arsaken_bak_tilbakekallingen(migrator, klient):
     from .test_pr015_operativt_lag import TREDJE_TENANT
 
     cookie, _ = _adminsesjon()
-    ordinaer = f"ord{secrets.token_hex(3)}.example"
-    avklaring = f"avk{secrets.token_hex(3)}.example"
-    forbigatt = f"fbg{secrets.token_hex(3)}.example"
+    ordinaer = f"ord{secrets.token_hex(3)}.example.com"
+    avklaring = f"avk{secrets.token_hex(3)}.example.com"
+    forbigatt = f"fbg{secrets.token_hex(3)}.example.com"
     # ÉN OVERGANG PER TRANSAKSJON, som resten av suiten: 041 §7-vakten er
     # en DEFERRABLE constraint-trigger, altså commit-tidspunktet. Slås flere
     # overganger for samme vertsnavn sammen, måles mellomtilstandene mot den
@@ -638,7 +661,7 @@ def test_verifiseringspasset_ende_til_ende(migrator, klient):
     from drift import domenerevalidering as dr
 
     cookie, csrf = _adminsesjon()
-    vert = f"e2e{secrets.token_hex(3)}.example"
+    vert = f"e2e{secrets.token_hex(3)}.example.com"
     r = klient.post("/v1/domener", json={"hostname": vert},
                     headers={"X-Disponit-CSRF": csrf},
                     cookies={sesjonmodul.C_SESJON: cookie})
@@ -692,7 +715,7 @@ def test_reutstedelse_koer_tilbakekalt_og_utlopt_domene(migrator, klient):
     from api import sesjon as sesjonmodul
     cookie, csrf = _adminsesjon()
     for start in ("tilbakekalt", "utlopt"):
-        vert = f"koe{secrets.token_hex(4)}.example"
+        vert = f"koe{secrets.token_hex(4)}.example.com"
         _utsted(migrator, vert)
         _sett_kontekst(migrator, TENANT)
         migrator.execute("UPDATE domenekontroll SET status=%s"
@@ -723,7 +746,7 @@ def test_reutstedelse_avvises_nar_raden_avventer_m37(migrator, klient):
     kan innfri."""
     from api import sesjon as sesjonmodul
     cookie, csrf = _adminsesjon()
-    vert = f"m37{secrets.token_hex(4)}.example"
+    vert = f"m37{secrets.token_hex(4)}.example.com"
     _utsted(migrator, vert)
     _sett_kontekst(migrator, TENANT)
     # 041: avklaring uten sak avvises ved commit (port 2) — fixturen
@@ -793,7 +816,7 @@ def test_utstedelse_skiller_dbsvikt_fra_tilstandsnekt(migrator, klient, app,
                         lambda c: gi(c.ekte if isinstance(c, _Vrang) else c))
 
     r = klient.post("/v1/domener",
-                    json={"hostname": f"drift{secrets.token_hex(3)}.example"},
+                    json={"hostname": f"drift{secrets.token_hex(3)}.example.com"},
                     headers={"X-Disponit-CSRF": csrf},
                     cookies={sesjonmodul.C_SESJON: cookie})
     assert (r.status_code, r.json()["feil"]) == (503, "db_utilgjengelig"), \
@@ -816,7 +839,7 @@ def test_avvist_kandidat_far_ny_utfordring_uten_a_rive_gjerdet(migrator):
     MUTASJONEN SOM DREPER DENNE: kø raden til `ventende` ved utstedelse (da
     blir svaret 'verifisert'), eller avvis utstedelsen igjen.
     """
-    vert = f"reapp{secrets.token_hex(4)}.example"
+    vert = f"reapp{secrets.token_hex(4)}.example.com"
     a = _admin()
     try:
         a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
@@ -935,7 +958,7 @@ def test_naturlig_utlopt_verifisering_fornyes_selvbetjent(migrator):
     `utsted_challenge_selvbetjent` — raden blir da stående `verifisert`, og
     plukket er tomt.
     """
-    vert = f"fornyelse{secrets.token_hex(4)}.example"
+    vert = f"fornyelse{secrets.token_hex(4)}.example.com"
     a = _admin()
     try:
         a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
@@ -1026,7 +1049,7 @@ def test_en_avvisning_blir_staaende_til_det_finnes_nytt_bevis(migrator):
 
     MUTASJONEN SOM DREPER DENNE: la avvisningen la `challenge_token_hash` stå.
     """
-    vert = f"avvist{secrets.token_hex(4)}.example"
+    vert = f"avvist{secrets.token_hex(4)}.example.com"
     token = secrets.token_hex(32)
     h = hashlib.sha256(token.encode()).hexdigest()
     a = _admin()
@@ -1128,7 +1151,7 @@ def test_en_forbigatt_utfordrer_forbruker_ogsaa_utfordringen(migrator):
     """
     from .test_pr015_operativt_lag import TREDJE_TENANT
 
-    vert = f"forbigatt{secrets.token_hex(4)}.example"
+    vert = f"forbigatt{secrets.token_hex(4)}.example.com"
     token_b = secrets.token_hex(32)
     a = _admin()
     try:
@@ -1305,7 +1328,7 @@ def test_opprydningen_sparer_en_ventende_reapplikasjon(migrator):
         """En rad i den tilstanden opprydningen ser etter: `tilbakekalt` med
         motpart, etter en ekte M-37-avvisning (som legger `avklaring_avvist`
         i hendelsesloggen)."""
-        vert = f"rydd{secrets.token_hex(4)}.example"
+        vert = f"rydd{secrets.token_hex(4)}.example.com"
         token = secrets.token_hex(32)
         a = _admin()
         try:
@@ -1514,7 +1537,7 @@ def test_konflikt_far_sin_m37_sak_av_dreneringen(migrator):
     """
     from api import domeneovertakelse as dov
 
-    vert = f"kfl{secrets.token_hex(4)}.example"
+    vert = f"kfl{secrets.token_hex(4)}.example.com"
     a = _admin()
     try:
         a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
@@ -1546,7 +1569,7 @@ def test_konflikt_far_sin_m37_sak_av_dreneringen(migrator):
         rt.close()
 
     # ... og en pre-041-rad UTEN sak (kirurgisk gjenskapt) NAVNGIS.
-    vert2 = f"kfl{secrets.token_hex(4)}.example"
+    vert2 = f"kfl{secrets.token_hex(4)}.example.com"
     a = _admin()
     try:
         a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
@@ -1614,7 +1637,7 @@ def test_foreldet_konflikt_far_ingen_sak(migrator):
     """
     from api import domeneovertakelse as dov
 
-    vert = f"foreldet{secrets.token_hex(4)}.example"
+    vert = f"foreldet{secrets.token_hex(4)}.example.com"
     a = _admin()
     try:
         a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
@@ -1674,7 +1697,7 @@ def test_vakten_revaliderer_plukket_for_den_roper(migrator):
 
     from .test_pr015_operativt_lag import TREDJE_TENANT
 
-    vert = f"kappl{secrets.token_hex(4)}.example"
+    vert = f"kappl{secrets.token_hex(4)}.example.com"
     a = _admin()
     try:
         a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
@@ -1846,7 +1869,7 @@ def test_konfliktutvalget_roterer_forbi_dem_som_venter_paa_mennesker(migrator):
     migrator.execute("RESET ROLE")
     migrator.commit()
 
-    verter = [f"kro{i}{secrets.token_hex(3)}.example" for i in range(2)]
+    verter = [f"kro{i}{secrets.token_hex(3)}.example.com" for i in range(2)]
     for v in verter:
         _utsted(migrator, v)
         _sett_kontekst(migrator, TENANT)
@@ -1897,7 +1920,7 @@ class _Falskkonn:
         if "pg_try_advisory_lock" in sql:
             return _Svar([(True,)])
         if "ventende_domenechallenges" in sql:
-            return _Svar([("t", "en.example")])
+            return _Svar([("t", "en.example.com")])
         if "bekreft_domenechallenge" in sql:
             raise self.feil
         if "pg_advisory_unlock" in sql:
@@ -2067,10 +2090,10 @@ def test_utfordringen_slaas_opp_paa_et_navn_kunden_kan_eie(monkeypatch):
     monkeypatch.setattr(
         dr, "enig_svar",
         lambda resolvere, h: (frozenset({"arv"})
-                              if h == "gammel.example" else frozenset()))
-    assert dr.utfordringssvar([], "gammel.example",
+                              if h == "gammel.example.com" else frozenset()))
+    assert dr.utfordringssvar([], "gammel.example.com",
                               ogsa_vertsnavnet=True) == frozenset({"arv"})
-    assert dr.utfordringssvar([], "gammel.example",
+    assert dr.utfordringssvar([], "gammel.example.com",
                               ogsa_vertsnavnet=False) == frozenset()
 
     # 4) Ett navn nede river ikke et bevis vi FANT på det andre — men er
@@ -2079,10 +2102,10 @@ def test_utfordringen_slaas_opp_paa_et_navn_kunden_kan_eie(monkeypatch):
         dr, "enig_svar",
         lambda resolvere, h: (None if h.startswith(dr.UTFORDRINGSPREFIKS)
                               else frozenset({"arv"})))
-    assert dr.utfordringssvar([], "gammel.example",
+    assert dr.utfordringssvar([], "gammel.example.com",
                               ogsa_vertsnavnet=True) == frozenset({"arv"})
     monkeypatch.setattr(dr, "enig_svar", lambda resolvere, h: None)
-    assert dr.utfordringssvar([], "gammel.example",
+    assert dr.utfordringssvar([], "gammel.example.com",
                               ogsa_vertsnavnet=True) is None
 
 
@@ -2103,8 +2126,8 @@ def test_trege_hostnames_sulter_ikke_de_friske(monkeypatch):
     """
     from drift import domenerevalidering as dr
 
-    treg = "treg.example"
-    friske = [f"frisk{i}.example" for i in range(4)]
+    treg = "treg.example.com"
+    friske = [f"frisk{i}.example.com" for i in range(4)]
     rader = [("t", treg)] + [("t", h) for h in friske]
 
     def sakte(resolvere, hostname):
@@ -2130,7 +2153,7 @@ def test_passet_stanser_seg_selv_paa_egen_frist(monkeypatch):
     commiten."""
     from drift import domenerevalidering as dr
 
-    rader = [("t", f"h{i}.example") for i in range(6)]
+    rader = [("t", f"h{i}.example.com") for i in range(6)]
     monkeypatch.setattr(dr, "enig_svar",
                         lambda resolvere, hostname: frozenset({"bevis"}))
     konn = _Tellekonn(rader)
@@ -2158,7 +2181,7 @@ def test_bred_resolverfeil_feller_verifiseringsunitten(monkeypatch):
     from drift import domenerevalidering as dr
     from drift import kjor_domeneverifisering as kv
 
-    rader = [("t", f"h{i}.example") for i in range(5)]
+    rader = [("t", f"h{i}.example.com") for i in range(5)]
 
     # 1) Alle oppslag feiler: terskelen slår inn.
     monkeypatch.setattr(dr, "enig_svar", lambda resolvere, hostname: None)
@@ -2247,12 +2270,12 @@ def test_autoritativt_ingen_txt_er_et_svar_ikke_en_resolverfeil(monkeypatch):
         res_mod.Resolver = lambda configure=False: _FalskResolver(feil)
         return kr._txt_oppslag("192.0.2.1")
 
-    assert _med(NXDOMAIN())("x.example") == frozenset(), \
+    assert _med(NXDOMAIN())("x.example.com") == frozenset(), \
         "NXDOMAIN ble ikke båret som et tomt svar"
-    assert _med(NoAnswer())("x.example") == frozenset(), \
+    assert _med(NoAnswer())("x.example.com") == frozenset(), \
         "NoAnswer ble ikke båret som et tomt svar"
     with pytest.raises(NoNameservers):
-        _med(NoNameservers())("x.example")
+        _med(NoNameservers())("x.example.com")
 
 
 def test_taket_holder_seg_innenfor_unitens_timeout():

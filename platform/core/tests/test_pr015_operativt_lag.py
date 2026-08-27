@@ -33,7 +33,7 @@ BEVIS_TOKEN = "t"
 
 
 def _host():
-    return "d" + secrets.token_hex(6) + ".example"
+    return "d" + secrets.token_hex(6) + ".example.com"
 
 
 def _admin():
@@ -117,7 +117,7 @@ def test_plan_er_avledet_og_deterministisk():
     """
     import hashlib
     from drift.domenerevalidering import revalideringsminutt, DOGN_MINUTTER
-    h = "eksempel.example"
+    h = "eksempel.example.com"
     assert revalideringsminutt(h) == revalideringsminutt(h)
     assert 0 <= revalideringsminutt(h) < DOGN_MINUTTER
     # Kjent verdi, så en endring i utledningen ikke kan skje ubemerket: en ny
@@ -133,7 +133,7 @@ def test_retry_slott_forskyver_ikke_normalplanen():
     lagres noe sted — det utledes på nytt hver gang.
     """
     from drift.domenerevalidering import revalideringsminutt, slott_minutter
-    h = "retry.example"
+    h = "retry.example.com"
     m = revalideringsminutt(h)
     s = slott_minutter(h)
     assert s == (m, (m + 240) % 1440, (m + 480) % 1440)
@@ -145,7 +145,7 @@ def test_jitter_holder_seg_innenfor_slottet():
     from drift.domenerevalidering import jitter_minutt, JITTER_MINUTTER
     for i in range(200):
         for slott in (0, 700, 1439):
-            assert abs(jitter_minutt(f"j{i}.example", slott)) <= JITTER_MINUTTER
+            assert abs(jitter_minutt(f"j{i}.example.com", slott)) <= JITTER_MINUTTER
 
 
 @pg
@@ -158,7 +158,7 @@ def test_sql_minutt_er_identisk_med_python_minutt(migrator):
     """
     from drift.domenerevalidering import revalideringsminutt, _MINUTT_SQL
     for i in range(50):
-        h = f"m{i}.example"
+        h = f"m{i}.example.com"
         i_sql = int(migrator.execute(
             f"SELECT {_MINUTT_SQL} FROM (SELECT %s::TEXT AS hostname) t",
             (h,)).fetchone()[0])
@@ -215,8 +215,8 @@ def test_resolverparser_avviser_tomme_komponenter(monkeypatch):
 def test_uenige_resolvere_er_ikke_vellykket():
     """Port 2 (ren del): uenighet → ikke vellykket. Ikke flertall, ikke «minst én»."""
     from drift.domenerevalidering import enige
-    assert enige(_enige(), "x.example") is True
-    assert enige(_uenige(), "x.example") is False
+    assert enige(_enige(), "x.example.com") is True
+    assert enige(_uenige(), "x.example.com") is False
 
 
 def test_oppslag_som_kaster_teller_som_uenighet():
@@ -227,7 +227,7 @@ def test_oppslag_som_kaster_teller_som_uenighet():
         raise TimeoutError("ingen svar")
 
     assert enige([Resolver("a", "op1", "n1", sprekker),
-                  _res("b", "op2", "n2", frozenset({"t"}))], "x.example") is False
+                  _res("b", "op2", "n2", frozenset({"t"}))], "x.example.com") is False
 
 
 @pg
@@ -460,7 +460,7 @@ def test_port5_patologisk_populasjon_bryter_aldri_K(migrator):
     from drift import domenerevalidering as dr
     _tom_populasjon(migrator, TENANT)
     for i in range(60):
-        _verifisert(migrator, TENANT, f"pat{i}-{secrets.token_hex(3)}.example",
+        _verifisert(migrator, TENANT, f"pat{i}-{secrets.token_hex(3)}.example.com",
                     alder_timer=21)
     a = _admin()
     try:
@@ -486,7 +486,7 @@ def test_port10_sikkerhetsnett_plukkes_selv_nar_K_er_brukt_opp(migrator):
     from drift import domenerevalidering as dr
     _tom_populasjon(migrator, TENANT)
     for i in range(10):
-        _verifisert(migrator, TENANT, f"nett{i}-{secrets.token_hex(3)}.example",
+        _verifisert(migrator, TENANT, f"nett{i}-{secrets.token_hex(3)}.example.com",
                     alder_timer=40)
     a = _admin()
     try:
@@ -509,7 +509,7 @@ def test_port10b_samtidighet_aldri_over_C(migrator):
     _tom_populasjon(migrator, TENANT)
     antall = 40
     for i in range(antall):
-        _verifisert(migrator, TENANT, f"c{i}-{secrets.token_hex(3)}.example",
+        _verifisert(migrator, TENANT, f"c{i}-{secrets.token_hex(3)}.example.com",
                     alder_timer=40)
     a = _admin()
     try:
@@ -533,7 +533,7 @@ def test_port6_bootstrap_rapporterer_faktisk_fordeling(migrator):
     from drift import domenerevalidering as dr
     _tom_populasjon(migrator, TENANT)
     for i in range(120):
-        _verifisert(migrator, TENANT, f"boot{i}-{secrets.token_hex(3)}.example",
+        _verifisert(migrator, TENANT, f"boot{i}-{secrets.token_hex(3)}.example.com",
                     alder_timer=21)
     a = _admin()
     try:
@@ -557,7 +557,7 @@ def test_port7_outage_kohorten_er_monotont_synkende(migrator):
     """
     from drift import domenerevalidering as dr
     _tom_populasjon(migrator, TENANT)
-    kohort = [f"out{i}-{secrets.token_hex(3)}.example" for i in range(30)]
+    kohort = [f"out{i}-{secrets.token_hex(3)}.example.com" for i in range(30)]
     for h in kohort:
         _verifisert(migrator, TENANT, h, alder_timer=25)
     igjen = []
@@ -592,7 +592,7 @@ def test_port11_bred_feil_gir_en_alarm_og_ingen_m37_sak(migrator):
     from drift import domenerevalidering as dr
     _tom_populasjon(migrator, TENANT)
     for i in range(10):
-        _verifisert(migrator, TENANT, f"bred{i}-{secrets.token_hex(3)}.example",
+        _verifisert(migrator, TENANT, f"bred{i}-{secrets.token_hex(3)}.example.com",
                     alder_timer=40)
     _sett_kontekst(migrator, TENANT)
     saker_for = int(migrator.execute(
@@ -617,6 +617,162 @@ def test_port11_bred_feil_gir_en_alarm_og_ingen_m37_sak(migrator):
     migrator.rollback()
     assert saker_etter == saker_for, "bred feil opprettet M-37-sak(er)"
     assert synlige == 10, "radene sluttet å være individuelt synlige"
+
+
+# ===========================================================================
+# #209 — reserverte TLD-er. Negative porter: navn som ALDRI kan resolves
+# skal verken plukkes, telles i nevneren eller kunne utløse alarmen.
+# ===========================================================================
+
+@pg
+def test_209_reservert_tld_predikatet_treffer_siste_label(migrator):
+    """Predikatet er en ren funksjon av navnet — og grensen er MÅLT.
+
+    `example.com` er reservert for dokumentasjon (RFC 2606 §3), men den er
+    faktisk delegert og svarer med en ekte A-post. Den KAN altså resolves og
+    hører hjemme i populasjonen; TLD-en `.example` kan det ikke. Skillet er
+    «finnes navnet i global DNS», ikke «ser navnet oppdiktet ut» — og det er
+    nettopp derfor husets `.example.com`-korpus ikke faller ut her.
+
+    MUTASJONEN SOM DREPER DENNE: bytt `substring(... '[^.]+$')` mot en
+    `LIKE '%.test'`-form. Da overlever `sub.fasit.test`, men `mintest.no`
+    blir plutselig reservert — et kundedomene ute av revalideringen, stille.
+    """
+    reservert = ("fasit.test", "fasit-frekvens.test", "sub.fasit.test",
+                 "x.example", "y.invalid", "a.localhost")
+    ikke = ("disponit.com", "wcagvakt.no", "d1.example.com", "mintest.no",
+            "nyinvalid.no", "test.no")
+    for h in reservert:
+        assert migrator.execute("SELECT public.er_reservert_tld(%s)",
+                                (h,)).fetchone()[0] is True, h
+    for h in ikke:
+        assert migrator.execute("SELECT public.er_reservert_tld(%s)",
+                                (h,)).fetchone()[0] is False, h
+    migrator.rollback()
+
+
+@pg
+def test_209_reservert_tld_plukkes_aldri_av_sikkerhetsnettet(migrator):
+    """#209: fixturraden bor ikke lenger permanent i kø 1.
+
+    Reproduserer prod-tilstanden målt 19/8–27/8: `.test`-radene er eldre enn
+    sikkerhetsnettet og kan per konstruksjon aldri bli ferske igjen. Kø 1 er
+    UTEN grense, så de ble plukket hver time, for alltid — en absorberende
+    tilstand ingen kjøring kunne rydde opp i.
+
+    Den ekte raden i samme kjøring er porten mot overfiksing: den skal
+    fortsatt plukkes. Et filter som tok alt, hadde også bestått «ingen
+    alarm».
+    """
+    from drift import domenerevalidering as dr
+    _tom_populasjon(migrator, TENANT)
+    for navn in ("fasit", "fasit-frekvens"):
+        _verifisert(migrator, TENANT, f"{navn}-{secrets.token_hex(3)}.test",
+                    alder_timer=40)
+    ekte = f"ekte-{secrets.token_hex(3)}.example.com"
+    _verifisert(migrator, TENANT, ekte, alder_timer=40)
+
+    a = _admin()
+    try:
+        rader = dr.kandidater(a, 0, 1439, 99)
+    finally:
+        a.close()
+    plukkede = {h for _, h, _ in rader}
+    assert ekte in plukkede, "den ekte raden mistet sikkerhetsnettet sitt"
+    assert not [h for h in plukkede if h.endswith(".test")], (
+        f"reservert navn ble plukket: {sorted(plukkede)}")
+
+
+@pg
+def test_209_reservert_tld_plukkes_aldri_av_budsjettkoeene(migrator):
+    """Den ANDRE grenen: kø 2/kø 3, ikke bare sikkerhetsnettet.
+
+    De øvrige #209-portene seeder `alder_timer=40`. Raden er da eldre enn
+    sikkerhetsnettet og når aldri kandidat-CTE-en, så `ko2_pluss_ko3 == 0`
+    holder av seg selv — uansett hva predikatet gjør der nede. Alderen her er
+    21 t: over normalgrensen (20), under nettet (26), altså midt i vinduet
+    budsjettkøene plukker fra. Det er nøyaktig raden migrasjonen advarer mot,
+    en reservert rad som EN GANG hadde en fersk revalidering.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `AND NOT er_reservert_tld(d.hostname)`
+    fra kandidat-CTE-en alene. Alle andre #209-porter forblir grønne, og de
+    reserverte radene spiser budsjett som ingen kjøring kan omsette i arbeid.
+
+    Den ekte raden er porten mot overfiksing, som i sikkerhetsnett-testen:
+    et filter som tømte hele vinduet, hadde også bestått «ingen reservert».
+    """
+    from drift import domenerevalidering as dr
+    _tom_populasjon(migrator, TENANT)
+    reservert = f"fasit-{secrets.token_hex(3)}.test"
+    ekte = f"ekte-{secrets.token_hex(3)}.example.com"
+    _verifisert(migrator, TENANT, reservert, alder_timer=21)
+    _verifisert(migrator, TENANT, ekte, alder_timer=21)
+
+    a = _admin()
+    try:
+        rader = dr.kandidater(a, 0, 1439, 99)
+    finally:
+        a.close()
+    plukkede = {(h, ko) for _, h, ko in rader}
+    assert reservert not in {h for h, _ in plukkede}, (
+        f"reservert navn nådde budsjettkøene: {sorted(plukkede)}")
+    assert any(h == ekte and ko in (2, 3) for h, ko in plukkede), (
+        f"den ekte raden falt ut av kø 2/kø 3: {sorted(plukkede)}")
+
+
+@pg
+def test_209_reservert_tld_teller_ikke_i_nevneren(migrator):
+    """N er nevneren budsjettet regnes av — da må den måle det plukkbare.
+
+    Sto de reserverte radene igjen i N mens de var ute av utvalget, ville K
+    vært et tak over rader som ikke finnes: budsjettet hadde vokst med hver
+    fixtur uten at én eneste ekte revalidering fikk plass mer.
+    """
+    from drift import domenerevalidering as dr
+    _tom_populasjon(migrator, TENANT)
+    a = _admin()
+    try:
+        N_for, _ = dr.budsjett(a)
+    finally:
+        a.close()
+    for i in range(5):
+        _verifisert(migrator, TENANT, f"fix{i}-{secrets.token_hex(3)}.test",
+                    alder_timer=40)
+    a = _admin()
+    try:
+        N_etter, _ = dr.budsjett(a)
+    finally:
+        a.close()
+    assert N_etter == N_for, (
+        f"fem reserverte rader flyttet nevneren {N_for} → {N_etter}")
+
+
+@pg
+def test_209_reserverte_navn_utloser_ikke_bred_resolverfeil(migrator):
+    """Selve #209: alarmen slutter å rope ulv.
+
+    Dette er kjøringen som har feilet 129 ganger siden 19/8 16:56Z. Med KUN
+    reserverte rader i populasjonen er det ingenting å slå opp — og en
+    nevner på null er ikke «100 % feil», den er «ingen måling».
+
+    Porten er negativ i begge retninger: `_uenige()` ville gitt alarm på et
+    hvilket som helst ekte navn, så en grønn test her beviser at det er
+    NAVNENE og ikke resolverne som er tatt ut av regnestykket.
+    """
+    from drift import domenerevalidering as dr
+    _tom_populasjon(migrator, TENANT)
+    for navn in ("fasit", "fasit-frekvens"):
+        _verifisert(migrator, TENANT, f"{navn}-{secrets.token_hex(3)}.test",
+                    alder_timer=40)
+    a = _admin()
+    try:
+        res = dr.kjor(a, _uenige())
+    finally:
+        a.close()
+    assert res.plukket_ko1 == 0, "reservert rad nådde sikkerhetsnettet"
+    assert res.ko2_pluss_ko3 == 0, "reservert rad nådde budsjettkøene"
+    assert res.alarm_utlost is False, (
+        "bred_resolverfeil utløst av navn som aldri kan resolves — #209")
 
 
 def test_alarmterskelen_gir_en_feilet_kjoring(monkeypatch):
