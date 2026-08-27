@@ -1513,6 +1513,10 @@ test("Evalueringer: produktet først og null klikk — ferskeste klare "
   const overskrift2 = hoved.querySelector("h3[tabindex='-1']");
   assert.equal(hoved.ownerDocument.activeElement, overskrift2,
     "cache-treffet ga ikke klikkets fokus");
+  // ... og en ALT VIST rapport bygges ikke på nytt (Codex P2): samme
+  // overskrift-NODE — en rebuild hadde kollapset åpne detaljbokser.
+  assert.equal(overskrift2, overskrift,
+    "klikk på vist rapport bygde DOM-en på nytt");
   // 3) ... og stille er ikke det samme som skånsom (Cursor P2): uten
   //    fokusflytting er den høflige live-regionen det ENESTE sporet som
   //    sier fra at produktet dukket opp.
@@ -1565,6 +1569,62 @@ test("Evalueringer: auto-visningen tar den FERSKESTE klare rapporten, "
   }
   // MUTASJONEN SOM DREPER DENNE: bytt reduksjonen tilbake til
   // `seedListe.find((e2) => e2.rapport_klar)` — stigende seed viser 96.
+});
+
+test("Evalueringer: hopplenke med ÉN prosess — ankeret står før "
+  + "blinding, vekter og signering", async () => {
+  // Pass-P2 (speilport): flerprosess-testen låser ankerets plass mot
+  // prosessVELGEREN, som bare finnes med ≥2 prosesser. Vanligste flate
+  // er én prosess — der må ankeret ligge etter rangeringens siste
+  // `<summary>` og FØR første prosesskontroll (blinding/vekter),
+  // ellers er bypass ødelagt for de fleste uten at porten ser det.
+  KALL = [];
+  const kandidater = ["kandidat-01", "kandidat-02", "kandidat-03"];
+  SVAR = {
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
+    "/v1/rekruttering/rapport/96": { oppdrag_id: 96, rapport: {
+      rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+      profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
+      antall_soknader: 3,
+      rangering: kandidater.map((id, i) => ({ kandidat_id: id,
+        poeng: 9 - i, nedbrytning: { drift: 9 - i } })),
+      kandidater: Object.fromEntries(kandidater.map((id) => [id, { funn: [] }])),
+      fremdrift: { filer_lest: 3, filer_totalt: 3, byte_lest: 150 },
+    } },
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("h3[tabindex='-1']")),
+    "rapporten rendret ikke av seg selv");
+  const sammendrag = [...hoved.querySelectorAll(
+    "section[aria-labelledby=evaluering-tittel] details > summary")];
+  assert.ok(sammendrag.length >= 3);
+  const hopp = hoved.querySelector("a.rekrut-hopp");
+  assert.ok(hopp, "hopplenken mangler i én-prosess-flaten");
+  const maal = hoved.querySelector(hopp.getAttribute("href"));
+  assert.ok(maal, "ankeret mangler i én-prosess-flaten");
+  const alle = [...hoved.querySelectorAll("*")];
+  assert.ok(alle.indexOf(maal)
+    > alle.indexOf(sammendrag[sammendrag.length - 1]),
+    "ankeret ligger foran detaljboksene — ingenting hoppes over");
+  // Første prosesskontroll i én-prosess-grenen: blindingsbryteren/vekt-
+  // kontrollen — ankeret må ligge FØR den (mutasjonen «flytt hoppAnker
+  // etter listeRot» rødner her).
+  const foersteKontroll = hoved.querySelector(
+    "input[type=range], input[type=checkbox], table[aria-label]");
+  assert.ok(foersteKontroll, "fant ingen prosesskontroll i riggen");
+  assert.ok(alle.indexOf(maal) < alle.indexOf(foersteKontroll),
+    "ankeret ligger etter prosesskontrollene — hoppet lander for langt ned");
+  const klikk = new window.MouseEvent("click",
+    { bubbles: true, cancelable: true });
+  hopp.dispatchEvent(klikk);
+  assert.equal(hoved.ownerDocument.activeElement, maal,
+    "hopplenken flyttet ikke fokus til ankeret");
+  assert.ok(klikk.defaultPrevented, "fragmentnavigasjonen slapp gjennom");
 });
 
 test("Evalueringer: hopplenke forbi rangeringen til prosess og signering "
@@ -1620,6 +1680,10 @@ test("Evalueringer: hopplenke forbi rangeringen til prosess og signering "
   assert.ok(hopp, "hopplenken over rangeringen mangler");
   const maal = hoved.querySelector(hopp.getAttribute("href"));
   assert.ok(maal, "hopplenken peker på et anker som ikke finnes i flaten");
+  // Ankeret har et TILGJENGELIG navn (Codex P2): fokus på en navnløs,
+  // tom div annonseres som ingenting for skjermleseren.
+  assert.equal(maal.getAttribute("aria-label"),
+    t("ui.rekruttering.evalueringer.hopp_maal"));
   // Dokumentrekkefølge: ankeret ligger ETTER alle detaljboksene og FØR
   // prosesskontrollen — altså er det nettopp rangeringen som hoppes over.
   const alle = [...hoved.querySelectorAll("*")];

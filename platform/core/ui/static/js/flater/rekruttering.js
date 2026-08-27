@@ -333,7 +333,8 @@ function tegn(hoved, ctx, data, okt, valgtId) {
   // egen: et anker rett etter seksjonen, og en hopplenke til det øverst
   // i rapporten. Ankeret står i begge grenene — profileditoren og
   // bestillingen ligger etter rangeringen også når ingen prosess finnes.
-  const hoppAnker = el("div", { id: HOPP_ANKER, tabindex: "-1" });
+  const hoppAnker = el("div", { id: HOPP_ANKER, tabindex: "-1", role: "group",
+    "aria-label": t("ui.rekruttering.evalueringer.hopp_maal") });
   if (!prosesser.length) {
     // PRODUKTET FØRST (eiers UX-prinsipp 27/8: færrest mulig klikk
     // til produktet): rapportene øverst, administrasjonen under.
@@ -923,6 +924,14 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
     // til å laste ned og dekryptere 5000 kandidater på nytt — den
     // re-bygges, og klikket beholder fokus-semantikken sin.
     if (rHent.siste && rHent.siste.oppdrag_id === oppdragId) {
+      // ALT VIST? Ikke bygg på nytt (Codex P2): en rebuild kollapser
+      // åpne detaljbokser og kaster leserens posisjon — rapporten står
+      // jo der. Klikket får bare fokus-semantikken sin.
+      const vist = rapportRot.querySelector("h3[tabindex='-1']");
+      if (vist) {
+        if (fokus) vist.focus();
+        return;
+      }
       try {
         const { overskrift, noder } = byggRapport(rHent.siste);
         if (rHent.tegn(null, noder) && fokus) overskrift.focus();

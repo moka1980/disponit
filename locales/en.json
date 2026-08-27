@@ -1081,6 +1081,7 @@
   "ui.rekruttering.evalueringer.rapportfeil": "The report could not be fetched.",
   "ui.rekruttering.evalueringer.blindet": "Candidates are blinded in the evaluation — personal values appear as masks (e.g. [NAVN-1]).",
   "ui.rekruttering.evalueringer.hopp_prosess": "Skip the ranking, go to process and signing",
+  "ui.rekruttering.evalueringer.hopp_maal": "Process and administration",
   "ui.rekruttering.bestill.tittel": "Order an evaluation",
   "ui.rekruttering.bestill.fil": "Application bundle (ZIP file)",
   "ui.rekruttering.bestill.profil": "Job profile",
