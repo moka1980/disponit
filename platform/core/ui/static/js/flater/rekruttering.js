@@ -194,6 +194,11 @@ export function visRekruttering(hoved, ctx) {
       okt.evalueringer.liste = undefined;
       okt.evalueringer.flere = false;
       okt.evalueringer.nr += 1;
+      // ... og rapport-cachen følger listen: en fersk lasting er
+      // sannheten for begge (auto-lastingen får kjøre på nytt).
+      okt.rapportHenting.nr += 1;
+      okt.rapportHenting.siste = null;
+      okt.rapportHenting.autoKjort = false;
       tegn(hoved, ctx, data, okt);
     });
 }
@@ -781,35 +786,10 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
   // fortsatt `min === listeNr` i SIN teller og kunne skrive seg inn i
   // øktens liste etter et ferskere svar.
 
-  const visRapport = async (oppdragId, { fokus = true } = {}) => {
-    // Auto-stien (fokus=false) og klikk-stien deler suksessvei, men
-    // ALDRI feilform (pass-funn): listen og detaljen kan divergere i
-    // vinduet mellom dem (frist/TOCTOU/transient), og en usolicited
-    // `role="alert"` på hver sidelasting er falsk alarm. Auto-feil er
-    // stille — rapportområdet står tomt, listen er fortsatt sannheten.
-    // Tøm FØR henting: et feilet kall skal aldri la forrige rapport stå
-    // igjen under en feilmelding som gjelder en annen.
-    rHent.tegn(null, []);
-    const min = ++rHent.nr;
-    let svar;
-    try {
-      svar = await hentEvalueringsrapport(oppdragId);
-    } catch (e) {
-      if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
-      if (min !== rHent.nr) return;
-      meldLive("");
-      if (fokus) rHent.tegn(t("ui.rekruttering.evalueringer.rapportfeil"), []);
-      return;
-    }
-    if (min !== rHent.nr) return;
-    // RENDRINGEN LIGGER INNE I `try` (Cursor P2). 200 er ikke det samme
-    // som rendrbar: mangler `rangering`, `profil` eller `nedbrytning`,
-    // kastet dereferansen HER — etter at `utfall` og `rapportRot` alt var
-    // tømt. Resultatet var en stille tom seksjon uten `role="alert"`,
-    // samme «200-og-feiler-under-rendring»-klasse som diskriminator-
-    // portene verner serversiden mot. WCAG-flaten rendrer inne i `try`;
-    // ats-veien gjør nå det samme, og lander i den ærlige feiltilstanden.
-    try {
+  // Bygger rapportens DOM fra et svar — deles av hentestien og
+  // økt-cachen (Codex P2: rapporten skal OVERLEVE et prosessbytte uten
+  // ny henting; cachen re-bygges inn i den nye seksjonens rot).
+  const byggRapport = (svar) => {
       const rapport = svar.rapport;
       const kropp = el("tbody", {}, ...rapport.rangering.map((rad) =>
         el("tr", {},
@@ -896,12 +876,49 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
         const maal = hoved.querySelector(`#${HOPP_ANKER}`);
         if (maal) maal.focus();
       });
-      const tegnet = rHent.tegn(null, [
-        hoppLenke,
-        overskrift,
-        el("p", { text: t("ui.rekruttering.evalueringer.blindet") }),
-        el("div", { class: "tablewrap" }, tabell), ...detaljer]);
+    return { overskrift, noder: [
+      hoppLenke,
+      overskrift,
+      el("p", { text: t("ui.rekruttering.evalueringer.blindet") }),
+      el("div", { class: "tablewrap" }, tabell), ...detaljer] };
+  };
+
+  const visRapport = async (oppdragId, { fokus = true } = {}) => {
+    // Auto-stien (fokus=false) og klikk-stien deler suksessvei, men
+    // ALDRI feilform (pass-funn): listen og detaljen kan divergere i
+    // vinduet mellom dem (frist/TOCTOU/transient), og en usolicited
+    // `role="alert"` på hver sidelasting er falsk alarm. Auto-feil er
+    // stille — rapportområdet står tomt, listen er fortsatt sannheten.
+    // Tøm FØR henting: et feilet kall skal aldri la forrige rapport stå
+    // igjen under en feilmelding som gjelder en annen.
+    rHent.tegn(null, []);
+    const min = ++rHent.nr;
+    let svar;
+    try {
+      svar = await hentEvalueringsrapport(oppdragId);
+    } catch (e) {
+      if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+      if (min !== rHent.nr) return;
+      // Ryddingen av live-regionen er også EIERSKAPS-vaktet (Codex P2):
+      // etter et rutebytte kan en ANNEN flate nettopp ha annonsert der,
+      // og vår tømming ville slettet dens beskjed.
+      if (rapportRot.isConnected) meldLive("");
+      if (fokus) rHent.tegn(t("ui.rekruttering.evalueringer.rapportfeil"), []);
+      return;
+    }
+    if (min !== rHent.nr) return;
+    // RENDRINGEN LIGGER INNE I `try` (Cursor P2). 200 er ikke det samme
+    // som rendrbar: mangler `rangering`, `profil` eller `nedbrytning`,
+    // kastet dereferansen HER — etter at `utfall` og `rapportRot` alt var
+    // tømt. Resultatet var en stille tom seksjon uten `role="alert"`,
+    // samme «200-og-feiler-under-rendring»-klasse som diskriminator-
+    // portene verner serversiden mot. WCAG-flaten rendrer inne i `try`;
+    // ats-veien gjør nå det samme, og lander i den ærlige feiltilstanden.
+    try {
+      const { overskrift, noder } = byggRapport(svar);
+      const tegnet = rHent.tegn(null, noder);
       if (!tegnet) return;
+      rHent.siste = svar;
       // Fokus KUN på eksplisitt klikk — auto-visningen ved sidelasting
       // skal aldri stjele fokus fra der brukeren er (a11y).
       //
@@ -919,7 +936,7 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       // Halv DOM er verre enn ingen: en delvis bygget rapport ser ekte
       // ut — og en TIDLIGERE auto-annonsering skal ikke bli stående og
       // beskrive en rapport som ikke vises (CodeRabbit).
-      meldLive("");
+      if (rapportRot.isConnected) meldLive("");
       if (fokus) rHent.tegn(t("ui.rekruttering.evalueringer.rapportfeil"), []);
     }
   };
@@ -1027,8 +1044,21 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
   // ... og kun ÉN gang per økt (Codex P2): listen er tenant-global og
   // uavhengig av valgt prosess — hvert prosessbytte bygger seksjonen på
   // nytt, og en ubetinget auto-lasting hadde re-fetchet og re-rendret
-  // rapporten for hver eneste veksling.
-  if (klarRad && rHent && !rHent.autoKjort) {
+  // rapporten for hver eneste veksling. En ALT lastet rapport skal
+  // likevel OVERLEVE byttet (Codex P2): den re-bygges fra øktens cache
+  // inn i den nye rota — ingen henting, ingen annonsering, samme
+  // rapport brukeren sto i.
+  if (rHent && rHent.siste) {
+    try {
+      // Direkte i EGEN rot, ikke via `rHent.tegn`: ved mount er rota
+      // ennå ikke i dokumentet (seksjonen settes inn ETTER at denne
+      // funksjonen returnerer), og tegn-vaktens isConnected ville
+      // avvist en helt legitim mount-rendring.
+      sett(rapportRot, ...byggRapport(rHent.siste).noder);
+    } catch (e) {
+      // Stille: cachen kan være foreldet i form; listen er sannheten.
+    }
+  } else if (klarRad && rHent && !rHent.autoKjort) {
     rHent.autoKjort = true;
     visRapport(klarRad.oppdrag_id, { fokus: false });
   }

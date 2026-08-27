@@ -1701,6 +1701,10 @@ test("Evalueringer: auto-lastingen kjører ÉN gang per økt — "
   assert.equal(KALL.filter(
     (k) => k.sti === "/v1/rekruttering/rapport/96").length, foer,
     "prosessbyttet re-fetchet rapporten — auto-lastingen er per økt");
+  // ... og rapporten OVERLEVER byttet (Codex P2): re-bygget fra øktens
+  // cache inn i den nye seksjonen — uten henting.
+  assert.ok(hoved.textContent.includes("kandidat-01"),
+    "rapporten forsvant i prosessbyttet — cachen re-bygges ikke");
 });
 
 test("Evalueringer: en rapport som lander etter et prosessbytte tegner "
