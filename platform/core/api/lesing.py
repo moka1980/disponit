@@ -556,17 +556,22 @@ def rekrutteringsevalueringer(tjeneste, request: Request) -> Response:
             "                (SELECT * FROM unnest(%s::text[], %s::text[])))"
             "  FROM oppdrag o"
             " WHERE o.tenant=%s AND o.oppdragstype = ANY(%s::text[])"
-            " ORDER BY o.id DESC LIMIT 100",
+            # HENTER ÉN OVER VINDUET (Codex P2). `LIMIT 100` + `flere =
+            # len(rader) == 100` PÅSTÅR eldre rader ved nøyaktig 100 uten
+            # å ha sett én — flaten sier da «det finnes eldre» om en
+            # komplett historikk. Den 101. raden er beviset; den sendes
+            # aldri ut, den avgjør bare `flere`.
+            " ORDER BY o.id DESC LIMIT 101",
             (typer, arter, auth.tenant, typer)).fetchall()
         return kanonisk_json({
             "evalueringer": [
                 {"oppdrag_id": r[0], "status": r[1],
                  "opprettet": r[2].isoformat() if r[2] else None,
-                 "rapport_klar": r[3]} for r in rader],
-            # Aldri stille avkorting: et fullt vindu KAN bety flere — flaten
-            # sier det, i stedet for å presentere de nyeste 100 som alt.
+                 "rapport_klar": r[3]} for r in rader[:100]],
+            # Aldri stille avkorting: finnes rad 101, MELDER flaten det i
+            # stedet for å presentere de nyeste 100 som alt.
             # Cursor (#220 P2-3, eierdom); selve pagineringen bor i #221.
-            "flere": len(rader) == 100,
+            "flere": len(rader) > 100,
             "request_id": rid,
         }, 200, {"x-request-id": rid})
     return _les(tjeneste, request, "decisions:read", _fn)

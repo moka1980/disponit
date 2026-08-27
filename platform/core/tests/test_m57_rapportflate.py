@@ -289,12 +289,16 @@ def test_listeveien_viser_ogsaa_uferdige(migrator, miljo, inndata_rot,
 
 @pg
 def test_listen_avkorter_aldri_stille(migrator, miljo):
-    """Et fullt vindu (`LIMIT 100`) melder `flere: true` — flaten skal
-    kunne si at eldre evalueringer finnes, aldri presentere de nyeste
-    100 som alt (Cursor #220 P2-3). Selve pagineringen bor i #221.
+    """`flere` er MÅLT, ikke gjettet: nøyaktig 100 evalueringer er en
+    komplett historikk (`flere: false`), 101 er avkortet (`flere: true`).
+    Flaten skal kunne si at eldre finnes, aldri presentere de nyeste 100
+    som alt (Cursor #220 P2-3) — og aldri påstå eldre som ikke finnes
+    (Codex P2). Selve pagineringen bor i #221.
 
-    MUTASJONEN SOM DREPER DENNE: fjern `flere`-leddet, eller regn det av
-    noe annet enn radtallet mot vinduet."""
+    MUTASJONEN SOM DREPER DENNE: `flere = len(rader) == 100` mot et
+    `LIMIT 100`-vindu — grensearmen under rødner, fordi den påstanden
+    ikke har SETT rad 101. Likeså: fjern `flere`-leddet, eller la den
+    101. raden lekke ut i svaret."""
     from starlette.testclient import TestClient
     from api.app import lag_app
     from api import sesjon as sesjonmodul
@@ -304,36 +308,56 @@ def test_listen_avkorter_aldri_stille(migrator, miljo):
     _sett_kontekst(migrator, TENANT)
     key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(migrator, TENANT)
     ct, nonce = kryptering.krypter(dek, {"x": 1}, TENANT, key_id)
-    for _ in range(101):
-        # `oppdrag_en_per_beslutning`: hvert oppdrag krever sin egen
-        # beslutningsloggpost.
-        logg = migrator.execute(
-            "INSERT INTO revisjonslogg (tenant, aktor, kilde, input_hash,"
-            " policy_id, beslutning, begrunnelse, idempotency_key)"
-            " VALUES (%s,'test','api_token','ih','p@1.0.0/x.y','TILLAT',"
-            "'[]',%s) RETURNING id",
-            (TENANT, secrets.token_hex(8))).fetchone()[0]
-        migrator.execute(
-            "INSERT INTO oppdrag (opprinnelse, tenant,"
-            " beslutning_loggpost_id, oppdragstype, handling, eiermodul,"
-            " payload_kryptert, key_id, nonce, utforelsesfrist,"
-            " evidensfrist, koblingsstatus, status)"
-            " VALUES ('beslutning',%s,%s,'rekruttering.evaluering',"
-            "'rekruttering.evaluering','m57_ats',%s,%s,%s,"
-            " now()+interval '4 hour', now()+interval '1 day','KOBLET',"
-            # Terminal fra fødselen: seedingen skal fylle VINDUET, aldri
-            # bli claimet av en annen tests controller.
-            "'kansellert')",
-            (TENANT, logg, ct, key_id, nonce))
-    migrator.commit()
-    a = lag_app(DSN)
-    with TestClient(a) as c:
-        cookie, _csrf = _adminsesjon()
+
+    def _seed(antall):
+        for _ in range(antall):
+            # `oppdrag_en_per_beslutning`: hvert oppdrag krever sin egen
+            # beslutningsloggpost.
+            logg = migrator.execute(
+                "INSERT INTO revisjonslogg (tenant, aktor, kilde,"
+                " input_hash, policy_id, beslutning, begrunnelse,"
+                " idempotency_key)"
+                " VALUES (%s,'test','api_token','ih','p@1.0.0/x.y',"
+                "'TILLAT','[]',%s) RETURNING id",
+                (TENANT, secrets.token_hex(8))).fetchone()[0]
+            migrator.execute(
+                "INSERT INTO oppdrag (opprinnelse, tenant,"
+                " beslutning_loggpost_id, oppdragstype, handling,"
+                " eiermodul, payload_kryptert, key_id, nonce,"
+                " utforelsesfrist, evidensfrist, koblingsstatus, status)"
+                " VALUES ('beslutning',%s,%s,'rekruttering.evaluering',"
+                "'rekruttering.evaluering','m57_ats',%s,%s,%s,"
+                " now()+interval '4 hour', now()+interval '1 day',"
+                "'KOBLET',"
+                # Terminal fra fødselen: seedingen skal fylle VINDUET,
+                # aldri bli claimet av en annen tests controller.
+                "'kansellert')",
+                (TENANT, logg, ct, key_id, nonce))
+        migrator.commit()
+
+    def _les(c, cookie):
         r = c.get("/v1/rekruttering/evalueringer",
                   cookies={sesjonmodul.C_SESJON: cookie})
         assert r.status_code == 200, r.text
-        kropp = r.json()
+        return r.json()
+
+    _seed(100)
+    a = lag_app(DSN)
+    with TestClient(a) as c:
+        cookie, _csrf = _adminsesjon()
+        # GRENSEN (Codex P2): nøyaktig vindusstort er KOMPLETT, ikke
+        # avkortet. `len(rader) == 100` mot et `LIMIT 100`-vindu ville
+        # meldt `true` her uten å ha sett en eneste eldre rad.
+        kropp = _les(c, cookie)
         assert len(kropp["evalueringer"]) == 100, \
             "vinduet skal være nøyaktig LIMIT-en"
+        assert kropp["flere"] is False, \
+            "nøyaktig 100 er hele historikken — ingen eldre å påstå"
+
+        # Én rad OVER vinduet: nå FINNES det eldre, og først nå meldes det.
+        _seed(1)
+        kropp = _les(c, cookie)
+        assert len(kropp["evalueringer"]) == 100, \
+            "svaret skal aldri lekke den 101. beviseraden"
         assert kropp["flere"] is True, \
-            "et fullt vindu skal MELDE at det kan finnes flere"
+            "med rad 101 seedet skal avkortingen MELDES"
