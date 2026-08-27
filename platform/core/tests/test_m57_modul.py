@@ -975,8 +975,7 @@ def test_port15_artefakten_baerer_det_kanoniske_funnet():
                                         "slutt": start + 6,
                                         "sitat": "ti års"},
                               "karaktertrekk": "pertentlig"}],
-                    "oppfylt": {k: True for k in vekter},
-                    "intervjusporsmal": []}
+                    "oppfylt": {k: True for k in vekter}}
 
     with pytest.raises(evaluering.Evalueringsfeil) as e:
         evaluering.evaluer_kandidat(
@@ -993,8 +992,7 @@ class _Modell:
 
     def vurder(self, tekst, vekter):
         self.sett.append(tekst)
-        return {"funn": [], "oppfylt": {k: True for k in vekter},
-                "intervjusporsmal": ["Fortell om drift."]}
+        return {"funn": [], "oppfylt": {k: True for k in vekter}}
 
 
 _MAALINGER = {_Modell.image_digest: Biasmaaling(
@@ -1162,13 +1160,11 @@ def test_avkortet_modellsvar_er_en_feil_ikke_et_tomt_resultat():
             return self._svar
 
     vekter = {"drift": 3, "sikkerhet": 2}
-    hele = {"funn": [], "oppfylt": {"drift": True, "sikkerhet": False},
-            "intervjusporsmal": ["Fortell om drift."]}
+    hele = {"funn": [], "oppfylt": {"drift": True, "sikkerhet": False}}
     for svar in (
             {},                                    # avkortet i sin helhet
             "ikke et objekt",
             {k: v for k, v in hele.items() if k != "oppfylt"},
-            {k: v for k, v in hele.items() if k != "intervjusporsmal"},
             hele | {"funn": None},
             # Listen var målt, ELEMENTENE ikke (Cursor P2): `valider_funn`
             # leser funnet som en dict, så disse ga en rå `AttributeError`
@@ -1179,9 +1175,7 @@ def test_avkortet_modellsvar_er_en_feil_ikke_et_tomt_resultat():
             # Et krav profilen har, men modellen ikke svarte på, ble
             # stille til null poeng — speilbildet av `ranger`s avvisning
             # av krav UTENFOR profilen.
-            hele | {"oppfylt": {"drift": True}},
-            hele | {"intervjusporsmal": [None]},
-            hele | {"intervjusporsmal": [""]}):
+            hele | {"oppfylt": {"drift": True}}):
         with pytest.raises(evaluering.Evalueringsfeil) as e:
             evaluering.evaluer_kandidat(
                 _Avkortet(svar), "Kari søker.", {"navn": ["Kari"]},
@@ -1202,12 +1196,16 @@ def test_avkortet_modellsvar_er_en_feil_ikke_et_tomt_resultat():
                 biasmaalinger=_MAALINGER)
         assert e.value.kode == "ikke_boolsk_oppfyllelse", verdi
         assert "drift" in str(e.value)
-    # Positiv kontroll: det HELE svaret går uendret gjennom.
-    ut = evaluering.evaluer_kandidat(
-        _Avkortet(hele), "Kari søker.", {"navn": ["Kari"]},
-        vekter, biasmaalinger=_MAALINGER)
-    assert ut["oppfylt"] == {"drift": True, "sikkerhet": False}
-    assert ut["intervjusporsmal"] == ["Fortell om drift."]
+    # Positiv kontroll: det HELE svaret går uendret gjennom — og
+    # intervjuspørsmål er UTE av kontrakten (#225): et svar som likevel
+    # bærer dem passerer, men artefakten bærer alltid tom liste —
+    # spørsmål genereres ved innkalling, aldri under evalueringen.
+    for svar in (hele, hele | {"intervjusporsmal": ["Fortell om drift."]}):
+        ut = evaluering.evaluer_kandidat(
+            _Avkortet(svar), "Kari søker.", {"navn": ["Kari"]},
+            vekter, biasmaalinger=_MAALINGER)
+        assert ut["oppfylt"] == {"drift": True, "sikkerhet": False}
+        assert ut["intervjusporsmal"] == []
 
 
 def test_port16_versalvarianter_maskeres_og_maales():
@@ -1248,8 +1246,7 @@ def test_kildereferansen_folger_teksten_den_indekserer():
                               "kilde": {"start": start,
                                         "slutt": start + 6,
                                         "sitat": "ti års"}}],
-                    "oppfylt": {k: True for k in vekter},
-                    "intervjusporsmal": []}
+                    "oppfylt": {k: True for k in vekter}}
 
     raa = "Kari Nordmann har ti års erfaring."
     ut = evaluering.evaluer_kandidat(
