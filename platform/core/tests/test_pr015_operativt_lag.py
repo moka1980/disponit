@@ -684,6 +684,43 @@ def test_209_reservert_tld_plukkes_aldri_av_sikkerhetsnettet(migrator):
 
 
 @pg
+def test_209_reservert_tld_plukkes_aldri_av_budsjettkoeene(migrator):
+    """Den ANDRE grenen: kø 2/kø 3, ikke bare sikkerhetsnettet.
+
+    De øvrige #209-portene seeder `alder_timer=40`. Raden er da eldre enn
+    sikkerhetsnettet og når aldri kandidat-CTE-en, så `ko2_pluss_ko3 == 0`
+    holder av seg selv — uansett hva predikatet gjør der nede. Alderen her er
+    21 t: over normalgrensen (20), under nettet (26), altså midt i vinduet
+    budsjettkøene plukker fra. Det er nøyaktig raden migrasjonen advarer mot,
+    en reservert rad som EN GANG hadde en fersk revalidering.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `AND NOT er_reservert_tld(d.hostname)`
+    fra kandidat-CTE-en alene. Alle andre #209-porter forblir grønne, og de
+    reserverte radene spiser budsjett som ingen kjøring kan omsette i arbeid.
+
+    Den ekte raden er porten mot overfiksing, som i sikkerhetsnett-testen:
+    et filter som tømte hele vinduet, hadde også bestått «ingen reservert».
+    """
+    from drift import domenerevalidering as dr
+    _tom_populasjon(migrator, TENANT)
+    reservert = f"fasit-{secrets.token_hex(3)}.test"
+    ekte = f"ekte-{secrets.token_hex(3)}.example.com"
+    _verifisert(migrator, TENANT, reservert, alder_timer=21)
+    _verifisert(migrator, TENANT, ekte, alder_timer=21)
+
+    a = _admin()
+    try:
+        rader = dr.kandidater(a, 0, 1439, 99)
+    finally:
+        a.close()
+    plukkede = {(h, ko) for _, h, ko in rader}
+    assert reservert not in {h for h, _ in plukkede}, (
+        f"reservert navn nådde budsjettkøene: {sorted(plukkede)}")
+    assert any(h == ekte and ko in (2, 3) for h, ko in plukkede), (
+        f"den ekte raden falt ut av kø 2/kø 3: {sorted(plukkede)}")
+
+
+@pg
 def test_209_reservert_tld_teller_ikke_i_nevneren(migrator):
     """N er nevneren budsjettet regnes av — da må den måle det plukkbare.
 
