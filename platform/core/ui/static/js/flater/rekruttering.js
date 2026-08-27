@@ -145,7 +145,16 @@ export function visRekruttering(hoved, ctx) {
     bestilling: { reserverIdem: null, bestillIdem: null,
                   inndataRef: null, filnavn: null,
                   paagaaende: false, generasjon: 0,
-                  oppdaterProfilvalg: null, frysSkjema: null } };
+                  oppdaterProfilvalg: null, frysSkjema: null },
+    // Evalueringslisten hører til ØKTEN av samme grunn som bunten over
+    // (Cursor P1): den er tenant-global, ikke prosessbundet, men `tegn`
+    // bygger seksjonen på nytt ved hvert prosessbytte og seedet lå i
+    // `data`-snapshoten fra sidelastingen. Oppfriskningen etter et
+    // levert oppdrag tegnet bare DOM, så oppdraget forsvant i det neste
+    // bytte — nøyaktig det Codex-løftet «levert oppdrag synlig uten
+    // omlasting» lovte bort. `undefined` betyr «ingen oppfriskning
+    // ennå»; `null` er listefeil og en ekte verdi.
+    evalueringer: undefined };
   medStatus(hoved, ctx,
     async () => {
       // Profilene er TILLEGGSDATA (samme politikk som
@@ -168,7 +177,13 @@ export function visRekruttering(hoved, ctx) {
       return { ...pros, profiler: (prof && prof.profiler) || [],
                evalueringer: evals ? (evals.evalueringer || []) : null };
     },
-    (data) => tegn(hoved, ctx, data, okt));
+    (data) => {
+      // En fersk full lasting ER sannheten — også «Prøv igjen» etter en
+      // feilet lasting. Oppfriskningscachen fra forrige lasting skal
+      // aldri vinne over den.
+      okt.evalueringer = undefined;
+      tegn(hoved, ctx, data, okt);
+    });
 }
 
 function tegn(hoved, ctx, data, okt, valgtId) {
@@ -876,7 +891,12 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       el("div", { class: "tablewrap" }, liste), rapportRot);
   };
 
-  tegnListe(data ? data.evalueringer : []);
+  // Seedet kommer fra ØKTEN når en oppfriskning har vært kjørt, ellers
+  // fra lastingens egen liste: et prosessbytte er en om-tegning, ikke en
+  // ny lasting, og seksjonen henter ikke selv ved mount.
+  tegnListe(okt && okt.evalueringer !== undefined
+    ? okt.evalueringer
+    : (data ? data.evalueringer : []));
   // Bestillingsseksjonen melder fra etter et definitivt `tillat` — da
   // hentes listen på nytt så det ferske oppdraget faktisk vises. Feiler
   // hentingen beholdes listen som står; dette er en oppfriskning, ikke
@@ -891,14 +911,19 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
         if (e instanceof UautorisertFeil) ctx.paaUautorisert();
         return;
       }
-      // Rakk en omtegning å erstatte seksjonen mens hentingen sto i
-      // lufta, tilhører svaret en frakoblet DOM — den nye instansen har
-      // alt hentet ferskt selv.
-      if (!rot.isConnected) return;
       // Samme regel som rapporthentingen: bare den SISTE oppfriskningen
-      // får tegne.
+      // får tegne — og et tregt eldre svar skal heller ikke skrive seg
+      // inn i økten.
       if (min !== listeNr) return;
-      tegnListe((svar && svar.evalueringer) || []);
+      const liste = (svar && svar.evalueringer) || [];
+      // Økten skrives FØR `isConnected`-vakten. Rakk en om-tegning å
+      // erstatte seksjonen mens hentingen sto i lufta, tilhører svaret
+      // en frakoblet DOM — men det er fortsatt det ferskeste vi har, og
+      // den nye instansen har IKKE hentet ferskt selv (den seedes fra
+      // økten). Skrev vi bare DOM, ville oppdraget dødd i remounten.
+      okt.evalueringer = liste;
+      if (!rot.isConnected) return;
+      tegnListe(liste);
     } };
   }
   return rot;

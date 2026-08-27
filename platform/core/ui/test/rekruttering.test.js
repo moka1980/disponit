@@ -1365,6 +1365,68 @@ test("Evalueringer: siste oppfriskning vinner — tregt eldre listesvar forkaste
   assert.ok(rader.includes("42"), "oppdrag 42 forsvant fra listen");
 });
 
+test("Evalueringer: det leverte oppdraget overlever et prosessbytte", async () => {
+  KALL = [];
+  // Listen er TENANT-global, ikke prosessbundet — men `tegn` bygger
+  // seksjonen på nytt ved hvert prosessbytte. Skrev oppfriskningen bare
+  // DOM, seedet den nye instansen seg fra `data`-snapshoten fra
+  // sidelastingen, og oppdraget brukeren nettopp leverte forsvant igjen
+  // (Cursor P1). Ingen ny listehenting i mount-pathen skal redde det:
+  // etter den første lastingen svarer endepunktet aldri mer.
+  const to = prosess();
+  to.prosesser.push({
+    prosess_id: "p-2", navn: "Sykepleier vest", blinding_av: false,
+    vekter: { drift: 1 },
+    kandidater: [{ kandidat_id: "K-9", oppfylt: { drift: true },
+      status: "anbefalt", funn: [], intervjusporsmal: [] }],
+    lister: [],
+  });
+  const rad = (id) => ({ oppdrag_id: id, status: "opprettet",
+    opprettet: "2026-08-27T07:00:00+00:00", rapport_klar: false });
+  let listekall = 0;
+  const basis = { "/v1/rekruttering/prosesser": to,
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/bestilling": { beslutning: "tillat", oppdrag_id: 42 },
+    "/v1/inndata/reserver": { reservasjon_jti: "j-1",
+                              inndata_ref: "inndata:u-1" },
+    "/v1/inndata/opplast/j-1": {} };
+  SVAR = (sti) => {
+    if (sti === "/v1/rekruttering/evalueringer") {
+      listekall += 1;
+      // Lastingen ser tom historikk; oppfriskningen etter `tillat` er
+      // det ENESTE svaret som bærer oppdrag 42.
+      return { evalueringer: listekall === 1 ? [] : [rad(42)] };
+    }
+    return basis[sti];
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const seksjon = hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  const skjema = seksjon.querySelector("form");
+  const filInp = skjema.querySelector("input[type=file]");
+  Object.defineProperty(filInp, "files", { configurable: true,
+    value: [{ name: "bunt.zip",
+              arrayBuffer: async () => new ArrayBuffer(16) }] });
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() => seksjon.querySelector("[role=alert]")
+    .textContent.includes("42")), "bestillingen kvitterte aldri");
+  const evalRader = () => [...hoved.querySelectorAll(
+    "section[aria-labelledby=evaluering-tittel] tbody tr th")]
+    .map((c) => c.textContent);
+  assert.ok(await vent(() => evalRader().includes("42")),
+    "det leverte oppdraget kom aldri i listen");
+  const kallFoer = listekall;
+  const velger = hoved.querySelector("#rekrut-prosessvelger");
+  velger.value = "p-2";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.ok(evalRader().includes("42"),
+    "oppdraget døde i prosessbyttets om-tegning");
+  assert.equal(listekall, kallFoer,
+    "seksjonen hentet listen på nytt ved mount — den skal seedes fra økten");
+});
+
 test("Evalueringer: utilgjengelig liste er en feiltilstand, ikke tom historikk", async () => {
   KALL = [];
   SVAR = (sti) => sti === "/v1/rekruttering/evalueringer" ? 500 : ({
