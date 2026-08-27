@@ -361,6 +361,68 @@ def _prosess_under_kjoring() -> str:
         rt.close()
 
 
+def _terminer(prosess_id: str, status: str) -> str:
+    """Løpet ENDER uten at et eneste kandidatlager ble skrevet — den
+    skipede controllerens signatur. Bare `utfort`/`feilet` er lovlige fra
+    `plukket` (056s statusvakt); `kansellert` nås kun fra `opprettet`, og
+    da er prosessen aldri født. -> prosess_id (uendret).
+
+    Oppslaget av oppdraget tas på RUNTIME-koblingen, ikke migrator:
+    ankeret leses av leseveiens egen rolle under tenantkontekst
+    (`_reap`-formen), mens selve statusskiftet hører til migrator som i
+    `_seed_prosess`."""
+    from db.pg import koble, sett_kontekst
+    rt = koble(DSN)
+    try:
+        sett_kontekst(rt, TEN, "test", "r-term")
+        oid = rt.execute(
+            "SELECT oppdrag_id FROM rekrutteringsprosess"
+            " WHERE tenant=%s AND prosess_id=%s",
+            (TEN, prosess_id)).fetchone()[0]
+    finally:
+        rt.close()
+    m = _migrator()
+    try:
+        n = m.execute("UPDATE oppdrag SET status=%s WHERE tenant=%s"
+                      " AND id=%s", (status, TEN, oid)).rowcount
+        assert n == 1, "terminalovergangen traff ikke oppdraget"
+        m.commit()
+        return prosess_id
+    finally:
+        m.close()
+
+
+@pg
+def test_terminal_tom_retensjonsanker_holdes_ute_av_prosessvelgeren(klient):
+    """Codex P2/#220: claimen føder et retensjonsanker for HVER
+    evaluering, men den skipede controlleren skriver ingen kandidatlagre.
+    Et terminalt løp med tom prosess har derfor ingenting velgeren kan
+    vise — og ville fortrengt en ekte prosess som standardvalg i 30–365
+    døgn, siden ankeret lever ut slettefristen. Grensen går ved
+    TERMINAL: en pågående tom prosess vises fortsatt (evalueringens
+    tilstand-doktrine), for der kommer kandidatene ennå.
+
+    MUTASJONENE SOM DREPER DENNE: fjern `OR EXISTS (...)`-armen (den
+    ekte, ferdige prosessen forsvinner), eller hele tilleggspredikatet
+    (de tomme ankrene er tilbake i velgeren).
+    """
+    ekte, _lid, _ih = _seed_prosess()
+    tom_utfort = _terminer(_prosess_under_kjoring(), "utfort")
+    tom_feilet = _terminer(_prosess_under_kjoring(), "feilet")
+    kjorer = _prosess_under_kjoring()
+    bid = _bruker("velger-leser", ["leser"])
+    cookie, _ = _browsersesjon(bid)
+    r = _get(klient, cookie, "/v1/rekruttering/prosesser")
+    assert r.status_code == 200, r.text
+    ider = {p["prosess_id"] for p in r.json()["prosesser"]}
+    assert tom_utfort not in ider, \
+        "et terminalt tomt retensjonsanker fortrenger ekte prosesser"
+    assert tom_feilet not in ider, \
+        "et feilet tomt retensjonsanker fortrenger ekte prosesser"
+    assert ekte in ider, "den ferdige prosessen med kandidater falt ut"
+    assert kjorer in ider, "en pågående tom prosess skal fortsatt vises"
+
+
 @pg
 def test_evalueringens_tilstand_folger_med_leseflaten(klient):
     """Codex P2: prosessen fødes MENS kjøringen står på (`plukket` — 057s
