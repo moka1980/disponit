@@ -452,12 +452,28 @@ def prosesser_endepunkt(tjeneste, request):
         # standardvalg i 30–365 døgn. En PÅGÅENDE tom prosess vises
         # fortsatt (evalueringens tilstand-doktrine over); et terminalt
         # løps status og rapport bor i evalueringsseksjonen.
+        #
+        # OG FRISTEN HÅNDHEVES HER OGSÅ, IKKE BARE REAPERENS MERKE
+        # (Cursor P1, #220). `slettet_ts IS NULL` alene måler når
+        # `reap_kandidatdata` RAKK å kjøre, ikke når kundens frist gikk
+        # ut — og reaperen er en batch. I vinduet mellom fristen og
+        # batchen sa rapportveien (`rekrutteringsrapport_detalj`,
+        # `_anker_lever`) og evalueringslisten alt `slettet: true` /
+        # `rapport_klar: false`, mens DENNE flaten fortsatt serverte
+        # funn, sitater og intervjuspørsmål for hver kandidat gjennom
+        # `_kandidater`. Samme grense som reaperen og som leseveiene:
+        # lukket_ts (avslutningen) eller opprettet (forlatt-fallbacken)
+        # pluss kundens døgn. Prosessen faller UT av velgeren når
+        # fristen er ute — `_kandidater` kalles aldri for den, så det er
+        # samme port ett ledd tidligere, ikke en ny.
         for pid, oppdrag_id, status, opprettet in conn.execute(
                 "SELECT p.prosess_id, p.oppdrag_id, o.status, p.opprettet"
                 "  FROM rekrutteringsprosess p"
                 "  JOIN oppdrag o ON o.tenant = p.tenant"
                 "                AND o.id = p.oppdrag_id"
                 " WHERE p.tenant=%s AND p.slettet_ts IS NULL"
+                "   AND now() < coalesce(p.lukket_ts, p.opprettet)"
+                "               + p.slettefrist_dogn * interval '1 day'"
                 "   AND (o.status IN ('opprettet','plukket')"
                 "        OR EXISTS (SELECT 1 FROM kandidat_evalueringsartefakt k"
                 "             WHERE k.tenant = p.tenant"
