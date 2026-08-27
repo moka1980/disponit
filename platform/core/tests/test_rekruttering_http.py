@@ -642,8 +642,14 @@ def test_giftig_sporsmalstype_tar_ikke_ned_detaljpanelet(klient):
     under måler nettopp det: den giftige kandidaten har perfekt `oppfylt`
     og ingen funn, og er fortsatt `anbefalt`.
 
-    MUTASJONEN SOM DREPER DENNE: bytt `rene`-porten i `_kandidater` mot
-    `sporsmal or []`.
+    Etter #224 hentes spørsmålene ikke lenger i det hele tatt, så porten
+    er ikke lenger en typesjekk, men et fravær: giftige lagerrader kan
+    ikke nå flaten fordi feltet ikke forlater serveren.
+
+    MUTASJONEN SOM DREPER DENNE: la `_kandidater` emittere spørsmålene
+    igjen — enten fra artefaktkopien (drop `- 'intervjusporsmal'` og legg
+    `art.get("intervjusporsmal")` på kandidaten) eller fra lageret (legg
+    JOIN-en tilbake og send `sporsmal` rått ut).
     """
     pid, _lid, _ih = _seed_prosess()
     perfekt = {"drift": True, "sky": True}
@@ -668,6 +674,30 @@ def test_giftig_sporsmalstype_tar_ikke_ned_detaljpanelet(klient):
     lys = {k["kandidat_id"]: k["status"] for k in p["kandidater"]}
     assert all(lys[kid] == "anbefalt"
                for kid in (skalar, objekt, blandet, ekte)), lys
+
+
+def test_utvelgelsen_rorer_ikke_sporsmalslageret():
+    """Cursor P2 (#224): et felt som ikke serveres, skal heller ikke
+    HENTES. HTTP-porten over måler svaret og ville bestått også med
+    JOIN-en stående — den ser ikke arbeidet i basen. Denne måler
+    spørringen selv: `_kandidater` løper over HVER ureapet prosess med
+    inntil 5000 kandidater hver (#183), så en JOIN mot et lager ingen
+    leser er unødvendig arbeid i basen og unødvendig nyttelast over
+    forbindelsen.
+
+    Subtraksjonen består: artefaktet kan fortsatt bære en KOPI av
+    spørsmålene, og den skal ut av svaret.
+    """
+    import inspect
+
+    from api import rekruttering as rk
+    kilde = inspect.getsource(rk._kandidater)
+    sql = kilde[kilde.index("rader = conn.execute"):kilde.index(".fetchall")]
+    assert "kandidat_intervjusporsmal" not in sql \
+        and "i.sporsmal" not in sql, \
+        "utvelgelsen skal ikke hente spørsmålslageret den ikke serverer"
+    assert "- 'intervjusporsmal'" in sql, \
+        "artefaktkopien skal fortsatt subtraheres ut av svaret"
 
 
 @pg
