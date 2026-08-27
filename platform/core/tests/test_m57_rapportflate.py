@@ -568,3 +568,50 @@ def test_claimen_foder_retensjonsankeret(migrator, miljo, inndata_rot):
 
         assert _ankere(migrator, oid) == (1, 1), \
             "claimen skal etterlate nøyaktig ett LEVENDE retensjonsanker"
+
+
+@pg
+def test_ankersjekken_staar_etter_dekrypteringen(migrator, miljo):
+    """TOCTOU-dommen (eierdom): re-sjekken `_anker_lever` måles i begge
+    retninger mot basen, og PLASSERINGEN måles i kilden — den skal stå
+    ETTER dekrypteringen og FØR 200, ellers er vinduet like bredt som
+    før. Den interleavede toforbindelses-riggen bor i eget issue; dette
+    er de deterministiske halvdelene.
+
+    MUTASJONEN SOM DREPER DENNE: fjern re-sjekken, eller flytt den foran
+    dekrypteringen."""
+    import inspect
+
+    from api import lesing
+    from .test_m57_kandidatlagre import _prosess, _reaperkobling
+    from .test_m57_utsending import _rt as _rekrutt_rt
+
+    rt = _rekrutt_rt()
+    try:
+        oid, pid = _prosess(migrator, rt, frist=30)
+        rt.commit()
+        _sett_kontekst(migrator, TENANT)
+        assert lesing._anker_lever(migrator, TENANT, oid) is True
+        migrator.rollback()
+        _sett_kontekst(rt, TENANT)
+        rt.execute("SELECT lukk_rekrutteringsprosess(%s,%s,"
+                   " now() - interval '31 days')", (TENANT, pid))
+        rt.commit()
+        rp, _timer = _reaperkobling()
+        try:
+            rp.execute("SELECT * FROM reap_kandidatdata(50)")
+            rp.commit()
+        finally:
+            rp.close()
+        _sett_kontekst(migrator, TENANT)
+        assert lesing._anker_lever(migrator, TENANT, oid) is False
+        migrator.rollback()
+    finally:
+        rt.close()
+
+    kilde = inspect.getsource(lesing.rekrutteringsrapport_detalj)
+    dekryptering = kilde.index("kryptering.dekrypter")
+    sjekk = kilde.index("_anker_lever")
+    svar = kilde.index("kanonisk_json")
+    assert dekryptering < sjekk < svar, \
+        "re-sjekken skal stå ETTER dekrypteringen og FØR 200-svaret"

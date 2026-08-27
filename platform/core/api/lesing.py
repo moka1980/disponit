@@ -501,6 +501,24 @@ def _m57_avslatt(tjeneste, request: Request):
     return rekruttering._modul_inaktiv(tjeneste, _rid(request))
 
 
+def _anker_lever(conn, tenant, oppdrag_id) -> bool:
+    """Lever retensjonsankeret NÅ? Re-sjekken bak TOCTOU-dommen (#220,
+    eierdom): hovedspørringens EXISTS(levende anker) og payloadleveransen
+    er to tidspunkter, og en reap kan committe i vinduet mellom dem.
+    Denne leses rett før 200, ETTER dekrypteringen, i samme transaksjon
+    (READ COMMITTED tar ferskt snapshot per setning) — payloaden forlater
+    aldri prosessen etter en reap som var committet da beslutningen ble
+    tatt. VINDUSINNSNEVRING, ikke lås: FOR SHARE fra leseveien ville
+    krevd UPDATE-rett på retensjonsankeret for en READ-rute — et felt
+    rettighetsvedtak (migrer.py:86-95) denne dommen nekter å reversere.
+    Den interleavede bevisriggen bor i eget issue."""
+    return conn.execute(
+        "SELECT EXISTS (SELECT 1 FROM rekrutteringsprosess p"
+        "  WHERE p.tenant=%s AND p.oppdrag_id=%s"
+        "    AND p.slettet_ts IS NULL)",
+        (tenant, oppdrag_id)).fetchone()[0]
+
+
 def rekrutteringsrapport_detalj(tjeneste, request: Request) -> Response:
     """GET /v1/rekruttering/rapport/{oppdrag_id} — den promoterte
     evalueringsrapporten. M-57s EGEN leseflate (kontraktens
@@ -554,6 +572,8 @@ def rekrutteringsrapport_detalj(tjeneste, request: Request) -> Response:
             tjeneste.logg.hendelse("intern_feil", rid, auth.tenant,
                                    art="drift", artefakt=str(art_id))
             return _feilsvar("intern_feil", rid)
+        if not _anker_lever(conn, auth.tenant, oid):
+            return _feilsvar("ikke_funnet", rid)
         return kanonisk_json({
             "oppdrag_id": oid,
             "artefakt_id": str(art_id),
