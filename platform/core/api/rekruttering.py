@@ -537,7 +537,22 @@ def signer_endepunkt(tjeneste, request):
             "                WHERE b.tenant=l.tenant"
             "                  AND b.utkast_serie=l.utkast_serie"
             "                  AND b.forrige_liste_id=l.liste_id),"
-            "       (p.slettet_ts IS NOT NULL) AS reapet"
+            # REAPET MÅLES PÅ FRISTEN, IKKE PÅ MERKET (Cursor P2, #220).
+            # `slettet_ts` settes av `reap_kandidatdata` i batcher; leser
+            # denne porten bare merket, står vinduet mellom kundens frist
+            # og batchen åpent foran den IRREVERSIBLE handlingen: 201 på
+            # en utsendelse hvis mottakerdata rapportflaten alt behandler
+            # som slettet, og seriens ene signatur-slot brent på den.
+            # Samme formel som evalueringslistens `slettet`-felt
+            # (`lesing.py`) — merket ELLER fristen, samme grense sett fra
+            # kunden. `coalesce(..., false)`: LEFT JOIN-en gir NULL-rader
+            # for en 056-liste uten 057-prosess bak seg, og den skal
+            # dømmes NØYAKTIG som før (`NULL IS NOT NULL` var false, mens
+            # `now() >= NULL` er NULL) — porten utvides, den flyttes ikke.
+            "       coalesce(p.slettet_ts IS NOT NULL"
+            "                OR now() >= coalesce(p.lukket_ts, p.opprettet)"
+            "                    + p.slettefrist_dogn * interval '1 day',"
+            "                false) AS reapet"
             "  FROM utsendingsliste l"
             "  LEFT JOIN rekrutteringsprosess p"
             "    ON p.tenant = l.tenant AND p.oppdrag_id = l.oppdrag_id"
