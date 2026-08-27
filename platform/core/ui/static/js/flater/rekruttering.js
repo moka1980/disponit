@@ -153,8 +153,11 @@ export function visRekruttering(hoved, ctx) {
     // levert oppdrag tegnet bare DOM, så oppdraget forsvant i det neste
     // bytte — nøyaktig det Codex-løftet «levert oppdrag synlig uten
     // omlasting» lovte bort. `undefined` betyr «ingen oppfriskning
-    // ennå»; `null` er listefeil og en ekte verdi.
-    evalueringer: undefined };
+    // ennå»; `null` er listefeil og en ekte verdi. `nr` er
+    // oppfriskningens generasjon og `tegn` den for tiden monterte
+    // seksjonens tegner — begge hører til listen, ikke til instansen
+    // som tilfeldigvis viser den.
+    evalueringer: { liste: undefined, nr: 0, tegn: null } };
   medStatus(hoved, ctx,
     async () => {
       // Profilene er TILLEGGSDATA (samme politikk som
@@ -180,8 +183,10 @@ export function visRekruttering(hoved, ctx) {
     (data) => {
       // En fersk full lasting ER sannheten — også «Prøv igjen» etter en
       // feilet lasting. Oppfriskningscachen fra forrige lasting skal
-      // aldri vinne over den.
-      okt.evalueringer = undefined;
+      // aldri vinne over den, og en oppfriskning som fortsatt er i lufta
+      // skal ikke lande oppå den ferske listen: generasjonen bumpes.
+      okt.evalueringer.liste = undefined;
+      okt.evalueringer.nr += 1;
       tegn(hoved, ctx, data, okt);
     });
 }
@@ -729,7 +734,12 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
   // ferdig, så to raske bestillinger gir to hentinger i lufta samtidig.
   // Uten generasjon kan det treGE eldre svaret tegne over den nyeste
   // listen og fjerne oppdraget brukeren nettopp leverte.
-  let listeNr = 0;
+  //
+  // Generasjonen bor på ØKTEN, ikke i instansen (Codex P2): listen er
+  // øktens, og en teller som nullstilles av hvert prosessbytte vokter
+  // ingenting på tvers av dem — en frakoblet instans' trege svar hadde
+  // fortsatt `min === listeNr` i SIN teller og kunne skrive seg inn i
+  // øktens liste etter et ferskere svar.
 
   const visRapport = async (oppdragId) => {
     // Tøm FØR henting: et feilet kall skal aldri la forrige rapport stå
@@ -894,16 +904,24 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
   // Seedet kommer fra ØKTEN når en oppfriskning har vært kjørt, ellers
   // fra lastingens egen liste: et prosessbytte er en om-tegning, ikke en
   // ny lasting, og seksjonen henter ikke selv ved mount.
-  tegnListe(okt && okt.evalueringer !== undefined
-    ? okt.evalueringer
+  const eval_ = okt ? okt.evalueringer : null;
+  tegnListe(eval_ && eval_.liste !== undefined
+    ? eval_.liste
     : (data ? data.evalueringer : []));
   // Bestillingsseksjonen melder fra etter et definitivt `tillat` — da
   // hentes listen på nytt så det ferske oppdraget faktisk vises. Feiler
   // hentingen beholdes listen som står; dette er en oppfriskning, ikke
   // en sannhetskilde.
-  if (okt) {
+  if (eval_) {
+    // DEN MONTERTE seksjonen er den som tegner (Codex P2). Et svar som
+    // lander etter et prosessbytte tilhørte før en frakoblet DOM og ble
+    // stille sluppet — da sto det leverte oppdraget usynlig til NESTE
+    // bytte, selv om økten hadde det. Instansen melder seg her i stedet
+    // for å bli spurt om `isConnected`: siste `tegn` vinner, og den
+    // vakten trengs ikke lenger.
+    eval_.tegn = tegnListe;
     okt.evaluering = { oppdater: async () => {
-      const min = ++listeNr;
+      const min = ++eval_.nr;
       let svar;
       try {
         svar = await hentEvalueringer();
@@ -914,16 +932,9 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       // Samme regel som rapporthentingen: bare den SISTE oppfriskningen
       // får tegne — og et tregt eldre svar skal heller ikke skrive seg
       // inn i økten.
-      if (min !== listeNr) return;
-      const liste = (svar && svar.evalueringer) || [];
-      // Økten skrives FØR `isConnected`-vakten. Rakk en om-tegning å
-      // erstatte seksjonen mens hentingen sto i lufta, tilhører svaret
-      // en frakoblet DOM — men det er fortsatt det ferskeste vi har, og
-      // den nye instansen har IKKE hentet ferskt selv (den seedes fra
-      // økten). Skrev vi bare DOM, ville oppdraget dødd i remounten.
-      okt.evalueringer = liste;
-      if (!rot.isConnected) return;
-      tegnListe(liste);
+      if (min !== eval_.nr) return;
+      eval_.liste = (svar && svar.evalueringer) || [];
+      eval_.tegn(eval_.liste);
     } };
   }
   return rot;

@@ -1427,6 +1427,66 @@ test("Evalueringer: det leverte oppdraget overlever et prosessbytte", async () =
     "seksjonen hentet listen på nytt ved mount — den skal seedes fra økten");
 });
 
+test("Evalueringer: en oppfriskning som lander etter et prosessbytte tegner "
+  + "i den MONTERTE seksjonen", async () => {
+  KALL = [];
+  // `paagaaende` slipper opp før den fire-and-forget `oppdater()` er
+  // ferdig, så brukeren rekker å bytte prosess mens oppfriskningen står
+  // i lufta. Svaret tilhørte da en frakoblet DOM og ble stille sluppet:
+  // økten fikk listen, men skjermen viste den ikke før NESTE bytte. Det
+  // er den monterte seksjonen som tegner, ikke den som ba (Codex P2).
+  const to = prosess();
+  to.prosesser.push({
+    prosess_id: "p-2", navn: "Sykepleier vest", blinding_av: false,
+    vekter: { drift: 1 },
+    kandidater: [{ kandidat_id: "K-9", oppfylt: { drift: true },
+      status: "anbefalt", funn: [], intervjusporsmal: [] }],
+    lister: [],
+  });
+  let slipp;
+  const treg = new Promise((res) => { slipp = res; });
+  const rad = (id) => ({ oppdrag_id: id, status: "opprettet",
+    opprettet: "2026-08-27T07:00:00+00:00", rapport_klar: false });
+  let listekall = 0;
+  const basis = { "/v1/rekruttering/prosesser": to,
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/bestilling": { beslutning: "tillat", oppdrag_id: 42 },
+    "/v1/inndata/reserver": { reservasjon_jti: "j-1",
+                              inndata_ref: "inndata:u-1" },
+    "/v1/inndata/opplast/j-1": {} };
+  SVAR = (sti) => {
+    if (sti === "/v1/rekruttering/evalueringer") {
+      listekall += 1;
+      // Lastingen ser tom historikk; oppfriskningen HENGER.
+      return listekall === 1 ? { evalueringer: [] } : treg;
+    }
+    return basis[sti];
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const seksjon = hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  const skjema = seksjon.querySelector("form");
+  const filInp = skjema.querySelector("input[type=file]");
+  Object.defineProperty(filInp, "files", { configurable: true,
+    value: [{ name: "bunt.zip",
+              arrayBuffer: async () => new ArrayBuffer(16) }] });
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() => seksjon.querySelector("[role=alert]")
+    .textContent.includes("42")), "bestillingen kvitterte aldri");
+  assert.ok(await vent(() => listekall === 2), "oppfriskningen kom aldri");
+  // ... og HER bytter brukeren prosess, med svaret fortsatt i lufta.
+  const velger = hoved.querySelector("#rekrut-prosessvelger");
+  velger.value = "p-2";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  slipp({ evalueringer: [rad(42)] });
+  assert.ok(await vent(() => [...hoved.querySelectorAll(
+    "section[aria-labelledby=evaluering-tittel] tbody tr th")]
+    .map((c) => c.textContent).includes("42")),
+    "svaret døde med instansen som ba om det");
+});
+
 test("Evalueringer: utilgjengelig liste er en feiltilstand, ikke tom historikk", async () => {
   KALL = [];
   SVAR = (sti) => sti === "/v1/rekruttering/evalueringer" ? 500 : ({
