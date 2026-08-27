@@ -162,7 +162,15 @@ export function visRekruttering(hoved, ctx) {
     // P2): generasjon og tegner hører til ØKTEN, og hver mount melder
     // seg som tegner — et svar som lander etter et bytte tegner i den
     // MONTERTE seksjonen, aldri i en frakoblet.
-    rapportHenting: { nr: 0, tegn: null } };
+    // FORENKLINGEN (eierdom, K2-dommen i #224): auto-latchen og det
+    // delte løftet var to tilstander med hver sine overganger, og fem
+    // runder med funn var interleavings mellom dem. Nå AVLEDES latchen:
+    // `aktiv` er den ENE in-flight-markøren (deler løftet ved samme id,
+    // hindrer dobbel auto), `siste` er den ENE kvitteringen for tegnet
+    // rapport. Auto fyrer når begge er tomme — en feilet runde
+    // etterlater dem tomme, og neste mount får prøve, uten noen latch å
+    // slippe eller gjenåpne.
+    rapportHenting: { nr: 0, tegn: null, siste: null, aktiv: null } };
   medStatus(hoved, ctx,
     async () => {
       // Profilene er TILLEGGSDATA (samme politikk som
@@ -198,7 +206,6 @@ export function visRekruttering(hoved, ctx) {
       // sannheten for begge (auto-lastingen får kjøre på nytt).
       okt.rapportHenting.nr += 1;
       okt.rapportHenting.siste = null;
-      okt.rapportHenting.autoKjort = false;
       tegn(hoved, ctx, data, okt);
     });
 }
@@ -906,16 +913,16 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       // mens auto-lastingen av SAMME rapport står i lufta, deles
       // løftet — generasjonen avgjør hvem som får rendre (klikket),
       // og fokus-semantikken er kallerens.
-      if (rHent.pending && rHent.pending.id === oppdragId) {
-        svar = await rHent.pending.lofte;
+      if (rHent.aktiv && rHent.aktiv.id === oppdragId) {
+        svar = await rHent.aktiv.lofte;
       } else {
         const lofte = hentEvalueringsrapport(oppdragId);
-        rHent.pending = { id: oppdragId, lofte };
+        rHent.aktiv = { id: oppdragId, lofte };
         try {
           svar = await lofte;
         } finally {
-          if (rHent.pending && rHent.pending.lofte === lofte) {
-            rHent.pending = null;
+          if (rHent.aktiv && rHent.aktiv.lofte === lofte) {
+            rHent.aktiv = null;
           }
         }
       }
@@ -1081,19 +1088,15 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
     } catch (e) {
       // Stille: cachen kan være foreldet i form; listen er sannheten.
     }
-  } else if (klarRad && rHent && !rHent.autoKjort) {
-    rHent.autoKjort = true;
-    // ... men LATCHEN ER IKKE PERMANENT FØR SUKSESS (pass-funn). Den
-    // settes før utfallet er kjent, og finnes for å hindre en DOBBELT
-    // auto-henting — ikke for å bruke opp økten. Feilet runden (liste og
-    // detalj kan divergere i vinduet mellom dem: frist/TOCTOU/404/5xx),
-    // er auto-feilen med rette stille — men da sto flaten tom for resten
-    // av økten, uten alert og uten at auto-stien noen gang prøvde igjen.
-    // `rHent.siste` er kvitteringen for at noe FAKTISK ble tegnet: står
-    // den tom når runden er over, slippes latchen og neste mount får
-    // prøve. Suksess trenger ingen latch — cachen over kortslutter.
-    visRapport(klarRad.oppdrag_id, { fokus: false })
-      .then(() => { if (!rHent.siste) rHent.autoKjort = false; });
+  } else if (klarRad && rHent && !rHent.aktiv) {
+    // Auto-vilkåret er AVLEDET, aldri latchet (eierdom, K2-dommen):
+    // ingen cache (`siste` — grenen over kortslutter) og ingenting i
+    // lufta (`aktiv`) betyr at denne mounten har noe å hente. En feilet
+    // runde etterlater begge tomme — neste mount prøver igjen, stille
+    // (alerten hører til klikket). Et sent A-svar kan aldri «gjenåpne»
+    // noe: det finnes ingen latch, og generasjonen forkaster rendringen
+    // mens `aktiv`-eierskapet rydder markøren.
+    visRapport(klarRad.oppdrag_id, { fokus: false });
   }
   // Bestillingsseksjonen melder fra etter et definitivt `tillat` — da
   // hentes listen på nytt så det ferske oppdraget faktisk vises. Feiler

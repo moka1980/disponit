@@ -1754,15 +1754,81 @@ test("Evalueringer: auto-lastingen kjører ÉN gang per økt — "
     "rapporten forsvant i prosessbyttet — cachen re-bygges ikke");
 });
 
+test("Evalueringer: et sent auto-svar kan aldri restarte auto-stien — "
+  + "brukerens valg står", async () => {
+  KALL = [];
+  // Codex P2 (femte runde → K2-forenklingen): auto A henger, brukeren
+  // klikker B; A fullfører sent; deretter prosessbytte. Latch-modellen
+  // kunne «gjenåpnes» av A og re-starte A over brukerens B — i den
+  // avledede modellen finnes ingen latch: cache/aktiv styrer, og A
+  // hverken tegner eller endrer tilstanden B eier.
+  let slippA;
+  const tregA = new Promise((res) => { slippA = res; });
+  const rapportFor = (navn) => ({ oppdrag_id: 0, rapport: {
+    rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+    profil: { profil_id: "p-1", versjon: 2, navn },
+    antall_soknader: 1,
+    rangering: [{ kandidat_id: "kandidat-01", poeng: 5,
+      nedbrytning: { drift: 5 } }],
+    kandidater: { "kandidat-01": { funn: [] } },
+    fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+  } });
+  const to = prosess();
+  to.prosesser.push({
+    prosess_id: "p-2", navn: "Sykepleier vest", blinding_av: false,
+    vekter: { drift: 1 },
+    kandidater: [{ kandidat_id: "K-9", oppfylt: { drift: true },
+      status: "anbefalt", funn: [], intervjusporsmal: [] }],
+    lister: [],
+  });
+  SVAR = (sti) => ({
+    "/v1/rekruttering/prosesser": to,
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 97, status: "utfort",
+        opprettet: "2026-08-27T01:00:00+00:00", rapport_klar: true },
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
+    "/v1/rekruttering/rapport/97": tregA,           // NYESTE — auto tar A
+    "/v1/rekruttering/rapport/96": rapportFor("Driftskonsulent"),
+  })[sti] ?? 500;
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelectorAll(
+    "section[aria-labelledby=evaluering-tittel] button").length === 2));
+  const seksjon = () => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  // Brukeren velger B (96) mens auto-A (97) henger.
+  [...seksjon().querySelectorAll("button")]
+    .find((b) => b.closest("tr").textContent.includes("96")).click();
+  assert.ok(await vent(() => seksjon().textContent.includes("kandidat-01")),
+    "B rendret aldri");
+  // A fullfører SENT — og skal hverken tegne eller røre tilstanden.
+  slippA(rapportFor("Sikkerhetsleder"));
+  await new Promise((r) => setTimeout(r, 20));
+  assert.ok(!seksjon().textContent.includes("Sikkerhetsleder"),
+    "det sene auto-svaret tegnet over brukerens valg");
+  // Prosessbytte: B står (fra cachen), og A re-fetches ALDRI.
+  const aFoer = KALL.filter(
+    (k) => k.sti === "/v1/rekruttering/rapport/97").length;
+  const velger = hoved.querySelector("#rekrut-prosessvelger");
+  velger.value = "p-2";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 20));
+  assert.ok(seksjon().textContent.includes("Driftskonsulent"),
+    "brukerens valgte rapport overlevde ikke byttet");
+  assert.equal(KALL.filter(
+    (k) => k.sti === "/v1/rekruttering/rapport/97").length, aFoer,
+    "auto-stien restartet A over brukerens valg");
+});
+
 test("Evalueringer: en stille auto-feil bruker ikke opp økten", async () => {
   KALL = [];
-  // Pass-funn, andre halvdel: `autoKjort` settes FØR utfallet er kjent.
-  // Cachen redder den VELLYKKEDE runden, men feilet auto-hentingen
-  // (liste og detalj divergerer i vinduet mellom dem — frist/TOCTOU/
-  // 404/5xx), sto flaten tom for resten av økten: feilen er med rette
-  // stille (alert hører til klikket), og latchen sørget for at
-  // auto-stien aldri prøvde igjen. Latchen slippes derfor når runden
-  // er over uten at noe ble tegnet.
+  // Pass-funn, andre halvdel — nå AVLEDET form (eierdom, K2-dommen):
+  // det finnes ingen latch å slippe. Auto fyrer når verken cache
+  // (`siste`) eller in-flight (`aktiv`) finnes; en feilet runde
+  // etterlater begge tomme, så neste mount prøver igjen — stille
+  // (alerten hører til klikket).
   const to = prosess();
   to.prosesser.push({
     prosess_id: "p-2", navn: "Sykepleier vest", blinding_av: false,
