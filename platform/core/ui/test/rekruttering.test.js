@@ -1273,6 +1273,67 @@ test("Evalueringer: det siste klikket vinner — et tregt eldre svar forkastes",
     "det TREGE eldre svaret vant over brukerens siste valg");
 });
 
+test("Evalueringer: siste oppfriskning vinner — tregt eldre listesvar forkastes", async () => {
+  KALL = [];
+  // `paagaaende` slipper opp FØR den fire-and-forget `oppdater()` er
+  // ferdig, så to raske bestillinger gir to listehentinger i lufta.
+  // Hentingen etter bestilling 42 HENGER og svarer til slutt `[42]`;
+  // hentingen etter bestilling 43 svarer `[42,43]` straks. Slippes den
+  // trege etterpå, må 43 fortsatt stå — ellers forsvinner oppdraget
+  // brukeren nettopp leverte, helt til neste side-omlasting.
+  let slippTreg;
+  const treg = new Promise((res) => { slippTreg = res; });
+  const rad = (id) => ({ oppdrag_id: id, status: "opprettet",
+    opprettet: "2026-08-27T07:00:00+00:00", rapport_klar: false });
+  let listekall = 0;
+  const basis = { "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/inndata/reserver": { reservasjon_jti: "j-1",
+                              inndata_ref: "inndata:u-1" },
+    "/v1/inndata/opplast/j-1": {} };
+  let bestillingssvar = { beslutning: "tillat", oppdrag_id: 42 };
+  SVAR = (sti) => {
+    if (sti === "/v1/bestilling") return bestillingssvar;
+    if (sti === "/v1/rekruttering/evalueringer") {
+      listekall += 1;
+      if (listekall === 1) return { evalueringer: [] };
+      if (listekall === 2) return treg;
+      return { evalueringer: [rad(42), rad(43)] };
+    }
+    return basis[sti];
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const seksjon = hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  const skjema = seksjon.querySelector("form");
+  const filInp = skjema.querySelector("input[type=file]");
+  Object.defineProperty(filInp, "files", { configurable: true,
+    value: [{ name: "bunt.zip",
+              arrayBuffer: async () => new ArrayBuffer(16) }] });
+  const send = async (oppdrag) => {
+    bestillingssvar = { beslutning: "tillat", oppdrag_id: oppdrag };
+    skjema.dispatchEvent(new window.Event("submit",
+      { bubbles: true, cancelable: true }));
+    assert.ok(await vent(() => seksjon.querySelector("[role=alert]")
+      .textContent.includes(String(oppdrag)), 20),
+      `bestilling ${oppdrag} kvitterte aldri`);
+  };
+  await send(42);
+  await send(43);
+  const evalSeksjon = hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  assert.ok(await vent(() => evalSeksjon.textContent.includes("43")),
+    "den ferske listen kom aldri på skjermen");
+  slippTreg({ evalueringer: [rad(42)] });
+  await new Promise((r) => setTimeout(r, 30));
+  const rader = [...evalSeksjon.querySelectorAll("tbody tr th")]
+    .map((c) => c.textContent);
+  assert.ok(rader.includes("43"),
+    "det TREGE eldre listesvaret tegnet over den nyeste listen");
+  assert.ok(rader.includes("42"), "oppdrag 42 forsvant fra listen");
+});
+
 test("Evalueringer: utilgjengelig liste er en feiltilstand, ikke tom historikk", async () => {
   KALL = [];
   SVAR = (sti) => sti === "/v1/rekruttering/evalueringer" ? 500 : ({

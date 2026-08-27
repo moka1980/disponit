@@ -709,6 +709,12 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
   // To raske klikk må ikke la det TREGESTE svaret vinne: bare den sist
   // bestilte hentingen får rendre (eller melde feil).
   let hentingNr = 0;
+  // Listeoppfriskningen bærer NØYAKTIG samme risiko (Cursor P2):
+  // `paagaaende` slipper opp før den fire-and-forget `oppdater()` er
+  // ferdig, så to raske bestillinger gir to hentinger i lufta samtidig.
+  // Uten generasjon kan det treGE eldre svaret tegne over den nyeste
+  // listen og fjerne oppdraget brukeren nettopp leverte.
+  let listeNr = 0;
 
   const visRapport = async (oppdragId) => {
     // Tøm FØR henting: et feilet kall skal aldri la forrige rapport stå
@@ -863,6 +869,7 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
   // en sannhetskilde.
   if (okt) {
     okt.evaluering = { oppdater: async () => {
+      const min = ++listeNr;
       let svar;
       try {
         svar = await hentEvalueringer();
@@ -874,6 +881,9 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       // lufta, tilhører svaret en frakoblet DOM — den nye instansen har
       // alt hentet ferskt selv.
       if (!rot.isConnected) return;
+      // Samme regel som rapporthentingen: bare den SISTE oppfriskningen
+      // får tegne.
+      if (min !== listeNr) return;
       tegnListe((svar && svar.evalueringer) || []);
     } };
   }
