@@ -174,7 +174,11 @@ export function visRekruttering(hoved, ctx) {
     // finne As eget løfte selv om B startet imellom — fortsatt samme to
     // tilstandsarter (in-flight + cache), bare per rapport-id.
     rapportHenting: { nr: 0, tegn: null, siste: null,
-                      aktive: new Map() } };
+                      aktive: new Map() },
+    // Evalueringsseksjonens NODE (remount-dommen): bygges én gang per
+    // rute-inngang, gjenbrukes ved prosessbytte, nullstilles ved full
+    // lasting.
+    evalDel: null };
   medStatus(hoved, ctx,
     async () => {
       // Profilene er TILLEGGSDATA (samme politikk som
@@ -210,6 +214,7 @@ export function visRekruttering(hoved, ctx) {
       // sannheten for begge (auto-lastingen får kjøre på nytt).
       okt.rapportHenting.nr += 1;
       okt.rapportHenting.siste = null;
+      okt.evalDel = null;
       tegn(hoved, ctx, data, okt);
     });
 }
@@ -309,7 +314,16 @@ function tegn(hoved, ctx, data, okt, valgtId) {
     if (okt.bestilling.oppdaterProfilvalg) okt.bestilling.oppdaterProfilvalg();
   });
   const bestillDel = bestillRot.firstChild ? bestillRot : null;
-  const evalDel = evalueringSeksjon(hoved, ctx, data, okt);
+  // SEKSJONEN OVERLEVER BYTTET SOM NODE (eierdom, remount-dommen —
+  // dom-klasse `remount-av-tenantglobal-seksjon`, søster til A-dommen i
+  // #212): fem av åtte funn i denne PR-en hadde samme rot — `tegn` rev
+  // og bygde en tenant-global seksjon på nytt ved hvert prosessbytte,
+  // og hver hengende callback fikk et vindu å dø i. Noden bygges nå én
+  // gang per rute-inngang og GJENBRUKES; `sett(hoved, …)` flytter den
+  // synkront (replaceChildren + append), så ingen callback kan lande i
+  // et vindu. Full lasting nullstiller den sammen med resten.
+  const evalDel = okt.evalDel
+    || (okt.evalDel = evalueringSeksjon(hoved, ctx, data, okt));
   // HOPPLENKENS LANDINGSPUNKT (Cursor P2). «Produktet først» legger en
   // auto-rendret rangering — én fokusbar `<summary>` per kandidat, opp
   // mot 5000 — foran prosessvelger, vekter og signering. Tastaturveien
@@ -1096,27 +1110,13 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
   // likevel OVERLEVE byttet (Codex P2): den re-bygges fra øktens cache
   // inn i den nye rota — ingen henting, ingen annonsering, samme
   // rapport brukeren sto i.
-  if (rHent && rHent.siste) {
-    try {
-      // Direkte i EGEN rot, ikke via `rHent.tegn`: ved mount er rota
-      // ennå ikke i dokumentet (seksjonen settes inn ETTER at denne
-      // funksjonen returnerer), og tegn-vaktens isConnected ville
-      // avvist en helt legitim mount-rendring.
-      sett(rapportRot, ...byggRapport(rHent.siste).noder);
-    } catch (e) {
-      // Stille: cachen kan være foreldet i form; listen er sannheten.
-    }
-  } else if (klarRad && rHent) {
-    // Auto-vilkåret er AVLEDET, aldri latchet (eierdom, K2-dommen):
-    // ingen cache (`siste` — grenen over kortslutter) betyr at denne
-    // mounten har noe å vise frem. Nettverket vokter seg selv: Map-en
-    // deler et hengende løfte, så kallet her er enten en fersk henting
-    // eller en GJENOPPTAKELSE (Codex P2 — rejoin etter remount) med ny
-    // generasjon som får rendre i DENNE seksjonen. En feilet runde
-    // etterlater cache og kart tomme — neste mount prøver igjen,
-    // stille (alerten hører til klikket).
-    visRapport(klarRad.oppdrag_id, { fokus: false });
-  }
+  // Auto ved RUTE-INNGANG (remount-dommen): mount skjer nå bare der og
+  // ved full lasting, så vilkåret er rent — finnes en klar rapport,
+  // hentes den. `siste` består KUN som cache-treff for klikk
+  // (immutabelt artefakt), `aktive` KUN som delt løfte per id; ingen
+  // mount-rebuild og ingen aktive-logikk her, for noden — og dermed
+  // enhver hengende hentings mål — overlever prosessbyttene.
+  if (klarRad) visRapport(klarRad.oppdrag_id, { fokus: false });
   // Bestillingsseksjonen melder fra etter et definitivt `tillat` — da
   // hentes listen på nytt så det ferske oppdraget faktisk vises. Feiler
   // hentingen beholdes listen som står; dette er en oppfriskning, ikke

@@ -1773,16 +1773,72 @@ test("Evalueringer: auto-lastingen kjører ÉN gang per økt — "
     "rapporten forsvant i prosessbyttet — cachen re-bygges ikke");
 });
 
-test("Evalueringer: et hengende auto-løfte GJENOPPTAS etter remount — "
-  + "rapporten når frem", async () => {
+test("Evalueringer: seksjonen er SAMME node etter prosessbyttet — "
+  + "og ingenting hentes på nytt", async () => {
   KALL = [];
-  // Codex P2: auto-A henger, klikk på B feiler (bumper generasjonen),
-  // prosessbytte — den nye mounten skal GJENOPPTA As løfte med fersk
-  // generasjon (Map-en deler; ingen ny nedlasting), så A rendres når
-  // den omsider fullfører. Undertrykt rejoin = brukeren fikk aldri
-  // rapporten listen lovte.
-  let slippA;
-  const tregA = new Promise((res) => { slippA = res; });
+  // Remount-dommen (port a): identitet dreper en gjeninnført rebuild.
+  const to = prosess();
+  to.prosesser.push({
+    prosess_id: "p-2", navn: "Sykepleier vest", blinding_av: false,
+    vekter: { drift: 1 },
+    kandidater: [{ kandidat_id: "K-9", oppfylt: { drift: true },
+      status: "anbefalt", funn: [], intervjusporsmal: [] }],
+    lister: [],
+  });
+  SVAR = {
+    "/v1/rekruttering/prosesser": to,
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
+    "/v1/rekruttering/rapport/96": { oppdrag_id: 96, rapport: {
+      rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+      profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
+      antall_soknader: 1,
+      rangering: [{ kandidat_id: "kandidat-01", poeng: 5,
+        nedbrytning: { drift: 5 } }],
+      kandidater: { "kandidat-01": { funn: [] } },
+      fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+    } },
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.textContent.includes("kandidat-01")));
+  const foer = hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  const kallFoer = KALL.length;
+  const velger = hoved.querySelector("#rekrut-prosessvelger");
+  velger.value = "p-2";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 10));
+  const etter = hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  assert.equal(etter, foer,
+    "prosessbyttet bygde seksjonen på nytt — noden skulle gjenbrukes");
+  assert.equal(KALL.length, kallFoer,
+    "prosessbyttet utløste nettverkskall fra evalueringsseksjonen");
+  assert.ok(etter.textContent.includes("kandidat-01"),
+    "rapporten forsvant fra den gjenbrukte noden");
+});
+
+test("Evalueringer: en hengende KLIKK-henting overlever byttet — "
+  + "brukerens valg tegnes, auto blander seg aldri", async () => {
+  KALL = [];
+  // Remount-dommen (port b, runde 5-klassen c47a4409): B henger når
+  // brukeren bytter prosess. Uten remount finnes ikke vinduet der
+  // auto-A kunne overta — B lander i samme node, og A hentes aldri
+  // utover auto-ens opprinnelige (som her alt er cache).
+  let slippB;
+  const tregB = new Promise((res) => { slippB = res; });
+  const rapportA = { oppdrag_id: 97, rapport: {
+    rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+    profil: { profil_id: "p-1", versjon: 2, navn: "Sikkerhetsleder" },
+    antall_soknader: 1,
+    rangering: [{ kandidat_id: "kandidat-02", poeng: 4,
+      nedbrytning: { drift: 4 } }],
+    kandidater: { "kandidat-02": { funn: [] } },
+    fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+  } };
   const to = prosess();
   to.prosesser.push({
     prosess_id: "p-2", navn: "Sykepleier vest", blinding_av: false,
@@ -1799,25 +1855,77 @@ test("Evalueringer: et hengende auto-løfte GJENOPPTAS etter remount — "
         opprettet: "2026-08-27T01:00:00+00:00", rapport_klar: true },
       { oppdrag_id: 96, status: "utfort",
         opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
-    "/v1/rekruttering/rapport/97": tregA,
-  })[sti] ?? 500;   // B (96) feiler
+    "/v1/rekruttering/rapport/97": rapportA,
+    "/v1/rekruttering/rapport/96": tregB,
+  })[sti] ?? 500;
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
-  assert.ok(await vent(() => hoved.querySelectorAll(
-    "section[aria-labelledby=evaluering-tittel] button").length === 2));
+  // Auto-A (97) er rendret; brukeren klikker B (96), som HENGER.
+  assert.ok(await vent(() => hoved.textContent.includes("Sikkerhetsleder")));
   const seksjon = () => hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
   [...seksjon().querySelectorAll("button")]
     .find((b) => b.closest("tr").textContent.includes("96")).click();
-  await new Promise((r) => setTimeout(r, 10));
+  const aFoer = KALL.filter(
+    (k) => k.sti === "/v1/rekruttering/rapport/97").length;
   const velger = hoved.querySelector("#rekrut-prosessvelger");
   velger.value = "p-2";
   velger.dispatchEvent(new window.Event("change", { bubbles: true }));
   await new Promise((r) => setTimeout(r, 10));
-  // Gjenopptakelsen delte løftet — fortsatt bare ÉN nedlasting av A.
+  assert.equal(KALL.filter(
+    (k) => k.sti === "/v1/rekruttering/rapport/97").length, aFoer,
+    "byttet lot auto-A overta — A skulle aldri hentes på nytt");
+  slippB({ oppdrag_id: 96, rapport: {
+    rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+    profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
+    antall_soknader: 1,
+    rangering: [{ kandidat_id: "kandidat-01", poeng: 5,
+      nedbrytning: { drift: 5 } }],
+    kandidater: { "kandidat-01": { funn: [] } },
+    fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+  } });
+  assert.ok(await vent(() => seksjon().textContent.includes("Driftskonsulent")),
+    "brukerens hengende valg (B) nådde aldri frem");
+  assert.ok(!seksjon().textContent.includes("Sikkerhetsleder"),
+    "auto-A ble stående over brukerens valg");
+});
+
+test("Evalueringer: et hengende auto-løfte OVERLEVER prosessbyttet — "
+  + "rapporten når frem, én nedlasting", async () => {
+  KALL = [];
+  // Remount-dommen (port c): noden overlever byttet, så det hengende
+  // auto-løftets mål finnes fortsatt — ingen gjenopptakelses-maskin,
+  // ingen ny nedlasting; svaret lander i den samme seksjonen.
+  let slippA;
+  const tregA = new Promise((res) => { slippA = res; });
+  const to = prosess();
+  to.prosesser.push({
+    prosess_id: "p-2", navn: "Sykepleier vest", blinding_av: false,
+    vekter: { drift: 1 },
+    kandidater: [{ kandidat_id: "K-9", oppfylt: { drift: true },
+      status: "anbefalt", funn: [], intervjusporsmal: [] }],
+    lister: [],
+  });
+  SVAR = (sti) => ({
+    "/v1/rekruttering/prosesser": to,
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 97, status: "utfort",
+        opprettet: "2026-08-27T01:00:00+00:00", rapport_klar: true }] },
+    "/v1/rekruttering/rapport/97": tregA,
+  })[sti] ?? 500;
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => KALL.some(
+    (k) => k.sti === "/v1/rekruttering/rapport/97")),
+    "auto-lastingen startet aldri");
+  const velger = hoved.querySelector("#rekrut-prosessvelger");
+  velger.value = "p-2";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 10));
   assert.equal(KALL.filter(
     (k) => k.sti === "/v1/rekruttering/rapport/97").length, 1,
-    "remounten startet en ny nedlasting i stedet for å gjenoppta");
+    "byttet utløste en ny nedlasting — noden skulle overlevd");
   slippA({ oppdrag_id: 97, rapport: {
     rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
     profil: { profil_id: "p-1", versjon: 2, navn: "Sikkerhetsleder" },
@@ -1827,8 +1935,10 @@ test("Evalueringer: et hengende auto-løfte GJENOPPTAS etter remount — "
     kandidater: { "kandidat-02": { funn: [] } },
     fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
   } });
+  const seksjon = () => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
   assert.ok(await vent(() => seksjon().textContent.includes("Sikkerhetsleder")),
-    "det gjenopptatte auto-løftet rendret aldri — rapporten kom ikke frem");
+    "det hengende auto-løftet nådde aldri frem etter byttet");
 });
 
 test("Evalueringer: A→B→A gjenbruker As løfte — aldri to nedlastinger "
@@ -1958,24 +2068,16 @@ test("Evalueringer: et sent auto-svar kan aldri restarte auto-stien — "
     "auto-stien restartet A over brukerens valg");
 });
 
-test("Evalueringer: en stille auto-feil bruker ikke opp økten", async () => {
+test("Evalueringer: en stille auto-feil bruker ikke opp noe — neste "
+  + "rute-inngang prøver igjen", async () => {
   KALL = [];
-  // Pass-funn, andre halvdel — nå AVLEDET form (eierdom, K2-dommen):
-  // det finnes ingen latch å slippe. Auto fyrer når verken cache
-  // (`siste`) eller in-flight (`aktiv`) finnes; en feilet runde
-  // etterlater begge tomme, så neste mount prøver igjen — stille
-  // (alerten hører til klikket).
-  const to = prosess();
-  to.prosesser.push({
-    prosess_id: "p-2", navn: "Sykepleier vest", blinding_av: false,
-    vekter: { drift: 1 },
-    kandidater: [{ kandidat_id: "K-9", oppfylt: { drift: true },
-      status: "anbefalt", funn: [], intervjusporsmal: [] }],
-    lister: [],
-  });
+  // Remount-dommen: mount skjer ved RUTE-INNGANG (og full lasting) —
+  // prosessbytte gjenbruker noden og prøver ikke på nytt (det er
+  // poenget). En feilet auto-runde etterlater cache og kart tomme, så
+  // NESTE rute-inngang henter rapporten som nå finnes.
   let rapportSvar; // undefined ⇒ 404 fra fetch-stubben
   SVAR = (sti) => ({
-    "/v1/rekruttering/prosesser": to,
+    "/v1/rekruttering/prosesser": prosess(),
     "/v1/rekruttering/stillingsprofiler": profiler(),
     "/v1/rekruttering/evalueringer": { evalueringer: [
       { oppdrag_id: 96, status: "utfort",
@@ -1994,10 +2096,7 @@ test("Evalueringer: en stille auto-feil bruker ikke opp økten", async () => {
     .every((a) => !a.textContent.includes(
       t("ui.rekruttering.evalueringer.rapportfeil"))),
     "auto-feilen malte en usolicited alert");
-  // ... og ØKTEN ER IKKE BRUKT OPP: er rapporten der ved neste mount,
-  // henter auto-stien den. Mutasjonen som dreper denne: la latchen stå
-  // etter en mislykket runde — alerten mangler fortsatt (riktig), men
-  // produktet kommer aldri.
+  // Rapporten blir tilgjengelig; NESTE rute-inngang henter den.
   rapportSvar = { oppdrag_id: 96, rapport: {
     rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
     profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
@@ -2007,11 +2106,10 @@ test("Evalueringer: en stille auto-feil bruker ikke opp økten", async () => {
     kandidater: { "kandidat-01": { funn: [] } },
     fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
   } };
-  const velger = hoved.querySelector("#rekrut-prosessvelger");
-  velger.value = "p-2";
-  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
-  assert.ok(await vent(() => hoved.textContent.includes("kandidat-01")),
-    "den stille auto-feilen latchet økten — produktet kom aldri tilbake");
+  const hoved2 = nyHoved();
+  visRekruttering(hoved2, ctx());
+  assert.ok(await vent(() => hoved2.textContent.includes("kandidat-01")),
+    "den stille auto-feilen latchet noe — produktet kom aldri tilbake");
 });
 
 test("Evalueringer: en rapport som lander etter et prosessbytte tegner "
