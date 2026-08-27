@@ -875,12 +875,17 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
         handling.append(knapp);
       }
       // Terminale statuser er sine egne sannheter — "venter" er bare for
-      // oppdrag som faktisk kan bli klare.
-      const statusTekst = e2.rapport_klar
-        ? t("ui.rekruttering.evalueringer.klar")
-        : (e2.status === "feilet" || e2.status === "kansellert")
-          ? t("ui.rekruttering.evalueringer." + e2.status)
-          : t("ui.rekruttering.evalueringer.venter");
+      // oppdrag som faktisk kan bli klare. En reapet evaluering er
+      // hverken klar eller underveis: fristen har makulert den (Codex
+      // P2 — uten dette sto et `utfort` oppdrag som «under arbeid» i
+      // det uendelige etter retensjonsgrensen).
+      const statusTekst = e2.slettet
+        ? t("ui.rekruttering.evalueringer.slettet")
+        : e2.rapport_klar
+          ? t("ui.rekruttering.evalueringer.klar")
+          : (e2.status === "feilet" || e2.status === "kansellert")
+            ? t("ui.rekruttering.evalueringer." + e2.status)
+            : t("ui.rekruttering.evalueringer.venter");
       return el("tr", {},
         el("th", { scope: "row", text: String(e2.oppdrag_id) }),
         el("td", {}, Tidspunkt(e2.opprettet || "")),

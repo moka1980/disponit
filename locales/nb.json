@@ -1069,6 +1069,7 @@
   "ui.rekruttering.evalueringer.klar": "Rapport klar",
   "ui.rekruttering.evalueringer.feilet": "Feilet",
   "ui.rekruttering.evalueringer.kansellert": "Kansellert",
+  "ui.rekruttering.evalueringer.slettet": "Slettet etter oppbevaringsfristen",
   "ui.rekruttering.evalueringer.nedbrytning": "Poengfordeling",
   "ui.rekruttering.evalueringer.rangering": "Rangering — {navn} (versjon {versjon})",
   "ui.rekruttering.evalueringer.kandidat": "Kandidat",

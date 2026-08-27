@@ -461,5 +461,10 @@ def test_reapet_prosess_stenger_rapporten(migrator, miljo):
                         if e["oppdrag_id"] == oid)
             assert rad2["rapport_klar"] is False, \
                 "listen skal slutte å reklamere for en reapet rapport"
+            # … og reapingen er NAVNGITT (Codex P2): flaten skal aldri
+            # vise et makulert oppdrag som «under arbeid».
+            assert rad2["slettet"] is True
+            assert rad["slettet"] is False, \
+                "en levende evaluering skal ikke merkes slettet"
     finally:
         rt.close()

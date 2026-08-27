@@ -1101,6 +1101,9 @@ test("Evalueringer: liste med status, og rapporten rendres blindet", async () =>
         opprettet: "2026-08-27T07:00:00+00:00", rapport_klar: false },
       { oppdrag_id: 95, status: "feilet",
         opprettet: "2026-08-26T22:00:00+00:00", rapport_klar: false },
+      { oppdrag_id: 90, status: "utfort",
+        opprettet: "2026-08-20T10:00:00+00:00", rapport_klar: false,
+        slettet: true },
     ], flere: true },
     "/v1/rekruttering/rapport/96": { oppdrag_id: 96, rapport: {
       rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
@@ -1135,6 +1138,10 @@ test("Evalueringer: liste med status, og rapporten rendres blindet", async () =>
   assert.match(tekst, new RegExp(t("ui.rekruttering.evalueringer.venter")));
   // Terminal status er sin egen sannhet — aldri "under arbeid".
   assert.match(tekst, new RegExp(t("ui.rekruttering.evalueringer.feilet")));
+  // En reapet evaluering er navngitt slettet — ikke «under arbeid» i
+  // det uendelige, og uten Vis-knapp (rapport_klar er false).
+  assert.match(tekst,
+    new RegExp(t("ui.rekruttering.evalueringer.slettet")));
   // Fullt vindu: avkortingen SIES, aldri stille (Cursor P2-3; #221 tar
   // selve pagineringen).
   assert.match(tekst,

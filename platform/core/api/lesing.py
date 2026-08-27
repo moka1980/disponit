@@ -599,7 +599,14 @@ def rekrutteringsevalueringer(tjeneste, request: Request) -> Response:
             # reapet (samme grense som detaljruten — Codex P1).
             " AND NOT EXISTS (SELECT 1 FROM rekrutteringsprosess p"
             "      WHERE p.tenant = o.tenant AND p.oppdrag_id = o.id"
-            "        AND p.slettet_ts IS NOT NULL)"
+            "        AND p.slettet_ts IS NOT NULL),"
+            # … og reapingen NAVNGIS (Codex P2): et `utfort` oppdrag med
+            # `rapport_klar: false` fordi fristen har makulert det er
+            # ikke «under arbeid» — uten dette feltet ville flaten vist
+            # det slik i det uendelige.
+            " EXISTS (SELECT 1 FROM rekrutteringsprosess p"
+            "      WHERE p.tenant = o.tenant AND p.oppdrag_id = o.id"
+            "        AND p.slettet_ts IS NOT NULL) AS slettet"
             "  FROM oppdrag o"
             " WHERE o.tenant=%s AND o.oppdragstype = ANY(%s::text[])"
             # HENTER ÉN OVER VINDUET (Codex P2). `LIMIT 100` + `flere =
@@ -613,7 +620,8 @@ def rekrutteringsevalueringer(tjeneste, request: Request) -> Response:
             "evalueringer": [
                 {"oppdrag_id": r[0], "status": r[1],
                  "opprettet": r[2].isoformat() if r[2] else None,
-                 "rapport_klar": r[3]} for r in rader[:100]],
+                 "rapport_klar": r[3],
+                 "slettet": r[4]} for r in rader[:100]],
             # Aldri stille avkorting: finnes rad 101, MELDER flaten det i
             # stedet for å presentere de nyeste 100 som alt.
             # Cursor (#220 P2-3, eierdom); selve pagineringen bor i #221.
