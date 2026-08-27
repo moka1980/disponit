@@ -1593,6 +1593,12 @@ test("Evalueringer: hopplenke forbi rangeringen til prosess og signering "
   // `.rekrut-hopp`, ikke sidetopp-`.hoppelenke` (pass-funn: den er
   // viewport-absolute og teleporterte fokuset bort fra rangeringen).
   const hopp = hoved.querySelector("a.rekrut-hopp");
+  // ... og lenken står ETTER overskriften (Codex P2): tab framover fra
+  // den fokuserte overskriften skal møte bypass-en før rangeringen.
+  const rapportOverskrift = hoved.querySelector("h3[tabindex='-1']");
+  assert.ok(rapportOverskrift.compareDocumentPosition(hopp)
+    & rapportOverskrift.DOCUMENT_POSITION_FOLLOWING,
+    "hopplenken står foran overskriften — utabbar fra fokuspunktet");
   assert.ok(hopp, "hopplenken over rangeringen mangler");
   const maal = hoved.querySelector(hopp.getAttribute("href"));
   assert.ok(maal, "hopplenken peker på et anker som ikke finnes i flaten");
@@ -1624,6 +1630,47 @@ test("Evalueringer: hopplenke forbi rangeringen til prosess og signering "
   // MUTASJONEN SOM DREPER DENNE: fjern hopplenken fra rapporten, flytt
   // ankeret foran evalueringsseksjonen, eller slipp klikket videre til
   // nettleserens egen fragmentnavigasjon.
+});
+
+test("Evalueringer: klikk under pågående auto-lasting deler løftet — "
+  + "én henting, fokus til klikket", async () => {
+  KALL = [];
+  // Codex P2: auto-lastingen og et utålmodig klikk på samme rapport
+  // skal aldri bli to hentinger.
+  let slipp;
+  const treg = new Promise((res) => { slipp = res; });
+  SVAR = (sti) => ({
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
+    "/v1/rekruttering/rapport/96": treg,
+  })[sti] ?? 500;
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel] button")));
+  const seksjon = hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  seksjon.querySelector("button").click();
+  slipp({ oppdrag_id: 96, rapport: {
+    rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+    profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
+    antall_soknader: 1,
+    rangering: [{ kandidat_id: "kandidat-01", poeng: 5,
+      nedbrytning: { drift: 5 } }],
+    kandidater: { "kandidat-01": { funn: [] } },
+    fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+  } });
+  assert.ok(await vent(() => seksjon.textContent.includes("kandidat-01")),
+    "rapporten rendret aldri");
+  assert.equal(KALL.filter(
+    (k) => k.sti === "/v1/rekruttering/rapport/96").length, 1,
+    "klikket startet en henting nr. 2 av samme rapport");
+  const overskrift = seksjon.querySelector("h3[tabindex='-1']");
+  assert.equal(seksjon.ownerDocument.activeElement, overskrift,
+    "klikket skal ha fokus-semantikken selv om løftet var autoens");
 });
 
 test("Evalueringer: auto-feil er stille — alert hører til klikket", async () => {

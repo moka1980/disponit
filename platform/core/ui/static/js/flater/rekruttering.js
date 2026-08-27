@@ -876,9 +876,13 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
         const maal = hoved.querySelector(`#${HOPP_ANKER}`);
         if (maal) maal.focus();
       });
+    // Hopplenken ETTER overskriften (Codex P2): eksplisitt klikk
+    // fokuserer overskriften, og tab framover derfra skal møte
+    // bypass-en FØR rangeringens N `<summary>` — sto lenken foran,
+    // var den utabbar fra det eneste stedet fokus faktisk står.
     return { overskrift, noder: [
-      hoppLenke,
       overskrift,
+      hoppLenke,
       el("p", { text: t("ui.rekruttering.evalueringer.blindet") }),
       el("div", { class: "tablewrap" }, tabell), ...detaljer] };
   };
@@ -890,12 +894,31 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
     // `role="alert"` på hver sidelasting er falsk alarm. Auto-feil er
     // stille — rapportområdet står tomt, listen er fortsatt sannheten.
     // Tøm FØR henting: et feilet kall skal aldri la forrige rapport stå
-    // igjen under en feilmelding som gjelder en annen.
+    // igjen under en feilmelding som gjelder en annen — og CACHEN følger
+    // DOM-en (Codex P2): sto den igjen, gjenoppsto den gamle rapporten
+    // ved neste prosessbytte selv om brukeren nettopp forlot den.
     rHent.tegn(null, []);
+    rHent.siste = null;
     const min = ++rHent.nr;
     let svar;
     try {
-      svar = await hentEvalueringsrapport(oppdragId);
+      // ÉN henting per rapport-id (Codex P2): klikker brukeren «Vis»
+      // mens auto-lastingen av SAMME rapport står i lufta, deles
+      // løftet — generasjonen avgjør hvem som får rendre (klikket),
+      // og fokus-semantikken er kallerens.
+      if (rHent.pending && rHent.pending.id === oppdragId) {
+        svar = await rHent.pending.lofte;
+      } else {
+        const lofte = hentEvalueringsrapport(oppdragId);
+        rHent.pending = { id: oppdragId, lofte };
+        try {
+          svar = await lofte;
+        } finally {
+          if (rHent.pending && rHent.pending.lofte === lofte) {
+            rHent.pending = null;
+          }
+        }
+      }
     } catch (e) {
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
       if (min !== rHent.nr) return;
