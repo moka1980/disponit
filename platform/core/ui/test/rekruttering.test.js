@@ -1227,6 +1227,37 @@ test("Evalueringer: feilet rapporthenting melder i alert, ikke stille", async ()
     "den gamle rapporten ble stående etter feilet henting");
 });
 
+test("Evalueringer: 200 med urendrbar rapport lander i alert, ikke tom seksjon", async () => {
+  KALL = [];
+  // Ruta svarer 200, men kroppen mangler `rangering` — nøyaktig den
+  // «200-og-feiler-under-rendring»-klassen diskriminatorportene verner
+  // serversiden mot. Rendringen skjer etter at `utfall` og rapport-roten
+  // er tømt: uten vakt blir det en STILLE tom seksjon uten role="alert".
+  SVAR = (sti) => ({
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
+    "/v1/rekruttering/rapport/96": { oppdrag_id: 96, rapport: null },
+  })[sti] ?? 500;
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel] button")));
+  const seksjon = hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  seksjon.querySelector("button").click();
+  assert.ok(await vent(() => seksjon.querySelector("[role=alert]").textContent
+    === t("ui.rekruttering.evalueringer.rapportfeil")),
+    "urendrbar rapport ga ingen feilmelding — seksjonen ble stille tom");
+  // Ingen halv DOM: en delvis bygget rapport ser ekte ut for leseren.
+  assert.equal(seksjon.querySelectorAll("table").length, 1,
+    "rapporttabellen ble stående halvbygget ved siden av feilmeldingen");
+  assert.doesNotMatch(seksjon.textContent,
+    new RegExp(t("ui.rekruttering.evalueringer.blindet").slice(0, 20)));
+});
+
 test("Evalueringer: det siste klikket vinner — et tregt eldre svar forkastes", async () => {
   KALL = [];
   // Rapport 96 HENGER til testen slipper den; 97 svarer straks. Slippes

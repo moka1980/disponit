@@ -732,76 +732,90 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       return;
     }
     if (min !== hentingNr) return;
-    const rapport = svar.rapport;
-    const kropp = el("tbody", {}, ...rapport.rangering.map((rad) =>
-      el("tr", {},
-        el("th", { scope: "row", text: rad.kandidat_id }),
-        el("td", { text: String(rad.poeng) }),
-        el("td", { text: Object.entries(rad.nedbrytning)
-          .map(([k, v]) => `${t(`ui.rekruttering.krav.${k}`, k)}: ${v}`)
-          .join(", ") }))));
-    const tabell = el("table", {},
-      el("caption", { text: t("ui.rekruttering.evalueringer.rangering")
-        .replace("{navn}", rapport.profil.navn)
-        .replace("{versjon}", String(rapport.profil.versjon)) }),
-      el("thead", {}, el("tr", {},
-        el("th", { scope: "col",
-          text: t("ui.rekruttering.evalueringer.kandidat") }),
-        el("th", { scope: "col",
-          text: t("ui.rekruttering.evalueringer.poeng") }),
-        el("th", { scope: "col",
-          text: t("ui.rekruttering.evalueringer.nedbrytning") }))),
-      kropp);
-    // Skjemaet tillater 5000 kandidater à 100 funn + 20 spørsmål — en
-    // gyldig maksrapport ville bygget hundretusener av noder opp front.
-    // Kroppen bygges derfor først når leseren åpner den.
-    const detaljer = rapport.rangering.map((rad) => {
-      const boks = el("details", {},
-        el("summary", { text: t("ui.rekruttering.evalueringer.detaljer")
-          .replace("{kandidat}", rad.kandidat_id) }));
-      let bygget = false;
-      boks.addEventListener("toggle", () => {
-        if (bygget || !boks.open) return;
-        bygget = true;
-        const k = rapport.kandidater[rad.kandidat_id] || {};
-        // Sitatløse funn beholdes med plassholder — speilet fra
-        // prosesspanelets funnliste (`:448`): kategorien er selve
-        // risikoopplysningen, og et skjult funn er verre enn et uten belegg.
-        const funn = (k.funn || []).filter(Boolean).length
-          ? el("ul", {}, ...(k.funn || []).filter(Boolean).map((f) => {
-              const sitat = f.kilde && typeof f.kilde.sitat === "string"
-                ? f.kilde.sitat
-                : null;
-              return el("li", {},
-                el("strong", { text: t(`ui.rekruttering.funn.${f.kategori}`) }),
-                " — ",
-                sitat === null
-                  ? el("em", { text: t("ui.rekruttering.uten_sitat") })
-                  : el("q", { text: sitat }));
-            }))
-          : el("p", { text: t("ui.rekruttering.evalueringer.ingen_funn") });
-        boks.append(
-          el("h4", { text: t("ui.rekruttering.evalueringer.funn") }), funn);
-        if ((k.intervjusporsmal || []).length) {
-          boks.append(el("h4", {
-            text: t("ui.rekruttering.evalueringer.sporsmal") }),
-            el("ol", {}, ...(k.intervjusporsmal || []).map((sp) =>
-              el("li", { text: sp }))));
-        }
+    // RENDRINGEN LIGGER INNE I `try` (Cursor P2). 200 er ikke det samme
+    // som rendrbar: mangler `rangering`, `profil` eller `nedbrytning`,
+    // kastet dereferansen HER — etter at `utfall` og `rapportRot` alt var
+    // tømt. Resultatet var en stille tom seksjon uten `role="alert"`,
+    // samme «200-og-feiler-under-rendring»-klasse som diskriminator-
+    // portene verner serversiden mot. WCAG-flaten rendrer inne i `try`;
+    // ats-veien gjør nå det samme, og lander i den ærlige feiltilstanden.
+    try {
+      const rapport = svar.rapport;
+      const kropp = el("tbody", {}, ...rapport.rangering.map((rad) =>
+        el("tr", {},
+          el("th", { scope: "row", text: rad.kandidat_id }),
+          el("td", { text: String(rad.poeng) }),
+          el("td", { text: Object.entries(rad.nedbrytning)
+            .map(([k, v]) => `${t(`ui.rekruttering.krav.${k}`, k)}: ${v}`)
+            .join(", ") }))));
+      const tabell = el("table", {},
+        el("caption", { text: t("ui.rekruttering.evalueringer.rangering")
+          .replace("{navn}", rapport.profil.navn)
+          .replace("{versjon}", String(rapport.profil.versjon)) }),
+        el("thead", {}, el("tr", {},
+          el("th", { scope: "col",
+            text: t("ui.rekruttering.evalueringer.kandidat") }),
+          el("th", { scope: "col",
+            text: t("ui.rekruttering.evalueringer.poeng") }),
+          el("th", { scope: "col",
+            text: t("ui.rekruttering.evalueringer.nedbrytning") }))),
+        kropp);
+      // Skjemaet tillater 5000 kandidater à 100 funn + 20 spørsmål — en
+      // gyldig maksrapport ville bygget hundretusener av noder opp front.
+      // Kroppen bygges derfor først når leseren åpner den.
+      const detaljer = rapport.rangering.map((rad) => {
+        const boks = el("details", {},
+          el("summary", { text: t("ui.rekruttering.evalueringer.detaljer")
+            .replace("{kandidat}", rad.kandidat_id) }));
+        let bygget = false;
+        boks.addEventListener("toggle", () => {
+          if (bygget || !boks.open) return;
+          bygget = true;
+          const k = rapport.kandidater[rad.kandidat_id] || {};
+          // Sitatløse funn beholdes med plassholder — speilet fra
+          // prosesspanelets funnliste (`:448`): kategorien er selve
+          // risikoopplysningen, og et skjult funn er verre enn et uten belegg.
+          const funn = (k.funn || []).filter(Boolean).length
+            ? el("ul", {}, ...(k.funn || []).filter(Boolean).map((f) => {
+                const sitat = f.kilde && typeof f.kilde.sitat === "string"
+                  ? f.kilde.sitat
+                  : null;
+                return el("li", {},
+                  el("strong", { text: t(`ui.rekruttering.funn.${f.kategori}`) }),
+                  " — ",
+                  sitat === null
+                    ? el("em", { text: t("ui.rekruttering.uten_sitat") })
+                    : el("q", { text: sitat }));
+              }))
+            : el("p", { text: t("ui.rekruttering.evalueringer.ingen_funn") });
+          boks.append(
+            el("h4", { text: t("ui.rekruttering.evalueringer.funn") }), funn);
+          if ((k.intervjusporsmal || []).length) {
+            boks.append(el("h4", {
+              text: t("ui.rekruttering.evalueringer.sporsmal") }),
+              el("ol", {}, ...(k.intervjusporsmal || []).map((sp) =>
+                el("li", { text: sp }))));
+          }
+        });
+        return boks;
       });
-      return boks;
-    });
-    // Rapporten settes inn ETTER tabellen brukeren sto i — fokusér
-    // overskriften, ellers får tastatur/skjermleser aldri vite at
-    // lastingen ble ferdig.
-    const overskrift = el("h3", { tabindex: "-1",
-      text: t("ui.rekruttering.evalueringer.rangering")
-        .replace("{navn}", rapport.profil.navn)
-        .replace("{versjon}", String(rapport.profil.versjon)) });
-    sett(rapportRot, overskrift,
-      el("p", { text: t("ui.rekruttering.evalueringer.blindet") }),
-      el("div", { class: "tablewrap" }, tabell), ...detaljer);
-    overskrift.focus();
+      // Rapporten settes inn ETTER tabellen brukeren sto i — fokusér
+      // overskriften, ellers får tastatur/skjermleser aldri vite at
+      // lastingen ble ferdig.
+      const overskrift = el("h3", { tabindex: "-1",
+        text: t("ui.rekruttering.evalueringer.rangering")
+          .replace("{navn}", rapport.profil.navn)
+          .replace("{versjon}", String(rapport.profil.versjon)) });
+      sett(rapportRot, overskrift,
+        el("p", { text: t("ui.rekruttering.evalueringer.blindet") }),
+        el("div", { class: "tablewrap" }, tabell), ...detaljer);
+      overskrift.focus();
+    } catch (e) {
+      if (min !== hentingNr) return;
+      // Halv DOM er verre enn ingen: en delvis bygget rapport ser ekte ut.
+      sett(rapportRot);
+      sett(utfall, t("ui.rekruttering.evalueringer.rapportfeil"));
+    }
   };
 
   const tegnListe = (evalueringer) => {
