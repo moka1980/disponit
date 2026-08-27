@@ -218,16 +218,26 @@ def test_rapportflaten_er_deklarert_aldri_utledet():
     At feltet DEKLARERES er halve saken; at leseveien DISPATCHER på
     VERDIEN er den andre, og den står i nabotesten under.
 
+    CP4 ER LANDET: M-57 har nå sin EGEN flate ("ats" →
+    `/v1/rekruttering/rapport/{id}` + evalueringsseksjonen). Invarianten
+    porten verner er den samme som før, i sin ferdige form: flaten er en
+    DISKRIMINATOR, aldri en boolsk — M-57 må aldri peke på WCAG-rendrerens
+    verdi, og begge leseveiene dispatcher på hver sin.
+
     MUTASJONEN SOM DREPER DENNE: sett `rapportflate="wcag"` på
     `rekruttering.evaluering`, eller fjern `rapportflate`-leddet i
-    `lesing.rapport_detalj`.
+    `lesing.rapport_detalj`/`lesing.rekrutteringsrapport_detalj`.
     """
     import oppdragskontrakt as ok
+    from api import lesing
     m57 = ok.OPPDRAGSTYPER["rekruttering.evaluering"]
     assert m57.rapport_artefakttype is not None, \
         "uten navngitt type får modulen `opplasting: null` ved claim"
-    assert m57.rapportflate is None, \
-        "M-57-rapporten har ingen flate før CP4 — 404 er det ærlige svaret"
+    assert m57.rapportflate == lesing.RAPPORTFLATE_ATS, \
+        "M-57s rapport hører til ats-flaten — aldri WCAG-rendrerens"
+    assert m57.rapportflate != lesing.RAPPORTFLATE, \
+        "diskriminatorene MÅ være disjunkte — ellers arver flatene" \
+        " hverandres former"
     wcag = ok.OPPDRAGSTYPER["kontroll.wcag.nettsted"]
     assert wcag.rapportflate == "wcag"
     # Kontraktporten: en flate uten artefakttype er en flate som viser en
@@ -238,10 +248,11 @@ def test_rapportflaten_er_deklarert_aldri_utledet():
                        rapport_artefakttype=None,
                        rapportflate="wcag").valider())
     # … og leseveiens PAR er utledet av begge feltene, ikke bare det ene.
+    # Etter CP4 bærer BEGGE typene komplette par — hver mot sin flate.
     par = {navn for navn, t in ok.OPPDRAGSTYPER.items()
            if t.rapport_artefakttype is not None
            and t.rapportflate is not None}
-    assert par == {"kontroll.wcag.nettsted"}, par
+    assert par == {"kontroll.wcag.nettsted", "rekruttering.evaluering"}, par
 
 
 def test_rapportflaten_er_en_diskriminator_ikke_en_boolsk():

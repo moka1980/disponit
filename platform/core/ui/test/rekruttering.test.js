@@ -1081,7 +1081,8 @@ function profiler() {
 async function tegnetMedProfiler() {
   KALL = [];
   SVAR = { "/v1/rekruttering/prosesser": prosess(),
-           "/v1/rekruttering/stillingsprofiler": profiler() };
+           "/v1/rekruttering/stillingsprofiler": profiler(),
+           "/v1/rekruttering/evalueringer": { evalueringer: [] } };
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelector("table")),
@@ -1089,10 +1090,117 @@ async function tegnetMedProfiler() {
   return hoved;
 }
 
+test("Evalueringer: liste med status, og rapporten rendres blindet", async () => {
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true },
+      { oppdrag_id: 97, status: "opprettet",
+        opprettet: "2026-08-27T07:00:00+00:00", rapport_klar: false },
+      { oppdrag_id: 95, status: "feilet",
+        opprettet: "2026-08-26T22:00:00+00:00", rapport_klar: false },
+    ] },
+    "/v1/rekruttering/rapport/96": { oppdrag_id: 96, rapport: {
+      rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+      profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
+      antall_soknader: 2,
+      rangering: [
+        { kandidat_id: "kandidat-01", poeng: 5,
+          nedbrytning: { drift: 3, sky: 2 } },
+        { kandidat_id: "kandidat-02", poeng: 3,
+          nedbrytning: { drift: 3, sky: 0 } },
+      ],
+      kandidater: {
+        "kandidat-01": { funn: [{ kategori: "uklar_tidslinje",
+          kilde: { start: 0, slutt: 9, sitat: "[NAVN-1] har" } }],
+          intervjusporsmal: ["Fortell om driftserfaringen."],
+          kildetekst: "[NAVN-1] har drift" },
+        "kandidat-02": { funn: [], intervjusporsmal: [],
+          kildetekst: "[NAVN-2] litt sky" },
+      },
+      fremdrift: { filer_lest: 2, filer_totalt: 2, byte_lest: 100 },
+    } } };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]")), "seksjonen kom aldri");
+  const seksjon = hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  const tekst = seksjon.textContent;
+  assert.match(tekst, /96/);
+  assert.match(tekst, new RegExp(t("ui.rekruttering.evalueringer.klar")));
+  assert.match(tekst, new RegExp(t("ui.rekruttering.evalueringer.venter")));
+  // Terminal status er sin egen sannhet — aldri "under arbeid".
+  assert.match(tekst, new RegExp(t("ui.rekruttering.evalueringer.feilet")));
+  // Kun den ferdige raden har en Vis-knapp.
+  const knapper = [...seksjon.querySelectorAll("button")]
+    .filter((b) => b.textContent === t("ui.rekruttering.evalueringer.vis"));
+  assert.equal(knapper.length, 1);
+  knapper[0].click();
+  assert.ok(await vent(() => seksjon.textContent.includes("Driftskonsulent")),
+    "rapporten rendret aldri");
+  const etter = seksjon.textContent;
+  assert.match(etter, /kandidat-01/);
+  assert.match(etter, /uklar_tidslinje/);
+  assert.match(etter, /\[NAVN-1\] har/);       // sitatet, blindet form
+  assert.match(etter, /Fortell om driftserfaringen/);
+  // Nedbrytningskolonnen bærer sin EGEN etikett, ikke funnenes.
+  assert.match(etter,
+    new RegExp(t("ui.rekruttering.evalueringer.nedbrytning")));
+  assert.match(etter,
+    new RegExp(t("ui.rekruttering.evalueringer.blindet").slice(0, 20)));
+  const brudd = await alvorligeBrudd(hoved);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
+test("Evalueringer: feilet rapporthenting melder i alert, ikke stille", async () => {
+  KALL = [];
+  // Første klikk lykkes; deretter svarer ruta 500 — den gamle rapporten
+  // skal da IKKE bli stående under en feilmelding som gjelder en annen.
+  let rapportSvar = { oppdrag_id: 96, rapport: {
+    rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+    profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
+    antall_soknader: 1,
+    rangering: [{ kandidat_id: "kandidat-01", poeng: 5,
+      nedbrytning: { drift: 5 } }],
+    kandidater: { "kandidat-01": { funn: [], intervjusporsmal: [],
+      kildetekst: "[NAVN-1]" } },
+    fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+  } };
+  SVAR = (sti) => ({
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
+    "/v1/rekruttering/rapport/96": rapportSvar,
+  })[sti] ?? 500;
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel] button")));
+  const seksjon = hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  seksjon.querySelector("button").click();
+  assert.ok(await vent(() => seksjon.textContent.includes("Driftskonsulent")),
+    "rapporten rendret aldri");
+  rapportSvar = undefined; // ?? 500 tar over
+  seksjon.querySelector("button").click();
+  await vent(() => seksjon.querySelector("[role=alert]").textContent
+    === t("ui.rekruttering.evalueringer.rapportfeil"));
+  assert.equal(seksjon.querySelector("[role=alert]").textContent,
+    t("ui.rekruttering.evalueringer.rapportfeil"));
+  assert.ok(!seksjon.textContent.includes("Driftskonsulent"),
+    "den gamle rapporten ble stående etter feilet henting");
+});
+
 test("Profiler: uten bestilling:opprett finnes ingen skriveknapper (P2-1)", async () => {
   KALL = [];
   SVAR = { "/v1/rekruttering/prosesser": prosess(),
-           "/v1/rekruttering/stillingsprofiler": profiler() };
+           "/v1/rekruttering/stillingsprofiler": profiler(),
+           "/v1/rekruttering/evalueringer": { evalueringer: [] } };
   const hoved = nyHoved();
   const leser = ctx();
   leser.scopes = ["decisions:read"];
@@ -1123,7 +1231,8 @@ test("Bestilling: uten bestilling:opprett finnes ingen bestillingsseksjon (P2-7)
   // blindvei som først dør server-side.
   KALL = [];
   SVAR = { "/v1/rekruttering/prosesser": prosess(),
-           "/v1/rekruttering/stillingsprofiler": profiler() };
+           "/v1/rekruttering/stillingsprofiler": profiler(),
+           "/v1/rekruttering/evalueringer": { evalueringer: [] } };
   const hoved = nyHoved();
   const leser = ctx();
   leser.scopes = ["decisions:read"];
@@ -2618,7 +2727,8 @@ test("Profiler: tapt svar → retry sender SAMME nøkkel (SP-2)", async () => {
   assert.ok(await vent(() => !lagre.disabled, 40), "runden ble aldri ferdig");
   // Andre forsøk: samme operasjon — samme nøkkel.
   SVAR = { "/v1/rekruttering/prosesser": prosess(),
-           "/v1/rekruttering/stillingsprofiler": profiler() };
+           "/v1/rekruttering/stillingsprofiler": profiler(),
+           "/v1/rekruttering/evalueringer": { evalueringer: [] } };
   KALL = [];
   skjema.dispatchEvent(new window.Event("submit",
     { bubbles: true, cancelable: true }));
@@ -2703,7 +2813,8 @@ test("Profiler: endret innhold etter tapt svar gir NY nøkkel (P2-5)", async () 
   navn.value = "Driftsarkitekt";
   navn.dispatchEvent(new window.Event("input", { bubbles: true }));
   SVAR = { "/v1/rekruttering/prosesser": prosess(),
-           "/v1/rekruttering/stillingsprofiler": profiler() };
+           "/v1/rekruttering/stillingsprofiler": profiler(),
+           "/v1/rekruttering/evalueringer": { evalueringer: [] } };
   KALL = [];
   skjema.dispatchEvent(new window.Event("submit",
     { bubbles: true, cancelable: true }));

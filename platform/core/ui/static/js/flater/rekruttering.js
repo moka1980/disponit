@@ -19,6 +19,7 @@ import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { hentJson, signerRekrutteringsliste, lagreStillingsprofil,
          reserverBunt, lastOppBunt, bestillEvaluering,
+         hentEvalueringer, hentEvalueringsrapport,
          nyIdempotensnokkel, UautorisertFeil } from "../api.js";
 import { harScope } from "../sitekart.js";
 import { DataTabell } from "../tabell.js";
@@ -151,14 +152,19 @@ export function visRekruttering(hoved, ctx) {
       // `hentUtrullingForSkall`): faller de, står prosessflaten likevel
       // — editoren viser sin egen tomtilstand. 401 er kvalitativt annet
       // og skal nå innloggingsveien, som overalt ellers.
-      const [pros, prof] = await Promise.all([
+      const [pros, prof, evals] = await Promise.all([
         hentJson("/v1/rekruttering/prosesser"),
         hentJson("/v1/rekruttering/stillingsprofiler").catch((e) => {
           if (e instanceof UautorisertFeil) throw e;
           return { profiler: [] };
         }),
+        hentEvalueringer().catch((e) => {
+          if (e instanceof UautorisertFeil) throw e;
+          return { evalueringer: [] };
+        }),
       ]);
-      return { ...pros, profiler: (prof && prof.profiler) || [] };
+      return { ...pros, profiler: (prof && prof.profiler) || [],
+               evalueringer: (evals && evals.evalueringer) || [] };
     },
     (data) => tegn(hoved, ctx, data, okt));
 }
@@ -252,10 +258,11 @@ function tegn(hoved, ctx, data, okt, valgtId) {
     if (okt.bestilling.oppdaterProfilvalg) okt.bestilling.oppdaterProfilvalg();
   });
   const bestillDel = bestillRot.firstChild ? bestillRot : null;
+  const evalDel = evalueringSeksjon(hoved, ctx, data);
   if (!prosesser.length) {
     sett(hoved, flateHode(t("ui.rekruttering.tittel")),
       el("p", { text: t("ui.rekruttering.ingen_prosess") }),
-      profilDel, ...(bestillDel ? [bestillDel] : []));
+      profilDel, ...(bestillDel ? [bestillDel] : []), evalDel);
     return;
   }
   // FLERE PROSESSER ER TILGJENGELIGE, IKKE BARE DEN FØRSTE (Codex P2).
@@ -673,7 +680,7 @@ function tegn(hoved, ctx, data, okt, valgtId) {
 
   sett(hoved, flateHode(t("ui.rekruttering.tittel")), velgerRot,
     utfall, kunngjoring, blindingRot, vektRot, merknadRot, tabellRot,
-    listeRot, profilDel, ...(bestillDel ? [bestillDel] : []));
+    listeRot, profilDel, ...(bestillDel ? [bestillDel] : []), evalDel);
   tegnTabell();
 }
 
@@ -690,6 +697,121 @@ function tegn(hoved, ctx, data, okt, valgtId) {
 // SP-2 hele veien: bunten er engangs (ny fil = ny reservasjon), og
 // bestillingsnøkkelen holdes til et DEFINITIVT svar. Skjemaform etter
 // §8: ekte <label for>, tallfelt med min/maks, utfall i role="alert".
+// M-57s egen rapportflate ("ats"): bestilte evalueringer med status,
+// og den promoterte, blindede rangeringsrapporten — lesbar for alle med
+// decisions:read (evidensen bak en beslutning tenanten selv bestilte).
+function evalueringSeksjon(hoved, ctx, data) {
+  const evalueringer = (data && data.evalueringer) || [];
+  const rot = el("section", { "aria-labelledby": "evaluering-tittel" });
+  const utfall = el("div", { role: "alert", class: "utfall" });
+  const rapportRot = el("div");
+
+  const visRapport = async (oppdragId) => {
+    // Tøm FØR henting: et feilet kall skal aldri la forrige rapport stå
+    // igjen under en feilmelding som gjelder en annen.
+    sett(utfall);
+    sett(rapportRot);
+    let svar;
+    try {
+      svar = await hentEvalueringsrapport(oppdragId);
+    } catch (e) {
+      if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+      sett(utfall, t("ui.rekruttering.evalueringer.rapportfeil"));
+      return;
+    }
+    const rapport = svar.rapport;
+    const kropp = el("tbody", {}, ...rapport.rangering.map((rad) =>
+      el("tr", {},
+        el("th", { scope: "row", text: rad.kandidat_id }),
+        el("td", { text: String(rad.poeng) }),
+        el("td", { text: Object.entries(rad.nedbrytning)
+          .map(([k, v]) => `${k}: ${v}`).join(", ") }))));
+    const tabell = el("table", {},
+      el("caption", { text: t("ui.rekruttering.evalueringer.rangering")
+        .replace("{navn}", rapport.profil.navn)
+        .replace("{versjon}", String(rapport.profil.versjon)) }),
+      el("thead", {}, el("tr", {},
+        el("th", { scope: "col",
+          text: t("ui.rekruttering.evalueringer.kandidat") }),
+        el("th", { scope: "col",
+          text: t("ui.rekruttering.evalueringer.poeng") }),
+        el("th", { scope: "col",
+          text: t("ui.rekruttering.evalueringer.nedbrytning") }))),
+      kropp);
+    const detaljer = rapport.rangering.map((rad) => {
+      const k = rapport.kandidater[rad.kandidat_id] || {};
+      const funn = (k.funn || []).length
+        ? el("ul", {}, ...(k.funn || []).map((f) =>
+            el("li", {}, el("strong", { text: f.kategori }), " — ",
+              el("q", { text: f.kilde.sitat }))))
+        : el("p", { text: t("ui.rekruttering.evalueringer.ingen_funn") });
+      const sporsmal = (k.intervjusporsmal || []).length
+        ? el("ol", {}, ...(k.intervjusporsmal || []).map((sp) =>
+            el("li", { text: sp })))
+        : null;
+      return el("details", {},
+        el("summary", { text: t("ui.rekruttering.evalueringer.detaljer")
+          .replace("{kandidat}", rad.kandidat_id) }),
+        el("h4", { text: t("ui.rekruttering.evalueringer.funn") }), funn,
+        ...(sporsmal ? [el("h4", {
+          text: t("ui.rekruttering.evalueringer.sporsmal") }), sporsmal]
+          : []));
+    });
+    sett(rapportRot,
+      el("p", { text: t("ui.rekruttering.evalueringer.blindet") }),
+      tabell, ...detaljer);
+  };
+
+  if (!evalueringer.length) {
+    sett(rot, el("h2", { id: "evaluering-tittel",
+      text: t("ui.rekruttering.evalueringer.tittel") }),
+      el("p", { text: t("ui.rekruttering.evalueringer.ingen") }));
+    return rot;
+  }
+  const rader = evalueringer.map((e2) => {
+    const handling = el("td");
+    if (e2.rapport_klar) {
+      const knapp = el("button", { type: "button",
+        text: t("ui.rekruttering.evalueringer.vis") });
+      knapp.setAttribute("aria-label",
+        t("ui.rekruttering.evalueringer.vis")
+        + " — " + t("ui.rekruttering.evalueringer.oppdrag")
+        + " " + e2.oppdrag_id);
+      knapp.addEventListener("click", () => visRapport(e2.oppdrag_id));
+      handling.append(knapp);
+    }
+    // Terminale statuser er sine egne sannheter — "venter" er bare for
+    // oppdrag som faktisk kan bli klare.
+    const statusTekst = e2.rapport_klar
+      ? t("ui.rekruttering.evalueringer.klar")
+      : (e2.status === "feilet" || e2.status === "kansellert")
+        ? t("ui.rekruttering.evalueringer." + e2.status)
+        : t("ui.rekruttering.evalueringer.venter");
+    return el("tr", {},
+      el("th", { scope: "row", text: String(e2.oppdrag_id) }),
+      el("td", {}, Tidspunkt(e2.opprettet || "")),
+      el("td", { text: statusTekst }),
+      handling);
+  });
+  const liste = el("table", {},
+    el("caption", { text: t("ui.rekruttering.evalueringer.tabell") }),
+    el("thead", {}, el("tr", {},
+      el("th", { scope: "col",
+        text: t("ui.rekruttering.evalueringer.oppdrag") }),
+      el("th", { scope: "col",
+        text: t("ui.rekruttering.evalueringer.bestilt") }),
+      el("th", { scope: "col",
+        text: t("ui.rekruttering.evalueringer.status") }),
+      el("th", { scope: "col",
+        text: t("ui.rekruttering.evalueringer.vis") }))),
+    el("tbody", {}, ...rader));
+  sett(rot, el("h2", { id: "evaluering-tittel",
+    text: t("ui.rekruttering.evalueringer.tittel") }),
+    utfall, liste, rapportRot);
+  return rot;
+}
+
+
 function bestillSeksjon(hoved, ctx, data, okt, laas) {
   if (!harScope(ctx, "bestilling:opprett")) return null;
   const profiler = (data && data.profiler) || [];

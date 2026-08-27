@@ -850,6 +850,12 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def rapport_detalj(request: Request) -> Response:
         return lesing.rapport_detalj(tjeneste, request)
 
+    def rekrutteringsrapport_detalj(request: Request) -> Response:
+        return lesing.rekrutteringsrapport_detalj(tjeneste, request)
+
+    def rekrutteringsevalueringer(request: Request) -> Response:
+        return lesing.rekrutteringsevalueringer(tjeneste, request)
+
     def unntak_detalj(request: Request) -> Response:
         return lesing.unntak_detalj(tjeneste, request)
 
@@ -1099,6 +1105,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/beslutninger", beslutninger, methods=["GET"]),
         Route("/v1/beslutninger/{id:int}", beslutning_detalj, methods=["GET"]),
         Route("/v1/rapport/{id:int}", rapport_detalj, methods=["GET"]),
+        Route("/v1/rekruttering/rapport/{id:int}",
+              rekrutteringsrapport_detalj, methods=["GET"]),
+        Route("/v1/rekruttering/evalueringer", rekrutteringsevalueringer,
+              methods=["GET"]),
         Route("/v1/unntak/{id:int}", unntak_detalj, methods=["GET"]),
         Route("/v1/unntak/{id:int}/historikk", unntak_historikk,
               methods=["GET"]),
@@ -1569,6 +1579,10 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # og blinding-avskruing bak mutasjonsscopet (056-kjeden + #159 gjør
     # resten av dømmingen inne i endepunktene).
     ("GET",  "/v1/rekruttering/prosesser"):  "decisions:read",
+    # M-57s egen rapportflate ("ats"-diskriminatoren): evidens bak en
+    # beslutning tenanten selv bestilte — samme scope som WCAG-rapporten.
+    ("GET",  "/v1/rekruttering/rapport/{id:int}"): "decisions:read",
+    ("GET",  "/v1/rekruttering/evalueringer"): "decisions:read",
     ("GET",  "/v1/rekruttering/stillingsprofiler"): "decisions:read",
     # Skriving av profilen er kundens/adminens bestillingsmyndighet —
     # samme scope som signeringen og inndata-reservasjonen.

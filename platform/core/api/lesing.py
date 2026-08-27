@@ -474,6 +474,85 @@ def rapport_detalj(tjeneste, request: Request) -> Response:
     return _les(tjeneste, request, "decisions:read", _fn)
 
 
+RAPPORTFLATE_ATS = "ats"
+
+
+def rekrutteringsrapport_detalj(tjeneste, request: Request) -> Response:
+    """GET /v1/rekruttering/rapport/{oppdrag_id} — den promoterte
+    evalueringsrapporten. M-57s EGEN leseflate (kontraktens
+    `rapportflate="ats"`): samme dekrypterings- og 404-doktrine som
+    WCAG-rapporten (`rapport_detalj`), men med SIN diskriminator — de to
+    flatene kan aldri servere hverandres former (200-og-feiler-under-
+    rendring-klassen)."""
+    def _fn(conn, auth, rid):
+        import oppdragskontrakt
+        oid = request.path_params["id"]
+        par = [(navn, t.rapport_artefakttype)
+               for navn, t in oppdragskontrakt.OPPDRAGSTYPER.items()
+               if t.rapport_artefakttype is not None
+               and t.rapportflate == RAPPORTFLATE_ATS]
+        rad = conn.execute(
+            "SELECT a.artefakt_id, a.ciphertext, a.nonce, a.dek_ref,"
+            " a.promotert_ts, a.artefakttype"
+            "  FROM artefakt a JOIN oppdrag o"
+            "    ON o.tenant = a.tenant AND o.id = a.oppdrag_id"
+            " WHERE a.tenant=%s AND a.oppdrag_id=%s"
+            "   AND a.tilstand='promotert'"
+            "   AND (o.oppdragstype, a.artefakttype) IN"
+            "       (SELECT * FROM unnest(%s::text[], %s::text[]))"
+            " ORDER BY a.promotert_ts DESC LIMIT 1",
+            (auth.tenant, oid, [p[0] for p in par],
+             [p[1] for p in par])).fetchone()
+        if rad is None:
+            return _feilsvar("ikke_funnet", rid)
+        art_id, ct, nonce, dek_ref, ts, artefakttype = rad
+        from db import kryptering
+        try:
+            dek = kryptering.hent_dek(conn, auth.tenant, dek_ref)
+            rapport = kryptering.dekrypter(dek, ct, nonce, auth.tenant,
+                                           dek_ref)
+        except Exception:
+            tjeneste.logg.hendelse("intern_feil", rid, auth.tenant,
+                                   art="drift", artefakt=str(art_id))
+            return _feilsvar("intern_feil", rid)
+        return kanonisk_json({
+            "oppdrag_id": oid,
+            "artefakt_id": str(art_id),
+            "artefakttype": artefakttype,
+            "promotert_ts": ts.isoformat() if ts else None,
+            "rapport": rapport,
+            "request_id": rid,
+        }, 200, {"x-request-id": rid})
+    return _les(tjeneste, request, "decisions:read", _fn)
+
+
+def rekrutteringsevalueringer(tjeneste, request: Request) -> Response:
+    """GET /v1/rekruttering/evalueringer — tenantens evalueringsoppdrag,
+    nyeste først: id, status, tidspunkt, og om rapporten er klar
+    (promotert artefakt finnes). Ingen payload-dekryptering på
+    listeveien — innholdet hører til detaljruten."""
+    def _fn(conn, auth, rid):
+        rader = conn.execute(
+            "SELECT o.id, o.status, o.opprettet,"
+            " EXISTS (SELECT 1 FROM artefakt a"
+            "          WHERE a.tenant = o.tenant AND a.oppdrag_id = o.id"
+            "            AND a.tilstand='promotert'"
+            "            AND a.artefakttype ="
+            "                'rekruttering.evaluering.rapport')"
+            "  FROM oppdrag o"
+            " WHERE o.tenant=%s AND o.oppdragstype='rekruttering.evaluering'"
+            " ORDER BY o.id DESC LIMIT 100",
+            (auth.tenant,)).fetchall()
+        return kanonisk_json({
+            "evalueringer": [
+                {"oppdrag_id": r[0], "status": r[1],
+                 "opprettet": r[2].isoformat() if r[2] else None,
+                 "rapport_klar": r[3]} for r in rader],
+            "request_id": rid,
+        }, 200, {"x-request-id": rid})
+    return _les(tjeneste, request, "decisions:read", _fn)
+
+
 def beslutning_detalj(tjeneste, request: Request) -> Response:
     def _fn(conn, auth, rid):
         try:
