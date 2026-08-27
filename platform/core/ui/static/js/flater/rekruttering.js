@@ -782,6 +782,11 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
   // øktens liste etter et ferskere svar.
 
   const visRapport = async (oppdragId, { fokus = true } = {}) => {
+    // Auto-stien (fokus=false) og klikk-stien deler suksessvei, men
+    // ALDRI feilform (pass-funn): listen og detaljen kan divergere i
+    // vinduet mellom dem (frist/TOCTOU/transient), og en usolicited
+    // `role="alert"` på hver sidelasting er falsk alarm. Auto-feil er
+    // stille — rapportområdet står tomt, listen er fortsatt sannheten.
     // Tøm FØR henting: et feilet kall skal aldri la forrige rapport stå
     // igjen under en feilmelding som gjelder en annen.
     rHent.tegn(null, []);
@@ -793,7 +798,7 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
       if (min !== rHent.nr) return;
       meldLive("");
-      rHent.tegn(t("ui.rekruttering.evalueringer.rapportfeil"), []);
+      if (fokus) rHent.tegn(t("ui.rekruttering.evalueringer.rapportfeil"), []);
       return;
     }
     if (min !== rHent.nr) return;
@@ -873,7 +878,11 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       // rangeringens N `<summary>` og ned til prosess, vekter og
       // signering (Cursor P2). Husets `.hoppelenke` — usynlig til den
       // får fokus, som «Hopp til innhold» i skallet.
-      const hoppLenke = el("a", { class: "hoppelenke", href: `#${HOPP_ANKER}`,
+      // EGEN klasse (pass-funn): husets `.hoppelenke` er viewport-
+      // absolute for sidetoppen — midt i flaten teleporterte fokuset
+      // brukeren bort fra rangeringen lenken betjener. `.rekrut-hopp`
+      // er in-flow, sr-only til fokus.
+      const hoppLenke = el("a", { class: "rekrut-hopp", href: `#${HOPP_ANKER}`,
         text: t("ui.rekruttering.evalueringer.hopp_prosess") });
       // ADRESSEN EIES AV RUTEREN, som leser den som `#/<rute>`. Lot vi
       // nettleseren følge fragmentet, fyrte `hashchange` med en ukjent
@@ -911,7 +920,7 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       // ut — og en TIDLIGERE auto-annonsering skal ikke bli stående og
       // beskrive en rapport som ikke vises (CodeRabbit).
       meldLive("");
-      rHent.tegn(t("ui.rekruttering.evalueringer.rapportfeil"), []);
+      if (fokus) rHent.tegn(t("ui.rekruttering.evalueringer.rapportfeil"), []);
     }
   };
 

@@ -1590,7 +1590,9 @@ test("Evalueringer: hopplenke forbi rangeringen til prosess og signering "
   const sammendrag = [...hoved.querySelectorAll("details > summary")];
   assert.ok(sammendrag.length >= 3,
     `rangeringen ga bare ${sammendrag.length} detaljbokser`);
-  const hopp = hoved.querySelector("a.hoppelenke");
+  // `.rekrut-hopp`, ikke sidetopp-`.hoppelenke` (pass-funn: den er
+  // viewport-absolute og teleporterte fokuset bort fra rangeringen).
+  const hopp = hoved.querySelector("a.rekrut-hopp");
   assert.ok(hopp, "hopplenken over rangeringen mangler");
   const maal = hoved.querySelector(hopp.getAttribute("href"));
   assert.ok(maal, "hopplenken peker på et anker som ikke finnes i flaten");
@@ -1622,6 +1624,38 @@ test("Evalueringer: hopplenke forbi rangeringen til prosess og signering "
   // MUTASJONEN SOM DREPER DENNE: fjern hopplenken fra rapporten, flytt
   // ankeret foran evalueringsseksjonen, eller slipp klikket videre til
   // nettleserens egen fragmentnavigasjon.
+});
+
+test("Evalueringer: auto-feil er stille — alert hører til klikket", async () => {
+  KALL = [];
+  // Pass-funn: listen og detaljen kan divergere i vinduet mellom mount
+  // og henting (frist/TOCTOU/transient). En usolicited role=alert på
+  // hver sidelasting er falsk alarm — auto-feilen lar rapportområdet
+  // stå tomt; klikket får feilmeldingen som før.
+  SVAR = {
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => KALL.some(
+    (k) => k.sti === "/v1/rekruttering/rapport/96")),
+    "auto-lastingen prøvde aldri");
+  await new Promise((r) => setTimeout(r, 20));
+  const seksjon = hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  assert.ok([...seksjon.querySelectorAll('[role="alert"]')]
+    .every((a) => !a.textContent.includes(
+      t("ui.rekruttering.evalueringer.rapportfeil"))),
+    "auto-feilen malte en usolicited alert");
+  // ... og KLIKKET får feilmeldingen som før (positiv kontroll).
+  seksjon.querySelector("button").click();
+  await vent(() => [...seksjon.querySelectorAll('[role="alert"]')]
+    .some((a) => a.textContent
+      === t("ui.rekruttering.evalueringer.rapportfeil")));
 });
 
 test("Evalueringer: auto-lastingen kjører ÉN gang per økt — "
