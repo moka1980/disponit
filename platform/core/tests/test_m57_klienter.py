@@ -174,19 +174,21 @@ def test_funntaket_handheves_ved_grensen(monkeypatch):
     assert mo.droppede_funn == 30, mo.droppede_funn
 
 
-def test_intervjusporsmal_klippes_i_antall_og_lengde(monkeypatch):
-    """Spørsmålene er fri modelltekst rett inn i rapporten. Både antall
-    og lengde klippes ved grensen, og ikke-strenger faller bort — samme
-    grunn som funntaket: skjemaet skal ikke felles av at modellen var
-    ordrik."""
+def test_intervjusporsmal_verken_bes_om_eller_hentes_ut(monkeypatch):
+    """Eiers produktretning 27/8 (#225): rekrutterer velger de beste
+    blant mange, og intervjuer skjer manuelt når de innkalles —
+    evalueringen skal ikke bruke modelltid på spørsmål per søker.
+    Prompten ber ikke om dem, og en modell som likevel sender dem får
+    dem droppet ved grensen: fri modelltekst uten plass i kontrakten
+    følger aldri med videre."""
     import json
+    assert "intervjusporsmal" not in m._SYSTEM, \
+        "prompten skal ikke bestille intervjuspørsmål"
     _svarer(monkeypatch, json.dumps({
-        "intervjusporsmal": ["x" * 900] + ["ok"] * 40 + [None, 7, "  "]}))
+        "oppfylt": {"drift": True, "norsk": False},
+        "intervjusporsmal": ["Fortell om drift."]}))
     res = _modell().vurder("tekst", VEKTER)
-    assert len(res["intervjusporsmal"]) == 20
-    assert len(res["intervjusporsmal"][0]) == 500
-    assert all(isinstance(s, str) and s.strip()
-               for s in res["intervjusporsmal"])
+    assert "intervjusporsmal" not in res, res
 
 
 # --- uttrekket ------------------------------------------------------

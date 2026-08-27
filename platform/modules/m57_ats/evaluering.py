@@ -124,7 +124,7 @@ def _krev_helt_svar(svar: object, vekter: dict[str, int]) -> dict:
 
     Artefakten ble bygget med `.get(..., tom)` per felt, så `{}` — det et
     avbrutt eller lengdekuttet svar typisk er — ble til en vellykket
-    evaluering: ingen funn, ingen oppfylte krav, ingen intervjuspørsmål.
+    evaluering: ingen funn, ingen oppfylte krav.
     Kalleren kunne rangere og promotere den kandidaten som «oppfyller
     ingenting». En avbrutt kjøring skal gi et rent feilutfall (§7), og
     det gjelder også når avbruddet er modellens eget.
@@ -134,8 +134,11 @@ def _krev_helt_svar(svar: object, vekter: dict[str, int]) -> dict:
     if not isinstance(svar, dict):
         raise Evalueringsfeil("ufullstendig_modellsvar",
                               type(svar).__name__)
-    for felt, form in (("funn", list), ("oppfylt", dict),
-                       ("intervjusporsmal", list)):
+    # `intervjusporsmal` er UTE av kontrakten (#225, eiers retning 27/8):
+    # spørsmål genereres ved innkalling av de beste, aldri under
+    # evalueringen av alle — et svar som likevel bærer dem får dem
+    # ignorert, for artefakten bygges av de validerte feltene alene.
+    for felt, form in (("funn", list), ("oppfylt", dict)):
         if not isinstance(svar.get(felt), form):
             raise Evalueringsfeil("ufullstendig_modellsvar", felt)
     # LISTEN var målt, ELEMENTENE ikke (Cursor P2). `valider_funn` leser
@@ -162,10 +165,6 @@ def _krev_helt_svar(svar: object, vekter: dict[str, int]) -> dict:
     if ulovlige:
         raise Evalueringsfeil("ikke_boolsk_oppfyllelse",
                               ",".join(sorted(ulovlige)))
-    if any(not isinstance(s, str) or not s
-           for s in svar["intervjusporsmal"]):
-        raise Evalueringsfeil("ufullstendig_modellsvar",
-                              "intervjusporsmal")
     return svar
 
 
@@ -339,8 +338,11 @@ def evaluer_kandidat(modell, soknadstekst: str,
     # uten strengen de hører til, var å invitere til nettopp den
     # forvekslingen; her er referansen entydig, og verifiserbar av
     # mottakeren med samme snitt som `valider_funn` bruker.
+    # Tom med vilje (#225): rapportskjemaet beholder feltet, så den
+    # promoterte formen er uendret — men evalueringen bruker aldri
+    # modelltid på spørsmål. De genereres ved innkalling (shortlist).
     return {"funn": funn_kanonisk,
             "oppfylt": dict(svar["oppfylt"]),
-            "intervjusporsmal": list(svar["intervjusporsmal"]),
+            "intervjusporsmal": [],
             "avmaskering": avmaskering,
             "kildetekst": tekst}
