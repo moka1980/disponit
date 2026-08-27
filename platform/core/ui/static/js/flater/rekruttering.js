@@ -500,18 +500,16 @@ function tegn(hoved, ctx, data, okt, valgtId) {
           ? el("em", { text: t("ui.rekruttering.uten_sitat") })
           : el("q", { text: sitat }));
     });
-    const sporsmal = (kandidat.intervjusporsmal || []).map((s) =>
-      el("li", { text: s }));
+    // Ingen intervjuspørsmål i detaljpanelet (eiers produktbeslutning
+    // 27/8): de hører til innkallingen av de beste, ikke utvelgelsen.
+    // Lageret består; shortlist-arcen (#225) henter derfra.
     Detaljpanel({
       tittel: `${t("ui.rekruttering.kandidat")} ${kandidat.kandidat_id}`,
       innhold: el("div", {},
         el("p", { text: `${t("ui.rekruttering.kol_poeng")}: ${poeng}` }),
         el("h3", { text: t("ui.rekruttering.funn_tittel") }),
         funn.length ? el("ul", {}, ...funn)
-          : el("p", { text: t("ui.rekruttering.ingen_funn") }),
-        el("h3", { text: t("ui.rekruttering.sporsmal_tittel") }),
-        sporsmal.length ? el("ul", {}, ...sporsmal)
-          : el("p", { text: t("ui.rekruttering.ingen_sporsmal") })),
+          : el("p", { text: t("ui.rekruttering.ingen_funn") })),
     });
   }
 
@@ -761,8 +759,15 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
   // og `sett(rapportRot, …)` i en frakoblet instans er et stille tap.
   const rHent = (okt && okt.rapportHenting) || { nr: 0, tegn: null };
   rHent.tegn = (utfallTekst, noder) => {
+    // FORLATT RUTE ER IKKE ET LERRET (Codex P2): et svar som lander
+    // etter at brukeren forlot rekrutteringen ville tegnet i frakoblet
+    // DOM og (verre) annonsert et produkt fra en annen flate i den
+    // GLOBALE live-regionen. Frakoblet mål = ingen tegning, og kalleren
+    // leser svaret før den annonserer.
+    if (!rapportRot.isConnected) return false;
     sett(utfall, ...(utfallTekst ? [utfallTekst] : []));
     sett(rapportRot, ...(noder || []));
+    return true;
   };
   // Listeoppfriskningen bærer NØYAKTIG samme risiko (Cursor P2):
   // `paagaaende` slipper opp før den fire-and-forget `oppdater()` er
@@ -787,6 +792,7 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
     } catch (e) {
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
       if (min !== rHent.nr) return;
+      meldLive("");
       rHent.tegn(t("ui.rekruttering.evalueringer.rapportfeil"), []);
       return;
     }
@@ -881,11 +887,12 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
         const maal = hoved.querySelector(`#${HOPP_ANKER}`);
         if (maal) maal.focus();
       });
-      rHent.tegn(null, [
+      const tegnet = rHent.tegn(null, [
         hoppLenke,
         overskrift,
         el("p", { text: t("ui.rekruttering.evalueringer.blindet") }),
         el("div", { class: "tablewrap" }, tabell), ...detaljer]);
+      if (!tegnet) return;
       // Fokus KUN på eksplisitt klikk — auto-visningen ved sidelasting
       // skal aldri stjele fokus fra der brukeren er (a11y).
       //
@@ -900,7 +907,10 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       else meldLive(overskrift.textContent);
     } catch (e) {
       if (min !== rHent.nr) return;
-      // Halv DOM er verre enn ingen: en delvis bygget rapport ser ekte ut.
+      // Halv DOM er verre enn ingen: en delvis bygget rapport ser ekte
+      // ut — og en TIDLIGERE auto-annonsering skal ikke bli stående og
+      // beskrive en rapport som ikke vises (CodeRabbit).
+      meldLive("");
       rHent.tegn(t("ui.rekruttering.evalueringer.rapportfeil"), []);
     }
   };
@@ -1005,7 +1015,14 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
   const klarRad = (seedListe || []).reduce((beste, e2) =>
     (e2.rapport_klar && (!beste || e2.oppdrag_id > beste.oppdrag_id))
       ? e2 : beste, null);
-  if (klarRad) visRapport(klarRad.oppdrag_id, { fokus: false });
+  // ... og kun ÉN gang per økt (Codex P2): listen er tenant-global og
+  // uavhengig av valgt prosess — hvert prosessbytte bygger seksjonen på
+  // nytt, og en ubetinget auto-lasting hadde re-fetchet og re-rendret
+  // rapporten for hver eneste veksling.
+  if (klarRad && rHent && !rHent.autoKjort) {
+    rHent.autoKjort = true;
+    visRapport(klarRad.oppdrag_id, { fokus: false });
+  }
   // Bestillingsseksjonen melder fra etter et definitivt `tillat` — da
   // hentes listen på nytt så det ferske oppdraget faktisk vises. Feiler
   // hentingen beholdes listen som står; dette er en oppfriskning, ikke

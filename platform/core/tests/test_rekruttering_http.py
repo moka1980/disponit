@@ -428,14 +428,15 @@ def test_prosesslisten_baerer_flatens_kontrakt(klient):
     assert "navn" not in p
     assert {k["status"] for k in p["kandidater"]} == \
         {"anbefalt", "innstilt_avslag"}
-    assert all(set(k) >= {"kandidat_id", "oppfylt", "funn",
-                          "intervjusporsmal"} for k in p["kandidater"])
-    # …og spørsmålene kommer fra LAGERET: den anbefalte kandidaten er den
-    # som fikk en 057-rad, og teksten er lagerets — ikke artefaktkopien.
-    # Den andre har ingen rad ennå og skal likevel være med, med tom liste.
-    spm = {k["status"]: k["intervjusporsmal"] for k in p["kandidater"]}
-    assert spm == {"anbefalt": ["Fortell om drift."],
-                   "innstilt_avslag": []}, spm
+    assert all(set(k) >= {"kandidat_id", "oppfylt", "funn"}
+               for k in p["kandidater"])
+    # …og INGEN intervjuspørsmål i utvelgelsessvaret (eiers
+    # produktbeslutning 27/8, #224/#225): de hører til innkallingen av
+    # de beste. Lageret (kandidat_intervjusporsmal) består som
+    # shortlist-arcens kilde — men feltet forlater aldri serveren her,
+    # verken fra lageret eller fra artefaktkopien.
+    assert all("intervjusporsmal" not in k for k in p["kandidater"]), \
+        "intervjuspørsmål skal ikke serveres i prosessflaten"
     liste = [l for l in p["lister"] if l["liste_id"] == lid]
     assert liste and liste[0]["innhold_hash"] == ih \
         and liste[0]["antall"] == 2 and liste[0]["signert"] is False
@@ -659,13 +660,11 @@ def test_giftig_sporsmalstype_tar_ikke_ned_detaljpanelet(klient):
     r = _get(klient, cookie, "/v1/rekruttering/prosesser")
     assert r.status_code == 200, r.text
     p = [x for x in r.json()["prosesser"] if x["prosess_id"] == pid][0]
-    spm = {k["kandidat_id"]: k["intervjusporsmal"] for k in p["kandidater"]}
-    for kid in (skalar, objekt, blandet):
-        assert spm[kid] == [], \
-            f"{kid} sendte en form flaten ikke kan kalle .map() på"
-    # Positiv kontroll, begge ledd: den ekte listen kommer uendret ut, og
-    # porten er ren visning — trafikklyset er urørt av den.
-    assert spm[ekte] == ["Fortell om drift."]
+    # Etter eiers produktbeslutning (#224) forlater spørsmålene aldri
+    # serveren — giftklassen kan dermed ikke nå flaten i det hele tatt.
+    # Porten består i sin sterkeste form: 200 tross giftige lagerrader,
+    # feltet fraværende for ALLE, og trafikklyset urørt.
+    assert all("intervjusporsmal" not in k for k in p["kandidater"])
     lys = {k["kandidat_id"]: k["status"] for k in p["kandidater"]}
     assert all(lys[kid] == "anbefalt"
                for kid in (skalar, objekt, blandet, ekte)), lys

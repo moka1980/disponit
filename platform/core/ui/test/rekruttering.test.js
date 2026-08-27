@@ -788,8 +788,10 @@ test("Rekruttering: «Detaljer» åpner panelet med funn, sitat og spørsmål", 
     t("ui.rekruttering.funn.uklar_tidslinje")), "funnet mangler");
   assert.ok(panel.querySelector("q").textContent === "2019",
     "kildesitatet mangler");
-  assert.ok(panel.textContent.includes("Fortell om tidslinjen."),
-    "intervjuspørsmålet mangler");
+  // Ingen intervjuspørsmål i utvelgelsen (eiers produktbeslutning,
+  // #224/#225): selv når payloaden bærer dem, rendres de ikke.
+  assert.ok(!panel.textContent.includes("Fortell om tidslinjen."),
+    "intervjuspørsmål skal ikke vises i detaljpanelet");
 });
 
 test("Rekruttering: et funn uten sitat åpner panelet og skjules ikke", async () => {
@@ -1620,6 +1622,51 @@ test("Evalueringer: hopplenke forbi rangeringen til prosess og signering "
   // MUTASJONEN SOM DREPER DENNE: fjern hopplenken fra rapporten, flytt
   // ankeret foran evalueringsseksjonen, eller slipp klikket videre til
   // nettleserens egen fragmentnavigasjon.
+});
+
+test("Evalueringer: auto-lastingen kjører ÉN gang per økt — "
+  + "prosessbytte re-fetcher ikke rapporten", async () => {
+  KALL = [];
+  // Codex P2: listen er tenant-global; hvert prosessbytte bygger
+  // seksjonen på nytt, og en ubetinget auto-lasting hadde hentet og
+  // re-rendret rapporten for hver veksling.
+  const to = prosess();
+  to.prosesser.push({
+    prosess_id: "p-2", navn: "Sykepleier vest", blinding_av: false,
+    vekter: { drift: 1 },
+    kandidater: [{ kandidat_id: "K-9", oppfylt: { drift: true },
+      status: "anbefalt", funn: [], intervjusporsmal: [] }],
+    lister: [],
+  });
+  SVAR = {
+    "/v1/rekruttering/prosesser": to,
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
+    "/v1/rekruttering/rapport/96": { oppdrag_id: 96, rapport: {
+      rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+      profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
+      antall_soknader: 1,
+      rangering: [{ kandidat_id: "kandidat-01", poeng: 5,
+        nedbrytning: { drift: 5 } }],
+      kandidater: { "kandidat-01": { funn: [] } },
+      fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+    } },
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.textContent.includes("kandidat-01")),
+    "auto-visningen rendret aldri");
+  const foer = KALL.filter(
+    (k) => k.sti === "/v1/rekruttering/rapport/96").length;
+  const velger = hoved.querySelector("#rekrut-prosessvelger");
+  velger.value = "p-2";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(KALL.filter(
+    (k) => k.sti === "/v1/rekruttering/rapport/96").length, foer,
+    "prosessbyttet re-fetchet rapporten — auto-lastingen er per økt");
 });
 
 test("Evalueringer: en rapport som lander etter et prosessbytte tegner "

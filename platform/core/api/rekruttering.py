@@ -349,7 +349,10 @@ def _kandidater(conn, tenant, prosess_id):
             "oppfylt": oppfylt,
             "status": status,
             "funn": funn,
-            "intervjusporsmal": sporsmal or [],
+            # Ingen intervjuspørsmål i prosessflaten heller (eiers
+            # produktbeslutning 27/8, PR #224): de hører til innkallingen
+            # av de beste — lageret (kandidat_intervjusporsmal) består og
+            # er shortlist-arcens kilde (#225).
         })
     return kandidater, vekter, kilde
 
