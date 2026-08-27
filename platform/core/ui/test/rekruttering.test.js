@@ -1143,7 +1143,13 @@ test("Evalueringer: liste med status, og rapporten rendres blindet", async () =>
     "rapporten rendret aldri");
   const etter = seksjon.textContent;
   assert.match(etter, /kandidat-01/);
-  assert.match(etter, /uklar_tidslinje/);
+  // FLATEN SNAKKER NORSK, OGSÅ HER (RUTINER §5, Cursor P2). Rapporten
+  // rendret rå maskinkoder — funnkategorien og kravnøklene i
+  // nedbrytningen — mens prosesspanelet i samme fil oversatte begge.
+  assert.match(etter, new RegExp(t("ui.rekruttering.funn.uklar_tidslinje")));
+  assert.doesNotMatch(etter, /uklar_tidslinje/);
+  assert.match(etter, new RegExp(`${t("ui.rekruttering.krav.drift")}: 3`));
+  assert.doesNotMatch(etter, /drift:/);
   assert.match(etter, /\[NAVN-1\] har/);       // sitatet, blindet form
   assert.match(etter, /Fortell om driftserfaringen/);
   // Nedbrytningskolonnen bærer sin EGEN etikett, ikke funnenes.

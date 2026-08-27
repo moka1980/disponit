@@ -725,7 +725,8 @@ function evalueringSeksjon(hoved, ctx, data) {
         el("th", { scope: "row", text: rad.kandidat_id }),
         el("td", { text: String(rad.poeng) }),
         el("td", { text: Object.entries(rad.nedbrytning)
-          .map(([k, v]) => `${k}: ${v}`).join(", ") }))));
+          .map(([k, v]) => `${t(`ui.rekruttering.krav.${k}`, k)}: ${v}`)
+          .join(", ") }))));
     const tabell = el("table", {},
       el("caption", { text: t("ui.rekruttering.evalueringer.rangering")
         .replace("{navn}", rapport.profil.navn)
@@ -742,8 +743,9 @@ function evalueringSeksjon(hoved, ctx, data) {
       const k = rapport.kandidater[rad.kandidat_id] || {};
       const funn = (k.funn || []).length
         ? el("ul", {}, ...(k.funn || []).map((f) =>
-            el("li", {}, el("strong", { text: f.kategori }), " — ",
-              el("q", { text: f.kilde.sitat }))))
+            el("li", {},
+              el("strong", { text: t(`ui.rekruttering.funn.${f.kategori}`) }),
+              " — ", el("q", { text: f.kilde.sitat }))))
         : el("p", { text: t("ui.rekruttering.evalueringer.ingen_funn") });
       const sporsmal = (k.intervjusporsmal || []).length
         ? el("ol", {}, ...(k.intervjusporsmal || []).map((sp) =>
