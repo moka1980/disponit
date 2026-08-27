@@ -36,6 +36,7 @@ feil.
 Budsjettet (§2.2) er absolutt for kø 2 + kø 3 samlet:
 
     N = antall rader med status IN ('verifisert','avklaring_kreves')
+        og navn utenfor de reserverte TLD-ene (064, #209)
     K = ceil(0.10 * N)
 
 K håndheves med `LIMIT`, ikke som forventning. Rader fra kø 2 som ikke får plass
