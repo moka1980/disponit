@@ -212,6 +212,13 @@ def test_rapporten_leses_paa_sin_egen_flate(migrator, miljo, inndata_rot,
         _promoter_kopi(migrator, oid, oid2, fremmed)
         assert c.get(f"/v1/rekruttering/rapport/{oid2}",
                      cookies=ck).status_code == 404
+        # En id forbi bigint er samme «ikke funnet» — aldri en
+        # bind-/driftsfeil (Codex P2).
+        r_stor = c.get("/v1/rekruttering/rapport/9223372036854775808",
+                       cookies=ck)
+        assert r_stor.status_code == 404, r_stor.text
+        assert r_stor.json()["feil"] == "ikke_funnet"
+
         # … og listen sier det samme: ingen rapport å vise.
         rad2 = next(e for e in c.get("/v1/rekruttering/evalueringer",
                                      cookies=ck).json()["evalueringer"]
@@ -640,6 +647,15 @@ def test_ankersjekken_staar_etter_dekrypteringen(migrator, miljo):
     svar = kilde.index("kanonisk_json")
     assert dekryptering < sjekk < svar, \
         "re-sjekken skal stå ETTER dekrypteringen og FØR 200-svaret"
+    # ... og den måler et FERSKERE klokkeslett enn transaksjonsstarten:
+    # `now()` er identisk med hovedspørringens og ville bestått på det
+    # samme tidspunktet den alt besto med (Codex P2).
+    hjelper = inspect.getsource(lesing._anker_lever)
+    assert '"    AND clock_timestamp() <' in hjelper, \
+        "re-sjekkens SQL skal måle clock_timestamp(), ikke now()"
+    assert '" now()' not in hjelper and '"now()' not in hjelper and \
+        "AND now()" not in hjelper, \
+        "now() i re-sjekkens SQL er transaksjonsstart — poengløs re-sjekk"
 
 
 @pg

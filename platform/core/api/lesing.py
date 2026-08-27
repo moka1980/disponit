@@ -512,11 +512,16 @@ def _anker_lever(conn, tenant, oppdrag_id) -> bool:
     krevd UPDATE-rett på retensjonsankeret for en READ-rute — et felt
     rettighetsvedtak (migrer.py:86-95) denne dommen nekter å reversere.
     Den interleavede bevisriggen bor i eget issue."""
+    # `clock_timestamp()`, ikke `now()` (Codex P2): `now()` er
+    # transaksjonens STARTTID og identisk i hovedspørringen og her — en
+    # dekryptering som drar forbi fristen ville bestått re-sjekken med
+    # det samme klokkeslettet den alt besto med. Re-sjekkens hele poeng
+    # er et FERSKERE tidspunkt.
     return conn.execute(
         "SELECT EXISTS (SELECT 1 FROM rekrutteringsprosess p"
         "  WHERE p.tenant=%s AND p.oppdrag_id=%s"
         "    AND p.slettet_ts IS NULL"
-        "    AND now() < coalesce(p.lukket_ts, p.opprettet)"
+        "    AND clock_timestamp() < coalesce(p.lukket_ts, p.opprettet)"
         "                + p.slettefrist_dogn * interval '1 day')",
         (tenant, oppdrag_id)).fetchone()[0]
 
@@ -535,6 +540,11 @@ def rekrutteringsrapport_detalj(tjeneste, request: Request) -> Response:
     def _fn(conn, auth, rid):
         import oppdragskontrakt
         oid = request.path_params["id"]
+        # Starlettes `:int` er ubegrenset Python-int; forbi bigint dør
+        # bindingen i basen som en driftsfeil. En id ingen rad kan ha ER
+        # «ikke funnet» (Codex P2) — samme svar, før tilkoblingsbruk.
+        if not 0 <= oid <= 9223372036854775807:
+            return _feilsvar("ikke_funnet", rid)
         par = [(navn, t.rapport_artefakttype)
                for navn, t in oppdragskontrakt.OPPDRAGSTYPER.items()
                if t.rapport_artefakttype is not None
