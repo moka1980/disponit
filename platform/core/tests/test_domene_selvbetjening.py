@@ -897,6 +897,67 @@ def test_avvist_kandidat_far_ny_utfordring_uten_a_rive_gjerdet(migrator):
 
 
 @pg
+def test_209_reservert_tld_koes_aldri_paa_reapplikasjonsarmen(migrator):
+    """Cursor P2-1 (runde 2): plukket har TO innganger, ikke én.
+
+    `ventende_domenechallenges` slipper inn `ventende` ELLER `tilbakekalt`
+    med motpart (reapplikasjonsgrenen 018 kjenner igjen). Predikatet står i
+    dag etter hele OR-gruppen og dekker begge — men den forrige #209-porten
+    seeder kun `ventende` via `_utsted`, så bare den ene armen er målt.
+
+    MUTASJONEN SOM DREPER DENNE: flytt `AND NOT er_reservert_tld` inn i
+    `ventende`-grenen inne i OR-paren. AND binder tettere enn OR, så
+    uttrykket blir `(ventende ∧ ¬reservert) ∨ (tilbakekalt ∧ motpart)`:
+    reserverte reapplikasjonsrader plukkes igjen, stemples, DNS-feiler og
+    drar `uenige/vurdert` mot ALARM_ANDEL. Den forrige porten forblir grønn.
+
+    Samme defektklasse som kø1-vs-kø2/3-splitten på revalideringssiden — én
+    arm målt, den andre ikke.
+    """
+    verter = {"reservert": f"reapp{secrets.token_hex(4)}.test",
+              "ekte": f"reapp{secrets.token_hex(4)}.example.com"}
+    for vert in verter.values():
+        a = _admin()
+        try:
+            a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                      (TENANT, vert))
+            a.commit()
+            a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                      (ANNEN_TENANT, vert))
+            a.commit()
+            gen = _gen(migrator, ANNEN_TENANT, vert)
+            a.execute("SELECT avgjor_domeneovertakelse(%s,%s,%s,false,'m37')",
+                      (ANNEN_TENANT, vert, gen))
+            a.commit()
+        finally:
+            a.close()
+        rt = _rt()
+        try:
+            _sett_kontekst(rt, ANNEN_TENANT)
+            rt.execute("SELECT utsted_challenge_selvbetjent(%s,%s,false,%s,'rt')",
+                       (ANNEN_TENANT, vert,
+                        hashlib.sha256(secrets.token_hex(32).encode()).hexdigest()))
+            rt.commit()
+        finally:
+            rt.close()
+
+    # Begge står nå `tilbakekalt` med motpart og et levende challenge-vindu —
+    # altså på reapplikasjonsarmen, ikke på `ventende`.
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    statuser = {h: s for h, s in migrator.execute(
+        "SELECT hostname, status FROM domenekontroll WHERE hostname = ANY(%s)",
+        (list(verter.values()),)).fetchall()}
+    migrator.rollback()
+    assert set(statuser.values()) == {"tilbakekalt"}, statuser
+
+    koet = {h for _, h in _alle_ventende(migrator)}
+    assert verter["ekte"] in koet, (
+        "den ekte reapplikasjonen falt ut av køen — overfiksing")
+    assert verter["reservert"] not in koet, (
+        f"reservert navn køet på reapplikasjonsarmen: {verter['reservert']}")
+
+
+@pg
 def test_alle_domeneoverganger_deler_laaserekkefolge(migrator):
     """Codex P2: to låser tatt i to rekkefølger er en vranglås som venter.
 
