@@ -318,6 +318,53 @@ def test_rapportflaten_er_en_diskriminator_ikke_en_boolsk():
     assert par == {"kontroll.wcag.nettsted"}, par
 
 
+def test_ats_ruten_dispatcher_ogsaa_paa_verdien():
+    """Cursor P2: porten over var ENSIDIG — den målte bare WCAG-veien.
+
+    CP4 landet M-57s egen rute, og med den den andre halvdelen av samme
+    risiko: `rekrutteringsrapport_detalj` kan degenerere til «har flaten
+    en verdi?» like stille som WCAG-veien kunne. Mutasjonen er nøyaktig
+    speilvendt — `rapportflate is not None` her serverer WCAG-formen på
+    `/v1/rekruttering/rapport/{id}`, og `evalueringSeksjon` dereferer
+    `rapport.rangering`/`profil` med en gang: 200, og feil under rendring
+    hos klienten. Isolasjonen er bare bevist når BEGGE rutene måles.
+
+    MUTASJONEN SOM DREPER DENNE: gjør `rapportflate`-leddet i
+    `lesing.rekrutteringsrapport_detalj` boolsk (`is not None`), eller pek
+    `lesing.RAPPORTFLATE_ATS` på en annen flate enn den `rekruttering.js`
+    rendrer.
+    """
+    import oppdragskontrakt as ok
+    m57 = ok.OPPDRAGSTYPER["rekruttering.evaluering"]
+    tre = ast.parse((CORE / "api" / "lesing.py").read_text(encoding="utf-8"))
+    flate = next(
+        (n.value.value for n in tre.body
+         if isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant)
+         and any(isinstance(m, ast.Name) and m.id == "RAPPORTFLATE_ATS"
+                 for m in n.targets)), None)
+    assert flate == m57.rapportflate, \
+        ("/v1/rekruttering/rapport serverer `rekruttering.js`, altså"
+         f" ats-formen — endepunktet navngir {flate!r}")
+    fn = next(n for n in tre.body if isinstance(n, ast.FunctionDef)
+              and n.name == "rekrutteringsrapport_detalj")
+    ledd = [c for c in ast.walk(fn) if isinstance(c, ast.Compare)
+            and isinstance(c.left, ast.Attribute)
+            and c.left.attr == "rapportflate"]
+    assert ledd, "ats-ruten spør ikke om `rapportflate` i det hele tatt"
+    for c in ledd:
+        assert (all(isinstance(o, ast.Eq) for o in c.ops)
+                and all(isinstance(k, ast.Name) and k.id == "RAPPORTFLATE_ATS"
+                        for k in c.comparators)), \
+            ("ats-ruten spør om flaten FINNES, ikke hvilken den er:"
+             f" {ast.unparse(c)}")
+    # De to flatene deler ingen type: hver rute serverer sin egen form, og
+    # WCAG-typen er ikke lesbar her — 404, ikke 200-og-feiler-hos-klienten.
+    par = {navn for navn, t in ok.OPPDRAGSTYPER.items()
+           if t.rapport_artefakttype is not None
+           and t.rapportflate == flate}
+    assert par == {"rekruttering.evaluering"}, par
+
+
 def test_evalueringslisten_leser_kontrakten_ikke_en_literal():
     """Cursor P2: listen hardkodet paret detaljruten UTLEDER.
 

@@ -2150,6 +2150,17 @@ def test_rapport_lese_api(migrator, klient):
                     headers={"authorization": f"Bearer {tok}"})
     assert r2.status_code == 404
 
+    # KRYSS-FLATE-ISOLASJONEN GÅR BEGGE VEIER (Cursor P2). M-57-testen
+    # beviser at WCAG-ruten ikke serverer ats-formen; her står den andre
+    # halvdelen, på det ENE stedet i suiten som har en promotert
+    # WCAG-rapport å prøve med. `evalueringSeksjon` dereferer
+    # `rapport.rangering`/`profil` med en gang, så en WCAG-rapport servert
+    # her ville blitt 200 og feil under rendring — samme klasse som Codex
+    # P2 på WCAG-veien, bare speilvendt.
+    r2b = klient.get(f"/v1/rekruttering/rapport/{oid}",
+                     headers={"authorization": f"Bearer {tok}"})
+    assert r2b.status_code == 404, r2b.text
+
     # Codex P2: en type flaten IKKE kan vise skal aldri bli en 200.
     # `rapportInnhold` dereferer `sammendrag`/`sider_kontrollert` med en
     # gang, så et artefakt fra en annen registrert kontrakt ga et svar som
