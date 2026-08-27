@@ -480,8 +480,10 @@ def test_reapet_prosess_stenger_rapporten(migrator, miljo):
                 (TENANT, oid, 30)).fetchone()[0]
             rt.commit()
 
-            # Positiv kontroll: FØR reaping er rapporten lesbar og listet
-            # som klar — en fraværstest uten den går grønn på søppel.
+            # Positiv kontroll: med LEVENDE anker (åpen prosess, fristen
+            # løper fra `opprettet` og ligger frem i tid) er rapporten
+            # lesbar og listet som klar — en fraværstest uten den går
+            # grønn på søppel.
             assert c.get(f"/v1/rekruttering/rapport/{oid}",
                          cookies=ck).status_code == 200
             rad = next(e for e in c.get("/v1/rekruttering/evalueringer",
@@ -489,10 +491,25 @@ def test_reapet_prosess_stenger_rapporten(migrator, miljo):
                        if e["oppdrag_id"] == oid)
             assert rad["rapport_klar"] is True
 
+            # FRISTEN HÅNDHEVES AV LESEVEIEN SELV (Codex P1): lukket
+            # forbi fristen — reaperen har IKKE kjørt, `slettet_ts` er
+            # NULL — og rapporten er alt borte. En forsinket reaper
+            # forlenger aldri tilgangen.
             _sett_kontekst(rt, TENANT)
             rt.execute("SELECT lukk_rekrutteringsprosess(%s,%s,"
                        " now() - interval '31 days')", (TENANT, pid))
             rt.commit()
+            assert c.get(f"/v1/rekruttering/rapport/{oid}",
+                         cookies=ck).status_code == 404, \
+                "utløpt frist skal stenge lesingen FØR reaperen rekker det"
+            rad_frist = next(e for e in
+                             c.get("/v1/rekruttering/evalueringer",
+                                   cookies=ck).json()["evalueringer"]
+                             if e["oppdrag_id"] == oid)
+            assert rad_frist["rapport_klar"] is False
+            assert rad_frist["slettet"] is True, \
+                "fristen og reaperens merke er samme grense sett fra kunden"
+
             rp, _timer = _reaperkobling()
             try:
                 rp.execute("SELECT * FROM reap_kandidatdata(50)")

@@ -515,7 +515,9 @@ def _anker_lever(conn, tenant, oppdrag_id) -> bool:
     return conn.execute(
         "SELECT EXISTS (SELECT 1 FROM rekrutteringsprosess p"
         "  WHERE p.tenant=%s AND p.oppdrag_id=%s"
-        "    AND p.slettet_ts IS NULL)",
+        "    AND p.slettet_ts IS NULL"
+        "    AND now() < coalesce(p.lukket_ts, p.opprettet)"
+        "                + p.slettefrist_dogn * interval '1 day')",
         (tenant, oppdrag_id)).fetchone()[0]
 
 
@@ -554,9 +556,17 @@ def rekrutteringsrapport_detalj(tjeneste, request: Request) -> Response:
             # oppdrag utenfor retensjonskontrakten og serveres ikke —
             # identisk 404, samme svar som før promotering. Etter
             # reaping faller den samme veien.
+            # ... og FRISTEN håndheves her, ikke bare reaperens merke
+            # (Codex P1): `slettet_ts` skrives asynkront i batcher — en
+            # forsinket reaper skal aldri forlenge tilgangen til
+            # kandidatdata forbi kundens frist. Samme grense som
+            # reaperen: lukket_ts (avslutningen) eller opprettet
+            # (forlatt-fallbacken) pluss kundens døgn.
             "   AND EXISTS (SELECT 1 FROM rekrutteringsprosess p"
             "        WHERE p.tenant = o.tenant AND p.oppdrag_id = o.id"
-            "          AND p.slettet_ts IS NULL)"
+            "          AND p.slettet_ts IS NULL"
+            "          AND now() < coalesce(p.lukket_ts, p.opprettet)"
+            "                      + p.slettefrist_dogn * interval '1 day')"
             " ORDER BY a.promotert_ts DESC LIMIT 1",
             (auth.tenant, oid, [p[0] for p in par],
              [p[1] for p in par])).fetchone()
@@ -630,14 +640,21 @@ def rekrutteringsevalueringer(tjeneste, request: Request) -> Response:
             # EXISTS-form som detaljruten — Codex P1 ×2).
             " AND EXISTS (SELECT 1 FROM rekrutteringsprosess p"
             "      WHERE p.tenant = o.tenant AND p.oppdrag_id = o.id"
-            "        AND p.slettet_ts IS NULL),"
+            "        AND p.slettet_ts IS NULL"
+            "        AND now() < coalesce(p.lukket_ts, p.opprettet)"
+            "                    + p.slettefrist_dogn * interval '1 day'),"
             # … og reapingen NAVNGIS (Codex P2): et `utfort` oppdrag med
             # `rapport_klar: false` fordi fristen har makulert det er
             # ikke «under arbeid» — uten dette feltet ville flaten vist
             # det slik i det uendelige.
+            # `slettet` er sant fra FRISTEN, ikke først fra reaperens
+            # batch — merket og fristen er samme grense sett fra kunden.
             " EXISTS (SELECT 1 FROM rekrutteringsprosess p"
             "      WHERE p.tenant = o.tenant AND p.oppdrag_id = o.id"
-            "        AND p.slettet_ts IS NOT NULL) AS slettet"
+            "        AND (p.slettet_ts IS NOT NULL"
+            "             OR now() >= coalesce(p.lukket_ts, p.opprettet)"
+            "                 + p.slettefrist_dogn * interval '1 day'))"
+            " AS slettet"
             "  FROM oppdrag o"
             " WHERE o.tenant=%s AND o.oppdragstype = ANY(%s::text[])"
             # HENTER ÉN OVER VINDUET (Codex P2). `LIMIT 100` + `flere =
