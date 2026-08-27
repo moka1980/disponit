@@ -574,6 +574,15 @@ def rekrutteringsrapport_detalj(tjeneste, request: Request) -> Response:
             return _feilsvar("intern_feil", rid)
         if not _anker_lever(conn, auth.tenant, oid):
             return _feilsvar("ikke_funnet", rid)
+        # LESNINGEN SERVERER IKKE DET FLATEN KASTER (Codex P2 — samme
+        # doktrine som `_kandidater`s nøkkelsubtraksjon): `kildetekst` er
+        # hele den blindede søknadsteksten per kandidat, og ingen
+        # konsument av denne ruten leser den — funnene bærer sine egne
+        # sitater. Den desidert tyngste delen av payloaden strippes før
+        # svaret; artefaktet selv er urørt.
+        for _k in (rapport.get("kandidater") or {}).values():
+            if isinstance(_k, dict):
+                _k.pop("kildetekst", None)
         return kanonisk_json({
             "oppdrag_id": oid,
             "artefakt_id": str(art_id),

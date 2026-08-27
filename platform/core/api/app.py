@@ -2556,14 +2556,21 @@ def _forbruk_kapabilitet(tjeneste: Tjeneste, conn, jti: str, ny_hash: str, *,
         # å verne og tas av forlatt-fristen. Oppslaget er type-agnostisk:
         # bare M-57-oppdrag HAR et anker, og et alt lukket anker røres
         # ikke (døren nekter å flytte en satt lukking).
-        rad_p = conn.execute(
-            "SELECT prosess_id FROM rekrutteringsprosess"
-            " WHERE tenant=%s AND oppdrag_id=%s AND lukket_ts IS NULL",
-            (tenant, oppdrag_id)).fetchone()
-        if rad_p is not None:
-            conn.execute(
-                "SELECT lukk_rekrutteringsprosess(%s,%s, now())",
-                (tenant, rad_p[0]))
+        #
+        # KUN «brukt» (Codex P2 runde 2): `sen_evidens` er en UTLØPT
+        # eiers evidens etter at en NY generasjon har reclaimet — jobben
+        # står `plukket` hos den nye eieren, og hans levende anker skal
+        # ikke lukkes av forgjengerens etterslep. Fristen hans ville
+        # ellers startet før løpet hans var ferdig.
+        if utfall == "brukt":
+            rad_p = conn.execute(
+                "SELECT prosess_id FROM rekrutteringsprosess"
+                " WHERE tenant=%s AND oppdrag_id=%s AND lukket_ts IS NULL",
+                (tenant, oppdrag_id)).fetchone()
+            if rad_p is not None:
+                conn.execute(
+                    "SELECT lukk_rekrutteringsprosess(%s,%s, now())",
+                    (tenant, rad_p[0]))
         return None
 
     if utfall == "idempotent":

@@ -152,6 +152,12 @@ def test_rapporten_leses_paa_sin_egen_flate(migrator, miljo, inndata_rot,
         assert r.status_code == 200, r.text
         k = r.json()
         rapport = k["rapport"]
+        # Nøkkelsubtraksjonen (Codex P2): kildeteksten — den tyngste og
+        # mest persondatabærende delen — serveres ikke; funnene bærer
+        # sine egne sitater, og de skal fortsatt være der.
+        assert all("kildetekst" not in kand
+                   for kand in rapport["kandidater"].values()), \
+            "kildeteksten skal strippes fra lesesvaret"
         assert rapport["rapporttype"] == "rekruttering.evaluering.rapport"
         assert rapport["rangering"][0]["kandidat_id"] == "k1"
         # Lageret er kryptert i ro, og dekrypteringen skjer på serveren —
