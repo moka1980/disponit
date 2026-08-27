@@ -1076,7 +1076,6 @@
   "ui.rekruttering.evalueringer.kandidat": "Candidate",
   "ui.rekruttering.evalueringer.poeng": "Score",
   "ui.rekruttering.evalueringer.funn": "Findings",
-  "ui.rekruttering.evalueringer.sporsmal": "Interview questions",
   "ui.rekruttering.evalueringer.detaljer": "Details for {kandidat}",
   "ui.rekruttering.evalueringer.ingen_funn": "No findings.",
   "ui.rekruttering.evalueringer.rapportfeil": "The report could not be fetched.",

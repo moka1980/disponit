@@ -289,9 +289,11 @@ function tegn(hoved, ctx, data, okt, valgtId) {
   const bestillDel = bestillRot.firstChild ? bestillRot : null;
   const evalDel = evalueringSeksjon(hoved, ctx, data, okt);
   if (!prosesser.length) {
-    sett(hoved, flateHode(t("ui.rekruttering.tittel")),
+    // PRODUKTET FØRST (eiers UX-prinsipp 27/8: færrest mulig klikk
+    // til produktet): rapportene øverst, administrasjonen under.
+    sett(hoved, flateHode(t("ui.rekruttering.tittel")), evalDel,
       el("p", { text: t("ui.rekruttering.ingen_prosess") }),
-      profilDel, ...(bestillDel ? [bestillDel] : []), evalDel);
+      profilDel, ...(bestillDel ? [bestillDel] : []));
     return;
   }
   // FLERE PROSESSER ER TILGJENGELIGE, IKKE BARE DEN FØRSTE (Codex P2).
@@ -707,9 +709,11 @@ function tegn(hoved, ctx, data, okt, valgtId) {
       knapp));
   }
 
-  sett(hoved, flateHode(t("ui.rekruttering.tittel")), velgerRot,
+  // PRODUKTET FØRST (eiers UX-prinsipp 27/8): evalueringene og den
+  // ferdige rapporten øverst — prosessdypdykk og administrasjon under.
+  sett(hoved, flateHode(t("ui.rekruttering.tittel")), evalDel, velgerRot,
     utfall, kunngjoring, blindingRot, vektRot, merknadRot, tabellRot,
-    listeRot, profilDel, ...(bestillDel ? [bestillDel] : []), evalDel);
+    listeRot, profilDel, ...(bestillDel ? [bestillDel] : []));
   tegnTabell();
 }
 
@@ -755,7 +759,7 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
   // fortsatt `min === listeNr` i SIN teller og kunne skrive seg inn i
   // øktens liste etter et ferskere svar.
 
-  const visRapport = async (oppdragId) => {
+  const visRapport = async (oppdragId, { fokus = true } = {}) => {
     // Tøm FØR henting: et feilet kall skal aldri la forrige rapport stå
     // igjen under en feilmelding som gjelder en annen.
     rHent.tegn(null, []);
@@ -826,14 +830,12 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
                     : el("q", { text: sitat }));
               }))
             : el("p", { text: t("ui.rekruttering.evalueringer.ingen_funn") });
+          // Ingen intervjuspørsmål i RANGERINGEN (eiers produktbeslutning
+          // 27/8): de hører til innkallingen av de 5–10 beste, ikke til
+          // utvelgelsen blant mange. Lageret består; shortlist-arcen
+          // henter derfra.
           boks.append(
             el("h4", { text: t("ui.rekruttering.evalueringer.funn") }), funn);
-          if ((k.intervjusporsmal || []).length) {
-            boks.append(el("h4", {
-              text: t("ui.rekruttering.evalueringer.sporsmal") }),
-              el("ol", {}, ...(k.intervjusporsmal || []).map((sp) =>
-                el("li", { text: sp }))));
-          }
         });
         return boks;
       });
@@ -847,7 +849,9 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       rHent.tegn(null, [overskrift,
         el("p", { text: t("ui.rekruttering.evalueringer.blindet") }),
         el("div", { class: "tablewrap" }, tabell), ...detaljer]);
-      overskrift.focus();
+      // Fokus KUN på eksplisitt klikk — auto-visningen ved sidelasting
+      // skal aldri stjele fokus fra der brukeren er (a11y).
+      if (fokus) overskrift.focus();
     } catch (e) {
       if (min !== rHent.nr) return;
       // Halv DOM er verre enn ingen: en delvis bygget rapport ser ekte ut.
@@ -939,6 +943,14 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
     tegnListe(data ? data.evalueringer : [],
       !!(data && data.evalueringerFlere));
   }
+  // NULL KLIKK TIL PRODUKTET (eiers UX-prinsipp 27/8): finnes en ferdig
+  // rapport, rendres den ferskeste med en gang — uten fokus-tyveri.
+  // Kun ved mount, aldri ved oppfriskning: en levert bestilling skal
+  // ikke rive lesingen av en annen rapport.
+  const seedListe = (eval_ && eval_.liste !== undefined)
+    ? eval_.liste : (data ? data.evalueringer : []);
+  const klarRad = (seedListe || []).find((e2) => e2.rapport_klar);
+  if (klarRad) visRapport(klarRad.oppdrag_id, { fokus: false });
   // Bestillingsseksjonen melder fra etter et definitivt `tillat` — da
   // hentes listen på nytt så det ferske oppdraget faktisk vises. Feiler
   // hentingen beholdes listen som står; dette er en oppfriskning, ikke

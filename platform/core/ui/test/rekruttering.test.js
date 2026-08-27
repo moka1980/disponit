@@ -450,8 +450,11 @@ test("Rekruttering: signaturdialogen sier antall, type, hashkortform — og «Ka
     k.sti === "/v1/rekruttering/lister/L-1/signer")), "POST kom aldri");
   assert.equal(KALL.find((k) => k.sti.endsWith("/signer")).kropp.innhold_hash,
     HASH);
-  assert.ok(await vent(() => hoved.querySelector('[role="alert"]')
-    .textContent.includes(HASH.slice(0, 12))), "utfallet mangler");
+  // Flaten har flere alert-regioner (evalueringene står FØRST etter
+  // eiers UX-prinsipp) — utfallet måles der det faktisk meldes.
+  assert.ok(await vent(() => [...hoved.querySelectorAll('[role="alert"]')]
+    .some((a) => a.textContent.includes(HASH.slice(0, 12)))),
+    "utfallet mangler");
 });
 
 test("Rekruttering: hver prosess i svaret kan velges (ikke bare den første)", async () => {
@@ -587,7 +590,8 @@ test("Rekruttering: et tapt svar meldes som uvisst, ikke som «ingenting er send
   const hoved = await tegnet();
   const knapp = [...hoved.querySelectorAll("button")]
     .find((b) => b.textContent === t("ui.rekruttering.signer_knapp"));
-  const melding = () => hoved.querySelector('[role="alert"]').textContent;
+  const melding = () => [...hoved.querySelectorAll('[role="alert"]')]
+    .map((a) => a.textContent).join("");
   const signer = async () => {
     assert.ok(await vent(() => !knapp.disabled), "knappen ble aldri åpen");
     knapp.click();
@@ -929,7 +933,8 @@ test("Rekruttering: 401 i mutasjonene er innlogging, ikke en handlingsfeil", asy
       .click();
     assert.ok(await vent(() => uautorisert === 1),
       `${flyt}: 401 nådde aldri paaUautorisert`);
-    assert.equal(hoved.querySelector('[role="alert"]').textContent, "",
+    assert.ok([...hoved.querySelectorAll('[role="alert"]')]
+      .every((a) => a.textContent === ""),
       `${flyt}: 401 ble meldt som en vanlig handlingsfeil`);
   }
 });
@@ -1194,7 +1199,9 @@ test("Evalueringer: liste med status, og rapporten rendres blindet", async () =>
   assert.match(aapnet,
     new RegExp(t("ui.rekruttering.funn.manglende_dokumentasjon")));
   assert.match(aapnet, new RegExp(t("ui.rekruttering.uten_sitat")));
-  assert.match(aapnet, /Fortell om driftserfaringen/);
+  // Ingen intervjuspørsmål i rangeringen (eiers produktbeslutning):
+  // selv om payloaden skulle bære dem, rendres de ikke.
+  assert.doesNotMatch(aapnet, /Fortell om driftserfaringen/);
   // Begge tabellene står i rullbar container (Codex P2: 50 krav à 120
   // tegn i nedbrytningscellen skal ikke velte siden).
   assert.ok(seksjon.querySelectorAll(".tablewrap").length >= 2,
@@ -1450,6 +1457,42 @@ test("Evalueringer: det leverte oppdraget overlever et prosessbytte", async () =
     "oppdraget døde i prosessbyttets om-tegning");
   assert.equal(listekall, kallFoer,
     "seksjonen hentet listen på nytt ved mount — den skal seedes fra økten");
+});
+
+test("Evalueringer: produktet først og null klikk — ferskeste klare "
+  + "rapport står ferdig rendret uten fokus-tyveri", async () => {
+  KALL = [];
+  // Eiers UX-prinsipp (27/8): færrest mulig klikk til produktet.
+  // 1) Evalueringsseksjonen er FØRSTE seksjon på flaten.
+  // 2) Finnes en ferdig rapport, er den rendret ved lasting — uten
+  //    klikk, og uten å stjele fokus fra der brukeren er.
+  SVAR = {
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
+    "/v1/rekruttering/rapport/96": { oppdrag_id: 96, rapport: {
+      rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+      profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
+      antall_soknader: 1,
+      rangering: [{ kandidat_id: "kandidat-01", poeng: 5,
+        nedbrytning: { drift: 5 } }],
+      kandidater: { "kandidat-01": { funn: [] } },
+      fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+    } },
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.textContent.includes("Driftskonsulent")),
+    "rapporten rendret ikke av seg selv");
+  const seksjoner = [...hoved.querySelectorAll("section[aria-labelledby]")];
+  assert.equal(seksjoner[0] && seksjoner[0].getAttribute("aria-labelledby"),
+    "evaluering-tittel", "produktet skal stå FØRST på flaten");
+  const overskrift = hoved.querySelector("h3[tabindex='-1']");
+  assert.ok(overskrift, "rapportoverskriften mangler");
+  assert.notEqual(hoved.ownerDocument.activeElement, overskrift,
+    "auto-visningen stjal fokus — fokus hører til eksplisitt klikk");
 });
 
 test("Evalueringer: en rapport som lander etter et prosessbytte tegner "
