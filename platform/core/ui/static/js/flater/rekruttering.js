@@ -1106,14 +1106,15 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
     } catch (e) {
       // Stille: cachen kan være foreldet i form; listen er sannheten.
     }
-  } else if (klarRad && rHent && rHent.aktive.size === 0) {
+  } else if (klarRad && rHent) {
     // Auto-vilkåret er AVLEDET, aldri latchet (eierdom, K2-dommen):
-    // ingen cache (`siste` — grenen over kortslutter) og ingenting i
-    // lufta (`aktiv`) betyr at denne mounten har noe å hente. En feilet
-    // runde etterlater begge tomme — neste mount prøver igjen, stille
-    // (alerten hører til klikket). Et sent A-svar kan aldri «gjenåpne»
-    // noe: det finnes ingen latch, og generasjonen forkaster rendringen
-    // mens `aktiv`-eierskapet rydder markøren.
+    // ingen cache (`siste` — grenen over kortslutter) betyr at denne
+    // mounten har noe å vise frem. Nettverket vokter seg selv: Map-en
+    // deler et hengende løfte, så kallet her er enten en fersk henting
+    // eller en GJENOPPTAKELSE (Codex P2 — rejoin etter remount) med ny
+    // generasjon som får rendre i DENNE seksjonen. En feilet runde
+    // etterlater cache og kart tomme — neste mount prøver igjen,
+    // stille (alerten hører til klikket).
     visRapport(klarRad.oppdrag_id, { fokus: false });
   }
   // Bestillingsseksjonen melder fra etter et definitivt `tillat` — da

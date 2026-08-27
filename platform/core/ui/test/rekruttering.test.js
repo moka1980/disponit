@@ -1773,6 +1773,64 @@ test("Evalueringer: auto-lastingen kjører ÉN gang per økt — "
     "rapporten forsvant i prosessbyttet — cachen re-bygges ikke");
 });
 
+test("Evalueringer: et hengende auto-løfte GJENOPPTAS etter remount — "
+  + "rapporten når frem", async () => {
+  KALL = [];
+  // Codex P2: auto-A henger, klikk på B feiler (bumper generasjonen),
+  // prosessbytte — den nye mounten skal GJENOPPTA As løfte med fersk
+  // generasjon (Map-en deler; ingen ny nedlasting), så A rendres når
+  // den omsider fullfører. Undertrykt rejoin = brukeren fikk aldri
+  // rapporten listen lovte.
+  let slippA;
+  const tregA = new Promise((res) => { slippA = res; });
+  const to = prosess();
+  to.prosesser.push({
+    prosess_id: "p-2", navn: "Sykepleier vest", blinding_av: false,
+    vekter: { drift: 1 },
+    kandidater: [{ kandidat_id: "K-9", oppfylt: { drift: true },
+      status: "anbefalt", funn: [], intervjusporsmal: [] }],
+    lister: [],
+  });
+  SVAR = (sti) => ({
+    "/v1/rekruttering/prosesser": to,
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 97, status: "utfort",
+        opprettet: "2026-08-27T01:00:00+00:00", rapport_klar: true },
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
+    "/v1/rekruttering/rapport/97": tregA,
+  })[sti] ?? 500;   // B (96) feiler
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelectorAll(
+    "section[aria-labelledby=evaluering-tittel] button").length === 2));
+  const seksjon = () => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  [...seksjon().querySelectorAll("button")]
+    .find((b) => b.closest("tr").textContent.includes("96")).click();
+  await new Promise((r) => setTimeout(r, 10));
+  const velger = hoved.querySelector("#rekrut-prosessvelger");
+  velger.value = "p-2";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 10));
+  // Gjenopptakelsen delte løftet — fortsatt bare ÉN nedlasting av A.
+  assert.equal(KALL.filter(
+    (k) => k.sti === "/v1/rekruttering/rapport/97").length, 1,
+    "remounten startet en ny nedlasting i stedet for å gjenoppta");
+  slippA({ oppdrag_id: 97, rapport: {
+    rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+    profil: { profil_id: "p-1", versjon: 2, navn: "Sikkerhetsleder" },
+    antall_soknader: 1,
+    rangering: [{ kandidat_id: "kandidat-02", poeng: 4,
+      nedbrytning: { drift: 4 } }],
+    kandidater: { "kandidat-02": { funn: [] } },
+    fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+  } });
+  assert.ok(await vent(() => seksjon().textContent.includes("Sikkerhetsleder")),
+    "det gjenopptatte auto-løftet rendret aldri — rapporten kom ikke frem");
+});
+
 test("Evalueringer: A→B→A gjenbruker As løfte — aldri to nedlastinger "
   + "av samme rapport", async () => {
   KALL = [];
