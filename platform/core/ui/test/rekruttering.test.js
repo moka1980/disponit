@@ -1837,6 +1837,47 @@ test("Evalueringer: auto-lastingen kjører ÉN gang per økt — "
     "rapporten forsvant i prosessbyttet — cachen re-bygges ikke");
 });
 
+test("Evalueringer: et svar etter RUTE-forlatelse bygger og melder "
+  + "ingenting", async () => {
+  KALL = [];
+  // Codex P2: eierskapstesten står FØR byggingen — et svar som lander
+  // etter at brukeren forlot rekrutteringen skal hverken bygge
+  // 5000-raders DOM, tegne eller kunngjøre.
+  let slipp;
+  const treg = new Promise((res) => { slipp = res; });
+  SVAR = (sti) => ({
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
+    "/v1/rekruttering/rapport/96": treg,
+  })[sti] ?? 500;
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => KALL.some(
+    (k) => k.sti === "/v1/rekruttering/rapport/96")),
+    "auto-lastingen startet aldri");
+  // Brukeren forlater ruta: en annen flate overtar hovedinnholdet.
+  hoved.replaceChildren();
+  const live = document.querySelector('[role="status"][aria-live="polite"]');
+  if (live) live.textContent = "";
+  slipp({ oppdrag_id: 96, rapport: {
+    rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+    profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
+    antall_soknader: 1,
+    rangering: [{ kandidat_id: "kandidat-01", poeng: 5,
+      nedbrytning: { drift: 5 } }],
+    kandidater: { "kandidat-01": { funn: [] } },
+    fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+  } });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(hoved.textContent, "",
+    "svaret tegnet inn i en forlatt flate");
+  assert.ok(!live || !live.textContent.includes("Driftskonsulent"),
+    "svaret kunngjorde et produkt fra en forlatt flate");
+});
+
 test("Evalueringer: seksjonen er SAMME node etter prosessbyttet — "
   + "og ingenting hentes på nytt", async () => {
   KALL = [];

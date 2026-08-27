@@ -978,6 +978,11 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       return;
     }
     if (min !== rHent.nr) return;
+    // FORLATT RUTE SJEKKES FØR BYGGING (Codex P2): `rHent.tegn` dropper
+    // riktignok frakoblede mål, men da hadde vi alt bygget hele
+    // rapport-DOM-en (opptil 5000 rader + detaljbokser) for søpla.
+    // Samme eierskapstest, bare FØR arbeidet.
+    if (!rapportRot.isConnected) return;
     // RENDRINGEN LIGGER INNE I `try` (Cursor P2). 200 er ikke det samme
     // som rendrbar: mangler `rangering`, `profil` eller `nedbrytning`,
     // kastet dereferansen HER — etter at `utfall` og `rapportRot` alt var
