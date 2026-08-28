@@ -1583,8 +1583,18 @@ def test_backupen_stopper_for_disken_gar_full():
     i_disk = indeks("LEDIG_KIB")
     i_rot = indeks('[ -d "$LAGER" ]')
     i_dump = indeks('age -R "$MOTTAKER"')
+    i_dumpmaal = indeks("pg_database_size")
     assert 0 <= i_rot < i_dump, "lagerroten sjekkes ikke før dumpen starter"
     assert 0 <= i_disk < i_dump, "diskporten måler etter at dumpen er skrevet"
+
+    # Cursor P2: kravet må dekke BEGGE halvdelene av fotavtrykket. Målte
+    # porten bare lageret, kunne en base som har vokst raskere enn lageret
+    # passere og dø midt i `pg_dump` — porten uten sin egen hensikt.
+    assert 0 <= i_dumpmaal < i_dump, \
+        "dumpens fotavtrykk måles ikke før dumpen starter — diskporten " \
+        "regner bare lageret, og basen kan ha vokst forbi marginen"
+    assert "KREVES_KIB=$((LAGER_KIB + DUMP_KIB + MARGIN_KIB))" in skript, \
+        "kravet summerer ikke lager + dump + margin"
 
 
 def test_inndatalageret_er_api_unitens_egen_state_katalog():

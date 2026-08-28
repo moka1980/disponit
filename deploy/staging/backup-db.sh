@@ -96,11 +96,20 @@ rm -f "$KATALOG"/disponit-*.dump.age.delvis \
   exit 1
 }
 LAGER_KIB=$(du -sk "$LAGER" | cut -f1)
+# BEGGE HALVDELENE MÅLES, ikke bare arkivets. Porten regnet kun lageret +
+# margin, mens kjøringens peak er dump + arkiv: en base som har vokst raskere
+# enn lageret passerer da porten og dør midt i `pg_dump` på en /var basen
+# selv skriver til — samme utfall porten finnes for å unngå, bare uten den
+# tidlige avvisningen. `pg_database_size` er ukomprimert on-disk-størrelse og
+# custom-format-dumpen blir mindre; overestimatet er riktig vei for en
+# fail-closed port.
+DUMP_KIB=$(sudo -u postgres psql -Atd disponit -c \
+  "SELECT (pg_database_size('disponit') + 1023) / 1024")
 LEDIG_KIB=$(df -k --output=avail "$KATALOG" | tail -1)
-KREVES_KIB=$((LAGER_KIB + MARGIN_KIB))
+KREVES_KIB=$((LAGER_KIB + DUMP_KIB + MARGIN_KIB))
 [ "$LEDIG_KIB" -ge "$KREVES_KIB" ] || {
   echo "AVBRUTT: $LEDIG_KIB KiB ledig i $KATALOG, trenger $KREVES_KIB KiB" \
-       "(lager $LAGER_KIB + margin $MARGIN_KIB)" >&2
+       "(lager $LAGER_KIB + dump $DUMP_KIB + margin $MARGIN_KIB)" >&2
   exit 1
 }
 
