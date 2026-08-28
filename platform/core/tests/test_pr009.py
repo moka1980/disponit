@@ -1401,6 +1401,77 @@ def test_checksumporten_feller_uherdet_ikkelegacy_rad(migrator, tmp_path):
 
 
 @pg
+def test_feilet_herding_etterlater_ingen_delvis_backfill(migrator):
+    """Codex P1: en herding som FEILER, skal ikke ha skrevet noe.
+
+    `herd_historikk` backfiller de reviewede radene FØR den måler resten.
+    Er det en NULL igjen som herdingen ikke kan fylle, kaster den — men
+    UPDATE-ene ligger da fortsatt upåbegynt-committet i transaksjonen, og
+    den som rydder opp etter kastet, committer: `main()` slipper
+    advisory-låsen i sin `finally` med `conn.commit()`. Opprydningen ville
+    dermed BEVART en historikk som er halvveis herdet av en herding som
+    feilet — 001/002 fylt, den ukjente raden NULL — og neste kjøring møter
+    en tilstand ingen har herdet ferdig og ingen har latt være.
+
+    Torrkjøringen hadde denne garantien fra før (`conn.rollback()` før
+    `return avvik`); den skrivende veien hadde den ikke, og det er nettopp
+    den veien som faktisk har skrevet noe å angre på.
+
+    Testen reproduserer kallerens commit ETTER feilen — uten den ville
+    ingenting overlevd uansett, og porten hadde målt transaksjonens
+    levetid i stedet for herdingens atomisitet.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `conn.rollback()` foran
+    `raise HerdingFeilet`.
+    """
+    modul = _bootstrapmodul()
+    reviewet = min(_reviewede_versjoner())
+    ukjent, = migrator.execute(
+        "SELECT versjon FROM migrasjoner ORDER BY versjon DESC LIMIT 1"
+    ).fetchone()
+    assert ukjent not in _reviewede_versjoner(), \
+        "basen har ingen kjørt migrasjon utenfor REVIEWEDE_CHECKSUMS —" \
+        " herdingen ville ikke feilet, og testen måler ikke det den tror"
+
+    rader = [reviewet, ukjent]
+    fasit = dict(migrator.execute(
+        "SELECT versjon, checksum FROM migrasjoner WHERE versjon = ANY(%s)",
+        (rader,)).fetchall())
+    try:
+        # Begge nulles i SAMME kontekst: `_med_null_checksum` kan ikke
+        # nøstes, fordi den indre `finally` setter NOT NULL igjen mens den
+        # ytre raden fortsatt står NULL.
+        migrator.execute("ALTER TABLE migrasjoner"
+                         " ALTER COLUMN checksum DROP NOT NULL")
+        migrator.execute("UPDATE migrasjoner SET checksum=NULL"
+                         " WHERE versjon = ANY(%s)", (rader,))
+        migrator.commit()
+
+        with pytest.raises(modul.HerdingFeilet):
+            modul.herd_historikk(migrator)
+        # Kallerens opprydning, ordrett: main() committer for å slippe
+        # advisory-låsen — uansett utfall av herdingen.
+        migrator.commit()
+
+        etter = dict(migrator.execute(
+            "SELECT versjon, checksum FROM migrasjoner WHERE versjon = ANY(%s)",
+            (rader,)).fetchall())
+        assert etter[reviewet] is None, \
+            f"den feilede herdingen etterlot {reviewet:03d} backfilt" \
+            f" ({etter[reviewet]}) — historikken står halvveis herdet"
+        assert etter[ukjent] is None, \
+            f"herdingen fylte {ukjent:03d}, som ikke er reviewet"
+    finally:
+        for versjon, sum_ in fasit.items():
+            migrator.execute(
+                "UPDATE migrasjoner SET checksum=%s WHERE versjon=%s",
+                (sum_, versjon))
+        migrator.execute("ALTER TABLE migrasjoner"
+                         " ALTER COLUMN checksum SET NOT NULL")
+        migrator.commit()
+
+
+@pg
 def test_checksumporten_feller_migrasjon_borte_fra_treet(migrator, tmp_path):
     """Cursor P2 (#178, runde 2): `fil is None`-grenen hadde ingen test.
 

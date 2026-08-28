@@ -138,8 +138,15 @@ def herd_historikk(conn, *, torrkjor: bool = False) -> list[str]:
             + ")")
 
     if avvik:
+        # Rull tilbake FØR utgangen, uansett vei ut. Backfillen over står
+        # fortsatt upåbegynt-committet i transaksjonen, og den som rydder
+        # opp etter et kast, committer: `main()` slipper advisory-låsen i
+        # sin `finally` med `conn.commit()`. Uten denne rollbacken ville
+        # opprydningen BEVART en halvveis herdet historikk fra en herding
+        # som feilet — 001/002 fylt, resten NULL — og neste kjøring møter
+        # en base ingen har herdet ferdig og ingen har latt være.
+        conn.rollback()
         if torrkjor:
-            conn.rollback()
             return avvik
         raise HerdingFeilet("; ".join(avvik))
 
