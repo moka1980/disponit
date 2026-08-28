@@ -259,13 +259,18 @@ function hjemSide() {
         el("p", { class: "site-kontrollbevis-label", text: t("site.home.flyt.label") }),
         el("h2", { text: t("site.home.flyt.tittel") }),
         el("ol", { class: "site-kontrollflyt" },
+          /* Nummer, tittel og tekst er tre SØSKEN, ikke to: raden er et grid
+             med tre kolonner, og bare direkte barn blir grid-elementer. En
+             mellomliggende <div> ville lagt tittel og tekst i kolonne 2 og
+             latt den brede kolonne 3 stå tom (Codex P2). Mobilregelen
+             `.site-kontrollflyt li p { grid-column: 2 }` regner også med at
+             avsnittet er et grid-element. */
           ["handling", "policy", "utfall", "spor"].map((steg, indeks) =>
             el("li", {},
               el("span", { class: "site-kontrollflyt-nr", "aria-hidden": "true",
                 text: String(indeks + 1).padStart(2, "0") }),
-              el("div", {},
-                el("strong", { text: t(`site.home.flyt.${steg}.tittel`) }),
-                el("p", { text: t(`site.home.flyt.${steg}.tekst`) }))))))),
+              el("strong", { text: t(`site.home.flyt.${steg}.tittel`) }),
+              el("p", { text: t(`site.home.flyt.${steg}.tekst`) })))))),
     el("section", { class: "site-driftstatus", "aria-labelledby": "driftstatus-tittel" },
       el("p", { class: "site-driftstatus-merke", text: t("site.home.status.merke") }),
       el("div", {},
