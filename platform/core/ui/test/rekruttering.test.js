@@ -4096,6 +4096,62 @@ test("Profiler: endret innhold etter tapt svar gir NY nøkkel (P2-5)", async () 
     "endret innhold bar fortsatt den gamle intensjonens nøkkel");
 });
 
+test("Prosessbytte: en feilet henting ruller valget tilbake og SIER fra",
+  async () => {
+  KALL = [];
+  // Cursor P2 (#183): serveren har sin negative test
+  // (`test_ukjent_prosess_id_er_ikke_funnet_ikke_den_nyeste` — 404, ikke
+  // «ta den nyeste»), men KLIENTENS feilvei hadde ingen. Uten den kan en
+  // regresjon som viser kandidatene fra prosess A mens velgeren står på B
+  // passere CI — og en 404 er en LOVLIG utgang her: fristen kan ha løpt
+  // ut mellom to klikk, så veien er ingen kantsak.
+  //
+  // MUTASJONEN SOM DREPER DENNE: fjern `velger.value = prosess.prosess_id`
+  // (rollbacken) eller `sett(velgerFeil, …)` fra `.catch`-armen.
+  const to = prosess();
+  to.prosesser.push({
+    prosess_id: "p-2", blinding_av: false, vekter: { drift: 1 },
+    evaluering_status: "utfort",
+    kandidater: [{ kandidat_id: "K-9", oppfylt: { drift: true },
+      status: "anbefalt", funn: [], intervjusporsmal: [] }],
+    lister: [],
+  });
+  SVAR = { "/v1/rekruttering/prosesser": to };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")));
+  const velger = hoved.querySelector("#rekrut-prosessvelger");
+  assert.ok(velger, "ingen prosessvelger med flere prosesser i svaret");
+  // ... og HER er prosessen borte: fristen løp ut mellom lastingen og
+  // byttet, og serveren svarer det samme som på en ukjent id.
+  KALL = [];
+  SVAR = (sti) => (sti === "/v1/rekruttering/prosesser"
+    ? { __status: 404, __kropp: { feil: "ikke_funnet" } } : undefined);
+  velger.value = "p-2";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  const feil = hoved.querySelector(".rekrut-velgerfeil");
+  assert.ok(feil, "flaten har ingen egen feilregion for byttet");
+  assert.equal(feil.getAttribute("role"), "alert",
+    "byttefeilen kunngjøres ikke");
+  assert.ok(await vent(() => feil.textContent
+    === t("ui.rekruttering.prosessbytte_feilet")),
+    `byttefeilen ble aldri meldt: ${JSON.stringify(feil.textContent)}`);
+  assert.ok(KALL.some((k) => k.sti === "/v1/rekruttering/prosesser"),
+    "byttet hentet aldri — testen måler ikke det den tror");
+  // VALGET ER RULLET TILBAKE til den prosessen flaten faktisk viser.
+  assert.equal(hoved.querySelector("#rekrut-prosessvelger").value, "p-1",
+    "velgeren sto igjen på en prosess flaten ikke viser — brukeren leser"
+    + " kandidatene til A under navnet B");
+  assert.equal(hoved.querySelector("#rekrut-prosessvelger").disabled, false,
+    "velgeren ble stående låst etter en feil brukeren kan prøve om igjen");
+  // ... og tabellen står urørt på den prosessen som er lastet.
+  const rader = [...hoved.querySelectorAll("tbody tr")]
+    .map((tr) => tr.querySelector("td").textContent);
+  assert.ok(!rader.includes("K-9"),
+    `en feilet henting tegnet den andre prosessen likevel: ${rader}`);
+  assert.deepEqual([...rader].sort(), ["K-1", "K-2"]);
+});
+
 test("Prosessbytte: et svar som lander etter at flaten er forlatt "
   + "tegner ingenting", async () => {
   KALL = [];
