@@ -49,12 +49,23 @@ CREATE TABLE revisjonshendelse (
     -- plassholderaktør gjør hendelsen ubrukelig som revisjonsspor, og en
     -- ubrukelig revisjonshendelse er verre enn ingen: den ser ut som et
     -- svar på spørsmålet «hvem bestemte dette».
-    aktor TEXT NOT NULL CHECK (length(btrim(aktor)) BETWEEN 1 AND 200),
+    --
+    -- BLANKTEGNSKLASSEN MÅ NAVNGIS (Codex P2 ×2). Enargs `btrim` fjerner
+    -- BARE mellomrom — ikke tabulator, ikke linjeskift. En aktør på én
+    -- tabulator og en begrunnelse på ti linjeskift passerte derfor begge
+    -- grensene under og ga en rad som er tom for et menneske, men gyldig
+    -- for porten som leser den. Toargsformen navngir hele ASCII-klassen
+    -- (`\v` skrives `\x0B`: en ukjent escape tas LITERALT i PostgreSQL,
+    -- så `E'\v'` ville trimmet bokstaven v av navn).
+    aktor TEXT NOT NULL
+        CHECK (length(btrim(aktor, E' \t\n\r\f\x0B')) BETWEEN 1 AND 200),
     -- BEGRUNNELSEN HAR EN NEDRE GRENSE. «x» er ikke en begrunnelse, og
     -- funnet som skapte denne tabellen brukte nettopp «x». Ti tegn er
-    -- ikke mye, men det skiller en setning fra et tastetrykk.
+    -- ikke mye, men det skiller en setning fra et tastetrykk — og etter
+    -- linjen over er det ti tegn, ikke ti tastetrykk på enter.
     begrunnelse TEXT NOT NULL
-        CHECK (length(btrim(begrunnelse)) BETWEEN 10 AND 2000),
+        CHECK (length(btrim(begrunnelse, E' \t\n\r\f\x0B'))
+               BETWEEN 10 AND 2000),
     ts TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (tenant, hendelse_id)
 );

@@ -2843,8 +2843,18 @@ def test_begrunnelsen_kan_ikke_vaere_et_tastetrykk(migrator):
     etter første case tar tenanten med seg. Andre runde traff da RLS —
     `new row violates row-level security policy` — og målte ikke
     CHECK-en den er skrevet for.
+
+    DE TO SISTE CASENE ER BLANKTEGN SOM IKKE ER MELLOMROM (Codex P2 ×2,
+    runde 2). Enargs `btrim` fjerner bare mellomrom, så ti linjeskift var
+    en lovlig «begrunnelse» og én tabulator en lovlig «aktor» — raden var
+    tom for et menneske og gyldig for porten som leser den. Mellomrom-
+    casen over kunne ikke felle det: den passerer uansett hvilken
+    blanktegnsklasse CHECK-en navngir.
     """
-    for aktor, begrunnelse in (("drift", "x"), ("  ", "en ekte begrunnelse")):
+    for aktor, begrunnelse in (("drift", "x"),
+                               ("  ", "en ekte begrunnelse"),
+                               ("\t", "en ekte begrunnelse"),
+                               ("drift", "\n" * 10)):
         _sett_kontekst(migrator, TENANT)
         with pytest.raises(psycopg.errors.CheckViolation):
             migrator.execute(
