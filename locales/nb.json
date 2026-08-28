@@ -1110,6 +1110,7 @@
   "ui.rekruttering.profiler.tomt_krav": "Profilen må ha minst ett krav.",
   "ui.rekruttering.ingen_prosess": "Ingen aktiv rekrutteringsprosess.",
   "ui.rekruttering.prosessvelger": "Rekrutteringsprosess",
+  "ui.rekruttering.prosessbytte_feilet": "Kunne ikke hente den valgte rekrutteringsprosessen. Valget er satt tilbake — prøv igjen, eller last siden på nytt.",
   "ui.rekruttering.prosessetikett": "Startet {dato} · kandidater: {antall}",
   "ui.rekruttering.tabell_caption": "Kandidater, rangert etter poeng med gjeldende vekter",
   "ui.rekruttering.kol_kandidat": "Kandidat",

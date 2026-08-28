@@ -352,6 +352,14 @@ function tegn(hoved, ctx, data, okt, valgtId) {
   const prosess = prosesser.find((p) => p.prosess_id === valgtId)
     || prosesser[0];
   let velgerRot = null;
+  // Feilveien for prosessbyttet (#183): `role="alert"`, fordi et bytte som
+  // ikke gikk gjennom er noe brukeren må vite FØR hun leser videre.
+  // EGEN KLASSE, ikke `rekrut-utfall`: den klassen er signeringens og
+  // blindingens utfallsområde, og flere tester slår den opp med
+  // `querySelector(".rekrut-utfall")` — altså FØRSTE treff i DOM-en.
+  // Velgeren står over dem, så en gjenbruk her ville kapret oppslaget og
+  // gitt en tom node der utfallet skulle stått. Målt: den gjorde det.
+  const velgerFeil = el("div", { role: "alert", class: "rekrut-velgerfeil" });
   if (prosesser.length > 1) {
     const velgerId = "rekrut-prosessvelger";
     const velger = el("select", { id: velgerId },
@@ -372,14 +380,44 @@ function tegn(hoved, ctx, data, okt, valgtId) {
         velger.value = prosess.prosess_id;
         return;
       }
-      tegn(hoved, ctx, data, okt, velger.value);
-      const ny = hoved.querySelector(`#${velgerId}`);
-      if (ny) ny.focus();
+      // BYTTE ER EN HENTING, IKKE EN OM-TEGNING (#183, Codex P2 fra #176).
+      // Flaten lastet ALT én gang: hver ureapet prosess med hver kandidats
+      // funn, sitater og intervjuspørsmål, og velgeren tegnet på nytt mot
+      // det samme svaret. Katalogens løfte er 5000 søknader per bestilling
+      // og prosessraden lever inntil 365 døgn, så én GET kunne serialisere
+      // titusener av payloader. Nå bærer svaret en LETT indeks og full data
+      // for ÉN prosess — og da må velgeren hente den nye.
+      //
+      // `okt` røres ikke: signeringsnøklene og `signerte`-merket bor der og
+      // overlever hentingen av seg selv. Det er invarianten Codex P1 og
+      // Cursor P1 alt har felt en runde over i #176, og den holder her
+      // fordi økten ligger UTENFOR hentingen — ikke fordi vi husker den.
+      const nyId = velger.value;
+      velger.disabled = true;
+      hentJson(`/v1/rekruttering/prosesser?prosess_id=${encodeURIComponent(nyId)}`)
+        .then((svar) => {
+          data.prosesser = svar.prosesser;
+          tegn(hoved, ctx, data, okt, nyId);
+          const ny = hoved.querySelector(`#${velgerId}`);
+          if (ny) ny.focus();
+        })
+        .catch((e) => {
+          if (e instanceof UautorisertFeil) throw e;
+          // EN FEILET HENTING RULLER VALGET TILBAKE. Uten det står
+          // velgeren på en prosess flaten ikke viser — og brukeren leser
+          // kandidatene til A under navnet B. En 404 er dessuten en
+          // LOVLIG utgang: prosessen kan ha falt ut på fristen mellom to
+          // klikk, og da er «finnes ikke lenger» det sanne svaret.
+          velger.disabled = false;
+          velger.value = prosess.prosess_id;
+          sett(velgerFeil, t("ui.rekruttering.prosessbytte_feilet"));
+          velger.focus();
+        });
     });
     velgerRot = el("div", { class: "rekrut-prosessvelger" },
       el("label", { for: velgerId,
         text: t("ui.rekruttering.prosessvelger") }),
-      velger);
+      velger, velgerFeil);
     // ... og HER er `tegn`-utløseren A-dommen navngir: den ene kontrollen
     // på flaten som river bestillingsseksjonen og bygger den på nytt.
     laas.meld("velger", velger);

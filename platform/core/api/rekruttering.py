@@ -383,7 +383,7 @@ def _fullfort_replay(conn, tenant, nokkel, liste_id, bid) -> bool:
 def prosesser_endepunkt(tjeneste, request):
     """GET /v1/rekruttering/prosesser."""
     from .app import _rid
-    from .policyadmin_http import _med_conn, _ok
+    from .policyadmin_http import _feil, _med_conn, _ok
     rid = _rid(request)
     av = _modul_inaktiv(tjeneste, rid)
     if av is not None:
@@ -392,6 +392,7 @@ def prosesser_endepunkt(tjeneste, request):
     def kjor(conn):
         tenant, _bid = _leseauth_beslutninger(tjeneste, request, conn, rid)
         prosesser = []
+        rader = []
         # EVALUERINGENS TILSTAND FØLGER MED (Codex P2). Prosessen FØDES
         # mens kjøringen står på (`plukket` — 057s fødselsport), og
         # kandidatartefaktene skrives inkrementelt etterpå. Spørringen
@@ -460,18 +461,53 @@ def prosesser_endepunkt(tjeneste, request):
                 "             WHERE k.tenant = p.tenant"
                 "               AND k.prosess_id = p.prosess_id))"
                 " ORDER BY p.opprettet DESC", (tenant,)).fetchall():
-            kandidater, vekter, kilde = _kandidater(conn, tenant, pid)
-            prosesser.append({
+            rader.append((pid, oppdrag_id, status, opprettet))
+
+        # ÉN PROSESS BÆRER DATA, RESTEN ER EN INDEKS (#183, Codex P2 fra
+        # #176). Løkka kalte `_kandidater` og `_lister` for HVER ureapet
+        # prosess. Katalogens løfte er 5000 søknader per bestilling, og
+        # prosessraden lever til slettefristen — inntil 365 døgn — så én
+        # GET kunne skanne og serialisere titusener av funn- og
+        # spørsmålspayloader, holde en pool-forbindelse hele veien, og i
+        # verste fall ta knekken på worker-minnet. Det er ikke en
+        # spesialkonstruert forespørsel; det er flaten som åpnes.
+        #
+        # Svaret bærer nå alltid en LETT indeks over prosessene, og full
+        # data for ÉN — den navngitte, ellers den nyeste. Da vokser svaret
+        # med antall prosesser bare i indeksen, ikke i payloaden.
+        bedt = request.query_params.get("prosess_id")
+        if bedt is not None:
+            # EN UKJENT ID ER «FINNES IKKE», IKKE «ta den nyeste». Å
+            # servere en annen prosess' kandidater under den id-en
+            # klienten ba om, er en løgn flaten ikke kan oppdage — og
+            # prosessen KAN være borte helt lovlig: fristen løp ut mellom
+            # to klikk. Samme doktrine som rapportveien: identisk 404,
+            # uansett om den aldri fantes eller nettopp falt ut.
+            valgt = next((r for r in rader if str(r[0]) == bedt), None)
+            if valgt is None:
+                return _feil("ikke_funnet", rid, 404)
+        else:
+            valgt = rader[0] if rader else None
+
+        for pid, oppdrag_id, status, opprettet in rader:
+            post = {
                 "prosess_id": str(pid),
                 "opprettet": opprettet.isoformat(),
-                "blinding_av": False,   # avskruing finnes ikke før #159
                 "evaluering_status": status,
-                "vekter": vekter,
-                "vekter_kilde": kilde,
-                "kandidater": kandidater,
-                "lister": _lister(conn, tenant, oppdrag_id),
-            })
-        return _ok({"prosesser": prosesser}, rid)
+            }
+            if valgt is not None and pid == valgt[0]:
+                kandidater, vekter, kilde = _kandidater(conn, tenant, pid)
+                post |= {
+                    "blinding_av": False,  # avskruing finnes ikke før #159
+                    "vekter": vekter,
+                    "vekter_kilde": kilde,
+                    "kandidater": kandidater,
+                    "lister": _lister(conn, tenant, oppdrag_id),
+                }
+            prosesser.append(post)
+        return _ok({"prosesser": prosesser,
+                    "valgt_prosess_id": str(valgt[0]) if valgt else None},
+                   rid)
 
     return _med_conn(tjeneste, rid, kjor)
 

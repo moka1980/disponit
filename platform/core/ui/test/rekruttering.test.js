@@ -482,6 +482,13 @@ test("Rekruttering: hver prosess i svaret kan velges (ikke bare den første)", a
   // Den andre prosessens kandidater er nådd uten en ny runde i ruteren.
   velger.value = "p-2";
   velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  // BYTTE ER EN HENTING (#183): flaten laster ikke lenger alle prosesser
+  // med kandidatene sine, så velgeren henter den valgte og tegner NÅR
+  // svaret er der. Testen må derfor vente på tegningen i stedet for å
+  // lese DOM-en på samme tikk.
+  assert.ok(await vent(() => [...hoved.querySelectorAll("tbody tr")]
+    .some((tr) => tr.querySelector("td").textContent === "K-9")),
+    "prosessbyttet hentet aldri den valgte prosessen");
   const rader = [...hoved.querySelectorAll("tbody tr")]
     .map((tr) => tr.querySelector("td").textContent);
   assert.deepEqual(rader, ["K-9"]);
@@ -658,10 +665,16 @@ test("Rekruttering: signeringsnøkkel og «signert» overlever prosessbytte", as
       .find((b) => b.textContent === t("ui.rekruttering.signer_bekreft"))
       .click();
   };
-  const bytt = (id) => {
+  const bytt = async (id) => {
     const velger = hoved.querySelector("#rekrut-prosessvelger");
     velger.value = id;
     velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+    // #183: byttet henter. Vent til flaten faktisk står på den nye
+    // prosessen — ellers måler testen tilstanden FØR byttet.
+    await vent(() => {
+      const v = hoved.querySelector("#rekrut-prosessvelger");
+      return v && v.value === id && !v.disabled;
+    });
   };
 
   // Første forsøk på p-1: svaret går tapt.
@@ -671,9 +684,9 @@ test("Rekruttering: signeringsnøkkel og «signert» overlever prosessbytte", as
   assert.ok(forste.hoder["Idempotency-Key"], "signeringen gikk uten nøkkel");
 
   // Brukeren ser innom den andre prosessen før hun prøver igjen.
-  bytt("p-2");
+  await bytt("p-2");
   assert.equal(signerKnapp(), undefined, "p-2 har ingen lister å signere");
-  bytt("p-1");
+  await bytt("p-1");
   KALL = [];
   SVAR = (sti, opts) => (opts.method === "POST"
     ? { innhold_hash: HASH } : to);
@@ -687,8 +700,8 @@ test("Rekruttering: signeringsnøkkel og «signert» overlever prosessbytte", as
   // og tilbake gjenoppliver den ikke.
   assert.ok(await vent(() => signerKnapp().disabled),
     "knappen levde videre etter vellykket signering");
-  bytt("p-2");
-  bytt("p-1");
+  await bytt("p-2");
+  await bytt("p-1");
   KALL = [];
   const gjenoppstatt = signerKnapp();
   assert.ok(gjenoppstatt.disabled,
@@ -729,10 +742,15 @@ test("Rekruttering: signeringens kvittering overlever et prosessbytte",
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelector("table")));
-  const bytt = (id) => {
+  const bytt = async (id) => {
     const velger = hoved.querySelector("#rekrut-prosessvelger");
     velger.value = id;
     velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+    // #183: byttet henter — vent til den nye prosessen står tegnet.
+    await vent(() => {
+      const v = hoved.querySelector("#rekrut-prosessvelger");
+      return v && v.value === id && !v.disabled;
+    });
   };
   const knapp = [...hoved.querySelectorAll("button")]
     .find((b) => b.textContent === t("ui.rekruttering.signer_knapp"));
@@ -746,7 +764,7 @@ test("Rekruttering: signeringens kvittering overlever et prosessbytte",
     "signeringen ble aldri sendt");
 
   const gammel = hoved.querySelector(".rekrut-utfall");
-  bytt("p-2");
+  await bytt("p-2");
   assert.notEqual(hoved.querySelector(".rekrut-utfall"), gammel,
     "prosessbyttet tegnet ikke et nytt utfallsområde — testen måler ikke"
     + " lenger vinduet den ble skrevet for");
@@ -760,7 +778,7 @@ test("Rekruttering: signeringens kvittering overlever et prosessbytte",
     "kvitteringen for en irreversibel signering ble skrevet til en"
     + " frakoblet node");
   // …og den blir stående når brukeren går tilbake: økten bærer den.
-  bytt("p-1");
+  await bytt("p-1");
   assert.equal(hoved.querySelector(".rekrut-utfall").textContent, ventet,
     "kvitteringen forsvant ved neste tegning");
 });
@@ -1920,8 +1938,15 @@ test("Evalueringer: seksjonen er SAMME node etter prosessbyttet — "
     "section[aria-labelledby=evaluering-tittel]");
   assert.equal(etter, foer,
     "prosessbyttet bygde seksjonen på nytt — noden skulle gjenbrukes");
-  assert.equal(KALL.length, kallFoer,
-    "prosessbyttet utløste nettverkskall fra evalueringsseksjonen");
+  // #183: byttet er selv EN henting — den nye prosessen må hentes, for
+  // svaret bærer bare den valgtes data. Det er ikke det denne testen
+  // måler. Påstanden skjerpes derfor i stedet for å slakkes: nøyaktig
+  // ETT nytt kall, og det er prosesshentingen — evalueringsseksjonen
+  // henter fortsatt ingenting.
+  const nye = KALL.slice(kallFoer);
+  assert.deepEqual(nye.map((k) => k.sti), ["/v1/rekruttering/prosesser"],
+    "prosessbyttet utløste andre nettverkskall enn selve prosesshentingen"
+    + ` — evalueringsseksjonen skal ikke hente: ${JSON.stringify(nye)}`);
   assert.ok(etter.textContent.includes("kandidat-01"),
     "rapporten forsvant fra den gjenbrukte noden");
 });
@@ -3054,6 +3079,12 @@ test("Bestilling: en opplastet bunt overlever prosessbyttet SYNLIG (P2-6)", asyn
   const velger = hoved.querySelector("#rekrut-prosessvelger");
   velger.value = "p-2";
   velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  // #183: byttet henter først, tegner så. Uten ventingen leses det GAMLE
+  // skjemaet — og da måler testen tilstanden før byttet, ikke etter.
+  assert.ok(await vent(() => {
+    const v = hoved.querySelector("#rekrut-prosessvelger");
+    return v && v.value === "p-2" && !v.disabled;
+  }), "prosessbyttet ble aldri tegnet");
   const nyttSkjema = bestill().querySelector("form");
   const nyFil = nyttSkjema.querySelector("input[type=file]");
   assert.equal(nyFil.files.length, 0, "testen antar en tom filvelger");
