@@ -2738,7 +2738,7 @@ def test_revisjonshendelsen_er_udodelig(migrator):
     igjen skal gjøre testen rød PÅ RADEN, ikke på et uteblitt unntak.
     """
     def _sa_en_hendelse():
-        migrator.execute("SET LOCAL disponit.tenant = %s", (TENANT,))
+        _sett_kontekst(migrator, TENANT)
         migrator.execute(
             "INSERT INTO revisjonshendelse (tenant, handling, aktor,"
             " begrunnelse) VALUES (%s, 'm57.blinding_avskrudd', 'drift',"
@@ -2816,7 +2816,7 @@ def test_handlingen_er_et_lukket_sett(migrator):
     Uten CHECK-en kunne en kaller skrevet «m57.blinding_avskrudd_liksom»
     og fått en rad som SER ut som beviset porten leter etter.
     """
-    migrator.execute("SET LOCAL disponit.tenant = %s", (TENANT,))
+    _sett_kontekst(migrator, TENANT)
     with pytest.raises(psycopg.errors.CheckViolation):
         migrator.execute(
             "INSERT INTO revisjonshendelse (tenant, handling, aktor,"
@@ -2832,7 +2832,7 @@ def test_begrunnelsen_kan_ikke_vaere_et_tastetrykk(migrator):
     En ubrukelig revisjonshendelse er verre enn ingen: den ser ut som et
     svar på spørsmålet «hvem bestemte dette».
     """
-    migrator.execute("SET LOCAL disponit.tenant = %s", (TENANT,))
+    _sett_kontekst(migrator, TENANT)
     for aktor, begrunnelse in (("drift", "x"), ("  ", "en ekte begrunnelse")):
         with pytest.raises(psycopg.errors.CheckViolation):
             migrator.execute(
