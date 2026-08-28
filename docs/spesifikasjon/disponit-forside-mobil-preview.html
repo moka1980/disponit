@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="nb" data-sprak="nb" data-visning="landing" data-offentlig-side="hjem">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ny forside – Disponit</title>
+  <link rel="stylesheet" href="../../design/tokens.css">
+  <link rel="stylesheet" href="../../platform/core/ui/static/css/base.css">
+  <link rel="stylesheet" href="../../platform/core/ui/static/css/komponenter.css">
+</head>
+<body>
+  <a class="hoppelenke" href="#hovedinnhold">Hopp til innhold</a>
+  <header class="site-topp">
+    <div class="site-topp-rad">
+      <a class="site-logo" href="#hovedinnhold" aria-label="Disponit – gå til forsiden">
+        <span aria-hidden="true">D</span><strong>Disponit</strong>
+      </a>
+      <nav class="site-hovednav" aria-label="Hovednavigasjon">
+        <ul>
+          <li><a href="#hovedinnhold" aria-current="page">Hjem</a></li>
+          <li><a href="#tilbud">Tjenester</a></li>
+          <li><a href="#kontroll">Om produktet</a></li>
+          <li><a href="#status">Sikkerhet</a></li>
+          <li><a href="#bunn">Logg inn</a></li>
+        </ul>
+      </nav>
+      <nav class="site-sprak" aria-label="Språk">
+        <button type="button" lang="nb" class="site-sprak-knapp valgt" aria-current="true">Norsk</button>
+        <button type="button" lang="en" class="site-sprak-knapp">English</button>
+      </nav>
+    </div>
+  </header>
+
+  <main id="hovedinnhold" class="skall-hoved site-shell" tabindex="-1">
+    <section class="site-home-hero">
+      <div class="site-home-copy">
+        <p class="site-eyebrow">Kontrollert automatisering</p>
+        <h1>La rutinearbeidet gå. Behold kontrollen.</h1>
+        <p class="site-home-ingress">Disponit utfører det løpende arbeidet innenfor fullmaktene du setter. Det som er innenfor, blir gjort. Det som er utenfor, stopper med en begrunnelse hos deg.</p>
+        <div class="site-home-handlinger">
+          <a class="knapp primar" href="#tilbud">Se hva Disponit kan gjøre</a>
+          <a class="site-tekstlenke" href="#kontroll">Slik virker Disponit</a>
+        </div>
+      </div>
+      <aside id="kontroll" class="site-kontrollbevis" aria-label="Kontroll før utførelse">
+        <p class="site-kontrollbevis-label">En handling i Disponit</p>
+        <h2>Kontroll før utførelse</h2>
+        <ol class="site-kontrollflyt">
+          <li><span class="site-kontrollflyt-nr" aria-hidden="true">01</span><strong>Arbeid kommer inn</strong><p>En oppgave, frist eller kontroll må håndteres.</p></li>
+          <li><span class="site-kontrollflyt-nr" aria-hidden="true">02</span><strong>Policyen avgjør</strong><p>Fullmakt, grenser og attestasjoner sjekkes først.</p></li>
+          <li><span class="site-kontrollflyt-nr" aria-hidden="true">03</span><strong>Utfør eller stopp</strong><p>Ingenting blir gjettet når et vilkår mangler.</p></li>
+          <li><span class="site-kontrollflyt-nr" aria-hidden="true">04</span><strong>Begrunnelse blir igjen</strong><p>Beslutningen knyttes til policyversjon og revisjonsspor.</p></li>
+        </ol>
+      </aside>
+    </section>
+
+    <section id="status" class="site-driftstatus" aria-labelledby="driftstatus-tittel">
+      <p class="site-driftstatus-merke">Operativ status</p>
+      <div>
+        <h2 id="driftstatus-tittel">Det som kjører i dag</h2>
+        <p>Kontrollaget kjører i dag — policymotor, revisjonslogg, unntakskø og policyadministrasjon med fire øyne. Den første modulen som gjør faktisk arbeid — automatisk WCAG-kontroll av nettsteder du har bekreftet at du kontrollerer — har bestått akseptporten og er satt i drift. De øvrige områdene er spesifisert og under bygging.</p>
+      </div>
+    </section>
+
+    <section class="site-section site-prinsipper" aria-labelledby="prinsipper-tittel">
+      <div class="site-section-head"><div><p class="site-eyebrow">Bygget for ansvar</p><h2 id="prinsipper-tittel">Automatisering du kan forklare etterpå</h2></div></div>
+      <div class="site-prinsipp-grid">
+        <article class="site-prinsipp"><span aria-hidden="true">01</span><h3>Du bestemmer hva agenten får lov til</h3><p>Fullmaktene er en policy du selv forvalter: beløpsgrenser, hvilke handlinger som krever attestasjon, og hvem som kan godkjenne. Endringer krever fire øyne, og ingen knapp overstyrer dem.</p></article>
+        <article class="site-prinsipp"><span aria-hidden="true">02</span><h3>Ett sted for drift, policy og unntak</h3><p>Beslutninger, unntak, policyforvaltning og brukertilgang ligger i samme flate. Du slipper å lete i fire systemer for å finne ut hvorfor noe ble gjort — eller ikke gjort.</p></article>
+        <article class="site-prinsipp"><span aria-hidden="true">03</span><h3>Begynn i det små</h3><p>Sett agenten på ett område først, med stramme grenser. Utvid når du ser hva den faktisk gjør. Fullmaktene kan strammes inn igjen når som helst.</p></article>
+      </div>
+    </section>
+
+    <section id="tilbud" class="site-section site-tilbud">
+      <div class="site-section-head"><div><p class="site-eyebrow">Hva du får</p><h2>Agenten som gjør jobben, innenfor dine rammer</h2></div></div>
+      <div class="site-grid site-grid-2">
+        <article class="site-feature"><span class="site-feature-nr" aria-hidden="true">01</span><div><div class="site-module-head"><h3>Fullmakter og policy</h3><span class="site-badge plan">Kommer</span></div><p>Du setter grensene: beløp, hvilke handlinger som krever attestasjon, og hvem som kan godkjenne. Agenten måler hver handling mot dem før den utføres.</p></div></article>
+        <article class="site-feature"><span class="site-feature-nr" aria-hidden="true">02</span><div><div class="site-module-head"><h3>Unntak og oppfølging</h3><span class="site-badge plan">Kommer</span></div><p>Alt som ikke kan gjøres innenfor rammen havner i én kø med begrunnelse — ikke i en innboks. Du avgjør, agenten fullfører.</p></div></article>
+        <article class="site-feature"><span class="site-feature-nr" aria-hidden="true">03</span><div><div class="site-module-head"><h3>Revisjonsspor</h3><span class="site-badge plan">Kommer</span></div><p>Hver beslutning er sporbar i ettertid: hva som ble gjort, hvorfor, mot hvilken policyversjon. Uten å lete i logger.</p></div></article>
+        <article class="site-feature"><span class="site-feature-nr" aria-hidden="true">04</span><div><div class="site-module-head"><h3>Kapasitet og kø</h3><span class="site-badge plan">Kommer</span></div><p>Fordeling av arbeid og modellvalg per område, så volum ikke går på bekostning av kontroll.</p></div></article>
+      </div>
+    </section>
+
+    <section class="site-bunn-cta">
+      <div><p class="site-eyebrow">Klar for kontrollert automatisering?</p><h2>Start med ett område. Utvid når du er trygg.</h2></div>
+      <a class="knapp primar" href="#tilbud">Se hva Disponit kan gjøre</a>
+    </section>
+  </main>
+
+  <footer id="bunn" class="site-footer"><strong>Disponit</strong><p>AI-bedriftsagent med kontroll før handling.</p><a href="#status">Sikkerhet</a></footer>
+</body>
+</html>
