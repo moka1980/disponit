@@ -23,15 +23,22 @@
      latt nettopp de største overskriftene bli stående igjen. `-smal` er
      trinnet under 560px, `ls`/`lh` hører til display-trinnet og ikke til
      brødteksten, og `maks-*` er tekstmålet (linjelengden) for hvert trinn. */
-  --fs-display:clamp(2.5rem, 6vw, 5.4rem); --fs-display-smal:2.5rem;
-  --ls-display:-.045em; --lh-display:1.02;
+  --fs-display:clamp(2.35rem, 5vw, 3.8rem); --fs-display-smal:2.35rem;
+  --ls-display:-.035em; --lh-display:1.06;
   --fs-ingress:1.2rem; --fs-tittel:1.8rem; --fs-logo:1.15rem;
-  --maks-display:14ch; --maks-tittel:15ch; --maks-ingress:48rem;
+  --maks-display:17ch; --maks-tittel:20ch; --maks-ingress:48rem;
   /* Avstander og form */
   --sp-1:.25rem; --sp-2:.5rem; --sp-3:.75rem; --sp-4:1rem;
   --sp-6:1.5rem; --sp-8:2rem;
   --radius:8px; --radius-sm:4px;
   --radius-lg:24px; --radius-pill:999px;
+  --touch-min:2.75rem;
+  /* Offentlig Disponit-identitet: kjølig kontrollflate, uten mørke
+     layoutbakgrunner og tydelig adskilt fra Aqelyns varme papirprofil. */
+  --site-paper:#EEF3F3; --site-surface:#FFFFFF; --site-ink:#132629;
+  --site-muted:#526568; --site-line:#AEBFC0; --site-signal:#006F68;
+  --site-signal-bg:#D8EEEB; --site-action:#B94718;
+  --site-action-hover:#8F3210;
   /* Fokus (WCAG 2.4.7) — brukes på ALT interaktivt */
   --focus:3px solid var(--info); --focus-offset:2px;
   /* UI-lag (M-1): skygge, lagdeling og breakpoint hører hjemme HER, aldri
