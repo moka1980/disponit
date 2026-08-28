@@ -404,17 +404,27 @@ def test_hengende_linjeskift_i_en_digest_felles_i_BEGGE_lag():
     MUTASJONEN SOM DREPER DENNE: sett `^`/`$` tilbake i `_bias_utledet`
     (første halvdel) eller i skjemaet (andre halvdel).
     """
-    for felt, hale in (("bias_digester_kjort", "\n"),
-                       ("bias_maalinger", "\n")):
-        art = _gront_artefakt()
-        if felt == "bias_digester_kjort":
-            art["maalt"][felt][0] = art["maalt"][felt][0] + hale
-        else:
-            art["maalt"][felt][0]["artefakt_sha256"] = "a" * 64 + hale
-        feil = _m57_feil(art)
-        assert feil, f"{felt} med hengende {hale!r} passerte grensen"
-        assert valider_artefaktformat(art, "m57-v1") != [], \
-            f"skjemaet slapp gjennom {felt} med hengende {hale!r}"
+    # Meldingen MÅ være formmeldingen. Første utgave av denne porten
+    # spurte bare om `_m57_feil` sa noe i det hele tatt, og da overlevde
+    # mutasjonen: en digest med hengende linjeskift havner uansett
+    # utenfor `dekket`, så dekningsleddet klaget om «mangler måling» og
+    # porten ble grønn på feil grunn. Vi krever nå ordene fra det leddet
+    # som faktisk leser formen.
+    art = _gront_artefakt()
+    art["maalt"]["bias_digester_kjort"][0] += "\n"
+    feil = _m57_feil(art)
+    assert any("ikke er digester" in f for f in feil), \
+        f"en digest med hengende linjeskift passerte formleddet: {feil}"
+    assert valider_artefaktformat(art, "m57-v1") != [], \
+        "skjemaets pattern slapp gjennom en digest med hengende linjeskift"
+
+    art = _gront_artefakt()
+    art["maalt"]["bias_maalinger"][0]["artefakt_sha256"] = "a" * 64 + "\n"
+    feil = _m57_feil(art)
+    assert any("ikke en sha256" in f for f in feil), \
+        f"en artefakthash med hengende linjeskift passerte: {feil}"
+    assert valider_artefaktformat(art, "m57-v1") != [], \
+        "skjemaets pattern slapp gjennom en hash med hengende linjeskift"
 
 
 def test_duplikatsjekken_skalerer_lineaert_ikke_kvadratisk():
