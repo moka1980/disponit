@@ -2518,10 +2518,36 @@ def test_serielaasen_serialiserer_signering_mot_ny_versjon(migrator):
     runtime har kun SELECT på `utsendingsliste`. Radlåsen var ikke nåbar
     fra signeringssiden i det hele tatt.
 
-    MUTASJONEN SOM DREPER DENNE: fjern advisory-låsen fra
-    `opprett_utsendingsliste` — da går B rett gjennom mens A holder sin.
+    BEGGE BEN MÅLES (Cursor P2 på #239). Kappløpet under simulerer
+    signeringsbenet med låsuttrykket skrevet ut for hånd — DB-siden av
+    #180 blir dermed målt, men Python-siden ikke: fjernet man låsblokken
+    i `signer_endepunkt`, sto CI grønt mens spiss-TOCTOU-en var
+    gjenåpnet. Kildeporten under binder simuleringen til endepunktets
+    faktiske kode, samme form som `test_056_navngir_aldri_runtime_rollen`
+    og re-sjekkporten i `test_m57_rapportflate.py`.
+
+    MUTASJONEN SOM DREPER DENNE — én per ben: fjern advisory-låsen fra
+    `opprett_utsendingsliste` (065) → B går rett gjennom mens A holder
+    sin; ELLER fjern låsblokken fra `signer_endepunkt`
+    (`api/rekruttering.py`) → kildeporten faller.
     """
+    import inspect
     import threading
+
+    from api import rekruttering
+
+    # SIGNERINGSBENET TAR LÅSEN, OG DEN TAR DEN FØRST. Kappløpet under
+    # kan ikke måle dette selv: det går ikke gjennom `signer_endepunkt`,
+    # så uten denne porten er endepunktets låsblokk udekket.
+    kilde = inspect.getsource(rekruttering.signer_endepunkt)
+    assert "hashtextextended('m57:serie:' || %s || ':'" in kilde, (
+        "`signer_endepunkt` tar ikke serielåsen — da er spissjekken og"
+        " `signer_utsendingsliste` igjen to steg uten lås imellom,"
+        " og #180 står åpent på signeringssiden")
+    assert (kilde.index("pg_advisory_xact_lock(")
+            < kilde.index("EXISTS (SELECT 1 FROM utsendingsliste b")), \
+        "serielåsen skal tas FØR spisslesningen — låses det etterpå, er" \
+        " vinduet bare ett hakk mindre, ikke lukket"
 
     oid, _ = _grunnlag(migrator)
     liste = _liste(migrator, oid)
