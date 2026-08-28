@@ -4051,6 +4051,52 @@ def test_kryss_sitat_felles_HELE_veien_gjennom_evaluer_kandidat():
         f" gjennom `evaluer_kandidat`: {ei.value.args}")
 
 
+def test_kryss_sitat_felles_gjennom_kjor_bunt(tmp_path):
+    """#174s faktiske regresjonsflate er `kjor_bunt` (Cursor P2).
+
+    Det var HER skjøtingen skjedde før blindingen, og testen over stopper
+    på `evaluer_kandidat`: skjøter `kjor_bunt` dokumentene igjen før
+    kallet, ser evalueringen ÉN tekst, grensene blir ett eneste spenn, og
+    kryss-sitatporten slipper alt gjennom — uten at noe blir rødt. Porten
+    alene er ikke nok; koblingen må måles der den ble brutt.
+
+    MUTASJONEN SOM DREPER DENNE: send `blinding.SKJOT.join(dokumenter)`
+    (eller en annen forhåndsskjøtet streng) i stedet for dokumentlista
+    til `evaluer_kandidat` i `kjor_bunt`.
+    """
+    from modules.m57_ats import kjoring
+
+    class _Kryssmodell(_Modell):
+        def vurder(self, tekst, vekter):
+            # Sitatet spenner over HELE modellinputen — altså over skjøten
+            # så lenge dokumentene fortsatt holdes fra hverandre.
+            self.sett.append(tekst)
+            return {"funn": [{"kategori": "uklar_tidslinje",
+                              "kilde": {"start": 0, "slutt": len(tekst),
+                                        "sitat": tekst}}],
+                    "oppfylt": {k: True for k in vekter}}
+
+    arkiv = _bunt(tmp_path, [
+        ("k1/cv.html", "<p>Vitnemål for Kari Testdal.</p>".encode()),
+        ("k1/soknad.html",
+         "<p>Kari Testdal har ti års erfaring.</p>".encode()),
+    ])
+
+    modell = _Kryssmodell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
+                          kandidatfelter_for=lambda m: {
+                              "navn": ["Kari Testdal"]},
+                          tekst_for=lambda m, d: d.decode("utf-8"),
+                          biasmaalinger=_MAALINGER, antall_soknader=1)
+    assert e.value.kode == "sitat_krysser_dokumentgrense", (
+        "et sitat over skjøten overlevde HELE veien gjennom `kjor_bunt` —"
+        f" dokumentene ble skjøtet før evalueringen: {e.value.kode}")
+    # Modellen SKAL ha vært kalt: felles kjøringen tidligere, måler testen
+    # en annen port enn kryss-sitatporten, og mutasjonen over overlever.
+    assert modell.sett, "kjøringen stoppet før modellen — feil port måles"
+
+
 def test_grensene_regnes_av_den_samme_skjoten():
     """Ett sted for skjøten, ellers peker grensene feil.
 
