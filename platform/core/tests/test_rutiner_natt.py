@@ -608,8 +608,12 @@ def test_parkeringen_har_verktoyet_den_krever():
     MUTASJONEN SOM DREPER DENNE: fjern `Bash(gh issue create:*)` fra én
     av listene.
     """
-    lister = [l for l in YML.splitlines() if "--allowedTools" in l]
-    assert lister, "fant ingen --allowedTools-linjer"
+    # Bare de EKTE flagglinjene — prompten nevner `--allowedTools` i sin
+    # egen begrunnelse, og første utgave av porten talte den prosaen som
+    # en verktøyliste og var rød på seg selv.
+    lister = [l for l in YML.splitlines()
+              if "--allowedTools" in l and "Read,Grep,Glob" in l]
+    assert len(lister) >= 5, f"fant bare {len(lister)} verktøylister"
     manglende = [i for i, l in enumerate(lister)
                  if "Bash(gh issue create:*)" not in l]
     assert not manglende, (
