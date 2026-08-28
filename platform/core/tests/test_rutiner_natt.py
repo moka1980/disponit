@@ -655,6 +655,15 @@ def test_inline_funn_scopes_til_utlosende_review():
         assert "ULUKKET" in norm, (
             f"forsøk {i} har absolutt scoping — et eldre, ulukket funn"
             " blir da usynlig, som er #211s egen defektklasse")
+        # Cursor P2-3 runde 3: skillet må kunne AVGJØRES. REST bærer ikke
+        # trådoppløsning, så uten en kilde er «lukket» en gjetning — og
+        # gjetter agenten «lukket», merges funnet forbi.
+        assert "isResolved" in norm, (
+            f"forsøk {i} krever et skille mellom lukket og ulukket uten"
+            " å si hvor lukketheten leses — REST bærer den ikke")
+        assert "VED TVIL: behandle som ULUKKET" in norm, (
+            f"forsøk {i} mangler fail-closed-defaulten: de to feilene"
+            " koster ikke det samme")
     assert "pull_request_review_id" in RUTINER, (
         "claude.yml håndhever linjedraget, men RUTINER §11.1 sier det"
         " ikke — flatene glir fra hverandre")
@@ -686,6 +695,12 @@ def test_bot_review_kan_aldri_ta_merge_steg3():
         assert "PARKÉR" in norm, (
             f"forsøk {i} sier ikke hva som skal skje ved null funn —"
             " «ikke merge» uten et alternativ blir til merge")
+        # Cursor P2-1 runde 3: steg 0-forbudet dekker null-funn-veien,
+        # ikke selve merge-blokken. En agent som hopper over STOPP kunne
+        # ta den likevel — vakten må stå PÅ blokken.
+        assert "KANALVAKT (#211)" in norm, (
+            f"forsøk {i} har merge-blokk uten kanalvakt — forbudet i"
+            " steg 0 dekker klassifiseringen, ikke veien inn i merge")
 
 
 def test_steg0_skanner_inline_paa_review_utlost():
@@ -705,6 +720,13 @@ def test_steg0_skanner_inline_paa_review_utlost():
         assert "skann de scopede inline-kommentarene for kvote" in norm, (
             f"forsøk {i} leter etter kvotemeldingen bare i kroppen, som"
             " er tom på nettopp denne kanalen")
+        # Cursor P2-2 runde 3: «scopet» må DEFINERES her. Sto det først i
+        # steg 1, er det enten alle inline (falsk parkering på en gammel
+        # runde) eller ingen (kvoteteksten slipper forbi).
+        steg0 = norm.split("1.")[0]
+        assert "pull_request_review_id" in steg0, (
+            f"forsøk {i} ber steg 0 skanne «scopet» uten å si hva scopet"
+            " er — det defineres først i steg 1")
 
 
 def test_steg_0_verdiktporten_i_alle_tre_forsokene():

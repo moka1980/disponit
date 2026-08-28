@@ -173,9 +173,13 @@ jobs:
                notat til eier — aldri steg 3. Eierens `approved` er den
                ENESTE review-veien til merge.
                Og skann de scopede inline-kommentarene for kvote-/feil-/
-               statustekst også: `review.body` er ofte tom på denne
-               kanalen, så kvotemeldingen kan stå der i stedet for i
-               kroppen — samme utfall som steg 0 ellers.
+               statustekst også (scope = `pull_request_review_id ==
+               ${{ github.event.review.id }}`, definert her og ikke først
+               i steg 1: uten den er «scopet» enten alle inline-kommentarer
+               på PR-en, som gir falsk parkering på en gammel runde, eller
+               ingen, som slipper kvoteteksten forbi): `review.body` er
+               ofte tom på denne kanalen, så kvotemeldingen kan stå der i
+               stedet for i kroppen — samme utfall som steg 0 ellers.
             1. Les hele verdiktet og alle tråder: `gh pr view <nr> --comments`
                og `gh api` mot pulls/<nr>/reviews og pulls/<nr>/comments.
                Ignorer rene triggerkommentarer («@codex review»).
@@ -195,6 +199,15 @@ jobs:
                falske K2-utslag), men et eldre funn som fortsatt står
                ULUKKET skal fikses, aldri merges forbi: at en runde en
                gang overså det er grunnen til at #211 finnes.
+               HVORDAN DU AVGJØR LUKKETHET: REST-endepunktet
+               `pulls/<nr>/comments` bærer ikke trådoppløsning, så den
+               kan du ikke lese det av. Bruk GraphQL
+               (`reviewThreads { isResolved }`) eller en eksplisitt
+               markering fra eier/Codex i tråden. VED TVIL: behandle som
+               ULUKKET. Et lukket funn behandlet som åpent koster en
+               unødig runde; et åpent behandlet som lukket merger det
+               forbi — feilene er ikke like dyre, og defaulten følger
+               den dyreste.
             2. Reelle funn (P1/P2/aksjonspunkter): fiks dem i roten, ikke
                symptomet. KONVERGENSREGLENE (RUTINER.md §9, ratifisert
                21/8) er bindende for hvordan:
@@ -239,6 +252,7 @@ jobs:
             3. Verdikt uten reelle funn (f.eks. «Didn't find any major
                issues») eller godkjenning: da skal PR-en MERGES, og det er
                tre ting som må stemme — i denne rekkefølgen.
+               KANALVAKT (#211): merge-veien under gjelder KUN et `issue_comment`-verdikt eller eierens `approved` — ALDRI når utløseren er `chatgpt-codex-connector[bot]` på review-kanalen. Der er utfallet parkering, uansett hvordan resten av denne blokken leser.
 
                FØRST, VED INNGANG TIL STEG 3 — BASELINE: noter SHA-en
                verdiktet gjelder. Review-utløst kjøring:
@@ -402,9 +416,13 @@ jobs:
                notat til eier — aldri steg 3. Eierens `approved` er den
                ENESTE review-veien til merge.
                Og skann de scopede inline-kommentarene for kvote-/feil-/
-               statustekst også: `review.body` er ofte tom på denne
-               kanalen, så kvotemeldingen kan stå der i stedet for i
-               kroppen — samme utfall som steg 0 ellers.
+               statustekst også (scope = `pull_request_review_id ==
+               ${{ github.event.review.id }}`, definert her og ikke først
+               i steg 1: uten den er «scopet» enten alle inline-kommentarer
+               på PR-en, som gir falsk parkering på en gammel runde, eller
+               ingen, som slipper kvoteteksten forbi): `review.body` er
+               ofte tom på denne kanalen, så kvotemeldingen kan stå der i
+               stedet for i kroppen — samme utfall som steg 0 ellers.
             1. Gjenstående reelle funn (P1/P2) fra Codex-verdiktet og
                inline-kommentarene (`gh api` mot pulls/<nr>/comments — er
                kjøringen review-utløst, ligger funnene ofte IKKE I KROPPEN
@@ -420,6 +438,15 @@ jobs:
                falske K2-utslag), men et eldre funn som fortsatt står
                ULUKKET skal fikses, aldri merges forbi: at en runde en
                gang overså det er grunnen til at #211 finnes.
+               HVORDAN DU AVGJØR LUKKETHET: REST-endepunktet
+               `pulls/<nr>/comments` bærer ikke trådoppløsning, så den
+               kan du ikke lese det av. Bruk GraphQL
+               (`reviewThreads { isResolved }`) eller en eksplisitt
+               markering fra eier/Codex i tråden. VED TVIL: behandle som
+               ULUKKET. Et lukket funn behandlet som åpent koster en
+               unødig runde; et åpent behandlet som lukket merger det
+               forbi — feilene er ikke like dyre, og defaulten følger
+               den dyreste.
                Fiks
                i roten, ETT AV GANGEN — fiks, commit på norsk, push. Alt som
                ikke er pushet er tapt hvis også dette forsøket avbrytes.
@@ -430,7 +457,8 @@ jobs:
                stopp og eskaler rotårsaken til eier; K3 står produktet
                ferdig mens funnene treffer PR-intern portkode → foreslå
                deling; K4/SP-13 aldri hand-parse fremmed grammatikk.
-            2. Er alle funn adressert: CURSOR-PORT (RUTINER §10) — kommenter
+            2. KANALVAKT (#211): merge-veien under gjelder KUN et `issue_comment`-verdikt eller eierens `approved` — ALDRI når utløseren er `chatgpt-codex-connector[bot]` på review-kanalen. Der er utfallet parkering, uansett hvordan resten av denne blokken leser.
+               Er alle funn adressert: CURSOR-PORT (RUTINER §10) — kommenter
                `@cursor review` og STOPP — passets fullføring vekker
                cursor-pass-fulgt via workflow_run-broen (§10.4), som
                eier Codex-adgangen; aldri `@codex review` herfra.
@@ -522,9 +550,13 @@ jobs:
                notat til eier — aldri steg 3. Eierens `approved` er den
                ENESTE review-veien til merge.
                Og skann de scopede inline-kommentarene for kvote-/feil-/
-               statustekst også: `review.body` er ofte tom på denne
-               kanalen, så kvotemeldingen kan stå der i stedet for i
-               kroppen — samme utfall som steg 0 ellers.
+               statustekst også (scope = `pull_request_review_id ==
+               ${{ github.event.review.id }}`, definert her og ikke først
+               i steg 1: uten den er «scopet» enten alle inline-kommentarer
+               på PR-en, som gir falsk parkering på en gammel runde, eller
+               ingen, som slipper kvoteteksten forbi): `review.body` er
+               ofte tom på denne kanalen, så kvotemeldingen kan stå der i
+               stedet for i kroppen — samme utfall som steg 0 ellers.
             Prioriter deretter i denne
             rekkefølgen:
             1. Push alt arbeid som er i nærheten av ferdig, ett funn per
@@ -545,6 +577,15 @@ jobs:
                falske K2-utslag), men et eldre funn som fortsatt står
                ULUKKET skal fikses, aldri merges forbi: at en runde en
                gang overså det er grunnen til at #211 finnes.
+               HVORDAN DU AVGJØR LUKKETHET: REST-endepunktet
+               `pulls/<nr>/comments` bærer ikke trådoppløsning, så den
+               kan du ikke lese det av. Bruk GraphQL
+               (`reviewThreads { isResolved }`) eller en eksplisitt
+               markering fra eier/Codex i tråden. VED TVIL: behandle som
+               ULUKKET. Et lukket funn behandlet som åpent koster en
+               unødig runde; et åpent behandlet som lukket merger det
+               forbi — feilene er ikke like dyre, og defaulten følger
+               den dyreste.
                Er alt adressert: kommenter `@cursor review` og
                STOPP (RUTINER §10.4): passets fullføring vekker
                cursor-pass-fulgt via workflow_run-broen, som eier
@@ -553,6 +594,7 @@ jobs:
                med nøyaktig hvilke funn som gjenstår og hvor arbeidet står,
                så sløyfa kan startes igjen med en `@claude`-kommentar. En
                stille PR er det eneste uakseptable utfallet.
+            KANALVAKT (#211): merge-veien under gjelder KUN et `issue_comment`-verdikt eller eierens `approved` — ALDRI når utløseren er `chatgpt-codex-connector[bot]` på review-kanalen. Der er utfallet parkering, uansett hvordan resten av denne blokken leser.
             Merging følger samme rekkefølge som før — og `DIRTY`
             (ekte konflikt) parkeres ALLTID: løs den ALDRI selv,
             kommenter til eier og STOPP; en konflikt-push betyr verdikt

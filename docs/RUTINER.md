@@ -259,6 +259,13 @@ aldri et vindu der dokumentet lover en port maskinen mangler
    ULUKKET merges aldri forbi. At en runde en gang overså et funn er
    nettopp grunnen til at denne regelen finnes.
 
+   Lukketheten må kunne AVGJØRES, ikke antas: REST-endepunktet bærer
+   ikke trådoppløsning, så den leses via GraphQL
+   (`reviewThreads { isResolved }`) eller en eksplisitt markering i
+   tråden. **Ved tvil: ULUKKET.** Et lukket funn behandlet som åpent
+   koster en unødig runde; et åpent behandlet som lukket merges forbi —
+   og defaulten følger den dyreste feilen.
+
 2. **Mandater bor i KOMMENTARER, og omtalen er `@claude`.** En ordre i en
    issue-KROPP trigger ingen kjøring (samme utløser-klasse som §10s
    Bugbot-notat). Ethvert nattmandat legges som egen kommentar — og
