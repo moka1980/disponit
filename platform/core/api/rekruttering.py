@@ -168,24 +168,18 @@ def _kandidater(conn, tenant, prosess_id):
     og ikke en positiv projeksjon: da overlever ethvert felt en fremtidig
     produsent legger til, `status` inkludert.
 
-    INTERVJUSPØRSMÅLENE HAR SITT EGET LAGER (Codex P2, runde 5). 057
-    modellerer dem som `kandidat_intervjusporsmal` — egen tabell, egen
-    `innhold_sha256`, egen rad i reaperens sletteliste. Lesningen tok dem
-    likevel fra en KOPI inne i evalueringsartefakten, og en kopi og et
-    lager kan si to ting: PR-ens egen demo-seed skrev to ULIKE
-    spørsmålslister til de to stedene, og flaten viste artefaktkopien. En
-    normalisert produsent — den 057 beskriver, som skriver lageret og
-    dropper duplikatet i artefaktet — ville gitt flaten INGEN spørsmål.
-    Lageret er kilden; `intervjusporsmal` subtraheres derfor ut av
-    artefaktet sammen med det andre denne lesningen ikke leser.
-
-    LEFT JOIN, ikke INNER: en kandidat kan ha artefakt uten at spørsmål
-    er skrevet ennå (lagrene fylles inkrementelt mens kjøringen står på),
-    og hun skal fortsatt vises — med tom liste, som er det sanne svaret.
-    `slettet_ts IS NULL` i join-leddet, ikke i WHERE: et reapet
-    spørsmålslager bærer `sporsmal = NULL` og skal ikke fjerne kandidaten
-    fra svaret. Primærnøkkelen (tenant, prosess_id, kandidat_id) holder
-    treffet på høyst én rad.
+    INTERVJUSPØRSMÅLENE HENTES IKKE I DET HELE TATT (eiers
+    produktbeslutning 27/8, PR #224). De hører til innkallingen av de
+    beste, ikke til utvelgelsen, så feltet forlater aldri serveren her —
+    og da er både artefaktkopien og 057-lageret (`kandidat_intervjusporsmal`)
+    noe denne lesningen kaster. Regelen over gjelder også dem: lesningen
+    slutter å hente det den kaster, og på et endepunkt som løper over
+    HVER prosess med inntil 5000 kandidater er en JOIN mot lageret
+    unødvendig arbeid i basen og unødvendig nyttelast over forbindelsen.
+    Subtraksjonen av `intervjusporsmal` blir stående — artefaktet kan
+    fortsatt bære en kopi, og den skal ut av svaret på samme måte som
+    `kildetekst` og `avmaskering`. Lageret består urørt som
+    shortlist-arcens kilde (#225).
 
     OG SUBTRAKSJONEN GJØRES BARE PÅ ET OBJEKT (Cursor P1). `jsonb - text`
     er definert for objekt og array; mot en JSON-SKALAR feiler den i
@@ -201,17 +195,13 @@ def _kandidater(conn, tenant, prosess_id):
         "       CASE WHEN jsonb_typeof(a.artefakt) = 'object'"
         "            THEN a.artefakt - 'kildetekst' - 'avmaskering'"
         "                            - 'intervjusporsmal' END,"
-        "       jsonb_typeof(a.artefakt) = 'object',"
-        "       i.sporsmal"
+        "       jsonb_typeof(a.artefakt) = 'object'"
         "  FROM kandidat_evalueringsartefakt a"
-        "  LEFT JOIN kandidat_intervjusporsmal i"
-        "    ON i.tenant = a.tenant AND i.prosess_id = a.prosess_id"
-        "   AND i.kandidat_id = a.kandidat_id AND i.slettet_ts IS NULL"
         " WHERE a.tenant=%s AND a.prosess_id=%s AND a.slettet_ts IS NULL"
         " ORDER BY a.kandidat_id", (tenant, prosess_id)).fetchall()
     kandidater, vekter, kilde, lest = [], None, "standard", []
     lesbare_vekter = []
-    for kid, artefakt, er_objekt, sporsmal in rader:
+    for kid, artefakt, er_objekt in rader:
         # TYPEN ER OGSÅ EN PORT (Cursor P1). `x or {}` verner mot NULL og
         # tomt, aldri mot FEIL TYPE: `{...}` er en sann `funn`, `["drift"]`
         # er en sann `oppfylt`, og begge er `jsonb` runtime kan INSERTe
@@ -255,23 +245,11 @@ def _kandidater(conn, tenant, prosess_id):
         lesbart = (bool(er_objekt) and isinstance(raa_funn, list)
                    and isinstance(raa_oppfylt, dict)
                    and all(isinstance(f, dict) for f in funn))
-        # SPØRSMÅLSLAGERET HAR SAMME TYPEPORT SOM ARTEFAKTET (Codex P2,
-        # runde 8). `sporsmal` er `jsonb NOT NULL` i 057 og ingenting mer:
-        # `'3'`, `'"hei"'` og `'{"a":1}'` er alle lovlige INSERTs for
-        # runtime. Verdien ble sendt rå ut, og flaten gjør
-        # `(kandidat.intervjusporsmal || []).map(...)` — en ikke-array er
-        # sann, så `||` verner ikke, og `.map` finnes ikke på den: én slik
-        # rad tok ned HELE detaljpanelet med en `TypeError`. Samme dom som
-        # `funn`/`oppfylt` over får: feil form er INGEN opplysning, og
-        # ingen opplysning vises som ingenting. Elementene måles også —
-        # en liste med et objekt i ville rendret `[object Object]` som et
-        # intervjuspørsmål. Til forskjell fra `funn` bæres det ikke i
-        # `lesbart`: spørsmålene er ren visning og inngår ikke i
-        # trafikklyset, så et tomt spørsmålsfelt gjør ingen kandidat
-        # grønnere enn hun er.
-        rene = (sporsmal if isinstance(sporsmal, list)
-                and all(isinstance(s, str) for s in sporsmal) else [])
-        lest.append((kid, funn, oppfylt, lesbart, rene))
+        # Spørsmålslagerets egen typeport falt bort sammen med JOIN-en
+        # (#224): et felt som aldri forlater serveren, kan ingen giftig
+        # `sporsmal`-rad nå flaten gjennom. Porten står nå i sin
+        # sterkeste form — fravær.
+        lest.append((kid, funn, oppfylt, lesbart))
     # VEKTENE ER ENDELIGE FØR TRAFIKKLYSET UTLEDES (Cursor P1). Reserven
     # under leser HVER kandidats krav, så den kan ikke stå etter en
     # dømming som må måle mot den — derfor to pass over de samme radene.
@@ -294,10 +272,10 @@ def _kandidater(conn, tenant, prosess_id):
                               for v in lesbare_vekter[1:]):
         vekter, kilde = lesbare_vekter[0], "evalueringsartefakt"
     if vekter is None:
-        krav = sorted({k for _kid, _funn, oppfylt, _les, _sp in lest
+        krav = sorted({k for _kid, _funn, oppfylt, _les in lest
                        for k in oppfylt})
         vekter = {k: 3 for k in krav}
-    for kid, funn, oppfylt, lesbart, sporsmal in lest:
+    for kid, funn, oppfylt, lesbart in lest:
         # ANBEFALINGEN ER OPPFYLTE KRAV, IKKE FRAVÆRET AV FUNN (Codex P1).
         # Den kanoniske evalueringsartefakten har ingen `status` i det hele
         # tatt (`evaluering.evaluer_kandidat` returnerer `funn`, `oppfylt`,
@@ -349,7 +327,10 @@ def _kandidater(conn, tenant, prosess_id):
             "oppfylt": oppfylt,
             "status": status,
             "funn": funn,
-            "intervjusporsmal": sporsmal or [],
+            # Ingen intervjuspørsmål i prosessflaten heller (eiers
+            # produktbeslutning 27/8, PR #224): de hører til innkallingen
+            # av de beste — lageret (kandidat_intervjusporsmal) består og
+            # er shortlist-arcens kilde (#225).
         })
     return kandidater, vekter, kilde
 

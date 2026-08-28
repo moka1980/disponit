@@ -50,6 +50,23 @@ html[data-visning="app"] body {
 }
 .hoppelenke:focus { top: var(--sp-2); }
 
+/* Midt-side-hopp (rekrutteringens rapport): in-flow, usynlig til fokus —
+   deler IKKE sidetopp-selectoren, som er viewport-absolute. */
+.rekrut-hopp {
+  position: absolute;
+  width: 1px; height: 1px; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap;
+}
+.rekrut-hopp:focus {
+  position: static; display: inline-block;
+  width: auto; height: auto; overflow: visible;
+  clip-path: none; white-space: normal;
+  background: var(--card); color: var(--ink);
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--skygge);
+}
+
 /* Ett synlig fokus på ALT interaktivt (WCAG 2.4.7 / 2.4.11). */
 :focus-visible {
   outline: var(--focus);

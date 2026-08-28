@@ -191,12 +191,18 @@ Modulen er KUNDE av plattformen, aldri omvendt (m56-formen):
   ikke en utsettelse: porten står lukket her og nå.
 * **Ut**: ÉN promotert rapport per oppdrag —
   `rekruttering.evaluering.rapport`, den rangerte kandidatlisten med
-  begrunnede funn (kildereferanse), poeng med nedbrytning og
-  intervjuspørsmål PER KANDIDAT inni seg — og innstilte utsendingslister
-  som VENTER på menneskelig signatur gjennom 056-kjeden. Ingen vei fra
-  modellutdata til utsendingstekst — malene er plattformeide med lukket
-  flettefeltsett (`maler.py`), og bruddet er en statisk port, ikke en
-  kodegjennomgang.
+  begrunnede funn (kildereferanse) og poeng med nedbrytning — og
+  innstilte utsendingslister som VENTER på menneskelig signatur gjennom
+  056-kjeden. Intervjuspørsmål genereres IKKE under evalueringen
+  ([#225](https://github.com/moka1980/disponit/issues/225), eiers
+  retning 27/8): rekrutterer velger de beste blant mange, og intervjuer
+  skjer manuelt når de 5–10 beste innkalles — spørsmål til alle er
+  modelltid uten produkt. Rapportens `intervjusporsmal`-felt består
+  (skjemaet er hash-bundet) og bærer tom liste; spørsmål per INNKALT
+  kandidat er shortlist-flytens sak (#225 del 2, designes med eier).
+  Ingen vei fra modellutdata til utsendingstekst — malene er
+  plattformeide med lukket flettefeltsett (`maler.py`), og bruddet er
+  en statisk port, ikke en kodegjennomgang.
 
   ETT artefakt, ikke ett per kandidat (Codex P1). Linja sto før som «ett
   artefakt per kandidat», og det er noe plattformen ikke kan levere:

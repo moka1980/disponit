@@ -61,5 +61,6 @@
   "060_inndata_resolver.sql": "020c2394a1beed4caf53a3a658de49af16856046e9fdc23866edeb98eceb83dc",
   "061_stillingsprofil.sql": "94aefa1dad4139af22f85337f02e617d2aa2bf71750119794d98ccc3716841f7",
   "062_modultoken_klokke.sql": "f0f8b7bd2a6d207b10a1bc92c3115261e6e27d21be9879c27990c690835a366b",
-  "063_lease_fornyelse.sql": "a3590a3127aa8bc97c2ae4f0d9ccd425e1fd5390cf1120e777d6cfc60e33fe7d"
+  "063_lease_fornyelse.sql": "a3590a3127aa8bc97c2ae4f0d9ccd425e1fd5390cf1120e777d6cfc60e33fe7d",
+  "064_reserverte_tld.sql": "49a15876d5d4ca7c32a62b7f5bdd5ade1ea8282ed0eaa367823930c2dbf1e7e8"
 }

@@ -450,8 +450,11 @@ test("Rekruttering: signaturdialogen sier antall, type, hashkortform — og «Ka
     k.sti === "/v1/rekruttering/lister/L-1/signer")), "POST kom aldri");
   assert.equal(KALL.find((k) => k.sti.endsWith("/signer")).kropp.innhold_hash,
     HASH);
-  assert.ok(await vent(() => hoved.querySelector('[role="alert"]')
-    .textContent.includes(HASH.slice(0, 12))), "utfallet mangler");
+  // Flaten har flere alert-regioner (evalueringene står FØRST etter
+  // eiers UX-prinsipp) — utfallet måles der det faktisk meldes.
+  assert.ok(await vent(() => [...hoved.querySelectorAll('[role="alert"]')]
+    .some((a) => a.textContent.includes(HASH.slice(0, 12)))),
+    "utfallet mangler");
 });
 
 test("Rekruttering: hver prosess i svaret kan velges (ikke bare den første)", async () => {
@@ -587,7 +590,8 @@ test("Rekruttering: et tapt svar meldes som uvisst, ikke som «ingenting er send
   const hoved = await tegnet();
   const knapp = [...hoved.querySelectorAll("button")]
     .find((b) => b.textContent === t("ui.rekruttering.signer_knapp"));
-  const melding = () => hoved.querySelector('[role="alert"]').textContent;
+  const melding = () => [...hoved.querySelectorAll('[role="alert"]')]
+    .map((a) => a.textContent).join("");
   const signer = async () => {
     assert.ok(await vent(() => !knapp.disabled), "knappen ble aldri åpen");
     knapp.click();
@@ -784,8 +788,10 @@ test("Rekruttering: «Detaljer» åpner panelet med funn, sitat og spørsmål", 
     t("ui.rekruttering.funn.uklar_tidslinje")), "funnet mangler");
   assert.ok(panel.querySelector("q").textContent === "2019",
     "kildesitatet mangler");
-  assert.ok(panel.textContent.includes("Fortell om tidslinjen."),
-    "intervjuspørsmålet mangler");
+  // Ingen intervjuspørsmål i utvelgelsen (eiers produktbeslutning,
+  // #224/#225): selv når payloaden bærer dem, rendres de ikke.
+  assert.ok(!panel.textContent.includes("Fortell om tidslinjen."),
+    "intervjuspørsmål skal ikke vises i detaljpanelet");
 });
 
 test("Rekruttering: et funn uten sitat åpner panelet og skjules ikke", async () => {
@@ -929,7 +935,8 @@ test("Rekruttering: 401 i mutasjonene er innlogging, ikke en handlingsfeil", asy
       .click();
     assert.ok(await vent(() => uautorisert === 1),
       `${flyt}: 401 nådde aldri paaUautorisert`);
-    assert.equal(hoved.querySelector('[role="alert"]').textContent, "",
+    assert.ok([...hoved.querySelectorAll('[role="alert"]')]
+      .every((a) => a.textContent === ""),
       `${flyt}: 401 ble meldt som en vanlig handlingsfeil`);
   }
 });
@@ -1194,7 +1201,9 @@ test("Evalueringer: liste med status, og rapporten rendres blindet", async () =>
   assert.match(aapnet,
     new RegExp(t("ui.rekruttering.funn.manglende_dokumentasjon")));
   assert.match(aapnet, new RegExp(t("ui.rekruttering.uten_sitat")));
-  assert.match(aapnet, /Fortell om driftserfaringen/);
+  // Ingen intervjuspørsmål i rangeringen (eiers produktbeslutning):
+  // selv om payloaden skulle bære dem, rendres de ikke.
+  assert.doesNotMatch(aapnet, /Fortell om driftserfaringen/);
   // Begge tabellene står i rullbar container (Codex P2: 50 krav à 120
   // tegn i nedbrytningscellen skal ikke velte siden).
   assert.ok(seksjon.querySelectorAll(".tablewrap").length >= 2,
@@ -1227,20 +1236,25 @@ test("Evalueringer: feilet rapporthenting melder i alert, ikke stille", async ()
     "/v1/rekruttering/stillingsprofiler": profiler(),
     "/v1/rekruttering/evalueringer": { evalueringer: [
       { oppdrag_id: 96, status: "utfort",
-        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true },
+      { oppdrag_id: 97, status: "utfort",
+        opprettet: "2026-08-27T01:00:00+00:00", rapport_klar: true }] },
     "/v1/rekruttering/rapport/96": rapportSvar,
+    "/v1/rekruttering/rapport/97": rapportSvar,
   })[sti] ?? 500;
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
-  assert.ok(await vent(() => hoved.querySelector(
-    "section[aria-labelledby=evaluering-tittel] button")));
+  assert.ok(await vent(() => hoved.querySelectorAll(
+    "section[aria-labelledby=evaluering-tittel] button").length === 2));
   const seksjon = hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
-  seksjon.querySelector("button").click();
+  const knappFor = (id) => [...seksjon.querySelectorAll("button")]
+    .find((b) => b.closest("tr").textContent.includes(String(id)));
+  knappFor(96).click();
   assert.ok(await vent(() => seksjon.textContent.includes("Driftskonsulent")),
     "rapporten rendret aldri");
-  rapportSvar = undefined; // ?? 500 tar over
-  seksjon.querySelector("button").click();
+  rapportSvar = undefined; // ?? 500 tar over — 97 er IKKE i cachen
+  knappFor(97).click();
   await vent(() => seksjon.querySelector("[role=alert]").textContent
     === t("ui.rekruttering.evalueringer.rapportfeil"));
   assert.equal(seksjon.querySelector("[role=alert]").textContent,
@@ -1450,6 +1464,757 @@ test("Evalueringer: det leverte oppdraget overlever et prosessbytte", async () =
     "oppdraget døde i prosessbyttets om-tegning");
   assert.equal(listekall, kallFoer,
     "seksjonen hentet listen på nytt ved mount — den skal seedes fra økten");
+});
+
+test("Evalueringer: produktet først og null klikk — ferskeste klare "
+  + "rapport står ferdig rendret uten fokus-tyveri", async () => {
+  KALL = [];
+  // Eiers UX-prinsipp (27/8): færrest mulig klikk til produktet.
+  // 1) Evalueringsseksjonen er FØRSTE seksjon på flaten.
+  // 2) Finnes en ferdig rapport, er den rendret ved lasting — uten
+  //    klikk, og uten å stjele fokus fra der brukeren er.
+  SVAR = {
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
+    "/v1/rekruttering/rapport/96": { oppdrag_id: 96, rapport: {
+      rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+      profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
+      antall_soknader: 1,
+      rangering: [{ kandidat_id: "kandidat-01", poeng: 5,
+        nedbrytning: { drift: 5 } }],
+      kandidater: { "kandidat-01": { funn: [] } },
+      fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+    } },
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.textContent.includes("Driftskonsulent")),
+    "rapporten rendret ikke av seg selv");
+  const seksjoner = [...hoved.querySelectorAll("section[aria-labelledby]")];
+  assert.equal(seksjoner[0] && seksjoner[0].getAttribute("aria-labelledby"),
+    "evaluering-tittel", "produktet skal stå FØRST på flaten");
+  const overskrift = hoved.querySelector("h3[tabindex='-1']");
+  assert.ok(overskrift, "rapportoverskriften mangler");
+  assert.notEqual(hoved.ownerDocument.activeElement, overskrift,
+    "auto-visningen stjal fokus — fokus hører til eksplisitt klikk");
+  // Klikk på rapporten som ALT står der: cache-treff (immutabelt
+  // artefakt) — ingen ny henting, men klikkets fokus-semantikk.
+  const hentingerFoer = KALL.filter(
+    (k) => k.sti === "/v1/rekruttering/rapport/96").length;
+  hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel] button").click();
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(KALL.filter(
+    (k) => k.sti === "/v1/rekruttering/rapport/96").length, hentingerFoer,
+    "klikk på cachet rapport lastet den ned på nytt");
+  const overskrift2 = hoved.querySelector("h3[tabindex='-1']");
+  assert.equal(hoved.ownerDocument.activeElement, overskrift2,
+    "cache-treffet ga ikke klikkets fokus");
+  // ... og en ALT VIST rapport bygges ikke på nytt (Codex P2): samme
+  // overskrift-NODE — en rebuild hadde kollapset åpne detaljbokser.
+  assert.equal(overskrift2, overskrift,
+    "klikk på vist rapport bygde DOM-en på nytt");
+  // 3) ... og stille er ikke det samme som skånsom (Cursor P2): uten
+  //    fokusflytting er den høflige live-regionen det ENESTE sporet som
+  //    sier fra at produktet dukket opp.
+  const live = hoved.ownerDocument.body
+    .querySelector('[role=status][aria-live=polite]');
+  assert.ok(live, "den høflige live-regionen finnes ikke");
+  assert.equal(live.textContent, overskrift.textContent,
+    "auto-visningen meldte ikke rangeringen til skjermleseren");
+  // MUTASJONEN SOM DREPER DENNE: fjern `meldLive(...)` fra `!fokus`-grenen.
+});
+
+test("Evalueringer: auto-visningen tar den FERSKESTE klare rapporten, "
+  + "uansett rekkefølgen listen kommer i", async () => {
+  // Cursor P2: `find(e => e.rapport_klar)` leste «ferskeste» ut av
+  // listens rekkefølge — altså ut av `ORDER BY o.id DESC` i `lesing.py`,
+  // en sortering flaten hverken eier eller binder. Testen kjører BEGGE
+  // rekkefølgene: stigende seed dreper den gamle formen, synkende seed
+  // er motprøven som sier at valget ikke bare snudde en antagelse.
+  const rapport = (navn) => ({ rapport: {
+    rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+    profil: { profil_id: "p-1", versjon: 2, navn },
+    antall_soknader: 1,
+    rangering: [{ kandidat_id: "kandidat-01", poeng: 5,
+      nedbrytning: { drift: 5 } }],
+    kandidater: { "kandidat-01": { funn: [] } },
+    fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+  } });
+  const rad = (oid) => ({ oppdrag_id: oid, status: "utfort",
+    opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true });
+  for (const seed of [[rad(96), rad(97)], [rad(97), rad(96)]]) {
+    KALL = [];
+    SVAR = {
+      "/v1/rekruttering/prosesser": prosess(),
+      "/v1/rekruttering/stillingsprofiler": profiler(),
+      "/v1/rekruttering/evalueringer": { evalueringer: seed },
+      "/v1/rekruttering/rapport/96": rapport("Eldre rangering"),
+      "/v1/rekruttering/rapport/97": rapport("Ferskere rangering"),
+    };
+    const hoved = nyHoved();
+    visRekruttering(hoved, ctx());
+    const rekkefolge = seed.map((e) => e.oppdrag_id).join(",");
+    assert.ok(await vent(() => hoved.querySelector("h3[tabindex='-1']")),
+      `rapporten rendret ikke av seg selv (seed ${rekkefolge})`);
+    assert.ok(hoved.textContent.includes("Ferskere rangering"),
+      `auto-visningen viste ikke det høyeste oppdraget (seed ${rekkefolge})`);
+    assert.ok(!hoved.textContent.includes("Eldre rangering"),
+      `den eldre rapporten ble vist (seed ${rekkefolge})`);
+    assert.ok(!KALL.some((k) => k.sti === "/v1/rekruttering/rapport/96"),
+      `flaten hentet den eldre rapporten (seed ${rekkefolge})`);
+  }
+  // MUTASJONEN SOM DREPER DENNE: bytt reduksjonen tilbake til
+  // `seedListe.find((e2) => e2.rapport_klar)` — stigende seed viser 96.
+});
+
+test("Evalueringer: hopplenke med ÉN prosess — ankeret står før "
+  + "blinding, vekter og signering", async () => {
+  // Pass-P2 (speilport): flerprosess-testen låser ankerets plass mot
+  // prosessVELGEREN, som bare finnes med ≥2 prosesser. Vanligste flate
+  // er én prosess — der må ankeret ligge etter rangeringens siste
+  // `<summary>` og FØR første prosesskontroll (blinding/vekter),
+  // ellers er bypass ødelagt for de fleste uten at porten ser det.
+  KALL = [];
+  const kandidater = ["kandidat-01", "kandidat-02", "kandidat-03"];
+  SVAR = {
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
+    "/v1/rekruttering/rapport/96": { oppdrag_id: 96, rapport: {
+      rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+      profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
+      antall_soknader: 3,
+      rangering: kandidater.map((id, i) => ({ kandidat_id: id,
+        poeng: 9 - i, nedbrytning: { drift: 9 - i } })),
+      kandidater: Object.fromEntries(kandidater.map((id) => [id, { funn: [] }])),
+      fremdrift: { filer_lest: 3, filer_totalt: 3, byte_lest: 150 },
+    } },
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("h3[tabindex='-1']")),
+    "rapporten rendret ikke av seg selv");
+  const sammendrag = [...hoved.querySelectorAll(
+    "section[aria-labelledby=evaluering-tittel] details > summary")];
+  assert.ok(sammendrag.length >= 3);
+  const hopp = hoved.querySelector("a.rekrut-hopp");
+  assert.ok(hopp, "hopplenken mangler i én-prosess-flaten");
+  const maal = hoved.querySelector(hopp.getAttribute("href"));
+  assert.ok(maal, "ankeret mangler i én-prosess-flaten");
+  const alle = [...hoved.querySelectorAll("*")];
+  assert.ok(alle.indexOf(maal)
+    > alle.indexOf(sammendrag[sammendrag.length - 1]),
+    "ankeret ligger foran detaljboksene — ingenting hoppes over");
+  // Første prosesskontroll i én-prosess-grenen: blindingsbryteren/vekt-
+  // kontrollen — ankeret må ligge FØR den (mutasjonen «flytt hoppAnker
+  // etter listeRot» rødner her).
+  const foersteKontroll = hoved.querySelector(
+    "input[type=range], input[type=checkbox], table[aria-label]");
+  assert.ok(foersteKontroll, "fant ingen prosesskontroll i riggen");
+  assert.ok(alle.indexOf(maal) < alle.indexOf(foersteKontroll),
+    "ankeret ligger etter prosesskontrollene — hoppet lander for langt ned");
+  const klikk = new window.MouseEvent("click",
+    { bubbles: true, cancelable: true });
+  hopp.dispatchEvent(klikk);
+  assert.equal(hoved.ownerDocument.activeElement, maal,
+    "hopplenken flyttet ikke fokus til ankeret");
+  assert.ok(klikk.defaultPrevented, "fragmentnavigasjonen slapp gjennom");
+});
+
+test("Evalueringer: hopplenke forbi rangeringen til prosess og signering "
+  + "— og den rører ikke ruterens hash", async () => {
+  // Cursor P2: «produktet først» + null klikk mounter én fokusbar
+  // `<summary>` per kandidat FORAN prosessvelger, vekter og signering.
+  // Tastaturveien til de irreversible handlingene ble dermed like lang som
+  // kandidatlisten (skjemaet tillater 5000). `<summary>`-ene beholder
+  // tab-rekkefølgen sin — å ta dem ut ville stengt tastaturveien INN i
+  // detaljene — og veien forbi er WCAG 2.4.1s egen: en hopplenke.
+  KALL = [];
+  const to = prosess();
+  to.prosesser.push({
+    prosess_id: "p-2", navn: "Sykepleier vest", blinding_av: false,
+    vekter: { drift: 1 },
+    kandidater: [{ kandidat_id: "K-9", oppfylt: { drift: true },
+      status: "anbefalt", funn: [], intervjusporsmal: [] }],
+    lister: [],
+  });
+  const kandidater = ["kandidat-01", "kandidat-02", "kandidat-03"];
+  SVAR = {
+    "/v1/rekruttering/prosesser": to,
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
+    "/v1/rekruttering/rapport/96": { oppdrag_id: 96, rapport: {
+      rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+      profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
+      antall_soknader: 3,
+      rangering: kandidater.map((id, i) => ({ kandidat_id: id,
+        poeng: 9 - i, nedbrytning: { drift: 9 - i } })),
+      kandidater: Object.fromEntries(kandidater.map((id) => [id, { funn: [] }])),
+      fremdrift: { filer_lest: 3, filer_totalt: 3, byte_lest: 150 },
+    } },
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("h3[tabindex='-1']")),
+    "rapporten rendret ikke av seg selv");
+  const sammendrag = [...hoved.querySelectorAll("details > summary")];
+  assert.ok(sammendrag.length >= 3,
+    `rangeringen ga bare ${sammendrag.length} detaljbokser`);
+  // `.rekrut-hopp`, ikke sidetopp-`.hoppelenke` (pass-funn: den er
+  // viewport-absolute og teleporterte fokuset bort fra rangeringen).
+  const hopp = hoved.querySelector("a.rekrut-hopp");
+  // ... og lenken står ETTER overskriften (Codex P2): tab framover fra
+  // den fokuserte overskriften skal møte bypass-en før rangeringen.
+  const rapportOverskrift = hoved.querySelector("h3[tabindex='-1']");
+  assert.ok(rapportOverskrift.compareDocumentPosition(hopp)
+    & rapportOverskrift.DOCUMENT_POSITION_FOLLOWING,
+    "hopplenken står foran overskriften — utabbar fra fokuspunktet");
+  assert.ok(hopp, "hopplenken over rangeringen mangler");
+  const maal = hoved.querySelector(hopp.getAttribute("href"));
+  assert.ok(maal, "hopplenken peker på et anker som ikke finnes i flaten");
+  // Ankeret har et TILGJENGELIG navn (Codex P2): fokus på en navnløs,
+  // tom div annonseres som ingenting for skjermleseren.
+  assert.equal(maal.getAttribute("aria-label"),
+    t("ui.rekruttering.evalueringer.hopp_maal"));
+  // Dokumentrekkefølge: ankeret ligger ETTER alle detaljboksene og FØR
+  // prosesskontrollen — altså er det nettopp rangeringen som hoppes over.
+  const alle = [...hoved.querySelectorAll("*")];
+  const velger = hoved.querySelector("#rekrut-prosessvelger");
+  assert.ok(velger, "prosessvelgeren mangler i riggen");
+  assert.ok(alle.indexOf(maal) > alle.indexOf(sammendrag[sammendrag.length - 1]),
+    "ankeret ligger foran detaljboksene — da hoppes ingenting over");
+  assert.ok(alle.indexOf(maal) < alle.indexOf(velger),
+    "ankeret ligger etter prosessvelgeren — hoppet lander for langt ned");
+  assert.ok(alle.indexOf(hopp) < alle.indexOf(sammendrag[0]),
+    "hopplenken står ikke foran rangeringen den skal hoppe over");
+  // ... og hoppet er et FOKUSHOPP, ikke en navigasjon: hash-en eies av
+  // `ruter.js` (`#/<rute>`), og en ukjent rute sender brukeren til
+  // reserveflaten — altså ut av rekrutteringen lenken skulle hoppe inne i.
+  // Målt på HENDELSEN, ikke på `location.hash`: jsdom følger ikke
+  // fragmentlenker, så en hash-sammenligning ville stått grønn uansett —
+  // en port som ikke kan feile. `defaultPrevented` er selve forsvaret.
+  const klikk = new window.MouseEvent("click",
+    { bubbles: true, cancelable: true });
+  hopp.dispatchEvent(klikk);
+  assert.equal(hoved.ownerDocument.activeElement, maal,
+    "hopplenken flyttet ikke fokus til ankeret");
+  assert.ok(klikk.defaultPrevented,
+    "fragmentnavigasjonen gikk videre til ruteren — den leser hashen som "
+    + "`#/<rute>` og sender brukeren til reserveflaten");
+  // MUTASJONEN SOM DREPER DENNE: fjern hopplenken fra rapporten, flytt
+  // ankeret foran evalueringsseksjonen, eller slipp klikket videre til
+  // nettleserens egen fragmentnavigasjon.
+});
+
+test("Evalueringer: klikk under pågående auto-lasting deler løftet — "
+  + "én henting, fokus til klikket", async () => {
+  KALL = [];
+  // Codex P2: auto-lastingen og et utålmodig klikk på samme rapport
+  // skal aldri bli to hentinger.
+  let slipp;
+  const treg = new Promise((res) => { slipp = res; });
+  SVAR = (sti) => ({
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
+    "/v1/rekruttering/rapport/96": treg,
+  })[sti] ?? 500;
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel] button")));
+  const seksjon = hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  seksjon.querySelector("button").click();
+  slipp({ oppdrag_id: 96, rapport: {
+    rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+    profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
+    antall_soknader: 1,
+    rangering: [{ kandidat_id: "kandidat-01", poeng: 5,
+      nedbrytning: { drift: 5 } }],
+    kandidater: { "kandidat-01": { funn: [] } },
+    fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+  } });
+  assert.ok(await vent(() => seksjon.textContent.includes("kandidat-01")),
+    "rapporten rendret aldri");
+  assert.equal(KALL.filter(
+    (k) => k.sti === "/v1/rekruttering/rapport/96").length, 1,
+    "klikket startet en henting nr. 2 av samme rapport");
+  const overskrift = seksjon.querySelector("h3[tabindex='-1']");
+  assert.equal(seksjon.ownerDocument.activeElement, overskrift,
+    "klikket skal ha fokus-semantikken selv om løftet var autoens");
+});
+
+test("Evalueringer: auto-feil er stille — alert hører til klikket", async () => {
+  KALL = [];
+  // Pass-funn: listen og detaljen kan divergere i vinduet mellom mount
+  // og henting (frist/TOCTOU/transient). En usolicited role=alert på
+  // hver sidelasting er falsk alarm — auto-feilen lar rapportområdet
+  // stå tomt; klikket får feilmeldingen som før.
+  SVAR = {
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => KALL.some(
+    (k) => k.sti === "/v1/rekruttering/rapport/96")),
+    "auto-lastingen prøvde aldri");
+  await new Promise((r) => setTimeout(r, 20));
+  const seksjon = hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  assert.ok([...seksjon.querySelectorAll('[role="alert"]')]
+    .every((a) => !a.textContent.includes(
+      t("ui.rekruttering.evalueringer.rapportfeil"))),
+    "auto-feilen malte en usolicited alert");
+  // ... og KLIKKET får feilmeldingen som før (positiv kontroll).
+  seksjon.querySelector("button").click();
+  assert.ok(await vent(() => [...seksjon.querySelectorAll('[role="alert"]')]
+    .some((a) => a.textContent
+      === t("ui.rekruttering.evalueringer.rapportfeil"))),
+    "klikket ga aldri feilmeldingen (positiv kontroll)");
+});
+
+test("Evalueringer: auto-lastingen kjører ÉN gang per økt — "
+  + "prosessbytte re-fetcher ikke rapporten", async () => {
+  KALL = [];
+  // Codex P2: listen er tenant-global; hvert prosessbytte bygger
+  // seksjonen på nytt, og en ubetinget auto-lasting hadde hentet og
+  // re-rendret rapporten for hver veksling.
+  const to = prosess();
+  to.prosesser.push({
+    prosess_id: "p-2", navn: "Sykepleier vest", blinding_av: false,
+    vekter: { drift: 1 },
+    kandidater: [{ kandidat_id: "K-9", oppfylt: { drift: true },
+      status: "anbefalt", funn: [], intervjusporsmal: [] }],
+    lister: [],
+  });
+  SVAR = {
+    "/v1/rekruttering/prosesser": to,
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
+    "/v1/rekruttering/rapport/96": { oppdrag_id: 96, rapport: {
+      rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+      profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
+      antall_soknader: 1,
+      rangering: [{ kandidat_id: "kandidat-01", poeng: 5,
+        nedbrytning: { drift: 5 } }],
+      kandidater: { "kandidat-01": { funn: [] } },
+      fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+    } },
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.textContent.includes("kandidat-01")),
+    "auto-visningen rendret aldri");
+  const foer = KALL.filter(
+    (k) => k.sti === "/v1/rekruttering/rapport/96").length;
+  const velger = hoved.querySelector("#rekrut-prosessvelger");
+  velger.value = "p-2";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(KALL.filter(
+    (k) => k.sti === "/v1/rekruttering/rapport/96").length, foer,
+    "prosessbyttet re-fetchet rapporten — auto-lastingen er per økt");
+  // ... og rapporten OVERLEVER byttet (Codex P2): re-bygget fra øktens
+  // cache inn i den nye seksjonen — uten henting.
+  assert.ok(hoved.textContent.includes("kandidat-01"),
+    "rapporten forsvant i prosessbyttet — cachen re-bygges ikke");
+});
+
+test("Evalueringer: et svar etter RUTE-forlatelse bygger og melder "
+  + "ingenting", async () => {
+  KALL = [];
+  // Codex P2: eierskapstesten står FØR byggingen — et svar som lander
+  // etter at brukeren forlot rekrutteringen skal hverken bygge
+  // 5000-raders DOM, tegne eller kunngjøre.
+  let slipp;
+  const treg = new Promise((res) => { slipp = res; });
+  SVAR = (sti) => ({
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
+    "/v1/rekruttering/rapport/96": treg,
+  })[sti] ?? 500;
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => KALL.some(
+    (k) => k.sti === "/v1/rekruttering/rapport/96")),
+    "auto-lastingen startet aldri");
+  // Brukeren forlater ruta: en annen flate overtar hovedinnholdet.
+  hoved.replaceChildren();
+  const live = document.querySelector('[role="status"][aria-live="polite"]');
+  if (live) live.textContent = "";
+  slipp({ oppdrag_id: 96, rapport: {
+    rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+    profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
+    antall_soknader: 1,
+    rangering: [{ kandidat_id: "kandidat-01", poeng: 5,
+      nedbrytning: { drift: 5 } }],
+    kandidater: { "kandidat-01": { funn: [] } },
+    fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+  } });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(hoved.textContent, "",
+    "svaret tegnet inn i en forlatt flate");
+  assert.ok(!live || !live.textContent.includes("Driftskonsulent"),
+    "svaret kunngjorde et produkt fra en forlatt flate");
+});
+
+test("Evalueringer: seksjonen er SAMME node etter prosessbyttet — "
+  + "og ingenting hentes på nytt", async () => {
+  KALL = [];
+  // Remount-dommen (port a): identitet dreper en gjeninnført rebuild.
+  const to = prosess();
+  to.prosesser.push({
+    prosess_id: "p-2", navn: "Sykepleier vest", blinding_av: false,
+    vekter: { drift: 1 },
+    kandidater: [{ kandidat_id: "K-9", oppfylt: { drift: true },
+      status: "anbefalt", funn: [], intervjusporsmal: [] }],
+    lister: [],
+  });
+  SVAR = {
+    "/v1/rekruttering/prosesser": to,
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
+    "/v1/rekruttering/rapport/96": { oppdrag_id: 96, rapport: {
+      rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+      profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
+      antall_soknader: 1,
+      rangering: [{ kandidat_id: "kandidat-01", poeng: 5,
+        nedbrytning: { drift: 5 } }],
+      kandidater: { "kandidat-01": { funn: [] } },
+      fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+    } },
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.textContent.includes("kandidat-01")));
+  const foer = hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  const kallFoer = KALL.length;
+  const velger = hoved.querySelector("#rekrut-prosessvelger");
+  velger.value = "p-2";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 10));
+  const etter = hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  assert.equal(etter, foer,
+    "prosessbyttet bygde seksjonen på nytt — noden skulle gjenbrukes");
+  assert.equal(KALL.length, kallFoer,
+    "prosessbyttet utløste nettverkskall fra evalueringsseksjonen");
+  assert.ok(etter.textContent.includes("kandidat-01"),
+    "rapporten forsvant fra den gjenbrukte noden");
+});
+
+test("Evalueringer: en hengende KLIKK-henting overlever byttet — "
+  + "brukerens valg tegnes, auto blander seg aldri", async () => {
+  KALL = [];
+  // Remount-dommen (port b, runde 5-klassen c47a4409): B henger når
+  // brukeren bytter prosess. Uten remount finnes ikke vinduet der
+  // auto-A kunne overta — B lander i samme node, og A hentes aldri
+  // utover auto-ens opprinnelige (som her alt er cache).
+  let slippB;
+  const tregB = new Promise((res) => { slippB = res; });
+  const rapportA = { oppdrag_id: 97, rapport: {
+    rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+    profil: { profil_id: "p-1", versjon: 2, navn: "Sikkerhetsleder" },
+    antall_soknader: 1,
+    rangering: [{ kandidat_id: "kandidat-02", poeng: 4,
+      nedbrytning: { drift: 4 } }],
+    kandidater: { "kandidat-02": { funn: [] } },
+    fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+  } };
+  const to = prosess();
+  to.prosesser.push({
+    prosess_id: "p-2", navn: "Sykepleier vest", blinding_av: false,
+    vekter: { drift: 1 },
+    kandidater: [{ kandidat_id: "K-9", oppfylt: { drift: true },
+      status: "anbefalt", funn: [], intervjusporsmal: [] }],
+    lister: [],
+  });
+  SVAR = (sti) => ({
+    "/v1/rekruttering/prosesser": to,
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 97, status: "utfort",
+        opprettet: "2026-08-27T01:00:00+00:00", rapport_klar: true },
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
+    "/v1/rekruttering/rapport/97": rapportA,
+    "/v1/rekruttering/rapport/96": tregB,
+  })[sti] ?? 500;
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  // Auto-A (97) er rendret; brukeren klikker B (96), som HENGER.
+  assert.ok(await vent(() => hoved.textContent.includes("Sikkerhetsleder")));
+  const seksjon = () => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  [...seksjon().querySelectorAll("button")]
+    .find((b) => b.closest("tr").textContent.includes("96")).click();
+  const aFoer = KALL.filter(
+    (k) => k.sti === "/v1/rekruttering/rapport/97").length;
+  const velger = hoved.querySelector("#rekrut-prosessvelger");
+  velger.value = "p-2";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(KALL.filter(
+    (k) => k.sti === "/v1/rekruttering/rapport/97").length, aFoer,
+    "byttet lot auto-A overta — A skulle aldri hentes på nytt");
+  slippB({ oppdrag_id: 96, rapport: {
+    rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+    profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
+    antall_soknader: 1,
+    rangering: [{ kandidat_id: "kandidat-01", poeng: 5,
+      nedbrytning: { drift: 5 } }],
+    kandidater: { "kandidat-01": { funn: [] } },
+    fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+  } });
+  assert.ok(await vent(() => seksjon().textContent.includes("Driftskonsulent")),
+    "brukerens hengende valg (B) nådde aldri frem");
+  assert.ok(!seksjon().textContent.includes("Sikkerhetsleder"),
+    "auto-A ble stående over brukerens valg");
+});
+
+test("Evalueringer: et hengende auto-løfte OVERLEVER prosessbyttet — "
+  + "rapporten når frem, én nedlasting", async () => {
+  KALL = [];
+  // Remount-dommen (port c): noden overlever byttet, så det hengende
+  // auto-løftets mål finnes fortsatt — ingen gjenopptakelses-maskin,
+  // ingen ny nedlasting; svaret lander i den samme seksjonen.
+  let slippA;
+  const tregA = new Promise((res) => { slippA = res; });
+  const to = prosess();
+  to.prosesser.push({
+    prosess_id: "p-2", navn: "Sykepleier vest", blinding_av: false,
+    vekter: { drift: 1 },
+    kandidater: [{ kandidat_id: "K-9", oppfylt: { drift: true },
+      status: "anbefalt", funn: [], intervjusporsmal: [] }],
+    lister: [],
+  });
+  SVAR = (sti) => ({
+    "/v1/rekruttering/prosesser": to,
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 97, status: "utfort",
+        opprettet: "2026-08-27T01:00:00+00:00", rapport_klar: true }] },
+    "/v1/rekruttering/rapport/97": tregA,
+  })[sti] ?? 500;
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => KALL.some(
+    (k) => k.sti === "/v1/rekruttering/rapport/97")),
+    "auto-lastingen startet aldri");
+  const velger = hoved.querySelector("#rekrut-prosessvelger");
+  velger.value = "p-2";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(KALL.filter(
+    (k) => k.sti === "/v1/rekruttering/rapport/97").length, 1,
+    "byttet utløste en ny nedlasting — noden skulle overlevd");
+  slippA({ oppdrag_id: 97, rapport: {
+    rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+    profil: { profil_id: "p-1", versjon: 2, navn: "Sikkerhetsleder" },
+    antall_soknader: 1,
+    rangering: [{ kandidat_id: "kandidat-02", poeng: 4,
+      nedbrytning: { drift: 4 } }],
+    kandidater: { "kandidat-02": { funn: [] } },
+    fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+  } });
+  const seksjon = () => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  assert.ok(await vent(() => seksjon().textContent.includes("Sikkerhetsleder")),
+    "det hengende auto-løftet nådde aldri frem etter byttet");
+});
+
+test("Evalueringer: A→B→A gjenbruker As løfte — aldri to nedlastinger "
+  + "av samme rapport", async () => {
+  KALL = [];
+  // Codex P2: in-flight-markøren er nøklet per rapport-id.
+  let slippA, slippB;
+  const tregA = new Promise((res) => { slippA = res; });
+  const tregB = new Promise((res) => { slippB = res; });
+  SVAR = (sti) => ({
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 97, status: "utfort",
+        opprettet: "2026-08-27T01:00:00+00:00", rapport_klar: true },
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
+    "/v1/rekruttering/rapport/97": tregA,
+    "/v1/rekruttering/rapport/96": tregB,
+  })[sti] ?? 500;
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelectorAll(
+    "section[aria-labelledby=evaluering-tittel] button").length === 2));
+  const seksjon = () => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  const knappFor = (id) => [...seksjon().querySelectorAll("button")]
+    .find((b) => b.closest("tr").textContent.includes(String(id)));
+  // Auto tok alt 97 (A). Brukeren: B (96), så A (97) igjen — mens
+  // BEGGE henger.
+  knappFor(96).click();
+  knappFor(97).click();
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(KALL.filter(
+    (k) => k.sti === "/v1/rekruttering/rapport/97").length, 1,
+    "gjenvalget av A lastet den ned på nytt mens As løfte hang");
+  // Slipp begge: siste valg (A/97) vinner rendringen.
+  slippB({ oppdrag_id: 96, rapport: {
+    rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+    profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
+    antall_soknader: 1,
+    rangering: [{ kandidat_id: "kandidat-01", poeng: 5,
+      nedbrytning: { drift: 5 } }],
+    kandidater: { "kandidat-01": { funn: [] } },
+    fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+  } });
+  slippA({ oppdrag_id: 97, rapport: {
+    rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+    profil: { profil_id: "p-1", versjon: 2, navn: "Sikkerhetsleder" },
+    antall_soknader: 1,
+    rangering: [{ kandidat_id: "kandidat-02", poeng: 4,
+      nedbrytning: { drift: 4 } }],
+    kandidater: { "kandidat-02": { funn: [] } },
+    fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+  } });
+  assert.ok(await vent(() => seksjon().textContent.includes("Sikkerhetsleder")),
+    "brukerens siste valg (A) rendret aldri");
+  assert.ok(!seksjon().textContent.includes("Driftskonsulent"),
+    "det forbigåtte B-svaret ble stående");
+});
+
+test("Evalueringer: et sent auto-svar kan aldri restarte auto-stien — "
+  + "brukerens valg står", async () => {
+  KALL = [];
+  // Codex P2 (femte runde → K2-forenklingen): auto A henger, brukeren
+  // klikker B; A fullfører sent; deretter prosessbytte. Latch-modellen
+  // kunne «gjenåpnes» av A og re-starte A over brukerens B — i den
+  // avledede modellen finnes ingen latch: cache/aktiv styrer, og A
+  // hverken tegner eller endrer tilstanden B eier.
+  let slippA;
+  const tregA = new Promise((res) => { slippA = res; });
+  const rapportFor = (navn) => ({ oppdrag_id: 0, rapport: {
+    rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+    profil: { profil_id: "p-1", versjon: 2, navn },
+    antall_soknader: 1,
+    rangering: [{ kandidat_id: "kandidat-01", poeng: 5,
+      nedbrytning: { drift: 5 } }],
+    kandidater: { "kandidat-01": { funn: [] } },
+    fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+  } });
+  const to = prosess();
+  to.prosesser.push({
+    prosess_id: "p-2", navn: "Sykepleier vest", blinding_av: false,
+    vekter: { drift: 1 },
+    kandidater: [{ kandidat_id: "K-9", oppfylt: { drift: true },
+      status: "anbefalt", funn: [], intervjusporsmal: [] }],
+    lister: [],
+  });
+  SVAR = (sti) => ({
+    "/v1/rekruttering/prosesser": to,
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 97, status: "utfort",
+        opprettet: "2026-08-27T01:00:00+00:00", rapport_klar: true },
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
+    "/v1/rekruttering/rapport/97": tregA,           // NYESTE — auto tar A
+    "/v1/rekruttering/rapport/96": rapportFor("Driftskonsulent"),
+  })[sti] ?? 500;
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelectorAll(
+    "section[aria-labelledby=evaluering-tittel] button").length === 2));
+  const seksjon = () => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  // Brukeren velger B (96) mens auto-A (97) henger.
+  [...seksjon().querySelectorAll("button")]
+    .find((b) => b.closest("tr").textContent.includes("96")).click();
+  assert.ok(await vent(() => seksjon().textContent.includes("kandidat-01")),
+    "B rendret aldri");
+  // A fullfører SENT — og skal hverken tegne eller røre tilstanden.
+  slippA(rapportFor("Sikkerhetsleder"));
+  await new Promise((r) => setTimeout(r, 20));
+  assert.ok(!seksjon().textContent.includes("Sikkerhetsleder"),
+    "det sene auto-svaret tegnet over brukerens valg");
+  // Prosessbytte: B står (fra cachen), og A re-fetches ALDRI.
+  const aFoer = KALL.filter(
+    (k) => k.sti === "/v1/rekruttering/rapport/97").length;
+  const velger = hoved.querySelector("#rekrut-prosessvelger");
+  velger.value = "p-2";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 20));
+  assert.ok(seksjon().textContent.includes("Driftskonsulent"),
+    "brukerens valgte rapport overlevde ikke byttet");
+  assert.equal(KALL.filter(
+    (k) => k.sti === "/v1/rekruttering/rapport/97").length, aFoer,
+    "auto-stien restartet A over brukerens valg");
+});
+
+test("Evalueringer: en stille auto-feil bruker ikke opp noe — neste "
+  + "rute-inngang prøver igjen", async () => {
+  KALL = [];
+  // Remount-dommen: mount skjer ved RUTE-INNGANG (og full lasting) —
+  // prosessbytte gjenbruker noden og prøver ikke på nytt (det er
+  // poenget). En feilet auto-runde etterlater cache og kart tomme, så
+  // NESTE rute-inngang henter rapporten som nå finnes.
+  let rapportSvar; // undefined ⇒ 404 fra fetch-stubben
+  SVAR = (sti) => ({
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
+    "/v1/rekruttering/rapport/96": rapportSvar,
+  })[sti];
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => KALL.some(
+    (k) => k.sti === "/v1/rekruttering/rapport/96")),
+    "auto-lastingen prøvde aldri");
+  await new Promise((r) => setTimeout(r, 20));
+  const seksjon = hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  assert.ok([...seksjon.querySelectorAll('[role="alert"]')]
+    .every((a) => !a.textContent.includes(
+      t("ui.rekruttering.evalueringer.rapportfeil"))),
+    "auto-feilen malte en usolicited alert");
+  // Rapporten blir tilgjengelig; NESTE rute-inngang henter den.
+  rapportSvar = { oppdrag_id: 96, rapport: {
+    rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+    profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
+    antall_soknader: 1,
+    rangering: [{ kandidat_id: "kandidat-01", poeng: 5,
+      nedbrytning: { drift: 5 } }],
+    kandidater: { "kandidat-01": { funn: [] } },
+    fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+  } };
+  const hoved2 = nyHoved();
+  visRekruttering(hoved2, ctx());
+  assert.ok(await vent(() => hoved2.textContent.includes("kandidat-01")),
+    "den stille auto-feilen latchet noe — produktet kom aldri tilbake");
 });
 
 test("Evalueringer: en rapport som lander etter et prosessbytte tegner "

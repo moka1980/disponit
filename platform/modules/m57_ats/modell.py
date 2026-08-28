@@ -3,8 +3,10 @@ OpenAI-kompatibel/Ollama-server (eiers valg 26/8: persondata forlater
 aldri serveren).
 
 Kontrakten klienten oppfyller er `_krev_helt_svar`s (evaluering):
-`{funn, oppfylt, intervjusporsmal}` med `oppfylt` over NØYAKTIG
-profilens kravsett. Modellen bes om VERBATIME sitater; klienten
+`{funn, oppfylt}` med `oppfylt` over NØYAKTIG profilens kravsett.
+Intervjuspørsmål bes det ikke om (#225, eiers retning 27/8): de hører
+til innkallingen av de beste, ikke evalueringen av alle. Modellen bes
+om VERBATIME sitater; klienten
 lokaliserer offsetene selv (`tekst.find`) — et sitat som ikke finnes
 ordrett i den blindede teksten er ikke evidens og DROPPES, talt i
 `droppede_funn` for driftsloggen. `oppfylt` fylles fail-closed: et krav
@@ -36,8 +38,7 @@ _SYSTEM = (
     "kravliste. Svar KUN med ett JSON-objekt på nøyaktig denne formen:\n"
     '{"oppfylt": {<krav>: true/false for HVERT krav i lista>},\n'
     ' "funn": [{"kategori": <en av %s>,\n'
-    '           "sitat": "<ORDRETT utdrag fra teksten>"}],\n'
-    ' "intervjusporsmal": ["<spørsmål>", ...]}\n'
+    '           "sitat": "<ORDRETT utdrag fra teksten>"}]}\n'
     "Sitatene MÅ være ordrette utdrag. Ingen tekst utenfor "
     "JSON-objektet." % sorted(FUNN_KATEGORIER))
 
@@ -117,7 +118,4 @@ class Ollamamodell:
                          "kilde": {"start": start,
                                    "slutt": start + len(sitat),
                                    "sitat": sitat}})
-        sporsmal = [s[:500] for s in (svar.get("intervjusporsmal") or [])
-                    if isinstance(s, str) and s.strip()][:20]
-        return {"funn": funn, "oppfylt": oppfylt,
-                "intervjusporsmal": sporsmal}
+        return {"funn": funn, "oppfylt": oppfylt}
