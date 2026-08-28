@@ -78,6 +78,16 @@ def test_produktakseptpunktets_kildetype_finnes_i_akseptmodellen():
     blir dokumentet rødt her — ikke i en Codex-runde et halvår senere."""
     p = _paragraf("12.2")
     assert "Punktet er en `evidensfil`" in p
+    # OBLIGATORISK, OG HVORFOR IKKE `required` (eiers dom 29/8). Uten
+    # begrunnelsen ville neste leser «rydde opp» ved å sette `required` og
+    # dermed bestille en produksjonsdeployment for å få suiten grønn.
+    assert "OBLIGATORISK" in p and "binder FRAMOVER" in p, \
+        "paragrafen sier ikke at punktet er obligatorisk"
+    assert "AKSEPTERTE_GENERASJONER" in p, (
+        "paragrafen forklarer ikke hvorfor kravet ikke står som `required`"
+        " — neste leser setter det, og tvinger fram en ny aksept for m56")
+    assert "blokkert" in p, \
+        "det finnes ingen ærlig utvei for en modul uten flate"
     m = re.search(r"kilde_type[^;]*?CHECK[^;]*?IN\s*\(([^)]*)\)",
                   MIGRASJON, re.S)
     assert m, "fant ingen kilde_type-CHECK i 049_modulaksept.sql"
@@ -132,6 +142,73 @@ def test_produktpunktet_er_FAKTISK_registrert_ikke_bare_mulig():
     assert punkt["status"] in ("ja", "nei", "blokkert")
     assert punkt.get("notat"), \
         "punktet sier ikke hva brukeren skal kunne gjøre"
+
+
+def test_produktpunktet_kreves_av_hver_uakseptert_modul():
+    """Eiers dom 29/8: punktet er OBLIGATORISK — men fra nå av.
+
+    Hvorfor ikke `required` i skjemaet: repoets egen immutabilitet
+    forbyr det. `AKSEPTERTE_GENERASJONER` fryser m02 og m56 til
+    projeksjonen aksepten MÅLTE, og m56s manifesthash er i tillegg pinnet
+    til release `wcag-r24` (`test_release_id_folger_manifestets_-
+    projeksjon`). En ny sjekklistenøkkel der er en NY identitet som
+    krever ny aksept — en deployment-handling. `required` ville tvunget
+    frem nettopp den handlingen for å få suiten grønn, og en skjema-
+    endring skal ikke kunne bestille en produksjonsdeployment.
+
+    Kravet håndheves derfor her, mot repoets EGEN definisjon av «alt
+    akseptert»: hver modul som ikke står i `AKSEPTERTE_GENERASJONER` skal
+    bære punktet. Unntaket oppløser seg selv — neste aksept for m02/m56
+    endrer manifestet uansett, og da treffer denne porten dem.
+
+    Punktet er dessuten IKKE `ja` noe sted ennå, og det skal stå slik til
+    et menneske faktisk har gått gjennom flaten og attestert notatet. Et
+    `ja` uten `artefakt_sha256` fanges av `valider_artefakter`.
+
+    MUTASJONEN SOM DREPER DENNE: fjern punktet fra m01, m37 eller m57 —
+    eller legg en ny modul inn i katalogen uten det.
+    """
+    import yaml
+
+    from manifestskjema import AKSEPTERTE_GENERASJONER
+
+    moduler = sorted((ROT / "platform" / "modules").iterdir())
+    manifester = [m for m in moduler if (m / "manifest.yaml").exists()]
+    assert len(manifester) >= 5, \
+        f"fant bare {len(manifester)} moduler — leser porten riktig sted?"
+
+    # Frosset måles på MANIFESTSTIEN, ikke på katalognavnet: m56s nøkkel i
+    # kartet er modulens `id` (`wcag_audit`), ikke mappenavnet
+    # (`m56_wcag_audit`), og en navnesammenligning slapp den derfor
+    # igjennom som «uakseptert». To registre, to navnerom — stien er det
+    # ene begge er enige om.
+    frosne_stier = {g["manifest"] for g in AKSEPTERTE_GENERASJONER.values()}
+    manglende = []
+    for katalog in manifester:
+        rel = f"platform/modules/{katalog.name}/manifest.yaml"
+        if rel in frosne_stier:
+            continue                      # frosset av en registrert aksept
+        data = yaml.safe_load(
+            (katalog / "manifest.yaml").read_text(encoding="utf-8")) or {}
+        if "produktgjennomgang_bestatt" not in (
+                data.get("staging_sjekkliste") or {}):
+            manglende.append(katalog.name)
+    assert not manglende, (
+        f"moduler uten produktakseptpunkt: {manglende}. §12.2 gjelder hver"
+        " modul som ikke alt er frosset av en registrert aksept — en"
+        " frivillig port hoppes over av nettopp den modulen som trenger"
+        " den")
+
+    # ... OG UNNTAKET MÅ VÆRE MEKANISK, ikke en navneliste her. Står en
+    # modul over uten å være frosset, er den glemt — ikke unntatt.
+    assert frosne_stier, \
+        "ingen aksepterte generasjoner — unntaket ville vært ubegrenset"
+    assert all((ROT / sti).exists() for sti in frosne_stier), \
+        "en frosset modul finnes ikke lenger — unntakslisten er foreldet"
+    # Og unntaket skal være LITE: står flertallet av katalogen som
+    # frosset, er porten en dekorasjon.
+    assert len(frosne_stier) < len(manifester), (
+        "hver modul er frosset — da krever porten punktet av ingen")
 
 
 def test_samlet_merge_er_en_stabel_ikke_et_tidsvindu():

@@ -88,7 +88,7 @@
         },
         "produktgjennomgang_bestatt": {
           "$ref": "#/$defs/punkt",
-          "comment": "RUTINER 12.2 (eiervedtak 28/8): ett punkt som beskriver hva brukeren skal kunne gjore, flippet av en MENNESKELIG gjennomgang av flaten - ikke av at en test ble gronn. Kilden er en evidensfil: attester_evidensfil fester notatets sha256 sammen med aktoren som leste det, og gjennomgangen produserer nettopp en fil. Punktet er FRIVILLIG her fordi en modul uten brukerflate ikke har en flate a ga gjennom; om det skal bli obligatorisk for alle 57 er eiers avgjorelse, ikke portens."
+          "comment": "RUTINER 12.2 (eiervedtak 28/8, obligatorisk fra eiers dom 29/8): ett punkt som beskriver hva brukeren skal kunne gjore, flippet av en MENNESKELIG gjennomgang av flaten - ikke av at en test ble gronn. Kilden er en evidensfil: attester_evidensfil fester notatets sha256 sammen med aktoren som leste det, og gjennomgangen produserer nettopp en fil. OBLIGATORISK for hver modul som ikke alt er frosset av en registrert aksept - handhevet av test_produktpunktet_kreves_av_hver_uakseptert_modul, ikke av required her. Grunnen er repoets egen immutabilitet: m02 og m56 star i AKSEPTERTE_GENERASJONER, og m56s manifesthash er dessuten pinnet til release wcag-r24, saa en ny sjekklistenokkel der er en NY identitet som krever ny aksept - en deployment-handling, ikke en skjemaendring. Required her ville tvunget frem nettopp den handlingen. Unntaket oploses av seg selv: neste aksept for m02/m56 endrer manifestet uansett, og porten krever punktet da. En modul som en dag mangler en flate skriver status blokkert med blokkert_av - registrert slar fravaerende."
         }
       }
     },

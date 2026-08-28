@@ -87,6 +87,25 @@ i18n_prefiks: m01              # alle modulens tekstnøkler starter slik
 # definert, målbar grense regnes som `nei` — en port man ikke kan måle er
 # ingen port.
 staging_sjekkliste:
+  # PRODUKTAKSEPTEN, RUTINER §12.2 (eiervedtak 28/8, obligatorisk fra
+  # eiers dom 29/8). Punktet kom fordi #153-arcen hadde sytten åpne issues
+  # om porter, invarianter og kappløp — og ingen av dem sa at flaten viste
+  # overskriften to ganger. Vi beviste at maskineriet var riktig uten at
+  # noen eide at produktet var brukbart.
+  #
+  # Kilden er en `evidensfil`, den ene av de fire kildetypene som bærer et
+  # menneskes lesning: `attester_evidensfil` fester notatets sha256 sammen
+  # med aktøren som leste det.
+  #
+  # STATUS ER `nei` FORDI DET ER SANT. Ingen gjennomgang er registrert, og
+  # et manifest skal aldri lese sterkere enn porten måler.
+  produktgjennomgang_bestatt:
+    status: nei
+    notat: >-
+      KREVER: en navngitt person går gjennom policyadministrasjonen fra utkast til
+      publisert versjon og bekrefter at hvert steg lar seg gjøre, og skriver notatet fra vandringen, som attesteres med
+      `attester_evidensfil`. Modulens flate er policyadmin.js, policyeditor.js, policy.js og policyhistorikk.js. INGEN GJENNOMGANG
+      ER REGISTRERT.
   tester_gronne_pa_staging:
     status: ja
     notat: >-

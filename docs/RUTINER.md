@@ -323,6 +323,32 @@ Hver modul skal derfor ha ETT produktakseptpunkt som beskriver hva
 brukeren skal kunne gjøre, og det punktet flippes av en menneskelig
 gjennomgang av flaten — ikke av at en test ble grønn.
 
+**Punktet er OBLIGATORISK (eiers dom 29/8), og det binder FRAMOVER.**
+Det var frivillig i én runde, med den begrunnelsen at en modul uten
+brukerflate ikke har en flate å gå gjennom. Den begrunnelsen holdt ikke
+mot katalogen: alle fem modulene har en flate — også revisjonsloggen,
+som leses gjennom `policyhistorikk`, `beslutninger` og `adjudikator`. En
+logg ingen leser er ikke et krav noen stilte. Unntaket var teoretisk, og
+en frivillig port hoppes over av nettopp den modulen som har det travelt.
+
+Kravet står likevel IKKE som `required` i manifestskjemaet, og grunnen er
+repoets egen immutabilitet. `AKSEPTERTE_GENERASJONER` fryser m02 og m56
+til projeksjonen aksepten MÅLTE, og m56s manifesthash er i tillegg pinnet
+til release `wcag-r24`. En ny sjekklistenøkkel der er en NY identitet som
+krever ny aksept — altså en deployment. Et `required` ville tvunget fram
+den deploymenten bare for å få suiten grønn, og en skjemaendring skal
+ikke kunne bestille en produksjonsdeployment.
+
+Porten står derfor i `test_produktpunktet_kreves_av_hver_uakseptert_-
+modul` og måler mot repoets EGEN definisjon av «alt akseptert»: hver
+modul som ikke er frosset av en registrert aksept skal bære punktet.
+Unntaket oppløser seg selv — neste aksept for m02 eller m56 endrer
+manifestet uansett, og da treffer porten dem.
+
+En modul som en dag virkelig mangler en flate skriver `status: blokkert`
+med `blokkert_av`. Registrert slår fraværende: en manglende nøkkel står
+ingen steder, en blokkert står i sjekklista.
+
 Punktet er en `evidensfil`. Det er den eneste av de fire kildetypene
 (`artefakt`, `registerhendelse`, `evidensfil`, `ci_kjoring`) som bærer
 et menneskes lesning: `attester_evidensfil` fester filas sha256 sammen

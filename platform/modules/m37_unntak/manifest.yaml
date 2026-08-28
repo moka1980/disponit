@@ -20,6 +20,29 @@ i18n_prefiks: m37
 # tallene er motorens egne. Punktene under sier hvilket tall som beviser
 # hva, slik at «delt artefakt» aldri blir «lånt konklusjon».
 staging_sjekkliste:
+  # PRODUKTAKSEPTEN, RUTINER §12.2 (eiervedtak 28/8, obligatorisk fra
+  # eiers dom 29/8). Punktet kom fordi #153-arcen hadde sytten åpne issues
+  # om porter, invarianter og kappløp — og ingen av dem sa at flaten viste
+  # overskriften to ganger. Vi beviste at maskineriet var riktig uten at
+  # noen eide at produktet var brukbart.
+  #
+  # Kilden er en `evidensfil`, den ene av de fire kildetypene som bærer et
+  # menneskes lesning: `attester_evidensfil` fester notatets sha256 sammen
+  # med aktøren som leste det.
+  #
+  # STATUS ER `nei` FORDI DET ER SANT. Modulen ble akseptert FØR §12.2
+  # fantes, og aksepthendelsen står — den er en registrert hendelse, ikke
+  # en påstand manifestet kan omgjøre. Men ingen gjennomgang er registrert,
+  # og et manifest skal aldri lese sterkere enn porten måler.
+  produktgjennomgang_bestatt:
+    status: nei
+    notat: >-
+      KREVER: en navngitt person tar et unntak fra køen til lukket sak og bekrefter
+      at hvert steg lar seg gjøre, og skriver notatet fra vandringen, som attesteres med
+      `attester_evidensfil`. Modulens flate er unntak.js. INGEN GJENNOMGANG
+      ER REGISTRERT: modulen ble akseptert før §12.2 (28/8), og punktet
+      binder aksepter fra da av — den registrerte aksepthendelsen står
+      urørt.
   tester_gronne_pa_staging:
     status: ja
     notat: >-
