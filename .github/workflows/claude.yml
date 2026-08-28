@@ -464,7 +464,9 @@ jobs:
                `@cursor review` og STOPP — passets fullføring vekker
                cursor-pass-fulgt via workflow_run-broen (§10.4), som
                eier Codex-adgangen; aldri `@codex review` herfra.
-            3. Er verdiktet rent / godkjent: noter FØRST baseline-SHA-en
+            3. ALLE ULØSTE TRÅDER FØRST (#211): før du merger, skann `reviewThreads { isResolved }` på HELE PR-en via GraphQL — ikke bare den utløsende reviewens. Scopingen i steg 1 avgjør hvilke funn som er DETTE verdiktet; den avgjør ALDRI hvilke som må være lukket før merge. Finnes én `isResolved == false`, merger du ikke: fiks den eller parkér. Et rent issue_comment-verdikt kan ellers trigge merge-løypa mens en eldre inline-P1 fra en bot-review står åpen — og den ble aldri lest, fordi den lå utenfor scopet.
+               KANALVAKT (#211): merge-veien under gjelder KUN et `issue_comment`-verdikt eller eierens `approved` — ALDRI når utløseren er `chatgpt-codex-connector[bot]` på review-kanalen. Der er utfallet parkering, uansett hvordan resten av denne blokken leser.
+               Er verdiktet rent / godkjent: noter FØRST baseline-SHA-en
                verdiktet gjelder (review-utløst: reviewens `commit_id`;
                issue_comment-utløst: SHA-en verdikt-kommentaren SELV
                deklarerer, «Reviewed commit» — aldri en live

@@ -669,38 +669,81 @@ def test_inline_funn_scopes_til_utlosende_review():
         " ikke — flatene glir fra hverandre")
 
 
+def _merge_seksjoner() -> list[tuple[int, str]]:
+    """(forsøksnummer, teksten fra siste nummererte steg til `gh pr merge`).
+
+    Cursor P2 runde 5 på #230: forrige form asserterte at vaktene fantes
+    ET STED i forsøksblokken. Mutasjonen «flytt vakten fra steg 3 til
+    steg 2» slapp da grønt — og det var nøyaktig den mutasjonen som var
+    ekte i runde 2, med et P1 som følge. En test som ikke kan felle sitt
+    eget dokumenterte angrep, verner ingenting.
+
+    Porten måler derfor SEKSJONEN som faktisk merger: fra det siste
+    nummererte steget før `gh pr merge` og fram til kallet. Står vakten i
+    et tidligere steg, er den utenfor — som den var.
+
+    Formen er også GENERELL: den vokser ikke med antall regler. Legges en
+    fjerde merge-vei til i en fremtidig runde, måles den av seg selv.
+    """
+    ut = []
+    for nr, forsok in enumerate(_fiksforsok(), 1):
+        linjer = forsok.split("\n")
+        for k, linje in enumerate(linjer):
+            if "gh pr merge" not in linje or "forbudt" in linje:
+                continue
+            start = 0
+            for m in range(k, -1, -1):
+                s = linjer[m].lstrip()
+                if s[:2] in ("0.", "1.", "2.", "3.", "4.") and s[2:3] == " ":
+                    start = m
+                    break
+            ut.append((nr, "\n".join(linjer[start:k + 1])))
+    return ut
+
+
 def test_bot_review_kan_aldri_ta_merge_steg3():
-    """Cursor P1 runde 2 på #230: merge-forbudet må være strukturelt.
+    """Cursor P1 runde 2 + P1/P2 runde 5 på #230.
 
     #211 målte at boten ALDRI bærer et rent verdikt på review-kanalen —
-    uten funn kommer det som issue_comment, og et 👍 som reaksjon. Steg
-    3 var likevel generisk («verdikt uten reelle funn … skal MERGES»).
-    På en review-utløst kjøring med tom `review.body` er den eneste
-    veien dit at agenten leser scoped inline og konkluderer «ingen
-    funn» — og en tom liste kan like gjerne komme av API-etterslep,
-    feil filter, eller en hendelse som landet før inline-kommentarene.
-    Da merger jobben ureviewet kode. Det er #211 ett hakk inn: porten
-    er åpnet, men merge-forbudet fulgte ikke med.
+    uten funn kommer det som issue_comment, og et 👍 som reaksjon. En tom
+    scoped inline-liste er derfor ikke en godkjenning, men en lesning som
+    feilet: API-etterslep, feil filter, eller en hendelse som landet før
+    inline-kommentarene. Uten vakten merger jobben ureviewet kode.
 
-    Eierens `approved` er fortsatt en gyldig merge-vei — forbudet
-    gjelder botens kanal, ikke review-hendelsen som sådan.
+    Vakten må stå PÅ seksjonen som merger, ikke i et tidligere steg:
+    agenten kan hoppe 0 → 1 → 3, og da leses steg 2 aldri. Det var
+    presist feilen i runde 2, og forrige versjon av denne testen så den
+    ikke fordi den lette i hele forsøksblokken.
 
-    MUTASJONEN SOM DREPER DENNE: fjern forbudet fra ett av forsøkene —
-    det holder å ta det fra runde 3, den som merger.
+    Eierens `approved` er fortsatt en gyldig merge-vei — forbudet gjelder
+    botens kanal, ikke review-hendelsen som sådan.
+
+    MUTASJONEN SOM DREPER DENNE: flytt vakten fra steg 3 til steg 2 i ett
+    av forsøkene. Den gamle formen overlevde nettopp den.
     """
-    for i, forsok in enumerate(_fiksforsok(), 1):
+    seksjoner = _merge_seksjoner()
+    assert len(seksjoner) >= 3, (
+        f"fant {len(seksjoner)} merge-veier — ventet minst én per forsøk;"
+        " en merge-vei uten nummerert steg foran seg er heller ikke målt")
+    for nr, seksjon in seksjoner:
+        norm = " ".join(seksjon.split())
+        assert "KANALVAKT (#211)" in norm, (
+            f"forsøk {nr} har en merge-vei uten kanalvakt i sin egen"
+            " seksjon — en bot-review kan nå den ved å hoppe over"
+            " steget vakten står i")
+        assert "ALLE ULØSTE TRÅDER FØRST" in norm, (
+            f"forsøk {nr} merger uten å måle uløste tråder i seksjonen"
+            " som faktisk merger")
+        assert "isResolved == false" in norm, (
+            f"forsøk {nr} sier ikke hva som stopper mergen")
+
+    for nr, forsok in enumerate(_fiksforsok(), 1):
         norm = " ".join(forsok.split())
         assert "BOT-REVIEW MERGER ALDRI" in norm, (
-            f"forsøk {i} lar en bot-review nå steg 3")
+            f"forsøk {nr} mangler merge-forbudet i klassifiseringen")
         assert "PARKÉR" in norm, (
-            f"forsøk {i} sier ikke hva som skal skje ved null funn —"
+            f"forsøk {nr} sier ikke hva som skal skje ved null funn —"
             " «ikke merge» uten et alternativ blir til merge")
-        # Cursor P2-1 runde 3: steg 0-forbudet dekker null-funn-veien,
-        # ikke selve merge-blokken. En agent som hopper over STOPP kunne
-        # ta den likevel — vakten må stå PÅ blokken.
-        assert "KANALVAKT (#211)" in norm, (
-            f"forsøk {i} har merge-blokk uten kanalvakt — forbudet i"
-            " steg 0 dekker klassifiseringen, ikke veien inn i merge")
 
 
 def test_steg0_skanner_inline_paa_review_utlost():
