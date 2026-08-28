@@ -85,6 +85,10 @@
         },
         "rollback_testet": {
           "$ref": "#/$defs/punkt"
+        },
+        "produktgjennomgang_bestatt": {
+          "$ref": "#/$defs/punkt",
+          "comment": "RUTINER 12.2 (eiervedtak 28/8): ett punkt som beskriver hva brukeren skal kunne gjore, flippet av en MENNESKELIG gjennomgang av flaten - ikke av at en test ble gronn. Kilden er en evidensfil: attester_evidensfil fester notatets sha256 sammen med aktoren som leste det, og gjennomgangen produserer nettopp en fil. Punktet er FRIVILLIG her fordi en modul uten brukerflate ikke har en flate a ga gjennom; om det skal bli obligatorisk for alle 57 er eiers avgjorelse, ikke portens."
         }
       }
     },

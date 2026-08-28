@@ -735,6 +735,29 @@ jobs:
                `@cursor review` for verifikasjon og stopp. K2/K5 og
                PASS-ekvivalensregelen (en runde med kun test-negativer
                teller som PASS) gjelder.
+
+               RUNDETAKET UTFØRES HER (RUTINER §12.1, Codex P1 på #242).
+               Cursor kjører READ-ONLY og kan ikke parkere noe selv — du
+               er den eneste skrivende deltakeren i sløyfa, så uten dette
+               leddet ville taket vært en regel ingen kunne oppfylle, og
+               sløyfa gikk i ring til eier grep inn. Tell passene i
+               tråden (kommentarer fra `github-actions[bot]` med
+               overskriften `## Cursor pre-Codex`). Er du på fjerde eller
+               senere, og det gjenstår P2/P3 du ikke har fikset:
+
+               a. opprett ETT oppfølgingsissue med `gh issue create` som
+                  gjengir hvert gjenstående funn ORDRETT, med fil og
+                  linje, og peker på denne PR-en;
+               b. post ÉN kommentar i PR-tråden som navngir issuet
+                  (`#<nr>`) og lister hvilke funn som er parkert i det;
+               c. lukk review-trådene til de parkerte funnene med
+                  `resolveReviewThread` — en parkering som lar tråden stå
+                  gjør PR-en ufullførbar av merge-porten;
+               d. deretter `@cursor review` som vanlig. Neste pass leser
+                  parkeringen og gir PASS.
+
+               P1 PARKERES ALDRI. Taket gjelder funn som gjør arbeidet
+               bedre, ikke funn som gjør det riktig.
             4. PASS (eller pass-ekvivalent): verifiser FØRST at
                pass-kommentarens egen SHA-linje (`SHA: ...`) er identisk
                med `gh pr view <nr> --json headRefOid -q .headRefOid` —

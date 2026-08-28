@@ -343,11 +343,25 @@ CI-runder til seks sekvensielle CI-runder som starter samtidig — altså
 ingenting.
 
 En stabel fjerner problemet ved roten. PR nr. 2 rebases på nr. 1s GREN
-og får den som base, nr. 3 på nr. 2. Da inneholder hver PR alt under
-seg, mergene skjer nedenfra og opp, og GitHub flytter automatisk basen
-til `main` når den under merger. Ingen blir `BEHIND`, fordi hver gren
-allerede inneholder `main`s nye tipp. Strict status checks er
-tilfredsstilt uten en eneste ny CI-runde.
+og får den som base, nr. 3 på nr. 2. Da inneholder hver PR alt under seg.
+
+**Men stabelen merges ÉN gang, ovenfra — ikke nedenfra og opp.** Første
+utgave sa det motsatte, og Codex målte hvorfor det ikke virker:
+`claude.yml` merger med `gh pr merge --squash`, og en squash lager en NY
+commit på `main` som ikke er forfar til grenen over. Den øvre PR-en
+inneholder riktignok de samme endringene, men ikke den commiten, så
+retargeting til `main` gjør den `BEHIND` likevel — og vi er tilbake der
+vi startet, bare med mer arbeid.
+
+Det som faktisk virker er å merge TOPPEN av stabelen med `--rebase`:
+grenen inneholder alle commitene i stabelen, og `--rebase` spiller dem
+inn på `main` enkeltvis og lineært. Én operasjon, én CI-kjøring, og
+historikken beholder hver PR sin egen commit — i motsetning til en
+squash av hele stabelen, som hadde slått fem leveranser sammen til én
+melding. PR-ene under lukkes med en peker til den som bar dem inn.
+
+`--squash` er standarden ellers og skal forbli det for enkeltstående
+PR-er. En stabel er unntaket, og det er `--rebase` som gjør den mulig.
 
 Prisen er koblingen: endres en PR nede i stabelen, må alle over den
 rebases. Stable derfor bare PR-er som er FERDIGE — porten passert,

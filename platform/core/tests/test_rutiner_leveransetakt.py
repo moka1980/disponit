@@ -87,6 +87,53 @@ def test_produktakseptpunktets_kildetype_finnes_i_akseptmodellen():
         f"bare {sorted(lovlige)}")
 
 
+def test_produktpunktet_er_FAKTISK_registrert_ikke_bare_mulig():
+    """Codex P2 (#242, runde 2): en mulig kildetype er ingen port.
+
+    Første utgave av porten over spurte bare om `evidensfil` fantes i
+    CHECK-en. Den ville vært grønn i et repo der INGEN modul har et
+    produktpunkt i det hele tatt — altså nøyaktig tilstanden §12.2 ble
+    skrevet for å avslutte, og `aksepter_moduldeployment` ville akseptert
+    hvert registrerte punkt mens den menneskelige porten manglet.
+
+    Punktet må derfor finnes to steder: som en LOVLIG nøkkel i det delte
+    manifestskjemaet (ellers kan ingen modul bære det), og som en FAKTISK
+    oppføring i modulen som er under arbeid.
+
+    Nøkkelen er FRIVILLIG i skjemaet, med vilje: en modul uten
+    brukerflate har ingen flate å gå gjennom. Om den skal bli
+    obligatorisk for alle 57 er eiers avgjørelse, ikke portens — men den
+    modulen som HAR en flate skal ikke kunne glemme den.
+
+    MUTASJONEN SOM DREPER DENNE: stryk punktet fra `m57_ats/manifest.yaml`
+    (da er §12.2 en regel ingen modul følger), eller fra
+    `manifest-skjema.json` (da kan ingen modul følge den).
+    """
+    import json
+    import yaml
+
+    skjema = json.loads(
+        (ROT / "platform" / "core" / "manifest-skjema.json")
+        .read_text(encoding="utf-8"))
+    punkter = (skjema["properties"]["staging_sjekkliste"]["properties"])
+    assert "produktgjennomgang_bestatt" in punkter, (
+        "manifestskjemaet har ingen nøkkel for produktaksept — sjekklista"
+        " er lukket mot nye felt, så INGEN modul kan bære punktet")
+
+    manifest = yaml.safe_load(
+        (ROT / "platform" / "modules" / "m57_ats" / "manifest.yaml")
+        .read_text(encoding="utf-8"))
+    punkt = manifest["staging_sjekkliste"].get("produktgjennomgang_bestatt")
+    assert punkt, (
+        "modulen som er under arbeid har ikke registrert produktpunktet —"
+        " §12.2 er da en regel ingen modul følger, og aksepten kan gå"
+        " igjennom med hvert registrerte punkt mens den menneskelige"
+        " porten mangler")
+    assert punkt["status"] in ("ja", "nei", "blokkert")
+    assert punkt.get("notat"), \
+        "punktet sier ikke hva brukeren skal kunne gjøre"
+
+
 def test_samlet_merge_er_en_stabel_ikke_et_tidsvindu():
     """Codex P2 (#242): «samme vindu» skaper ingen kaskade. Etter første
     merge beveger `main` seg, og med strict status checks er alle andre
@@ -95,7 +142,15 @@ def test_samlet_merge_er_en_stabel_ikke_et_tidsvindu():
     hver gren inneholder den under seg, så ingen blir noen gang BEHIND."""
     p = _paragraf("12.3")
     assert "STABEL" in p
-    assert "Ingen blir `BEHIND`" in p
+    # OG MERGEMÅTEN, ikke bare stabelen (Codex P2, runde 2). `--squash`
+    # lager en NY commit på `main` som ikke er forfar til grenen over, så
+    # en stabel som merges nedenfra og opp blir `BEHIND` på nøyaktig
+    # samme måte som uten stabel. Regelen er ubrukelig uten dette leddet.
+    assert "--rebase" in p and "--squash" in p, (
+        "paragrafen sier ikke HVORDAN stabelen merges — med workflowens"
+        " `--squash` er stabelen ingen kaskade")
+    assert "ovenfra" in p, \
+        "stabelen merges nedenfra og opp — da rives ancestry ved hver squash"
     # Prisen må stå der taket står. En stabel av PR-er som fortsatt tar
     # runder er dyrere enn ingen stabel: hver endring nede rebaser alt over.
     assert "må alle over den" in p and "rebases" in p

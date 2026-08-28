@@ -44,6 +44,30 @@ i18n_prefiks: m57ats
 # #166; til den lander er ordlyden her den eneste ærligheten vi har.
 # «Et manifest skal aldri lese sterkere enn porten måler.»
 staging_sjekkliste:
+  # PRODUKTAKSEPTEN, RUTINER §12.2 (eiervedtak 28/8). Punktet kom fordi
+  # #153-arcen hadde sytten åpne issues om porter, invarianter og
+  # kappløp — og ingen av dem sa at rekrutteringsflaten viste
+  # overskriften to ganger, stablet tjue detaljbokser under tabellen
+  # uten kobling til raden, og fylte kandidatkolonnen med rå UUID-er.
+  # Vi beviste at maskineriet var riktig uten at noen eide at produktet
+  # var brukbart.
+  #
+  # Kilden er en `evidensfil`, den ene av de fire kildetypene som bærer
+  # et menneskes lesning: `attester_evidensfil` fester notatets sha256
+  # sammen med aktøren som leste det, og gjennomgangen produserer
+  # nettopp en fil.
+  produktgjennomgang_bestatt:
+    status: nei
+    krav_id: m57-v1
+    notat: >-
+      KREVER: en navngitt person går gjennom rekrutteringsflaten fra
+      bestilling til signert utsendingsliste og bekrefter at hvert steg
+      lar seg gjøre — og skriver notatet fra vandringen, som attesteres
+      med `attester_evidensfil`. MÅLINGEN FINNES IKKE i `m57-v1`:
+      grensen bærer invariantpar, to ja-punkter og ytelsesparet, ingen
+      produktgjennomgang. Punktet er derfor ikke flippbart på evidens
+      ennå — men det er REGISTRERT, og et uregistrert punkt kan ikke
+      flippes i det hele tatt.
   tester_gronne_pa_staging:
     status: nei
     krav_id: m57-v1
