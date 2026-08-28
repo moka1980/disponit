@@ -445,6 +445,37 @@ function tegn(hoved, ctx, data, okt, valgtId) {
       hentJson(`/v1/rekruttering/prosesser?prosess_id=${encodeURIComponent(nyId)}`)
         .then((svar) => {
           if (!gjelder()) return;
+          // ... OG LÅSEN KAN VÆRE TATT ETTER AT VI SPURTE (Codex P1).
+          // A-dommen (#212) sier at ingen om-tegning skjer under en
+          // mutasjon, og håndhever det ved å fryse `tegn`-utløserne —
+          // velgeren er meldt inn som én av dem. Den frysen holder bare
+          // så lenge klikket OG om-tegningen er samme hendelse. Etter
+          // #183 er byttet en HENTING: `paagaaende`-vakten seksti linjer
+          // over måler ved klikket, og om-tegningen skjer et nettverk
+          // senere. I det vinduet er Send og Lagre ufrosne, og en
+          // bestilling eller profillagring kan ta låsen — og så tegner
+          // dette svaret flaten om midt i den.
+          //
+          // Det river ikke bare skjemaet mutasjonen skriver i. Det bytter
+          // ut hvem låsen gjelder: `laas.meld` fryser hver nye kontroll
+          // fordi `paagaaende` står, mens mutasjonens `finally` løfter
+          // frysen på den `laas`-en den selv tok — den GAMLE, nå
+          // frakoblede. Send og Lagre ble da stående låst til omlasting,
+          // med utfallet skrevet i en alert som ikke er i dokumentet.
+          // Nøyaktig den frakoblede noden A-dommen finnes for å hindre.
+          //
+          // Vakten hører derfor der om-tegningen FAKTISK skjer, ikke der
+          // den ble bedt om. Svaret forkastes — en lesning er fritt
+          // gjentakbar, og valget står alt på prosessen flaten viser
+          // (rollbacken skjedde ved hentingens start), så meldingen
+          // «valget er satt tilbake» er sann. Velgeren låses IKKE opp:
+          // den er nå frosset av mutasjonens `laas`, og det er
+          // mutasjonens `finally` som skal løfte den — på de samme
+          // kontrollene som tok låsen, som A-dommen krever.
+          if (okt.bestilling.paagaaende) {
+            sett(velgerFeil, t("ui.rekruttering.prosessbytte_feilet"));
+            return;
+          }
           data.prosesser = svar.prosesser;
           tegn(hoved, ctx, data, okt, nyId);
           const ny = hoved.querySelector(`#${velgerId}`);
@@ -474,8 +505,18 @@ function tegn(hoved, ctx, data, okt, valgtId) {
           // bare opp og sier fra. En 404 er en LOVLIG utgang: prosessen
           // kan ha falt ut på fristen mellom to klikk, og da er «finnes
           // ikke lenger» det sanne svaret.
-          velger.disabled = false;
           sett(velgerFeil, t("ui.rekruttering.prosessbytte_feilet"));
+          // ... men den låser bare opp en lås den SELV holder (Codex P1,
+          // samme rot som i suksessarmen over). Tok en mutasjon
+          // `paagaaende` mens hentingen sto på, er velgeren frosset av
+          // `laas` — og en `laas`-frys skal løftes av den `finally`-en
+          // som tok den, ikke av en henting som tilfeldigvis feilet
+          // under den. Uten dette leddet sto velgeren åpen midt i en
+          // bestilling, og et klikk der ville bare rullet seg selv
+          // tilbake på `paagaaende`-vakten: en kontroll som ser
+          // handlingsklar ut og ikke er det.
+          if (okt.bestilling.paagaaende) return;
+          velger.disabled = false;
           velger.focus();
         });
     });

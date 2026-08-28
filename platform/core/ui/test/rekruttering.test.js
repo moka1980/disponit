@@ -3444,6 +3444,207 @@ test("Bestilling: prosessvelgeren er frosset mens kjeden er i lufta (A-dommen)",
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
 });
 
+test("Bestilling: en mutasjon startet UNDER prosesshentingen låses aldri ute "
+  + "av byttets om-tegning (Codex P1)", async () => {
+  // SPEILET AV A-DOMMEN (#212). Testen over måler den ene retningen: et
+  // bytteforsøk MENS kjeden henger. Frysen av `tegn`-utløserne dekker
+  // den, og dekket i sin tid begge — fordi klikket og om-tegningen var
+  // samme hendelse.
+  //
+  // Etter #183 er byttet en HENTING, og de to falt fra hverandre:
+  // `paagaaende`-vakten i velgerens `change` måler ved KLIKKET, mens
+  // om-tegningen skjer et nettverk senere. I det vinduet er Send og
+  // Lagre ufrosne — en lesning tar ikke mutasjonslåsen — så brukeren
+  // rekker å sende bestillingen. Landet svaret uten vakt, tegnet det
+  // flaten om midt i kjeden: de NYE kontrollene ble meldt frosne
+  // (`laas.meld` ser `paagaaende`), mens kjedens `finally` løftet frysen
+  // på den `laas`-en den selv tok — den gamle, nå frakoblede. Send sto
+  // låst til omlasting, og kvitteringen ble skrevet i en alert utenfor
+  // dokumentet. Nøyaktig den frakoblede noden A-dommen finnes for.
+  //
+  // MUTASJONEN SOM DREPER DENNE: fjern `if (okt.bestilling.paagaaende)`
+  // fra suksessarmen i velgerens `change`. Da rives skjemaet
+  // («bestillingsseksjonen ble revet»), og knappen kommer aldri opp igjen
+  // («Send sto låst etter at bestillingen svarte»).
+  const full = prosess();
+  full.prosesser.push({ ...full.prosesser[0], prosess_id: "p-2" });
+  const kart = svar183(full);
+  KALL = [];
+  SVAR = { ...kart, "/v1/rekruttering/stillingsprofiler": profiler() };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const bestill = () =>
+    hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  const velger = hoved.querySelector("#rekrut-prosessvelger");
+  assert.ok(velger, "ingen prosessvelger med flere prosesser i svaret");
+
+  // Byttet henger på nettet — og bestillingen henger etter det, så begge
+  // vinduene er åpne samtidig og rekkefølgen kan styres.
+  let slippBytte;
+  const byttesvar = new Promise((r) => {
+    slippBytte = () => r(kart["/v1/rekruttering/prosesser?prosess_id=p-2"]);
+  });
+  let slippBestilling;
+  const bestillingssvar = new Promise((r) => {
+    slippBestilling = () => r({ beslutning: "tillat", oppdrag_id: 8 });
+  });
+  KALL = [];
+  SVAR = (sti) => {
+    if (sti === "/v1/rekruttering/prosesser") return byttesvar;
+    if (sti === "/v1/rekruttering/stillingsprofiler") return profiler();
+    if (sti === "/v1/inndata/reserver") {
+      return { reservasjon_jti: "j-1", inndata_ref: "inndata:u-1" };
+    }
+    if (sti.startsWith("/v1/inndata/opplast/")) return {};
+    if (sti === "/v1/bestilling") return bestillingssvar;
+    return undefined;
+  };
+  velger.value = "p-2";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.ok(await vent(() =>
+    KALL.some((k) => k.sti === "/v1/rekruttering/prosesser"), 20),
+    "byttet hentet aldri — testen måler ikke det den tror");
+
+  // ... og MENS den henger tar bestillingen låsen. Den kan det: en
+  // lesning fryser ikke mutasjonene, så knappen står handlingsklar.
+  const skjema = bestill().querySelector("form");
+  const send = skjema.querySelector("button[type=submit]");
+  assert.equal(send.disabled, false,
+    "Send var alt frosset — vinduet testen måler finnes ikke");
+  const filInp = skjema.querySelector("input[type=file]");
+  Object.defineProperty(filInp, "files", { configurable: true,
+    value: [{ name: "bunt.zip",
+              arrayBuffer: async () => new ArrayBuffer(16) }] });
+  filInp.dispatchEvent(new window.Event("change", { bubbles: true }));
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() =>
+    KALL.some((k) => k.sti === "/v1/bestilling"), 40),
+    "bestillingen ble aldri sendt");
+  assert.equal(send.disabled, true, "kjeden tok aldri låsen");
+
+  // NÅ lander byttet — midt i kjeden. Svaret forkastes, og velgeren sier
+  // fra at valget står tilbake på prosessen flaten faktisk viser.
+  slippBytte();
+  // Vinduet ventes UT, ikke på vakten selv: da er det STRUKTUREN som
+  // felles først om vakten faller — den frakoblede noden er funnet,
+  // meldingen bare hvordan flaten sier det.
+  await vent(() => false, 40);
+  assert.equal(bestill().querySelector("form"), skjema,
+    "bestillingsseksjonen ble revet mens kjeden var i lufta");
+  assert.equal(send.isConnected, true,
+    "Send-knappen kjeden låste står ikke lenger i dokumentet");
+  assert.equal(velger.value, "p-1",
+    "velgeren navngir en prosess flaten ikke viser");
+  // Låsen er mutasjonens, ikke hentingens: byttet låser den ikke opp.
+  assert.equal(velger.disabled, true,
+    "byttet løftet en frys det ikke hadde tatt");
+  assert.notEqual(hoved.querySelector(".rekrut-velgerfeil").textContent, "",
+    "byttet forkastet svaret uten å si fra");
+
+  // Kjeden fullfører — på de SAMME kontrollene som tok låsen.
+  slippBestilling();
+  assert.ok(await vent(() => !send.disabled, 60),
+    "Send sto låst etter at bestillingen svarte");
+  assert.equal(bestill().querySelector("form"), skjema,
+    "kvitteringen tegnet et nytt skjema — kjeden mistet sine kontroller");
+  assert.match(bestill().querySelector("[role=alert]").textContent, /8/,
+    "kvitteringen nådde aldri den synlige alerten");
+  assert.equal(velger.disabled, false,
+    "velgeren ble stående frosset etter at kjeden slapp låsen");
+
+  // ... og byttet går, som før, når låsen er løftet.
+  KALL = [];
+  SVAR = { ...kart, "/v1/rekruttering/stillingsprofiler": profiler() };
+  velger.value = "p-2";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.ok(await vent(() =>
+    hoved.querySelector("#rekrut-prosessvelger").value === "p-2", 40),
+    "byttet gikk ikke gjennom etter at kjeden slapp låsen");
+  const brudd = await alvorligeBrudd(hoved);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
+test("Bestilling: en FEILET henting låser ikke opp velgeren mutasjonen "
+  + "holder (Codex P1, feilarmen)", async () => {
+  // SAMME ROT, ANDRE ARM. Feilveien låser opp og sier fra — den formen
+  // er riktig når hentingen selv holder låsen. Tar en mutasjon
+  // `paagaaende` mens hentingen står på, er velgeren derimot frosset av
+  // `laas`, og en `laas`-frys skal løftes av den `finally`-en som tok
+  // den. Uten vakten sto velgeren åpen midt i en bestilling: en kontroll
+  // som ser handlingsklar ut, men der et klikk bare ruller seg selv
+  // tilbake på `paagaaende`-vakten.
+  //
+  // MUTASJONEN SOM DREPER DENNE: fjern `if (okt.bestilling.paagaaende)
+  // return;` fra feilarmen — da står velgeren `disabled === false` mens
+  // kjeden fortsatt henger.
+  const full = prosess();
+  full.prosesser.push({ ...full.prosesser[0], prosess_id: "p-2" });
+  const kart = svar183(full);
+  KALL = [];
+  SVAR = { ...kart, "/v1/rekruttering/stillingsprofiler": profiler() };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const bestill = () =>
+    hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  const velger = hoved.querySelector("#rekrut-prosessvelger");
+  let slippBytte;
+  const byttesvar = new Promise((r) => { slippBytte = () => r(500); });
+  let slippBestilling;
+  const bestillingssvar = new Promise((r) => {
+    slippBestilling = () => r({ beslutning: "tillat", oppdrag_id: 9 });
+  });
+  KALL = [];
+  SVAR = (sti) => {
+    if (sti === "/v1/rekruttering/prosesser") return byttesvar;
+    if (sti === "/v1/rekruttering/stillingsprofiler") return profiler();
+    if (sti === "/v1/inndata/reserver") {
+      return { reservasjon_jti: "j-9", inndata_ref: "inndata:u-9" };
+    }
+    if (sti.startsWith("/v1/inndata/opplast/")) return {};
+    if (sti === "/v1/bestilling") return bestillingssvar;
+    return undefined;
+  };
+  velger.value = "p-2";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.ok(await vent(() =>
+    KALL.some((k) => k.sti === "/v1/rekruttering/prosesser"), 20),
+    "byttet hentet aldri — testen måler ikke det den tror");
+  const skjema = bestill().querySelector("form");
+  const send = skjema.querySelector("button[type=submit]");
+  const filInp = skjema.querySelector("input[type=file]");
+  Object.defineProperty(filInp, "files", { configurable: true,
+    value: [{ name: "bunt.zip",
+              arrayBuffer: async () => new ArrayBuffer(16) }] });
+  filInp.dispatchEvent(new window.Event("change", { bubbles: true }));
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() =>
+    KALL.some((k) => k.sti === "/v1/bestilling"), 40),
+    "bestillingen ble aldri sendt");
+  assert.equal(send.disabled, true, "kjeden tok aldri låsen");
+
+  // 500 på byttet, midt i kjeden: meldingen kommer, frysen står.
+  slippBytte();
+  assert.ok(await vent(() =>
+    hoved.querySelector(".rekrut-velgerfeil").textContent !== "", 40),
+    "en feilet henting sa aldri fra");
+  assert.equal(velger.disabled, true,
+    "den feilede hentingen låste opp en velger mutasjonen holder");
+  assert.equal(send.disabled, true, "kjeden mistet låsen sin");
+
+  // ... og kjeden løfter frysen selv, på sine egne kontroller.
+  slippBestilling();
+  assert.ok(await vent(() => !send.disabled, 60),
+    "Send sto låst etter at bestillingen svarte");
+  assert.equal(velger.disabled, false,
+    "velgeren ble stående frosset etter at kjeden slapp låsen");
+  const brudd = await alvorligeBrudd(hoved);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
 test("Bestilling: STOPP er ingen leveranse — bunten står igjen (P1-1)", async () => {
   // Serveren svarer `200` også på STOPP og unntak, uten oppdrag, og lar
   // bunten stå `lastet` (`test_stopp_binder_ikke_bunten`). Sa flaten
