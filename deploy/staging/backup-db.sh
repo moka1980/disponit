@@ -104,7 +104,26 @@ ARKIV_DELVIS="$ARKIV.delvis"
 # omstarter ville de hopet seg opp — og de tar av det samme minnet neste
 # kjøring trenger. Feies FØR vår egen lages, ellers feier vi oss selv;
 # `flock` over garanterer at ingen annen kjøring eier en akkurat nå.
-rm -rf /dev/shm/disponit-backup.*
+#
+# FEIEN ER AVGRENSET TIL VÅRE EGNE RESTER (Cursor P2 på `4a6dccf`).
+# `rm -rf /dev/shm/disponit-backup.*` som root traff ENHVER match,
+# uansett eier. `/dev/shm` er verdensskrivbar med sticky bit, og
+# DEPLOY.md dokumenterer at verten er DELT med et annet produkt: en
+# hvilken som helst lokal bruker kunne lagt igjen `disponit-backup.x`
+# og fått root til å slette den for seg — eller lagt den der før hver
+# backup og gjort feien til sitt eget verktøy mot nabotjenesten.
+# Sticky bit hindrer at ANDRE sletter våre; det hindrer ikke at vi
+# sletter andres.
+#
+# `-user root` er avgrensningen som holder: `/dev/shm` er sticky, så en
+# uprivilegert bruker kan ikke lage en root-eid oppføring der, og det
+# er nettopp våre egne rester som er root-eide. `-mindepth 1 -maxdepth
+# 1` gjør at feien aldri kan vandre ut av `/dev/shm` selv. Null treff
+# gir exit 0 — feien dreper ikke kjøringen når det ikke var noe å feie
+# — mens et manglende `/dev/shm` gir exit 1 og stopper her, som er
+# riktig vei: `mktemp -d -p /dev/shm` på neste linje ville dødd uansett.
+find /dev/shm -mindepth 1 -maxdepth 1 -user root \
+     -name 'disponit-backup.*' -exec rm -rf {} +
 RAA_KAT=$(mktemp -d -p /dev/shm disponit-backup.XXXXXXXX)
 chmod 700 "$RAA_KAT"
 RAA="$RAA_KAT/disponit-$STEMPEL.dump.raa"

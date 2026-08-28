@@ -1735,8 +1735,37 @@ def test_klarteksten_ligger_i_minne_ikke_i_backupkatalogen():
     assert skript.count("sudo -u postgres pg_dump") == 1, \
         "to dumper igjen — porten måler da et annet snapshot enn det " \
         "som lagres (Cursor P2 på 12c7476)"
-    assert 'rm -rf /dev/shm/disponit-backup.*' in skript, \
+    assert "-name 'disponit-backup.*' -exec rm -rf {} +" in skript, \
         "en SIGKILL-et kjøring etterlater klartekst på tmpfs for alltid"
+
+
+def test_feien_av_tmpfs_rester_treffer_bare_vare_egne():
+    """Cursor P2 på `4a6dccf`: feien var en root-`rm -rf` uten eier.
+
+    `rm -rf /dev/shm/disponit-backup.*` kjørte som root og traff enhver
+    match uansett eier. `/dev/shm` er verdensskrivbar, og DEPLOY.md
+    dokumenterer at Cloud Server S er DELT med et annet produkt — så en
+    lokal bruker kunne lagt igjen `disponit-backup.x` og fått root til
+    å slette den for seg. Sticky bit hindrer at andre sletter VÅRE
+    kataloger; det hindrer ikke at vi sletter deres.
+
+    `-user root` er avgrensningen som holder, nettopp fordi `/dev/shm`
+    er sticky: en uprivilegert bruker får ikke lagt igjen en root-eid
+    oppføring der, og våre egne rester er root-eide.
+
+    MUTASJONEN SOM DREPER DENNE: tilbake til den uavgrensede globben,
+    eller fjern `-user root` fra `find`-en.
+    """
+    skript = (ROT / "deploy/staging/backup-db.sh").read_text(encoding="utf-8")
+    # KODELINJER, ikke kommentarer: prosaen over feien SITERER den gamle
+    # globben for å forklare hvorfor den er borte. En port som leser hele
+    # fila ville felt sin egen begrunnelse.
+    kode = "\n".join(ln for ln in skript.splitlines()
+                     if not ln.lstrip().startswith("#"))
+    assert "rm -rf /dev/shm/disponit-backup.*" not in kode, \
+        "uavgrenset root-rm mot verdensskrivbar /dev/shm på en delt vert"
+    assert "find /dev/shm -mindepth 1 -maxdepth 1 -user root" in kode, \
+        "feien avgrenser ikke til root-eide rester i /dev/shm selv"
 
 
 def test_runbooken_leter_etter_klarteksten_i_shm_ikke_i_katalogen():
