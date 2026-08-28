@@ -4217,6 +4217,73 @@ test("Prosessbytte: en feilet henting ruller valget tilbake og SIER fra",
   assert.deepEqual([...rader].sort(), ["K-1", "K-2"]);
 });
 
+test("Prosessbytte: 500 og nettverksfeil går samme vei som 404", async () => {
+  KALL = [];
+  // Cursor P2 (#183): feilveien er STATUS-AGNOSTISK med vilje — alt som
+  // ikke er 401 låser opp velgeren og sier fra, for brukeren kan prøve om
+  // igjen uansett hvorfor det feilet. Bare 404 var målt. En regresjon som
+  // forgrener på status i `.catch` — «bare den lovlige 404-en ruller
+  // tilbake» — ville latt en 500 eller et falt nett etterlate velgeren
+  // låst og taus på en flate der neste handling er irreversibel, og den
+  // ville passert dagens CI.
+  //
+  // MUTASJONEN SOM DREPER DENNE: gjør `.catch`-armen status-spesifikk
+  // (f.eks. `if (!(e instanceof ApiFeil) || e.status !== 404) return;`
+  // foran opplåsingen og `sett(velgerFeil, …)`).
+  const to = prosess();
+  to.prosesser.push({
+    prosess_id: "p-2", blinding_av: false, vekter: { drift: 1 },
+    evaluering_status: "utfort",
+    kandidater: [{ kandidat_id: "K-9", oppfylt: { drift: true },
+      status: "anbefalt", funn: [], intervjusporsmal: [] }],
+    lister: [],
+  });
+  SVAR = svar183(to);
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")));
+  const velger = hoved.querySelector("#rekrut-prosessvelger");
+  assert.ok(velger, "ingen prosessvelger med flere prosesser i svaret");
+  const feil = hoved.querySelector(".rekrut-velgerfeil");
+  assert.ok(feil, "flaten har ingen egen feilregion for byttet");
+  const rader = () => [...hoved.querySelectorAll("tbody tr")]
+    .map((tr) => tr.querySelector("td").textContent);
+  // SERVEREN FALLER (500): ingen kode i kroppen, bare en feil.
+  KALL = [];
+  SVAR = (sti) => (sti === "/v1/rekruttering/prosesser" ? 500 : undefined);
+  velger.value = "p-2";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.ok(await vent(() => feil.textContent
+    === t("ui.rekruttering.prosessbytte_feilet")),
+    `en 500 ble aldri meldt: ${JSON.stringify(feil.textContent)}`);
+  assert.ok(KALL.some((k) => k.sti === "/v1/rekruttering/prosesser"),
+    "byttet hentet aldri — testen måler ikke det den tror");
+  assert.equal(hoved.querySelector("#rekrut-prosessvelger").value, "p-1",
+    "en 500 etterlot velgeren på en prosess flaten ikke viser");
+  assert.equal(hoved.querySelector("#rekrut-prosessvelger").disabled, false,
+    "en 500 etterlot velgeren låst — byttet kan ikke prøves om igjen");
+  assert.ok(!rader().includes("K-9"),
+    `en 500 tegnet den andre prosessen likevel: ${rader().join(",")}`);
+  // NETTET FALLER (`ApiFeil(0, "nettverk")`): `fetch` avviser, og da
+  // finnes det ingen status å forgrene på i det hele tatt.
+  KALL = [];
+  feil.textContent = "";
+  SVAR = () => Promise.reject(new Error("nettet falt"));
+  velger.value = "p-2";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.ok(await vent(() => feil.textContent
+    === t("ui.rekruttering.prosessbytte_feilet")),
+    `et falt nett ble aldri meldt: ${JSON.stringify(feil.textContent)}`);
+  assert.ok(KALL.some((k) => k.sti === "/v1/rekruttering/prosesser"),
+    "det andre byttet hentet aldri — testen måler ikke det den tror");
+  assert.equal(hoved.querySelector("#rekrut-prosessvelger").value, "p-1",
+    "et falt nett etterlot velgeren på en prosess flaten ikke viser");
+  assert.equal(hoved.querySelector("#rekrut-prosessvelger").disabled, false,
+    "et falt nett etterlot velgeren låst");
+  assert.ok(!rader().includes("K-9"),
+    `et falt nett tegnet den andre prosessen likevel: ${rader().join(",")}`);
+});
+
 test("Prosessbytte: velgeren viser prosessen som VISES, ikke den som hentes",
   async () => {
   KALL = [];
