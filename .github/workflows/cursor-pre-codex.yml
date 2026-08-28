@@ -126,6 +126,14 @@ jobs:
           - ÉN batched liste — ikke drypp. Prioriter P1 deretter P2. P3 blokkerer ikke.
           - Hvert funn: fil:linje (eller constraint-navn), rotårsak, konkret fiks, test som beviser.
           - Hvis ingen P1/P2: status PASS.
+          - RUNDETAK TRE (RUTINER §12.1). Fra og med RUNDE FIRE på samme PR
+            teller et P2/P3 som LUKKET for PASS-formål når det er PARKERT.
+            Parkert betyr alle tre samtidig: (a) runde fire eller senere,
+            (b) funnet er P2 eller P3, (c) en kommentar i PR-tråden nevner
+            issue-nummeret parkeringen ligger i. Mangler ett av de tre, er
+            funnet IKKE parkert, og du gir ikke PASS. P1 kan ALDRI parkeres —
+            et levende P1 stopper PR-en uansett rundetall. Rundetallet leser
+            du av antall pre-Codex-pass som alt står i tråden.
           - Avslutt med nøyaktig én av disse to footerene:
 
           FUNN-footer (bruk linjen med tre bindestreker under):

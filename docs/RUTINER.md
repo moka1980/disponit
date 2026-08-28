@@ -280,10 +280,10 @@ kostnaden. Samtidig setter hver merge til `main` alle andre åpne PR-er
 
 ### 12.1 Rundetak: TRE
 
-Etter tredje review-runde på samme PR går gjenstående funn til ETT
+Etter tredje review-runde på samme PR parkeres gjenstående P2/P3 i ETT
 oppfølgingsissue, og PR-en går videre til Codex.
 
-**P1 er aldri utsettbart.** Taket gjelder P2 og P3 — altså funn som gjør
+**P1 er aldri parkerbart.** Taket gjelder P2 og P3 — altså funn som gjør
 arbeidet bedre, ikke funn som gjør det riktig. Et levende P1 stopper
 PR-en uansett rundetall, og et rundetak som slapp P1 forbi ville vært en
 port som åpner en dør.
@@ -291,26 +291,67 @@ port som åpner en dør.
 Runde 4–7 på #230 fant prosaplasseringer og manglende gjentakelser, ikke
 defekter. Det er ekte funn, men de er ikke verdt en times CI hver.
 
+**Taket måtte inn i porten, ikke bare i prosaen.** Første utgave av
+denne paragrafen var uoppnåelig: `cursor-pre-codex.yml` gir PASS bare
+når ingen P1/P2 står igjen, og `claude.yml` skriver `@codex review` bare
+på PASS — så «flytt P2 til et issue og gå videre» hadde ingen vei ut av
+sløyfa. Cursor-prompten sier nå at et P2/P3 er LUKKET for PASS-formål
+når det er parkert, og parkering krever tre ting samtidig:
+
+1. runde fire eller senere (rundetallet telles i PR-tråden),
+2. funnet er P2 eller P3,
+3. kommentaren nevner issue-nummeret parkeringen ligger i.
+
+Mangler ett av de tre, er funnet ikke parkert, og PASS uteblir. En
+parkering uten issue er en glemsel med bedre ordforråd.
+
 ### 12.2 Produktaksept før mekanismeaksept
 
-En modul er ferdig når **flaten virker**, ikke når invariantene er
-bevist.
+En modul er ikke ferdig før **flaten virker**. Det er et krav som kommer
+i TILLEGG til invariantene, ikke i stedet for dem: §2 gjelder uendret,
+og aktivering krever fortsatt at hvert punkt i modulens manifest-
+sjekkliste står `ja`. Vedtaket flytter REKKEFØLGEN, ikke terskelen.
 
 Rekkefølgen har vært motsatt, og #153-arcen viser hva det koster:
 sytten åpne issues om porter, invarianter og kappløp — og ingen av dem
-sa at rekrutteringsflaten viste to motstridende rangeringstabeller med
-hvert sitt ID-format. Vi beviste at maskineriet var riktig uten at noen
-eide at produktet var brukbart.
+sa at rekrutteringsflaten viste overskriften to ganger, stablet tjue
+detaljbokser under tabellen uten kobling til raden de gjaldt, og fylte
+kandidatkolonnen med rå UUID-er. Vi beviste at maskineriet var riktig
+uten at noen eide at produktet var brukbart.
 
 Hver modul skal derfor ha ETT produktakseptpunkt som beskriver hva
 brukeren skal kunne gjøre, og det punktet flippes av en menneskelig
-gjennomgang av flaten — ikke av et artefakt.
+gjennomgang av flaten — ikke av at en test ble grønn.
 
-### 12.3 Samlet merge
+Punktet er en `evidensfil`. Det er den eneste av de fire kildetypene
+(`artefakt`, `registerhendelse`, `evidensfil`, `ci_kjoring`) som bærer
+et menneskes lesning: `attester_evidensfil` fester filas sha256 sammen
+med aktøren som leste den, og gjennomgangen produserer nettopp en fil —
+notatet fra vandringen gjennom flaten, med måletallet «alle stegene
+gikk». Sjekklista er lukket mot nye felt (`additionalProperties`), så et
+punkt som ikke passet i en av de fire kildetypene hadde ikke kunnet
+lagres i det hele tatt.
 
-Klare PR-er merges i ETT vindu, ikke én om gangen. Grunnen er mekanisk:
-`main` som beveger seg setter alle andre `BEHIND`, og med strict status
-checks koster hver av dem en ny CI-runde. Én kaskade i stedet for seks.
+### 12.3 Samlet merge: STABEL, ikke vindu
+
+Klare PR-er stables, de merges ikke én om gangen fra hver sin gren.
+
+Første utgave sa «samme vindu», og det virker ikke: så snart den første
+merger, beveger `main` seg, og med strict status checks er hver av de
+andre `BEHIND` og må kjøre CI på nytt. Et vindu gjør seks sekvensielle
+CI-runder til seks sekvensielle CI-runder som starter samtidig — altså
+ingenting.
+
+En stabel fjerner problemet ved roten. PR nr. 2 rebases på nr. 1s GREN
+og får den som base, nr. 3 på nr. 2. Da inneholder hver PR alt under
+seg, mergene skjer nedenfra og opp, og GitHub flytter automatisk basen
+til `main` når den under merger. Ingen blir `BEHIND`, fordi hver gren
+allerede inneholder `main`s nye tipp. Strict status checks er
+tilfredsstilt uten en eneste ny CI-runde.
+
+Prisen er koblingen: endres en PR nede i stabelen, må alle over den
+rebases. Stable derfor bare PR-er som er FERDIGE — porten passert,
+tråder lukket — og la en PR som fortsatt tar runder stå på `main`.
 
 ### 12.4 Stale-sveip
 
