@@ -23,6 +23,7 @@ reapes med resten.
 from __future__ import annotations
 
 import re
+from bisect import bisect_right
 
 #: Katalogens løfte, ordrett — settet er LUKKET og rekkefølgen stabil
 #: (tokennummereringen skal være deterministisk for samme input).
@@ -372,13 +373,38 @@ def blind_dokumenter(dokumenter: list[str],
     # ingen mening om skjøten. Grensen tilhører den PER-DOKUMENT-anvendte
     # tabellen, altså denne funksjonen — ikke deklarasjonens form. Et
     # sjette formforsøk er nettopp det §9 forbyr.
+    # SØKET ER AVGRENSET FØR DET STARTER (Codex P1). To ledd, og begge
+    # følger av formen, ikke av en optimalisering:
+    #
+    # 1) En verdi UTEN skjøt kan per konstruksjon ikke krysse en. Et
+    #    treff som spenner over en grense inneholder separatoren
+    #    bokstavelig — `_monster` er `re.escape` med `IGNORECASE`, og
+    #    `\n\n` har ingen versaler — så treffteksten, og dermed verdien,
+    #    må inneholde `SKJOT`. Verdier uten den hoppes over helt.
+    # 2) Spennet et treff ligger i FINNES med `bisect`, ikke med en
+    #    gjennomlesning. Grensene er sortert og disjunkte, så det siste
+    #    dokumentet som starter før treffet er det ENESTE som kan
+    #    inneholde det.
+    #
+    # Uten begge ledd var sjekken kvadratisk i dokumentantallet på den
+    # ærlige veien: buntgaten tillater 20 000 dokumenter, og `['a'] *
+    # 20_000` med én vanlig verdi ga rundt 200 millioner
+    # grensesammenligninger — ganger opptil seksti deklarerte verdier,
+    # før modellen i det hele tatt ble kalt.
     samlet = SKJOT.join(dokumenter)
     grenser = dokumentgrenser(dokumenter)
+    startene = [start for start, _ in grenser]
     for verdier in kandidatfelter.values():
         for verdi in verdier:
+            if SKJOT not in verdi:
+                continue
             for treff in _monster(verdi).finditer(samlet):
-                if not any(start <= treff.start() and treff.end() <= slutt
-                           for start, slutt in grenser):
+                i = bisect_right(startene, treff.start()) - 1
+                # `i < 0` kan ikke skje — første dokument starter på 0 —
+                # men et treff som BEGYNNER inne i selve skjøten peker på
+                # dokumentet foran, og faller da ut på sluttkravet under.
+                start, slutt = grenser[i]
+                if not (start <= treff.start() and treff.end() <= slutt):
                     raise Blindingsfeil("verdi_krysser_dokumentgrense")
     if not _traff_alle(kandidatfelter, dokumenter):
         raise Blindingsfeil("ugyldig_maskeringsform")

@@ -460,7 +460,6 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
             # `evaluer_kandidat` skjøter dem selv, med `blinding.SKJOT`,
             # og regner grensene av den samme.
             dokumenter = [bit[2] for bit in medlemmer]
-            tekst = blinding.SKJOT.join(dokumenter)
             kandidatfelter: dict = {}
             for *_, nye in medlemmer:
                 _flett_felter(kandidatfelter, nye)
@@ -473,7 +472,17 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
             # plassering nederst i rangeringen. Kandidaten er dermed
             # vurdert som om søknaden var tom, i stillhet, i stedet for
             # at uttrekket meldes som det som feilet.
-            if not tekst.strip():
+            #
+            # MÅLT UTEN Å BYGGE TEKSTEN (Codex P2). Sjekken sto på en
+            # skjøtet kopi som ikke ble brukt til noe annet: parseren
+            # slipper gjennom inntil 2 GB utpakket, `dokumenter` og
+            # medlemsstrengene blir stående, og `blind_dokumenter` lager
+            # sin EGEN skjøtede kopi rett etterpå. Den ene ekstra
+            # kandidatstore allokeringen kunne ta livet av arbeideren for
+            # bunter som før gikk inn — før noe modellkall. `any` leser
+            # dokument for dokument og stanser på det første som har
+            # innhold.
+            if not any(d.strip() for d in dokumenter):
                 raise Kjoringsfeil("tekstuttrekk_feilet", fremdrift)
             blinding.evalueringsinput_dokumenter(
                 dokumenter, kandidatfelter,

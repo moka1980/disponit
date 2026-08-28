@@ -4266,6 +4266,117 @@ def test_verdi_krysser_felles_gjennom_kjor_bunt(tmp_path):
         f" i evalueringsløkka, ikke i klargjøringen: {modell.sett}")
 
 
+def test_samme_sitat_lenger_ute_i_teksten_flyttes_ikke_felles():
+    """Klienten setter offsetene med `find` — første forekomst (Codex P2).
+
+    `modell.py` ber ikke modellen om posisjoner; den finner dem selv med
+    `tekst.find(sitat)`. Faller den første forekomsten tilfeldig over
+    skjøten mens NØYAKTIG samme utdrag står helt inne i et senere
+    dokument, felte porten et funn som har gyldig belegg.
+
+    Vi flytter referansen i stedet for å forkaste funnet. Det er ikke å
+    gjette: `find` var alt bare «første forekomst», så en annen forekomst
+    av samme streng er minst like tro mot det modellen sa — og i
+    motsetning til den forkastede peker denne på et faktisk
+    søknadsdokument. Porten måler at offsetene FLYTTET seg dit, ikke bare
+    at kallet ikke hevet.
+
+    MUTASJONEN SOM DREPER DENNE: la `_forste_innenfor` returnere `None`
+    alltid, eller behold `raise` uten flyttingen.
+    """
+    dokumenter = ["prefix", "suffix", "prefix" + blinding.SKJOT + "suffix"]
+    tekst = blinding.SKJOT.join(dokumenter)
+    grenser = blinding.dokumentgrenser(dokumenter)
+    sitat = "prefix" + blinding.SKJOT + "suffix"
+    # Slik klienten gjør det: første forekomst, som her krysser skjøten.
+    start = tekst.find(sitat)
+    assert not any(a <= start and start + len(sitat) <= b
+                   for a, b in grenser), \
+        "fikstur uten kryss — testen måler ikke det den tror"
+    funn = evaluering.valider_funn(
+        {"kategori": "uklar_tidslinje",
+         "kilde": {"start": start, "slutt": start + len(sitat),
+                   "sitat": sitat}},
+        tekst, grenser)
+    ny_start, ny_slutt = funn["kilde"]["start"], funn["kilde"]["slutt"]
+    assert (ny_start, ny_slutt) != (start, start + len(sitat)), \
+        "referansen ble stående på den kryssende forekomsten"
+    assert any(a <= ny_start and ny_slutt <= b for a, b in grenser), \
+        f"den flyttede referansen krysser fortsatt en grense: {funn}"
+    assert tekst[ny_start:ny_slutt] == sitat, \
+        "den flyttede referansen peker ikke på sitatet"
+
+    # OG NÅR DET IKKE FINNES NOEN GYLDIG FOREKOMST, felles funnet som før
+    # — flyttingen er en redning, ikke en amnesti.
+    bare_kryss = ["prefix", "suffix"]
+    tekst2 = blinding.SKJOT.join(bare_kryss)
+    with pytest.raises(evaluering.Evalueringsfeil) as ei:
+        evaluering.valider_funn(
+            {"kategori": "uklar_tidslinje",
+             "kilde": {"start": 0, "slutt": len(tekst2), "sitat": tekst2}},
+            tekst2, blinding.dokumentgrenser(bare_kryss))
+    assert ei.value.args[0] == "sitat_krysser_dokumentgrense"
+
+
+def test_en_verdi_med_skjot_INNE_i_ett_dokument_er_lovlig():
+    """Grensen måler treffets plassering, ikke verdiens tegn (Codex P2).
+
+    En adresse som «Gate 1\n\n0123 Oslo» inneholder skjøten, men står
+    helt inne i sitt eget dokument. En port som forbød separatoren i
+    deklarerte verdier ville felt den — og den samme regresjonen traff
+    ett-dokuments-veien, der det ikke finnes noen skjøt å krysse i det
+    hele tatt.
+
+    Porten er også bisect-oppslagets korrekthetsprøve: treffet ligger i
+    det SISTE dokumentet, altså ikke det `bisect` ville landet på om
+    indeksen var av med én.
+
+    MUTASJONEN SOM DREPER DENNE: `if SKJOT in verdi: raise`, eller
+    `bisect_right(...)` uten `- 1`.
+    """
+    adresse = "Gate 1" + blinding.SKJOT + "0123 Oslo"
+    dokumenter = ["Søknad fra Kari.", "Vitnemål.", f"Bor i {adresse}."]
+    blindede, avmaskering = blinding.blind_dokumenter(
+        dokumenter, {"adresse": [adresse]})
+    assert adresse not in blinding.SKJOT.join(blindede), \
+        "adressen med skjøt i seg ble ikke maskert"
+    assert adresse in avmaskering.values(), \
+        "avmaskeringen mistet den maskerte adressen"
+    # Og ett dokument alene: ingen skjøt å krysse, uansett verdi.
+    en, _ = blinding.blind_dokumenter([f"Bor i {adresse}."],
+                                      {"adresse": [adresse]})
+    assert adresse not in en[0]
+
+
+def test_grenseoppslaget_skalerer_med_dokumentantallet():
+    """Buntgaten tillater 20 000 dokumenter — formen må tåle det.
+
+    Uten forhåndsfilteret og bisect leste sjekken `grenser` fra
+    begynnelsen for HVERT treff. Målt på maskinen porten kjører på:
+    `['a'] * 20_000` med den vanlige verdien «a» tok 15,4 sekunder for ÉN
+    verdi. Buntgaten tillater opptil seksti deklarerte verdier per
+    kandidat, altså et kvarter før modellen i det hele tatt kalles — og
+    dyrest på den ærlige veien, der ingen verdi krysser noe.
+
+    Den nye formen bruker 0,034 s på det samme. Budsjettet er to
+    sekunder: seksti ganger over den nye målingen, sju ganger under den
+    gamle.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `if SKJOT not in verdi: continue`,
+    eller bytt bisect-oppslaget tilbake til `any(... for ... in grenser)`.
+    """
+    import time
+
+    dokumenter = ["a"] * 20_000
+    start = time.perf_counter()
+    blinding.blind_dokumenter(dokumenter, {"navn": ["a"]})
+    brukt = time.perf_counter() - start
+    assert brukt < 2.0, (
+        f"20 000 dokumenter tok {brukt:.1f} s i grensesjekken — formen er"
+        " kvadratisk i dokumentantallet igjen, og en lovlig bunt kan da"
+        " stanse arbeideren før noe modellkall")
+
+
 def test_grensene_regnes_av_den_samme_skjoten():
     """Ett sted for skjøten, ellers peker grensene feil.
 

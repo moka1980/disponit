@@ -132,11 +132,46 @@ def valider_funn(funn: dict, soknadstekst: str,
     # krysse. Den beholdes fordi `blind`/`evalueringsinput` fortsatt har
     # enkeltdokument-formen, og fordi et kall UTEN grenser da måler
     # nøyaktig det samme som før — ikke mindre.
+    #
+    # ET SITAT KAN STÅ FLERE STEDER (Codex P2). Klienten i `modell.py`
+    # setter offsetene med `tekst.find(sitat)` — altså FØRSTE forekomst,
+    # ikke en posisjon modellen selv oppga. Faller den tilfeldig over
+    # skjøten mens det samme utdraget står helt inne i et senere
+    # dokument, felte porten et funn som HAR gyldig belegg:
+    # `['prefix', 'suffix', 'prefix\n\nsuffix']` er nok.
+    #
+    # Vi flytter derfor referansen til den første forekomsten som ligger
+    # inne i ett dokument, i stedet for å avvise funnet. Det er ikke å
+    # gjette: `find` var alt bare «første forekomst», så en annen
+    # forekomst av NØYAKTIG samme streng er minst like tro mot det
+    # modellen sa — og i motsetning til den forkastede peker denne på et
+    # faktisk søknadsdokument. Finnes ingen slik forekomst, står sitatet
+    # ingen steder som ett dokument, og funnet felles som før.
     if grenser is not None and not any(
             a <= start and slutt <= b for a, b in grenser):
-        raise Evalueringsfeil("sitat_krysser_dokumentgrense")
+        flyttet = _forste_innenfor(soknadstekst, sitat, grenser)
+        if flyttet is None:
+            raise Evalueringsfeil("sitat_krysser_dokumentgrense")
+        start, slutt = flyttet
     return {"kategori": kategori,
             "kilde": {"start": start, "slutt": slutt, "sitat": sitat}}
+
+
+def _forste_innenfor(tekst: str, sitat: str,
+                     grenser: list[tuple[int, int]]
+                     ) -> tuple[int, int] | None:
+    """Første forekomst av `sitat` som ligger helt inne i ett dokument.
+
+    Søket går per DOKUMENT, ikke over hele teksten med en etterfølgende
+    grensesjekk: da er treffet innenfor per konstruksjon, og kostnaden
+    er én gjennomlesning av teksten uansett hvor mange dokumenter den
+    har. Grensene er sortert, så den første treffer først.
+    """
+    for a, b in grenser:
+        i = tekst.find(sitat, a, b)
+        if i != -1:
+            return i, i + len(sitat)
+    return None
 
 
 def _krev_helt_svar(svar: object, vekter: dict[str, int]) -> dict:
