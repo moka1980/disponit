@@ -64,9 +64,17 @@ ARKIV_DELVIS="$ARKIV.delvis"
 # er tom til engangsbasen finnes, så oppryddingen dekker begge fasene uten
 # å kalle `dropdb` på et navn som aldri ble opprettet.
 VERIF=""
+# FINALISERINGEN ER TO `mv`, OG DET ER ET VINDU. Dør prosessen mellom dem
+# (SIGTERM fra opp.sh steg 5, OOM, strømbrudd), står den ene halvdelen igjen
+# med sitt ENDELIGE navn mens trapen rydder den andres arbeidsnavn — en dump
+# uten arkiv er nøyaktig #191-hullet, bare flyttet inn i backupkatalogen.
+# `PAR_KLAR` er tomt til BEGGE navnene er satt, og oppryddingen tar da også
+# de endelige navnene: enten finnes hele paret, eller ingenting.
+PAR_KLAR=""
 LISTE=$(mktemp)
 opprydd() {
   rm -f "$DELVIS" "$ARKIV_DELVIS" "$LISTE" "$LISTE.sett" "$LISTE.krav"
+  [ -n "$PAR_KLAR" ] || rm -f "$FIL" "$ARKIV"
   [ -z "$VERIF" ] || sudo -u postgres dropdb --if-exists "$VERIF"
 }
 trap opprydd EXIT
@@ -192,8 +200,17 @@ BUNTER=$(wc -l < "$LISTE.krav")
 # backupnavnene sine, og de får dem SAMMEN: paret er gjenopprettingsenheten,
 # og en halv enhet i katalogen ville vært den samme løgnen som en avkortet
 # dump med endelig navn.
-mv "$DELVIS" "$FIL"
+#
+# ARKIVET FØRST, DUMPEN SIST. Rekkefølgen er utledet av hva et SIGKILL i
+# vinduet etterlater: dumpen er det retention, globben og operatøren leter
+# etter, så en dump med endelig navn UTEN arkiv ser ut som dagens backup og
+# lyver. Et arkiv uten dump ser ut som det er — en rest ingen forveksler med
+# en gjenopprettingsenhet. `PAR_KLAR` settes SIST, etter begge navnene, så
+# trapen over rydder begge halvdelene så lenge finaliseringen ikke kom helt
+# i mål.
 mv "$ARKIV_DELVIS" "$ARKIV"
+mv "$DELVIS" "$FIL"
+PAR_KLAR=1
 
 # Retention: 30 dager, og slettingen TELLES — en glob som ikke treffer
 # noe ser ellers ut som en som ikke hadde noe å slette.

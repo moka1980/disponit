@@ -1479,6 +1479,60 @@ def test_backupen_arkiverer_inndatalageret_etter_dumpen():
         "backupen på en foreldreløs fil som ikke er noen feil"
 
 
+def test_backupen_par_finaliseres_atomisk_eller_ryddes():
+    """Cursor P1: finaliseringen er to `mv`, og mellom dem lå #191 igjen.
+
+    Alle portene har svart, og paret får navnene sine med `mv "$DELVIS"
+    "$FIL"` og `mv "$ARKIV_DELVIS" "$ARKIV"`. Dør prosessen MELLOM dem —
+    SIGTERM fra opp.sh steg 5, OOM, strømbrudd — står den ene halvdelen med
+    sitt ENDELIGE navn mens `opprydd` sletter den andres arbeidsnavn og lar
+    den endelige stå. Resultatet er et halvt par i backupkatalogen: nøyaktig
+    gjenopprettingshullet #191 lukker, bare flyttet ett steg ned i skriptet.
+
+    PORTEN ER TODELT, fordi vinduet har to utganger:
+
+    1. `PAR_KLAR` er tomt til BEGGE navnene er satt, og `opprydd` tar da også
+       `$FIL`/`$ARKIV` — trapen etterlater aldri en halv enhet.
+    2. ARKIVET FINALISERES FØRST. Et SIGKILL rekker ingen trap, og da avgjør
+       rekkefølgen hva som blir liggende: dumpen er det retention, globben og
+       operatøren leter etter, så en dump uten arkiv LYVER om at dagen er
+       dekket. Et arkiv uten dump er en rest ingen forveksler med en backup.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `PAR_KLAR`-grenen fra `opprydd` (da
+    etterlater trapen `$FIL` alene), eller sett `PAR_KLAR=1` før den siste
+    `mv` (da rydder trapen ikke vinduet den finnes for), eller snu de to
+    `mv`-ene tilbake.
+    """
+    skript = (ROT / "deploy/staging/backup-db.sh").read_text(encoding="utf-8")
+    linjer = [ln.strip() for ln in skript.splitlines()
+              if ln.strip() and not ln.lstrip().startswith("#")]
+
+    def indeks(bit):
+        for i, ln in enumerate(linjer):
+            if bit in ln:
+                return i
+        return -1
+
+    i_init = indeks('PAR_KLAR=""')
+    i_trap = indeks("trap opprydd EXIT")
+    i_mv_arkiv = indeks('mv "$ARKIV_DELVIS" "$ARKIV"')
+    i_mv_dump = indeks('mv "$DELVIS" "$FIL"')
+    i_klar = indeks("PAR_KLAR=1")
+
+    assert 0 <= i_init < i_trap, \
+        "PAR_KLAR er ikke tom FØR trapen installeres — en tidlig exit ville " \
+        "lest en variabel som ikke finnes, og med `set -u` dør trapen selv"
+    assert '[ -n "$PAR_KLAR" ] || rm -f "$FIL" "$ARKIV"' in skript, \
+        "opprydd rører ikke de ENDELIGE navnene — et avbrudd mellom de to " \
+        "`mv`-ene etterlater et halvt par i backupkatalogen"
+    assert 0 <= i_mv_arkiv < i_mv_dump, \
+        "dumpen finaliseres først — et SIGKILL i vinduet etterlater da en " \
+        "dump uten arkiv, som ser ut som dagens backup og ikke er det"
+    assert i_klar > i_mv_dump > 0, \
+        "PAR_KLAR settes før begge navnene er på plass — da er vinduet " \
+        "udekket nettopp der det finnes"
+
+
 def test_backupen_sletter_dumpen_og_arkivet_som_ett_par():
     """Paret er gjenopprettingsenheten — også når det dør.
 
