@@ -252,6 +252,7 @@ jobs:
             3. Verdikt uten reelle funn (f.eks. «Didn't find any major
                issues») eller godkjenning: da skal PR-en MERGES, og det er
                tre ting som må stemme — i denne rekkefølgen.
+               ALLE ULØSTE TRÅDER FØRST (#211): før du merger, skann `reviewThreads { isResolved }` på HELE PR-en via GraphQL — ikke bare den utløsende reviewens. Scopingen i steg 1 avgjør hvilke funn som er DETTE verdiktet; den avgjør ALDRI hvilke som må være lukket før merge. Finnes én `isResolved == false`, merger du ikke: fiks den eller parkér. Et rent issue_comment-verdikt kan ellers trigge merge-løypa mens en eldre inline-P1 fra en bot-review står åpen — og den ble aldri lest, fordi den lå utenfor scopet.
                KANALVAKT (#211): merge-veien under gjelder KUN et `issue_comment`-verdikt eller eierens `approved` — ALDRI når utløseren er `chatgpt-codex-connector[bot]` på review-kanalen. Der er utfallet parkering, uansett hvordan resten av denne blokken leser.
 
                FØRST, VED INNGANG TIL STEG 3 — BASELINE: noter SHA-en
@@ -457,7 +458,8 @@ jobs:
                stopp og eskaler rotårsaken til eier; K3 står produktet
                ferdig mens funnene treffer PR-intern portkode → foreslå
                deling; K4/SP-13 aldri hand-parse fremmed grammatikk.
-            2. KANALVAKT (#211): merge-veien under gjelder KUN et `issue_comment`-verdikt eller eierens `approved` — ALDRI når utløseren er `chatgpt-codex-connector[bot]` på review-kanalen. Der er utfallet parkering, uansett hvordan resten av denne blokken leser.
+            2. ALLE ULØSTE TRÅDER FØRST (#211): før du merger, skann `reviewThreads { isResolved }` på HELE PR-en via GraphQL — ikke bare den utløsende reviewens. Scopingen i steg 1 avgjør hvilke funn som er DETTE verdiktet; den avgjør ALDRI hvilke som må være lukket før merge. Finnes én `isResolved == false`, merger du ikke: fiks den eller parkér. Et rent issue_comment-verdikt kan ellers trigge merge-løypa mens en eldre inline-P1 fra en bot-review står åpen — og den ble aldri lest, fordi den lå utenfor scopet.
+               KANALVAKT (#211): merge-veien under gjelder KUN et `issue_comment`-verdikt eller eierens `approved` — ALDRI når utløseren er `chatgpt-codex-connector[bot]` på review-kanalen. Der er utfallet parkering, uansett hvordan resten av denne blokken leser.
                Er alle funn adressert: CURSOR-PORT (RUTINER §10) — kommenter
                `@cursor review` og STOPP — passets fullføring vekker
                cursor-pass-fulgt via workflow_run-broen (§10.4), som
@@ -594,7 +596,8 @@ jobs:
                med nøyaktig hvilke funn som gjenstår og hvor arbeidet står,
                så sløyfa kan startes igjen med en `@claude`-kommentar. En
                stille PR er det eneste uakseptable utfallet.
-            KANALVAKT (#211): merge-veien under gjelder KUN et `issue_comment`-verdikt eller eierens `approved` — ALDRI når utløseren er `chatgpt-codex-connector[bot]` på review-kanalen. Der er utfallet parkering, uansett hvordan resten av denne blokken leser.
+            ALLE ULØSTE TRÅDER FØRST (#211): før du merger, skann `reviewThreads { isResolved }` på HELE PR-en via GraphQL — ikke bare den utløsende reviewens. Scopingen i steg 1 avgjør hvilke funn som er DETTE verdiktet; den avgjør ALDRI hvilke som må være lukket før merge. Finnes én `isResolved == false`, merger du ikke: fiks den eller parkér. Et rent issue_comment-verdikt kan ellers trigge merge-løypa mens en eldre inline-P1 fra en bot-review står åpen — og den ble aldri lest, fordi den lå utenfor scopet.
+               KANALVAKT (#211): merge-veien under gjelder KUN et `issue_comment`-verdikt eller eierens `approved` — ALDRI når utløseren er `chatgpt-codex-connector[bot]` på review-kanalen. Der er utfallet parkering, uansett hvordan resten av denne blokken leser.
             Merging følger samme rekkefølge som før — og `DIRTY`
             (ekte konflikt) parkeres ALLTID: løs den ALDRI selv,
             kommenter til eier og STOPP; en konflikt-push betyr verdikt

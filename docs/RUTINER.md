@@ -266,6 +266,18 @@ aldri et vindu der dokumentet lover en port maskinen mangler
    koster en unødig runde; et åpent behandlet som lukket merges forbi —
    og defaulten følger den dyreste feilen.
 
+   **Bot-utløst review er ALDRI en merge-vei.** Kanalen bærer per
+   måling alltid funn, så «null funn lest» der er ikke en godkjenning
+   — det er en lesning som feilet. Utfallet er fiks eller parkering.
+   Et rent verdikt kommer som issue_comment, og eierens `approved` er
+   den eneste review-veien til merge.
+
+   Og merge-porten måler ALLE uløste tråder på PR-en, ikke bare det
+   utløsende verdiktets: scopingen over gjelder hvilke funn som er
+   DETTE verdiktet, aldri hvilke som må være lukket før merge. En
+   eldre, ULUKKET tråd stopper mergen uansett hvilken kanal som vekket
+   sløyfa.
+
 2. **Mandater bor i KOMMENTARER, og omtalen er `@claude`.** En ordre i en
    issue-KROPP trigger ingen kjøring (samme utløser-klasse som §10s
    Bugbot-notat). Ethvert nattmandat legges som egen kommentar — og

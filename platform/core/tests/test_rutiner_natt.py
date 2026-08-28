@@ -729,6 +729,49 @@ def test_steg0_skanner_inline_paa_review_utlost():
             " er — det defineres først i steg 1")
 
 
+def test_kanalvakten_er_speilet_begge_veier():
+    """Cursor P2-1 runde 4 på #230: #193-klassen — flatene glir fra
+    hverandre én markør av gangen.
+
+    `claude.yml` håndhever nå at en bot-utløst review aldri er merge-vei,
+    men RUTINER §11.1 dokumenterte bare kanalene, inline-lesningen og
+    scopingen — ikke forbudet. Speilingen er ikke pynt: en regel som bare
+    finnes i workflowen kan fjernes i en oppryddingsrunde uten at noe
+    dokument motsier den.
+    """
+    for i, forsok in enumerate(_fiksforsok(), 1):
+        assert "BOT-REVIEW MERGER ALDRI" in " ".join(forsok.split()), (
+            f"forsøk {i} mangler merge-forbudet")
+    assert "Bot-utløst review er ALDRI en merge-vei" in RUTINER, (
+        "claude.yml forbyr merge på botens review-kanal, men RUTINER"
+        " §11.1 sier det ikke")
+
+
+def test_merge_steg3_krever_at_alle_trader_er_lost():
+    """Cursor P2-2 runde 4 på #230: scopingen gjaldt feil beslutning.
+
+    Steg 1 sier korrekt at et eldre, ULUKKET inline-funn aldri merges
+    forbi. Men merge-løypa i steg 3 hadde ingen port på det: et rent
+    issue_comment-verdikt kunne trigge den mens en eldre inline-P1 fra en
+    bot-review sto åpen — og den ble aldri lest, fordi den lå utenfor
+    `pull_request_review_id`-scopet.
+
+    Skillet porten holder: scopingen avgjør hvilke funn som er DETTE
+    verdiktet; den avgjør aldri hvilke som må være lukket før merge.
+
+    MUTASJONEN SOM DREPER DENNE: fjern trådskanningen fra ett forsøk, og
+    en gammel åpen P1 merges forbi i nettopp den runden.
+    """
+    for i, forsok in enumerate(_fiksforsok(), 1):
+        norm = " ".join(forsok.split())
+        assert "ALLE ULØSTE TRÅDER FØRST" in norm, (
+            f"forsøk {i} merger uten å måle uløste tråder")
+        assert "isResolved == false" in norm, (
+            f"forsøk {i} sier ikke hva som stopper mergen")
+    assert "merge-porten måler ALLE uløste tråder" in RUTINER, (
+        "porten står i workflowen, men ikke i regelen")
+
+
 def test_steg_0_verdiktporten_i_alle_tre_forsokene():
     """Cursor P2 runde 14 (#198): kvote-/statusmeldinger som slipper
     forbi jobb-if-ens prefiksfilter må felles av steg 0 i HVERT forsøk —
