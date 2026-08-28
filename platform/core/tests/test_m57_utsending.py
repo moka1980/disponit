@@ -2766,6 +2766,50 @@ def test_revisjonshendelsen_er_udodelig(migrator):
 
 
 @pg
+def test_revisjonshendelse_ingen_direkte_dml_for_disponit(migrator):
+    """REVOKE-beltet er en PORT, ikke dokumentasjon (Cursor P2, runde 1).
+
+    Migrasjonen tar ALL tabellrett fra runtime og gir bare `EXECUTE` på de
+    to funksjonene — men ingen test målte det, og en umålt REVOKE er en
+    kommentar. Poenget er at det ikke FINNES en direkte vei til en UPDATE
+    triggeren må stoppe: rettigheten er selen, `avvis_endring` er beltet,
+    og denne testen måler selen.
+    """
+    # Rettighetskontrollen skjer på TABELLEN, før noen rad slås opp — derfor
+    # trenger ingen av avvisningene en seedet rad, og ingen av dem kan
+    # forveksles med «traff null rader».
+    uuid_uten_rad = "00000000-0000-4000-8000-000000000000"
+    rt = _rt()
+    try:
+        for sql, args in (
+            ("INSERT INTO revisjonshendelse (tenant, handling, aktor,"
+             " begrunnelse) VALUES (%s, 'm57.blinding_avskrudd', 'drift',"
+             " 'direkte innskriving utenom funksjonen')", (TENANT,)),
+            ("UPDATE revisjonshendelse SET aktor = 'noen andre'"
+             " WHERE hendelse_id = %s", (uuid_uten_rad,)),
+            ("DELETE FROM revisjonshendelse WHERE hendelse_id = %s",
+             (uuid_uten_rad,)),
+        ):
+            _sett_kontekst(rt, TENANT)
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                rt.execute(sql, args)
+            # Et avvist DML-forsøk aborterer transaksjonen; uten
+            # tilbakerullingen ville de neste casene feilet på
+            # InFailedSqlTransaction og målt ingenting.
+            rt.rollback()
+        # ... og den LOVLIGE veien skal fortsatt virke. Uten dette leddet
+        # ville en fullstendig ødelagt tilkobling bestått testen.
+        _sett_kontekst(rt, TENANT)
+        rt.execute(
+            "SELECT skriv_revisjonshendelse(%s, 'm57.blinding_avskrudd',"
+            " %s, %s)", (TENANT, "drift", "lovlig vei, gjennom funksjonen"))
+        assert rt.fetchone()[0], "funksjonsveien ga ingen hendelses-ID"
+    finally:
+        rt.rollback()
+        rt.close()
+
+
+@pg
 def test_handlingen_er_et_lukket_sett(migrator):
     """En ny slags revisjonshendelse er en kontraktsendring.
 
