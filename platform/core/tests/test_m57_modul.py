@@ -2525,6 +2525,59 @@ def test_manglende_felter_felles_for_stroemmen(tmp_path, monkeypatch):
     assert strommet, "strømmen skulle gått når porten ikke gjelder"
 
 
+def test_revisjonshendelsen_slaas_opp_en_gang_per_bunt(tmp_path):
+    """Codex P2 (runde 2 på #247): én autorisasjon, ett oppslag.
+
+    `krev_avskruingshendelse` går i BASEN, og porten står på to
+    kallesteder per kandidat — foran strømmen og inne i
+    `evaluer_kandidat`. Uten memoiseringen ble én uforanderlig
+    revisjonshendelse til 2 × N spørringer: 10 000 på den støttede
+    buntgrensen (5 000 kandidater).
+
+    Prisen er ikke det verste. REKKEFØLGEN er: en forbigående
+    oppslagsfeil i ANDRE løkke feller kjøringen først etter at tidligere
+    kandidater alt har nådd modellen — samme halvveis-eksponering som de
+    to testene rundt denne finnes for å hindre.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `if blinding_av`-blokken i
+    `kjor_bunt` som slår opp hendelsen én gang. Kjøringen blir fortsatt
+    grønn og artefaktene de samme — bare telleren skiller.
+    """
+    import json as _json
+
+    from modules.m57_ats import blinding, kjoring
+
+    manifest = _json.dumps({"soknader": [
+        {"kandidat_id": "k1", "filer": ["k1/cv.html"]},
+        {"kandidat_id": "k2", "filer": ["k2/cv.html"]}]})
+    arkiv = _bunt(tmp_path,
+                  [("k1/cv.html", b"<p>Kari Testdal kan drift</p>"),
+                   ("k2/cv.html", b"<p>Ola Testdal kan drift</p>")],
+                  manifest=manifest)
+
+    hid = "7f1c1f7e-0000-4000-8000-000000000002"
+    oppslag: list[str] = []
+
+    def _teller(hendelse_id):
+        oppslag.append(hendelse_id)
+        return {"handling": blinding.AVSKRUINGSHANDLING,
+                "aktor": "drift", "ts": "2026-08-26T20:00:00+00:00"}
+
+    modell = _Modell()
+    ut = kjoring.kjor_bunt(
+        arkiv, modell, vekter={"drift": 3},
+        tekst_for=lambda m, d: d.decode("utf-8"),
+        biasmaalinger=_MAALINGER, antall_soknader=2, blinding_av=True,
+        avskruing_hendelse_id=hid, hendelseoppslag=_teller)
+
+    assert set(ut["artefakter"]) == {"k1", "k2"}, \
+        "riggen kjørte ikke gjennom — da måler ikke telleren noe"
+    assert oppslag == [hid], (
+        "revisjonshendelsen ble slått opp"
+        f" {len(oppslag)} ganger for to kandidater — én bunt er én"
+        " autorisasjon, og oppslaget går i basen")
+
+
 def test_vakuos_deklarasjon_felles_for_forste_modellkall(tmp_path):
     """Cursor P2: samme REKKEFØLGEPRIS som `blinding_uten_felter`, bare
     ett hakk senere i veien.
