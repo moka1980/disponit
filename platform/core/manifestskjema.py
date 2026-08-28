@@ -50,6 +50,23 @@ KRAVGRENSER: dict[str, dict] = {
         "maks_promoterte_ved_feil": 0,
         "min_evidensfrist_reapet": 1,
         "min_evidensfrist_sak": 1,
+        # PUNKTBINDING (#166): hvilke MÅLINGER som kan bevise hvert
+        # punkt. Et punkt som ikke står her er UFLIPPBART.
+        "punktbinding": {
+            "feilinjisering_til_unntakskø": (
+                "maalt.evidensfrist_reapet",
+                "maalt.feilinjisering_feilet_med_kvittering",
+                "maalt.feilinjisering_promoterte_artefakter",
+            ),
+            "tester_gronne_pa_staging": (
+                "maalt.avvik_mot_fasit",
+                "maalt.kjoringer_rent_innen_frist",
+            ),
+            "ytelse_bestatt": (
+                "maalt.kjoringer_krav",
+                "maalt.kjoringer_rent_innen_frist",
+            ),
+        },
     },
     "rollback-m56-v1": {
         # 049-flippedrillen: den drillede releasen claimer INGENTING
@@ -76,6 +93,19 @@ KRAVGRENSER: dict[str, dict] = {
         # En grense som er videre enn den den håndhever, er ingen grense;
         # den er et løfte som brytes ett steg senere.
         "rene_utfall": ("utfort", "feilet"),
+        # PUNKTBINDING (#166): hvilke MÅLINGER som kan bevise hvert
+        # punkt. Et punkt som ikke står her er UFLIPPBART.
+        "punktbinding": {
+            "rollback_testet": (
+                "maalt.falske_verdikter",
+                "maalt.inflight_har_signert_kvittering",
+                "maalt.kandidat_claimet_oppdrag",
+                "maalt.nye_oppdrag_claimet_av_drillet_release",
+                "maalt.overtakelse_s",
+                "maalt.rullback_claimet_oppdrag",
+                "maalt.rullback_har_signert_kvittering",
+            ),
+        },
     },
     "perf-m01-v1": {
         "min_antall": 6000,
@@ -91,6 +121,17 @@ KRAVGRENSER: dict[str, dict] = {
         # rom for en kjøring på halv fart.
         "rate_slingringsmonn": 0.01,
         "varighet_slingringsmonn": 0.05,
+        # PUNKTBINDING (#166): hvilke MÅLINGER som kan bevise hvert
+        # punkt. Et punkt som ikke står her er UFLIPPBART.
+        "punktbinding": {
+            "ytelse_bestatt": (
+                "etterkontroll.auditerte_svar",
+                "etterkontroll.en_til_en",
+                "etterkontroll.revisjonsrader",
+                "maalt.feil",
+                "maalt.svartid_ms.p95",
+            ),
+        },
     },
     # --- PR-006 -----------------------------------------------------------
     # Begge grensene defineres FØR arbeidet som skal måles (brief §5).
@@ -116,6 +157,22 @@ KRAVGRENSER: dict[str, dict] = {
         # Uten den er gjenopptaksveien udokumentert — og en gjenopptaksvei
         # som aldri er kjørt er en hypotese.
         "min_lease_tap_re_claim": 1,
+        # PUNKTBINDING (#166): hvilke MÅLINGER som kan bevise hvert
+        # punkt. Et punkt som ikke står her er UFLIPPBART.
+        "punktbinding": {
+            "feilinjisering_til_unntakskø": (
+                "etterkontroll.historikk_komplett",
+                "etterkontroll.klartekst_payload_funnet",
+                "maalt.lease_tap_re_claim",
+                "maalt.lost_andel",
+                "maalt.manuell_andel",
+                "maalt.terminal_andel",
+            ),
+            "ytelse_bestatt": (
+                "maalt.p95_api_under_last_ms",
+                "maalt.varighet_sek",
+            ),
+        },
     },
     "rollback-m01-v1": {
         "maks_deaktivering_s": 5.0,
@@ -123,6 +180,17 @@ KRAVGRENSER: dict[str, dict] = {
         "maks_tapte_loggposter": 0,
         "krev_avvist_andel": 1.0,
         "maks_halvferdige": 0,
+        # PUNKTBINDING (#166): hvilke MÅLINGER som kan bevise hvert
+        # punkt. Et punkt som ikke står her er UFLIPPBART.
+        "punktbinding": {
+            "rollback_testet": (
+                "etterkontroll.radtelling_etter.revisjonslogg",
+                "etterkontroll.radtelling_for.revisjonslogg",
+                "maalt.deaktivering_effektiv_s",
+                "maalt.paagaaende_requests_korrekt_avvist",
+                "maalt.tapte_loggposter",
+            ),
+        },
     },
     # --- PR-012 (menneskelig unntaksbehandling) -------------------------
     # 12 saker over 4 kategorier (spec §10 + v2-delta): avvis-vei terminal ·
@@ -160,6 +228,21 @@ KRAVGRENSER: dict[str, dict] = {
         # Ingen klartekst-begrunnelse i logg eller DB-dump — 0, ikke «lite».
         "maks_klartekst_treff": 0,
         "maks_varighet_sek": 300.0,
+        # PUNKTBINDING (#166): hvilke MÅLINGER som kan bevise hvert
+        # punkt. Et punkt som ikke står her er UFLIPPBART.
+        "punktbinding": {
+            "menneskelig_behandling_bestatt": (
+                "maalt.avvis.terminal",
+                "maalt.fire_oyne.fullfort",
+                "maalt.godkjenn.ny_beslutning",
+                "maalt.handlinger_med_aktor",
+                "maalt.klartekst_treff",
+                "maalt.kvitteringsrace_falskt_avvist",
+                "maalt.kvitteringsrace_kvittering_brukt",
+                "maalt.samtidig_vinnere",
+                "maalt.sideeffekt.til_utforelse",
+            ),
+        },
     },
     # PR-013: policyadministrasjon. Fire kategori-veier beviser
     # fire-øyne-fullmaktsmodellen; de harde invariantene beviser V10 (runtime
@@ -184,6 +267,19 @@ KRAVGRENSER: dict[str, dict] = {
         # rundens (treff == totalt > 0).
         "krev_diff_binding_full": True,
         "maks_varighet_sek": 300.0,
+        # PUNKTBINDING (#166): hvilke MÅLINGER som kan bevise hvert
+        # punkt. Et punkt som ikke står her er UFLIPPBART.
+        "punktbinding": {
+            "policyadministrasjon_bestatt": (
+                "maalt.diff_binding_treff",
+                "maalt.forfatter_alene.stoppet",
+                "maalt.innsnevrer.aktivert",
+                "maalt.policyer_med_flere_aktive",
+                "maalt.rebasering.rebasert",
+                "maalt.runtime_skrivenekt",
+                "maalt.utvider.aktivert",
+            ),
+        },
     },
 }
 
@@ -203,6 +299,20 @@ KRAVGRENSER["wcag-kontroll-v2"] = {
     # §1.2: byte-likhet i begge ledd (SP-11). Negativ port: én byte
     # endret i ett av leddene → punktet rødt.
     "krev_datasett_sha_lik_innsjekket": True,
+    # PUNKTBINDING (#166): hvilke MÅLINGER som kan bevise hvert
+    # punkt. Et punkt som ikke står her er UFLIPPBART.
+    "punktbinding": {
+        "revisjonslogg_korrekt": (
+            "maalt.kjoringer_med_attestert_kvittering",
+            "maalt.kvittering_attest_avvik",
+            "maalt.revisjonsrad_avvik",
+            "maalt.revisjonsrader_mot_bestilt",
+        ),
+        "syntetisk_datasett_likt_lokalt": (
+            "maalt.avvik_mot_fasit",
+            "oppsett.datasett_sha256",
+        ),
+    },
 }
 
 # --- m02-aksept-arcen (klarsignal 6d1cf8ec…, §3) ----------------------
@@ -268,6 +378,16 @@ KRAVGRENSER["m02-suite-v1"] = {
     "maks_m2_feilet": 0,
     "maks_m2_hoppet": 0,
     "m2_andel_pakrevd": M02_SUITE_ANDEL,
+    # PUNKTBINDING (#166): hvilke MÅLINGER som kan bevise hvert
+    # punkt. Et punkt som ikke står her er UFLIPPBART.
+    "punktbinding": {
+        "tester_gronne_pa_staging": (
+            "maalt.m2_feilet",
+            "maalt.m2_tester",
+            "maalt.tester_feilet",
+            "maalt.tester_totalt",
+        ),
+    },
 }
 KRAVGRENSER["m02-fordeling-v1"] = {
     # Det syntetiske settet er REPRODUSERT, ikke historisk: basen på
@@ -284,6 +404,15 @@ KRAVGRENSER["m02-fordeling-v1"] = {
     # WCAG-datasettet). Uten den kunne staging drevet helt andre
     # hendelser til samme sum og likevel passert.
     "krev_sett_sha_lik_innsjekket": True,
+    # PUNKTBINDING (#166): hvilke MÅLINGER som kan bevise hvert
+    # punkt. Et punkt som ikke står her er UFLIPPBART.
+    "punktbinding": {
+        "syntetisk_datasett_likt_lokalt": (
+            "maalt.antall_stopp",
+            "maalt.antall_tillat",
+            "maalt.antall_unntak",
+        ),
+    },
 }
 
 #: M-57-klarsignalet §10, registrert FØR bygging (§0). Hver numeriske
@@ -342,6 +471,21 @@ KRAVGRENSER["m57-v1"] = {
     # hverandre, sier `test_ytelsesgrensen_er_klarsignalets_tall` ifra.
     "ytelse_min_soknader": 5000,
     "ytelse_maks_minutter": 240,
+    # PUNKTBINDING (#166): TOM MED VILJE, og det er det tilsiktede utfallet.
+    #
+    # Codex felte seks punkter på M-57 der notatet lovet en måling `m57-v1`
+    # ikke bærer — suitetotaler, datasett-digester, revisjonsmålinger,
+    # køelementer, flippedrillen. Manifestets notater sier dette ærlig i dag
+    # (#153s mellomtilstand), men ærlig prosa er ikke en port: uten binding
+    # kunne punktene flippes av en hvilken som helst sti som tilfeldigvis
+    # fantes i artefaktet.
+    #
+    # Tom binding gjør dem UFLIPPBARE til målingene finnes. M-57-aksepten
+    # skal uansett ikke kjøre før utførelsesarmen har gitt dem, så dette er
+    # §10s egen setning gjort mekanisk — ikke en blokkering vi må rundt.
+    #
+    # Hvert punkt som får sin måling, får sin linje her, pinnet før bygging.
+    "punktbinding": {},
 }
 
 #: KATALOGAKSENE (A-vedtaket på #152, K2): `status` og `driftstilstand`
@@ -2049,6 +2193,67 @@ def _slaa_opp(art: object, sti: str):
     return node, True
 
 
+def _punktbinding(krav_id: str, punkt: dict, navn: str) -> list[str]:
+    """Målingene må bevise NETTOPP dette punktet (#166, eiers valg A).
+
+    `_bevismaalinger_finnes` under måler at en påberopt sti FINNES i
+    artefaktet. Den sier ingenting om hva stien beviser — så et hvilket som
+    helst gyldig modulartefakt kunne flippe et hvilket som helst punkt, så
+    lenge det navnga en sti som tilfeldigvis fantes. Codex felte den seks
+    ganger på M-57 alene, hver gang som et nytt «funn», hver gang samme rot.
+
+    `KRAVGRENSER[krav_id]["punktbinding"]` navngir nå, PINNET FØR BYGGING
+    (§0-formen), hvilke målinger som kan bevise hvert punkt. Et punkt som
+    ikke står der er UFLIPPBART — og det er det tilsiktede utfallet, ikke en
+    bivirkning: «et punkt uten definert, målbar grense regnes som nei» (§10),
+    gjort mekanisk.
+
+    ARBEIDSDELINGEN ER UENDRET, BARE FLYTTET (RUTINER §2): at målingen
+    FINNES er maskinelt, at den er RELEVANT for modulen er reviewansvar.
+    Bindingen her er derfor unionen av det som lovlig beviser punktet i det
+    artefaktet — ikke ett sett per modul. Delt evidens er villet: `rollback-
+    m01-v1` beviser `rollback_testet` for M-1 gjennom deaktiveringstiden og
+    for M-2 gjennom tapte loggposter, i samme kjøring. Det maskinen nå
+    hindrer, er at et punkt bevises av en måling som ikke beviser DET.
+    """
+    grense = KRAVGRENSER.get(krav_id)
+    if grense is None:
+        return []                       # ukjent krav_id felles av _sjekk_grenser
+    # FRAVÆR ER IKKE FRITAK. Første utgave leste «ingen binding» som
+    # «ingenting å håndheve», og da slapp nettopp de grensene igjennom som
+    # ikke har navngitt noe — altså `m57-v1`, som er hele grunnen til at
+    # issuet finnes. En port som er blind der den mangler, er ingen port.
+    binding = grense.get("punktbinding") or {}
+    lovlige = binding.get(navn) if isinstance(binding, dict) else None
+    if not lovlige:
+        return [f"{navn}: `{krav_id}` navngir ingen målinger som beviser"
+                f" dette punktet — det er UFLIPPBART til bindingen finnes"
+                f" (#166). Et punkt uten målbar grense regnes som nei (§10)."]
+    # EN MALFORMET BINDING SLIPPER INGENTING GJENNOM (Codex, PR #234). Er
+    # `lovlige` en bar streng, blir `s not in lovlige` en delstrengtest: en
+    # binding skrevet `"maalt.teller"` i stedet for `("maalt.teller",)`
+    # ville da autorisert `maalt` — en KORTERE sti som beviser noe annet.
+    # Porten kan ikke stole på sin egen tabell uten å måle den: feil form
+    # er ikke en svakere binding, det er ingen binding.
+    if (isinstance(lovlige, (str, bytes))
+            or not isinstance(lovlige, (list, tuple))
+            or not all(isinstance(s, str) and s for s in lovlige)):
+        return [f"{navn}: `{krav_id}`s binding for dette punktet har feil"
+                f" form ({lovlige!r}) — den må være en liste eller tuple av"
+                f" ikke-tomme målestier. Punktet er UFLIPPBART til"
+                f" bindingen er skrevet riktig (#166)."]
+    oppgitt = punkt.get("bevismaalinger")
+    if not isinstance(oppgitt, list):
+        return []                       # formen felles av _bevismaalinger_finnes
+    utenfor = [s for s in oppgitt if s not in lovlige]
+    if utenfor:
+        return [f"{navn}: bevismaaling(er) {utenfor} står ikke i"
+                f" `{krav_id}`s binding for dette punktet — en sti som"
+                f" finnes i artefaktet er ikke det samme som en måling som"
+                f" beviser DETTE punktet. Lovlige: {sorted(lovlige)}"]
+    return []
+
+
 def _bevismaalinger_finnes(art: dict, punkt: dict, navn: str) -> list[str]:
     """Hver oppgitte måling må FINNES i artefaktet (Codex P1, PR #15).
 
@@ -2136,6 +2341,7 @@ def valider_artefakter(manifest: dict, rot: Path | None = None) -> list[str]:
         # konklusjon. Kjøres etter hashkontrollen, så stien slås opp i en
         # fil vi har bevist er den manifestet mener.
         feil += _bevismaalinger_finnes(data, p, navn)
+        feil += _punktbinding(krav_id, p, navn)
     return feil
 
 
