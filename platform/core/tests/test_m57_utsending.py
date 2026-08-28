@@ -2488,3 +2488,98 @@ def test_listen_starter_i_et_evalueringsoppdrag(migrator):
         rt.rollback()
     finally:
         rt.close()
+
+
+@pg
+def test_serielaasen_serialiserer_signering_mot_ny_versjon(migrator):
+    """#180 (Codex P1 runde 2 + Cursor P1 på #176): spissjekkens TOCTOU.
+
+    Signeringsveien leser «finnes det et barn med
+    `forrige_liste_id = liste_id`» og svarer 409 `liste_utdatert`. Sjekken
+    og `signer_utsendingsliste` var to steg i samme READ COMMITTED-
+    transaksjon, uten lås på serien. Committet en annen transaksjon en
+    barnversjon i mellomrommet, var utfallet:
+
+      * hash-ekkoet stemte fortsatt — forelderens `innhold_hash` er uendret
+      * `signer_utsendingsliste` verifiserer ikke spiss; den signerer
+        hvilken som helst `liste_id`
+      * `en_signert_versjon_per_serie` gir serien nøyaktig ÉN signatur-slot
+
+    Altså: feil innhold irreversibelt autorisert, og den faktiske spissen
+    permanent usignerbar.
+
+    Migrasjon 065 lar BEGGE veier ta samme advisory-lås på serien. Testen
+    måler serialiseringen direkte: A holder serielåsen (som endepunktet
+    tar før porten leser), og B skal da ikke komme gjennom
+    `opprett_utsendingsliste` før A er ferdig.
+
+    ADVISORY OG IKKE `FOR UPDATE` er ikke en stilsak: PostgreSQL krever
+    UPDATE-privilegium for enhver radlåsklausul, også `FOR SHARE`, og
+    runtime har kun SELECT på `utsendingsliste`. Radlåsen var ikke nåbar
+    fra signeringssiden i det hele tatt.
+
+    MUTASJONEN SOM DREPER DENNE: fjern advisory-låsen fra
+    `opprett_utsendingsliste` — da går B rett gjennom mens A holder sin.
+    """
+    import threading
+
+    oid, _ = _grunnlag(migrator)
+    liste = _liste(migrator, oid)
+    _sett_kontekst(migrator, TENANT)
+    serie, = migrator.execute(
+        "SELECT utkast_serie FROM utsendingsliste"
+        " WHERE tenant=%s AND liste_id=%s", (TENANT, liste[0])).fetchone()
+    migrator.rollback()
+
+    # BEGGE veier trenger EXECUTE på `opprett_utsendingsliste`, og den
+    # ligger hos runtime (migrer.py `M37_RETTIGHETER_API`), ikke hos
+    # varselsenderen `_sender()` bruker. Migrator med funksjonens egen
+    # eierrolle er testenes vanlige vei inn — samme som `_liste`.
+    from db.pg import koble
+
+    def _eier():
+        k = koble(MIGRATOR_DSN)
+        k.execute("SET ROLE disponit_m37_claimer")
+        return k
+
+    a = _eier()
+    b = _eier()
+    try:
+        # A tar serielåsen — nøyaktig samme uttrykk som `signer_endepunkt`
+        # kjører før spissporten leser.
+        _sett_kontekst(a, TENANT)
+        a.execute(
+            "SELECT pg_advisory_xact_lock("
+            "         hashtextextended('m57:serie:' || %s || ':'"
+            "                          || utkast_serie::text, 0))"
+            "  FROM utsendingsliste WHERE tenant=%s AND liste_id=%s",
+            (TENANT, TENANT, liste[0]))
+
+        resultat: dict = {}
+
+        def barneversjon():
+            try:
+                _sett_kontekst(b, TENANT)
+                resultat["id"] = b.execute(
+                    "SELECT opprett_utsendingsliste(%s,%s,%s,%s,'invitasjon',"
+                    " 'mal@1',%s,1)",
+                    (TENANT, serie, liste[0], oid, "b" * 64)).fetchone()[0]
+                b.commit()
+            except Exception as e:            # noqa: BLE001 — meldes videre
+                resultat["feil"] = f"{type(e).__name__}: {e}"
+
+        t = threading.Thread(target=barneversjon)
+        t.start()
+        t.join(timeout=2)
+        assert t.is_alive(), (
+            "B opprettet en barnversjon MENS A holdt serielåsen — da er"
+            " spissjekken og signaturen fortsatt to steg uten lås imellom,"
+            " og #180 står åpent")
+        a.commit()
+        t.join(timeout=10)
+        assert not t.is_alive(), "B kom aldri gjennom etter As commit"
+        assert resultat.get("id"), (
+            "barneversjonen ble aldri opprettet:"
+            f" {resultat.get('feil', 'ingen feil meldt')}")
+    finally:
+        a.close(); b.close()
