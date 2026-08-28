@@ -602,6 +602,34 @@ def test_dirty_grenen_loser_aldri_konflikten():
         assert "BRUKT OPP" in norm
 
 
+def test_211_inline_funn_leses_i_alle_tre_forsokene():
+    """Cursor P2-1/P2-4 på #230: #211-porten sto bare i forsøk 1.
+
+    Fortynningsklassen fra #198, gjentatt. Runde 1 fikk beskjeden om at
+    `review.body` kan være tom og at funnene ligger i
+    `pulls/<nr>/comments`; runde 2 hadde bare API-pekeren uten
+    KROPPEN-advarselen, og runde 3 hadde ingen av delene — samtidig som
+    runde 3 er den som går rett i merge-løypa. Timer runde 1 ut på et
+    review-utløst verdikt med inline-P1, kunne siste forsøk lese den
+    tomme kroppen som «ingen funn» og merge dem forbi.
+
+    Det er nøyaktig #211 igjen, ett hakk lenger inn: porten er åpnet,
+    men lesningen er ikke.
+
+    MUTASJONEN SOM DREPER DENNE: fjern KROPPEN-advarselen fra ett av de
+    tre forsøkene — det holder å ta den fra runde 3, den som merger.
+    """
+    for i, forsok in enumerate(_fiksforsok(), 1):
+        norm = " ".join(forsok.split())
+        assert "pulls/<nr>/comments" in norm, (
+            f"forsøk {i} peker ikke på inline-kommentarene")
+        assert "IKKE I KROPPEN" in norm, (
+            f"forsøk {i} advarer ikke om at `review.body` kan være tom —"
+            " en tom kropp lest som «ingen funn» merger uåpnede P1")
+        assert "#211" in norm, (
+            f"forsøk {i} mangler sporet tilbake til funnet")
+
+
 def test_steg_0_verdiktporten_i_alle_tre_forsokene():
     """Cursor P2 runde 14 (#198): kvote-/statusmeldinger som slipper
     forbi jobb-if-ens prefiksfilter må felles av steg 0 i HVERT forsøk —

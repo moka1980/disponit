@@ -370,7 +370,10 @@ jobs:
                IKKE en review — ikke fiks, ikke merge; én kommentar til
                eier om at kanalen er nede, og stopp.
             1. Gjenstående reelle funn (P1/P2) fra Codex-verdiktet og
-               inline-kommentarene (`gh api` mot pulls/<nr>/comments): fiks
+               inline-kommentarene (`gh api` mot pulls/<nr>/comments — er
+               kjøringen review-utløst, ligger funnene ofte IKKE I KROPPEN
+               (#211): `review.body` kan være helt tom, og en tom kropp er
+               da et verdikt som peker hit, ikke «ingen funn»): fiks
                i roten, ETT AV GANGEN — fiks, commit på norsk, push. Alt som
                ikke er pushet er tapt hvis også dette forsøket avbrytes.
                IKKE rediger .github/workflows, .env eller hemmeligheter.
@@ -465,7 +468,13 @@ jobs:
             rekkefølgen:
             1. Push alt arbeid som er i nærheten av ferdig, ett funn per
                commit.
-            2. Er alle funn adressert: kommenter `@cursor review` og
+            2. Er alle funn adressert — og HAR DU LEST DEM ALLE? Er
+               kjøringen review-utløst, ligger funnene ofte IKKE I KROPPEN
+               (#211): `review.body` kan være helt tom mens P1-ene står som
+               inline-kommentarer. `gh api` mot pulls/<nr>/comments er
+               stedet. Dette er siste forsøk, og en tom kropp lest som
+               «ingen funn» sender deg rett i merge-løypa under med
+               uåpnede P1. Er alt adressert: kommenter `@cursor review` og
                STOPP (RUTINER §10.4): passets fullføring vekker
                cursor-pass-fulgt via workflow_run-broen, som eier
                Codex-adgangen — aldri `@codex review` herfra.
