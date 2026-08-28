@@ -642,12 +642,17 @@ html[data-visning="landing"] .skall-hoved {
   margin: .55rem var(--sp-8) 0 0;
   padding-top: var(--sp-3);
 }
+/* Forsidens h1 ER display-trinnet og skal styres av det, ikke ved siden av
+   det: egen clamp(), egen line-height og eget tekstmål her betyr at
+   justeringer i tokens.css treffer hver offentlig sidetittel UNNTATT den
+   viktigste (Codex P2). Bare margin-bottom er lokal — den er avstand til
+   ingressen, ikke typografi. */
 .site-home-copy h1 {
-  font-size: clamp(2.5rem, 5vw, 4.4rem);
+  font-size: var(--fs-display);
   letter-spacing: var(--ls-display);
-  line-height: .98;
+  line-height: var(--lh-display);
   margin-bottom: var(--sp-4);
-  max-width: 13ch;
+  max-width: var(--maks-display);
 }
 .site-home-ingress {
   color: var(--site-muted);
