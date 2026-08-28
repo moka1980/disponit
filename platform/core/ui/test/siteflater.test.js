@@ -9,7 +9,8 @@ import { visInnlogging } from "../static/js/innlogging.js";
 import { AppShell } from "../static/js/komponenter.js";
 import { visKundeadmin } from "../static/js/flater/kundeadmin.js";
 import { visAdmin } from "../static/js/flater/admin.js";
-import { TILBUD, erTilgjengelig } from "../static/js/plattformdata.js";
+import { TILBUD, erTilgjengelig, erTilgjengeligFor, modulStatus, settProduksjonsmiljo }
+  from "../static/js/plattformdata.js";
 import { siteTilbudMerke } from "../static/js/sitekomponenter.js";
 
 const HER = dirname(fileURLToPath(import.meta.url));
@@ -180,6 +181,73 @@ test("Landing: tilgjengelighetsbrikkene har CSS som faktisk skiller dem", async 
   assert.notEqual(siteTilbudMerke(true).className,
     siteTilbudMerke(false).className,
     "tilgjengelig og kommer deler klasse — da skiller ingenting dem visuelt");
+});
+
+test("Landing: oppsett.json miljo=produksjon styrer brikker og statuslinje", async () => {
+  // Cursor P2: begge leddene i løftet var pinnet HVER FOR SEG — `erTilgjengeligFor`
+  // som ren funksjon i `plattformdata.test.js`, og serverens fail-closed `miljo` i
+  // `test_ui_serving.py` — men ingen test koblet dem i DOM. Riggen over svarer
+  // alltid uten `miljo`, så hele suiten målte bare den NEGATIVE grenen: alle fire
+  // brikkene «Kommer», og `tekst_bygges` i statuslinja. Den positive grenen — den
+  // som faktisk lover en besøkende noe — hadde ingen dekning, og en regresjon der
+  // (`settProduksjonsmiljo` fjernet, satt fra feil felt, eller kalt ETTER at treet
+  // er bygd) ville rendret «Kommer» på en modul som er i drift uten at noe brøt.
+  //
+  // Testen holder ETTER at flere moduler går i drift: den utleder forventningen av
+  // `erTilgjengeligFor(modulStatus(id), true)` per punkt i stedet for å anta at det
+  // er M-2 alene som står grønt.
+  const ekteFetch = globalThis.fetch;
+  let miljo = "produksjon";
+  globalThis.fetch = async (url) => {
+    const sti = String(url).split("?")[0];
+    if (sti === "/ui/oppsett.json") {
+      return { ok: true, status: 200,
+        json: async () => ({ provider_id: "google", miljo }) };
+    }
+    return ekteFetch(url);
+  };
+  try {
+    window.history.replaceState({}, "", "/");
+    const app = nyttAppBrett();
+    await visInnlogging();
+    await vent(() => app.querySelectorAll(".site-feature .site-badge").length > 0);
+
+    // I produksjon er det FØRSTE leddet (`MODULSTATUS === "i_drift"`) alene
+    // avgjørende, så forventningen leses ut av statusen per tilbudspunkt.
+    const iDrift = TILBUD.filter((post) => erTilgjengeligFor(modulStatus(post.id), true));
+    assert.ok(iDrift.length > 0 && iDrift.length < TILBUD.length,
+      "testen forutsetter DELVIS utrulling — ellers måler den ikke delvis-formen");
+    assert.deepEqual(
+      [...app.querySelectorAll(".site-feature .site-badge")]
+        .map((b) => [b.className, b.textContent]),
+      TILBUD.map((post) => erTilgjengeligFor(modulStatus(post.id), true)
+        ? ["site-badge ok", t("site.tilbud.tilgjengelig")]
+        : ["site-badge plan", t("site.tilbud.kommer")]),
+      "produksjonsmiljøet nådde ikke brikkene — flaten sier «Kommer» om en " +
+      "modul som er i drift hos kunder");
+    assert.equal(app.querySelector(".site-driftstatus div p").textContent,
+      t("site.hero.tekst_delvis"),
+      "statuslinja motsier brikkene: noen områder er merket «Tilgjengelig», " +
+      "men teksten sier at alt fortsatt bygges");
+
+    // Motprøve på SAMME rigg: bytter bare `miljo`, så et utfall som ikke
+    // endrer seg avslører et løfte som ikke leser miljøet i det hele tatt.
+    miljo = "staging";
+    const stagingApp = nyttAppBrett();
+    await visInnlogging();
+    await vent(() => stagingApp.querySelectorAll(".site-feature .site-badge").length > 0);
+    assert.equal(stagingApp.querySelectorAll(".site-feature .site-badge.ok").length, 0,
+      "staging-verten lover «Tilgjengelig» — begge ledd kreves, ikke bare status");
+    assert.equal(stagingApp.querySelector(".site-driftstatus div p").textContent,
+      t("site.hero.tekst_bygges"),
+      "statuslinja lover delvis drift på en vert ingen kunde bruker");
+  } finally {
+    globalThis.fetch = ekteFetch;
+    // `_produksjonsmiljo` er modulglobal: en test som avbryter mellom de to
+    // grenene ville ellers latt `true` lekke inn i resten av suiten.
+    settProduksjonsmiljo(false);
+    window.history.replaceState({}, "", "/");
+  }
 });
 
 test("Landing: hvert språknavn er merket med sitt eget språk", async () => {
