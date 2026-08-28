@@ -223,6 +223,22 @@ jobs:
         rakk å pushe mens denne jobben sto i kø — så du et verdikt over kode
         som ikke ligger der lenger, og å «fikse» det ville endret noe reviewen
         aldri så. Parkér og be om nytt review.
+      RUNDETAK: |
+        RUNDETAK: TRE (RUTINER §12.1, eiervedtak 28/8). Tell rundene på
+        denne PR-en — antall pass fra `github-actions[bot]` med
+        overskriften `## Cursor pre-Codex`. Er du forbi tre, samler du
+        GJENSTÅENDE P2/P3 i ETT oppfølgingsissue, viser til det i tråden,
+        og går videre i stedet for å fikse dem.
+
+        P1 ER ALDRI UTSETTBART. Taket gjelder funn som gjør arbeidet
+        bedre, ikke funn som gjør det riktig. Et levende P1 stopper PR-en
+        uansett rundetall — et rundetak som slapp P1 forbi ville vært en
+        port som åpner en dør.
+
+        Målingen bak taket: runde 4–7 på #230 fant prosaplasseringer og
+        manglende gjentakelser, ikke defekter, mens CI koster 10–11
+        minutter per push. Rundene er den dominerende kostnaden, ikke
+        byggingen.
       MERGEPORT: |
         ALLE ULØSTE TRÅDER FØRST (#211): før du merger, skann
         `reviewThreads { isResolved }` på HELE PR-en via GraphQL — ikke bare
@@ -296,6 +312,7 @@ jobs:
             `gh pr checkout ${{ github.event.pull_request.number || github.event.issue.number }}`.
 
             0. ${{ env.VERDIKTPORT }}
+            ${{ env.RUNDETAK }}
             1. Les hele verdiktet og alle tråder: `gh pr view <nr> --comments`
                og `gh api` mot pulls/<nr>/reviews og pulls/<nr>/comments.
                Ignorer rene triggerkommentarer («@codex review»).
@@ -493,6 +510,7 @@ jobs:
 
             Fullfør så jobben etter samme regler som forrige forsøk:
             0. ${{ env.VERDIKTPORT }}
+            ${{ env.RUNDETAK }}
             1. Gjenstående reelle funn (P1/P2) fra Codex-verdiktet og
                inline-kommentarene (`gh api` mot pulls/<nr>/comments — er
                ${{ env.FUNNLESNING }}
@@ -590,6 +608,7 @@ jobs:
 
             Dette er siste forsøk. FØRST:
             ${{ env.VERDIKTPORT }}
+            ${{ env.RUNDETAK }}
             Prioriter deretter i denne
             rekkefølgen:
             1. Push alt arbeid som er i nærheten av ferdig, ett funn per

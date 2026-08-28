@@ -627,8 +627,15 @@ def test_merge_reglene_har_ett_sted_a_sta():
     forsøk (da mangler regelen der).
     """
     env = _jobbenv()
-    for anker in ("VERDIKTPORT", "FUNNLESNING", "MERGEPORT"):
+    for anker in ("VERDIKTPORT", "FUNNLESNING", "RUNDETAK", "MERGEPORT"):
         assert anker in env, f"{anker} er ikke definert på jobben"
+    # RUTINER §12.1: rundetaket er en REGEL, ikke god vilje. Den må stå i
+    # sløyfas egen prompt, ellers gjelder den bare når noen husker den —
+    # og den må si at P1 aldri utsettes, ellers er taket en åpen dør.
+    assert "P1 ER ALDRI UTSETTBART" in env["RUNDETAK"], (
+        "rundetaket slipper P1 forbi — da er det ikke et tak, det er en"
+        " omgåelse av korrekthetsgulvet")
+    assert "§12.1" in env["RUNDETAK"], "taket peker ikke på regelen"
 
     # 1. Hver regel finnes ÉN gang i fila — nemlig i sitt anker.
     for markor in ("BOT-REVIEW MERGER ALDRI", "LINJEDRAGET",
@@ -641,7 +648,8 @@ def test_merge_reglene_har_ett_sted_a_sta():
     # 2. Hvert forsøk HENTER alle tre — en regel som ikke refereres,
     #    gjelder ikke i det forsøket uansett hvor pent den er skrevet.
     for i, forsok in enumerate(_fiksforsok(), 1):
-        for anker in ("env.VERDIKTPORT", "env.FUNNLESNING", "env.MERGEPORT"):
+        for anker in ("env.VERDIKTPORT", "env.FUNNLESNING",
+                      "env.RUNDETAK", "env.MERGEPORT"):
             assert anker in forsok, (
                 f"forsøk {i} henter ikke {anker} — reglene der er de fra"
                 " før omskrivingen, og de kan drifte igjen")
