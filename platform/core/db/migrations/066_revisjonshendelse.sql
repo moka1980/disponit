@@ -142,9 +142,23 @@ END $$;
 REVOKE ALL ON FUNCTION skriv_revisjonshendelse(TEXT, TEXT, TEXT, TEXT)
     FROM PUBLIC;
 REVOKE ALL ON FUNCTION les_revisjonshendelse(TEXT, UUID) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION skriv_revisjonshendelse(TEXT, TEXT, TEXT, TEXT)
-    TO disponit;
-GRANT EXECUTE ON FUNCTION les_revisjonshendelse(TEXT, UUID) TO disponit;
+-- `disponit` er LOKAL-/TESTNAVNET på runtime-rollen, ikke rollen (Codex P1).
+-- `deploy/staging/migrer.py` tar runtime-rollens navn som argument: på en
+-- installasjon med et annet navn traff en literal grant her enten feil rolle
+-- — den konfigurerte rollen fikk INGEN execute, og hele #159-veien var stengt
+-- etter migrering — eller den falt hardt på en rolle som ikke finnes, og da
+-- rullet 066 tilbake FØR kjøreren rakk sine parameteriserte grants.
+--
+-- Den AUTORITATIVE granten er derfor kjørerens `M37_RETTIGHETER_API`, der
+-- begge signaturene nå står; denne er betinget, med 043s form ordrett (der
+-- står den tre ganger, av nøyaktig samme funn).
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'disponit') THEN
+    GRANT EXECUTE ON FUNCTION skriv_revisjonshendelse(TEXT, TEXT, TEXT, TEXT)
+      TO disponit;
+    GRANT EXECUTE ON FUNCTION les_revisjonshendelse(TEXT, UUID) TO disponit;
+  END IF;
+END $$;
 
 RESET ROLE;
 

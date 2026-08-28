@@ -366,6 +366,12 @@ GRANT EXECUTE ON FUNCTION signer_utsendingsliste(TEXT, UUID, TEXT, TEXT) TO {rol
 -- migrasjonen).
 GRANT EXECUTE ON FUNCTION opprett_rekrutteringsprosess(TEXT, BIGINT, INT) TO {rolle};
 GRANT EXECUTE ON FUNCTION lukk_rekrutteringsprosess(TEXT, UUID, TIMESTAMPTZ) TO {rolle};
+-- 066 (#159): revisjonshendelsen. Begge veiene hører runtime til — det er
+-- API-et innloggede mennesker skriver hendelsen gjennom, og modulporten
+-- leser den gjennom. Migrasjonens egen grant er betinget av at rollen HETER
+-- `disponit`; denne er den autoritative for den konfigurerte rollen.
+GRANT EXECUTE ON FUNCTION skriv_revisjonshendelse(TEXT, TEXT, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION les_revisjonshendelse(TEXT, UUID) TO {rolle};
 """
 
 # Token-administrasjonen er en EGEN rolle som eier ingenting (korreksjon 2).
