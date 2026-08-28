@@ -669,6 +669,18 @@ html[data-visning="landing"] .skall-hoved {
 }
 .site-home-handlinger .knapp,
 .site-tekstlenke { min-height: var(--touch-min); }
+/* .knapp er en <a> uten egen display; som flex-element blir den blokk, og på
+   en blokk gjør verken justify-content eller min-height noe med selve
+   teksten. Under 560px står knappen i full bredde med `justify-content:
+   center` — som ble ignorert, så etiketten lå venstrejustert mens
+   .site-tekstlenke under den var sentrert (Codex P2). Å gjøre knappen til
+   flex-container gir sentreringen OG berøringsmålets høyde effekt, akkurat
+   som for tekstlenka. */
+.site-home-handlinger .knapp {
+  align-items: center;
+  display: inline-flex;
+  justify-content: center;
+}
 .site-home-handlinger .primar {
   background: var(--site-action);
   border-color: var(--site-action);
