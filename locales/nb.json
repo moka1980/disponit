@@ -1091,6 +1091,8 @@
   "ui.rekruttering.evalueringer.utilgjengelig": "Rapport utilgjengelig",
   "ui.rekruttering.evalueringer.nedbrytning": "Poengfordeling",
   "ui.rekruttering.evalueringer.rangering": "Rangering — {navn} (versjon {versjon})",
+  "ui.rekruttering.evalueringer.kol_detaljer": "Detaljer",
+  "ui.rekruttering.evalueringer.vis_funn": "Vis funn",
   "ui.rekruttering.evalueringer.kandidat": "Kandidat",
   "ui.rekruttering.evalueringer.poeng": "Poeng",
   "ui.rekruttering.evalueringer.funn": "Funn",

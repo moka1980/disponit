@@ -3992,3 +3992,104 @@ test("Profiler: endret innhold etter tapt svar gir NY nøkkel (P2-5)", async () 
     forste.hoder["Idempotency-Key"],
     "endret innhold bar fortsatt den gamle intensjonens nøkkel");
 });
+
+
+// Rapportfikstur for produktportene under (28/8): to kandidater er nok
+// til å måle både radplasseringen og at ingen mur står igjen.
+function enkelRapportSvar() {
+  return {
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
+    "/v1/rekruttering/rapport/96": { oppdrag_id: 96, rapport: {
+      rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+      profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
+      antall_soknader: 2,
+      rangering: [
+        { kandidat_id: "kandidat-01", poeng: 5, nedbrytning: { drift: 3 } },
+        { kandidat_id: "kandidat-02", poeng: 3, nedbrytning: { drift: 3 } },
+      ],
+      kandidater: {
+        "kandidat-01": { funn: [], intervjusporsmal: [], kildetekst: "a" },
+        "kandidat-02": { funn: [], intervjusporsmal: [], kildetekst: "b" },
+      },
+      fremdrift: { filer_lest: 2, filer_totalt: 2, byte_lest: 100 },
+    } } };
+}
+test("Rapport: overskriften står ÉN gang — captionen er skjermleserens", async () => {
+  // Produktrunden 28/8: `<caption>` og `<h3>` bar samme tekst, begge
+  // synlige, så leseren fikk «Rangering — Driftskonsulent (versjon 2)»
+  // to ganger etter hverandre. Tabellen trenger sitt tilgjengelige navn,
+  // så captionen står — bare usynlig.
+  //
+  // MUTASJONEN SOM DREPER DENNE: fjern `sr-only` fra captionen.
+  KALL = [];
+  SVAR = { ...enkelRapportSvar() };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.textContent.includes("kandidat-01")));
+  // RAPPORTENS tabell, ikke prosessens: DataTabell-en over har sin egen
+  // caption, og `querySelector` ville tatt den første i DOM-en.
+  const rapporttabell = [...hoved.querySelectorAll("table")]
+    .find((tb) => tb.textContent.includes("kandidat-01"));
+  assert.ok(rapporttabell, "rangeringstabellen mangler");
+  const cap = rapporttabell.querySelector("caption");
+  assert.ok(cap, "tabellen mistet sitt tilgjengelige navn");
+  assert.ok(cap.classList.contains("sr-only"),
+    "captionen er synlig ved siden av overskriften — samme tekst to ganger");
+  const synlige = [...hoved.querySelectorAll("h3")]
+    .filter((h) => h.textContent.includes("Driftskonsulent"));
+  assert.equal(synlige.length, 1,
+    `overskriften står ${synlige.length} ganger`);
+});
+
+test("Rapport: detaljene ligger i kandidatens RAD, ikke som en mur under", async () => {
+  // De sto som en flat liste av `<details>` under tabellen — én per
+  // kandidat, opp mot 5000 — uten kobling til linjen de gjaldt. Leseren
+  // måtte telle seg fram.
+  //
+  // MUTASJONEN SOM DREPER DENNE: legg detaljene tilbake som søsken av
+  // tabellen.
+  KALL = [];
+  SVAR = { ...enkelRapportSvar() };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.textContent.includes("kandidat-01")));
+  const tabell = [...hoved.querySelectorAll("table")]
+    .find((tb) => tb.textContent.includes("kandidat-01"));
+  assert.ok(tabell, "rangeringstabellen mangler");
+  const iRad = tabell.querySelectorAll("tbody tr details");
+  assert.equal(iRad.length, 2, "detaljene ligger ikke i radene");
+  // ...og ingen står igjen utenfor tabellen.
+  const utenfor = [...hoved.querySelectorAll("details")]
+    .filter((d) => !tabell.contains(d));
+  assert.equal(utenfor.length, 0,
+    `${utenfor.length} detaljbokser står fortsatt som en mur under tabellen`);
+});
+
+test("Prosess: en lang kandidat-id kortes, men mistes ikke", async () => {
+  // Seeden gir UUID-er, og en full UUID bryter over tre linjer på mobil —
+  // kolonnen ble en vegg av heksadesimal. Hele id-en står i `title`.
+  //
+  // MUTASJONEN SOM DREPER DENNE: skriv `kandidat_id` rått i cellen igjen.
+  const uuid = "58f17252-8a2b-4092-a420-adf5d5d430d1";
+  const data = prosess();
+  data.prosesser[0].kandidater = [{
+    kandidat_id: uuid, oppfylt: { drift: true }, status: "anbefalt",
+    funn: [], intervjusporsmal: [] }];
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": data };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("tbody tr")));
+  const celle = hoved.querySelector("tbody th, tbody td");
+  assert.ok(!hoved.textContent.includes(uuid),
+    "hele UUID-en står i tabellen — kolonnen er en vegg på mobil");
+  assert.ok(hoved.textContent.includes("58f17252"),
+    "kandidaten er ikke gjenkjennelig i det hele tatt");
+  const medTittel = [...hoved.querySelectorAll("[title]")]
+    .some((n) => n.getAttribute("title") === uuid);
+  assert.ok(medTittel, "hele id-en er borte — den skal kunne kopieres");
+});

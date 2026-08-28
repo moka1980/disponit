@@ -471,7 +471,21 @@ function tegn(hoved, ctx, data, okt, valgtId) {
       paaSort: (valg) => { sortValg = valg; },
       rader: rader.map(({ kandidat, poeng }) => ({
         celler: {
-          kandidat: kandidat.kandidat_id,
+          // KANDIDATREFERANSEN KORTES, MEN MISTES IKKE (produktrunden
+          // 28/8). Seeden gir kandidatene UUID-er, og en full UUID bryter
+          // over tre linjer på mobil — kolonnen ble en vegg av heksadesimal
+          // der leseren skulle kjenne igjen en person. De første åtte
+          // tegnene skiller trygt innenfor én prosess (maks 5000
+          // kandidater), og HELE id-en står i `title` for den som skal
+          // kopiere den videre.
+          //
+          // Er id-en alt lesbar — manifestets `kandidat-09`-form (#161) —
+          // står den urørt: kortingen gjelder maskingenererte id-er, ikke
+          // navn kunden selv har gitt.
+          kandidat: el("span", { title: kandidat.kandidat_id },
+            kandidat.kandidat_id.length > 20
+              ? `${kandidat.kandidat_id.slice(0, 8)}…`
+              : kandidat.kandidat_id),
           poeng: String(poeng),
           // Trafikklys: tekst + klasse, aldri farge alene.
           kategori: el("span",
@@ -817,15 +831,32 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
   // ny henting; cachen re-bygges inn i den nye seksjonens rot).
   const byggRapport = (svar) => {
       const rapport = svar.rapport;
-      const kropp = el("tbody", {}, ...rapport.rangering.map((rad) =>
-        el("tr", {},
+      // DETALJENE HØRER I RADEN (produktrunden 28/8). De sto som en flat
+      // mur av `<details>` UNDER tabellen — tjue «Detaljer for
+      // kandidat-NN» på rad, uten noen kobling til linjen de gjaldt.
+      // Leseren måtte telle seg fram. Nå er hver kandidats detaljer i
+      // kandidatens egen rad, og muren finnes ikke.
+      const detaljFor = new Map();
+      const kropp = el("tbody", {}, ...rapport.rangering.map((rad) => {
+        const boks = detaljboks(rad);
+        detaljFor.set(rad.kandidat_id, boks);
+        return el("tr", {},
           el("th", { scope: "row", text: rad.kandidat_id }),
           el("td", { text: String(rad.poeng) }),
           el("td", { text: Object.entries(rad.nedbrytning)
             .map(([k, v]) => `${t(`ui.rekruttering.krav.${k}`, k)}: ${v}`)
-            .join(", ") }))));
+            .join(", ") }),
+          el("td", {}, boks));
+      }));
       const tabell = el("table", {},
-        el("caption", { text: t("ui.rekruttering.evalueringer.rangering")
+        // CAPTION ER SKJERMLESERENS, IKKE ØYETS. Overskriften under
+        // (`h3`) bærer den samme teksten som synlig tittel og som
+        // fokusmål etter lasting — sto begge synlige, leste brukeren
+        // «Rangering — Tromsø kk (versjon 2)» to ganger etter hverandre.
+        // Tabellen trenger likevel sitt tilgjengelige navn, så captionen
+        // blir stående, bare usynlig.
+        el("caption", { class: "sr-only",
+          text: t("ui.rekruttering.evalueringer.rangering")
           .replace("{navn}", rapport.profil.navn)
           .replace("{versjon}", String(rapport.profil.versjon)) }),
         el("thead", {}, el("tr", {},
@@ -834,15 +865,19 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
           el("th", { scope: "col",
             text: t("ui.rekruttering.evalueringer.poeng") }),
           el("th", { scope: "col",
-            text: t("ui.rekruttering.evalueringer.nedbrytning") }))),
+            text: t("ui.rekruttering.evalueringer.nedbrytning") }),
+          el("th", { scope: "col",
+            text: t("ui.rekruttering.evalueringer.kol_detaljer") }))),
         kropp);
       // Skjemaet tillater 5000 kandidater à 100 funn + 20 spørsmål — en
       // gyldig maksrapport ville bygget hundretusener av noder opp front.
       // Kroppen bygges derfor først når leseren åpner den.
-      const detaljer = rapport.rangering.map((rad) => {
+      function detaljboks(rad) {
+        // Sammendraget er kort fordi det står I raden: kandidaten er
+        // allerede navngitt i radoverskriften, så «Detaljer for
+        // kandidat-09» ville gjentatt den på hver linje.
         const boks = el("details", {},
-          el("summary", { text: t("ui.rekruttering.evalueringer.detaljer")
-            .replace("{kandidat}", rad.kandidat_id) }));
+          el("summary", { text: t("ui.rekruttering.evalueringer.vis_funn") }));
         let bygget = false;
         boks.addEventListener("toggle", () => {
           if (bygget || !boks.open) return;
@@ -872,7 +907,7 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
             el("h4", { text: t("ui.rekruttering.evalueringer.funn") }), funn);
         });
         return boks;
-      });
+      }
       // Rapporten settes inn ETTER tabellen brukeren sto i — fokusér
       // overskriften, ellers får tastatur/skjermleser aldri vite at
       // lastingen ble ferdig.
@@ -910,7 +945,7 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       overskrift,
       hoppLenke,
       el("p", { text: t("ui.rekruttering.evalueringer.blindet") }),
-      el("div", { class: "tablewrap" }, tabell), ...detaljer] };
+      el("div", { class: "tablewrap" }, tabell)] };
   };
 
   const visRapport = async (oppdragId, { fokus = true } = {}) => {
