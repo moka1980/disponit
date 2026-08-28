@@ -214,13 +214,38 @@ UTLOPTE=$(find "$KATALOG" -name 'disponit-*.dump.age' -mtime +"$DAGER") || {
        "seg opp bak en grønn logglinje" >&2
   exit 1
 }
+# ... MEN ALDRI DEN SISTE FØR DEN NYE STÅR (Codex P1, denne runden).
+# Å flytte sveipen foran diskporten løste en deadlock og åpnet en verre
+# dør: er ALLE par eldre enn 30 dager — en timer som har stått, en vert
+# som har vært nede — slettet sveipen hvert eneste gjenopprettingspunkt
+# FØR `pg_dump`, verifiseringen og arkivet hadde lykkes. En transient
+# feil etterpå etterlot da installasjonen uten backup i det hele tatt.
+# Den gamle rekkefølgen hadde ikke det hullet; den hadde bare det andre.
+#
+# Begge lukkes ved å SPARE DEN NYESTE: sveipen her tar alt unntatt den,
+# og den siste tas først når det nye paret har fått navnene sine. Da
+# finnes det aldri et øyeblikk uten et gjenopprettingspunkt på disken, og
+# plassen frigjøres likevel før porten måler.
+#
+# `sort -r` på filnavnet er kronologisk: stempelet er `YYYYmmdd-HHMMSS`,
+# altså leksikografisk lik tidsrekkefølgen. Vi trenger ingen `stat`.
+SPART=""
+if [ -n "$UTLOPTE" ]; then
+  SPART=$(printf '%s\n' "$UTLOPTE" | sed '/^$/d' | sort -r | head -1)
+fi
+slett_par() {
+  local sti="$1" stempel
+  [ -n "$sti" ] || return 0
+  stempel=$(basename "$sti"); stempel=${stempel#disponit-}
+  stempel=${stempel%.dump.age}
+  rm -f "$KATALOG/disponit-$stempel.dump.age" \
+        "$KATALOG/disponit-$stempel.inndata.tar.age"
+}
 SLETTET=0
 while IFS= read -r gammel; do
   [ -n "$gammel" ] || continue
-  STEMPEL_GAMMEL=$(basename "$gammel"); STEMPEL_GAMMEL=${STEMPEL_GAMMEL#disponit-}
-  STEMPEL_GAMMEL=${STEMPEL_GAMMEL%.dump.age}
-  rm -f "$KATALOG/disponit-$STEMPEL_GAMMEL.dump.age" \
-        "$KATALOG/disponit-$STEMPEL_GAMMEL.inndata.tar.age"
+  [ "$gammel" != "$SPART" ] || continue
+  slett_par "$gammel"
   SLETTET=$((SLETTET + 1))
 done <<< "$UTLOPTE"
 
@@ -385,13 +410,20 @@ BUNTER=$(wc -l < "$LISTE.krav")
 mens_manglet=""
 while IFS= read -r sti; do
   [ -n "$sti" ] || continue
-  if [ ! -f "$LAGER/$sti" ] || [ ! -s "$LAGER/$sti" ]; then
+  # `-L` FØRST: både `-f` og `-s` FØLGER lenken, så en `.bin` byttet ut
+  # med en symlenke til en hvilken som helst ikke-tom fil ville passert
+  # begge — mens `tar` uten `--dereference` arkiverer LENKEN, ikke
+  # ciphertexten. Paret ble da meldt verifisert og gjenopprettet en
+  # peker (Codex P1, denne runden).
+  if [ -L "$LAGER/$sti" ] \
+     || [ ! -f "$LAGER/$sti" ] || [ ! -s "$LAGER/$sti" ]; then
     mens_manglet="$mens_manglet$sti"$'\n'
   fi
 done < "$LISTE.krav"
 [ -z "$mens_manglet" ] || {
   echo "AVBRUTT: $(printf '%s' "$mens_manglet" | grep -c .) fil(er) som" \
-       "dumpen krever er tomme eller ikke vanlige filer — arkivet ville" \
+       "dumpen krever er tomme, symlenker eller ikke vanlige filer —" \
+       "arkivet ville" \
        "båret navnet uten innholdet:" >&2
   printf '%s' "$mens_manglet" | head -5 >&2
   exit 1
@@ -432,6 +464,15 @@ sync "$KATALOG"
 mv "$DELVIS" "$FIL"
 sync "$KATALOG"
 PAR_KLAR=1
+
+# DEN SPARTE TAS NÅ. Det nye paret står med sine endelige navn og er
+# fsynket, så det finnes et gjenopprettingspunkt — og først da er det
+# forsvarlig å fjerne det siste gamle. Fristen er den samme som sveipen
+# målte mot, så den er fortsatt utløpt.
+if [ -n "$SPART" ]; then
+  slett_par "$SPART"
+  SLETTET=$((SLETTET + 1))
+fi
 
 
 echo "backup ok: $FIL (${STORRELSE} B), verifisert mot $VERIF" \

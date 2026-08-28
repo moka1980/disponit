@@ -102,6 +102,36 @@ def test_finaliseringen_er_fsynket_i_par_rekkefolge():
     assert mv_arkiv < mv_dump, "dumpen får endelig navn før arkivet"
 
 
+def test_det_nyeste_utlopte_paret_lever_til_det_nye_star():
+    """Codex P1: sveipen foran porten åpnet en verre dør.
+
+    Å flytte retensjonen foran diskporten løste en deadlock — men er ALLE
+    par eldre enn 30 dager, etter en timer som har stått eller en vert som
+    har vært nede, slettet sveipen hvert eneste gjenopprettingspunkt FØR
+    `pg_dump`, verifiseringen og arkivet hadde lykkes. En transient feil
+    etterpå etterlot installasjonen uten backup i det hele tatt.
+
+    Begge hullene lukkes av å SPARE DEN NYESTE: sveipen tar alt unntatt
+    den, og den siste faller først når det nye paret har fått navnene
+    sine og er fsynket.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `[ "$gammel" != "$SPART" ]` (da er
+    vi tilbake i «alle slettes før dumpen»), eller flytt den avsluttende
+    `slett_par "$SPART"` opp foran finaliseringen.
+    """
+    assert 'SPART=$(printf' in SKRIPT, \
+        "ingen sparer det nyeste utløpte paret"
+    assert '[ "$gammel" != "$SPART" ] || continue' in SKRIPT, \
+        "sveipen sletter også den som skal spares"
+    # Den spartes fall må komme ETTER at begge navnene er satt.
+    fall = SKRIPT.index('  slett_par "$SPART"')
+    assert _pos('mv "$DELVIS" "$FIL"') < fall, (
+        "det siste gamle paret slettes før det nye har fått navnene sine"
+        " — da finnes det et vindu uten noe gjenopprettingspunkt")
+    assert _pos('PAR_KLAR=1') < fall, \
+        "den sparte faller før paret er erklært ferdig"
+
+
 def test_arkivporten_maler_innhold_ikke_bare_navn():
     """Codex P1: en tømt `.bin` passerte som gjenopprettingsverifisert.
 
@@ -121,6 +151,23 @@ def test_arkivporten_maler_innhold_ikke_bare_navn():
         "porten spør ikke om filen har innhold — en tømt bunt passerer")
     assert '[ ! -f "$LAGER/$sti" ]' in SKRIPT, \
         "porten spør ikke om stien er en vanlig fil"
+    # SYMLENKEN FØRST (Codex P1, runde 6). Både `-f` og `-s` FØLGER
+    # lenken, så en `.bin` byttet ut med en symlenke til hvilken som helst
+    # ikke-tom fil passerte begge — mens `tar` uten `--dereference`
+    # arkiverer LENKEN. Paret ble meldt verifisert og gjenopprettet en
+    # peker.
+    assert '[ -L "$LAGER/$sti" ]' in SKRIPT, (
+        "porten avviser ikke symlenker — `-f`/`-s` følger dem, mens `tar`"
+        " arkiverer lenken og ikke ciphertexten")
+    # ... og `tar` må FORTSATT ikke dereferere: gjorde den det, ville
+    # lageret kunne arkivere filer utenfor seg selv gjennom en lenke.
+    # Målt på selve kommandolinjen, ikke på prosaen rundt den — kommen-
+    # taren over NEVNER flagget, og en tekstsøk over hele skriptet ville
+    # lest sin egen begrunnelse som et treff.
+    tar_linje = next(l for l in SKRIPT.splitlines()
+                     if l.lstrip().startswith("tar --create"))
+    assert "--dereference" not in tar_linje and " -h" not in tar_linje, (
+        f"arkivet følger nå lenker: {tar_linje}")
     assert innholdsport < _pos('mv "$ARKIV_DELVIS" "$ARKIV"'), (
         "innholdsporten står etter finaliseringen — da er paret alt"
         " publisert når den feller")
