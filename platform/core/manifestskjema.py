@@ -1532,64 +1532,25 @@ def _bias_utledet(m: dict) -> list[str]:
         # feller dem (`bias_maling_uten_tidspunkt`), så uten dette leddet
         # var evidenslaget svakere enn porten det skal speile — samme
         # klasse som «en oppføring er ikke en måling».
-        # Datoen leses med kalenderen, ikke med et mønster: en
-        # ISO-8601-regex i skjemaet ville vært en håndskrevet grammatikk
-        # (K4), og `fromisoformat` er den samme lesningen som porten gjør.
-        # GRAMMATIKKEN FØRST, KALENDEREN ETTERPÅ (Codex P2, runde 2).
-        # `fromisoformat` er ISO 8601, ikke RFC 3339: den godtar
-        # `"2026-01-01x00:00:00+00:00"` (vilkårlig separator), den
-        # kompakte formen, og offset med sekunder. `tzinfo`-leddet lukket
-        # bare de rapporterte eksemplene, ikke klassen — feltet er
-        # DEKLARERT `date-time`, og skjemaet håndhever det ikke
-        # (`Draft202012Validator` bygges uten `FormatChecker`).
         #
-        # HVORFOR DETTE IKKE ER K4. Forbudet gjelder å hand-parse en
-        # FREMMED grammatikk. RFC 3339 §5.6 er ti linjer ABNF, lukket og
-        # uforanderlig, og det er VÅRT EGET skjemafelts erklærte form —
-        # ikke et dokumentformat vi mottar. Mønsteret avgjør dessuten
-        # bare FORMEN; `fromisoformat` under leser fortsatt KALENDEREN, så
-        # `2026-02-30T00:00:00Z` felles av den, ikke av regexen. To ledd
-        # som måler hver sin ting, ikke én håndskrevet parser.
-        RFC3339 = _re.compile(
-            r"\A\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(\.\d+)?"
-            r"([Zz]|[+-]\d{2}:\d{2})\Z")
-        if not isinstance(mal.get("ts"), str) or not RFC3339.match(mal["ts"]):
+        # ETT PREDIKAT, TO KALLERE (Codex P2, runde 5). Grensen og
+        # kjøretidsporten lover å måle det SAMME tidspunktkravet, og fem
+        # runder har målt at to håndskrevne lesninger av samme standard
+        # divergerer — først var grensen strengest (`fromisoformat` alene
+        # i kjøretiden), så kjøretiden (skuddsekundet). Det er §9 K2s egen
+        # defektklasse, og svaret er ikke et sjette formforsøk, men ÉN
+        # lesning: `evaluering.rfc3339_lesbar`.
+        #
+        # Den bor i modulen fordi det er modulens kontrakt; grensen
+        # importerer den lokalt, som resten av denne funksjonen gjør med
+        # sine hjelpere. Drifter de to nå, er det fordi noen slettet
+        # importen — og da er begge røde, ikke bare den ene.
+        from modules.m57_ats.evaluering import rfc3339_lesbar
+        if not rfc3339_lesbar(mal.get("ts")):
             feil.append(f"bias_maalinger[{i}].ts={mal.get('ts')!r} for {d} er"
-                        " ikke RFC 3339 — feltet er deklarert `date-time`,"
-                        " og en form skjemaet ikke lover er ikke datert"
-                        " bevis")
-            continue
-        try:
-            # `[Zz]` I MØNSTERET, `Z` I NORMALISERINGEN — det var uenige
-            # (Codex P2, runde 3). RFC 3339 tillater begge versalformer av
-            # UTC-suffikset, mønsteret over godtar begge, men bare den
-            # store ble byttet ut før `fromisoformat` — så en gyldig
-            # `2026-01-01t00:00:00z` besto grammatikken og felte på
-            # kalenderen. To ledd som måler hver sin ting skal ikke være
-            # uenige om hva de leser.
-            # SKUDDSEKUNDET ER GYLDIG RFC 3339 (Codex P3, runde 4).
-            # §5.7 tillater `time-second = 60` ved et innskutt skuddsekund
-            # — `2016-12-31T23:59:60Z` er et ekte tidspunkt — men
-            # `fromisoformat` avviser sekund 60. Uten dette leddet var
-            # grensen STRENGERE enn kontrakten den påberoper seg, og en
-            # måling tatt i det sekundet ble rapportert som udatert.
-            #
-            # Kalenderen leses fortsatt av standardbiblioteket: bare
-            # sekundfeltet senkes til 59 FOR LESNINGEN, og bare når
-            # mønsteret over alt har godkjent formen. Datoen, timen og
-            # minuttet måles uendret, så en umulig dato felles som før.
-            _datetime.fromisoformat(
-                _re.sub(r":60(?=(\.\d+)?([+-]\d{2}:\d{2})?\Z)", ":59",
-                        _re.sub(r"[Zz]\Z", "+00:00", str(mal.get("ts")))))
-        except (TypeError, ValueError):
-            # KALENDEREN, ikke formen: mønsteret over slipper
-            # `2026-02-30T00:00:00Z` — riktig antall siffer på riktig
-            # plass — mens datoen ikke finnes. To ledd som måler hver sin
-            # ting er nettopp derfor begge er her.
-            feil.append(f"bias_maalinger[{i}].ts={mal.get('ts')!r} for {d} er"
-                        " ikke en dato som finnes — formen stemmer, men"
-                        " kalenderen sier nei, og en måling uten tidspunkt"
-                        " er ikke datert bevis")
+                        " ikke et RFC 3339-tidspunkt som finnes i"
+                        " kalenderen — feltet er deklarert `date-time`, og"
+                        " en form skjemaet ikke lover er ikke datert bevis")
             continue
         # `tzinfo`-leddet som sto her er BORTE, ikke glemt: RFC
         # 3339-mønsteret over krever offset, så en tidssonefri verdi når

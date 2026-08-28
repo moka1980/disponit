@@ -35,6 +35,46 @@ FUNN_KATEGORIER = frozenset({
 VEKT_EKSAKT_MAKS = 2 ** 53 - 1
 
 
+#: RFC 3339 §5.6, som grammatikk. Ikke K4-brudd: dette er ti linjer ABNF
+#: fra en lukket, uforanderlig standard, og det er VÅRT EGET felts
+#: erklærte form — ikke et dokumentformat vi mottar. Formen måles her,
+#: kalenderen av standardbiblioteket rett under.
+_RFC3339 = re.compile(
+    r"\A\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(\.\d+)?"
+    r"([Zz]|[+-]\d{2}:\d{2})\Z")
+
+
+def rfc3339_lesbar(verdi: object) -> bool:
+    """Er `verdi` et RFC 3339-tidspunkt som finnes i kalenderen?
+
+    ETT STED, TO KALLERE (Codex P2, runde 5). `krev_biasmaaling` og
+    `manifestskjema._bias_utledet` lover å måle det SAMME, og fire runder
+    har målt at de ikke gjorde det — først var grensen strengest, så
+    kjøretiden. To håndskrevne lesninger av samme standard divergerer;
+    det er §9 K2s egen defektklasse.
+
+    Skuddsekundet er tillatt der RFC 3339 §5.7 tillater det — ved
+    minuttets slutt, altså `23:59:60` — og ingen andre steder.
+    `2026-01-01T12:30:60Z` er ikke et tidspunkt som har eksistert.
+    """
+    if not isinstance(verdi, str) or not _RFC3339.match(verdi):
+        return False
+    normalisert = re.sub(r"[Zz]\Z", "+00:00", verdi)
+    if ":60" in normalisert[11:19]:
+        # `time-second = 60` er BARE lovlig i det innskutte skuddsekundet,
+        # og det står alltid sist i minuttet — sist i timen, sist i
+        # døgnet. Uten denne avgrensningen ville substitusjonen under
+        # gjort ethvert umulig sekund til et gyldig tidspunkt.
+        if not normalisert[11:19].endswith("59:60"):
+            return False
+        normalisert = normalisert[:17] + "59" + normalisert[19:]
+    try:
+        datetime.fromisoformat(normalisert)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
 class Evalueringsfeil(Exception):
     def __init__(self, kode: str, detalj: str = ""):
         self.kode = kode
@@ -300,15 +340,15 @@ def krev_biasmaaling(image_digest: str,
         raise Evalueringsfeil("bias_maling_ugyldig_digest", image_digest)
     if not _er_sha256(maaling.artefakt_sha256):
         raise Evalueringsfeil("bias_maling_uten_artefakt", image_digest)
-    try:
-        # Begge versalformer av UTC-suffikset (Codex P2 på #241): RFC
-        # 3339 tillater `z` like mye som `Z`, og en måling med den lille
-        # felte porten på «uten tidspunkt». Grensen i `manifestskjema`
-        # lover å speile denne porten; da må de lese likt.
-        datetime.fromisoformat(re.sub(r"[Zz]\Z", "+00:00", str(maaling.ts)))
-    except (TypeError, ValueError) as feil:
-        raise Evalueringsfeil("bias_maling_uten_tidspunkt",
-                              image_digest) from feil
+    # KJØRETIDEN LESER LIKE STRENGT SOM GRENSEN (Codex P2, runde 5).
+    # `fromisoformat` alene er ISO 8601, ikke RFC 3339: den godtok
+    # dato-alene, tidssonefri, kompakt form og vilkårlig separator — mens
+    # `_bias_utledet` i `manifestskjema` avviser dem. Speilingen gikk
+    # altså BEGGE veier feil: først var grensen strengest, nå var
+    # kjøretiden det. En arbeider som slipper inn en måling artefaktporten
+    # senere feller, produserer en kjøring som ikke kan aksepteres.
+    if not rfc3339_lesbar(maaling.ts):
+        raise Evalueringsfeil("bias_maling_uten_tidspunkt", image_digest)
     return maaling
 
 

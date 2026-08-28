@@ -359,7 +359,7 @@ def test_bias_maaling_med_ugyldig_ts_felles():
         art = _gront_artefakt()
         art["maalt"]["bias_maalinger"][0]["ts"] = umulig
         feil = _m57_feil(art)
-        assert any("kalenderen sier nei" in f for f in feil), \
+        assert any("kalenderen" in f for f in feil), \
             f"{umulig} passerte som datert bevis: {feil}"
 
     # Og den gyldige formen porten selv bruker (`Z`-suffiks) består.
@@ -502,6 +502,49 @@ def test_to_maalinger_med_samme_STORE_digest_er_fortsatt_tvetydig():
         f" sammen i én settoppføring: {feil}")
 
 
+def test_grensen_og_kjoretiden_leser_med_SAMME_predikat():
+    """Codex P2 (runde 5): to lesninger av samme standard divergerer.
+
+    Fem runder har målt tidspunktkravet, og hver runde fant at grensen og
+    kjøretidsporten leste ULIKT — først var grensen strengest
+    (`fromisoformat` alene i `krev_biasmaaling`), så kjøretiden
+    (skuddsekundet uten avgrensning). Det er §9 K2s egen defektklasse, og
+    svaret er ikke et sjette formforsøk: ÉN lesning, to kallere.
+
+    Porten måler at det faktisk ER én — ikke at de to tilfeldigvis er
+    enige i dag.
+
+    MUTASJONEN SOM DREPER DENNE: skriv en egen lesning i `_bias_utledet`
+    igjen.
+    """
+    import inspect
+
+    from manifestskjema import _bias_utledet
+    kilde = inspect.getsource(_bias_utledet)
+    assert "rfc3339_lesbar" in kilde, (
+        "grensen leser tidspunktet med sin egen lesning — da kan den"
+        " divergere fra kjøretidsporten den lover å speile")
+    # KALLET, ikke ordet. Første utgave søkte på `fromisoformat` og fant
+    # sin egen begrunnelse i kommentaren over — samme felle som to andre
+    # porter i natt. Kallformen er det som faktisk ville vært en andre
+    # lesning.
+    assert "fromisoformat(" not in kilde, (
+        "grensen har fortsatt en egen kalenderlesning ved siden av det"
+        " felles predikatet")
+
+    # ... og predikatet må være det kjøretidsporten FAKTISK bruker.
+    from modules.m57_ats.evaluering import krev_biasmaaling, rfc3339_lesbar
+    assert "rfc3339_lesbar" in inspect.getsource(krev_biasmaaling), \
+        "kjøretidsporten bruker ikke det felles predikatet"
+    for gyldig in ("2026-01-01T00:00:00Z", "2016-12-31T23:59:60Z",
+                   "2026-01-01t00:00:00z", "2026-01-01T00:00:00+02:00"):
+        assert rfc3339_lesbar(gyldig), gyldig
+    for ugyldig in ("2026-01-01", "2026-01-01T12:00:00", "20260101T120000",
+                    "2026-01-01x00:00:00+00:00", "2026-02-30T00:00:00Z",
+                    "2026-01-01T12:30:60Z", "", None):
+        assert not rfc3339_lesbar(ugyldig), ugyldig
+
+
 def test_skuddsekundet_er_gyldig_rfc_3339():
     """Codex P3 (runde 4): grensen var strengere enn kontrakten.
 
@@ -521,11 +564,23 @@ def test_skuddsekundet_er_gyldig_rfc_3339():
     assert not _m57_feil(art), \
         f"et gyldig skuddsekund ble felt: {_m57_feil(art)}"
 
+    # ... MEN BARE VED MINUTTETS SLUTT (Codex P2, runde 5). RFC 3339 §5.7
+    # tillater sekund 60 i det INNSKUTTE skuddsekundet, som alltid står
+    # sist i minuttet. `2026-01-01T12:30:60Z` er ikke et tidspunkt som har
+    # eksistert, og en ubetinget substitusjon gjorde det til gyldig
+    # datert bevis.
+    for umulig in ("2026-01-01T12:30:60Z", "2026-01-01T12:00:60+00:00"):
+        art = _gront_artefakt()
+        art["maalt"]["bias_maalinger"][0]["ts"] = umulig
+        assert _m57_feil(art), \
+            f"{umulig} passerte som datert bevis — sekund 60 er bare"\
+            " lovlig sist i minuttet"
+
     # ... men en umulig DATO felles fortsatt av kalenderen. Uten denne
     # halvdelen kunne substitusjonen vært en generell oppmykning.
     art = _gront_artefakt()
     art["maalt"]["bias_maalinger"][0]["ts"] = "2026-02-30T23:59:60Z"
-    assert any("kalenderen sier nei" in f for f in _m57_feil(art)), \
+    assert any("kalenderen" in f for f in _m57_feil(art)), \
         "30. februar passerte fordi skuddsekundet myknet opp lesningen"
 
 
