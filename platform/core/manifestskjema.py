@@ -1486,7 +1486,6 @@ def _bias_utledet(m: dict) -> list[str]:
     som ber om evalueringen.
     """
     import re as _re
-    from datetime import datetime as _datetime
     from collections import Counter as _Counter
     from tid import rfc3339_lesbar
     feil: list[str] = []
