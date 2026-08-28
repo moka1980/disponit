@@ -424,9 +424,25 @@ def test_grensen_leser_versaler_SOM_kjoretidsporten():
     eller i skjemaet, eller `dekket.add(d)` uten `.lower()`.
     """
     def _stor(d: str) -> str:
-        return d[:7] + d[7:].upper()
+        stor = d[:7] + d[7:].upper()
+        # Fiksturens digester er rene SIFRE, og siffer har ingen versaler
+        # — første utgave av porten «uppercaset» derfor ingenting, og hver
+        # mutasjon på normalformen overlevde. Bokstavene må inn i
+        # fiksturen for at den skal måle noe i det hele tatt.
+        assert stor != d, "fiksturens digest har ingen bokstaver å endre"
+        return stor
 
-    art = _gront_artefakt()
+    def _med_bokstaver(art: dict) -> dict:
+        """Bytter fiksturens siffer-digester mot digester med hex-bokstaver."""
+        kart = {d: d[:7] + ("abcdef" * 11)[:57] + d[-7:]
+                for d in art["maalt"]["bias_digester_kjort"]}
+        art["maalt"]["bias_digester_kjort"] = [
+            kart[d] for d in art["maalt"]["bias_digester_kjort"]]
+        for m in art["maalt"]["bias_maalinger"]:
+            m["image_digest"] = kart[m["image_digest"]]
+        return art
+
+    art = _med_bokstaver(_gront_artefakt())
     art["maalt"]["bias_digester_kjort"] = [
         _stor(d) for d in art["maalt"]["bias_digester_kjort"]]
     for m in art["maalt"]["bias_maalinger"]:
@@ -443,14 +459,14 @@ def test_grensen_leser_versaler_SOM_kjoretidsporten():
     # mutasjonen på den andre. Første utgave av porten hadde nettopp det
     # hullet — den skrev versaler bare i digestlisten, og da holdt
     # `dekket.add(d)` uten `.lower()` fortsatt.
-    art = _gront_artefakt()
+    art = _med_bokstaver(_gront_artefakt())
     art["maalt"]["bias_digester_kjort"] = [
         _stor(d) for d in art["maalt"]["bias_digester_kjort"]]
     assert not _m57_feil(art), (
         "versaler i DIGESTLISTEN ble lest som andre digester enn"
         f" målingenes: {_m57_feil(art)}")
 
-    art = _gront_artefakt()
+    art = _med_bokstaver(_gront_artefakt())
     for m in art["maalt"]["bias_maalinger"]:
         m["image_digest"] = _stor(m["image_digest"])
     assert not _m57_feil(art), (
