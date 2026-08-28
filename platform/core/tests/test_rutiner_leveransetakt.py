@@ -228,6 +228,60 @@ def test_produktpunktet_kreves_av_hver_modul_som_ikke_er_aktiv():
         " aktivert")
 
 
+#: De tre modulene som var `aktiv` da §12.2 ble innført (29/8). Settet er
+#: DATERT og skal bare krympe: hver gang en av dem gjennomgås og får
+#: punktet, går den ut herfra. Det er ikke en unntaksliste noen kan legge
+#: til i — porten under krever at hvert navn fortsatt oppfyller begge
+#: betingelsene for å STÅ her.
+AKTIVE_UTEN_PRODUKTPUNKT_29_08 = {
+    "m01_policy", "m02_revisjonslogg", "m56_wcag_audit"}
+
+
+def test_ingen_NY_modul_kan_aktiveres_uten_produktpunktet():
+    """Codex P2 (runde 5): aktivering og sletting i samme endring.
+
+    Den betingede skjemaregelen slutter å kreve punktet i det øyeblikket
+    `status` blir `aktiv` — altså nøyaktig ved overgangen porten skal
+    bite. Én endring kunne sette `status: aktiv` OG slette punktet, og da
+    godtar `valider_manifest` fraværet mens `aktiv_uten_bevis` ikke har
+    noe å klage på.
+
+    Skjemaet kan ikke se historikk, så porten gjør det: en `aktiv` modul
+    UTEN punktet må være én av de tre som alt var aktive da §12.2 ble
+    innført. Settet er datert og skal bare krympe.
+
+    MUTASJONEN SOM DREPER DENNE: sett en modul `aktiv` og slett punktet
+    — eller legg et nytt navn i `AKTIVE_UTEN_PRODUKTPUNKT_29_08`.
+    """
+    import yaml
+
+    moduler = sorted((ROT / "platform" / "modules").iterdir())
+    manifester = [m for m in moduler if (m / "manifest.yaml").exists()]
+    uten = set()
+    for katalog in manifester:
+        data = yaml.safe_load(
+            (katalog / "manifest.yaml").read_text(encoding="utf-8")) or {}
+        if "produktgjennomgang_bestatt" in (data.get("staging_sjekkliste")
+                                            or {}):
+            continue
+        assert data.get("status") == "aktiv", (
+            f"{katalog.name} mangler produktpunktet uten å være aktiv —"
+            " skjemaets betingede regel skulle felt den")
+        uten.add(katalog.name)
+    nye = uten - AKTIVE_UTEN_PRODUKTPUNKT_29_08
+    assert not nye, (
+        f"{sorted(nye)} er aktiv(e) uten produktpunkt, og var det ikke"
+        " 29/8 — en endring kan ha satt `aktiv` og slettet punktet i"
+        " samme slengen, som er nøyaktig overgangen §12.2 skal bite ved")
+    # SETTET SKAL BARE KRYMPE. Står et navn her som ikke lenger oppfyller
+    # begge betingelsene, er listen foreldet — og en foreldet unntaksliste
+    # er et hull som ser ut som en regel.
+    foreldet = AKTIVE_UTEN_PRODUKTPUNKT_29_08 - uten
+    assert not foreldet, (
+        f"{sorted(foreldet)} står i unntakssettet uten å trenge det"
+        " lenger — fjern dem")
+
+
 def test_produktpunktets_ja_krever_bevis():
     """Codex P1: gjennomgangen kunne «fullføres» ved å skrive `ja`.
 
@@ -317,6 +371,13 @@ def test_samlet_merge_er_en_stabel_ikke_et_tidsvindu():
     # ... og hvem som gjør det. `claude.yml` har bare `--squash` for ÉN
     # PR, så en paragraf som lot leseren tro at sløyfa stabler ville
     # beskrevet en vei som ikke finnes.
+    # VERDIKTENE ER SHA-BUNDET (Codex P2, runde 5). Rebasing skriver
+    # commitene om, så en stabel bygget ETTER portene har passert bærer
+    # verdikter som peker på commits som ikke lenger er hodet.
+    assert "FØR de siste verdiktene" in p, (
+        "paragrafen sier ikke NÅR stabelen bygges — bygges den etter"
+        " portene, er hvert verdikt bundet til en commit som ikke finnes"
+        " som hode lenger")
     assert "for hånd" in p or "operatørhandling" in p, (
         "paragrafen sier ikke at stabelen merges manuelt — workflowen har"
         " ingen retarget- eller rebase-vei")

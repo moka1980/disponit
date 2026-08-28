@@ -422,8 +422,17 @@ en økt som er bedt om det, med de to kommandoene over.
 `--squash` forblir standarden for enkeltstående PR-er, og det er den
 workflowen skal fortsette å bruke.
 
+**Stabelen bygges FØR de siste verdiktene, ikke etter.** Å rebase en
+øvre gren skriver commitene om og gir den en ny head-SHA, og
+Cursor/Codex-verdiktene er bundet til SHA-en de ble avsagt på (§11.1).
+Stables PR-ene etter at portene har passert, peker hvert verdikt på en
+commit som ikke lenger er hodet — og `--match-head-commit` ville bare
+pinnet en SHA ingen har reviewet. Rekkefølgen er derfor: rebase til
+stabelen står, så `@cursor review` og `@codex review` på de stablede
+hodene, og først da mergen.
+
 Prisen er koblingen: endres en PR nede i stabelen, må alle over den
-rebases. Stable derfor bare PR-er som er FERDIGE — porten passert,
+rebases — og da er verdiktene over den brukt opp igjen. Stable derfor bare PR-er som er FERDIGE — porten passert,
 tråder lukket — og la en PR som fortsatt tar runder stå på `main`.
 
 ### 12.4 Stale-sveip
