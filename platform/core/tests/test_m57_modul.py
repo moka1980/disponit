@@ -4348,6 +4348,57 @@ def test_en_verdi_med_skjot_INNE_i_ett_dokument_er_lovlig():
     assert adresse not in en[0]
 
 
+def test_ingen_skjotet_kopi_naar_ingen_verdi_kan_krysse():
+    """Codex P2: kopien ble laget selv når sjekken ikke hadde noe å gjøre.
+
+    En verdi UTEN skjøt kan per konstruksjon ikke krysse en, så
+    normaltilfellet — ingen deklarert verdi inneholder blank linje —
+    trenger ingen skjøtet tekst i det hele tatt. Filteret sto likevel INNI
+    løkka, så `SKJOT.join(dokumenter)` ble materialisert først og hoppet
+    over etterpå. `parsing.MAKS_TOTAL_UTPAKKET` tillater 2 GB, og
+    `kjor_bunt` går denne veien to ganger per kandidat, så en fullt lovlig
+    bunt kunne ta livet av arbeideren for en sjekk uten arbeid.
+
+    Målt med `tracemalloc`, ikke med klokke: kopien er en STØRRELSE, og
+    en størrelse er det eneste her som ikke er flakete på en delt maskin.
+    Fiksturen er ~8 MB tekst; toppen skal ligge godt under den, og
+    kontrollen under viser at porten faktisk MÅLER kopien — med en
+    kryssbar verdi til stede kommer den tilbake.
+
+    MUTASJONEN SOM DREPER DENNE: flytt `SKJOT.join` ut av `if kryssbare:`
+    igjen.
+    """
+    import tracemalloc
+
+    dokumenter = ["Kari Testdal bor i Oslo. " * 20_000 for _ in range(16)]
+    mb = sum(len(d) for d in dokumenter) / 1e6
+    assert mb > 5, f"fiksturen er for liten til å måle noe: {mb:.1f} MB"
+
+    tracemalloc.start()
+    blinding.blind_dokumenter(dokumenter, {"navn": ["Kari Testdal"]})
+    _, uten = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+
+    # Kontrollen: samme tekst, men EN verdi som kan krysse. Da MÅ kopien
+    # bygges, og toppen stiger med tekstens egen størrelse. Uten dette
+    # leddet målte porten like gjerne at fiksturen var for liten.
+    adresse = "Gate 1" + blinding.SKJOT + "0123 Oslo"
+    med_kryssbar = list(dokumenter)
+    med_kryssbar[0] = med_kryssbar[0] + " " + adresse
+    tracemalloc.start()
+    blinding.blind_dokumenter(
+        med_kryssbar, {"navn": ["Kari Testdal"], "adresse": [adresse]})
+    _, med = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+
+    assert med > uten, (
+        f"toppen er den samme med og uten kryssbar verdi ({uten} vs {med})"
+        " — porten måler ikke kopien den tror den måler")
+    assert uten < med - mb * 1e6 / 2, (
+        f"den skjøtede kopien bygges selv uten kryssbare verdier:"
+        f" {uten / 1e6:.1f} MB mot {med / 1e6:.1f} MB med")
+
+
 def test_grenseoppslaget_skalerer_med_dokumentantallet():
     """Buntgaten tillater 20 000 dokumenter — formen må tåle det.
 

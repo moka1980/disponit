@@ -394,20 +394,27 @@ def blind_dokumenter(dokumenter: list[str],
     # bisect: 0,034 s. `test_grenseoppslaget_skalerer_med_dokument-
     # antallet` holder den målingen.
     #
-    # Ledd 1 er en KONSTANT, og det står uten egen port — sagt høyt fordi
-    # en uportet linje ellers er en linje ingen vet virker. Målt på seks
-    # MB fordelt på tre dokumenter med seksti verdier: 2,90 s med
-    # filteret, 5,57 s uten. Det er ~2x, og skanningen det sparer er av
-    # samme orden som `anvend`s egne substitusjonspass — som må skje
-    # uansett. En port på to ganger er en flakete port på en delt
-    # CI-maskin, og en flakete port er verre enn en dokumentert måling.
-    samlet = SKJOT.join(dokumenter)
-    grenser = dokumentgrenser(dokumenter)
-    startene = [start for start, _ in grenser]
-    for verdier in kandidatfelter.values():
-        for verdi in verdier:
-            if SKJOT not in verdi:
-                continue
+    # Ledd 1 sparte først bare TID — 2,90 s mot 5,57 s på seks MB med
+    # seksti verdier, altså ~2x på arbeid av samme orden som `anvend`s
+    # egne pass. Det er for tett til en port på en delt CI-maskin, og det
+    # sto en runde uten en. Codex flyttet spørsmålet dit det hørte hjemme:
+    # filteret sto INNI løkka, så den skjøtede kopien ble laget uansett.
+    # Nå står det FØR, og da sparer det MINNE — som er målbart uten
+    # klokke.
+    # SKJØTET TEKST BYGGES BARE NÅR DEN KAN TRENGES (Codex P2, runde 3).
+    # Filteret sto INNI løkka, så `samlet` ble materialisert selv når ingen
+    # verdi kunne krysse — normaltilfellet. Det er en kandidatstor kopi:
+    # `parsing.MAKS_TOTAL_UTPAKKET` tillater 2 GB, og `kjor_bunt` går
+    # denne veien to ganger per kandidat (klargjøring og evaluering), så
+    # en fullt lovlig bunt kunne ta livet av arbeideren for en sjekk som
+    # ikke hadde noe å gjøre. Spørsmålet stilles nå FØR kopien lages.
+    kryssbare = [v for verdier in kandidatfelter.values()
+                 for v in verdier if SKJOT in v]
+    if kryssbare:
+        samlet = SKJOT.join(dokumenter)
+        grenser = dokumentgrenser(dokumenter)
+        startene = [start for start, _ in grenser]
+        for verdi in kryssbare:
             for treff in _monster(verdi).finditer(samlet):
                 i = bisect_right(startene, treff.start()) - 1
                 # `i < 0` kan ikke skje — første dokument starter på 0 —
