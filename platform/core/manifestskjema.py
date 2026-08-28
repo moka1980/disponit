@@ -1503,8 +1503,14 @@ def _bias_utledet(m: dict) -> list[str]:
     # ved siden av har samme svakhet. Da telles en digest med hengende
     # data som gyldig bevis, mens kjøretidssiden slår opp på den nøyaktige
     # strengen og aldri finner den igjen (Codex P2, #241).
-    DIG = _re.compile(r"\Asha256:[0-9a-f]{64}\Z")
-    HEX = _re.compile(r"\A[0-9a-f]{64}\Z")
+    # BEGGE VERSALFORMER, som kjøretidsporten (Codex P2, runde 3).
+    # `_er_sha256` sammenligner `verdi.lower()`, så `krev_biasmaaling`
+    # godtar en måling med store heksadesimaler. Grensen avviste den —
+    # og en grense som er STRENGERE enn porten den lover å speile, feller
+    # akseptartefakter for kjøringer som faktisk gikk igjennom. Løftet er
+    # speilingen; da må skrivemåten være den samme.
+    DIG = _re.compile(r"\Asha256:[0-9a-fA-F]{64}\Z")
+    HEX = _re.compile(r"\A[0-9a-fA-F]{64}\Z")
     dekket = set()
     for i, mal in enumerate(maalinger):
         if not isinstance(mal, dict):
@@ -1554,8 +1560,15 @@ def _bias_utledet(m: dict) -> list[str]:
                         " bevis")
             continue
         try:
+            # `[Zz]` I MØNSTERET, `Z` I NORMALISERINGEN — det var uenige
+            # (Codex P2, runde 3). RFC 3339 tillater begge versalformer av
+            # UTC-suffikset, mønsteret over godtar begge, men bare den
+            # store ble byttet ut før `fromisoformat` — så en gyldig
+            # `2026-01-01t00:00:00z` besto grammatikken og felte på
+            # kalenderen. To ledd som måler hver sin ting skal ikke være
+            # uenige om hva de leser.
             _datetime.fromisoformat(
-                str(mal.get("ts")).replace("Z", "+00:00"))
+                _re.sub(r"[Zz]\Z", "+00:00", str(mal.get("ts"))))
         except (TypeError, ValueError):
             # KALENDEREN, ikke formen: mønsteret over slipper
             # `2026-02-30T00:00:00Z` — riktig antall siffer på riktig
@@ -1581,7 +1594,12 @@ def _bias_utledet(m: dict) -> list[str]:
                         " to som utgir seg for samme er ikke bevis, men et"
                         " valg denne grensen ikke skal ta")
             continue
-        dekket.add(d)
+        # ... og settene sammenlignes på samme normalform. Med begge
+        # versalformer lovlige ville `sha256:AB...` i digestlisten og
+        # `sha256:ab...` i målingen sett ut som to ulike digester, og
+        # dekningen ville rapportert både «mangler måling» og
+        # «foreldreløs måling» for én og samme modellversjon.
+        dekket.add(d.lower())
 
     ukjente = [d for d in digester if not isinstance(d, str) or not DIG.match(d)]
     if ukjente:
@@ -1600,7 +1618,8 @@ def _bias_utledet(m: dict) -> list[str]:
     # `bias_digester_kjort` har ingen `maxItems`, så den kvadratiske
     # formen gjorde valideringen dyrere jo større artefaktet ble — også
     # når hver digest var unik (Codex P2, #241).
-    duplikater = sorted(d for d, n in _Counter(digester).items() if n > 1)
+    duplikater = sorted(
+        d for d, n in _Counter(x.lower() for x in digester).items() if n > 1)
     if duplikater:
         feil.append(f"bias_digester_kjort gjentar digest(er):"
                     f" {duplikater} — en gjentakelse er ikke et forsøk"
@@ -1616,7 +1635,7 @@ def _bias_utledet(m: dict) -> list[str]:
     # dokumenterer. Valg B gjorde det deklarerte digest-settet til
     # grunnlaget invarianten utledes av; ekstra biasbevis smuglet inn ved
     # siden av det settet er nettopp lineage-disiplinen B innførte.
-    foreldrelose = sorted(dekket - set(digester))
+    foreldrelose = sorted(dekket - {d.lower() for d in digester})
     if foreldrelose:
         feil.append(f"bias_maalinger måler digest(er) som ikke står i"
                     f" bias_digester_kjort: {foreldrelose} — en måling"
@@ -1624,7 +1643,7 @@ def _bias_utledet(m: dict) -> list[str]:
                     " dokumenterer en annen kjøring enn den som telles")
         return feil
 
-    mangler = sorted(set(digester) - dekket)
+    mangler = sorted({d.lower() for d in digester} - dekket)
     rapportert, f1 = _teller(m, "maalt.bias_maling_mangler_for_digest_brudd",
                              "bias_maling_mangler_for_digest_brudd")
     if f1:

@@ -406,6 +406,70 @@ def test_ts_uten_utc_offset_er_ikke_datert_bevis():
             " strengere enn standarden den påberoper seg"
 
 
+def test_grensen_leser_versaler_SOM_kjoretidsporten():
+    """Codex P2: en grense strengere enn porten den speiler.
+
+    `_er_sha256` sammenligner `verdi.lower()`, så `krev_biasmaaling`
+    godtar en måling med store heksadesimaler. Grensen avviste den — og
+    da ville et akseptartefakt for en kjøring som FAKTISK gikk igjennom
+    blitt felt av evidenslaget. Løftet er speilingen; da må skrivemåten
+    være den samme i begge lag og i skjemaet.
+
+    Dekningen sammenlignes på normalform, ellers ville `sha256:AB…` i
+    digestlisten og `sha256:ab…` i målingen sett ut som to ulike
+    modellversjoner — og porten rapportert både «mangler måling» og
+    «foreldreløs måling» for én og samme.
+
+    MUTASJONEN SOM DREPER DENNE: `[0-9a-f]` tilbake i `_bias_utledet`
+    eller i skjemaet, eller `dekket.add(d)` uten `.lower()`.
+    """
+    def _stor(d: str) -> str:
+        return d[:7] + d[7:].upper()
+
+    art = _gront_artefakt()
+    art["maalt"]["bias_digester_kjort"] = [
+        _stor(d) for d in art["maalt"]["bias_digester_kjort"]]
+    for m in art["maalt"]["bias_maalinger"]:
+        m["image_digest"] = _stor(m["image_digest"])
+        m["artefakt_sha256"] = m["artefakt_sha256"].upper()
+    assert not _m57_feil(art), (
+        "store heksadesimaler ble felt av grensen, mens kjøretidsporten"
+        f" godtar dem: {_m57_feil(art)}")
+    assert valider_artefaktformat(art, "m57-v1") == [], \
+        "skjemaet avviser skrivemåten kjøretidsporten godtar"
+
+    # ... OG BLANDET SKRIVEMÅTE er samme digest, ikke to: bare
+    # digestlisten skrives med versaler, målingene beholder sin form.
+    art = _gront_artefakt()
+    art["maalt"]["bias_digester_kjort"] = [
+        _stor(d) for d in art["maalt"]["bias_digester_kjort"]]
+    assert not _m57_feil(art), (
+        "samme digest skrevet med ulike versaler ble lest som to —"
+        f" dekningen måles ikke på normalform: {_m57_feil(art)}")
+
+
+def test_lowercase_z_er_et_gyldig_utc_suffiks_i_BEGGE_lag():
+    """Codex P2: mønsteret og kalenderen var uenige om `z`.
+
+    RFC 3339 tillater begge versalformer av UTC-suffikset, og mønsteret
+    fra forrige runde godtar `[Zz]` — men bare den STORE ble byttet ut før
+    `fromisoformat`, så en gyldig `2026-01-01t00:00:00z` besto
+    grammatikken og felte på kalenderen. To ledd som måler hver sin ting
+    skal ikke være uenige om hva de leser.
+
+    Kjøretidsporten hadde nøyaktig samme uenighet i sin egen
+    `krev_biasmaaling`, og er rettet med den — ellers ville grensen
+    sluttet å speile den i det øyeblikket den ble riktig.
+
+    MUTASJONEN SOM DREPER DENNE: `.replace("Z", "+00:00")` tilbake.
+    """
+    for gyldig in ("2026-01-01t00:00:00z", "2026-01-01T00:00:00Z"):
+        art = _gront_artefakt()
+        art["maalt"]["bias_maalinger"][0]["ts"] = gyldig
+        assert not _m57_feil(art), \
+            f"{gyldig!r} er gyldig RFC 3339, men ble felt: {_m57_feil(art)}"
+
+
 def test_hengende_linjeskift_i_en_digest_felles_i_BEGGE_lag():
     """Pythons `$` matcher rett FØR en avsluttende linjeskift.
 

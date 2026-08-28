@@ -270,7 +270,7 @@
           "uniqueItems": true,
           "items": {
             "type": "string",
-            "pattern": "^sha256:[0-9a-f]{64}$",
+            "pattern": "^sha256:[0-9a-fA-F]{64}$",
             "minLength": 71,
             "maxLength": 71
           },
@@ -289,13 +289,13 @@
             "properties": {
               "image_digest": {
                 "type": "string",
-                "pattern": "^sha256:[0-9a-f]{64}$",
+                "pattern": "^sha256:[0-9a-fA-F]{64}$",
                 "minLength": 71,
                 "maxLength": 71
               },
               "artefakt_sha256": {
                 "type": "string",
-                "pattern": "^[0-9a-f]{64}$",
+                "pattern": "^[0-9a-fA-F]{64}$",
                 "minLength": 64,
                 "maxLength": 64
               },

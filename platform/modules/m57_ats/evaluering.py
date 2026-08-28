@@ -10,6 +10,7 @@ kjøringen.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -300,7 +301,11 @@ def krev_biasmaaling(image_digest: str,
     if not _er_sha256(maaling.artefakt_sha256):
         raise Evalueringsfeil("bias_maling_uten_artefakt", image_digest)
     try:
-        datetime.fromisoformat(str(maaling.ts).replace("Z", "+00:00"))
+        # Begge versalformer av UTC-suffikset (Codex P2 på #241): RFC
+        # 3339 tillater `z` like mye som `Z`, og en måling med den lille
+        # felte porten på «uten tidspunkt». Grensen i `manifestskjema`
+        # lover å speile denne porten; da må de lese likt.
+        datetime.fromisoformat(re.sub(r"[Zz]\Z", "+00:00", str(maaling.ts)))
     except (TypeError, ValueError) as feil:
         raise Evalueringsfeil("bias_maling_uten_tidspunkt",
                               image_digest) from feil
