@@ -1487,6 +1487,7 @@ def _bias_utledet(m: dict) -> list[str]:
     """
     import re as _re
     from datetime import datetime as _datetime
+    from collections import Counter as _Counter
     feil: list[str] = []
     digester = m.get("bias_digester_kjort")
     maalinger = m.get("bias_maalinger")
@@ -1497,8 +1498,13 @@ def _bias_utledet(m: dict) -> list[str]:
         return ["bias_maalinger: mangler — modulen påstår et bruddtall uten"
                 " å vise målingene det hviler på"]
 
-    DIG = _re.compile(r"^sha256:[0-9a-f]{64}$")
-    HEX = _re.compile(r"^[0-9a-f]{64}$")
+    # `\A`/`\Z`, IKKE `^`/`$`. Pythons `$` matcher rett FØR en avsluttende
+    # linjeskift, så `"sha256:<64 hex>\n"` passerte — og skjemamønstrene
+    # ved siden av har samme svakhet. Da telles en digest med hengende
+    # data som gyldig bevis, mens kjøretidssiden slår opp på den nøyaktige
+    # strengen og aldri finner den igjen (Codex P2, #241).
+    DIG = _re.compile(r"\Asha256:[0-9a-f]{64}\Z")
+    HEX = _re.compile(r"\A[0-9a-f]{64}\Z")
     dekket = set()
     for i, mal in enumerate(maalinger):
         if not isinstance(mal, dict):
@@ -1524,11 +1530,26 @@ def _bias_utledet(m: dict) -> list[str]:
         # ISO-8601-regex i skjemaet ville vært en håndskrevet grammatikk
         # (K4), og `fromisoformat` er den samme lesningen som porten gjør.
         try:
-            _datetime.fromisoformat(str(mal.get("ts")).replace("Z", "+00:00"))
+            lest = _datetime.fromisoformat(
+                str(mal.get("ts")).replace("Z", "+00:00"))
         except (TypeError, ValueError):
             feil.append(f"bias_maalinger[{i}].ts={mal.get('ts')!r} for {d} er"
                         " ikke et lesbart tidspunkt — en måling uten"
                         " tidspunkt er ikke datert bevis")
+            continue
+        # OFFSETET ER KRAVET, IKKE PYNT. Skjemaet erklærer `ts` som
+        # `date-time` (RFC 3339), der UTC-offset er obligatorisk — men
+        # `fromisoformat` er romsligere enn det og godtar `"2026-01-01"`,
+        # `"2026-W01-1"` og tidssonefri `"...T12:00:00"`. Alle tre ble
+        # dermed talt som datert bevis. Kravet leses fortsatt med
+        # kalenderen, ikke med en håndskrevet grammatikk (K4): en dato
+        # uten klokkeslett KAN ikke bære et offset, så `tzinfo` felles
+        # av det samme leddet som feller den tidssonefrie (Codex P2, #241).
+        if lest.tzinfo is None:
+            feil.append(f"bias_maalinger[{i}].ts={mal.get('ts')!r} for {d}"
+                        " mangler UTC-offset — skjemaet erklærer feltet"
+                        " som date-time (RFC 3339), og et tidspunkt uten"
+                        " sone er ikke et tidspunkt, men en påstand om ett")
             continue
         # ÉN MÅLING PER DIGEST. Kjøretidssiden er `dict[str, Biasmaaling]`
         # — digesten er nøkkelen, så den bærer nøyaktig én måling. En
@@ -1556,7 +1577,11 @@ def _bias_utledet(m: dict) -> list[str]:
     # og se grundigere ut enn den var»), gjenåpnet gjennom grunnlaget
     # invarianten utledes av. Listen navngir digestene kjøringen brukte;
     # å bruke den samme igjen er ikke en digest til.
-    duplikater = sorted({d for d in digester if digester.count(d) > 1})
+    # Telt ÉN gang med `Counter`, ikke `list.count()` per element:
+    # `bias_digester_kjort` har ingen `maxItems`, så den kvadratiske
+    # formen gjorde valideringen dyrere jo større artefaktet ble — også
+    # når hver digest var unik (Codex P2, #241).
+    duplikater = sorted(d for d, n in _Counter(digester).items() if n > 1)
     if duplikater:
         feil.append(f"bias_digester_kjort gjentar digest(er):"
                     f" {duplikater} — en gjentakelse er ikke et forsøk"

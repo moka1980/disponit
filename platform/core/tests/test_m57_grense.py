@@ -10,7 +10,8 @@ veier: manglende felt felles av `required`, fremmede av
 """
 from __future__ import annotations
 
-from manifestskjema import (KRAVGRENSER, M57_INVARIANTER, _sjekk_grenser,
+from manifestskjema import (KRAVGRENSER, M57_INVARIANTER, _bias_utledet,
+                            _sjekk_grenser,
                             valider_artefaktformat)
 
 
@@ -352,6 +353,104 @@ def test_bias_maaling_med_ugyldig_ts_felles():
     assert not _m57_feil(art), \
         "en gyldig ISO 8601 med Z-suffiks ble felt — grensen leser" \
         " strengere enn kjøretidsporten den speiler"
+
+
+def test_ts_uten_utc_offset_er_ikke_datert_bevis():
+    """`date-time` i RFC 3339 KREVER offset — `fromisoformat` gjør ikke.
+
+    Skjemaet erklærer `ts` som `format: date-time`, og RFC 3339 gjør
+    UTC-offset obligatorisk. `fromisoformat` er romsligere enn den
+    erklæringen: `"2026-01-01"` (bare dato), `"2026-W01-1"` (ukedato) og
+    `"2026-01-01T12:00:00"` (uten sone) leses alle uten å heve. Alle tre
+    ble derfor talt som datert bevis, mens `format` samtidig var inert i
+    skjemalaget — så feltet var i praksis ustyrt i begge lag. Et
+    tidspunkt uten sone er ikke et tidspunkt, men en påstand om ett: to
+    målinger fra hver sin verdensdel kan ikke ordnes mot hverandre.
+
+    Kravet leses fortsatt med kalenderen, ikke med en håndskrevet
+    ISO-grammatikk (K4): en dato uten klokkeslett KAN ikke bære offset,
+    så det samme leddet feller alle tre formene.
+
+    MUTASJONEN SOM DREPER DENNE: slett `if lest.tzinfo is None`-leddet.
+    """
+    for uten_sone in ("2026-01-01", "2026-W01-1", "2026-01-01T12:00:00",
+                      "20260101T120000"):
+        art = _gront_artefakt()
+        art["maalt"]["bias_maalinger"][0]["ts"] = uten_sone
+        feil = _m57_feil(art)
+        assert any("UTC-offset" in f for f in feil), \
+            f"ts={uten_sone!r} passerte som datert bevis: {feil}"
+
+    # Og begge de gyldige skrivemåtene består — porten skal ikke være
+    # strengere enn RFC 3339, bare like streng.
+    for gyldig in ("2026-01-01T00:00:00Z", "2026-01-01T00:00:00+02:00"):
+        art = _gront_artefakt()
+        art["maalt"]["bias_maalinger"][0]["ts"] = gyldig
+        assert not _m57_feil(art), f"{gyldig!r} ble felt — porten leser" \
+            " strengere enn standarden den påberoper seg"
+
+
+def test_hengende_linjeskift_i_en_digest_felles_i_BEGGE_lag():
+    """Pythons `$` matcher rett FØR en avsluttende linjeskift.
+
+    `^sha256:[0-9a-f]{64}$` slapp derfor `"sha256:<64 hex>\n"` gjennom —
+    både i grensesjekken og i skjemaets `pattern`, som `jsonschema`
+    kjører med `re.search` og samme semantikk. En digest med hengende
+    data telte da som gyldig bevis, mens kjøretidssiden slår opp på den
+    NØYAKTIGE strengen (`dict[str, Biasmaaling]`) og aldri finner den
+    igjen: dekningen ville sagt grønt om en nøkkel ingen kan bruke.
+    Anker er nå `\\A`/`\\Z`, som ikke kjenner noe slikt unntak.
+
+    MUTASJONEN SOM DREPER DENNE: sett `^`/`$` tilbake i `_bias_utledet`
+    (første halvdel) eller i skjemaet (andre halvdel).
+    """
+    for felt, hale in (("bias_digester_kjort", "\n"),
+                       ("bias_maalinger", "\n")):
+        art = _gront_artefakt()
+        if felt == "bias_digester_kjort":
+            art["maalt"][felt][0] = art["maalt"][felt][0] + hale
+        else:
+            art["maalt"][felt][0]["artefakt_sha256"] = "a" * 64 + hale
+        feil = _m57_feil(art)
+        assert feil, f"{felt} med hengende {hale!r} passerte grensen"
+        assert valider_artefaktformat(art, "m57-v1") != [], \
+            f"skjemaet slapp gjennom {felt} med hengende {hale!r}"
+
+
+def test_duplikatsjekken_skalerer_lineaert_ikke_kvadratisk():
+    """`bias_digester_kjort` har ingen `maxItems` — formen må tåle det.
+
+    Duplikatsjekken kalte `list.count()` per element, altså én full
+    gjennomlesning per digest. Målt her på maskinen porten kjører på:
+    den kvadratiske formen bruker 1,33 s på 10 000 unike digester og
+    skalerer med kvadratet, altså ~21 s på de 40 000 denne porten
+    stiller. `Counter` gjør samme arbeid på 0,04 s. Budsjettet under er
+    tre sekunder — 75 ganger over den lineære målingen, og sju ganger
+    UNDER den kvadratiske, så porten er hverken flakete eller snill.
+
+    Kostnaden traff også den ærlige veien: hver digest er unik, så det
+    er ikke duplikatene som er dyre, men letingen etter dem.
+
+    MUTASJONEN SOM DREPER DENNE: `sorted({d for d in digester if
+    digester.count(d) > 1})`.
+    """
+    import time
+
+    digester = [f"sha256:{i:064x}" for i in range(40_000)]
+    m = {"bias_digester_kjort": digester,
+         "bias_maalinger": [{"image_digest": digester[0],
+                             "artefakt_sha256": "a" * 64,
+                             "ts": "2026-01-01T00:00:00+00:00"}]}
+    start = time.perf_counter()
+    feil = _bias_utledet(m)
+    brukt = time.perf_counter() - start
+    assert brukt < 3.0, (
+        f"40 000 unike digester tok {brukt:.1f} s — duplikatsjekken er"
+        " kvadratisk igjen, og et artefakt uten maxItems kan da gjøre"
+        " validering til en kostnad angriperen velger")
+    # Og den gjør fortsatt jobben sin: 39 999 digester mangler måling.
+    assert any("ikke er målt" in f or "mangler" in f for f in feil), \
+        f"den raske formen sluttet å måle dekning: {feil}"
 
 
 def test_bias_maaling_for_udeklarert_digest_felles():
