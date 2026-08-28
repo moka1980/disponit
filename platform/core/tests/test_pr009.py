@@ -1746,17 +1746,24 @@ def test_inndatalageret_er_api_unitens_egen_state_katalog():
     assert "/var/lib/disponit/inndata" not in opp + modul + skript, \
         "den gamle stien står igjen et sted og vil gli fra unit-en"
 
-    # Backupen leser den samme variabelen med den samme defaulten som
-    # api/inndata.py — og gjør det ETTER `staging.env`, ellers er variabelen
-    # ikke i scope og bindingen er ren dekorasjon.
-    assert f'LAGER="${{DISPONIT_INNDATA_ROT:-{rot}}}"' in skript, \
-        "backup-db.sh binder ikke LAGER til DISPONIT_INNDATA_ROT — en rot " \
-        "satt i staging.env ville gitt API og backup hver sin katalog"
-    skriptlinjer = skript.splitlines()
-    i_env = next(i for i, ln in enumerate(skriptlinjer)
-                 if "staging.env" in ln)
-    i_lager = next(i for i, ln in enumerate(skriptlinjer)
-                   if ln.startswith("LAGER="))
-    assert i_lager > i_env, \
-        "LAGER settes før staging.env er sourcet — DISPONIT_INNDATA_ROT er " \
-        "ikke i scope, og defaulten vinner alltid"
+    # Backupen navngir den SAMME stien, som en konstant.
+    assert f"LAGER={rot}\n" in skript, \
+        f"backup-db.sh peker ikke på {rot} — arkivet ville blitt tatt av " \
+        "feil katalog mens lager_sti-porten fortsatt passerte, fordi den " \
+        "måler radene mot nettopp det arkivet den fikk"
+
+    # ROTEN ER IKKE EN KNAPP (#191, K2 mellom to Cursor-runder som pekte
+    # motsatt vei). `DISPONIT_INNDATA_ROT` var lest to steder med denne
+    # stien som default — men den KAN ikke ta noen annen verdi: uniten
+    # kjører `ProtectSystem=strict`, der `StateDirectory` er eneste
+    # skrivbare sti, så en annen rot gir `EROFS` på hver opplasting. Å
+    # gjøre knappen ekte krever `ReadWritePaths`-formen #162 forkastet.
+    #
+    # En halvbindt knapp er verre enn ingen: den lar API-et og backupen
+    # gli fra hverandre den dagen noen setter variabelen i troen på at den
+    # virker. Porten forbyr derfor at den kommer tilbake — i BEGGE filer,
+    # for én av dem alene er nettopp glidningen.
+    assert "DISPONIT_INNDATA_ROT" not in modul + skript, \
+        "roten er blitt en knapp igjen — men den kan bare stå i én " \
+        "stilling (ProtectSystem=strict), så det den kjøper er at API og " \
+        "backup kan lese hver sin katalog uten at noe sier fra"

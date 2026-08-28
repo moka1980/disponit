@@ -26,16 +26,22 @@ flock -n 9 || { echo "AVBRUTT: backup kjører allerede" >&2; exit 1; }
   exit 1
 }
 command -v age >/dev/null || { echo "AVBRUTT: age er ikke installert" >&2; exit 1; }
-
-set -a; . /etc/disponit/staging.env; set +a
-# FS-lageret for inndata-bunter (#162). API-unitens egen StateDirectory, og
-# `INNDATA_ROT` i platform/core/api/inndata.py leser den SAMME variabelen med
-# den SAMME defaulten. Derfor ETTER `staging.env`, ikke før: hardkodet sti
-# her ville arkivert feil katalog i det øyeblikket noen satte
-# `DISPONIT_INNDATA_ROT` i miljøfila — og `lager_sti`-porten ville fortsatt
-# passert, fordi den måler radene mot det arkivet den fikk. En stille
-# #191-regresjon med alle lys grønne.
-LAGER="${DISPONIT_INNDATA_ROT:-/var/lib/disponit-inndata}"
+# FS-lageret for inndata-bunter (#162). API-unitens egen StateDirectory.
+#
+# HARDKODET MED VILJE, ikke av slurv (#191, K2). Runde 1 ba om
+# `LAGER="${DISPONIT_INNDATA_ROT:-...}"` for at backupen skulle følge API-et;
+# runde 2 påpekte at variabelen da er halvbindt. Begge har rett om formen —
+# feilen lå under: variabelen KAN ikke ta noen annen verdi. API-uniten kjører
+# `ProtectSystem=strict`, der `StateDirectory` er den eneste skrivbare stien,
+# og en annen rot gir `EROFS` på hver opplasting. Å gjøre knappen ekte krever
+# `ReadWritePaths`-formen #162 forkastet på Codex P1.
+#
+# Derfor er stien konstant BEGGE steder — her og i `api/inndata.py` — og
+# `test_inndatalageret_er_api_unitens_egen_state_katalog` binder alle fire
+# forekomstene til unitens `StateDirectory`-navn. En knapp som bare kan stå i
+# én stilling er ikke konfigurasjon; den er to filer som kan gli fra
+# hverandre uten at noe sier fra.
+LAGER=/var/lib/disponit-inndata
 install -d -m 700 "$KATALOG"
 STEMPEL=$(date -u +%Y%m%dT%H%M%S)
 FIL="$KATALOG/disponit-$STEMPEL.dump.age"
