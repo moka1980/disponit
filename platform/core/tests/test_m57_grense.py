@@ -10,9 +10,13 @@ veier: manglende felt felles av `required`, fremmede av
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from manifestskjema import (KRAVGRENSER, M57_INVARIANTER, _bias_utledet,
                             _sjekk_grenser,
                             valider_artefaktformat)
+
+ROT = Path(__file__).resolve().parents[3]
 
 
 def _gront_artefakt() -> dict:
@@ -340,12 +344,23 @@ def test_bias_maaling_med_ugyldig_ts_felles():
     MUTASJONEN SOM DREPER DENNE: dropp `fromisoformat`-lesningen og stol
     på `"format": "date-time"`.
     """
-    for daarlig in ("", "ikke-en-dato", "2026-13-45T99:00:00Z", None):
+    for daarlig in ("", "ikke-en-dato", "2026/01/01 00:00", None):
         art = _gront_artefakt()
         art["maalt"]["bias_maalinger"][0]["ts"] = daarlig
         feil = _m57_feil(art)
-        assert any("lesbart tidspunkt" in f for f in feil), \
+        assert any("RFC 3339" in f for f in feil), \
             f"ts={daarlig!r} passerte som datert bevis: {feil}"
+    # ... OG KALENDEREN MÅLES SEPARAT. Formen kan stemme til punkt og
+    # prikke mens datoen ikke finnes; da er det `fromisoformat` som
+    # feller, ikke mønsteret. Uten denne halvdelen kunne kalenderleddet
+    # slettes uten at noe ble rødt.
+    art = _gront_artefakt()
+    for umulig in ("2026-02-30T00:00:00Z", "2026-13-45T99:00:00Z"):
+        art = _gront_artefakt()
+        art["maalt"]["bias_maalinger"][0]["ts"] = umulig
+        feil = _m57_feil(art)
+        assert any("kalenderen sier nei" in f for f in feil), \
+            f"{umulig} passerte som datert bevis: {feil}"
 
     # Og den gyldige formen porten selv bruker (`Z`-suffiks) består.
     art = _gront_artefakt()
@@ -356,7 +371,7 @@ def test_bias_maaling_med_ugyldig_ts_felles():
 
 
 def test_ts_uten_utc_offset_er_ikke_datert_bevis():
-    """`date-time` i RFC 3339 KREVER offset — `fromisoformat` gjør ikke.
+    """`fromisoformat` er ISO 8601, ikke RFC 3339.
 
     Skjemaet erklærer `ts` som `format: date-time`, og RFC 3339 gjør
     UTC-offset obligatorisk. `fromisoformat` er romsligere enn den
@@ -373,13 +388,14 @@ def test_ts_uten_utc_offset_er_ikke_datert_bevis():
 
     MUTASJONEN SOM DREPER DENNE: slett `if lest.tzinfo is None`-leddet.
     """
-    for uten_sone in ("2026-01-01", "2026-W01-1", "2026-01-01T12:00:00",
-                      "20260101T120000"):
+    for ikke_rfc in ("2026-01-01", "2026-W01-1", "2026-01-01T12:00:00",
+                     "20260101T120000", "2026-01-01x00:00:00+00:00",
+                     "2026-01-01T00:00:00+00:00:30"):
         art = _gront_artefakt()
-        art["maalt"]["bias_maalinger"][0]["ts"] = uten_sone
+        art["maalt"]["bias_maalinger"][0]["ts"] = ikke_rfc
         feil = _m57_feil(art)
-        assert any("UTC-offset" in f for f in feil), \
-            f"ts={uten_sone!r} passerte som datert bevis: {feil}"
+        assert any("RFC 3339" in f for f in feil), \
+            f"ts={ikke_rfc!r} passerte som datert bevis: {feil}"
 
     # Og begge de gyldige skrivemåtene består — porten skal ikke være
     # strengere enn RFC 3339, bare like streng.
@@ -425,6 +441,40 @@ def test_hengende_linjeskift_i_en_digest_felles_i_BEGGE_lag():
         f"en artefakthash med hengende linjeskift passerte: {feil}"
     assert valider_artefaktformat(art, "m57-v1") != [], \
         "skjemaets pattern slapp gjennom en hash med hengende linjeskift"
+
+    # SKJEMAET SKAL VÆRE PORTABELT (Codex P2, runde 2). `\\A`/`\\Z` er
+    # Pythons anker, ikke ECMA-262s, og en standardsorientert validator kan
+    # avvise mønsteret eller lese escapene som bokstaver — da feiler
+    # GYLDIGE digester. Skjemaet bruker derfor `^...$`, som i ECMA-262
+    # ikke har Pythons linjeskift-unntak, og lengdegrensene lukker hullet
+    # også for Pythons `re`: 71 tegn for `sha256:<64 hex>`, 64 for en bar
+    # hash. Pythons egne anker bor i `_bias_utledet`, der de hører hjemme.
+    import json as _json
+    skjema = _json.loads(
+        (ROT / "platform" / "core" / "artefakt-m57-skjema.json")
+        .read_text(encoding="utf-8"))
+    monstre = []
+
+    def _samle(node):
+        if isinstance(node, dict):
+            if "pattern" in node:
+                monstre.append(node)
+            for v in node.values():
+                _samle(v)
+        elif isinstance(node, list):
+            for v in node:
+                _samle(v)
+
+    _samle(skjema)
+    assert monstre, "fant ingen mønstre i skjemaet — porten måler ingenting"
+    for node in monstre:
+        assert "\\A" not in node["pattern"] and "\\Z" not in node["pattern"], (
+            f"Python-anker i et delt skjema: {node['pattern']!r}")
+    for node in monstre:
+        if "[0-9a-f]{64}" in node["pattern"]:
+            assert "maxLength" in node, (
+                f"{node['pattern']!r} står uten lengdegrense — `$` i"
+                " Pythons `re` slipper da et hengende linjeskift igjennom")
 
 
 def test_duplikatsjekken_skalerer_lineaert_ikke_kvadratisk():

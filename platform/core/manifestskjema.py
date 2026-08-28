@@ -1529,28 +1529,47 @@ def _bias_utledet(m: dict) -> list[str]:
         # Datoen leses med kalenderen, ikke med et mønster: en
         # ISO-8601-regex i skjemaet ville vært en håndskrevet grammatikk
         # (K4), og `fromisoformat` er den samme lesningen som porten gjør.
+        # GRAMMATIKKEN FØRST, KALENDEREN ETTERPÅ (Codex P2, runde 2).
+        # `fromisoformat` er ISO 8601, ikke RFC 3339: den godtar
+        # `"2026-01-01x00:00:00+00:00"` (vilkårlig separator), den
+        # kompakte formen, og offset med sekunder. `tzinfo`-leddet lukket
+        # bare de rapporterte eksemplene, ikke klassen — feltet er
+        # DEKLARERT `date-time`, og skjemaet håndhever det ikke
+        # (`Draft202012Validator` bygges uten `FormatChecker`).
+        #
+        # HVORFOR DETTE IKKE ER K4. Forbudet gjelder å hand-parse en
+        # FREMMED grammatikk. RFC 3339 §5.6 er ti linjer ABNF, lukket og
+        # uforanderlig, og det er VÅRT EGET skjemafelts erklærte form —
+        # ikke et dokumentformat vi mottar. Mønsteret avgjør dessuten
+        # bare FORMEN; `fromisoformat` under leser fortsatt KALENDEREN, så
+        # `2026-02-30T00:00:00Z` felles av den, ikke av regexen. To ledd
+        # som måler hver sin ting, ikke én håndskrevet parser.
+        RFC3339 = _re.compile(
+            r"\A\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(\.\d+)?"
+            r"([Zz]|[+-]\d{2}:\d{2})\Z")
+        if not isinstance(mal.get("ts"), str) or not RFC3339.match(mal["ts"]):
+            feil.append(f"bias_maalinger[{i}].ts={mal.get('ts')!r} for {d} er"
+                        " ikke RFC 3339 — feltet er deklarert `date-time`,"
+                        " og en form skjemaet ikke lover er ikke datert"
+                        " bevis")
+            continue
         try:
-            lest = _datetime.fromisoformat(
+            _datetime.fromisoformat(
                 str(mal.get("ts")).replace("Z", "+00:00"))
         except (TypeError, ValueError):
+            # KALENDEREN, ikke formen: mønsteret over slipper
+            # `2026-02-30T00:00:00Z` — riktig antall siffer på riktig
+            # plass — mens datoen ikke finnes. To ledd som måler hver sin
+            # ting er nettopp derfor begge er her.
             feil.append(f"bias_maalinger[{i}].ts={mal.get('ts')!r} for {d} er"
-                        " ikke et lesbart tidspunkt — en måling uten"
-                        " tidspunkt er ikke datert bevis")
+                        " ikke en dato som finnes — formen stemmer, men"
+                        " kalenderen sier nei, og en måling uten tidspunkt"
+                        " er ikke datert bevis")
             continue
-        # OFFSETET ER KRAVET, IKKE PYNT. Skjemaet erklærer `ts` som
-        # `date-time` (RFC 3339), der UTC-offset er obligatorisk — men
-        # `fromisoformat` er romsligere enn det og godtar `"2026-01-01"`,
-        # `"2026-W01-1"` og tidssonefri `"...T12:00:00"`. Alle tre ble
-        # dermed talt som datert bevis. Kravet leses fortsatt med
-        # kalenderen, ikke med en håndskrevet grammatikk (K4): en dato
-        # uten klokkeslett KAN ikke bære et offset, så `tzinfo` felles
-        # av det samme leddet som feller den tidssonefrie (Codex P2, #241).
-        if lest.tzinfo is None:
-            feil.append(f"bias_maalinger[{i}].ts={mal.get('ts')!r} for {d}"
-                        " mangler UTC-offset — skjemaet erklærer feltet"
-                        " som date-time (RFC 3339), og et tidspunkt uten"
-                        " sone er ikke et tidspunkt, men en påstand om ett")
-            continue
+        # `tzinfo`-leddet som sto her er BORTE, ikke glemt: RFC
+        # 3339-mønsteret over krever offset, så en tidssonefri verdi når
+        # aldri hit. En gren som ikke kan nås er en port som ser ut som en
+        # port — og dens egen test ville vært vakuøs.
         # ÉN MÅLING PER DIGEST. Kjøretidssiden er `dict[str, Biasmaaling]`
         # — digesten er nøkkelen, så den bærer nøyaktig én måling. En
         # liste med to oppføringer for samme digest kan derfor ikke være

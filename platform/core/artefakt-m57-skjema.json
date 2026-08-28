@@ -270,7 +270,9 @@
           "uniqueItems": true,
           "items": {
             "type": "string",
-            "pattern": "\\Asha256:[0-9a-f]{64}\\Z"
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "minLength": 71,
+            "maxLength": 71
           },
           "description": "Modelldigestene kjoringen faktisk brukte. Invarianten bias_maling_mangler_for_digest utledes av denne mot bias_maalinger (#167 valg B) - den leses ikke som et rapportert tall. uniqueItems: en gjentatt digest er ikke et forsok til, og forsokstallet males mot lengden av denne listen - samme regel som grensesjekken, handhevet i begge lag."
         },
@@ -287,11 +289,15 @@
             "properties": {
               "image_digest": {
                 "type": "string",
-                "pattern": "\\Asha256:[0-9a-f]{64}\\Z"
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "minLength": 71,
+                "maxLength": 71
               },
               "artefakt_sha256": {
                 "type": "string",
-                "pattern": "\\A[0-9a-f]{64}\\Z"
+                "pattern": "^[0-9a-f]{64}$",
+                "minLength": 64,
+                "maxLength": 64
               },
               "ts": {
                 "type": "string",
