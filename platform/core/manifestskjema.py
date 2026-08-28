@@ -1480,11 +1480,13 @@ def _bias_utledet(m: dict) -> list[str]:
 
     Formkravene er de samme som kjøretidsporten stiller (`krev_biasmaaling`
     i m57_ats/evaluering.py): digesten på formen `sha256:<64 hex>`,
-    artefakthashen som 64 hex. Forskjellen er hvem som svarer for dem —
-    her er de DATA i et hash-bundet akseptartefakt, ikke et kart levert av
-    den samme kalleren som ber om evalueringen.
+    artefakthashen som 64 hex, tidspunktet som lesbar ISO 8601.
+    Forskjellen er hvem som svarer for dem — her er de DATA i et
+    hash-bundet akseptartefakt, ikke et kart levert av den samme kalleren
+    som ber om evalueringen.
     """
     import re as _re
+    from datetime import datetime as _datetime
     feil: list[str] = []
     digester = m.get("bias_digester_kjort")
     maalinger = m.get("bias_maalinger")
@@ -1510,6 +1512,23 @@ def _bias_utledet(m: dict) -> list[str]:
         if not isinstance(a, str) or not HEX.match(a):
             feil.append(f"bias_maalinger[{i}].artefakt_sha256 for {d} er"
                         " ikke en sha256")
+            continue
+        # TIDSPUNKTET MÅLES HER, FOR SKJEMAET MÅLER DET IKKE.
+        # `valider_artefaktformat` kjører `Draft202012Validator` uten
+        # `FormatChecker`, så `"format": "date-time"` på `ts` er inert:
+        # `""` og `"ikke-en-dato"` passerer skjemaet. Kjøretidsporten
+        # feller dem (`bias_maling_uten_tidspunkt`), så uten dette leddet
+        # var evidenslaget svakere enn porten det skal speile — samme
+        # klasse som «en oppføring er ikke en måling».
+        # Datoen leses med kalenderen, ikke med et mønster: en
+        # ISO-8601-regex i skjemaet ville vært en håndskrevet grammatikk
+        # (K4), og `fromisoformat` er den samme lesningen som porten gjør.
+        try:
+            _datetime.fromisoformat(str(mal.get("ts")).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            feil.append(f"bias_maalinger[{i}].ts={mal.get('ts')!r} for {d} er"
+                        " ikke et lesbart tidspunkt — en måling uten"
+                        " tidspunkt er ikke datert bevis")
             continue
         # ÉN MÅLING PER DIGEST. Kjøretidssiden er `dict[str, Biasmaaling]`
         # — digesten er nøkkelen, så den bærer nøyaktig én måling. En
