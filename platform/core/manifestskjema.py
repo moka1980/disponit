@@ -1472,6 +1472,77 @@ def _falske_verdikter(m: dict) -> list[str]:
     return []
 
 
+def _bias_utledet(m: dict) -> list[str]:
+    """Regner `bias_maling_mangler_for_digest` på nytt fra artefaktets data.
+
+    Returnerer avvikene. Tom liste = det rapporterte tallet stemmer med det
+    dataene viser.
+
+    Formkravene er de samme som kjøretidsporten stiller (`krev_biasmaaling`
+    i m57_ats/evaluering.py): digesten på formen `sha256:<64 hex>`,
+    artefakthashen som 64 hex. Forskjellen er hvem som svarer for dem —
+    her er de DATA i et hash-bundet akseptartefakt, ikke et kart levert av
+    den samme kalleren som ber om evalueringen.
+    """
+    import re as _re
+    feil: list[str] = []
+    digester = m.get("bias_digester_kjort")
+    maalinger = m.get("bias_maalinger")
+    if not isinstance(digester, list) or not digester:
+        return ["bias_digester_kjort: mangler eller tom — invarianten kan"
+                " ikke utledes, og en uutledbar invariant er ingen port"]
+    if not isinstance(maalinger, list):
+        return ["bias_maalinger: mangler — modulen påstår et bruddtall uten"
+                " å vise målingene det hviler på"]
+
+    DIG = _re.compile(r"^sha256:[0-9a-f]{64}$")
+    HEX = _re.compile(r"^[0-9a-f]{64}$")
+    dekket = set()
+    for i, mal in enumerate(maalinger):
+        if not isinstance(mal, dict):
+            feil.append(f"bias_maalinger[{i}]: ikke et objekt")
+            continue
+        d, a = mal.get("image_digest"), mal.get("artefakt_sha256")
+        if not isinstance(d, str) or not DIG.match(d):
+            feil.append(f"bias_maalinger[{i}].image_digest={d!r} har ikke"
+                        " formen sha256:<64 hex>")
+            continue
+        if not isinstance(a, str) or not HEX.match(a):
+            feil.append(f"bias_maalinger[{i}].artefakt_sha256 for {d} er"
+                        " ikke en sha256")
+            continue
+        dekket.add(d)
+
+    ukjente = [d for d in digester if not isinstance(d, str) or not DIG.match(d)]
+    if ukjente:
+        feil.append(f"bias_digester_kjort inneholder verdier som ikke er"
+                    f" digester: {ukjente}")
+        return feil
+
+    mangler = sorted(set(digester) - dekket)
+    rapportert, f1 = _teller(m, "maalt.bias_maling_mangler_for_digest_brudd",
+                             "bias_maling_mangler_for_digest_brudd")
+    if f1:
+        feil.append(f1)
+    elif rapportert != len(mangler):
+        feil.append(
+            f"bias_maling_mangler_for_digest_brudd={rapportert}, men"
+            f" dataene viser {len(mangler)} digest(er) uten måling"
+            f" ({mangler or 'ingen'}) — et rapportert tall som ikke stemmer"
+            " med målingene det skal hvile på, er ikke en måling")
+
+    forsok, f2 = _teller(m, "maalt.bias_maling_mangler_for_digest_forsok",
+                         "bias_maling_mangler_for_digest_forsok")
+    if f2:
+        feil.append(f2)
+    elif forsok != len(digester):
+        feil.append(
+            f"bias_maling_mangler_for_digest_forsok={forsok}, men kjøringen"
+            f" brukte {len(digester)} digest(er) — forsøkstallet er antallet"
+            " digester porten faktisk ble stilt spørsmålet om")
+    return feil
+
+
 def _grenser_m57(grense: dict, art: dict) -> list[str]:
     """`m57-v1` — M-57-klarsignalet §10. Hver invariant er et par
     (forsøk, brudd): null brudd beviser ingenting uten minst ett forsøk,
@@ -1495,6 +1566,27 @@ def _grenser_m57(grense: dict, art: dict) -> list[str]:
         if brudd > grense["maks_brudd"]:
             feil.append(f"{navn}_brudd={brudd}, krever <="
                         f" {grense['maks_brudd']}")
+    # BIASINVARIANTEN UTLEDES, DEN LESES IKKE (#167 valg B).
+    #
+    # `bias_maling_mangler_for_digest` var to selvrapporterte tall: modulen
+    # skrev «0 brudd», og grensen leste «0 brudd». Kjøretidsporten
+    # `krev_biasmaaling` måler bare FORMEN på en måling — `"0" * 64` er en
+    # syntaktisk gyldig artefakthash — så invarianten talte manglende
+    # OPPFØRINGER, ikke manglende MÅLINGER, og leste sterkere enn noe sted
+    # målte. Codex felte mekanismen tre ganger på #153.
+    #
+    # Artefaktet bærer nå dataene invarianten hviler på: hvilke
+    # modelldigester kjøringen brukte, og hvilken biasartefakt som dekker
+    # hver av dem. Bruddtallet regnes på NYTT herfra, og et avvik mellom
+    # det utledede og det rapporterte er selve funnet — samme disiplin som
+    # `_grenser_rollback`: tallene mot hverandre, ikke mot flagg.
+    #
+    # Dette gjør ikke porten absolutt: at biasartefakten FINNES i et lager
+    # er #167 valg A, og hører i controlleren som har tenantkontekst — ikke
+    # i en ren rangeringsfunksjon. Men «modulen påstår null» er nå erstattet
+    # av «her er digestene, her er målingene, regn selv».
+    feil += _bias_utledet(m)
+
     for navn in grense["krav_ja"]:
         if m.get(navn) is not True:
             feil.append(f"{navn}={m.get(navn)!r}, krever bokstavelig true"

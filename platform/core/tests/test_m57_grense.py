@@ -24,6 +24,15 @@ def _gront_artefakt() -> dict:
     maalt["ddl_begge_kjoringer_gronne"] = True
     maalt["ytelse_full_bunt_soknader"] = 5000
     maalt["ytelse_full_bunt_minutter"] = 212.5
+    # #167 valg B: biasinvarianten UTLEDES av disse, den leses ikke.
+    # Tre digester kjørt, tre målinger — så `_forsok` er 3 og `_brudd` 0
+    # fordi DATAENE viser det, ikke fordi produsenten skrev det.
+    digester = [f"sha256:{str(i) * 64}" for i in (1, 2, 3)]
+    maalt["bias_digester_kjort"] = digester
+    maalt["bias_maalinger"] = [
+        {"image_digest": d, "artefakt_sha256": f"{i}" * 64,
+         "ts": "2026-08-23T00:00:00+00:00"}
+        for i, d in zip("abc", digester)]
     return {
         "krav_id": "m57-v1",
         "ts": "2026-08-23T00:00:00+00:00",
@@ -182,6 +191,105 @@ def test_skjemaets_feltsett_er_generert_fra_settet():
     ventet = {f"{n}_{s}" for n in M57_INVARIANTER for s in ("forsok", "brudd")}
     ventet |= {"ui_tastaturgjennomgang_dokumentert",
                "ddl_begge_kjoringer_gronne",
-               "ytelse_full_bunt_soknader", "ytelse_full_bunt_minutter"}
+               "ytelse_full_bunt_soknader", "ytelse_full_bunt_minutter",
+               # #167 valg B: dataene biasinvarianten UTLEDES av. De står
+               # her, ikke i invariantparet, fordi de ikke er en invariant
+               # — de er grunnlaget ett av parene regnes fra.
+               "bias_digester_kjort", "bias_maalinger"}
     assert felter == ventet
     assert set(skjema["properties"]["maalt"]["required"]) == ventet
+
+
+# ===========================================================================
+# #167 valg B — biasinvarianten utledes, den leses ikke
+# ===========================================================================
+
+def _m57_feil(art):
+    from manifestskjema import KRAVGRENSER, _grenser_m57
+    return _grenser_m57(KRAVGRENSER["m57-v1"], art)
+
+
+def test_en_digest_uten_maaling_felles_selv_om_modulen_rapporterer_null():
+    """#167 (Codex P1 ×3 på #153): invarianten var to selvrapporterte tall.
+
+    `bias_maling_mangler_for_digest` besto av `_forsok` og `_brudd` i
+    artefaktet. Modulen skrev «0 brudd», grensen leste «0 brudd», og
+    kjøretidsporten `krev_biasmaaling` måler bare FORMEN på en måling — så
+    ingen ledd i kjeden målte at det fantes en biasmåling for digesten.
+
+    Nå bærer artefaktet dataene, og bruddtallet regnes på nytt. Rapporterer
+    modulen null mens en digest står udekket, er avviket selve funnet —
+    samme disiplin som `_grenser_rollback`: tallene mot hverandre, ikke mot
+    flagg.
+
+    MUTASJONEN SOM DREPER DENNE: les `_brudd` i stedet for å utlede det.
+    """
+    art = _gront_artefakt()
+    # Fjern målingen for én digest, men la modulen fortsette å påstå null.
+    art["maalt"]["bias_maalinger"] = art["maalt"]["bias_maalinger"][:2]
+    feil = _m57_feil(art)
+    assert any("uten måling" in f for f in feil), \
+        f"en udekket digest slapp gjennom med rapportert null: {feil}"
+
+
+def test_forsoket_er_antallet_digester_ikke_et_tall_modulen_velger():
+    """Null brudd beviser ingenting uten at porten ble stilt spørsmålet.
+
+    `_forsok` skulle si at invarianten ble PRØVD. Var det et fritt tall,
+    kunne en kjøring med én digest rapportere tre forsøk og se grundigere
+    ut enn den var.
+
+    MUTASJONEN SOM DREPER DENNE: slutt å sammenligne `_forsok` med
+    antallet digester.
+    """
+    art = _gront_artefakt()
+    art["maalt"]["bias_maling_mangler_for_digest_forsok"] = 7
+    feil = _m57_feil(art)
+    assert any("digest(er)" in f and "forsok" in f for f in feil), \
+        f"forsøkstallet var frikoblet fra digestene: {feil}"
+
+
+def test_grunnlaget_kan_ikke_utelates():
+    """En uutledbar invariant er ingen port.
+
+    Uten `bias_digester_kjort` finnes det ingenting å regne fra, og da er
+    vi tilbake til å lese modulens eget tall. Fraværet må derfor felles,
+    ikke hoppes over — samme fail-closed-form som punktbindingen i #166.
+
+    MUTASJONEN SOM DREPER DENNE: returner tom liste når grunnlaget mangler.
+    """
+    for felt in ("bias_digester_kjort", "bias_maalinger"):
+        art = _gront_artefakt()
+        del art["maalt"][felt]
+        feil = _m57_feil(art)
+        assert any(felt in f for f in feil), \
+            f"artefaktet passerte uten `{felt}`: {feil}"
+
+    art = _gront_artefakt()
+    art["maalt"]["bias_digester_kjort"] = []
+    assert any("tom" in f for f in _m57_feil(art)), \
+        "en tom digestliste utleder null brudd av ingenting"
+
+
+def test_grensen_mot_valg_A_er_skrevet_ned_aerlig():
+    """Det B IKKE gjør, sagt høyt — så neste leser ikke tror den er dekket.
+
+    En form-gyldig måling for en digest som aldri ble målt passerer
+    fortsatt: `artefakt_sha256` er en streng med riktig fasong, og at
+    artefakten FINNES i et lager måles ingen steder. Det er #167 valg A, og
+    den hører i controlleren som har tenantkontekst — ikke i en ren
+    rangeringsfunksjon og ikke i et manifestskjema.
+
+    Porten står her fordi en kommentar som lover mer enn den måler er
+    verre enn ingen kommentar (Codex P1, runde 5 på #153). Denne testen ER
+    påstanden om hva som ikke er dekket, målt.
+    """
+    art = _gront_artefakt()
+    # Oppdiktet, men form-gyldig: ingen slik biasartefakt finnes noe sted.
+    art["maalt"]["bias_maalinger"] = [
+        {"image_digest": d, "artefakt_sha256": "0" * 64,
+         "ts": "2026-01-01T00:00:00Z"}
+        for d in art["maalt"]["bias_digester_kjort"]]
+    assert not _m57_feil(art), \
+        "B har begynt å måle eksistens — da skal denne porten byttes ut" \
+        " med A sin, ikke slettes"
