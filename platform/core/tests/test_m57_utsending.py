@@ -2626,15 +2626,15 @@ def test_revisjonshendelsen_skrives_og_slaas_opp(migrator):
     rt = _rt()
     try:
         _sett_kontekst(rt, TENANT)
-        rt.execute(
+        hid = rt.execute(
             "SELECT skriv_revisjonshendelse(%s, 'm57.blinding_avskrudd',"
             " %s, %s)",
-            (TENANT, "eier@kunde", "intern rekruttering, avtalt med HR"))
-        hid = rt.fetchone()[0]
+            (TENANT, "eier@kunde", "intern rekruttering, avtalt med HR")
+        ).fetchone()[0]
         assert hid, "skriveren ga ingen hendelses-ID"
-        rt.execute("SELECT handling, aktor FROM"
-                   " les_revisjonshendelse(%s, %s)", (TENANT, hid))
-        rad = rt.fetchone()
+        rad = rt.execute("SELECT handling, aktor FROM"
+                         " les_revisjonshendelse(%s, %s)",
+                         (TENANT, hid)).fetchone()
         assert rad is not None, "hendelsen kunne ikke slås opp igjen"
         assert rad[0] == "m57.blinding_avskrudd"
         assert rad[1] == "eier@kunde"
@@ -2654,9 +2654,10 @@ def test_en_fabrikkert_hendelses_id_finnes_ikke(migrator):
     rt = _rt()
     try:
         _sett_kontekst(rt, TENANT)
-        rt.execute("SELECT handling FROM les_revisjonshendelse(%s, %s)",
-                   (TENANT, "00000000-0000-4000-8000-000000000000"))
-        assert rt.fetchone() is None, (
+        assert rt.execute(
+            "SELECT handling FROM les_revisjonshendelse(%s, %s)",
+            (TENANT, "00000000-0000-4000-8000-000000000000")
+        ).fetchone() is None, (
             "en fabrikkert hendelses-ID ga et oppslag — da er «auditert»"
             " fortsatt en påstand")
     finally:
@@ -2676,15 +2677,15 @@ def test_en_hendelse_i_EN_ANNEN_tenant_finnes_ikke_her(migrator):
     rt = _rt()
     try:
         _sett_kontekst(rt, ANNEN_TENANT)
-        rt.execute(
+        fremmed = rt.execute(
             "SELECT skriv_revisjonshendelse(%s, 'm57.blinding_avskrudd',"
-            " %s, %s)", (ANNEN_TENANT, "nabo@annen", "naboens egen sak"))
-        fremmed = rt.fetchone()[0]
+            " %s, %s)", (ANNEN_TENANT, "nabo@annen", "naboens egen sak")
+        ).fetchone()[0]
         # ... og NÅ leser vi den som oss selv.
         _sett_kontekst(rt, TENANT)
-        rt.execute("SELECT handling FROM les_revisjonshendelse(%s, %s)",
-                   (TENANT, fremmed))
-        assert rt.fetchone() is None, (
+        assert rt.execute(
+            "SELECT handling FROM les_revisjonshendelse(%s, %s)",
+            (TENANT, fremmed)).fetchone() is None, (
             "naboens revisjonshendelse var synlig her — da autoriserer"
             " naboens lapp vår avskruing")
         # Å be om DEN andre tenanten direkte skal avvises, ikke betjenes:
@@ -2739,12 +2740,11 @@ def test_revisjonshendelsen_er_udodelig(migrator):
     """
     def _sa_en_hendelse():
         _sett_kontekst(migrator, TENANT)
-        migrator.execute(
+        return migrator.execute(
             "INSERT INTO revisjonshendelse (tenant, handling, aktor,"
             " begrunnelse) VALUES (%s, 'm57.blinding_avskrudd', 'drift',"
             " 'manuell kontroll av kandidat') RETURNING hendelse_id",
-            (TENANT,))
-        return migrator.fetchone()[0]
+            (TENANT,)).fetchone()[0]
 
     for lag_mutasjon in (
         lambda hid: ("UPDATE revisjonshendelse SET aktor = 'noen andre'"
@@ -2754,9 +2754,9 @@ def test_revisjonshendelsen_er_udodelig(migrator):
         lambda _hid: ("TRUNCATE revisjonshendelse", ()),
     ):
         hid = _sa_en_hendelse()
-        migrator.execute("SELECT count(*) FROM revisjonshendelse"
-                         " WHERE hendelse_id = %s", (hid,))
-        assert migrator.fetchone()[0] == 1, (
+        assert migrator.execute(
+            "SELECT count(*) FROM revisjonshendelse"
+            " WHERE hendelse_id = %s", (hid,)).fetchone()[0] == 1, (
             "raden manglet FØR mutasjonen — da måler caset ingenting:"
             " en DELETE mot null rader fyrer ikke radtriggeren")
         sql, args = lag_mutasjon(hid)
@@ -2800,10 +2800,10 @@ def test_revisjonshendelse_ingen_direkte_dml_for_disponit(migrator):
         # ... og den LOVLIGE veien skal fortsatt virke. Uten dette leddet
         # ville en fullstendig ødelagt tilkobling bestått testen.
         _sett_kontekst(rt, TENANT)
-        rt.execute(
+        assert rt.execute(
             "SELECT skriv_revisjonshendelse(%s, 'm57.blinding_avskrudd',"
-            " %s, %s)", (TENANT, "drift", "lovlig vei, gjennom funksjonen"))
-        assert rt.fetchone()[0], "funksjonsveien ga ingen hendelses-ID"
+            " %s, %s)", (TENANT, "drift", "lovlig vei, gjennom funksjonen")
+        ).fetchone()[0], "funksjonsveien ga ingen hendelses-ID"
     finally:
         rt.rollback()
         rt.close()
@@ -2863,16 +2863,16 @@ def test_avskruing_krever_hendelse_fra_basen_ikke_mock(migrator):
     rt = _rt()
     try:
         _sett_kontekst(rt, TENANT)
-        rt.execute(
+        hid = rt.execute(
             "SELECT skriv_revisjonshendelse(%s, 'm57.blinding_avskrudd',"
             " %s, %s)",
-            (TENANT, "eier@kunde", "intern rekruttering, avtalt med HR"))
-        hid = rt.fetchone()[0]
+            (TENANT, "eier@kunde", "intern rekruttering, avtalt med HR")
+        ).fetchone()[0]
 
         def _oppslag(hendelse_id):
-            rt.execute("SELECT handling, aktor, ts FROM"
-                       " les_revisjonshendelse(%s, %s)", (TENANT, hendelse_id))
-            rad = rt.fetchone()
+            rad = rt.execute("SELECT handling, aktor, ts FROM"
+                             " les_revisjonshendelse(%s, %s)",
+                             (TENANT, hendelse_id)).fetchone()
             return None if rad is None else {
                 "handling": rad[0], "aktor": rad[1], "ts": rad[2]}
 
