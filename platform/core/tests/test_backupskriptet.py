@@ -152,10 +152,18 @@ def test_en_paagaaende_opplasting_dreper_ikke_backupen():
     """
     tar_linje = next(l for l in SKRIPT.splitlines()
                      if l.lstrip().startswith("tar --create"))
-    assert "--exclude='*.tmp'" in tar_linje, (
+    assert "--exclude='*.bin.tmp'" in tar_linje, (
         f"arkivet leser opplastingens midlertidige filer: {tar_linje}")
-    # ... og den skal IKKE ekskludere selve buntene.
-    assert "*.bin" not in tar_linje, (
+    # MØNSTERET MÅ VÆRE SMALT (Codex P2, runde 8). `tar --exclude`
+    # matcher mot HELE medlemsstien, og `_stikomponent` tillater en
+    # tenant-ID som `customer.tmp` — `*.tmp` ville tatt hele den kundens
+    # katalog med alle ferdige bunter, og `comm`-porten avbrutt backupen
+    # hver natt for den installasjonen.
+    assert "--exclude='*.tmp'" not in tar_linje, (
+        "det brede mønsteret er tilbake — en tenant som heter"
+        f" `noe.tmp` mister hele arkivet sitt: {tar_linje}")
+    # ... og den skal ikke ekskludere ferdige bunter.
+    assert "--exclude='*.bin'" not in tar_linje, (
         "ekskluderingen dekker buntfilene — da arkiverer backupen"
         f" ingenting av det den finnes for: {tar_linje}")
     # `pipefail` er fortsatt på; det er dét som gjorde `tar`-statusen

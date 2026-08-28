@@ -371,11 +371,19 @@ rm -f "$RAA"
 #
 # `--exclude` løser det ved roten i stedet for å dempe symptomet: den
 # midlertidige fila er per konstruksjon ikke en bunt ennå, så den har
-# ingenting i arkivet å gjøre. En `.bin` som dumpen KREVER er ferdig skrevet
+# ingenting i arkivet å gjøre.
+#
+# MØNSTERET ER `*.bin.tmp`, IKKE `*.tmp` (Codex P2, runde 8). `tar`s
+# `--exclude` matcher mot HELE medlemsstien, og `_stikomponent` tillater
+# en tenant-ID som `customer.tmp` — med det brede mønsteret ville hele
+# den kundens katalog og hver ferdige `.bin` under den falt ut, og
+# `comm`-porten avbrutt backupen for den installasjonen hver eneste natt.
+# Suffikset er `inndata.py`s eget (`<bunt>.bin.tmp`), så det smale
+# mønsteret dekker nøyaktig det som skal dekkes. En `.bin` som dumpen KREVER er ferdig skrevet
 # og omdøpt før raden ble committet (rekkefølgen er utledet lenger oppe), så
 # ekskluderingen kan ikke skjule noe porten trenger — og skulle den likevel
 # mangle, feller innholdsporten under det høyt.
-tar --create --directory="$LAGER" --verbose --exclude='*.tmp' \
+tar --create --directory="$LAGER" --verbose --exclude='*.bin.tmp' \
     --file=- . 2>"$LISTE" \
   | age -R "$MOTTAKER" > "$ARKIV_DELVIS"
 chmod 600 "$ARKIV_DELVIS"
