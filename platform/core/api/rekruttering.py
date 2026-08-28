@@ -524,6 +524,29 @@ def prosesser_endepunkt(tjeneste, request):
                     "vekter": vekter,
                     "vekter_kilde": kilde,
                     "kandidater": kandidater,
+                    # DEN VALGTE RADEN TELLER SIN EGEN LISTE (Codex P2).
+                    # Tellingen over og `_kandidater` er TO setninger, og
+                    # forbindelsen står på psycopg-standarden READ
+                    # COMMITTED (`koble`: `autocommit=False`, intet
+                    # isolasjonsnivå satt), så hver setning tar sitt eget
+                    # øyeblikksbilde. En `plukket` prosess får artefaktene
+                    # sine skrevet ETTER HVERT, og et artefakt som
+                    # committes mellom de to setningene står i
+                    # `kandidater` uten å være med i `kandidat_antall` —
+                    # reapingen gir det motsatte. Da sier velgerens
+                    # etikett og tabellen under den ULIKE ting om samme
+                    # prosess, i samme svar, på flaten der signeringen
+                    # skjer: nøyaktig den løgnen indekstallet ble innført
+                    # for å fjerne (Cursor P2, «kandidater: 0»).
+                    #
+                    # Predikatet var alt ordrett `_kandidater`s eget, så
+                    # de to kan bare være uenige om TIDEN. Den valgte
+                    # raden har en liste å telle, og et tall utledet av
+                    # den lesningen kan per konstruksjon ikke motsi den.
+                    # Indeksradene beholder skalaren: de bærer ingen liste
+                    # å være uenige med, og et øyeblikksbilde er det
+                    # ærligste en indeks kan love.
+                    "kandidat_antall": len(kandidater),
                     "lister": _lister(conn, tenant, oppdrag_id),
                 }
             prosesser.append(post)

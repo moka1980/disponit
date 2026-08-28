@@ -1960,6 +1960,64 @@ def test_indeksraden_teller_kandidatene_sine(klient):
 
 
 @pg
+def test_den_valgte_radens_antall_kan_ikke_motsi_sin_egen_liste(
+        klient, monkeypatch):
+    """Tallet og listen er to setninger — de skal likevel være ett svar.
+
+    Codex P2 (#183): indekstellingen og `_kandidater` er TO setninger på
+    en forbindelse som står på psycopg-standarden READ COMMITTED
+    (`koble`: `autocommit=False`, intet isolasjonsnivå satt), så hver av
+    dem tar sitt eget øyeblikksbilde. En `plukket` prosess får
+    artefaktene sine skrevet etter hvert, og ett som committes mellom de
+    to setningene står i `kandidater` uten å være med i
+    `kandidat_antall`. Da sier velgerens etikett og tabellen under den
+    ULIKE ting om samme prosess, i samme svar, på flaten der signeringen
+    skjer — nøyaktig løgnen indekstallet ble innført for å fjerne.
+
+    VINDUET GJØRES DETERMINISTISK, IKKE SIMULERT: `_kandidater` byttes ut
+    med en som skriver ETT artefakt fra en ANNEN, committende forbindelse
+    (`_artefakt`s egen form) før den kaller den ekte. Det er nøyaktig
+    interleavingen, ikke en modell av den — skrivingen skjer i det ekte
+    vinduet, mellom endepunktets to setninger.
+
+    PREMISSET MÅLES FØRST: står nykommeren i den valgte radens liste, ER
+    vinduet åpent på denne forbindelsen. Gjør den ikke det, feiler testen
+    på premisset i stedet for å bli grønn på feil grunnlag.
+
+    MUTASJONEN SOM DREPER DENNE: la den valgte raden beholde
+    indeksspørringens `antall` i stedet for `len(kandidater)`.
+    """
+    from api import rekruttering as rekrutteringsmodul
+
+    prosess, _r, _h = _seed_prosess()
+    cookie, _ = _browsersesjon(_bruker("les-183f", ["leser"]))
+
+    ekte = rekrutteringsmodul._kandidater
+    skrevet = {}
+
+    def _skriver_i_vinduet(conn, tenant, prosess_id):
+        if not skrevet:
+            skrevet["kid"] = _artefakt(str(prosess_id),
+                                       {"drift": True, "sky": False})
+        return ekte(conn, tenant, prosess_id)
+
+    monkeypatch.setattr(rekrutteringsmodul, "_kandidater", _skriver_i_vinduet)
+
+    r = _get(klient, cookie,
+             f"/v1/rekruttering/prosesser?prosess_id={prosess}")
+    assert r.status_code == 200, r.text
+    valgt = [p for p in r.json()["prosesser"]
+             if p["prosess_id"] == str(prosess)][0]
+    assert skrevet, "vinduet ble aldri åpnet — testen måler ikke det den tror"
+    assert skrevet["kid"] in {k["kandidat_id"] for k in valgt["kandidater"]}, \
+        "artefaktet som ble committet i vinduet kom ikke med i listen —" \
+        " forbindelsen leser ikke READ COMMITTED, og premisset holder ikke"
+    assert valgt["kandidat_antall"] == len(valgt["kandidater"]), \
+        "den valgte radens etikett og dens egen tabell er uenige om" \
+        " antallet — velgeren motsier innholdet under seg"
+
+
+@pg
 def test_den_valgte_prosessen_hentes_paa_id(klient):
     """Velgeren skal kunne be om en ANNEN prosess enn den nyeste.
 
