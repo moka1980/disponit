@@ -306,6 +306,52 @@ def test_en_gjentatt_digest_er_ikke_et_forsok_til():
         "skjemaet slapp gjennom en gjentatt digest (uniqueItems)"
 
 
+def test_to_digester_som_bare_skiller_versaler_er_ikke_to_forsok():
+    """Cursor P2-2: duplikattesten over dekker bare det ENE laget.
+
+    `uniqueItems` er case-sensitiv (ECMA-262 sammenligner strengene rått),
+    så `sha256:ab…` og `sha256:AB…` er to ulike oppføringer for skjemaet —
+    og testen over bruker tre IDENTISKE strenger, altså nettopp det laget
+    skjemaet fanger. Grensen stenger det andre laget med
+    `Counter(x.lower() for x in digester)`, men ingen test målte det
+    leddet: mutasjonen `Counter(x for x in digester)` overlevde hele
+    suiten og gjenåpnet #167-hullet på nytt — `forsok=2` med én faktisk
+    modellversjon og `brudd=0`.
+
+    Derfor måles begge lagene her, hver for seg: skjemaet skal SLIPPE
+    (det er ikke dets jobb), grensen skal FELLE. En felles «noe feller
+    dette» ville vært grønn på feil grunn.
+
+    Digesten må ha bokstaver for å ha versaler i det hele tatt.
+    `_gront_artefakt` bygger sine av sifre, og `[d, d.upper()]` på en slik
+    er to identiske strenger — en fikstur som måler `uniqueItems` om
+    igjen i stedet for normalformen.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `.lower()` i duplikattellingen.
+    """
+    art = _gront_artefakt()
+    d = "sha256:" + "ab" * 32
+    # Prefikset er lovlig BARE i små bokstaver (`^sha256:`); det er
+    # heksadesimalene som har to skrivemåter.
+    stor = "sha256:" + d[7:].upper()
+    art["maalt"]["bias_digester_kjort"] = [d, stor]
+    art["maalt"]["bias_maalinger"] = [
+        {"image_digest": d, "artefakt_sha256": "c" * 64,
+         "ts": "2026-08-23T00:00:00+00:00"}]
+    # Én modellversjon, utgitt for to forsøk — og null brudd, fordi den
+    # ene målingen «dekker» begge skrivemåtene av den samme digesten.
+    art["maalt"]["bias_maling_mangler_for_digest_forsok"] = 2
+    art["maalt"]["bias_maling_mangler_for_digest_brudd"] = 0
+    assert valider_artefaktformat(art, "m57-v1") == [], (
+        "skjemaet felte versalvarianten — da måler ikke denne testen"
+        " lenger grensens eget duplikatledd, og mutasjonen der ville"
+        " overlevd bak en port som tilfeldigvis stengte først")
+    feil = _m57_feil(art)
+    assert any("gjentar" in f for f in feil), (
+        "to skrivemåter av samme digest passerte som to forsøk — én"
+        f" modellversjon utgitt for to: {feil}")
+
+
 def test_to_malinger_for_samme_digest_er_tvetydig_bevis():
     """Kjøretidssiden er `dict[str, Biasmaaling]` — én måling per digest.
 
