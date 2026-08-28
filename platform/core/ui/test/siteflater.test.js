@@ -436,6 +436,11 @@ test("Landing: hver offentlig side har sin egen dokumenttittel", async () => {
 // norsk igjen ved første klikk i den nye navigasjonen. Testen kjører med
 // nektet `localStorage`, altså nøyaktig den brukeren, og krever at HVER vei
 // videre bærer språket: lenkene, søkeformen og adresselinja.
+//
+// «Hver vei videre» må også bety heroens egne handlinger. Selektoren utelot
+// `.site-home-handlinger a` (Cursor P2), altså primærknappen og tekstlenka —
+// de FØRSTE veiene videre en besøkende ser. En regresjon i `offentligUrl()`
+// der ville passert grønn CI, og på den lenken flest faktisk klikker.
 test("Landing: språkvalget følger navigasjonen når lagring er nektet", async () => {
   const app = nyttAppBrett();
   const ekte = Object.getOwnPropertyDescriptor(window, "localStorage");
@@ -454,8 +459,12 @@ test("Landing: språkvalget følger navigasjonen når lagring er nektet", async 
     await vent(() => app.textContent.includes(EN["site.home.tittel"]));
 
     const lenker = [...app.querySelectorAll(".site-hovednav a, .site-logo, " +
-      ".site-cta a, .site-bunn-cta a, .site-footer a")];
+      ".site-home-handlinger a, .site-cta a, .site-bunn-cta a, .site-footer a")];
     assert.ok(lenker.length >= 8, "for få offentlige lenker til å måle noe");
+    // Måler selektoren heroen i det hele tatt? Forsvinner handlingene ut av
+    // settet, står løkka under igjen og påstår om alt UNNTATT dem.
+    assert.equal(app.querySelectorAll(".site-home-handlinger a").length, 2,
+      "heroens to handlinger er ikke med i det språkleddet måles på");
     for (const a of lenker) {
       assert.equal(new URL(a.getAttribute("href"), "https://x.test")
         .searchParams.get("sprak"), "en",
