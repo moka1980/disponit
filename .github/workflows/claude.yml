@@ -218,11 +218,20 @@ jobs:
         ufullførbar av sin egen port.
 
         VERDIKTET GJELDER SIN EGEN SHA (Codex r3878895724): er kjøringen
-        review-utløst, sammenlign reviewens `commit_id` med PR-ens
-        `headRefOid` FØR du fikser. Har hodet flyttet seg — en annen skriver
-        rakk å pushe mens denne jobben sto i kø — så du et verdikt over kode
-        som ikke ligger der lenger, og å «fikse» det ville endret noe reviewen
-        aldri så. Parkér og be om nytt review.
+        review-utløst, sammenlign reviewens `commit_id` med `$HODE_VED_START`
+        FØR du fikser. Har hodet flyttet seg — en annen skriver rakk å pushe
+        mens denne jobben sto i kø — så du et verdikt over kode som ikke
+        ligger der lenger, og å «fikse» det ville endret noe reviewen aldri
+        så. Parkér og be om nytt review.
+
+        MÅLESTOKKEN ER HODET VED KJØRINGENS START, IKKE `headRefOid` (Codex
+        r3879...225). Forsøk 1 fikser og pusher, går tom for turer, og
+        forsøk 2 skal fortsette derfra — det er hele poenget med de tre
+        forsøkene. Leste regelen den LEVENDE `headRefOid`, ville forsøk 2
+        sett kjøringens egen push som en fremmed inngripen og parkert på sitt
+        eget fremskritt. `$HODE_VED_START` settes av steget «Hodet ved start»
+        FØR forsøk 1 og står fast hele jobben: den skiller en push som kom
+        FØR oss fra en vi gjorde selv, uten å gjette på forfatter.
       RUNDETAK: |
         RUNDETAK: TRE (RUTINER §12.1, eiervedtak 28/8). Tell rundene på
         denne PR-en — antall pass fra `github-actions[bot]` med
@@ -234,6 +243,17 @@ jobs:
         bedre, ikke funn som gjør det riktig. Et levende P1 stopper PR-en
         uansett rundetall — et rundetak som slapp P1 forbi ville vært en
         port som åpner en dør.
+
+        EN PARKERING ER IKKE FERDIG FØR TRÅDEN ER LUKKET (Codex
+        r3879...231). MERGEPORT stopper på hver `isResolved == false`, og
+        å flytte et funn til et issue setter ikke det flagget — så en
+        parkering som lot tråden stå ville gjort PR-en ufullførbar av sin
+        egen port, og de to reglene kunne ikke oppfylles samtidig. Rekke-
+        følgen er derfor: opprett/oppdater issuet, SVAR i tråden med
+        issue-nummeret, og kjør `resolveReviewThread` på den. En parkering
+        uten lukket tråd er ingen parkering. MERGEPORT svekkes IKKE — den
+        er fortsatt «én uløst tråd stopper alt»; det er parkeringen som
+        må gjøre jobben sin ferdig.
 
         Målingen bak taket: runde 4–7 på #230 fant prosaplasseringer og
         manglende gjentakelser, ikke defekter, mens CI koster 10–11
@@ -288,6 +308,18 @@ jobs:
             exit 1
           fi
           echo "hodet ligger i ${{ github.repository }}"
+      # HODET VED START — målestokken for SHA-porten (Codex P2, runde 8).
+      # Den leses ÉN gang, før noe forsøk skriver, og står fast hele
+      # jobben. Da kan `FUNNLESNING` skille en push som kom FØR oss fra
+      # en denne kjøringen gjorde selv, uten å gjette på forfatter.
+      - name: Hodet ved start
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NR: ${{ github.event.pull_request.number || github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          echo "HODE_VED_START=$(gh api "repos/${{ github.repository }}/pulls/$NR" \
+                                   --jq '.head.sha')" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -524,9 +556,7 @@ jobs:
                stopp og eskaler rotårsaken til eier; K3 står produktet
                ferdig mens funnene treffer PR-intern portkode → foreslå
                deling; K4/SP-13 aldri hand-parse fremmed grammatikk.
-            2. ${{ env.MERGEPORT }}
-
-               Er alle funn adressert: CURSOR-PORT (RUTINER §10) — kommenter
+            2. Er alle funn adressert: CURSOR-PORT (RUTINER §10) — kommenter
                `@cursor review` og STOPP — passets fullføring vekker
                cursor-pass-fulgt via workflow_run-broen (§10.4), som
                eier Codex-adgangen; aldri `@codex review` herfra.
@@ -678,7 +708,33 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ github.event.pull_request.number || github.event.issue.number }}
           KJORING: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        # EN FORK-AVVISNING FÅR ALDRI DENNE TEKSTEN (Codex P1, runde 8).
+        # Meldingen ba eier starte runden på nytt med `@claude`, og den
+        # kommentaren vekker `mention` — en jobb som bærer
+        # CLAUDE_CODE_OAUTH_TOKEN og ber agenten `gh pr checkout`. Fulgte
+        # eier instruksen, gikk fork-vakten rett forbi seg selv, og
+        # beskyttelsen den nettopp håndhevet var borte fordi utfallet
+        # pekte veien rundt. Vakten er ikke en port hvis feilmeldingen
+        # er en omvei.
+        #
+        # Vi leser hodet på nytt her i stedet for å tro på et steg som
+        # kanskje aldri kjørte: jobben kan feile på hva som helst, og en
+        # variabel satt av et hoppet steg er ingen opplysning.
         run: |
+          set -euo pipefail
+          HODE=$(gh api "repos/${{ github.repository }}/pulls/$PR" \
+                   --jq '.head.repo.full_name // ""' || echo "")
+          if [ "$HODE" != "${{ github.repository }}" ]; then
+            gh pr comment "$PR" --body "@moka1980 kjøringen ble AVVIST: \
+            PR-ens hode ligger i \`$HODE\`, ikke i ${{ github.repository }}. \
+            En skrivende agent kjører aldri mot fork-innhold. \
+            Kjøring: $KJORING
+
+            IKKE start denne på nytt med \`@claude\` — den veien går til en \
+            jobb som ville sjekket ut det samme fork-innholdet. Vil du ha \
+            endringen inn, hent grenen inn i repoet og åpne PR-en derfra."
+            exit 0
+          fi
           gh pr comment "$PR" --body "@moka1980 sløyfa stoppet: alle tre \
           forsøk i denne runden ble avbrutt (typisk turgrensen). Det som ble \
           pushet ligger på grenen; resten av funnene er ikke adressert. \
@@ -718,6 +774,30 @@ jobs:
       id-token: write
       actions: read
     steps:
+      # FORK-VAKT (Codex P1, runde 8). Eier-porten i `if:` stopper en
+      # fremmed kommentator, men ikke DENNE grensen: mandatet kan gjelde
+      # et PR hvis hode ligger i en fork, og prompten under ber agenten
+      # `gh pr checkout` med CLAUDE_CODE_OAUTH_TOKEN og `contents: write`.
+      # Eier som følger en instruks er nettopp veien fork-vakten i
+      # `fiks-og-merge` ble omgått gjennom.
+      #
+      # Gjelder mandatet et rent issue, finnes ingen gren å sjekke ut, og
+      # vakten slipper det igjennom: §11.2s kjernebruk er nattmandater på
+      # issues, og en vakt som felte dem ville tatt livet av jobben.
+      - name: Fork-vakt
+        if: github.event.issue.pull_request || github.event_name == 'pull_request_review_comment'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NR: ${{ github.event.issue.number || github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          HODE=$(gh api "repos/${{ github.repository }}/pulls/$NR" \
+                   --jq '.head.repo.full_name // ""')
+          if [ "$HODE" != "${{ github.repository }}" ]; then
+            echo "::error::PR #$NR har hodet sitt i '$HODE', ikke i ${{ github.repository }} — en skrivende agent kjører aldri mot fork-innhold."
+            exit 1
+          fi
+          echo "hodet ligger i ${{ github.repository }}"
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
