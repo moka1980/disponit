@@ -1564,6 +1564,22 @@ def _bias_utledet(m: dict) -> list[str]:
                     " måling")
         return feil
 
+    # DEKNINGEN MÅLES BEGGE VEIER. `set(digester) - dekket` finner
+    # digester uten måling; den omvendte differansen finner målinger uten
+    # digest — en måling for noe kjøringen aldri deklarerte at den brukte.
+    # Da motsier evidenslistene hverandre, og forsøkstallet (= antall
+    # deklarerte digester) beskriver ikke lenger kjøringen målingene
+    # dokumenterer. Valg B gjorde det deklarerte digest-settet til
+    # grunnlaget invarianten utledes av; ekstra biasbevis smuglet inn ved
+    # siden av det settet er nettopp lineage-disiplinen B innførte.
+    foreldrelose = sorted(dekket - set(digester))
+    if foreldrelose:
+        feil.append(f"bias_maalinger måler digest(er) som ikke står i"
+                    f" bias_digester_kjort: {foreldrelose} — en måling"
+                    " for en digest kjøringen ikke sier den brukte,"
+                    " dokumenterer en annen kjøring enn den som telles")
+        return feil
+
     mangler = sorted(set(digester) - dekket)
     rapportert, f1 = _teller(m, "maalt.bias_maling_mangler_for_digest_brudd",
                              "bias_maling_mangler_for_digest_brudd")
