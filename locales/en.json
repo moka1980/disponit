@@ -1129,6 +1129,7 @@
   "ui.rekruttering.ingen_prosess": "No active recruitment process.",
   "ui.rekruttering.prosessvelger": "Recruitment process",
   "ui.rekruttering.prosessbytte_feilet": "Could not load the selected recruitment process. The selection has been reverted — try again, or reload the page.",
+  "ui.rekruttering.prosessbytte_utsatt": "The process switch was not completed because a dialog was open. Close it and select the process again.",
   "ui.rekruttering.prosessetikett": "Started {dato} · candidates: {antall}",
   "ui.rekruttering.tabell_caption": "Candidates, ranked by points with the current weights",
   "ui.rekruttering.kol_kandidat": "Candidate",

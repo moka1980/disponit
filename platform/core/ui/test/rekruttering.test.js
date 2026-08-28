@@ -557,6 +557,89 @@ test("Rekruttering: hver prosess i svaret kan velges (ikke bare den første)", a
   assert.equal(en.querySelector("#rekrut-prosessvelger"), null);
 });
 
+test("Rekruttering: en åpen dialog river ikke prosessen ut under seg",
+  async () => {
+  // Codex P2: under prosesshentingen er BARE velgeren låst. Resten av
+  // flaten lever, så leseren rekker å åpne en kandidatdetalj for
+  // prosessen som fortsatt står der. Kom svaret da, tegnet `tegn` hele
+  // prosessen om UNDER den åpne dialogen: `aapneDialog` fanget
+  // `document.activeElement` som åpner og gir fokus tilbake dit ved
+  // lukking, men den knappen er nå en frakoblet node. Tastaturbruk
+  // ender uten fokusposisjon — og i signeringstilfellet går
+  // bekreftelsen videre gjennom den gamle knappen etter at flaten har
+  // byttet prosess.
+  //
+  // MUTASJONEN SOM DREPER DENNE: fjern `.overlegg`-vakten i
+  // suksessarmen.
+  const to = prosess();
+  to.prosesser.push({
+    prosess_id: "p-2", blinding_av: false, vekter: { drift: 1 },
+    evaluering_status: "utfort",
+    kandidater: [{ kandidat_id: "K-9", oppfylt: { drift: true },
+      status: "anbefalt", funn: [], intervjusporsmal: [] }],
+    lister: [],
+  });
+  KALL = [];
+  SVAR = svar183(to);
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")));
+  const velger = hoved.querySelector("#rekrut-prosessvelger");
+  assert.ok(velger, "ingen prosessvelger med flere prosesser i svaret");
+
+  // Byttet HENGER: svaret slippes først når testen vil.
+  let slipp;
+  const hengende = new Promise((r) => { slipp = r; });
+  const indeks = svar183(to);
+  SVAR = (sti, opts) => (sti === "/v1/rekruttering/prosesser"
+    && opts.method === undefined
+    && KALL[KALL.length - 1].url.includes("p-2")
+    ? hengende : indeks(sti, opts));
+  velger.value = "p-2";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.ok(await vent(() => velger.disabled),
+    "velgeren ble aldri låst — hentingen startet ikke");
+
+  // ... og MENS den henger, åpner leseren en kandidatdetalj.
+  const rad = [...hoved.querySelectorAll("tbody tr")]
+    .find((tr) => tr.querySelector("td").textContent === "K-2");
+  const detaljer = [...rad.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.detaljer"));
+  assert.ok(detaljer, "raden mangler detaljknappen");
+  detaljer.click();
+  const panel = document.querySelector('[role="dialog"]');
+  assert.ok(panel, "detaljknappen åpnet ingenting");
+  assert.ok(panel.isConnected && detaljer.isConnected,
+    "dialogen eller åpneren var alt frakoblet før svaret kom");
+
+  slipp(to);
+  // Svaret forkastes: prosessen under dialogen står, og åpneren lever.
+  assert.ok(await vent(() =>
+    hoved.querySelector(".rekrut-velgerfeil").textContent !== ""),
+    "byttet sa ingenting da det ble avvist av den åpne dialogen");
+  assert.equal(hoved.querySelector(".rekrut-velgerfeil").textContent,
+    t("ui.rekruttering.prosessbytte_utsatt"),
+    "avvisningen ble meldt som en vanlig byttefeil");
+  assert.ok(detaljer.isConnected,
+    "om-tegningen koblet fra knappen dialogen skal gi fokus tilbake til");
+  assert.ok(document.querySelector('[role="dialog"]'),
+    "dialogen forsvant med prosessen under den");
+  const viste = [...hoved.querySelectorAll("tbody tr")]
+    .map((tr) => tr.querySelector("td").textContent);
+  assert.deepEqual([...viste].sort(), ["K-1", "K-2"],
+    "flaten byttet prosess under en åpen dialog");
+  assert.ok(!viste.includes("K-9"),
+    "p-2s kandidat kom inn under dialogen som eier p-1");
+  // Velgeren låses OPP: ingen mutasjons-`finally` venter på å gjøre det,
+  // og en kontroll som blir stående låst til omlasting er den samme
+  // feilen én etasje ned. Fokus flyttes ikke — det tilhører dialogen.
+  assert.equal(velger.disabled, false,
+    "velgeren ble stående låst uten at noen kunne løfte den");
+  assert.ok(document.activeElement !== velger,
+    "avvisningen rev fokus ut av den åpne dialogen");
+  document.querySelector(".dialog-lukk").click();
+});
+
 test("Rekruttering: 401 under prosessbyttet er innlogging, ikke en byttefeil",
   async () => {
   // Codex: `.catch`-armen på prosesshentingen kastet 401 VIDERE — i enden

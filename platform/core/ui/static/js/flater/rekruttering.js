@@ -476,6 +476,34 @@ function tegn(hoved, ctx, data, okt, valgtId) {
             sett(velgerFeil, t("ui.rekruttering.prosessbytte_feilet"));
             return;
           }
+          // ... OG EN ÅPEN MODAL EIER DEN GAMLE PROSESSEN (Codex P2,
+          // denne runden). Under hentingen er bare velgeren låst; resten
+          // av flaten er levende, så leseren rekker å åpne en
+          // kandidatdetalj eller signeringsdialog for prosessen som
+          // fortsatt STÅR der. `aapneDialog` fanger `document
+          // .activeElement` som åpner og gir fokus tilbake dit ved
+          // lukking — men om-tegningen bytter ut hele prosessen under
+          // dialogen, og åpneren er da en frakoblet node. Tastaturbruk
+          // ender uten fokusposisjon, og i signeringstilfellet går
+          // bekreftelsen videre gjennom den gamle knappen etter at
+          // flaten har byttet prosess: en irreversibel handling utført på
+          // en visning som ikke lenger finnes.
+          //
+          // Modalen kjennes på overlegget: `aapneDialog` henger det på
+          // `document.body` og setter bakgrunnen `inert`. Svaret
+          // forkastes, som i mutasjonsarmen over — en lesning er fritt
+          // gjentakbar, og valget står alt på prosessen flaten viser.
+          //
+          // MEN velgeren låses opp her, i motsetning til over: ingen
+          // `finally` venter på å løfte den. Fokus flyttes IKKE — det
+          // tilhører dialogen, og å rive det ut av en modal ville vært
+          // den samme feilen én etasje ned. Meldingen står i bakgrunnen
+          // og leses når dialogen lukkes.
+          if (document.querySelector(".overlegg")) {
+            sett(velgerFeil, t("ui.rekruttering.prosessbytte_utsatt"));
+            velger.disabled = false;
+            return;
+          }
           data.prosesser = svar.prosesser;
           tegn(hoved, ctx, data, okt, nyId);
           const ny = hoved.querySelector(`#${velgerId}`);
