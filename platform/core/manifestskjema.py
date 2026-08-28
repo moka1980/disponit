@@ -1567,8 +1567,20 @@ def _bias_utledet(m: dict) -> list[str]:
             # `2026-01-01t00:00:00z` besto grammatikken og felte på
             # kalenderen. To ledd som måler hver sin ting skal ikke være
             # uenige om hva de leser.
+            # SKUDDSEKUNDET ER GYLDIG RFC 3339 (Codex P3, runde 4).
+            # §5.7 tillater `time-second = 60` ved et innskutt skuddsekund
+            # — `2016-12-31T23:59:60Z` er et ekte tidspunkt — men
+            # `fromisoformat` avviser sekund 60. Uten dette leddet var
+            # grensen STRENGERE enn kontrakten den påberoper seg, og en
+            # måling tatt i det sekundet ble rapportert som udatert.
+            #
+            # Kalenderen leses fortsatt av standardbiblioteket: bare
+            # sekundfeltet senkes til 59 FOR LESNINGEN, og bare når
+            # mønsteret over alt har godkjent formen. Datoen, timen og
+            # minuttet måles uendret, så en umulig dato felles som før.
             _datetime.fromisoformat(
-                _re.sub(r"[Zz]\Z", "+00:00", str(mal.get("ts"))))
+                _re.sub(r":60(?=(\.\d+)?([+-]\d{2}:\d{2})?\Z)", ":59",
+                        _re.sub(r"[Zz]\Z", "+00:00", str(mal.get("ts")))))
         except (TypeError, ValueError):
             # KALENDEREN, ikke formen: mønsteret over slipper
             # `2026-02-30T00:00:00Z` — riktig antall siffer på riktig
@@ -1588,7 +1600,13 @@ def _bias_utledet(m: dict) -> list[str]:
         # liste med to oppføringer for samme digest kan derfor ikke være
         # en tro gjengivelse av kartet, og hvilken av dem som er beviset
         # er ikke noe denne funksjonen kan avgjøre. Tvetydig bevis felles.
-        if d in dekket:
+        # SAMME NORMALFORM BEGGE VEIER (Codex P2, runde 4). Innsettingen
+        # under bruker `d.lower()`, mens denne testen brukte `d` rått — så
+        # to målinger med SAMME store digest kolliderte aldri, og begge
+        # falt sammen i én settoppføring. Et artefakt med to motstridende
+        # artefakthasher for samme modellversjon passerte da porten som
+        # sier «én måling per digest».
+        if d.lower() in dekket:
             feil.append(f"bias_maalinger[{i}]: {d} er målt mer enn én gang"
                         " — kjøretidsporten bærer én måling per digest, og"
                         " to som utgir seg for samme er ikke bevis, men et"

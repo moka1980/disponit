@@ -474,6 +474,61 @@ def test_grensen_leser_versaler_SOM_kjoretidsporten():
         f" digestlistens — `dekket` normaliseres ikke: {_m57_feil(art)}")
 
 
+def test_to_maalinger_med_samme_STORE_digest_er_fortsatt_tvetydig():
+    """Codex P2 (runde 4): normalformen gjaldt bare den ene veien.
+
+    Innsettingen brukte `d.lower()`, testen `d` rått. To målinger med
+    NØYAKTIG samme store digest kolliderte derfor aldri — begge falt
+    sammen i én settoppføring — og et artefakt med to motstridende
+    artefakthasher for samme modellversjon passerte porten som sier «én
+    måling per digest».
+
+    MUTASJONEN SOM DREPER DENNE: `if d in dekket` tilbake.
+    """
+    art = _gront_artefakt()
+    m = art["maalt"]["bias_maalinger"][0]
+    stor = m["image_digest"][:7] + ("ABCDEF" * 11)[:57] + m["image_digest"][-7:]
+    art["maalt"]["bias_digester_kjort"] = [stor]
+    art["maalt"]["bias_maalinger"] = [
+        {"image_digest": stor, "artefakt_sha256": "a" * 64,
+         "ts": "2026-01-01T00:00:00Z"},
+        {"image_digest": stor, "artefakt_sha256": "f" * 64,
+         "ts": "2026-01-01T00:00:00Z"}]
+    art["maalt"]["bias_maling_mangler_for_digest_forsok"] = 1
+    art["maalt"]["bias_maling_mangler_for_digest_brudd"] = 0
+    feil = _m57_feil(art)
+    assert any("mer enn én gang" in f for f in feil), (
+        "to målinger med samme STORE digest passerte som bevis — de falt"
+        f" sammen i én settoppføring: {feil}")
+
+
+def test_skuddsekundet_er_gyldig_rfc_3339():
+    """Codex P3 (runde 4): grensen var strengere enn kontrakten.
+
+    RFC 3339 §5.7 tillater `time-second = 60` ved et innskutt skuddsekund,
+    og `2016-12-31T23:59:60Z` er et ekte tidspunkt. `fromisoformat`
+    avviser sekund 60, så en måling tatt i det sekundet ble rapportert som
+    udatert — og digesten dens som udekket.
+
+    Kalenderen leses fortsatt av standardbiblioteket; bare sekundfeltet
+    senkes til 59 for lesningen, og bare når mønsteret alt har godkjent
+    formen.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `:60`-substitusjonen.
+    """
+    art = _gront_artefakt()
+    art["maalt"]["bias_maalinger"][0]["ts"] = "2016-12-31T23:59:60Z"
+    assert not _m57_feil(art), \
+        f"et gyldig skuddsekund ble felt: {_m57_feil(art)}"
+
+    # ... men en umulig DATO felles fortsatt av kalenderen. Uten denne
+    # halvdelen kunne substitusjonen vært en generell oppmykning.
+    art = _gront_artefakt()
+    art["maalt"]["bias_maalinger"][0]["ts"] = "2026-02-30T23:59:60Z"
+    assert any("kalenderen sier nei" in f for f in _m57_feil(art)), \
+        "30. februar passerte fordi skuddsekundet myknet opp lesningen"
+
+
 def test_lowercase_z_er_et_gyldig_utc_suffiks_i_BEGGE_lag():
     """Codex P2: mønsteret og kalenderen var uenige om `z`.
 
