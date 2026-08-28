@@ -34,32 +34,120 @@ class HerdingFeilet(RuntimeError):
     exit 0 er ingen port."""
 
 
-def herd_historikk(conn) -> None:
+def _filavvik() -> list[str]:
+    """Reviewede filer som ikke matcher konstantene sine.
+
+    Herdingens FØRSTE måling, og den er ubetinget: den gjelder uansett om
+    raden er NULL og uansett om versjonen er registrert i basen i det hele
+    tatt. Det er nettopp denne ubetingetheten opp.sh-porten ikke kunne
+    speile (#181) — porten løkket over basens rader, denne løkker over
+    det som er REVIEWET.
+    """
+    avvik = []
+    for versjon, forventet in REVIEWEDE_CHECKSUMS.items():
+        fil = next(MIG.glob(f"{versjon:03d}_*.sql"), None)
+        if fil is None:
+            avvik.append(f"{versjon:03d}: reviewet migrasjon mangler i treet")
+            continue
+        if hashlib.sha256(fil.read_bytes()).hexdigest() != forventet:
+            avvik.append(
+                f"{fil.name} matcher ikke reviewet checksum — historikken"
+                f" skal bindes til det som er gjennomgått, ikke til disk")
+    return avvik
+
+
+def _uherdbare(conn) -> list[int] | None:
+    """Registrerte versjoner som står UTEN checksum etter at herdingen har
+    fylt de reviewede. `None` = ingen historikk å måle ennå.
+
+    ÉN kropp for tre skjemaformer, og det er hele poenget med #181:
+
+    * ingen `migrasjoner`-tabell — fersk base. Kjøreren lager den og
+      registrerer 001/002; herdingen fyller dem. Ingenting å måle.
+    * ingen `checksum`-KOLONNE — PR-004-æraens base. Kjøreren legger den
+      til som NULL for HVER registrert versjon, og herdingen fyller kun de
+      reviewede. Spørsmålet er derfor det samme som i normaltilfellet,
+      bare stilt før kolonnen finnes.
+    * kolonnen finnes — normaltilfellet.
+
+    De to siste stiller altså SAMME spørsmål: hvilke registrerte versjoner
+    kan herdingen ikke fylle? Den gamle porten hadde dem som to grener med
+    hver sin begrunnelse, og hver reviewrunde fant et sted de sa
+    forskjellige ting.
+    """
+    import psycopg  # lokal: predikatet kalles også fra skript uten toppimport
+    try:
+        rader = conn.execute(
+            "SELECT versjon FROM migrasjoner WHERE checksum IS NULL"
+            " ORDER BY versjon").fetchall()
+    except psycopg.errors.UndefinedTable:
+        conn.rollback()
+        return None
+    except psycopg.errors.UndefinedColumn:
+        # Kolonnen finnes ikke: da er ALLE registrerte versjoner uten
+        # checksum, og herdingen fyller de reviewede.
+        conn.rollback()
+        rader = conn.execute(
+            "SELECT versjon FROM migrasjoner ORDER BY versjon").fetchall()
+    return [v for (v,) in rader if v not in REVIEWEDE_CHECKSUMS]
+
+
+def herd_historikk(conn, *, torrkjor: bool = False) -> list[str]:
     """Backfill av reviewede checksums + NOT NULL. Idempotent.
 
     Kalles av deploy/staging/migrer.py FØR migrasjon 003, slik den bindende
     spesifikasjonen krever. Kjøres den etterpå — eller ikke i det hele tatt
     — er historikken fortsatt muterbar selv om oppsettet rapporterer
     suksess. Det var Codex' P1 i andre review-runde.
-    """
-    for versjon, forventet in REVIEWEDE_CHECKSUMS.items():
-        fil = next(MIG.glob(f"{versjon:03d}_*.sql"))
-        faktisk = hashlib.sha256(fil.read_bytes()).hexdigest()
-        if faktisk != forventet:
-            raise HerdingFeilet(
-                f"{fil.name} matcher ikke reviewet checksum — historikken"
-                f" skal bindes til det som er gjennomgått, ikke til disk")
-        conn.execute("UPDATE migrasjoner SET checksum=%s"
-                     " WHERE versjon=%s AND checksum IS NULL",
-                     (forventet, versjon))
 
-    mangler = conn.execute(
-        "SELECT versjon FROM migrasjoner WHERE checksum IS NULL"
-        " ORDER BY versjon").fetchall()
-    if mangler:
-        raise HerdingFeilet(
-            f"registrerte migrasjoner uten checksum: {[m[0] for m in mangler]}"
-            " — kan ikke låse historikken")
+    `torrkjor=True` gjør NØYAKTIG de samme målingene og skriver ingenting.
+    Den returnerer avvikene i stedet for å kaste, og tom liste betyr at
+    den skrivende veien vil lykkes.
+
+    ÉN KROPP, IKKE TO GRENER (#181, eiervalg A fra #178s K2). Porten i
+    `opp.sh` var en håndskrevet speiling av kriteriene her, og de to løkkene
+    hadde forskjellig definisjonsmengde: porten løkket over basens rader,
+    herdingen over `REVIEWEDE_CHECKSUMS` med ubetinget filmåling. Hver
+    reviewrunde fant et nytt sted de sa forskjellige ting (R1 manglende
+    kolonne, R2 NULL på ukjent versjon, R3 NULL på legacy uten filmåling),
+    og grenen kunne ikke konvergere ved lapping — det er SP-13/K4-mønsteret
+    målt på semantikk: porten SIMULERTE en fremmed modul i stedet for å
+    spørre den.
+
+    En torrkjøring som er en KOPI av målingene løser ingenting. Derfor deler
+    de to veiene denne kroppen, og forskjellen er kun om det skrives.
+    """
+    avvik = _filavvik()
+    if not avvik and not torrkjor:
+        # Skriv bare når filene er verifisert: en UPDATE på grunnlag av en
+        # konstant vi nettopp så ikke stemmer, ville bundet historikken til
+        # en fil ingen har reviewet.
+        for versjon, forventet in REVIEWEDE_CHECKSUMS.items():
+            conn.execute("UPDATE migrasjoner SET checksum=%s"
+                         " WHERE versjon=%s AND checksum IS NULL",
+                         (forventet, versjon))
+
+    uherdbare = _uherdbare(conn)
+    if uherdbare:
+        avvik.append(
+            "registrerte migrasjoner uten checksum: "
+            + ", ".join(f"{v:03d}" for v in uherdbare)
+            + " — kan ikke låse historikken; herdingen fyller kun de"
+            + " reviewede ("
+            + ", ".join(f"{v:03d}" for v in sorted(REVIEWEDE_CHECKSUMS))
+            + ")")
+
+    if avvik:
+        if torrkjor:
+            conn.rollback()
+            return avvik
+        raise HerdingFeilet("; ".join(avvik))
+
+    if torrkjor:
+        # Ingen skriving skal overleve en MÅLING — heller ikke en tom
+        # transaksjon som holder en lås mens deployet venter.
+        conn.rollback()
+        return []
 
     conn.execute("ALTER TABLE migrasjoner"
                  " ALTER COLUMN checksum SET NOT NULL")
@@ -72,6 +160,17 @@ def herd_historikk(conn) -> None:
     conn.rollback()
     if not nullable or nullable[0] != "NO":
         raise HerdingFeilet("checksum er fortsatt nullable etter herding")
+    return []
+
+
+def kan_herdes(conn) -> list[str]:
+    """Tom liste = `herd_historikk` vil lykkes mot denne basen.
+
+    Lesende, sideeffektfri, og — avgjørende — ingen egen kropp: den ER
+    herdingen, kjørt uten skriving. Det er forskjellen på et predikat og
+    en simulator (K4/SP-13).
+    """
+    return herd_historikk(conn, torrkjor=True)
 
 
 def main() -> int:
