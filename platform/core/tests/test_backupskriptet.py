@@ -132,6 +132,66 @@ def test_det_nyeste_utlopte_paret_lever_til_det_nye_star():
         "den sparte faller før paret er erklært ferdig"
 
 
+def test_en_paagaaende_opplasting_dreper_ikke_backupen():
+    """Codex P2: `tar` returnerer 1 når en fil endres mens den leses.
+
+    `inndata.py` skriver ciphertexten til `<bunt>.bin.tmp` og gjør
+    `os.replace` først når den er hel. Overlapper en opplasting
+    arkivpasset, leser `tar` den midlertidige fila mens den vokser eller
+    byttes ut, melder «file changed as we read it» og returnerer status
+    1 — og med `pipefail` dør HELE nattbackupen av en fil dumpen ikke
+    engang refererer til.
+
+    Ekskluderingen løser det ved roten: en `.tmp` er per konstruksjon
+    ikke en bunt ennå. En `.bin` dumpen KREVER er ferdig skrevet og
+    omdøpt før raden ble committet, så ekskluderingen kan ikke skjule noe
+    porten trenger.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `--exclude`, eller utvid den til
+    `*.bin` og skjul dermed det porten måler.
+    """
+    tar_linje = next(l for l in SKRIPT.splitlines()
+                     if l.lstrip().startswith("tar --create"))
+    assert "--exclude='*.tmp'" in tar_linje, (
+        f"arkivet leser opplastingens midlertidige filer: {tar_linje}")
+    # ... og den skal IKKE ekskludere selve buntene.
+    assert "*.bin" not in tar_linje, (
+        "ekskluderingen dekker buntfilene — da arkiverer backupen"
+        f" ingenting av det den finnes for: {tar_linje}")
+    # `pipefail` er fortsatt på; det er dét som gjorde `tar`-statusen
+    # dødelig, og det skal den være for ekte feil.
+    assert "pipefail" in SKRIPT, \
+        "pipefail er slått av — da skjules ekte tar-feil i stedet"
+
+
+def test_tenantstier_gaar_ikke_i_loggen():
+    """Codex P2: stiene havnet i journald.
+
+    `disponit-backup.service` overstyrer ikke strømmene, så stderr går i
+    journalen — og på en vert med persistent journal blir tenant-ID-ene
+    liggende på disk. Det er nøyaktig lekkasjen listene ble flyttet til
+    tmpfs for å unngå, og arkivet krypteres for å hindre.
+
+    Antall og korthash er nok til å finne igjen raden og til å
+    sammenligne to kjøringer, men kan ikke leses tilbake til en kunde.
+
+    MUTASJONEN SOM DREPER DENNE: skriv `printf '%s\\n' "$MANGLER" |
+    head -5 >&2` igjen.
+    """
+    # Ingen av feilveiene skal sende en RÅ sti til stderr.
+    raa = [l for l in SKRIPT.splitlines()
+           if ">&2" in l and ("$MANGLER" in l or "$mens_manglet" in l)
+           and "sha256sum" not in l and "wc -l" not in l
+           and "grep -c" not in l]
+    assert not raa, f"rå tenant-stier skrives til stderr: {raa}"
+    assert SKRIPT.count("sha256sum | cut -c1-12") == 2, (
+        "begge feilveiene skal hashe stien — én av dem lekker fortsatt")
+    # Operatøren må få vite HVOR klarteksten finnes, ellers er
+    # redaksjonen en forringelse og ikke en beskyttelse.
+    assert "$LISTE.krav" in SKRIPT and "tmpfs for klartekst" in SKRIPT, \
+        "meldingen sier ikke hvor operatøren finner de faktiske stiene"
+
+
 def test_arkivporten_maler_innhold_ikke_bare_navn():
     """Codex P1: en tømt `.bin` passerte som gjenopprettingsverifisert.
 

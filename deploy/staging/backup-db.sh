@@ -362,7 +362,21 @@ rm -f "$RAA"
 # Den krypterte filen kan ikke leses tilbake her — privatnøkkelen er ikke på
 # verten, med vilje — så porten under måler samme strøm som ble skrevet,
 # nøyaktig som dumpens egen verifisering gjør det.
-tar --create --directory="$LAGER" --verbose --file=- . 2>"$LISTE" \
+# EN PÅGÅENDE OPPLASTING SKAL IKKE DREPE BACKUPEN (Codex P2, runde 7).
+# `inndata.py` skriver ciphertexten til `<bunt>.bin.tmp` og gjør `os.replace`
+# først når den er hel. Overlapper en opplasting dette passet, leser `tar`
+# den midlertidige fila mens den vokser eller byttes ut, melder «file changed
+# as we read it» og returnerer status 1 — og med `pipefail` dør HELE
+# nattbackupen av en fil dumpen ikke engang refererer til.
+#
+# `--exclude` løser det ved roten i stedet for å dempe symptomet: den
+# midlertidige fila er per konstruksjon ikke en bunt ennå, så den har
+# ingenting i arkivet å gjøre. En `.bin` som dumpen KREVER er ferdig skrevet
+# og omdøpt før raden ble committet (rekkefølgen er utledet lenger oppe), så
+# ekskluderingen kan ikke skjule noe porten trenger — og skulle den likevel
+# mangle, feller innholdsporten under det høyt.
+tar --create --directory="$LAGER" --verbose --exclude='*.tmp' \
+    --file=- . 2>"$LISTE" \
   | age -R "$MOTTAKER" > "$ARKIV_DELVIS"
 chmod 600 "$ARKIV_DELVIS"
 
@@ -383,9 +397,23 @@ else
 fi
 MANGLER=$(comm -23 "$LISTE.krav" "$LISTE.sett")
 [ -z "$MANGLER" ] || {
+  # STIENE GÅR IKKE I LOGGEN (Codex P2, runde 7). `disponit-backup.service`
+  # overstyrer ikke strømmene, så stderr havner i journald — og på en vert
+  # med persistent journal blir tenant-ID-ene liggende på disk. Det er
+  # nøyaktig lekkasjen listene ble flyttet til tmpfs for å unngå, og
+  # arkivet krypteres for å hindre.
+  #
+  # Antallet og en KORTHASH er nok til å finne igjen raden: hashen er
+  # stabil, så to kjøringer som klager på samme bunt kan sammenlignes,
+  # mens strengen ikke kan leses tilbake til en kunde. Vil operatøren ha
+  # stiene, ligger de i `$LISTE.krav` på tmpfs så lenge kjøringen varer.
   echo "AVBRUTT: $(printf '%s\n' "$MANGLER" | wc -l) rad(er) i dumpen peker" \
-       "på filer arkivet ikke har — en restore ville gitt rader uten filer:" >&2
-  printf '%s\n' "$MANGLER" | head -5 >&2
+       "på filer arkivet ikke har — en restore ville gitt rader uten filer." \
+       "Korthash per sti (se \$LISTE.krav på tmpfs for klartekst):" >&2
+  printf '%s\n' "$MANGLER" | head -5 \
+    | while IFS= read -r sti; do
+        printf '  %s\n' "$(printf '%s' "$sti" | sha256sum | cut -c1-12)" >&2
+      done
   exit 1
 }
 BUNTER=$(wc -l < "$LISTE.krav")
@@ -424,8 +452,11 @@ done < "$LISTE.krav"
   echo "AVBRUTT: $(printf '%s' "$mens_manglet" | grep -c .) fil(er) som" \
        "dumpen krever er tomme, symlenker eller ikke vanlige filer —" \
        "arkivet ville" \
-       "båret navnet uten innholdet:" >&2
-  printf '%s' "$mens_manglet" | head -5 >&2
+       "båret navnet uten innholdet. Korthash per sti:" >&2
+  printf '%s' "$mens_manglet" | head -5 \
+    | while IFS= read -r sti; do
+        printf '  %s\n' "$(printf '%s' "$sti" | sha256sum | cut -c1-12)" >&2
+      done
   exit 1
 }
 
