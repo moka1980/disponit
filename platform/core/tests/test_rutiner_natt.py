@@ -739,6 +739,16 @@ def test_traden_kan_lukkes_saa_porten_kan_passere():
         "ingen vei til å lukke en tråd — merge-porten blir en vranglås"
     assert "isResolved == false" in port, \
         "merge-porten måler ikke uløste tråder"
+    # Cursor P1 runde 7: porten stoppet bare på BOTENS uløste tråder,
+    # mens RUTINER §11.1 sier ALLE. Forfatterporten hører til hva som
+    # skal FIKSES (`BARE BOTENS EGNE FUNN ER ORDRER`), ikke til hva som
+    # stopper merge — ellers kan en åpen tråd fra eier merges forbi i
+    # stillhet. En regel som stopper arbeid skal ikke også åpne en dør.
+    assert "UANSETT FORFATTER" in port, (
+        "merge-porten begrenser stoppet til én forfatter — da er en"
+        " annens uløste tråd en åpen dør")
+    assert "fra `chatgpt-codex-connector[bot]`,\n        merger du ikke" \
+        not in YML, "den forfatterbegrensede merge-stoppen er tilbake"
 
 
 def test_verdiktet_gjelder_sin_egen_sha():
