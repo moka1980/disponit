@@ -1511,12 +1511,38 @@ def _bias_utledet(m: dict) -> list[str]:
             feil.append(f"bias_maalinger[{i}].artefakt_sha256 for {d} er"
                         " ikke en sha256")
             continue
+        # ÉN MÅLING PER DIGEST. Kjøretidssiden er `dict[str, Biasmaaling]`
+        # — digesten er nøkkelen, så den bærer nøyaktig én måling. En
+        # liste med to oppføringer for samme digest kan derfor ikke være
+        # en tro gjengivelse av kartet, og hvilken av dem som er beviset
+        # er ikke noe denne funksjonen kan avgjøre. Tvetydig bevis felles.
+        if d in dekket:
+            feil.append(f"bias_maalinger[{i}]: {d} er målt mer enn én gang"
+                        " — kjøretidsporten bærer én måling per digest, og"
+                        " to som utgir seg for samme er ikke bevis, men et"
+                        " valg denne grensen ikke skal ta")
+            continue
         dekket.add(d)
 
     ukjente = [d for d in digester if not isinstance(d, str) or not DIG.match(d)]
     if ukjente:
         feil.append(f"bias_digester_kjort inneholder verdier som ikke er"
                     f" digester: {ukjente}")
+        return feil
+
+    # DUPLIKATER ER IKKE FORSØK. Forsøkstallet måles mot `len(digester)`,
+    # dekningen mot `set(digester)` — står samme digest tre ganger, blir
+    # `forsok=3` sant med ÉN måling og null brudd. Det er nøyaktig hullet
+    # #167 stengte («en kjøring med én digest kunne rapportere tre forsøk
+    # og se grundigere ut enn den var»), gjenåpnet gjennom grunnlaget
+    # invarianten utledes av. Listen navngir digestene kjøringen brukte;
+    # å bruke den samme igjen er ikke en digest til.
+    duplikater = sorted({d for d in digester if digester.count(d) > 1})
+    if duplikater:
+        feil.append(f"bias_digester_kjort gjentar digest(er):"
+                    f" {duplikater} — en gjentakelse er ikke et forsøk"
+                    " til, og et forsøkstall som teller den er ikke en"
+                    " måling")
         return feil
 
     mangler = sorted(set(digester) - dekket)

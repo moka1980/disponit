@@ -271,6 +271,59 @@ def test_grunnlaget_kan_ikke_utelates():
         "en tom digestliste utleder null brudd av ingenting"
 
 
+def test_en_gjentatt_digest_er_ikke_et_forsok_til():
+    """Hullet #167 stengte, gjenåpnet gjennom sitt eget grunnlag.
+
+    Forsøkstallet måles mot `len(bias_digester_kjort)`, mens dekningen
+    regnes mot `set(...)`. Står én digest tre ganger, er `forsok=3` sant
+    med ÉN måling og null brudd — og artefaktet ser ut som en kjøring mot
+    tre modellversjoner når den prøvde én. Det er ordrett det
+    `test_forsoket_er_antallet_digester_ikke_et_tall_modulen_velger`
+    påstår er stengt, så uten denne porten løy den testen.
+
+    Begge lag feller det, som for de andre feltene: skjemaet på
+    `uniqueItems`, grensesjekken uavhengig.
+
+    MUTASJONEN SOM DREPER DENNE: tell duplikater som forsøk igjen (regn
+    `_forsok` mot `len(digester)` uten å avvise gjentakelser).
+    """
+    art = _gront_artefakt()
+    d = art["maalt"]["bias_digester_kjort"][0]
+    # Én digest, prøvd én gang, utgitt for tre forsøk.
+    art["maalt"]["bias_digester_kjort"] = [d, d, d]
+    art["maalt"]["bias_maalinger"] = art["maalt"]["bias_maalinger"][:1]
+    art["maalt"]["bias_maling_mangler_for_digest_forsok"] = 3
+    art["maalt"]["bias_maling_mangler_for_digest_brudd"] = 0
+    feil = _m57_feil(art)
+    assert any("gjentar" in f for f in feil), \
+        f"tre kopier av én digest passerte som tre forsøk: {feil}"
+    assert valider_artefaktformat(art, "m57-v1") != [], \
+        "skjemaet slapp gjennom en gjentatt digest (uniqueItems)"
+
+
+def test_to_malinger_for_samme_digest_er_tvetydig_bevis():
+    """Kjøretidssiden er `dict[str, Biasmaaling]` — én måling per digest.
+
+    En liste med to ulike målinger for samme digest kan derfor ikke være
+    en tro gjengivelse av kartet porten faktisk ble stilt. Å plukke den
+    første ville gjort grensen til en som VELGER hvilket bevis som
+    gjelder; det valget hører ikke hjemme her. Tvetydig bevis felles.
+
+    MUTASJONEN SOM DREPER DENNE: la `dekket` svelge gjentatte digester
+    stille (`dekket.add(d)` uten å se om den alt er der).
+    """
+    art = _gront_artefakt()
+    maalinger = art["maalt"]["bias_maalinger"]
+    d = maalinger[0]["image_digest"]
+    # Samme digest, to ulike artefakthasher — hvilken er beviset?
+    art["maalt"]["bias_maalinger"] = maalinger + [
+        {"image_digest": d, "artefakt_sha256": "f" * 64,
+         "ts": "2026-08-23T00:00:00+00:00"}]
+    feil = _m57_feil(art)
+    assert any("mer enn én gang" in f for f in feil), \
+        f"to målinger for samme digest passerte som bevis: {feil}"
+
+
 def test_grensen_mot_valg_A_er_skrevet_ned_aerlig():
     """Det B IKKE gjør, sagt høyt — så neste leser ikke tror den er dekket.
 
