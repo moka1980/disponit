@@ -448,8 +448,24 @@ def prosesser_endepunkt(tjeneste, request):
         # pluss kundens døgn. Prosessen faller UT av velgeren når
         # fristen er ute — `_kandidater` kalles aldri for den, så det er
         # samme port ett ledd tidligere, ikke en ny.
-        for pid, oppdrag_id, status, opprettet in conn.execute(
-                "SELECT p.prosess_id, p.oppdrag_id, o.status, p.opprettet"
+        # ANTALLET ER INDEKSENS EGET TALL (Cursor P2, #183). Velgerens
+        # etikett er «Startet <dato> · kandidater: N», og N ble lest av
+        # `kandidater`-listen — som etter #183 bare finnes på den VALGTE
+        # raden. Hver andre prosess i nedtrekket sa derfor «kandidater: 0»
+        # om en prosess som kan bære tusenvis, og det er ikke en manglende
+        # opplysning: det er en gal en, på den ene kontrollen som skal
+        # skille prosessene fra hverandre foran en irreversibel signering.
+        #
+        # Tellingen er en SKALAR per rad, ikke payloaden tilbake: det er
+        # nettopp forskjellen #183 finnes for. Predikatet er ordrett
+        # `_kandidater`s eget (`slettet_ts IS NULL`), så indeksens tall og
+        # den valgte radens liste kan ikke si ulike ting om samme prosess.
+        for pid, oppdrag_id, status, opprettet, antall in conn.execute(
+                "SELECT p.prosess_id, p.oppdrag_id, o.status, p.opprettet,"
+                "       (SELECT count(*) FROM kandidat_evalueringsartefakt t"
+                "         WHERE t.tenant = p.tenant"
+                "           AND t.prosess_id = p.prosess_id"
+                "           AND t.slettet_ts IS NULL)"
                 "  FROM rekrutteringsprosess p"
                 "  JOIN oppdrag o ON o.tenant = p.tenant"
                 "                AND o.id = p.oppdrag_id"
@@ -461,7 +477,7 @@ def prosesser_endepunkt(tjeneste, request):
                 "             WHERE k.tenant = p.tenant"
                 "               AND k.prosess_id = p.prosess_id))"
                 " ORDER BY p.opprettet DESC", (tenant,)).fetchall():
-            rader.append((pid, oppdrag_id, status, opprettet))
+            rader.append((pid, oppdrag_id, status, opprettet, antall))
 
         # ÉN PROSESS BÆRER DATA, RESTEN ER EN INDEKS (#183, Codex P2 fra
         # #176). Løkka kalte `_kandidater` og `_lister` for HVER ureapet
@@ -489,11 +505,12 @@ def prosesser_endepunkt(tjeneste, request):
         else:
             valgt = rader[0] if rader else None
 
-        for pid, oppdrag_id, status, opprettet in rader:
+        for pid, oppdrag_id, status, opprettet, antall in rader:
             post = {
                 "prosess_id": str(pid),
                 "opprettet": opprettet.isoformat(),
                 "evaluering_status": status,
+                "kandidat_antall": antall,
             }
             if valgt is not None and pid == valgt[0]:
                 kandidater, vekter, kilde = _kandidater(conn, tenant, pid)

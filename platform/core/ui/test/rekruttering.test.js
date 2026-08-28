@@ -585,6 +585,40 @@ test("Rekruttering: velgeren navngir prosessen, aldri bare UUID-en", async () =>
     "navnet fra serveren tapte mot tidsstempelet");
 });
 
+test("Velgeretiketten teller INDEKSENS kandidater, ikke den valgtes liste",
+  async () => {
+  // Cursor P2 (#183): etter #183 bærer bare den VALGTE prosessen
+  // `kandidater`; de øvrige oppføringene er en lett indeks. Etiketten
+  // leste `(p.kandidater || []).length` og sa derfor ALLTID «kandidater:
+  // 0» om dem — om en prosess som kan bære tusenvis. Det er ikke en
+  // manglende opplysning, det er en gal en, på den ene kontrollen som
+  // skiller prosessene fra hverandre foran en irreversibel signering.
+  //
+  // MUTASJONEN SOM DREPER DENNE: les `(p.kandidater || []).length` igjen.
+  const svar = { valgt_prosess_id: "p-1", prosesser: [
+    { ...prosess().prosesser[0], kandidat_antall: 2 },
+    // Indeksraden: serverens #183-form — ingen `kandidater`, men et tall.
+    { prosess_id: "p-2", opprettet: "2026-08-20T09:00:00+00:00",
+      evaluering_status: "utfort", kandidat_antall: 1743 },
+  ] };
+  svar.prosesser[0].opprettet = "2026-08-24T06:10:00+00:00";
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": svar };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")));
+  const tekster = [...hoved.querySelector("#rekrut-prosessvelger").options]
+    .map((o) => o.textContent);
+  assert.equal(tekster[1], t("ui.rekruttering.prosessetikett")
+    .replaceAll("{dato}", Tidspunkt("2026-08-20T09:00:00+00:00").textContent)
+    .replaceAll("{antall}", "1743"),
+    `indeksraden lyver om antallet: ${JSON.stringify(tekster)}`);
+  // Og den VALGTE raden teller det samme tallet, ikke to ulike sannheter.
+  assert.equal(tekster[0], t("ui.rekruttering.prosessetikett")
+    .replaceAll("{dato}", Tidspunkt("2026-08-24T06:10:00+00:00").textContent)
+    .replaceAll("{antall}", "2"));
+});
+
 test("Rekruttering: signeringen gjenbruker idempotensnøkkelen etter usikker feil", async () => {
   // Codex P1: den irreversible operasjonen fikk fersk nøkkel per klikk.
   // Commiter serveren og svaret går tapt, må BRUKERENS retry bære SAMME

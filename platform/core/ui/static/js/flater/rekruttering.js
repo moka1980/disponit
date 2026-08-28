@@ -93,9 +93,17 @@ function prosessetikett(p) {
   // Datoformen er husets ene beslutning om tidspunkter (`Tidspunkt` i
   // komponenter.js: leserens egen sone, ingen påstand om hvilken). Her
   // trengs teksten, ikke elementet — `<option>` bærer ikke barn.
+  // ANTALLET KOMMER FRA INDEKSEN, IKKE FRA LISTEN (Cursor P2, #183).
+  // `kandidater` finnes bare på den VALGTE prosessen etter #183, så
+  // `(p.kandidater || []).length` ga ALLTID 0 for de øvrige oppføringene
+  // i nedtrekket — en prosess med tusen søkere sto oppført med «kandidater:
+  // 0». Serveren teller nå raden sin i indeksen; listen står igjen som
+  // reserve for et svar uten feltet, ikke som kilden.
+  const antall = typeof p.kandidat_antall === "number"
+    ? p.kandidat_antall : (p.kandidater || []).length;
   return t("ui.rekruttering.prosessetikett")
     .replaceAll("{dato}", Tidspunkt(p.opprettet).textContent)
-    .replaceAll("{antall}", String((p.kandidater || []).length));
+    .replaceAll("{antall}", String(antall));
 }
 
 function kortHash(hash) {

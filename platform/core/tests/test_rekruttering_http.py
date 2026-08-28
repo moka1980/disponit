@@ -1906,8 +1906,57 @@ def test_svaret_vokser_ikke_med_antall_prosesser(klient):
 
     # Indeksen bærer det velgeren trenger, og ikke mer.
     lett = etter[str(gammel)]
-    assert set(lett) == {"prosess_id", "opprettet", "evaluering_status"}, \
+    assert set(lett) == {"prosess_id", "opprettet", "evaluering_status",
+                         "kandidat_antall"}, \
         f"indeksraden bærer felter velgeren ikke bruker: {sorted(lett)}"
+
+
+@pg
+def test_indeksraden_teller_kandidatene_sine(klient):
+    """Velgeretiketten skal ikke lyve om antallet (Cursor P2, #183).
+
+    Etiketten er «Startet <dato> · kandidater: N», og N ble lest av
+    `kandidater`-listen — som etter #183 bare finnes på den VALGTE raden.
+    Hver andre prosess i nedtrekket sa derfor «kandidater: 0» om en
+    prosess som kan bære tusenvis. Det er ikke en manglende opplysning;
+    det er en gal en, på den ene kontrollen som skiller prosessene fra
+    hverandre foran en irreversibel signering.
+
+    Tallet er en SKALAR per rad — ikke payloaden tilbake — og må måle
+    NØYAKTIG det `_kandidater` selv ville levert.
+
+    MUTASJONEN SOM DREPER DENNE: la `kandidat_antall` falle bort fra
+    indeksraden, eller tell uten `slettet_ts IS NULL`.
+    """
+    gammel, _r1, _h1 = _seed_prosess()
+    _artefakt(gammel, {"drift": True, "sky": True})
+    ny, _r2, _h2 = _seed_prosess()
+    cookie, _ = _browsersesjon(_bruker("les-183d", ["leser"]))
+
+    r = _get(klient, cookie, "/v1/rekruttering/prosesser")
+    assert r.status_code == 200, r.text
+    svar = r.json()
+    etter = {p["prosess_id"]: p for p in svar["prosesser"]}
+    assert svar["valgt_prosess_id"] == str(ny)
+
+    indeks = etter[str(gammel)]
+    assert "kandidater" not in indeks, \
+        "indeksraden bar kandidatene likevel — veksten er tilbake"
+    assert indeks["kandidat_antall"] > 0, \
+        "indeksraden telte 0 kandidater på en prosess som har dem —" \
+        " nøyaktig løgnen velgeretiketten sto for"
+
+    # ... og tallet er det SAMME som den valgte radens egen liste gir, så
+    # etiketten og tabellen ikke kan si ulike ting om samme prosess.
+    rg = _get(klient, cookie,
+              f"/v1/rekruttering/prosesser?prosess_id={gammel}")
+    assert rg.status_code == 200, rg.text
+    valgt = [p for p in rg.json()["prosesser"]
+             if p["prosess_id"] == str(gammel)][0]
+    assert valgt["kandidat_antall"] == len(valgt["kandidater"]), \
+        "indeksens tall og den valgte radens liste er uenige"
+    assert indeks["kandidat_antall"] == len(valgt["kandidater"]), \
+        "indeksraden og den spisse raden teller ulikt"
 
 
 @pg
