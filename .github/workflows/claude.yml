@@ -36,8 +36,10 @@ jobs:
   fiks-og-merge:
     name: Håndter review
     # Offentlig repo: bare reviews fra eier eller Codex utløser autonom
-    # fiksing/merging. Codex-verdikter kommer som issue_comment fra
-    # chatgpt-codex-connector[bot], ikke som formell review — fang begge.
+    # fiksing/merging. Codex bruker BEGGE kanalene, og valget følger
+    # utfallet (#211): verdikt UTEN funn kommer som issue_comment, verdikt
+    # MED funn som `pull_request_review` med inline-kommentarer. Begge
+    # porteres — se den utfyllende begrunnelsen rett over `if:`.
     #
     # 🔴 IKKE ALT Codex-bottet skriver ER ET VERDIKT. Da kreditten tok slutt
     # 2026-08-15 postet den «Codex usage limits have been reached for code
