@@ -438,14 +438,24 @@ def test_grensen_leser_versaler_SOM_kjoretidsporten():
     assert valider_artefaktformat(art, "m57-v1") == [], \
         "skjemaet avviser skrivemåten kjøretidsporten godtar"
 
-    # ... OG BLANDET SKRIVEMÅTE er samme digest, ikke to: bare
-    # digestlisten skrives med versaler, målingene beholder sin form.
+    # ... OG BLANDET SKRIVEMÅTE er samme digest, ikke to. BEGGE
+    # RETNINGENE måles: normaliseres bare den ene siden, overlever
+    # mutasjonen på den andre. Første utgave av porten hadde nettopp det
+    # hullet — den skrev versaler bare i digestlisten, og da holdt
+    # `dekket.add(d)` uten `.lower()` fortsatt.
     art = _gront_artefakt()
     art["maalt"]["bias_digester_kjort"] = [
         _stor(d) for d in art["maalt"]["bias_digester_kjort"]]
     assert not _m57_feil(art), (
-        "samme digest skrevet med ulike versaler ble lest som to —"
-        f" dekningen måles ikke på normalform: {_m57_feil(art)}")
+        "versaler i DIGESTLISTEN ble lest som andre digester enn"
+        f" målingenes: {_m57_feil(art)}")
+
+    art = _gront_artefakt()
+    for m in art["maalt"]["bias_maalinger"]:
+        m["image_digest"] = _stor(m["image_digest"])
+    assert not _m57_feil(art), (
+        "versaler i MÅLINGENE ble lest som andre digester enn"
+        f" digestlistens — `dekket` normaliseres ikke: {_m57_feil(art)}")
 
 
 def test_lowercase_z_er_et_gyldig_utc_suffiks_i_BEGGE_lag():
