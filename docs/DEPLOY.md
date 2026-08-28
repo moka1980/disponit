@@ -14,7 +14,22 @@ sudo deploy/staging/bootstrap-token.sh demo-a  # interaktiv, KREVER TTY
 | `disponit-m37.service` | Unix `disponit-m37`, DB `disponit_arbeider` | `/etc/disponit/m37/` | unntakskø-arbeider |
 | `disponit-helse.timer` | Unix `disponit-helse` (medlem `disponit-proxy`) | ingen | /live + heartbeat-tilsyn, restart via lukket helper |
 | `disponit-rydd-pending.timer` | `disponit-helse`, DB `disponit_token_admin` | `/etc/disponit/tokenadmin/` | PENDING-TTL (30 min) |
-| `disponit-backup.timer` | root | `backup-mottaker.pub` (age) | kryptert dump + restore-verifisering mot isolert base |
+| `disponit-backup.timer` | root | `backup-mottaker.pub` (age) | kryptert dump + arkiv av inndata-lageret, begge restore-verifisert |
+
+**Backupen er et PAR, ikke en fil (#191).** Hver kjøring legger to
+filer i `/var/backups/disponit` under samme stempel:
+`disponit-<stempel>.dump.age` (basen) og
+`disponit-<stempel>.inndata.tar.age` (bunt-lageret,
+`/var/lib/disponit-inndata`). De er ÉN gjenopprettingsenhet: DEK-ene
+som dekrypterer buntene i arkivet ligger i dumpen med samme stempel,
+KEK-wrappet slik de sto den natten. **Restore krysser aldri to
+stempler** — en dump fra i går med et arkiv fra i forgårs gir rader
+hvis filer aldri var der.
+
+Derfor får de to heller aldri backupnavnene sine hver for seg, og
+retention sletter dem sammen. Ser du ett stempel med bare én fil, er
+det ikke en halv backup — det er ingen backup, og noe har rørt
+katalogen utenom skriptet.
 
 **Ingen TCP-port (PR-009b §0).** API-et lytter KUN på
 `/run/disponit/api.sock`: eier `disponit-api`, gruppe `disponit-proxy`,

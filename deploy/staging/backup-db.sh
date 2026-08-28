@@ -13,7 +13,13 @@ set -euo pipefail
 
 MOTTAKER=/etc/disponit/backup-mottaker.pub
 KATALOG=/var/backups/disponit
+# FS-lageret for inndata-bunter (#162). API-unitens egen StateDirectory;
+# `INNDATA_ROT` i platform/core/api/inndata.py peker på den samme roten.
+LAGER=/var/lib/disponit-inndata
 DAGER=30
+# Diskmargin for dump + arkiv, i KiB. Bunter er inntil 64 MiB per stykk, og
+# en full /var tar basen med seg — da er en avbrutt backup den milde utgangen.
+MARGIN_KIB=$((256 * 1024))
 
 exec 9>/var/lock/disponit-backup.lock
 flock -n 9 || { echo "AVBRUTT: backup kjører allerede" >&2; exit 1; }
@@ -28,6 +34,14 @@ set -a; . /etc/disponit/staging.env; set +a
 install -d -m 700 "$KATALOG"
 STEMPEL=$(date -u +%Y%m%dT%H%M%S)
 FIL="$KATALOG/disponit-$STEMPEL.dump.age"
+# PARET ER ATOMISK (#191). Dumpen og arkivet deler stempel og er ÉN
+# gjenopprettingsenhet: DEK-ene som dekrypterer buntene i arkivet ligger i
+# dumpen med samme stempel, KEK-wrappet slik de sto den natten. Å restore
+# dem fra to ulike kjøringer er ikke støttet — derfor får de heller aldri
+# backupnavnene sine hver for seg, og retention sletter dem sammen.
+# En dump uten sitt arkiv ER funnet dette skriptet lukker, bare flyttet inn
+# i backupkatalogen.
+ARKIV="$KATALOG/disponit-$STEMPEL.inndata.tar.age"
 
 # Codex P1 (#178, runde 6): BACKUPNAVNET FÅS FØRST NÅR BACKUPEN ER SANN.
 # opp.sh steg 5 stopper `disponit-backup.service` for å holde `pg_dump`
@@ -44,13 +58,15 @@ FIL="$KATALOG/disponit-$STEMPEL.dump.age"
 # matcher hverken `disponit-*.dump.age` eller retention-globben, så en
 # rest kan verken forveksles med en backup eller slettes som en.
 DELVIS="$FIL.delvis"
+ARKIV_DELVIS="$ARKIV.delvis"
 # Ett felles trap fra og med HER, ikke etter dumpen: det er nettopp
 # intervallet før den gamle `trap`-linjen som er avbruddsvinduet. `VERIF`
 # er tom til engangsbasen finnes, så oppryddingen dekker begge fasene uten
 # å kalle `dropdb` på et navn som aldri ble opprettet.
 VERIF=""
+LISTE=$(mktemp)
 opprydd() {
-  rm -f "$DELVIS"
+  rm -f "$DELVIS" "$ARKIV_DELVIS" "$LISTE" "$LISTE.sett" "$LISTE.krav"
   [ -z "$VERIF" ] || sudo -u postgres dropdb --if-exists "$VERIF"
 }
 trap opprydd EXIT
@@ -58,7 +74,27 @@ trap opprydd EXIT
 # strømbrudd) ville ellers blitt liggende for alltid: retention rører den
 # ikke, og katalogen fylles av dumper. `flock` over garanterer at ingen
 # annen kjøring eier en `.delvis` akkurat nå.
-rm -f "$KATALOG"/disponit-*.dump.age.delvis
+rm -f "$KATALOG"/disponit-*.dump.age.delvis \
+      "$KATALOG"/disponit-*.inndata.tar.age.delvis
+
+# DISKPORTEN FØR DUMPEN, ikke etter. Arkivet er en kopi av hele lageret, og
+# lageret vokser med 64 MiB per bunt mens backupkatalogen holder 30 dagers
+# par. Går /var full MIDT i kjøringen, er ikke backupen det eneste som
+# stopper — basen skriver til den samme disken. Porten er derfor fail-closed
+# og måler det arkivet faktisk kommer til å koste.
+[ -d "$LAGER" ] || {
+  echo "AVBRUTT: $LAGER mangler — inndata-lageret er ikke provisjonert." \
+       "En backup som stille hopper over lageret er nøyaktig #191." >&2
+  exit 1
+}
+LAGER_KIB=$(du -sk "$LAGER" | cut -f1)
+LEDIG_KIB=$(df -k --output=avail "$KATALOG" | tail -1)
+KREVES_KIB=$((LAGER_KIB + MARGIN_KIB))
+[ "$LEDIG_KIB" -ge "$KREVES_KIB" ] || {
+  echo "AVBRUTT: $LEDIG_KIB KiB ledig i $KATALOG, trenger $KREVES_KIB KiB" \
+       "(lager $LAGER_KIB + margin $MARGIN_KIB)" >&2
+  exit 1
+}
 
 # pg_dump i custom-format som POSTGRES, ikke migrator. «Eier skjemaet, ser
 # alt» sluttet å være sant da kapabilitetstabellene fikk egen eier uten
@@ -88,14 +124,93 @@ TABELLER=$(sudo -u postgres psql -Atd "$VERIF" -c \
 }
 STORRELSE=$(stat -c%s "$DELVIS")
 [ "$STORRELSE" -gt 1024 ] || { echo "AVBRUTT: backupfilen er tom" >&2; exit 1; }
-# Begge portene har svart. FØRST nå får fila backupnavnet, og fra og med
-# denne linjen er den dagens backup — for retention, for operatøren og for
-# den som en dag skal restore.
+
+# ============================================================
+# INNDATA-LAGERET (#191, Codex P1 fra #190)
+#
+# Dumpen alene ga en gjenoppretting med tilsynelatende gyldige `lastet`/
+# `bundet` rader hvis `lager_sti`-filer ALLE var borte — hele opplastingen
+# tapt, mens verifiseringen over meldte suksess.
+#
+# REKKEFØLGEN ER UTLEDET, IKKE VALGT. `inndata.py` skriver og fsync-er
+# ciphertexten FØR raden committes, og ingen kodevei unlinker filen til en
+# COMMITTET rad (unlinkene der ligger utelukkende på veier der
+# transaksjonen abortert — der er filen trygt en orphan). Av det følger:
+#
+#   rad i dumpen  ⟹  committet før dumpen
+#                 ⟹  filen fsynct før den commiten
+#                 ⟹  filen fantes før dumpen, og finnes når arkivet tas.
+#
+# Derfor DUMP FØRST, ARKIV ETTERPÅ. Motsatt vei er nettopp funnet på nytt,
+# bare med et nytt vindu: en fil skrevet etter arkivet, hvis rad rekker inn
+# i dumpen, gir en rad uten fil.
+#
+# HVA SOM VINNER VED SPRIK: dumpen er autoriteten på hva som MÅ finnes.
+# Arkivet får lov til å inneholde mer — orphans, og rader committet etter
+# dumpen. Porten er derfor ENVEIS: hver `lager_sti` skal finnes i arkivet,
+# aldri omvendt.
+#
+# KRYPTERING: age på nytt, samme mottaker som dumpen. Innholdet er alt
+# tenant-DEK-kryptert, så dette er dobbelt — men STIENE er det ikke, og de
+# bærer tenant-ID og buntvolum i klartekst. Katalogens invariant er at en
+# angriper med diskaksess leser null; en tar-liste med kundenavn bryter den
+# like fullt som en lesbar bunt.
+# ============================================================
+# Medlemslisten fanges fra DENNE ene passeringen (`--verbose` til stderr).
+# Den krypterte filen kan ikke leses tilbake her — privatnøkkelen er ikke på
+# verten, med vilje — så porten under måler samme strøm som ble skrevet,
+# nøyaktig som dumpens egen verifisering gjør det.
+tar --create --directory="$LAGER" --verbose --file=- . 2>"$LISTE" \
+  | age -R "$MOTTAKER" > "$ARKIV_DELVIS"
+chmod 600 "$ARKIV_DELVIS"
+
+# Gjenopprettingsverifiseringens andre halvdel: hver `lager_sti` i en
+# `lastet`/`bundet` rad i den GJENOPPRETTEDE basen skal finnes i arkivet.
+# Tabellen kan mangle i en base som er eldre enn 058 — da er kravmengden tom
+# og porten passerer, i stedet for at hele backupen dør på en manglende
+# tabell.
+sed 's#^\./##' "$LISTE" | sed '/^$/d' | sort -u > "$LISTE.sett"
+if [ "$(sudo -u postgres psql -Atd "$VERIF" -c \
+        "SELECT to_regclass('public.inndata_artefakt') IS NOT NULL")" = t ]; then
+  sudo -u postgres psql -Atd "$VERIF" -c \
+    "SELECT lager_sti FROM inndata_artefakt
+      WHERE status IN ('lastet','bundet') AND lager_sti IS NOT NULL" \
+    | sed '/^$/d' | sort -u > "$LISTE.krav"
+else
+  : > "$LISTE.krav"
+fi
+MANGLER=$(comm -23 "$LISTE.krav" "$LISTE.sett")
+[ -z "$MANGLER" ] || {
+  echo "AVBRUTT: $(printf '%s\n' "$MANGLER" | wc -l) rad(er) i dumpen peker" \
+       "på filer arkivet ikke har — en restore ville gitt rader uten filer:" >&2
+  printf '%s\n' "$MANGLER" | head -5 >&2
+  exit 1
+}
+BUNTER=$(wc -l < "$LISTE.krav")
+
+# ALLE portene har svart — dumpens to og arkivets én. FØRST nå får FILENE
+# backupnavnene sine, og de får dem SAMMEN: paret er gjenopprettingsenheten,
+# og en halv enhet i katalogen ville vært den samme løgnen som en avkortet
+# dump med endelig navn.
 mv "$DELVIS" "$FIL"
+mv "$ARKIV_DELVIS" "$ARKIV"
 
 # Retention: 30 dager, og slettingen TELLES — en glob som ikke treffer
 # noe ser ellers ut som en som ikke hadde noe å slette.
-SLETTET=$(find "$KATALOG" -name 'disponit-*.dump.age' -mtime +"$DAGER" \
-          -print -delete | wc -l)
+#
+# SLETTINGEN GÅR PÅ STEMPEL, IKKE PÅ GLOB PER FIL (#191). Utløper dumpen og
+# arkivet hver for seg, står man igjen med en dump hvis bunter ingen arkiv
+# lenger har — altså funnet, gjenoppstått etter 30 dager i stedet for med én
+# gang. Stempelet binder dem: paret dør som det ble født.
+SLETTET=0
+while IFS= read -r gammel; do
+  STEMPEL_GAMMEL=$(basename "$gammel"); STEMPEL_GAMMEL=${STEMPEL_GAMMEL#disponit-}
+  STEMPEL_GAMMEL=${STEMPEL_GAMMEL%.dump.age}
+  rm -f "$KATALOG/disponit-$STEMPEL_GAMMEL.dump.age" \
+        "$KATALOG/disponit-$STEMPEL_GAMMEL.inndata.tar.age"
+  SLETTET=$((SLETTET + 1))
+done < <(find "$KATALOG" -name 'disponit-*.dump.age' -mtime +"$DAGER")
+
 echo "backup ok: $FIL (${STORRELSE} B), verifisert mot $VERIF" \
-     "(${TABELLER} tabeller), slettet $SLETTET utløpte"
+     "(${TABELLER} tabeller); arkiv: $ARKIV ($(stat -c%s "$ARKIV") B," \
+     "${BUNTER} bunt(er) bekreftet); slettet $SLETTET utløpte par"

@@ -1427,6 +1427,112 @@ def test_backupen_far_backupnavnet_forst_etter_verifiseringen():
         "arbeidsfila ryddes ikke ved avbrudd"
 
 
+def test_backupen_arkiverer_inndatalageret_etter_dumpen():
+    """#191 (Codex P1 fra #190): en restore ga rader uten filer.
+
+    `backup-db.sh` dumpet og restore-verifiserte bare basen. Etter et havari
+    inneholdt den gjenopprettede basen tilsynelatende gyldige `lastet`/
+    `bundet` rader hvis `lager_sti`-filer ALLE var borte — hver eneste
+    opplastede bunt tapt, mens verifiseringen meldte suksess.
+
+    REKKEFØLGEN ER PORTEN, og den er utledet av en invariant som alt står:
+    `inndata.py` fsync-er ciphertexten FØR raden committes, og ingen kodevei
+    unlinker filen til en committet rad. Derfor gjelder «rad i dumpen ⟹ fil
+    på disk før dumpen», og arkivet må tas ETTER dumpen. Snus rekkefølgen,
+    er funnet tilbake med et nytt vindu: en fil skrevet etter arkivet, hvis
+    rad rekker inn i dumpen.
+
+    MUTASJONEN SOM DREPER DENNE: flytt `tar` opp foran `pg_dump` (arkiv før
+    dump), eller la `mv "$DELVIS" "$FIL"` skje før lager_sti-porten — da får
+    dumpen backupnavnet sitt uten at noen har målt at buntene finnes.
+    """
+    skript = (ROT / "deploy/staging/backup-db.sh").read_text(encoding="utf-8")
+    linjer = [ln.strip() for ln in skript.splitlines()
+              if ln.strip() and not ln.lstrip().startswith("#")]
+
+    def indeks(bit):
+        for i, ln in enumerate(linjer):
+            if bit in ln:
+                return i
+        return -1
+
+    i_dump = indeks('age -R "$MOTTAKER"')
+    i_tar = indeks("tar --create")
+    i_port = indeks("rad(er) i dumpen peker")
+    i_mv_dump = indeks('mv "$DELVIS" "$FIL"')
+    i_mv_arkiv = indeks('mv "$ARKIV_DELVIS" "$ARKIV"')
+
+    assert i_tar > i_dump > 0, \
+        "arkivet tas FØR dumpen — en fil skrevet etterpå, hvis rad rekker " \
+        "inn i dumpen, gir nøyaktig den raden uten fil som #191 handler om"
+    assert i_port > i_tar, \
+        "lager_sti-porten måler før arkivet finnes"
+    assert i_mv_dump > i_port and i_mv_arkiv > i_port, \
+        "backupnavnene settes før lager_sti-porten har svart"
+    assert 'rm -f "$DELVIS" "$ARKIV_DELVIS"' in skript, \
+        "arbeidsfilene ryddes ikke ved avbrudd — en avkortet halvdel kan " \
+        "bli liggende"
+    # ENVEIS, med vilje: arkivet får inneholde mer (orphans, og rader
+    # committet etter dumpen). Dumpen er autoriteten på hva som MÅ finnes.
+    assert 'comm -23 "$LISTE.krav" "$LISTE.sett"' in skript, \
+        "porten er ikke enveis — den krever likhet, og da feller den " \
+        "backupen på en foreldreløs fil som ikke er noen feil"
+
+
+def test_backupen_sletter_dumpen_og_arkivet_som_ett_par():
+    """Paret er gjenopprettingsenheten — også når det dør.
+
+    DEK-ene som dekrypterer buntene i et arkiv ligger i dumpen med SAMME
+    stempel, KEK-wrappet slik de sto den natten. Utløper de to hver for seg,
+    står man igjen med en dump hvis bunter ingen arkiv lenger har: #191
+    gjenoppstått etter 30 dager i stedet for med én gang.
+
+    MUTASJONEN SOM DREPER DENNE: erstatt stempelløkka med det gamle
+    `find -name 'disponit-*.dump.age' -delete`. Arkivene blir da liggende
+    som foreldreløse til de treffer sin egen glob — eller for alltid, om
+    globben aldri nevner dem.
+    """
+    skript = (ROT / "deploy/staging/backup-db.sh").read_text(encoding="utf-8")
+    assert 'rm -f "$KATALOG/disponit-$STEMPEL_GAMMEL.dump.age" \\\n' \
+           '        "$KATALOG/disponit-$STEMPEL_GAMMEL.inndata.tar.age"' \
+           in skript, \
+        "retention sletter ikke dumpen og arkivet under samme stempel"
+    assert "-print -delete" not in skript, \
+        "retention sletter fortsatt per fil — arkivet blir foreldreløst"
+    # Feiesvingen for avbrutte kjøringer må ta BEGGE arbeidsnavnene, ellers
+    # samler katalogen halve par som ingenting rører.
+    assert "disponit-*.inndata.tar.age.delvis" in skript, \
+        "en avbrutt arkivskriving blir liggende for alltid"
+
+
+def test_backupen_stopper_for_disken_gar_full():
+    """Bunter er inntil 64 MiB, og /var deles med basen.
+
+    Går disken full MIDT i en kjøring, er ikke backupen det eneste som
+    stopper — Postgres skriver til den samme disken. Porten er derfor
+    fail-closed og måler FØR dumpen starter, ikke etter.
+
+    Og en manglende lagerrot er en provisjoneringsfeil som skal SI det: en
+    backup som stille hopper over lageret fordi katalogen ikke fantes, er
+    nøyaktig #191 med et vennligere ansikt.
+    """
+    skript = (ROT / "deploy/staging/backup-db.sh").read_text(encoding="utf-8")
+    linjer = [ln.strip() for ln in skript.splitlines()
+              if ln.strip() and not ln.lstrip().startswith("#")]
+
+    def indeks(bit):
+        for i, ln in enumerate(linjer):
+            if bit in ln:
+                return i
+        return -1
+
+    i_disk = indeks("LEDIG_KIB")
+    i_rot = indeks('[ -d "$LAGER" ]')
+    i_dump = indeks('age -R "$MOTTAKER"')
+    assert 0 <= i_rot < i_dump, "lagerroten sjekkes ikke før dumpen starter"
+    assert 0 <= i_disk < i_dump, "diskporten måler etter at dumpen er skrevet"
+
+
 def test_inndatalageret_er_api_unitens_egen_state_katalog():
     """#162 (Codex P1, andre runde på samme linje): første forsøk la lageret
     under /var/lib/disponit med `ReadWritePaths`. Den katalogen er
