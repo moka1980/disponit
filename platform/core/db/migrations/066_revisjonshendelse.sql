@@ -28,8 +28,12 @@
 -- FORMEN ER HUSETS, ikke en ny: append-only med `avvis_endring()` på rad OG
 -- statement (011/014/036/053/056), RLS med `disponit.tenant`, og
 -- `krev_tenantkontekst` i skriveveien (038). Ingenting her er oppfunnet.
-
-BEGIN;
+--
+-- TRANSAKSJONEN EIES AV KJØREREN, ikke av fila: `db/kjorer.py` avviser
+-- `BEGIN` og `COMMIT` i alt fra og med 003, fordi en migrasjon som
+-- committer selv kan etterlate historikken halvskrevet hvis den neste
+-- feiler. Regelen håndheves av kjøreren, ikke av en pytest — den felte
+-- første utgave av denne fila i CI-steget «Databaseroller».
 
 CREATE TABLE revisjonshendelse (
     tenant TEXT NOT NULL,
@@ -126,4 +130,3 @@ GRANT EXECUTE ON FUNCTION skriv_revisjonshendelse(TEXT, TEXT, TEXT, TEXT)
     TO disponit;
 GRANT EXECUTE ON FUNCTION les_revisjonshendelse(TEXT, UUID) TO disponit;
 
-COMMIT;
