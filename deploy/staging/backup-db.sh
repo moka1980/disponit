@@ -13,9 +13,6 @@ set -euo pipefail
 
 MOTTAKER=/etc/disponit/backup-mottaker.pub
 KATALOG=/var/backups/disponit
-# FS-lageret for inndata-bunter (#162). API-unitens egen StateDirectory;
-# `INNDATA_ROT` i platform/core/api/inndata.py peker på den samme roten.
-LAGER=/var/lib/disponit-inndata
 DAGER=30
 # Diskmargin for dump + arkiv, i KiB. Bunter er inntil 64 MiB per stykk, og
 # en full /var tar basen med seg — da er en avbrutt backup den milde utgangen.
@@ -31,6 +28,14 @@ flock -n 9 || { echo "AVBRUTT: backup kjører allerede" >&2; exit 1; }
 command -v age >/dev/null || { echo "AVBRUTT: age er ikke installert" >&2; exit 1; }
 
 set -a; . /etc/disponit/staging.env; set +a
+# FS-lageret for inndata-bunter (#162). API-unitens egen StateDirectory, og
+# `INNDATA_ROT` i platform/core/api/inndata.py leser den SAMME variabelen med
+# den SAMME defaulten. Derfor ETTER `staging.env`, ikke før: hardkodet sti
+# her ville arkivert feil katalog i det øyeblikket noen satte
+# `DISPONIT_INNDATA_ROT` i miljøfila — og `lager_sti`-porten ville fortsatt
+# passert, fordi den måler radene mot det arkivet den fikk. En stille
+# #191-regresjon med alle lys grønne.
+LAGER="${DISPONIT_INNDATA_ROT:-/var/lib/disponit-inndata}"
 install -d -m 700 "$KATALOG"
 STEMPEL=$(date -u +%Y%m%dT%H%M%S)
 FIL="$KATALOG/disponit-$STEMPEL.dump.age"

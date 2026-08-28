@@ -1608,8 +1608,15 @@ def test_inndatalageret_er_api_unitens_egen_state_katalog():
     og tar foreldrekatalogen fra ryddeuniten på en fersk vert.
 
     Porten måler det som faktisk lukker funnet — at API-lageret er
-    api-unitens EGEN state-katalog — og binder de tre stedene stien står, så
-    de ikke kan gli fra hverandre."""
+    api-unitens EGEN state-katalog — og binder de FIRE stedene stien står, så
+    de ikke kan gli fra hverandre.
+
+    Det fjerde stedet er `backup-db.sh` (Cursor P2, #191): skriptet sourcer
+    `staging.env` og hardkodet så sin egen `LAGER`. Satte noen
+    `DISPONIT_INNDATA_ROT` i miljøfila, leste API-et én rot og backupen en
+    annen — arkivet ble tatt av feil katalog mens `lager_sti`-porten fortsatt
+    passerte, fordi den måler radene mot nettopp det arkivet den fikk. Alle
+    lys grønne, og #191 tilbake i stillhet."""
     def les(sti):
         """Direktivene, ikke kommentarene: nettopp DENNE fiksen forklarer den
         forkastede formen i prosa, og en `not in`-assert over rå tekst ville
@@ -1622,6 +1629,7 @@ def test_inndatalageret_er_api_unitens_egen_state_katalog():
     opp = les("deploy/staging/opp.sh")
     modul = les("platform/core/api/inndata.py")
     rydding = les("deploy/staging/disponit-artefaktrydding.service")
+    skript = les("deploy/staging/backup-db.sh")
 
     navn = None
     for linje in unit.splitlines():
@@ -1644,9 +1652,24 @@ def test_inndatalageret_er_api_unitens_egen_state_katalog():
     assert ryddekatalog and not rot.startswith(ryddekatalog + "/"), \
         f"{rot} ligger under {ryddekatalog}, som en annen unit eier"
 
-    # De to andre stedene stien står, sier det samme.
+    # De tre andre stedene stien står, sier det samme.
     assert f'"{rot}"' in modul, f"api/inndata.py peker ikke på {rot}"
     assert f"install -d -m 700 -o disponit-api -g disponit-api {rot}" in opp, \
         f"opp.sh oppretter ikke {rot} med api-brukerens eierskap"
-    assert "/var/lib/disponit/inndata" not in opp + modul, \
+    assert "/var/lib/disponit/inndata" not in opp + modul + skript, \
         "den gamle stien står igjen et sted og vil gli fra unit-en"
+
+    # Backupen leser den samme variabelen med den samme defaulten som
+    # api/inndata.py — og gjør det ETTER `staging.env`, ellers er variabelen
+    # ikke i scope og bindingen er ren dekorasjon.
+    assert f'LAGER="${{DISPONIT_INNDATA_ROT:-{rot}}}"' in skript, \
+        "backup-db.sh binder ikke LAGER til DISPONIT_INNDATA_ROT — en rot " \
+        "satt i staging.env ville gitt API og backup hver sin katalog"
+    skriptlinjer = skript.splitlines()
+    i_env = next(i for i, ln in enumerate(skriptlinjer)
+                 if "staging.env" in ln)
+    i_lager = next(i for i, ln in enumerate(skriptlinjer)
+                   if ln.startswith("LAGER="))
+    assert i_lager > i_env, \
+        "LAGER settes før staging.env er sourcet — DISPONIT_INNDATA_ROT er " \
+        "ikke i scope, og defaulten vinner alltid"
