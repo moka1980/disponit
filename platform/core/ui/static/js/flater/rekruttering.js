@@ -459,6 +459,28 @@ function tegn(hoved, ctx, data, okt, valgtId) {
       .sort((a, b) => (sortValg.retning === "ascending"
         ? a.poeng - b.poeng : b.poeng - a.poeng)
         || (a.kandidat.kandidat_id < b.kandidat.kandidat_id ? -1 : 1));
+    // KORTNAVNET REGNES AV DATAENE, ikke av et tall (Codex P2). Vi finner
+    // den korteste lengden der ALLE id-ene i prosessen fortsatt er
+    // forskjellige, og bruker den for hele tabellen — én lengde, så
+    // kolonnen ikke blir ujevn. Finnes ingen slik lengde under full id
+    // (to identiske id-er er en serverfeil, men flaten skal ikke lyve om
+    // det), står id-ene urørt.
+    //
+    // Bare id-er som faktisk er lange kortes: manifestets `kandidat-09`
+    // (#161) er kortere enn terskelen og går urørt igjennom uansett hva
+    // de andre radene inneholder.
+    const idene = prosess.kandidater.map((k) => k.kandidat_id);
+    const maksLengde = Math.max(0, ...idene.map((i) => i.length));
+    let skille = maksLengde;
+    for (let n = 8; n < maksLengde; n += 1) {
+      if (new Set(idene.map((i) => i.slice(0, n))).size === idene.length) {
+        skille = n;
+        break;
+      }
+    }
+    const kortnavn = (id) => (id.length > 20 && skille < id.length
+      ? `${id.slice(0, skille)}…`
+      : id);
     sett(tabellRot, DataTabell({
       captionTekst: t("ui.rekruttering.tabell_caption"),
       kolonner: [
@@ -474,18 +496,22 @@ function tegn(hoved, ctx, data, okt, valgtId) {
           // KANDIDATREFERANSEN KORTES, MEN MISTES IKKE (produktrunden
           // 28/8). Seeden gir kandidatene UUID-er, og en full UUID bryter
           // over tre linjer på mobil — kolonnen ble en vegg av heksadesimal
-          // der leseren skulle kjenne igjen en person. De første åtte
-          // tegnene skiller trygt innenfor én prosess (maks 5000
-          // kandidater), og HELE id-en står i `title` for den som skal
-          // kopiere den videre.
+          // der leseren skulle kjenne igjen en person.
+          //
+          // ÅTTE TEGN VAR ET TALL, IKKE ET SVAR (Codex P2). Et
+          // UUID-prefiks på åtte heksadesimaler er 32 bit, og det er ingen
+          // garanti innenfor 5000 kandidater — to rader kunne vist samme
+          // referanse, på flaten der leseren skal skille dem fra hverandre
+          // før en irreversibel utsendelse. Lengden regnes nå av DATAENE:
+          // `kortnavn` finner det korteste prefikset som er entydig i
+          // DENNE prosessen, og faller tilbake til hele id-en når intet
+          // prefiks skiller. HELE id-en står uansett i `title`.
           //
           // Er id-en alt lesbar — manifestets `kandidat-09`-form (#161) —
           // står den urørt: kortingen gjelder maskingenererte id-er, ikke
           // navn kunden selv har gitt.
           kandidat: el("span", { title: kandidat.kandidat_id },
-            kandidat.kandidat_id.length > 20
-              ? `${kandidat.kandidat_id.slice(0, 8)}…`
-              : kandidat.kandidat_id),
+            kortnavn(kandidat.kandidat_id)),
           poeng: String(poeng),
           // Trafikklys: tekst + klasse, aldri farge alene.
           kategori: el("span",
@@ -875,9 +901,21 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       function detaljboks(rad) {
         // Sammendraget er kort fordi det står I raden: kandidaten er
         // allerede navngitt i radoverskriften, så «Detaljer for
-        // kandidat-09» ville gjentatt den på hver linje.
+        // kandidat-09» ville gjentatt den på hver linje for ØYET.
+        //
+        // ØRET FÅR IKKE RADEN GRATIS (Codex P2). En skjermleser som
+        // lister interaktive elementer, eller tabber gjennom dem, leser
+        // kontrollens tilgjengelige navn ALENE — radoverskriften ved
+        // siden av er ikke med. Fem tusen kontroller som alle heter «Vis
+        // funn» er nøyaktig den telle-seg-fram-en denne runden fjernet
+        // for øyet. `aria-label` bærer derfor kandidaten, mens den synlige
+        // teksten forblir kort: samme løsning som prosesstabellens
+        // Detaljer-knapper alt bruker.
         const boks = el("details", {},
-          el("summary", { text: t("ui.rekruttering.evalueringer.vis_funn") }));
+          el("summary", {
+            "aria-label": `${t("ui.rekruttering.evalueringer.vis_funn")} — `
+              + `${t("ui.rekruttering.kandidat")} ${rad.kandidat_id}`,
+            text: t("ui.rekruttering.evalueringer.vis_funn") }));
         let bygget = false;
         boks.addEventListener("toggle", () => {
           if (bygget || !boks.open) return;

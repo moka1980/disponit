@@ -4069,6 +4069,73 @@ test("Rapport: detaljene ligger i kandidatens RAD, ikke som en mur under", async
     `${utenfor.length} detaljbokser står fortsatt som en mur under tabellen`);
 });
 
+test("Prosess: to id-er med samme åtte tegn får ULIKE kortnavn", async () => {
+  // Codex P2: et UUID-prefiks på åtte heksadesimaler er 32 bit, og det er
+  // ingen garanti innenfor de 5000 kandidatene skjemaet tillater. To rader
+  // kunne vist samme referanse — på flaten der leseren skal skille dem fra
+  // hverandre før en irreversibel utsendelse — mens `title` hverken er
+  // kopierbar eller tilgjengelig for berøring og tastatur.
+  //
+  // Lengden regnes nå av DATAENE: korteste prefiks som er entydig i denne
+  // prosessen.
+  //
+  // MUTASJONEN SOM DREPER DENNE: `id.slice(0, 8)` igjen.
+  const a = "58f17252-8a2b-4092-a420-adf5d5d430d1";
+  const b = "58f17252-8a2b-4092-a420-adf5d5d430d2";  // skiller på SISTE tegn
+  const data = prosess();
+  data.prosesser[0].kandidater = [a, b].map((id) => ({
+    kandidat_id: id, oppfylt: { drift: true }, status: "anbefalt",
+    funn: [], intervjusporsmal: [] }));
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": data };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelectorAll("tbody tr").length === 2));
+  const viste = [...hoved.querySelectorAll("tbody tr")]
+    .map((tr) => tr.querySelector("td, th").textContent.trim());
+  assert.equal(new Set(viste).size, 2,
+    `to kandidater vises med SAMME referanse: ${JSON.stringify(viste)}`);
+  // Og begge hele id-ene er fortsatt å få tak i.
+  const titler = [...hoved.querySelectorAll("[title]")]
+    .map((n) => n.getAttribute("title"));
+  assert.ok(titler.includes(a) && titler.includes(b),
+    "en av de hele id-ene forsvant");
+});
+
+test("Rapport: hvert «Vis funn» navngir sin egen kandidat for øret",
+  async () => {
+  // Codex P2: en skjermleser som lister interaktive elementer leser
+  // kontrollens tilgjengelige navn ALENE — radoverskriften ved siden av
+  // er ikke med. Fem tusen kontroller som alle heter «Vis funn» er
+  // nøyaktig den telle-seg-fram-en denne runden fjernet for øyet.
+  //
+  // Den SYNLIGE teksten skal forbli kort: gjentok vi kandidaten der,
+  // ville vi vært tilbake i «Detaljer for kandidat-NN» på hver linje.
+  //
+  // MUTASJONEN SOM DREPER DENNE: fjern `aria-label` fra summary-en.
+  KALL = [];
+  SVAR = { ...enkelRapportSvar() };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.textContent.includes("kandidat-01")));
+  const tabell = [...hoved.querySelectorAll("table")]
+    .find((tb) => tb.textContent.includes("kandidat-01"));
+  const sammendrag = [...tabell.querySelectorAll("tbody tr summary")];
+  assert.equal(sammendrag.length, 2, "detaljene mangler i radene");
+  const navn = sammendrag.map((sm) => sm.getAttribute("aria-label"));
+  assert.ok(navn.every(Boolean),
+    "et sammendrag mangler tilgjengelig navn — det leses som «Vis funn»");
+  assert.equal(new Set(navn).size, 2,
+    `to kontroller har samme navn: ${JSON.stringify(navn)}`);
+  assert.ok(navn.some((n) => n.includes("kandidat-01"))
+    && navn.some((n) => n.includes("kandidat-02")),
+    `navnene bærer ikke kandidatene: ${JSON.stringify(navn)}`);
+  // Den synlige teksten er fortsatt kort.
+  assert.ok(sammendrag.every(
+    (sm) => sm.textContent === t("ui.rekruttering.evalueringer.vis_funn")),
+    "kandidaten kom inn i den SYNLIGE teksten — muren er tilbake i raden");
+});
+
 test("Prosess: en lang kandidat-id kortes, men mistes ikke", async () => {
   // Seeden gir UUID-er, og en full UUID bryter over tre linjer på mobil —
   // kolonnen ble en vegg av heksadesimal. Hele id-en står i `title`.
