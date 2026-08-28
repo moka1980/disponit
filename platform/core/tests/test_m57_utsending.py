@@ -2737,6 +2737,12 @@ def test_revisjonshendelsen_er_udodelig(migrator):
     `BEFORE DELETE` fyrte aldri, og testen målte ingenting den påsto å
     måle. Derfor tellingen under — en mutasjon som flytter seedingen ut
     igjen skal gjøre testen rød PÅ RADEN, ikke på et uteblitt unntak.
+
+    FEILKLASSEN ER `CheckViolation`, ikke `RaiseException`: `avvis_endring`
+    (035) hever med `ERRCODE = 'check_violation'`, og hele huset måler den
+    slik (`test_listeversjonen_er_append_only`,
+    `test_kjedetabellene_taaler_ikke_truncate`). Den gamle forventningen
+    var usynlig så lenge testen døde tidligere.
     """
     def _sa_en_hendelse():
         _sett_kontekst(migrator, TENANT)
@@ -2760,7 +2766,7 @@ def test_revisjonshendelsen_er_udodelig(migrator):
             "raden manglet FØR mutasjonen — da måler caset ingenting:"
             " en DELETE mot null rader fyrer ikke radtriggeren")
         sql, args = lag_mutasjon(hid)
-        with pytest.raises(psycopg.errors.RaiseException):
+        with pytest.raises(psycopg.errors.CheckViolation):
             migrator.execute(sql, args)
         migrator.rollback()
 
