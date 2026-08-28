@@ -3984,6 +3984,59 @@ def test_effektporten_gjelder_kandidaten_ikke_hvert_dokument():
     assert ei.value.args[0] == "ugyldig_maskeringsform"
 
 
+def test_deklarert_verdi_kan_ikke_krysse_skjoten():
+    """Codex P1 på #240: den per-dokument-formens egen grense.
+
+    Erstatningen skjer i ETT dokument av gangen, så en deklarert verdi
+    som ligger PÅ TVERS av skjøten kan aldri maskeres — og `krev_blindet`
+    på den sammensatte teksten ser det ikke, fordi en overlappende
+    KORTERE søsterverdi rekker å rive bort beviset først.
+
+    Målt før fiksen, gjennom hele `evalueringsinput_dokumenter`:
+
+        (['[NAVN-2]', 'Testdal'], {'[NAVN-1]': 'Kari\\n\\nTestdal', ...})
+
+    Etternavnet i klartekst til modellen, porten grønn. Skjøt-før-blind
+    fanget det; #174 mistet det.
+
+    MUTASJONEN SOM DREPER DENNE: fjern skjøt-porten fra
+    `blind_dokumenter` — da er utfallet `(['[NAVN-2]', 'Testdal'], ...)`
+    i stedet for en `Blindingsfeil`.
+    """
+    kryssende = "Kari" + blinding.SKJOT + "Testdal"
+
+    # Verdien finnes BARE over skjøten, og `Kari` traff dokument 1 — så
+    # effektporten sier god og kan ikke felle dette.
+    assert blinding._traff_alle({"navn": [kryssende, "Kari"]},
+                                ["Kari", "Testdal"]), \
+        "forutsetningen falt bort: effektporten felte den alt"
+
+    with pytest.raises(blinding.Blindingsfeil) as ei:
+        blinding.evalueringsinput_dokumenter(
+            ["Kari", "Testdal"], {"navn": [kryssende, "Kari"]})
+    assert ei.value.args[0] == "verdi_krysser_dokumentgrense", \
+        "kryssende verdi ble avvist av feil grunn — da måler porten noe annet"
+
+    # Også når verdien I TILLEGG treffer ett dokument helt: skjøt-treffet
+    # et annet sted er like umaskerbart.
+    with pytest.raises(blinding.Blindingsfeil):
+        blinding.evalueringsinput_dokumenter(
+            ["x Kari", "Testdal y", kryssende], {"navn": [kryssende, "Kari"]})
+
+    # ENKELTTEKSTVEIEN ER URØRT: `blind` har ingen skjøt å krysse, og en
+    # verdi med blank linje maskeres der helt fint. Grensen tilhører den
+    # per-dokument-anvendte tabellen, ikke deklarasjonens form — derfor
+    # ligger den ikke i `verdiform_lukket`/manifestdøra.
+    blindet, _ = blinding.evalueringsinput(kryssende, {"navn": [kryssende]})
+    assert blindet == "[NAVN-1]"
+
+    # Og en helt normal bunt går fortsatt igjennom.
+    blindede, _ = blinding.evalueringsinput_dokumenter(
+        ["Kari Testdal søker.", "CV for Kari Testdal."],
+        {"navn": ["Kari Testdal"]})
+    assert all("[NAVN-1]" in d for d in blindede)
+
+
 def test_sitat_kan_ikke_krysse_dokumentgrensen():
     """#174 (Codex G7 på #170): skjøten var ikke en grense.
 

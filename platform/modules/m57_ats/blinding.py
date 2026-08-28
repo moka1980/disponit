@@ -327,6 +327,39 @@ def blind_dokumenter(dokumenter: list[str],
     samme dom.
     """
     par, avmaskering = bygg_tabell(kandidatfelter)
+    # DEN PER-DOKUMENT-FORMENS EGEN GRENSE (Codex P1 på #240). Erstatningen
+    # skjer i ÉTT dokument av gangen, så en deklarert verdi som ligger PÅ
+    # TVERS av skjøten kan per konstruksjon aldri maskeres — og
+    # `krev_blindet` på den sammensatte teksten kan ikke se det, fordi en
+    # overlappende KORTERE søsterverdi rekker å rive bort beviset først:
+    #
+    #     dokumenter = ["Kari", "Testdal"]
+    #     felter     = {"navn": ["Kari\n\nTestdal", "Kari"]}
+    #
+    # `_traff_alle` sier god (`Kari` traff dokument 1), `Kari` erstattes
+    # per dokument, og modellinputen blir `"[NAVN-2]\n\nTestdal"`. Da
+    # finnes `Kari\n\nTestdal` ikke lenger i teksten porten måler, porten
+    # løper vakuøst, og ETTERNAVNET går i klartekst til modellen mens
+    # kjøringen telles som blindet. Skjøt-før-blind-formen fanget dette;
+    # #174 mistet det, og dette er #174s regning.
+    #
+    # PORTEN, IKKE EN TEGNLISTE. Et treff kan bare krysse en skjøt hvis
+    # det inneholder skjøtens tegn, og `_monster` er `re.escape` +
+    # `IGNORECASE` — et treff er verdien ORDRETT, og `\n` har ingen
+    # versalvariant. Så «verdien inneholder `SKJOT`» er nøyaktig
+    # betingelsen for at et kryssende treff kan finnes, ikke en
+    # tilnærming til den. Den måles på DEKLARASJONEN, ikke ved å telle
+    # treff i en tekst erstatningen alt har skrevet i — samme grunn som
+    # runde 6-dommen ga for `_traff_alle`.
+    #
+    # Den bor HER og ikke i `verdiform_lukket`: `blind` (én tekst) kan
+    # maskere en verdi med blank linje helt fint, og manifestdøra har
+    # ingen mening om skjøten. Grensen tilhører den PER-DOKUMENT-anvendte
+    # tabellen, altså denne funksjonen — ikke deklarasjonens form. Et
+    # sjette formforsøk er nettopp det §9 forbyr.
+    if any(SKJOT in verdi
+           for verdier in kandidatfelter.values() for verdi in verdier):
+        raise Blindingsfeil("verdi_krysser_dokumentgrense")
     if not _traff_alle(kandidatfelter, dokumenter):
         raise Blindingsfeil("ugyldig_maskeringsform")
     return [anvend(par, d) for d in dokumenter], avmaskering
