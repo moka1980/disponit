@@ -2705,24 +2705,40 @@ def test_revisjonshendelsen_er_udodelig(migrator):
     revisjonsspor. TRUNCATE fyrer ALDRI radtriggere, så statement-vakten
     er ikke en gjentakelse — den er den andre halvdelen (samme par som
     011/014/036/053/056).
+
+    RADEN SÅS PÅ NYTT FØR HVER MUTASJON (Cursor P1, runde 1 på #247).
+    Første utgave sådde ÉN gang utenfor løkka, og `rollback()` etter
+    UPDATE-caset angret også seedingen: DELETE traff da null rader,
+    `BEFORE DELETE` fyrte aldri, og testen målte ingenting den påsto å
+    måle. Derfor tellingen under — en mutasjon som flytter seedingen ut
+    igjen skal gjøre testen rød PÅ RADEN, ikke på et uteblitt unntak.
     """
-    migrator.execute("SET LOCAL disponit.tenant = %s", (TENANT,))
-    migrator.execute(
-        "INSERT INTO revisjonshendelse (tenant, handling, aktor,"
-        " begrunnelse) VALUES (%s, 'm57.blinding_avskrudd', 'drift',"
-        " 'manuell kontroll av kandidat') RETURNING hendelse_id",
-        (TENANT,))
-    hid = migrator.fetchone()[0]
-    for sql, args in (
-        ("UPDATE revisjonshendelse SET aktor = 'noen andre'"
-         " WHERE hendelse_id = %s", (hid,)),
-        ("DELETE FROM revisjonshendelse WHERE hendelse_id = %s", (hid,)),
-        ("TRUNCATE revisjonshendelse", ()),
+    def _sa_en_hendelse():
+        migrator.execute("SET LOCAL disponit.tenant = %s", (TENANT,))
+        migrator.execute(
+            "INSERT INTO revisjonshendelse (tenant, handling, aktor,"
+            " begrunnelse) VALUES (%s, 'm57.blinding_avskrudd', 'drift',"
+            " 'manuell kontroll av kandidat') RETURNING hendelse_id",
+            (TENANT,))
+        return migrator.fetchone()[0]
+
+    for lag_mutasjon in (
+        lambda hid: ("UPDATE revisjonshendelse SET aktor = 'noen andre'"
+                     " WHERE hendelse_id = %s", (hid,)),
+        lambda hid: ("DELETE FROM revisjonshendelse WHERE hendelse_id = %s",
+                     (hid,)),
+        lambda _hid: ("TRUNCATE revisjonshendelse", ()),
     ):
+        hid = _sa_en_hendelse()
+        migrator.execute("SELECT count(*) FROM revisjonshendelse"
+                         " WHERE hendelse_id = %s", (hid,))
+        assert migrator.fetchone()[0] == 1, (
+            "raden manglet FØR mutasjonen — da måler caset ingenting:"
+            " en DELETE mot null rader fyrer ikke radtriggeren")
+        sql, args = lag_mutasjon(hid)
         with pytest.raises(psycopg.errors.RaiseException):
             migrator.execute(sql, args)
         migrator.rollback()
-        migrator.execute("SET LOCAL disponit.tenant = %s", (TENANT,))
 
 
 @pg
