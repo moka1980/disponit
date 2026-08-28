@@ -9,7 +9,8 @@ import { visInnlogging } from "../static/js/innlogging.js";
 import { AppShell } from "../static/js/komponenter.js";
 import { visKundeadmin } from "../static/js/flater/kundeadmin.js";
 import { visAdmin } from "../static/js/flater/admin.js";
-import { TILBUD, erTilgjengelig } from "../static/js/plattformdata.js";
+import { TILBUD, erTilgjengelig, erTilgjengeligFor, modulStatus, produksjonsmiljo,
+  settProduksjonsmiljo } from "../static/js/plattformdata.js";
 import { siteTilbudMerke } from "../static/js/sitekomponenter.js";
 
 const HER = dirname(fileURLToPath(import.meta.url));
@@ -84,14 +85,25 @@ test("Landing: forsiden har hovednavigasjon og er ikke en lang katalog", async (
   const app = nyttAppBrett();
   await visInnlogging();
   await vent(() => app.querySelector(".site-hovednav"));
-  assert.ok(app.textContent.includes(t("site.hero.tittel")));
+  assert.ok(app.textContent.includes(t("site.home.tittel")));
   // Forsiden selger TILBUDET, ikke byggestatusen: kundevendte navn og en
   // tilgjengelighetsbrikke, ikke modulnumre og «0/45 i drift».
   assert.ok(app.textContent.includes(t("site.tilbud_tittel")));
   assert.ok(app.textContent.includes(t("site.tilbud.fullmakt.navn")));
+  // …og selve tilbudsbeskrivelsen. `plattformdata.test.js` vokter at prosaen
+  // ligger i `site.hero.tilbud` og ikke i de utrullingsavhengige nøklene, men
+  // den porten er blind for om noen faktisk rendrer nøkkelen: en periode gjorde
+  // ingen det, og prosaen nådde ingen besøkende (Cursor P2).
+  assert.ok(app.textContent.includes(t("site.hero.tilbud")),
+    "tilbudsbeskrivelsen rendres ikke på forsiden — nøkkelen er død kontrakt");
   assert.equal(app.querySelectorAll(".site-hovednav a").length, 5);
   assert.equal(app.querySelectorAll('.site-hovednav a[aria-current="page"]').length, 1);
-  assert.ok(app.querySelector(".site-sok input[type=search]"));
+  assert.equal(app.querySelector(".site-sok"), null,
+    "katalogsøket konkurrerer fortsatt med forsidens primærhandling");
+  assert.equal(app.querySelectorAll(".site-home-handlinger .primar").length, 1,
+    "forsiden har ikke nøyaktig én visuelt primær handling i heroen");
+  assert.equal(app.querySelectorAll(".site-kontrollflyt li").length, 4,
+    "kontrollflyten viser ikke hele veien handling → policy → utfall → spor");
   assert.ok(!app.textContent.includes(t("site.katalog.m42.navn")),
     "modulkatalogen ligger fortsatt som en lang liste på forsiden");
   assert.equal(app.querySelectorAll('form[action="/v1/oidc/start"]').length, 0,
@@ -114,6 +126,8 @@ test("Landing: tjenester har hele katalogen og søk filtrerer den", async () => 
   await visInnlogging();
   assert.ok(app.textContent.includes(t("site.katalog.m42.navn")));
   assert.ok(!app.textContent.includes(t("site.katalog.m1.navn")));
+  assert.ok(app.querySelector(".site-sok input[type=search]"),
+    "katalogsøket er ikke bevart på tjenestesiden");
   assert.equal(app.querySelector('.site-hovednav a[aria-current="page"]').textContent,
     t("site.nav.tjenester"));
   const b = await alvorligeBrudd(app);
@@ -175,6 +189,152 @@ test("Landing: tilgjengelighetsbrikkene har CSS som faktisk skiller dem", async 
     "tilgjengelig og kommer deler klasse — da skiller ingenting dem visuelt");
 });
 
+test("Landing: oppsett.json miljo=produksjon styrer brikker og statuslinje", async () => {
+  // Cursor P2: begge leddene i løftet var pinnet HVER FOR SEG — `erTilgjengeligFor`
+  // som ren funksjon i `plattformdata.test.js`, og serverens fail-closed `miljo` i
+  // `test_ui_serving.py` — men ingen test koblet dem i DOM. Riggen over svarer
+  // alltid uten `miljo`, så hele suiten målte bare den NEGATIVE grenen: alle fire
+  // brikkene «Kommer», og `tekst_bygges` i statuslinja. Den positive grenen — den
+  // som faktisk lover en besøkende noe — hadde ingen dekning, og en regresjon der
+  // (`settProduksjonsmiljo` fjernet, satt fra feil felt, eller kalt ETTER at treet
+  // er bygd) ville rendret «Kommer» på en modul som er i drift uten at noe brøt.
+  //
+  // Testen holder ETTER at flere moduler går i drift: den utleder forventningen av
+  // `erTilgjengeligFor(modulStatus(id), true)` per punkt i stedet for å anta at det
+  // er M-2 alene som står grønt.
+  const ekteFetch = globalThis.fetch;
+  let miljo = "produksjon";
+  globalThis.fetch = async (url) => {
+    const sti = String(url).split("?")[0];
+    if (sti === "/ui/oppsett.json") {
+      return { ok: true, status: 200,
+        json: async () => ({ provider_id: "google", miljo }) };
+    }
+    return ekteFetch(url);
+  };
+  try {
+    window.history.replaceState({}, "", "/");
+    const app = nyttAppBrett();
+    await visInnlogging();
+    await vent(() => app.querySelectorAll(".site-feature .site-badge").length > 0);
+
+    // I produksjon er det FØRSTE leddet (`MODULSTATUS === "i_drift"`) alene
+    // avgjørende, så forventningen leses ut av statusen per tilbudspunkt.
+    const iDrift = TILBUD.filter((post) => erTilgjengeligFor(modulStatus(post.id), true));
+    assert.ok(iDrift.length > 0 && iDrift.length < TILBUD.length,
+      "testen forutsetter DELVIS utrulling — ellers måler den ikke delvis-formen");
+    assert.deepEqual(
+      [...app.querySelectorAll(".site-feature .site-badge")]
+        .map((b) => [b.className, b.textContent]),
+      TILBUD.map((post) => erTilgjengeligFor(modulStatus(post.id), true)
+        ? ["site-badge ok", t("site.tilbud.tilgjengelig")]
+        : ["site-badge plan", t("site.tilbud.kommer")]),
+      "produksjonsmiljøet nådde ikke brikkene — flaten sier «Kommer» om en " +
+      "modul som er i drift hos kunder");
+    assert.equal(app.querySelector(".site-driftstatus div p").textContent,
+      t("site.hero.tekst_delvis"),
+      "statuslinja motsier brikkene: noen områder er merket «Tilgjengelig», " +
+      "men teksten sier at alt fortsatt bygges");
+    // Tilbudsbeskrivelsen står utenfor `site.hero.tekst_*` fordi den ikke er
+    // en funksjon av utrullingen. Da må den også OVERLEVE begge tilstandene i
+    // flaten, ikke bare i locale-porten (Cursor P2).
+    assert.ok(app.textContent.includes(t("site.hero.tilbud")),
+      "tilbudsbeskrivelsen faller bort ved delvis utrulling");
+
+    // Motprøve på SAMME rigg: bytter bare `miljo`, så et utfall som ikke
+    // endrer seg avslører et løfte som ikke leser miljøet i det hele tatt.
+    miljo = "staging";
+    const stagingApp = nyttAppBrett();
+    await visInnlogging();
+    await vent(() => stagingApp.querySelectorAll(".site-feature .site-badge").length > 0);
+    assert.equal(stagingApp.querySelectorAll(".site-feature .site-badge.ok").length, 0,
+      "staging-verten lover «Tilgjengelig» — begge ledd kreves, ikke bare status");
+    assert.equal(stagingApp.querySelector(".site-driftstatus div p").textContent,
+      t("site.hero.tekst_bygges"),
+      "statuslinja lover delvis drift på en vert ingen kunde bruker");
+    assert.ok(stagingApp.textContent.includes(t("site.hero.tilbud")),
+      "tilbudsbeskrivelsen faller bort når ingenting er i drift");
+  } finally {
+    globalThis.fetch = ekteFetch;
+    // `_produksjonsmiljo` er modulglobal: en test som avbryter mellom de to
+    // grenene ville ellers latt `true` lekke inn i resten av suiten.
+    settProduksjonsmiljo(false);
+    window.history.replaceState({}, "", "/");
+  }
+});
+
+test("Landing: et forbigått oppsett-svar setter ikke miljøflagget", async () => {
+  // Cursor P2: `_produksjonsmiljo` er MODULGLOBAL, og den ble skrevet i det
+  // oppsett-svaret kom — altså før `gjelderFortsatt()`. Et kall som er
+  // forbigått har ingen rett til å tegne, og har da heller ingen rett til å
+  // etterlate SITT miljø i en global som `erTilgjengelig` og
+  // `heroTekstNokkel` leser for alle senere rendringer. Den dyre retningen er
+  // staging: et forlatt kall med `miljo: "produksjon"` kunne løfte flaten til
+  // «Tilgjengelig» på en vert ingen kunde bruker — nøyaktig feilklassen
+  // `byttNr`/`gjelderFortsatt` ble innført for å stoppe, bare på tilstand i
+  // stedet for på DOM.
+  //
+  // Riggen speiler den som beviser DOM-siden: det første byttets oppsett-kall
+  // henger og svarer TIL SLUTT med `produksjon`, mens byttet som faktisk eier
+  // flaten svarer `staging` og kommer i mål først.
+  window.history.replaceState({}, "", "/");
+  const app = nyttAppBrett();
+  const ekteFetch = globalThis.fetch;
+  let slippOppsett = () => {};
+  const holdt = new Promise((r) => { slippOppsett = r; });
+  let oppsettNr = 0;
+  globalThis.fetch = async (url) => {
+    const sti = String(url).split("?")[0];
+    if (sti === "/ui/oppsett.json") {
+      const nr = ++oppsettNr;
+      if (nr === 2) {                    // det FØRSTE byttet: henger, og taper
+        await holdt;
+        return { ok: true, status: 200,
+          json: async () => ({ provider_id: "google", miljo: "produksjon" }) };
+      }
+      return { ok: true, status: 200,
+        json: async () => ({ provider_id: "google", miljo: "staging" }) };
+    }
+    return ekteFetch(url);
+  };
+  try {
+    const iDrift = TILBUD.filter((post) => erTilgjengeligFor(modulStatus(post.id), true));
+    assert.ok(iDrift.length > 0,
+      "testen forutsetter minst én modul i drift — ellers kan ingen brikke " +
+      "løftes, og et lekket miljøflagg ville vært usynlig uansett");
+
+    await visInnlogging();
+    await vent(() => app.querySelectorAll(".site-sprak-knapp").length === 2);
+    const engelsk = [...app.querySelectorAll(".site-sprak-knapp")]
+      .find((k) => k.textContent === NB["ui.sprak.en"]);
+
+    // Første klikk blir stående i oppsett-hentingen; andre klikk overtar
+    // flaten og kommer i mål med sitt staging-svar.
+    engelsk.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await vent(() => oppsettNr === 2);
+    engelsk.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await vent(() => app.textContent.includes(EN["site.home.tittel"]));
+    assert.equal(produksjonsmiljo(), false,
+      "byttet som eier flaten kjører på staging, men flagget står i produksjon");
+
+    // …og så kommer det forlatte byttet i mål med sitt produksjonssvar.
+    slippOppsett();
+    await vent(() => false, 20);         // la det forlatte kallet få kjøre ut
+
+    assert.equal(produksjonsmiljo(), false,
+      "et forbigått kall skrev miljøflagget — flaten kan nå love drift den " +
+      "ikke har, uten at noe tegnet feil i det øyeblikket");
+    assert.equal(app.querySelectorAll(".site-feature .site-badge.ok").length, 0,
+      "staging-flaten viser «Tilgjengelig» etter at et forlatt kall kom i mål");
+  } finally {
+    slippOppsett();
+    globalThis.fetch = ekteFetch;
+    settProduksjonsmiljo(false);
+    settI18nForTest(NB, "nb");
+    window.history.replaceState({}, "", "/");
+  }
+});
+
 test("Landing: hvert språknavn er merket med sitt eget språk", async () => {
   // Codex P2: begge etikettene arvet sidens `lang`. På den norske forsiden ble
   // «English» dermed uttalt med norsk uttale av en skjermleser, og etter
@@ -218,7 +378,7 @@ test("Landing: hoppelenka følger språkbyttet", async () => {
     const engelsk = [...app.querySelectorAll(".site-sprak-knapp")]
       .find((k) => k.textContent === NB["ui.sprak.en"]);
     engelsk.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-    await vent(() => app.textContent.includes(EN["site.hero.tittel"]));
+    await vent(() => app.textContent.includes(EN["site.home.tittel"]));
 
     assert.equal(lenke.textContent, EN["ui.hopp_til_innhold"],
       "hoppelenka står igjen på norsk etter byttet til engelsk");
@@ -276,6 +436,11 @@ test("Landing: hver offentlig side har sin egen dokumenttittel", async () => {
 // norsk igjen ved første klikk i den nye navigasjonen. Testen kjører med
 // nektet `localStorage`, altså nøyaktig den brukeren, og krever at HVER vei
 // videre bærer språket: lenkene, søkeformen og adresselinja.
+//
+// «Hver vei videre» må også bety heroens egne handlinger. Selektoren utelot
+// `.site-home-handlinger a` (Cursor P2), altså primærknappen og tekstlenka —
+// de FØRSTE veiene videre en besøkende ser. En regresjon i `offentligUrl()`
+// der ville passert grønn CI, og på den lenken flest faktisk klikker.
 test("Landing: språkvalget følger navigasjonen når lagring er nektet", async () => {
   const app = nyttAppBrett();
   const ekte = Object.getOwnPropertyDescriptor(window, "localStorage");
@@ -291,26 +456,33 @@ test("Landing: språkvalget følger navigasjonen når lagring er nektet", async 
     const engelsk = [...app.querySelectorAll(".site-sprak-knapp")]
       .find((k) => k.textContent === NB["ui.sprak.en"]);
     engelsk.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-    await vent(() => app.textContent.includes(EN["site.hero.tittel"]));
+    await vent(() => app.textContent.includes(EN["site.home.tittel"]));
 
     const lenker = [...app.querySelectorAll(".site-hovednav a, .site-logo, " +
-      ".site-cta a, .site-bunn-cta a, .site-footer a")];
+      ".site-home-handlinger a, .site-cta a, .site-bunn-cta a, .site-footer a")];
     assert.ok(lenker.length >= 8, "for få offentlige lenker til å måle noe");
+    // Måler selektoren heroen i det hele tatt? Forsvinner handlingene ut av
+    // settet, står løkka under igjen og påstår om alt UNNTATT dem.
+    assert.equal(app.querySelectorAll(".site-home-handlinger a").length, 2,
+      "heroens to handlinger er ikke med i det språkleddet måles på");
     for (const a of lenker) {
       assert.equal(new URL(a.getAttribute("href"), "https://x.test")
         .searchParams.get("sprak"), "en",
         `${a.getAttribute("href")} mister språkvalget ved klikk`);
     }
-    assert.equal(
-      app.querySelector('.site-sok input[name="sprak"]').getAttribute("value"),
-      "en", "søket sender brukeren tilbake til norsk");
+    assert.equal(app.querySelector(".site-sok"), null,
+      "katalogsøket skal ikke stå på forsiden");
     assert.equal(new URLSearchParams(window.location.search).get("sprak"), "en",
       "adresselinja sier fortsatt norsk — en oppdatering mister valget");
 
     // Og den andre enden: en URL med språkleddet velges over dokumentets
     // `data-sprak`, ellers hadde lenkene båret et valg ingen leser.
-    document.documentElement.setAttribute("data-sprak", "nb");
     window.history.replaceState({}, "", "/?side=tjenester&sprak=en");
+    await visInnlogging();
+    assert.equal(
+      app.querySelector('.site-sok input[name="sprak"]').getAttribute("value"),
+      "en", "katalogsøket sender brukeren tilbake til norsk");
+    document.documentElement.setAttribute("data-sprak", "nb");
     assert.equal(velgSprak(), "en");
   } finally {
     if (ekte) Object.defineProperty(window, "localStorage", ekte);
@@ -422,16 +594,16 @@ test("Landing: språket tas i bruk først når flaten som bærer det er klar", a
     await vent(() => oppsettNr === 2);
     await vent(() => false, 20);          // la locale-svaret komme helt fram
 
-    assert.ok(app.textContent.includes(NB["site.hero.tittel"]),
+    assert.ok(app.textContent.includes(NB["site.home.tittel"]),
       "riggen parkerte ikke byttet — flaten er allerede byttet");
     assert.equal(document.documentElement.getAttribute("lang"), "nb",
       "dokumentet ble merket engelsk mens den norske forsiden fortsatt sto");
-    assert.equal(t("site.hero.tittel"), NB["site.hero.tittel"],
+    assert.equal(t("site.home.tittel"), NB["site.home.tittel"],
       "locale-kartet ble byttet under flaten som fortsatt sto på skjermen");
 
     // Oppsettet kommer i mål: NÅ skal språket og flaten skifte sammen.
     slippOppsett();
-    await vent(() => app.textContent.includes(EN["site.hero.tittel"]));
+    await vent(() => app.textContent.includes(EN["site.home.tittel"]));
     assert.equal(document.documentElement.getAttribute("lang"), "en",
       "flaten ble engelsk uten at dokumentet fulgte med");
   } finally {
@@ -464,17 +636,17 @@ test("Landing: språkbyttet virker når localStorage er nektet", async () => {
     const app = nyttAppBrett();
     await visInnlogging();
     await vent(() => app.querySelectorAll(".site-sprak-knapp").length === 2);
-    assert.ok(app.textContent.includes(NB["site.hero.tittel"]));
+    assert.ok(app.textContent.includes(NB["site.home.tittel"]));
 
     const engelsk = [...app.querySelectorAll(".site-sprak-knapp")]
       .find((k) => k.textContent === NB["ui.sprak.en"]);
     assert.ok(engelsk, "ingen knapp for engelsk på forsiden");
     engelsk.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 
-    await vent(() => app.textContent.includes(EN["site.hero.tittel"]));
-    assert.ok(app.textContent.includes(EN["site.hero.tittel"]),
+    await vent(() => app.textContent.includes(EN["site.home.tittel"]));
+    assert.ok(app.textContent.includes(EN["site.home.tittel"]),
       "forsiden ble aldri engelsk — byttet lente seg på lagringen");
-    assert.ok(!app.textContent.includes(NB["site.hero.tittel"]),
+    assert.ok(!app.textContent.includes(NB["site.home.tittel"]),
       "norsk innhold står igjen etter byttet");
     assert.equal(document.documentElement.getAttribute("lang"), "en",
       "<html lang> følger ikke det valgte språket");
@@ -709,7 +881,7 @@ test("Landing: hopp-lenka hopper FORBI navigasjonen, ikke til den", async () => 
     "hovednavigasjonen står inne i hopp-målet — da hopper lenka til den");
   assert.equal(maal.querySelector(".site-sok"), null,
     "søkefeltet står inne i hopp-målet");
-  assert.ok(maal.textContent.includes(t("site.hero.tittel")),
+  assert.ok(maal.textContent.includes(t("site.home.tittel")),
     "sideinnholdet står UTENFOR hopp-målet — da hopper lenka til ingenting");
 });
 
@@ -720,7 +892,7 @@ test("Landing: en ukjent side gir hjem, ikke en tom flate", async () => {
   const app = nyttAppBrett();
   await visInnlogging();
   await vent(() => app.querySelector(".site-hovednav"));
-  assert.ok(app.textContent.includes(t("site.hero.tittel")),
+  assert.ok(app.textContent.includes(t("site.home.tittel")),
     "en ukjent side ga en tom flate i stedet for hjem");
   window.history.replaceState({}, "", "/");
 });

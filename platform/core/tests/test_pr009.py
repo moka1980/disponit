@@ -1165,6 +1165,174 @@ def _kjor_checksumporten(tmp_path):
         env={**os.environ, "DISPONIT_MIGRATOR_URL": MIGRATOR_DSN})
 
 
+def _bootstrapmodul():
+    """`migrasjon-bootstrap.py` lastet — filnavnet har bindestrek."""
+    import importlib.util
+    spek = importlib.util.spec_from_file_location(
+        "migrasjon_bootstrap", ROT / "deploy/staging/migrasjon-bootstrap.py")
+    modul = importlib.util.module_from_spec(spek)
+    spek.loader.exec_module(modul)
+    return modul
+
+
+def test_herdepredikatet_har_ingen_egen_kropp():
+    """#181 (eiervalg A, K2 fra #178): porten skal SPØRRE herdingen.
+
+    Rotårsaken var at `opp.sh` gjenga herdingens akseptkriterier for hånd.
+    De to løkkene hadde forskjellig definisjonsmengde — porten løkket over
+    basens rader, herdingen over `REVIEWEDE_CHECKSUMS` med UBETINGET
+    filmåling — og hver reviewrunde fant et nytt sted de sa forskjellige
+    ting. Grenen kunne ikke konvergere ved lapping: en FERDIG herdet base
+    med endret 001-fil gikk grønt i porten og rødt i herdingen.
+
+    En torrkjøring som er en KOPI av målingene løser ingenting. Porten her
+    måler derfor at `kan_herdes` ikke HAR en egen kropp: den kaller
+    `herd_historikk` med `torrkjor=True`, og det er alt den gjør.
+
+    MUTASJONEN SOM DREPER DENNE: gi `kan_herdes` egne målinger — da er
+    speilingen tilbake, bare flyttet én fil.
+    """
+    import ast
+    import inspect
+    import textwrap
+    modul = _bootstrapmodul()
+    tre = ast.parse(textwrap.dedent(inspect.getsource(modul.kan_herdes)))
+    kropp = tre.body[0].body
+    # Docstringen er ikke kropp — den forklarer, den måler ikke. `ast`
+    # skiller dem; en tekstfiltrering gjør det ikke, fordi docstringens
+    # MIDTLINJER ikke starter med anførselstegn.
+    if (kropp and isinstance(kropp[0], ast.Expr)
+            and isinstance(kropp[0].value, ast.Constant)
+            and isinstance(kropp[0].value.value, str)):
+        kropp = kropp[1:]
+    assert len(kropp) == 1 and isinstance(kropp[0], ast.Return), \
+        f"kan_herdes har {len(kropp)} setninger — et predikat med egen" \
+        " kropp er en simulator, og den kan drifte fra originalen"
+    kall = kropp[0].value
+    assert (isinstance(kall, ast.Call)
+            and getattr(kall.func, "id", None) == "herd_historikk"), \
+        "kan_herdes returnerer noe annet enn et kall til herdingen"
+    assert any(k.arg == "torrkjor" and k.value.value is True
+               for k in kall.keywords), \
+        "kan_herdes kaller herdingen UTEN torrkjor=True — den ville skrevet"
+
+
+def test_checksumporten_gjengir_ikke_herdingens_kriterier():
+    """Porten i `opp.sh` skal ikke lenger LESE herdingens konstant.
+
+    Den gamle formen importerte `REVIEWEDE_CHECKSUMS` og bygde sitt eget
+    `herdbare`-sett for å avgjøre hvilke NULL-rader som var greie. Det er
+    speilingen: samme spørsmål, egen kropp. Nå spør den `kan_herdes()`, og
+    konstanten er herdingens private sak.
+
+    MUTASJONEN SOM DREPER DENNE: hent `REVIEWEDE_CHECKSUMS` inn i porten
+    igjen for å «hjelpe» en gren.
+    """
+    raa = (ROT / "deploy/staging/opp.sh").read_text(encoding="utf-8")
+    assert "kan_herdes(" in raa, \
+        "porten spør ikke herdingen om den kan fullføre"
+    # KOMMENTARER TELLER IKKE: begrunnelsen for hvorfor speilingen ble
+    # fjernet nevner nødvendigvis konstanten. Det er BRUKEN i kode som er
+    # forbudt — en `not in` over rå tekst ville målt forklaringen.
+    kode = "\n".join(ln for ln in raa.splitlines()
+                     if not ln.lstrip().startswith("#"))
+    assert "REVIEWEDE_CHECKSUMS" not in kode, \
+        "porten leser herdingens konstant igjen — da er den tilbake til å" \
+        " gjengi kriteriene i stedet for å spørre om dem"
+
+
+@pg
+def test_torrkjoringen_skriver_ingenting(migrator):
+    """Et predikat som muterer er ingen preflight.
+
+    Preflighten kjører FØR vedlikeholdsvinduet, mot den levende basen. Om
+    torrkjøringen backfilte en rad «på veien», ville den endret historikken
+    utenfor vinduet — og en avbrutt deploy ville etterlatt en base halvveis
+    herdet av en MÅLING.
+
+    MUTASJONEN SOM DREPER DENNE: la torrkjøringen kjøre UPDATE-en.
+    """
+    modul = _bootstrapmodul()
+    versjon = min(_reviewede_versjoner())
+
+    class Lytter:
+        """Delegerer alt, men HUSKER hva som ble kjørt.
+
+        «Raden er fortsatt NULL etterpå» er IKKE nok: torrkjøringen ruller
+        tilbake til slutt, så en UPDATE som faktisk kjøres etterlater ingen
+        spor i basen. Den formen målte at ingenting OVERLEVDE — ikke at
+        ingenting ble SKREVET, som er det porten heter. Lytteren måler
+        forsøket, ikke resultatet.
+        """
+
+        def __init__(self, ekte):
+            self.ekte, self.sql = ekte, []
+
+        def execute(self, sql, *a, **kw):
+            self.sql.append(" ".join(str(sql).split()))
+            return self.ekte.execute(sql, *a, **kw)
+
+        def __getattr__(self, navn):
+            return getattr(self.ekte, navn)
+
+    with _med_null_checksum(migrator, versjon):
+        lytter = Lytter(migrator)
+        assert modul.kan_herdes(lytter) == [], \
+            "torrkjøringen felte en NULL herdingen faktisk kan fylle"
+        skriv = [s for s in lytter.sql
+                 if s.upper().startswith(("UPDATE", "INSERT", "DELETE",
+                                          "ALTER", "DROP", "CREATE"))]
+        assert not skriv, \
+            f"torrkjøringen FORSØKTE å skrive: {skriv}"
+        fortsatt_null, = migrator.execute(
+            "SELECT checksum IS NULL FROM migrasjoner WHERE versjon=%s",
+            (versjon,)).fetchone()
+        assert fortsatt_null, \
+            "torrkjøringen fylte raden den bare skulle måle"
+
+
+@pg
+def test_porten_feller_endret_reviewet_fil_paa_ferdig_herdet_base(
+        migrator, tmp_path):
+    """Klassen den gamle porten IKKE kunne fange (#181s eksempel).
+
+    Basen er ferdig herdet, 001-fila er endret, og radens checksum FØLGER
+    den endrede fila. Porten løkket over basens rader og fant ingen uenighet
+    — mens `herd_historikk` måler fila mot den REVIEWEDE konstanten og
+    feller den, inne i vedlikeholdsvinduet.
+
+    Nå faller den i preflighten, før noe stoppes. Det er hele poenget med
+    #181, og derfor er dette porten som beviser at klassen er lukket.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `kan_herdes()`-kallet fra porten og
+    la den bare sammenligne fil mot rad, som før.
+    """
+    import hashlib
+    fil = next((ROT / "platform/core/db/migrations").glob("001_*.sql"))
+    orig = fil.read_bytes()
+    fasit, = migrator.execute(
+        "SELECT checksum FROM migrasjoner WHERE versjon=1").fetchone()
+    try:
+        fil.write_bytes(orig + b"\n-- endret etter kjoring\n")
+        endret = hashlib.sha256(fil.read_bytes()).hexdigest()
+        # Radens checksum følger fila: fil-mot-rad er ENIGE, og bare den
+        # ubetingede målingen mot den reviewede konstanten kan se avviket.
+        migrator.execute("UPDATE migrasjoner SET checksum=%s WHERE versjon=1",
+                         (endret,))
+        migrator.commit()
+        res = _kjor_checksumporten(tmp_path)
+        assert res.returncode != 0, \
+            "porten slapp en endret REVIEWET fil på en ferdig herdet base —" \
+            f" herdingen ville felt den i vinduet:\n{res.stdout}{res.stderr}"
+        assert "reviewet checksum" in res.stdout, \
+            f"porten avbrøt, men ikke på herdingens grunn:\n{res.stdout}"
+    finally:
+        fil.write_bytes(orig)
+        migrator.execute("UPDATE migrasjoner SET checksum=%s WHERE versjon=1",
+                         (fasit,))
+        migrator.commit()
+
+
 @pg
 def test_checksumporten_slipper_uherdet_legacyhistorikk(migrator, tmp_path):
     """Codex P2 (runde 1): uherdet LEGACY-historikk er ikke et avvik.
@@ -1233,6 +1401,77 @@ def test_checksumporten_feller_uherdet_ikkelegacy_rad(migrator, tmp_path):
 
 
 @pg
+def test_feilet_herding_etterlater_ingen_delvis_backfill(migrator):
+    """Codex P1: en herding som FEILER, skal ikke ha skrevet noe.
+
+    `herd_historikk` backfiller de reviewede radene FØR den måler resten.
+    Er det en NULL igjen som herdingen ikke kan fylle, kaster den — men
+    UPDATE-ene ligger da fortsatt upåbegynt-committet i transaksjonen, og
+    den som rydder opp etter kastet, committer: `main()` slipper
+    advisory-låsen i sin `finally` med `conn.commit()`. Opprydningen ville
+    dermed BEVART en historikk som er halvveis herdet av en herding som
+    feilet — 001/002 fylt, den ukjente raden NULL — og neste kjøring møter
+    en tilstand ingen har herdet ferdig og ingen har latt være.
+
+    Torrkjøringen hadde denne garantien fra før (`conn.rollback()` før
+    `return avvik`); den skrivende veien hadde den ikke, og det er nettopp
+    den veien som faktisk har skrevet noe å angre på.
+
+    Testen reproduserer kallerens commit ETTER feilen — uten den ville
+    ingenting overlevd uansett, og porten hadde målt transaksjonens
+    levetid i stedet for herdingens atomisitet.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `conn.rollback()` foran
+    `raise HerdingFeilet`.
+    """
+    modul = _bootstrapmodul()
+    reviewet = min(_reviewede_versjoner())
+    ukjent, = migrator.execute(
+        "SELECT versjon FROM migrasjoner ORDER BY versjon DESC LIMIT 1"
+    ).fetchone()
+    assert ukjent not in _reviewede_versjoner(), \
+        "basen har ingen kjørt migrasjon utenfor REVIEWEDE_CHECKSUMS —" \
+        " herdingen ville ikke feilet, og testen måler ikke det den tror"
+
+    rader = [reviewet, ukjent]
+    fasit = dict(migrator.execute(
+        "SELECT versjon, checksum FROM migrasjoner WHERE versjon = ANY(%s)",
+        (rader,)).fetchall())
+    try:
+        # Begge nulles i SAMME kontekst: `_med_null_checksum` kan ikke
+        # nøstes, fordi den indre `finally` setter NOT NULL igjen mens den
+        # ytre raden fortsatt står NULL.
+        migrator.execute("ALTER TABLE migrasjoner"
+                         " ALTER COLUMN checksum DROP NOT NULL")
+        migrator.execute("UPDATE migrasjoner SET checksum=NULL"
+                         " WHERE versjon = ANY(%s)", (rader,))
+        migrator.commit()
+
+        with pytest.raises(modul.HerdingFeilet):
+            modul.herd_historikk(migrator)
+        # Kallerens opprydning, ordrett: main() committer for å slippe
+        # advisory-låsen — uansett utfall av herdingen.
+        migrator.commit()
+
+        etter = dict(migrator.execute(
+            "SELECT versjon, checksum FROM migrasjoner WHERE versjon = ANY(%s)",
+            (rader,)).fetchall())
+        assert etter[reviewet] is None, \
+            f"den feilede herdingen etterlot {reviewet:03d} backfilt" \
+            f" ({etter[reviewet]}) — historikken står halvveis herdet"
+        assert etter[ukjent] is None, \
+            f"herdingen fylte {ukjent:03d}, som ikke er reviewet"
+    finally:
+        for versjon, sum_ in fasit.items():
+            migrator.execute(
+                "UPDATE migrasjoner SET checksum=%s WHERE versjon=%s",
+                (sum_, versjon))
+        migrator.execute("ALTER TABLE migrasjoner"
+                         " ALTER COLUMN checksum SET NOT NULL")
+        migrator.commit()
+
+
+@pg
 def test_checksumporten_feller_migrasjon_borte_fra_treet(migrator, tmp_path):
     """Cursor P2 (#178, runde 2): `fil is None`-grenen hadde ingen test.
 
@@ -1267,6 +1506,70 @@ def test_checksumporten_feller_migrasjon_borte_fra_treet(migrator, tmp_path):
     assert "borte fra treet" in res.stdout and f"{versjon:03d}" in res.stdout, \
         f"porten avbrøt, men sier ikke hvilken versjon som mangler:\n" \
         f"{res.stdout}"
+
+
+@pg
+def test_checksumporten_feller_reviewet_migrasjon_mangler_i_treet(tmp_path):
+    """Cursor P2 (#181): `_filavvik()`s tredje gren sto umålt.
+
+    Søskenporten over måler den motsatte retningen — en RAD uten fil, felt
+    av portens egen løkke over basens rader. Denne måler herdingens gren:
+    en REVIEWET versjon (`REVIEWEDE_CHECKSUMS`) som kandidat-treet ikke har
+    fila til. Den er ubetinget og gjelder uansett hva basen sier, så den kan
+    ikke nås gjennom radløkka — og etter #181 er det nettopp `kan_herdes()`
+    som skal bringe den fram i preflighten. Uten test her kunne grenen falle
+    ut i en refaktorering mens `herd_historikk` fortsatt kaster
+    `HerdingFeilet` i steg 6, etter tjenestestoppen.
+
+    Treet fabrikkeres som en KOPI i tmp: det ekte treet deles med de andre
+    portene i samme kjøring, og en `unlink`/`rename` der ville vært en
+    sidevirkning utenfor testens egen tilstand. `migrasjon-bootstrap.py`
+    kopieres med, fordi herdingens `MIG` er relativ til sin EGEN fil — ikke
+    til cwd — og kopien er det som gjør at den ser tmp-treet.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `fil is None`-grenen i `_filavvik()`
+    (eller la den `continue` uten å legge til et avvik).
+    """
+    import os
+    import shutil
+    import subprocess
+    import sys
+
+    def kjor_uten(navn, utelatt):
+        rot = tmp_path / navn
+        (rot / "deploy/staging").mkdir(parents=True)
+        shutil.copy2(ROT / "deploy/staging/migrasjon-bootstrap.py",
+                     rot / "deploy/staging/migrasjon-bootstrap.py")
+        kat = rot / "platform/core/db/migrations"
+        shutil.copytree(ROT / "platform/core/db/migrations", kat)
+        if utelatt:
+            (kat / utelatt).unlink()
+        port = rot / "checksumport.py"
+        port.write_text(_checksumporten(), encoding="utf-8")
+        return subprocess.run(
+            [sys.executable, str(port)], cwd=rot, capture_output=True,
+            text=True,
+            env={**os.environ, "DISPONIT_MIGRATOR_URL": MIGRATOR_DSN})
+
+    versjon = min(_reviewede_versjoner())
+    fil = next((ROT / "platform/core/db/migrations").glob(f"{versjon:03d}_*.sql"))
+
+    # Grønn først: det er den manglende fila som feller porten, ikke det at
+    # treet er en kopi. Uten denne halvdelen ville en tmp-kopi som ALLTID er
+    # rød sett ut som en bestått negativ test.
+    ok = kjor_uten("helt", None)
+    assert ok.returncode == 0, \
+        f"porten er rød på en komplett kopi av treet — harnesset måler ikke" \
+        f" det testen tror:\n{ok.stdout}{ok.stderr}"
+
+    rod = kjor_uten("uten-reviewet", fil.name)
+    assert rod.returncode != 0, \
+        f"porten slapp et tre uten den reviewede {fil.name} — herdingen" \
+        f" ville kastet HerdingFeilet i vedlikeholdsvinduet:\n" \
+        f"{rod.stdout}{rod.stderr}"
+    assert "mangler i treet" in rod.stdout and f"{versjon:03d}" in rod.stdout, \
+        f"porten avbrøt, men navngir ikke den reviewede migrasjonen som" \
+        f" mangler:\n{rod.stdout}{rod.stderr}"
 
 
 def test_checksumporten_feller_to_filer_med_samme_versjon(tmp_path):

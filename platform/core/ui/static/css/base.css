@@ -17,7 +17,11 @@ body {
   line-height: var(--lh-base);
 }
 
-html[data-visning="landing"] body,
+html[data-visning="landing"] body {
+  background: var(--site-paper);
+  color: var(--site-ink);
+}
+
 html[data-visning="app"] body {
   background:
     radial-gradient(circle at top right, rgba(29,111,165,.08), transparent 28rem),
