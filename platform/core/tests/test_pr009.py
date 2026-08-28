@@ -1739,6 +1739,37 @@ def test_klarteksten_ligger_i_minne_ikke_i_backupkatalogen():
         "en SIGKILL-et kjøring etterlater klartekst på tmpfs for alltid"
 
 
+def test_runbooken_leter_etter_klarteksten_i_shm_ikke_i_katalogen():
+    """Cursor P2 på `4a6dccf`: dommen flyttet fila, runbooken ble stående.
+
+    DEPLOY.md sa fortsatt «en `disponit-<stempel>.dump.raa` i katalogen»
+    og sendte operatøren til `/var/backups/disponit`. Etter tmpfs-dommen
+    ligger klarteksten aldri der — så etter et `SIGKILL`/OOM ser
+    operatøren en ren katalog, konkluderer at ingenting ble etterlatt,
+    og den gjenopprettbare klarteksten blir liggende i `/dev/shm` til
+    neste omstart. Runbooken ledet altså vekk fra det ene stedet den
+    fantes.
+
+    Porten er tekstuell fordi runbooken er det: en leseinstruks kan bare
+    drifte fra koden i én retning, og det er den retningen dette måler.
+
+    MUTASJONEN SOM DREPER DENNE: skriv `.raa`-avsnittet tilbake til
+    backupkatalogen, eller fjern `/dev/shm`-stien fra det.
+    """
+    deploy = (ROT / "docs/DEPLOY.md").read_text(encoding="utf-8")
+    assert "/dev/shm/disponit-backup" in deploy, \
+        "runbooken navngir ikke tmpfs-stien der klarteksten faktisk " \
+        "kan bli liggende etter et SIGKILL"
+    # Avsnittet som nevner mellomfila skal ikke samtidig sende
+    # operatøren til backupkatalogen etter den.
+    avsnitt = [a for a in deploy.split("\n\n") if "dump.raa" in a]
+    assert avsnitt, "runbooken nevner ikke mellomfila i det hele tatt"
+    for a in avsnitt:
+        assert "/dev/shm" in a, \
+            "et avsnitt om `.raa` uten tmpfs-stien — operatøren ledes " \
+            "til å lete i backupkatalogen etter en fil som ikke er der"
+
+
 def test_opprydding_sletter_aldri_et_komplett_par():
     """Cursor P2 på `2d3886b`: vernet begynte å ødelegge det det vernet.
 
