@@ -1941,14 +1941,14 @@ def test_backupen_sletter_dumpen_og_arkivet_som_ett_par():
     står man igjen med en dump hvis bunter ingen arkiv lenger har: #191
     gjenoppstått etter 30 dager i stedet for med én gang.
 
-    MUTASJONEN SOM DREPER DENNE: erstatt stempelløkka med det gamle
+    MUTASJONEN SOM DREPER DENNE: erstatt `slett_par` med det gamle
     `find -name 'disponit-*.dump.age' -delete`. Arkivene blir da liggende
     som foreldreløse til de treffer sin egen glob — eller for alltid, om
     globben aldri nevner dem.
     """
     skript = (ROT / "deploy/staging/backup-db.sh").read_text(encoding="utf-8")
-    assert 'rm -f "$KATALOG/disponit-$STEMPEL_GAMMEL.dump.age" \\\n' \
-           '        "$KATALOG/disponit-$STEMPEL_GAMMEL.inndata.tar.age"' \
+    assert 'rm -f "$KATALOG/disponit-$stempel.dump.age" \\\n' \
+           '        "$KATALOG/disponit-$stempel.inndata.tar.age"' \
            in skript, \
         "retention sletter ikke dumpen og arkivet under samme stempel"
     assert "-print -delete" not in skript, \
