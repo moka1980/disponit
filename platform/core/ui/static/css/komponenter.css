@@ -769,6 +769,9 @@ html[data-visning="landing"] .skall-hoved {
 .site-cta .knapp, .site-bunn-cta .knapp { min-height: var(--touch-min); text-decoration: none; }
 .site-section { padding: var(--sp-8) 0; }
 .site-tilbud { border-top: 1px solid var(--line); }
+/* Samme dempede farge som forsidens øvrige brødtekst på --site-paper
+   (--site-muted, ikke --muted): landingsflaten har sin egen stemte skala. */
+.site-tilbud-ingress { color: var(--site-muted); margin: 0; max-width: var(--maks-ingress); }
 .site-feature {
   border-top: 1px solid var(--line);
   display: grid;

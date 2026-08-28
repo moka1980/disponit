@@ -90,6 +90,12 @@ test("Landing: forsiden har hovednavigasjon og er ikke en lang katalog", async (
   // tilgjengelighetsbrikke, ikke modulnumre og «0/45 i drift».
   assert.ok(app.textContent.includes(t("site.tilbud_tittel")));
   assert.ok(app.textContent.includes(t("site.tilbud.fullmakt.navn")));
+  // …og selve tilbudsbeskrivelsen. `plattformdata.test.js` vokter at prosaen
+  // ligger i `site.hero.tilbud` og ikke i de utrullingsavhengige nøklene, men
+  // den porten er blind for om noen faktisk rendrer nøkkelen: en periode gjorde
+  // ingen det, og prosaen nådde ingen besøkende (Cursor P2).
+  assert.ok(app.textContent.includes(t("site.hero.tilbud")),
+    "tilbudsbeskrivelsen rendres ikke på forsiden — nøkkelen er død kontrakt");
   assert.equal(app.querySelectorAll(".site-hovednav a").length, 5);
   assert.equal(app.querySelectorAll('.site-hovednav a[aria-current="page"]').length, 1);
   assert.equal(app.querySelector(".site-sok"), null,
@@ -229,6 +235,11 @@ test("Landing: oppsett.json miljo=produksjon styrer brikker og statuslinje", asy
       t("site.hero.tekst_delvis"),
       "statuslinja motsier brikkene: noen områder er merket «Tilgjengelig», " +
       "men teksten sier at alt fortsatt bygges");
+    // Tilbudsbeskrivelsen står utenfor `site.hero.tekst_*` fordi den ikke er
+    // en funksjon av utrullingen. Da må den også OVERLEVE begge tilstandene i
+    // flaten, ikke bare i locale-porten (Cursor P2).
+    assert.ok(app.textContent.includes(t("site.hero.tilbud")),
+      "tilbudsbeskrivelsen faller bort ved delvis utrulling");
 
     // Motprøve på SAMME rigg: bytter bare `miljo`, så et utfall som ikke
     // endrer seg avslører et løfte som ikke leser miljøet i det hele tatt.
@@ -241,6 +252,8 @@ test("Landing: oppsett.json miljo=produksjon styrer brikker og statuslinje", asy
     assert.equal(stagingApp.querySelector(".site-driftstatus div p").textContent,
       t("site.hero.tekst_bygges"),
       "statuslinja lover delvis drift på en vert ingen kunde bruker");
+    assert.ok(stagingApp.textContent.includes(t("site.hero.tilbud")),
+      "tilbudsbeskrivelsen faller bort når ingenting er i drift");
   } finally {
     globalThis.fetch = ekteFetch;
     // `_produksjonsmiljo` er modulglobal: en test som avbryter mellom de to

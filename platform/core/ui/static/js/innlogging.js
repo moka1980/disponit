@@ -231,6 +231,13 @@ function tilbudseksjon() {
     el("div", { class: "site-section-head" }, el("div", {},
       el("p", { class: "site-eyebrow", text: t("site.tilbud") }),
       el("h2", { text: t("site.tilbud_tittel") }))),
+    /* `site.hero.tilbud` er hele tilbudsbeskrivelsen, og den er nettopp IKKE
+       en funksjon av utrullingen — derfor står den utenfor
+       `site.hero.tekst_*` (se `plattformdata.js`). Nøkkelen var voktet i
+       locale og i unit, men kalt fra ingen flate: kontrakten sto død, og
+       prosaen nådde ingen besøkende (Cursor P2). Den hører hjemme her, rett
+       over områdene den ramser opp, og rendres uansett utrullingstilstand. */
+    el("p", { class: "site-tilbud-ingress", text: t("site.hero.tilbud") }),
     el("div", { class: "site-grid site-grid-2" }, TILBUD.map((post, indeks) =>
       el("article", { class: "site-feature" },
         el("span", { class: "site-feature-nr", "aria-hidden": "true",
