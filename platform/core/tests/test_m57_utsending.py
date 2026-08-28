@@ -2840,3 +2840,59 @@ def test_begrunnelsen_kan_ikke_vaere_et_tastetrykk(migrator):
                 " begrunnelse) VALUES (%s, 'm57.blinding_avskrudd', %s, %s)",
                 (TENANT, aktor, begrunnelse))
         migrator.rollback()
+
+
+@pg
+def test_avskruing_krever_hendelse_fra_basen_ikke_mock(migrator):
+    """Modulporten møter BASEN, ikke en dict (Cursor P2, runde 1 på #247).
+
+    De to halvdelene var målt hver for seg: modultestene ga
+    `hendelseoppslag` som en mock-dict, DB-testene kalte `skriv/
+    les_revisjonshendelse` direkte. Ingen test gikk gjennom BEGGE — så
+    PR-ens kjerne («auditert er en egenskap ved basen, ikke ved kallet»)
+    kunne regressert i produksjonsadapteren uten at noe ble rødt. Det er
+    nøyaktig klassen Codex fant på #153: en selvattestert dict.
+
+    Adapteren her er den produksjonsveien skal bruke — `les_revisjonshendelse`
+    i KALLERENS tenantkontekst, mappet til dicten modulen leser.
+
+    MUTASJONEN SOM DREPER DENNE: la adapteren returnere en fabrikkert dict
+    i stedet for radens innhold.
+    """
+    from modules.m57_ats import blinding
+    rt = _rt()
+    try:
+        _sett_kontekst(rt, TENANT)
+        rt.execute(
+            "SELECT skriv_revisjonshendelse(%s, 'm57.blinding_avskrudd',"
+            " %s, %s)",
+            (TENANT, "eier@kunde", "intern rekruttering, avtalt med HR"))
+        hid = rt.fetchone()[0]
+
+        def _oppslag(hendelse_id):
+            rt.execute("SELECT handling, aktor, ts FROM"
+                       " les_revisjonshendelse(%s, %s)", (TENANT, hendelse_id))
+            rad = rt.fetchone()
+            return None if rad is None else {
+                "handling": rad[0], "aktor": rad[1], "ts": rad[2]}
+
+        # DEN AUDITERTE VEIEN, hele veien: raden finnes i basen, oppslaget
+        # finner den, og modulen gir råteksten.
+        tekst, avmaskering = blinding.evalueringsinput(
+            "Kari Nordmann", {"navn": ["Kari"]}, blinding_av=True,
+            avskruing_hendelse_id=hid, hendelseoppslag=_oppslag)
+        assert tekst == "Kari Nordmann" and avmaskering == {}
+
+        # ... og en velformet UUID uten rad er ikke en hendelse. Her er det
+        # BASEN som svarer nei, ikke en lambda som er skrevet til å gjøre det.
+        with pytest.raises(blinding.Blindingsfeil) as e:
+            blinding.evalueringsinput(
+                "Kari Nordmann", {"navn": ["Kari"]}, blinding_av=True,
+                avskruing_hendelse_id="00000000-0000-4000-8000-000000000000",
+                hendelseoppslag=_oppslag)
+        assert e.value.kode == "avskrudd_uten_auditrad", (
+            "en fabrikkert ID slapp gjennom den ekte oppslagsveien:"
+            f" {e.value.kode}")
+    finally:
+        rt.rollback()
+        rt.close()
