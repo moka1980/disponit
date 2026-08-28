@@ -84,6 +84,27 @@ CREATE POLICY tenant_isolasjon ON revisjonshendelse
     WITH CHECK (tenant = current_setting('disponit.tenant', true));
 
 -- ------------------------------------------------------------
+-- FUNKSJONENE EIES AV `disponit_m37_claimer`, IKKE AV MIGRATOR — og det er
+-- ikke stil, det er den eneste formen som virker (CI: «permission denied for
+-- function krev_tenantkontekst» inne i begge definer-funksjonene).
+--
+-- Porten `krev_tenantkontekst` er REVOKEt fra PUBLIC i 038 og eies av
+-- `disponit_m37_claimer`; migrator er medlem WITH INHERIT FALSE og arver
+-- derfor INGENTING. En definer-funksjon eid av migrator kjører altså som en
+-- rolle som ikke får kalle porten, og hele skrive-/leseveien er død.
+-- 038/056/065 løser det ved å lage funksjonene SOM eieren av porten — samme
+-- rolle, ingen ny grant, ingen ny rettighetsflate. Det gjør 066 nå også.
+--
+-- Alternativet — å gi migrator EXECUTE på porten — ville i tillegg latt hver
+-- fremtidig definer-funksjon kjøre med migrators fulle autoritet (eier av
+-- hver tabell i huset). Den veien utvider en flate 038 med vilje holdt smal.
+--
+-- RETTIGHETENE PÅ FUNKSJONENE HØRER HIT, inne i rolleblokken: PostgreSQL
+-- gir nye funksjoner EXECUTE til PUBLIC ved fødselen, og både REVOKE og
+-- GRANT på claimer-eide funksjoner er virkningsløse fra migrator (027-fellen,
+-- beskrevet i 056 §7).
+SET LOCAL ROLE disponit_m37_claimer;
+
 -- Skriveveien. SECURITY DEFINER med tenanten bundet til KONTEKSTEN, aldri
 -- til parameteret alene (038-formen): en kaller som oppgir en annen tenant
 -- enn sin egen blir avvist, ikke betjent.
@@ -118,15 +139,29 @@ BEGIN
          WHERE r.tenant = p_tenant AND r.hendelse_id = p_hendelse_id;
 END $$;
 
--- RETTIGHETSGRENSEN. Runtime skriver og leser GJENNOM funksjonene og har
--- ingen tabellrettigheter i det hele tatt: da finnes det ingen vei til en
--- UPDATE som triggeren må stoppe, og triggeren er beltet i tillegg til
--- selen. `disponit` er runtime-rollen (samme som resten av huset bruker).
-REVOKE ALL ON revisjonshendelse FROM PUBLIC;
 REVOKE ALL ON FUNCTION skriv_revisjonshendelse(TEXT, TEXT, TEXT, TEXT)
     FROM PUBLIC;
 REVOKE ALL ON FUNCTION les_revisjonshendelse(TEXT, UUID) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION skriv_revisjonshendelse(TEXT, TEXT, TEXT, TEXT)
     TO disponit;
 GRANT EXECUTE ON FUNCTION les_revisjonshendelse(TEXT, UUID) TO disponit;
+
+RESET ROLE;
+
+-- RETTIGHETSGRENSEN. Runtime skriver og leser GJENNOM funksjonene og har
+-- ingen tabellrettigheter i det hele tatt: da finnes det ingen vei til en
+-- UPDATE som triggeren må stoppe, og triggeren er beltet i tillegg til
+-- selen. `disponit` er runtime-rollen (samme som resten av huset bruker).
+--
+-- TABELLEN EIES AV MIGRATOR (den er laget utenfor rolleblokken over, og
+-- skal være det: testoppryddingen må kunne `ALTER TABLE ... DISABLE
+-- TRIGGER`, som krever eierskap). Rettighetene på den gis derfor herfra —
+-- retten til å gi bort et privilegium følger EIERSKAPET, så disse linjene
+-- ville vært stille no-ops inne i `SET LOCAL ROLE` (056 §8, 027-fellen).
+--
+-- Funksjonseieren trenger `SELECT, INSERT` fordi den nå ER den som utfører
+-- dem: 056-formen ordrett. RLS står uendret i veien for begge — tabellen
+-- har FORCE, og eieren av funksjonene er ikke eieren av tabellen.
+REVOKE ALL ON revisjonshendelse FROM PUBLIC;
+GRANT SELECT, INSERT ON revisjonshendelse TO disponit_m37_claimer;
 
