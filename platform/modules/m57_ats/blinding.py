@@ -415,13 +415,30 @@ def blind_dokumenter(dokumenter: list[str],
         grenser = dokumentgrenser(dokumenter)
         startene = [start for start, _ in grenser]
         for verdi in kryssbare:
-            for treff in _monster(verdi).finditer(samlet):
+            # OVERLAPPENDE FOREKOMSTER MÅ SES (Codex P1, runde 4).
+            # `finditer` gir bare IKKE-overlappende treff, og en verdi som
+            # overlapper seg selv kan skjule sitt eget kryss:
+            # `["Kari\n\nKari", "Kari"]` med verdien `"Kari\n\nKari"`
+            # gir ett treff på offset 0 — helt inne i dokument 1 — mens
+            # forekomsten på offset 7 KRYSSER skjøten og aldri blir sett.
+            # Blindingen maskerte da den første og sendte det andre navnet
+            # i klartekst til modellen, med porten grønn.
+            #
+            # Lookahead-formen `(?=(...))` konsumerer ingenting, så motoren
+            # rykker ett tegn fram om gangen og ser HVER forekomst. Gruppen
+            # inni bærer det ekte treffet, så `end(1)` er den faktiske
+            # slutten — ingen antakelse om at treffets lengde er verdiens
+            # (versalufølsomhet kan i prinsippet endre den).
+            overlappende = re.compile(f"(?={re.escape(verdi)})",
+                                      re.IGNORECASE)
+            for treff in overlappende.finditer(samlet):
+                slutt_treff = treff.start() + len(verdi)
                 i = bisect_right(startene, treff.start()) - 1
                 # `i < 0` kan ikke skje — første dokument starter på 0 —
                 # men et treff som BEGYNNER inne i selve skjøten peker på
                 # dokumentet foran, og faller da ut på sluttkravet under.
                 start, slutt = grenser[i]
-                if not (start <= treff.start() and treff.end() <= slutt):
+                if not (start <= treff.start() and slutt_treff <= slutt):
                     raise Blindingsfeil("verdi_krysser_dokumentgrense")
     if not _traff_alle(kandidatfelter, dokumenter):
         raise Blindingsfeil("ugyldig_maskeringsform")

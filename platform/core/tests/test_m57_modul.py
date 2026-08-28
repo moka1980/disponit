@@ -4348,6 +4348,38 @@ def test_en_verdi_med_skjot_INNE_i_ett_dokument_er_lovlig():
     assert adresse not in en[0]
 
 
+def test_en_verdi_som_overlapper_seg_selv_skjuler_ikke_sitt_eget_kryss():
+    """Codex P1 (runde 4): `finditer` gir bare IKKE-overlappende treff.
+
+    En verdi som overlapper seg selv kan derfor gjemme sitt eget kryss.
+    `["Kari\\n\\nKari", "Kari"]` med verdien `"Kari\\n\\nKari"` gir ett
+    treff på offset 0 — helt inne i dokument 1, altså lovlig — mens
+    forekomsten på offset 7 KRYSSER skjøten og aldri blir inspisert.
+    Blindingen maskerte den første og sendte det andre navnet i klartekst
+    til modellen, mens porten sa god for det.
+
+    Lookahead-formen ser hver forekomst fordi den ikke konsumerer noe.
+
+    MUTASJONEN SOM DREPER DENNE: `_monster(verdi).finditer(samlet)`
+    tilbake.
+    """
+    dokumenter = ["Kari" + blinding.SKJOT + "Kari", "Kari"]
+    verdi = "Kari" + blinding.SKJOT + "Kari"
+    with pytest.raises(blinding.Blindingsfeil) as e:
+        blinding.blind_dokumenter(dokumenter, {"navn": [verdi]})
+    assert e.value.args[0] == "verdi_krysser_dokumentgrense", (
+        "et overlappende treff skjulte krysset — og med den gamle formen"
+        " gikk det ANDRE navnet i klartekst til modellen")
+
+    # KONTROLLEN: uten den kryssende forekomsten skal den samme verdien
+    # gå igjennom. Ellers målte testen like gjerne at porten er blind for
+    # alt som overlapper.
+    blindede, avmaskering = blinding.blind_dokumenter(
+        [verdi, "Ola"], {"navn": [verdi, "Ola"]})
+    assert "Kari" not in blinding.SKJOT.join(blindede), \
+        "den lovlige, overlappende verdien ble ikke maskert"
+
+
 def test_ingen_skjotet_kopi_naar_ingen_verdi_kan_krysse():
     """Codex P2: kopien ble laget selv når sjekken ikke hadde noe å gjøre.
 
