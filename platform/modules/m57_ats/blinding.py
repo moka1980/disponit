@@ -386,11 +386,21 @@ def blind_dokumenter(dokumenter: list[str],
     #    dokumentet som starter før treffet er det ENESTE som kan
     #    inneholde det.
     #
-    # Uten begge ledd var sjekken kvadratisk i dokumentantallet på den
-    # ærlige veien: buntgaten tillater 20 000 dokumenter, og `['a'] *
-    # 20_000` med én vanlig verdi ga rundt 200 millioner
-    # grensesammenligninger — ganger opptil seksti deklarerte verdier,
-    # før modellen i det hele tatt ble kalt.
+    # Ledd 2 er det som fjernet KLASSEN: uten det var sjekken kvadratisk
+    # i dokumentantallet på den ærlige veien. Buntgaten tillater 20 000
+    # dokumenter, og `['a'] * 20_000` med én vanlig verdi tok 15,4 s
+    # målt her — ganger de seksti verdiene grensene tillater (seks felt à
+    # ti) er det et kvarter før modellen i det hele tatt kalles. Med
+    # bisect: 0,034 s. `test_grenseoppslaget_skalerer_med_dokument-
+    # antallet` holder den målingen.
+    #
+    # Ledd 1 er en KONSTANT, og det står uten egen port — sagt høyt fordi
+    # en uportet linje ellers er en linje ingen vet virker. Målt på seks
+    # MB fordelt på tre dokumenter med seksti verdier: 2,90 s med
+    # filteret, 5,57 s uten. Det er ~2x, og skanningen det sparer er av
+    # samme orden som `anvend`s egne substitusjonspass — som må skje
+    # uansett. En port på to ganger er en flakete port på en delt
+    # CI-maskin, og en flakete port er verre enn en dokumentert måling.
     samlet = SKJOT.join(dokumenter)
     grenser = dokumentgrenser(dokumenter)
     startene = [start for start, _ in grenser]
