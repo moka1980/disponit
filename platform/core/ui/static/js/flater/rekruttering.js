@@ -178,7 +178,12 @@ export function visRekruttering(hoved, ctx) {
     // Evalueringsseksjonens NODE (remount-dommen): bygges én gang per
     // rute-inngang, gjenbrukes ved prosessbytte, nullstilles ved full
     // lasting.
-    evalDel: null };
+    evalDel: null,
+    // Prosessbyttet er en HENTING, og da bærer det samme risiko som de to
+    // over (Cursor P2, #183): generasjonen hører til ØKTEN, ikke til den
+    // `tegn`-lukningen som tilfeldigvis startet hentingen — en teller som
+    // fødes på nytt for hver tegning vokter ingenting på tvers av byttene.
+    prosessHent: { nr: 0 } };
   medStatus(hoved, ctx,
     async () => {
       // Profilene er TILLEGGSDATA (samme politikk som
@@ -214,6 +219,10 @@ export function visRekruttering(hoved, ctx) {
       // sannheten for begge (auto-lastingen får kjøre på nytt).
       okt.rapportHenting.nr += 1;
       okt.rapportHenting.siste = null;
+      // ... og prosesshentingen av nøyaktig samme grunn: et bytte som
+      // fortsatt er i lufta skal ikke lande OPPÅ den ferske lastingen og
+      // sette flaten tilbake til prosessen brukeren forlot.
+      okt.prosessHent.nr += 1;
       okt.evalDel = null;
       tegn(hoved, ctx, data, okt);
     });
@@ -393,9 +402,29 @@ function tegn(hoved, ctx, data, okt, valgtId) {
       // Cursor P1 alt har felt en runde over i #176, og den holder her
       // fordi økten ligger UTENFOR hentingen — ikke fordi vi husker den.
       const nyId = velger.value;
+      // ... OG SVARET MÅ FORTSATT VÆRE ØNSKET NÅR DET LANDER (Cursor P2).
+      // Hentingen er husets tredje async-vei inn i denne flaten, og de to
+      // andre — rapporten og evalueringslisten — bærer begge vakten alt:
+      // generasjon på økten, og eierskapet til `hoved`. Denne hadde
+      // ingen. Uten dem tegner et tregt svar seg inn i `hoved` etter at
+      // brukeren har navigert bort (`tegn` skriver rått med `sett(hoved,
+      // …)`, så den treffer den flaten som står der NÅ), og et eldre
+      // bytte kan overskrive en ferskere full lasting med prosessen hun
+      // nettopp forlot. `medStatus` vokter sin egen lasting på samme vis
+      // — vakten mangler bare her.
+      //
+      // TILKOBLINGEN er rute-halvdelen, ikke ruterens stempel: ruteren
+      // river `hoved` synkront ved hver navigasjon (`visStatus` tegner
+      // lastetilstanden med én gang), så en velger som ikke lenger står i
+      // dokumentet ER en forlatt visning — og den formen fanger også en
+      // full «Prøv igjen»-lasting, som ruterstempelet ikke ville sett.
+      // Samme port som `rapportRot.isConnected` alt bærer i denne fila.
+      const min = ++okt.prosessHent.nr;
+      const gjelder = () => min === okt.prosessHent.nr && velger.isConnected;
       velger.disabled = true;
       hentJson(`/v1/rekruttering/prosesser?prosess_id=${encodeURIComponent(nyId)}`)
         .then((svar) => {
+          if (!gjelder()) return;
           data.prosesser = svar.prosesser;
           tegn(hoved, ctx, data, okt, nyId);
           const ny = hoved.querySelector(`#${velgerId}`);
@@ -413,6 +442,11 @@ function tegn(hoved, ctx, data, okt, valgtId) {
           // innloggingsveien, og en åpen kontroll på en død økt inviterer
           // bare til et nytt kall som feiler likt.
           if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+          // Feilveien vokter det SAMME (Cursor P2): en avvist henting fra
+          // en forlatt visning skal hverken låse opp en kontroll som ikke
+          // står der, eller rope i en `role="alert"` som nå tilhører en
+          // annen rute. Samme sted `medStatus` har porten sin.
+          if (!gjelder()) return;
           // EN FEILET HENTING RULLER VALGET TILBAKE. Uten det står
           // velgeren på en prosess flaten ikke viser — og brukeren leser
           // kandidatene til A under navnet B. En 404 er dessuten en

@@ -4061,3 +4061,96 @@ test("Profiler: endret innhold etter tapt svar gir NY nøkkel (P2-5)", async () 
     forste.hoder["Idempotency-Key"],
     "endret innhold bar fortsatt den gamle intensjonens nøkkel");
 });
+
+test("Prosessbytte: et svar som lander etter at flaten er forlatt "
+  + "tegner ingenting", async () => {
+  KALL = [];
+  // Cursor P2 (#183): byttet er husets tredje async-vei inn i flaten, og
+  // de to andre — rapporten og evalueringslisten — vokter begge både
+  // generasjon og tilkobling. Denne hadde ingen vakt: `tegn` skriver rått
+  // med `sett(hoved, …)`, så et tregt svar tegnet rekrutteringen inn i
+  // det `hoved` en ANNEN rute nå eier.
+  //
+  // MUTASJONEN SOM DREPER DENNE: fjern `if (!gjelder()) return;` fra
+  // `.then`-armen på prosesshentingen.
+  const to = prosess();
+  to.prosesser.push({
+    prosess_id: "p-2", blinding_av: false, vekter: { drift: 1 },
+    evaluering_status: "utfort",
+    kandidater: [{ kandidat_id: "K-9", oppfylt: { drift: true },
+      status: "anbefalt", funn: [], intervjusporsmal: [] }],
+    lister: [],
+  });
+  SVAR = { "/v1/rekruttering/prosesser": to };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")));
+  const velger = hoved.querySelector("#rekrut-prosessvelger");
+  assert.ok(velger, "ingen prosessvelger med flere prosesser i svaret");
+  // Byttet starter, og svaret holdes igjen.
+  let slipp;
+  SVAR = () => new Promise((res) => { slipp = res; });
+  velger.value = "p-2";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.ok(await vent(() => typeof slipp === "function"),
+    "byttet hentet aldri — testen måler ikke det den tror");
+  // ... og HER forlater brukeren ruta: en annen flate overtar `hoved`.
+  hoved.replaceChildren();
+  slipp(to);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(hoved.textContent, "",
+    "prosessbyttet tegnet inn i en forlatt flate");
+});
+
+test("Prosessbytte: bare det SISTE byttet får tegne", async () => {
+  KALL = [];
+  // Samme funn, andre halvdel: to hentinger i lufta samtidig (byttet kan
+  // startes på nytt så snart en tegning har bygget en fersk, ulåst
+  // velger). Uten generasjon på ØKTEN vinner det TREGESTE svaret, og
+  // flaten står igjen på en annen prosess enn velgeren viser.
+  //
+  // MUTASJONEN SOM DREPER DENNE: la `gjelder()` slutte å måle
+  // `min === okt.prosessHent.nr`.
+  const to = prosess();
+  to.prosesser.push({
+    prosess_id: "p-2", blinding_av: false, vekter: { drift: 1 },
+    evaluering_status: "utfort",
+    kandidater: [{ kandidat_id: "K-9", oppfylt: { drift: true },
+      status: "anbefalt", funn: [], intervjusporsmal: [] }],
+    lister: [],
+  });
+  SVAR = { "/v1/rekruttering/prosesser": to };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")));
+  const velger = hoved.querySelector("#rekrut-prosessvelger");
+  // BEGGE hentingene holdes igjen. Rekkefølgen er hele poenget: det
+  // ELDSTE svaret slippes FØRST, mens velgeren fortsatt står tilkoblet i
+  // dokumentet — ingen tegning har rukket å rive den. Da er tilkoblingen
+  // sann for begge, og generasjonen er den ENESTE porten igjen.
+  const slippene = [];
+  SVAR = () => new Promise((res) => { slippene.push(res); });
+  velger.value = "p-2";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.ok(await vent(() => slippene.length === 1),
+    "første bytte hentet aldri");
+  // Andre bytte tilbake til p-1 — startet fra den samme, fortsatt
+  // tilkoblede velgeren, slik en ny tegning ville gitt den.
+  velger.disabled = false;
+  velger.value = "p-1";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.ok(await vent(() => slippene.length === 2),
+    "andre bytte hentet aldri");
+  // Det ELDSTE svaret lander først — og skal slippes på gulvet.
+  slippene[0](to);
+  await new Promise((r) => setTimeout(r, 20));
+  const mellom = [...hoved.querySelectorAll("tbody tr")]
+    .map((tr) => tr.querySelector("td").textContent);
+  assert.ok(!mellom.includes("K-9"),
+    `et utdatert bytte tegnet over det nyeste valget: ${mellom.join(",")}`);
+  // ... og det NYESTE tegner, så testen ikke består på en død kjede.
+  slippene[1](prosess());
+  assert.ok(await vent(() => [...hoved.querySelectorAll("tbody tr")]
+    .some((tr) => tr.querySelector("td").textContent === "K-1")),
+    "det nyeste byttet tegnet aldri");
+});
