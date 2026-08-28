@@ -834,9 +834,18 @@ def test_mergeporten_pagineres_gjennom_hele_connectionen():
     MUTASJONEN SOM DREPER DENNE: fjern markørkravet fra MERGEPORT.
     """
     port = " ".join(_jobbenv()["MERGEPORT"].split())
-    assert "endCursor" in port and "hasNextPage" in port, (
-        "merge-porten krever ingen markørgjennomgang — den kan lese"
+    # SELVE SPØRRINGSFORMEN, ikke bare navnene. Første utgave spurte om
+    # `endCursor` og `hasNextPage` fantes hver for seg, og da overlevde
+    # mutasjonen: den avsluttende setningen «gjenta til `hasNextPage` er
+    # `false`» nevner det ene navnet, og `$endCursor: String` det andre,
+    # så porten kunne være grønn uten at spørringen var beskrevet.
+    assert "`pageInfo { hasNextPage endCursor }`" in port, (
+        "merge-porten beskriver ingen markørgjennomgang — den kan lese"
         " første side og merge forbi resten")
+    assert "$endCursor: String" in port, \
+        "spørringen tar ingen markørvariabel"
+    assert "hasNextPage` er `false`" in port, \
+        "regelen sier ikke når gjentakelsen stopper"
 
 
 def test_retryen_beviser_at_avviket_er_kjoringens_eget():
