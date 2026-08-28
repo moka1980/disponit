@@ -93,9 +93,17 @@ function prosessetikett(p) {
   // Datoformen er husets ene beslutning om tidspunkter (`Tidspunkt` i
   // komponenter.js: leserens egen sone, ingen påstand om hvilken). Her
   // trengs teksten, ikke elementet — `<option>` bærer ikke barn.
+  // ANTALLET KOMMER FRA INDEKSEN, IKKE FRA LISTEN (Cursor P2, #183).
+  // `kandidater` finnes bare på den VALGTE prosessen etter #183, så
+  // `(p.kandidater || []).length` ga ALLTID 0 for de øvrige oppføringene
+  // i nedtrekket — en prosess med tusen søkere sto oppført med «kandidater:
+  // 0». Serveren teller nå raden sin i indeksen; listen står igjen som
+  // reserve for et svar uten feltet, ikke som kilden.
+  const antall = typeof p.kandidat_antall === "number"
+    ? p.kandidat_antall : (p.kandidater || []).length;
   return t("ui.rekruttering.prosessetikett")
     .replaceAll("{dato}", Tidspunkt(p.opprettet).textContent)
-    .replaceAll("{antall}", String((p.kandidater || []).length));
+    .replaceAll("{antall}", String(antall));
 }
 
 function kortHash(hash) {
@@ -178,7 +186,12 @@ export function visRekruttering(hoved, ctx) {
     // Evalueringsseksjonens NODE (remount-dommen): bygges én gang per
     // rute-inngang, gjenbrukes ved prosessbytte, nullstilles ved full
     // lasting.
-    evalDel: null };
+    evalDel: null,
+    // Prosessbyttet er en HENTING, og da bærer det samme risiko som de to
+    // over (Cursor P2, #183): generasjonen hører til ØKTEN, ikke til den
+    // `tegn`-lukningen som tilfeldigvis startet hentingen — en teller som
+    // fødes på nytt for hver tegning vokter ingenting på tvers av byttene.
+    prosessHent: { nr: 0 } };
   medStatus(hoved, ctx,
     async () => {
       // Profilene er TILLEGGSDATA (samme politikk som
@@ -214,6 +227,10 @@ export function visRekruttering(hoved, ctx) {
       // sannheten for begge (auto-lastingen får kjøre på nytt).
       okt.rapportHenting.nr += 1;
       okt.rapportHenting.siste = null;
+      // ... og prosesshentingen av nøyaktig samme grunn: et bytte som
+      // fortsatt er i lufta skal ikke lande OPPÅ den ferske lastingen og
+      // sette flaten tilbake til prosessen brukeren forlot.
+      okt.prosessHent.nr += 1;
       okt.evalDel = null;
       tegn(hoved, ctx, data, okt);
     });
@@ -352,6 +369,14 @@ function tegn(hoved, ctx, data, okt, valgtId) {
   const prosess = prosesser.find((p) => p.prosess_id === valgtId)
     || prosesser[0];
   let velgerRot = null;
+  // Feilveien for prosessbyttet (#183): `role="alert"`, fordi et bytte som
+  // ikke gikk gjennom er noe brukeren må vite FØR hun leser videre.
+  // EGEN KLASSE, ikke `rekrut-utfall`: den klassen er signeringens og
+  // blindingens utfallsområde, og flere tester slår den opp med
+  // `querySelector(".rekrut-utfall")` — altså FØRSTE treff i DOM-en.
+  // Velgeren står over dem, så en gjenbruk her ville kapret oppslaget og
+  // gitt en tom node der utfallet skulle stått. Målt: den gjorde det.
+  const velgerFeil = el("div", { role: "alert", class: "rekrut-velgerfeil" });
   if (prosesser.length > 1) {
     const velgerId = "rekrut-prosessvelger";
     const velger = el("select", { id: velgerId },
@@ -372,14 +397,161 @@ function tegn(hoved, ctx, data, okt, valgtId) {
         velger.value = prosess.prosess_id;
         return;
       }
-      tegn(hoved, ctx, data, okt, velger.value);
-      const ny = hoved.querySelector(`#${velgerId}`);
-      if (ny) ny.focus();
+      // BYTTE ER EN HENTING, IKKE EN OM-TEGNING (#183, Codex P2 fra #176).
+      // Flaten lastet ALT én gang: hver ureapet prosess med hver kandidats
+      // funn, sitater og intervjuspørsmål, og velgeren tegnet på nytt mot
+      // det samme svaret. Katalogens løfte er 5000 søknader per bestilling
+      // og prosessraden lever inntil 365 døgn, så én GET kunne serialisere
+      // titusener av payloader. Nå bærer svaret en LETT indeks og full data
+      // for ÉN prosess — og da må velgeren hente den nye.
+      //
+      // `okt` røres ikke: signeringsnøklene og `signerte`-merket bor der og
+      // overlever hentingen av seg selv. Det er invarianten Codex P1 og
+      // Cursor P1 alt har felt en runde over i #176, og den holder her
+      // fordi økten ligger UTENFOR hentingen — ikke fordi vi husker den.
+      const nyId = velger.value;
+      // ... OG VELGEREN LYVER ALDRI OM DET SOM STÅR UNDER DEN (Cursor P1).
+      // Nettleseren har alt flyttet valget til B i det klikket skjer, men
+      // rangeringen, listene og Signer-knappene er A helt til svaret
+      // lander og `tegn` kjører. Hentingen kan henge så lenge nettet vil,
+      // og i det vinduet leser brukeren A under navnet B — på den ene
+      // flaten i huset der handlingen ikke kan angres: hun kan autorisere
+      // A-s utsendelse i troen på at hun står i B. Valget rulles derfor
+      // tilbake til prosessen som FAKTISK vises, og bare en fullført
+      // henting flytter det (`tegn` tegner velgeren på nytt med `nyId`).
+      // Samme form som `paagaaende`-vakten seksten linjer over, og samme
+      // grunn: låsen er brukerens vei, invarianten er husets.
+      velger.value = prosess.prosess_id;
+      // ... OG SVARET MÅ FORTSATT VÆRE ØNSKET NÅR DET LANDER (Cursor P2).
+      // Hentingen er husets tredje async-vei inn i denne flaten, og de to
+      // andre — rapporten og evalueringslisten — bærer begge vakten alt:
+      // generasjon på økten, og eierskapet til `hoved`. Denne hadde
+      // ingen. Uten dem tegner et tregt svar seg inn i `hoved` etter at
+      // brukeren har navigert bort (`tegn` skriver rått med `sett(hoved,
+      // …)`, så den treffer den flaten som står der NÅ), og et eldre
+      // bytte kan overskrive en ferskere full lasting med prosessen hun
+      // nettopp forlot. `medStatus` vokter sin egen lasting på samme vis
+      // — vakten mangler bare her.
+      //
+      // TILKOBLINGEN er rute-halvdelen, ikke ruterens stempel: ruteren
+      // river `hoved` synkront ved hver navigasjon (`visStatus` tegner
+      // lastetilstanden med én gang), så en velger som ikke lenger står i
+      // dokumentet ER en forlatt visning — og den formen fanger også en
+      // full «Prøv igjen»-lasting, som ruterstempelet ikke ville sett.
+      // Samme port som `rapportRot.isConnected` alt bærer i denne fila.
+      const min = ++okt.prosessHent.nr;
+      const gjelder = () => min === okt.prosessHent.nr && velger.isConnected;
+      velger.disabled = true;
+      hentJson(`/v1/rekruttering/prosesser?prosess_id=${encodeURIComponent(nyId)}`)
+        .then((svar) => {
+          if (!gjelder()) return;
+          // ... OG LÅSEN KAN VÆRE TATT ETTER AT VI SPURTE (Codex P1).
+          // A-dommen (#212) sier at ingen om-tegning skjer under en
+          // mutasjon, og håndhever det ved å fryse `tegn`-utløserne —
+          // velgeren er meldt inn som én av dem. Den frysen holder bare
+          // så lenge klikket OG om-tegningen er samme hendelse. Etter
+          // #183 er byttet en HENTING: `paagaaende`-vakten seksti linjer
+          // over måler ved klikket, og om-tegningen skjer et nettverk
+          // senere. I det vinduet er Send og Lagre ufrosne, og en
+          // bestilling eller profillagring kan ta låsen — og så tegner
+          // dette svaret flaten om midt i den.
+          //
+          // Det river ikke bare skjemaet mutasjonen skriver i. Det bytter
+          // ut hvem låsen gjelder: `laas.meld` fryser hver nye kontroll
+          // fordi `paagaaende` står, mens mutasjonens `finally` løfter
+          // frysen på den `laas`-en den selv tok — den GAMLE, nå
+          // frakoblede. Send og Lagre ble da stående låst til omlasting,
+          // med utfallet skrevet i en alert som ikke er i dokumentet.
+          // Nøyaktig den frakoblede noden A-dommen finnes for å hindre.
+          //
+          // Vakten hører derfor der om-tegningen FAKTISK skjer, ikke der
+          // den ble bedt om. Svaret forkastes — en lesning er fritt
+          // gjentakbar, og valget står alt på prosessen flaten viser
+          // (rollbacken skjedde ved hentingens start), så meldingen
+          // «valget er satt tilbake» er sann. Velgeren låses IKKE opp:
+          // den er nå frosset av mutasjonens `laas`, og det er
+          // mutasjonens `finally` som skal løfte den — på de samme
+          // kontrollene som tok låsen, som A-dommen krever.
+          if (okt.bestilling.paagaaende) {
+            sett(velgerFeil, t("ui.rekruttering.prosessbytte_feilet"));
+            return;
+          }
+          // ... OG EN ÅPEN MODAL EIER DEN GAMLE PROSESSEN (Codex P2,
+          // denne runden). Under hentingen er bare velgeren låst; resten
+          // av flaten er levende, så leseren rekker å åpne en
+          // kandidatdetalj eller signeringsdialog for prosessen som
+          // fortsatt STÅR der. `aapneDialog` fanger `document
+          // .activeElement` som åpner og gir fokus tilbake dit ved
+          // lukking — men om-tegningen bytter ut hele prosessen under
+          // dialogen, og åpneren er da en frakoblet node. Tastaturbruk
+          // ender uten fokusposisjon, og i signeringstilfellet går
+          // bekreftelsen videre gjennom den gamle knappen etter at
+          // flaten har byttet prosess: en irreversibel handling utført på
+          // en visning som ikke lenger finnes.
+          //
+          // Modalen kjennes på overlegget: `aapneDialog` henger det på
+          // `document.body` og setter bakgrunnen `inert`. Svaret
+          // forkastes, som i mutasjonsarmen over — en lesning er fritt
+          // gjentakbar, og valget står alt på prosessen flaten viser.
+          //
+          // MEN velgeren låses opp her, i motsetning til over: ingen
+          // `finally` venter på å løfte den. Fokus flyttes IKKE — det
+          // tilhører dialogen, og å rive det ut av en modal ville vært
+          // den samme feilen én etasje ned. Meldingen står i bakgrunnen
+          // og leses når dialogen lukkes.
+          if (document.querySelector(".overlegg")) {
+            sett(velgerFeil, t("ui.rekruttering.prosessbytte_utsatt"));
+            velger.disabled = false;
+            return;
+          }
+          data.prosesser = svar.prosesser;
+          tegn(hoved, ctx, data, okt, nyId);
+          const ny = hoved.querySelector(`#${velgerId}`);
+          if (ny) ny.focus();
+        })
+        .catch((e) => {
+          // 401 GÅR TIL INNLOGGINGEN, IKKE UT I INTET (Codex, denne
+          // runden). `throw e` her sto i enden av en kjede ingen venter
+          // på: det ble en ubehandlet avvisning, og brukeren ble stående
+          // i det innloggede skallet med en låst velger og ingen melding
+          // — nøyaktig tilstanden `meldFeil` alt er felt over én gang
+          // (linje 59). Formen er husets: `ctx.paaUautorisert(); return`
+          // (V2: 401 → innlogging, 403 → ingen tilgang). Velgeren blir
+          // stående låst med vilje — skallet byttes ut av
+          // innloggingsveien, og en åpen kontroll på en død økt inviterer
+          // bare til et nytt kall som feiler likt.
+          if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+          // Feilveien vokter det SAMME (Cursor P2): en avvist henting fra
+          // en forlatt visning skal hverken låse opp en kontroll som ikke
+          // står der, eller rope i en `role="alert"` som nå tilhører en
+          // annen rute. Samme sted `medStatus` har porten sin.
+          if (!gjelder()) return;
+          // EN FEILET HENTING HAR INGENTING Å RULLE TILBAKE: valget står
+          // alt på prosessen flaten viser, for rollbacken skjer ved
+          // hentingens START (Cursor P1) — ellers ville vinduet FØR svaret
+          // være like løgnaktig som vinduet etter. Feilveien låser derfor
+          // bare opp og sier fra. En 404 er en LOVLIG utgang: prosessen
+          // kan ha falt ut på fristen mellom to klikk, og da er «finnes
+          // ikke lenger» det sanne svaret.
+          sett(velgerFeil, t("ui.rekruttering.prosessbytte_feilet"));
+          // ... men den låser bare opp en lås den SELV holder (Codex P1,
+          // samme rot som i suksessarmen over). Tok en mutasjon
+          // `paagaaende` mens hentingen sto på, er velgeren frosset av
+          // `laas` — og en `laas`-frys skal løftes av den `finally`-en
+          // som tok den, ikke av en henting som tilfeldigvis feilet
+          // under den. Uten dette leddet sto velgeren åpen midt i en
+          // bestilling, og et klikk der ville bare rullet seg selv
+          // tilbake på `paagaaende`-vakten: en kontroll som ser
+          // handlingsklar ut og ikke er det.
+          if (okt.bestilling.paagaaende) return;
+          velger.disabled = false;
+          velger.focus();
+        });
     });
     velgerRot = el("div", { class: "rekrut-prosessvelger" },
       el("label", { for: velgerId,
         text: t("ui.rekruttering.prosessvelger") }),
-      velger);
+      velger, velgerFeil);
     // ... og HER er `tegn`-utløseren A-dommen navngir: den ene kontrollen
     // på flaten som river bestillingsseksjonen og bygger den på nytt.
     laas.meld("velger", velger);

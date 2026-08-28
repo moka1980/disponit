@@ -2,9 +2,12 @@
 
 Tre ruter, formet av flatens kontrakt (flater/rekruttering.js):
 
-* GET  /v1/rekruttering/prosesser — prosessene med kandidater, vekter og
-  innstilte lister, lest RETT fra 057-lagrene under RLS. `decisions:read`
-  (flatens svakeste ledd, WCAG-flate-formen).
+* GET  /v1/rekruttering/prosesser — en LETT indeks over alle ureapet
+  prosesser (id, opprettet, evalueringsstatus, kandidatantall) og full
+  payload — kandidater, vekter, innstilte lister — for ÉN: den navngitte
+  med `?prosess_id=`, ellers den nyeste. En ukjent eller utløpt id er
+  404, aldri «ta den nyeste» (#183). Lest RETT fra 057-lagrene under RLS.
+  `decisions:read` (flatens svakeste ledd, WCAG-flate-formen).
 * POST /v1/rekruttering/lister/{id}/signer — signeringen. Går gjennom
   DEN EKTE kjeden: `signer_utsendingsliste` (056) med øktens bruker som
   signatar og SP-2-nøkkel fra Idempotency-Key. Endepunktet verifiserer
@@ -151,13 +154,13 @@ def _vekter_lesbare(v: object) -> bool:
 def _kandidater(conn, tenant, prosess_id):
     """Kandidatene i én prosess, lest RETT fra 057-lageret under RLS.
 
-    SVARET ER IKKE AVGRENSET — UTSATT TIL #183 (Codex P2, K1). Kalleren
-    løper over hver ureapet prosess, og hver prosess kan bære 5000
-    kandidater (katalogens harde løfte) i inntil 365 døgn. Å binde det
-    krever at endepunktet henter den VALGTE prosessen i stedet for alle,
-    og det er ny kontrakt på lesesvaret pluss ny hentelogikk i flaten —
-    ny maskin i en fiksrunde. Rotårsak, foreslått maskin og målingen som
-    skal drepe den står i #183.
+    AVGRENSNINGEN LIGGER I KALLEREN (#183, landet i denne PR-en). Hver
+    prosess kan bære 5000 kandidater (katalogens harde løfte) i inntil
+    365 døgn, så et svar som løp over alle ureapet prosesser vokste uten
+    tak. Nå kalles denne funksjonen for ÉN prosess per forespørsel —
+    `prosesser_endepunkt` velger den og lar resten være indeksrader — og
+    målingen som holder det er `test_svaret_vokser_ikke_med_antall_prosesser`
+    og `test_den_valgte_prosessen_hentes_paa_id`.
 
     Det som KAN gjøres uten en ny kontrakt, gjøres her: lesningen slutter
     å hente det den kaster. `kildetekst` er hele den blindede
@@ -173,9 +176,9 @@ def _kandidater(conn, tenant, prosess_id):
     beste, ikke til utvelgelsen, så feltet forlater aldri serveren her —
     og da er både artefaktkopien og 057-lageret (`kandidat_intervjusporsmal`)
     noe denne lesningen kaster. Regelen over gjelder også dem: lesningen
-    slutter å hente det den kaster, og på et endepunkt som løper over
-    HVER prosess med inntil 5000 kandidater er en JOIN mot lageret
-    unødvendig arbeid i basen og unødvendig nyttelast over forbindelsen.
+    slutter å hente det den kaster, og på en prosess med inntil 5000
+    kandidater er en JOIN mot lageret unødvendig arbeid i basen og
+    unødvendig nyttelast over forbindelsen.
     Subtraksjonen av `intervjusporsmal` blir stående — artefaktet kan
     fortsatt bære en kopi, og den skal ut av svaret på samme måte som
     `kildetekst` og `avmaskering`. Lageret består urørt som
@@ -206,9 +209,11 @@ def _kandidater(conn, tenant, prosess_id):
         # tomt, aldri mot FEIL TYPE: `{...}` er en sann `funn`, `["drift"]`
         # er en sann `oppfylt`, og begge er `jsonb` runtime kan INSERTe
         # (057 har ingen formsjekk på `artefakt`). Ett giftig artefakt ga
-        # da `AttributeError` inne i utledningen, og siden kalleren løper
-        # over HVER prosess, ble svaret 500 for HELE tenantens
-        # prosessliste — signeringsflaten inkludert.
+        # da `AttributeError` inne i utledningen, og siden kalleren den
+        # gang løp over HVER prosess, ble svaret 500 for HELE tenantens
+        # prosessliste — signeringsflaten inkludert. Etter #183 leses én
+        # prosess per forespørsel, så porten verner den valgte; den er
+        # like nødvendig, for det er DEN flaten signerer fra.
         #
         # OG Å NORMALISERE ER IKKE Å LESE. Å sette et ulesbart `funn` til
         # `[]` gjør kandidaten GRØNNERE enn før — «ingen funn» er nettopp
@@ -383,7 +388,7 @@ def _fullfort_replay(conn, tenant, nokkel, liste_id, bid) -> bool:
 def prosesser_endepunkt(tjeneste, request):
     """GET /v1/rekruttering/prosesser."""
     from .app import _rid
-    from .policyadmin_http import _med_conn, _ok
+    from .policyadmin_http import _feil, _med_conn, _ok
     rid = _rid(request)
     av = _modul_inaktiv(tjeneste, rid)
     if av is not None:
@@ -392,6 +397,7 @@ def prosesser_endepunkt(tjeneste, request):
     def kjor(conn):
         tenant, _bid = _leseauth_beslutninger(tjeneste, request, conn, rid)
         prosesser = []
+        rader = []
         # EVALUERINGENS TILSTAND FØLGER MED (Codex P2). Prosessen FØDES
         # mens kjøringen står på (`plukket` — 057s fødselsport), og
         # kandidatartefaktene skrives inkrementelt etterpå. Spørringen
@@ -447,8 +453,24 @@ def prosesser_endepunkt(tjeneste, request):
         # pluss kundens døgn. Prosessen faller UT av velgeren når
         # fristen er ute — `_kandidater` kalles aldri for den, så det er
         # samme port ett ledd tidligere, ikke en ny.
-        for pid, oppdrag_id, status, opprettet in conn.execute(
-                "SELECT p.prosess_id, p.oppdrag_id, o.status, p.opprettet"
+        # ANTALLET ER INDEKSENS EGET TALL (Cursor P2, #183). Velgerens
+        # etikett er «Startet <dato> · kandidater: N», og N ble lest av
+        # `kandidater`-listen — som etter #183 bare finnes på den VALGTE
+        # raden. Hver andre prosess i nedtrekket sa derfor «kandidater: 0»
+        # om en prosess som kan bære tusenvis, og det er ikke en manglende
+        # opplysning: det er en gal en, på den ene kontrollen som skal
+        # skille prosessene fra hverandre foran en irreversibel signering.
+        #
+        # Tellingen er en SKALAR per rad, ikke payloaden tilbake: det er
+        # nettopp forskjellen #183 finnes for. Predikatet er ordrett
+        # `_kandidater`s eget (`slettet_ts IS NULL`), så indeksens tall og
+        # den valgte radens liste kan ikke si ulike ting om samme prosess.
+        for pid, oppdrag_id, status, opprettet, antall in conn.execute(
+                "SELECT p.prosess_id, p.oppdrag_id, o.status, p.opprettet,"
+                "       (SELECT count(*) FROM kandidat_evalueringsartefakt t"
+                "         WHERE t.tenant = p.tenant"
+                "           AND t.prosess_id = p.prosess_id"
+                "           AND t.slettet_ts IS NULL)"
                 "  FROM rekrutteringsprosess p"
                 "  JOIN oppdrag o ON o.tenant = p.tenant"
                 "                AND o.id = p.oppdrag_id"
@@ -460,18 +482,77 @@ def prosesser_endepunkt(tjeneste, request):
                 "             WHERE k.tenant = p.tenant"
                 "               AND k.prosess_id = p.prosess_id))"
                 " ORDER BY p.opprettet DESC", (tenant,)).fetchall():
-            kandidater, vekter, kilde = _kandidater(conn, tenant, pid)
-            prosesser.append({
+            rader.append((pid, oppdrag_id, status, opprettet, antall))
+
+        # ÉN PROSESS BÆRER DATA, RESTEN ER EN INDEKS (#183, Codex P2 fra
+        # #176). Løkka kalte `_kandidater` og `_lister` for HVER ureapet
+        # prosess. Katalogens løfte er 5000 søknader per bestilling, og
+        # prosessraden lever til slettefristen — inntil 365 døgn — så én
+        # GET kunne skanne og serialisere titusener av funn- og
+        # spørsmålspayloader, holde en pool-forbindelse hele veien, og i
+        # verste fall ta knekken på worker-minnet. Det er ikke en
+        # spesialkonstruert forespørsel; det er flaten som åpnes.
+        #
+        # Svaret bærer nå alltid en LETT indeks over prosessene, og full
+        # data for ÉN — den navngitte, ellers den nyeste. Da vokser svaret
+        # med antall prosesser bare i indeksen, ikke i payloaden.
+        bedt = request.query_params.get("prosess_id")
+        if bedt is not None:
+            # EN UKJENT ID ER «FINNES IKKE», IKKE «ta den nyeste». Å
+            # servere en annen prosess' kandidater under den id-en
+            # klienten ba om, er en løgn flaten ikke kan oppdage — og
+            # prosessen KAN være borte helt lovlig: fristen løp ut mellom
+            # to klikk. Samme doktrine som rapportveien: identisk 404,
+            # uansett om den aldri fantes eller nettopp falt ut.
+            valgt = next((r for r in rader if str(r[0]) == bedt), None)
+            if valgt is None:
+                return _feil("ikke_funnet", rid, 404)
+        else:
+            valgt = rader[0] if rader else None
+
+        for pid, oppdrag_id, status, opprettet, antall in rader:
+            post = {
                 "prosess_id": str(pid),
                 "opprettet": opprettet.isoformat(),
-                "blinding_av": False,   # avskruing finnes ikke før #159
                 "evaluering_status": status,
-                "vekter": vekter,
-                "vekter_kilde": kilde,
-                "kandidater": kandidater,
-                "lister": _lister(conn, tenant, oppdrag_id),
-            })
-        return _ok({"prosesser": prosesser}, rid)
+                "kandidat_antall": antall,
+            }
+            if valgt is not None and pid == valgt[0]:
+                kandidater, vekter, kilde = _kandidater(conn, tenant, pid)
+                post |= {
+                    "blinding_av": False,  # avskruing finnes ikke før #159
+                    "vekter": vekter,
+                    "vekter_kilde": kilde,
+                    "kandidater": kandidater,
+                    # DEN VALGTE RADEN TELLER SIN EGEN LISTE (Codex P2).
+                    # Tellingen over og `_kandidater` er TO setninger, og
+                    # forbindelsen står på psycopg-standarden READ
+                    # COMMITTED (`koble`: `autocommit=False`, intet
+                    # isolasjonsnivå satt), så hver setning tar sitt eget
+                    # øyeblikksbilde. En `plukket` prosess får artefaktene
+                    # sine skrevet ETTER HVERT, og et artefakt som
+                    # committes mellom de to setningene står i
+                    # `kandidater` uten å være med i `kandidat_antall` —
+                    # reapingen gir det motsatte. Da sier velgerens
+                    # etikett og tabellen under den ULIKE ting om samme
+                    # prosess, i samme svar, på flaten der signeringen
+                    # skjer: nøyaktig den løgnen indekstallet ble innført
+                    # for å fjerne (Cursor P2, «kandidater: 0»).
+                    #
+                    # Predikatet var alt ordrett `_kandidater`s eget, så
+                    # de to kan bare være uenige om TIDEN. Den valgte
+                    # raden har en liste å telle, og et tall utledet av
+                    # den lesningen kan per konstruksjon ikke motsi den.
+                    # Indeksradene beholder skalaren: de bærer ingen liste
+                    # å være uenige med, og et øyeblikksbilde er det
+                    # ærligste en indeks kan love.
+                    "kandidat_antall": len(kandidater),
+                    "lister": _lister(conn, tenant, oppdrag_id),
+                }
+            prosesser.append(post)
+        return _ok({"prosesser": prosesser,
+                    "valgt_prosess_id": str(valgt[0]) if valgt else None},
+                   rid)
 
     return _med_conn(tjeneste, rid, kjor)
 
