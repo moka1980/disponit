@@ -2831,9 +2831,15 @@ def test_begrunnelsen_kan_ikke_vaere_et_tastetrykk(migrator):
 
     En ubrukelig revisjonshendelse er verre enn ingen: den ser ut som et
     svar på spørsmålet «hvem bestemte dette».
+
+    KONTEKSTEN SETTES INNE I LØKKA (samme klasse som append-only-testens
+    seeding): `set_config(..., true)` er TRANSAKSJONSLOKAL, så `rollback()`
+    etter første case tar tenanten med seg. Andre runde traff da RLS —
+    `new row violates row-level security policy` — og målte ikke
+    CHECK-en den er skrevet for.
     """
-    _sett_kontekst(migrator, TENANT)
     for aktor, begrunnelse in (("drift", "x"), ("  ", "en ekte begrunnelse")):
+        _sett_kontekst(migrator, TENANT)
         with pytest.raises(psycopg.errors.CheckViolation):
             migrator.execute(
                 "INSERT INTO revisjonshendelse (tenant, handling, aktor,"
