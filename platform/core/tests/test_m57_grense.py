@@ -324,6 +324,36 @@ def test_to_malinger_for_samme_digest_er_tvetydig_bevis():
         f"to målinger for samme digest passerte som bevis: {feil}"
 
 
+def test_bias_maaling_med_ugyldig_ts_felles():
+    """`format: date-time` er inert i skjemaet — grensen må lese datoen.
+
+    `valider_artefaktformat` bygger `Draft202012Validator` UTEN
+    `FormatChecker`, så `"format"` er en annotasjon, ikke en port: `ts:
+    ""` og `ts: "ikke-en-dato"` passerer skjemalaget. Kjøretidsporten
+    `krev_biasmaaling` feller dem (`bias_maling_uten_tidspunkt`), og
+    docstringen her lover at formkravene er DE SAMME — så uten denne
+    lesningen løy løftet, og en udatert oppføring telte som måling.
+    Nøyaktig samme klasse som «en oppføring er ikke en måling» (Codex P2
+    på port 17), gjenåpnet i evidenslaget.
+
+    MUTASJONEN SOM DREPER DENNE: dropp `fromisoformat`-lesningen og stol
+    på `"format": "date-time"`.
+    """
+    for daarlig in ("", "ikke-en-dato", "2026-13-45T99:00:00Z", None):
+        art = _gront_artefakt()
+        art["maalt"]["bias_maalinger"][0]["ts"] = daarlig
+        feil = _m57_feil(art)
+        assert any("lesbart tidspunkt" in f for f in feil), \
+            f"ts={daarlig!r} passerte som datert bevis: {feil}"
+
+    # Og den gyldige formen porten selv bruker (`Z`-suffiks) består.
+    art = _gront_artefakt()
+    art["maalt"]["bias_maalinger"][0]["ts"] = "2026-01-01T00:00:00Z"
+    assert not _m57_feil(art), \
+        "en gyldig ISO 8601 med Z-suffiks ble felt — grensen leser" \
+        " strengere enn kjøretidsporten den speiler"
+
+
 def test_grensen_mot_valg_A_er_skrevet_ned_aerlig():
     """Det B IKKE gjør, sagt høyt — så neste leser ikke tror den er dekket.
 
