@@ -254,11 +254,24 @@ jobs:
         `gh pr update-branch` lager en MERGE-commit, den har ingen
         `--trailer`-flagg, og den kan derfor ikke bære merket. Uten dette
         unntaket ville jobben lest sin egen BEHIND-oppdatering som en
-        fremmed push og parkert på seg selv. Unntaket er smalt og
-        kontrollerbart: commiten må ha TO foreldre (en merge), den ene
-        forelderen må være det du sto på før 3a, og den andre må være
-        `main`s tipp. En vanlig commit uten merke er aldri vår, uansett
-        hvem som ser ut til å ha laget den.
+        fremmed push og parkert på seg selv.
+
+        SHA-EN NOTERES, DEN UTLEDES IKKE (Codex P2, runde 12). Første
+        utgave kjente unntaket på FORMEN — to foreldre, den ene der vi
+        sto, den andre `main`s tipp — og en fremmed skriver kan lage
+        nøyaktig den formen: en merge med de samme to foreldrene, men et
+        tre som bærer hvilke som helst konfliktløsninger. Formen er ikke
+        eierskap. Rett etter `gh pr update-branch <nr>` i 3a leser du
+        derfor `gh pr view <nr> --json headRefOid -q .headRefOid` og
+        skriver den til jobbmiljøet:
+
+            echo "OPPDATERT_HEAD=<sha>" >> "$GITHUB_ENV"
+
+        Eierskapssjekken godtar da nøyaktig ÉN umerket commit, og bare
+        hvis SHA-en er `$OPPDATERT_HEAD`. Er variabelen tom, finnes intet
+        unntak — en jobb som ikke selv har kjørt `update-branch` har
+        ingen umerket commit å forsvare. En vanlig commit uten merke er
+        aldri vår, uansett hvem som ser ut til å ha laget den.
 
         MÅLESTOKKEN ER HODET VED KJØRINGENS START, IKKE `headRefOid` (Codex
         r3879...225). Forsøk 1 fikser og pusher, går tom for turer, og
@@ -505,6 +518,12 @@ jobs:
                      så `gh pr update-branch <nr>` — og IKKE til 3b
                      ennå: VERDIKT-REKKEVIDDEN under måles først, og
                      tomt snitt er eneste lovlige vei videre.
+                     RETT ETTERPÅ: noter SHA-en oppdateringen ga, og
+                     skriv den til jobbmiljøet, slik at senere forsøk
+                     kan kjenne igjen VÅR merge-commit på identitet og
+                     ikke på form (Codex P2, runde 12):
+                     `echo "OPPDATERT_HEAD=$(gh pr view <nr> --json
+                     headRefOid -q .headRefOid)" >> "$GITHUB_ENV"`.
                      Bruk `update-branch`, ikke lokal rebase + force-push:
                      den skriver ikke om historikk Codex alt har reviewet
                      mot en SHA, og fletter kun `main` inn i PR-grenen.
@@ -639,7 +658,8 @@ jobs:
                parkér til eier, ikke merge. Så merge i denne rekkefølgen —
                (a) `gh pr view <nr> --json mergeStateStatus`; `BEHIND` →
                noter head (`--json headRefOid -q .headRefOid`), så
-               `gh pr update-branch <nr>` (ikke rebase/force-push), og
+               `gh pr update-branch <nr>` (ikke rebase/force-push; noter
+               SHA-en til `$OPPDATERT_HEAD` som i forsøk 2s 3a), og
                VERDIKT-REKKEVIDDEN (§11.1): snitt fillisten fra
                `gh api repos/${{ github.repository }}/compare/<gammel-head>...<ny-head>`
                mot PR-ens egne filer — og PR-fillisten har samme

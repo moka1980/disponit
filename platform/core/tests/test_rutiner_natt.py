@@ -918,10 +918,26 @@ def test_update_branch_commiten_er_et_smalt_unntak():
     assert "update-branch" in lesning, (
         "eierskapssjekken kjenner ikke sin egen BEHIND-oppdatering — da"
         " parkerer jobben på seg selv")
-    assert "TO foreldre" in lesning, \
-        "unntaket sjekker ikke at commiten faktisk er en merge"
-    assert "main`s tipp" in lesning, \
-        "unntaket sjekker ikke hva den ble merget MED"
+    # SHA-EN, IKKE FORMEN (Codex P2, runde 12). Første utgave kjente
+    # unntaket på foreldrene, og en fremmed skriver kan lage nøyaktig den
+    # formen: en merge med de samme to foreldrene, men et tre som bærer
+    # hvilke som helst konfliktløsninger. Form er ikke eierskap.
+    assert "$OPPDATERT_HEAD" in lesning, (
+        "unntaket kjenner ikke SHA-en jobben selv produserte — da kan en"
+        " fremmed merge med samme foreldre utgi seg for vår")
+    assert "Er variabelen tom, finnes intet unntak" in lesning, (
+        "unntaket gjelder også når jobben ALDRI kjørte update-branch —"
+        " da er det ikke et unntak, det er et hull")
+    assert "GITHUB_ENV" in lesning, \
+        "SHA-en skrives ikke til jobbmiljøet, så neste forsøk ser den ikke"
+    # ... og BEGGE update-branch-armene må notere den. Noterer bare den
+    # ene, parkerer neste forsøk på den andres oppdatering.
+    armer = [l for l in YML.splitlines() if "update-branch" in l
+             and "Codex P2" not in l]
+    assert len(armer) >= 2, f"fant bare {len(armer)} update-branch-armer"
+    assert YML.count("OPPDATERT_HEAD") >= 3, (
+        "ikke alle update-branch-armene noterer SHA-en — den armen som"
+        " glemmer det, får neste forsøk til å parkere på seg selv")
     assert "En vanlig commit uten merke er aldri vår" in lesning, (
         "unntaket er ikke avgrenset — da dekker det enhver umerket"
         " commit, og eierskapssjekken er en formalitet")
