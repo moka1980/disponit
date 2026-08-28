@@ -3,6 +3,7 @@
 Klarsignalets syv Codex-porter for kodelaget. Driftslaget (units, opp.sh,
 helsetimer) måles på staging — det som KAN måles i suiten, måles her.
 """
+import fnmatch
 import importlib.util
 import io
 import secrets
@@ -1378,7 +1379,7 @@ def test_backupen_dumper_som_postgres_ikke_migrator():
     skript = (ROT / "deploy/staging/backup-db.sh").read_text(encoding="utf-8")
     assert "pg_dump" in skript
     assert "MIGRATOR_URL" not in skript.split("pg_dump", 1)[1].split("\n")[0] \
-        and skript.count("sudo -u postgres pg_dump") == 2, \
+        and skript.count("sudo -u postgres pg_dump") == 1, \
         "backupen dumper ikke som postgres — kapabilitetstabellene blir utelatt"
 
 
@@ -1477,6 +1478,88 @@ def test_backupen_arkiverer_inndatalageret_etter_dumpen():
     assert 'comm -23 "$LISTE.krav" "$LISTE.sett"' in skript, \
         "porten er ikke enveis — den krever likhet, og da feller den " \
         "backupen på en foreldreløs fil som ikke er noen feil"
+
+
+def test_backupen_maler_lager_sti_mot_samme_dump_som_lagres():
+    """Cursor P2: porten beviste konsistens for et annet tidspunkt.
+
+    Skriptet kjørte `pg_dump` TO ganger. Den lagrede filen kom fra pass 1;
+    engangsbasen `$VERIF` — og dermed `lager_sti`-porten som leser den — ble
+    bygget fra pass 2. To passeringer er to snapshots, og mellom dem rekker
+    en `forkastet`-rydding (058/059 forbereder nettopp den) å unlinke en fil:
+
+      1. Pass 1 fanger rad R som `lastet`, med `lager_sti`.
+      2. Reaper setter R → `forkastet` og sletter filen.
+      3. Pass 2 har ikke R i `lastet`/`bundet` → kravmengden er tom for R.
+      4. `comm -23` passerer, og backupen meldes grønn.
+      5. Den LAGREDE dumpen (pass 1) har fortsatt R som `lastet`, uten fil i
+         arkivet — nøyaktig #191, gjennom porten som skulle fange det.
+
+    Porten lukkes bare av at det er ÉN passering: samme byte-sekvens
+    krypteres til backupen og gjenopprettes til engangsbasen, så alt porten
+    måler i `$VERIF` gjelder også fila som havner i katalogen.
+
+    MUTASJONEN SOM DREPER DENNE: gi verifiseringen sin egen `pg_dump` igjen,
+    eller la `$VERIF` restores fra noe annet enn mellomfila som mates til
+    `age`.
+    """
+    skript = (ROT / "deploy/staging/backup-db.sh").read_text(encoding="utf-8")
+    # Hele KOMMANDOEN, ikke tekstlinjen: en omdirigering som er skjøvet ned
+    # på en fortsettelseslinje hører til samme passering, og en port som
+    # ikke ser den ville felt riktig skript på ren formattering.
+    linjer = []
+    for rå in skript.splitlines():
+        rå = rå.strip()
+        if not rå or rå.startswith("#"):
+            continue
+        if linjer and linjer[-1].endswith("\\"):
+            linjer[-1] = linjer[-1][:-1].rstrip() + " " + rå
+        else:
+            linjer.append(rå)
+
+    dumpelinjer = [ln for ln in linjer if "pg_dump" in ln]
+    assert len(dumpelinjer) == 1, \
+        f"{len(dumpelinjer)} pg_dump-passeringer — to snapshots betyr at " \
+        "lager_sti-porten måler et annet tidspunkt enn det som arkiveres"
+    (dumpen,) = dumpelinjer
+    assert dumpen == 'sudo -u postgres pg_dump --format=custom' \
+                     ' --dbname=disponit > "$RAA"', \
+        "dumpen går ikke til mellomfila — da har forbrukerne hver sin strøm"
+
+    krypteringen = [ln for ln in linjer
+                    if 'age -R "$MOTTAKER"' in ln and '"$DELVIS"' in ln]
+    gjenopprettingen = [ln for ln in linjer if "pg_restore" in ln]
+    assert krypteringen == ['age -R "$MOTTAKER" < "$RAA" > "$DELVIS"'], \
+        "backupfila krypteres ikke fra mellomfila — den lagrede dumpen er " \
+        "da et annet snapshot enn det som verifiseres"
+    assert len(gjenopprettingen) == 1 and '"$RAA"' in gjenopprettingen[0], \
+        "engangsbasen gjenopprettes ikke fra den SAMME mellomfila — porten " \
+        "måler et snapshot som aldri ble lagret"
+
+    def indeks(bit):
+        for i, ln in enumerate(linjer):
+            if bit in ln:
+                return i
+        return -1
+
+    # Klarteksten er ikke en backup og skal ikke overleve kjøringen: ryddet
+    # av trapen, av feiesvingen for drepte kjøringer, og eksplisitt så snart
+    # begge forbrukerne er ferdige — før den lange `tar`-passeringen.
+    assert '"$RAA"' in skript.split("opprydd()", 1)[1].split("\n")[1], \
+        "trapen rydder ikke mellomfila — en ukryptert dump blir liggende"
+    assert "disponit-*.dump.raa" in skript, \
+        "en mellomfil fra en drept kjøring ryddes aldri opp"
+    i_rm = indeks('rm -f "$RAA"')
+    i_tar = indeks("tar --create")
+    assert 0 <= i_rm < i_tar, \
+        "klarteksten ligger igjen gjennom arkiveringen — den lengste delen " \
+        "av kjøringen, og den trapen ikke dekker ved SIGKILL"
+    # Endelsen må stå utenfor BEGGE globbene: matchet den backupnavnet, ville
+    # en ukryptert dump sett ut som dagens backup; matchet den retention,
+    # ville den blitt slettet som et par den ikke er halvparten av.
+    assert not fnmatch.fnmatch("disponit-20260828T000000.dump.raa",
+                               "disponit-*.dump.age"), \
+        "mellomfila matcher backup-globben og kan forveksles med en backup"
 
 
 def test_backupen_par_finaliseres_atomisk_eller_ryddes():
@@ -1593,8 +1676,12 @@ def test_backupen_stopper_for_disken_gar_full():
     assert 0 <= i_dumpmaal < i_dump, \
         "dumpens fotavtrykk måles ikke før dumpen starter — diskporten " \
         "regner bare lageret, og basen kan ha vokst forbi marginen"
-    assert "KREVES_KIB=$((LAGER_KIB + DUMP_KIB + MARGIN_KIB))" in skript, \
-        "kravet summerer ikke lager + dump + margin"
+    # Dumpen ligger på disken TO ganger samtidig — mellomfila og den
+    # krypterte — så den telles to ganger. Ett dumpledd her ville vært den
+    # samme underestimeringen som funnet over, bare med halvdelen skriptet
+    # selv la til da de to `pg_dump`-passeringene ble slått sammen til én.
+    assert "KREVES_KIB=$((LAGER_KIB + 2 * DUMP_KIB + MARGIN_KIB))" in skript, \
+        "kravet summerer ikke lager + begge dumpkopiene + margin"
 
 
 def test_inndatalageret_er_api_unitens_egen_state_katalog():

@@ -31,6 +31,15 @@ retention sletter dem sammen. Ser du ett stempel med bare én fil, er
 det ikke en halv backup — det er ingen backup, og noe har rørt
 katalogen utenom skriptet.
 
+**En `disponit-<stempel>.dump.raa` i katalogen er en UKRYPTERT dump.**
+Kjøringen dumper basen én gang til den mellomfila, fordi den lagrede
+dumpen og restore-verifiseringen må være nøyaktig samme snapshot — to
+`pg_dump`-passeringer ville latt `lager_sti`-porten godkjenne et annet
+tidspunkt enn det som ble arkivert. Fila slettes så snart begge er
+ferdige, og et avbrudd rydder den også; overlever den likevel et
+`SIGKILL`, feier neste kjøring den bort. Ser du en, ble kjøringen drept
+— slett den for hånd i stedet for å vente på neste natt.
+
 **Ingen TCP-port (PR-009b §0).** API-et lytter KUN på
 `/run/disponit/api.sock`: eier `disponit-api`, gruppe `disponit-proxy`,
 0660; katalogen 0750. Tillitsgrensen er filsystemrettigheter — loopback

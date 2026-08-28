@@ -64,6 +64,22 @@ ARKIV="$KATALOG/disponit-$STEMPEL.inndata.tar.age"
 # rest kan verken forveksles med en backup eller slettes som en.
 DELVIS="$FIL.delvis"
 ARKIV_DELVIS="$ARKIV.delvis"
+# ÉN DUMP, TO FORBRUKERE (Cursor P2, #191). Skriptet kjørte `pg_dump` to
+# ganger: den lagrede filen kom fra pass 1, mens engangsbasen — og dermed
+# `lager_sti`-porten — ble bygget fra pass 2. Porten beviste da konsistens
+# for et ANNET tidspunkt enn det som ble arkivert, og mellom passene rekker
+# en `forkastet`-rydding å unlinke en fil: pass 2 ser ikke raden, kravmengden
+# blir tom, porten passerer — og den lagrede pass-1-dumpen har fortsatt raden
+# som `lastet` uten fil i arkivet. Nøyaktig #191, gjennom porten som skulle
+# fange det.
+#
+# Mellomfila er UKRYPTERT og lever bare inne i kjøringen: root-eid 600 i en
+# 700-katalog, ryddet av trapen, av feiesvingen under, og eksplisitt så snart
+# begge forbrukerne er ferdige. Endelsen matcher hverken backup-globben eller
+# retention-globben, så den kan verken forveksles med en backup eller
+# forsvinne som en. Katalogens invariant gjelder HISTORISKE backuper — den
+# står, for dette er ikke en av dem.
+RAA="$KATALOG/disponit-$STEMPEL.dump.raa"
 # Ett felles trap fra og med HER, ikke etter dumpen: det er nettopp
 # intervallet før den gamle `trap`-linjen som er avbruddsvinduet. `VERIF`
 # er tom til engangsbasen finnes, så oppryddingen dekker begge fasene uten
@@ -78,7 +94,7 @@ VERIF=""
 PAR_KLAR=""
 LISTE=$(mktemp)
 opprydd() {
-  rm -f "$DELVIS" "$ARKIV_DELVIS" "$LISTE" "$LISTE.sett" "$LISTE.krav"
+  rm -f "$DELVIS" "$ARKIV_DELVIS" "$RAA" "$LISTE" "$LISTE.sett" "$LISTE.krav"
   [ -n "$PAR_KLAR" ] || rm -f "$FIL" "$ARKIV"
   [ -z "$VERIF" ] || sudo -u postgres dropdb --if-exists "$VERIF"
 }
@@ -88,7 +104,8 @@ trap opprydd EXIT
 # ikke, og katalogen fylles av dumper. `flock` over garanterer at ingen
 # annen kjøring eier en `.delvis` akkurat nå.
 rm -f "$KATALOG"/disponit-*.dump.age.delvis \
-      "$KATALOG"/disponit-*.inndata.tar.age.delvis
+      "$KATALOG"/disponit-*.inndata.tar.age.delvis \
+      "$KATALOG"/disponit-*.dump.raa
 
 # DISKPORTEN FØR DUMPEN, ikke etter. Arkivet er en kopi av hele lageret, og
 # lageret vokser med 64 MiB per bunt mens backupkatalogen holder 30 dagers
@@ -111,10 +128,15 @@ LAGER_KIB=$(du -sk "$LAGER" | cut -f1)
 DUMP_KIB=$(sudo -u postgres psql -Atd disponit -c \
   "SELECT (pg_database_size('disponit') + 1023) / 1024")
 LEDIG_KIB=$(df -k --output=avail "$KATALOG" | tail -1)
-KREVES_KIB=$((LAGER_KIB + DUMP_KIB + MARGIN_KIB))
+# DUMPEN TELLES TO GANGER, fordi den ligger på disken to ganger samtidig:
+# mellomfila `$RAA` og den krypterte `$DELVIS` sameksisterer gjennom hele
+# `age`-passeringen. Å telle den én gang her ville gjeninnført forrige rundes
+# funn — porten som ikke måler sitt eget fotavtrykk — bare med en halvdel
+# skriptet selv la til.
+KREVES_KIB=$((LAGER_KIB + 2 * DUMP_KIB + MARGIN_KIB))
 [ "$LEDIG_KIB" -ge "$KREVES_KIB" ] || {
   echo "AVBRUTT: $LEDIG_KIB KiB ledig i $KATALOG, trenger $KREVES_KIB KiB" \
-       "(lager $LAGER_KIB + dump $DUMP_KIB + margin $MARGIN_KIB)" >&2
+       "(lager $LAGER_KIB + 2 × dump $DUMP_KIB + margin $MARGIN_KIB)" >&2
   exit 1
 }
 
@@ -125,19 +147,26 @@ KREVES_KIB=$((LAGER_KIB + DUMP_KIB + MARGIN_KIB))
 # er den nøyaktige mutasjonen `test_migrator_naar_ikke_kapabilitetene_uten_
 # set_role` finnes for å forby. Uniten kjører som root; superbrukeren ser alt
 # uten at rettighetsmodellen røres.
-sudo -u postgres pg_dump --format=custom --dbname=disponit \
-  | age -R "$MOTTAKER" > "$DELVIS"
+# Omdirigeringene gjøres av ROOT-skallet, ikke av `postgres`: mellomfila bor
+# i en 700-katalog `postgres` ikke kommer inn i, og `< "$RAA"` gir
+# `pg_restore` en ferdig åpnet fd — samme grep som den gamle pipen brukte,
+# uten å slippe noen inn i backupkatalogen.
+sudo -u postgres pg_dump --format=custom --dbname=disponit > "$RAA"
+chmod 600 "$RAA"
+age -R "$MOTTAKER" < "$RAA" > "$DELVIS"
 chmod 600 "$DELVIS"
 
 # Gjenopprettingsverifisering: restore til en ISOLERT engangsbase.
-# Verifiseringen bruker en UKRYPTERT strøm direkte fra pg_dump — den
-# krypterte filens innhold kan ikke leses her (privatnøkkelen er ikke på
-# verten, med vilje), så det som verifiseres er at dumpen er komplett og
-# gjenopprettbar, og at den krypterte filen ble skrevet i sin helhet.
+# Verifiseringen bruker den UKRYPTERTE mellomfila — den krypterte filens
+# innhold kan ikke leses her (privatnøkkelen er ikke på verten, med vilje),
+# så det som verifiseres er at dumpen er komplett og gjenopprettbar, og at
+# den krypterte filen ble skrevet i sin helhet. Og fordi det er NØYAKTIG de
+# samme bytene som ble kryptert, gjelder alt porten under måler i
+# engangsbasen også for fila som havner i katalogen.
 VERIF="disponit_backup_verif_$$"
 sudo -u postgres createdb "$VERIF"
-sudo -u postgres pg_dump --format=custom --dbname=disponit \
-  | sudo -u postgres pg_restore --dbname="$VERIF" --no-owner --role=postgres
+sudo -u postgres pg_restore --dbname="$VERIF" --no-owner --role=postgres \
+  < "$RAA"
 TABELLER=$(sudo -u postgres psql -Atd "$VERIF" -c \
   "SELECT count(*) FROM pg_tables WHERE schemaname='public'")
 [ "$TABELLER" -ge 10 ] || {
@@ -146,6 +175,11 @@ TABELLER=$(sudo -u postgres psql -Atd "$VERIF" -c \
 }
 STORRELSE=$(stat -c%s "$DELVIS")
 [ "$STORRELSE" -gt 1024 ] || { echo "AVBRUTT: backupfilen er tom" >&2; exit 1; }
+# BEGGE FORBRUKERNE ER FERDIGE — klarteksten skal ikke ligge og vente på
+# `tar`. Trapen tar den uansett, men den dekker ikke SIGKILL, og resten av
+# kjøringen er den lengste delen av den. Frigjør også plassen før arkivet
+# skrives.
+rm -f "$RAA"
 
 # ============================================================
 # INNDATA-LAGERET (#191, Codex P1 fra #190)
