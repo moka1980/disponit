@@ -2224,11 +2224,24 @@ def _punktbinding(krav_id: str, punkt: dict, navn: str) -> list[str]:
     # ikke har navngitt noe — altså `m57-v1`, som er hele grunnen til at
     # issuet finnes. En port som er blind der den mangler, er ingen port.
     binding = grense.get("punktbinding") or {}
-    lovlige = binding.get(navn)
+    lovlige = binding.get(navn) if isinstance(binding, dict) else None
     if not lovlige:
         return [f"{navn}: `{krav_id}` navngir ingen målinger som beviser"
                 f" dette punktet — det er UFLIPPBART til bindingen finnes"
                 f" (#166). Et punkt uten målbar grense regnes som nei (§10)."]
+    # EN MALFORMET BINDING SLIPPER INGENTING GJENNOM (Codex, PR #234). Er
+    # `lovlige` en bar streng, blir `s not in lovlige` en delstrengtest: en
+    # binding skrevet `"maalt.teller"` i stedet for `("maalt.teller",)`
+    # ville da autorisert `maalt` — en KORTERE sti som beviser noe annet.
+    # Porten kan ikke stole på sin egen tabell uten å måle den: feil form
+    # er ikke en svakere binding, det er ingen binding.
+    if (isinstance(lovlige, (str, bytes))
+            or not isinstance(lovlige, (list, tuple))
+            or not all(isinstance(s, str) and s for s in lovlige)):
+        return [f"{navn}: `{krav_id}`s binding for dette punktet har feil"
+                f" form ({lovlige!r}) — den må være en liste eller tuple av"
+                f" ikke-tomme målestier. Punktet er UFLIPPBART til"
+                f" bindingen er skrevet riktig (#166)."]
     oppgitt = punkt.get("bevismaalinger")
     if not isinstance(oppgitt, list):
         return []                       # formen felles av _bevismaalinger_finnes

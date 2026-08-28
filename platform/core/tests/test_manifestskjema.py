@@ -1346,6 +1346,50 @@ def test_punktbindingen_avviser_en_sti_som_ikke_beviser_punktet():
         "punktets EGNE målinger ble avvist — porten måler feil vei"
 
 
+def test_en_binding_med_feil_form_slipper_ingenting_gjennom(monkeypatch):
+    """Codex på #234: feil form er ikke en svakere binding — det er ingen.
+
+    Skrives en binding som bar streng, `"maalt.teller"` i stedet for
+    `("maalt.teller",)`, blir medlemskapstesten en DELSTRENGTEST. Da
+    autoriserer bindingen `maalt` — en kortere sti som beviser noe helt
+    annet — og porten flipper punktet på en måling ingen har navngitt.
+
+    MUTASJONEN SOM DREPER DENNE: dropp formsjekken og la `s not in lovlige`
+    møte strengen direkte.
+    """
+    import manifestskjema as skjemamodul
+    for vrang in ("maalt.teller", ["maalt.teller", ""], ["maalt.teller", 7],
+                  {"maalt.teller": True}):
+        monkeypatch.setitem(
+            skjemamodul.KRAVGRENSER["wcag-kontroll-v1"], "punktbinding",
+            {"tester_gronne_pa_staging": vrang})
+        assert _punktbind("wcag-kontroll-v1", "tester_gronne_pa_staging",
+                          ["maalt"]), \
+            f"delstreng/vrang form {vrang!r} autoriserte en fremmed sti"
+        assert _punktbind("wcag-kontroll-v1", "tester_gronne_pa_staging",
+                          ["maalt.teller"]), \
+            f"vrang form {vrang!r} ble håndhevet som gyldig binding"
+
+
+def test_hver_binding_i_kravgrensene_har_riktig_form():
+    """Porten måler sin egen tabell, ikke bare de konstruerte tilfellene.
+
+    En binding skrevet feil ETTER denne runden skal felles her, der den
+    skrives — ikke først når et punkt flippes på en delstreng.
+    """
+    from manifestskjema import KRAVGRENSER
+    for krav_id, grense in KRAVGRENSER.items():
+        binding = grense.get("punktbinding")
+        if binding is None:
+            continue
+        assert isinstance(binding, dict), f"{krav_id}: punktbinding er ikke dict"
+        for navn, lovlige in binding.items():
+            assert isinstance(lovlige, (list, tuple)), \
+                f"{krav_id}/{navn}: bindingen er ikke liste eller tuple"
+            assert lovlige and all(isinstance(s, str) and s for s in lovlige), \
+                f"{krav_id}/{navn}: bindingen har tomme eller ikke-streng-ledd"
+
+
 def test_et_punkt_uten_binding_er_uflippbart():
     """Fravær er ikke fritak — og det er hele poenget med #166.
 
