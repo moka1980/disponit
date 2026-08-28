@@ -354,6 +354,33 @@ def test_bias_maaling_med_ugyldig_ts_felles():
         " strengere enn kjøretidsporten den speiler"
 
 
+def test_bias_maaling_for_udeklarert_digest_felles():
+    """Dekningen måles begge veier — ellers er den halv.
+
+    `mangler = set(digester) - dekket` finner digester uten måling. Den
+    omvendte differansen ble ikke sjekket, så `bias_digester_kjort=[d1]`
+    med `bias_maalinger=[d1, d2]` ga `mangler=[]`, `forsok=1`, `brudd=0`
+    — grønt, mens målingslisten dokumenterer en modellversjon kjøringen
+    aldri sa den brukte. Evidenslistene motsier hverandre, og
+    forsøkstallet beskriver da en annen kjøring enn den bevisene viser.
+
+    Det er lineage-disiplinen #167 valg B innførte: forsøk = det
+    DEKLARERTE digest-settet. En produsent som kan legge biasbevis ved
+    siden av det settet, kan pynte på kjøringen uten at porten reagerer.
+
+    MUTASJONEN SOM DREPER DENNE: sjekk bare `set(digester) - dekket`.
+    """
+    art = _gront_artefakt()
+    d1 = art["maalt"]["bias_digester_kjort"][0]
+    # Én digest deklarert, to målt — den andre er formgyldig og dekket.
+    art["maalt"]["bias_digester_kjort"] = [d1]
+    art["maalt"]["bias_maling_mangler_for_digest_forsok"] = 1
+    art["maalt"]["bias_maling_mangler_for_digest_brudd"] = 0
+    feil = _m57_feil(art)
+    assert any("ikke står i" in f for f in feil), \
+        f"en måling for en udeklarert digest passerte som grønt: {feil}"
+
+
 def test_grensen_mot_valg_A_er_skrevet_ned_aerlig():
     """Det B IKKE gjør, sagt høyt — så neste leser ikke tror den er dekket.
 
