@@ -28,9 +28,15 @@ globalThis.fetch = async (url, opts = {}) => {
     try { kropp = JSON.parse(opts.body); }
     catch { kropp = { binaer: opts.body.byteLength || 0 }; }
   }
-  KALL.push({ sti, metode: opts.method || "GET", kropp,
+  KALL.push({ sti, url, metode: opts.method || "GET", kropp,
     hoder: opts.headers || {} });
-  const raatt = (typeof SVAR === "function") ? SVAR(sti, opts) : SVAR[sti];
+  // SPØRRESTRENGEN KAN VELGE SVAR (Cursor P2, #183). `sti` er strippet, og
+  // med bare den kunne prosessbyttet aldri få et ANNET svar enn den første
+  // lastingen — så fixturene måtte gi hver prosess full data, altså en
+  // kontrakt serveren ikke har. En eksakt URL-nøkkel vinner nå over
+  // sti-nøkkelen; alt som ikke bruker den går nøyaktig samme vei som før.
+  const raatt = (typeof SVAR === "function") ? SVAR(sti, opts)
+    : (SVAR[url] !== undefined ? SVAR[url] : SVAR[sti]);
   // Et `SVAR` som er et LØFTE henger hele kallet til testen slipper det, og
   // utfallet avgjøres først DA. Uten dette sto `ok` klar før løftet var
   // løst, så et hengende kall kunne bare ende i suksess — og vinduet
@@ -84,7 +90,49 @@ function prosess() {
     ],
     lister: [{ liste_id: "L-1", listetype: "invitasjon", antall: 42,
                innhold_hash: HASH }],
-  }] };
+    // Serveren teller raden sin i indeksen (#183) og sender tallet på
+    // hver prosess, også den spisse.
+    kandidat_antall: 2,
+  }], valgt_prosess_id: "p-1" };
+}
+
+// #183-FORMEN, ÉTT STED (Cursor P2). Svaret bærer en LETT indeks over
+// prosessene og full data for ÉN — den navngitte, ellers den nyeste. De
+// eksisterende flerprosess-fixturene ga hver prosess full
+// `kandidater`/`lister`, altså en nyttelast serveren ikke har: de beviste
+// BYTTELOGIKK, ikke den nye formen, og et funn som bare finnes i
+// indeksraden — etiketten som teller 0 kandidater — kunne derfor ikke
+// fanges av en grønn suite.
+//
+// Hjelperen tar den fulle fixturen og gir kartet flaten faktisk henter:
+// uten `?prosess_id=` er den FØRSTE spissen, og hver id har sin egen
+// oppføring. Tester som måler noe helt annet enn byttet beholder sine
+// full-data-mocker.
+function svar183(full) {
+  const alle = full.prosesser;
+  const antall = (p) => (p.kandidater || []).length;
+  const lett = (p) => {
+    const rad = { prosess_id: p.prosess_id,
+      evaluering_status: p.evaluering_status,
+      kandidat_antall: antall(p) };
+    if (p.opprettet !== undefined) rad.opprettet = p.opprettet;
+    // `navn` sender serveren ikke i dag — men fixturen setter det der
+    // testen måler at det VINNER den dagen #162-kjeden gir tittelen, og
+    // da er indeksraden nettopp raden det gjelder.
+    if (p.navn !== undefined) rad.navn = p.navn;
+    return rad;
+  };
+  const bygg = (valgt) => ({
+    valgt_prosess_id: valgt,
+    prosesser: alle.map((p) => (p.prosess_id === valgt
+      ? { ...p, kandidat_antall: antall(p) } : lett(p))),
+  });
+  const kart = { "/v1/rekruttering/prosesser": bygg(alle[0].prosess_id) };
+  for (const p of alle) {
+    kart["/v1/rekruttering/prosesser?prosess_id="
+      + encodeURIComponent(p.prosess_id)] = bygg(p.prosess_id);
+  }
+  return kart;
 }
 
 function ctx() {
@@ -470,7 +518,8 @@ test("Rekruttering: hver prosess i svaret kan velges (ikke bare den første)", a
     lister: [],
   });
   KALL = [];
-  SVAR = { "/v1/rekruttering/prosesser": to };
+  // #183-formen: indeksen først, den valgte hentes.
+  SVAR = svar183(to);
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelector("table")));
@@ -489,6 +538,11 @@ test("Rekruttering: hver prosess i svaret kan velges (ikke bare den første)", a
   assert.ok(await vent(() => [...hoved.querySelectorAll("tbody tr")]
     .some((tr) => tr.querySelector("td").textContent === "K-9")),
     "prosessbyttet hentet aldri den valgte prosessen");
+  // ... og den kunne BARE komme derfra: indeksraden for p-2 bærer ingen
+  // kandidater, så K-9 finnes ikke i det første svaret (#183).
+  assert.ok(KALL.some((k) =>
+    k.url === "/v1/rekruttering/prosesser?prosess_id=p-2"),
+    "byttet ba aldri om den valgte prosessen på id");
   const rader = [...hoved.querySelectorAll("tbody tr")]
     .map((tr) => tr.querySelector("td").textContent);
   assert.deepEqual(rader, ["K-9"]);
@@ -519,7 +573,7 @@ test("Rekruttering: 401 under prosessbyttet er innlogging, ikke en byttefeil",
     evaluering_status: "utfort", kandidater: [], lister: [],
   });
   KALL = [];
-  SVAR = { "/v1/rekruttering/prosesser": to };
+  SVAR = svar183(to);
   let uautorisert = 0;
   const hoved = nyHoved();
   visRekruttering(hoved,
@@ -560,7 +614,7 @@ test("Rekruttering: velgeren navngir prosessen, aldri bare UUID-en", async () =>
     lister: [],
   });
   KALL = [];
-  SVAR = { "/v1/rekruttering/prosesser": to };
+  SVAR = svar183(to);
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelector("table")));
@@ -574,8 +628,10 @@ test("Rekruttering: velgeren navngir prosessen, aldri bare UUID-en", async () =>
     .replaceAll("{dato}", Tidspunkt("2026-08-20T09:00:00+00:00").textContent)
     .replaceAll("{antall}", "1"));
   assert.notEqual(tekster[0], tekster[1]);
-  // …og den dagen #162 gir tittelen, vinner den uten at flaten røres.
+  // …og den dagen #162 gir tittelen, vinner den uten at flaten røres —
+  // også på INDEKSRADEN, som er der de øvrige prosessene bor (#183).
   to.prosesser[1].navn = "Sykepleier vest";
+  SVAR = svar183(to);
   KALL = [];
   const medNavn = nyHoved();
   visRekruttering(medNavn, ctx());
@@ -1893,7 +1949,7 @@ test("Evalueringer: auto-lastingen kjører ÉN gang per økt — "
     lister: [],
   });
   SVAR = {
-    "/v1/rekruttering/prosesser": to,
+    ...svar183(to),
     "/v1/rekruttering/stillingsprofiler": profiler(),
     "/v1/rekruttering/evalueringer": { evalueringer: [
       { oppdrag_id: 96, status: "utfort",
@@ -1917,6 +1973,9 @@ test("Evalueringer: auto-lastingen kjører ÉN gang per økt — "
   const velger = hoved.querySelector("#rekrut-prosessvelger");
   velger.value = "p-2";
   velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.ok(await vent(() => [...hoved.querySelectorAll("tbody tr")]
+    .some((tr) => tr.querySelector("td").textContent === "K-9")),
+    "prosessbyttet hentet aldri den valgte prosessen");
   await new Promise((r) => setTimeout(r, 20));
   assert.equal(KALL.filter(
     (k) => k.sti === "/v1/rekruttering/rapport/96").length, foer,
@@ -1981,7 +2040,7 @@ test("Evalueringer: seksjonen er SAMME node etter prosessbyttet — "
     lister: [],
   });
   SVAR = {
-    "/v1/rekruttering/prosesser": to,
+    ...svar183(to),
     "/v1/rekruttering/stillingsprofiler": profiler(),
     "/v1/rekruttering/evalueringer": { evalueringer: [
       { oppdrag_id: 96, status: "utfort",
@@ -4116,7 +4175,7 @@ test("Prosessbytte: en feilet henting ruller valget tilbake og SIER fra",
       status: "anbefalt", funn: [], intervjusporsmal: [] }],
     lister: [],
   });
-  SVAR = { "/v1/rekruttering/prosesser": to };
+  SVAR = svar183(to);
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelector("table")));
@@ -4171,7 +4230,7 @@ test("Prosessbytte: et svar som lander etter at flaten er forlatt "
       status: "anbefalt", funn: [], intervjusporsmal: [] }],
     lister: [],
   });
-  SVAR = { "/v1/rekruttering/prosesser": to };
+  SVAR = svar183(to);
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelector("table")));
@@ -4209,7 +4268,7 @@ test("Prosessbytte: bare det SISTE byttet får tegne", async () => {
       status: "anbefalt", funn: [], intervjusporsmal: [] }],
     lister: [],
   });
-  SVAR = { "/v1/rekruttering/prosesser": to };
+  SVAR = svar183(to);
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelector("table")));
