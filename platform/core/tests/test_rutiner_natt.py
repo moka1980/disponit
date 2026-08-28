@@ -781,7 +781,13 @@ def test_verdiktet_gjelder_sin_egen_sha():
     lesning = _jobbenv()["FUNNLESNING"]
     assert "commit_id" in lesning, \
         "fikseveien måler ikke om hodet har flyttet seg siden verdiktet"
-    assert "$HODE_VED_START" in lesning, (
+    # SELVE SAMMENLIGNINGEN, ikke bare et treff på navnet. Første utgave
+    # spurte om `$HODE_VED_START` fantes noe sted i teksten, og da
+    # overlevde mutasjonen: avsnittet under FORKLARER hvorfor `headRefOid`
+    # er feil målestokk og nevner variabelen der, så porten ble grønn av
+    # sin egen begrunnelse. Setningen som gir ordren må bindes.
+    assert "sammenlign reviewens `commit_id` med `$HODE_VED_START`" \
+        in " ".join(lesning.split()), (
         "SHA-porten måler mot en levende `headRefOid` — da parkerer forsøk"
         " 2 på forsøk 1s egen push, og de tre forsøkene kan aldri"
         " fortsette hverandre")
