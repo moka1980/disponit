@@ -1077,6 +1077,34 @@ def test_maalesti_fra_et_ANNET_artefakt_avvises(m01):
     assert any("finnes ikke i artefaktet" in f for f in feil), feil
 
 
+def test_nabopunktsmaaling_avvises_gjennom_valider_artefakter():
+    """#166 gjennom HELE kjeden — ikke bare `_punktbinding` direkte.
+
+    De andre #166-negativene kaller `_punktbinding()` rett, og felles
+    derfor ikke av at KALLET forsvinner: fjernes `feil += _punktbinding(…)`
+    fra `valider_artefakter`, flyttes det foran hash/grenser eller
+    kondisjoneres bort, blir de grønne mens porten er borte. Det er samme
+    klasse `test_oppdiktet_maalesti_avvises` og
+    `test_maalesti_fra_et_ANNET_artefakt_avvises` finnes for på lag 3.
+
+    `maalt.avvik_mot_fasit` FINNES i m56s artefakt — den beviser
+    `tester_gronne_pa_staging` i samme grense — så hash, format, grenser og
+    `_bevismaalinger_finnes` slipper den alle gjennom. Bare punktbindingen
+    kan avvise den under `feilinjisering_til_unntakskø`, og derfor er dette
+    kallet det eneste testen kan måle.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `_punktbinding`-kallet fra
+    `valider_artefakter`.
+    """
+    m = yaml.safe_load((MODULROT / "m56_wcag_audit/manifest.yaml"
+                        ).read_text(encoding="utf-8"))
+    m["staging_sjekkliste"]["feilinjisering_til_unntakskø"][
+        "bevismaalinger"].append("maalt.avvik_mot_fasit")
+    feil = valider_artefakter(m, REPOROT)
+    assert any("står ikke i" in f and "maalt.avvik_mot_fasit" in f
+               for f in feil), feil
+
+
 def test_artefakt_uten_bevismaalinger_avvises(m01):
     """Codex' negative test 1, i BEGGE lag.
 
