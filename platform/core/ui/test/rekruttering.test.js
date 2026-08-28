@@ -3431,10 +3431,15 @@ test("Bestilling: prosessvelgeren er frosset mens kjeden er i lufta (A-dommen)",
   assert.equal(velger.parentElement.hasAttribute("aria-busy"), false);
   assert.equal(skjema.hasAttribute("aria-busy"), false);
   assert.equal(skjema.querySelector("#bestill-antall").readOnly, false);
-  // ... og NÅ går prosessbyttet, som før.
+  // ... og NÅ går prosessbyttet, som før — men valget flyttes av TEGNINGEN,
+  // ikke av klikket (Cursor P1): mellom klikk og svar står velgeren på
+  // prosessen som faktisk vises, så den kan ikke navngi B mens tabellen er
+  // A. Byttet måles derfor der det fullfører.
   velger.value = "p-2";
   velger.dispatchEvent(new window.Event("change", { bubbles: true }));
-  assert.equal(hoved.querySelector("#rekrut-prosessvelger").value, "p-2");
+  assert.ok(await vent(() =>
+    hoved.querySelector("#rekrut-prosessvelger").value === "p-2", 20),
+    "prosessbyttet gikk ikke gjennom etter at frysen var løftet");
   const brudd = await alvorligeBrudd(hoved);
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
 });
@@ -4166,7 +4171,8 @@ test("Prosessbytte: en feilet henting ruller valget tilbake og SIER fra",
   // ut mellom to klikk, så veien er ingen kantsak.
   //
   // MUTASJONEN SOM DREPER DENNE: fjern `velger.value = prosess.prosess_id`
-  // (rollbacken) eller `sett(velgerFeil, …)` fra `.catch`-armen.
+  // (rollbacken, som etter Cursor P1 står ved hentingens START) eller
+  // `sett(velgerFeil, …)` fra `.catch`-armen.
   const to = prosess();
   to.prosesser.push({
     prosess_id: "p-2", blinding_av: false, vekter: { drift: 1 },
@@ -4209,6 +4215,76 @@ test("Prosessbytte: en feilet henting ruller valget tilbake og SIER fra",
   assert.ok(!rader.includes("K-9"),
     `en feilet henting tegnet den andre prosessen likevel: ${rader}`);
   assert.deepEqual([...rader].sort(), ["K-1", "K-2"]);
+});
+
+test("Prosessbytte: velgeren viser prosessen som VISES, ikke den som hentes",
+  async () => {
+  KALL = [];
+  // Cursor P1 (#183): nettleseren flytter valget til B i det klikket skjer,
+  // men rangeringen, listene og Signer-knappene er A helt til svaret lander
+  // og `tegn` kjører. Hentingen kan henge så lenge nettet vil, og i det
+  // vinduet leser brukeren kandidatene til A under navnet B — på den ene
+  // flaten i huset der handlingen ikke kan angres. `disabled` stanser bare
+  // NYE bytter; den sier ingenting om hva velgeren PÅSTÅR mens hentingen
+  // står i lufta.
+  //
+  // MUTASJONEN SOM DREPER DENNE: fjern `velger.value = prosess.prosess_id`
+  // fra starten av `change`-handleren (rollbacken FØR hentingen).
+  const to = prosess();
+  to.prosesser.push({
+    prosess_id: "p-2", blinding_av: false, vekter: { drift: 1 },
+    evaluering_status: "utfort",
+    kandidater: [{ kandidat_id: "K-9", oppfylt: { drift: true },
+      status: "anbefalt", funn: [], intervjusporsmal: [] }],
+    lister: [],
+  });
+  const kart = svar183(to);
+  const svarB = kart["/v1/rekruttering/prosesser?prosess_id=p-2"];
+  SVAR = kart;
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")));
+  const velger = hoved.querySelector("#rekrut-prosessvelger");
+  assert.ok(velger, "ingen prosessvelger med flere prosesser i svaret");
+  // Byttet starter, og svaret holdes igjen: HER er vinduet.
+  let slipp;
+  kart["/v1/rekruttering/prosesser?prosess_id=p-2"] =
+    new Promise((res) => { slipp = res; });
+  velger.value = "p-2";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.ok(await vent(() => typeof slipp === "function" && KALL.some((k) =>
+    k.url === "/v1/rekruttering/prosesser?prosess_id=p-2")),
+    "byttet hentet aldri — testen måler ikke det den tror");
+  const rader = () => [...hoved.querySelectorAll("tbody tr")]
+    .map((tr) => tr.querySelector("td").textContent);
+  assert.ok(!rader().includes("K-9"),
+    `tabellen viste prosess B før svaret var der: ${rader().join(",")}`);
+  assert.equal(velger.value, "p-1",
+    "velgeren sto på prosessen som HENTES mens tabellen fortsatt viste den"
+    + " som er lastet — brukeren leser kandidatene til A under navnet B");
+  // ... og den irreversible handlingen i vinduet treffer den prosessen
+  // brukeren faktisk ser: signeringen går til A-s liste, den eneste som
+  // står tegnet. Velger og handling navngir samme prosess.
+  [...hoved.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.signer_knapp")).click();
+  const dialog = document.querySelector('[role="alertdialog"]');
+  assert.ok(dialog, "signering uten alertdialog");
+  kart["/v1/rekruttering/lister/L-1/signer"] = { innhold_hash: HASH };
+  [...dialog.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.signer_bekreft"))
+    .click();
+  assert.ok(await vent(() => KALL.some((k) => k.sti.endsWith("/signer"))),
+    "signeringen i vinduet kom aldri fram (positiv kontroll)");
+  assert.deepEqual(KALL.filter((k) => k.sti.endsWith("/signer"))
+    .map((k) => k.sti), ["/v1/rekruttering/lister/L-1/signer"],
+    "signeringen i byttevinduet traff en annen liste enn den som vises");
+  // POSITIV KONTROLL: rollbacken stanser ikke byttet. Svaret lander, og
+  // DA — og bare da — flytter valget seg.
+  slipp(svarB);
+  assert.ok(await vent(() => rader().includes("K-9")),
+    "byttet tegnet aldri etter at svaret landet");
+  assert.equal(hoved.querySelector("#rekrut-prosessvelger").value, "p-2",
+    "velgeren fulgte ikke med da innholdet endelig ble prosess B");
 });
 
 test("Prosessbytte: et svar som lander etter at flaten er forlatt "

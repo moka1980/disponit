@@ -410,6 +410,18 @@ function tegn(hoved, ctx, data, okt, valgtId) {
       // Cursor P1 alt har felt en runde over i #176, og den holder her
       // fordi økten ligger UTENFOR hentingen — ikke fordi vi husker den.
       const nyId = velger.value;
+      // ... OG VELGEREN LYVER ALDRI OM DET SOM STÅR UNDER DEN (Cursor P1).
+      // Nettleseren har alt flyttet valget til B i det klikket skjer, men
+      // rangeringen, listene og Signer-knappene er A helt til svaret
+      // lander og `tegn` kjører. Hentingen kan henge så lenge nettet vil,
+      // og i det vinduet leser brukeren A under navnet B — på den ene
+      // flaten i huset der handlingen ikke kan angres: hun kan autorisere
+      // A-s utsendelse i troen på at hun står i B. Valget rulles derfor
+      // tilbake til prosessen som FAKTISK vises, og bare en fullført
+      // henting flytter det (`tegn` tegner velgeren på nytt med `nyId`).
+      // Samme form som `paagaaende`-vakten seksten linjer over, og samme
+      // grunn: låsen er brukerens vei, invarianten er husets.
+      velger.value = prosess.prosess_id;
       // ... OG SVARET MÅ FORTSATT VÆRE ØNSKET NÅR DET LANDER (Cursor P2).
       // Hentingen er husets tredje async-vei inn i denne flaten, og de to
       // andre — rapporten og evalueringslisten — bærer begge vakten alt:
@@ -455,13 +467,14 @@ function tegn(hoved, ctx, data, okt, valgtId) {
           // står der, eller rope i en `role="alert"` som nå tilhører en
           // annen rute. Samme sted `medStatus` har porten sin.
           if (!gjelder()) return;
-          // EN FEILET HENTING RULLER VALGET TILBAKE. Uten det står
-          // velgeren på en prosess flaten ikke viser — og brukeren leser
-          // kandidatene til A under navnet B. En 404 er dessuten en
-          // LOVLIG utgang: prosessen kan ha falt ut på fristen mellom to
-          // klikk, og da er «finnes ikke lenger» det sanne svaret.
+          // EN FEILET HENTING HAR INGENTING Å RULLE TILBAKE: valget står
+          // alt på prosessen flaten viser, for rollbacken skjer ved
+          // hentingens START (Cursor P1) — ellers ville vinduet FØR svaret
+          // være like løgnaktig som vinduet etter. Feilveien låser derfor
+          // bare opp og sier fra. En 404 er en LOVLIG utgang: prosessen
+          // kan ha falt ut på fristen mellom to klikk, og da er «finnes
+          // ikke lenger» det sanne svaret.
           velger.disabled = false;
-          velger.value = prosess.prosess_id;
           sett(velgerFeil, t("ui.rekruttering.prosessbytte_feilet"));
           velger.focus();
         });
