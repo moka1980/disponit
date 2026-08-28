@@ -872,6 +872,63 @@ def test_retryen_beviser_at_avviket_er_kjoringens_eget():
         "regelen sier ikke hva som skjer når en fremmed commit står der"
 
 
+def test_forsok_3_leser_eierskapet_FOR_sin_forste_push():
+    """Codex P2 (runde 11): sjekken sto bak skrivingen.
+
+    Forsøk 3s punkt 1 var «push alt som er i nærheten av ferdig», og
+    `FUNNLESNING` — som bærer live-head- og eierskapssjekken — sto i
+    punkt 2. Hadde en fremmed skriver flyttet hodet mellom forsøk 2 og 3,
+    la forsøk 3 arbeid oppå kode verdiktet aldri så, og sjekken kom for
+    sent til å hindre det.
+
+    Den eneste skrivingen som er trygg før lesningen, er ingen.
+
+    MUTASJONEN SOM DREPER DENNE: bytt punkt 1 og 2 tilbake.
+    """
+    import re as _re
+    m = _re.search(r"- id: runde3\n(.*?)(?=\n      - (?:id|name|uses):)",
+                   YML, _re.S)
+    assert m, "fant ikke forsøk 3"
+    t = m.group(1)
+    assert t.index("FØR DIN FØRSTE PUSH") < t.index("Push så alt arbeid"), (
+        "forsøk 3 pusher før den leser eierskapet — da skriver den oppå"
+        " kode verdiktet aldri så")
+    assert "${{ env.FUNNLESNING }}" in t.split("Push så alt arbeid")[0], \
+        "FUNNLESNING står ikke foran den første pushen"
+
+
+def test_update_branch_commiten_er_et_smalt_unntak():
+    """Codex P2 (runde 11): jobben ville parkert på seg selv.
+
+    Eierskapssjekken krever at hver commit mellom `$HODE_VED_START` og
+    live head bærer `Claude-Run`. `gh pr update-branch` lager en
+    MERGE-commit og har ingen `--trailer`-flagg, så BEHIND-armen i steg 3a
+    produserer per konstruksjon en umerket commit — og neste forsøk leste
+    jobbens egen oppdatering som en fremmed push.
+
+    Unntaket må være smalt, ellers er hele eierskapssjekken en formalitet:
+    to foreldre, den ene der vi sto, den andre `main`s tipp. En VANLIG
+    commit uten merke er aldri vår.
+
+    MUTASJONEN SOM DREPER DENNE: gjør unntaket generelt («umerkede
+    commits fra bot-er er våre»), eller fjern det (da parkerer jobben på
+    sin egen BEHIND-oppdatering).
+    """
+    lesning = " ".join(_jobbenv()["FUNNLESNING"].split())
+    assert "update-branch" in lesning, (
+        "eierskapssjekken kjenner ikke sin egen BEHIND-oppdatering — da"
+        " parkerer jobben på seg selv")
+    assert "TO foreldre" in lesning, \
+        "unntaket sjekker ikke at commiten faktisk er en merge"
+    assert "main`s tipp" in lesning, \
+        "unntaket sjekker ikke hva den ble merget MED"
+    assert "En vanlig commit uten merke er aldri vår" in lesning, (
+        "unntaket er ikke avgrenset — da dekker det enhver umerket"
+        " commit, og eierskapssjekken er en formalitet")
+    assert "%P" in lesning, \
+        "kommandoen henter ikke foreldrene, så unntaket kan ikke måles"
+
+
 def test_uleselig_hode_er_hverken_fork_eller_trygt():
     """Codex P2 (runde 9): `|| echo ""` gjorde en API-feil til en fork.
 

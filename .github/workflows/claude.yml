@@ -245,10 +245,20 @@ jobs:
             Claude-Run: ${{ github.run_id }}
 
         og før du fortsetter etter et avvik, les
-        `git log --format='%H %(trailers:key=Claude-Run,valueonly)'
+        `git log --format='%H %P %(trailers:key=Claude-Run,valueonly)'
         $HODE_VED_START..<live head>`: er HVER commit der merket med
         DENNE kjøringens id, er hele avviket vårt eget og du fortsetter.
         Er én av dem umerket, har noen andre skrevet — parkér.
+
+        ÉN UMERKET COMMIT ER LOVLIG, OG BARE ÉN (Codex P2, runde 11):
+        `gh pr update-branch` lager en MERGE-commit, den har ingen
+        `--trailer`-flagg, og den kan derfor ikke bære merket. Uten dette
+        unntaket ville jobben lest sin egen BEHIND-oppdatering som en
+        fremmed push og parkert på seg selv. Unntaket er smalt og
+        kontrollerbart: commiten må ha TO foreldre (en merge), den ene
+        forelderen må være det du sto på før 3a, og den andre må være
+        `main`s tipp. En vanlig commit uten merke er aldri vår, uansett
+        hvem som ser ut til å ha laget den.
 
         MÅLESTOKKEN ER HODET VED KJØRINGENS START, IKKE `headRefOid` (Codex
         r3879...225). Forsøk 1 fikser og pusher, går tom for turer, og
@@ -691,10 +701,15 @@ jobs:
             ${{ env.RUNDETAK }}
             Prioriter deretter i denne
             rekkefølgen:
-            1. Push alt arbeid som er i nærheten av ferdig, ett funn per
-               commit.
-            2. Er alle funn adressert — og HAR DU LEST DEM ALLE?
+            1. FØR DIN FØRSTE PUSH: les funnene og eierskapet.
                ${{ env.FUNNLESNING }}
+               Rekkefølgen er ikke tilfeldig (Codex P2, runde 11): sto
+               pushen først, la forsøk 3 arbeid oppå kode verdiktet aldri
+               så — og live-head-sjekken kom for sent til å hindre det.
+               Den eneste skrivingen som er trygg før denne lesningen, er
+               ingen.
+            2. Push så alt arbeid som er i nærheten av ferdig, ett funn
+               per commit. Er alle funn adressert:
                Er alt adressert: kommenter `@cursor review` og
                STOPP (RUTINER §10.4): passets fullføring vekker
                cursor-pass-fulgt via workflow_run-broen, som eier
