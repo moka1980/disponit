@@ -67,15 +67,19 @@ function offentligTopp(side) {
       value: side === "tjenester"
         ? new URLSearchParams(window.location.search).get("q") || "" : "" }),
     el("button", { type: "submit", text: t("site.sok.knapp") }));
-  return el("header", { class: "site-topp" },
+  const topp = el("header", { class: side === "tjenester" ? "site-topp har-sok" : "site-topp" },
     el("div", { class: "site-topp-rad" },
       el("a", { class: "site-logo", href: offentligUrl("hjem"),
         "aria-label": t("site.nav.logo") },
         el("span", { "aria-hidden": "true", text: "D" }),
         el("strong", { text: t("app.navn", "Disponit") })),
       nav,
-      sprakvelger()),
-    el("div", { class: "site-sok-rad" }, sok));
+      sprakvelger()));
+  // Søket hører til katalogen, ikke til merkevarens første møte med brukeren.
+  // På forsiden skapte en egen søkerad en konkurrerende handling før produktet
+  // var forklart. Funksjonen er bevart der den faktisk har et resultatrom.
+  if (side === "tjenester") topp.append(el("div", { class: "site-sok-rad" }, sok));
+  return topp;
 }
 
 function katalogseksjon() {
@@ -240,31 +244,50 @@ function tilbudseksjon() {
 
 function hjemSide() {
   return [
-    el("section", { class: "site-hero site-hero-ny" },
-      el("div", { class: "site-hero-copy" },
-        el("p", { class: "site-eyebrow", text: t("site.hero.kicker") }),
-        el("h1", { text: t("site.hero.tittel") }),
-        el("p", { class: "site-hero-text", text: t("site.hero.tilbud") }),
-        el("p", { class: "site-hero-status", text: t(heroTekstNokkel()) }),
-        el("div", { class: "site-cta" },
+    el("section", { class: "site-home-hero" },
+      el("div", { class: "site-home-copy" },
+        el("p", { class: "site-eyebrow", text: t("site.home.kicker") }),
+        el("h1", { text: t("site.home.tittel") }),
+        el("p", { class: "site-home-ingress", text: t("site.home.ingress") }),
+        el("div", { class: "site-home-handlinger" },
           el("a", { class: "knapp primar", href: offentligUrl("tjenester"),
-            text: t("site.cta.tjenester") }),
-          el("a", { class: "knapp", href: offentligUrl("produkt"),
+            text: t("site.home.cta") }),
+          el("a", { class: "site-tekstlenke", href: offentligUrl("produkt"),
             text: t("site.cta.produkt") }))),
-      el("aside", { class: "site-signal", "aria-label": t("site.hero.punkter_tittel") },
-        el("span", { class: "site-orbit", "aria-hidden": "true" }),
-        el("p", { class: "site-eyebrow", text: t("site.hero.punkter") }),
-        el("h2", { text: t("site.hero.punkter_tittel") }),
-        el("ul", { class: "site-checklist" },
-          el("li", { text: t("site.hero.punkt.fullmakt") }),
-          el("li", { text: t("site.hero.punkt.stopp") }),
-          el("li", { text: t("site.hero.punkt.spor") })))),
+      el("aside", { class: "site-kontrollbevis",
+        "aria-label": t("site.home.flyt.tittel") },
+        el("p", { class: "site-kontrollbevis-label", text: t("site.home.flyt.label") }),
+        el("h2", { text: t("site.home.flyt.tittel") }),
+        el("ol", { class: "site-kontrollflyt" },
+          ["handling", "policy", "utfall", "spor"].map((steg, indeks) =>
+            el("li", {},
+              el("span", { class: "site-kontrollflyt-nr", "aria-hidden": "true",
+                text: String(indeks + 1).padStart(2, "0") }),
+              el("div", {},
+                el("strong", { text: t(`site.home.flyt.${steg}.tittel`) }),
+                el("p", { text: t(`site.home.flyt.${steg}.tekst`) }))))))),
+    el("section", { class: "site-driftstatus", "aria-labelledby": "driftstatus-tittel" },
+      el("p", { class: "site-driftstatus-merke", text: t("site.home.status.merke") }),
+      el("div", {},
+        el("h2", { id: "driftstatus-tittel", text: t("site.home.status.tittel") }),
+        el("p", { text: t(heroTekstNokkel()) }))),
+    el("section", { class: "site-section site-prinsipper",
+      "aria-labelledby": "prinsipper-tittel" },
+      el("div", { class: "site-section-head" }, el("div", {},
+        el("p", { class: "site-eyebrow", text: t("site.home.prinsipper.kicker") }),
+        el("h2", { id: "prinsipper-tittel", text: t("site.home.prinsipper.tittel") }))),
+      el("div", { class: "site-prinsipp-grid" },
+        ["presisjon", "plattform", "kostnad"].map((n, indeks) =>
+          el("article", { class: "site-prinsipp" },
+            el("span", { "aria-hidden": "true", text: String(indeks + 1).padStart(2, "0") }),
+            el("h3", { text: t(`site.argument.${n}_tittel`) }),
+            el("p", { text: t(`site.argument.${n}_tekst`) }))))),
     tilbudseksjon(),
     el("section", { class: "site-bunn-cta" },
       el("div", {}, el("p", { class: "site-eyebrow", text: t("site.cta.kicker") }),
         el("h2", { text: t("site.cta.tittel") })),
-      el("a", { class: "knapp primar", href: offentligUrl("innlogging"),
-        text: t("site.nav.innlogging") })),
+      el("a", { class: "knapp primar", href: offentligUrl("tjenester"),
+        text: t("site.home.cta") })),
   ];
 }
 
@@ -405,6 +428,7 @@ export async function visInnlogging(opsjoner = {}) {
   }
 
   const side = lesSide();
+  document.documentElement.setAttribute("data-offentlig-side", side);
   settDokumenttittel(side);
   const sideinnhold = side === "tjenester" ? tjenesterSide()
     : side === "produkt" ? produktSide()

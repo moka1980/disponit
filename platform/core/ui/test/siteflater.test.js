@@ -84,14 +84,19 @@ test("Landing: forsiden har hovednavigasjon og er ikke en lang katalog", async (
   const app = nyttAppBrett();
   await visInnlogging();
   await vent(() => app.querySelector(".site-hovednav"));
-  assert.ok(app.textContent.includes(t("site.hero.tittel")));
+  assert.ok(app.textContent.includes(t("site.home.tittel")));
   // Forsiden selger TILBUDET, ikke byggestatusen: kundevendte navn og en
   // tilgjengelighetsbrikke, ikke modulnumre og «0/45 i drift».
   assert.ok(app.textContent.includes(t("site.tilbud_tittel")));
   assert.ok(app.textContent.includes(t("site.tilbud.fullmakt.navn")));
   assert.equal(app.querySelectorAll(".site-hovednav a").length, 5);
   assert.equal(app.querySelectorAll('.site-hovednav a[aria-current="page"]').length, 1);
-  assert.ok(app.querySelector(".site-sok input[type=search]"));
+  assert.equal(app.querySelector(".site-sok"), null,
+    "katalogsøket konkurrerer fortsatt med forsidens primærhandling");
+  assert.equal(app.querySelectorAll(".site-home-handlinger .primar").length, 1,
+    "forsiden har ikke nøyaktig én visuelt primær handling i heroen");
+  assert.equal(app.querySelectorAll(".site-kontrollflyt li").length, 4,
+    "kontrollflyten viser ikke hele veien handling → policy → utfall → spor");
   assert.ok(!app.textContent.includes(t("site.katalog.m42.navn")),
     "modulkatalogen ligger fortsatt som en lang liste på forsiden");
   assert.equal(app.querySelectorAll('form[action="/v1/oidc/start"]').length, 0,
@@ -114,6 +119,8 @@ test("Landing: tjenester har hele katalogen og søk filtrerer den", async () => 
   await visInnlogging();
   assert.ok(app.textContent.includes(t("site.katalog.m42.navn")));
   assert.ok(!app.textContent.includes(t("site.katalog.m1.navn")));
+  assert.ok(app.querySelector(".site-sok input[type=search]"),
+    "katalogsøket er ikke bevart på tjenestesiden");
   assert.equal(app.querySelector('.site-hovednav a[aria-current="page"]').textContent,
     t("site.nav.tjenester"));
   const b = await alvorligeBrudd(app);
@@ -218,7 +225,7 @@ test("Landing: hoppelenka følger språkbyttet", async () => {
     const engelsk = [...app.querySelectorAll(".site-sprak-knapp")]
       .find((k) => k.textContent === NB["ui.sprak.en"]);
     engelsk.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-    await vent(() => app.textContent.includes(EN["site.hero.tittel"]));
+    await vent(() => app.textContent.includes(EN["site.home.tittel"]));
 
     assert.equal(lenke.textContent, EN["ui.hopp_til_innhold"],
       "hoppelenka står igjen på norsk etter byttet til engelsk");
@@ -291,7 +298,7 @@ test("Landing: språkvalget følger navigasjonen når lagring er nektet", async 
     const engelsk = [...app.querySelectorAll(".site-sprak-knapp")]
       .find((k) => k.textContent === NB["ui.sprak.en"]);
     engelsk.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-    await vent(() => app.textContent.includes(EN["site.hero.tittel"]));
+    await vent(() => app.textContent.includes(EN["site.home.tittel"]));
 
     const lenker = [...app.querySelectorAll(".site-hovednav a, .site-logo, " +
       ".site-cta a, .site-bunn-cta a, .site-footer a")];
@@ -301,16 +308,19 @@ test("Landing: språkvalget følger navigasjonen når lagring er nektet", async 
         .searchParams.get("sprak"), "en",
         `${a.getAttribute("href")} mister språkvalget ved klikk`);
     }
-    assert.equal(
-      app.querySelector('.site-sok input[name="sprak"]').getAttribute("value"),
-      "en", "søket sender brukeren tilbake til norsk");
+    assert.equal(app.querySelector(".site-sok"), null,
+      "katalogsøket skal ikke stå på forsiden");
     assert.equal(new URLSearchParams(window.location.search).get("sprak"), "en",
       "adresselinja sier fortsatt norsk — en oppdatering mister valget");
 
     // Og den andre enden: en URL med språkleddet velges over dokumentets
     // `data-sprak`, ellers hadde lenkene båret et valg ingen leser.
-    document.documentElement.setAttribute("data-sprak", "nb");
     window.history.replaceState({}, "", "/?side=tjenester&sprak=en");
+    await visInnlogging();
+    assert.equal(
+      app.querySelector('.site-sok input[name="sprak"]').getAttribute("value"),
+      "en", "katalogsøket sender brukeren tilbake til norsk");
+    document.documentElement.setAttribute("data-sprak", "nb");
     assert.equal(velgSprak(), "en");
   } finally {
     if (ekte) Object.defineProperty(window, "localStorage", ekte);
@@ -422,16 +432,16 @@ test("Landing: språket tas i bruk først når flaten som bærer det er klar", a
     await vent(() => oppsettNr === 2);
     await vent(() => false, 20);          // la locale-svaret komme helt fram
 
-    assert.ok(app.textContent.includes(NB["site.hero.tittel"]),
+    assert.ok(app.textContent.includes(NB["site.home.tittel"]),
       "riggen parkerte ikke byttet — flaten er allerede byttet");
     assert.equal(document.documentElement.getAttribute("lang"), "nb",
       "dokumentet ble merket engelsk mens den norske forsiden fortsatt sto");
-    assert.equal(t("site.hero.tittel"), NB["site.hero.tittel"],
+    assert.equal(t("site.home.tittel"), NB["site.home.tittel"],
       "locale-kartet ble byttet under flaten som fortsatt sto på skjermen");
 
     // Oppsettet kommer i mål: NÅ skal språket og flaten skifte sammen.
     slippOppsett();
-    await vent(() => app.textContent.includes(EN["site.hero.tittel"]));
+    await vent(() => app.textContent.includes(EN["site.home.tittel"]));
     assert.equal(document.documentElement.getAttribute("lang"), "en",
       "flaten ble engelsk uten at dokumentet fulgte med");
   } finally {
@@ -464,17 +474,17 @@ test("Landing: språkbyttet virker når localStorage er nektet", async () => {
     const app = nyttAppBrett();
     await visInnlogging();
     await vent(() => app.querySelectorAll(".site-sprak-knapp").length === 2);
-    assert.ok(app.textContent.includes(NB["site.hero.tittel"]));
+    assert.ok(app.textContent.includes(NB["site.home.tittel"]));
 
     const engelsk = [...app.querySelectorAll(".site-sprak-knapp")]
       .find((k) => k.textContent === NB["ui.sprak.en"]);
     assert.ok(engelsk, "ingen knapp for engelsk på forsiden");
     engelsk.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 
-    await vent(() => app.textContent.includes(EN["site.hero.tittel"]));
-    assert.ok(app.textContent.includes(EN["site.hero.tittel"]),
+    await vent(() => app.textContent.includes(EN["site.home.tittel"]));
+    assert.ok(app.textContent.includes(EN["site.home.tittel"]),
       "forsiden ble aldri engelsk — byttet lente seg på lagringen");
-    assert.ok(!app.textContent.includes(NB["site.hero.tittel"]),
+    assert.ok(!app.textContent.includes(NB["site.home.tittel"]),
       "norsk innhold står igjen etter byttet");
     assert.equal(document.documentElement.getAttribute("lang"), "en",
       "<html lang> følger ikke det valgte språket");
@@ -709,7 +719,7 @@ test("Landing: hopp-lenka hopper FORBI navigasjonen, ikke til den", async () => 
     "hovednavigasjonen står inne i hopp-målet — da hopper lenka til den");
   assert.equal(maal.querySelector(".site-sok"), null,
     "søkefeltet står inne i hopp-målet");
-  assert.ok(maal.textContent.includes(t("site.hero.tittel")),
+  assert.ok(maal.textContent.includes(t("site.home.tittel")),
     "sideinnholdet står UTENFOR hopp-målet — da hopper lenka til ingenting");
 });
 
@@ -720,7 +730,7 @@ test("Landing: en ukjent side gir hjem, ikke en tom flate", async () => {
   const app = nyttAppBrett();
   await visInnlogging();
   await vent(() => app.querySelector(".site-hovednav"));
-  assert.ok(app.textContent.includes(t("site.hero.tittel")),
+  assert.ok(app.textContent.includes(t("site.home.tittel")),
     "en ukjent side ga en tom flate i stedet for hjem");
   window.history.replaceState({}, "", "/");
 });
