@@ -312,7 +312,8 @@ def evaluer_kandidat(modell, soknadstekst: str,
                      vekter: dict[str, int], *,
                      biasmaalinger: dict[str, Biasmaaling],
                      blinding_av: bool = False,
-                     auditrad: dict | None = None) -> dict:
+                     avskruing_hendelse_id=None,
+                     hendelseoppslag=None) -> dict:
     """Én kandidat gjennom hele kontrakten: biasmåling for modellens
     digest (port 17), blindet input (port 16), skjemavaliderte funn
     (port 15). Modellen får ALDRI se råteksten når blinding står på —
@@ -325,7 +326,9 @@ def evaluer_kandidat(modell, soknadstekst: str,
     krev_biasmaaling(modell.image_digest, biasmaalinger)
     tekst, avmaskering = blinding.evalueringsinput(
         soknadstekst, kandidatfelter,
-        blinding_av=blinding_av, auditrad=auditrad)
+        blinding_av=blinding_av,
+        avskruing_hendelse_id=avskruing_hendelse_id,
+        hendelseoppslag=hendelseoppslag)
     blinding.krev_blindet(tekst, avmaskering)
     svar = _krev_helt_svar(modell.vurder(tekst, vekter), vekter)
     # Porten BYGGER funnene: artefakten bærer det kanoniske funnet

@@ -138,7 +138,8 @@ def _felter(kandidatfelter_for, medlem, fremdrift):
 
 def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
               antall_soknader, kandidatfelter_for=None,
-              blinding_av=False, auditrad=None):
+              blinding_av=False, avskruing_hendelse_id=None,
+              hendelseoppslag=None):
     """-> {"rangering": [...], "artefakter": {kandidat_id: ...},
     "fremdrift": {...}} — eller Kjoringsfeil, aldri noe imellom.
 
@@ -467,7 +468,9 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
                 raise Kjoringsfeil("tekstuttrekk_feilet", fremdrift)
             blinding.evalueringsinput(
                 tekst, kandidatfelter,
-                blinding_av=blinding_av, auditrad=auditrad)
+                blinding_av=blinding_av,
+                avskruing_hendelse_id=avskruing_hendelse_id,
+                hendelseoppslag=hendelseoppslag)
             klargjort[kandidat_id] = (tekst, kandidatfelter)
         # `klargjort` er fylt i `sorted`-rekkefølge, og dict beholder
         # innsettingsrekkefølgen: evalueringen går fortsatt i samme,
@@ -476,7 +479,9 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
             resultat = evaluering.evaluer_kandidat(
                 modell, tekst, kandidatfelter, vekter,
                 biasmaalinger=biasmaalinger,
-                blinding_av=blinding_av, auditrad=auditrad)
+                blinding_av=blinding_av,
+                avskruing_hendelse_id=avskruing_hendelse_id,
+                hendelseoppslag=hendelseoppslag)
             artefakter[kandidat_id] = resultat
             oppfylt[kandidat_id] = resultat["oppfylt"]
         # RANGERINGEN ER EN DEL AV KJØRINGEN (Codex P1). Sto den utenfor

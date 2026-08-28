@@ -1020,15 +1020,125 @@ def test_port16_blindingen_maales_pa_faktisk_input():
             biasmaalinger=_MAALINGER, blinding_av=True)
     assert e.value.kode == "avskrudd_uten_auditrad"
     assert not modell2.sett
-    # … og MED auditrad er avskruingen en auditert handling som gir
-    # råteksten (den auditerte veien skal virke, ellers er porten bare
-    # en av-knapp for hele funksjonen).
+    # … EN FABRIKKERT ID HJELPER IKKE (#159). Porten var selvattestert:
+    # tre sanne verdier i en dict var beviset. Nå slås hendelsen OPP, og
+    # et oppslag som ikke finner noe er ikke en godkjenning.
+    with pytest.raises(blinding.Blindingsfeil) as e:
+        evaluering.evaluer_kandidat(
+            modell2, tekst, felter, {"drift": 3},
+            biasmaalinger=_MAALINGER, blinding_av=True,
+            avskruing_hendelse_id="00000000-0000-0000-0000-000000000000",
+            hendelseoppslag=lambda _id: None)
+    assert e.value.kode == "avskrudd_uten_auditrad"
+    assert not modell2.sett
+    # … og MED en oppslått hendelse er avskruingen en auditert handling
+    # som gir råteksten (den auditerte veien skal virke, ellers er porten
+    # bare en av-knapp for hele funksjonen).
     ut2 = evaluering.evaluer_kandidat(
         modell2, tekst, felter, {"drift": 3},
         biasmaalinger=_MAALINGER, blinding_av=True,
-        auditrad={"aktor": "eier@kunde", "ts": "2026-08-23T00:00:00Z",
-                  "begrunnelse": "intern rekruttering"})
+        avskruing_hendelse_id="7f1c1f7e-0000-4000-8000-000000000001",
+        hendelseoppslag=lambda _id: {
+            "handling": blinding.AVSKRUINGSHANDLING,
+            "aktor": "eier@kunde", "ts": "2026-08-23T00:00:00+00:00"})
     assert modell2.sett[-1] == tekst and ut2["avmaskering"] == {}
+
+
+def test_avskruingen_slaas_OPP_den_paastaas_ikke(tmp_path):
+    """#159, eiers valg A: «auditert» er en egenskap ved basen.
+
+    Porten var SELVATTESTERT. Den som ba om å skru av blindingen leverte
+    selv beviset på at handlingen var auditert, og beviset var en dict
+    med tre sanne verdier — `{"aktor": "x", "ts": "x", "begrunnelse":
+    "x"}` passerte. Codex målte det to ganger (#153 runde 2 og 9), og et
+    repo-vidt søk fant hverken produsent eller persisteringsvei for den
+    dicten. En sann påstand om en revisjonshendelse er ikke en
+    revisjonshendelse.
+
+    Fem veier måles her, og hver av dem var åpen før:
+
+    1. ingen hendelses-ID
+    2. en ID uten oppslagsfunksjon — påstanden alene
+    3. en ID som ikke finnes (oppslaget gir `None`)
+    4. en hendelse med FEIL handling — ellers hadde vi byttet en fri
+       dict mot en fri UUID
+    5. et oppslag som KASTER — en base som er nede skal ikke bli en åpen
+       dør (SP-3: umålt utfall er avvist utfall)
+
+    Den sjette er den positive: en ekte hendelse med riktig handling gir
+    råteksten. Uten den ville porten vært en av-knapp for funksjonen.
+
+    MUTASJONEN SOM DREPER DENNE: la `krev_avskruingshendelse` returnere
+    uten å slå opp, eller fjern handlingssjekken, eller la `except`-armen
+    svelge feilen.
+    """
+    ekte = {"handling": blinding.AVSKRUINGSHANDLING,
+            "aktor": "eier@kunde", "ts": "2026-08-29T00:00:00+00:00"}
+
+    def _kaster(_id):
+        raise RuntimeError("forbindelsen er nede")
+
+    for merkelapp, kwargs in (
+        ("ingen id", {}),
+        ("id uten oppslag", {"avskruing_hendelse_id": "abc"}),
+        ("id som ikke finnes", {"avskruing_hendelse_id": "abc",
+                                "hendelseoppslag": lambda _i: None}),
+        ("oppslag som kaster", {"avskruing_hendelse_id": "abc",
+                                "hendelseoppslag": _kaster}),
+        ("hendelse uten aktør", {"avskruing_hendelse_id": "abc",
+                                 "hendelseoppslag": lambda _i: {
+                                     "handling":
+                                         blinding.AVSKRUINGSHANDLING}}),
+    ):
+        with pytest.raises(blinding.Blindingsfeil) as e:
+            blinding.evalueringsinput("Kari Nordmann", {"navn": ["Kari"]},
+                                      blinding_av=True, **kwargs)
+        # KODEN, ikke meldingen: `Blindingsfeil` legger detaljen i
+        # `args[0]` når den finnes, så en sammenligning på `args` ville
+        # målt formuleringen. `kode` er kontrakten.
+        assert e.value.kode == "avskrudd_uten_auditrad", \
+            f"{merkelapp} ga feil kode: {e.value.kode}"
+
+    # FEIL HANDLING har sin EGEN kode: en revisjonshendelse om noe helt
+    # annet er ikke en manglende hendelse, og driften skal kunne skille
+    # dem.
+    with pytest.raises(blinding.Blindingsfeil) as e:
+        blinding.evalueringsinput(
+            "Kari Nordmann", {"navn": ["Kari"]}, blinding_av=True,
+            avskruing_hendelse_id="abc",
+            hendelseoppslag=lambda _i: {**ekte, "handling": "m01.noe_annet"})
+    assert e.value.kode == "avskrudd_feil_handling", (
+        "en hvilken som helst revisjonshendelse autoriserte avskruingen —"
+        f" da er en fri UUID like god som den frie dicten var: {e.value.kode}")
+
+    # DEN POSITIVE VEIEN. Uten den måler testen bare at døra er stengt,
+    # ikke at den er en dør.
+    tekst, avmaskering = blinding.evalueringsinput(
+        "Kari Nordmann", {"navn": ["Kari"]}, blinding_av=True,
+        avskruing_hendelse_id="7f1c1f7e-0000-4000-8000-000000000003",
+        hendelseoppslag=lambda _i: ekte)
+    assert tekst == "Kari Nordmann" and avmaskering == {}
+
+
+def test_avskruingshandlingen_finnes_i_066():
+    """Modulens streng og migrasjonens CHECK må være den samme.
+
+    Drifter de to, slår oppslaget aldri til — og porten blir en dør som
+    ikke kan åpnes i det hele tatt. Det ville sett ut som sikkerhet og
+    vært en stille regresjon: den auditerte veien §6 lover, borte.
+
+    MUTASJONEN SOM DREPER DENNE: endre `AVSKRUINGSHANDLING` uten å endre
+    CHECK-en, eller omvendt.
+    """
+    sql = (ROT / "platform" / "core" / "db" / "migrations"
+           / "066_revisjonshendelse.sql").read_text(encoding="utf-8")
+    assert f"'{blinding.AVSKRUINGSHANDLING}'" in sql, (
+        f"{blinding.AVSKRUINGSHANDLING!r} står ikke i 066s CHECK — en"
+        " avskruing kan da aldri autoriseres")
+    # ... og settet må være LUKKET, ellers beviser treffet over ingenting.
+    assert "handling TEXT NOT NULL CHECK (handling IN (" in sql, (
+        "handlingen er ikke et lukket sett — en kaller kunne skrevet en"
+        " hendelse som SER ut som beviset porten leter etter")
 
 
 def test_port16_blinding_uten_felter_feiler_lukket():
@@ -2407,8 +2517,10 @@ def test_manglende_felter_felles_for_stroemmen(tmp_path, monkeypatch):
         arkiv, modell, vekter={"drift": 3},
         tekst_for=lambda m, d: d.decode("utf-8"),
         biasmaalinger=_MAALINGER, antall_soknader=2, blinding_av=True,
-        auditrad={"aktor": "drift", "ts": "2026-08-26T20:00:00Z",
-                  "begrunnelse": "manuell kontroll"})
+        avskruing_hendelse_id="7f1c1f7e-0000-4000-8000-000000000002",
+        hendelseoppslag=lambda _id: {
+            "handling": blinding.AVSKRUINGSHANDLING,
+            "aktor": "drift", "ts": "2026-08-26T20:00:00+00:00"})
     assert set(ut["artefakter"]) == {"k1", "k2"}
     assert strommet, "strømmen skulle gått når porten ikke gjelder"
 

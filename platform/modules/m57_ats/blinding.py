@@ -14,8 +14,10 @@ blinding — personfeltene finnes ikke i inputen i det hele tatt — og den
 er eiers ratifiserte mål (B-veien, #158); til den lander er ordlyden over
 det ærlige løftet.
 
-Avskruingen (port 16b) er en ANNEN maskin og står utsatt i #159:
-`auditrad` er i dag kallerens egen påstand om at handlingen er auditert.
+Avskruingen (port 16b) hviler på en OPPSLÅTT revisjonshendelse (#159,
+migrasjon 066): kalleren oppgir en hendelses-ID, og grensen slår den opp
+gjennom en injisert oppslagsfunksjon. «Auditert» er en egenskap ved
+basen, ikke ved kallet.
 
 Av-maskeringstabellen er payload i `kandidat_avmaskering` (057) og
 reapes med resten.
@@ -39,9 +41,17 @@ MAKS_FELTVERDI_TEGN = 200
 
 
 class Blindingsfeil(Exception):
-    def __init__(self, kode: str):
+    """Kode + valgfri detalj — samme form som `Evalueringsfeil` (#159).
+
+    Detaljen kom med oppslagsveien: en base som er nede og en hendelse som
+    ikke finnes gir samme KODE (begge er «ikke autorisert», og noe annet
+    ville lekket at naboen har en hendelse), men driften må kunne skille
+    dem. Koden er kontrakten, detaljen er for mennesket som leser loggen.
+    """
+
+    def __init__(self, kode: str, detalj: str = ""):
         self.kode = kode
-        super().__init__(kode)
+        super().__init__(f"{kode}: {detalj}" if detalj else kode)
 
 
 def verdiform_lukket(verdi: str) -> bool:
@@ -279,36 +289,65 @@ def krev_blindet(tekst: str, avmaskering: dict[str, str]) -> None:
             raise Blindingsfeil("maskert_felt_i_modellinput")
 
 
+#: Handlingen avskruingen krever i revisjonsloggen. Strengen er den samme
+#: som CHECK-en i migrasjon 066 tillater — drifter de to, slår oppslaget
+#: aldri til, og porten blir en dør som ikke kan åpnes i det hele tatt.
+#: `test_avskruingshandlingen_finnes_i_066` holder dem sammen.
+AVSKRUINGSHANDLING = "m57.blinding_avskrudd"
+
+
+def krev_avskruingshendelse(hendelse_id, hendelseoppslag) -> dict:
+    """Slår opp revisjonshendelsen avskruingen påberoper seg (#159).
+
+    PÅSTANDEN ER ERSTATTET MED ET OPPSLAG. Porten var selvattestert:
+    kalleren leverte selv beviset på at handlingen var auditert, og
+    beviset var en dict med tre sanne verdier. Codex målte det to ganger
+    (#153 runde 2 og 9), og et repo-vidt søk fant hverken produsent eller
+    persisteringsvei for den dicten. En sann påstand om en
+    revisjonshendelse er ikke en revisjonshendelse.
+
+    `hendelseoppslag` er INJISERT, som `kandidatfelter_for` og `tekst_for`
+    i `kjor_bunt`: modulen har ingen databaseforbindelse og skal ikke ha
+    en. Kalleren gir en funksjon som slår opp `hendelse_id` i SIN EGEN
+    tenantkontekst — i produksjon `les_revisjonshendelse` fra 066, som er
+    SECURITY DEFINER med tenanten bundet til konteksten gjennom
+    `krev_tenantkontekst`. Returnerer den `None`, finnes hendelsen ikke i
+    kallerens tenant, og de to tilfellene («finnes ikke» og «finnes hos
+    naboen») skilles bevisst ikke: at noe finnes hos naboen er ikke din
+    opplysning.
+
+    HANDLINGEN MÅLES OGSÅ, ikke bare eksistensen. Uten det leddet ville en
+    hvilken som helst revisjonshendelse autorisert avskruing av
+    blindingen — og vi hadde byttet en fri dict mot en fri UUID.
+    """
+    if not hendelse_id or not callable(hendelseoppslag):
+        raise Blindingsfeil("avskrudd_uten_auditrad")
+    try:
+        hendelse = hendelseoppslag(hendelse_id)
+    except Exception as e:                        # noqa: BLE001
+        # EN OPPSLAGSFEIL ER IKKE EN GODKJENNING. Uten dette leddet ville
+        # en base som er nede blitt en åpen dør — fail-open, som SP-3
+        # forbyr. Feiltypen følger med i koden så driften kan skille en
+        # manglende hendelse fra en manglende forbindelse.
+        raise Blindingsfeil("avskrudd_uten_auditrad", type(e).__name__)
+    if not isinstance(hendelse, dict) or not hendelse.get("aktor"):
+        raise Blindingsfeil("avskrudd_uten_auditrad")
+    if hendelse.get("handling") != AVSKRUINGSHANDLING:
+        raise Blindingsfeil("avskrudd_feil_handling",
+                            str(hendelse.get("handling")))
+    return hendelse
+
+
 def evalueringsinput(tekst: str, kandidatfelter: dict[str, list[str]], *,
                      blinding_av: bool = False,
-                     auditrad: dict | None = None
+                     avskruing_hendelse_id=None,
+                     hendelseoppslag=None
                      ) -> tuple[str, dict[str, str]]:
     """Den ENESTE veien til modellinput. Standard er blindet; avskrudd
-    krever en auditrad med aktør, tidspunkt og begrunnelse — mangler
-    den, finnes ikke input (port 16b)."""
+    krever en OPPSLÅTT revisjonshendelse (#159) — finnes den ikke i
+    kallerens tenant, finnes ikke input (port 16b)."""
     if blinding_av:
-        # UTSATT, K1 → #159. Codex har målt det samme to ganger, og
-        # funnet er riktig: denne porten er SELVATTESTERT. Den som ber om
-        # å skru av blindingen leverer selv beviset på at handlingen er
-        # auditert, og beviset er en dict med tre sanne verdier. Det
-        # finnes ingen produsent og ingen persisteringsvei for `auditrad`
-        # i repoet — «auditert» er altså en påstand fra kalleren, ikke en
-        # egenskap ved noe som overlever kallet.
-        #
-        # Det kan ikke lukkes her. En strengere formport (`ts` som gyldig
-        # ISO-8601, en `revisjon_id` som ser ut som en UUID) flytter bare
-        # påstanden ett hakk: en velformet UUID beviser ikke at en rad
-        # finnes. Den ekte lukkingen krever en varig, tenant-bundet
-        # revisjonshendelse — tabell, append-only-vakt, rettighetsgrense,
-        # skriver og oppslag — og kjernen har ingen slik tabell i dag.
-        # Ny maskin i en fiksrunde er nettopp det §9 K1 forbyr, så valget
-        # (bygg hendelsen, eller fjern døra til den finnes) ligger i
-        # #159. Formporten under er derfor uendret, og den leser bevisst
-        # ikke sterkere enn den måler.
-        if not (isinstance(auditrad, dict)
-                and auditrad.get("aktor") and auditrad.get("ts")
-                and auditrad.get("begrunnelse")):
-            raise Blindingsfeil("avskrudd_uten_auditrad")
+        krev_avskruingshendelse(avskruing_hendelse_id, hendelseoppslag)
         return tekst, {}
     blindet, avmaskering = blind(tekst, kandidatfelter)
     # FAIL-CLOSED (Codex P1, eiers K2-avgjørelse). Med tomme eller

@@ -2609,3 +2609,150 @@ def test_serielaasen_serialiserer_signering_mot_ny_versjon(migrator):
             f" {resultat.get('feil', 'ingen feil meldt')}")
     finally:
         a.close(); b.close()
+
+
+# ============================================================
+# #159 — revisjonshendelsen (migrasjon 066)
+#
+# Porten i modulen var SELVATTESTERT: kalleren leverte selv beviset på at
+# avskruingen var auditert. Testene her måler den andre halvdelen —
+# at hendelsen faktisk er en rad, at raden er udødelig, og at den er
+# TENANT-BUNDET. Uten den siste er «auditert» bare «noen, et sted».
+# ============================================================
+
+@pg
+def test_revisjonshendelsen_skrives_og_slaas_opp(migrator):
+    """Den lovlige veien: skriv, les tilbake, gjenkjenn handlingen."""
+    rt = _rt()
+    try:
+        _sett_kontekst(rt, TENANT)
+        rt.execute(
+            "SELECT skriv_revisjonshendelse(%s, 'm57.blinding_avskrudd',"
+            " %s, %s)",
+            (TENANT, "eier@kunde", "intern rekruttering, avtalt med HR"))
+        hid = rt.fetchone()[0]
+        assert hid, "skriveren ga ingen hendelses-ID"
+        rt.execute("SELECT handling, aktor FROM"
+                   " les_revisjonshendelse(%s, %s)", (TENANT, hid))
+        rad = rt.fetchone()
+        assert rad is not None, "hendelsen kunne ikke slås opp igjen"
+        assert rad[0] == "m57.blinding_avskrudd"
+        assert rad[1] == "eier@kunde"
+    finally:
+        rt.rollback()
+        rt.close()
+
+
+@pg
+def test_en_fabrikkert_hendelses_id_finnes_ikke(migrator):
+    """#159s første negative: en velformet UUID er ikke en rad.
+
+    Det var nettopp dette den gamle formporten ikke kunne måle — en
+    strengere kontroll av feltene ville flyttet påstanden ett hakk, ikke
+    fjernet den.
+    """
+    rt = _rt()
+    try:
+        _sett_kontekst(rt, TENANT)
+        rt.execute("SELECT handling FROM les_revisjonshendelse(%s, %s)",
+                   (TENANT, "00000000-0000-4000-8000-000000000000"))
+        assert rt.fetchone() is None, (
+            "en fabrikkert hendelses-ID ga et oppslag — da er «auditert»"
+            " fortsatt en påstand")
+    finally:
+        rt.rollback()
+        rt.close()
+
+
+@pg
+def test_en_hendelse_i_EN_ANNEN_tenant_finnes_ikke_her(migrator):
+    """#159s andre negative, og den viktigste.
+
+    Uten tenantbindingen ville en hvilken som helst kundes
+    revisjonshendelse autorisert avskruing hos en annen — «auditert» ville
+    betydd «noen, et sted, har skrevet noe». RLS-policyen og
+    `krev_tenantkontekst` skal begge stå i veien.
+    """
+    rt = _rt()
+    try:
+        _sett_kontekst(rt, ANNEN_TENANT)
+        rt.execute(
+            "SELECT skriv_revisjonshendelse(%s, 'm57.blinding_avskrudd',"
+            " %s, %s)", (ANNEN_TENANT, "nabo@annen", "naboens egen sak"))
+        fremmed = rt.fetchone()[0]
+        # ... og NÅ leser vi den som oss selv.
+        _sett_kontekst(rt, TENANT)
+        rt.execute("SELECT handling FROM les_revisjonshendelse(%s, %s)",
+                   (TENANT, fremmed))
+        assert rt.fetchone() is None, (
+            "naboens revisjonshendelse var synlig her — da autoriserer"
+            " naboens lapp vår avskruing")
+        # Å be om DEN andre tenanten direkte skal avvises, ikke betjenes:
+        # `krev_tenantkontekst` binder tenanten til konteksten.
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.execute("SELECT handling FROM les_revisjonshendelse(%s, %s)",
+                       (ANNEN_TENANT, fremmed))
+    finally:
+        rt.rollback()
+        rt.close()
+
+
+@pg
+def test_revisjonshendelsen_er_udodelig(migrator):
+    """Append-only, begge veier: rad OG statement.
+
+    En revisjonshendelse som kan endres eller slettes er ikke et
+    revisjonsspor. TRUNCATE fyrer ALDRI radtriggere, så statement-vakten
+    er ikke en gjentakelse — den er den andre halvdelen (samme par som
+    011/014/036/053/056).
+    """
+    migrator.execute("SET LOCAL disponit.tenant = %s", (TENANT,))
+    migrator.execute(
+        "INSERT INTO revisjonshendelse (tenant, handling, aktor,"
+        " begrunnelse) VALUES (%s, 'm57.blinding_avskrudd', 'drift',"
+        " 'manuell kontroll av kandidat') RETURNING hendelse_id",
+        (TENANT,))
+    hid = migrator.fetchone()[0]
+    for sql, args in (
+        ("UPDATE revisjonshendelse SET aktor = 'noen andre'"
+         " WHERE hendelse_id = %s", (hid,)),
+        ("DELETE FROM revisjonshendelse WHERE hendelse_id = %s", (hid,)),
+        ("TRUNCATE revisjonshendelse", ()),
+    ):
+        with pytest.raises(psycopg.errors.RaiseException):
+            migrator.execute(sql, args)
+        migrator.rollback()
+        migrator.execute("SET LOCAL disponit.tenant = %s", (TENANT,))
+
+
+@pg
+def test_handlingen_er_et_lukket_sett(migrator):
+    """En ny slags revisjonshendelse er en kontraktsendring.
+
+    Uten CHECK-en kunne en kaller skrevet «m57.blinding_avskrudd_liksom»
+    og fått en rad som SER ut som beviset porten leter etter.
+    """
+    migrator.execute("SET LOCAL disponit.tenant = %s", (TENANT,))
+    with pytest.raises(psycopg.errors.CheckViolation):
+        migrator.execute(
+            "INSERT INTO revisjonshendelse (tenant, handling, aktor,"
+            " begrunnelse) VALUES (%s, 'm57.blinding_avskrudd_liksom',"
+            " 'drift', 'ser riktig ut, er det ikke')", (TENANT,))
+    migrator.rollback()
+
+
+@pg
+def test_begrunnelsen_kan_ikke_vaere_et_tastetrykk(migrator):
+    """Funnet som skapte tabellen brukte «x» som begrunnelse.
+
+    En ubrukelig revisjonshendelse er verre enn ingen: den ser ut som et
+    svar på spørsmålet «hvem bestemte dette».
+    """
+    migrator.execute("SET LOCAL disponit.tenant = %s", (TENANT,))
+    for aktor, begrunnelse in (("drift", "x"), ("  ", "en ekte begrunnelse")):
+        with pytest.raises(psycopg.errors.CheckViolation):
+            migrator.execute(
+                "INSERT INTO revisjonshendelse (tenant, handling, aktor,"
+                " begrunnelse) VALUES (%s, 'm57.blinding_avskrudd', %s, %s)",
+                (TENANT, aktor, begrunnelse))
+        migrator.rollback()
