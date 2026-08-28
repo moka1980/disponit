@@ -660,6 +660,53 @@ def test_inline_funn_scopes_til_utlosende_review():
         " ikke — flatene glir fra hverandre")
 
 
+def test_bot_review_kan_aldri_ta_merge_steg3():
+    """Cursor P1 runde 2 på #230: merge-forbudet må være strukturelt.
+
+    #211 målte at boten ALDRI bærer et rent verdikt på review-kanalen —
+    uten funn kommer det som issue_comment, og et 👍 som reaksjon. Steg
+    3 var likevel generisk («verdikt uten reelle funn … skal MERGES»).
+    På en review-utløst kjøring med tom `review.body` er den eneste
+    veien dit at agenten leser scoped inline og konkluderer «ingen
+    funn» — og en tom liste kan like gjerne komme av API-etterslep,
+    feil filter, eller en hendelse som landet før inline-kommentarene.
+    Da merger jobben ureviewet kode. Det er #211 ett hakk inn: porten
+    er åpnet, men merge-forbudet fulgte ikke med.
+
+    Eierens `approved` er fortsatt en gyldig merge-vei — forbudet
+    gjelder botens kanal, ikke review-hendelsen som sådan.
+
+    MUTASJONEN SOM DREPER DENNE: fjern forbudet fra ett av forsøkene —
+    det holder å ta det fra runde 3, den som merger.
+    """
+    for i, forsok in enumerate(_fiksforsok(), 1):
+        norm = " ".join(forsok.split())
+        assert "BOT-REVIEW MERGER ALDRI" in norm, (
+            f"forsøk {i} lar en bot-review nå steg 3")
+        assert "PARKÉR" in norm, (
+            f"forsøk {i} sier ikke hva som skal skje ved null funn —"
+            " «ikke merge» uten et alternativ blir til merge")
+
+
+def test_steg0_skanner_inline_paa_review_utlost():
+    """Cursor P2 runde 2 på #230: kvotefilteret måler bare kroppen.
+
+    Jobb-`if`-en filtrerer kvote via `startsWith(review.body, …)`, og på
+    review-utløste funn er kroppen målt tom. Står kvote-/statusteksten i
+    en inline-kommentar i stedet, slipper den både `if`-en og et steg 0
+    som bare leter i kroppen — speilvendt av #198s kvotefunn, nå på
+    review-kanalen.
+
+    MUTASJONEN SOM DREPER DENNE: fjern inline-skanningen fra steg 0 i
+    ett forsøk.
+    """
+    for i, forsok in enumerate(_fiksforsok(), 1):
+        norm = " ".join(forsok.split())
+        assert "skann de scopede inline-kommentarene for kvote" in norm, (
+            f"forsøk {i} leter etter kvotemeldingen bare i kroppen, som"
+            " er tom på nettopp denne kanalen")
+
+
 def test_steg_0_verdiktporten_i_alle_tre_forsokene():
     """Cursor P2 runde 14 (#198): kvote-/statusmeldinger som slipper
     forbi jobb-if-ens prefiksfilter må felles av steg 0 i HVERT forsøk —

@@ -163,6 +163,19 @@ jobs:
                fordi noen gikk tom for penger. Skjer det: IKKE fiks, IKKE
                merge. Skriv én kommentar til eier om at review-kanalen er
                nede og at PR-en venter, og stopp.
+               BOT-REVIEW MERGER ALDRI (#211): er kjøringen
+               review-utløst fra `chatgpt-codex-connector[bot]`, bærer
+               kanalen per måling ALLTID funn — et rent verdikt kommer
+               som issue_comment, og et 👍 kommer som reaksjon. Leser du
+               null funn der, er det ikke en godkjenning, det er en
+               lesning som feilet: API-etterslep, feil filter, eller en
+               hendelse som landet før inline-kommentarene. PARKÉR da med
+               notat til eier — aldri steg 3. Eierens `approved` er den
+               ENESTE review-veien til merge.
+               Og skann de scopede inline-kommentarene for kvote-/feil-/
+               statustekst også: `review.body` er ofte tom på denne
+               kanalen, så kvotemeldingen kan stå der i stedet for i
+               kroppen — samme utfall som steg 0 ellers.
             1. Les hele verdiktet og alle tråder: `gh pr view <nr> --comments`
                og `gh api` mot pulls/<nr>/reviews og pulls/<nr>/comments.
                Ignorer rene triggerkommentarer («@codex review»).
@@ -379,6 +392,19 @@ jobs:
                («usage limits», «add credits», integrasjonsfeil) er
                IKKE en review — ikke fiks, ikke merge; én kommentar til
                eier om at kanalen er nede, og stopp.
+               BOT-REVIEW MERGER ALDRI (#211): er kjøringen
+               review-utløst fra `chatgpt-codex-connector[bot]`, bærer
+               kanalen per måling ALLTID funn — et rent verdikt kommer
+               som issue_comment, og et 👍 kommer som reaksjon. Leser du
+               null funn der, er det ikke en godkjenning, det er en
+               lesning som feilet: API-etterslep, feil filter, eller en
+               hendelse som landet før inline-kommentarene. PARKÉR da med
+               notat til eier — aldri steg 3. Eierens `approved` er den
+               ENESTE review-veien til merge.
+               Og skann de scopede inline-kommentarene for kvote-/feil-/
+               statustekst også: `review.body` er ofte tom på denne
+               kanalen, så kvotemeldingen kan stå der i stedet for i
+               kroppen — samme utfall som steg 0 ellers.
             1. Gjenstående reelle funn (P1/P2) fra Codex-verdiktet og
                inline-kommentarene (`gh api` mot pulls/<nr>/comments — er
                kjøringen review-utløst, ligger funnene ofte IKKE I KROPPEN
@@ -485,7 +511,21 @@ jobs:
             Dette er siste forsøk. FØRST: ER DETTE I DET HELE TATT ET
             VERDIKT? Samme port som forsøk 1 — kvote-/feil-/status-
             meldinger er ikke en review: ikke fiks, ikke merge, én
-            kommentar til eier, stopp. Prioriter deretter i denne
+            kommentar til eier, stopp.
+               BOT-REVIEW MERGER ALDRI (#211): er kjøringen
+               review-utløst fra `chatgpt-codex-connector[bot]`, bærer
+               kanalen per måling ALLTID funn — et rent verdikt kommer
+               som issue_comment, og et 👍 kommer som reaksjon. Leser du
+               null funn der, er det ikke en godkjenning, det er en
+               lesning som feilet: API-etterslep, feil filter, eller en
+               hendelse som landet før inline-kommentarene. PARKÉR da med
+               notat til eier — aldri steg 3. Eierens `approved` er den
+               ENESTE review-veien til merge.
+               Og skann de scopede inline-kommentarene for kvote-/feil-/
+               statustekst også: `review.body` er ofte tom på denne
+               kanalen, så kvotemeldingen kan stå der i stedet for i
+               kroppen — samme utfall som steg 0 ellers.
+            Prioriter deretter i denne
             rekkefølgen:
             1. Push alt arbeid som er i nærheten av ferdig, ett funn per
                commit.
