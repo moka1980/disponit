@@ -2,9 +2,12 @@
 
 Tre ruter, formet av flatens kontrakt (flater/rekruttering.js):
 
-* GET  /v1/rekruttering/prosesser — prosessene med kandidater, vekter og
-  innstilte lister, lest RETT fra 057-lagrene under RLS. `decisions:read`
-  (flatens svakeste ledd, WCAG-flate-formen).
+* GET  /v1/rekruttering/prosesser — en LETT indeks over alle ureapet
+  prosesser (id, opprettet, evalueringsstatus, kandidatantall) og full
+  payload — kandidater, vekter, innstilte lister — for ÉN: den navngitte
+  med `?prosess_id=`, ellers den nyeste. En ukjent eller utløpt id er
+  404, aldri «ta den nyeste» (#183). Lest RETT fra 057-lagrene under RLS.
+  `decisions:read` (flatens svakeste ledd, WCAG-flate-formen).
 * POST /v1/rekruttering/lister/{id}/signer — signeringen. Går gjennom
   DEN EKTE kjeden: `signer_utsendingsliste` (056) med øktens bruker som
   signatar og SP-2-nøkkel fra Idempotency-Key. Endepunktet verifiserer
@@ -151,13 +154,13 @@ def _vekter_lesbare(v: object) -> bool:
 def _kandidater(conn, tenant, prosess_id):
     """Kandidatene i én prosess, lest RETT fra 057-lageret under RLS.
 
-    SVARET ER IKKE AVGRENSET — UTSATT TIL #183 (Codex P2, K1). Kalleren
-    løper over hver ureapet prosess, og hver prosess kan bære 5000
-    kandidater (katalogens harde løfte) i inntil 365 døgn. Å binde det
-    krever at endepunktet henter den VALGTE prosessen i stedet for alle,
-    og det er ny kontrakt på lesesvaret pluss ny hentelogikk i flaten —
-    ny maskin i en fiksrunde. Rotårsak, foreslått maskin og målingen som
-    skal drepe den står i #183.
+    AVGRENSNINGEN LIGGER I KALLEREN (#183, landet i denne PR-en). Hver
+    prosess kan bære 5000 kandidater (katalogens harde løfte) i inntil
+    365 døgn, så et svar som løp over alle ureapet prosesser vokste uten
+    tak. Nå kalles denne funksjonen for ÉN prosess per forespørsel —
+    `prosesser_endepunkt` velger den og lar resten være indeksrader — og
+    målingen som holder det er `test_svaret_vokser_ikke_med_antall_prosesser`
+    og `test_den_valgte_prosessen_hentes_paa_id`.
 
     Det som KAN gjøres uten en ny kontrakt, gjøres her: lesningen slutter
     å hente det den kaster. `kildetekst` er hele den blindede
@@ -173,9 +176,9 @@ def _kandidater(conn, tenant, prosess_id):
     beste, ikke til utvelgelsen, så feltet forlater aldri serveren her —
     og da er både artefaktkopien og 057-lageret (`kandidat_intervjusporsmal`)
     noe denne lesningen kaster. Regelen over gjelder også dem: lesningen
-    slutter å hente det den kaster, og på et endepunkt som løper over
-    HVER prosess med inntil 5000 kandidater er en JOIN mot lageret
-    unødvendig arbeid i basen og unødvendig nyttelast over forbindelsen.
+    slutter å hente det den kaster, og på en prosess med inntil 5000
+    kandidater er en JOIN mot lageret unødvendig arbeid i basen og
+    unødvendig nyttelast over forbindelsen.
     Subtraksjonen av `intervjusporsmal` blir stående — artefaktet kan
     fortsatt bære en kopi, og den skal ut av svaret på samme måte som
     `kildetekst` og `avmaskering`. Lageret består urørt som
@@ -206,9 +209,11 @@ def _kandidater(conn, tenant, prosess_id):
         # tomt, aldri mot FEIL TYPE: `{...}` er en sann `funn`, `["drift"]`
         # er en sann `oppfylt`, og begge er `jsonb` runtime kan INSERTe
         # (057 har ingen formsjekk på `artefakt`). Ett giftig artefakt ga
-        # da `AttributeError` inne i utledningen, og siden kalleren løper
-        # over HVER prosess, ble svaret 500 for HELE tenantens
-        # prosessliste — signeringsflaten inkludert.
+        # da `AttributeError` inne i utledningen, og siden kalleren den
+        # gang løp over HVER prosess, ble svaret 500 for HELE tenantens
+        # prosessliste — signeringsflaten inkludert. Etter #183 leses én
+        # prosess per forespørsel, så porten verner den valgte; den er
+        # like nødvendig, for det er DEN flaten signerer fra.
         #
         # OG Å NORMALISERE ER IKKE Å LESE. Å sette et ulesbart `funn` til
         # `[]` gjør kandidaten GRØNNERE enn før — «ingen funn» er nettopp
