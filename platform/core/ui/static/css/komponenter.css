@@ -732,7 +732,11 @@ html[data-visning="landing"] .skall-hoved {
   margin: 0;
 }
 .site-driftstatus h2 { font-size: var(--fs-tittel); margin: 0 0 var(--sp-2); }
-.site-driftstatus div p { color: var(--muted); margin: 0; max-width: var(--maks-ingress); }
+/* --muted er stemt mot papirflatene (--paper/--card); på signalpanelets
+   --site-signal-bg gir den bare ~4,1:1 og bryter WCAG 1.4.3 for vanlig
+   brødtekst. Den offentlige flaten har sin egen dempede farge nettopp for
+   dette — --site-muted gir ~5,1:1 mot samme bakgrunn (Codex P2). */
+.site-driftstatus div p { color: var(--site-muted); margin: 0; max-width: var(--maks-ingress); }
 .site-prinsipp-grid {
   border-bottom: 1px solid var(--line);
   border-top: 1px solid var(--line);
