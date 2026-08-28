@@ -295,7 +295,7 @@ jobs:
           claude_args: |
             --model claude-opus-5
             --max-turns 300
-            --allowedTools "Read,Grep,Glob,Edit,Write,Bash(git:*),Bash(gh pr:*),Bash(gh api:*),Bash(gh run:*),Bash(python:*),Bash(python3:*),Bash(pip:*),Bash(pytest:*),Bash(node:*),Bash(npm:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(find:*),Bash(grep:*),Bash(rg:*),Bash(diff:*),Bash(jq:*),Bash(sed:*),Bash(awk:*),Bash(sort:*),Bash(uniq:*),Bash(mkdir:*),Bash(cp:*),Bash(mv:*)"
+            --allowedTools "Read,Grep,Glob,Edit,Write,Bash(git:*),Bash(gh pr:*),Bash(gh api:*),Bash(gh issue create:*),Bash(gh issue comment:*),Bash(gh run:*),Bash(python:*),Bash(python3:*),Bash(pip:*),Bash(pytest:*),Bash(node:*),Bash(npm:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(find:*),Bash(grep:*),Bash(rg:*),Bash(diff:*),Bash(jq:*),Bash(sed:*),Bash(awk:*),Bash(sort:*),Bash(uniq:*),Bash(mkdir:*),Bash(cp:*),Bash(mv:*)"
 
       # Forsøk 2 og 3 kjører BARE hvis forrige forsøk døde (turgrense, feil).
       # De starter fra grenen slik den står, altså med alt forrige forsøk rakk
@@ -398,7 +398,7 @@ jobs:
           claude_args: |
             --model claude-opus-5
             --max-turns 300
-            --allowedTools "Read,Grep,Glob,Edit,Write,Bash(git:*),Bash(gh pr:*),Bash(gh api:*),Bash(gh run:*),Bash(python:*),Bash(python3:*),Bash(pip:*),Bash(pytest:*),Bash(node:*),Bash(npm:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(find:*),Bash(grep:*),Bash(rg:*),Bash(diff:*),Bash(jq:*),Bash(sed:*),Bash(awk:*),Bash(sort:*),Bash(uniq:*),Bash(mkdir:*),Bash(cp:*),Bash(mv:*)"
+            --allowedTools "Read,Grep,Glob,Edit,Write,Bash(git:*),Bash(gh pr:*),Bash(gh api:*),Bash(gh issue create:*),Bash(gh issue comment:*),Bash(gh run:*),Bash(python:*),Bash(python3:*),Bash(pip:*),Bash(pytest:*),Bash(node:*),Bash(npm:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(find:*),Bash(grep:*),Bash(rg:*),Bash(diff:*),Bash(jq:*),Bash(sed:*),Bash(awk:*),Bash(sort:*),Bash(uniq:*),Bash(mkdir:*),Bash(cp:*),Bash(mv:*)"
 
       - id: runde3
         if: steps.runde2.outcome == 'failure'
@@ -476,7 +476,7 @@ jobs:
           claude_args: |
             --model claude-opus-5
             --max-turns 300
-            --allowedTools "Read,Grep,Glob,Edit,Write,Bash(git:*),Bash(gh pr:*),Bash(gh api:*),Bash(gh run:*),Bash(python:*),Bash(python3:*),Bash(pip:*),Bash(pytest:*),Bash(node:*),Bash(npm:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(find:*),Bash(grep:*),Bash(rg:*),Bash(diff:*),Bash(jq:*),Bash(sed:*),Bash(awk:*),Bash(sort:*),Bash(uniq:*),Bash(mkdir:*),Bash(cp:*),Bash(mv:*)"
+            --allowedTools "Read,Grep,Glob,Edit,Write,Bash(git:*),Bash(gh pr:*),Bash(gh api:*),Bash(gh issue create:*),Bash(gh issue comment:*),Bash(gh run:*),Bash(python:*),Bash(python3:*),Bash(pip:*),Bash(pytest:*),Bash(node:*),Bash(npm:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(find:*),Bash(grep:*),Bash(rg:*),Bash(diff:*),Bash(jq:*),Bash(sed:*),Bash(awk:*),Bash(sort:*),Bash(uniq:*),Bash(mkdir:*),Bash(cp:*),Bash(mv:*)"
 
       # Siste utvei: alle tre forsøk døde. Da skal PR-en ikke være stille.
       # Kommentaren postes med GITHUB_TOKEN og trigger derfor ingen ny
@@ -564,7 +564,7 @@ jobs:
           claude_args: |
             --model claude-opus-5
             --max-turns 300
-            --allowedTools "Read,Grep,Glob,Edit,Write,Bash(git:*),Bash(gh pr view:*),Bash(gh pr checkout:*),Bash(gh pr comment:*),Bash(gh pr checks:*),Bash(gh pr diff:*),Bash(gh api:*),Bash(gh run:*),Bash(python:*),Bash(python3:*),Bash(pip:*),Bash(pytest:*),Bash(node:*),Bash(npm:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(find:*),Bash(grep:*),Bash(rg:*),Bash(diff:*),Bash(jq:*),Bash(sed:*),Bash(awk:*),Bash(sort:*),Bash(uniq:*),Bash(mkdir:*),Bash(cp:*),Bash(mv:*)"
+            --allowedTools "Read,Grep,Glob,Edit,Write,Bash(git:*),Bash(gh pr view:*),Bash(gh pr checkout:*),Bash(gh pr comment:*),Bash(gh pr checks:*),Bash(gh pr diff:*),Bash(gh api:*),Bash(gh issue create:*),Bash(gh issue comment:*),Bash(gh run:*),Bash(python:*),Bash(python3:*),Bash(pip:*),Bash(pytest:*),Bash(node:*),Bash(npm:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(find:*),Bash(grep:*),Bash(rg:*),Bash(diff:*),Bash(jq:*),Bash(sed:*),Bash(awk:*),Bash(sort:*),Bash(uniq:*),Bash(mkdir:*),Bash(cp:*),Bash(mv:*)"
 
   pr-fra-pass:
     name: PR-nummer fra passet
@@ -745,7 +745,10 @@ jobs:
                overskriften `## Cursor pre-Codex`). Er du på fjerde eller
                senere, og det gjenstår P2/P3 du ikke har fikset:
 
-               a. opprett ETT oppfølgingsissue med `gh issue create` som
+               a. opprett ETT oppfølgingsissue med `gh issue create` — som
+                  nå står i `--allowedTools` (Codex P1, runde 3: uten den
+                  ble regelen nektet av verktøyporten, og taket sto like
+                  fast som før) — og som
                   gjengir hvert gjenstående funn ORDRETT, med fil og
                   linje, og peker på denne PR-en;
                b. post ÉN kommentar i PR-tråden som navngir issuet
@@ -794,4 +797,4 @@ jobs:
           claude_args: |
             --model claude-opus-5
             --max-turns 300
-            --allowedTools "Read,Grep,Glob,Edit,Write,Bash(git:*),Bash(gh pr view:*),Bash(gh pr checkout:*),Bash(gh pr comment:*),Bash(gh pr checks:*),Bash(gh pr diff:*),Bash(gh api:*),Bash(gh run:*),Bash(python:*),Bash(python3:*),Bash(pip:*),Bash(pytest:*),Bash(node:*),Bash(npm:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(find:*),Bash(grep:*),Bash(rg:*),Bash(diff:*),Bash(jq:*),Bash(sed:*),Bash(awk:*),Bash(sort:*),Bash(uniq:*),Bash(mkdir:*),Bash(cp:*),Bash(mv:*)"
+            --allowedTools "Read,Grep,Glob,Edit,Write,Bash(git:*),Bash(gh pr view:*),Bash(gh pr checkout:*),Bash(gh pr comment:*),Bash(gh pr checks:*),Bash(gh pr diff:*),Bash(gh api:*),Bash(gh issue create:*),Bash(gh issue comment:*),Bash(gh run:*),Bash(python:*),Bash(python3:*),Bash(pip:*),Bash(pytest:*),Bash(node:*),Bash(npm:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(find:*),Bash(grep:*),Bash(rg:*),Bash(diff:*),Bash(jq:*),Bash(sed:*),Bash(awk:*),Bash(sort:*),Bash(uniq:*),Bash(mkdir:*),Bash(cp:*),Bash(mv:*)"

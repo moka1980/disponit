@@ -353,15 +353,32 @@ inneholder riktignok de samme endringene, men ikke den commiten, så
 retargeting til `main` gjør den `BEHIND` likevel — og vi er tilbake der
 vi startet, bare med mer arbeid.
 
-Det som faktisk virker er å merge TOPPEN av stabelen med `--rebase`:
-grenen inneholder alle commitene i stabelen, og `--rebase` spiller dem
-inn på `main` enkeltvis og lineært. Én operasjon, én CI-kjøring, og
-historikken beholder hver PR sin egen commit — i motsetning til en
-squash av hele stabelen, som hadde slått fem leveranser sammen til én
-melding. PR-ene under lukkes med en peker til den som bar dem inn.
+Det som virker er to steg, i denne rekkefølgen:
 
-`--squash` er standarden ellers og skal forbli det for enkeltstående
-PR-er. En stabel er unntaket, og det er `--rebase` som gjør den mulig.
+```
+gh pr edit  <topp> --base main
+gh pr merge <topp> --rebase
+```
+
+Retargetingen er ikke valgfri: toppens base er grenen UNDER den, og
+`--rebase` spiller commitene inn på PR-ens base — uten det første steget
+merger man toppen inn i mellomgrenen og `main` står stille. Etter
+retargetingen inneholder toppgrenen alle commitene i stabelen, og
+`--rebase` legger dem på `main` enkeltvis og lineært. Én operasjon, én
+CI-kjøring, og historikken beholder hver PR sin egen commit — i
+motsetning til en squash av hele stabelen, som hadde slått fem
+leveranser sammen til én melding. PR-ene under lukkes med en peker til
+den som bar dem inn.
+
+**Stabelen merges for hånd.** `claude.yml` har bare én mergevei, og den
+er `gh pr merge --squash` for ÉN PR — den kan ikke retargete og den kan
+ikke rebase. Å lære den stabler ville vært å gi den skrivende agenten
+myndighet over flere PR-er samtidig, og det er en annen beslutning enn
+denne paragrafen tar. Stabelen er derfor en operatørhandling: eier eller
+en økt som er bedt om det, med de to kommandoene over.
+
+`--squash` forblir standarden for enkeltstående PR-er, og det er den
+workflowen skal fortsette å bruke.
 
 Prisen er koblingen: endres en PR nede i stabelen, må alle over den
 rebases. Stable derfor bare PR-er som er FERDIGE — porten passert,

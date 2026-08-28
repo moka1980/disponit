@@ -593,6 +593,30 @@ def test_mergen_pinner_baseline_atomisk():
     assert "--match-head-commit" in RUTINER
 
 
+def test_parkeringen_har_verktoyet_den_krever():
+    """Codex P1 (#242, runde 3): regelen ble nektet av verktøyporten.
+
+    `cursor-pass-fulgt` skal opprette parkeringsissuet, men
+    `--allowedTools` listet `Bash(gh pr:*)` og `Bash(gh api:*)` — ikke
+    `gh issue create`, som er en egen kommando. Agenten ville blitt
+    nektet nøyaktig i det steget taket avhenger av, og sløyfa sto like
+    fast som før regelen fantes.
+
+    Kravet gjelder HVER skrivende jobb: `RUNDETAK` står i alle tre
+    forsøkene i `fiks-og-merge` også.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `Bash(gh issue create:*)` fra én
+    av listene.
+    """
+    lister = [l for l in YML.splitlines() if "--allowedTools" in l]
+    assert lister, "fant ingen --allowedTools-linjer"
+    manglende = [i for i, l in enumerate(lister)
+                 if "Bash(gh issue create:*)" not in l]
+    assert not manglende, (
+        f"{len(manglende)} av {len(lister)} verktøylister mangler"
+        " `gh issue create` — parkeringen kan ikke utføres derfra")
+
+
 def test_mention_og_broen_mangler_merge_kapasitet():
     """Cursor P1-2 runde 17 + P2-3 runde 19 (#198): `gh pr merge` er
     fjernet fra ACL-en (eksplisitte pr-underkommandoer). PRESISJON:

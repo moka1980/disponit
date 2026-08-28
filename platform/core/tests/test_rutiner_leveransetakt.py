@@ -151,6 +151,29 @@ def test_samlet_merge_er_en_stabel_ikke_et_tidsvindu():
         " `--squash` er stabelen ingen kaskade")
     assert "ovenfra" in p, \
         "stabelen merges nedenfra og opp — da rives ancestry ved hver squash"
+    # RETARGETINGEN (Codex P2, runde 3). `--rebase` spiller commitene inn
+    # på PR-ens BASE, og toppens base er grenen under den — uten
+    # `gh pr edit --base main` merges toppen inn i mellomgrenen og `main`
+    # står stille. Uten dette leddet beskriver paragrafen en operasjon som
+    # ikke gjør det den sier.
+    assert "gh pr edit" in p and "--base main" in p, (
+        "toppen retargetes aldri til `main` — `--rebase` ville da bare"
+        " merget den inn i grenen under")
+    # Rekkefølgen måles i KOMMANDOBLOKKEN, ikke i prosaen: paragrafen
+    # nevner `gh pr merge --squash` LENGER OPPE, i forklaringen av
+    # hvorfor squash river stabelen, og en naiv `index` leste den.
+    blokk = p[p.index("```"):p.index("```", p.index("```") + 3)]
+    assert "gh pr edit" in blokk and "gh pr merge" in blokk, \
+        "kommandoene står ikke samlet i én blokk leseren kan følge"
+    assert blokk.index("gh pr edit") < blokk.index("gh pr merge"), \
+        "retargetingen står etter mergen"
+    assert "--rebase" in blokk, "kommandoblokken merger ikke med --rebase"
+    # ... og hvem som gjør det. `claude.yml` har bare `--squash` for ÉN
+    # PR, så en paragraf som lot leseren tro at sløyfa stabler ville
+    # beskrevet en vei som ikke finnes.
+    assert "for hånd" in p or "operatørhandling" in p, (
+        "paragrafen sier ikke at stabelen merges manuelt — workflowen har"
+        " ingen retarget- eller rebase-vei")
     # Prisen må stå der taket står. En stabel av PR-er som fortsatt tar
     # runder er dyrere enn ingen stabel: hver endring nede rebaser alt over.
     assert "må alle over den" in p and "rebases" in p
