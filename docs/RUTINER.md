@@ -265,3 +265,56 @@ aldri et vindu der dokumentet lover en port maskinen mangler
    dag/natt-skiller, markører og catch-up-pass utgår. (Beslutning under
    eiers delegasjon 25/8 — å speile en regel bygget for en død premiss
    hadde vært formfiksing, #193-rundenes defektklasse.)
+
+## 12. Leveransetakt (eiervedtak 28/8)
+
+Målet er **én modul ferdig per 1–2 dager**. Det er ikke en ambisjon, det
+er en planforutsetning: katalogen har 57 moduler, og med den takten
+rundene hadde før dette vedtaket, er den planen ikke gjennomførbar.
+
+Vedtaket kom av en måling, ikke en følelse. På #230 sto det sju
+Cursor-runder, på #229 fem, på #237 fire. CI er 10–11 minutter og
+utløses av hver push, så rundene — ikke byggingen — er den dominerende
+kostnaden. Samtidig setter hver merge til `main` alle andre åpne PR-er
+`BEHIND`, så seks åpne PR-er gjør én merge til seks nye CI-kjøringer.
+
+### 12.1 Rundetak: TRE
+
+Etter tredje review-runde på samme PR går gjenstående funn til ETT
+oppfølgingsissue, og PR-en går videre til Codex.
+
+**P1 er aldri utsettbart.** Taket gjelder P2 og P3 — altså funn som gjør
+arbeidet bedre, ikke funn som gjør det riktig. Et levende P1 stopper
+PR-en uansett rundetall, og et rundetak som slapp P1 forbi ville vært en
+port som åpner en dør.
+
+Runde 4–7 på #230 fant prosaplasseringer og manglende gjentakelser, ikke
+defekter. Det er ekte funn, men de er ikke verdt en times CI hver.
+
+### 12.2 Produktaksept før mekanismeaksept
+
+En modul er ferdig når **flaten virker**, ikke når invariantene er
+bevist.
+
+Rekkefølgen har vært motsatt, og #153-arcen viser hva det koster:
+sytten åpne issues om porter, invarianter og kappløp — og ingen av dem
+sa at rekrutteringsflaten viste to motstridende rangeringstabeller med
+hvert sitt ID-format. Vi beviste at maskineriet var riktig uten at noen
+eide at produktet var brukbart.
+
+Hver modul skal derfor ha ETT produktakseptpunkt som beskriver hva
+brukeren skal kunne gjøre, og det punktet flippes av en menneskelig
+gjennomgang av flaten — ikke av et artefakt.
+
+### 12.3 Samlet merge
+
+Klare PR-er merges i ETT vindu, ikke én om gangen. Grunnen er mekanisk:
+`main` som beveger seg setter alle andre `BEHIND`, og med strict status
+checks koster hver av dem en ny CI-runde. Én kaskade i stedet for seks.
+
+### 12.4 Stale-sveip
+
+Et issue som er levert, men ikke lukket, er backlog som ser ut som
+arbeid. Seks slike ble funnet 28/8 (#161, #165, #169, #172, #177, #188)
+— rundt en femtedel av det som ble undersøkt. Før en arc planlegges,
+måles den mot koden.
