@@ -805,10 +805,16 @@ html[data-visning="landing"] .skall-hoved {
 
 @media (max-width: 860px) {
   /* Toppen slutter å klebe her, og da skal offsetet bort med den: ellers
-     stopper hoppet en skjermhøyde for tidlig og etterlater et tomt felt. */
+     stopper hoppet en skjermhøyde for tidlig og etterlater et tomt felt.
+     Tjeneste-siden må navngis eksplisitt: dens to-rads-offset står på en
+     selektor med ett attributt mer, og media-blokker gir ikke spesifisitet.
+     Uten linjene under vant tjeneste-regelen også her, og hoppet landet en
+     hel søkerad for lavt på nettopp den siden reset-en gjelder for (Codex P2). */
   .site-topp { position: static; }
-  html[data-visning="landing"] { scroll-padding-top: 0; }
-  html[data-visning="landing"] #hovedinnhold { scroll-margin-top: 0; }
+  html[data-visning="landing"],
+  html[data-visning="landing"][data-offentlig-side="tjenester"] { scroll-padding-top: 0; }
+  html[data-visning="landing"] #hovedinnhold,
+  html[data-visning="landing"][data-offentlig-side="tjenester"] #hovedinnhold { scroll-margin-top: 0; }
   .site-topp-rad { align-items: flex-start; flex-wrap: wrap; padding-top: var(--sp-3); }
   .site-hovednav { order: 3; width: 100%; }
   .site-hovednav ul { flex-wrap: wrap; width: auto; }
