@@ -81,11 +81,33 @@ ARKIV_DELVIS="$ARKIV.delvis"
 #
 # Mellomfila er UKRYPTERT og lever bare inne i kjøringen: root-eid 600 i en
 # 700-katalog, ryddet av trapen, av feiesvingen under, og eksplisitt så snart
-# begge forbrukerne er ferdige. Endelsen matcher hverken backup-globben eller
-# retention-globben, så den kan verken forveksles med en backup eller
-# forsvinne som en. Katalogens invariant gjelder HISTORISKE backuper — den
-# står, for dette er ikke en av dem.
-RAA="$KATALOG/disponit-$STEMPEL.dump.raa"
+# begge forbrukerne er ferdige.
+#
+# DEN LIGGER I MINNE, IKKE PÅ DISK (#229, eiers dom 28/8). Codex (P1) og
+# Cursor (P2) sto mot hverandre på nettopp denne fila: Cursor krevde ÉN
+# dump, fordi to `pg_dump` betyr at porten måler et annet snapshot enn det
+# som lagres; Codex krevde at klartekst aldri persisteres, fordi katalogens
+# trusselmodell er at diskaksess gir null — privatnøkkelen ligger bevisst
+# ikke på verten, og da er gjenopprettbare klartekstblokker i /var/backups
+# inkonsekvent.
+#
+# Motsetningen var ekte bare så lenge «én snapshot» ble antatt å kreve «fil
+# på disk». tmpfs oppfyller begge: samme byte-sekvens til kryptering,
+# `pg_restore` og `lager_sti`-porten, og klarteksten når aldri varig
+# lagring. Målt på verten: /dev/shm har 2,0 GB fri mot en dump på 3,0 MB.
+#
+# `mktemp -d` og ikke et konstruert søskennavn: katalogen er reservert av
+# kjernen, og 0700 settes FØR fila finnes — et navn man gjetter seg til kan
+# være forutsigbart for andre på verten (Codex r3878291010).
+# En kjøring drept før traps rakk å kjøre (SIGKILL, OOM) etterlater
+# katalogen sin på tmpfs. Den overlever ikke en omstart, men mellom to
+# omstarter ville de hopet seg opp — og de tar av det samme minnet neste
+# kjøring trenger. Feies FØR vår egen lages, ellers feier vi oss selv;
+# `flock` over garanterer at ingen annen kjøring eier en akkurat nå.
+rm -rf /dev/shm/disponit-backup.*
+RAA_KAT=$(mktemp -d -p /dev/shm disponit-backup.XXXXXXXX)
+chmod 700 "$RAA_KAT"
+RAA="$RAA_KAT/disponit-$STEMPEL.dump.raa"
 # Ett felles trap fra og med HER, ikke etter dumpen: det er nettopp
 # intervallet før den gamle `trap`-linjen som er avbruddsvinduet. `VERIF`
 # er tom til engangsbasen finnes, så oppryddingen dekker begge fasene uten
@@ -97,11 +119,22 @@ VERIF=""
 # uten arkiv er nøyaktig #191-hullet, bare flyttet inn i backupkatalogen.
 # `PAR_KLAR` er tomt til BEGGE navnene er satt, og oppryddingen tar da også
 # de endelige navnene: enten finnes hele paret, eller ingenting.
+#
+# MEN FLAGGET ER IKKE SANNHETEN — DISKEN ER (Cursor P2 på 2d3886b). `PAR_KLAR=1`
+# settes ETTER den siste `mv`, og lander SIGTERM i det mikrovinduet, ville
+# trapen slettet et komplett, verifisert par. Da hadde vernet mot en halv
+# enhet begynt å ødelegge hele. Oppryddingen spør derfor filsystemet i
+# stedet: finnes BEGGE de endelige navnene, er paret ferdig uansett hva
+# flagget rakk å bli. Finnes bare den ene, er det nettopp halvparten som
+# skal bort.
 PAR_KLAR=""
 LISTE=$(mktemp)
 opprydd() {
-  rm -f "$DELVIS" "$ARKIV_DELVIS" "$RAA" "$LISTE" "$LISTE.sett" "$LISTE.krav"
-  [ -n "$PAR_KLAR" ] || rm -f "$FIL" "$ARKIV"
+  rm -f "$DELVIS" "$ARKIV_DELVIS" "$LISTE" "$LISTE.sett" "$LISTE.krav"
+  [ -z "$RAA_KAT" ] || rm -rf "$RAA_KAT"
+  if [ -z "$PAR_KLAR" ] && ! { [ -f "$FIL" ] && [ -f "$ARKIV" ]; }; then
+    rm -f "$FIL" "$ARKIV"
+  fi
   [ -z "$VERIF" ] || sudo -u postgres dropdb --if-exists "$VERIF"
 }
 trap opprydd EXIT
@@ -110,8 +143,7 @@ trap opprydd EXIT
 # ikke, og katalogen fylles av dumper. `flock` over garanterer at ingen
 # annen kjøring eier en `.delvis` akkurat nå.
 rm -f "$KATALOG"/disponit-*.dump.age.delvis \
-      "$KATALOG"/disponit-*.inndata.tar.age.delvis \
-      "$KATALOG"/disponit-*.dump.raa
+      "$KATALOG"/disponit-*.inndata.tar.age.delvis
 
 # DISKPORTEN FØR DUMPEN, ikke etter. Arkivet er en kopi av hele lageret, og
 # lageret vokser med 64 MiB per bunt mens backupkatalogen holder 30 dagers
@@ -134,15 +166,19 @@ LAGER_KIB=$(du -sk "$LAGER" | cut -f1)
 DUMP_KIB=$(sudo -u postgres psql -Atd disponit -c \
   "SELECT (pg_database_size('disponit') + 1023) / 1024")
 LEDIG_KIB=$(df -k --output=avail "$KATALOG" | tail -1)
-# DUMPEN TELLES TO GANGER, fordi den ligger på disken to ganger samtidig:
-# mellomfila `$RAA` og den krypterte `$DELVIS` sameksisterer gjennom hele
-# `age`-passeringen. Å telle den én gang her ville gjeninnført forrige rundes
-# funn — porten som ikke måler sitt eget fotavtrykk — bare med en halvdel
-# skriptet selv la til.
-KREVES_KIB=$((LAGER_KIB + 2 * DUMP_KIB + MARGIN_KIB))
+# DUMPEN TELLES ÉN GANG. Den lå tidligere på disken to ganger samtidig —
+# mellomfila og den krypterte — og porten talte begge. Etter eiers dom 28/8
+# bor mellomfila på tmpfs, så den koster null i `$KATALOG`. Codex (P2,
+# r3878380033) og skriptets egen prosa sto mot hverandre om nettopp dette
+# leddet; dommen fjernet striden i stedet for å velge side i den.
+#
+# Minnet måles ikke her: /dev/shm er 2,0 GB mot en dump på 3,0 MB, og går
+# den likevel full, feiler `pg_dump` høyt på ENOSPC uten å ha rørt hverken
+# katalogen eller basen. Det er en billigere feil enn den porten finnes for.
+KREVES_KIB=$((LAGER_KIB + DUMP_KIB + MARGIN_KIB))
 [ "$LEDIG_KIB" -ge "$KREVES_KIB" ] || {
   echo "AVBRUTT: $LEDIG_KIB KiB ledig i $KATALOG, trenger $KREVES_KIB KiB" \
-       "(lager $LAGER_KIB + 2 × dump $DUMP_KIB + margin $MARGIN_KIB)" >&2
+       "(lager $LAGER_KIB + dump $DUMP_KIB + margin $MARGIN_KIB)" >&2
   exit 1
 }
 
@@ -262,6 +298,13 @@ BUNTER=$(wc -l < "$LISTE.krav")
 # en gjenopprettingsenhet. `PAR_KLAR` settes SIST, etter begge navnene, så
 # trapen over rydder begge halvdelene så lenge finaliseringen ikke kom helt
 # i mål.
+# `sync` FØR navnene settes (Codex r3878291028). `mv` innenfor samme
+# filsystem er en katalogoperasjon: den flytter navnet, ikke bytene. Faller
+# strømmen etter en `mv` men før sidene er skrevet ut, kan katalogposten
+# være på disk mens innholdet ikke er — en backup med endelig navn og et
+# hull i seg, altså nøyaktig den «ser ut som dagens backup»-løgnen
+# arbeidsnavnene finnes for å hindre.
+sync
 mv "$ARKIV_DELVIS" "$ARKIV"
 mv "$DELVIS" "$FIL"
 PAR_KLAR=1
@@ -273,14 +316,29 @@ PAR_KLAR=1
 # arkivet hver for seg, står man igjen med en dump hvis bunter ingen arkiv
 # lenger har — altså funnet, gjenoppstått etter 30 dager i stedet for med én
 # gang. Stempelet binder dem: paret dør som det ble født.
+# `find`-STATUSEN PROPAGERER IKKE ut av `< <(...)` (Codex r3878291023):
+# prosess-substitusjonen er en egen prosess, og skallet ser aldri exitkoden
+# dens. Feiler `find` — katalogen borte, I/O-feil — leser løkka null linjer,
+# `SLETTET` blir 0, og kjøringen melder «slettet 0 utløpte par» som om
+# retention hadde gjort jobben sin. Utløpte backuper ville da hopet seg opp
+# i stillhet, med en grønn logglinje over seg.
+#
+# Derfor materialiseres listen FØRST, med statusen synlig, og løkka leser
+# den.
+UTLOPTE=$(find "$KATALOG" -name 'disponit-*.dump.age' -mtime +"$DAGER") || {
+  echo "AVBRUTT: retention-søket feilet — utløpte backuper ville hopet" \
+       "seg opp bak en grønn logglinje" >&2
+  exit 1
+}
 SLETTET=0
 while IFS= read -r gammel; do
+  [ -n "$gammel" ] || continue
   STEMPEL_GAMMEL=$(basename "$gammel"); STEMPEL_GAMMEL=${STEMPEL_GAMMEL#disponit-}
   STEMPEL_GAMMEL=${STEMPEL_GAMMEL%.dump.age}
   rm -f "$KATALOG/disponit-$STEMPEL_GAMMEL.dump.age" \
         "$KATALOG/disponit-$STEMPEL_GAMMEL.inndata.tar.age"
   SLETTET=$((SLETTET + 1))
-done < <(find "$KATALOG" -name 'disponit-*.dump.age' -mtime +"$DAGER")
+done <<< "$UTLOPTE"
 
 echo "backup ok: $FIL (${STORRELSE} B), verifisert mot $VERIF" \
      "(${TABELLER} tabeller); arkiv: $ARKIV ($(stat -c%s "$ARKIV") B," \

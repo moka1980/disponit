@@ -1545,9 +1545,18 @@ def test_backupen_maler_lager_sti_mot_samme_dump_som_lagres():
     # Klarteksten er ikke en backup og skal ikke overleve kjøringen: ryddet
     # av trapen, av feiesvingen for drepte kjøringer, og eksplisitt så snart
     # begge forbrukerne er ferdige — før den lange `tar`-passeringen.
-    assert '"$RAA"' in skript.split("opprydd()", 1)[1].split("\n")[1], \
-        "trapen rydder ikke mellomfila — en ukryptert dump blir liggende"
-    assert "disponit-*.dump.raa" in skript, \
+    # Etter eiers dom 28/8 bor mellomfila på tmpfs, i sin egen katalog:
+    # trapen rydder KATALOGEN, ikke en fil i backupkatalogen. Kravet er
+    # uendret — ingen ukryptert dump overlever kjøringen — men stedet den
+    # kunne overlevd er et annet.
+    trapkropp = skript.split("opprydd()", 1)[1].split("}", 1)[0]
+    assert 'rm -rf "$RAA_KAT"' in trapkropp, \
+        "trapen rydder ikke tmpfs-katalogen — en ukryptert dump blir" \
+        " liggende i minnet til neste omstart"
+    # Feiesvingen fulgte mellomfila til tmpfs (eiers dom 28/8). En drept
+    # kjøring etterlater nå en katalog i /dev/shm, ikke en fil i
+    # backupkatalogen — kravet er det samme, stedet er nytt.
+    assert "rm -rf /dev/shm/disponit-backup.*" in skript, \
         "en mellomfil fra en drept kjøring ryddes aldri opp"
     i_rm = indeks('rm -f "$RAA"')
     i_tar = indeks("tar --create")
@@ -1605,9 +1614,14 @@ def test_backupen_par_finaliseres_atomisk_eller_ryddes():
     assert 0 <= i_init < i_trap, \
         "PAR_KLAR er ikke tom FØR trapen installeres — en tidlig exit ville " \
         "lest en variabel som ikke finnes, og med `set -u` dør trapen selv"
-    assert '[ -n "$PAR_KLAR" ] || rm -f "$FIL" "$ARKIV"' in skript, \
-        "opprydd rører ikke de ENDELIGE navnene — et avbrudd mellom de to " \
-        "`mv`-ene etterlater et halvt par i backupkatalogen"
+    # Cursor P2 på 2d3886b: flagget alene lot trapen slette et KOMPLETT
+    # par i mikrovinduet mellom siste `mv` og `PAR_KLAR=1`. Kravet står —
+    # et halvt par skal bort — men avgjørelsen leses nå av disken, som er
+    # sannheten flagget bare forsøkte å gjengi.
+    assert ('if [ -z "$PAR_KLAR" ] && ! { [ -f "$FIL" ] && [ -f "$ARKIV" ]; }'
+            in skript), \
+        "opprydd avgjør par-tilstanden på flagget alene — da står enten " \
+        "et halvt par igjen, eller et komplett blir slettet i vinduet"
     assert 0 <= i_mv_arkiv < i_mv_dump, \
         "dumpen finaliseres først — et SIGKILL i vinduet etterlater da en " \
         "dump uten arkiv, som ser ut som dagens backup og ikke er det"
@@ -1680,8 +1694,108 @@ def test_backupen_stopper_for_disken_gar_full():
     # krypterte — så den telles to ganger. Ett dumpledd her ville vært den
     # samme underestimeringen som funnet over, bare med halvdelen skriptet
     # selv la til da de to `pg_dump`-passeringene ble slått sammen til én.
-    assert "KREVES_KIB=$((LAGER_KIB + 2 * DUMP_KIB + MARGIN_KIB))" in skript, \
-        "kravet summerer ikke lager + begge dumpkopiene + margin"
+    # ÉN dumpkopi etter eiers dom 28/8: mellomfila ligger på tmpfs og
+    # koster null i backupkatalogen. Codex (P2) ville ha
+    # `max(2×dump, dump+lager)`, skriptets egen prosa ville ha `2×dump` —
+    # dommen fjernet striden i stedet for å velge side, og leddene ble
+    # færre, ikke flere.
+    assert "KREVES_KIB=$((LAGER_KIB + DUMP_KIB + MARGIN_KIB))" in skript, \
+        "kravet summerer ikke lager + dump + margin"
+    assert "2 * DUMP_KIB" not in skript, \
+        "porten teller fortsatt to dumpkopier i katalogen — mellomfila" \
+        " ligger på tmpfs og er ikke der"
+
+
+def test_klarteksten_ligger_i_minne_ikke_i_backupkatalogen():
+    """#229, eiers dom 28/8: Codex og Cursor sto mot hverandre her.
+
+    Cursor krevde ÉN `pg_dump` — to kjøringer betyr at porten måler et
+    annet snapshot enn det som lagres. Codex krevde at klartekst aldri
+    persisteres: katalogens trusselmodell er at diskaksess gir null, og
+    privatnøkkelen ligger bevisst ikke på verten, så gjenopprettbare
+    klartekstblokker i backupkatalogen er inkonsekvent.
+
+    Motsetningen var ekte bare så lenge «én snapshot» ble antatt å kreve
+    «fil på disk». tmpfs oppfyller begge kravene samtidig, og det er
+    derfor dommen ikke er et kompromiss mellom dem.
+
+    `mktemp -d` og ikke et konstruert søskennavn: katalogen reserveres av
+    kjernen, og 0700 settes før fila finnes.
+
+    MUTASJONEN SOM DREPER DENNE: legg `$RAA` tilbake i `$KATALOG` (Codex'
+    P1 gjenoppstår), eller bytt `mktemp -d` mot et gjettbart navn.
+    """
+    skript = (ROT / "deploy/staging/backup-db.sh").read_text(encoding="utf-8")
+    assert "RAA_KAT=$(mktemp -d -p /dev/shm" in skript, \
+        "mellomfila ligger ikke på tmpfs — klarteksten persisteres"
+    assert 'chmod 700 "$RAA_KAT"' in skript, \
+        "katalogen for klarteksten er ikke 0700"
+    assert '$KATALOG/disponit-$STEMPEL.dump.raa' not in skript, \
+        "klarteksten skrives til backupkatalogen igjen"
+    assert skript.count("sudo -u postgres pg_dump") == 1, \
+        "to dumper igjen — porten måler da et annet snapshot enn det " \
+        "som lagres (Cursor P2 på 12c7476)"
+    assert 'rm -rf /dev/shm/disponit-backup.*' in skript, \
+        "en SIGKILL-et kjøring etterlater klartekst på tmpfs for alltid"
+
+
+def test_opprydding_sletter_aldri_et_komplett_par():
+    """Cursor P2 på `2d3886b`: vernet begynte å ødelegge det det vernet.
+
+    `PAR_KLAR=1` settes ETTER den siste `mv`. Lander SIGTERM i det
+    mikrovinduet, ville trapen slettet et komplett, verifisert par —
+    altså miste natten helt, for å hindre en halv enhet.
+
+    Flagget er derfor ikke sannheten; disken er. Finnes BEGGE de
+    endelige navnene, er paret ferdig uansett hva flagget rakk å bli.
+
+    MUTASJONEN SOM DREPER DENNE: tilbake til `[ -n "$PAR_KLAR" ] ||
+    rm -f "$FIL" "$ARKIV"` — da forsvinner en ferdig backup i vinduet.
+    """
+    skript = (ROT / "deploy/staging/backup-db.sh").read_text(encoding="utf-8")
+    assert ('if [ -z "$PAR_KLAR" ] && ! { [ -f "$FIL" ] && [ -f "$ARKIV" ]; }'
+            in skript), \
+        "oppryddingen spør bare flagget — et komplett par kan slettes i " \
+        "vinduet mellom siste mv og PAR_KLAR=1"
+
+
+def test_retention_og_holdbarhet_feiler_hoyt():
+    """To stille feilveier, begge fra Codex' inline-runde på `2d3886b`.
+
+    `find`-statusen propagerer ikke ut av `< <(...)`: prosess-
+    substitusjonen er en egen prosess. Feiler søket, leser løkka null
+    linjer, `SLETTET` blir 0, og kjøringen melder «slettet 0 utløpte
+    par» som om retention hadde gjort jobben — mens utløpte backuper
+    hoper seg opp bak en grønn logglinje.
+
+    Og `mv` innenfor ett filsystem flytter navnet, ikke bytene: uten en
+    `sync` foran kan katalogposten være på disk mens innholdet ikke er.
+    Det er en backup med endelig navn og et hull i seg — nøyaktig den
+    løgnen arbeidsnavnene finnes for å hindre.
+
+    MUTASJONEN SOM DREPER DENNE: tilbake til `done < <(find ...)`, eller
+    fjern `sync` foran den første `mv`.
+    """
+    skript = (ROT / "deploy/staging/backup-db.sh").read_text(encoding="utf-8")
+    linjer = [ln.strip() for ln in skript.splitlines()
+              if ln.strip() and not ln.lstrip().startswith("#")]
+    assert "done < <(find" not in skript, \
+        "retention leser fra en prosess-substitusjon — find-statusen " \
+        "forsvinner, og et feilet søk ser ut som «ingenting å slette»"
+    assert 'UTLOPTE=$(find "$KATALOG"' in skript, \
+        "retention-søket materialiseres ikke med synlig status"
+
+    def indeks(bit):
+        for i, ln in enumerate(linjer):
+            if bit in ln:
+                return i
+        return -1
+
+    i_sync = indeks("sync")
+    i_mv = indeks('mv "$ARKIV_DELVIS" "$ARKIV"')
+    assert 0 <= i_sync < i_mv, \
+        "ingen sync før navnene settes — en backup kan få endelig navn " \
+        "med et hull i seg"
 
 
 def test_inndatalageret_er_api_unitens_egen_state_katalog():
