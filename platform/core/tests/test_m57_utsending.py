@@ -2698,6 +2698,30 @@ def test_en_hendelse_i_EN_ANNEN_tenant_finnes_ikke_her(migrator):
 
 
 @pg
+def test_skriv_revisjonshendelse_avviser_nabo_tenant(migrator):
+    """Samme port på SKRIVEVEIEN (Cursor P2, runde 1 på #247).
+
+    Leseveien over var målt mot feil `p_tenant`, skriveveien ikke —
+    `krev_tenantkontekst` er felles (038-formen), men «felles kode» er
+    ikke et bevis: den ene veien kunne mistet PERFORM-linja uten at en
+    eneste test ble rød. Å SKRIVE naboens revisjonshendelse er dessuten
+    det farligste av de to: da kan man plante lappen som autoriserer
+    avskruing hos naboen.
+    """
+    rt = _rt()
+    try:
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.execute(
+                "SELECT skriv_revisjonshendelse(%s,"
+                " 'm57.blinding_avskrudd', %s, %s)",
+                (ANNEN_TENANT, "oss@her", "vi skriver i naboens bok"))
+    finally:
+        rt.rollback()
+        rt.close()
+
+
+@pg
 def test_revisjonshendelsen_er_udodelig(migrator):
     """Append-only, begge veier: rad OG statement.
 
