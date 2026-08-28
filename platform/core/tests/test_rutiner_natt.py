@@ -602,227 +602,169 @@ def test_dirty_grenen_loser_aldri_konflikten():
         assert "BRUKT OPP" in norm
 
 
-def test_211_inline_funn_leses_i_alle_tre_forsokene():
-    """Cursor P2-1/P2-4 på #230: #211-porten sto bare i forsøk 1.
+def _jobbenv() -> dict:
+    """`env`-blokken på fikserjobben — den ENE kilden til merge-reglene."""
+    import yaml
+    d = yaml.safe_load(YML)
+    return d["jobs"]["fiks-og-merge"]["env"]
 
-    Fortynningsklassen fra #198, gjentatt. Runde 1 fikk beskjeden om at
-    `review.body` kan være tom og at funnene ligger i
-    `pulls/<nr>/comments`; runde 2 hadde bare API-pekeren uten
-    KROPPEN-advarselen, og runde 3 hadde ingen av delene — samtidig som
-    runde 3 er den som går rett i merge-løypa. Timer runde 1 ut på et
-    review-utløst verdikt med inline-P1, kunne siste forsøk lese den
-    tomme kroppen som «ingen funn» og merge dem forbi.
 
-    Det er nøyaktig #211 igjen, ett hakk lenger inn: porten er åpnet,
-    men lesningen er ikke.
+def test_merge_reglene_har_ett_sted_a_sta():
+    """#231: fortynning er en klasse, ikke seks feil.
 
-    MUTASJONEN SOM DREPER DENNE: fjern KROPPEN-advarselen fra ett av de
-    tre forsøkene — det holder å ta den fra runde 3, den som merger.
+    Seks Cursor-runder på #230 fant seks ulike steder der en regel manglet
+    i én av de tre prompt-kopiene. Repoet hadde alt tre porter som fantes
+    utelukkende for å fange den klassen, og #230 måtte legge til fem til.
+    At porten mot fortynning vokser med hver regel, ER symptomet.
+
+    Denne porten erstatter alle fem, og den vokser ikke: den måler at hver
+    regel har NØYAKTIG ett sted å stå, og at hvert forsøk henter derfra.
+    Legges en fjerde regel til i morgen, er den dekket uten en ny port —
+    og det er forskjellen på å lukke en klasse og å lappe en instans.
+
+    MUTASJONEN SOM DREPER DENNE: lim en regel inn i ett av forsøkene igjen
+    (da finnes den to steder), eller fjern en `env`-referanse fra ett
+    forsøk (da mangler regelen der).
     """
+    env = _jobbenv()
+    for anker in ("VERDIKTPORT", "FUNNLESNING", "MERGEPORT"):
+        assert anker in env, f"{anker} er ikke definert på jobben"
+
+    # 1. Hver regel finnes ÉN gang i fila — nemlig i sitt anker.
+    for markor in ("BOT-REVIEW MERGER ALDRI", "LINJEDRAGET",
+                   "HVORDAN DU AVGJØR LUKKETHET", "KANALVAKT (#211)",
+                   "ALLE ULØSTE TRÅDER FØRST", "BARE BOTENS EGNE FUNN"):
+        assert YML.count(markor) == 1, (
+            f"«{markor}» står {YML.count(markor)} steder — regelen er"
+            " kopiert igjen, og kopiene kan si forskjellige ting")
+
+    # 2. Hvert forsøk HENTER alle tre — en regel som ikke refereres,
+    #    gjelder ikke i det forsøket uansett hvor pent den er skrevet.
     for i, forsok in enumerate(_fiksforsok(), 1):
-        norm = " ".join(forsok.split())
-        assert "pulls/<nr>/comments" in norm, (
-            f"forsøk {i} peker ikke på inline-kommentarene")
-        assert "IKKE I KROPPEN" in norm, (
-            f"forsøk {i} advarer ikke om at `review.body` kan være tom —"
-            " en tom kropp lest som «ingen funn» merger uåpnede P1")
-        assert "#211" in norm, (
-            f"forsøk {i} mangler sporet tilbake til funnet")
+        for anker in ("env.VERDIKTPORT", "env.FUNNLESNING", "env.MERGEPORT"):
+            assert anker in forsok, (
+                f"forsøk {i} henter ikke {anker} — reglene der er de fra"
+                " før omskrivingen, og de kan drifte igjen")
 
 
-def test_inline_funn_scopes_til_utlosende_review():
-    """Cursor P2-2 på #230: `pulls/<nr>/comments` er ikke verdiktet.
+def test_forkvakten_star_for_alt_annet():
+    """Codex P1 (r3878818430): en skrivende agent mot fork-innhold.
 
-    Endepunktet gir ALLE inline-kommentarer på PR-en. Etter flere
-    Codex-runder betyr det at agenten kan re-fikse alt lukkede funn
-    (K1-brudd), lese gammel P1 som gjenstående, eller utløse K2 på feil
-    grunnlag. #211 gjør review-kanalen primær for funn, så kollisjonen
-    blir hyppigere — porten hører til i samme PR som årsaken.
+    Jobben har `contents: write`, bærer `CLAUDE_CODE_OAUTH_TOKEN` og
+    instruerer agenten til å sjekke ut PR-ens innhold. På et fork-PR er
+    det innholdet angriperkontrollert — og forfatterporten beskytter ikke
+    grensen, for den utløsende reviewen er skrevet av den tillatte bot-en
+    uansett hvem som eier grenen.
 
-    Scopingen er BEVISST ikke absolutt: en streng `== review.id`-lesning
-    ville gjort et eldre, ULUKKET funn usynlig, og det er nøyaktig
-    #211s egen defektklasse. Regelen er derfor todelt — lukket lar du
-    ligge, ulukket fikser du — og begge halvdelene må stå i alle tre
-    forsøkene, ellers gjelder de bare til første timeout.
+    Broen (`pr-fra-pass`) har hatt vakten siden #198. Fikserjobben hadde
+    den aldri, og #211 utvider flaten med en ny hendelsesvei.
 
-    MUTASJONEN SOM DREPER DENNE: ta linjedraget ut av ett forsøk, eller
-    gjør det absolutt ved å fjerne ULUKKET-halvdelen.
+    Vakten må stå BEGGE steder: `pull_request_review` bærer `head.repo` i
+    payloaden og felles av `if:`, mens `issue_comment` bare bærer en URL
+    og derfor må måles i et steg — før noe sjekkes ut.
+
+    MUTASJONEN SOM DREPER DENNE: fjern steget (da står issue_comment-veien
+    åpen), eller legg det etter `actions/checkout`.
     """
-    for i, forsok in enumerate(_fiksforsok(), 1):
-        norm = " ".join(forsok.split())
-        assert "pull_request_review_id" in norm, (
-            f"forsøk {i} skiller ikke verdiktets inline-funn fra PR-ens")
-        assert "ULUKKET" in norm, (
-            f"forsøk {i} har absolutt scoping — et eldre, ulukket funn"
-            " blir da usynlig, som er #211s egen defektklasse")
-        # Cursor P2-3 runde 3: skillet må kunne AVGJØRES. REST bærer ikke
-        # trådoppløsning, så uten en kilde er «lukket» en gjetning — og
-        # gjetter agenten «lukket», merges funnet forbi.
-        assert "isResolved" in norm, (
-            f"forsøk {i} krever et skille mellom lukket og ulukket uten"
-            " å si hvor lukketheten leses — REST bærer den ikke")
-        assert "VED TVIL: behandle som ULUKKET" in norm, (
-            f"forsøk {i} mangler fail-closed-defaulten: de to feilene"
-            " koster ikke det samme")
-    assert "pull_request_review_id" in RUTINER, (
-        "claude.yml håndhever linjedraget, men RUTINER §11.1 sier det"
-        " ikke — flatene glir fra hverandre")
+    import yaml
+    jobb = yaml.safe_load(YML)["jobs"]["fiks-og-merge"]
+    assert "github.event.pull_request.head.repo.full_name == github.repository" \
+        in jobb["if"], "review-grenene mangler fork-vakt i if-en"
+    steg = jobb["steps"]
+    assert steg[0].get("name") == "Fork-vakt", (
+        "fork-vakten er ikke FØRSTE steg — alt etter checkout kjører mot"
+        " innholdet vakten skulle avvist")
+    assert "head.repo.full_name" in steg[0]["run"], \
+        "fork-steget måler ikke hodets repo"
 
 
-def _merge_seksjoner() -> list[tuple[int, str]]:
-    """(forsøksnummer, teksten fra siste nummererte steg til `gh pr merge`).
+def test_funnlesningen_bruker_en_gyldig_og_paginert_api_sti():
+    """Codex P1 ×2 (r3878818420, r3878757057): instruksjonen virket ikke.
 
-    Cursor P2 runde 5 på #230: forrige form asserterte at vaktene fantes
-    ET STED i forsøksblokken. Mutasjonen «flytt vakten fra steg 3 til
-    steg 2» slapp da grønt — og det var nøyaktig den mutasjonen som var
-    ekte i runde 2, med et P1 som følge. En test som ikke kan felle sitt
-    eget dokumenterte angrep, verner ingenting.
+    `gh api pulls/<nr>/comments` treffer en API-rot som ikke finnes — stien
+    må være repo-scopet. Og uten `--paginate` kommer bare første side;
+    kommentarene er sortert eldst først, så nettopp den utløsende reviewens
+    ferske funn faller utenfor. En tom side leses da som «ingen funn» rett
+    inn i merge-løypa.
 
-    Porten måler derfor SEKSJONEN som faktisk merger: fra det siste
-    nummererte steget før `gh pr merge` og fram til kallet. Står vakten i
-    et tidligere steg, er den utenfor — som den var.
-
-    Formen er også GENERELL: den vokser ikke med antall regler. Legges en
-    fjerde merge-vei til i en fremtidig runde, måles den av seg selv.
+    MUTASJONEN SOM DREPER DENNE: ta bort `--paginate`, eller kort stien
+    tilbake til `pulls/<nr>/comments`.
     """
-    ut = []
-    for nr, forsok in enumerate(_fiksforsok(), 1):
-        linjer = forsok.split("\n")
-        for k, linje in enumerate(linjer):
-            if "gh pr merge" not in linje or "forbudt" in linje:
-                continue
-            start = 0
-            for m in range(k, -1, -1):
-                s = linjer[m].lstrip()
-                if s[:2] in ("0.", "1.", "2.", "3.", "4.") and s[2:3] == " ":
-                    start = m
-                    break
-            ut.append((nr, "\n".join(linjer[start:k + 1])))
-    return ut
+    lesning = _jobbenv()["FUNNLESNING"]
+    assert "repos/OWNER/REPO/pulls/<nr>/comments" in lesning \
+        or "repos/${{ github.repository }}/pulls" in lesning, \
+        "stien er ikke repo-scopet — den treffer en rot som ikke finnes"
+    assert "--paginate" in lesning, \
+        "lesningen pagineres ikke — første side er ikke alle funnene"
+    # Den ugyldige stien SKAL kunne nevnes — forklaringen på hvorfor den
+    # er feil er nettopp det som hindrer at noen skriver den tilbake. Det
+    # er BRUKEN som instruksjon som er forbudt, og den kjennes på at
+    # setningen ikke sier hva som er galt med den.
+    for linje in YML.splitlines():
+        if "gh api pulls/" in linje:
+            assert "treffer en API-rot" in linje, \
+                f"den ugyldige stien står som instruksjon: {linje.strip()}"
 
 
-def test_bot_review_kan_aldri_ta_merge_steg3():
-    """Cursor P1 runde 2 + P1/P2 runde 5 på #230.
+def test_bare_botens_funn_er_ordrer():
+    """Codex P1 (r3878818434): et offentlig repo kan plante arbeidspunkter.
 
-    #211 målte at boten ALDRI bærer et rent verdikt på review-kanalen —
-    uten funn kommer det som issue_comment, og et 👍 som reaksjon. En tom
-    scoped inline-liste er derfor ikke en godkjenning, men en lesning som
-    feilet: API-etterslep, feil filter, eller en hendelse som landet før
-    inline-kommentarene. Uten vakten merger jobben ureviewet kode.
+    Regelen «et eldre, ULUKKET funn skal fikses» gjorde enhver reviewer til
+    oppdragsgiver for en skrivende agent: jobbens allowlist autentiserer
+    den UTLØSENDE hendelsen, ikke historikken den leser.
 
-    Vakten må stå PÅ seksjonen som merger, ikke i et tidligere steg:
-    agenten kan hoppe 0 → 1 → 3, og da leses steg 2 aldri. Det var
-    presist feilen i runde 2, og forrige versjon av denne testen så den
-    ikke fordi den lette i hele forsøksblokken.
-
-    Eierens `approved` er fortsatt en gyldig merge-vei — forbudet gjelder
-    botens kanal, ikke review-hendelsen som sådan.
-
-    MUTASJONEN SOM DREPER DENNE: flytt vakten fra steg 3 til steg 2 i ett
-    av forsøkene. Den gamle formen overlevde nettopp den.
+    MUTASJONEN SOM DREPER DENNE: fjern forfatterkravet fra
+    ULUKKET-regelen.
     """
-    seksjoner = _merge_seksjoner()
-    assert len(seksjoner) >= 3, (
-        f"fant {len(seksjoner)} merge-veier — ventet minst én per forsøk;"
-        " en merge-vei uten nummerert steg foran seg er heller ikke målt")
-    for nr, seksjon in seksjoner:
-        norm = " ".join(seksjon.split())
-        assert "KANALVAKT (#211)" in norm, (
-            f"forsøk {nr} har en merge-vei uten kanalvakt i sin egen"
-            " seksjon — en bot-review kan nå den ved å hoppe over"
-            " steget vakten står i")
-        assert "ALLE ULØSTE TRÅDER FØRST" in norm, (
-            f"forsøk {nr} merger uten å måle uløste tråder i seksjonen"
-            " som faktisk merger")
-        assert "isResolved == false" in norm, (
-            f"forsøk {nr} sier ikke hva som stopper mergen")
-
-    for nr, forsok in enumerate(_fiksforsok(), 1):
-        norm = " ".join(forsok.split())
-        assert "BOT-REVIEW MERGER ALDRI" in norm, (
-            f"forsøk {nr} mangler merge-forbudet i klassifiseringen")
-        assert "PARKÉR" in norm, (
-            f"forsøk {nr} sier ikke hva som skal skje ved null funn —"
-            " «ikke merge» uten et alternativ blir til merge")
+    lesning = _jobbenv()["FUNNLESNING"]
+    assert "BARE BOTENS EGNE FUNN" in lesning
+    assert "chatgpt-codex-connector[bot]" in lesning, \
+        "ULUKKET-regelen navngir ikke hvem som kan gi ordrer"
 
 
-def test_steg0_skanner_inline_paa_review_utlost():
-    """Cursor P2 runde 2 på #230: kvotefilteret måler bare kroppen.
+def test_traden_kan_lukkes_saa_porten_kan_passere():
+    """Codex P1 (r3879144585): porten var en vranglås.
 
-    Jobb-`if`-en filtrerer kvote via `startsWith(review.body, …)`, og på
-    review-utløste funn er kroppen målt tom. Står kvote-/statusteksten i
-    en inline-kommentar i stedet, slipper den både `if`-en og et steg 0
-    som bare leter i kroppen — speilvendt av #198s kvotefunn, nå på
-    review-kanalen.
+    Runde 4 la inn «finnes én `isResolved == false`, merger du ikke» — men
+    å endre koden setter ikke flagget, og prompten gjorde ingen
+    `resolveReviewThread`-mutasjon. En PR med inline-funn kunne dermed
+    aldri fullføre den autonome merge-løypa, uansett hvor godt funnene ble
+    fikset. Porten låste ute nettopp de PR-ene den var skrevet for.
 
-    MUTASJONEN SOM DREPER DENNE: fjern inline-skanningen fra steg 0 i
-    ett forsøk.
+    MUTASJONEN SOM DREPER DENNE: fjern lukkemutasjonen og behold porten.
     """
-    for i, forsok in enumerate(_fiksforsok(), 1):
-        norm = " ".join(forsok.split())
-        assert "skann de scopede inline-kommentarene for kvote" in norm, (
-            f"forsøk {i} leter etter kvotemeldingen bare i kroppen, som"
-            " er tom på nettopp denne kanalen")
-        # Cursor P2-2 runde 3: «scopet» må DEFINERES her. Sto det først i
-        # steg 1, er det enten alle inline (falsk parkering på en gammel
-        # runde) eller ingen (kvoteteksten slipper forbi).
-        steg0 = norm.split("1.")[0]
-        assert "pull_request_review_id" in steg0, (
-            f"forsøk {i} ber steg 0 skanne «scopet» uten å si hva scopet"
-            " er — det defineres først i steg 1")
+    lesning = _jobbenv()["FUNNLESNING"]
+    port = _jobbenv()["MERGEPORT"]
+    assert "resolveReviewThread" in lesning, \
+        "ingen vei til å lukke en tråd — merge-porten blir en vranglås"
+    assert "isResolved == false" in port, \
+        "merge-porten måler ikke uløste tråder"
 
 
-def test_kanalvakten_er_speilet_begge_veier():
-    """Cursor P2-1 runde 4 på #230: #193-klassen — flatene glir fra
-    hverandre én markør av gangen.
+def test_verdiktet_gjelder_sin_egen_sha():
+    """Codex P2 (r3878895724): et foreldet verdikt kan endre ny kode.
 
-    `claude.yml` håndhever nå at en bot-utløst review aldri er merge-vei,
-    men RUTINER §11.1 dokumenterte bare kanalene, inline-lesningen og
-    scopingen — ikke forbudet. Speilingen er ikke pynt: en regel som bare
-    finnes i workflowen kan fjernes i en oppryddingsrunde uten at noe
-    dokument motsier den.
+    Står reviewen i kø bak en annen skriver, kan hodet ha flyttet seg før
+    jobben starter. Uten en sammenligning fikser agenten funn over kode
+    reviewen aldri så.
     """
-    for i, forsok in enumerate(_fiksforsok(), 1):
-        assert "BOT-REVIEW MERGER ALDRI" in " ".join(forsok.split()), (
-            f"forsøk {i} mangler merge-forbudet")
-    assert "Bot-utløst review er ALDRI en merge-vei" in RUTINER, (
-        "claude.yml forbyr merge på botens review-kanal, men RUTINER"
-        " §11.1 sier det ikke")
+    lesning = _jobbenv()["FUNNLESNING"]
+    assert "headRefOid" in lesning and "commit_id" in lesning, \
+        "fikseveien måler ikke om hodet har flyttet seg siden verdiktet"
 
 
-def test_merge_steg3_krever_at_alle_trader_er_lost():
-    """Cursor P2-2 runde 4 på #230: scopingen gjaldt feil beslutning.
+def test_driftsmelding_males_ikke_paa_ordforraad():
+    """Codex P2 (r3878818440): et ekte funn om kvoter er et funn.
 
-    Steg 1 sier korrekt at et eldre, ULUKKET inline-funn aldri merges
-    forbi. Men merge-løypa i steg 3 hadde ingen port på det: et rent
-    issue_comment-verdikt kunne trigge den mens en eldre inline-P1 fra en
-    bot-review sto åpen — og den ble aldri lest, fordi den lå utenfor
-    `pull_request_review_id`-scopet.
-
-    Skillet porten holder: scopingen avgjør hvilke funn som er DETTE
-    verdiktet; den avgjør aldri hvilke som må være lukket før merge.
-
-    MUTASJONEN SOM DREPER DENNE: fjern trådskanningen fra ett forsøk, og
-    en gammel åpen P1 merges forbi i nettopp den runden.
+    Steg 0 skulle skille konnektorens driftsmeldinger fra verdikter. Måler
+    den på ordene «kvote», «feil» og «status», parkerer den nettopp de
+    reviewene som handler om rate-limiting og fakturering — speilvendt av
+    kvotefunnet på #198.
     """
-    for i, forsok in enumerate(_fiksforsok(), 1):
-        norm = " ".join(forsok.split())
-        assert "ALLE ULØSTE TRÅDER FØRST" in norm, (
-            f"forsøk {i} merger uten å måle uløste tråder")
-        assert "isResolved == false" in norm, (
-            f"forsøk {i} sier ikke hva som stopper mergen")
-    assert "merge-porten måler ALLE uløste tråder" in RUTINER, (
-        "porten står i workflowen, men ikke i regelen")
-
-
-def test_steg_0_verdiktporten_i_alle_tre_forsokene():
-    """Cursor P2 runde 14 (#198): kvote-/statusmeldinger som slipper
-    forbi jobb-if-ens prefiksfilter må felles av steg 0 i HVERT forsøk —
-    ellers kan forsøk 2/3 lese «ingen funn» og merge på en tom
-    lommebok."""
-    for i, forsok in enumerate(_fiksforsok(), 1):
-        assert "ER DETTE I DET HELE TATT ET" in forsok, (
-            f"forsøk {i} mangler steg 0-porten")
+    verdikt = _jobbenv()["VERDIKTPORT"]
+    assert "DRIFTSMELDING, IKKE ORDLISTE" in verdikt
+    assert "HELE den er en kjent melding" in verdikt, \
+        "porten måler fortsatt på ordforrådet"
 
 
 def test_cursor_porten_stopper_og_broen_eier_fortsettelsen():
