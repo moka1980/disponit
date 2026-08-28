@@ -514,8 +514,16 @@ def test_grensen_og_kjoretiden_leser_med_SAMME_predikat():
     Porten måler at det faktisk ER én — ikke at de to tilfeldigvis er
     enige i dag.
 
+    ... OG AT DEN ENE BOR I CORE (Cursor P2-1 / Codex P1). Runde 5 la den
+    i modulen og lot grensen importere `modules.m57_ats.evaluering`. Det
+    er RUTINER §7 baklengs, og det er dødt i den kjøringen som teller:
+    CI-steget som validerer manifester legger bare `platform/core` på
+    stien. Denne testfila ser det ikke av seg selv — `conftest.py` legger
+    på `platform` i tillegg — så retningen måles her, ikke bare
+    delingen.
+
     MUTASJONEN SOM DREPER DENNE: skriv en egen lesning i `_bias_utledet`
-    igjen.
+    igjen, eller flytt den felles lesningen tilbake til modulen.
     """
     import inspect
 
@@ -531,11 +539,17 @@ def test_grensen_og_kjoretiden_leser_med_SAMME_predikat():
     assert "fromisoformat(" not in kilde, (
         "grensen har fortsatt en egen kalenderlesning ved siden av det"
         " felles predikatet")
-
-    # ... og predikatet må være det kjøretidsporten FAKTISK bruker.
-    from modules.m57_ats.evaluering import krev_biasmaaling, rfc3339_lesbar
+    # ... og predikatet må være det SAMME objektet kjøretidsporten
+    # faktisk bruker. Identitet, ikke navnelikhet: to like hete funksjoner
+    # er nettopp de to lesningene fem runder har målt at divergerer.
+    from tid import rfc3339_lesbar
+    from modules.m57_ats import evaluering
+    from modules.m57_ats.evaluering import krev_biasmaaling
     assert "rfc3339_lesbar" in inspect.getsource(krev_biasmaaling), \
         "kjøretidsporten bruker ikke det felles predikatet"
+    assert evaluering.rfc3339_lesbar is rfc3339_lesbar, (
+        "kjøretidsporten leser med et ANNET predikat enn core-symbolet"
+        " grensen leser med")
     for gyldig in ("2026-01-01T00:00:00Z", "2016-12-31T23:59:60Z",
                    "2026-01-01t00:00:00z", "2026-01-01T00:00:00+02:00"):
         assert rfc3339_lesbar(gyldig), gyldig
@@ -543,6 +557,51 @@ def test_grensen_og_kjoretiden_leser_med_SAMME_predikat():
                     "2026-01-01x00:00:00+00:00", "2026-02-30T00:00:00Z",
                     "2026-01-01T12:30:60Z", "", None):
         assert not rfc3339_lesbar(ugyldig), ugyldig
+
+
+def test_grensen_validerer_med_BARE_platform_core_paa_stien():
+    """Cursor P2-1 / Codex P1: retningen på delingen, målt der den ryker.
+
+    Runde 5 delte lesningen ved å la core importere
+    `modules.m57_ats.evaluering`. Delingen ble ekte, retningen ble feil —
+    og feil retning er ikke en stilfeil her: CI-steget «Manifester
+    gyldige» kjører `sys.path.insert(0, "platform/core")` og INGENTING
+    mer, så `_bias_utledet` ville reist `ModuleNotFoundError: No module
+    named 'modules'` første gang et `m57-v1`-punkt slås på og
+    `valider_artefakter` kaller den. Testsuiten så det ikke: `conftest.py`
+    legger på `platform` i tillegg, så modulpakken var importerbar her og
+    bare her.
+
+    Derfor måles importen i en EGEN prosess med CI-steget sin sti, ikke
+    med en tekstsjekk i denne. En `assert "modules" not in kilde` ville
+    vært akkurat den vakuøse porten `fromisoformat`-linjen over ble
+    skrevet om for å unngå: den felles av en kommentar, og den beviser
+    ikke at importen finnes.
+
+    MUTASJONEN SOM DREPER DENNE: flytt `rfc3339_lesbar` tilbake til
+    `modules.m57_ats.evaluering` og importer den derfra i core.
+    """
+    import subprocess
+    import sys
+
+    # `-I` = isolert: hverken cwd, PYTHONPATH eller brukerens site-dir
+    # havner på stien. Da er `platform/core` det eneste repo-steget har
+    # lagt der, akkurat som i ci.yml.
+    r = subprocess.run(
+        [sys.executable, "-I", "-c",
+         'import sys; sys.path.insert(0, "platform/core");'
+         ' from manifestskjema import _bias_utledet;'
+         ' d = "sha256:" + "a" * 64;'
+         ' print(_bias_utledet({"bias_digester_kjort": [d],'
+         ' "bias_maalinger": [{"image_digest": d,'
+         ' "artefakt_sha256": "b" * 64,'
+         ' "ts": "2026-01-01T00:00:00Z"}],'
+         ' "bias_maling_mangler_for_digest_brudd": 0,'
+         ' "bias_maling_mangler_for_digest_forsok": 1}))'],
+        cwd=str(ROT), capture_output=True, text=True)
+    assert r.returncode == 0, (
+        "evidensgrensen kan ikke kjøres med CI-stegets egen sti — core"
+        f" henter noe utenfor platform/core:\n{r.stderr}")
 
 
 def test_skuddsekundet_er_gyldig_rfc_3339():

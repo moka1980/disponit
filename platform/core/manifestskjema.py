@@ -1488,6 +1488,7 @@ def _bias_utledet(m: dict) -> list[str]:
     import re as _re
     from datetime import datetime as _datetime
     from collections import Counter as _Counter
+    from tid import rfc3339_lesbar
     feil: list[str] = []
     digester = m.get("bias_digester_kjort")
     maalinger = m.get("bias_maalinger")
@@ -1539,13 +1540,16 @@ def _bias_utledet(m: dict) -> list[str]:
         # divergerer — først var grensen strengest (`fromisoformat` alene
         # i kjøretiden), så kjøretiden (skuddsekundet). Det er §9 K2s egen
         # defektklasse, og svaret er ikke et sjette formforsøk, men ÉN
-        # lesning: `evaluering.rfc3339_lesbar`.
+        # lesning: `tid.rfc3339_lesbar`.
         #
-        # Den bor i modulen fordi det er modulens kontrakt; grensen
-        # importerer den lokalt, som resten av denne funksjonen gjør med
-        # sine hjelpere. Drifter de to nå, er det fordi noen slettet
-        # importen — og da er begge røde, ikke bare den ene.
-        from modules.m57_ats.evaluering import rfc3339_lesbar
+        # DEN LESNINGEN BOR I CORE (Cursor P2-1 / Codex P1, runde 5).
+        # Runde 5 hentet den fra `modules.m57_ats.evaluering`, og det snudde
+        # modellgrensen: RUTINER §7 sier core aldri importerer fra moduler,
+        # og CI-steget som validerer manifester legger bare `platform/core`
+        # på stien — importen ville reist `ModuleNotFoundError: No module
+        # named 'modules'` første gang et `m57-v1`-punkt slås på. Testene
+        # skjulte det, for `tests/conftest.py` legger på `platform` i
+        # tillegg.
         if not rfc3339_lesbar(mal.get("ts")):
             feil.append(f"bias_maalinger[{i}].ts={mal.get('ts')!r} for {d} er"
                         " ikke et RFC 3339-tidspunkt som finnes i"

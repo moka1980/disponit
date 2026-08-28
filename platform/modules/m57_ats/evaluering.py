@@ -10,9 +10,15 @@ kjøringen.
 """
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
-from datetime import datetime
+
+# PREDIKATET BOR I CORE, IKKE HER (Cursor P2-1 / Codex P1, runde 5).
+# `krev_biasmaaling` under og `manifestskjema._bias_utledet` skal lese
+# tidspunktet med SAMME predikat — men core kan ikke importere fra
+# moduler (RUTINER §7), så den ene lesningen måtte flyttes hit-fra, ikke
+# hentes hit-til. Navnet står fortsatt i denne modulens flate, for
+# kontrakten «m57s `ts` er RFC 3339» er modulens; lesningen er felles.
+from tid import rfc3339_lesbar  # noqa: F401  (re-eksport: modulens kontrakt)
 
 from . import blinding
 
@@ -33,46 +39,6 @@ FUNN_KATEGORIER = frozenset({
 #: bærer eksakt. Over dette leser flaten et ANNET tall enn det som ble
 #: rangert — se porten i `ranger`.
 VEKT_EKSAKT_MAKS = 2 ** 53 - 1
-
-
-#: RFC 3339 §5.6, som grammatikk. Ikke K4-brudd: dette er ti linjer ABNF
-#: fra en lukket, uforanderlig standard, og det er VÅRT EGET felts
-#: erklærte form — ikke et dokumentformat vi mottar. Formen måles her,
-#: kalenderen av standardbiblioteket rett under.
-_RFC3339 = re.compile(
-    r"\A\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(\.\d+)?"
-    r"([Zz]|[+-]\d{2}:\d{2})\Z")
-
-
-def rfc3339_lesbar(verdi: object) -> bool:
-    """Er `verdi` et RFC 3339-tidspunkt som finnes i kalenderen?
-
-    ETT STED, TO KALLERE (Codex P2, runde 5). `krev_biasmaaling` og
-    `manifestskjema._bias_utledet` lover å måle det SAMME, og fire runder
-    har målt at de ikke gjorde det — først var grensen strengest, så
-    kjøretiden. To håndskrevne lesninger av samme standard divergerer;
-    det er §9 K2s egen defektklasse.
-
-    Skuddsekundet er tillatt der RFC 3339 §5.7 tillater det — ved
-    minuttets slutt, altså `23:59:60` — og ingen andre steder.
-    `2026-01-01T12:30:60Z` er ikke et tidspunkt som har eksistert.
-    """
-    if not isinstance(verdi, str) or not _RFC3339.match(verdi):
-        return False
-    normalisert = re.sub(r"[Zz]\Z", "+00:00", verdi)
-    if ":60" in normalisert[11:19]:
-        # `time-second = 60` er BARE lovlig i det innskutte skuddsekundet,
-        # og det står alltid sist i minuttet — sist i timen, sist i
-        # døgnet. Uten denne avgrensningen ville substitusjonen under
-        # gjort ethvert umulig sekund til et gyldig tidspunkt.
-        if not normalisert[11:19].endswith("59:60"):
-            return False
-        normalisert = normalisert[:17] + "59" + normalisert[19:]
-    try:
-        datetime.fromisoformat(normalisert)
-    except (TypeError, ValueError):
-        return False
-    return True
 
 
 class Evalueringsfeil(Exception):
