@@ -46,7 +46,8 @@ FUNN_FELTER = frozenset({"kategori", "kilde"})
 KILDE_FELTER = frozenset({"start", "slutt", "sitat"})
 
 
-def valider_funn(funn: dict, soknadstekst: str) -> dict:
+def valider_funn(funn: dict, soknadstekst: str,
+                 grenser: list[tuple[int, int]] | None = None) -> dict:
     """Skjemaporten (port 15): et funn uten kildereferanse som ordrett
     står i søknadsteksten, finnes ikke. Sitatet måles mot teksten på
     [start:slutt] — en referanse som ikke treffer er like avvist som en
@@ -114,6 +115,26 @@ def valider_funn(funn: dict, soknadstekst: str) -> dict:
             or not 0 <= start < slutt <= len(soknadstekst)
             or soknadstekst[start:slutt] != sitat):
         raise Evalueringsfeil("uten_kildereferanse")
+    # SITATET KAN IKKE KRYSSE EN DOKUMENTGRENSE (#174, Codex G7 på #170).
+    #
+    # Kandidatens dokumenter settes sammen til én tekst før modellen leser
+    # dem. Et sitat som spenner over skjøten står ikke i NOE faktisk
+    # søknadsdokument — det er satt sammen av to — og porten over godtok
+    # det likevel, fordi den bare måler mot den sammensatte strengen.
+    #
+    # Grensene er nå kjennbare fordi blindingen skjer per dokument mot én
+    # delt tabell (`blinding.blind_dokumenter`): hvert blindet dokument
+    # har sin egen lengde. Uten den splitten kunne grensene ikke bæres inn
+    # i dette koordinatsystemet i det hele tatt — blindingen endrer
+    # lengder, så råtekstens skjøter peker feil sted i den blindede.
+    #
+    # `grenser=None` er den gamle kontrakten: ett dokument, ingen skjøt å
+    # krysse. Den beholdes fordi `blind`/`evalueringsinput` fortsatt har
+    # enkeltdokument-formen, og fordi et kall UTEN grenser da måler
+    # nøyaktig det samme som før — ikke mindre.
+    if grenser is not None and not any(
+            a <= start and slutt <= b for a, b in grenser):
+        raise Evalueringsfeil("sitat_krysser_dokumentgrense")
     return {"kategori": kategori,
             "kilde": {"start": start, "slutt": slutt, "sitat": sitat}}
 
@@ -307,7 +328,7 @@ def krev_biasmaaling(image_digest: str,
     return maaling
 
 
-def evaluer_kandidat(modell, soknadstekst: str,
+def evaluer_kandidat(modell, soknadstekst: "str | list[str]",
                      kandidatfelter: dict[str, list[str]],
                      vekter: dict[str, int], *,
                      biasmaalinger: dict[str, Biasmaaling],
@@ -323,14 +344,26 @@ def evaluer_kandidat(modell, soknadstekst: str,
     samme koordinatsystem.
     """
     krev_biasmaaling(modell.image_digest, biasmaalinger)
-    tekst, avmaskering = blinding.evalueringsinput(
-        soknadstekst, kandidatfelter,
+    # ÉN VEI, IKKE TO (#174). `soknadstekst` tar imot én tekst ELLER
+    # kandidatens dokumenter. Én streng ER enkeltdokument-tilfellet, så
+    # normaliseringen her gir samme kode for begge — ikke en gren til som
+    # kan drifte fra den andre.
+    dokumenter = ([soknadstekst] if isinstance(soknadstekst, str)
+                  else list(soknadstekst))
+    blindede, avmaskering = blinding.evalueringsinput_dokumenter(
+        dokumenter, kandidatfelter,
         blinding_av=blinding_av, auditrad=auditrad)
+    tekst = blinding.SKJOT.join(blindede)
+    # Grensene regnes av den SAMME skjøten sammensetningen brukte
+    # (`blinding.SKJOT`). Drifter de to, peker grensene feil sted — og da
+    # måler kryss-sitatporten noe annet enn den tror.
+    grenser = blinding.dokumentgrenser(blindede)
     blinding.krev_blindet(tekst, avmaskering)
     svar = _krev_helt_svar(modell.vurder(tekst, vekter), vekter)
     # Porten BYGGER funnene: artefakten bærer det kanoniske funnet
     # `valider_funn` returnerer, aldri modellens egen dict (Codex P1).
-    funn_kanonisk = [valider_funn(funn, tekst) for funn in svar["funn"]]
+    funn_kanonisk = [valider_funn(funn, tekst, grenser)
+                     for funn in svar["funn"]]
     # `kildetekst` er strengen kildereferansene faktisk indekserer, og den
     # følger med artefakten (Codex P2). Blindingen ENDRER lengder — «Kari»
     # blir `[NAVN-1]` — så en [start:slutt] validert mot den blindede

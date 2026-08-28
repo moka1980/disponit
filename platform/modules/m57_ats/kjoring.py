@@ -450,7 +450,17 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
             # annen person. Rånavnet er medlemmets egen, entydige nøkkel
             # (buntgaten avviser duplikater av den), så det avgjør likheten.
             medlemmer = sorted(biter[kandidat_id], key=lambda bit: bit[:2])
-            tekst = "\n\n".join(bit[2] for bit in medlemmer)
+            # DOKUMENTENE HOLDES FRA HVERANDRE TIL ETTER BLINDINGEN
+            # (#174). Skjøtingen skjedde FØR blindingen, og da kunne et
+            # modellsitat krysse skjøten: `valider_funn` godtok et utdrag
+            # som ikke står i noe faktisk søknadsdokument (Codex G7 på
+            # #170). Blindingen endrer lengder, så råtekstens skjøter kan
+            # ikke bæres inn i det blindede koordinatsystemet i det hele
+            # tatt — grensene MÅ oppstå på den blindede siden.
+            # `evaluer_kandidat` skjøter dem selv, med `blinding.SKJOT`,
+            # og regner grensene av den samme.
+            dokumenter = [bit[2] for bit in medlemmer]
+            tekst = blinding.SKJOT.join(dokumenter)
             kandidatfelter: dict = {}
             for *_, nye in medlemmer:
                 _flett_felter(kandidatfelter, nye)
@@ -465,16 +475,16 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
             # at uttrekket meldes som det som feilet.
             if not tekst.strip():
                 raise Kjoringsfeil("tekstuttrekk_feilet", fremdrift)
-            blinding.evalueringsinput(
-                tekst, kandidatfelter,
+            blinding.evalueringsinput_dokumenter(
+                dokumenter, kandidatfelter,
                 blinding_av=blinding_av, auditrad=auditrad)
-            klargjort[kandidat_id] = (tekst, kandidatfelter)
+            klargjort[kandidat_id] = (dokumenter, kandidatfelter)
         # `klargjort` er fylt i `sorted`-rekkefølge, og dict beholder
         # innsettingsrekkefølgen: evalueringen går fortsatt i samme,
         # deterministiske orden som før.
-        for kandidat_id, (tekst, kandidatfelter) in klargjort.items():
+        for kandidat_id, (dokumenter, kandidatfelter) in klargjort.items():
             resultat = evaluering.evaluer_kandidat(
-                modell, tekst, kandidatfelter, vekter,
+                modell, dokumenter, kandidatfelter, vekter,
                 biasmaalinger=biasmaalinger,
                 blinding_av=blinding_av, auditrad=auditrad)
             artefakter[kandidat_id] = resultat

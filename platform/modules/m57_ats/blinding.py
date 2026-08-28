@@ -134,20 +134,38 @@ def _monster(verdi: str) -> re.Pattern[str]:
     return re.compile(re.escape(verdi), re.IGNORECASE)
 
 
-def blind(tekst: str, kandidatfelter: dict[str, list[str]]
-          ) -> tuple[str, dict[str, str]]:
-    """-> (blindet tekst, avmaskeringstabell {token: klartekst}).
+#: Skjøten mellom kandidatens dokumenter. ÉN kilde (#174): kjøringen
+#: setter dem sammen med denne, og `dokumentgrenser` regner spennene ut
+#: fra den samme. Drifter de to, peker grensene feil sted — og da er
+#: kryss-sitatporten en port som måler noe annet enn den tror.
+SKJOT = "\n\n"
 
-    `kandidatfelter` er de STRUKTURERTE verdiene fra søknaden
-    ({felt: [verdier]}); fritekst-gjenkjenning av personalia er bevisst
-    IKKE lovet her — løftet er de navngitte feltene.
 
-    To porter, og den andre måler EFFEKT: formen inn
-    (`feltverdier_lukket`), og — målt på ORIGINALTEKSTEN, før noen
-    erstatning — at hvert deklarert felt faktisk traff dokumentteksten.
-    Begge er `ugyldig_maskeringsform`.
+def dokumentgrenser(blindede: list[str]) -> list[tuple[int, int]]:
+    """[start, slutt) for hvert dokument i `SKJOT.join(blindede)`."""
+    grenser: list[tuple[int, int]] = []
+    pos = 0
+    for i, d in enumerate(blindede):
+        if i:
+            pos += len(SKJOT)
+        grenser.append((pos, pos + len(d)))
+        pos += len(d)
+    return grenser
+
+
+def bygg_tabell(kandidatfelter: dict[str, list[str]]
+                ) -> tuple[list[tuple[str, str, str]], dict[str, str]]:
+    """-> (tokenpar, avmaskeringstabell). ÉN tabell per KANDIDAT (#174).
+
+    DELT OVER DOKUMENTENE, og det er grunnen til at tabellen bygges her
+    og ikke per dokument: `[NAVN-1]` skal bety den samme personen i
+    søknadsbrevet og i vitnemålet. Bygde vi én tabell per dokument,
+    ville nummereringen startet på nytt, og modellen sett to personer
+    der det er én.
+
+    Formportene bor her fordi de gjelder DEKLARASJONEN, ikke teksten.
+    Effektporten hører til dokumentene og måles av `_traff_alle`.
     """
-    # Vakten gir PRESISJON, ikke lenger sikkerheten alene (målt i runde
     # 5): et ukjent felt kan per konstruksjon aldri treffe, siden løkka
     # under bare rører `MASKERTE_FELTER` — så vakuøsitetsporten nederst
     # feller det samme kartet uansett. Forskjellen er hva utfallet SIER:
@@ -177,6 +195,19 @@ def blind(tekst: str, kandidatfelter: dict[str, list[str]]
             token = f"[{felt.upper()}-{nr}]"
             avmaskering[token] = verdi
             par.append((felt, token, verdi))
+    return par, avmaskering
+
+
+def _traff_alle(kandidatfelter: dict[str, list[str]],
+                dokumenter: list[str]) -> bool:
+    """Traff HVERT deklarert felt minst ETT av dokumentene? (#174)
+
+    Effektmålingen løftet til KANDIDATNIVÅ. Med blinding per dokument er
+    «traff dokumentet» feil spørsmål: et navn står gjerne i søknadsbrevet
+    og ikke i vitnemålet, og å kreve treff i HVERT dokument ville felt en
+    helt normal bunt. Fortegnet er uendret — begrunnelsen under er
+    runde 5/6-dommenes, ordrett.
+    """
     # VAKUØSITETEN MÅLES PÅ EFFEKT, PER FELT (eierdom, K2-kjennelse
     # runde 5 på #217, valg B) — OG MÅLINGEN SKJER PÅ ORIGINALTEKSTEN,
     # FØR NOEN ERSTATNING (eierdom, K2-kjennelse runde 6, valg A).
@@ -230,11 +261,14 @@ def blind(tekst: str, kandidatfelter: dict[str, list[str]]
     # `krev_blindet` søker fortsatt hele inputen.
     #   dom-klasse: tokenkollisjon-korrupsjon · felt i #217 ·
     #   https://github.com/moka1980/disponit/pull/217#issuecomment-5430381316
-    traff: dict[str, bool] = {
-        felt: any(_monster(verdi).search(tekst) for verdi in verdier)
-        for felt, verdier in kandidatfelter.items()}
-    if not all(traff.values()):
-        raise Blindingsfeil("ugyldig_maskeringsform")
+    return all(
+        any(_monster(verdi).search(dok)
+            for verdi in verdier for dok in dokumenter)
+        for felt, verdier in kandidatfelter.items())
+
+
+def anvend(par: list[tuple[str, str, str]], tekst: str) -> str:
+    """Anvender tokentabellen på ÉN tekst."""
     # LENGSTE VERDI FØRST, på tvers av alle felter (Codex P1). Erstatning
     # i feltrekkefølge var to lekkasjer i én: «Ola» før «Ola Nordmann» gir
     # `[NAVN-1] Nordmann` — etternavnet når modellen — og «Ann» før
@@ -268,7 +302,54 @@ def blind(tekst: str, kandidatfelter: dict[str, list[str]]
         # `Kari` tilbake der dokumentet skrev `KARI`, og det er riktig:
         # feltverdien er kilden, dokumentets versaler er formatering.
         tekst = _monster(verdi).sub(lambda _t, tok=token: tok, tekst)
-    return tekst, avmaskering
+    return tekst
+
+
+def blind_dokumenter(dokumenter: list[str],
+                     kandidatfelter: dict[str, list[str]]
+                     ) -> tuple[list[str], dict[str, str]]:
+    """-> (blindede dokumenter, avmaskeringstabell). #174s form.
+
+    Kandidatens dokumenter ble skjøtet med to linjeskift FØR blindingen,
+    og et modellsitat kunne krysse skjøten: `valider_funn` godtok et
+    utdrag som ikke står i noe faktisk søknadsdokument (Codex G7 på
+    #170). Dokumentgrensene kunne ikke bæres inn i koordinatsystemet
+    fordi blindingen endrer lengder.
+
+    Med tabellen bygget ÉN gang og anvendt PER dokument er grensene
+    trivielle: hvert blindet dokument har sin egen lengde, og kalleren
+    kan måle et sitat mot ett dokument i stedet for mot skjøten.
+    Kryss-sitater blir umulige per konstruksjon — ikke avvist av nok en
+    port.
+
+    Skilletekst-sentinelen (en syntetisk streng inn i modellens
+    lesestoff for å redde det gamle koordinatsystemet) er AVVIST i
+    samme dom.
+    """
+    par, avmaskering = bygg_tabell(kandidatfelter)
+    if not _traff_alle(kandidatfelter, dokumenter):
+        raise Blindingsfeil("ugyldig_maskeringsform")
+    return [anvend(par, d) for d in dokumenter], avmaskering
+
+
+def blind(tekst: str, kandidatfelter: dict[str, list[str]]
+          ) -> tuple[str, dict[str, str]]:
+    """-> (blindet tekst, avmaskeringstabell {token: klartekst}).
+
+    `kandidatfelter` er de STRUKTURERTE verdiene fra søknaden
+    ({felt: [verdier]}); fritekst-gjenkjenning av personalia er bevisst
+    IKKE lovet her — løftet er de navngitte feltene.
+
+    To porter, og den andre måler EFFEKT: formen inn
+    (`feltverdier_lukket`), og — målt på ORIGINALTEKSTEN, før noen
+    erstatning — at hvert deklarert felt faktisk traff dokumentteksten.
+    Begge er `ugyldig_maskeringsform`.
+    """
+    # Vakten gir PRESISJON, ikke lenger sikkerheten alene (målt i runde
+    par, avmaskering = bygg_tabell(kandidatfelter)
+    if not _traff_alle(kandidatfelter, [tekst]):
+        raise Blindingsfeil("ugyldig_maskeringsform")
+    return anvend(par, tekst), avmaskering
 
 
 def krev_blindet(tekst: str, avmaskering: dict[str, str]) -> None:
@@ -329,3 +410,35 @@ def evalueringsinput(tekst: str, kandidatfelter: dict[str, list[str]], *,
         raise Blindingsfeil("blinding_uten_felter")
     krev_blindet(blindet, avmaskering)
     return blindet, avmaskering
+
+
+def evalueringsinput_dokumenter(dokumenter: list[str],
+                                kandidatfelter: dict[str, list[str]], *,
+                                blinding_av: bool = False,
+                                auditrad: dict | None = None
+                                ) -> tuple[list[str], dict[str, str]]:
+    """Som `evalueringsinput`, men bevarer DOKUMENTGRENSENE (#174).
+
+    Samme porter i samme rekkefølge — avskrudd krever auditrad,
+    `blinding_uten_felter` er fail-closed, og `krev_blindet` måler den
+    faktiske modellinputen. Forskjellen er at blindingen skjer per
+    dokument mot ÉN delt tabell, så kalleren får lengdene den trenger for
+    å hindre at et sitat krysser en skjøt.
+
+    `krev_blindet` måles på den SAMMENSATTE teksten, ikke per dokument:
+    det er den strengen modellen faktisk leser, og en verdi som er delt
+    over to dokumenter finnes ikke i noen av dem hver for seg. Porten skal
+    måle inputen, ikke bitene den ble laget av.
+    """
+    if blinding_av:
+        if not (isinstance(auditrad, dict)
+                and auditrad.get("aktor") and auditrad.get("ts")
+                and auditrad.get("begrunnelse")):
+            raise Blindingsfeil("avskrudd_uten_auditrad")
+        return list(dokumenter), {}
+    blindede, avmaskering = blind_dokumenter(dokumenter, kandidatfelter)
+    if not avmaskering:
+        raise Blindingsfeil("blinding_uten_felter")
+    krev_blindet(SKJOT.join(blindede), avmaskering)
+    return blindede, avmaskering
+
