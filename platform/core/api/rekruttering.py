@@ -570,6 +570,36 @@ def signer_endepunkt(tjeneste, request):
         kropp = _kropp(request)
         if not isinstance(kropp.get("innhold_hash"), str):
             raise _Avbrudd(_feil("request_feilformet", rid))
+        # SERIELÅSEN FØR PORTEN LESER (#180). Spissjekken under og
+        # `signer_utsendingsliste` er to steg i samme READ COMMITTED-
+        # transaksjon. Committer `opprett_utsendingsliste` en barnversjon i
+        # mellomrommet, stemmer hash-ekkoet fortsatt (forelderens
+        # `innhold_hash` er uendret), funksjonen verifiserer ikke spiss —
+        # den signerer hvilken som helst `liste_id` — og
+        # `en_signert_versjon_per_serie` gir serien nøyaktig ÉN
+        # signatur-slot. Feil innhold blir irreversibelt autorisert, og den
+        # faktiske spissen permanent usignerbar.
+        #
+        # Migrasjon 065 tar den SAMME låsen i `opprett_utsendingsliste`, så
+        # de to veiene serialiseres på serien. Advisory og ikke `FOR
+        # UPDATE`: PostgreSQL krever UPDATE-privilegium for enhver
+        # radlåsklausul, også `FOR SHARE` (grensen 019 skrev ned, sitert i
+        # 056 §7b), og runtime har kun SELECT på `utsendingsliste`. En
+        # advisory-lås krever ingen privilegier — det er derfor den er
+        # nåbar fra BEGGE sider.
+        #
+        # Serien leses og låses i ETT uttrykk: å lese den først og låse
+        # etterpå ville vært nok et vindu, bare ett hakk mindre. Finnes
+        # ikke listen, låses ingenting — porten under svarer `ikke_funnet`
+        # som før, og en lås på en rad som ikke finnes ville uansett ikke
+        # vernet noe.
+        conn.execute(
+            "SELECT pg_advisory_xact_lock("
+            "         hashtextextended('m57:serie:' || %s || ':'"
+            "                          || utkast_serie::text, 0))"
+            "  FROM utsendingsliste"
+            " WHERE tenant=%s AND liste_id=%s",
+            (tenant, tenant, liste_id))
         rad = conn.execute(
             "SELECT l.innhold_hash, l.antall, l.listetype,"
             "       EXISTS (SELECT 1 FROM utsendingsliste b"
