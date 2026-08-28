@@ -630,6 +630,36 @@ def test_211_inline_funn_leses_i_alle_tre_forsokene():
             f"forsøk {i} mangler sporet tilbake til funnet")
 
 
+def test_inline_funn_scopes_til_utlosende_review():
+    """Cursor P2-2 på #230: `pulls/<nr>/comments` er ikke verdiktet.
+
+    Endepunktet gir ALLE inline-kommentarer på PR-en. Etter flere
+    Codex-runder betyr det at agenten kan re-fikse alt lukkede funn
+    (K1-brudd), lese gammel P1 som gjenstående, eller utløse K2 på feil
+    grunnlag. #211 gjør review-kanalen primær for funn, så kollisjonen
+    blir hyppigere — porten hører til i samme PR som årsaken.
+
+    Scopingen er BEVISST ikke absolutt: en streng `== review.id`-lesning
+    ville gjort et eldre, ULUKKET funn usynlig, og det er nøyaktig
+    #211s egen defektklasse. Regelen er derfor todelt — lukket lar du
+    ligge, ulukket fikser du — og begge halvdelene må stå i alle tre
+    forsøkene, ellers gjelder de bare til første timeout.
+
+    MUTASJONEN SOM DREPER DENNE: ta linjedraget ut av ett forsøk, eller
+    gjør det absolutt ved å fjerne ULUKKET-halvdelen.
+    """
+    for i, forsok in enumerate(_fiksforsok(), 1):
+        norm = " ".join(forsok.split())
+        assert "pull_request_review_id" in norm, (
+            f"forsøk {i} skiller ikke verdiktets inline-funn fra PR-ens")
+        assert "ULUKKET" in norm, (
+            f"forsøk {i} har absolutt scoping — et eldre, ulukket funn"
+            " blir da usynlig, som er #211s egen defektklasse")
+    assert "pull_request_review_id" in RUTINER, (
+        "claude.yml håndhever linjedraget, men RUTINER §11.1 sier det"
+        " ikke — flatene glir fra hverandre")
+
+
 def test_steg_0_verdiktporten_i_alle_tre_forsokene():
     """Cursor P2 runde 14 (#198): kvote-/statusmeldinger som slipper
     forbi jobb-if-ens prefiksfilter må felles av steg 0 i HVERT forsøk —

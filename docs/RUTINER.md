@@ -251,6 +251,14 @@ aldri et vindu der dokumentet lover en port maskinen mangler
    verdikt leses ALDRI ut fra kroppen alene: funnene ligger i
    `pulls/<nr>/comments`.
 
+   Det endepunktet gir ALLE inline-kommentarer på PR-en, ikke bare
+   verdiktets. Den utløsende reviewens egne
+   (`pull_request_review_id`) er verdiktet sløyfa svarer på; de eldre
+   er kontekst. Et lukket funn gjøres ikke om igjen — det er K1-brudd
+   og gir falske K2-utslag — men et eldre funn som fortsatt står
+   ULUKKET merges aldri forbi. At en runde en gang overså et funn er
+   nettopp grunnen til at denne regelen finnes.
+
 2. **Mandater bor i KOMMENTARER, og omtalen er `@claude`.** En ordre i en
    issue-KROPP trigger ingen kjøring (samme utløser-klasse som §10s
    Bugbot-notat). Ethvert nattmandat legges som egen kommentar — og

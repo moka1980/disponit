@@ -172,6 +172,16 @@ jobs:
                kropp er derfor ikke «ingen funn» — den er et verdikt som
                peker et annet sted. `gh api pulls/<nr>/comments` er stedet.
                Leser du bare kroppen, merger steg 3 en PR med uåpnede P1.
+               LINJEDRAGET: `pulls/<nr>/comments` gir ALLE
+               inline-kommentarer på PR-en, ikke bare dette verdiktets.
+               Er kjøringen review-utløst, er det den UTLØSENDE reviewens
+               egne (`pull_request_review_id ==
+               ${{ github.event.review.id }}`) som utgjør verdiktet du
+               svarer på — de eldre er kontekst fra tidligere runder. Ikke
+               gjør om igjen det som alt er lukket (det er K1-brudd og gir
+               falske K2-utslag), men et eldre funn som fortsatt står
+               ULUKKET skal fikses, aldri merges forbi: at en runde en
+               gang overså det er grunnen til at #211 finnes.
             2. Reelle funn (P1/P2/aksjonspunkter): fiks dem i roten, ikke
                symptomet. KONVERGENSREGLENE (RUTINER.md §9, ratifisert
                21/8) er bindende for hvordan:
@@ -373,7 +383,18 @@ jobs:
                inline-kommentarene (`gh api` mot pulls/<nr>/comments — er
                kjøringen review-utløst, ligger funnene ofte IKKE I KROPPEN
                (#211): `review.body` kan være helt tom, og en tom kropp er
-               da et verdikt som peker hit, ikke «ingen funn»): fiks
+               da et verdikt som peker hit, ikke «ingen funn»).
+               LINJEDRAGET: `pulls/<nr>/comments` gir ALLE
+               inline-kommentarer på PR-en, ikke bare dette verdiktets.
+               Er kjøringen review-utløst, er det den UTLØSENDE reviewens
+               egne (`pull_request_review_id ==
+               ${{ github.event.review.id }}`) som utgjør verdiktet du
+               svarer på — de eldre er kontekst fra tidligere runder. Ikke
+               gjør om igjen det som alt er lukket (det er K1-brudd og gir
+               falske K2-utslag), men et eldre funn som fortsatt står
+               ULUKKET skal fikses, aldri merges forbi: at en runde en
+               gang overså det er grunnen til at #211 finnes.
+               Fiks
                i roten, ETT AV GANGEN — fiks, commit på norsk, push. Alt som
                ikke er pushet er tapt hvis også dette forsøket avbrytes.
                IKKE rediger .github/workflows, .env eller hemmeligheter.
@@ -474,7 +495,17 @@ jobs:
                inline-kommentarer. `gh api` mot pulls/<nr>/comments er
                stedet. Dette er siste forsøk, og en tom kropp lest som
                «ingen funn» sender deg rett i merge-løypa under med
-               uåpnede P1. Er alt adressert: kommenter `@cursor review` og
+               uåpnede P1. LINJEDRAGET: `pulls/<nr>/comments` gir ALLE
+               inline-kommentarer på PR-en, ikke bare dette verdiktets.
+               Er kjøringen review-utløst, er det den UTLØSENDE reviewens
+               egne (`pull_request_review_id ==
+               ${{ github.event.review.id }}`) som utgjør verdiktet du
+               svarer på — de eldre er kontekst fra tidligere runder. Ikke
+               gjør om igjen det som alt er lukket (det er K1-brudd og gir
+               falske K2-utslag), men et eldre funn som fortsatt står
+               ULUKKET skal fikses, aldri merges forbi: at en runde en
+               gang overså det er grunnen til at #211 finnes.
+               Er alt adressert: kommenter `@cursor review` og
                STOPP (RUTINER §10.4): passets fullføring vekker
                cursor-pass-fulgt via workflow_run-broen, som eier
                Codex-adgangen — aldri `@codex review` herfra.
