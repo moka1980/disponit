@@ -4037,6 +4037,58 @@ def test_deklarert_verdi_kan_ikke_krysse_skjoten():
     assert all("[NAVN-1]" in d for d in blindede)
 
 
+def test_flerlinjet_verdi_inne_i_ETT_dokument_er_lovlig():
+    """Skjøt-porten måler FORESKOMSTEN, ikke deklarasjonens form (Cursor P2).
+
+    Første utgave felte enhver verdi som INNEHOLDT `SKJOT`. Det er den
+    nødvendige betingelsen for et kryssende treff, ikke den tilstrekkelige:
+    en flerlinjet adresse som står helt inne i ÉN CV krysser ingenting, og
+    ble like fullt avvist som `verdi_krysser_dokumentgrense`.
+
+    Målt før fiksen — begge disse kastet:
+
+        blind_dokumenter(["CV … Gate 1\\n\\n0020 Oslo", "Vitnemål"],
+                         {"adresse": ["Gate 1\\n\\n0020 Oslo"], …})
+        evalueringsinput_dokumenter([kryssende], {"navn": [kryssende]})
+
+    Og det andre er et KONTRAKTSBRUDD, ikke bare en streng port:
+    `evaluer_kandidat` går nå ALLTID via `evalueringsinput_dokumenter`, så
+    én-streng-veien og én-fils-bunten — som ikke har noen skjøt i det hele
+    tatt — arvet en grense som ikke gjelder dem.
+
+    MUTASJONEN SOM DREPER DENNE: mål `SKJOT in verdi` på deklarasjonen i
+    stedet for treffets plassering i `blind_dokumenter`.
+    """
+    adresse = "Gate 1" + blinding.SKJOT + "0020 Oslo"
+
+    # Verdien inneholder skjøten, men hele treffet ligger i dokument 1.
+    blindede, avmask = blinding.blind_dokumenter(
+        ["CV for Kari, " + adresse, "Vitnemål for Kari"],
+        {"navn": ["Kari"], "adresse": [adresse]})
+    assert "[ADRESSE-1]" in blindede[0], \
+        f"lovlig flerlinjet adresse i ett dokument ble ikke maskert: {blindede}"
+    assert "Gate 1" not in "".join(blindede), "klartekst igjen"
+    blinding.krev_blindet(blinding.SKJOT.join(blindede), avmask)
+
+    # ÉN-FILS-BUNTEN HAR INGEN SKJØT: porten er selv-avgrensende, for med
+    # ett dokument er hele teksten ett spenn.
+    kryssende = "Kari" + blinding.SKJOT + "Testdal"
+    blindede, _ = blinding.evalueringsinput_dokumenter(
+        [kryssende], {"navn": [kryssende]})
+    assert blindede == ["[NAVN-1]"], \
+        f"én-fils-bunten arvet en grense den ikke har: {blindede}"
+
+    # KONTRAKTEN, gjennom den faktiske inngangen: `evaluer_kandidat` med
+    # ÉN streng skal fortsatt lykkes. Speiler assert-en på `evalueringsinput`
+    # over, men via veien produksjonen bruker.
+    resultat = evaluering.evaluer_kandidat(
+        _Modell(), kryssende, {"navn": [kryssende]}, {"drift": 1},
+        biasmaalinger=_MAALINGER)
+    assert resultat["kildetekst"] == "[NAVN-1]", (
+        "én-streng-veien gjennom `evaluer_kandidat` felles av skjøt-porten"
+        f" — kontraktsbrudd: {resultat['kildetekst']!r}")
+
+
 def test_sitat_kan_ikke_krysse_dokumentgrensen():
     """#174 (Codex G7 på #170): skjøten var ikke en grense.
 

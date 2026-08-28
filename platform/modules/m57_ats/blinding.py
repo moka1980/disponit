@@ -343,23 +343,43 @@ def blind_dokumenter(dokumenter: list[str],
     # kjøringen telles som blindet. Skjøt-før-blind-formen fanget dette;
     # #174 mistet det, og dette er #174s regning.
     #
-    # PORTEN, IKKE EN TEGNLISTE. Et treff kan bare krysse en skjøt hvis
-    # det inneholder skjøtens tegn, og `_monster` er `re.escape` +
-    # `IGNORECASE` — et treff er verdien ORDRETT, og `\n` har ingen
-    # versalvariant. Så «verdien inneholder `SKJOT`» er nøyaktig
-    # betingelsen for at et kryssende treff kan finnes, ikke en
-    # tilnærming til den. Den måles på DEKLARASJONEN, ikke ved å telle
-    # treff i en tekst erstatningen alt har skrevet i — samme grunn som
-    # runde 6-dommen ga for `_traff_alle`.
+    # PORTEN MÅLER FOREKOMSTEN, IKKE DEKLARASJONENS FORM (Cursor P2 på
+    # #240). «Verdien inneholder `SKJOT`» er NØDVENDIG for at et treff
+    # skal kunne krysse, men ikke TILSTREKKELIG — og den første formen
+    # her målte bare det nødvendige. En flerlinjet verdi som står HELT
+    # inne i ETT dokument (`"Gate 1\n\n0020 Oslo"` i adressefeltet på én
+    # CV) inneholder skjøten uten å krysse noe som helst, og ble felt.
+    # Det er ikke fail-closed sikkerhet, det er et kontraktsbrudd:
+    # docstringen under lover at en verdi med blank linje kan maskeres i
+    # én tekst, og `evaluer_kandidat` går NÅ alltid denne veien — også
+    # for én streng og for én-fils-bunter, som ikke har noen skjøt.
+    #
+    # Målingen er derfor treffets PLASSERING, på råteksten, før noen
+    # erstatning: et treff som ikke ligger helt inne i ett dokument er
+    # per konstruksjon umaskerbart, fordi `anvend` ser ett dokument av
+    # gangen. Skjøten og spennene kommer fra `dokumentgrenser`, altså
+    # samme kilde som kryss-sitatporten bruker — ingen ny maskin, og
+    # ingen tegnliste: vi spør ikke HVILKE tegn verdien består av, bare
+    # om en forekomst faller mellom to dokumenter.
+    #
+    # Formen er SELV-AVGRENSENDE. Med ett dokument er hele teksten ett
+    # spenn, så hvert treff ligger per definisjon inne i det: én-tekst-
+    # veien kan aldri felles her, uten at det trengs et `len(...) > 1`-
+    # unntak som kunne drifte fra resten.
     #
     # Den bor HER og ikke i `verdiform_lukket`: `blind` (én tekst) kan
     # maskere en verdi med blank linje helt fint, og manifestdøra har
     # ingen mening om skjøten. Grensen tilhører den PER-DOKUMENT-anvendte
     # tabellen, altså denne funksjonen — ikke deklarasjonens form. Et
     # sjette formforsøk er nettopp det §9 forbyr.
-    if any(SKJOT in verdi
-           for verdier in kandidatfelter.values() for verdi in verdier):
-        raise Blindingsfeil("verdi_krysser_dokumentgrense")
+    samlet = SKJOT.join(dokumenter)
+    grenser = dokumentgrenser(dokumenter)
+    for verdier in kandidatfelter.values():
+        for verdi in verdier:
+            for treff in _monster(verdi).finditer(samlet):
+                if not any(start <= treff.start() and treff.end() <= slutt
+                           for start, slutt in grenser):
+                    raise Blindingsfeil("verdi_krysser_dokumentgrense")
     if not _traff_alle(kandidatfelter, dokumenter):
         raise Blindingsfeil("ugyldig_maskeringsform")
     return [anvend(par, d) for d in dokumenter], avmaskering
