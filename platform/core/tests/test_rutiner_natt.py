@@ -804,6 +804,60 @@ def test_verdiktet_gjelder_sin_egen_sha():
         "hodet leses etter checkout — da er det ikke lenger «ved start»"
 
 
+def test_uleselig_hode_er_hverken_fork_eller_trygt():
+    """Codex P2 (runde 9): `|| echo ""` gjorde en API-feil til en fork.
+
+    En transient API-, auth- eller ratefeil ble til et TOMT svar, og det
+    tomme svaret leste seg som «ikke dette repoet». Eier fikk da
+    fork-avvisningen — med beskjed om IKKE å starte på nytt — for en gren
+    som er helt trygg og en kjøring som bare gikk tom for tid. En vakt
+    som gjetter er ingen vakt.
+
+    Tre utfall skilles nå: lest og likt repo, lest og annet repo, og ikke
+    lest. Den tredje sier nettopp det, og hverken ber om restart (vi kan
+    ikke utelukke fork) eller påstår fork.
+
+    MUTASJONEN SOM DREPER DENNE: `|| echo ""` tilbake, eller slå den
+    uleste armen sammen med fork-armen.
+    """
+    import yaml
+    steg = yaml.safe_load(YML)["jobs"]["fiks-og-merge"]["steps"]
+    varsel = [t for t in steg if t.get("if") == "failure()"][0]["run"]
+    assert '|| echo ""' not in varsel, (
+        "et mislykket oppslag gir fortsatt tom streng — den leses som fork")
+    assert "__ULEST__" in varsel, \
+        "ingen egen gren for «kunne ikke lese hodet»"
+    ulest = varsel[varsel.index("__ULEST__"):varsel.index("ble AVVIST")]
+    assert "fikk ikke lest" in ulest, \
+        "den uleste armen sier ikke hva som faktisk skjedde"
+    assert "ikke startes på nytt herfra" in ulest and "er trygg" in ulest, (
+        "den uleste armen tar et standpunkt den ikke har grunnlag for —"
+        " den skal gi eier BEGGE veiene, betinget av hva hodet faktisk er")
+
+
+def test_hodet_leses_paa_nytt_for_forste_skriving():
+    """Codex P2 (runde 9): fangsten er ikke en lås.
+
+    `$HODE_VED_START` settes av et steg, og mellom det steget og den
+    første commiten er det et vindu. Per-PR-mutexen serialiserer VÅRE
+    jobber — den stopper ikke et menneske eller en fremmed skriver. Uten
+    en ny lesning ville et verdikt blitt anvendt på kode reviewen aldri
+    så, med den frosne verdien som alibi.
+
+    Regelen må samtidig slippe kjøringens EGNE pusher igjennom, ellers er
+    vi tilbake i feilen forrige runde fant: forsøk 2 som parkerer på
+    forsøk 1s fremskritt.
+
+    MUTASJONEN SOM DREPER DENNE: slett avsnittet om den nye lesningen.
+    """
+    lesning = " ".join(_jobbenv()["FUNNLESNING"].split())
+    assert "les `headRefOid` live" in lesning, \
+        "hodet leses aldri på nytt — den frosne verdien er et alibi"
+    assert "TIDLIGERE FORSØK i samme kjøring" in lesning, (
+        "den nye lesningen skiller ikke vår egen push fra en fremmed —"
+        " da parkerer forsøk 2 på forsøk 1s fremskritt igjen")
+
+
 def test_mention_har_sin_egen_forkvakt():
     """Codex P1 (runde 8): eier-porten er ikke en fork-port.
 

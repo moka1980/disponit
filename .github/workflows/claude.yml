@@ -224,6 +224,17 @@ jobs:
         ligger der lenger, og å «fikse» det ville endret noe reviewen aldri
         så. Parkér og be om nytt review.
 
+        OG DEN LEVENDE HODET LESES PÅ NYTT FØR FØRSTE SKRIVING (Codex P2,
+        runde 9). `$HODE_VED_START` fanges av et steg, og mellom det
+        steget og din første commit er det et vindu: per-PR-mutexen
+        serialiserer VÅRE jobber, ikke et menneske eller en fremmed
+        skriver. Derfor, rett før du gjør din FØRSTE endring: les
+        `headRefOid` live. Er den ulik `$HODE_VED_START` OG ingen commit
+        i denne kjøringen har pushet ennå, har noen andre skrevet — da
+        parkerer du og ber om nytt review, uansett hva `commit_id` sier.
+        Har et TIDLIGERE FORSØK i samme kjøring pushet, er avviket vårt
+        eget og du fortsetter.
+
         MÅLESTOKKEN ER HODET VED KJØRINGENS START, IKKE `headRefOid` (Codex
         r3879...225). Forsøk 1 fikser og pusher, går tom for turer, og
         forsøk 2 skal fortsette derfra — det er hele poenget med de tre
@@ -243,6 +254,16 @@ jobs:
         bedre, ikke funn som gjør det riktig. Et levende P1 stopper PR-en
         uansett rundetall — et rundetak som slapp P1 forbi ville vært en
         port som åpner en dør.
+
+        PARKERINGEN UTFØRES AV `cursor-pass-fulgt` (#242), og den bærer
+        den videre: Cursor-prompten teller et parkert P2/P3 som LUKKET
+        for PASS-formål når parkeringen er autentisert. Uten det leddet
+        ville et parkert funn kommet tilbake som et Cursor-funn på neste
+        pass, og sløyfa fikset det likevel — taket hadde da flyttet
+        kostnaden, ikke fjernet den (Codex P2, runde 9). Bærer denne
+        PR-en RUNDETAK uten at #242 er merget, er taket derfor ikke
+        virksomt ennå; det er en KJENT rekkefølge mellom de to, ikke en
+        glemsel.
 
         EN PARKERING ER IKKE FERDIG FØR TRÅDEN ER LUKKET (Codex
         r3879...231). MERGEPORT stopper på hver `isResolved == false`, og
@@ -720,10 +741,33 @@ jobs:
         # Vi leser hodet på nytt her i stedet for å tro på et steg som
         # kanskje aldri kjørte: jobben kan feile på hva som helst, og en
         # variabel satt av et hoppet steg er ingen opplysning.
+        # TRE UTFALL, IKKE TO (Codex P2, runde 9). `|| echo ""` gjorde en
+        # transient API-, auth- eller rate-limit-feil om til et TOMT
+        # svar, og det tomme svaret leste seg som «ikke dette repoet» —
+        # altså fork. Da fikk eier fork-avvisningen, med beskjed om IKKE
+        # å starte på nytt, for en gren som er helt trygg og en kjøring
+        # som bare gikk tom for tid. En vakt som gjetter er ikke en vakt.
+        #
+        # Utfallene skilles derfor: lest og likt repo → vanlig
+        # «avbrutt»-melding; lest og ANNET repo → fork-avvisning; ikke
+        # lest → en tredje melding som sier nettopp det, og som hverken
+        # ber om restart (vi kan ikke utelukke fork) eller påstår fork.
         run: |
           set -euo pipefail
           HODE=$(gh api "repos/${{ github.repository }}/pulls/$PR" \
-                   --jq '.head.repo.full_name // ""' || echo "")
+                   --jq '.head.repo.full_name // ""') || HODE="__ULEST__"
+          if [ "$HODE" = "__ULEST__" ]; then
+            gh pr comment "$PR" --body "@moka1980 runden stoppet, og jeg \
+            fikk ikke lest hvor PR-ens hode ligger (API-, auth- eller \
+            ratefeil). Da kan jeg hverken si at den er trygg å starte på \
+            nytt eller at den ble avvist som fork. \
+            Kjøring: $KJORING
+
+            Sjekk hodet selv. Ligger det i ${{ github.repository }}, er en \
+            \`@claude\`-kommentar trygg; ligger det i en fork, skal den \
+            ikke startes på nytt herfra."
+            exit 0
+          fi
           if [ "$HODE" != "${{ github.repository }}" ]; then
             gh pr comment "$PR" --body "@moka1980 kjøringen ble AVVIST: \
             PR-ens hode ligger i \`$HODE\`, ikke i ${{ github.repository }}. \
