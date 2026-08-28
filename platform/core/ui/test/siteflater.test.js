@@ -9,8 +9,8 @@ import { visInnlogging } from "../static/js/innlogging.js";
 import { AppShell } from "../static/js/komponenter.js";
 import { visKundeadmin } from "../static/js/flater/kundeadmin.js";
 import { visAdmin } from "../static/js/flater/admin.js";
-import { TILBUD, erTilgjengelig, erTilgjengeligFor, modulStatus, settProduksjonsmiljo }
-  from "../static/js/plattformdata.js";
+import { TILBUD, erTilgjengelig, erTilgjengeligFor, modulStatus, produksjonsmiljo,
+  settProduksjonsmiljo } from "../static/js/plattformdata.js";
 import { siteTilbudMerke } from "../static/js/sitekomponenter.js";
 
 const HER = dirname(fileURLToPath(import.meta.url));
@@ -246,6 +246,78 @@ test("Landing: oppsett.json miljo=produksjon styrer brikker og statuslinje", asy
     // `_produksjonsmiljo` er modulglobal: en test som avbryter mellom de to
     // grenene ville ellers latt `true` lekke inn i resten av suiten.
     settProduksjonsmiljo(false);
+    window.history.replaceState({}, "", "/");
+  }
+});
+
+test("Landing: et forbigått oppsett-svar setter ikke miljøflagget", async () => {
+  // Cursor P2: `_produksjonsmiljo` er MODULGLOBAL, og den ble skrevet i det
+  // oppsett-svaret kom — altså før `gjelderFortsatt()`. Et kall som er
+  // forbigått har ingen rett til å tegne, og har da heller ingen rett til å
+  // etterlate SITT miljø i en global som `erTilgjengelig` og
+  // `heroTekstNokkel` leser for alle senere rendringer. Den dyre retningen er
+  // staging: et forlatt kall med `miljo: "produksjon"` kunne løfte flaten til
+  // «Tilgjengelig» på en vert ingen kunde bruker — nøyaktig feilklassen
+  // `byttNr`/`gjelderFortsatt` ble innført for å stoppe, bare på tilstand i
+  // stedet for på DOM.
+  //
+  // Riggen speiler den som beviser DOM-siden: det første byttets oppsett-kall
+  // henger og svarer TIL SLUTT med `produksjon`, mens byttet som faktisk eier
+  // flaten svarer `staging` og kommer i mål først.
+  window.history.replaceState({}, "", "/");
+  const app = nyttAppBrett();
+  const ekteFetch = globalThis.fetch;
+  let slippOppsett = () => {};
+  const holdt = new Promise((r) => { slippOppsett = r; });
+  let oppsettNr = 0;
+  globalThis.fetch = async (url) => {
+    const sti = String(url).split("?")[0];
+    if (sti === "/ui/oppsett.json") {
+      const nr = ++oppsettNr;
+      if (nr === 2) {                    // det FØRSTE byttet: henger, og taper
+        await holdt;
+        return { ok: true, status: 200,
+          json: async () => ({ provider_id: "google", miljo: "produksjon" }) };
+      }
+      return { ok: true, status: 200,
+        json: async () => ({ provider_id: "google", miljo: "staging" }) };
+    }
+    return ekteFetch(url);
+  };
+  try {
+    const iDrift = TILBUD.filter((post) => erTilgjengeligFor(modulStatus(post.id), true));
+    assert.ok(iDrift.length > 0,
+      "testen forutsetter minst én modul i drift — ellers kan ingen brikke " +
+      "løftes, og et lekket miljøflagg ville vært usynlig uansett");
+
+    await visInnlogging();
+    await vent(() => app.querySelectorAll(".site-sprak-knapp").length === 2);
+    const engelsk = [...app.querySelectorAll(".site-sprak-knapp")]
+      .find((k) => k.textContent === NB["ui.sprak.en"]);
+
+    // Første klikk blir stående i oppsett-hentingen; andre klikk overtar
+    // flaten og kommer i mål med sitt staging-svar.
+    engelsk.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await vent(() => oppsettNr === 2);
+    engelsk.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await vent(() => app.textContent.includes(EN["site.home.tittel"]));
+    assert.equal(produksjonsmiljo(), false,
+      "byttet som eier flaten kjører på staging, men flagget står i produksjon");
+
+    // …og så kommer det forlatte byttet i mål med sitt produksjonssvar.
+    slippOppsett();
+    await vent(() => false, 20);         // la det forlatte kallet få kjøre ut
+
+    assert.equal(produksjonsmiljo(), false,
+      "et forbigått kall skrev miljøflagget — flaten kan nå love drift den " +
+      "ikke har, uten at noe tegnet feil i det øyeblikket");
+    assert.equal(app.querySelectorAll(".site-feature .site-badge.ok").length, 0,
+      "staging-flaten viser «Tilgjengelig» etter at et forlatt kall kom i mål");
+  } finally {
+    slippOppsett();
+    globalThis.fetch = ekteFetch;
+    settProduksjonsmiljo(false);
+    settI18nForTest(NB, "nb");
     window.history.replaceState({}, "", "/");
   }
 });

@@ -407,16 +407,18 @@ export async function visInnlogging(opsjoner = {}) {
   const gjelderFortsatt = opsjoner.gjelderFortsatt || (() => true);
   const app = document.getElementById("app");
   let provider = null;
+  // Miljøet avgjør om forsiden kan LOVE noe, og leses fail-closed: bare den
+  // eksakte strengen teller, så et manglende felt eller en feilet henting
+  // koster et løfte i stedet for å gi et. Svaret bæres som LOKAL variabel her
+  // og skrives til modulglobalen først nedenfor — se der for hvorfor.
+  let iProduksjon = false;
   try {
     const o = await hentJson("/ui/oppsett.json");
     provider = o && typeof o.provider_id === "string" ? o.provider_id : null;
-    // Miljøet avgjør om forsiden kan LOVE noe. Settes FØR rendringen under, og
-    // fail-closed: bare den eksakte strengen teller, så et manglende felt
-    // eller en feilet henting koster et løfte i stedet for å gi et.
-    settProduksjonsmiljo(o && o.miljo === "produksjon");
+    iProduksjon = o && o.miljo === "produksjon";
   } catch {
     provider = null;
-    settProduksjonsmiljo(false);
+    iProduksjon = false;
   }
   // Sjekken står FØR treet bygges, ikke bare før `sett`: er kallet forbigått,
   // er også dette oppsett-svaret gammelt, og ingenting av det skal på skjermen.
@@ -431,6 +433,15 @@ export async function visInnlogging(opsjoner = {}) {
     // Hoppelenka står UTENFOR `#app` og overlever rendringen under (Codex P2).
     lokaliserSkiplenke();
   }
+
+  // Miljøflagget er modulglobalt og leses av `erTilgjengelig`/`heroTekstNokkel`
+  // mens treet under bygges. Det skrives derfor FØRST her: etter begge
+  // returpunktene over, og uten et eneste ventepunkt mellom skrivingen og
+  // rendringen som bruker den. Sto skrivingen ved hentingen, kunne et kall som
+  // ikke lenger har rett til å tegne likevel etterlate SITT miljø i globalen —
+  // samme feilklasse som `gjelderFortsatt` ble innført mot, og med staging som
+  // taperen: en flate som lover «Tilgjengelig» utenfor produksjon (Cursor P2).
+  settProduksjonsmiljo(iProduksjon);
 
   const side = lesSide();
   document.documentElement.setAttribute("data-offentlig-side", side);
