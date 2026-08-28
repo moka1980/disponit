@@ -4202,6 +4202,70 @@ def test_kryss_sitat_felles_gjennom_kjor_bunt(tmp_path):
     assert modell.sett, "kjøringen stoppet før modellen — feil port måles"
 
 
+def test_verdi_krysser_felles_gjennom_kjor_bunt(tmp_path):
+    """Skjøt-porten koblet på produksjonsflaten (Cursor P2).
+
+    Kryss-SITATET har sin koblingstest gjennom `kjor_bunt` over; den
+    kryssende VERDIEN hadde bare en test på `evalueringsinput_dokumenter`.
+    Forskjellen er målbar: en mutasjon som fjerner skjøt-sjekken fra
+    `blind_dokumenter` fanges av porttesten, men en mutasjon som lar
+    porten stå og feilimplementerer den — eller som skjøter dokumentene
+    før `evalueringsinput_dokumenter` i `kjoring.py` slik at bunten ser
+    ett dokument og ingen skjøt finnes å krysse — overlever uten
+    end-to-end-bevis på veien produksjonen faktisk går.
+
+    Bunten har derfor TO kandidater, og den kryssende er den SISTE i
+    `sorted`-rekkefølgen. Det er det som gjør `modell.sett`-asserten til
+    et bevis og ikke en tautologi: med bare én kandidat er modellen ukalt
+    uansett hvor porten står, siden den ene kandidaten er den som felles.
+
+    MUTASJONEN SOM DREPER DENNE: send `[blinding.SKJOT.join(dokumenter)]`
+    i stedet for `dokumenter` til `evalueringsinput_dokumenter` i
+    `kjor_bunt`s klargjøringsløkke — da ser klargjøringen ett dokument
+    uten skjøt, porten tier der, og først `evaluer_kandidat` feller `k2`.
+    Koden stemmer fortsatt, men `k1` er ALT hos modellen, og det er
+    nøyaktig prisen klargjøringsløkka ble flyttet ut for å slippe.
+    """
+    from modules.m57_ats import kjoring
+
+    kryssende = "Kari" + blinding.SKJOT + "Testdal"
+    arkiv = _bunt(tmp_path, [
+        # `k1` er en helt vanlig, gyldig kandidat — og kommer først.
+        ("k1/cv.html", b"<p>Ola Nordmann har ti \xc3\xa5rs drift</p>"),
+        # `k2` bærer den kryssende verdien, fordelt på to dokumenter.
+        ("k2/a_soknad.html", b"<p>Kari</p>"),
+        ("k2/b_vitnemal.html", b"<p>Testdal</p>"),
+    ])
+    # Innholdstypeporten krever at en `.html` BEGYNNER med et merke, så
+    # uttrekket må skrelle det av: da er `k2`s dokumenttekster «Kari» og
+    # «Testdal», og verdien finnes bare over skjøten — akkurat som i
+    # porttesten. Det er nettopp jobben `tekst_for` har i produksjon.
+    def _uttrekk(_medlem, data: bytes) -> str:
+        return data.decode("utf-8").removeprefix("<p>").removesuffix("</p>")
+
+    def _felter(medlem):
+        if medlem.navn.startswith("k2/"):
+            return {"navn": [kryssende, "Kari"]}
+        return {"navn": ["Ola Nordmann"]}
+
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
+                          kandidatfelter_for=_felter, tekst_for=_uttrekk,
+                          biasmaalinger=_MAALINGER, antall_soknader=2)
+    assert e.value.kode == "verdi_krysser_dokumentgrense", (
+        "en verdi som bare finnes over skjøten overlevde HELE veien"
+        f" gjennom `kjor_bunt`: {e.value.kode}")
+    # OG FØR DET FØRSTE MODELLKALLET: porten sitter i klargjøringsløkka,
+    # ikke i evalueringsløkka. Felte den først under evalueringen, ville
+    # `k1` — gyldig og tidligere i `sorted`-rekkefølgen — alt vært hos
+    # modellen når `k2` felte kjøringen. Samme regning som vakuøsiteten
+    # betalte før klargjøringen ble skilt ut.
+    assert not modell.sett, (
+        "`k1` nådde modellen før porten felte `k2` — skjøt-porten måles"
+        f" i evalueringsløkka, ikke i klargjøringen: {modell.sett}")
+
+
 def test_grensene_regnes_av_den_samme_skjoten():
     """Ett sted for skjøten, ellers peker grensene feil.
 
