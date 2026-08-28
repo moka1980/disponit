@@ -147,9 +147,28 @@ VERIF=""
 # flagget rakk å bli. Finnes bare den ene, er det nettopp halvparten som
 # skal bort.
 PAR_KLAR=""
-LISTE=$(mktemp)
+# LISTEN BOR I DEN PRIVATE KATALOGEN, ikke i `$TMPDIR` (Codex P1 ×2).
+# `mktemp` uten `-p` legger fila i `/tmp` — verdensskrivbar, sticky, og
+# PERSISTENT. To ting fulgte av det, og begge er alvorlige på en vert
+# DEPLOY.md sier er DELT:
+#
+#   1. Fila og de to avledede (`.sett`, `.krav`) bærer hver tenant-ID og
+#      hver arkivmedlemssti i KLARTEKST. Arkivet krypteres nettopp for å
+#      holde de stiene borte fra disken; en liste ved siden av opphever
+#      det.
+#   2. `mktemp` lager bare `$LISTE` trygt. `$LISTE.sett` og `$LISTE.krav`
+#      er navn en lokal bruker kan gjette fra den første — den er lesbar
+#      i katalogen — og pre-opprette som symlenker under den lange
+#      dump/arkiv-fasen. Da skriver root gjennom lenken.
+#
+# `$RAA_KAT` er 0700 og root-eid, laget med `mktemp -d`, og ligger på
+# tmpfs. Alle tre navnene bor der: ingen andre kommer inn i katalogen, så
+# hverken lesningen eller lenke-kappløpet finnes.
+LISTE="$RAA_KAT/medlemmer"
 opprydd() {
-  rm -f "$DELVIS" "$ARKIV_DELVIS" "$LISTE" "$LISTE.sett" "$LISTE.krav"
+  rm -f "$DELVIS" "$ARKIV_DELVIS"
+  # `$RAA_KAT` tar mellomfila OG de tre listene med seg — de bor alle der
+  # nå. `rm -rf` på katalogen er derfor hele oppryddingen etter dem.
   [ -z "$RAA_KAT" ] || rm -rf "$RAA_KAT"
   if [ -z "$PAR_KLAR" ] && ! { [ -f "$FIL" ] && [ -f "$ARKIV" ]; }; then
     rm -f "$FIL" "$ARKIV"
@@ -163,6 +182,47 @@ trap opprydd EXIT
 # annen kjøring eier en `.delvis` akkurat nå.
 rm -f "$KATALOG"/disponit-*.dump.age.delvis \
       "$KATALOG"/disponit-*.inndata.tar.age.delvis
+
+# RETENSJONEN FØR DISKPORTEN (Codex P1, denne runden). Sto sveipen sist,
+# var den uoppnåelig nettopp når den trengtes: fylte de beholdte parene
+# katalogen så et nytt par ikke fikk plass, avsluttet diskporten FØR
+# sveipen kunne slette noe. Neste kjøring så samme opptatte plass og
+# avsluttet på samme sted — permanent, uten at noe var galt annet enn
+# rekkefølgen. En port som hindrer sin egen forutsetning er en deadlock
+# med en feilmelding.
+#
+# Sveipen står derfor her, før målingen: det som skal frigjøres, frigjøres
+# først, og porten måler den plassen som faktisk finnes.
+# Retention: 30 dager, og slettingen TELLES — en glob som ikke treffer
+# noe ser ellers ut som en som ikke hadde noe å slette.
+#
+# SLETTINGEN GÅR PÅ STEMPEL, IKKE PÅ GLOB PER FIL (#191). Utløper dumpen og
+# arkivet hver for seg, står man igjen med en dump hvis bunter ingen arkiv
+# lenger har — altså funnet, gjenoppstått etter 30 dager i stedet for med én
+# gang. Stempelet binder dem: paret dør som det ble født.
+# `find`-STATUSEN PROPAGERER IKKE ut av `< <(...)` (Codex r3878291023):
+# prosess-substitusjonen er en egen prosess, og skallet ser aldri exitkoden
+# dens. Feiler `find` — katalogen borte, I/O-feil — leser løkka null linjer,
+# `SLETTET` blir 0, og kjøringen melder «slettet 0 utløpte par» som om
+# retention hadde gjort jobben sin. Utløpte backuper ville da hopet seg opp
+# i stillhet, med en grønn logglinje over seg.
+#
+# Derfor materialiseres listen FØRST, med statusen synlig, og løkka leser
+# den.
+UTLOPTE=$(find "$KATALOG" -name 'disponit-*.dump.age' -mtime +"$DAGER") || {
+  echo "AVBRUTT: retention-søket feilet — utløpte backuper ville hopet" \
+       "seg opp bak en grønn logglinje" >&2
+  exit 1
+}
+SLETTET=0
+while IFS= read -r gammel; do
+  [ -n "$gammel" ] || continue
+  STEMPEL_GAMMEL=$(basename "$gammel"); STEMPEL_GAMMEL=${STEMPEL_GAMMEL#disponit-}
+  STEMPEL_GAMMEL=${STEMPEL_GAMMEL%.dump.age}
+  rm -f "$KATALOG/disponit-$STEMPEL_GAMMEL.dump.age" \
+        "$KATALOG/disponit-$STEMPEL_GAMMEL.inndata.tar.age"
+  SLETTET=$((SLETTET + 1))
+done <<< "$UTLOPTE"
 
 # DISKPORTEN FØR DUMPEN, ikke etter. Arkivet er en kopi av hele lageret, og
 # lageret vokser med 64 MiB per bunt mens backupkatalogen holder 30 dagers
@@ -305,6 +365,38 @@ MANGLER=$(comm -23 "$LISTE.krav" "$LISTE.sett")
 }
 BUNTER=$(wc -l < "$LISTE.krav")
 
+# NAVNET ER IKKE INNHOLDET (Codex P1, denne runden). `comm` over måler at
+# hver påkrevd sti STÅR i arkivet. En `.bin` som er blitt avkortet, tømt
+# eller overskrevet før backupen kjørte, blir arkivert like lydig som en
+# hel — `tar` lykkes, navnet står i listen, og porten publiserer paret som
+# «gjenopprettingsverifisert» mens den restaurerte radens nonce og
+# målinger peker på en fil uten innhold.
+#
+# HVA DENNE PORTEN GJØR: hver påkrevd sti må være en VANLIG FIL med
+# innhold i seg ved kilden. Det feller tomme og forsvunne filer, som er
+# den formen sviktende lagring og avbrutte skrivinger oftest tar.
+#
+# HVA DEN IKKE GJØR, sagt høyt: den oppdager ikke DELVIS avkorting eller
+# byte-korrupsjon. Filen på disk er tenant-DEK-ciphertext, og basen bærer
+# `innhold_sha256` over KLARTEKSTEN — det er ikke samme streng, så det
+# finnes ingen lagret digest å måle ciphertexten mot. Å innføre en er en
+# ny maskin (K1) på skrivesiden i `inndata.py`, ikke noe en backupport kan
+# finne på selv. Den står som eget issue.
+mens_manglet=""
+while IFS= read -r sti; do
+  [ -n "$sti" ] || continue
+  if [ ! -f "$LAGER/$sti" ] || [ ! -s "$LAGER/$sti" ]; then
+    mens_manglet="$mens_manglet$sti"$'\n'
+  fi
+done < "$LISTE.krav"
+[ -z "$mens_manglet" ] || {
+  echo "AVBRUTT: $(printf '%s' "$mens_manglet" | grep -c .) fil(er) som" \
+       "dumpen krever er tomme eller ikke vanlige filer — arkivet ville" \
+       "båret navnet uten innholdet:" >&2
+  printf '%s' "$mens_manglet" | head -5 >&2
+  exit 1
+}
+
 # ALLE portene har svart — dumpens to og arkivets én. FØRST nå får FILENE
 # backupnavnene sine, og de får dem SAMMEN: paret er gjenopprettingsenheten,
 # og en halv enhet i katalogen ville vært den samme løgnen som en avkortet
@@ -323,41 +415,24 @@ BUNTER=$(wc -l < "$LISTE.krav")
 # være på disk mens innholdet ikke er — en backup med endelig navn og et
 # hull i seg, altså nøyaktig den «ser ut som dagens backup»-løgnen
 # arbeidsnavnene finnes for å hindre.
-sync
+# ... men `sync` alene gir ingen REKKEFØLGE (Codex P1, denne runden). Den
+# tømmer køen én gang, før begge `mv`-ene; etterpå er de to katalogpostene
+# usynkede, og et strømbrudd kan la filsystemet gjenopprette dumpens
+# endelige navn UTEN arkivets. Da er vi tilbake i «ser ut som dagens
+# backup»-løgnen, bare med filsystemet som årsak i stedet for signalet.
+#
+# Rekkefølgen må derfor tvinges LEDD FOR LEDD: innholdet i begge filene
+# først, så arkivets navn, så dumpens navn — med en katalog-fsync mellom.
+# `sync <fil>` fsync-er den fila; `sync <katalog>` fsync-er katalogposten.
+# Etter dette finnes det ikke noe krasjpunkt der dumpen har endelig navn
+# uten at arkivet har det.
+sync "$ARKIV_DELVIS" "$DELVIS"
 mv "$ARKIV_DELVIS" "$ARKIV"
+sync "$KATALOG"
 mv "$DELVIS" "$FIL"
+sync "$KATALOG"
 PAR_KLAR=1
 
-# Retention: 30 dager, og slettingen TELLES — en glob som ikke treffer
-# noe ser ellers ut som en som ikke hadde noe å slette.
-#
-# SLETTINGEN GÅR PÅ STEMPEL, IKKE PÅ GLOB PER FIL (#191). Utløper dumpen og
-# arkivet hver for seg, står man igjen med en dump hvis bunter ingen arkiv
-# lenger har — altså funnet, gjenoppstått etter 30 dager i stedet for med én
-# gang. Stempelet binder dem: paret dør som det ble født.
-# `find`-STATUSEN PROPAGERER IKKE ut av `< <(...)` (Codex r3878291023):
-# prosess-substitusjonen er en egen prosess, og skallet ser aldri exitkoden
-# dens. Feiler `find` — katalogen borte, I/O-feil — leser løkka null linjer,
-# `SLETTET` blir 0, og kjøringen melder «slettet 0 utløpte par» som om
-# retention hadde gjort jobben sin. Utløpte backuper ville da hopet seg opp
-# i stillhet, med en grønn logglinje over seg.
-#
-# Derfor materialiseres listen FØRST, med statusen synlig, og løkka leser
-# den.
-UTLOPTE=$(find "$KATALOG" -name 'disponit-*.dump.age' -mtime +"$DAGER") || {
-  echo "AVBRUTT: retention-søket feilet — utløpte backuper ville hopet" \
-       "seg opp bak en grønn logglinje" >&2
-  exit 1
-}
-SLETTET=0
-while IFS= read -r gammel; do
-  [ -n "$gammel" ] || continue
-  STEMPEL_GAMMEL=$(basename "$gammel"); STEMPEL_GAMMEL=${STEMPEL_GAMMEL#disponit-}
-  STEMPEL_GAMMEL=${STEMPEL_GAMMEL%.dump.age}
-  rm -f "$KATALOG/disponit-$STEMPEL_GAMMEL.dump.age" \
-        "$KATALOG/disponit-$STEMPEL_GAMMEL.inndata.tar.age"
-  SLETTET=$((SLETTET + 1))
-done <<< "$UTLOPTE"
 
 echo "backup ok: $FIL (${STORRELSE} B), verifisert mot $VERIF" \
      "(${TABELLER} tabeller); arkiv: $ARKIV ($(stat -c%s "$ARKIV") B," \
