@@ -1437,6 +1437,70 @@ def test_checksumporten_feller_migrasjon_borte_fra_treet(migrator, tmp_path):
         f"{res.stdout}"
 
 
+@pg
+def test_checksumporten_feller_reviewet_migrasjon_mangler_i_treet(tmp_path):
+    """Cursor P2 (#181): `_filavvik()`s tredje gren sto umålt.
+
+    Søskenporten over måler den motsatte retningen — en RAD uten fil, felt
+    av portens egen løkke over basens rader. Denne måler herdingens gren:
+    en REVIEWET versjon (`REVIEWEDE_CHECKSUMS`) som kandidat-treet ikke har
+    fila til. Den er ubetinget og gjelder uansett hva basen sier, så den kan
+    ikke nås gjennom radløkka — og etter #181 er det nettopp `kan_herdes()`
+    som skal bringe den fram i preflighten. Uten test her kunne grenen falle
+    ut i en refaktorering mens `herd_historikk` fortsatt kaster
+    `HerdingFeilet` i steg 6, etter tjenestestoppen.
+
+    Treet fabrikkeres som en KOPI i tmp: det ekte treet deles med de andre
+    portene i samme kjøring, og en `unlink`/`rename` der ville vært en
+    sidevirkning utenfor testens egen tilstand. `migrasjon-bootstrap.py`
+    kopieres med, fordi herdingens `MIG` er relativ til sin EGEN fil — ikke
+    til cwd — og kopien er det som gjør at den ser tmp-treet.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `fil is None`-grenen i `_filavvik()`
+    (eller la den `continue` uten å legge til et avvik).
+    """
+    import os
+    import shutil
+    import subprocess
+    import sys
+
+    def kjor_uten(navn, utelatt):
+        rot = tmp_path / navn
+        (rot / "deploy/staging").mkdir(parents=True)
+        shutil.copy2(ROT / "deploy/staging/migrasjon-bootstrap.py",
+                     rot / "deploy/staging/migrasjon-bootstrap.py")
+        kat = rot / "platform/core/db/migrations"
+        shutil.copytree(ROT / "platform/core/db/migrations", kat)
+        if utelatt:
+            (kat / utelatt).unlink()
+        port = rot / "checksumport.py"
+        port.write_text(_checksumporten(), encoding="utf-8")
+        return subprocess.run(
+            [sys.executable, str(port)], cwd=rot, capture_output=True,
+            text=True,
+            env={**os.environ, "DISPONIT_MIGRATOR_URL": MIGRATOR_DSN})
+
+    versjon = min(_reviewede_versjoner())
+    fil = next((ROT / "platform/core/db/migrations").glob(f"{versjon:03d}_*.sql"))
+
+    # Grønn først: det er den manglende fila som feller porten, ikke det at
+    # treet er en kopi. Uten denne halvdelen ville en tmp-kopi som ALLTID er
+    # rød sett ut som en bestått negativ test.
+    ok = kjor_uten("helt", None)
+    assert ok.returncode == 0, \
+        f"porten er rød på en komplett kopi av treet — harnesset måler ikke" \
+        f" det testen tror:\n{ok.stdout}{ok.stderr}"
+
+    rod = kjor_uten("uten-reviewet", fil.name)
+    assert rod.returncode != 0, \
+        f"porten slapp et tre uten den reviewede {fil.name} — herdingen" \
+        f" ville kastet HerdingFeilet i vedlikeholdsvinduet:\n" \
+        f"{rod.stdout}{rod.stderr}"
+    assert "mangler i treet" in rod.stdout and f"{versjon:03d}" in rod.stdout, \
+        f"porten avbrøt, men navngir ikke den reviewede migrasjonen som" \
+        f" mangler:\n{rod.stdout}{rod.stderr}"
+
+
 def test_checksumporten_feller_to_filer_med_samme_versjon(tmp_path):
     """Codex P2 (#178, runde 3): duplikat versjonsprefiks felles i porten.
 
