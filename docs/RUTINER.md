@@ -234,11 +234,22 @@ aldri et vindu der dokumentet lover en port maskinen mangler
    `@codex review`. Selve mergen PINNER baseline-SHA-en atomisk
    (`--match-head-commit`): å måle før og handle etterpå er et vindu,
    pinnen lukker det. Baseline-kilden følger kanalen: en formell review
-   bærer `commit_id`; verdikt-kommentarer (den målte kanalen)
-   DEKLARERER sin egen SHA («Reviewed commit») og DEN er baselinen —
-   aldri en live `headRefOid`, som en push i vinduet før lesningen
-   kunne ha flyttet (TOCTOU før capture). Verdikt uten deklarasjon
-   parkeres.
+   bærer `commit_id`; verdikt-kommentarer DEKLARERER sin egen SHA
+   («Reviewed commit») og DEN er baselinen — aldri en live
+   `headRefOid`, som en push i vinduet før lesningen kunne ha flyttet
+   (TOCTOU før capture). Verdikt uten deklarasjon parkeres.
+
+   **BEGGE KANALENE ER I BRUK, og valget følger utfallet** (#211, målt
+   på #210): et verdikt UTEN funn kommer som issue_comment («Didn't
+   find any major issues»), mens et verdikt MED funn kommer som
+   `pull_request_review` med funnene som INLINE-kommentarer og ofte
+   tom kropp. Det sto tidligere at kommentarkanalen var «den målte»,
+   og porten i `claude.yml` var bygget på det: review-grenen slapp kun
+   eier. Følgen var den verst tenkelige — jo viktigere verdiktet var,
+   desto sikrere var det at sløyfa overså det. Begge kanaler porteres
+   nå, hver med kvotefilteret på sin egen kropp, og et review-utløst
+   verdikt leses ALDRI ut fra kroppen alene: funnene ligger i
+   `pulls/<nr>/comments`.
 
 2. **Mandater bor i KOMMENTARER, og omtalen er `@claude`.** En ordre i en
    issue-KROPP trigger ingen kjøring (samme utløser-klasse som §10s

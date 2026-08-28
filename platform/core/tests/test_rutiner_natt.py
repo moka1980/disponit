@@ -455,15 +455,79 @@ def test_kvoten_filteret_er_prefiks_ikke_contains():
     assert "contains(github.event.comment.body, 'usage limits')" not in fiks
 
 
-def test_review_grenen_er_kun_eier_approved():
-    """Cursor P1-1 runde 11 (#198): botens verdikter kommer som
-    issue_comment — review-grenen skal ikke bære en bar login-match uten
-    kvote-filter og state-krav."""
+def _grener() -> list[str]:
+    """`if`-uttrykkets grener, én per `||`.
+
+    Den gamle formen splittet på `pull_request_review'` og leste `[1]`.
+    Med en gren til på samme hendelse ville den lest EIERENS gren og
+    konkludert at boten ikke er der — grønt uansett hva botens gren
+    inneholder. En port som slutter å måle det den heter, er verre enn
+    ingen port, så grenene deles her og navngis hver for seg.
+    """
     fiks = _uttrykk(_jobb("fiks-og-merge").split("steps:")[0])
-    review = fiks.split("pull_request_review'")[1].split("issue_comment")[0]
-    assert "chatgpt-codex-connector" not in review, (
-        "boten er tilbake på review-kanalen uten filter")
-    assert "approved" in review
+    uttrykk = fiks.split("if: >-", 1)[1].split("runs-on:", 1)[0]
+    return [" ".join(g.split()) for g in uttrykk.split("||")]
+
+
+def test_review_grenen_slipper_codex_men_bare_med_kvotefilter():
+    """#211, målt på #210 (run-listen 01:14Z): verdikter MED funn kommer
+    som `pull_request_review`, ikke som issue_comment.
+
+    Runde 11 på #198 fjernet boten fra review-grenen med begrunnelsen
+    «botens verdikter kommer som issue_comment». Det var sant for de
+    verdiktene som var målt da, og usant for den viktigste halvdelen: på
+    #210 landet 2×P1 + 1×P2 som review med inline-funn, alle fire
+    event-kjøringene ble SKIPPED, og funnene ble liggende stille.
+    Asymmetrien gikk verst tenkelig vei — jo viktigere verdiktet, desto
+    sikrere at sløyfa overså det.
+
+    Innvendingen fra runde 11 gjaldt aldri kanalen, men at grenen bar en
+    BAR login-match uten kvotefilter. Porten holder derfor begge deler:
+    boten SKAL være på review-kanalen, og den skal bære filteret der,
+    på `review.body` — ikke på `comment.body`, som er tom på et
+    review-event og dermed ville gjort filteret til dekorasjon.
+
+    MUTASJONEN SOM DREPER DENNE: fjern botens review-gren igjen (#211
+    gjenoppstår), eller la den stå uten kvotefilter (en tom lommebok
+    leses som «ingen funn», og steg 3 merger ureviewet kode).
+    """
+    grener = _grener()
+    eier = [g for g in grener
+            if "pull_request_review'" in g and "moka1980" in g]
+    bot = [g for g in grener
+           if "pull_request_review'" in g
+           and "chatgpt-codex-connector[bot]" in g]
+    assert len(eier) == 1, f"eierens review-gren er ikke entydig: {eier}"
+    assert "github.event.review.state == 'approved'" in eier[0], (
+        "eierens review-gren krever ikke lenger `approved` — en"
+        " tilfeldig eier-kommentar er ikke et verdikt")
+    assert len(bot) == 1, (
+        "Codex-bottets review-gren mangler eller er duplisert — #211:"
+        f" verdikter MED funn kommer nettopp denne veien. Grener: {grener}")
+    assert ("startsWith(github.event.review.body, 'Codex usage limits"
+            " have been reached')" in bot[0]), (
+        "botens review-gren mangler kvotefilteret på `review.body` — en"
+        " kvotemelding ville da nådd steg 3, som merger et verdikt uten"
+        " funn")
+    assert "github.event.review.state" not in bot[0], (
+        "state-krav på botens gren stenger ute `changes_requested`,"
+        " altså de tyngste funnene")
+
+
+def test_begge_verdiktkanalene_bærer_kvotefilteret():
+    """Filteret må stå på DEN kroppen hendelsen faktisk har.
+
+    `comment.body` er tom på et review-event og `review.body` er tom på
+    et issue_comment-event. Et filter som måler feil felt er ikke et
+    filter — det er en negasjon av tomhet, altså alltid sann.
+    """
+    for gren in _grener():
+        if "chatgpt-codex-connector[bot]" not in gren:
+            continue
+        felt = ("review.body" if "pull_request_review'" in gren
+                else "comment.body")
+        assert f"startsWith(github.event.{felt}," in gren, (
+            f"verdiktgrenen måler ikke kvotefilteret på {felt}: {gren}")
 
 
 def test_broen_forbyr_merge_som_mention():

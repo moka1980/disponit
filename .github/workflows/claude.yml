@@ -62,14 +62,44 @@ jobs:
     # `chatgpt-codex-connector[bot]` (#199-verdiktet). Eier-reviews
     # krever `approved` (Cursor P2-2): `types: [submitted]` dekker også
     # `commented`, og en tilfeldig eier-kommentar er ikke et verdikt.
-    # Review-grenen er KUN eier+approved (Cursor P1-1 runde 11): botens
-    # verdikter kommer som issue_comment (målt — se kvote-notatet over),
-    # og en bar login-match på review-kanalen sto uten kvote-filter og
-    # uten state-krav. Kanalen bot-en faktisk bruker bærer filteret.
+    # BOTEN BRUKER BEGGE KANALENE, og hvilken den velger avhenger av hva
+    # den fant (#211, målt på #210 run-listen 01:14Z):
+    #
+    #   verdikt UTEN funn  → issue_comment («Didn't find any major issues»)
+    #   verdikt MED funn   → pull_request_review, state `commented`, med
+    #                        funnene som inline-kommentarer
+    #
+    # Runde 11 på #198 fjernet boten fra review-grenen på premisset
+    # «botens verdikter kommer som issue_comment». Premisset var sant for
+    # de verdiktene som var målt DA, og usant for den viktigste halvdelen:
+    # på #210 landet 2×P1 + 1×P2 som review, alle fire event-kjøringene
+    # ble SKIPPED, og funnene ble liggende stille til eier fant dem for
+    # hånd. Asymmetrien var den verst tenkelige veien: JO VIKTIGERE
+    # VERDIKTET ER, DESTO SIKRERE VAR DET AT SLØYFA IGNORERTE DET.
+    #
+    # Innvendingen som fjernet boten sist står likevel — den gjaldt aldri
+    # kanalen, men at review-grenen bar en BAR login-match uten
+    # kvotefilter. Derfor kommer boten tilbake MED filteret, på sin egen
+    # gren: eksakt login (aldri contains), og kvotemeldingens egen åpning
+    # målt på `review.body` slik den måles på `comment.body`.
+    #
+    # INGEN state-krav på botens gren, med vilje: `approved` er eierens
+    # skille mellom en tilfeldig kommentar og et verdikt, mens HVER review
+    # boten sender ER et verdikt — den kommenterer ikke ellers. Et krav om
+    # `commented` ville dessuten stengt ute `changes_requested`, altså
+    # nettopp de tyngste funnene.
+    #
+    # `review.body` er TOM når funnene bare er inline (målt på #210).
+    # `startsWith(null, …)` er falsk i GitHub-uttrykk, så negasjonen
+    # slipper den igjennom — riktig vei: et tomt kropp er et verdikt med
+    # funnene et annet sted, ikke en kvotemelding.
     if: >-
       (github.event_name == 'pull_request_review' &&
        github.event.review.user.login == 'moka1980' &&
        github.event.review.state == 'approved') ||
+      (github.event_name == 'pull_request_review' &&
+       github.event.review.user.login == 'chatgpt-codex-connector[bot]' &&
+       !startsWith(github.event.review.body, 'Codex usage limits have been reached')) ||
       (github.event_name == 'issue_comment' &&
        github.event.issue.pull_request &&
        github.event.comment.user.login == 'chatgpt-codex-connector[bot]' &&
@@ -134,6 +164,12 @@ jobs:
             1. Les hele verdiktet og alle tråder: `gh pr view <nr> --comments`
                og `gh api` mot pulls/<nr>/reviews og pulls/<nr>/comments.
                Ignorer rene triggerkommentarer («@codex review»).
+               ER KJØRINGEN REVIEW-UTLØST, LIGGER FUNNENE OFTE IKKE I
+               KROPPEN (#211): Codex sender da funnene som INLINE-
+               kommentarer, og `review.body` kan være helt tom. En tom
+               kropp er derfor ikke «ingen funn» — den er et verdikt som
+               peker et annet sted. `gh api pulls/<nr>/comments` er stedet.
+               Leser du bare kroppen, merger steg 3 en PR med uåpnede P1.
             2. Reelle funn (P1/P2/aksjonspunkter): fiks dem i roten, ikke
                symptomet. KONVERGENSREGLENE (RUTINER.md §9, ratifisert
                21/8) er bindende for hvordan:
@@ -181,8 +217,9 @@ jobs:
 
                FØRST, VED INNGANG TIL STEG 3 — BASELINE: noter SHA-en
                verdiktet gjelder. Review-utløst kjøring:
-               `${{ github.event.review.commit_id }}`. issue_comment-
-               utløst (den MÅLTE verdiktkanalen): verdikt-kommentaren
+               `${{ github.event.review.commit_id }}` — den bærer sin
+               egen SHA, og den er alltid å foretrekke når den finnes.
+               issue_comment-utløst: verdikt-kommentaren
                DEKLARERER sin egen SHA («Reviewed commit: `…`») — parse
                DEN som baseline. Aldri les en live `headRefOid` som
                baseline: en push i vinduet mellom verdikt og lesning
