@@ -233,7 +233,22 @@ jobs:
         i denne kjøringen har pushet ennå, har noen andre skrevet — da
         parkerer du og ber om nytt review, uansett hva `commit_id` sier.
         Har et TIDLIGERE FORSØK i samme kjøring pushet, er avviket vårt
-        eget og du fortsetter.
+        eget og du fortsetter — men det må BEVISES, ikke antas (Codex P2,
+        runde 10). «Et tidligere forsøk pushet» gjør ikke enhver senere
+        endring til vår: en fremmed skriver kan ha pushet ETTER vårt
+        forsøk, og da ville retryen endret kode verdiktet aldri så, med
+        vårt eget fremskritt som alibi.
+
+        Beviset er commit-kjeden. HVER commit du lager i denne jobben
+        skal bære traileren
+
+            Claude-Run: ${{ github.run_id }}
+
+        og før du fortsetter etter et avvik, les
+        `git log --format='%H %(trailers:key=Claude-Run,valueonly)'
+        $HODE_VED_START..<live head>`: er HVER commit der merket med
+        DENNE kjøringens id, er hele avviket vårt eget og du fortsetter.
+        Er én av dem umerket, har noen andre skrevet — parkér.
 
         MÅLESTOKKEN ER HODET VED KJØRINGENS START, IKKE `headRefOid` (Codex
         r3879...225). Forsøk 1 fikser og pusher, går tom for turer, og
@@ -246,9 +261,15 @@ jobs:
       RUNDETAK: |
         RUNDETAK: TRE (RUTINER §12.1, eiervedtak 28/8). Tell rundene på
         denne PR-en — antall pass fra `github-actions[bot]` med
-        overskriften `## Cursor pre-Codex`. Er du forbi tre, samler du
+        overskriften `## Cursor pre-Codex`. Har tallet NÅDD tre, samler du
         GJENSTÅENDE P2/P3 i ETT oppfølgingsissue, viser til det i tråden,
         og går videre i stedet for å fikse dem.
+
+        «NÅDD», IKKE «FORBI» (Codex P2, runde 10). Med «forbi tre» var
+        betingelsen usann på nøyaktig det tredje passet: agenten fikset
+        funnene og startet en FJERDE runde, og parkeringen slo først inn
+        etter at den runden hadde kostet sin egen Cursor- og
+        CI-syklus. Taket het TRE og kostet fire.
 
         P1 ER ALDRI UTSETTBART. Taket gjelder funn som gjør arbeidet
         bedre, ikke funn som gjør det riktig. Et levende P1 stopper PR-en
@@ -283,7 +304,15 @@ jobs:
       MERGEPORT: |
         ALLE ULØSTE TRÅDER FØRST (#211): før du merger, skann
         `reviewThreads { isResolved }` på HELE PR-en via GraphQL — ikke bare
-        den utløsende reviewens. Scopingen avgjør hvilke funn som er DETTE
+        den utløsende reviewens.
+
+        OG HELE CONNECTIONEN, IKKE FØRSTE SIDE (Codex P2, runde 10).
+        `--paginate` gjelder REST-kallet over; en GraphQL-connection
+        pagineres ikke av seg selv. Spør med `$endCursor: String` og
+        `pageInfo { hasNextPage endCursor }`, og gjenta til
+        `hasNextPage` er `false`. Leser du bare første side, kan en uløst
+        tråd lenger ute i connectionen merges forbi — og porten som
+        skulle stoppe alt ville stoppet det den tilfeldigvis så. Scopingen avgjør hvilke funn som er DETTE
         verdiktet; den avgjør ALDRI hvilke som må være lukket før merge.
         Finnes én `isResolved == false` — UANSETT FORFATTER — merger du
         ikke. Er tråden botens, fikser du den og lukker den; er den en

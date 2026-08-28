@@ -804,6 +804,65 @@ def test_verdiktet_gjelder_sin_egen_sha():
         "hodet leses etter checkout — da er det ikke lenger «ved start»"
 
 
+def test_taket_slaar_inn_VED_tredje_pass():
+    """Codex P2 (runde 10): et tak som het TRE og kostet fire.
+
+    «Er du forbi tre» er usant på nøyaktig det tredje passet: agenten
+    fikset funnene og startet en FJERDE runde, og parkeringen slo først
+    inn etter at den runden hadde kostet sin egen Cursor- og CI-syklus.
+    Hele vedtaket handler om at rundene er den dominerende kostnaden, så
+    en av-med-én her er ikke kosmetikk — den er én runde per PR.
+
+    MUTASJONEN SOM DREPER DENNE: «forbi tre» tilbake.
+    """
+    tak = " ".join(_jobbenv()["RUNDETAK"].split())
+    assert "NÅDD tre" in tak, \
+        "taket slår inn etter tre runder, ikke ved den tredje"
+    assert "forbi tre, samler du" not in tak, \
+        "den gamle av-med-én-formen står fortsatt i regelen"
+
+
+def test_mergeporten_pagineres_gjennom_hele_connectionen():
+    """Codex P2 (runde 10): `--paginate` gjelder ikke GraphQL.
+
+    REST-kallet i FUNNLESNING pagineres eksplisitt, men merge-porten
+    spør GraphQL — og en connection pagineres ikke av seg selv. På en PR
+    med flere tråder enn én side kunne porten lest første side, sett
+    null uløste, og merget forbi en uløst tråd lenger ute. En port som
+    «stopper alt» ville da stoppet det den tilfeldigvis så.
+
+    MUTASJONEN SOM DREPER DENNE: fjern markørkravet fra MERGEPORT.
+    """
+    port = " ".join(_jobbenv()["MERGEPORT"].split())
+    assert "endCursor" in port and "hasNextPage" in port, (
+        "merge-porten krever ingen markørgjennomgang — den kan lese"
+        " første side og merge forbi resten")
+
+
+def test_retryen_beviser_at_avviket_er_kjoringens_eget():
+    """Codex P2 (runde 10): «vi pushet» er ikke «bare vi pushet».
+
+    Runde 9 lot retryen fortsette så snart et tidligere forsøk hadde
+    pushet. Men en fremmed skriver kan ha pushet ETTER vårt forsøk, og
+    da endret retryen kode verdiktet aldri så — med vårt eget fremskritt
+    som alibi. Per-PR-mutexen serialiserer ikke eksterne skrivere.
+
+    Beviset må være commit-kjeden, ikke en antakelse: hver commit mellom
+    `$HODE_VED_START` og live head må bære DENNE kjøringens id.
+
+    MUTASJONEN SOM DREPER DENNE: fjern traileren og kjedelesningen.
+    """
+    lesning = " ".join(_jobbenv()["FUNNLESNING"].split())
+    assert "Claude-Run: ${{ github.run_id }}" in lesning, (
+        "commitene merkes ikke med kjøringens id — da finnes det ingen"
+        " måte å skille vårt fremskritt fra en fremmed push")
+    assert "git log" in lesning and "$HODE_VED_START.." in lesning, (
+        "kjeden mellom startpunktet og live head leses aldri — regelen"
+        " ANTAR at avviket er vårt")
+    assert "Er én av dem umerket" in lesning, \
+        "regelen sier ikke hva som skjer når en fremmed commit står der"
+
+
 def test_uleselig_hode_er_hverken_fork_eller_trygt():
     """Codex P2 (runde 9): `|| echo ""` gjorde en API-feil til en fork.
 
