@@ -87,8 +87,8 @@
           "$ref": "#/$defs/punkt"
         },
         "produktgjennomgang_bestatt": {
-          "$ref": "#/$defs/punkt",
-          "comment": "RUTINER 12.2 (eiervedtak 28/8, obligatorisk fra eiers dom 29/8): ett punkt som beskriver hva brukeren skal kunne gjore, flippet av en MENNESKELIG gjennomgang av flaten - ikke av at en test ble gronn. Kilden er en evidensfil: attester_evidensfil fester notatets sha256 sammen med aktoren som leste det, og gjennomgangen produserer nettopp en fil. OBLIGATORISK for hver modul som ikke alt er frosset av en registrert aksept - handhevet av test_produktpunktet_kreves_av_hver_uakseptert_modul, ikke av required her. Grunnen er repoets egen immutabilitet: m02 og m56 star i AKSEPTERTE_GENERASJONER, og m56s manifesthash er dessuten pinnet til release wcag-r24, saa en ny sjekklistenokkel der er en NY identitet som krever ny aksept - en deployment-handling, ikke en skjemaendring. Required her ville tvunget frem nettopp den handlingen. Unntaket oploses av seg selv: neste aksept for m02/m56 endrer manifestet uansett, og porten krever punktet da. En modul som en dag mangler en flate skriver status blokkert med blokkert_av - registrert slar fravaerende."
+          "$ref": "#/$defs/produktpunkt",
+          "comment": "RUTINER 12.2 (eiervedtak 28/8, obligatorisk fra eiers dom 29/8): ett punkt som beskriver hva brukeren skal kunne gjore, flippet av en MENNESKELIG gjennomgang av flaten. Kravet om at punktet FINNES staar som en betinget regel i rota: hver modul som ikke alt er `aktiv` maa ha det. Se begrunnelsen der."
         }
       }
     },
@@ -235,6 +235,49 @@
           }
         }
       ]
+    },
+    "produktpunkt": {
+      "$ref": "#/$defs/punkt",
+      "comment": "RUTINER 12.2. Samme form som ethvert annet punkt, med ETT tillegg: et `ja` her krever artefakt, sha256 og krav_id. Uten det leddet kunne gjennomgangen 'fullfores' ved a bytte nei til ja - valider_artefakter hopper over `ja` UTEN krav_id, saa den menneskelige porten var en streng noen kunne skrive.",
+      "if": {
+        "properties": {
+          "status": {
+            "const": "ja"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "required": [
+          "krav_id",
+          "artefakt",
+          "artefakt_sha256"
+        ]
+      }
     }
-  }
+  },
+  "if": {
+    "properties": {
+      "status": {
+        "not": {
+          "const": "aktiv"
+        }
+      }
+    },
+    "required": [
+      "status"
+    ]
+  },
+  "then": {
+    "properties": {
+      "staging_sjekkliste": {
+        "required": [
+          "produktgjennomgang_bestatt"
+        ]
+      }
+    }
+  },
+  "comment_produktaksept": "HVORFOR BETINGET OG IKKE `required` (Codex P1/P2 paa #242): RUTINER 2 sier at en modul ikke settes `aktiv` for hvert punkt staar `ja`, og CI haandhever det med aktiv_uten_bevis. Et ubetinget krav ville derfor gjort hver ALT AKTIV modul (m01, m02, m56) roed i CI over natta for et punkt som ikke fantes da de ble aktivert - eller tvunget frem et `ja` uten gjennomgang. 12.2 er en AKTIVERINGSPORT, og den binder framover: hver modul som ennaa ikke er aktiv maa baere punktet, og for den kan bli aktiv tvinger aktiv_uten_bevis det til `ja` og produktpunkt-defen krever bevis for det `ja`-et. Ingen ny modul kan aktiveres uten menneskelig produktgjennomgang."
 }

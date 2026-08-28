@@ -621,6 +621,61 @@ def test_parkeringen_har_verktoyet_den_krever():
         " `gh issue create` — parkeringen kan ikke utføres derfra")
 
 
+def test_rundetaket_telles_FOR_fiks_og_stopp_grenen():
+    """Codex P1 (runde 4 på #242): et tak bak stoppet er ingen port.
+
+    Rundetaket sto UNDER instruksjonen «fiks alle P1/P2, post `@cursor
+    review` og STOPP». En leser som følger rekkefølgen kom aldri dit: den
+    fikset alle P2-ene og stoppet, runde etter runde, og taket var
+    uvirksomt uansett hvor riktig det var formulert.
+
+    Tellingen må stå FØRST, og fiks-grenen må være den betingede — ikke
+    omvendt.
+
+    MUTASJONEN SOM DREPER DENNE: flytt rundetaks-avsnittet tilbake bak
+    fiks-og-stopp.
+    """
+    import re as _re
+    m = _re.search(
+        r"^            3\. Les det SISTE passet(.*?)^            4\. PASS",
+        YML, _re.S | _re.M)
+    assert m, "fant ikke steg 3 i cursor-pass-fulgt"
+    steg3 = m.group(1)
+    assert "TELL RUNDEN FØR DU GJØR NOE ANNET" in steg3, \
+        "steg 3 teller ikke runden i det hele tatt"
+    assert steg3.index("TELL RUNDEN FØR DU GJØR NOE ANNET") \
+        < steg3.index("PÅ RUNDE 1–3"), (
+        "rundetaket står bak fiks-og-stopp-grenen — en leser som følger"
+        " rekkefølgen når det aldri")
+    assert "PÅ RUNDE 1–3 (eller når bare P1 gjenstår)" in steg3, (
+        "fiks-grenen er ubetinget igjen — da gjelder den også på runde"
+        " fire, og taket er omgått")
+
+
+def test_parkeringen_har_en_markor_cursor_ikke_kan_forfalske():
+    """Codex P2 (runde 4): Cursors egen rapport oppfylte alle vilkårene.
+
+    Passene postes av `github-actions[bot]` — samme forfatter som
+    parkeringsvilkåret tillater — så en funnliste fra Cursor som nevner et
+    issue-nummer oppfylte alle fire vilkårene. Cursor kunne lest sin EGEN
+    rapport som beslutningen om å parkere og gitt PASS, uten at noen hadde
+    opprettet issuet eller lukket tråden.
+
+    Markøren skiller en beslutning fra en rapport, og den må stå BEGGE
+    steder: hos skriveren som setter den, og hos leseren som krever den.
+
+    MUTASJONEN SOM DREPER DENNE: fjern markøren fra ett av de to stedene.
+    """
+    assert "PARKERT (RUTINER §12.1)" in YML, (
+        "skriveren setter ingen markør — Cursor kan da ikke skille en"
+        " parkering fra sin egen funnrapport")
+    assert "PARKERT (RUTINER §12.1)" in CURSOR_YML, \
+        "leseren krever ingen markør"
+    assert "DIN EGEN RAPPORT ER ALDRI EN PARKERING" in CURSOR_YML, (
+        "prompten avviser ikke `## Cursor pre-Codex`-kommentarer som"
+        " parkeringsbevis")
+
+
 def test_mention_og_broen_mangler_merge_kapasitet():
     """Cursor P1-2 runde 17 + P2-3 runde 19 (#198): `gh pr merge` er
     fjernet fra ACL-en (eksplisitte pr-underkommandoer). PRESISJON:

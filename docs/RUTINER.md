@@ -323,27 +323,36 @@ Hver modul skal derfor ha ETT produktakseptpunkt som beskriver hva
 brukeren skal kunne gjøre, og det punktet flippes av en menneskelig
 gjennomgang av flaten — ikke av at en test ble grønn.
 
-**Punktet er OBLIGATORISK (eiers dom 29/8), og det binder FRAMOVER.**
+**Punktet er OBLIGATORISK (eiers dom 29/8), og det er en AKTIVERINGSPORT.**
 Det var frivillig i én runde, med den begrunnelsen at en modul uten
 brukerflate ikke har en flate å gå gjennom. Den begrunnelsen holdt ikke
 mot katalogen: alle fem modulene har en flate — også revisjonsloggen,
 som leses gjennom `policyhistorikk`, `beslutninger` og `adjudikator`. En
-logg ingen leser er ikke et krav noen stilte. Unntaket var teoretisk, og
-en frivillig port hoppes over av nettopp den modulen som har det travelt.
+logg ingen leser er ikke et krav noen stilte.
 
-Kravet står likevel IKKE som `required` i manifestskjemaet, og grunnen er
-repoets egen immutabilitet. `AKSEPTERTE_GENERASJONER` fryser m02 og m56
-til projeksjonen aksepten MÅLTE, og m56s manifesthash er i tillegg pinnet
-til release `wcag-r24`. En ny sjekklistenøkkel der er en NY identitet som
-krever ny aksept — altså en deployment. Et `required` ville tvunget fram
-den deploymenten bare for å få suiten grønn, og en skjemaendring skal
-ikke kunne bestille en produksjonsdeployment.
+Formen tok tre runder å finne, og hver feilform lærte noe:
 
-Porten står derfor i `test_produktpunktet_kreves_av_hver_uakseptert_-
-modul` og måler mot repoets EGEN definisjon av «alt akseptert»: hver
-modul som ikke er frosset av en registrert aksept skal bære punktet.
-Unntaket oppløser seg selv — neste aksept for m02 eller m56 endrer
-manifestet uansett, og da treffer porten dem.
+1. `required` i skjemaet gjorde hver ALT AKTIV modul rød i CI. §2 sier
+   at en modul ikke settes `aktiv` før hvert punkt står `ja`, og
+   `Manifestskjema (v2 Del 7)` håndhever det med `exit 1`. m01, m02 og
+   m56 ville stått røde på hver eneste PR for et punkt som ikke fantes
+   da de ble aktivert — og alternativet, å skrive `ja`, er å dikte en
+   gjennomgang som ikke er gjort.
+2. Et unntak basert på `AKSEPTERTE_GENERASJONER` oppløste seg aldri:
+   stien blir stående der for alltid.
+3. Én test hardkodet til M-57 lot enhver senere modul bare la være.
+
+Formen som holder er §2s egen. **Hver modul som ennå ikke er `aktiv` må
+bære punktet**, håndhevet av en betinget regel i manifestskjemaet
+(`if status ≠ aktiv → then required`). Da er kjeden lukket for alt som
+aktiveres heretter: punktet må finnes, `aktiv_uten_bevis` tvinger det
+til `ja` før aktivering, og `ja`-et må bære bevis — `produktpunkt`-defen
+krever `krav_id`, `artefakt` og `artefakt_sha256`, og da griper husets
+egen evidenskjede og åpner fila.
+
+Det som er alt aktivert, felles ikke. m01, m02 og m56 mangler en
+registrert produktgjennomgang, og det er sant — men det er et issue, ikke
+en rød CI.
 
 En modul som en dag virkelig mangler en flate skriver `status: blokkert`
 med `blokkert_av`. Registrert slår fraværende: en manglende nøkkel står
@@ -382,9 +391,16 @@ vi startet, bare med mer arbeid.
 Det som virker er to steg, i denne rekkefølgen:
 
 ```
+SHA=$(gh pr view <topp> --json headRefOid -q .headRefOid)
 gh pr edit  <topp> --base main
-gh pr merge <topp> --rebase
+gh pr merge <topp> --rebase --match-head-commit "$SHA"
 ```
+
+`--match-head-commit` er heller ikke valgfri. Mellom retargetingen og
+mergen er det et vindu, og en push der ville merget et hode ingen av
+stabelens Codex-verdikter dekker — nøyaktig sjekk-så-handle-hullet §11.1
+finnes for, og som den automatiske veien i `claude.yml` alt lukker med
+samme flagg. SHA-en leses FØR retargetingen, for det er den Codex så.
 
 Retargetingen er ikke valgfri: toppens base er grenen UNDER den, og
 `--rebase` spiller commitene inn på PR-ens base — uten det første steget

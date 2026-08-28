@@ -121,25 +121,21 @@ def test_uavklarte_punkter_og_aktiv_uten_bevis(m01):
     # hadde uavklarte punkter. Derfor står de to kontrollene på hver sin
     # kopi: `aktiv_uten_bevis` måles med et innsatt uavklart punkt, slik at
     # den fortsatt kan feile.
-    # ... OG SÅ BLE DET ETT IGJEN, 2026-08-29. `produktgjennomgang_bestatt`
-    # ble innført som krav (RUTINER §12.2, eiers dom), og m01 har ingen
-    # registrert menneskelig gjennomgang av policyflaten. Punktet står
-    # derfor `nei`, og porten RAPPORTERER m01. Det er riktig oppførsel og
-    # ikke en falsk alarm: modulen ER aktiv med et uavklart punkt.
+    # §12.2 ENDRET IKKE DETTE, og det er med vilje (Codex P1 på #242).
+    # Produktakseptpunktet ble lagt i m01 i én runde, og da ble m01 «aktiv
+    # med uavklart punkt» — som CI-steget `Manifestskjema (v2 Del 7)`
+    # avviser med exit 1. Hver eneste PR ville stått rød for et punkt som
+    # ikke fantes da m01 ble aktivert.
     #
-    # Aksepthendelsen fra 2026-08-05 omgjøres ikke av dette. Den er en
-    # registrert hendelse; §12.2 binder aksepter fra 28/8 og framover.
-    #
-    # Settet PINNES i stedet for å tømmes: går et annet punkt tilbake til
-    # nei, faller testen fortsatt — og flippes produktpunktet til ja etter
-    # en faktisk gjennomgang, faller den også, som den skal.
-    assert set(uavklarte_punkter(m01)) == {"produktgjennomgang_bestatt"}
+    # §12.2 er en AKTIVERINGSPORT, ikke en tilbakevirkende dom: kravet
+    # gjelder hver modul som ennå ikke er `aktiv`, og håndheves av
+    # skjemaets betingede regel. m01 er alt aktiv og bærer derfor ikke
+    # punktet. At den mangler en registrert produktgjennomgang står som
+    # eget issue, ikke som en rød CI.
+    assert set(uavklarte_punkter(m01)) == set()
     assert m01["status"] == "aktiv", (
         "m01 ble aktivert 2026-08-05 — går den tilbake, skal denne falle")
-    assert aktiv_uten_bevis(m01) == ["produktgjennomgang_bestatt"], (
-        "porten skal navngi NØYAKTIG det uavklarte punktet — en tom liste"
-        " ville betydd at den ikke ser det, og en lengre at noe annet"
-        " også har falt")
+    assert aktiv_uten_bevis(m01) == []
 
     # PORTEN MÅ FORTSATT KUNNE FEILE.
     #

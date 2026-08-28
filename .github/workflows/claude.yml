@@ -730,37 +730,47 @@ jobs:
                aldri bare formen): en kommentar fra enhver annen
                forfatter er ALDRI et pass, uansett hvor lik den ser ut —
                SHA-linja gjør en forfalskning billig, forfatteren gjør
-               den umulig. P1/P2-funn: fiks etter
+               den umulig.
+
+               TELL RUNDEN FØR DU GJØR NOE ANNET (RUTINER §12.1, Codex P1
+               på #242 runde 4). Rundetaket sto tidligere UNDER
+               fiks-og-stopp-instruksjonen, og en leser som følger
+               rekkefølgen kom aldri dit: den fikset alle P2-ene og
+               stoppet, runde etter runde. Et tak som står bak stoppet er
+               ingen port. Tell derfor FØRST: antall kommentarer fra
+               `github-actions[bot]` med overskriften `## Cursor
+               pre-Codex` i denne tråden.
+
+               PÅ FJERDE RUNDE ELLER SENERE, og det gjenstår P2/P3:
+
+               a. opprett ETT oppfølgingsissue med `gh issue create` — som
+                  står i `--allowedTools` (Codex P1, runde 3: uten den
+                  ble regelen nektet av verktøyporten, og taket sto like
+                  fast som før) — og som gjengir hvert gjenstående funn
+                  ORDRETT, med fil og linje, og peker på denne PR-en;
+               b. post ÉN kommentar i PR-tråden som BEGYNNER med linjen
+
+                      PARKERT (RUTINER §12.1)
+
+                  og deretter navngir issuet (`#<nr>`) og lister hvilke
+                  funn som er parkert i det. Markøren er ikke pynt: uten
+                  den kan Cursor ikke skille din beslutning fra sin egen
+                  funnrapport, som postes av samme bot (Codex P2, runde 4);
+               c. lukk review-trådene til de parkerte funnene med
+                  `resolveReviewThread` — en parkering som lar tråden stå
+                  gjør PR-en ufullførbar av merge-porten;
+               d. deretter `@cursor review`. Neste pass leser parkeringen
+                  og gir PASS.
+
+               P1 PARKERES ALDRI. Taket gjelder funn som gjør arbeidet
+               bedre, ikke funn som gjør det riktig — og et P1 fikses selv
+               på runde ni.
+
+               PÅ RUNDE 1–3 (eller når bare P1 gjenstår): fiks etter
                K1-reglene, ett funn per commit, push underveis; deretter
                `@cursor review` for verifikasjon og stopp. K2/K5 og
                PASS-ekvivalensregelen (en runde med kun test-negativer
                teller som PASS) gjelder.
-
-               RUNDETAKET UTFØRES HER (RUTINER §12.1, Codex P1 på #242).
-               Cursor kjører READ-ONLY og kan ikke parkere noe selv — du
-               er den eneste skrivende deltakeren i sløyfa, så uten dette
-               leddet ville taket vært en regel ingen kunne oppfylle, og
-               sløyfa gikk i ring til eier grep inn. Tell passene i
-               tråden (kommentarer fra `github-actions[bot]` med
-               overskriften `## Cursor pre-Codex`). Er du på fjerde eller
-               senere, og det gjenstår P2/P3 du ikke har fikset:
-
-               a. opprett ETT oppfølgingsissue med `gh issue create` — som
-                  nå står i `--allowedTools` (Codex P1, runde 3: uten den
-                  ble regelen nektet av verktøyporten, og taket sto like
-                  fast som før) — og som
-                  gjengir hvert gjenstående funn ORDRETT, med fil og
-                  linje, og peker på denne PR-en;
-               b. post ÉN kommentar i PR-tråden som navngir issuet
-                  (`#<nr>`) og lister hvilke funn som er parkert i det;
-               c. lukk review-trådene til de parkerte funnene med
-                  `resolveReviewThread` — en parkering som lar tråden stå
-                  gjør PR-en ufullførbar av merge-porten;
-               d. deretter `@cursor review` som vanlig. Neste pass leser
-                  parkeringen og gir PASS.
-
-               P1 PARKERES ALDRI. Taket gjelder funn som gjør arbeidet
-               bedre, ikke funn som gjør det riktig.
             4. PASS (eller pass-ekvivalent): verifiser FØRST at
                pass-kommentarens egen SHA-linje (`SHA: ...`) er identisk
                med `gh pr view <nr> --json headRefOid -q .headRefOid` —

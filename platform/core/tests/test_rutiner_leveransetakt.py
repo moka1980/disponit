@@ -81,11 +81,14 @@ def test_produktakseptpunktets_kildetype_finnes_i_akseptmodellen():
     # OBLIGATORISK, OG HVORFOR IKKE `required` (eiers dom 29/8). Uten
     # begrunnelsen ville neste leser «rydde opp» ved å sette `required` og
     # dermed bestille en produksjonsdeployment for å få suiten grønn.
-    assert "OBLIGATORISK" in p and "binder FRAMOVER" in p, \
+    assert "OBLIGATORISK" in p and "AKTIVERINGSPORT" in p, \
         "paragrafen sier ikke at punktet er obligatorisk"
-    assert "AKSEPTERTE_GENERASJONER" in p, (
-        "paragrafen forklarer ikke hvorfor kravet ikke står som `required`"
-        " — neste leser setter det, og tvinger fram en ny aksept for m56")
+    # HVORFOR IKKE `required`, med målingen. Uten den ville neste leser
+    # «rydde opp» ved å sette `required` — og gjøre hver PR rød for m01,
+    # m02 og m56. Feilformen må stå beskrevet, ikke bare den riktige.
+    assert "aktiv_uten_bevis" in p and "if status ≠ aktiv" in p, (
+        "paragrafen forklarer ikke hvorfor kravet er betinget — neste"
+        " leser setter `required` og gjør hver PR rød")
     assert "blokkert" in p, \
         "det finnes ingen ærlig utvei for en modul uten flate"
     m = re.search(r"kilde_type[^;]*?CHECK[^;]*?IN\s*\(([^)]*)\)",
@@ -144,71 +147,128 @@ def test_produktpunktet_er_FAKTISK_registrert_ikke_bare_mulig():
         "punktet sier ikke hva brukeren skal kunne gjøre"
 
 
-def test_produktpunktet_kreves_av_hver_uakseptert_modul():
-    """Eiers dom 29/8: punktet er OBLIGATORISK — men fra nå av.
+def test_produktpunktet_kreves_av_hver_modul_som_ikke_er_aktiv():
+    """Eiers dom 29/8: obligatorisk — men det er en AKTIVERINGSPORT.
 
-    Hvorfor ikke `required` i skjemaet: repoets egen immutabilitet
-    forbyr det. `AKSEPTERTE_GENERASJONER` fryser m02 og m56 til
-    projeksjonen aksepten MÅLTE, og m56s manifesthash er i tillegg pinnet
-    til release `wcag-r24` (`test_release_id_folger_manifestets_-
-    projeksjon`). En ny sjekklistenøkkel der er en NY identitet som
-    krever ny aksept — en deployment-handling. `required` ville tvunget
-    frem nettopp den handlingen for å få suiten grønn, og en skjema-
-    endring skal ikke kunne bestille en produksjonsdeployment.
+    Tre runder brukte på å finne den riktige formen, og hver feilform
+    lærte noe:
 
-    Kravet håndheves derfor her, mot repoets EGEN definisjon av «alt
-    akseptert»: hver modul som ikke står i `AKSEPTERTE_GENERASJONER` skal
-    bære punktet. Unntaket oppløser seg selv — neste aksept for m02/m56
-    endrer manifestet uansett, og da treffer denne porten dem.
+    1. `required` i skjemaet → m01, m02 og m56 er `aktiv`, og
+       `aktiv_uten_bevis` + CI-steget `Manifestskjema (v2 Del 7)` avviser
+       en aktiv modul med ETT uavklart punkt. Hver PR ble rød for et
+       punkt som ikke fantes da de ble aktivert. Alternativet — å skrive
+       `ja` — er å dikte en gjennomgang som ikke er gjort.
+    2. Sti-basert unntak mot `AKSEPTERTE_GENERASJONER` → stien ligger der
+       for alltid, så unntaket «oppløste seg» aldri (Codex P2).
+    3. Én test hardkodet til M-57 → enhver senere modul kunne bare la
+       være å ha punktet (Codex P2).
 
-    Punktet er dessuten IKKE `ja` noe sted ennå, og det skal stå slik til
-    et menneske faktisk har gått gjennom flaten og attestert notatet. Et
-    `ja` uten `artefakt_sha256` fanges av `valider_artefakter`.
+    Formen som holder er §2s egen: en modul settes ikke `aktiv` før hvert
+    punkt står `ja`. §12.2 legger ETT punkt til den porten, for hver
+    modul som ennå ikke har passert den. Da er kjeden lukket for alt som
+    aktiveres heretter — punktet må finnes, det må stå `ja`, og `ja`-et
+    må bære bevis — uten å felle det som alt er aktivert.
 
-    MUTASJONEN SOM DREPER DENNE: fjern punktet fra m01, m37 eller m57 —
-    eller legg en ny modul inn i katalogen uten det.
+    Regelen bor i SKJEMAET (betinget `if/then`), ikke i denne testen.
+    Porten her måler at den faktisk står der og at den biter begge veier.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `if`/`then` fra manifest-skjemaet,
+    eller stryk punktet fra m37/m57.
     """
+    import copy
+    import json
+
     import yaml
 
-    from manifestskjema import AKSEPTERTE_GENERASJONER
+    from manifestskjema import valider_manifest
+
+    skjema = json.loads(
+        (ROT / "platform" / "core" / "manifest-skjema.json")
+        .read_text(encoding="utf-8"))
+    assert "if" in skjema and "then" in skjema, (
+        "skjemaet har ingen betinget regel — kravet ville da bare finnes"
+        " i en test, og enhver senere modul kunne utelate punktet")
+    assert skjema["then"]["properties"]["staging_sjekkliste"]["required"] \
+        == ["produktgjennomgang_bestatt"]
 
     moduler = sorted((ROT / "platform" / "modules").iterdir())
     manifester = [m for m in moduler if (m / "manifest.yaml").exists()]
     assert len(manifester) >= 5, \
         f"fant bare {len(manifester)} moduler — leser porten riktig sted?"
 
-    # Frosset måles på MANIFESTSTIEN, ikke på katalognavnet: m56s nøkkel i
-    # kartet er modulens `id` (`wcag_audit`), ikke mappenavnet
-    # (`m56_wcag_audit`), og en navnesammenligning slapp den derfor
-    # igjennom som «uakseptert». To registre, to navnerom — stien er det
-    # ene begge er enige om.
-    frosne_stier = {g["manifest"] for g in AKSEPTERTE_GENERASJONER.values()}
-    manglende = []
+    ikke_aktive = []
     for katalog in manifester:
-        rel = f"platform/modules/{katalog.name}/manifest.yaml"
-        if rel in frosne_stier:
-            continue                      # frosset av en registrert aksept
         data = yaml.safe_load(
             (katalog / "manifest.yaml").read_text(encoding="utf-8")) or {}
-        if "produktgjennomgang_bestatt" not in (
-                data.get("staging_sjekkliste") or {}):
-            manglende.append(katalog.name)
-    assert not manglende, (
-        f"moduler uten produktakseptpunkt: {manglende}. §12.2 gjelder hver"
-        " modul som ikke alt er frosset av en registrert aksept — en"
-        " frivillig port hoppes over av nettopp den modulen som trenger"
-        " den")
+        if data.get("status") == "aktiv":
+            continue
+        ikke_aktive.append(katalog.name)
+        assert "produktgjennomgang_bestatt" in (
+            data.get("staging_sjekkliste") or {}), (
+            f"{katalog.name} er ikke aktiv og mangler produktpunktet —"
+            " den kan da aktiveres uten menneskelig gjennomgang")
+    assert ikke_aktive, (
+        "ingen modul er under arbeid — porten måler ingenting, og en ny"
+        " modul ville sluppet inn uten at noe ble rødt")
 
-    # ... OG UNNTAKET MÅ VÆRE MEKANISK, ikke en navneliste her. Står en
-    # modul over uten å være frosset, er den glemt — ikke unntatt.
-    assert frosne_stier, \
-        "ingen aksepterte generasjoner — unntaket ville vært ubegrenset"
-    assert all((ROT / sti).exists() for sti in frosne_stier), \
-        "en frosset modul finnes ikke lenger — unntakslisten er foreldet"
-    # Og unntaket skal være LITE: står flertallet av katalogen som
-    # frosset, er porten en dekorasjon.
-    assert len(frosne_stier) < len(manifester), (
-        "hver modul er frosset — da krever porten punktet av ingen")
+    # OG REGELEN MÅ BITE BEGGE VEIER, målt gjennom validatoren og ikke
+    # bare lest ut av JSON-en.
+    m57 = yaml.safe_load(
+        (ROT / "platform" / "modules" / "m57_ats" / "manifest.yaml")
+        .read_text(encoding="utf-8"))
+    uten = copy.deepcopy(m57)
+    del uten["staging_sjekkliste"]["produktgjennomgang_bestatt"]
+    assert valider_manifest(uten), \
+        "en modul under utvikling uten produktpunktet validerte"
+    bestefar = copy.deepcopy(uten)
+    bestefar["status"] = "aktiv"
+    assert not valider_manifest(bestefar), (
+        "en ALT AKTIV modul uten punktet ble avvist — da er hver PR rød"
+        " for m01, m02 og m56, for et punkt som ikke fantes da de ble"
+        " aktivert")
+
+
+def test_produktpunktets_ja_krever_bevis():
+    """Codex P1: gjennomgangen kunne «fullføres» ved å skrive `ja`.
+
+    `valider_artefakter` hopper eksplisitt over et `ja` som mangler
+    `krav_id` (`manifestskjema.py`), og punktene ble lagt inn uten. Å
+    bytte `nei` til `ja` ville dermed passert både skjema og evidenskjede
+    — uten `attester_evidensfil`, uten sha256, uten en aktør. Den
+    menneskelige porten var en streng noen kunne skrive.
+
+    `produktpunkt`-defen krever nå `krav_id`, `artefakt` og
+    `artefakt_sha256` når status er `ja`. Da griper husets egen
+    evidenskjede: `valider_artefakter` åpner fila, verifiserer hashen mot
+    innholdet og måler tallene mot `KRAVGRENSER`.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `if`/`then` fra `produktpunkt`.
+    """
+    import copy
+
+    import yaml
+
+    from manifestskjema import valider_manifest
+
+    m57 = yaml.safe_load(
+        (ROT / "platform" / "modules" / "m57_ats" / "manifest.yaml")
+        .read_text(encoding="utf-8"))
+    bart_ja = copy.deepcopy(m57)
+    bart_ja["staging_sjekkliste"]["produktgjennomgang_bestatt"] = {
+        "status": "ja"}
+    feil = valider_manifest(bart_ja)
+    assert feil, "et `ja` uten bevis validerte — porten er en streng"
+    for krevd in ("krav_id", "artefakt", "artefakt_sha256"):
+        assert any(krevd in f for f in feil), \
+            f"{krevd} kreves ikke av et `ja` på produktpunktet: {feil}"
+
+    # ... og `nei` skal fortsatt kunne stå bart. Ellers ville en modul
+    # under arbeid vært tvunget til å love bevis den ikke har ennå.
+    bart_nei = copy.deepcopy(m57)
+    bart_nei["staging_sjekkliste"]["produktgjennomgang_bestatt"] = {
+        "status": "nei"}
+    assert not valider_manifest(bart_nei), \
+        "et ærlig `nei` uten artefakt ble avvist"
 
 
 def test_samlet_merge_er_en_stabel_ikke_et_tidsvindu():
@@ -245,6 +305,15 @@ def test_samlet_merge_er_en_stabel_ikke_et_tidsvindu():
     assert blokk.index("gh pr edit") < blokk.index("gh pr merge"), \
         "retargetingen står etter mergen"
     assert "--rebase" in blokk, "kommandoblokken merger ikke med --rebase"
+    # PINNET TIL HODET CODEX SÅ (Codex P1, runde 4). Mellom retargeting og
+    # merge er det et vindu, og en push der ville merget et hode ingen av
+    # stabelens verdikter dekker — sjekk-så-handle-hullet §11.1 finnes
+    # for, og som den automatiske veien alt lukker med samme flagg.
+    assert "--match-head-commit" in blokk, (
+        "den manuelle stabelmergen pinner ikke hodet — den omgår"
+        " invarianten §11.1 håndhever på den automatiske veien")
+    assert blokk.index("headRefOid") < blokk.index("gh pr edit"), \
+        "SHA-en leses etter retargetingen — da er det ikke hodet Codex så"
     # ... og hvem som gjør det. `claude.yml` har bare `--squash` for ÉN
     # PR, så en paragraf som lot leseren tro at sløyfa stabler ville
     # beskrevet en vei som ikke finnes.
