@@ -402,7 +402,17 @@ function tegn(hoved, ctx, data, okt, valgtId) {
           if (ny) ny.focus();
         })
         .catch((e) => {
-          if (e instanceof UautorisertFeil) throw e;
+          // 401 GÅR TIL INNLOGGINGEN, IKKE UT I INTET (Codex, denne
+          // runden). `throw e` her sto i enden av en kjede ingen venter
+          // på: det ble en ubehandlet avvisning, og brukeren ble stående
+          // i det innloggede skallet med en låst velger og ingen melding
+          // — nøyaktig tilstanden `meldFeil` alt er felt over én gang
+          // (linje 59). Formen er husets: `ctx.paaUautorisert(); return`
+          // (V2: 401 → innlogging, 403 → ingen tilgang). Velgeren blir
+          // stående låst med vilje — skallet byttes ut av
+          // innloggingsveien, og en åpen kontroll på en død økt inviterer
+          // bare til et nytt kall som feiler likt.
+          if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
           // EN FEILET HENTING RULLER VALGET TILBAKE. Uten det står
           // velgeren på en prosess flaten ikke viser — og brukeren leser
           // kandidatene til A under navnet B. En 404 er dessuten en

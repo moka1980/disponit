@@ -503,6 +503,44 @@ test("Rekruttering: hver prosess i svaret kan velges (ikke bare den første)", a
   assert.equal(en.querySelector("#rekrut-prosessvelger"), null);
 });
 
+test("Rekruttering: 401 under prosessbyttet er innlogging, ikke en byttefeil",
+  async () => {
+  // Codex: `.catch`-armen på prosesshentingen kastet 401 VIDERE — i enden
+  // av en kjede ingen venter på. Det ble en ubehandlet avvisning:
+  // `paaUautorisert` ble aldri kalt, velgeren sto igjen låst, og brukeren
+  // ble stående i det innloggede skallet uten økt bak seg og uten et ord
+  // om hvorfor. Samme tilstand `meldFeil` alt er felt over én gang for
+  // mutasjonene; byttet er ikke et unntak fra V2 (401 → innlogging).
+  //
+  // MUTASJONEN SOM DREPER DENNE: sett `throw e` tilbake i armen.
+  const to = prosess();
+  to.prosesser.push({
+    prosess_id: "p-2", blinding_av: false, vekter: { drift: 1 },
+    evaluering_status: "utfort", kandidater: [], lister: [],
+  });
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": to };
+  let uautorisert = 0;
+  const hoved = nyHoved();
+  visRekruttering(hoved,
+    { ...ctx(), paaUautorisert: () => { uautorisert += 1; } });
+  assert.ok(await vent(() => hoved.querySelector("table")));
+  const velger = hoved.querySelector("#rekrut-prosessvelger");
+  assert.ok(velger, "ingen prosessvelger med flere prosesser i svaret");
+  // … og HER dør økten, mellom lastingen av flaten og byttet.
+  KALL = [];
+  SVAR = (sti) => (sti === "/v1/rekruttering/prosesser" ? 401 : undefined);
+  velger.value = "p-2";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.ok(await vent(() => uautorisert === 1),
+    "401 under prosessbyttet nådde aldri paaUautorisert");
+  assert.ok(KALL.some((k) => k.sti === "/v1/rekruttering/prosesser"),
+    "byttet hentet aldri — testen måler ikke det den tror");
+  assert.ok([...hoved.querySelectorAll('[role="alert"]')]
+    .every((a) => a.textContent === ""),
+    "401 ble meldt som en vanlig prosessbyttefeil");
+});
+
 test("Rekruttering: velgeren navngir prosessen, aldri bare UUID-en", async () => {
   // Codex P2 (runde 4): velgeren leste `p.navn || p.prosess_id`, men
   // serveren har aldri sendt `navn` — stillingens tittel bor i #162-kjeden
