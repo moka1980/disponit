@@ -720,6 +720,47 @@ def test_155_docx_byte_betales_av_bladene_ikke_containeren(
     assert e.value.args[0].endswith("cv.docx/word/document.xml")
 
 
+def test_155_bytebudsjettet_er_buntens_ikke_per_docx(tmp_path, monkeypatch):
+    """Cursor P2: speilet av `..._filbudsjettet_er_buntens_...` for BYTE.
+
+    `#155`s kjerneinvariant er ETT `Budsjett` for begge feltene. `filer`-
+    siden er låst mot en nullstilling per docx (port22); `byte`-siden var
+    bare dekket INNEN én docx — dobbelttellingen container/blad — og
+    ingen test målte at to docx-er deler den samme byte-telleren. En
+    nullstilling der slipper to docx-er som hver for seg er lovlige, men
+    som til sammen ekspanderer langt over taket, gjennom gaten, mens
+    fil-testen fortsatt er grønn.
+
+    Grensen er skrudd ned her fordi det er FORMEN som måles, ikke tallet.
+
+    MUTASJONEN SOM DREPER DENNE: nullstill byte-siden i `_mal_docx`
+    (`budsjett.byte = 0`, eller gi løkka `Budsjett(filer=budsjett.filer)`)
+    — da betaler hver docx bare for seg selv, og bunten under slipper
+    gjennom."""
+    docx = _docx([("word/document.xml", os.urandom(2048) * 40)])
+    with zipfile.ZipFile(io.BytesIO(docx)) as zf:
+        indre = sum(i.file_size for i in zf.infolist() if not i.is_dir())
+    # Taket rommer ÉN docx' blader med margin, men ikke to. Den ytre
+    # katalogen (to deflaterte blober + manifestet) måles for seg mot
+    # samme tak, og passerer med god margin.
+    tak = indre + indre // 2
+    arkiv = _bunt(tmp_path, [("a.docx", docx), ("b.docx", docx)])
+    assert 2 * len(docx) < tak < 2 * indre, \
+        "forutsetningen: hver docx alene er lovlig, to er det ikke"
+    monkeypatch.setattr(parsing, "MAKS_TOTAL_UTPAKKET", tak)
+    parsing.inspiser_bunt(arkiv)   # ytre gate ser to små, lovlige filer
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(arkiv))
+    assert e.value.kode == "total_for_stor"
+    assert e.value.args[0].endswith("b.docx/word/document.xml"), \
+        "den ANDRE docx-en sprenger taket — den første betalte alt sitt"
+    arkiv.unlink()
+    # Positiv kontroll: samme docx, samme tak, én av dem — går gjennom.
+    # Det er summen som feller, ikke en for streng grense per docx.
+    en = _bunt(tmp_path, [("a.docx", docx)])
+    assert len(list(parsing.les_porsjonsvis(en))) == 1
+
+
 def test_155_for_stor_docx_katalog_avvises_for_lesing(tmp_path, monkeypatch):
     """Codex P2: den inkrementelle tellingen er riktig, men for sen alene.
 
