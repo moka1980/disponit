@@ -1,4 +1,4 @@
--- 066: reaperen makulerer den promoterte rapporten, og frist-feilingen
+-- 067: reaperen makulerer den promoterte rapporten, og frist-feilingen
 -- lukker ankeret (#222 — andre halvdel av Codex P1-2 på #220, pluss
 -- eiers tillegg fra samme tråd)
 --

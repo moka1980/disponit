@@ -64,5 +64,6 @@
   "063_lease_fornyelse.sql": "a3590a3127aa8bc97c2ae4f0d9ccd425e1fd5390cf1120e777d6cfc60e33fe7d",
   "064_reserverte_tld.sql": "49a15876d5d4ca7c32a62b7f5bdd5ade1ea8282ed0eaa367823930c2dbf1e7e8",
   "065_serielaas_utsending.sql": "9a75923d37354315fca147b7beb5a1bf4bb8d010bc5e1be360e1bf819df2bd2c",
-  "066_makulering_ved_reap.sql": "378038d5ce2956efe82edd4a61ddd6ec3bd2667c4209fd6ca57e446f95f89f44"
+  "066_evalueringsliste_keyset.sql": "3455abfcde08caa3dd55d70de2df03286d694625431dad7b733ec4e227524e77",
+  "067_makulering_ved_reap.sql": "d583fe1790ce58d3623ead88d5c00490fb66ff0660a7da357cc1eb8afb7050e8"
 }

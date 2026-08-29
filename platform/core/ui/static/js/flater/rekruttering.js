@@ -165,7 +165,8 @@ export function visRekruttering(hoved, ctx) {
     // oppfriskningens generasjon og `tegn` den for tiden monterte
     // seksjonens tegner — begge hører til listen, ikke til instansen
     // som tilfeldigvis viser den.
-    evalueringer: { liste: undefined, flere: false, nr: 0, tegn: null },
+    evalueringer: { liste: undefined, flere: false, cursor: null,
+                    nr: 0, tegn: null },
     // Rapporthentingen deler prosessbytte-risikoen med listen (Codex
     // P2): generasjon og tegner hører til ØKTEN, og hver mount melder
     // seg som tegner — et svar som lander etter et bytte tegner i den
@@ -213,7 +214,8 @@ export function visRekruttering(hoved, ctx) {
       ]);
       return { ...pros, profiler: (prof && prof.profiler) || [],
                evalueringer: evals ? (evals.evalueringer || []) : null,
-               evalueringerFlere: !!(evals && evals.flere) };
+               evalueringerFlere: !!(evals && evals.flere),
+               evalueringerCursor: (evals && evals.neste_cursor) || null };
     },
     (data) => {
       // En fersk full lasting ER sannheten — også «Prøv igjen» etter en
@@ -222,6 +224,7 @@ export function visRekruttering(hoved, ctx) {
       // skal ikke lande oppå den ferske listen: generasjonen bumpes.
       okt.evalueringer.liste = undefined;
       okt.evalueringer.flere = false;
+      okt.evalueringer.cursor = null;
       okt.evalueringer.nr += 1;
       // ... og rapport-cachen følger listen: en fersk lasting er
       // sannheten for begge (auto-lastingen får kjøre på nytt).
@@ -972,6 +975,45 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
     sett(rapportRot, ...(noder || []));
     return true;
   };
+  // LISTEHANDLINGENE MELDER FRA (Codex P2). En feilet «Last flere» eller
+  // «Oppdater» re-aktiverte bare knappen og lot den utdaterte listen stå:
+  // brukeren kunne ikke skille et nettbrudd/403/5xx fra «oppdatert, og
+  // ingenting hadde endret seg», og fortsatte derfor å handle på gamle
+  // statuser — eller å be om en side hen ikke har tilgang til, om og om
+  // igjen. 401 er fortsatt ikke en melding: den eier `ctx.paaUautorisert`.
+  //
+  // Meldingen går i seksjonens `role="alert"` — SAMME utfallsområde som
+  // rapporthentingen bruker — og ryddes av neste vellykkede listehandling,
+  // så en gammel feil aldri blir stående over en fersk liste. Frakoblet
+  // rot er ikke et lerret (samme regel som `rHent.tegn`).
+  const meldListefeil = (feilet) => {
+    if (!rot.isConnected) return;
+    sett(utfall,
+      ...(feilet ? [t("ui.rekruttering.evalueringer.handlingfeil")] : []));
+  };
+  // FOKUS OVERLEVER OM-TEGNINGEN (Codex P2). `tegnListe` bytter hele
+  // seksjonen med `sett(rot, …)`, så knappen en tastatur- eller
+  // skjermleserbruker nettopp aktiverte er en ANNEN node etterpå: fokus
+  // falt tilbake til `document.body`, og brukeren mistet posisjonen sin
+  // ved hver oppfriskning og hver lastede side — uten noe som sa hvor de
+  // nye radene havnet.
+  //
+  // Fokus flyttes derfor til ERSTATNINGEN for kontrollen som ble
+  // aktivert, med «Oppdater» som fallback: «Last flere» forsvinner jo
+  // når siste side er hentet, og da er det ingen erstatning å lande på.
+  // Beskjeden går i den høflige live-regionen — samme grep som
+  // auto-visningen av rapporten — så det annonseres HVA som skjedde, ikke
+  // bare at fokus flyttet seg. KUN på eksplisitt klikk: oppfriskningen
+  // etter en bestilling går gjennom `oppdater()` uten dette, og skal
+  // aldri rive fokus fra skjemaet brukeren står i.
+  const etterListeklikk = (foretrukket, antall) => {
+    if (!rot.isConnected) return;
+    const ny = rot.querySelector("." + foretrukket)
+      || rot.querySelector(".eval-oppdater");
+    if (ny) ny.focus();
+    meldLive(t("ui.rekruttering.evalueringer.listemeldt")
+      .replace("{antall}", String(antall)));
+  };
   // Listeoppfriskningen bærer NØYAKTIG samme risiko (Cursor P2):
   // `paagaaende` slipper opp før den fire-and-forget `oppdater()` er
   // ferdig, så to raske bestillinger gir to hentinger i lufta samtidig.
@@ -1189,20 +1231,47 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
     }
   };
 
-  const tegnListe = (evalueringer, flere) => {
+  const tegnListe = (evalueringer, flere, cursor) => {
     const tittel = el("h2", { id: "evaluering-tittel",
       text: t("ui.rekruttering.evalueringer.tittel") });
+    // LEVENDE STATUS UTEN SIDE-RELOAD (#221): listen hentes ved mount og
+    // etter bestilling — en evaluering som blir ferdig mens brukeren
+    // ser på, krever ellers en omlasting av hele ruta. Knappen bruker
+    // øktens egen oppfriskning (samme vei som post-bestilling), så det
+    // finnes ÉN henting og én tegner. Ingen polling: en timer som
+    // re-fetcher bak brukerens rygg eier ikke feilhåndteringen sin —
+    // eksplisitt oppdatering er ærlig og testbar.
+    // Oppslaget er LAZY: `okt.evaluering` settes først ETTER den første
+    // tegningen (samme mount, synkront) — knappen finnes fra første
+    // render, og klikket treffer alltid den sist monterte oppfriskeren.
+    const oppdaterKnapp = okt ? (() => {
+      const k = el("button", { type: "button", class: "eval-oppdater",
+        text: t("ui.rekruttering.evalueringer.oppdater") });
+      k.addEventListener("click", async () => {
+        if (!okt.evaluering) return;
+        // `oppdater()` sier fra om den faktisk TEGNET: en feilet eller
+        // forkastet oppfriskning bytter ingen noder, så knappen holder
+        // fokus selv — og `role="alert"` annonserer feilen.
+        if (await okt.evaluering.oppdater()) {
+          etterListeklikk("eval-oppdater",
+            (okt.evalueringer.liste || []).length);
+        }
+      });
+      return k;
+    })() : null;
     // `null` er FEIL-tilstanden fra hentingen — en utilgjengelig
     // historikk er ikke en tom historikk.
     if (evalueringer === null) {
       sett(rot, tittel,
         el("p", { text: t("ui.rekruttering.evalueringer.listefeil") }),
+        ...(oppdaterKnapp ? [oppdaterKnapp] : []),
         utfall, rapportRot);
       return;
     }
     if (!evalueringer.length) {
       sett(rot, tittel,
         el("p", { text: t("ui.rekruttering.evalueringer.ingen") }),
+        ...(oppdaterKnapp ? [oppdaterKnapp] : []),
         utfall, rapportRot);
       return;
     }
@@ -1253,12 +1322,71 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
         el("th", { scope: "col",
           text: t("ui.rekruttering.evalueringer.vis") }))),
       el("tbody", {}, ...rader));
-    sett(rot, tittel, utfall,
+    // PAGINERINGEN (#221): cursoren er serverens fortsettelse — flaten
+    // regner aldri ut «neste side» selv. Klikket APPENDER: brukeren
+    // mister ikke radene hen alt ser på. Generasjonen vokter mot både
+    // oppfriskning og prosessbytte midt i flukten — bare den siste
+    // hentingen får skrive økten.
+    const eval2 = okt ? okt.evalueringer : null;
+    const lastFlere = (flere && cursor && eval2) ? (() => {
+      const k = el("button", { type: "button", class: "eval-last-flere",
+        text: t("ui.rekruttering.evalueringer.last_flere") });
+      k.addEventListener("click", async () => {
+        k.disabled = true;
+        // PAGINERINGEN TAR GENERASJONEN, DEN LESER DEN IKKE (Codex P2).
+        // «Oppdater» og «Last flere» er to skrivere på ÉN liste, og
+        // begge knappene står klikkbare. Leste pagineringen bare
+        // `eval2.nr`, delte de to hentingene generasjon: rakk
+        // oppfriskningen inn først, ble et cursorsvar fra den GAMLE
+        // kjeden appendet på en nyhentet første side — to kjeder blandet,
+        // med rader som kunne gjentas eller falle ut. Rakk pagineringen
+        // inn først, ble den stille overskrevet.
+        //
+        // Å ta generasjonen gjør klikket til den siste intensjonen, og
+        // det er nøyaktig samme regel som `oppdater()` alt følger: siste
+        // klikk vinner, taperen skriver ingenting. En oppfriskning som
+        // lander etterpå forkastes, og motsatt — klikker brukeren
+        // «Oppdater» mens en side er i lufta, taper siden.
+        const min = ++eval2.nr;
+        let svar;
+        try {
+          svar = await hentEvalueringer(cursor);
+        } catch (e) {
+          if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+          // Et eldre, tapt kall skal ikke melde feil over en ferskere
+          // liste — samme generasjonsregel som suksessveien.
+          if (min === eval2.nr) meldListefeil(true);
+          k.disabled = false;
+          return;
+        }
+        // Taperen skriver ingenting — men den LÅSER heller ikke
+        // kontrollen sin (Cursor P2). Vant en vellykket «Oppdater», er
+        // `k` alt revet ut av DOM-en og linjen er en no-op. Vant en
+        // FEILET «Oppdater», tegnes ingenting på nytt: da er dette den
+        // eneste veien knappen kommer tilbake, og uten den står den
+        // deaktivert over en liste som fortsatt har mer å hente.
+        if (min !== eval2.nr) { k.disabled = false; return; }
+        meldListefeil(false);
+        const basis = eval2.liste !== undefined
+          ? eval2.liste : (evalueringer || []);
+        eval2.liste = basis.concat((svar && svar.evalueringer) || []);
+        eval2.flere = !!(svar && svar.flere);
+        eval2.cursor = (svar && svar.neste_cursor) || null;
+        eval2.tegn(eval2.liste, eval2.flere, eval2.cursor);
+        etterListeklikk("eval-last-flere", eval2.liste.length);
+      });
+      return k;
+    })() : null;
+    sett(rot, tittel,
+      ...(oppdaterKnapp ? [oppdaterKnapp] : []),
+      utfall,
       el("div", { class: "tablewrap" }, liste),
-      // Et fullt vindu KAN bety flere — aldri stille avkorting. Selve
-      // pagineringen bor i #221; her sies det bare fra.
-      ...(flere ? [el("p",
-        { text: t("ui.rekruttering.evalueringer.flere") })] : []),
+      // Et fullt vindu KAN bety flere — aldri stille avkorting: uten en
+      // cursor å følge (eldre server, eller ingen økt å appende i) står
+      // meldingen; med den står knappen.
+      ...(lastFlere ? [lastFlere]
+        : flere ? [el("p",
+          { text: t("ui.rekruttering.evalueringer.flere") })] : []),
       rapportRot);
   };
 
@@ -1268,26 +1396,44 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
   // listen den beskriver, uansett kilde.
   const eval_ = okt ? okt.evalueringer : null;
   if (eval_ && eval_.liste !== undefined) {
-    tegnListe(eval_.liste, !!eval_.flere);
+    tegnListe(eval_.liste, !!eval_.flere, eval_.cursor);
   } else {
+    if (eval_) eval_.cursor = (data && data.evalueringerCursor) || null;
     tegnListe(data ? data.evalueringer : [],
-      !!(data && data.evalueringerFlere));
+      !!(data && data.evalueringerFlere),
+      (data && data.evalueringerCursor) || null);
   }
   // NULL KLIKK TIL PRODUKTET (eiers UX-prinsipp 27/8): finnes en ferdig
   // rapport, rendres den ferskeste med en gang — uten fokus-tyveri.
   // Kun ved mount, aldri ved oppfriskning: en levert bestilling skal
   // ikke rive lesingen av en annen rapport.
   //
-  // FERSKEST ER HØYESTE OPPDRAG, IKKE FØRSTE RAD (Cursor P2). `find`
-  // leste «ferskeste» ut av listens rekkefølge — en skjult kontrakt med
-  // `ORDER BY o.id DESC` i `lesing.py`, som flaten selv ikke binder.
-  // Kom listen noen gang i en annen rekkefølge (annen sortering, en
-  // oppfrisket liste satt sammen et annet sted), viste auto-stien en
-  // ELDRE rapport uten at noe feilet. Valget står derfor her, eksplisitt.
+  // FERSKEST ER SERVERENS EGEN NØKKEL, IKKE FØRSTE RAD (Cursor P2 →
+  // Codex P2). `find` leste «ferskeste» ut av listens rekkefølge — en
+  // skjult kontrakt med sorteringen i `lesing.py`, som flaten selv ikke
+  // binder. Kom listen i en annen rekkefølge (en oppfrisket liste satt
+  // sammen et annet sted), viste auto-stien en ELDRE rapport uten at noe
+  // feilet. Valget står derfor her, eksplisitt.
+  //
+  // ... men det må stå på SAMME nøkkel (Codex P2): endepunktet definerer
+  // nyest som `(opprettet, id)`, og de to ordenene kan divergere.
+  // PostgreSQLs `now()` er TRANSAKSJONENS starttid mens id-en tildeles
+  // når inserten faktisk kjører, så en forsinket eldre transaksjon kan
+  // få den HØYESTE id-en. `id` alene valgte da en rapport som står lenger
+  // ned i en korrekt tidssortert tabell — tabellen riktig, åpningen feil.
   const seedListe = (eval_ && eval_.liste !== undefined)
     ? eval_.liste : (data ? data.evalueringer : []);
+  // `opprettet` mangler eller er uparsbar → eldst mulig: en rad uten
+  // tidsstempel skal aldri vinne over en som har ett, og id-en avgjør
+  // fortsatt mellom to like (og mellom to uten).
+  const tid = (e2) => {
+    const ms = Date.parse(e2.opprettet || "");
+    return Number.isNaN(ms) ? -Infinity : ms;
+  };
+  const ferskereEnn = (a, b) => (tid(a) !== tid(b))
+    ? tid(a) > tid(b) : a.oppdrag_id > b.oppdrag_id;
   const klarRad = (seedListe || []).reduce((beste, e2) =>
-    (e2.rapport_klar && (!beste || e2.oppdrag_id > beste.oppdrag_id))
+    (e2.rapport_klar && (!beste || ferskereEnn(e2, beste)))
       ? e2 : beste, null);
   // ... og kun ÉN gang per økt (Codex P2): listen er tenant-global og
   // uavhengig av valgt prosess — hvert prosessbytte bygger seksjonen på
@@ -1315,22 +1461,38 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
     // for å bli spurt om `isConnected`: siste `tegn` vinner, og den
     // vakten trengs ikke lenger.
     eval_.tegn = tegnListe;
+    // SVARET ER «TEGNET DU?» (Codex P2). Fokus og annonsering hører til
+    // det eksplisitte klikket, ikke til oppfriskningen som sådan — den
+    // kalles også fire-and-forget etter en bestilling, og skal aldri rive
+    // fokus fra skjemaet. Knappen spør derfor om det faktisk ble byttet
+    // noder; feilet eller forkastet oppfriskning bytter ingen, og da
+    // holder knappen fokus selv.
     okt.evaluering = { oppdater: async () => {
       const min = ++eval_.nr;
       let svar;
       try {
         svar = await hentEvalueringer();
       } catch (e) {
-        if (e instanceof UautorisertFeil) ctx.paaUautorisert();
-        return;
+        if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return false; }
+        // Også oppfriskningen etter en bestilling melder fra: en stille
+        // katch her lot den nye evalueringen mangle fra listen uten at
+        // noe sa hvorfor (Codex P2).
+        if (min === eval_.nr) meldListefeil(true);
+        return false;
       }
       // Samme regel som rapporthentingen: bare den SISTE oppfriskningen
       // får tegne — og et tregt eldre svar skal heller ikke skrive seg
       // inn i økten.
-      if (min !== eval_.nr) return;
+      if (min !== eval_.nr) return false;
+      meldListefeil(false);
+      // Oppfriskningen er FØRSTE side på nytt — cursoren følger den:
+      // en beholdt fortsettelse fra en eldre liste ville pekt midt inn
+      // i en historikk som nettopp fikk nye rader øverst.
       eval_.liste = (svar && svar.evalueringer) || [];
       eval_.flere = !!(svar && svar.flere);
-      eval_.tegn(eval_.liste, eval_.flere);
+      eval_.cursor = (svar && svar.neste_cursor) || null;
+      eval_.tegn(eval_.liste, eval_.flere, eval_.cursor);
+      return true;
     } };
   }
   return rot;

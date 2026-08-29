@@ -86,12 +86,17 @@ def _skad_payload(arkiv: Path, navn: bytes) -> None:
     raise AssertionError(f"{navn!r} ikke blant de lokale hodene")
 
 
-def _patch_deklarert(arkiv: Path, navn: bytes, ny_storrelse: int,
-                     komprimert: int | None = None) -> None:
+def _patch_katalog(raa: bytes, navn: bytes, ny_storrelse: int,
+                   komprimert: int | None = None) -> bytes:
     """Skriver om `uncompressed size` (og valgfritt `compressed size`) i
     SENTRALKATALOGEN for én oppføring — katalogen er en PÅSTAND, og
-    nettopp det skal gaten/strømmen skille på."""
-    data = bytearray(arkiv.read_bytes())
+    nettopp det skal gaten/strømmen skille på.
+
+    Formen er BYTE-inn/BYTE-ut fordi løgnen skal kunne plantes på begge
+    nivåer: i buntens katalog og i katalogen inni en docx. En egen kopi
+    for det indre nivået ville vært riggens versjon av nøyaktig den
+    divergensen #155 river ut av gaten."""
+    data = bytearray(raa)
     sig = b"PK\x01\x02"
     i = data.find(sig)
     while i != -1:
@@ -100,10 +105,16 @@ def _patch_deklarert(arkiv: Path, navn: bytes, ny_storrelse: int,
             struct.pack_into("<I", data, i + 24, ny_storrelse)
             if komprimert is not None:
                 struct.pack_into("<I", data, i + 20, komprimert)
-            arkiv.write_bytes(bytes(data))
-            return
+            return bytes(data)
         i = data.find(sig, i + 4)
     raise AssertionError(f"{navn!r} ikke i sentralkatalogen")
+
+
+def _patch_deklarert(arkiv: Path, navn: bytes, ny_storrelse: int,
+                     komprimert: int | None = None) -> None:
+    """`_patch_katalog` på en fil."""
+    arkiv.write_bytes(_patch_katalog(arkiv.read_bytes(), navn,
+                                     ny_storrelse, komprimert))
 
 
 def _patch_kryptert(arkiv: Path) -> None:
@@ -120,7 +131,8 @@ def _patch_kryptert(arkiv: Path) -> None:
 
 
 def _docx(indre: list[tuple[str, bytes]] | None = None, *,
-          pakke: bool = True) -> bytes:
+          pakke: bool = True,
+          metode: int = zipfile.ZIP_DEFLATED) -> bytes:
     """En EKTE docx — altså en OPC-pakke i en zip — bygget i minnet.
     DOCX er unntaket fra «ingen nøstede arkiver», og et unntak kan bare
     måles med den ekte formen.
@@ -128,7 +140,8 @@ def _docx(indre: list[tuple[str, bytes]] | None = None, *,
     `pakke=True` legger på de obligatoriske pakkemedlemmene som ikke alt
     er oppgitt, slik at fixturen er en docx og ikke bare en zip med
     riktig endelse. `pakke=False` er for testene som måler nettopp den
-    forskjellen."""
+    forskjellen. `metode=ZIP_STORED` er for testen der containerens
+    størrelse skal være ≈ summen av de indre bytene."""
     medlemmer = list(indre or [("word/document.xml", b"<w:t>CV</w:t>")])
     if pakke:
         oppgitt = {medlem[0] for medlem in medlemmer}
@@ -137,10 +150,10 @@ def _docx(indre: list[tuple[str, bytes]] | None = None, *,
                      for navn in sorted(parsing.DOCX_PAKKEMEDLEMMER
                                         - oppgitt)] + medlemmer
     buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+    with zipfile.ZipFile(buf, "w", metode) as zf:
         for navn, innhold, *attr in medlemmer:
             info = zipfile.ZipInfo(navn)
-            info.compress_type = zipfile.ZIP_DEFLATED
+            info.compress_type = metode
             if attr:
                 info.external_attr = attr[0]
             zf.writestr(info, innhold)
@@ -206,8 +219,7 @@ def test_port23_symlenke_avvises(tmp_path):
     # lenke i det indre arkivet er samme klasse som en i bunten; den ene
     # gaten kan ikke være strengere enn den andre uten at forskjellen er
     # et hull.
-    # MUTASJONEN SOM DREPER DENNE: fjern symlenkelinjen i
-    # `_inspiser_docx`.
+    # MUTASJONEN SOM DREPER DENNE: fjern symlenkelinjen i `_mal_docx`.
     docx = _docx([("word/document.xml", b"<w:t>CV</w:t>"),
                   ("word/lenke.xml", b"/etc/passwd", (0o120777 << 16))])
     arkiv = _bunt(tmp_path, [("cv.docx", docx)])
@@ -215,6 +227,22 @@ def test_port23_symlenke_avvises(tmp_path):
     with pytest.raises(parsing.Buntfeil) as e:
         list(parsing.les_porsjonsvis(arkiv))
     assert e.value.kode == "symlenke"
+    arkiv.unlink()
+    # Codex P2: STIEN FELLER FØR FILTYPEN, også for en MEDLEMSOPPFØRING.
+    # `_sjekk_navn` ble utsatt til `_mal_medlem` for ikke-mapper, men
+    # symlenketesten ble stående på alle oppføringer — en oppføring som
+    # er BEGGE deler rapporterte da `symlenke` for en sti som aldri var
+    # inne i bunten. Ute måles navnet på hver oppføring før filtypen;
+    # inne skal koden være den samme.
+    # MUTASJONEN SOM DREPER DENNE: flytt `_sjekk_navn` i `_mal_docx`
+    # tilbake inn i `if info.is_dir()`-armen.
+    docx = _docx([("word/document.xml", b"<w:t>CV</w:t>"),
+                  ("../../escape.xml", b"/etc/passwd", (0o120777 << 16))])
+    arkiv = _bunt(tmp_path, [("cv.docx", docx)])
+    parsing.inspiser_bunt(arkiv)
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(arkiv))
+    assert e.value.kode == "sti_utenfor_bunten"
 
 
 def test_port24_nostet_arkiv_avvises(tmp_path):
@@ -328,7 +356,7 @@ def test_port26_duplikat_medlem_inni_docx_avvises(tmp_path):
     for stillhet.
 
     MUTASJONEN SOM DREPER DENNE: fjern duplikatsjekken i
-    `_inspiser_docx`."""
+    `_mal_docx`."""
     duplikat = _docx([("word/document.xml", b"<w:t>en</w:t>"),
                       ("word/document.xml", b"<w:t>to</w:t>")])
     arkiv = _bunt(tmp_path, [("cv.docx", duplikat)])
@@ -354,7 +382,8 @@ def test_port21_enkeltfilgrensen_gjelder_ogsa_inni_docx(tmp_path):
     stoppe, nådde dermed tekstuttrekket.
 
     MUTASJONEN SOM DREPER DENNE: fjern `MAKS_ENKELTFIL`-linjen i
-    `_inspiser_docx` — forholds- og totalsjekken er grønn hele veien."""
+    `_mal_medlem`s lesesløyfe — forholds- og totalsjekken er grønn hele
+    veien."""
     # 64 tilfeldige byte per 4 KB-blokk: deflate komprimerer nullene, men
     # ikke støyen, så forholdet lander godt under 100:1 mens medlemmet
     # pakker ut til mer enn 25 MB.
@@ -389,8 +418,8 @@ def test_port22_filbudsjettet_er_buntens_ikke_per_docx(tmp_path):
     hundre kilobyte. Budsjettet er derfor ÉN teller: buntens egne filer
     pluss hvert nøstet medlem, aldri et friskt sett per docx.
 
-    MUTASJONEN SOM DREPER DENNE: la `_inspiser_docx` måle `len(infos)`
-    mot `MAKS_FILER` i stedet for `filer_brukt + len(infos)`."""
+    MUTASJONEN SOM DREPER DENNE: gi `_mal_docx` et friskt `Budsjett()`
+    i stedet for buntens."""
     halv = parsing.MAKS_FILER // 2 + 2000     # 12 000 hver, 24 000 til sammen
     fyll = [(f"word/f{n}.xml", b"") for n in range(halv)]
     docx = _docx([("word/document.xml", b"<w:t>x</w:t>")] + fyll)
@@ -418,7 +447,7 @@ def test_port25_docx_er_en_pakke_ikke_bare_en_zip(tmp_path):
     `feil_innholdstype`.
 
     MUTASJONEN SOM DREPER DENNE: fjern `DOCX_PAKKEMEDLEMMER`-sjekken i
-    `_inspiser_docx`."""
+    `_mal_docx`."""
     for indre in ([("ikke-et-dokument.txt", b"hei")],
                   [("[Content_Types].xml", b"<Types/>")],
                   [("word/document.xml", b"<w:t>CV</w:t>")]):
@@ -556,8 +585,8 @@ def test_port26_mapper_i_docx_teller_i_samme_budsjett(tmp_path):
     kunne dermed bære et ubegrenset antall katalogoppføringer forbi
     buntens ene teller.
 
-    MUTASJONEN SOM DREPER DENNE: la `_inspiser_docx` måle og returnere
-    `len(infos)` i stedet for `len(alle)`."""
+    MUTASJONEN SOM DREPER DENNE: hopp over mappeoppføringene i
+    `_mal_docx`s første løkke."""
     halv = parsing.MAKS_FILER // 2 + 2000     # 12 000 hver, 24 000 totalt
     fyll = [(f"word/m{n}/", b"") for n in range(halv)]
     docx = _docx([("word/document.xml", b"<w:t>x</w:t>")] + fyll)
@@ -567,6 +596,364 @@ def test_port26_mapper_i_docx_teller_i_samme_budsjett(tmp_path):
     with pytest.raises(parsing.Buntfeil) as e:
         list(parsing.les_porsjonsvis(arkiv))
     assert e.value.kode == "for_mange_filer"
+
+
+def test_155_katalogen_inni_docx_er_en_paastand_ikke_bytene(tmp_path):
+    """Runde 8, formen #155 ble skrevet for å felle.
+
+    `_inspiser_docx` målte 25 MB, 100:1 og 2 GB på det den INDRE
+    sentralkatalogen PÅSTOD (`file_size`/`compress_size`). Ingenting ble
+    lest, og ingen CRC ble målt — så en patchet indre katalog kunne
+    oppgi lav `file_size`, passere alle tre grensene, og la den
+    faktiske ekspansjonen skje først i tekstuttrekket. Den ytre veien
+    lærte dette i `les_porsjonsvis` for lenge siden; den indre kunne
+    ikke lære det uten å bli den samme veien.
+
+    Gaten leser nå strømmen med et hardt tak og teller det den FAKTISK
+    fikk. Løgnen har da ingen steder å gjemme seg: enten leverer
+    medlemmet bytene sine og felles på dem, eller så leverer det færre
+    enn det påstår og felles som korrupt.
+
+    MUTASJONEN SOM DREPER DENNE: la `_mal_medlem` måle
+    `info.file_size` i stedet for de leste bytene."""
+    stor = b"<w:t>" + b"\0" * (parsing.MAKS_ENKELTFIL + (1 << 20))
+    docx = _docx([("word/document.xml", stor)])
+    assert len(docx) < parsing.MAKS_ENKELTFIL, \
+        "forutsetningen: den ytre docx-en er liten nok til å passere gaten"
+
+    # Ærlig katalog: bytene selv feller medlemmet.
+    aerlig = _bunt(tmp_path, [("cv.docx", docx)])
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(aerlig))
+    assert e.value.kode == "enkeltfil_for_stor"
+    aerlig.unlink()
+
+    # Løgnaktig katalog: PÅSTANDEN er 1000 byte, altså grønt på alle tre
+    # grensene den gamle indre gaten målte. Den nye leser, og et medlem
+    # som ikke leverer det det påstår er en korrupt bunt — ikke en
+    # godkjent søknad.
+    logn = _patch_katalog(docx, b"word/document.xml", 1000)
+    arkiv = _bunt(tmp_path, [("cv.docx", logn)])
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(arkiv))
+    assert e.value.kode == "korrupt_bunt"
+
+
+def test_155_hver_oppforing_betaler_en_gang(tmp_path):
+    """Ett budsjett er ikke det samme som én betaling.
+
+    Da gaten begynte å telle sitt eget medlem, sto seedingen av
+    `budsjett.filer` igjen på HELE den ytre katalogen — så hvert
+    innholdsmedlem betalte to ganger, og taket på 20 000 slo inn ved
+    drøyt 10 000. Det feiler lukket, og derfor stille: en ærlig bunt
+    ble avvist for å være for stor, uten at noen port var brutt.
+
+    MUTASJONEN SOM DREPER DENNE: seed `budsjett.filer` med
+    `len(zf.infolist())` i stedet for oppføringene strømmen ikke selv
+    måler."""
+    antall = parsing.MAKS_FILER // 2 + 10      # 10 010 ærlige medlemmer
+    filer = [(f"k{n}/cv.html", b"<p>x</p>") for n in range(antall)]
+    arkiv = _bunt(tmp_path, filer)
+    assert antall < parsing.MAKS_FILER, "forutsetningen: bunten er lovlig"
+    assert len(list(parsing.les_porsjonsvis(arkiv))) == antall
+
+
+def test_155_docx_byte_betales_av_bladene_ikke_containeren(
+        tmp_path, monkeypatch):
+    """Cursor P2, byte-siden av `..._betaler_en_gang`.
+
+    `filer`-siden ble ryddet i runde 9; `byte`-siden sto igjen med
+    nøyaktig samme form. `_mal_medlem` la containerens målte `lest` til
+    totalen, og så betalte hvert indre medlem for de SAMME bytene en
+    gang til. For `ZIP_STORED` er containeren ≈ summen av de indre
+    bytene, så et docx-lag betalte omtrent DOBBELT mot klarsignalets
+    «utpakket totalstørrelse | 2 GB» — og docstringen påsto samtidig
+    «ingen dobbelttelling».
+
+    Det feiler lukket, som slektningen sin: en ærlig bunt godt under
+    taket avvises som `total_for_stor`, uten at noen port er brutt.
+    Zip-bomben felles av den INDRE målingen — den som måler den
+    faktiske ekspansjonen — ikke av det ytre tillegget.
+
+    Grensen er skrudd ned her fordi det er FORMEN som måles, ikke
+    tallet.
+
+    MUTASJONEN SOM DREPER DENNE: gjør `budsjett.byte += lest`
+    ubetinget igjen — da betaler containeren for barna sine, og den
+    ærlige bunten under blir rød."""
+    tekst = b"<w:t>" + os.urandom(4096).hex().encode() + b"</w:t>"
+    docx = _docx([("word/document.xml", tekst)],
+                 metode=zipfile.ZIP_STORED)
+    with zipfile.ZipFile(io.BytesIO(docx)) as zf:
+        indre = sum(i.file_size for i in zf.infolist() if not i.is_dir())
+    assert indre < len(docx) < 2 * indre, \
+        "forutsetningen: STORED gjør containeren ≈ summen av bladene"
+    arkiv = _bunt(tmp_path, [("cv.docx", docx)])
+
+    # Taket settes ETT byte under den dobbelte betalingen: bladene alene
+    # har rikelig plass, container + blader har det ikke. Taket må
+    # samtidig romme den ytre KATALOGens sum (docx-blob + manifest),
+    # som `inspiser_bunt` måler for seg — og det gjør det med god margin
+    # så lenge bladene er større enn manifestet.
+    monkeypatch.setattr(parsing, "MAKS_TOTAL_UTPAKKET",
+                        len(docx) + indre - 1)
+    fasit = [f for f, _, _ in parsing.les_porsjonsvis(arkiv) if f][-1]
+    assert fasit["byte_lest"] == indre, \
+        "bare bladene betaler — containerens blob telles ikke i tillegg"
+    arkiv.unlink()
+
+    # SPEILET: taket gjelder fortsatt, og det er de INDRE bytene som
+    # bærer det. En deflatert docx er liten utenpå og stor inni; her er
+    # det bladet som sprenger taket, og bladet som navngis.
+    stort = _docx([("word/document.xml", os.urandom(2048) * 40)])
+    with zipfile.ZipFile(io.BytesIO(stort)) as zf:
+        indre_stort = sum(i.file_size for i in zf.infolist()
+                          if not i.is_dir())
+    tak = (len(stort) + indre_stort) // 2
+    assert len(stort) < tak < indre_stort, \
+        "forutsetningen: containeren passerer, bladene gjør det ikke"
+    arkiv2 = _bunt(tmp_path, [("cv.docx", stort)])
+    monkeypatch.setattr(parsing, "MAKS_TOTAL_UTPAKKET", tak)
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(arkiv2))
+    assert e.value.kode == "total_for_stor"
+    assert e.value.args[0].endswith("cv.docx/word/document.xml")
+
+
+def test_155_bytebudsjettet_er_buntens_ikke_per_docx(tmp_path, monkeypatch):
+    """Cursor P2: speilet av `..._filbudsjettet_er_buntens_...` for BYTE.
+
+    `#155`s kjerneinvariant er ETT `Budsjett` for begge feltene. `filer`-
+    siden er låst mot en nullstilling per docx (port22); `byte`-siden var
+    bare dekket INNEN én docx — dobbelttellingen container/blad — og
+    ingen test målte at to docx-er deler den samme byte-telleren. En
+    nullstilling der slipper to docx-er som hver for seg er lovlige, men
+    som til sammen ekspanderer langt over taket, gjennom gaten, mens
+    fil-testen fortsatt er grønn.
+
+    Grensen er skrudd ned her fordi det er FORMEN som måles, ikke tallet.
+
+    MUTASJONEN SOM DREPER DENNE: nullstill byte-siden i `_mal_docx`
+    (`budsjett.byte = 0`, eller gi løkka `Budsjett(filer=budsjett.filer)`)
+    — da betaler hver docx bare for seg selv, og bunten under slipper
+    gjennom."""
+    docx = _docx([("word/document.xml", os.urandom(2048) * 40)])
+    with zipfile.ZipFile(io.BytesIO(docx)) as zf:
+        indre = sum(i.file_size for i in zf.infolist() if not i.is_dir())
+    # Taket rommer ÉN docx' blader med margin, men ikke to. Den ytre
+    # katalogen (to deflaterte blober + manifestet) måles for seg mot
+    # samme tak, og passerer med god margin.
+    tak = indre + indre // 2
+    arkiv = _bunt(tmp_path, [("a.docx", docx), ("b.docx", docx)])
+    assert 2 * len(docx) < tak < 2 * indre, \
+        "forutsetningen: hver docx alene er lovlig, to er det ikke"
+    monkeypatch.setattr(parsing, "MAKS_TOTAL_UTPAKKET", tak)
+    parsing.inspiser_bunt(arkiv)   # ytre gate ser to små, lovlige filer
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(arkiv))
+    assert e.value.kode == "total_for_stor"
+    assert e.value.args[0].endswith("b.docx/word/document.xml"), \
+        "den ANDRE docx-en sprenger taket — den første betalte alt sitt"
+    arkiv.unlink()
+    # Positiv kontroll: samme docx, samme tak, én av dem — går gjennom.
+    # Det er summen som feller, ikke en for streng grense per docx.
+    en = _bunt(tmp_path, [("a.docx", docx)])
+    assert len(list(parsing.les_porsjonsvis(en))) == 1
+
+
+def test_155_for_stor_docx_katalog_avvises_for_lesing(tmp_path, monkeypatch):
+    """Codex P2: den inkrementelle tellingen er riktig, men for sen alene.
+
+    En katalog som overskrider grensen med én oppføring ble ikke avvist
+    før `_mal_medlem` hadde åpnet og pakket ut hver eneste foregående
+    oppføring — altså opptil hele bytebudsjettet brukt på arbeid vi
+    allerede visste var over taket. Antallet er kjent når `infolist()`
+    er materialisert, og den fjernede implementasjonen sammenlignet
+    nettopp der.
+
+    Målingen er derfor ikke KODEN — den var riktig før også — men at
+    ingen indre oppføring er LEST når den faller.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `budsjett.filer + len(alle) >
+    MAKS_FILER`-porten før løkkene i `_mal_docx`; koden blir fortsatt
+    `for_mange_filer`, men først etter elleve utpakkede medlemmer."""
+    monkeypatch.setattr(parsing, "MAKS_FILER", 12)
+    docx = _docx([(f"word/d{n}.xml", b"<w:t>" + b"x" * 512 + b"</w:t>")
+                  for n in range(12)])
+    arkiv = _bunt(tmp_path, [("cv.docx", docx)])
+
+    ekte = parsing._mal_medlem
+    lest: list[str] = []
+
+    def spion(navn, aapne, **kw):
+        if kw.get("dybde"):
+            lest.append(navn)
+        return ekte(navn, aapne, **kw)
+
+    monkeypatch.setattr(parsing, "_mal_medlem", spion)
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(arkiv))
+    assert e.value.kode == "for_mange_filer"
+    assert lest == [], \
+        f"katalogen ble avvist, men først etter {len(lest)} utpakkede medlemmer"
+
+
+def _spion_paa_indre(monkeypatch) -> list[str]:
+    """Noterer hvilke INDRE docx-medlemmer som faktisk ble pakket ut."""
+    ekte = parsing._mal_medlem
+    lest: list[str] = []
+
+    def spion(navn, aapne, **kw):
+        if kw.get("dybde"):
+            lest.append(navn)
+        return ekte(navn, aapne, **kw)
+
+    monkeypatch.setattr(parsing, "_mal_medlem", spion)
+    return lest
+
+
+def test_155_ugyldig_docx_katalog_avvises_for_lesing(tmp_path, monkeypatch):
+    """Codex P2, runde 2: alt katalogen ALENE kan dømme, dømmes først.
+
+    Antallet ble flyttet fram i forrige runde, men duplikatet, det
+    manglende pakkemedlemmet og den forbudte endelsen sto igjen spredt
+    rundt lesesløyfa. Alle tre er egenskaper ved NAVNENE i katalogen, ikke
+    ved bytene — og alle tre ble likevel meldt først etter at hvert
+    foregående medlem var pakket ut. En docx vi allerede visste var
+    ugyldig kunne dermed bruke opptil hele bytebudsjettet på veien til
+    sin egen avvisning.
+
+    KODENE ER UENDRET — det er tidspunktet som måles. Derfor står det en
+    tung `word/aaa.xml` FØRST i hver katalog: uten forhåndsdommen er den
+    lest når feilen meldes.
+
+    MUTASJONEN SOM DREPER DENNE: flytt duplikat-, pakkemedlem- eller
+    endelsessjekken tilbake til (eller bak) lesesløyfa i `_mal_docx`."""
+    # Ukomprimerbar med vilje: en `x` * 4096 hadde felt forholdsporten når
+    # den ble lest, og da målte speilet den porten i stedet for lesingen.
+    tung = ("word/aaa.xml",
+            b"<w:t>" + os.urandom(4096).hex().encode() + b"</w:t>")
+    for indre, pakke, kode in (
+            # duplikat sist i katalogen
+            ([tung, ("word/document.xml", b"<w:t>en</w:t>"),
+              ("word/document.xml", b"<w:t>to</w:t>")], True,
+             "duplikat_medlem"),
+            # pakkemedlem som aldri kom
+            ([tung, ("word/document.xml", b"<w:t>CV</w:t>")], False,
+             "feil_innholdstype"),
+            # nøstet arkiv bakerst
+            ([tung, ("word/document.xml", b"<w:t>CV</w:t>"),
+              ("word/indre.zip", b"PK\x03\x04hva som helst")], True,
+             "nostet_arkiv"),
+    ):
+        arkiv = _bunt(tmp_path, [("cv.docx", _docx(indre, pakke=pakke))])
+        lest = _spion_paa_indre(monkeypatch)
+        with pytest.raises(parsing.Buntfeil) as e:
+            list(parsing.les_porsjonsvis(arkiv))
+        assert e.value.kode == kode
+        assert lest == [], \
+            f"{kode}: katalogen dømte, men {len(lest)} medlemmer var lest"
+        arkiv.unlink()
+
+
+def test_155_docx_i_docx_felles_av_dybdevakten(tmp_path):
+    """Cursor P2: dybdevakten var det ENESTE som lukket docx-klassen, og
+    ingen test bandt den.
+
+    `.docx` er unntatt fra BEGGE de andre armene — endelsen står ikke i
+    `ARKIVENDELSER`, og formporten leser `endelse != ".docx" and
+    er_arkiv`. En docx inni en docx er derfor den ene nøstingen hverken
+    navnet eller bytene feller; bare `if dybde` gjør det. Den forrige
+    `word/indre.zip`-dekningen treffer endelsesarmen FØR lesing og sier
+    ingenting om denne klassen.
+
+    VAKTEN STÅR FØR LESINGEN (Cursor P2, runde 2). Sto den etter — der
+    hele medlemmet er lest, budsjettert og kjørt gjennom magiporten —
+    så avgjorde INNHOLDET klassen: en `word/nested.docx` med søppelbyte
+    ble `feil_innholdstype`, ikke `nostet_arkiv`, og en ekte nøstet
+    docx tvang ekspansjon opp mot 25 MB før den ble avvist. Nøstingen
+    kjennes på NAVNET, som for enhver annen arkivendelse.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `endelse == ".docx" and dybde` i
+    `_mal_medlem` — da rekurserer gaten videre ned i den indre docx-en i
+    stedet for å avvise den. Flyttes vakten tilbake under magiporten,
+    blir søppel-varianten under rød."""
+    arkiv = _bunt(tmp_path, [("cv.docx", _docx([
+        ("word/nested.docx", _docx())]))])   # ekte OPC-pakke, ikke bare PK
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(arkiv))
+    assert e.value.kode == "nostet_arkiv"
+    assert e.value.args[0].endswith("cv.docx/word/nested.docx")
+    arkiv.unlink()
+
+    # Samme klasse, uten gyldig OPC: endelsen bærer nøstingen, og
+    # bytene får aldri lov til å omklassifisere den.
+    soppel = _bunt(tmp_path, [("cv.docx", _docx([
+        ("word/nested.docx", b"not-a-docx")]))])
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(soppel))
+    assert e.value.kode == "nostet_arkiv"
+    assert e.value.args[0].endswith("cv.docx/word/nested.docx")
+    soppel.unlink()
+
+    # SPEILET: på dybde 0 er `.docx` en av de tre lovede typene, og da
+    # er søppelbyte nettopp feil innholdstype — vakten har flyttet seg,
+    # ikke vokst.
+    ytre = _bunt(tmp_path, [("cv.docx", b"not-a-docx")])
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(ytre))
+    assert e.value.kode == "feil_innholdstype"
+
+
+def test_155_null_komprimert_i_indre_katalog_slipper_ikke_forbi(tmp_path):
+    """Cursor P2: `komprimert <= 0` på strøm-/docx-veien hadde ingen
+    negativ. `test_port21_null_komprimert_er_ikke_fritak` måler
+    `inspiser_bunt`s KATALOGpåstand, og indre medlemmer går aldri der —
+    de får `komprimert` fra `info.compress_size` i docx-ens egen katalog.
+
+    Den løgnen er MÅLT her, og utfallet er ikke det man gjetter: `zipfile`
+    begrenser lesingen til `compress_size`, så et medlem som påstår null
+    leverer null byte — og CRC-en over det tomme avviker fra den
+    deklarerte. Løgnen felles derfor som `korrupt_bunt`, et kodet SP-3-
+    utfall, ikke som `komprimeringsforhold`. Det som betyr noe for porten
+    er at den ALDRI slipper forbi: et medlem som ikke leverer det
+    katalogen påstår, er en korrupt bunt — aldri en godkjent søknad.
+
+    (Følgen for `komprimert <= 0`-armen på DENNE veien: `lest > 0` og
+    `komprimert == 0` kan ikke opptre samtidig gjennom `zipfile`, så
+    armen står som kontraktsvakt for `_mal_medlem`s egen signatur —
+    ikke som en gren en bunt kan nå. Notert i PR-tråden.)
+
+    MUTASJONEN SOM DREPER DENNE: fjern `lest > 0` i `_mal_medlem` — da
+    felles det ÆRLIG tomme medlemmet under av `komprimert <= 0`, og
+    positivkontrollen blir rød."""
+    docx = _docx()
+    ekte = zipfile.ZipFile(io.BytesIO(docx)).getinfo("word/document.xml")
+    logn = _patch_katalog(docx, b"word/document.xml", ekte.file_size,
+                          komprimert=0)
+    arkiv = _bunt(tmp_path, [("cv.docx", logn)])
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(arkiv))
+    assert e.value.kode == "korrupt_bunt"
+    arkiv.unlink()
+
+    # POSITIV KONTROLL: en ÆRLIG tom fil inni docx-en har `compress_size
+    # = 0` uten å lyve — null ut av null er ikke en bombe, og `lest > 0`
+    # er det som skiller den fra løgnen over.
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for navn in sorted(parsing.DOCX_PAKKEMEDLEMMER):
+            zf.writestr(navn, b"<Types/>" if navn.endswith("].xml")
+                        else b"<w:t>CV</w:t>")
+        tom = zipfile.ZipInfo("word/tom.xml")
+        tom.compress_type = zipfile.ZIP_STORED     # tom + STORED → 0 byte
+        zf.writestr(tom, b"")
+    med_tom = buf.getvalue()
+    assert zipfile.ZipFile(io.BytesIO(med_tom)).getinfo(
+        "word/tom.xml").compress_size == 0, \
+        "forutsetningen: det ærlige medlemmet oppgir null komprimert"
+    assert len(list(parsing.les_porsjonsvis(
+        _bunt(tmp_path, [("cv.docx", med_tom)])))) == 1
 
 
 def test_port21_komprimeringsforhold(tmp_path):
@@ -623,10 +1010,20 @@ def test_port21_totalen_maales_ogsa_pa_et_medlem_uten_lesesloyfe(
     Grensen er skrudd ned her fordi det er FORMEN som måles, ikke
     tallet: å bygge 2 GB ekte byte i CI ville målt disken, ikke porten.
 
+    FIXTUREN ER REBASERT (Cursor P2, runde 2): docx-en bærer nå
+    KOMPRIMERBART innhold. Da containeren betalte for barna sine, var
+    strømmens sum omtrent dobbelt så stor som katalogens, og et tak
+    under strømsummen lå trygt over katalogsummen ved et uhell. Nå
+    betaler bare bladene, og en ukomprimerbar docx gir strømsum <
+    katalogsum — da feller `inspiser_bunt`s KATALOGport først, og
+    strømporten denne testen finnes for blir aldri nådd. Komprimerbart
+    innhold gjenoppretter forholdet med vilje, og forutsetningen er
+    påstått under, ikke antatt.
+
     MUTASJONEN SOM DREPER DENNE: gjør `total += lest`-sjekken betinget
     igjen (eller fjern den) — sjekken inne i lesesløyfa er grønn hele
     veien, for den kjøres aldri for dette medlemmet."""
-    docx = _docx([("word/media/bilde.bin", os.urandom(4096))])
+    docx = _docx([("word/media/bilde.bin", os.urandom(2048) * 40)])
     liten = b"<html><body>cv</body></html>"
     assert len(liten) < parsing._HODEBYTE, \
         "forutsetningen: medlemmet leses ferdig FØR lesesløyfa"
@@ -636,6 +1033,9 @@ def test_port21_totalen_maales_ogsa_pa_et_medlem_uten_lesesloyfe(
     # summen er det taket ett byte under skal felle.
     fasit = [f for f, _, _ in parsing.les_porsjonsvis(arkiv) if f][-1]
     total = fasit["byte_lest"]
+    katalog = sum(m.storrelse for m in parsing.inspiser_bunt(arkiv))
+    assert katalog < total, \
+        "forutsetningen: det er STRØMporten taket skal treffe, ikke katalogens"
     monkeypatch.setattr(parsing, "MAKS_TOTAL_UTPAKKET", total - 1)
     with pytest.raises(parsing.Buntfeil) as e:
         list(parsing.les_porsjonsvis(arkiv))
@@ -711,7 +1111,7 @@ def test_en_ulesbar_ytre_katalog_er_et_kodet_utfall(tmp_path, skade, kode):
 def test_en_ulesbar_indre_docx_katalog_er_feil_innholdstype(tmp_path):
     """Samme dør, innsiden: et INDRE filnavn som påstår UTF-8 uten å
     være det, feller `ZipFile(...)` med en rå `ValueError` — den ene
-    bibliotekformen `_inspiser_docx` ikke kjente. En docx som ikke lar
+    bibliotekformen `_mal_docx`s dør ikke kjente. En docx som ikke lar
     seg lese som arkiv er ikke en docx."""
     docx = bytearray(_docx())
     i = docx.index(b"PK\x01\x02")
