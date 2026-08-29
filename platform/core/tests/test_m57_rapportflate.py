@@ -821,7 +821,9 @@ def test_223_interleavet_reap_i_dekrypteringsvinduet_feller_200(
                 except Exception as e:      # noqa: BLE001 — til asserten
                     utfall.append(e)
 
-            traad = threading.Thread(target=_hent)
+            # `daemon=True`: overlever tråden alt under, skal den aldri
+            # kunne holde pytest-prosessen åpen etter at suiten er ferdig.
+            traad = threading.Thread(target=_hent, daemon=True)
             traad.start()
             try:
                 assert inne.wait(20), \
@@ -846,6 +848,16 @@ def test_223_interleavet_reap_i_dekrypteringsvinduet_feller_200(
             finally:
                 slipp.set()
                 traad.join(30)
+            # Lever tråden fortsatt, står `c.get()` fast et ANNET sted enn
+            # sømmen (f.eks. en deadlock i den samtidigheten riggen
+            # diagnostiserer) — `join` bare returnerte. Hev derfor HER,
+            # inne i `with`-en: anyio-portalen kanselleres kun når kroppen
+            # forlates med exception, så dette river den utestående
+            # forespørselen ned i stedet for å la `TestClient`-
+            # nedstengingen blokkere på den. Feilen forblir avgrenset.
+            assert not traad.is_alive(), (
+                "forespørselstråden lever etter `slipp` + 30 s join — "
+                "kallet står fast utenfor dekrypteringssømmen")
         assert utfall and not isinstance(utfall[0], Exception), utfall
         assert utfall[0].status_code == 404, (
             "payloaden forlot prosessen ETTER en committet reap — "
