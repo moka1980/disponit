@@ -327,9 +327,17 @@ def krev_avskruingshendelse(hendelse_id, hendelseoppslag) -> dict:
     except Exception as e:                        # noqa: BLE001
         # EN OPPSLAGSFEIL ER IKKE EN GODKJENNING. Uten dette leddet ville
         # en base som er nede blitt en åpen dør — fail-open, som SP-3
-        # forbyr. Feiltypen følger med i koden så driften kan skille en
-        # manglende hendelse fra en manglende forbindelse.
-        raise Blindingsfeil("avskrudd_uten_auditrad", type(e).__name__)
+        # forbyr.
+        #
+        # OG DEN HAR SIN EGEN KODE (Codex P2, runde 3). Første utgave la
+        # feiltypen i MELDINGEN, men `kjor_bunt` bygger `Kjoringsfeil` av
+        # `feil.kode` og controlleren returnerer bare den — så
+        # «forbindelsen er nede» og «raden finnes ikke» kom ut som samme
+        # utfall hos driften. Skillet leddet finnes for, forsvant to lag
+        # opp. Koden er det som forplanter seg; da må skillet ligge i
+        # koden. Begge er fortsatt fail-closed — det er
+        # KLASSIFISERINGEN som skiller, ikke utfallet.
+        raise Blindingsfeil("avskrudd_oppslag_feilet", type(e).__name__)
     if not isinstance(hendelse, dict) or not hendelse.get("aktor"):
         raise Blindingsfeil("avskrudd_uten_auditrad")
     if hendelse.get("handling") != AVSKRUINGSHANDLING:
@@ -342,13 +350,28 @@ def evalueringsinput(tekst: str, kandidatfelter: dict[str, list[str]], *,
                      blinding_av: bool = False,
                      avskruing_hendelse_id=None,
                      hendelseoppslag=None
-                     ) -> tuple[str, dict[str, str]]:
-    """Den ENESTE veien til modellinput. Standard er blindet; avskrudd
+                     ) -> tuple[str, dict[str, str], dict | None]:
+    """-> (tekst, avmaskering, avskruingsspor).
+
+    Den ENESTE veien til modellinput. Standard er blindet; avskrudd
     krever en OPPSLÅTT revisjonshendelse (#159) — finnes den ikke i
-    kallerens tenant, finnes ikke input (port 16b)."""
+    kallerens tenant, finnes ikke input (port 16b).
+
+    SPORET FØLGER MED UT (Codex P1, runde 3 på #247). Den verifiserte
+    hendelsen ble kastet, så evalueringen bar bare råteksten og et tomt
+    avmaskeringskart. Følgen: ingenting i den lagrede artefakten knyttet
+    NETTOPP DEN utleveringen til revisjonsraden — én hendelses-ID kunne
+    autorisert et ubegrenset antall senere bunter, og ingen kunne lest
+    seg tilbake fra et artefakt til hvem som bestemte det. En
+    revisjonshendelse ingen artefakt peker på, er en logg uten lesere.
+    """
     if blinding_av:
-        krev_avskruingshendelse(avskruing_hendelse_id, hendelseoppslag)
-        return tekst, {}
+        hendelse = krev_avskruingshendelse(avskruing_hendelse_id,
+                                           hendelseoppslag)
+        return tekst, {}, {"hendelse_id": str(avskruing_hendelse_id),
+                           "aktor": hendelse.get("aktor"),
+                           "ts": hendelse.get("ts"),
+                           "handling": hendelse.get("handling")}
     blindet, avmaskering = blind(tekst, kandidatfelter)
     # FAIL-CLOSED (Codex P1, eiers K2-avgjørelse). Med tomme eller
     # manglende strukturerte felter ble `avmaskering` tom, `krev_blindet`
@@ -367,4 +390,4 @@ def evalueringsinput(tekst: str, kandidatfelter: dict[str, list[str]], *,
     if not avmaskering:
         raise Blindingsfeil("blinding_uten_felter")
     krev_blindet(blindet, avmaskering)
-    return blindet, avmaskering
+    return blindet, avmaskering, None

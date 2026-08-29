@@ -1042,6 +1042,13 @@ def test_port16_blindingen_maales_pa_faktisk_input():
             "handling": blinding.AVSKRUINGSHANDLING,
             "aktor": "eier@kunde", "ts": "2026-08-23T00:00:00+00:00"})
     assert modell2.sett[-1] == tekst and ut2["avmaskering"] == {}
+    # Artefakten bærer sporet, og BARE når blindingen faktisk var av.
+    assert ut2["avskruing"]["aktor"] == "eier@kunde", (
+        "den avskrudde evalueringen kan ikke leses tilbake til"
+        f" revisjonsraden: {ut2.get('avskruing')}")
+    assert "avskruing" not in ut, (
+        "en BLINDET evaluering bærer et avskruingsfelt — da sier feltet"
+        " ingenting om unntaket det skal dokumentere")
 
 
 def test_avskruingen_slaas_OPP_den_paastaas_ikke(tmp_path):
@@ -1083,8 +1090,7 @@ def test_avskruingen_slaas_OPP_den_paastaas_ikke(tmp_path):
         ("id uten oppslag", {"avskruing_hendelse_id": "abc"}),
         ("id som ikke finnes", {"avskruing_hendelse_id": "abc",
                                 "hendelseoppslag": lambda _i: None}),
-        ("oppslag som kaster", {"avskruing_hendelse_id": "abc",
-                                "hendelseoppslag": _kaster}),
+
         ("hendelse uten aktør", {"avskruing_hendelse_id": "abc",
                                  "hendelseoppslag": lambda _i: {
                                      "handling":
@@ -1098,6 +1104,22 @@ def test_avskruingen_slaas_OPP_den_paastaas_ikke(tmp_path):
         # målt formuleringen. `kode` er kontrakten.
         assert e.value.kode == "avskrudd_uten_auditrad", \
             f"{merkelapp} ga feil kode: {e.value.kode}"
+
+    # OPPSLAGSFEIL HAR SIN EGEN KODE (Codex P2, runde 3). «Forbindelsen
+    # er nede» og «raden finnes ikke» er begge fail-closed, men driften
+    # må kunne skille dem: den ene skal retryes, den andre eskaleres.
+    # Detaljen var ikke nok — `kjor_bunt` bygger `Kjoringsfeil` av
+    # `feil.kode`, og controlleren returnerer bare den, så skillet
+    # forsvant to lag opp.
+    with pytest.raises(blinding.Blindingsfeil) as e:
+        blinding.evalueringsinput(
+            "Kari Nordmann", {"navn": ["Kari"]}, blinding_av=True,
+            avskruing_hendelse_id="abc", hendelseoppslag=_kaster)
+    assert e.value.kode == "avskrudd_oppslag_feilet", (
+        "en oppslagsfeil er ikke til å skille fra en manglende rad —"
+        f" driften kan ikke klassifisere den: {e.value.kode}")
+    assert "RuntimeError" in str(e.value), \
+        "feiltypen følger ikke med for den som leser loggen"
 
     # FEIL HANDLING har sin EGEN kode: en revisjonshendelse om noe helt
     # annet er ikke en manglende hendelse, og driften skal kunne skille
@@ -1113,11 +1135,20 @@ def test_avskruingen_slaas_OPP_den_paastaas_ikke(tmp_path):
 
     # DEN POSITIVE VEIEN. Uten den måler testen bare at døra er stengt,
     # ikke at den er en dør.
-    tekst, avmaskering = blinding.evalueringsinput(
+    tekst, avmaskering, spor = blinding.evalueringsinput(
         "Kari Nordmann", {"navn": ["Kari"]}, blinding_av=True,
         avskruing_hendelse_id="7f1c1f7e-0000-4000-8000-000000000003",
         hendelseoppslag=lambda _i: ekte)
     assert tekst == "Kari Nordmann" and avmaskering == {}
+    # ... OG SPORET FØLGER MED (Codex P1, runde 3). Uten det bar en
+    # avskrudd evaluering ingenting som knyttet NETTOPP DEN utleveringen
+    # til revisjonsraden — én hendelses-ID kunne autorisert et ubegrenset
+    # antall bunter, og ingen kunne lest seg fra artefaktet tilbake til
+    # hvem som bestemte det.
+    assert spor is not None, "avskruingen etterlot ikke noe spor"
+    assert spor["hendelse_id"] == "7f1c1f7e-0000-4000-8000-000000000003"
+    assert spor["aktor"] == "eier@kunde"
+    assert spor["handling"] == blinding.AVSKRUINGSHANDLING
 
 
 def test_avskruingshandlingen_finnes_i_066():
