@@ -86,12 +86,17 @@ def _skad_payload(arkiv: Path, navn: bytes) -> None:
     raise AssertionError(f"{navn!r} ikke blant de lokale hodene")
 
 
-def _patch_deklarert(arkiv: Path, navn: bytes, ny_storrelse: int,
-                     komprimert: int | None = None) -> None:
+def _patch_katalog(raa: bytes, navn: bytes, ny_storrelse: int,
+                   komprimert: int | None = None) -> bytes:
     """Skriver om `uncompressed size` (og valgfritt `compressed size`) i
     SENTRALKATALOGEN for én oppføring — katalogen er en PÅSTAND, og
-    nettopp det skal gaten/strømmen skille på."""
-    data = bytearray(arkiv.read_bytes())
+    nettopp det skal gaten/strømmen skille på.
+
+    Formen er BYTE-inn/BYTE-ut fordi løgnen skal kunne plantes på begge
+    nivåer: i buntens katalog og i katalogen inni en docx. En egen kopi
+    for det indre nivået ville vært riggens versjon av nøyaktig den
+    divergensen #155 river ut av gaten."""
+    data = bytearray(raa)
     sig = b"PK\x01\x02"
     i = data.find(sig)
     while i != -1:
@@ -100,10 +105,16 @@ def _patch_deklarert(arkiv: Path, navn: bytes, ny_storrelse: int,
             struct.pack_into("<I", data, i + 24, ny_storrelse)
             if komprimert is not None:
                 struct.pack_into("<I", data, i + 20, komprimert)
-            arkiv.write_bytes(bytes(data))
-            return
+            return bytes(data)
         i = data.find(sig, i + 4)
     raise AssertionError(f"{navn!r} ikke i sentralkatalogen")
+
+
+def _patch_deklarert(arkiv: Path, navn: bytes, ny_storrelse: int,
+                     komprimert: int | None = None) -> None:
+    """`_patch_katalog` på en fil."""
+    arkiv.write_bytes(_patch_katalog(arkiv.read_bytes(), navn,
+                                     ny_storrelse, komprimert))
 
 
 def _patch_kryptert(arkiv: Path) -> None:
@@ -206,8 +217,7 @@ def test_port23_symlenke_avvises(tmp_path):
     # lenke i det indre arkivet er samme klasse som en i bunten; den ene
     # gaten kan ikke være strengere enn den andre uten at forskjellen er
     # et hull.
-    # MUTASJONEN SOM DREPER DENNE: fjern symlenkelinjen i
-    # `_inspiser_docx`.
+    # MUTASJONEN SOM DREPER DENNE: fjern symlenkelinjen i `_mal_docx`.
     docx = _docx([("word/document.xml", b"<w:t>CV</w:t>"),
                   ("word/lenke.xml", b"/etc/passwd", (0o120777 << 16))])
     arkiv = _bunt(tmp_path, [("cv.docx", docx)])
@@ -328,7 +338,7 @@ def test_port26_duplikat_medlem_inni_docx_avvises(tmp_path):
     for stillhet.
 
     MUTASJONEN SOM DREPER DENNE: fjern duplikatsjekken i
-    `_inspiser_docx`."""
+    `_mal_docx`."""
     duplikat = _docx([("word/document.xml", b"<w:t>en</w:t>"),
                       ("word/document.xml", b"<w:t>to</w:t>")])
     arkiv = _bunt(tmp_path, [("cv.docx", duplikat)])
@@ -354,7 +364,8 @@ def test_port21_enkeltfilgrensen_gjelder_ogsa_inni_docx(tmp_path):
     stoppe, nådde dermed tekstuttrekket.
 
     MUTASJONEN SOM DREPER DENNE: fjern `MAKS_ENKELTFIL`-linjen i
-    `_inspiser_docx` — forholds- og totalsjekken er grønn hele veien."""
+    `_mal_medlem`s lesesløyfe — forholds- og totalsjekken er grønn hele
+    veien."""
     # 64 tilfeldige byte per 4 KB-blokk: deflate komprimerer nullene, men
     # ikke støyen, så forholdet lander godt under 100:1 mens medlemmet
     # pakker ut til mer enn 25 MB.
@@ -389,8 +400,8 @@ def test_port22_filbudsjettet_er_buntens_ikke_per_docx(tmp_path):
     hundre kilobyte. Budsjettet er derfor ÉN teller: buntens egne filer
     pluss hvert nøstet medlem, aldri et friskt sett per docx.
 
-    MUTASJONEN SOM DREPER DENNE: la `_inspiser_docx` måle `len(infos)`
-    mot `MAKS_FILER` i stedet for `filer_brukt + len(infos)`."""
+    MUTASJONEN SOM DREPER DENNE: gi `_mal_docx` et friskt `Budsjett()`
+    i stedet for buntens."""
     halv = parsing.MAKS_FILER // 2 + 2000     # 12 000 hver, 24 000 til sammen
     fyll = [(f"word/f{n}.xml", b"") for n in range(halv)]
     docx = _docx([("word/document.xml", b"<w:t>x</w:t>")] + fyll)
@@ -418,7 +429,7 @@ def test_port25_docx_er_en_pakke_ikke_bare_en_zip(tmp_path):
     `feil_innholdstype`.
 
     MUTASJONEN SOM DREPER DENNE: fjern `DOCX_PAKKEMEDLEMMER`-sjekken i
-    `_inspiser_docx`."""
+    `_mal_docx`."""
     for indre in ([("ikke-et-dokument.txt", b"hei")],
                   [("[Content_Types].xml", b"<Types/>")],
                   [("word/document.xml", b"<w:t>CV</w:t>")]):
@@ -556,8 +567,8 @@ def test_port26_mapper_i_docx_teller_i_samme_budsjett(tmp_path):
     kunne dermed bære et ubegrenset antall katalogoppføringer forbi
     buntens ene teller.
 
-    MUTASJONEN SOM DREPER DENNE: la `_inspiser_docx` måle og returnere
-    `len(infos)` i stedet for `len(alle)`."""
+    MUTASJONEN SOM DREPER DENNE: hopp over mappeoppføringene i
+    `_mal_docx`s første løkke."""
     halv = parsing.MAKS_FILER // 2 + 2000     # 12 000 hver, 24 000 totalt
     fyll = [(f"word/m{n}/", b"") for n in range(halv)]
     docx = _docx([("word/document.xml", b"<w:t>x</w:t>")] + fyll)
@@ -567,6 +578,66 @@ def test_port26_mapper_i_docx_teller_i_samme_budsjett(tmp_path):
     with pytest.raises(parsing.Buntfeil) as e:
         list(parsing.les_porsjonsvis(arkiv))
     assert e.value.kode == "for_mange_filer"
+
+
+def test_155_katalogen_inni_docx_er_en_paastand_ikke_bytene(tmp_path):
+    """Runde 8, formen #155 ble skrevet for å felle.
+
+    `_inspiser_docx` målte 25 MB, 100:1 og 2 GB på det den INDRE
+    sentralkatalogen PÅSTOD (`file_size`/`compress_size`). Ingenting ble
+    lest, og ingen CRC ble målt — så en patchet indre katalog kunne
+    oppgi lav `file_size`, passere alle tre grensene, og la den
+    faktiske ekspansjonen skje først i tekstuttrekket. Den ytre veien
+    lærte dette i `les_porsjonsvis` for lenge siden; den indre kunne
+    ikke lære det uten å bli den samme veien.
+
+    Gaten leser nå strømmen med et hardt tak og teller det den FAKTISK
+    fikk. Løgnen har da ingen steder å gjemme seg: enten leverer
+    medlemmet bytene sine og felles på dem, eller så leverer det færre
+    enn det påstår og felles som korrupt.
+
+    MUTASJONEN SOM DREPER DENNE: la `_mal_medlem` måle
+    `info.file_size` i stedet for de leste bytene."""
+    stor = b"<w:t>" + b"\0" * (parsing.MAKS_ENKELTFIL + (1 << 20))
+    docx = _docx([("word/document.xml", stor)])
+    assert len(docx) < parsing.MAKS_ENKELTFIL, \
+        "forutsetningen: den ytre docx-en er liten nok til å passere gaten"
+
+    # Ærlig katalog: bytene selv feller medlemmet.
+    aerlig = _bunt(tmp_path, [("cv.docx", docx)])
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(aerlig))
+    assert e.value.kode == "enkeltfil_for_stor"
+    aerlig.unlink()
+
+    # Løgnaktig katalog: PÅSTANDEN er 1000 byte, altså grønt på alle tre
+    # grensene den gamle indre gaten målte. Den nye leser, og et medlem
+    # som ikke leverer det det påstår er en korrupt bunt — ikke en
+    # godkjent søknad.
+    logn = _patch_katalog(docx, b"word/document.xml", 1000)
+    arkiv = _bunt(tmp_path, [("cv.docx", logn)])
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(arkiv))
+    assert e.value.kode == "korrupt_bunt"
+
+
+def test_155_hver_oppforing_betaler_en_gang(tmp_path):
+    """Ett budsjett er ikke det samme som én betaling.
+
+    Da gaten begynte å telle sitt eget medlem, sto seedingen av
+    `budsjett.filer` igjen på HELE den ytre katalogen — så hvert
+    innholdsmedlem betalte to ganger, og taket på 20 000 slo inn ved
+    drøyt 10 000. Det feiler lukket, og derfor stille: en ærlig bunt
+    ble avvist for å være for stor, uten at noen port var brutt.
+
+    MUTASJONEN SOM DREPER DENNE: seed `budsjett.filer` med
+    `len(zf.infolist())` i stedet for oppføringene strømmen ikke selv
+    måler."""
+    antall = parsing.MAKS_FILER // 2 + 10      # 10 010 ærlige medlemmer
+    filer = [(f"k{n}/cv.html", b"<p>x</p>") for n in range(antall)]
+    arkiv = _bunt(tmp_path, filer)
+    assert antall < parsing.MAKS_FILER, "forutsetningen: bunten er lovlig"
+    assert len(list(parsing.les_porsjonsvis(arkiv))) == antall
 
 
 def test_port21_komprimeringsforhold(tmp_path):
@@ -711,7 +782,7 @@ def test_en_ulesbar_ytre_katalog_er_et_kodet_utfall(tmp_path, skade, kode):
 def test_en_ulesbar_indre_docx_katalog_er_feil_innholdstype(tmp_path):
     """Samme dør, innsiden: et INDRE filnavn som påstår UTF-8 uten å
     være det, feller `ZipFile(...)` med en rå `ValueError` — den ene
-    bibliotekformen `_inspiser_docx` ikke kjente. En docx som ikke lar
+    bibliotekformen `_mal_docx`s dør ikke kjente. En docx som ikke lar
     seg lese som arkiv er ikke en docx."""
     docx = bytearray(_docx())
     i = docx.index(b"PK\x01\x02")
