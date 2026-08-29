@@ -1210,3 +1210,12 @@ th.rekrut-kandidat { white-space: normal; }
 .rekrut-kort-handlinger { display: flex; gap: var(--sp-2); }
 .rekrut-kort-handlinger .knapp { flex-grow: 1; }
 .rekrut-kort-handlinger .knapp.fare { flex-grow: 0; }
+
+/* Rapporthodet: overskrift + Slett på samme rad (eiers bestilling 29/8 —
+   handlingen står der dommen felles, ikke bare i listen). */
+.rekrut-rapporthode { display: flex; align-items: flex-start;
+  justify-content: space-between; gap: var(--sp-3); }
+/* min-width:0 + ombrekking: et langt profilnavn uten mellomrom skal
+   krympe og brytes, aldri skyve Slett ut av viewporten (CodeRabbit). */
+.rekrut-rapporthode h3 { margin: 0; min-width: 0;
+  overflow-wrap: anywhere; }

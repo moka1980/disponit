@@ -6308,3 +6308,71 @@ test("Kortlisten: pillen er tekst med fargeregel per art (port 30)", async () =>
   const brudd = await alvorligeBrudd(hoved);
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
 });
+
+test("Rapporten: Slett står i rapporthodet, gjennom dialogen — og tar visningen ned", async () => {
+  KALL = [];
+  let evalsvar = { evalueringer: [
+    { oppdrag_id: 96, status: "utfort",
+      opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }],
+  flere: false };
+  SVAR = (sti) => ({
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": evalsvar,
+    "/v1/rekruttering/rapport/96": { oppdrag_id: 96, rapport: {
+      rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+      profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
+      antall_soknader: 1,
+      rangering: [{ kandidat_id: "kandidat-01", poeng: 5,
+        nedbrytning: { drift: 5 } }],
+      kandidater: { "kandidat-01": { funn: [], intervjusporsmal: [],
+        kildetekst: "[NAVN-1]" } },
+      fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+    } },
+    "/v1/rekruttering/evaluering/96/slett": { slett_bestilt: true },
+  })[sti] ?? 500;
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector(".rekrut-rapporthode")),
+    "rapporten kom aldri");
+  const hode = hoved.querySelector(".rekrut-rapporthode");
+  const slett = [...hode.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.evalueringer.slett"));
+  assert.ok(slett, "Slett mangler i rapporthodet");
+  assert.ok(slett.getAttribute("aria-label").includes("96"));
+  slett.click();
+  const dlg = hoved.ownerDocument.querySelector("dialog[open], [role=dialog]");
+  assert.ok(dlg, "bekreftelsesdialogen åpnet ikke");
+  assert.ok(!KALL.some((k) => k.sti.endsWith("/slett")),
+    "slettingen gikk uten bekreftelse");
+  evalsvar = { evalueringer: [
+    { oppdrag_id: 96, status: "utfort",
+      opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: false,
+      slettet: true }], flere: false };
+  [...dlg.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.evalueringer.slett"))
+    .click();
+  assert.ok(await vent(() => KALL.some((k) =>
+    k.sti === "/v1/rekruttering/evaluering/96/slett"
+    && k.metode === "POST")), "POST-en gikk aldri");
+  // Visningen tas NED: en bestilt sletting er kundens grense fra
+  // bestillingsøyeblikket — rapportinnholdet skal ikke bli stående.
+  assert.ok(await vent(() => !hoved.querySelector(".rekrut-rapporthode")),
+    "rapporten ble stående etter bestilt sletting");
+  assert.ok(await vent(() => hoved.textContent
+    .includes(t("ui.rekruttering.evalueringer.slettet"))),
+  "listen ble ikke oppfrisket til basens tilstand");
+
+  // Uten skrivescope: rapporten vises, men uten Slett.
+  const hoved2 = nyHoved();
+  evalsvar = { evalueringer: [
+    { oppdrag_id: 96, status: "utfort",
+      opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }],
+  flere: false };
+  visRekruttering(hoved2, { ...ctx(), scopes: ["decisions:read"] });
+  assert.ok(await vent(() => hoved2.querySelector(".rekrut-rapporthode")),
+    "leserapporten kom aldri");
+  assert.ok(![...hoved2.querySelectorAll(".rekrut-rapporthode button")]
+    .some((b) => b.textContent === t("ui.rekruttering.evalueringer.slett")),
+  "Slett uten bestilling:opprett er en blindvei (P2-1-klassen)");
+});
