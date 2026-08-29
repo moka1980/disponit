@@ -326,8 +326,18 @@ Modulen er KUNDE av plattformen, aldri omvendt (m56-formen):
   * Dokument: §4s enkeltfil, 25 MiB — både originalbytene og
     parseteksten, hver for seg.
   * Evalueringsartefakt: 50 MiB kanonisk JSON, altså §4-tallet én gang
-    for `kildetekst` og én gang for funnenes sitater, som per
-    konstruksjon er utsnitt AV den samme teksten. Dette er en
+    for `kildetekst` og like mye til for alt det andre kandidaten bærer.
+    SITATENE ER IKKE DISJUNKTE (Codex P2): den andre halvdelen var
+    tidligere begrunnet med at funnenes sitater er utsnitt AV samme
+    tekst og derfor til sammen ikke kan overstige én kopi av den. 100
+    funn kan uavhengig sitere hvilken som helst del av teksten, så
+    antakelsen holdt ikke — en skjemagyldig kandidat kunne sprenge
+    budsjettet og felle hele evalueringen på `kandidatlagring_feilet`.
+    Grensen er derfor kontraktens egen og håndheves ved modellgrensen:
+    `rapportskjema.SITAT_MAKS` = 4096 tegn per sitat og `FUNN_MAKS` =
+    100 funn, altså ≤ 1,6 MiB samlet sitatvolum i verste fall (4 byte
+    per tegn i UTF-8). Et for langt sitat DROPPES som et sitat som ikke
+    står ordrett i teksten, og telles i `droppede_funn`. Dette er en
     PER-KANDIDAT-grense, og §4 har ingen fra før: arkivgrensene teller
     filer og totalvolum, ikke tekst per kandidat. Tallet er derfor valgt
     som §4s egen klasse, ikke avledet av den — en kandidat med mer enn

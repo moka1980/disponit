@@ -14,6 +14,28 @@ faktisk indekserer; personverdiene finnes ikke i den.
 """
 from __future__ import annotations
 
+#: Funnenes tak, navngitt her fordi det er DENNE grensen skriveveiens
+#: budsjett er utledet av (`app.MAKS_KANDIDATARTEFAKT_KROPP`).
+FUNN_MAKS = 100
+#: SITATENE ER IKKE DISJUNKTE (Codex P2, #173). `sitat` sto uten
+#: `maxLength`, og hvert funn kan uavhengig sitere HVILKEN SOM HELST del
+#: av `kildetekst` — hundre funn kan altså sitere hele teksten hundre
+#: ganger. Skriveveiens budsjett var derimot dimensjonert som «teksten én
+#: gang + sitatene én gang», altså på en antakelse om at utsnittene til
+#: sammen ikke overstiger kilden. En skjemagyldig 20 MiB-kandidat med to
+#: fulltekstsitater sprengte da dørens 50 MiB, fikk `request_feilformet`,
+#: og `lagre_kandidat` felte HELE den ellers gyldige evalueringen.
+#:
+#: Kontrakten bærer nå grensen selv, som Codex' første utvei: sitatene er
+#: EVIDENS for ett funn, ikke en kopi av dokumentet, og 4096 tegn er et
+#: par siders utdrag. Det samlede sitatbudsjettet er dermed bundet —
+#: `FUNN_MAKS * SITAT_MAKS` tegn, verste fall 4 byte per tegn i UTF-8 =
+#: 1,6 MiB — og døren kan regne på et tall i stedet for på en antakelse.
+#: Håndheves ved GRENSEN (`modell.Ollamamodell.vurder` dropper et for
+#: langt sitat, som den dropper et som ikke står ordrett i teksten), så
+#: en ordrik modell feller ikke en gyldig evaluering på skjemaporten.
+SITAT_MAKS = 4096
+
 _FUNN = {
     "type": "object", "additionalProperties": False,
     "required": ["kategori", "kilde"],
@@ -25,7 +47,8 @@ _FUNN = {
             "properties": {
                 "start": {"type": "integer", "minimum": 0},
                 "slutt": {"type": "integer", "minimum": 1},
-                "sitat": {"type": "string", "minLength": 1},
+                "sitat": {"type": "string", "minLength": 1,
+                          "maxLength": SITAT_MAKS},
             },
         },
     },
@@ -35,7 +58,7 @@ _KANDIDAT = {
     "type": "object", "additionalProperties": False,
     "required": ["funn", "intervjusporsmal", "kildetekst"],
     "properties": {
-        "funn": {"type": "array", "items": _FUNN, "maxItems": 100},
+        "funn": {"type": "array", "items": _FUNN, "maxItems": FUNN_MAKS},
         "intervjusporsmal": {
             "type": "array", "maxItems": 20,
             "items": {"type": "string", "minLength": 1,

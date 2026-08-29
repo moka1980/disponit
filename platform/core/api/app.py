@@ -62,9 +62,29 @@ STORE_KROPP_RUTER = frozenset({"/v1/artefakt"})
 #: PR-014b-linjen over finnes for å unngå.
 _KANDIDAT_DOK_MAKS = 25 * 1024 * 1024
 #: Kandidatartefaktets eget budsjett, målt på den KANONISKE JSON-formen i
-#: døren — dokumentveiens `_KANDIDAT_DOK_MAKS`, én gang for `kildetekst`
-#: og én gang for funnenes sitater, som per konstruksjon er utsnitt AV
-#: den samme teksten.
+#: døren: dokumentveiens `_KANDIDAT_DOK_MAKS` for `kildetekst`, og like
+#: mye til for ALT det andre kandidaten bærer.
+#:
+#: «SITATENE ER UTSNITT AV TEKSTEN» VAR IKKE EN GRENSE (Codex P2). Den
+#: andre halvdelen var begrunnet med at funnenes sitater per
+#: konstruksjon er utsnitt av `kildetekst` og derfor til sammen ikke kan
+#: overstige én kopi av den. Utsnitt er de, men de er ikke DISJUNKTE:
+#: kontrakten tillater 100 funn, og hvert sitat kan uavhengig dekke
+#: hvilken som helst del av teksten. To fulltekstsitater på en 20
+#: MiB-kandidat ga ~60 MiB kanonisk JSON, altså `request_feilformet` fra
+#: denne porten — og `lagre_kandidat` reiser den som
+#: `kandidatlagring_feilet` for HELE den ellers gyldige evalueringen.
+#: Antakelsen felte det den skulle beskytte.
+#:
+#: Grensen bor nå der den kan HÅNDHEVES, i modulkontrakten:
+#: `rapportskjema.SITAT_MAKS` = 4096 tegn per sitat, `FUNN_MAKS` = 100
+#: funn, håndhevet ved modellgrensen. Verste fall i UTF-8 er 4 byte per
+#: tegn, altså 1,6 MiB samlet sitatvolum — mot de 25 MiB denne
+#: halvdelen setter av. Intervjuspørsmålene er 20 × 500 tegn (≤ 40 KiB),
+#: og resten er avmaskeringskartet og JSON-strukturen. Tallet er som før
+#: speilet og ikke importert (api/ importerer aldri modulkode, samme
+#: grunn som `_KANDIDAT_ID_KANON`); det som endret seg er at det nå er
+#: utledet av tall kontrakten faktisk håndhever.
 _KANDIDAT_ARTEFAKT_MAKS = 2 * _KANDIDAT_DOK_MAKS
 #: Verste-falls JSON-ekspansjon per KILDEBYTE, samme faktor som
 #: PR-014b-linjen over: gyldig JSON kan skrive ett tegn som `\uXXXX`, og
