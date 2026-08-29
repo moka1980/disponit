@@ -634,17 +634,24 @@ def rekrutteringsevalueringer(tjeneste, request: Request) -> Response:
     def _fn(conn, auth, rid):
         import oppdragskontrakt
         # KEYSET-CURSOR, HUSFORMEN (#221): signert med server-pepper og
-        # BUNDET TIL TENANT, som `GET /v1/unntak`. En cursor er ellers
-        # bare et par tall, og et par tall fra en annen tenants liste ser
-        # nøyaktig like gyldige ut. Keyset og ikke OFFSET: en liste som
-        # får nye evalueringer mens noen blar, hopper over eller gjentar
-        # rader med OFFSET.
+        # bundet med v2 (PR-008), som søsknene `beslutninger`,
+        # `unntak_historikk` og `domeneovertakelse_saker`. En cursor er
+        # ellers bare et par tall. v1 binder BARE tenant, og `les()`
+        # godtar også en v2-kropp (den bærer `t`/`ts`/`id`) — en gyldig
+        # cursor fra et annet endepunkt hos samme tenant ville derfor
+        # være 200 her og forskyve keysetet til en fremmed (ts, id)-
+        # posisjon (Cursor P2). v2 binder endepunkt, retning og filtre i
+        # tillegg, og det er nettopp den forvekslingen den finnes for.
+        # Keyset og ikke OFFSET: en liste som får nye evalueringer mens
+        # noen blar, hopper over eller gjentar rader med OFFSET.
         etter = None
         raa_cursor = request.query_params.get("cursor")
         if raa_cursor:
             try:
-                etter = cursormodul.les(raa_cursor, auth.tenant,
-                                        tjeneste.cursorpepper)
+                etter = cursormodul.les_v2(
+                    raa_cursor, tjeneste.cursorpepper, tenant=auth.tenant,
+                    endepunkt="rekruttering_evalueringer", retning="desc",
+                    filtre={})
             except cursormodul.CursorUgyldig:
                 tjeneste.logg.hendelse("cursor_ugyldig", rid, auth.tenant)
                 return _feilsvar("cursor_ugyldig", rid)
@@ -709,8 +716,10 @@ def rekrutteringsevalueringer(tjeneste, request: Request) -> Response:
         # neste side begynner nøyaktig der denne sluttet.
         neste = None
         if len(rader) > 100 and rader[99][2] is not None:
-            neste = cursormodul.lag(auth.tenant, rader[99][2],
-                                    rader[99][0], tjeneste.cursorpepper)
+            neste = cursormodul.lag_v2(
+                tjeneste.cursorpepper, tenant=auth.tenant,
+                endepunkt="rekruttering_evalueringer", retning="desc",
+                filtre={}, ts=rader[99][2], rad_id=rader[99][0])
         return kanonisk_json({
             "evalueringer": [
                 {"oppdrag_id": r[0], "status": r[1],
