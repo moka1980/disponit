@@ -1878,6 +1878,47 @@ test("Evalueringer: auto-visningen tar den FERSKESTE klare rapporten, "
   // `seedListe.find((e2) => e2.rapport_klar)` — stigende seed viser 96.
 });
 
+test("Evalueringer: auto-visningen bruker API-ETS nøkkel (opprettet, id) — "
+  + "høyeste id er ikke ferskest", async () => {
+  // Codex P2: endepunktet sorterer på `(opprettet, id)`, flaten valgte på
+  // `id` alene. Ordenene DIVERGERER for samtidige bestillinger, fordi
+  // PostgreSQLs `now()` er transaksjonens starttid mens id-en tildeles
+  // ved selve inserten: en forsinket ELDRE transaksjon kan få den høyeste
+  // id-en. Her er 98 eldst i tid, men høyest i id — tabellen er korrekt
+  // tidssortert, og auto-stien skal åpne 97, ikke 98.
+  const rapport = (navn) => ({ rapport: {
+    rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+    profil: { profil_id: "p-1", versjon: 2, navn },
+    antall_soknader: 1,
+    rangering: [{ kandidat_id: "kandidat-01", poeng: 5,
+      nedbrytning: { drift: 5 } }],
+    kandidater: { "kandidat-01": { funn: [] } },
+    fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+  } });
+  const rad = (oid, tid) => ({ oppdrag_id: oid, status: "utfort",
+    opprettet: tid, rapport_klar: true });
+  const seed = [rad(97, "2026-08-27T02:00:00+00:00"),
+    rad(98, "2026-08-27T01:00:00+00:00")];
+  KALL = [];
+  SVAR = {
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: seed },
+    "/v1/rekruttering/rapport/97": rapport("Ferskest i tid"),
+    "/v1/rekruttering/rapport/98": rapport("Hoyest id, eldst i tid"),
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("h3[tabindex='-1']")),
+    "rapporten rendret ikke av seg selv");
+  assert.ok(hoved.textContent.includes("Ferskest i tid"),
+    "auto-visningen fulgte ikke serverens (opprettet, id)-nøkkel");
+  assert.ok(!KALL.some((k) => k.sti === "/v1/rekruttering/rapport/98"),
+    "flaten hentet raden som bare hadde høyest id");
+  // MUTASJONEN SOM DREPER DENNE: sammenlign på `oppdrag_id` alene igjen —
+  // da vinner 98, og «Hoyest id, eldst i tid» rendres.
+});
+
 test("Evalueringer: hopplenke med ÉN prosess — ankeret står før "
   + "blinding, vekter og signering", async () => {
   // Pass-P2 (speilport): flerprosess-testen låser ankerets plass mot
