@@ -1091,6 +1091,7 @@
   "ui.rekruttering.evalueringer.utilgjengelig": "Report unavailable",
   "ui.rekruttering.evalueringer.nedbrytning": "Score breakdown",
   "ui.rekruttering.evalueringer.rangering": "Ranking — {navn} (version {versjon})",
+  "ui.rekruttering.evalueringer.tabellnavn": "Candidates ranked by score",
   "ui.rekruttering.evalueringer.kol_detaljer": "Details",
   "ui.rekruttering.evalueringer.vis_funn": "Show findings",
   "ui.rekruttering.evalueringer.kandidat": "Candidate",

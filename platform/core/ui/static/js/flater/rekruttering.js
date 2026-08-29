@@ -273,13 +273,6 @@ export function visRekruttering(hoved, ctx) {
 // behovet for den. Id-en er kontrakten mellom de to.
 const HOPP_ANKER = "rekrut-etter-evaluering";
 
-// Rangeringstabellens tilgjengelige navn er OVERSKRIFTEN SELV (Cursor
-// P2). Id-en er kontrakten mellom `h3`-en og `<table aria-labelledby>`;
-// den står her fordi tabellen bygges FØR overskriften i `byggRapport`.
-// Rapporten finnes i høyden én gang i DOM-en — `rapportRot` erstattes,
-// aldri utvides — så en fast id kan ikke kollidere med seg selv.
-const RANGERING_TITTEL = "rekrut-rangering-tittel";
-
 function tegn(hoved, ctx, data, okt, valgtId) {
   const prosesser = (data && data.prosesser) || [];
   // A-DOMMEN (#212): GENERATOREN FJERNES, IKKE INSTANSENE. Tre runder med
@@ -1074,20 +1067,32 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
             .join(", ") }),
           el("td", {}, boks));
       }));
-      // ØRET FIKK NAVNET TO GANGER (Cursor P2). Produktrunden fjernet
-      // det SYNLIGE duplikatet ved å gjøre captionen `sr-only` — men
-      // `sr-only` skjuler bare for øyet: noden blir stående i
-      // tilgjengelighetstreet med nøyaktig samme tekst som `h3`-en over.
-      // I dokumentrekkefølge leste skjermleseren derfor overskriften
-      // først og annonserte den SAMME strengen på nytt idet tabellen
-      // møttes. Samme feilklasse runden skulle lukke, bare flyttet fra
-      // øye til øre.
+      // ØRET FIKK NAVNET TO GANGER, OG DUPLIKATET LÅ I TEKSTEN (Codex
+      // P2). To former er prøvd på denne mekanismen, og begge bommet på
+      // samme sted:
       //
-      // Tabellen trenger fortsatt sitt tilgjengelige navn, men den skal
-      // LÅNE overskriftens i stedet for å bære en egen kopi:
-      // `aria-labelledby` peker på `h3`-en, og captionen finnes ikke
-      // lenger. Én tekst, én node, ett navn — for både øye og øre.
-      const tabell = el("table", { "aria-labelledby": RANGERING_TITTEL },
+      //   1. `sr-only` caption med overskriftens tekst — `sr-only`
+      //      skjuler for øyet, ikke for øret: noden ble stående i
+      //      tilgjengelighetstreet med nøyaktig samme streng.
+      //   2. `aria-labelledby` mot `h3`-en — den flyttet HVOR navnet
+      //      kommer fra, men den demper ikke tabellens egen annonsering.
+      //      Skjermleseren leser fortsatt overskriften i
+      //      dokumentrekkefølge og SAMME streng igjen som tabellnavn
+      //      idet tabellen møtes.
+      //
+      // Rotårsaken er altså ikke noden navnet bor i, men at navnet ER
+      // overskriftens tekst. Å låne den i stedet for å kopiere den er
+      // fortsatt en kopi for øret. Tabellen får derfor sitt EGET, korte
+      // navn som sier hva tabellen inneholder — «Kandidater rangert
+      // etter poeng» — mens `h3`-en beholder profil og versjon. To
+      // annonseringer, to forskjellige opplysninger.
+      //
+      // Navnet blir `sr-only`: produktrunden ville ha ÉN overskrift for
+      // øyet, og et synlig tabellnavn under `h3`-en ville bygget den
+      // andre linjen opp igjen. Det var aldri `sr-only` som var feilen.
+      const tabell = el("table", {},
+        el("caption", { class: "sr-only",
+          text: t("ui.rekruttering.evalueringer.tabellnavn") }),
         el("thead", {}, el("tr", {},
           el("th", { scope: "col",
             text: t("ui.rekruttering.evalueringer.kandidat") }),
@@ -1151,11 +1156,10 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       }
       // Rapporten settes inn ETTER tabellen brukeren sto i — fokusér
       // overskriften, ellers får tastatur/skjermleser aldri vite at
-      // lastingen ble ferdig.
-      // ...og den er samtidig tabellens tilgjengelige navn
-      // (`RANGERING_TITTEL`), så `tabindex="-1"` som fokusmål og
-      // `aria-labelledby` som navnekilde deler én og samme node.
-      const overskrift = el("h3", { id: RANGERING_TITTEL, tabindex: "-1",
+      // lastingen ble ferdig. Fokusmålet er NODEN (`overskrift.focus()`),
+      // ikke en id: tabellen bærer sitt eget navn nå, så overskriften
+      // trenger ingen id å bli pekt på med.
+      const overskrift = el("h3", { tabindex: "-1",
         text: t("ui.rekruttering.evalueringer.rangering")
           .replace("{navn}", rapport.profil.navn)
           .replace("{versjon}", String(rapport.profil.versjon)) });

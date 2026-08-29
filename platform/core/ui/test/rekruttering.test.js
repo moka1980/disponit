@@ -4475,10 +4475,19 @@ test("Rapport: navnet står ÉN gang — for øyet OG for øret", async () => {
   // `h3` sto igjen med identisk tekst i tilgjengelighetstreet, så
   // skjermleseren leste «Rangering — Driftskonsulent (versjon 2)» først
   // som overskrift og så en gang til som tabellnavn (Cursor P2).
-  // Tabellen LÅNER nå overskriftens navn via `aria-labelledby`.
   //
-  // MUTASJONEN SOM DREPER DENNE: gi tabellen en egen caption med samme
-  // tekst igjen (synlig ELLER `sr-only`), eller fjern `aria-labelledby`.
+  // Neste forsøk lot tabellen LÅNE overskriften via `aria-labelledby`.
+  // Det flyttet hvor navnet kom fra, men ikke HVA som ble annonsert:
+  // tabellen har fortsatt sin egen annonsering, og strengen var den
+  // samme (Codex P2). Duplikatet lå i TEKSTEN, ikke i noden.
+  //
+  // Porten måler derfor rotårsaken og ikke formen: tabellens
+  // tilgjengelige navn — uansett om det kommer fra caption,
+  // `aria-label` eller `aria-labelledby` — skal finnes, og det skal
+  // IKKE være overskriftens tekst.
+  //
+  // MUTASJONEN SOM DREPER DENNE: gi tabellen overskriftens tekst igjen,
+  // på hvilken som helst av de tre måtene — eller fjern navnet helt.
   KALL = [];
   SVAR = { ...enkelRapportSvar() };
   const hoved = nyHoved();
@@ -4493,17 +4502,36 @@ test("Rapport: navnet står ÉN gang — for øyet OG for øret", async () => {
     .filter((h) => h.textContent.includes("Driftskonsulent"));
   assert.equal(synlige.length, 1,
     `overskriften står ${synlige.length} ganger`);
-  // Navnet kommer fra overskriften — ikke fra en kopi.
   const overskrift = synlige[0];
-  assert.ok(overskrift.id, "overskriften mangler id-en tabellen peker på");
-  assert.equal(rapporttabell.getAttribute("aria-labelledby"), overskrift.id,
-    "tabellen låner ikke overskriftens navn");
-  // ...og fokusmålet etter lasting er fortsatt den samme noden.
+  // Tabellens tilgjengelige navn, slik en skjermleser regner det ut:
+  // `aria-label`, ellers `aria-labelledby` → den utpekte noden, ellers
+  // `caption`. Alle tre veiene måles av samme port.
+  const pekt = rapporttabell.getAttribute("aria-labelledby");
+  const cap = rapporttabell.querySelector("caption");
+  const navn = (rapporttabell.getAttribute("aria-label")
+    || (pekt && (hoved.querySelector(`#${pekt}`) || {}).textContent)
+    || (cap && cap.textContent) || "").trim();
+  assert.ok(navn, "rangeringstabellen har ikke noe tilgjengelig navn");
+  // ROTÅRSAKEN: navnet skal ikke være overskriftens tekst — hverken
+  // kopiert inn eller lånt via `aria-labelledby`. Overskriften
+  // annonseres allerede av seg selv rett før tabellen.
+  assert.notEqual(navn, overskrift.textContent.trim(),
+    "tabellnavnet gjentar overskriften for øret");
+  // ...og det er ikke bare ordrett likhet som er duplikatet: bærer
+  // navnet profilen fra overskriften, er det den samme opplysningen om
+  // igjen.
+  assert.ok(!navn.includes("Driftskonsulent"),
+    `tabellnavnet gjentar profilen fra overskriften: «${navn}»`);
+  // Navnet står ikke i den SYNLIGE flaten: PR-ens produktvalg er én
+  // overskrift for øyet. En caption uten `sr-only` ville bygget den
+  // andre linjen opp igjen.
+  if (cap) {
+    assert.ok(cap.classList.contains("sr-only"),
+      "tabellnavnet ble synlig og gir øyet to linjer igjen");
+  }
+  // ...og fokusmålet etter lasting er fortsatt overskriften.
   assert.equal(overskrift.getAttribute("tabindex"), "-1",
     "overskriften er ikke lenger fokusmål etter lasting");
-  const cap = rapporttabell.querySelector("caption");
-  assert.ok(!cap || !cap.textContent.trim(),
-    "captionen gjentar tabellnavnet for øret ved siden av overskriften");
 });
 
 test("Rapport: detaljene ligger i kandidatens RAD, ikke som en mur under", async () => {
@@ -4616,10 +4644,14 @@ function rapportSvarMed(...ider) {
 // borte (Cursor P2 — `sr-only` skjulte duplikatet for øyet, ikke for
 // øret). Tabellen peker nå på `h3`-en med `aria-labelledby`, så
 // hjelperen følger den pekeren — samme vei skjermleseren går.
+// Rapportens tabell, ikke prosessens. Den kjennes på sitt EGET
+// tilgjengelige navn: helperen pekte før gjennom `aria-labelledby` til
+// overskriften, men nettopp den lånte navngivningen var Codex-funnet
+// (tabellen annonserte overskriftens tekst en gang til for øret).
 function rapporttabellen(hoved) {
-  return [...hoved.querySelectorAll("table[aria-labelledby]")].find((tb) => {
-    const navn = hoved.querySelector(`#${tb.getAttribute("aria-labelledby")}`);
-    return navn && navn.textContent.includes("Driftskonsulent");
+  return [...hoved.querySelectorAll("table")].find((tb) => {
+    const cap = tb.querySelector("caption");
+    return cap && cap.textContent.trim() === "Kandidater rangert etter poeng";
   });
 }
 
