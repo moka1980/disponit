@@ -313,7 +313,7 @@ def test_fristen_stenger_ogsaa_prosessflaten(klient):
     # POSITIV KONTROLL FØRST: med levende frist ER prosessen der, med
     # kandidatene sine. Uten dette leddet ville en fraværstest gått
     # grønn på en flate som aldri viste noe.
-    r = _get(klient, cookie, "/v1/rekruttering/prosesser")
+    r = _get(klient, cookie, f"/v1/rekruttering/prosesser?prosess_id={pid}")
     assert r.status_code == 200, r.text
     fore = [p for p in r.json()["prosesser"] if p["prosess_id"] == pid]
     assert len(fore) == 1, "levende prosess skal stå i velgeren"
@@ -324,6 +324,9 @@ def test_fristen_stenger_ogsaa_prosessflaten(klient):
         "positiv kontroll: reaperen skal IKKE ha kjørt — det er nettopp"
         " merket-vs-fristen denne testen skiller")
 
+    # INDEKSEN, ikke raden: denne testen måler at prosessen FORSVINNER fra
+    # velgeren når fristen er ute. Ber vi om den ved id, er svaret 404 —
+    # sant, men det er en annen påstand. Under (#183) står den også.
     r2 = _get(klient, cookie, "/v1/rekruttering/prosesser")
     assert r2.status_code == 200, r2.text
     etter = [p for p in r2.json()["prosesser"] if p["prosess_id"] == pid]
@@ -331,6 +334,14 @@ def test_fristen_stenger_ogsaa_prosessflaten(klient):
         "utløpt frist skal stenge prosessflaten FØR reaperen rekker det —"
         " ellers serverer den kandidatdata rapportflaten alt kaller"
         " slettet")
+    # Og den DIREKTE veien inn er stengt med samme svar som rapportveien:
+    # identisk 404, uansett om prosessen aldri fantes eller nettopp falt
+    # ut. En klient som holder på en id fra før fristen skal ikke kunne
+    # hente kandidatene med den (#183).
+    r3 = _get(klient, cookie, f"/v1/rekruttering/prosesser?prosess_id={pid}")
+    assert r3.status_code == 404, (
+        "en utløpt prosess kunne hentes direkte på id — fristen stenger"
+        f" velgeren, men ikke døra: {r3.text}")
 
 
 @pg
@@ -404,7 +415,7 @@ def test_prosesslisten_baerer_flatens_kontrakt(klient):
     pid, lid, ih = _seed_prosess()
     bid = _bruker("leser", ["leser"])
     cookie, _ = _browsersesjon(bid)
-    r = _get(klient, cookie, "/v1/rekruttering/prosesser")
+    r = _get(klient, cookie, f"/v1/rekruttering/prosesser?prosess_id={pid}")
     assert r.status_code == 200, r.text
     pr = [p for p in r.json()["prosesser"] if p["prosess_id"] == pid]
     assert len(pr) == 1
@@ -663,7 +674,7 @@ def test_giftig_sporsmalstype_tar_ikke_ned_detaljpanelet(klient):
     _sporsmalslager(pid, ekte, ["Fortell om drift."])
     bid = _bruker("lys-leser-spm", ["leser"])
     cookie, _ = _browsersesjon(bid)
-    r = _get(klient, cookie, "/v1/rekruttering/prosesser")
+    r = _get(klient, cookie, f"/v1/rekruttering/prosesser?prosess_id={pid}")
     assert r.status_code == 200, r.text
     p = [x for x in r.json()["prosesser"] if x["prosess_id"] == pid][0]
     # Etter eiers produktbeslutning (#224) forlater spørsmålene aldri
@@ -717,7 +728,7 @@ def test_anbefalingen_krever_oppfylte_krav_ikke_bare_tomme_funn(klient):
     alle = _artefakt(pid, {"drift": True, "sky": True})
     bid = _bruker("lys-leser", ["leser"])
     cookie, _ = _browsersesjon(bid)
-    r = _get(klient, cookie, "/v1/rekruttering/prosesser")
+    r = _get(klient, cookie, f"/v1/rekruttering/prosesser?prosess_id={pid}")
     assert r.status_code == 200, r.text
     p = [x for x in r.json()["prosesser"] if x["prosess_id"] == pid][0]
     lys = {k["kandidat_id"]: k["status"] for k in p["kandidater"]}
@@ -758,7 +769,7 @@ def test_trafikklyset_er_fail_closed_paa_alle_tre_leddene(klient):
     alle = _artefakt(pid, {"drift": True, "sky": True})
     bid = _bruker("lys-leser-2", ["leser"])
     cookie, _ = _browsersesjon(bid)
-    r = _get(klient, cookie, "/v1/rekruttering/prosesser")
+    r = _get(klient, cookie, f"/v1/rekruttering/prosesser?prosess_id={pid}")
     assert r.status_code == 200, r.text
     p = [x for x in r.json()["prosesser"] if x["prosess_id"] == pid][0]
     lys = {k["kandidat_id"]: k["status"] for k in p["kandidater"]}
@@ -817,7 +828,7 @@ def test_giftig_artefakttype_tar_ikke_ned_prosesslisten(klient):
     alle = _artefakt(pid, {"drift": True, "sky": True})
     bid = _bruker("lys-leser-3", ["leser"])
     cookie, _ = _browsersesjon(bid)
-    r = _get(klient, cookie, "/v1/rekruttering/prosesser")
+    r = _get(klient, cookie, f"/v1/rekruttering/prosesser?prosess_id={pid}")
     assert r.status_code == 200, r.text
     p = [x for x in r.json()["prosesser"] if x["prosess_id"] == pid][0]
     lys = {k["kandidat_id"]: k["status"] for k in p["kandidater"]}
@@ -897,7 +908,7 @@ def test_giftige_vekter_faller_til_reserven_ikke_til_flaten(klient):
     pid, _lid, _ih = _seed_prosess(vekter={"drift": None, "sky": 2})
     bid = _bruker("vekt-leser", ["leser"])
     cookie, _ = _browsersesjon(bid)
-    r = _get(klient, cookie, "/v1/rekruttering/prosesser")
+    r = _get(klient, cookie, f"/v1/rekruttering/prosesser?prosess_id={pid}")
     assert r.status_code == 200, r.text
     p = [x for x in r.json()["prosesser"] if x["prosess_id"] == pid][0]
     assert p["vekter_kilde"] == "standard", \
@@ -935,7 +946,7 @@ def test_motstridende_vekter_er_ingen_vekting(klient):
     smal = _artefakt(pid, {"drift": True}, ekstra={"vekter": {"drift": 3}})
     bid = _bruker("vekt-uenig", ["leser"])
     cookie, _ = _browsersesjon(bid)
-    r = _get(klient, cookie, "/v1/rekruttering/prosesser")
+    r = _get(klient, cookie, f"/v1/rekruttering/prosesser?prosess_id={pid}")
     assert r.status_code == 200, r.text
     p = [x for x in r.json()["prosesser"] if x["prosess_id"] == pid][0]
     assert p["vekter_kilde"] == "standard", \
@@ -950,7 +961,7 @@ def test_motstridende_vekter_er_ingen_vekting(klient):
     # dommen over feller uenighet — ikke det å ha flere artefakter.
     pid2, _l2, _h2 = _seed_prosess()
     _artefakt(pid2, {"drift": True, "sky": True})
-    r2 = _get(klient, cookie, "/v1/rekruttering/prosesser")
+    r2 = _get(klient, cookie, f"/v1/rekruttering/prosesser?prosess_id={pid2}")
     assert r2.status_code == 200, r2.text
     p2 = [x for x in r2.json()["prosesser"] if x["prosess_id"] == pid2][0]
     assert p2["vekter_kilde"] == "evalueringsartefakt", p2["vekter_kilde"]
@@ -1572,9 +1583,15 @@ def test_signaturstatusen_folger_serien_ikke_raden(klient):
     barn, barn_hash = _ny_versjon(rot)
     leser = _bruker("serie-leser", ["leser"])
     lc, _ = _browsersesjon(leser)
-    rg = _get(klient, lc, "/v1/rekruttering/prosesser")
+    rg = _get(klient, lc, f"/v1/rekruttering/prosesser?prosess_id={_pid}")
     assert rg.status_code == 200, rg.text
-    spisser = [l for p in rg.json()["prosesser"] for l in p["lister"]]
+    # Bare den VALGTE prosessen bærer data (#183) — de andre er indeks.
+    # `p["lister"]` over alle ville vært en KeyError så snart tenanten har
+    # mer enn én prosess, altså en test som består på ordningstilfeldighet.
+    svar = rg.json()
+    spisser = [l for p in svar["prosesser"]
+               if p["prosess_id"] == svar["valgt_prosess_id"]
+               for l in p["lister"]]
     spiss = [l for l in spisser if l["liste_id"] == barn]
     assert spiss, "barnet er spissen, men kom ikke ut av leseflaten"
     assert spiss[0]["signert"] is True, \
@@ -1846,3 +1863,197 @@ def test_deaktivert_m57_gir_definert_503_paa_alle_tre_rutene(miljo,
             assert ukjent.json()["feil"] == "ikke_funnet"
     finally:
         paa.tjeneste.pool.lukk()
+
+
+@pg
+def test_svaret_vokser_ikke_med_antall_prosesser(klient):
+    """#183 (Codex P2 fra #176): flaten lastet ALT.
+
+    `GET /v1/rekruttering/prosesser` kalte `_kandidater` og `_lister` for
+    HVER ureapet prosess. Katalogens løfte er 5000 søknader per bestilling,
+    og prosessraden lever til slettefristen — inntil 365 døgn. Én GET kunne
+    dermed skanne og serialisere titusener av funn- og spørsmålspayloader,
+    holde en pool-forbindelse hele veien, og i verste fall ta knekken på
+    worker-minnet. Det er ikke en spesialkonstruert forespørsel; det er
+    flaten som åpnes.
+
+    Målingen issuet ber om: to prosesser med kandidater, og svaret uten
+    `prosess_id` skal ikke bære den andres kandidater.
+
+    MUTASJONEN SOM DREPER DENNE: kall `_kandidater` for hver rad igjen.
+    """
+    gammel, _r1, _h1 = _seed_prosess()
+    ny, _r2, _h2 = _seed_prosess()
+    bruker = _bruker("les-183", ["leser"])
+    cookie, _ = _browsersesjon(bruker)
+
+    r = _get(klient, cookie, "/v1/rekruttering/prosesser")
+    assert r.status_code == 200, r.text
+    svar = r.json()
+    etter = {p["prosess_id"]: p for p in svar["prosesser"]}
+    assert str(gammel) in etter and str(ny) in etter, \
+        "begge prosessene skal stå i indeksen — velgeren trenger dem"
+
+    # ÉN bærer data, resten er indeks.
+    med_data = [pid for pid, p in etter.items() if "kandidater" in p]
+    assert med_data == [svar["valgt_prosess_id"]], \
+        f"flere enn den valgte bar kandidater: {med_data}"
+    assert svar["valgt_prosess_id"] == str(ny), \
+        "standardvalget skal være den nyeste prosessen"
+    assert not etter[str(gammel)].get("kandidater"), \
+        "den andre prosessens kandidater ble serialisert likevel — det er" \
+        " nettopp veksten #183 finnes for"
+
+    # Indeksen bærer det velgeren trenger, og ikke mer.
+    lett = etter[str(gammel)]
+    assert set(lett) == {"prosess_id", "opprettet", "evaluering_status",
+                         "kandidat_antall"}, \
+        f"indeksraden bærer felter velgeren ikke bruker: {sorted(lett)}"
+
+
+@pg
+def test_indeksraden_teller_kandidatene_sine(klient):
+    """Velgeretiketten skal ikke lyve om antallet (Cursor P2, #183).
+
+    Etiketten er «Startet <dato> · kandidater: N», og N ble lest av
+    `kandidater`-listen — som etter #183 bare finnes på den VALGTE raden.
+    Hver andre prosess i nedtrekket sa derfor «kandidater: 0» om en
+    prosess som kan bære tusenvis. Det er ikke en manglende opplysning;
+    det er en gal en, på den ene kontrollen som skiller prosessene fra
+    hverandre foran en irreversibel signering.
+
+    Tallet er en SKALAR per rad — ikke payloaden tilbake — og må måle
+    NØYAKTIG det `_kandidater` selv ville levert.
+
+    MUTASJONEN SOM DREPER DENNE: la `kandidat_antall` falle bort fra
+    indeksraden, eller tell uten `slettet_ts IS NULL`.
+    """
+    gammel, _r1, _h1 = _seed_prosess()
+    _artefakt(gammel, {"drift": True, "sky": True})
+    ny, _r2, _h2 = _seed_prosess()
+    cookie, _ = _browsersesjon(_bruker("les-183d", ["leser"]))
+
+    r = _get(klient, cookie, "/v1/rekruttering/prosesser")
+    assert r.status_code == 200, r.text
+    svar = r.json()
+    etter = {p["prosess_id"]: p for p in svar["prosesser"]}
+    assert svar["valgt_prosess_id"] == str(ny)
+
+    indeks = etter[str(gammel)]
+    assert "kandidater" not in indeks, \
+        "indeksraden bar kandidatene likevel — veksten er tilbake"
+    assert indeks["kandidat_antall"] > 0, \
+        "indeksraden telte 0 kandidater på en prosess som har dem —" \
+        " nøyaktig løgnen velgeretiketten sto for"
+
+    # ... og tallet er det SAMME som den valgte radens egen liste gir, så
+    # etiketten og tabellen ikke kan si ulike ting om samme prosess.
+    rg = _get(klient, cookie,
+              f"/v1/rekruttering/prosesser?prosess_id={gammel}")
+    assert rg.status_code == 200, rg.text
+    valgt = [p for p in rg.json()["prosesser"]
+             if p["prosess_id"] == str(gammel)][0]
+    assert valgt["kandidat_antall"] == len(valgt["kandidater"]), \
+        "indeksens tall og den valgte radens liste er uenige"
+    assert indeks["kandidat_antall"] == len(valgt["kandidater"]), \
+        "indeksraden og den spisse raden teller ulikt"
+
+
+@pg
+def test_den_valgte_radens_antall_kan_ikke_motsi_sin_egen_liste(
+        klient, monkeypatch):
+    """Tallet og listen er to setninger — de skal likevel være ett svar.
+
+    Codex P2 (#183): indekstellingen og `_kandidater` er TO setninger på
+    en forbindelse som står på psycopg-standarden READ COMMITTED
+    (`koble`: `autocommit=False`, intet isolasjonsnivå satt), så hver av
+    dem tar sitt eget øyeblikksbilde. En `plukket` prosess får
+    artefaktene sine skrevet etter hvert, og ett som committes mellom de
+    to setningene står i `kandidater` uten å være med i
+    `kandidat_antall`. Da sier velgerens etikett og tabellen under den
+    ULIKE ting om samme prosess, i samme svar, på flaten der signeringen
+    skjer — nøyaktig løgnen indekstallet ble innført for å fjerne.
+
+    VINDUET GJØRES DETERMINISTISK, IKKE SIMULERT: `_kandidater` byttes ut
+    med en som skriver ETT artefakt fra en ANNEN, committende forbindelse
+    (`_artefakt`s egen form) før den kaller den ekte. Det er nøyaktig
+    interleavingen, ikke en modell av den — skrivingen skjer i det ekte
+    vinduet, mellom endepunktets to setninger.
+
+    PREMISSET MÅLES FØRST: står nykommeren i den valgte radens liste, ER
+    vinduet åpent på denne forbindelsen. Gjør den ikke det, feiler testen
+    på premisset i stedet for å bli grønn på feil grunnlag.
+
+    MUTASJONEN SOM DREPER DENNE: la den valgte raden beholde
+    indeksspørringens `antall` i stedet for `len(kandidater)`.
+    """
+    from api import rekruttering as rekrutteringsmodul
+
+    prosess, _r, _h = _seed_prosess()
+    cookie, _ = _browsersesjon(_bruker("les-183f", ["leser"]))
+
+    ekte = rekrutteringsmodul._kandidater
+    skrevet = {}
+
+    def _skriver_i_vinduet(conn, tenant, prosess_id):
+        if not skrevet:
+            skrevet["kid"] = _artefakt(str(prosess_id),
+                                       {"drift": True, "sky": False})
+        return ekte(conn, tenant, prosess_id)
+
+    monkeypatch.setattr(rekrutteringsmodul, "_kandidater", _skriver_i_vinduet)
+
+    r = _get(klient, cookie,
+             f"/v1/rekruttering/prosesser?prosess_id={prosess}")
+    assert r.status_code == 200, r.text
+    valgt = [p for p in r.json()["prosesser"]
+             if p["prosess_id"] == str(prosess)][0]
+    assert skrevet, "vinduet ble aldri åpnet — testen måler ikke det den tror"
+    assert skrevet["kid"] in {k["kandidat_id"] for k in valgt["kandidater"]}, \
+        "artefaktet som ble committet i vinduet kom ikke med i listen —" \
+        " forbindelsen leser ikke READ COMMITTED, og premisset holder ikke"
+    assert valgt["kandidat_antall"] == len(valgt["kandidater"]), \
+        "den valgte radens etikett og dens egen tabell er uenige om" \
+        " antallet — velgeren motsier innholdet under seg"
+
+
+@pg
+def test_den_valgte_prosessen_hentes_paa_id(klient):
+    """Velgeren skal kunne be om en ANNEN prosess enn den nyeste.
+
+    Uten dette var flaten låst til `prosesser[0]` igjen — den feilen Codex
+    alt felte i #176 — bare med et lettere svar.
+    """
+    gammel, _r1, _h1 = _seed_prosess()
+    _ny, _r2, _h2 = _seed_prosess()
+    cookie, _ = _browsersesjon(_bruker("les-183b", ["leser"]))
+
+    r = _get(klient, cookie,
+             f"/v1/rekruttering/prosesser?prosess_id={gammel}")
+    assert r.status_code == 200, r.text
+    svar = r.json()
+    assert svar["valgt_prosess_id"] == str(gammel)
+    valgt = [p for p in svar["prosesser"]
+             if p["prosess_id"] == str(gammel)][0]
+    assert valgt["kandidater"], "den etterspurte prosessen bar ingen data"
+
+
+@pg
+def test_ukjent_prosess_id_er_ikke_funnet_ikke_den_nyeste(klient):
+    """En ukjent id skal ikke bli til «ta den nyeste».
+
+    Å servere en annen prosess' kandidater under den id-en klienten ba om,
+    er en løgn flaten ikke kan oppdage — og prosessen KAN være borte helt
+    lovlig: fristen løp ut mellom to klikk. Samme doktrine som rapportveien:
+    identisk 404, uansett om den aldri fantes eller nettopp falt ut.
+
+    MUTASJONEN SOM DREPER DENNE: fall tilbake til nyeste når id-en ikke
+    finnes.
+    """
+    _seed_prosess()
+    cookie, _ = _browsersesjon(_bruker("les-183c", ["leser"]))
+    r = _get(klient, cookie,
+             "/v1/rekruttering/prosesser"
+             "?prosess_id=00000000-0000-0000-0000-000000000000")
+    assert r.status_code == 404, \
+        f"en ukjent prosess-id ga data i stedet for 404: {r.text}"
