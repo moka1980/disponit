@@ -2569,11 +2569,26 @@ def _kandidatdata(tjeneste: Tjeneste, request: Request, form: str) -> Response:
             # fortsatt en grense — døren stoler aldri på kalleren, og
             # `dokumentnavn` går inn i uuid5, i en TEXT-kolonne og i
             # loggens detalj — men nå en som ikke kan felle noe gyldig.
+            #
+            # NUL ER EN FEILFORMET FORESPØRSEL, IKKE EN DØD BASE (Codex
+            # P2). PostgreSQL kan ikke lagre en nullbyte i en `TEXT`-verdi
+            # i det hele tatt, og et uttrekk fra html eller pdf kan bære
+            # en: den passerer arkivgaten og uttrekket, og felte først
+            # her — som en rå `psycopg.Error`, som handlerens catch-all
+            # oversetter til `db_utilgjengelig`. Modulen leser 5xx som
+            # DRIFT, brenner hele retrykjeden mot en base som er frisk,
+            # og feller til slutt evalueringen som
+            # `kandidatlagring_feilet` — med en falsk infrastrukturalarm
+            # på veien, altså feil kø og feil diagnose. Koden skal si
+            # hva som faktisk er galt: kroppen bærer et tegn lageret ikke
+            # har. Målt på `tekst` OG `navn`, for begge går i
+            # TEXT-kolonner (og `navn` også i uuid5 og i loggens detalj).
             if not isinstance(navn, str) or not navn \
                     or len(navn.encode("utf-8")) > _KANDIDAT_NAVN_MAKS \
                     or endelse not in _KANDIDAT_MIME \
                     or not isinstance(b64, str) \
-                    or not isinstance(tekst, str):
+                    or not isinstance(tekst, str) \
+                    or "\x00" in navn or "\x00" in tekst:
                 conn.rollback()
                 tjeneste.logg.hendelse("request_feilformet", rid, tenant)
                 return _feilsvar("request_feilformet", rid)
@@ -2691,9 +2706,19 @@ def _kandidatdata(tjeneste: Tjeneste, request: Request, form: str) -> Response:
             # linjen var 256 KiB-fallet det eneste som bandt en JSONB-rad
             # i det hele tatt, og å heve taket ville fjernet grensen i
             # stedet for å flytte den.
+            #
+            # OG NUL FELLES HER SOM PÅ DOKUMENTVEIEN (Codex P2, samme
+            # klasse): `jsonb` kan ikke bære en nullbyte noe
+            # mer enn `TEXT` kan. `kildetekst` er den samme uttrekksteksten
+            # dokumentveien bærer, og avmaskeringens verdier er utsnitt
+            # av den, så nullbyten når hit langs nøyaktig samme vei.
+            # Målt på de kanoniske strengene og ikke ved å gå gjennom
+            # vilkårlig JSON: de er alt bygget, og de ER det som
+            # INSERTes.
             if sum(len(r.encode("utf-8"))
                    for r in (raa_a, raa_m, raa_s)) \
-                    > _KANDIDAT_ARTEFAKT_MAKS:
+                    > _KANDIDAT_ARTEFAKT_MAKS \
+                    or any("\x00" in r for r in (raa_a, raa_m, raa_s)):
                 conn.rollback()
                 tjeneste.logg.hendelse("request_feilformet", rid, tenant)
                 return _feilsvar("request_feilformet", rid)

@@ -1780,6 +1780,56 @@ def test_tekstuttrekket_er_containerens_aldri_en_utf8_dekoding(tmp_path):
     assert e.value.kode == "tekstuttrekk_feilet"
 
 
+def test_nullbyten_fra_uttrekket_naar_aldri_lagrene(tmp_path):
+    """#173 (Codex P2): en nullbyte i uttrekket felte HELE evalueringen.
+
+    PostgreSQL kan ikke lagre en nullbyte i `TEXT` eller `jsonb` i det
+    hele tatt. Et uttrekk fra html eller pdf kan lovlig bære en — den
+    passerer arkivgaten og uttrekket — og den felte først på INSERT, som
+    en rå `psycopg.Error` API-et oversetter til `db_utilgjengelig`.
+    `lever` leser 5xx som DRIFT, brenner hele retrykjeden mot en frisk
+    base, og feller til slutt kjøringen som `kandidatlagring_feilet`,
+    med en falsk infrastrukturalarm på veien. Én søknad med ett usynlig
+    tegn tok altså ned buntens 4 999 andre.
+
+    Rensingen står ved uttrekksgrensen, som er det ENE stedet fremmed
+    uttrekkerkode kommer inn: både modellen, dokumentlageret og
+    `kildetekst` i artefaktet ser da SAMME tekst. Testen måler begge
+    veiene ut — modellen og dokumentsinken — for en rensing på bare den
+    ene ville gitt to sannheter om samme søknad.
+
+    Byten fjernes, den avvises ikke: den er ikke innhold. Ingen leser
+    kan se den, uttrekket produserer den som kodingsartefakt, og
+    «evidensen» den endrer er en byte som per konstruksjon ikke kunne
+    vært lagret. Plattformdøren avviser den fortsatt
+    (`request_feilformet`) — modulen er ikke lagrenes eneste vern.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `.replace(chr(0), "")` fra
+    `_tekst`."""
+    from modules.m57_ats import kjoring
+
+    arkiv = _bunt(tmp_path, [("k1/soknad.html", b"<p>drift hos k1</p>")])
+    felter = lambda m: {"navn": ["Kandidat k1"]}
+    lagret = []
+
+    modell = _Modell()
+    ut = kjoring.kjor_bunt(
+        arkiv, modell, vekter={"drift": 3}, kandidatfelter_for=felter,
+        tekst_for=lambda m, d: "drift\x00tekst for Kandidat k1\x00",
+        biasmaalinger=_MAALINGER, antall_soknader=1,
+        lagre_dokument=lambda kid, navn, data, tekst: lagret.append(tekst))
+
+    # Kjøringen fullfører — den falt ikke på et usynlig tegn.
+    assert set(ut["artefakter"]) == {"k1"}
+    # Dokumentsinken fikk tekst basen faktisk kan holde …
+    assert lagret and all("\x00" not in t for t in lagret), lagret
+    assert "drifttekst" in lagret[0], lagret
+    # … modellen så nøyaktig det samme (blindet) …
+    assert modell.sett == ["drifttekst for [NAVN-1]"], modell.sett
+    # … og `kildetekst` i artefaktet, som går i jsonb, er like ren.
+    assert "\x00" not in ut["artefakter"]["k1"]["kildetekst"]
+
+
 def test_uttrekkerens_egen_kode_overlever_ut_av_kjoringen(tmp_path):
     """Cursor P2, runde 6: uttrekkerens SP-3-kode ble spist av `_tekst`.
 

@@ -2304,6 +2304,133 @@ def test_173_leaseleddet_maaler_veggklokken_ikke_transaksjonsstarten():
 
 
 @pg
+def test_173_nullbyte_er_feilformet_ikke_doed_base(migrator, miljo):
+    """#173 (Codex P2): NUL skal kodes som request-feil, ikke som drift.
+
+    PostgreSQL kan ikke lagre en nullbyte i `TEXT` eller `jsonb` i det
+    hele tatt. Uten porten nådde den INSERT-en og kom ut som en rå
+    `psycopg.Error`, som handlerens catch-all oversetter til
+    `db_utilgjengelig` — en 5xx. Modulens `lever` leser 5xx som DRIFT,
+    brenner hele retrykjeden mot en base som er frisk, og feller til
+    slutt evalueringen som `kandidatlagring_feilet`. Prisen er ikke bare
+    den ene kjøringen: driftsloggen får en falsk infrastrukturalarm, så
+    den som står med vakttelefonen leter etter en base som aldri var
+    nede.
+
+    Begge veiene måles. `jsonb` avviser nullbyten like hardt som `TEXT`,
+    og `kildetekst` i artefaktet ER den samme uttrekksteksten
+    dokumentveien bærer — så en port på bare dokumentveien ville latt
+    nøyaktig samme byte gå inn gjennom nabodøren.
+
+    MUTASJONEN SOM DREPER DENNE: fjern NUL-leddene i `_kandidatdata`.
+    Da svarer døren 500 `db_utilgjengelig` i stedet for 400."""
+    import base64
+
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    from .test_bestilling_rekruttering import _sikre_m57_claimbar
+    from .test_modul_onboarding_http import _onboard_token
+    from miljo import gjeldende_miljo
+
+    _sikre_m57_claimbar(migrator)
+    rel = migrator.execute(
+        "SELECT release_id FROM moduldeployment"
+        " WHERE modul_id='m57_ats' AND miljo=%s AND livslop='claiming'"
+        " LIMIT 1", (gjeldende_miljo(),)).fetchone()[0]
+    migrator.commit()
+
+    rt = _rt()
+    try:
+        oid, pid = _prosess(migrator, rt)
+        rt.commit()                     # jf. fødselsvaktens `FOR SHARE`
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+        migrator.execute(
+            "UPDATE oppdrag SET owner_claim_id=%s, owner_generation=1,"
+            " owner_lease_utloper=now()+interval '10 minutes',"
+            " claim_release_id=%s, claim_miljo=%s"
+            " WHERE tenant=%s AND id=%s",
+            ("c" * 22, rel, gjeldende_miljo(), TENANT, oid))
+        migrator.execute("RESET ROLE")
+        migrator.commit()
+
+        a = lag_app(DSN)
+        with TestClient(a) as c:
+            mtk, _ = _onboard_token(c, migrator, "m57_ats", rel)
+            hode = {"authorization": f"Bearer {mtk}"}
+            trippel = {"tenant": TENANT, "oppdrag_id": oid,
+                       "owner_claim_id": "c" * 22, "owner_generation": 1}
+            b64 = base64.b64encode(b"%PDF-1.7 " + FIXTUR.encode()).decode()
+
+            # Dokumentveien: NUL i parseteksten.
+            r = c.post("/v1/rekruttering/kandidatdokument",
+                       json={**trippel, "kandidat_id": "k1",
+                             "dokumentnavn": "k1/cv.pdf",
+                             "dokument_b64": b64,
+                             "tekst": "CV-tekst\x00 med nullbyte"},
+                       headers=hode)
+            assert r.status_code == 400, r.text
+            assert r.json()["feil"] == "request_feilformet"
+
+            # … og i dokumentnavnet, som går i uuid5, i en TEXT-kolonne
+            # og i loggens detalj.
+            r = c.post("/v1/rekruttering/kandidatdokument",
+                       json={**trippel, "kandidat_id": "k1",
+                             "dokumentnavn": "k1/cv\x00.pdf",
+                             "dokument_b64": b64, "tekst": "CV-tekst"},
+                       headers=hode)
+            assert r.status_code == 400, r.text
+            assert r.json()["feil"] == "request_feilformet"
+
+            # Artefaktveien: NUL i `kildetekst` (jsonb) …
+            r = c.post("/v1/rekruttering/kandidatartefakt",
+                       json={**trippel, "kandidat_id": "k1",
+                             "artefakt": {"funn": [], "oppfylt": {},
+                                          "kildetekst": "tekst\x00her"},
+                             "avmaskering": {}}, headers=hode)
+            assert r.status_code == 400, r.text
+            assert r.json()["feil"] == "request_feilformet"
+
+            # … og i avmaskeringskartets verdi, som er et utsnitt AV
+            # nøyaktig den samme teksten.
+            r = c.post("/v1/rekruttering/kandidatartefakt",
+                       json={**trippel, "kandidat_id": "k1",
+                             "artefakt": {"funn": [], "oppfylt": {},
+                                          "kildetekst": "x"},
+                             "avmaskering": {"[NAVN-1]": "Kari\x00"}},
+                       headers=hode)
+            assert r.status_code == 400, r.text
+            assert r.json()["feil"] == "request_feilformet"
+
+            # Uten nullbyten går nøyaktig de samme kroppene inn — porten
+            # felte tegnet, ikke forespørselen.
+            assert c.post("/v1/rekruttering/kandidatdokument",
+                          json={**trippel, "kandidat_id": "k1",
+                                "dokumentnavn": "k1/cv.pdf",
+                                "dokument_b64": b64,
+                                "tekst": "CV-tekst med nullbyte"},
+                          headers=hode).status_code == 200
+            assert c.post("/v1/rekruttering/kandidatartefakt",
+                          json={**trippel, "kandidat_id": "k1",
+                                "artefakt": {"funn": [], "oppfylt": {},
+                                             "kildetekst": "teksther"},
+                                "avmaskering": {"[NAVN-1]": "Kari"}},
+                          headers=hode).status_code == 200
+
+            _sett_kontekst(migrator, TENANT)
+            rader = migrator.execute(
+                "SELECT (SELECT count(*) FROM kandidat_originaldokument"
+                "         WHERE tenant=%s AND prosess_id=%s),"
+                " (SELECT count(*) FROM kandidat_evalueringsartefakt"
+                "         WHERE tenant=%s AND prosess_id=%s)",
+                (TENANT, pid) * 2).fetchone()
+            migrator.rollback()
+            assert rader == (1, 1), rader
+    finally:
+        rt.close()
+
+
+@pg
 def test_173_budsjettet_dekker_alle_tre_payloadene(migrator, miljo,
                                                    monkeypatch):
     """#173 (Codex P2): kandidatbudsjettet gjelder alle TRE lagrene.

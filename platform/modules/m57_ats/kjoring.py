@@ -87,6 +87,32 @@ def _tekst(tekst_for, medlem, data, fremdrift):
     Koden bæres derfor videre urørt til `kjor_bunt`s egen oversetter, der
     den alt hører hjemme. Ingen ny oversettelse her: to steder som gjør
     om `Uttrekksfeil` til `Kjoringsfeil` er to kilder til samme sannhet.
+
+    NULLBYTEN FJERNES HER (Codex P2). PostgreSQL kan ikke lagre en
+    nullbyte i `TEXT` eller `jsonb` i det hele tatt, og et uttrekk fra
+    html eller pdf kan lovlig bære en — den passerer arkivgaten og
+    uttrekket og felte først på INSERT, som en rå `psycopg.Error` API-et
+    oversetter til `db_utilgjengelig`. `lever` leser 5xx som DRIFT,
+    brenner hele retrykjeden mot en frisk base, og feller til slutt HELE
+    evalueringen som `kandidatlagring_feilet` — med en falsk
+    infrastrukturalarm på veien. Én søknad med en artefakt-nullbyte tok
+    altså ned buntens 5 000 andre.
+
+    HER, og ikke ved sinken: dette er det ENE stedet fremmed
+    uttrekkerkode kommer inn, og teksten går videre til BÅDE
+    dokumentlageret, modellen og `kildetekst` i artefaktet. Renset ved
+    grensen ser alle tre det samme; renset ved sinken ville modellen
+    vurdert én tekst og lageret båret en annen.
+
+    Å fjerne er riktigere enn å avvise nettopp for DENNE byten: den er
+    ikke innhold. Ingen leser kan se den, PDF-/HTML-uttrekk produserer
+    den som artefakt av kodingen, og evidensen den «endrer» er en byte
+    som per konstruksjon ikke kunne vært lagret. Det er ikke
+    normaliseringen `rekruttering._kandidater` avviser — der ville et
+    ulesbart `funn` normalisert til `[]` gjort kandidaten GRØNNERE, altså
+    endret betydning. Her endres ingen betydning; alternativet er å felle
+    kjøringen på et usynlig tegn. Plattformdøren avviser den fortsatt
+    (`request_feilformet`): modulen skal ikke være lagrenes eneste vern.
     """
     try:
         tekst = tekst_for(medlem, data)
@@ -98,7 +124,7 @@ def _tekst(tekst_for, medlem, data, fremdrift):
         # En uttrekker som gir tilbake bytene sine (eller None) er samme
         # feil som den vi kom fra: da hadde modellen fått binærstøy igjen.
         raise Kjoringsfeil("tekstuttrekk_feilet", fremdrift)
-    return tekst
+    return tekst.replace("\x00", "")
 
 
 def _felter(kandidatfelter_for, medlem, fremdrift):
