@@ -1940,7 +1940,18 @@ def test_173_skriveveien_er_claimbundet_og_idempotent(migrator, miljo):
 
     rt = _rt()
     try:
-        oid, pid = _prosess(migrator, rt)
+        # `frist=30` FORDI (4b) FAKTISK SKAL REAPE. Kjeden lukket
+        # prosessen 31 døgn tilbake, men opprettet den med default
+        # `frist=90`: reaperens predikat er
+        # `now() > lukket_ts + slettefrist_dogn`, altså
+        # `now() > now() + 59 døgn` — usant. `reap_kandidatdata` plukket
+        # aldri raden, `p.slettet_ts` forble NULL, og dørens
+        # claim-oppslag (som krever `p.slettet_ts IS NULL`) slapp
+        # skrivet inn i en prosess forbi kundens frist: (4b) svarte 200
+        # der den påsto å måle `kandidatdata_avvist`. Armen målte altså
+        # ingenting, og CI sto rød på den fra `b0365a7`. Samme paring
+        # som de fem andre reap-testene i fila: `frist=30` + 31 døgn.
+        oid, pid = _prosess(migrator, rt, frist=30)
         # `_prosess` COMMITER IKKE — kalleren gjør det, og her må den.
         # To grunner, og begge er harde: (1) fødselsvakten i 057 tar
         # `FOR SHARE` på oppdragsraden og HOLDER den til transaksjonen
