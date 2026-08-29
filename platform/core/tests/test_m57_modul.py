@@ -1935,6 +1935,77 @@ def test_uttrekkerens_egen_kode_overlever_ut_av_kjoringen(tmp_path):
     assert e.value.kode == "uttrekk_uleselig", e.value.kode
 
 
+def test_173_uttrekkstaket_er_sinkens_tak(tmp_path):
+    """Codex P2 (#173): uttrekket var UBUNDET, sinken var bundet.
+
+    `api.app._KANDIDAT_DOK_MAKS` avviser en parsettekst over 25 MiB som
+    `request_feilformet`, og controlleren melder den 4xx-en som
+    `kandidatlagring_feilet` for HELE bunten. Men `_pdf` returnerte hele
+    `pdftotext`-stdout uansett størrelse, og en PDF innenfor arkivets
+    `MAKS_ENKELTFIL` kan lovlig pakke ut til langt mer tekst. Arkivgaten
+    sa ja, uttrekket sa ja, og sinken felte bunten på noe ingen av dem
+    hadde sagt fra om.
+
+    Grensen hører hjemme i uttrekket: der er den et KODET utfall om ETT
+    dokument, mens den ved sinken er en lagringsfeil om hele
+    evalueringen. Å heve sinkens tak i stedet ville sluppet ubundet
+    tekst inn i `TEXT`-kolonnen og fjernet §4-budsjettet i stedet for å
+    flytte det.
+
+    To ting måles, og begge er nødvendige:
+
+    1. Tallene er LIKE. modules/ og api/ importerer ikke hverandre, så
+       konstanten er speilet — og et speil ingen måler driver. Hever
+       noen det ene taket alene, er funnet tilbake.
+    2. Uttrekkeren HÅNDHEVER sitt eget tak, med en kodet
+       `Uttrekksfeil` som `kjor_bunt` bærer urørt videre. Kommandoen er
+       en ekte prosess som skriver mer enn taket på stdout — ikke en
+       stub som later som.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `MAKS_TEKST`-porten i
+    `tekst_for`, eller sett taket til noe annet enn sinkens.
+    """
+    import shutil
+    import types
+
+    from api.app import _KANDIDAT_DOK_MAKS
+    from modules.m57_ats import uttrekk
+
+    assert uttrekk.MAKS_TEKST == _KANDIDAT_DOK_MAKS, (
+        f"uttrekket bruker {uttrekk.MAKS_TEKST}, sinken"
+        f" {_KANDIDAT_DOK_MAKS} — speilet har drevet, og differansen er"
+        " nøyaktig den bunten felles på")
+
+    # En EKTE pdf-kommando som skriver mer enn taket ut. Taket senkes
+    # kunstig i stedet for å presse 25 MiB gjennom CI — samme form som
+    # `test_173_budsjettet_dekker_alle_tre_payloadene` bruker for
+    # budsjettet, og den måler nøyaktig leddet funnet gjelder: at
+    # uttrekket SELV stopper på sitt eget tall.
+    python = shutil.which("python3") or shutil.which("python")
+    assert python, "ingen python-tolk å bygge en ekte uttrekkskommando av"
+    skript = tmp_path / "falsk_pdftotext.py"
+    skript.write_text(
+        "import sys\n"
+        "sys.stdin.buffer.read()\n"
+        "sys.stdout.buffer.write(b'T' * 5000)\n",
+        encoding="utf-8")
+    u = uttrekk.Uttrekker(f"{python} {skript}")
+    medlem = types.SimpleNamespace(navn="k1/cv.pdf")
+
+    # Under taket: teksten kommer ut som den er.
+    u_stor = uttrekk.MAKS_TEKST
+    try:
+        uttrekk.MAKS_TEKST = 5000
+        assert len(u.tekst_for(medlem, b"%PDF-1.4")) == 5000
+        # Over taket, med ETT tegn: porten måler grensen, ikke en sone.
+        uttrekk.MAKS_TEKST = 4999
+        with pytest.raises(uttrekk.Uttrekksfeil) as e:
+            u.tekst_for(medlem, b"%PDF-1.4")
+    finally:
+        uttrekk.MAKS_TEKST = u_stor
+    assert e.value.kode == "uttrekk_uleselig", e.value.kode
+
+
 def test_tomt_tekstuttrekk_er_kodet_feil_ikke_en_tom_vurdering(tmp_path):
     """Codex P1: `isinstance(tekst, str)` slipper `""` og bare blanktegn.
 

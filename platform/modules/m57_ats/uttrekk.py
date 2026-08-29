@@ -57,6 +57,33 @@ def _html(data: bytes) -> str:
 #: i minnet (samme grense som buntens enkeltfiltak).
 MAKS_DOCX_XML = 25 * 1024 * 1024
 
+#: UTTREKKETS UTDATA HAR SAMME TAK SOM SINKEN (Codex P2, #173).
+#:
+#: `api.app._KANDIDAT_DOK_MAKS` avviser en parsettekst over 25 MiB som
+#: `request_feilformet`, og controlleren melder den 4xx-en som
+#: `kandidatlagring_feilet` for HELE bunten. Men uttrekkeren hadde ingen
+#: tilsvarende grense: `_pdf` returnerte hele `pdftotext`-stdout uansett
+#: størrelse. En PDF som er innenfor arkivets `MAKS_ENKELTFIL` (25 MiB
+#: komprimert/binært) kan lovlig pakke ut til langt mer tekst — og da
+#: godtok arkivgaten dokumentet, godtok uttrekket det, og sinken felte
+#: bunten på noe ingen av de to portene hadde sagt fra om.
+#:
+#: Grensen hører hjemme HER, ikke ved sinken: her er den et KODET
+#: uttrekksutfall om ett dokument (`uttrekk_uleselig`, båret urørt
+#: gjennom `kjor_bunt`s oversetter), mens den ved sinken er en
+#: lagringsfeil om hele evalueringen. Å heve sinkens tak i stedet ville
+#: sluppet ubundet tekst inn i `TEXT`-kolonnen og fjernet §4-budsjettet
+#: i stedet for å flytte det.
+#:
+#: Tallet er §4-tallet, speilet — modules/ og api/ importerer ikke
+#: hverandre. `test_173_uttrekkstaket_er_sinkens_tak` binder de to.
+#:
+#: Målt på ETTER-formen, `len(tekst.encode("utf-8"))`, som er nøyaktig
+#: det sinken måler: `errors="replace"` kan gjøre én ugyldig byte til
+#: tre (U+FFFD), så et tak på rå stdout ville vært et annet tall enn
+#: sinkens og sluppet gjennom akkurat det som felte bunten.
+MAKS_TEKST = 25 * 1024 * 1024
+
 
 def _docx(data: bytes) -> str:
     try:
@@ -112,9 +139,21 @@ class Uttrekker:
     def tekst_for(self, medlem, data: bytes) -> str:
         navn = medlem.navn.lower()
         if navn.endswith((".html", ".htm")):
-            return _html(data)
-        if navn.endswith(".docx"):
-            return _docx(data)
-        if navn.endswith(".pdf"):
-            return self._pdf(data)
-        raise Uttrekksfeil("uttrekk_ustottet", medlem.navn)
+            tekst = _html(data)
+        elif navn.endswith(".docx"):
+            tekst = _docx(data)
+        elif navn.endswith(".pdf"):
+            tekst = self._pdf(data)
+        else:
+            raise Uttrekksfeil("uttrekk_ustottet", medlem.navn)
+        # PÅ KONTRAKTGRENSEN, IKKE I HVER UTTREKKER (Codex P2, #173).
+        # `MAKS_TEKST` er en egenskap ved det uttrekket LEVERER, og dette
+        # er det ene stedet det forlater modulen. `_pdf` var den eneste
+        # ubundne veien i dag — `_html` gir aldri mer tekst enn kilden,
+        # og `_docx` er alt bundet av `MAKS_DOCX_XML` — men porten måler
+        # kontrakten, ikke dagens tre implementasjoner av den: en fjerde
+        # uttrekker skal arve grensen, ikke måtte huske den.
+        if len(tekst.encode("utf-8")) > MAKS_TEKST:
+            raise Uttrekksfeil("uttrekk_uleselig",
+                               f"{medlem.navn}: tekst for stor")
+        return tekst
