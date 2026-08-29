@@ -163,6 +163,9 @@ class _Stubklient:
         self.kandidatdata_ok_forst = 0
         self.kvitteringer = []
         self.stier = []
+        #: #173 (Codex P1): HTTP-fristen hvert kall faktisk fikk, per sti.
+        #: `None` = klientens egen (avslutningens `http_frist_s()`).
+        self.frister = []
 
     def _kandidatdatasvar(self):
         """Kallet er alt talt når dette kjører, så n = 1 på det første.
@@ -180,8 +183,9 @@ class _Stubklient:
                                "oppdrag_id": 1})
         return _Svar(self.kvitteringsstatus, {})
 
-    def post(self, sti, json=None, headers=None):
+    def post(self, sti, json=None, headers=None, timeout=None):
         self.stier.append(sti)
+        self.frister.append((sti, timeout))
         if sti == "/v1/oppdrag/claim":
             return _Svar(200, {
                 "oppdrag_id": 1, "tenant": TENANT, "kvittering_jti": "j",
@@ -266,6 +270,73 @@ def test_173_kandidatdata_stroemmes_underveis(monkeypatch):
     assert "avmaskering" not in art
     # Rapporten er fortsatt komplett (v1-skjemaet, til #168s v2).
     assert "/v1/artefakt" in k.stier
+
+
+def test_173_kandidatskriv_far_overforingsfrist_ikke_avslutningsfrist(
+        monkeypatch):
+    """#173 (Codex P1): de to kandidatsinkene bærer opptil ~185 MiB og
+    ~301 MiB wire-kropp, men arvet `http_frist_s()` — avslutningens
+    frist, 5,0 sekunder — fordi klienten bare hadde ÉN. `urllib`s
+    `timeout` er én samlet frist over hele utsendelsen OG over ventingen
+    på svaret, så en stor GYLDIG kandidat timet ut, ble retryet fire
+    ganger på samme umulige frist og falt som `kandidatlagring_feilet`.
+
+    MUTASJONEN SOM DREPER DENNE: slutt å sende `frist=SKRIVEFRIST_S` fra
+    sinkene, eller la `KlientHTTP.post` sluke `timeout` i `**kw` igjen.
+    """
+    from modules.m57_ats import controller
+    monkeypatch.setattr(controller, "_sov", lambda s: None)
+    k = _Stubklient()
+    assert _kjor(k)["utfall"] == "utfort"
+
+    skriv = [f for sti, f in k.frister
+             if sti in ("/v1/rekruttering/kandidatdokument",
+                        "/v1/rekruttering/kandidatartefakt")]
+    assert skriv, "ingen kandidatskriv å måle fristen på"
+    assert all(f == controller.SKRIVEFRIST_S for f in skriv), k.frister
+    # Fristen er UTLEDET av overføringen, ikke et tall ved siden av den.
+    assert controller.SKRIVEFRIST_S == (
+        controller.SKRIV_MAKS_KROPP / controller.SKRIV_GJENNOMSTROMNING_B_S
+        + controller.SKRIV_BEHANDLING_S)
+    # ... og den er en HELT annen størrelse enn avslutningens.
+    assert controller.SKRIVEFRIST_S > 60 * controller.http_frist_s()
+
+    # Avslutningen beholder sin: kvittering og opplasting er små kall
+    # innenfor lukkevinduet, og der er en lang frist selve faren.
+    for sti in ("/v1/oppdrag/kvittering", "/v1/artefakt",
+                "/v1/oppdrag/claim"):
+        assert [f for s, f in k.frister if s == sti] \
+            and all(f is None for s, f in k.frister if s == sti), \
+            f"{sti} skal kjøre på klientens egen frist"
+
+
+def test_173_klienten_slukker_ikke_kallets_egen_frist(monkeypatch):
+    """#173 (Codex P1): `KlientHTTP.post` tok `**kw`. En `timeout=` der
+    ville blitt slukt i stillhet — fiksen ville sett riktig ut i kallet
+    og ikke gjort noe. `timeout` står derfor i signaturen, og målingen
+    her er på det `urllib` FAKTISK får, ikke på at parameteret finnes.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `timeout` fra signaturen igjen,
+    eller send `self.frist_s` videre uansett."""
+    import urllib.request
+
+    from drift.m57_arbeider import KlientHTTP
+
+    sett = []
+
+    class _Uapnet(Exception):
+        pass
+
+    def _urlopen(req, timeout=None):
+        sett.append(timeout)
+        raise _Uapnet
+
+    monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
+    klient = KlientHTTP("http://x", 5.0)
+    for kw in ({}, {"timeout": 361.0}):
+        with pytest.raises(_Uapnet):
+            klient.post("/v1/x", {}, None, **kw)
+    assert sett == [5.0, 361.0], sett
 
 
 def test_173_vektene_folger_hver_kandidat_inn_i_lageret(monkeypatch):
@@ -656,7 +727,7 @@ def test_tom_ko_er_tomt_utfall():
     from modules.m57_ats import controller
 
     class _K:
-        def post(self, sti, json=None, headers=None):
+        def post(self, sti, json=None, headers=None, timeout=None):
             class _R:
                 status_code = 204
             assert sti == "/v1/oppdrag/claim"
@@ -723,13 +794,14 @@ def test_kvitteringen_gjentas_ved_forbigaaende_feil(monkeypatch):
             self.mist_igjen = mist_antall
             self.forsok = 0
 
-        def post(self, sti, json=None, headers=None):
+        def post(self, sti, json=None, headers=None, timeout=None):
             if sti == "/v1/oppdrag/kvittering":
                 self.forsok += 1
                 if self.mist_igjen:
                     self.mist_igjen -= 1
                     raise ConnectionError("svaret kom aldri")
-            return super().post(sti, json=json, headers=headers)
+            return super().post(sti, json=json, headers=headers,
+                                timeout=timeout)
 
     m = _Mister(1)
     assert _kjor(m)["utfall"] == "utfort"
@@ -827,13 +899,14 @@ def test_opplastingen_gjentas_som_kvitteringen(monkeypatch):
             self.mist_igjen = mist_antall
             self.opplastinger = []
 
-        def post(self, sti, json=None, headers=None):
+        def post(self, sti, json=None, headers=None, timeout=None):
             if sti == "/v1/artefakt":
                 self.opplastinger.append(json)
                 if self.mist_igjen:
                     self.mist_igjen -= 1
                     raise ConnectionError("svaret kom aldri")
-            return super().post(sti, json=json, headers=headers)
+            return super().post(sti, json=json, headers=headers,
+                                timeout=timeout)
 
     # 1) Et tapt svar gjentas, og lykkes det, er oppdraget UTFØRT — ikke
     # et unntak ut av kjøreløkka med bunten alt evaluert.
@@ -861,13 +934,14 @@ def test_opplastingen_gjentas_som_kvitteringen(monkeypatch):
             self.feil_igjen = feil_antall
             self.opplastinger = 0
 
-        def post(self, sti, json=None, headers=None):
+        def post(self, sti, json=None, headers=None, timeout=None):
             if sti == "/v1/artefakt":
                 self.opplastinger += 1
                 if self.feil_igjen:
                     self.feil_igjen -= 1
                     return _Svar(503, {})
-            return super().post(sti, json=json, headers=headers)
+            return super().post(sti, json=json, headers=headers,
+                                timeout=timeout)
 
     k = _FeilerForstOpplasting(2)
     res = _kjor(k)
@@ -919,13 +993,14 @@ def test_opplastingsretryen_stanser_ikke_ved_nominelt_utlop(monkeypatch):
             super().__init__(200, **kw)
             self.opplastinger = []
 
-        def post(self, sti, json=None, headers=None):
+        def post(self, sti, json=None, headers=None, timeout=None):
             if sti == "/v1/artefakt":
                 self.opplastinger.append(json)
                 if len(self.opplastinger) == 1:
                     apent["na"] = False        # utløpet passerte imens
                     raise ConnectionError("svaret kom aldri")
-            return super().post(sti, json=json, headers=headers)
+            return super().post(sti, json=json, headers=headers,
+                                timeout=timeout)
 
     # 1) Utløpet passerte mens svaret var borte: retryen fortsetter
     # likevel, plattformen gjenspiller det staged artefaktet, og
@@ -957,12 +1032,13 @@ def test_opplastingsretryen_stanser_ikke_ved_nominelt_utlop(monkeypatch):
             super().__init__(200, **kw)
             self.forsok = 0
 
-        def post(self, sti, json=None, headers=None):
+        def post(self, sti, json=None, headers=None, timeout=None):
             if sti == "/v1/oppdrag/kvittering":
                 self.forsok += 1
                 apent["na"] = False
                 raise ConnectionError("svaret kom aldri")
-            return super().post(sti, json=json, headers=headers)
+            return super().post(sti, json=json, headers=headers,
+                                timeout=timeout)
 
     apent["na"] = True
     k = _MisterKvittering()
@@ -1161,10 +1237,11 @@ def test_fersk_kapabilitet_brukes_faktisk_i_opplastingen(monkeypatch):
             super().__init__(200, **kw)
             self.opplastinger = []
 
-        def post(self, sti, json=None, headers=None):
+        def post(self, sti, json=None, headers=None, timeout=None):
             if sti == "/v1/artefakt":
                 self.opplastinger.append(json)
-            return super().post(sti, json=json, headers=headers)
+            return super().post(sti, json=json, headers=headers,
+                                timeout=timeout)
 
     k = _Registrerer(forny=forny)
     res = _kjor(k, modell=_VenterModell(slo))
@@ -1330,7 +1407,7 @@ def test_uhentbar_bunt_kvitteres_feilet(monkeypatch):
     kvitteringer = []
 
     class _K:
-        def post(self, sti, json=None, headers=None):
+        def post(self, sti, json=None, headers=None, timeout=None):
             if sti == "/v1/oppdrag/claim":
                 return _R(200, claim)
             if sti.startswith("/v1/inndata/hent-for-oppdrag/"):
@@ -1366,11 +1443,12 @@ def test_tom_bunt_er_uhentbar_og_naar_aldri_modellen():
     Kontroll: fjern `if not raa`-porten i `kjor_en`, så faller denne på
     `kjoring_avbrutt` i stedet, med bunten alt skrevet til disk."""
     class _TomBunt(_Stubklient):
-        def post(self, sti, json=None, headers=None):
+        def post(self, sti, json=None, headers=None, timeout=None):
             if sti.startswith("/v1/inndata/hent-for-oppdrag/"):
                 self.stier.append(sti)
                 return _Svar(200, content=b"")
-            return super().post(sti, json=json, headers=headers)
+            return super().post(sti, json=json, headers=headers,
+                                timeout=timeout)
 
     k, modell = _TomBunt(), _Modell()
     res = _kjor(k, modell=modell)
@@ -1454,7 +1532,7 @@ def test_heartbeatet_fornyer_og_bytter_kapabilitet(monkeypatch):
     fornyelser = []
 
     class _K:
-        def post(self, sti, json=None, headers=None):
+        def post(self, sti, json=None, headers=None, timeout=None):
             assert sti == "/v1/oppdrag/forny"
             fornyelser.append(json)
 
@@ -1485,7 +1563,7 @@ def test_avvist_fornyelse_stopper_pulsen(monkeypatch):
     kall = []
 
     class _K:
-        def post(self, sti, json=None, headers=None):
+        def post(self, sti, json=None, headers=None, timeout=None):
             kall.append(sti)
 
             class _R:
@@ -1575,7 +1653,7 @@ def test_stumme_pulser_nullstilles_av_en_bekreftet_fornyelse(monkeypatch):
     ferdig = threading.Event()
 
     class _K:
-        def post(self, sti, json=None, headers=None):
+        def post(self, sti, json=None, headers=None, timeout=None):
             assert sti == "/v1/oppdrag/forny", sti
             steg = plan[len(sett)] if len(sett) < len(plan) else 200
             sett.append(steg)
