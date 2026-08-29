@@ -118,11 +118,14 @@ ARKIV_DELVIS="$ARKIV.delvis"
 # `-user root` er avgrensningen som holder: `/dev/shm` er sticky, så en
 # uprivilegert bruker kan ikke lage en root-eid oppføring der, og det
 # er nettopp våre egne rester som er root-eide. `-mindepth 1 -maxdepth
-# 1` gjør at feien aldri kan vandre ut av `/dev/shm` selv. Null treff
+# 1` gjør at feien aldri kan vandre ut av `/dev/shm` selv. `-type d`
+# holder den til formen våre rester faktisk har (`mktemp -d`): en
+# root-eid FIL med samme navn er ikke vår, og en `rm -rf` som ikke
+# trenger å treffe den, skal ikke kunne det. Null treff
 # gir exit 0 — feien dreper ikke kjøringen når det ikke var noe å feie
 # — mens et manglende `/dev/shm` gir exit 1 og stopper her, som er
 # riktig vei: `mktemp -d -p /dev/shm` på neste linje ville dødd uansett.
-find /dev/shm -mindepth 1 -maxdepth 1 -user root \
+find /dev/shm -mindepth 1 -maxdepth 1 -user root -type d \
      -name 'disponit-backup.*' -exec rm -rf {} +
 RAA_KAT=$(mktemp -d -p /dev/shm disponit-backup.XXXXXXXX)
 chmod 700 "$RAA_KAT"

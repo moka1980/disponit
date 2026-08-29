@@ -2063,8 +2063,13 @@ def test_feien_av_tmpfs_rester_treffer_bare_vare_egne():
     er sticky: en uprivilegert bruker får ikke lagt igjen en root-eid
     oppføring der, og våre egne rester er root-eide.
 
+    `-type d` er den andre halvdelen (Cursor P2 på `db2eeda`): våre
+    rester er kataloger fra `mktemp -d`, så en root-eid FIL med samme
+    navn er ikke vår — og en `rm -rf` som ikke trenger å treffe den,
+    skal ikke kunne det.
+
     MUTASJONEN SOM DREPER DENNE: tilbake til den uavgrensede globben,
-    eller fjern `-user root` fra `find`-en.
+    eller fjern `-user root` eller `-type d` fra `find`-en.
     """
     skript = (ROT / "deploy/staging/backup-db.sh").read_text(encoding="utf-8")
     # KODELINJER, ikke kommentarer: prosaen over feien SITERER den gamle
@@ -2076,6 +2081,8 @@ def test_feien_av_tmpfs_rester_treffer_bare_vare_egne():
         "uavgrenset root-rm mot verdensskrivbar /dev/shm på en delt vert"
     assert "find /dev/shm -mindepth 1 -maxdepth 1 -user root" in kode, \
         "feien avgrenser ikke til root-eide rester i /dev/shm selv"
+    assert "-user root -type d" in kode, \
+        "feien kan rm -rf-e en root-eid FIL — våre rester er kataloger"
 
 
 def test_runbooken_leter_etter_klarteksten_i_shm_ikke_i_katalogen():
