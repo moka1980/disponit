@@ -319,3 +319,57 @@ BEGIN
 END $$;
 
 RESET ROLE;
+
+-- ------------------------------------------------------------
+-- 6. DEN BEBODDE BASEN MAKULERES ÉN GANG (Cursor P1 på #252).
+--
+-- Alt over gjelder FREMTIDIGE reap: en prosess plukkes bare mens
+-- `slettet_ts IS NULL`. #222 finnes fordi promoterte rapporter
+-- overlevde §5-fristen — og de som alt er reapet, av reaperen slik
+-- den sto FØR denne migrasjonen, bærer merket allerede. De plukkes
+-- derfor aldri igjen: uten dette steget beholder de ciphertext, og
+-- migrasjonen lukker hullet bare for det som ennå ikke har skjedd.
+--
+-- Formen er dørens, ikke et speilet UPDATE: samme
+-- `krev_tenantkontekst`, samme predikat, samme statemaskin.
+-- Idempotent per konstruksjon
+-- (`makulert_ts IS NULL` + levende payload), så en gjenkjøring — eller
+-- en rad reaperen rakk først — er null rader, ikke en feil.
+--
+-- ROLLEN ER PÅKREVD, ikke pynt: `rekrutteringsprosess` har FORCE ROW
+-- LEVEL SECURITY, og migrator har ingen tenantkontekst å arve. Uten
+-- `SET LOCAL ROLE` ville løkken sett NULL rader og backfillen vært en
+-- stille no-op — nøyaktig den blinde formen porten finnes for.
+-- Claimeren har sin egen eksplisitte policy (`m57_reaper`, 057) og
+-- EXECUTE på døren.
+--
+-- ORDNINGEN ER OGSÅ EN PÅSTAND: masse-skrivingen står ETTER `ALTER
+-- TABLE`-setningene i §1. 047-stoppet var utsatte triggerhendelser i kø
+-- foran en ALTER-klasse-setning; her er DDL-en unnagjort før den første
+-- raden skrives. Målt av SP-10 mot bebodd base, ikke antatt.
+SET LOCAL ROLE disponit_m37_claimer;
+DO $$
+DECLARE r RECORD; v_kontekst TEXT; v_naa TIMESTAMPTZ; v_antall INT := 0;
+BEGIN
+    v_kontekst := current_setting('disponit.tenant', true);
+    v_naa := pg_catalog.now();
+    -- Løkken spør ALLE reapede prosesser, uten å forhåndsfiltrere på
+    -- levende artefaktpayload: et EXISTS mot `artefakt` her ville lest
+    -- under tenant-policyen med FEIL kontekst (den settes først per rad
+    -- under), og stille hoppet over nettopp radene steget finnes for.
+    -- Døren avgjør i stedet per oppdrag, med konteksten satt.
+    FOR r IN
+        SELECT p.tenant AS t, p.oppdrag_id AS oid
+          FROM public.rekrutteringsprosess p
+         WHERE p.slettet_ts IS NOT NULL
+         ORDER BY p.tenant, p.oppdrag_id
+    LOOP
+        PERFORM set_config('disponit.tenant', r.t, true);
+        v_antall := v_antall + public.makuler_artefakter_for_prosess(
+            r.t, r.oid, v_naa);
+    END LOOP;
+    PERFORM set_config('disponit.tenant', coalesce(v_kontekst, ''), true);
+    RAISE NOTICE '066: engangs-makulering av alt reapet før denne'
+        ' migrasjonen — % artefakt(er) tømt', v_antall;
+END $$;
+RESET ROLE;
