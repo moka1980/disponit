@@ -4767,20 +4767,54 @@ function rapportSvarMed(...ider) {
 
 // RANGERINGSTABELLEN, IKKE PROSESSENS: flaten har flere `<table>`, og
 // `querySelector` ville tatt den første i DOM-en. Kjennetegnet er
-// NAVNET, ikke en caption: captionen var en kopi av overskriften og er
-// borte (Cursor P2 — `sr-only` skjulte duplikatet for øyet, ikke for
-// øret). Tabellen peker nå på `h3`-en med `aria-labelledby`, så
-// hjelperen følger den pekeren — samme vei skjermleseren går.
-// Rapportens tabell, ikke prosessens. Den kjennes på sitt EGET
-// tilgjengelige navn: helperen pekte før gjennom `aria-labelledby` til
-// overskriften, men nettopp den lånte navngivningen var Codex-funnet
-// (tabellen annonserte overskriftens tekst en gang til for øret).
+// tabellens EGET tilgjengelige navn — den `sr-only`-captionen den fikk
+// da den sluttet å låne overskriftens (Codex P2: `aria-labelledby` mot
+// `h3` flyttet hvor navnet kom fra, ikke hva som ble annonsert for øret).
+//
+// NAVNET LESES UT AV LOCALE, IKKE SKREVET INN HER (Cursor P2). En norsk
+// literal gjorde hjelperen — og dermed hver port som bygger på den —
+// blind på engelsk, der captionen heter «Candidates ranked by score».
+// `find` returnerte da `undefined`, og portene falt på «tabellen
+// mangler» i stedet for på det de er til for å måle.
 function rapporttabellen(hoved) {
   return [...hoved.querySelectorAll("table")].find((tb) => {
     const cap = tb.querySelector("caption");
-    return cap && cap.textContent.trim() === "Kandidater rangert etter poeng";
+    return cap && cap.textContent.trim()
+      === t("ui.rekruttering.evalueringer.tabellnavn");
   });
 }
+
+test("Rapport: hjelperen finner rangeringstabellen på ENGELSK òg", async () => {
+  // Cursor P2. `rapporttabellen()` matchet captionen mot en norsk
+  // literal mens produksjonen skriver `t("…tabellnavn")`. En port som
+  // bare kan kjøre på sitt eget språk måler språket, ikke koden — og
+  // portene som bygger på hjelperen (kortnavn, tilgjengelig navn,
+  // detaljkropp) ville alle falt på «tabellen mangler» det øyeblikket
+  // noen kjørte dem på engelsk.
+  //
+  // MUTASJONEN SOM DREPER DENNE: skriv «Kandidater rangert etter poeng»
+  // tilbake som literal i `rapporttabellen()`.
+  settI18nForTest(EN, "en");
+  try {
+    KALL = [];
+    SVAR = { ...enkelRapportSvar() };
+    const hoved = nyHoved();
+    visRekruttering(hoved, ctx());
+    assert.ok(await vent(() => hoved.textContent.includes("kandidat-01")),
+      "rapporten kom aldri");
+    // Fiksturen krysser faktisk språkskillet — ellers måler resten intet.
+    assert.notEqual(t("ui.rekruttering.evalueringer.tabellnavn"),
+      "Kandidater rangert etter poeng",
+      "EN-settet ga norsk tabellnavn — porten måler da ingenting");
+    const tabell = rapporttabellen(hoved);
+    assert.ok(tabell, "hjelperen fant ikke rangeringstabellen på engelsk");
+    // …og det er RANGERINGEN den fant, ikke prosessens tabell.
+    assert.equal(tabell.querySelectorAll("tbody tr").length, 2,
+      "hjelperen traff en annen tabell enn rangeringen");
+  } finally {
+    settI18nForTest(NB, "nb");
+  }
+});
 
 test("Rapport: en lang kandidat-id kortes, men mistes ikke", async () => {
   // Cursor P2: kortnavnet gjaldt bare prosesstabellen. Rapporten står
