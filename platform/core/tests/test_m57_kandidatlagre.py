@@ -2267,6 +2267,42 @@ def test_173_doed_lease_stenger_doren_midt_i_stroemmen(migrator, miljo):
         rt.close()
 
 
+def test_173_leaseleddet_maaler_veggklokken_ikke_transaksjonsstarten():
+    """#173 (Codex P2): dørens lease-ledd skal måle `clock_timestamp()`.
+
+    Leddet spør «lever holdet NÅ», og `now()` er ikke nå — den er
+    fastfrosset ved transaksjonens START. Dørens transaksjon åpnes FØR
+    base64-dekodingen av inntil 25 MiB og før `FOR SHARE OF o` har
+    ventet ut en samtidig claimer, så den kan stå åpen vilkårlig lenge
+    mens `now()` peker på tiden før ventingen. En lease som døde i
+    nettopp det vinduet ble da autorisert, og persondata committet på en
+    fullmakt reaperen alt hadde inndratt.
+
+    Målt på KILDEN, ikke på et lås-kappløp (K1): den behavioural formen
+    krever at predikatet kan kalles to ganger i samme transaksjon med
+    veggklokken flyttet imellom, og dørens SQL er ikke en kallbar
+    funksjon slik `hent_inndata_for_oppdrag` er. Porten er derfor samme
+    form som `test_m57_rapportflate` alt bruker på `_anker_lever`s
+    re-sjekk — og den dreper nøyaktig mutasjonen.
+
+    Retningen er trygg og bør ikke forveksles med en strengere port som
+    kan felle noe lovlig: `clock_timestamp()` er alltid ≥ `now()`, så
+    leddet slipper aldri gjennom noe reclaimeren (005:894-895) alt har
+    tatt.
+
+    MUTASJONEN SOM DREPER DENNE: sett `clock_timestamp()` tilbake til
+    `now()` i `_kandidatdata`s radoppslag."""
+    import inspect
+
+    from api import app as appmod
+
+    kilde = inspect.getsource(appmod._kandidatdata)
+    assert "AND o.owner_lease_utloper > clock_timestamp()" in kilde, \
+        "dørens lease-ledd skal måle clock_timestamp(), ikke now()"
+    assert "> now()" not in kilde.replace("`now()`", ""), \
+        "now() i dørens SQL er transaksjonsstart — poengløs fencing"
+
+
 @pg
 def test_173_doren_binder_deploymenten_ikke_bare_modulen(migrator, miljo):
     """#173 (Codex P1): claim-trippelet er ikke nok — deploymenten måles.

@@ -2499,6 +2499,21 @@ def _kandidatdata(tjeneste: Tjeneste, request: Request, form: str) -> Response:
         # `rekrutteringsprosess`. En bar `FOR SHARE` her ville forsøkt å
         # låse begge og svart `permission denied` — nøyaktig grunnen
         # `_anker_lever` forkastet delelåsen på leseveien.
+        #
+        # OG `clock_timestamp()`, IKKE `now()` (Codex P2). Leddet spør
+        # «lever holdet NÅ», og `now()` er ikke nå: den er fastfrosset
+        # ved transaksjonens START. Denne transaksjonen begynner FØR
+        # base64-dekodingen av inntil 25 MiB og før `FOR SHARE` har
+        # ventet ut en samtidig claimer — den kan derfor stå åpen
+        # vilkårlig lenge mens `now()` peker på tiden før ventingen. En
+        # lease som døde i nettopp det vinduet ble da autorisert, og
+        # persondata committet på en fullmakt reaperen alt hadde
+        # inndratt. `clock_timestamp()` leses på nytt ved evalueringen
+        # og måler den faktiske skrivetiden. Retningen er trygg: den er
+        # alltid ≥ `now()`, så porten kan bare bli STRENGERE — den
+        # slipper aldri gjennom noe reclaimeren (som selv måler med
+        # `now()`, 005:894-895) alt har tatt. Samme ledd og samme grunn
+        # som `hent_inndata_for_oppdrag` (060:66-78, 101).
         rad = conn.execute(
             "SELECT p.prosess_id FROM oppdrag o"
             "  JOIN rekrutteringsprosess p"
@@ -2508,7 +2523,7 @@ def _kandidatdata(tjeneste: Tjeneste, request: Request, form: str) -> Response:
             "   AND o.status='plukket' AND o.owner_claim_id=%s"
             "   AND o.owner_generation=%s"
             "   AND o.owner_lease_utloper IS NOT NULL"
-            "   AND o.owner_lease_utloper > now()"
+            "   AND o.owner_lease_utloper > clock_timestamp()"
             "   AND o.claim_release_id IS NOT DISTINCT FROM %s"
             "   AND o.claim_miljo IS NOT DISTINCT FROM %s"
             "   AND p.slettet_ts IS NULL"
