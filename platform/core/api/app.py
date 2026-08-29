@@ -374,10 +374,31 @@ class Rategrense:
         stedet for å holde sin egen grense — én bøtteimplementasjon, ett
         sted å lese om vinduet.
         """
-        naa = naa if naa is not None else time.monotonic()
         grense = tak if tak is not None else self.per_minutt
-        vindustart = naa - 60.0
         with self._laas:
+            # TIDSPUNKTET TAS UNDER LÅSEN (Codex P2). Det ble tidligere
+            # samplet FØR `with self._laas`, og da er det ingen
+            # sammenheng mellom rekkefølgen tidspunktene får og
+            # rekkefølgen trådene faktisk skriver i: en tråd som blir
+            # deschedulert mellom de to linjene vekker opp og appender et
+            # GAMMELT tidspunkt bak nyere innslag.
+            #
+            # Køen tåler ikke den inversjonen, og det er ikke en
+            # skjønnhetsfeil — begge endepunktene den leses fra antar
+            # sortert innhold. `popleft`-løkken under stopper på det
+            # første innslaget som ikke er utløpt, så et gammelt
+            # tidspunkt bak et nyere blir ALDRI forlatt: bøtta bærer et
+            # utløpt treff for alltid og avviser lovlig trafikk. Og
+            # nøkkelfeiingen over måler `v[-1]` som «nyeste», så en
+            # inversjon der kan slette en bøtte som fortsatt har
+            # levende treff — motsatt feil, samme årsak.
+            #
+            # Ingen produksjonskaller sender `naa`; parameteren er
+            # testsømmen, og en test som oppgir sine egne tidspunkter
+            # eier rekkefølgen selv.
+            if naa is None:
+                naa = time.monotonic()
+            vindustart = naa - 60.0
             if len(self._treff) > self.NOKKELTAK:
                 self._treff = {k: v for k, v in self._treff.items()
                                if v and v[-1] > vindustart}

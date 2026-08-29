@@ -298,6 +298,69 @@ def test_kroppen_bufres_i_en_kopi_ikke_tre():
         "bytearray-bufferet lever fortsatt gjennom `await self.app`"
 
 
+def test_ratebotta_tar_tidspunktet_under_laasen(monkeypatch):
+    """Codex P2 (#173): `naa` ble samplet FØR `with self._laas`.
+
+    Da finnes det ingen sammenheng mellom rekkefølgen tidspunktene får og
+    rekkefølgen trådene faktisk skriver i — en tråd som blir deschedulert
+    mellom de to linjene vekker opp og appender et GAMMELT tidspunkt bak
+    nyere innslag.
+
+    Køen tåler ikke inversjonen, fordi begge endepunktene den leses fra
+    antar sortert innhold: `popleft`-løkken stopper på det første
+    innslaget som ikke er utløpt (et gammelt tidspunkt bak et nyere blir
+    aldri forlatt — bøtta avviser lovlig trafikk for alltid), og
+    nøkkelfeiingen måler `v[-1]` som «nyeste» (en inversjon der kan
+    slette en bøtte som fortsatt har levende treff).
+
+    MÅLT PÅ ÅRSAKEN, IKKE PÅ SYMPTOMET: selve inversjonen er en race, og
+    en test som prøver å FREMPROVOSERE den er enten flaky eller en
+    schedulersimulator. Invarianten som utelukker den er derimot skarp og
+    deterministisk — tidspunktet skal tas mens låsen holdes — og det er
+    nøyaktig det som måles her.
+
+    MUTASJONEN SOM DREPER DENNE: flytt `naa`-samplingen ut av `with
+    self._laas` igjen; `locked()` er da `False` i det klokken leses.
+    """
+    import time as _time
+
+    from api.app import Rategrense
+
+    r = Rategrense(per_minutt=10)
+    holdt = []
+    ekte = _time.monotonic
+
+    def maalt():
+        holdt.append(r._laas.locked())
+        return ekte()
+
+    monkeypatch.setattr(_time, "monotonic", maalt)
+    try:
+        assert r.slipp_gjennom("en-nokkel") is True
+    finally:
+        monkeypatch.undo()
+
+    assert holdt, "klokken ble aldri lest — testen måler ingenting"
+    assert all(holdt), \
+        "tidspunktet ble samplet UTENFOR låsen: %r" % (holdt,)
+
+    # Og invarianten selve funnet handler om, under ekte samtidighet:
+    # køen skal være sortert. Etter fiksen kan den ikke være noe annet.
+    r2 = Rategrense(per_minutt=100_000)
+
+    def kjor():
+        for _ in range(300):
+            r2.slipp_gjennom("felles")
+
+    traader = [threading.Thread(target=kjor) for _ in range(8)]
+    for t in traader:
+        t.start()
+    for t in traader:
+        t.join()
+    tider = list(r2._treff["felles"])
+    assert tider == sorted(tider), "køen kom ut av tidsrekkefølge"
+
+
 @pg
 def test_lyvende_content_length_avvises(server, policy, token, migrator):
     """Content-Length er en PÅSTAND. Her sier den 10 og det kommer 300 KiB.
