@@ -46,6 +46,30 @@ DO $$ BEGIN
                OR (ciphertext IS NULL AND nonce IS NULL));
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
+-- OPPSLAGET MÅ HA EN INDEKS FØR BACKFILLEN (Codex P1). Døren under slår
+-- opp på `(tenant, oppdrag_id)`, og `artefakt` hadde ingen indeks som
+-- dekket det paret: de to som fantes er `ett_promotert_per_oppdrag`
+-- (partiell, bare `tilstand = 'promotert'`, og uten tenant i nøkkelen)
+-- og `artefakt_staged_opprydding` (på `opprettet`). Begge dørens armer
+-- måtte derfor seq-scanne HELE evidenstabellen — én gang per prosess.
+-- Engangsbackfillen i §6 kaller døren i løkke over alle reapede
+-- prosesser, så kostnaden er prosesser × artefakter, og den samme
+-- kvadratiske formen traff hver senere reap-batch og §7-vakten.
+--
+-- Indeksen er FULL, ikke partiell, og det er et valg: en partiell
+-- indeks måtte enten dekke begge armene (tre retained-tilstander med
+-- `makulert_ts IS NULL`, pluss `staged`) eller vært to indekser, og
+-- planleggerens implikasjonsbevis for `IN`-lister mot en videre
+-- predikatliste er ikke noe man skal bygge en P1-fiks på. Paret er
+-- dessuten det samme oppslaget leseveien gjør (`lesing.py`s detaljrute)
+-- og vakten i §7 gjør — én alminnelig indeks tjener alle tre, og det er
+-- den minst påfunnede formen som lukker funnet.
+--
+-- Den står FØR §6 med vilje: en indeks bygget etter masse-skrivingen
+-- ville ikke hjulpet den ene kjøringen som faktisk gjør arbeidet.
+CREATE INDEX IF NOT EXISTS artefakt_oppdrag_oppslag
+    ON artefakt (tenant, oppdrag_id);
+
 -- ------------------------------------------------------------
 -- 2. Statemaskinen lærer makuleringsformen (016-kroppen, diff-endret).
 CREATE OR REPLACE FUNCTION artefakt_statemaskin()
