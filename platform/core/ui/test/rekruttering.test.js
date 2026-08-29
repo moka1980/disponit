@@ -4469,13 +4469,16 @@ function enkelRapportSvar() {
       fremdrift: { filer_lest: 2, filer_totalt: 2, byte_lest: 100 },
     } } };
 }
-test("Rapport: overskriften står ÉN gang — captionen er skjermleserens", async () => {
-  // Produktrunden 28/8: `<caption>` og `<h3>` bar samme tekst, begge
-  // synlige, så leseren fikk «Rangering — Driftskonsulent (versjon 2)»
-  // to ganger etter hverandre. Tabellen trenger sitt tilgjengelige navn,
-  // så captionen står — bare usynlig.
+test("Rapport: navnet står ÉN gang — for øyet OG for øret", async () => {
+  // Produktrunden 28/8 fjernet det SYNLIGE duplikatet ved å gjøre
+  // captionen `sr-only`. Men `sr-only` skjuler bare for øyet: caption og
+  // `h3` sto igjen med identisk tekst i tilgjengelighetstreet, så
+  // skjermleseren leste «Rangering — Driftskonsulent (versjon 2)» først
+  // som overskrift og så en gang til som tabellnavn (Cursor P2).
+  // Tabellen LÅNER nå overskriftens navn via `aria-labelledby`.
   //
-  // MUTASJONEN SOM DREPER DENNE: fjern `sr-only` fra captionen.
+  // MUTASJONEN SOM DREPER DENNE: gi tabellen en egen caption med samme
+  // tekst igjen (synlig ELLER `sr-only`), eller fjern `aria-labelledby`.
   KALL = [];
   SVAR = { ...enkelRapportSvar() };
   const hoved = nyHoved();
@@ -4486,14 +4489,21 @@ test("Rapport: overskriften står ÉN gang — captionen er skjermleserens", asy
   const rapporttabell = [...hoved.querySelectorAll("table")]
     .find((tb) => tb.textContent.includes("kandidat-01"));
   assert.ok(rapporttabell, "rangeringstabellen mangler");
-  const cap = rapporttabell.querySelector("caption");
-  assert.ok(cap, "tabellen mistet sitt tilgjengelige navn");
-  assert.ok(cap.classList.contains("sr-only"),
-    "captionen er synlig ved siden av overskriften — samme tekst to ganger");
   const synlige = [...hoved.querySelectorAll("h3")]
     .filter((h) => h.textContent.includes("Driftskonsulent"));
   assert.equal(synlige.length, 1,
     `overskriften står ${synlige.length} ganger`);
+  // Navnet kommer fra overskriften — ikke fra en kopi.
+  const overskrift = synlige[0];
+  assert.ok(overskrift.id, "overskriften mangler id-en tabellen peker på");
+  assert.equal(rapporttabell.getAttribute("aria-labelledby"), overskrift.id,
+    "tabellen låner ikke overskriftens navn");
+  // ...og fokusmålet etter lasting er fortsatt den samme noden.
+  assert.equal(overskrift.getAttribute("tabindex"), "-1",
+    "overskriften er ikke lenger fokusmål etter lasting");
+  const cap = rapporttabell.querySelector("caption");
+  assert.ok(!cap || !cap.textContent.trim(),
+    "captionen gjentar tabellnavnet for øret ved siden av overskriften");
 });
 
 test("Rapport: detaljene ligger i kandidatens RAD, ikke som en mur under", async () => {
@@ -4601,12 +4611,15 @@ function rapportSvarMed(...ider) {
 }
 
 // RANGERINGSTABELLEN, IKKE PROSESSENS: flaten har flere `<table>`, og
-// `querySelector` ville tatt den første i DOM-en. Captionen bærer
-// profilnavnet og er rapportens alene.
+// `querySelector` ville tatt den første i DOM-en. Kjennetegnet er
+// NAVNET, ikke en caption: captionen var en kopi av overskriften og er
+// borte (Cursor P2 — `sr-only` skjulte duplikatet for øyet, ikke for
+// øret). Tabellen peker nå på `h3`-en med `aria-labelledby`, så
+// hjelperen følger den pekeren — samme vei skjermleseren går.
 function rapporttabellen(hoved) {
-  return [...hoved.querySelectorAll("table")].find((tb) => {
-    const cap = tb.querySelector("caption");
-    return cap && cap.textContent.includes("Driftskonsulent");
+  return [...hoved.querySelectorAll("table[aria-labelledby]")].find((tb) => {
+    const navn = hoved.querySelector(`#${tb.getAttribute("aria-labelledby")}`);
+    return navn && navn.textContent.includes("Driftskonsulent");
   });
 }
 

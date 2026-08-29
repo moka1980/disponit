@@ -273,6 +273,13 @@ export function visRekruttering(hoved, ctx) {
 // behovet for den. Id-en er kontrakten mellom de to.
 const HOPP_ANKER = "rekrut-etter-evaluering";
 
+// Rangeringstabellens tilgjengelige navn er OVERSKRIFTEN SELV (Cursor
+// P2). Id-en er kontrakten mellom `h3`-en og `<table aria-labelledby>`;
+// den står her fordi tabellen bygges FØR overskriften i `byggRapport`.
+// Rapporten finnes i høyden én gang i DOM-en — `rapportRot` erstattes,
+// aldri utvides — så en fast id kan ikke kollidere med seg selv.
+const RANGERING_TITTEL = "rekrut-rangering-tittel";
+
 function tegn(hoved, ctx, data, okt, valgtId) {
   const prosesser = (data && data.prosesser) || [];
   // A-DOMMEN (#212): GENERATOREN FJERNES, IKKE INSTANSENE. Tre runder med
@@ -1067,17 +1074,20 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
             .join(", ") }),
           el("td", {}, boks));
       }));
-      const tabell = el("table", {},
-        // CAPTION ER SKJERMLESERENS, IKKE ØYETS. Overskriften under
-        // (`h3`) bærer den samme teksten som synlig tittel og som
-        // fokusmål etter lasting — sto begge synlige, leste brukeren
-        // «Rangering — Tromsø kk (versjon 2)» to ganger etter hverandre.
-        // Tabellen trenger likevel sitt tilgjengelige navn, så captionen
-        // blir stående, bare usynlig.
-        el("caption", { class: "sr-only",
-          text: t("ui.rekruttering.evalueringer.rangering")
-          .replace("{navn}", rapport.profil.navn)
-          .replace("{versjon}", String(rapport.profil.versjon)) }),
+      // ØRET FIKK NAVNET TO GANGER (Cursor P2). Produktrunden fjernet
+      // det SYNLIGE duplikatet ved å gjøre captionen `sr-only` — men
+      // `sr-only` skjuler bare for øyet: noden blir stående i
+      // tilgjengelighetstreet med nøyaktig samme tekst som `h3`-en over.
+      // I dokumentrekkefølge leste skjermleseren derfor overskriften
+      // først og annonserte den SAMME strengen på nytt idet tabellen
+      // møttes. Samme feilklasse runden skulle lukke, bare flyttet fra
+      // øye til øre.
+      //
+      // Tabellen trenger fortsatt sitt tilgjengelige navn, men den skal
+      // LÅNE overskriftens i stedet for å bære en egen kopi:
+      // `aria-labelledby` peker på `h3`-en, og captionen finnes ikke
+      // lenger. Én tekst, én node, ett navn — for både øye og øre.
+      const tabell = el("table", { "aria-labelledby": RANGERING_TITTEL },
         el("thead", {}, el("tr", {},
           el("th", { scope: "col",
             text: t("ui.rekruttering.evalueringer.kandidat") }),
@@ -1142,7 +1152,10 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       // Rapporten settes inn ETTER tabellen brukeren sto i — fokusér
       // overskriften, ellers får tastatur/skjermleser aldri vite at
       // lastingen ble ferdig.
-      const overskrift = el("h3", { tabindex: "-1",
+      // ...og den er samtidig tabellens tilgjengelige navn
+      // (`RANGERING_TITTEL`), så `tabindex="-1"` som fokusmål og
+      // `aria-labelledby` som navnekilde deler én og samme node.
+      const overskrift = el("h3", { id: RANGERING_TITTEL, tabindex: "-1",
         text: t("ui.rekruttering.evalueringer.rangering")
           .replace("{navn}", rapport.profil.navn)
           .replace("{versjon}", String(rapport.profil.versjon)) });
