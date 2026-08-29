@@ -25,6 +25,7 @@ reapes med resten.
 from __future__ import annotations
 
 import re
+from bisect import bisect_right
 
 #: Katalogens løfte, ordrett — settet er LUKKET og rekkefølgen stabil
 #: (tokennummereringen skal være deterministisk for samme input).
@@ -144,20 +145,38 @@ def _monster(verdi: str) -> re.Pattern[str]:
     return re.compile(re.escape(verdi), re.IGNORECASE)
 
 
-def blind(tekst: str, kandidatfelter: dict[str, list[str]]
-          ) -> tuple[str, dict[str, str]]:
-    """-> (blindet tekst, avmaskeringstabell {token: klartekst}).
+#: Skjøten mellom kandidatens dokumenter. ÉN kilde (#174): kjøringen
+#: setter dem sammen med denne, og `dokumentgrenser` regner spennene ut
+#: fra den samme. Drifter de to, peker grensene feil sted — og da er
+#: kryss-sitatporten en port som måler noe annet enn den tror.
+SKJOT = "\n\n"
 
-    `kandidatfelter` er de STRUKTURERTE verdiene fra søknaden
-    ({felt: [verdier]}); fritekst-gjenkjenning av personalia er bevisst
-    IKKE lovet her — løftet er de navngitte feltene.
 
-    To porter, og den andre måler EFFEKT: formen inn
-    (`feltverdier_lukket`), og — målt på ORIGINALTEKSTEN, før noen
-    erstatning — at hvert deklarert felt faktisk traff dokumentteksten.
-    Begge er `ugyldig_maskeringsform`.
+def dokumentgrenser(blindede: list[str]) -> list[tuple[int, int]]:
+    """[start, slutt) for hvert dokument i `SKJOT.join(blindede)`."""
+    grenser: list[tuple[int, int]] = []
+    pos = 0
+    for i, d in enumerate(blindede):
+        if i:
+            pos += len(SKJOT)
+        grenser.append((pos, pos + len(d)))
+        pos += len(d)
+    return grenser
+
+
+def bygg_tabell(kandidatfelter: dict[str, list[str]]
+                ) -> tuple[list[tuple[str, str, str]], dict[str, str]]:
+    """-> (tokenpar, avmaskeringstabell). ÉN tabell per KANDIDAT (#174).
+
+    DELT OVER DOKUMENTENE, og det er grunnen til at tabellen bygges her
+    og ikke per dokument: `[NAVN-1]` skal bety den samme personen i
+    søknadsbrevet og i vitnemålet. Bygde vi én tabell per dokument,
+    ville nummereringen startet på nytt, og modellen sett to personer
+    der det er én.
+
+    Formportene bor her fordi de gjelder DEKLARASJONEN, ikke teksten.
+    Effektporten hører til dokumentene og måles av `_traff_alle`.
     """
-    # Vakten gir PRESISJON, ikke lenger sikkerheten alene (målt i runde
     # 5): et ukjent felt kan per konstruksjon aldri treffe, siden løkka
     # under bare rører `MASKERTE_FELTER` — så vakuøsitetsporten nederst
     # feller det samme kartet uansett. Forskjellen er hva utfallet SIER:
@@ -187,6 +206,19 @@ def blind(tekst: str, kandidatfelter: dict[str, list[str]]
             token = f"[{felt.upper()}-{nr}]"
             avmaskering[token] = verdi
             par.append((felt, token, verdi))
+    return par, avmaskering
+
+
+def _traff_alle(kandidatfelter: dict[str, list[str]],
+                dokumenter: list[str]) -> bool:
+    """Traff HVERT deklarert felt minst ETT av dokumentene? (#174)
+
+    Effektmålingen løftet til KANDIDATNIVÅ. Med blinding per dokument er
+    «traff dokumentet» feil spørsmål: et navn står gjerne i søknadsbrevet
+    og ikke i vitnemålet, og å kreve treff i HVERT dokument ville felt en
+    helt normal bunt. Fortegnet er uendret — begrunnelsen under er
+    runde 5/6-dommenes, ordrett.
+    """
     # VAKUØSITETEN MÅLES PÅ EFFEKT, PER FELT (eierdom, K2-kjennelse
     # runde 5 på #217, valg B) — OG MÅLINGEN SKJER PÅ ORIGINALTEKSTEN,
     # FØR NOEN ERSTATNING (eierdom, K2-kjennelse runde 6, valg A).
@@ -240,11 +272,14 @@ def blind(tekst: str, kandidatfelter: dict[str, list[str]]
     # `krev_blindet` søker fortsatt hele inputen.
     #   dom-klasse: tokenkollisjon-korrupsjon · felt i #217 ·
     #   https://github.com/moka1980/disponit/pull/217#issuecomment-5430381316
-    traff: dict[str, bool] = {
-        felt: any(_monster(verdi).search(tekst) for verdi in verdier)
-        for felt, verdier in kandidatfelter.items()}
-    if not all(traff.values()):
-        raise Blindingsfeil("ugyldig_maskeringsform")
+    return all(
+        any(_monster(verdi).search(dok)
+            for verdi in verdier for dok in dokumenter)
+        for felt, verdier in kandidatfelter.items())
+
+
+def anvend(par: list[tuple[str, str, str]], tekst: str) -> str:
+    """Anvender tokentabellen på ÉN tekst."""
     # LENGSTE VERDI FØRST, på tvers av alle felter (Codex P1). Erstatning
     # i feltrekkefølge var to lekkasjer i én: «Ola» før «Ola Nordmann» gir
     # `[NAVN-1] Nordmann` — etternavnet når modellen — og «Ann» før
@@ -278,7 +313,182 @@ def blind(tekst: str, kandidatfelter: dict[str, list[str]]
         # `Kari` tilbake der dokumentet skrev `KARI`, og det er riktig:
         # feltverdien er kilden, dokumentets versaler er formatering.
         tekst = _monster(verdi).sub(lambda _t, tok=token: tok, tekst)
-    return tekst, avmaskering
+    return tekst
+
+
+def blind_dokumenter(dokumenter: list[str],
+                     kandidatfelter: dict[str, list[str]]
+                     ) -> tuple[list[str], dict[str, str]]:
+    """-> (blindede dokumenter, avmaskeringstabell). #174s form.
+
+    Kandidatens dokumenter ble skjøtet med to linjeskift FØR blindingen,
+    og et modellsitat kunne krysse skjøten: `valider_funn` godtok et
+    utdrag som ikke står i noe faktisk søknadsdokument (Codex G7 på
+    #170). Dokumentgrensene kunne ikke bæres inn i koordinatsystemet
+    fordi blindingen endrer lengder.
+
+    Med tabellen bygget ÉN gang og anvendt PER dokument er grensene
+    trivielle: hvert blindet dokument har sin egen lengde, og kalleren
+    kan måle et sitat mot ett dokument i stedet for mot skjøten.
+    Kryss-sitater blir umulige per konstruksjon — ikke avvist av nok en
+    port.
+
+    Skilletekst-sentinelen (en syntetisk streng inn i modellens
+    lesestoff for å redde det gamle koordinatsystemet) er AVVIST i
+    samme dom.
+    """
+    par, avmaskering = bygg_tabell(kandidatfelter)
+    # DEN PER-DOKUMENT-FORMENS EGEN GRENSE (Codex P1 på #240). Erstatningen
+    # skjer i ÉTT dokument av gangen, så en deklarert verdi som ligger PÅ
+    # TVERS av skjøten kan per konstruksjon aldri maskeres — og
+    # `krev_blindet` på den sammensatte teksten kan ikke se det, fordi en
+    # overlappende KORTERE søsterverdi rekker å rive bort beviset først:
+    #
+    #     dokumenter = ["Kari", "Testdal"]
+    #     felter     = {"navn": ["Kari\n\nTestdal", "Kari"]}
+    #
+    # `_traff_alle` sier god (`Kari` traff dokument 1), `Kari` erstattes
+    # per dokument, og modellinputen blir `"[NAVN-2]\n\nTestdal"`. Da
+    # finnes `Kari\n\nTestdal` ikke lenger i teksten porten måler, porten
+    # løper vakuøst, og ETTERNAVNET går i klartekst til modellen mens
+    # kjøringen telles som blindet. Skjøt-før-blind-formen fanget dette;
+    # #174 mistet det, og dette er #174s regning.
+    #
+    # PORTEN MÅLER FOREKOMSTEN, IKKE DEKLARASJONENS FORM (Cursor P2 på
+    # #240). «Verdien inneholder `SKJOT`» er NØDVENDIG for at et treff
+    # skal kunne krysse, men ikke TILSTREKKELIG — og den første formen
+    # her målte bare det nødvendige. En flerlinjet verdi som står HELT
+    # inne i ETT dokument (`"Gate 1\n\n0020 Oslo"` i adressefeltet på én
+    # CV) inneholder skjøten uten å krysse noe som helst, og ble felt.
+    # Det er ikke fail-closed sikkerhet, det er et kontraktsbrudd:
+    # docstringen under lover at en verdi med blank linje kan maskeres i
+    # én tekst, og `evaluer_kandidat` går NÅ alltid denne veien — også
+    # for én streng og for én-fils-bunter, som ikke har noen skjøt.
+    #
+    # Målingen er derfor treffets PLASSERING, på råteksten, før noen
+    # erstatning: et treff som ikke ligger helt inne i ett dokument er
+    # per konstruksjon umaskerbart, fordi `anvend` ser ett dokument av
+    # gangen. Skjøten og spennene kommer fra `dokumentgrenser`, altså
+    # samme kilde som kryss-sitatporten bruker — ingen ny maskin, og
+    # ingen tegnliste: vi spør ikke HVILKE tegn verdien består av, bare
+    # om en forekomst faller mellom to dokumenter.
+    #
+    # Formen er SELV-AVGRENSENDE. Med ett dokument er hele teksten ett
+    # spenn, så hvert treff ligger per definisjon inne i det: én-tekst-
+    # veien kan aldri felles her, uten at det trengs et `len(...) > 1`-
+    # unntak som kunne drifte fra resten.
+    #
+    # Den bor HER og ikke i `verdiform_lukket`: `blind` (én tekst) kan
+    # maskere en verdi med blank linje helt fint, og manifestdøra har
+    # ingen mening om skjøten. Grensen tilhører den PER-DOKUMENT-anvendte
+    # tabellen, altså denne funksjonen — ikke deklarasjonens form. Et
+    # sjette formforsøk er nettopp det §9 forbyr.
+    # SØKET ER AVGRENSET FØR DET STARTER (Codex P1). To ledd, og begge
+    # følger av formen, ikke av en optimalisering:
+    #
+    # 1) En verdi UTEN skjøt kan per konstruksjon ikke krysse en. Et
+    #    treff som spenner over en grense inneholder separatoren
+    #    bokstavelig — `_monster` er `re.escape` med `IGNORECASE`, og
+    #    `\n\n` har ingen versaler — så treffteksten, og dermed verdien,
+    #    må inneholde `SKJOT`. Verdier uten den hoppes over helt.
+    # 2) Spennet et treff ligger i FINNES med `bisect`, ikke med en
+    #    gjennomlesning. Grensene er sortert og disjunkte, så det siste
+    #    dokumentet som starter før treffet er det ENESTE som kan
+    #    inneholde det.
+    #
+    # Ledd 2 er det som fjernet KLASSEN: uten det var sjekken kvadratisk
+    # i dokumentantallet på den ærlige veien. Buntgaten tillater 20 000
+    # dokumenter, og `['a'] * 20_000` med én vanlig verdi tok 15,4 s
+    # målt her — ganger de seksti verdiene grensene tillater (seks felt à
+    # ti) er det et kvarter før modellen i det hele tatt kalles. Med
+    # bisect: 0,034 s. `test_grenseoppslaget_skalerer_med_dokument-
+    # antallet` holder den målingen.
+    #
+    # Ledd 1 sparte først bare TID — 2,90 s mot 5,57 s på seks MB med
+    # seksti verdier, altså ~2x på arbeid av samme orden som `anvend`s
+    # egne pass. Det er for tett til en port på en delt CI-maskin, og det
+    # sto en runde uten en. Codex flyttet spørsmålet dit det hørte hjemme:
+    # filteret sto INNI løkka, så den skjøtede kopien ble laget uansett.
+    # Nå står det FØR, og da sparer det MINNE — som er målbart uten
+    # klokke.
+    # SKJØTET TEKST BYGGES BARE NÅR DEN KAN TRENGES (Codex P2, runde 3).
+    # Filteret sto INNI løkka, så `samlet` ble materialisert selv når ingen
+    # verdi kunne krysse — normaltilfellet. Det er en kandidatstor kopi:
+    # `parsing.MAKS_TOTAL_UTPAKKET` tillater 2 GB, og `kjor_bunt` går
+    # denne veien to ganger per kandidat (klargjøring og evaluering), så
+    # en fullt lovlig bunt kunne ta livet av arbeideren for en sjekk som
+    # ikke hadde noe å gjøre. Spørsmålet stilles nå FØR kopien lages.
+    kryssbare = [v for verdier in kandidatfelter.values()
+                 for v in verdier if SKJOT in v]
+    if kryssbare:
+        samlet = SKJOT.join(dokumenter)
+        grenser = dokumentgrenser(dokumenter)
+        startene = [start for start, _ in grenser]
+        for verdi in kryssbare:
+            # OVERLAPPENDE FOREKOMSTER MÅ SES (Codex P1, runde 4).
+            # `finditer` gir bare IKKE-overlappende treff, og en verdi som
+            # overlapper seg selv kan skjule sitt eget kryss:
+            # `["Kari\n\nKari", "Kari"]` med verdien `"Kari\n\nKari"`
+            # gir ett treff på offset 0 — helt inne i dokument 1 — mens
+            # forekomsten på offset 7 KRYSSER skjøten og aldri blir sett.
+            # Blindingen maskerte da den første og sendte det andre navnet
+            # i klartekst til modellen, med porten grønn.
+            #
+            # Lookahead-formen `(?=(...))` konsumerer ingenting, så motoren
+            # rykker ett tegn fram om gangen og ser HVER forekomst. Gruppen
+            # inni bærer det ekte treffet, så `end(1)` er den faktiske
+            # slutten — ingen antakelse om at treffets lengde er verdiens
+            # (versalufølsomhet kan i prinsippet endre den).
+            #
+            # GRUPPEN MANGLET, OG SLUTTEN VAR REGNET (Cursor P2, runde 5).
+            # Kommentaren over lovet `end(1)`; koden skrev
+            # `treff.start() + len(verdi)`. Målt her er de to ALLTID like:
+            # `re.escape` gir bare enkelttegn-literaler, og ingen av dem
+            # matcher et løp på annet enn ett tegn under `IGNORECASE` —
+            # brute-forcet over hele Unicode (alle printbare kodepunkter,
+            # null avvik), og ligaturveien Cursor foreslo (`ﬁ` mot `fi`)
+            # matcher ikke i det hele tatt: Pythons `re` gjør SIMPEL
+            # case-folding, ikke full. Det finnes derfor ingen inndata som
+            # gjør mutasjonen rød, og ingen test kan bevise denne linja.
+            # Nettopp derfor MÅLES slutten i stedet for å regnes: da hviler
+            # porten på det motoren faktisk fant, ikke på en `re`-invariant
+            # ingen port her holder — og et bytte til full case-folding
+            # (`regex`, eller en framtidig `re`) kan ikke gjøre den fail-open
+            # i stillhet. SP-3: et umålt utfall er et avvist utfall.
+            overlappende = re.compile(f"(?=({re.escape(verdi)}))",
+                                      re.IGNORECASE)
+            for treff in overlappende.finditer(samlet):
+                slutt_treff = treff.end(1)
+                i = bisect_right(startene, treff.start()) - 1
+                # `i < 0` kan ikke skje — første dokument starter på 0 —
+                # men et treff som BEGYNNER inne i selve skjøten peker på
+                # dokumentet foran, og faller da ut på sluttkravet under.
+                start, slutt = grenser[i]
+                if not (start <= treff.start() and slutt_treff <= slutt):
+                    raise Blindingsfeil("verdi_krysser_dokumentgrense")
+    if not _traff_alle(kandidatfelter, dokumenter):
+        raise Blindingsfeil("ugyldig_maskeringsform")
+    return [anvend(par, d) for d in dokumenter], avmaskering
+
+
+def blind(tekst: str, kandidatfelter: dict[str, list[str]]
+          ) -> tuple[str, dict[str, str]]:
+    """-> (blindet tekst, avmaskeringstabell {token: klartekst}).
+
+    `kandidatfelter` er de STRUKTURERTE verdiene fra søknaden
+    ({felt: [verdier]}); fritekst-gjenkjenning av personalia er bevisst
+    IKKE lovet her — løftet er de navngitte feltene.
+
+    To porter, og den andre måler EFFEKT: formen inn
+    (`feltverdier_lukket`), og — målt på ORIGINALTEKSTEN, før noen
+    erstatning — at hvert deklarert felt faktisk traff dokumentteksten.
+    Begge er `ugyldig_maskeringsform`.
+    """
+    # Vakten gir PRESISJON, ikke lenger sikkerheten alene (målt i runde
+    par, avmaskering = bygg_tabell(kandidatfelter)
+    if not _traff_alle(kandidatfelter, [tekst]):
+        raise Blindingsfeil("ugyldig_maskeringsform")
+    return anvend(par, tekst), avmaskering
 
 
 def krev_blindet(tekst: str, avmaskering: dict[str, str]) -> None:
@@ -391,3 +601,40 @@ def evalueringsinput(tekst: str, kandidatfelter: dict[str, list[str]], *,
         raise Blindingsfeil("blinding_uten_felter")
     krev_blindet(blindet, avmaskering)
     return blindet, avmaskering, None
+
+
+def evalueringsinput_dokumenter(dokumenter: list[str],
+                                kandidatfelter: dict[str, list[str]], *,
+                                blinding_av: bool = False,
+                                avskruing_hendelse_id=None,
+                                hendelseoppslag=None
+                                ) -> tuple[list[str], dict[str, str],
+                                           dict | None]:
+    """Som `evalueringsinput`, men bevarer DOKUMENTGRENSENE (#174).
+
+    Samme porter i samme rekkefølge — avskrudd krever en OPPSLÅTT
+    revisjonshendelse (#159/#247, aldri en auditrad-påstand),
+    `blinding_uten_felter` er fail-closed, og `krev_blindet` måler den
+    faktiske modellinputen. Forskjellen er at blindingen skjer per
+    dokument mot ÉN delt tabell, så kalleren får lengdene den trenger for
+    å hindre at et sitat krysser en skjøt. Avskruingssporet følger med ut
+    som i enkelttekst-varianten.
+
+    `krev_blindet` måles på den SAMMENSATTE teksten, ikke per dokument:
+    det er den strengen modellen faktisk leser, og en verdi som er delt
+    over to dokumenter finnes ikke i noen av dem hver for seg. Porten skal
+    måle inputen, ikke bitene den ble laget av.
+    """
+    if blinding_av:
+        hendelse = krev_avskruingshendelse(avskruing_hendelse_id,
+                                           hendelseoppslag)
+        return list(dokumenter), {}, {
+            "hendelse_id": str(avskruing_hendelse_id),
+            "aktor": hendelse.get("aktor"),
+            "ts": hendelse.get("ts"),
+            "handling": hendelse.get("handling")}
+    blindede, avmaskering = blind_dokumenter(dokumenter, kandidatfelter)
+    if not avmaskering:
+        raise Blindingsfeil("blinding_uten_felter")
+    krev_blindet(SKJOT.join(blindede), avmaskering)
+    return blindede, avmaskering, None

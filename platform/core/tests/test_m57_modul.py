@@ -4918,3 +4918,650 @@ def test_ugyldig_feltform_i_SENERE_fil_felles_ogsaa(tmp_path):
                           tekst_for=lambda m, d: d.decode("utf-8"),
                           biasmaalinger=_MAALINGER, antall_soknader=1)
     assert e.value.kode == "ugyldig_maskeringsform"
+
+
+# ===========================================================================
+# #174 — blinding per dokument med delt tokentabell
+# ===========================================================================
+
+def test_tokentabellen_er_delt_over_dokumentene():
+    """Samme navn skal få samme token i ALLE kandidatens dokumenter.
+
+    Det er grunnen til at tabellen bygges per KANDIDAT og ikke per
+    dokument: `[NAVN-1]` skal bety den samme personen i søknadsbrevet og i
+    vitnemålet. Bygde vi én tabell per dokument, ville nummereringen
+    startet på nytt, og modellen sett to personer der det er én.
+
+    MUTASJONEN SOM DREPER DENNE: bygg tabellen inne i løkka over
+    dokumentene.
+    """
+    dok = ["Kari Testdal søker.", "Vitnemål for Kari Testdal."]
+    blindede, avmask = blinding.blind_dokumenter(
+        dok, {"navn": ["Kari Testdal"]})
+    assert "[NAVN-1]" in blindede[0] and "[NAVN-1]" in blindede[1], \
+        f"navnet fikk ikke samme token i begge dokumentene: {blindede}"
+    assert avmask == {"[NAVN-1]": "Kari Testdal"}
+    assert "Kari" not in "".join(blindede), "klartekst igjen"
+
+
+def test_effektporten_gjelder_kandidaten_ikke_hvert_dokument():
+    """Et navn står gjerne i søknadsbrevet og ikke i vitnemålet.
+
+    Effektmålingen (runde 5/6-dommene) krevde at hvert deklarert felt
+    traff DOKUMENTET. Med blinding per dokument ville det felt en helt
+    normal bunt — porten måler derfor kandidatens dokumenter samlet.
+
+    Fortegnet er uendret: et felt som ikke traff NOEN av dem er fortsatt
+    en vakuøs deklarasjon.
+
+    MUTASJONEN SOM DREPER DENNE: krev treff i hvert enkelt dokument.
+    """
+    # `alder` står bare i det andre dokumentet.
+    blindede, _ = blinding.blind_dokumenter(
+        ["Kari Testdal søker.", "Kari Testdal er 42."],
+        {"navn": ["Kari Testdal"], "alder": ["42"]})
+    assert "[ALDER-1]" in blindede[1]
+
+    # ...men et felt som ikke traff NOEN av dem felles fortsatt.
+    with pytest.raises(blinding.Blindingsfeil) as ei:
+        blinding.blind_dokumenter(
+            ["Kari Testdal søker.", "Vitnemål."],
+            {"navn": ["Kari Testdal"], "alder": ["99"]})
+    assert ei.value.args[0] == "ugyldig_maskeringsform"
+
+
+def test_deklarert_verdi_kan_ikke_krysse_skjoten():
+    """Codex P1 på #240: den per-dokument-formens egen grense.
+
+    Erstatningen skjer i ETT dokument av gangen, så en deklarert verdi
+    som ligger PÅ TVERS av skjøten kan aldri maskeres — og `krev_blindet`
+    på den sammensatte teksten ser det ikke, fordi en overlappende
+    KORTERE søsterverdi rekker å rive bort beviset først.
+
+    Målt før fiksen, gjennom hele `evalueringsinput_dokumenter`:
+
+        (['[NAVN-2]', 'Testdal'], {'[NAVN-1]': 'Kari\\n\\nTestdal', ...})
+
+    Etternavnet i klartekst til modellen, porten grønn. Skjøt-før-blind
+    fanget det; #174 mistet det.
+
+    MUTASJONEN SOM DREPER DENNE: fjern skjøt-porten fra
+    `blind_dokumenter` — da er utfallet `(['[NAVN-2]', 'Testdal'], ...)`
+    i stedet for en `Blindingsfeil`.
+    """
+    kryssende = "Kari" + blinding.SKJOT + "Testdal"
+
+    # Verdien finnes BARE over skjøten, og `Kari` traff dokument 1 — så
+    # effektporten sier god og kan ikke felle dette.
+    assert blinding._traff_alle({"navn": [kryssende, "Kari"]},
+                                ["Kari", "Testdal"]), \
+        "forutsetningen falt bort: effektporten felte den alt"
+
+    with pytest.raises(blinding.Blindingsfeil) as ei:
+        blinding.evalueringsinput_dokumenter(
+            ["Kari", "Testdal"], {"navn": [kryssende, "Kari"]})
+    assert ei.value.args[0] == "verdi_krysser_dokumentgrense", \
+        "kryssende verdi ble avvist av feil grunn — da måler porten noe annet"
+
+    # Også når verdien I TILLEGG treffer ett dokument helt: skjøt-treffet
+    # et annet sted er like umaskerbart.
+    with pytest.raises(blinding.Blindingsfeil):
+        blinding.evalueringsinput_dokumenter(
+            ["x Kari", "Testdal y", kryssende], {"navn": [kryssende, "Kari"]})
+
+    # ENKELTTEKSTVEIEN ER URØRT: `blind` har ingen skjøt å krysse, og en
+    # verdi med blank linje maskeres der helt fint. Grensen tilhører den
+    # per-dokument-anvendte tabellen, ikke deklarasjonens form — derfor
+    # ligger den ikke i `verdiform_lukket`/manifestdøra.
+    blindet, _, _spor = blinding.evalueringsinput(kryssende, {"navn": [kryssende]})
+    assert blindet == "[NAVN-1]"
+
+    # Og en helt normal bunt går fortsatt igjennom.
+    blindede, _, _spor = blinding.evalueringsinput_dokumenter(
+        ["Kari Testdal søker.", "CV for Kari Testdal."],
+        {"navn": ["Kari Testdal"]})
+    assert all("[NAVN-1]" in d for d in blindede)
+
+
+def test_flerlinjet_verdi_inne_i_ETT_dokument_er_lovlig():
+    """Skjøt-porten måler FORESKOMSTEN, ikke deklarasjonens form (Cursor P2).
+
+    Første utgave felte enhver verdi som INNEHOLDT `SKJOT`. Det er den
+    nødvendige betingelsen for et kryssende treff, ikke den tilstrekkelige:
+    en flerlinjet adresse som står helt inne i ÉN CV krysser ingenting, og
+    ble like fullt avvist som `verdi_krysser_dokumentgrense`.
+
+    Målt før fiksen — begge disse kastet:
+
+        blind_dokumenter(["CV … Gate 1\\n\\n0020 Oslo", "Vitnemål"],
+                         {"adresse": ["Gate 1\\n\\n0020 Oslo"], …})
+        evalueringsinput_dokumenter([kryssende], {"navn": [kryssende]})
+
+    Og det andre er et KONTRAKTSBRUDD, ikke bare en streng port:
+    `evaluer_kandidat` går nå ALLTID via `evalueringsinput_dokumenter`, så
+    én-streng-veien og én-fils-bunten — som ikke har noen skjøt i det hele
+    tatt — arvet en grense som ikke gjelder dem.
+
+    MUTASJONEN SOM DREPER DENNE: mål `SKJOT in verdi` på deklarasjonen i
+    stedet for treffets plassering i `blind_dokumenter`.
+    """
+    adresse = "Gate 1" + blinding.SKJOT + "0020 Oslo"
+
+    # Verdien inneholder skjøten, men hele treffet ligger i dokument 1.
+    blindede, avmask = blinding.blind_dokumenter(
+        ["CV for Kari, " + adresse, "Vitnemål for Kari"],
+        {"navn": ["Kari"], "adresse": [adresse]})
+    assert "[ADRESSE-1]" in blindede[0], \
+        f"lovlig flerlinjet adresse i ett dokument ble ikke maskert: {blindede}"
+    assert "Gate 1" not in "".join(blindede), "klartekst igjen"
+    blinding.krev_blindet(blinding.SKJOT.join(blindede), avmask)
+
+    # ÉN-FILS-BUNTEN HAR INGEN SKJØT: porten er selv-avgrensende, for med
+    # ett dokument er hele teksten ett spenn.
+    kryssende = "Kari" + blinding.SKJOT + "Testdal"
+    blindede, _, _spor = blinding.evalueringsinput_dokumenter(
+        [kryssende], {"navn": [kryssende]})
+    assert blindede == ["[NAVN-1]"], \
+        f"én-fils-bunten arvet en grense den ikke har: {blindede}"
+
+    # KONTRAKTEN, gjennom den faktiske inngangen: `evaluer_kandidat` med
+    # ÉN streng skal fortsatt lykkes. Speiler assert-en på `evalueringsinput`
+    # over, men via veien produksjonen bruker.
+    resultat = evaluering.evaluer_kandidat(
+        _Modell(), kryssende, {"navn": [kryssende]}, {"drift": 1},
+        biasmaalinger=_MAALINGER)
+    assert resultat["kildetekst"] == "[NAVN-1]", (
+        "én-streng-veien gjennom `evaluer_kandidat` felles av skjøt-porten"
+        f" — kontraktsbrudd: {resultat['kildetekst']!r}")
+
+
+def test_sitat_kan_ikke_krysse_dokumentgrensen():
+    """#174 (Codex G7 på #170): skjøten var ikke en grense.
+
+    Dokumentene ble skjøtet med to linjeskift FØR blindingen, og et
+    modellsitat kunne krysse skjøten — `valider_funn` godtok et utdrag som
+    ikke står i NOE faktisk søknadsdokument, fordi det bare målte mot den
+    sammensatte strengen.
+
+    Grensene er nå kjennbare fordi blindingen skjer per dokument mot én
+    delt tabell: hvert blindet dokument har sin egen lengde.
+
+    MUTASJONEN SOM DREPER DENNE: send `grenser=None` fra
+    `evaluer_kandidat`.
+    """
+    kat = sorted(evaluering.FUNN_KATEGORIER)[0]
+    blindede = ["først", "andre"]
+    tekst = blinding.SKJOT.join(blindede)
+    grenser = blinding.dokumentgrenser(blindede)
+
+    # Innenfor ett dokument: godtatt.
+    ok = {"kategori": kat,
+          "kilde": {"start": 0, "slutt": 5, "sitat": "først"}}
+    assert evaluering.valider_funn(ok, tekst, grenser)["kilde"]["sitat"] == "først"
+
+    # Over skjøten: avvist — og med sin EGEN kode, ikke «uten_kilde».
+    kryss = {"kategori": kat,
+             "kilde": {"start": 0, "slutt": len(tekst), "sitat": tekst}}
+    with pytest.raises(evaluering.Evalueringsfeil) as ei:
+        evaluering.valider_funn(kryss, tekst, grenser)
+    assert ei.value.args[0] == "sitat_krysser_dokumentgrense", \
+        "kryss-sitatet ble avvist av feil grunn — da måler porten noe annet"
+
+
+def test_kryss_sitat_felles_HELE_veien_gjennom_evaluer_kandidat():
+    """Koblingen, ikke bare porten (#174).
+
+    Første utgave av kryss-sitattesten kalte `valider_funn` direkte med
+    grenser. Da var selve VEIEN utestet: mutasjonen «send `grenser=None`
+    fra `evaluer_kandidat`» overlevde, og porten som skulle hindre
+    kryss-sitater var koblet fra uten at noe ble rødt.
+
+    Denne går gjennom hele kontrakten — modellen svarer med et sitat som
+    spenner over skjøten, slik en ekte modell kan gjøre når den leser to
+    dokumenter som én tekst.
+
+    MUTASJONEN SOM DREPER DENNE: `valider_funn(funn, tekst, None)` i
+    `evaluer_kandidat`.
+    """
+    class _Kryssmodell(_Modell):
+        def vurder(self, tekst, vekter):
+            # Sitatet starter i dokument 1 og slutter i dokument 2.
+            return {"funn": [{"kategori": "uklar_tidslinje",
+                              "kilde": {"start": 0, "slutt": len(tekst),
+                                        "sitat": tekst}}],
+                    "oppfylt": {k: True for k in vekter}}
+
+    with pytest.raises(evaluering.Evalueringsfeil) as ei:
+        evaluering.evaluer_kandidat(
+            _Kryssmodell(),
+            ["Kari Testdal har ti års erfaring.", "Vitnemål for Kari Testdal."],
+            {"navn": ["Kari Testdal"]}, {"drift": 1},
+            biasmaalinger=_MAALINGER)
+    assert ei.value.args[0] == "sitat_krysser_dokumentgrense", (
+        "et sitat over skjøten nådde artefakten — grensene er ikke koblet"
+        f" gjennom `evaluer_kandidat`: {ei.value.args}")
+
+
+def test_kryss_sitat_felles_gjennom_kjor_bunt(tmp_path):
+    """#174s faktiske regresjonsflate er `kjor_bunt` (Cursor P2).
+
+    Det var HER skjøtingen skjedde før blindingen, og testen over stopper
+    på `evaluer_kandidat`: skjøter `kjor_bunt` dokumentene igjen før
+    kallet, ser evalueringen ÉN tekst, grensene blir ett eneste spenn, og
+    kryss-sitatporten slipper alt gjennom — uten at noe blir rødt. Porten
+    alene er ikke nok; koblingen må måles der den ble brutt.
+
+    MUTASJONEN SOM DREPER DENNE: send `blinding.SKJOT.join(dokumenter)`
+    (eller en annen forhåndsskjøtet streng) i stedet for dokumentlista
+    til `evaluer_kandidat` i `kjor_bunt`.
+    """
+    from modules.m57_ats import kjoring
+
+    class _Kryssmodell(_Modell):
+        def vurder(self, tekst, vekter):
+            # Sitatet spenner over HELE modellinputen — altså over skjøten
+            # så lenge dokumentene fortsatt holdes fra hverandre.
+            self.sett.append(tekst)
+            return {"funn": [{"kategori": "uklar_tidslinje",
+                              "kilde": {"start": 0, "slutt": len(tekst),
+                                        "sitat": tekst}}],
+                    "oppfylt": {k: True for k in vekter}}
+
+    arkiv = _bunt(tmp_path, [
+        ("k1/cv.html", "<p>Vitnemål for Kari Testdal.</p>".encode()),
+        ("k1/soknad.html",
+         "<p>Kari Testdal har ti års erfaring.</p>".encode()),
+    ])
+
+    modell = _Kryssmodell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
+                          kandidatfelter_for=lambda m: {
+                              "navn": ["Kari Testdal"]},
+                          tekst_for=lambda m, d: d.decode("utf-8"),
+                          biasmaalinger=_MAALINGER, antall_soknader=1)
+    assert e.value.kode == "sitat_krysser_dokumentgrense", (
+        "et sitat over skjøten overlevde HELE veien gjennom `kjor_bunt` —"
+        f" dokumentene ble skjøtet før evalueringen: {e.value.kode}")
+    # Modellen SKAL ha vært kalt: felles kjøringen tidligere, måler testen
+    # en annen port enn kryss-sitatporten, og mutasjonen over overlever.
+    assert modell.sett, "kjøringen stoppet før modellen — feil port måles"
+
+
+def test_verdi_krysser_felles_gjennom_kjor_bunt(tmp_path):
+    """Skjøt-porten koblet på produksjonsflaten (Cursor P2).
+
+    Kryss-SITATET har sin koblingstest gjennom `kjor_bunt` over; den
+    kryssende VERDIEN hadde bare en test på `evalueringsinput_dokumenter`.
+    Forskjellen er målbar: en mutasjon som fjerner skjøt-sjekken fra
+    `blind_dokumenter` fanges av porttesten, men en mutasjon som lar
+    porten stå og feilimplementerer den — eller som skjøter dokumentene
+    før `evalueringsinput_dokumenter` i `kjoring.py` slik at bunten ser
+    ett dokument og ingen skjøt finnes å krysse — overlever uten
+    end-to-end-bevis på veien produksjonen faktisk går.
+
+    Bunten har derfor TO kandidater, og den kryssende er den SISTE i
+    `sorted`-rekkefølgen. Det er det som gjør `modell.sett`-asserten til
+    et bevis og ikke en tautologi: med bare én kandidat er modellen ukalt
+    uansett hvor porten står, siden den ene kandidaten er den som felles.
+
+    MUTASJONEN SOM DREPER DENNE: send `[blinding.SKJOT.join(dokumenter)]`
+    i stedet for `dokumenter` til `evalueringsinput_dokumenter` i
+    `kjor_bunt`s klargjøringsløkke — da ser klargjøringen ett dokument
+    uten skjøt, porten tier der, og først `evaluer_kandidat` feller `k2`.
+    Koden stemmer fortsatt, men `k1` er ALT hos modellen, og det er
+    nøyaktig prisen klargjøringsløkka ble flyttet ut for å slippe.
+    """
+    from modules.m57_ats import kjoring
+
+    kryssende = "Kari" + blinding.SKJOT + "Testdal"
+    arkiv = _bunt(tmp_path, [
+        # `k1` er en helt vanlig, gyldig kandidat — og kommer først.
+        ("k1/cv.html", b"<p>Ola Nordmann har ti \xc3\xa5rs drift</p>"),
+        # `k2` bærer den kryssende verdien, fordelt på to dokumenter.
+        ("k2/a_soknad.html", b"<p>Kari</p>"),
+        ("k2/b_vitnemal.html", b"<p>Testdal</p>"),
+    ])
+    # Innholdstypeporten krever at en `.html` BEGYNNER med et merke, så
+    # uttrekket må skrelle det av: da er `k2`s dokumenttekster «Kari» og
+    # «Testdal», og verdien finnes bare over skjøten — akkurat som i
+    # porttesten. Det er nettopp jobben `tekst_for` har i produksjon.
+    def _uttrekk(_medlem, data: bytes) -> str:
+        return data.decode("utf-8").removeprefix("<p>").removesuffix("</p>")
+
+    def _felter(medlem):
+        if medlem.navn.startswith("k2/"):
+            return {"navn": [kryssende, "Kari"]}
+        return {"navn": ["Ola Nordmann"]}
+
+    modell = _Modell()
+    with pytest.raises(kjoring.Kjoringsfeil) as e:
+        kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
+                          kandidatfelter_for=_felter, tekst_for=_uttrekk,
+                          biasmaalinger=_MAALINGER, antall_soknader=2)
+    assert e.value.kode == "verdi_krysser_dokumentgrense", (
+        "en verdi som bare finnes over skjøten overlevde HELE veien"
+        f" gjennom `kjor_bunt`: {e.value.kode}")
+    # OG FØR DET FØRSTE MODELLKALLET: porten sitter i klargjøringsløkka,
+    # ikke i evalueringsløkka. Felte den først under evalueringen, ville
+    # `k1` — gyldig og tidligere i `sorted`-rekkefølgen — alt vært hos
+    # modellen når `k2` felte kjøringen. Samme regning som vakuøsiteten
+    # betalte før klargjøringen ble skilt ut.
+    assert not modell.sett, (
+        "`k1` nådde modellen før porten felte `k2` — skjøt-porten måles"
+        f" i evalueringsløkka, ikke i klargjøringen: {modell.sett}")
+
+
+def test_samme_sitat_lenger_ute_i_teksten_flyttes_ikke_felles():
+    """Klienten setter offsetene med `find` — første forekomst (Codex P2).
+
+    `modell.py` ber ikke modellen om posisjoner; den finner dem selv med
+    `tekst.find(sitat)`. Faller den første forekomsten tilfeldig over
+    skjøten mens NØYAKTIG samme utdrag står helt inne i et senere
+    dokument, felte porten et funn som har gyldig belegg.
+
+    Vi flytter referansen i stedet for å forkaste funnet. Det er ikke å
+    gjette: `find` var alt bare «første forekomst», så en annen forekomst
+    av samme streng er minst like tro mot det modellen sa — og i
+    motsetning til den forkastede peker denne på et faktisk
+    søknadsdokument. Porten måler at offsetene FLYTTET seg dit, ikke bare
+    at kallet ikke hevet.
+
+    MUTASJONEN SOM DREPER DENNE: la `_forste_innenfor` returnere `None`
+    alltid, eller behold `raise` uten flyttingen.
+    """
+    dokumenter = ["prefix", "suffix", "prefix" + blinding.SKJOT + "suffix"]
+    tekst = blinding.SKJOT.join(dokumenter)
+    grenser = blinding.dokumentgrenser(dokumenter)
+    sitat = "prefix" + blinding.SKJOT + "suffix"
+    # Slik klienten gjør det: første forekomst, som her krysser skjøten.
+    start = tekst.find(sitat)
+    assert not any(a <= start and start + len(sitat) <= b
+                   for a, b in grenser), \
+        "fikstur uten kryss — testen måler ikke det den tror"
+    funn = evaluering.valider_funn(
+        {"kategori": "uklar_tidslinje",
+         "kilde": {"start": start, "slutt": start + len(sitat),
+                   "sitat": sitat}},
+        tekst, grenser)
+    ny_start, ny_slutt = funn["kilde"]["start"], funn["kilde"]["slutt"]
+    assert (ny_start, ny_slutt) != (start, start + len(sitat)), \
+        "referansen ble stående på den kryssende forekomsten"
+    assert any(a <= ny_start and ny_slutt <= b for a, b in grenser), \
+        f"den flyttede referansen krysser fortsatt en grense: {funn}"
+    assert tekst[ny_start:ny_slutt] == sitat, \
+        "den flyttede referansen peker ikke på sitatet"
+
+    # OG NÅR DET IKKE FINNES NOEN GYLDIG FOREKOMST, felles funnet som før
+    # — flyttingen er en redning, ikke en amnesti.
+    bare_kryss = ["prefix", "suffix"]
+    tekst2 = blinding.SKJOT.join(bare_kryss)
+    with pytest.raises(evaluering.Evalueringsfeil) as ei:
+        evaluering.valider_funn(
+            {"kategori": "uklar_tidslinje",
+             "kilde": {"start": 0, "slutt": len(tekst2), "sitat": tekst2}},
+            tekst2, blinding.dokumentgrenser(bare_kryss))
+    assert ei.value.args[0] == "sitat_krysser_dokumentgrense"
+
+
+def test_sitatet_flyttes_gjennom_evaluer_kandidat():
+    """Flyttingen målt på PRODUKSJONSSTIEN, ikke på `valider_funn` (Cursor P2).
+
+    `test_samme_sitat_lenger_ute_i_teksten_flyttes_ikke_felles` over
+    kaller `valider_funn` direkte, med `grenser` levert for hånd. Men
+    `evaluer_kandidat` er den ENESTE produksjonsinngangen som regner
+    `grenser` selv — og den regner dem av de BLINDEDE dokumentene, ikke
+    av råteksten. Alle de andre #174-testene på denne veien er
+    NEGATIVER: de måler at noe felles. En mutasjon som sender
+    `grenser=None` fra `evaluer_kandidat`, eller som river flyttingen ut
+    av `valider_funn`, gir da et grønt sett likevel — for et funn som
+    ALDRI skulle vært felt, blir ikke felt av en port som er borte.
+
+    Derfor et positivt e2e-scenario: modellen svarer med et sitat hvis
+    FØRSTE forekomst krysser skjøten, mens nøyaktig samme utdrag står
+    helt inne i det siste dokumentet. Artefakten skal komme ut med
+    referansen FLYTTET dit — ikke med en `sitat_krysser_dokumentgrense`.
+
+    Klientens `tekst.find(sitat)` er etterlignet med vilje: `modell.py`
+    ber ikke modellen om posisjoner, den setter dem selv med første
+    forekomst. Det er nettopp den vanen som gjør flyttingen nødvendig.
+
+    MUTASJONEN SOM DREPER DENNE, OG SOM INGEN ANNEN TEST SER — målt:
+
+        grenser = blinding.dokumentgrenser(dokumenter)   # rå, ikke blindede
+
+    Blindingen ENDRER lengder (`Kari` → `[NAVN-1]`), så spenn regnet av
+    råtekstene peker feil sted i den strengen modellen faktisk leste.
+    Hele resten av `test_m57_modul.py` er GRØNN på den mutasjonen:
+    kryss-avvisningene felles fortsatt, bare på gale grenser. Denne
+    testen er rød, fordi den er den eneste som krever at en referanse
+    lander RIKTIG — ikke bare at en gal referanse felles.
+
+    Funnets tre foreslåtte mutasjoner (`grenser=None`, `_forste_innenfor`
+    → `None`, flyttingen fjernet) er ALLE alt røde uten denne testen —
+    målt, ikke antatt. Det var ikke der hullet lå.
+    """
+    sitat = "prefix" + blinding.SKJOT + "suffix"
+    # Dokument 1 bærer navnet som gjør blindingen ikke-vakuøs, og en
+    # `prefix` som gjør at FØRSTE forekomst av sitatet krysser skjøten
+    # mellom dokument 1 og 2. Dokument 3 bærer hele sitatet alene.
+    dokumenter = ["Kari prefix", "suffix", sitat]
+
+    class _ModellSomSiterer(_Modell):
+        def vurder(self, tekst, vekter):
+            self.sett.append(tekst)
+            # Som klienten: første forekomst, uansett hvor den faller.
+            start = tekst.find(sitat)
+            return {"funn": [{"kategori": "uklar_tidslinje",
+                              "kilde": {"start": start,
+                                        "slutt": start + len(sitat),
+                                        "sitat": sitat}}],
+                    "oppfylt": {k: True for k in vekter}}
+
+    modell = _ModellSomSiterer()
+    ut = evaluering.evaluer_kandidat(
+        modell, dokumenter, {"navn": ["Kari"]}, {"drift": 3},
+        biasmaalinger=_MAALINGER)
+
+    tekst = ut["kildetekst"]
+    # Grensene regnes av de BLINDEDE dokumentene, aldri ved å splitte
+    # `kildetekst` på skjøten: dokument 3 har selv en blank linje i seg,
+    # så en split ville laget fire spenn av tre og gjort testen rød på
+    # riktig kode. Lengdene er den eneste kilden — og bindingen under
+    # sier at fasiten og artefakten er samme koordinatsystem.
+    blindede, _ = blinding.blind_dokumenter(dokumenter, {"navn": ["Kari"]})
+    assert blinding.SKJOT.join(blindede) == tekst, \
+        "testens fasit og artefaktens `kildetekst` er ikke samme streng"
+    grenser = blinding.dokumentgrenser(blindede)
+    # FIKSTURKONTROLL: uten et kryss å redde måler testen ingenting.
+    forste = tekst.find(sitat)
+    assert not any(a <= forste and forste + len(sitat) <= b
+                   for a, b in grenser), \
+        "fiksturen krysser ikke lenger — testen måler ikke flyttingen"
+
+    assert len(ut["funn"]) == 1, f"funnet forsvant fra artefakten: {ut}"
+    kilde = ut["funn"][0]["kilde"]
+    start, slutt = kilde["start"], kilde["slutt"]
+    assert (start, slutt) != (forste, forste + len(sitat)), \
+        "referansen ble stående på den kryssende første forekomsten"
+    assert any(a <= start and slutt <= b for a, b in grenser), \
+        f"den flyttede referansen krysser fortsatt en skjøt: {kilde}"
+    # Og referansen indekserer `kildetekst`, ikke råsøknaden.
+    assert tekst[start:slutt] == sitat, \
+        "offsetene peker ikke på sitatet i `kildetekst`"
+
+
+def test_en_verdi_med_skjot_INNE_i_ett_dokument_er_lovlig():
+    """Grensen måler treffets plassering, ikke verdiens tegn (Codex P2).
+
+    En adresse som «Gate 1\n\n0123 Oslo» inneholder skjøten, men står
+    helt inne i sitt eget dokument. En port som forbød separatoren i
+    deklarerte verdier ville felt den — og den samme regresjonen traff
+    ett-dokuments-veien, der det ikke finnes noen skjøt å krysse i det
+    hele tatt.
+
+    Porten er også bisect-oppslagets korrekthetsprøve: treffet ligger i
+    det SISTE dokumentet, altså ikke det `bisect` ville landet på om
+    indeksen var av med én.
+
+    MUTASJONEN SOM DREPER DENNE: `if SKJOT in verdi: raise`, eller
+    `bisect_right(...)` uten `- 1`.
+    """
+    adresse = "Gate 1" + blinding.SKJOT + "0123 Oslo"
+    dokumenter = ["Søknad fra Kari.", "Vitnemål.", f"Bor i {adresse}."]
+    blindede, avmaskering = blinding.blind_dokumenter(
+        dokumenter, {"adresse": [adresse]})
+    assert adresse not in blinding.SKJOT.join(blindede), \
+        "adressen med skjøt i seg ble ikke maskert"
+    assert adresse in avmaskering.values(), \
+        "avmaskeringen mistet den maskerte adressen"
+    # Og ett dokument alene: ingen skjøt å krysse, uansett verdi.
+    en, _ = blinding.blind_dokumenter([f"Bor i {adresse}."],
+                                      {"adresse": [adresse]})
+    assert adresse not in en[0]
+
+
+def test_en_verdi_som_overlapper_seg_selv_skjuler_ikke_sitt_eget_kryss():
+    """Codex P1 (runde 4): `finditer` gir bare IKKE-overlappende treff.
+
+    En verdi som overlapper seg selv kan derfor gjemme sitt eget kryss.
+    `["Kari\\n\\nKari", "Kari"]` med verdien `"Kari\\n\\nKari"` gir ett
+    treff på offset 0 — helt inne i dokument 1, altså lovlig — mens
+    forekomsten på offset 7 KRYSSER skjøten og aldri blir inspisert.
+    Blindingen maskerte den første og sendte det andre navnet i klartekst
+    til modellen, mens porten sa god for det.
+
+    Lookahead-formen ser hver forekomst fordi den ikke konsumerer noe.
+
+    MUTASJONEN SOM DREPER DENNE: `_monster(verdi).finditer(samlet)`
+    tilbake.
+    """
+    dokumenter = ["Kari" + blinding.SKJOT + "Kari", "Kari"]
+    verdi = "Kari" + blinding.SKJOT + "Kari"
+    with pytest.raises(blinding.Blindingsfeil) as e:
+        blinding.blind_dokumenter(dokumenter, {"navn": [verdi]})
+    assert e.value.args[0] == "verdi_krysser_dokumentgrense", (
+        "et overlappende treff skjulte krysset — og med den gamle formen"
+        " gikk det ANDRE navnet i klartekst til modellen")
+
+    # KONTROLLEN: uten den kryssende forekomsten skal den samme verdien
+    # gå igjennom. Ellers målte testen like gjerne at porten er blind for
+    # alt som overlapper.
+    blindede, avmaskering = blinding.blind_dokumenter(
+        [verdi, "Ola"], {"navn": [verdi, "Ola"]})
+    assert "Kari" not in blinding.SKJOT.join(blindede), \
+        "den lovlige, overlappende verdien ble ikke maskert"
+
+
+def test_ingen_skjotet_kopi_naar_ingen_verdi_kan_krysse():
+    """Codex P2: kopien ble laget selv når sjekken ikke hadde noe å gjøre.
+
+    En verdi UTEN skjøt kan per konstruksjon ikke krysse en, så
+    normaltilfellet — ingen deklarert verdi inneholder blank linje —
+    trenger ingen skjøtet tekst i det hele tatt. Filteret sto likevel INNI
+    løkka, så `SKJOT.join(dokumenter)` ble materialisert først og hoppet
+    over etterpå. `parsing.MAKS_TOTAL_UTPAKKET` tillater 2 GB, og
+    `kjor_bunt` går denne veien to ganger per kandidat, så en fullt lovlig
+    bunt kunne ta livet av arbeideren for en sjekk uten arbeid.
+
+    Målt med `tracemalloc`, ikke med klokke: kopien er en STØRRELSE, og
+    en størrelse er det eneste her som ikke er flakete på en delt maskin.
+    Fiksturen er ~8 MB tekst; toppen skal ligge godt under den, og
+    kontrollen under viser at porten faktisk MÅLER kopien — med en
+    kryssbar verdi til stede kommer den tilbake.
+
+    MUTASJONEN SOM DREPER DENNE: flytt `SKJOT.join` ut av `if kryssbare:`
+    igjen.
+    """
+    import tracemalloc
+
+    dokumenter = ["Kari Testdal bor i Oslo. " * 20_000 for _ in range(16)]
+    mb = sum(len(d) for d in dokumenter) / 1e6
+    assert mb > 5, f"fiksturen er for liten til å måle noe: {mb:.1f} MB"
+
+    tracemalloc.start()
+    blinding.blind_dokumenter(dokumenter, {"navn": ["Kari Testdal"]})
+    _, uten = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+
+    # Kontrollen: samme tekst, men EN verdi som kan krysse. Da MÅ kopien
+    # bygges, og toppen stiger med tekstens egen størrelse. Uten dette
+    # leddet målte porten like gjerne at fiksturen var for liten.
+    adresse = "Gate 1" + blinding.SKJOT + "0123 Oslo"
+    med_kryssbar = list(dokumenter)
+    med_kryssbar[0] = med_kryssbar[0] + " " + adresse
+    tracemalloc.start()
+    blinding.blind_dokumenter(
+        med_kryssbar, {"navn": ["Kari Testdal"], "adresse": [adresse]})
+    _, med = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+
+    assert med > uten, (
+        f"toppen er den samme med og uten kryssbar verdi ({uten} vs {med})"
+        " — porten måler ikke kopien den tror den måler")
+    assert uten < med - mb * 1e6 / 2, (
+        f"den skjøtede kopien bygges selv uten kryssbare verdier:"
+        f" {uten / 1e6:.1f} MB mot {med / 1e6:.1f} MB med")
+
+
+def test_grenseoppslaget_skalerer_med_dokumentantallet():
+    """Buntgaten tillater 20 000 dokumenter — formen må tåle det.
+
+    Uten forhåndsfilteret og bisect leste sjekken `grenser` fra
+    begynnelsen for HVERT treff. Målt på maskinen porten kjører på:
+    `['a'] * 20_000` med den vanlige verdien «a» tok 15,4 sekunder for ÉN
+    verdi. Buntgaten tillater opptil seksti deklarerte verdier per
+    kandidat, altså et kvarter før modellen i det hele tatt kalles — og
+    dyrest på den ærlige veien, der ingen verdi krysser noe.
+
+    Den nye formen bruker 0,034 s på det samme. Budsjettet er to
+    sekunder: seksti ganger over den nye målingen, sju ganger under den
+    gamle.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `if SKJOT not in verdi: continue`,
+    eller bytt bisect-oppslaget tilbake til `any(... for ... in grenser)`.
+    """
+    import time
+
+    dokumenter = ["a"] * 20_000
+    start = time.perf_counter()
+    blinding.blind_dokumenter(dokumenter, {"navn": ["a"]})
+    brukt = time.perf_counter() - start
+    assert brukt < 2.0, (
+        f"20 000 dokumenter tok {brukt:.1f} s i grensesjekken — formen er"
+        " kvadratisk i dokumentantallet igjen, og en lovlig bunt kan da"
+        " stanse arbeideren før noe modellkall")
+
+
+def test_grensene_regnes_av_den_samme_skjoten():
+    """Ett sted for skjøten, ellers peker grensene feil.
+
+    `dokumentgrenser` må regne spennene ut fra NØYAKTIG den strengen
+    sammensetningen bruker. Drifter de to, er kryss-sitatporten en port
+    som måler noe annet enn den tror — og det er verre enn ingen port.
+
+    MUTASJONEN SOM DREPER DENNE: hardkod en annen skjøt i én av dem.
+    """
+    dok = ["abc", "de", "f"]
+    tekst = blinding.SKJOT.join(dok)
+    for (a, b), d in zip(blinding.dokumentgrenser(dok), dok):
+        assert tekst[a:b] == d, (
+            f"grensen {a}:{b} traff {tekst[a:b]!r}, ikke {d!r} — skjøten"
+            " som ble brukt til å sette sammen er ikke den grensene ble"
+            " regnet av")
+
+
+def test_blindingen_maales_paa_den_sammensatte_inputen():
+    """`krev_blindet` skal måle det modellen FAKTISK leser.
+
+    Måler den per dokument, finnes en verdi som er delt over to dokumenter
+    ikke i noen av dem hver for seg — og porten løper sine runder uten å se
+    den. Den sammensatte teksten er inputen; bitene er bare hvordan den
+    ble laget.
+    """
+    blindede, avmask, _spor = blinding.evalueringsinput_dokumenter(
+        ["Kari Testdal søker.", "Hilsen Kari Testdal"],
+        {"navn": ["Kari Testdal"]})
+    samlet = blinding.SKJOT.join(blindede)
+    assert "Kari" not in samlet
+    blinding.krev_blindet(samlet, avmask)      # skal ikke kaste
