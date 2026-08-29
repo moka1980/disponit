@@ -2060,6 +2060,47 @@ def test_173_skriveveien_er_claimbundet_og_idempotent(migrator, miljo):
             assert FIXTUR in tekst
             assert felter == {"[NAVN-1]": f"Kari {FIXTUR}"}, felter
 
+            # (5) INTERVJUSPØRSMÅL ER SYMMETRISK MED DE ANDRE LAGRENE
+            # (Cursor P2-2). Armen sto som `if sporsmal:`, og da var
+            # «ingen spørsmål» ikke en lagret sannhet, men et hopp over
+            # lageret — begge retninger brøt idempotensløftet stille.
+            # Står ETTER radtellingen over, som er en port på nøyaktig
+            # én rad per lager for k1.
+            #
+            # (5a) r3 skrev `intervjusporsmal: null`, altså den kanoniske
+            # «ingen spørsmål» (`[]`). En liste etterpå er en ANNEN
+            # sannhet under samme nøkkel.
+            r7 = c.post("/v1/rekruttering/kandidatartefakt",
+                        json={**art, "intervjusporsmal": ["Hvorfor?"]},
+                        headers=hode)
+            assert r7.status_code == 409, r7.text
+            assert r7.json()["feil"] == "kandidatdata_konflikt"
+
+            # (5b) Motsatt vei, på egen kandidat: liste først, `null`
+            # etterpå. Det var den STILLE retningen — armen ble hoppet
+            # over, og den gamle lista ble stående uten at noen målte
+            # avviket.
+            art2 = {**art, "kandidat_id": "k2",
+                    "intervjusporsmal": ["Hvorfor?"]}
+            r8 = c.post("/v1/rekruttering/kandidatartefakt",
+                        json=art2, headers=hode)
+            assert r8.status_code == 200, r8.text
+            r9 = c.post("/v1/rekruttering/kandidatartefakt",
+                        json={**art2, "intervjusporsmal": None},
+                        headers=hode)
+            assert r9.status_code == 409, r9.text
+            assert r9.json()["feil"] == "kandidatdata_konflikt"
+            # k1 har en rad med `[]` — «ingen spørsmål» er LAGRET, ikke
+            # utelatt. Uten det er (5a) uoppnåelig.
+            _sett_kontekst(migrator, TENANT)
+            sp = migrator.execute(
+                "SELECT sporsmal FROM kandidat_intervjusporsmal"
+                " WHERE tenant=%s AND prosess_id=%s"
+                "   AND kandidat_id=%s::uuid",
+                (TENANT, pid, kid_uuid)).fetchone()
+            migrator.rollback()
+            assert sp is not None and sp[0] == [], sp
+
             # (4b) Reapet anker: samme avvisning — døren skriver aldri
             # inn i en prosess forbi kundens frist.
             _sett_kontekst(rt, TENANT)

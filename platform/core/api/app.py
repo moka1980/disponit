@@ -2663,26 +2663,41 @@ def _kandidatdata(tjeneste: Tjeneste, request: Request, form: str) -> Response:
                     (raa_m, tenant, prosess_id, kid_uuid)).fetchone()
                 if likt is None or not likt[0]:
                     return _konflikt("avmaskering")
-            if sporsmal:
-                raa_s = json.dumps(sporsmal, ensure_ascii=False,
-                                   sort_keys=True, separators=(",", ":"))
-                satt = conn.execute(
-                    "INSERT INTO kandidat_intervjusporsmal (tenant,"
-                    " prosess_id, kandidat_id, sporsmal, innhold_sha256)"
-                    " VALUES (%s,%s,%s,%s::jsonb,%s)"
-                    " ON CONFLICT DO NOTHING",
-                    (tenant, prosess_id, kid_uuid, raa_s,
-                     hashlib.sha256(raa_s.encode("utf-8")).hexdigest()
-                     )).rowcount
-                if not satt:
-                    likt = conn.execute(
-                        "SELECT sporsmal = %s::jsonb"
-                        " FROM kandidat_intervjusporsmal"
-                        " WHERE tenant=%s AND prosess_id=%s"
-                        "   AND kandidat_id=%s",
-                        (raa_s, tenant, prosess_id, kid_uuid)).fetchone()
-                    if likt is None or not likt[0]:
-                        return _konflikt("intervjusporsmal")
+            # SYMMETRISK MED ARTEFAKT/AVMASKERING (Cursor P2-2). Armen sto
+            # som `if sporsmal:`, og da var «ingen spørsmål» ikke en
+            # LAGRET sannhet, men et hopp over lageret. Begge veier brøt
+            # løftet i docstringen over:
+            #
+            #   null først, deretter liste  → INSERT-en lyktes, og et
+            #     nytt svar sto stille under samme nøkkel;
+            #   liste først, deretter null  → armen ble hoppet over, og
+            #     den gamle lista ble stående uten at noen målte avviket.
+            #
+            # To sannheter under samme `(tenant, prosess_id,
+            # kandidat_id)` er nøyaktig det `kandidatdata_konflikt`
+            # finnes for. Feltet får derfor ÉN kanonisk form: fravær og
+            # tom liste er samme påstand, `[]`, og den skrives — 057s
+            # CHECK krever `sporsmal IS NOT NULL`, ikke ikke-tom. Da
+            # måles armen som de to over, med samme idempotens.
+            raa_s = json.dumps(sporsmal or [], ensure_ascii=False,
+                               sort_keys=True, separators=(",", ":"))
+            satt = conn.execute(
+                "INSERT INTO kandidat_intervjusporsmal (tenant,"
+                " prosess_id, kandidat_id, sporsmal, innhold_sha256)"
+                " VALUES (%s,%s,%s,%s::jsonb,%s)"
+                " ON CONFLICT DO NOTHING",
+                (tenant, prosess_id, kid_uuid, raa_s,
+                 hashlib.sha256(raa_s.encode("utf-8")).hexdigest()
+                 )).rowcount
+            if not satt:
+                likt = conn.execute(
+                    "SELECT sporsmal = %s::jsonb"
+                    " FROM kandidat_intervjusporsmal"
+                    " WHERE tenant=%s AND prosess_id=%s"
+                    "   AND kandidat_id=%s",
+                    (raa_s, tenant, prosess_id, kid_uuid)).fetchone()
+                if likt is None or not likt[0]:
+                    return _konflikt("intervjusporsmal")
         conn.commit()
         return kanonisk_json(svar, 200, {"x-request-id": rid})
     except psycopg.Error as e:
