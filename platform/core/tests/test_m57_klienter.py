@@ -14,7 +14,8 @@ HTTP og subprocess mockes; ingen ny maskin, ingen ekte server (K1).
 from __future__ import annotations
 
 import io
-import subprocess
+import shlex
+import shutil
 import types
 import urllib.error
 import zipfile
@@ -216,43 +217,98 @@ def test_ukjent_endelse_er_ustottet_ikke_tom_tekst():
         assert e.value.kode == "uttrekk_ustottet", navn
 
 
-def test_pdf_delegeres_til_kommandoen_og_feil_kodes(monkeypatch):
+def _pdf_kommando(tmp_path, navn, kropp):
+    """En EKTE uttrekkskommando av samme form som `pdftotext - -`.
+
+    TESTEN MÅ DRIVE DEN VEIEN KODEN FAKTISK GÅR (Codex P2, #173). Denne
+    testen mocket `subprocess.run`, men `_pdf` gikk over til `Popen` med
+    stdout til fil da taket ble flyttet inn i skrivingen. Patchen traff
+    da ingenting: testen startet den ekte, fraværende `pdftotext` og
+    felte på `FileNotFoundError` i suksesstilfellet. En mock av et navn
+    produksjonskoden ikke lenger kaller, er ikke en svakere test — den
+    er ingen test, og den var rød i CI.
+
+    Ekte kommando i stedet for en ny Popen-attrapp: `_kjor_bundet` måler
+    en voksende FIL og dreper en LEVENDE prosess, og en attrapp av det
+    er en simulator av nettopp mekanismen som skal prøves (K4/SP-13).
+    Samme form som `test_173_pdf_stdout_felles_mens_den_skrives_ikke_etterpa`.
+    """
+    python = shutil.which("python3") or shutil.which("python")
+    assert python, "ingen python-tolk å bygge en ekte uttrekkskommando av"
+    skript = tmp_path / navn
+    skript.write_text("import sys, time\nsys.stdin.buffer.read()\n" + kropp,
+                      encoding="utf-8")
+    return f"{shlex.quote(python)} {shlex.quote(str(skript))}"
+
+
+def test_pdf_delegeres_til_kommandoen_og_feil_kodes(tmp_path):
     """PDF delegeres til en konfigurert kommando (`pdftotext`-form) —
     samme delegasjonsmønster som m56s motor. Alt som kan gå galt der ute
     blir en kodet `Uttrekksfeil`, aldri et rått `OSError` inn i
     kjøreløkka."""
-    ut = u.Uttrekker("pdftotext - -")
-
     # 1) Suksess: stdout er teksten.
-    monkeypatch.setattr(u.subprocess, "run", lambda *a, **kw:
-                        types.SimpleNamespace(returncode=0,
-                                              stdout="drift i tre år".encode()))
+    ut = u.Uttrekker(_pdf_kommando(
+        tmp_path, "ok.py",
+        "sys.stdout.buffer.write('drift i tre år'.encode('utf-8'))\n"))
     assert ut.tekst_for(_medlem("cv.pdf"), b"%PDF") == "drift i tre år"
 
-    # 2) Kommandoen finnes ikke / frist utløp / ikke-null exit.
-    for reiser, kode in ((OSError("finnes ikke"), "uttrekk_uleselig"),
-                         (subprocess.TimeoutExpired("pdftotext", 60),
-                          "uttrekk_uleselig")):
-        def _run(*a, **kw):
-            raise reiser
-        monkeypatch.setattr(u.subprocess, "run", _run)
-        with pytest.raises(u.Uttrekksfeil) as e:
-            ut.tekst_for(_medlem("cv.pdf"), b"%PDF")
-        assert e.value.kode == kode, (reiser, e.value.kode)
-
-    monkeypatch.setattr(u.subprocess, "run", lambda *a, **kw:
-                        types.SimpleNamespace(returncode=1, stdout=b""))
+    # 2) Ikke-null exit: kommandoen kjørte, men fikk ikke lest pdf-en.
+    ut = u.Uttrekker(_pdf_kommando(tmp_path, "rc1.py", "sys.exit(1)\n"))
     with pytest.raises(u.Uttrekksfeil) as e:
         ut.tekst_for(_medlem("cv.pdf"), b"%PDF")
-    assert e.value.kode == "uttrekk_uleselig"
+    assert e.value.kode == "uttrekk_uleselig", e.value.kode
     assert "rc=1" in str(e.value)
 
-    # 3) Ugyldig UTF-8 fra kommandoen erstattes, den feller ikke: teksten
+    # 3) Fristen løper ut: kommandoen henger uten å skrive.
+    ut = u.Uttrekker(_pdf_kommando(tmp_path, "henger.py", "time.sleep(120)\n"),
+                     frist_s=0.5)
+    with pytest.raises(u.Uttrekksfeil) as e:
+        ut.tekst_for(_medlem("cv.pdf"), b"%PDF")
+    assert e.value.kode == "uttrekk_uleselig", e.value.kode
+
+    # 4) Ugyldig UTF-8 fra kommandoen erstattes, den feller ikke: teksten
     # er kandidatens, og en enkelt rar byte skal ikke koste evalueringen.
-    monkeypatch.setattr(u.subprocess, "run", lambda *a, **kw:
-                        types.SimpleNamespace(returncode=0,
-                                              stdout=b"drift \xff her"))
+    ut = u.Uttrekker(_pdf_kommando(
+        tmp_path, "raabyte.py", "sys.stdout.buffer.write(b'drift \\xff her')\n"))
     assert "drift" in ut.tekst_for(_medlem("cv.pdf"), b"%PDF")
+
+
+def test_173_pdf_skiller_spolefeil_fra_kommandofeil(tmp_path, monkeypatch):
+    """Codex P2 (#173): `_pdf` la BEGGE i `uttrekk_uleselig`.
+
+    Grenen fanget `OSError` fra hele blokken — `TemporaryFile`, `write`,
+    `read` og `fstat` — og kalte alt sammen et ulesbart dokument. De to
+    kildene har ikke samme eier:
+
+    * Det MIDLERTIDIGE FILSYSTEMET er DRIFT. Er spolen full, borte eller
+      svarer den EIO, ble bunten avbrutt med at søkerens pdf var
+      ulesbar; arbeiderens retry og driftsalarmen leste da feil kø, mens
+      dokumentet var helt i orden. Samme misattribusjon `_spoletekst`
+      fikk rettet én kodevei lenger ut, og samme kode: `infrastrukturfeil`.
+    * En kommando som ikke lar seg STARTE er DEPLOYMENTEN. Det er samme
+      sak som en tom `pdf_kommando` — pdf-uttrekk finnes ikke her — og
+      derfor `uttrekk_ustottet`. Meldt som drift ville den blitt
+      retryet mot en feil som aldri går over av seg selv.
+
+    MUTASJONEN SOM DREPER DENNE: gi begge veiene samme kode igjen.
+    """
+    # Spolen svikter: `infrastrukturfeil`, ikke dokumentets feil.
+    ut = u.Uttrekker(_pdf_kommando(tmp_path, "aldri.py", "pass\n"))
+
+    def _full_disk(*a, **kw):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(u.tempfile, "TemporaryFile", _full_disk)
+    with pytest.raises(u.Uttrekksfeil) as e:
+        ut.tekst_for(_medlem("cv.pdf"), b"%PDF")
+    assert e.value.kode == "infrastrukturfeil", e.value.kode
+    monkeypatch.undo()
+
+    # Kommandoen finnes ikke: `uttrekk_ustottet`, ikke drift.
+    ut = u.Uttrekker(shlex.quote(str(tmp_path / "pdftotext-finnes-ikke")))
+    with pytest.raises(u.Uttrekksfeil) as e:
+        ut.tekst_for(_medlem("cv.pdf"), b"%PDF")
+    assert e.value.kode == "uttrekk_ustottet", e.value.kode
 
 
 def test_html_trekkes_ut_med_ekte_parser():
