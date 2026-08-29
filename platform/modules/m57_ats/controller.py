@@ -546,10 +546,28 @@ def kjor_en(klient, token: str, modell, uttrekker, biasmaalinger,
             # artefakt-JSON-en ville gitt `kandidat_evalueringsartefakt`
             # en klartekst-kopi som overlever nøyaktig det
             # `kandidat_avmaskering` reapes for.
+            #
+            # OG VEKTENE FØLGER MED (Codex P1). `rekruttering._kandidater`
+            # leser `vekter` fra HVERT `kandidat_evalueringsartefakt` og
+            # utleder prosessens vekting av dem (`vekter_kilde`); sinken
+            # plukket funn/oppfylt/kildetekst og lot feltet ligge. For
+            # enhver profil hvis vekter avviker fra reserven `{krav: 3}`
+            # rekonstruerte signeringsflaten derfor LIKE vekter og sa
+            # `vekter_kilde="standard"` — altså viste den en annen
+            # vekting enn den `ranger` faktisk rangerte etter, foran en
+            # irreversibel signering. Kilden er stillingsprofilens egne
+            # tall (`profil["krav"]`), de samme `kjor_bunt` får.
+            #
+            # Ingen ny port her: `_vekter_lesbare` på leseveien er
+            # skriveveiens egen dom lest på riktig side av lagringen
+            # (eiers K2-dom A), og et sett den ikke kan lese faller til
+            # reserven nøyaktig som før. Å legge en andre kopi av den
+            # porten her ville vært maskinen §9 K1 forbyr.
             r = lever("/v1/rekruttering/kandidatartefakt", {
                 **claim_trippel, "kandidat_id": kandidat_id,
                 "artefakt": {"funn": resultat["funn"],
                              "oppfylt": resultat["oppfylt"],
+                             "vekter": vekter,
                              "kildetekst": resultat["kildetekst"]},
                 "avmaskering": resultat["avmaskering"],
                 "intervjusporsmal": resultat.get("intervjusporsmal") or

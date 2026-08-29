@@ -250,8 +250,8 @@ def test_173_kandidatdata_stroemmes_underveis(monkeypatch):
     assert isinstance(dok["tekst"], str) and dok["tekst"].strip(), \
         "dokumentveien skal bære parsetteksten"
     art = k.kandidatartefakter[0]["artefakt"]
-    assert set(art) == {"funn", "oppfylt", "kildetekst"}, \
-        "artefaktveien skal bære evalueringens tre deler, intet mer"
+    assert set(art) == {"funn", "oppfylt", "vekter", "kildetekst"}, \
+        "artefaktveien skal bære evalueringens fire deler, intet mer"
     # AVMASKERINGEN ER EGET TOPPNIVÅFELT (Codex P1). Den skal FINNES —
     # uten den er den blindede `kildetekst` over lagret med tokener ingen
     # kan løse opp — og den skal ikke ligge INNE i `artefakt`, for da får
@@ -265,6 +265,36 @@ def test_173_kandidatdata_stroemmes_underveis(monkeypatch):
     assert "avmaskering" not in art
     # Rapporten er fortsatt komplett (v1-skjemaet, til #168s v2).
     assert "/v1/artefakt" in k.stier
+
+
+def test_173_vektene_folger_hver_kandidat_inn_i_lageret(monkeypatch):
+    """#173 (Codex P1): profilens vekter persisteres med kandidaten.
+
+    `rekruttering._kandidater` leser `vekter` fra HVERT
+    `kandidat_evalueringsartefakt` og utleder prosessens vekting av dem
+    (`vekter_kilde`). Sinken plukket funn/oppfylt/kildetekst og lot
+    feltet ligge, så flaten fant ingen vekter, falt til reserven
+    `{krav: 3}` og meldte `vekter_kilde="standard"` — den VISTE altså en
+    annen vekting enn den `ranger` faktisk rangerte etter, foran en
+    irreversibel signering.
+
+    Vekten her er 7, ikke 3: med fixturens standardprofil er reserven og
+    profilen samme tall, og testen ville vært grønn også uten feltet.
+    Det er nettopp de profilene som avviker fra reserven funnet handler
+    om.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `"vekter": vekter` fra
+    `lagre_kandidat`s artefaktkropp."""
+    from modules.m57_ats import controller
+    monkeypatch.setattr(controller, "_sov", lambda s: None)
+    profil = {"profil_id": "p", "versjon": 1, "navn": "N",
+              "krav": [{"kravnavn": "drift", "vekt": 7}]}
+    k = _Stubklient(payload=_payload(stillingsprofil=profil))
+    res = _kjor(k)
+    assert res["utfall"] == "utfort", res
+    assert k.kandidatartefakter, "ingen artefakter strømmet til lageret"
+    for kall in k.kandidatartefakter:
+        assert kall["artefakt"]["vekter"] == {"drift": 7}, kall["artefakt"]
 
 
 def test_173_sinkfeil_er_kodet_avbrudd(monkeypatch):
