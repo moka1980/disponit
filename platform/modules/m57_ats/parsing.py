@@ -13,6 +13,7 @@ plattform-sidens dør inn og slipper bare gjennom det gaten har målt.
 """
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import lzma
@@ -33,8 +34,9 @@ MAKS_ENKELTFIL = 25 * 1024 * 1024              # 25 MB
 # UNNTAKET — den er en av de tre lovede innholdstypene, og magien
 # `PK` kreves der (innholdstypeporten under), mens alt annet med
 # arkivmagi eller arkivendelse felles. Unntaket gjelder TYPEN, ikke
-# grensene: `_inspiser_docx` måler det indre arkivet mot BUNTENS
-# budsjett — samme tall, samme teller, aldri et friskt sett per docx.
+# grensene: gaten (`_mal_medlem`) bruker seg selv på det indre
+# arkivet, mot BUNTENS budsjett — samme kode, samme teller, aldri et
+# friskt sett per docx.
 #: OOXML-pakkens OBLIGATORISKE deler. En docx er ikke «en zip som heter
 #: .docx» — den er en OPC-pakke, og uten disse to finnes det ikke noe
 #: dokument å trekke tekst ut av (Codex P2). Uten kravet passerte enhver
@@ -133,6 +135,49 @@ def _ser_ut_som_html(hode: bytes) -> bool:
     return hode.lstrip(b" \t\r\n\x00").startswith(b"<")
 
 
+@contextlib.contextmanager
+def _kodet_lesefeil(navn: str, *, mangler: str):
+    """UTTREKKETS bibliotekformer, oversatt til kodede utfall ÉTT sted.
+
+    `_apne_katalog` dekker åpningen av sentralkatalogen; dette dekker
+    lesingen av et medlem. De to lesestedene — innholdsstrømmen og
+    `les_manifest` — hadde hver sin kopi av nøyaktig denne kjeden, og
+    det er samme rot som #155 river ut på gate-siden: to
+    implementasjoner av samme oversettelse divergerer med nødvendighet.
+    Bare KeyError-armen skiller dem, og den er derfor et argument
+    (`mangler`) — en deklarasjon vi ikke finner er `manifest_mangler`,
+    et deklarert medlem vi ikke finner er `manifest_medlem_mangler`.
+
+    Kontrakten er et KODET utfall (SP-3), aldri en rå bibliotekfeil:
+    ødelagte headere og CRC-avvik kommer som `BadZipFile`, men en SKADET
+    komprimert strøm feller dekompressoren FØR CRC-en måles, og da i det
+    formatets egen form — `zlib.error` for DEFLATE, `lzma.LZMAError` for
+    LZMA, og en errno-løs `OSError` for BZIP2. `OSError` MED errno er
+    noe helt annet: en lesefeil på disk eller nettlager er DRIFT, ikke
+    buntens skyld, og å kalle den `korrupt_bunt` ville gjort vår feil til
+    en kundeavvisning. Passord gir `RuntimeError` og en manglende
+    komprimeringsmodul `NotImplementedError` — begge er bunter vi ikke
+    kan lese, ikke bunter som er ødelagte.
+    """
+    try:
+        yield
+    except KeyError as feil:
+        raise Buntfeil(mangler, navn) from feil
+    except zipfile.BadZipFile as feil:
+        raise Buntfeil("korrupt_bunt", f"{navn}: {feil}") from feil
+    except (zlib.error, lzma.LZMAError) as feil:
+        raise Buntfeil("korrupt_bunt",
+                       f"{navn}: {type(feil).__name__}") from feil
+    except OSError as feil:
+        if feil.errno is not None:
+            raise
+        raise Buntfeil("korrupt_bunt",
+                       f"{navn}: {type(feil).__name__}") from feil
+    except (RuntimeError, NotImplementedError) as feil:
+        raise Buntfeil("uleselig_medlem",
+                       f"{navn}: {type(feil).__name__}") from feil
+
+
 def _apne_katalog(sti: str | Path) -> zipfile.ZipFile:
     """DEN YTRE SENTRALKATALOGEN HAR ÉN DØR, OG DEN ER KODET (Codex P2).
 
@@ -144,7 +189,7 @@ def _apne_katalog(sti: str | Path) -> zipfile.ZipFile:
     først inne i medlemssløyfa), så en angriperlevert bunt ble en uventet
     arbeiderfeil i stedet for det kodede utfallet kontrakten lover
     (SP-3). Den INDRE katalogen har hatt nettopp denne døren siden
-    docx-runden (`_inspiser_docx`); den ytre hadde den ikke.
+    docx-runden (`_mal_docx`); den ytre hadde den ikke.
 
     Kodene er de samme som medlemssløyfa bruker, fordi det er de samme
     bibliotekformene: bytene i katalogen er ødelagte (`BadZipFile`, og
@@ -291,136 +336,253 @@ def inspiser_bunt(sti: str | Path) -> list[Medlem]:
     return medlemmer
 
 
-def _inspiser_docx(navn: str, data: bytes, *,
-                   filer_brukt: int = 0,
-                   byte_brukt: int = 0) -> tuple[int, int]:
-    """DOCX-unntaket måles som alle andre arkiver — mot BUNTENS budsjett,
-    ikke mot sitt eget (Codex P1).
+@dataclass
+class Budsjett:
+    """Buntens ENE budsjett, båret gjennom alle nivåer (#155).
 
-    ROTÅRSAKEN, funnet fjerde runde på denne funksjonen: den indre gaten
-    var en KOPI av den ytre med SIN EGEN tilstand. Hver runde fant nok en
-    grense som ikke var kopiert (medlemsnavnet, 25 MB, duplikatene) — og
-    denne gangen var det ikke en manglende sjekk, men en nullstilt
-    teller: `MAKS_FILER` ble målt på nytt per docx, så to docx-er à
-    20 000 indre medlemmer passerte begge portene og ga 40 000 filer til
-    uttrekket. Grensene er buntens, ikke per arkiv: det som er brukt
-    kommer inn (`filer_brukt`, `byte_brukt`), og det som ble brukt går ut
-    (utpakkede byte, antall medlemmer). Da kan ingen ny nøstet fil få et
-    friskt budsjett.
+    Ni runder på `_inspiser_docx` fant ni ulike former og én rot: to
+    implementasjoner av samme grense divergerer med nødvendighet. Den
+    femte runden fant nettopp dette feltet — `MAKS_FILER` ble målt på
+    nytt per docx, så to docx-er à 20 000 indre medlemmer passerte begge
+    portene og ga 40 000 filer til uttrekket.
 
-    En `.docx` ble sluppet gjennom på `PK`-magien og sin egen KOMPRIMERTE
-    størrelse alene. En liten docx kan bære et indre medlem som pakker ut
-    til gigabyte: den ytre bunten passerte hver eneste 2 GB/100:1-sjekk,
-    fordi den bare inneholdt de alt komprimerte docx-bytene, og bomben
-    møtte først tekstuttrekket. Unntaket er at DOCX er en av de tre lovede
-    innholdstypene — ikke at grensene ikke gjelder inni den.
+    Budsjettet er derfor et OBJEKT som gaten muterer, ikke tall som
+    sendes inn og ut. Et friskt budsjett kan da ikke oppstå ved et uhell:
+    det må konstrueres, og det gjøres ett sted.
+    """
 
-    UTSATT, K2 → #155. NI runder har funnet ni ULIKE former og ÉN rot:
-    to implementasjoner av samme grense divergerer med nødvendighet.
-    Eier valgte A — én strømmende gate, brukt rekursivt — som eget issue
-    + egen PR. Denne funksjonen er den lappede tilstanden til den lander,
-    og hver lapp under er navngitt med runden som fant den.
+    filer: int = 0
+    byte: int = 0
 
-    Runde 8 (Cursor P1) og runde 9 (Cursor P2) er IKKE lappet, og det er
-    med vilje — de treffer ikke en manglende sjekk, men selve
-    delelinjen mellom de to gatene, altså nøyaktig det #155 river ut:
 
-    * Runde 8 — GRENSENE HER MÅLER KATALOGEN, IKKE BYTENE. `file_size`
-      og `compress_size` under er hva den indre sentralkatalogen
-      PÅSTÅR; ingenting leses, og ingen CRC måles. En patchet indre
-      katalog kan derfor oppgi lav `file_size` og gå forbi 25 MB,
-      100:1 og 2 GB, mens den faktiske ekspansjonen først skjer i
-      tekstuttrekket. Den ytre veien lærte dette i `les_porsjonsvis`
-      (katalogen er en PÅSTAND, strømmen måler byte). Lappen ville vært
-      å lese hvert indre medlem med et hardt tak her — som ER den
-      strømmende gaten, bygget for tredje gang, i en fiksrunde. #155s
-      egen tekst felte denne formen på forhånd: «Katalogen i en zip er
-      ikke bytene i den.»
-    * Runde 9 — BUDSJETTLINJEN. `les_porsjonsvis` legger både
-      containerens målte byte (`lest`) og denne funksjonens
-      katalogsum (`utpakket`) til totalen, så et docx-lag betaler to
-      ganger. Det feiler LUKKET (en ærlig bunt kan avvises som for
-      stor, ingen slipper gjennom), og det er grunnen til at det ikke
-      hastes: å fjerne `lest` her ville tatt bort den ENESTE målte
-      byten en docx bidrar med, og latt katalogpåstanden fra runde 8
-      stå alene som budsjett. Hvilket lag som betaler, er ikke en lapp
-      — det er definisjonen av «ett budsjett, gjennomgående», og den
-      hører til i #155.
+def _mal_medlem(navn: str, aapne, *, budsjett: Budsjett,
+                komprimert: int | None = None,
+                kontekst: str = "", dybde: int = 0) -> bytes:
+    """ÉN gate. Måler ett medlem mot buntens budsjett, og bruker seg selv
+    rekursivt på et DOCX-medlem (#155, eiers valg A).
+
+    NAVNET MÅLES RÅTT (runde 6). Kontekst legges på for FEILMELDINGENS
+    skyld, aldri før målingen: `_sjekk_navn("cv.docx//tmp/x")` ser en
+    relativ sti med et rart navn, mens `_sjekk_navn("/tmp/x")` ser den
+    absolutte stien den er. Runde 6 fant nøyaktig den forskjellen, og
+    her er den en egenskap ved gaten, ikke en lapp.
+
+    BYTENE ER SANNHETEN, IKKE KATALOGEN (runde 8). `file_size` og
+    `compress_size` er hva sentralkatalogen PÅSTÅR. En patchet indre
+    katalog kunne oppgi lav `file_size` og gå forbi 25 MB, 100:1 og 2 GB,
+    mens den faktiske ekspansjonen skjedde i tekstuttrekket. Gaten leser
+    derfor strømmen med et hardt tak og teller det den FAKTISK fikk —
+    samme lærdom den ytre veien tok i `les_porsjonsvis`.
+
+    FORHOLDET MÅLES MOT DET VI FAKTISK FIKK. `MAKS_KOMPRIMERINGSFORHOLD`
+    sto før på katalogens `file_size / compress_size` — påstand delt på
+    påstand. Her er telleren de bytene strømmen TALTE, så en katalog som
+    lyver lavt om `file_size` ikke lenger kjøper seg forbi porten; den
+    lyver da bare om sin egen nevner. `compress_size <= 0` på noe som
+    leverte byte er et uendelig forhold, ikke «ukomprimert».
+
+    ETT BUDSJETT, ÉN GANG (runde 9, presisert av Cursor-runde 2).
+    Tidligere la strømmen containerens målte byte OG docx-gatens
+    katalogsum til totalen, så et docx-lag betalte to ganger. Formen
+    overlevde inn i denne gaten: containerens `lest` ble lagt til, og
+    så betalte hvert indre medlem for de SAMME bytene en gang til.
+    Nå betaler BLADENE, og bare de: et docx-medlem legger ikke sin egen
+    blob til totalen, fordi medlemmene inni den gjør det. PDF og HTML
+    er blader og betaler for seg selv. Ingen dobbelttelling, ingen
+    nullstilling.
+    """
+    fullt = f"{kontekst}/{navn}" if kontekst else navn
+    _sjekk_navn(navn, kontekst=fullt if kontekst else None)
+
+    budsjett.filer += 1
+    if budsjett.filer > MAKS_FILER:
+        raise Buntfeil("for_mange_filer", f"{fullt}: {budsjett.filer}")
+
+    # ENDELSEN FELLER FØR VI LESER. Et nøstet arkiv kjennes på to
+    # uavhengige ting: navnet det bærer, og formen bytene har. Den
+    # første koster ingenting og måles her, slik den ytre gaten gjør;
+    # den andre måles under, på hele medlemmet. DOCX er unntaket, og
+    # bare det.
+    endelse = _endelse(navn)
+    if endelse in ARKIVENDELSER:
+        raise Buntfeil("nostet_arkiv", fullt)
+    # DYBDEVAKTEN ER DET SOM BINDER REKURSJONEN — ikke de to portene
+    # under. Ethvert ANNET nøstet arkiv felles på endelsen rett over
+    # eller på formen (`endelse != ".docx"` og `er_arkiv`); DOCX er
+    # unntatt fra begge, og en docx i en docx er derfor den ene formen
+    # INGEN av dem ser. Vakten står HER, hos den andre endelsesarmen, og
+    # ikke etter lesingen: et nøstet arkiv er felt på NAVNET, og da skal
+    # det hverken leses inn mot 25 MB, belastes budsjettet, eller rekke
+    # å bli omdøpt til `feil_innholdstype` av magiporten under — en
+    # `word/nested.docx` med søppelbyte er et NØSTET ARKIV, som er den
+    # grensen klarsignalet §4 setter til null. Tallet er ikke hellig;
+    # vakten er, og uten den er klassen ikke lukket.
+    if endelse == ".docx" and dybde:
+        raise Buntfeil("nostet_arkiv", fullt)
+
+    # CONTAINEREN BETALER IKKE FOR BARNA SINE. Et DOCX-medlem måles ett
+    # nivå ned, byte for byte, og de bytene ER containerens innhold. Ble
+    # begge lagt til, betalte hvert docx-lag omtrent DOBBELT mot
+    # klarsignalets «utpakket totalstørrelse | 2 GB» — for `ZIP_STORED`
+    # eller nesten ukomprimerbart innhold er containeren ≈ summen av de
+    # indre bytene — og ærlige bunter under taket ble avvist. Zip-bomben
+    # felles av den INDRE målingen, som er den som måler den faktiske
+    # ekspansjonen. Dybdevakten over gjør betingelsen eksakt: en `.docx`
+    # som kommer HIT har alltid dybde 0, og da følger indre måling
+    # alltid i `_mal_docx`. Containerens egne byte er likevel BUNDET —
+    # av `MAKS_ENKELTFIL` og av forholdet mot dens `komprimert`, begge
+    # under — og den ytre katalogporten holder buntens leste totalsum
+    # under taket uansett.
+    betaler = endelse != ".docx"
+
+    biter: list[bytes] = []
+    lest = 0
+    with aapne() as f:
+        hode = f.read(_HODEBYTE)
+        biter.append(hode)
+        lest = len(hode)
+        while True:
+            bit = f.read(1 << 16)
+            if not bit:
+                break
+            lest += len(bit)
+            if lest > MAKS_ENKELTFIL:
+                raise Buntfeil("enkeltfil_for_stor", fullt)
+            if betaler and budsjett.byte + lest > MAKS_TOTAL_UTPAKKET:
+                raise Buntfeil("total_for_stor", fullt)
+            biter.append(bit)
+    if lest > 0 and komprimert is not None and (
+            komprimert <= 0
+            or lest / komprimert > MAKS_KOMPRIMERINGSFORHOLD):
+        raise Buntfeil("komprimeringsforhold", fullt)
+    if betaler:
+        budsjett.byte += lest
+        if budsjett.byte > MAKS_TOTAL_UTPAKKET:
+            raise Buntfeil("total_for_stor", fullt)
+    data = b"".join(biter)
+
+    # KLASSIFISERINGEN LESER BYTENE (runde 7). `_ser_ut_som_html` avviser
+    # på FORM — positiv gjenkjenning — mens den gamle docx-veien avviste
+    # på det katalogen PÅSTOD. Katalogen i en zip er ikke bytene i den, og
+    # de to sidene har samme rot. Her er begge sider samme spørsmål: hva
+    # ER dette, målt på innholdet?
+    for magi in _MAGI.get(endelse, ()):
+        if not data.startswith(magi):
+            raise Buntfeil("feil_innholdstype", fullt)
+    if endelse in (".html", ".htm"):
+        if any(data.startswith(m) for m in _ARKIVMAGI):
+            raise Buntfeil("nostet_arkiv", fullt)
+        if not _ser_ut_som_html(data[:_HODEBYTE]):
+            raise Buntfeil("feil_innholdstype", fullt)
+
+    er_arkiv = zipfile.is_zipfile(io.BytesIO(data))
+    if endelse != ".docx" and er_arkiv:
+        raise Buntfeil("nostet_arkiv", fullt)
+    if endelse == ".docx":
+        # Dybden er alt felt over; her nede finnes bare dybde 0.
+        _mal_docx(data, budsjett=budsjett, kontekst=fullt)
+    return data
+
+
+def _mal_docx(data: bytes, *, budsjett: Budsjett, kontekst: str) -> None:
+    """DOCX-unntaket: samme gate, ett nivå ned.
+
+    Unntaket er at DOCX er en av de tre lovede innholdstypene — ikke at
+    grensene ikke gjelder inni den. Derfor er dette ikke en gate, men en
+    LØKKE over `_mal_medlem`: alle sju rundenes funn treffer den ene
+    implementasjonen, fordi det bare finnes én.
     """
     try:
-        with zipfile.ZipFile(io.BytesIO(data)) as indre:
-            alle = indre.infolist()
+        zf = zipfile.ZipFile(io.BytesIO(data))
     except (zipfile.BadZipFile, RuntimeError, NotImplementedError,
             UnicodeDecodeError) as feil:
-        # `PK` er ikke en zip; en docx som ikke lar seg lese som arkiv er
-        # ikke en docx. `UnicodeDecodeError` er samme klasse og kom inn
-        # sammen med den ytre døren (`_apne_katalog`): et indre filnavn
-        # som PÅSTÅR UTF-8 uten å være det, feller `ZipFile(...)` med en
-        # rå `ValueError` — den ene bibliotekformen denne tuppelen ikke
-        # kjente. Døren utvides, den bygges ikke på nytt.
-        raise Buntfeil("feil_innholdstype", navn) from feil
-    # Mappene teller også her (Codex P2): budsjettet er katalogarbeid, og
-    # en mappeoppføring koster like mye å lese som en filoppføring. Den
-    # ytre gaten teller alle oppføringer, og den indre kan ikke telle
-    # færre uten at forskjellen er nettopp veien rundt.
-    if filer_brukt + len(alle) > MAKS_FILER:
-        raise Buntfeil("for_mange_filer",
-                       f"{navn}: {filer_brukt} + {len(alle)}")
-    # Runde 20 (Codex P2): sti- og lenkeporten måler HVER oppføring, ikke
-    # bare de vi pakker ut. Samme rekkefølgefeil som i den ytre gaten —
-    # mappene ble filtrert bort før navnet ble målt, så `../../unnslapp/`
-    # inni en docx passerte porten som finnes for å avvise den.
-    for info in alle:
-        _sjekk_navn(info.filename, kontekst=f"{navn}/{info.filename}")
-        # Symlenkeporten fra ytre gate gjelder også her (Cursor P3). En
-        # zip bærer filtypen i `external_attr`, og uttrekket skjer i
-        # containeren: en lenke inni en docx er samme klasse som en
-        # lenke i bunten, og den ene gaten kan ikke være strengere enn
-        # den andre uten at forskjellen er et hull.
-        if (info.external_attr >> 16) & 0o170000 == 0o120000:
-            raise Buntfeil("symlenke", f"{navn}/{info.filename}")
-    infos = [i for i in alle if not i.is_dir()]
-    utpakket = 0
-    sett: set[str] = set()
-    for info in infos:
-        # Duplikatporten fra ytre gate gjelder også her (Cursor P2). En zip
-        # kan bære to oppføringer med samme navn, og et medlemsoppslag på
-        # navn treffer navnekartet, som bare husker den SISTE — to
-        # `word/document.xml` betyr at det uttrekket leser ikke er det
-        # samme dokumentet gaten målte. Hvilken tekst som evalueres er
-        # ikke et sted for stillhet, hverken ute eller inne.
-        if info.filename in sett:
-            raise Buntfeil("duplikat_medlem", f"{navn}/{info.filename}")
-        sett.add(info.filename)
-        if _endelse(info.filename) in ARKIVENDELSER:
-            raise Buntfeil("nostet_arkiv", f"{navn}/{info.filename}")
-        # 25 MB-grensen gjelder MEDLEMMET, også inni en docx (Codex P1).
-        # Løkken målte forholdet og totalen, men ikke enkeltfilen — og de
-        # tre grensene fanger ulike ting: et moderat komprimerbart medlem
-        # kan pakke ut til hundrevis av megabyte uten å bryte hverken
-        # 100:1 eller 2 GB, mens den ytre docx-en holder seg under 25 MB
-        # og passerer ytre gate. Da er det nettopp den overdimensjonerte
-        # inputen tekstuttrekket møter, som grensen finnes for å stoppe.
-        if info.file_size > MAKS_ENKELTFIL:
-            raise Buntfeil("enkeltfil_for_stor", f"{navn}/{info.filename}")
-        if info.file_size > 0 and (
-                info.compress_size <= 0
-                or info.file_size / info.compress_size
-                > MAKS_KOMPRIMERINGSFORHOLD):
-            raise Buntfeil("komprimeringsforhold",
-                           f"{navn}/{info.filename}")
-        utpakket += info.file_size
-        if byte_brukt + utpakket > MAKS_TOTAL_UTPAKKET:
-            raise Buntfeil("total_for_stor", f"{navn}/{info.filename}")
-    # Innholdstypeporten måler PAKKEN, ikke endelsen (Codex P2). Sjekken
-    # står etter løkken med vilje: en docx med en sti utenfor bunten er
-    # avvist som nettopp det, ikke som feil innholdstype.
-    if not DOCX_PAKKEMEDLEMMER <= sett:
-        raise Buntfeil(
-            "feil_innholdstype",
-            f"{navn}: mangler "
-            + ", ".join(sorted(DOCX_PAKKEMEDLEMMER - sett)))
-    return utpakket, len(alle)
+        raise Buntfeil("feil_innholdstype", kontekst) from feil
+    with zf:
+        try:
+            alle = zf.infolist()
+        except (zipfile.BadZipFile, RuntimeError, NotImplementedError,
+                UnicodeDecodeError) as feil:
+            raise Buntfeil("feil_innholdstype", kontekst) from feil
+        # KATALOGEN AVVISES FØR DEN LESES (Codex P2). Den inkrementelle
+        # tellingen under er riktig, men den er for SEN alene: en katalog
+        # som overskrider grensen med én oppføring rakk å bli målt først
+        # når `_mal_medlem` hadde åpnet og pakket ut hver eneste
+        # foregående oppføring — altså opptil hele bytebudsjettet brukt
+        # på en katalog vi ALLEREDE visste var for stor. Antallet er
+        # kjent her: `alle` er materialisert, og den fjernede
+        # implementasjonen sammenlignet nettopp `budsjett.filer +
+        # len(alle)` før den leste noe. Terskelen er den samme som den
+        # inkrementelle — hver oppføring i `alle` betaler nøyaktig én
+        # gang, i mappearmen eller i `_mal_medlem` — så dette er en
+        # tidligere avvisning, ikke en strengere grense. Ute gjør den
+        # ytre gaten det samme med `len(alle) > MAKS_FILER` før løkkene.
+        if budsjett.filer + len(alle) > MAKS_FILER:
+            raise Buntfeil("for_mange_filer",
+                           f"{kontekst}: {budsjett.filer + len(alle)}")
+        # Mappene teller mot budsjettet, som ute (runde 7): grensen
+        # bevokter arbeidet katalogen påfører oss, og det arbeidet er
+        # gjort før vi rekker å filtrere.
+        #
+        # STIEN MÅLES PÅ HVER OPPFØRING, FØR FILTYPEN (Codex P2). Da
+        # `_sjekk_navn` for medlemmene ble utsatt til `_mal_medlem`, ble
+        # den stående igjen inne i mappearmen — men symlenketesten under
+        # gjelder ALLE oppføringer. `../../escape.xml` med lenkebiter ble
+        # derfor meldt som `symlenke` mens den er `sti_utenfor_bunten`,
+        # og kodene er den offentlige, sikkerhetsrelevante utgangen av
+        # gaten. Den ytre katalogporten måler navn på hver oppføring før
+        # den ser på filtypen; her er rekkefølgen nå den samme. At
+        # `_mal_medlem` måler navnet en gang til er samme dublett som
+        # ute — en idempotent port, ikke to implementasjoner.
+        #
+        # ALT KATALOGEN ALENE KAN DØMME, DØMMES FØR NOE PAKKES UT (Codex
+        # P2, runde 2 på denne mekanismen). Antallet ble flyttet fram
+        # over, men duplikatet, det manglende pakkemedlemmet og den
+        # forbudte endelsen sto igjen SPREDT rundt lesesløyfa: et
+        # duplikat sist i katalogen, et `[Content_Types].xml` som aldri
+        # kom, eller en `word/indre.docx` bakerst ble først meldt etter
+        # at hvert foregående medlem var pakket ut — opptil hele
+        # bytebudsjettet brukt på en docx vi ALLEREDE visste var ugyldig.
+        # Alle tre er egenskaper ved navnene i `alle`, ikke ved bytene,
+        # så de hører hjemme her. Dette er samme todeling som ute:
+        # `inspiser_bunt` dømmer katalogens PÅSTAND, og `_mal_medlem`
+        # dømmer bytene — to spørsmål, ikke to implementasjoner av det
+        # samme. `_mal_medlem` beholder derfor sine egne porter urørt;
+        # den er fortsatt den ene gaten, og den er sannheten.
+        sett: set[str] = set()
+        for info in alle:
+            _sjekk_navn(info.filename,
+                        kontekst=f"{kontekst}/{info.filename}")
+            if info.is_dir():
+                budsjett.filer += 1
+                if budsjett.filer > MAKS_FILER:
+                    raise Buntfeil("for_mange_filer",
+                                   f"{kontekst}/{info.filename}")
+            if (info.external_attr >> 16) & 0o170000 == 0o120000:
+                raise Buntfeil("symlenke", f"{kontekst}/{info.filename}")
+            if info.is_dir():
+                continue
+            if info.filename in sett:
+                raise Buntfeil("duplikat_medlem",
+                               f"{kontekst}/{info.filename}")
+            sett.add(info.filename)
+            # Et indre medlem har alltid dybde 1, så BEGGE endelsesarmene
+            # i `_mal_medlem` — `ARKIVENDELSER` og dybdevakten for
+            # `.docx` — feller på navnet alene her nede. Da er utfallet
+            # kjent av katalogen, og lesingen er unødig.
+            if _endelse(info.filename) in ARKIVENDELSER | {".docx"}:
+                raise Buntfeil("nostet_arkiv", f"{kontekst}/{info.filename}")
+        if not DOCX_PAKKEMEDLEMMER <= sett:
+            raise Buntfeil(
+                "feil_innholdstype",
+                f"{kontekst}: mangler "
+                + ", ".join(sorted(DOCX_PAKKEMEDLEMMER - sett)))
+        # Først her er katalogen godtatt, og først her leses byte.
+        for info in (i for i in alle if not i.is_dir()):
+            _mal_medlem(info.filename,
+                        lambda i=info: zf.open(i),
+                        budsjett=budsjett,
+                        komprimert=info.compress_size,
+                        kontekst=kontekst, dybde=1)
 
 
 def les_porsjonsvis(sti: str | Path, *, porsjon: int = 200):
@@ -436,161 +598,36 @@ def les_porsjonsvis(sti: str | Path, *, porsjon: int = 200):
     feilutfall er kontrakten (SP-3).
     """
     medlemmer = inspiser_bunt(sti)
-    total = 0
+    # ÉN GATE, ETT BUDSJETT (#155). Strømmen hadde sin egen `total` og
+    # `filer`, og docx-veien sin egen tilstand — to implementasjoner av
+    # samme grense, som er nøyaktig roten de ni rundene delte. Budsjettet
+    # er nå ett objekt som bæres gjennom hvert nivå.
+    budsjett = Budsjett()
     with _apne_katalog(sti) as zf:
-        # ÉN teller for hele bunten, nøstede docx-medlemmer inkludert
-        # (Codex P1): budsjettet starter på buntens egne oppføringer og
-        # forbrukes videre av hver docx, aldri nullstilt per arkiv. Det
-        # er KATALOGOPPFØRINGENE som telles, ikke de filtrerte
-        # medlemmene — ellers finansierte hver mappe i den ytre bunten
-        # et indre docx-medlem gratis (Codex P2).
-        filer = len(zf.infolist())
-        # Manifestet er DEKLARASJON, ikke søknadsinnhold (#161): det
-        # leses av `les_manifest`, aldri av innholdsstrømmen — teller
-        # hverken som fremdrift eller tekst.
         innhold = [m for m in medlemmer if m.navn != MANIFESTNAVN]
+        # HVER OPPFØRING TELLES ÉN GANG. Budsjettet kan ikke seedes med
+        # hele katalogen når `_mal_medlem` teller sitt eget medlem: da
+        # betalte hvert innholdsmedlem to ganger, og en ærlig bunt på
+        # 10 001 oppføringer ble avvist mot et tak på 20 000. Her betaler
+        # oppføringene strømmen IKKE selv måler — mappene og manifestet —
+        # og medlemmene teller seg selv i gaten.
+        budsjett.filer = max(0, len(zf.infolist()) - len(innhold))
         for nr, medlem in enumerate(innhold, start=1):
-            biter: list[bytes] = []
-            lest = 0
-            try:
-                with zf.open(medlem.navn) as f:
-                    hode = f.read(_HODEBYTE)
-                    endelse = _endelse(medlem.navn)
-                    for magi in _MAGI.get(endelse, ()):
-                        if not hode.startswith(magi):
-                            raise Buntfeil("feil_innholdstype",
-                                           medlem.navn)
-                    if endelse in (".html", ".htm"):
-                        if any(hode.startswith(m) for m in _ARKIVMAGI):
-                            raise Buntfeil("nostet_arkiv", medlem.navn)
-                        # HTML har ingen magi, men den har en FORM: et
-                        # dokument begynner med et merke. Den gamle porten
-                        # var en denyliste på åtte byte — og `%PDF` sto
-                        # ikke i den, tross kommentaren som lovet det, så
-                        # en PDF omdøpt til `cv.html` gikk rett gjennom
-                        # (Codex P2). En positiv form fanger hele klassen
-                        # i stedet for de signaturene noen kom på — og
-                        # hodet må være langt nok til at formen finnes i
-                        # det: åtte byte rommet ikke en BOM og et par
-                        # linjeskift før merket.
-                        if not _ser_ut_som_html(hode):
-                            raise Buntfeil("feil_innholdstype",
-                                           medlem.navn)
-                    biter.append(hode)
-                    lest = len(hode)
-                    while True:
-                        bit = f.read(1 << 16)
-                        if not bit:
-                            break
-                        lest += len(bit)
-                        if lest > MAKS_ENKELTFIL:
-                            raise Buntfeil("enkeltfil_for_stor",
-                                           medlem.navn)
-                        # Denne sjekken er den TIDLIGE: den avbryter en
-                        # bombe midt i strømmen, før hele medlemmet ligger
-                        # i `biter`. Den er ikke totalens eneste port — se
-                        # under.
-                        if total + lest > MAKS_TOTAL_UTPAKKET:
-                            raise Buntfeil("total_for_stor", medlem.navn)
-                        biter.append(bit)
-            # OG NAVNET SLÅS OPP DER UTTREKKET SKJER (Cursor P1). Dette er
-            # SISTE stedet i klassen `les_manifest`s `KeyError`-port og
-            # `kart.get` i `kjoring.py` alt lukker: `inspiser_bunt` bygde
-            # `medlemmer` fra ÉN åpning av arkivet, og løkken her slår
-            # navnet opp i navnekartet til en ANNEN. Divergerer de to —
-            # fila byttet i vinduet mellom dem — reiser `zipfile` en rå
-            # `KeyError` som ingen av armene under kjente, og den falt til
-            # `kjor_bunt`s catch-all: `modellfeil` om en bunt modellen
-            # aldri fikk se. Et deklarert medlem vi ikke finner ved
-            # uttrekk ER `manifest_medlem_mangler` — samme ord som
-            # toveisbindingen bruker for nøyaktig samme fravær.
-            except KeyError as feil:
-                raise Buntfeil("manifest_medlem_mangler",
-                               medlem.navn) from feil
-            except zipfile.BadZipFile as feil:
-                raise Buntfeil("korrupt_bunt",
-                               f"{medlem.navn}: {feil}") from feil
-            # DEKOMPRESSOREN har sine EGNE feiltyper (Codex P2). `zipfile`
-            # oversetter bare det den selv oppdager — ødelagte headere og
-            # CRC-avvik — til `BadZipFile`. En SKADET komprimert strøm
-            # feller biblioteket under, FØR CRC-en i det hele tatt måles,
-            # og da kommer feilen i det formatets egen form: DEFLATE gir
-            # `zlib.error`, LZMA gir `lzma.LZMAError`, og BZIP2 gir en
-            # `OSError` uten errno («Invalid data stream»). Alle tre gikk
-            # forbi begge håndteringene her, så en STRUKTURELT gyldig zip
-            # med ødelagt payload ble en uventet arbeiderfeil i stedet for
-            # det kodede utfallet kontrakten lover (SP-3) — og den formen
-            # er billig å lage for den som leverer bunten.
-            except (zlib.error, lzma.LZMAError) as feil:
-                raise Buntfeil("korrupt_bunt",
-                               f"{medlem.navn}: {type(feil).__name__}"
-                               ) from feil
-            # `OSError` MED errno er noe helt annet: lesefeil på den
-            # underliggende fila (disk, nettlager). Det er ikke en påstand
-            # om buntens innhold, og å kalle det `korrupt_bunt` ville
-            # gjort en driftsfeil til en kundeavvisning — bunten ville
-            # blitt forkastet for noe som var vårt. Den slipper derfor
-            # gjennom som seg selv; bare den errno-løse formen
-            # dekompressoren kaster, er buntens skyld.
-            except OSError as feil:
-                if feil.errno is not None:
-                    raise
-                raise Buntfeil("korrupt_bunt",
-                               f"{medlem.navn}: {type(feil).__name__}"
-                               ) from feil
-            # Et passordbeskyttet medlem passerer katalogen, men `zf.open`
-            # kaster `RuntimeError: password required` — og en komprimering
-            # biblioteket ikke har (bzip2/lzma uten modul) kaster
-            # `NotImplementedError`. Begge slapp ut som RÅ exceptions forbi
-            # denne håndteringen (Codex P2). Kontrakten er et KODET utfall
-            # (SP-3), aldri en bibliotekfeil: en bunt vi ikke kan lese er
-            # avvist med grunn, ikke en 500.
-            except (RuntimeError, NotImplementedError) as feil:
-                raise Buntfeil("uleselig_medlem",
-                               f"{medlem.navn}: {type(feil).__name__}"
-                               ) from feil
-            # Totalen håndheves der den ENDRES, ikke bare der den vokser
-            # (Codex P2). Sjekken over står inne i lesesløyfa, og et medlem
-            # som får plass i førstelesingen kommer aldri inn i den:
-            # `f.read` returnerer tomt, `break` går, og denne linja la
-            # medlemmet til uten å spørre. Én liten HTML-fil etter en bunt
-            # som alt lå tett på 2 GB — eller mange av dem — passerte
-            # dermed grensen fritt. `_inspiser_docx` måler alt sin egen
-            # total etter hver oppdatering; den ytre strømmen gjorde det
-            # ikke.
-            total += lest
-            if total > MAKS_TOTAL_UTPAKKET:
-                raise Buntfeil("total_for_stor", medlem.navn)
-            data = b"".join(biter)
-            # ET ARKIV KJENNES PÅ HALEN, IKKE PÅ HODET (Codex P2).
-            # `nostet_arkiv`-porten hadde to armer, og begge målte en
-            # BEGYNNELSE: endelsen i gaten, og `_ARKIVMAGI` mot hodet —
-            # sistnevnte inne i HTML-grenen, fordi HTML er den eneste
-            # endelsen uten egen magi. En zip identifiseres derimot av
-            # sentralkatalogen SIST i fila, så et medlem kan tilfredsstille
-            # `%PDF` i byte 0 og likevel være et komplett arkiv: en PDF med
-            # påhengt EOCD passerte innholdstypeporten, og de indre
-            # oppføringene ble aldri målt mot fil-, forholds- eller
-            # totalbudsjettet.
-            #
-            # Testen er derfor hele medlemmet, ikke et prefiks, og den er
-            # et EKTE oppslag: `is_zipfile` leter opp sentralkatalogen
-            # (K4/SP-13 — aldri en signaturliste som gjetter på formatet).
-            # Den AVVISER; den inspiserer ikke. DOCX er unntatt fordi det
-            # ER en zip, og den har sin egen dør i `_inspiser_docx`.
-            if (_endelse(medlem.navn) != ".docx"
-                    and zipfile.is_zipfile(io.BytesIO(data))):
-                raise Buntfeil("nostet_arkiv", medlem.navn)
-            if _endelse(medlem.navn) == ".docx":
-                utpakket, indre = _inspiser_docx(
-                    medlem.navn, data,
-                    filer_brukt=filer, byte_brukt=total)
-                total += utpakket
-                filer += indre
+            # Begge oppslagene går på NAVNET, i strømmens eget navnekart —
+            # det samme kartet uttrekket bruker. Et medlem som forsvant
+            # mellom `inspiser_bunt`s lesning og denne feller dem begge
+            # med `KeyError`, og det er et kodet utfall.
+            with _kodet_lesefeil(medlem.navn,
+                                 mangler="manifest_medlem_mangler"):
+                komprimert = zf.getinfo(medlem.navn).compress_size
+                data = _mal_medlem(medlem.navn,
+                                   lambda m=medlem: zf.open(m.navn),
+                                   budsjett=budsjett,
+                                   komprimert=komprimert)
             if nr % porsjon == 0 or nr == len(innhold):
                 fremdrift = {"filer_lest": nr,
                              "filer_totalt": len(innhold),
-                             "byte_lest": total}
+                             "byte_lest": budsjett.byte}
             else:
                 fremdrift = None
             yield fremdrift, medlem, data
@@ -674,38 +711,23 @@ def les_manifest(sti: str | Path,
     # `les_porsjonsvis`: en lesefeil på disk eller nettlager er DRIFT, ikke
     # buntens skyld.
     #
-    # At oversettelsen nå står to steder er den kjente divergensrisikoen
-    # (`_inspiser_docx`, ni runder): den konsolideres når #155 gjør gaten
-    # til én strømmende vei brukt rekursivt — ikke som ny maskin i en
-    # fiksrunde (K1).
-    try:
+    # …OG FRAVÆRET MÅLES DER UTTREKKET SKJER (Cursor P1, runde 2).
+    # Linja over slår opp `MANIFESTNAVN` i `medlemmer` — en katalog ANDRE
+    # leste — mens `zf.read` åpner arkivet PÅ NYTT og slår opp i sitt eget
+    # navnekart. Divergerer de to (fila byttet i vinduet mellom
+    # `inspiser_bunt` og her, eller en `medlemmer`-liste som ikke kom fra
+    # denne bunten), reiser `zipfile` en `KeyError` som gikk rå til
+    # `kjor_bunt`s catch-all: `modellfeil` om en bunt modellen aldri fikk
+    # se. Samme klasse som `kart.get` i `kjoring.py` — en garanti målt ett
+    # sted er ingen garanti det andre. En deklarasjon vi ikke finner, ER
+    # `manifest_mangler`.
+    #
+    # Oversettelsen sto før i to kopier, her og i strømmen. Det er den
+    # kjente divergensrisikoen, og den er nå én funksjon
+    # (`_kodet_lesefeil`) — samme dom som #155 feller over gate-siden.
+    with _kodet_lesefeil(MANIFESTNAVN, mangler="manifest_mangler"):
         with _apne_katalog(sti) as zf:
             raa = zf.read(MANIFESTNAVN)
-    except KeyError as feil:
-        # …OG FRAVÆRET MÅLES DER UTTREKKET SKJER (Cursor P1, runde 2).
-        # Linja over slår opp `MANIFESTNAVN` i `medlemmer` — en katalog
-        # ANDRE leste — mens `zf.read` åpner arkivet PÅ NYTT og slår opp i
-        # sitt eget navnekart. Divergerer de to (fila byttet i vinduet
-        # mellom `inspiser_bunt` og her, eller en `medlemmer`-liste som
-        # ikke kom fra denne bunten), reiser `zipfile` en `KeyError` som
-        # gikk rå til `kjor_bunt`s catch-all: `modellfeil` om en bunt
-        # modellen aldri fikk se. Samme klasse som `kart.get` i
-        # `kjoring.py` — en garanti målt ett sted er ingen garanti det
-        # andre. En deklarasjon vi ikke finner, ER `manifest_mangler`.
-        raise Buntfeil("manifest_mangler", MANIFESTNAVN) from feil
-    except zipfile.BadZipFile as feil:
-        raise Buntfeil("korrupt_bunt", f"{MANIFESTNAVN}: {feil}") from feil
-    except (zlib.error, lzma.LZMAError) as feil:
-        raise Buntfeil("korrupt_bunt",
-                       f"{MANIFESTNAVN}: {type(feil).__name__}") from feil
-    except OSError as feil:
-        if feil.errno is not None:
-            raise
-        raise Buntfeil("korrupt_bunt",
-                       f"{MANIFESTNAVN}: {type(feil).__name__}") from feil
-    except (RuntimeError, NotImplementedError) as feil:
-        raise Buntfeil("uleselig_medlem",
-                       f"{MANIFESTNAVN}: {type(feil).__name__}") from feil
     # TAKET MÅLES PÅ BYTENE, IKKE BARE PÅ PÅSTANDEN (Cursor P2, runde 4).
     # `inspiser_bunt` håndhever `MAKS_MANIFESTBYTES` på `info.file_size`,
     # og det er KATALOGENS påstand — nøyaktig det strømmen ikke stoler på
