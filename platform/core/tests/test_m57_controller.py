@@ -10,6 +10,7 @@ PROMOTERT med rangeringen inni.
 import io
 import json
 import secrets
+import time
 import zipfile
 
 import pytest
@@ -149,8 +150,30 @@ class _Stubklient:
         #: fersk kapabilitet. Med standardintervallet (240 s) rekker
         #: pulsen aldri å slå i en test — den må skrus ned med vilje.
         self.forny = forny
+        #: #173: skriveveien inn i kandidatlagrene. Alt fanges for
+        #: assertions; `kandidatdatastatus` lar en test felle sinken.
+        self.kandidatdokumenter = []
+        self.kandidatartefakter = []
+        self.kandidatdatastatus = 200
+        #: Antall kandidatdata-kall som LYKKES før `kandidatdatastatus`
+        #: slår inn. 0 = grensen gjelder fra første kall, altså den gamle
+        #: oppførselen. Et tall > 0 gir den DELVISE commiten: noen skriv
+        #: står i lagrene når strømmen ryker — feilmodusen «alt feiler
+        #: fra første kall» aldri kan måle.
+        self.kandidatdata_ok_forst = 0
         self.kvitteringer = []
         self.stier = []
+        #: #173 (Codex P1): HTTP-fristen hvert kall faktisk fikk, per sti.
+        #: `None` = klientens egen (avslutningens `http_frist_s()`).
+        self.frister = []
+
+    def _kandidatdatasvar(self):
+        """Kallet er alt talt når dette kjører, så n = 1 på det første.
+        `kandidatdata_ok_forst = 0` gir da `kandidatdatastatus` fra og med
+        kall 1 — uendret standardoppførsel."""
+        n = len(self.kandidatdokumenter) + len(self.kandidatartefakter)
+        return 200 if n <= self.kandidatdata_ok_forst \
+            else self.kandidatdatastatus
 
     def _kvitteringssvar(self, sendt):
         if self.kvitteringskropp is not ...:
@@ -160,8 +183,9 @@ class _Stubklient:
                                "oppdrag_id": 1})
         return _Svar(self.kvitteringsstatus, {})
 
-    def post(self, sti, json=None, headers=None):
+    def post(self, sti, json=None, headers=None, timeout=None):
         self.stier.append(sti)
+        self.frister.append((sti, timeout))
         if sti == "/v1/oppdrag/claim":
             return _Svar(200, {
                 "oppdrag_id": 1, "tenant": TENANT, "kvittering_jti": "j",
@@ -177,6 +201,12 @@ class _Stubklient:
             return _Svar(200, content=_buntbytes())
         if sti == "/v1/oppdrag/forny":
             return self.forny() if self.forny else _Svar(200, {})
+        if sti == "/v1/rekruttering/kandidatdokument":
+            self.kandidatdokumenter.append(json)
+            return _Svar(self._kandidatdatasvar(), {})
+        if sti == "/v1/rekruttering/kandidatartefakt":
+            self.kandidatartefakter.append(json)
+            return _Svar(self._kandidatdatasvar(), {})
         if sti == "/v1/artefakt":
             if self.opplastingsstatus != 200:
                 return _Svar(self.opplastingsstatus, {})
@@ -193,6 +223,399 @@ def _kjor(klient, modell=None):
     from modules.m57_ats import controller
     return controller.kjor_en(klient, "tk", modell or _Modell(),
                               _Uttrekker(), _MAALINGER, lambda k: k)
+
+
+def test_173_kandidatdata_stroemmes_underveis(monkeypatch):
+    """#173 (eiers valg b + i): hvert medlem går til dokumentveien I DET
+    det er lest, og hver kandidat til artefaktveien i det den er
+    evaluert — aldri en sluttbatch. Kallene bærer claim-trippelen
+    (fullmakten er claimets) og manifestets kandidat-ID; UUID-ene er
+    dørens og finnes ikke i kroppen.
+
+    MUTASJONEN SOM DREPER DENNE: fjern sink-kallene i `kjor_bunt`, eller
+    slutt å sende sinkene fra `kjor_en`."""
+    import base64 as b64mod
+
+    from modules.m57_ats import controller
+    monkeypatch.setattr(controller, "_sov", lambda s: None)
+    k = _Stubklient()
+    res = _kjor(k)
+    assert res["utfall"] == "utfort", res
+    assert k.kandidatdokumenter, "ingen dokumenter strømmet til lageret"
+    assert k.kandidatartefakter, "ingen artefakter strømmet til lageret"
+    for kall in k.kandidatdokumenter + k.kandidatartefakter:
+        assert kall["tenant"] == TENANT
+        assert kall["oppdrag_id"] == 1
+        assert kall["owner_claim_id"] == "o" * 22
+        assert kall["owner_generation"] == 0
+        assert kall["kandidat_id"], kall
+    dok = k.kandidatdokumenter[0]
+    assert b64mod.b64decode(dok["dokument_b64"]), \
+        "dokumentveien skal bære de rå bytene"
+    assert isinstance(dok["tekst"], str) and dok["tekst"].strip(), \
+        "dokumentveien skal bære parsetteksten"
+    art = k.kandidatartefakter[0]["artefakt"]
+    assert set(art) == {"funn", "oppfylt", "vekter", "kildetekst"}, \
+        "artefaktveien skal bære evalueringens fire deler, intet mer"
+    # AVMASKERINGEN ER EGET TOPPNIVÅFELT (Codex P1). Den skal FINNES —
+    # uten den er den blindede `kildetekst` over lagret med tokener ingen
+    # kan løse opp — og den skal ikke ligge INNE i `artefakt`, for da får
+    # `kandidat_evalueringsartefakt` en klartekstkopi som overlever
+    # nøyaktig det `kandidat_avmaskering` reapes for.
+    avm = k.kandidatartefakter[0]["avmaskering"]
+    assert isinstance(avm, dict) and avm, \
+        "avmaskeringskartet skal følge den claim-bundne skriveveien"
+    assert all(isinstance(t, str) and isinstance(v, str)
+               for t, v in avm.items()), avm
+    assert "avmaskering" not in art
+    # Rapporten er fortsatt komplett (v1-skjemaet, til #168s v2).
+    assert "/v1/artefakt" in k.stier
+
+
+def test_173_kandidatskriv_far_overforingsfrist_ikke_avslutningsfrist(
+        monkeypatch):
+    """#173 (Codex P1): de to kandidatsinkene bærer opptil ~185 MiB og
+    ~301 MiB wire-kropp, men arvet `http_frist_s()` — avslutningens
+    frist, 5,0 sekunder — fordi klienten bare hadde ÉN. `urllib`s
+    `timeout` er én samlet frist over hele utsendelsen OG over ventingen
+    på svaret, så en stor GYLDIG kandidat timet ut, ble retryet fire
+    ganger på samme umulige frist og falt som `kandidatlagring_feilet`.
+
+    MUTASJONEN SOM DREPER DENNE: slutt å sende `frist=SKRIVEFRIST_S` fra
+    sinkene, eller la `KlientHTTP.post` sluke `timeout` i `**kw` igjen.
+    """
+    from modules.m57_ats import controller
+    monkeypatch.setattr(controller, "_sov", lambda s: None)
+    k = _Stubklient()
+    assert _kjor(k)["utfall"] == "utfort"
+
+    skriv = [f for sti, f in k.frister
+             if sti in ("/v1/rekruttering/kandidatdokument",
+                        "/v1/rekruttering/kandidatartefakt")]
+    assert skriv, "ingen kandidatskriv å måle fristen på"
+    assert all(f == controller.SKRIVEFRIST_S for f in skriv), k.frister
+    # Fristen er UTLEDET av overføringen, ikke et tall ved siden av den.
+    assert controller.SKRIVEFRIST_S == (
+        controller.SKRIV_MAKS_KROPP / controller.SKRIV_GJENNOMSTROMNING_B_S
+        + controller.SKRIV_BEHANDLING_S)
+    # ... og den er en HELT annen størrelse enn avslutningens.
+    assert controller.SKRIVEFRIST_S > 60 * controller.http_frist_s()
+
+    # Avslutningen beholder sin: kvittering og opplasting er små kall
+    # innenfor lukkevinduet, og der er en lang frist selve faren.
+    for sti in ("/v1/oppdrag/kvittering", "/v1/artefakt",
+                "/v1/oppdrag/claim"):
+        assert [f for s, f in k.frister if s == sti] \
+            and all(f is None for s, f in k.frister if s == sti), \
+            f"{sti} skal kjøre på klientens egen frist"
+
+
+def test_173_klienten_slukker_ikke_kallets_egen_frist(monkeypatch):
+    """#173 (Codex P1): `KlientHTTP.post` tok `**kw`. En `timeout=` der
+    ville blitt slukt i stillhet — fiksen ville sett riktig ut i kallet
+    og ikke gjort noe. `timeout` står derfor i signaturen, og målingen
+    her er på det `urllib` FAKTISK får, ikke på at parameteret finnes.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `timeout` fra signaturen igjen,
+    eller send `self.frist_s` videre uansett."""
+    import urllib.request
+
+    from drift.m57_arbeider import KlientHTTP
+
+    sett = []
+
+    class _Uapnet(Exception):
+        pass
+
+    def _urlopen(req, timeout=None):
+        sett.append(timeout)
+        raise _Uapnet
+
+    monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
+    klient = KlientHTTP("http://x", 5.0)
+    for kw in ({}, {"timeout": 361.0}):
+        with pytest.raises(_Uapnet):
+            klient.post("/v1/x", {}, None, **kw)
+    assert sett == [5.0, 361.0], sett
+
+
+def test_173_vektene_folger_hver_kandidat_inn_i_lageret(monkeypatch):
+    """#173 (Codex P1): profilens vekter persisteres med kandidaten.
+
+    `rekruttering._kandidater` leser `vekter` fra HVERT
+    `kandidat_evalueringsartefakt` og utleder prosessens vekting av dem
+    (`vekter_kilde`). Sinken plukket funn/oppfylt/kildetekst og lot
+    feltet ligge, så flaten fant ingen vekter, falt til reserven
+    `{krav: 3}` og meldte `vekter_kilde="standard"` — den VISTE altså en
+    annen vekting enn den `ranger` faktisk rangerte etter, foran en
+    irreversibel signering.
+
+    Vekten her er 7, ikke 3: med fixturens standardprofil er reserven og
+    profilen samme tall, og testen ville vært grønn også uten feltet.
+    Det er nettopp de profilene som avviker fra reserven funnet handler
+    om.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `"vekter": vekter` fra
+    `lagre_kandidat`s artefaktkropp."""
+    from modules.m57_ats import controller
+    monkeypatch.setattr(controller, "_sov", lambda s: None)
+    profil = {"profil_id": "p", "versjon": 1, "navn": "N",
+              "krav": [{"kravnavn": "drift", "vekt": 7}]}
+    k = _Stubklient(payload=_payload(stillingsprofil=profil))
+    res = _kjor(k)
+    assert res["utfall"] == "utfort", res
+    assert k.kandidatartefakter, "ingen artefakter strømmet til lageret"
+    for kall in k.kandidatartefakter:
+        assert kall["artefakt"]["vekter"] == {"drift": 7}, kall["artefakt"]
+
+
+def test_173_sinkfeil_er_kodet_avbrudd(monkeypatch):
+    """En feilet kandidatlagring er et KODET utfall — kjøringen stopper
+    før flere medlemmer pakkes ut, ingenting lastes opp, og
+    kvitteringen sier `kjoring_avbrutt` (SP-3, aldri en rå exception).
+
+    MUTASJONEN SOM DREPER DENNE: la sinken svelge ikke-2xx i
+    `kjor_en`s `lagre_dokument`."""
+    from modules.m57_ats import controller
+    monkeypatch.setattr(controller, "_sov", lambda s: None)
+    k = _Stubklient()
+    k.kandidatdatastatus = 500
+    res = _kjor(k)
+    assert res["utfall"] == "avbrutt", res
+    assert res["grunn"] == "kjoring_avbrutt:kandidatlagring_feilet", res
+    assert "/v1/artefakt" not in k.stier, \
+        "en kjøring som ikke fikk lagret kandidatdata leverte likevel"
+    assert k.kvitteringer and \
+        k.kvitteringer[0]["feilkode"] == "kjoring_avbrutt"
+
+
+def test_173_delvis_stroem_feller_kjoringen_uten_promotering(monkeypatch):
+    """#173 (Cursor P2-5): den FAKTISKE strømmefeilmodusen — noen skriv
+    står alt i lagrene når neste ryker.
+
+    `test_173_sinkfeil_er_kodet_avbrudd` feller sinken fra FØRSTE kall,
+    og da er «ingenting ble skrevet» sant uten at noen kode sørget for
+    det. Her lykkes dokumentveien og artefaktveien feiler: kjøringen har
+    en delvis commit bak seg, og porten er at den likevel ikke leverer.
+    Delvis lagret kandidatdata reapes med prosessen (057), mens et
+    promotert artefakt er en påstand om en FULLFØRT evaluering — det er
+    forskjellen på et avbrudd og en løgn.
+
+    MUTASJONEN SOM DREPER DENNE: la `kjor_bunt` fortsette til
+    rapportbygging når `lagre_kandidat` reiser, eller la `kjor_en`
+    promotere før utfallet er kjent."""
+    from modules.m57_ats import controller
+    monkeypatch.setattr(controller, "_sov", lambda s: None)
+    k = _Stubklient()
+    k.kandidatdatastatus = 500
+    k.kandidatdata_ok_forst = 1         # dokumentet lander, artefaktet ryker
+    res = _kjor(k)
+    assert res["utfall"] == "avbrutt", res
+    assert res["grunn"] == "kjoring_avbrutt:kandidatlagring_feilet", res
+    # DELVIS: dokumentveien svarte 200, så et skriv står i lagrene — det
+    # er nettopp den tilstanden den gamle porten ikke kunne konstruere.
+    assert len(k.kandidatdokumenter) == 1, k.kandidatdokumenter
+    # MINST ett artefaktforsøk — aldri nøyaktig ett: `lever` retrier
+    # transiente 5xx, og antall FORSØK er transportens tall, ikke
+    # portens. Porten er at kjøringen avbrytes kodet og aldri leverer;
+    # retry mot en idempotent dør er samme skriv, ikke et nytt.
+    assert len(k.kandidatartefakter) >= 1, k.kandidatartefakter
+    assert "/v1/artefakt" not in k.stier, \
+        "en kjøring med delvis lagret kandidatdata promoterte likevel"
+    assert k.kvitteringer and \
+        k.kvitteringer[0]["feilkode"] == "kjoring_avbrutt"
+
+
+class _LeasetapMidtIStroemmen(_Stubklient):
+    """Døren slik plattformen faktisk oppfører seg når leasen er tapt.
+
+    Det FØRSTE skrivet lander — det er den delvise commiten som gjør
+    dette til et tap MIDT i strømmen og ikke før den. Fra og med det
+    andre venter døren til pulsen HAR registrert tapet, og svarer så
+    409 `kandidatdata_avvist`.
+
+    Ventingen er det som gjør porten deterministisk: `_Heartbeat` lever
+    i en egen tråd, og `except Kjoringsfeil` leser `puls.tapt` INNE i
+    `with`-blokka — altså før `__exit__` joiner tråden. Uten den ville
+    testen målt kappløpet mellom tråden og strømmen i stedet for
+    feilattribusjonen den finnes for. 409 er 4xx, så `lever` retryer
+    den ikke: nøyaktig ett avvist skriv feller kjøringen."""
+
+    def __init__(self, pulser, **kw):
+        super().__init__(**kw)
+        self._pulser = pulser
+
+    def _kandidatdatasvar(self):
+        n = len(self.kandidatdokumenter) + len(self.kandidatartefakter)
+        if n <= 1:
+            return 200
+        frist = time.monotonic() + 10
+        while not (self._pulser and self._pulser[0].tapt) \
+                and time.monotonic() < frist:
+            time.sleep(0.001)
+        assert self._pulser and self._pulser[0].tapt, \
+            "pulsen registrerte aldri lease-tapet"
+        return 409
+
+
+def test_173_leasetap_midt_i_stroemmen_meldes_som_lease_tapt(monkeypatch):
+    """#173 (Cursor P2-1/P2-2): et lease-tap midtveis heter `lease_tapt`
+    på kvitteringen, ikke `kandidatlagring_feilet`.
+
+    Før strømmingen traff et tap midtveis LEVERINGSPORTEN etter
+    `with _Heartbeat` — den som navngir at det var AUTORITETEN som falt
+    bort. Nå er skriveveien den faktiske aborten: døren feller neste
+    kandidatskriv med 409, sinken reiser, og `kjor_bunt` pakker enhver
+    sinkfeil som `kandidatlagring_feilet`. `except Kjoringsfeil`
+    returnerte da FØR porten under rakk å lese `puls.tapt`, som alt sto
+    satt — drift leste en lagringsfeil, og kvitteringen sa
+    `kjoring_avbrutt` om et oppdrag plattformen hadde gitt til noen
+    andre.
+
+    `test_173_doed_lease_stenger_doren_midt_i_stroemmen` måler at DØREN
+    avviser; ingen port målte hvilket ORD utfallet fikk. Uten denne kan
+    en regresjon passere CI med døren fortsatt lukket.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `puls.tapt`-grenen i
+    `except kjoring.Kjoringsfeil` — da blir `grunn`
+    `kjoring_avbrutt:kandidatlagring_feilet` og feilkoden
+    `kjoring_avbrutt`."""
+    from modules.m57_ats import controller
+
+    monkeypatch.setattr(controller, "FORNY_INTERVALL_S", 0.01)
+    monkeypatch.setattr(controller, "_sov", lambda s: None)
+
+    # Instansen fanges fordi BÅDE døren og porten må snakke om SAMME
+    # puls: det er `puls.tapt` fiksen leser, så det er `puls.tapt`
+    # testen må synkronisere mot.
+    pulser: list = []
+    ekte = controller._Heartbeat
+
+    class _Fanget(ekte):                            # type: ignore[misc,valid-type]
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            pulser.append(self)
+
+    monkeypatch.setattr(controller, "_Heartbeat", _Fanget)
+
+    k = _LeasetapMidtIStroemmen(
+        pulser, forny=lambda: _Svar(409, {"feil": "lease_utlopt"}))
+    res = _kjor(k)
+
+    assert res["utfall"] == "avbrutt", res
+    assert res["grunn"] == "lease_tapt", res
+    assert res["lease_tapt"] == "lease_utlopt", res
+    assert k.kvitteringer and \
+        k.kvitteringer[0]["feilkode"] == "lease_tapt", k.kvitteringer
+    # MIDT i strømmen: ett skriv sto alt i lagrene da fullmakten døde.
+    assert len(k.kandidatdokumenter) == 1, k.kandidatdokumenter
+    assert "/v1/artefakt" not in k.stier, \
+        "en kjøring uten gyldig lease promoterte likevel"
+
+
+def test_173_doeren_avviser_foer_pulsen_slaar_og_utfallet_er_lease_tapt(
+        monkeypatch):
+    """#173 (Cursor P1-1): den EKTE rekkefølgen — døren avviser FØRST,
+    pulsen ville slått minutter senere.
+
+    Testen over lar stubbdøren vente på `puls.tapt` før den svarer 409,
+    og måler derfor bare grenen etter at tråden alt har slått. Drift er
+    motsatt: `_lopp` sover `FORNY_INTERVALL_S` = 240 s mellom hvert kall,
+    mens døren måler leasen på veggklokken ved HVERT skriv. Avvisningen
+    kommer altså først, og `except Kjoringsfeil` leser en `puls.tapt` som
+    ennå er `None` — remappen fra runde 1 traff aldri der den skulle, og
+    kvitteringen sa `kjoring_avbrutt` om et autoritetstap.
+
+    Her står `FORNY_INTERVALL_S` urørt på 240 s: tråden REKKER ikke å
+    pulse i løpet av testen, så `puls.tapt` er beviselig usatt når
+    utfallet avgjøres. At `/v1/oppdrag/forny` likevel er kalt, er selve
+    porten — det kallet kan bare komme fra den synkrone sonden.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `or puls.sonder()` fra
+    `except kjoring.Kjoringsfeil` — da blir `grunn`
+    `kjoring_avbrutt:kandidatlagring_feilet`."""
+    from modules.m57_ats import controller
+
+    monkeypatch.setattr(controller, "_sov", lambda s: None)
+
+    pulser: list = []
+    ekte = controller._Heartbeat
+
+    class _Fanget(ekte):                            # type: ignore[misc,valid-type]
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            pulser.append(self)
+
+    monkeypatch.setattr(controller, "_Heartbeat", _Fanget)
+
+    k = _Stubklient(forny=lambda: _Svar(409, {"feil": "lease_utlopt"}))
+    k.kandidatdatastatus = 409          # døren: `kandidatdata_avvist`
+    k.kandidatdata_ok_forst = 1         # ett skriv sto alt i lagrene
+    res = _kjor(k)
+
+    assert res["utfall"] == "avbrutt", res
+    assert res["grunn"] == "lease_tapt", res
+    assert res["lease_tapt"] == "lease_utlopt", res
+    assert k.kvitteringer and \
+        k.kvitteringer[0]["feilkode"] == "lease_tapt", k.kvitteringer
+    # Sonden er den ENESTE mulige kilden til dette kallet: med 240 s
+    # intervall og en kjøring på millisekunder pulset tråden aldri.
+    assert "/v1/oppdrag/forny" in k.stier, k.stier
+    assert len(k.kandidatdokumenter) == 1, k.kandidatdokumenter
+    assert "/v1/artefakt" not in k.stier, \
+        "en kjøring uten gyldig lease promoterte likevel"
+
+
+def test_173_avvist_skriv_med_levende_lease_er_fortsatt_lagringsfeil(
+        monkeypatch):
+    """Baksiden av sonden: en 409 fra døren er IKKE i seg selv et
+    autoritetstap.
+
+    `kandidatdata_konflikt` (hashavvik, dobbeltskriv) mens leasen lever
+    er en ekte lagringsfeil. Svarer `/v1/oppdrag/forny` 2xx, eier vi
+    fortsatt oppdraget, og utfallet beholder sitt eget ord — ellers ville
+    sonden døpt om hver eneste dør-avvisning til `lease_tapt`, og drift
+    mistet konflikten.
+
+    MUTASJONEN SOM DREPER DENNE: la `sonder` melde tap på alt som ikke er
+    2xx, eller la den returnere en sannhetsverdi uavhengig av svaret."""
+    from modules.m57_ats import controller
+
+    monkeypatch.setattr(controller, "_sov", lambda s: None)
+    k = _Stubklient(forny=lambda: _Svar(200, {}))
+    k.kandidatdatastatus = 409          # `kandidatdata_konflikt`
+    k.kandidatdata_ok_forst = 1
+    res = _kjor(k)
+
+    assert res["grunn"] == "kjoring_avbrutt:kandidatlagring_feilet", res
+    assert k.kvitteringer and \
+        k.kvitteringer[0]["feilkode"] == "kjoring_avbrutt", k.kvitteringer
+    assert "lease_tapt" not in res, res
+    # Sonden ble faktisk spurt — den negative porten måler svaret dens,
+    # ikke at den uteble.
+    assert "/v1/oppdrag/forny" in k.stier, k.stier
+
+
+def test_173_sinkfeil_uten_leasetap_beholder_sitt_eget_ord(monkeypatch):
+    """Baksiden av porten over: `puls.tapt`-grenen skal treffe SMALT.
+
+    En ekte lagringsfeil mens leasen lever er fortsatt
+    `kjoring_avbrutt:kandidatlagring_feilet` — ellers ville fiksen
+    døpt om hver eneste 5xx fra kandidatlagrene til et autoritetstap,
+    og drift ville mistet lagringsfeilen helt.
+
+    MUTASJONEN SOM DREPER DENNE: la `puls.tapt`-grenen slå på koden
+    alene, uten å spørre pulsen."""
+    from modules.m57_ats import controller
+
+    monkeypatch.setattr(controller, "_sov", lambda s: None)
+    k = _Stubklient()
+    k.kandidatdatastatus = 500
+    res = _kjor(k)
+    assert res["grunn"] == "kjoring_avbrutt:kandidatlagring_feilet", res
+    assert k.kvitteringer and \
+        k.kvitteringer[0]["feilkode"] == "kjoring_avbrutt", k.kvitteringer
+    assert "lease_tapt" not in res, res
 
 
 def test_avvist_kvittering_er_ikke_utfort(monkeypatch):
@@ -304,7 +727,7 @@ def test_tom_ko_er_tomt_utfall():
     from modules.m57_ats import controller
 
     class _K:
-        def post(self, sti, json=None, headers=None):
+        def post(self, sti, json=None, headers=None, timeout=None):
             class _R:
                 status_code = 204
             assert sti == "/v1/oppdrag/claim"
@@ -371,13 +794,14 @@ def test_kvitteringen_gjentas_ved_forbigaaende_feil(monkeypatch):
             self.mist_igjen = mist_antall
             self.forsok = 0
 
-        def post(self, sti, json=None, headers=None):
+        def post(self, sti, json=None, headers=None, timeout=None):
             if sti == "/v1/oppdrag/kvittering":
                 self.forsok += 1
                 if self.mist_igjen:
                     self.mist_igjen -= 1
                     raise ConnectionError("svaret kom aldri")
-            return super().post(sti, json=json, headers=headers)
+            return super().post(sti, json=json, headers=headers,
+                                timeout=timeout)
 
     m = _Mister(1)
     assert _kjor(m)["utfall"] == "utfort"
@@ -475,13 +899,14 @@ def test_opplastingen_gjentas_som_kvitteringen(monkeypatch):
             self.mist_igjen = mist_antall
             self.opplastinger = []
 
-        def post(self, sti, json=None, headers=None):
+        def post(self, sti, json=None, headers=None, timeout=None):
             if sti == "/v1/artefakt":
                 self.opplastinger.append(json)
                 if self.mist_igjen:
                     self.mist_igjen -= 1
                     raise ConnectionError("svaret kom aldri")
-            return super().post(sti, json=json, headers=headers)
+            return super().post(sti, json=json, headers=headers,
+                                timeout=timeout)
 
     # 1) Et tapt svar gjentas, og lykkes det, er oppdraget UTFØRT — ikke
     # et unntak ut av kjøreløkka med bunten alt evaluert.
@@ -509,13 +934,14 @@ def test_opplastingen_gjentas_som_kvitteringen(monkeypatch):
             self.feil_igjen = feil_antall
             self.opplastinger = 0
 
-        def post(self, sti, json=None, headers=None):
+        def post(self, sti, json=None, headers=None, timeout=None):
             if sti == "/v1/artefakt":
                 self.opplastinger += 1
                 if self.feil_igjen:
                     self.feil_igjen -= 1
                     return _Svar(503, {})
-            return super().post(sti, json=json, headers=headers)
+            return super().post(sti, json=json, headers=headers,
+                                timeout=timeout)
 
     k = _FeilerForstOpplasting(2)
     res = _kjor(k)
@@ -567,13 +993,14 @@ def test_opplastingsretryen_stanser_ikke_ved_nominelt_utlop(monkeypatch):
             super().__init__(200, **kw)
             self.opplastinger = []
 
-        def post(self, sti, json=None, headers=None):
+        def post(self, sti, json=None, headers=None, timeout=None):
             if sti == "/v1/artefakt":
                 self.opplastinger.append(json)
                 if len(self.opplastinger) == 1:
                     apent["na"] = False        # utløpet passerte imens
                     raise ConnectionError("svaret kom aldri")
-            return super().post(sti, json=json, headers=headers)
+            return super().post(sti, json=json, headers=headers,
+                                timeout=timeout)
 
     # 1) Utløpet passerte mens svaret var borte: retryen fortsetter
     # likevel, plattformen gjenspiller det staged artefaktet, og
@@ -605,12 +1032,13 @@ def test_opplastingsretryen_stanser_ikke_ved_nominelt_utlop(monkeypatch):
             super().__init__(200, **kw)
             self.forsok = 0
 
-        def post(self, sti, json=None, headers=None):
+        def post(self, sti, json=None, headers=None, timeout=None):
             if sti == "/v1/oppdrag/kvittering":
                 self.forsok += 1
                 apent["na"] = False
                 raise ConnectionError("svaret kom aldri")
-            return super().post(sti, json=json, headers=headers)
+            return super().post(sti, json=json, headers=headers,
+                                timeout=timeout)
 
     apent["na"] = True
     k = _MisterKvittering()
@@ -809,10 +1237,11 @@ def test_fersk_kapabilitet_brukes_faktisk_i_opplastingen(monkeypatch):
             super().__init__(200, **kw)
             self.opplastinger = []
 
-        def post(self, sti, json=None, headers=None):
+        def post(self, sti, json=None, headers=None, timeout=None):
             if sti == "/v1/artefakt":
                 self.opplastinger.append(json)
-            return super().post(sti, json=json, headers=headers)
+            return super().post(sti, json=json, headers=headers,
+                                timeout=timeout)
 
     k = _Registrerer(forny=forny)
     res = _kjor(k, modell=_VenterModell(slo))
@@ -978,7 +1407,7 @@ def test_uhentbar_bunt_kvitteres_feilet(monkeypatch):
     kvitteringer = []
 
     class _K:
-        def post(self, sti, json=None, headers=None):
+        def post(self, sti, json=None, headers=None, timeout=None):
             if sti == "/v1/oppdrag/claim":
                 return _R(200, claim)
             if sti.startswith("/v1/inndata/hent-for-oppdrag/"):
@@ -1014,11 +1443,12 @@ def test_tom_bunt_er_uhentbar_og_naar_aldri_modellen():
     Kontroll: fjern `if not raa`-porten i `kjor_en`, så faller denne på
     `kjoring_avbrutt` i stedet, med bunten alt skrevet til disk."""
     class _TomBunt(_Stubklient):
-        def post(self, sti, json=None, headers=None):
+        def post(self, sti, json=None, headers=None, timeout=None):
             if sti.startswith("/v1/inndata/hent-for-oppdrag/"):
                 self.stier.append(sti)
                 return _Svar(200, content=b"")
-            return super().post(sti, json=json, headers=headers)
+            return super().post(sti, json=json, headers=headers,
+                                timeout=timeout)
 
     k, modell = _TomBunt(), _Modell()
     res = _kjor(k, modell=modell)
@@ -1102,7 +1532,7 @@ def test_heartbeatet_fornyer_og_bytter_kapabilitet(monkeypatch):
     fornyelser = []
 
     class _K:
-        def post(self, sti, json=None, headers=None):
+        def post(self, sti, json=None, headers=None, timeout=None):
             assert sti == "/v1/oppdrag/forny"
             fornyelser.append(json)
 
@@ -1133,7 +1563,7 @@ def test_avvist_fornyelse_stopper_pulsen(monkeypatch):
     kall = []
 
     class _K:
-        def post(self, sti, json=None, headers=None):
+        def post(self, sti, json=None, headers=None, timeout=None):
             kall.append(sti)
 
             class _R:
@@ -1223,7 +1653,7 @@ def test_stumme_pulser_nullstilles_av_en_bekreftet_fornyelse(monkeypatch):
     ferdig = threading.Event()
 
     class _K:
-        def post(self, sti, json=None, headers=None):
+        def post(self, sti, json=None, headers=None, timeout=None):
             assert sti == "/v1/oppdrag/forny", sti
             steg = plan[len(sett)] if len(sett) < len(plan) else 200
             sett.append(steg)

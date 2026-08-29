@@ -2026,6 +2026,785 @@ def test_222_makuleringen_er_en_navngitt_form(migrator):
 
 
 @pg
+def test_173_skriveveien_er_claimbundet_og_idempotent(migrator, miljo):
+    """#173 (eiers valg b + i): skriveveien inn i kandidatlagrene.
+
+    Måler hele kontrakten i én kjede: (1) et gyldig claim-par skriver
+    originaldokument + parsettekst i samme kall (FK-kjeden — valg i) og
+    evalueringsartefakt i sitt; (2) identitetene er DØRENS og
+    deterministiske (valg b) — samme kall to ganger gir samme UUID-er og
+    ingen ny rad, og kandidat-UUID-en er den samme på tvers av de to
+    rutene; (3) et avvikende re-skriv under samme nøkkel felles som
+    `kandidatdata_konflikt` — på dokumentbytene, på parsetteksten under
+    SAMME byte, og i kandidatgrenen på både artefaktet og
+    avmaskeringskartet; (4) feil claim-par og reapet anker er samme
+    `kandidatdata_avvist` — et oppslagsverk over claims skal ikke
+    finnes.
+
+    MUTASJONEN SOM DREPER DENNE: fjern claim-leddet i dørens
+    radoppslag, eller bytt ON CONFLICT-likhetsmålingen med et stille ja.
+    """
+    import base64
+
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    from .test_api import DSN as API_DSN, dekker  # noqa: F401
+    from .test_bestilling_rekruttering import _sikre_m57_claimbar
+    from .test_modul_onboarding_http import _onboard_token
+    from miljo import gjeldende_miljo
+
+    _sikre_m57_claimbar(migrator)
+    rel = migrator.execute(
+        "SELECT release_id FROM moduldeployment"
+        " WHERE modul_id='m57_ats' AND miljo=%s AND livslop='claiming'"
+        " LIMIT 1", (gjeldende_miljo(),)).fetchone()[0]
+    migrator.commit()
+
+    rt = _rt()
+    try:
+        # `frist=30` FORDI (4b) FAKTISK SKAL REAPE. Kjeden lukket
+        # prosessen 31 døgn tilbake, men opprettet den med default
+        # `frist=90`: reaperens predikat er
+        # `now() > lukket_ts + slettefrist_dogn`, altså
+        # `now() > now() + 59 døgn` — usant. `reap_kandidatdata` plukket
+        # aldri raden, `p.slettet_ts` forble NULL, og dørens
+        # claim-oppslag (som krever `p.slettet_ts IS NULL`) slapp
+        # skrivet inn i en prosess forbi kundens frist: (4b) svarte 200
+        # der den påsto å måle `kandidatdata_avvist`. Armen målte altså
+        # ingenting, og CI sto rød på den fra `b0365a7`. Samme paring
+        # som de fem andre reap-testene i fila: `frist=30` + 31 døgn.
+        oid, pid = _prosess(migrator, rt, frist=30)
+        # `_prosess` COMMITER IKKE — kalleren gjør det, og her må den.
+        # To grunner, og begge er harde: (1) fødselsvakten i 057 tar
+        # `FOR SHARE` på oppdragsraden og HOLDER den til transaksjonen
+        # slutter, så migrator-UPDATE-en under ville stått og ventet på
+        # en `rt` som aldri committer — testen hang, den feilet ikke;
+        # (2) døren er en EGEN forbindelse, og en ucommittet
+        # `rekrutteringsprosess` finnes ikke i dens JOIN, så hvert kall
+        # ville svart `kandidatdata_avvist` av feil grunn.
+        rt.commit()
+        # Claim-paret settes på raden (kolonnelåsen tillater owner- og
+        # statusfeltene) — riggen er claim-tilstanden, ikke claim-veien:
+        # det som måles her er DØRENS binding til den.
+        _sett_kontekst(migrator, TENANT)
+        # DEPLOYMENTEN STEMPLES OGSÅ (Codex P1). Claim-porten skriver
+        # `claim_release_id`/`claim_miljo` med den deploymenten den
+        # verifiserte (049:294), og døren binder nå mot dem; en rigg som
+        # lot dem stå NULL ville målt en tilstand claim-døren aldri
+        # produserer. Kolonnene er claim-vaktens (049:98) og kan KUN
+        # settes av `disponit_m37_claimer` — samme form som `_pluk` i
+        # resolvertestene.
+        migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+        migrator.execute(
+            "UPDATE oppdrag SET owner_claim_id=%s, owner_generation=1,"
+            " owner_lease_utloper=now()+interval '10 minutes',"
+            " claim_release_id=%s, claim_miljo=%s"
+            " WHERE tenant=%s AND id=%s",
+            ("c" * 22, rel, gjeldende_miljo(), TENANT, oid))
+        migrator.execute("RESET ROLE")
+        migrator.commit()
+
+        a = lag_app(DSN)
+        with TestClient(a) as c:
+            mtk, _ = _onboard_token(c, migrator, "m57_ats", rel)
+            hode = {"authorization": f"Bearer {mtk}"}
+            trippel = {"tenant": TENANT, "oppdrag_id": oid,
+                       "owner_claim_id": "c" * 22,
+                       "owner_generation": 1}
+            dok = {**trippel, "kandidat_id": "k1",
+                   "dokumentnavn": "k1/cv.pdf",
+                   "dokument_b64": base64.b64encode(
+                       b"%PDF-1.7 " + FIXTUR.encode()).decode(),
+                   "tekst": f"CV-tekst {FIXTUR}"}
+            r1 = c.post("/v1/rekruttering/kandidatdokument",
+                        json=dok, headers=hode)
+            assert r1.status_code == 200, r1.text
+            kid_uuid = r1.json()["kandidat_id"]
+            did = r1.json()["dokument_id"]
+            # Idempotent: samme byte, samme dør, samme identiteter.
+            r2 = c.post("/v1/rekruttering/kandidatdokument",
+                        json=dok, headers=hode)
+            assert r2.status_code == 200, r2.text
+            assert r2.json()["kandidat_id"] == kid_uuid
+            assert r2.json()["dokument_id"] == did
+
+            # `avmaskering` er KREVD på denne veien (Codex P1): uten
+            # kartet er den blindede `kildetekst` over lagret med tokener
+            # ingen autorisert leser kan løse opp, og et VALGFRITT felt
+            # ville gitt nøyaktig den stille ikke-lagringen funnet gjaldt.
+            art = {**trippel, "kandidat_id": "k1",
+                   "artefakt": {"funn": [], "oppfylt": {"krav": True},
+                                "kildetekst": f"[NAVN-1] {FIXTUR}"},
+                   "avmaskering": {"[NAVN-1]": f"Kari {FIXTUR}"},
+                   "intervjusporsmal": None}
+            r3u = c.post("/v1/rekruttering/kandidatartefakt",
+                         json={k: v for k, v in art.items()
+                               if k != "avmaskering"}, headers=hode)
+            assert r3u.status_code == 400, r3u.text
+            assert r3u.json()["feil"] == "request_feilformet"
+            r3 = c.post("/v1/rekruttering/kandidatartefakt",
+                        json=art, headers=hode)
+            assert r3.status_code == 200, r3.text
+            assert r3.json()["kandidat_id"] == kid_uuid, \
+                "kandidat-UUID-en skal være dørens ENE utledning (valg b)"
+
+            # (3) Avvikende re-skriv: to sannheter committes aldri.
+            r4 = c.post("/v1/rekruttering/kandidatdokument",
+                        json={**dok, "dokument_b64": base64.b64encode(
+                            b"%PDF-1.7 noe-annet").decode()},
+                        headers=hode)
+            assert r4.status_code == 409, r4.text
+            assert r4.json()["feil"] == "kandidatdata_konflikt"
+
+            # (3b) SAMME dokument, ANNEN parsettekst (Cursor P2-5). Den
+            # armen var ubevist, og den er den sannsynlige: bytene er
+            # arkivets og endrer seg ikke, mens teksten kommer fra en
+            # uttrekker som kan bytte versjon mellom to retries. Da er
+            # `ON CONFLICT DO NOTHING` på originaldokumentet et stille ja
+            # — likhetsmålingen slipper det gjennom — og bare
+            # parsettekstens egen måling står igjen mellom to sannheter
+            # om samme dokument.
+            r4b = c.post("/v1/rekruttering/kandidatdokument",
+                         json={**dok, "tekst": f"ANNEN tekst {FIXTUR}"},
+                         headers=hode)
+            assert r4b.status_code == 409, r4b.text
+            assert r4b.json()["feil"] == "kandidatdata_konflikt"
+
+            # (3c) KANDIDATGRENEN HAR SAMME LØFTE (Cursor P2-4).
+            # Konflikten var kun bevist på dokumentveien, så
+            # `kandidatdata_konflikt` for artefakt og avmaskering var to
+            # ubeviste armer i den grenen som faktisk bærer evalueringen.
+            # Endret `kildetekst` = endret artefakt:
+            r4c = c.post("/v1/rekruttering/kandidatartefakt",
+                         json={**art, "artefakt": {
+                             **art["artefakt"],
+                             "kildetekst": f"[NAVN-1] ANNEN {FIXTUR}"}},
+                         headers=hode)
+            assert r4c.status_code == 409, r4c.text
+            assert r4c.json()["feil"] == "kandidatdata_konflikt"
+
+            # (3d) IDENTISK artefakt, ANNET kart. Den er den viktigste av
+            # de to: artefakt-INSERT-en er da et stille ja
+            # (`ON CONFLICT DO NOTHING` + likhetsmåling), så bare
+            # avmaskeringens egen måling står mellom to nøkler til samme
+            # blindede tekst — og feil nøkkel løser opp til feil person.
+            r4d = c.post("/v1/rekruttering/kandidatartefakt",
+                         json={**art, "avmaskering": {
+                             "[NAVN-1]": f"Ola {FIXTUR}"}},
+                         headers=hode)
+            assert r4d.status_code == 409, r4d.text
+            assert r4d.json()["feil"] == "kandidatdata_konflikt"
+
+            # (4a) Feil claim-par: ETT svar.
+            r5 = c.post("/v1/rekruttering/kandidatdokument",
+                        json={**dok, "owner_claim_id": "x" * 22},
+                        headers=hode)
+            assert r5.status_code == 409, r5.text
+            assert r5.json()["feil"] == "kandidatdata_avvist"
+
+            # Radene: nøyaktig én per lager, payload intakt, FK-kjeden hel.
+            _sett_kontekst(migrator, TENANT)
+            rader = migrator.execute(
+                "SELECT (SELECT count(*) FROM kandidat_originaldokument"
+                "         WHERE tenant=%s AND prosess_id=%s),"
+                " (SELECT count(*) FROM kandidat_parsettekst"
+                "         WHERE tenant=%s AND prosess_id=%s),"
+                " (SELECT count(*) FROM kandidat_evalueringsartefakt"
+                "         WHERE tenant=%s AND prosess_id=%s),"
+                " (SELECT count(*) FROM kandidat_avmaskering"
+                "         WHERE tenant=%s AND prosess_id=%s)",
+                (TENANT, pid) * 4).fetchone()
+            assert rader == (1, 1, 1, 1), rader
+            tekst = migrator.execute(
+                "SELECT tekst FROM kandidat_parsettekst"
+                " WHERE tenant=%s AND prosess_id=%s",
+                (TENANT, pid)).fetchone()[0]
+            # Kartet løser opp nøyaktig tokenet den lagrede kildeteksten
+            # bærer — lageret 057 definerer for det, skrevet i SAMME
+            # transaksjon som artefaktet.
+            felter = migrator.execute(
+                "SELECT felter FROM kandidat_avmaskering"
+                " WHERE tenant=%s AND prosess_id=%s",
+                (TENANT, pid)).fetchone()[0]
+            migrator.rollback()
+            assert FIXTUR in tekst
+            assert felter == {"[NAVN-1]": f"Kari {FIXTUR}"}, felter
+
+            # (5) INTERVJUSPØRSMÅL: ABSENS LAGRES IKKE, MEN MÅLES
+            # (Codex P2, runde 2 på samme arm). Cursor P2-2 gjorde
+            # «ingen spørsmål» til en LAGRET sannhet — `[]` skrevet
+            # ubetinget — fordi et stille hopp over lageret ikke måler
+            # noen divergens. Men lageret er append-only med
+            # `(tenant, prosess_id, kandidat_id)` som primærnøkkel og
+            # ingen UPDATE av payload, og hver evaluering produserer med
+            # vilje null spørsmål (#225): plassen innkallings-/
+            # shortlist-steget skal skrive i ble dermed permanent
+            # okkupert av tomhet for HVER kandidat.
+            #
+            # Begge kravene måles her: ingen rad når det ikke er noe å
+            # lagre, og fortsatt konflikt når en lagret liste motsies.
+            # Står ETTER radtellingen over, som er en port på nøyaktig
+            # én rad per lager for k1.
+            #
+            # (5a) r3 skrev `intervjusporsmal: null`. Da står det INGEN
+            # rad — absens er ikke materialisert.
+            _sett_kontekst(migrator, TENANT)
+            antall = migrator.execute(
+                "SELECT count(*) FROM kandidat_intervjusporsmal"
+                " WHERE tenant=%s AND prosess_id=%s"
+                "   AND kandidat_id=%s::uuid",
+                (TENANT, pid, kid_uuid)).fetchone()[0]
+            migrator.rollback()
+            assert antall == 0, antall
+
+            # (5b) …og nettopp derfor kan en liste skrives etterpå: det
+            # er en FØRSTE sannhet under nøkkelen, ikke en motsigelse.
+            # Dette er flyten funnet handler om — uten (5a) svarte
+            # døren 409 her, og lageret var stengt for det steget det
+            # er utpekt som kilde for.
+            r7 = c.post("/v1/rekruttering/kandidatartefakt",
+                        json={**art, "intervjusporsmal": ["Hvorfor?"]},
+                        headers=hode)
+            assert r7.status_code == 200, r7.text
+            _sett_kontekst(migrator, TENANT)
+            sp = migrator.execute(
+                "SELECT sporsmal FROM kandidat_intervjusporsmal"
+                " WHERE tenant=%s AND prosess_id=%s"
+                "   AND kandidat_id=%s::uuid",
+                (TENANT, pid, kid_uuid)).fetchone()
+            migrator.rollback()
+            assert sp is not None and sp[0] == ["Hvorfor?"], sp
+
+            # (5c) Den STILLE retningen er fortsatt stengt, på egen
+            # kandidat: liste først, `null` etterpå. Armen skriver ikke,
+            # men den MÅLER — og en lagret liste som motsies er den
+            # samme `kandidatdata_konflikt` som de to lagrene over.
+            art2 = {**art, "kandidat_id": "k2",
+                    "intervjusporsmal": ["Hvorfor?"]}
+            r8 = c.post("/v1/rekruttering/kandidatartefakt",
+                        json=art2, headers=hode)
+            assert r8.status_code == 200, r8.text
+            r9 = c.post("/v1/rekruttering/kandidatartefakt",
+                        json={**art2, "intervjusporsmal": None},
+                        headers=hode)
+            assert r9.status_code == 409, r9.text
+            assert r9.json()["feil"] == "kandidatdata_konflikt"
+
+            # (4b) Reapet anker: samme avvisning — døren skriver aldri
+            # inn i en prosess forbi kundens frist.
+            _sett_kontekst(rt, TENANT)
+            rt.execute("SELECT lukk_rekrutteringsprosess(%s,%s,"
+                       " now() - interval '31 days')", (TENANT, pid))
+            rt.commit()
+            rp, _timer = _reaperkobling()
+            try:
+                rp.execute("SELECT * FROM reap_kandidatdata(50)")
+                rp.commit()
+            finally:
+                rp.close()
+            r6 = c.post("/v1/rekruttering/kandidatartefakt",
+                        json=art, headers=hode)
+            assert r6.status_code == 409, r6.text
+            assert r6.json()["feil"] == "kandidatdata_avvist"
+    finally:
+        rt.close()
+
+
+@pg
+def test_173_doed_lease_stenger_doren_midt_i_stroemmen(migrator, miljo):
+    """#173 (Cursor P2-5): leasen dør MENS strømmen går.
+
+    Kjedetesten måler feil claim-par og reapet anker. Dette er den
+    tredje veien inn i samme avvisning, og den som faktisk skjer i
+    drift: claimet er riktig, ankeret lever, men heartbeatet er tapt og
+    `owner_lease_utloper` har passert. Fencing-leddet i døren er det
+    eneste som står igjen — en utfører uten levende lease er ikke
+    lenger oppdragets utfører, og skal ikke få skrive det neste
+    dokumentet inn i prosessen.
+
+    Riggen er strømmen: ETT dokument lander på levende lease, så dør
+    leasen, så kommer det neste. Å måle bare det andre kallet ville
+    ikke skilt «leasen var død» fra «riggen var feil».
+
+    MUTASJONEN SOM DREPER DENNE: fjern
+    `owner_lease_utloper > now()`-leddet i dørens radoppslag."""
+    import base64
+
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    from .test_bestilling_rekruttering import _sikre_m57_claimbar
+    from .test_modul_onboarding_http import _onboard_token
+    from miljo import gjeldende_miljo
+
+    _sikre_m57_claimbar(migrator)
+    rel = migrator.execute(
+        "SELECT release_id FROM moduldeployment"
+        " WHERE modul_id='m57_ats' AND miljo=%s AND livslop='claiming'"
+        " LIMIT 1", (gjeldende_miljo(),)).fetchone()[0]
+    migrator.commit()
+
+    rt = _rt()
+    try:
+        oid, pid = _prosess(migrator, rt)
+        rt.commit()                     # jf. fødselsvaktens `FOR SHARE`
+        _sett_kontekst(migrator, TENANT)
+        # DEPLOYMENTEN STEMPLES OGSÅ (Codex P1). Claim-porten skriver
+        # `claim_release_id`/`claim_miljo` med den deploymenten den
+        # verifiserte (049:294), og døren binder nå mot dem; en rigg som
+        # lot dem stå NULL ville målt en tilstand claim-døren aldri
+        # produserer. Kolonnene er claim-vaktens (049:98) og kan KUN
+        # settes av `disponit_m37_claimer` — samme form som `_pluk` i
+        # resolvertestene.
+        migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+        migrator.execute(
+            "UPDATE oppdrag SET owner_claim_id=%s, owner_generation=1,"
+            " owner_lease_utloper=now()+interval '10 minutes',"
+            " claim_release_id=%s, claim_miljo=%s"
+            " WHERE tenant=%s AND id=%s",
+            ("c" * 22, rel, gjeldende_miljo(), TENANT, oid))
+        migrator.execute("RESET ROLE")
+        migrator.commit()
+
+        a = lag_app(DSN)
+        with TestClient(a) as c:
+            mtk, _ = _onboard_token(c, migrator, "m57_ats", rel)
+            hode = {"authorization": f"Bearer {mtk}"}
+            dok = {"tenant": TENANT, "oppdrag_id": oid,
+                   "owner_claim_id": "c" * 22, "owner_generation": 1,
+                   "kandidat_id": "k1", "dokumentnavn": "k1/cv.pdf",
+                   "dokument_b64": base64.b64encode(
+                       b"%PDF-1.7 " + FIXTUR.encode()).decode(),
+                   "tekst": f"CV-tekst {FIXTUR}"}
+            r1 = c.post("/v1/rekruttering/kandidatdokument",
+                        json=dok, headers=hode)
+            assert r1.status_code == 200, r1.text
+
+            # Heartbeatet er tapt: leasen har passert. Claim-paret og
+            # ankeret er UENDRET — det er nettopp poenget.
+            _sett_kontekst(migrator, TENANT)
+            migrator.execute(
+                "UPDATE oppdrag SET owner_lease_utloper=now()"
+                " - interval '1 second' WHERE tenant=%s AND id=%s",
+                (TENANT, oid))
+            migrator.commit()
+
+            r2 = c.post("/v1/rekruttering/kandidatdokument",
+                        json={**dok, "dokumentnavn": "k1/attest.pdf"},
+                        headers=hode)
+            assert r2.status_code == 409, r2.text
+            assert r2.json()["feil"] == "kandidatdata_avvist"
+            # Artefaktveien står i samme dør.
+            r3 = c.post("/v1/rekruttering/kandidatartefakt",
+                        json={"tenant": TENANT, "oppdrag_id": oid,
+                              "owner_claim_id": "c" * 22,
+                              "owner_generation": 1, "kandidat_id": "k1",
+                              "artefakt": {"funn": [], "oppfylt": {},
+                                           "kildetekst": "x"},
+                              "avmaskering": {}}, headers=hode)
+            assert r3.status_code == 409, r3.text
+            assert r3.json()["feil"] == "kandidatdata_avvist"
+
+            # Det FØRSTE dokumentet står — avvisningen gjelder skrivene
+            # etter at leasen døde, ikke det som var lovlig lagret.
+            _sett_kontekst(migrator, TENANT)
+            rader = migrator.execute(
+                "SELECT (SELECT count(*) FROM kandidat_originaldokument"
+                "         WHERE tenant=%s AND prosess_id=%s),"
+                " (SELECT count(*) FROM kandidat_evalueringsartefakt"
+                "         WHERE tenant=%s AND prosess_id=%s)",
+                (TENANT, pid) * 2).fetchone()
+            migrator.rollback()
+            assert rader == (1, 0), rader
+    finally:
+        rt.close()
+
+
+def test_173_leaseleddet_maaler_veggklokken_ikke_transaksjonsstarten():
+    """#173 (Codex P2): dørens lease-ledd skal måle `clock_timestamp()`.
+
+    Leddet spør «lever holdet NÅ», og `now()` er ikke nå — den er
+    fastfrosset ved transaksjonens START. Dørens transaksjon åpnes FØR
+    base64-dekodingen av inntil 25 MiB og før `FOR SHARE OF o` har
+    ventet ut en samtidig claimer, så den kan stå åpen vilkårlig lenge
+    mens `now()` peker på tiden før ventingen. En lease som døde i
+    nettopp det vinduet ble da autorisert, og persondata committet på en
+    fullmakt reaperen alt hadde inndratt.
+
+    Målt på KILDEN, ikke på et lås-kappløp (K1): den behavioural formen
+    krever at predikatet kan kalles to ganger i samme transaksjon med
+    veggklokken flyttet imellom, og dørens SQL er ikke en kallbar
+    funksjon slik `hent_inndata_for_oppdrag` er. Porten er derfor samme
+    form som `test_m57_rapportflate` alt bruker på `_anker_lever`s
+    re-sjekk — og den dreper nøyaktig mutasjonen.
+
+    Retningen er trygg og bør ikke forveksles med en strengere port som
+    kan felle noe lovlig: `clock_timestamp()` er alltid ≥ `now()`, så
+    leddet slipper aldri gjennom noe reclaimeren (005:894-895) alt har
+    tatt.
+
+    MUTASJONEN SOM DREPER DENNE: sett `clock_timestamp()` tilbake til
+    `now()` i `_kandidatdata`s radoppslag."""
+    import inspect
+
+    from api import app as appmod
+
+    kilde = inspect.getsource(appmod._kandidatdata)
+    assert "AND o.owner_lease_utloper > clock_timestamp()" in kilde, \
+        "dørens lease-ledd skal måle clock_timestamp(), ikke now()"
+    assert "> now()" not in kilde.replace("`now()`", ""), \
+        "now() i dørens SQL er transaksjonsstart — poengløs fencing"
+
+
+def test_173_leasen_maales_ogsaa_ved_skrivegrensen():
+    """#173 (Codex P2): ÉN tidsmåling er én for få på skriveveien.
+
+    Leddet over står FØR base64-dekodingen, hashingen og INSERT-ene av
+    inntil 25–50 MiB. Radlåsen (`FOR SHARE OF o`) serialiserer
+    tilstandsendringer — claim-tyven og `forny_oppdragslease` tar begge
+    `FOR UPDATE` og venter på oss — men den stopper ikke veggklokken. Og
+    så lenge VI holder delelåsen, kan heartbeaten ikke ta sin egen: leasen
+    kan ikke engang fornyes mens skrivingen pågår. En forespørsel med lite
+    tid igjen passerte derfor porten, brukte sekundene sine på å skrive,
+    og committet persondata på en fullmakt som var utløpt da raden landet.
+
+    Målt på KILDEN, ikke på et kappløp (K1), av nøyaktig samme grunn som
+    porten over: den behavioural formen krever at veggklokken flyttes
+    MELLOM to punkter i én transaksjon i døren, og dørens SQL er ikke en
+    kallbar funksjon. To målinger med `clock_timestamp()`, én før og én
+    ved skrivegrensen, er det porten håndhever.
+
+    MUTASJONEN SOM DREPER DENNE: fjern re-målingen foran `conn.commit()`.
+    """
+    import inspect
+
+    from api import app as appmod
+
+    kilde = inspect.getsource(appmod._kandidatdata)
+    assert kilde.count("owner_lease_utloper > clock_timestamp()") >= 2, \
+        "leasen skal måles både i porten og ved skrivegrensen"
+    # Re-målingen står FORAN committen, ikke etter — ellers er den en
+    # observasjon av noe som alt er varig.
+    foran = kilde.index("owner_lease_utloper > clock_timestamp()",
+                        kilde.index("owner_lease_utloper >"
+                                    " clock_timestamp()") + 1)
+    assert foran < kilde.index("conn.commit()"), \
+        "re-målingen skal stå foran conn.commit()"
+    assert "lease_utlopt_under_skriving" in kilde, \
+        "utfallet skal være skillbart i driftsloggen"
+
+
+@pg
+def test_173_nullbyte_er_feilformet_ikke_doed_base(migrator, miljo):
+    """#173 (Codex P2): NUL skal kodes som request-feil, ikke som drift.
+
+    PostgreSQL kan ikke lagre en nullbyte i `TEXT` eller `jsonb` i det
+    hele tatt. Uten porten nådde den INSERT-en og kom ut som en rå
+    `psycopg.Error`, som handlerens catch-all oversetter til
+    `db_utilgjengelig` — en 5xx. Modulens `lever` leser 5xx som DRIFT,
+    brenner hele retrykjeden mot en base som er frisk, og feller til
+    slutt evalueringen som `kandidatlagring_feilet`. Prisen er ikke bare
+    den ene kjøringen: driftsloggen får en falsk infrastrukturalarm, så
+    den som står med vakttelefonen leter etter en base som aldri var
+    nede.
+
+    Begge veiene måles. `jsonb` avviser nullbyten like hardt som `TEXT`,
+    og `kildetekst` i artefaktet ER den samme uttrekksteksten
+    dokumentveien bærer — så en port på bare dokumentveien ville latt
+    nøyaktig samme byte gå inn gjennom nabodøren.
+
+    MUTASJONEN SOM DREPER DENNE: fjern NUL-leddene i `_kandidatdata`.
+    Da svarer døren 500 `db_utilgjengelig` i stedet for 400."""
+    import base64
+
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    from .test_bestilling_rekruttering import _sikre_m57_claimbar
+    from .test_modul_onboarding_http import _onboard_token
+    from miljo import gjeldende_miljo
+
+    _sikre_m57_claimbar(migrator)
+    rel = migrator.execute(
+        "SELECT release_id FROM moduldeployment"
+        " WHERE modul_id='m57_ats' AND miljo=%s AND livslop='claiming'"
+        " LIMIT 1", (gjeldende_miljo(),)).fetchone()[0]
+    migrator.commit()
+
+    rt = _rt()
+    try:
+        oid, pid = _prosess(migrator, rt)
+        rt.commit()                     # jf. fødselsvaktens `FOR SHARE`
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+        migrator.execute(
+            "UPDATE oppdrag SET owner_claim_id=%s, owner_generation=1,"
+            " owner_lease_utloper=now()+interval '10 minutes',"
+            " claim_release_id=%s, claim_miljo=%s"
+            " WHERE tenant=%s AND id=%s",
+            ("c" * 22, rel, gjeldende_miljo(), TENANT, oid))
+        migrator.execute("RESET ROLE")
+        migrator.commit()
+
+        a = lag_app(DSN)
+        with TestClient(a) as c:
+            mtk, _ = _onboard_token(c, migrator, "m57_ats", rel)
+            hode = {"authorization": f"Bearer {mtk}"}
+            trippel = {"tenant": TENANT, "oppdrag_id": oid,
+                       "owner_claim_id": "c" * 22, "owner_generation": 1}
+            b64 = base64.b64encode(b"%PDF-1.7 " + FIXTUR.encode()).decode()
+
+            # Dokumentveien: NUL i parseteksten.
+            r = c.post("/v1/rekruttering/kandidatdokument",
+                       json={**trippel, "kandidat_id": "k1",
+                             "dokumentnavn": "k1/cv.pdf",
+                             "dokument_b64": b64,
+                             "tekst": "CV-tekst\x00 med nullbyte"},
+                       headers=hode)
+            assert r.status_code == 400, r.text
+            assert r.json()["feil"] == "request_feilformet"
+
+            # … og i dokumentnavnet, som går i uuid5, i en TEXT-kolonne
+            # og i loggens detalj.
+            r = c.post("/v1/rekruttering/kandidatdokument",
+                       json={**trippel, "kandidat_id": "k1",
+                             "dokumentnavn": "k1/cv\x00.pdf",
+                             "dokument_b64": b64, "tekst": "CV-tekst"},
+                       headers=hode)
+            assert r.status_code == 400, r.text
+            assert r.json()["feil"] == "request_feilformet"
+
+            # Artefaktveien: NUL i `kildetekst` (jsonb) …
+            r = c.post("/v1/rekruttering/kandidatartefakt",
+                       json={**trippel, "kandidat_id": "k1",
+                             "artefakt": {"funn": [], "oppfylt": {},
+                                          "kildetekst": "tekst\x00her"},
+                             "avmaskering": {}}, headers=hode)
+            assert r.status_code == 400, r.text
+            assert r.json()["feil"] == "request_feilformet"
+
+            # … og i avmaskeringskartets verdi, som er et utsnitt AV
+            # nøyaktig den samme teksten.
+            r = c.post("/v1/rekruttering/kandidatartefakt",
+                       json={**trippel, "kandidat_id": "k1",
+                             "artefakt": {"funn": [], "oppfylt": {},
+                                          "kildetekst": "x"},
+                             "avmaskering": {"[NAVN-1]": "Kari\x00"}},
+                       headers=hode)
+            assert r.status_code == 400, r.text
+            assert r.json()["feil"] == "request_feilformet"
+
+            # Uten nullbyten går nøyaktig de samme kroppene inn — porten
+            # felte tegnet, ikke forespørselen.
+            assert c.post("/v1/rekruttering/kandidatdokument",
+                          json={**trippel, "kandidat_id": "k1",
+                                "dokumentnavn": "k1/cv.pdf",
+                                "dokument_b64": b64,
+                                "tekst": "CV-tekst med nullbyte"},
+                          headers=hode).status_code == 200
+            assert c.post("/v1/rekruttering/kandidatartefakt",
+                          json={**trippel, "kandidat_id": "k1",
+                                "artefakt": {"funn": [], "oppfylt": {},
+                                             "kildetekst": "teksther"},
+                                "avmaskering": {"[NAVN-1]": "Kari"}},
+                          headers=hode).status_code == 200
+
+            _sett_kontekst(migrator, TENANT)
+            rader = migrator.execute(
+                "SELECT (SELECT count(*) FROM kandidat_originaldokument"
+                "         WHERE tenant=%s AND prosess_id=%s),"
+                " (SELECT count(*) FROM kandidat_evalueringsartefakt"
+                "         WHERE tenant=%s AND prosess_id=%s)",
+                (TENANT, pid) * 2).fetchone()
+            migrator.rollback()
+            assert rader == (1, 1), rader
+    finally:
+        rt.close()
+
+
+def test_173_losrevet_surrogat_er_feilformet_ikke_ukodet_500():
+    """#173 (Codex P2): `\\ud800` skal kodes som request-feil, ikke 500.
+
+    `json.loads` gjør escapen `\\ud800` til et ekte lone surrogate i
+    Python-strengen, og en slik streng er ikke en gyldig
+    Unicode-scalar-sekvens: `str.encode("utf-8")` reiser
+    `UnicodeEncodeError`. Det unntaket er verken `psycopg.Error` eller
+    noe portene i `_kandidatdata` fanger, så det falt ut som en UKODET
+    500 — og siden samme kropp gir samme unntak, på hvert eneste
+    retryforsøk, helt til evalueringen ble felt uten at noe sa hva som
+    var galt.
+
+    Veien inn er helt vanlig: manifestpredikatene slipper verdien
+    gjennom når et søskeninnslag matcher, og `avmaskering` beholder
+    hver deklarert verdi.
+
+    Predikatet måles direkte her, ikke over HTTP. Det er porten begge
+    grenene spør, og det er den ENE avgjørelsen funnet handler om —
+    HTTP-runden rundt den er alt dekket av
+    `test_173_nullbyte_er_feilformet_ikke_doed_base`, som går gjennom
+    nøyaktig samme `if`. Denne trenger derfor ingen database.
+
+    BEGGE GRENENE, ikke bare den meldte: funnet ble skrevet på
+    artefaktveien (`r.encode` i størrelsesporten), men dokumentveien
+    har samme defekt én gren unna — `uuid.uuid5` encoder navnet sitt.
+    Derfor står predikatet foran første koding begge steder.
+
+    MUTASJONEN SOM DREPER DENNE: fjern surrogatarmen i
+    `_har_ulagringsbart_tegn`, eller flytt tegnporten tilbake BAK
+    størrelsessummen i artefaktgrenen (`or` evaluerer venstre side
+    først, så `r.encode` møter surrogatet igjen).
+    """
+    import json as _json
+
+    from api.app import _har_ulagringsbart_tegn
+
+    # Slik verdien FAKTISK kommer inn: som en escape på wire, gjennom
+    # `json.loads`. Ingen håndlaget `"\ud800"`-literal i testen.
+    kropp = _json.loads('{"artefakt": {"kildetekst": "Kari\\ud800"},'
+                        ' "avmaskering": {"[NAVN-1]": "Kari"}}')
+    surrogat = kropp["artefakt"]["kildetekst"]
+    with pytest.raises(UnicodeEncodeError):
+        surrogat.encode("utf-8")
+
+    assert _har_ulagringsbart_tegn(kropp["artefakt"]) is True
+    # Også i et avmaskeringskarts VERDI …
+    assert _har_ulagringsbart_tegn({"[NAVN-1]": surrogat}) is True
+    # … og i en NØKKEL, som `json.dumps(sort_keys=True)` også encoder.
+    assert _har_ulagringsbart_tegn({surrogat: "Kari"}) is True
+    # … og nestet i intervjuspørsmålslisten.
+    assert _har_ulagringsbart_tegn([{"sporsmal": [surrogat]}]) is True
+
+    # Nullbyten er fortsatt fanget — armen ble utvidet, ikke byttet.
+    assert _har_ulagringsbart_tegn({"a": ["x\x00y"]}) is True
+
+    # Og en helt vanlig kropp slipper gjennom: porten feller tegnet,
+    # ikke forespørselen.
+    assert _har_ulagringsbart_tegn(kropp["avmaskering"]) is False
+    assert _har_ulagringsbart_tegn(
+        {"funn": [], "oppfylt": {"drift": True},
+         "kildetekst": "Kari Nordmann, æøå, 漢字, \U0001f600"}) is False
+
+
+@pg
+def test_173_budsjettet_dekker_alle_tre_payloadene(migrator, miljo,
+                                                   monkeypatch):
+    """#173 (Codex P2): kandidatbudsjettet gjelder alle TRE lagrene.
+
+    Døren målte bare `artefakt` mot `_KANDIDAT_ARTEFAKT_MAKS`.
+    `avmaskering` og `intervjusporsmal` er like fullt PERSISTERTE
+    payloads — hver sin JSONB-rad, hver sin hashing, hver sin
+    likhetssammenligning ved retry — og gikk inn uten noe dekodet tak.
+    Det eneste som bandt dem var wire-taket
+    `MAKS_KANDIDATARTEFAKT_KROPP`, som per konstruksjon er ~6×
+    budsjettet (JSON-eskapefaktoren): en autentisert claimant kunne
+    lagre ~301 MiB kart under et uttalt 50 MiB-budsjett.
+
+    Taket senkes kunstig i stedet for å sende 50 MiB gjennom CI — det
+    er formen Cursor-passet selv foreslo for denne klassen, og den
+    måler nøyaktig leddet funnet gjelder: HVILKE payloads som telles
+    med.
+
+    SUMMEN måles, ikke tre tak: budsjettet er KANDIDATENS, og tre
+    uavhengige tak à 50 MiB ville vært 150 MiB under samme navn. Siste
+    arm beviser det — tre payloads som hver for seg er innenfor (260,
+    235, 224 byte mot taket 600), men som til sammen er over.
+
+    MUTASJONEN SOM DREPER DENNE: mål bare `raa_a` igjen, eller bytt
+    summen mot tre separate sammenligninger."""
+    from starlette.testclient import TestClient
+    from api import app as appmod
+    from api.app import lag_app
+    from .test_bestilling_rekruttering import _sikre_m57_claimbar
+    from .test_modul_onboarding_http import _onboard_token
+    from miljo import gjeldende_miljo
+
+    _sikre_m57_claimbar(migrator)
+    rel = migrator.execute(
+        "SELECT release_id FROM moduldeployment"
+        " WHERE modul_id='m57_ats' AND miljo=%s AND livslop='claiming'"
+        " LIMIT 1", (gjeldende_miljo(),)).fetchone()[0]
+    migrator.commit()
+
+    # Bare dørens egen måling flyttes. Middlewarens rutetak er utledet
+    # ved import og står urørt på 301 MiB — det er nettopp avstanden
+    # mellom de to funnet handler om.
+    monkeypatch.setattr(appmod, "_KANDIDAT_ARTEFAKT_MAKS", 600)
+
+    rt = _rt()
+    try:
+        oid, pid = _prosess(migrator, rt)
+        rt.commit()                     # jf. fødselsvaktens `FOR SHARE`
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+        migrator.execute(
+            "UPDATE oppdrag SET owner_claim_id=%s, owner_generation=1,"
+            " owner_lease_utloper=now()+interval '10 minutes',"
+            " claim_release_id=%s, claim_miljo=%s"
+            " WHERE tenant=%s AND id=%s",
+            ("c" * 22, rel, gjeldende_miljo(), TENANT, oid))
+        migrator.execute("RESET ROLE")
+        migrator.commit()
+
+        a = lag_app(DSN)
+        with TestClient(a) as c:
+            mtk, _ = _onboard_token(c, migrator, "m57_ats", rel)
+            hode = {"authorization": f"Bearer {mtk}"}
+            trippel = {"tenant": TENANT, "oppdrag_id": oid,
+                       "owner_claim_id": "c" * 22, "owner_generation": 1}
+            liten = {"funn": [], "oppfylt": {}, "kildetekst": "x"}
+
+            def _post(kid, **felt):
+                return c.post("/v1/rekruttering/kandidatartefakt",
+                              json={**trippel, "kandidat_id": kid,
+                                    "artefakt": liten, "avmaskering": {},
+                                    **felt}, headers=hode)
+
+            # DEN POSITIVE ARMEN FØRST — uten den ville en dør som
+            # avviser ALT vært like grønn under et kunstig lavt tak.
+            assert _post("k-ok").status_code == 200
+
+            # `avmaskering` alene over taket (1434 byte).
+            r = _post("k-kart",
+                      avmaskering={f"[NAVN-{i}]": "n" * 20
+                                   for i in range(40)})
+            assert r.status_code == 400, r.text
+            assert r.json()["feil"] == "request_feilformet"
+
+            # `intervjusporsmal` alene over taket (1764 byte).
+            r = _post("k-sp", intervjusporsmal=["s" * 40 for _ in range(40)])
+            assert r.status_code == 400, r.text
+            assert r.json()["feil"] == "request_feilformet"
+
+            # SUMMEN: tre payloads som HVER FOR SEG er innenfor 600
+            # byte, men som til sammen er 719. Tre separate tak ville
+            # sluppet nettopp denne gjennom.
+            r = _post("k-sum",
+                      artefakt={"funn": [], "oppfylt": {},
+                                "kildetekst": "a" * 220},
+                      avmaskering={"[NAVN-1]": "b" * 220},
+                      intervjusporsmal=["c" * 220])
+            assert r.status_code == 400, r.text
+            assert r.json()["feil"] == "request_feilformet"
+
+            # Bare den lovlige kandidaten står i lagrene — avvisningene
+            # rullet tilbake, de skrev ikke halve rader.
+            _sett_kontekst(migrator, TENANT)
+            rader = migrator.execute(
+                "SELECT (SELECT count(*) FROM kandidat_evalueringsartefakt"
+                "         WHERE tenant=%s AND prosess_id=%s),"
+                " (SELECT count(*) FROM kandidat_avmaskering"
+                "         WHERE tenant=%s AND prosess_id=%s),"
+                " (SELECT count(*) FROM kandidat_intervjusporsmal"
+                "         WHERE tenant=%s AND prosess_id=%s)",
+                (TENANT, pid) * 3).fetchone()
+            migrator.rollback()
+            # `k-ok` sendte ingen `intervjusporsmal`, og absens
+            # materialiseres ikke (Codex P2): null rader i det lageret er
+            # riktig utfall, ikke en manglende skriving.
+            assert rader == (1, 1, 0), rader
+    finally:
+        rt.close()
+
+
+@pg
 def test_222_fristfeiling_lukker_ankeret(migrator):
     """Eiers tillegg på #222 (Codex på #220 `9ca3aca4`):
     `reap_evidensfrister` flytter et utløpt claimet M-57-oppdrag til
@@ -2092,3 +2871,284 @@ def test_222_fristfeiling_lukker_ankeret(migrator):
         rt.close()
         if rp is not None:
             rp.close()
+def test_173_doren_binder_deploymenten_ikke_bare_modulen(migrator, miljo):
+    """#173 (Codex P1): claim-trippelet er ikke nok — deploymenten måles.
+
+    `o.eiermodul` er DELT av hver levende deployment av modulen: staging
+    og produksjon, gammel release og ny, svarer alle `m57_ats`. Et
+    claim-trippel som lekker eller replayes til en annen deployment av
+    samme modul kunne derfor skrive persondata inn i en prosess den
+    aldri claimet — og siden lagrene er append-only, ville den LOVLIGE
+    utføreren etterpå møtt `kandidatdata_konflikt` på sin egen kandidat
+    og felt hele evalueringen.
+
+    Riggen er den lovlige claim-tilstanden med ÉN forskjell: stempelet
+    peker på en annen release enn tokenets. Alt annet — claim-par,
+    generasjon, lease, anker — er gyldig, så leddet som avviser står
+    alene. Formen er `hent_inndata_for_oppdrag` sin (060:102–103), og
+    dette er samme funn som #202 lukket på leseveien.
+
+    MUTASJONEN SOM DREPER DENNE: fjern
+    `claim_release_id IS NOT DISTINCT FROM %s` fra dørens radoppslag.
+    """
+    import base64
+
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    from .test_bestilling_rekruttering import _sikre_m57_claimbar
+    from .test_modul_onboarding_http import _onboard_token
+    from miljo import gjeldende_miljo
+
+    _sikre_m57_claimbar(migrator)
+    rel = migrator.execute(
+        "SELECT release_id FROM moduldeployment"
+        " WHERE modul_id='m57_ats' AND miljo=%s AND livslop='claiming'"
+        " LIMIT 1", (gjeldende_miljo(),)).fetchone()[0]
+    migrator.commit()
+
+    rt = _rt()
+    try:
+        oid, pid = _prosess(migrator, rt)
+        rt.commit()                     # jf. fødselsvaktens `FOR SHARE`
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+        migrator.execute(
+            "UPDATE oppdrag SET owner_claim_id=%s, owner_generation=1,"
+            " owner_lease_utloper=now()+interval '10 minutes',"
+            " claim_release_id=%s, claim_miljo=%s"
+            " WHERE tenant=%s AND id=%s",
+            ("c" * 22, rel + "-en-annen", gjeldende_miljo(), TENANT, oid))
+        migrator.execute("RESET ROLE")
+        migrator.commit()
+
+        a = lag_app(DSN)
+        with TestClient(a) as c:
+            mtk, _ = _onboard_token(c, migrator, "m57_ats", rel)
+            hode = {"authorization": f"Bearer {mtk}"}
+            trippel = {"tenant": TENANT, "oppdrag_id": oid,
+                       "owner_claim_id": "c" * 22, "owner_generation": 1}
+            r1 = c.post("/v1/rekruttering/kandidatdokument",
+                        json={**trippel, "kandidat_id": "k1",
+                              "dokumentnavn": "k1/cv.pdf",
+                              "dokument_b64": base64.b64encode(
+                                  b"%PDF-1.7 " + FIXTUR.encode()).decode(),
+                              "tekst": f"CV-tekst {FIXTUR}"},
+                        headers=hode)
+            assert r1.status_code == 409, r1.text
+            assert r1.json()["feil"] == "kandidatdata_avvist"
+            # Artefaktveien står i samme dør.
+            r2 = c.post("/v1/rekruttering/kandidatartefakt",
+                        json={**trippel, "kandidat_id": "k1",
+                              "artefakt": {"funn": [], "oppfylt": {},
+                                           "kildetekst": "x"},
+                              "avmaskering": {}}, headers=hode)
+            assert r2.status_code == 409, r2.text
+            assert r2.json()["feil"] == "kandidatdata_avvist"
+
+            # MILJØLEDDET MÅLES ALENE (samme lærdom som #202 runde 10:
+            # en regresjon som droppet det ene leddet ville ellers vært
+            # grønn på det andre). Riktig release, feil miljø.
+            _sett_kontekst(migrator, TENANT)
+            migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+            migrator.execute(
+                "UPDATE oppdrag SET claim_release_id=%s, claim_miljo=%s"
+                " WHERE tenant=%s AND id=%s",
+                (rel, gjeldende_miljo() + "-annet", TENANT, oid))
+            migrator.execute("RESET ROLE")
+            migrator.commit()
+            r3 = c.post("/v1/rekruttering/kandidatartefakt",
+                        json={**trippel, "kandidat_id": "k1",
+                              "artefakt": {"funn": [], "oppfylt": {},
+                                           "kildetekst": "x"},
+                              "avmaskering": {}}, headers=hode)
+            assert r3.status_code == 409, r3.text
+            assert r3.json()["feil"] == "kandidatdata_avvist"
+
+            # OG DEN RIKTIGE DEPLOYMENTEN SLIPPER GJENNOM — uten denne
+            # armen ville en dør som avviser ALT vært like grønn.
+            _sett_kontekst(migrator, TENANT)
+            migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+            migrator.execute(
+                "UPDATE oppdrag SET claim_release_id=%s, claim_miljo=%s"
+                " WHERE tenant=%s AND id=%s",
+                (rel, gjeldende_miljo(), TENANT, oid))
+            migrator.execute("RESET ROLE")
+            migrator.commit()
+            r4 = c.post("/v1/rekruttering/kandidatartefakt",
+                        json={**trippel, "kandidat_id": "k1",
+                              "artefakt": {"funn": [], "oppfylt": {},
+                                           "kildetekst": "x"},
+                              "avmaskering": {}}, headers=hode)
+            assert r4.status_code == 200, r4.text
+
+            # Lagrene bærer nøyaktig det ENE lovlige skrivet.
+            _sett_kontekst(migrator, TENANT)
+            rader = migrator.execute(
+                "SELECT (SELECT count(*) FROM kandidat_originaldokument"
+                "         WHERE tenant=%s AND prosess_id=%s),"
+                " (SELECT count(*) FROM kandidat_evalueringsartefakt"
+                "         WHERE tenant=%s AND prosess_id=%s)",
+                (TENANT, pid) * 2).fetchone()
+            migrator.rollback()
+            assert rader == (0, 1), rader
+    finally:
+        rt.close()
+
+
+@pg
+def test_173_claimtyveri_i_skrivevinduet_feller_doren(migrator, miljo):
+    """#173 (Cursor P2-3): TOCTOU mot claim-tyveri, med TO FORBINDELSER.
+
+    Kjedetesten over måler at FEIL claim-par avvises — det er den
+    deterministiske halvdelen. Dette er selve VINDUET: uten radlås var
+    dørens autorisasjon et snapshot, og en ny claimer kunne committe
+    `UPDATE oppdrag SET owner_generation…` mellom oppslaget og
+    INSERT-ene. Døren skrev likevel: INSERT-ene måler ikke claimet på
+    nytt, og lagervakten (057) måler `slettet_ts`, ikke leasen. En
+    utfører som HADDE mistet oppdraget skrev da persondata inn i
+    prosessen på vegne av en fullmakt som var borte.
+
+    Riggen trenger ingen instrumentert søm — LÅSEN er sømmen. Tyven tar
+    `FOR UPDATE` på oppdragsraden FØRST, så dørens `FOR SHARE OF o`
+    blokkerer på nøyaktig det stedet vinduet lå. At den venter DER måles
+    positivt med `pg_blocking_pids` mot tyvens backend-pid — låsmanageren
+    selv, ikke en sleep som håper at vinduet var åpent.
+
+    Når tyveriet committer, re-evaluerer PostgreSQL predikatet mot den
+    NYE radversjonen — samme mekanikk 057s fødselsvakt bruker — og
+    generasjonsleddet faller. Døren svarer `kandidatdata_avvist`, og
+    lagrene står tomme.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `FOR SHARE OF o` i
+    `_kandidatdata`. Da venter ingen backend, ventepollen utløper, og
+    forespørselen har for lengst svart 200 på et gammelt snapshot."""
+    import base64
+    import threading
+    import time
+
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    from .test_bestilling_rekruttering import _sikre_m57_claimbar
+    from .test_modul_onboarding_http import _onboard_token
+    from miljo import gjeldende_miljo
+
+    _sikre_m57_claimbar(migrator)
+    rel = migrator.execute(
+        "SELECT release_id FROM moduldeployment"
+        " WHERE modul_id='m57_ats' AND miljo=%s AND livslop='claiming'"
+        " LIMIT 1", (gjeldende_miljo(),)).fetchone()[0]
+    migrator.commit()
+
+    rt = _rt()
+    tyv = psycopg.connect(MIGRATOR_DSN)
+    obs = psycopg.connect(MIGRATOR_DSN, autocommit=True)
+    try:
+        oid, pid = _prosess(migrator, rt)
+        # Fødselsvakten holder `FOR SHARE` på oppdragsraden til `rt`
+        # committer — uten denne linjen ville riggen selv okkupert
+        # nøyaktig låsen tyven under skal eie.
+        rt.commit()
+        _sett_kontekst(migrator, TENANT)
+        # DEPLOYMENTEN STEMPLES OGSÅ (Codex P1). Claim-porten skriver
+        # `claim_release_id`/`claim_miljo` med den deploymenten den
+        # verifiserte (049:294), og døren binder nå mot dem; en rigg som
+        # lot dem stå NULL ville målt en tilstand claim-døren aldri
+        # produserer. Kolonnene er claim-vaktens (049:98) og kan KUN
+        # settes av `disponit_m37_claimer` — samme form som `_pluk` i
+        # resolvertestene.
+        migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+        migrator.execute(
+            "UPDATE oppdrag SET owner_claim_id=%s, owner_generation=1,"
+            " owner_lease_utloper=now()+interval '10 minutes',"
+            " claim_release_id=%s, claim_miljo=%s"
+            " WHERE tenant=%s AND id=%s",
+            ("c" * 22, rel, gjeldende_miljo(), TENANT, oid))
+        migrator.execute("RESET ROLE")
+        migrator.commit()
+
+        utfall: list = []
+        a = lag_app(DSN)
+        with TestClient(a) as c:
+            mtk, _ = _onboard_token(c, migrator, "m57_ats", rel)
+            hode = {"authorization": f"Bearer {mtk}"}
+            dok = {"tenant": TENANT, "oppdrag_id": oid,
+                   "owner_claim_id": "c" * 22, "owner_generation": 1,
+                   "kandidat_id": "k1", "dokumentnavn": "k1/cv.pdf",
+                   "dokument_b64": base64.b64encode(
+                       b"%PDF-1.7 " + FIXTUR.encode()).decode(),
+                   "tekst": f"CV-tekst {FIXTUR}"}
+
+            # TYVEN FØRST: eksklusiv lås på oppdragsraden, og den nye
+            # generasjonen skrevet men IKKE committet. Dette er stillingen
+            # en samtidig `plukk`/overtakelse står i.
+            _sett_kontekst(tyv, TENANT)
+            tyvpid = tyv.execute("SELECT pg_backend_pid()").fetchone()[0]
+            tyv.execute("SELECT 1 FROM oppdrag WHERE tenant=%s AND id=%s"
+                        " FOR UPDATE", (TENANT, oid))
+            tyv.execute(
+                "UPDATE oppdrag SET owner_claim_id=%s, owner_generation=2,"
+                " owner_lease_utloper=now()+interval '10 minutes'"
+                " WHERE tenant=%s AND id=%s", ("d" * 22, TENANT, oid))
+
+            def _skriv():
+                try:
+                    utfall.append(c.post("/v1/rekruttering/kandidatdokument",
+                                         json=dok, headers=hode))
+                except Exception as e:      # noqa: BLE001 — til asserten
+                    utfall.append(e)
+
+            traad = threading.Thread(target=_skriv, daemon=True)
+            traad.start()
+            try:
+                # `pg_blocking_pids` leser låsmanageren direkte og krever
+                # ingen stats-privilegier — `pid` er synlig for alle, og
+                # observatøren er autocommit, så ingen transaksjon cacher
+                # backend-statusen mellom rundene.
+                frist = time.monotonic() + 20
+                while time.monotonic() < frist:
+                    if obs.execute(
+                            "SELECT count(*) FROM pg_stat_activity"
+                            " WHERE %s = ANY(pg_blocking_pids(pid))",
+                            (tyvpid,)).fetchone()[0]:
+                        break
+                    time.sleep(0.05)
+                else:
+                    raise AssertionError(
+                        "ingen backend ble blokkert av tyvens radlås innen"
+                        " 20 s — døren leste claimet ULÅST og skrev på et"
+                        f" gammelt snapshot. Utfall så langt: {utfall}")
+                # Vinduet lukkes: tyveriet committer MENS døren venter.
+                tyv.commit()
+            finally:
+                tyv.rollback()
+                traad.join(30)
+            assert not traad.is_alive(), \
+                "skrivetråden lever etter commit + 30 s join"
+            assert len(utfall) == 1, utfall
+            r = utfall[0]
+            assert not isinstance(r, Exception), r
+            assert r.status_code == 409, r.text
+            assert r.json()["feil"] == "kandidatdata_avvist"
+
+            # Ingenting ble skrevet på den tapte fullmakten.
+            _sett_kontekst(migrator, TENANT)
+            rader = migrator.execute(
+                "SELECT (SELECT count(*) FROM kandidat_originaldokument"
+                "         WHERE tenant=%s AND prosess_id=%s),"
+                " (SELECT count(*) FROM kandidat_parsettekst"
+                "         WHERE tenant=%s AND prosess_id=%s)",
+                (TENANT, pid) * 2).fetchone()
+            migrator.rollback()
+            assert rader == (0, 0), rader
+    finally:
+        obs.close()
+        tyv.close()
+        rt.close()
+
+
+# Dekningsporten: begge kodene bevises av kjedetesten over.
+from .test_api import dekker as _dekker173  # noqa: E402
+
+test_173_skriveveien_er_claimbundet_og_idempotent = _dekker173(
+    "kandidatdata_avvist", "kandidatdata_konflikt")(
+    test_173_skriveveien_er_claimbundet_og_idempotent)

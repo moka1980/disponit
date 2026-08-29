@@ -171,6 +171,22 @@ FEILVEIER: tuple[Feilvei, ...] = (
         "ETT svar for alle årsakene (058-formen: et oppslagsverk over "
         "bunter skal ikke finnes). Avvist billig i forhåndsporten, og "
         "endelig av bind_inndata i fødselstransaksjonen.")),
+    Feilvei("kandidatdata_avvist", 409, ("sikkerhet",), None, notat=(
+        "Skriveveien inn i kandidatlagrene (#173) avviste kallet: "
+        "oppdraget finnes ikke hos tenanten, er ikke aktivt claimet av "
+        "denne modulen med dette claim-paret, leasen er utløpt, eller "
+        "retensjonsankeret er reapet. ETT svar for alle årsakene — et "
+        "oppslagsverk over claims og prosesser skal ikke finnes "
+        "(058-formen). Fullmakten er CLAIMETS, som kvittering/fornyelse: "
+        "modultokenet svarer bare på hvilken deployment dette er.")),
+    Feilvei("kandidatdata_konflikt", 409, ("sikkerhet",), None, notat=(
+        "En kandidatdatarad med samme nøkkel finnes alt med ANNET "
+        "innhold (#173). Lagrene er append-only og skriveveien er "
+        "idempotent på payload-likhet: en retry etter tapt lease skriver "
+        "de samme bytene og er et stille ja — et AVVIKENDE re-skriv er "
+        "derimot to sannheter om samme dokument, og det committes "
+        "aldri i stillhet. Sikkerhetslogg: noen forsøkte å bytte "
+        "innholdet under en eksisterende evidensnøkkel.")),
     Feilvei("bestillingstype_utilgjengelig", 503, ("drift",), None, notat=(
         "Bestillingstypen er kodefestet, men oppdragstypen dens kan ikke "
         "CLAIMES nå: raden mangler i oppdragstype_register, har feil "
