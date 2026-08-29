@@ -1,4 +1,4 @@
--- 066: revisjonshendelse — kjernens udødelige, tenant-bundne hendelseslogg (#159)
+-- 068: revisjonshendelse — kjernens udødelige, tenant-bundne hendelseslogg (#159)
 --
 -- FUNNET SOM KREVDE DEN (Codex P1 ×2 på #153, runde 2 og 9): den auditerte
 -- avskruingen av blindingen var SELVATTESTERT. Den som ba om å skru av

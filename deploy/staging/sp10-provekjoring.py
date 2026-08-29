@@ -729,8 +729,159 @@ def _mal_059(conn) -> list[str]:
     return feil
 
 
+def _seed_067(conn):
+    """Bebodd 066-tilstand for 067s engangs-makulering (Cursor P1/P2 på
+    #252): den ENE formen migrasjonen møter ved oppgradering og som ingen
+    tom-base-kjøring kan vise — en prosess som ALT er reapet av reaperen
+    slik den sto FØR 067, med den promoterte rapportens payload i live.
+
+    Etter `slettet_ts` er satt plukkes prosessen aldri igjen (reaperens
+    predikat er `slettet_ts IS NULL`), så uten engangssteget beholder
+    nettopp disse radene ciphertext for alltid. Formen er uoppnåelig på
+    en base som alt står på 067: vakten avviser da merket så lenge
+    rapporten bærer payload. Bare SP-10 kan bebo den.
+
+    To armer, én per utfall:
+
+    - REAPET prosess + promotert rapport med payload → skal makuleres av
+      067 (payload nullet, merke satt, tilstand + hash i behold).
+    - LEVENDE prosess + promotert rapport med payload → skal stå ORDRETT
+      urørt; backfillen er ikke en tabellsveip.
+    """
+    import os
+    import secrets
+    # Engangsbasen har ingen driftshemmeligheter (samme mønster som
+    # _seed_056): nøkkelen finnes bare for at radene skal ha
+    # produksjonsFORM.
+    os.environ.setdefault("DISPONIT_KEK", "ab" * 32)
+    from db import kryptering
+    from db.pg import sett_kontekst
+    sett_kontekst(conn, TEN, "sp10:seed", "r-sp10-067")
+    key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(conn, TEN)
+
+    # Rapporttypen i registerets ekte form: artefakt-FK-en går via
+    # `artefakttype_register` → `modulkontrakt`. Fødes bare hvis den ikke
+    # alt finnes (035-formen), og bindingen LESES etterpå — en hardkodet
+    # hash ville felt FK-en den dagen en migrasjon seeder kontrakten
+    # først, altså gjort seedet skjørt mot sin egen fremtid.
+    conn.execute(
+        "INSERT INTO modulkontrakt (modul_id, kontraktversjon,"
+        " kontrakt_hash, payload_schema_hash, kvittering_schema_hash,"
+        " sideeffektklasse, reversibilitet)"
+        " SELECT 'm57_ats',1,'kh-sp10-067','p','k','krever_outbox',"
+        "'kompenserende'"
+        " WHERE NOT EXISTS (SELECT 1 FROM modulkontrakt"
+        "   WHERE modul_id='m57_ats' AND kontraktversjon=1)")
+    conn.execute(
+        "INSERT INTO artefakttype_register (artefakttype, eiermodul,"
+        " kontraktversjon, kontrakt_hash, skjema_hash)"
+        " SELECT 'rekruttering.evaluering.rapport', mk.modul_id,"
+        "        mk.kontraktversjon, mk.kontrakt_hash, 's'"
+        "   FROM modulkontrakt mk"
+        "  WHERE mk.modul_id='m57_ats' AND mk.kontraktversjon=1"
+        "    AND NOT EXISTS (SELECT 1 FROM artefakttype_register"
+        "      WHERE artefakttype='rekruttering.evaluering.rapport')")
+    modul, ver, kh = conn.execute(
+        "SELECT eiermodul, kontraktversjon, kontrakt_hash"
+        "  FROM artefakttype_register"
+        " WHERE artefakttype='rekruttering.evaluering.rapport'").fetchone()
+    # `artefakt_release_fk` (049) binder (modul_id, release_id) til
+    # modulregisteret — samme rigg som _seed_049 bygger for sin modul.
+    conn.execute(
+        "INSERT INTO modulhode (modul_id, status) SELECT %s,'aktiv'"
+        " WHERE NOT EXISTS (SELECT 1 FROM modulhode WHERE modul_id=%s)",
+        (modul, modul))
+    conn.execute(
+        "INSERT INTO modulrelease (modul_id, release_id, kontraktversjon,"
+        " kontrakt_hash, manifest_hash, artifact_digest)"
+        " SELECT %s,'r-sp10',%s,%s,'mh','digest-sp10'"
+        " WHERE NOT EXISTS (SELECT 1 FROM modulrelease"
+        "   WHERE modul_id=%s AND release_id='r-sp10')",
+        (modul, ver, kh, modul))
+
+    def _arm(merke: str, reapet: bool):
+        # Beslutningsveien, ordrett fra _seed_056 — men et CLAIMET
+        # `rekruttering.evaluering`-oppdrag, den ENESTE tilstanden et
+        # retensjonsanker fødes på (057s vakt måler nettopp den).
+        logg = conn.execute(
+            "INSERT INTO revisjonslogg (tenant, aktor, kilde, input_hash,"
+            " policy_id, beslutning, begrunnelse, idempotency_key)"
+            " VALUES (%s,'sp10','api_token','ih','p@1.0.0/x.y','TILLAT',"
+            "'[]',%s) RETURNING id", (TEN, "sp10-067-" + merke)).fetchone()[0]
+        ct, nonce = kryptering.krypter(dek, {"sp10": "067", "arm": merke},
+                                       TEN, key_id)
+        oid = conn.execute(
+            "INSERT INTO oppdrag (opprinnelse, tenant,"
+            " beslutning_loggpost_id, oppdragstype, handling, eiermodul,"
+            " payload_kryptert, key_id, nonce, utforelsesfrist,"
+            " evidensfrist, koblingsstatus)"
+            " VALUES ('beslutning',%s,%s,'rekruttering.evaluering',"
+            "'rekruttering.evaluering','m57_ats',%s,%s,%s,"
+            " now()+interval '1 hour', now()+interval '1 day','KOBLET')"
+            " RETURNING id", (TEN, logg, ct, key_id, nonce)).fetchone()[0]
+        conn.execute("UPDATE oppdrag SET status='plukket'"
+                     " WHERE tenant=%s AND id=%s", (TEN, oid))
+        conn.execute(
+            "INSERT INTO rekrutteringsprosess (tenant, prosess_id,"
+            " oppdrag_id, slettefrist_dogn)"
+            " VALUES (%s, gen_random_uuid(), %s, 30)", (TEN, oid))
+        # Rapporten: promotert, med STRUKTURELT dekrypterbar payload —
+        # det er den som overlevde fristen, og som backfillen måles på.
+        conn.execute(
+            "INSERT INTO artefakt (tenant, oppdrag_id, artefakttype,"
+            " modul_id, release_id, kontraktversjon, kontrakt_hash,"
+            " module_epoch, tilstand, storrelse_bytes, klartekst_sha256,"
+            " ciphertext, nonce, dek_ref, kapabilitet_jti, promotert_ts)"
+            " VALUES (%s,%s,'rekruttering.evaluering.rapport',%s,"
+            "'r-sp10',%s,%s,1,'promotert',10,%s,%s,%s,%s,%s, now())",
+            (TEN, oid, modul, ver, kh, "h-" + merke, ct, nonce, key_id,
+             "jti-sp10-067-" + secrets.token_hex(8)))
+        if reapet:
+            # Reaperens merke slik den SATTE det før 067: de seks lagrene
+            # er tomme, så 057-vakten slipper det gjennom — og rapporten
+            # blir stående.
+            conn.execute(
+                "UPDATE rekrutteringsprosess"
+                "   SET lukket_ts = now() - interval '31 days',"
+                "       slettet_ts = now() - interval '1 day'"
+                " WHERE tenant=%s AND oppdrag_id=%s", (TEN, oid))
+        return oid
+
+    _arm("reapet", True)
+    _arm("levende", False)
+    conn.commit()
+
+
+def _mal_067(conn) -> list[str]:
+    """Etter 067: den reapede armens rapport er TØMT og merket, med
+    tilstand og hash i behold; den levende armens rapport står ordrett
+    urørt.
+
+    NEGATIVEN LIGGER I SEEDET: fjernes engangs-løkken fra 067, står den
+    reapede armens ciphertext fortsatt der — og målingen her er rød. En
+    tom-base-`migrer` er grønn i begge tilfeller."""
+    from db.pg import sett_kontekst
+    sett_kontekst(conn, TEN, "sp10:fasit", "r-sp10-067-2")
+    feil = []
+    rader = conn.execute(
+        "SELECT p.slettet_ts IS NOT NULL, a.tilstand,"
+        "       a.ciphertext IS NULL, a.nonce IS NULL,"
+        "       a.makulert_ts IS NOT NULL, a.klartekst_sha256"
+        "  FROM rekrutteringsprosess p JOIN artefakt a"
+        "    ON a.tenant = p.tenant AND a.oppdrag_id = p.oppdrag_id"
+        " WHERE p.tenant = %s ORDER BY p.slettet_ts IS NOT NULL",
+        (TEN,)).fetchall()
+    fasit = [(False, "promotert", False, False, False, "h-levende"),
+             (True, "promotert", True, True, True, "h-reapet")]
+    if rader != fasit:
+        feil.append(f"067 mot bebodd base: {rader!r}, ventet {fasit!r}")
+    conn.rollback()
+    return feil
+
+
 SEEDS = {48: (_seed_048, _mal_048), 49: (_seed_049, _mal_049),
-         56: (_seed_056, _mal_056), 59: (_seed_059, _mal_059)}
+         56: (_seed_056, _mal_056), 59: (_seed_059, _mal_059),
+         67: (_seed_067, _mal_067)}
 
 
 def main(argv: list[str] | None = None) -> int:

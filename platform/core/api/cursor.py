@@ -36,6 +36,26 @@ def _avb64(tekst: str) -> bytes:
     return base64.urlsafe_b64decode(tekst + pad)
 
 
+def _sjekk_signatur(pepper: str, kropp: bytes, signatur: str) -> None:
+    """Konstant-tids signaturkontroll som ALDRI slipper ut annet enn
+    `CursorUgyldig` (Cursor P1).
+
+    `hmac.compare_digest` på to `str` kaster TypeError så snart én av dem
+    bærer et ikke-ASCII-tegn — og signaturen kommer rått fra en
+    query-parameter, så `?cursor=AAAA.%C3%A6` nådde `_les` som et UFANGET
+    unntak. `_les` fanger bare `Feilsvar`/`psycopg.Error`, så svaret ble
+    500 i stedet for kontraktens `400 cursor_ugyldig`: en klientfeil
+    presentert som en serverfeil, og en gratis 500 for hvem som helst med
+    en økt. Ulik LENGDE er derimot ikke en feil — `compare_digest` svarer
+    da bare False, og gjorde det også før denne vakten."""
+    try:
+        lik = hmac.compare_digest(_mac(pepper, kropp), signatur)
+    except Exception as e:
+        raise CursorUgyldig("signaturen er ikke sammenlignbar") from e
+    if not lik:
+        raise CursorUgyldig("signaturen stemmer ikke")
+
+
 def lag(tenant: str, ts: datetime, sak_id: int, pepper: str) -> str:
     kropp = json.dumps({"t": tenant, "ts": ts.astimezone(timezone.utc).isoformat(),
                         "id": int(sak_id)},
@@ -50,8 +70,7 @@ def les(raa: str, tenant: str, pepper: str) -> tuple[datetime, int]:
         kropp = _avb64(del_b64)
     except Exception as e:
         raise CursorUgyldig("kunne ikke dekodes") from e
-    if not hmac.compare_digest(_mac(pepper, kropp), signatur):
-        raise CursorUgyldig("signaturen stemmer ikke")
+    _sjekk_signatur(pepper, kropp, signatur)
     try:
         data = json.loads(kropp)
         ts = datetime.fromisoformat(data["ts"])
@@ -110,8 +129,7 @@ def les_v2(raa: str, pepper: str, *, tenant: str, endepunkt: str,
         kropp = _avb64(del_b64)
     except Exception as e:
         raise CursorUgyldig("kunne ikke dekodes") from e
-    if not hmac.compare_digest(_mac(pepper, kropp), signatur):
-        raise CursorUgyldig("signaturen stemmer ikke")
+    _sjekk_signatur(pepper, kropp, signatur)
     try:
         data = json.loads(kropp)
         ts = datetime.fromisoformat(data["ts"])

@@ -51,8 +51,8 @@ Uten dette er CODEOWNERS og CI bare pynt — med dette nekter GitHub feil.
 | Rolle | Tilgang | Slik settes det opp |
 |---|---|---|
 | **Claude Code** | Skrive til brancher, aldri main | Kjøres på din maskin eller Cloud Server S der du er git-innlogget, ELLER: GitHub → Settings → Developer settings → Fine-grained token, kun repo `disponit`, Contents+Pull requests: Read/Write. Legg tokenet i miljøvariabel på serveren — aldri i chat eller i repoet. |
-| **Codex** | Review + merge av PR-er | Koble Codex til GitHub-kontoen din i Codex-innstillingene, gi tilgang kun til `disponit`. Merge-porter håndheves uansett av branch protection. |
-| **Cursor** | Pre-Codex (automatisk) | 1) GitHub App installert på repoet. 2) Opprett API-nøkkel på https://cursor.com/dashboard/api og sett `gh secret set CURSOR_API_KEY --repo moka1980/disponit`. Workflow: `.github/workflows/cursor-pre-codex.yml`. |
+| ~~**Codex**~~ | Fjernet 29/8-26 (RUTINER §10) | Skal ikke konfigureres; koble fra GitHub-kontoen om den fortsatt er tilkoblet. |
+| ~~**Cursor**~~ | Fjernet 29/8-26 (RUTINER §10) | Skal ikke konfigureres; avinstaller GitHub-appen og slett `CURSOR_API_KEY`-secreten. |
 | **ChatGPT** | Kun lese | Repoet er offentlig — gi ChatGPT lenken https://github.com/moka1980/disponit og be om PR-001-review mot `platform/core/policy_validator/` med de tre spørsmålene i `docs/README-arbeidsflyt.md`. |
 | **Claude.ai** | Kun lese (offentlig repo) | Drafter og reviewer via chat; leverer push-klare pakker som denne. |
 

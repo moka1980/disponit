@@ -71,7 +71,7 @@ APPEND_ONLY_TRIGGERE = (
     ("unntak", "unntak_ingen_delete"),
     ("unntak", "unntak_historikkforing"),
     ("revisjonslogg", "revisjonslogg_ingen_endring"),
-    # 066: revisjonshendelsen er append-only på samme form (rad OG
+    # 068: revisjonshendelsen er append-only på samme form (rad OG
     # statement), og nekter dermed DELETE. Bare RADtriggeren skrus av —
     # `revisjonshendelse_ingen_truncate` fyrer på TRUNCATE, som
     # oppryddingen aldri gjør, og en sperre som ikke er i veien skal
@@ -190,7 +190,7 @@ RYDDETABELLER = ("bestillingsplan_tick", "bestillingsplan_vindu",
                  # må ut før begge.
                  "inndata_artefakt",
                  "oppdrag", "reparasjonsoperasjoner", "unntak",
-                 # 066: revisjonshendelsen peker BARE ut av tenanten —
+                 # 068: revisjonshendelsen peker BARE ut av tenanten —
                  # `bruker_id` har FK til den GLOBALE `brukeridentitet`
                  # (056-formen for `signatar`), og den tabellen ryddes
                  # ikke herfra. Tenanten er en TEXT-kolonne, ikke en FK.

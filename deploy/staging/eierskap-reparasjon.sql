@@ -332,6 +332,12 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'rydd_staged_artefakter()',                          'disponit_domene_eier'),
     ('FUNCTION', 'karantenesett_artefakt(uuid,text,bigint)',         'disponit_domene_eier'),
     ('FUNCTION', 'bevar_artefakt(uuid,text,bigint,text)',                 'disponit_domene_eier'),
+    -- 066/#222: makuleringsdøren. Samme eier som resten av 016-familien,
+    -- av samme grunn — den skriver på `artefakt`, og reaperen får EXECUTE
+    -- på DØREN i stedet for UPDATE på evidenstabellen. `timestamptz`
+    -- skrives ut slik `regprocedure` gjengir den, ellers matcher raden
+    -- ingen funksjon.
+    ('FUNCTION', 'makuler_artefakter_for_prosess(text,bigint,timestamp with time zone)', 'disponit_domene_eier'),
     -- 043 §8: samme validering og samme lås som `bevar_artefakt`, uten
     -- skrivingen — den sene kvitteringsveien må kunne avvise et fremmed
     -- artefakt også når `direkte`-reversibiliteten sier at artefaktet skal

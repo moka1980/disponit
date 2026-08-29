@@ -223,6 +223,261 @@ def test_nginx_artefaktrute_slipper_gjennom_appens_kroppsgrense():
         assert "proxy_pass http://unix:/run/disponit/api.sock;" in krop
 
 
+def test_nginx_kandidatrutene_slipper_gjennom_appens_kroppsgrenser():
+    """#173 (Cursor P1-1): tredje gang samme klasse er målt — appen ga
+    kandidatrutene egne, større kroppsgrenser, ingressen sto igjen på
+    256 KiB.
+
+    En reell CV er base64 langt over 256 KiB, så nginx hadde svart 413 før
+    appens rutegrense ble konsultert. Og et 413 HER er ikke en avvist
+    forespørsel: sinkene i `kjor_en` reiser ikke-2xx som
+    `kandidatlagring_feilet`, og `kjor_bunt` feller hele evalueringen —
+    grensen felte den eneste kjøringen rutene finnes for. `TestClient`
+    treffer aldri nginx, så ingen apptest ser dette.
+
+    Porten itererer `RUTEKROPPSGRENSER`, ikke en liste her: en ny rute med
+    eget apptak, men uten egen nginx-location, feller testen.
+
+    MUTASJONEN SOM DREPER DENNE: fjern én av de to `location =`-blokkene i
+    malen, eller sett `client_max_body_size` der under appkonstanten."""
+    from api.app import RUTEKROPPSGRENSER
+    https = _https()
+    assert RUTEKROPPSGRENSER, "ingen ruter med eget kroppstak å binde"
+    for rute, apptak in RUTEKROPPSGRENSER.items():
+        blokk = re.search(r"location = %s \{(.*?)\n    \}" % re.escape(rute),
+                          https, re.S)
+        assert blokk, f"ingen egen nginx-location for {rute}"
+        krop = blokk.group(1)
+        m = re.search(r"client_max_body_size\s+(\d+)([kKmM]?);", krop)
+        assert m, f"{rute} mangler egen client_max_body_size"
+        grense = int(m.group(1)) * _ENHET[m.group(2).lower()]
+        assert grense >= apptak, (
+            f"nginx slipper {grense} B på {rute}, appen tillater {apptak} B"
+            " — proxyen avviser med 413 først, og sinken leser det som"
+            " kandidatlagring_feilet")
+        # Ruten mister ikke rate-grense eller socket-tillitsgrensen.
+        # HVILKEN sone måles av testen under — her er kravet bare at
+        # ruten fortsatt HAR en (en location uten `limit_req` faller ut
+        # av rate-vernet helt, og det er en annen og verre feil).
+        assert re.search(r"limit_req zone=\w+ burst=\d+", krop), \
+            f"{rute} mistet rate-grensen"
+        assert "proxy_pass http://unix:/run/disponit/api.sock;" in krop
+
+
+def test_nginx_kandidatrutene_faar_sin_egen_ratesone():
+    """#173 (Codex P1): ingressens rate-budsjett må matche strømmen.
+
+    Kroppsgrensen ble hevet i `56fe289`, men begge kandidatrutene sto
+    igjen i `disponit_general` — 600 r/m med burst 100, altså 10 r/s.
+    Skriveveien er en STRØM: inntil 25 000 skrivinger under ett claim
+    (§4: 20 000 medlemmer + 5 000 kandidater). En arbeider som leverer
+    små dokumenter fortere enn 10/s tømmer bursten og får nginx' 429
+    lenge før appens egen `KANDIDATDATA_RATE_PER_MIN`-bøtte er i
+    nærheten — altså var appfiksen i `bc1e7f3` uten virkning i den
+    eneste stien som finnes i drift.
+
+    Og et 429 her er ikke en bremset forespørsel, like lite som 413-en
+    var en avvist: `lever` leser 4xx som TERMINALT, og `kjor_bunt`
+    feller hele evalueringen som `kandidatlagring_feilet`. Ingressen
+    felte den eneste kjøringen rutene finnes for.
+
+    Porten er den samme formen som kroppsgrensen har: ingressen skal
+    ikke være strammere enn budsjettet appen SELV håndhever, og
+    appkonstanten er ankeret — ikke et tall kopiert inn i testen.
+
+    MUTASJONEN SOM DREPER DENNE: sett rutene tilbake til
+    `zone=disponit_general`, eller senk sonens rate under appbøtta."""
+    from api.app import (KANDIDATARTEFAKT_RUTE, KANDIDATDATA_RATE_PER_MIN,
+                         KANDIDATDOK_RUTE)
+    https = _https()
+    soner = (NGINX / "rate-soner.conf").read_text(encoding="utf-8")
+    m = re.search(r"zone=disponit_kandidatdata:\d+[km]\s+rate=(\d+)r/m;",
+                  soner)
+    assert m, "ingen egen rate-sone for kandidatskriveveien"
+    sonerate = int(m.group(1))
+    assert sonerate >= KANDIDATDATA_RATE_PER_MIN, (
+        f"ingressen slipper {sonerate}/min, appen budsjetterer"
+        f" {KANDIDATDATA_RATE_PER_MIN}/min — nginx svarer 429 først, og"
+        " sinken leser det som kandidatlagring_feilet")
+    # Den generelle sonen er URØRT: fiksen er en egen sone for to ruter,
+    # ikke en oppmyking av transportvernet for hele flaten.
+    assert "zone=disponit_general:10m rate=600r/m;" in soner, \
+        "den generelle sonen ble hevet i stedet for å få en søster"
+    for rute in (KANDIDATDOK_RUTE, KANDIDATARTEFAKT_RUTE):
+        blokk = re.search(r"location = %s \{(.*?)\n    \}" % re.escape(rute),
+                          https, re.S)
+        assert blokk, f"ingen egen nginx-location for {rute}"
+        krop = blokk.group(1)
+        assert "zone=disponit_kandidatdata" in krop, \
+            f"{rute} står fortsatt i den generelle sonen"
+        assert "zone=disponit_general" not in krop, \
+            f"{rute} stabler den generelle sonen oppå den egne"
+        assert "limit_req_status 429;" in krop, rute
+
+
+def test_nginx_kandidatrutene_faar_frist_med_margin():
+    """#173 (Codex P2): ingressens FRIST må ha margin over appens eget
+    behandlingsbudsjett.
+
+    Sonen og kroppsgrensen ble bundet til appkonstantene i tidligere
+    runder, men begge rutene arvet fortsatt nginx' default
+    `proxy_read_timeout` på 60 s — nøyaktig samme tall som
+    `controller.SKRIV_BEHANDLING_S`, altså det plattformen SELV setter
+    av til å behandle kroppen etter at den er mottatt. Marginen var
+    null.
+
+    Og vinduet er ekte taust: handleren parser inntil 301 MiB
+    wire-JSON, kanoniserer og hasher payloaden og fullfører
+    databasetransaksjonen uten å sende en byte underveis. En GYLDIG
+    forespørsel som bruker budsjettet sitt ble derfor kuttet av
+    ingressen — 504 — før controllerens egen `SKRIVEFRIST_S` var i
+    nærheten. Tredje gang samme følge: `lever` leser ikke-2xx som
+    TERMINALT, og `kjor_bunt` feller hele evalueringen som
+    `kandidatlagring_feilet`.
+
+    Ankeret er appkonstanten, ikke et tall kopiert inn i testen — samme
+    form som rate-sonen og kroppsgrensen. Og det er HELE ankeret malen
+    forplikter seg på: 3 × `SKRIV_BEHANDLING_S`. En port som bare krevde
+    `frist > SKRIV_BEHANDLING_S` slapp `61s` gjennom CI — praktisk null
+    margin under last, med samme 504 til følge.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `proxy_read_timeout` fra en av
+    rutene (da gjelder defaulten på 60 s igjen), eller sett den under
+    3 × `SKRIV_BEHANDLING_S` — `61s` like fullt som `60s`."""
+    from api.app import KANDIDATARTEFAKT_RUTE, KANDIDATDOK_RUTE
+    from modules.m57_ats.controller import SKRIVEFRIST_S, SKRIV_BEHANDLING_S
+    https = _https()
+    for rute in (KANDIDATDOK_RUTE, KANDIDATARTEFAKT_RUTE):
+        blokk = re.search(r"location = %s \{(.*?)\n    \}" % re.escape(rute),
+                          https, re.S)
+        assert blokk, f"ingen egen nginx-location for {rute}"
+        # Kommentarene strippes FØR matchen (Codex P2): et deaktivert
+        # `# proxy_read_timeout 180s;` er nøyaktig den mutasjonen porten
+        # finnes for — nginx faller da tilbake på defaulten på 60 s —
+        # men en rå regex på malteksten leser den som et satt direktiv
+        # og lar regresjonen passere grønt. Samme helper som
+        # `$scheme`-porten over bruker.
+        m = re.search(r"proxy_read_timeout\s+(\d+)s;",
+                      _uten_kommentarer(blokk.group(1)))
+        assert m, (
+            f"{rute} arver nginx' default proxy_read_timeout (60 s) —"
+            " samme tall som appens eget behandlingsbudsjett, altså null"
+            " margin")
+        frist = int(m.group(1))
+        assert frist >= 3 * SKRIV_BEHANDLING_S, (
+            f"{rute}: ingressen kutter etter {frist} s, appen budsjetterer"
+            f" {SKRIV_BEHANDLING_S} s behandling — margin under 3 ×"
+            " budsjettet er ingen margin under last: proxyen feller et"
+            " gyldig skriv, og sinken leser 504 som kandidatlagring_feilet")
+        # Og ikke lenger enn klientens egen tålmodighet: da ville nginx
+        # holdt en forbindelse ingen venter på lenger.
+        assert frist <= SKRIVEFRIST_S, (
+            f"{rute}: ingressens frist ({frist} s) er lengre enn"
+            f" controllerens SKRIVEFRIST_S ({SKRIVEFRIST_S} s)")
+
+
+def test_173_kandidatrutenes_kroppstak_daekker_arkivets_maksdokument():
+    """#173 (Cursor P2-5): de to takene var dokumenterte Codex-fikser
+    uten port. En mutasjon tilbake til `MAKS_KROPP` slapp gjennom CI, og
+    følgen er ikke en avvist forespørsel: 4xx på skriveveien leses av
+    `lever` som terminalt, `kjor_bunt` feller hele evalueringen med
+    `kandidatlagring_feilet`.
+
+    Ankeret er §4s eget tall (25 MiB per dokument), ikke appens
+    sammensatte uttrykk — porten er en NEDRE grense på wire-budsjettet,
+    ikke en kopi av formelen.
+
+    MUTASJONEN SOM DREPER DENNE: la en av rutene falle ut av
+    `RUTEKROPPSGRENSER` (og dermed ned på `MAKS_KROPP`)."""
+    from api.app import (KANDIDATARTEFAKT_RUTE, KANDIDATDOK_RUTE,
+                         MAKS_KROPP, RUTEKROPPSGRENSER)
+    for rute in (KANDIDATDOK_RUTE, KANDIDATARTEFAKT_RUTE):
+        assert rute in RUTEKROPPSGRENSER, \
+            f"{rute} faller ned på MAKS_KROPP — 413 på hver reell CV"
+        assert RUTEKROPPSGRENSER[rute] > MAKS_KROPP, rute
+    # §4s maksdokument, base64-kodet: den delen av dokumentkroppen som
+    # ikke kan komprimeres bort. Taket må minst dekke den.
+    dok_maks = 25 * 1024 * 1024
+    assert RUTEKROPPSGRENSER[KANDIDATDOK_RUTE] >= (dok_maks + 2) // 3 * 4, (
+        "dokumentruten rommer ikke §4s 25 MiB som base64")
+    # Artefaktkroppen bærer kildeteksten selv, ikke en koding av den —
+    # men på wire kan hvert tegn stå som `\\uXXXX`. Taket må dekke minst
+    # den ene teksten i verste fall.
+    assert RUTEKROPPSGRENSER[KANDIDATARTEFAKT_RUTE] >= 6 * dok_maks, (
+        "artefaktruten rommer ikke §4-teksten i verste JSON-form")
+
+
+def test_173_kandidatskrivingen_har_egen_ratebotte():
+    """#173 (Cursor P2-5): bøtta var en dokumentert Codex-fiks uten port.
+
+    En bunt kan lovlig bære 20 000 filer og 5 000 kandidater — 25 000
+    skrivinger — mens standardbudsjettet er 12 000 per rullende minutt.
+    Delte skrivingen den bøtta, felte plattformens egen grense den ENESTE
+    kjøringen ruten finnes for.
+
+    Porten måler begge halvdelene, for taket alene er ikke fiksen:
+    nøkkelen må være EGEN, ellers sulter skrivesløyfa modulens
+    claim/forny/kvittering eller sultes av dem.
+
+    MUTASJONEN SOM DREPER DENNE: bytt tilbake til
+    `slipp_gjennom(auth.token_id)` i `_kandidatdata`, eller senk taket
+    under buntens dokumenterte maksima."""
+    import inspect
+
+    from api.app import KANDIDATDATA_RATE_PER_MIN, _kandidatdata
+    assert KANDIDATDATA_RATE_PER_MIN >= 20_000 + 5_000, (
+        f"{KANDIDATDATA_RATE_PER_MIN}/min dekker ikke buntens 25 000"
+        " skrivinger — grensen feller kjøringen, ikke misbruk")
+    kilde = inspect.getsource(_kandidatdata)
+    assert 'slipp_gjennom("kandidatdata:"' in kilde, \
+        "skrivingen deler nøkkel med modultokenets standardbøtte igjen"
+    assert "tak=KANDIDATDATA_RATE_PER_MIN" in kilde, \
+        "skrivingen bruker ikke sitt eget tak"
+
+
+def test_173_ratebudsjettet_dekker_hele_retrykjeden():
+    """#173 (Codex P2): faktoren var 2, men `lever` gjør FIRE forsøk.
+
+    Bøtta belastes av hvert forsøk som NÅR handleren — rate-porten står
+    foran databasearbeidet, så et forsøk som ender i 5xx har allerede
+    tatt sin plass i vinduet. Med faktor 2 budsjetteres bare ETT retry
+    per logisk skriving: en kjøring med i snitt to forbigående feil
+    bruker tre forespørsler per skriving og passerer 50 000 rundt logisk
+    skriving nummer 16 667, godt under kontraktens 25 000. Neste forsøk
+    får en TERMINAL 429, og `lever` leser 4xx som endelig — en fullt
+    gjenopprettelig evaluering felt av plattformens egen grense.
+
+    Speilet bindes til modulens EGET tall, ikke til literalen 4: api/
+    importerer aldri modulkode, så konstanten er en kopi, og en kopi som
+    ingen måler er en kopi som driver. Skrus `LEVERINGSFORSOK` opp uten
+    at budsjettet følger etter, er funnet tilbake — da skal denne
+    testen falle, ikke en bunt i produksjon.
+
+    MUTASJONEN SOM DREPER DENNE: sett faktoren tilbake til 2, eller la
+    speilet stå igjen når modulens `LEVERINGSFORSOK` endres.
+    """
+    from api.app import KANDIDAT_LEVERINGSFORSOK, KANDIDATDATA_RATE_PER_MIN
+    from modules.m57_ats import controller
+
+    assert KANDIDAT_LEVERINGSFORSOK == controller.LEVERINGSFORSOK, (
+        f"appens speil er {KANDIDAT_LEVERINGSFORSOK}, modulen gjør"
+        f" {controller.LEVERINGSFORSOK} forsøk — kopien har drevet")
+    assert KANDIDATDATA_RATE_PER_MIN >= \
+        controller.LEVERINGSFORSOK * (20_000 + 5_000), (
+            f"{KANDIDATDATA_RATE_PER_MIN}/min dekker ikke"
+            f" {controller.LEVERINGSFORSOK} forsøk × 25 000 skrivinger —"
+            " en retrykjede innenfor kontrakten treffer taket")
+
+    # Og ingressen må følge appen, ellers svarer nginx 429 først —
+    # samme binding som `test_nginx_kandidatrutene_faar_sin_egen_ratesone`
+    # måler, her sett fra retrykjedens side.
+    soner = (NGINX / "rate-soner.conf").read_text(encoding="utf-8")
+    m = re.search(r"zone=disponit_kandidatdata:\d+[km]\s+rate=(\d+)r/m;",
+                  soner)
+    assert m and int(m.group(1)) >= KANDIDATDATA_RATE_PER_MIN, \
+        "ingressen ble ikke hevet sammen med appbudsjettet"
+
+
 def test_nginx_inndataruten_slipper_bunten_gjennom_og_redigerer_jtien():
     """#162, to Codex-funn i samme location.
 
