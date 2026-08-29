@@ -393,7 +393,7 @@ def test_opptatt_bunt_avvises_for_beslutningen(klient, migrator, miljo,
             (navn,)).fetchone()[0] is True
         r = _bestill(klient, cookie, csrf, kropp, nokkel)
         assert (r.status_code, r.json()["feil"]) == (
-            409, "inndata_ubrukelig"), r.text
+            409, "inndata_opptatt"), r.text
         assert _beslutninger(migrator) == 0, \
             "en forespørsel uten buntlåsen tok likevel en beslutning"
         assert _buntrad(migrator, ref) == ("lastet", None)
