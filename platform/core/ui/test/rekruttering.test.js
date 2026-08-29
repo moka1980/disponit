@@ -4710,6 +4710,109 @@ test("Rapport: to id-er med samme åtte tegn får ULIKE kortnavn", async () => {
     `en av de hele id-ene forsvant: ${JSON.stringify(titler)}`);
 });
 
+test("Kortnavn: det tilgjengelige navnet bærer RADENS referanse, ikke rå UUID",
+  async () => {
+  // Pass-funn (runde 3). `kortnavnFor` kortet den SYNLIGE teksten, mens de
+  // to tilgjengelige navnene aldri ble med: `tilgjengeligNavn` på
+  // prosessens radhandling og `aria-label` på rapportens `<summary>` limte
+  // fortsatt rå `kandidat_id`. Kontrollen navnga altså kandidaten med en
+  // streng som ikke sto noe sted på skjermen, og for den som lister
+  // interaktive elementer var hver rad tilbake til sin vegg av heksadesimal.
+  //
+  // PORT 29 MÅLTE DETTE ALT — OG KUNNE LIKEVEL IKKE SE DET. Den krever at
+  // navnet inneholder cellens tekst, men fiksturen er `K-1`/`K-2`: begge
+  // er under kortingsterskelen på 20 tegn, så synlig tekst og full id ER
+  // samme streng og `includes` var sann uansett hva koden gjorde. En port
+  // hvis fikstur ikke krysser terskelen den måler, måler ingenting.
+  //
+  // Derfor id-er som FAKTISK kortes, og assert (1) under er selve vernet
+  // mot at porten blir blind igjen: skulle noen bytte fiksturen tilbake
+  // til korte id-er, dør porten på sin egen forutsetning i stedet for å
+  // stilne.
+  //
+  // MUTASJONEN SOM DREPER DENNE: skriv `kandidat.kandidat_id` (prosess)
+  // eller `rad.kandidat_id` (rapport) rått i det tilgjengelige navnet
+  // igjen — begge var koden før dette passet.
+  const a = "58f17252-8a2b-4092-a420-adf5d5d430d1";
+  const b = "99a17252-8a2b-4092-a420-adf5d5d430d2";  // skiller på FØRSTE tegn
+
+  // --- Prosesstabellen -----------------------------------------------
+  const data = prosess();
+  data.prosesser[0].kandidater = [a, b].map((id) => ({
+    kandidat_id: id, oppfylt: { drift: true }, status: "anbefalt",
+    funn: [], intervjusporsmal: [] }));
+  data.prosesser[0].kandidat_antall = 2;
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": data };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(
+    () => hoved.querySelectorAll("tbody .handling-celle button").length === 2),
+    "prosesstabellen kom aldri");
+
+  const pNavn = [];
+  for (const rad of hoved.querySelectorAll("tbody tr")) {
+    const synlig = rad.querySelector("td").textContent.trim();
+    const navn = rad.querySelector(".handling-celle button")
+      .getAttribute("aria-label");
+    pNavn.push(navn);
+    // (1) Fiksturen krysser faktisk terskelen — ellers måler resten intet.
+    assert.ok(synlig.endsWith("…") && synlig.length < a.length,
+      `fiksturen kortes ikke (${synlig}) — porten måler da ingenting`);
+    // (2) Øret hører ikke id-en øyet slapp å se.
+    assert.ok(!navn.includes(a) && !navn.includes(b),
+      `radhandlingen leser hele UUID-en: ${navn}`);
+    // (3) …og det den hører, står faktisk på skjermen, på DENNE raden.
+    assert.ok(navn.includes(synlig),
+      `navnet bærer ikke referansen raden viser (${synlig}): ${navn}`);
+  }
+  // (4) To rader, to navn: kortformen skiller dem fortsatt fra hverandre.
+  assert.equal(new Set(pNavn).size, 2,
+    `to radhandlinger deler tilgjengelig navn: ${pNavn.join(" / ")}`);
+  // (5) Hele id-en er ikke tapt: raden åpner panelet som bærer den, og den
+  //     veien går tastatur og skjermleser — `title` gjør ingen av delene.
+  hoved.querySelector("tbody .handling-celle button").click();
+  assert.ok(await vent(() => document.querySelector(".dialog.skuff")),
+    "detaljpanelet åpnet ikke");
+  const panel = document.querySelector(".dialog.skuff");
+  assert.ok(panel.textContent.includes(a) || panel.textContent.includes(b),
+    "hele id-en finnes ingen steder utenom `title`");
+
+  // --- Rapportens rangeringstabell ------------------------------------
+  KALL = [];
+  SVAR = rapportSvarMed(a, b);
+  const hoved2 = nyHoved();
+  visRekruttering(hoved2, ctx());
+  assert.ok(await vent(() => {
+    const tb = rapporttabellen(hoved2);
+    return tb && tb.querySelectorAll("tbody tr details").length === 2;
+  }), "rangeringstabellen kom aldri");
+
+  const rTabell = rapporttabellen(hoved2);
+  const rNavn = [];
+  for (const rad of rTabell.querySelectorAll("tbody tr")) {
+    const synlig = rad.querySelector("th[scope=row]").textContent.trim();
+    const navn = rad.querySelector("details > summary")
+      .getAttribute("aria-label");
+    rNavn.push(navn);
+    assert.ok(synlig.endsWith("…") && synlig.length < a.length,
+      `fiksturen kortes ikke (${synlig}) — porten måler da ingenting`);
+    assert.ok(!navn.includes(a) && !navn.includes(b),
+      `«Vis funn» leser hele UUID-en: ${navn}`);
+    assert.ok(navn.includes(synlig),
+      `navnet bærer ikke referansen raden viser (${synlig}): ${navn}`);
+  }
+  assert.equal(new Set(rNavn).size, 2,
+    `to «Vis funn» deler tilgjengelig navn: ${rNavn.join(" / ")}`);
+  // Og rapporten har sin egen vei til hele id-en: `<details>` er radens
+  // panel, så id-en står i kroppen — ikke bare i `th`-ens `title`.
+  const boks = rTabell.querySelector("tbody tr details");
+  boks.open = true;
+  boks.dispatchEvent(new (rTabell.ownerDocument.defaultView.Event)("toggle"));
+  assert.ok(boks.textContent.includes(a),
+    "hele id-en finnes ingen steder i rapporten utenom `title`");
+});
+
 test("Prosess: en lang kandidat-id kortes, men mistes ikke", async () => {
   // Seeden gir UUID-er, og en full UUID bryter over tre linjer på mobil —
   // kolonnen ble en vegg av heksadesimal. Hele id-en står i `title`.
