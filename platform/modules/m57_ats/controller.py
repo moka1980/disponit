@@ -10,6 +10,7 @@ Alt som kan hindre en gyldig leveranse måles FØR arbeidet starter
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import tempfile
 import threading
@@ -50,6 +51,41 @@ FORNY_LEASE_S = 600
 FORNY_TAPT_ETTER = int(FORNY_LEASE_S // FORNY_INTERVALL_S)
 #: Margin reservert til rapportbygging + levering + kvittering.
 AVSLUTNINGSMARGIN_S = 120.0
+#: OVERFØRINGENE HAR SITT EGET BUDSJETT (Codex P1, #173).
+#:
+#: `http_frist_s()` er AVSLUTNINGENS frist: den deler lukkevinduets 120
+#: sekunder på åtte kall og gir 5,0 s. Kandidatsinkene arvet den fordi
+#: klienten bare hadde ÉN frist — men de er ikke avslutningskall. De
+#: bærer et helt dokument (base64 + parsetekst) og et helt
+#: evalueringsartefakt (`kildetekst` + funn + avmaskeringskart), og
+#: rutene tar imot ~185 MiB og ~301 MiB wire-kropp
+#: (`api.app.MAKS_KANDIDATDOK_KROPP` / `MAKS_KANDIDATARTEFAKT_KROPP`).
+#:
+#: 5 sekunder er ikke en taushetsgrense for den kroppen. CPythons
+#: `socket.sendall` holder ÉN samlet frist over hele utsendelsen, og
+#: `urllib`s `timeout` er nettopp den; svaret plattformen sender etter at
+#: den har parset og skrevet kroppen måles av samme tall. En stor, GYLDIG
+#: kandidat traff derfor timeout, ble retryet `LEVERINGSFORSOK` = 4
+#: ganger på samme umulige frist, og falt til slutt som
+#: `kandidatlagring_feilet` — plattformen felte en kandidat den hadde
+#: rukket å ta imot.
+#:
+#: Fristen er derfor UTLEDET av overføringen: verstefallskroppen delt på
+#: et gjennomstrømningsgulv, pluss plattformens egen behandlingstid etter
+#: at kroppen er mottatt. Gulvet er bevisst lavt — arbeideren og API-et
+#: står på samme vert (`DISPONIT_API_URL` er loopback), så 1 MiB/s er
+#: flere størrelsesordener under det som faktisk måles; en frist som
+#: løper ut her betyr at noe er GALT, ikke at kandidaten var stor.
+#:
+#: Leasen tar ikke skade av den lange fristen: `_Heartbeat` fornyer fra
+#: en egen tråd, og `lever` sjekker `_vindu_apent(utforelsesfrist)` før
+#: hvert nye forsøk. Det som endrer seg er at et skriv får lov til å
+#: fullføre.
+SKRIV_MAKS_KROPP = 301 * 1024 * 1024
+SKRIV_GJENNOMSTROMNING_B_S = 1024 * 1024
+SKRIV_BEHANDLING_S = 60.0
+SKRIVEFRIST_S = (SKRIV_MAKS_KROPP / SKRIV_GJENNOMSTROMNING_B_S
+                 + SKRIV_BEHANDLING_S)
 #: `lever` kjøres TO ganger i en avslutning: opplastingen og kvitteringen.
 LEVERINGSRUNDER = 2
 #: Arbeidet MELLOM kallene — bygging og skjemavalidering av rapporten, og
@@ -400,6 +436,50 @@ class _Heartbeat:
                     self.tapt = str(r.status_code)
                 return
 
+    def sonder(self) -> str | None:
+        """ÉN synkron fornyelse, spurt av skriveveien når døren alt har
+        avvist et skriv (Cursor P1-1, runde 2 på feilattribusjonen).
+
+        PULSEN ER FOR SEN TIL Å SPØRRES ALENE. `_lopp` sover
+        `FORNY_INTERVALL_S` = 240 s mellom hvert kall, mens døren måler
+        leasen på veggklokken ved HVERT kandidatskriv. I drift dør derfor
+        leasen på døren først: neste `/v1/rekruttering/kandidatdokument|
+        artefakt` svarer 409 med en gang, sinken reiser, og `except
+        Kjoringsfeil` leser en `puls.tapt` som ennå er `None` fordi neste
+        puls er inntil fire minutter unna. Remappen fra runde 1 traff da
+        aldri der den skulle: kvitteringen sa `kjoring_avbrutt` om et
+        autoritetstap — nøyaktig feilattribusjonen den ble skrevet for å
+        lukke. (Runde 1s test skjulte det: stubbdøren VENTET på
+        `puls.tapt` før den svarte 409. Produksjonsdøren venter ikke.)
+
+        Sonden spør derfor kilden pulsen selv spør, i det øyeblikket
+        avvisningen er kjent, og ARVER `_lopp`s dom ordrett: 4xx på
+        `/v1/oppdrag/forny` er autoritetstap, alt annet er det ikke. Å
+        liste opp hvilke 4xx-koder som «egentlig» betyr tap ville vært en
+        andre kilde til sannhet om samme spørsmål, og den drifter fra
+        `_lopp` ved neste kode 063 legger til.
+
+        Alt annet enn 4xx svarer `None` og lar lagringsfeilen beholde sitt
+        eget ord: 2xx sier at leasen lever (ekte konflikt, 5xx, rate), og
+        et 5xx/taust svar fra forny sier ingenting om hvem som eier
+        oppdraget — den stumme veien er `_lopp`s, som feller leasen på
+        horisonten (`_utlopt`), ikke på ett enkelt tapt svar.
+
+        Ingen ny returkontrakt i `kjor_bunt`, ingen ny tilstand: sonden
+        skriver samme `tapt` som tråden, og `except`-grenen leser samme
+        felt som før."""
+        try:
+            r = self._klient.post("/v1/oppdrag/forny",
+                                  json=self._kropp, headers=self._hode)
+        except Exception:                           # noqa: BLE001
+            return None                             # transport: intet svar
+        if 400 <= r.status_code < 500:
+            try:
+                self.tapt = r.json().get("feil", str(r.status_code))
+            except ValueError:
+                self.tapt = str(r.status_code)
+        return self.tapt
+
 
 def kjor_en(klient, token: str, modell, uttrekker, biasmaalinger,
             signer) -> dict:
@@ -421,9 +501,15 @@ def kjor_en(klient, token: str, modell, uttrekker, biasmaalinger,
         "ressurs_id": f"oppdrag:{claim['oppdrag_id']}",
     }
 
-    def lever(sti, kropp, utloper, *, gjenlosbar_etter_utlop=False):
+    def lever(sti, kropp, utloper, *, gjenlosbar_etter_utlop=False,
+              frist=None):
         """m56s leveringsløkke, ordrett i semantikk: 5xx/tapt svar
-        retryes (idempotente endepunkter), 4xx aldri, 2xx er ferdig."""
+        retryes (idempotente endepunkter), 4xx aldri, 2xx er ferdig.
+
+        `frist` er kallets EGEN HTTP-frist når den er satt (kandidat-
+        sinkene, `SKRIVEFRIST_S`); uten den gjelder klientens, som er
+        avslutningens `http_frist_s()`."""
+        ekstra = {} if frist is None else {"timeout": frist}
         rk = _Uteblitt()
         for forsok in range(LEVERINGSFORSOK):
             if forsok:
@@ -431,7 +517,7 @@ def kjor_en(klient, token: str, modell, uttrekker, biasmaalinger,
                     break
                 _sov(LEVERINGSPAUSE_S * forsok)
             try:
-                rk = klient.post(sti, json=kropp, headers=hode)
+                rk = klient.post(sti, json=kropp, headers=hode, **ekstra)
             except Exception as e:                  # noqa: BLE001
                 rk = _Uteblitt(f"{type(e).__name__}: intet svar")
                 continue
@@ -497,19 +583,131 @@ def kjor_en(klient, token: str, modell, uttrekker, biasmaalinger,
         # manifest- og innholdslesing kan per konstruksjon ikke nå den.
         fd = os.open(filsti, os.O_RDONLY)
         sti = f"/proc/self/fd/{fd}"
+        # SINKENE (#173): kandidatlagrene fylles UNDERVEIS gjennom den
+        # claim-bundne skriveveien — fullmakten er claimets, som
+        # fornyelsen og kvitteringen. Et ikke-2xx-svar er en feil sinket
+        # reiser rått; `kjor_bunt` oversetter den til det kodede
+        # utfallet (`kandidatlagring_feilet`), aldri en rå exception ut.
+        claim_trippel = {"tenant": claim["tenant"],
+                         "oppdrag_id": claim["oppdrag_id"],
+                         "owner_claim_id": claim["owner_claim_id"],
+                         "owner_generation": claim["owner_generation"]}
+
+        def lagre_dokument(kandidat_id, medlemsnavn, data, tekst):
+            r = lever("/v1/rekruttering/kandidatdokument", {
+                **claim_trippel, "kandidat_id": kandidat_id,
+                "dokumentnavn": medlemsnavn,
+                "dokument_b64": base64.b64encode(data).decode("ascii"),
+                "tekst": tekst}, claim.get("utforelsesfrist"),
+                frist=SKRIVEFRIST_S)
+            if not 200 <= r.status_code < 300:
+                raise RuntimeError(
+                    f"kandidatdokument {medlemsnavn}: {r.status_code}")
+
+        def lagre_kandidat(kandidat_id, resultat):
+            # AVMASKERINGEN FØLGER MED (Codex P1). `artefakt`-dicten
+            # plukket funn/oppfylt/kildetekst og lot `avmaskering` ligge,
+            # og den promoterte rapporten stripper kartet med vilje
+            # (rapportskjema.py: de to skal aldri reise sammen). Da fantes
+            # token→klartekst bare i arbeiderens minne, og forsvant når
+            # prosessen døde — igjen sto blindet kildetekst med
+            # `[NAVN-1]`-tokener og ingen varig vei tilbake for en
+            # autorisert leser. `kandidat_avmaskering` (057) er lageret
+            # som finnes for nettopp dette kartet, og den claim-bundne
+            # skriveveien er den ENESTE veien dit.
+            #
+            # Eget toppnivåfelt, ikke inne i `artefakt`: lagrene er hver
+            # sin rad med hver sin reaping, og å legge kartet i
+            # artefakt-JSON-en ville gitt `kandidat_evalueringsartefakt`
+            # en klartekst-kopi som overlever nøyaktig det
+            # `kandidat_avmaskering` reapes for.
+            #
+            # OG VEKTENE FØLGER MED (Codex P1). `rekruttering._kandidater`
+            # leser `vekter` fra HVERT `kandidat_evalueringsartefakt` og
+            # utleder prosessens vekting av dem (`vekter_kilde`); sinken
+            # plukket funn/oppfylt/kildetekst og lot feltet ligge. For
+            # enhver profil hvis vekter avviker fra reserven `{krav: 3}`
+            # rekonstruerte signeringsflaten derfor LIKE vekter og sa
+            # `vekter_kilde="standard"` — altså viste den en annen
+            # vekting enn den `ranger` faktisk rangerte etter, foran en
+            # irreversibel signering. Kilden er stillingsprofilens egne
+            # tall (`profil["krav"]`), de samme `kjor_bunt` får.
+            #
+            # Ingen ny port her: `_vekter_lesbare` på leseveien er
+            # skriveveiens egen dom lest på riktig side av lagringen
+            # (eiers K2-dom A), og et sett den ikke kan lese faller til
+            # reserven nøyaktig som før. Å legge en andre kopi av den
+            # porten her ville vært maskinen §9 K1 forbyr.
+            r = lever("/v1/rekruttering/kandidatartefakt", {
+                **claim_trippel, "kandidat_id": kandidat_id,
+                "artefakt": {"funn": resultat["funn"],
+                             "oppfylt": resultat["oppfylt"],
+                             "vekter": vekter,
+                             "kildetekst": resultat["kildetekst"]},
+                "avmaskering": resultat["avmaskering"],
+                "intervjusporsmal": resultat.get("intervjusporsmal") or
+                None}, claim.get("utforelsesfrist"),
+                frist=SKRIVEFRIST_S)
+            if not 200 <= r.status_code < 300:
+                raise RuntimeError(
+                    f"kandidatartefakt {kandidat_id}: {r.status_code}")
+
         with _Heartbeat(klient, hode, claim) as puls:
             try:
                 resultat = kjoring.kjor_bunt(
                     sti, modell, vekter=vekter,
                     tekst_for=uttrekker.tekst_for,
                     biasmaalinger=biasmaalinger,
-                    antall_soknader=payload["antall_soknader"])
+                    antall_soknader=payload["antall_soknader"],
+                    lagre_dokument=lagre_dokument,
+                    lagre_kandidat=lagre_kandidat)
                 rapport = rapportskjema.bygg(
                     resultat, profil=profil,
                     antall_soknader=payload["antall_soknader"])
                 jsonschema.Draft202012Validator(
                     rapportskjema.SKJEMA).validate(rapport)
             except kjoring.Kjoringsfeil as e:
+                # LEASE-TAP MIDT I STRØMMEN HETER `lease_tapt` (Cursor
+                # P2-1). Før #173 fullførte en kjøring som mistet leasen
+                # midtveis arbeidet sitt og ble stoppet på
+                # LEVERINGSPORTEN under — den som navngir at det var
+                # AUTORITETEN som falt bort, ikke arbeidet. Strømmingen
+                # gjorde skriveveien til den faktiske aborten: døren
+                # feller neste kandidatskriv med 409
+                # `kandidatdata_avvist`, sinken reiser, og `kjor_bunt`
+                # pakker enhver sinkfeil som `kandidatlagring_feilet`.
+                # Denne grenen returnerte da FØR porten under rakk å
+                # lese `puls.tapt` — som alt sto satt. Drift leste en
+                # lagringsfeil (feil kø, feil alarm), og kvitteringen sa
+                # `kjoring_avbrutt` om et oppdrag plattformen hadde gitt
+                # til noen andre.
+                #
+                # Porten spør pulsen vi ALLEREDE har, og gjenbruker
+                # leveringsportens egne to linjer: ingen ny
+                # returkontrakt i `kjor_bunt`, som ville vært nøyaktig
+                # den nye maskinen K1 forbyr i en fiksrunde (og som
+                # KONTRAKT §«Kjøringens varighet» holder utsatt til egen
+                # PR). `kandidatlagring_feilet` er den ENE koden som kan
+                # bæres av et lease-tap; enhver annen kode er en ekte
+                # kjøringsfeil og beholder sitt eget ord.
+                #
+                # OG PULSEN SPØRRES IKKE ALENE (Cursor P1-1). Runde 1
+                # antok at `puls.tapt` alt sto satt når døren avviste.
+                # Rekkefølgen er motsatt i drift: døren måler leasen ved
+                # HVERT skriv, tråden bare hvert `FORNY_INTERVALL_S` =
+                # 240 s — så avvisningen kommer først, og porten leste en
+                # `tapt` som ennå var `None`. `puls.sonder()` stiller det
+                # ene spørsmålet tråden ellers ville stilt minutter for
+                # sent; svarer plattformen 4xx, er autoriteten borte og
+                # `tapt` står satt til grenen under. Kortslutningen er
+                # med vilje: har tråden alt slått, spørres det ikke igjen.
+                if e.kode == "kandidatlagring_feilet" and (
+                        puls.tapt or puls.sonder()):
+                    rk = kvitter({**kvittering_basis,
+                                  "resultat": "feilet",
+                                  "feilkode": "lease_tapt"})
+                    return _feilutfall(rk, "lease_tapt",
+                                       lease_tapt=puls.tapt)
                 rk = kvitter({**kvittering_basis, "resultat": "feilet",
                               "feilkode": "kjoring_avbrutt"})
                 return _feilutfall(rk, f"kjoring_avbrutt:{e.kode}")

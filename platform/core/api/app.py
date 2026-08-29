@@ -13,12 +13,15 @@ port — dette er.
 """
 from __future__ import annotations
 
+import base64
+import collections
 import hashlib
 import hmac
 import ipaddress
 import json
 import os
 import queue
+import re
 import secrets
 import sys
 import threading
@@ -54,6 +57,80 @@ MAKS_KROPP = 256 * 1024          # v2 Del 3.4
 # egentlige porten og sjekkes i handleren FØR lagring.
 MAKS_ARTEFAKT_KROPP = 6 * 1024 * 1024 + 64 * 1024
 STORE_KROPP_RUTER = frozenset({"/v1/artefakt"})
+#: §4-tallet, pinnet her som i arkivgaten: 25 MiB per dokument. Står i
+#: KROPPSGRENSE-blokken og ikke ved handleren fordi transporttakene under
+#: REGNES ut av det — to skrivemåter av samme tall er nettopp driften
+#: PR-014b-linjen over finnes for å unngå.
+_KANDIDAT_DOK_MAKS = 25 * 1024 * 1024
+#: Kandidatartefaktets eget budsjett, målt på den KANONISKE JSON-formen i
+#: døren: dokumentveiens `_KANDIDAT_DOK_MAKS` for `kildetekst`, og like
+#: mye til for ALT det andre kandidaten bærer.
+#:
+#: «SITATENE ER UTSNITT AV TEKSTEN» VAR IKKE EN GRENSE (Codex P2). Den
+#: andre halvdelen var begrunnet med at funnenes sitater per
+#: konstruksjon er utsnitt av `kildetekst` og derfor til sammen ikke kan
+#: overstige én kopi av den. Utsnitt er de, men de er ikke DISJUNKTE:
+#: kontrakten tillater 100 funn, og hvert sitat kan uavhengig dekke
+#: hvilken som helst del av teksten. To fulltekstsitater på en 20
+#: MiB-kandidat ga ~60 MiB kanonisk JSON, altså `request_feilformet` fra
+#: denne porten — og `lagre_kandidat` reiser den som
+#: `kandidatlagring_feilet` for HELE den ellers gyldige evalueringen.
+#: Antakelsen felte det den skulle beskytte.
+#:
+#: Grensen bor nå der den kan HÅNDHEVES, i modulkontrakten:
+#: `rapportskjema.SITAT_MAKS` = 4096 tegn per sitat, `FUNN_MAKS` = 100
+#: funn, håndhevet ved modellgrensen. Verste fall i UTF-8 er 4 byte per
+#: tegn, altså 1,6 MiB samlet sitatvolum — mot de 25 MiB denne
+#: halvdelen setter av. Intervjuspørsmålene er 20 × 500 tegn (≤ 40 KiB),
+#: og resten er avmaskeringskartet og JSON-strukturen. Tallet er som før
+#: speilet og ikke importert (api/ importerer aldri modulkode, samme
+#: grunn som `_KANDIDAT_ID_KANON`); det som endret seg er at det nå er
+#: utledet av tall kontrakten faktisk håndhever.
+_KANDIDAT_ARTEFAKT_MAKS = 2 * _KANDIDAT_DOK_MAKS
+#: Verste-falls JSON-ekspansjon per KILDEBYTE, samme faktor som
+#: PR-014b-linjen over: gyldig JSON kan skrive ett tegn som `\uXXXX`, og
+#: en kontrolltegn-byte blir da 6 byte på wire. Kandidatrutene bærer
+#: store tekstfelt, så faktoren er ikke teoretisk her — den er forskjellen
+#: på et tak som holder og et som avviser gyldige kandidater.
+JSON_ESKAPEFAKTOR = 6
+#: Claim-trippel, kandidat_id og dokumentnavn. Navnet er ARKIVETS eget
+#: (se `_kandidatdata`) og ZIP-formatets navnefelt er 16-bits, altså
+#: maks 64 KiB; 1 MiB dekker konvolutten med god margin.
+_KANDIDAT_KONVOLUTT = 1024 * 1024
+#: #173: dokumentveien inn i kandidatlagrene bærer ETT dokument som
+#: base64 (§4-taket 25 MiB → ~33,4 MiB koding) pluss parsetteksten av
+#: samme dokument og claim-konvolutten.
+#:
+#: TEKSTEN ER IKKE «ALDRI STØRRE ENN KILDEN» PÅ WIRE (Codex P2). Den
+#: linjen målte parseteksten i DEKODEDE byte, men det som passerer
+#: middlewaren er JSON-konvolutten: `\n` blir to byte, et kontrolltegn
+#: seks. Et gyldig 25 MiB-uttrekk kunne derfor bli avvist med
+#: `body_for_stor` FØR handlerens dokumenterte dekodede sjekk kjørte —
+#: og `lagre_dokument` reiser den 4xx-en som `kandidatlagring_feilet`
+#: for HELE evalueringen. Taket budsjetterer nå verste fall.
+MAKS_KANDIDATDOK_KROPP = (
+    # base64: 4 byte per 3 kildebyte, avrundet opp til blokk
+    (_KANDIDAT_DOK_MAKS + 2) // 3 * 4
+    + JSON_ESKAPEFAKTOR * _KANDIDAT_DOK_MAKS
+    + _KANDIDAT_KONVOLUTT)
+KANDIDATDOK_RUTE = "/v1/rekruttering/kandidatdokument"
+#: #173 (Codex P1): kandidatveien inn i evalueringsartefaktet FALT NED PÅ
+#: `MAKS_KROPP` (256 KiB). Kroppen bærer kandidatens hele `kildetekst`
+#: pluss funnenes sitater, så enhver kandidat med mer enn en snau side
+#: tekst fikk `body_for_stor`; `lagre_kandidat` reiser den som
+#: `kandidatlagring_feilet` og feller hele evalueringen. Taket er dørens
+#: `_KANDIDAT_ARTEFAKT_MAKS` skrevet i wire-form.
+MAKS_KANDIDATARTEFAKT_KROPP = (
+    JSON_ESKAPEFAKTOR * _KANDIDAT_ARTEFAKT_MAKS + _KANDIDAT_KONVOLUTT)
+KANDIDATARTEFAKT_RUTE = "/v1/rekruttering/kandidatartefakt"
+#: Rutene med eget kroppstak. Oppslag, ikke en voksende kjede av
+#: betingede uttrykk: en rute som mangler her får `MAKS_KROPP`, og det
+#: er nettopp fallet dette funnet handlet om — da skal det være ÉN
+#: leselig linje å se den i.
+RUTEKROPPSGRENSER = {
+    KANDIDATDOK_RUTE: MAKS_KANDIDATDOK_KROPP,
+    KANDIDATARTEFAKT_RUTE: MAKS_KANDIDATARTEFAKT_KROPP,
+}
 #: #162: inndata-opplastingen STRØMMES gjennom middlewaren — den teller og
 #: videresender chunks, og bufrer aldri. Endepunktet samler derimot opp til
 #: dette taket i minnet: v1 krypterer bunten i én operasjon (bevisst
@@ -75,6 +152,57 @@ STROEM_RUTE_PREFIKS = "/v1/inndata/opplast/"
 #: tallene sammen så de ikke kan gli fra hverandre igjen.
 YTELSESKRAV_PER_SEK = 100
 STANDARD_RATE_PER_MIN = 2 * 60 * YTELSESKRAV_PER_SEK      # 12 000/min
+#: #173 (Codex P1): kandidatskrivingen har sin EGEN bøtte, og den er
+#: dimensjonert av MODULKONTRAKTENS dokumenterte maksima — ikke av
+#: ytelsesporten, som handler om beslutningsflaten.
+#:
+#: En bunt kan lovlig bære `MAKS_FILER` = 20 000 medlemmer og
+#: `antall_soknader` = 5 000 kandidater (kontrakt/KONTRAKT.md, §4), altså
+#: 25 000 skrivinger på veien inn i kandidatlagrene. Med standardbudsjettet
+#: 12 000/min fikk skriving nummer 12 001 innenfor et rullende minutt 429,
+#: og modulens `lever` leser 4xx som TERMINALT: hele evalueringen falt som
+#: `kandidatlagring_feilet` fordi plattformen kjørte inn i sin egen grense.
+#: Tallene står her og ikke i modulen fordi det er DENNE siden som håndhever
+#: dem; api/ importerer aldri modulkode (samme grunn som
+#: `_KANDIDAT_ID_KANON` er speilet og ikke importert).
+#:
+#: FAKTOREN ER HELE RETRYKJEDEN, IKKE HALVE (Codex P2, #173). Her sto
+#: faktor 2, med begrunnelsen «modulens retrykjede» — men `lever` gjør
+#: inntil `LEVERINGSFORSOK` = 4 forsøk, og faktor 2 budsjetterer bare ETT
+#: retry per logisk skriving. Bøtta belastes dessuten av hvert forsøk som
+#: NÅR handleren: rate-porten står foran databasearbeidet, så et forsøk
+#: som ender i 5xx har allerede tatt sin plass i vinduet.
+#:
+#: Regnestykket funnet peker på: en kjøring med i snitt to forbigående
+#: feil per skriving bruker tre forespørsler per logiske skriving og
+#: passerer 50 000 rundt logisk skriving nummer 16 667 — godt under
+#: kontraktens 25 000. Neste forsøk får en TERMINAL 429, og `lever` leser
+#: 4xx som endelig: en evaluering som var fullt gjenopprettelig ble felt
+#: som `kandidatlagring_feilet` av plattformens egen grense. Nøyaktig
+#: klassen bøtta ble laget for å fjerne, bare flyttet lenger ut i bunten.
+#:
+#: Budsjettet dekker derfor ALLE forsøkene. Den andre utveien — å ikke
+#: belaste retryer som ferske logiske skrivinger — krever at bøtta kan
+#: kjenne igjen et gjentatt skriv, altså idempotensnøkler inn i
+#: rate-laget: ny maskin, og ikke en fiksrunde-endring (§9 K1).
+#:
+#: `LEVERINGSFORSOK` SPEILES, den importeres ikke: api/ importerer aldri
+#: modulkode (samme grunn som `_KANDIDAT_ID_KANON` er speilet). Speilet
+#: er bundet til modulens eget tall av
+#: `test_173_ratebudsjettet_dekker_hele_retrykjeden`, så de to kan ikke
+#: drive fra hverandre i stillhet.
+#:
+#: PRISEN ER BETALT I BØTTEFORMEN, IKKE I TAKET (Codex P2). Linjen her sa
+#: at `slipp_gjennom` bygger vindulisten på nytt per kall — ~312
+#: millioner float-sammenligninger for en full bunt — og godtok det som
+#: «ikke veiens toppunkt». Det stemte per skriving, men kostnaden lå
+#: under den DELTE låsen: hver annen rate-sjekk i prosessen ventet på et
+#: arbeid bare denne bøtta hadde bruk for. Bøtta er nå en `deque` som
+#: forlater hvert tidspunkt én gang (amortisert O(1)), så taket kan være
+#: kontraktens tall uten å være et ytelsesspørsmål.
+KANDIDAT_LEVERINGSFORSOK = 4          # speiler m57 controller.LEVERINGSFORSOK
+KANDIDATDATA_RATE_PER_MIN = \
+    KANDIDAT_LEVERINGSFORSOK * (20_000 + 5_000)           # 100 000/min
 SIDE_STANDARD, SIDE_MAKS = 50, 200
 #: Statusene der saksbehandlingen ER FERDIG. Alt annet i statusmaskinen
 #: (migrasjon 011) venter på et menneske eller en maskin, og er dermed «åpen».
@@ -258,7 +386,7 @@ class Rategrense:
 
     def __init__(self, per_minutt: int) -> None:
         self.per_minutt = per_minutt
-        self._treff: dict[str, list[float]] = {}
+        self._treff: dict[str, collections.deque[float]] = {}
         self._laas = threading.Lock()
 
     def slipp_gjennom(self, nokkel: str, naa: float | None = None, *,
@@ -270,18 +398,57 @@ class Rategrense:
         stedet for å holde sin egen grense — én bøtteimplementasjon, ett
         sted å lese om vinduet.
         """
-        naa = naa if naa is not None else time.monotonic()
         grense = tak if tak is not None else self.per_minutt
         with self._laas:
+            # TIDSPUNKTET TAS UNDER LÅSEN (Codex P2). Det ble tidligere
+            # samplet FØR `with self._laas`, og da er det ingen
+            # sammenheng mellom rekkefølgen tidspunktene får og
+            # rekkefølgen trådene faktisk skriver i: en tråd som blir
+            # deschedulert mellom de to linjene vekker opp og appender et
+            # GAMMELT tidspunkt bak nyere innslag.
+            #
+            # Køen tåler ikke den inversjonen, og det er ikke en
+            # skjønnhetsfeil — begge endepunktene den leses fra antar
+            # sortert innhold. `popleft`-løkken under stopper på det
+            # første innslaget som ikke er utløpt, så et gammelt
+            # tidspunkt bak et nyere blir ALDRI forlatt: bøtta bærer et
+            # utløpt treff for alltid og avviser lovlig trafikk. Og
+            # nøkkelfeiingen over måler `v[-1]` som «nyeste», så en
+            # inversjon der kan slette en bøtte som fortsatt har
+            # levende treff — motsatt feil, samme årsak.
+            #
+            # Ingen produksjonskaller sender `naa`; parameteren er
+            # testsømmen, og en test som oppgir sine egne tidspunkter
+            # eier rekkefølgen selv.
+            if naa is None:
+                naa = time.monotonic()
+            vindustart = naa - 60.0
             if len(self._treff) > self.NOKKELTAK:
                 self._treff = {k: v for k, v in self._treff.items()
-                               if v and v[-1] > naa - 60.0}
-            tider = [t for t in self._treff.get(nokkel, ()) if t > naa - 60.0]
+                               if v and v[-1] > vindustart}
+            tider = self._treff.get(nokkel)
+            if tider is None:
+                tider = self._treff[nokkel] = collections.deque()
+            # HVERT TIDSPUNKT UTLØPER ÉN GANG (Codex P2). Linjen her
+            # bygde vindulisten på nytt per kall — O(vindu) — og gjorde
+            # det mens den DELTE låsen sto. Med kandidatbøttas vindu på
+            # 50 000 kostet én full bunt (25 000 skriv, kontraktens
+            # maksimum) ~312 millioner sammenligninger, og hver av dem
+            # holdt låsen hver annen rate-sjekk i prosessen venter på.
+            # Prisen var beskrevet i konstantens kommentar og godtatt som
+            # «ikke veiens toppunkt» — men den er betalt av ALLE ruter,
+            # ikke bare av den som betalte for den.
+            #
+            # Køen gir samme vindu til amortisert O(1): tidspunktene står
+            # sortert fordi de settes inn i kalltidsrekkefølge (samme
+            # antakelse som feiingen over alt bygger på, `v[-1]`), så det
+            # som har falt ut av vinduet ligger fremst og forlates én
+            # gang — ikke én gang per etterfølgende kall.
+            while tider and tider[0] <= vindustart:
+                tider.popleft()
             if len(tider) >= grense:
-                self._treff[nokkel] = tider
                 return False
             tider.append(naa)
-            self._treff[nokkel] = tider
             return True
 
 
@@ -391,7 +558,7 @@ class KroppsgrenseMiddleware:
             return await self._stroem(scope, receive, send, rid, headere)
         # PR-014b §7: opplastingsruten tåler en større kropp (1 MiB-artefakt).
         maks = (MAKS_ARTEFAKT_KROPP if scope.get("path") in STORE_KROPP_RUTER
-                else self.maks)
+                else RUTEKROPPSGRENSER.get(scope.get("path"), self.maks))
         oppgitt = headere.get("content-length")
         chunked = "chunked" in headere.get("transfer-encoding", "").lower()
         if oppgitt is None and not chunked:
@@ -414,6 +581,21 @@ class KroppsgrenseMiddleware:
             if not melding.get("more_body", False):
                 break
 
+        # ÉN KROPP, IKKE TRE (Codex P1, #173). Linjene under lagde
+        # `bytes(kropp)` TO ganger — én til `scope["state"]`, én til
+        # replay — mens `kropp` selv holdt bytearray-bufferet levende
+        # gjennom hele `await self.app`. Det er tre samtidige kopier av
+        # en kropp som på kandidatartefaktruten kan være ~301 MiB, og
+        # middlewaren kjører FØR enhver autentisering: en forespørsel med
+        # ugyldig token betalte samme minne som en gyldig.
+        #
+        # Kopien tas nå én gang, deles av begge lesere, og bytearray-en
+        # slippes før handleren kalles. `bytearray.clear()` frigjør
+        # FAKTISK bufferet — CPythons `PyByteArray_Resize` har egen arm
+        # for størrelse 0 som kaller `PyObject_Free` — så dette er en
+        # frigjøring, ikke bare en dereferanse som venter på GC.
+        data = bytes(kropp)
+        kropp.clear()
         ferdig = False
 
         async def replay():
@@ -421,10 +603,10 @@ class KroppsgrenseMiddleware:
             if ferdig:
                 return {"type": "http.disconnect"}
             ferdig = True
-            return {"type": "http.request", "body": bytes(kropp),
+            return {"type": "http.request", "body": data,
                     "more_body": False}
 
-        scope["state"]["kropp"] = bytes(kropp)
+        scope["state"]["kropp"] = data
         return await self.app(scope, replay, send)
 
     async def _stroem(self, scope, receive, send, rid, headere):
@@ -828,6 +1010,12 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def oppdrag_forny(request: Request) -> Response:
         return _oppdrag_forny(tjeneste, request)
 
+    def kandidatdokument(request: Request) -> Response:
+        return _kandidatdata(tjeneste, request, "dokument")
+
+    def kandidatartefakt(request: Request) -> Response:
+        return _kandidatdata(tjeneste, request, "kandidat")
+
     def artefakt_upload(request: Request) -> Response:
         return _artefakt_upload(tjeneste, request)
 
@@ -1095,6 +1283,12 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               methods=["POST"]),
         Route("/v1/oppdrag/kvittering", oppdrag_kvittering, methods=["POST"]),
         Route("/v1/oppdrag/forny", oppdrag_forny, methods=["POST"]),
+        # #173: skriveveien inn i kandidatlagrene — claim-bundet, som
+        # forny/kvittering.
+        Route("/v1/rekruttering/kandidatdokument", kandidatdokument,
+              methods=["POST"]),
+        Route("/v1/rekruttering/kandidatartefakt", kandidatartefakt,
+              methods=["POST"]),
         Route("/v1/artefakt", artefakt_upload, methods=["POST"]),
         # PR-008: rent lesende kundeflate. Merk rekkefølgen: den statiske
         # `/v1/policy/aktiv` registreres FØR mønsterruter kunne ha slukt
@@ -1557,6 +1751,12 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # 063 (#165): fornyelsen autentiseres som claim/kvittering —
     # modultoken + claimets egen identitet i kroppen.
     ("POST", "/v1/oppdrag/forny"):           ORDRESCOPE + "<prefiks>",
+    # #173: skriveveien inn i kandidatlagrene — samme autentisering som
+    # forny/kvittering: modultoken + claimets identitet i kroppen.
+    ("POST", "/v1/rekruttering/kandidatdokument"):
+        ORDRESCOPE + "<prefiks>",
+    ("POST", "/v1/rekruttering/kandidatartefakt"):
+        ORDRESCOPE + "<prefiks>",
     ("POST", "/v1/artefakt"):                "artifacts:upload",
     ("GET",  "/v1/oversikt"):                "decisions:read",
     ("GET",  "/v1/nokkeltall"):              "decisions:read",
@@ -2244,6 +2444,659 @@ def _resultathash(kvittering: dict) -> str:
     return hashlib.sha256(json.dumps(
         kjerne_felt, sort_keys=True, ensure_ascii=False,
         separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+#: Dør-eid navnerom for kandidatlagrenes deterministiske identiteter
+#: (#173, eiers valg b): plattformen utleder UUID-ene av (tenant,
+#: prosess, manifest-id[, dokumentnavn]) — én kilde, modulen ser dem
+#: aldri. #157 kan løfte utledningen til en ankertabell uten at flaten
+#: endres. Separatoren er husets (`\x1f`, jf. buntlåsen).
+_KANDIDAT_NS = uuid.uuid5(uuid.NAMESPACE_URL, "disponit:m57:kandidatlager")
+#: Manifestets kandidat-ID-form — KONTRAKT (kontrakt/KONTRAKT.md, #216
+#: valg A). Speilet av modulens `parsing.KANDIDAT_ID_KANON`; kilden er
+#: kontrakten, og api/ importerer aldri modulkode.
+_KANDIDAT_ID_KANON = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+#: Arkivmedlemmets navn: ZIPs `file name length` er 16-bits, så 65 535
+#: byte er det lengste navnet et medlem overhodet kan bære. Grensen er
+#: ARKIVKONTRAKTENS, ikke dørens egen — se `_kandidatdata`.
+#:
+#: MÅLT I TEGN, IKKE I UTF-8-BYTE (Codex P2). Døren fikk aldri arkivets
+#: navnefelt; den får `dokumentnavn` som en DEKODET streng, og
+#: `zipfile` dekoder med arkivets egen koding (CP437 når UTF-8-flagget
+#: mangler). Å re-kode den til UTF-8 og måle DE bytene måler en koding
+#: arkivet aldri brukte: et lovlig legacy-navn med 40 000 CP437-`é` er
+#: 40 000 byte i arkivet og 80 000 i UTF-8, så `parsing.inspiser_bunt`
+#: godtok bunten mens denne porten svarte `request_feilformet` — og
+#: `lagre_dokument` reiser den som `kandidatlagring_feilet` for hele
+#: evalueringen. Tegn er derimot den ene målingen som ALDRI kan avvise
+#: et navn arkivet kan bære: enhver koding bruker minst én byte per
+#: tegn, så et navn på ≤ 65 535 byte i arkivet er ≤ 65 535 tegn dekodet.
+#: Fortsatt en grense — `dokumentnavn` går inn i uuid5, i en
+#: TEXT-kolonne og i loggens detalj — men nå formatets egen.
+_KANDIDAT_NAVN_MAKS = 65_535
+#: De tre lovede innholdstypene — endelse -> MIME. Alt annet er alt
+#: felt av arkivgaten; her er det en feilformet forespørsel.
+_KANDIDAT_MIME = {
+    ".pdf": "application/pdf",
+    ".docx": ("application/vnd.openxmlformats-officedocument"
+              ".wordprocessingml.document"),
+    ".html": "text/html", ".htm": "text/html"}
+
+
+def _har_ulagringsbart_tegn(rot) -> bool:
+    """Bærer noen streng i strukturen et tegn raden ikke kan ta imot —
+    nøkler medregnet? To klasser, ÉN gjennomgang.
+
+    LØSREVNE SURROGATER (Codex P2, #173). `json.loads` gjør escapen
+    `\\ud800` til et ekte lone surrogate i Python-strengen, og en slik
+    streng er IKKE en gyldig Unicode-scalar-sekvens: `str.encode("utf-8")`
+    reiser `UnicodeEncodeError`. Den er verken `psycopg.Error` eller noe
+    porten under fanger, så den falt ut som en UKODET 500 — på hvert
+    eneste retryforsøk, siden samme kropp gir samme unntak — og felte
+    evalueringen uten å si hva som var galt. Manifestpredikatene slipper
+    verdien gjennom fordi et søskeninnslag matcher, og `avmaskering`
+    beholder hver deklarert verdi, så veien hit er helt vanlig.
+
+    Den treffer BEGGE grenene: artefaktveien på `r.encode("utf-8")` i
+    størrelsesporten, dokumentveien på `uuid.uuid5`, som encoder navnet
+    sitt. Derfor måles den her, i det ene predikatet begge grenene
+    allerede spør, og FØR noe forsøkes kodet.
+
+    Nullbyten er den andre klassen, og den var her først:
+
+    MÅLT PÅ VERDIENE, IKKE PÅ JSON-TEKSTEN (Codex P2). Porten sto som
+    `"\\x00" in raa`, altså på den kanoniske JSON-strengen — og der
+    finnes nullbyten ALDRI: `json.dumps` skriver den som de seks tegnene
+    `\\u0000`, uansett `ensure_ascii`. Predikatet var dermed dødt, og en
+    nullbyte i en nestet verdi (manifestkontrakten tillater f.eks. en
+    ikke-matchende alternativverdi for et personfelt, som når
+    `avmaskering` uten å bli sett) nådde `jsonb`, som avviste den. Rå
+    `psycopg.Error` → handlerens catch-all → `db_utilgjengelig`, altså
+    en falsk infrastrukturalarm som modulen retryer mot en frisk base
+    før den feller evalueringen. Nøyaktig utfallet den opprinnelige
+    fiksen fantes for å hindre.
+
+    MÅLT PÅ VERDIENE, IKKE PÅ JSON-TEKSTEN (Codex P2). Porten sto som
+    `"\\x00" in raa`, altså på den kanoniske JSON-strengen — og der
+    finnes nullbyten ALDRI: `json.dumps` skriver den som de seks tegnene
+    `\\u0000`, uansett `ensure_ascii`. Predikatet var dermed dødt, og en
+    nullbyte i en nestet verdi (manifestkontrakten tillater f.eks. en
+    ikke-matchende alternativverdi for et personfelt, som når
+    `avmaskering` uten å bli sett) nådde `jsonb`, som avviste den. Rå
+    `psycopg.Error` → handlerens catch-all → `db_utilgjengelig`, altså
+    en falsk infrastrukturalarm som modulen retryer mot en frisk base
+    før den feller evalueringen. Nøyaktig utfallet den opprinnelige
+    fiksen fantes for å hindre.
+
+    Å lete etter escapen `\\u0000` i JSON-teksten i stedet ville vært
+    feil andre vei: en tekst som LOVLIG inneholder de seks tegnene
+    `\\u0000` blir dumpet som `\\\\u0000`, som inneholder søkestrengen —
+    en gyldig kandidat avvist på en nullbyte den ikke har.
+
+    Iterativ og ikke rekursiv med vilje: dybden er kallerens, og en
+    `RecursionError` her ville vært en 500 der porten skal svare
+    `request_feilformet`.
+    """
+    stakk = [rot]
+    while stakk:
+        verdi = stakk.pop()
+        if isinstance(verdi, str):
+            if "\x00" in verdi:
+                return True
+            # Surrogatet måles ved å FORSØKE kodingen, ikke ved å lete
+            # etter kodepunkter i U+D800–U+DFFF for hånd: `encode` ER
+            # regelen nedstrøms, og et eget intervallsøk ville vært en
+            # andre sannhet om samme spørsmål (§9 K4 — ekte koder, ikke
+            # en etterligning av den).
+            try:
+                verdi.encode("utf-8")
+            except UnicodeEncodeError:
+                return True
+        elif isinstance(verdi, dict):
+            stakk.extend(verdi.keys())
+            stakk.extend(verdi.values())
+        elif isinstance(verdi, list):
+            stakk.extend(verdi)
+    return False
+
+
+def _kandidatdata(tjeneste: Tjeneste, request: Request, form: str) -> Response:
+    """Skriveveien inn i kandidatlagrene (#173, eiers valg b + i).
+
+    057 designet denne døren («Runtime skriver lagrene gjennom
+    API-veien») — dette er den. Autentiseringen er kvitteringens og
+    fornyelsens form: modultokenet svarer på hvilken deployment dette
+    er, og FULLMAKTEN ER CLAIMETS — kroppen bærer (tenant, oppdrag_id,
+    owner_claim_id, owner_generation), og raden må matche et aktivt
+    claimet `rekruttering.evaluering`-oppdrag hos denne modulen med
+    levende lease OG levende retensjonsanker. Tenant er kallerens
+    påstand bare som RLS-nøkkel: claim-paret er hemmeligheten som
+    binder, og et feil tenantvalg finner ingen rad.
+
+    `form="dokument"`: originaldokument + parsettekst i SAMME
+    transaksjon (FK-kjeden er kontrakten — eiers valg i). `form=
+    "kandidat"`: evalueringsartefakt + ev. intervjuspørsmål.
+
+    IDEMPOTENT PÅ PAYLOAD-LIKHET: lagrene er append-only, og en retry
+    etter tapt lease skriver de samme bytene — det er et stille ja. Et
+    AVVIKENDE re-skriv under samme nøkkel er to sannheter om samme
+    dokument og felles som `kandidatdata_konflikt`. Alle
+    autorisasjonsutfall er ETT svar (`kandidatdata_avvist`, 058-formen).
+    Lagervaktene (057) står bak døren og måler det samme for enhver
+    rolle — denne døren kan aldri være lagrenes eneste vern.
+    """
+    rid = _rid(request)
+    try:
+        conn = tjeneste.pool.hent()
+    except (TimeoutError, psycopg.Error):
+        tjeneste.logg.hendelse("db_utilgjengelig", rid, art="drift")
+        return _feilsvar("db_utilgjengelig", rid)
+    try:
+        auth = preauth(tjeneste, conn, request.headers.get("authorization"),
+                       rid)
+        if auth is None or auth.kapabilitet is not None:
+            tjeneste.logg.hendelse("token_ugyldig", rid)
+            return _feilsvar("token_ugyldig", rid)
+        if not isinstance(auth, ModulAutentisert) and not _modulscope(auth):
+            tjeneste.logg.hendelse("scope_mangler", rid, auth.tenant,
+                                   scope=ORDRESCOPE + "<prefiks>")
+            return _feilsvar("scope_mangler", rid)
+        # EGEN BØTTE, IKKE MODULTOKENETS DELTE (Codex P1). Linjen sto som
+        # «samme ratebudsjett som claim/forny/upload», og det gjorde
+        # plattformens egen grense til en port mot dens egne dokumenterte
+        # maksima: en bunt kan lovlig bære 20 000 filer og 5 000
+        # kandidater, altså 25 000 skrivinger, mens standardbudsjettet er
+        # 12 000 per rullende minutt. Strømmer uttrekket mer enn 12 000
+        # små dokumenter innenfor et minutt, får neste skriving 429 —
+        # `lever` leser 4xx som terminalt, og `kjor_bunt` feller HELE
+        # evalueringen med `kandidatlagring_feilet`. Grensen felte altså
+        # ikke misbruk; den felte den eneste kjøringen den fantes for.
+        #
+        # Nøkkelen er EGEN, ikke bare taket: en skrivesløyfe skal hverken
+        # sulte modulens claim/forny/kvittering eller sultes av dem. Ett
+        # bøttested fortsatt (`Rategrense`), to bøtter.
+        if not tjeneste.rate.slipp_gjennom("kandidatdata:" + auth.token_id,
+                                           tak=KANDIDATDATA_RATE_PER_MIN):
+            tjeneste.logg.hendelse("rate_grense", rid, auth.tenant)
+            return _feilsvar("rate_grense", rid)
+        if isinstance(auth, ModulAutentisert):
+            revalidering = _modultoken_revalidert(tjeneste, conn, auth, rid)
+            if revalidering is not None:
+                return revalidering
+
+        raa = request.scope.get("state", {}).get("kropp", b"")
+        try:
+            kropp = json.loads(raa.decode("utf-8"))
+        except Exception:
+            kropp = None
+        if not isinstance(kropp, dict):
+            tjeneste.logg.hendelse("request_feilformet", rid)
+            return _feilsvar("request_feilformet", rid)
+        tenant = kropp.get("tenant")
+        opp_id = kropp.get("oppdrag_id")
+        claim_id = kropp.get("owner_claim_id")
+        generasjon = kropp.get("owner_generation")
+        kid = kropp.get("kandidat_id")
+        if not isinstance(tenant, str) or not tenant \
+                or not isinstance(opp_id, int) or isinstance(opp_id, bool) \
+                or not isinstance(claim_id, str) or not claim_id \
+                or not isinstance(generasjon, int) \
+                or isinstance(generasjon, bool) \
+                or not isinstance(kid, str) \
+                or not _KANDIDAT_ID_KANON.fullmatch(kid):
+            tjeneste.logg.hendelse("request_feilformet", rid)
+            return _feilsvar("request_feilformet", rid)
+
+        modul = auth.modul_id if isinstance(auth, ModulAutentisert) \
+            else auth.rolle
+        # DEPLOYMENTEN, IKKE BARE MODULEN (Codex P1). Bindingen målte
+        # `o.eiermodul`, og `modul_id` er DELT av hver levende deployment
+        # av modulen: staging og produksjon, gammel release og ny, svarer
+        # alle det samme på det spørsmålet. Et claim-trippel som lekker
+        # eller replayes til en annen deployment av samme modul kunne
+        # derfor skrive persondata inn i en annen deployments prosess —
+        # og siden lagrene er append-only, ville den LOVLIGE utføreren
+        # etterpå møtt `kandidatdata_konflikt` på sin egen kandidat og
+        # felt hele evalueringen. Claim-paret er en hemmelighet, men det
+        # er ikke deploymentens identitet, og døren skal måle begge.
+        #
+        # Formen er `hent_inndata_for_oppdrag` sin (060:102–103):
+        # `claim_release_id`/`claim_miljo` er sporet claim-porten selv
+        # STEMPLET (049 §0) fra TOKENET — aldri noe kalleren oppgir — så
+        # det finnes ingen vei til å påstå seg til en annen deployment.
+        #
+        # `IS NOT DISTINCT FROM`, ikke `=`: et legacy-api-token claimer
+        # deploymentløst, og da står begge kolonnene NULL (`app.py:2025`,
+        # samme grunn kvitteringskapabiliteten blir deploymentløs og bare
+        # kan innløses av en like deploymentløs credential). Med `=`
+        # hadde NULL-siden svart UKJENT, og den lovlige legacy-veien inn
+        # i lagrene ville stengt seg selv; med denne formen matcher
+        # deploymentløs KUN deploymentløs, og en deployment KUN seg selv.
+        claim_release = auth.release_id \
+            if isinstance(auth, ModulAutentisert) else None
+        claim_miljo = auth.miljo if isinstance(auth, ModulAutentisert) \
+            else None
+        sett_kontekst(conn, tenant, auth.aktor, rid)
+        # LÅST LESNING (Cursor P2-3). Uten radlåsen var autorisasjonen et
+        # SNAPSHOT: under READ COMMITTED kunne en ny claimer committe et
+        # `UPDATE oppdrag SET owner_claim_id/owner_generation/lease` i
+        # vinduet mellom dette oppslaget og INSERT-ene under, og denne
+        # forespørselen skrev likevel — INSERT-ene måler ikke claimet på
+        # nytt, og lagervakten (057) måler `slettet_ts`, ikke leasen. En
+        # utfører som HADDE mistet oppdraget skrev da persondata inn i
+        # prosessen på vegne av en fullmakt som var borte.
+        #
+        # `FOR SHARE`, ikke `FOR UPDATE`: claim-tyven og `forny_oppdragslease`
+        # tar `FOR UPDATE`, så delelåsen serialiserer mot NØYAKTIG dem —
+        # mens den lovlige strømmen av dokument- og artefaktskriv under
+        # SAMME claim går videre parallelt. En eksklusiv lås her ville
+        # gjort hele skriveveien til en kø på én rad. Og PostgreSQL
+        # re-evaluerer predikatet etter låsen: en rad som ble stjålet
+        # under ventingen faller ut av treffet i stedet for å bli lest fra
+        # et gammelt snapshot — samme mekanikk 057s fødselsvakt bruker.
+        #
+        # `OF o` er ikke stil, det er en RETTIGHET: enhver radlåsklausul
+        # krever UPDATE på tabellen, og runtime har SELECT+UPDATE på
+        # `oppdrag` (`deploy/staging/migrer.py`) men KUN SELECT på
+        # `rekrutteringsprosess`. En bar `FOR SHARE` her ville forsøkt å
+        # låse begge og svart `permission denied` — nøyaktig grunnen
+        # `_anker_lever` forkastet delelåsen på leseveien.
+        #
+        # OG `clock_timestamp()`, IKKE `now()` (Codex P2). Leddet spør
+        # «lever holdet NÅ», og `now()` er ikke nå: den er fastfrosset
+        # ved transaksjonens START. Denne transaksjonen begynner FØR
+        # base64-dekodingen av inntil 25 MiB og før `FOR SHARE` har
+        # ventet ut en samtidig claimer — den kan derfor stå åpen
+        # vilkårlig lenge mens `now()` peker på tiden før ventingen. En
+        # lease som døde i nettopp det vinduet ble da autorisert, og
+        # persondata committet på en fullmakt reaperen alt hadde
+        # inndratt. `clock_timestamp()` leses på nytt ved evalueringen
+        # og måler den faktiske skrivetiden. Retningen er trygg: den er
+        # alltid ≥ `now()`, så porten kan bare bli STRENGERE — den
+        # slipper aldri gjennom noe reclaimeren (som selv måler med
+        # `now()`, 005:894-895) alt har tatt. Samme ledd og samme grunn
+        # som `hent_inndata_for_oppdrag` (060:66-78, 101).
+        rad = conn.execute(
+            "SELECT p.prosess_id FROM oppdrag o"
+            "  JOIN rekrutteringsprosess p"
+            "    ON p.tenant = o.tenant AND p.oppdrag_id = o.id"
+            " WHERE o.tenant=%s AND o.id=%s AND o.eiermodul=%s"
+            "   AND o.oppdragstype='rekruttering.evaluering'"
+            "   AND o.status='plukket' AND o.owner_claim_id=%s"
+            "   AND o.owner_generation=%s"
+            "   AND o.owner_lease_utloper IS NOT NULL"
+            "   AND o.owner_lease_utloper > clock_timestamp()"
+            "   AND o.claim_release_id IS NOT DISTINCT FROM %s"
+            "   AND o.claim_miljo IS NOT DISTINCT FROM %s"
+            "   AND p.slettet_ts IS NULL"
+            " FOR SHARE OF o",
+            (tenant, opp_id, modul, claim_id, generasjon,
+             claim_release, claim_miljo)).fetchone()
+        if rad is None:
+            conn.rollback()
+            tjeneste.logg.hendelse("kandidatdata_avvist", rid, tenant,
+                                   art="sikkerhet", oppdrag_id=opp_id)
+            return _feilsvar("kandidatdata_avvist", rid)
+        prosess_id = rad[0]
+        kid_uuid = uuid.uuid5(
+            _KANDIDAT_NS, f"{tenant}\x1f{prosess_id}\x1f{kid}")
+
+        def _konflikt(detalj):
+            conn.rollback()
+            tjeneste.logg.hendelse("kandidatdata_konflikt", rid, tenant,
+                                   art="sikkerhet", oppdrag_id=opp_id,
+                                   detalj=detalj)
+            return _feilsvar("kandidatdata_konflikt", rid)
+
+        svar = {"kandidat_id": str(kid_uuid), "request_id": rid}
+        if form == "dokument":
+            navn = kropp.get("dokumentnavn")
+            b64 = kropp.get("dokument_b64")
+            tekst = kropp.get("tekst")
+            endelse = ("." + navn.rsplit(".", 1)[-1].lower()
+                       if isinstance(navn, str) and "." in navn else "")
+            # NAVNEGRENSEN ER ARKIVETS, IKKE DØRENS EGEN (Codex P2). Her
+            # sto `len(navn) > 512`, et tall arkivgaten ikke kjenner:
+            # `parsing._sjekk_navn` måler traversering og endelse, aldri
+            # lengde, og `les_porsjonsvis` strømmer medlemmene uten å
+            # materialisere navnene som filsystemstier. En ellers gyldig
+            # pdf/docx/html med et lengre ZIP-navn passerte altså hele
+            # veien fram hit og fikk `request_feilformet` — som
+            # controlleren gjør om til `kandidatlagring_feilet` for HELE
+            # evalueringen. Døren avviste en bunt arkivkontrakten godtar.
+            #
+            # Grensen er derfor formatets egen: ZIPs `file name length`
+            # er 16-bits, så 65 535 byte er det lengste navnet et medlem
+            # overhodet KAN bære.
+            #
+            # MÅLT I TEGN (Codex P2, runde 2). Linjen sto som
+            # `len(navn.encode("utf-8"))`, altså i en koding arkivet
+            # aldri brukte: døren får det DEKODEDE navnet, og et lovlig
+            # CP437-navn dobler seg i UTF-8. Se `_KANDIDAT_NAVN_MAKS`
+            # for hvorfor tegn er den målingen som ikke kan felle noe
+            # arkivet godtar.
+            #
+            # NUL ER EN FEILFORMET FORESPØRSEL, IKKE EN DØD BASE (Codex
+            # P2). PostgreSQL kan ikke lagre en nullbyte i en `TEXT`-verdi
+            # i det hele tatt, og et uttrekk fra html eller pdf kan bære
+            # en: den passerer arkivgaten og uttrekket, og felte først
+            # her — som en rå `psycopg.Error`, som handlerens catch-all
+            # oversetter til `db_utilgjengelig`. Modulen leser 5xx som
+            # DRIFT, brenner hele retrykjeden mot en base som er frisk,
+            # og feller til slutt evalueringen som
+            # `kandidatlagring_feilet` — med en falsk infrastrukturalarm
+            # på veien, altså feil kø og feil diagnose. Koden skal si
+            # hva som faktisk er galt: kroppen bærer et tegn lageret ikke
+            # har. Målt på `tekst` OG `navn`, for begge går i
+            # TEXT-kolonner (og `navn` også i uuid5 og i loggens detalj).
+            #
+            # OG SAMME PORT FOR LØSREVNE SURROGATER (Codex P2, #173).
+            # Funnet ble meldt på artefaktveien, men dokumentveien har
+            # nøyaktig samme defekt én gren unna: `uuid.uuid5` encoder
+            # navnet sitt til UTF-8, og `tekst` encodes både til
+            # størrelsesmålingen og til sha256. Et `\ud800` fra
+            # `json.loads` reiser `UnicodeEncodeError` alle tre stedene —
+            # ukodet 500, ikke `request_feilformet`. Å lukke bare den ene
+            # grenen ville vært å fikse symptomet: predikatet er derfor
+            # det samme her, og det står FØR første koding.
+            if not isinstance(navn, str) or not navn \
+                    or len(navn) > _KANDIDAT_NAVN_MAKS \
+                    or endelse not in _KANDIDAT_MIME \
+                    or not isinstance(b64, str) \
+                    or not isinstance(tekst, str) \
+                    or _har_ulagringsbart_tegn(navn) \
+                    or _har_ulagringsbart_tegn(tekst):
+                conn.rollback()
+                tjeneste.logg.hendelse("request_feilformet", rid, tenant)
+                return _feilsvar("request_feilformet", rid)
+            try:
+                data = base64.b64decode(b64, validate=True)
+            except Exception:
+                conn.rollback()
+                tjeneste.logg.hendelse("request_feilformet", rid, tenant)
+                return _feilsvar("request_feilformet", rid)
+            # Teksten måles for seg (CodeRabbit, korrigert form): den
+            # kan LOVLIG være større enn dokumentbytene — en docx er
+            # komprimert, teksten er utpakket — så «tekst ≤ dokument» er
+            # feil grense. Taket er §4-tallets egen klasse: én fils
+            # budsjett, målt i UTF-8-byte.
+            if not data or len(data) > _KANDIDAT_DOK_MAKS \
+                    or len(tekst.encode("utf-8")) > _KANDIDAT_DOK_MAKS:
+                conn.rollback()
+                tjeneste.logg.hendelse("request_feilformet", rid, tenant)
+                return _feilsvar("request_feilformet", rid)
+            dok_uuid = uuid.uuid5(
+                _KANDIDAT_NS,
+                f"{tenant}\x1f{prosess_id}\x1f{kid}\x1f{navn}")
+            sha = hashlib.sha256(data).hexdigest()
+            satt = conn.execute(
+                "INSERT INTO kandidat_originaldokument (tenant,"
+                " prosess_id, kandidat_id, dokument_id, filnavn,"
+                " innholdstype, dokument, storrelse_bytes,"
+                " innhold_sha256) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)"
+                " ON CONFLICT DO NOTHING",
+                (tenant, prosess_id, kid_uuid, dok_uuid, navn,
+                 _KANDIDAT_MIME[endelse], data, len(data),
+                 sha)).rowcount
+            if not satt:
+                likt = conn.execute(
+                    "SELECT dokument = %s AND filnavn = %s"
+                    " FROM kandidat_originaldokument"
+                    " WHERE tenant=%s AND prosess_id=%s"
+                    "   AND kandidat_id=%s AND dokument_id=%s",
+                    (data, navn, tenant, prosess_id, kid_uuid,
+                     dok_uuid)).fetchone()
+                if likt is None or not likt[0]:
+                    return _konflikt("originaldokument")
+            satt = conn.execute(
+                "INSERT INTO kandidat_parsettekst (tenant, prosess_id,"
+                " kandidat_id, dokument_id, tekst, innhold_sha256)"
+                " VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+                (tenant, prosess_id, kid_uuid, dok_uuid, tekst,
+                 hashlib.sha256(tekst.encode("utf-8")).hexdigest()
+                 )).rowcount
+            if not satt:
+                likt = conn.execute(
+                    "SELECT tekst = %s FROM kandidat_parsettekst"
+                    " WHERE tenant=%s AND prosess_id=%s"
+                    "   AND kandidat_id=%s AND dokument_id=%s",
+                    (tekst, tenant, prosess_id, kid_uuid,
+                     dok_uuid)).fetchone()
+                if likt is None or not likt[0]:
+                    return _konflikt("parsettekst")
+            svar["dokument_id"] = str(dok_uuid)
+        else:
+            artefakt = kropp.get("artefakt")
+            sporsmal = kropp.get("intervjusporsmal")
+            # AVMASKERINGEN ER OBLIGATORISK PÅ DENNE VEIEN (Codex P1).
+            # 057 definerer `kandidat_avmaskering` som lagret for nettopp
+            # token→klartekst-kartet, og hver evaluering PRODUSERER det —
+            # men veien inn bar det ikke, og den promoterte rapporten
+            # stripper det med vilje. Kartet forsvant dermed når
+            # arbeideren døde, og igjen sto blindet kildetekst med
+            # `[NAVN-1]`-tokener ingen autorisert leser kunne løse opp.
+            #
+            # Feltet er KREVD, ikke valgfritt: et utelatt felt ville gitt
+            # nøyaktig den stille ikke-lagringen funnet handler om. Tom
+            # dict er derimot lovlig — det er formen blinding AVSKRUDD
+            # (auditert handling, `blinding.evalueringsinput`) gir, og
+            # 057s CHECK krever `felter IS NOT NULL`, ikke ikke-tom.
+            avmaskering = kropp.get("avmaskering")
+            if not isinstance(artefakt, dict) or not artefakt \
+                    or not isinstance(avmaskering, dict) \
+                    or not all(isinstance(t, str) and isinstance(v, str)
+                               for t, v in avmaskering.items()) \
+                    or (sporsmal is not None
+                        and not isinstance(sporsmal, list)):
+                conn.rollback()
+                tjeneste.logg.hendelse("request_feilformet", rid, tenant)
+                return _feilsvar("request_feilformet", rid)
+            # Kanonisk JSON så payload-likheten er byte-veldefinert på
+            # tvers av retries — samme dict, samme streng.
+            #
+            # ALLE TRE MÅLES, OG SAMLET (Codex P2). Linjen under målte
+            # bare `artefakt`. `avmaskering` og `intervjusporsmal` er
+            # like fullt PERSISTERTE payloads — hver sin JSONB-rad, hver
+            # sin hashing og hver sin likhetssammenligning ved retry — og
+            # de gikk inn uten noe dekodet tak i det hele tatt. Det
+            # eneste som bandt dem var wire-taket
+            # `MAKS_KANDIDATARTEFAKT_KROPP`, som per konstruksjon er ~6×
+            # budsjettet (JSON-eskapefaktoren): en autentisert claimant
+            # kunne dermed lagre ~301 MiB kart eller spørsmålsliste under
+            # et uttalt 50 MiB-budsjett, med hashing, lagring og
+            # retry-sammenligning på hele mengden.
+            #
+            # SUMMEN, ikke tre separate tak: budsjettet er KANDIDATENS,
+            # og tre uavhengige tak à 50 MiB ville vært 150 MiB under
+            # samme navn. Det er også nøyaktig forholdet wire-taket alt
+            # er utledet av, så de to tallene fortsetter å bety det samme.
+            raa_a = json.dumps(artefakt, ensure_ascii=False,
+                               sort_keys=True, separators=(",", ":"))
+            raa_m = json.dumps(avmaskering, ensure_ascii=False,
+                               sort_keys=True, separators=(",", ":"))
+            raa_s = json.dumps(sporsmal or [], ensure_ascii=False,
+                               sort_keys=True, separators=(",", ":"))
+            # DØREN MÅLER, IKKE TRANSPORTEN (samme form som dokumentveien
+            # over): kroppstaket er wire-formen med verste-falls
+            # JSON-ekspansjon, mens budsjettet payloadene faktisk skal
+            # holde seg innenfor er den KANONISKE størrelsen. Uten denne
+            # linjen var 256 KiB-fallet det eneste som bandt en JSONB-rad
+            # i det hele tatt, og å heve taket ville fjernet grensen i
+            # stedet for å flytte den.
+            #
+            # OG NUL FELLES HER SOM PÅ DOKUMENTVEIEN (Codex P2, samme
+            # klasse): `jsonb` kan ikke bære en nullbyte noe
+            # mer enn `TEXT` kan. `kildetekst` er den samme uttrekksteksten
+            # dokumentveien bærer, og avmaskeringens verdier er utsnitt
+            # av den, så nullbyten når hit langs nøyaktig samme vei.
+            #
+            # PÅ VERDIENE, IKKE PÅ JSON-TEKSTEN (Codex P2, runde 2).
+            # Denne porten målte `"\x00" in raa_*`, og der finnes den
+            # aldri: `json.dumps` skriver nullbyten som de seks tegnene
+            # `\u0000`. Predikatet var dødt fra første linje. Se
+            # `_har_ulagringsbart_tegn` for hvorfor escapen ikke er noe
+            # bedre å lete etter. STØRRELSEN måles fortsatt på de
+            # kanoniske strengene — de ER det som INSERTes.
+            #
+            # TEGNPORTEN STÅR FØRST, OG DET ER IKKE KOSMETIKK (Codex P2,
+            # #173). `or` evaluerer venstre side først, så med
+            # størrelsessummen foran var det `r.encode("utf-8")` som møtte
+            # et løsrevet surrogat — og `UnicodeEncodeError` derfra er
+            # verken `psycopg.Error` eller noe denne porten fanger. Den
+            # kom ut som en UKODET 500, på hvert eneste retryforsøk, i
+            # stedet for det `request_feilformet` linjene her finnes for.
+            # Tegnene måles derfor FØR noe forsøkes kodet.
+            if any(_har_ulagringsbart_tegn(v)
+                   for v in (artefakt, avmaskering, sporsmal or [])) \
+                    or sum(len(r.encode("utf-8"))
+                           for r in (raa_a, raa_m, raa_s)) \
+                    > _KANDIDAT_ARTEFAKT_MAKS:
+                conn.rollback()
+                tjeneste.logg.hendelse("request_feilformet", rid, tenant)
+                return _feilsvar("request_feilformet", rid)
+            satt = conn.execute(
+                "INSERT INTO kandidat_evalueringsartefakt (tenant,"
+                " prosess_id, kandidat_id, artefakt, innhold_sha256)"
+                " VALUES (%s,%s,%s,%s::jsonb,%s) ON CONFLICT DO NOTHING",
+                (tenant, prosess_id, kid_uuid, raa_a,
+                 hashlib.sha256(raa_a.encode("utf-8")).hexdigest()
+                 )).rowcount
+            if not satt:
+                likt = conn.execute(
+                    "SELECT artefakt = %s::jsonb"
+                    " FROM kandidat_evalueringsartefakt"
+                    " WHERE tenant=%s AND prosess_id=%s AND kandidat_id=%s",
+                    (raa_a, tenant, prosess_id, kid_uuid)).fetchone()
+                if likt is None or not likt[0]:
+                    return _konflikt("evalueringsartefakt")
+            # Samme transaksjon som artefaktet: kartet og teksten det
+            # løser opp er ETT skriv, ikke to som kan divergere. Samme
+            # idempotens- og konfliktform som lagrene over. (`raa_m` er
+            # kanonisert sammen med de to andre over — budsjettet er
+            # kandidatens, og alle tre måles før noe INSERTes.)
+            satt = conn.execute(
+                "INSERT INTO kandidat_avmaskering (tenant, prosess_id,"
+                " kandidat_id, felter, innhold_sha256)"
+                " VALUES (%s,%s,%s,%s::jsonb,%s) ON CONFLICT DO NOTHING",
+                (tenant, prosess_id, kid_uuid, raa_m,
+                 hashlib.sha256(raa_m.encode("utf-8")).hexdigest()
+                 )).rowcount
+            if not satt:
+                likt = conn.execute(
+                    "SELECT felter = %s::jsonb FROM kandidat_avmaskering"
+                    " WHERE tenant=%s AND prosess_id=%s AND kandidat_id=%s",
+                    (raa_m, tenant, prosess_id, kid_uuid)).fetchone()
+                if likt is None or not likt[0]:
+                    return _konflikt("avmaskering")
+            # SYMMETRISK MED ARTEFAKT/AVMASKERING (Cursor P2-2). Armen sto
+            # som `if sporsmal:`, og da var «ingen spørsmål» ikke en
+            # LAGRET sannhet, men et hopp over lageret. Begge veier brøt
+            # løftet i docstringen over:
+            #
+            #   null først, deretter liste  → INSERT-en lyktes, og et
+            #     nytt svar sto stille under samme nøkkel;
+            #   liste først, deretter null  → armen ble hoppet over, og
+            #     den gamle lista ble stående uten at noen målte avviket.
+            #
+            # To sannheter under samme `(tenant, prosess_id,
+            # kandidat_id)` er nøyaktig det `kandidatdata_konflikt`
+            # finnes for, og et STILLE hopp over lageret måler ingen
+            # divergens.
+            #
+            # MEN FRAVÆR SKAL IKKE MATERIALISERES (Codex P2). Forrige
+            # runde løste «hoppet» ved å skrive `[]` ubetinget, og det
+            # gjør absens til den ENDELIGE payloaden: 057-lageret er
+            # append-only, triggeren tillater ingen UPDATE av payload, og
+            # `(tenant, prosess_id, kandidat_id)` er primærnøkkelen. Hver
+            # evaluering produserer med vilje null spørsmål (#225, eiers
+            # retning 27/8: de hører til innkallingen av de beste, ikke
+            # evalueringen av alle), så raden ble skrevet for HVER
+            # kandidat — og la permanent beslag på nøkkelen det senere
+            # innkallings-/shortlist-steget skal skrive under. Lageret
+            # som er utpekt som kilden for genererte spørsmål var dermed
+            # fylt med tomhet før den flyten fikk eksistere.
+            #
+            # Begge kravene holder samtidig ved å skille PÅSTAND fra
+            # LAGRING: en liste skrives og måles som de to lagrene over,
+            # mens ingen liste ikke skriver noe — men fortsatt MÅLER at
+            # ingen står der fra før. Divergensen forrige runde pekte på
+            # («liste først, deretter null») blir da fortsatt en
+            # `kandidatdata_konflikt`, ikke et stille hopp. (`raa_s`
+            # kanoniseres sammen med de to andre over, av samme grunn:
+            # budsjettet er kandidatens og måles før noe INSERTes.)
+            #
+            # RESTRISIKO, SAGT HØYT: skriver innkallingssteget spørsmål
+            # og en SEN retry av denne evalueringen kommer etterpå, ser
+            # målingen en rad og svarer `kandidatdata_konflikt`. Vinduet
+            # er leasens, og alternativet — å la raden stå tom for alltid
+            # — stenger flyten for hver eneste kandidat.
+            if sporsmal:
+                satt = conn.execute(
+                    "INSERT INTO kandidat_intervjusporsmal (tenant,"
+                    " prosess_id, kandidat_id, sporsmal, innhold_sha256)"
+                    " VALUES (%s,%s,%s,%s::jsonb,%s)"
+                    " ON CONFLICT DO NOTHING",
+                    (tenant, prosess_id, kid_uuid, raa_s,
+                     hashlib.sha256(raa_s.encode("utf-8")).hexdigest()
+                     )).rowcount
+                if not satt:
+                    likt = conn.execute(
+                        "SELECT sporsmal = %s::jsonb"
+                        " FROM kandidat_intervjusporsmal"
+                        " WHERE tenant=%s AND prosess_id=%s"
+                        "   AND kandidat_id=%s",
+                        (raa_s, tenant, prosess_id, kid_uuid)).fetchone()
+                    if likt is None or not likt[0]:
+                        return _konflikt("intervjusporsmal")
+            else:
+                staar = conn.execute(
+                    "SELECT 1 FROM kandidat_intervjusporsmal"
+                    " WHERE tenant=%s AND prosess_id=%s"
+                    "   AND kandidat_id=%s",
+                    (tenant, prosess_id, kid_uuid)).fetchone()
+                if staar is not None:
+                    return _konflikt("intervjusporsmal")
+        # OG LEASEN MÅLES PÅ NYTT VED SKRIVEGRENSEN (Codex P2). Leddet
+        # over var den ENESTE tidsmålingen, og den står før
+        # base64-dekodingen, hashingen og INSERT-ene av inntil 25–50 MiB.
+        # Radlåsen serialiserer TILSTANDSENDRINGER — en claim-tyv og
+        # `forny_oppdragslease` tar begge `FOR UPDATE` og venter på oss —
+        # men den stopper ikke VEGGKLOKKEN. Verre: mens vi holder `FOR
+        # SHARE` kan heartbeaten ikke ta sin egen lås, så leasen kan
+        # ikke engang fornyes underveis. En forespørsel med lite tid
+        # igjen kunne derfor passere porten over, bruke sekundene sine på
+        # å skrive, og committe persondata på en fullmakt som var utløpt
+        # da raden landet.
+        #
+        # Målingen gjentas derfor der skrivingen faktisk blir varig, i
+        # SAMME transaksjon og med samme `clock_timestamp()`. Claimet
+        # måles med — ikke fordi det kan ha endret seg under låsen, men
+        # fordi en port som fanger utfallet skal stå på egne ben om en
+        # framtidig skriver glemmer `FOR UPDATE`. Retningen er
+        # fail-closed: en lease som døde i skrivevinduet ruller tilbake
+        # og svarer som en avvist claim, aldri et stille ja.
+        levende = conn.execute(
+            "SELECT 1 FROM oppdrag"
+            " WHERE tenant=%s AND id=%s AND status='plukket'"
+            "   AND owner_claim_id=%s AND owner_generation=%s"
+            "   AND owner_lease_utloper IS NOT NULL"
+            "   AND owner_lease_utloper > clock_timestamp()",
+            (tenant, opp_id, claim_id, generasjon)).fetchone()
+        if levende is None:
+            conn.rollback()
+            tjeneste.logg.hendelse("kandidatdata_avvist", rid, tenant,
+                                   art="sikkerhet", oppdrag_id=opp_id,
+                                   detalj="lease_utlopt_under_skriving")
+            return _feilsvar("kandidatdata_avvist", rid)
+        conn.commit()
+        return kanonisk_json(svar, 200, {"x-request-id": rid})
+    except psycopg.Error as e:
+        conn.rollback()
+        tjeneste.logg.hendelse("db_utilgjengelig", rid, art="drift",
+                               feiltype=type(e).__name__)
+        return _feilsvar("db_utilgjengelig", rid)
+    finally:
+        tjeneste.pool.gi_tilbake(conn)
 
 
 def _oppdrag_forny(tjeneste: Tjeneste, request: Request) -> Response:

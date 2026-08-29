@@ -245,29 +245,41 @@ Modulen er KUNDE av plattformen, aldri omvendt (m56-formen):
   den tidligste av `utforelsesfrist`, `opplasting.utloper` og
   `kvittering_utloper`, minus `AVSLUTNINGSMARGIN_S`) og avviser et
   claim som er dødfødt. Er claimet levedyktig, løper `kjor_bunt` uten
-  internt tak: `frist_s` sendes ikke inn i kandidatløkka, og
-  `puls.tapt` leses først når `with _Heartbeat`-blokken slipper. En
-  evaluering som ble startet i tide, men løper forbi vinduet — eller
-  mister leasen midtveis — fullfører derfor arbeidet, og stoppes først
-  på LEVERINGSPORTENE: `lease_tapt` før opplasting, og kvitteringens
-  eget statusskifte, som etter fristen svarer 202
-  `lagret_uten_statusendring` → `ukvittert`. Utfallet er aldri et
-  falskt `utfort`; prisen er persondata og modellkall brukt utenfor
-  det annonserte vinduet.
+  internt tak: `frist_s` sendes ikke inn i kandidatløkka. En
+  evaluering som ble startet i tide, men løper forbi vinduet,
+  fullfører derfor arbeidet, og stoppes først på LEVERINGSPORTENE:
+  `lease_tapt` før opplasting, og kvitteringens eget statusskifte, som
+  etter fristen svarer 202 `lagret_uten_statusendring` → `ukvittert`.
+  Utfallet er aldri et falskt `utfort`; prisen er persondata og
+  modellkall brukt utenfor det annonserte vinduet.
 
-  KJENT BEGRENSNING, OG DEN ER UTSATT TIL
-  [#173](https://github.com/moka1980/disponit/issues/173) (eierdom,
-  K2-kjennelse på #218, valg 1). Både det løpende fristtaket og et
-  lease-avbrudd midt i evalueringen vil ha DET SAMME: et budsjett- og
-  avbruddssignal tredd inn i `kjor_bunt`s per-kandidat-løkke, og et
-  avbrudd der er en ny returkontrakt på funksjonen — ny maskin, som
-  K1 sender til egen PR. Løkka er nøyaktig den #173 skriver om
-  (artefaktene strømmes til kandidatlagrene, retur blir referanser +
-  rangering), så avbruddssemantikk skrevet nå ville blitt skrevet to
-  ganger. Samme klasse som minnegrensen `kjor_bunt` alt bærer: 23/8-
-  dommen legger HARD SPERRE mot kjøring på reelle bunter i full
-  størrelse før #173 er landet, og det er den sperren som holder
-  varigheten nede i mellomtiden.
+  ET LEASE-TAP fullfører derimot IKKE lenger arbeidet (#173 PR-1).
+  Strømmingen gjorde den claim-bundne skriveveien til den faktiske
+  aborten: mister vi leasen midtveis, feller døren neste
+  kandidatskriv med 409 `kandidatdata_avvist`, sinken reiser, og
+  `kjor_bunt` stopper med `kandidatlagring_feilet` FØR
+  `with _Heartbeat`-blokken slipper. Kjøringen avsluttes derfor der,
+  ikke på leveringsporten — men den MELDES fortsatt som det den er:
+  faller `kjor_bunt` med `kandidatlagring_feilet` mens `puls.tapt` er
+  satt, er kvitteringens feilkode `lease_tapt` (ikke
+  `kjoring_avbrutt`), og utfallets grunn er `lease_tapt`. Uten lease-tap
+  beholder en lagringsfeil sitt eget ord,
+  `kjoring_avbrutt:kandidatlagring_feilet`.
+
+  KJENT BEGRENSNING (eierdom, K2-kjennelse på #218, valg 1): både det
+  løpende fristtaket og et lease-avbrudd midt i evalueringen vil ha
+  DET SAMME — et budsjett- og avbruddssignal tredd inn i `kjor_bunt`s
+  per-kandidat-løkke, og et avbrudd der er en ny returkontrakt på
+  funksjonen — ny maskin, egen PR (K1). #173s PR-1 landet STRØMMINGEN
+  (kandidatlagrene fylles underveis gjennom den claim-bundne
+  skriveveien, og uttrekkstekstene spoles til disk — toppunktet på
+  tekstsiden er største kandidat, ikke bunten), men returens
+  `artefakter` bærer fortsatt hver kandidats resultat, fordi
+  rapport-v1-skjemaet er registrert og immutabelt til
+  [#168](https://github.com/moka1980/disponit/issues/168)s v2.
+  23/8-dommens HARDE SPERRE mot kjøring på reelle bunter i full
+  størrelse STÅR derfor til v2 binder returen — og det er den sperren
+  som holder varigheten nede i mellomtiden.
 
   `dom-klasse: kjoring-avbrudd-og-frist · felt i #218 · https://github.com/moka1980/disponit/pull/218#issuecomment-5431892763`
 * **Lease-horisonten er serverens** — fra claimen. `_Heartbeat._utlopt`
@@ -285,6 +297,49 @@ Modulen er KUNDE av plattformen, aldri omvendt (m56-formen):
   falskt `utfort`.
 
   `dom-klasse: lease-horisont-foer-foerste-fornyelse · felt i #218 · lukket av #219`
+* **Skriveveiens budsjetter** (#173, Codex P1/P2): dørene
+  `/v1/rekruttering/kandidatdokument` og `.../kandidatartefakt` måler
+  DEKODEDE byte, og transporttakene er de samme tallene skrevet i
+  wire-form med verste-falls JSON-ekspansjon (6× — gyldig JSON kan skrive
+  én kildebyte som `\uXXXX`). Uten den faktoren avviste middlewaren
+  gyldige kandidater med `body_for_stor` FØR dørens dokumenterte måling
+  kjørte, og `lever` reiser den 4xx-en som `kandidatlagring_feilet` for
+  HELE evalueringen.
+
+  * Dokument: §4s enkeltfil, 25 MiB — både originalbytene og
+    parseteksten, hver for seg.
+  * Evalueringsartefakt: 50 MiB kanonisk JSON, altså §4-tallet én gang
+    for `kildetekst` og like mye til for alt det andre kandidaten bærer.
+    SITATENE ER IKKE DISJUNKTE (Codex P2): den andre halvdelen var
+    tidligere begrunnet med at funnenes sitater er utsnitt AV samme
+    tekst og derfor til sammen ikke kan overstige én kopi av den. 100
+    funn kan uavhengig sitere hvilken som helst del av teksten, så
+    antakelsen holdt ikke — en skjemagyldig kandidat kunne sprenge
+    budsjettet og felle hele evalueringen på `kandidatlagring_feilet`.
+    Grensen er derfor kontraktens egen og håndheves ved modellgrensen:
+    `rapportskjema.SITAT_MAKS` = 4096 tegn per sitat og `FUNN_MAKS` =
+    100 funn, altså ≤ 1,6 MiB samlet sitatvolum i verste fall (4 byte
+    per tegn i UTF-8). Et for langt sitat DROPPES som et sitat som ikke
+    står ordrett i teksten, og telles i `droppede_funn`. Grensen står
+    IKKE i `rapportskjema.SKJEMA`: det dokumentet er innholdsadressert
+    og bundet immutabelt til `rekruttering.evaluering.rapport` v1 i
+    `artefakttype_register`, så et nytt skjemanøkkelord ville felt
+    release-registreringen på `unique_violation` (Codex P1). Dette er en
+    PER-KANDIDAT-grense, og §4 har ingen fra før: arkivgrensene teller
+    filer og totalvolum, ikke tekst per kandidat. Tallet er derfor valgt
+    som §4s egen klasse, ikke avledet av den — en kandidat med mer enn
+    50 MiB uttrekt tekst felles kodet (`kandidatlagring_feilet`), aldri
+    stille avkortet.
+
+  PRISEN, SAGT HØYT: skriveveien er JSON-med-store-strenger, så taket
+  over betyr at `Kroppsgrense` kan bufre ~301 MiB per forespørsel før
+  `json.loads`. Codex ga to utveier, og dette er den første («size the
+  transport allowance for worst-case JSON expansion»). Den ANDRE — en
+  strømmet eller binær representasjon av dokument- og tekstfeltene, samme
+  form som `/v1/inndata/opplast/` som teller og videresender chunks uten
+  å bufre — fjerner flaten i stedet for å dimensjonere den, men endrer
+  endepunktets kontrakt og modulens klientvei. Ny maskin, egen PR (K1),
+  under [#173](https://github.com/moka1980/disponit/issues/173).
 * **Kandidatdata** (§5): alt payload bor i de seks 057-lagrene og reapes
   ved fristen; modulen kan ikke forlenge den. Unntaket er den promoterte
   rapporten over, som i dag bærer den samme payloaden uten å arve
