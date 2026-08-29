@@ -433,9 +433,10 @@ def test_031_nuller_de_historiske_nb_ene_innenfor_RLS_vinduet():
     """
     sql = (Path(__file__).resolve().parents[1] / "db/migrations"
            / "031_varsel_sprak_ikke_uttrykt.sql").read_text(encoding="utf-8")
-    # Bare teksten her: `_setninger` gir også «står setningen under en vakt»,
-    # og det er ACL-avspillingens spørsmål, ikke rekkefølgens.
-    setninger = [s for s, _under_vakt in _setninger(sql)]
+    # Bare den SKREVNE teksten her: `_setninger` gir også en maskert form og
+    # «står setningen under en vakt», og begge er ACL-avspillingens spørsmål,
+    # ikke rekkefølgens. Maskeringen ville dessuten strøket nettopp `'nb'`.
+    setninger = [s for s, _maskert, _under_vakt in _setninger(sql)]
 
     def hvor(nal):
         traff = [i for i, s in enumerate(setninger) if nal in s]
@@ -1356,6 +1357,20 @@ _TYPEORD = frozenset((
 #: hindre. Klausulen er derfor det som står MELLOM verbet og mottakeren.
 _REVOKE_MAL = re.compile(r"\brevoke\b(.*?)\bfrom\s+public\b")
 
+#: EN REVOKE SOM IKKE TAR PRIVILEGIET (Codex P2 på #71). `REVOKE GRANT OPTION
+#: FOR EXECUTE ON FUNCTION f(…) FROM PUBLIC` er en lovlig REVOKE som treffer
+#: den beskyttede signaturen — og fjerner likevel ikke EXECUTE. Den tar bare
+#: PUBLICs adgang til å GI privilegiet videre; PUBLIC beholder sitt eget.
+#: Setningen leste derfor som et gjerde mens funksjonen sto like åpen, og
+#: `deploy/staging/migrer.py`s opprydding ville skjult resten.
+#:
+#: Formen kan bare stå ETTER verbet — PostgreSQL skriver den som
+#: `REVOKE [GRANT OPTION FOR] privilegier ON … FROM …` — så klausulen måles
+#: fra begynnelsen. Den flytter INGENTING i denne modellen, i noen av
+#: retningene: den kan ikke gi PUBLIC EXECUTE, og den kan ikke bevise at
+#: EXECUTE er borte. Et gjerde som alt står, står derfor videre.
+_GRANT_OPSJON = re.compile(r"^\s*grant\s+option\s+for\b")
+
 #: `ROUTINE` ER SAMME SLETTING, STAVET OM (Codex P2 på #71). PostgreSQL godtar
 #: `DROP ROUTINE f(int,int)` som en generisk form som treffer funksjonen like
 #: godt som `DROP FUNCTION`. Kjente modellen bare den ene stavemåten, sto
@@ -1365,6 +1380,32 @@ _REVOKE_MAL = re.compile(r"\brevoke\b(.*?)\bfrom\s+public\b")
 #: er hullet bare skrevet på nytt.
 _DROP_MAL = re.compile(
     r"\bdrop\s+(?:function|routine)\b(?:\s+if\s+exists\b)?(.*)")
+
+#: Å FLYTTE ET NAVN ER Å FJERNE DET (Codex P2 på #71). `DROP` er ikke den
+#: eneste veien ut: `ALTER FUNCTION f(int,int) RENAME TO …` og `ALTER FUNCTION
+#: f(int,int) SET SCHEMA …` lar funksjonen leve, men `public.f(int,int)` —
+#: navnet `varselsender.kjor` faktisk kaller, ukvalifisert — finnes ikke
+#: lenger. Modellen kjente bare `DROP` som fjerning og lot `True` fra forrige
+#: REVOKE stå: porten var grønn på et gjerde rundt et navn som var borte, og
+#: den som kjører `db.kjorer.migrer` direkte satt igjen med en sender som ikke
+#: virker.
+#:
+#: Identiteten som flyttes er den i MÅLKLAUSULEN, altså det som står mellom
+#: `ALTER FUNCTION` og verbet — samme krav som for `DROP` og `REVOKE`, slik at
+#: en omdøpt OVERLAST ikke fjerner den beskyttede.
+#:
+#: Vakten teller ikke her, av samme grunn som for `DROP`: skjedde flyttingen
+#: likevel ikke, er svaret «finnes ikke», og det er en falsk alarm noen må se
+#: på — ikke en sender ingen oppdager er borte.
+_NAVNESKIFTE = re.compile(
+    r"\balter\s+(?:function|routine)\b(.*?)\b(rename\s+to|set\s+schema)\b")
+
+#: DET NYE NAVNET, altså det som står ETTER verbet: et bart navn for `RENAME
+#: TO`, et skjemanavn for `SET SCHEMA`. Begge formene tar ett ord — PostgreSQL
+#: godtar ikke `RENAME TO annet.f` — så det er nettopp ett ord som leses. Et
+#: sitert navn (`"Tmp"`) treffer ikke, og da vet modellen ikke hvor funksjonen
+#: tok veien: sporet slippes, og navnet blir stående som borte.
+_ETTER_SKIFTET = re.compile(r"\s*([a-z_][a-z0-9_]*)")
 
 #: EIERSKIFTET (Codex P2 på #71). `ALTER FUNCTION … OWNER TO x` er den ene
 #: setningen som bestemmer hvem en senere `REVOKE … FROM PUBLIC` må kjøres
@@ -1414,6 +1455,20 @@ _AAPNER = re.compile(
 _LUKKER = re.compile(r"\bend\s+(?:if|case)\b")
 
 
+def _er_escapestreng(sql, i):
+    """Er apostrofen på `i` starten på en `E'…'`, der `\\'` er ETT tegn?
+
+    PREFIKSET HØRER TIL KONSTANTEN (Codex P2 på #74). PostgreSQL skriver
+    tekstkonstanter på flere former, og `E'…'` er den ene der bakstreken er
+    en escape. Prefikset er en bokstav rett foran apostrofen, og bare når
+    den bokstaven ikke selv er slutten på et navn: `e'x'` er en
+    escape-konstant, mens `verdie` fulgt av `'x'` er et navn og en vanlig
+    konstant.
+    """
+    return (i > 0 and sql[i - 1] in "eE"
+            and not (i > 1 and (sql[i - 2].isalnum() or sql[i - 2] in "_$")))
+
+
 def _uten_kommentarer(sql):
     """SQL-en slik BASEN leser den: uten kommentarer av noe slag.
 
@@ -1434,6 +1489,13 @@ def _uten_kommentarer(sql):
       inne i en `--`-linje er tekst, og en `--` inne i en blokk likeså.
     * En apostrof åpner en STRENGKONSTANT, og der er `--` og `/*` bare tegn.
       Strengene beholdes ordrett — det er bare kommentarene som skal bort.
+    * En `E'…'` slutter ikke på en `\\'`. Leses bakstreken som et vanlig tegn,
+      slutter konstanten for tidlig, og halen — som godt kan inneholde en
+      `--` — leses som kode.
+    * EN `"…"` ER ET NAVN, og der er apostrofen bare et tegn (Codex P2 på
+      #74). `"customer's"` er en fullt lovlig identifikator, og leses
+      apostrofen i den som starten på en konstant, slutter den falske
+      konstanten først på neste apostrof i filen — med alt som lå imellom.
 
     Blokken erstattes av ett mellomrom, ikke ingenting: `revoke/**/all` er to
     ord for basen, og skal være to ord her også.
@@ -1456,12 +1518,31 @@ def _uten_kommentarer(sql):
                     i += 1
             ut.append(" ")
         elif sql[i] == "'":
+            escape = _er_escapestreng(sql, i)
             j = i + 1
             while j < n:
-                if sql[j] != "'":
+                if escape and sql[j] == "\\" and j + 1 < n:
+                    j += 2          # `\'` er ETT tegn i en E-streng
+                elif sql[j] != "'":
                     j += 1
                 elif sql.startswith("''", j):
                     j += 2          # doblet apostrof er ETT tegn, ikke slutt
+                else:
+                    j += 1
+                    break
+            ut.append(sql[i:j])
+            i = j
+        elif sql[i] == '"':
+            # En sitert IDENTIFIKATOR. Den beholdes ordrett som konstantene,
+            # men av motsatt grunn: her er det ikke teksten som skal skånes,
+            # det er apostrofen inni den som ikke skal få åpne noe.
+            # `""` er en apostrof-doblingens tvilling — ETT tegn, ikke slutt.
+            j = i + 1
+            while j < n:
+                if sql.startswith('""', j):
+                    j += 2
+                elif sql[j] != '"':
+                    j += 1
                 else:
                     j += 1
                     break
@@ -1473,19 +1554,400 @@ def _uten_kommentarer(sql):
     return "".join(ut)
 
 
-def _delt(tekst, i_blokk):
-    """Setningene i et tekststykke, hver med «står den under en vakt?».
+#: En strengkonstant, med PostgreSQLs doblede apostrof som eneste unntak:
+#: `'det''s'` er ÉN konstant, ikke to som støter mot hverandre.
+#:
+#: EN KONSTANT KAN HA ET PREFIKS (Codex P2 på #74). `E'…'` og `U&'…'` er
+#: like gyldige skrivemåter som den bare, og modellen kjente bare den bare.
+#: Prefikset ble derfor stående igjen UTENFOR markøren, og en
+#: `EXECUTE E'GRANT EXECUTE … TO PUBLIC'` maskerte til `execute e<markør>`
+#: — som `_DYNAMISK` ikke treffer. Den dynamiske granten falt dermed ut av
+#: avspillingen, og gjerdet ble stående True mens PUBLIC fikk EXECUTE
+#: tilbake. Prefikset er en DEL av konstanten, og går inn i markøren med
+#: den.
+#:
+#: `E` er dessuten den ene formen der BAKSTREKEN er en escape: `\'` slutter
+#: ikke konstanten. `U&` bruker bakstreken til unicode-punkter i stedet, og
+#: dobler apostrofen som den bare formen — derfor to grener og ikke én.
+#: Bokstaven må stå fritt: `verdie` fulgt av `'x'` er et navn og en vanlig
+#: konstant, ikke en escape-konstant.
+#:
+#: EN SITERT IDENTIFIKATOR ER IKKE EN KONSTANT (Codex P2 på #74), og den
+#: står FØRST i uttrykket nettopp derfor. `"customer's"` er et lovlig navn,
+#: og apostrofen i det er et tegn i navnet — ikke starten på noe. Uten den
+#: grenen leste modellen apostrofen som en åpning, og den falske konstanten
+#: sluttet først på neste apostrof i filen: alt imellom — semikolonene, og
+#: en `GRANT EXECUTE … TO PUBLIC` — forsvant inn i én markør, og gjerdet ble
+#: stående True mens PUBLIC var åpnet igjen.
+#:
+#: Grenen treffer først fordi den regexmotoren skanner venstre mot høyre:
+#: står identifikatoren foran, er apostrofene i den spist før en konstant
+#: kan begynne på dem. `bytt` gir den tilbake urørt — den skal hverken
+#: maskeres eller spilles av, bare passere.
+_STRENG = re.compile(
+    r'"(?:""|[^"])*"'
+    r"|(?<![0-9a-z_$])e'(?:''|\\.|[^'\\])*'"
+    r"|(?<![0-9a-z_$])u&'(?:''|[^'])*'"
+    r"|'(?:''|[^'])*'",
+    re.IGNORECASE | re.DOTALL)
+
+#: Escape-sekvensene i en `E'…'`, redusert til det denne modellen trenger:
+#: `''` og `\'` er en apostrof, `\b\f\n\r\t` er tomrom — og tomrom er
+#: nettopp det normaliseringen uansett klapper sammen — og ellers er tegnet
+#: etter bakstreken seg selv (`\\` er en bakstrek). De NUMERISKE formene
+#: (`\101`, `\x41`, unicode-punktene) dekodes ikke: en ACL-setning skrevet slik
+#: finnes ikke i disse migrasjonene, og et treff mistes heller enn å bli
+#: diktet opp. Som for dynamisk SQL bygget av en variabel er det en grense,
+#: ikke en fullstendighet.
+_ESCAPE = re.compile(r"''|\\(.)", re.DOTALL)
+
+#: Markøren bruker NUL, som ikke kan stå i SQL-tekst — og som ingen av
+#: uttrykkene over kan forveksle med et navn eller et nøkkelord.
+_MARKOER = "\x00{}\x00"
+_MARKOER_MAL = re.compile(r"\x00(\d+)\x00")
+
+#: DEN ENE STRENGEN SOM LIKEVEL KJØRER (Codex P2 på #71). plpgsql `EXECUTE`
+#: tar en tekst og utfører den som SQL, og 003 bruker formen alt
+#: (`EXECUTE format('ALTER TABLE %I …', t)`). Ble den maskert bort sammen med
+#: logglinjene, hadde maskeringen laget et NYTT hull i den farlige retningen:
+#: en `EXECUTE 'GRANT EXECUTE … TO PUBLIC'` ville blitt usynlig. Innholdet
+#: spilles derfor av som egne setninger, i den samme grenen og rollen.
+#:
+#: `format(…)` regnes med fordi det er formen som faktisk brukes. Bygges
+#: SQL-en derimot av en VARIABEL, ser ingen kildetest hva den blir — og en
+#: `%I` eller `%s` i malen er samme sak i det små: den treffer ingen
+#: signatur, og en REVOKE skrevet slik beviser derfor ingenting. Det er
+#: riktig vei på tvilen, men verdt å vite om.
+#:
+#: `EXECUTE` TAR ET UTTRYKK, IKKE EN TEKST (Codex P2 på #74). Uttrykket kan
+#: stå i parentes — `EXECUTE ('GRANT EXECUTE … TO PUBLIC')` er nøyaktig den
+#: samme setningen som uten — og modellen krevde markøren RETT etter
+#: `EXECUTE`, med `format(` som eneste unntak. En parentes foran var derfor
+#: nok til at den dynamiske setningen aldri ble spilt av, og gjerdet ble
+#: stående True mens PUBLIC fikk EXECUTE. Parentesene er en skrivemåte, ikke
+#: en betydning, og telles som det: `EXECUTE ((format('…')))` er den samme
+#: teksten som kjøres.
+#:
+#: Mellomrommet er `\s*` og ikke `\s+`: `EXECUTE'…'` er lovlig — apostrofen
+#: avslutter nøkkelordet for lexeren — og et krav om mellomrom ville vært
+#: den samme blindsonen skrevet om. Det er markøren rett etter som gjør
+#: treffet, og en markør kan bare komme av en konstant som faktisk sto der.
+_DYNAMISK = re.compile(
+    r"\bexecute\s*(?:\(\s*)*(?P<fmt>format\s*\(\s*)?\x00(?P<mal>\d+)\x00")
+
+#: ARGUMENTLISTEN til en `format(…)`, lest fra kommaet etter malen og fram
+#: til parentesen som lukker kallet. Bare markører teller: står det en
+#: VARIABEL i listen, treffer ikke uttrykket i det hele tatt, og malen
+#: spilles av som før. Det er den samme grensen som for SQL bygget av en
+#: variabel — modellen dikter ikke opp en verdi den ikke kan se.
+_FORMAT_HALE = re.compile(r"((?:\s*,\s*\x00\d+\x00)*)\s*\)")
+
+#: Én spesifikator i en `format`-mal. PostgreSQL har `%s`, `%I`, `%L` og
+#: `%%`. Bredde- og posisjonsformene (`%1$s`, `%-10s`) er IKKE med: de
+#: finnes ikke i disse migrasjonene, og en mal som bruker dem, lar heller
+#: være å bli løst enn å bli gjettet på — se `_formatert`.
+_FORMAT_SPEK = re.compile(r"%(.)", re.DOTALL)
+
+#: Det samme uttrykket, men for den DOLLARSITERTE skrivemåten — og den må
+#: leses FØR `_KROPP` (Codex P2 på #74). `EXECUTE $sql$GRANT EXECUTE … TO
+#: PUBLIC$sql$` er en fullt vanlig dynamisk setning, og `$sql$…$sql$` ser
+#: for `_KROPP` ut som en funksjonskropp: nyttelasten ble strøket før
+#: `_DYNAMISK` fikk se den, og gjerdet ble stående True mens PUBLIC hadde
+#: fått EXECUTE. Formen er dessuten den man NÅR til når teksten selv er
+#: full av apostrofer — altså nettopp i en ACL-setning som siterer noe.
+#:
+#: Prefikset — `EXECUTE`, parentesene og et eventuelt `format(` — er med i
+#: uttrykket som group 1, slik at det står igjen foran markøren og
+#: `_DYNAMISK` kjenner den igjen som den apostrofsiterte formen. Taggen er
+#: en tilbakereferanse av samme grunn som i `_KROPP`: `$a$ … $b$ … $a$` er
+#: ÉN tekst.
+_DYNAMISK_DOLLAR = re.compile(
+    r"(\bexecute\s*(?:\(\s*)*(?:format\s*\(\s*)?)" + _TAGG + r"(.*?)\$\2\$",
+    re.S | re.I)
+
+
+def _uten_dollarnyttelast(tekst, innhold):
+    """De dollarsiterte tekstene `EXECUTE` KJØRER, byttet ut med markører.
+
+    Kjøres FØR `_KROPP` stryker kroppene, og legger nyttelastene i den samme
+    konstanttabellen som apostrofformen bruker. Da er det bare ÉN form
+    `_DYNAMISK` og avspillingen trenger å kjenne.
+
+    Bare de som står etter `EXECUTE` flyttes over. En dollarsitert tekst
+    ellers i filen ER en funksjonskropp — det er den `_KROPP` finnes for —
+    og en regel som tok dem alle, ville pakket ut hver kropp i historikken
+    som om den kjørte.
+
+    Innholdet lagres RÅTT: en dollarsitert tekst har ingen escaping i det
+    hele tatt, så `''` i den er to apostrofer og ikke én. Taggen tas vare på
+    som «prefiks», slik at `_klartekst` kan skrive setningen tilbake slik
+    den står.
+    """
+    def bytt(m):
+        innhold.append(("$" + m.group(2) + "$", m.group(3)))
+        return m.group(1) + _MARKOER.format(len(innhold) - 1)
+
+    return _DYNAMISK_DOLLAR.sub(bytt, tekst)
+
+
+def _uten_strenger(tekst, innhold=None):
+    """Teksten med hver strengkonstant byttet ut med en nummerert markør.
+
+    EN STRENGKONSTANT ER IKKE EN SETNING (Codex P2 på #71). Kommentarene var
+    bare den ene halvparten av «tekst som ser ut som SQL uten å være det».
+    Den andre er apostrofene: `RAISE NOTICE 'REVOKE ALL ON FUNCTION
+    varsel_klaim_epost(int,int) FROM PUBLIC'` — nøyaktig den slags melding en
+    opprydding logger — sto igjen ordrett i strømmen, og `_REVOKE_MAL` leste
+    den som en utført REVOKE fra eieren. Etter en gjenskaping som lot
+    funksjonen stå åpen, løftet altså en LOGGLINJE gjerdet til True.
+
+    Verre, og av samme grunn som for blokkommentarene: et semikolon inne i
+    konstanten delte setningen. En vakt eller en `RESET ROLE` kunne dermed
+    havne på feil side av skillet, og både gren og rolle bli bokført feil.
+
+    Markøren er nummerert fordi innholdet trengs igjen: en `EXECUTE '…'` er
+    ekte SQL som KJØRER, og den skilles ut for seg — se `_DYNAMISK`. Alt
+    annet er inert tekst, og skal måles som det.
+
+    Gir `(maskert, konstanter)`, der hver konstant er `(prefiks, innhold)`:
+    prefikset — `e`, `u&` eller ingenting — hører til konstanten og går inn
+    i markøren med den, slik at `EXECUTE E'…'` er den samme formen som
+    `EXECUTE '…'` for `_DYNAMISK`. Det er bare `_klartekst` som trenger å
+    vite hvilken skrivemåte som sto der.
+
+    En SITERT IDENTIFIKATOR passerer urørt: den er med i uttrykket bare for
+    å spise sine egne apostrofer, slik at `"customer's"` ikke åpner en
+    konstant som sluker resten av setningen — se `_STRENG`.
+
+    `innhold` kan gis inn ferdig påbegynt. Da nummereres konstantene videre
+    i den samme tabellen, slik at de dollarsiterte nyttelastene — som må
+    plukkes ut før `_KROPP` — og de apostrofsiterte deler ÉN nummerering.
+    """
+    innhold = [] if innhold is None else innhold
+
+    def bytt(m):
+        rå = m.group(0)
+        if rå.startswith('"'):
+            return rå
+        # Den FØRSTE apostrofen åpner konstanten; alt foran den er prefiks.
+        q = rå.index("'")
+        prefiks, tekst = rå[:q].lower(), rå[q + 1:-1]
+        innhold.append((prefiks,
+                        _ESCAPE.sub(_uten_escape, tekst) if prefiks == "e"
+                        else tekst.replace("''", "'")))
+        return _MARKOER.format(len(innhold) - 1)
+
+    return _STRENG.sub(bytt, tekst), innhold
+
+
+def _uten_escape(m):
+    """Én escape-sekvens i en `E'…'` redusert til tegnet den står for."""
+    tegn = m.group(1)
+    if tegn is None:                      # `''`
+        return "'"
+    # `\n` og de andre er TOMROM, ikke bokstaven n: ble de lest bokstavelig,
+    # ble `'REVOKE ALL\nON FUNCTION …'` til `revoke allnon function …`, og
+    # en ekte setning falt ut av avspillingen.
+    return " " if tegn in "bfnrtv" else tegn
+
+
+def _formatert(mal, argumenter):
+    """`format(mal, …)` regnet ut, eller `None` om malen ikke lot seg løse.
+
+    KONSTANTE ARGUMENTER ER KJENTE (Codex P2 på #74). `EXECUTE
+    format('GRANT EXECUTE ON FUNCTION varsel_klaim_epost(int,int) TO %I',
+    'PUBLIC')` er en helt vanlig dynamisk GRANT, men modellen spilte av
+    MALEN — med `%I` i behold. `_GRANT_PUBLIC` fikk da aldri se mottakeren,
+    og gjerdet ble stående True mens PUBLIC hadde fått EXECUTE tilbake.
+    Argumentene står jo skrevet i filen: det som er KJENT, skal regnes ut,
+    og det er bare det ukjente som er en grense.
+
+    `%s` og `%I` settes inn RÅTT. `quote_ident` ville satt anførselstegn om
+    navnet trengte det, men modellen leser mottakere og navn som ord, og et
+    sitert `"PUBLIC"` er den samme mottakeren for den. `%L` siteres derimot,
+    for da ER resultatet en konstant: `format('SELECT %L', 'REVOKE … FROM
+    PUBLIC')` velger bare ut en tekst, og avspillingen skal maskere den bort
+    igjen som den konstanten den er.
+
+    Gir `None` når malen har en spesifikator modellen ikke kjenner, eller
+    når antallet ikke går opp mot argumentene. Da spilles malen av som før:
+    et treff mistes heller enn å bli diktet opp.
+    """
+    ut, i, brukt = [], 0, 0
+    for m in _FORMAT_SPEK.finditer(mal):
+        ut.append(mal[i:m.start()])
+        i = m.end()
+        spek = m.group(1)
+        if spek == "%":
+            ut.append("%")
+        elif spek not in "sIL" or brukt >= len(argumenter):
+            return None
+        else:
+            verdi = argumenter[brukt]
+            brukt += 1
+            ut.append("'" + verdi.replace("'", "''") + "'" if spek == "L"
+                      else verdi)
+    if brukt != len(argumenter):
+        return None
+    return "".join(ut) + mal[i:]
+
+
+def _nyttelast(maskert, treff, strenger):
+    """Teksten et `EXECUTE`-treff faktisk kjører.
+
+    Er formen `format(…)`, og står ALLE argumentene som konstanter, regnes
+    malen ut — se `_formatert`. Ellers er nyttelasten malen selv: en
+    variabel i listen er nettopp det ingen kildetest kan se verdien av.
+    """
+    mal = strenger[int(treff.group("mal"))][1]
+    if not treff.group("fmt"):
+        return mal
+    hale = _FORMAT_HALE.match(maskert, treff.end())
+    if hale is None:
+        return mal
+    løst = _formatert(mal, [strenger[int(i)][1]
+                            for i in _MARKOER_MAL.findall(hale.group(1))])
+    return mal if løst is None else løst
+
+
+def _klartekst(setning, strenger):
+    """Setningen slik den STÅR SKREVET — markørene byttet tilbake.
+
+    Maskeringen er ACL-avspillingens verktøy, ikke en egenskap ved filen.
+    Den som spør etter setningene for å lese REKKEFØLGEN — nullingen i 031
+    mot RLS-vinduet, for eksempel — skal se teksten som er der, `'nb'` og
+    alt. Tomrommet i konstanten klappes sammen som i resten av setningen,
+    slik at den leses likt uansett hvordan den er brutt over linjer, og
+    prefikset følger med: `E'…'` sto det, og `e'…'` skal det leses som.
+
+    STORE OG SMÅ BOKSTAVER ER IKKE DET SAMME I EN KONSTANT (Codex P2 på
+    #74). Normaliseringen småskrev HELE setningen, konstantinnholdet med —
+    og det er en normalisering som bare gjelder SYNTAKS. PostgreSQL slår
+    `SELECT` og `select` opp likt, men `sprak = 'NB'` og `sprak = 'nb'`
+    sammenligner mot to forskjellige verdier. Ble 031-nullingen skrevet om
+    til `'NB'`, ville den ikke lenger truffet en eneste lagret `'nb'` — og
+    gjenskrivingen småskrev den tilbake, så porten som måler nettopp den
+    nullingen ble stående grønn på en migrasjon som ikke gjorde noe.
+    Konstanten er en VERDI, og gis tilbake med sin egen skrivemåte.
+
+    ACL-avspillingen merker ikke forskjellen: den måler den MASKERTE formen,
+    der konstantene er markører — og der de likevel kommer tilbake som SQL,
+    nemlig i en `EXECUTE`-nyttelast, småskriver `_delt` teksten på nytt som
+    den setningen den da er.
+
+    En DOLLARSITERT nyttelast skrives tilbake med taggen sin, ikke med
+    apostrofer: `$sql$…$sql$` har ingen escaping i det hele tatt, og en
+    dobling av apostrofene i den ville vært en annen tekst.
+    """
+    def igjen(m):
+        prefiks, tekst = strenger[int(m.group(1))]
+        flat = " ".join(tekst.split())
+        if prefiks.startswith("$"):
+            return prefiks + flat + prefiks
+        return prefiks + "'" + flat.replace("'", "''") + "'"
+
+    return _MARKOER_MAL.sub(igjen, setning)
+
+
+def _delt(tekst, i_blokk, arvet_vakt=False, strenger=None):
+    """Setningene i et tekststykke, hver på to former og med sin vakt.
+
+    Gir `(setning, maskert, betinget)`: `setning` er teksten slik den står
+    skrevet, `maskert` er den samme med strengkonstantene byttet ut med
+    markører. ACL-avspillingen måler den MASKERTE — se `_uten_strenger` —
+    mens den som leser rekkefølge eller innhold skal ha den skrevne.
 
     Dybden telles bare inne i en DO-blokk: på toppnivå i en migrasjonsfil
     finnes det ingen plpgsql-gren en setning kan stå under.
+
+    Strengkonstantene maskeres FØR splittingen på semikolon, slik at et
+    semikolon inne i en konstant ikke deler en setning i to — og slik at
+    hverken vakttellingen eller ACL-uttrykkene leser inert tekst som kode.
+
+    De DOLLARSITERTE nyttelastene plukkes ut aller først, FØR `_KROPP`
+    stryker kroppene: `EXECUTE $sql$…$sql$` er en dynamisk setning, og
+    `$sql$…$sql$` ser ut som en kropp. Etterpå er de vanlige konstanter i
+    den samme tabellen, og resten av leddet ser bare én form.
+
+    `arvet_vakt` er vakten en KALLER har målt for teksten som helhet — den
+    brukes av den dynamiske grenen under, der teksten som kjøres arver
+    vakten fra `EXECUTE`-setningen den sto i.
+
+    `strenger` er konstanttabellen KALLEREN alt har begynt på. `_setninger`
+    maskerer filen FØR den leter etter DO-blokker, og gir da både den
+    maskerte teksten og tabellen videre hit; en tekst som ikke er maskert
+    fra før, maskeres her og får sin egen tabell. Å maskere en alt maskert
+    tekst er ingenting: markørene inneholder ingen apostrof.
     """
     dybde = 0
-    for rå in _KROPP.sub(" ", tekst).split(";"):
+    strenger = [] if strenger is None else strenger
+    uten_streng, strenger = _uten_strenger(
+        _KROPP.sub(" ", _uten_dollarnyttelast(tekst, strenger)), strenger)
+    for rå in uten_streng.split(";"):
         s = " ".join(rå.split()).lower()
         if not s:
             continue
-        yield s, dybde > 0
+        yield _klartekst(s, strenger), s, arvet_vakt or dybde > 0
+        # …og den ene teksten som likevel er kode. Den spilles av HER, altså
+        # på plassen der `EXECUTE` står, med den vakten som gjelder der.
+        for m in _DYNAMISK.finditer(s):
+            # VAKTEN FØLGER MED UT AV TEKSTEN (Codex P2 på #74). `dybde`
+            # teller grenene som åpnet i en TIDLIGERE setning, og oppdateres
+            # først nedenfor — men `IF … THEN EXECUTE '…'` er ETT
+            # semikolonfragment, så en gren som åpner rett foran `EXECUTE`
+            # er ennå ikke talt. Den utpakkede teksten mister dessuten
+            # `IF`-forstavelsen, så leseren kan ikke finne vakten selv slik
+            # den gjør for skrevne setninger. Ble den derfor spilt av som
+            # ubetinget, leste modellen en betinget dynamisk REVOKE som
+            # bevis, og lot gjerdet stå der klyngen — med usann vakt — ikke
+            # hadde revokert noe.
+            betinget = (arvet_vakt or dybde > 0
+                        or bool(_BETINGET.search(s[:m.start()])))
+            # DEN KJØRTE TEKSTEN ER SQL, IKKE FERDIGMÅLT SQL (Codex P2 på
+            # #74). Innholdet ble før gitt videre RÅTT, og som sin egen
+            # maskerte form — altså som om det hverken kunne inneholde
+            # kommentarer eller strengkonstanter. Men en `EXECUTE 'SELECT
+            # ''REVOKE … FROM PUBLIC'''` VELGER bare ut en tekst; den
+            # revokerer ingenting. Modellen leste den siterte teksten som en
+            # utført REVOKE fra eieren og løftet gjerdet til True mens PUBLIC
+            # beholdt EXECUTE — nøyaktig den blindsonen maskeringen av
+            # filteksten ble lagt inn for å lukke, én omvei unna.
+            #
+            # Teksten går derfor gjennom det SAMME leddet som filen selv:
+            # kommentarene strykes, konstantene maskeres, og splittingen på
+            # semikolon skjer etterpå — så et semikolon inne i en tekst
+            # deler ingen setning her heller. At det er den samme funksjonen
+            # som kalles, er hele poenget: en `EXECUTE` inne i den kjørte
+            # teksten måles da likt, uten en egen regel for hvert lag.
+            #
+            # `i_blokk` er False: nyttelasten er SQL, ikke plpgsql, så det
+            # finnes ingen gren å telle i den. Vakten den står under, følger
+            # med som `arvet_vakt`.
+            #
+            # Tabellen er DEN SAMME. Nyttelasten kan selv være maskert —
+            # `_setninger` maskerer filen før den leter etter DO-blokker —
+            # og en markør i den peker inn i kallerens tabell. Fikk laget
+            # under sin egen, pekte den samme markøren et annet sted, eller
+            # ingen steder.
+            #
+            # Og er formen `format(…)` med KONSTANTE argumenter, er det den
+            # UTREGNEDE teksten som kjører — se `_nyttelast`.
+            #
+            # EN `DO`-BLOKK I NYTTELASTEN ER EN DO-BLOKK (Codex P2 på #74).
+            # Teksten ble gitt rett til `_delt`, som stryker alt
+            # dollarsitert som kropper — og `EXECUTE 'DO $$ BEGIN GRANT …
+            # TO PUBLIC; END $$'` er nettopp en dollarsitert tekst.
+            # PostgreSQL KJØRER den indre blokken; modellen strøk den, og
+            # gjerdet ble stående True mens PUBLIC hadde fått EXECUTE. Den
+            # kjørte teksten går derfor gjennom det samme leddet som
+            # filteksten, `_stykker`, der en `DO` pakkes ut i stedet for å
+            # strykes.
+            yield from _stykker(_nyttelast(s, m, strenger), strenger,
+                                betinget)
         if i_blokk:
+            # Vakttellingen leser den MASKERTE setningen: en `END IF` inne i
+            # en logglinje lukker ingen gren, og en `IF … THEN` i en
+            # feilmelding åpner ingen.
             dybde = max(0, dybde + len(_AAPNER.findall(s))
                         - len(_LUKKER.findall(s)))
 
@@ -1493,8 +1955,10 @@ def _delt(tekst, i_blokk):
 def _setninger(sql):
     """Migrasjonsfilens setninger, uten kommentarer og funksjonskropper.
 
-    Gir `(setning, betinget)`, der `betinget` sier om setningen står inne i
-    en plpgsql-gren som ÅPNET I EN TIDLIGERE SETNING.
+    Gir `(setning, maskert, betinget)`, der `setning` er teksten slik den
+    står skrevet, `maskert` er den samme med strengkonstantene byttet ut med
+    markører — den ACL-avspillingen måler — og `betinget` sier om setningen
+    står inne i en plpgsql-gren som ÅPNET I EN TIDLIGERE SETNING.
 
     Kroppene fjernes fordi de inneholder både `;` og — i kommentarform —
     nettopp de ordene denne testen leter etter. Det som er igjen er filens
@@ -1505,14 +1969,46 @@ def _setninger(sql):
     kropp — den er kode som kjører. Og de pakkes ut STYKKEVIS, ikke ved å
     limes inn i filteksten: grensen mellom «inne i en blokk» og «på toppnivå»
     er nettopp det tellingen over trenger for å vite hva som er en gren.
+
+    EN DO-BLOKK I EN KONSTANT ER IKKE EN DO-BLOKK (Codex P2 på #74).
+    Blokkene ble lett opp i den rå teksten, altså FØR maskeringen — og en
+    `COMMENT ON FUNCTION … IS 'DO $$ BEGIN REVOKE … FROM PUBLIC; END $$'`
+    ble derfor pakket ut og spilt av som eierens SQL. PostgreSQL lagrer bare
+    kommentaren; modellen løftet et åpent gjerde til True på den. Det er den
+    samme blindsonen konstantmaskeringen ble lagt inn for å lukke, ett steg
+    tidligere i leddet enn maskeringen selv sto.
+
+    Filen maskeres derfor FØRST, og blokkene letes opp i den maskerte
+    teksten. Konstanttabellen gis videre til `_delt` sammen med hvert
+    stykke: markørene i stykkene peker inn i den, og et lag som lagde sin
+    egen tabell ville lest dem feil.
     """
-    uten_kommentar = _uten_kommentarer(sql)
+    return _stykker(sql, None)
+
+
+def _stykker(tekst, strenger, arvet_vakt=False):
+    """En tekst delt om DO-blokkene sine, hvert stykke målt av `_delt`.
+
+    Leddet `_setninger` er, skilt ut for seg fordi det gjelder ALL tekst som
+    kjøres — ikke bare filen (Codex P2 på #74). En `EXECUTE`-nyttelast er
+    SQL på samme måte som filen er det, og en `DO`-blokk i den er kode som
+    kjører: `EXECUTE 'DO $$ BEGIN GRANT EXECUTE … TO PUBLIC; END $$'` gir
+    PUBLIC EXECUTE. Ble nyttelasten gitt rett til `_delt`, strøk `_KROPP`
+    den indre blokken som en funksjonskropp, og gjerdet ble stående True.
+    At det er den SAMME funksjonen som brukes begge steder, er hele poenget:
+    et lag til av dynamisk SQL måles da likt, uten en egen regel for hvert.
+
+    `strenger` er konstanttabellen kalleren alt har begynt på — `None` for
+    filen selv, som starter sin egen. `arvet_vakt` er vakten teksten som
+    helhet står under, og følger med ned i hvert stykke.
+    """
+    maskert, strenger = _uten_strenger(_uten_kommentarer(tekst), strenger)
     pos = 0
-    for m in _DO_BLOKK.finditer(uten_kommentar):
-        yield from _delt(uten_kommentar[pos:m.start()], False)
-        yield from _delt(m.group(2), True)
+    for m in _DO_BLOKK.finditer(maskert):
+        yield from _delt(maskert[pos:m.start()], False, arvet_vakt, strenger)
+        yield from _delt(m.group(2), True, arvet_vakt, strenger)
         pos = m.end()
-    yield from _delt(uten_kommentar[pos:], False)
+    yield from _delt(maskert[pos:], False, arvet_vakt, strenger)
 
 
 def _type(ledd):
@@ -1603,7 +2099,7 @@ def _nevner(tekst, basenavn):
     return any(navn == basenavn for _skjema, navn, _args in _referanser(tekst))
 
 
-def _rammer(klausul, sig, basenavn):
+def _rammer(klausul, sig, basenavn, skjema="public"):
     """Treffer MÅLKLAUSULEN denne signaturen — som OBJEKT, ikke som tekst?
 
     Brukes av de LUKKENDE grenene (REVOKE, DROP), og der er tvilens retning
@@ -1622,9 +2118,16 @@ def _rammer(klausul, sig, basenavn):
     entydig — finnes det ingen argumentliste å skille på, og setningen
     gjelder enhver overlast. Tvilen faller da mot at den beskyttede
     signaturen er truffet, som ellers i denne modellen.
+
+    `skjema` er skjemaet objektet FAKTISK bor i, og er `public` for alt annet
+    enn en funksjon som er flyttet ut (se `_spill_av`). At `public` også kan
+    stå USKREVET er ikke en slapphet, men søkestien under migrering; et annet
+    skjema må derimot stå skrevet, for en ukvalifisert `ALTER FUNCTION tmp(…)`
+    finner ikke `arkiv.tmp`.
     """
-    egne = [args for skjema, navn, args in _referanser(klausul)
-            if navn == basenavn and skjema in (None, "public")]
+    godtatt = (None, "public") if skjema == "public" else (skjema,)
+    egne = [args for sk, navn, args in _referanser(klausul)
+            if navn == basenavn and sk in godtatt]
     if not egne:
         return False
     med_args = [a for a in egne if a is not None]
@@ -1632,6 +2135,23 @@ def _rammer(klausul, sig, basenavn):
         return True
     onsket = _typeliste(sig.split("(", 1)[1].rstrip(")"))
     return any(_typeliste(a) == onsket for a in med_args)
+
+
+def _nytt_sted(sted, nav, s):
+    """Hvor identiteten står ETTER en `RENAME TO` eller `SET SCHEMA`.
+
+    `sted` er `(skjema, navn)` før setningen, `nav` treffet fra
+    `_NAVNESKIFTE`. En omdøping bytter navnet og lar skjemaet stå; en
+    skjemaflytting gjør det motsatte. Gir None når navnet etter verbet ikke
+    er et bart navn — da vet ikke modellen hvor funksjonen tok veien, og det
+    er nettopp den tvilen som skal falle mot «borte».
+    """
+    videre = _ETTER_SKIFTET.match(s, nav.end())
+    if not videre:
+        return None
+    skjema, navn = sted
+    return ((skjema, videre.group(1)) if nav.group(2).startswith("rename")
+            else (videre.group(1), navn))
 
 
 def _spill_av(filer, signaturer):
@@ -1664,6 +2184,12 @@ def _spill_av(filer, signaturer):
       tilstanden til True. Som migrator måles den fortsatt som åpning: holder
       vakten, materialiserer den standard-ACL-en. Tvilen faller begge veier
       mot åpent.
+    * EN `REVOKE GRANT OPTION FOR …` TAR IKKE PRIVILEGIET (Codex P2 på #71).
+      Den fjerner bare PUBLICs adgang til å gi EXECUTE videre, og lar PUBLIC
+      beholde sitt eget. Den er derfor hverken bevis eller åpning, og lar
+      tilstanden stå — den ene setningsformen her som med vilje ikke flytter
+      noe. Uten den grenen leste en slik REVOKE som et gjerde rundt en
+      funksjon PUBLIC fortsatt kunne kalle.
     * En SKJEMABRED `GRANT … ON ALL FUNCTIONS IN SCHEMA … TO PUBLIC` nevner
       hverken signatur eller basenavn, og åpner alle tre. Den måles derfor
       før silen på navn — se `_GRANT_ALLE_PUBLIC`.
@@ -1686,11 +2212,38 @@ def _spill_av(filer, signaturer):
       ikke fantes. Den bruker samme målklausul som REVOKE-en, med ett
       tillegg: `DROP FUNCTION f` uten signatur er lovlig når navnet er
       entydig, og gjelder da enhver overlast.
+    * EN `RENAME TO` ELLER `SET SCHEMA` ER SAMME UTGANG (Codex P2 på #71).
+      Funksjonen kan leve videre under et annet navn, men `public.f(…)` — det
+      ukvalifiserte navnet `varselsender.kjor` kaller — er borte, og
+      tilstanden settes til None som for en DROP. Uten den grenen sto `True`
+      fra forrige REVOKE igjen som et gjerde rundt et navn som ikke fantes.
+    * …OG DEN HAR EN VEI TILBAKE (Codex P2 på #74). En DROP er endelig, en
+      flytting er det ikke: `RENAME TO tmp` fulgt av `RENAME TO f` — eller
+      `SET SCHEMA arkiv` fulgt av `SET SCHEMA public` — setter funksjonen
+      tilbake på plass, MED ACL-en og eieren sin, for de følger objektet og
+      ikke navnet. Modellen kjente bare utgangen: `_rammer` godtar en kilde
+      som alt heter det beskyttede navnet i `public`, og en identitet som
+      ikke gjør det lenger, kunne aldri bli den igjen. En fullt lovlig
+      arkivering-og-tilbakeføring endte derfor på None, og kildeporten rødmet
+      på en funksjon som sto der med gjerdet sitt.
+
+      Identiteten som flyttes bokføres derfor i `flyttet` — hvor den tok
+      veien, og tilstanden den tok med seg — og en flytting TILBAKE til
+      `public.<basenavn>` gir tilstanden tilbake. Tvilen faller mot «borte»
+      hele veien: sporet slippes så snart noe annet rører enten det flyttede
+      eller det beskyttede navnet, og en BETINGET tilbakeføring gir det ikke
+      tilbake i det hele tatt. Utfallet er da None — en falsk alarm noen må
+      se på, som er den billige utgangen, og ikke et gjerde rundt et navn
+      som ikke finnes.
     """
     beskyttet = [_normalisert(s) for s in signaturer]
     basenavn = {sig: sig.split("(")[0] for sig in beskyttet}
     gjerdet = dict.fromkeys(beskyttet)
     eier = dict.fromkeys(beskyttet)
+    # `(skjema, navn, gjerde, eier)` for en funksjon som er flyttet UT av det
+    # beskyttede navnet, og None ellers: veien tilbake, og tilstanden som
+    # venter i den andre enden.
+    flyttet = dict.fromkeys(beskyttet)
     spor = {sig: [] for sig in beskyttet}
     sesjonsrolle = None                   # None = migrator, kjørerens rolle
     for filnavn, sql in filer:
@@ -1699,7 +2252,9 @@ def _spill_av(filer, signaturer):
         # mens et `SET ROLE` uten `LOCAL` blir stående inn i den neste — og
         # den forskjellen er nettopp hvem en senere REVOKE kjøres som.
         rolle = sesjonsrolle
-        for s, under_vakt in _setninger(sql):
+        # Den MASKERTE formen måles: en ACL-setning som bare er sitert i en
+        # logglinje er ikke en setning. Klarteksten er de andre lesernes.
+        for _skrevet, s, under_vakt in _setninger(sql):
             if skift := _ROLLESKIFTE.match(s):
                 ny = None if skift.group(2) == "none" else skift.group(2)
                 rolle = ny
@@ -1715,10 +2270,68 @@ def _spill_av(filer, signaturer):
                 # grunnen til at den er verdt et eget spor.
                 for sig in beskyttet:
                     gjerdet[sig] = False
+                    # …og den nevner heller ikke det FLYTTEDE navnet, men kan
+                    # godt ha åpnet det: setningen er skjemabred. Tilstanden
+                    # som venter på en tilbakeføring er dermed ikke lenger
+                    # den som ble lagt til side, og sporet slippes.
+                    flyttet[sig] = None
                     spor[sig].append(
                         f"{filnavn}: skjemabred grant til public som {aktiv}")
                 continue
             for sig in beskyttet:
+                if sted := flyttet[sig]:
+                    # VEIEN TILBAKE (Codex P2 på #74). Funksjonen er flyttet
+                    # ut av det beskyttede navnet, og setningene som gjelder
+                    # den, treffer nå den ANDRE identiteten — som `_rammer`
+                    # nedenfor per definisjon ikke kjenner. De måles her, før
+                    # silen på basenavn, av samme grunn som den skjemabrede
+                    # granten måles før den: ellers kom de aldri så langt.
+                    if (nav := _NAVNESKIFTE.search(s)) and _rammer(
+                            nav.group(1), sig, sted[1], sted[0]):
+                        nytt = _nytt_sted(sted[:2], nav, s)
+                        # EN BETINGET TILBAKEFØRING GIR INGENTING TILBAKE.
+                        # Holder ikke vakten, står funksjonen der den ble
+                        # flyttet, og et gjerde levert tilbake til et navn som
+                        # ikke finnes er nøyaktig utgangen flyttegrenen ble
+                        # lagt inn for å hindre. Tvilen faller mot «borte».
+                        if under_vakt or _BETINGET.search(s[:nav.start()]):
+                            flyttet[sig] = None
+                            spor[sig].append(
+                                f"{filnavn}: betinget {nav.group(2)} av det"
+                                f" flyttede navnet — veien tilbake slippes")
+                        elif nytt == ("public", basenavn[sig]):
+                            # …og ACL-en og eieren følger OBJEKTET, ikke
+                            # navnet: tilstanden som ble lagt til side er
+                            # nettopp den funksjonen kommer tilbake med.
+                            gjerdet[sig], eier[sig] = sted[2], sted[3]
+                            flyttet[sig] = None
+                            spor[sig].append(
+                                f"{filnavn}: {nav.group(2)} — navnet er"
+                                f" tilbake, med gjerdet {gjerdet[sig]}")
+                        elif nytt:
+                            flyttet[sig] = (*nytt, sted[2], sted[3])
+                            spor[sig].append(
+                                f"{filnavn}: {nav.group(2)} — nå"
+                                f" {nytt[0]}.{nytt[1]}")
+                        else:
+                            flyttet[sig] = None
+                            spor[sig].append(
+                                f"{filnavn}: flyttet til et navn modellen"
+                                f" ikke kan lese — borte")
+                        continue
+                    if _nevner(s, sted[1]) or _nevner(s, basenavn[sig]):
+                        # ALT ANNET ENN EN FLYTTING BRYTER RUNDTUREN. En
+                        # GRANT, en REVOKE, et eierskifte eller en DROP på
+                        # den flyttede funksjonen — eller en gjenskaping av
+                        # det beskyttede navnet mens den er borte — gjør
+                        # tilstanden som ble lagt til side ugyldig, og
+                        # modellen kan ikke levere den tilbake. Sporet
+                        # slippes, navnet blir stående som borte, og det er
+                        # en falsk alarm og ikke et hull.
+                        flyttet[sig] = None
+                        spor[sig].append(
+                            f"{filnavn}: rører den flyttede funksjonen —"
+                            f" veien tilbake slippes")
                 if not _nevner(s, basenavn[sig]):
                     continue
                 fall = _DROP_MAL.search(s)
@@ -1733,6 +2346,27 @@ def _spill_av(filer, signaturer):
                     gjerdet[sig] = None
                     eier[sig] = None
                     spor[sig].append(f"{filnavn}: droppet")
+                elif (nav := _NAVNESKIFTE.search(s)) and _rammer(
+                        nav.group(1), sig, basenavn[sig]):
+                    # SAMME UTGANG SOM EN DROP, en annen dør. Funksjonen kan
+                    # godt leve videre under et nytt navn eller i et annet
+                    # skjema — men navnet senderen kaller, finnes ikke, og et
+                    # gjerde rundt et navn som er borte er ikke et bevis.
+                    #
+                    # …men i motsetning til en DROP er den ikke ENDELIG:
+                    # objektet lever, og med det ACL-en og eieren sin. Hvor
+                    # det tok veien bokføres derfor sammen med tilstanden det
+                    # tok med seg, slik at en flytting TILBAKE kan levere den
+                    # (Codex P2 på #74). Kan ikke målet leses, er det ingen
+                    # vei tilbake å bokføre, og navnet er bare borte.
+                    nytt = _nytt_sted(("public", basenavn[sig]), nav, s)
+                    flyttet[sig] = (None if nytt is None
+                                    else (*nytt, gjerdet[sig], eier[sig]))
+                    gjerdet[sig] = None
+                    eier[sig] = None
+                    hvor = f", står nå som {nytt[0]}.{nytt[1]}" if nytt else ""
+                    spor[sig].append(
+                        f"{filnavn}: {nav.group(2)} — navnet er borte{hvor}")
                 elif (eie := _EIERSKIFTE.search(s)) and _rammer(
                         eie.group(1), sig, basenavn[sig]):
                     # Eierskapet flyttes. ACL-en følger ikke med, så gjerdet
@@ -1778,6 +2412,17 @@ def _spill_av(filer, signaturer):
                     # tilfellet skal måles som åpent, ikke antas lukket.
                     gjerdet[sig] = False
                     spor[sig].append(f"{filnavn}: grant til public som {aktiv}")
+                elif (rev := _REVOKE_MAL.search(s)) and _rammer(
+                        rev.group(1), sig, basenavn[sig]) and (
+                            _GRANT_OPSJON.match(rev.group(1))):
+                    # EN REVOKE SOM IKKE TAR PRIVILEGIET. `GRANT OPTION FOR`
+                    # tar bare PUBLICs adgang til å gi EXECUTE VIDERE — selve
+                    # EXECUTE blir stående. Setningen beviser derfor
+                    # ingenting, og river heller ingenting: tilstanden holdes
+                    # der den var, uansett hvem som kjører den.
+                    spor[sig].append(
+                        f"{filnavn}: revoke av GRANT OPTION som {aktiv}"
+                        f" — EXECUTE står igjen")
                 elif (rev := _REVOKE_MAL.search(s)) and _rammer(
                         rev.group(1), sig, basenavn[sig]):
                     # Vakten kan stå i den SAMME setningen (`IF … THEN
@@ -2112,6 +2757,12 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
 
     # Vakten er ikke målet: en betinget REVOKE som NEVNER den beskyttede
     # signaturen, men bare tar overlasten, lukker ingenting.
+    #
+    # MERK at nevningen her står i en STRENGKONSTANT, og etter maskeringen er
+    # den borte før målingen i det hele tatt skjer. Sporet holder derfor to
+    # regler oppe samtidig, og isolerer ingen av dem. Målklausul-regelens
+    # egen last bæres av overlastsporet over og av løkkeformen under —
+    # begge er mutasjonstestet mot at `_rammer` fjernes fra REVOKE-grenen.
     vakt = ("DO $$\nBEGIN\n"
             "    IF to_regprocedure('varsel_klaim_epost(int,int)')"
             " IS NOT NULL THEN\n"
@@ -2129,6 +2780,12 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
     # målt dette sporet i stedet, og målklausulen stått uprøvd. Løkkeformen er
     # 030s egen: en signaturliste i en `FOREACH`, som nevner den beskyttede
     # signaturen i hodet mens setningen under tar en annen.
+    #
+    # Signaturlisten er strengkonstanter og maskeres bort, så nevningen i
+    # hodet er ikke lenger det som prøves. Det som står igjen — og som er
+    # grunnen til at sporet blir værende — er at REVOKE-en tar en OVERLAST
+    # uten vakt: fjernes `_rammer` fra REVOKE-grenen, lukker denne setningen
+    # gjerdet for `(int,int)`, og sporet faller. Det er mutasjonstestet.
     loekke = ("DO $$\nDECLARE s text;\nBEGIN\n"
               "    FOREACH s IN ARRAY"
               " ARRAY['varsel_klaim_epost(int,int)']\n"
@@ -2238,6 +2895,816 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
             [("a.sql", lag + gjerde),
              ("b.sql", f"DROP FUNCTION varsel_klaim_epost({annen});")],
             n)[0] == {sig: True}, f"`{annen}` er ikke `(int,int)`"
+
+    # EN STRENGKONSTANT ER IKKE EN SETNING. En logglinje som SITERER den
+    # påkrevde ACL-en — den slags merknad disse migrasjonene er fulle av —
+    # ble lest som en utført REVOKE fra eieren, og løftet gjerdet til True
+    # rundt en funksjon gjenskapingen nettopp hadde latt stå åpen.
+    inert = ("SET LOCAL ROLE disponit_domene_eier; DO $$\nBEGIN\n"
+             "    RAISE NOTICE 'REVOKE ALL ON FUNCTION"
+             " varsel_klaim_epost(int,int) FROM PUBLIC';\n"
+             "END $$; RESET ROLE;")
+    gjerdet, spor = _spill_av([("a.sql", lag), ("b.sql", inert)], n)
+    assert gjerdet == {sig: False}, (
+        "en REVOKE som bare er SITERT i en logglinje er ikke et gjerde."
+        f" Spor: {spor}")
+
+    # …og et SEMIKOLON INNE I KONSTANTEN deler ingen setning. Gjorde det
+    # det, havnet vakten og `RESET ROLE` på feil side av skillet — samme
+    # skade som blokkommentarene gjorde før de ble strøket. `END IF` i den
+    # samme teksten lukker heller ingen gren: REVOKE-en under står fortsatt
+    # under vakten, og er derfor ikke bevis.
+    delt_av_streng = ("SET LOCAL ROLE disponit_domene_eier; DO $$\nBEGIN\n"
+                      "    IF EXISTS (SELECT 1 FROM pg_roles"
+                      " WHERE rolname = 'disponit_varselsender') THEN\n"
+                      "        RAISE NOTICE 'rydder opp; END IF';\n"
+                      "        REVOKE ALL ON FUNCTION"
+                      " varsel_klaim_epost(int, int) FROM PUBLIC;\n"
+                      "    END IF;\nEND $$; RESET ROLE;")
+    gjerdet, spor = _spill_av([("a.sql", lag + delt_av_streng)], n)
+    assert gjerdet == {sig: False}, (
+        "et semikolon eller en `END IF` inne i en tekst er ikke SQL."
+        f" Spor: {spor}")
+
+    # …og EN DO-BLOKK I EN KONSTANT ER IKKE EN DO-BLOKK. Blokkene ble lett
+    # opp i den RÅ teksten, altså før maskeringen, så en kommentartekst med
+    # formen i seg ble pakket ut og spilt av som eierens SQL. PostgreSQL
+    # lagrer bare kommentaren — modellen løftet et åpent gjerde til True på
+    # den. Det er den samme blindsonen maskeringen finnes for, ett steg
+    # tidligere i leddet enn maskeringen selv sto.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag),
+         ("b.sql", "SET LOCAL ROLE disponit_domene_eier;"
+                   " COMMENT ON FUNCTION varsel_klaim_epost(int, int) IS"
+                   " 'DO $$ BEGIN REVOKE ALL ON FUNCTION"
+                   " varsel_klaim_epost(int, int) FROM PUBLIC; END $$';"
+                   " RESET ROLE;")], n)
+    assert gjerdet == {sig: False}, (
+        "en DO-blokk som bare er SITERT i en kommentartekst kjører ikke, og"
+        f" er ikke et gjerde. Spor: {spor}")
+
+    # …og motprøven, som er den som skiller regelen fra «DO-blokker teller
+    # ikke»: en EKTE blokk ETTER den siterte pakkes fortsatt ut, og vakten i
+    # den telles. Ble maskeringen for bred, ville 027, 030 og 031 — som alle
+    # legger den betingede senderrollegranten i en DO-blokk — blitt usynlige.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "COMMENT ON FUNCTION varsel_klaim_epost(int, int) IS"
+                   " 'DO $$ BEGIN REVOKE ALL ON FUNCTION"
+                   " varsel_klaim_epost(int, int) FROM PUBLIC; END $$';"
+                   + i_do)], n)
+    assert gjerdet == {sig: False}, (
+        "en ekte DO-blokk etter en sitert er fortsatt kode, og GRANT-en i"
+        f" den åpner gjerdet. Spor: {spor}")
+
+    # …og motprøven, som er det som gjør maskeringen til noe annet enn en ny
+    # blindsone: EN `EXECUTE '…'` KJØRER. Maskeres den bort sammen med
+    # logglinjene, blir dynamisk SQL usynlig — og det er den farlige
+    # retningen. Som eier lukker den gjerdet, akkurat som den skrevne
+    # formen.
+    dynamisk = ("SET LOCAL ROLE disponit_domene_eier; DO $$\nBEGIN\n"
+                "    EXECUTE 'REVOKE ALL ON FUNCTION"
+                " varsel_klaim_epost(int, int) FROM PUBLIC';\n"
+                "END $$; RESET ROLE;")
+    gjerdet, spor = _spill_av([("a.sql", lag + dynamisk)], n)
+    assert gjerdet == {sig: True}, (
+        "en dynamisk REVOKE fra eieren er et gjerde som alle andre."
+        f" Spor: {spor}")
+
+    # …og den samme veien tilbake: `EXECUTE format('GRANT … TO PUBLIC')` er
+    # formen 003 alt bruker for annen DDL, og den åpner gjerdet.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DO $$\nBEGIN\n    EXECUTE format('GRANT EXECUTE ON"
+                   " FUNCTION varsel_klaim_epost(int, int) TO PUBLIC');\n"
+                   "END $$;")], n)
+    assert gjerdet == {sig: False}, (
+        f"en dynamisk GRANT til PUBLIC åpner gjerdet. Spor: {spor}")
+
+    # …og `EXECUTE` TAR ET UTTRYKK, ikke en tekst. En PARENTES rundt det er
+    # en skrivemåte og ikke en betydning — `EXECUTE ('…')` kjører den samme
+    # teksten — men modellen krevde markøren rett etter `EXECUTE`, med
+    # `format(` som eneste unntak. Én parentes var derfor nok til at den
+    # dynamiske granten aldri ble spilt av, og gjerdet ble stående True mens
+    # PUBLIC hadde fått EXECUTE.
+    for uttrykk in ("('GRANT EXECUTE ON FUNCTION varsel_klaim_epost(int, int)"
+                    " TO PUBLIC')",
+                    "((format('GRANT EXECUTE ON FUNCTION"
+                    " varsel_klaim_epost(int, int) TO PUBLIC')))",
+                    "'GRANT EXECUTE ON FUNCTION varsel_klaim_epost(int, int)"
+                    " TO PUBLIC'"):
+        gjerdet, spor = _spill_av(
+            [("a.sql", lag + gjerde),
+             ("b.sql", f"DO $$\nBEGIN\n    EXECUTE {uttrykk};\nEND $$;")], n)
+        assert gjerdet == {sig: False}, (
+            "en dynamisk GRANT åpner gjerdet uansett hvor mange parenteser"
+            f" uttrykket står i. Spor: {spor}")
+
+    # …og motprøven, som er den som gjør parentesene til en del av `EXECUTE`
+    # og ikke til «en konstant i en parentes er kode»: den samme teksten i en
+    # parentes UTEN `EXECUTE` foran er like inert som før. Det er nøkkelordet
+    # som kjører teksten, ikke parentesen.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DO $$\nBEGIN\n    PERFORM ('GRANT EXECUTE ON FUNCTION"
+                   " varsel_klaim_epost(int, int) TO PUBLIC');\nEND $$;")], n)
+    assert gjerdet == {sig: True}, (
+        "en konstant i en parentes er ikke kode — det er `EXECUTE` foran som"
+        f" kjører den. Spor: {spor}")
+
+    # …og et KONSTANT `format`-argument er en kjent verdi. `format('… TO %I',
+    # 'PUBLIC')` er en helt vanlig dynamisk GRANT, men modellen spilte av
+    # MALEN — med `%I` i behold — og `_GRANT_PUBLIC` fikk aldri se
+    # mottakeren. Gjerdet ble stående True mens PUBLIC hadde fått EXECUTE.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DO $$\nBEGIN\n    EXECUTE format('GRANT EXECUTE ON"
+                   " FUNCTION varsel_klaim_epost(int, int) TO %I',"
+                   " 'PUBLIC');\nEND $$;")], n)
+    assert gjerdet == {sig: False}, (
+        "et konstant `format`-argument står skrevet i filen, og skal regnes"
+        f" ut. Spor: {spor}")
+
+    # …og den samme veien tilbake, som er den som viser at `%I` settes inn
+    # som et NAVN og ikke i anførselstegn: en `%I` som ble sitert, ville gitt
+    # `REVOKE … ON FUNCTION "varsel_klaim_epost"(int, int)`, og den treffer
+    # ingen signatur.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + "SET LOCAL ROLE disponit_domene_eier; DO $$\nBEGIN\n"
+                         "    EXECUTE format('REVOKE ALL ON FUNCTION"
+                         " %I(int, int) FROM PUBLIC',"
+                         " 'varsel_klaim_epost');\nEND $$; RESET ROLE;")], n)
+    assert gjerdet == {sig: True}, (
+        "en dynamisk REVOKE med konstant navn treffer signaturen sin."
+        f" Spor: {spor}")
+
+    # …og MOTPRØVEN som skiller `%L` fra de to andre: `%L` er PostgreSQLs
+    # egen sitering, så resultatet er en KONSTANT. `format('SELECT %L', 'REVOKE
+    # … FROM PUBLIC')` velger bare ut en tekst — ble verdien satt inn rått,
+    # leste modellen den siterte REVOKE-en som et gjerde eieren hadde satt.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + "SET LOCAL ROLE disponit_domene_eier; DO $$\nBEGIN\n"
+                         "    EXECUTE format('SELECT %L', 'REVOKE ALL ON"
+                         " FUNCTION varsel_klaim_epost(int, int) FROM"
+                         " PUBLIC');\nEND $$; RESET ROLE;")], n)
+    assert gjerdet == {sig: False}, (
+        "en `%L` siteres, og en sitert REVOKE er ikke et gjerde."
+        f" Spor: {spor}")
+
+    # …og `%%` er ETT tegn og ikke en plassholder: teller den som en, går
+    # argumentene ut av takt og hele malen faller tilbake til å bli spilt av
+    # med plassholderne i behold.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DO $$\nBEGIN\n    EXECUTE format('GRANT EXECUTE ON"
+                   " FUNCTION varsel_klaim_epost(int, int) TO %I %% %s',"
+                   " 'PUBLIC', 'x');\nEND $$;")], n)
+    assert gjerdet == {sig: False}, (
+        f"`%%` er en prosent, ikke et argument. Spor: {spor}")
+
+    # …og GRENSEN, som er den samme som for all annen SQL bygget av noe
+    # ukjent: står det en VARIABEL i argumentlisten, ser ingen kildetest hva
+    # den blir. Da spilles malen av som før, med `%I` i behold — et treff
+    # mistes heller enn å bli diktet opp.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DO $$\nBEGIN\n    EXECUTE format('GRANT EXECUTE ON"
+                   " FUNCTION varsel_klaim_epost(int, int) TO %I',"
+                   " mottaker);\nEND $$;")], n)
+    assert gjerdet == {sig: True}, (
+        "en variabel som `format`-argument er ukjent, og modellen dikter den"
+        f" ikke opp. Spor: {spor}")
+
+    # …og den skarpe kanten på den grensen: et argument som er DELVIS
+    # konstant, er ukjent HELT. `prefiks || 'varsel_klaim_epost'` inneholder
+    # en konstant, men verdien er det bare basen som vet — og en modell som
+    # plukket konstanten ut av uttrykket, ville lest en REVOKE mot et navn
+    # den ikke kan vite at treffer, og satt et gjerde som ikke finnes.
+    # Derfor krever argumentlisten markører HELE VEIEN, ikke bare et treff
+    # på en markør i den.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + "SET LOCAL ROLE disponit_domene_eier; DO $$\nBEGIN\n"
+                         "    EXECUTE format('REVOKE ALL ON FUNCTION"
+                         " %I(int, int) FROM PUBLIC',"
+                         " prefiks || 'varsel_klaim_epost');\n"
+                         "END $$; RESET ROLE;")], n)
+    assert gjerdet == {sig: False}, (
+        "et delvis konstant argument er ukjent, og konstanten i det er ikke"
+        f" verdien. Spor: {spor}")
+
+    # …og den samme grensen der den er lettest å lese: en mal modellen ikke
+    # kjenner formen på, LØSES IKKE. `%1$s` og de andre bredde-/posisjons-
+    # formene finnes ikke i disse migrasjonene, og et antall som ikke går
+    # opp er like ukjent. `None` betyr «spill av malen som før».
+    assert _formatert("a %s b", ["x"]) == "a x b", \
+        "`%s` er verdien slik den står"
+    assert _formatert("%L", ["a'b"]) == "'a''b'", \
+        "`%L` er PostgreSQLs egen sitering, og apostrofen dobles i den"
+    assert _formatert("%1$s", ["x"]) is None, \
+        "en posisjonsform er en mal modellen ikke kjenner"
+    assert _formatert("%s %s", ["x"]) is None, \
+        "flere plassholdere enn argumenter går ikke opp"
+    assert _formatert("ingen", ["x"]) is None, \
+        "flere argumenter enn plassholdere går ikke opp heller"
+
+    # …og NYTTELASTEN KAN VÆRE DOLLARSITERT. `EXECUTE $sql$…$sql$` er en
+    # fullt vanlig dynamisk setning, og formen er nettopp den man når til
+    # når teksten selv er full av apostrofer — altså i en ACL-setning som
+    # siterer noe. For `_KROPP` så den ut som en funksjonskropp: nyttelasten
+    # ble strøket før `_DYNAMISK` fikk se den, og gjerdet ble stående True
+    # mens PUBLIC hadde fått EXECUTE.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DO $do$\nBEGIN\n    EXECUTE $sql$GRANT EXECUTE ON"
+                   " FUNCTION varsel_klaim_epost(int, int) TO PUBLIC$sql$;\n"
+                   "END $do$;")], n)
+    assert gjerdet == {sig: False}, (
+        "en dollarsitert dynamisk GRANT er en GRANT, ikke en kropp."
+        f" Spor: {spor}")
+
+    # …og den samme veien: som eier lukker den, akkurat som apostrofformen.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + "SET LOCAL ROLE disponit_domene_eier; DO $do$\n"
+                         "BEGIN\n    EXECUTE $sql$REVOKE ALL ON FUNCTION"
+                         " varsel_klaim_epost(int, int) FROM PUBLIC$sql$;\n"
+                         "END $do$; RESET ROLE;")], n)
+    assert gjerdet == {sig: True}, (
+        "en dollarsitert dynamisk REVOKE fra eieren er et gjerde som alle"
+        f" andre. Spor: {spor}")
+
+    # …og MOTPRØVEN, som er den som holder `_KROPP` i live ved siden av den
+    # nye grenen: en dollarsitert tekst uten `EXECUTE` foran er en KROPP, og
+    # en kropp kjører ikke av å bli laget. Ble dollartekstene pakket UT i
+    # stedet for å bli strøket, ville hver funksjonskropp i historikken blitt
+    # spilt av som SQL — og det er mutasjonstestet at dette sporet faller da.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "CREATE FUNCTION hjelper() RETURNS void LANGUAGE plpgsql"
+                   " AS $$ BEGIN GRANT EXECUTE ON FUNCTION"
+                   " varsel_klaim_epost(int, int) TO PUBLIC; END $$;")], n)
+    assert gjerdet == {sig: True}, (
+        "en GRANT som står i en KROPP kjører ikke av at kroppen lages."
+        f" Spor: {spor}")
+
+    # …og den samme grensen ett lag ned: en dollarsitert tekst INNE I
+    # nyttelasten er sitert der også, og `SELECT $q$…$q$` velger den bare ut.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag),
+         ("b.sql", "SET LOCAL ROLE disponit_domene_eier; DO $do$\nBEGIN\n"
+                   "    EXECUTE $sql$SELECT $q$REVOKE ALL ON FUNCTION"
+                   " varsel_klaim_epost(int, int) FROM PUBLIC$q$ $sql$;\n"
+                   "END $do$; RESET ROLE;")], n)
+    assert gjerdet == {sig: False}, (
+        "en REVOKE som bare er SITERT i den kjørte teksten er ikke et gjerde,"
+        f" heller ikke dollarsitert. Spor: {spor}")
+
+    # …og en APOSTROF i nyttelasten er grunnen til at formen brukes: den
+    # maskeres der, og en ekte GRANT ved siden av den er fortsatt kode.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DO $do$\nBEGIN\n    EXECUTE $sql$SELECT 'x'; GRANT"
+                   " EXECUTE ON FUNCTION varsel_klaim_epost(int, int)"
+                   " TO PUBLIC$sql$;\nEND $do$;")], n)
+    assert gjerdet == {sig: False}, (
+        "en ekte GRANT ved siden av en apostrofsitert tekst i en"
+        f" dollarsitert nyttelast åpner gjerdet. Spor: {spor}")
+
+    # …OG EN `DO`-BLOKK I NYTTELASTEN ER EN DO-BLOKK (Codex P2 på #74).
+    # `EXECUTE 'DO $$ … $$'` er en helt vanlig innpakning, og PostgreSQL
+    # KJØRER den indre blokken. Nyttelasten gikk før rett til splittingen,
+    # som stryker alt dollarsitert som funksjonskropper — og den indre
+    # blokken ble dermed strøket, med GRANT-en i seg. Gjerdet ble stående
+    # True mens PUBLIC hadde fått EXECUTE.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DO $ytre$\nBEGIN\n    EXECUTE 'DO $$ BEGIN GRANT EXECUTE"
+                   " ON FUNCTION varsel_klaim_epost(int, int) TO PUBLIC;"
+                   " END $$';\nEND $ytre$;")], n)
+    assert gjerdet == {sig: False}, (
+        "en DO-blokk i en EXECUTE-nyttelast er kode som kjører."
+        f" Spor: {spor}")
+
+    # …og den samme veien tilbake, som eier.
+    indre_revoke = ("DO $ytre$\nBEGIN\n    EXECUTE 'DO $$ BEGIN REVOKE ALL ON"
+                    " FUNCTION varsel_klaim_epost(int, int) FROM PUBLIC;"
+                    " END $$';\nEND $ytre$;")
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + "SET LOCAL ROLE disponit_domene_eier; "
+                         + indre_revoke + " RESET ROLE;")], n)
+    assert gjerdet == {sig: True}, (
+        "en REVOKE i en DO-blokk i en nyttelast er et gjerde som alle andre."
+        f" Spor: {spor}")
+
+    # …og VAKTEN følger med HELE veien ned: gjennom `EXECUTE`-setningen, inn
+    # i nyttelasten og videre inn i den indre blokken. En betinget REVOKE er
+    # ikke bevis, uansett hvor mange lag den står i.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + "SET LOCAL ROLE disponit_domene_eier; "
+                         + indre_revoke.replace(
+                             "BEGIN\n    EXECUTE", "BEGIN\n    IF nei THEN"
+                             " EXECUTE").replace("$$';\n", "$$'; END IF;\n")
+                         + " RESET ROLE;")], n)
+    assert gjerdet == {sig: False}, (
+        "en betinget REVOKE er ikke bevis, heller ikke i en DO-blokk i en"
+        f" nyttelast. Spor: {spor}")
+
+    # …og MOTPRØVEN som skiller en BLOKK fra en KROPP ett lag ned: en
+    # `CREATE FUNCTION … AS $$ … $$` i nyttelasten LAGER en funksjon, og en
+    # kropp kjører ikke av å bli laget. Ble hver dollartekst i nyttelasten
+    # pakket ut, ville denne GRANT-en åpnet gjerdet.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DO $ytre$\nBEGIN\n    EXECUTE 'CREATE FUNCTION hjelper()"
+                   " RETURNS void LANGUAGE plpgsql AS $$ BEGIN GRANT EXECUTE"
+                   " ON FUNCTION varsel_klaim_epost(int, int) TO PUBLIC;"
+                   " END $$';\nEND $ytre$;")], n)
+    assert gjerdet == {sig: True}, (
+        "en GRANT i en KROPP kjører ikke av at kroppen lages, heller ikke"
+        f" når `CREATE FUNCTION` selv står i en nyttelast. Spor: {spor}")
+
+    # …og den andre motprøven: maskeringen står FØR blokkeletingen i
+    # nyttelasten også, så en DO-blokk som bare er SITERT i den kjørte
+    # teksten er fortsatt inert.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "SET LOCAL ROLE disponit_domene_eier; DO $ytre$\nBEGIN\n"
+                   "    EXECUTE 'COMMENT ON FUNCTION"
+                   " varsel_klaim_epost(int, int) IS ''DO $$ BEGIN REVOKE ALL"
+                   " ON FUNCTION varsel_klaim_epost(int, int) FROM PUBLIC;"
+                   " END $$''';\nEND $ytre$; RESET ROLE;")], n)
+    assert gjerdet == {sig: True}, (
+        "en DO-blokk som bare er sitert i nyttelasten lagrer en kommentar og"
+        f" kjører ingenting. Spor: {spor}")
+
+    # …og den SKREVNE formen er fortsatt den skrevne: en dollarsitert tekst
+    # skrives tilbake med taggen sin og ikke med apostrofer. `$sql$…$sql$`
+    # har ingen escaping i det hele tatt, så en dobling ville vært en annen
+    # tekst — og det er denne formen 031-sporet leser rekkefølge på.
+    #
+    # Og INNHOLDET er den verdien som sto der, med sin egen skrivemåte:
+    # normaliseringen til småbokstaver gjelder SYNTAKS. `execute` og
+    # `$sql$` er syntaks; `GRANT a TO b` er innholdet i en konstant, og
+    # PostgreSQL sammenligner ikke to konstanter likt fordi de er stavet
+    # med ulike bokstavstørrelser.
+    assert [s for s, _, _ in _setninger(
+        "DO $do$ BEGIN EXECUTE $sql$GRANT a TO b$sql$; END $do$;")][0] == \
+        "begin execute $sql$GRANT a TO b$sql$", \
+        "en dollarsitert nyttelast skrives tilbake med taggen og innholdet"
+
+    # …OG DEN SAMME REGELEN DER DEN FAKTISK BETYR NOE (Codex P2 på #74).
+    # `sprak = 'NB'` og `sprak = 'nb'` treffer to forskjellige verdier i
+    # basen. Småskrev gjenskrivingen konstanten, leste 031-sporet en
+    # omskrevet predikat som om den sto uendret, og porten som skal fange
+    # nettopp den omskrivingen ble stående grønn på en migrasjon som ikke
+    # ville truffet en eneste lagret rad.
+    assert [s for s, _, _ in _setninger(
+        "UPDATE varselvalg SET sprak = NULL WHERE sprak = 'NB';")] == \
+        ["update varselvalg set sprak = null where sprak = 'NB'"], \
+        "en konstant er en VERDI, og skrivemåten i den er ikke syntaks"
+
+    # …og motprøven som holder normaliseringen i live ved siden av: TOMROMMET
+    # i konstanten klappes fortsatt sammen, ellers ville en setning brutt
+    # over linjer lest annerledes enn den samme på én linje.
+    assert [s for s, _, _ in _setninger("SELECT 'A\n   B';")] == \
+        ["select 'A B'"], \
+        "tomrommet i en konstant er skrivemåte, bokstavstørrelsen er ikke"
+
+    # …og den ene veien konstanten LIKEVEL blir SQL: en `EXECUTE`-nyttelast
+    # kjører, og der er den syntaks igjen. Da småskrives den som den
+    # setningen den er — det er nettopp derfor avspillingen ikke merker
+    # forskjellen på den skrevne formen.
+    assert [s for s, _, _ in _setninger(
+        "DO $$ BEGIN EXECUTE 'GRANT a TO b'; END $$;")][1] == \
+        "grant a to b", \
+        "teksten `EXECUTE` kjører er en SETNING, og normaliseres som en"
+
+    # …OG DEN KJØRTE TEKSTEN ER SQL, IKKE FERDIGMÅLT SQL. Nyttelasten ble før
+    # gitt videre rå, og som sin egen maskerte form — som om den ikke selv
+    # kunne inneholde en strengkonstant. En `EXECUTE 'SELECT ''REVOKE …'''`
+    # VELGER da bare ut en tekst i basen, men leste i modellen som en utført
+    # REVOKE fra eieren: gjerdet ble True mens PUBLIC beholdt EXECUTE. Det er
+    # den samme blindsonen maskeringen av filteksten lukket, ett lag ned.
+    sitert_i_execute = (
+        "SET LOCAL ROLE disponit_domene_eier; DO $$\nBEGIN\n"
+        "    EXECUTE 'SELECT ''REVOKE ALL ON FUNCTION"
+        " varsel_klaim_epost(int,int) FROM PUBLIC''';\n"
+        "END $$; RESET ROLE;")
+    gjerdet, spor = _spill_av([("a.sql", lag), ("b.sql", sitert_i_execute)], n)
+    assert gjerdet == {sig: False}, (
+        "en REVOKE som bare er SITERT inne i den kjørte teksten er ikke et"
+        f" gjerde — `SELECT` velger den ut, den kjører ikke. Spor: {spor}")
+
+    # …og motprøven, som er det som skiller maskeringen fra «alt inne i en
+    # EXECUTE teller ikke»: en EKTE setning ved siden av den siterte er
+    # fortsatt kode. Semikolonet inne i konstanten deler heller ingen
+    # setning her — ellers hadde GRANT-en blitt hakket i to og forsvunnet.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DO $$\nBEGIN\n    EXECUTE 'SELECT ''; GRANT ingenting'';"
+                   " GRANT EXECUTE ON FUNCTION varsel_klaim_epost(int, int)"
+                   " TO PUBLIC';\nEND $$;")], n)
+    assert gjerdet == {sig: False}, (
+        "en ekte GRANT ved siden av en sitert tekst i den samme nyttelasten"
+        f" åpner gjerdet. Spor: {spor}")
+
+    # …og KOMMENTARENE I NYTTELASTEN er basens kommentarer. En `--` inni den
+    # kjørte teksten kommenterer ut resten av linjen for PostgreSQL også, så
+    # en ACL-setning skrevet der utføres ikke — og skal ikke måles som om den
+    # ble det.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag),
+         ("b.sql", "SET LOCAL ROLE disponit_domene_eier; DO $$\nBEGIN\n"
+                   "    EXECUTE 'SELECT 1; -- REVOKE ALL ON FUNCTION"
+                   " varsel_klaim_epost(int, int) FROM PUBLIC';\n"
+                   "END $$; RESET ROLE;")], n)
+    assert gjerdet == {sig: False}, (
+        "en utkommentert REVOKE inne i den kjørte teksten utføres ikke, og"
+        f" er ikke et gjerde. Spor: {spor}")
+
+    # …og motprøven til DEN: kommentarstrykingen skal ta kommentaren, ikke
+    # setningen foran den. Ellers ville regelen gjort enhver dokumentert
+    # dynamisk REVOKE usynlig — den farlige retningen, én gang til.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + "SET LOCAL ROLE disponit_domene_eier; DO $$\nBEGIN\n"
+                         "    EXECUTE 'REVOKE ALL ON FUNCTION"
+                         " varsel_klaim_epost(int, int) FROM PUBLIC"
+                         " -- gjerdet, jf. 030';\nEND $$; RESET ROLE;")], n)
+    assert gjerdet == {sig: True}, (
+        "en kommentar ETTER en dynamisk REVOKE stryker kommentaren, ikke"
+        f" REVOKE-en. Spor: {spor}")
+
+    # …og VAKTEN GJELDER OGSÅ DEN. `IF … THEN EXECUTE '…'` er ETT
+    # semikolonfragment: grentellingen ser `IF`-en først i fragmentet
+    # ETTER, og teksten som pakkes ut har ingen `IF` foran seg å bli lest
+    # på. En betinget dynamisk REVOKE ble derfor spilt av som ubetinget og
+    # løftet gjerdet til True — mens klyngen, med usann vakt, ikke revokerte
+    # noe som helst.
+    betinget_dynamisk = (
+        "SET LOCAL ROLE disponit_domene_eier; DO $$\nBEGIN\n"
+        "    IF EXISTS (SELECT 1 FROM pg_roles"
+        " WHERE rolname = 'disponit_varselsender') THEN\n"
+        "        EXECUTE 'REVOKE ALL ON FUNCTION"
+        " varsel_klaim_epost(int, int) FROM PUBLIC';\n"
+        "    END IF;\nEND $$; RESET ROLE;")
+    gjerdet, spor = _spill_av([("a.sql", lag + betinget_dynamisk)], n)
+    assert gjerdet == {sig: False}, (
+        "en dynamisk REVOKE under en vakt er ikke bevis for at gjerdet står,"
+        f" heller ikke når vakten står i den samme setningen. Spor: {spor}")
+
+    # …og motprøven, av samme grunn som for den skrevne formen: den river
+    # ikke ned et gjerde som alt står. Uten den ville regelen lest som «alt
+    # med en `IF` i nærheten teller ikke».
+    assert _spill_av([("a.sql", lag + gjerde),
+                      ("b.sql", betinget_dynamisk)], n)[0] == {sig: True}, \
+        "en betinget dynamisk revoke skal ikke rive et gjerde som står"
+
+    # …og `END IF` LUKKER GRENEN her også: en dynamisk REVOKE ETTER den står
+    # ubetinget, og lukker gjerdet. Det er dette som skiller «vakten i det
+    # samme fragmentet» fra «en `IF` hvor som helst i blokken».
+    etter_end_if = (
+        "SET LOCAL ROLE disponit_domene_eier; DO $$\nBEGIN\n"
+        "    IF EXISTS (SELECT 1 FROM pg_roles"
+        " WHERE rolname = 'disponit_varselsender') THEN\n"
+        "        RAISE NOTICE 'rydder opp';\n"
+        "    END IF;\n"
+        "    EXECUTE 'REVOKE ALL ON FUNCTION"
+        " varsel_klaim_epost(int, int) FROM PUBLIC';\n"
+        "END $$; RESET ROLE;")
+    gjerdet, spor = _spill_av([("a.sql", lag + etter_end_if)], n)
+    assert gjerdet == {sig: True}, (
+        "en dynamisk REVOKE ETTER `END IF` er ubetinget og lukker gjerdet."
+        f" Spor: {spor}")
+
+    # EN KONSTANT KAN HA ET PREFIKS. `E'…'` og `U&'…'` er like gyldige
+    # skrivemåter som den bare, og modellen kjente bare den bare. Prefikset
+    # ble stående igjen utenfor markøren, `EXECUTE E'…'` maskerte til
+    # `execute e<markør>`, og den dynamiske setningen falt ut av
+    # avspillingen — den farlige veien: en GRANT til PUBLIC ble usynlig og
+    # gjerdet ble stående True.
+    for pre in ("E", "e", "U&", "u&"):
+        gjerdet, spor = _spill_av(
+            [("a.sql", lag + gjerde),
+             ("b.sql", f"DO $$\nBEGIN\n    EXECUTE {pre}'GRANT EXECUTE ON"
+                       " FUNCTION varsel_klaim_epost(int, int) TO PUBLIC';\n"
+                       "END $$;")], n)
+        assert gjerdet == {sig: False}, (
+            f"`{pre}'…'` er en strengkonstant som alle andre, og en dynamisk"
+            f" GRANT skrevet slik åpner gjerdet. Spor: {spor}")
+
+        # …og den samme veien: prefikset skal ikke gjøre setningen usynlig,
+        # bare fordi den peker riktig vei denne gangen.
+        gjerdet, spor = _spill_av(
+            [("a.sql", lag + "SET LOCAL ROLE disponit_domene_eier;"
+                             f" DO $$\nBEGIN\n    EXECUTE {pre}'REVOKE ALL ON"
+                             " FUNCTION varsel_klaim_epost(int, int)"
+                             " FROM PUBLIC';\nEND $$; RESET ROLE;")], n)
+        assert gjerdet == {sig: True}, (
+            f"en dynamisk REVOKE skrevet `{pre}'…'` er et gjerde som alle"
+            f" andre. Spor: {spor}")
+
+    # BAKSTREKEN ER EN ESCAPE I EN `E'…'`, og bare der. Slutter konstanten
+    # på den første `\'`, blir halen — som godt kan inneholde en `--` —
+    # lest som kode, og den gjenværende teksten forskjøvet med den. Her ville
+    # `-- it\'s fine` blitt strøket som kommentar og GRANT-en delt i to.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DO $$\nBEGIN\n    EXECUTE E'GRANT EXECUTE ON FUNCTION"
+                   " varsel_klaim_epost(int, int) TO PUBLIC"
+                   " -- it\\'s fine';\nEND $$;")], n)
+    assert gjerdet == {sig: False}, (
+        "en `\\'` avslutter ikke en E-streng, og halen er tekst — ikke en"
+        f" kommentar som deler setningen. Spor: {spor}")
+
+    # …og `\n` I EN E-STRENG ER TOMROM, ikke bokstaven n. Ble den lest
+    # bokstavelig, sto det `fromnpublic` igjen der setningen sier
+    # `FROM\nPUBLIC`, og en ekte REVOKE falt ut av avspillingen.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + "SET LOCAL ROLE disponit_domene_eier; DO $$\nBEGIN\n"
+                         "    EXECUTE E'REVOKE ALL ON FUNCTION"
+                         " varsel_klaim_epost(int, int) FROM\\nPUBLIC';\n"
+                         "END $$; RESET ROLE;")], n)
+    assert gjerdet == {sig: True}, (
+        f"`\\n` i en E-streng er tomrom, ikke en bokstav. Spor: {spor}")
+
+    # MOTPRØVEN, og den som gjør prefikset til noe annet enn «hopp over
+    # bokstaven foran»: en SITERT E-streng er like inert som en bar. Den er
+    # ikke kode av å ha et prefiks — det er `EXECUTE` foran som avgjør.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag),
+         ("b.sql", "SET LOCAL ROLE disponit_domene_eier; DO $$\nBEGIN\n"
+                   "    RAISE NOTICE E'REVOKE ALL ON FUNCTION"
+                   " varsel_klaim_epost(int, int) FROM PUBLIC';\n"
+                   "END $$; RESET ROLE;")], n)
+    assert gjerdet == {sig: False}, (
+        "en REVOKE som bare er SITERT i en E-streng er ikke et gjerde."
+        f" Spor: {spor}")
+
+    assert _uten_strenger("select kolonne'a''b'")[1] == [("", "a'b")], \
+        "`kolonne` fulgt av `'…'` er et navn og en bar konstant"
+    assert _uten_strenger(r"select E'a\'b'")[1] == [("e", "a'b")], \
+        "`E'…'` er én konstant, og `\\'` er apostrofen i den"
+
+    # DEN SAMME REGELEN I KOMMENTARSTRYKEREN. Den hopper over konstantene
+    # nettopp for at en `--` inne i en tekst ikke skal bli en kommentar, og
+    # må derfor kjenne den samme slutten som maskeringen. Gjør den ikke det,
+    # slutter E-strengen på den første `\'`, og halen — med `--` i seg — blir
+    # strøket som kommentar, med alt som fulgte på den linjen.
+    assert _uten_kommentarer(r"raise notice E'a\'b -- c';") == \
+        r"raise notice E'a\'b -- c';", \
+        "en `--` inne i en E-streng er tekst, ikke en kommentar"
+
+    # …og motprøven, som er det som gjør prefikset til en REGEL og ikke til
+    # «hopp over bokstaven foran»: en `e` som er SLUTTEN PÅ ET NAVN er ikke
+    # et prefiks. `kolonne'a\'` er da en HEL bar konstant — bakstreken er et
+    # vanlig tegn i den — og `-- c'` etter den er en ekte kommentar.
+    assert (_uten_kommentarer(r"select kolonne'a\'b -- c'")
+            == r"select kolonne'a\'b "), (
+        "`kolonne` fulgt av `'…'` er et navn og en bar konstant — og der er"
+        " bakstreken bare et tegn")
+
+    # EN `"…"` ER ET NAVN, IKKE EN KONSTANT. `"customer's"` er en lovlig
+    # identifikator, og apostrofen i den er et tegn i navnet. Leses den som
+    # en åpning, slutter den falske konstanten først på neste apostrof i
+    # filen — her `'x'` i COMMENT-en — og alt imellom, semikolonene og en
+    # `GRANT EXECUTE … TO PUBLIC`, forsvinner inn i én markør. Gjerdet ble
+    # da stående True mens PUBLIC var åpnet igjen.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "CREATE TABLE \"customer's\" (id int);"
+                   " GRANT EXECUTE ON FUNCTION varsel_klaim_epost(int, int)"
+                   " TO PUBLIC;"
+                   " COMMENT ON TABLE \"customer's\" IS 'x';")], n)
+    assert gjerdet == {sig: False}, (
+        "apostrofen i en sitert identifikator åpner ingen konstant, og skal"
+        f" ikke sluke setningen etter den. Spor: {spor}")
+
+    # …og motprøven, som er den som gjør identifikatorgrenen til noe annet
+    # enn «apostrofer teller ikke etter en `"`»: konstanten ETTER en sitert
+    # identifikator maskeres fortsatt, og en REVOKE sitert i den er like
+    # inert som ellers. Ble maskeringen slått av, ville denne lest som et
+    # gjerde.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag),
+         ("b.sql", "SET LOCAL ROLE disponit_domene_eier;"
+                   " COMMENT ON TABLE \"customer's\" IS 'REVOKE ALL ON"
+                   " FUNCTION varsel_klaim_epost(int, int) FROM PUBLIC';"
+                   " RESET ROLE;")], n)
+    assert gjerdet == {sig: False}, (
+        "en REVOKE sitert i en konstant etter en sitert identifikator er"
+        f" fortsatt bare tekst. Spor: {spor}")
+
+    # …og den andre motprøven, som er grunnen til at identifikatoren gis
+    # tilbake URØRT og ikke bare maskeres bort sammen med konstantene: et
+    # sitert navn er FORTSATT navnet. `"varsel_klaim_epost"(int,int)` er
+    # den beskyttede funksjonen, og en GRANT til PUBLIC skrevet slik åpner
+    # gjerdet. Ble navnet maskert, ville nettopp den setningen blitt usynlig
+    # — den farlige retningen.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", 'GRANT EXECUTE ON FUNCTION "varsel_klaim_epost"(int, int)'
+                   " TO PUBLIC;")], n)
+    assert gjerdet == {sig: False}, (
+        "et sitert navn er det samme navnet, og en GRANT til PUBLIC skrevet"
+        f" slik åpner gjerdet. Spor: {spor}")
+
+    # …og den samme regelen i kommentarstrykeren, av samme grunn som for
+    # konstantene: en `--` inne i et NAVN er tegn i navnet, ikke en
+    # kommentar som stryker resten av linjen.
+    assert _uten_kommentarer('select "a--b" from t;') == \
+        'select "a--b" from t;', \
+        "en `--` inne i en sitert identifikator er tegn i navnet"
+
+    # …og `""` er identifikatorens egen dobling — ETT tegn, ikke slutt.
+    # Leses den som slutt, står den andre halvdelen igjen som kode, og en
+    # `--` etter den stryker linjen den ikke skulle rørt.
+    assert _uten_kommentarer('select "a""--b" from t;') == \
+        'select "a""--b" from t;', \
+        "`\"\"` er ett tegn i en sitert identifikator, ikke slutten på den"
+
+    # Å FLYTTE ET NAVN ER Å FJERNE DET. Funksjonen lever videre — det gjør
+    # ikke navnet senderen kaller, og et gjerde rundt et navn som er borte er
+    # ikke et bevis. Samme utgang som en DROP, gjennom en annen dør.
+    for form in ("RENAME TO varsel_klaim_epost_v2", "SET SCHEMA arkiv"):
+        gjerdet, spor = _spill_av(
+            [("a.sql", lag + gjerde),
+             ("b.sql", f"ALTER FUNCTION varsel_klaim_epost(int, int)"
+                       f" {form};")], n)
+        assert gjerdet == {sig: None}, (
+            f"`{form}` fjerner det beskyttede navnet. Spor: {spor}")
+
+    # …og motprøvene, som er det som skiller regelen fra «enhver ALTER er en
+    # fjerning»: EIERSKIFTET er også en `ALTER FUNCTION`, og det flytter ikke
+    # navnet noe sted. En OMDØPT OVERLAST er heller ikke den beskyttede.
+    assert _spill_av([("a.sql", lag + gjerde)], n)[0] == {sig: True}, \
+        "`ALTER … OWNER TO` i `lag` er ikke en fjerning"
+    assert _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "ALTER FUNCTION varsel_klaim_epost(text)"
+                   " RENAME TO noe_annet;")], n)[0] == {sig: True}, \
+        "en omdøpt OVERLAST rører ikke den beskyttede signaturen"
+
+    # …og gjenskaping av navnet etterpå er den lovlige formen: omdøpingen
+    # arkiverer den gamle, `lag + gjerde` setter opp den nye. Uten dette
+    # ville regelen over gjort enhver arkivering til en permanent rød port.
+    assert _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "ALTER FUNCTION varsel_klaim_epost(int, int)"
+                   " RENAME TO varsel_klaim_epost_v1;" + lag + gjerde)],
+        n)[0] == {sig: True}, "omdøping + gjenskaping + nytt gjerde"
+
+    # …OG FLYTTINGEN HAR EN VEI TILBAKE. En DROP er endelig; en flytting er
+    # det ikke. Objektet lever, og ACL-en og eieren følger DET og ikke navnet
+    # — så en arkivering og en tilbakeføring er en fullt lovlig runde som
+    # ender akkurat der den begynte. Modellen kjente bare utgangen: `_rammer`
+    # godtar en kilde som alt heter det beskyttede navnet i `public`, og en
+    # identitet som ikke gjorde det lenger, kunne aldri bli den igjen. Runden
+    # endte derfor på None, og kildeporten rødmet på en funksjon som sto der
+    # med gjerdet sitt.
+    for ut, inn in (("RENAME TO tmp_kle", "ALTER FUNCTION tmp_kle(int, int)"
+                     " RENAME TO varsel_klaim_epost"),
+                    ("SET SCHEMA arkiv",
+                     "ALTER FUNCTION arkiv.varsel_klaim_epost(int, int)"
+                     " SET SCHEMA public")):
+        gjerdet, spor = _spill_av(
+            [("a.sql", lag + gjerde),
+             ("b.sql", f"ALTER FUNCTION varsel_klaim_epost(int, int) {ut};"),
+             ("c.sql", f"{inn};")], n)
+        assert gjerdet == {sig: True}, (
+            f"`{ut}` og tilbake igjen er den samme funksjonen, med det samme"
+            f" gjerdet. Spor: {spor}")
+
+    # …også I TO STEG, som er den eneste veien tilbake når BEGGE delene av
+    # navnet er flyttet. Mellomsteget nevner ikke det beskyttede navnet i det
+    # hele tatt, og måles derfor på den flyttede identiteten — ikke på silen.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "ALTER FUNCTION varsel_klaim_epost(int, int)"
+                   " RENAME TO tmp_kle;"
+                   " ALTER FUNCTION tmp_kle(int, int) SET SCHEMA arkiv;"),
+         ("c.sql", "ALTER FUNCTION arkiv.tmp_kle(int, int) SET SCHEMA public;"
+                   " ALTER FUNCTION tmp_kle(int, int)"
+                   " RENAME TO varsel_klaim_epost;")], n)
+    assert gjerdet == {sig: True}, (
+        f"to steg ut og to steg inn er den samme runden. Spor: {spor}")
+
+    # …og TILSTANDEN BÆRES, den dikters ikke opp. Er gjerdet nede når
+    # funksjonen flyttes, er det nede når den kommer tilbake — ellers ville
+    # veien tilbake vært en gratis herding.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag),
+         ("b.sql", "ALTER FUNCTION varsel_klaim_epost(int, int)"
+                   " RENAME TO tmp_kle;"),
+         ("c.sql", "ALTER FUNCTION tmp_kle(int, int)"
+                   " RENAME TO varsel_klaim_epost;")], n)
+    assert gjerdet == {sig: False}, (
+        "en funksjon som flyttes UTEN gjerde kommer tilbake uten gjerde."
+        f" Spor: {spor}")
+
+    # MOTPRØVENE, og de er det som gjør veien tilbake til noe annet enn et
+    # hull: den gjelder BARE identiteten som faktisk ble flyttet ut, og bare
+    # når ingenting annet har skjedd med den underveis.
+    #
+    # En ANNEN funksjon som døpes om TIL det beskyttede navnet er ikke den
+    # beskyttede som kommer tilbake — den er en fremmed med riktig navn, og
+    # ACL-en er dens egen.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DROP FUNCTION varsel_klaim_epost(int, int);"),
+         ("c.sql", "ALTER FUNCTION en_annen(int, int)"
+                   " RENAME TO varsel_klaim_epost;")], n)
+    assert gjerdet == {sig: None}, (
+        "en DROP er endelig — en fremmed med det riktige navnet leverer"
+        f" ingen tilstand tilbake. Spor: {spor}")
+
+    # …og en OVERLAST av det flyttede navnet er heller ikke det flyttede
+    # objektet: argumentene må stemme, som overalt ellers i modellen.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "ALTER FUNCTION varsel_klaim_epost(int, int)"
+                   " RENAME TO tmp_kle;"),
+         ("c.sql", "ALTER FUNCTION tmp_kle(text)"
+                   " RENAME TO varsel_klaim_epost;")], n)
+    assert gjerdet == {sig: None}, (
+        f"`tmp_kle(text)` er ikke `tmp_kle(int,int)`. Spor: {spor}")
+
+    # …og et USKREVET skjema finner ikke en funksjon som er flyttet UT av
+    # `public`: søkestien under migrering er `public`, så `ALTER FUNCTION
+    # varsel_klaim_epost(int,int) SET SCHEMA public` treffer ingenting når
+    # objektet står i `arkiv`.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "ALTER FUNCTION varsel_klaim_epost(int, int)"
+                   " SET SCHEMA arkiv;"),
+         ("c.sql", "ALTER FUNCTION varsel_klaim_epost(int, int)"
+                   " SET SCHEMA public;")], n)
+    assert gjerdet == {sig: None}, (
+        "en ukvalifisert ALTER finner ikke `arkiv.varsel_klaim_epost`."
+        f" Spor: {spor}")
+
+    # …og EN BETINGET TILBAKEFØRING gir ingenting tilbake. Holder ikke
+    # vakten, står funksjonen der den ble flyttet — og et gjerde levert
+    # tilbake til et navn som ikke finnes er nøyaktig utgangen flyttegrenen
+    # ble lagt inn for å hindre.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "ALTER FUNCTION varsel_klaim_epost(int, int)"
+                   " RENAME TO tmp_kle;"),
+         ("c.sql", "DO $$\nBEGIN\n    IF EXISTS (SELECT 1 FROM pg_proc"
+                   " WHERE proname = 'tmp_kle') THEN\n"
+                   "        ALTER FUNCTION tmp_kle(int, int)"
+                   " RENAME TO varsel_klaim_epost;\n"
+                   "    END IF;\nEND $$;")], n)
+    assert gjerdet == {sig: None}, (
+        "en betinget tilbakeføring er ikke bevis for at navnet er tilbake."
+        f" Spor: {spor}")
+
+    # …og ALT ANNET SOM RØRER DEN FLYTTEDE FUNKSJONEN bryter runden: en GRANT
+    # til PUBLIC på det arkiverte navnet gjør tilstanden som ble lagt til
+    # side ugyldig, og modellen kan ikke levere den tilbake. Utfallet er
+    # None — en falsk alarm noen må se på, og ikke et gjerde modellen tror
+    # står rundt en funksjon PUBLIC nettopp fikk EXECUTE på.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "ALTER FUNCTION varsel_klaim_epost(int, int)"
+                   " RENAME TO tmp_kle;"
+                   " GRANT EXECUTE ON FUNCTION tmp_kle(int, int) TO PUBLIC;"),
+         ("c.sql", "ALTER FUNCTION tmp_kle(int, int)"
+                   " RENAME TO varsel_klaim_epost;")], n)
+    assert gjerdet == {sig: None}, (
+        "en GRANT til PUBLIC på det flyttede navnet bryter runden — det som"
+        f" kommer tilbake er ikke det som ble lagt til side. Spor: {spor}")
+
+    # …og det samme for den SKJEMABREDE granten, som ikke nevner noe navn i
+    # det hele tatt og derfor måles før silen.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "ALTER FUNCTION varsel_klaim_epost(int, int)"
+                   " RENAME TO tmp_kle;"
+                   " GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public"
+                   " TO PUBLIC;"),
+         ("c.sql", "ALTER FUNCTION tmp_kle(int, int)"
+                   " RENAME TO varsel_klaim_epost;")], n)
+    assert gjerdet == {sig: False}, (
+        "en skjemabred grant treffer også det arkiverte navnet, og runden"
+        f" leverer ingen gammel tilstand tilbake. Spor: {spor}")
+
+    # EN REVOKE SOM IKKE TAR PRIVILEGIET. `GRANT OPTION FOR` er en lovlig
+    # REVOKE på nøyaktig den beskyttede signaturen, kjørt av eieren — og den
+    # fjerner likevel ikke EXECUTE. Leses den som et gjerde, er porten grønn
+    # på en funksjon PUBLIC fortsatt kan kalle.
+    opsjon = ("SET LOCAL ROLE disponit_domene_eier;"
+              " REVOKE GRANT OPTION FOR EXECUTE ON FUNCTION"
+              " varsel_klaim_epost(int, int) FROM PUBLIC; RESET ROLE;")
+    gjerdet, spor = _spill_av([("a.sql", lag + opsjon)], n)
+    assert gjerdet == {sig: False}, (
+        "`REVOKE GRANT OPTION FOR` tar ikke EXECUTE, og er ikke et gjerde."
+        f" Spor: {spor}")
+
+    # …og motprøven, som er det som skiller regelen fra «alt med ordet grant
+    # i seg teller ikke»: den river heller ikke ned et gjerde som ALT står.
+    # Setningen flytter ingenting, i noen av retningene.
+    assert _spill_av([("a.sql", lag + gjerde), ("b.sql", opsjon)], n)[0] == {
+        sig: True}, "en grant option-revoke rører ikke et gjerde som står"
 
     assert _type("p_ts timestamp with time zone") \
         == "timestamp with time zone", "flerordstypen skal stå hel"
