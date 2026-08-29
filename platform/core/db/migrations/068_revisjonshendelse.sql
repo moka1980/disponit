@@ -57,14 +57,22 @@ CREATE TABLE revisjonshendelse (
     -- gang til. Det er §9 K2s mønster, og svaret er ikke en fjerde liste.
     --
     -- Regelen snus: i stedet for å fjerne hvert blanktegn vi klarer å
-    -- navngi, trimmer vi med `\s` — PostgreSQLs regexklasse, som i en
-    -- UTF-8-base dekker Unicodes blanktegn og ikke bare ASCII. Da er det
-    -- ingen liste å glemme noe fra.
+    -- navngi, trimmer vi med `\s` PLUSS Unicodes Zs-klasse eksplisitt.
+    -- `\s` alene er locale-`iswspace`, og glibc regner IKKE U+00A0
+    -- (hardt mellomrom) som whitespace — påstanden «\s dekker Unicode»
+    -- var målt usann av testens egen NBSP-case. PostgreSQL har ingen
+    -- \p{Zs}, så klassen ENUMERERES: hele Zs (NBSP, OGHAM, EN QUAD–
+    -- HAIR SPACE, NNBSP, MMSP, IDEOGRAPHIC) pluss LS/PS. Listen er
+    -- Unicodes egen lukkede kategori, ikke en liste noen kom på — en ny
+    -- blanktegnsklasse kan bare oppstå ved ny Unicode-versjon, og
+    -- testens tre klasser feller hver sin historiske regresjon.
     --
     -- Grensen måles på den TRIMMEDE lengden, ikke på råteksten: ellers
     -- ville ni mellomrom og én bokstav vært en ti tegns begrunnelse.
     aktor TEXT NOT NULL
-        CHECK (length(regexp_replace(aktor, '^\s+|\s+$', '', 'g'))
+        CHECK (length(regexp_replace(aktor,
+                   '^[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$',
+                   '', 'g'))
                BETWEEN 1 AND 200),
     -- BEGRUNNELSEN HAR EN NEDRE GRENSE. «x» er ikke en begrunnelse, og
     -- funnet som skapte denne tabellen brukte nettopp «x». Ti tegn er
@@ -72,7 +80,9 @@ CREATE TABLE revisjonshendelse (
     -- linjen over er det ti TEGN, ikke ti tastetrykk på enter eller ti
     -- harde mellomrom.
     begrunnelse TEXT NOT NULL
-        CHECK (length(regexp_replace(begrunnelse, '^\s+|\s+$', '', 'g'))
+        CHECK (length(regexp_replace(begrunnelse,
+                   '^[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$',
+                   '', 'g'))
                BETWEEN 10 AND 2000),
     -- PRINSIPALEN BAK AKTØREN (Cursor P1, runde 5 på #247). `aktor` er en
     -- ETIKETT — den er fri tekst, og fri tekst beviser ingenting: runtime
