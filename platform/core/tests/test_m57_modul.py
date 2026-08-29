@@ -2692,6 +2692,74 @@ def test_avskruing_uten_hendelse_felles_for_forste_modellkall(tmp_path):
     assert len(modell.sett) == 2, "riggen var ugyldig av en annen grunn"
 
 
+def test_avskruingssporet_naar_leveransen_ikke_bare_artefaktet(tmp_path):
+    """Cursor P2 (runde 4 på #247): sporet døde på leveransegrensen.
+
+    Runde 3 lot avskruingen etterlate et spor på per-kandidat-artefaktet
+    — men `rapportskjema.bygg` plukker EKSPLISITT `funn`,
+    `intervjusporsmal` og `kildetekst`, og controlleren sender bare
+    rapporten til `/v1/artefakt`. Sporet nådde altså aldri det som blir
+    lagret: den promoterte rapporten bar ingenting som pekte tilbake på
+    `revisjonshendelse`-raden, og vi sto igjen med nøyaktig hullformen
+    runde 3 skulle lukke — «en revisjonshendelse ingen artefakt peker
+    på, er en logg uten lesere».
+
+    Målt på den SERIALISERTE rapporten, ikke på dicten i minnet: det er
+    JSON-formen plattformen tar imot, og et felt som ikke overlever
+    serialiseringen har ikke krysset grensen.
+
+    Kontrasten til slutt er halve porten: en BLINDET bunt har intet
+    unntak å dokumentere, og et felt som alltid er der sier ingenting om
+    unntaket det finnes for.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `avskruing`-blokken fra
+    `rapportskjema.bygg` (eller la den bære sporet ufiltrert — `ts`
+    kommer som `datetime` fra basen og felles av skjemaet).
+    """
+    import json as _json
+
+    import jsonschema
+
+    from modules.m57_ats import blinding, kjoring, rapportskjema
+
+    manifest = _json.dumps({"soknader": [
+        {"kandidat_id": "k1", "filer": ["k1/cv.html"]},
+        {"kandidat_id": "k2", "filer": ["k2/cv.html"]}]})
+    arkiv = _bunt(tmp_path,
+                  [("k1/cv.html", b"<p>Kari Testdal kan drift</p>"),
+                   ("k2/cv.html", b"<p>Ola Testdal kan drift</p>")],
+                  manifest=manifest)
+    profil = {"profil_id": "p-159", "versjon": 1, "navn": "Driftsingenior"}
+    hid = "7f1c1f7e-0000-4000-8000-000000000004"
+
+    ut = kjoring.kjor_bunt(
+        arkiv, _Modell(), vekter={"drift": 3},
+        tekst_for=lambda m, d: d.decode("utf-8"),
+        biasmaalinger=_MAALINGER, antall_soknader=2, blinding_av=True,
+        avskruing_hendelse_id=hid,
+        hendelseoppslag=lambda _i: {
+            "handling": blinding.AVSKRUINGSHANDLING,
+            "aktor": "eier@kunde", "ts": "2026-08-29T00:00:00+00:00"})
+    rapport = rapportskjema.bygg(ut, profil=profil, antall_soknader=2)
+    jsonschema.Draft202012Validator(rapportskjema.SKJEMA).validate(rapport)
+    sendt = _json.loads(_json.dumps(rapport))
+    assert sendt.get("avskruing") == {"hendelse_id": hid,
+                                      "aktor": "eier@kunde"}, (
+        "rapporten som FAKTISK sendes bar ingen peker tilbake til"
+        f" revisjonsraden: {sendt.get('avskruing')}")
+
+    blindet = kjoring.kjor_bunt(
+        arkiv, _Modell(), vekter={"drift": 3},
+        kandidatfelter_for=lambda m: {"navn": ["Testdal"]},
+        tekst_for=lambda m, d: d.decode("utf-8"),
+        biasmaalinger=_MAALINGER, antall_soknader=2)
+    ren = rapportskjema.bygg(blindet, profil=profil, antall_soknader=2)
+    jsonschema.Draft202012Validator(rapportskjema.SKJEMA).validate(ren)
+    assert "avskruing" not in ren, (
+        "en BLINDET bunt promoterte et avskruingsfelt — da dokumenterer"
+        " feltet ingenting")
+
+
 def test_vakuos_deklarasjon_felles_for_forste_modellkall(tmp_path):
     """Cursor P2: samme REKKEFØLGEPRIS som `blinding_uten_felter`, bare
     ett hakk senere i veien.
