@@ -294,7 +294,19 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
     # der) og dør med kjøringen.
     biter: dict[str, list[tuple[str, str, Path, object]]] = {}
     lest = 0
-    spole = tempfile.TemporaryDirectory(prefix="m57-spole-")
+    # SPOLEN OPPRETTES I DEN KODEDE VEIEN (Codex P2). Linjen sto UTENFOR
+    # `try`-en under, og `TemporaryDirectory` reiser `OSError` når
+    # arbeiderens midlertidige filsystem er utilgjengelig, fullt eller
+    # nektet. Catch-allen som gjør feil om til `Kjoringsfeil` kjørte
+    # derfor aldri, og `kjor_en` fanger bare `Kjoringsfeil`/skjemafeil:
+    # arbeideren døde uten den KODEDE feilkvitteringen alle andre
+    # spole-I/O-feil sender (`_spoletekst`, strømløkkens `except
+    # OSError`). Samme klasse som lesefeilene forrige runde flyttet inn i
+    # gaten — og samme kode, for kilden er den samme disken.
+    try:
+        spole = tempfile.TemporaryDirectory(prefix="m57-spole-")
+    except OSError as feil:
+        raise Kjoringsfeil("infrastrukturfeil", fremdrift) from feil
     spolerot = Path(spole.name)
     try:
         # LAGRINGSHÅNDTEREREN HØRER TIL LESINGEN, IKKE HELE KJØRINGEN
