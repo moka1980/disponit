@@ -168,6 +168,50 @@ def test_det_nyeste_utlopte_paret_lever_til_det_nye_star():
         "den sparte faller før paret er erklært ferdig"
 
 
+def test_sparingen_er_et_unntak_ikke_en_regel():
+    """Codex P1 på `db2eeda`: et utløpt par ble spart selv når et ULØPT sto der.
+
+    Sparingen finnes for ÉN grunn — at sveipen aldri skal etterlate
+    katalogen uten et gjenopprettingspunkt. Er det allerede et komplett
+    uløpt par der, er grunnen borte. Da er det spartes eneste virkning at
+    plass står beslaglagt, og er det nettopp den plassen diskporten under
+    trenger, avbryter porten hver eneste nattbackup mens sparingen holder
+    igjen det porten ber om. Sperren løser seg først når det uløpte paret
+    selv utløper ~30 dager senere — den fornyer seg selv.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `[ -z "$HAR_ULOPT_PAR" ]` fra
+    vilkåret rundt utvelgelsen.
+    """
+    assert 'if [ -n "$UTLOPTE" ] && [ -z "$HAR_ULOPT_PAR" ]; then' in SKRIPT, (
+        "utvelgelsen spør ikke om det alt finnes et uløpt par — et utløpt"
+        " par spares da unødig, og kan låse diskporten i 30 dager")
+    # Målingen må skje FØR utvelgelsen, ellers er svaret ikke tilgjengelig
+    # når vilkåret leses.
+    assert _pos('HAR_ULOPT_PAR=1') < _pos('[ -z "$HAR_ULOPT_PAR" ]'), \
+        "flagget settes etter at det er lest"
+    # ... og den må måle et KOMPLETT uløpt par: en uløpt dump uten arkiv er
+    # ikke den gjenopprettingsenheten #191 handler om.
+    maaling = SKRIPT[_pos('HAR_ULOPT_PAR=""'):_pos('HAR_ULOPT_PAR=1')]
+    assert '! -mtime +"$DAGER"' in maaling, (
+        "søket etter uløpte par filtrerer ikke på alder — da teller et"
+        " utløpt par som grunn til ikke å spare noe")
+    assert '.inndata.tar.age" ]; then' in maaling, \
+        "målingen godtar en uløpt dump UTEN arkiv som gjenopprettingspunkt"
+    # SIGPIPE-klassen igjen (samme som `| head` over): en mengdedifferanse
+    # mot `$UTLOPTE` ville latt `grep -q` lukke røret på TREFF, avsenderen
+    # dø på 141, og `pipefail` gjøre treffet om til bom — altså «ingen
+    # uløpte par» i nøyaktig det tilfellet porten finnes for.
+    #
+    # KJØRENDE LINJER, IKKE PROSA (samme lærdom som `12e53c6`): begrunnelsen
+    # i skriptet NEVNER formen den forkaster, og et tekstsøk over hele fila
+    # ville lest sin egen forklaring som et brudd.
+    kjorende_qx = [l for l in SKRIPT.splitlines()
+                   if not l.lstrip().startswith("#") and "grep -q" in l]
+    assert not kjorende_qx, (
+        "mengdedifferansen leser et treff som bom under pipefail — bruk et"
+        f" eget `find`-søk med `! -mtime`: {kjorende_qx}")
+
+
 def test_en_paagaaende_opplasting_dreper_ikke_backupen():
     """Codex P2: `tar` returnerer 1 når en fil endres mens den leses.
 

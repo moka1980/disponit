@@ -232,8 +232,51 @@ UTLOPTE=$(find "$KATALOG" -name 'disponit-*.dump.age' -mtime +"$DAGER") || {
 #
 # `sort -r` på filnavnet er kronologisk: stempelet er `YYYYmmdd-HHMMSS`,
 # altså leksikografisk lik tidsrekkefølgen. Vi trenger ingen `stat`.
-SPART=""
+#
+# SPARINGEN ER ET UNNTAK, IKKE EN REGEL (Codex P1 på `db2eeda`). Sparingen
+# over finnes for ÉN grunn: at sveipen aldri skal etterlate katalogen uten
+# et gjenopprettingspunkt. Er det allerede et komplett ULØPT par i
+# katalogen, er den grunnen borte — punktet finnes, og et utløpt par i
+# tillegg er bare beslaglagt plass. Verre: er det nettopp det utløpte paret
+# som må vekk for at diskporten under skal passere, avbryter porten hver
+# eneste nattbackup, mens sparingen holder på det den porten trenger
+# frigjort. Da står installasjonen uten NYE backuper til det uløpte paret
+# selv utløper ~30 dager senere — en sperre som fornyer seg selv.
+#
+# Derfor måles det først: finnes et komplett par som IKKE er utløpt, spares
+# ingenting, og sveipen tar alt den fant.
+#
+# `! -mtime +$DAGER` er det EKSAKTE komplementet til søket over, og et eget
+# søk — ikke en mengdedifferanse mot `$UTLOPTE` i skallet. Å filtrere den
+# ene listen mot den andre ville krevd `printf | grep -qx` per kandidat, og
+# den pipen har nøyaktig SIGPIPE-formen retensjonen alt er blitt felt på:
+# `grep -q` lukker røret på treff, `printf` dør på 141, og med `pipefail`
+# leses et TREFF som et bom. Da hadde porten sagt «ingen uløpte par» i
+# nettopp det tilfellet den finnes for.
+#
+# Feiler søket, avbryter vi — samme fail-closed-linje som søket over. Å
+# gjette «ingen uløpte par» ville spart et utløpt par unødig; å gjette
+# motsatt vei ville slettet det siste punktet. Ingen av gjetningene er verdt
+# en stille kjøring.
+HAR_ULOPT_PAR=""
 if [ -n "$UTLOPTE" ]; then
+  ULOPTE=$(find "$KATALOG" -name 'disponit-*.dump.age' \
+                ! -mtime +"$DAGER") || {
+    echo "AVBRUTT: søket etter uløpte par feilet — sveipen kan ikke vite" \
+         "om det finnes et gjenopprettingspunkt som gjør sparing unødig" >&2
+    exit 1
+  }
+  while IFS= read -r dump; do
+    [ -n "$dump" ] || continue
+    st=$(basename "$dump"); st=${st#disponit-}; st=${st%.dump.age}
+    if [ -f "$KATALOG/disponit-$st.inndata.tar.age" ]; then
+      HAR_ULOPT_PAR=1
+      break
+    fi
+  done <<< "$ULOPTE"
+fi
+SPART=""
+if [ -n "$UTLOPTE" ] && [ -z "$HAR_ULOPT_PAR" ]; then
   # `sort | head -1` GIR SIGPIPE (Codex P2): `head` lukker røret etter
   # første linje, `sort` dør på signal 141, og med `pipefail` + `set -e`
   # avbrytes hele kjøringen. Med nok utløpte par ville retensjonen da
