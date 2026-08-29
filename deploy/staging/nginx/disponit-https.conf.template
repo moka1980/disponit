@@ -212,10 +212,32 @@ server {
     # rate-soner.conf. Bursten er 500: sonens jevne rate er 833 r/s, og
     # bursten dekker det øyeblikkelige spranget når strømmen starter.
     # Bindingen er `test_nginx_kandidatrutene_faar_sin_egen_ratesone`.
+    #
+    # OG FRISTEN, IKKE BARE TAKET OG SONEN (Codex P2). Begge rutene arvet
+    # nginx' default `proxy_read_timeout` på 60 s — nøyaktig det samme
+    # tallet som controllerens `SKRIV_BEHANDLING_S`, altså budsjettet
+    # plattformen SELV setter av til å behandle kroppen ETTER at den er
+    # mottatt. Marginen mellom de to var null. Handleren skal i det
+    # vinduet parse inntil 301 MiB wire-JSON, kanonisere og hashe
+    # payloaden og fullføre databasetransaksjonen, og den sender ikke en
+    # eneste byte underveis — så for nginx er upstream helt taus hele
+    # veien. En GYLDIG forespørsel som bruker budsjettet sitt ble derfor
+    # kuttet av ingressen før controllerens egen, mye lengre
+    # `SKRIVEFRIST_S` (361 s) var i nærheten. Følgen er tredje gang den
+    # samme: `lever` leser ikke-2xx som TERMINALT og `kjor_bunt` feller
+    # HELE evalueringen som `kandidatlagring_feilet` — ingressen felte
+    # igjen den eneste kjøringen rutene finnes for.
+    #
+    # 180 s er 3 × `SKRIV_BEHANDLING_S`: samme prinsipp som sonen og
+    # kroppsgrensen over — ingressen skal ikke være strammere enn den
+    # grensen appen selv håndhever — og fortsatt godt innenfor
+    # `SKRIVEFRIST_S`, så klienten er den som gir opp først, ikke
+    # proxyen. Bindingen er `test_nginx_kandidatrutene_faar_frist_med_margin`.
     location = /v1/rekruttering/kandidatdokument {
         client_max_body_size 185m;      # >= MAKS_KANDIDATDOK_KROPP (~184,3 MiB)
         limit_req zone=disponit_kandidatdata burst=500 nodelay;
         limit_req_status 429;
+        proxy_read_timeout 180s;        # >= 3 x SKRIV_BEHANDLING_S (60 s)
         proxy_pass http://unix:/run/disponit/api.sock;
     }
 
@@ -223,6 +245,7 @@ server {
         client_max_body_size 301m;      # = MAKS_KANDIDATARTEFAKT_KROPP (301 MiB)
         limit_req zone=disponit_kandidatdata burst=500 nodelay;
         limit_req_status 429;
+        proxy_read_timeout 180s;        # >= 3 x SKRIV_BEHANDLING_S (60 s)
         proxy_pass http://unix:/run/disponit/api.sock;
     }
 

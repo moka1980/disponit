@@ -315,6 +315,56 @@ def test_nginx_kandidatrutene_faar_sin_egen_ratesone():
         assert "limit_req_status 429;" in krop, rute
 
 
+def test_nginx_kandidatrutene_faar_frist_med_margin():
+    """#173 (Codex P2): ingressens FRIST må ha margin over appens eget
+    behandlingsbudsjett.
+
+    Sonen og kroppsgrensen ble bundet til appkonstantene i tidligere
+    runder, men begge rutene arvet fortsatt nginx' default
+    `proxy_read_timeout` på 60 s — nøyaktig samme tall som
+    `controller.SKRIV_BEHANDLING_S`, altså det plattformen SELV setter
+    av til å behandle kroppen etter at den er mottatt. Marginen var
+    null.
+
+    Og vinduet er ekte taust: handleren parser inntil 301 MiB
+    wire-JSON, kanoniserer og hasher payloaden og fullfører
+    databasetransaksjonen uten å sende en byte underveis. En GYLDIG
+    forespørsel som bruker budsjettet sitt ble derfor kuttet av
+    ingressen — 504 — før controllerens egen `SKRIVEFRIST_S` var i
+    nærheten. Tredje gang samme følge: `lever` leser ikke-2xx som
+    TERMINALT, og `kjor_bunt` feller hele evalueringen som
+    `kandidatlagring_feilet`.
+
+    Ankeret er appkonstanten, ikke et tall kopiert inn i testen — samme
+    form som rate-sonen og kroppsgrensen.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `proxy_read_timeout` fra en av
+    rutene (da gjelder defaulten på 60 s igjen), eller sett den til
+    `SKRIV_BEHANDLING_S` uten margin."""
+    from api.app import KANDIDATARTEFAKT_RUTE, KANDIDATDOK_RUTE
+    from modules.m57_ats.controller import SKRIVEFRIST_S, SKRIV_BEHANDLING_S
+    https = _https()
+    for rute in (KANDIDATDOK_RUTE, KANDIDATARTEFAKT_RUTE):
+        blokk = re.search(r"location = %s \{(.*?)\n    \}" % re.escape(rute),
+                          https, re.S)
+        assert blokk, f"ingen egen nginx-location for {rute}"
+        m = re.search(r"proxy_read_timeout\s+(\d+)s;", blokk.group(1))
+        assert m, (
+            f"{rute} arver nginx' default proxy_read_timeout (60 s) —"
+            " samme tall som appens eget behandlingsbudsjett, altså null"
+            " margin")
+        frist = int(m.group(1))
+        assert frist > SKRIV_BEHANDLING_S, (
+            f"{rute}: ingressen kutter etter {frist} s, appen budsjetterer"
+            f" {SKRIV_BEHANDLING_S} s behandling — proxyen feller et gyldig"
+            " skriv, og sinken leser 504 som kandidatlagring_feilet")
+        # Og ikke lenger enn klientens egen tålmodighet: da ville nginx
+        # holdt en forbindelse ingen venter på lenger.
+        assert frist <= SKRIVEFRIST_S, (
+            f"{rute}: ingressens frist ({frist} s) er lengre enn"
+            f" controllerens SKRIVEFRIST_S ({SKRIVEFRIST_S} s)")
+
+
 def test_173_kandidatrutenes_kroppstak_daekker_arkivets_maksdokument():
     """#173 (Cursor P2-5): de to takene var dokumenterte Codex-fikser
     uten port. En mutasjon tilbake til `MAKS_KROPP` slapp gjennom CI, og
