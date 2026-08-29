@@ -425,11 +425,22 @@ def test_221_cursoren_er_serverens_og_folges_uten_hull(migrator, miljo):
     `flere: False` og ingen cursor, og en manipulert cursor er 400
     `cursor_ugyldig` — aldri en annen tenants fortsettelse.
 
+    De negative armene MÅLER de to bindingene påstanden hviler på
+    (Cursor P2): en manipulert cursor (signaturen), og en ekte,
+    korrekt signert cursor som tilhører en ANNEN tenant (tenantleddet)
+    — husformen fra `test_api.py::test_cursor_ugyldig` og
+    `test_pr015_endepunkt.py`. Uten den siste armen kunne
+    tenantsjekken i `cursor.les_v2` falle ut og suiten forbli grønn.
+
     MUTASJONEN SOM DREPER DENNE: la keyset-leddet stå, men fjern
-    signaturkontrollen i `cursormodul.les` — den manipulerte cursoren
-    slipper da gjennom som et par tall."""
+    signaturkontrollen i `cursormodul.les_v2` — den manipulerte
+    cursoren slipper da gjennom som et par tall; eller fjern
+    `t`-sjekken samme sted — da følger denne tenanten en fremmed
+    fortsettelse."""
+    from datetime import datetime, timezone
     from starlette.testclient import TestClient
     from api.app import lag_app
+    from api import cursor as cursormodul
     from api import sesjon as sesjonmodul
     from db import kryptering
 
@@ -519,6 +530,29 @@ def test_221_cursoren_er_serverens_og_folges_uten_hull(migrator, miljo):
                    cookies=ck)
         assert r3.status_code == 400, r3.text
         assert r3.json()["feil"] == "cursor_ugyldig"
+
+        # … og en ekte, korrekt SIGNERT cursor som tilhører en annen
+        # tenant er den armen docstringen lover: signaturen er gyldig,
+        # så bare tenantbindingen kan avvise den (Cursor P2).
+        fremmed = cursormodul.lag_v2(
+            a.tjeneste.cursorpepper, tenant=ANNEN_TENANT,
+            endepunkt="rekruttering_evalueringer", retning="desc",
+            filtre={}, ts=datetime.now(timezone.utc), rad_id=1)
+        r4 = c.get(f"/v1/rekruttering/evalueringer?cursor={fremmed}",
+                   cookies=ck)
+        assert r4.status_code == 400, r4.text
+        assert r4.json()["feil"] == "cursor_ugyldig"
+
+        # Og endepunktbindingen: en egen, gyldig cursor fra et ANNET
+        # endepunkt hos SAMME tenant peker inn i en annen spørring.
+        naboen = cursormodul.lag_v2(
+            a.tjeneste.cursorpepper, tenant=TENANT,
+            endepunkt="beslutninger", retning="desc",
+            filtre={}, ts=datetime.now(timezone.utc), rad_id=1)
+        r5 = c.get(f"/v1/rekruttering/evalueringer?cursor={naboen}",
+                   cookies=ck)
+        assert r5.status_code == 400, r5.text
+        assert r5.json()["feil"] == "cursor_ugyldig"
 
 
 @pg
