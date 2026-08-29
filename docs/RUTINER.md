@@ -365,9 +365,14 @@ Det som er alt aktivert, felles ikke. m01, m02 og m56 mangler en
 registrert produktgjennomgang, og det er sant — men det er et issue, ikke
 en rød CI.
 
-En modul som en dag virkelig mangler en flate skriver `status: blokkert`
-med `blokkert_av`. Registrert slår fraværende: en manglende nøkkel står
-ingen steder, en blokkert står i sjekklista.
+En modul som en dag virkelig mangler en flate skriver punktet
+`produktgjennomgang_bestatt: {status: blokkert, blokkert_av: …}`. Det er
+SJEKKLISTEPUNKTETS status, ikke modulens: modul-`status` er en lukket
+enum (`aktiv | inaktiv | under_utvikling`), og en modul som tok
+dokumentet på ordet og skrev `blokkert` DER, ville feilet
+`valider_manifest` og CI-steget «Manifestskjema (v2 Del 7)». Modulen står
+`inaktiv`; punktet står `blokkert`. Registrert slår fraværende: en
+manglende nøkkel står ingen steder, en blokkert står i sjekklista.
 
 Punktet er en `evidensfil`. Det er den eneste av de fire kildetypene
 (`artefakt`, `registerhendelse`, `evidensfil`, `ci_kjoring`) som bærer

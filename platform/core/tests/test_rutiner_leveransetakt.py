@@ -102,6 +102,29 @@ def test_produktakseptpunktets_kildetype_finnes_i_akseptmodellen():
         " leser setter `required` og gjør hver PR rød")
     assert "blokkert" in p, \
         "det finnes ingen ærlig utvei for en modul uten flate"
+    # UTVEIEN MÅ PEKE ET STED SOM FINNES (Cursor P2, runde 1). Første
+    # utgave lovet at modulen «skriver `status: blokkert` med
+    # `blokkert_av`» — men `blokkert` bor på SJEKKLISTEPUNKTET, ikke på
+    # modulen, hvis enum er lukket. En modul som fulgte dokumentet ble
+    # avvist av `valider_manifest`: en ærlig utvei som gjør CI rød er
+    # ingen utvei. Porten binder de to enumene mot hverandre, så prosaen
+    # ikke kan gli tilbake til modulnivået.
+    import json
+
+    skjema = json.loads(
+        (ROT / "platform" / "core" / "manifest-skjema.json")
+        .read_text(encoding="utf-8"))
+    modulstatus = set(skjema["properties"]["status"]["enum"])
+    punktstatus = set(skjema["$defs"]["punkt"]["properties"]["status"]["enum"])
+    assert "blokkert" in punktstatus, (
+        "§12.2s utvei hviler på punktstatusen «blokkert», men "
+        f"skjemaet tillater bare {sorted(punktstatus)}")
+    if "blokkert" not in modulstatus:
+        assert "produktgjennomgang_bestatt" in p and "SJEKKLISTEPUNKTETS" in p, (
+            "§12.2 lar «blokkert» stå uten å si at det er punktets status "
+            f"— men modul-`status` tillater bare {sorted(modulstatus)}, så "
+            "en modul som følger dokumentet feiler «Manifestskjema (v2 "
+            "Del 7)»")
     m = re.search(r"kilde_type[^;]*?CHECK[^;]*?IN\s*\(([^)]*)\)",
                   MIGRASJON, re.S)
     assert m, "fant ingen kilde_type-CHECK i 049_modulaksept.sql"
