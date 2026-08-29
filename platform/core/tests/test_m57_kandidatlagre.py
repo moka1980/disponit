@@ -3388,3 +3388,152 @@ def test_sp10_daekker_067():
     mal = sp10[sp10.index("def _mal_067"):sp10.index("SEEDS = {")]
     assert "makulert_ts" in mal and "ciphertext" in mal, \
         "målingen ser hverken merket eller den tømte payloaden"
+
+
+@pg
+def test_069_tidligsletting_reapes_i_forste_sveip(migrator):
+    """069: «Slett» i flaten er en BESTILLING reaperen fullbyrder.
+
+    Fristen og lukkingen er immutable (port 20) — tidligslettingen er
+    et eget, enveis merke: døren setter det (og lukker en ulukket
+    prosess), reaperens predikat tar bestilte slettinger uavhengig av
+    fristen, og alle reap-portene (seks lagre + makulering) gjelder.
+    Merket kan aldri fjernes eller flyttes — heller ikke av eieren.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `slett_bestilt_ts`-leddet fra
+    reaperens predikat — prosessen med frist 90 døgn består da sveipet."""
+    rt = _rt()
+    rp = None
+    try:
+        oid, pid = _prosess(migrator, rt, frist=90)
+        _fyll_lagrene(rt, pid)
+        rt.commit()
+        assert _tell_fixtur(migrator, pid) == 9
+        migrator.rollback()
+        # Døren: idempotent, lukker den åpne prosessen, setter merket.
+        _sett_kontekst(rt, TENANT)
+        rt.execute("SELECT bestill_tidligsletting(%s,%s)", (TENANT, pid))
+        rt.execute("SELECT bestill_tidligsletting(%s,%s)", (TENANT, pid))
+        rt.commit()
+        _sett_kontekst(migrator, TENANT)
+        rad = migrator.execute(
+            "SELECT lukket_ts IS NOT NULL, slett_bestilt_ts IS NOT NULL"
+            "  FROM rekrutteringsprosess"
+            " WHERE tenant=%s AND prosess_id=%s", (TENANT, pid)).fetchone()
+        assert rad == (True, True), rad
+        # Merket er enveis — flytting og fjerning felles av vakten.
+        # Konteksten er TRANSAKSJONSLOKAL og rollback tar den med seg
+        # (FORCE RLS gjelder også eieren) — settes derfor INNE i løkka.
+        for ny in ("NULL", "now() - interval '1 hour'"):
+            _sett_kontekst(migrator, TENANT)
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                migrator.execute(
+                    f"UPDATE rekrutteringsprosess SET slett_bestilt_ts={ny}"
+                    f" WHERE tenant=%s AND prosess_id=%s", (TENANT, pid))
+            migrator.rollback()
+        # En prosess kan aldri FØDES med merket (CodeRabbit på 069):
+        # gravsteinsklassen fra lagervakten, på ankeret.
+        o2, _ = _claimet(migrator)
+        _sett_kontekst(migrator, TENANT)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            migrator.execute(
+                "INSERT INTO rekrutteringsprosess (tenant, prosess_id,"
+                " oppdrag_id, slett_bestilt_ts)"
+                " VALUES (%s, gen_random_uuid(), %s, now())",
+                (TENANT, o2))
+        migrator.rollback()
+        # Reaperen tar den i FØRSTE sveip — 90-døgnsfristen har så vidt
+        # begynt å løpe.
+        rp, _timer = _reaperkobling()
+        reapet = rp.execute("SELECT * FROM reap_kandidatdata(50)").fetchall()
+        rp.commit()
+        assert (TENANT, pid) in [(r[0], r[1]) for r in reapet], reapet
+        assert _tell_fixtur(migrator, pid) == 0
+        migrator.rollback()
+    finally:
+        rt.close()
+        if rp is not None:
+            rp.close()
+
+
+@pg
+def test_069_slett_og_avbryt_endepunktene(migrator, miljo):
+    """Flatens Slett og Avbryt går gjennom sine egne dører (069).
+
+    Avbryt: `plukket` går maskinens EGEN vei (plukket -> opprettet ->
+    kansellert i samme transaksjon), ankeret lukkes (frist fra
+    avslutningen, sak 222-formen), og en terminal evaluering svarer
+    `evaluering_terminal` — flaten oppfrisker i stedet for å tro på
+    skjermbildet. Slett: bestiller tidligsletting via døren; ukjent
+    oppdrag er `ikke_funnet`."""
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    from api import sesjon as sesjonmodul
+    from .test_bestilling_rekruttering import _adminsesjon, _sikre_m57_claimbar
+    from .test_api import DSN as API_DSN, dekker  # noqa: F401
+
+    _sikre_m57_claimbar(migrator)
+    migrator.commit()
+    rt = _rt()
+    try:
+        oid, pid = _prosess(migrator, rt, frist=90)
+        rt.commit()
+        a = lag_app(API_DSN)
+        with TestClient(a) as c:
+            cookie, csrf = _adminsesjon()
+            hode = {"X-Disponit-CSRF": csrf}
+            ck = {sesjonmodul.C_SESJON: cookie,
+                  "__Host-disponit_csrf": csrf}
+            r1 = c.post(f"/v1/rekruttering/evaluering/{oid}/avbryt",
+                        cookies=ck, headers=hode)
+            assert r1.status_code == 200, r1.text
+            _sett_kontekst(migrator, TENANT)
+            rad = migrator.execute(
+                "SELECT o.status, p.lukket_ts IS NOT NULL"
+                "  FROM oppdrag o JOIN rekrutteringsprosess p"
+                "    ON p.tenant=o.tenant AND p.oppdrag_id=o.id"
+                " WHERE o.tenant=%s AND o.id=%s", (TENANT, oid)).fetchone()
+            migrator.rollback()
+            assert rad == ("kansellert", True), rad
+            # Terminal: 409 med egen kode.
+            r2 = c.post(f"/v1/rekruttering/evaluering/{oid}/avbryt",
+                        cookies=ck, headers=hode)
+            assert r2.status_code == 409, r2.text
+            assert r2.json()["feil"] == "evaluering_terminal"
+            # Slett: bestiller tidligsletting.
+            r3 = c.post(f"/v1/rekruttering/evaluering/{oid}/slett",
+                        cookies=ck, headers=hode)
+            assert r3.status_code == 200, r3.text
+            _sett_kontekst(migrator, TENANT)
+            assert migrator.execute(
+                "SELECT slett_bestilt_ts IS NOT NULL"
+                "  FROM rekrutteringsprosess"
+                " WHERE tenant=%s AND prosess_id=%s",
+                (TENANT, pid)).fetchone()[0]
+            migrator.rollback()
+            # Bestillingen ER slettingen sett fra kunden (069-utvidelsen av
+            # grenseformelen): listen dømmer «slettet» og indeksen mister
+            # prosessen I SAMME ØYEBLIKK — ikke først ved reaperens batch.
+            r5 = c.get("/v1/rekruttering/evalueringer",
+                       cookies=ck, headers=hode)
+            assert r5.status_code == 200, r5.text
+            mine = [e for e in r5.json()["evalueringer"]
+                    if e["oppdrag_id"] == oid]
+            assert mine and mine[0]["slettet"] is True, mine
+            r6 = c.get("/v1/rekruttering/prosesser",
+                       cookies=ck, headers=hode)
+            assert r6.status_code == 200, r6.text
+            assert all(p["prosess_id"] != str(pid)
+                       for p in r6.json()["prosesser"]), r6.text
+            # Ukjent oppdrag: intet anker å slette.
+            r4 = c.post("/v1/rekruttering/evaluering/99999999/slett",
+                        cookies=ck, headers=hode)
+            assert r4.status_code == 404, r4.text
+    finally:
+        rt.close()
+
+
+from .test_api import dekker as _dekker069  # noqa: E402
+
+test_069_slett_og_avbryt_endepunktene = _dekker069(
+    "evaluering_terminal")(test_069_slett_og_avbryt_endepunktene)

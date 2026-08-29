@@ -521,6 +521,7 @@ def _anker_lever(conn, tenant, oppdrag_id) -> bool:
         "SELECT EXISTS (SELECT 1 FROM rekrutteringsprosess p"
         "  WHERE p.tenant=%s AND p.oppdrag_id=%s"
         "    AND p.slettet_ts IS NULL"
+        "    AND p.slett_bestilt_ts IS NULL"
         "    AND clock_timestamp() < coalesce(p.lukket_ts, p.opprettet)"
         "                + p.slettefrist_dogn * interval '1 day')",
         (tenant, oppdrag_id)).fetchone()[0]
@@ -616,6 +617,9 @@ def rekrutteringsrapport_detalj(tjeneste, request: Request) -> Response:
             "   AND EXISTS (SELECT 1 FROM rekrutteringsprosess p"
             "        WHERE p.tenant = o.tenant AND p.oppdrag_id = o.id"
             "          AND p.slettet_ts IS NULL"
+            # 069: bestilt tidligsletting stenger lesingen i samme
+            # øyeblikk som bestillingen — ikke først ved reaperens batch.
+            "          AND p.slett_bestilt_ts IS NULL"
             "          AND now() < coalesce(p.lukket_ts, p.opprettet)"
             "                      + p.slettefrist_dogn * interval '1 day')"
             " ORDER BY a.promotert_ts DESC LIMIT 1",
@@ -737,6 +741,7 @@ def rekrutteringsevalueringer(tjeneste, request: Request) -> Response:
             " AND EXISTS (SELECT 1 FROM rekrutteringsprosess p"
             "      WHERE p.tenant = o.tenant AND p.oppdrag_id = o.id"
             "        AND p.slettet_ts IS NULL"
+            "        AND p.slett_bestilt_ts IS NULL"  # 069: som detaljruten
             "        AND now() < coalesce(p.lukket_ts, p.opprettet)"
             "                    + p.slettefrist_dogn * interval '1 day'),"
             # … og reapingen NAVNGIS (Codex P2): et `utfort` oppdrag med
@@ -748,6 +753,10 @@ def rekrutteringsevalueringer(tjeneste, request: Request) -> Response:
             " EXISTS (SELECT 1 FROM rekrutteringsprosess p"
             "      WHERE p.tenant = o.tenant AND p.oppdrag_id = o.id"
             "        AND (p.slettet_ts IS NOT NULL"
+            # 069: bestillingen ER slettingen sett fra kunden — flaten
+            # skal vise «slettet» i svaret på selve slett-kallet, ikke
+            # først når reaperens batch har løpt.
+            "             OR p.slett_bestilt_ts IS NOT NULL"
             "             OR now() >= coalesce(p.lukket_ts, p.opprettet)"
             "                 + p.slettefrist_dogn * interval '1 day'))"
             " AS slettet"
