@@ -36,8 +36,26 @@ from starlette.concurrency import run_in_threadpool
 #: verken tas eierskap over eller traverseres ned i. opp.sh oppretter den
 #: også ved førstegangsdeploy; en manglende rot er en deploy-feil og skal si
 #: det, ikke ENOENT dypt nede.
-INNDATA_ROT = os.environ.get("DISPONIT_INNDATA_ROT",
-                             "/var/lib/disponit-inndata")
+#:
+#: ROTEN ER IKKE EN KNAPP, og det er et vedtak (#191, K2 mellom to
+#: Cursor-runder som pekte motsatt vei). Den var `os.environ.get(...)` med
+#: denne stien som default — en knapp som IKKE KAN ta noen annen verdi:
+#: uniten kjører `ProtectSystem=strict`, og `StateDirectory` er da den
+#: ENESTE skrivbare stien den har. Peker variabelen et annet sted, blir hver
+#: opplasting `EROFS` i prod — mens `install -d` i opp.sh og eierskapet ser
+#: helt riktig ut. Skulle den bli sann, måtte stien inn som skrivbar ved
+#: siden av `StateDirectory`, og det er nøyaktig `ReadWritePaths`-formen
+#: #162 forkastet på Codex P1.
+#:
+#: En knapp som bare kan stå i én stilling er ikke konfigurasjon; den er en
+#: invitasjon til at API-et og backupen leser hver sin rot uten at noe sier
+#: fra. Derfor står stien her som en konstant, og porten
+#: `test_inndatalageret_er_api_unitens_egen_state_katalog` binder alle fire
+#: stedene den finnes til unitens eget `StateDirectory`-navn.
+#:
+#: Testene injiserer sin egen rot med `monkeypatch.setattr` på DENNE
+#: konstanten — ikke via miljøet — så bindingen koster ingen testbarhet.
+INNDATA_ROT = "/var/lib/disponit-inndata"
 
 #: AES-GCM-taggen, i bytes. `kryptering.krypter_bytes` legger den — og
 #: INGENTING annet — til klarteksten; nonce-en bor i sin egen kolonne. En
