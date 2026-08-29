@@ -2094,6 +2094,132 @@ def test_222_fristfeiling_lukker_ankeret(migrator):
             rp.close()
 
 
+def _utlopt_beslutning(m, tenant, *, oppdragstype, eiermodul, status,
+                       alder_min):
+    """Beslutningsoppdrag født med fristene alt passert, i EN gitt tenant.
+
+    Fristene er frosset ved fødselen (056-kolonnelåsen), så avviket må
+    oppgis i INSERT-en — samme form som
+    `test_222_fristfeiling_lukker_ankeret` over. `alder_min` styrer
+    REKKEFØLGEN i sveipet: loopen er `ORDER BY o.evidensfrist`.
+    """
+    from db import kryptering
+    _sett_kontekst(m, tenant)
+    logg = m.execute(
+        "INSERT INTO revisjonslogg (tenant, aktor, kilde, input_hash,"
+        " policy_id, beslutning, begrunnelse, idempotency_key)"
+        " VALUES (%s,'test','api_token','ih','p@1.0.0/x.y','TILLAT',"
+        "'[]',%s) RETURNING id",
+        (tenant, secrets.token_hex(8))).fetchone()[0]
+    key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(m, tenant)
+    ct, nonce = kryptering.krypter(dek, {"m57": True}, tenant, key_id)
+    oid = m.execute(
+        "INSERT INTO oppdrag (opprinnelse, tenant,"
+        " beslutning_loggpost_id, oppdragstype, handling, eiermodul,"
+        " payload_kryptert, key_id, nonce, utforelsesfrist,"
+        " evidensfrist, koblingsstatus)"
+        " VALUES ('beslutning',%s,%s,%s,%s,%s,%s,%s,%s,"
+        f" now()-interval '{alder_min + 1} minutes',"
+        f" now()-interval '{alder_min} minutes','KOBLET') RETURNING id",
+        (tenant, logg, oppdragstype, oppdragstype, eiermodul, ct, key_id,
+         nonce)).fetchone()[0]
+    if status != "opprettet":
+        m.execute("UPDATE oppdrag SET status=%s WHERE tenant=%s AND id=%s",
+                  (status, tenant, oid))
+    m.commit()
+    return int(oid)
+
+
+@pg
+def test_222_ankerlukkingen_ser_bare_sitt_eget_oppdrag(migrator):
+    """Cursor P1 på #252 (runde 2) — MÅLING AV EN PÅSTAND OM PL/pgSQL.
+
+    Funnet var at `SELECT … INTO` skal la målvariabelen stå UENDRET når
+    spørringen ikke gir rader, slik at et sveip som først lukker tenant
+    A-s anker treffer neste, ankerløse oppdrag med A-s `v_pid` i hånda
+    og kaller `lukk_rekrutteringsprosess(B, A-s pid, …)` →
+    `invalid_parameter_value` → hele batchen ruller. Samme påstand for
+    `v_kandidat`: stale sak-id → `FOR UPDATE … NOT FOUND` → stille
+    `CONTINUE`, altså et utløpt oppdrag som aldri feiles.
+
+    PostgreSQL dokumenterer det motsatte («target will be set to the
+    first row returned by the query, or to nulls if the query returned
+    no rows»), og 058/059 skriver den semantikken ut i klartekst i sine
+    egne kommentarer. Men dokumentasjon er ikke en måling, og formen
+    påstanden handler om — TO utløpte oppdrag i ETT sveip, i HVER SIN
+    tenant, der bare det første har anker og sak — fantes ikke i suiten.
+    Nå gjør den det, og basen avgjør spørsmålet.
+
+    Begge armene er bebodd med vilje: A har både et ÅPENT anker og en
+    åpen `evidensfrist`-sak, B har ingen av delene og ligger etter A i
+    `ORDER BY o.evidensfrist`. Holder påstanden, er testen rød på
+    nøyaktig de to måtene funnet beskriver — ellers grønn.
+    """
+    from .test_api import ANNEN_TENANT
+    rt = _rt()
+    rp = None
+    try:
+        # A: claimet M-57-oppdrag med anker, ELDST i sveipet.
+        oid_a = _utlopt_beslutning(
+            migrator, TENANT, oppdragstype="rekruttering.evaluering",
+            eiermodul="m57_ats", status="plukket", alder_min=10)
+        _sett_kontekst(rt, TENANT)
+        pid_a = rt.execute("SELECT opprett_rekrutteringsprosess(%s,%s,%s)",
+                           (TENANT, oid_a, 90)).fetchone()[0]
+        # …og en ÅPEN evidensfrist-sak, så `v_kandidat` faktisk får en
+        # verdi å være stale med. Låsen må være ledig når sveipet går,
+        # derav commit — en åpen transaksjon her ville fått reaperen til
+        # å hoppe over A av en helt annen grunn enn den testen måler.
+        rt.execute("SELECT sikre_sak_for_oppdrag(%s,%s,'evidensfrist',"
+                   "'test','r-forhaand')", (TENANT, oid_a))
+        rt.commit()
+
+        # B: ANNEN tenant, WCAG — har per konstruksjon verken
+        # rekrutteringsprosess eller evidensfrist-sak, og kommer ETTER A.
+        oid_b = _utlopt_beslutning(
+            migrator, ANNEN_TENANT,
+            oppdragstype="kontroll.wcag.nettsted",
+            eiermodul="m_wcag_audit", status="opprettet", alder_min=9)
+
+        rp, _timerrolle = _reaperkobling()
+        # Selve målingen: ETT sveip over begge. Stale `v_pid` ville felt
+        # dette kallet med `invalid_parameter_value`.
+        rader = rp.execute("SELECT tenant, oppdrag_id"
+                           " FROM reap_evidensfrister(200)").fetchall()
+        rp.commit()
+        assert (TENANT, oid_a) in rader, f"A ble ikke reapet: {rader!r}"
+        assert (ANNEN_TENANT, oid_b) in rader, \
+            ("B falt ut av sveipet — en stale `v_kandidat` gir nettopp"
+             f" dette stille `CONTINUE`-et: {rader!r}")
+
+        _sett_kontekst(migrator, TENANT)
+        status_a, lukket_a = migrator.execute(
+            "SELECT o.status, p.lukket_ts IS NOT NULL FROM oppdrag o"
+            " JOIN rekrutteringsprosess p ON p.tenant = o.tenant"
+            " AND p.oppdrag_id = o.id WHERE o.tenant=%s AND o.id=%s",
+            (TENANT, oid_a)).fetchone()
+        migrator.rollback()
+        _sett_kontekst(migrator, ANNEN_TENANT)
+        status_b = migrator.execute(
+            "SELECT status FROM oppdrag WHERE tenant=%s AND id=%s",
+            (ANNEN_TENANT, oid_b)).fetchone()[0]
+        # …og B fikk ikke A-s anker dyttet over på seg på veien.
+        ankre_b = migrator.execute(
+            "SELECT count(*) FROM rekrutteringsprosess WHERE tenant=%s",
+            (ANNEN_TENANT,)).fetchone()[0]
+        migrator.rollback()
+        assert (status_a, lukket_a) == ("feilet", True), \
+            f"A: {(status_a, lukket_a, pid_a)}"
+        assert status_b == "feilet", \
+            f"B ble stående utenfor sin egen frist-feiling: {status_b}"
+        assert ankre_b == 0, \
+            f"ankerlukkingen skrev inn i feil tenant: {ankre_b}"
+    finally:
+        rt.close()
+        if rp is not None:
+            rp.close()
+
+
 @pg
 def test_reapmerket_krever_ogsaa_at_rapporten_er_makulert(migrator):
     """Cursor P1 på #252: vakten målte de SEKS lagrene, ikke `artefakt`.
