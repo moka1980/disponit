@@ -2183,8 +2183,12 @@ test("Evalueringer: hopplenke med ÉN prosess — ankeret står før "
   // Første prosesskontroll i én-prosess-grenen: blindingsbryteren/vekt-
   // kontrollen — ankeret må ligge FØR den (mutasjonen «flytt hoppAnker
   // etter listeRot» rødner her).
+  // Rapportens EGNE vekter (mobil-redesignet 29/8) hører til rangeringen
+  // og ligger med rette FØR ankeret — prosesskontrollen porten måler er
+  // dypdykkets (fieldset.rekrut-vekter), blindingen eller tabellen.
   const foersteKontroll = hoved.querySelector(
-    "input[type=range], input[type=checkbox], table[aria-label]");
+    "fieldset.rekrut-vekter input[type=range], input[type=checkbox],"
+    + " table[aria-label]");
   assert.ok(foersteKontroll, "fant ingen prosesskontroll i riggen");
   assert.ok(alle.indexOf(maal) < alle.indexOf(foersteKontroll),
     "ankeret ligger etter prosesskontrollene — hoppet lander for langt ned");
@@ -5234,7 +5238,10 @@ test("Vis funn: det tilgjengelige navnet er en LOCALE-mal, ikke en setning i kod
       "rapporten kom aldri");
     const tabell = [...hoved.querySelectorAll("table")]
       .find((tb) => tb.textContent.includes("kandidat-01"));
-    const rader = [...tabell.querySelectorAll("tbody tr")];
+    // Funnene bor i egen fullbredderad (mobil-redesignet 29/8):
+    // hovedradene telles, og summaryen står i PARETS detaljrad.
+    const rader = [...tabell.querySelectorAll(
+      "tbody tr:not(.rekrut-detaljrad)")];
     assert.equal(rader.length, 2, "rangeringen kom aldri");
     // Malen deles på plassholderen — porten substituerer ikke selv, og
     // måler derfor flatens fylling og ikke sin egen.
@@ -5244,7 +5251,7 @@ test("Vis funn: det tilgjengelige navnet er en LOCALE-mal, ikke en setning i kod
     assert.ok(for_.trim(), "malen er tom — da måler resten ingenting");
     for (const rad of rader) {
       const synlig = rad.querySelector("th[scope=row]").textContent.trim();
-      const sm = rad.querySelector("details > summary");
+      const sm = rad.nextElementSibling.querySelector("details > summary");
       assert.equal(sm.getAttribute("aria-label"), `${for_}${synlig}${etter}`,
         "det tilgjengelige navnet følger ikke malen i locale");
       // Den synlige teksten er fortsatt bare handlingen.
@@ -5356,8 +5363,9 @@ test("Rapport: hjelperen finner rangeringstabellen på ENGELSK òg", async () =>
     const tabell = rapporttabellen(hoved);
     assert.ok(tabell, "hjelperen fant ikke rangeringstabellen på engelsk");
     // …og det er RANGERINGEN den fant, ikke prosessens tabell.
-    assert.equal(tabell.querySelectorAll("tbody tr").length, 2,
-      "hjelperen traff en annen tabell enn rangeringen");
+    assert.equal(tabell.querySelectorAll(
+      "tbody tr:not(.rekrut-detaljrad)").length, 2,
+    "hjelperen traff en annen tabell enn rangeringen");
   } finally {
     settI18nForTest(NB, "nb");
   }
@@ -5701,9 +5709,10 @@ test("Kortnavn: det tilgjengelige navnet bærer RADENS referanse, ikke rå UUID"
 
   const rTabell = rapporttabellen(hoved2);
   const rNavn = [];
-  for (const rad of rTabell.querySelectorAll("tbody tr")) {
+  for (const rad of rTabell.querySelectorAll(
+    "tbody tr:not(.rekrut-detaljrad)")) {
     const synlig = rad.querySelector("th[scope=row]").textContent.trim();
-    const navn = rad.querySelector("details > summary")
+    const navn = rad.nextElementSibling.querySelector("details > summary")
       .getAttribute("aria-label");
     rNavn.push(navn);
     assert.ok(synlig.endsWith("…") && synlig.length < a.length,
@@ -6097,4 +6106,68 @@ test("Prosessbytte: bare det SISTE byttet får tegne", async () => {
   assert.ok(await vent(() => [...hoved.querySelectorAll("tbody tr")]
     .some((tr) => tr.querySelector("td").textContent === "K-1")),
     "det nyeste byttet tegnet aldri");
+});
+
+test("Faner: tre paneler, aktiv fane overlever prosessbytte, innhold rives aldri (mobil-redesignet 29/8)", async () => {
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [], flere: false } };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelectorAll("[role=tab]").length === 3),
+    "fanelinja kom aldri");
+  const faner = [...hoved.querySelectorAll("[role=tab]")];
+  assert.deepEqual(faner.map((f) => f.textContent), [
+    t("ui.rekruttering.fane.evalueringer"),
+    t("ui.rekruttering.fane.bestill"),
+    t("ui.rekruttering.fane.profiler")]);
+  // Bestillingsfanen: skjemaet finnes og verdier består over fanebytte
+  // (behold-modus — panelene tømmes aldri av et bytte).
+  faner[1].click();
+  const antall = hoved.querySelector("#bestill-antall");
+  assert.ok(antall, "bestillingsskjemaet finnes ikke i fanen");
+  antall.value = "42";
+  faner[0].click();
+  faner[1].click();
+  assert.equal(hoved.querySelector("#bestill-antall").value, "42",
+    "fanebyttet rev skjemaet — remount-klassen er tilbake");
+  // MUTASJONEN SOM DREPER DENNE: fjern `behold: true` fra fanevalg.
+});
+
+test("Rapportvekter: skyverne re-vekter poengene og omsorterer — åpne funn består (mobil-redesignet 29/8)", async () => {
+  KALL = [];
+  SVAR = { ...enkelRapportSvar() };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => rapporttabellen(hoved)), "rapporten kom aldri");
+  const felt = hoved.querySelector(".rekrut-rapportvekter");
+  assert.ok(felt, "vektfeltet finnes ikke i rapporten");
+  const skyvere = [...felt.querySelectorAll("input[type=range]")];
+  assert.ok(skyvere.length >= 1, "ingen skyvere");
+  const tabell = rapporttabellen(hoved);
+  const rekkefolge = () => [...tabell.querySelectorAll(
+    "tbody tr:not(.rekrut-detaljrad) th[scope=row]")]
+    .map((c) => c.textContent.trim());
+  const foer = rekkefolge();
+  // Åpne første kandidats funn — tilstanden skal overleve omsortering.
+  tabell.querySelector("tbody tr.rekrut-detaljrad details")
+    .setAttribute("open", "");
+  // Dra ALLE skyverne til 0: alle poeng blir 0, teksten i poengcellene
+  // oppdateres — og kunngjøringen melder ny rekkefølge.
+  for (const sk of skyvere) {
+    sk.value = "0";
+    sk.dispatchEvent(new window.Event("input", { bubbles: true }));
+  }
+  const poeng = [...tabell.querySelectorAll(
+    "tbody tr:not(.rekrut-detaljrad) td:first-of-type")]
+    .map((c) => c.textContent);
+  assert.ok(poeng.every((p2) => p2 === "0"),
+    `alle vekter 0 skal gi 0 poeng: ${poeng}`);
+  assert.equal(rekkefolge().length, foer.length,
+    "omsorteringen mistet rader");
+  assert.ok(tabell.querySelector("tbody tr.rekrut-detaljrad details[open]"),
+    "omsorteringen rev den åpne detaljboksen");
+  // MUTASJONEN SOM DREPER DENNE: fjern `omVekt`-kallet i skyverens
+  // input-lytter, eller bygg radene på nytt i stedet for å flytte dem.
 });

@@ -24,7 +24,7 @@ import { hentJson, signerRekrutteringsliste, lagreStillingsprofil,
 import { harScope } from "../sitekart.js";
 import { DataTabell } from "../tabell.js";
 import { Detaljpanel, Bekreftelsesdialog } from "../dialog.js";
-import { Tidspunkt, meldLive } from "../komponenter.js";
+import { Faner, Tidspunkt, meldLive } from "../komponenter.js";
 import { medStatus, flateHode } from "./felles.js";
 
 function meldUtfall(hoved, okt, tekst) {
@@ -489,12 +489,43 @@ function tegn(hoved, ctx, data, okt, valgtId) {
   // bestillingen ligger etter rangeringen også når ingen prosess finnes.
   const hoppAnker = el("div", { id: HOPP_ANKER, tabindex: "-1", role: "group",
     "aria-label": t("ui.rekruttering.evalueringer.hopp_maal") });
+  // FANENE BÆRER FLATEN (mobil-redesignet 29/8, eiers bestilling:
+  // tab-meny når det er flere seksjoner). Tre likestilte visninger —
+  // produktet (evalueringene og rapporten) først, bestillingen og
+  // profilene i egne paneler i stedet for under en lang rulle der
+  // opplastingen gjemte seg nederst. Panelene holder de SAMME nodene
+  // (remount-dommen): `bygg` returnerer den bygde panelroten, og et
+  // fanebytte FLYTTER den — river aldri.
+  const fanevalg = (paneler) => {
+    const faner = Faner({
+      trinn: [
+        { nokkel: "evalueringer",
+          tittel: t("ui.rekruttering.fane.evalueringer"),
+          bygg: () => paneler.evalueringer },
+        { nokkel: "bestill", tittel: t("ui.rekruttering.fane.bestill"),
+          bygg: () => paneler.bestill },
+        { nokkel: "profiler", tittel: t("ui.rekruttering.fane.profiler"),
+          bygg: () => paneler.profiler },
+      ],
+      // Fanen hører til ØKTEN: et prosessbytte re-tegner flaten, og
+      // brukeren skal stå igjen i fanen hun sto i.
+      start: okt.fane || "evalueringer",
+      paaBytte: (n) => { okt.fane = n; },
+      styring: false,
+      // Panelene holder LEVENDE seksjoner (remount-dommen): bygges én
+      // gang, tømmes aldri av et fanebytte.
+      behold: true,
+    });
+    sett(hoved, flateHode(t("ui.rekruttering.tittel")), faner.rot);
+  };
   if (!prosesser.length) {
-    // PRODUKTET FØRST (eiers UX-prinsipp 27/8: færrest mulig klikk
-    // til produktet): rapportene øverst, administrasjonen under.
-    sett(hoved, flateHode(t("ui.rekruttering.tittel")), evalDel, hoppAnker,
-      el("p", { text: t("ui.rekruttering.ingen_prosess") }),
-      profilDel, ...(bestillDel ? [bestillDel] : []));
+    fanevalg({
+      evalueringer: el("div", {}, evalDel, hoppAnker,
+        el("p", { text: t("ui.rekruttering.ingen_prosess") })),
+      bestill: bestillDel
+        || el("p", { text: t("ui.rekruttering.bestill.ingen_profil") }),
+      profiler: profilDel,
+    });
     return;
   }
   // FLERE PROSESSER ER TILGJENGELIGE, IKKE BARE DEN FØRSTE (Codex P2).
@@ -1133,12 +1164,17 @@ function tegn(hoved, ctx, data, okt, valgtId) {
       knapp));
   }
 
-  // PRODUKTET FØRST (eiers UX-prinsipp 27/8): evalueringene og den
-  // ferdige rapporten øverst — prosessdypdykk og administrasjon under.
-  sett(hoved, flateHode(t("ui.rekruttering.tittel")), evalDel, hoppAnker,
-    velgerRot,
-    utfall, kunngjoring, blindingRot, vektRot, merknadRot, tabellRot,
-    listeRot, profilDel, ...(bestillDel ? [bestillDel] : []));
+  // PRODUKTET FØRST (eiers UX-prinsipp 27/8) — nå som FANER:
+  // evalueringene, rapporten og prosessdypdykket i produktfanen;
+  // bestillingen og profilene i hver sin.
+  fanevalg({
+    evalueringer: el("div", {}, evalDel, hoppAnker, velgerRot,
+      utfall, kunngjoring, blindingRot, vektRot, merknadRot, tabellRot,
+      listeRot),
+    bestill: bestillDel
+      || el("p", { text: t("ui.rekruttering.bestill.ingen_profil") }),
+    profiler: profilDel,
+  });
   tegnTabell();
 }
 
@@ -1250,18 +1286,102 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       // regel — og hele id-en står i radens `<details>`, ikke i `title`
       // alene (pass-funn; `title` er musens snarvei, ikke kopi-veien).
       const kortnavn = kortnavnFor(rapport.rangering.map((r) => r.kandidat_id));
-      const kropp = el("tbody", {}, ...rapport.rangering.map((rad) => {
+      // VEKTENE ER SYNLIGE OG LEVENDE OGSÅ HER (mobil-redesignet 29/8,
+      // spesifikasjonens egen guard: «rangering vises som rangering med
+      // synlige vekter»). Prosess-dypdykket har hatt skyverne hele
+      // tiden; rapporten leseren faktisk møter først, viste bare tall.
+      // Re-vektingen er RENT klientarbeid på nedbrytningen — artefaktet
+      // står urørt, og det sies på skjermen. Oppfyllelse utledes av
+      // nedbrytningen (kravet bidro > 0); et krav med profilvekt 0 kan
+      // ikke skilles fra ikke-oppfylt i rapportformen og regnes da som
+      // ikke-oppfylt — ærlig grense, samme som dypdykkets.
+      const profilVekter = {};
+      for (const kravRad of ((rapport.profil || {}).krav || [])) {
+        profilVekter[kravRad.kravnavn] = kravRad.vekt;
+      }
+      // RESERVEN NÅR PROFILEN IKKE BÆRER KRAVENE (samme ærlighet som
+      // dypdykkets `vekter_kilde`): kravene utledes av nedbrytningens
+      // nøkler, og utgangsvekten er største observerte bidrag per krav
+      // (= profilvekten for et oppfylt krav). Kilden sies på skjermen.
+      let vektReserve = false;
+      if (!Object.keys(profilVekter).length) {
+        vektReserve = true;
+        for (const rad of rapport.rangering) {
+          for (const [k, v] of Object.entries(rad.nedbrytning)) {
+            profilVekter[k] = Math.max(profilVekter[k] || 0, v, 1);
+          }
+        }
+      }
+      const vekter = { ...profilVekter };
+      const radPar = rapport.rangering.map((rad) => {
         const boks = detaljboks(rad);
         detaljFor.set(rad.kandidat_id, boks);
-        return el("tr", {},
+        const oppfylt = {};
+        for (const [k, v] of Object.entries(rad.nedbrytning)) {
+          oppfylt[k] = v > 0;
+        }
+        const poengCelle = el("td", { text: String(rad.poeng) });
+        const nedCelle = el("td", { text: Object.entries(rad.nedbrytning)
+          .map(([k, v]) => `${t(`ui.rekruttering.krav.${k}`, k)}: ${v}`)
+          .join(", ") });
+        const hovedrad = el("tr", {},
           el("th", { scope: "row", class: "rekrut-kandidat",
             title: rad.kandidat_id, text: kortnavn(rad.kandidat_id) }),
-          el("td", { text: String(rad.poeng) }),
-          el("td", { text: Object.entries(rad.nedbrytning)
-            .map(([k, v]) => `${t(`ui.rekruttering.krav.${k}`, k)}: ${v}`)
-            .join(", ") }),
-          el("td", {}, boks));
-      }));
+          poengCelle, nedCelle);
+        // FUNNENE FÅR FULL BREDDE (mobil-redesignet): detaljboksen bor i
+        // sin egen rad som spenner alle kolonnene — aldri i en smal
+        // kolonne som bryter ord for ord på mobil.
+        const detaljrad = el("tr", { class: "rekrut-detaljrad" },
+          el("td", { colspan: "3", class: "rekrut-detalj" }, boks));
+        return { rad, oppfylt, poengCelle, nedCelle, hovedrad, detaljrad };
+      });
+      const kropp = el("tbody", {},
+        ...radPar.flatMap((p) => [p.hovedrad, p.detaljrad]));
+      const omVekt = () => {
+        for (const p of radPar) {
+          p.poeng = Object.keys(vekter).reduce(
+            (sum, k) => sum + (p.oppfylt[k] ? vekter[k] : 0), 0);
+          p.poengCelle.textContent = String(p.poeng);
+          p.nedCelle.textContent = Object.keys(vekter)
+            .map((k) => `${t(`ui.rekruttering.krav.${k}`, k)}: `
+              + `${p.oppfylt[k] ? vekter[k] : 0}`)
+            .join(", ");
+        }
+        // Stabil omsortering: parene FLYTTES i ny rekkefølge — åpne
+        // `<details>` beholder tilstanden sin, for nodene er de samme.
+        [...radPar].sort((a, b) => (b.poeng ?? 0) - (a.poeng ?? 0))
+          .forEach((p) => { kropp.append(p.hovedrad, p.detaljrad); });
+      };
+      const vektFelt = el("fieldset", { class: "rekrut-rapportvekter" },
+        el("legend", { text: t("ui.rekruttering.vekter_tittel") }));
+      for (const kravnavn of Object.keys(vekter)) {
+        const id = `rapportvekt-${kravnavn}`;
+        const visning = el("output", { for: id,
+          text: String(vekter[kravnavn]) });
+        const skyver = el("input", { type: "range", id, min: "0",
+          max: String(Math.max(5, ...Object.values(profilVekter))),
+          step: "1", value: String(vekter[kravnavn]) });
+        skyver.addEventListener("input", () => {
+          vekter[kravnavn] = Number(skyver.value);
+          visning.textContent = skyver.value;
+          omVekt();
+          meldLive(t("ui.rekruttering.ny_rekkefolge").replace("{forst}",
+            radPar.length
+              ? kortnavn([...radPar].sort((a, b) =>
+                (b.poeng ?? 0) - (a.poeng ?? 0))[0].rad.kandidat_id)
+              : ""));
+        });
+        vektFelt.append(el("div", { class: "rekrut-vekt" },
+          el("label", { for: id,
+            text: t(`ui.rekruttering.krav.${kravnavn}`, kravnavn) }),
+          skyver, visning));
+      }
+      if (vektReserve) {
+        vektFelt.append(el("p", { class: "rekrut-vekter-kilde",
+          text: t("ui.rekruttering.vekter_standard") }));
+      }
+      vektFelt.append(el("p", { class: "muted",
+        text: t("ui.rekruttering.vekter_klientside") }));
       // ØRET FIKK NAVNET TO GANGER, OG DUPLIKATET LÅ I TEKSTEN (Codex
       // P2). To former er prøvd på denne mekanismen, og begge bommet på
       // samme sted:
@@ -1294,9 +1414,7 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
           el("th", { scope: "col",
             text: t("ui.rekruttering.evalueringer.poeng") }),
           el("th", { scope: "col",
-            text: t("ui.rekruttering.evalueringer.nedbrytning") }),
-          el("th", { scope: "col",
-            text: t("ui.rekruttering.evalueringer.kol_detaljer") }))),
+            text: t("ui.rekruttering.evalueringer.nedbrytning") }))),
         kropp);
       // Skjemaet tillater 5000 kandidater à 100 funn + 20 spørsmål — en
       // gyldig maksrapport ville bygget hundretusener av noder opp front.
@@ -1420,6 +1538,7 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       overskrift,
       hoppLenke,
       el("p", { text: t("ui.rekruttering.evalueringer.blindet") }),
+      vektFelt,
       el("div", { class: "tablewrap" }, tabell)] };
   };
 
