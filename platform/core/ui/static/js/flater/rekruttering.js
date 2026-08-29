@@ -112,6 +112,37 @@ function kortHash(hash) {
   return `${(hash || "").slice(0, 12)}…`;
 }
 
+function kortnavnFor(idene) {
+  // KORTNAVNET REGNES AV DATAENE, ikke av et tall (Codex P2). Vi finner
+  // den korteste lengden der ALLE id-ene i settet fortsatt er
+  // forskjellige, og bruker den for hele tabellen — én lengde, så
+  // kolonnen ikke blir ujevn. Finnes ingen slik lengde under full id
+  // (to identiske id-er er en serverfeil, men flaten skal ikke lyve om
+  // det), står id-ene urørt.
+  //
+  // Bare id-er som faktisk er lange kortes: manifestets `kandidat-09`
+  // (#161) er kortere enn terskelen og går urørt igjennom uansett hva
+  // de andre radene inneholder.
+  //
+  // ÉN ALGORITME, TO TABELLER (Cursor P2). Prosesstabellen og
+  // rangeringstabellen i evalueringsrapporten viser samme kandidater på
+  // samme flate; regnet de kortnavnet hver for seg, ville en fiks i den
+  // ene stilltiende latt den andre stå igjen med en vegg av heksadesimal.
+  // Kalleren eier settet — entydigheten gjelder alltid akkurat de id-ene
+  // som står i tabellen kortnavnet skal leses i.
+  const maksLengde = Math.max(0, ...idene.map((i) => i.length));
+  let skille = maksLengde;
+  for (let n = 8; n < maksLengde; n += 1) {
+    if (new Set(idene.map((i) => i.slice(0, n))).size === idene.length) {
+      skille = n;
+      break;
+    }
+  }
+  return (id) => (id.length > 20 && skille < id.length
+    ? `${id.slice(0, skille)}…`
+    : id);
+}
+
 export function visRekruttering(hoved, ctx) {
   // ØKTEN OVERLEVER TEGNINGEN (Codex P1 / Cursor P1). Alt som handler om
   // en IRREVERSIBEL operasjon — idempotensnøkkelen som lar serveren
@@ -631,28 +662,9 @@ function tegn(hoved, ctx, data, okt, valgtId) {
       .sort((a, b) => (sortValg.retning === "ascending"
         ? a.poeng - b.poeng : b.poeng - a.poeng)
         || (a.kandidat.kandidat_id < b.kandidat.kandidat_id ? -1 : 1));
-    // KORTNAVNET REGNES AV DATAENE, ikke av et tall (Codex P2). Vi finner
-    // den korteste lengden der ALLE id-ene i prosessen fortsatt er
-    // forskjellige, og bruker den for hele tabellen — én lengde, så
-    // kolonnen ikke blir ujevn. Finnes ingen slik lengde under full id
-    // (to identiske id-er er en serverfeil, men flaten skal ikke lyve om
-    // det), står id-ene urørt.
-    //
-    // Bare id-er som faktisk er lange kortes: manifestets `kandidat-09`
-    // (#161) er kortere enn terskelen og går urørt igjennom uansett hva
-    // de andre radene inneholder.
-    const idene = prosess.kandidater.map((k) => k.kandidat_id);
-    const maksLengde = Math.max(0, ...idene.map((i) => i.length));
-    let skille = maksLengde;
-    for (let n = 8; n < maksLengde; n += 1) {
-      if (new Set(idene.map((i) => i.slice(0, n))).size === idene.length) {
-        skille = n;
-        break;
-      }
-    }
-    const kortnavn = (id) => (id.length > 20 && skille < id.length
-      ? `${id.slice(0, skille)}…`
-      : id);
+    // Entydigheten regnes over PROSESSENS egne id-er — settet leseren
+    // faktisk skal skille fra hverandre i denne tabellen (`kortnavnFor`).
+    const kortnavn = kortnavnFor(prosess.kandidater.map((k) => k.kandidat_id));
     sett(tabellRot, DataTabell({
       captionTekst: t("ui.rekruttering.tabell_caption"),
       kolonner: [
@@ -1035,11 +1047,20 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       // Leseren måtte telle seg fram. Nå er hver kandidats detaljer i
       // kandidatens egen rad, og muren finnes ikke.
       const detaljFor = new Map();
+      // KANDIDATEN ER LESBAR I RAPPORTEN OGSÅ (Cursor P2). Kortnavnet
+      // ble innført i prosesstabellen, men rangeringstabellen her sto
+      // igjen med rå `kandidat_id` i radoverskriften — og det er DENNE
+      // tabellen som står øverst, i produktdelen leseren møter først.
+      // Med seedens UUID-er fikk hun altså veggen av heksadesimal i
+      // rapporten og den ryddede kolonnen under. Samme helper, samme
+      // regel: hele id-en blir stående i `title`.
+      const kortnavn = kortnavnFor(rapport.rangering.map((r) => r.kandidat_id));
       const kropp = el("tbody", {}, ...rapport.rangering.map((rad) => {
         const boks = detaljboks(rad);
         detaljFor.set(rad.kandidat_id, boks);
         return el("tr", {},
-          el("th", { scope: "row", text: rad.kandidat_id }),
+          el("th", { scope: "row", title: rad.kandidat_id,
+            text: kortnavn(rad.kandidat_id) }),
           el("td", { text: String(rad.poeng) }),
           el("td", { text: Object.entries(rad.nedbrytning)
             .map(([k, v]) => `${t(`ui.rekruttering.krav.${k}`, k)}: ${v}`)
