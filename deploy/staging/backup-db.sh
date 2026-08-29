@@ -288,7 +288,25 @@ if [ -n "$UTLOPTE" ] && [ -z "$HAR_ULOPT_PAR" ]; then
   # og slette et eldre KOMPLETT par ville etterlatt oss med noe som per
   # definisjon ikke kan gjenopprettes. Vi filtrerer derfor på at begge
   # halvdelene finnes, og sparer den nyeste som gjør det.
+  #
+  # ... MEN «FORETREKK» ER IKKE «KREV» (Codex P1 på `0438007`). Filteret
+  # var absolutt, og det har en garantert forekomst: FØRSTE kjøring av
+  # denne versjonen etter et opphold lengre enn 30 dager. Da er HVER
+  # backup i katalogen fra før endringen, altså per definisjon uten
+  # arkiv — filteret finner ingen kandidat, `SPART` blir tom, og løkka
+  # under sletter samtlige dumper FØR `pg_dump` er forsøkt. Feiler et
+  # senere ledd, står installasjonen uten database-backup i det hele
+  # tatt. Endringsbeskrivelsen behandler nettopp disse dumpene som
+  # gyldige basebackuper, så å slette dem alle er ikke en streng
+  # tolkning av regelen — det er å bryte den regelen sparingen finnes for.
+  #
+  # Rangeringen er derfor: komplett par først, ellers nyeste dump. En dump
+  # alene gjenoppretter basen; den mangler bare inndata-lageret, og det er
+  # nøyaktig det ene gjenopprettingspunktet som fantes før #191. Det er
+  # strengt mer enn ingenting, og «ingenting» er det eneste alternativet i
+  # dette tilfellet.
   SPART=""
+  SORTERTE_UTLOPTE=$(printf '%s\n' "$UTLOPTE" | sed '/^$/d' | sort -r)
   while IFS= read -r kandidat; do
     [ -n "$kandidat" ] || continue
     st=$(basename "$kandidat"); st=${st#disponit-}; st=${st%.dump.age}
@@ -296,7 +314,9 @@ if [ -n "$UTLOPTE" ] && [ -z "$HAR_ULOPT_PAR" ]; then
       SPART="$kandidat"
       break
     fi
-  done <<< "$(printf '%s\n' "$UTLOPTE" | sed '/^$/d' | sort -r)"
+  done <<< "$SORTERTE_UTLOPTE"
+  # `sed -n 1p` og ikke `head -1`: samme SIGPIPE-grunn som over.
+  [ -n "$SPART" ] || SPART=$(printf '%s\n' "$SORTERTE_UTLOPTE" | sed -n 1p)
 fi
 slett_par() {
   local sti="$1" stempel

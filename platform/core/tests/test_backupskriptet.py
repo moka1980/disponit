@@ -212,6 +212,42 @@ def test_sparingen_er_et_unntak_ikke_en_regel():
         f" eget `find`-søk med `! -mtime`: {kjorende_qx}")
 
 
+def test_en_arvet_dump_spares_naar_intet_komplett_par_finnes():
+    """Codex P1 på `0438007`: «foretrekk komplett par» var skrevet som «krev».
+
+    Filteret som bare sparer komplette par har en GARANTERT forekomst der
+    det ikke finner noe: første kjøring av denne versjonen etter et
+    opphold lengre enn 30 dager. Hver backup i katalogen er da fra før
+    endringen, altså per definisjon uten arkiv. `SPART` ble tom, og sveipen
+    slettet samtlige dumper FØR `pg_dump` var forsøkt — feilet et senere
+    ledd, sto installasjonen uten database-backup i det hele tatt.
+
+    En arvet dump alene gjenoppretter basen; den mangler bare
+    inndata-lageret, og det er nøyaktig det gjenopprettingspunktet som
+    fantes før #191. Strengt mer enn ingenting, og «ingenting» er det
+    eneste alternativet her.
+
+    MUTASJONEN SOM DREPER DENNE: fjern fallback-linjen, så er `SPART` tom
+    igjen når ingen kandidat har begge halvdelene.
+    """
+    assert '[ -n "$SPART" ] || SPART=$(printf' in SKRIPT, (
+        "ingen fallback når ingen utløpt kandidat har begge halvdelene —"
+        " en katalog med bare arvede dumper tømmes før pg_dump er forsøkt")
+    # Fallbacken må komme ETTER den preferansen den er en fallback for.
+    assert _pos('SPART="$kandidat"') < _pos('[ -n "$SPART" ] || SPART=$('), (
+        "fallbacken kjører før preferansen — da spares den nyeste dumpen"
+        " selv når et komplett par finnes")
+    # ... og den må lese den SORTERTE listen, ikke rå `$UTLOPTE`:
+    # `find` gir katalogrekkefølge, som ikke er kronologisk.
+    fallback = SKRIPT[_pos('[ -n "$SPART" ] || SPART=$('):]
+    fallback = fallback[:fallback.index("\n")]
+    assert "SORTERTE_UTLOPTE" in fallback, \
+        "fallbacken leser en usortert liste — «nyeste» er da tilfeldig"
+    # SIGPIPE-klassen: `sed -n 1p` leser strømmen ferdig, `head -1` ikke.
+    assert "head" not in fallback, \
+        "fallbacken lukker røret og dør på 141 under pipefail"
+
+
 def test_en_paagaaende_opplasting_dreper_ikke_backupen():
     """Codex P2: `tar` returnerer 1 når en fil endres mens den leses.
 
