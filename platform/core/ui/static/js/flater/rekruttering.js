@@ -783,7 +783,15 @@ function tegn(hoved, ctx, data, okt, valgtId) {
           // detaljpanelets tittel (`visDetalj`) — raden åpner panelet,
           // og DEN veien går både mus, tastatur og skjermleser.
           // `title` blir stående som musens snarvei, ikke som løftet.
-          kandidat: el("span", { title: kandidat.kandidat_id },
+          // OMBREKKINGEN GJELDER OGSÅ DEN SYNLIGE CELLEN (Cursor P2).
+          // `.rekrut-detalj` vernet innholdet INNI detaljpanelet, men
+          // ikke referansen i raden — og etter at lesbare navn står
+          // hele (inntil 64 tegn, kanon uten blanktegn) er det denne
+          // strengen som løfter kolonnens min-content og skyver
+          // tabellen ut i `.tablewrap`-ens sidescroll. Samme token,
+          // samme regel: ingen ny maskin.
+          kandidat: el("span",
+            { class: "rekrut-kandidat", title: kandidat.kandidat_id },
             kortnavn(kandidat.kandidat_id)),
           poeng: String(poeng),
           // Trafikklys: tekst + klasse, aldri farge alene.
@@ -1164,8 +1172,8 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
         const boks = detaljboks(rad);
         detaljFor.set(rad.kandidat_id, boks);
         return el("tr", {},
-          el("th", { scope: "row", title: rad.kandidat_id,
-            text: kortnavn(rad.kandidat_id) }),
+          el("th", { scope: "row", class: "rekrut-kandidat",
+            title: rad.kandidat_id, text: kortnavn(rad.kandidat_id) }),
           el("td", { text: String(rad.poeng) }),
           el("td", { text: Object.entries(rad.nedbrytning)
             .map(([k, v]) => `${t(`ui.rekruttering.krav.${k}`, k)}: ${v}`)

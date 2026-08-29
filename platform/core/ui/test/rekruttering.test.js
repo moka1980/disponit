@@ -4913,6 +4913,69 @@ test("Rapport: den utvidede raden bryter den lange id-en i stedet for tabellen",
     + `med i min-content-bredden: ${regel[1].trim()}`);
 });
 
+test("Kandidatcellen bryter den lange id-en i stedet for tabellen — BEGGE tabeller",
+  async () => {
+  // Cursor P2 (runde 6). Ombrekkingen over dekket bare `<details>`. Den
+  // SYNLIGE kandidatreferansen — `th` i rapporten, cellen i prosesstabellen —
+  // sto uten vern, og det gikk bra bare så lenge alt langt ble kortet til et
+  // prefiks. Kortingen gjelder nå bare de ugjennomsiktige id-ene (samme
+  // runde), så et beskrivende manifestnavn på 64 tegn står HELT i cellen —
+  // uten et eneste blanktegn å bryte på, per `KANDIDAT_ID_KANON` — og løfter
+  // kolonnens min-content akkurat som id-linjen i panelet gjorde. Wrap-porten
+  // over måler bare `details` og kunne ikke se det.
+  //
+  // jsdom legger ikke ut noe, så porten måler de to leddene som FAKTISK bærer
+  // bruddet, som wrap-porten over: at cellen har klassen i begge tabeller, og
+  // at klassen bryter på en måte som teller med i min-content-bredden.
+  //
+  // MUTASJONENE SOM DREPER DENNE:
+  //   · klassen fjernet fra rapportens `th`                     → rød
+  //   · klassen fjernet fra prosesstabellens celle              → rød
+  //   · regelen fjernet fra `base.css`                          → rød
+  //   · `anywhere` → `break-word` (bryter synlig, men lar        → rød
+  //     tabellen være like bred — altså funnet i behold)
+  const lang = "zulu-senior-backend-engineer-med-langt-beskrivende-navn-01xy";
+  assert.ok(lang.length > 20 && !/\s/.test(lang),
+    "fiksturen må være lang og uten brytepunkt, ellers måler porten intet");
+
+  // (1) Rapportens radoverskrift.
+  KALL = [];
+  SVAR = rapportSvarMed(lang);
+  let hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => {
+    const tb = rapporttabellen(hoved);
+    return tb && tb.querySelectorAll("tbody th[scope=row]").length === 1;
+  }));
+  const th = rapporttabellen(hoved).querySelector("tbody th[scope=row]");
+  assert.equal(th.textContent.trim(), lang,
+    "fiksturen ble kortet — da bærer ikke cellen bredden porten måler");
+  assert.ok(th.classList.contains("rekrut-kandidat"),
+    "rapportens radoverskrift har ingen ombrekking — den lange id-en løfter "
+    + "tabellens minstebredde og gir sidescroll på mobil");
+
+  // (2) Prosesstabellens celle — samme referanse, andre tabell.
+  const data = prosess();
+  data.prosesser[0].kandidater = [{ kandidat_id: lang, oppfylt: { drift: true },
+    status: "anbefalt", funn: [], intervjusporsmal: [] }];
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": data };
+  hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelectorAll("tbody tr").length === 1));
+  assert.ok(hoved.querySelector("tbody tr .rekrut-kandidat"),
+    "prosesstabellens kandidatcelle har ingen ombrekking");
+
+  // (3) Og klassen bryter på måten som faktisk teller.
+  const css = readFileSync(join(ROT,
+    "platform/core/ui/static/css/base.css"), "utf-8");
+  const regel = css.match(/\.rekrut-kandidat\s*\{([^}]*)\}/);
+  assert.ok(regel, "ingen `.rekrut-kandidat`-regel i base.css");
+  assert.match(regel[1], /overflow-wrap:\s*anywhere/,
+    "`.rekrut-kandidat` bryter ikke med `anywhere` — bare `anywhere` teller "
+    + `med i min-content-bredden: ${regel[1].trim()}`);
+});
+
 test("Kortnavn: et beskrivende manifestnavn kortes ALDRI, uansett lengde",
   async () => {
   // Codex P2 (runde 3): kortingen het «maskingenererte id-er kortes, navn

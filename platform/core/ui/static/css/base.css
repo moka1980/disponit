@@ -83,6 +83,18 @@ html[data-visning="app"] body {
    samme ubrutte streng. */
 .rekrut-detalj { overflow-wrap: anywhere; }
 
+/* OG DEN SYNLIGE CELLEN (Cursor P2). Regelen over vernet innholdet INNI
+   detaljpanelet, mens kandidatreferansen i raden — `th` i rapporten, cellen i
+   prosesstabellen — sto uten. Så lenge alt langt ble kortet til et prefiks
+   kostet den ingen bredde, men kortingen gjelder nå bare de ugjennomsiktige
+   id-ene: et beskrivende manifestnavn på 64 tegn står HELT i cellen og løfter
+   kolonnens min-content akkurat som id-linjen i panelet gjorde. Samme defekt,
+   samme token, og `anywhere` av samme grunn — bare `anywhere` teller med når
+   min-content regnes. Egen regel, ikke en selektor til på regelen over: hver
+   av de to er låst av sin egen port, og en delt blokk ville latt en endring
+   det ene stedet rive porten det andre. */
+.rekrut-kandidat { overflow-wrap: anywhere; }
+
 /* Ett synlig fokus på ALT interaktivt (WCAG 2.4.7 / 2.4.11). */
 :focus-visible {
   outline: var(--focus);
