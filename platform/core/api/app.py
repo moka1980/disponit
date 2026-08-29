@@ -2448,6 +2448,30 @@ def _kandidatdata(tjeneste: Tjeneste, request: Request, form: str) -> Response:
         modul = auth.modul_id if isinstance(auth, ModulAutentisert) \
             else auth.rolle
         sett_kontekst(conn, tenant, auth.aktor, rid)
+        # LÅST LESNING (Cursor P2-3). Uten radlåsen var autorisasjonen et
+        # SNAPSHOT: under READ COMMITTED kunne en ny claimer committe et
+        # `UPDATE oppdrag SET owner_claim_id/owner_generation/lease` i
+        # vinduet mellom dette oppslaget og INSERT-ene under, og denne
+        # forespørselen skrev likevel — INSERT-ene måler ikke claimet på
+        # nytt, og lagervakten (057) måler `slettet_ts`, ikke leasen. En
+        # utfører som HADDE mistet oppdraget skrev da persondata inn i
+        # prosessen på vegne av en fullmakt som var borte.
+        #
+        # `FOR SHARE`, ikke `FOR UPDATE`: claim-tyven og `forny_oppdragslease`
+        # tar `FOR UPDATE`, så delelåsen serialiserer mot NØYAKTIG dem —
+        # mens den lovlige strømmen av dokument- og artefaktskriv under
+        # SAMME claim går videre parallelt. En eksklusiv lås her ville
+        # gjort hele skriveveien til en kø på én rad. Og PostgreSQL
+        # re-evaluerer predikatet etter låsen: en rad som ble stjålet
+        # under ventingen faller ut av treffet i stedet for å bli lest fra
+        # et gammelt snapshot — samme mekanikk 057s fødselsvakt bruker.
+        #
+        # `OF o` er ikke stil, det er en RETTIGHET: enhver radlåsklausul
+        # krever UPDATE på tabellen, og runtime har SELECT+UPDATE på
+        # `oppdrag` (`deploy/staging/migrer.py`) men KUN SELECT på
+        # `rekrutteringsprosess`. En bar `FOR SHARE` her ville forsøkt å
+        # låse begge og svart `permission denied` — nøyaktig grunnen
+        # `_anker_lever` forkastet delelåsen på leseveien.
         rad = conn.execute(
             "SELECT p.prosess_id FROM oppdrag o"
             "  JOIN rekrutteringsprosess p"
@@ -2458,7 +2482,8 @@ def _kandidatdata(tjeneste: Tjeneste, request: Request, form: str) -> Response:
             "   AND o.owner_generation=%s"
             "   AND o.owner_lease_utloper IS NOT NULL"
             "   AND o.owner_lease_utloper > now()"
-            "   AND p.slettet_ts IS NULL",
+            "   AND p.slettet_ts IS NULL"
+            " FOR SHARE OF o",
             (tenant, opp_id, modul, claim_id, generasjon)).fetchone()
         if rad is None:
             conn.rollback()

@@ -2065,6 +2065,146 @@ def test_173_skriveveien_er_claimbundet_og_idempotent(migrator, miljo):
         rt.close()
 
 
+@pg
+def test_173_claimtyveri_i_skrivevinduet_feller_doren(migrator, miljo):
+    """#173 (Cursor P2-3): TOCTOU mot claim-tyveri, med TO FORBINDELSER.
+
+    Kjedetesten over måler at FEIL claim-par avvises — det er den
+    deterministiske halvdelen. Dette er selve VINDUET: uten radlås var
+    dørens autorisasjon et snapshot, og en ny claimer kunne committe
+    `UPDATE oppdrag SET owner_generation…` mellom oppslaget og
+    INSERT-ene. Døren skrev likevel: INSERT-ene måler ikke claimet på
+    nytt, og lagervakten (057) måler `slettet_ts`, ikke leasen. En
+    utfører som HADDE mistet oppdraget skrev da persondata inn i
+    prosessen på vegne av en fullmakt som var borte.
+
+    Riggen trenger ingen instrumentert søm — LÅSEN er sømmen. Tyven tar
+    `FOR UPDATE` på oppdragsraden FØRST, så dørens `FOR SHARE OF o`
+    blokkerer på nøyaktig det stedet vinduet lå. At den venter DER måles
+    positivt med `pg_blocking_pids` mot tyvens backend-pid — låsmanageren
+    selv, ikke en sleep som håper at vinduet var åpent.
+
+    Når tyveriet committer, re-evaluerer PostgreSQL predikatet mot den
+    NYE radversjonen — samme mekanikk 057s fødselsvakt bruker — og
+    generasjonsleddet faller. Døren svarer `kandidatdata_avvist`, og
+    lagrene står tomme.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `FOR SHARE OF o` i
+    `_kandidatdata`. Da venter ingen backend, ventepollen utløper, og
+    forespørselen har for lengst svart 200 på et gammelt snapshot."""
+    import base64
+    import threading
+    import time
+
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    from .test_bestilling_rekruttering import _sikre_m57_claimbar
+    from .test_modul_onboarding_http import _onboard_token
+    from miljo import gjeldende_miljo
+
+    _sikre_m57_claimbar(migrator)
+    rel = migrator.execute(
+        "SELECT release_id FROM moduldeployment"
+        " WHERE modul_id='m57_ats' AND miljo=%s AND livslop='claiming'"
+        " LIMIT 1", (gjeldende_miljo(),)).fetchone()[0]
+    migrator.commit()
+
+    rt = _rt()
+    tyv = psycopg.connect(MIGRATOR_DSN)
+    obs = psycopg.connect(MIGRATOR_DSN, autocommit=True)
+    try:
+        oid, pid = _prosess(migrator, rt)
+        # Fødselsvakten holder `FOR SHARE` på oppdragsraden til `rt`
+        # committer — uten denne linjen ville riggen selv okkupert
+        # nøyaktig låsen tyven under skal eie.
+        rt.commit()
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute(
+            "UPDATE oppdrag SET owner_claim_id=%s, owner_generation=1,"
+            " owner_lease_utloper=now()+interval '10 minutes'"
+            " WHERE tenant=%s AND id=%s", ("c" * 22, TENANT, oid))
+        migrator.commit()
+
+        utfall: list = []
+        a = lag_app(DSN)
+        with TestClient(a) as c:
+            mtk, _ = _onboard_token(c, migrator, "m57_ats", rel)
+            hode = {"authorization": f"Bearer {mtk}"}
+            dok = {"tenant": TENANT, "oppdrag_id": oid,
+                   "owner_claim_id": "c" * 22, "owner_generation": 1,
+                   "kandidat_id": "k1", "dokumentnavn": "k1/cv.pdf",
+                   "dokument_b64": base64.b64encode(
+                       b"%PDF-1.7 " + FIXTUR.encode()).decode(),
+                   "tekst": f"CV-tekst {FIXTUR}"}
+
+            # TYVEN FØRST: eksklusiv lås på oppdragsraden, og den nye
+            # generasjonen skrevet men IKKE committet. Dette er stillingen
+            # en samtidig `plukk`/overtakelse står i.
+            _sett_kontekst(tyv, TENANT)
+            tyvpid = tyv.execute("SELECT pg_backend_pid()").fetchone()[0]
+            tyv.execute("SELECT 1 FROM oppdrag WHERE tenant=%s AND id=%s"
+                        " FOR UPDATE", (TENANT, oid))
+            tyv.execute(
+                "UPDATE oppdrag SET owner_claim_id=%s, owner_generation=2,"
+                " owner_lease_utloper=now()+interval '10 minutes'"
+                " WHERE tenant=%s AND id=%s", ("d" * 22, TENANT, oid))
+
+            def _skriv():
+                try:
+                    utfall.append(c.post("/v1/rekruttering/kandidatdokument",
+                                         json=dok, headers=hode))
+                except Exception as e:      # noqa: BLE001 — til asserten
+                    utfall.append(e)
+
+            traad = threading.Thread(target=_skriv, daemon=True)
+            traad.start()
+            try:
+                # `pg_blocking_pids` leser låsmanageren direkte og krever
+                # ingen stats-privilegier — `pid` er synlig for alle, og
+                # observatøren er autocommit, så ingen transaksjon cacher
+                # backend-statusen mellom rundene.
+                frist = time.monotonic() + 20
+                while time.monotonic() < frist:
+                    if obs.execute(
+                            "SELECT count(*) FROM pg_stat_activity"
+                            " WHERE %s = ANY(pg_blocking_pids(pid))",
+                            (tyvpid,)).fetchone()[0]:
+                        break
+                    time.sleep(0.05)
+                else:
+                    raise AssertionError(
+                        "ingen backend ble blokkert av tyvens radlås innen"
+                        " 20 s — døren leste claimet ULÅST og skrev på et"
+                        f" gammelt snapshot. Utfall så langt: {utfall}")
+                # Vinduet lukkes: tyveriet committer MENS døren venter.
+                tyv.commit()
+            finally:
+                tyv.rollback()
+                traad.join(30)
+            assert not traad.is_alive(), \
+                "skrivetråden lever etter commit + 30 s join"
+            assert len(utfall) == 1, utfall
+            r = utfall[0]
+            assert not isinstance(r, Exception), r
+            assert r.status_code == 409, r.text
+            assert r.json()["feil"] == "kandidatdata_avvist"
+
+            # Ingenting ble skrevet på den tapte fullmakten.
+            _sett_kontekst(migrator, TENANT)
+            rader = migrator.execute(
+                "SELECT (SELECT count(*) FROM kandidat_originaldokument"
+                "         WHERE tenant=%s AND prosess_id=%s),"
+                " (SELECT count(*) FROM kandidat_parsettekst"
+                "         WHERE tenant=%s AND prosess_id=%s)",
+                (TENANT, pid) * 2).fetchone()
+            migrator.rollback()
+            assert rader == (0, 0), rader
+    finally:
+        obs.close()
+        tyv.close()
+        rt.close()
+
+
 # Dekningsporten: begge kodene bevises av kjedetesten over.
 from .test_api import dekker as _dekker173  # noqa: E402
 
