@@ -1398,7 +1398,7 @@ test("Evalueringer: liste med status, og rapporten rendres blindet", async () =>
   assert.match(tekst,
     new RegExp(t("ui.rekruttering.evalueringer.flere").slice(0, 25)));
   // Kun den ferdige raden har en Vis-knapp.
-  const knapper = [...seksjon.querySelectorAll("tbody button")]
+  const knapper = [...seksjon.querySelectorAll(".rekrut-kortliste button")]
     .filter((b) => b.textContent === t("ui.rekruttering.evalueringer.vis"));
   assert.equal(knapper.length, 1);
   knapper[0].click();
@@ -1439,8 +1439,10 @@ test("Evalueringer: liste med status, og rapporten rendres blindet", async () =>
   assert.doesNotMatch(aapnet, /Fortell om driftserfaringen/);
   // Begge tabellene står i rullbar container (Codex P2: 50 krav à 120
   // tegn i nedbrytningscellen skal ikke velte siden).
-  assert.ok(seksjon.querySelectorAll(".tablewrap").length >= 2,
-    "tabellene mangler .tablewrap");
+  // Listen er kort, ikke tabell — de rullbare tabellene er RAPPORTENS
+  // (rangeringen og nedbrytningen), og begge skal stå i .tablewrap.
+  assert.ok(seksjon.querySelectorAll(".tablewrap table").length >= 1,
+    "rapporttabellen mangler .tablewrap");
   // Nedbrytningskolonnen bærer sin EGEN etikett, ikke funnenes.
   assert.match(etter,
     new RegExp(t("ui.rekruttering.evalueringer.nedbrytning")));
@@ -1478,14 +1480,15 @@ test("Evalueringer: feilet rapporthenting melder i alert, ikke stille", async ()
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => [...hoved.querySelectorAll(
-    "section[aria-labelledby=evaluering-tittel] tbody button")]
+    "section[aria-labelledby=evaluering-tittel] .rekrut-kortliste button")]
     .filter((b) => b.textContent
       === t("ui.rekruttering.evalueringer.vis")).length === 2));
   const seksjon = hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
-  const knappFor = (id) => [...seksjon.querySelectorAll("tbody button")]
+  const knappFor = (id) => [...seksjon.querySelectorAll(".rekrut-kortliste button")]
     .filter((b) => b.textContent === t("ui.rekruttering.evalueringer.vis"))
-    .find((b) => b.closest("tr") && b.closest("tr").textContent.includes(String(id)));
+    .find((b) => b.closest(".rekrut-kort")
+      && b.closest(".rekrut-kort").textContent.includes(String(id)));
   knappFor(96).click();
   assert.ok(await vent(() => seksjon.textContent.includes("Driftskonsulent")),
     "rapporten rendret aldri");
@@ -1519,15 +1522,15 @@ test("Evalueringer: 200 med urendrbar rapport lander i alert, ikke tom seksjon",
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelector(
-    "section[aria-labelledby=evaluering-tittel] tbody button")));
+    "section[aria-labelledby=evaluering-tittel] .rekrut-kortliste button")));
   const seksjon = hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
-  seksjon.querySelector("tbody button").click();
+  seksjon.querySelector(".rekrut-kortliste button").click();
   assert.ok(await vent(() => seksjon.querySelector("[role=alert]").textContent
     === t("ui.rekruttering.evalueringer.rapportfeil")),
     "urendrbar rapport ga ingen feilmelding — seksjonen ble stille tom");
   // Ingen halv DOM: en delvis bygget rapport ser ekte ut for leseren.
-  assert.equal(seksjon.querySelectorAll("table").length, 1,
+  assert.equal(seksjon.querySelectorAll("table").length, 0,
     "rapporttabellen ble stående halvbygget ved siden av feilmeldingen");
   assert.doesNotMatch(seksjon.textContent,
     new RegExp(t("ui.rekruttering.evalueringer.blindet").slice(0, 20)));
@@ -1555,7 +1558,7 @@ test("Evalueringer: «Last flere» følger serverens cursor og appender (#221)",
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelector(
-    "section[aria-labelledby=evaluering-tittel] table")));
+    "section[aria-labelledby=evaluering-tittel] .rekrut-kortliste")));
   const seksjon = hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
   const flereKnapp = () => [...seksjon.querySelectorAll("button")]
@@ -1597,7 +1600,7 @@ test("Evalueringer: fokus OVERLEVER om-tegningen av listen, og redrawet "
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelector(
-    "section[aria-labelledby=evaluering-tittel] table")));
+    "section[aria-labelledby=evaluering-tittel] .rekrut-kortliste")));
   const seksjon = hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
   const knapp = (nokkel) => [...seksjon.querySelectorAll("button")]
@@ -1651,7 +1654,7 @@ test("Evalueringer: en feilet listehandling MELDER fra — ikke stille "
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelector(
-    "section[aria-labelledby=evaluering-tittel] table")));
+    "section[aria-labelledby=evaluering-tittel] .rekrut-kortliste")));
   const seksjon = hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
   const knapp = (nokkel) => [...seksjon.querySelectorAll("button")]
@@ -1715,7 +1718,7 @@ test("Evalueringer: «Oppdater» og «Last flere» blander aldri to "
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelector(
-    "section[aria-labelledby=evaluering-tittel] table")));
+    "section[aria-labelledby=evaluering-tittel] .rekrut-kortliste")));
   const seksjon = hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
   const knapp = (nokkel) => [...seksjon.querySelectorAll("button")]
@@ -1730,8 +1733,8 @@ test("Evalueringer: «Oppdater» og «Last flere» blander aldri to "
     rad(200, "2026-08-27T02:00:00+00:00")], flere: false,
   neste_cursor: null });
   await new Promise((r) => setTimeout(r, 30));
-  const rader = [...seksjon.querySelectorAll("tbody tr th")]
-    .map((c) => c.textContent);
+  const rader = [...seksjon.querySelectorAll(".rekrut-kort")]
+    .map((c) => c.dataset.oppdrag);
   assert.deepEqual(rader, ["200", "100"],
     "oppfriskningen og pagineringen skrev over hverandre: " + rader.join(","));
   // MUTASJONEN SOM DREPER DENNE: bytt `const min = ++eval2.nr` tilbake til
@@ -1765,7 +1768,7 @@ test("Evalueringer: en taperunde låser ikke «Last flere» når «Oppdater» "
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelector(
-    "section[aria-labelledby=evaluering-tittel] table")));
+    "section[aria-labelledby=evaluering-tittel] .rekrut-kortliste")));
   const seksjon = hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
   const knapp = (nokkel) => [...seksjon.querySelectorAll("button")]
@@ -1810,7 +1813,7 @@ test("Evalueringer: «Oppdater» henter listen på nytt uten side-reload"
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelector(
-    "section[aria-labelledby=evaluering-tittel] table")));
+    "section[aria-labelledby=evaluering-tittel] .rekrut-kortliste")));
   const seksjon = hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
   assert.match(seksjon.textContent,
@@ -1858,12 +1861,12 @@ test("Evalueringer: det siste klikket vinner — et tregt eldre svar forkastes",
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => [...hoved.querySelectorAll(
-    "section[aria-labelledby=evaluering-tittel] tbody button")]
+    "section[aria-labelledby=evaluering-tittel] .rekrut-kortliste button")]
     .filter((b) => b.textContent
       === t("ui.rekruttering.evalueringer.vis")).length === 2));
   const seksjon = hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
-  const [knapp96, knapp97] = [...seksjon.querySelectorAll("tbody button")]
+  const [knapp96, knapp97] = [...seksjon.querySelectorAll(".rekrut-kortliste button")]
     .filter((b) => b.textContent === t("ui.rekruttering.evalueringer.vis"));
   knapp96.click();
   knapp97.click();
@@ -1931,8 +1934,8 @@ test("Evalueringer: siste oppfriskning vinner — tregt eldre listesvar forkaste
     "den ferske listen kom aldri på skjermen");
   slippTreg({ evalueringer: [rad(42)] });
   await new Promise((r) => setTimeout(r, 30));
-  const rader = [...evalSeksjon.querySelectorAll("tbody tr th")]
-    .map((c) => c.textContent);
+  const rader = [...evalSeksjon.querySelectorAll(".rekrut-kort")]
+    .map((c) => c.dataset.oppdrag);
   assert.ok(rader.includes("43"),
     "det TREGE eldre listesvaret tegnet over den nyeste listen");
   assert.ok(rader.includes("42"), "oppdrag 42 forsvant fra listen");
@@ -1986,8 +1989,8 @@ test("Evalueringer: det leverte oppdraget overlever et prosessbytte", async () =
   assert.ok(await vent(() => seksjon.querySelector("[role=alert]")
     .textContent.includes("42")), "bestillingen kvitterte aldri");
   const evalRader = () => [...hoved.querySelectorAll(
-    "section[aria-labelledby=evaluering-tittel] tbody tr th")]
-    .map((c) => c.textContent);
+    "section[aria-labelledby=evaluering-tittel] .rekrut-kort")]
+    .map((c) => c.dataset.oppdrag);
   assert.ok(await vent(() => evalRader().includes("42")),
     "det leverte oppdraget kom aldri i listen");
   const kallFoer = listekall;
@@ -2039,7 +2042,7 @@ test("Evalueringer: produktet først og null klikk — ferskeste klare "
   const hentingerFoer = KALL.filter(
     (k) => k.sti === "/v1/rekruttering/rapport/96").length;
   hoved.querySelector(
-    "section[aria-labelledby=evaluering-tittel] tbody button").click();
+    "section[aria-labelledby=evaluering-tittel] .rekrut-kortliste button").click();
   await new Promise((r) => setTimeout(r, 20));
   assert.equal(KALL.filter(
     (k) => k.sti === "/v1/rekruttering/rapport/96").length, hentingerFoer,
@@ -2311,10 +2314,10 @@ test("Evalueringer: klikk under pågående auto-lasting deler løftet — "
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelector(
-    "section[aria-labelledby=evaluering-tittel] tbody button")));
+    "section[aria-labelledby=evaluering-tittel] .rekrut-kortliste button")));
   const seksjon = hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
-  seksjon.querySelector("tbody button").click();
+  seksjon.querySelector(".rekrut-kortliste button").click();
   slipp({ oppdrag_id: 96, rapport: {
     rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
     profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
@@ -2360,7 +2363,7 @@ test("Evalueringer: auto-feil er stille — alert hører til klikket", async () 
       t("ui.rekruttering.evalueringer.rapportfeil"))),
     "auto-feilen malte en usolicited alert");
   // ... og KLIKKET får feilmeldingen som før (positiv kontroll).
-  seksjon.querySelector("tbody button").click();
+  seksjon.querySelector(".rekrut-kortliste button").click();
   assert.ok(await vent(() => [...seksjon.querySelectorAll('[role="alert"]')]
     .some((a) => a.textContent
       === t("ui.rekruttering.evalueringer.rapportfeil"))),
@@ -2559,7 +2562,8 @@ test("Evalueringer: en hengende KLIKK-henting overlever byttet — "
   const seksjon = () => hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
   [...seksjon().querySelectorAll("button")]
-    .find((b) => b.closest("tr") && b.closest("tr").textContent.includes("96")).click();
+    .find((b) => b.closest(".rekrut-kort")
+      && b.closest(".rekrut-kort").textContent.includes("96")).click();
   const aFoer = KALL.filter(
     (k) => k.sti === "/v1/rekruttering/rapport/97").length;
   const velger = hoved.querySelector("#rekrut-prosessvelger");
@@ -2656,13 +2660,14 @@ test("Evalueringer: A→B→A gjenbruker As løfte — aldri to nedlastinger "
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => [...hoved.querySelectorAll(
-    "section[aria-labelledby=evaluering-tittel] tbody button")]
+    "section[aria-labelledby=evaluering-tittel] .rekrut-kortliste button")]
     .filter((b) => b.textContent
       === t("ui.rekruttering.evalueringer.vis")).length === 2));
   const seksjon = () => hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
   const knappFor = (id) => [...seksjon().querySelectorAll("button")]
-    .find((b) => b.closest("tr") && b.closest("tr").textContent.includes(String(id)));
+    .find((b) => b.closest(".rekrut-kort")
+      && b.closest(".rekrut-kort").textContent.includes(String(id)));
   // Auto tok alt 97 (A). Brukeren: B (96), så A (97) igjen — mens
   // BEGGE henger.
   knappFor(96).click();
@@ -2737,14 +2742,15 @@ test("Evalueringer: et sent auto-svar kan aldri restarte auto-stien — "
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => [...hoved.querySelectorAll(
-    "section[aria-labelledby=evaluering-tittel] tbody button")]
+    "section[aria-labelledby=evaluering-tittel] .rekrut-kortliste button")]
     .filter((b) => b.textContent
       === t("ui.rekruttering.evalueringer.vis")).length === 2));
   const seksjon = () => hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
   // Brukeren velger B (96) mens auto-A (97) henger.
   [...seksjon().querySelectorAll("button")]
-    .find((b) => b.closest("tr") && b.closest("tr").textContent.includes("96")).click();
+    .find((b) => b.closest(".rekrut-kort")
+      && b.closest(".rekrut-kort").textContent.includes("96")).click();
   assert.ok(await vent(() => seksjon().textContent.includes("kandidat-01")),
     "B rendret aldri");
   // A fullfører SENT — og skal hverken tegne eller røre tilstanden.
@@ -2837,9 +2843,9 @@ test("Evalueringer: en rapport som lander etter et prosessbytte tegner "
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelector(
-    "section[aria-labelledby=evaluering-tittel] tbody button")));
+    "section[aria-labelledby=evaluering-tittel] .rekrut-kortliste button")));
   hoved.querySelector(
-    "section[aria-labelledby=evaluering-tittel] tbody button").click();
+    "section[aria-labelledby=evaluering-tittel] .rekrut-kortliste button").click();
   const velger = hoved.querySelector("#rekrut-prosessvelger");
   velger.value = "p-2";
   velger.dispatchEvent(new window.Event("change", { bubbles: true }));
@@ -2915,8 +2921,8 @@ test("Evalueringer: en oppfriskning som lander etter et prosessbytte tegner "
   velger.dispatchEvent(new window.Event("change", { bubbles: true }));
   slipp({ evalueringer: [rad(42)] });
   assert.ok(await vent(() => [...hoved.querySelectorAll(
-    "section[aria-labelledby=evaluering-tittel] tbody tr th")]
-    .map((c) => c.textContent).includes("42")),
+    "section[aria-labelledby=evaluering-tittel] .rekrut-kort")]
+    .map((c) => c.dataset.oppdrag).includes("42")),
     "svaret døde med instansen som ba om det");
 });
 
@@ -6200,8 +6206,8 @@ test("Handlinger: Slett går gjennom bekreftelsen, poster og oppfrisker (069)", 
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelector(
-    "section[aria-labelledby=evaluering-tittel] tbody")), "listen kom aldri");
-  const slett = [...hoved.querySelectorAll("tbody button")]
+    "section[aria-labelledby=evaluering-tittel] .rekrut-kortliste")), "listen kom aldri");
+  const slett = [...hoved.querySelectorAll(".rekrut-kortliste button")]
     .find((b) => b.textContent === t("ui.rekruttering.evalueringer.slett"));
   assert.ok(slett, "Slett-knappen mangler på klar rapport");
   slett.click();
@@ -6240,8 +6246,8 @@ test("Handlinger: Avbryt finnes på ventende, aldri på terminale — og krever 
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelector(
-    "section[aria-labelledby=evaluering-tittel] tbody")), "listen kom aldri");
-  const knapper = [...hoved.querySelectorAll("tbody button")];
+    "section[aria-labelledby=evaluering-tittel] .rekrut-kortliste")), "listen kom aldri");
+  const knapper = [...hoved.querySelectorAll(".rekrut-kortliste button")];
   const avbrytFor = (id) => knapper.find((b) =>
     b.textContent === t("ui.rekruttering.evalueringer.avbryt")
     && b.getAttribute("aria-label").includes(String(id)));
@@ -6257,9 +6263,48 @@ test("Handlinger: Avbryt finnes på ventende, aldri på terminale — og krever 
   const hoved2 = nyHoved();
   visRekruttering(hoved2, { ...ctx(), scopes: ["decisions:read"] });
   assert.ok(await vent(() => hoved2.querySelector(
-    "section[aria-labelledby=evaluering-tittel] tbody")), "leselisten kom aldri");
-  assert.ok(![...hoved2.querySelectorAll("tbody button")].some((b) =>
+    "section[aria-labelledby=evaluering-tittel] .rekrut-kortliste")), "leselisten kom aldri");
+  assert.ok(![...hoved2.querySelectorAll(".rekrut-kortliste button")].some((b) =>
     [t("ui.rekruttering.evalueringer.slett"),
       t("ui.rekruttering.evalueringer.avbryt")].includes(b.textContent)),
   "skriveknapper uten bestilling:opprett er en blindvei (P2-1-klassen)");
+});
+
+test("Kortlisten: pillen er tekst med fargeregel per art (port 30)", async () => {
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 99, status: "plukket",
+        opprettet: "2026-08-29T21:12:00+00:00", rapport_klar: false },
+      { oppdrag_id: 98, status: "utfort",
+        opprettet: "2026-08-27T16:59:00+00:00", rapport_klar: true },
+      { oppdrag_id: 97, status: "feilet",
+        opprettet: "2026-08-27T08:06:00+00:00", rapport_klar: false }],
+    flere: false } };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector(".rekrut-kortliste")),
+    "kortlisten kom aldri");
+  // Semantikken er en LISTE — skjermleseren får antallet og navnet.
+  const liste = hoved.querySelector(".rekrut-kortliste");
+  assert.equal(liste.tagName, "UL");
+  assert.ok(liste.getAttribute("aria-label").length > 0);
+  const piller = [...liste.querySelectorAll(".rekrut-pille")];
+  assert.equal(piller.length, 3);
+  for (const p of piller) {
+    assert.ok(p.textContent.trim().length > 0,
+      "statusen mangler som tekst — farge alene er ikke informasjon");
+  }
+  // …og fargen finnes faktisk (trafikklys-regelen): hver pille-art som
+  // flaten kan sette har en egen regel, eller arver grunnpillens grå.
+  const css = readFileSync(join(ROT,
+    "platform/core/ui/static/css/komponenter.css"), "utf-8");
+  assert.ok(css.includes(".rekrut-pille {"), "grunnpillen er uten flate");
+  for (const art of ["venter", "klar", "feilet"]) {
+    assert.ok(css.includes(`.rekrut-pille--${art} {`),
+      `ingen fargeregel for arten ${art}`);
+  }
+  const brudd = await alvorligeBrudd(hoved);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
 });

@@ -1184,3 +1184,29 @@ th.rekrut-kandidat { white-space: normal; }
     z-index: var(--z-innhold); }
   .fane { min-height: var(--touch-min); }
 }
+
+/* Evalueringslisten som KORTLISTE (mobil-redesignet 29/8, godkjent
+   mockup): kortet er enheten — hode med oppdrag/tidspunkt og statuspille,
+   handlingsrad under. Pillen har ALLTID tekst (port 30: farge alene er
+   ikke informasjon), og hver art har sin fargeregel her — en ny art uten
+   regel arver grunnpillen og synes, den forsvinner ikke. */
+.rekrut-kortliste { list-style: none; margin: var(--sp-3) 0; padding: 0;
+  display: grid; gap: var(--sp-2); }
+.rekrut-kort { background: var(--card); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: var(--sp-3);
+  display: grid; gap: var(--sp-2); }
+.rekrut-kort--klar { border-color: var(--info); }
+.rekrut-kort-hode { display: flex; align-items: center; gap: var(--sp-3);
+  min-height: var(--touch-min); }
+.rekrut-kort-titler { display: grid; gap: var(--sp-1); flex-grow: 1; }
+.rekrut-kort-titler time { color: var(--muted); font-size: .88rem; }
+.rekrut-pille { padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--radius-pill); font-size: .88rem; font-weight: 600;
+  background: var(--paper); color: var(--muted); white-space: nowrap; }
+.rekrut-pille--venter { background: var(--info-bg); color: var(--info); }
+.rekrut-pille--klar { background: var(--auto-bg); color: var(--auto); }
+.rekrut-pille--feilet { background: var(--danger-bg); color: var(--danger); }
+/* kansellert, slettet og utilgjengelig: grunnpillens dempede grå. */
+.rekrut-kort-handlinger { display: flex; gap: var(--sp-2); }
+.rekrut-kort-handlinger .knapp { flex-grow: 1; }
+.rekrut-kort-handlinger .knapp.fare { flex-grow: 0; }

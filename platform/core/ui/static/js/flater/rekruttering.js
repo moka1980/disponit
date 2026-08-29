@@ -1720,10 +1720,17 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
         },
       });
     };
-    const rader = evalueringer.map((e2) => {
-      const handling = el("td", { class: "rekrut-handlinger" });
+    // KORTLISTE, IKKE TABELL (eiers mobil-redesign 29/8, godkjent
+    // mockup): fire kolonner på 390px ga en tabell som hverken kunne
+    // leses eller treffes. Kortet bærer samme fakta i samme rekkefølge
+    // — oppdrag, tidspunkt, status som PILLE (tekst, aldri bare farge —
+    // port 30-regelen), handlingene som egen rad med touch-høyde.
+    // Semantikken er en LISTE (ul/li): raden var aldri tabulær data,
+    // den var en enhet med handlinger.
+    const kort = evalueringer.map((e2) => {
+      const handling = el("div", { class: "rekrut-kort-handlinger" });
       if (e2.rapport_klar) {
-        const knapp = el("button", { type: "button",
+        const knapp = el("button", { type: "button", class: "knapp primar",
           text: t("ui.rekruttering.evalueringer.vis") });
         knapp.setAttribute("aria-label",
           t("ui.rekruttering.evalueringer.vis")
@@ -1735,7 +1742,7 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       const venter = !e2.slettet && !e2.rapport_klar
         && !["feilet", "kansellert", "utfort"].includes(e2.status);
       if (kanSkrive && venter) {
-        const avbryt = el("button", { type: "button",
+        const avbryt = el("button", { type: "button", class: "knapp",
           text: t("ui.rekruttering.evalueringer.avbryt") });
         avbryt.setAttribute("aria-label",
           t("ui.rekruttering.evalueringer.avbryt")
@@ -1748,7 +1755,7 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       }
       if (kanSkrive && !e2.slettet
           && (e2.rapport_klar || e2.status === "feilet")) {
-        const slett = el("button", { type: "button", class: "fare",
+        const slett = el("button", { type: "button", class: "knapp fare",
           text: t("ui.rekruttering.evalueringer.slett") });
         slett.setAttribute("aria-label",
           t("ui.rekruttering.evalueringer.slett")
@@ -1767,33 +1774,28 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       // «venter» er KUN for løp som kan bli klare (opprettet/plukket).
       // Et utfort oppdrag uten lesbar rapport (intet retensjonsanker —
       // eldre enn anker-fødselen) er utilgjengelig, ikke underveis.
-      const statusTekst = e2.slettet
-        ? t("ui.rekruttering.evalueringer.slettet")
-        : e2.rapport_klar
-          ? t("ui.rekruttering.evalueringer.klar")
+      const art = e2.slettet ? "slettet"
+        : e2.rapport_klar ? "klar"
           : (e2.status === "feilet" || e2.status === "kansellert")
-            ? t("ui.rekruttering.evalueringer." + e2.status)
-            : e2.status === "utfort"
-              ? t("ui.rekruttering.evalueringer.utilgjengelig")
-              : t("ui.rekruttering.evalueringer.venter");
-      return el("tr", {},
-        el("th", { scope: "row", text: String(e2.oppdrag_id) }),
-        el("td", {}, Tidspunkt(e2.opprettet || "")),
-        el("td", { text: statusTekst }),
-        handling);
+            ? e2.status
+            : e2.status === "utfort" ? "utilgjengelig" : "venter";
+      const statusTekst = t("ui.rekruttering.evalueringer." + art);
+      // Pillen bærer ARTEN som klasse for fargen og som TEKST for
+      // informasjonen — samme regel som trafikklyset (port 30).
+      return el("li", { class: "rekrut-kort rekrut-kort--" + art,
+        "data-oppdrag": String(e2.oppdrag_id) },
+        el("div", { class: "rekrut-kort-hode" },
+          el("div", { class: "rekrut-kort-titler" },
+            el("strong", { text: t("ui.rekruttering.evalueringer.oppdrag")
+              + " " + e2.oppdrag_id }),
+            Tidspunkt(e2.opprettet || "")),
+          el("span", { class: "rekrut-pille rekrut-pille--" + art,
+            text: statusTekst })),
+        ...(handling.childNodes.length ? [handling] : []));
     });
-    const liste = el("table", {},
-      el("caption", { text: t("ui.rekruttering.evalueringer.tabell") }),
-      el("thead", {}, el("tr", {},
-        el("th", { scope: "col",
-          text: t("ui.rekruttering.evalueringer.oppdrag") }),
-        el("th", { scope: "col",
-          text: t("ui.rekruttering.evalueringer.bestilt") }),
-        el("th", { scope: "col",
-          text: t("ui.rekruttering.evalueringer.status") }),
-        el("th", { scope: "col",
-          text: t("ui.rekruttering.evalueringer.vis") }))),
-      el("tbody", {}, ...rader));
+    const liste = el("ul", { class: "rekrut-kortliste",
+      "aria-label": t("ui.rekruttering.evalueringer.tabell") },
+      ...kort);
     // PAGINERINGEN (#221): cursoren er serverens fortsettelse — flaten
     // regner aldri ut «neste side» selv. Klikket APPENDER: brukeren
     // mister ikke radene hen alt ser på. Generasjonen vokter mot både
@@ -1852,7 +1854,7 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
     sett(rot, tittel,
       ...(oppdaterKnapp ? [oppdaterKnapp] : []),
       utfall,
-      el("div", { class: "tablewrap" }, liste),
+      liste,
       // Et fullt vindu KAN bety flere — aldri stille avkorting: uten en
       // cursor å følge (eldre server, eller ingen økt å appende i) står
       // meldingen; med den står knappen.
