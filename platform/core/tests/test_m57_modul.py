@@ -2609,6 +2609,89 @@ def test_revisjonshendelsen_slaas_opp_en_gang_per_bunt(tmp_path):
         " autorisasjon, og oppslaget går i basen")
 
 
+def test_avskruing_uten_hendelse_felles_for_forste_modellkall(tmp_path):
+    """Cursor P2 (runde 3 på #247): negativen manglet på BUNTNIVÅ.
+
+    Memoiseringsblokken er det eneste som stopper halvveis-eksponering
+    ved avskruing, men alle negativene sto på `evaluer_kandidat` /
+    `evalueringsinput` — altså på porten alene, aldri på utfallet
+    `kjor_bunt` faktisk leverer. To ting var dermed umålt, og begge er
+    kontrakten mot arbeideren:
+
+    1. at `Blindingsfeil` blir et RENT `Kjoringsfeil`-utfall her, ikke
+       en rå modulexception som arbeideren melder som ukjent feil, og
+    2. at koden overlever oversettelsen — `kjor_bunt` bygger
+       `Kjoringsfeil(feil.kode, fremdrift)`, og det er den koden
+       controlleren melder som `kjoring_avbrutt:<kode>`.
+
+    Punkt 2 er nettopp Codex' P2 (runde 3): «ingen rad» og «oppslaget
+    virket ikke» må komme ut som to utfall hos driften — den ene skal
+    eskaleres, den andre prøves om igjen. Skillet er verdiløst hvis det
+    dør i oversettelsen, og det er BARE her det kan måles.
+
+    Bunten har to kandidater, så `modell.sett == []` også sier at ingen
+    tidligere kandidat rakk modellen før porten felte kjøringen.
+
+    MUTASJONEN SOM DREPER DENNE: gi de to avvisningene samme kode igjen,
+    eller la `except blinding.Blindingsfeil`-armen i `kjor_bunt` falle
+    ned i catch-all-en (`modellfeil`).
+    """
+    import json as _json
+
+    from modules.m57_ats import kjoring
+
+    manifest = _json.dumps({"soknader": [
+        {"kandidat_id": "k1", "filer": ["k1/cv.html"]},
+        {"kandidat_id": "k2", "filer": ["k2/cv.html"]}]})
+
+    def _arkiv(katalog: str):
+        mappe = tmp_path / katalog
+        mappe.mkdir()
+        return _bunt(mappe,
+                     [("k1/cv.html", b"<p>Kari Testdal kan drift</p>"),
+                      ("k2/cv.html", b"<p>Ola Testdal kan drift</p>")],
+                     manifest=manifest)
+
+    hid = "7f1c1f7e-0000-4000-8000-000000000004"
+
+    def _kaster(_hendelse_id):
+        raise RuntimeError("forbindelsen er nede")
+
+    for katalog, oppslag, ventet in (
+        ("ingen_rad", lambda _i: None, "avskrudd_uten_auditrad"),
+        ("basen_nede", _kaster, "avskrudd_oppslag_feilet"),
+    ):
+        modell = _Modell()
+        with pytest.raises(kjoring.Kjoringsfeil) as e:
+            kjoring.kjor_bunt(
+                _arkiv(katalog), modell, vekter={"drift": 3},
+                tekst_for=lambda m, d: d.decode("utf-8"),
+                biasmaalinger=_MAALINGER, antall_soknader=2,
+                blinding_av=True, avskruing_hendelse_id=hid,
+                hendelseoppslag=oppslag)
+        assert e.value.kode == ventet, (
+            f"{katalog} kom ut av kjøringen som {e.value.kode} —"
+            " driften kan ikke klassifisere utfallet")
+        assert modell.sett == [], (
+            "en kandidat nådde modellen ublindet før porten felte"
+            f" kjøringen ({katalog})")
+
+    # KONTROLLEN: samme rigg med en ekte hendelse går gjennom. Uten den
+    # kunne begge negativene bestått på en bunt som var ugyldig av en
+    # helt annen grunn.
+    modell = _Modell()
+    ut = kjoring.kjor_bunt(
+        _arkiv("ekte"), modell, vekter={"drift": 3},
+        tekst_for=lambda m, d: d.decode("utf-8"),
+        biasmaalinger=_MAALINGER, antall_soknader=2, blinding_av=True,
+        avskruing_hendelse_id=hid,
+        hendelseoppslag=lambda _i: {
+            "handling": blinding.AVSKRUINGSHANDLING,
+            "aktor": "drift", "ts": "2026-08-29T00:00:00+00:00"})
+    assert set(ut["artefakter"]) == {"k1", "k2"}
+    assert len(modell.sett) == 2, "riggen var ugyldig av en annen grunn"
+
+
 def test_vakuos_deklarasjon_felles_for_forste_modellkall(tmp_path):
     """Cursor P2: samme REKKEFØLGEPRIS som `blinding_uten_felter`, bare
     ett hakk senere i veien.
