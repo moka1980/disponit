@@ -4587,6 +4587,84 @@ test("Rapport: hvert «Vis funn» navngir sin egen kandidat for øret",
     "kandidaten kom inn i den SYNLIGE teksten — muren er tilbake i raden");
 });
 
+// Samme fikstur, andre id-er: portene under måler FORKORTINGEN, ikke
+// rapportens form. Poengene faller med rekkefølgen, så rangeringen er
+// den kalleren ba om.
+function rapportSvarMed(...ider) {
+  const svar = enkelRapportSvar();
+  const rapport = svar["/v1/rekruttering/rapport/96"].rapport;
+  rapport.rangering = ider.map((id, i) => (
+    { kandidat_id: id, poeng: 5 - i, nedbrytning: { drift: 3 } }));
+  rapport.kandidater = Object.fromEntries(ider.map((id) => (
+    [id, { funn: [], intervjusporsmal: [], kildetekst: "a" }])));
+  return svar;
+}
+
+// RANGERINGSTABELLEN, IKKE PROSESSENS: flaten har flere `<table>`, og
+// `querySelector` ville tatt den første i DOM-en. Captionen bærer
+// profilnavnet og er rapportens alene.
+function rapporttabellen(hoved) {
+  return [...hoved.querySelectorAll("table")].find((tb) => {
+    const cap = tb.querySelector("caption");
+    return cap && cap.textContent.includes("Driftskonsulent");
+  });
+}
+
+test("Rapport: en lang kandidat-id kortes, men mistes ikke", async () => {
+  // Cursor P2: kortnavnet gjaldt bare prosesstabellen. Rapporten står
+  // ØVERST — den er produktdelen leseren møter først — og viste rå
+  // `kandidat_id` i radoverskriften. Med seedens UUID-er ble det en vegg
+  // av heksadesimal i rapporten og en ryddet kolonne under.
+  //
+  // MUTASJONEN SOM DREPER DENNE: skriv `rad.kandidat_id` rått i `th`-en
+  // igjen (eller fjern `title`).
+  const uuid = "58f17252-8a2b-4092-a420-adf5d5d430d1";
+  KALL = [];
+  SVAR = rapportSvarMed(uuid);
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.textContent.includes("58f17252")));
+  const tabell = rapporttabellen(hoved);
+  assert.ok(tabell, "rangeringstabellen mangler");
+  assert.ok(!tabell.textContent.includes(uuid),
+    "hele UUID-en står i rapporttabellen — kolonnen er en vegg på mobil");
+  const th = tabell.querySelector("tbody th[scope=row]");
+  assert.ok(th, "radoverskriften mangler");
+  assert.ok(th.textContent.includes("58f17252"),
+    "kandidaten er ikke gjenkjennelig i det hele tatt");
+  assert.equal(th.getAttribute("title"), uuid,
+    "hele id-en er borte fra rapporten — den skal kunne kopieres");
+});
+
+test("Rapport: to id-er med samme åtte tegn får ULIKE kortnavn", async () => {
+  // Speiler prosessportens måling på rapportveien: åtte heksadesimaler
+  // er 32 bit og ingen garanti innenfor de 5000 kandidatene skjemaet
+  // tillater. Skiller intet prefiks dem, står id-ene urørt — flaten
+  // lyver heller ikke om at to referanser er like.
+  //
+  // MUTASJONEN SOM DREPER DENNE: `id.slice(0, 8)` i rapportens `th`.
+  const a = "58f17252-8a2b-4092-a420-adf5d5d430d1";
+  const b = "58f17252-8a2b-4092-a420-adf5d5d430d2";  // skiller på SISTE tegn
+  KALL = [];
+  SVAR = rapportSvarMed(a, b);
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => {
+    const tb = rapporttabellen(hoved);
+    return tb && tb.querySelectorAll("tbody th[scope=row]").length === 2;
+  }));
+  const tabell = rapporttabellen(hoved);
+  const viste = [...tabell.querySelectorAll("tbody th[scope=row]")]
+    .map((th) => th.textContent.trim());
+  assert.equal(new Set(viste).size, 2,
+    `to kandidater vises med SAMME referanse: ${JSON.stringify(viste)}`);
+  // Og begge hele id-ene er fortsatt å få tak i.
+  const titler = [...tabell.querySelectorAll("tbody th[scope=row]")]
+    .map((th) => th.getAttribute("title"));
+  assert.ok(titler.includes(a) && titler.includes(b),
+    `en av de hele id-ene forsvant: ${JSON.stringify(titler)}`);
+});
+
 test("Prosess: en lang kandidat-id kortes, men mistes ikke", async () => {
   // Seeden gir UUID-er, og en full UUID bryter over tre linjer på mobil —
   // kolonnen ble en vegg av heksadesimal. Hele id-en står i `title`.
