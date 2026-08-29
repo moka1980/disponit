@@ -930,6 +930,16 @@ def test_update_branch_commiten_er_et_smalt_unntak():
         " da er det ikke et unntak, det er et hull")
     assert "GITHUB_ENV" in lesning, \
         "SHA-en skrives ikke til jobbmiljøet, så neste forsøk ser den ikke"
+    # IDENTITET *OG* FORM (Codex P2, runde 13). `update-branch` oppgir
+    # ikke SHA-en den laget, så oppslaget etterpå er et eget steg — og en
+    # force-push i det vinduet ville fått oss til å notere den fremmedes
+    # SHA som vår. Den ene sjekken alene kan forfalskes av et kappløp,
+    # den andre av en merge med samme foreldre; sammen kan ingen av dem.
+    assert "git cat-file -p" in lesning and "^parent" in lesning, (
+        "SHA-en verifiseres ikke mot formen den påstår å ha — et kappløp"
+        " i vinduet etter `update-branch` gir oss en fremmed commit")
+    assert "NØYAKTIG to foreldre" in lesning, \
+        "foreldrekravet er ikke eksakt"
     # ... og BEGGE update-branch-armene må notere den. Noterer bare den
     # ene, parkerer neste forsøk på den andres oppdatering.
     armer = [l for l in YML.splitlines() if "update-branch" in l

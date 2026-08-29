@@ -273,6 +273,21 @@ jobs:
         ingen umerket commit å forsvare. En vanlig commit uten merke er
         aldri vår, uansett hvem som ser ut til å ha laget den.
 
+        OG SHA-EN VERIFISERES, DEN LESES IKKE BARE (Codex P2, runde 13).
+        `gh pr update-branch` returnerer uten å oppgi SHA-en den laget, så
+        oppslaget etterpå er et EGET steg — og force-pusher en annen
+        skriver i det vinduet, noterer vi HANS SHA som vår. Identiteten
+        alene er derfor ikke nok; den må stemme med formen den påstår å
+        ha. Før unntaket brukes:
+
+            git cat-file -p "$OPPDATERT_HEAD" | grep '^parent'
+
+        Commiten må ha NØYAKTIG to foreldre, den første `$HODE_VED_START`
+        og den andre `main`s tipp slik den var da 3a kjørte. Stemmer ikke
+        det, er SHA-en ikke oppdateringen vår, og unntaket faller bort —
+        da parkerer du. Identitet OG form: den ene alene kan forfalskes av
+        et kappløp, den andre av en fremmed merge med samme foreldre.
+
         MÅLESTOKKEN ER HODET VED KJØRINGENS START, IKKE `headRefOid` (Codex
         r3879...225). Forsøk 1 fikser og pusher, går tom for turer, og
         forsøk 2 skal fortsette derfra — det er hele poenget med de tre
