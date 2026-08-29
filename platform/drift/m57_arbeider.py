@@ -47,15 +47,23 @@ class KlientHTTP:
         self.base = base.rstrip("/")
         self.frist_s = frist_s
 
-    def post(self, sti: str, json_kropp=None, headers=None, **kw):
+    def post(self, sti: str, json_kropp=None, headers=None, timeout=None,
+             **kw):
+        # `timeout` er EKSPLISITT i signaturen, ikke i `**kw` (Codex P1,
+        # #173): kandidatsinkene gir kallet sin egen overføringsfrist
+        # (`controller.SKRIVEFRIST_S`), og hadde den ligget i `**kw`
+        # ville den blitt slukt i stillhet og hvert stort skriv fortsatt
+        # kjørt på avslutningens 5 sekunder — en fiks som så riktig ut i
+        # kallet og ikke gjorde noe.
         json_kropp = kw.pop("json", json_kropp)
         data = json.dumps(json_kropp or {}).encode("utf-8")
         req = urllib.request.Request(
             self.base + sti, data=data, method="POST",
             headers={"content-type": "application/json",
                      **(headers or {})})
+        frist = self.frist_s if timeout is None else timeout
         try:
-            with urllib.request.urlopen(req, timeout=self.frist_s) as r:
+            with urllib.request.urlopen(req, timeout=frist) as r:
                 return _Svar(r.status, r.read())
         except urllib.error.HTTPError as e:
             return _Svar(e.code, e.read())
