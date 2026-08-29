@@ -154,8 +154,22 @@ class _Stubklient:
         self.kandidatdokumenter = []
         self.kandidatartefakter = []
         self.kandidatdatastatus = 200
+        #: Antall kandidatdata-kall som LYKKES før `kandidatdatastatus`
+        #: slår inn. 0 = grensen gjelder fra første kall, altså den gamle
+        #: oppførselen. Et tall > 0 gir den DELVISE commiten: noen skriv
+        #: står i lagrene når strømmen ryker — feilmodusen «alt feiler
+        #: fra første kall» aldri kan måle.
+        self.kandidatdata_ok_forst = 0
         self.kvitteringer = []
         self.stier = []
+
+    def _kandidatdatasvar(self):
+        """Kallet er alt talt når dette kjører, så n = 1 på det første.
+        `kandidatdata_ok_forst = 0` gir da `kandidatdatastatus` fra og med
+        kall 1 — uendret standardoppførsel."""
+        n = len(self.kandidatdokumenter) + len(self.kandidatartefakter)
+        return 200 if n <= self.kandidatdata_ok_forst \
+            else self.kandidatdatastatus
 
     def _kvitteringssvar(self, sendt):
         if self.kvitteringskropp is not ...:
@@ -184,10 +198,10 @@ class _Stubklient:
             return self.forny() if self.forny else _Svar(200, {})
         if sti == "/v1/rekruttering/kandidatdokument":
             self.kandidatdokumenter.append(json)
-            return _Svar(self.kandidatdatastatus, {})
+            return _Svar(self._kandidatdatasvar(), {})
         if sti == "/v1/rekruttering/kandidatartefakt":
             self.kandidatartefakter.append(json)
-            return _Svar(self.kandidatdatastatus, {})
+            return _Svar(self._kandidatdatasvar(), {})
         if sti == "/v1/artefakt":
             if self.opplastingsstatus != 200:
                 return _Svar(self.opplastingsstatus, {})
@@ -269,6 +283,39 @@ def test_173_sinkfeil_er_kodet_avbrudd(monkeypatch):
     assert res["grunn"] == "kjoring_avbrutt:kandidatlagring_feilet", res
     assert "/v1/artefakt" not in k.stier, \
         "en kjøring som ikke fikk lagret kandidatdata leverte likevel"
+    assert k.kvitteringer and \
+        k.kvitteringer[0]["feilkode"] == "kjoring_avbrutt"
+
+
+def test_173_delvis_stroem_feller_kjoringen_uten_promotering(monkeypatch):
+    """#173 (Cursor P2-5): den FAKTISKE strømmefeilmodusen — noen skriv
+    står alt i lagrene når neste ryker.
+
+    `test_173_sinkfeil_er_kodet_avbrudd` feller sinken fra FØRSTE kall,
+    og da er «ingenting ble skrevet» sant uten at noen kode sørget for
+    det. Her lykkes dokumentveien og artefaktveien feiler: kjøringen har
+    en delvis commit bak seg, og porten er at den likevel ikke leverer.
+    Delvis lagret kandidatdata reapes med prosessen (057), mens et
+    promotert artefakt er en påstand om en FULLFØRT evaluering — det er
+    forskjellen på et avbrudd og en løgn.
+
+    MUTASJONEN SOM DREPER DENNE: la `kjor_bunt` fortsette til
+    rapportbygging når `lagre_kandidat` reiser, eller la `kjor_en`
+    promotere før utfallet er kjent."""
+    from modules.m57_ats import controller
+    monkeypatch.setattr(controller, "_sov", lambda s: None)
+    k = _Stubklient()
+    k.kandidatdatastatus = 500
+    k.kandidatdata_ok_forst = 1         # dokumentet lander, artefaktet ryker
+    res = _kjor(k)
+    assert res["utfall"] == "avbrutt", res
+    assert res["grunn"] == "kjoring_avbrutt:kandidatlagring_feilet", res
+    # DELVIS: dokumentveien svarte 200, så et skriv står i lagrene — det
+    # er nettopp den tilstanden den gamle porten ikke kunne konstruere.
+    assert len(k.kandidatdokumenter) == 1, k.kandidatdokumenter
+    assert len(k.kandidatartefakter) == 1, k.kandidatartefakter
+    assert "/v1/artefakt" not in k.stier, \
+        "en kjøring med delvis lagret kandidatdata promoterte likevel"
     assert k.kvitteringer and \
         k.kvitteringer[0]["feilkode"] == "kjoring_avbrutt"
 

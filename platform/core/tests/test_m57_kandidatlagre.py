@@ -1913,7 +1913,8 @@ def test_173_skriveveien_er_claimbundet_og_idempotent(migrator, miljo):
     deterministiske (valg b) — samme kall to ganger gir samme UUID-er og
     ingen ny rad, og kandidat-UUID-en er den samme på tvers av de to
     rutene; (3) et avvikende re-skriv under samme nøkkel felles som
-    `kandidatdata_konflikt`; (4) feil claim-par og reapet anker er samme
+    `kandidatdata_konflikt` — både på dokumentbytene og, på SAMME byte,
+    på parsetteksten; (4) feil claim-par og reapet anker er samme
     `kandidatdata_avvist` — et oppslagsverk over claims skal ikke
     finnes.
 
@@ -2010,6 +2011,20 @@ def test_173_skriveveien_er_claimbundet_og_idempotent(migrator, miljo):
             assert r4.status_code == 409, r4.text
             assert r4.json()["feil"] == "kandidatdata_konflikt"
 
+            # (3b) SAMME dokument, ANNEN parsettekst (Cursor P2-5). Den
+            # armen var ubevist, og den er den sannsynlige: bytene er
+            # arkivets og endrer seg ikke, mens teksten kommer fra en
+            # uttrekker som kan bytte versjon mellom to retries. Da er
+            # `ON CONFLICT DO NOTHING` på originaldokumentet et stille ja
+            # — likhetsmålingen slipper det gjennom — og bare
+            # parsettekstens egen måling står igjen mellom to sannheter
+            # om samme dokument.
+            r4b = c.post("/v1/rekruttering/kandidatdokument",
+                         json={**dok, "tekst": f"ANNEN tekst {FIXTUR}"},
+                         headers=hode)
+            assert r4b.status_code == 409, r4b.text
+            assert r4b.json()["feil"] == "kandidatdata_konflikt"
+
             # (4a) Feil claim-par: ETT svar.
             r5 = c.post("/v1/rekruttering/kandidatdokument",
                         json={**dok, "owner_claim_id": "x" * 22},
@@ -2061,6 +2076,104 @@ def test_173_skriveveien_er_claimbundet_og_idempotent(migrator, miljo):
                         json=art, headers=hode)
             assert r6.status_code == 409, r6.text
             assert r6.json()["feil"] == "kandidatdata_avvist"
+    finally:
+        rt.close()
+
+
+@pg
+def test_173_doed_lease_stenger_doren_midt_i_stroemmen(migrator, miljo):
+    """#173 (Cursor P2-5): leasen dør MENS strømmen går.
+
+    Kjedetesten måler feil claim-par og reapet anker. Dette er den
+    tredje veien inn i samme avvisning, og den som faktisk skjer i
+    drift: claimet er riktig, ankeret lever, men heartbeatet er tapt og
+    `owner_lease_utloper` har passert. Fencing-leddet i døren er det
+    eneste som står igjen — en utfører uten levende lease er ikke
+    lenger oppdragets utfører, og skal ikke få skrive det neste
+    dokumentet inn i prosessen.
+
+    Riggen er strømmen: ETT dokument lander på levende lease, så dør
+    leasen, så kommer det neste. Å måle bare det andre kallet ville
+    ikke skilt «leasen var død» fra «riggen var feil».
+
+    MUTASJONEN SOM DREPER DENNE: fjern
+    `owner_lease_utloper > now()`-leddet i dørens radoppslag."""
+    import base64
+
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    from .test_bestilling_rekruttering import _sikre_m57_claimbar
+    from .test_modul_onboarding_http import _onboard_token
+    from miljo import gjeldende_miljo
+
+    _sikre_m57_claimbar(migrator)
+    rel = migrator.execute(
+        "SELECT release_id FROM moduldeployment"
+        " WHERE modul_id='m57_ats' AND miljo=%s AND livslop='claiming'"
+        " LIMIT 1", (gjeldende_miljo(),)).fetchone()[0]
+    migrator.commit()
+
+    rt = _rt()
+    try:
+        oid, pid = _prosess(migrator, rt)
+        rt.commit()                     # jf. fødselsvaktens `FOR SHARE`
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute(
+            "UPDATE oppdrag SET owner_claim_id=%s, owner_generation=1,"
+            " owner_lease_utloper=now()+interval '10 minutes'"
+            " WHERE tenant=%s AND id=%s", ("c" * 22, TENANT, oid))
+        migrator.commit()
+
+        a = lag_app(DSN)
+        with TestClient(a) as c:
+            mtk, _ = _onboard_token(c, migrator, "m57_ats", rel)
+            hode = {"authorization": f"Bearer {mtk}"}
+            dok = {"tenant": TENANT, "oppdrag_id": oid,
+                   "owner_claim_id": "c" * 22, "owner_generation": 1,
+                   "kandidat_id": "k1", "dokumentnavn": "k1/cv.pdf",
+                   "dokument_b64": base64.b64encode(
+                       b"%PDF-1.7 " + FIXTUR.encode()).decode(),
+                   "tekst": f"CV-tekst {FIXTUR}"}
+            r1 = c.post("/v1/rekruttering/kandidatdokument",
+                        json=dok, headers=hode)
+            assert r1.status_code == 200, r1.text
+
+            # Heartbeatet er tapt: leasen har passert. Claim-paret og
+            # ankeret er UENDRET — det er nettopp poenget.
+            _sett_kontekst(migrator, TENANT)
+            migrator.execute(
+                "UPDATE oppdrag SET owner_lease_utloper=now()"
+                " - interval '1 second' WHERE tenant=%s AND id=%s",
+                (TENANT, oid))
+            migrator.commit()
+
+            r2 = c.post("/v1/rekruttering/kandidatdokument",
+                        json={**dok, "dokumentnavn": "k1/attest.pdf"},
+                        headers=hode)
+            assert r2.status_code == 409, r2.text
+            assert r2.json()["feil"] == "kandidatdata_avvist"
+            # Artefaktveien står i samme dør.
+            r3 = c.post("/v1/rekruttering/kandidatartefakt",
+                        json={"tenant": TENANT, "oppdrag_id": oid,
+                              "owner_claim_id": "c" * 22,
+                              "owner_generation": 1, "kandidat_id": "k1",
+                              "artefakt": {"funn": [], "oppfylt": {},
+                                           "kildetekst": "x"},
+                              "avmaskering": {}}, headers=hode)
+            assert r3.status_code == 409, r3.text
+            assert r3.json()["feil"] == "kandidatdata_avvist"
+
+            # Det FØRSTE dokumentet står — avvisningen gjelder skrivene
+            # etter at leasen døde, ikke det som var lovlig lagret.
+            _sett_kontekst(migrator, TENANT)
+            rader = migrator.execute(
+                "SELECT (SELECT count(*) FROM kandidat_originaldokument"
+                "         WHERE tenant=%s AND prosess_id=%s),"
+                " (SELECT count(*) FROM kandidat_evalueringsartefakt"
+                "         WHERE tenant=%s AND prosess_id=%s)",
+                (TENANT, pid) * 2).fetchone()
+            migrator.rollback()
+            assert rader == (1, 0), rader
     finally:
         rt.close()
 
