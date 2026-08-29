@@ -1359,7 +1359,13 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
           k.disabled = false;
           return;
         }
-        if (min !== eval2.nr) return;
+        // Taperen skriver ingenting — men den LÅSER heller ikke
+        // kontrollen sin (Cursor P2). Vant en vellykket «Oppdater», er
+        // `k` alt revet ut av DOM-en og linjen er en no-op. Vant en
+        // FEILET «Oppdater», tegnes ingenting på nytt: da er dette den
+        // eneste veien knappen kommer tilbake, og uten den står den
+        // deaktivert over en liste som fortsatt har mer å hente.
+        if (min !== eval2.nr) { k.disabled = false; return; }
         meldListefeil(false);
         const basis = eval2.liste !== undefined
           ? eval2.liste : (evalueringer || []);

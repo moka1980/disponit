@@ -1733,6 +1733,60 @@ test("Evalueringer: «Oppdater» og «Last flere» blander aldri to "
   // appendede siden stille borte.
 });
 
+test("Evalueringer: en taperunde låser ikke «Last flere» når «Oppdater» "
+  + "tok generasjonen og FEILET", async () => {
+  KALL = [];
+  // Cursor P2: generasjonsvakten forkastet det tapte svaret med et bart
+  // `return` — uten å slå knappen på igjen. Vant en VELLYKKET
+  // «Oppdater», gjorde det ingenting: om-tegningen river noden uansett.
+  // Men «Oppdater» bumper generasjonen FØR den vet om den lykkes, og på
+  // feilveien tegner den ikke. Da ble «Last flere» stående deaktivert
+  // over en liste som fortsatt meldte `flere: true` — kontrollen var
+  // død til noe annet tvang en full om-tegning.
+  let slippSide2;
+  const treg = new Promise((res) => { slippSide2 = res; });
+  const rad = (id, tid) => ({ oppdrag_id: id, status: "opprettet",
+    opprettet: tid, rapport_klar: false });
+  SVAR = {
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": {
+      evalueringer: [rad(200, "2026-08-27T02:00:00+00:00")],
+      flere: true, neste_cursor: "c-side2.mac" },
+    "/v1/rekruttering/evalueringer?cursor=c-side2.mac": treg,
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel] table")));
+  const seksjon = hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  const knapp = (nokkel) => [...seksjon.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.evalueringer." + nokkel));
+
+  // 1) «Last flere» tar generasjonen og henger.
+  knapp("last_flere").click();
+  assert.ok(knapp("last_flere").disabled,
+    "positiv kontroll: knappen skal være deaktivert mens siden er i lufta");
+  // 2) «Oppdater» bumper generasjonen og FEILER — ingen om-tegning, så
+  //    «Last flere»-noden lever fortsatt.
+  SVAR["/v1/rekruttering/evalueringer"] = 503;
+  knapp("oppdater").click();
+  assert.ok(await vent(() => seksjon.querySelector("[role=alert]").textContent
+    .includes(t("ui.rekruttering.evalueringer.handlingfeil"))),
+  "riggen feilet: «Oppdater» meldte aldri fra");
+  // 3) Den tapte siden lander. Den skal ikke skrive noe — og ikke låse.
+  slippSide2({ evalueringer: [rad(100, "2026-08-27T01:00:00+00:00")],
+    flere: false, neste_cursor: null });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.ok(!seksjon.textContent.includes("100"),
+    "det tapte svaret ble skrevet inn i listen likevel");
+  assert.ok(knapp("last_flere") && !knapp("last_flere").disabled,
+    "«Last flere» ble stående deaktivert etter en tapt runde");
+  // MUTASJONEN SOM DREPER DENNE: fjern `k.disabled = false` fra
+  // `if (min !== eval2.nr)`-grenen i «Last flere».
+});
+
 test("Evalueringer: «Oppdater» henter listen på nytt uten side-reload"
   + " (#221)", async () => {
   KALL = [];
