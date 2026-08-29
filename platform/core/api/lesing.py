@@ -526,6 +526,35 @@ def _anker_lever(conn, tenant, oppdrag_id) -> bool:
         (tenant, oppdrag_id)).fetchone()[0]
 
 
+def _artefakt_lever(conn, tenant, artefakt_id) -> bool:
+    """Er artefaktet fortsatt UMAKULERT med levende payload NÅ?
+
+    Søsteren til `_anker_lever`, og den lukker det vinduet ankeret ikke
+    ser (Codex P2 på #252). `makuler_artefakter_for_prosess` (#222) kan
+    committe UTEN at prosessen merkes reapet — det er en form #252
+    eksplisitt støtter og tester, siden døren kalles per oppdrag og
+    reapmerket settes av et eget steg. Ankeret lever da fortsatt og
+    `_anker_lever` sier true, mens raden vi alt har lest er tømt.
+
+    Uten denne leser hovedspørringen ciphertexten rett før makuleringen
+    committer, dekrypterer den, passerer ankersjekken — og leverer 200
+    med kandidatpayload som er slettet i basen. Ankeret måler PROSESSENS
+    frist; dette måler ARTEFAKTETS eget merke, og det er to forskjellige
+    fakta.
+
+    Samme doktrine som søsteren for øvrig: leses rett før 200, etter
+    dekrypteringen, i samme transaksjon — READ COMMITTED tar ferskt
+    snapshot per setning. Vindusinnsnevring, ikke lås; en FOR SHARE
+    herfra ville krevd skriverett på evidenstabellen for en READ-rute.
+    Ingen klokkeslett her: merket er et faktum, ikke en frist.
+    """
+    return conn.execute(
+        "SELECT EXISTS (SELECT 1 FROM artefakt a"
+        "  WHERE a.tenant=%s AND a.artefakt_id=%s"
+        "    AND a.makulert_ts IS NULL AND a.ciphertext IS NOT NULL)",
+        (tenant, artefakt_id)).fetchone()[0]
+
+
 def rekrutteringsrapport_detalj(tjeneste, request: Request) -> Response:
     """GET /v1/rekruttering/rapport/{oppdrag_id} — den promoterte
     evalueringsrapporten. M-57s EGEN leseflate (kontraktens
@@ -605,6 +634,15 @@ def rekrutteringsrapport_detalj(tjeneste, request: Request) -> Response:
                                    art="drift", artefakt=str(art_id))
             return _feilsvar("intern_feil", rid)
         if not _anker_lever(conn, auth.tenant, oid):
+            return _feilsvar("ikke_funnet", rid)
+        # … OG ARTEFAKTET SELV MÅ FORTSATT VÆRE UMAKULERT (Codex P2 på
+        # #252). Ankersjekken over måler PROSESSENS frist; makuleringen
+        # er et eget faktum på artefaktraden, og døren kan committe uten
+        # at prosessen merkes reapet. Da består ankeret, og bare dette
+        # leddet ser at payloaden vi nettopp dekrypterte er slettet.
+        # Samme svar som resten av 404-doktrinen — en makulert rapport
+        # er identisk «finnes ikke», aldri et halvt svar.
+        if not _artefakt_lever(conn, auth.tenant, art_id):
             return _feilsvar("ikke_funnet", rid)
         # LESNINGEN SERVERER IKKE DET FLATEN KASTER (Codex P2 — samme
         # doktrine som `_kandidater`s nøkkelsubtraksjon): `kildetekst` er
