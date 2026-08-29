@@ -536,6 +536,21 @@ class KroppsgrenseMiddleware:
             if not melding.get("more_body", False):
                 break
 
+        # ÉN KROPP, IKKE TRE (Codex P1, #173). Linjene under lagde
+        # `bytes(kropp)` TO ganger — én til `scope["state"]`, én til
+        # replay — mens `kropp` selv holdt bytearray-bufferet levende
+        # gjennom hele `await self.app`. Det er tre samtidige kopier av
+        # en kropp som på kandidatartefaktruten kan være ~301 MiB, og
+        # middlewaren kjører FØR enhver autentisering: en forespørsel med
+        # ugyldig token betalte samme minne som en gyldig.
+        #
+        # Kopien tas nå én gang, deles av begge lesere, og bytearray-en
+        # slippes før handleren kalles. `bytearray.clear()` frigjør
+        # FAKTISK bufferet — CPythons `PyByteArray_Resize` har egen arm
+        # for størrelse 0 som kaller `PyObject_Free` — så dette er en
+        # frigjøring, ikke bare en dereferanse som venter på GC.
+        data = bytes(kropp)
+        kropp.clear()
         ferdig = False
 
         async def replay():
@@ -543,10 +558,10 @@ class KroppsgrenseMiddleware:
             if ferdig:
                 return {"type": "http.disconnect"}
             ferdig = True
-            return {"type": "http.request", "body": bytes(kropp),
+            return {"type": "http.request", "body": data,
                     "more_body": False}
 
-        scope["state"]["kropp"] = bytes(kropp)
+        scope["state"]["kropp"] = data
         return await self.app(scope, replay, send)
 
     async def _stroem(self, scope, receive, send, rid, headere):
