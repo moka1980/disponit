@@ -2946,6 +2946,56 @@ def test_revisjonshendelse_ingen_direkte_dml_for_disponit(migrator):
 
 
 @pg
+def test_arbeideren_leser_men_skriver_ikke_revisjonshendelsen(migrator):
+    """Rolleskillet MÅLES i basen, ikke bare pinnes i kjøreteksten
+    (Cursor P2, runde 5 på #247).
+
+    Alle #159-testene over kobler som runtime (`_rt()`), men oppslaget
+    som gjør «auditert» til en egenskap ved basen skjer i `kjor_bunt` —
+    i `disponit_arbeider`. Grantet dit var derfor umålt: det kunne
+    forsvinne uten at én test ble rød, og funnet ville dukket opp som
+    `permission denied` i drift.
+
+    TO VERDENER, INGEN SKIPP (samme form som
+    `test_arbeiderrollen_har_ikke_bevislos_revalidering`): finnes den
+    dedikerte rollen, måles les-ja/skriv-nei rett på den. Finnes den
+    ikke — CI og `opp.sh`-fallbacken, der m57-unitten KJØRER som runtime
+    — måles fallbackens egen invariant: runtime har begge, altså er
+    avskruingsveien ikke stengt av flyttingen. En hoppet test er ikke en
+    bestått test, så ingen av grenene skipper.
+
+    MUTASJONEN SOM DREPER DENNE: flytt `les_revisjonshendelse` tilbake
+    til `M37_RETTIGHETER_API` (arbeideren mister den), eller la
+    `skriv_revisjonshendelse` følge med til den delte blokken
+    (arbeideren kan da føre hendelser selv).
+    """
+    from .test_pr015_operativt_lag import _execute_mottakere
+
+    les = "les_revisjonshendelse(text,uuid)"
+    skriv = "skriv_revisjonshendelse(text,text,text,text,text)"
+    finnes = migrator.execute(
+        "SELECT 1 FROM pg_roles WHERE rolname='disponit_arbeider'").fetchone()
+    migrator.rollback()
+    if not finnes:
+        assert "disponit" in _execute_mottakere(migrator, les), (
+            "runtime mistet leseveien — fallbacken KJØRER m57-unitten som"
+            " runtime, så avskruingsoppslaget er da dødt")
+        assert "disponit" in _execute_mottakere(migrator, skriv), \
+            "runtime mistet skriveveien — hendelsen kan ikke føres"
+        return
+    q = lambda sql: migrator.execute(sql).fetchone()[0]     # noqa: E731
+    assert q("SELECT has_function_privilege('disponit_arbeider',"
+             f"'{les}','EXECUTE')") is True, (
+        "arbeideren kan ikke lese revisjonshendelsen — oppslaget i"
+        " `kjor_bunt` dør med permission denied etter migrering")
+    assert q("SELECT has_function_privilege('disponit_arbeider',"
+             f"'{skriv}','EXECUTE')") is False, (
+        "arbeideren kan SKRIVE revisjonshendelser — hendelsen skal føres"
+        " av innloggede mennesker, ikke av en bakgrunnsprosess")
+    migrator.rollback()
+
+
+@pg
 def test_handlingen_er_et_lukket_sett(migrator):
     """En ny slags revisjonshendelse er en kontraktsendring.
 
