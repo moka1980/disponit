@@ -175,6 +175,32 @@ opprydd() {
   [ -z "$RAA_KAT" ] || rm -rf "$RAA_KAT"
   if [ -z "$PAR_KLAR" ] && ! { [ -f "$FIL" ] && [ -f "$ARKIV" ]; }; then
     rm -f "$FIL" "$ARKIV"
+    # OG UNLINKEN MÅ VÆRE HOLDBAR (Codex P1 på `f2284d9`). En `unlink` er
+    # en katalogoperasjon som alle andre: den endrer bare cachet metadata.
+    # Krasjer verten etter at vi har forkastet paret, kan filsystemet
+    # gjenopprette ETT eller BEGGE de endelige navnene — inkludert dumpen
+    # uten arkivet, som er nøyaktig løgnen `sync`-kjeden i finaliseringen
+    # finnes for å hindre. Tjenesten meldte feil; disken viste dagens
+    # backup.
+    #
+    # HER, OG BARE HER. Feilarmen etter siste katalog-sync rydder selv —
+    # den må, ellers ser trapen to endelige navn og lar paret stå — men
+    # den avslutter gjennom `exit 1`, altså gjennom denne trapen, som da
+    # fester unlinken. Én `sync` dekker begge veiene; en kopi i feilarmen
+    # ville bare vært et andre sted å glemme.
+    #
+    # `slett_par` fjerner også endelige navn, men der er holdbarhet ikke
+    # det samme kravet: gjenoppstår et UTLØPT par etter et krasj, er
+    # utfallet en gammel backup som lever en runde til, ikke et forkastet
+    # par som utgir seg for å være dagens.
+    #
+    # FAIL-CLOSED er allerede gitt: grenen kjøres bare når `PAR_KLAR` er
+    # tom, og hver vei dit avslutter med status ulik 0. Feiler syncen, er
+    # det derfor ikke noe utfall å endre — bare noe å SI, høyt nok til at
+    # operatøren vet at katalogen trenger ettersyn.
+    sync "$KATALOG" || echo "ADVARSEL: ryddingen av det forkastede paret" \
+      "kunne ikke gjøres holdbar — $KATALOG kan etter et krasj gjenoppstå" \
+      "med ett eller begge de endelige navnene. Krever ettersyn." >&2
   fi
   [ -z "$VERIF" ] || sudo -u postgres dropdb --if-exists "$VERIF"
 }
@@ -605,6 +631,15 @@ mv "$DELVIS" "$FIL"
 #
 # Feiler den, rydder vi selv FØR trapen rekker å se to navn, og lar så
 # feilen forplante seg.
+#
+# HOLDBARHETEN AV DENNE RYDDINGEN LIGGER I TRAPEN (Codex P1 på `f2284d9`).
+# `rm` her er også bare cachet metadata, så et krasj etterpå kan
+# gjenopprette ett eller begge de endelige navnene. `exit 1` går gjennom
+# EXIT-trapen, og `opprydd` ser da at `PAR_KLAR` er tom og at navnene er
+# borte — den kjører `rm -f` på nytt (uvirksomt) og fester katalogen med
+# `sync "$KATALOG"`. Den fsyncen står ÉTT sted med vilje: her ville den
+# vært en andre kopi å glemme, og trapen dekker i tillegg hver annen vei
+# som forkaster et halvt par.
 if ! sync "$KATALOG"; then
   echo "AVBRUTT: siste katalog-sync feilet — paret publiseres ikke" >&2
   rm -f "$FIL" "$ARKIV"

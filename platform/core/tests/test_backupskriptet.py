@@ -168,6 +168,40 @@ def test_det_nyeste_utlopte_paret_lever_til_det_nye_star():
         "den sparte faller før paret er erklært ferdig"
 
 
+def test_forkastede_navn_fjernes_holdbart():
+    """Codex P1 på `f2284d9`: ryddingen fjernet navnene, men festet dem ikke.
+
+    En `unlink` er en katalogoperasjon som alle andre — bare cachet
+    metadata. Krasjer verten etter at et par er FORKASTET, kan
+    filsystemet gjenopprette ett eller begge de endelige navnene,
+    inkludert dumpen uten arkivet. Da meldte tjenesten feil mens disken
+    viste dagens backup: nøyaktig løgnen `sync`-kjeden i finaliseringen
+    finnes for å hindre, bare på vei ut i stedet for på vei inn.
+
+    Fsyncen står ÉTT sted — i `opprydd`, rett etter `rm -f "$FIL"
+    "$ARKIV"`. Feilarmen etter siste katalog-sync rydder selv (ellers ser
+    trapen to navn og lar paret stå), men avslutter gjennom `exit 1`,
+    altså gjennom trapen, som fester unlinken. Én kopi å vedlikeholde, og
+    den dekker hver annen vei som forkaster et halvt par.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `sync "$KATALOG"` fra `opprydd`.
+    """
+    rydding = _pos('rm -f "$FIL" "$ARKIV"')
+    # Trapens egen rydding er den FØRSTE forekomsten; feilarmens er den
+    # andre. Fsyncen skal ligge i den første, før funksjonen er slutt.
+    trapkropp = SKRIPT[rydding:_pos("trap opprydd EXIT")]
+    assert 'sync "$KATALOG"' in trapkropp, (
+        "oppryddingen fjerner de endelige navnene uten å feste katalogen —"
+        " et krasj kan gjenopprette dumpen uten arkivet")
+    # ... og den må ikke kunne velte trapen: grenen kjøres bare på veier
+    # som alt avslutter ulikt 0, så en feilet sync skal SIES, ikke endre
+    # utfallet — og en naken `sync` ville drept trapen på `set -e`.
+    syncl = [l for l in trapkropp.splitlines() if 'sync "$KATALOG"' in l]
+    assert syncl and "||" in syncl[0], (
+        "katalog-syncen i trapen er ikke skjermet — en I/O-feil der velter"
+        f" oppryddingen midtveis: {syncl}")
+
+
 def test_sparingen_er_et_unntak_ikke_en_regel():
     """Codex P1 på `db2eeda`: et utløpt par ble spart selv når et ULØPT sto der.
 
