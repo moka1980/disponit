@@ -140,7 +140,7 @@ CREATE OR REPLACE FUNCTION makuler_artefakter_for_prosess(
     p_tenant TEXT, p_oppdrag_id BIGINT, p_naa TIMESTAMPTZ)
 RETURNS INT LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
-DECLARE v_antall INT;
+DECLARE v_antall INT; v_staged INT;
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant,
                                        'makuler_artefakter_for_prosess');
@@ -151,7 +151,37 @@ BEGIN
        AND a.makulert_ts IS NULL
        AND (a.ciphertext IS NOT NULL OR a.nonce IS NOT NULL);
     GET DIAGNOSTICS v_antall = ROW_COUNT;
-    RETURN v_antall;
+    -- … OG DEN STAGEDE RAPPORTEN BÆRER SAMME PAYLOAD (Codex P1).
+    -- Laster modulen opp kandidatrapporten men fullfører aldri en gyldig
+    -- kvittering, blir artefaktet stående `staged` med NØYAKTIG den
+    -- payloaden de tre retained-tilstandene makuleres for — funn,
+    -- intervjuspørsmål og den blindede kildeteksten. Et predikat på bare
+    -- de tre lot den ligge mens `reap_kandidatdata` merket prosessen
+    -- reapet, og kunden hadde fått §5-fristen sin overskredet på et
+    -- artefakt ingen av de to veiene tok.
+    --
+    -- `rydd_staged_artefakter()` er IKKE svaret her, og det er hele
+    -- poenget: den er en egen asynkron timer med sin egen 24-timers- og
+    -- evidensfrist-terskel, og en timer som henger eller feiler er en
+    -- forsinkelse retensjonsfristen ikke tåler. Fristen er kundens, ikke
+    -- ryddejobbens. Sveipet tar derfor sin egen prosess' stagede
+    -- artefakter selv, i samme transaksjon som resten.
+    --
+    -- FORMEN ER DEN EKSISTERENDE DØREN, ikke en ny: `staged -> forkastet`
+    -- er statemaskinens ANDRE navngitte nulling (016), og den arm
+    -- godtar nettopp denne overgangen med begge payloadfeltene nullet.
+    -- Merket settes IKKE her — `makulert_ts` hører til makuleringen av
+    -- et artefakt som beholder tilstanden sin, og en forkastet rad bærer
+    -- per definisjon ingenting. Terskelen er heller ikke `rydd`s:
+    -- prosessen sveipes fordi HELE retensjonsfristen er ute, og da er
+    -- oppdraget ferdig uansett hva kvitteringen aldri rakk.
+    UPDATE public.artefakt a
+       SET tilstand = 'forkastet', ciphertext = NULL, nonce = NULL
+     WHERE a.tenant = p_tenant AND a.oppdrag_id = p_oppdrag_id
+       AND a.tilstand = 'staged'
+       AND (a.ciphertext IS NOT NULL OR a.nonce IS NOT NULL);
+    GET DIAGNOSTICS v_staged = ROW_COUNT;
+    RETURN v_antall + v_staged;
 END $$;
 -- ACL-EN SETTES AV EIEREN, INNENFOR BLOKKA (Codex P1). Setningene sto
 -- etter `RESET ROLE`, altså som migrator — og migrator er `WITH INHERIT
@@ -568,11 +598,23 @@ BEGIN
         -- hull som armen over finnes for, bare i den ene tabellen den
         -- ikke så. Alle port 18-testene er grønne under den mutasjonen.
         --
-        -- Predikatet er DØRENS, ordrett: de tre payloadbærende retained-
-        -- tilstandene, umerket, med levende ciphertext/nonce. Da er
-        -- «døren har tømt alt» og «vakten slipper merket gjennom»
-        -- nøyaktig samme spørsmål, og ingen tredje form kan oppstå
-        -- mellom dem.
+        -- Predikatet er DØRENS RETAINED-ARM, ordrett: de tre
+        -- payloadbærende retained-tilstandene, umerket, med levende
+        -- ciphertext/nonce. Da er «døren har tømt alt» og «vakten
+        -- slipper merket gjennom» nøyaktig samme spørsmål, og ingen
+        -- tredje form kan oppstå mellom dem.
+        --
+        -- `staged` STÅR MED VILJE IKKE HER, selv om døren nå tar den
+        -- (Codex P1 over). Vakten finnes for det UGJENOPPRETTELIGE:
+        -- merket utelukker prosessen fra reaperen for ALLTID, og de tre
+        -- retained-tilstandene har ingen annen sveiper — blir de stående,
+        -- blir de stående for godt. `staged` har sin egen dør i tillegg
+        -- til vår (`rydd_staged_artefakter`), så et staged artefakt som
+        -- slapp forbi er en forsinkelse, ikke en permanent lekkasje.
+        -- Døren tar den likevel, fordi fristen er kundens og ikke
+        -- ryddejobbens; vakten avviser den ikke, fordi en vakt som
+        -- blokkerer merket på noe en annen timer rydder ville stanset
+        -- reaperen på en tilstand den ikke eier.
         --
         -- SYNLIGHETEN ER MÅLT, IKKE ANTATT: `artefakt` har FORCE ROW
         -- LEVEL SECURITY med bare `tenant_isolasjon`, og vakten er ikke
