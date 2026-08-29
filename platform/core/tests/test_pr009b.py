@@ -336,11 +336,14 @@ def test_nginx_kandidatrutene_faar_frist_med_margin():
     `kandidatlagring_feilet`.
 
     Ankeret er appkonstanten, ikke et tall kopiert inn i testen — samme
-    form som rate-sonen og kroppsgrensen.
+    form som rate-sonen og kroppsgrensen. Og det er HELE ankeret malen
+    forplikter seg på: 3 × `SKRIV_BEHANDLING_S`. En port som bare krevde
+    `frist > SKRIV_BEHANDLING_S` slapp `61s` gjennom CI — praktisk null
+    margin under last, med samme 504 til følge.
 
     MUTASJONEN SOM DREPER DENNE: fjern `proxy_read_timeout` fra en av
-    rutene (da gjelder defaulten på 60 s igjen), eller sett den til
-    `SKRIV_BEHANDLING_S` uten margin."""
+    rutene (da gjelder defaulten på 60 s igjen), eller sett den under
+    3 × `SKRIV_BEHANDLING_S` — `61s` like fullt som `60s`."""
     from api.app import KANDIDATARTEFAKT_RUTE, KANDIDATDOK_RUTE
     from modules.m57_ats.controller import SKRIVEFRIST_S, SKRIV_BEHANDLING_S
     https = _https()
@@ -354,10 +357,11 @@ def test_nginx_kandidatrutene_faar_frist_med_margin():
             " samme tall som appens eget behandlingsbudsjett, altså null"
             " margin")
         frist = int(m.group(1))
-        assert frist > SKRIV_BEHANDLING_S, (
+        assert frist >= 3 * SKRIV_BEHANDLING_S, (
             f"{rute}: ingressen kutter etter {frist} s, appen budsjetterer"
-            f" {SKRIV_BEHANDLING_S} s behandling — proxyen feller et gyldig"
-            " skriv, og sinken leser 504 som kandidatlagring_feilet")
+            f" {SKRIV_BEHANDLING_S} s behandling — margin under 3 ×"
+            " budsjettet er ingen margin under last: proxyen feller et"
+            " gyldig skriv, og sinken leser 504 som kandidatlagring_feilet")
         # Og ikke lenger enn klientens egen tålmodighet: da ville nginx
         # holdt en forbindelse ingen venter på lenger.
         assert frist <= SKRIVEFRIST_S, (
