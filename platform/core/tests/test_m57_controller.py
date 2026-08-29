@@ -344,7 +344,11 @@ def test_173_delvis_stroem_feller_kjoringen_uten_promotering(monkeypatch):
     # DELVIS: dokumentveien svarte 200, så et skriv står i lagrene — det
     # er nettopp den tilstanden den gamle porten ikke kunne konstruere.
     assert len(k.kandidatdokumenter) == 1, k.kandidatdokumenter
-    assert len(k.kandidatartefakter) == 1, k.kandidatartefakter
+    # MINST ett artefaktforsøk — aldri nøyaktig ett: `lever` retrier
+    # transiente 5xx, og antall FORSØK er transportens tall, ikke
+    # portens. Porten er at kjøringen avbrytes kodet og aldri leverer;
+    # retry mot en idempotent dør er samme skriv, ikke et nytt.
+    assert len(k.kandidatartefakter) >= 1, k.kandidatartefakter
     assert "/v1/artefakt" not in k.stier, \
         "en kjøring med delvis lagret kandidatdata promoterte likevel"
     assert k.kvitteringer and \
