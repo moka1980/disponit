@@ -153,11 +153,25 @@ BEGIN
     GET DIAGNOSTICS v_antall = ROW_COUNT;
     RETURN v_antall;
 END $$;
-RESET ROLE;
+-- ACL-EN SETTES AV EIEREN, INNENFOR BLOKKA (Codex P1). Setningene sto
+-- etter `RESET ROLE`, altså som migrator — og migrator er `WITH INHERIT
+-- FALSE`-medlem av `disponit_domene_eier` i prod. Uten SET ROLE har den
+-- da ikke eierens rettigheter, og PostgreSQL svarer på en REVOKE mot en
+-- funksjon den ikke eier med en WARNING, ikke en feil: migrasjonen ville
+-- gått grønn mens funksjonens default-ACL (`EXECUTE` for `PUBLIC`) sto
+-- urørt. Resultatet er en SECURITY DEFINER-funksjon eid av BYPASSRLS-
+-- rollen, kjørbar for ENHVER rolle i basen — en kaller som setter
+-- tenant-GUC-en kunne slettet retained payload direkte. GRANT-en til
+-- claimeren var virkningsløs av samme grunn, så døren ville i tillegg
+-- vært stengt for den ene rollen som skal gjennom den.
+--
+-- Formen er 016s, ordrett: hele 016-familiens REVOKE/GRANT-hale står
+-- innenfor `SET LOCAL ROLE disponit_domene_eier` … `RESET ROLE`.
 REVOKE ALL ON FUNCTION makuler_artefakter_for_prosess(TEXT, BIGINT,
     TIMESTAMPTZ) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION makuler_artefakter_for_prosess(TEXT, BIGINT,
     TIMESTAMPTZ) TO disponit_m37_claimer;
+RESET ROLE;
 
 -- ------------------------------------------------------------
 -- 4. Reaperen kaller døren i samme iterasjon som de seks lagrene
