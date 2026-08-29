@@ -166,9 +166,31 @@ STANDARD_RATE_PER_MIN = 2 * 60 * YTELSESKRAV_PER_SEK      # 12 000/min
 #: dem; api/ importerer aldri modulkode (samme grunn som
 #: `_KANDIDAT_ID_KANON` er speilet og ikke importert).
 #:
-#: Faktor 2 er modulens retrykjede (`LEVERINGSFORSOK = 4`, med pause bare
-#: på 5xx): en forbigående serverfeil skal ikke kunne spise budsjettet og
-#: gjøre neste skriving til en terminal 4xx.
+#: FAKTOREN ER HELE RETRYKJEDEN, IKKE HALVE (Codex P2, #173). Her sto
+#: faktor 2, med begrunnelsen «modulens retrykjede» — men `lever` gjør
+#: inntil `LEVERINGSFORSOK` = 4 forsøk, og faktor 2 budsjetterer bare ETT
+#: retry per logisk skriving. Bøtta belastes dessuten av hvert forsøk som
+#: NÅR handleren: rate-porten står foran databasearbeidet, så et forsøk
+#: som ender i 5xx har allerede tatt sin plass i vinduet.
+#:
+#: Regnestykket funnet peker på: en kjøring med i snitt to forbigående
+#: feil per skriving bruker tre forespørsler per logiske skriving og
+#: passerer 50 000 rundt logisk skriving nummer 16 667 — godt under
+#: kontraktens 25 000. Neste forsøk får en TERMINAL 429, og `lever` leser
+#: 4xx som endelig: en evaluering som var fullt gjenopprettelig ble felt
+#: som `kandidatlagring_feilet` av plattformens egen grense. Nøyaktig
+#: klassen bøtta ble laget for å fjerne, bare flyttet lenger ut i bunten.
+#:
+#: Budsjettet dekker derfor ALLE forsøkene. Den andre utveien — å ikke
+#: belaste retryer som ferske logiske skrivinger — krever at bøtta kan
+#: kjenne igjen et gjentatt skriv, altså idempotensnøkler inn i
+#: rate-laget: ny maskin, og ikke en fiksrunde-endring (§9 K1).
+#:
+#: `LEVERINGSFORSOK` SPEILES, den importeres ikke: api/ importerer aldri
+#: modulkode (samme grunn som `_KANDIDAT_ID_KANON` er speilet). Speilet
+#: er bundet til modulens eget tall av
+#: `test_173_ratebudsjettet_dekker_hele_retrykjeden`, så de to kan ikke
+#: drive fra hverandre i stillhet.
 #:
 #: PRISEN ER BETALT I BØTTEFORMEN, IKKE I TAKET (Codex P2). Linjen her sa
 #: at `slipp_gjennom` bygger vindulisten på nytt per kall — ~312
@@ -178,7 +200,9 @@ STANDARD_RATE_PER_MIN = 2 * 60 * YTELSESKRAV_PER_SEK      # 12 000/min
 #: arbeid bare denne bøtta hadde bruk for. Bøtta er nå en `deque` som
 #: forlater hvert tidspunkt én gang (amortisert O(1)), så taket kan være
 #: kontraktens tall uten å være et ytelsesspørsmål.
-KANDIDATDATA_RATE_PER_MIN = 2 * (20_000 + 5_000)          # 50 000/min
+KANDIDAT_LEVERINGSFORSOK = 4          # speiler m57 controller.LEVERINGSFORSOK
+KANDIDATDATA_RATE_PER_MIN = \
+    KANDIDAT_LEVERINGSFORSOK * (20_000 + 5_000)           # 100 000/min
 SIDE_STANDARD, SIDE_MAKS = 50, 200
 #: Statusene der saksbehandlingen ER FERDIG. Alt annet i statusmaskinen
 #: (migrasjon 011) venter på et menneske eller en maskin, og er dermed «åpen».

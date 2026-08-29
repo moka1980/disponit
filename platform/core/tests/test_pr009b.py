@@ -374,6 +374,49 @@ def test_173_kandidatskrivingen_har_egen_ratebotte():
         "skrivingen bruker ikke sitt eget tak"
 
 
+def test_173_ratebudsjettet_dekker_hele_retrykjeden():
+    """#173 (Codex P2): faktoren var 2, men `lever` gjør FIRE forsøk.
+
+    Bøtta belastes av hvert forsøk som NÅR handleren — rate-porten står
+    foran databasearbeidet, så et forsøk som ender i 5xx har allerede
+    tatt sin plass i vinduet. Med faktor 2 budsjetteres bare ETT retry
+    per logisk skriving: en kjøring med i snitt to forbigående feil
+    bruker tre forespørsler per skriving og passerer 50 000 rundt logisk
+    skriving nummer 16 667, godt under kontraktens 25 000. Neste forsøk
+    får en TERMINAL 429, og `lever` leser 4xx som endelig — en fullt
+    gjenopprettelig evaluering felt av plattformens egen grense.
+
+    Speilet bindes til modulens EGET tall, ikke til literalen 4: api/
+    importerer aldri modulkode, så konstanten er en kopi, og en kopi som
+    ingen måler er en kopi som driver. Skrus `LEVERINGSFORSOK` opp uten
+    at budsjettet følger etter, er funnet tilbake — da skal denne
+    testen falle, ikke en bunt i produksjon.
+
+    MUTASJONEN SOM DREPER DENNE: sett faktoren tilbake til 2, eller la
+    speilet stå igjen når modulens `LEVERINGSFORSOK` endres.
+    """
+    from api.app import KANDIDAT_LEVERINGSFORSOK, KANDIDATDATA_RATE_PER_MIN
+    from modules.m57_ats import controller
+
+    assert KANDIDAT_LEVERINGSFORSOK == controller.LEVERINGSFORSOK, (
+        f"appens speil er {KANDIDAT_LEVERINGSFORSOK}, modulen gjør"
+        f" {controller.LEVERINGSFORSOK} forsøk — kopien har drevet")
+    assert KANDIDATDATA_RATE_PER_MIN >= \
+        controller.LEVERINGSFORSOK * (20_000 + 5_000), (
+            f"{KANDIDATDATA_RATE_PER_MIN}/min dekker ikke"
+            f" {controller.LEVERINGSFORSOK} forsøk × 25 000 skrivinger —"
+            " en retrykjede innenfor kontrakten treffer taket")
+
+    # Og ingressen må følge appen, ellers svarer nginx 429 først —
+    # samme binding som `test_nginx_kandidatrutene_faar_sin_egen_ratesone`
+    # måler, her sett fra retrykjedens side.
+    soner = (NGINX / "rate-soner.conf").read_text(encoding="utf-8")
+    m = re.search(r"zone=disponit_kandidatdata:\d+[km]\s+rate=(\d+)r/m;",
+                  soner)
+    assert m and int(m.group(1)) >= KANDIDATDATA_RATE_PER_MIN, \
+        "ingressen ble ikke hevet sammen med appbudsjettet"
+
+
 def test_nginx_inndataruten_slipper_bunten_gjennom_og_redigerer_jtien():
     """#162, to Codex-funn i samme location.
 
