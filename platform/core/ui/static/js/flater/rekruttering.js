@@ -712,6 +712,18 @@ function tegn(hoved, ctx, data, okt, valgtId) {
   // og hører til den eskalerte avgjørelsen — ikke til denne fiksen.
   let sortValg = { nokkel: "poeng", retning: "descending" };
 
+  // Entydigheten regnes over PROSESSENS egne id-er — settet leseren
+  // faktisk skal skille fra hverandre i denne tabellen (`kortnavnFor`).
+  //
+  // ÉN LUKNING, IKKE ETT KALL PER LESESTED (pass-funn, runde 5). Lukningen
+  // sto inne i `tegnTabell` og var dermed utilgjengelig for
+  // kunngjøringen under, som derfor limte rå `kandidat_id`. Å regne
+  // kortnavnet en gang til der ville gitt to lukninger som KAN divergere;
+  // her kan de ikke det. Settet er `tegn`-konstant: `prosess` er bundet
+  // én gang (`:460`), og et prosessbytte bygger hele flaten på nytt — så
+  // dette er samme verdi `tegnTabell` regnet hver gang, regnet én gang.
+  const kortnavn = kortnavnFor(prosess.kandidater.map((k) => k.kandidat_id));
+
   function tegnTabell() {
     // Flatens egen rekkefølge følger valget, så `rader[0]` fortsatt er
     // den raden som faktisk står øverst — kunngjøringen under leser den.
@@ -722,9 +734,6 @@ function tegn(hoved, ctx, data, okt, valgtId) {
       .sort((a, b) => (sortValg.retning === "ascending"
         ? a.poeng - b.poeng : b.poeng - a.poeng)
         || (a.kandidat.kandidat_id < b.kandidat.kandidat_id ? -1 : 1));
-    // Entydigheten regnes over PROSESSENS egne id-er — settet leseren
-    // faktisk skal skille fra hverandre i denne tabellen (`kortnavnFor`).
-    const kortnavn = kortnavnFor(prosess.kandidater.map((k) => k.kandidat_id));
     sett(tabellRot, DataTabell({
       captionTekst: t("ui.rekruttering.tabell_caption"),
       kolonner: [
@@ -894,8 +903,15 @@ function tegn(hoved, ctx, data, okt, valgtId) {
       vekter[krav] = Number(range.value);
       visning.textContent = range.value;
       const rader = tegnTabell();
+      // ØRET HØRER DET ØYET SER — OGSÅ HER (pass-funn, runde 5). Denne
+      // kunngjøringen var det siste stedet som limte rå `kandidat_id`:
+      // `aria-live` leste trettiseks tegn heksadesimal opp for den som
+      // nettopp flyttet en skyver, mens cellen øverst i tabellen — det
+      // ENESTE stedet hun kan bekrefte kunngjøringen — sa `58f17252…`.
+      // Samme lukning som cellen, så referansen er ordrett den samme.
       kunngjoring.textContent = t("ui.rekruttering.ny_rekkefolge")
-        .replace("{forst}", rader.length ? rader[0].kandidat.kandidat_id : "");
+        .replace("{forst}",
+          rader.length ? kortnavn(rader[0].kandidat.kandidat_id) : "");
     });
     vektRot.append(el("div", { class: "rekrut-vekt" },
       el("label", { for: id, text: t(`ui.rekruttering.krav.${krav}`, krav) }),

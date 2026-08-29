@@ -5053,6 +5053,69 @@ test("Kortnavn: det tilgjengelige navnet bærer RADENS referanse, ikke rå UUID"
     "hele id-en finnes ingen steder i rapporten utenom `title`");
 });
 
+test("Kortnavn: re-rangeringen KUNNGJØR radens referanse, ikke rå UUID",
+  async () => {
+  // Pass-funn (runde 5), samme defektklasse som radhandlingen og «Vis
+  // funn» over: vekthandlerens `aria-live`-kunngjøring var det siste
+  // stedet som limte rå `kandidat_id`. Den som flytter en skyver uten
+  // mus fikk trettiseks tegn heksadesimal lest opp, mens cellen øverst i
+  // tabellen — det ENESTE stedet kunngjøringen kan bekreftes — sa
+  // `99a17252…`. Referansen hun hørte, sto ikke på skjermen.
+  //
+  // PORT 30 MÅLTE DETTE ALT — OG KUNNE LIKEVEL IKKE SE DET, av nøyaktig
+  // samme grunn som port 29: fiksturen `K-1`/`K-2` ligger under
+  // kortingsterskelen, så `includes("K-1")` er sann uansett hva koden
+  // gjør. Derfor id-er som FAKTISK kortes, og assert (1) er vernet mot at
+  // porten blir blind igjen.
+  //
+  // MUTASJONEN SOM DREPER DENNE: skriv `rader[0].kandidat.kandidat_id`
+  // rått i `{forst}` igjen — det var koden før dette passet.
+  const a = "58f17252-8a2b-4092-a420-adf5d5d430d1";
+  const b = "99a17252-8a2b-4092-a420-adf5d5d430d2";  // skiller på FØRSTE tegn
+  const data = prosess();
+  // Vektene skiller de to: `a` bæres av drift (3), `b` av sky (2), så `a`
+  // står øverst før skyveren røres — og skal MISTE plassen når sky settes
+  // høyest. Kunngjøringen må da navngi `b`, ikke den den nettopp forlot.
+  data.prosesser[0].kandidater = [
+    { kandidat_id: a, oppfylt: { drift: true, sky: false },
+      status: "anbefalt", funn: [], intervjusporsmal: [] },
+    { kandidat_id: b, oppfylt: { drift: false, sky: true },
+      status: "vurderes", funn: [], intervjusporsmal: [] },
+  ];
+  data.prosesser[0].kandidat_antall = 2;
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": data };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelectorAll("tbody tr").length === 2),
+    "prosesstabellen kom aldri");
+  const forst = () => hoved.querySelector("tbody tr")
+    .querySelector("td, th").textContent.trim();
+  assert.ok(forst().startsWith("58f17252"),
+    `utgangsrekkefølgen er ikke den porten bygger på: ${forst()}`);
+
+  // Tastaturbrukerens vei: sett verdien og fyr `input` — ingen mus.
+  const range = hoved.querySelector('input[type="range"]#vekt-sky');
+  range.value = "10";
+  range.dispatchEvent(new window.Event("input", { bubbles: true }));
+
+  const synlig = forst();
+  const kunngjoring = hoved.querySelector('[aria-live="polite"]').textContent;
+  // (1) Fiksturen krysser faktisk terskelen — ellers måler resten intet.
+  assert.ok(synlig.endsWith("…") && synlig.length < a.length,
+    `fiksturen kortes ikke (${synlig}) — porten måler da ingenting`);
+  // (2) Tabellen re-rangerte faktisk, så kunngjøringen har noe å melde.
+  assert.ok(synlig.startsWith("99a17252"),
+    `vektendringen re-rangerte ikke — øverst står fortsatt ${synlig}`);
+  // (3) Øret hører ikke id-en øyet slapp å se.
+  assert.ok(!kunngjoring.includes(a) && !kunngjoring.includes(b),
+    `kunngjøringen leser hele UUID-en: ${kunngjoring}`);
+  // (4) …og det den hører, står faktisk på skjermen — øverst, der den
+  //     lover at kandidaten er.
+  assert.ok(kunngjoring.includes(synlig),
+    `kunngjøringen bærer ikke referansen raden viser (${synlig}): ${kunngjoring}`);
+});
+
 test("Prosess: en lang kandidat-id kortes, men mistes ikke", async () => {
   // Seeden gir UUID-er, og en full UUID bryter over tre linjer på mobil —
   // kolonnen ble en vegg av heksadesimal. Hele id-en står i `title`.
