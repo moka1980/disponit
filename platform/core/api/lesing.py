@@ -556,6 +556,18 @@ def rekrutteringsrapport_detalj(tjeneste, request: Request) -> Response:
             "    ON o.tenant = a.tenant AND o.id = a.oppdrag_id"
             " WHERE a.tenant=%s AND a.oppdrag_id=%s"
             "   AND a.tilstand='promotert'"
+            # MAKULERT ER IKKE LESBART (Cursor P2 på #252). Makuleringen
+            # (#222) nuller payloaden UTEN tilstandsskifte — raden består
+            # som evidensen om at rapporten fantes, og `tilstand` sier
+            # fortsatt `promotert`. Uten dette leddet finner spørringen
+            # den, `dekrypter` får `ct = None`, og kunden får
+            # `intern_feil` (500) der #220 lovet et identisk 404.
+            # Ankeret redder ikke: døren kan kalles uten reap, og da
+            # lever prosessen fortsatt innenfor fristen.
+            # `ciphertext IS NOT NULL` står ved siden av merket med
+            # vilje: merket er årsaken vi kjenner, tom payload er
+            # tilstanden leseveien faktisk ikke tåler.
+            "   AND a.makulert_ts IS NULL AND a.ciphertext IS NOT NULL"
             "   AND (o.oppdragstype, a.artefakttype) IN"
             "       (SELECT * FROM unnest(%s::text[], %s::text[]))"
             # SLETTEGRENSEN GJELDER OGSÅ RAPPORTEN (Codex P1 ×2, felt
@@ -652,6 +664,12 @@ def rekrutteringsevalueringer(tjeneste, request: Request) -> Response:
             " EXISTS (SELECT 1 FROM artefakt a"
             "          WHERE a.tenant = o.tenant AND a.oppdrag_id = o.id"
             "            AND a.tilstand='promotert'"
+            # … og en MAKULERT rapport er ikke klar (samme ledd som
+            # detaljruten — Cursor P2 på #252). Uten det ville listen
+            # sagt `rapport_klar: true` om noe detaljruten svarer 404
+            # på: divergensen #220 stengte, gjenåpnet av makuleringen.
+            "            AND a.makulert_ts IS NULL"
+            "            AND a.ciphertext IS NOT NULL"
             "            AND (o.oppdragstype, a.artefakttype) IN"
             "                (SELECT * FROM unnest(%s::text[], %s::text[])))"
             # … og listen reklamerer bare med et LEVENDE anker (samme
