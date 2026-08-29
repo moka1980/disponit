@@ -533,6 +533,22 @@ def _mal_docx(data: bytes, *, budsjett: Budsjett, kontekst: str) -> None:
         # den ser på filtypen; her er rekkefølgen nå den samme. At
         # `_mal_medlem` måler navnet en gang til er samme dublett som
         # ute — en idempotent port, ikke to implementasjoner.
+        #
+        # ALT KATALOGEN ALENE KAN DØMME, DØMMES FØR NOE PAKKES UT (Codex
+        # P2, runde 2 på denne mekanismen). Antallet ble flyttet fram
+        # over, men duplikatet, det manglende pakkemedlemmet og den
+        # forbudte endelsen sto igjen SPREDT rundt lesesløyfa: et
+        # duplikat sist i katalogen, et `[Content_Types].xml` som aldri
+        # kom, eller en `word/indre.docx` bakerst ble først meldt etter
+        # at hvert foregående medlem var pakket ut — opptil hele
+        # bytebudsjettet brukt på en docx vi ALLEREDE visste var ugyldig.
+        # Alle tre er egenskaper ved navnene i `alle`, ikke ved bytene,
+        # så de hører hjemme her. Dette er samme todeling som ute:
+        # `inspiser_bunt` dømmer katalogens PÅSTAND, og `_mal_medlem`
+        # dømmer bytene — to spørsmål, ikke to implementasjoner av det
+        # samme. `_mal_medlem` beholder derfor sine egne porter urørt;
+        # den er fortsatt den ene gaten, og den er sannheten.
+        sett: set[str] = set()
         for info in alle:
             _sjekk_navn(info.filename,
                         kontekst=f"{kontekst}/{info.filename}")
@@ -543,22 +559,30 @@ def _mal_docx(data: bytes, *, budsjett: Budsjett, kontekst: str) -> None:
                                    f"{kontekst}/{info.filename}")
             if (info.external_attr >> 16) & 0o170000 == 0o120000:
                 raise Buntfeil("symlenke", f"{kontekst}/{info.filename}")
-        sett: set[str] = set()
-        for info in (i for i in alle if not i.is_dir()):
+            if info.is_dir():
+                continue
             if info.filename in sett:
                 raise Buntfeil("duplikat_medlem",
                                f"{kontekst}/{info.filename}")
             sett.add(info.filename)
-            _mal_medlem(info.filename,
-                        lambda i=info: zf.open(i),
-                        budsjett=budsjett,
-                        komprimert=info.compress_size,
-                        kontekst=kontekst, dybde=1)
+            # Et indre medlem har alltid dybde 1, så BEGGE endelsesarmene
+            # i `_mal_medlem` — `ARKIVENDELSER` og dybdevakten for
+            # `.docx` — feller på navnet alene her nede. Da er utfallet
+            # kjent av katalogen, og lesingen er unødig.
+            if _endelse(info.filename) in ARKIVENDELSER | {".docx"}:
+                raise Buntfeil("nostet_arkiv", f"{kontekst}/{info.filename}")
         if not DOCX_PAKKEMEDLEMMER <= sett:
             raise Buntfeil(
                 "feil_innholdstype",
                 f"{kontekst}: mangler "
                 + ", ".join(sorted(DOCX_PAKKEMEDLEMMER - sett)))
+        # Først her er katalogen godtatt, og først her leses byte.
+        for info in (i for i in alle if not i.is_dir()):
+            _mal_medlem(info.filename,
+                        lambda i=info: zf.open(i),
+                        budsjett=budsjett,
+                        komprimert=info.compress_size,
+                        kontekst=kontekst, dybde=1)
 
 
 def les_porsjonsvis(sti: str | Path, *, porsjon: int = 200):

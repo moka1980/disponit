@@ -757,6 +757,64 @@ def test_155_for_stor_docx_katalog_avvises_for_lesing(tmp_path, monkeypatch):
         f"katalogen ble avvist, men først etter {len(lest)} utpakkede medlemmer"
 
 
+def _spion_paa_indre(monkeypatch) -> list[str]:
+    """Noterer hvilke INDRE docx-medlemmer som faktisk ble pakket ut."""
+    ekte = parsing._mal_medlem
+    lest: list[str] = []
+
+    def spion(navn, aapne, **kw):
+        if kw.get("dybde"):
+            lest.append(navn)
+        return ekte(navn, aapne, **kw)
+
+    monkeypatch.setattr(parsing, "_mal_medlem", spion)
+    return lest
+
+
+def test_155_ugyldig_docx_katalog_avvises_for_lesing(tmp_path, monkeypatch):
+    """Codex P2, runde 2: alt katalogen ALENE kan dømme, dømmes først.
+
+    Antallet ble flyttet fram i forrige runde, men duplikatet, det
+    manglende pakkemedlemmet og den forbudte endelsen sto igjen spredt
+    rundt lesesløyfa. Alle tre er egenskaper ved NAVNENE i katalogen, ikke
+    ved bytene — og alle tre ble likevel meldt først etter at hvert
+    foregående medlem var pakket ut. En docx vi allerede visste var
+    ugyldig kunne dermed bruke opptil hele bytebudsjettet på veien til
+    sin egen avvisning.
+
+    KODENE ER UENDRET — det er tidspunktet som måles. Derfor står det en
+    tung `word/aaa.xml` FØRST i hver katalog: uten forhåndsdommen er den
+    lest når feilen meldes.
+
+    MUTASJONEN SOM DREPER DENNE: flytt duplikat-, pakkemedlem- eller
+    endelsessjekken tilbake til (eller bak) lesesløyfa i `_mal_docx`."""
+    # Ukomprimerbar med vilje: en `x` * 4096 hadde felt forholdsporten når
+    # den ble lest, og da målte speilet den porten i stedet for lesingen.
+    tung = ("word/aaa.xml",
+            b"<w:t>" + os.urandom(4096).hex().encode() + b"</w:t>")
+    for indre, pakke, kode in (
+            # duplikat sist i katalogen
+            ([tung, ("word/document.xml", b"<w:t>en</w:t>"),
+              ("word/document.xml", b"<w:t>to</w:t>")], True,
+             "duplikat_medlem"),
+            # pakkemedlem som aldri kom
+            ([tung, ("word/document.xml", b"<w:t>CV</w:t>")], False,
+             "feil_innholdstype"),
+            # nøstet arkiv bakerst
+            ([tung, ("word/document.xml", b"<w:t>CV</w:t>"),
+              ("word/indre.zip", b"PK\x03\x04hva som helst")], True,
+             "nostet_arkiv"),
+    ):
+        arkiv = _bunt(tmp_path, [("cv.docx", _docx(indre, pakke=pakke))])
+        lest = _spion_paa_indre(monkeypatch)
+        with pytest.raises(parsing.Buntfeil) as e:
+            list(parsing.les_porsjonsvis(arkiv))
+        assert e.value.kode == kode
+        assert lest == [], \
+            f"{kode}: katalogen dømte, men {len(lest)} medlemmer var lest"
+        arkiv.unlink()
+
+
 def test_155_docx_i_docx_felles_av_dybdevakten(tmp_path):
     """Cursor P2: dybdevakten var det ENESTE som lukket docx-klassen, og
     ingen test bandt den.
