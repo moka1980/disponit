@@ -2905,8 +2905,16 @@ def test_222_fristfeiling_lukker_ankeret(migrator):
     fra `opprettet` — kandidatdata kunne reapes inntil hele kjøretiden
     for tidlig i forhold til kundens frist målt fra AVSLUTNINGEN.
 
+    BEGGE HALVDELER MÅLES (Cursor P2 på #252): at ankeret lukkes, OG at
+    lukkingen faktisk flyttet fristen. Den første alene er et
+    bokføringsmerke — en `lukket_ts` kan stå riktig mens kandidatdataene
+    likevel plukkes i samme sekund, og det er nettopp utfallet kunden
+    betaler for at ikke skal skje. Prosessen er derfor født forbi
+    slettefristen: faller fristen tilbake på fødselen, er den forfalt med
+    én gang.
+
     MUTASJONEN SOM DREPER DENNE: fjern ankerlukkingen fra
-    `reap_evidensfrister` (066) — oppdraget feiles fortsatt, og alle
+    `reap_evidensfrister` (067) — oppdraget feiles fortsatt, og alle
     eldre reaper-tester er grønne."""
     from db import kryptering
     rt = _rt()
@@ -2936,11 +2944,24 @@ def test_222_fristfeiling_lukker_ankeret(migrator):
             (TENANT, logg, ct, key_id, nonce)).fetchone()[0]
         migrator.execute("UPDATE oppdrag SET status='plukket'"
                          " WHERE tenant=%s AND id=%s", (TENANT, oid))
+        # Ankeret fødes MENS oppdraget er claimet (vaktens fødselsport),
+        # men med en FØDSEL som ligger forbi slettefristen. Det er hele
+        # forskjellen den negative invarianten under måler: faller
+        # fristen tilbake på fødselen, er prosessen alt forfalt i samme
+        # sekund som oppdraget feiles.
+        pid = uuid.uuid4()
+        migrator.execute(
+            "INSERT INTO rekrutteringsprosess (tenant, prosess_id,"
+            " oppdrag_id, slettefrist_dogn, opprettet)"
+            " VALUES (%s,%s,%s,30, now() - interval '31 days')",
+            (TENANT, pid, oid))
         migrator.commit()
         _sett_kontekst(rt, TENANT)
-        pid = rt.execute("SELECT opprett_rekrutteringsprosess(%s,%s,%s)",
-                         (TENANT, oid, 90)).fetchone()[0]
+        _fyll_lagrene(rt, pid)
         rt.commit()
+        for_reap = _tell_fixtur(migrator, pid)
+        assert for_reap, \
+            "positiv kontroll: lagrene skal bære payload før sveipet"
         rp, _timerrolle = _reaperkobling()
         rader = rp.execute("SELECT tenant, oppdrag_id"
                            " FROM reap_evidensfrister(200)").fetchall()
@@ -2959,6 +2980,27 @@ def test_222_fristfeiling_lukker_ankeret(migrator):
         assert lukket and i_tide, \
             ("ankeret skal lukkes av SAMME transaksjon som feiler"
              f" oppdraget, ved frist-feilingen: {(lukket, i_tide, pid)}")
+
+        # …OG DA SKAL KANDIDATREAPEREN LA PROSESSEN STÅ (Cursor P2).
+        # Lukkingen er ikke et bokføringsmerke: den flytter fristen fra
+        # FØDSELEN til avslutningen, og det er den flyttingen kunden
+        # kjøpte. Uten den er prosessen forfalt i samme sekund som
+        # oppdraget feiles, og hele §5-løftet er brutt av en sveip som
+        # ser helt korrekt ut i loggen.
+        reapet = rp.execute("SELECT * FROM reap_kandidatdata(50)").fetchall()
+        rp.commit()
+        assert (TENANT, pid) not in [(r[0], r[1]) for r in reapet], (
+            "kandidatreaperen plukket prosessen med én gang — fristen"
+            " løper fortsatt fra fødselen, ikke fra avslutningen")
+        _sett_kontekst(migrator, TENANT)
+        staar = migrator.execute(
+            "SELECT slettet_ts IS NULL FROM rekrutteringsprosess"
+            " WHERE tenant=%s AND prosess_id=%s",
+            (TENANT, pid)).fetchone()[0]
+        migrator.rollback()
+        assert staar, "prosessen er merket reapet rett etter frist-feilingen"
+        assert _tell_fixtur(migrator, pid) == for_reap, \
+            "kandidatpayloaden ble tømt før fristen målt fra avslutningen"
     finally:
         rt.close()
         if rp is not None:
