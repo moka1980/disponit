@@ -238,6 +238,17 @@ def test_173_kandidatdata_stroemmes_underveis(monkeypatch):
     art = k.kandidatartefakter[0]["artefakt"]
     assert set(art) == {"funn", "oppfylt", "kildetekst"}, \
         "artefaktveien skal bære evalueringens tre deler, intet mer"
+    # AVMASKERINGEN ER EGET TOPPNIVÅFELT (Codex P1). Den skal FINNES —
+    # uten den er den blindede `kildetekst` over lagret med tokener ingen
+    # kan løse opp — og den skal ikke ligge INNE i `artefakt`, for da får
+    # `kandidat_evalueringsartefakt` en klartekstkopi som overlever
+    # nøyaktig det `kandidat_avmaskering` reapes for.
+    avm = k.kandidatartefakter[0]["avmaskering"]
+    assert isinstance(avm, dict) and avm, \
+        "avmaskeringskartet skal følge den claim-bundne skriveveien"
+    assert all(isinstance(t, str) and isinstance(v, str)
+               for t, v in avm.items()), avm
+    assert "avmaskering" not in art
     # Rapporten er fortsatt komplett (v1-skjemaet, til #168s v2).
     assert "/v1/artefakt" in k.stier
 

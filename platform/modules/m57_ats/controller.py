@@ -530,11 +530,28 @@ def kjor_en(klient, token: str, modell, uttrekker, biasmaalinger,
                     f"kandidatdokument {medlemsnavn}: {r.status_code}")
 
         def lagre_kandidat(kandidat_id, resultat):
+            # AVMASKERINGEN FØLGER MED (Codex P1). `artefakt`-dicten
+            # plukket funn/oppfylt/kildetekst og lot `avmaskering` ligge,
+            # og den promoterte rapporten stripper kartet med vilje
+            # (rapportskjema.py: de to skal aldri reise sammen). Da fantes
+            # token→klartekst bare i arbeiderens minne, og forsvant når
+            # prosessen døde — igjen sto blindet kildetekst med
+            # `[NAVN-1]`-tokener og ingen varig vei tilbake for en
+            # autorisert leser. `kandidat_avmaskering` (057) er lageret
+            # som finnes for nettopp dette kartet, og den claim-bundne
+            # skriveveien er den ENESTE veien dit.
+            #
+            # Eget toppnivåfelt, ikke inne i `artefakt`: lagrene er hver
+            # sin rad med hver sin reaping, og å legge kartet i
+            # artefakt-JSON-en ville gitt `kandidat_evalueringsartefakt`
+            # en klartekst-kopi som overlever nøyaktig det
+            # `kandidat_avmaskering` reapes for.
             r = lever("/v1/rekruttering/kandidatartefakt", {
                 **claim_trippel, "kandidat_id": kandidat_id,
                 "artefakt": {"funn": resultat["funn"],
                              "oppfylt": resultat["oppfylt"],
                              "kildetekst": resultat["kildetekst"]},
+                "avmaskering": resultat["avmaskering"],
                 "intervjusporsmal": resultat.get("intervjusporsmal") or
                 None}, claim.get("utforelsesfrist"))
             if not 200 <= r.status_code < 300:

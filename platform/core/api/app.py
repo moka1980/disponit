@@ -2545,7 +2545,24 @@ def _kandidatdata(tjeneste: Tjeneste, request: Request, form: str) -> Response:
         else:
             artefakt = kropp.get("artefakt")
             sporsmal = kropp.get("intervjusporsmal")
+            # AVMASKERINGEN ER OBLIGATORISK PÅ DENNE VEIEN (Codex P1).
+            # 057 definerer `kandidat_avmaskering` som lagret for nettopp
+            # token→klartekst-kartet, og hver evaluering PRODUSERER det —
+            # men veien inn bar det ikke, og den promoterte rapporten
+            # stripper det med vilje. Kartet forsvant dermed når
+            # arbeideren døde, og igjen sto blindet kildetekst med
+            # `[NAVN-1]`-tokener ingen autorisert leser kunne løse opp.
+            #
+            # Feltet er KREVD, ikke valgfritt: et utelatt felt ville gitt
+            # nøyaktig den stille ikke-lagringen funnet handler om. Tom
+            # dict er derimot lovlig — det er formen blinding AVSKRUDD
+            # (auditert handling, `blinding.evalueringsinput`) gir, og
+            # 057s CHECK krever `felter IS NOT NULL`, ikke ikke-tom.
+            avmaskering = kropp.get("avmaskering")
             if not isinstance(artefakt, dict) or not artefakt \
+                    or not isinstance(avmaskering, dict) \
+                    or not all(isinstance(t, str) and isinstance(v, str)
+                               for t, v in avmaskering.items()) \
                     or (sporsmal is not None
                         and not isinstance(sporsmal, list)):
                 conn.rollback()
@@ -2581,6 +2598,25 @@ def _kandidatdata(tjeneste: Tjeneste, request: Request, form: str) -> Response:
                     (raa_a, tenant, prosess_id, kid_uuid)).fetchone()
                 if likt is None or not likt[0]:
                     return _konflikt("evalueringsartefakt")
+            # Samme transaksjon som artefaktet: kartet og teksten det
+            # løser opp er ETT skriv, ikke to som kan divergere. Samme
+            # idempotens- og konfliktform som lagrene over.
+            raa_m = json.dumps(avmaskering, ensure_ascii=False,
+                               sort_keys=True, separators=(",", ":"))
+            satt = conn.execute(
+                "INSERT INTO kandidat_avmaskering (tenant, prosess_id,"
+                " kandidat_id, felter, innhold_sha256)"
+                " VALUES (%s,%s,%s,%s::jsonb,%s) ON CONFLICT DO NOTHING",
+                (tenant, prosess_id, kid_uuid, raa_m,
+                 hashlib.sha256(raa_m.encode("utf-8")).hexdigest()
+                 )).rowcount
+            if not satt:
+                likt = conn.execute(
+                    "SELECT felter = %s::jsonb FROM kandidat_avmaskering"
+                    " WHERE tenant=%s AND prosess_id=%s AND kandidat_id=%s",
+                    (raa_m, tenant, prosess_id, kid_uuid)).fetchone()
+                if likt is None or not likt[0]:
+                    return _konflikt("avmaskering")
             if sporsmal:
                 raa_s = json.dumps(sporsmal, ensure_ascii=False,
                                    sort_keys=True, separators=(",", ":"))

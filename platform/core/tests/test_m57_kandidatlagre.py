@@ -1973,10 +1973,20 @@ def test_173_skriveveien_er_claimbundet_og_idempotent(migrator, miljo):
             assert r2.json()["kandidat_id"] == kid_uuid
             assert r2.json()["dokument_id"] == did
 
+            # `avmaskering` er KREVD på denne veien (Codex P1): uten
+            # kartet er den blindede `kildetekst` over lagret med tokener
+            # ingen autorisert leser kan løse opp, og et VALGFRITT felt
+            # ville gitt nøyaktig den stille ikke-lagringen funnet gjaldt.
             art = {**trippel, "kandidat_id": "k1",
                    "artefakt": {"funn": [], "oppfylt": {"krav": True},
                                 "kildetekst": f"[NAVN-1] {FIXTUR}"},
+                   "avmaskering": {"[NAVN-1]": f"Kari {FIXTUR}"},
                    "intervjusporsmal": None}
+            r3u = c.post("/v1/rekruttering/kandidatartefakt",
+                         json={k: v for k, v in art.items()
+                               if k != "avmaskering"}, headers=hode)
+            assert r3u.status_code == 400, r3u.text
+            assert r3u.json()["feil"] == "request_feilformet"
             r3 = c.post("/v1/rekruttering/kandidatartefakt",
                         json=art, headers=hode)
             assert r3.status_code == 200, r3.text
@@ -2006,15 +2016,25 @@ def test_173_skriveveien_er_claimbundet_og_idempotent(migrator, miljo):
                 " (SELECT count(*) FROM kandidat_parsettekst"
                 "         WHERE tenant=%s AND prosess_id=%s),"
                 " (SELECT count(*) FROM kandidat_evalueringsartefakt"
+                "         WHERE tenant=%s AND prosess_id=%s),"
+                " (SELECT count(*) FROM kandidat_avmaskering"
                 "         WHERE tenant=%s AND prosess_id=%s)",
-                (TENANT, pid) * 3).fetchone()
-            assert rader == (1, 1, 1), rader
+                (TENANT, pid) * 4).fetchone()
+            assert rader == (1, 1, 1, 1), rader
             tekst = migrator.execute(
                 "SELECT tekst FROM kandidat_parsettekst"
                 " WHERE tenant=%s AND prosess_id=%s",
                 (TENANT, pid)).fetchone()[0]
+            # Kartet løser opp nøyaktig tokenet den lagrede kildeteksten
+            # bærer — lageret 057 definerer for det, skrevet i SAMME
+            # transaksjon som artefaktet.
+            felter = migrator.execute(
+                "SELECT felter FROM kandidat_avmaskering"
+                " WHERE tenant=%s AND prosess_id=%s",
+                (TENANT, pid)).fetchone()[0]
             migrator.rollback()
             assert FIXTUR in tekst
+            assert felter == {"[NAVN-1]": f"Kari {FIXTUR}"}, felter
 
             # (4b) Reapet anker: samme avvisning — døren skriver aldri
             # inn i en prosess forbi kundens frist.
