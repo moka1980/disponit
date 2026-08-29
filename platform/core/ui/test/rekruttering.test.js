@@ -1477,11 +1477,14 @@ test("Evalueringer: feilet rapporthenting melder i alert, ikke stille", async ()
   })[sti] ?? 500;
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
-  assert.ok(await vent(() => hoved.querySelectorAll(
-    "section[aria-labelledby=evaluering-tittel] tbody button").length === 2));
+  assert.ok(await vent(() => [...hoved.querySelectorAll(
+    "section[aria-labelledby=evaluering-tittel] tbody button")]
+    .filter((b) => b.textContent
+      === t("ui.rekruttering.evalueringer.vis")).length === 2));
   const seksjon = hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
   const knappFor = (id) => [...seksjon.querySelectorAll("tbody button")]
+    .filter((b) => b.textContent === t("ui.rekruttering.evalueringer.vis"))
     .find((b) => b.closest("tr") && b.closest("tr").textContent.includes(String(id)));
   knappFor(96).click();
   assert.ok(await vent(() => seksjon.textContent.includes("Driftskonsulent")),
@@ -1854,11 +1857,14 @@ test("Evalueringer: det siste klikket vinner — et tregt eldre svar forkastes",
   })[sti] ?? 500;
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
-  assert.ok(await vent(() => hoved.querySelectorAll(
-    "section[aria-labelledby=evaluering-tittel] tbody button").length === 2));
+  assert.ok(await vent(() => [...hoved.querySelectorAll(
+    "section[aria-labelledby=evaluering-tittel] tbody button")]
+    .filter((b) => b.textContent
+      === t("ui.rekruttering.evalueringer.vis")).length === 2));
   const seksjon = hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
-  const [knapp96, knapp97] = seksjon.querySelectorAll("tbody button");
+  const [knapp96, knapp97] = [...seksjon.querySelectorAll("tbody button")]
+    .filter((b) => b.textContent === t("ui.rekruttering.evalueringer.vis"));
   knapp96.click();
   knapp97.click();
   assert.ok(await vent(() => seksjon.textContent.includes("Sikkerhetsleder")),
@@ -2649,8 +2655,10 @@ test("Evalueringer: A→B→A gjenbruker As løfte — aldri to nedlastinger "
   })[sti] ?? 500;
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
-  assert.ok(await vent(() => hoved.querySelectorAll(
-    "section[aria-labelledby=evaluering-tittel] tbody button").length === 2));
+  assert.ok(await vent(() => [...hoved.querySelectorAll(
+    "section[aria-labelledby=evaluering-tittel] tbody button")]
+    .filter((b) => b.textContent
+      === t("ui.rekruttering.evalueringer.vis")).length === 2));
   const seksjon = () => hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
   const knappFor = (id) => [...seksjon().querySelectorAll("button")]
@@ -2728,8 +2736,10 @@ test("Evalueringer: et sent auto-svar kan aldri restarte auto-stien — "
   })[sti] ?? 500;
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
-  assert.ok(await vent(() => hoved.querySelectorAll(
-    "section[aria-labelledby=evaluering-tittel] tbody button").length === 2));
+  assert.ok(await vent(() => [...hoved.querySelectorAll(
+    "section[aria-labelledby=evaluering-tittel] tbody button")]
+    .filter((b) => b.textContent
+      === t("ui.rekruttering.evalueringer.vis")).length === 2));
   const seksjon = () => hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
   // Brukeren velger B (96) mens auto-A (97) henger.
@@ -6170,4 +6180,86 @@ test("Rapportvekter: skyverne re-vekter poengene og omsorterer — åpne funn be
     "omsorteringen rev den åpne detaljboksen");
   // MUTASJONEN SOM DREPER DENNE: fjern `omVekt`-kallet i skyverens
   // input-lytter, eller bygg radene på nytt i stedet for å flytte dem.
+});
+
+test("Handlinger: Slett går gjennom bekreftelsen, poster og oppfrisker (069)", async () => {
+  KALL = [];
+  let evalsvar = { evalueringer: [
+    { oppdrag_id: 98, status: "utfort",
+      opprettet: "2026-08-27T16:59:00+00:00", rapport_klar: true }],
+  flere: false };
+  SVAR = (sti) => {
+    if (sti === "/v1/rekruttering/evalueringer") return evalsvar;
+    if (sti === "/v1/rekruttering/evaluering/98/slett") {
+      return { slett_bestilt: true };
+    }
+    return ({ "/v1/rekruttering/prosesser": prosess(),
+      "/v1/rekruttering/stillingsprofiler": profiler(),
+      "/v1/rekruttering/rapport/98": 500 })[sti] ?? 500;
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel] tbody")), "listen kom aldri");
+  const slett = [...hoved.querySelectorAll("tbody button")]
+    .find((b) => b.textContent === t("ui.rekruttering.evalueringer.slett"));
+  assert.ok(slett, "Slett-knappen mangler på klar rapport");
+  slett.click();
+  const dlg = hoved.ownerDocument.querySelector("dialog[open], [role=dialog]");
+  assert.ok(dlg, "bekreftelsesdialogen åpnet ikke");
+  // Sletting skjer FØRST ved bekreftelse — ikke ved klikket.
+  assert.ok(!KALL.some((k) => k.sti.endsWith("/slett")),
+    "slettingen gikk uten bekreftelse");
+  evalsvar = { evalueringer: [
+    { oppdrag_id: 98, status: "utfort",
+      opprettet: "2026-08-27T16:59:00+00:00", rapport_klar: false,
+      slettet: true }], flere: false };
+  [...dlg.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.evalueringer.slett"))
+    .click();
+  assert.ok(await vent(() => KALL.some((k) =>
+    k.sti === "/v1/rekruttering/evaluering/98/slett"
+    && k.metode === "POST")), "POST-en gikk aldri");
+  assert.ok(await vent(() => hoved.textContent
+    .includes(t("ui.rekruttering.evalueringer.slettet"))),
+  "listen ble ikke oppfrisket til basens tilstand");
+  // MUTASJONEN SOM DREPER DENNE: kall slettEvaluering direkte fra
+  // knappens click i stedet for fra dialogens paaPrimar.
+});
+
+test("Handlinger: Avbryt finnes på ventende, aldri på terminale — og krever scope", async () => {
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 99, status: "plukket",
+        opprettet: "2026-08-29T21:12:00+00:00", rapport_klar: false },
+      { oppdrag_id: 97, status: "feilet",
+        opprettet: "2026-08-27T08:06:00+00:00", rapport_klar: false }],
+    flere: false } };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel] tbody")), "listen kom aldri");
+  const knapper = [...hoved.querySelectorAll("tbody button")];
+  const avbrytFor = (id) => knapper.find((b) =>
+    b.textContent === t("ui.rekruttering.evalueringer.avbryt")
+    && b.getAttribute("aria-label").includes(String(id)));
+  assert.ok(avbrytFor(99), "Avbryt mangler på den plukkede");
+  assert.ok(!avbrytFor(97), "Avbryt står på en terminal evaluering");
+  // Feilet får Slett (kandidatdata kan ligge igjen), utfort-uten-anker ikke.
+  assert.ok(knapper.some((b) =>
+    b.textContent === t("ui.rekruttering.evalueringer.slett")
+    && b.getAttribute("aria-label").includes("97")),
+  "Slett mangler på den feilede");
+
+  // Uten skrivescope: ingen handlingsknapper i det hele tatt.
+  const hoved2 = nyHoved();
+  visRekruttering(hoved2, { ...ctx(), scopes: ["decisions:read"] });
+  assert.ok(await vent(() => hoved2.querySelector(
+    "section[aria-labelledby=evaluering-tittel] tbody")), "leselisten kom aldri");
+  assert.ok(![...hoved2.querySelectorAll("tbody button")].some((b) =>
+    [t("ui.rekruttering.evalueringer.slett"),
+      t("ui.rekruttering.evalueringer.avbryt")].includes(b.textContent)),
+  "skriveknapper uten bestilling:opprett er en blindvei (P2-1-klassen)");
 });

@@ -959,6 +959,116 @@ def blinding_endepunkt(tjeneste, request):
     return _med_conn(tjeneste, rid, kjor)
 
 
+def evaluering_slett_endepunkt(tjeneste, request):
+    """POST /v1/rekruttering/evaluering/{oppdrag_id}/slett (069).
+
+    Bestiller TIDLIGSLETTING av evalueringens kandidatdata: døren
+    `bestill_tidligsletting` setter det enveise merket (og lukker en
+    ulukket prosess så fristen løper fra avslutningen), og reaperen
+    fullbyrder i første sveip — seks lagre + makulert rapportartefakt,
+    med alle portene reapingen alt har. Idempotent: knappen kan trykkes
+    to ganger. Fristen og lukkingen er fortsatt immutable (port 20) —
+    dette er kundens egen KORTING av fristen, paragraf 5s ene lovlige
+    retning.
+    """
+    from .app import _rid
+    from .policyadmin_http import _browserkontekst, _feil, _med_conn, _ok
+    rid = _rid(request)
+    av = _modul_inaktiv(tjeneste, rid)
+    if av is not None:
+        return av
+    try:
+        oppdrag_id = int(request.path_params["oppdrag_id"])
+    except (KeyError, ValueError):
+        return _feil("request_feilformet", rid, 400)
+
+    def kjor(conn):
+        tenant, _bid = _browserkontekst(tjeneste, request, conn, rid,
+                                        "bestilling:opprett")
+        rad = conn.execute(
+            "SELECT prosess_id FROM rekrutteringsprosess"
+            " WHERE tenant=%s AND oppdrag_id=%s",
+            (tenant, oppdrag_id)).fetchone()
+        if rad is None:
+            # En evaluering uten retensjonsanker har ingen kandidatdata
+            # aa slette — samme ord som leseveien bruker om fravaeret.
+            return _feil("ikke_funnet", rid, 404)
+        conn.execute("SELECT bestill_tidligsletting(%s,%s)",
+                     (tenant, rad[0]))
+        conn.commit()
+        tjeneste.logg.hendelse("tidligsletting_bestilt", rid, tenant,
+                               art="drift", oppdrag_id=oppdrag_id)
+        return _ok({"slett_bestilt": True}, rid)
+
+    return _med_conn(tjeneste, rid, kjor)
+
+
+def evaluering_avbryt_endepunkt(tjeneste, request):
+    """POST /v1/rekruttering/evaluering/{oppdrag_id}/avbryt.
+
+    Kansellerer en evaluering som ennaa ikke er ferdig. Statusmaskinen
+    (056) eier lovligheten: opprettet -> kansellert direkte, og et
+    PLUKKET oppdrag gaar veien plukket -> opprettet -> kansellert i
+    SAMME transaksjon — begge stegene er maskinens egne overganger, og
+    en samtidig kvittering taper paa radlaasen i stedet for aa flette.
+    Utfoereren som mister oppdraget midt i arbeidet stoppes av portene
+    som alt finnes (lease/fencing/kvittering mot terminal status);
+    kompensasjonen er den samme som ved lease-tap — arbeid uten
+    leveranse, aldri feil leveranse. Et aapent retensjonsanker lukkes i
+    samme transaksjon (frist fra avslutningen, sak 222-formen).
+    """
+    from .app import _rid
+    from .policyadmin_http import _browserkontekst, _feil, _med_conn, _ok
+    rid = _rid(request)
+    av = _modul_inaktiv(tjeneste, rid)
+    if av is not None:
+        return av
+    try:
+        oppdrag_id = int(request.path_params["oppdrag_id"])
+    except (KeyError, ValueError):
+        return _feil("request_feilformet", rid, 400)
+
+    def kjor(conn):
+        tenant, _bid = _browserkontekst(tjeneste, request, conn, rid,
+                                        "bestilling:opprett")
+        rad = conn.execute(
+            "SELECT status FROM oppdrag"
+            " WHERE tenant=%s AND id=%s"
+            "   AND oppdragstype='rekruttering.evaluering'"
+            " FOR UPDATE", (tenant, oppdrag_id)).fetchone()
+        if rad is None:
+            return _feil("ikke_funnet", rid, 404)
+        status = rad[0]
+        if status in ("utfort", "feilet", "kansellert"):
+            conn.rollback()
+            tjeneste.logg.hendelse("evaluering_terminal", rid, tenant,
+                                   art="drift", oppdrag_id=oppdrag_id)
+            return _feil("evaluering_terminal", rid, 409)
+        if status == "plukket":
+            # Maskinens egen vei: tilbake i koe, saa kansellert — to
+            # lovlige overganger i samme transaksjon, aldri en ny arm i
+            # kolonnelaasen.
+            conn.execute(
+                "UPDATE oppdrag SET status='opprettet'"
+                " WHERE tenant=%s AND id=%s", (tenant, oppdrag_id))
+        conn.execute(
+            "UPDATE oppdrag SET status='kansellert'"
+            " WHERE tenant=%s AND id=%s", (tenant, oppdrag_id))
+        p = conn.execute(
+            "SELECT prosess_id FROM rekrutteringsprosess"
+            " WHERE tenant=%s AND oppdrag_id=%s AND lukket_ts IS NULL",
+            (tenant, oppdrag_id)).fetchone()
+        if p is not None:
+            conn.execute("SELECT lukk_rekrutteringsprosess(%s,%s, now())",
+                         (tenant, p[0]))
+        conn.commit()
+        tjeneste.logg.hendelse("evaluering_avbrutt", rid, tenant,
+                               art="drift", oppdrag_id=oppdrag_id)
+        return _ok({"avbrutt": True}, rid)
+
+    return _med_conn(tjeneste, rid, kjor)
+
+
 def stillingsprofiler_endepunkt(tjeneste, request):
     """GET /v1/rekruttering/stillingsprofiler — kundens kravlister (#189).
 

@@ -198,6 +198,12 @@ export const bestillEvaluering = (kropp, idem) =>
 export const hentEvalueringer = (cursor) =>
   hentJson("/v1/rekruttering/evalueringer"
     + (cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""));
+export const slettEvaluering = (oppdragId) =>
+  _muter(`/v1/rekruttering/evaluering/${encodeURIComponent(oppdragId)}/slett`,
+    "POST", {});
+export const avbrytEvaluering = (oppdragId) =>
+  _muter(`/v1/rekruttering/evaluering/${encodeURIComponent(oppdragId)}/avbryt`,
+    "POST", {});
 export const hentEvalueringsrapport = (oppdragId) =>
   hentJson(`/v1/rekruttering/rapport/${encodeURIComponent(oppdragId)}`);
 

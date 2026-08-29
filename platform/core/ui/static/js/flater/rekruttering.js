@@ -18,6 +18,7 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { hentJson, signerRekrutteringsliste, lagreStillingsprofil,
+         slettEvaluering, avbrytEvaluering,
          reserverBunt, lastOppBunt, bestillEvaluering,
          hentEvalueringer, hentEvalueringsrapport,
          nyIdempotensnokkel, UautorisertFeil } from "../api.js";
@@ -1690,8 +1691,37 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
         utfall, rapportRot);
       return;
     }
+    // HANDLINGENE DER DE TRENGS (eiers bestilling 29/8: vis, slett,
+    // rediger, avbryt): Vis + Slett på en klar rapport, Slett på en
+    // feilet, Avbryt på en som venter. Begge de irreversible går
+    // gjennom Bekreftelsesdialogen, og utfallet oppfriskes fra basen —
+    // aldri en optimistisk rad flaten selv har diktet.
+    const kanSkrive = harScope(ctx, "bestilling:opprett");
+    const bekreftHandling = (e2, nokkel, kall, kvittering) => {
+      Bekreftelsesdialog({
+        tittel: t(`ui.rekruttering.evalueringer.${nokkel}_tittel`),
+        tekst: flett(t(`ui.rekruttering.evalueringer.${nokkel}_tekst`),
+          { oppdrag: e2.oppdrag_id }),
+        primarTekst: t(`ui.rekruttering.evalueringer.${nokkel}`),
+        farlig: nokkel === "slett",
+        paaPrimar: async () => {
+          try {
+            await kall(e2.oppdrag_id);
+            meldLive(t(kvittering));
+          } catch (feil) {
+            if (feil instanceof UautorisertFeil) {
+              ctx.paaUautorisert(); return;
+            }
+            // 409 evaluering_terminal og alt annet: basen vant — si
+            // det, og la oppfriskningen under vise sannheten.
+            meldLive(t("ui.rekruttering.evalueringer.handlingsfeil"));
+          }
+          if (okt.evaluering) okt.evaluering.oppdater();
+        },
+      });
+    };
     const rader = evalueringer.map((e2) => {
-      const handling = el("td");
+      const handling = el("td", { class: "rekrut-handlinger" });
       if (e2.rapport_klar) {
         const knapp = el("button", { type: "button",
           text: t("ui.rekruttering.evalueringer.vis") });
@@ -1701,6 +1731,33 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
           + " " + e2.oppdrag_id);
         knapp.addEventListener("click", () => visRapport(e2.oppdrag_id));
         handling.append(knapp);
+      }
+      const venter = !e2.slettet && !e2.rapport_klar
+        && !["feilet", "kansellert", "utfort"].includes(e2.status);
+      if (kanSkrive && venter) {
+        const avbryt = el("button", { type: "button",
+          text: t("ui.rekruttering.evalueringer.avbryt") });
+        avbryt.setAttribute("aria-label",
+          t("ui.rekruttering.evalueringer.avbryt")
+          + " — " + t("ui.rekruttering.evalueringer.oppdrag")
+          + " " + e2.oppdrag_id);
+        avbryt.addEventListener("click", () => bekreftHandling(e2,
+          "avbryt", avbrytEvaluering,
+          "ui.rekruttering.evalueringer.avbrutt"));
+        handling.append(avbryt);
+      }
+      if (kanSkrive && !e2.slettet
+          && (e2.rapport_klar || e2.status === "feilet")) {
+        const slett = el("button", { type: "button", class: "fare",
+          text: t("ui.rekruttering.evalueringer.slett") });
+        slett.setAttribute("aria-label",
+          t("ui.rekruttering.evalueringer.slett")
+          + " — " + t("ui.rekruttering.evalueringer.oppdrag")
+          + " " + e2.oppdrag_id);
+        slett.addEventListener("click", () => bekreftHandling(e2,
+          "slett", slettEvaluering,
+          "ui.rekruttering.evalueringer.slett_bestilt"));
+        handling.append(slett);
       }
       // Terminale statuser er sine egne sannheter — "venter" er bare for
       // oppdrag som faktisk kan bli klare. En reapet evaluering er

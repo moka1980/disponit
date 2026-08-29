@@ -378,6 +378,7 @@ GRANT EXECUTE ON FUNCTION signer_utsendingsliste(TEXT, UUID, TEXT, TEXT) TO {rol
 -- migrasjonen).
 GRANT EXECUTE ON FUNCTION opprett_rekrutteringsprosess(TEXT, BIGINT, INT) TO {rolle};
 GRANT EXECUTE ON FUNCTION lukk_rekrutteringsprosess(TEXT, UUID, TIMESTAMPTZ) TO {rolle};
+GRANT EXECUTE ON FUNCTION bestill_tidligsletting(TEXT, UUID) TO {rolle};
 -- 066 (#159): revisjonshendelsens SKRIVEVEI — runtime alene. Det er API-et
 -- innloggede mennesker skriver hendelsen gjennom; en bakgrunnsarbeider har
 -- ingenting med å føre den. Leseveien står i den DELTE blokken over, fordi

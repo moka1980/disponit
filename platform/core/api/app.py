@@ -1126,6 +1126,12 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def rekruttering_blinding(request: Request) -> Response:
         return rekruttering_http.blinding_endepunkt(tjeneste, request)
 
+    def rk_slett(request: Request) -> Response:
+        return rekruttering_http.evaluering_slett_endepunkt(tjeneste, request)
+
+    def rk_avbryt(request: Request) -> Response:
+        return rekruttering_http.evaluering_avbryt_endepunkt(tjeneste, request)
+
     def rekruttering_profiler(request: Request) -> Response:
         return rekruttering_http.stillingsprofiler_endepunkt(
             tjeneste, request)
@@ -1336,6 +1342,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               methods=["GET"]),
         Route("/v1/rekruttering/stillingsprofiler",
               rekruttering_profil_lagre, methods=["POST"]),
+        Route("/v1/rekruttering/evaluering/{oppdrag_id:int}/slett",
+              rk_slett, methods=["POST"]),
+        Route("/v1/rekruttering/evaluering/{oppdrag_id:int}/avbryt",
+              rk_avbryt, methods=["POST"]),
         Route("/v1/rekruttering/prosesser/{prosess_id}/blinding",
               rekruttering_blinding, methods=["POST"]),
         Route("/v1/rekruttering/lister/{liste_id:uuid}/signer",
@@ -1753,6 +1763,10 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/oppdrag/forny"):           ORDRESCOPE + "<prefiks>",
     # #173: skriveveien inn i kandidatlagrene — samme autentisering som
     # forny/kvittering: modultoken + claimets identitet i kroppen.
+    ("POST", "/v1/rekruttering/evaluering/{oppdrag_id:int}/slett"):
+        "bestilling:opprett",
+    ("POST", "/v1/rekruttering/evaluering/{oppdrag_id:int}/avbryt"):
+        "bestilling:opprett",
     ("POST", "/v1/rekruttering/kandidatdokument"):
         ORDRESCOPE + "<prefiks>",
     ("POST", "/v1/rekruttering/kandidatartefakt"):
