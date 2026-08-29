@@ -155,12 +155,22 @@ function flett(mal, verdier) {
 // over en streng vi selv skal TEGNE, og den kan ikke feile til en gal
 // avgjørelse, bare til en bred kolonne.
 const UGJENNOMSIKTIG = /^[0-9a-fA-F]+(?:-[0-9a-fA-F]+)*$/;
+// SIFRE ER IKKE HEKSVEGGEN (Cursor P2). `[0-9a-fA-F]` inneholder sifrene, så
+// tegnklassetesten alene dømte også den rene sifferstrengen ugjennomsiktig —
+// og `KANDIDAT_ID_KANON` tillater nettopp den: `202408150012345678901` er et
+// kundenummer et menneske leser, ikke en digest. Det brøt asymmetrien over:
+// vi var ikke sikre, og id-en ble likevel kortet. Ugjennomsiktig krever
+// derfor ETT av to positive tegn — en heksbokstav (`a-f`), eller UUID-ens
+// egen gruppeform, som er maskingenerert uansett hvilke siffer den fikk.
+const HEKSBOKSTAV = /[a-fA-F]/;
+const UUID_FORM = /^[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$/;
 
 function erUgjennomsiktig(id) {
   // Lang OG uten et eneste tegn utenfor heksadesimalen: en UUID (med eller
   // uten bindestreker) eller en digest. `kandidat-09` (#161) og
   // `senior-backend-engineer-01` faller ut på `k`, `n`, `s`, `r` …
-  return id.length > 20 && UGJENNOMSIKTIG.test(id);
+  return id.length > 20 && UGJENNOMSIKTIG.test(id)
+    && (HEKSBOKSTAV.test(id) || UUID_FORM.test(id));
 }
 
 function kortnavnFor(idene) {

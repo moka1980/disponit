@@ -4950,6 +4950,67 @@ test("Kortnavn: et beskrivende manifestnavn kortes ALDRI, uansett lengde",
     `UUID-en ble ikke kortet — kortingen er slått av: ${JSON.stringify(viste)}`);
 });
 
+test("Kortnavn: en ren sifferstreng er ikke heksveggen — den står hel",
+  async () => {
+  // Cursor P2 (runde 6). Runde 3 byttet lengdemålet mot en tegnklassetest,
+  // men `[0-9a-fA-F]` INNEHOLDER sifrene: en id uten en eneste bokstav falt
+  // like fullt igjennom som «ugjennomsiktig». `KANDIDAT_ID_KANON`
+  // (`[A-Za-z0-9][A-Za-z0-9._-]{0,63}`) tillater nettopp den formen, og et
+  // kundenummer som `202408150012345678901` er et menneske leser — ikke en
+  // digest. Predikatet er stengt («er vi ikke sikre, står id-en hel»), og
+  // dette var det ene stedet asymmetrien pekte feil vei.
+  //
+  // Porten måler begge lesestedene, fordi kortnavnet har ÉN algoritme og to
+  // tabeller: prosesstabellen og rangeringstabellen i rapporten. Og den
+  // måler de to positive tegnene hver for seg, ellers ville «skru av
+  // kortingen helt» gått grønn.
+  //
+  // MUTASJONENE SOM DREPER DENNE:
+  //   · `HEKSBOKSTAV || UUID_FORM`-leddet fjernet → sifferid kortes  → rød
+  //   · `erUgjennomsiktig` → `false`              → UUID-en står hel → rød
+  //   · `UUID_FORM`-grenen fjernet         → siffer-UUID-en står hel → rød
+  const siffer = "202408150012345678901";              // 21 tegn, lesbart
+  const uuid = "58f17252-8a2b-4092-a420-adf5d5d430d1"; // ugjennomsiktig
+  const sifferUuid = "20240815-0012-3456-7890-123456789012"; // gruppeformen
+
+  // (1) Prosesstabellen.
+  const data = prosess();
+  data.prosesser[0].kandidater = [siffer, uuid, sifferUuid].map((id) => ({
+    kandidat_id: id, oppfylt: { drift: true }, status: "anbefalt",
+    funn: [], intervjusporsmal: [] }));
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": data };
+  let hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelectorAll("tbody tr").length === 3));
+  const iProsess = [...hoved.querySelectorAll("tbody tr")]
+    .map((tr) => tr.querySelector("td, th").textContent.trim());
+  assert.ok(iProsess.includes(siffer),
+    `sifferid-en ble kortet i prosesstabellen: ${JSON.stringify(iProsess)}`);
+  // ... OG heksveggen kortes fortsatt — begge grenene, hver for seg.
+  assert.ok(iProsess.some((v) => v.endsWith("…") && uuid.startsWith(v.slice(0, -1))),
+    `UUID-en ble ikke kortet — kortingen er slått av: ${JSON.stringify(iProsess)}`);
+  assert.ok(iProsess.some((v) => v.endsWith("…") && sifferUuid.startsWith(v.slice(0, -1))),
+    "UUID-ens gruppeform er maskingenerert uansett hvilke siffer den fikk, "
+    + `og skal fortsatt kortes: ${JSON.stringify(iProsess)}`);
+
+  // (2) Rangeringstabellen i rapporten — samme algoritme, andre lesested.
+  KALL = [];
+  SVAR = rapportSvarMed(siffer, uuid);
+  hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => {
+    const tb = rapporttabellen(hoved);
+    return tb && tb.querySelectorAll("tbody th[scope=row]").length === 2;
+  }));
+  const iRapport = [...rapporttabellen(hoved)
+    .querySelectorAll("tbody th[scope=row]")].map((th) => th.textContent.trim());
+  assert.ok(iRapport.includes(siffer),
+    `sifferid-en ble kortet i rapporttabellen: ${JSON.stringify(iRapport)}`);
+  assert.ok(iRapport.some((v) => v.endsWith("…") && uuid.startsWith(v.slice(0, -1))),
+    `UUID-en ble ikke kortet i rapporten: ${JSON.stringify(iRapport)}`);
+});
+
 test("Kortnavn: det tilgjengelige navnet bærer RADENS referanse, ikke rå UUID",
   async () => {
   // Pass-funn (runde 3). `kortnavnFor` kortet den SYNLIGE teksten, mens de
