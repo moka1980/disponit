@@ -694,6 +694,14 @@ function tegn(hoved, ctx, data, okt, valgtId) {
           // Er id-en alt lesbar — manifestets `kandidat-09`-form (#161) —
           // står den urørt: kortingen gjelder maskingenererte id-er, ikke
           // navn kunden selv har gitt.
+          //
+          // `title` ER IKKE KOPI-VEIEN (pass-funn). Kollisjonsporten
+          // innrømmer alt at `title` hverken er kopierbar eller
+          // tilgjengelig for berøring og tastatur, så «mistes ikke»
+          // kunne ikke hvile på den. Den fulle id-en står i
+          // detaljpanelets tittel (`visDetalj`) — raden åpner panelet,
+          // og DEN veien går både mus, tastatur og skjermleser.
+          // `title` blir stående som musens snarvei, ikke som løftet.
           kandidat: el("span", { title: kandidat.kandidat_id },
             kortnavn(kandidat.kandidat_id)),
           poeng: String(poeng),
@@ -720,10 +728,18 @@ function tegn(hoved, ctx, data, okt, valgtId) {
         // kandidat hun åpnet. `tabell.js` har mekanismen for nøyaktig dette
         // (`tilgjengeligNavn` → `aria-label`), og `policyadmin` bruker den
         // med samme «tekst: id»-form. Den synlige teksten er uendret.
+        //
+        // ØRET HØRER DET ØYET SER (pass-funn). Navnet limte rå
+        // `kandidat_id` mens cellen ved siden av viste `kortnavn(...)`:
+        // referansen leseren hørte, fantes ikke på skjermen, og den som
+        // lette opp raden for «58f17252…» fikk i stedet trettiseks tegn
+        // heksadesimal lest opp. Navnet bærer nå samme kortform som
+        // cellen — regnet over SAMME sett, så entydigheten som gjelder i
+        // tabellen gjelder ordrett også for øret.
         handling: {
           tekst: t("ui.rekruttering.detaljer"),
           tilgjengeligNavn:
-            `${t("ui.rekruttering.detaljer")}: ${kandidat.kandidat_id}`,
+            `${t("ui.rekruttering.detaljer")}: ${kortnavn(kandidat.kandidat_id)}`,
           paaKlikk: () => visDetalj(kandidat, poeng),
         },
       })),
@@ -1053,7 +1069,8 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       // tabellen som står øverst, i produktdelen leseren møter først.
       // Med seedens UUID-er fikk hun altså veggen av heksadesimal i
       // rapporten og den ryddede kolonnen under. Samme helper, samme
-      // regel: hele id-en blir stående i `title`.
+      // regel — og hele id-en står i radens `<details>`, ikke i `title`
+      // alene (pass-funn; `title` er musens snarvei, ikke kopi-veien).
       const kortnavn = kortnavnFor(rapport.rangering.map((r) => r.kandidat_id));
       const kropp = el("tbody", {}, ...rapport.rangering.map((rad) => {
         const boks = detaljboks(rad);
@@ -1119,10 +1136,18 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
         // for øyet. `aria-label` bærer derfor kandidaten, mens den synlige
         // teksten forblir kort: samme løsning som prosesstabellens
         // Detaljer-knapper alt bruker.
+        //
+        // …MEN MED RADENS EGEN REFERANSE (pass-funn). `aria-label` limte
+        // rå `kandidat_id` mens radoverskriften over viste
+        // `kortnavn(...)`. Kontrollen navnga altså kandidaten med en
+        // streng som ikke sto noe sted på skjermen — og i en liste over
+        // interaktive elementer var hver rad tilbake til sin vegg av
+        // heksadesimal, nøyaktig det denne runden fjernet for øyet.
+        // Samme `kortnavn` som `th`-en, samme sett, samme entydighet.
         const boks = el("details", {},
           el("summary", {
             "aria-label": `${t("ui.rekruttering.evalueringer.vis_funn")} — `
-              + `${t("ui.rekruttering.kandidat")} ${rad.kandidat_id}`,
+              + `${t("ui.rekruttering.kandidat")} ${kortnavn(rad.kandidat_id)}`,
             text: t("ui.rekruttering.evalueringer.vis_funn") }));
         let bygget = false;
         boks.addEventListener("toggle", () => {
@@ -1149,7 +1174,20 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
           // 27/8): de hører til innkallingen av de 5–10 beste, ikke til
           // utvelgelsen blant mange. Lageret består; shortlist-arcen
           // henter derfra.
+          // HELE ID-EN BOR HER, IKKE I `title` (pass-funn). Rapporten
+          // hadde ingen vei til den fulle id-en utenom `th`-ens `title`,
+          // og den er hverken kopierbar eller tilgjengelig for berøring
+          // og tastatur — «kortes, men mistes ikke» var altså usant på
+          // rapportveien. Prosesstabellen har alt svaret: raden åpner et
+          // detaljpanel som bærer full id i tittelen (`visDetalj`).
+          // Rapportens `<details>` ER den samme veien, så id-en står
+          // øverst i den — én linje, i kroppen som uansett bygges først
+          // ved åpning. IKKE en `sr-only` node i hver rad: fem tusen
+          // radoverskrifter som leser trettiseks tegn heksadesimal er
+          // veggen denne runden rev, gjenreist for øret.
           boks.append(
+            el("p", {
+              text: `${t("ui.rekruttering.kandidat")}: ${rad.kandidat_id}` }),
             el("h4", { text: t("ui.rekruttering.evalueringer.funn") }), funn);
         });
         return boks;
