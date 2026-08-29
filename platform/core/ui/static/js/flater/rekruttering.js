@@ -112,6 +112,24 @@ function kortHash(hash) {
   return `${(hash || "").slice(0, 12)}…`;
 }
 
+function flett(mal, verdier) {
+  // ÉN PASS OVER MALEN (Cursor P2). En KJEDE av `.replace` leser
+  // resultatet av forrige ledd om igjen, så en verdi som selv inneholder
+  // en plassholder stjeler neste nøkkels treff: et profilnavn
+  // «Drift{versjon}X» spiste `{versjon}` i «Rangering — {navn} (versjon
+  // {versjon})», og overskriften — som er fokusmål etter lasting og går
+  // til `meldLive` — endte med brukerens tekst der versjonen skulle stå
+  // OG en rå `{versjon}` igjen for øret. `replaceAll` løser gjentakelse,
+  // ikke rekkefølge; det er re-skanningen som er defekten, og den dør
+  // bare av å skanne malen én gang.
+  //
+  // Ukjente nøkler står igjen urørt: en manglende parameter skal være
+  // synlig i teksten, ikke stum.
+  return String(mal).replace(/\{(\w+)\}/g, (helt, nokkel) =>
+    Object.prototype.hasOwnProperty.call(verdier, nokkel)
+      ? String(verdier[nokkel]) : helt);
+}
+
 // LENGDE ER IKKE OPPRINNELSE (Codex P2, runde 3). Kortingen het hele tiden
 // «maskingenererte id-er kortes, navn kunden selv har gitt står urørt», men
 // den MÅLTE `length > 20` — og kontrakten
@@ -1247,9 +1265,8 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       // ikke en id: tabellen bærer sitt eget navn nå, så overskriften
       // trenger ingen id å bli pekt på med.
       const overskrift = el("h3", { tabindex: "-1",
-        text: t("ui.rekruttering.evalueringer.rangering")
-          .replace("{navn}", rapport.profil.navn)
-          .replace("{versjon}", String(rapport.profil.versjon)) });
+        text: flett(t("ui.rekruttering.evalueringer.rangering"),
+          { navn: rapport.profil.navn, versjon: rapport.profil.versjon }) });
       // Hopplenken FØRST i rapporten: den er tastaturbrukerens vei forbi
       // rangeringens N `<summary>` og ned til prosess, vekter og
       // signering (Cursor P2). Husets `.hoppelenke` — usynlig til den
@@ -1609,9 +1626,8 @@ function bestillSeksjon(hoved, ctx, data, okt, laas) {
     const valgt = profilVelger.value;
     sett(profilVelger, ...profiler.map((pr) => el("option",
       { value: `${pr.profil_id}@${pr.versjon}` },
-      t("ui.rekruttering.bestill.profilvalg")
-        .replace("{navn}", pr.navn)
-        .replace("{versjon}", String(pr.versjon)))));
+      flett(t("ui.rekruttering.bestill.profilvalg"),
+        { navn: pr.navn, versjon: pr.versjon }))));
     if (valgt && [...profilVelger.options].some((o) => o.value === valgt)) {
       // Valget er brukerens, og det overlever en oppfriskning av listen.
       profilVelger.value = valgt;
@@ -2194,9 +2210,8 @@ function profilSeksjon(hoved, ctx, data, okt, laas, paaProfilendring) {
         const svar = await lagreStillingsprofil(
           profil ? profil.profil_id : null, sendtNavn, krav, idem);
         nyIntensjon();                 // definitivt svar → ny operasjon
-        sett(utfall, t("ui.rekruttering.profiler.lagret")
-          .replace("{navn}", sendtNavn)
-          .replace("{versjon}", String(svar.versjon)));
+        sett(utfall, flett(t("ui.rekruttering.profiler.lagret"),
+          { navn: sendtNavn, versjon: svar.versjon }));
         await oppdaterListe();
       } catch (e) {
         if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }

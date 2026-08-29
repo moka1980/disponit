@@ -4534,6 +4534,82 @@ test("Rapport: navnet står ÉN gang — for øyet OG for øret", async () => {
     "overskriften er ikke lenger fokusmål etter lasting");
 });
 
+test("Maler: en verdi som bærer en plassholder stjeler ikke neste nøkkel",
+  async () => {
+  // Cursor P2. Malene ble fylt med en KJEDE av `.replace`: først
+  // `{navn}`, så `{versjon}`. Kjeden leser resultatet av forrige ledd om
+  // igjen, så et profilnavn som selv inneholder `{versjon}` fikk
+  // versjonen limt inn i SEG — og malens egen `{versjon}` sto igjen rå.
+  // På rapportens `h3` er det fokusmålet etter lasting, altså det første
+  // en skjermleser sier når rapporten er klar.
+  //
+  // Navnet er brukerens: `#profil-navn` er et fritt tekstfelt, så
+  // «Drift{versjon}X» er en profil noen kan lagre i dag.
+  //
+  // PORTEN SUBSTITUERER IKKE SELV. Den deler malen på plassholderne og
+  // limer segmentene rundt verdiene — ellers hadde den målt sin egen
+  // implementasjon i stedet for flatens.
+  //
+  // MUTASJONEN SOM DREPER DENNE: bytt `flett(...)` tilbake til
+  // `.replace("{navn}", …).replace("{versjon}", …)` på ett av de tre
+  // stedene (rapportoverskrift, profilvalg, lagret-kvittering).
+  const navn = "Drift{versjon}X";
+  const ventet = (nokkel, versjon) => {
+    const [a, b, c] = t(nokkel).split(/\{navn\}|\{versjon\}/);
+    assert.ok(c !== undefined,
+      `malen ${nokkel} har ikke lenger begge plassholderne`);
+    return `${a}${navn}${b}${versjon}${c}`;
+  };
+  const enProfil = { ...profiler().profiler[0], navn };
+  const basis = enkelRapportSvar();
+  basis["/v1/rekruttering/stillingsprofiler"] = { profiler: [enProfil] };
+  basis["/v1/rekruttering/rapport/96"] = {
+    oppdrag_id: 96,
+    rapport: { ...basis["/v1/rekruttering/rapport/96"].rapport,
+      profil: { profil_id: "prof-1", versjon: 2, navn } } };
+  KALL = [];
+  SVAR = basis;
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.textContent.includes("kandidat-01")),
+    "rapporten kom aldri");
+
+  // (1) Rapportens overskrift — fokusmålet etter lasting.
+  const [forNavn] = t("ui.rekruttering.evalueringer.rangering").split("{navn}");
+  const overskrift = [...hoved.querySelectorAll("h3")]
+    .find((h) => h.textContent.startsWith(forNavn));
+  assert.ok(overskrift, "rangeringsoverskriften mangler");
+  assert.equal(overskrift.textContent,
+    ventet("ui.rekruttering.evalueringer.rangering", 2),
+    "overskriftens versjon ble spist av profilnavnet");
+
+  // (2) Bestillingens profilvalg — samme mal, samme kjede.
+  const valg = hoved.querySelector("select#bestill-profil option");
+  assert.ok(valg, "profilvelgeren mangler");
+  assert.equal(valg.textContent,
+    ventet("ui.rekruttering.bestill.profilvalg", 2),
+    "nedtrekkets versjon ble spist av profilnavnet");
+
+  // (3) Kvitteringen etter lagring — den tredje kallstedet.
+  const pSeksjon = hoved.querySelector(
+    "section[aria-labelledby=profil-tittel]");
+  [...pSeksjon.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.profiler.rediger"))
+    .click();
+  const skjema = pSeksjon.querySelector("form");
+  skjema.querySelector("#profil-navn").value = navn;
+  KALL = [];
+  SVAR = (sti, opts) => ((opts.method || "GET") === "POST"
+    ? { profil_id: "prof-1", versjon: 3 } : basis[sti]);
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  const lagre = skjema.querySelector("button[type=submit]");
+  assert.ok(await vent(() => !lagre.disabled, 40), "runden ble aldri ferdig");
+  assert.equal(pSeksjon.querySelector("[role=alert]").textContent,
+    ventet("ui.rekruttering.profiler.lagret", 3),
+    "kvitteringens versjon ble spist av profilnavnet");
+});
+
 test("Rapport: detaljene ligger i kandidatens RAD, ikke som en mur under", async () => {
   // De sto som en flat liste av `<details>` under tabellen — én per
   // kandidat, opp mot 5000 — uten kobling til linjen de gjaldt. Leseren
