@@ -353,7 +353,7 @@ def _vurder_ci_kjoring(data: dict, run_id: str, ci_commit: str) -> list[str]:
                     f" {run_id}")
     # Codex' P1 på PR #117 (runde 3): id, terminalstatus, conclusion og
     # sha sa ingenting om HVILKEN workflow som kjørte. Repoet har også
-    # `claude.yml`, og en grønn kjøring DERFRA på akseptcommiten kjører
+    # `deploy.yml`, og en grønn kjøring DERFRA på akseptcommiten kjører
     # ikke én eneste av invarianttestene punktene påberoper seg — like
     # fullt bar den alle 16. Punktene hviler på testene i `ci.yml`, så
     # det er den workflowen som må ha kjørt.
@@ -396,7 +396,7 @@ def verifiser_ci_kjoring(run_id: str, ci_commit: str) -> dict:
     kjøring ga like fullt 16 immutable «grønne» punkter — en kjøring
     ingen har sett bevise noe som helst. Nå slås kjøringen opp: den må
     finnes i dette repoet, være `ci.yml` (runde 3: en grønn
-    `claude.yml`-kjøring på samme commit kjører ingen av
+    `deploy.yml`-kjøring på samme commit kjører ingen av
     invarianttestene), være en PUSH PÅ `main` (runde 11: `ci.yml` kjører
     også for `pull_request`, og en kjøring på et forslag beviser ikke at
     bytene ble historikk), være FERDIG og GRØNN, og ha testet nøyaktig

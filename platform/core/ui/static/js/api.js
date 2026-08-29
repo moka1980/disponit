@@ -195,8 +195,9 @@ export const bestillEvaluering = (kropp, idem) =>
   _muter("/v1/bestilling", "POST", kropp, idem);
 
 // M-57s egen rapportflate ("ats"): listen og den promoterte rapporten.
-export const hentEvalueringer = () =>
-  hentJson("/v1/rekruttering/evalueringer");
+export const hentEvalueringer = (cursor) =>
+  hentJson("/v1/rekruttering/evalueringer"
+    + (cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""));
 export const hentEvalueringsrapport = (oppdragId) =>
   hentJson(`/v1/rekruttering/rapport/${encodeURIComponent(oppdragId)}`);
 

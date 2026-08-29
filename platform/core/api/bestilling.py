@@ -68,17 +68,18 @@ IDEMPOTENSNOKKEL_MAKS = 200
 #: Koden når aldri ut av prosessen og hører derfor ikke hjemme i
 #: feilveitabellen — den ER `idempotenskonflikt` utad.
 OPPTATT = "idempotens_opptatt"
-#: LOKAL kode for «bunten er OPPTATT akkurat nå» (Cursor P1). Samme klasse
+#: Kode for «bunten er OPPTATT akkurat nå» (Cursor P1). Samme klasse
 #: som `OPPTATT`, én knapp ressurs lenger inn: en annen bestilling holder
-#: engangsbunten og er i ferd med å binde den. Utad er den
-#: `inndata_ubrukelig` som før — 409, ingen beslutning, ingen kvote, og ett
-#: svar for alle årsakene (058-formen) — men den er FORBIGÅENDE, ikke en
-#: dom: taperen kan lovlig lykkes med en annen bunt, og planveien skal
-#: derfor ikke pause permanent på den.
+#: engangsbunten og er i ferd med å binde den. Den er FORBIGÅENDE, ikke
+#: en dom: første forsøk kan fortsatt committe, og retry med samme nøkkel
+#: er SAMME operasjon. Til #215 var den kollapset til `inndata_ubrukelig`
+#: utad, så klienten ikke kunne velge nøkkeløkonomi på koden alene — nå
+#: er den sin egen 409 i feilveitabellen (drift, ikke sikkerhet: ingen
+#: dom over bunten er felt).
 INNDATA_OPPTATT = "inndata_opptatt"
 #: Kodene endepunktet oversetter tilbake til klientens kontrakt.
-KLIENTKODE = {OPPTATT: "idempotenskonflikt",
-              INNDATA_OPPTATT: "inndata_ubrukelig"}
+#: `INNDATA_OPPTATT` står ikke her lenger (#215): den ER klientkoden.
+KLIENTKODE = {OPPTATT: "idempotenskonflikt"}
 
 
 @dataclass(frozen=True)
@@ -622,10 +623,12 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                 if fikk:
                     laaser.append(navn)
             if not fikk:
-                # IKKE `inndata_ubrukelig` innover (Cursor P1): den er
-                # terminal, og planveien gjør en terminal kode om til en
-                # pause bare et menneske kan oppheve. Utad er de samme
-                # 409 — se `KLIENTKODE`.
+                # IKKE `inndata_ubrukelig` (Cursor P1): den er terminal,
+                # og planveien gjør en terminal kode om til en pause bare
+                # et menneske kan oppheve. Siden #215 bærer ledningen
+                # skillet helt ut: flaten beholder nøkkelen og sier «prøv
+                # igjen om et øyeblikk» — mot en død bunt ville det vært
+                # løgn, og mot en holdt lås er alt annet det.
                 tjeneste.logg.hendelse(INNDATA_OPPTATT, rid, tenant,
                                        art="drift")
                 return ("feil", INNDATA_OPPTATT)

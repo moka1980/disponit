@@ -146,14 +146,10 @@ export function visRekruttering(hoved, ctx) {
     // lenge `paagaaende` står — og da er kontrollene kjeden låste de samme
     // som skal låses opp.
     //
-    // `frysSkjema` er bestillingsseksjonens egen `frys`, lagt der
-    // profillagringen kan nå den (eierdom B, #212 runde 6): kroppen —
-    // profil, antall, frist — eies av seksjonen, så en lås som bare går
-    // gjennom `laas` fryser utløserne og lar feltene stå åpne.
     bestilling: { reserverIdem: null, bestillIdem: null,
                   inndataRef: null, filnavn: null,
                   paagaaende: false, generasjon: 0,
-                  oppdaterProfilvalg: null, frysSkjema: null },
+                  oppdaterProfilvalg: null },
     // Evalueringslisten hører til ØKTEN av samme grunn som bunten over
     // (Cursor P1): den er tenant-global, ikke prosessbundet, men `tegn`
     // bygger seksjonen på nytt ved hvert prosessbytte og seedet lå i
@@ -165,7 +161,8 @@ export function visRekruttering(hoved, ctx) {
     // oppfriskningens generasjon og `tegn` den for tiden monterte
     // seksjonens tegner — begge hører til listen, ikke til instansen
     // som tilfeldigvis viser den.
-    evalueringer: { liste: undefined, flere: false, nr: 0, tegn: null },
+    evalueringer: { liste: undefined, flere: false, cursor: null,
+                    nr: 0, tegn: null },
     // Rapporthentingen deler prosessbytte-risikoen med listen (Codex
     // P2): generasjon og tegner hører til ØKTEN, og hver mount melder
     // seg som tegner — et svar som lander etter et bytte tegner i den
@@ -213,7 +210,8 @@ export function visRekruttering(hoved, ctx) {
       ]);
       return { ...pros, profiler: (prof && prof.profiler) || [],
                evalueringer: evals ? (evals.evalueringer || []) : null,
-               evalueringerFlere: !!(evals && evals.flere) };
+               evalueringerFlere: !!(evals && evals.flere),
+               evalueringerCursor: (evals && evals.neste_cursor) || null };
     },
     (data) => {
       // En fersk full lasting ER sannheten — også «Prøv igjen» etter en
@@ -222,6 +220,7 @@ export function visRekruttering(hoved, ctx) {
       // skal ikke lande oppå den ferske listen: generasjonen bumpes.
       okt.evalueringer.liste = undefined;
       okt.evalueringer.flere = false;
+      okt.evalueringer.cursor = null;
       okt.evalueringer.nr += 1;
       // ... og rapport-cachen følger listen: en fersk lasting er
       // sannheten for begge (auto-lastingen får kjøre på nytt).
@@ -264,6 +263,22 @@ function tegn(hoved, ctx, data, okt, valgtId) {
   // ERSTATTER sin egen kontroll i stedet for å legge igjen en frakoblet
   // node ingen låser opp.
   const utlosere = { velger: null, send: null, lagre: null };
+  // #214 (A-maskinen — K2-gapet fra #212 lukket): låsen kjenner også
+  // KROPPSFELTENE. Gapet var to frysemekanismer med ulik rekkevidde —
+  // `laas.frys` tok utløserne, en lokal closure i bestillingsskjemaet
+  // tok feltene — og hvilken som kjørte avhang av hvem som tok låsen:
+  // bestillingsarmen frøs alt, profilarmen bare utløserne, og seks
+  // review-pass fant speilet av forrige runde. Nå fryser ENHVER som tar
+  // låsen alt som er meldt — én mekanisme, symmetrisk, ingen speil.
+  // Navngitte plasser her også: en om-tegnet seksjon ERSTATTER feltet
+  // sitt i stedet for å etterlate en frakoblet node.
+  const felter = { antall: null, frist: null, profil: null };
+  //: Snapshot per kontroll ved frysing (bare feltene som ber om det):
+  //: verdien kroppen ble bygd med, som change-vakten ruller tilbake
+  //: til. Eies av LÅSEN, ikke av en seksjons closure — det var
+  //: nøyaktig eierskapet som gjorde at profilarmens frys rullet
+  //: tilbake til null og TØMTE valget (Cursor P2-1, runde 6).
+  const frosne = new Map();
   const frysEn = (kontroll, paa) => {
     if (!kontroll) return;
     kontroll.disabled = paa;
@@ -274,9 +289,22 @@ function tegn(hoved, ctx, data, okt, valgtId) {
     if (paa) rot.setAttribute("aria-busy", "true");
     else rot.removeAttribute("aria-busy");
   };
+  const frysFelt = (felt, paa) => {
+    if (!felt) return;
+    // `readOnly` for tekst/tall (feltet beholder fokus og lesbarhet for
+    // skjermleseren), `disabled` for select — en select har ingen
+    // readOnly, samme valg som skjemaet alltid har gjort.
+    if (felt.modus === "readOnly") felt.kontroll.readOnly = paa;
+    else felt.kontroll.disabled = paa;
+    if (felt.snapshot) {
+      if (paa) frosne.set(felt.kontroll, felt.kontroll.value);
+      else frosne.delete(felt.kontroll);
+    }
+  };
   const laas = {
     frys: (paa) => {
       for (const k of Object.values(utlosere)) frysEn(k, paa);
+      for (const f of Object.values(felter)) frysFelt(f, paa);
     },
     // Kontrollene fødes til ulik tid — profilskjemaet åpnes på et klikk —
     // så en som meldes mens flaten er frosset, fryses med det samme.
@@ -286,6 +314,14 @@ function tegn(hoved, ctx, data, okt, valgtId) {
       utlosere[navn] = kontroll;
       if (okt.bestilling.paagaaende) frysEn(kontroll, true);
     },
+    meldFelt: (navn, kontroll, modus, valg) => {
+      felter[navn] = { kontroll, modus, snapshot: !!(valg && valg.snapshot) };
+      if (okt.bestilling.paagaaende) frysFelt(felter[navn], true);
+    },
+    //: Verdien kontrollen hadde da låsen ble tatt — `undefined` når
+    //: låsen ikke holdes. Change-vakten leser den her, aldri fra en
+    //: seksjons egen kopi.
+    frossetVerdi: (kontroll) => frosne.get(kontroll),
   };
   // DEN FØRSTE PROFILEN LÅSER OPP BESTILLINGEN (Cursor P1-1). Uten
   // profiler tegner `bestillSeksjon` en «opprett en profil først»-tekst
@@ -972,6 +1008,45 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
     sett(rapportRot, ...(noder || []));
     return true;
   };
+  // LISTEHANDLINGENE MELDER FRA (Codex P2). En feilet «Last flere» eller
+  // «Oppdater» re-aktiverte bare knappen og lot den utdaterte listen stå:
+  // brukeren kunne ikke skille et nettbrudd/403/5xx fra «oppdatert, og
+  // ingenting hadde endret seg», og fortsatte derfor å handle på gamle
+  // statuser — eller å be om en side hen ikke har tilgang til, om og om
+  // igjen. 401 er fortsatt ikke en melding: den eier `ctx.paaUautorisert`.
+  //
+  // Meldingen går i seksjonens `role="alert"` — SAMME utfallsområde som
+  // rapporthentingen bruker — og ryddes av neste vellykkede listehandling,
+  // så en gammel feil aldri blir stående over en fersk liste. Frakoblet
+  // rot er ikke et lerret (samme regel som `rHent.tegn`).
+  const meldListefeil = (feilet) => {
+    if (!rot.isConnected) return;
+    sett(utfall,
+      ...(feilet ? [t("ui.rekruttering.evalueringer.handlingfeil")] : []));
+  };
+  // FOKUS OVERLEVER OM-TEGNINGEN (Codex P2). `tegnListe` bytter hele
+  // seksjonen med `sett(rot, …)`, så knappen en tastatur- eller
+  // skjermleserbruker nettopp aktiverte er en ANNEN node etterpå: fokus
+  // falt tilbake til `document.body`, og brukeren mistet posisjonen sin
+  // ved hver oppfriskning og hver lastede side — uten noe som sa hvor de
+  // nye radene havnet.
+  //
+  // Fokus flyttes derfor til ERSTATNINGEN for kontrollen som ble
+  // aktivert, med «Oppdater» som fallback: «Last flere» forsvinner jo
+  // når siste side er hentet, og da er det ingen erstatning å lande på.
+  // Beskjeden går i den høflige live-regionen — samme grep som
+  // auto-visningen av rapporten — så det annonseres HVA som skjedde, ikke
+  // bare at fokus flyttet seg. KUN på eksplisitt klikk: oppfriskningen
+  // etter en bestilling går gjennom `oppdater()` uten dette, og skal
+  // aldri rive fokus fra skjemaet brukeren står i.
+  const etterListeklikk = (foretrukket, antall) => {
+    if (!rot.isConnected) return;
+    const ny = rot.querySelector("." + foretrukket)
+      || rot.querySelector(".eval-oppdater");
+    if (ny) ny.focus();
+    meldLive(t("ui.rekruttering.evalueringer.listemeldt")
+      .replace("{antall}", String(antall)));
+  };
   // Listeoppfriskningen bærer NØYAKTIG samme risiko (Cursor P2):
   // `paagaaende` slipper opp før den fire-and-forget `oppdater()` er
   // ferdig, så to raske bestillinger gir to hentinger i lufta samtidig.
@@ -1189,20 +1264,47 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
     }
   };
 
-  const tegnListe = (evalueringer, flere) => {
+  const tegnListe = (evalueringer, flere, cursor) => {
     const tittel = el("h2", { id: "evaluering-tittel",
       text: t("ui.rekruttering.evalueringer.tittel") });
+    // LEVENDE STATUS UTEN SIDE-RELOAD (#221): listen hentes ved mount og
+    // etter bestilling — en evaluering som blir ferdig mens brukeren
+    // ser på, krever ellers en omlasting av hele ruta. Knappen bruker
+    // øktens egen oppfriskning (samme vei som post-bestilling), så det
+    // finnes ÉN henting og én tegner. Ingen polling: en timer som
+    // re-fetcher bak brukerens rygg eier ikke feilhåndteringen sin —
+    // eksplisitt oppdatering er ærlig og testbar.
+    // Oppslaget er LAZY: `okt.evaluering` settes først ETTER den første
+    // tegningen (samme mount, synkront) — knappen finnes fra første
+    // render, og klikket treffer alltid den sist monterte oppfriskeren.
+    const oppdaterKnapp = okt ? (() => {
+      const k = el("button", { type: "button", class: "eval-oppdater",
+        text: t("ui.rekruttering.evalueringer.oppdater") });
+      k.addEventListener("click", async () => {
+        if (!okt.evaluering) return;
+        // `oppdater()` sier fra om den faktisk TEGNET: en feilet eller
+        // forkastet oppfriskning bytter ingen noder, så knappen holder
+        // fokus selv — og `role="alert"` annonserer feilen.
+        if (await okt.evaluering.oppdater()) {
+          etterListeklikk("eval-oppdater",
+            (okt.evalueringer.liste || []).length);
+        }
+      });
+      return k;
+    })() : null;
     // `null` er FEIL-tilstanden fra hentingen — en utilgjengelig
     // historikk er ikke en tom historikk.
     if (evalueringer === null) {
       sett(rot, tittel,
         el("p", { text: t("ui.rekruttering.evalueringer.listefeil") }),
+        ...(oppdaterKnapp ? [oppdaterKnapp] : []),
         utfall, rapportRot);
       return;
     }
     if (!evalueringer.length) {
       sett(rot, tittel,
         el("p", { text: t("ui.rekruttering.evalueringer.ingen") }),
+        ...(oppdaterKnapp ? [oppdaterKnapp] : []),
         utfall, rapportRot);
       return;
     }
@@ -1253,12 +1355,71 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
         el("th", { scope: "col",
           text: t("ui.rekruttering.evalueringer.vis") }))),
       el("tbody", {}, ...rader));
-    sett(rot, tittel, utfall,
+    // PAGINERINGEN (#221): cursoren er serverens fortsettelse — flaten
+    // regner aldri ut «neste side» selv. Klikket APPENDER: brukeren
+    // mister ikke radene hen alt ser på. Generasjonen vokter mot både
+    // oppfriskning og prosessbytte midt i flukten — bare den siste
+    // hentingen får skrive økten.
+    const eval2 = okt ? okt.evalueringer : null;
+    const lastFlere = (flere && cursor && eval2) ? (() => {
+      const k = el("button", { type: "button", class: "eval-last-flere",
+        text: t("ui.rekruttering.evalueringer.last_flere") });
+      k.addEventListener("click", async () => {
+        k.disabled = true;
+        // PAGINERINGEN TAR GENERASJONEN, DEN LESER DEN IKKE (Codex P2).
+        // «Oppdater» og «Last flere» er to skrivere på ÉN liste, og
+        // begge knappene står klikkbare. Leste pagineringen bare
+        // `eval2.nr`, delte de to hentingene generasjon: rakk
+        // oppfriskningen inn først, ble et cursorsvar fra den GAMLE
+        // kjeden appendet på en nyhentet første side — to kjeder blandet,
+        // med rader som kunne gjentas eller falle ut. Rakk pagineringen
+        // inn først, ble den stille overskrevet.
+        //
+        // Å ta generasjonen gjør klikket til den siste intensjonen, og
+        // det er nøyaktig samme regel som `oppdater()` alt følger: siste
+        // klikk vinner, taperen skriver ingenting. En oppfriskning som
+        // lander etterpå forkastes, og motsatt — klikker brukeren
+        // «Oppdater» mens en side er i lufta, taper siden.
+        const min = ++eval2.nr;
+        let svar;
+        try {
+          svar = await hentEvalueringer(cursor);
+        } catch (e) {
+          if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+          // Et eldre, tapt kall skal ikke melde feil over en ferskere
+          // liste — samme generasjonsregel som suksessveien.
+          if (min === eval2.nr) meldListefeil(true);
+          k.disabled = false;
+          return;
+        }
+        // Taperen skriver ingenting — men den LÅSER heller ikke
+        // kontrollen sin (Cursor P2). Vant en vellykket «Oppdater», er
+        // `k` alt revet ut av DOM-en og linjen er en no-op. Vant en
+        // FEILET «Oppdater», tegnes ingenting på nytt: da er dette den
+        // eneste veien knappen kommer tilbake, og uten den står den
+        // deaktivert over en liste som fortsatt har mer å hente.
+        if (min !== eval2.nr) { k.disabled = false; return; }
+        meldListefeil(false);
+        const basis = eval2.liste !== undefined
+          ? eval2.liste : (evalueringer || []);
+        eval2.liste = basis.concat((svar && svar.evalueringer) || []);
+        eval2.flere = !!(svar && svar.flere);
+        eval2.cursor = (svar && svar.neste_cursor) || null;
+        eval2.tegn(eval2.liste, eval2.flere, eval2.cursor);
+        etterListeklikk("eval-last-flere", eval2.liste.length);
+      });
+      return k;
+    })() : null;
+    sett(rot, tittel,
+      ...(oppdaterKnapp ? [oppdaterKnapp] : []),
+      utfall,
       el("div", { class: "tablewrap" }, liste),
-      // Et fullt vindu KAN bety flere — aldri stille avkorting. Selve
-      // pagineringen bor i #221; her sies det bare fra.
-      ...(flere ? [el("p",
-        { text: t("ui.rekruttering.evalueringer.flere") })] : []),
+      // Et fullt vindu KAN bety flere — aldri stille avkorting: uten en
+      // cursor å følge (eldre server, eller ingen økt å appende i) står
+      // meldingen; med den står knappen.
+      ...(lastFlere ? [lastFlere]
+        : flere ? [el("p",
+          { text: t("ui.rekruttering.evalueringer.flere") })] : []),
       rapportRot);
   };
 
@@ -1268,26 +1429,44 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
   // listen den beskriver, uansett kilde.
   const eval_ = okt ? okt.evalueringer : null;
   if (eval_ && eval_.liste !== undefined) {
-    tegnListe(eval_.liste, !!eval_.flere);
+    tegnListe(eval_.liste, !!eval_.flere, eval_.cursor);
   } else {
+    if (eval_) eval_.cursor = (data && data.evalueringerCursor) || null;
     tegnListe(data ? data.evalueringer : [],
-      !!(data && data.evalueringerFlere));
+      !!(data && data.evalueringerFlere),
+      (data && data.evalueringerCursor) || null);
   }
   // NULL KLIKK TIL PRODUKTET (eiers UX-prinsipp 27/8): finnes en ferdig
   // rapport, rendres den ferskeste med en gang — uten fokus-tyveri.
   // Kun ved mount, aldri ved oppfriskning: en levert bestilling skal
   // ikke rive lesingen av en annen rapport.
   //
-  // FERSKEST ER HØYESTE OPPDRAG, IKKE FØRSTE RAD (Cursor P2). `find`
-  // leste «ferskeste» ut av listens rekkefølge — en skjult kontrakt med
-  // `ORDER BY o.id DESC` i `lesing.py`, som flaten selv ikke binder.
-  // Kom listen noen gang i en annen rekkefølge (annen sortering, en
-  // oppfrisket liste satt sammen et annet sted), viste auto-stien en
-  // ELDRE rapport uten at noe feilet. Valget står derfor her, eksplisitt.
+  // FERSKEST ER SERVERENS EGEN NØKKEL, IKKE FØRSTE RAD (Cursor P2 →
+  // Codex P2). `find` leste «ferskeste» ut av listens rekkefølge — en
+  // skjult kontrakt med sorteringen i `lesing.py`, som flaten selv ikke
+  // binder. Kom listen i en annen rekkefølge (en oppfrisket liste satt
+  // sammen et annet sted), viste auto-stien en ELDRE rapport uten at noe
+  // feilet. Valget står derfor her, eksplisitt.
+  //
+  // ... men det må stå på SAMME nøkkel (Codex P2): endepunktet definerer
+  // nyest som `(opprettet, id)`, og de to ordenene kan divergere.
+  // PostgreSQLs `now()` er TRANSAKSJONENS starttid mens id-en tildeles
+  // når inserten faktisk kjører, så en forsinket eldre transaksjon kan
+  // få den HØYESTE id-en. `id` alene valgte da en rapport som står lenger
+  // ned i en korrekt tidssortert tabell — tabellen riktig, åpningen feil.
   const seedListe = (eval_ && eval_.liste !== undefined)
     ? eval_.liste : (data ? data.evalueringer : []);
+  // `opprettet` mangler eller er uparsbar → eldst mulig: en rad uten
+  // tidsstempel skal aldri vinne over en som har ett, og id-en avgjør
+  // fortsatt mellom to like (og mellom to uten).
+  const tid = (e2) => {
+    const ms = Date.parse(e2.opprettet || "");
+    return Number.isNaN(ms) ? -Infinity : ms;
+  };
+  const ferskereEnn = (a, b) => (tid(a) !== tid(b))
+    ? tid(a) > tid(b) : a.oppdrag_id > b.oppdrag_id;
   const klarRad = (seedListe || []).reduce((beste, e2) =>
-    (e2.rapport_klar && (!beste || e2.oppdrag_id > beste.oppdrag_id))
+    (e2.rapport_klar && (!beste || ferskereEnn(e2, beste)))
       ? e2 : beste, null);
   // ... og kun ÉN gang per økt (Codex P2): listen er tenant-global og
   // uavhengig av valgt prosess — hvert prosessbytte bygger seksjonen på
@@ -1315,22 +1494,38 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
     // for å bli spurt om `isConnected`: siste `tegn` vinner, og den
     // vakten trengs ikke lenger.
     eval_.tegn = tegnListe;
+    // SVARET ER «TEGNET DU?» (Codex P2). Fokus og annonsering hører til
+    // det eksplisitte klikket, ikke til oppfriskningen som sådan — den
+    // kalles også fire-and-forget etter en bestilling, og skal aldri rive
+    // fokus fra skjemaet. Knappen spør derfor om det faktisk ble byttet
+    // noder; feilet eller forkastet oppfriskning bytter ingen, og da
+    // holder knappen fokus selv.
     okt.evaluering = { oppdater: async () => {
       const min = ++eval_.nr;
       let svar;
       try {
         svar = await hentEvalueringer();
       } catch (e) {
-        if (e instanceof UautorisertFeil) ctx.paaUautorisert();
-        return;
+        if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return false; }
+        // Også oppfriskningen etter en bestilling melder fra: en stille
+        // katch her lot den nye evalueringen mangle fra listen uten at
+        // noe sa hvorfor (Codex P2).
+        if (min === eval_.nr) meldListefeil(true);
+        return false;
       }
       // Samme regel som rapporthentingen: bare den SISTE oppfriskningen
       // får tegne — og et tregt eldre svar skal heller ikke skrive seg
       // inn i økten.
-      if (min !== eval_.nr) return;
+      if (min !== eval_.nr) return false;
+      meldListefeil(false);
+      // Oppfriskningen er FØRSTE side på nytt — cursoren følger den:
+      // en beholdt fortsettelse fra en eldre liste ville pekt midt inn
+      // i en historikk som nettopp fikk nye rader øverst.
       eval_.liste = (svar && svar.evalueringer) || [];
       eval_.flere = !!(svar && svar.flere);
-      eval_.tegn(eval_.liste, eval_.flere);
+      eval_.cursor = (svar && svar.neste_cursor) || null;
+      eval_.tegn(eval_.liste, eval_.flere, eval_.cursor);
+      return true;
     } };
   }
   return rot;
@@ -1436,7 +1631,14 @@ function bestillSeksjon(hoved, ctx, data, okt, laas) {
   // også her, og valget rulles tilbake til den profilen kroppen ble bygget
   // på, så `stillingsprofil_ref` og det brukeren ser er samme profil.
   profilVelger.addEventListener("change", () => {
-    if (tilstand.paagaaende) { profilVelger.value = frossetProfil; return; }
+    if (tilstand.paagaaende) {
+      // Låsens snapshot, aldri en lokal kopi (#214): under en
+      // profillagring er dette verdien slik den sto da DEN låsen ble
+      // tatt — ikke null.
+      const fry = laas.frossetVerdi(profilVelger);
+      if (fry !== undefined) profilVelger.value = fry;
+      return;
+    }
     nyIntensjon();
   });
   antallInp.addEventListener("input", nyIntensjon);
@@ -1469,16 +1671,13 @@ function bestillSeksjon(hoved, ctx, data, okt, laas) {
   // Knappene og prosessvelgeren eies av flatens `laas` (A-dommen, #212):
   // det er den samme frysen, bare utvidet til `tegn`-utløserne, og den
   // setter `aria-busy` på DETTE skjemaet fordi `send` hører til det.
-  let frossetProfil = null;
-  const frys = (paa) => {
-    antallInp.readOnly = paa;
-    fristInp.readOnly = paa;
-    profilVelger.disabled = paa;
-    // Valget slik det sto da kjeden tok låsen: det er DENNE profilen
-    // `kropp` bygges med, og den `change`-vakten over ruller tilbake til.
-    frossetProfil = paa ? profilVelger.value : null;
-    laas.frys(paa);
-  };
+  // #214: feltene MELDES til låsen i stedet for å fryses av en lokal
+  // closure — da fryser også profilarmens lås dem, og snapshotet av
+  // profilvalget eies av låsen (aldri null under en fremmed frys).
+  laas.meldFelt("antall", antallInp, "readOnly");
+  laas.meldFelt("frist", fristInp, "readOnly");
+  laas.meldFelt("profil", profilVelger, "disabled", { snapshot: true });
+  const frys = (paa) => laas.frys(paa);
 
   const skjema = el("form", {},
     buntNotis,
@@ -1682,11 +1881,16 @@ function bestillSeksjon(hoved, ctx, data, okt, laas) {
       // reservasjonsarmens egen test.
       const opptattNokkel = definitivt && e.status === 409
         && e.kode === "idempotenskonflikt" && tilstand.inndataRef != null;
+      // #215: buntlåsen er holdt — forbigående, samme nøkkeløkonomi som
+      // en opptatt idempotensnøkkel. Koden alene er stedet (som for
+      // `buntUbrukelig` under): bestillingsendepunktets egen.
+      const buntOpptatt = definitivt && e.status === 409
+        && e.kode === "inndata_opptatt";
       if (definitivt) {
         // Serveren DØMTE operasjonen — retry er en NY operasjon. En
         // reservert bunt beholdes: dommen gjaldt bestillingen, ikke
         // opplastingen.
-        if (!opptattNokkel) tilstand.bestillIdem = null;
+        if (!opptattNokkel && !buntOpptatt) tilstand.bestillIdem = null;
         // EN DØD RESERVASJON MÅ KUNNE SLIPPES (Cursor P1-3). Kom dommen
         // FØR `inndataRef` ble satt, traff den reservasjonen eller
         // opplastingen — og 058 sier at en brukt/utløpt reservasjon
@@ -1731,27 +1935,32 @@ function bestillSeksjon(hoved, ctx, data, okt, laas) {
       //
       // ... og «SJEKK FELTENE» ER LØGN NÅR DET ER BUNTEN (Cursor P2-1,
       // eierdom (c) 11:38). `inndata_ubrukelig` er ikke en dom over
-      // kroppen: 058 gir ETT svar for alle årsakene — bunten er ukjent,
-      // utløpt, ikke ferdig lastet, alt bundet til et annet oppdrag,
-      // ELLER holdt av en samtidig bestilling akkurat nå
-      // (`INNDATA_OPPTATT`, kollapset til den samme koden utad i
-      // `bestilling.py:71-81`). Ingen av dem står i et felt brukeren kan
+      // kroppen: 058 gir ETT svar for alle de TERMINALE årsakene —
+      // bunten er ukjent, utløpt, ikke ferdig lastet, eller alt bundet
+      // til et annet oppdrag. Ingen av dem står i et felt brukeren kan
       // rette, så «Sjekk feltene og prøv igjen» sender henne til feil
-      // sted.
+      // sted. Nøkkelen roterer: mot en død bunt er «prøv igjen, samme
+      // operasjon» en løgn, og utveien som virker — en ny fil — må STÅ
+      // på skjermen (`875de8f`: en bruker som må gjette seg til
+      // filbytte er nøyaktig hullet den lukket).
       //
-      // DETTE ER EN SANNHETS-FIKS, IKKE EN NØKKELFIKS: `bestillIdem`
-      // roterer som før (`opptattNokkel` er usann her), for ledningen
-      // bærer ikke skillet forbigående/terminal — `KLIENTKODE` kollapser
-      // det, og husets egen port sier `not er_forbigaende(
-      // "inndata_ubrukelig")` (`test_bestilling_rekruttering.py:350`).
-      // Å beholde nøkkelen på den koden ville lovet «prøv igjen, samme
-      // operasjon» til en bruker som står mot en død bunt. Det ekte
-      // skillet er en distinkt utadkode — kontraktsendring, eget issue
-      // (eierdom (b)). Teksten lover derfor INGENTING om retry: den sier
-      // hva som er sant for begge årsakene, og navngir den ene utveien
-      // som virker uansett — en ny fil. (`875de8f` er grunnen til at den
-      // utveien må STÅ på skjermen: en bruker som må gjette seg til
-      // filbytte er nøyaktig hullet den lukket.)
+      // DEN FORBIGÅENDE NABOEN HAR SIN EGEN KODE (#215, eierdom (b)):
+      // `inndata_opptatt` betyr at en annen bestilling holder bunten
+      // AKKURAT NÅ. Samme økonomi som `opptattNokkel`: nøkkelen består
+      // (retry er SAMME operasjon), og teksten sier «prøv igjen om et
+      // øyeblikk». Før #215 kollapset `KLIENTKODE` begge til
+      // `inndata_ubrukelig`, og flaten kunne ikke velge nøkkeløkonomi
+      // på koden alene.
+      //
+      // ... MEN «INGEN DOM, INGEN KVOTE» ER IKKE KODENS LØFTE (Codex
+      // P2). Koden bæres av TO grener i `utfor_bestilling`: den vanlige
+      // (låsen tas før beslutningen — da er begge deler sant) og
+      // gjenopprettingen, der et alt COMMITET `TILLAT` re-tar buntlåsen
+      // (`bestilling.py:617-626`) og svarer det samme når en annen
+      // holder den. Der ER dommen felt og kvoten trukket, og teksten
+      // ville sagt brukeren to usanne ting. Den sier derfor bare det
+      // BEGGE grenene garanterer: bunten er holdt akkurat nå, og retry
+      // med SAMME nøkkel er trygg.
       //
       // Koden alene er stedet her, uten `inndataRef`-vakten
       // `opptattNokkel` trenger: `idempotenskonflikt` har motsatt
@@ -1761,12 +1970,28 @@ function bestillSeksjon(hoved, ctx, data, okt, laas) {
       // 409-er, aldri denne.
       const buntUbrukelig = definitivt && e.status === 409
         && e.kode === "inndata_ubrukelig";
+      // «SAMME OPERASJON» ER USANT OGSÅ HER NÅR INTENSJONEN ER
+      // FORLATT (Codex P2). Denne armen velges på KODEN alene, uten
+      // `opptattNokkel`s `inndataRef`-vakt — og `change` nuller nettopp
+      // `inndataRef` samtidig som den bumper `generasjon` og forkaster
+      // `bestillIdem` (`:1391`). Byttet brukeren fil mens POST-en fløy,
+      // står nøkkelen altså IKKE: linjen over beholder bare en nøkkel
+      // som er borte, og neste Send bærer en fersk nøkkel på en NY bunt.
+      // Løftet «et nytt forsøk gjentar den SAMME operasjonen» er da
+      // løgn, samme klasse som `sendt_forlatt_bunt` (tillat-armen),
+      // `stoppet_forlatt`/`unntak_forlatt` (dom-armen) og
+      // `forlatt_usikkert` (0/5xx-armen) — og samme måling, `forlatt`
+      // under. Teksten navngir ikke bunten: `sendtBunt` (`:1563`) bor i
+      // `try`, og armen her klarer seg med det `forlatt_usikkert` sier.
       const forlatt = tilstand.generasjon !== min;
       sett(utfall, t(opptattNokkel ? "ui.rekruttering.bestill.opptatt"
-        : buntUbrukelig ? "ui.rekruttering.bestill.bunt_ubrukelig"
-          : definitivt ? "ui.rekruttering.bestill.feil"
-            : forlatt ? "ui.rekruttering.bestill.forlatt_usikkert"
-              : "ui.rekruttering.usikkert_utfall"));
+        : buntOpptatt
+          ? (forlatt ? "ui.rekruttering.bestill.bunt_opptatt_forlatt"
+            : "ui.rekruttering.bestill.bunt_opptatt")
+          : buntUbrukelig ? "ui.rekruttering.bestill.bunt_ubrukelig"
+            : definitivt ? "ui.rekruttering.bestill.feil"
+              : forlatt ? "ui.rekruttering.bestill.forlatt_usikkert"
+                : "ui.rekruttering.usikkert_utfall"));
     } finally {
       tilstand.paagaaende = false;
       // Låsen løftes på de SAMME kontrollene som tok den (A-dommen,
@@ -1788,10 +2013,9 @@ function bestillSeksjon(hoved, ctx, data, okt, laas) {
   // mens flaten er frosset.
   // ... og det er DENNE velgeren en ny profilversjon skal nå (P2-2).
   tilstand.oppdaterProfilvalg = tegnProfilvalg;
-  // ... og det er DENNE frysen den ANDRE mutasjonen i kjeden skal ta
-  // (Cursor P2-1, eierdom B): `laas` eier utløserne, seksjonen eier
-  // kroppen. Låsen er hel bare når profillagringen når begge.
-  tilstand.frysSkjema = frys;
+  // Broen `frysSkjema` (eierdom B, #212 runde 6) er BORTE (#214, A):
+  // feltene er meldt til låsen over, så profillagringens `laas.frys`
+  // når dem uten en peker inn i denne seksjonens closure.
   sett(rot, el("h2", { id: "bestill-tittel",
     text: t("ui.rekruttering.bestill.tittel") }),
     utfall, skjema);
@@ -1806,23 +2030,17 @@ function profilSeksjon(hoved, ctx, data, okt, laas, paaProfilendring) {
   // scopet er en blindvei som først dør server-side. Samme port som
   // kanBestille i bestillingsdelen.
   const kanSkrive = harScope(ctx, "bestilling:opprett");
-  // ÉN LÅS FOR BEGGE MUTASJONENE I KJEDEN (Cursor P2-1, eierdom B i
-  // runde 6). A-dommen lover én lås for bestilling OG profillagring, men
-  // `laas.frys` tar bare `tegn`-utløserne: bestillingens KROPP — profil,
-  // antall, frist — eies av seksjonens egen `frys`. Profilarmen frøs
-  // derfor utløserne og lot feltene stå åpne, samtidig som `laas.frys`
-  // satte `aria-busy` på bestillingsskjemaet gjennom `send`: skjemaet
-  // PÅSTO opptatt og tok input. Verst traff det profilvelgeren, som ruller
-  // et bytte tilbake til `frossetProfil` — en verdi bare seksjonens `frys`
-  // setter, så under en profillagring rullet den tilbake til `null` og
-  // TØMTE valget i stedet for å bevare det. Seksjonen eksponerer nå sin
-  // egen `frys` på økten, og armen her tar hele låsen gjennom den.
-  // Uten bestillingsseksjon — ingen profiler ennå, altså den aller første
-  // lagringen — er `laas` alt som finnes å låse.
-  const frysKjeden = (paa) => {
-    if (okt.bestilling.frysSkjema) okt.bestilling.frysSkjema(paa);
-    else laas.frys(paa);
-  };
+  // ÉN LÅS FOR BEGGE MUTASJONENE I KJEDEN (#214, A-maskinen). Gapet
+  // K2-passet i #212 målte — to frysemekanismer med ulik rekkevidde,
+  // og rekkevidden avhang av kalleren — er lukket i selve låsen:
+  // feltene er MELDT dit (laas.meldFelt), så `laas.frys` fryser både
+  // utløserne og kroppen uansett hvilken arm som tar den, og
+  // snapshotet av profilvalget eies av låsen (aldri null under en
+  // profillagring).
+  // #214 (A): låsen kjenner feltene selv — broen inn i
+  // bestillingsseksjonens closure er borte, og den aller første
+  // lagringen (ingen bestillingsseksjon ennå) er samme kall.
+  const frysKjeden = (paa) => laas.frys(paa);
   const rot = el("section", { "aria-labelledby": "profil-tittel" });
   const utfall = el("div", { role: "alert", class: "utfall" });
   const liste = el("div");

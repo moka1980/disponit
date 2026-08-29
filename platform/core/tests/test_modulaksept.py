@@ -814,7 +814,7 @@ def test_ci_punktene_krever_referatet_fra_veien_som_spurte(migrator):
     # akse for seg, så en port som avviser alt ikke består testen.
     for navn, endring in (
             ("en annen workflow",
-             {"arbeidsflyt": ".github/workflows/claude.yml"}),
+             {"arbeidsflyt": ".github/workflows/deploy.yml"}),
             ("en PR-kjøring", {"hendelse": "pull_request"}),
             ("en annen gren", {"gren": "m56-akseptflipp"}),
             ("en rød kjøring", {"konklusjon": "failure"}),
@@ -5145,15 +5145,17 @@ def test_invariantpunktene_krever_en_groenn_kjoring_paa_akseptcommiten():
               "event": "push", "head_branch": "main"}
     assert m._vurder_ci_kjoring(groenn, "42", sha) == []
     # Codex' P1 (runde 3): en GRØNN kjøring av en annen workflow på samme
-    # commit bar alle 16 punktene. `claude.yml` kjører ingen av
-    # invarianttestene punktene påberoper seg.
-    assert (ROT / ".github/workflows/claude.yml").exists(), \
-        "porten under måler nettopp at denne workflowen ikke bærer punktene"
+    # commit bar alle 16 punktene. Deploy-workflowen kjører ingen av
+    # invarianttestene punktene påberoper seg. (Fixturen pekte før på
+    # `claude.yml`; den ble slettet med review-kjeden 29/8 — RUTINER
+    # §10 — og porten måler formen «feil workflow», ikke ett navn.)
+    assert (ROT / ".github/workflows/deploy.yml").exists(), \
+        "porten under måler nettopp at en annen workflow ikke bærer punktene"
     for muteres, ord_i_feil in (
             ({"conclusion": "failure"}, "conclusion"),
             ({"conclusion": None, "status": "in_progress"}, "ikke ferdig"),
             ({"head_sha": "b" * 40}, "akseptcommiten"),
-            ({"path": ".github/workflows/claude.yml"}, "claude.yml"),
+            ({"path": ".github/workflows/deploy.yml"}, "deploy.yml"),
             ({"path": None}, "ci.yml"),
             ({"id": 43}, "svarte med kjøring")):
         feil = m._vurder_ci_kjoring(dict(groenn, **muteres), "42", sha)

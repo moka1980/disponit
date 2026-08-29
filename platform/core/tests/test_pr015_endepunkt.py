@@ -541,6 +541,48 @@ def test_port22_uten_registrert_artefakttype_ingen_kapabilitet(migrator, miljo,
 
 
 @pg
+def test_219_claimsvaret_baerer_lease_horisonten(migrator, miljo, token):
+    """#219: claim-svaret bærer `owner_lease_utloper` — feltet 037 skrev
+    i SAMME UPDATE som claimen, lest fra raden (aldri en formel i
+    endepunktet). Uten det måtte klientene enten speile 037s formel (to
+    sannheter) eller telle pulser før første fornyelse — den dokumenterte
+    falsk-`lease_tapt`-klassen i m57-heartbeatet.
+
+    Verdien måles mot RADEN, ikke mot en gjenutregning: ett felt, én
+    kilde, byte-likt det basen faktisk skrev."""
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    from .test_m37 import _lag_sak, _lag_oppdrag, _sett_kontekst
+    from .test_m37 import TENANT as M37_TENANT
+
+    sak, logg = _lag_sak(migrator, M37_TENANT)
+    _lag_oppdrag(migrator, M37_TENANT, sak, logg)
+
+    app = lag_app(DSN)
+    with TestClient(app) as c:
+        tok, _ = token(rolle="eiermodul:reinnsending",
+                       scopes=("orders:execute:purring.",))
+        r = c.post("/v1/oppdrag/claim", json={},
+                   headers={"authorization": f"Bearer {tok}"})
+    assert r.status_code == 200, r.text
+    kropp = r.json()
+    _sett_kontekst(migrator, M37_TENANT)
+    rad = migrator.execute(
+        "SELECT owner_lease_utloper, owner_lease_utloper > now(),"
+        " owner_lease_utloper >= utforelsesfrist"
+        " FROM oppdrag WHERE tenant=%s AND id=%s",
+        (M37_TENANT, kropp["oppdrag_id"])).fetchone()
+    migrator.rollback()
+    assert kropp["owner_lease_utloper"] == rad[0].isoformat(), (
+        "claim-svarets horisont skal være RADENS, byte-likt: "
+        f"{kropp['owner_lease_utloper']!r} != {rad[0].isoformat()!r}")
+    assert rad[1], "claimen skal ha satt en levende lease"
+    assert rad[2], (
+        "037-formen: leasen dekker minst utforelsesfristen "
+        "(least(nå+3600s, greatest(nå+lease, utforelsesfrist)))")
+
+
+@pg
 def test_ukjent_sak_er_ikke_funnet(klient):
     """En sak som ikke er en overtakelsessak låner seg ikke adjudikasjonsveien.
 

@@ -8,10 +8,14 @@ Gjelder alle i pipelinen. Avvik fra rutinene er selv en review-feil.
 |---|---|---|
 | **Eier** | Deg | Godkjenner retning, eier kontoer/nøkler/avtaler, bærer juridisk ansvar. Involveres bare der policy krever menneske. |
 | **Claude.ai** | Arkitekt og produktleder | Bestemmer struktur og spesifikasjon, lager drafts, koordinerer reviews, tar beslutninger på vegne av Eier der det trengs. Avslutter **alltid** med NÅ/NESTE-blokken (se pkt. 3). |
-| **ChatGPT** | Spesifikasjonsreview | Reviewer drafts mot de tre faste spørsmålene (se docs/README-arbeidsflyt.md). Svar limes inn i PR-beskrivelsen. |
-| **Claude Code** | Implementering | Skriver kode i repoet, kjører tester lokalt og på staging-serveren. Deployer aldri til produksjon direkte. |
-| **Cursor** | Pre-Codex-angriper | Kjører automatisk på GitHub (`.github/workflows/cursor-pre-codex.yml`, poster som `github-actions[bot]`) før Codex. Poster én batched funnliste eller PASS. Merger aldri. **Ikke** Cursor Bugbot-appen — den er avslått i dette repoet, se §10. |
-| **Codex** | Kodereview og merge | Håndhever de fire merge-portene. Merger kun grønt. |
+| **ChatGPT** | Reviewer arkitekten | Reviewer Claude.ai-drafts (spesifikasjon) mot de tre faste spørsmålene (se docs/README-arbeidsflyt.md). Svar limes inn i PR-beskrivelsen. |
+| **Claude Code** | Implementering, kodereview-port og merge | Skriver kode i repoet, kjører tester lokalt og på staging-serveren, kjører CodeRabbit som feilfanger på hver PR, og merger egne PR-er når CodeRabbit er ren og CI grønn. Deployer aldri til produksjon direkte. |
+| **CodeRabbit** | Feilfanger | `coderabbit review --agent` kjøres av Claude Code før push og etter vesentlige endringer. Kritisk/alvorlig fikses; bagateller listes i PR-en. Verktøy, ikke aktør — den merger aldri og har ingen GitHub-flate. |
+
+*Cursor og Codex ble tatt ut av pipelinen 29/8-2026 (eierbeslutning):
+review-kjeden deres kostet 10–15 runder à 10 min per PR. Historikken
+deres står i merge-historikk og lukkede PR-tråder; K-reglene i §9 bærer
+lærdommen videre.*
 
 ## 2. Modulrutine — én modul om gangen, helt ferdig
 
@@ -19,8 +23,8 @@ Gjelder alle i pipelinen. Avvik fra rutinene er selv en review-feil.
 2. **Spesifikasjonsreview (ChatGPT) — OBLIGATORISK for alle PR-er som rører `platform/`, `policies/` eller `deploy/`.** Claude.ai sender draften (spesifikasjon eller kode) til ChatGPT FØR Claude Code starter implementering. Review-svaret limes inn i PR-beskrivelsen. Kun PR-er som utelukkende endrer `docs/` kan hoppe over porten, og da skal PR-beskrivelsen si det eksplisitt med begrunnelse.
    *Historikk: porten ble hoppet over i PR-003 (forsvarlig, ren docs) og PR-004 (ikke forsvarlig — tillitsankerets tilstandslag). Codex og Claude Code fanget tolv P1 i PR-004-rundene, men porten foran skal redusere antallet som når dit. Denne presiseringen finnes fordi arkitekten brøt sin egen rutine; regelen gjelder Claude.ai mest av alle.*
 3. **Implementering** (Claude Code): kode + tester, inkludert obligatoriske negative policytester.
-4. **Pre-Codex** (Cursor, automatisk): når PR er `ready_for_review`, merket `pre-codex`, eller eier (`moka1980`) eller sløyfas bot (`claude[bot]`) kommenterer `@cursor review` — kommentar-utløseren er en allowlist (speilet i `cursor-pre-codex.yml`); ready/label er write-portet av GitHub selv. Cursor poster én batched funnliste (P1/P2/P3) eller PASS; oppfølgingen vekkes av passets fullføring (`workflow_run`-broen, §10.4) — footerens `@claude` er signatur, ikke vekker. Claude fikser P1/P2 og ber om nytt `@cursor review` til PASS. **Ingen `@codex review` før Cursor-PASS.**
-5. **Kodereview** (Codex): fire porter, merge til main — først etter Cursor-PASS.
+4. **Feilfanger** (CodeRabbit, kjørt av Claude Code): `coderabbit review --agent --include-untracked --base main` FØR push, og på nytt etter vesentlige endringer. «Ren» betyr NULL åpne kritisk/alvorlig-funn — de fikses før PR-en åpnes; minor/bagateller kan stå, men listes da i PR-beskrivelsen med begrunnelse. Fikk den ikke kjørt (rate-limit/nede) sies det eksplisitt i PR-en, og merge er da TILLATT når CI er grønn — CodeRabbit er feilfanger, CI er porten; en nede-tjeneste skal ikke stanse leveransen, men fraværet skal aldri være stille.
+5. **Merge** (Claude Code): når vilkårene i pkt. 4 er oppfylt og CI (`test`) er grønn, merger Claude Code selv (`gh pr merge --squash`). Branch protection er porten som håndhever det maskinelt: ingen merge uten grønn `test`, strict up-to-date, lineær historikk, `enforce_admins`.
 6. **Staging-test** (Claude Code): modulen kjøres på staging-serveren — ekte server, syntetiske data, sandkasse-integrasjoner. Hele sjekklisten i modulens manifest må bestå 100 %.
 7. **Aksept** (Claude.ai bekrefter, Eier informeres): modulstatus settes til `aktiv`. Først nå starter neste modul.
 
@@ -77,11 +81,11 @@ Ingen leveranse uten denne blokken. Uklarhet om hvem/hva/hvor er en feil.
 
 Repoet bor på github.com. Reglene under er ikke anbefalinger — de konfigureres som branch protection slik at GitHub nekter det som er forbudt.
 
-**Flyt:** Claude Code lager branch `pr-XXX-mNN-kortnavn` → åpner PR med malen (.github/PULL_REQUEST_TEMPLATE.md) → CI kjører automatisk (.github/workflows/ci.yml) → ChatGPT-review limes inn i PR-beskrivelsen → **Cursor pre-Codex** (PASS eller Claude fikser batched funn) → Codex reviewer i PR-en og merger når portene er grønne → merge til main trigger staging-deploy (PR-004).
+**Flyt:** Claude Code lager branch → CodeRabbit kjøres lokalt (rene funn) → åpner PR med malen (.github/PULL_REQUEST_TEMPLATE.md) → CI kjører automatisk (.github/workflows/ci.yml) → ChatGPT-review av spesifikasjonen limes inn i PR-beskrivelsen → Claude Code merger ved grønn CI → merge til main trigger staging-deploy (PR-004).
 
 > ✅ **Status 2026-08-01: branch protection er aktiv og satt opp av Claude Code via GitHub-API-et** (ikke i Settings-menyen). Del B i `docs/PUSH-INSTRUKS.md` er utført; verifiser med `gh api repos/moka1980/disponit/branches/main/protection` framfor å sette den opp på nytt.
 
-**Eiers beslutning 2026-08-01: merge-porten driftes av pipelinen (Claude Code / Codex) uten Eier.** Det endrer to ting fra det opprinnelige oppsettet, og begge er bevisste:
+**Eiers beslutning 2026-08-01 (revidert 29/8): merge-porten driftes av Claude Code uten Eier.** Det endrer to ting fra det opprinnelige oppsettet, og begge er bevisste:
 
 - **Ingen menneskelig godkjenning kreves lenger** — heller ikke på tillitsankeret (M-1 policymotor, M-2 revisjonslogg, M-37 unntaksmotor). Anbefalingen i `docs/README-arbeidsflyt.md` om å beholde én menneskelig port er dermed **forlatt med vitende og vilje**. Porten som er igjen er maskinell: ingenting når `main` uten grønn CI, og CI inneholder de negative policytestene som beviser at handling utenfor policy faktisk stoppes. Svekkes en test, svekkes porten — derfor er «ingen fjernet/svekket negativ test» merge-port nr. 1.
 - **`enforce_admins` er nå PÅ.** Det kunne den ikke være før: så lenge en godkjenning var påkrevd og det bare finnes én konto, ville `main` låst seg helt (GitHub lar ingen godkjenne sin egen PR). Med null påkrevde godkjenninger er det ingen låsing — og da forsvinner admin-forbikjøringen som tidligere ble bevist med «Bypassed rule violations». **Ingen kan lenger pushe direkte til `main`. Ikke Codex, ikke Claude Code, ikke Eier.**
@@ -94,14 +98,16 @@ Repoet bor på github.com. Reglene under er ikke anbefalinger — de konfigurere
 
 **CODEOWNERS er ikke lenger en sperre.** Filen beholdes fordi GitHub fortsatt automatisk ber om review fra eier på de fire stiene, men den **blokkerer ingen merge**. Skal tillitsanker-porten gjeninnføres senere, er det ett API-kall: `require_code_owner_reviews: true` + `required_approving_review_count: 1` — og da må rolle-kontoene under finnes først.
 
-**Rolle-kontoer (fortsatt anbefalt, nå av en annen grunn):** egne GitHub-kontoer for Claude Code og Codex gir sporbarhet — hvem gjorde hva — og gjør det mulig å kreve at Codex faktisk godkjenner Claude Codes PR før merge, uten at Eier involveres. Så lenge begge kjører som `moka1980` er «Codex reviewet» kun en påstand i PR-beskrivelsen, ikke noe GitHub kan bekrefte.
+**Rolle-konto for Claude Code er fortsatt anbefalt** for sporbarhet — hvem gjorde hva — men er ikke lenger en merge-forutsetning: porten er maskinell (CI + branch protection), ikke en aktørs godkjenning.
 
 ## 9. Konvergensregler for review-runder (K1–K5, ratifisert 21/8)
 
-Rotårsaken de finnes for er målt, ikke ment: Codex reviewer hele
-diffen, så en fiks som VOKSER flaten gir flere funn neste runde —
-selvforsterkende. I #118 gikk porten 292 → 4281 linjer over 19 runder
-mens produktet på 116 linjer sto ferdig og uimotsagt fra runde 6.
+Rotårsaken de finnes for er målt, ikke ment: en reviewer som ser hele
+diffen gir flere funn av en fiks som VOKSER flaten — selvforsterkende.
+I #118 gikk porten 292 → 4281 linjer over 19 runder mens produktet på
+116 linjer sto ferdig og uimotsagt fra runde 6. Reglene overlever
+aktørbyttet 29/8: de gjelder CodeRabbit-rundene og enhver senere
+reviewer likt.
 
 - **K1 — En fiksrunde bygger aldri.** Et funn lukkes med minst mulig
   endring; fikser krymper eller holder flaten. Krever funnet ny maskin
@@ -123,183 +129,43 @@ mens produktet på 116 linjer sto ferdig og uimotsagt fra runde 6.
   scope-kjennelse i PR-tråden rundt runde 8 — med eskalering til eier —
   ikke etter tjue runder.
 
-## 10. Cursor pre-Codex (automatisk, GitHub)
+## 10. Kodereview-porten (CodeRabbit, kjørt av Claude Code)
 
-Formål: kutte Codex-rundene fra 10–18 ned mot 2–3 ved å angripe PR-en
-*før* Codex. Pilot: M-57 / PR #140; deretter alle `platform/`-PR-er.
+Cursor pre-Codex-kjeden og Codex-merge-porten ble tatt ut 29/8-2026
+(eierbeslutning; workflowene `cursor-pre-codex.yml` og `claude.yml` er
+slettet i samme commit som denne teksten — regel og port er samme
+commit, aldri et vindu der dokumentet lover en port maskinen mangler).
 
-**Automatikk (ingen manuell ping):**
-1. Trigger: `ready_for_review`, label `pre-codex`, eller kommentar `@cursor review`
-2. Workflow: `.github/workflows/cursor-pre-codex.yml`
-3. Cursor kjører i `--mode ask` (read-only), poster én kommentar med P1/P2/P3 eller PASS
-4. Passets FULLFØRING vekker Claude via `workflow_run`-broen til
-   `cursor-pass-fulgt` i `claude.yml` (#194/#197) — footerens `@claude`
-   er lesbar signatur, ikke selve vekkeren: passet postes med
-   GITHUB_TOKEN, og slike kommentarer sender ingen hendelser
-   mention-jobben kan se. Mention-jobben håndterer eksplisitte
-   `@claude`-mandater i kommentarer (§11.2)
-5. Etter fiks: Claude kommenterer `@cursor review` (verifisering)
-6. Først ved Cursor-PASS: Claude kommenterer `@codex review`
-7. Codex forblir eneste merge-autoritet
+Porten som står igjen:
 
-**PASS-ekvivalensregelen** (felt av eier på #185, ratifisert her): en
-verifiseringsrunde hvis funn UTELUKKENDE er test-negativer — endringer i
-PR-ens egne tester/porter, null endringer i produktkode — teller som
-PASS for §10s Cursor-port. Et funn som rører produktkode, uansett hvor
-lite, er ikke ekvivalent.
+1. **Før push:** `coderabbit review --agent --include-untracked
+   --base main`. Kritisk/alvorlig fikses; bagateller listes i
+   PR-beskrivelsen. Rate-limit/nede sies eksplisitt.
+2. **Etter vesentlige endringer i PR-en:** ny kjøring.
+3. **Merge:** Claude Code, `gh pr merge --squash`, KUN ved grønn
+   `test`-check. Branch protection håndhever: strict up-to-date,
+   lineær historikk, `enforce_admins`, ingen direkte push til main.
+4. **K-reglene i §9 gjelder** CodeRabbit-rundene som de gjaldt de
+   gamle: en fiksrunde bygger aldri (K1), tredje runde på samme
+   mekanisme eskaleres (K2), produktet holdes aldri som gissel (K3).
 
-**Hard stop:** to Cursor-FUNN-runder på samme mekanisme uten konvergens →
-K2 gjelder; eskaler i PR-tråden, ikke et tredje formforsøk via Cursor.
+`CURSOR_API_KEY`-secreten og Cursor/Codex-appinstallasjonene kan
+fjernes av eier når som helst etter denne mergen; ingenting i repoet
+leser dem lenger.
 
-**KANALEN ER WORKFLOWEN, IKKE BUGBOT** (målt 24/8, eiervedtak i #178).
-`@cursor review` treffer to helt forskjellige mottakere, og bare den ene
-lever:
+## 11. Mandater og drift utenom øktene
 
-* **Cursor Bugbot** — GitHub-appen som svarer direkte på mentionen. Den
-  svarer i dag «Bugbot is disabled for this repository». Den er IKKE
-  kanalen, og et svar derfra er ikke en review.
-* **`Cursor pre-Codex`-workflowen** (`.github/workflows/cursor-pre-codex.yml`,
-  poster som `github-actions[bot]`) — dette er kanalen som faktisk leverer
-  funnlistene. Det er den `@cursor review` skal trigge, og den som teller
-  som PASS/FUNN i punkt 5–6 over.
+Den autonome natt-sløyfa (`claude.yml`) er avviklet sammen med
+review-kjeden den var bygget rundt. Det som gjelder nå:
 
-Praktisk følge: en «Bugbot is disabled»-melding er en KANALFEIL, ikke en
-PASS. Er det den eneste responsen, står PR-en og venter — den regnes aldri
-som Cursor-PASS, og gir dermed heller ikke adgang til `@codex review`.
-Se også stående Cursor-ute-regel: ved transportfeil re-køes passet ÉN
-gang; feiler transporten også på nytt forsøk, går broen rett på
-`@codex review` med et kort notat i tråden — uten pass/SHA-binding, for
-det finnes intet pass å binde (samme semantikk i `cursor-pass-fulgt`
-steg 2/4).
-
-**Secret:** `CURSOR_API_KEY` må ligge i repo-secrets (Cursor Dashboard →
-API Keys). GitHub App-installasjonen gir repo-tilgang; Actions trenger
-nøkkelen for å starte agenten.
-
-## 11. Nattregler (ratifisert av eier 25/8 — «beslutninger tas uten meg om natta»)
-
-Om natten sover både eier og Claude Codes lokale økt; skyen er alene.
-Reglene her landet i samme commit som speilingen sin i
-`.github/workflows/claude.yml` — regel og port er alltid samme commit,
-aldri et vindu der dokumentet lover en port maskinen mangler
-(K2-eskaleringen i #193, avgjort under eiers delegasjon 25/8).
-
-1. **Dom-klasse-gjenbruk — I KRAFT (speilet i `claude.yml` steg 3).**
-   Et utsatt punkt som ordrett matcher en ALLEREDE FELT dom-klasse
-   (samme mekanisme, samme utfall) trenger ingen fersk eier-dom.
-   Klassen må siteres oppslagbart i PR-tråden, på nøyaktig denne formen:
-
-   `dom-klasse: <id> · felt i #<PR/issue-nr> · <URL til kommentaren med dommen>`
-
-   URL-en ER klasseregisteret: dommen bor der eier faktisk felte den, og
-   sløyfa ÅPNER lenken, leser mekanisme og utfall, og sjekker at den
-   siterte kommentarens `user.login` er `moka1980` — formen er billig å
-   forfalske på et offentlig repo, forfatteren gjør den umulig (samme
-   klasse som PASS-forfatterbindingen i broen). Uten sitatlinje, med død
-   lenke, med annen forfatter, eller når dommen gjelder en annen
-   mekanisme, finnes klassen ikke: punktet parkeres til eier — nær-lik
-   formulering, husket presedens eller en klasse-ID uten lenke er ikke
-   et treff. Ved tvil: parkér.
-
-   **Verdikt-rekkevidden etter grenoppdatering (speilet i steg 3a).**
-   Et verdikt gjelder innholdet det ble avsagt over. `gh pr
-   update-branch` flytter head uten å endre PR-ens eget innhold — ren
-   mekanikk bruker ikke verdiktet opp, MEN bare så lenge mains
-   mellomkomne endringer ikke berører PR-ens egne filer. Sløyfa MÅLER
-   det (fillisten i `compare/<gammel-head>...<ny-head>` snittes mot
-   PR-ens filer): tomt snitt → verdiktet står; ikke-tomt snitt →
-   verdiktet er brukt opp og nytt `@codex review` kreves på den nye
-   head-en; feiler målingen, behandles den som ikke-tomt snitt.
-   (Avvik fra ratifiseringens absolutte «etter enhver head-flytting er
-   verdiktet brukt opp», besluttet under delegasjonen: den absolutte
-   formen gjeninnfører nøyaktig BEHIND-parkeringen steg 3a ble bygget
-   for å fjerne, og brenner en Codex-runde per naboskaps-merge uten at
-   noe nytt er reviewet. Grensen er trukket der risikoen faktisk bor:
-   filsnittet. Compare-svar med 300+ filer eller manglende liste regnes
-   som ikke-tomt snitt — GitHub trunkerer ved 300, og porten feiler
-   stengt; det samme gjelder snittets andre side: en PR-filliste som er
-   uventet tom eller treffer sidegrensen (100+) regnes også som
-   ikke-tomt snitt.)
-
-   **Asymmetrien mot §10s pass-binding er BEVISST** (avgjort under
-   delegasjonen, runde 10 på #198): Cursor-PASSET er bundet til eksakt
-   SHA fordi et nytt pass er billig og kvotefritt — å fornye det etter
-   en head-flytting koster minutter; Codex-VERDIKTET får filsnitt-
-   rekkevidde fordi en ny Codex-runde er dyr og kvotebelagt. Samme
-   risiko, ulik fornyelsespris — derav ulik regel. De to portene
-   gjelder hver sin adgang (pass → Codex-bestilling; verdikt → merge)
-   og står ikke i konflikt. En push på PR-SIDEN utenom `update-branch`
-   dekkes ikke av filsnittet: mergen måles alltid mot verdiktets egen
-   baseline-SHA (eller 3a-målingens merge-commit) — alt annet er nytt
-   `@codex review`. Selve mergen PINNER baseline-SHA-en atomisk
-   (`--match-head-commit`): å måle før og handle etterpå er et vindu,
-   pinnen lukker det. Baseline-kilden følger kanalen: en formell review
-   bærer `commit_id`; verdikt-kommentarer DEKLARERER sin egen SHA
-   («Reviewed commit») og DEN er baselinen — aldri en live
-   `headRefOid`, som en push i vinduet før lesningen kunne ha flyttet
-   (TOCTOU før capture). Verdikt uten deklarasjon parkeres.
-
-   **BEGGE KANALENE ER I BRUK, og valget følger utfallet** (#211, målt
-   på #210): et verdikt UTEN funn kommer som issue_comment («Didn't
-   find any major issues»), mens et verdikt MED funn kommer som
-   `pull_request_review` med funnene som INLINE-kommentarer og ofte
-   tom kropp. Det sto tidligere at kommentarkanalen var «den målte»,
-   og porten i `claude.yml` var bygget på det: review-grenen slapp kun
-   eier. Følgen var den verst tenkelige — jo viktigere verdiktet var,
-   desto sikrere var det at sløyfa overså det. Begge kanaler porteres
-   nå, hver med kvotefilteret på sin egen kropp, og et review-utløst
-   verdikt leses ALDRI ut fra kroppen alene: funnene ligger i
-   `pulls/<nr>/comments`.
-
-   Det endepunktet gir ALLE inline-kommentarer på PR-en, ikke bare
-   verdiktets. Den utløsende reviewens egne
-   (`pull_request_review_id`) er verdiktet sløyfa svarer på; de eldre
-   er kontekst. Et lukket funn gjøres ikke om igjen — det er K1-brudd
-   og gir falske K2-utslag — men et eldre funn som fortsatt står
-   ULUKKET merges aldri forbi. At en runde en gang overså et funn er
-   nettopp grunnen til at denne regelen finnes.
-
-   Lukketheten må kunne AVGJØRES, ikke antas: REST-endepunktet bærer
-   ikke trådoppløsning, så den leses via GraphQL
-   (`reviewThreads { isResolved }`) eller en eksplisitt markering i
-   tråden. **Ved tvil: ULUKKET.** Et lukket funn behandlet som åpent
-   koster en unødig runde; et åpent behandlet som lukket merges forbi —
-   og defaulten følger den dyreste feilen.
-
-   **Bot-utløst review er ALDRI en merge-vei.** Kanalen bærer per
-   måling alltid funn, så «null funn lest» der er ikke en godkjenning
-   — det er en lesning som feilet. Utfallet er fiks eller parkering.
-   Et rent verdikt kommer som issue_comment, og eierens `approved` er
-   den eneste review-veien til merge.
-
-   Og merge-porten måler ALLE uløste tråder på PR-en, ikke bare det
-   utløsende verdiktets: scopingen over gjelder hvilke funn som er
-   DETTE verdiktet, aldri hvilke som må være lukket før merge. En
-   eldre, ULUKKET tråd stopper mergen uansett hvilken kanal som vekket
-   sløyfa.
-
-2. **Mandater bor i KOMMENTARER, og omtalen er `@claude`.** En ordre i en
-   issue-KROPP trigger ingen kjøring (samme utløser-klasse som §10s
-   Bugbot-notat). Ethvert nattmandat legges som egen kommentar — og
-   omtalen må være bokstavelig `@claude`, ikke en hvilken som helst
-   @-omtale. Mandater utstedes av KUN eier (`moka1980`): mention-jobben
-   krever eierens login i workflow-if-en, så andres `@claude` trigger
-   ingenting — på et offentlig repo er forfatter-porten selve
-   sikkerheten (speilet i `claude.yml`). Handleren er `mention`-jobben (`Svar @claude`) i
-   `.github/workflows/claude.yml`, som kjører `claude-code-action` uten
-   egen `trigger_phrase` og derfor lytter på standardfrasen `@claude` —
-   samme frase workflowens egen omstart-instruks ber om. En kommentar som
-   bare nevner `@moka1980` eller `@codex` oppfyller ikke regelen: den lar
-   mandatet ligge ubehandlet, eller vekker feil tjeneste.
-
-3. **Nattkjedens form — OPPLØST med #194 (workflow_run-broen).**
-   Ratifiseringens §11.3 (Codex-only om natten, natt-markør, dagtids
-   catch-up-pass) hvilte på ÉN premiss: Cursor-passene kunne ikke vekke
-   sløyfa (#188). Den premissen døde da #194 merget — passets fullføring
-   trigger nå `cursor-pass-fulgt` døgnet rundt (herdet i #197: broen
-   slipper inn claude[bot] som oppstrøms-actor og feiler HØYT i stedet
-   for stille). Det finnes derfor ingen nattmodus å markere: natten
-   kjører NØYAKTIG samme §10-kjede som dagen, og hele familien av
-   dag/natt-skiller, markører og catch-up-pass utgår. (Beslutning under
-   eiers delegasjon 25/8 — å speile en regel bygget for en død premiss
-   hadde vært formfiksing, #193-rundenes defektklasse.)
+1. **Mandater gis i økt** — Remote Control-økten eller en lokal
+   Claude Code-økt. En ordre i en issue-kommentar trigger ingen
+   kjøring lenger; GitHub-flaten er passiv utenom CI.
+2. **Dom-klasse-registeret består som DOKUMENTASJON.** Formen
+   `dom-klasse: <id> · felt i #<nr> · <URL>` brukes fortsatt i
+   PR-tråder og KONTRAKT-filer for å sitere felte eierdommer — men
+   ingen maskin leser den lenger; den er for mennesker og fremtidige
+   økter.
+3. **Eierdommer felles av eier** (`moka1980`) i issue-/PR-tråder eller
+   direkte i økt, som før. Delegasjonsvedtak dokumenteres der de
+   felles.
