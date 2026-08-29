@@ -172,8 +172,22 @@ class Uttrekker:
                 ut.seek(0)
                 raa = ut.read(MAKS_TEKST + 1)
         except OSError as feil:
-            raise Uttrekksfeil("uttrekk_uleselig",
-                               f"pdf: {type(feil).__name__}") from feil
+            # SPOLEN ER DRIFT, IKKE DOKUMENTETS FEIL (Codex P2, #173).
+            # Denne grenen dekker `TemporaryFile`, `write`, `read` og
+            # `fstat` — altså det MIDLERTIDIGE FILSYSTEMET, ikke
+            # kundens pdf. Er den flaten full, borte eller svarer den
+            # EIO, sa denne linjen likevel `uttrekk_uleselig`: bunten
+            # ble avbrutt med at søkerens dokument var ulesbart, og
+            # arbeiderens retry og driftsalarmen leste feil kø. Samme
+            # misattribusjon som `_spoletekst` fikk rettet én kodevei
+            # lenger ut, og koden er den samme derfra:
+            # `infrastrukturfeil` bæres urørt til `kjor_bunt`s
+            # oversetter, som alt kjenner den.
+            #
+            # Kommandoen som ikke lar seg STARTE er en annen sak og
+            # felles i `_kjor_bundet` før den når hit — se der.
+            raise Uttrekksfeil("infrastrukturfeil",
+                               f"pdf-spole: {type(feil).__name__}") from feil
         # Kommandoen kan ha rukket å skrive forbi taket innenfor ett
         # måleintervall, og en kommando som avslutter av seg selv blir
         # aldri målt underveis i det hele tatt.
@@ -183,10 +197,26 @@ class Uttrekker:
 
     def _kjor_bundet(self, inn, ut) -> int:
         """Kjører `pdf_kommando` med stdout til `ut`, og dreper den så
-        snart filen passerer `MAKS_TEKST` eller fristen er ute."""
+        snart filen passerer `MAKS_TEKST` eller fristen er ute.
+
+        STARTEN FELLES FOR SEG (Codex P2, #173). `Popen` reiser
+        `OSError` når den konfigurerte kommandoen ikke finnes, ikke er
+        kjørbar eller mangler ressurser å starte i. Det er ikke
+        spolens feil, og det er ikke pdf-ens: det er DEPLOYMENTEN som
+        ikke kan trekke ut pdf — nøyaktig samme sak som en tom
+        `pdf_kommando`, og derfor samme kode. Uten denne oversettelsen
+        falt starten ned i `_pdf`s spolegren og ville blitt meldt som
+        `infrastrukturfeil`, altså en drift-retry mot en feil som
+        aldri går over av seg selv."""
         frist = time.monotonic() + self.frist_s
-        with subprocess.Popen(self.pdf_kommando, stdin=inn, stdout=ut,
-                              stderr=subprocess.DEVNULL) as p:
+        try:
+            p = subprocess.Popen(self.pdf_kommando, stdin=inn, stdout=ut,
+                                 stderr=subprocess.DEVNULL)
+        except OSError as feil:
+            raise Uttrekksfeil(
+                "uttrekk_ustottet",
+                f"pdf-kommando: {type(feil).__name__}") from feil
+        with p:
             while True:
                 igjen = frist - time.monotonic()
                 try:
