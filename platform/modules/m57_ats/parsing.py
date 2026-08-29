@@ -402,6 +402,19 @@ def _mal_medlem(navn: str, aapne, *, budsjett: Budsjett,
     endelse = _endelse(navn)
     if endelse in ARKIVENDELSER:
         raise Buntfeil("nostet_arkiv", fullt)
+    # DYBDEVAKTEN ER DET SOM BINDER REKURSJONEN — ikke de to portene
+    # under. Ethvert ANNET nøstet arkiv felles på endelsen rett over
+    # eller på formen (`endelse != ".docx"` og `er_arkiv`); DOCX er
+    # unntatt fra begge, og en docx i en docx er derfor den ene formen
+    # INGEN av dem ser. Vakten står HER, hos den andre endelsesarmen, og
+    # ikke etter lesingen: et nøstet arkiv er felt på NAVNET, og da skal
+    # det hverken leses inn mot 25 MB, belastes budsjettet, eller rekke
+    # å bli omdøpt til `feil_innholdstype` av magiporten under — en
+    # `word/nested.docx` med søppelbyte er et NØSTET ARKIV, som er den
+    # grensen klarsignalet §4 setter til null. Tallet er ikke hellig;
+    # vakten er, og uten den er klassen ikke lukket.
+    if endelse == ".docx" and dybde:
+        raise Buntfeil("nostet_arkiv", fullt)
 
     biter: list[bytes] = []
     lest = 0
@@ -446,14 +459,7 @@ def _mal_medlem(navn: str, aapne, *, budsjett: Budsjett,
     if endelse != ".docx" and er_arkiv:
         raise Buntfeil("nostet_arkiv", fullt)
     if endelse == ".docx":
-        # DYBDEVAKTEN ER DET SOM BINDER REKURSJONEN — ikke de to portene
-        # over. Ethvert ANNET nøstet arkiv felles der: på endelsen
-        # (`ARKIVENDELSER`) eller på formen (`endelse != ".docx"` og
-        # `er_arkiv`). DOCX er unntatt fra begge, og en docx i en docx
-        # er derfor den ene formen INGEN av dem ser. Tallet er ikke
-        # hellig; vakten er, og uten den er klassen ikke lukket.
-        if dybde:
-            raise Buntfeil("nostet_arkiv", fullt)
+        # Dybden er alt felt over; her nede finnes bare dybde 0.
         _mal_docx(data, budsjett=budsjett, kontekst=fullt)
     return data
 

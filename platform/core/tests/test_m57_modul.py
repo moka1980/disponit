@@ -651,15 +651,42 @@ def test_155_docx_i_docx_felles_av_dybdevakten(tmp_path):
     `word/indre.zip`-dekningen treffer endelsesarmen FØR lesing og sier
     ingenting om denne klassen.
 
-    MUTASJONEN SOM DREPER DENNE: fjern `if dybde` i `_mal_medlem` —
-    da rekurserer gaten videre ned i den indre docx-en i stedet for å
-    avvise den."""
+    VAKTEN STÅR FØR LESINGEN (Cursor P2, runde 2). Sto den etter — der
+    hele medlemmet er lest, budsjettert og kjørt gjennom magiporten —
+    så avgjorde INNHOLDET klassen: en `word/nested.docx` med søppelbyte
+    ble `feil_innholdstype`, ikke `nostet_arkiv`, og en ekte nøstet
+    docx tvang ekspansjon opp mot 25 MB før den ble avvist. Nøstingen
+    kjennes på NAVNET, som for enhver annen arkivendelse.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `endelse == ".docx" and dybde` i
+    `_mal_medlem` — da rekurserer gaten videre ned i den indre docx-en i
+    stedet for å avvise den. Flyttes vakten tilbake under magiporten,
+    blir søppel-varianten under rød."""
     arkiv = _bunt(tmp_path, [("cv.docx", _docx([
         ("word/nested.docx", _docx())]))])   # ekte OPC-pakke, ikke bare PK
     with pytest.raises(parsing.Buntfeil) as e:
         list(parsing.les_porsjonsvis(arkiv))
     assert e.value.kode == "nostet_arkiv"
     assert e.value.args[0].endswith("cv.docx/word/nested.docx")
+    arkiv.unlink()
+
+    # Samme klasse, uten gyldig OPC: endelsen bærer nøstingen, og
+    # bytene får aldri lov til å omklassifisere den.
+    soppel = _bunt(tmp_path, [("cv.docx", _docx([
+        ("word/nested.docx", b"not-a-docx")]))])
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(soppel))
+    assert e.value.kode == "nostet_arkiv"
+    assert e.value.args[0].endswith("cv.docx/word/nested.docx")
+    soppel.unlink()
+
+    # SPEILET: på dybde 0 er `.docx` en av de tre lovede typene, og da
+    # er søppelbyte nettopp feil innholdstype — vakten har flyttet seg,
+    # ikke vokst.
+    ytre = _bunt(tmp_path, [("cv.docx", b"not-a-docx")])
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(ytre))
+    assert e.value.kode == "feil_innholdstype"
 
 
 def test_155_null_komprimert_i_indre_katalog_slipper_ikke_forbi(tmp_path):
