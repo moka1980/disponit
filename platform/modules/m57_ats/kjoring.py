@@ -308,6 +308,11 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
     except OSError as feil:
         raise Kjoringsfeil("infrastrukturfeil", fremdrift) from feil
     spolerot = Path(spole.name)
+    #: Kom kroppen helt igjennom? Leses av `finally` under, og er en
+    #: EKSPLISITT flagg og ikke `sys.exc_info()`: den siste svarer på
+    #: «håndteres det et unntak NÅ», og et kall fra en ytre `except`-arm
+    #: ville gjort et rent gjennomløp umulig å skille fra et feilet.
+    kropp_fullfort = False
     try:
         # LAGRINGSHÅNDTEREREN HØRER TIL LESINGEN, IKKE HELE KJØRINGEN
         # (Codex P2). Denne indre `try`-en dekker BARE arkivgaten. Sto
@@ -591,6 +596,7 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
         # I arbeideren er det forskjellen på det rene SP-3-utfallet og en
         # uventet arbeiderfeil.
         rangering = evaluering.ranger(oppfylt, vekter)
+        kropp_fullfort = True
     except Kjoringsfeil:
         # Alt som alt ER utfallet, går videre som seg selv: uten denne
         # linjen ville catch-allen under pakket det inn på nytt som
@@ -619,6 +625,25 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
     except Exception as feil:   # modellen er fremmed kode — også dens
         raise Kjoringsfeil("modellfeil", fremdrift) from feil
     finally:
-        spole.cleanup()
+        # OPPRYDDINGEN SKAL IKKE OVERSKRIVE UTFALLET (Codex P2).
+        # `cleanup()` reiser når det midlertidige filsystemet blir
+        # utilgjengelig eller svarer EIO/EPERM, og den reiser fra
+        # `finally` — altså ETTER at all oversettelse over er ferdig. En
+        # rå `OSError` derfra erstattet både et vellykket resultat og en
+        # alt kodet `Kjoringsfeil`, og `kjor_en` fanger den ikke:
+        # arbeideren døde uten feilkvittering, med opprydding som
+        # dødsårsak i stedet for det som faktisk skjedde.
+        #
+        # Feilen får derfor ordet BARE når det ikke alt finnes et utfall
+        # å melde, og da som `infrastrukturfeil` — samme kode og samme
+        # kilde som spolens øvrige I/O. Feilet kroppen, er dens kode den
+        # sanne, og oppryddingsfeilen forlates i stillhet: en spole som
+        # ikke lot seg slette er en katalog i `TMPDIR`, ikke en grunn
+        # til å bytte ut diagnosen driften skal handle på.
+        try:
+            spole.cleanup()
+        except OSError as feil:
+            if kropp_fullfort:
+                raise Kjoringsfeil("infrastrukturfeil", fremdrift) from feil
     return {"rangering": rangering,
             "artefakter": artefakter, "fremdrift": fremdrift}
