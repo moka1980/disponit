@@ -1901,3 +1901,194 @@ def test_kandidatlagrene_er_tenantisolert(migrator):
         rt.rollback()
     finally:
         rt.close()
+
+
+def _promotert_rapport(m, oid, *, tilstand="promotert"):
+    """Et artefakt i en payloadbærende retained-tilstand på PROSESSENS
+    oppdrag — bygget med 014b-riggens ekte form (kontrakt, type,
+    release, strukturelt dekrypterbar payload), aldri en FK-omgåelse.
+    Promoteringen tas som tabelleier gjennom statemaskinen
+    (staged → promotert/bevart/karantene er lovlige overganger);
+    kapabilitetsmaskineriet er 014b-testenes eget bevisområde."""
+    from .test_pr014b_domene_artefakt import _artefakt, _artefakttype
+    at = f"at.t{secrets.token_hex(4)}.rapport"
+    modul = "m-" + secrets.token_hex(4)
+    kh = "k-" + secrets.token_hex(8)
+    _artefakttype(m, modul, kh, at)
+    aid = _artefakt(m, TENANT, oid, at, modul, kh)
+    _sett_kontekst(m, TENANT)
+    m.execute("UPDATE artefakt SET tilstand=%s WHERE artefakt_id=%s",
+              (tilstand, aid))
+    m.commit()
+    return aid
+
+
+def _artefaktrad(m, aid):
+    _sett_kontekst(m, TENANT)
+    rad = m.execute(
+        "SELECT tilstand, ciphertext IS NULL, nonce IS NULL,"
+        " makulert_ts IS NOT NULL, klartekst_sha256 IS NOT NULL"
+        " FROM artefakt WHERE artefakt_id=%s", (aid,)).fetchone()
+    m.rollback()
+    return rad
+
+
+@pg
+def test_222_reaping_makulerer_den_promoterte_rapporten(migrator):
+    """#222 (andre halvdel av Codex P1-2 på #220): `reap_kandidatdata`
+    nullet de seks lagrene og merket prosessen — men rørte aldri
+    `artefakt`. Den promoterte rapporten bærer funn, intervjuspørsmål og
+    hele den blindede kildeteksten per kandidat, og besto forbi
+    retensjonsfristen kunden kjøpte. #220 lukket lesesiden; dette er
+    selve makuleringen, i SAMME iterasjon og transaksjon som lagrene.
+
+    `bevart` og `karantene` makuleres av samme grunn som `promotert`:
+    §5-fristen ser payloaden, ikke tilstandsmaskinen vår. Tilstanden og
+    hashen består — raden er fortsatt evidensen om at rapporten fantes.
+
+    MUTASJONEN SOM DREPER DENNE: fjern
+    `makuler_artefakter_for_prosess`-kallet fra `reap_kandidatdata` —
+    alle port 18-testene er grønne, for de måler bare de seks lagrene."""
+    rt = _rt()
+    rp = None
+    try:
+        oid, pid = _prosess(migrator, rt, frist=30)
+        _fyll_lagrene(rt, pid)
+        aid = _promotert_rapport(migrator, oid)
+        kid = _promotert_rapport(migrator, oid, tilstand="karantene")
+        rt.execute("SELECT lukk_rekrutteringsprosess(%s,%s,"
+                   " now() - interval '31 days')", (TENANT, pid))
+        rt.commit()
+        for a in (aid, kid):
+            rad = _artefaktrad(migrator, a)
+            assert rad[1] is False and rad[2] is False and rad[3] is False, \
+                f"positiv kontroll: payloaden skal stå før reaping: {rad}"
+        rp, _timerrolle = _reaperkobling()
+        reapet = rp.execute("SELECT * FROM reap_kandidatdata(50)"
+                            ).fetchall()
+        rp.commit()
+        assert (TENANT, pid) in [(r[0], r[1]) for r in reapet]
+        for a, tilstand in ((aid, "promotert"), (kid, "karantene")):
+            rad = _artefaktrad(migrator, a)
+            assert rad == (tilstand, True, True, True, True), \
+                (f"makuleringen skal nulle payloaden og sette merket,"
+                 f" og la tilstand + hash bestå: {rad}")
+    finally:
+        rt.close()
+        if rp is not None:
+            rp.close()
+
+
+@pg
+def test_222_makuleringen_er_en_navngitt_form(migrator):
+    """Statemaskinporten: nulling av payload UTEN merket er fortsatt
+    korrupsjon, merket UTEN nulling er fortsatt en løgn, og merket
+    settes én gang — det kan hverken fjernes eller flyttes etterpå.
+
+    MUTASJONEN SOM DREPER DENNE: fjern makulert_ts-armen i
+    `artefakt_statemaskin` (066) — da er den første UPDATE-en under
+    stille korrupsjon i stedet for en avvisning."""
+    rt = _rt()
+    try:
+        oid, _pid = _prosess(migrator, rt, frist=30)
+        rt.commit()
+        aid = _promotert_rapport(migrator, oid)
+        _sett_kontekst(migrator, TENANT)
+        # Nulling uten merke: den gamle korrupsjonsklassen, fortsatt rød.
+        with pytest.raises(psycopg.errors.RaiseException):
+            migrator.execute(
+                "UPDATE artefakt SET ciphertext=NULL, nonce=NULL"
+                " WHERE artefakt_id=%s", (aid,))
+        migrator.rollback()
+        # Merke uten nulling: løgnen andre veien.
+        _sett_kontekst(migrator, TENANT)
+        with pytest.raises(psycopg.errors.RaiseException):
+            migrator.execute(
+                "UPDATE artefakt SET makulert_ts=now()"
+                " WHERE artefakt_id=%s", (aid,))
+        migrator.rollback()
+        # Den lovlige formen: begge nulles og merket settes, i ETT update.
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute(
+            "UPDATE artefakt SET ciphertext=NULL, nonce=NULL,"
+            " makulert_ts=now() WHERE artefakt_id=%s", (aid,))
+        migrator.commit()
+        # Merket er satt én gang: aldri fjernet, aldri flyttet.
+        for ny in ("NULL", "now() + interval '1 day'"):
+            _sett_kontekst(migrator, TENANT)
+            with pytest.raises(psycopg.errors.RaiseException):
+                migrator.execute(
+                    f"UPDATE artefakt SET makulert_ts={ny}"
+                    f" WHERE artefakt_id=%s", (aid,))
+            migrator.rollback()
+    finally:
+        rt.close()
+
+
+@pg
+def test_222_fristfeiling_lukker_ankeret(migrator):
+    """Eiers tillegg på #222 (Codex på #220 `9ca3aca4`):
+    `reap_evidensfrister` flytter et utløpt claimet M-57-oppdrag til
+    `feilet` UTENFOR `_ingest_kvittering`, så kvitteringsveiens
+    ankerlukking aldri nås. Fristen falt da til forlatt-fallbacken målt
+    fra `opprettet` — kandidatdata kunne reapes inntil hele kjøretiden
+    for tidlig i forhold til kundens frist målt fra AVSLUTNINGEN.
+
+    MUTASJONEN SOM DREPER DENNE: fjern ankerlukkingen fra
+    `reap_evidensfrister` (066) — oppdraget feiles fortsatt, og alle
+    eldre reaper-tester er grønne."""
+    from db import kryptering
+    rt = _rt()
+    rp = None
+    try:
+        # `_grunnlag`s form, men med UTLØPTE frister — de er frosset ved
+        # fødselen (056-kolonnelåsen), så avviket må oppgis i INSERT-en.
+        _sett_kontekst(migrator, TENANT)
+        logg = migrator.execute(
+            "INSERT INTO revisjonslogg (tenant, aktor, kilde, input_hash,"
+            " policy_id, beslutning, begrunnelse, idempotency_key)"
+            " VALUES (%s,'test','api_token','ih','p@1.0.0/x.y','TILLAT',"
+            "'[]',%s) RETURNING id",
+            (TENANT, secrets.token_hex(8))).fetchone()[0]
+        key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(
+            migrator, TENANT)
+        ct, nonce = kryptering.krypter(dek, {"m57": True}, TENANT, key_id)
+        oid = migrator.execute(
+            "INSERT INTO oppdrag (opprinnelse, tenant,"
+            " beslutning_loggpost_id, oppdragstype, handling, eiermodul,"
+            " payload_kryptert, key_id, nonce, utforelsesfrist,"
+            " evidensfrist, koblingsstatus)"
+            " VALUES ('beslutning',%s,%s,'rekruttering.evaluering',"
+            "'rekruttering.evaluering','m57_ats',%s,%s,%s,"
+            " now()-interval '2 minutes', now()-interval '1 minute',"
+            "'KOBLET') RETURNING id",
+            (TENANT, logg, ct, key_id, nonce)).fetchone()[0]
+        migrator.execute("UPDATE oppdrag SET status='plukket'"
+                         " WHERE tenant=%s AND id=%s", (TENANT, oid))
+        migrator.commit()
+        _sett_kontekst(rt, TENANT)
+        pid = rt.execute("SELECT opprett_rekrutteringsprosess(%s,%s,%s)",
+                         (TENANT, oid, 90)).fetchone()[0]
+        rt.commit()
+        rp, _timerrolle = _reaperkobling()
+        rader = rp.execute("SELECT tenant, oppdrag_id"
+                           " FROM reap_evidensfrister(200)").fetchall()
+        rp.commit()
+        assert (TENANT, oid) in rader, \
+            f"reaperen lot det utløpte oppdraget stå: {rader!r}"
+        _sett_kontekst(migrator, TENANT)
+        status, lukket, i_tide = migrator.execute(
+            "SELECT o.status, p.lukket_ts IS NOT NULL,"
+            " p.lukket_ts >= now() - interval '1 minute'"
+            " FROM oppdrag o JOIN rekrutteringsprosess p"
+            " ON p.tenant = o.tenant AND p.oppdrag_id = o.id"
+            " WHERE o.tenant=%s AND o.id=%s", (TENANT, oid)).fetchone()
+        migrator.rollback()
+        assert status == "feilet"
+        assert lukket and i_tide, \
+            ("ankeret skal lukkes av SAMME transaksjon som feiler"
+             f" oppdraget, ved frist-feilingen: {(lukket, i_tide, pid)}")
+    finally:
+        rt.close()
+        if rp is not None:
+            rp.close()

@@ -63,5 +63,6 @@
   "062_modultoken_klokke.sql": "f0f8b7bd2a6d207b10a1bc92c3115261e6e27d21be9879c27990c690835a366b",
   "063_lease_fornyelse.sql": "a3590a3127aa8bc97c2ae4f0d9ccd425e1fd5390cf1120e777d6cfc60e33fe7d",
   "064_reserverte_tld.sql": "49a15876d5d4ca7c32a62b7f5bdd5ade1ea8282ed0eaa367823930c2dbf1e7e8",
-  "065_serielaas_utsending.sql": "9a75923d37354315fca147b7beb5a1bf4bb8d010bc5e1be360e1bf819df2bd2c"
+  "065_serielaas_utsending.sql": "9a75923d37354315fca147b7beb5a1bf4bb8d010bc5e1be360e1bf819df2bd2c",
+  "066_makulering_ved_reap.sql": "e82a355a170adc614218c5fe44e08b246ff0aa9f429e9756106f175dd83727e2"
 }
