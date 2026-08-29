@@ -1939,6 +1939,15 @@ def test_173_skriveveien_er_claimbundet_og_idempotent(migrator, miljo):
     rt = _rt()
     try:
         oid, pid = _prosess(migrator, rt)
+        # `_prosess` COMMITER IKKE — kalleren gjør det, og her må den.
+        # To grunner, og begge er harde: (1) fødselsvakten i 057 tar
+        # `FOR SHARE` på oppdragsraden og HOLDER den til transaksjonen
+        # slutter, så migrator-UPDATE-en under ville stått og ventet på
+        # en `rt` som aldri committer — testen hang, den feilet ikke;
+        # (2) døren er en EGEN forbindelse, og en ucommittet
+        # `rekrutteringsprosess` finnes ikke i dens JOIN, så hvert kall
+        # ville svart `kandidatdata_avvist` av feil grunn.
+        rt.commit()
         # Claim-paret settes på raden (kolonnelåsen tillater owner- og
         # statusfeltene) — riggen er claim-tilstanden, ikke claim-veien:
         # det som måles her er DØRENS binding til den.
