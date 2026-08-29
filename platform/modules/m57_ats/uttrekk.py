@@ -10,8 +10,11 @@ skal kunne si «denne FILEN kunne ikke leses», ikke «modellen feilet».
 from __future__ import annotations
 
 import io
+import os
 import shlex
 import subprocess
+import tempfile
+import time
 import zipfile
 from html.parser import HTMLParser
 from xml.etree import ElementTree
@@ -84,6 +87,12 @@ MAKS_DOCX_XML = 25 * 1024 * 1024
 #: sinkens og sluppet gjennom akkurat det som felte bunten.
 MAKS_TEKST = 25 * 1024 * 1024
 
+#: Hvor ofte den voksende stdout-filen måles mot `MAKS_TEKST` mens
+#: pdf-kommandoen kjører. Overskytelsen kommandoen rekker å skrive før
+#: den felles, er dermed bundet av gjennomstrømningen i ETT intervall —
+#: ikke av hele fristen.
+_PDF_MAALEINTERVALL_S = 0.1
+
 
 def _docx(data: bytes) -> str:
     try:
@@ -122,19 +131,78 @@ class Uttrekker:
         self.frist_s = frist_s
 
     def _pdf(self, data: bytes) -> str:
+        """GRENSEN HÅNDHEVES MENS DEN SKRIVES, IKKE ETTERPÅ (Codex P1,
+        #173).
+
+        `capture_output=True` materialiserte HELE stdout i minnet før
+        `tekst_for`s tak i det hele tatt fikk se den. En PDF innenfor
+        arkivets 25 MiB kan pakke ut til langt mer tekst enn unitens
+        `MemoryMax=1G` (`deploy/staging/disponit-m57.service`), og da
+        ble arbeideren OOM-drept før den rakk å returnere det kodede
+        `uttrekk_uleselig`-utfallet: taket sto bak den døren det skulle
+        vokte.
+
+        Derfor går stdout til en TEMPORÆR FIL som måles mens den
+        vokser, og kommandoen felles i det den passerer `MAKS_TEKST`.
+        Minnet ser aldri mer enn ett tak (+1 byte), og disken heller.
+
+        SAMME TALL, IKKE ET NYTT: rå stdout måles mot `MAKS_TEKST` selv
+        om taket ellers måles på ETTER-formen. `errors="replace"` kan
+        bare VOKSE (én ugyldig byte blir tre), aldri krympe — så
+        `len(tekst.encode("utf-8")) >= len(rå)`, og rå over taket
+        betyr at kontraktporten uansett ville felt dokumentet. Den
+        tidlige grensen avviser altså aldri noe den sene ville sluppet
+        gjennom, og et speil nummer to oppstår ikke.
+
+        Både stdin og stdout er filer, aldri rør: et rør fylles opp av
+        en kommando som skriver mens vi fortsatt mater den, og da står
+        begge parter og venter på hverandre til fristen.
+        """
         if not self.pdf_kommando:
             raise Uttrekksfeil("uttrekk_ustottet", "pdf uten kommando")
         try:
-            r = subprocess.run(self.pdf_kommando, input=data,
-                               capture_output=True,
-                               timeout=self.frist_s, check=False)
-        except (OSError, subprocess.TimeoutExpired) as feil:
+            with tempfile.TemporaryFile() as inn, \
+                    tempfile.TemporaryFile() as ut:
+                inn.write(data)
+                inn.seek(0)
+                kode = self._kjor_bundet(inn, ut)
+                if kode != 0:
+                    raise Uttrekksfeil("uttrekk_uleselig",
+                                       f"pdf: rc={kode}")
+                ut.seek(0)
+                raa = ut.read(MAKS_TEKST + 1)
+        except OSError as feil:
             raise Uttrekksfeil("uttrekk_uleselig",
                                f"pdf: {type(feil).__name__}") from feil
-        if r.returncode != 0:
-            raise Uttrekksfeil("uttrekk_uleselig",
-                               f"pdf: rc={r.returncode}")
-        return r.stdout.decode("utf-8", errors="replace")
+        # Kommandoen kan ha rukket å skrive forbi taket innenfor ett
+        # måleintervall, og en kommando som avslutter av seg selv blir
+        # aldri målt underveis i det hele tatt.
+        if len(raa) > MAKS_TEKST:
+            raise Uttrekksfeil("uttrekk_uleselig", "pdf: tekst for stor")
+        return raa.decode("utf-8", errors="replace")
+
+    def _kjor_bundet(self, inn, ut) -> int:
+        """Kjører `pdf_kommando` med stdout til `ut`, og dreper den så
+        snart filen passerer `MAKS_TEKST` eller fristen er ute."""
+        frist = time.monotonic() + self.frist_s
+        with subprocess.Popen(self.pdf_kommando, stdin=inn, stdout=ut,
+                              stderr=subprocess.DEVNULL) as p:
+            while True:
+                igjen = frist - time.monotonic()
+                try:
+                    p.wait(timeout=max(0.0,
+                                       min(_PDF_MAALEINTERVALL_S, igjen)))
+                    return p.returncode
+                except subprocess.TimeoutExpired:
+                    pass
+                if os.fstat(ut.fileno()).st_size > MAKS_TEKST:
+                    p.kill()
+                    raise Uttrekksfeil("uttrekk_uleselig",
+                                       "pdf: tekst for stor")
+                if igjen <= 0:
+                    p.kill()
+                    raise Uttrekksfeil("uttrekk_uleselig",
+                                       "pdf: TimeoutExpired")
 
     def tekst_for(self, medlem, data: bytes) -> str:
         navn = medlem.navn.lower()

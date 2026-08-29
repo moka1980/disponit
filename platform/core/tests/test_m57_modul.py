@@ -2006,6 +2006,76 @@ def test_173_uttrekkstaket_er_sinkens_tak(tmp_path):
     assert e.value.kode == "uttrekk_uleselig", e.value.kode
 
 
+def test_173_pdf_stdout_felles_mens_den_skrives_ikke_etterpa(tmp_path):
+    """Codex P1 (#173): taket sto BAK døren det skulle vokte.
+
+    Forrige runde ga `tekst_for` et tak, men `_pdf` hentet fortsatt
+    stdout med `capture_output=True` — altså materialiserte HELE
+    utdataen i minnet FØR porten fikk se den. En PDF innenfor arkivets
+    `MAKS_ENKELTFIL` (25 MiB) kan pakke ut til langt mer tekst enn
+    unitens `MemoryMax=1G`, og da blir arbeideren OOM-drept før den
+    rekker å returnere det kodede `uttrekk_uleselig`-utfallet. Porten
+    var ikke feil, den sto bare for sent: en grense som først måles
+    etter at minnet er brukt opp, måles aldri.
+
+    Målingen skiller de to formene på detaljen, ikke på klokken:
+    kommandoen her skriver forbi taket og SOVER så lenge — lenger enn
+    fristen. Felles den mens den skriver, er utfallet «tekst for stor»
+    med én gang; buffres den til slutt, kan utfallet bare bli
+    `TimeoutExpired`, og da har prosessen holdt hele overskytelsen i
+    minnet i mellomtiden. Klokken måles i tillegg, som en billig
+    forsikring om at det faktisk var den tidlige veien.
+
+    MUTASJONEN SOM DREPER DENNE: sett `_pdf` tilbake til
+    `subprocess.run(..., capture_output=True)`, eller fjern
+    størrelsesmålingen i `_kjor_bundet`s ventelokke.
+    """
+    import shutil
+    import time
+    import types
+
+    from modules.m57_ats import uttrekk
+
+    python = shutil.which("python3") or shutil.which("python")
+    assert python, "ingen python-tolk å bygge en ekte uttrekkskommando av"
+    # Skriver 4 MiB i biter — med flush, for stdout er en FIL her og
+    # buffres ellers til prosessen avslutter — og sover deretter langt
+    # forbi fristen uten å avslutte.
+    skript = tmp_path / "pdftotext_som_spyr.py"
+    skript.write_text(
+        "import sys, time\n"
+        "sys.stdin.buffer.read()\n"
+        "for _ in range(16):\n"
+        "    sys.stdout.buffer.write(b'T' * (256 * 1024))\n"
+        "    sys.stdout.buffer.flush()\n"
+        "time.sleep(120)\n",
+        encoding="utf-8")
+
+    frist_s = 30.0
+    u = uttrekk.Uttrekker(f"{python} {skript}", frist_s=frist_s)
+    medlem = types.SimpleNamespace(navn="k1/cv.pdf")
+
+    u_stor = uttrekk.MAKS_TEKST
+    start = time.monotonic()
+    try:
+        # Taket senkes kunstig i stedet for å presse 25 MiB gjennom CI
+        # — samme form som `test_173_uttrekkstaket_er_sinkens_tak`.
+        uttrekk.MAKS_TEKST = 1024 * 1024
+        with pytest.raises(uttrekk.Uttrekksfeil) as e:
+            u.tekst_for(medlem, b"%PDF-1.4")
+    finally:
+        uttrekk.MAKS_TEKST = u_stor
+    brukt = time.monotonic() - start
+
+    assert e.value.kode == "uttrekk_uleselig", e.value.kode
+    assert "tekst for stor" in str(e.value), (
+        "utfallet kom ikke fra størrelsesgrensen — stdout ble buffret"
+        f" ferdig først: {e.value}")
+    assert brukt < frist_s / 2, (
+        f"uttrekket brukte {brukt:.1f}s av en frist på {frist_s:.0f}s —"
+        " kommandoen ble ikke felt idet den passerte taket")
+
+
 def test_tomt_tekstuttrekk_er_kodet_feil_ikke_en_tom_vurdering(tmp_path):
     """Codex P1: `isinstance(tekst, str)` slipper `""` og bare blanktegn.
 
