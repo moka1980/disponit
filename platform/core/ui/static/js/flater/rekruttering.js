@@ -112,6 +112,107 @@ function kortHash(hash) {
   return `${(hash || "").slice(0, 12)}…`;
 }
 
+function flett(mal, verdier) {
+  // ÉN PASS OVER MALEN (Cursor P2). En KJEDE av `.replace` leser
+  // resultatet av forrige ledd om igjen, så en verdi som selv inneholder
+  // en plassholder stjeler neste nøkkels treff: et profilnavn
+  // «Drift{versjon}X» spiste `{versjon}` i «Rangering — {navn} (versjon
+  // {versjon})», og overskriften — som er fokusmål etter lasting og går
+  // til `meldLive` — endte med brukerens tekst der versjonen skulle stå
+  // OG en rå `{versjon}` igjen for øret. `replaceAll` løser gjentakelse,
+  // ikke rekkefølge; det er re-skanningen som er defekten, og den dør
+  // bare av å skanne malen én gang.
+  //
+  // Ukjente nøkler står igjen urørt: en manglende parameter skal være
+  // synlig i teksten, ikke stum.
+  return String(mal).replace(/\{(\w+)\}/g, (helt, nokkel) =>
+    Object.prototype.hasOwnProperty.call(verdier, nokkel)
+      ? String(verdier[nokkel]) : helt);
+}
+
+// LENGDE ER IKKE OPPRINNELSE (Codex P2, runde 3). Kortingen het hele tiden
+// «maskingenererte id-er kortes, navn kunden selv har gitt står urørt», men
+// den MÅLTE `length > 20` — og kontrakten
+// (`m57_ats/parsing.py`, `KANDIDAT_ID_KANON`) tillater kundevalgte
+// ASCII-id-er på inntil 64 tegn. `senior-backend-engineer-01` er 26 tegn og
+// ble `senior-b…` i begge tabeller og i kontrollenes tilgjengelige navn:
+// leseren måtte åpne detaljpanelet for å se hvem raden gjaldt, som er
+// nøyaktig det kortnavnet skulle fjerne.
+//
+// DET FINNES INGEN «GENERERT» KLASSE Å KJENNE IGJEN. Codex foreslo å
+// detektere generert-formen, men `kandidat_id` kommer ALLTID fra kundens
+// manifest (`parsing.py` leser den, ingenting i modulen lager den) — det er
+// én klasse id-er, ikke to, og da finnes det ingen markør å slå opp. Det som
+// faktisk plager leseren er heller ikke opprinnelsen, men UGJENNOMSIKTIGHET:
+// veggen av heksadesimal der et navn skulle stått. Porten måler derfor DET,
+// og bare det.
+//
+// ASYMMETRIEN BESTEMMER RETNINGEN. Å vise for mye koster bredde — og den
+// kostnaden er alt betalt av ombrekkingen i `.rekrut-detalj` (samme runde).
+// Å vise for lite ØDELEGGER identiteten raden bæres av. Predikatet er derfor
+// stengt: er vi ikke sikre på at id-en er ugjennomsiktig, står den hel.
+// Dette er ingen grammatikk som tolkes (K4) — det er en total tegnklassetest
+// over en streng vi selv skal TEGNE, og den kan ikke feile til en gal
+// avgjørelse, bare til en bred kolonne.
+const UGJENNOMSIKTIG = /^[0-9a-fA-F]+(?:-[0-9a-fA-F]+)*$/;
+// SIFRE ER IKKE HEKSVEGGEN (Cursor P2). `[0-9a-fA-F]` inneholder sifrene, så
+// tegnklassetesten alene dømte også den rene sifferstrengen ugjennomsiktig —
+// og `KANDIDAT_ID_KANON` tillater nettopp den: `202408150012345678901` er et
+// kundenummer et menneske leser, ikke en digest. Det brøt asymmetrien over:
+// vi var ikke sikre, og id-en ble likevel kortet. Ugjennomsiktig krever
+// derfor ETT av to positive tegn — en heksbokstav (`a-f`), eller UUID-ens
+// egen gruppeform, som er maskingenerert uansett hvilke siffer den fikk.
+const HEKSBOKSTAV = /[a-fA-F]/;
+const UUID_FORM = /^[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$/;
+
+function erUgjennomsiktig(id) {
+  // Lang OG uten et eneste tegn utenfor heksadesimalen: en UUID (med eller
+  // uten bindestreker) eller en digest. `kandidat-09` (#161) og
+  // `senior-backend-engineer-01` faller ut på `k`, `n`, `s`, `r` …
+  return id.length > 20 && UGJENNOMSIKTIG.test(id)
+    && (HEKSBOKSTAV.test(id) || UUID_FORM.test(id));
+}
+
+function kortnavnFor(idene) {
+  // KORTNAVNET REGNES AV DATAENE, ikke av et tall (Codex P2). Vi finner
+  // den korteste lengden der ALLE id-ene i settet fortsatt er
+  // forskjellige, og bruker den for hele tabellen — én lengde, så
+  // kolonnen ikke blir ujevn. Finnes ingen slik lengde under full id
+  // (to identiske id-er er en serverfeil, men flaten skal ikke lyve om
+  // det), står id-ene urørt.
+  //
+  // Bare id-er som faktisk er lange kortes: manifestets `kandidat-09`
+  // (#161) er kortere enn terskelen og går urørt igjennom uansett hva
+  // de andre radene inneholder.
+  //
+  // ÉN ALGORITME, TO TABELLER (Cursor P2). Prosesstabellen og
+  // rangeringstabellen i evalueringsrapporten viser samme kandidater på
+  // samme flate; regnet de kortnavnet hver for seg, ville en fiks i den
+  // ene stilltiende latt den andre stå igjen med en vegg av heksadesimal.
+  // Kalleren eier settet — entydigheten gjelder alltid akkurat de id-ene
+  // som står i tabellen kortnavnet skal leses i.
+  // ENTYDIGHETEN REGNES OVER DE SOM FAKTISK KORTES. Bare de ugjennomsiktige
+  // id-ene vises som prefiks, så det er bare de som kan kollidere med
+  // hverandre; en hel id kan ikke kollidere med et prefiks, fordi prefikset
+  // bærer «…» og kanonen ikke tillater det tegnet. Regnet vi `skille` over
+  // HELE settet, ville to like beskrivende navn — som aldri kortes — låst
+  // `skille` til full lengde og dermed slått av kortingen for UUID-ene som
+  // trengte den.
+  const ugjennomsiktige = idene.filter(erUgjennomsiktig);
+  const maksLengde = Math.max(0, ...ugjennomsiktige.map((i) => i.length));
+  let skille = maksLengde;
+  for (let n = 8; n < maksLengde; n += 1) {
+    if (new Set(ugjennomsiktige.map((i) => i.slice(0, n))).size
+        === ugjennomsiktige.length) {
+      skille = n;
+      break;
+    }
+  }
+  return (id) => (erUgjennomsiktig(id) && skille < id.length
+    ? `${id.slice(0, skille)}…`
+    : id);
+}
+
 export function visRekruttering(hoved, ctx) {
   // ØKTEN OVERLEVER TEGNINGEN (Codex P1 / Cursor P1). Alt som handler om
   // en IRREVERSIBEL operasjon — idempotensnøkkelen som lar serveren
@@ -657,6 +758,18 @@ function tegn(hoved, ctx, data, okt, valgtId) {
   // og hører til den eskalerte avgjørelsen — ikke til denne fiksen.
   let sortValg = { nokkel: "poeng", retning: "descending" };
 
+  // Entydigheten regnes over PROSESSENS egne id-er — settet leseren
+  // faktisk skal skille fra hverandre i denne tabellen (`kortnavnFor`).
+  //
+  // ÉN LUKNING, IKKE ETT KALL PER LESESTED (pass-funn, runde 5). Lukningen
+  // sto inne i `tegnTabell` og var dermed utilgjengelig for
+  // kunngjøringen under, som derfor limte rå `kandidat_id`. Å regne
+  // kortnavnet en gang til der ville gitt to lukninger som KAN divergere;
+  // her kan de ikke det. Settet er `tegn`-konstant: `prosess` er bundet
+  // én gang (`:460`), og et prosessbytte bygger hele flaten på nytt — så
+  // dette er samme verdi `tegnTabell` regnet hver gang, regnet én gang.
+  const kortnavn = kortnavnFor(prosess.kandidater.map((k) => k.kandidat_id));
+
   function tegnTabell() {
     // Flatens egen rekkefølge følger valget, så `rader[0]` fortsatt er
     // den raden som faktisk står øverst — kunngjøringen under leser den.
@@ -679,7 +792,43 @@ function tegn(hoved, ctx, data, okt, valgtId) {
       paaSort: (valg) => { sortValg = valg; },
       rader: rader.map(({ kandidat, poeng }) => ({
         celler: {
-          kandidat: kandidat.kandidat_id,
+          // KANDIDATREFERANSEN KORTES, MEN MISTES IKKE (produktrunden
+          // 28/8). Seeden gir kandidatene UUID-er, og en full UUID bryter
+          // over tre linjer på mobil — kolonnen ble en vegg av heksadesimal
+          // der leseren skulle kjenne igjen en person.
+          //
+          // ÅTTE TEGN VAR ET TALL, IKKE ET SVAR (Codex P2). Et
+          // UUID-prefiks på åtte heksadesimaler er 32 bit, og det er ingen
+          // garanti innenfor 5000 kandidater — to rader kunne vist samme
+          // referanse, på flaten der leseren skal skille dem fra hverandre
+          // før en irreversibel utsendelse. Lengden regnes nå av DATAENE:
+          // `kortnavn` finner det korteste prefikset som er entydig i
+          // DENNE prosessen, og faller tilbake til hele id-en når intet
+          // prefiks skiller. HELE id-en står uansett i `title`.
+          //
+          // Er id-en alt lesbar, står den urørt — og «lesbar» måles nå på
+          // TEGNENE, ikke på lengden (Codex P2, runde 3). Kontrakten
+          // tillater kundevalgte navn på inntil 64 tegn, så `length > 20`
+          // alene gjorde `senior-backend-engineer-01` til `senior-b…`.
+          // `erUgjennomsiktig` korter bare den rene heksadesimalen.
+          //
+          // `title` ER IKKE KOPI-VEIEN (pass-funn). Kollisjonsporten
+          // innrømmer alt at `title` hverken er kopierbar eller
+          // tilgjengelig for berøring og tastatur, så «mistes ikke»
+          // kunne ikke hvile på den. Den fulle id-en står i
+          // detaljpanelets tittel (`visDetalj`) — raden åpner panelet,
+          // og DEN veien går både mus, tastatur og skjermleser.
+          // `title` blir stående som musens snarvei, ikke som løftet.
+          // OMBREKKINGEN GJELDER OGSÅ DEN SYNLIGE CELLEN (Cursor P2).
+          // `.rekrut-detalj` vernet innholdet INNI detaljpanelet, men
+          // ikke referansen i raden — og etter at lesbare navn står
+          // hele (inntil 64 tegn, kanon uten blanktegn) er det denne
+          // strengen som løfter kolonnens min-content og skyver
+          // tabellen ut i `.tablewrap`-ens sidescroll. Samme token,
+          // samme regel: ingen ny maskin.
+          kandidat: el("span",
+            { class: "rekrut-kandidat", title: kandidat.kandidat_id },
+            kortnavn(kandidat.kandidat_id)),
           poeng: String(poeng),
           // Trafikklys: tekst + klasse, aldri farge alene.
           kategori: el("span",
@@ -704,10 +853,25 @@ function tegn(hoved, ctx, data, okt, valgtId) {
         // kandidat hun åpnet. `tabell.js` har mekanismen for nøyaktig dette
         // (`tilgjengeligNavn` → `aria-label`), og `policyadmin` bruker den
         // med samme «tekst: id»-form. Den synlige teksten er uendret.
+        //
+        // ØRET HØRER DET ØYET SER (pass-funn). Navnet limte rå
+        // `kandidat_id` mens cellen ved siden av viste `kortnavn(...)`:
+        // referansen leseren hørte, fantes ikke på skjermen, og den som
+        // lette opp raden for «58f17252…» fikk i stedet trettiseks tegn
+        // heksadesimal lest opp. Navnet bærer nå samme kortform som
+        // cellen — regnet over SAMME sett, så entydigheten som gjelder i
+        // tabellen gjelder ordrett også for øret.
+        //
+        // SETNINGEN EIES AV LOCALE, IKKE AV KODEN (pass-funn, §5). Navnet
+        // ble limt som `${t(detaljer)}: ${kortnavn}` — skilletegnet og
+        // ordstillingen sto i koden, så et språk som setter kandidaten
+        // først, eller skiller med noe annet enn kolon, kunne ikke.
+        // Rapportens søsterkontroll fikk `vis_funn_for` i denne PR-en;
+        // dette er samme form på samme defekt, ett lesested lenger ned.
         handling: {
           tekst: t("ui.rekruttering.detaljer"),
-          tilgjengeligNavn:
-            `${t("ui.rekruttering.detaljer")}: ${kandidat.kandidat_id}`,
+          tilgjengeligNavn: flett(t("ui.rekruttering.detaljer_for"),
+            { kandidat: kortnavn(kandidat.kandidat_id) }),
           paaKlikk: () => visDetalj(kandidat, poeng),
         },
       })),
@@ -800,8 +964,15 @@ function tegn(hoved, ctx, data, okt, valgtId) {
       vekter[krav] = Number(range.value);
       visning.textContent = range.value;
       const rader = tegnTabell();
+      // ØRET HØRER DET ØYET SER — OGSÅ HER (pass-funn, runde 5). Denne
+      // kunngjøringen var det siste stedet som limte rå `kandidat_id`:
+      // `aria-live` leste trettiseks tegn heksadesimal opp for den som
+      // nettopp flyttet en skyver, mens cellen øverst i tabellen — det
+      // ENESTE stedet hun kan bekrefte kunngjøringen — sa `58f17252…`.
+      // Samme lukning som cellen, så referansen er ordrett den samme.
       kunngjoring.textContent = t("ui.rekruttering.ny_rekkefolge")
-        .replace("{forst}", rader.length ? rader[0].kandidat.kandidat_id : "");
+        .replace("{forst}",
+          rader.length ? kortnavn(rader[0].kandidat.kandidat_id) : "");
     });
     vektRot.append(el("div", { class: "rekrut-vekt" },
       el("label", { for: id, text: t(`ui.rekruttering.krav.${krav}`, krav) }),
@@ -1064,32 +1235,110 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
   // ny henting; cachen re-bygges inn i den nye seksjonens rot).
   const byggRapport = (svar) => {
       const rapport = svar.rapport;
-      const kropp = el("tbody", {}, ...rapport.rangering.map((rad) =>
-        el("tr", {},
-          el("th", { scope: "row", text: rad.kandidat_id }),
+      // DETALJENE HØRER I RADEN (produktrunden 28/8). De sto som en flat
+      // mur av `<details>` UNDER tabellen — tjue «Detaljer for
+      // kandidat-NN» på rad, uten noen kobling til linjen de gjaldt.
+      // Leseren måtte telle seg fram. Nå er hver kandidats detaljer i
+      // kandidatens egen rad, og muren finnes ikke.
+      const detaljFor = new Map();
+      // KANDIDATEN ER LESBAR I RAPPORTEN OGSÅ (Cursor P2). Kortnavnet
+      // ble innført i prosesstabellen, men rangeringstabellen her sto
+      // igjen med rå `kandidat_id` i radoverskriften — og det er DENNE
+      // tabellen som står øverst, i produktdelen leseren møter først.
+      // Med seedens UUID-er fikk hun altså veggen av heksadesimal i
+      // rapporten og den ryddede kolonnen under. Samme helper, samme
+      // regel — og hele id-en står i radens `<details>`, ikke i `title`
+      // alene (pass-funn; `title` er musens snarvei, ikke kopi-veien).
+      const kortnavn = kortnavnFor(rapport.rangering.map((r) => r.kandidat_id));
+      const kropp = el("tbody", {}, ...rapport.rangering.map((rad) => {
+        const boks = detaljboks(rad);
+        detaljFor.set(rad.kandidat_id, boks);
+        return el("tr", {},
+          el("th", { scope: "row", class: "rekrut-kandidat",
+            title: rad.kandidat_id, text: kortnavn(rad.kandidat_id) }),
           el("td", { text: String(rad.poeng) }),
           el("td", { text: Object.entries(rad.nedbrytning)
             .map(([k, v]) => `${t(`ui.rekruttering.krav.${k}`, k)}: ${v}`)
-            .join(", ") }))));
+            .join(", ") }),
+          el("td", {}, boks));
+      }));
+      // ØRET FIKK NAVNET TO GANGER, OG DUPLIKATET LÅ I TEKSTEN (Codex
+      // P2). To former er prøvd på denne mekanismen, og begge bommet på
+      // samme sted:
+      //
+      //   1. `sr-only` caption med overskriftens tekst — `sr-only`
+      //      skjuler for øyet, ikke for øret: noden ble stående i
+      //      tilgjengelighetstreet med nøyaktig samme streng.
+      //   2. `aria-labelledby` mot `h3`-en — den flyttet HVOR navnet
+      //      kommer fra, men den demper ikke tabellens egen annonsering.
+      //      Skjermleseren leser fortsatt overskriften i
+      //      dokumentrekkefølge og SAMME streng igjen som tabellnavn
+      //      idet tabellen møtes.
+      //
+      // Rotårsaken er altså ikke noden navnet bor i, men at navnet ER
+      // overskriftens tekst. Å låne den i stedet for å kopiere den er
+      // fortsatt en kopi for øret. Tabellen får derfor sitt EGET, korte
+      // navn som sier hva tabellen inneholder — «Kandidater rangert
+      // etter poeng» — mens `h3`-en beholder profil og versjon. To
+      // annonseringer, to forskjellige opplysninger.
+      //
+      // Navnet blir `sr-only`: produktrunden ville ha ÉN overskrift for
+      // øyet, og et synlig tabellnavn under `h3`-en ville bygget den
+      // andre linjen opp igjen. Det var aldri `sr-only` som var feilen.
       const tabell = el("table", {},
-        el("caption", { text: t("ui.rekruttering.evalueringer.rangering")
-          .replace("{navn}", rapport.profil.navn)
-          .replace("{versjon}", String(rapport.profil.versjon)) }),
+        el("caption", { class: "sr-only",
+          text: t("ui.rekruttering.evalueringer.tabellnavn") }),
         el("thead", {}, el("tr", {},
           el("th", { scope: "col",
             text: t("ui.rekruttering.evalueringer.kandidat") }),
           el("th", { scope: "col",
             text: t("ui.rekruttering.evalueringer.poeng") }),
           el("th", { scope: "col",
-            text: t("ui.rekruttering.evalueringer.nedbrytning") }))),
+            text: t("ui.rekruttering.evalueringer.nedbrytning") }),
+          el("th", { scope: "col",
+            text: t("ui.rekruttering.evalueringer.kol_detaljer") }))),
         kropp);
       // Skjemaet tillater 5000 kandidater à 100 funn + 20 spørsmål — en
       // gyldig maksrapport ville bygget hundretusener av noder opp front.
       // Kroppen bygges derfor først når leseren åpner den.
-      const detaljer = rapport.rangering.map((rad) => {
-        const boks = el("details", {},
-          el("summary", { text: t("ui.rekruttering.evalueringer.detaljer")
-            .replace("{kandidat}", rad.kandidat_id) }));
+      function detaljboks(rad) {
+        // Sammendraget er kort fordi det står I raden: kandidaten er
+        // allerede navngitt i radoverskriften, så «Detaljer for
+        // kandidat-09» ville gjentatt den på hver linje for ØYET.
+        //
+        // ØRET FÅR IKKE RADEN GRATIS (Codex P2). En skjermleser som
+        // lister interaktive elementer, eller tabber gjennom dem, leser
+        // kontrollens tilgjengelige navn ALENE — radoverskriften ved
+        // siden av er ikke med. Fem tusen kontroller som alle heter «Vis
+        // funn» er nøyaktig den telle-seg-fram-en denne runden fjernet
+        // for øyet. `aria-label` bærer derfor kandidaten, mens den synlige
+        // teksten forblir kort: samme løsning som prosesstabellens
+        // Detaljer-knapper alt bruker.
+        //
+        // …MEN MED RADENS EGEN REFERANSE (pass-funn). `aria-label` limte
+        // rå `kandidat_id` mens radoverskriften over viste
+        // `kortnavn(...)`. Kontrollen navnga altså kandidaten med en
+        // streng som ikke sto noe sted på skjermen — og i en liste over
+        // interaktive elementer var hver rad tilbake til sin vegg av
+        // heksadesimal, nøyaktig det denne runden fjernet for øyet.
+        // Samme `kortnavn` som `th`-en, samme sett, samme entydighet.
+        // ... OG DEN HOLDER SEG I VIEWPORTEN (Codex P2). Panelet står nå i
+        // en tabellcelle, så innholdet teller med i tabellens intrinsikke
+        // bredde: en 64-tegns id uten brytepunkt løftet cellens minstebredde
+        // og ga sidescroll på mobil. `.rekrut-detalj` bryter den — se
+        // `base.css` for hvorfor det må være `anywhere` og ikke `break-word`.
+        // …OG NAVNET BYGGES I LOCALE, IKKE HER (Cursor P2, RUTINER §5).
+        // Skillet `" — "` og ordstillingen «handling, så kandidat» sto i
+        // koden, så et språk som vil si det motsatt veien — eller med et
+        // annet skilletegn — kunne ikke. Én mal eier hele setningen nå;
+        // koden leverer bare verdien. Malen er den forlatte
+        // `…evalueringer.detaljer` (den døde da «Detaljer» ble «Vis
+        // funn»), gjenbrukt under sitt rette navn — ingen ny nøkkel.
+        const boks = el("details", { class: "rekrut-detalj" },
+          el("summary", {
+            "aria-label": flett(t("ui.rekruttering.evalueringer.vis_funn_for"),
+              { kandidat: kortnavn(rad.kandidat_id) }),
+            text: t("ui.rekruttering.evalueringer.vis_funn") }));
         let bygget = false;
         boks.addEventListener("toggle", () => {
           if (bygget || !boks.open) return;
@@ -1115,18 +1364,32 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
           // 27/8): de hører til innkallingen av de 5–10 beste, ikke til
           // utvelgelsen blant mange. Lageret består; shortlist-arcen
           // henter derfra.
+          // HELE ID-EN BOR HER, IKKE I `title` (pass-funn). Rapporten
+          // hadde ingen vei til den fulle id-en utenom `th`-ens `title`,
+          // og den er hverken kopierbar eller tilgjengelig for berøring
+          // og tastatur — «kortes, men mistes ikke» var altså usant på
+          // rapportveien. Prosesstabellen har alt svaret: raden åpner et
+          // detaljpanel som bærer full id i tittelen (`visDetalj`).
+          // Rapportens `<details>` ER den samme veien, så id-en står
+          // øverst i den — én linje, i kroppen som uansett bygges først
+          // ved åpning. IKKE en `sr-only` node i hver rad: fem tusen
+          // radoverskrifter som leser trettiseks tegn heksadesimal er
+          // veggen denne runden rev, gjenreist for øret.
           boks.append(
+            el("p", {
+              text: `${t("ui.rekruttering.kandidat")}: ${rad.kandidat_id}` }),
             el("h4", { text: t("ui.rekruttering.evalueringer.funn") }), funn);
         });
         return boks;
-      });
+      }
       // Rapporten settes inn ETTER tabellen brukeren sto i — fokusér
       // overskriften, ellers får tastatur/skjermleser aldri vite at
-      // lastingen ble ferdig.
+      // lastingen ble ferdig. Fokusmålet er NODEN (`overskrift.focus()`),
+      // ikke en id: tabellen bærer sitt eget navn nå, så overskriften
+      // trenger ingen id å bli pekt på med.
       const overskrift = el("h3", { tabindex: "-1",
-        text: t("ui.rekruttering.evalueringer.rangering")
-          .replace("{navn}", rapport.profil.navn)
-          .replace("{versjon}", String(rapport.profil.versjon)) });
+        text: flett(t("ui.rekruttering.evalueringer.rangering"),
+          { navn: rapport.profil.navn, versjon: rapport.profil.versjon }) });
       // Hopplenken FØRST i rapporten: den er tastaturbrukerens vei forbi
       // rangeringens N `<summary>` og ned til prosess, vekter og
       // signering (Cursor P2). Husets `.hoppelenke` — usynlig til den
@@ -1157,7 +1420,7 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       overskrift,
       hoppLenke,
       el("p", { text: t("ui.rekruttering.evalueringer.blindet") }),
-      el("div", { class: "tablewrap" }, tabell), ...detaljer] };
+      el("div", { class: "tablewrap" }, tabell)] };
   };
 
   const visRapport = async (oppdragId, { fokus = true } = {}) => {
@@ -1606,9 +1869,8 @@ function bestillSeksjon(hoved, ctx, data, okt, laas) {
     const valgt = profilVelger.value;
     sett(profilVelger, ...profiler.map((pr) => el("option",
       { value: `${pr.profil_id}@${pr.versjon}` },
-      t("ui.rekruttering.bestill.profilvalg")
-        .replace("{navn}", pr.navn)
-        .replace("{versjon}", String(pr.versjon)))));
+      flett(t("ui.rekruttering.bestill.profilvalg"),
+        { navn: pr.navn, versjon: pr.versjon }))));
     if (valgt && [...profilVelger.options].some((o) => o.value === valgt)) {
       // Valget er brukerens, og det overlever en oppfriskning av listen.
       profilVelger.value = valgt;
@@ -2214,9 +2476,8 @@ function profilSeksjon(hoved, ctx, data, okt, laas, paaProfilendring) {
         const svar = await lagreStillingsprofil(
           profil ? profil.profil_id : null, sendtNavn, krav, idem);
         nyIntensjon();                 // definitivt svar → ny operasjon
-        sett(utfall, t("ui.rekruttering.profiler.lagret")
-          .replace("{navn}", sendtNavn)
-          .replace("{versjon}", String(svar.versjon)));
+        sett(utfall, flett(t("ui.rekruttering.profiler.lagret"),
+          { navn: sendtNavn, versjon: svar.versjon }));
         await oppdaterListe();
       } catch (e) {
         if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
