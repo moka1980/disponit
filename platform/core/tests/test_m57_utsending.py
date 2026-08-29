@@ -2876,6 +2876,53 @@ def test_begrunnelsen_kan_ikke_vaere_et_tastetrykk(migrator):
 
 
 @pg
+def test_skriv_revisjonshendelse_avviser_ugyldig_innhold(migrator):
+    """CHECK-ene måles på PRODUKSJONSVEIEN, ikke bare på tabellen.
+
+    Cursor P2, runde 3 på #247. De to testene over slår inn på tabellen
+    med migrator-`INSERT`, og runtime har ingen tabell-DML i det hele
+    tatt (`test_revisjonshendelse_ingen_direkte_dml_for_disponit`) — så
+    ingen av dem gikk gjennom den ENESTE veien produksjonen har inn hit.
+    En regresjon som lot `skriv_revisjonshendelse` slippe ugyldige verdier
+    forbi, eller som ga API-laget feil feilklasse, ville ikke gjort noen
+    av dem røde. Samme klasse som lese- mot skrivevei-tenantporten runde 1
+    fant, bare på innholdet i stedet for på tenanten.
+
+    FEILKLASSEN ER EN DEL AV PÅSTANDEN. `CheckViolation`, ikke
+    `InsufficientPrivilege`: kom den siste, hadde ikke innholdsporten
+    målt noe — da stoppet kallet på rettigheter FØR det nådde INSERT-en,
+    og testen ville vært grønn på feil grunn.
+
+    MUTASJONEN SOM DREPER DENNE: fjern en CHECK fra tabellen, eller la
+    funksjonen normalisere argumentene før INSERT.
+    """
+    rt = _rt()
+    try:
+        for handling, aktor, begrunnelse in (
+            ("m57.blinding_avskrudd_liksom", "drift", "ser riktig ut"),
+            ("m57.blinding_avskrudd", " ", "en ekte begrunnelse"),
+            ("m57.blinding_avskrudd", "drift", "x"),
+        ):
+            _sett_kontekst(rt, TENANT)
+            with pytest.raises(psycopg.errors.CheckViolation):
+                rt.execute("SELECT skriv_revisjonshendelse(%s, %s, %s, %s)",
+                           (TENANT, handling, aktor, begrunnelse))
+            rt.rollback()
+
+        # KONTROLLEN: den lovlige raden går gjennom samme vei. Uten den
+        # kunne alle tre casene bestått på en funksjon som var ødelagt.
+        _sett_kontekst(rt, TENANT)
+        assert rt.execute(
+            "SELECT skriv_revisjonshendelse(%s, 'm57.blinding_avskrudd',"
+            " %s, %s)",
+            (TENANT, "eier@kunde", "intern rekruttering, avtalt med HR")
+        ).fetchone()[0] is not None, "skriveveien er død, ikke streng"
+    finally:
+        rt.rollback()
+        rt.close()
+
+
+@pg
 def test_avskruing_krever_hendelse_fra_basen_ikke_mock(migrator):
     """Modulporten møter BASEN, ikke en dict (Cursor P2, runde 1 på #247).
 
