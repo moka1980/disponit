@@ -1081,6 +1081,7 @@
   "ui.rekruttering.evalueringer.last_flere": "Load more evaluations",
   "ui.rekruttering.evalueringer.oppdater": "Refresh the list",
   "ui.rekruttering.evalueringer.handlingfeil": "The list could not be updated. The statuses below may be out of date — please try again.",
+  "ui.rekruttering.evalueringer.listemeldt": "The evaluation list has been updated. Showing {antall} evaluations.",
   "ui.rekruttering.evalueringer.tabell": "Ordered evaluations with status",
   "ui.rekruttering.evalueringer.oppdrag": "Job",
   "ui.rekruttering.evalueringer.bestilt": "Ordered",

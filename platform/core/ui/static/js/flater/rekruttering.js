@@ -991,6 +991,29 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
     sett(utfall,
       ...(feilet ? [t("ui.rekruttering.evalueringer.handlingfeil")] : []));
   };
+  // FOKUS OVERLEVER OM-TEGNINGEN (Codex P2). `tegnListe` bytter hele
+  // seksjonen med `sett(rot, …)`, så knappen en tastatur- eller
+  // skjermleserbruker nettopp aktiverte er en ANNEN node etterpå: fokus
+  // falt tilbake til `document.body`, og brukeren mistet posisjonen sin
+  // ved hver oppfriskning og hver lastede side — uten noe som sa hvor de
+  // nye radene havnet.
+  //
+  // Fokus flyttes derfor til ERSTATNINGEN for kontrollen som ble
+  // aktivert, med «Oppdater» som fallback: «Last flere» forsvinner jo
+  // når siste side er hentet, og da er det ingen erstatning å lande på.
+  // Beskjeden går i den høflige live-regionen — samme grep som
+  // auto-visningen av rapporten — så det annonseres HVA som skjedde, ikke
+  // bare at fokus flyttet seg. KUN på eksplisitt klikk: oppfriskningen
+  // etter en bestilling går gjennom `oppdater()` uten dette, og skal
+  // aldri rive fokus fra skjemaet brukeren står i.
+  const etterListeklikk = (foretrukket, antall) => {
+    if (!rot.isConnected) return;
+    const ny = rot.querySelector("." + foretrukket)
+      || rot.querySelector(".eval-oppdater");
+    if (ny) ny.focus();
+    meldLive(t("ui.rekruttering.evalueringer.listemeldt")
+      .replace("{antall}", String(antall)));
+  };
   // Listeoppfriskningen bærer NØYAKTIG samme risiko (Cursor P2):
   // `paagaaende` slipper opp før den fire-and-forget `oppdater()` er
   // ferdig, så to raske bestillinger gir to hentinger i lufta samtidig.
@@ -1224,8 +1247,16 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
     const oppdaterKnapp = okt ? (() => {
       const k = el("button", { type: "button", class: "eval-oppdater",
         text: t("ui.rekruttering.evalueringer.oppdater") });
-      k.addEventListener("click",
-        () => okt.evaluering && okt.evaluering.oppdater());
+      k.addEventListener("click", async () => {
+        if (!okt.evaluering) return;
+        // `oppdater()` sier fra om den faktisk TEGNET: en feilet eller
+        // forkastet oppfriskning bytter ingen noder, så knappen holder
+        // fokus selv — og `role="alert"` annonserer feilen.
+        if (await okt.evaluering.oppdater()) {
+          etterListeklikk("eval-oppdater",
+            (okt.evalueringer.liste || []).length);
+        }
+      });
       return k;
     })() : null;
     // `null` er FEIL-tilstanden fra hentingen — en utilgjengelig
@@ -1336,6 +1367,7 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
         eval2.flere = !!(svar && svar.flere);
         eval2.cursor = (svar && svar.neste_cursor) || null;
         eval2.tegn(eval2.liste, eval2.flere, eval2.cursor);
+        etterListeklikk("eval-last-flere", eval2.liste.length);
       });
       return k;
     })() : null;
@@ -1423,23 +1455,29 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
     // for å bli spurt om `isConnected`: siste `tegn` vinner, og den
     // vakten trengs ikke lenger.
     eval_.tegn = tegnListe;
+    // SVARET ER «TEGNET DU?» (Codex P2). Fokus og annonsering hører til
+    // det eksplisitte klikket, ikke til oppfriskningen som sådan — den
+    // kalles også fire-and-forget etter en bestilling, og skal aldri rive
+    // fokus fra skjemaet. Knappen spør derfor om det faktisk ble byttet
+    // noder; feilet eller forkastet oppfriskning bytter ingen, og da
+    // holder knappen fokus selv.
     okt.evaluering = { oppdater: async () => {
       const min = ++eval_.nr;
       let svar;
       try {
         svar = await hentEvalueringer();
       } catch (e) {
-        if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+        if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return false; }
         // Også oppfriskningen etter en bestilling melder fra: en stille
         // katch her lot den nye evalueringen mangle fra listen uten at
         // noe sa hvorfor (Codex P2).
         if (min === eval_.nr) meldListefeil(true);
-        return;
+        return false;
       }
       // Samme regel som rapporthentingen: bare den SISTE oppfriskningen
       // får tegne — og et tregt eldre svar skal heller ikke skrive seg
       // inn i økten.
-      if (min !== eval_.nr) return;
+      if (min !== eval_.nr) return false;
       meldListefeil(false);
       // Oppfriskningen er FØRSTE side på nytt — cursoren følger den:
       // en beholdt fortsettelse fra en eldre liste ville pekt midt inn
@@ -1448,6 +1486,7 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       eval_.flere = !!(svar && svar.flere);
       eval_.cursor = (svar && svar.neste_cursor) || null;
       eval_.tegn(eval_.liste, eval_.flere, eval_.cursor);
+      return true;
     } };
   }
   return rot;

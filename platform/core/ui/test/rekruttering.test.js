@@ -1570,6 +1570,62 @@ test("Evalueringer: «Last flere» følger serverens cursor og appender (#221)",
     "knappen ble stående uten fortsettelse å følge");
 });
 
+test("Evalueringer: fokus OVERLEVER om-tegningen av listen, og redrawet "
+  + "annonseres", async () => {
+  KALL = [];
+  // Codex P2: `tegnListe` bytter hele seksjonen med `sett(rot, …)`, så
+  // knappen brukeren nettopp aktiverte er en ANNEN node etterpå — fokus
+  // falt til `document.body` ved hver oppfriskning og hver lastede side,
+  // uten noe som sa hvor de nye radene havnet.
+  const rad = (id) => ({ oppdrag_id: id, status: "opprettet",
+    opprettet: "2026-08-27T02:00:00+00:00", rapport_klar: false });
+  SVAR = {
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": {
+      evalueringer: [rad(200)], flere: true, neste_cursor: "c-side2.mac" },
+    "/v1/rekruttering/evalueringer?cursor=c-side2.mac": {
+      evalueringer: [rad(100)], flere: false, neste_cursor: null },
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel] table")));
+  const seksjon = hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  const knapp = (nokkel) => [...seksjon.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.evalueringer." + nokkel));
+  const live = () => document.querySelector(
+    '[role=status][aria-live=polite]').textContent;
+  const meldt = (antall) => t("ui.rekruttering.evalueringer.listemeldt")
+    .replace("{antall}", String(antall));
+
+  // «Oppdater»: erstatningsknappen får fokus, ikke `document.body`.
+  const gammel = knapp("oppdater");
+  gammel.focus();
+  gammel.click();
+  assert.ok(await vent(() => knapp("oppdater") !== gammel),
+    "listen ble aldri tegnet på nytt");
+  assert.ok(await vent(() => document.activeElement === knapp("oppdater")),
+    "fokus falt ut av seksjonen etter oppfriskningen");
+  assert.equal(live(), meldt(1),
+    "redrawet ble aldri annonsert i den høflige live-regionen");
+
+  // «Last flere»: siste side finnes ikke, så knappen forsvinner —
+  // fokus lander på «Oppdater» i stedet for i ingenting.
+  knapp("last_flere").focus();
+  knapp("last_flere").click();
+  assert.ok(await vent(() => seksjon.textContent.includes("100")),
+    "side 2 ble aldri appendet");
+  assert.ok(!knapp("last_flere"),
+    "positiv kontroll: siste side skal fjerne «Last flere»");
+  assert.equal(document.activeElement, knapp("oppdater"),
+    "fokus falt ut av seksjonen da «Last flere» forsvant");
+  assert.equal(live(), meldt(2), "den appendede siden ble aldri annonsert");
+  // MUTASJONEN SOM DREPER DENNE: fjern `etterListeklikk(…)` fra de to
+  // klikkhåndtererne — fokus faller da til `document.body`.
+});
+
 test("Evalueringer: en feilet listehandling MELDER fra — ikke stille "
   + "utdatert liste", async () => {
   KALL = [];

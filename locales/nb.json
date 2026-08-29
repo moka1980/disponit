@@ -1081,6 +1081,7 @@
   "ui.rekruttering.evalueringer.last_flere": "Last flere evalueringer",
   "ui.rekruttering.evalueringer.oppdater": "Oppdater listen",
   "ui.rekruttering.evalueringer.handlingfeil": "Listen kunne ikke oppdateres. Statusene under kan være utdaterte — prøv igjen.",
+  "ui.rekruttering.evalueringer.listemeldt": "Evalueringslisten er oppdatert. {antall} evalueringer vises.",
   "ui.rekruttering.evalueringer.tabell": "Bestilte evalueringer med status",
   "ui.rekruttering.evalueringer.oppdrag": "Oppdrag",
   "ui.rekruttering.evalueringer.bestilt": "Bestilt",
