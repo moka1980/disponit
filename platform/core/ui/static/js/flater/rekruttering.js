@@ -1270,6 +1270,39 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
   // Bygger rapportens DOM fra et svar — deles av hentestien og
   // økt-cachen (Codex P2: rapporten skal OVERLEVE et prosessbytte uten
   // ny henting; cachen re-bygges inn i den nye seksjonens rot).
+  // DE IRREVERSIBLE HANDLINGENE DELES av listen og rapporten (eiers
+  // bestilling 29/8: «det skal være mulig å slette også ved vis
+  // rapport»): alltid gjennom Bekreftelsesdialogen, utfallet oppfriskes
+  // fra basen — aldri en optimistisk rad flaten selv har diktet.
+  // `etter` kjøres KUN etter et vellykket kall, før oppfriskningen —
+  // rapportens vei bruker den til å ta sin egen visning ned, siden en
+  // bestilt sletting gjør innholdet til noe flaten ikke skal vise videre.
+  const bekreftEvalueringshandling = (oppdragId, nokkel, kall, kvittering,
+    etter) => {
+    Bekreftelsesdialog({
+      tittel: t(`ui.rekruttering.evalueringer.${nokkel}_tittel`),
+      tekst: flett(t(`ui.rekruttering.evalueringer.${nokkel}_tekst`),
+        { oppdrag: oppdragId }),
+      primarTekst: t(`ui.rekruttering.evalueringer.${nokkel}`),
+      farlig: nokkel === "slett",
+      paaPrimar: async () => {
+        try {
+          await kall(oppdragId);
+          meldLive(t(kvittering));
+          if (etter) etter();
+        } catch (feil) {
+          if (feil instanceof UautorisertFeil) {
+            ctx.paaUautorisert(); return;
+          }
+          // 409 evaluering_terminal og alt annet: basen vant — si
+          // det, og la oppfriskningen under vise sannheten.
+          meldLive(t("ui.rekruttering.evalueringer.handlingsfeil"));
+        }
+        if (okt.evaluering) okt.evaluering.oppdater();
+      },
+    });
+  };
+
   const byggRapport = (svar) => {
       const rapport = svar.rapport;
       // DETALJENE HØRER I RADEN (produktrunden 28/8). De sto som en flat
@@ -1535,8 +1568,29 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
     // fokuserer overskriften, og tab framover derfra skal møte
     // bypass-en FØR rangeringens N `<summary>` — sto lenken foran,
     // var den utabbar fra det eneste stedet fokus faktisk står.
+    // SLETT OGSÅ HER (eiers bestilling 29/8): rapporten er stedet
+    // leseren faktisk står når dommen «denne skal bort» felles. Samme
+    // dialog, samme dør som listens knapp — og etterpå tas visningen
+    // ned: en bestilt sletting er kundens grense fra bestillings-
+    // øyeblikket (069), så flaten skal ikke fortsette å vise innholdet.
+    const rapporthode = el("div", { class: "rekrut-rapporthode" },
+      overskrift);
+    if (harScope(ctx, "bestilling:opprett")) {
+      const slettKnapp = el("button", { type: "button",
+        class: "knapp fare",
+        text: t("ui.rekruttering.evalueringer.slett") });
+      slettKnapp.setAttribute("aria-label",
+        t("ui.rekruttering.evalueringer.slett")
+        + " — " + t("ui.rekruttering.evalueringer.oppdrag")
+        + " " + svar.oppdrag_id);
+      slettKnapp.addEventListener("click", () =>
+        bekreftEvalueringshandling(svar.oppdrag_id, "slett",
+          slettEvaluering, "ui.rekruttering.evalueringer.slett_bestilt",
+          () => { rHent.siste = null; rHent.tegn(null, []); }));
+      rapporthode.append(slettKnapp);
+    }
     return { overskrift, noder: [
-      overskrift,
+      rapporthode,
       hoppLenke,
       el("p", { text: t("ui.rekruttering.evalueringer.blindet") }),
       vektFelt,
@@ -1697,29 +1751,8 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
     // gjennom Bekreftelsesdialogen, og utfallet oppfriskes fra basen —
     // aldri en optimistisk rad flaten selv har diktet.
     const kanSkrive = harScope(ctx, "bestilling:opprett");
-    const bekreftHandling = (e2, nokkel, kall, kvittering) => {
-      Bekreftelsesdialog({
-        tittel: t(`ui.rekruttering.evalueringer.${nokkel}_tittel`),
-        tekst: flett(t(`ui.rekruttering.evalueringer.${nokkel}_tekst`),
-          { oppdrag: e2.oppdrag_id }),
-        primarTekst: t(`ui.rekruttering.evalueringer.${nokkel}`),
-        farlig: nokkel === "slett",
-        paaPrimar: async () => {
-          try {
-            await kall(e2.oppdrag_id);
-            meldLive(t(kvittering));
-          } catch (feil) {
-            if (feil instanceof UautorisertFeil) {
-              ctx.paaUautorisert(); return;
-            }
-            // 409 evaluering_terminal og alt annet: basen vant — si
-            // det, og la oppfriskningen under vise sannheten.
-            meldLive(t("ui.rekruttering.evalueringer.handlingsfeil"));
-          }
-          if (okt.evaluering) okt.evaluering.oppdater();
-        },
-      });
-    };
+    const bekreftHandling = (e2, nokkel, kall, kvittering) =>
+      bekreftEvalueringshandling(e2.oppdrag_id, nokkel, kall, kvittering);
     // KORTLISTE, IKKE TABELL (eiers mobil-redesign 29/8, godkjent
     // mockup): fire kolonner på 390px ga en tabell som hverken kunne
     // leses eller treffes. Kortet bærer samme fakta i samme rekkefølge
