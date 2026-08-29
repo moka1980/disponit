@@ -131,6 +131,31 @@ STROEM_RUTE_PREFIKS = "/v1/inndata/opplast/"
 #: tallene sammen så de ikke kan gli fra hverandre igjen.
 YTELSESKRAV_PER_SEK = 100
 STANDARD_RATE_PER_MIN = 2 * 60 * YTELSESKRAV_PER_SEK      # 12 000/min
+#: #173 (Codex P1): kandidatskrivingen har sin EGEN bøtte, og den er
+#: dimensjonert av MODULKONTRAKTENS dokumenterte maksima — ikke av
+#: ytelsesporten, som handler om beslutningsflaten.
+#:
+#: En bunt kan lovlig bære `MAKS_FILER` = 20 000 medlemmer og
+#: `antall_soknader` = 5 000 kandidater (kontrakt/KONTRAKT.md, §4), altså
+#: 25 000 skrivinger på veien inn i kandidatlagrene. Med standardbudsjettet
+#: 12 000/min fikk skriving nummer 12 001 innenfor et rullende minutt 429,
+#: og modulens `lever` leser 4xx som TERMINALT: hele evalueringen falt som
+#: `kandidatlagring_feilet` fordi plattformen kjørte inn i sin egen grense.
+#: Tallene står her og ikke i modulen fordi det er DENNE siden som håndhever
+#: dem; api/ importerer aldri modulkode (samme grunn som
+#: `_KANDIDAT_ID_KANON` er speilet og ikke importert).
+#:
+#: Faktor 2 er modulens retrykjede (`LEVERINGSFORSOK = 4`, med pause bare
+#: på 5xx): en forbigående serverfeil skal ikke kunne spise budsjettet og
+#: gjøre neste skriving til en terminal 4xx.
+#:
+#: MÅLT PRIS, ikke oversett: `slipp_gjennom` bygger vindulisten på nytt per
+#: kall, så en full bunt koster ~25 000 kall à opptil 50 000
+#: float-sammenligninger. Det er millisekunder per skriving ved siden av en
+#: HTTP-rundtur og et INSERT på inntil 25 MiB, altså ikke veiens toppunkt —
+#: men det er tallet som gjør en enda større bøtte til et ytelsesspørsmål,
+#: og da er det bøtteformen (deque/teller) som må endres, ikke taket.
+KANDIDATDATA_RATE_PER_MIN = 2 * (20_000 + 5_000)          # 50 000/min
 SIDE_STANDARD, SIDE_MAKS = 50, 200
 #: Statusene der saksbehandlingen ER FERDIG. Alt annet i statusmaskinen
 #: (migrasjon 011) venter på et menneske eller en maskin, og er dermed «åpen».
@@ -2369,9 +2394,22 @@ def _kandidatdata(tjeneste: Tjeneste, request: Request, form: str) -> Response:
             tjeneste.logg.hendelse("scope_mangler", rid, auth.tenant,
                                    scope=ORDRESCOPE + "<prefiks>")
             return _feilsvar("scope_mangler", rid)
-        # Samme ratebudsjett som claim/forny/upload: en skrivesløyfe er
-        # billig for kalleren og skal ikke være gratis her.
-        if not tjeneste.rate.slipp_gjennom(auth.token_id):
+        # EGEN BØTTE, IKKE MODULTOKENETS DELTE (Codex P1). Linjen sto som
+        # «samme ratebudsjett som claim/forny/upload», og det gjorde
+        # plattformens egen grense til en port mot dens egne dokumenterte
+        # maksima: en bunt kan lovlig bære 20 000 filer og 5 000
+        # kandidater, altså 25 000 skrivinger, mens standardbudsjettet er
+        # 12 000 per rullende minutt. Strømmer uttrekket mer enn 12 000
+        # små dokumenter innenfor et minutt, får neste skriving 429 —
+        # `lever` leser 4xx som terminalt, og `kjor_bunt` feller HELE
+        # evalueringen med `kandidatlagring_feilet`. Grensen felte altså
+        # ikke misbruk; den felte den eneste kjøringen den fantes for.
+        #
+        # Nøkkelen er EGEN, ikke bare taket: en skrivesløyfe skal hverken
+        # sulte modulens claim/forny/kvittering eller sultes av dem. Ett
+        # bøttested fortsatt (`Rategrense`), to bøtter.
+        if not tjeneste.rate.slipp_gjennom("kandidatdata:" + auth.token_id,
+                                           tak=KANDIDATDATA_RATE_PER_MIN):
             tjeneste.logg.hendelse("rate_grense", rid, auth.tenant)
             return _feilsvar("rate_grense", rid)
         if isinstance(auth, ModulAutentisert):
