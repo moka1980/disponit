@@ -4318,6 +4318,93 @@ def test_samme_sitat_lenger_ute_i_teksten_flyttes_ikke_felles():
     assert ei.value.args[0] == "sitat_krysser_dokumentgrense"
 
 
+def test_sitatet_flyttes_gjennom_evaluer_kandidat():
+    """Flyttingen målt på PRODUKSJONSSTIEN, ikke på `valider_funn` (Cursor P2).
+
+    `test_samme_sitat_lenger_ute_i_teksten_flyttes_ikke_felles` over
+    kaller `valider_funn` direkte, med `grenser` levert for hånd. Men
+    `evaluer_kandidat` er den ENESTE produksjonsinngangen som regner
+    `grenser` selv — og den regner dem av de BLINDEDE dokumentene, ikke
+    av råteksten. Alle de andre #174-testene på denne veien er
+    NEGATIVER: de måler at noe felles. En mutasjon som sender
+    `grenser=None` fra `evaluer_kandidat`, eller som river flyttingen ut
+    av `valider_funn`, gir da et grønt sett likevel — for et funn som
+    ALDRI skulle vært felt, blir ikke felt av en port som er borte.
+
+    Derfor et positivt e2e-scenario: modellen svarer med et sitat hvis
+    FØRSTE forekomst krysser skjøten, mens nøyaktig samme utdrag står
+    helt inne i det siste dokumentet. Artefakten skal komme ut med
+    referansen FLYTTET dit — ikke med en `sitat_krysser_dokumentgrense`.
+
+    Klientens `tekst.find(sitat)` er etterlignet med vilje: `modell.py`
+    ber ikke modellen om posisjoner, den setter dem selv med første
+    forekomst. Det er nettopp den vanen som gjør flyttingen nødvendig.
+
+    MUTASJONEN SOM DREPER DENNE, OG SOM INGEN ANNEN TEST SER — målt:
+
+        grenser = blinding.dokumentgrenser(dokumenter)   # rå, ikke blindede
+
+    Blindingen ENDRER lengder (`Kari` → `[NAVN-1]`), så spenn regnet av
+    råtekstene peker feil sted i den strengen modellen faktisk leste.
+    Hele resten av `test_m57_modul.py` er GRØNN på den mutasjonen:
+    kryss-avvisningene felles fortsatt, bare på gale grenser. Denne
+    testen er rød, fordi den er den eneste som krever at en referanse
+    lander RIKTIG — ikke bare at en gal referanse felles.
+
+    Funnets tre foreslåtte mutasjoner (`grenser=None`, `_forste_innenfor`
+    → `None`, flyttingen fjernet) er ALLE alt røde uten denne testen —
+    målt, ikke antatt. Det var ikke der hullet lå.
+    """
+    sitat = "prefix" + blinding.SKJOT + "suffix"
+    # Dokument 1 bærer navnet som gjør blindingen ikke-vakuøs, og en
+    # `prefix` som gjør at FØRSTE forekomst av sitatet krysser skjøten
+    # mellom dokument 1 og 2. Dokument 3 bærer hele sitatet alene.
+    dokumenter = ["Kari prefix", "suffix", sitat]
+
+    class _ModellSomSiterer(_Modell):
+        def vurder(self, tekst, vekter):
+            self.sett.append(tekst)
+            # Som klienten: første forekomst, uansett hvor den faller.
+            start = tekst.find(sitat)
+            return {"funn": [{"kategori": "uklar_tidslinje",
+                              "kilde": {"start": start,
+                                        "slutt": start + len(sitat),
+                                        "sitat": sitat}}],
+                    "oppfylt": {k: True for k in vekter}}
+
+    modell = _ModellSomSiterer()
+    ut = evaluering.evaluer_kandidat(
+        modell, dokumenter, {"navn": ["Kari"]}, {"drift": 3},
+        biasmaalinger=_MAALINGER)
+
+    tekst = ut["kildetekst"]
+    # Grensene regnes av de BLINDEDE dokumentene, aldri ved å splitte
+    # `kildetekst` på skjøten: dokument 3 har selv en blank linje i seg,
+    # så en split ville laget fire spenn av tre og gjort testen rød på
+    # riktig kode. Lengdene er den eneste kilden — og bindingen under
+    # sier at fasiten og artefakten er samme koordinatsystem.
+    blindede, _ = blinding.blind_dokumenter(dokumenter, {"navn": ["Kari"]})
+    assert blinding.SKJOT.join(blindede) == tekst, \
+        "testens fasit og artefaktens `kildetekst` er ikke samme streng"
+    grenser = blinding.dokumentgrenser(blindede)
+    # FIKSTURKONTROLL: uten et kryss å redde måler testen ingenting.
+    forste = tekst.find(sitat)
+    assert not any(a <= forste and forste + len(sitat) <= b
+                   for a, b in grenser), \
+        "fiksturen krysser ikke lenger — testen måler ikke flyttingen"
+
+    assert len(ut["funn"]) == 1, f"funnet forsvant fra artefakten: {ut}"
+    kilde = ut["funn"][0]["kilde"]
+    start, slutt = kilde["start"], kilde["slutt"]
+    assert (start, slutt) != (forste, forste + len(sitat)), \
+        "referansen ble stående på den kryssende første forekomsten"
+    assert any(a <= start and slutt <= b for a, b in grenser), \
+        f"den flyttede referansen krysser fortsatt en skjøt: {kilde}"
+    # Og referansen indekserer `kildetekst`, ikke råsøknaden.
+    assert tekst[start:slutt] == sitat, \
+        "offsetene peker ikke på sitatet i `kildetekst`"
+
+
 def test_en_verdi_med_skjot_INNE_i_ett_dokument_er_lovlig():
     """Grensen måler treffets plassering, ikke verdiens tegn (Codex P2).
 
