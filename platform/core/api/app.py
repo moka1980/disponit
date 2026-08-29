@@ -14,6 +14,7 @@ port — dette er.
 from __future__ import annotations
 
 import base64
+import collections
 import hashlib
 import hmac
 import ipaddress
@@ -169,12 +170,14 @@ STANDARD_RATE_PER_MIN = 2 * 60 * YTELSESKRAV_PER_SEK      # 12 000/min
 #: på 5xx): en forbigående serverfeil skal ikke kunne spise budsjettet og
 #: gjøre neste skriving til en terminal 4xx.
 #:
-#: MÅLT PRIS, ikke oversett: `slipp_gjennom` bygger vindulisten på nytt per
-#: kall, så en full bunt koster ~25 000 kall à opptil 50 000
-#: float-sammenligninger. Det er millisekunder per skriving ved siden av en
-#: HTTP-rundtur og et INSERT på inntil 25 MiB, altså ikke veiens toppunkt —
-#: men det er tallet som gjør en enda større bøtte til et ytelsesspørsmål,
-#: og da er det bøtteformen (deque/teller) som må endres, ikke taket.
+#: PRISEN ER BETALT I BØTTEFORMEN, IKKE I TAKET (Codex P2). Linjen her sa
+#: at `slipp_gjennom` bygger vindulisten på nytt per kall — ~312
+#: millioner float-sammenligninger for en full bunt — og godtok det som
+#: «ikke veiens toppunkt». Det stemte per skriving, men kostnaden lå
+#: under den DELTE låsen: hver annen rate-sjekk i prosessen ventet på et
+#: arbeid bare denne bøtta hadde bruk for. Bøtta er nå en `deque` som
+#: forlater hvert tidspunkt én gang (amortisert O(1)), så taket kan være
+#: kontraktens tall uten å være et ytelsesspørsmål.
 KANDIDATDATA_RATE_PER_MIN = 2 * (20_000 + 5_000)          # 50 000/min
 SIDE_STANDARD, SIDE_MAKS = 50, 200
 #: Statusene der saksbehandlingen ER FERDIG. Alt annet i statusmaskinen
@@ -359,7 +362,7 @@ class Rategrense:
 
     def __init__(self, per_minutt: int) -> None:
         self.per_minutt = per_minutt
-        self._treff: dict[str, list[float]] = {}
+        self._treff: dict[str, collections.deque[float]] = {}
         self._laas = threading.Lock()
 
     def slipp_gjennom(self, nokkel: str, naa: float | None = None, *,
@@ -373,16 +376,34 @@ class Rategrense:
         """
         naa = naa if naa is not None else time.monotonic()
         grense = tak if tak is not None else self.per_minutt
+        vindustart = naa - 60.0
         with self._laas:
             if len(self._treff) > self.NOKKELTAK:
                 self._treff = {k: v for k, v in self._treff.items()
-                               if v and v[-1] > naa - 60.0}
-            tider = [t for t in self._treff.get(nokkel, ()) if t > naa - 60.0]
+                               if v and v[-1] > vindustart}
+            tider = self._treff.get(nokkel)
+            if tider is None:
+                tider = self._treff[nokkel] = collections.deque()
+            # HVERT TIDSPUNKT UTLØPER ÉN GANG (Codex P2). Linjen her
+            # bygde vindulisten på nytt per kall — O(vindu) — og gjorde
+            # det mens den DELTE låsen sto. Med kandidatbøttas vindu på
+            # 50 000 kostet én full bunt (25 000 skriv, kontraktens
+            # maksimum) ~312 millioner sammenligninger, og hver av dem
+            # holdt låsen hver annen rate-sjekk i prosessen venter på.
+            # Prisen var beskrevet i konstantens kommentar og godtatt som
+            # «ikke veiens toppunkt» — men den er betalt av ALLE ruter,
+            # ikke bare av den som betalte for den.
+            #
+            # Køen gir samme vindu til amortisert O(1): tidspunktene står
+            # sortert fordi de settes inn i kalltidsrekkefølge (samme
+            # antakelse som feiingen over alt bygger på, `v[-1]`), så det
+            # som har falt ut av vinduet ligger fremst og forlates én
+            # gang — ikke én gang per etterfølgende kall.
+            while tider and tider[0] <= vindustart:
+                tider.popleft()
             if len(tider) >= grense:
-                self._treff[nokkel] = tider
                 return False
             tider.append(naa)
-            self._treff[nokkel] = tider
             return True
 
 
