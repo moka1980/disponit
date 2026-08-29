@@ -2159,3 +2159,44 @@ def test_reapmerket_krever_ogsaa_at_rapporten_er_makulert(migrator):
         migrator.rollback()
     finally:
         rt.close()
+
+
+def test_sp10_daekker_066():
+    """Cursor P2 på #252: 066 er en BACKFILL, og en backfill uten SP-10
+    er umålt der den faktisk kjører.
+
+    Engangs-makuleringen møter én form ved oppgradering som ingen
+    tom-base-`migrer` kan vise: en prosess som ALT er reapet, med den
+    promoterte rapportens payload i live. Uten seedet måler CI bare at
+    setningene parser — og en fjernet løkke ville vært grønn hele veien
+    til prod. Porten speiler `test_sp10_daekker_049`/`_056`/`_059`:
+    seed + måling registrert i SEEDS, og CI-pekeren på plass, ellers
+    kjører den aldri i pipelinen.
+
+    CI-PEKEREN MANGLER ENNÅ, OG DET STÅR HER I KLARTEKST: linja
+    `python deploy/staging/sp10-provekjoring.py 66` hører hjemme i
+    SP-10-steget i `.github/workflows/ci.yml`, rett under `59`. Denne
+    sløyfa kan ikke skrive den — GitHub avviser workflow-endringer fra
+    app-tokenet uten `workflows`-rettighet — så den ene linja er eiers
+    håndgrep. Porten under holder seedet og målingen på plass i
+    mellomtiden; assert-en på pekeren legges til i samme commit som
+    linja, av den som kan skrive den (`test_sp10_daekker_059` viser
+    formen)."""
+    from pathlib import Path
+    rot = Path(__file__).resolve().parents[3]
+    sp10 = (rot / "deploy" / "staging" / "sp10-provekjoring.py").read_text(
+        encoding="utf-8")
+    assert "66: (_seed_066, _mal_066)" in sp10, \
+        "066 har ingen registrert seed+måling i SEEDS"
+    # Seedet må FAKTISK bebo klassen 066 finnes for: en REAPET prosess
+    # (merket satt før 066) med en promotert rapport som fortsatt bærer
+    # payload. Et seed som bare fødte en levende prosess ville gjort
+    # målingen vacuous.
+    seed = sp10[sp10.index("def _seed_066"):sp10.index("def _mal_066")]
+    assert "slettet_ts = now()" in seed, \
+        "seedet setter aldri reap-merket — den bebodde formen mangler"
+    assert "'promotert'" in seed and "ciphertext" in seed, \
+        "seedet legger ingen promotert rapport med payload på oppdraget"
+    mal = sp10[sp10.index("def _mal_066"):sp10.index("SEEDS = {")]
+    assert "makulert_ts" in mal and "ciphertext" in mal, \
+        "målingen ser hverken merket eller den tømte payloaden"
