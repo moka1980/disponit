@@ -227,6 +227,22 @@ def test_port23_symlenke_avvises(tmp_path):
     with pytest.raises(parsing.Buntfeil) as e:
         list(parsing.les_porsjonsvis(arkiv))
     assert e.value.kode == "symlenke"
+    arkiv.unlink()
+    # Codex P2: STIEN FELLER FØR FILTYPEN, også for en MEDLEMSOPPFØRING.
+    # `_sjekk_navn` ble utsatt til `_mal_medlem` for ikke-mapper, men
+    # symlenketesten ble stående på alle oppføringer — en oppføring som
+    # er BEGGE deler rapporterte da `symlenke` for en sti som aldri var
+    # inne i bunten. Ute måles navnet på hver oppføring før filtypen;
+    # inne skal koden være den samme.
+    # MUTASJONEN SOM DREPER DENNE: flytt `_sjekk_navn` i `_mal_docx`
+    # tilbake inn i `if info.is_dir()`-armen.
+    docx = _docx([("word/document.xml", b"<w:t>CV</w:t>"),
+                  ("../../escape.xml", b"/etc/passwd", (0o120777 << 16))])
+    arkiv = _bunt(tmp_path, [("cv.docx", docx)])
+    parsing.inspiser_bunt(arkiv)
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(arkiv))
+    assert e.value.kode == "sti_utenfor_bunten"
 
 
 def test_port24_nostet_arkiv_avvises(tmp_path):

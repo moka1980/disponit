@@ -506,14 +506,25 @@ def _mal_docx(data: bytes, *, budsjett: Budsjett, kontekst: str) -> None:
         # Mappene teller mot budsjettet, som ute (runde 7): grensen
         # bevokter arbeidet katalogen påfører oss, og det arbeidet er
         # gjort før vi rekker å filtrere.
+        #
+        # STIEN MÅLES PÅ HVER OPPFØRING, FØR FILTYPEN (Codex P2). Da
+        # `_sjekk_navn` for medlemmene ble utsatt til `_mal_medlem`, ble
+        # den stående igjen inne i mappearmen — men symlenketesten under
+        # gjelder ALLE oppføringer. `../../escape.xml` med lenkebiter ble
+        # derfor meldt som `symlenke` mens den er `sti_utenfor_bunten`,
+        # og kodene er den offentlige, sikkerhetsrelevante utgangen av
+        # gaten. Den ytre katalogporten måler navn på hver oppføring før
+        # den ser på filtypen; her er rekkefølgen nå den samme. At
+        # `_mal_medlem` måler navnet en gang til er samme dublett som
+        # ute — en idempotent port, ikke to implementasjoner.
         for info in alle:
+            _sjekk_navn(info.filename,
+                        kontekst=f"{kontekst}/{info.filename}")
             if info.is_dir():
                 budsjett.filer += 1
                 if budsjett.filer > MAKS_FILER:
                     raise Buntfeil("for_mange_filer",
                                    f"{kontekst}/{info.filename}")
-                _sjekk_navn(info.filename,
-                            kontekst=f"{kontekst}/{info.filename}")
             if (info.external_attr >> 16) & 0o170000 == 0o120000:
                 raise Buntfeil("symlenke", f"{kontekst}/{info.filename}")
         sett: set[str] = set()
