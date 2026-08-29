@@ -1762,9 +1762,24 @@ function bestillSeksjon(hoved, ctx, data, okt, laas) {
       // 409-er, aldri denne.
       const buntUbrukelig = definitivt && e.status === 409
         && e.kode === "inndata_ubrukelig";
+      // «SAMME OPERASJON» ER USANT OGSÅ HER NÅR INTENSJONEN ER
+      // FORLATT (Codex P2). Denne armen velges på KODEN alene, uten
+      // `opptattNokkel`s `inndataRef`-vakt — og `change` nuller nettopp
+      // `inndataRef` samtidig som den bumper `generasjon` og forkaster
+      // `bestillIdem` (`:1391`). Byttet brukeren fil mens POST-en fløy,
+      // står nøkkelen altså IKKE: linjen over beholder bare en nøkkel
+      // som er borte, og neste Send bærer en fersk nøkkel på en NY bunt.
+      // Løftet «et nytt forsøk gjentar den SAMME operasjonen» er da
+      // løgn, samme klasse som `sendt_forlatt_bunt` (tillat-armen),
+      // `stoppet_forlatt`/`unntak_forlatt` (dom-armen) og
+      // `forlatt_usikkert` (0/5xx-armen) — og samme måling, `forlatt`
+      // under. Teksten navngir ikke bunten: `sendtBunt` (`:1563`) bor i
+      // `try`, og armen her klarer seg med det `forlatt_usikkert` sier.
       const forlatt = tilstand.generasjon !== min;
       sett(utfall, t(opptattNokkel ? "ui.rekruttering.bestill.opptatt"
-        : buntOpptatt ? "ui.rekruttering.bestill.bunt_opptatt"
+        : buntOpptatt
+          ? (forlatt ? "ui.rekruttering.bestill.bunt_opptatt_forlatt"
+            : "ui.rekruttering.bestill.bunt_opptatt")
           : buntUbrukelig ? "ui.rekruttering.bestill.bunt_ubrukelig"
             : definitivt ? "ui.rekruttering.bestill.feil"
               : forlatt ? "ui.rekruttering.bestill.forlatt_usikkert"

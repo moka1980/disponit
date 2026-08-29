@@ -2936,6 +2936,79 @@ test("Bestilling: 409 «bunten er opptatt» beholder nøkkelen (#215)",
       + "operasjon i stedet for den samme");
   });
 
+test("Bestilling: en FORLATT bunt får ikke «samme operasjon» av 409-en "
+  + "(Codex P2)", async () => {
+  // Grensevakten til testen over: der ER retryen den samme operasjonen,
+  // fordi nøkkelen står. Bytter brukeren fil mens POST-en flyr, nuller
+  // `change` derimot `inndataRef` og forkaster `bestillIdem` samtidig som
+  // den bumper `generasjon` — og da beholder 409-armen bare en nøkkel som
+  // er borte. `buntOpptatt` ble likevel valgt FØR `forlatt`, så teksten
+  // lovte at et nytt forsøk gjentar SAMME operasjon mens neste Send bar
+  // en fersk nøkkel på en NY bunt. Samme løgnklasse som
+  // `sendt_forlatt_bunt`, `stoppet_forlatt` og `forlatt_usikkert`.
+  //
+  // MUTASJONEN SOM DREPER DENNE: la `buntOpptatt`-armen velge
+  // `bunt_opptatt` uten `forlatt`-vurderingen.
+  KALL = [];
+  let slippBestilling;
+  let bestillingssvar = new Promise((r) => { slippBestilling = r; });
+  let reservasjon = { reservasjon_jti: "j-1", inndata_ref: "inndata:u-1" };
+  SVAR = (sti) => {
+    if (sti === "/v1/rekruttering/prosesser") return prosess();
+    if (sti === "/v1/rekruttering/stillingsprofiler") return profiler();
+    if (sti === "/v1/inndata/reserver") return reservasjon;
+    if (sti.startsWith("/v1/inndata/opplast/")) return {};
+    if (sti === "/v1/bestilling") return bestillingssvar;
+    return undefined;
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const seksjon =
+    hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  const skjema = seksjon.querySelector("form");
+  const send = skjema.querySelector("button[type=submit]");
+  const filInp = skjema.querySelector("input[type=file]");
+  const velgFil = (navn) => {
+    Object.defineProperty(filInp, "files", { configurable: true,
+      value: [{ name: navn, arrayBuffer: async () => new ArrayBuffer(16) }] });
+    filInp.dispatchEvent(new window.Event("change", { bubbles: true }));
+  };
+  const bestillinger = () => KALL.filter((k) => k.sti === "/v1/bestilling");
+  const bestill = () => skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  velgFil("bunt.zip");
+  bestill();
+  assert.ok(await vent(() => bestillinger().length === 1, 40),
+    "bestillingen kom aldri");
+  // Brukeren bytter bunt mens bestillingen står UBESVART — og FØRST DA
+  // svarer serveren at buntlåsen er holdt.
+  reservasjon = { reservasjon_jti: "j-2", inndata_ref: "inndata:u-2" };
+  velgFil("bunt2.zip");
+  slippBestilling({ __status: 409, __kropp: { feil: "inndata_opptatt" } });
+  assert.ok(await vent(() => !send.disabled, 40), "kjeden ble aldri ferdig");
+  const melding = seksjon.querySelector("[role=alert]").textContent;
+  assert.notEqual(melding, t("ui.rekruttering.bestill.bunt_opptatt"),
+    "en forlatt bunt lovte fortsatt at retry er SAMME operasjon");
+  // `t()` faller tilbake til nøkkelen selv når den mangler, og da ville
+  // linjen under målt seg selv: begge sider hadde vært samme streng.
+  assert.notEqual(melding, "ui.rekruttering.bestill.bunt_opptatt_forlatt",
+    "locale mangler nøkkelen — brukeren fikk en rå identifikator");
+  assert.equal(melding, t("ui.rekruttering.bestill.bunt_opptatt_forlatt"));
+  // ... og setningen er sann: neste Send ER en ny operasjon, på den nye
+  // bunten og med en fersk nøkkel.
+  bestillingssvar = { beslutning: "tillat", oppdrag_id: 12 };
+  bestill();
+  assert.ok(await vent(() => bestillinger().length === 2, 40),
+    "den nye bestillingen kom aldri");
+  const [b1, b2] = bestillinger();
+  assert.equal(b1.kropp.inndata_ref, "inndata:u-1");
+  assert.equal(b2.kropp.inndata_ref, "inndata:u-2",
+    "den nye bestillingen gikk på den forlatte bunten");
+  assert.notEqual(b2.hoder["Idempotency-Key"], b1.hoder["Idempotency-Key"],
+    "en ny kropp bar den forlatte intensjonens nøkkel");
+});
+
 test("Bestilling: den terminale teksten beskriver ikke den forbigående "
   + "naboen (#215)", () => {
   // Cursor P2: kodene ble delt i #215, men `bunt_ubrukelig` bar fortsatt
