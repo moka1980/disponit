@@ -2344,6 +2344,11 @@ _KANDIDAT_NS = uuid.uuid5(uuid.NAMESPACE_URL, "disponit:m57:kandidatlager")
 #: valg A). Speilet av modulens `parsing.KANDIDAT_ID_KANON`; kilden er
 #: kontrakten, og api/ importerer aldri modulkode.
 _KANDIDAT_ID_KANON = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+#: Arkivmedlemmets navn, målt i byte som ZIP-formatet selv gjør det:
+#: `file name length` er 16-bits, så dette er det lengste navnet et
+#: medlem overhodet kan bære. Grensen er ARKIVKONTRAKTENS, ikke dørens
+#: egen — se `_kandidatdata`.
+_KANDIDAT_NAVN_MAKS = 65_535
 #: De tre lovede innholdstypene — endelse -> MIME. Alt annet er alt
 #: felt av arkivgaten; her er det en feilformet forespørsel.
 _KANDIDAT_MIME = {
@@ -2478,8 +2483,24 @@ def _kandidatdata(tjeneste: Tjeneste, request: Request, form: str) -> Response:
             tekst = kropp.get("tekst")
             endelse = ("." + navn.rsplit(".", 1)[-1].lower()
                        if isinstance(navn, str) and "." in navn else "")
+            # NAVNEGRENSEN ER ARKIVETS, IKKE DØRENS EGEN (Codex P2). Her
+            # sto `len(navn) > 512`, et tall arkivgaten ikke kjenner:
+            # `parsing._sjekk_navn` måler traversering og endelse, aldri
+            # lengde, og `les_porsjonsvis` strømmer medlemmene uten å
+            # materialisere navnene som filsystemstier. En ellers gyldig
+            # pdf/docx/html med et lengre ZIP-navn passerte altså hele
+            # veien fram hit og fikk `request_feilformet` — som
+            # controlleren gjør om til `kandidatlagring_feilet` for HELE
+            # evalueringen. Døren avviste en bunt arkivkontrakten godtar.
+            #
+            # Grensen er derfor formatets egen: ZIPs `file name length`
+            # er 16-bits, så 65 535 byte er det lengste navnet et medlem
+            # overhodet KAN bære. Målt i byte, som feltet selv. Den er
+            # fortsatt en grense — døren stoler aldri på kalleren, og
+            # `dokumentnavn` går inn i uuid5, i en TEXT-kolonne og i
+            # loggens detalj — men nå en som ikke kan felle noe gyldig.
             if not isinstance(navn, str) or not navn \
-                    or len(navn) > 512 \
+                    or len(navn.encode("utf-8")) > _KANDIDAT_NAVN_MAKS \
                     or endelse not in _KANDIDAT_MIME \
                     or not isinstance(b64, str) \
                     or not isinstance(tekst, str):
