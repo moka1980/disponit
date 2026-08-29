@@ -1909,12 +1909,21 @@ function bestillSeksjon(hoved, ctx, data, okt, laas) {
       //
       // DEN FORBIGÅENDE NABOEN HAR SIN EGEN KODE (#215, eierdom (b)):
       // `inndata_opptatt` betyr at en annen bestilling holder bunten
-      // AKKURAT NÅ — ingen dom, ingen kvote, første forsøk kan fortsatt
-      // committe. Samme økonomi som `opptattNokkel`: nøkkelen består
+      // AKKURAT NÅ. Samme økonomi som `opptattNokkel`: nøkkelen består
       // (retry er SAMME operasjon), og teksten sier «prøv igjen om et
       // øyeblikk». Før #215 kollapset `KLIENTKODE` begge til
       // `inndata_ubrukelig`, og flaten kunne ikke velge nøkkeløkonomi
       // på koden alene.
+      //
+      // ... MEN «INGEN DOM, INGEN KVOTE» ER IKKE KODENS LØFTE (Codex
+      // P2). Koden bæres av TO grener i `utfor_bestilling`: den vanlige
+      // (låsen tas før beslutningen — da er begge deler sant) og
+      // gjenopprettingen, der et alt COMMITET `TILLAT` re-tar buntlåsen
+      // (`bestilling.py:617-626`) og svarer det samme når en annen
+      // holder den. Der ER dommen felt og kvoten trukket, og teksten
+      // ville sagt brukeren to usanne ting. Den sier derfor bare det
+      // BEGGE grenene garanterer: bunten er holdt akkurat nå, og retry
+      // med SAMME nøkkel er trygg.
       //
       // Koden alene er stedet her, uten `inndataRef`-vakten
       // `opptattNokkel` trenger: `idempotenskonflikt` har motsatt
@@ -1924,9 +1933,24 @@ function bestillSeksjon(hoved, ctx, data, okt, laas) {
       // 409-er, aldri denne.
       const buntUbrukelig = definitivt && e.status === 409
         && e.kode === "inndata_ubrukelig";
+      // «SAMME OPERASJON» ER USANT OGSÅ HER NÅR INTENSJONEN ER
+      // FORLATT (Codex P2). Denne armen velges på KODEN alene, uten
+      // `opptattNokkel`s `inndataRef`-vakt — og `change` nuller nettopp
+      // `inndataRef` samtidig som den bumper `generasjon` og forkaster
+      // `bestillIdem` (`:1391`). Byttet brukeren fil mens POST-en fløy,
+      // står nøkkelen altså IKKE: linjen over beholder bare en nøkkel
+      // som er borte, og neste Send bærer en fersk nøkkel på en NY bunt.
+      // Løftet «et nytt forsøk gjentar den SAMME operasjonen» er da
+      // løgn, samme klasse som `sendt_forlatt_bunt` (tillat-armen),
+      // `stoppet_forlatt`/`unntak_forlatt` (dom-armen) og
+      // `forlatt_usikkert` (0/5xx-armen) — og samme måling, `forlatt`
+      // under. Teksten navngir ikke bunten: `sendtBunt` (`:1563`) bor i
+      // `try`, og armen her klarer seg med det `forlatt_usikkert` sier.
       const forlatt = tilstand.generasjon !== min;
       sett(utfall, t(opptattNokkel ? "ui.rekruttering.bestill.opptatt"
-        : buntOpptatt ? "ui.rekruttering.bestill.bunt_opptatt"
+        : buntOpptatt
+          ? (forlatt ? "ui.rekruttering.bestill.bunt_opptatt_forlatt"
+            : "ui.rekruttering.bestill.bunt_opptatt")
           : buntUbrukelig ? "ui.rekruttering.bestill.bunt_ubrukelig"
             : definitivt ? "ui.rekruttering.bestill.feil"
               : forlatt ? "ui.rekruttering.bestill.forlatt_usikkert"

@@ -3272,6 +3272,130 @@ test("Bestilling: 409 «bunten er opptatt» beholder nøkkelen (#215)",
       + "operasjon i stedet for den samme");
   });
 
+test("Bestilling: en FORLATT bunt får ikke «samme operasjon» av 409-en "
+  + "(Codex P2)", async () => {
+  // Grensevakten til testen over: der ER retryen den samme operasjonen,
+  // fordi nøkkelen står. Bytter brukeren fil mens POST-en flyr, nuller
+  // `change` derimot `inndataRef` og forkaster `bestillIdem` samtidig som
+  // den bumper `generasjon` — og da beholder 409-armen bare en nøkkel som
+  // er borte. `buntOpptatt` ble likevel valgt FØR `forlatt`, så teksten
+  // lovte at et nytt forsøk gjentar SAMME operasjon mens neste Send bar
+  // en fersk nøkkel på en NY bunt. Samme løgnklasse som
+  // `sendt_forlatt_bunt`, `stoppet_forlatt` og `forlatt_usikkert`.
+  //
+  // MUTASJONEN SOM DREPER DENNE: la `buntOpptatt`-armen velge
+  // `bunt_opptatt` uten `forlatt`-vurderingen.
+  KALL = [];
+  let slippBestilling;
+  let bestillingssvar = new Promise((r) => { slippBestilling = r; });
+  let reservasjon = { reservasjon_jti: "j-1", inndata_ref: "inndata:u-1" };
+  SVAR = (sti) => {
+    if (sti === "/v1/rekruttering/prosesser") return prosess();
+    if (sti === "/v1/rekruttering/stillingsprofiler") return profiler();
+    if (sti === "/v1/inndata/reserver") return reservasjon;
+    if (sti.startsWith("/v1/inndata/opplast/")) return {};
+    if (sti === "/v1/bestilling") return bestillingssvar;
+    return undefined;
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const seksjon =
+    hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  const skjema = seksjon.querySelector("form");
+  const send = skjema.querySelector("button[type=submit]");
+  const filInp = skjema.querySelector("input[type=file]");
+  const velgFil = (navn) => {
+    Object.defineProperty(filInp, "files", { configurable: true,
+      value: [{ name: navn, arrayBuffer: async () => new ArrayBuffer(16) }] });
+    filInp.dispatchEvent(new window.Event("change", { bubbles: true }));
+  };
+  const bestillinger = () => KALL.filter((k) => k.sti === "/v1/bestilling");
+  const bestill = () => skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  velgFil("bunt.zip");
+  bestill();
+  assert.ok(await vent(() => bestillinger().length === 1, 40),
+    "bestillingen kom aldri");
+  // Brukeren bytter bunt mens bestillingen står UBESVART — og FØRST DA
+  // svarer serveren at buntlåsen er holdt.
+  reservasjon = { reservasjon_jti: "j-2", inndata_ref: "inndata:u-2" };
+  velgFil("bunt2.zip");
+  slippBestilling({ __status: 409, __kropp: { feil: "inndata_opptatt" } });
+  assert.ok(await vent(() => !send.disabled, 40), "kjeden ble aldri ferdig");
+  const melding = seksjon.querySelector("[role=alert]").textContent;
+  assert.notEqual(melding, t("ui.rekruttering.bestill.bunt_opptatt"),
+    "en forlatt bunt lovte fortsatt at retry er SAMME operasjon");
+  // `t()` faller tilbake til nøkkelen selv når den mangler, og da ville
+  // linjen under målt seg selv: begge sider hadde vært samme streng.
+  assert.notEqual(melding, "ui.rekruttering.bestill.bunt_opptatt_forlatt",
+    "locale mangler nøkkelen — brukeren fikk en rå identifikator");
+  assert.equal(melding, t("ui.rekruttering.bestill.bunt_opptatt_forlatt"));
+  // ... og setningen er sann: neste Send ER en ny operasjon, på den nye
+  // bunten og med en fersk nøkkel.
+  bestillingssvar = { beslutning: "tillat", oppdrag_id: 12 };
+  bestill();
+  assert.ok(await vent(() => bestillinger().length === 2, 40),
+    "den nye bestillingen kom aldri");
+  const [b1, b2] = bestillinger();
+  assert.equal(b1.kropp.inndata_ref, "inndata:u-1");
+  assert.equal(b2.kropp.inndata_ref, "inndata:u-2",
+    "den nye bestillingen gikk på den forlatte bunten");
+  assert.notEqual(b2.hoder["Idempotency-Key"], b1.hoder["Idempotency-Key"],
+    "en ny kropp bar den forlatte intensjonens nøkkel");
+});
+
+test("Bestilling: den terminale teksten beskriver ikke den forbigående "
+  + "naboen (#215)", () => {
+  // Cursor P2: kodene ble delt i #215, men `bunt_ubrukelig` bar fortsatt
+  // kollaps-teksten «enten holder en annen bestilling den akkurat nå,
+  // eller …». Da lyver den terminale armen om årsaksklassen og blander
+  // «vent, samme nøkkel» med «velg ny fil» — nøyaktig skillet koden
+  // alene nå skal bære. Den forbigående teksten eier den klausulen.
+  //
+  // MUTASJONEN SOM DREPER DENNE: legg den forbigående klausulen tilbake
+  // i `bunt_ubrukelig` i nb.json eller en.json.
+  const en = JSON.parse(readFileSync(join(ROT, "locales", "en.json"), "utf-8"));
+  const ubrukelig = "ui.rekruttering.bestill.bunt_ubrukelig";
+  const opptatt = "ui.rekruttering.bestill.bunt_opptatt";
+  assert.ok(!/holder .* akkurat nå/.test(t(ubrukelig)),
+    "nb: den terminale teksten beskriver fortsatt den forbigående naboen");
+  assert.ok(!/holding .* right now/.test(en[ubrukelig]),
+    "en: den terminale teksten beskriver fortsatt den forbigående naboen");
+  // …og klausulen står der den hører hjemme.
+  assert.ok(/holder .* akkurat nå/.test(t(opptatt)), "nb: bunt_opptatt");
+  assert.ok(/holding .* right now/.test(en[opptatt]), "en: bunt_opptatt");
+});
+
+test("Bestilling: den forbigående teksten lover ikke ubrukt kvote "
+  + "(Codex P2)", () => {
+  // `inndata_opptatt` bæres av TO grener i `utfor_bestilling`: den
+  // vanlige (buntlåsen tas FØR beslutningen — ingen dom, ingen kvote) og
+  // gjenopprettingen, der et alt committet `TILLAT` re-tar låsen
+  // (`bestilling.py:617-626`) og svarer den samme koden. På den andre er
+  // dommen felt og kvoten trukket, så «Ingenting er avgjort, og ingen
+  // kvote er brukt» var to usanne setninger. Teksten skal si bare det
+  // BEGGE grenene garanterer — holdt bunt, trygg retry med samme nøkkel.
+  //
+  // MUTASJONEN SOM DREPER DENNE: legg kvote-/dom-løftet tilbake i
+  // `bunt_opptatt` i nb.json eller en.json.
+  const en = JSON.parse(readFileSync(join(ROT, "locales", "en.json"), "utf-8"));
+  const opptatt = "ui.rekruttering.bestill.bunt_opptatt";
+  const forlatt = "ui.rekruttering.bestill.bunt_opptatt_forlatt";
+  for (const nokkel of [opptatt, forlatt]) {
+    assert.ok(!/ingen kvote/i.test(t(nokkel)), `nb: ${nokkel} lover kvote`);
+    assert.ok(!/no quota/i.test(en[nokkel]), `en: ${nokkel} lover kvote`);
+    assert.ok(!/ingenting er avgjort/i.test(t(nokkel)),
+      `nb: ${nokkel} lover at ingenting er avgjort`);
+    assert.ok(!/nothing has been decided/i.test(en[nokkel]),
+      `en: ${nokkel} lover at ingenting er avgjort`);
+  }
+  // …og det koden FAKTISK garanterer står fortsatt der (testen over
+  // eier holdt-bunt-klausulen; denne eier nøkkelløftet).
+  assert.ok(/SAMME operasjonen/.test(t(opptatt)), "nb: retry-løftet falt ut");
+  assert.ok(/SAME operation/.test(en[opptatt]), "en: retry-løftet falt ut");
+});
+
 test("Bestilling: endret kropp etter usikkert svar gir NY nøkkel (P1-2)", async () => {
   KALL = [];
   const basis = { "/v1/rekruttering/prosesser": prosess(),

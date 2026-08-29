@@ -366,6 +366,7 @@ def test_buntlaasen_og_nokkellaasen_deler_ikke_navnerom():
 
 
 @pg
+@dekker("inndata_opptatt")
 def test_opptatt_bunt_avvises_for_beslutningen(klient, migrator, miljo,
                                                inndata_rot):
     """Cursor P1, deterministisk: holdes buntlåsen av en ANNEN bestilling,
@@ -393,7 +394,7 @@ def test_opptatt_bunt_avvises_for_beslutningen(klient, migrator, miljo,
             (navn,)).fetchone()[0] is True
         r = _bestill(klient, cookie, csrf, kropp, nokkel)
         assert (r.status_code, r.json()["feil"]) == (
-            409, "inndata_ubrukelig"), r.text
+            409, "inndata_opptatt"), r.text
         assert _beslutninger(migrator) == 0, \
             "en forespørsel uten buntlåsen tok likevel en beslutning"
         assert _buntrad(migrator, ref) == ("lastet", None)
@@ -504,7 +505,6 @@ def test_to_samtidige_bestillinger_paa_bunten_brenner_en_kvote(
 
 
 @pg
-@dekker("inndata_opptatt")
 def test_gjenspill_av_evalueringsbestillingen_binder_ikke_paa_nytt(
         klient, migrator, miljo, inndata_rot):
     """Cursor P2 (b): en retry som mistet svaret får BESLUTNINGEN sin
