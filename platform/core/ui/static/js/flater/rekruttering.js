@@ -975,6 +975,22 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
     sett(rapportRot, ...(noder || []));
     return true;
   };
+  // LISTEHANDLINGENE MELDER FRA (Codex P2). En feilet «Last flere» eller
+  // «Oppdater» re-aktiverte bare knappen og lot den utdaterte listen stå:
+  // brukeren kunne ikke skille et nettbrudd/403/5xx fra «oppdatert, og
+  // ingenting hadde endret seg», og fortsatte derfor å handle på gamle
+  // statuser — eller å be om en side hen ikke har tilgang til, om og om
+  // igjen. 401 er fortsatt ikke en melding: den eier `ctx.paaUautorisert`.
+  //
+  // Meldingen går i seksjonens `role="alert"` — SAMME utfallsområde som
+  // rapporthentingen bruker — og ryddes av neste vellykkede listehandling,
+  // så en gammel feil aldri blir stående over en fersk liste. Frakoblet
+  // rot er ikke et lerret (samme regel som `rHent.tegn`).
+  const meldListefeil = (feilet) => {
+    if (!rot.isConnected) return;
+    sett(utfall,
+      ...(feilet ? [t("ui.rekruttering.evalueringer.handlingfeil")] : []));
+  };
   // Listeoppfriskningen bærer NØYAKTIG samme risiko (Cursor P2):
   // `paagaaende` slipper opp før den fire-and-forget `oppdater()` er
   // ferdig, så to raske bestillinger gir to hentinger i lufta samtidig.
@@ -1306,10 +1322,14 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
           svar = await hentEvalueringer(cursor);
         } catch (e) {
           if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+          // Et eldre, tapt kall skal ikke melde feil over en ferskere
+          // liste — samme generasjonsregel som suksessveien.
+          if (min === eval2.nr) meldListefeil(true);
           k.disabled = false;
           return;
         }
         if (min !== eval2.nr) return;
+        meldListefeil(false);
         const basis = eval2.liste !== undefined
           ? eval2.liste : (evalueringer || []);
         eval2.liste = basis.concat((svar && svar.evalueringer) || []);
@@ -1409,13 +1429,18 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       try {
         svar = await hentEvalueringer();
       } catch (e) {
-        if (e instanceof UautorisertFeil) ctx.paaUautorisert();
+        if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+        // Også oppfriskningen etter en bestilling melder fra: en stille
+        // katch her lot den nye evalueringen mangle fra listen uten at
+        // noe sa hvorfor (Codex P2).
+        if (min === eval_.nr) meldListefeil(true);
         return;
       }
       // Samme regel som rapporthentingen: bare den SISTE oppfriskningen
       // får tegne — og et tregt eldre svar skal heller ikke skrive seg
       // inn i økten.
       if (min !== eval_.nr) return;
+      meldListefeil(false);
       // Oppfriskningen er FØRSTE side på nytt — cursoren følger den:
       // en beholdt fortsettelse fra en eldre liste ville pekt midt inn
       // i en historikk som nettopp fikk nye rader øverst.

@@ -1570,6 +1570,59 @@ test("Evalueringer: «Last flere» følger serverens cursor og appender (#221)",
     "knappen ble stående uten fortsettelse å følge");
 });
 
+test("Evalueringer: en feilet listehandling MELDER fra — ikke stille "
+  + "utdatert liste", async () => {
+  KALL = [];
+  // Codex P2: en feilet «Last flere»/«Oppdater» re-aktiverte bare
+  // knappen. Brukeren kunne ikke skille 403/5xx/nettbrudd fra
+  // «oppdatert, ingenting nytt», og handlet videre på gamle statuser.
+  const rad = (id) => ({ oppdrag_id: id, status: "opprettet",
+    opprettet: "2026-08-27T02:00:00+00:00", rapport_klar: false });
+  SVAR = {
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": {
+      evalueringer: [rad(200)], flere: true, neste_cursor: "c-side2.mac" },
+    "/v1/rekruttering/evalueringer?cursor=c-side2.mac": 503,
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel] table")));
+  const seksjon = hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  const knapp = (nokkel) => [...seksjon.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.evalueringer." + nokkel));
+  const alert = () => seksjon.querySelector("[role=alert]").textContent;
+  assert.equal(alert(), "", "positiv kontroll: utfallsområdet står tomt");
+  knapp("last_flere").click();
+  assert.ok(await vent(() => alert().includes(
+    t("ui.rekruttering.evalueringer.handlingfeil"))),
+  "en feilet «Last flere» sa ingenting");
+  assert.ok(!knapp("last_flere").disabled,
+    "knappen ble stående deaktivert etter feilen");
+  assert.ok(seksjon.textContent.includes("200"),
+    "listen brukeren så på forsvant på feilveien");
+
+  // ... og «Oppdater» på samme vei.
+  SVAR["/v1/rekruttering/evalueringer"] = 503;
+  knapp("oppdater").click();
+  assert.ok(await vent(() => alert().includes(
+    t("ui.rekruttering.evalueringer.handlingfeil"))),
+  "en feilet «Oppdater» sa ingenting");
+
+  // ... og en vellykket handling RYDDER meldingen: en gammel feil skal
+  // aldri bli stående over en fersk liste.
+  SVAR["/v1/rekruttering/evalueringer"] = {
+    evalueringer: [rad(201), rad(200)], flere: false, neste_cursor: null };
+  knapp("oppdater").click();
+  assert.ok(await vent(() => alert() === ""),
+    "feilmeldingen ble stående over en vellykket oppfriskning");
+  assert.ok(seksjon.textContent.includes("201"), "listen ble ikke oppfrisket");
+  // MUTASJONEN SOM DREPER DENNE: fjern `meldListefeil(true)` fra katchene
+  // — da er alle tre ventingene tomme og testen ryker på den første.
+});
+
 test("Evalueringer: «Oppdater» og «Last flere» blander aldri to "
   + "cursorkjeder — siste klikk vinner", async () => {
   KALL = [];
