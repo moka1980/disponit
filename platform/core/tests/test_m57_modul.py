@@ -5616,3 +5616,93 @@ def test_funnbudsjettene_haandheves_i_den_delte_porten():
     svar["funn"] = svar["funn"][:FUNN_MAKS]
     # Grensen selv er lovlig — elementvalideringen tar resten.
     evaluering._krev_helt_svar(svar, {"drift": 3})
+
+def test_v2_rapporten_er_beslutningssporet_uten_payload(tmp_path):
+    """#168 (eiers A-dom): v2-rapporten bærer referanser, poeng,
+    nedbrytning og modelldigest — ALDRI funn, sitater, intervjuspørsmål
+    eller kildetekst. Skjemaet er lukket, så payloadfeltene er ikke bare
+    fraværende i byggingen: de er UMULIGE i dokumentet."""
+    import json as _json
+
+    import jsonschema
+
+    from modules.m57_ats import blinding, kjoring, rapportskjema
+
+    manifest = _json.dumps({"soknader": [
+        {"kandidat_id": "k1", "filer": ["k1/cv.html"]},
+        {"kandidat_id": "k2", "filer": ["k2/cv.html"]}]})
+    arkiv = _bunt(tmp_path,
+                  [("k1/cv.html", b"<p>Kari Testdal kan drift</p>"),
+                   ("k2/cv.html", b"<p>Ola Testdal kan drift</p>")],
+                  manifest=manifest)
+    profil = {"profil_id": "p-168", "versjon": 1, "navn": "Driftsingenior"}
+    digest = "sha256:" + "ab" * 32
+
+    ut = kjoring.kjor_bunt(
+        arkiv, _Modell(), vekter={"drift": 3},
+        kandidatfelter_for=lambda m: {"navn": ["Testdal"]},
+        tekst_for=lambda m, d: d.decode("utf-8"),
+        biasmaalinger=_MAALINGER, antall_soknader=2)
+    rapport = rapportskjema.bygg_v2(ut, profil=profil, antall_soknader=2,
+                                    modelldigest=digest)
+    jsonschema.Draft202012Validator(rapportskjema.SKJEMA_V2).validate(rapport)
+    # Beslutningssporet er der …
+    assert rapport["versjon"] == rapportskjema.VERSJON_V2
+    assert rapport["modelldigest"] == digest
+    assert {r["kandidat_id"] for r in rapport["rangering"]} == {"k1", "k2"}
+    # … og payloaden er ikke det — målt på DOKUMENTET, ikke på koden.
+    sendt = _json.dumps(rapport)
+    for forbudt in ("kandidater", "funn", "sitat", "intervjusporsmal",
+                    "kildetekst"):
+        assert f'"{forbudt}"' not in sendt, (
+            f"payloadfeltet {forbudt} lekket inn i beslutningssporet")
+    # Et forsøk på å legge payload TIL avvises av det lukkede skjemaet.
+    med_payload = dict(rapport, kandidater={"k1": {"funn": []}})
+    try:
+        jsonschema.Draft202012Validator(
+            rapportskjema.SKJEMA_V2).validate(med_payload)
+    except jsonschema.ValidationError:
+        pass
+    else:
+        raise AssertionError("SKJEMA_V2 tok imot et kandidater-felt")
+    # Digestformen er biasmålingens egen — en løs streng er ingen modell.
+    try:
+        jsonschema.Draft202012Validator(rapportskjema.SKJEMA_V2).validate(
+            dict(rapport, modelldigest="latest"))
+    except jsonschema.ValidationError:
+        pass
+    else:
+        raise AssertionError("SKJEMA_V2 tok imot en digest uten form")
+
+
+def test_v2_avskruingssporet_promoteres_som_i_v1(tmp_path):
+    """Unntaket skal synes i evidensen også når payloaden ikke gjør det:
+    en avskrudd bunt bærer (hendelse_id, aktor) i v2-rapporten, en
+    blindet bærer ingenting."""
+    import json as _json
+
+    import jsonschema
+
+    from modules.m57_ats import blinding, kjoring, rapportskjema
+
+    manifest = _json.dumps({"soknader": [
+        {"kandidat_id": "k1", "filer": ["k1/cv.html"]}]})
+    arkiv = _bunt(tmp_path, [("k1/cv.html", b"<p>Kari kan drift</p>")],
+                  manifest=manifest)
+    profil = {"profil_id": "p-168", "versjon": 1, "navn": "Driftsingenior"}
+    hid = "7f1c1f7e-0000-4000-8000-000000000168"
+    digest = "sha256:" + "cd" * 32
+
+    ut = kjoring.kjor_bunt(
+        arkiv, _Modell(), vekter={"drift": 3},
+        tekst_for=lambda m, d: d.decode("utf-8"),
+        biasmaalinger=_MAALINGER, antall_soknader=1, blinding_av=True,
+        avskruing_hendelse_id=hid,
+        hendelseoppslag=lambda _i: {
+            "handling": blinding.AVSKRUINGSHANDLING,
+            "aktor": "eier@kunde", "ts": "2026-08-29T00:00:00+00:00"})
+    rapport = rapportskjema.bygg_v2(ut, profil=profil, antall_soknader=1,
+                                    modelldigest=digest)
+    jsonschema.Draft202012Validator(rapportskjema.SKJEMA_V2).validate(rapport)
+    assert rapport["avskruing"] == {"hendelse_id": hid,
+                                    "aktor": "eier@kunde"}
