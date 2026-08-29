@@ -848,30 +848,6 @@ def test_mergeporten_pagineres_gjennom_hele_connectionen():
         "regelen sier ikke når gjentakelsen stopper"
 
 
-def test_retryen_beviser_at_avviket_er_kjoringens_eget():
-    """Codex P2 (runde 10): «vi pushet» er ikke «bare vi pushet».
-
-    Runde 9 lot retryen fortsette så snart et tidligere forsøk hadde
-    pushet. Men en fremmed skriver kan ha pushet ETTER vårt forsøk, og
-    da endret retryen kode verdiktet aldri så — med vårt eget fremskritt
-    som alibi. Per-PR-mutexen serialiserer ikke eksterne skrivere.
-
-    Beviset må være commit-kjeden, ikke en antakelse: hver commit mellom
-    `$HODE_VED_START` og live head må bære DENNE kjøringens id.
-
-    MUTASJONEN SOM DREPER DENNE: fjern traileren og kjedelesningen.
-    """
-    lesning = " ".join(_jobbenv()["FUNNLESNING"].split())
-    assert "Claude-Run: ${{ github.run_id }}" in lesning, (
-        "commitene merkes ikke med kjøringens id — da finnes det ingen"
-        " måte å skille vårt fremskritt fra en fremmed push")
-    assert "git log" in lesning and "$HODE_VED_START.." in lesning, (
-        "kjeden mellom startpunktet og live head leses aldri — regelen"
-        " ANTAR at avviket er vårt")
-    assert "Er én av dem umerket" in lesning, \
-        "regelen sier ikke hva som skjer når en fremmed commit står der"
-
-
 def test_forsok_3_leser_eierskapet_FOR_sin_forste_push():
     """Codex P2 (runde 11): sjekken sto bak skrivingen.
 
@@ -897,62 +873,88 @@ def test_forsok_3_leser_eierskapet_FOR_sin_forste_push():
         "FUNNLESNING står ikke foran den første pushen"
 
 
-def test_update_branch_commiten_er_et_smalt_unntak():
-    """Codex P2 (runde 11): jobben ville parkert på seg selv.
+def test_hodet_leses_live_for_forste_skriving():
+    """Fangsten er ikke en lås (Codex P2, runde 9).
 
-    Eierskapssjekken krever at hver commit mellom `$HODE_VED_START` og
-    live head bærer `Claude-Run`. `gh pr update-branch` lager en
-    MERGE-commit og har ingen `--trailer`-flagg, så BEHIND-armen i steg 3a
-    produserer per konstruksjon en umerket commit — og neste forsøk leste
-    jobbens egen oppdatering som en fremmed push.
+    `$HODE_VED_START` settes av et steg, og mellom det steget og den
+    første commiten er det et vindu. Per-PR-mutexen serialiserer VÅRE
+    jobber — den stopper ikke et menneske eller en fremmed skriver.
 
-    Unntaket må være smalt, ellers er hele eierskapssjekken en formalitet:
-    to foreldre, den ene der vi sto, den andre `main`s tipp. En VANLIG
-    commit uten merke er aldri vår.
-
-    MUTASJONEN SOM DREPER DENNE: gjør unntaket generelt («umerkede
-    commits fra bot-er er våre»), eller fjern det (da parkerer jobben på
-    sin egen BEHIND-oppdatering).
+    MUTASJONEN SOM DREPER DENNE: slett kravet om den live lesningen.
     """
     lesning = " ".join(_jobbenv()["FUNNLESNING"].split())
-    assert "update-branch" in lesning, (
-        "eierskapssjekken kjenner ikke sin egen BEHIND-oppdatering — da"
-        " parkerer jobben på seg selv")
-    # SHA-EN, IKKE FORMEN (Codex P2, runde 12). Første utgave kjente
-    # unntaket på foreldrene, og en fremmed skriver kan lage nøyaktig den
-    # formen: en merge med de samme to foreldrene, men et tre som bærer
-    # hvilke som helst konfliktløsninger. Form er ikke eierskap.
-    assert "$OPPDATERT_HEAD" in lesning, (
-        "unntaket kjenner ikke SHA-en jobben selv produserte — da kan en"
-        " fremmed merge med samme foreldre utgi seg for vår")
-    assert "Er variabelen tom, finnes intet unntak" in lesning, (
-        "unntaket gjelder også når jobben ALDRI kjørte update-branch —"
-        " da er det ikke et unntak, det er et hull")
-    assert "GITHUB_ENV" in lesning, \
-        "SHA-en skrives ikke til jobbmiljøet, så neste forsøk ser den ikke"
-    # IDENTITET *OG* FORM (Codex P2, runde 13). `update-branch` oppgir
-    # ikke SHA-en den laget, så oppslaget etterpå er et eget steg — og en
-    # force-push i det vinduet ville fått oss til å notere den fremmedes
-    # SHA som vår. Den ene sjekken alene kan forfalskes av et kappløp,
-    # den andre av en merge med samme foreldre; sammen kan ingen av dem.
-    assert "git cat-file -p" in lesning and "^parent" in lesning, (
-        "SHA-en verifiseres ikke mot formen den påstår å ha — et kappløp"
-        " i vinduet etter `update-branch` gir oss en fremmed commit")
-    assert "NØYAKTIG to foreldre" in lesning, \
-        "foreldrekravet er ikke eksakt"
-    # ... og BEGGE update-branch-armene må notere den. Noterer bare den
-    # ene, parkerer neste forsøk på den andres oppdatering.
-    armer = [l for l in YML.splitlines() if "update-branch" in l
-             and "Codex P2" not in l]
-    assert len(armer) >= 2, f"fant bare {len(armer)} update-branch-armer"
-    assert YML.count("OPPDATERT_HEAD") >= 3, (
-        "ikke alle update-branch-armene noterer SHA-en — den armen som"
-        " glemmer det, får neste forsøk til å parkere på seg selv")
-    assert "En vanlig commit uten merke er aldri vår" in lesning, (
-        "unntaket er ikke avgrenset — da dekker det enhver umerket"
-        " commit, og eierskapssjekken er en formalitet")
-    assert "%P" in lesning, \
-        "kommandoen henter ikke foreldrene, så unntaket kan ikke måles"
+    assert "Les `headRefOid` live rett før du endrer noe" in lesning, \
+        "hodet leses aldri på nytt — den frosne verdien er et alibi"
+    assert "FØR DIN FØRSTE SKRIVING" in lesning, \
+        "sjekken er ikke bundet til tidspunktet FØR første skriving"
+
+
+def test_eierskapet_bevises_av_SHAER_VI_SAA():
+    """Codex P1/P2, rundene 9–14: tre forgjeves bevisformer.
+
+    Spørsmålet er alltid det samme — eier denne kjøringen hele avviket
+    mellom `$HODE_VED_START` og live head? — og hvert svar jeg skrev
+    kunne forfalskes av nettopp den det skulle stenge ute:
+
+      1. en `Claude-Run`-trailer: fri commit-tekst, og `run_id` står
+         åpent i den offentlige kjøringen
+      2. commitens foreldre: en fremmed merge kan ha nøyaktig de to
+         foreldrene og et vilkårlig tre
+      3. én SHA lest etter `update-branch`: et separat oppslag, altså
+         enda et kappløpsvindu
+
+    Tre runder på samme akse er §9 K2s mønster, og svaret er ikke en
+    fjerde form ved siden av de tre. Det er ÉN som erstatter dem: en
+    kumulativ liste over SHA-er jobben SELV observerte etter sine egne
+    pusher. Vi sammenligner mot noe vi så, ikke mot noe kalleren kunne
+    skrevet.
+
+    Listen må være kumulativ: `main` kan flytte seg igjen og gi et ANDRE
+    update-pass i samme kjøring, og med ett slot ville retryen parkert på
+    sin egen dokumenterte to-oppdateringsvei.
+
+    MUTASJONEN SOM DREPER DENNE: gjeninnfør trailer- eller
+    foreldresjekken, eller gjør listen til en enkelt variabel.
+    """
+    lesning = " ".join(_jobbenv()["FUNNLESNING"].split())
+    assert "$VAARE_SHAER" in lesning, \
+        "eierskapet bevises ikke av SHA-er jobben selv observerte"
+    assert "Listen er kumulativ" in lesning, (
+        "listen er ikke kumulativ — to `update-branch`-passer i samme"
+        " kjøring ville da fått retryen til å parkere på seg selv")
+    assert "Er listen tom" in lesning, \
+        "det står ikke hva som gjelder når jobben ikke har skrevet noe"
+    # DE TRE GAMLE FORMENE SKAL VÆRE BORTE FRA REGELEN, ikke ligge ved
+    # siden av som et fjerde lag. De nevnes i begrunnelsen — derfor måles
+    # det på om de fortsatt STILLES SOM KRAV.
+    assert "må ha NØYAKTIG to foreldre" not in lesning, \
+        "foreldresjekken står fortsatt som krav"
+    assert "bære traileren" not in lesning, \
+        "trailerkravet står fortsatt"
+    # ... og BEGGE update-branch-armene må fylle listen.
+    assert YML.count("VAARE_SHAER=$VAARE_SHAER") >= 2, (
+        "ikke alle armene legger SHA-en i listen — den armen som glemmer"
+        " det, får neste forsøk til å parkere på seg selv")
+
+
+def test_stale_head_porten_gjelder_ogsaa_kommentarverdikter():
+    """Codex P2 (runde 14): porten gjaldt bare review-utløste kjøringer.
+
+    Et rent `issue_comment`-verdikt vekker jobben, `MERGEPORT` ber den
+    fikse eldre uløste bot-tråder — og da SKRIVER den, på et hode verken
+    kommentarens «Reviewed commit» eller det gamle verdiktet dekker.
+    `--match-head-commit` ved mergen kommer for sent: skrivingen har alt
+    skjedd.
+
+    MUTASJONEN SOM DREPER DENNE: begrens sammenligningen til
+    review-utløste kjøringer igjen.
+    """
+    lesning = " ".join(_jobbenv()["FUNNLESNING"].split())
+    assert "uansett hva som vekket jobben" in lesning, (
+        "stale-head-porten gjelder bare review-utløste kjøringer — en"
+        " kommentarutløst fiksrunde skriver da uten sjekk")
+    assert "kommentaren SELV deklarerer" in lesning, \
+        "det står ikke hva baseline er når utløseren er en kommentar"
 
 
 def test_uleselig_hode_er_hverken_fork_eller_trygt():
@@ -984,29 +986,6 @@ def test_uleselig_hode_er_hverken_fork_eller_trygt():
     assert "ikke startes på nytt herfra" in ulest and "er trygg" in ulest, (
         "den uleste armen tar et standpunkt den ikke har grunnlag for —"
         " den skal gi eier BEGGE veiene, betinget av hva hodet faktisk er")
-
-
-def test_hodet_leses_paa_nytt_for_forste_skriving():
-    """Codex P2 (runde 9): fangsten er ikke en lås.
-
-    `$HODE_VED_START` settes av et steg, og mellom det steget og den
-    første commiten er det et vindu. Per-PR-mutexen serialiserer VÅRE
-    jobber — den stopper ikke et menneske eller en fremmed skriver. Uten
-    en ny lesning ville et verdikt blitt anvendt på kode reviewen aldri
-    så, med den frosne verdien som alibi.
-
-    Regelen må samtidig slippe kjøringens EGNE pusher igjennom, ellers er
-    vi tilbake i feilen forrige runde fant: forsøk 2 som parkerer på
-    forsøk 1s fremskritt.
-
-    MUTASJONEN SOM DREPER DENNE: slett avsnittet om den nye lesningen.
-    """
-    lesning = " ".join(_jobbenv()["FUNNLESNING"].split())
-    assert "les `headRefOid` live" in lesning, \
-        "hodet leses aldri på nytt — den frosne verdien er et alibi"
-    assert "TIDLIGERE FORSØK i samme kjøring" in lesning, (
-        "den nye lesningen skiller ikke vår egen push fra en fremmed —"
-        " da parkerer forsøk 2 på forsøk 1s fremskritt igjen")
 
 
 def test_mention_har_sin_egen_forkvakt():

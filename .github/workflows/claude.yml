@@ -224,78 +224,62 @@ jobs:
         ligger der lenger, og å «fikse» det ville endret noe reviewen aldri
         så. Parkér og be om nytt review.
 
-        OG DEN LEVENDE HODET LESES PÅ NYTT FØR FØRSTE SKRIVING (Codex P2,
-        runde 9). `$HODE_VED_START` fanges av et steg, og mellom det
+        FØR DIN FØRSTE SKRIVING: EIER VI HELE AVVIKET? (Codex P1/P2,
+        rundene 9–14.) `$HODE_VED_START` fanges av et steg, og mellom det
         steget og din første commit er det et vindu: per-PR-mutexen
         serialiserer VÅRE jobber, ikke et menneske eller en fremmed
-        skriver. Derfor, rett før du gjør din FØRSTE endring: les
-        `headRefOid` live. Er den ulik `$HODE_VED_START` OG ingen commit
-        i denne kjøringen har pushet ennå, har noen andre skrevet — da
-        parkerer du og ber om nytt review, uansett hva `commit_id` sier.
-        Har et TIDLIGERE FORSØK i samme kjøring pushet, er avviket vårt
-        eget og du fortsetter — men det må BEVISES, ikke antas (Codex P2,
-        runde 10). «Et tidligere forsøk pushet» gjør ikke enhver senere
-        endring til vår: en fremmed skriver kan ha pushet ETTER vårt
-        forsøk, og da ville retryen endret kode verdiktet aldri så, med
-        vårt eget fremskritt som alibi.
+        skriver. Les `headRefOid` live rett før du endrer noe. Er den lik
+        `$HODE_VED_START`, skriv i vei.
 
-        Beviset er commit-kjeden. HVER commit du lager i denne jobben
-        skal bære traileren
+        Er den ULIK, må HVER commit i `$HODE_VED_START..<live head>` være
+        en vi selv laget — ellers parkerer du og ber om nytt review.
 
-            Claude-Run: ${{ github.run_id }}
+        BEVISET ER SHA-ER VI HAR SETT, IKKE METADATA VI HAR SKREVET.
+        Fire runder gikk med på tre svakere former, og hver av dem kunne
+        forfalskes av nettopp den de skulle stenge ute:
 
-        og før du fortsetter etter et avvik, les
-        `git log --format='%H %P %(trailers:key=Claude-Run,valueonly)'
-        $HODE_VED_START..<live head>`: er HVER commit der merket med
-        DENNE kjøringens id, er hele avviket vårt eget og du fortsetter.
-        Er én av dem umerket, har noen andre skrevet — parkér.
+          · en `Claude-Run`-trailer — fri commit-tekst, og `run_id` står
+            åpent i den offentlige kjøringen
+          · commitens foreldre — en fremmed merge kan ha nøyaktig de to
+            foreldrene og et vilkårlig tre
+          · én SHA lest etter `update-branch` — et separat oppslag, altså
+            enda et kappløpsvindu
 
-        ÉN UMERKET COMMIT ER LOVLIG, OG BARE ÉN (Codex P2, runde 11):
-        `gh pr update-branch` lager en MERGE-commit, den har ingen
-        `--trailer`-flagg, og den kan derfor ikke bære merket. Uten dette
-        unntaket ville jobben lest sin egen BEHIND-oppdatering som en
-        fremmed push og parkert på seg selv.
+        Derfor: ETTER HVER push og HVER `gh pr update-branch` du selv
+        gjør, les hodet og legg SHA-en til i listen:
 
-        SHA-EN NOTERES, DEN UTLEDES IKKE (Codex P2, runde 12). Første
-        utgave kjente unntaket på FORMEN — to foreldre, den ene der vi
-        sto, den andre `main`s tipp — og en fremmed skriver kan lage
-        nøyaktig den formen: en merge med de samme to foreldrene, men et
-        tre som bærer hvilke som helst konfliktløsninger. Formen er ikke
-        eierskap. Rett etter `gh pr update-branch <nr>` i 3a leser du
-        derfor `gh pr view <nr> --json headRefOid -q .headRefOid` og
-        skriver den til jobbmiljøet:
+            echo "VAARE_SHAER=$VAARE_SHAER $(gh pr view <nr> --json \
+              headRefOid -q .headRefOid)" >> "$GITHUB_ENV"
 
-            echo "OPPDATERT_HEAD=<sha>" >> "$GITHUB_ENV"
+        Listen er kumulativ og overlever mellom forsøkene i samme
+        kjøring. Eierskapssjekken er da ETT spørsmål: står HVER commit i
+        avviket i `$VAARE_SHAER`? Én som ikke gjør det, betyr at noen
+        andre har skrevet — parkér.
 
-        Eierskapssjekken godtar da nøyaktig ÉN umerket commit, og bare
-        hvis SHA-en er `$OPPDATERT_HEAD`. Er variabelen tom, finnes intet
-        unntak — en jobb som ikke selv har kjørt `update-branch` har
-        ingen umerket commit å forsvare. En vanlig commit uten merke er
-        aldri vår, uansett hvem som ser ut til å ha laget den.
+        Dette dekker det de tre svakere formene ikke gjorde: TO
+        `update-branch`-passer i samme kjøring (listen har to
+        oppføringer, ikke ett slot), en fremmed merge med riktige
+        foreldre (SHA-en står ikke i listen), og en fremmed commit med
+        vår `run_id` i traileren (samme). Er listen tom, har vi ikke
+        skrevet noe — og da er ethvert avvik fremmed.
 
-        OG SHA-EN VERIFISERES, DEN LESES IKKE BARE (Codex P2, runde 13).
-        `gh pr update-branch` returnerer uten å oppgi SHA-en den laget, så
-        oppslaget etterpå er et EGET steg — og force-pusher en annen
-        skriver i det vinduet, noterer vi HANS SHA som vår. Identiteten
-        alene er derfor ikke nok; den må stemme med formen den påstår å
-        ha. Før unntaket brukes:
+        Formen er ikke perfekt, og det sies høyt: `gh pr update-branch`
+        returnerer ikke SHA-en den laget, så oppslaget rett etterpå er
+        fortsatt et eget kall. Forskjellen er at vi nå sammenligner mot
+        noe VI observerte, ikke mot noe kalleren kunne skrevet — og en
+        force-push i det vinduet gir en SHA vi aldri noterte, altså
+        parkering. Fail-closed, ikke fail-open.
 
-            git cat-file -p "$OPPDATERT_HEAD" | grep '^parent'
+        SAMME PORT PÅ KOMMENTAR-VERDIKTER (Codex P2, runde 14). Sjekken
+        gjaldt bare review-utløste kjøringer. Men et rent
+        `issue_comment`-verdikt vekker jobben, `MERGEPORT` ber deg fikse
+        eldre uløste bot-tråder, og da SKRIVER du — på et hode verken
+        kommentarens «Reviewed commit» eller det gamle verdiktet dekker.
+        `--match-head-commit` ved mergen kommer for sent; skrivingen har
+        alt skjedd. Gjør derfor samme sammenligning FØR første skriving
+        uansett hva som vekket jobben: er utløseren en kommentar, er
+        baseline SHA-en kommentaren SELV deklarerer.
 
-        Commiten må ha NØYAKTIG to foreldre, den første `$HODE_VED_START`
-        og den andre `main`s tipp slik den var da 3a kjørte. Stemmer ikke
-        det, er SHA-en ikke oppdateringen vår, og unntaket faller bort —
-        da parkerer du. Identitet OG form: den ene alene kan forfalskes av
-        et kappløp, den andre av en fremmed merge med samme foreldre.
-
-        MÅLESTOKKEN ER HODET VED KJØRINGENS START, IKKE `headRefOid` (Codex
-        r3879...225). Forsøk 1 fikser og pusher, går tom for turer, og
-        forsøk 2 skal fortsette derfra — det er hele poenget med de tre
-        forsøkene. Leste regelen den LEVENDE `headRefOid`, ville forsøk 2
-        sett kjøringens egen push som en fremmed inngripen og parkert på sitt
-        eget fremskritt. `$HODE_VED_START` settes av steget «Hodet ved start»
-        FØR forsøk 1 og står fast hele jobben: den skiller en push som kom
-        FØR oss fra en vi gjorde selv, uten å gjette på forfatter.
       RUNDETAK: |
         RUNDETAK: TRE (RUTINER §12.1, eiervedtak 28/8). Tell rundene på
         denne PR-en — antall pass fra `github-actions[bot]` med
@@ -534,11 +518,11 @@ jobs:
                      ennå: VERDIKT-REKKEVIDDEN under måles først, og
                      tomt snitt er eneste lovlige vei videre.
                      RETT ETTERPÅ: noter SHA-en oppdateringen ga, og
-                     skriv den til jobbmiljøet, slik at senere forsøk
-                     kan kjenne igjen VÅR merge-commit på identitet og
-                     ikke på form (Codex P2, runde 12):
-                     `echo "OPPDATERT_HEAD=$(gh pr view <nr> --json
-                     headRefOid -q .headRefOid)" >> "$GITHUB_ENV"`.
+                     LEGG DEN TIL i `$VAARE_SHAER` (se FUNNLESNING) —
+                     listen er kumulativ, for `main` kan flytte seg igjen
+                     og gi deg et andre update-pass i samme kjøring:
+                     `echo "VAARE_SHAER=$VAARE_SHAER $(gh pr view <nr>
+                     --json headRefOid -q .headRefOid)" >> "$GITHUB_ENV"`.
                      Bruk `update-branch`, ikke lokal rebase + force-push:
                      den skriver ikke om historikk Codex alt har reviewet
                      mot en SHA, og fletter kun `main` inn i PR-grenen.
@@ -673,8 +657,8 @@ jobs:
                parkér til eier, ikke merge. Så merge i denne rekkefølgen —
                (a) `gh pr view <nr> --json mergeStateStatus`; `BEHIND` →
                noter head (`--json headRefOid -q .headRefOid`), så
-               `gh pr update-branch <nr>` (ikke rebase/force-push; noter
-               SHA-en til `$OPPDATERT_HEAD` som i forsøk 2s 3a), og
+               `gh pr update-branch <nr>` (ikke rebase/force-push; legg
+               SHA-en til i `$VAARE_SHAER` som i forsøk 2s 3a), og
                VERDIKT-REKKEVIDDEN (§11.1): snitt fillisten fra
                `gh api repos/${{ github.repository }}/compare/<gammel-head>...<ny-head>`
                mot PR-ens egne filer — og PR-fillisten har samme
