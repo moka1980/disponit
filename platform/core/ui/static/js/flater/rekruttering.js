@@ -1286,7 +1286,21 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
         text: t("ui.rekruttering.evalueringer.last_flere") });
       k.addEventListener("click", async () => {
         k.disabled = true;
-        const min = eval2.nr;
+        // PAGINERINGEN TAR GENERASJONEN, DEN LESER DEN IKKE (Codex P2).
+        // «Oppdater» og «Last flere» er to skrivere på ÉN liste, og
+        // begge knappene står klikkbare. Leste pagineringen bare
+        // `eval2.nr`, delte de to hentingene generasjon: rakk
+        // oppfriskningen inn først, ble et cursorsvar fra den GAMLE
+        // kjeden appendet på en nyhentet første side — to kjeder blandet,
+        // med rader som kunne gjentas eller falle ut. Rakk pagineringen
+        // inn først, ble den stille overskrevet.
+        //
+        // Å ta generasjonen gjør klikket til den siste intensjonen, og
+        // det er nøyaktig samme regel som `oppdater()` alt følger: siste
+        // klikk vinner, taperen skriver ingenting. En oppfriskning som
+        // lander etterpå forkastes, og motsatt — klikker brukeren
+        // «Oppdater» mens en side er i lufta, taper siden.
+        const min = ++eval2.nr;
         let svar;
         try {
           svar = await hentEvalueringer(cursor);

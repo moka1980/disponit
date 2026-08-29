@@ -1570,6 +1570,60 @@ test("Evalueringer: «Last flere» følger serverens cursor og appender (#221)",
     "knappen ble stående uten fortsettelse å følge");
 });
 
+test("Evalueringer: «Oppdater» og «Last flere» blander aldri to "
+  + "cursorkjeder — siste klikk vinner", async () => {
+  KALL = [];
+  // Codex P2: begge knappene står klikkbare, og pagineringen LESTE bare
+  // generasjonen mens oppfriskningen tok den. Da delte de to hentingene
+  // generasjon, og et cursorsvar fra den GAMLE kjeden kunne appendes på
+  // en nyhentet første side — to kjeder blandet i én liste.
+  //
+  // Riggen: oppfriskningen HENGER, pagineringen svarer straks. Slippes
+  // oppfriskningen etterpå, skal den forkastes (klikket på «Last flere»
+  // var den siste intensjonen), og listen skal være den GAMLE kjeden
+  // hel: 200 + 100, aldri 201 fra den ferske første siden.
+  let slippTreg;
+  const treg = new Promise((res) => { slippTreg = res; });
+  const rad = (id, tid) => ({ oppdrag_id: id, status: "opprettet",
+    opprettet: tid, rapport_klar: false });
+  SVAR = {
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": {
+      evalueringer: [rad(200, "2026-08-27T02:00:00+00:00")],
+      flere: true, neste_cursor: "c-side2.mac" },
+    "/v1/rekruttering/evalueringer?cursor=c-side2.mac": {
+      evalueringer: [rad(100, "2026-08-27T01:00:00+00:00")],
+      flere: false, neste_cursor: null },
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel] table")));
+  const seksjon = hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  const knapp = (nokkel) => [...seksjon.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.evalueringer." + nokkel));
+  // Fra nå henger første side — altså oppfriskningen.
+  SVAR["/v1/rekruttering/evalueringer"] = treg;
+  knapp("oppdater").click();
+  knapp("last_flere").click();
+  assert.ok(await vent(() => seksjon.textContent.includes("100")),
+    "side 2 ble aldri appendet");
+  slippTreg({ evalueringer: [rad(201, "2026-08-27T03:00:00+00:00"),
+    rad(200, "2026-08-27T02:00:00+00:00")], flere: false,
+  neste_cursor: null });
+  await new Promise((r) => setTimeout(r, 30));
+  const rader = [...seksjon.querySelectorAll("tbody tr th")]
+    .map((c) => c.textContent);
+  assert.deepEqual(rader, ["200", "100"],
+    "oppfriskningen og pagineringen skrev over hverandre: " + rader.join(","));
+  // MUTASJONEN SOM DREPER DENNE: bytt `const min = ++eval2.nr` tilbake til
+  // `const min = eval2.nr` i «Last flere» — da slipper det trege
+  // oppfriskningssvaret gjennom og listen blir ["201", "200"], altså den
+  // appendede siden stille borte.
+});
+
 test("Evalueringer: «Oppdater» henter listen på nytt uten side-reload"
   + " (#221)", async () => {
   KALL = [];
