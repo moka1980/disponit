@@ -526,6 +526,35 @@ def _anker_lever(conn, tenant, oppdrag_id) -> bool:
         (tenant, oppdrag_id)).fetchone()[0]
 
 
+def _artefakt_lever(conn, tenant, artefakt_id) -> bool:
+    """Er artefaktet fortsatt UMAKULERT med levende payload NÅ?
+
+    Søsteren til `_anker_lever`, og den lukker det vinduet ankeret ikke
+    ser (Codex P2 på #252). `makuler_artefakter_for_prosess` (#222) kan
+    committe UTEN at prosessen merkes reapet — det er en form #252
+    eksplisitt støtter og tester, siden døren kalles per oppdrag og
+    reapmerket settes av et eget steg. Ankeret lever da fortsatt og
+    `_anker_lever` sier true, mens raden vi alt har lest er tømt.
+
+    Uten denne leser hovedspørringen ciphertexten rett før makuleringen
+    committer, dekrypterer den, passerer ankersjekken — og leverer 200
+    med kandidatpayload som er slettet i basen. Ankeret måler PROSESSENS
+    frist; dette måler ARTEFAKTETS eget merke, og det er to forskjellige
+    fakta.
+
+    Samme doktrine som søsteren for øvrig: leses rett før 200, etter
+    dekrypteringen, i samme transaksjon — READ COMMITTED tar ferskt
+    snapshot per setning. Vindusinnsnevring, ikke lås; en FOR SHARE
+    herfra ville krevd skriverett på evidenstabellen for en READ-rute.
+    Ingen klokkeslett her: merket er et faktum, ikke en frist.
+    """
+    return conn.execute(
+        "SELECT EXISTS (SELECT 1 FROM artefakt a"
+        "  WHERE a.tenant=%s AND a.artefakt_id=%s"
+        "    AND a.makulert_ts IS NULL AND a.ciphertext IS NOT NULL)",
+        (tenant, artefakt_id)).fetchone()[0]
+
+
 def rekrutteringsrapport_detalj(tjeneste, request: Request) -> Response:
     """GET /v1/rekruttering/rapport/{oppdrag_id} — den promoterte
     evalueringsrapporten. M-57s EGEN leseflate (kontraktens
@@ -556,6 +585,18 @@ def rekrutteringsrapport_detalj(tjeneste, request: Request) -> Response:
             "    ON o.tenant = a.tenant AND o.id = a.oppdrag_id"
             " WHERE a.tenant=%s AND a.oppdrag_id=%s"
             "   AND a.tilstand='promotert'"
+            # MAKULERT ER IKKE LESBART (Cursor P2 på #252). Makuleringen
+            # (#222) nuller payloaden UTEN tilstandsskifte — raden består
+            # som evidensen om at rapporten fantes, og `tilstand` sier
+            # fortsatt `promotert`. Uten dette leddet finner spørringen
+            # den, `dekrypter` får `ct = None`, og kunden får
+            # `intern_feil` (500) der #220 lovet et identisk 404.
+            # Ankeret redder ikke: døren kan kalles uten reap, og da
+            # lever prosessen fortsatt innenfor fristen.
+            # `ciphertext IS NOT NULL` står ved siden av merket med
+            # vilje: merket er årsaken vi kjenner, tom payload er
+            # tilstanden leseveien faktisk ikke tåler.
+            "   AND a.makulert_ts IS NULL AND a.ciphertext IS NOT NULL"
             "   AND (o.oppdragstype, a.artefakttype) IN"
             "       (SELECT * FROM unnest(%s::text[], %s::text[]))"
             # SLETTEGRENSEN GJELDER OGSÅ RAPPORTEN (Codex P1 ×2, felt
@@ -593,6 +634,15 @@ def rekrutteringsrapport_detalj(tjeneste, request: Request) -> Response:
                                    art="drift", artefakt=str(art_id))
             return _feilsvar("intern_feil", rid)
         if not _anker_lever(conn, auth.tenant, oid):
+            return _feilsvar("ikke_funnet", rid)
+        # … OG ARTEFAKTET SELV MÅ FORTSATT VÆRE UMAKULERT (Codex P2 på
+        # #252). Ankersjekken over måler PROSESSENS frist; makuleringen
+        # er et eget faktum på artefaktraden, og døren kan committe uten
+        # at prosessen merkes reapet. Da består ankeret, og bare dette
+        # leddet ser at payloaden vi nettopp dekrypterte er slettet.
+        # Samme svar som resten av 404-doktrinen — en makulert rapport
+        # er identisk «finnes ikke», aldri et halvt svar.
+        if not _artefakt_lever(conn, auth.tenant, art_id):
             return _feilsvar("ikke_funnet", rid)
         # LESNINGEN SERVERER IKKE DET FLATEN KASTER (Codex P2 — samme
         # doktrine som `_kandidater`s nøkkelsubtraksjon): `kildetekst` er
@@ -633,6 +683,28 @@ def rekrutteringsevalueringer(tjeneste, request: Request) -> Response:
 
     def _fn(conn, auth, rid):
         import oppdragskontrakt
+        # KEYSET-CURSOR, HUSFORMEN (#221): signert med server-pepper og
+        # bundet med v2 (PR-008), som søsknene `beslutninger`,
+        # `unntak_historikk` og `domeneovertakelse_saker`. En cursor er
+        # ellers bare et par tall. v1 binder BARE tenant, og `les()`
+        # godtar også en v2-kropp (den bærer `t`/`ts`/`id`) — en gyldig
+        # cursor fra et annet endepunkt hos samme tenant ville derfor
+        # være 200 her og forskyve keysetet til en fremmed (ts, id)-
+        # posisjon (Cursor P2). v2 binder endepunkt, retning og filtre i
+        # tillegg, og det er nettopp den forvekslingen den finnes for.
+        # Keyset og ikke OFFSET: en liste som får nye evalueringer mens
+        # noen blar, hopper over eller gjentar rader med OFFSET.
+        etter = None
+        raa_cursor = request.query_params.get("cursor")
+        if raa_cursor:
+            try:
+                etter = cursormodul.les_v2(
+                    raa_cursor, tjeneste.cursorpepper, tenant=auth.tenant,
+                    endepunkt="rekruttering_evalueringer", retning="desc",
+                    filtre={})
+            except cursormodul.CursorUgyldig:
+                tjeneste.logg.hendelse("cursor_ugyldig", rid, auth.tenant)
+                return _feilsvar("cursor_ugyldig", rid)
         # SAMME KILDE SOM DETALJRUTEN (Cursor P2). Listen hardkodet paret
         # (`'rekruttering.evaluering'`, `'rekruttering.evaluering.rapport'`)
         # mens `rekrutteringsrapport_detalj` utleder det fra kontrakten.
@@ -652,6 +724,12 @@ def rekrutteringsevalueringer(tjeneste, request: Request) -> Response:
             " EXISTS (SELECT 1 FROM artefakt a"
             "          WHERE a.tenant = o.tenant AND a.oppdrag_id = o.id"
             "            AND a.tilstand='promotert'"
+            # … og en MAKULERT rapport er ikke klar (samme ledd som
+            # detaljruten — Cursor P2 på #252). Uten det ville listen
+            # sagt `rapport_klar: true` om noe detaljruten svarer 404
+            # på: divergensen #220 stengte, gjenåpnet av makuleringen.
+            "            AND a.makulert_ts IS NULL"
+            "            AND a.ciphertext IS NOT NULL"
             "            AND (o.oppdragstype, a.artefakttype) IN"
             "                (SELECT * FROM unnest(%s::text[], %s::text[])))"
             # … og listen reklamerer bare med et LEVENDE anker (samme
@@ -675,19 +753,37 @@ def rekrutteringsevalueringer(tjeneste, request: Request) -> Response:
             " AS slettet"
             "  FROM oppdrag o"
             " WHERE o.tenant=%s AND o.oppdragstype = ANY(%s::text[])"
+            # Keyset-leddet: fortsettelsen er «eldre enn siste viste rad»,
+            # målt på (opprettet, id) — samme par cursoren bærer, og samme
+            # par sorteringen går på, så vinduene verken overlapper eller
+            # hopper. Sorteringen gikk før på `o.id` alene; paret er samme
+            # rekkefølge (id-er er monotone i praksis), gjort eksplisitt
+            # så nøkkelen og sorteringen ikke kan divergere.
+            + (" AND (o.opprettet, o.id) < (%s, %s)" if etter else "")
             # HENTER ÉN OVER VINDUET (Codex P2). `LIMIT 100` + `flere =
             # len(rader) == 100` PÅSTÅR eldre rader ved nøyaktig 100 uten
             # å ha sett én — flaten sier da «det finnes eldre» om en
             # komplett historikk. Den 101. raden er beviset; den sendes
-            # aldri ut, den avgjør bare `flere`.
-            " ORDER BY o.id DESC LIMIT 101",
-            (typer, arter, auth.tenant, typer)).fetchall()
+            # aldri ut, den avgjør bare `flere` og cursoren.
+            + " ORDER BY o.opprettet DESC, o.id DESC LIMIT 101",
+            (typer, arter, auth.tenant, typer)
+            + ((etter[0], etter[1]) if etter else ())).fetchall()
+        # Cursoren peker på den SISTE VISTE raden — aldri på bevisraden:
+        # neste side begynner nøyaktig der denne sluttet.
+        neste = None
+        if len(rader) > 100 and rader[99][2] is not None:
+            neste = cursormodul.lag_v2(
+                tjeneste.cursorpepper, tenant=auth.tenant,
+                endepunkt="rekruttering_evalueringer", retning="desc",
+                filtre={}, ts=rader[99][2], rad_id=rader[99][0])
         return kanonisk_json({
             "evalueringer": [
                 {"oppdrag_id": r[0], "status": r[1],
                  "opprettet": r[2].isoformat() if r[2] else None,
                  "rapport_klar": r[3],
                  "slettet": r[4]} for r in rader[:100]],
+            # #221: fortsettelsen er et felt, ikke bare en påstand.
+            "neste_cursor": neste,
             # Aldri stille avkorting: finnes rad 101, MELDER flaten det i
             # stedet for å presentere de nyeste 100 som alt.
             # Cursor (#220 P2-3, eierdom); selve pagineringen bor i #221.

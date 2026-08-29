@@ -1,0 +1,40 @@
+-- 066: indeksen som matcher evalueringslistens keyset-orden (#221)
+--
+-- Codex P2 på #255. `GET /v1/rekruttering/evalueringer` sorterte før på
+-- `o.id DESC` og kunne da lese ordenen rett ut av `oppdrag_tenant_id_unik`
+-- (`UNIQUE (tenant, id)`, migrasjon 005). Keyset-pagineringen gjorde
+-- nøkkelen eksplisitt — `ORDER BY o.opprettet DESC, o.id DESC` med
+-- fortsettelsesleddet `(o.opprettet, o.id) < (%s, %s)` — og DEN ordenen
+-- har ingen indeks i repoet: nærmeste er `oppdrag_ko`
+-- (`eiermodul, status, opprettet, id WHERE status = 'opprettet'`), som
+-- hverken starter på `tenant` eller dekker terminale statuser.
+--
+-- Uten en matchende indeks må PostgreSQL samle OG sortere hver rad som
+-- passerer `tenant` + `oppdragstype` før `LIMIT 101` kan kappe. For en
+-- tenant med lang oppdragshistorikk blir det dyrere for hvert oppdrag som
+-- legges til — og kostnaden treffer FØRSTE side like hardt som hver
+-- fortsettelse. Det er nøyaktig gevinsten keyset-formen ble valgt for:
+-- en cursor som må sortere hele historikken på nytt for hver side, er en
+-- OFFSET med ekstra steg.
+--
+-- PREFIKSET ER SPØRRINGENS EGET: `tenant` er likhetsleddet, så
+-- `(opprettet, id)` blir sorterte inni det — både radsammenligningen i
+-- keyset-leddet og `ORDER BY` leses da rett ut av indeksen, og
+-- `LIMIT 101` stopper scanet etter 101 rader.
+--
+-- `oppdragstype` står MED VILJE utenfor: den er et likhetsfilter PÅ TVERS
+-- av ordenen (`= ANY(...)`), og lagt inn etter `tenant` ville den brutt
+-- sorteringen indeksen finnes for. Den filtreres derfor per rad, som før.
+--
+-- PRISEN, sagt høyt: én indeks til på `oppdrag` er skrivearbeid på hver
+-- insert og hver `opprettet`-berørende update. `opprettet` settes ved
+-- insert og er kolonnelåst (`oppdrag_kolonnelaas`, 005/056), så i praksis
+-- er det innsettingsveien som betaler — den samme veien som i dag betaler
+-- for `oppdrag_ko` og `oppdrag_sak`.
+--
+-- DESC/DESC og ikke default ASC: begge er lesbare for en btree (scanet kan
+-- gå baklengs), men formen her SPEILER `ORDER BY`-en den betjener, så
+-- neste leser ser sammenhengen uten å måtte resonnere om scanretning.
+
+CREATE INDEX IF NOT EXISTS oppdrag_tenant_keyset
+    ON oppdrag (tenant, opprettet DESC, id DESC);

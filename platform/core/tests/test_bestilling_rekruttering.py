@@ -336,17 +336,24 @@ def test_opptatt_bunt_er_forbigaende_ikke_dom():
     bundet — og planveien gjør en terminal kode om til en pause bare et
     menneske kan oppheve. «En annen bestilling holder bunten akkurat nå»
     er derimot et sammenstøt i tid, nøyaktig samme klasse som en opptatt
-    idempotensnøkkel. Utad er de fortsatt den samme 409-en.
+    idempotensnøkkel. Siden #215 bærer ledningen skillet helt ut:
+    `INNDATA_OPPTATT` er sin egen 409 i feilveitabellen (drift), og
+    `KLIENTKODE` kollapser den ikke lenger.
 
     MUTASJONEN SOM DREPER DENNE: la låsegrenen returnere
-    `inndata_ubrukelig` igjen, eller fjern koden fra `_FORBIGAENDE`.
+    `inndata_ubrukelig` igjen, fjern koden fra `_FORBIGAENDE`, eller
+    legg kollapsen tilbake i `KLIENTKODE`.
     """
     from api.bestilling import INNDATA_OPPTATT, KLIENTKODE
+    from api.feil import FEILVEIER
     from plan.materialiser import _FORBIGAENDE, _tick_utfall, er_forbigaende
     assert INNDATA_OPPTATT in _FORBIGAENDE
     assert er_forbigaende(INNDATA_OPPTATT)
     assert _tick_utfall(("feil", INNDATA_OPPTATT))[0] is None
-    assert KLIENTKODE[INNDATA_OPPTATT] == "inndata_ubrukelig"
+    # #215: koden går UOVERSATT ut — den er sin egen klientkontrakt.
+    assert INNDATA_OPPTATT not in KLIENTKODE
+    vei = {v.kode: v for v in FEILVEIER}[INNDATA_OPPTATT]
+    assert vei.http == 409 and "drift" in vei.routing, vei
     assert not er_forbigaende("inndata_ubrukelig")
 
 
@@ -359,6 +366,7 @@ def test_buntlaasen_og_nokkellaasen_deler_ikke_navnerom():
 
 
 @pg
+@dekker("inndata_opptatt")
 def test_opptatt_bunt_avvises_for_beslutningen(klient, migrator, miljo,
                                                inndata_rot):
     """Cursor P1, deterministisk: holdes buntlåsen av en ANNEN bestilling,
@@ -386,7 +394,7 @@ def test_opptatt_bunt_avvises_for_beslutningen(klient, migrator, miljo,
             (navn,)).fetchone()[0] is True
         r = _bestill(klient, cookie, csrf, kropp, nokkel)
         assert (r.status_code, r.json()["feil"]) == (
-            409, "inndata_ubrukelig"), r.text
+            409, "inndata_opptatt"), r.text
         assert _beslutninger(migrator) == 0, \
             "en forespørsel uten buntlåsen tok likevel en beslutning"
         assert _buntrad(migrator, ref) == ("lastet", None)
@@ -623,9 +631,10 @@ def test_krasj_mellom_beslutning_og_binding_fullfores_av_retryen(
         holder.close()
     assert r_laast.status_code == 409, \
         f"FIKK {r_laast.status_code}: {r_laast.text[:400]}"
-    # Utad er busy-låsen buntens 409 (`KLIENTKODE[INNDATA_OPPTATT]`) —
-    # forbigående: r2 under beviser at samme kall lykkes når låsen er fri.
-    assert r_laast.json()["feil"] == "inndata_ubrukelig", r_laast.text
+    # #215: busy-låsen er sin EGEN 409 — forbigående, og klienten kan
+    # velge nøkkeløkonomi på koden alene. r2 under beviser løftet koden
+    # gir: samme kall lykkes når låsen er fri.
+    assert r_laast.json()["feil"] == "inndata_opptatt", r_laast.text
     assert _buntrad(migrator, ref) == ("lastet", None), \
         "gjenspillet bandt forbi en holdt buntlås"
     assert _beslutninger(migrator) == 1
