@@ -662,6 +662,57 @@ def test_155_docx_i_docx_felles_av_dybdevakten(tmp_path):
     assert e.value.args[0].endswith("cv.docx/word/nested.docx")
 
 
+def test_155_null_komprimert_i_indre_katalog_slipper_ikke_forbi(tmp_path):
+    """Cursor P2: `komprimert <= 0` på strøm-/docx-veien hadde ingen
+    negativ. `test_port21_null_komprimert_er_ikke_fritak` måler
+    `inspiser_bunt`s KATALOGpåstand, og indre medlemmer går aldri der —
+    de får `komprimert` fra `info.compress_size` i docx-ens egen katalog.
+
+    Den løgnen er MÅLT her, og utfallet er ikke det man gjetter: `zipfile`
+    begrenser lesingen til `compress_size`, så et medlem som påstår null
+    leverer null byte — og CRC-en over det tomme avviker fra den
+    deklarerte. Løgnen felles derfor som `korrupt_bunt`, et kodet SP-3-
+    utfall, ikke som `komprimeringsforhold`. Det som betyr noe for porten
+    er at den ALDRI slipper forbi: et medlem som ikke leverer det
+    katalogen påstår, er en korrupt bunt — aldri en godkjent søknad.
+
+    (Følgen for `komprimert <= 0`-armen på DENNE veien: `lest > 0` og
+    `komprimert == 0` kan ikke opptre samtidig gjennom `zipfile`, så
+    armen står som kontraktsvakt for `_mal_medlem`s egen signatur —
+    ikke som en gren en bunt kan nå. Notert i PR-tråden.)
+
+    MUTASJONEN SOM DREPER DENNE: fjern `lest > 0` i `_mal_medlem` — da
+    felles det ÆRLIG tomme medlemmet under av `komprimert <= 0`, og
+    positivkontrollen blir rød."""
+    docx = _docx()
+    ekte = zipfile.ZipFile(io.BytesIO(docx)).getinfo("word/document.xml")
+    logn = _patch_katalog(docx, b"word/document.xml", ekte.file_size,
+                          komprimert=0)
+    arkiv = _bunt(tmp_path, [("cv.docx", logn)])
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(arkiv))
+    assert e.value.kode == "korrupt_bunt"
+    arkiv.unlink()
+
+    # POSITIV KONTROLL: en ÆRLIG tom fil inni docx-en har `compress_size
+    # = 0` uten å lyve — null ut av null er ikke en bombe, og `lest > 0`
+    # er det som skiller den fra løgnen over.
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for navn in sorted(parsing.DOCX_PAKKEMEDLEMMER):
+            zf.writestr(navn, b"<Types/>" if navn.endswith("].xml")
+                        else b"<w:t>CV</w:t>")
+        tom = zipfile.ZipInfo("word/tom.xml")
+        tom.compress_type = zipfile.ZIP_STORED     # tom + STORED → 0 byte
+        zf.writestr(tom, b"")
+    med_tom = buf.getvalue()
+    assert zipfile.ZipFile(io.BytesIO(med_tom)).getinfo(
+        "word/tom.xml").compress_size == 0, \
+        "forutsetningen: det ærlige medlemmet oppgir null komprimert"
+    assert len(list(parsing.les_porsjonsvis(
+        _bunt(tmp_path, [("cv.docx", med_tom)])))) == 1
+
+
 def test_port21_komprimeringsforhold(tmp_path):
     # 4 MB nuller pakker ~1000:1 — langt over 100:1-taket.
     arkiv = _bunt(tmp_path, [("cv.pdf", b"%PDF" + b"\0" * (4 << 20))])
