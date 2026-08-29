@@ -366,6 +366,7 @@ def test_buntlaasen_og_nokkellaasen_deler_ikke_navnerom():
 
 
 @pg
+@dekker("inndata_opptatt")
 def test_opptatt_bunt_avvises_for_beslutningen(klient, migrator, miljo,
                                                inndata_rot):
     """Cursor P1, deterministisk: holdes buntlåsen av en ANNEN bestilling,
@@ -504,7 +505,6 @@ def test_to_samtidige_bestillinger_paa_bunten_brenner_en_kvote(
 
 
 @pg
-@dekker("inndata_opptatt")
 def test_gjenspill_av_evalueringsbestillingen_binder_ikke_paa_nytt(
         klient, migrator, miljo, inndata_rot):
     """Cursor P2 (b): en retry som mistet svaret får BESLUTNINGEN sin
