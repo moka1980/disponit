@@ -1859,7 +1859,14 @@ def test_backupen_maler_lager_sti_mot_samme_dump_som_lagres():
     # Feiesvingen fulgte mellomfila til tmpfs (eiers dom 28/8). En drept
     # kjøring etterlater nå en katalog i /dev/shm, ikke en fil i
     # backupkatalogen — kravet er det samme, stedet er nytt.
-    assert "rm -rf /dev/shm/disponit-backup.*" in skript, \
+    #
+    # Målt på KODELINJER, ikke på fila: prosaen over feien siterer den
+    # forkastede globben `rm -rf /dev/shm/disponit-backup.*` for å forklare
+    # hvorfor den er borte, så en port som leser hele teksten står grønn
+    # også om selve `find`-linjen forsvinner (Cursor P2 på `db2eeda`).
+    feien = [ln for ln in linjer if ln.startswith("find /dev/shm")]
+    assert len(feien) == 1 and "-user root" in feien[0] \
+        and "-name 'disponit-backup.*' -exec rm -rf {} +" in feien[0], \
         "en mellomfil fra en drept kjøring ryddes aldri opp"
     i_rm = indeks('rm -f "$RAA"')
     i_tar = indeks("tar --create")
