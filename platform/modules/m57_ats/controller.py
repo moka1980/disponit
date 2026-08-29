@@ -51,6 +51,41 @@ FORNY_LEASE_S = 600
 FORNY_TAPT_ETTER = int(FORNY_LEASE_S // FORNY_INTERVALL_S)
 #: Margin reservert til rapportbygging + levering + kvittering.
 AVSLUTNINGSMARGIN_S = 120.0
+#: OVERFØRINGENE HAR SITT EGET BUDSJETT (Codex P1, #173).
+#:
+#: `http_frist_s()` er AVSLUTNINGENS frist: den deler lukkevinduets 120
+#: sekunder på åtte kall og gir 5,0 s. Kandidatsinkene arvet den fordi
+#: klienten bare hadde ÉN frist — men de er ikke avslutningskall. De
+#: bærer et helt dokument (base64 + parsetekst) og et helt
+#: evalueringsartefakt (`kildetekst` + funn + avmaskeringskart), og
+#: rutene tar imot ~185 MiB og ~301 MiB wire-kropp
+#: (`api.app.MAKS_KANDIDATDOK_KROPP` / `MAKS_KANDIDATARTEFAKT_KROPP`).
+#:
+#: 5 sekunder er ikke en taushetsgrense for den kroppen. CPythons
+#: `socket.sendall` holder ÉN samlet frist over hele utsendelsen, og
+#: `urllib`s `timeout` er nettopp den; svaret plattformen sender etter at
+#: den har parset og skrevet kroppen måles av samme tall. En stor, GYLDIG
+#: kandidat traff derfor timeout, ble retryet `LEVERINGSFORSOK` = 4
+#: ganger på samme umulige frist, og falt til slutt som
+#: `kandidatlagring_feilet` — plattformen felte en kandidat den hadde
+#: rukket å ta imot.
+#:
+#: Fristen er derfor UTLEDET av overføringen: verstefallskroppen delt på
+#: et gjennomstrømningsgulv, pluss plattformens egen behandlingstid etter
+#: at kroppen er mottatt. Gulvet er bevisst lavt — arbeideren og API-et
+#: står på samme vert (`DISPONIT_API_URL` er loopback), så 1 MiB/s er
+#: flere størrelsesordener under det som faktisk måles; en frist som
+#: løper ut her betyr at noe er GALT, ikke at kandidaten var stor.
+#:
+#: Leasen tar ikke skade av den lange fristen: `_Heartbeat` fornyer fra
+#: en egen tråd, og `lever` sjekker `_vindu_apent(utforelsesfrist)` før
+#: hvert nye forsøk. Det som endrer seg er at et skriv får lov til å
+#: fullføre.
+SKRIV_MAKS_KROPP = 301 * 1024 * 1024
+SKRIV_GJENNOMSTROMNING_B_S = 1024 * 1024
+SKRIV_BEHANDLING_S = 60.0
+SKRIVEFRIST_S = (SKRIV_MAKS_KROPP / SKRIV_GJENNOMSTROMNING_B_S
+                 + SKRIV_BEHANDLING_S)
 #: `lever` kjøres TO ganger i en avslutning: opplastingen og kvitteringen.
 LEVERINGSRUNDER = 2
 #: Arbeidet MELLOM kallene — bygging og skjemavalidering av rapporten, og
@@ -477,9 +512,15 @@ def kjor_en(klient, token: str, modell, uttrekker, biasmaalinger,
         "ressurs_id": f"oppdrag:{claim['oppdrag_id']}",
     }
 
-    def lever(sti, kropp, utloper, *, gjenlosbar_etter_utlop=False):
+    def lever(sti, kropp, utloper, *, gjenlosbar_etter_utlop=False,
+              frist=None):
         """m56s leveringsløkke, ordrett i semantikk: 5xx/tapt svar
-        retryes (idempotente endepunkter), 4xx aldri, 2xx er ferdig."""
+        retryes (idempotente endepunkter), 4xx aldri, 2xx er ferdig.
+
+        `frist` er kallets EGEN HTTP-frist når den er satt (kandidat-
+        sinkene, `SKRIVEFRIST_S`); uten den gjelder klientens, som er
+        avslutningens `http_frist_s()`."""
+        ekstra = {} if frist is None else {"timeout": frist}
         rk = _Uteblitt()
         for forsok in range(LEVERINGSFORSOK):
             if forsok:
@@ -487,7 +528,7 @@ def kjor_en(klient, token: str, modell, uttrekker, biasmaalinger,
                     break
                 _sov(LEVERINGSPAUSE_S * forsok)
             try:
-                rk = klient.post(sti, json=kropp, headers=hode)
+                rk = klient.post(sti, json=kropp, headers=hode, **ekstra)
             except Exception as e:                  # noqa: BLE001
                 rk = _Uteblitt(f"{type(e).__name__}: intet svar")
                 continue
@@ -568,7 +609,8 @@ def kjor_en(klient, token: str, modell, uttrekker, biasmaalinger,
                 **claim_trippel, "kandidat_id": kandidat_id,
                 "dokumentnavn": medlemsnavn,
                 "dokument_b64": base64.b64encode(data).decode("ascii"),
-                "tekst": tekst}, claim.get("utforelsesfrist"))
+                "tekst": tekst}, claim.get("utforelsesfrist"),
+                frist=SKRIVEFRIST_S)
             if not 200 <= r.status_code < 300:
                 raise RuntimeError(
                     f"kandidatdokument {medlemsnavn}: {r.status_code}")
@@ -615,7 +657,8 @@ def kjor_en(klient, token: str, modell, uttrekker, biasmaalinger,
                              "kildetekst": resultat["kildetekst"]},
                 "avmaskering": resultat["avmaskering"],
                 "intervjusporsmal": resultat.get("intervjusporsmal") or
-                None}, claim.get("utforelsesfrist"))
+                None}, claim.get("utforelsesfrist"),
+                frist=SKRIVEFRIST_S)
             if not 200 <= r.status_code < 300:
                 raise RuntimeError(
                     f"kandidatartefakt {kandidat_id}: {r.status_code}")
