@@ -148,9 +148,15 @@ def test_det_nyeste_utlopte_paret_lever_til_det_nye_star():
     # treff. Vi ser bare på linjer som faktisk kjører noe.
     kjorende = [l for l in SKRIPT.splitlines()
                 if not l.lstrip().startswith("#")]
-    assert not [l for l in kjorende if "| head -1" in l], (
-        "`head -1` lukker røret og gir `sort` SIGPIPE — med pipefail dør"
-        " kjøringen, og hver senere kjøring møter samme liste")
+    # KLASSEN, ikke det ene tallet (Cursor P2): `head -5` på feilveiene
+    # lukker røret på nøyaktig samme måte. Der dør blokken på 141 FØR sin
+    # egen `exit 1`, så avbruddet går utenom AVBRUTT-stien. Porten
+    # forbyr derfor enhver `| head` i kjørende linjer — les strømmen
+    # ferdig med `sed -n`.
+    assert not [l for l in kjorende if "| head" in l], (
+        "`head` lukker røret og gir avsenderen SIGPIPE — med pipefail dør"
+        " kjøringen: retensjonen låser seg permanent, og feilveiene"
+        " avbryter på 141 i stedet for gjennom sin egen exit 1")
     assert '[ "$gammel" != "$SPART" ] || continue' in SKRIPT, \
         "sveipen sletter også den som skal spares"
     # Den spartes fall må komme ETTER at begge navnene er satt.

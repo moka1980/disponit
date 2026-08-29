@@ -448,7 +448,7 @@ MANGLER=$(comm -23 "$LISTE.krav" "$LISTE.sett")
   echo "AVBRUTT: $(printf '%s\n' "$MANGLER" | wc -l) rad(er) i dumpen peker" \
        "på filer arkivet ikke har — en restore ville gitt rader uten filer." \
        "Korthash per sti (se \$LISTE.krav på tmpfs for klartekst):" >&2
-  printf '%s\n' "$MANGLER" | head -5 \
+  printf '%s\n' "$MANGLER" | sed -n '1,5p' \
     | while IFS= read -r sti; do
         printf '  %s\n' "$(printf '%s' "$sti" | sha256sum | cut -c1-12)" >&2
       done
@@ -491,7 +491,7 @@ done < "$LISTE.krav"
        "dumpen krever er tomme, symlenker eller ikke vanlige filer —" \
        "arkivet ville" \
        "båret navnet uten innholdet. Korthash per sti:" >&2
-  printf '%s' "$mens_manglet" | head -5 \
+  printf '%s' "$mens_manglet" | sed -n '1,5p' \
     | while IFS= read -r sti; do
         printf '  %s\n' "$(printf '%s' "$sti" | sha256sum | cut -c1-12)" >&2
       done
