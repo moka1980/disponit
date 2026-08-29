@@ -127,7 +127,7 @@ class _Stubklient:
     def __init__(self, kvitteringsstatus=200, *, opplastingsstatus=200,
                  kvitteringskropp=..., payload=..., opplasting=...,
                  buntstatus=200, frist_om_s=30 * 60, forny=None,
-                 artefaktkropp=...):
+                 artefaktkropp=..., lease_utloper=None):
         from datetime import datetime, timedelta, timezone
         naa = datetime.now(timezone.utc)
         self.utforelsesfrist = (
@@ -149,6 +149,10 @@ class _Stubklient:
         #: fersk kapabilitet. Med standardintervallet (240 s) rekker
         #: pulsen aldri å slå i en test — den må skrus ned med vilje.
         self.forny = forny
+        #: #219: claim-svarets `owner_lease_utloper`. None = feltet
+        #: utelates (en server fra før #219), så teller-testene måler
+        #: tilbakefallet de alltid har målt.
+        self.lease_utloper = lease_utloper
         self.kvitteringer = []
         self.stier = []
 
@@ -163,14 +167,17 @@ class _Stubklient:
     def post(self, sti, json=None, headers=None):
         self.stier.append(sti)
         if sti == "/v1/oppdrag/claim":
-            return _Svar(200, {
+            kropp = {
                 "oppdrag_id": 1, "tenant": TENANT, "kvittering_jti": "j",
                 "repair_operation_id": "r", "owner_claim_id": "o" * 22,
                 "owner_generation": 0,
                 "utforelsesfrist": self.utforelsesfrist,
                 "kvittering_utloper": self.kvittering_utloper,
                 "payload": self.payload,
-                "opplasting": self.opplasting})
+                "opplasting": self.opplasting}
+            if self.lease_utloper is not None:
+                kropp["owner_lease_utloper"] = self.lease_utloper
+            return _Svar(200, kropp)
         if sti.startswith("/v1/inndata/hent-for-oppdrag/"):
             if self.buntstatus != 200:
                 return _Svar(self.buntstatus, {"feil": "x"})
@@ -1288,6 +1295,77 @@ def test_serverens_horisont_slaar_den_avledede_telleren(monkeypatch):
     assert res["utfall"] == "utfort", res
     assert res.get("lease_tapt") is None, res
     assert "/v1/artefakt" in k.stier
+
+
+def test_219_claimsvaret_seeder_horisonten(monkeypatch):
+    """#219: horisonten er serverens FRA CLAIMEN. 037 skrev den i samme
+    UPDATE som claimen, og claim-svaret bærer den nå — så vinduet der en
+    teller kunne felle en levende lease (480 s mot en initial lease på
+    opptil 3600 s) finnes ikke lenger: det er ingen «før første
+    bekreftede fornyelse» uten horisont.
+
+    Porten: claim med horisont langt fram, deretter BARE stumme pulser —
+    flere enn telleren tålte. Ikke én fornyelse bekreftes. Autoriteten
+    lever på claimets egen horisont, og oppdraget blir UTFØRT.
+
+    MUTASJONEN SOM DREPER DENNE: fjern seedingen i `_Heartbeat.__init__`
+    — da feller telleren på `FORNY_TAPT_ETTER` stumme pulser, og
+    kvitteringen sier `lease_tapt`."""
+    import threading
+
+    from modules.m57_ats import controller
+
+    monkeypatch.setattr(controller, "FORNY_INTERVALL_S", 0.01)
+    slo = threading.Event()
+    forsok = []
+
+    def forny():
+        forsok.append(1)
+        if len(forsok) >= controller.FORNY_TAPT_ETTER + 3:
+            slo.set()           # slipper evalueringen fram til utgangen
+        return _Svar(503, {})
+
+    k = _Stubklient(forny=forny, lease_utloper=_om(3600))
+    res = _kjor(k, modell=_VenterModell(slo))
+    assert res["utfall"] == "utfort", res
+    assert res.get("lease_tapt") is None, res
+    assert "/v1/artefakt" in k.stier
+
+
+def test_219_passert_claimhorisont_feller_paa_forste_stumme_puls(
+        monkeypatch):
+    """Seedingen er sann begge veier, som fornyelsens horisont alt er:
+    en claim-horisont som ALT er passert betyr at det ikke finnes lease
+    å puste på — første stumme puls feller, uten å vente på telleren.
+
+    Uten denne ville seedingen vært en ren oppmykning: fail-open der
+    porten skal felle."""
+    import threading
+
+    from modules.m57_ats import controller
+
+    assert controller.FORNY_TAPT_ETTER >= 2, (
+        "med terskel 1 skiller ikke denne porten horisonten fra"
+        " telleren — begge ville felt på første stumme puls")
+    monkeypatch.setattr(controller, "FORNY_INTERVALL_S", 0.01)
+    stoppet = threading.Event()
+    forsok = []
+
+    def forny():
+        forsok.append(1)
+        stoppet.set()
+        return _Svar(503, {})
+
+    k = _Stubklient(forny=forny, lease_utloper=_om(-1))
+    with controller._Heartbeat(k, {},
+                               {"oppdrag_id": 1,
+                                "owner_claim_id": "c" * 22,
+                                "owner_generation": 1,
+                                "owner_lease_utloper": _om(-1)}) as puls:
+        assert stoppet.wait(10), "den stumme pulsen kom aldri"
+    assert puls.tapt == "forny_utilgjengelig", (puls.tapt, forsok)
+    #: ÉN stum puls holdt — telleren ville krevd `FORNY_TAPT_ETTER`.
+    assert len(forsok) == 1, forsok
 
 
 def test_passert_horisont_taper_leasen_paa_forste_stumme_puls(monkeypatch):

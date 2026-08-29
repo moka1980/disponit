@@ -2021,9 +2021,17 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
             # 038 §5: opphavet er metadata i svaret, ikke autorisasjon —
             # modulen gjør det samme arbeidet uansett. Leses etter claimen
             # (claim_neste_oppdrag-signaturen er 008s og røres ikke).
-            opprinnelse = conn.execute(
-                "SELECT opprinnelse FROM oppdrag WHERE tenant=%s AND id=%s",
-                (tenant, opp_id)).fetchone()[0]
+            # `owner_lease_utloper` leses fra SAMME rad claimen nettopp
+            # skrev (#219): horisonten er serverens, og dette er den ENE
+            # kilden — å regne den ut i klienten ville speilet 037s
+            # formel, to sannheter som driver fra hverandre ved neste
+            # migrasjon. Fornyelsessvaret bærer alt feltet (063); nå gjør
+            # claim-svaret det også, så heartbeatets teller-tilbakefall
+            # før første fornyelse dør.
+            opprinnelse, lease_utloper = conn.execute(
+                "SELECT opprinnelse, owner_lease_utloper FROM oppdrag"
+                " WHERE tenant=%s AND id=%s",
+                (tenant, opp_id)).fetchone()
             nokkelrad = conn.execute(
                 "SELECT wrapped_dek FROM tenant_nokler"
                 " WHERE tenant=%s AND key_id=%s", (tenant, key_id)).fetchone()
@@ -2169,6 +2177,9 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
             "oppdragstype": oppdragstype, "handling": handling,
             "repair_operation_id": repair_id, "owner_claim_id": claim_id,
             "owner_generation": owner_gen,
+            # Horisonten 037 skrev i claim-UPDATE-en (#219) — samme felt
+            # fornyelsen returnerer, fra samme kolonne.
+            "owner_lease_utloper": lease_utloper.isoformat(),
             "utforelsesfrist": uf.isoformat(), "evidensfrist": ef.isoformat(),
             # Kvitteringskapabiliteten er modulens ENESTE adgang til
             # kvitteringsporten for DETTE oppdraget. Et langlivet modultoken

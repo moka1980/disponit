@@ -270,38 +270,21 @@ Modulen er KUNDE av plattformen, aldri omvendt (m56-formen):
   varigheten nede i mellomtiden.
 
   `dom-klasse: kjoring-avbrudd-og-frist · felt i #218 · https://github.com/moka1980/disponit/pull/218#issuecomment-5431892763`
-* **Lease-horisonten er serverens** — men først fra den FØRSTE
-  bekreftede fornyelsen. `_Heartbeat._utlopt` feller autoriteten på
-  `owner_lease_utloper` slik 063 skriver den; i vinduet før det svaret
-  har kommet, finnes ingen horisont fra serveren (`/v1/oppdrag/claim`
-  returnerer `utforelsesfrist`, ikke `owner_lease_utloper`), og
-  tilbakefallet er telleren: `FORNY_TAPT_ETTER` ×
-  `FORNY_INTERVALL_S` = 480 s. 037 skrev den initielle leasen som
-  `least(nå + 3600 s, greatest(nå + lease_s, utforelsesfrist))` — for
-  `bunt` (frist 240 min) altså 3600 s. Telleren kan derfor felle en
-  lease som fortsatt er gyldig.
+* **Lease-horisonten er serverens** — fra claimen. `_Heartbeat._utlopt`
+  feller autoriteten på `owner_lease_utloper` slik 037/063 skriver den:
+  claim-svaret SEEDER horisonten (#219 — feltet basen alt skrev i samme
+  UPDATE som claimen), og hver bekreftet fornyelse avløser den. Én
+  kilde, aldri en klientformel: å regne horisonten ut selv ville vært
+  037s formel skrevet en gang til — nøyaktig den dobbeltsannheten
+  `dom-klasse: kjoring-avbrudd-og-frist`-runden fjernet.
 
-  KJENT BEGRENSNING, PARKERT AV EIER (K2-kjennelse på #218, valg 3),
-  med fiksen utsatt til
-  [#219](https://github.com/moka1980/disponit/issues/219): claim-svaret
-  skal bære `owner_lease_utloper` — feltet basen alt skriver i samme
-  UPDATE. Det er ÉN kilde på riktig sted, men `/v1/oppdrag/claim` er
-  plattformens delte claim-flate (m56 claimer gjennom den), altså egen
-  sak og egen PR — slik 037 selv sa om fornyelsesveien. De to andre
-  veiene er formene rundene alt har avvist: å seede horisonten fra
-  `utforelsesfrist` klemt med `UTSTEDT_AUTORITET_S` er 037s formel
-  skrevet en gang til i klienten — nøyaktig den dobbeltsannheten
-  `dom-klasse: kjoring-avbrudd-og-frist`-runden fjernet, og to kilder
-  som driver fra hverandre ved neste migrasjon.
-
-  MÅLT KONSEKVENS i mellomtiden, så begrensningen bæres på tall og ikke
-  på uro: den krever at plattformen er SAMMENHENGENDE utilgjengelig
-  gjennom hele de første ~8 minuttene av en kjøring, FØR den første
-  vellykkede fornyelsen. Utfallet er fail-closed — en falsk
+  Teller-tilbakefallet (`FORNY_TAPT_ETTER` × `FORNY_INTERVALL_S` =
+  480 s) består KUN mot en server som ennå ikke sender feltet i
+  claim-svaret (utrullingsvinduet), og er fail-closed: en falsk
   `lease_tapt` (evalueringen kastes, feil-kvittering sendes), aldri et
   falskt `utfort`.
 
-  `dom-klasse: lease-horisont-foer-foerste-fornyelse · felt i #218 · https://github.com/moka1980/disponit/pull/218#issuecomment-5432174987`
+  `dom-klasse: lease-horisont-foer-foerste-fornyelse · felt i #218 · lukket av #219`
 * **Kandidatdata** (§5): alt payload bor i de seks 057-lagrene og reapes
   ved fristen; modulen kan ikke forlenge den. Unntaket er den promoterte
   rapporten over, som i dag bærer den samme payloaden uten å arve
