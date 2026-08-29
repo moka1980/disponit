@@ -429,10 +429,26 @@ def blind_dokumenter(dokumenter: list[str],
             # inni bærer det ekte treffet, så `end(1)` er den faktiske
             # slutten — ingen antakelse om at treffets lengde er verdiens
             # (versalufølsomhet kan i prinsippet endre den).
-            overlappende = re.compile(f"(?={re.escape(verdi)})",
+            #
+            # GRUPPEN MANGLET, OG SLUTTEN VAR REGNET (Cursor P2, runde 5).
+            # Kommentaren over lovet `end(1)`; koden skrev
+            # `treff.start() + len(verdi)`. Målt her er de to ALLTID like:
+            # `re.escape` gir bare enkelttegn-literaler, og ingen av dem
+            # matcher et løp på annet enn ett tegn under `IGNORECASE` —
+            # brute-forcet over hele Unicode (alle printbare kodepunkter,
+            # null avvik), og ligaturveien Cursor foreslo (`ﬁ` mot `fi`)
+            # matcher ikke i det hele tatt: Pythons `re` gjør SIMPEL
+            # case-folding, ikke full. Det finnes derfor ingen inndata som
+            # gjør mutasjonen rød, og ingen test kan bevise denne linja.
+            # Nettopp derfor MÅLES slutten i stedet for å regnes: da hviler
+            # porten på det motoren faktisk fant, ikke på en `re`-invariant
+            # ingen port her holder — og et bytte til full case-folding
+            # (`regex`, eller en framtidig `re`) kan ikke gjøre den fail-open
+            # i stillhet. SP-3: et umålt utfall er et avvist utfall.
+            overlappende = re.compile(f"(?=({re.escape(verdi)}))",
                                       re.IGNORECASE)
             for treff in overlappende.finditer(samlet):
-                slutt_treff = treff.start() + len(verdi)
+                slutt_treff = treff.end(1)
                 i = bisect_right(startene, treff.start()) - 1
                 # `i < 0` kan ikke skje — første dokument starter på 0 —
                 # men et treff som BEGYNNER inne i selve skjøten peker på
