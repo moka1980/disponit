@@ -793,17 +793,29 @@ def test_223_interleavet_reap_i_dekrypteringsvinduet_feller_200(
 
         # SØMMEN: dekrypteringen pauses ÉN gang, med tidsgrense begge
         # veier så en feilende rigg aldri henger suiten — utløper
-        # ventingen, fortsetter kallet og assertionene feller ærlig.
+        # ventingen, FELLER riggen på sin egen premiss i stedet for å
+        # slippe kallet videre.
         inne = threading.Event()
         slipp = threading.Event()
         brukt = threading.Event()
+        forgjeves = threading.Event()
         ekte = kryptering.dekrypter
 
         def _pause(*a, **kw):
             if not brukt.is_set():
                 brukt.set()
                 inne.set()
-                slipp.wait(20)
+                # Tidsgrensen SKAL ikke fortsette gjennom koden under
+                # test (Codex P2): drar lukking + reap forbi 20 s på en
+                # lastet CI-base, er vinduet aldri åpnet, og et kall som
+                # går videre kjører `_anker_lever` FØR reapen committet.
+                # 200 er da KORREKT produktoppførsel — riggen ville meldt
+                # en regresjon som ikke finnes, altså gjort treg base om
+                # til rødt. Avbryt forespørselen i stedet.
+                if not slipp.wait(20):
+                    forgjeves.set()
+                    raise AssertionError(
+                        "sømmen ventet 20 s uten at vinduet ble åpnet")
             return ekte(*a, **kw)
 
         monkeypatch.setattr(kryptering, "dekrypter", _pause)
@@ -858,6 +870,14 @@ def test_223_interleavet_reap_i_dekrypteringsvinduet_feller_200(
             assert not traad.is_alive(), (
                 "forespørselstråden lever etter `slipp` + 30 s join — "
                 "kallet står fast utenfor dekrypteringssømmen")
+        # Diagnosen leses av EGEN flagg, ikke av svaret: heves
+        # AssertionError inne i ruten, kan appen rendre den som 500, og
+        # 404-asserten under ville da meldt «re-sjekken lukket ikke
+        # vinduet» om noe som bare var en treg base.
+        assert not forgjeves.is_set(), (
+            "riggen målte aldri vinduet: lukking + reap ble ikke "
+            "committet innen sømmens 20 s. Dette er en treg base, "
+            "IKKE en regresjon i re-sjekken")
         assert utfall and not isinstance(utfall[0], Exception), utfall
         assert utfall[0].status_code == 404, (
             "payloaden forlot prosessen ETTER en committet reap — "
