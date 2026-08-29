@@ -1570,6 +1570,54 @@ def test_m57_har_EN_modulidentitet_i_kontrakt_migrasjon_og_artefakt():
     assert manifest["id"] == MODULROT.name
 
 
+def test_spolen_bevarer_uttrekkerens_linjeskiftbytes(tmp_path):
+    """Codex P2 (#173): spolen oversatte `\\r\\n` og enslig `\\r` til `\\n`.
+
+    `Path.write_text`/`read_text` gjør universell linjeskiftoversettelse
+    når `newline` ikke settes. Spolen er ikke en logg — den er kilden til
+    de EKSAKTE strengsammenligningene nedstrøms, og `lagre_dokument` har
+    alt persistert uttrekkerens ORIGINALE tekst. Oversettelsen ga derfor
+    to ulike sannheter om samme dokument.
+
+    Testen måler begge følgene i én kjøring:
+
+    1. En DEKLARERT verdi med internt `\\r\\n` — en flerlinjes adresse —
+       traff den uttrukne teksten før spolingen og ikke etterpå. Da er
+       deklarasjonen vakuøs, og `blinding.evalueringsinput` feller et
+       fullstendig gyldig manifest som `ugyldig_maskeringsform`. At
+       kjøringen fullfører er derfor selve porten.
+    2. Bytene modellen ser: teksten bærer et `\\r\\n` UTENFOR de
+       maskerte verdiene, og det skal stå igjen uendret.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `newline=""` fra lesningen i
+    `_les_spole` (punkt 1 og 2 faller begge), eller fra skrivingen i
+    `kjor_bunt` (faller på plattformer der `os.linesep != "\\n"`).
+    """
+    from modules.m57_ats import kjoring
+
+    adresse = "Gate 1\r\nOslo"
+    # `\r\n` både INNE i en deklarert verdi (punkt 1) og utenfor alle
+    # deklarerte verdier (punkt 2) — de to måles hver for seg.
+    tekst = f"Kandidat k1, {adresse}.\r\nKandidat k1 kan drift."
+    arkiv = _bunt(tmp_path, [("k1/soknad.html", b"<p>irrelevant</p>")])
+    felter = lambda m: {"navn": ["Kandidat k1"], "adresse": [adresse]}
+
+    modell = _Modell()
+    res = kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
+                            kandidatfelter_for=felter,
+                            tekst_for=lambda m, d: tekst,
+                            biasmaalinger=_MAALINGER, antall_soknader=1)
+
+    assert [k["kandidat_id"] for k in res["rangering"]] == ["k1"]
+    assert modell.sett, "modellen ble aldri kalt"
+    assert "\r\n" in modell.sett[0], (
+        "spolen oversatte linjeskiftene — modellen fikk ikke uttrekkerens"
+        f" egne bytes: {modell.sett[0]!r}")
+    # Og adressen ER faktisk maskert: uten dette kunne punkt 2 vært
+    # grønt fordi blindingen aldri traff i det hele tatt.
+    assert adresse not in modell.sett[0], modell.sett[0]
+
+
 def test_deklarert_antall_bindes_til_buntens_kandidater(tmp_path):
     """Codex P1 på #210: `antall_soknader` er bestillingens signerte tall
     og ble aldri lest i kjøringen — deklarer 1, lever 2, og policyens

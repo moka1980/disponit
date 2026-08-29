@@ -179,13 +179,32 @@ def _spoletekst(medlemmer, fremdrift):
 
     Uten errno-splitten fra strømløkken, med vilje: DEN finnes for
     dekompressorens errno-løse «Invalid data stream», og det er ikke en
-    form som kan komme ut av `Path.read_text` på vår egen spolefil.
+    form som kan komme ut av vår egen spolefil.
+
+    `newline=""` ER PÅKREVD (Codex P2, #173). Uten den gjør Python
+    universell linjeskiftoversettelse på veien inn: `\\r\\n` og enslig
+    `\\r` fra uttrekkeren blir `\\n`. Spolen er ikke en logg — den er
+    kilden til de EKSAKTE strengsammenligningene nedstrøms, og
+    `lagre_dokument` har alt persistert uttrekkerens ORIGINALE tekst.
+    Oversettelsen ga derfor to ulike sannheter om samme dokument: et
+    manifestfelt med et internt `\\r\\n` — en flerlinjes adresse, for
+    eksempel — matchet den uttrukne teksten før spolingen og matchet
+    IKKE etterpå, og den blindingssjekken feller et gyldig manifest.
     """
     try:
-        return "\n\n".join(bit[2].read_text(encoding="utf-8")
-                           for bit in medlemmer)
+        return "\n\n".join(_les_spole(bit[2]) for bit in medlemmer)
     except OSError as feil:
         raise Kjoringsfeil("infrastrukturfeil", fremdrift) from feil
+
+
+def _les_spole(sti):
+    """Spolefila lest UTEN linjeskiftoversettelse — se `_spoletekst`.
+
+    Egen funksjon fordi `Path.read_text` først tar `newline` i 3.13, og
+    `with` hører hjemme i en setning, ikke i et generatoruttrykk der
+    lukkingen ville hvilt på refcounting."""
+    with sti.open(encoding="utf-8", newline="") as fil:
+        return fil.read()
 
 
 def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
@@ -439,7 +458,14 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
                         raise Kjoringsfeil("kandidatlagring_feilet",
                                            fremdrift) from feil
                 spolesti = spolerot / f"{lest}.txt"
-                spolesti.write_text(tekst, encoding="utf-8")
+                # `newline=""` på BEGGE sider (Codex P2, #173): lesningen
+                # er der oversettelsen faktisk beit, men uten den her er
+                # rundturen bare byte-eksakt fordi `os.linesep` tilfeldigvis
+                # er `\n` på Linux. Spolen skal bære uttrekkerens streng
+                # uendret av konstruksjon, ikke av plattformflaks.
+                with spolesti.open("w", encoding="utf-8",
+                                   newline="") as fil:
+                    fil.write(tekst)
                 biter.setdefault(kandidat_id, []).append(
                     (navn, medlem.navn, spolesti, felter))
         except OSError as feil:
