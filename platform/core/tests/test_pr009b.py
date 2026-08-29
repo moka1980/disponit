@@ -256,8 +256,63 @@ def test_nginx_kandidatrutene_slipper_gjennom_appens_kroppsgrenser():
             " — proxyen avviser med 413 først, og sinken leser det som"
             " kandidatlagring_feilet")
         # Ruten mister ikke rate-grense eller socket-tillitsgrensen.
-        assert "zone=disponit_general" in krop
+        # HVILKEN sone måles av testen under — her er kravet bare at
+        # ruten fortsatt HAR en (en location uten `limit_req` faller ut
+        # av rate-vernet helt, og det er en annen og verre feil).
+        assert re.search(r"limit_req zone=\w+ burst=\d+", krop), \
+            f"{rute} mistet rate-grensen"
         assert "proxy_pass http://unix:/run/disponit/api.sock;" in krop
+
+
+def test_nginx_kandidatrutene_faar_sin_egen_ratesone():
+    """#173 (Codex P1): ingressens rate-budsjett må matche strømmen.
+
+    Kroppsgrensen ble hevet i `56fe289`, men begge kandidatrutene sto
+    igjen i `disponit_general` — 600 r/m med burst 100, altså 10 r/s.
+    Skriveveien er en STRØM: inntil 25 000 skrivinger under ett claim
+    (§4: 20 000 medlemmer + 5 000 kandidater). En arbeider som leverer
+    små dokumenter fortere enn 10/s tømmer bursten og får nginx' 429
+    lenge før appens egen `KANDIDATDATA_RATE_PER_MIN`-bøtte er i
+    nærheten — altså var appfiksen i `bc1e7f3` uten virkning i den
+    eneste stien som finnes i drift.
+
+    Og et 429 her er ikke en bremset forespørsel, like lite som 413-en
+    var en avvist: `lever` leser 4xx som TERMINALT, og `kjor_bunt`
+    feller hele evalueringen som `kandidatlagring_feilet`. Ingressen
+    felte den eneste kjøringen rutene finnes for.
+
+    Porten er den samme formen som kroppsgrensen har: ingressen skal
+    ikke være strammere enn budsjettet appen SELV håndhever, og
+    appkonstanten er ankeret — ikke et tall kopiert inn i testen.
+
+    MUTASJONEN SOM DREPER DENNE: sett rutene tilbake til
+    `zone=disponit_general`, eller senk sonens rate under appbøtta."""
+    from api.app import (KANDIDATARTEFAKT_RUTE, KANDIDATDATA_RATE_PER_MIN,
+                         KANDIDATDOK_RUTE)
+    https = _https()
+    soner = (NGINX / "rate-soner.conf").read_text(encoding="utf-8")
+    m = re.search(r"zone=disponit_kandidatdata:\d+[km]\s+rate=(\d+)r/m;",
+                  soner)
+    assert m, "ingen egen rate-sone for kandidatskriveveien"
+    sonerate = int(m.group(1))
+    assert sonerate >= KANDIDATDATA_RATE_PER_MIN, (
+        f"ingressen slipper {sonerate}/min, appen budsjetterer"
+        f" {KANDIDATDATA_RATE_PER_MIN}/min — nginx svarer 429 først, og"
+        " sinken leser det som kandidatlagring_feilet")
+    # Den generelle sonen er URØRT: fiksen er en egen sone for to ruter,
+    # ikke en oppmyking av transportvernet for hele flaten.
+    assert "zone=disponit_general:10m rate=600r/m;" in soner, \
+        "den generelle sonen ble hevet i stedet for å få en søster"
+    for rute in (KANDIDATDOK_RUTE, KANDIDATARTEFAKT_RUTE):
+        blokk = re.search(r"location = %s \{(.*?)\n    \}" % re.escape(rute),
+                          https, re.S)
+        assert blokk, f"ingen egen nginx-location for {rute}"
+        krop = blokk.group(1)
+        assert "zone=disponit_kandidatdata" in krop, \
+            f"{rute} står fortsatt i den generelle sonen"
+        assert "zone=disponit_general" not in krop, \
+            f"{rute} stabler den generelle sonen oppå den egne"
+        assert "limit_req_status 429;" in krop, rute
 
 
 def test_173_kandidatrutenes_kroppstak_daekker_arkivets_maksdokument():

@@ -196,16 +196,32 @@ server {
     # `test_nginx_kandidatrutene_slipper_gjennom_appens_kroppsgrenser`, som
     # itererer `RUTEKROPPSGRENSER` — en ny rute med eget apptak uten egen
     # location her feller testen.
+    # OG SONEN ER EGEN, IKKE BARE TAKET (Codex P1). Kroppsgrensen over
+    # løste 413-en, men begge rutene sto igjen i `disponit_general`: 600
+    # r/m med burst 100, altså 10 r/s. Dette er en STRØM — inntil 25 000
+    # skrivinger under ett claim — så en arbeider som leverer små
+    # dokumenter fortere enn 10/s tømmer bursten og får nginx' 429 lenge
+    # før appens egen 50 000/min-bøtte er i nærheten. Nøyaktig samme
+    # følge som 413-en: `lever` leser 4xx som TERMINALT, `kjor_bunt`
+    # feller hele evalueringen som `kandidatlagring_feilet`. Å heve
+    # appbøtta i `bc1e7f3` uten å heve ingressen flyttet altså bare
+    # hvilken av de to grensene som felte kjøringen.
+    #
+    # `disponit_kandidatdata` er dimensjonert etter appens eget budsjett
+    # (`KANDIDATDATA_RATE_PER_MIN`), ikke etter et nytt tall — se
+    # rate-soner.conf. Bursten er 500: sonens jevne rate er 833 r/s, og
+    # bursten dekker det øyeblikkelige spranget når strømmen starter.
+    # Bindingen er `test_nginx_kandidatrutene_faar_sin_egen_ratesone`.
     location = /v1/rekruttering/kandidatdokument {
         client_max_body_size 185m;      # >= MAKS_KANDIDATDOK_KROPP (~184,3 MiB)
-        limit_req zone=disponit_general burst=100 nodelay;
+        limit_req zone=disponit_kandidatdata burst=500 nodelay;
         limit_req_status 429;
         proxy_pass http://unix:/run/disponit/api.sock;
     }
 
     location = /v1/rekruttering/kandidatartefakt {
         client_max_body_size 301m;      # = MAKS_KANDIDATARTEFAKT_KROPP (301 MiB)
-        limit_req zone=disponit_general burst=100 nodelay;
+        limit_req zone=disponit_kandidatdata burst=500 nodelay;
         limit_req_status 429;
         proxy_pass http://unix:/run/disponit/api.sock;
     }
