@@ -2849,10 +2849,10 @@ test("Bestilling: 409 «bunten er ubrukelig» er ikke feltene (eierdom (c))",
       "/v1/inndata/reserver": { reservasjon_jti: "j-1",
                                 inndata_ref: "inndata:u-1" },
       "/v1/inndata/opplast/j-1": {} };
-    // 058-formen: ETT svar for alle årsakene — ukjent, utløpt, ikke
-    // ferdig lastet, alt bundet, ELLER holdt av en samtidig bestilling
-    // (`INNDATA_OPPTATT`, kollapset til denne koden i `KLIENTKODE`).
-    // Ingen av dem står i et felt brukeren kan rette.
+    // 058-formen: ETT svar for alle de TERMINALE årsakene — ukjent,
+    // utløpt, ikke ferdig lastet, alt bundet. Ingen av dem står i et
+    // felt brukeren kan rette. Den forbigående naboen har siden #215
+    // sin egen kode og sin egen test under.
     let bestillingssvar = { __status: 409,
       __kropp: { feil: "inndata_ubrukelig" } };
     SVAR = (sti) => sti === "/v1/bestilling" ? bestillingssvar : basis[sti];
@@ -2876,20 +2876,64 @@ test("Bestilling: 409 «bunten er ubrukelig» er ikke feltene (eierdom (c))",
     "buntens 409 ble meldt som en feil i skjemafeltene");
     assert.notEqual(seksjon.querySelector("[role=alert]").textContent,
       t("ui.rekruttering.bestill.feil"));
-    // NØKKELØKONOMIEN ER URØRT (eierdom (c): sannhets-fiks, ikke ny form).
-    // Ledningen bærer ikke skillet forbigående/terminal — `KLIENTKODE`
-    // kollapser det, og husets port sier `not er_forbigaende(
-    // "inndata_ubrukelig")`. Nøkkelen roterer derfor som før; å beholde
-    // den her krever den distinkte utadkoden, som er eierdom (b)s eget
-    // issue. Denne assertionen er grensevakten: gjør en senere runde
-    // teksten om til en nøkkelfiks uten kontraktsendringen, dør den.
+    // DEN TERMINALE KODEN ROTERER NØKKELEN — mot en død bunt er «prøv
+    // igjen, samme operasjon» en løgn. Skillet bæres av utadkoden
+    // (#215): den forbigående naboen under BEHOLDER nøkkelen.
     bestillingssvar = { beslutning: "tillat", oppdrag_id: 11 };
     send();
     await vent(() => bestillinger().length === 2, 20);
     const [b1, b2] = bestillinger();
     assert.notEqual(b2.hoder["Idempotency-Key"], b1.hoder["Idempotency-Key"],
-      "den terminale koden beholdt nøkkelen — det er kontraktsendringen "
-      + "i (b), ikke tekstfiksen i (c)");
+      "den terminale koden beholdt nøkkelen — det er den forbigående "
+      + "naboens (inndata_opptatt) økonomi, ikke denne kodens");
+  });
+
+test("Bestilling: 409 «bunten er opptatt» beholder nøkkelen (#215)",
+  async () => {
+    KALL = [];
+    const basis = { "/v1/rekruttering/prosesser": prosess(),
+      "/v1/rekruttering/stillingsprofiler": profiler(),
+      "/v1/inndata/reserver": { reservasjon_jti: "j-1",
+                                inndata_ref: "inndata:u-1" },
+      "/v1/inndata/opplast/j-1": {} };
+    // #215: en annen bestilling holder bunten AKKURAT NÅ. Ingen dom,
+    // ingen kvote — retry med SAMME nøkkel er samme operasjon, og
+    // teksten sier «prøv igjen om et øyeblikk» i stedet for å sende
+    // brukeren til filvelgeren.
+    let bestillingssvar = { __status: 409,
+      __kropp: { feil: "inndata_opptatt" } };
+    SVAR = (sti) => sti === "/v1/bestilling" ? bestillingssvar : basis[sti];
+    const hoved = nyHoved();
+    visRekruttering(hoved, ctx());
+    assert.ok(await vent(() => hoved.querySelector("table")),
+      "flaten kom aldri");
+    const seksjon =
+      hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+    const skjema = seksjon.querySelector("form");
+    Object.defineProperty(skjema.querySelector("input[type=file]"), "files",
+      { configurable: true, value: [{ name: "bunt.zip",
+          arrayBuffer: async () => new ArrayBuffer(16) }] });
+    const send = () => skjema.dispatchEvent(new window.Event("submit",
+      { bubbles: true, cancelable: true }));
+    const bestillinger = () => KALL.filter((k) => k.sti === "/v1/bestilling");
+    send();
+    await vent(() => bestillinger().length === 1, 20);
+    assert.ok(await vent(() => seksjon.querySelector("[role=alert]")
+      .textContent === t("ui.rekruttering.bestill.bunt_opptatt"), 20),
+    "buntlåsens 409 fikk ikke sin egen forbigående tekst");
+    assert.notEqual(seksjon.querySelector("[role=alert]").textContent,
+      t("ui.rekruttering.bestill.bunt_ubrukelig"),
+      "den forbigående koden falt i den terminale armen");
+    // NØKKELØKONOMIEN ER LØFTET KODEN GIR: retry er SAMME operasjon.
+    // MUTASJONEN SOM DREPER DENNE: fjern `buntOpptatt` fra
+    // nøkkel-vilkåret i submit-handleren.
+    bestillingssvar = { beslutning: "tillat", oppdrag_id: 11 };
+    send();
+    await vent(() => bestillinger().length === 2, 20);
+    const [b1, b2] = bestillinger();
+    assert.equal(b2.hoder["Idempotency-Key"], b1.hoder["Idempotency-Key"],
+      "den forbigående koden roterte nøkkelen — retryen ble en NY "
+      + "operasjon i stedet for den samme");
   });
 
 test("Bestilling: endret kropp etter usikkert svar gir NY nøkkel (P1-2)", async () => {

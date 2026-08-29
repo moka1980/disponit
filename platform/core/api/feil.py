@@ -168,9 +168,20 @@ FEILVEIER: tuple[Feilvei, ...] = (
     Feilvei("inndata_ubrukelig", 409, ("sikkerhet",), None, notat=(
         "Bestillingens inndata_ref kan ikke bindes: ukjent, utløpt, "
         "ikke ferdig lastet, eller alt bundet til et annet oppdrag — "
-        "ETT svar for alle årsakene (058-formen: et oppslagsverk over "
-        "bunter skal ikke finnes). Avvist billig i forhåndsporten, og "
-        "endelig av bind_inndata i fødselstransaksjonen.")),
+        "ETT svar for alle de TERMINALE årsakene (058-formen: et "
+        "oppslagsverk over bunter skal ikke finnes). Avvist billig i "
+        "forhåndsporten, og endelig av bind_inndata i "
+        "fødselstransaksjonen. Den FORBIGÅENDE naboen — bunten er holdt "
+        "av en samtidig bestilling — er inndata_opptatt (#215).")),
+    Feilvei("inndata_opptatt", 409, ("drift",), None, notat=(
+        "En annen bestilling holder engangsbunten AKKURAT NÅ (#215). "
+        "Forbigående, ingen dom: ingen beslutning er tatt, ingen kvote "
+        "brukt, og et nytt forsøk med SAMME idempotensnøkkel er samme "
+        "operasjon. Skilt fra inndata_ubrukelig fordi klienten velger "
+        "nøkkeløkonomi på koden alene: terminal kode roterer nøkkelen, "
+        "denne beholder den. Drift, ikke sikkerhet — et sammenstøt i "
+        "tid, ikke et forsøk på noe. 058-formen står: koden røper "
+        "ingenting en samtidig VINNENDE bestilling ikke alt vet.")),
     Feilvei("bestillingstype_utilgjengelig", 503, ("drift",), None, notat=(
         "Bestillingstypen er kodefestet, men oppdragstypen dens kan ikke "
         "CLAIMES nå: raden mangler i oppdragstype_register, har feil "
