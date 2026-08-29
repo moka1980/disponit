@@ -369,7 +369,7 @@ BEGIN
             r.t, r.oid, v_naa);
     END LOOP;
     PERFORM set_config('disponit.tenant', coalesce(v_kontekst, ''), true);
-    RAISE NOTICE '066: engangs-makulering av alt reapet før denne'
+    RAISE NOTICE '067: engangs-makulering av alt reapet før denne'
         ' migrasjonen — % artefakt(er) tømt', v_antall;
 END $$;
 RESET ROLE;

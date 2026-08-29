@@ -729,22 +729,22 @@ def _mal_059(conn) -> list[str]:
     return feil
 
 
-def _seed_066(conn):
-    """Bebodd 065-tilstand for 066s engangs-makulering (Cursor P1/P2 på
+def _seed_067(conn):
+    """Bebodd 066-tilstand for 067s engangs-makulering (Cursor P1/P2 på
     #252): den ENE formen migrasjonen møter ved oppgradering og som ingen
     tom-base-kjøring kan vise — en prosess som ALT er reapet av reaperen
-    slik den sto FØR 066, med den promoterte rapportens payload i live.
+    slik den sto FØR 067, med den promoterte rapportens payload i live.
 
     Etter `slettet_ts` er satt plukkes prosessen aldri igjen (reaperens
     predikat er `slettet_ts IS NULL`), så uten engangssteget beholder
     nettopp disse radene ciphertext for alltid. Formen er uoppnåelig på
-    en base som alt står på 066: vakten avviser da merket så lenge
+    en base som alt står på 067: vakten avviser da merket så lenge
     rapporten bærer payload. Bare SP-10 kan bebo den.
 
     To armer, én per utfall:
 
     - REAPET prosess + promotert rapport med payload → skal makuleres av
-      066 (payload nullet, merke satt, tilstand + hash i behold).
+      067 (payload nullet, merke satt, tilstand + hash i behold).
     - LEVENDE prosess + promotert rapport med payload → skal stå ORDRETT
       urørt; backfillen er ikke en tabellsveip.
     """
@@ -756,7 +756,7 @@ def _seed_066(conn):
     os.environ.setdefault("DISPONIT_KEK", "ab" * 32)
     from db import kryptering
     from db.pg import sett_kontekst
-    sett_kontekst(conn, TEN, "sp10:seed", "r-sp10-066")
+    sett_kontekst(conn, TEN, "sp10:seed", "r-sp10-067")
     key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(conn, TEN)
 
     # Rapporttypen i registerets ekte form: artefakt-FK-en går via
@@ -768,7 +768,7 @@ def _seed_066(conn):
         "INSERT INTO modulkontrakt (modul_id, kontraktversjon,"
         " kontrakt_hash, payload_schema_hash, kvittering_schema_hash,"
         " sideeffektklasse, reversibilitet)"
-        " SELECT 'm57_ats',1,'kh-sp10-066','p','k','krever_outbox',"
+        " SELECT 'm57_ats',1,'kh-sp10-067','p','k','krever_outbox',"
         "'kompenserende'"
         " WHERE NOT EXISTS (SELECT 1 FROM modulkontrakt"
         "   WHERE modul_id='m57_ats' AND kontraktversjon=1)")
@@ -807,8 +807,8 @@ def _seed_066(conn):
             "INSERT INTO revisjonslogg (tenant, aktor, kilde, input_hash,"
             " policy_id, beslutning, begrunnelse, idempotency_key)"
             " VALUES (%s,'sp10','api_token','ih','p@1.0.0/x.y','TILLAT',"
-            "'[]',%s) RETURNING id", (TEN, "sp10-066-" + merke)).fetchone()[0]
-        ct, nonce = kryptering.krypter(dek, {"sp10": "066", "arm": merke},
+            "'[]',%s) RETURNING id", (TEN, "sp10-067-" + merke)).fetchone()[0]
+        ct, nonce = kryptering.krypter(dek, {"sp10": "067", "arm": merke},
                                        TEN, key_id)
         oid = conn.execute(
             "INSERT INTO oppdrag (opprinnelse, tenant,"
@@ -835,9 +835,9 @@ def _seed_066(conn):
             " VALUES (%s,%s,'rekruttering.evaluering.rapport',%s,"
             "'r-sp10',%s,%s,1,'promotert',10,%s,%s,%s,%s,%s, now())",
             (TEN, oid, modul, ver, kh, "h-" + merke, ct, nonce, key_id,
-             "jti-sp10-066-" + secrets.token_hex(8)))
+             "jti-sp10-067-" + secrets.token_hex(8)))
         if reapet:
-            # Reaperens merke slik den SATTE det før 066: de seks lagrene
+            # Reaperens merke slik den SATTE det før 067: de seks lagrene
             # er tomme, så 057-vakten slipper det gjennom — og rapporten
             # blir stående.
             conn.execute(
@@ -852,16 +852,16 @@ def _seed_066(conn):
     conn.commit()
 
 
-def _mal_066(conn) -> list[str]:
-    """Etter 066: den reapede armens rapport er TØMT og merket, med
+def _mal_067(conn) -> list[str]:
+    """Etter 067: den reapede armens rapport er TØMT og merket, med
     tilstand og hash i behold; den levende armens rapport står ordrett
     urørt.
 
-    NEGATIVEN LIGGER I SEEDET: fjernes engangs-løkken fra 066, står den
+    NEGATIVEN LIGGER I SEEDET: fjernes engangs-løkken fra 067, står den
     reapede armens ciphertext fortsatt der — og målingen her er rød. En
     tom-base-`migrer` er grønn i begge tilfeller."""
     from db.pg import sett_kontekst
-    sett_kontekst(conn, TEN, "sp10:fasit", "r-sp10-066-2")
+    sett_kontekst(conn, TEN, "sp10:fasit", "r-sp10-067-2")
     feil = []
     rader = conn.execute(
         "SELECT p.slettet_ts IS NOT NULL, a.tilstand,"
@@ -874,14 +874,14 @@ def _mal_066(conn) -> list[str]:
     fasit = [(False, "promotert", False, False, False, "h-levende"),
              (True, "promotert", True, True, True, "h-reapet")]
     if rader != fasit:
-        feil.append(f"066 mot bebodd base: {rader!r}, ventet {fasit!r}")
+        feil.append(f"067 mot bebodd base: {rader!r}, ventet {fasit!r}")
     conn.rollback()
     return feil
 
 
 SEEDS = {48: (_seed_048, _mal_048), 49: (_seed_049, _mal_049),
          56: (_seed_056, _mal_056), 59: (_seed_059, _mal_059),
-         66: (_seed_066, _mal_066)}
+         67: (_seed_067, _mal_067)}
 
 
 def main(argv: list[str] | None = None) -> int:
