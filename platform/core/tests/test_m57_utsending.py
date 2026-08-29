@@ -1777,15 +1777,47 @@ def test_migrer_baerer_revisjonshendelsens_rettigheter():
     altså at avskruingsdøra er stengt for de som skal gjennom den, mens
     hele testflaten fortsatt er grønn.
 
-    Målt på teksten med vilje: mutasjonen som dreper denne (slett de to
-    linjene i `M37_RETTIGHETER_API`) skal felles uten at DB-testene
-    trenger å kjøre.
+    HVILKEN BLOKK, IKKE BARE «et sted i fila» (Cursor P2, runde 5).
+    Første utgave søkte i hele `migrer.py`, og da var de to grantene
+    utskiftbare for porten: `les_revisjonshendelse` kunne stå i
+    API-blokken alene og fortsatt bestå — men den blokken kjøres ikke for
+    `disponit_arbeider`, og det er ARBEIDEREN som gjør oppslaget
+    (`kjor_bunt` i `disponit-m57.service`). Blokkene måles derfor hver
+    for seg: lesing i den DELTE (runtime + arbeider), skriving i
+    API-blokken (runtime alene), og skriving IKKE i den delte.
+
+    Målt på teksten med vilje: mutasjonene som dreper denne (flytt en
+    linje mellom blokkene, eller slett den) skal felles uten at
+    DB-testene trenger å kjøre.
     """
     tekst = (ROT / "deploy" / "staging" / "migrer.py").read_text(
         encoding="utf-8")
-    for fn in ("skriv_revisjonshendelse(TEXT, TEXT, TEXT, TEXT, TEXT)",
-               "les_revisjonshendelse(TEXT, UUID)"):
-        assert f"GRANT EXECUTE ON FUNCTION {fn} TO {{rolle}};" in tekst, fn
+
+    def _blokk(navn):
+        """Kroppen til én `NAVN = \"\"\"…\"\"\"`-blokk.
+
+        Lest fra teksten og ikke importert: `migrer.py` skriver `sys.path`
+        ved import, og en tekstpin skal ikke ha bivirkninger.
+        """
+        start = tekst.index(f'{navn} = """') + len(f'{navn} = """')
+        return tekst[start:tekst.index('"""', start)]
+
+    def _grant(fn):
+        return f"GRANT EXECUTE ON FUNCTION {fn} TO {{rolle}};"
+
+    delt, api = _blokk("M37_RETTIGHETER"), _blokk("M37_RETTIGHETER_API")
+    les = "les_revisjonshendelse(TEXT, UUID)"
+    skriv = "skriv_revisjonshendelse(TEXT, TEXT, TEXT, TEXT, TEXT)"
+    assert _grant(les) in delt, (
+        "leseveien står ikke i den DELTE blokken — da får"
+        " `disponit_arbeider` den ikke, og avskruingsoppslaget dør med"
+        " `permission denied` etter migrering")
+    assert _grant(skriv) in api, (
+        "skriveveien står ikke i API-blokken — runtime kan ikke føre"
+        " hendelsen etter migrering")
+    assert _grant(skriv) not in delt, (
+        "skriveveien lekket til den delte blokken — en"
+        " bakgrunnsarbeider skal ikke kunne skrive revisjonshendelser")
 
 
 @pg
