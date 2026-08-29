@@ -455,15 +455,79 @@ def test_kvoten_filteret_er_prefiks_ikke_contains():
     assert "contains(github.event.comment.body, 'usage limits')" not in fiks
 
 
-def test_review_grenen_er_kun_eier_approved():
-    """Cursor P1-1 runde 11 (#198): botens verdikter kommer som
-    issue_comment — review-grenen skal ikke bære en bar login-match uten
-    kvote-filter og state-krav."""
+def _grener() -> list[str]:
+    """`if`-uttrykkets grener, én per `||`.
+
+    Den gamle formen splittet på `pull_request_review'` og leste `[1]`.
+    Med en gren til på samme hendelse ville den lest EIERENS gren og
+    konkludert at boten ikke er der — grønt uansett hva botens gren
+    inneholder. En port som slutter å måle det den heter, er verre enn
+    ingen port, så grenene deles her og navngis hver for seg.
+    """
     fiks = _uttrykk(_jobb("fiks-og-merge").split("steps:")[0])
-    review = fiks.split("pull_request_review'")[1].split("issue_comment")[0]
-    assert "chatgpt-codex-connector" not in review, (
-        "boten er tilbake på review-kanalen uten filter")
-    assert "approved" in review
+    uttrykk = fiks.split("if: >-", 1)[1].split("runs-on:", 1)[0]
+    return [" ".join(g.split()) for g in uttrykk.split("||")]
+
+
+def test_review_grenen_slipper_codex_men_bare_med_kvotefilter():
+    """#211, målt på #210 (run-listen 01:14Z): verdikter MED funn kommer
+    som `pull_request_review`, ikke som issue_comment.
+
+    Runde 11 på #198 fjernet boten fra review-grenen med begrunnelsen
+    «botens verdikter kommer som issue_comment». Det var sant for de
+    verdiktene som var målt da, og usant for den viktigste halvdelen: på
+    #210 landet 2×P1 + 1×P2 som review med inline-funn, alle fire
+    event-kjøringene ble SKIPPED, og funnene ble liggende stille.
+    Asymmetrien gikk verst tenkelig vei — jo viktigere verdiktet, desto
+    sikrere at sløyfa overså det.
+
+    Innvendingen fra runde 11 gjaldt aldri kanalen, men at grenen bar en
+    BAR login-match uten kvotefilter. Porten holder derfor begge deler:
+    boten SKAL være på review-kanalen, og den skal bære filteret der,
+    på `review.body` — ikke på `comment.body`, som er tom på et
+    review-event og dermed ville gjort filteret til dekorasjon.
+
+    MUTASJONEN SOM DREPER DENNE: fjern botens review-gren igjen (#211
+    gjenoppstår), eller la den stå uten kvotefilter (en tom lommebok
+    leses som «ingen funn», og steg 3 merger ureviewet kode).
+    """
+    grener = _grener()
+    eier = [g for g in grener
+            if "pull_request_review'" in g and "moka1980" in g]
+    bot = [g for g in grener
+           if "pull_request_review'" in g
+           and "chatgpt-codex-connector[bot]" in g]
+    assert len(eier) == 1, f"eierens review-gren er ikke entydig: {eier}"
+    assert "github.event.review.state == 'approved'" in eier[0], (
+        "eierens review-gren krever ikke lenger `approved` — en"
+        " tilfeldig eier-kommentar er ikke et verdikt")
+    assert len(bot) == 1, (
+        "Codex-bottets review-gren mangler eller er duplisert — #211:"
+        f" verdikter MED funn kommer nettopp denne veien. Grener: {grener}")
+    assert ("startsWith(github.event.review.body, 'Codex usage limits"
+            " have been reached')" in bot[0]), (
+        "botens review-gren mangler kvotefilteret på `review.body` — en"
+        " kvotemelding ville da nådd steg 3, som merger et verdikt uten"
+        " funn")
+    assert "github.event.review.state" not in bot[0], (
+        "state-krav på botens gren stenger ute `changes_requested`,"
+        " altså de tyngste funnene")
+
+
+def test_begge_verdiktkanalene_bærer_kvotefilteret():
+    """Filteret må stå på DEN kroppen hendelsen faktisk har.
+
+    `comment.body` er tom på et review-event og `review.body` er tom på
+    et issue_comment-event. Et filter som måler feil felt er ikke et
+    filter — det er en negasjon av tomhet, altså alltid sann.
+    """
+    for gren in _grener():
+        if "chatgpt-codex-connector[bot]" not in gren:
+            continue
+        felt = ("review.body" if "pull_request_review'" in gren
+                else "comment.body")
+        assert f"startsWith(github.event.{felt}," in gren, (
+            f"verdiktgrenen måler ikke kvotefilteret på {felt}: {gren}")
 
 
 def test_broen_forbyr_merge_som_mention():
@@ -538,14 +602,519 @@ def test_dirty_grenen_loser_aldri_konflikten():
         assert "BRUKT OPP" in norm
 
 
-def test_steg_0_verdiktporten_i_alle_tre_forsokene():
-    """Cursor P2 runde 14 (#198): kvote-/statusmeldinger som slipper
-    forbi jobb-if-ens prefiksfilter må felles av steg 0 i HVERT forsøk —
-    ellers kan forsøk 2/3 lese «ingen funn» og merge på en tom
-    lommebok."""
+def _jobbenv() -> dict:
+    """`env`-blokken på fikserjobben — den ENE kilden til merge-reglene."""
+    import yaml
+    d = yaml.safe_load(YML)
+    return d["jobs"]["fiks-og-merge"]["env"]
+
+
+def test_merge_reglene_har_ett_sted_a_sta():
+    """#231: fortynning er en klasse, ikke seks feil.
+
+    Seks Cursor-runder på #230 fant seks ulike steder der en regel manglet
+    i én av de tre prompt-kopiene. Repoet hadde alt tre porter som fantes
+    utelukkende for å fange den klassen, og #230 måtte legge til fem til.
+    At porten mot fortynning vokser med hver regel, ER symptomet.
+
+    Denne porten erstatter alle fem, og den vokser ikke: den måler at hver
+    regel har NØYAKTIG ett sted å stå, og at hvert forsøk henter derfra.
+    Legges en fjerde regel til i morgen, er den dekket uten en ny port —
+    og det er forskjellen på å lukke en klasse og å lappe en instans.
+
+    MUTASJONEN SOM DREPER DENNE: lim en regel inn i ett av forsøkene igjen
+    (da finnes den to steder), eller fjern en `env`-referanse fra ett
+    forsøk (da mangler regelen der).
+    """
+    env = _jobbenv()
+    for anker in ("VERDIKTPORT", "FUNNLESNING", "RUNDETAK", "MERGEPORT"):
+        assert anker in env, f"{anker} er ikke definert på jobben"
+    # RUTINER §12.1: rundetaket er en REGEL, ikke god vilje. Den må stå i
+    # sløyfas egen prompt, ellers gjelder den bare når noen husker den —
+    # og den må si at P1 aldri utsettes, ellers er taket en åpen dør.
+    assert "P1 ER ALDRI UTSETTBART" in env["RUNDETAK"], (
+        "rundetaket slipper P1 forbi — da er det ikke et tak, det er en"
+        " omgåelse av korrekthetsgulvet")
+    assert "§12.1" in env["RUNDETAK"], "taket peker ikke på regelen"
+
+    # 1. Hver regel finnes ÉN gang i fila — nemlig i sitt anker.
+    for markor in ("BOT-REVIEW MERGER ALDRI", "LINJEDRAGET",
+                   "HVORDAN DU AVGJØR LUKKETHET", "KANALVAKT (#211)",
+                   "ALLE ULØSTE TRÅDER FØRST", "BARE BOTENS EGNE FUNN"):
+        assert YML.count(markor) == 1, (
+            f"«{markor}» står {YML.count(markor)} steder — regelen er"
+            " kopiert igjen, og kopiene kan si forskjellige ting")
+
+    # 2. Hvert forsøk HENTER alle tre — en regel som ikke refereres,
+    #    gjelder ikke i det forsøket uansett hvor pent den er skrevet.
     for i, forsok in enumerate(_fiksforsok(), 1):
-        assert "ER DETTE I DET HELE TATT ET" in forsok, (
-            f"forsøk {i} mangler steg 0-porten")
+        for anker in ("env.VERDIKTPORT", "env.FUNNLESNING",
+                      "env.RUNDETAK", "env.MERGEPORT"):
+            assert anker in forsok, (
+                f"forsøk {i} henter ikke {anker} — reglene der er de fra"
+                " før omskrivingen, og de kan drifte igjen")
+
+
+def test_forkvakten_star_for_alt_annet():
+    """Codex P1 (r3878818430): en skrivende agent mot fork-innhold.
+
+    Jobben har `contents: write`, bærer `CLAUDE_CODE_OAUTH_TOKEN` og
+    instruerer agenten til å sjekke ut PR-ens innhold. På et fork-PR er
+    det innholdet angriperkontrollert — og forfatterporten beskytter ikke
+    grensen, for den utløsende reviewen er skrevet av den tillatte bot-en
+    uansett hvem som eier grenen.
+
+    Broen (`pr-fra-pass`) har hatt vakten siden #198. Fikserjobben hadde
+    den aldri, og #211 utvider flaten med en ny hendelsesvei.
+
+    Vakten må stå BEGGE steder: `pull_request_review` bærer `head.repo` i
+    payloaden og felles av `if:`, mens `issue_comment` bare bærer en URL
+    og derfor må måles i et steg — før noe sjekkes ut.
+
+    MUTASJONEN SOM DREPER DENNE: fjern steget (da står issue_comment-veien
+    åpen), eller legg det etter `actions/checkout`.
+    """
+    import yaml
+    jobb = yaml.safe_load(YML)["jobs"]["fiks-og-merge"]
+    assert "github.event.pull_request.head.repo.full_name == github.repository" \
+        in jobb["if"], "review-grenene mangler fork-vakt i if-en"
+    steg = jobb["steps"]
+    assert steg[0].get("name") == "Fork-vakt", (
+        "fork-vakten er ikke FØRSTE steg — alt etter checkout kjører mot"
+        " innholdet vakten skulle avvist")
+    assert "head.repo.full_name" in steg[0]["run"], \
+        "fork-steget måler ikke hodets repo"
+
+
+def test_funnlesningen_bruker_en_gyldig_og_paginert_api_sti():
+    """Codex P1 ×2 (r3878818420, r3878757057): instruksjonen virket ikke.
+
+    `gh api pulls/<nr>/comments` treffer en API-rot som ikke finnes — stien
+    må være repo-scopet. Og uten `--paginate` kommer bare første side;
+    kommentarene er sortert eldst først, så nettopp den utløsende reviewens
+    ferske funn faller utenfor. En tom side leses da som «ingen funn» rett
+    inn i merge-løypa.
+
+    MUTASJONEN SOM DREPER DENNE: ta bort `--paginate`, eller kort stien
+    tilbake til `pulls/<nr>/comments`.
+    """
+    lesning = _jobbenv()["FUNNLESNING"]
+    assert "repos/OWNER/REPO/pulls/<nr>/comments" in lesning \
+        or "repos/${{ github.repository }}/pulls" in lesning, \
+        "stien er ikke repo-scopet — den treffer en rot som ikke finnes"
+    assert "--paginate" in lesning, \
+        "lesningen pagineres ikke — første side er ikke alle funnene"
+    # Den ugyldige stien SKAL kunne nevnes — forklaringen på hvorfor den
+    # er feil er nettopp det som hindrer at noen skriver den tilbake. Det
+    # er BRUKEN som instruksjon som er forbudt, og den kjennes på at
+    # setningen ikke sier hva som er galt med den.
+    for linje in YML.splitlines():
+        if "gh api pulls/" in linje:
+            assert "treffer en API-rot" in linje, \
+                f"den ugyldige stien står som instruksjon: {linje.strip()}"
+
+
+def test_bare_botens_funn_er_ordrer():
+    """Codex P1 (r3878818434): et offentlig repo kan plante arbeidspunkter.
+
+    Regelen «et eldre, ULUKKET funn skal fikses» gjorde enhver reviewer til
+    oppdragsgiver for en skrivende agent: jobbens allowlist autentiserer
+    den UTLØSENDE hendelsen, ikke historikken den leser.
+
+    MUTASJONEN SOM DREPER DENNE: fjern forfatterkravet fra
+    ULUKKET-regelen.
+    """
+    lesning = _jobbenv()["FUNNLESNING"]
+    assert "BARE BOTENS EGNE FUNN" in lesning
+    assert "chatgpt-codex-connector[bot]" in lesning, \
+        "ULUKKET-regelen navngir ikke hvem som kan gi ordrer"
+
+
+def test_traden_kan_lukkes_saa_porten_kan_passere():
+    """Codex P1 (r3879144585): porten var en vranglås.
+
+    Runde 4 la inn «finnes én `isResolved == false`, merger du ikke» — men
+    å endre koden setter ikke flagget, og prompten gjorde ingen
+    `resolveReviewThread`-mutasjon. En PR med inline-funn kunne dermed
+    aldri fullføre den autonome merge-løypa, uansett hvor godt funnene ble
+    fikset. Porten låste ute nettopp de PR-ene den var skrevet for.
+
+    MUTASJONEN SOM DREPER DENNE: fjern lukkemutasjonen og behold porten.
+    """
+    lesning = _jobbenv()["FUNNLESNING"]
+    port = _jobbenv()["MERGEPORT"]
+    assert "resolveReviewThread" in lesning, \
+        "ingen vei til å lukke en tråd — merge-porten blir en vranglås"
+    assert "isResolved == false" in port, \
+        "merge-porten måler ikke uløste tråder"
+    # Cursor P1 runde 7: porten stoppet bare på BOTENS uløste tråder,
+    # mens RUTINER §11.1 sier ALLE. Forfatterporten hører til hva som
+    # skal FIKSES (`BARE BOTENS EGNE FUNN ER ORDRER`), ikke til hva som
+    # stopper merge — ellers kan en åpen tråd fra eier merges forbi i
+    # stillhet. En regel som stopper arbeid skal ikke også åpne en dør.
+    assert "UANSETT FORFATTER" in port, (
+        "merge-porten begrenser stoppet til én forfatter — da er en"
+        " annens uløste tråd en åpen dør")
+    assert "fra `chatgpt-codex-connector[bot]`,\n        merger du ikke" \
+        not in YML, "den forfatterbegrensede merge-stoppen er tilbake"
+
+
+def test_verdiktet_gjelder_sin_egen_sha():
+    """Codex P2 (r3878895724): et foreldet verdikt kan endre ny kode.
+
+    Står reviewen i kø bak en annen skriver, kan hodet ha flyttet seg før
+    jobben starter. Uten en sammenligning fikser agenten funn over kode
+    reviewen aldri så.
+
+    MÅLESTOKKEN ER HODET VED START (Codex P2, runde 8). Første utgave
+    sammenlignet med den LEVENDE `headRefOid`, og da felte regelen
+    kjøringens EGET fremskritt: forsøk 1 pusher en fiks, går tom for
+    turer, og forsøk 2 — som finnes nettopp for å fortsette — ser sin egen
+    push som en fremmed inngripen og parkerer. `$HODE_VED_START` leses én
+    gang, før noe forsøk skriver, og skiller «kom før oss» fra «gjorde vi
+    selv» uten å gjette på forfatter.
+
+    MUTASJONEN SOM DREPER DENNE: sammenlign med `headRefOid` igjen, eller
+    slett steget som setter variabelen.
+    """
+    import yaml
+    lesning = _jobbenv()["FUNNLESNING"]
+    assert "commit_id" in lesning, \
+        "fikseveien måler ikke om hodet har flyttet seg siden verdiktet"
+    # SELVE SAMMENLIGNINGEN, ikke bare et treff på navnet. Første utgave
+    # spurte om `$HODE_VED_START` fantes noe sted i teksten, og da
+    # overlevde mutasjonen: avsnittet under FORKLARER hvorfor `headRefOid`
+    # er feil målestokk og nevner variabelen der, så porten ble grønn av
+    # sin egen begrunnelse. Setningen som gir ordren må bindes.
+    assert "sammenlign reviewens `commit_id` med `$HODE_VED_START`" \
+        in " ".join(lesning.split()), (
+        "SHA-porten måler mot en levende `headRefOid` — da parkerer forsøk"
+        " 2 på forsøk 1s egen push, og de tre forsøkene kan aldri"
+        " fortsette hverandre")
+    steg = yaml.safe_load(YML)["jobs"]["fiks-og-merge"]["steps"]
+    hodet = [t for t in steg if t.get("name") == "Hodet ved start"]
+    assert hodet, "ingen setter `HODE_VED_START` — regelen peker i tomme"
+    assert "HODE_VED_START=" in hodet[0]["run"] \
+        and "GITHUB_ENV" in hodet[0]["run"], \
+        "steget skriver ikke variabelen til jobbmiljøet"
+    navn = [t.get("name") or t.get("uses", "") for t in steg]
+    assert navn.index("Hodet ved start") < next(
+        i for i, n in enumerate(navn) if str(n).startswith(
+            "actions/checkout")), \
+        "hodet leses etter checkout — da er det ikke lenger «ved start»"
+
+
+def test_taket_slaar_inn_VED_tredje_pass():
+    """Codex P2 (runde 10): et tak som het TRE og kostet fire.
+
+    «Er du forbi tre» er usant på nøyaktig det tredje passet: agenten
+    fikset funnene og startet en FJERDE runde, og parkeringen slo først
+    inn etter at den runden hadde kostet sin egen Cursor- og CI-syklus.
+    Hele vedtaket handler om at rundene er den dominerende kostnaden, så
+    en av-med-én her er ikke kosmetikk — den er én runde per PR.
+
+    MUTASJONEN SOM DREPER DENNE: «forbi tre» tilbake.
+    """
+    tak = " ".join(_jobbenv()["RUNDETAK"].split())
+    assert "NÅDD tre" in tak, \
+        "taket slår inn etter tre runder, ikke ved den tredje"
+    assert "forbi tre, samler du" not in tak, \
+        "den gamle av-med-én-formen står fortsatt i regelen"
+
+
+def test_mergeporten_pagineres_gjennom_hele_connectionen():
+    """Codex P2 (runde 10): `--paginate` gjelder ikke GraphQL.
+
+    REST-kallet i FUNNLESNING pagineres eksplisitt, men merge-porten
+    spør GraphQL — og en connection pagineres ikke av seg selv. På en PR
+    med flere tråder enn én side kunne porten lest første side, sett
+    null uløste, og merget forbi en uløst tråd lenger ute. En port som
+    «stopper alt» ville da stoppet det den tilfeldigvis så.
+
+    MUTASJONEN SOM DREPER DENNE: fjern markørkravet fra MERGEPORT.
+    """
+    port = " ".join(_jobbenv()["MERGEPORT"].split())
+    # SELVE SPØRRINGSFORMEN, ikke bare navnene. Første utgave spurte om
+    # `endCursor` og `hasNextPage` fantes hver for seg, og da overlevde
+    # mutasjonen: den avsluttende setningen «gjenta til `hasNextPage` er
+    # `false`» nevner det ene navnet, og `$endCursor: String` det andre,
+    # så porten kunne være grønn uten at spørringen var beskrevet.
+    assert "`pageInfo { hasNextPage endCursor }`" in port, (
+        "merge-porten beskriver ingen markørgjennomgang — den kan lese"
+        " første side og merge forbi resten")
+    assert "$endCursor: String" in port, \
+        "spørringen tar ingen markørvariabel"
+    assert "hasNextPage` er `false`" in port, \
+        "regelen sier ikke når gjentakelsen stopper"
+
+
+def test_forsok_3_leser_eierskapet_FOR_sin_forste_push():
+    """Codex P2 (runde 11): sjekken sto bak skrivingen.
+
+    Forsøk 3s punkt 1 var «push alt som er i nærheten av ferdig», og
+    `FUNNLESNING` — som bærer live-head- og eierskapssjekken — sto i
+    punkt 2. Hadde en fremmed skriver flyttet hodet mellom forsøk 2 og 3,
+    la forsøk 3 arbeid oppå kode verdiktet aldri så, og sjekken kom for
+    sent til å hindre det.
+
+    Den eneste skrivingen som er trygg før lesningen, er ingen.
+
+    MUTASJONEN SOM DREPER DENNE: bytt punkt 1 og 2 tilbake.
+    """
+    import re as _re
+    m = _re.search(r"- id: runde3\n(.*?)(?=\n      - (?:id|name|uses):)",
+                   YML, _re.S)
+    assert m, "fant ikke forsøk 3"
+    t = m.group(1)
+    assert t.index("FØR DIN FØRSTE PUSH") < t.index("Push så alt arbeid"), (
+        "forsøk 3 pusher før den leser eierskapet — da skriver den oppå"
+        " kode verdiktet aldri så")
+    assert "${{ env.FUNNLESNING }}" in t.split("Push så alt arbeid")[0], \
+        "FUNNLESNING står ikke foran den første pushen"
+
+
+def test_hodet_leses_live_for_forste_skriving():
+    """Fangsten er ikke en lås (Codex P2, runde 9).
+
+    `$HODE_VED_START` settes av et steg, og mellom det steget og den
+    første commiten er det et vindu. Per-PR-mutexen serialiserer VÅRE
+    jobber — den stopper ikke et menneske eller en fremmed skriver.
+
+    MUTASJONEN SOM DREPER DENNE: slett kravet om den live lesningen.
+    """
+    lesning = " ".join(_jobbenv()["FUNNLESNING"].split())
+    assert "Les `headRefOid` live rett før du endrer noe" in lesning, \
+        "hodet leses aldri på nytt — den frosne verdien er et alibi"
+    assert "FØR DIN FØRSTE SKRIVING" in lesning, \
+        "sjekken er ikke bundet til tidspunktet FØR første skriving"
+
+
+def test_eierskapet_bevises_av_SHAER_VI_SAA():
+    """Codex P1/P2, rundene 9–14: tre forgjeves bevisformer.
+
+    Spørsmålet er alltid det samme — eier denne kjøringen hele avviket
+    mellom `$HODE_VED_START` og live head? — og hvert svar jeg skrev
+    kunne forfalskes av nettopp den det skulle stenge ute:
+
+      1. en `Claude-Run`-trailer: fri commit-tekst, og `run_id` står
+         åpent i den offentlige kjøringen
+      2. commitens foreldre: en fremmed merge kan ha nøyaktig de to
+         foreldrene og et vilkårlig tre
+      3. én SHA lest etter `update-branch`: et separat oppslag, altså
+         enda et kappløpsvindu
+
+    Tre runder på samme akse er §9 K2s mønster, og svaret er ikke en
+    fjerde form ved siden av de tre. Det er ÉN som erstatter dem: en
+    kumulativ liste over SHA-er jobben SELV observerte etter sine egne
+    pusher. Vi sammenligner mot noe vi så, ikke mot noe kalleren kunne
+    skrevet.
+
+    Listen må være kumulativ: `main` kan flytte seg igjen og gi et ANDRE
+    update-pass i samme kjøring, og med ett slot ville retryen parkert på
+    sin egen dokumenterte to-oppdateringsvei.
+
+    MUTASJONEN SOM DREPER DENNE: gjeninnfør trailer- eller
+    foreldresjekken, eller gjør listen til en enkelt variabel.
+    """
+    lesning = " ".join(_jobbenv()["FUNNLESNING"].split())
+    assert "$VAARE_SHAER" in lesning, \
+        "eierskapet bevises ikke av SHA-er jobben selv observerte"
+    assert "Listen er kumulativ" in lesning, (
+        "listen er ikke kumulativ — to `update-branch`-passer i samme"
+        " kjøring ville da fått retryen til å parkere på seg selv")
+    assert "Er listen tom" in lesning, \
+        "det står ikke hva som gjelder når jobben ikke har skrevet noe"
+    # DE TRE GAMLE FORMENE SKAL VÆRE BORTE FRA REGELEN, ikke ligge ved
+    # siden av som et fjerde lag. De nevnes i begrunnelsen — derfor måles
+    # det på om de fortsatt STILLES SOM KRAV.
+    assert "må ha NØYAKTIG to foreldre" not in lesning, \
+        "foreldresjekken står fortsatt som krav"
+    assert "bære traileren" not in lesning, \
+        "trailerkravet står fortsatt"
+    # ... og BEGGE update-branch-armene må fylle listen.
+    assert YML.count("VAARE_SHAER=$VAARE_SHAER") >= 2, (
+        "ikke alle armene legger SHA-en i listen — den armen som glemmer"
+        " det, får neste forsøk til å parkere på seg selv")
+
+
+def test_stale_head_porten_gjelder_ogsaa_kommentarverdikter():
+    """Codex P2 (runde 14): porten gjaldt bare review-utløste kjøringer.
+
+    Et rent `issue_comment`-verdikt vekker jobben, `MERGEPORT` ber den
+    fikse eldre uløste bot-tråder — og da SKRIVER den, på et hode verken
+    kommentarens «Reviewed commit» eller det gamle verdiktet dekker.
+    `--match-head-commit` ved mergen kommer for sent: skrivingen har alt
+    skjedd.
+
+    MUTASJONEN SOM DREPER DENNE: begrens sammenligningen til
+    review-utløste kjøringer igjen.
+    """
+    lesning = " ".join(_jobbenv()["FUNNLESNING"].split())
+    assert "uansett hva som vekket jobben" in lesning, (
+        "stale-head-porten gjelder bare review-utløste kjøringer — en"
+        " kommentarutløst fiksrunde skriver da uten sjekk")
+    assert "kommentaren SELV deklarerer" in lesning, \
+        "det står ikke hva baseline er når utløseren er en kommentar"
+
+
+def test_uleselig_hode_er_hverken_fork_eller_trygt():
+    """Codex P2 (runde 9): `|| echo ""` gjorde en API-feil til en fork.
+
+    En transient API-, auth- eller ratefeil ble til et TOMT svar, og det
+    tomme svaret leste seg som «ikke dette repoet». Eier fikk da
+    fork-avvisningen — med beskjed om IKKE å starte på nytt — for en gren
+    som er helt trygg og en kjøring som bare gikk tom for tid. En vakt
+    som gjetter er ingen vakt.
+
+    Tre utfall skilles nå: lest og likt repo, lest og annet repo, og ikke
+    lest. Den tredje sier nettopp det, og hverken ber om restart (vi kan
+    ikke utelukke fork) eller påstår fork.
+
+    MUTASJONEN SOM DREPER DENNE: `|| echo ""` tilbake, eller slå den
+    uleste armen sammen med fork-armen.
+    """
+    import yaml
+    steg = yaml.safe_load(YML)["jobs"]["fiks-og-merge"]["steps"]
+    varsel = [t for t in steg if t.get("if") == "failure()"][0]["run"]
+    assert '|| echo ""' not in varsel, (
+        "et mislykket oppslag gir fortsatt tom streng — den leses som fork")
+    assert "__ULEST__" in varsel, \
+        "ingen egen gren for «kunne ikke lese hodet»"
+    ulest = varsel[varsel.index("__ULEST__"):varsel.index("ble AVVIST")]
+    assert "fikk ikke lest" in ulest, \
+        "den uleste armen sier ikke hva som faktisk skjedde"
+    assert "ikke startes på nytt herfra" in ulest and "er trygg" in ulest, (
+        "den uleste armen tar et standpunkt den ikke har grunnlag for —"
+        " den skal gi eier BEGGE veiene, betinget av hva hodet faktisk er")
+
+
+def test_mention_har_sin_egen_forkvakt():
+    """Codex P1 (runde 8): eier-porten er ikke en fork-port.
+
+    `mention` krever at kommentaren er eierens, og det stopper en fremmed
+    kommentator. Det stopper IKKE denne grensen: mandatet kan gjelde et PR
+    hvis hode ligger i en fork, og prompten ber agenten `gh pr checkout`
+    med `CLAUDE_CODE_OAUTH_TOKEN` og `contents: write`. Eier som følger en
+    instruks er nettopp veien fork-vakten i `fiks-og-merge` ble omgått
+    gjennom.
+
+    Vakten må slippe RENE issues igjennom: §11.2s kjernebruk er nattmandat
+    på et issue, og der finnes ingen gren å sjekke ut. En vakt som felte
+    dem hadde tatt livet av jobben den beskytter.
+
+    MUTASJONEN SOM DREPER DENNE: fjern steget, eller fjern `if`-en som
+    slipper issues forbi (da felles §11.2s kjernebruk).
+    """
+    import yaml
+    steg = yaml.safe_load(YML)["jobs"]["mention"]["steps"]
+    assert steg[0].get("name") == "Fork-vakt", (
+        "fork-vakten er ikke FØRSTE steg i mention — alt etter checkout"
+        " kjører mot innholdet vakten skulle avvist")
+    assert "head.repo.full_name" in steg[0]["run"], \
+        "fork-steget måler ikke hodets repo"
+    assert "github.event.issue.pull_request" in steg[0]["if"], (
+        "vakten skiller ikke PR fra rent issue — et nattmandat på et"
+        " issue ville feilet på et PR-oppslag som ikke finnes")
+
+
+def test_forkavvisningen_peker_ikke_inn_i_mention():
+    """Codex P1 (runde 8): feilmeldingen var omveien rundt vakten.
+
+    Fork-vakten avviser med `exit 1`, og `if: failure()`-steget postet da
+    «start runden på nytt med en `@claude`-kommentar». Den kommentaren
+    vekker `mention` — som bærer det samme tokenet og sjekker ut det samme
+    innholdet. Fulgte eier instruksen, gikk vakten forbi seg selv. En
+    vakt er ingen port hvis utfallet peker veien rundt.
+
+    Hodet leses PÅ NYTT i varselsteget: jobben kan feile på hva som helst,
+    og en variabel satt av et steg som kanskje aldri kjørte er ingen
+    opplysning.
+
+    MUTASJONEN SOM DREPER DENNE: slå de to meldingene sammen igjen.
+    """
+    import yaml
+    steg = yaml.safe_load(YML)["jobs"]["fiks-og-merge"]["steps"]
+    varsel = [t for t in steg if t.get("if") == "failure()"]
+    assert varsel, "ingen varsling ved feilet runde"
+    kropp = varsel[0]["run"]
+    assert "head.repo.full_name" in kropp, \
+        "varselet skiller ikke en fork-avvisning fra en avbrutt runde"
+    fork_arm = kropp[:kropp.index("sløyfa stoppet")]
+    assert "IKKE start denne på nytt" in fork_arm, (
+        "fork-armen sier ikke fra om at `@claude` er veien rundt vakten")
+    assert "exit 0" in fork_arm, \
+        "fork-armen faller igjennom til den vanlige «start på nytt»-teksten"
+
+
+def test_cursor_armen_i_forsok_2_baerer_ikke_mergeporten():
+    """Codex P2 (runde 8): KANALVAKTEN parkerte fortsettelsen.
+
+    `MERGEPORT` sier at hver bot-review-vei parkerer «uansett hvordan
+    resten av blokken leser». Sto den i forsøk 2s steg 2 — armen som skal
+    poste `@cursor review` og stoppe — parkerte retryen i stedet for å
+    starte Cursor/Codex-fortsettelsen, og sløyfa kunne aldri fullføre.
+    Porten hører til merge-grenen (steg 3), ikke til den som leverer
+    funnene videre.
+
+    MUTASJONEN SOM DREPER DENNE: sett `${{ env.MERGEPORT }}` tilbake foran
+    CURSOR-PORT-en i forsøk 2.
+    """
+    import re as _re
+    steg2 = _re.search(r"- id: runde2\n(.*?)(?=\n      - (?:id|name|uses):)",
+                       YML, _re.S)
+    assert steg2, "fant ikke forsøk 2 i claude.yml"
+    tekst = steg2.group(1)
+    cursor = tekst.index("CURSOR-PORT")
+    merge = tekst.index("3. ${{ env.MERGEPORT }}")
+    assert cursor < merge, (
+        "MERGEPORT står FORAN cursor-armen i forsøk 2 — KANALVAKTEN"
+        " parkerer da fortsettelsen i stedet for å levere til Cursor")
+    assert tekst.count("${{ env.MERGEPORT }}") == 1, (
+        "forsøk 2 refererer MERGEPORT mer enn én gang — bare merge-grenen"
+        f" skal ha den: {tekst.count('${{ env.MERGEPORT }}')}")
+
+
+def test_parkeringen_lukker_traaden_den_parkerer():
+    """Codex P2 (runde 8): to påbud som ikke kunne oppfylles samtidig.
+
+    `RUNDETAK` sier «flytt gjenstående P2/P3 til et issue og gå videre»;
+    `MERGEPORT` sier «én uløst tråd stopper alt, og botens tråder fikser
+    du». Å flytte et funn til et issue setter ikke `isResolved`, så
+    PR-en ble ufullførbar av sin egen port og taket kunne ikke avslutte
+    sløyfa.
+
+    Løsningen svekker ikke MERGEPORT — det er parkeringen som må gjøre
+    jobben sin ferdig: issue, svar i tråden med nummeret, og
+    `resolveReviewThread`.
+
+    MUTASJONEN SOM DREPER DENNE: stryk lukkekravet fra RUNDETAK (da står
+    motsigelsen igjen), eller la RUNDETAK unnta parkerte tråder fra
+    MERGEPORT (da åpner taket en dør).
+    """
+    tak = _jobbenv()["RUNDETAK"]
+    assert "resolveReviewThread" in tak, (
+        "parkeringen lukker ikke tråden — MERGEPORT stopper da på den,"
+        " og de to reglene kan ikke oppfylles samtidig")
+    assert "MERGEPORT svekkes IKKE" in tak, (
+        "taket løser motsigelsen ved å unnta tråder fra merge-porten —"
+        " en regel som stopper arbeid skal ikke også åpne en dør")
+    port = _jobbenv()["MERGEPORT"]
+    assert "UANSETT FORFATTER" in port, \
+        "merge-porten ble svekket for å få taket til å gå opp"
+
+
+def test_driftsmelding_males_ikke_paa_ordforraad():
+    """Codex P2 (r3878818440): et ekte funn om kvoter er et funn.
+
+    Steg 0 skulle skille konnektorens driftsmeldinger fra verdikter. Måler
+    den på ordene «kvote», «feil» og «status», parkerer den nettopp de
+    reviewene som handler om rate-limiting og fakturering — speilvendt av
+    kvotefunnet på #198.
+    """
+    verdikt = _jobbenv()["VERDIKTPORT"]
+    assert "DRIFTSMELDING, IKKE ORDLISTE" in verdikt
+    assert "HELE den er en kjent melding" in verdikt, \
+        "porten måler fortsatt på ordforrådet"
 
 
 def test_cursor_porten_stopper_og_broen_eier_fortsettelsen():
