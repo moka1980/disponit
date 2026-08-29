@@ -1472,6 +1472,183 @@ def _falske_verdikter(m: dict) -> list[str]:
     return []
 
 
+def _bias_utledet(m: dict) -> list[str]:
+    """Regner `bias_maling_mangler_for_digest` på nytt fra artefaktets data.
+
+    Returnerer avvikene. Tom liste = det rapporterte tallet stemmer med det
+    dataene viser.
+
+    Formkravene er de samme som kjøretidsporten stiller (`krev_biasmaaling`
+    i m57_ats/evaluering.py): digesten på formen `sha256:<64 hex>`,
+    artefakthashen som 64 hex, tidspunktet som lesbar ISO 8601.
+    Forskjellen er hvem som svarer for dem — her er de DATA i et
+    hash-bundet akseptartefakt, ikke et kart levert av den samme kalleren
+    som ber om evalueringen.
+    """
+    import re as _re
+    from collections import Counter as _Counter
+    from tid import rfc3339_lesbar
+    feil: list[str] = []
+    digester = m.get("bias_digester_kjort")
+    maalinger = m.get("bias_maalinger")
+    if not isinstance(digester, list) or not digester:
+        return ["bias_digester_kjort: mangler eller tom — invarianten kan"
+                " ikke utledes, og en uutledbar invariant er ingen port"]
+    if not isinstance(maalinger, list):
+        return ["bias_maalinger: mangler — modulen påstår et bruddtall uten"
+                " å vise målingene det hviler på"]
+
+    # `\A`/`\Z`, IKKE `^`/`$`. Pythons `$` matcher rett FØR en avsluttende
+    # linjeskift, så `"sha256:<64 hex>\n"` passerte — og skjemamønstrene
+    # ved siden av har samme svakhet. Da telles en digest med hengende
+    # data som gyldig bevis, mens kjøretidssiden slår opp på den nøyaktige
+    # strengen og aldri finner den igjen (Codex P2, #241).
+    # BEGGE VERSALFORMER, som kjøretidsporten (Codex P2, runde 3).
+    # `_er_sha256` sammenligner `verdi.lower()`, så `krev_biasmaaling`
+    # godtar en måling med store heksadesimaler. Grensen avviste den —
+    # og en grense som er STRENGERE enn porten den lover å speile, feller
+    # akseptartefakter for kjøringer som faktisk gikk igjennom. Løftet er
+    # speilingen; da må skrivemåten være den samme.
+    DIG = _re.compile(r"\Asha256:[0-9a-fA-F]{64}\Z")
+    HEX = _re.compile(r"\A[0-9a-fA-F]{64}\Z")
+    dekket = set()
+    for i, mal in enumerate(maalinger):
+        if not isinstance(mal, dict):
+            feil.append(f"bias_maalinger[{i}]: ikke et objekt")
+            continue
+        d, a = mal.get("image_digest"), mal.get("artefakt_sha256")
+        if not isinstance(d, str) or not DIG.match(d):
+            feil.append(f"bias_maalinger[{i}].image_digest={d!r} har ikke"
+                        " formen sha256:<64 hex>")
+            continue
+        if not isinstance(a, str) or not HEX.match(a):
+            feil.append(f"bias_maalinger[{i}].artefakt_sha256 for {d} er"
+                        " ikke en sha256")
+            continue
+        # TIDSPUNKTET MÅLES HER, FOR SKJEMAET MÅLER DET IKKE.
+        # `valider_artefaktformat` kjører `Draft202012Validator` uten
+        # `FormatChecker`, så `"format": "date-time"` på `ts` er inert:
+        # `""` og `"ikke-en-dato"` passerer skjemaet. Kjøretidsporten
+        # feller dem (`bias_maling_uten_tidspunkt`), så uten dette leddet
+        # var evidenslaget svakere enn porten det skal speile — samme
+        # klasse som «en oppføring er ikke en måling».
+        #
+        # ETT PREDIKAT, TO KALLERE (Codex P2, runde 5). Grensen og
+        # kjøretidsporten lover å måle det SAMME tidspunktkravet, og fem
+        # runder har målt at to håndskrevne lesninger av samme standard
+        # divergerer — først var grensen strengest (`fromisoformat` alene
+        # i kjøretiden), så kjøretiden (skuddsekundet). Det er §9 K2s egen
+        # defektklasse, og svaret er ikke et sjette formforsøk, men ÉN
+        # lesning: `tid.rfc3339_lesbar`.
+        #
+        # DEN LESNINGEN BOR I CORE (Cursor P2-1 / Codex P1, runde 5).
+        # Runde 5 hentet den fra `modules.m57_ats.evaluering`, og det snudde
+        # modellgrensen: RUTINER §7 sier core aldri importerer fra moduler,
+        # og CI-steget som validerer manifester legger bare `platform/core`
+        # på stien — importen ville reist `ModuleNotFoundError: No module
+        # named 'modules'` første gang et `m57-v1`-punkt slås på. Testene
+        # skjulte det, for `tests/conftest.py` legger på `platform` i
+        # tillegg.
+        if not rfc3339_lesbar(mal.get("ts")):
+            feil.append(f"bias_maalinger[{i}].ts={mal.get('ts')!r} for {d} er"
+                        " ikke et RFC 3339-tidspunkt som finnes i"
+                        " kalenderen — feltet er deklarert `date-time`, og"
+                        " en form skjemaet ikke lover er ikke datert bevis")
+            continue
+        # `tzinfo`-leddet som sto her er BORTE, ikke glemt: RFC
+        # 3339-mønsteret over krever offset, så en tidssonefri verdi når
+        # aldri hit. En gren som ikke kan nås er en port som ser ut som en
+        # port — og dens egen test ville vært vakuøs.
+        # ÉN MÅLING PER DIGEST. Kjøretidssiden er `dict[str, Biasmaaling]`
+        # — digesten er nøkkelen, så den bærer nøyaktig én måling. En
+        # liste med to oppføringer for samme digest kan derfor ikke være
+        # en tro gjengivelse av kartet, og hvilken av dem som er beviset
+        # er ikke noe denne funksjonen kan avgjøre. Tvetydig bevis felles.
+        # SAMME NORMALFORM BEGGE VEIER (Codex P2, runde 4). Innsettingen
+        # under bruker `d.lower()`, mens denne testen brukte `d` rått — så
+        # to målinger med SAMME store digest kolliderte aldri, og begge
+        # falt sammen i én settoppføring. Et artefakt med to motstridende
+        # artefakthasher for samme modellversjon passerte da porten som
+        # sier «én måling per digest».
+        if d.lower() in dekket:
+            feil.append(f"bias_maalinger[{i}]: {d} er målt mer enn én gang"
+                        " — kjøretidsporten bærer én måling per digest, og"
+                        " to som utgir seg for samme er ikke bevis, men et"
+                        " valg denne grensen ikke skal ta")
+            continue
+        # ... og settene sammenlignes på samme normalform. Med begge
+        # versalformer lovlige ville `sha256:AB...` i digestlisten og
+        # `sha256:ab...` i målingen sett ut som to ulike digester, og
+        # dekningen ville rapportert både «mangler måling» og
+        # «foreldreløs måling» for én og samme modellversjon.
+        dekket.add(d.lower())
+
+    ukjente = [d for d in digester if not isinstance(d, str) or not DIG.match(d)]
+    if ukjente:
+        feil.append(f"bias_digester_kjort inneholder verdier som ikke er"
+                    f" digester: {ukjente}")
+        return feil
+
+    # DUPLIKATER ER IKKE FORSØK. Forsøkstallet måles mot `len(digester)`,
+    # dekningen mot `set(digester)` — står samme digest tre ganger, blir
+    # `forsok=3` sant med ÉN måling og null brudd. Det er nøyaktig hullet
+    # #167 stengte («en kjøring med én digest kunne rapportere tre forsøk
+    # og se grundigere ut enn den var»), gjenåpnet gjennom grunnlaget
+    # invarianten utledes av. Listen navngir digestene kjøringen brukte;
+    # å bruke den samme igjen er ikke en digest til.
+    # Telt ÉN gang med `Counter`, ikke `list.count()` per element:
+    # `bias_digester_kjort` har ingen `maxItems`, så den kvadratiske
+    # formen gjorde valideringen dyrere jo større artefaktet ble — også
+    # når hver digest var unik (Codex P2, #241).
+    duplikater = sorted(
+        d for d, n in _Counter(x.lower() for x in digester).items() if n > 1)
+    if duplikater:
+        feil.append(f"bias_digester_kjort gjentar digest(er):"
+                    f" {duplikater} — en gjentakelse er ikke et forsøk"
+                    " til, og et forsøkstall som teller den er ikke en"
+                    " måling")
+        return feil
+
+    # DEKNINGEN MÅLES BEGGE VEIER. `set(digester) - dekket` finner
+    # digester uten måling; den omvendte differansen finner målinger uten
+    # digest — en måling for noe kjøringen aldri deklarerte at den brukte.
+    # Da motsier evidenslistene hverandre, og forsøkstallet (= antall
+    # deklarerte digester) beskriver ikke lenger kjøringen målingene
+    # dokumenterer. Valg B gjorde det deklarerte digest-settet til
+    # grunnlaget invarianten utledes av; ekstra biasbevis smuglet inn ved
+    # siden av det settet er nettopp lineage-disiplinen B innførte.
+    foreldrelose = sorted(dekket - {d.lower() for d in digester})
+    if foreldrelose:
+        feil.append(f"bias_maalinger måler digest(er) som ikke står i"
+                    f" bias_digester_kjort: {foreldrelose} — en måling"
+                    " for en digest kjøringen ikke sier den brukte,"
+                    " dokumenterer en annen kjøring enn den som telles")
+        return feil
+
+    mangler = sorted({d.lower() for d in digester} - dekket)
+    rapportert, f1 = _teller(m, "maalt.bias_maling_mangler_for_digest_brudd",
+                             "bias_maling_mangler_for_digest_brudd")
+    if f1:
+        feil.append(f1)
+    elif rapportert != len(mangler):
+        feil.append(
+            f"bias_maling_mangler_for_digest_brudd={rapportert}, men"
+            f" dataene viser {len(mangler)} digest(er) uten måling"
+            f" ({mangler or 'ingen'}) — et rapportert tall som ikke stemmer"
+            " med målingene det skal hvile på, er ikke en måling")
+
+    forsok, f2 = _teller(m, "maalt.bias_maling_mangler_for_digest_forsok",
+                         "bias_maling_mangler_for_digest_forsok")
+    if f2:
+        feil.append(f2)
+    elif forsok != len(digester):
+        feil.append(
+            f"bias_maling_mangler_for_digest_forsok={forsok}, men kjøringen"
+            f" brukte {len(digester)} digest(er) — forsøkstallet er antallet"
+            " digester porten faktisk ble stilt spørsmålet om")
+    return feil
+
+
 def _grenser_m57(grense: dict, art: dict) -> list[str]:
     """`m57-v1` — M-57-klarsignalet §10. Hver invariant er et par
     (forsøk, brudd): null brudd beviser ingenting uten minst ett forsøk,
@@ -1495,6 +1672,27 @@ def _grenser_m57(grense: dict, art: dict) -> list[str]:
         if brudd > grense["maks_brudd"]:
             feil.append(f"{navn}_brudd={brudd}, krever <="
                         f" {grense['maks_brudd']}")
+    # BIASINVARIANTEN UTLEDES, DEN LESES IKKE (#167 valg B).
+    #
+    # `bias_maling_mangler_for_digest` var to selvrapporterte tall: modulen
+    # skrev «0 brudd», og grensen leste «0 brudd». Kjøretidsporten
+    # `krev_biasmaaling` måler bare FORMEN på en måling — `"0" * 64` er en
+    # syntaktisk gyldig artefakthash — så invarianten talte manglende
+    # OPPFØRINGER, ikke manglende MÅLINGER, og leste sterkere enn noe sted
+    # målte. Codex felte mekanismen tre ganger på #153.
+    #
+    # Artefaktet bærer nå dataene invarianten hviler på: hvilke
+    # modelldigester kjøringen brukte, og hvilken biasartefakt som dekker
+    # hver av dem. Bruddtallet regnes på NYTT herfra, og et avvik mellom
+    # det utledede og det rapporterte er selve funnet — samme disiplin som
+    # `_grenser_rollback`: tallene mot hverandre, ikke mot flagg.
+    #
+    # Dette gjør ikke porten absolutt: at biasartefakten FINNES i et lager
+    # er #167 valg A, og hører i controlleren som har tenantkontekst — ikke
+    # i en ren rangeringsfunksjon. Men «modulen påstår null» er nå erstattet
+    # av «her er digestene, her er målingene, regn selv».
+    feil += _bias_utledet(m)
+
     for navn in grense["krav_ja"]:
         if m.get(navn) is not True:
             feil.append(f"{navn}={m.get(navn)!r}, krever bokstavelig true"

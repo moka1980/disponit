@@ -10,8 +10,13 @@ veier: manglende felt felles av `required`, fremmede av
 """
 from __future__ import annotations
 
-from manifestskjema import (KRAVGRENSER, M57_INVARIANTER, _sjekk_grenser,
+from pathlib import Path
+
+from manifestskjema import (KRAVGRENSER, M57_INVARIANTER, _bias_utledet,
+                            _sjekk_grenser,
                             valider_artefaktformat)
+
+ROT = Path(__file__).resolve().parents[3]
 
 
 def _gront_artefakt() -> dict:
@@ -24,6 +29,15 @@ def _gront_artefakt() -> dict:
     maalt["ddl_begge_kjoringer_gronne"] = True
     maalt["ytelse_full_bunt_soknader"] = 5000
     maalt["ytelse_full_bunt_minutter"] = 212.5
+    # #167 valg B: biasinvarianten UTLEDES av disse, den leses ikke.
+    # Tre digester kjørt, tre målinger — så `_forsok` er 3 og `_brudd` 0
+    # fordi DATAENE viser det, ikke fordi produsenten skrev det.
+    digester = [f"sha256:{str(i) * 64}" for i in (1, 2, 3)]
+    maalt["bias_digester_kjort"] = digester
+    maalt["bias_maalinger"] = [
+        {"image_digest": d, "artefakt_sha256": f"{i}" * 64,
+         "ts": "2026-08-23T00:00:00+00:00"}
+        for i, d in zip("abc", digester)]
     return {
         "krav_id": "m57-v1",
         "ts": "2026-08-23T00:00:00+00:00",
@@ -182,6 +196,674 @@ def test_skjemaets_feltsett_er_generert_fra_settet():
     ventet = {f"{n}_{s}" for n in M57_INVARIANTER for s in ("forsok", "brudd")}
     ventet |= {"ui_tastaturgjennomgang_dokumentert",
                "ddl_begge_kjoringer_gronne",
-               "ytelse_full_bunt_soknader", "ytelse_full_bunt_minutter"}
+               "ytelse_full_bunt_soknader", "ytelse_full_bunt_minutter",
+               # #167 valg B: dataene biasinvarianten UTLEDES av. De står
+               # her, ikke i invariantparet, fordi de ikke er en invariant
+               # — de er grunnlaget ett av parene regnes fra.
+               "bias_digester_kjort", "bias_maalinger"}
     assert felter == ventet
     assert set(skjema["properties"]["maalt"]["required"]) == ventet
+
+
+# ===========================================================================
+# #167 valg B — biasinvarianten utledes, den leses ikke
+# ===========================================================================
+
+def _m57_feil(art):
+    from manifestskjema import KRAVGRENSER, _grenser_m57
+    return _grenser_m57(KRAVGRENSER["m57-v1"], art)
+
+
+def test_en_digest_uten_maaling_felles_selv_om_modulen_rapporterer_null():
+    """#167 (Codex P1 ×3 på #153): invarianten var to selvrapporterte tall.
+
+    `bias_maling_mangler_for_digest` besto av `_forsok` og `_brudd` i
+    artefaktet. Modulen skrev «0 brudd», grensen leste «0 brudd», og
+    kjøretidsporten `krev_biasmaaling` måler bare FORMEN på en måling — så
+    ingen ledd i kjeden målte at det fantes en biasmåling for digesten.
+
+    Nå bærer artefaktet dataene, og bruddtallet regnes på nytt. Rapporterer
+    modulen null mens en digest står udekket, er avviket selve funnet —
+    samme disiplin som `_grenser_rollback`: tallene mot hverandre, ikke mot
+    flagg.
+
+    MUTASJONEN SOM DREPER DENNE: les `_brudd` i stedet for å utlede det.
+    """
+    art = _gront_artefakt()
+    # Fjern målingen for én digest, men la modulen fortsette å påstå null.
+    art["maalt"]["bias_maalinger"] = art["maalt"]["bias_maalinger"][:2]
+    feil = _m57_feil(art)
+    assert any("uten måling" in f for f in feil), \
+        f"en udekket digest slapp gjennom med rapportert null: {feil}"
+
+
+def test_forsoket_er_antallet_digester_ikke_et_tall_modulen_velger():
+    """Null brudd beviser ingenting uten at porten ble stilt spørsmålet.
+
+    `_forsok` skulle si at invarianten ble PRØVD. Var det et fritt tall,
+    kunne en kjøring med én digest rapportere tre forsøk og se grundigere
+    ut enn den var.
+
+    MUTASJONEN SOM DREPER DENNE: slutt å sammenligne `_forsok` med
+    antallet digester.
+    """
+    art = _gront_artefakt()
+    art["maalt"]["bias_maling_mangler_for_digest_forsok"] = 7
+    feil = _m57_feil(art)
+    assert any("digest(er)" in f and "forsok" in f for f in feil), \
+        f"forsøkstallet var frikoblet fra digestene: {feil}"
+
+
+def test_grunnlaget_kan_ikke_utelates():
+    """En uutledbar invariant er ingen port.
+
+    Uten `bias_digester_kjort` finnes det ingenting å regne fra, og da er
+    vi tilbake til å lese modulens eget tall. Fraværet må derfor felles,
+    ikke hoppes over — samme fail-closed-form som punktbindingen i #166.
+
+    MUTASJONEN SOM DREPER DENNE: returner tom liste når grunnlaget mangler.
+    """
+    for felt in ("bias_digester_kjort", "bias_maalinger"):
+        art = _gront_artefakt()
+        del art["maalt"][felt]
+        feil = _m57_feil(art)
+        assert any(felt in f for f in feil), \
+            f"artefaktet passerte uten `{felt}`: {feil}"
+
+    art = _gront_artefakt()
+    art["maalt"]["bias_digester_kjort"] = []
+    assert any("tom" in f for f in _m57_feil(art)), \
+        "en tom digestliste utleder null brudd av ingenting"
+
+
+def test_en_gjentatt_digest_er_ikke_et_forsok_til():
+    """Hullet #167 stengte, gjenåpnet gjennom sitt eget grunnlag.
+
+    Forsøkstallet måles mot `len(bias_digester_kjort)`, mens dekningen
+    regnes mot `set(...)`. Står én digest tre ganger, er `forsok=3` sant
+    med ÉN måling og null brudd — og artefaktet ser ut som en kjøring mot
+    tre modellversjoner når den prøvde én. Det er ordrett det
+    `test_forsoket_er_antallet_digester_ikke_et_tall_modulen_velger`
+    påstår er stengt, så uten denne porten løy den testen.
+
+    Begge lag feller det, som for de andre feltene: skjemaet på
+    `uniqueItems`, grensesjekken uavhengig.
+
+    MUTASJONEN SOM DREPER DENNE: tell duplikater som forsøk igjen (regn
+    `_forsok` mot `len(digester)` uten å avvise gjentakelser).
+    """
+    art = _gront_artefakt()
+    d = art["maalt"]["bias_digester_kjort"][0]
+    # Én digest, prøvd én gang, utgitt for tre forsøk.
+    art["maalt"]["bias_digester_kjort"] = [d, d, d]
+    art["maalt"]["bias_maalinger"] = art["maalt"]["bias_maalinger"][:1]
+    art["maalt"]["bias_maling_mangler_for_digest_forsok"] = 3
+    art["maalt"]["bias_maling_mangler_for_digest_brudd"] = 0
+    feil = _m57_feil(art)
+    assert any("gjentar" in f for f in feil), \
+        f"tre kopier av én digest passerte som tre forsøk: {feil}"
+    assert valider_artefaktformat(art, "m57-v1") != [], \
+        "skjemaet slapp gjennom en gjentatt digest (uniqueItems)"
+
+
+def test_to_digester_som_bare_skiller_versaler_er_ikke_to_forsok():
+    """Cursor P2-2: duplikattesten over dekker bare det ENE laget.
+
+    `uniqueItems` er case-sensitiv (ECMA-262 sammenligner strengene rått),
+    så `sha256:ab…` og `sha256:AB…` er to ulike oppføringer for skjemaet —
+    og testen over bruker tre IDENTISKE strenger, altså nettopp det laget
+    skjemaet fanger. Grensen stenger det andre laget med
+    `Counter(x.lower() for x in digester)`, men ingen test målte det
+    leddet: mutasjonen `Counter(x for x in digester)` overlevde hele
+    suiten og gjenåpnet #167-hullet på nytt — `forsok=2` med én faktisk
+    modellversjon og `brudd=0`.
+
+    Derfor måles begge lagene her, hver for seg: skjemaet skal SLIPPE
+    (det er ikke dets jobb), grensen skal FELLE. En felles «noe feller
+    dette» ville vært grønn på feil grunn.
+
+    Digesten må ha bokstaver for å ha versaler i det hele tatt.
+    `_gront_artefakt` bygger sine av sifre, og `[d, d.upper()]` på en slik
+    er to identiske strenger — en fikstur som måler `uniqueItems` om
+    igjen i stedet for normalformen.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `.lower()` i duplikattellingen.
+    """
+    art = _gront_artefakt()
+    d = "sha256:" + "ab" * 32
+    # Prefikset er lovlig BARE i små bokstaver (`^sha256:`); det er
+    # heksadesimalene som har to skrivemåter.
+    stor = "sha256:" + d[7:].upper()
+    art["maalt"]["bias_digester_kjort"] = [d, stor]
+    art["maalt"]["bias_maalinger"] = [
+        {"image_digest": d, "artefakt_sha256": "c" * 64,
+         "ts": "2026-08-23T00:00:00+00:00"}]
+    # Én modellversjon, utgitt for to forsøk — og null brudd, fordi den
+    # ene målingen «dekker» begge skrivemåtene av den samme digesten.
+    art["maalt"]["bias_maling_mangler_for_digest_forsok"] = 2
+    art["maalt"]["bias_maling_mangler_for_digest_brudd"] = 0
+    assert valider_artefaktformat(art, "m57-v1") == [], (
+        "skjemaet felte versalvarianten — da måler ikke denne testen"
+        " lenger grensens eget duplikatledd, og mutasjonen der ville"
+        " overlevd bak en port som tilfeldigvis stengte først")
+    feil = _m57_feil(art)
+    assert any("gjentar" in f for f in feil), (
+        "to skrivemåter av samme digest passerte som to forsøk — én"
+        f" modellversjon utgitt for to: {feil}")
+
+
+def test_to_malinger_for_samme_digest_er_tvetydig_bevis():
+    """Kjøretidssiden er `dict[str, Biasmaaling]` — én måling per digest.
+
+    En liste med to ulike målinger for samme digest kan derfor ikke være
+    en tro gjengivelse av kartet porten faktisk ble stilt. Å plukke den
+    første ville gjort grensen til en som VELGER hvilket bevis som
+    gjelder; det valget hører ikke hjemme her. Tvetydig bevis felles.
+
+    MUTASJONEN SOM DREPER DENNE: la `dekket` svelge gjentatte digester
+    stille (`dekket.add(d)` uten å se om den alt er der).
+    """
+    art = _gront_artefakt()
+    maalinger = art["maalt"]["bias_maalinger"]
+    d = maalinger[0]["image_digest"]
+    # Samme digest, to ulike artefakthasher — hvilken er beviset?
+    art["maalt"]["bias_maalinger"] = maalinger + [
+        {"image_digest": d, "artefakt_sha256": "f" * 64,
+         "ts": "2026-08-23T00:00:00+00:00"}]
+    feil = _m57_feil(art)
+    assert any("mer enn én gang" in f for f in feil), \
+        f"to målinger for samme digest passerte som bevis: {feil}"
+
+
+def test_bias_maaling_med_ugyldig_ts_felles():
+    """`format: date-time` er inert i skjemaet — grensen må lese datoen.
+
+    `valider_artefaktformat` bygger `Draft202012Validator` UTEN
+    `FormatChecker`, så `"format"` er en annotasjon, ikke en port: `ts:
+    ""` og `ts: "ikke-en-dato"` passerer skjemalaget. Kjøretidsporten
+    `krev_biasmaaling` feller dem (`bias_maling_uten_tidspunkt`), og
+    docstringen her lover at formkravene er DE SAMME — så uten denne
+    lesningen løy løftet, og en udatert oppføring telte som måling.
+    Nøyaktig samme klasse som «en oppføring er ikke en måling» (Codex P2
+    på port 17), gjenåpnet i evidenslaget.
+
+    MUTASJONEN SOM DREPER DENNE: dropp `fromisoformat`-lesningen og stol
+    på `"format": "date-time"`.
+    """
+    for daarlig in ("", "ikke-en-dato", "2026/01/01 00:00", None):
+        art = _gront_artefakt()
+        art["maalt"]["bias_maalinger"][0]["ts"] = daarlig
+        feil = _m57_feil(art)
+        assert any("RFC 3339" in f for f in feil), \
+            f"ts={daarlig!r} passerte som datert bevis: {feil}"
+    # ... OG KALENDEREN MÅLES SEPARAT. Formen kan stemme til punkt og
+    # prikke mens datoen ikke finnes; da er det `fromisoformat` som
+    # feller, ikke mønsteret. Uten denne halvdelen kunne kalenderleddet
+    # slettes uten at noe ble rødt.
+    art = _gront_artefakt()
+    for umulig in ("2026-02-30T00:00:00Z", "2026-13-45T99:00:00Z"):
+        art = _gront_artefakt()
+        art["maalt"]["bias_maalinger"][0]["ts"] = umulig
+        feil = _m57_feil(art)
+        assert any("kalenderen" in f for f in feil), \
+            f"{umulig} passerte som datert bevis: {feil}"
+
+    # Og den gyldige formen porten selv bruker (`Z`-suffiks) består.
+    art = _gront_artefakt()
+    art["maalt"]["bias_maalinger"][0]["ts"] = "2026-01-01T00:00:00Z"
+    assert not _m57_feil(art), \
+        "en gyldig ISO 8601 med Z-suffiks ble felt — grensen leser" \
+        " strengere enn kjøretidsporten den speiler"
+
+
+def test_ts_uten_utc_offset_er_ikke_datert_bevis():
+    """`fromisoformat` er ISO 8601, ikke RFC 3339.
+
+    Skjemaet erklærer `ts` som `format: date-time`, og RFC 3339 gjør
+    UTC-offset obligatorisk. `fromisoformat` er romsligere enn den
+    erklæringen: `"2026-01-01"` (bare dato), `"2026-W01-1"` (ukedato) og
+    `"2026-01-01T12:00:00"` (uten sone) leses alle uten å heve. Alle tre
+    ble derfor talt som datert bevis, mens `format` samtidig var inert i
+    skjemalaget — så feltet var i praksis ustyrt i begge lag. Et
+    tidspunkt uten sone er ikke et tidspunkt, men en påstand om ett: to
+    målinger fra hver sin verdensdel kan ikke ordnes mot hverandre.
+
+    Kravet leses fortsatt med kalenderen, ikke med en håndskrevet
+    ISO-grammatikk (K4): en dato uten klokkeslett KAN ikke bære offset,
+    så det samme leddet feller alle tre formene.
+
+    MUTASJONEN SOM DREPER DENNE: slett `if lest.tzinfo is None`-leddet.
+    """
+    for ikke_rfc in ("2026-01-01", "2026-W01-1", "2026-01-01T12:00:00",
+                     "20260101T120000", "2026-01-01x00:00:00+00:00",
+                     "2026-01-01T00:00:00+00:00:30"):
+        art = _gront_artefakt()
+        art["maalt"]["bias_maalinger"][0]["ts"] = ikke_rfc
+        feil = _m57_feil(art)
+        assert any("RFC 3339" in f for f in feil), \
+            f"ts={ikke_rfc!r} passerte som datert bevis: {feil}"
+
+    # Og begge de gyldige skrivemåtene består — porten skal ikke være
+    # strengere enn RFC 3339, bare like streng.
+    for gyldig in ("2026-01-01T00:00:00Z", "2026-01-01T00:00:00+02:00"):
+        art = _gront_artefakt()
+        art["maalt"]["bias_maalinger"][0]["ts"] = gyldig
+        assert not _m57_feil(art), f"{gyldig!r} ble felt — porten leser" \
+            " strengere enn standarden den påberoper seg"
+
+
+def test_grensen_leser_versaler_SOM_kjoretidsporten():
+    """Codex P2: en grense strengere enn porten den speiler.
+
+    `_er_sha256` sammenligner `verdi.lower()`, så `krev_biasmaaling`
+    godtar en måling med store heksadesimaler. Grensen avviste den — og
+    da ville et akseptartefakt for en kjøring som FAKTISK gikk igjennom
+    blitt felt av evidenslaget. Løftet er speilingen; da må skrivemåten
+    være den samme i begge lag og i skjemaet.
+
+    Dekningen sammenlignes på normalform, ellers ville `sha256:AB…` i
+    digestlisten og `sha256:ab…` i målingen sett ut som to ulike
+    modellversjoner — og porten rapportert både «mangler måling» og
+    «foreldreløs måling» for én og samme.
+
+    MUTASJONEN SOM DREPER DENNE: `[0-9a-f]` tilbake i `_bias_utledet`
+    eller i skjemaet, eller `dekket.add(d)` uten `.lower()`.
+    """
+    def _stor(d: str) -> str:
+        stor = d[:7] + d[7:].upper()
+        # Fiksturens digester er rene SIFRE, og siffer har ingen versaler
+        # — første utgave av porten «uppercaset» derfor ingenting, og hver
+        # mutasjon på normalformen overlevde. Bokstavene må inn i
+        # fiksturen for at den skal måle noe i det hele tatt.
+        assert stor != d, "fiksturens digest har ingen bokstaver å endre"
+        return stor
+
+    def _med_bokstaver(art: dict) -> dict:
+        """Bytter fiksturens siffer-digester mot digester med hex-bokstaver."""
+        kart = {d: d[:7] + ("abcdef" * 11)[:57] + d[-7:]
+                for d in art["maalt"]["bias_digester_kjort"]}
+        art["maalt"]["bias_digester_kjort"] = [
+            kart[d] for d in art["maalt"]["bias_digester_kjort"]]
+        for m in art["maalt"]["bias_maalinger"]:
+            m["image_digest"] = kart[m["image_digest"]]
+        return art
+
+    art = _med_bokstaver(_gront_artefakt())
+    art["maalt"]["bias_digester_kjort"] = [
+        _stor(d) for d in art["maalt"]["bias_digester_kjort"]]
+    for m in art["maalt"]["bias_maalinger"]:
+        m["image_digest"] = _stor(m["image_digest"])
+        m["artefakt_sha256"] = m["artefakt_sha256"].upper()
+    assert not _m57_feil(art), (
+        "store heksadesimaler ble felt av grensen, mens kjøretidsporten"
+        f" godtar dem: {_m57_feil(art)}")
+    assert valider_artefaktformat(art, "m57-v1") == [], \
+        "skjemaet avviser skrivemåten kjøretidsporten godtar"
+
+    # ... OG BLANDET SKRIVEMÅTE er samme digest, ikke to. BEGGE
+    # RETNINGENE måles: normaliseres bare den ene siden, overlever
+    # mutasjonen på den andre. Første utgave av porten hadde nettopp det
+    # hullet — den skrev versaler bare i digestlisten, og da holdt
+    # `dekket.add(d)` uten `.lower()` fortsatt.
+    art = _med_bokstaver(_gront_artefakt())
+    art["maalt"]["bias_digester_kjort"] = [
+        _stor(d) for d in art["maalt"]["bias_digester_kjort"]]
+    assert not _m57_feil(art), (
+        "versaler i DIGESTLISTEN ble lest som andre digester enn"
+        f" målingenes: {_m57_feil(art)}")
+
+    art = _med_bokstaver(_gront_artefakt())
+    for m in art["maalt"]["bias_maalinger"]:
+        m["image_digest"] = _stor(m["image_digest"])
+    assert not _m57_feil(art), (
+        "versaler i MÅLINGENE ble lest som andre digester enn"
+        f" digestlistens — `dekket` normaliseres ikke: {_m57_feil(art)}")
+
+
+def test_to_maalinger_med_samme_STORE_digest_er_fortsatt_tvetydig():
+    """Codex P2 (runde 4): normalformen gjaldt bare den ene veien.
+
+    Innsettingen brukte `d.lower()`, testen `d` rått. To målinger med
+    NØYAKTIG samme store digest kolliderte derfor aldri — begge falt
+    sammen i én settoppføring — og et artefakt med to motstridende
+    artefakthasher for samme modellversjon passerte porten som sier «én
+    måling per digest».
+
+    MUTASJONEN SOM DREPER DENNE: `if d in dekket` tilbake.
+    """
+    art = _gront_artefakt()
+    m = art["maalt"]["bias_maalinger"][0]
+    stor = m["image_digest"][:7] + ("ABCDEF" * 11)[:57] + m["image_digest"][-7:]
+    art["maalt"]["bias_digester_kjort"] = [stor]
+    art["maalt"]["bias_maalinger"] = [
+        {"image_digest": stor, "artefakt_sha256": "a" * 64,
+         "ts": "2026-01-01T00:00:00Z"},
+        {"image_digest": stor, "artefakt_sha256": "f" * 64,
+         "ts": "2026-01-01T00:00:00Z"}]
+    art["maalt"]["bias_maling_mangler_for_digest_forsok"] = 1
+    art["maalt"]["bias_maling_mangler_for_digest_brudd"] = 0
+    feil = _m57_feil(art)
+    assert any("mer enn én gang" in f for f in feil), (
+        "to målinger med samme STORE digest passerte som bevis — de falt"
+        f" sammen i én settoppføring: {feil}")
+
+
+def test_grensen_og_kjoretiden_leser_med_SAMME_predikat():
+    """Codex P2 (runde 5): to lesninger av samme standard divergerer.
+
+    Fem runder har målt tidspunktkravet, og hver runde fant at grensen og
+    kjøretidsporten leste ULIKT — først var grensen strengest
+    (`fromisoformat` alene i `krev_biasmaaling`), så kjøretiden
+    (skuddsekundet uten avgrensning). Det er §9 K2s egen defektklasse, og
+    svaret er ikke et sjette formforsøk: ÉN lesning, to kallere.
+
+    Porten måler at det faktisk ER én — ikke at de to tilfeldigvis er
+    enige i dag.
+
+    ... OG AT DEN ENE BOR I CORE (Cursor P2-1 / Codex P1). Runde 5 la den
+    i modulen og lot grensen importere `modules.m57_ats.evaluering`. Det
+    er RUTINER §7 baklengs, og det er dødt i den kjøringen som teller:
+    CI-steget som validerer manifester legger bare `platform/core` på
+    stien. Denne testfila ser det ikke av seg selv — `conftest.py` legger
+    på `platform` i tillegg — så retningen måles her, ikke bare
+    delingen.
+
+    MUTASJONEN SOM DREPER DENNE: skriv en egen lesning i `_bias_utledet`
+    igjen, eller flytt den felles lesningen tilbake til modulen.
+    """
+    import inspect
+
+    from manifestskjema import _bias_utledet
+    kilde = inspect.getsource(_bias_utledet)
+    assert "rfc3339_lesbar" in kilde, (
+        "grensen leser tidspunktet med sin egen lesning — da kan den"
+        " divergere fra kjøretidsporten den lover å speile")
+    # KALLET, ikke ordet. Første utgave søkte på `fromisoformat` og fant
+    # sin egen begrunnelse i kommentaren over — samme felle som to andre
+    # porter i natt. Kallformen er det som faktisk ville vært en andre
+    # lesning.
+    assert "fromisoformat(" not in kilde, (
+        "grensen har fortsatt en egen kalenderlesning ved siden av det"
+        " felles predikatet")
+    # ... og predikatet må være det SAMME objektet kjøretidsporten
+    # faktisk bruker. Identitet, ikke navnelikhet: to like hete funksjoner
+    # er nettopp de to lesningene fem runder har målt at divergerer.
+    from tid import rfc3339_lesbar
+    from modules.m57_ats import evaluering
+    from modules.m57_ats.evaluering import krev_biasmaaling
+    assert "rfc3339_lesbar" in inspect.getsource(krev_biasmaaling), \
+        "kjøretidsporten bruker ikke det felles predikatet"
+    assert evaluering.rfc3339_lesbar is rfc3339_lesbar, (
+        "kjøretidsporten leser med et ANNET predikat enn core-symbolet"
+        " grensen leser med")
+    for gyldig in ("2026-01-01T00:00:00Z", "2016-12-31T23:59:60Z",
+                   "2026-01-01t00:00:00z", "2026-01-01T00:00:00+02:00"):
+        assert rfc3339_lesbar(gyldig), gyldig
+    for ugyldig in ("2026-01-01", "2026-01-01T12:00:00", "20260101T120000",
+                    "2026-01-01x00:00:00+00:00", "2026-02-30T00:00:00Z",
+                    "2026-01-01T12:30:60Z", "", None):
+        assert not rfc3339_lesbar(ugyldig), ugyldig
+
+
+def test_grensen_validerer_med_BARE_platform_core_paa_stien():
+    """Cursor P2-1 / Codex P1: retningen på delingen, målt der den ryker.
+
+    Runde 5 delte lesningen ved å la core importere
+    `modules.m57_ats.evaluering`. Delingen ble ekte, retningen ble feil —
+    og feil retning er ikke en stilfeil her: CI-steget «Manifester
+    gyldige» kjører `sys.path.insert(0, "platform/core")` og INGENTING
+    mer, så `_bias_utledet` ville reist `ModuleNotFoundError: No module
+    named 'modules'` første gang et `m57-v1`-punkt slås på og
+    `valider_artefakter` kaller den. Testsuiten så det ikke: `conftest.py`
+    legger på `platform` i tillegg, så modulpakken var importerbar her og
+    bare her.
+
+    Derfor måles importen i en EGEN prosess med CI-steget sin sti, ikke
+    med en tekstsjekk i denne. En `assert "modules" not in kilde` ville
+    vært akkurat den vakuøse porten `fromisoformat`-linjen over ble
+    skrevet om for å unngå: den felles av en kommentar, og den beviser
+    ikke at importen finnes.
+
+    MUTASJONEN SOM DREPER DENNE: flytt `rfc3339_lesbar` tilbake til
+    `modules.m57_ats.evaluering` og importer den derfra i core.
+    """
+    import subprocess
+    import sys
+
+    # `-I` = isolert: hverken cwd, PYTHONPATH eller brukerens site-dir
+    # havner på stien. Da er `platform/core` det eneste repo-steget har
+    # lagt der, akkurat som i ci.yml.
+    r = subprocess.run(
+        [sys.executable, "-I", "-c",
+         'import sys; sys.path.insert(0, "platform/core");'
+         ' from manifestskjema import _bias_utledet;'
+         ' d = "sha256:" + "a" * 64;'
+         ' print(_bias_utledet({"bias_digester_kjort": [d],'
+         ' "bias_maalinger": [{"image_digest": d,'
+         ' "artefakt_sha256": "b" * 64,'
+         ' "ts": "2026-01-01T00:00:00Z"}],'
+         ' "bias_maling_mangler_for_digest_brudd": 0,'
+         ' "bias_maling_mangler_for_digest_forsok": 1}))'],
+        cwd=str(ROT), capture_output=True, text=True)
+    assert r.returncode == 0, (
+        "evidensgrensen kan ikke kjøres med CI-stegets egen sti — core"
+        f" henter noe utenfor platform/core:\n{r.stderr}")
+
+
+def test_skuddsekundet_er_gyldig_rfc_3339():
+    """Codex P3 (runde 4): grensen var strengere enn kontrakten.
+
+    RFC 3339 §5.7 tillater `time-second = 60` ved et innskutt skuddsekund,
+    og `2016-12-31T23:59:60Z` er et ekte tidspunkt. `fromisoformat`
+    avviser sekund 60, så en måling tatt i det sekundet ble rapportert som
+    udatert — og digesten dens som udekket.
+
+    Kalenderen leses fortsatt av standardbiblioteket; bare sekundfeltet
+    senkes til 59 for lesningen, og bare når mønsteret alt har godkjent
+    formen.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `:60`-substitusjonen.
+    """
+    art = _gront_artefakt()
+    art["maalt"]["bias_maalinger"][0]["ts"] = "2016-12-31T23:59:60Z"
+    assert not _m57_feil(art), \
+        f"et gyldig skuddsekund ble felt: {_m57_feil(art)}"
+
+    # ... MEN BARE VED MINUTTETS SLUTT (Codex P2, runde 5). RFC 3339 §5.7
+    # tillater sekund 60 i det INNSKUTTE skuddsekundet, som alltid står
+    # sist i minuttet. `2026-01-01T12:30:60Z` er ikke et tidspunkt som har
+    # eksistert, og en ubetinget substitusjon gjorde det til gyldig
+    # datert bevis.
+    for umulig in ("2026-01-01T12:30:60Z", "2026-01-01T12:00:60+00:00"):
+        art = _gront_artefakt()
+        art["maalt"]["bias_maalinger"][0]["ts"] = umulig
+        assert _m57_feil(art), \
+            f"{umulig} passerte som datert bevis — sekund 60 er bare"\
+            " lovlig sist i minuttet"
+
+    # ... men en umulig DATO felles fortsatt av kalenderen. Uten denne
+    # halvdelen kunne substitusjonen vært en generell oppmykning.
+    art = _gront_artefakt()
+    art["maalt"]["bias_maalinger"][0]["ts"] = "2026-02-30T23:59:60Z"
+    assert any("kalenderen" in f for f in _m57_feil(art)), \
+        "30. februar passerte fordi skuddsekundet myknet opp lesningen"
+
+
+def test_lowercase_z_er_et_gyldig_utc_suffiks_i_BEGGE_lag():
+    """Codex P2: mønsteret og kalenderen var uenige om `z`.
+
+    RFC 3339 tillater begge versalformer av UTC-suffikset, og mønsteret
+    fra forrige runde godtar `[Zz]` — men bare den STORE ble byttet ut før
+    `fromisoformat`, så en gyldig `2026-01-01t00:00:00z` besto
+    grammatikken og felte på kalenderen. To ledd som måler hver sin ting
+    skal ikke være uenige om hva de leser.
+
+    Kjøretidsporten hadde nøyaktig samme uenighet i sin egen
+    `krev_biasmaaling`, og er rettet med den — ellers ville grensen
+    sluttet å speile den i det øyeblikket den ble riktig.
+
+    MUTASJONEN SOM DREPER DENNE: `.replace("Z", "+00:00")` tilbake.
+    """
+    for gyldig in ("2026-01-01t00:00:00z", "2026-01-01T00:00:00Z"):
+        art = _gront_artefakt()
+        art["maalt"]["bias_maalinger"][0]["ts"] = gyldig
+        assert not _m57_feil(art), \
+            f"{gyldig!r} er gyldig RFC 3339, men ble felt: {_m57_feil(art)}"
+
+
+def test_hengende_linjeskift_i_en_digest_felles_i_BEGGE_lag():
+    """Pythons `$` matcher rett FØR en avsluttende linjeskift.
+
+    `^sha256:[0-9a-f]{64}$` slapp derfor `"sha256:<64 hex>\n"` gjennom —
+    både i grensesjekken og i skjemaets `pattern`, som `jsonschema`
+    kjører med `re.search` og samme semantikk. En digest med hengende
+    data telte da som gyldig bevis, mens kjøretidssiden slår opp på den
+    NØYAKTIGE strengen (`dict[str, Biasmaaling]`) og aldri finner den
+    igjen: dekningen ville sagt grønt om en nøkkel ingen kan bruke.
+    Anker er nå `\\A`/`\\Z`, som ikke kjenner noe slikt unntak.
+
+    MUTASJONEN SOM DREPER DENNE: sett `^`/`$` tilbake i `_bias_utledet`
+    (første halvdel) eller i skjemaet (andre halvdel).
+    """
+    # Meldingen MÅ være formmeldingen. Første utgave av denne porten
+    # spurte bare om `_m57_feil` sa noe i det hele tatt, og da overlevde
+    # mutasjonen: en digest med hengende linjeskift havner uansett
+    # utenfor `dekket`, så dekningsleddet klaget om «mangler måling» og
+    # porten ble grønn på feil grunn. Vi krever nå ordene fra det leddet
+    # som faktisk leser formen.
+    art = _gront_artefakt()
+    art["maalt"]["bias_digester_kjort"][0] += "\n"
+    feil = _m57_feil(art)
+    assert any("ikke er digester" in f for f in feil), \
+        f"en digest med hengende linjeskift passerte formleddet: {feil}"
+    assert valider_artefaktformat(art, "m57-v1") != [], \
+        "skjemaets pattern slapp gjennom en digest med hengende linjeskift"
+
+    art = _gront_artefakt()
+    art["maalt"]["bias_maalinger"][0]["artefakt_sha256"] = "a" * 64 + "\n"
+    feil = _m57_feil(art)
+    assert any("ikke en sha256" in f for f in feil), \
+        f"en artefakthash med hengende linjeskift passerte: {feil}"
+    assert valider_artefaktformat(art, "m57-v1") != [], \
+        "skjemaets pattern slapp gjennom en hash med hengende linjeskift"
+
+    # SKJEMAET SKAL VÆRE PORTABELT (Codex P2, runde 2). `\\A`/`\\Z` er
+    # Pythons anker, ikke ECMA-262s, og en standardsorientert validator kan
+    # avvise mønsteret eller lese escapene som bokstaver — da feiler
+    # GYLDIGE digester. Skjemaet bruker derfor `^...$`, som i ECMA-262
+    # ikke har Pythons linjeskift-unntak, og lengdegrensene lukker hullet
+    # også for Pythons `re`: 71 tegn for `sha256:<64 hex>`, 64 for en bar
+    # hash. Pythons egne anker bor i `_bias_utledet`, der de hører hjemme.
+    import json as _json
+    skjema = _json.loads(
+        (ROT / "platform" / "core" / "artefakt-m57-skjema.json")
+        .read_text(encoding="utf-8"))
+    monstre = []
+
+    def _samle(node):
+        if isinstance(node, dict):
+            if "pattern" in node:
+                monstre.append(node)
+            for v in node.values():
+                _samle(v)
+        elif isinstance(node, list):
+            for v in node:
+                _samle(v)
+
+    _samle(skjema)
+    assert monstre, "fant ingen mønstre i skjemaet — porten måler ingenting"
+    for node in monstre:
+        assert "\\A" not in node["pattern"] and "\\Z" not in node["pattern"], (
+            f"Python-anker i et delt skjema: {node['pattern']!r}")
+    for node in monstre:
+        if "[0-9a-f]{64}" in node["pattern"]:
+            assert "maxLength" in node, (
+                f"{node['pattern']!r} står uten lengdegrense — `$` i"
+                " Pythons `re` slipper da et hengende linjeskift igjennom")
+
+
+def test_duplikatsjekken_skalerer_lineaert_ikke_kvadratisk():
+    """`bias_digester_kjort` har ingen `maxItems` — formen må tåle det.
+
+    Duplikatsjekken kalte `list.count()` per element, altså én full
+    gjennomlesning per digest. Målt her på maskinen porten kjører på:
+    den kvadratiske formen bruker 1,33 s på 10 000 unike digester og
+    skalerer med kvadratet, altså ~21 s på de 40 000 denne porten
+    stiller. `Counter` gjør samme arbeid på 0,04 s. Budsjettet under er
+    tre sekunder — 75 ganger over den lineære målingen, og sju ganger
+    UNDER den kvadratiske, så porten er hverken flakete eller snill.
+
+    Kostnaden traff også den ærlige veien: hver digest er unik, så det
+    er ikke duplikatene som er dyre, men letingen etter dem.
+
+    MUTASJONEN SOM DREPER DENNE: `sorted({d for d in digester if
+    digester.count(d) > 1})`.
+    """
+    import time
+
+    digester = [f"sha256:{i:064x}" for i in range(40_000)]
+    m = {"bias_digester_kjort": digester,
+         "bias_maalinger": [{"image_digest": digester[0],
+                             "artefakt_sha256": "a" * 64,
+                             "ts": "2026-01-01T00:00:00+00:00"}]}
+    start = time.perf_counter()
+    feil = _bias_utledet(m)
+    brukt = time.perf_counter() - start
+    assert brukt < 3.0, (
+        f"40 000 unike digester tok {brukt:.1f} s — duplikatsjekken er"
+        " kvadratisk igjen, og et artefakt uten maxItems kan da gjøre"
+        " validering til en kostnad angriperen velger")
+    # Og den gjør fortsatt jobben sin: 39 999 digester mangler måling.
+    assert any("ikke er målt" in f or "mangler" in f for f in feil), \
+        f"den raske formen sluttet å måle dekning: {feil}"
+
+
+def test_bias_maaling_for_udeklarert_digest_felles():
+    """Dekningen måles begge veier — ellers er den halv.
+
+    `mangler = set(digester) - dekket` finner digester uten måling. Den
+    omvendte differansen ble ikke sjekket, så `bias_digester_kjort=[d1]`
+    med `bias_maalinger=[d1, d2]` ga `mangler=[]`, `forsok=1`, `brudd=0`
+    — grønt, mens målingslisten dokumenterer en modellversjon kjøringen
+    aldri sa den brukte. Evidenslistene motsier hverandre, og
+    forsøkstallet beskriver da en annen kjøring enn den bevisene viser.
+
+    Det er lineage-disiplinen #167 valg B innførte: forsøk = det
+    DEKLARERTE digest-settet. En produsent som kan legge biasbevis ved
+    siden av det settet, kan pynte på kjøringen uten at porten reagerer.
+
+    MUTASJONEN SOM DREPER DENNE: sjekk bare `set(digester) - dekket`.
+    """
+    art = _gront_artefakt()
+    d1 = art["maalt"]["bias_digester_kjort"][0]
+    # Én digest deklarert, to målt — den andre er formgyldig og dekket.
+    art["maalt"]["bias_digester_kjort"] = [d1]
+    art["maalt"]["bias_maling_mangler_for_digest_forsok"] = 1
+    art["maalt"]["bias_maling_mangler_for_digest_brudd"] = 0
+    feil = _m57_feil(art)
+    assert any("ikke står i" in f for f in feil), \
+        f"en måling for en udeklarert digest passerte som grønt: {feil}"
+
+
+def test_grensen_mot_valg_A_er_skrevet_ned_aerlig():
+    """Det B IKKE gjør, sagt høyt — så neste leser ikke tror den er dekket.
+
+    En form-gyldig måling for en digest som aldri ble målt passerer
+    fortsatt: `artefakt_sha256` er en streng med riktig fasong, og at
+    artefakten FINNES i et lager måles ingen steder. Det er #167 valg A, og
+    den hører i controlleren som har tenantkontekst — ikke i en ren
+    rangeringsfunksjon og ikke i et manifestskjema.
+
+    Porten står her fordi en kommentar som lover mer enn den måler er
+    verre enn ingen kommentar (Codex P1, runde 5 på #153). Denne testen ER
+    påstanden om hva som ikke er dekket, målt.
+    """
+    art = _gront_artefakt()
+    # Oppdiktet, men form-gyldig: ingen slik biasartefakt finnes noe sted.
+    art["maalt"]["bias_maalinger"] = [
+        {"image_digest": d, "artefakt_sha256": "0" * 64,
+         "ts": "2026-01-01T00:00:00Z"}
+        for d in art["maalt"]["bias_digester_kjort"]]
+    assert not _m57_feil(art), \
+        "B har begynt å måle eksistens — da skal denne porten byttes ut" \
+        " med A sin, ikke slettes"
