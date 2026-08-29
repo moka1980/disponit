@@ -197,6 +197,18 @@ def _spoletekst(medlemmer, fremdrift):
         raise Kjoringsfeil("infrastrukturfeil", fremdrift) from feil
 
 
+def _spoledokumenter(medlemmer, fremdrift):
+    """Kandidatens dokumenter lest tilbake HVER FOR SEG (#174): skjøtingen
+    skjer først på den blindede siden (`evaluer_kandidat` med
+    `blinding.SKJOT`), så et modellsitat aldri kan krysse en
+    dokumentgrense råteksten ikke har. Samme utfallsklasse som
+    `_spoletekst` — spolefeil er drift, aldri modellens."""
+    try:
+        return [_les_spole(bit[2]) for bit in medlemmer]
+    except OSError as feil:
+        raise Kjoringsfeil("infrastrukturfeil", fremdrift) from feil
+
+
 def _les_spole(sti):
     """Spolefila lest UTEN linjeskiftoversettelse — se `_spoletekst`.
 
@@ -595,7 +607,17 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
             # annen person. Rånavnet er medlemmets egen, entydige nøkkel
             # (buntgaten avviser duplikater av den), så det avgjør likheten.
             medlemmer = sorted(biter[kandidat_id], key=lambda bit: bit[:2])
-            tekst = _spoletekst(medlemmer, fremdrift)
+            # DOKUMENTENE HOLDES FRA HVERANDRE TIL ETTER BLINDINGEN
+            # (#174). Skjøtingen skjedde FØR blindingen, og da kunne et
+            # modellsitat krysse skjøten: `valider_funn` godtok et utdrag
+            # som ikke står i noe faktisk søknadsdokument (Codex G7 på
+            # #170). Blindingen endrer lengder, så råtekstens skjøter kan
+            # ikke bæres inn i det blindede koordinatsystemet i det hele
+            # tatt — grensene MÅ oppstå på den blindede siden.
+            # `evaluer_kandidat` skjøter dem selv, med `blinding.SKJOT`,
+            # og regner grensene av den samme. Lest fra SPOLEN (#173):
+            # bitene bærer stier, ikke tekst.
+            dokumenter = _spoledokumenter(medlemmer, fremdrift)
             kandidatfelter: dict = {}
             for *_, nye in medlemmer:
                 _flett_felter(kandidatfelter, nye)
@@ -608,10 +630,20 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
             # plassering nederst i rangeringen. Kandidaten er dermed
             # vurdert som om søknaden var tom, i stillhet, i stedet for
             # at uttrekket meldes som det som feilet.
-            if not tekst.strip():
+            #
+            # MÅLT UTEN Å BYGGE TEKSTEN (Codex P2). Sjekken sto på en
+            # skjøtet kopi som ikke ble brukt til noe annet: parseren
+            # slipper gjennom inntil 2 GB utpakket, `dokumenter` og
+            # medlemsstrengene blir stående, og `blind_dokumenter` lager
+            # sin EGEN skjøtede kopi rett etterpå. Den ene ekstra
+            # kandidatstore allokeringen kunne ta livet av arbeideren for
+            # bunter som før gikk inn — før noe modellkall. `any` leser
+            # dokument for dokument og stanser på det første som har
+            # innhold.
+            if not any(d.strip() for d in dokumenter):
                 raise Kjoringsfeil("tekstuttrekk_feilet", fremdrift)
-            blinding.evalueringsinput(
-                tekst, kandidatfelter,
+            blinding.evalueringsinput_dokumenter(
+                dokumenter, kandidatfelter,
                 blinding_av=blinding_av,
                 avskruing_hendelse_id=avskruing_hendelse_id,
                 hendelseoppslag=hendelseoppslag)
@@ -619,15 +651,17 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
         # en `klargjort`-dict med hele buntens tekst (#173): portpasset
         # over har alt garantert at ALLE kandidater blindes gyldig før
         # den første når modellen, og spolen gir samme byte begge
-        # ganger. Evalueringen går i samme deterministiske orden.
+        # ganger. Evalueringen går i samme deterministiske orden —
+        # og fortsatt per DOKUMENT (#174): skjøten legges først på den
+        # blindede siden, i `evaluer_kandidat`.
         for kandidat_id in sorted(biter):
             medlemmer = sorted(biter[kandidat_id], key=lambda bit: bit[:2])
-            tekst = _spoletekst(medlemmer, fremdrift)
+            dokumenter = _spoledokumenter(medlemmer, fremdrift)
             kandidatfelter = {}
             for *_, nye in medlemmer:
                 _flett_felter(kandidatfelter, nye)
             resultat = evaluering.evaluer_kandidat(
-                modell, tekst, kandidatfelter, vekter,
+                modell, dokumenter, kandidatfelter, vekter,
                 biasmaalinger=biasmaalinger,
                 blinding_av=blinding_av,
                 avskruing_hendelse_id=avskruing_hendelse_id,
