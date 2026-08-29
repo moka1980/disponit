@@ -522,6 +522,43 @@ def test_221_cursoren_er_serverens_og_folges_uten_hull(migrator, miljo):
 
 
 @pg
+def test_221_keyset_ordenen_har_en_indeks_a_lese_den_ut_av(migrator):
+    """#221 (Codex P2): sorteringen ble eksplisitt `(opprettet, id)`, og
+    DEN ordenen hadde ingen indeks — `oppdrag_tenant_id_unik` betjente
+    bare den gamle `ORDER BY o.id DESC`. Uten en matchende indeks må
+    PostgreSQL samle og sortere hele tenantens oppdragshistorikk før
+    `LIMIT 101` kan kappe, på hver eneste side. En cursor som sorterer alt
+    på nytt for hver side er en OFFSET med ekstra steg.
+
+    Målingen er PREFIKSET, ikke navnet: `tenant` er likhetsleddet, så
+    `(opprettet, id)` må komme rett etter for at både keyset-leddet og
+    `ORDER BY` skal kunne leses ut av indeksen.
+
+    MUTASJONEN SOM DREPER DENNE: slett migrasjon 066, eller bytt
+    kolonnerekkefølgen i den (f.eks. `(tenant, id, opprettet)`)."""
+    kolonner = migrator.execute(
+        # `pg_get_indexdef(oid, kolonne_nr, pretty)` gir ÉN kolonne av
+        # gangen — altså rekkefølgen, ikke bare medlemskapet. Finnes ikke
+        # indeksen, gir spørringen null rader og listen blir tom.
+        "SELECT pg_get_indexdef(c.oid, g.i, true)"
+        "  FROM pg_class c"
+        "  JOIN pg_index i ON i.indexrelid = c.oid"
+        "  JOIN pg_class tbl ON tbl.oid = i.indrelid"
+        "  JOIN pg_namespace n ON n.oid = tbl.relnamespace,"
+        "       generate_series(1, 3) AS g(i)"
+        " WHERE n.nspname = 'public' AND tbl.relname = 'oppdrag'"
+        "   AND c.relname = 'oppdrag_tenant_keyset'"
+        " ORDER BY g.i").fetchall()
+    # Kun kolonnenavnet måles: om `pg_get_indexdef` skriver «opprettet» og
+    # «opprettet DESC» er en formateringsdetalj, mens PREFIKSET er det
+    # funnet handler om — en btree leses uansett begge veier.
+    navn = [str(r[0]).split()[0] for r in kolonner]
+    assert navn == ["tenant", "opprettet", "id"], (
+        "evalueringslistens keyset-orden har ingen indeks som starter på"
+        f" (tenant, opprettet, id) — fant {navn}")
+
+
+@pg
 def test_reapet_prosess_stenger_rapporten(migrator, miljo):
     """SLETTEGRENSEN (Codex P1): det promoterte artefaktet er immutabelt
     og bærer funn, sitater og blindet kildetekst — men når prosessen er
