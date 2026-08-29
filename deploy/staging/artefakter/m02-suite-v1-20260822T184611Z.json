@@ -1,0 +1,30 @@
+{
+  "bestatt": true,
+  "krav_id": "m02-suite-v1",
+  "maalt": {
+    "m2_exitkode": 0,
+    "m2_feilet": 0,
+    "m2_hoppet": 0,
+    "m2_tester": 7,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 2195
+  },
+  "oppsett": {
+    "bevisrot_sha256": "a44e8f45bc56c20cc7eba5801e410efa1bda076d8910bde543275b4c08847c9a",
+    "commit": "67f40ef1f0df38f53fe247e90f1f744b974ec28f",
+    "m2_filer": [
+      "platform/core/tests/test_pg_og_attestering.py::test_revisjonslogg_er_append_only_i_databasen",
+      "platform/core/tests/test_pg_og_attestering.py::test_runtime_kan_ikke_skru_av_append_only",
+      "platform/core/tests/test_pg_og_attestering.py::test_append_only_triggeren_star_paa_etter_migrasjon",
+      "platform/core/tests/test_api.py::test_tillat_gir_loggpost_med_evidensfelter",
+      "platform/core/tests/test_api.py::test_unntakshistorikk_far_aktor_fra_serverkontekst",
+      "platform/core/tests/test_api.py::test_idempotent_replay_er_byteidentisk_uten_ny_loggpost",
+      "platform/core/tests/test_api.py::test_unntaksskriv_feilet_ruller_ogsa_loggposten"
+    ],
+    "modul": "m02_revisjonslogg",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-08-22T18:49:49.887395+00:00"
+}

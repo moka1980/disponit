@@ -88,8 +88,21 @@ def _medlem(sub, roller):
     return bid
 
 
-def _utkast(uid, pid, av, innhold):
+def _med_meta(pid, innhold, versjon):
+    """Fragment + den `meta` en ekte policy alltid baerer. Aktiveringen lagrer
+    policyens EGEN `meta.versjon` som registerets `versjon` (migrasjon 020), saa
+    et utkast uten den kan ikke aktiveres. Feltene er klassifisert NOEYTRALE, saa
+    risikoklassene evidensen maaler avgjoeres fortsatt av regelendringen alene."""
+    if "meta" in innhold:
+        return innhold
+    return {**innhold,
+            "meta": {"policy_id": pid, "versjon": versjon,
+                     "bransjemal": "staging", "status": "produksjon"}}
+
+
+def _utkast(uid, pid, av, innhold, versjon="1.1.0"):
     m = _mig()
+    innhold = _med_meta(pid, innhold, versjon)
     h = pr.innholds_hash(innhold)
     m.execute(
         "INSERT INTO policyutkast (tenant,utkast_id,policy_id,innhold,"
@@ -100,17 +113,17 @@ def _utkast(uid, pid, av, innhold):
     m.close()
 
 
-def _aktiv_base(pid, innhold, versjon="1"):
+def _aktiv_base(pid, innhold, versjon="1.0.0"):
     m = _mig()
+    innhold = _med_meta(pid, innhold, versjon)
     h = pr.innholds_hash(innhold)
     m.execute(
         "INSERT INTO policyer (tenant,policy_id,versjon,innholds_hash,status,"
         "innhold,aktiv) VALUES (%s,%s,%s,%s,'produksjon',%s::jsonb,true)",
         (TENANT, pid, versjon, h, json.dumps(innhold)))
     m.execute(
-        "INSERT INTO policy_hode (tenant,policy_id,neste_versjon,aktiv_versjon,"
-        "revisjon) VALUES (%s,%s,%s,%s,1)",
-        (TENANT, pid, int(versjon) + 1, versjon))
+        "INSERT INTO policy_hode (tenant,policy_id,aktiv_versjon,revisjon)"
+        " VALUES (%s,%s,%s,1)", (TENANT, pid, versjon))
     m.commit()
     m.close()
 

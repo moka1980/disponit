@@ -11,10 +11,55 @@ status: aktiv                  # aktiv | inaktiv | under_utvikling
 # andre feltet leses `aktiv` som «ute hos kunder», og det er noe helt annet
 # enn det sjekklisten har bevist.
 #
-# M-1 er godkjent og kjører ingen steder: staging har ingen installerte
-# units, og det finnes ikke engang en unit for API-et. `registry.valider`
-# nekter motsatt tilstand — drift uten aktiv status er en feil.
-driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+# M-1 er godkjent OG i drift: `disponit-api.service` er installert og aktiv,
+# databasen står på migrasjon 19, og policymotoren avgjør ekte forespørsler.
+# `registry.valider` nekter motsatt tilstand — drift uten aktiv status er en
+# feil.
+#
+# MEN DEN KJØRER PÅ STAGING, IKKE I PRODUKSJON. Maskinen er one.com Cloud
+# Server S, og `docs/DEPLOY.md` utpeker den eksplisitt som staging-serveren
+# vår; produksjon er en EGEN VPS med kunder og ekte, tenant-isolert data, og
+# den er ikke satt opp ennå. Feltet svarer på hvor koden kjører, og det
+# faktiske svaret er staging — det er nettopp derfor enumet har tre verdier og
+# ikke to. Skrives `produksjon` her, sier registeret, `i_drift`-lista og
+# kunde-KPI-ene at det finnes en kundeutrulling som ikke eksisterer, og
+# `docs/DEPLOY.md` og dette manifestet blir to motstridende kilder på samme
+# spørsmål. Verten sier det samme selv: `DISPONIT_MILJO` står `staging`, og en
+# maskin som ikke selv regner seg som produksjon skal ingen fil her si at er
+# det.
+#
+# DEN DAGEN PRODUKSJONS-VPS-EN ER SATT OPP og M-1 er rullet ut der etter
+# utrullingsløypen i DEPLOY.md, er `produksjon` riktig verdi — og da flytter
+# brikka på forsiden seg av seg selv, siden `MODULSTATUS` er avledet herfra.
+#
+# BARE M-1s EGEN UNIT TELLER SOM BEVIS HER. `disponit-m37.service` sto i denne
+# begrunnelsen fram til nå, og gjorde M-37s manifest usant i samme åndedrag:
+# det sier `under_utvikling` og `ikke_i_drift`, og punktet `rollback_testet`
+# begrunner sin `nei` nettopp med at arbeiderens unit ikke er installert på
+# staging. To manifester kan ikke begge være autoriteten på M-37s tilstand, og
+# registeret leser hver modul fra HENNES egen fil. Er arbeideren faktisk i
+# drift, er det M-37s manifest som skal endres — etter at porten den mangler
+# er kjørt — ikke M-1s begrunnelse som skal påstå det på hennes vegne.
+#
+# M-1s driftstilstand avhenger uansett ikke av arbeideren: policymotoren
+# avgjør forespørsler gjennom API-et uten at unntakskøen behandler noe.
+#
+# FELTET STO `ikke_i_drift` FRAM TIL 2026-08-15, begrunnet med at staging ikke
+# hadde installerte units og at det ikke fantes en unit for API-et engang.
+# Sant den dagen det ble skrevet, usant nå. En akse som ikke oppdateres når
+# virkeligheten endrer seg, later registeret som om ingenting kjører — og
+# flatene arver løgnen, siden de leser HERFRA og ikke fra serverne. Feilen går
+# begge veier: settes feltet ETT hakk for høyt, arver flatene en løgn i motsatt
+# retning, og den koster mer, fordi den lover en kunde noe.
+#
+# AT DEN KJØRER ER IKKE ET KUNDELØFTE. Dette feltet sier hvor koden kjører, og
+# ingenting om hvilke policystatuser verten godtar. Står `DISPONIT_MILJO` i
+# staging, binder policyer merket `utkast` beslutningene, og da skal forsiden
+# si «Kommer», ikke «Tilgjengelig». Det andre leddet bor i `platform/core/miljo`
+# og leses av flaten via `/ui/oppsett.json` — ikke i dette manifestet. De to
+# leddene er uavhengige med vilje: en produksjonsutrulling som fortsatt kjørte
+# verten i staging-modus skulle heller ikke gitt noe løfte.
+driftstilstand: staging        # ikke_i_drift | staging | produksjon
 # AKTIVERT 2026-08-05, etter at PR #13 var merget (main fd16f55).
 #
 # Grunnlaget er MASKINVERIFISERT, ikke et flagg noen satte: alle punktene i

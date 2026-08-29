@@ -1,0 +1,48 @@
+# 048 (#108): credentialen under bærer PLAN-ARBEIDERENS egen DSN
+# (`disponit_plan_arbeider`), aldri runtime-DSN-en. Rollen er den eneste
+# med EXECUTE på claim_planvindu/terminaliser_planvindu/frigi_planvindu:
+# delte arbeideren DSN med API-et, ville EXECUTE måttet gis til
+# `disponit`, og da hadde et kompromittert web-API hatt planvindus-
+# mutexen — nøyaktig hullet #108 lukker. Samme modell og samme
+# begrunnelse som disponit-varselsender.service.
+#
+# 044 §4: plan-materialiseringen. Arbeideren har ingen egen autoritet —
+# den claimer vinduets mutexrad og kaller så NØYAKTIG samme
+# bestillingsfunksjon som browserendepunktet (`utfor_bestilling`), i
+# API-ens eget tillitsnivå (m37-presedensen: samme credentials, for
+# beslutningsveien krypterer payloads og attesterer domenekontroll).
+# Klassifiseringen kjører i samme sveip: utløpte vinduer får sin
+# terminale dom (hoppet_over eller idempotens-fasit) — aldri innhenting.
+
+[Unit]
+Description=Disponit plan-materialiserer (periodisk kontroll)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=disponit-plan
+Group=disponit-plan
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+LoadCredential=DISPONIT_DATABASE_URL:/etc/disponit/plan/DISPONIT_DATABASE_URL
+LoadCredential=DISPONIT_KEK:/etc/disponit/plan/DISPONIT_KEK
+LoadCredential=DISPONIT_TOKEN_PEPPER:/etc/disponit/plan/DISPONIT_TOKEN_PEPPER
+LoadCredential=DISPONIT_ATT_NOKLER:/etc/disponit/plan/DISPONIT_ATT_NOKLER
+LoadCredential=DISPONIT_MAC_NOKLER:/etc/disponit/plan/DISPONIT_MAC_NOKLER
+LoadCredential=DISPONIT_MILJO:/etc/disponit/plan/DISPONIT_MILJO
+# PR-013 (V8/port 13): den pinnede miljøsignaturen. Uten den HOPPER
+# `verifiser_oppstartsmiljo()` over tzdata-sammenligningen — og da ville en
+# tzdata-drift på verten gitt nøyaktig det utfallet porten finnes for å
+# hindre: API-et nekter å starte, mens den planlagte veien fortsetter å
+# beslutte på en semantikk ingen har verifisert, uten et menneske til stede.
+LoadCredential=DISPONIT_SEMANTIKK_MILJO:/etc/disponit/plan/DISPONIT_SEMANTIKK_MILJO
+EnvironmentFile=-/etc/disponit/plan/konfig
+ExecStart=/opt/disponit/.venv/bin/python -m plan.materialiser
+TimeoutStartSec=10min
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

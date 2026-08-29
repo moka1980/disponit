@@ -39,8 +39,17 @@ FEILVEIER: tuple[Feilvei, ...] = (
         "Ingen tenant-sak, ingen policylasting: tenanten er ukjent, og en"
         " sak hos feil tenant er verre enn ingen sak.")),
     Feilvei("scope_mangler", 403, ("sikkerhet",), None),
+    # 063 (#165): fornyelsesveien. Identitetsavvik er ÉN kode uten
+    # detaljer (et oppslagsverk over andres claims skal ikke finnes);
+    # utløpt lease/frist/rullet epoch er den ENE grenen utføreren kan
+    # handle på (arbeidet er tapt — slutt å jobbe, ikke prøv igjen).
+    Feilvei("lease_ikke_fornybar", 404, ("sikkerhet",), None),
+    Feilvei("lease_utlopt", 409, ("drift",), None),
     Feilvei("idempotensnokkel_mangler", 400, ("avvis",), None),
     Feilvei("idempotenskonflikt", 409, ("avvis",), None, aggregert=True),
+    # 044: planovergang i ulovlig tilstand (aktivere en aktiv, gjenoppta
+    # en stanset) — tilstandskonflikt, ikke valideringsfeil.
+    Feilvei("plan_ulovlig_tilstand", 409, ("avvis",), None),
     Feilvei("body_for_stor", 413, ("sikkerhet",), None, aggregert=True),
     Feilvei("body_lengde_ugyldig", 411, ("sikkerhet",), None, aggregert=True),
     Feilvei("request_feilformet", 400, ("sikkerhet",), None, aggregert=True,
@@ -109,6 +118,111 @@ FEILVEIER: tuple[Feilvei, ...] = (
     Feilvei("modul_inaktiv", 503, ("drift",), None, notat=(
         "Rollback-kontrakten (rollback-m01-v1): modulen er deaktivert i"
         " registeret, og API-et svarer definert i stedet for å feile.")),
+    # --- 035: modul-onboarding -------------------------------------------
+    Feilvei("modulepoch_utdatert", 403, ("sikkerhet",), None, notat=(
+        "Claim/rotasjonsbruk med en annen epoch enn modulens gjeldende."
+        " ALLTID 403, aldri 204: «du har ikke lov» og «det finnes ikke"
+        " arbeid» må aldri se like ut fra utsiden (035, port 18–19)."
+        " Reaktivering krever ny onboarding; rotasjon plukker aldri opp"
+        " ny epoch. Også svaret når en kapabilitet skal INNLØSES etter at"
+        " et nødstopp har bumpet epoch: fullmakten var gyldig da den ble"
+        " utstedt, men deploymenten er det ikke lenger.")),
+    Feilvei("modul_ikke_claimbar", 403, ("sikkerhet",), None, notat=(
+        "Modultokenets deployment er ikke `claiming`, eller modulen er"
+        " ikke aktiv. Eksplisitt avslag (035, port 10): en draining"
+        " release kan fortsatt kvittere og laste opp innen evidensfrist,"
+        " men aldri claime — og det skal SIES, ikke se ut som tom kø."
+        " På INNLØSNINGSveiene (kvittering/artefakt) leses kun modulens"
+        " status, aldri livsløpet: nettopp fordi en draining deployment"
+        " skal få levere ferdig, mens en nødstoppet ikke skal.")),
+    Feilvei("onboarding_avvist", 403, ("sikkerhet",), None, notat=(
+        "Innløsning avvist: ukjent id, feil hemmelighet, allerede brukt"
+        " eller utløpt — SAMME svar utad for alle fire (035, port 4/6):"
+        " et skille ville vært et orakel for gjettverk.")),
+    # --- PR-014c: artefakt-skjemavalidering -------------------------------
+    Feilvei("artefakt_skjemabrudd", 422, ("sikkerhet",), None, notat=(
+        "Rapporten bryter artefakttypens skjema — avvist VED OPPLASTING,"
+        " før kryptering (014c §8 pkt. 1). Sikkerhetslogg, ikke sak:"
+        " modulen er autentisert, og et skjemabrudd fra en godkjent"
+        " controller er noe drift skal SE. Detaljene står i loggen, aldri"
+        " i svaret (innholdet kan bære persondata).")),
+    Feilvei("artefaktskjema_mangler", 422, ("drift",), None, notat=(
+        "Artefakttypens skjema_hash har ingen rad i artefaktskjema —"
+        " konfigurasjonsfeil (typen ble registrert før 036s positive"
+        " regel). Innhold ingen kan validere tas ikke imot; raden må"
+        " registreres via registrer_artefaktskjema().")),
+    # --- PR-014c v4: bestillingsveien -------------------------------------
+    Feilvei("bestilling_hostname_uverifisert", 403, ("sikkerhet",), None,
+            notat=(
+        "Bestilling mot et hostname tenanten ikke har VERIFISERT "
+        "domenekontroll for — avvist FØR beslutningen tas (038, port 9): "
+        "positivt autorisert mål er ikke policyens ansvar, det er "
+        "opprettelsens. Sikkerhetslogg: noen ba plattformen lese et mål "
+        "de ikke eier.")),
+    Feilvei("stillingsprofil_ukjent", 404, ("sikkerhet",), None, notat=(
+        "Bestillingens stillingsprofil_ref peker på en profilversjon "
+        "tenanten ikke har (#189/061). 404, ikke 400: referanseFORMEN "
+        "var gyldig, målet finnes bare ikke — og siden oppslaget er "
+        "RLS-gated til egen tenant, lekker svaret ingenting om andres "
+        "profiler.")),
+    Feilvei("inndata_ubrukelig", 409, ("sikkerhet",), None, notat=(
+        "Bestillingens inndata_ref kan ikke bindes: ukjent, utløpt, "
+        "ikke ferdig lastet, eller alt bundet til et annet oppdrag — "
+        "ETT svar for alle de TERMINALE årsakene (058-formen: et "
+        "oppslagsverk over bunter skal ikke finnes). Avvist billig i "
+        "forhåndsporten, og endelig av bind_inndata i "
+        "fødselstransaksjonen. Den FORBIGÅENDE naboen — bunten er holdt "
+        "av en samtidig bestilling — er inndata_opptatt (#215).")),
+    Feilvei("inndata_opptatt", 409, ("drift",), None, notat=(
+        "En annen bestilling holder engangsbunten AKKURAT NÅ (#215). "
+        "Forbigående, ingen dom: ingen beslutning er tatt, ingen kvote "
+        "brukt, og et nytt forsøk med SAMME idempotensnøkkel er samme "
+        "operasjon. Skilt fra inndata_ubrukelig fordi klienten velger "
+        "nøkkeløkonomi på koden alene: terminal kode roterer nøkkelen, "
+        "denne beholder den. Drift, ikke sikkerhet — et sammenstøt i "
+        "tid, ikke et forsøk på noe. 058-formen står: koden røper "
+        "ingenting en samtidig VINNENDE bestilling ikke alt vet.")),
+    Feilvei("kandidatdata_avvist", 409, ("sikkerhet",), None, notat=(
+        "Skriveveien inn i kandidatlagrene (#173) avviste kallet: "
+        "oppdraget finnes ikke hos tenanten, er ikke aktivt claimet av "
+        "denne modulen med dette claim-paret, leasen er utløpt, eller "
+        "retensjonsankeret er reapet. ETT svar for alle årsakene — et "
+        "oppslagsverk over claims og prosesser skal ikke finnes "
+        "(058-formen). Fullmakten er CLAIMETS, som kvittering/fornyelse: "
+        "modultokenet svarer bare på hvilken deployment dette er.")),
+    Feilvei("kandidatdata_konflikt", 409, ("sikkerhet",), None, notat=(
+        "En kandidatdatarad med samme nøkkel finnes alt med ANNET "
+        "innhold (#173). Lagrene er append-only og skriveveien er "
+        "idempotent på payload-likhet: en retry etter tapt lease skriver "
+        "de samme bytene og er et stille ja — et AVVIKENDE re-skriv er "
+        "derimot to sannheter om samme dokument, og det committes "
+        "aldri i stillhet. Sikkerhetslogg: noen forsøkte å bytte "
+        "innholdet under en eksisterende evidensnøkkel.")),
+    Feilvei("bestillingstype_utilgjengelig", 503, ("drift",), None, notat=(
+        "Bestillingstypen er kodefestet, men oppdragstypen dens kan ikke "
+        "CLAIMES nå: raden mangler i oppdragstype_register, har feil "
+        "eiermodul, modulen står ikke 'aktiv', eller ingen deployment i "
+        "dette miljøet er 'claiming'. Samme vilkår som "
+        "claim_neste_oppdrag (037) — står ett av dem ikke, finnes det "
+        "ingen arbeider som kan plukke oppdraget før utforelsesfristen. "
+        "Nektes FØR beslutningen: et TILLAT her ville gitt et oppdrag "
+        "ingen modul kan claime. 503, ikke 400: kroppen er velformet, det "
+        "er PLATTFORMEN som mangler utføreren, og klienten skal prøve "
+        "igjen når modulen er aktiv. Hvilket vilkår som sviktet står i "
+        "driftsloggen (`grunn`), aldri i svaret — ellers er 503-en et "
+        "kart over hvilke moduler som er nede.")),
+    Feilvei("idempotensnokkel_reservert", 400, ("sikkerhet",), None,
+            aggregert=True, notat=(
+        "Kalleren ba om en idempotensnøkkel i et nøkkelrom PLATTFORMEN "
+        "avleder selv (`kjerne.RESERVERTE_NOKKELROM`). `idempotens` er "
+        "delt mellom endepunktene, og bestillingens gjenoppretting STOLER "
+        "på raden den finner der: kunne en kaller skrive i det rommet, "
+        "kunne den plante svaret gjenopprettingen leser. Sikkerhetslogg — "
+        "en lovlig klient treffer aldri denne.")),
+    Feilvei("domene_challenge_avvist", 409, ("sikkerhet",), None, notat=(
+        "utsted_challenge nektet (016): raden står i avklaring/overtakelse "
+        "eller bryter en vakt der. 409, ikke 400: kroppen er velformet — "
+        "det er domenets TILSTAND som ikke tillater ny utfordring nå.")),
     # --- PR-008: lese-API ----------------------------------------------
     Feilvei("ikke_funnet", 404, ("avvis",), None, notat=(
         "Detalj-ID som ikke finnes OG detalj-ID hos en annen tenant gir"
@@ -155,6 +269,24 @@ FEILVEIER: tuple[Feilvei, ...] = (
         " revisjonen er foreldet av en nyere overtakelse. Ingen sak — dette er"
         " den normale utgangen når en konflikt rekker å bli avløst av en"
         " nyere, og attestasjonsraden er allerede bevart som evidens.")),
+    # --- #162 PR-1: inndata-artefaktet, buntens vei INN ------------------
+    # Kodene ble brukt av `api/inndata.py` uten en rad her (Cursor P2).
+    # `_feil()` faller da tilbake på `_FEIL_HTTP.get(kode, 409)` og hopper
+    # over routingen helt: HTTP-svaret så riktig ut i testene, men
+    # sikkerhetslogg/metric fantes ikke, og «én test per rad» kunne ikke
+    # telle en rad som ikke var der.
+    Feilvei("inndata_reservasjon_ugyldig", 409, ("avvis",), None, notat=(
+        "Ukjent, utløpt eller alt forbrukt reservasjons-jti — og SAMME svar"
+        " for alle tre: et skille ville vært et orakel på hvilke jti-er som"
+        " finnes. Avvis og ikke sikkerhet: jti-en er en engangsreferanse"
+        " klienten selv nettopp fikk utstedt, og en tapt kappløp mot"
+        " fristen er en normal utgang, ikke et angrep.")),
+    Feilvei("inndata_alt_lastet", 409, ("avvis",), None, aggregert=True,
+            notat=(
+        "Reservasjonen er brukt for ANNET innhold. Et gjenspill med samme"
+        " kropp er derimot en 201 med det opprinnelige svaret — skillet går"
+        " på `innhold_sha256`, som i 017. Aggregert: en klient som retryer"
+        " en muterende kropp gjør det i serie.")),
 )
 
 FEIL: dict[str, Feilvei] = {f.kode: f for f in FEILVEIER}
@@ -182,10 +314,19 @@ SIKKERHETSKODER = frozenset({
     # ANNEN kanonisering er ikke en formfeil å rette — det er noen som har
     # signert andre bytes enn vi verifiserer.
     "attestasjon_kanonisering_ukjent",
+    # PR-014c: målbindingen. En hendelse som ber om ekstern lesing av et
+    # ANNET mål enn autorisasjonen dekker, er ikke en formfeil å rette —
+    # det er trafikk ut mot noe ingen har godkjent, med et bevis som ser
+    # gyldig ut. Samme kø som en attestasjon på feil ressurs.
+    "malautorisasjon_feil_mal", "malautorisasjon_mal_ugyldig",
 })
 
 #: Feil i plattformen selv, ikke i forespørselen.
-DRIFTSKODER = frozenset({"policy_korrupt", "motor_exception"})
+DRIFTSKODER = frozenset({"policy_korrupt", "motor_exception",
+                         # Et måldomene uten kjent hendelsesfelt er en
+                         # kodefeil hos OSS: typen deklarerer et krav
+                         # plattformen ikke vet hvordan den skal binde.
+                         "malautorisasjon_domene_ukjent"})
 
 #: Feil i POLICYEN — noen må rette et dokument. Handlingsbart, altså
 #: ordinær kø (v2 Del 4: «Autentisert, handlingsbar policyfeil ... m37»).

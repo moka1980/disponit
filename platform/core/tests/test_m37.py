@@ -146,18 +146,292 @@ def test_port7_payloadfelt_utenfor_skjemaet_slipper_aldri_ut():
     assert "belop" not in oppdragskontrakt.minimer("verifikasjon", payload)
 
 
-def test_oppdragstypenes_prefikser_er_disjunkte():
-    """Overlappende prefikser ville gjort feltbredden avhengig av
-    rekkefølgen i en dict."""
+def test_oppdragstypenes_prefikser_er_entydige():
+    """Ingen handling får to typer å velge mellom.
+
+    Prefiksene var disjunkte før PR-014c. Med `kontroll.wcag.` under
+    `kontroll.` er de nested, og da er det LENGSTE treffet som avgjør —
+    entydig uansett rekkefølgen i dict-en. Det som fortsatt ville gjort
+    feltbredden til et lotteri, er to ULIKE typer med NØYAKTIG samme
+    prefiks: da finnes det ikke noe lengste treff.
+    """
     import oppdragskontrakt
-    alle = [(t.navn, p) for t in oppdragskontrakt.OPPDRAGSTYPER.values()
-            for p in t.handlingsprefikser]
-    for navn_a, pre_a in alle:
-        for navn_b, pre_b in alle:
-            if navn_a >= navn_b:
-                continue
-            assert not (pre_a.startswith(pre_b) or pre_b.startswith(pre_a)), \
-                f"prefiksene {pre_a!r} ({navn_a}) og {pre_b!r} ({navn_b}) overlapper"
+    eier: dict[str, str] = {}
+    for t in oppdragskontrakt.OPPDRAGSTYPER.values():
+        for p in t.handlingsprefikser:
+            assert p not in eier or eier[p] == t.navn, \
+                f"prefikset {p!r} deles av {eier[p]} og {t.navn}"
+            eier[p] = t.navn
+
+
+def test_rapportartefakttypene_kan_faktisk_registreres():
+    """Codex P1: en artefakttype kontrakten lover, men registeret ikke kan
+    ta imot, er en kapabilitet som aldri oppstår.
+
+    `rekruttering.evalueringsrapport` hadde TO ledd. `registrer_artefakttype`
+    (035, herdet i 036) har en lukket navneform på minst tre —
+    `<domene>.<underdomene>.<artefakt>` — så registreringen ville feilet,
+    og claim-svaret utleder opplastingskapabiliteten utelukkende fra
+    `artefakttype_register`: modulen fikk `opplasting: null` på et oppdrag
+    hvis egen kontrakt sier at den skal levere en rapport.
+
+    Formen LESES ut av migrasjonen, den skrives ikke av på nytt her — en
+    port som gjentar regelen med egne ord måler sin egen avskrift.
+    Overlappsregelen fra samme funksjon måles på samme sett: to typer der
+    den ene er prefiks av den andre kan ikke sameksistere i registeret.
+    """
+    import re
+    from pathlib import Path
+    import oppdragskontrakt
+    rot = Path(__file__).resolve().parents[3]
+    sql = (rot / "platform" / "core" / "db" / "migrations"
+           / "036_wcag_kontroll.sql").read_text(encoding="utf-8")
+    m = re.search(r"IF p_artefakttype !~ '([^']+)' THEN", sql)
+    assert m, "navneformen finnes ikke lenger i 036 — porten måler ingenting"
+    navneform = re.compile(m.group(1))
+    typer = sorted({t.rapport_artefakttype
+                    for t in oppdragskontrakt.OPPDRAGSTYPER.values()
+                    if t.rapport_artefakttype is not None})
+    assert typer, "ingen artefakttyper å måle"
+    for artefakttype in typer:
+        assert navneform.match(artefakttype), \
+            f"{artefakttype!r} kan aldri registreres ({m.group(1)})"
+    for en in typer:
+        for annen in typer:
+            assert en == annen or not annen.startswith(en + "."), \
+                f"{annen!r} overlapper {en!r} — registeret tar bare én"
+
+
+def test_rapportflaten_er_deklarert_aldri_utledet():
+    """Codex P2: `/v1/rapport/{id}` utledet hvilke rapporter den serverer
+    fra `rapport_artefakttype` alene.
+
+    De to feltene svarer på ULIKE spørsmål. `rapport_artefakttype` sier
+    hva artefaktet ER, og er påkrevd for at modulen skal få laste det opp
+    i det hele tatt. `rapportflate` sier at det finnes en konsument som
+    kan RENDRE det. Da M-57 fikk sin artefakttype, ble den derfor
+    automatisk servert til `ui/static/js/flater/rapport.js`, som
+    dereferer WCAG-formens `sammendrag` og `sider_kontrollert` uten å
+    spørre: hver eneste M-57-rapport ville feilet UNDER rendring, etter
+    en 200.
+
+    At feltet DEKLARERES er halve saken; at leseveien DISPATCHER på
+    VERDIEN er den andre, og den står i nabotesten under.
+
+    CP4 ER LANDET: M-57 har nå sin EGEN flate ("ats" →
+    `/v1/rekruttering/rapport/{id}` + evalueringsseksjonen). Invarianten
+    porten verner er den samme som før, i sin ferdige form: flaten er en
+    DISKRIMINATOR, aldri en boolsk — M-57 må aldri peke på WCAG-rendrerens
+    verdi, og begge leseveiene dispatcher på hver sin.
+
+    MUTASJONEN SOM DREPER DENNE: sett `rapportflate="wcag"` på
+    `rekruttering.evaluering`, eller fjern `rapportflate`-leddet i
+    `lesing.rapport_detalj`/`lesing.rekrutteringsrapport_detalj`.
+    """
+    import oppdragskontrakt as ok
+    from api import lesing
+    m57 = ok.OPPDRAGSTYPER["rekruttering.evaluering"]
+    assert m57.rapport_artefakttype is not None, \
+        "uten navngitt type får modulen `opplasting: null` ved claim"
+    assert m57.rapportflate == lesing.RAPPORTFLATE_ATS, \
+        "M-57s rapport hører til ats-flaten — aldri WCAG-rendrerens"
+    assert m57.rapportflate != lesing.RAPPORTFLATE, \
+        "diskriminatorene MÅ være disjunkte — ellers arver flatene" \
+        " hverandres former"
+    wcag = ok.OPPDRAGSTYPER["kontroll.wcag.nettsted"]
+    assert wcag.rapportflate == "wcag"
+    # Kontraktporten: en flate uten artefakttype er en flate som viser en
+    # rapport typen aldri leverer.
+    from dataclasses import replace
+    assert any("rapportflate" in f for f in
+               replace(m57, produserer_artefakt=False,
+                       rapport_artefakttype=None,
+                       rapportflate="wcag").valider())
+    # … og leseveiens PAR er utledet av begge feltene, ikke bare det ene.
+    # Etter CP4 bærer BEGGE typene komplette par — hver mot sin flate.
+    par = {navn for navn, t in ok.OPPDRAGSTYPER.items()
+           if t.rapport_artefakttype is not None
+           and t.rapportflate is not None}
+    assert par == {"kontroll.wcag.nettsted", "rekruttering.evaluering"}, par
+
+
+def test_rapportflaten_er_en_diskriminator_ikke_en_boolsk():
+    """Codex P2: `/v1/rapport/{id}` spurte om flaten var SATT, ikke hvilken.
+
+    Nabotesten over måler at feltet DEKLARERES. Denne måler at leseveien
+    DISPATCHER på verdien. Forskjellen var usynlig så lenge M-57 er den
+    eneste andre rapportbærende typen og står uten flate: det var M-57s
+    tomme felt, ikke endepunktets valg, som holdt ATS-rapporten unna
+    WCAG-rendreren. Den dagen CP4 gir modulen sin egen flate (`"ats"`),
+    ville `rapport.js` fått den igjen — 200 og feil under rendring, med
+    den tauseste mulige utløseren: at en annen kontrakt fylte ut sitt
+    eget felt.
+
+    Selve SAMMENLIGNINGEN er det som må måles, og den finnes bare i
+    endepunktets kode: at `par`-settet i dag blir det samme uansett, er
+    nettopp funnet. `api.lesing` drar inn både driveren og webrammeverket,
+    så leddet leses med AST — samme valg som `_importer` over, og av
+    samme grunn: en tekstsøkning ville truffet ordet i en kommentar.
+
+    MUTASJONEN SOM DREPER DENNE: gjør `rapportflate`-leddet i
+    `lesing.rapport_detalj` boolsk igjen (`is not None`), eller pek
+    `lesing.RAPPORTFLATE` på en annen flate enn den `rapport.js` rendrer.
+    """
+    from dataclasses import replace
+    import oppdragskontrakt as ok
+    m57 = ok.OPPDRAGSTYPER["rekruttering.evaluering"]
+    wcag = ok.OPPDRAGSTYPER["kontroll.wcag.nettsted"]
+    tre = ast.parse((CORE / "api" / "lesing.py").read_text(encoding="utf-8"))
+    flate = next(
+        (n.value.value for n in tre.body
+         if isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant)
+         and any(isinstance(m, ast.Name) and m.id == "RAPPORTFLATE"
+                 for m in n.targets)), None)
+    assert flate == wcag.rapportflate, \
+        ("/v1/rapport serverer `rapport.js`, altså WCAG-formen —"
+         f" endepunktet navngir {flate!r}")
+    fn = next(n for n in tre.body if isinstance(n, ast.FunctionDef)
+              and n.name == "rapport_detalj")
+    ledd = [c for c in ast.walk(fn) if isinstance(c, ast.Compare)
+            and isinstance(c.left, ast.Attribute)
+            and c.left.attr == "rapportflate"]
+    assert ledd, "endepunktet spør ikke om `rapportflate` i det hele tatt"
+    for c in ledd:
+        assert (all(isinstance(o, ast.Eq) for o in c.ops)
+                and all(isinstance(k, ast.Name) and k.id == "RAPPORTFLATE"
+                        for k in c.comparators)), \
+            ("leseveien spør om flaten FINNES, ikke hvilken den er:"
+             f" {ast.unparse(c)}")
+    # Fremtiden porten finnes for: en kontrakt med rapportartefakttype og
+    # sin EGEN flate er lovlig, og hører likevel ikke til her.
+    ats = replace(m57, rapportflate="ats")
+    assert not ats.valider(), \
+        "en type med artefakttype OG flate er en lovlig kontrakt"
+    assert not (ats.rapport_artefakttype is not None
+                and ats.rapportflate == flate), \
+        "en fremmed leseflate ble servert av WCAG-endepunktet"
+    # … og kontroll på at leddet ikke bare er trivielt usant: WCAG-typen
+    # selv slipper gjennom, og endepunktets utvalg er fortsatt den ene.
+    par = {navn for navn, t in ok.OPPDRAGSTYPER.items()
+           if t.rapport_artefakttype is not None
+           and t.rapportflate == flate}
+    assert par == {"kontroll.wcag.nettsted"}, par
+
+
+def test_ats_ruten_dispatcher_ogsaa_paa_verdien():
+    """Cursor P2: porten over var ENSIDIG — den målte bare WCAG-veien.
+
+    CP4 landet M-57s egen rute, og med den den andre halvdelen av samme
+    risiko: `rekrutteringsrapport_detalj` kan degenerere til «har flaten
+    en verdi?» like stille som WCAG-veien kunne. Mutasjonen er nøyaktig
+    speilvendt — `rapportflate is not None` her serverer WCAG-formen på
+    `/v1/rekruttering/rapport/{id}`, og `evalueringSeksjon` dereferer
+    `rapport.rangering`/`profil` med en gang: 200, og feil under rendring
+    hos klienten. Isolasjonen er bare bevist når BEGGE rutene måles.
+
+    MUTASJONEN SOM DREPER DENNE: gjør `rapportflate`-leddet i
+    `lesing.rekrutteringsrapport_detalj` boolsk (`is not None`), eller pek
+    `lesing.RAPPORTFLATE_ATS` på en annen flate enn den `rekruttering.js`
+    rendrer.
+    """
+    import oppdragskontrakt as ok
+    m57 = ok.OPPDRAGSTYPER["rekruttering.evaluering"]
+    tre = ast.parse((CORE / "api" / "lesing.py").read_text(encoding="utf-8"))
+    flate = next(
+        (n.value.value for n in tre.body
+         if isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant)
+         and any(isinstance(m, ast.Name) and m.id == "RAPPORTFLATE_ATS"
+                 for m in n.targets)), None)
+    assert flate == m57.rapportflate, \
+        ("/v1/rekruttering/rapport serverer `rekruttering.js`, altså"
+         f" ats-formen — endepunktet navngir {flate!r}")
+    fn = next(n for n in tre.body if isinstance(n, ast.FunctionDef)
+              and n.name == "rekrutteringsrapport_detalj")
+    ledd = [c for c in ast.walk(fn) if isinstance(c, ast.Compare)
+            and isinstance(c.left, ast.Attribute)
+            and c.left.attr == "rapportflate"]
+    assert ledd, "ats-ruten spør ikke om `rapportflate` i det hele tatt"
+    for c in ledd:
+        assert (all(isinstance(o, ast.Eq) for o in c.ops)
+                and all(isinstance(k, ast.Name) and k.id == "RAPPORTFLATE_ATS"
+                        for k in c.comparators)), \
+            ("ats-ruten spør om flaten FINNES, ikke hvilken den er:"
+             f" {ast.unparse(c)}")
+    # De to flatene deler ingen type: hver rute serverer sin egen form, og
+    # WCAG-typen er ikke lesbar her — 404, ikke 200-og-feiler-hos-klienten.
+    par = {navn for navn, t in ok.OPPDRAGSTYPER.items()
+           if t.rapport_artefakttype is not None
+           and t.rapportflate == flate}
+    assert par == {"rekruttering.evaluering"}, par
+
+
+def test_evalueringslisten_leser_kontrakten_ikke_en_literal():
+    """Cursor P2: listen hardkodet paret detaljruten UTLEDER.
+
+    `rekrutteringsrapport_detalj` bygger `(oppdragstype, artefakttype)`
+    fra `OPPDRAGSTYPER` + `RAPPORTFLATE_ATS`; `rekrutteringsevalueringer`
+    skrev de samme to strengene rett inn i SQL-en. Så lenge strengene er
+    like, er divergensen usynlig — og nettopp derfor er den farlig: endrer
+    kontrakten sin `rapport_artefakttype`, følger detaljruten etter mens
+    listen blir stående. Da sier listen `rapport_klar: false` for en
+    rapport detaljruten svarer 200 på, og flaten skjuler «Vis»-knappen for
+    evidens som finnes.
+
+    Målt med AST og ikke grep, av samme grunn som nabotesten over: en
+    tekstsøkning ville truffet artefakttypen i en kommentar eller i
+    detaljrutens helt legitime bruk.
+
+    MUTASJONEN SOM DREPER DENNE: skriv artefakttypen eller oppdragstypen
+    tilbake som literal i listespørringen, eller fjern
+    `rapportflate`-leddet så listen slutter å følge kontraktens flate.
+    """
+    import oppdragskontrakt as ok
+    tre = ast.parse((CORE / "api" / "lesing.py").read_text(encoding="utf-8"))
+    fn = next(n for n in tre.body if isinstance(n, ast.FunctionDef)
+              and n.name == "rekrutteringsevalueringer")
+    # Kontraktens egne navn er de eneste literalene som betyr noe her:
+    # står ett av dem i funksjonen, er kilden kopiert og ikke lest.
+    kontraktsnavn = set(ok.OPPDRAGSTYPER) | {
+        t.rapport_artefakttype for t in ok.OPPDRAGSTYPER.values()
+        if t.rapport_artefakttype is not None}
+    funnet = {c.value for c in ast.walk(fn) if isinstance(c, ast.Constant)
+              and isinstance(c.value, str)} & kontraktsnavn
+    assert not funnet, \
+        f"listespørringen hardkoder kontraktsnavn i stedet for å lese dem: {funnet}"
+    # … og den leser dem faktisk: samme diskriminatorledd som detaljruten.
+    ledd = [c for c in ast.walk(fn) if isinstance(c, ast.Compare)
+            and isinstance(c.left, ast.Attribute)
+            and c.left.attr == "rapportflate"]
+    assert ledd, "listen filtrerer ikke på `rapportflate` i det hele tatt"
+    for c in ledd:
+        assert (all(isinstance(o, ast.Eq) for o in c.ops)
+                and all(isinstance(k, ast.Name) and k.id == "RAPPORTFLATE_ATS"
+                        for k in c.comparators)), \
+            ("listen spør om flaten FINNES, ikke hvilken den er:"
+             f" {ast.unparse(c)}")
+
+
+def test_lengste_prefiks_vinner_over_dict_rekkefolgen():
+    """WCAG-kontrollen eier `kontroll.wcag.`, `verifikasjon` resten.
+
+    Mutasjonssjekk: med førstetreff i `type_for_handling` avhenger begge
+    disse av hvilken vei dict-en itereres.
+    """
+    import oppdragskontrakt as ok
+    assert ok.type_for_handling(
+        "kontroll.wcag.nettsted").navn == "kontroll.wcag.nettsted"
+    # Codex P1, runde 11: en persistert tenantpolicy kan bære en fri
+    # `kontroll.*`-handling. Den skal fortsatt rutes som før — ikke bli
+    # `eiermodul:ukjent` fordi WCAG-kontrollen tok navnerommet.
+    assert ok.type_for_handling(
+        "kontroll.fakturagrunnlag").navn == "verifikasjon"
+    assert ok.type_for_handling("verifiser.mva").navn == "verifikasjon"
+    assert ok.type_for_handling("kontroll") is None
+    # Feltbredden følger den typen som VANT, ikke den som delte prefiks.
+    wcag = ok.minimer("kontroll.wcag.nettsted",
+                      {"mal_url": "https://a.example/", "kravsett": "wcag22aa",
+                       "omfang": "forside", "vilkaar_sett": ["x"]})
+    assert "vilkaar_sett" not in wcag and wcag["kravsett"] == "wcag22aa"
 
 
 # ===========================================================================
@@ -288,6 +562,42 @@ def _sett_kontekst(conn, tenant, aktor="test", rid="r"):
                  (tenant, aktor, rid))
 
 
+def _attester_avvis(conn, tenant, sak, aktor, *, runde=1):
+    """Det attesterte nei-et 043 §7 krever (Codex P1, runde 8 og 9).
+
+    `behandle_unntakshandling` skriver denne append-only raden
+    (`_skriv_attestasjon`) rett FØR den kaller `avvis_med_opplosning`, i
+    SAMME transaksjon, og funksjonen krever den nå: EXECUTE alene er ikke
+    kanselleringsautoritet. Testene som konstruerer nei-et direkte — for å
+    eie kappløpets timing — må derfor legge igjen det samme beviset.
+    Kalles FØR `SET ROLE disponit_m37_claimer`: claimeren har kun SELECT på
+    tabellen og skal aldri kunne skrive sitt eget mandat.
+
+    Runde 9: raden må også være AUTORISERT — et aktivt medlemskap med
+    rollen i behold og `exceptions:reject` i rollesettet. Den lovlige veien
+    har alt lest medlemskapet under sakslåsen, så helperen sørger for det
+    samme her; uten det ville testene målt en kaller som ikke finnes."""
+    conn.execute("INSERT INTO brukeridentitet (bruker_id, issuer, sub)"
+                 " VALUES (%s,'https://idp.example',%s)"
+                 " ON CONFLICT DO NOTHING",
+                 (aktor, f"{tenant}-attest-{aktor}"))
+    conn.execute("INSERT INTO brukermedlemskap (tenant, bruker_id, roller)"
+                 " VALUES (%s,%s,ARRAY['godkjenner'])"
+                 " ON CONFLICT (tenant, bruker_id) DO NOTHING",
+                 (tenant, aktor))
+    authz = conn.execute("SELECT authz_version FROM brukermedlemskap WHERE"
+                         " tenant=%s AND bruker_id=%s",
+                         (tenant, aktor)).fetchone()[0]
+    conn.execute(
+        "INSERT INTO menneskelig_attestasjon (tenant, unntak_id, runde,"
+        " operatorhandling, bruker_id, rolle, authz_version,"
+        " konvoluttversjon, konvolutt_hash, mac, mac_key_id, jti, utloper,"
+        " saksversjon) VALUES (%s,%s,%s,'avvis',%s,'godkjenner',%s,2,%s,%s,"
+        "'k-test',%s,now()+interval '1 hour',0)",
+        (tenant, sak, runde, aktor, authz, secrets.token_hex(32),
+         secrets.token_hex(32), secrets.token_hex(16)))
+
+
 #: Policy-id-en fixturene later som saken ble besluttet under.
 FIXTURE_POLICY_ID = "tjenestebedrift-no"
 
@@ -312,7 +622,7 @@ def _lag_sak(conn, tenant, *, kategori="manglende_data", handling="purring.send"
              snapshot=3, hash_="1" * 64, versjon="1.0.0", sakstype="normal",
              policy_id=FIXTURE_POLICY_ID,
              grunnkode="attestasjon_mangler",
-             vilkaar="forfall_passert_dager"):
+             vilkaar="forfall_passert_dager", status="ny"):
     """En unntaksrad med policysnapshot, som API-veien ville laget den."""
     _sett_kontekst(conn, tenant)
     logg = conn.execute(
@@ -332,13 +642,19 @@ def _lag_sak(conn, tenant, *, kategori="manglende_data", handling="purring.send"
               "kategori": kategori, "begrunnelse": [grunnkode],
               **({"manglende_vilkaar": vilkaar} if vilkaar else {})},
         tenant, key_id)
+    # `status` settes ved INSERT og ikke med en etterfølgende UPDATE: statusen
+    # er lovlig per CHECK-en i 011, men overgangsvakten `unntak_laas` er en
+    # BEFORE UPDATE-trigger, så en test som vil FØDE en sak midt i
+    # godkjenningsflyten må gjøre det her — ikke ved å hoppe dit etterpå.
     sak = conn.execute(
         "INSERT INTO unntak (tenant, loggpost_id, handling, kategori, sakstype,"
         " payload_kryptert, key_id, nonce, maks_auto_forsok_snapshot,"
-        " policy_versjon, policy_content_hash)"
-        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+        # 041: sakskilde er defaultløs (port 12) — fixturen er en kjernesak.
+        " policy_versjon, policy_content_hash, status, sakskilde)"
+        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'policybrudd')"
+        " RETURNING id",
         (tenant, logg, handling, kategori, sakstype, ct, key_id, nonce,
-         snapshot, versjon, hash_)).fetchone()[0]
+         snapshot, versjon, hash_, status)).fetchone()[0]
     conn.commit()
     return int(sak), int(logg)
 
@@ -751,6 +1067,10 @@ def test_claim_prioriterer_hoy_for_normal(migrator):
     migrator.execute("ALTER TABLE unntak DISABLE TRIGGER unntak_laas")
     migrator.execute("UPDATE unntak SET prioritet='hoy' WHERE tenant=%s"
                      " AND id=%s", (TENANT, hoy))
+    # 041: unntak har utsatte constraint-triggere (lineage/loggpost) — de må
+    # fyre FØR en ALTER TABLE i samme transaksjon («pending trigger events»),
+    # samme håndgrep som _rydd bruker.
+    migrator.execute("SET CONSTRAINTS ALL IMMEDIATE")
     migrator.execute("ALTER TABLE unntak ENABLE TRIGGER unntak_laas")
     migrator.commit()
 
@@ -890,6 +1210,11 @@ def test_vilkaar_V2_backfill_bruker_hele_policyidentiteten(migrator, malpolicy):
                      " maks_auto_forsok_snapshot DROP NOT NULL,"
                      " ALTER COLUMN policy_versjon DROP NOT NULL,"
                      " ALTER COLUMN policy_content_hash DROP NOT NULL")
+    # 041: totalitets-CHECKen krever trioen for policybrudd — pre-006-
+    # tilstanden fixturen gjenskaper er nettopp trio=NULL, så sperren
+    # løftes eksplisitt og settes tilbake nederst, som NOT NULL-ene.
+    migrator.execute(
+        "ALTER TABLE unntak DROP CONSTRAINT unntak_snapshot_komplett")
     migrator.execute("ALTER TABLE unntak DISABLE TRIGGER unntak_laas")
     _sett_kontekst(migrator, TENANT)
     migrator.execute(
@@ -909,19 +1234,30 @@ def test_vilkaar_V2_backfill_bruker_hele_policyidentiteten(migrator, malpolicy):
         (_policyref("pbf", "2.0.0"), TENANT, TENANT, med_evidens))
     migrator.execute("ALTER TABLE revisjonslogg ENABLE TRIGGER"
                      " revisjonslogg_ingen_endring")
+    # 041: unntak har utsatte constraint-triggere (lineage/loggpost) — de må
+    # fyre FØR en ALTER TABLE i samme transaksjon («pending trigger events»),
+    # samme håndgrep som _rydd bruker.
+    migrator.execute("SET CONSTRAINTS ALL IMMEDIATE")
     migrator.execute("ALTER TABLE unntak ENABLE TRIGGER unntak_laas")
     migrator.commit()
 
     res = m37_backfill.backfill(migrator)
     assert res.fra_evidens >= 1 and res.legacy >= 1, res
 
-    # NOT NULL tilbake — og at den lar seg sette er selve beviset for at
-    # backfillen faktisk fylte alle radene. Feiler den her, har backfillen
-    # hoppet over noe, og migrasjon 006 ville stoppet deployet.
-    migrator.execute("ALTER TABLE unntak ALTER COLUMN"
-                     " maks_auto_forsok_snapshot SET NOT NULL,"
-                     " ALTER COLUMN policy_versjon SET NOT NULL,"
-                     " ALTER COLUMN policy_content_hash SET NOT NULL")
+    # 041 gjorde trioen nullable (overtakelsessaker HAR NULL-trio) — å sette
+    # NOT NULL tilbake ville gjeninnført pre-041-skjemaet og felt enhver
+    # senere overtakelsestest. Beviset for at backfillen fylte radene bæres
+    # nå av CHECK-en alene: ADD CONSTRAINT validerer HELE tabellen, så en
+    # policybrudd-rad backfillen hoppet over ville felt nettopp denne linjen.
+    migrator.execute(
+        "ALTER TABLE unntak ADD CONSTRAINT unntak_snapshot_komplett CHECK ("
+        " (sakskilde = 'domeneovertakelse'"
+        "    AND maks_auto_forsok_snapshot IS NULL"
+        "    AND policy_versjon IS NULL AND policy_content_hash IS NULL)"
+        " OR (sakskilde <> 'domeneovertakelse'"
+        "    AND maks_auto_forsok_snapshot IS NOT NULL"
+        "    AND policy_versjon IS NOT NULL"
+        "    AND policy_content_hash IS NOT NULL))")
     migrator.commit()
 
     _sett_kontekst(migrator, TENANT)
@@ -1308,6 +1644,7 @@ def _unik_eiermodul() -> str:
 
 def _lag_oppdrag(conn, tenant, sak_id, loggpost_id, *, rid=None,
                  handling="purring.send", eiermodul="eiermodul:reinnsending",
+                 oppdragstype="reinnsending",
                  utforelsesfrist="1 hour", evidensfrist="30 days"):
     """Et oppdrag slik arbeideren ville lagt det ut.
 
@@ -1336,15 +1673,15 @@ def _lag_oppdrag(conn, tenant, sak_id, loggpost_id, *, rid=None,
     ct, nonce = kryptering.krypter(
         dek, {"handling": handling, "ressurs_id": "fak-1"}, tenant, key_id)
     opp = conn.execute(
-        "INSERT INTO oppdrag (tenant, unntak_id, loggpost_id,"
+        "INSERT INTO oppdrag (opprinnelse, tenant, unntak_id, loggpost_id,"
         " repair_operation_id, oppdragstype, handling, eiermodul,"
         " payload_kryptert, key_id, nonce, utforelsesfrist, evidensfrist,"
         " beslutning_loggpost_id, koblingsstatus)"
-        " VALUES (%s,%s,%s,%s,'reinnsending',%s,%s,%s,%s,%s,"
+        " VALUES ('m37_reparasjon',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
         f" now()+interval '{utforelsesfrist}', now()+interval '{evidensfrist}',"
         " %s,'KOBLET') RETURNING id",
-        (tenant, sak_id, loggpost_id, rid, handling, eiermodul, ct, key_id,
-         nonce, beslutning_loggpost)).fetchone()[0]
+        (tenant, sak_id, loggpost_id, rid, oppdragstype, handling, eiermodul,
+         ct, key_id, nonce, beslutning_loggpost)).fetchone()[0]
     conn.commit()
     return int(opp), rid
 
@@ -1678,10 +2015,14 @@ def test_P1_sen_kvittering_forbruker_kapabiliteten(migrator, miljo, token):
             assert r1.json()["status"] == "lagret_uten_statusendring"
 
             # --- A poster R1 igjen: IDEMPOTENT, ingen ny evidensrad -----
+            # ... og svaret må si HVILKEN idempotens (Codex P2, runde 11):
+            # R1 over ble bevart som sen evidens, oppdraget står bevisst
+            # ufullført, og et rent `idempotent` ville fortalt utføreren at
+            # den kunne slutte å følge det.
             r1b = c.post("/v1/oppdrag/kvittering",
                          json=kvittering(a, "utfort"), headers=h)
             assert r1b.status_code == 200, r1b.text
-            assert r1b.json()["status"] == "idempotent"
+            assert r1b.json()["status"] == "idempotent_uten_statusendring"
 
             # --- A poster R2 med SAMME kapabilitet: KONFLIKT ------------
             r2 = c.post("/v1/oppdrag/kvittering",
@@ -1694,6 +2035,18 @@ def test_P1_sen_kvittering_forbruker_kapabiliteten(migrator, miljo, token):
                          json=kvittering(b, "utfort"), headers=h)
             assert rb2.status_code == 200, rb2.text
             assert rb2.json()["status"] == "utfort"
+
+            # --- B poster SIN på nytt: idempotent MED statusskifte -----
+            # Codex P2, runde 11: dette er den dokumenterte suksessveien —
+            # en utfører som mistet svaret sender den samme kvitteringen
+            # om igjen. Oppdraget ER `utfort`, og svaret må si det, ellers
+            # melder utføreren `ukvittert` for noe som er ferdig. Legg
+            # merke til at A sin re-post over — samme gren, samme kropp,
+            # samme kapabilitetstreff — får det MOTSATTE ordet.
+            rb3 = c.post("/v1/oppdrag/kvittering",
+                         json=kvittering(b, "utfort"), headers=h)
+            assert rb3.status_code == 200, rb3.text
+            assert rb3.json()["status"] == "idempotent", rb3.text
     finally:
         app.tjeneste.pool.lukk()
 
@@ -1716,6 +2069,393 @@ def test_P1_sen_kvittering_forbruker_kapabiliteten(migrator, miljo, token):
         f"motstridende resultat ble ikke registrert som konflikt: {hendelser}")
     assert status == ("utfort", "løst"), (
         f"B fikk ikke avsluttet: {status}")
+
+
+@pg
+def test_P1_sen_kvittering_etter_menneskelig_avvis_naar_evidensgrenen(
+        migrator, miljo, token):
+    """043 (Gate 14b) §5 målt på INGEST-VEIEN, ikke bare på DB-porten.
+
+    Etter en kansellering med fencing står kvitteringskapabiliteten `avvist`.
+    Toargsformen svarer `ugyldig` på den — og siden modulens retry bærer
+    SAMME jti, gjorde den det for evig: `_forbruk_kapabilitet` rullet
+    tilbake med `kapabilitet_ugyldig` FØR sen-evidensgrenen ble nådd. En
+    gyldig, signert sen kvittering kunne dermed aldri skrive
+    `sen_kvittering` og aldri føde kompensasjonssaken §5 lover — fencingen
+    gjorde systemet blindt for det som allerede hadde skjedd, i stedet for
+    bare å hindre fullføring.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `sen=True` fra
+    `_forbruk_kapabilitet`-kallet i `not kan_avslutte`-grenen. Da blir
+    202-en en 401 `kapabilitet_ugyldig`, og kompensasjonssaken uteblir.
+    """
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+
+    sak, logg = _lag_sak(migrator, TENANT)
+    opp, _ = _lag_oppdrag(migrator, TENANT, sak, logg)
+    cid_sak = secrets.token_hex(16)
+    _sett_kontekst(migrator, TENANT, "m37-arbeider", cid_sak)
+    migrator.execute(
+        "UPDATE unntak SET status='under_behandling', claim_id=%s,"
+        " claim_generation=1, claim_utloper=now()+interval '600 s'"
+        " WHERE tenant=%s AND id=%s", (cid_sak, TENANT, sak))
+    migrator.execute("UPDATE unntak SET status='venter_utførelse'"
+                     " WHERE tenant=%s AND id=%s", (TENANT, sak))
+    migrator.commit()
+
+    app = lag_app(DSN)
+    try:
+        with TestClient(app) as c:
+            tok, _ = token(rolle="eiermodul:reinnsending",
+                           scopes=("orders:execute:purring.",))
+            h = {"authorization": f"Bearer {tok}"}
+            a = c.post("/v1/oppdrag/claim", json={}, headers=h).json()
+            assert a["oppdrag_id"] == opp, a
+
+            # Modulkontrakten oppdraget kjørte under: `kompenserende`. §5
+            # utleder saken av KONTRAKTEN, aldri av gjetning.
+            modul = "m-" + secrets.token_hex(4)
+            kh = secrets.token_hex(16)
+            _sett_kontekst(migrator, TENANT)
+            migrator.execute("SET ROLE disponit_modul_eier")
+            migrator.execute(
+                "INSERT INTO modulkontrakt (modul_id, kontraktversjon,"
+                " kontrakt_hash, payload_schema_hash, kvittering_schema_hash,"
+                " sideeffektklasse, reversibilitet)"
+                " VALUES (%s,1,%s,'p','k','ekstern_lesing','kompenserende')",
+                (modul, kh))
+            migrator.execute("RESET ROLE")
+            migrator.execute("ALTER TABLE oppdrag DISABLE TRIGGER USER")
+            migrator.execute(
+                "UPDATE oppdrag SET modul_id=%s, kontraktversjon=1,"
+                " kontrakt_hash=%s WHERE tenant=%s AND id=%s",
+                (modul, kh, TENANT, opp))
+            migrator.execute("ALTER TABLE oppdrag ENABLE TRIGGER USER")
+            migrator.commit()
+
+            # Mennesket sier nei — den EKTE oppløsningsveien: kapabiliteten
+            # brennes `avvist`, claimet fences, oppdraget kanselleres.
+            _sett_kontekst(migrator, TENANT, "menneske", "r-avvis")
+            _attester_avvis(migrator, TENANT, sak, "menneske")
+            migrator.execute("SET ROLE disponit_m37_claimer")
+            res = migrator.execute(
+                "SELECT utfall FROM avvis_med_opplosning(%s,%s,%s,"
+                "'menneske','r-avvis')", (TENANT, sak, [opp])).fetchall()
+            migrator.execute("RESET ROLE")
+            migrator.commit()
+            assert res == [("kansellert",)], res
+
+            def kvittering(resultat):
+                return _signer_kvittering({
+                    "oppdrag_id": opp, "tenant": TENANT,
+                    "kvittering_jti": a["kvittering_jti"],
+                    "repair_operation_id": a["repair_operation_id"],
+                    "owner_claim_id": a["owner_claim_id"],
+                    "owner_generation": a["owner_generation"],
+                    "resultat": resultat, "ressurs_id": "fak-1"})
+
+            # --- Den sene kvitteringen: EVIDENS, aldri fullføring --------
+            r1 = c.post("/v1/oppdrag/kvittering", json=kvittering("utfort"),
+                        headers=h)
+            assert r1.status_code == 202, r1.text
+            assert r1.json()["status"] == "lagret_uten_statusendring"
+
+            # --- Re-post: idempotent, ingen ny evidensrad ---------------
+            r1b = c.post("/v1/oppdrag/kvittering", json=kvittering("utfort"),
+                         headers=h)
+            assert r1b.status_code == 200, r1b.text
+            assert r1b.json()["status"] == "idempotent_uten_statusendring"
+
+            # --- Motstridende sen kvittering: sikkerhetssak, ikke evidens
+            r2 = c.post("/v1/oppdrag/kvittering", json=kvittering("feilet"),
+                        headers=h)
+            assert r2.status_code == 409, r2.text
+            assert r2.json()["feil"] == "kvittering_konflikt"
+    finally:
+        app.tjeneste.pool.lukk()
+
+    _sett_kontekst(migrator, TENANT)
+    hendelser = dict(migrator.execute(
+        "SELECT hendelse, count(*) FROM unntak_historikk"
+        " WHERE tenant=%s AND unntak_id=%s GROUP BY hendelse",
+        (TENANT, sak)).fetchall())
+    oppdragsrad = migrator.execute(
+        "SELECT status, kansellert_aarsak FROM oppdrag WHERE tenant=%s"
+        " AND id=%s", (TENANT, opp)).fetchone()
+    # Codex P2 (runde 8): selve den SIGNERTE kvitteringen — grunnlaget
+    # §5-saken hviler på — må være bevart, ikke bare oppsummert.
+    bevart = migrator.execute(
+        "SELECT kvittering->>'resultat', kvittering->>'kvittering_jti',"
+        " kvittering_signatur IS NOT NULL, resultathash IS NOT NULL"
+        " FROM oppdrag WHERE tenant=%s AND id=%s", (TENANT, opp)).fetchone()
+    sen_detalj = migrator.execute(
+        "SELECT detalj FROM unntak_historikk WHERE tenant=%s AND unntak_id=%s"
+        "   AND hendelse='sen_kvittering'", (TENANT, sak)).fetchone()[0]
+    migrator.execute("SET ROLE disponit_m37_claimer")
+    kap = migrator.execute(
+        "SELECT status, resultathash IS NOT NULL FROM"
+        " kvitteringskapabiliteter WHERE jti=%s",
+        (a["kvittering_jti"],)).fetchone()
+    migrator.execute("RESET ROLE")
+    kompensasjon = migrator.execute(
+        "SELECT count(*) FROM unntak WHERE tenant=%s AND oppdrag_id=%s"
+        " AND arsak='kompensasjon_kreves'", (TENANT, opp)).fetchone()[0]
+    migrator.rollback()
+
+    assert hendelser.get("sen_kvittering") == 1, (
+        f"den sene kvitteringen nådde aldri evidensgrenen: {hendelser}")
+    assert hendelser.get("motstridende_kvittering") == 1, (
+        f"motstridende sen kvittering ble ikke en sikkerhetssak: {hendelser}")
+    # Fencingen står: nei-et er fortsatt nei-et.
+    assert oppdragsrad == ("kansellert", "menneskelig_avvis"), oppdragsrad
+    assert kap == ("avvist", True), (
+        f"kapabiliteten skulle stått avvist MED sen hash: {kap}")
+    # ... og §5-saken finnes: kontrakten sa `kompenserende`.
+    assert kompensasjon == 1, "kompensasjonssaken ble aldri født"
+    # ... OG BEVISET SAKEN HVILER PÅ ER BEVART (Codex P2, runde 8).
+    #
+    # Saken påstår at handlingen skjedde. Uten den signerte kvitteringen
+    # kunne ingen etterpå kontrollere påstanden: evidensraden bar bare
+    # resultat + hash, kapabiliteten bare hashen, og selve kvitteringen
+    # fantes ingen steder. Et kansellert oppdrag er terminalt, så
+    # lagringen blokkerer ingen ny eier — den gir bare saken sitt
+    # grunnlag, uforanderlig.
+    #
+    # MUTASJONEN SOM DREPER DENNE: fjern `oppdrag`-UPDATE-en i sen-grenen.
+    assert bevart == ("utfort", a["kvittering_jti"], True, True), (
+        "den signerte kvitteringen §5-saken hviler på ble kastet:"
+        f" {bevart}")
+    assert sen_detalj.get("kvittering_lagret") is True, (
+        f"evidensraden sier ikke hvor beviset ligger: {sen_detalj}")
+
+
+@pg
+@pytest.mark.parametrize("rev,ventet_arsak", [
+    ("kompenserende", "kompensasjon_kreves"),
+    ("irreversibel", "irreversibel_utfort"),
+])
+def test_P1_sen_feilet_kvittering_foder_ingen_reversibilitetssak(
+        migrator, miljo, token, rev, ventet_arsak):
+    """043 §5 (Codex P1 runde 3): slutningen krever premisset.
+
+    §5 utleder saken av modulkontraktens reversibilitet ut fra ÉN antakelse:
+    at modulen rakk å utføre før nei-et nådde den. En sen kvittering med
+    `resultat: "feilet"` sier tvert imot at utførelsen mislyktes — ingen
+    sideeffekt inntraff. Grenen så bare på `kansellert_aarsak` og
+    kontrakten, aldri på resultatet, og fødte derfor `kompensasjon_kreves`
+    (be et menneske kompensere for noe som aldri ble gjort) eller
+    `irreversibel_utfort` (før i revisjonssporet at en irreversibel handling
+    ER utført, stikk i strid med utførerens egen rapport).
+
+    Evidensen skal fortsatt lagres — en sen kvittering ER evidens uansett
+    utfall, og bærer nå resultatet i detaljen. Det er SLUTNINGEN som faller
+    bort.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `and sen_utfort` fra §5-grenen.
+    """
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+
+    sak, logg = _lag_sak(migrator, TENANT)
+    opp, _ = _lag_oppdrag(migrator, TENANT, sak, logg)
+    cid_sak = secrets.token_hex(16)
+    _sett_kontekst(migrator, TENANT, "m37-arbeider", cid_sak)
+    migrator.execute(
+        "UPDATE unntak SET status='under_behandling', claim_id=%s,"
+        " claim_generation=1, claim_utloper=now()+interval '600 s'"
+        " WHERE tenant=%s AND id=%s", (cid_sak, TENANT, sak))
+    migrator.execute("UPDATE unntak SET status='venter_utførelse'"
+                     " WHERE tenant=%s AND id=%s", (TENANT, sak))
+    migrator.commit()
+
+    app = lag_app(DSN)
+    try:
+        with TestClient(app) as c:
+            tok, _ = token(rolle="eiermodul:reinnsending",
+                           scopes=("orders:execute:purring.",))
+            h = {"authorization": f"Bearer {tok}"}
+            a = c.post("/v1/oppdrag/claim", json={}, headers=h).json()
+            assert a["oppdrag_id"] == opp, a
+
+            modul = "m-" + secrets.token_hex(4)
+            kh = secrets.token_hex(16)
+            _sett_kontekst(migrator, TENANT)
+            migrator.execute("SET ROLE disponit_modul_eier")
+            migrator.execute(
+                "INSERT INTO modulkontrakt (modul_id, kontraktversjon,"
+                " kontrakt_hash, payload_schema_hash, kvittering_schema_hash,"
+                " sideeffektklasse, reversibilitet)"
+                " VALUES (%s,1,%s,'p','k','ekstern_lesing',%s)",
+                (modul, kh, rev))
+            migrator.execute("RESET ROLE")
+            migrator.execute("ALTER TABLE oppdrag DISABLE TRIGGER USER")
+            migrator.execute(
+                "UPDATE oppdrag SET modul_id=%s, kontraktversjon=1,"
+                " kontrakt_hash=%s WHERE tenant=%s AND id=%s",
+                (modul, kh, TENANT, opp))
+            migrator.execute("ALTER TABLE oppdrag ENABLE TRIGGER USER")
+            migrator.commit()
+
+            # Mennesket sier nei — den EKTE oppløsningsveien.
+            _sett_kontekst(migrator, TENANT, "menneske", "r-avvis")
+            _attester_avvis(migrator, TENANT, sak, "menneske")
+            migrator.execute("SET ROLE disponit_m37_claimer")
+            res = migrator.execute(
+                "SELECT utfall FROM avvis_med_opplosning(%s,%s,%s,"
+                "'menneske','r-avvis')", (TENANT, sak, [opp])).fetchall()
+            migrator.execute("RESET ROLE")
+            migrator.commit()
+            assert res == [("kansellert",)], res
+
+            # Den sene kvitteringen sier at utførelsen MISLYKTES.
+            r = c.post("/v1/oppdrag/kvittering",
+                       json=_signer_kvittering({
+                           "oppdrag_id": opp, "tenant": TENANT,
+                           "kvittering_jti": a["kvittering_jti"],
+                           "repair_operation_id": a["repair_operation_id"],
+                           "owner_claim_id": a["owner_claim_id"],
+                           "owner_generation": a["owner_generation"],
+                           "resultat": "feilet", "ressurs_id": "fak-1"}),
+                       headers=h)
+            assert r.status_code == 202, r.text
+            assert r.json()["status"] == "lagret_uten_statusendring"
+    finally:
+        app.tjeneste.pool.lukk()
+
+    _sett_kontekst(migrator, TENANT)
+    detalj = migrator.execute(
+        "SELECT detalj FROM unntak_historikk WHERE tenant=%s AND unntak_id=%s"
+        "   AND hendelse='sen_kvittering'", (TENANT, sak)).fetchall()
+    saker = migrator.execute(
+        "SELECT count(*) FROM unntak WHERE tenant=%s AND oppdrag_id=%s"
+        "   AND arsak=%s", (TENANT, opp, ventet_arsak)).fetchone()[0]
+    oppdragsrad = migrator.execute(
+        "SELECT status, kansellert_aarsak FROM oppdrag WHERE tenant=%s"
+        " AND id=%s", (TENANT, opp)).fetchone()
+    migrator.rollback()
+
+    # Evidensen står — og sier hva utføreren faktisk rapporterte.
+    assert len(detalj) == 1, detalj
+    assert detalj[0][0].get("resultat") == "feilet", detalj
+    # ... men slutningen er ikke trukket.
+    assert saker == 0, (
+        f"en feilet sen kvittering fødte {ventet_arsak} — §5-slutningen ble"
+        " trukket uten premisset om at handlingen faktisk skjedde")
+    # Fencingen står uansett: nei-et er fortsatt nei-et.
+    assert oppdragsrad == ("kansellert", "menneskelig_avvis"), oppdragsrad
+
+
+@pg
+def test_P1_ukjent_reversibilitet_eskalerer_den_sene_utforelsen(
+        migrator, miljo, token):
+    """043 §5 (Codex P1, runde 8): UKJENT reversibilitet er ikke TRYGG.
+
+    Mappingen var et oppslag med stille frafall: alt som ikke var
+    `kompenserende` eller `irreversibel` ga ingen sak. For `direkte` er det
+    riktig — kontrakten sier at virkningen reverserer seg selv. Men
+    claim-veien tillater BEVISST oppgavetyper uten registrert
+    modulkontrakt (037: uregistrert oppdragstype → ingen binding), og de
+    kjører med `modul_id`/`kontraktversjon`/`kontrakt_hash` NULL. En slik
+    oppgave kan utføre og sende en gyldig, signert `utfort`-kvittering
+    etter et menneskelig nei — og da svarer `reversibilitet_for_oppdrag`
+    NULL, ikke `direkte`.
+
+    Hendelsen falt rett gjennom: ingen kompensasjonssak, ingen
+    irreversibilitetsvurdering, ingen som fikk vite det — enda systemet
+    ikke har ETT kontraktbevis for at virkningen er trygg. Fraværet av
+    bevis ble behandlet som bevis på fravær, i nøyaktig den grenen §5 ble
+    bygget for å hindre stillhet i.
+
+    MUTASJONEN SOM DREPER DENNE: la mappingen falle tilbake til None
+    (`.get(reversibilitet)`) i stedet for `reversibilitet_ukjent`.
+    """
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+
+    sak, logg = _lag_sak(migrator, TENANT)
+    opp, _ = _lag_oppdrag(migrator, TENANT, sak, logg)
+    cid_sak = secrets.token_hex(16)
+    _sett_kontekst(migrator, TENANT, "m37-arbeider", cid_sak)
+    migrator.execute(
+        "UPDATE unntak SET status='under_behandling', claim_id=%s,"
+        " claim_generation=1, claim_utloper=now()+interval '600 s'"
+        " WHERE tenant=%s AND id=%s", (cid_sak, TENANT, sak))
+    migrator.execute("UPDATE unntak SET status='venter_utførelse'"
+                     " WHERE tenant=%s AND id=%s", (TENANT, sak))
+    migrator.commit()
+
+    app = lag_app(DSN)
+    try:
+        with TestClient(app) as c:
+            tok, _ = token(rolle="eiermodul:reinnsending",
+                           scopes=("orders:execute:purring.",))
+            h = {"authorization": f"Bearer {tok}"}
+            a = c.post("/v1/oppdrag/claim", json={}, headers=h).json()
+            assert a["oppdrag_id"] == opp, a
+
+            # LEGACY-TILSTANDEN, eksplisitt: ingen modulkontrakt er
+            # registrert, og bindingen står NULL — nøyaktig det 037 lar en
+            # uregistrert oppdragstype gjøre.
+            _sett_kontekst(migrator, TENANT)
+            migrator.execute("ALTER TABLE oppdrag DISABLE TRIGGER USER")
+            migrator.execute(
+                "UPDATE oppdrag SET modul_id=NULL, kontraktversjon=NULL,"
+                " kontrakt_hash=NULL WHERE tenant=%s AND id=%s",
+                (TENANT, opp))
+            migrator.execute("ALTER TABLE oppdrag ENABLE TRIGGER USER")
+            migrator.commit()
+            # Premisset måles, ikke antas: oppslaget svarer NULL.
+            _sett_kontekst(migrator, TENANT, "sen", "r-rev")
+            migrator.execute("SET ROLE disponit_m37_claimer")
+            rev = migrator.execute("SELECT reversibilitet_for_oppdrag(%s,%s)",
+                                   (TENANT, opp)).fetchone()[0]
+            migrator.execute("RESET ROLE")
+            migrator.rollback()
+            assert rev is None, f"premisset holder ikke: {rev!r}"
+
+            # Mennesket sier nei — den EKTE oppløsningsveien.
+            _sett_kontekst(migrator, TENANT, "menneske", "r-avvis")
+            _attester_avvis(migrator, TENANT, sak, "menneske")
+            migrator.execute("SET ROLE disponit_m37_claimer")
+            res = migrator.execute(
+                "SELECT utfall FROM avvis_med_opplosning(%s,%s,%s,"
+                "'menneske','r-avvis')", (TENANT, sak, [opp])).fetchall()
+            migrator.execute("RESET ROLE")
+            migrator.commit()
+            assert res == [("kansellert",)], res
+
+            # ... og SÅ kommer den sene kvitteringen: utførelsen SKJEDDE.
+            r = c.post("/v1/oppdrag/kvittering",
+                       json=_signer_kvittering({
+                           "oppdrag_id": opp, "tenant": TENANT,
+                           "kvittering_jti": a["kvittering_jti"],
+                           "repair_operation_id": a["repair_operation_id"],
+                           "owner_claim_id": a["owner_claim_id"],
+                           "owner_generation": a["owner_generation"],
+                           "resultat": "utfort", "ressurs_id": "fak-1"}),
+                       headers=h)
+            assert r.status_code == 202, r.text
+            assert r.json()["status"] == "lagret_uten_statusendring"
+    finally:
+        app.tjeneste.pool.lukk()
+
+    _sett_kontekst(migrator, TENANT)
+    saker = dict(migrator.execute(
+        "SELECT arsak, count(*) FROM unntak WHERE tenant=%s AND oppdrag_id=%s"
+        " GROUP BY arsak", (TENANT, opp)).fetchall())
+    detalj = migrator.execute(
+        "SELECT detalj FROM unntak_historikk WHERE tenant=%s AND unntak_id=%s"
+        "   AND hendelse='sen_kvittering'", (TENANT, sak)).fetchall()
+    migrator.rollback()
+
+    assert len(detalj) == 1, detalj
+    assert saker.get("reversibilitet_ukjent") == 1, (
+        "en sen UTFØRT kvittering uten modulkontrakt ga ingen sak et"
+        f" menneske kan se: {saker}")
+    # ... og den er ikke feilklassifisert som en av de to vi HAR dekning for.
+    assert "kompensasjon_kreves" not in saker, saker
+    assert "irreversibel_utfort" not in saker, saker
 
 
 @pg
@@ -1888,7 +2628,11 @@ def test_P1_samtidig_identisk_repost_blir_idempotent_ikke_auth_feil(
 
             r = svar["r"]
             assert r.status_code == 200, r.text
-            assert r.json()["status"] == "idempotent", r.text
+            # Vinneren her er en SEN kvittering (`_vinner_holder_laasen`
+            # skriver `sen_kvittering` og rører ikke oppdragsstatusen), så
+            # taperen skal få det samme ordet en sekvensiell retry ville
+            # fått — kappløpsveien og retryveien svarer likt (Codex P2).
+            assert r.json()["status"] == "idempotent_uten_statusendring", r.text
     finally:
         app.tjeneste.pool.lukk()
 
@@ -1979,6 +2723,695 @@ def test_P1_samtidig_motstridende_repost_blir_sikkerhetssak(migrator, miljo,
     assert hendelser.get("motstridende_kvittering") == 1, (
         f"motstridende samtidig kvittering ble ikke sikkerhetssak: {hendelser}")
     assert status == ("plukket", "venter_utførelse"), status
+
+
+@pg
+def test_P1_kvitteringsveien_laser_saken_for_kapabiliteten(migrator, miljo,
+                                                           token):
+    """043 (Gate 14b), Codex P1 runde 3: den YTRE låsen i kappløpet.
+
+    Avvis-veien tar tre rader i rekkefølgen sak → kapabilitet → oppdrag:
+    `behandle_unntakshandling` låser `unntak` med `FOR UPDATE` og holder den
+    gjennom hele operatørhandlingen, og inne i den låsen pre-låser
+    `avvis_med_opplosning` kapabilitetene før oppdragene (043 §7).
+
+    Kvitteringsveien tok de samme radene fra motsatt ende: kapabiliteten
+    brant i `_forbruk_kapabilitet`, saken ble først rørt til slutt
+    (historikkraden + `UPDATE unntak`). Da kan avvis-veien holde saken og
+    vente på kapabiliteten mens kvitteringen holder kapabiliteten og venter
+    på saken — PostgreSQL avbryter én med 40P01. Forrige rundes pre-pass
+    rettet bare den INDRE halvparten; den ytre sakslåsen sto igjen, og
+    port 17 bommet på den fordi den kaller `avvis_med_opplosning` direkte,
+    altså uten sakslåsen kalleren i praksis alltid holder.
+
+    Målingen er deterministisk, ikke et kappløp: avvis-veiens FØRSTE lås
+    (saken) holdes av en egen transaksjon, kvitteringen postes, og så
+    spørres kapabilitetsraden med `FOR UPDATE NOWAIT`. Er den låst, står
+    kvitteringsveien og venter på saken MENS den holder kapabiliteten —
+    nøyaktig den halvparten av vranglåsen som ikke kan sameksistere med
+    avvis-veiens andre halvpart.
+
+    MUTASJONEN SOM DREPER DENNE: fjern sakslåsen (`SELECT ... FROM unntak
+    ... FOR UPDATE`) i kvitteringsingesten. Da låses kapabiliteten først
+    igjen, og NOWAIT-proben feiler.
+    """
+    import threading
+
+    import psycopg
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    from db.pg import koble
+
+    app = lag_app(DSN)
+    holder = None
+    try:
+        with TestClient(app) as c:
+            modul = _unik_eiermodul()
+            tok, _ = token(rolle=modul,
+                           scopes=("orders:execute:purring.",))
+            h = {"authorization": f"Bearer {tok}"}
+            sak, logg = _lag_sak(migrator, TENANT)
+            opp, _ = _lag_oppdrag(migrator, TENANT, sak, logg,
+                                  eiermodul=modul)
+            cid = secrets.token_hex(16)
+            _sett_kontekst(migrator, TENANT, "m37-arbeider", cid)
+            migrator.execute(
+                "UPDATE unntak SET status='under_behandling', claim_id=%s,"
+                " claim_generation=1, claim_utloper=now()+interval '600 s'"
+                " WHERE tenant=%s AND id=%s", (cid, TENANT, sak))
+            migrator.execute("UPDATE unntak SET status='venter_utførelse'"
+                             " WHERE tenant=%s AND id=%s", (TENANT, sak))
+            migrator.commit()
+
+            ra = c.post("/v1/oppdrag/claim", json={}, headers=h)
+            assert ra.status_code == 200, ra.text
+            a = ra.json()
+            assert a["oppdrag_id"] == opp, "claimet traff et annet oppdrag"
+
+            # (1) Avvis-veiens første lås: SAKEN. Holdes ucommittet.
+            holder = koble(MIGRATOR_DSN)
+            holder.execute("SELECT set_config('disponit.tenant',%s,true)",
+                           (TENANT,))
+            holder.execute("SELECT 1 FROM unntak WHERE tenant=%s AND id=%s"
+                           "   FOR UPDATE", (TENANT, sak))
+
+            # (2) Kvitteringen postes og skal blokkere PÅ SAKEN.
+            svar = {}
+
+            def kvitter():
+                svar["r"] = c.post("/v1/oppdrag/kvittering",
+                                   json=_kvitteringskropp(a, opp, "utfort"),
+                                   headers=h)
+
+            t = threading.Thread(target=kvitter)
+            t.start()
+            time.sleep(1.0)      # kvitteringen rekker fram til låsen
+            assert "r" not in svar, "kvitteringen gikk forbi sakslåsen"
+
+            # (3) MÅLINGEN: kapabiliteten skal være urørt mens saken holdes.
+            probe = koble(MIGRATOR_DSN)
+            probe.execute("SELECT set_config('disponit.tenant',%s,true)",
+                          (TENANT,))
+            probe.execute("SET LOCAL ROLE disponit_m37_claimer")
+            try:
+                probe.execute("SELECT 1 FROM kvitteringskapabiliteter"
+                              " WHERE jti=%s FOR UPDATE NOWAIT",
+                              (a["kvittering_jti"],))
+            except psycopg.errors.LockNotAvailable:
+                pytest.fail(
+                    "kvitteringsveien holder kapabilitetslåsen mens den"
+                    " venter på saken — motsatt rekkefølge av avvis-veien,"
+                    " altså den ene halvparten av en 40P01")
+            finally:
+                probe.rollback(); probe.close()
+
+            # (4) Slippes saken fri, går kvitteringen gjennom som normalt.
+            holder.commit(); holder.close(); holder = None
+            t.join(timeout=30)
+            assert not t.is_alive(), "kvitteringen ble aldri sluppet fri"
+            r = svar["r"]
+            assert r.status_code == 200, r.text
+            assert r.json()["status"] == "utfort", r.text
+    finally:
+        if holder is not None:
+            holder.rollback(); holder.close()
+        app.tjeneste.pool.lukk()
+
+    _sett_kontekst(migrator, TENANT)
+    status = migrator.execute(
+        "SELECT o.status, u.status FROM oppdrag o JOIN unntak u"
+        "   ON u.tenant=o.tenant AND u.id=o.unntak_id"
+        " WHERE o.tenant=%s AND o.id=%s", (TENANT, opp)).fetchone()
+    migrator.rollback()
+    assert status == ("utfort", "løst"), status
+
+
+@pg
+def test_P1_kvitteringen_leser_tilstanden_paa_nytt_etter_sakslasen(
+        migrator, miljo, token):
+    """043 (Gate 14b), Codex P1 runde 4: låsen uten ny lesing er blind.
+
+    Forrige runde flyttet sakslåsen foran kapabilitets-/oppdragslåsen, så
+    de to veiene tar radene i samme rekkefølge. Men kapabiliteten og
+    oppdragsraden leses i steg 1/1b — altså FØR den låsen. Kommer
+    kvitteringen fram mens et menneskelig nei holder saken, venter den her
+    til nei-et har committet, og regner så videre på verdiene fra tiden før:
+    kapabiliteten «utstedt», oppdraget «plukket», generasjonen eierens.
+
+    Følgen var det motsatte av det §5 er til for: `kan_avslutte` ble True,
+    den ORDINÆRE toargsbrenningen kjørte mot en kapabilitet som nå sto
+    `avvist`, og `_forbruk_kapabilitet` rullet tilbake med
+    `kapabilitet_ugyldig`. Den signerte kvitteringen ble aldri skrevet som
+    `sen_kvittering`, og kompensasjonssaken ble aldri født — vranglåsen var
+    byttet mot et stille tap av nettopp den evidensen sen-evidensveien ble
+    bygget for.
+
+    Målingen er deterministisk, ikke et kappløp: nei-et tar sakslåsen
+    FØRST og holder den, kvitteringen postes og må blokkere der, og så
+    kjører nei-et den ekte oppløsningsveien inne i den samme transaksjonen
+    før den committer. Når kvitteringen slippes fri, er kapabiliteten
+    `avvist` og oppdraget `kansellert` — og den skal da ta
+    sen-evidensveien, ikke den avsluttende.
+
+    MUTASJONEN SOM DREPER DENNE: fjern de to `SELECT`-ene etter sakslåsen i
+    steg 3c. Da står `kap_status`/`status`/generasjonen fra førstelesningen,
+    202-en blir `kapabilitet_ugyldig`, og kompensasjonssaken uteblir.
+    """
+    import threading
+
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    from db.pg import koble
+
+    sak, logg = _lag_sak(migrator, TENANT)
+    opp, _ = _lag_oppdrag(migrator, TENANT, sak, logg)
+    cid_sak = secrets.token_hex(16)
+    _sett_kontekst(migrator, TENANT, "m37-arbeider", cid_sak)
+    migrator.execute(
+        "UPDATE unntak SET status='under_behandling', claim_id=%s,"
+        " claim_generation=1, claim_utloper=now()+interval '600 s'"
+        " WHERE tenant=%s AND id=%s", (cid_sak, TENANT, sak))
+    migrator.execute("UPDATE unntak SET status='venter_utførelse'"
+                     " WHERE tenant=%s AND id=%s", (TENANT, sak))
+    migrator.commit()
+
+    app = lag_app(DSN)
+    holder = None
+    try:
+        with TestClient(app) as c:
+            tok, _ = token(rolle="eiermodul:reinnsending",
+                           scopes=("orders:execute:purring.",))
+            h = {"authorization": f"Bearer {tok}"}
+            a = c.post("/v1/oppdrag/claim", json={}, headers=h).json()
+            assert a["oppdrag_id"] == opp, a
+
+            # Modulkontrakten oppdraget kjørte under: `kompenserende`. §5
+            # utleder saken av KONTRAKTEN, aldri av gjetning.
+            modul = "m-" + secrets.token_hex(4)
+            kh = secrets.token_hex(16)
+            _sett_kontekst(migrator, TENANT)
+            migrator.execute("SET ROLE disponit_modul_eier")
+            migrator.execute(
+                "INSERT INTO modulkontrakt (modul_id, kontraktversjon,"
+                " kontrakt_hash, payload_schema_hash, kvittering_schema_hash,"
+                " sideeffektklasse, reversibilitet)"
+                " VALUES (%s,1,%s,'p','k','ekstern_lesing','kompenserende')",
+                (modul, kh))
+            migrator.execute("RESET ROLE")
+            migrator.execute("ALTER TABLE oppdrag DISABLE TRIGGER USER")
+            migrator.execute(
+                "UPDATE oppdrag SET modul_id=%s, kontraktversjon=1,"
+                " kontrakt_hash=%s WHERE tenant=%s AND id=%s",
+                (modul, kh, TENANT, opp))
+            migrator.execute("ALTER TABLE oppdrag ENABLE TRIGGER USER")
+            migrator.commit()
+
+            # (1) Nei-ets FØRSTE lås: saken. Holdes ucommittet, akkurat som
+            #     `behandle_unntakshandling` holder den (steg 2).
+            holder = koble(MIGRATOR_DSN)
+            _sett_kontekst(holder, TENANT, "menneske", "r-avvis")
+            holder.execute("SELECT 1 FROM unntak WHERE tenant=%s AND id=%s"
+                           "   FOR UPDATE", (TENANT, sak))
+
+            # (2) Kvitteringen postes og skal blokkere PÅ SAKEN.
+            kropp = _signer_kvittering({
+                "oppdrag_id": opp, "tenant": TENANT,
+                "kvittering_jti": a["kvittering_jti"],
+                "repair_operation_id": a["repair_operation_id"],
+                "owner_claim_id": a["owner_claim_id"],
+                "owner_generation": a["owner_generation"],
+                "resultat": "utfort", "ressurs_id": "fak-1"})
+            svar = {}
+
+            def kvitter():
+                svar["r"] = c.post("/v1/oppdrag/kvittering", json=kropp,
+                                   headers=h)
+
+            t = threading.Thread(target=kvitter)
+            t.start()
+            time.sleep(1.0)      # kvitteringen rekker fram til sakslåsen
+            assert "r" not in svar, "kvitteringen gikk forbi sakslåsen"
+
+            # (3) Nei-et kjører den EKTE oppløsningsveien INNE i den samme
+            #     transaksjonen: kapabiliteten brennes `avvist`, claimet
+            #     fences, oppdraget kanselleres. Så committer det.
+            _attester_avvis(holder, TENANT, sak, "menneske")
+            holder.execute("SET ROLE disponit_m37_claimer")
+            res = holder.execute(
+                "SELECT utfall FROM avvis_med_opplosning(%s,%s,%s,"
+                "'menneske','r-avvis')", (TENANT, sak, [opp])).fetchall()
+            holder.execute("RESET ROLE")
+            assert res == [("kansellert",)], res
+            holder.commit(); holder.close(); holder = None
+
+            # (4) MÅLINGEN: kvitteringen slippes fri og møter en verden som
+            #     har endret seg under føttene på den.
+            t.join(timeout=30)
+            assert not t.is_alive(), "kvitteringen ble aldri sluppet fri"
+            r = svar["r"]
+            assert r.status_code == 202, (
+                "kvitteringen regnet på tilstanden fra FØR sakslåsen og"
+                f" mistet seg selv: {r.status_code} {r.text}")
+            assert r.json()["status"] == "lagret_uten_statusendring", r.text
+    finally:
+        if holder is not None:
+            holder.rollback(); holder.close()
+        app.tjeneste.pool.lukk()
+
+    _sett_kontekst(migrator, TENANT)
+    hendelser = dict(migrator.execute(
+        "SELECT hendelse, count(*) FROM unntak_historikk"
+        " WHERE tenant=%s AND unntak_id=%s GROUP BY hendelse",
+        (TENANT, sak)).fetchall())
+    oppdragsrad = migrator.execute(
+        "SELECT status, kansellert_aarsak FROM oppdrag WHERE tenant=%s"
+        " AND id=%s", (TENANT, opp)).fetchone()
+    migrator.execute("SET ROLE disponit_m37_claimer")
+    kap = migrator.execute(
+        "SELECT status, resultathash IS NOT NULL FROM"
+        " kvitteringskapabiliteter WHERE jti=%s",
+        (a["kvittering_jti"],)).fetchone()
+    migrator.execute("RESET ROLE")
+    kompensasjon = migrator.execute(
+        "SELECT count(*) FROM unntak WHERE tenant=%s AND oppdrag_id=%s"
+        " AND arsak='kompensasjon_kreves'", (TENANT, opp)).fetchone()[0]
+    migrator.rollback()
+
+    assert hendelser.get("sen_kvittering") == 1, (
+        f"den sene kvitteringen nådde aldri evidensgrenen: {hendelser}")
+    # Fencingen står: nei-et er fortsatt nei-et.
+    assert oppdragsrad == ("kansellert", "menneskelig_avvis"), oppdragsrad
+    assert kap == ("avvist", True), (
+        f"kapabiliteten skulle stått avvist MED sen hash: {kap}")
+    assert kompensasjon == 1, "kompensasjonssaken ble aldri født"
+
+
+@pg
+def test_P1_sakslasen_dekker_beslutningsopphavet(migrator, miljo, token):
+    """043 (Gate 14b), Codex P1 runde 5: saken har TO relasjonsretninger.
+
+    `oppdrag.unntak_id` er OPPHAV, ikke generell sakstilknytning (038). Et
+    BESLUTNINGSoppdrag har den NULL, og saken peker den andre veien
+    (`unntak.oppdrag_id`). §4 i 043 gjorde nettopp den koblingen avvisbar:
+    `sak_utestaaende` finner beslutningsoppdrag gjennom den, og §7 godtar
+    dem som oppløsningsmål.
+
+    Sakslåsen og oppfriskningen under den sto likevel bak `unntak_id is not
+    None` — altså bare reparasjonsopphavet. For beslutningsoppdrag hoppet
+    kvitteringsveien over begge, og hele tapet fra runde 4 var tilbake:
+    nei-et rekker å committe kansellering og `avvist`, kvitteringen regner
+    videre på `plukket`/`utstedt`, den ordinære toargsbrenningen svarer
+    `ugyldig`, og den signerte sene evidensen — med kompensasjonssaken §5
+    skal føde — går tapt i stillhet.
+
+    Samme deterministiske måling som runde 4, på det andre opphavet: nei-et
+    tar sakslåsen først, kvitteringen må BLOKKERE der (uten fiksen seiler
+    den rett forbi og lukker oppdraget), nei-et kjører den ekte
+    oppløsningsveien i samme transaksjon og committer.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `OR u.oppdrag_id=%s` fra sakslåsen i
+    steg 3c. Da blokkerer kvitteringen aldri, og både 202-en og
+    kompensasjonssaken uteblir.
+    """
+    import threading
+
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    from db.pg import koble
+
+    # Oppdraget legges ut under en REPARASJONSsak (fixturen bygger den ekte
+    # kjeden), men saken som skal peke TILBAKE er en EGEN, fersk sak. Det er
+    # ikke kosmetikk: `reparasjonsoperasjoner` peker på reparasjonssaken, og
+    # 038 holder de to saksfamiliene fra hverandre — en oppdragssak står
+    # aldri i `oppdrag.unntak_id`, og en reparasjonsoperasjon peker aldri på
+    # en oppdragssak. Å gjøre reparasjonssaken om til en oppdragssak ville
+    # laget en rad ingen produksjonsvei kan lage.
+    sak, logg = _lag_sak(migrator, TENANT)
+    opp, _ = _lag_oppdrag(migrator, TENANT, sak, logg)
+    sak_b, _ = _lag_sak(migrator, TENANT)
+    cid_sak = secrets.token_hex(16)
+    _sett_kontekst(migrator, TENANT, "m37-arbeider", cid_sak)
+    migrator.execute(
+        "UPDATE unntak SET status='under_behandling', claim_id=%s,"
+        " claim_generation=1, claim_utloper=now()+interval '600 s'"
+        " WHERE tenant=%s AND id=%s", (cid_sak, TENANT, sak_b))
+    migrator.execute("UPDATE unntak SET status='venter_utførelse'"
+                     " WHERE tenant=%s AND id=%s", (TENANT, sak_b))
+    migrator.commit()
+
+    app = lag_app(DSN)
+    holder = None
+    try:
+        with TestClient(app) as c:
+            tok, _ = token(rolle="eiermodul:reinnsending",
+                           scopes=("orders:execute:purring.",))
+            h = {"authorization": f"Bearer {tok}"}
+            a = c.post("/v1/oppdrag/claim", json={}, headers=h).json()
+            assert a["oppdrag_id"] == opp, a
+
+            modul = "m-" + secrets.token_hex(4)
+            kh = secrets.token_hex(16)
+            _sett_kontekst(migrator, TENANT)
+            migrator.execute("SET ROLE disponit_modul_eier")
+            migrator.execute(
+                "INSERT INTO modulkontrakt (modul_id, kontraktversjon,"
+                " kontrakt_hash, payload_schema_hash, kvittering_schema_hash,"
+                " sideeffektklasse, reversibilitet)"
+                " VALUES (%s,1,%s,'p','k','ekstern_lesing','kompenserende')",
+                (modul, kh))
+            migrator.execute("RESET ROLE")
+
+            # VRIDNINGEN: oppdraget gjøres om til et BESLUTNINGSoppdrag —
+            # `unntak_id` NULL — og saken peker tilbake på det i stedet.
+            # Samme konstruksjon som port 2 i test_gate14b.
+            migrator.execute("ALTER TABLE oppdrag DISABLE TRIGGER USER")
+            migrator.execute(
+                "UPDATE oppdrag SET modul_id=%s, kontraktversjon=1,"
+                " kontrakt_hash=%s, unntak_id=NULL, opprinnelse='beslutning',"
+                " repair_operation_id=NULL, loggpost_id=NULL"
+                " WHERE tenant=%s AND id=%s", (modul, kh, TENANT, opp))
+            migrator.execute("ALTER TABLE oppdrag ENABLE TRIGGER USER")
+            migrator.execute("ALTER TABLE unntak DISABLE TRIGGER USER")
+            migrator.execute(
+                "UPDATE unntak SET oppdrag_id=%s, arsak='evidensfrist',"
+                " sakskilde='oppdrag' WHERE tenant=%s AND id=%s",
+                (opp, TENANT, sak_b))
+            migrator.execute("SET CONSTRAINTS ALL IMMEDIATE")
+            migrator.execute("ALTER TABLE unntak ENABLE TRIGGER USER")
+            migrator.commit()
+
+            # (1) Nei-ets FØRSTE lås: saken.
+            holder = koble(MIGRATOR_DSN)
+            _sett_kontekst(holder, TENANT, "menneske", "r-avvis-b")
+            holder.execute("SELECT 1 FROM unntak WHERE tenant=%s AND id=%s"
+                           "   FOR UPDATE", (TENANT, sak_b))
+
+            # (2) Kvitteringen postes og skal blokkere PÅ SAKEN — den som
+            #     bare finnes gjennom `unntak.oppdrag_id`.
+            kropp = _signer_kvittering({
+                "oppdrag_id": opp, "tenant": TENANT,
+                "kvittering_jti": a["kvittering_jti"],
+                "repair_operation_id": a["repair_operation_id"],
+                "owner_claim_id": a["owner_claim_id"],
+                "owner_generation": a["owner_generation"],
+                "resultat": "utfort", "ressurs_id": "fak-1"})
+            svar = {}
+
+            def kvitter():
+                svar["r"] = c.post("/v1/oppdrag/kvittering", json=kropp,
+                                   headers=h)
+
+            t = threading.Thread(target=kvitter)
+            t.start()
+            time.sleep(1.0)
+            assert "r" not in svar, (
+                "kvitteringen gikk forbi sakslåsen — beslutningsopphavet"
+                " (`unntak.oppdrag_id`) er ikke dekket")
+
+            # (3) Nei-et kjører den EKTE oppløsningsveien og committer.
+            _attester_avvis(holder, TENANT, sak_b, "menneske")
+            holder.execute("SET ROLE disponit_m37_claimer")
+            res = holder.execute(
+                "SELECT utfall FROM avvis_med_opplosning(%s,%s,%s,"
+                "'menneske','r-avvis-b')", (TENANT, sak_b, [opp])).fetchall()
+            holder.execute("RESET ROLE")
+            assert res == [("kansellert",)], res
+            holder.commit(); holder.close(); holder = None
+
+            # (4) MÅLINGEN.
+            t.join(timeout=30)
+            assert not t.is_alive(), "kvitteringen ble aldri sluppet fri"
+            r = svar["r"]
+            assert r.status_code == 202, (
+                "kvitteringen regnet på tilstanden fra FØR sakslåsen og"
+                f" mistet seg selv: {r.status_code} {r.text}")
+            assert r.json()["status"] == "lagret_uten_statusendring", r.text
+    finally:
+        if holder is not None:
+            holder.rollback(); holder.close()
+        app.tjeneste.pool.lukk()
+
+    _sett_kontekst(migrator, TENANT)
+    hendelser = dict(migrator.execute(
+        "SELECT hendelse, count(*) FROM unntak_historikk"
+        " WHERE tenant=%s AND unntak_id=%s GROUP BY hendelse",
+        (TENANT, sak_b)).fetchall())
+    oppdragsrad = migrator.execute(
+        "SELECT status, kansellert_aarsak FROM oppdrag WHERE tenant=%s"
+        " AND id=%s", (TENANT, opp)).fetchone()
+    migrator.execute("SET ROLE disponit_m37_claimer")
+    kap = migrator.execute(
+        "SELECT status, resultathash IS NOT NULL FROM"
+        " kvitteringskapabiliteter WHERE jti=%s",
+        (a["kvittering_jti"],)).fetchone()
+    migrator.execute("RESET ROLE")
+    kompensasjon = migrator.execute(
+        "SELECT count(*) FROM unntak WHERE tenant=%s AND oppdrag_id=%s"
+        " AND arsak='kompensasjon_kreves'", (TENANT, opp)).fetchone()[0]
+    migrator.rollback()
+
+    assert hendelser.get("sen_kvittering") == 1, (
+        f"den sene kvitteringen nådde aldri evidensgrenen: {hendelser}")
+    assert oppdragsrad == ("kansellert", "menneskelig_avvis"), oppdragsrad
+    assert kap == ("avvist", True), (
+        f"kapabiliteten skulle stått avvist MED sen hash: {kap}")
+    assert kompensasjon == 1, "kompensasjonssaken ble aldri født"
+
+
+@pg
+def test_P1_nei_et_foder_ingen_falsk_evidensfristsak(migrator, miljo, token):
+    """043 (Gate 14b), Codex P1 runde 7: saken som SA NEI eier evidensen.
+
+    For et BESLUTNINGSoppdrag er `unntak_id` NULL med vilje — saken peker
+    tilbake gjennom `unntak.oppdrag_id`. Sen-evidensveien falt derfor rett
+    ned i `sikre_sak_for_oppdrag(... 'evidensfrist' ...)`, og den ga ikke
+    saken tilbake: mennesket har nettopp satt den `avvist`, altså TERMINAL,
+    og gjenbruksveien (038) tar aldri en terminal sak.
+
+    Resultatet var en helt ny, ÅPEN evidensfrist-sak — en påstand om at
+    fristen løp ut, for en kvittering som kom i TIDE — og for
+    `kompenserende` deretter enda en sak ved siden av. En operatør som
+    nettopp har sagt nei fikk altså to nye saker, hvorav den ene lyver om
+    hvorfor den finnes.
+
+    Målingen trenger ingen tråder: nei-et committer FØRST (ekte
+    `avvis_med_opplosning` + saken satt `avvist`), og kvitteringen kommer
+    etterpå — men fortsatt innenfor evidensfristen.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `menneskelig_nei`-grenen i
+    sen-evidensveien, så `sikre_sak_for_oppdrag(...'evidensfrist')` igjen
+    er første utvei når `unntak_id` er NULL.
+    """
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+
+    sak, logg = _lag_sak(migrator, TENANT)
+    opp, _ = _lag_oppdrag(migrator, TENANT, sak, logg)
+    sak_b, _ = _lag_sak(migrator, TENANT)
+
+    app = lag_app(DSN)
+    try:
+        with TestClient(app) as c:
+            tok, _ = token(rolle="eiermodul:reinnsending",
+                           scopes=("orders:execute:purring.",))
+            h = {"authorization": f"Bearer {tok}"}
+            a = c.post("/v1/oppdrag/claim", json={}, headers=h).json()
+            assert a["oppdrag_id"] == opp, a
+
+            modul = "m-" + secrets.token_hex(4)
+            kh = secrets.token_hex(16)
+            _sett_kontekst(migrator, TENANT)
+            migrator.execute("SET ROLE disponit_modul_eier")
+            migrator.execute(
+                "INSERT INTO modulkontrakt (modul_id, kontraktversjon,"
+                " kontrakt_hash, payload_schema_hash, kvittering_schema_hash,"
+                " sideeffektklasse, reversibilitet)"
+                " VALUES (%s,1,%s,'p','k','ekstern_lesing','kompenserende')",
+                (modul, kh))
+            migrator.execute("RESET ROLE")
+            migrator.execute("ALTER TABLE oppdrag DISABLE TRIGGER USER")
+            migrator.execute(
+                "UPDATE oppdrag SET modul_id=%s, kontraktversjon=1,"
+                " kontrakt_hash=%s, unntak_id=NULL, opprinnelse='beslutning',"
+                " repair_operation_id=NULL, loggpost_id=NULL"
+                " WHERE tenant=%s AND id=%s", (modul, kh, TENANT, opp))
+            migrator.execute("ALTER TABLE oppdrag ENABLE TRIGGER USER")
+            migrator.execute("ALTER TABLE unntak DISABLE TRIGGER USER")
+            migrator.execute(
+                "UPDATE unntak SET oppdrag_id=%s, arsak='evidensfrist',"
+                " sakskilde='oppdrag' WHERE tenant=%s AND id=%s",
+                (opp, TENANT, sak_b))
+            migrator.execute("SET CONSTRAINTS ALL IMMEDIATE")
+            migrator.execute("ALTER TABLE unntak ENABLE TRIGGER USER")
+            migrator.commit()
+
+            # NEI-ET, HELE VEIEN: oppløsningen kjøres, og saken settes
+            # `avvist` — altså terminal, slik operatørveien gjør det.
+            cid = secrets.token_hex(16)
+            _sett_kontekst(migrator, TENANT, "menneske", "r-nei")
+            migrator.execute(
+                "UPDATE unntak SET status='under_behandling', claim_id=%s,"
+                " claim_generation=1, claim_utloper=now()+interval '600 s'"
+                " WHERE tenant=%s AND id=%s", (cid, TENANT, sak_b))
+            _attester_avvis(migrator, TENANT, sak_b, "menneske")
+            migrator.execute("SET ROLE disponit_m37_claimer")
+            res = migrator.execute(
+                "SELECT utfall FROM avvis_med_opplosning(%s,%s,%s,"
+                "'menneske','r-nei')", (TENANT, sak_b, [opp])).fetchall()
+            migrator.execute("RESET ROLE")
+            assert res == [("kansellert",)], res
+            migrator.execute("UPDATE unntak SET status='avvist'"
+                             " WHERE tenant=%s AND id=%s", (TENANT, sak_b))
+            migrator.commit()
+
+            # ... og SÅ kommer den sene kvitteringen — i god tid før
+            # evidensfristen.
+            kropp = _signer_kvittering({
+                "oppdrag_id": opp, "tenant": TENANT,
+                "kvittering_jti": a["kvittering_jti"],
+                "repair_operation_id": a["repair_operation_id"],
+                "owner_claim_id": a["owner_claim_id"],
+                "owner_generation": a["owner_generation"],
+                "resultat": "utfort", "ressurs_id": "fak-1"})
+            r = c.post("/v1/oppdrag/kvittering", json=kropp, headers=h)
+            assert r.status_code == 202, r.text
+            assert r.json()["status"] == "lagret_uten_statusendring", r.text
+    finally:
+        app.tjeneste.pool.lukk()
+
+    _sett_kontekst(migrator, TENANT)
+    hendelser = dict(migrator.execute(
+        "SELECT hendelse, count(*) FROM unntak_historikk"
+        " WHERE tenant=%s AND unntak_id=%s GROUP BY hendelse",
+        (TENANT, sak_b)).fetchall())
+    saker = dict(migrator.execute(
+        "SELECT arsak, count(*) FROM unntak WHERE tenant=%s AND oppdrag_id=%s"
+        " GROUP BY arsak", (TENANT, opp)).fetchall())
+    migrator.rollback()
+
+    assert hendelser.get("sen_kvittering") == 1, (
+        "den sene evidensen ble ikke ført på saken mennesket avgjorde:"
+        f" {hendelser}")
+    # ÉN evidensfrist-sak: den som alt fantes. Ingen ny, åpen påstand om en
+    # frist som aldri løp ut.
+    assert saker.get("evidensfrist") == 1, (
+        f"nei-et fødte en falsk evidensfrist-sak: {saker}")
+    assert saker.get("kompensasjon_kreves") == 1, (
+        f"kompensasjonssaken uteble eller ble doblet: {saker}")
+
+
+@pg
+def test_P1_sakslaskoen_tar_ikke_kapabilitetens_frist(migrator, miljo, token):
+    """043 (Gate 14b), Codex P2 runde 5: køen skal ikke koste kvitteringen
+    fristen dens.
+
+    Innvendingen: `innlos_kvitteringskapabilitet` filtrerer på
+    `k.utloper > now()`, så en kvittering som ankom i tide, men sto i
+    sakslåskø forbi utløpet, skulle miste kapabiliteten i den NYE lesningen
+    etter låsen og få `kapabilitet_ugyldig` — stikk i strid med at `naa`
+    (ankomsttiden) bevisst ikke friskes opp.
+
+    Egenskapen er allerede der, og den er ikke en tilfeldighet: `now()` er
+    transaksjonstidsstempelet, ikke veggklokka, og hele ingesten kjører i
+    ÉN transaksjon (`preauth` lukker sin egen). Låskøen kan derfor ikke
+    flytte utløpsgrensen. Men en egenskap ingen måler, er en egenskap som
+    kan forsvinne — bytter noen `now()` mot `statement_timestamp()`, eller
+    splitter ingesten i to transaksjoner, er tapet nøyaktig det Codex
+    beskriver, og helt stille.
+
+    Målingen er derfor deterministisk: oppdragets evidensfrist — som ER
+    kapabilitetens `utloper` (035) — er 8 sekunder, og sakslåsen holdes i 9.
+    Utløpet er altså passert på VEGGKLOKKA når kvitteringen slippes fri,
+    mens den ankom godt innenfor. Den skal likevel avslutte oppdraget.
+
+    MUTASJONEN SOM DREPER DENNE: bytt `k.utloper > pg_catalog.now()` i
+    `innlos_kvitteringskapabilitet` (035) mot `statement_timestamp()`.
+    """
+    import threading
+
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    from db.pg import koble
+
+    # KORTE FRISTER FRA FØDSELEN AV, ikke etterpå: kapabilitetens `utloper`
+    # ER oppdragets evidensfrist (`utsted_kvitteringskapabilitet`, 035), og
+    # bindingsfeltene på kapabiliteten er uforanderlige — som de skal være.
+    # Fristene settes derfor der de hører hjemme, på oppdraget.
+    sak, logg = _lag_sak(migrator, TENANT)
+    opp, _ = _lag_oppdrag(migrator, TENANT, sak, logg,
+                          utforelsesfrist="4 seconds",
+                          evidensfrist="8 seconds")
+    cid_sak = secrets.token_hex(16)
+    _sett_kontekst(migrator, TENANT, "m37-arbeider", cid_sak)
+    migrator.execute(
+        "UPDATE unntak SET status='under_behandling', claim_id=%s,"
+        " claim_generation=1, claim_utloper=now()+interval '600 s'"
+        " WHERE tenant=%s AND id=%s", (cid_sak, TENANT, sak))
+    migrator.execute("UPDATE unntak SET status='venter_utførelse'"
+                     " WHERE tenant=%s AND id=%s", (TENANT, sak))
+    migrator.commit()
+
+    app = lag_app(DSN)
+    holder = None
+    try:
+        with TestClient(app) as c:
+            tok, _ = token(rolle="eiermodul:reinnsending",
+                           scopes=("orders:execute:purring.",))
+            h = {"authorization": f"Bearer {tok}"}
+            a = c.post("/v1/oppdrag/claim", json={}, headers=h).json()
+            assert a["oppdrag_id"] == opp, a
+
+            # (1) Sakslåsen tas FØRST og holdes — som et menneskelig nei
+            #     ville holdt den gjennom hele operatørhandlingen.
+            holder = koble(MIGRATOR_DSN)
+            _sett_kontekst(holder, TENANT, "menneske", "r-frist")
+            holder.execute("SELECT 1 FROM unntak WHERE tenant=%s AND id=%s"
+                           "   FOR UPDATE", (TENANT, sak))
+
+            # (2) Kvitteringen ankommer godt innenfor BEGGE fristene.
+            kropp = _signer_kvittering({
+                "oppdrag_id": opp, "tenant": TENANT,
+                "kvittering_jti": a["kvittering_jti"],
+                "repair_operation_id": a["repair_operation_id"],
+                "owner_claim_id": a["owner_claim_id"],
+                "owner_generation": a["owner_generation"],
+                "resultat": "utfort", "ressurs_id": "fak-1"})
+            svar = {}
+
+            def kvitter():
+                svar["r"] = c.post("/v1/oppdrag/kvittering", json=kropp,
+                                   headers=h)
+
+            t = threading.Thread(target=kvitter)
+            t.start()
+            time.sleep(1.0)
+            assert "r" not in svar, "kvitteringen gikk forbi sakslåsen"
+
+            # (3) Køen holdes forbi kapabilitetens utløp — på veggklokka.
+            time.sleep(8.0)
+            holder.rollback(); holder.close(); holder = None
+
+            # (4) MÅLINGEN: kvitteringen ankom i tide, og køen er ikke dens
+            #     skyld. Den skal fortsatt avslutte oppdraget.
+            t.join(timeout=30)
+            assert not t.is_alive(), "kvitteringen ble aldri sluppet fri"
+            r = svar["r"]
+            assert r.status_code == 200, (
+                "kvitteringen mistet kapabilitetens frist mens den sto i"
+                f" sakslåskø: {r.status_code} {r.text}")
+            assert r.json()["status"] == "utfort", r.text
+    finally:
+        if holder is not None:
+            holder.rollback(); holder.close()
+        app.tjeneste.pool.lukk()
+
+    _sett_kontekst(migrator, TENANT)
+    status = migrator.execute(
+        "SELECT o.status, u.status FROM oppdrag o JOIN unntak u"
+        "   ON u.tenant=o.tenant AND u.id=o.unntak_id"
+        " WHERE o.tenant=%s AND o.id=%s", (TENANT, opp)).fetchone()
+    migrator.rollback()
+    assert status == ("utfort", "løst"), status
 
 
 @pg
@@ -2201,19 +3634,38 @@ def test_backfill_finner_evidens_paa_produksjonsformet_loggpost(migrator,
                      " maks_auto_forsok_snapshot DROP NOT NULL,"
                      " ALTER COLUMN policy_versjon DROP NOT NULL,"
                      " ALTER COLUMN policy_content_hash DROP NOT NULL")
+    # 041: totalitets-CHECKen krever trioen for policybrudd — pre-006-
+    # tilstanden fixturen gjenskaper er nettopp trio=NULL, så sperren
+    # løftes eksplisitt og settes tilbake nederst, som NOT NULL-ene.
+    migrator.execute(
+        "ALTER TABLE unntak DROP CONSTRAINT unntak_snapshot_komplett")
     migrator.execute("ALTER TABLE unntak DISABLE TRIGGER unntak_laas")
     _sett_kontekst(migrator, TENANT)
     migrator.execute(
         "UPDATE unntak SET maks_auto_forsok_snapshot=NULL, policy_versjon=NULL,"
         " policy_content_hash=NULL WHERE tenant=%s AND id=%s", (TENANT, sak))
+    # 041: unntak har utsatte constraint-triggere (lineage/loggpost) — de må
+    # fyre FØR en ALTER TABLE i samme transaksjon («pending trigger events»),
+    # samme håndgrep som _rydd bruker.
+    migrator.execute("SET CONSTRAINTS ALL IMMEDIATE")
     migrator.execute("ALTER TABLE unntak ENABLE TRIGGER unntak_laas")
     migrator.commit()
 
     res = m37_backfill.backfill(migrator)
-    migrator.execute("ALTER TABLE unntak ALTER COLUMN"
-                     " maks_auto_forsok_snapshot SET NOT NULL,"
-                     " ALTER COLUMN policy_versjon SET NOT NULL,"
-                     " ALTER COLUMN policy_content_hash SET NOT NULL")
+    # 041 gjorde trioen nullable (overtakelsessaker HAR NULL-trio) — å sette
+    # NOT NULL tilbake ville gjeninnført pre-041-skjemaet og felt enhver
+    # senere overtakelsestest. Beviset for at backfillen fylte radene bæres
+    # nå av CHECK-en alene: ADD CONSTRAINT validerer HELE tabellen, så en
+    # policybrudd-rad backfillen hoppet over ville felt nettopp denne linjen.
+    migrator.execute(
+        "ALTER TABLE unntak ADD CONSTRAINT unntak_snapshot_komplett CHECK ("
+        " (sakskilde = 'domeneovertakelse'"
+        "    AND maks_auto_forsok_snapshot IS NULL"
+        "    AND policy_versjon IS NULL AND policy_content_hash IS NULL)"
+        " OR (sakskilde <> 'domeneovertakelse'"
+        "    AND maks_auto_forsok_snapshot IS NOT NULL"
+        "    AND policy_versjon IS NOT NULL"
+        "    AND policy_content_hash IS NOT NULL))")
     migrator.commit()
 
     assert res.fra_evidens >= 1, (

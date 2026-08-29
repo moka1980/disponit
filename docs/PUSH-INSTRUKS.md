@@ -16,7 +16,7 @@
 Endringene i denne pakken (navnebytte til Disponit): `README.md`,
 `docs/STRUKTUR.md`, `docs/RUTINER.md`, `.github/CODEOWNERS` (@moka1980),
 `locales/nb.json`, `locales/en.json`, og `docs/spesifikasjon/` der filen nå
-heter `disponit-prototype-v7.html` (gammel fil slettet).
+heter `disponit-prototype-v9.html` (gammel fil slettet).
 
 I terminal (eller be Claude Code gjøre det ordrett):
 
@@ -51,7 +51,8 @@ Uten dette er CODEOWNERS og CI bare pynt — med dette nekter GitHub feil.
 | Rolle | Tilgang | Slik settes det opp |
 |---|---|---|
 | **Claude Code** | Skrive til brancher, aldri main | Kjøres på din maskin eller Cloud Server S der du er git-innlogget, ELLER: GitHub → Settings → Developer settings → Fine-grained token, kun repo `disponit`, Contents+Pull requests: Read/Write. Legg tokenet i miljøvariabel på serveren — aldri i chat eller i repoet. |
-| **Codex** | Review + merge av PR-er | Koble Codex til GitHub-kontoen din i Codex-innstillingene, gi tilgang kun til `disponit`. Merge-porter håndheves uansett av branch protection. |
+| ~~**Codex**~~ | Fjernet 29/8-26 (RUTINER §10) | Skal ikke konfigureres; koble fra GitHub-kontoen om den fortsatt er tilkoblet. |
+| ~~**Cursor**~~ | Fjernet 29/8-26 (RUTINER §10) | Skal ikke konfigureres; avinstaller GitHub-appen og slett `CURSOR_API_KEY`-secreten. |
 | **ChatGPT** | Kun lese | Repoet er offentlig — gi ChatGPT lenken https://github.com/moka1980/disponit og be om PR-001-review mot `platform/core/policy_validator/` med de tre spørsmålene i `docs/README-arbeidsflyt.md`. |
 | **Claude.ai** | Kun lese (offentlig repo) | Drafter og reviewer via chat; leverer push-klare pakker som denne. |
 

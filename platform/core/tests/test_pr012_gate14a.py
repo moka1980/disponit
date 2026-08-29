@@ -1,9 +1,10 @@
-"""PR-012 gate 14a: avvis på sak med utestående oppdrag/kapabilitet.
+"""PR-012 gate 14a → 043 (Gate 14b): avvis på sak med utestående rader.
 
-Avvis er KUN trygt når HVER relatert rad positivt er trygg (intet, kansellert
-oppdrag, terminal kapabilitet). Én levende rad → `avklaring_kreves` + 409,
-ALDRI `avvist`. P3: gjentatt forsøk (ulike nøkler) mot SAMME utestående
-tilstand gir samme 409 uten ny versjonsøkning eller historikkrad.
+043 endret kontrakten: et levende OPPDRAG løses nå OPP (kansellering med
+fencing) i stedet for 409 — 14a-svaret (`avklaring_kreves` + 409) står
+igjen KUN for levende arbeidskapabiliteter uten oppdrag, og et TERMINALT
+oppdrag er ordinært avvis der hendelsen bærer status ved avvis. Denne
+suiten måler begge kontraktene der de nå gjelder.
 """
 import threading
 
@@ -40,10 +41,10 @@ def _oppdrag(uid, status="opprettet", gen=0, rep_status="aktiv"):
         "'[]'::jsonb,%s,'arbeidskapabilitet') RETURNING id",
         (TEN, rop)).fetchone()[0]
     m.execute(
-        "INSERT INTO oppdrag (tenant,unntak_id,loggpost_id,repair_operation_id,"
+        "INSERT INTO oppdrag (opprinnelse, tenant,unntak_id,loggpost_id,repair_operation_id,"
         "oppdragstype,handling,eiermodul,status,payload_kryptert,key_id,nonce,"
         "utforelsesfrist,evidensfrist,koblingsstatus,beslutning_loggpost_id)"
-        " VALUES (%s,%s,%s,%s,'reparasjon','faktura.bokfor','eier',%s,%s,%s,%s,"
+        " VALUES ('m37_reparasjon',%s,%s,%s,%s,'reparasjon','faktura.bokfor','eier',%s,%s,%s,%s,"
         "now()+interval '1 hour',now()+interval '2 hour','KOBLET',%s)",
         (TEN, uid, lid, rop, status, b"\x00", key_id, b"\x00" * 12, blid))
     m.commit()
@@ -96,7 +97,14 @@ def test_port8_ingen_oppdrag_kapabilitet_insert_uten_sakslas():
                 f"oppdrag/kapabilitet-INSERT utenfor saks-låst vei: {py}"
     # SQL: kun de gjennomgåtte migrasjonsfunksjonene (utsted_arbeidskapabilitet),
     # som kalles etter en claim som holder saks­låsen.
-    sql_tillatt = {"005_m37_behandling.sql", "007_r1_tofase.sql"}
+    # 038: outbox-generaliseringen flyttet oppdrag-INSERT-ene inn i de to
+    # herdede opphavsfunksjonene — migrasjonen er det nye, velsignede
+    # SQL-hjemmet (og python-veiene er nå NULL, se pr008-port 3).
+    sql_tillatt = {"005_m37_behandling.sql", "007_r1_tofase.sql",
+                   "038_outbox_bestilling.sql",
+                   # 056: opprett_frigivelsesoppdrag — tredje herdede
+                   # opphavsvei, samme disiplin som 038s to.
+                   "056_m57_utsending.sql"}
     for sql in (rot / "db" / "migrations").glob("*.sql"):
         if mons.search(sql.read_text(encoding="utf-8")):
             assert sql.name in sql_tillatt, \
@@ -122,17 +130,23 @@ def test_port2_kansellert_oppdrag_avvis_virker(conn):
 
 
 @pg
-def test_port3_levende_oppdrag_gir_409_og_avklaring(conn):
+def test_port3_levende_oppdrag_gir_opplosning(conn):
+    """043: det levende oppdraget kanselleres i samme transaksjon som
+    avvisningen — ingen 409, ingen avklaring."""
     uid = _oppsett(conn)
     bid = _medlem(conn, "op1")
     _oppdrag(uid, "opprettet")
-    sv0 = _saksversjon(conn, uid)
     res = _kall(conn, uid, "avvis", bid, _macreg())
-    assert res["utfall"] == "utestaaende_oppdrag"   # http-koden settes i endepunktet
-    # avklaring_kreves committet, saksversjon økt, saken IKKE avvist.
-    assert _status(conn, uid) != "avvist"
-    assert _saksversjon(conn, uid) == sv0 + 1
-    assert _historikk_teller(conn, uid) == 1
+    assert res["utfall"] == "avvist", res
+    assert _status(conn, uid) == "avvist"
+    assert _historikk_teller(conn, uid) == 0, "oppløsningen flagget avklaring"
+    from db.pg import koble, sett_kontekst
+    m = koble(MIGRATOR_DSN)
+    sett_kontekst(m, TEN, "sys", "r0")
+    rad = m.execute("SELECT status, kansellert_aarsak FROM oppdrag WHERE"
+                    " tenant=%s AND unntak_id=%s", (TEN, uid)).fetchone()
+    m.rollback(); m.close()
+    assert rad == ("kansellert", "menneskelig_avvis")
 
 
 def _kapabilitet(uid, status="utstedt"):
@@ -168,35 +182,102 @@ def test_port6_utestaaende_kapabilitet_uten_oppdrag_gir_409(conn):
 
 
 @pg
-def test_port4_utfort_oppdrag_default_deny_gir_409(conn):
-    """Port 4 (fremtidssikring): whitelisten er default-DENY — KUN `kansellert`
-    er trygt. Et `utfort` oppdrag (sideeffekten har alt skjedd) er nettopp det
-    farligste å avvise, og gir 409. En ekte syntetisk/ukjent status kan ikke
-    settes inn (CHECK-en på oppdrag.status), så egenskapen er STRUKTURELL i
-    formen `status <> 'kansellert'`; `utfort` er den sterkeste observerbare
-    prøven — en status som *ser* ferdig ut, men ikke er trygg å avvise."""
+def test_port4_utfort_oppdrag_ordinart_avvis_med_status(conn):
+    """043 (klarsignal §4, «utenfor kappløpet»): et TERMINALT oppdrag —
+    også `utfort` — er ordinært avvis; hendelsen bærer status ved avvis,
+    så evidensen viser hva mennesket visste. Oppdraget røres aldri."""
     uid = _oppsett(conn)
     bid = _medlem(conn, "op1")
     _oppdrag(uid, "utfort")
     res = _kall(conn, uid, "avvis", bid, _macreg())
-    assert res["utfall"] == "utestaaende_oppdrag"   # http-koden settes i endepunktet
+    assert res["utfall"] == "avvist", res
+    from db.pg import koble, sett_kontekst
+    m = koble(MIGRATOR_DSN)
+    sett_kontekst(m, TEN, "sys", "r0")
+    rad = m.execute("SELECT status, kansellert_aarsak FROM oppdrag WHERE"
+                    " tenant=%s AND unntak_id=%s", (TEN, uid)).fetchone()
+    detalj = m.execute("SELECT detalj FROM unntak_historikk WHERE tenant=%s"
+                       " AND unntak_id=%s AND hendelse='avvist_handling'"
+                       " ORDER BY id DESC LIMIT 1", (TEN, uid)).fetchone()[0]
+    m.rollback(); m.close()
+    assert rad == ("utfort", None), "et terminalt oppdrag ble rørt"
+    assert detalj["oppdrag_status_ved_avvis"][0]["status"] == "utfort"
 
 
 @pg
-def test_port5_baade_kansellert_og_levende_gir_409(conn):
+def test_port5_baade_kansellert_og_levende_gir_opplosning(conn):
+    """043: den levende blant de kansellerte løses opp — de kansellerte
+    står urørt uten årsak (de var ikke menneskets nei)."""
     uid = _oppsett(conn)
     bid = _medlem(conn, "op1")
     _kansellert_oppdrag(uid, gen=0)
-    _oppdrag(uid, "plukket", gen=1)   # én levende blant kansellerte
+    rop = _oppdrag(uid, "plukket", gen=1)   # én levende blant kansellerte
     res = _kall(conn, uid, "avvis", bid, _macreg())
-    assert res["utfall"] == "utestaaende_oppdrag"
+    assert res["utfall"] == "avvist", res
+    from db.pg import koble, sett_kontekst
+    m = koble(MIGRATOR_DSN)
+    sett_kontekst(m, TEN, "sys", "r0")
+    rader = m.execute("SELECT repair_operation_id, status, kansellert_aarsak"
+                      " FROM oppdrag WHERE tenant=%s AND unntak_id=%s"
+                      " ORDER BY id", (TEN, uid)).fetchall()
+    m.rollback(); m.close()
+    for r_rop, st, aarsak in rader:
+        assert st == "kansellert"
+        assert aarsak == ("menneskelig_avvis" if r_rop == rop else None), rader
+
+
+@pg
+def test_port19_terminal_status_overlever_oppløsningen_i_revisjonen(conn):
+    """Codex P2 (runde 2): har saken BÅDE et levende og et alt terminalt
+    oppdrag, ble de terminale radene lest i prescreeningen og så kastet —
+    `avvist_handling` fortalte bare om det som ble kansellert, og statusen
+    mennesket faktisk handlet på forsvant ut av revisjonen.
+
+    MUTASJONEN SOM DREPER DENNE: sett `if terminale and not levende_opp`
+    tilbake, eller la oppløsningsgrenen ERSTATTE `opplosning_detalj` i
+    stedet for å fylle på — begge tar `oppdrag_status_ved_avvis` bort
+    herfra."""
+    uid = _oppsett(conn)
+    bid = _medlem(conn, "op1")
+    # Én AKTIV reparasjon per sak (005): den utførte generasjonen er
+    # `superseded`, den levende er den aktive.
+    _oppdrag(uid, "utfort", gen=0, rep_status="superseded")
+    rop = _oppdrag(uid, "plukket", gen=1)      # levende → løses opp
+    res = _kall(conn, uid, "avvis", bid, _macreg())
+    assert res["utfall"] == "avvist", res
+    from db.pg import koble, sett_kontekst
+    m = koble(MIGRATOR_DSN)
+    sett_kontekst(m, TEN, "sys", "r0")
+    lev_id, ut_id = m.execute(
+        "SELECT max(id) FILTER (WHERE repair_operation_id=%s),"
+        " max(id) FILTER (WHERE repair_operation_id<>%s)"
+        "  FROM oppdrag WHERE tenant=%s AND unntak_id=%s",
+        (rop, rop, TEN, uid)).fetchone()
+    detalj = m.execute("SELECT detalj FROM unntak_historikk WHERE tenant=%s"
+                       " AND unntak_id=%s AND hendelse='avvist_handling'"
+                       " ORDER BY id DESC LIMIT 1", (TEN, uid)).fetchone()[0]
+    statuser = m.execute("SELECT id, status, kansellert_aarsak FROM oppdrag"
+                         " WHERE tenant=%s AND unntak_id=%s ORDER BY id",
+                         (TEN, uid)).fetchall()
+    m.rollback(); m.close()
+    # Oppløsningen står: bare det levende ble kansellert med menneskets årsak.
+    assert (ut_id, "utfort", None) in statuser, statuser
+    assert (lev_id, "kansellert", "menneskelig_avvis") in statuser, statuser
+    # ... og revisjonen bærer BEGGE sporene, ikke bare det kansellerte.
+    assert detalj["opplost"] == [{"oppdrag_id": lev_id,
+                                  "oppdrag_status_ved_avvis": "plukket"}], detalj
+    assert detalj["oppdrag_status_ved_avvis"] == [
+        {"oppdrag_id": ut_id, "status": "utfort"}], detalj
 
 
 @pg
 def test_port9_gjentatt_ulik_noekkel_samme_409_ingen_ny_versjon_eller_historikk(conn):
+    """P3-invarianten (043-formen): 409-veien som står igjen er den levende
+    kapabiliteten uten oppdrag — samme utestående tilstand, samme 409,
+    ingen ny versjonsøkning, ingen ny historikkrad."""
     uid = _oppsett(conn)
     bid = _medlem(conn, "op1")
-    _oppdrag(uid, "opprettet")
+    _kapabilitet(uid, "utstedt")
     r1 = _kall(conn, uid, "avvis", bid, _macreg(), idem=f"a-{uid}")
     assert r1["utfall"] == "utestaaende_oppdrag"
     sv1 = _saksversjon(conn, uid)
@@ -256,7 +337,7 @@ def test_port_endepunkt_avklaring_gir_lukket_409_og_committer(klient, miljo,
     finally:
         c.close()
     bid = _medlem(None, "e2e")               # rolle godkjenner → exceptions:reject
-    _oppdrag(uid, "opprettet")               # én levende oppdrag → utrygt å avvise
+    _kapabilitet(uid, "utstedt")             # levende kapabilitet → 14a-svaret består
     c = _runtime()
     try:
         sv = _saksversjon(c, uid)
@@ -308,10 +389,10 @@ def _claimet_oppdrag_med_kvittering(uid):
         "'[]'::jsonb,%s,'arbeidskapabilitet') RETURNING id",
         (TEN, rop)).fetchone()[0]
     opp = m.execute(
-        "INSERT INTO oppdrag (tenant,unntak_id,loggpost_id,repair_operation_id,"
+        "INSERT INTO oppdrag (opprinnelse, tenant,unntak_id,loggpost_id,repair_operation_id,"
         "oppdragstype,handling,eiermodul,status,payload_kryptert,key_id,nonce,"
         "utforelsesfrist,evidensfrist,koblingsstatus,beslutning_loggpost_id,"
-        "owner_claim_id,owner_generation,owner_lease_utloper) VALUES (%s,%s,%s,"
+        "owner_claim_id,owner_generation,owner_lease_utloper) VALUES ('m37_reparasjon',%s,%s,%s,"
         "%s,'reparasjon','faktura.bokfor','eier:reinns','plukket',%s,%s,%s,"
         "now()+interval '1 hour',now()+interval '2 hour','KOBLET',%s,%s,0,"
         "now()+interval '1 hour') RETURNING id",
@@ -428,16 +509,28 @@ def test_port_full_kvittering_vs_avvis(conn, app, miljo):
     assert _status(conn, uid) == "løst"                  # ALDRI avvist
     assert "avklaring_kreves" not in _hist_hendelser(conn, uid)
 
-    # --- Rekkefølge B: avvis FØRST (409 avklaring), så full kvittering ---
-    uid2 = _sak_venter_utforelse(conn)
+    # --- Rekkefølge B (043): avvis FØRST → OPPLØSNING (kansellert+avvist);
+    # den fulle kvitteringen etterpå møter en brent kapabilitet og kan
+    # ALDRI fullføre — det er selve fencing-beviset.
+    # (043: menneskebehandlingen finnes i `manuell` — venter_utførelse er
+    # M-37s egen kjørefase, der avvis felles av rundevakten som før.)
+    uid2 = _oppsett(conn)
     opp2, jti2, cid2, rop2 = _claimet_oppdrag_med_kvittering(uid2)
     res2 = _kall(conn, uid2, "avvis", bid, _macreg())
-    assert res2["utfall"] == "utestaaende_oppdrag"       # aldri avvist
-    assert _status(conn, uid2) != "avvist"
-    assert _full_kvittering(app, _signert_kvittering(opp2, jti2, cid2, rop2)) == 200
-    assert _status(conn, uid2) == "løst"                 # kvitteringen bevart+fullført
+    assert res2["utfall"] == "avvist", res2
+    assert _status(conn, uid2) == "avvist"
+    assert _full_kvittering(app, _signert_kvittering(opp2, jti2, cid2,
+                                                     rop2)) != 200
+    from db.pg import koble as _koble, sett_kontekst as _sk
+    m2 = _koble(MIGRATOR_DSN)
+    _sk(m2, TEN, "sys", "r0")
+    st2 = m2.execute("SELECT status, kansellert_aarsak FROM oppdrag WHERE"
+                     " tenant=%s AND id=%s", (TEN, opp2)).fetchone()
+    m2.rollback(); m2.close()
+    assert st2 == ("kansellert", "menneskelig_avvis"), \
+        "den sene kvitteringen rørte det kansellerte oppdraget"
     h2 = _hist_hendelser(conn, uid2)
-    assert "avklaring_kreves" in h2 and "kvittering" in h2
+    assert "oppdrag_fencet" in h2 and "oppdrag_kansellert" in h2
 
     # --- Samtidig, deterministisk vindu rundt saks­låsen -----------------
     # En port-conn holder `unntak FOR UPDATE`, så BÅDE avvis-tråden (som tar
@@ -445,7 +538,7 @@ def test_port_full_kvittering_vs_avvis(conn, app, miljo):
     # i kø; når porten slippes, serialiserer PostgreSQL dem. Uansett vinner:
     # saken ender `løst`, aldri `avvist`, uten motsigende historikk.
     from db.pg import koble, sett_kontekst
-    uid3 = _sak_venter_utforelse(conn)
+    uid3 = _oppsett(conn)
     opp3, jti3, cid3, rop3 = _claimet_oppdrag_med_kvittering(uid3)
     sv3 = _saksversjon(conn, uid3)
     port = koble(DSN)
@@ -473,7 +566,14 @@ def test_port_full_kvittering_vs_avvis(conn, app, miljo):
 
     def kvitter_traad():
         klar.wait()
-        s = _full_kvittering(app, _signert_kvittering(opp3, jti3, cid3, rop3))
+        try:
+            s = _full_kvittering(app, _signert_kvittering(opp3, jti3, cid3,
+                                                          rop3))
+        except Exception as e:  # noqa: BLE001 — utfallet ER målingen
+            # 043: taper kvitteringen mot en alt-kansellert/brent vei, kan
+            # sak-lukkingen felles av vaktene — det er et gyldig tap, ikke
+            # en testfeil.
+            s = f"unntak:{type(e).__name__}"
         with laas:
             ut["kvitter"] = s
 
@@ -488,17 +588,30 @@ def test_port_full_kvittering_vs_avvis(conn, app, miljo):
     for t in tr:
         t.join(timeout=30)
     assert not any(t.is_alive() for t in tr), "en tråd henger — kan ikke bevise"
-    assert ut["kvitter"] == 200                          # kvitteringen fullførte
-    # Uansett hvem som vant den serialiserte kritiske seksjonen:
-    #  - avvis flagget avklaring (så et levende oppdrag) ELLER så den bumpede
-    #    versjonen (`saksversjon_utdatert`) — men vant ALDRI avvisningen;
-    #  - saken ender `løst`, ALDRI `avvist`, og kvitteringen er bevart.
-    # En eventuell `avklaring_kreves` er en korrekt observasjon i det øyeblikket
-    # avvis kjørte (oppdraget var da levende), ikke en motsigelse — den endelige
-    # tilstanden er `løst`, aldri «ikke utført».
-    assert ut["avvis"] in ("utestaaende_oppdrag", "feil:saksversjon_utdatert")
-    assert _status(conn, uid3) == "løst"                 # ALDRI avvist; ender løst
-    assert "kvittering" in _hist_hendelser(conn, uid3)   # kvitteringen bevart
+    # 043: NØYAKTIG én vinner, aldri både utført og kansellert (port 6).
+    # Kapabiliteten er den atomiske dommeren; den serialiserte seksjonen
+    # avgjør hvem som brenner først.
+    slutt = _status(conn, uid3)
+    if ut["kvitter"] == 200:
+        # Kvitteringen vant: saken ender løst — avvis-tråden fikk enten den
+        # bumpede versjonen, kappløps-409-en (oppdrag_utfort) eller tapte
+        # på idempotensen.
+        assert slutt == "løst", (slutt, ut)
+        assert ut["avvis"] in ("oppdrag_utfort", "feil:saksversjon_utdatert",
+                               "avvist", None) and slutt == "løst", ut
+        assert ut["avvis"] != "avvist", "både løst og avvist av samme sak"
+        assert "kvittering" in _hist_hendelser(conn, uid3)
+    else:
+        # Avvisen vant: saken ender avvist, oppdraget kansellert, og
+        # kvitteringen kunne aldri fullføre.
+        assert slutt == "avvist", (slutt, ut)
+        assert ut["avvis"] == "avvist", ut
+        m3 = _koble(MIGRATOR_DSN)
+        _sk(m3, TEN, "sys", "r0")
+        st3 = m3.execute("SELECT status FROM oppdrag WHERE tenant=%s AND"
+                         " id=%s", (TEN, opp3)).fetchone()[0]
+        m3.rollback(); m3.close()
+        assert st3 == "kansellert", "avvis vant, men oppdraget lever"
 
 
 @pg
@@ -526,12 +639,40 @@ def test_port_leseapi_skjuler_avvis_ved_utestaaende(klient, miljo, monkeypatch):
     assert "avvis" in r0.json()["tillatte_handlinger"]
     assert "avvis_utilgjengelig" not in r0.json()
 
-    # Med ett levende oppdrag: avvis SKJULT + lukket årsak, eskaler fortsatt lovlig.
+    # 043: med et LEVENDE oppdrag tilbys avvis fortsatt — men DTO-en bærer
+    # `avvis_kansellerer`, så flaten kan varsle konsekvensen (alertdialogen)
+    # FØR klikket. Modul og status er navngitt.
     _oppdrag(uid, "opprettet")
     r1 = klient.get(f"/v1/unntak/{uid}", cookies={sesjonmodul.C_SESJON: cookie})
     assert r1.status_code == 200, r1.text
     body = r1.json()
-    assert "avvis" not in body["tillatte_handlinger"], \
-        "lese-API-et inviterer til en avvis serverkontrakten vet er utilgjengelig"
-    assert body["avvis_utilgjengelig"] == "utestaaende_oppdrag"
+    assert "avvis" in body["tillatte_handlinger"]
+    assert body["avvis_kansellerer"][0]["status"] == "opprettet"
+    assert body["avvis_kansellerer"][0]["modul_id"], body
     assert "eskaler" in body["tillatte_handlinger"]
+
+    # ... mens en levende KAPABILITET uten oppdrag beholder 14a-svaret.
+    c = _runtime()
+    try:
+        uid2 = _oppsett(c)
+    finally:
+        c.close()
+    _kapabilitet(uid2, "utstedt")
+    r2 = klient.get(f"/v1/unntak/{uid2}",
+                    cookies={sesjonmodul.C_SESJON: cookie})
+    assert r2.status_code == 200, r2.text
+    body2 = r2.json()
+    assert "avvis" not in body2["tillatte_handlinger"]
+    assert body2["avvis_utilgjengelig"] == "utestaaende_oppdrag"
+
+    # ... og BEGGE deler samtidig følger POST-vakten, ikke oppdraget: den
+    # blokkerer på kapabiliteten alene, så lesingen må skjule `avvis` her
+    # også. Mutasjonen som prøver oppdragene først (og tilbyr en `avvis`
+    # som alltid gir 409 og kansellerer ingenting) dør på denne.
+    _kapabilitet(uid, "utstedt")          # saken fra r1 har alt et LEVENDE oppdrag
+    r3 = klient.get(f"/v1/unntak/{uid}", cookies={sesjonmodul.C_SESJON: cookie})
+    assert r3.status_code == 200, r3.text
+    body3 = r3.json()
+    assert "avvis" not in body3["tillatte_handlinger"], body3
+    assert body3["avvis_utilgjengelig"] == "utestaaende_oppdrag"
+    assert "avvis_kansellerer" not in body3, body3

@@ -336,7 +336,7 @@ def _evaluer(policy: dict, context: EvaluationContext | None, event: dict,
                         effekt=effekt)
 
     # 2) Modus
-    if h.get("modus", "alltid_stopp") == "alltid_stopp":
+    if h.get("modus", MODUS_UTEN_LOFTBARE_UTFALL) == MODUS_UTEN_LOFTBARE_UTFALL:
         return blokker("regelkonflikt", Grunn("modus_alltid_stopp"))
 
     # 3) Rolle — fra autentisert kontekst, aldri fra event
@@ -567,16 +567,51 @@ def _finn_godkjennbar(policy: dict, grunnkode: str,
     return None, mo
 
 
+#: Grunnkodene `_loft_policy` KAN uttrykke som et løft, og feltet
+#: `godkjennbare`-oppføringen må bære for at løftet skal la seg bygge.
+#:
+#: Dette er ikke en smaksliste — det er motorens UTTRYKKSKRAFT (Codex P1).
+#: En oppføring for en grunnkode som ikke står her, eller uten feltet den
+#: krever, gir `_loft_policy() is None`, altså STOPP ved HVER godkjenning.
+#: Eier så da en konfigurert menneskelig overstyring som aldri kunne virke,
+#: og ingenting sa fra. Innføringskontrakten
+#: (`schema._valider_innforing`) og editorens grunnlagsrute leser HERFRA,
+#: så de tre ikke kan komme fra hverandre.
+#:
+#: Merk at skjemaet i tillegg krever `valuta` sammen med `belop_maks`
+#: (`dependentRequired`): et beløpstak uten valuta er ikke et beløp.
+LOFTBARE_GRUNNKODER: dict[str, str] = {
+    "belop_over_grense": "belop_maks",
+    "valuta_ikke_tillatt": "valuta",
+}
+
+#: Modusen `_evaluer` feller handlingen på i STEG 2 — altså før enhver kontroll
+#: en kode i `LOFTBARE_GRUNNKODER` kan komme fra (beløp er steg 4, valuta steg
+#: 5). En handling med denne modusen gir `modus_alltid_stopp` og aldri noen av
+#: de løftbare kodene, så en `godkjennbare`-oppføring festet på den er
+#: uanvendelig UANSETT grunnkode og verdi — løftet hever en grense
+#: evalueringen aldri rekker fram til (Codex P1).
+#:
+#: Konstanten er delt med innføringskontrakten
+#: (`schema._loftet_flytter_noe`) nettopp fordi det er ETT faktum om motoren,
+#: ikke to. `test_ingen_loftbar_grunnkode_naas_ved_alltid_stopp` er vakten:
+#: flyttes modussjekken bak grensene, ryker den.
+MODUS_UTEN_LOFTBARE_UTFALL = "alltid_stopp"
+
+
 def _loft_policy(policy: dict, handling_id: str, grunnkode: str,
                  entry: dict) -> dict | None:
     """Kopi av policyen der NØYAKTIG den kontrollen som ga `grunnkode` er
     hevet for `handling_id` — resten uendret. None hvis grunnkoden ikke lar
     seg uttrykke som et løft (fail-closed: ingen overstyring).
 
-    Motoren løfter kun det schemaet kan uttrykke (belop_maks / valuta). En
+    Motoren løfter kun det schemaet kan uttrykke (`LOFTBARE_GRUNNKODER`). En
     grunnkode fra en kontroll uten et slikt uttrykk (tidsvindu, frekvens,
     dataklasse) gir None og dermed ingen TILLAT — presis den fail-closed
     oppførselen v8 §2 krever."""
+    felt = LOFTBARE_GRUNNKODER.get(grunnkode)
+    if felt is None or entry.get(felt) is None:
+        return None
     ny = dict(policy)
     handlinger = []
     truffet = False
@@ -585,17 +620,15 @@ def _loft_policy(policy: dict, handling_id: str, grunnkode: str,
             h = copy.deepcopy(h)
             grenser = h.setdefault("grenser", {})
             if grunnkode == "belop_over_grense":
-                if entry.get("belop_maks") is None:
-                    return None
                 grenser["belop_maks"] = entry["belop_maks"]
             elif grunnkode == "valuta_ikke_tillatt":
-                if entry.get("valuta") is None:
-                    return None
                 vs = list(grenser.get("valuta") or [])
                 if entry["valuta"] not in vs:
                     vs.append(entry["valuta"])
                 grenser["valuta"] = vs
             else:
+                # En nøkkel i `LOFTBARE_GRUNNKODER` uten gren her er en feil
+                # under bygging, ikke en policy motoren skal gjette på.
                 return None
             truffet = True
         handlinger.append(h)

@@ -1,0 +1,38 @@
+# 038 §5 (port 23): evidensfrist-reaperen for beslutningsoppdrag.
+#
+# Timeren legger INGEN logikk oppå regelen. Regelen eies av databasen
+# (migrasjon 038): beslutningsoppdrag forbi evidensfristen uten avslutning
+# får en idempotent evidensfrist-sak (`sikre_sak_for_oppdrag`) og settes
+# `feilet` uten kvittering — plattformens «ufullført», som lese-API-et
+# viser som `feil_aarsak: timeout`. M-37-oppdrag røres aldri.
+#
+#
+# 057 §5: samme kjøring tar OGSÅ kandidatdatagrensen
+# (`reap_kandidatdata(int)`) — kundens 30–365-døgnsfrist på de seks
+# kandidatlagrene. Ingen ny enhet: rollen, DSN-en og snittet er de samme,
+# og 057 grantet EXECUTE til nettopp denne rollen. De to reapene har hver
+# sin transaksjon og hvert sitt feilfelt i JSON-linja.
+#
+# Kjøres som drift-timer-rollen (`disponit_domener`, 019-presedensen):
+# den har EXECUTE på nøyaktig `reap_evidensfrister(int)` og
+# `reap_kandidatdata(int)` og ingen bordtilgang — hele autoriteten står i
+# basen, revidérbar på ett sted.
+
+[Unit]
+Description=Disponit evidensfrist-reaper
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+# Se disponit-domenerevalidering.service: `drift` (platform/) og `db`
+# (platform/core/db) er søskenpakker, ikke nøstet — releaseroten alene
+# eksponerer ingen av dem.
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+LoadCredential=DISPONIT_DOMAINS_URL:/etc/disponit/domener/DISPONIT_DOMAINS_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_evidensreaper
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

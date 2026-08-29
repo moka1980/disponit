@@ -13,7 +13,7 @@ from policy_validator.audit import lag_loggpost, sikker_beslutning
 from policy_validator.engine import (
     STOPP, TILLAT, UNNTAK, Decision, EvaluationContext, MinneTellerLager,
     evaluate, parse_belop)
-from policy_validator.schema import valider_policy
+from policy_validator.schema import valider_ny_policy, valider_policy
 
 NAA = datetime(2026, 8, 3, 10, 0, tzinfo=timezone.utc)  # mandag
 CTX = EvaluationContext(tenant_id="t1", aktor_rolle="agent",
@@ -65,6 +65,105 @@ def test_ukjente_felter_avvises(tjeneste):
     assert any("hemmelig_bakdor" in f for f in valider_policy(p))
 
 
+def test_skjemamonstre_bruker_ekte_slutt_ikke_pythons(tjeneste):
+    """🔴 P2: `$` er ikke slutten på strengen i Python — den matcher også rett
+    før en avsluttende linjeskift.
+
+    JSON Schema er ECMA-262, der `$` uten `m`-flagget ER slutten. `jsonschema`
+    kjører mønstrene gjennom `re`, så hele skjemaet arvet lekkasjen: `"1.2.3\\n"`
+    var skjemagyldig. Databasen leser `$` strengt (migrasjon 020–025), så
+    utkastet ble frosset og attestert her og veltet først i `aktiver_policy` —
+    rapportert som `versjon_i_bruk`, altså feil beskjed på et tidspunkt der
+    `meta.versjon` ikke lenger kan rettes.
+
+    Halen rammer ikke bare versjonen: en `handlinger[].id` med linjeskift er
+    like skjemagyldig, og da avviser `les_policyref` referansen som uleselig —
+    evidens uten policyidentitet.
+
+    Kravet står i INNFØRINGSkontrakten — se
+    `test_ekte_slutt_gjelder_framover_ikke_for_aktive`.
+
+    Kontroll: fjern `pattern`-passet i `_valider_innforing`, så blir denne rød
+    ved at feillisten er tom.
+    """
+    for felt, verdi in (("versjon", "1.2.3\n"),
+                        ("policy_id", "tjenestebedrift-no\n")):
+        p = yaml.safe_load(yaml.safe_dump(tjeneste))
+        p["meta"][felt] = verdi
+        assert any(felt in f for f in valider_ny_policy(p)), \
+            f"{felt} med linjeskift slapp gjennom innføringskontrakten"
+    p = yaml.safe_load(yaml.safe_dump(tjeneste))
+    p["handlinger"][0]["id"] += "\n"
+    assert valider_ny_policy(p), "handling-id med linjeskift slapp gjennom"
+
+
+def test_ekte_slutt_gjelder_framover_ikke_for_aktive(tjeneste):
+    """Ankerkravet er FRAMOVERRETTET — lastekontrakten er urørt.
+
+    `hent_aktiv` revaliderer den LAGREDE policyen mot lastekontrakten ved hver
+    eneste forespørsel. En policy med hale i en `handlinger[].id` kan være aktiv
+    i dag: skjemaet slapp den gjennom, og bare `meta.policy_id`/`meta.versjon`
+    hadde en DB-kontroll som fanget den. Strammet vi lastekontrakten, ville den
+    tenanten mistet ALLE policystyrte beslutninger i det utrullingen lander —
+    `PolicyKorrupt`, uten sjanse til å aktivere en rettet versjon. Samme
+    resonnement som verifikator-id-kravet (Codex P1 på #63).
+
+    Kontroll: flytt `pattern`-passet fra `_valider_innforing` inn i `_valider`,
+    så blir denne rød.
+    """
+    p = yaml.safe_load(yaml.safe_dump(tjeneste))
+    p["handlinger"][0]["id"] += "\n"
+    assert valider_policy(p) == [], \
+        "lastekontrakten ble strammet — aktive policyer med hale blir korrupte"
+    assert valider_ny_policy(p), "veien INN skal likevel være stengt"
+
+
+def test_ecma_ankre_rorer_ikke_klasser_og_escaper():
+    """Oversettelsen `^`→`\\A`, `$`→`\\Z` gjelder ANKRE, ikke tegnene.
+
+    Inne i en tegnklasse er `^` negasjon og `$` et vanlig tegn, og `\\$` er en
+    escapet dollar. Blind erstatning ville endret hva mønstrene matcher, ikke
+    bare hvor de er forankret.
+    """
+    from policy_validator.schema import _ecma_ankre, _strengt_monster
+    assert _ecma_ankre(r"^[a-z]+$") == r"\A[a-z]+\Z"
+    assert _ecma_ankre(r"^[^$]+$") == r"\A[^$]+\Z"
+    assert _ecma_ankre(r"^\$\d+$") == r"\A\$\d+\Z"
+    assert _ecma_ankre(r"^[A-Za-z_+-]+$") == r"\A[A-Za-z_+-]+\Z"
+    assert _strengt_monster(r"^[0-9]+$").search("12")
+    assert not _strengt_monster(r"^[0-9]+$").search("12\n")
+
+
+def test_alle_skjemamonstre_kompilerer_etter_ankeroversettelsen():
+    """Oversettelsen kjøres på HVERT mønster i skjemaet, ikke bare de vi husket.
+
+    En `pattern` som ikke lenger kompilerer ville blitt en `intern
+    valideringsfeil` på hver eneste forespørsel — validatoren revalideres per
+    kall — så den skal felles her, ikke i produksjon.
+    """
+    import json
+    from policy_validator.schema import _SKJEMA_STI, _strengt_monster
+    funnet = []
+
+    def gaa(o):
+        if isinstance(o, dict):
+            if isinstance(o.get("pattern"), str):
+                funnet.append(o["pattern"])
+            for v in o.values():
+                gaa(v)
+        elif isinstance(o, list):
+            for v in o:
+                gaa(v)
+
+    gaa(json.loads(_SKJEMA_STI.read_text(encoding="utf-8")))
+    assert funnet, "fant ingen mønstre i skjemaet — gikk letingen i stykker?"
+    for m in funnet:
+        oversatt = _strengt_monster(m)          # kaster om den ikke kompilerer
+        if m.endswith("$"):
+            assert oversatt.pattern.endswith(r"\Z"), \
+                f"{m!r} ble ikke forankret: {oversatt.pattern!r}"
+
+
 def test_tekstlig_frekvens_avvises(tjeneste):
     p = yaml.safe_load(yaml.safe_dump(tjeneste))
     p["handlinger"][3]["grenser"]["frekvens"] = "1 per faktura per 14 dager"
@@ -102,6 +201,39 @@ def test_irreversibel_uten_rammer_avvises(tjeneste):
     del h["grenser"]; del h["vilkaar"]
     h["reversering"] = {"type": "irreversibel"}
     assert any("irreversibel" in f for f in valider_policy(p))
+
+
+def test_irreversibel_auto_med_bare_grenser_avvises(tjeneste):
+    """Grenser alene er ikke nok for en irreversibel handling som kan kjøre
+    automatisk. Replay-vernet henger på attestasjonens jti, og attestasjonen
+    finnes bare fordi et vilkår krever den — uten vilkår er jti-listen tom og
+    handlingen kan spilles av på nytt. Grensene begrenser hver avspilling,
+    ikke antallet.
+
+    MUTASJONEN SOM DREPER DENNE: la regelen godta `grenser or vilkaar`, slik
+    den gjorde før. Da passerer en irreversibel auto-handling uten et eneste
+    vilkår, og ferdigdefinisjonen lover et vern kontrollplanet ikke har.
+    """
+    p = yaml.safe_load(yaml.safe_dump(tjeneste))
+    h = p["handlinger"][0]
+    del h["vilkaar"]
+    h["modus"] = "auto"
+    h["reversering"] = {"type": "irreversibel"}
+    assert h.get("grenser")            # grensene står igjen — og er ikke nok
+    assert any("irreversibel" in f and "vilkår" in f for f in valider_policy(p))
+
+
+def test_irreversibel_alltid_stopp_uten_vilkaar_godtas(tjeneste):
+    """…men `alltid_stopp` trenger ikke vilkåret: handlingen utføres aldri
+    automatisk, så det finnes ingen avspilling å verne mot. Ellers ville
+    regelen tvunget fram et meningsløst vilkår på handlinger som per
+    definisjon alltid går til menneske."""
+    p = yaml.safe_load(yaml.safe_dump(tjeneste))
+    h = p["handlinger"][0]
+    del h["vilkaar"]
+    h["modus"] = "alltid_stopp"
+    h["reversering"] = {"type": "irreversibel"}
+    assert not [f for f in valider_policy(p) if "irreversibel" in f]
 
 
 # ---------- Autentisert kontekst (funn: uautentisert rolle) ---------------
@@ -441,6 +573,11 @@ def test_alle_filkall_har_eksplisitt_utf8():
     # hele tatt — revisjonsloggen skriver ferdig UTF-8-kodede bytes dit med
     # vilje, for å styre skrivingen selv (se audit.skriv).
     raa_fd = re.compile(r"\bos\.(open|write|fdopen)\(")
+    # ZipFile.open gir en binær medlemsstrøm og har heller ingen
+    # encoding-parameter — samme klasse som os.open over. Konvensjonen i
+    # repoet er at zipfile-håndtaket heter `zf`, og carve-outen er bundet
+    # til nettopp det navnet så den ikke blir en generell .open-åpning.
+    zip_stroem = re.compile(r"\bzf\.open\(")
     rot = Path(__file__).resolve().parents[3]
     synder = []
     for fil in (rot / "platform").rglob("*.py"):
@@ -449,7 +586,7 @@ def test_alle_filkall_har_eksplisitt_utf8():
         linjer = fil.read_text(encoding="utf-8").splitlines()
         for nr, linje in enumerate(linjer, 1):
             if not tekstkall.search(linje) or binaer.search(linje) \
-                    or raa_fd.search(linje):
+                    or raa_fd.search(linje) or zip_stroem.search(linje):
                 continue
             # Kallet kan gå over flere linjer, og `encoding=` kan stå på en
             # senere. Se på hele setningen: samle linjer til parentesene går

@@ -62,19 +62,159 @@ GRANT SELECT, INSERT ON unntak_historikk, attestasjon_jti TO {rolle};
 GRANT SELECT, INSERT, UPDATE ON unntak, idempotens TO {rolle};
 GRANT SELECT, INSERT, UPDATE ON tenant_nokler TO {rolle};
 GRANT SELECT ON policyer TO {rolle};
+-- #189: stillingsprofilen — leseflaten går rett på tabellene (RLS-gated);
+-- all skriving eies av domene_eier-døren. Grantes HER (migrator eier
+-- tabellene): inne i en SET LOCAL ROLE-blokk ville GRANT-en feilet på
+-- manglende grant-rett og rullet hele blokken.
+GRANT SELECT ON stillingsprofil, stillingsprofil_krav TO {rolle};
 -- PR-013: policyadministrasjon. Runtime LESER hodet/utkast/runder og SKRIVER
 -- utkast/runder/attestasjoner direkte (RLS-gated), men når ALDRI `policyer`
 -- eller `policy_hode`-pekeren — aktivering går kun via den herdede
 -- `aktiver_policy` (EXECUTE gitt i migrasjon 013).
 GRANT SELECT ON policy_hode TO {rolle};
-GRANT SELECT, INSERT, UPDATE ON policyutkast, aktiveringsrunde, aktiveringsattestasjon TO {rolle};
+GRANT SELECT, INSERT, UPDATE ON policyutkast, aktiveringsattestasjon TO {rolle};
+-- 047: runtime oppdaterer KUN rundens status (utlopt/kansellert i
+-- policyadmin.py) — versjonsbindingen `aktivert_som_versjon` er
+-- hendelsens og settes bare av aktiver_policy (eier-definer). Et
+-- tabellnivå-UPDATE her ville lagt kolonnen åpen igjen ved hvert deploy.
+GRANT SELECT, INSERT ON aktiveringsrunde TO {rolle};
+GRANT UPDATE (status) ON aktiveringsrunde TO {rolle};
+-- 057: M-57s kandidatlagre. Runtime leser og skriver gjennom API-veien
+-- (RLS-gated). INGEN UPDATE — eneste lovlige mutasjon er reap-overgangen,
+-- og den bor i `reap_kandidatdata` (definer). INGEN DELETE noensinne:
+-- kandidatrader reapes (payload til NULL), de slettes aldri som rader.
+-- ANKERET får KUN SELECT (Codex P1): et INSERT på `rekrutteringsprosess`
+-- er en vei utenom `opprett_rekrutteringsprosess`, som er den eneste
+-- veien som binder oppdraget, eiermodulen og fristen sammen ved
+-- fødselen. Radvakten har siden fått en egen INSERT-gren (Cursor P2), og
+-- kommentaren her sa fortsatt «BEFORE UPDATE OR DELETE» — misvisende for
+-- drift (Cursor P3). De to lagene står SAMMEN og med vilje: vakten
+-- gjelder enhver rolle, også claimeren som må ha INSERT for å være
+-- definer, mens denne rettigheten er den som holder runtime helt utenfor.
+-- EXECUTE på de to prosessfunksjonene ligger i M37_RETTIGHETER_API.
+GRANT SELECT ON rekrutteringsprosess TO {rolle};
+GRANT SELECT, INSERT ON kandidat_originaldokument,
+    kandidat_parsettekst, kandidat_evalueringsartefakt,
+    kandidat_intervjusporsmal, kandidat_utsendingsdata,
+    kandidat_avmaskering TO {rolle};
+-- 058: inndata-artefaktet — runtime leser metadata (RLS-gated);
+-- skrivingene går KUN gjennom domene_eier-dørene (EXECUTE i 058).
+GRANT SELECT ON inndata_artefakt TO {rolle};
+-- Varsler: flaten leser og merker som lest; tjenesten oppretter. Senderen
+-- oppdaterer e-poststatus. Ingen DELETE — rydding er en driftsoppgave med
+-- egen rolle, ikke noe forespørselsveien skal kunne gjøre.
+GRANT SELECT, INSERT, UPDATE ON varsel TO {rolle};
+-- Senderfunksjonene er BEVISST utelatt her (Codex P1): de er kryss-tenant,
+-- og web-API-rollen skal ikke kunne enumerere andre tenanters varsler om
+-- forespørselsveien kompromitteres. De tilhører `disponit_varselsender` alene —
+-- se VARSLER_RETTIGHETER. REVOKE fordi eldre kjøringer av dette skriptet
+-- faktisk ga dem: en grant som bare slutter å bli GITT er ikke trukket
+-- tilbake.
+SET LOCAL ROLE disponit_domene_eier;
+REVOKE ALL ON FUNCTION varsel_klaim_epost(int, int) FROM PUBLIC;
+REVOKE ALL ON FUNCTION varsel_sett_epoststatus(bigint, uuid, text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION varsel_rekoe(interval, int, interval) FROM PUBLIC;
+REVOKE ALL ON FUNCTION varsel_klaim_epost(int, int) FROM {rolle};
+REVOKE ALL ON FUNCTION varsel_sett_epoststatus(bigint, uuid, text, text) FROM {rolle};
+REVOKE ALL ON FUNCTION varsel_rekoe(interval, int, interval) FROM {rolle};
+RESET ROLE;
+-- 035: familiehorisont-sveipen er senderens pre-pass og hører til samme
+-- grense — den tar tenanten som parameter og setter DENS RLS-kontekst, så
+-- et grant her ville gitt forespørselsveien et kryss-tenant-vindu.
+SET LOCAL ROLE disponit_modul_eier;
+REVOKE ALL ON FUNCTION varsle_tokenfamilie_utlop(text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION varsle_tokenfamilie_utlop(text) FROM {rolle};
+RESET ROLE;
+-- 056: utsendingsveien er SAMME KLASSE, og verre — den er IRREVERSIBEL
+-- (Cursor P2 på #140). `frigi_utsendelse` og `opprett_frigivelsesoppdrag`
+-- gis KUN til `disponit_varselsender` (VARSLER_RETTIGHETER); web-API-rollen
+-- skal aldri kunne frigi en signert liste. Læren fra varsel-funnet over
+-- gjelder ordrett: en grant som bare slutter å bli GITT er ikke trukket
+-- tilbake — en tidligere kjøring, eller en manuell grant, ville overlevd
+-- alle senere migreringer i stillhet.
+SET LOCAL ROLE disponit_m37_claimer;
+REVOKE ALL ON FUNCTION frigi_utsendelse(TEXT, UUID, TEXT) FROM {rolle};
+REVOKE ALL ON FUNCTION opprett_frigivelsesoppdrag(TEXT, UUID, TEXT, TEXT, TEXT, BYTEA, TEXT, BYTEA, TIMESTAMPTZ, TIMESTAMPTZ) FROM {rolle};
+RESET ROLE;
+GRANT SELECT, INSERT, UPDATE ON varselvalg TO {rolle};
 -- PR-014a: modulregisteret. Runtime LESER det (default-deny, GRANT-modell §4) —
 -- INGEN INSERT/UPDATE/DELETE på registertabellene. Alle skriv går via de herdede
 -- overgangsfunksjonene (CP2), som `aktiver_policy`. En direkte skriving fra
 -- runtime skal gi `permission denied` (Codex-port 17).
 GRANT SELECT ON modulkontrakt, modulhode, modulrelease, moduldeployment,
     oppdragstype_register, modulregister_hendelse TO {rolle};
+-- 049: akseptflaten. Codex' P1 på PR #117 (runde 14): dette var ett
+-- ufiltrert `GRANT SELECT` på `moduldrill`, `modulaksept` og
+-- `modulaksept_punkt` — evidenstabeller som bærer tenantidentifikatorer,
+-- oppdrags-IDer, artefakt-UUIDer, aktører og evidensreferanser, og som
+-- den gang sto UTEN RLS. Nabotabellen `artefakt` er tenant-filtrert;
+-- disse var det ikke, så en kjøretidsrolle utenfor sin egen
+-- tenantkontekst — eller en kompromittert sådan — leste hver eneste
+-- tenants driftsbevis. Fullmakten er trukket tilbake (nullstillingen
+-- over REVOKEr den også på baser som fikk den av en tidligere kjøring),
+-- og 049 setter tenantpolicyene på radene i tillegg.
+--
+-- Det statusetiketten faktisk trenger — at (modul, miljø, release) er
+-- akseptert mot et krav, når, og hvilken drill den hviler på — står i
+-- den sanerte visningen `modulaksept_status`, som ikke bærer en eneste
+-- tenantidentifikator. Bevisradene leses av eier- og driftsveien.
+GRANT SELECT ON modulaksept_status, akseptkrav_punkt TO {rolle};
 GRANT SELECT ON domenekontroll, artefakt, artefakttype_register TO {rolle};
+-- PR-014c: skjemavalidering ved opplasting/promotering og aktiveringsporten
+-- for `ekstern_lesing` leses i API-prosessen. Runtime skriver aldri.
+GRANT SELECT ON artefaktskjema, malautorisasjonsvilkar TO {rolle};
+-- 038 §6.1: idempotensregisteret for bestillinger. Kun SELECT+INSERT
+-- — radene er immutable (trigger avviser UPDATE og DELETE), og et
+-- grant her ville bare skjult at triggeren er porten.
+GRANT SELECT, INSERT ON bestilling_idempotens TO {rolle};
+-- 017/035: artefaktkapabiliteten. Funksjonene eies av `disponit_domene_eier`
+-- (SECURITY DEFINER-veien inn i kapabilitetstabellen), så grantene MÅ gis
+-- som eieren — som migrator blir de en stille WARNING, samme felle som
+-- M37_RETTIGHETER under. 035 gir begge et haleargument for deploymenten og
+-- DROPper de gamle formene; signaturene her må derfor følge 035 eksakt.
+SET LOCAL ROLE disponit_domene_eier;
+GRANT EXECUTE ON FUNCTION utsted_artefaktkapabilitet(TEXT, BIGINT, TEXT, TEXT, INT, TEXT, BIGINT, TEXT, TEXT, INT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION innlos_artefaktkapabilitet(TEXT, TEXT, TEXT, TEXT) TO {rolle};
+-- 043: valideringen UTEN bevaring — den sene kvitteringsveien må kunne
+-- avvise et fremmed/feil-hashet artefakt også når artefaktet IKKE skal
+-- bevares (`direkte`-reversibilitet: resultatet forkastes, artefaktet
+-- ryddes). Samme eier som resten av artefaktveien, derfor samme blokk.
+GRANT EXECUTE ON FUNCTION verifiser_artefaktbinding(UUID, TEXT, BIGINT, TEXT) TO {rolle};
+-- 058: inndata-artefaktet (#162) — samme eier, derfor samme blokk. Codex P1:
+-- migrasjonen gir EXECUTE til `disponit` HARDKODET, som 017 gjør. På en
+-- installasjon som kaller dette skriptet med en annen runtime-rolle sto den
+-- rollen dermed uten EXECUTE — SELECT-en over var alt den fikk — og både
+-- reservasjonen og opplastingen svarte `permission denied`. Kjøreren er
+-- autoritativ for runtimerollens rettigheter (Cursor P1 på #140); en
+-- migrasjons grants overlever heller ikke en gjenoppbygging av skjemaet
+-- uten radene her. `bind_inndata` hører med: bestillingsveien kaller den i
+-- sin egen transaksjon, altså som runtimerollen.
+GRANT EXECUTE ON FUNCTION reserver_inndata(TEXT, TEXT, TEXT, BIGINT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION registrer_inndata_lastet(TEXT, TEXT, BIGINT, TEXT, TEXT, BYTEA) TO {rolle};
+GRANT EXECUTE ON FUNCTION bind_inndata(TEXT, UUID, BIGINT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION opprett_stillingsprofil_versjon(TEXT, UUID, TEXT, TEXT, JSONB, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION hent_inndata_for_oppdrag(BIGINT, TEXT, TEXT, TEXT, TEXT) TO {rolle};
+RESET ROLE;
+-- 035: modul-onboarding og modultokener. Hele denne veien er
+-- SECURITY DEFINER-funksjoner eid av `disponit_modul_eier`; runtime har
+-- verken lesing eller skriving på tabellene bak dem. `verifiser_modultoken`
+-- er selve autentiseringen av et modultoken, så uten EXECUTE her svarer
+-- API-et `permission denied` på hver eneste modulforespørsel.
+SET LOCAL ROLE disponit_modul_eier;
+GRANT EXECUTE ON FUNCTION utsted_onboarding_hemmelighet(TEXT, TEXT, TEXT, UUID, TEXT, INT, INT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION innlos_onboarding(UUID, TEXT, UUID, TEXT, INT, TEXT, UUID) TO {rolle};
+GRANT EXECUTE ON FUNCTION verifiser_modultoken(TEXT) TO {rolle};
+-- Revalideringen ved innløsning av en kapabilitet: uten EXECUTE her ville
+-- hver kvittering og hver artefaktopplasting fra et modultoken svart
+-- `permission denied`.
+GRANT EXECUTE ON FUNCTION modultoken_fortsatt_autorisert(UUID, TEXT, TEXT, TEXT, BIGINT) TO {rolle};
+GRANT EXECUTE ON FUNCTION roter_modultoken(UUID, UUID, TEXT, INT, TEXT, UUID) TO {rolle};
+GRANT EXECUTE ON FUNCTION tilbakekall_modultoken(UUID, TEXT, TEXT) TO {rolle};
+-- ... og INGEN direkte tabelltilgang (klarsignalet §3). Tabellene eies av
+-- modul_eier, så `NULLSTILL_TABELLER` (som bare rører migrators egne
+-- tabeller) når dem ikke; REVOKE-en må stå her, som eieren.
+REVOKE ALL ON modul_onboarding, modultoken, modultoken_hendelse FROM {rolle};
+RESET ROLE;
 -- PR-006: outbox-protokollen. `oppdrag` og `reparasjonsoperasjoner` er
 -- append+status som `unntak` — INSERT og status-UPDATE, aldri DELETE.
 -- `arbeidskapabiliteter` står bevisst IKKE her: den eies av
@@ -82,7 +222,17 @@ GRANT SELECT ON domenekontroll, artefakt, artefakttype_register TO {rolle};
 -- Et bordgrant der ville gjort hele kapabilitetsmodellen til pynt —
 -- runtime kunne satt `status='brukt'` selv, eller utstedt seg en
 -- kapabilitet til en handling saken aldri ble klassifisert for.
-GRANT SELECT, INSERT, UPDATE ON oppdrag, reparasjonsoperasjoner TO {rolle};
+-- 038 (port 7): INSERT på oppdrag er trukket — begge opphavsveiene
+-- går gjennom hver sin herdede funksjon (opprett_reparasjonsoppdrag /
+-- opprett_beslutningsoppdrag), som setter `opprinnelse` selv.
+GRANT SELECT, UPDATE ON oppdrag TO {rolle};
+-- 056: utsendingskjeden — flaten leser lister/signaturer/frigivelser;
+-- skriving går KUN gjennom kjedefunksjonene (eid av m37_claimer, EXECUTE
+-- i M37_RETTIGHETER_API/VARSLER_RETTIGHETER). Kjøreren er autoritativ:
+-- uten radene her overlever ikke migrasjonens grants neste kjøring
+-- (Cursor P1 på #140).
+GRANT SELECT ON utsendingsliste, utsendingssignatur, utsendingsfrigivelse TO {rolle};
+GRANT SELECT, INSERT, UPDATE ON reparasjonsoperasjoner TO {rolle};
 GRANT SELECT ON verifikasjonsgenerasjon, verifikasjonsbevis, utforelsesklasser TO {rolle};
 GRANT SELECT ON verifikasjonskonflikt TO {rolle};
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {rolle};
@@ -139,15 +289,102 @@ GRANT EXECUTE ON FUNCTION reserver_kapabilitet(TEXT, TEXT, INT) TO {rolle};
 GRANT EXECUTE ON FUNCTION bruk_kapabilitet(TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION frigi_hengende_kapabiliteter() TO {rolle};
 GRANT EXECUTE ON FUNCTION claim_neste_oppdrag(TEXT, TEXT[], TEXT, INT, TEXT, TEXT, BIGINT) TO {rolle};
+-- 063 (#165): fornyelsesveien — heartbeat er et claim-livssyklussteg og
+-- kalles av API-et som runtimerollen, som claim selv.
+GRANT EXECUTE ON FUNCTION forny_oppdragslease(BIGINT, TEXT, TEXT, INT, INT) TO {rolle};
 -- PR-007: tofaseprotokollen.
 GRANT EXECUTE ON FUNCTION registrer_verifikasjonsbevis(BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT, INT, INT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION start_verifikasjonsgenerasjon(TEXT, BIGINT, TEXT, INT, JSONB, TEXT, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION knytt_verifikasjonsoppdrag(TEXT, BIGINT, TEXT, INT, BIGINT) TO {rolle};
-GRANT EXECUTE ON FUNCTION utsted_kvitteringskapabilitet(BIGINT, TEXT, INT, TEXT) TO {rolle};
-GRANT EXECUTE ON FUNCTION innlos_kvitteringskapabilitet(TEXT, TEXT) TO {rolle};
+-- 035: begge fikk haleargumenter for DEPLOYMENTEN (miljø + release).
+-- Signaturen her MÅ følge migrasjonen — 035 dropper de gamle formene, og
+-- en GRANT mot en signatur som ikke finnes er en hard feil, ikke en
+-- advarsel.
+GRANT EXECUTE ON FUNCTION utsted_kvitteringskapabilitet(BIGINT, TEXT, INT, TEXT, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION innlos_kvitteringskapabilitet(TEXT, TEXT, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION bruk_kvitteringskapabilitet(TEXT, TEXT) TO {rolle};
+-- 066 (#159): LESEVEIEN hører til DEN DELTE blokken, ikke til API-blokken
+-- (Cursor P2, runde 5 på #247). Oppslaget som gjør «auditert» til en
+-- egenskap ved basen skjer i `kjor_bunt` — og den kjører i arbeideren
+-- (`disponit-m57.service`), som får DENNE blokken og ikke API-ens. Sto
+-- `les_revisjonshendelse` bare i `M37_RETTIGHETER_API`, var utfallet etter
+-- migrering enten `permission denied` på avskruingsveien, eller — verre —
+-- en usikker dict båret fra API til arbeider, altså tilbake til
+-- selvattesten hele #159 finnes for å fjerne.
+-- SKRIVEVEIEN følger IKKE med hit: hendelsen skrives av innloggede
+-- mennesker gjennom API-et, aldri av en bakgrunnsarbeider. Samme
+-- selektivitet som 043 gjorde for oppløsningsveien, bare motsatt vei.
+GRANT EXECUTE ON FUNCTION les_revisjonshendelse(TEXT, UUID) TO {rolle};
 -- `arkiver_policyversjon` gis IKKE til runtime. Arkivering er en
 -- administrativ operasjon, ikke noe forespørselsveien skal kunne utløse.
+"""
+
+# 043 (Gate 14b): oppløsningsveien. EGEN blokk fordi den KUN gjelder
+# runtime-rollen — M37_RETTIGHETER over kjøres også for `disponit_arbeider`,
+# og arbeideren har ingenting med et menneskelig nei å gjøre. Samme
+# selektivitet som 038 gjorde for `opprett_beslutningsoppdrag`: autoriteten
+# gis der veien faktisk går, ikke der blokken tilfeldigvis bor.
+#
+# Migrasjon 043 grantet disse til rollenavnet `disponit` direkte. Det
+# fungerer lokalt og i test (der runtime HETER disponit), men denne kjøreren
+# tar runtime-rollens navn som argument — og på en installasjon med et annet
+# navn ville migrasjonens grant enten truffet feil rolle eller feilet på en
+# rolle som ikke finnes. Den parameteriserte blokken er den autoritative;
+# migrasjonens egen grant er betinget av at rollen finnes.
+M37_RETTIGHETER_API = """
+SET LOCAL ROLE disponit_m37_claimer;
+-- Treargsformen: samme atomiske kappløpsport som kvitteringsveien, med
+-- utfallet `avvist` (oppløsningen) og `sen_evidens` (sen kvittering på et
+-- kansellert oppdrag).
+GRANT EXECUTE ON FUNCTION bruk_kvitteringskapabilitet(TEXT, TEXT, TEXT) TO {rolle};
+-- Reversibiliteten fra modulkontrakten — lesejobben sen-kvitteringsveien
+-- utleder kompensasjons-/irreversibilitetssaken av.
+GRANT EXECUTE ON FUNCTION reversibilitet_for_oppdrag(TEXT, BIGINT) TO {rolle};
+-- Selve oppløsningen: kalles av avvis-veien i unntaksbehandlingen, som er
+-- scope-gatet (`exceptions:handle`) i app-laget og tenantbundet i
+-- funksjonen selv.
+--
+-- EXECUTE er ikke kanselleringsautoritet (Codex P1, runde 8). Scopeporten
+-- og saksversjonen bor i app-laget; en runtime-spørring som omgår dem har
+-- fortsatt denne granten. Derfor krever funksjonen SELV en attestert
+-- avvisning: en `avvis`-rad i `menneskelig_attestasjon` på saken, av
+-- kalleren, skrevet i SAMME transaksjon (043 §7). Beviset er den samme
+-- append-only raden `behandle_unntakshandling` skriver rett før kallet, så
+-- den lovlige veien merker ingenting — og en direkte kaller får
+-- `insufficient_privilege` i stedet for et fencet og kansellert oppdrag.
+--
+-- ... og raden må være AUTORISERT, ikke bare tilstede (Codex P1, runde 9).
+-- Runtime har INSERT på attestasjonstabellen — en port kalleren selv kan
+-- fylle er ingen port. Funksjonen krever derfor at attestasjonen navngir et
+-- AKTIVT medlemskap i tenanten, med medlemskapets gjeldende
+-- `authz_version`, en rolle brukeren faktisk har, og et rollesett som bærer
+-- `exceptions:reject` (043 §6b). `brukermedlemskap` er den ene
+-- autorisasjonsinngangen runtime IKKE kan skrive (010: OIDC-forvaltet, kun
+-- SELECT herfra), så granten under gir ikke lenger rett til å kansellere på
+-- vegne av hvem som helst — bare til å utføre et nei et navngitt,
+-- avvisningsberettiget menneske har sagt.
+GRANT EXECUTE ON FUNCTION avvis_med_opplosning(TEXT, BIGINT, BIGINT[], TEXT, TEXT) TO {rolle};
+-- 056: M-57s API-veier — listen opprettes og signeres av innloggede
+-- MENNESKER gjennom API-et (runtime alene; utsendingsveien — frigivelse
+-- og frigivelsesoppdrag — bor hos varsleren, se VARSLER_RETTIGHETER).
+GRANT EXECUTE ON FUNCTION opprett_utsendingsliste(TEXT, UUID, UUID, BIGINT, TEXT, TEXT, TEXT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION signer_utsendingsliste(TEXT, UUID, TEXT, TEXT) TO {rolle};
+-- 057: kandidatprosessens to herdede veier. Migrasjonen navngir ikke
+-- runtime-rollen i det hele tatt lenger (Cursor P2, samme form som 056):
+-- denne blokken er ENESTE rettighetskilde. Uten den får en installasjon
+-- `permission denied` på prosessfødselen og på lukkingen (som starter
+-- slettefristen) etter migrering. Reaperen står bevisst IKKE her: den er
+-- kryss-tenant og hører til timerrollen (038-formen, betinget DO-blokk i
+-- migrasjonen).
+GRANT EXECUTE ON FUNCTION opprett_rekrutteringsprosess(TEXT, BIGINT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION lukk_rekrutteringsprosess(TEXT, UUID, TIMESTAMPTZ) TO {rolle};
+-- 066 (#159): revisjonshendelsens SKRIVEVEI — runtime alene. Det er API-et
+-- innloggede mennesker skriver hendelsen gjennom; en bakgrunnsarbeider har
+-- ingenting med å føre den. Leseveien står i den DELTE blokken over, fordi
+-- oppslaget skjer i arbeideren (se kommentaren der).
+-- Migrasjonens egen grant er betinget av at rollen HETER `disponit`; denne
+-- er den autoritative for den konfigurerte rollen.
+GRANT EXECUTE ON FUNCTION skriv_revisjonshendelse(TEXT, TEXT, TEXT, TEXT, TEXT) TO {rolle};
 """
 
 # Token-administrasjonen er en EGEN rolle som eier ingenting (korreksjon 2).
@@ -168,10 +405,103 @@ GRANT SELECT, INSERT ON unntak_historikk, attestasjon_jti TO {rolle};
 GRANT SELECT, INSERT, UPDATE ON unntak, idempotens TO {rolle};
 GRANT SELECT, INSERT, UPDATE ON tenant_nokler TO {rolle};
 GRANT SELECT ON policyer TO {rolle};
-GRANT SELECT, INSERT, UPDATE ON oppdrag, reparasjonsoperasjoner TO {rolle};
+-- 038 (port 7): INSERT på oppdrag er trukket — begge opphavsveiene
+-- går gjennom hver sin herdede funksjon (opprett_reparasjonsoppdrag /
+-- opprett_beslutningsoppdrag), som setter `opprinnelse` selv.
+GRANT SELECT, UPDATE ON oppdrag TO {rolle};
+
+GRANT SELECT, INSERT, UPDATE ON reparasjonsoperasjoner TO {rolle};
 GRANT SELECT ON verifikasjonsgenerasjon, verifikasjonsbevis, utforelsesklasser TO {rolle};
 GRANT SELECT ON verifikasjonskonflikt TO {rolle};
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {rolle};
+"""
+
+# Senderfunksjonene eies av `disponit_domene_eier` (kryss-tenant, BYPASSRLS),
+# og migrator er medlem `WITH INHERIT FALSE` — uten SET LOCAL ROLE blir hver
+# GRANT en STILLE WARNING («no privileges were granted») og rollen står uten
+# noe som helst. Nøyaktig samme felle og samme løsning som M37_RETTIGHETER
+# over; skjemagranten må derimot gis som migrator, som eier skjemaet.
+VARSLER_RETTIGHETER = """
+GRANT USAGE ON SCHEMA public TO {rolle};
+SET LOCAL ROLE disponit_domene_eier;
+GRANT EXECUTE ON FUNCTION varsel_klaim_epost(int, int) TO {rolle};
+GRANT EXECUTE ON FUNCTION varsel_sett_epoststatus(bigint, uuid, text, text) TO {rolle};
+GRANT EXECUTE ON FUNCTION varsel_rekoe(interval, int, interval) TO {rolle};
+RESET ROLE;
+-- 035: familiehorisont-sveipen (senderens pre-pass). Eies av en ANNEN rolle
+-- enn de tre over, derfor sin egen SET LOCAL ROLE.
+SET LOCAL ROLE disponit_modul_eier;
+GRANT EXECUTE ON FUNCTION varsle_tokenfamilie_utlop(text) TO {rolle};
+RESET ROLE;
+-- 056: utsendingsveien — det er SENDEREN som konsumerer signerte lister:
+-- frigivelse per mottaker og frigivelsesoppdraget (tredje opphavsvei).
+SET LOCAL ROLE disponit_m37_claimer;
+GRANT EXECUTE ON FUNCTION frigi_utsendelse(TEXT, UUID, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION opprett_frigivelsesoppdrag(TEXT, UUID, TEXT, TEXT, TEXT, BYTEA, TEXT, BYTEA, TIMESTAMPTZ, TIMESTAMPTZ) TO {rolle};
+RESET ROLE;
+"""
+
+PLAN_RETTIGHETER = """
+GRANT USAGE ON SCHEMA public TO {rolle};
+-- 048 (#108): plan-arbeiderens rolle — varselsender-modellen. Rollen
+-- kjører HELE bestillingsveien in-prosess (044-avviket, ratifisert), så
+-- den trenger runtime-DELMENGDEN bestillingsveien faktisk bruker — og
+-- claim-funksjonene runtime nettopp mistet. IKKE: saker, varsel-sending,
+-- policy-skriving, tokener, domener (negativ port 3 måler).
+GRANT SELECT ON migrasjoner TO {rolle};
+GRANT SELECT, INSERT ON revisjonslogg, frekvens_hendelser TO {rolle};
+GRANT SELECT, INSERT ON unntak_historikk, attestasjon_jti TO {rolle};
+-- SAKER: SELECT + INSERT, ALDRI UPDATE (Codex P1). Bestillingsveien
+-- SKRIVER en ny `unntak`-rad (`kjerne._skriv_unntak`) og LESER egne
+-- rader; den rører aldri en eksisterende sak. En tabell-UPDATE ville
+-- gått UTENOM saksbehandlingsfunksjonene: en kompromittert
+-- plan-credential kunne satt tenantkontekst, enumerert tenantens saker
+-- og selv gjort triggergyldige overganger (f.eks. `ny → manuell`) og
+-- dermed tatt saker ut av automatisk behandling — uten claim, uten
+-- kapabilitet og uten menneskelig autorisasjon. Det er nøyaktig
+-- «IKKE: saker»-grensen over.
+GRANT SELECT, INSERT ON unntak TO {rolle};
+GRANT SELECT, INSERT, UPDATE ON idempotens TO {rolle};
+-- TENANTNØKLER: SELECT + INSERT, ALDRI UPDATE (Codex P1).
+-- `hent_eller_opprett_aktiv_dek` leser den aktive DEK-en og oppretter
+-- den ved første behov — det er hele behovet. UPDATE er
+-- DESTRUKSJONSveien (`kryptering.destruer`: wrapped_dek = NULL,
+-- destruert_ts = now(), aktiv = false), og den overgangen er gyldig for
+-- enhver rad som er synlig under en valgt tenantkontekst. En
+-- kompromittert plan-credential kunne dermed crypto-shreddet en tenants
+-- nøkler og gjort alle dens krypterte saker permanent uleselige.
+-- Arbeideren verken roterer eller destruerer nøkler.
+GRANT SELECT, INSERT ON tenant_nokler TO {rolle};
+GRANT SELECT, INSERT ON bestilling_idempotens TO {rolle};
+GRANT SELECT ON policyer, policy_hode TO {rolle};
+GRANT SELECT ON oppdrag TO {rolle};
+GRANT SELECT ON domenekontroll TO {rolle};
+GRANT SELECT ON oppdragstype_register, modulkontrakt, modulhode,
+                moduldeployment, modulregister_hendelse TO {rolle};
+GRANT SELECT ON malautorisasjonsvilkar TO {rolle};
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {rolle};
+-- Plan-familiens definere (claimer-eide) — nøyaktig kallsettet fra
+-- plan/materialiser.py + plan/klassifiser.py + utfor_bestilling-stien;
+-- den statiske porten i test_claim_tillitsgrense måler at settet her og
+-- kallsettet er samme mengde, så listen ikke kan drifte.
+SET LOCAL ROLE disponit_m37_claimer;
+GRANT EXECUTE ON FUNCTION claim_planvindu(TEXT, UUID, TIMESTAMPTZ, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION terminaliser_planvindu(TEXT, UUID, TIMESTAMPTZ, UUID, TEXT, TEXT, BIGINT, JSONB) TO {rolle};
+GRANT EXECUTE ON FUNCTION frigi_planvindu(TEXT, UUID, TIMESTAMPTZ, UUID) TO {rolle};
+GRANT EXECUTE ON FUNCTION forfalte_planvinduer(INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION utlopte_planvinduer(INT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION planvinduer_til_klassifisering(INT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION plan_nedetid_kandidater(INT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION plan_nedetid_aggregert(TEXT, UUID, TIMESTAMPTZ, TIMESTAMPTZ, INT, TEXT, TEXT, BOOLEAN) TO {rolle};
+GRANT EXECUTE ON FUNCTION pause_plan(TEXT, UUID, TEXT, TEXT, TEXT, JSONB) TO {rolle};
+GRANT EXECUTE ON FUNCTION planer_med_menneskelig_avvis() TO {rolle};
+GRANT EXECUTE ON FUNCTION planer_gjentatt_uten_resultat() TO {rolle};
+GRANT EXECUTE ON FUNCTION planer_med_gjentatt_brudd() TO {rolle};
+GRANT EXECUTE ON FUNCTION planer_med_ubehandlet_stopp() TO {rolle};
+GRANT EXECUTE ON FUNCTION pause_gjentatt_uten_resultat(TEXT, UUID, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION varsle_plan_brudd(TEXT, UUID, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION opprett_beslutningsoppdrag(TEXT, BIGINT, TEXT, TEXT, TEXT, BYTEA, TEXT, BYTEA, TIMESTAMPTZ, TIMESTAMPTZ) TO {rolle};
+RESET ROLE;
 """
 
 TOKEN_ADMIN_RETTIGHETER = """
@@ -269,6 +599,9 @@ def main(argv: list[str] | None = None) -> int:
         conn.commit()
         conn.execute(M37_RETTIGHETER.format(rolle=rolle))
         conn.commit()      # avslutter SET LOCAL ROLE
+        # 043: oppløsningsveien — runtime ALENE (se blokken).
+        conn.execute(M37_RETTIGHETER_API.format(rolle=rolle))
+        conn.commit()
         # PR-013: policy_eier sitt skrivegrant på `policyer`/`policy_hode` bor
         # i migrasjon 013 sammen med funksjonen — der overlever det enhver
         # skjemagjenoppbygging (også testenes _nullstill + re-migrer), ikke
@@ -306,6 +639,34 @@ def main(argv: list[str] | None = None) -> int:
         else:
             conn.rollback()
             print(f"hopper over {arbeider}: rollen finnes ikke"
+                  " (opprettes av oppsett-postgresql.sh)")
+        # Varselsenderens rolle — betinget som de andre, av samme grunn.
+        # KUN de tre funksjonene: SECURITY DEFINER gjør tabellgrants
+        # unødvendige, og fraværet av dem ER poenget med rollen (Codex P1:
+        # et kompromittert web-API skal ikke ha senderens kryss-tenant-vindu).
+        varsler = "disponit_varselsender"
+        if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
+                        (varsler,)).fetchone():
+            conn.execute(VARSLER_RETTIGHETER.format(rolle=varsler))
+            conn.commit()
+            print(f"rettigheter satt for {varsler}")
+        else:
+            conn.rollback()
+            print(f"hopper over {varsler}: rollen finnes ikke"
+                  " (opprettes av oppsett-postgresql.sh)")
+        # 048 (#108): plan-arbeiderens rolle — betinget som de andre.
+        # Rollen bærer bestillingsveiens delmengde + claim-funksjonene
+        # runtime mistet; se PLAN_RETTIGHETER for grensen og porten.
+        planarb = "disponit_plan_arbeider"
+        if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
+                        (planarb,)).fetchone():
+            conn.execute(NULLSTILL_TABELLER.format(rolle=planarb))
+            conn.execute(PLAN_RETTIGHETER.format(rolle=planarb))
+            conn.commit()
+            print(f"rettigheter satt for {planarb}")
+        else:
+            conn.rollback()
+            print(f"hopper over {planarb}: rollen finnes ikke"
                   " (opprettes av oppsett-postgresql.sh)")
         # Sluttkontroll. En advarsel med exit 0 er ingen port: klarer vi
         # ikke å bevise at historikken er låst, skal oppsettet feile.

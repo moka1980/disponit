@@ -340,3 +340,52 @@ def test_oppsettskriptet_setter_rettigheter_etter_migrasjonene():
     assert "GRANT SELECT, INSERT ON revisjonslogg" not in skript, (
         "rettighetene settes fortsatt i skriptet — de hører i migrer.py, "
         "etter migrasjonene")
+
+
+def test_plan_timeren_stoppes_rundt_048_revoken():
+    """048 (#108), Codex P1: migrasjon 048 REVOKER claim/terminaliser/
+    frigi_planvindu fra runtime-rollen. På en vert som alt har rullet ut,
+    kjører `disponit-plan.timer` hvert 5. minutt med credentialen fra
+    forrige opp.sh — altså runtime-DSN-en. Kjørte oppsettskriptet
+    migrasjonen med timeren levende, feilet HVER planaktivering på
+    `claim_planvindu` helt til opp.sh skrev om credentialen. Planvinduer
+    hentes aldri inn igjen (SKIP-semantikken er bevisst), så det gapet
+    skriver bort kontroller PERMANENT — også når de to kommandoene kjøres
+    etter hverandre slik rutinen sier.
+
+    Revoken og credential-byttet hører derfor til samme operasjon.
+    Rekkefølgen er en egenskap ved skriptet, ikke ved biblioteket, og
+    låses her: stopp FØR migrer.py, credential-bytte og start ETTER.
+    Testen trenger ingen bash og kjører derfor overalt."""
+    rot = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))))
+    with open(rot + "/deploy/staging/oppsett-postgresql.sh",
+              encoding="utf-8") as f:
+        linjer = f.read().splitlines()
+
+    def forste(nal):
+        for nr, l in enumerate(linjer):
+            if nal in l and not l.strip().startswith("#"):
+                return nr
+        return None
+
+    stopp = forste("systemctl stop disponit-plan.timer")
+    migrasjon = forste("migrer.py")
+    cred = forste("/etc/disponit/plan/DISPONIT_DATABASE_URL")
+    start = forste("systemctl start disponit-plan.timer")
+
+    assert stopp is not None, (
+        "oppsettskriptet stopper ikke disponit-plan.timer — 048-revoken "
+        "kjører da mens arbeideren fortsatt autentiserer som `disponit`")
+    assert migrasjon is not None, "skriptet kaller ikke migrasjonskjøreren"
+    assert stopp < migrasjon, (
+        f"disponit-plan.timer stoppes (linje {stopp + 1}) etter at "
+        f"migrer.py har kjørt (linje {migrasjon + 1}) — revoken treffer "
+        f"da en levende arbeider med gammel credential")
+    assert cred is not None and cred > migrasjon, (
+        "credentialen i /etc/disponit/plan/DISPONIT_DATABASE_URL byttes "
+        "ikke etter migrasjonene — gapet til neste opp.sh står åpent")
+    assert start is not None and start > cred, (
+        "disponit-plan.timer startes ikke igjen etter credential-byttet, "
+        "eller startes FØR det — begge deler etterlater feilende "
+        "planvinduer som aldri hentes inn")

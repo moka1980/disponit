@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/m57payload-v1.json",
+  "title": "rekruttering.evaluering payload",
+  "comment": "Speiler oppdragskontraktens lukkede feltsett - minimeringen der er siste skanse for feltbredden, dette skjemaet er utforerens egen avvisning av en payload den aldri skulle faatt (m56-formen).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "stillingsprofil_ref",
+    "stillingsprofil",
+    "antall_soknader",
+    "omfang"
+  ],
+  "properties": {
+    "stillingsprofil_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "stillingsprofil": {
+      "comment": "Oyeblikksbildet av profilversjonen referansen peker paa (061 er append-only, saa kopien kan ikke drifte) - bygget server-side av bestillingsveien, aldri av klienten. Bunten navngis IKKE her (valg B, #200): bindingsraden er eneste sannhet, og modulen henter via hent_inndata_for_oppdrag (060).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profil_id", "versjon", "navn", "krav"],
+      "properties": {
+        "profil_id": {"type": "string", "minLength": 1},
+        "versjon": {"type": "integer", "minimum": 1},
+        "navn": {"type": "string", "minLength": 1, "maxLength": 200},
+        "krav": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kravnavn", "vekt"],
+            "properties": {
+              "kravnavn": {"type": "string", "minLength": 1,
+                           "maxLength": 120},
+              "vekt": {"type": "integer", "minimum": 0, "maximum": 10}
+            }
+          }
+        }
+      }
+    },
+    "antall_soknader": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5000
+    },
+    "omfang": {
+      "const": "bunt"
+    },
+    "slettefrist_dogn": {
+      "type": "integer",
+      "minimum": 30,
+      "maximum": 365
+    }
+  }
+}

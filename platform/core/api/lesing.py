@@ -19,7 +19,6 @@ transaksjonen, RLS+FORCE, identisk 404 for ukjent og annen tenants ID.
 """
 from __future__ import annotations
 
-import json
 import re
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -134,6 +133,156 @@ def oversikt(tjeneste, request: Request) -> Response:
 
 
 # ---------------------------------------------------------------------------
+# GET /v1/nokkeltall — scope decisions:read (M-16 v1, ren lesing)
+# ---------------------------------------------------------------------------
+
+#: DEN ENE vindusdefinisjonen (M-16 §3): UTC, halvåpent `[fra, til)`,
+#: forhåndsdefinerte vinduer. En hendelse nøyaktig på `til` tilhører
+#: neste vindu — det følger av `< til` i hver definer, og ingen
+#: kortspørring har egen vindusaritmetikk: alle får NØYAKTIG paret
+#: herfra (statisk port).
+NOKKELTALL_VINDUER = {"24t": timedelta(hours=24),
+                      "7d": timedelta(days=7),
+                      "30d": timedelta(days=30)}
+
+#: Radgrensen for lukkede-listen. Den er et VISNINGSTAK på radfakta, ikke
+#: en telling: svaret bærer alltid `unntak_lukkede_totalt` ved siden av,
+#: så et avkuttet utsnitt er synlig for klienten (M-16 §3).
+NOKKELTALL_LUKKEDE_GRENSE = 50
+
+
+def _nokkeltall_vindu(request: Request) -> tuple[datetime, datetime] | None:
+    # Fritt intervall er BEVISST ikke implementert i v1 (§3:
+    # forhåndsdefinerte vinduer). En klient som likevel ber om `fra`/`til`
+    # skal få 400 — ikke et urelatert 24-timerssvar med status 200. Et
+    # eksplisitt spørsmål besvares aldri stille med noe annet.
+    if "fra" in request.query_params or "til" in request.query_params:
+        return None
+    valg = request.query_params.get("vindu", "24t")
+    lengde = NOKKELTALL_VINDUER.get(valg)
+    if lengde is None:
+        return None
+    til = datetime.now(timezone.utc)
+    return til - lengde, til
+
+
+def _partisjon(rader) -> dict:
+    """(er_total, nokkel, antall) → {'total': n, 'deler': {nokkel: antall}}.
+
+    Totalen og delene kommer fra SAMME skann (GROUPING SETS i defineren),
+    så suminvarianten holder per konstruksjon — den KONTROLLERES likevel
+    her, fail-closed: et avvik er en definerfeil og skal høres, ikke
+    vises som pene tall.
+
+    Aggregatet kjennes på `er_total` — en egenskap ved RADEN — og ikke på
+    en reservert nøkkelverdi. Merket var før strengen `__total__` i samme
+    kolonne som kategoriene, men `unntak.kategori` er en fri TEXT-kolonne:
+    en sak med nøyaktig den kategorien var ikke til å skille fra
+    aggregatet, og kontrollen under ville da slått ut på data som var helt
+    i orden — eller, i et sett med bare den kategorien, gitt et kort uten
+    en eneste rad. Nå finnes det ingen kategoristreng som kan kollidere.
+    """
+    total = 0
+    deler: dict[str, int] = {}
+    for er_total, nokkel, antall in rader:
+        if er_total:
+            total = antall
+        else:
+            deler[nokkel] = antall
+    if sum(deler.values()) != total:
+        raise kjerne.Feilsvar("intern_feil")
+    return {"total": total, "deler": deler}
+
+
+def nokkeltall(tjeneste, request: Request) -> Response:
+    """M-16: nøkkeltall regnet fra faktiske beslutninger — telling over
+    rader som finnes, radvise varigheter, aldri analyse. Generaliseringen
+    av 24-timerssammendraget i `oversikt`: samme filtertelling, valgbart
+    vindu, alt via definere (SP-1/SP-7)."""
+    def _fn(conn, auth, rid):
+        vindu = _nokkeltall_vindu(request)
+        if vindu is None:
+            return _feilsvar("request_feilformet", rid)
+        fra, til = vindu
+        arg = (auth.tenant, fra, til)
+        beslutninger = _partisjon(conn.execute(
+            "SELECT er_total, nokkel, antall FROM m16_beslutninger(%s,%s,%s)",
+            arg).fetchall())
+        reservasjoner = conn.execute(
+            "SELECT m16_frekvensreservasjoner(%s,%s,%s)", arg).fetchone()[0]
+        aktiveringer: dict[str, list] = {}
+        for partisjon, er_total, nokkel, antall in conn.execute(
+                "SELECT partisjon, er_total, nokkel, antall FROM"
+                " m16_aktiveringer(%s,%s,%s)", arg).fetchall():
+            aktiveringer.setdefault(partisjon, []).append(
+                (er_total, nokkel, antall))
+        oppdrag = _partisjon(conn.execute(
+            "SELECT er_total, nokkel, antall FROM m16_oppdrag(%s,%s,%s)",
+            arg).fetchall())
+        # Terminalsettet er app-lagets ENE definisjon — statusmaskinen
+        # kopieres aldri inn i SQL (oversikt-lærdommen fra #105-æraen).
+        # Sakstypesettet kommer samme vei og av samme grunn: hvilke køer
+        # DETTE tokenet får se er en scope-regel, og den har ett hjem
+        # (`app.synlige_sakstyper`). Uten den ville nøkkeltallene vært en
+        # sidevei rundt `security:read`: tellingene, «åpne nå» og de
+        # lukkede radene leser `unntak` direkte, altså utenom
+        # unntakslistens egen sakstypeport. Skjulte rader nevnes IKKE i
+        # svaret — her er eksistensen det vernede (samme grunn som at
+        # `_hent_unntak` svarer `ikke_funnet`, ikke 403).
+        from .app import TERMINALE_UNNTAKSSTATUSER, synlige_sakstyper
+        terminale = list(TERMINALE_UNNTAKSSTATUSER)
+        sakstyper = list(synlige_sakstyper(auth.scopes))
+        aktivitet = _partisjon(conn.execute(
+            "SELECT er_total, nokkel, antall FROM"
+            " m16_unntak_aktivitet(%s,%s,%s,%s)",
+            (*arg, sakstyper)).fetchall())
+        # Radlisten har en grense — og grensen er ALDRI stille: defineren
+        # returnerer hele tellingen i vinduet (`antall_totalt`, samme
+        # skann), så svaret bærer både utsnittet og hvor stort settet er.
+        # Klienten kan dermed si «viser N av M»; den kan aldri komme til å
+        # påstå at N ER alle lukkede saker i vinduet.
+        lukkede_rader = conn.execute(
+            "SELECT id, kategori, sakstype, status, opprettet,"
+            " lukket, varighet_s, antall_totalt FROM"
+            " m16_unntak_lukkede(%s,%s,%s,%s,%s,%s)",
+            (*arg, terminale, sakstyper,
+             NOKKELTALL_LUKKEDE_GRENSE)).fetchall()
+        lukkede = [
+            {"id": r[0], "kategori": r[1], "sakstype": r[2],
+             "status": r[3], "opprettet": r[4].isoformat(),
+             "lukket": r[5].isoformat(), "varighet_s": r[6]}
+            for r in lukkede_rader]
+        # Tom liste ⇒ 0; ellers er tellingen lik i hver rad (window over
+        # hele settet), så første rad holder.
+        lukkede_totalt = lukkede_rader[0][7] if lukkede_rader else 0
+        # TILSTAND, ikke aktivitet: «åpne nå» står utenfor vinduet.
+        apne_naa = conn.execute(
+            "SELECT m16_unntak_apne(%s,%s,%s)",
+            (auth.tenant, terminale, sakstyper)).fetchone()[0]
+        tick = _partisjon(conn.execute(
+            "SELECT er_total, nokkel, antall FROM m16_tick(%s,%s,%s)",
+            arg).fetchall())
+        return kanonisk_json(
+            {"vindu_start": fra.isoformat(), "vindu_slutt": til.isoformat(),
+             "tidssone": "UTC",
+             "beslutninger": beslutninger,
+             "frekvensreservasjoner": reservasjoner,
+             "aktiveringer": {
+                 p: _partisjon(rader)
+                 for p, rader in aktiveringer.items()},
+             "oppdrag": oppdrag,
+             "unntak_aktivitet": aktivitet,
+             "unntak_lukkede": lukkede,
+             "unntak_lukkede_totalt": lukkede_totalt,
+             "unntak_lukkede_grense": NOKKELTALL_LUKKEDE_GRENSE,
+             "apne_naa": apne_naa,
+             "tick": tick,
+             "request_id": rid},
+            200, {"x-request-id": rid})
+    return _les(tjeneste, request, "decisions:read", _fn)
+
+
+# ---------------------------------------------------------------------------
 # GET /v1/beslutninger — scope decisions:read, keyset DESC, filterbundet
 # ---------------------------------------------------------------------------
 
@@ -228,6 +377,422 @@ def _kombinasjon_lovlig(art: str, ev: str, sen: bool, konflikt: bool) -> bool:
     return False
 
 
+#: Leseflaten DETTE endepunktet er — `ui/static/js/flater/rapport.js`.
+#: `rapportflate` på oppdragstypen navngir hvilken rendrer som kan vise
+#: rapportformen; her står navnet på den ene rendreren denne veien
+#: serverer, så filteret under kan sammenligne verdier i stedet for å
+#: spørre om feltet i det hele tatt er satt.
+RAPPORTFLATE = "wcag"
+
+
+def rapport_detalj(tjeneste, request: Request) -> Response:
+    """GET /v1/rapport/{oppdrag_id} — den promoterte WCAG-rapporten (038 §7).
+
+    Scope `decisions:read`: rapporten er evidensen bak en beslutning
+    tenanten selv bestilte, og lese-API-et viser alt annet om den
+    beslutningen under samme scope. Identisk 404 for «finnes ikke»,
+    «ikke ditt» og «ikke promotert» — tilstanden til et annet oppdrag er
+    ikke informasjon dette scopet skal bekrefte.
+
+    Dekrypteringen skjer her og bare her på leseveien: artefaktlageret er
+    kryptert i ro, og klienten får aldri ciphertext/nøkkelreferanser —
+    kun rapportdokumentet som ble validert mot det lukkede skjemaet ved
+    promoteringen.
+    """
+    def _fn(conn, auth, rid):
+        import oppdragskontrakt
+        oid = request.path_params["id"]
+        # BARE RAPPORTBÆRENDE TYPER (Codex P2). Uten JOIN-en og de to
+        # typefiltrene svarte endepunktet med det NYESTE promoterte
+        # artefaktet på oppdraget, uansett artefakttype og uansett hvilken
+        # oppdragstype som fødte det. `rapportInnhold` på flaten
+        # dereferer `sammendrag` og `sider_kontrollert` med en gang, så et
+        # artefakt fra en hvilken som helst annen registrert kontrakt ga
+        # 200 og en rapportvisning som kastet under rendring. Paret
+        # (oppdragstype, artefakttype) kommer fra kontrakten — samme kilde
+        # registreringen skriver registerraden fra — så en ny
+        # rapportbærende type blir lesbar ved å DEKLARERE seg, ikke ved at
+        # noen husker å utvide en liste her.
+        # … og bare typer med DENNE leseflaten (Codex P2). Å bære en
+        # rapportartefakttype er ikke det samme som å ha en konsument:
+        # `rapportInnhold` på flaten dereferer WCAG-formen med en gang,
+        # så en ny rapportbærende kontrakt uten flate ville fått 200 her
+        # og feilet under rendring hos klienten. En type uten flate er
+        # ikke lesbar her ennå, og 404 er det ærlige svaret.
+        #
+        # `rapportflate` er en DISKRIMINATOR, ikke en boolsk (Codex P2).
+        # Leddet spurte bare om feltet var satt, og da var det bare M-57s
+        # manglende flate som holdt M-57-rapporten unna WCAG-rendreren.
+        # Den dagen CP4 gir modulen sin egen flate, ville `"ats"` blitt
+        # servert hit igjen — nøyaktig 200-og-feiler-under-rendring dette
+        # leddet ble lagt til for å hindre, og med den TAUSESTE mulige
+        # utløseren: at en helt annen kontrakt fylte ut sitt eget felt.
+        # En ny flate blir lesbar ved å få sin EGEN vei, ikke ved å arve
+        # denne.
+        par = [(navn, t.rapport_artefakttype)
+               for navn, t in oppdragskontrakt.OPPDRAGSTYPER.items()
+               if t.rapport_artefakttype is not None
+               and t.rapportflate == RAPPORTFLATE]
+        rad = conn.execute(
+            "SELECT a.artefakt_id, a.ciphertext, a.nonce, a.dek_ref,"
+            " a.promotert_ts, a.artefakttype"
+            "  FROM artefakt a JOIN oppdrag o"
+            "    ON o.tenant = a.tenant AND o.id = a.oppdrag_id"
+            " WHERE a.tenant=%s AND a.oppdrag_id=%s"
+            "   AND a.tilstand='promotert'"
+            "   AND (o.oppdragstype, a.artefakttype) IN"
+            "       (SELECT * FROM unnest(%s::text[], %s::text[]))"
+            " ORDER BY a.promotert_ts DESC LIMIT 1",
+            (auth.tenant, oid, [p[0] for p in par],
+             [p[1] for p in par])).fetchone()
+        if rad is None:
+            # Samme 404 som «finnes ikke» og «ikke ditt»: en type flaten
+            # ikke kan vise er dokumentert som ikke-funnet, ikke som en
+            # halvveis 200.
+            return _feilsvar("ikke_funnet", rid)
+        art_id, ct, nonce, dek_ref, ts, artefakttype = rad
+        from db import kryptering
+        try:
+            dek = kryptering.hent_dek(conn, auth.tenant, dek_ref)
+            rapport = kryptering.dekrypter(dek, ct, nonce, auth.tenant,
+                                           dek_ref)
+        except Exception:
+            # En promotert rad som ikke lar seg dekryptere er en
+            # servertilstand (nøkkel destruert, korrupsjon) — aldri noe
+            # klienten skal tolke som «rapporten finnes ikke».
+            tjeneste.logg.hendelse("intern_feil", rid, auth.tenant,
+                                   art="drift", artefakt=str(art_id))
+            return _feilsvar("intern_feil", rid)
+        return kanonisk_json({
+            "oppdrag_id": oid,
+            "artefakt_id": str(art_id),
+            "artefakttype": artefakttype,
+            "promotert_ts": ts.isoformat() if ts else None,
+            "rapport": rapport,
+            "request_id": rid,
+        }, 200, {"x-request-id": rid})
+    return _les(tjeneste, request, "decisions:read", _fn)
+
+
+RAPPORTFLATE_ATS = "ats"
+
+
+def _m57_avslatt(tjeneste, request: Request):
+    """Er `m57_ats` rullet tilbake? -> ferdig 503-svar, ellers None.
+
+    ROLLBACK-KONTRAKTEN GJELDER OGSÅ LESEVEIEN (Codex P1). De skrivende og
+    lesende M-57-rutene i `rekruttering.py` avviser med 503 `modul_inaktiv`
+    når `DISPONIT_INAKTIVE_MODULER` navngir modulen; de to rutene her gikk
+    rett i `_les`. Å deaktivere `m57_ats` i drift stanset dermed resten av
+    flaten mens evalueringshistorikken og de DEKRYPTERTE rapportene sto
+    åpne — og rapporten er den formen med mest kandidatdata i seg.
+
+    SAMME PORT, IKKE EN KOPI: `rekruttering._modul_inaktiv` er kilden, så
+    modulnavnet, loggformen og statusoppslaget i `feil.FEIL` ikke kan
+    divergere mellom de to filene. Importen er lokal — `rekruttering`
+    importerer `app`, som importerer oss.
+
+    FØR TILKOBLINGEN, av samme grunn som der: en deaktivert modul skal
+    ikke bruke en poolplass eller åpne en transaksjon som må rulles.
+    `_rid` er idempotent (den cacher på `request.scope["state"]`), så
+    503-svaret bærer samme request-id som `_les` ville gitt.
+    """
+    from . import rekruttering
+    return rekruttering._modul_inaktiv(tjeneste, _rid(request))
+
+
+def _anker_lever(conn, tenant, oppdrag_id) -> bool:
+    """Lever retensjonsankeret NÅ? Re-sjekken bak TOCTOU-dommen (#220,
+    eierdom): hovedspørringens EXISTS(levende anker) og payloadleveransen
+    er to tidspunkter, og en reap kan committe i vinduet mellom dem.
+    Denne leses rett før 200, ETTER dekrypteringen, i samme transaksjon
+    (READ COMMITTED tar ferskt snapshot per setning) — payloaden forlater
+    aldri prosessen etter en reap som var committet da beslutningen ble
+    tatt. VINDUSINNSNEVRING, ikke lås: FOR SHARE fra leseveien ville
+    krevd UPDATE-rett på retensjonsankeret for en READ-rute — et felt
+    rettighetsvedtak (migrer.py:86-95) denne dommen nekter å reversere.
+    Den interleavede bevisriggen bor i eget issue."""
+    # `clock_timestamp()`, ikke `now()` (Codex P2): `now()` er
+    # transaksjonens STARTTID og identisk i hovedspørringen og her — en
+    # dekryptering som drar forbi fristen ville bestått re-sjekken med
+    # det samme klokkeslettet den alt besto med. Re-sjekkens hele poeng
+    # er et FERSKERE tidspunkt.
+    return conn.execute(
+        "SELECT EXISTS (SELECT 1 FROM rekrutteringsprosess p"
+        "  WHERE p.tenant=%s AND p.oppdrag_id=%s"
+        "    AND p.slettet_ts IS NULL"
+        "    AND clock_timestamp() < coalesce(p.lukket_ts, p.opprettet)"
+        "                + p.slettefrist_dogn * interval '1 day')",
+        (tenant, oppdrag_id)).fetchone()[0]
+
+
+def _artefakt_lever(conn, tenant, artefakt_id) -> bool:
+    """Er artefaktet fortsatt UMAKULERT med levende payload NÅ?
+
+    Søsteren til `_anker_lever`, og den lukker det vinduet ankeret ikke
+    ser (Codex P2 på #252). `makuler_artefakter_for_prosess` (#222) kan
+    committe UTEN at prosessen merkes reapet — det er en form #252
+    eksplisitt støtter og tester, siden døren kalles per oppdrag og
+    reapmerket settes av et eget steg. Ankeret lever da fortsatt og
+    `_anker_lever` sier true, mens raden vi alt har lest er tømt.
+
+    Uten denne leser hovedspørringen ciphertexten rett før makuleringen
+    committer, dekrypterer den, passerer ankersjekken — og leverer 200
+    med kandidatpayload som er slettet i basen. Ankeret måler PROSESSENS
+    frist; dette måler ARTEFAKTETS eget merke, og det er to forskjellige
+    fakta.
+
+    Samme doktrine som søsteren for øvrig: leses rett før 200, etter
+    dekrypteringen, i samme transaksjon — READ COMMITTED tar ferskt
+    snapshot per setning. Vindusinnsnevring, ikke lås; en FOR SHARE
+    herfra ville krevd skriverett på evidenstabellen for en READ-rute.
+    Ingen klokkeslett her: merket er et faktum, ikke en frist.
+    """
+    return conn.execute(
+        "SELECT EXISTS (SELECT 1 FROM artefakt a"
+        "  WHERE a.tenant=%s AND a.artefakt_id=%s"
+        "    AND a.makulert_ts IS NULL AND a.ciphertext IS NOT NULL)",
+        (tenant, artefakt_id)).fetchone()[0]
+
+
+def rekrutteringsrapport_detalj(tjeneste, request: Request) -> Response:
+    """GET /v1/rekruttering/rapport/{oppdrag_id} — den promoterte
+    evalueringsrapporten. M-57s EGEN leseflate (kontraktens
+    `rapportflate="ats"`): samme dekrypterings- og 404-doktrine som
+    WCAG-rapporten (`rapport_detalj`), men med SIN diskriminator — de to
+    flatene kan aldri servere hverandres former (200-og-feiler-under-
+    rendring-klassen)."""
+    av = _m57_avslatt(tjeneste, request)
+    if av is not None:
+        return av
+
+    def _fn(conn, auth, rid):
+        import oppdragskontrakt
+        oid = request.path_params["id"]
+        # Starlettes `:int` er ubegrenset Python-int; forbi bigint dør
+        # bindingen i basen som en driftsfeil. En id ingen rad kan ha ER
+        # «ikke funnet» (Codex P2) — samme svar, før tilkoblingsbruk.
+        if not 0 <= oid <= 9223372036854775807:
+            return _feilsvar("ikke_funnet", rid)
+        par = [(navn, t.rapport_artefakttype)
+               for navn, t in oppdragskontrakt.OPPDRAGSTYPER.items()
+               if t.rapport_artefakttype is not None
+               and t.rapportflate == RAPPORTFLATE_ATS]
+        rad = conn.execute(
+            "SELECT a.artefakt_id, a.ciphertext, a.nonce, a.dek_ref,"
+            " a.promotert_ts, a.artefakttype"
+            "  FROM artefakt a JOIN oppdrag o"
+            "    ON o.tenant = a.tenant AND o.id = a.oppdrag_id"
+            " WHERE a.tenant=%s AND a.oppdrag_id=%s"
+            "   AND a.tilstand='promotert'"
+            # MAKULERT ER IKKE LESBART (Cursor P2 på #252). Makuleringen
+            # (#222) nuller payloaden UTEN tilstandsskifte — raden består
+            # som evidensen om at rapporten fantes, og `tilstand` sier
+            # fortsatt `promotert`. Uten dette leddet finner spørringen
+            # den, `dekrypter` får `ct = None`, og kunden får
+            # `intern_feil` (500) der #220 lovet et identisk 404.
+            # Ankeret redder ikke: døren kan kalles uten reap, og da
+            # lever prosessen fortsatt innenfor fristen.
+            # `ciphertext IS NOT NULL` står ved siden av merket med
+            # vilje: merket er årsaken vi kjenner, tom payload er
+            # tilstanden leseveien faktisk ikke tåler.
+            "   AND a.makulert_ts IS NULL AND a.ciphertext IS NOT NULL"
+            "   AND (o.oppdragstype, a.artefakttype) IN"
+            "       (SELECT * FROM unnest(%s::text[], %s::text[]))"
+            # SLETTEGRENSEN GJELDER OGSÅ RAPPORTEN (Codex P1 ×2, felt
+            # stengt): rapporten serveres bare med et LEVENDE
+            # retensjonsanker. Kravet er EXISTS(ureapet prosess), ikke
+            # NOT EXISTS(reapet): claimen føder ankeret (057-døren i
+            # claim-transaksjonen), så en rapport UTEN prosess er et
+            # oppdrag utenfor retensjonskontrakten og serveres ikke —
+            # identisk 404, samme svar som før promotering. Etter
+            # reaping faller den samme veien.
+            # ... og FRISTEN håndheves her, ikke bare reaperens merke
+            # (Codex P1): `slettet_ts` skrives asynkront i batcher — en
+            # forsinket reaper skal aldri forlenge tilgangen til
+            # kandidatdata forbi kundens frist. Samme grense som
+            # reaperen: lukket_ts (avslutningen) eller opprettet
+            # (forlatt-fallbacken) pluss kundens døgn.
+            "   AND EXISTS (SELECT 1 FROM rekrutteringsprosess p"
+            "        WHERE p.tenant = o.tenant AND p.oppdrag_id = o.id"
+            "          AND p.slettet_ts IS NULL"
+            "          AND now() < coalesce(p.lukket_ts, p.opprettet)"
+            "                      + p.slettefrist_dogn * interval '1 day')"
+            " ORDER BY a.promotert_ts DESC LIMIT 1",
+            (auth.tenant, oid, [p[0] for p in par],
+             [p[1] for p in par])).fetchone()
+        if rad is None:
+            return _feilsvar("ikke_funnet", rid)
+        art_id, ct, nonce, dek_ref, ts, artefakttype = rad
+        from db import kryptering
+        try:
+            dek = kryptering.hent_dek(conn, auth.tenant, dek_ref)
+            rapport = kryptering.dekrypter(dek, ct, nonce, auth.tenant,
+                                           dek_ref)
+        except Exception:
+            tjeneste.logg.hendelse("intern_feil", rid, auth.tenant,
+                                   art="drift", artefakt=str(art_id))
+            return _feilsvar("intern_feil", rid)
+        if not _anker_lever(conn, auth.tenant, oid):
+            return _feilsvar("ikke_funnet", rid)
+        # … OG ARTEFAKTET SELV MÅ FORTSATT VÆRE UMAKULERT (Codex P2 på
+        # #252). Ankersjekken over måler PROSESSENS frist; makuleringen
+        # er et eget faktum på artefaktraden, og døren kan committe uten
+        # at prosessen merkes reapet. Da består ankeret, og bare dette
+        # leddet ser at payloaden vi nettopp dekrypterte er slettet.
+        # Samme svar som resten av 404-doktrinen — en makulert rapport
+        # er identisk «finnes ikke», aldri et halvt svar.
+        if not _artefakt_lever(conn, auth.tenant, art_id):
+            return _feilsvar("ikke_funnet", rid)
+        # LESNINGEN SERVERER IKKE DET FLATEN KASTER (Codex P2 — samme
+        # doktrine som `_kandidater`s nøkkelsubtraksjon): `kildetekst` er
+        # hele den blindede søknadsteksten per kandidat, og ingen
+        # konsument av denne ruten leser den — funnene bærer sine egne
+        # sitater. Den desidert tyngste delen av payloaden strippes før
+        # svaret; artefaktet selv er urørt.
+        #
+        # `intervjusporsmal` strippes av samme grunn PLUSS eiers
+        # produktbeslutning (27/8): spørsmål hører til INNKALLINGEN av de
+        # 5–10 beste, ikke til rangeringen av alle søkere — rekrutterer
+        # velger kandidater først, intervjuer skjer manuelt etterpå.
+        # Lageret (kandidat_intervjusporsmal) og artefaktet består;
+        # shortlist-arcen henter derfra når den kommer.
+        for _k in (rapport.get("kandidater") or {}).values():
+            if isinstance(_k, dict):
+                _k.pop("kildetekst", None)
+                _k.pop("intervjusporsmal", None)
+        return kanonisk_json({
+            "oppdrag_id": oid,
+            "artefakt_id": str(art_id),
+            "artefakttype": artefakttype,
+            "promotert_ts": ts.isoformat() if ts else None,
+            "rapport": rapport,
+            "request_id": rid,
+        }, 200, {"x-request-id": rid})
+    return _les(tjeneste, request, "decisions:read", _fn)
+
+
+def rekrutteringsevalueringer(tjeneste, request: Request) -> Response:
+    """GET /v1/rekruttering/evalueringer — tenantens evalueringsoppdrag,
+    nyeste først: id, status, tidspunkt, og om rapporten er klar
+    (promotert artefakt finnes). Ingen payload-dekryptering på
+    listeveien — innholdet hører til detaljruten."""
+    av = _m57_avslatt(tjeneste, request)
+    if av is not None:
+        return av
+
+    def _fn(conn, auth, rid):
+        import oppdragskontrakt
+        # KEYSET-CURSOR, HUSFORMEN (#221): signert med server-pepper og
+        # bundet med v2 (PR-008), som søsknene `beslutninger`,
+        # `unntak_historikk` og `domeneovertakelse_saker`. En cursor er
+        # ellers bare et par tall. v1 binder BARE tenant, og `les()`
+        # godtar også en v2-kropp (den bærer `t`/`ts`/`id`) — en gyldig
+        # cursor fra et annet endepunkt hos samme tenant ville derfor
+        # være 200 her og forskyve keysetet til en fremmed (ts, id)-
+        # posisjon (Cursor P2). v2 binder endepunkt, retning og filtre i
+        # tillegg, og det er nettopp den forvekslingen den finnes for.
+        # Keyset og ikke OFFSET: en liste som får nye evalueringer mens
+        # noen blar, hopper over eller gjentar rader med OFFSET.
+        etter = None
+        raa_cursor = request.query_params.get("cursor")
+        if raa_cursor:
+            try:
+                etter = cursormodul.les_v2(
+                    raa_cursor, tjeneste.cursorpepper, tenant=auth.tenant,
+                    endepunkt="rekruttering_evalueringer", retning="desc",
+                    filtre={})
+            except cursormodul.CursorUgyldig:
+                tjeneste.logg.hendelse("cursor_ugyldig", rid, auth.tenant)
+                return _feilsvar("cursor_ugyldig", rid)
+        # SAMME KILDE SOM DETALJRUTEN (Cursor P2). Listen hardkodet paret
+        # (`'rekruttering.evaluering'`, `'rekruttering.evaluering.rapport'`)
+        # mens `rekrutteringsrapport_detalj` utleder det fra kontrakten.
+        # To kilder for ETT spørsmål er en stille divergens: endrer en
+        # kontrakt sin `rapport_artefakttype`, sier listen `rapport_klar:
+        # false` mens detaljruten fortsatt svarer 200 (eller omvendt) — og
+        # flaten skjuler «Vis»-knappen for en rapport som finnes. Samme
+        # `par`-filter begge steder gjør divergensen umulig, og en ny
+        # ats-flatet kontrakt blir listbar ved å DEKLARERE seg.
+        par = [(navn, t.rapport_artefakttype)
+               for navn, t in oppdragskontrakt.OPPDRAGSTYPER.items()
+               if t.rapport_artefakttype is not None
+               and t.rapportflate == RAPPORTFLATE_ATS]
+        typer, arter = [p[0] for p in par], [p[1] for p in par]
+        rader = conn.execute(
+            "SELECT o.id, o.status, o.opprettet,"
+            " EXISTS (SELECT 1 FROM artefakt a"
+            "          WHERE a.tenant = o.tenant AND a.oppdrag_id = o.id"
+            "            AND a.tilstand='promotert'"
+            # … og en MAKULERT rapport er ikke klar (samme ledd som
+            # detaljruten — Cursor P2 på #252). Uten det ville listen
+            # sagt `rapport_klar: true` om noe detaljruten svarer 404
+            # på: divergensen #220 stengte, gjenåpnet av makuleringen.
+            "            AND a.makulert_ts IS NULL"
+            "            AND a.ciphertext IS NOT NULL"
+            "            AND (o.oppdragstype, a.artefakttype) IN"
+            "                (SELECT * FROM unnest(%s::text[], %s::text[])))"
+            # … og listen reklamerer bare med et LEVENDE anker (samme
+            # EXISTS-form som detaljruten — Codex P1 ×2).
+            " AND EXISTS (SELECT 1 FROM rekrutteringsprosess p"
+            "      WHERE p.tenant = o.tenant AND p.oppdrag_id = o.id"
+            "        AND p.slettet_ts IS NULL"
+            "        AND now() < coalesce(p.lukket_ts, p.opprettet)"
+            "                    + p.slettefrist_dogn * interval '1 day'),"
+            # … og reapingen NAVNGIS (Codex P2): et `utfort` oppdrag med
+            # `rapport_klar: false` fordi fristen har makulert det er
+            # ikke «under arbeid» — uten dette feltet ville flaten vist
+            # det slik i det uendelige.
+            # `slettet` er sant fra FRISTEN, ikke først fra reaperens
+            # batch — merket og fristen er samme grense sett fra kunden.
+            " EXISTS (SELECT 1 FROM rekrutteringsprosess p"
+            "      WHERE p.tenant = o.tenant AND p.oppdrag_id = o.id"
+            "        AND (p.slettet_ts IS NOT NULL"
+            "             OR now() >= coalesce(p.lukket_ts, p.opprettet)"
+            "                 + p.slettefrist_dogn * interval '1 day'))"
+            " AS slettet"
+            "  FROM oppdrag o"
+            " WHERE o.tenant=%s AND o.oppdragstype = ANY(%s::text[])"
+            # Keyset-leddet: fortsettelsen er «eldre enn siste viste rad»,
+            # målt på (opprettet, id) — samme par cursoren bærer, og samme
+            # par sorteringen går på, så vinduene verken overlapper eller
+            # hopper. Sorteringen gikk før på `o.id` alene; paret er samme
+            # rekkefølge (id-er er monotone i praksis), gjort eksplisitt
+            # så nøkkelen og sorteringen ikke kan divergere.
+            + (" AND (o.opprettet, o.id) < (%s, %s)" if etter else "")
+            # HENTER ÉN OVER VINDUET (Codex P2). `LIMIT 100` + `flere =
+            # len(rader) == 100` PÅSTÅR eldre rader ved nøyaktig 100 uten
+            # å ha sett én — flaten sier da «det finnes eldre» om en
+            # komplett historikk. Den 101. raden er beviset; den sendes
+            # aldri ut, den avgjør bare `flere` og cursoren.
+            + " ORDER BY o.opprettet DESC, o.id DESC LIMIT 101",
+            (typer, arter, auth.tenant, typer)
+            + ((etter[0], etter[1]) if etter else ())).fetchall()
+        # Cursoren peker på den SISTE VISTE raden — aldri på bevisraden:
+        # neste side begynner nøyaktig der denne sluttet.
+        neste = None
+        if len(rader) > 100 and rader[99][2] is not None:
+            neste = cursormodul.lag_v2(
+                tjeneste.cursorpepper, tenant=auth.tenant,
+                endepunkt="rekruttering_evalueringer", retning="desc",
+                filtre={}, ts=rader[99][2], rad_id=rader[99][0])
+        return kanonisk_json({
+            "evalueringer": [
+                {"oppdrag_id": r[0], "status": r[1],
+                 "opprettet": r[2].isoformat() if r[2] else None,
+                 "rapport_klar": r[3],
+                 "slettet": r[4]} for r in rader[:100]],
+            # #221: fortsettelsen er et felt, ikke bare en påstand.
+            "neste_cursor": neste,
+            # Aldri stille avkorting: finnes rad 101, MELDER flaten det i
+            # stedet for å presentere de nyeste 100 som alt.
+            # Cursor (#220 P2-3, eierdom); selve pagineringen bor i #221.
+            "flere": len(rader) > 100,
+            "request_id": rid,
+        }, 200, {"x-request-id": rid})
+    return _les(tjeneste, request, "decisions:read", _fn)
+
+
 def beslutning_detalj(tjeneste, request: Request) -> Response:
     def _fn(conn, auth, rid):
         try:
@@ -271,7 +836,7 @@ def beslutning_detalj(tjeneste, request: Request) -> Response:
         else:  # TILLAT
             o = conn.execute(
                 "SELECT id, status, kvittering IS NOT NULL, unntak_id,"
-                " repair_operation_id FROM oppdrag"
+                " repair_operation_id, opprinnelse FROM oppdrag"
                 " WHERE tenant=%s AND beslutning_loggpost_id=%s",
                 (auth.tenant, bid)).fetchone()
             if o is None:
@@ -285,9 +850,13 @@ def beslutning_detalj(tjeneste, request: Request) -> Response:
                 else:
                     resultat = {"art": "sideeffektfri_tillatt"}
             else:
-                oid, ostatus, har_kvittering, ounntak, rep_id = o
+                oid, ostatus, har_kvittering, ounntak, rep_id, oppr = o
+                # 038 §5 (port 28): `unntak_id` er null for
+                # beslutningsoppdrag — klienter må tåle det, og opphavet
+                # sier hvilken vei oppdraget ble født.
                 resultat = {"art": _ART_FOR_STATUS[ostatus],
-                            "oppdrag_id": oid}
+                            "oppdrag_id": oid, "unntak_id": ounntak,
+                            "opprinnelse": oppr}
                 if ostatus == "kansellert":
                     sup = conn.execute(
                         "SELECT status='superseded'"
@@ -295,6 +864,15 @@ def beslutning_detalj(tjeneste, request: Request) -> Response:
                         " WHERE tenant=%s AND repair_operation_id=%s",
                         (auth.tenant, rep_id)).fetchone()
                     resultat["superseded"] = bool(sup and sup[0])
+                    # 043 (port 12): årsaken er NULLABLE — klienter som
+                    # antar at `kansellert` er uten årsak må tåle verdien
+                    # (samme kontraktstil som 038 port 28). `feil_aarsak`
+                    # er uendret.
+                    ka = conn.execute(
+                        "SELECT kansellert_aarsak FROM oppdrag"
+                        " WHERE tenant=%s AND id=%s",
+                        (auth.tenant, oid)).fetchone()
+                    resultat["kansellert_aarsak"] = ka[0] if ka else None
                 if ostatus in ("opprettet", "plukket"):
                     evidens = "MANGLER"
                 elif ostatus == "utfort":
@@ -317,19 +895,32 @@ def beslutning_detalj(tjeneste, request: Request) -> Response:
                 # oppdrag_id i detaljene; en rad uten oppdrag_id på sakens
                 # historikk regnes derfor med — heller ett konfliktflagg for
                 # mye enn en konflikt som forsvinner.
+                #
+                # SAKEN SLÅS OPP VIA OPPDRAGET, IKKE OMVENDT (Codex P2).
+                # `ounntak` er `oppdrag.unntak_id`, altså «født som
+                # reparasjon av» — og den er NULL for hele
+                # beslutningsopphavet. Et `h.unntak_id = NULL`-filter
+                # matcher ingenting, så begge flaggene sto FALSE for et
+                # bestilt oppdrag selv når evidensen lå der: 038 §5 lar
+                # sen-/konfliktveiene opprette en EGEN sak, og den peker
+                # tilbake med `unntak.oppdrag_id`. Begge retningene tas
+                # med, så M-37-formen er uendret og beslutningsformen
+                # endelig finner sin egen evidens.
+                sakene = ("SELECT u.id FROM unntak u WHERE u.tenant=%s"
+                          " AND (u.id=%s OR u.oppdrag_id=%s)")
                 flagg = conn.execute(
                     "SELECT"
                     " EXISTS(SELECT 1 FROM unntak_historikk h"
-                    "         WHERE h.tenant=%s AND h.unntak_id=%s"
+                    f"         WHERE h.tenant=%s AND h.unntak_id IN ({sakene})"
                     "           AND h.hendelse='sen_kvittering'"
                     "           AND (h.detalj->>'oppdrag_id')::bigint=%s),"
                     " EXISTS(SELECT 1 FROM unntak_historikk h"
-                    "         WHERE h.tenant=%s AND h.unntak_id=%s"
+                    f"         WHERE h.tenant=%s AND h.unntak_id IN ({sakene})"
                     "           AND h.hendelse='motstridende_kvittering'"
                     "           AND (h.detalj->>'oppdrag_id' IS NULL"
                     "                OR (h.detalj->>'oppdrag_id')::bigint=%s))",
-                    (auth.tenant, ounntak, oid,
-                     auth.tenant, ounntak, oid)).fetchone()
+                    (auth.tenant, auth.tenant, ounntak, oid, oid,
+                     auth.tenant, auth.tenant, ounntak, oid, oid)).fetchone()
                 sen, konflikt = bool(flagg[0]), bool(flagg[1])
 
         # Sikkerhetsaksen (v2 pkt. 3): en sak beslutningen selv fødte
@@ -387,7 +978,7 @@ def _hent_unntak(conn, auth, uid: int):
     rad = conn.execute(
         "SELECT u.id, u.ts, u.handling, u.kategori, u.sakstype, u.status,"
         " u.prioritet, r.begrunnelse, u.intensjon_pakrevd, u.saksversjon,"
-        " r.policy_id"
+        " r.policy_id, u.arsak"
         "  FROM unntak u JOIN revisjonslogg r"
         "    ON r.tenant = u.tenant AND r.id = u.loggpost_id"
         " WHERE u.tenant=%s AND u.id=%s", (auth.tenant, uid)).fetchone()
@@ -468,19 +1059,61 @@ def unntak_detalj(tjeneste, request: Request) -> Response:
         # Gate 14a: er et oppdrag/kapabilitet utestående, er `avvis` utilgjengelig
         # (POST-vakten svarer 409 `utestaaende_oppdrag`) — skjul den her med den
         # lukkede årsaken, så UI-et forklarer det FØR brukeren prøver.
+        # 043 (Gate 14b): et levende OPPDRAG stenger ikke lenger avvis —
+        # veien løser opp (kansellering med fencing), og flaten skal
+        # varsle det FØR klikket (alertdialogen). En levende
+        # ARBEIDSKAPABILITET beholder 14a-svaret — med eller uten oppdrag
+        # ved siden av, for det er den POST-vakten står på.
         avvis_aarsak = None
-        if "avvis" in handlinger and _har_utestaaende(conn, auth.tenant, uid):
-            handlinger = [h for h in handlinger if h != "avvis"]
-            avvis_aarsak = "utestaaende_oppdrag"
+        avvis_kansellerer = None
+        if "avvis" in handlinger:
+            rader = conn.execute(
+                "SELECT kilde, ref, status FROM sak_utestaaende(%s,%s)",
+                (auth.tenant, uid)).fetchall()
+            lev_opp = [int(ref) for kilde, ref, st in rader
+                       if kilde == "oppdrag"
+                       and st in ("opprettet", "plukket")]
+            lev_kap = [ref for kilde, ref, st in rader
+                       if kilde == "kapabilitet"]
+            # Rekkefølgen er BAKVENDT av den naive (Codex P2, runde 2):
+            # POST-vakten blokkerer på `levende_kap` ALENE — også når det
+            # finnes kansellerbare oppdrag ved siden av. Prøvde lesingen
+            # oppdragene først, tilbød flaten en `avvis` med
+            # `avvis_kansellerer`-varsel som ALLTID endte i 409 og
+            # kansellerte ingenting: et løfte serverkontrakten ikke holder.
+            # Kapabiliteten avgjør derfor her også — nøyaktig som i vakten.
+            info = []
+            if lev_opp:
+                info = conn.execute(
+                    "SELECT id, status, COALESCE(modul_id, eiermodul),"
+                    " oppdragstype FROM oppdrag"
+                    " WHERE tenant=%s AND id = ANY(%s) ORDER BY id",
+                    (auth.tenant, lev_opp)).fetchall()
+            # Samme prioritering én gang til (Codex P2, runde 6): et levende
+            # VERIFIKASJONSoppdrag har ingen oppløsningsvei — POST-vakten
+            # blokkerer på det som på en levende arbeidskapabilitet. Tilbød
+            # flaten en `avvis` med kanselleringsvarsel her, ville den
+            # alltid endt i 409 og kansellert ingenting.
+            uloselige = [r for r in info if r[3] == "verifikasjon"]
+            if lev_kap or uloselige:
+                handlinger = [h for h in handlinger if h != "avvis"]
+                avvis_aarsak = "utestaaende_oppdrag"
+            elif lev_opp:
+                avvis_kansellerer = [
+                    {"oppdrag_id": int(r[0]), "status": r[1],
+                     "modul_id": r[2]} for r in info]
         kropp = {"id": rad[0], "ts": rad[1].isoformat(), "handling": rad[2],
                  "kategori": rad[3], "sakstype": rad[4], "status": rad[5],
                  "prioritet": rad[6], "begrunnelse": _koder(rad[7]),
-                 "saksversjon": rad[9], "tillatte_handlinger": handlinger,
+                 "saksversjon": rad[9], "arsak": rad[11],
+                 "tillatte_handlinger": handlinger,
                  "request_id": rid}
         if aarsak is not None:
             kropp["godkjenn_utilgjengelig"] = aarsak
         if avvis_aarsak is not None:
             kropp["avvis_utilgjengelig"] = avvis_aarsak
+        if avvis_kansellerer is not None:
+            kropp["avvis_kansellerer"] = avvis_kansellerer
         return kanonisk_json(kropp, 200, {"x-request-id": rid})
     return _les(tjeneste, request, "exceptions:read", _fn)
 
@@ -802,6 +1435,39 @@ def _valider_grenser(g: dict | None) -> list[str]:
     return feil
 
 
+def policy_aktive(tjeneste, request: Request) -> Response:
+    """ENUMERER de aktive policyene. Ingen DTO, ingen tolkning — bare hvilke
+    som er aktive, i policy_id-rekkefølge.
+
+    Dette er utveien fra tilstanden `/v1/policy/aktiv` med rette nekter å
+    servere (Codex P2). Det endepunktet lover ÉN aktiv policy, og svarer
+    `intern_feil` når tenanten har flere — fail-closed, fordi å velge en av dem
+    ville vært å bestemme kundens gjeldende policy i et leseendepunkt. Men
+    NØYAKTIG den tilstanden er feilen «angre en feilopprettet policy» finnes
+    for: `tjenestebedrift1` og `tjenestebedrift2` ble begge aktivert ved feil.
+    Uten en vei til å SE begge, var flatens slettehandling utilgjengelig i det
+    ene tilfellet den er skrevet for, og eier satt igjen med håndskrevet SQL —
+    altså der vi startet.
+
+    Fail-closed står: her velges ingen gjeldende policy, og ingen policy
+    serveres som håndhevet. Svaret er en LISTE, og at den kan ha lengde 2 er
+    hele poenget. Derfor bygges heller ingen `PolicyDTO`: en korrupt rad skal
+    kunne PEKES PÅ og slettes, ikke gjøre lista uleselig (`policy_korrupt` her
+    ville gjenskapt blindveien ett hakk lenger inn).
+    """
+    def _fn(conn, auth, rid):
+        rader = conn.execute(
+            "SELECT policy_id, versjon, innholds_hash FROM policyer"
+            " WHERE tenant=%s AND aktiv ORDER BY policy_id, versjon",
+            (auth.tenant,)).fetchall()
+        return kanonisk_json({
+            "policyer": [{"policy_id": p, "versjon": v, "innholds_hash": h}
+                         for p, v, h in rader],
+            "request_id": rid,
+        }, 200, {"x-request-id": rid})
+    return _les(tjeneste, request, "policy:read", _fn)
+
+
 def policy_aktiv(tjeneste, request: Request) -> Response:
     def _fn(conn, auth, rid):
         rader = conn.execute(
@@ -819,8 +1485,27 @@ def policy_aktiv(tjeneste, request: Request) -> Response:
                                    art="drift", aktive=len(rader))
             return _feilsvar("intern_feil", rid)
         policy_id, versjon, innholds_hash, innhold = rader[0]
-        if isinstance(innhold, str):
-            innhold = json.loads(innhold)
+        # Å avgjøre at raden ikke KAN tolkes er en del av tolkningen, ikke et
+        # forarbeid til den (Codex P2). `innhold` er JSONB, og registeret
+        # skriver alltid et objekt (`registrer` validerer før den skriver), så
+        # en verdi som kommer tilbake som noe annet enn et dict ER en korrupt
+        # rad — nøyaktig dommen `hent_aktiv` feller på beslutningsveien
+        # («policyinnholdet er ikke et objekt»).
+        #
+        # Reparsingen som sto her tok samme rad feil i begge retninger. En
+        # JSONB-STRENG som ikke er JSON (`"not-json"`) kastet JSONDecodeError
+        # UTENFOR try-en under, altså en generisk 500 i stedet for
+        # `policy_korrupt` — og flatens reserve tar bare én rad når koden er
+        # `policy_korrupt`, så nettopp den ENSLIGE korrupte policyen ble
+        # uslettelig fra flaten igjen. En DOBBELTKODET streng gikk motsatt
+        # vei: parset til et objekt og ble servert som en frisk policy her,
+        # mens hver beslutning på den svarte `policy_korrupt`. Ett register,
+        # to svar på om raden er gyldig, er en verre feil enn den vi kom for.
+        if not isinstance(innhold, dict):
+            tjeneste.logg.hendelse("policy_korrupt", rid, auth.tenant,
+                                   art="drift",
+                                   feiltype=type(innhold).__name__)
+            return _feilsvar("policy_korrupt", rid)
         try:
             dto = bygg_policy_dto(policy_id, versjon, innholds_hash, innhold)
         except (KeyError, ValueError, TypeError, InvalidOperation) as e:
@@ -838,3 +1523,35 @@ def policy_aktiv(tjeneste, request: Request) -> Response:
         dto["request_id"] = rid
         return kanonisk_json(dto, 200, {"x-request-id": rid})
     return _les(tjeneste, request, "policy:read", _fn)
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/utrulling — scope decisions:read
+#
+# Utrullingsplanen lå tidligere som en konstant i den STATISK SERVERTE
+# klientbunten, altså lesbar for hvem som helst. Her er den bak økten, og
+# `utrullingsmodul.svar_for` — ikke klienten — bestemmer hvilke rader som
+# forlater prosessen (P1, Codex runde 3).
+#
+# `decisions:read` er valgt fordi ALLE kunderollene i `autorisasjon.py` har
+# det: flaten er kundens egen. En senere plattformoperatørrolle må derfor
+# BÅDE ha `platform:admin` (for kontrollplanet) og `decisions:read` (for å
+# komme inn her) — eller `platform:admin` må registreres i `LESESCOPES`.
+# Det skal være en bevisst endring i autorisasjonslaget, ikke noe dette
+# endepunktet avgjør på egen hånd.
+# ---------------------------------------------------------------------------
+
+def utrulling(tjeneste, request: Request) -> Response:
+    from . import utrulling as utrullingsmodul
+
+    def _fn(conn, auth, rid):
+        # `?sprak=` velger fritekstoversettelsen av «neste steg». Kundenavn og
+        # «neste steg» kan ikke ligge i det ANONYMT nedlastbare locale-settet
+        # (P1, runde 3), så oversettelsen må følge raden ut her. Parameteren er
+        # ren presentasjon: `svar_for` bruker den ikke til å velge rader, og en
+        # ukjent verdi gir norsk tekst.
+        sprak = request.query_params.get("sprak")
+        svar = utrullingsmodul.svar_for(auth.tenant, auth.scopes, sprak)
+        svar["request_id"] = rid
+        return kanonisk_json(svar, 200, {"x-request-id": rid})
+    return _les(tjeneste, request, "decisions:read", _fn)

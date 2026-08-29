@@ -93,7 +93,55 @@ def kildechecksum() -> str:
 #: PINNET motorsemantikkversjon. MÅ være lik `kildechecksum()`; CI-porten
 #: håndhever det. Oppdateres BEVISST når en manifestfil endres (= versjonsbump).
 #: (CP3: nattvindu-støtte i tidsvindu/engine er innbakt i denne.)
-MOTOR_SEMANTIKKVERSJON = "4cf832a31a1abf6a89c85e1f58bb57fec33d7abfbc505e5b7de40160b33e6de3"
+#: (Codex P2 på #61 + P1 på #63: verifikator-id-en kan ikke inneholde
+#: skilletegnene i diffstien — men kravet ligger i INNFØRINGSKONTRAKTEN
+#: `schema.valider_ny_policy`, ikke i skjemaet, så en allerede aktiv policy
+#: ikke blir korrupt ved lasting.)
+#: (Codex P2 på #63: differansen er eksponert som `valider_innforingskrav`, så
+#: aktiveringsveien kan stille det framoverrettede kravet på nytt — `validert`
+#: kan være satt før kravet fantes.)
+#: (Codex P2 på #64: skjemamønstrene måles med ECMA-262-ankre, så `$` er ekte
+#: slutt og ikke «slutt, eller rett før en avsluttende linjeskift» som Pythons
+#: `re` leser den. Samme plassering og samme grunn som verifikator-id-kravet:
+#: INNFØRINGSKONTRAKTEN, ikke lastekontrakten — en alt aktiv policy med hale
+#: skal fortsette å virke.)
+#: (Codex P2 på #64: `valider_innforingskrav_strengt` skiller INTERN svikt i
+#: validatoren fra et innholdsbrudd. Ingen policy skifter dom av dette — kravene
+#: er de samme — men `schema.py` er en manifestfil, så pinnen følger med.)
+#: (Codex P2 på #99: en irreversibel handling som kan kjøre automatisk krever
+#: minst ett vilkår. Dette ER en dom-endring: en policy med `grenser` alene
+#: passerte før og avvises nå — jti-replay-vernet henger på attestasjonen
+#: vilkåret framtvinger, så uten vilkår fantes vernet spesifikasjonen lover
+#: bare på papiret.)
+#: (Codex P1 på #111: `engine.LOFTBARE_GRUNNKODER` er nå den ENE kilden til
+#: hva `_loft_policy` kan uttrykke, og innføringskontrakten avviser en
+#: `menneskelig_overstyring.godkjennbare`-oppføring motoren aldri kan anvende
+#: — ikke-løftbar grunnkode, eller løftbar uten verdien å løfte til. Ingen
+#: BESLUTNING skifter av dette: motoren ga alt None og dermed STOPP for begge
+#: former. Det som endrer seg er at policyen ikke lenger kan aktiveres med et
+#: løfte den ikke kan holde. Kravet står i INNFØRINGSkontrakten, så en alt
+#: aktiv policy med en slik oppføring virker som før.)
+#: (Codex P1 på #111, runde 8: en handling med `modus: "alltid_stopp"` felles i
+#: STEG 2, altså før beløps- og valutagrensene i det hele tatt vurderes. Ingen
+#: løftbar grunnkode kan da oppstå for den, og innføringskontrakten avviser
+#: oppføringen uansett hvor velegnet verdien er. Modusen er navngitt ÉN gang
+#: (`engine.MODUS_UTEN_LOFTBARE_UTFALL`) og lest av begge, så rekkefølgen i
+#: motoren og påstanden i kontrakten ikke kan komme fra hverandre. Motorens
+#: dommer er uendret — konstanten har samme verdi som literalen den erstattet
+#: — men `engine.py` og `schema.py` er manifestfiler, så pinnen følger med.)
+#: (Codex P1 på #111, runde 9: `_evaluer` feller rollen i STEG 3 —
+#: `aktor_rolle NOT IN tillatt_for` — før beløp og valuta. Er lista tom eller
+#: fraværende, er prøven sann for enhver rolle, og ingen løftbar grunnkode kan
+#: oppstå for handlingen. Innføringskontrakten avviser oppføringen deretter.
+#: Ingen beslutning skifter: motoren stoppet alt slike handlinger på
+#: `rolle_ikke_tillatt`.)
+#: (Codex P2 på #111, runde 10: et `belop_maks` må være et tall lagene under
+#: kan BÆRE — maks 18 sifre foran komma. En lengre sifferstreng passerte
+#: skjemaet og `Decimal`, men veltet `NUMERIC`-castet i aktiveringsgaten med
+#: en kode ingen håndterer, så en ferdig attestert runde endte i 500. Kravet
+#: står i INNFØRINGSkontrakten, så en alt aktiv policy leses som før; ingen
+#: beslutning skifter av det.)
+MOTOR_SEMANTIKKVERSJON = "f9ae91a18f68afd4fee9a8a9fd69634b542d7ce749265f28f3d1d146f436f856"
 
 
 # ---------------------------------------------------------------------------

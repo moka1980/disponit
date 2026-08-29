@@ -17,6 +17,7 @@ MODULESADMIN=disponit_modules_admin  # PR-014a: EXECUTE på overgangsfunksjonene
 EGRESS=disponit_egress           # PR-014b: egress-proxyens rolle, SELECT kun paa visningen
 DOMENEEIER=disponit_domene_eier  # PR-014b: eier domene/artefakt-funksjonene (BYPASSRLS: takeover er kryss-tenant)
 DOMAINSADMIN=disponit_domains_admin  # PR-014b: EXECUTE paa domenefunksjonene
+ADJUDIKATOR=disponit_domains_adjudicator  # 041: policy-avgrenset SELECT paa overtakelsessaker
 # PR-015 (Codex P1): EGEN, minst-privilegert rolle for driftstimerne
 # (revalidering + rydding). $DOMAINSADMIN baerer OGSAA direkte EXECUTE paa
 # avgjor_domeneovertakelse (016) — en holder av DEN credentialen kunne kalt
@@ -44,7 +45,32 @@ systemctl enable --now postgresql
 # MINUS verifiser_token (API-autentisering er ikke arbeiderens jobb);
 # skillet settes i migrer.py.
 ARBEIDER=disponit_arbeider
-for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER" "$EGRESS" "$DOMENER"; do
+# Varselsenderen har EGEN DB-rolle, av samme grunn som arbeideren: et
+# kompromittert web-API skal ikke ha senderens kryss-tenant-vindu, og en
+# kompromittert sender skal ikke ha API-ets DML. Rollen får KUN EXECUTE på de
+# tre senderfunksjonene (migrer.py) — ingen tabellrettigheter i det hele tatt.
+VARSLER=disponit_varselsender
+# 048 (#108): plan-arbeideren har EGEN DB-rolle — varselsender-modellen,
+# ordrett: et kompromittert web-API skal ikke kunne claime/terminalisere
+# planvinduer, og en kompromittert plan-arbeider skal ikke ha API-ets
+# fulle DML. Rollen får bestillingsveiens delmengde + claim-funksjonene
+# (migrer.py PLAN_RETTIGHETER); runtime MISTER claim-EXECUTE i 048.
+PLANARB=disponit_plan_arbeider
+# 049/#117 (Codex P1): CI-attesten og aksepten skal bæres av TO
+# identiteter. Verifikatoren er innloggingsrollen som SKRIVER attesten,
+# og den er MED VILJE ikke medlem av modules_admin: én innlogging skal
+# aldri kunne gjøre begge rolleskiftene i m56-aksept.py. Attestant og
+# akseptør er to logins.
+# Runde 22 (Codex P1): den fikk først medlemskap i modul_eier «WITH
+# INHERIT FALSE». Det var for bredt. Eierrollen eier BEGGE sider —
+# attestfunksjonene OG registrer_moduldrill/aksepter_moduldeployment —
+# og en eier har EXECUTE i kraft av eierskapet. `SET ROLE` var altså en
+# åpen dør til hele akseptveien, og fire-øyne-skillet lå bare i at
+# skriptet ikke gikk gjennom den. Verifikatoren får nå EXECUTE direkte
+# på de to attestfunksjonene (migrasjon 049) og ingen vei til
+# eierrollen.
+VERIFIKATOR=disponit_ci_verifikator
+for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER" "$EGRESS" "$DOMENER" "$VARSLER" "$PLANARB" "$VERIFIKATOR"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
     | grep -q 1 || sudo -u postgres psql -c \
     "CREATE ROLE $r LOGIN PASSWORD '$(openssl rand -hex 24)'"
@@ -72,7 +98,19 @@ sudo -u postgres psql -qc "GRANT $M37 TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $POLICYEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $MODULEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $MODULESADMIN TO $MIGRATOR WITH INHERIT FALSE"
+# Verifikatoren får INGEN rollemedlemskap — se blokken over LOGIN-løkka.
+# Fullmakten er de to EXECUTE-ene migrasjon 049 gir den, og ikke noe mer.
+# REVOKE-en er ikke pynt: baser satt opp med runde 21-varianten har alt
+# medlemskapet, og oppsettet er idempotent nettopp for å ta dem igjen.
+sudo -u postgres psql -qc "REVOKE $MODULEIER FROM $VERIFIKATOR"
 sudo -u postgres psql -qc "GRANT $DOMENEEIER TO $MIGRATOR WITH INHERIT FALSE"
+# 041: adjudikatorrollen — klyngeobjekt som rollene over. Runtime faar SET
+# (aldri arv) for de to lesningene i adjudikasjonsendepunktene; migrator
+# faar medlemskap for rebuilds/tester. Policyen i 041 avgrenser radene.
+sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$ADJUDIKATOR'" \
+  | grep -q 1 || sudo -u postgres psql -qc "CREATE ROLE $ADJUDIKATOR NOLOGIN"
+sudo -u postgres psql -qc "GRANT $ADJUDIKATOR TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $ADJUDIKATOR TO $BRUKER WITH INHERIT FALSE, SET TRUE"
 sudo -u postgres psql -qc "GRANT $DOMAINSADMIN TO $MIGRATOR WITH INHERIT FALSE"
 
 sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='$DB'" \
@@ -89,6 +127,16 @@ sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='${DB}_test'"
 # og manuell staging-prøve er ingen port.
 # ------------------------------------------------------------
 mkdir -p /etc/disponit && chmod 700 /etc/disponit
+# m_wcag_audit-arbeideren leser /etc/disponit/wcag/ SELV (kontekst +
+# kvitteringsnøkkel er gruppelesbare der) — men uten x på FORELDEREN når
+# den aldri frem: 700 her ga PermissionError på en fil den hadde rett til.
+# Traverse-only for arbeiderens gruppe (710, ingen r: katalogen kan ikke
+# listes, og hver hemmelighet under beholder sin egen stramme modus).
+# Betinget: brukeren opprettes av opp.sh, som kjører ETTER dette skriptet
+# ved førstegangsoppsett — da tar neste kjøring (hver deploy) den igjen.
+if id disponit-wcag >/dev/null 2>&1; then
+  chgrp disponit-wcag /etc/disponit && chmod 710 /etc/disponit
+fi
 touch "$MILJOFIL" && chmod 600 "$MILJOFIL"
 
 . "$(dirname "$0")/lib-miljofil.sh"
@@ -107,6 +155,9 @@ EGRESS_DSN=("DISPONIT_EGRESS_URL=$DB" "DISPONIT_TEST_EGRESS_DSN=${DB}_test")
 # samme state-machine som de andre rollene, ellers kan ikke $DOMENER
 # autentisere paa en fersk install.
 DOMENER_DSN=("DISPONIT_DOMAINS_URL=$DB" "DISPONIT_TEST_DOMAINS_DSN=${DB}_test")
+VARSLER_DSN=("DISPONIT_VARSEL_URL=$DB" "DISPONIT_TEST_VARSEL_DSN=${DB}_test")
+PLANARB_DSN=("DISPONIT_PLAN_URL=$DB" "DISPONIT_TEST_PLAN_DSN=${DB}_test")
+VERIFIKATOR_DSN=("DISPONIT_VERIFIKATOR_URL=$DB" "DISPONIT_TEST_VERIFIKATOR_DSN=${DB}_test")
 
 sikre_rolle_dsn "$BRUKER"     "${RUNTIME_DSN[@]}"
 sikre_rolle_dsn "$MIGRATOR"   "${MIGRATOR_DSN[@]}"
@@ -114,6 +165,9 @@ sikre_rolle_dsn "$TOKENADMIN" "${TOKENADMIN_DSN[@]}"
 sikre_rolle_dsn "$ARBEIDER"   "${ARBEIDER_DSN[@]}"
 sikre_rolle_dsn "$EGRESS"     "${EGRESS_DSN[@]}"
 sikre_rolle_dsn "$DOMENER"    "${DOMENER_DSN[@]}"
+sikre_rolle_dsn "$VARSLER"    "${VARSLER_DSN[@]}"
+sikre_rolle_dsn "$PLANARB"    "${PLANARB_DSN[@]}"
+sikre_rolle_dsn "$VERIFIKATOR" "${VERIFIKATOR_DSN[@]}"
 sikre_attestasjonsnokler
 sikre_mac_nokler          # PR-012: MAC-register (oppstartsperre for API-et)
 # KEK og token-pepper (PR-005b). KEK manglet helt etter PR-005a: krypteringen
@@ -135,6 +189,9 @@ verifiser_og_reparer "$TOKENADMIN" "${TOKENADMIN_DSN[@]}"
 verifiser_og_reparer "$ARBEIDER"   "${ARBEIDER_DSN[@]}"
 verifiser_og_reparer "$EGRESS"     "${EGRESS_DSN[@]}"
 verifiser_og_reparer "$DOMENER"    "${DOMENER_DSN[@]}"
+verifiser_og_reparer "$VARSLER"    "${VARSLER_DSN[@]}"
+verifiser_og_reparer "$PLANARB"    "${PLANARB_DSN[@]}"
+verifiser_og_reparer "$VERIFIKATOR" "${VERIFIKATOR_DSN[@]}"
 
 # ------------------------------------------------------------
 # Migrasjoner kjøres av MIGRATOR-rollen — verken av postgres eller av
@@ -235,6 +292,37 @@ fi
 "$VENV/bin/pip" install -q "psycopg[binary]" cryptography pyyaml jsonschema pytest \
   starlette uvicorn httpx "authlib>=1.6,<2" joserfc dnspython
 
+# ------------------------------------------------------------
+# 048 (#108), Codex P1: VEDLIKEHOLDSVINDU FOR PLAN-ARBEIDEREN.
+#
+# Migrasjon 048 REVOKER claim/terminaliser/frigi_planvindu fra `disponit`
+# og gir dem til `disponit_plan_arbeider`. Paa en vert som alt har rullet
+# ut, kjoerer `disponit-plan.timer` hvert 5. minutt med credentialen fra
+# FORRIGE opp.sh — altsaa runtime-DSN-en. Migrasjonen her og
+# credential-byttet i opp.sh er to separate kommandoer, og i gapet mellom
+# dem feiler HVER planaktivering paa `claim_planvindu`. Planvinduer hentes
+# aldri inn igjen (SKIP-semantikken er bevisst), saa gapet skriver bort
+# kontroller permanent — ogsaa naar de to kommandoene kjoeres etter
+# hverandre slik rutinen sier.
+#
+# Revoken og credential-byttet hoerer derfor til SAMME operasjon:
+# arbeideren stoppes FOER migrasjonene, credentialen dens skrives om til
+# plan-arbeiderrollens DSN etterpaa, og foerst da startes timeren igjen.
+# Vi starter kun det VI stoppet — er timeren ikke aktivert paa denne
+# verten (fersk install), er det opp.sh som aktiverer den.
+PLAN_TIMER_VAR_AKTIV=0
+if command -v systemctl >/dev/null 2>&1 \
+   && systemctl is-active --quiet disponit-plan.timer 2>/dev/null; then
+  PLAN_TIMER_VAR_AKTIV=1
+fi
+# Timeren OG den aktive oneshot-tjenesten (opp.sh steg 5, samme grunn): aa
+# stoppe timeren alene avbryter ikke en kjoering som alt er i gang, og
+# `systemctl stop` paa en oneshot venter til prosessen er ute — vinduet
+# aapnes foerst naar arbeideren faktisk er stille.
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl stop disponit-plan.timer disponit-plan.service 2>/dev/null || true
+fi
+
 for _dsn in "$DISPONIT_MIGRATOR_URL" "$DISPONIT_TEST_MIGRATOR_DSN"; do
   DISPONIT_MIGRATOR_URL="$_dsn" "$VENV/bin/python" \
     "$(dirname "$0")/migrer.py" "$BRUKER"
@@ -293,6 +381,40 @@ verifiser_og_reparer "$MIGRATOR"   "${MIGRATOR_DSN[@]}"
 verifiser_og_reparer "$TOKENADMIN" "${TOKENADMIN_DSN[@]}"
 verifiser_og_reparer "$EGRESS"     "${EGRESS_DSN[@]}"
 verifiser_og_reparer "$DOMENER"    "${DOMENER_DSN[@]}"
+verifiser_og_reparer "$VARSLER"    "${VARSLER_DSN[@]}"
+verifiser_og_reparer "$PLANARB"    "${PLANARB_DSN[@]}"
+verifiser_og_reparer "$VERIFIKATOR" "${VERIFIKATOR_DSN[@]}"
+
+# ------------------------------------------------------------
+# 048 (#108), Codex P1: LUKK VEDLIKEHOLDSVINDUET.
+#
+# Credentialen byttes HER, i samme operasjon som revoken — ikke foerst ved
+# neste opp.sh. Miljoefila leses paa nytt: reparasjonene rett over kan ha
+# rotert plan-rollens passord, og da er verdien vi leste foer
+# migrasjonene utdatert. En tom verdi skrives aldri (samme kontrakt som
+# opp.sh: en tom credential ville foerst vist seg som en feilende
+# timerkjoering).
+#
+# Katalogen opprettes ikke her — den eies av opp.sh (`install -d -m 700
+# /etc/disponit/plan`). Finnes den ikke, har verten aldri rullet ut, og da
+# finnes det heller ingen levende timer som kan feile i gapet.
+set -a; . "$MILJOFIL"; set +a
+if [ -d /etc/disponit/plan ]; then
+  if [ -z "${DISPONIT_PLAN_URL:-}" ]; then
+    echo "AVBRUTT: DISPONIT_PLAN_URL mangler i $MILJOFIL etter oppsettet."
+    echo "Migrasjonene har alt fjernet claim-EXECUTE fra runtime-rollen, og"
+    echo "disponit-plan.timer er STOPPET. Rett miljøfila og kjør skriptet"
+    echo "på nytt — timeren startes først når credentialen er byttet."
+    exit 1
+  fi
+  printf '%s' "$DISPONIT_PLAN_URL" > /etc/disponit/plan/DISPONIT_DATABASE_URL
+  chmod 600 /etc/disponit/plan/DISPONIT_DATABASE_URL
+  echo "  skrev plan-arbeiderens DSN til /etc/disponit/plan/DISPONIT_DATABASE_URL"
+fi
+if [ "$PLAN_TIMER_VAR_AKTIV" -eq 1 ]; then
+  systemctl start disponit-plan.timer
+  echo "  startet disponit-plan.timer igjen (credentialen er byttet)"
+fi
 
 echo "OK. Kilde miljøet med: set -a; . $MILJOFIL; set +a"
 echo "Verifiser: python3 -m pytest platform/core/tests -q"

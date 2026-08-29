@@ -1,0 +1,101 @@
+{
+  "$comment": "Kvitteringsskjemaet for m_wcag_audit (PR-006-kontrakten slik controlleren bruker den). Dette er DOKUMENTET bak modulkontraktens kvittering_schema_hash. Kroppen under er DET SIGNERTE: attestering.signer legger verifikator/nokkel_id/signatur/utloper rundt, og plattformen verifiserer mot nøkkelregisteret. resultat='utfort' bærer artefaktbindingen; 'feilet' bærer en lukket feilkode — aldri et delvis artefakt (§10). ressurs_id er målverten fra plattformens EGEN avledning (oppdragskontrakt.malvert), samme verdi som kjøretidsbindingen.",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "oppdrag_id",
+    "tenant",
+    "kvittering_jti",
+    "owner_claim_id",
+    "owner_generation",
+    "ressurs_id",
+    "resultat"
+  ],
+  "properties": {
+    "oppdrag_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "tenant": {
+      "type": "string",
+      "minLength": 1
+    },
+    "kvittering_jti": {
+      "type": "string",
+      "minLength": 1
+    },
+    "repair_operation_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "owner_claim_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "owner_generation": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "ressurs_id": {
+      "type": "string"
+    },
+    "resultat": {
+      "enum": [
+        "utfort",
+        "feilet"
+      ]
+    },
+    "artefakt_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "klartekst_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "feilkode": {
+      "enum": [
+        "malbinding_mangler",
+        "oppdrag_ugyldig",
+        "ingen_opplastingskapabilitet",
+        "kontekst_ugyldig",
+        "frist_utilstrekkelig",
+        "motor_avbrutt",
+        "opplasting_avvist"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "resultat": {
+            "const": "utfort"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "artefakt_id",
+          "klartekst_sha256"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "resultat": {
+            "const": "feilet"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "feilkode"
+        ]
+      }
+    }
+  ]
+}

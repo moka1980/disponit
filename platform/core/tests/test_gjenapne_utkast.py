@@ -1,0 +1,452 @@
+"""Gjenåpne et validert utkast + versjonsvaktene (eiers krav 17/8).
+
+Eier, ordrett: «man må kunne redigere samme policy selv etter validering …
+men da kan den igjen bli attestert og validert.» Uten denne veien var et
+validert utkast med en feil en blindgate: eneste utvei var å forkaste alt og
+begynne på nytt — og en åpen runde sperret til og med forkastingen i opptil
+24 timer.
+
+Tre ting prøves her:
+  * gjenåpningen selv: `validert → utkast`, hashen nullstilles (migrasjon
+    033), en åpen runde trekkes tilbake, og hele redigér-valider-sløyfa
+    virker igjen etterpå;
+  * at 033 åpnet NØYAKTIG den ene overgangen — hashen er fortsatt frosset i
+    alle andre retninger;
+  * versjonsvaktene som stopper eiers 17/8-felle der utkastet arvet den
+    aktive policyens egen versjon og døde uforklart ved rundeåpning:
+    valideringen sier fra som tekst, og opprettelsen bytter en opptatt arvet
+    versjon med neste ledige.
+"""
+import copy
+import json
+import secrets
+from datetime import datetime, timezone
+from pathlib import Path
+
+import pytest
+import yaml
+
+from api import policyadmin
+from api import policyregister as pr
+
+from .test_api import DSN, MIGRATOR_DSN
+
+pg = pytest.mark.skipif(not DSN, reason="DISPONIT_TEST_DSN ikke satt")
+TEN = "t-gjenapne-" + secrets.token_hex(3)
+
+_BASE = yaml.safe_load(
+    (Path(__file__).resolve().parents[3] / "policies"
+     / "bransjemal-tjenestebedrift.yaml").read_text(encoding="utf-8"))
+
+
+def _dokument(pid, versjon="1.1.0"):
+    """Et skjemagyldig dokument (bransjemalen) under utkastets identitet."""
+    d = copy.deepcopy(_BASE)
+    d["meta"] = {**(d.get("meta") or {}), "policy_id": pid,
+                 "versjon": versjon, "status": "produksjon"}
+    return d
+
+
+def _mig():
+    from db.pg import koble, sett_kontekst
+    c = koble(MIGRATOR_DSN)
+    sett_kontekst(c, TEN, "sys", "r0")
+    return c
+
+
+def _rt():
+    from db.pg import koble
+    return koble(DSN)
+
+
+def _utkast(uid, pid, status="validert", versjon="1.1.0"):
+    innhold = _dokument(pid, versjon)
+    m = _mig()
+    m.execute(
+        "INSERT INTO policyutkast (tenant,utkast_id,policy_id,innhold,"
+        "innholds_hash,status,opprettet_av) VALUES (%s,%s,%s,%s::jsonb,%s,%s,%s)",
+        (TEN, uid, pid, json.dumps(innhold),
+         pr.innholds_hash(innhold) if status != "utkast" else None,
+         status, "forf"))
+    m.commit()
+    m.close()
+    return innhold
+
+
+def _policyrad(c, pid, versjon="1.0.0"):
+    innhold = {"meta": {"policy_id": pid, "versjon": versjon}}
+    c.execute(
+        "INSERT INTO policyer (tenant,policy_id,versjon,innholds_hash,status,"
+        "innhold,aktiv) VALUES (%s,%s,%s,%s,'produksjon',%s::jsonb,true)",
+        (TEN, pid, versjon, "h-" + secrets.token_hex(8),
+         json.dumps(innhold)))
+    c.execute(
+        "INSERT INTO policy_hode (tenant,policy_id,aktiv_versjon)"
+        " VALUES (%s,%s,%s) ON CONFLICT (tenant,policy_id)"
+        " DO UPDATE SET aktiv_versjon=EXCLUDED.aktiv_versjon",
+        (TEN, pid, versjon))
+
+
+def _runde(uid, utloper="1 hour", status="apen"):
+    m = _mig()
+    m.execute(
+        "INSERT INTO aktiveringsrunde (tenant,utkast_id,runde,status,"
+        "diff_hash,utkast_innholds_hash,base_policy_hash,risikoklasse,"
+        "klassifisering_hash,klassifikatorversjon,policyskjema_versjon,"
+        "motor_semantikkversjon,deny_all_hash,deny_all_versjon,"
+        "pakrevd_antall_godkjennere,utloper)"
+        f" VALUES (%s,%s,1,'{status}','dh','ih','bh','UTVIDER','kh','1','0.2',"
+        f"'1','dah','1',2,now()+interval '{utloper}')", (TEN, uid))
+    m.commit()
+    m.close()
+
+
+def _gjenapne(rt, uid, ver=1, naa=None):
+    idem = secrets.token_hex(8)
+    return policyadmin.gjenapne_utkast(
+        rt, tenant=TEN, aktor="forf", request_id="r", utkast_id=uid,
+        forventet_utkastversjon=ver, idempotency_key=idem,
+        input_hash=f"{TEN}\x1f{uid}\x1fgjenapne\x1f{ver}\x1f{idem}",
+        naa=naa or datetime.now(timezone.utc))
+
+
+def _rediger(rt, uid, ver, innhold):
+    idem = secrets.token_hex(8)
+    return policyadmin.rediger_utkast(
+        rt, tenant=TEN, aktor="forf", request_id="r", utkast_id=uid,
+        forventet_utkastversjon=ver, innhold=innhold,
+        idempotency_key=idem, input_hash="ih-" + idem)
+
+
+def _valider(rt, uid, ver):
+    idem = secrets.token_hex(8)
+    return policyadmin.valider_utkast(
+        rt, tenant=TEN, aktor="forf", request_id="r", utkast_id=uid,
+        forventet_utkastversjon=ver, idempotency_key=idem,
+        input_hash="ih-" + idem)
+
+
+def _rad(uid):
+    m = _mig()
+    rad = m.execute("SELECT status, innholds_hash, utkastversjon FROM"
+                    " policyutkast WHERE tenant=%s AND utkast_id=%s",
+                    (TEN, uid)).fetchone()
+    m.close()
+    return rad
+
+
+def _rundestatus(uid):
+    m = _mig()
+    rad = m.execute("SELECT status FROM aktiveringsrunde WHERE tenant=%s"
+                    " AND utkast_id=%s AND runde=1", (TEN, uid)).fetchone()
+    m.close()
+    return rad[0] if rad else None
+
+
+@pg
+def test_validert_utkast_kan_gjenapnes_redigeres_og_valideres_paa_nytt():
+    """Hele sløyfa eier ba om: validert → gjenåpne → rediger → valider.
+    Den nye valideringen fryser en NY hash — ikke den gamle om igjen.
+
+    Kontroll: fjern `innholds_hash=NULL` fra gjenåpningens UPDATE, så blir
+    denne rød i valideringen (033-triggeren nekter å endre en satt hash).
+    """
+    pid = "p-" + secrets.token_hex(3)
+    uid = "u-" + secrets.token_hex(6)
+    _utkast(uid, pid, "validert")
+    gammel_hash = _rad(uid)[1]
+    rt = _rt()
+    try:
+        res = _gjenapne(rt, uid)
+        assert res["status"] == "utkast"
+        status, hash_, ver = _rad(uid)
+        assert status == "utkast"
+        assert hash_ is None, "hashen ble stående etter gjenåpningen"
+        # Gjenåpningen BUMPER den optimistiske låsen (Codex P1): en editor som
+        # lastet utkastet FØR valideringen holder fortsatt den gamle
+        # versjonen, og uten bumpen passerte den både status- og
+        # versjonssjekken i `rediger_utkast` og overskrev det gjenåpnede
+        # utkastet stille. Kontroll: fjern `utkastversjon=%s`-leddet fra
+        # gjenåpningens UPDATE, så blir begge assertene her røde.
+        assert res["utkastversjon"] == 2 and ver == 2, (res, ver)
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            _rediger(rt, uid, 1, _dokument(pid, "9.9.9"))
+        assert "utdatert" in e.value.kode, \
+            "en foreldet editor fikk skrive over det gjenåpnede utkastet"
+
+        nytt = _dokument(pid, "1.2.0")
+        r2 = _rediger(rt, uid, ver, nytt)
+        v = _valider(rt, uid, r2["utkastversjon"])
+        assert v["utfall"] == "validert", v
+        assert v["innholds_hash"] != gammel_hash, \
+            "den nye valideringen gjenbrukte den gamle frysingen"
+        assert _rad(uid)[0] == "validert"
+    finally:
+        rt.close()
+
+
+@pg
+def test_gjenapning_trekker_aapen_runde_tilbake():
+    """En åpen runde kunne uansett aldri aktivere det redigerte innholdet
+    (runden er frosset mot hashen som nå nullstilles) — å la den stå ville
+    bedt godkjennere signere på noe som ikke kan lande. Kansellert, og
+    varselet pensjonert, i samme transaksjon.
+
+    Kontroll: fjern `_kanseller_levende_runde`-kallet i `gjenapne_utkast`,
+    så blir denne rød."""
+    pid = "p-" + secrets.token_hex(3)
+    uid = "u-" + secrets.token_hex(6)
+    _utkast(uid, pid, "validert")
+    _runde(uid, "1 hour")
+    rt = _rt()
+    try:
+        res = _gjenapne(rt, uid)
+        assert res["status"] == "utkast"
+        assert _rundestatus(uid) == "kansellert"
+    finally:
+        rt.close()
+
+
+@pg
+def test_gjenapning_avviser_alt_annet_enn_validert():
+    """`utkast` har ingenting å gjenåpne; `godkjent` har fire øyne bak seg og
+    avvikles ikke ved å redigeres bort; `forkastet` er terminal."""
+    rt = _rt()
+    try:
+        for status in ("utkast", "godkjent", "forkastet"):
+            pid = "p-" + secrets.token_hex(3)
+            uid = "u-" + secrets.token_hex(6)
+            _utkast(uid, pid, status)
+            with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+                _gjenapne(rt, uid)
+            assert e.value.kode == "utkast_ulovlig_tilstand", (status, e.value)
+            assert _rad(uid)[0] == status
+    finally:
+        rt.close()
+
+
+@pg
+def test_feil_utkastversjon_avvises():
+    pid = "p-" + secrets.token_hex(3)
+    uid = "u-" + secrets.token_hex(6)
+    _utkast(uid, pid, "validert")
+    rt = _rt()
+    try:
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            _gjenapne(rt, uid, ver=99)
+        assert "utdatert" in e.value.kode
+        assert _rad(uid)[0] == "validert"
+    finally:
+        rt.close()
+
+
+@pg
+def test_hashen_er_fortsatt_frosset_i_alle_andre_retninger():
+    """033-kontrollen: migrasjonen åpnet ÉN overgang, ikke frysingen.
+
+    (a) NULL uten statusovergangen → nektet; (b) en ANNEN verdi, selv med
+    overgangen → nektet. Uten (a) kunne hvem som helst med skrivetilgang
+    nullstille hashen på et validert utkast og la den gamle valideringen
+    se ut som om den gjaldt nytt innhold."""
+    import psycopg
+    pid = "p-" + secrets.token_hex(3)
+    uid = "u-" + secrets.token_hex(6)
+    _utkast(uid, pid, "validert")
+    m = _mig()
+    try:
+        with pytest.raises(psycopg.errors.RaiseException, match="frosset"):
+            m.execute("UPDATE policyutkast SET innholds_hash=NULL"
+                      " WHERE tenant=%s AND utkast_id=%s", (TEN, uid))
+        m.rollback()
+        from db.pg import sett_kontekst
+        sett_kontekst(m, TEN, "sys", "r0")
+        with pytest.raises(psycopg.errors.RaiseException, match="frosset"):
+            m.execute("UPDATE policyutkast SET innholds_hash='annenhash',"
+                      " status='utkast' WHERE tenant=%s AND utkast_id=%s",
+                      (TEN, uid))
+        m.rollback()
+    finally:
+        m.close()
+
+
+# --------------------------------------------------------------------------
+# Versjonsvaktene — eiers 17/8-felle: utkastet arvet den aktive policyens
+# versjon (0.3.0), validerte i beste velgående, og døde uforklart ved
+# rundeåpning med `versjon_i_bruk`.
+# --------------------------------------------------------------------------
+
+@pg
+def test_valider_sier_fra_om_opptatt_versjon_med_forslag():
+    """Valideringen er stedet eier fortsatt kan RETTE. Kontroll: fjern
+    `_versjonsavvik`-kallet i `valider_utkast`, så blir denne rød."""
+    pid = "p-" + secrets.token_hex(3)
+    uid = "u-" + secrets.token_hex(6)
+    m = _mig()
+    _policyrad(m, pid, "1.1.0")
+    m.commit(); m.close()
+    _utkast(uid, pid, status="utkast", versjon="1.1.0")   # arver den aktive
+    rt = _rt()
+    try:
+        v = _valider(rt, uid, 1)
+        assert v["utfall"] == "ugyldig", v
+        tekst = " ".join(v["feil"])
+        assert "1.1.0" in tekst and "aktiv" in tekst, tekst
+        assert "1.1.1" in tekst, f"forslag mangler: {tekst}"
+        assert _rad(uid)[0] == "utkast", "et ugyldig utkast ble frosset"
+
+        # ... og med forslaget fulgt validerer det samme utkastet.
+        r = _rediger(rt, uid, 1, _dokument(pid, "1.1.1"))
+        v2 = _valider(rt, uid, r["utkastversjon"])
+        assert v2["utfall"] == "validert", v2
+    finally:
+        rt.close()
+
+
+@pg
+def test_opprett_bytter_arvet_opptatt_versjon_med_neste_ledige():
+    """Samme normalisering som `meta.status`: et utkast som er dødfødt slik
+    det opprettes, skal ikke opprettes slik. En versjon eier selv har satt
+    HØYERE er et valg og røres ikke.
+
+    Kontroll: fjern versjonsnormaliseringen i `opprett_utkast`, så blir den
+    første halvdelen rød."""
+    pid = "p-" + secrets.token_hex(3)
+    m = _mig()
+    _policyrad(m, pid, "1.1.0")
+    m.commit(); m.close()
+    rt = _rt()
+    try:
+        def opprett(versjon):
+            idem = secrets.token_hex(8)
+            return policyadmin.opprett_utkast(
+                rt, tenant=TEN, aktor="forf", request_id="r", policy_id=pid,
+                innhold=_dokument(pid, versjon), idempotency_key=idem,
+                input_hash="ih-" + idem)
+
+        uid1 = opprett("1.1.0")["utkast_id"]         # arvet == aktiv
+        m = _mig()
+        v1 = m.execute("SELECT innhold->'meta'->>'versjon' FROM policyutkast"
+                       " WHERE tenant=%s AND utkast_id=%s",
+                       (TEN, uid1)).fetchone()[0]
+        assert v1 == "1.1.1", v1
+
+        uid2 = opprett("2.0.0")["utkast_id"]         # eiers eget, høyere valg
+        v2 = m.execute("SELECT innhold->'meta'->>'versjon' FROM policyutkast"
+                       " WHERE tenant=%s AND utkast_id=%s",
+                       (TEN, uid2)).fetchone()[0]
+        m.close()
+        assert v2 == "2.0.0", v2
+    finally:
+        rt.close()
+
+
+def _identitet_og_varsel(uid):
+    """En godkjenner-identitet med et ulest attestering-venter-varsel for
+    utkastets runde 1 — tilstanden en vellykket varsling etterlater."""
+    m = _mig()
+    bid = m.execute(
+        "INSERT INTO brukeridentitet (issuer, sub) VALUES (%s,%s)"
+        " RETURNING bruker_id",
+        ("https://idp.example", f"{TEN}-godkj-{uid}")).fetchone()[0]
+    m.execute(
+        "INSERT INTO varsel (tenant,bruker_id,art,ressurs_type,ressurs_id,"
+        "hendelse,tekstnokkel) VALUES (%s,%s,'attestering_venter',"
+        "'policyutkast',%s,'1','varsel.attestering_venter')", (TEN, bid, uid))
+    m.commit()
+    m.close()
+
+
+def _uleste_varsler(uid):
+    m = _mig()
+    try:
+        return m.execute(
+            "SELECT count(*) FROM varsel WHERE tenant=%s AND"
+            " ressurs_type='policyutkast' AND ressurs_id=%s"
+            " AND lest_ts IS NULL", (TEN, uid)).fetchone()[0]
+    finally:
+        m.rollback()
+        m.close()
+
+
+@pg
+def test_gjenapne_replay_forsoner_en_feilet_varselrydding(monkeypatch):
+    """Codex P2, samme klasse som attesteringens replay-forsoning: runden
+    kanselleres og committes, men varselryddingen er skjermet best effort —
+    feiler den, sto godkjennernes uleste varsler og ba om en attestering
+    ingen kan gjøre, og retryen svarte fra replay-grenen uten å prøve.
+
+    Kontroll: fjern `_forson_rundepensjonering`-kallet i gjenåpningens
+    replay-gren, så blir denne rød."""
+    pid = "p-" + secrets.token_hex(3)
+    uid = "u-" + secrets.token_hex(6)
+    _utkast(uid, pid, "validert")
+    _runde(uid, "1 hour")
+    _identitet_og_varsel(uid)
+
+    idem = secrets.token_hex(8)
+    ih = f"{TEN}\x1f{uid}\x1fgjenapne\x1f1\x1f{idem}"
+    kall = dict(tenant=TEN, aktor="forf", request_id="r", utkast_id=uid,
+                forventet_utkastversjon=1, idempotency_key=idem,
+                input_hash=ih, naa=datetime.now(timezone.utc))
+    rt = _rt()
+    try:
+        # Første forsøk: ryddingen «feiler» (gjør ingenting), som etter en
+        # transient databasefeil bak skjermen.
+        monkeypatch.setattr(policyadmin.varsel, "pensjoner_runde",
+                            lambda *a, **k: 0)
+        policyadmin.gjenapne_utkast(rt, **kall)
+        monkeypatch.undo()
+        assert _rundestatus(uid) == "kansellert"
+        assert _uleste_varsler(uid) == 1, "forutsetningen holder ikke"
+
+        # Retry med samme nøkkel: svaret er det lagrede, men hullet tettes.
+        res = policyadmin.gjenapne_utkast(rt, **kall)
+        assert res["status"] == "utkast"
+        assert _uleste_varsler(uid) == 0, \
+            "replayen lot varselet be om en attestering som ikke finnes"
+    finally:
+        rt.close()
+
+
+@pg
+def test_valider_cacher_ikke_en_dom_registeret_kan_endre():
+    """Codex P2: «versjonen er opptatt» er en dom om REGISTERET, ikke om
+    utkastet — og registeret flytter seg: slettingen frigjør uttrykkelig
+    versjonsnumrene. Et cachet «ugyldig» ville replayet den foreldede dommen
+    for alltid, og flaten gjenbruker med rette nøkkelen sin per render.
+
+    Kontroll: la registerfeilene gå gjennom `_fullfor` som dokumentfeilene,
+    så blir denne rød på siste assert."""
+    pid = "p-" + secrets.token_hex(3)
+    uid = "u-" + secrets.token_hex(6)
+    m = _mig()
+    _policyrad(m, pid, "1.1.0")
+    hasj = m.execute("SELECT innholds_hash FROM policyer WHERE tenant=%s"
+                     " AND policy_id=%s", (TEN, pid)).fetchone()[0]
+    m.commit(); m.close()
+    _utkast(uid, pid, status="utkast", versjon="1.1.0")
+
+    idem = secrets.token_hex(8)
+    rt = _rt()
+    try:
+        def valider_med_samme_nokkel():
+            return policyadmin.valider_utkast(
+                rt, tenant=TEN, aktor="forf", request_id="r", utkast_id=uid,
+                forventet_utkastversjon=1, idempotency_key=idem,
+                input_hash="ih-" + idem)
+
+        v1 = valider_med_samme_nokkel()
+        assert v1["utfall"] == "ugyldig", v1
+
+        # Konflikten forsvinner: policyen som holdt versjonen slettes styrt.
+        from db.pg import sett_kontekst
+        sett_kontekst(rt, TEN, "forf", "r-slett")
+        rt.execute("SELECT slett_ubrukt_policy(%s,%s,%s,%s)",
+                   (TEN, pid, "1.1.0", hasj))
+        rt.commit()
+
+        v2 = valider_med_samme_nokkel()
+        assert v2["utfall"] == "validert", (
+            "et replay pinnet registertilstanden fra før slettingen", v2)
+    finally:
+        rt.close()

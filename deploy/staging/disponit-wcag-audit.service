@@ -1,0 +1,102 @@
+# m_wcag_audit-arbeideren (PR-014c): claimer WCAG-kontrolloppdrag over
+# API-et med modultokenet fra onboarding (035), kjører motoren i
+# browser-containeren, laster opp rapporten og kvitterer signert.
+#
+# TILLITSSNITTET: prosessen har modultoken + kvitteringsnøkkel — men
+# INGEN DB-tilgang, ingen KEK, ingen tenant-nøkler. Motoren under den
+# har heller ikke prosessens miljø (Kommandomotors allowlist). Enables
+# FØRST når modulen er akseptert (status aktiv) — før det svarer claim
+# 403 modul_ikke_claimbar, og uniten ville bare pollet seg varm.
+#
+# INGEN DOCKER-GRUPPE (Codex P1). `SupplementaryGroups=docker` sto her
+# for at arbeideren skulle få startet motorcontaineren. Men medlemskap i
+# `docker` ER root på verten: den som når daemon-socketen kan be om en
+# privilegert container eller montere `/` inn i en, og daemonen kjører
+# som root. En kompromittert, NETTVENDT arbeider kunne dermed lese DB,
+# KEK og tenant-nøkler — nøyaktig det tillitssnittet over sier den ikke
+# har — uansett hvor stramt selve motorcontaineren er satt opp. Å låse
+# motoren og gi nøkkelen til hele verten ved siden av er ikke en
+# innskjerping; det er en omvei rundt den.
+#
+# DISPONIT_WCAG_MOTOR skal derfor være en ROOTLESS launcher som kjører
+# som `disponit-wcag` selv, uten daemon i mellom:
+#
+#   DISPONIT_WCAG_MOTOR="podman run --rm -i --network host \
+#       --cap-drop ALL --security-opt no-new-privileges \
+#       --memory 2g --memory-swap 2g --pids-limit 512 \
+#       disponit-wcag-motor@sha256:<digest>"
+#
+# RESSURSGRENSENE ER EN DEL AV LAUNCHEREN (Codex P1). Nettleseren under
+# åpner en vilkårlig, KUNDEKONTROLLERT side. Uten grenser kunne en side
+# som allokerer aggressivt eller åpner mange workers spise vertens RAM
+# eller prosesstabell og ta ned API-et ved siden av — arbeiderens
+# klokkefrist stopper en LANG kjøring, ikke en grådig. `--memory-swap`
+# lik `--memory` slår av swap-påslaget; `--pids-limit` er
+# prosesstabellen. Verdiene står i sjekklistens `MOTORGRENSER`, som
+# skriver denne linja for drift, så målerunden og driften får samme motor.
+#
+# Rootless podman har ingen socket å eskalere gjennom: containeren
+# kjører i brukerens eget user-namespace, og «root» i den er
+# `disponit-wcag` på verten. Forutsetningen er subuid/subgid for
+# brukeren (`/etc/subuid`, `/etc/subgid`) og XDG_RUNTIME_DIR under —
+# begge er allerede i Kommandomotors miljø-allowlist.
+#
+# BILDELAGERET ER BRUKERENS EGET (Codex P1). Rootless podman leser og
+# skriver images under `$HOME/.local/share/containers/storage`, ikke i
+# dockerdaemonens lager — de to har ingenting med hverandre å gjøre. Et
+# image bygget med `docker build` finnes derfor IKKE her før det er
+# importert. `opp.sh` gir brukeren et hjem (/var/lib/disponit-wcag), og
+# fase 9 i staging-sjekklisten importerer imaget og verifiserer at det
+# faktisk er der før uniten enables. systemd setter $HOME fra
+# kontodatabasen for `User=`, så det trengs ingen Environment-linje.
+#
+# NoNewPrivileges settes BEVISST ikke: rootless podman trenger setuid-
+# hjelperne `newuidmap`/`newgidmap` for å sette opp namespacet, og
+# flagget ville brutt oppstarten. Privilegiegrensen bæres av at brukeren
+# ikke er i noen priviligert gruppe, ikke av dette flagget.
+
+[Unit]
+Description=Disponit WCAG-kontrollarbeider (m_wcag_audit)
+After=network-online.target disponit-api.service
+Wants=network-online.target
+
+[Service]
+User=disponit-wcag
+Group=disponit-wcag
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core:/opt/disponit/aktiv/platform
+EnvironmentFile=-/etc/disponit/wcag/konfig
+LoadCredential=DISPONIT_MODULTOKEN:/etc/disponit/wcag/DISPONIT_MODULTOKEN
+RuntimeDirectory=disponit-wcag
+# Rootless podmans kjøretidskatalog — samme sti som RuntimeDirectory over.
+Environment=XDG_RUNTIME_DIR=/run/disponit-wcag
+# Podman trenger sin egen cgroup-undergren for containeren.
+Delegate=yes
+# Det som kan strammes UTEN å ta fra podman namespace-oppsettet.
+# (ProtectControlGroups/NoNewPrivileges/RestrictSUIDSGID står bevisst
+# ikke her — se hodet: de bryter rootless-oppstarten.)
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+RestrictRealtime=yes
+# BACKSTOPPET RUNDT MOTOREN (Codex P1). Containerens egne grenser står i
+# DISPONIT_WCAG_MOTOR, men de holder bare så lenge launcheren er den vi
+# tror. Unitens cgroup INNEHOLDER containerens (Delegate=yes gir podman en
+# undergren, ikke en egen gren), så disse taler for arbeideren OG motoren
+# under den — også om noen setter en launcher uten grenser. Rommet over
+# containerens 2g/512 er arbeiderprosessen og podmans eget oppsett.
+#
+# CPU-TAKET LIGGER HER OG IKKE I LAUNCHEREN: rootless podman får ikke
+# cpu-kontrolleren delegert på en vanlig systemd-vert, så `--cpus` ville
+# feilet ved første claim. `CPUQuota` er ikke en drepende grense — den
+# struper — og det er riktig utfall for en travel side: kontrollen tar
+# lengre tid, verten blir stående.
+MemoryMax=3G
+MemorySwapMax=0
+TasksMax=1024
+CPUQuota=150%
+ExecStart=/opt/disponit/.venv/bin/python -m drift.wcag_audit_arbeider
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

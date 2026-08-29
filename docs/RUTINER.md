@@ -8,21 +8,27 @@ Gjelder alle i pipelinen. Avvik fra rutinene er selv en review-feil.
 |---|---|---|
 | **Eier** | Deg | Godkjenner retning, eier kontoer/nøkler/avtaler, bærer juridisk ansvar. Involveres bare der policy krever menneske. |
 | **Claude.ai** | Arkitekt og produktleder | Bestemmer struktur og spesifikasjon, lager drafts, koordinerer reviews, tar beslutninger på vegne av Eier der det trengs. Avslutter **alltid** med NÅ/NESTE-blokken (se pkt. 3). |
-| **ChatGPT** | Spesifikasjonsreview | Reviewer drafts mot de tre faste spørsmålene (se docs/README-arbeidsflyt.md). Svar limes inn i PR-beskrivelsen. |
-| **Claude Code** | Implementering | Skriver kode i repoet, kjører tester lokalt og på staging-serveren. Deployer aldri til produksjon direkte. |
-| **Codex** | Kodereview og merge | Håndhever de fire merge-portene. Merger kun grønt. |
+| **ChatGPT** | Reviewer arkitekten | Reviewer Claude.ai-drafts (spesifikasjon) mot de tre faste spørsmålene (se docs/README-arbeidsflyt.md). Svar limes inn i PR-beskrivelsen. |
+| **Claude Code** | Implementering, kodereview-port og merge | Skriver kode i repoet, kjører tester lokalt og på staging-serveren, kjører CodeRabbit som feilfanger på hver PR, og merger egne PR-er når CodeRabbit er ren og CI grønn. Deployer aldri til produksjon direkte. |
+| **CodeRabbit** | Feilfanger | `coderabbit review --agent` kjøres av Claude Code før push og etter vesentlige endringer. Kritisk/alvorlig fikses; bagateller listes i PR-en. Verktøy, ikke aktør — den merger aldri og har ingen GitHub-flate. |
+
+*Cursor og Codex ble tatt ut av pipelinen 29/8-2026 (eierbeslutning):
+review-kjeden deres kostet 10–15 runder à 10 min per PR. Historikken
+deres står i merge-historikk og lukkede PR-tråder; K-reglene i §9 bærer
+lærdommen videre.*
 
 ## 2. Modulrutine — én modul om gangen, helt ferdig
 
-1. **Draft** (Claude.ai): spesifikasjon/kode mot akseptansekriteriene i docs/spesifikasjon (v7.2). Én modul = én branch = én PR.
+1. **Draft** (Claude.ai): spesifikasjon/kode mot akseptansekriteriene i gjeldende prototype — fila i `docs/spesifikasjon/`, som alltid inneholder nøyaktig én utgave: den gjeldende. Én modul = én branch = én PR.
 2. **Spesifikasjonsreview (ChatGPT) — OBLIGATORISK for alle PR-er som rører `platform/`, `policies/` eller `deploy/`.** Claude.ai sender draften (spesifikasjon eller kode) til ChatGPT FØR Claude Code starter implementering. Review-svaret limes inn i PR-beskrivelsen. Kun PR-er som utelukkende endrer `docs/` kan hoppe over porten, og da skal PR-beskrivelsen si det eksplisitt med begrunnelse.
    *Historikk: porten ble hoppet over i PR-003 (forsvarlig, ren docs) og PR-004 (ikke forsvarlig — tillitsankerets tilstandslag). Codex og Claude Code fanget tolv P1 i PR-004-rundene, men porten foran skal redusere antallet som når dit. Denne presiseringen finnes fordi arkitekten brøt sin egen rutine; regelen gjelder Claude.ai mest av alle.*
 3. **Implementering** (Claude Code): kode + tester, inkludert obligatoriske negative policytester.
-4. **Kodereview** (Codex): fire porter, merge til main.
-5. **Staging-test** (Claude Code): modulen kjøres på staging-serveren — ekte server, syntetiske data, sandkasse-integrasjoner. Hele sjekklisten i modulens manifest må bestå 100 %.
-6. **Aksept** (Claude.ai bekrefter, Eier informeres): modulstatus settes til `aktiv`. Først nå starter neste modul.
+4. **Feilfanger** (CodeRabbit, kjørt av Claude Code): `coderabbit review --agent --include-untracked --base main` FØR push, og på nytt etter vesentlige endringer. «Ren» betyr NULL åpne kritisk/alvorlig-funn — de fikses før PR-en åpnes; minor/bagateller kan stå, men listes da i PR-beskrivelsen med begrunnelse. Fikk den ikke kjørt (rate-limit/nede) sies det eksplisitt i PR-en, og merge er da TILLATT når CI er grønn — CodeRabbit er feilfanger, CI er porten; en nede-tjeneste skal ikke stanse leveransen, men fraværet skal aldri være stille.
+5. **Merge** (Claude Code): når vilkårene i pkt. 4 er oppfylt og CI (`test`) er grønn, merger Claude Code selv (`gh pr merge --squash`). Branch protection er porten som håndhever det maskinelt: ingen merge uten grønn `test`, strict up-to-date, lineær historikk, `enforce_admins`.
+6. **Staging-test** (Claude Code): modulen kjøres på staging-serveren — ekte server, syntetiske data, sandkasse-integrasjoner. Hele sjekklisten i modulens manifest må bestå 100 %.
+7. **Aksept** (Claude.ai bekrefter, Eier informeres): modulstatus settes til `aktiv`. Først nå starter neste modul.
 
-**Regel:** «Testes direkte på serveren» betyr staging-serveren — aldri produksjon. Produksjon nås kun via utrullingsløypen i v7.2 (kanari → gradvis → automatisk rollback).
+**Regel:** «Testes direkte på serveren» betyr staging-serveren — aldri produksjon. Produksjon nås kun via utrullingsløypen i gjeldende prototype, seksjonen «Utrulling» (kanari → gradvis → automatisk rollback).
 
 **Bootstrap-unntak (kun fase 1-plattformmoduler):** M-1, M-2, M-37 og M-38 er gjensidig avhengige — m01 kan f.eks. ikke bestå `feilinjisering_til_unntakskø` før M-37 finnes, og M-37 kan ikke bygges uten M-1. For disse fire gjelder «ferdig før neste» på KJEDENIVÅ: de bygges i samspill, og ingen fase 2-modul startes før ALLE fire har bestått hele sin staging-sjekkliste. Regelen som aldri fravikes: en modul settes ikke til `aktiv` i registeret før alle sjekklistepunkter er ja — blokkerte punkter markeres `blokkert_av: <modul>` i manifestet, ikke som ja. Fra fase 2 gjelder regelen bokstavelig per modul.
 
@@ -63,7 +69,7 @@ Ingen leveranse uten denne blokken. Uklarhet om hvem/hva/hvor er en feil.
 
 - Alle farger, typografi, avstander og fokus-stiler defineres kun i `design/tokens.css`.
 - Komponenter refererer variabler — aldri egne verdier. Endre utseende = endre én fil.
-- WCAG 2.1 AA-kravene i v7.2 gjelder alt UI; axe-core i CI blokkerer merge ved brudd.
+- WCAG 2.1 AA-kravene i gjeldende prototype, seksjonen «Design og tilgjengelighet», gjelder alt UI; axe-core i CI blokkerer merge ved brudd.
 
 ## 7. Moduler — legg til og fjern uten ringvirkning
 
@@ -75,11 +81,11 @@ Ingen leveranse uten denne blokken. Uklarhet om hvem/hva/hvor er en feil.
 
 Repoet bor på github.com. Reglene under er ikke anbefalinger — de konfigureres som branch protection slik at GitHub nekter det som er forbudt.
 
-**Flyt:** Claude Code lager branch `pr-XXX-mNN-kortnavn` → åpner PR med malen (.github/PULL_REQUEST_TEMPLATE.md) → CI kjører automatisk (.github/workflows/ci.yml) → ChatGPT-review limes inn i PR-beskrivelsen → Codex reviewer i PR-en og merger når portene er grønne → merge til main trigger staging-deploy (PR-004).
+**Flyt:** Claude Code lager branch → CodeRabbit kjøres lokalt (rene funn) → åpner PR med malen (.github/PULL_REQUEST_TEMPLATE.md) → CI kjører automatisk (.github/workflows/ci.yml) → ChatGPT-review av spesifikasjonen limes inn i PR-beskrivelsen → Claude Code merger ved grønn CI → merge til main trigger staging-deploy (PR-004).
 
 > ✅ **Status 2026-08-01: branch protection er aktiv og satt opp av Claude Code via GitHub-API-et** (ikke i Settings-menyen). Del B i `docs/PUSH-INSTRUKS.md` er utført; verifiser med `gh api repos/moka1980/disponit/branches/main/protection` framfor å sette den opp på nytt.
 
-**Eiers beslutning 2026-08-01: merge-porten driftes av pipelinen (Claude Code / Codex) uten Eier.** Det endrer to ting fra det opprinnelige oppsettet, og begge er bevisste:
+**Eiers beslutning 2026-08-01 (revidert 29/8): merge-porten driftes av Claude Code uten Eier.** Det endrer to ting fra det opprinnelige oppsettet, og begge er bevisste:
 
 - **Ingen menneskelig godkjenning kreves lenger** — heller ikke på tillitsankeret (M-1 policymotor, M-2 revisjonslogg, M-37 unntaksmotor). Anbefalingen i `docs/README-arbeidsflyt.md` om å beholde én menneskelig port er dermed **forlatt med vitende og vilje**. Porten som er igjen er maskinell: ingenting når `main` uten grønn CI, og CI inneholder de negative policytestene som beviser at handling utenfor policy faktisk stoppes. Svekkes en test, svekkes porten — derfor er «ingen fjernet/svekket negativ test» merge-port nr. 1.
 - **`enforce_admins` er nå PÅ.** Det kunne den ikke være før: så lenge en godkjenning var påkrevd og det bare finnes én konto, ville `main` låst seg helt (GitHub lar ingen godkjenne sin egen PR). Med null påkrevde godkjenninger er det ingen låsing — og da forsvinner admin-forbikjøringen som tidligere ble bevist med «Bypassed rule violations». **Ingen kan lenger pushe direkte til `main`. Ikke Codex, ikke Claude Code, ikke Eier.**
@@ -92,4 +98,74 @@ Repoet bor på github.com. Reglene under er ikke anbefalinger — de konfigurere
 
 **CODEOWNERS er ikke lenger en sperre.** Filen beholdes fordi GitHub fortsatt automatisk ber om review fra eier på de fire stiene, men den **blokkerer ingen merge**. Skal tillitsanker-porten gjeninnføres senere, er det ett API-kall: `require_code_owner_reviews: true` + `required_approving_review_count: 1` — og da må rolle-kontoene under finnes først.
 
-**Rolle-kontoer (fortsatt anbefalt, nå av en annen grunn):** egne GitHub-kontoer for Claude Code og Codex gir sporbarhet — hvem gjorde hva — og gjør det mulig å kreve at Codex faktisk godkjenner Claude Codes PR før merge, uten at Eier involveres. Så lenge begge kjører som `moka1980` er «Codex reviewet» kun en påstand i PR-beskrivelsen, ikke noe GitHub kan bekrefte.
+**Rolle-konto for Claude Code er fortsatt anbefalt** for sporbarhet — hvem gjorde hva — men er ikke lenger en merge-forutsetning: porten er maskinell (CI + branch protection), ikke en aktørs godkjenning.
+
+## 9. Konvergensregler for review-runder (K1–K5, ratifisert 21/8)
+
+Rotårsaken de finnes for er målt, ikke ment: en reviewer som ser hele
+diffen gir flere funn av en fiks som VOKSER flaten — selvforsterkende.
+I #118 gikk porten 292 → 4281 linjer over 19 runder mens produktet på
+116 linjer sto ferdig og uimotsagt fra runde 6. Reglene overlever
+aktørbyttet 29/8: de gjelder CodeRabbit-rundene og enhver senere
+reviewer likt.
+
+- **K1 — En fiksrunde bygger aldri.** Et funn lukkes med minst mulig
+  endring; fikser krymper eller holder flaten. Krever funnet ny maskin
+  (parser, simulator, rammeverk), stopper runden: eget issue + egen PR
+  for maskinen, og funnet merkes utsatt dit. Ny kode introdusert i en
+  fiksrunde er i seg selv et rødt flagg.
+- **K2 — Tre-runders-regelen.** Tredje runde på samme fil/mekanisme =
+  automatisk stopp: rotårsaksanalyse og arkitekturvalg eskaleres FØR et
+  fjerde formforsøk.
+- **K3 — Produktet holdes aldri som gissel.** Står produktdelen ferdig
+  og uimotsagt to runder på rad mens funnene treffer test-/portkode
+  introdusert i PR-en, deles PR-en: produktet merges, maskineriet får
+  egen PR.
+- **K4 — Aldri hand-parse en fremmed grammatikk.** Løftet til SP-13 i
+  `docs/ARKITEKTUR-STAENDE-PORTER.md`: ekte parser for syntaks, oppslag
+  i virkelig tilstand for semantikk — aldri regex-tilstandsmaskiner
+  eller simulatorer.
+- **K5 — Overvåkeren griper inn.** Ved K2-/K3-brudd legges en
+  scope-kjennelse i PR-tråden rundt runde 8 — med eskalering til eier —
+  ikke etter tjue runder.
+
+## 10. Kodereview-porten (CodeRabbit, kjørt av Claude Code)
+
+Cursor pre-Codex-kjeden og Codex-merge-porten ble tatt ut 29/8-2026
+(eierbeslutning; workflowene `cursor-pre-codex.yml` og `claude.yml` er
+slettet i samme commit som denne teksten — regel og port er samme
+commit, aldri et vindu der dokumentet lover en port maskinen mangler).
+
+Porten som står igjen:
+
+1. **Før push:** `coderabbit review --agent --include-untracked
+   --base main`. Kritisk/alvorlig fikses; bagateller listes i
+   PR-beskrivelsen. Rate-limit/nede sies eksplisitt.
+2. **Etter vesentlige endringer i PR-en:** ny kjøring.
+3. **Merge:** Claude Code, `gh pr merge --squash`, KUN ved grønn
+   `test`-check. Branch protection håndhever: strict up-to-date,
+   lineær historikk, `enforce_admins`, ingen direkte push til main.
+4. **K-reglene i §9 gjelder** CodeRabbit-rundene som de gjaldt de
+   gamle: en fiksrunde bygger aldri (K1), tredje runde på samme
+   mekanisme eskaleres (K2), produktet holdes aldri som gissel (K3).
+
+`CURSOR_API_KEY`-secreten og Cursor/Codex-appinstallasjonene kan
+fjernes av eier når som helst etter denne mergen; ingenting i repoet
+leser dem lenger.
+
+## 11. Mandater og drift utenom øktene
+
+Den autonome natt-sløyfa (`claude.yml`) er avviklet sammen med
+review-kjeden den var bygget rundt. Det som gjelder nå:
+
+1. **Mandater gis i økt** — Remote Control-økten eller en lokal
+   Claude Code-økt. En ordre i en issue-kommentar trigger ingen
+   kjøring lenger; GitHub-flaten er passiv utenom CI.
+2. **Dom-klasse-registeret består som DOKUMENTASJON.** Formen
+   `dom-klasse: <id> · felt i #<nr> · <URL>` brukes fortsatt i
+   PR-tråder og KONTRAKT-filer for å sitere felte eierdommer — men
+   ingen maskin leser den lenger; den er for mennesker og fremtidige
+   økter.
+3. **Eierdommer felles av eier** (`moka1980`) i issue-/PR-tråder eller
+   direkte i økt, som før. Delegasjonsvedtak dokumenteres der de
+   felles.

@@ -6,7 +6,9 @@ stopper det de skal FØR noe røres, og at utkast-CRUD-funksjonene (opprett →
 rediger → valider) håndhever optimistisk lås + skjemavalidering + frysing.
 """
 import copy
+import re
 import secrets
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -23,9 +25,19 @@ _MAL = (Path(__file__).resolve().parents[3]
         / "policies" / "bransjemal-handverk-bygg.yaml")
 
 
-def _gyldig() -> dict:
-    """En kjent skjemagyldig policy (bransjemalen som CI allerede validerer)."""
-    return yaml.safe_load(_MAL.read_text(encoding="utf-8"))
+def _gyldig(pid: str | None = None) -> dict:
+    """En kjent skjemagyldig policy (bransjemalen som CI allerede validerer).
+
+    `pid` gjør malen til et UTKAST slik editoren gjør det: identiteten bindes
+    til utkastets policy_id (migrasjon 023), og statusen settes til den
+    aktiveringen skriver (023). Malen bærer sin egen id og `status: utkast` —
+    riktig for en mal, men et utkast som beholder dem kan ikke valideres.
+    """
+    pol = yaml.safe_load(_MAL.read_text(encoding="utf-8"))
+    if pid is not None:
+        pol["meta"]["policy_id"] = pid
+        pol["meta"]["status"] = "produksjon"
+    return pol
 
 
 def _rt():
@@ -95,7 +107,7 @@ def test_ruter_finnes_ikke_405_paa_feil_metode(klient):
 @pg
 def test_utkast_livssyklus_opprett_rediger_valider():
     pid = "pol-" + secrets.token_hex(3)
-    base = _gyldig()
+    base = _gyldig(pid)
     endret = copy.deepcopy(base)
     endret["roller"].append({"id": "ny_rolle", "beskrivelse": "lagt til"})
     rt = _rt()
@@ -154,7 +166,8 @@ def test_valider_ugyldig_policy_gir_feilliste_uten_tilstandsendring():
         assert res["feil"]
         # Status urørt (fortsatt utkast, ingen frosset hash).
         det = policyadmin.hent_utkast_detalj(
-            rt, tenant=TEN, aktor="forf", request_id="r", utkast_id=uid)
+            rt, tenant=TEN, aktor="forf", request_id="r", utkast_id=uid,
+            naa=datetime.now(timezone.utc))
         assert det["status"] == "utkast"
         assert det["innholds_hash"] is None
     finally:
@@ -188,6 +201,32 @@ def test_opprett_idempotent_replay_samme_utkast_id():
         rt.close()
 
 
+def test_nytt_utkast_avvik_er_portens_egen_prove():
+    """Codex P2: flaten må kunne SPØRRE om en identitet kan bære et utkast.
+
+    Historikken tilbyr rullbakk, og rullbakk er en utkastopprettelse. En
+    arvet policy-id som `acme\\n` kan leses (lastekontrakten slipper den
+    gjennom med vilje), men `opprett_utkast` avviser den — knappen endte
+    derfor deterministisk i 400. Prøven bor ETT sted, så flatens dom og
+    portens dom ikke kan gå fra hverandre; her måles nettopp den
+    likheten, ikke en kopi av regelen.
+    """
+    from api.policyadmin import (_MAKS_NOKKELBYTES, _VERSJONSRESERVE,
+                                 nytt_utkast_avvik)
+    assert nytt_utkast_avvik("t", "faktura-no") is None
+    # Formen: den arvede id-en, og et par nabotilfeller.
+    for rar in ("acme\n", "ACME", "ab", "acme_no", ""):
+        avvik = nytt_utkast_avvik("t", rar)
+        assert avvik and avvik[0] == "policy_id_ugyldig", (rar, avvik)
+    assert nytt_utkast_avvik("t", None) is not None
+    # Plassen: formen er grei, men nøkkelen levner ikke rom til en versjon.
+    lang = "a" * (_MAKS_NOKKELBYTES - _VERSJONSRESERVE)
+    avvik = nytt_utkast_avvik("t", lang)
+    assert avvik and avvik[0] == "policy_id_for_stor", avvik
+    # FORMEN måles først: `"ACME"` er feil form, ikke for stor.
+    assert nytt_utkast_avvik("t", ("A" * len(lang)))[0] == "policy_id_ugyldig"
+
+
 def test_opprett_input_hash_binder_rollback_av_versjon():
     # Codex R3: bevis at ENDEPUNKTETS hash-konstruksjon binder
     # `rollback_av_versjon` (ikke bare at funksjonen skiller ulike input_hash).
@@ -204,6 +243,31 @@ def test_opprett_input_hash_binder_rollback_av_versjon():
     assert h_uten != h_tom, "null og tom streng gir samme idempotenshash"
     # Deterministisk: samme input → samme hash.
     assert h_v3 == opprett_input_hash(rollback_av="3", **felles)
+    # Codex R4: klientens PÅSTAND om kildeinnholdet binder også. Ellers kunne
+    # en retry med samme nøkkel og en LØGN om innholdet replaye det gamle
+    # 201-svaret uten at påstanden noen gang ble målt mot kilden.
+    uten_paastand = dict(felles, innhold=None)
+    h_paastandslos = opprett_input_hash(rollback_av="3", **uten_paastand)
+    assert h_paastandslos != h_v3, "påstanden om kildeinnholdet binder ikke"
+    h_annen = opprett_input_hash(rollback_av="3",
+                                 **dict(felles, innhold={"a": 2}))
+    assert h_annen != h_v3, "to ULIKE påstander gir samme idempotenshash"
+    # ... men en rullbakk UTEN påstand er fortsatt uavhengig av det serveren
+    # henter: hashen må kunne regnes ut FØR kildeoppslaget, ellers er
+    # replay-før-oppslag umulig igjen.
+    assert h_paastandslos == opprett_input_hash(rollback_av="3",
+                                                **uten_paastand)
+    # Codex P2: KILDEGENERASJONEN binder også. Versjonsnummeret gjenbrukes
+    # — `slett_ubrukt_policy` frigjør det uttrykkelig — så «rull tilbake
+    # til 3» sier ikke hvilken RAD det gjelder. Uten generasjonen i hashen
+    # kunne en retry mot en gjenskapt kilde replayet det gamle 201-svaret
+    # uten at den nye kilden noen gang ble målt: samme nøkkel, annen rad.
+    h_g7 = opprett_input_hash(rollback_av="3", rollback_gen=7, **felles)
+    h_g8 = opprett_input_hash(rollback_av="3", rollback_gen=8, **felles)
+    assert h_g7 != h_g8, "to ULIKE kildegenerasjoner gir samme idempotenshash"
+    assert h_g7 != h_v3, "generasjonen binder ikke hashen"
+    assert h_g7 == opprett_input_hash(rollback_av="3", rollback_gen=7,
+                                      **felles)
 
 
 @pg
@@ -323,6 +387,291 @@ def test_valider_fanger_auto_med_vilkaar_uten_vilkaar():
         rt.close()
 
 
+def test_policy_id_monsteret_speiler_skjemaet():
+    """Porten sitt `_POLICY_ID` er en KOPI av skjemaets `meta.policy_id`.
+
+    Glir de fra hverandre, er hullet tilbake i en ny form: raden ville tatt en
+    id dokumentet ikke kan bære (eller motsatt), og utkastet blir dødfødt igjen.
+    Samme grep som `engine._POLICY_ID_MONSTER` (`test_m37`).
+
+    Kjører uten database.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+    skjema = _json.loads(
+        (_Path(__file__).resolve().parents[3] / "policies"
+         / "policy-schema-v0.2.json").read_text(encoding="utf-8"))
+    felt = skjema["properties"]["meta"]["properties"]["policy_id"]
+    assert felt["pattern"] == "^[a-z0-9-]+$", felt
+    assert felt["minLength"] == 3, felt
+    # Og mønsteret oppfører seg som de to kravene til sammen.
+    for gyldig in ("acme", "acme-netthandel", "a-1", "123"):
+        assert policyadmin._POLICY_ID.match(gyldig), gyldig
+    for ugyldig in ("ACME", " acme ", "acme ", "ac", "", "acme_no", "ac.me",
+                    "æøå"):
+        assert not policyadmin._POLICY_ID.match(ugyldig), ugyldig
+
+
+@pg
+def test_opprett_avviser_radidentitet_dokumentet_ikke_kan_baere():
+    """🔴 P2: raden må tåle det samme kravet som dokumentet.
+
+    Endepunktet krevde bare en ikke-tom streng, så `"ACME"` og `" acme "` ble
+    lagret som radens identitet — og den kan aldri endres. Etter at
+    identitetskravet kom, var et slikt utkast dødfødt uansett hvilken vei eier
+    prøvde: skriver hun radens id inn i dokumentet, bryter den skjemaet
+    (`^[a-z0-9-]+$`); velger hun en skjemagyldig id, spriker den fra raden. Den
+    eneste utveien var å forlate utkastet.
+
+    Kontroll: fjern `_POLICY_ID`-sjekken i `opprett_utkast`, så blir denne rød
+    ved at utkastet OPPRETTES — og de to påfølgende valideringene viser at det
+    da ikke finnes noen vei videre for det.
+    """
+    rt = _rt()
+    try:
+        for ugyldig in ("ACME", " acme ", "ac", "acme_no"):
+            with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+                _opprett(rt, tenant=TEN, aktor="forf", request_id="r",
+                         policy_id=ugyldig, innhold=_gyldig(ugyldig))
+            assert e.value.kode == "policy_id_ugyldig", (ugyldig, e.value.kode)
+            rt.rollback()
+        # Den trimmede/små-bokstavede varianten går, så avvisningen er om
+        # FORMEN og ikke om navnet.
+        o = _opprett(rt, tenant=TEN, aktor="forf", request_id="r",
+                     policy_id="acme", innhold=_gyldig("acme"))
+        assert o["policy_id"] == "acme"
+    finally:
+        rt.close()
+
+
+@pg
+def test_identitetskravet_bryter_ikke_replay_av_eldre_opprettelse(monkeypatch):
+    """🔴 P2: innstrammingen er yngre enn nøklene den møter.
+
+    Et utkast opprettet FØR identitetskravet ble rullet ut kan bære en id
+    kravet nå avviser. Mister klienten responsen og prøver på nytt med samme
+    `Idempotency-Key`, er svaret hun har krav på det LAGREDE — utkastet finnes
+    jo. Sto kontrollen foran `_idempotent_start`, fikk hun `policy_id_ugyldig`
+    i stedet, og da er utkastet usynlig for eieren sin: hun får aldri vite
+    id-en, og kan verken bruke eller rydde det bort.
+
+    Kontroll: flytt de to identitetskravene tilbake foran idempotensposten, så
+    blir denne rød på replayen — og den andre halvdelen viser hvorfor de sto
+    der: et FERSKT krav som avvises skal ikke brenne nøkkelen.
+    """
+    gammel = "LEGACY-" + secrets.token_hex(3)
+    k = secrets.token_hex(8)
+    rt = _rt()
+    try:
+        # Opprettelsen «før utrullingen»: kravet fantes ikke da.
+        monkeypatch.setattr(policyadmin, "_POLICY_ID", re.compile(r".+"))
+        a = policyadmin.opprett_utkast(
+            rt, tenant=TEN, aktor="forf", request_id="r", policy_id=gammel,
+            innhold=_gyldig(), idempotency_key=k, input_hash=k)
+        monkeypatch.undo()
+        # Utrullingen har landet; klienten prøver på nytt med samme nøkkel.
+        b = policyadmin.opprett_utkast(
+            rt, tenant=TEN, aktor="forf", request_id="r", policy_id=gammel,
+            innhold=_gyldig(), idempotency_key=k, input_hash=k)
+        assert b.get("replay") is True
+        assert b["utkast_id"] == a["utkast_id"]
+        assert b["policy_id"] == gammel
+
+        # Og et FERSKT krav som avvises brenner ikke nøkkelen: `rollback()`
+        # ruller idempotensposten tilbake sammen med resten, så den samme
+        # nøkkelen kan brukes om igjen når eier retter id-en.
+        ny = secrets.token_hex(8)
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            policyadmin.opprett_utkast(
+                rt, tenant=TEN, aktor="forf", request_id="r", policy_id="ACME",
+                innhold=_gyldig("ACME"), idempotency_key=ny, input_hash=ny)
+        assert e.value.kode == "policy_id_ugyldig"
+        rt.rollback()
+        pid = "pol-" + secrets.token_hex(3)
+        o = policyadmin.opprett_utkast(
+            rt, tenant=TEN, aktor="forf", request_id="r", policy_id=pid,
+            innhold=_gyldig(pid), idempotency_key=ny, input_hash=ny)
+        assert o.get("replay") is not True and o["policy_id"] == pid
+    finally:
+        rt.close()
+
+
+@pg
+def test_valider_avviser_dokument_med_fremmed_policy_id():
+    """🔴 P1: identiteten er ÉN sak, og valideringen er der den fryses.
+
+    Malen bærer sin egen `meta.policy_id`. Lager eier et utkast under sin id
+    uten å rette dokumentets, er policyen skjemagyldig — og likevel umulig å
+    aktivere forsvarlig: raden ville blitt indeksert under utkastets id, mens
+    motoren bygger beslutningens policyreferanse fra dokumentets
+    (`engine.policyreferanse`). Revisjonsposten og M-37-gjenopprettingen ville
+    slått opp en id uten aktiv rad.
+
+    Kontroll: fjern identitetssjekken i `valider_utkast`, så blir denne rød med
+    utfall `validert` — og et dokument som aldri kunne fungert, frosset.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    pol = _gyldig()                     # malens id, IKKE utkastets
+    rt = _rt()
+    try:
+        o = _opprett(rt, tenant=TEN, aktor="forf", request_id="r",
+                     policy_id=pid, innhold=pol)
+        res = _valider(rt, tenant=TEN, aktor="forf", request_id="r",
+                       utkast_id=o["utkast_id"], forventet_utkastversjon=1)
+        assert res["utfall"] == "ugyldig", res
+        assert any("meta.policy_id" in f for f in res["feil"]), res["feil"]
+        # Og innholdet er IKKE frosset: eier kan rette id-en og validere igjen.
+        det = policyadmin.hent_utkast_detalj(
+            rt, tenant=TEN, aktor="forf", request_id="r",
+            utkast_id=o["utkast_id"], naa=datetime.now(timezone.utc))
+        assert det["status"] == "utkast" and det["innholds_hash"] is None
+        _rediger(rt, tenant=TEN, aktor="forf", request_id="r",
+                 utkast_id=o["utkast_id"], forventet_utkastversjon=1,
+                 innhold=_gyldig(pid))
+        ok = _valider(rt, tenant=TEN, aktor="forf", request_id="r",
+                      utkast_id=o["utkast_id"], forventet_utkastversjon=2)
+        assert ok["utfall"] == "validert", ok
+    finally:
+        rt.close()
+
+
+@pg
+def test_valider_avviser_malstatus_mens_utkastet_ennaa_kan_rettes():
+    """🔴 P1: en mal bærer `status: utkast` — og fryses den slik, er den låst.
+
+    Alle tre bransjemalene oppgir `meta.status: utkast`, editoren har ingen
+    statuskontroll, og aktiveringen skriver `produksjon`. Fanget vi det først
+    ved rundeåpning, sto eier igjen med et VALIDERT utkast: frosset innhold hun
+    ikke kunne redigere, og en runde som ikke kunne åpnes. Normale UI-lagde
+    policyer kunne dermed ikke aktiveres i det hele tatt.
+
+    Kravet står derfor der utkastet ennå er redigerbart, og editoren setter
+    statusen når den bygger innholdet.
+
+    TO LAG, etter at #67 landet på `main`. Opprettelsen NORMALISERER nå
+    statusen — malens `utkast` blir `produksjon` før noe fryses, så veien
+    gjennom produktet kan ikke lenger produsere feilen. Men `rediger_utkast`
+    normaliserer ikke, så en redigering kan sette den tilbake, og da er
+    valideringen fortsatt det som fanger den mens utkastet kan rettes. Begge
+    lagene bevises her; uten det andre ville normaliseringen sett ut som en
+    grunn til å fjerne kontrollen.
+
+    Kontroll: fjern statusdelen av `_dokumentavvik`, så blir andre halvdel rød
+    med utfall `validert` — og utkastet innelåst.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    mal = _gyldig(pid)
+    mal["meta"]["status"] = "utkast"          # slik malen kommer
+    rt = _rt()
+    try:
+        # Lag 1: opprettelsen retter statusen, så malen validerer rett fram.
+        o = _opprett(rt, tenant=TEN, aktor="forf", request_id="r",
+                     policy_id=pid, innhold=mal)
+        ok = _valider(rt, tenant=TEN, aktor="forf", request_id="r",
+                      utkast_id=o["utkast_id"], forventet_utkastversjon=1)
+        assert ok["utfall"] == "validert", ok
+    finally:
+        rt.close()
+
+    # Lag 2: en redigering kan sette statusen tilbake — `rediger_utkast`
+    # normaliserer ikke — og da må valideringen fange den MENS utkastet ennå
+    # kan rettes.
+    pid2 = "pol-" + secrets.token_hex(3)
+    rt = _rt()
+    try:
+        o = _opprett(rt, tenant=TEN, aktor="forf", request_id="r",
+                     policy_id=pid2, innhold=_gyldig(pid2))
+        tilbake = _gyldig(pid2)
+        tilbake["meta"]["status"] = "utkast"
+        _rediger(rt, tenant=TEN, aktor="forf", request_id="r",
+                 utkast_id=o["utkast_id"], forventet_utkastversjon=1,
+                 innhold=tilbake)
+        res = _valider(rt, tenant=TEN, aktor="forf", request_id="r",
+                       utkast_id=o["utkast_id"], forventet_utkastversjon=2)
+        assert res["utfall"] == "ugyldig", res
+        assert any("meta.status" in f for f in res["feil"]), res["feil"]
+        # Utkastet er IKKE frosset: eier retter statusen og validerer igjen.
+        _rediger(rt, tenant=TEN, aktor="forf", request_id="r",
+                 utkast_id=o["utkast_id"], forventet_utkastversjon=2,
+                 innhold=_gyldig(pid2))
+        ok = _valider(rt, tenant=TEN, aktor="forf", request_id="r",
+                      utkast_id=o["utkast_id"], forventet_utkastversjon=3)
+        assert ok["utfall"] == "validert", ok
+    finally:
+        rt.close()
+
+
+@pg
+def test_opprett_avviser_policy_id_som_ikke_levner_plass_til_en_versjon():
+    """🔴 P2: nøkkelen deles — en enorm `policy_id` gjør utkastet dødfødt.
+
+    `policyer_pkey` er (tenant, policy_id, versjon), og de tre deler btree-taket.
+    Skjemaet setter ingen maks på `policy_id`, og `policyutkast`-indeksen tar
+    imot en id på et par kilobyte. Identiteten LÅSES ved opprettelse, så et
+    slikt utkast kunne aldri aktiveres uansett hva eier gjorde etterpå — og uten
+    denne kontrollen fikk hun vite det først når INSERT-en veltet, etter
+    signaturene.
+
+    Kontroll: fjern nøkkelkontrollen i `opprett_utkast`, så blir denne grønn på
+    opprettelsen og rød hos godkjennerne.
+
+    Koden er EGEN (Codex P3). `utkast_feilformet` oversettes av editoren til
+    «innholdet er ikke gyldig JSON-struktur», og HTTP-laget slipper bare koden
+    videre — detaljen når aldri skjermen. Eier ble altså sendt for å reparere et
+    dokument som er helt i orden, mens det eneste som må gjøres er å forkorte
+    id-en. `policy_id_for_stor` er 400, som `policy_id_ugyldig`: en feil i
+    forespørselen, ikke en tilstand som kan endre seg.
+    """
+    pid = "p" + "o" * 2500
+    rt = _rt()
+    try:
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            _opprett(rt, tenant=TEN, aktor="forf", request_id="r",
+                     policy_id=pid, innhold=_gyldig())
+        assert e.value.kode == "policy_id_for_stor", e.value.kode
+        rt.rollback()
+        # Formen først, størrelsen etterpå: en id som er feil på begge måter
+        # skal høre om formen — den er det eier faktisk må velge om igjen.
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e2:
+            _opprett(rt, tenant=TEN, aktor="forf", request_id="r",
+                     policy_id="P" + "O" * 2500, innhold=_gyldig())
+        assert e2.value.kode == "policy_id_ugyldig", e2.value.kode
+        rt.rollback()
+        # En vanlig id går fortsatt gjennom — kontrollen er en grense, ikke en dør.
+        assert _opprett(rt, tenant=TEN, aktor="forf", request_id="r",
+                        policy_id="pol-" + secrets.token_hex(3),
+                        innhold=_gyldig())["utkast_id"]
+    finally:
+        rt.close()
+
+
+@pg
+def test_valider_avviser_unicode_sifre_i_versjonen():
+    """🔴 P2: skjemaet godtar «١.٠.٠» — databasen gjør det ikke.
+
+    `jsonschema` bruker Pythons `\\d`, som dekker hele Unicodes
+    desimalsiffer-kategori; migrasjonene bruker `[0-9]`. Uten kontrollen her ble
+    utkastet FRYST med en versjon databasen ville avvist, runden åpnet, og
+    bruddet kom først etter attestasjonene.
+
+    Kontroll: sett `_SEMVER` tilbake til `\\d`, så blir denne rød med utfall
+    `validert`.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    pol = _gyldig(pid)
+    pol["meta"]["versjon"] = "١.٠.٠"        # ١.٠.٠
+    rt = _rt()
+    try:
+        o = _opprett(rt, tenant=TEN, aktor="forf", request_id="r",
+                     policy_id=pid, innhold=pol)
+        res = _valider(rt, tenant=TEN, aktor="forf", request_id="r",
+                       utkast_id=o["utkast_id"], forventet_utkastversjon=1)
+        assert res["utfall"] == "ugyldig", res
+        assert any("meta.versjon" in f for f in res["feil"]), res["feil"]
+    finally:
+        rt.close()
+
+
 @pg
 def test_maler_endepunkt_uautentisert_avvises(klient):
     r = klient.get("/v1/policymaler")
@@ -338,7 +687,7 @@ def test_detalj_eksponerer_innhold_for_redigering():
                      policy_id=pid, innhold=_gyldig())
         det = policyadmin.hent_utkast_detalj(
             rt, tenant=TEN, aktor="forf", request_id="r",
-            utkast_id=o["utkast_id"])
+            utkast_id=o["utkast_id"], naa=datetime.now(timezone.utc))
         assert isinstance(det["innhold"], dict)
         assert det["innhold"].get("roller")          # editoren kan laste det
     finally:
@@ -355,7 +704,7 @@ def test_hent_detalj_har_diff_og_klasse():
             innhold=_gyldig())
         det = policyadmin.hent_utkast_detalj(
             rt, tenant=TEN, aktor="forf", request_id="r",
-            utkast_id=o["utkast_id"])
+            utkast_id=o["utkast_id"], naa=datetime.now(timezone.utc))
         assert det["risikoklasse"] == "UTVIDER"     # fra DENY_ALL
         assert det["diff"]["endringer"]
         assert det["aktiv_runde"] is None

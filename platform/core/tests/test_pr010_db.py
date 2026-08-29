@@ -273,8 +273,14 @@ def test_rolle_scopes_er_kjente_og_leser_ikke_sikkerhet():
     for scopes in ROLLE_TIL_SCOPES.values():
         assert scopes <= kjente, f"ukjent scope: {scopes - kjente}"
     # Kun leseroller er rene lese-roller; godkjenner er den muterende.
-    for rolle in ("leser", "sikkerhet", "admin"):
+    for rolle in ("leser", "sikkerhet"):
         assert ROLLE_TIL_SCOPES[rolle] <= LESESCOPES
+    # 038 §6 + 044 §6: admin BESTILLER kontroller og forvalter PLANENE
+    # for dem — planen er stående intensjon, ikke stående fullmakt, så
+    # også plan-scopene fører bare til policyvurderte bestillinger.
+    assert ROLLE_TIL_SCOPES["admin"] - LESESCOPES == {
+        "bestilling:opprett", "plan:opprett", "plan:aktiver",
+        "plan:gjenoppta"}
     assert scopes_for_roller(["leser"]) == {"decisions:read",
                                             "exceptions:read", "policy:read"}
     assert "security:read" not in scopes_for_roller(["leser"])
@@ -284,3 +290,97 @@ def test_rolle_scopes_er_kjente_og_leser_ikke_sikkerhet():
     # Union av flere roller.
     assert scopes_for_roller(["leser", "sikkerhet"]) == \
         scopes_for_roller(["sikkerhet"])
+
+
+# ---------------------------------------------------------------------------
+# Prinsipaloppslaget: hva KOSTER det per API-kall?
+# ---------------------------------------------------------------------------
+
+class _Svar:
+    def __init__(self, rad):
+        self._rad = rad
+
+    def fetchone(self):
+        return self._rad
+
+
+class _TellendeConn:
+    """Teller spørringer uten Postgres. Poenget her er ikke hva databasen
+    svarer, men HVILKE spørringer prinsipaloppslaget i det hele tatt sender —
+    og i hvilken transaksjon."""
+
+    def __init__(self, svar):
+        self._svar = list(svar)
+        self.spor: list[str] = []
+
+    def execute(self, sql, params=None):
+        self.spor.append(sql)
+        return _Svar(self._svar.pop(0) if self._svar else None)
+
+    def rollback(self):
+        self.spor.append("ROLLBACK")
+
+
+class _Foresporsel:
+    def __init__(self, cookie):
+        from api.sesjon import C_SESJON
+        self.cookies = {C_SESJON: cookie}
+        self.headers: dict[str, str] = {}
+
+
+def _oppslag(med_profil):
+    from api import sesjon as s
+    conn = _TellendeConn([("t-x", "bid_1", 7),   # slaa_opp_sesjon
+                          None, None,            # sett_kontekst (set_config)
+                          (["leser"], 7),        # brukermedlemskap
+                          ("kari@acme.no",)])    # brukeridentitet
+    prin = s.slaa_opp_prinsipal(None, conn, _Foresporsel("c"), "rid",
+                                med_profil=med_profil)
+    return prin, conn.spor
+
+
+def test_profildata_hentes_bare_der_den_skal_vises():
+    """`_autentiser` slår opp prinsipalen på HVERT cookie-autentisert kall og
+    bruker bare tenant/bruker/scopes. Hentet oppslaget også profilen, betalte
+    hver eneste lesning og mutasjon for en ekstra spørring — og en egen
+    transaksjon å rulle tilbake — for data bare /v1/sesjon viser. En vanlig
+    skjerm gjør flere slike kall, så det ble ren multiplisert latens.
+
+    Rollene er derimot gratis: de ligger i medlemskapsraden autorisasjonen
+    uansett må lese."""
+    prin, spor = _oppslag(False)
+    assert prin[0] == "t-x" and prin[4] == ["leser"]
+    assert prin[5] is None, "profil skal ikke hentes uten med_profil"
+    assert not [q for q in spor if "brukeridentitet" in q], \
+        "et vanlig API-kall skal ikke røre brukeridentitet"
+    assert spor.count("ROLLBACK") == 1, "én transaksjon, én rollback"
+
+    prin2, spor2 = _oppslag(True)
+    assert prin2[5] == "kari@acme.no"
+    ident = [i for i, q in enumerate(spor2) if "brukeridentitet" in q]
+    assert len(ident) == 1, "profilen skal hentes én gang"
+    assert spor2.count("ROLLBACK") == 1, \
+        "profilen skal ikke koste en ekstra transaksjon"
+    assert ident[0] < spor2.index("ROLLBACK"), \
+        "profiloppslaget skal ligge i samme transaksjon som medlemskapet"
+
+
+def test_null_element_i_roller_velter_ikke_okten():
+    """`brukermedlemskap.roller` er `TEXT[] NOT NULL` — men NOT NULL gjelder
+    ARRAYET, ikke elementene: `{NULL,leser}` er en lovlig rad. Da `/v1/sesjon`
+    begynte å returnere `sorted(roller)`, sprakk svaret med TypeError på å
+    sammenligne `None` med en streng, og skallet nektet å laste for den
+    brukeren — en visningsdetalj som slo ut hele flaten.
+
+    Autorisasjonen har alltid tålt ukjente verdier (de gir ingen scopes), så
+    rollelista normaliseres samme vei: `None` er ingen rolle og faller bort.
+    """
+    from api import sesjon as s
+    conn = _TellendeConn([("t-x", "bid_1", 7),      # slaa_opp_sesjon
+                          None, None,               # sett_kontekst
+                          ([None, "leser"], 7)])    # brukermedlemskap
+    prin = s.slaa_opp_prinsipal(None, conn, _Foresporsel("c"), "rid")
+    assert prin[4] == ["leser"], "None er ingen rolle"
+    assert sorted(prin[4]) == ["leser"], "/v1/sesjon skal kunne sortere"
+    assert prin[2] == s.scopes_for_roller(["leser"]), \
+        "scopene skal være uendret av at et NULL-element falt bort"

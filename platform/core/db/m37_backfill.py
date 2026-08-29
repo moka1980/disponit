@@ -119,12 +119,24 @@ def _backfill_tenant(conn: psycopg.Connection, tenant: str,
     from .pg import sett_kontekst
 
     sett_kontekst(conn, tenant, AKTOR, "backfill")
+    har_sakskilde = conn.execute(
+        "SELECT 1 FROM information_schema.columns"
+        " WHERE table_schema='public' AND table_name='unntak'"
+        "   AND column_name='sakskilde'").fetchone() is not None
     rader = conn.execute(
         "SELECT u.id, u.status, r.policy_id, r.policy_content_hash"
         "  FROM unntak u"
         "  JOIN revisjonslogg r ON r.tenant = u.tenant AND r.id = u.loggpost_id"
         " WHERE u.tenant=%s"
-        "   AND (u.maks_auto_forsok_snapshot IS NULL"
+        # 041: overtakelsessaker HAR NULL-trio by design (port 31) — det
+        # finnes ingen policy bak dem, og totalitets-CHECKen KREVER at
+        # trioen forblir NULL. Uten filteret stemplet backfillen dem med
+        # legacy-verdier og veltet på CHECKen ved neste migrering.
+        # ERA-GATE: backfillen kjøres også midt i en fersk rebuild (etter
+        # migrasjon 6, FØR 041) — da finnes ikke kolonnen, og da finnes
+        # heller ingen overtakelsessaker å skjerme.
+        + (" AND u.sakskilde <> 'domeneovertakelse'" if har_sakskilde else "")
+        + " AND (u.maks_auto_forsok_snapshot IS NULL"
         "        OR u.policy_versjon IS NULL"
         "        OR u.policy_content_hash IS NULL)"
         " ORDER BY u.id", (tenant,)).fetchall()

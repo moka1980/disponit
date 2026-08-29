@@ -1,0 +1,313 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://disponit.no/skjema/m57artefakt-v1.json",
+  "title": "M-57 akseptartefakt (m57-v1)",
+  "comment": "M-57-klarsignalet paragraf 10. Hver invariant er et par (forsok, brudd) - null brudd uten minst ett forsok er en port som aldri kjorte. Feltsettet er generert fra manifestskjema.M57_INVARIANTER, aldri for haand; grensene staar i KRAVGRENSER. Ytelsespunktet (paragraf 4) er en MALING, ikke et ja-punkt: den fulle bunten og tiden den tok, malt sammen - grensene staar i KRAVGRENSER m57-v1.",
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "m57-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "modul",
+        "commit",
+        "vert"
+      ],
+      "properties": {
+        "modul": {
+          "const": "m57_ats"
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "vert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "notat": {
+          "type": "string"
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "arkiv_utpakking_utenfor_grense_brudd",
+        "arkiv_utpakking_utenfor_grense_forsok",
+        "bestilling_over_5000_akseptert_brudd",
+        "bestilling_over_5000_akseptert_forsok",
+        "bias_digester_kjort",
+        "bias_maalinger",
+        "bias_maling_mangler_for_digest_brudd",
+        "bias_maling_mangler_for_digest_forsok",
+        "blinding_avskrudd_uten_auditrad_brudd",
+        "blinding_avskrudd_uten_auditrad_forsok",
+        "blinding_maskert_felt_i_modellinput_brudd",
+        "blinding_maskert_felt_i_modellinput_forsok",
+        "ddl_begge_kjoringer_gronne",
+        "funn_uten_kildereferanse_brudd",
+        "funn_uten_kildereferanse_forsok",
+        "kjoring_delvis_resultat_promotert_brudd",
+        "kjoring_delvis_resultat_promotert_forsok",
+        "liste_forelder_i_annen_serie_brudd",
+        "liste_forelder_i_annen_serie_forsok",
+        "liste_signert_versjon_endret_brudd",
+        "liste_signert_versjon_endret_forsok",
+        "oppdrag_frigivelse_id_endret_brudd",
+        "oppdrag_frigivelse_id_endret_forsok",
+        "oppdrag_frigivelse_pa_annen_opprinnelse_brudd",
+        "oppdrag_frigivelse_pa_annen_opprinnelse_forsok",
+        "serie_forgrenet_historikk_brudd",
+        "serie_forgrenet_historikk_forsok",
+        "serie_to_signerte_versjoner_brudd",
+        "serie_to_signerte_versjoner_forsok",
+        "serie_uten_entydig_rot_brudd",
+        "serie_uten_entydig_rot_forsok",
+        "ttl_lager_utenfor_kandidatgrensen_brudd",
+        "ttl_lager_utenfor_kandidatgrensen_forsok",
+        "ttl_persondata_funnet_etter_reaping_brudd",
+        "ttl_persondata_funnet_etter_reaping_forsok",
+        "ui_axe_alvorlige_brudd_brudd",
+        "ui_axe_alvorlige_brudd_forsok",
+        "ui_tastaturgjennomgang_dokumentert",
+        "utsending_modellgenerert_fritekst_brudd",
+        "utsending_modellgenerert_fritekst_forsok",
+        "utsending_uten_signaturkjede_brudd",
+        "utsending_uten_signaturkjede_forsok",
+        "ytelse_full_bunt_minutter",
+        "ytelse_full_bunt_soknader"
+      ],
+      "properties": {
+        "utsending_uten_signaturkjede_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "utsending_uten_signaturkjede_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "liste_signert_versjon_endret_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "liste_signert_versjon_endret_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "serie_to_signerte_versjoner_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "serie_to_signerte_versjoner_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "liste_forelder_i_annen_serie_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "liste_forelder_i_annen_serie_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ttl_persondata_funnet_etter_reaping_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ttl_persondata_funnet_etter_reaping_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "blinding_maskert_felt_i_modellinput_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "blinding_maskert_felt_i_modellinput_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "utsending_modellgenerert_fritekst_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "utsending_modellgenerert_fritekst_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "arkiv_utpakking_utenfor_grense_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "arkiv_utpakking_utenfor_grense_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "oppdrag_frigivelse_id_endret_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "oppdrag_frigivelse_id_endret_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "oppdrag_frigivelse_pa_annen_opprinnelse_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "oppdrag_frigivelse_pa_annen_opprinnelse_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "serie_forgrenet_historikk_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "serie_forgrenet_historikk_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "serie_uten_entydig_rot_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "serie_uten_entydig_rot_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "funn_uten_kildereferanse_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "funn_uten_kildereferanse_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "blinding_avskrudd_uten_auditrad_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "blinding_avskrudd_uten_auditrad_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bias_maling_mangler_for_digest_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bias_maling_mangler_for_digest_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ttl_lager_utenfor_kandidatgrensen_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ttl_lager_utenfor_kandidatgrensen_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bestilling_over_5000_akseptert_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bestilling_over_5000_akseptert_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kjoring_delvis_resultat_promotert_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kjoring_delvis_resultat_promotert_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ui_axe_alvorlige_brudd_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ui_axe_alvorlige_brudd_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ui_tastaturgjennomgang_dokumentert": {
+          "type": "boolean"
+        },
+        "ddl_begge_kjoringer_gronne": {
+          "type": "boolean"
+        },
+        "ytelse_full_bunt_soknader": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ytelse_full_bunt_minutter": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "bias_digester_kjort": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-fA-F]{64}$",
+            "minLength": 71,
+            "maxLength": 71
+          },
+          "description": "Modelldigestene kjoringen faktisk brukte. Invarianten bias_maling_mangler_for_digest utledes av denne mot bias_maalinger (#167 valg B) - den leses ikke som et rapportert tall. uniqueItems: en gjentatt digest er ikke et forsok til, og forsokstallet males mot lengden av denne listen - samme regel som grensesjekken, handhevet i begge lag."
+        },
+        "bias_maalinger": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "image_digest",
+              "artefakt_sha256",
+              "ts"
+            ],
+            "properties": {
+              "image_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-fA-F]{64}$",
+                "minLength": 71,
+                "maxLength": 71
+              },
+              "artefakt_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-fA-F]{64}$",
+                "minLength": 64,
+                "maxLength": 64
+              },
+              "ts": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          },
+          "description": "Biasmalingene kjoringen hvilte pa, en per dekket digest. Formkravene speiler krev_biasmaaling; at artefakten FINNES i et lager er #167 valg A."
+        }
+      }
+    }
+  }
+}

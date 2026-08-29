@@ -17,10 +17,28 @@
   --font-sans:"Inter","Segoe UI",system-ui,-apple-system,sans-serif;
   --font-mono:ui-monospace,"Cascadia Mono","JetBrains Mono",monospace;
   --fs-base:1rem; --lh-base:1.55;
+  /* Display-trinnene den offentlige flaten bruker: hero- og sidetitler,
+     ingressen under dem, signalkortets overskrift og logolinja. Disse lå som
+     tall i komponenten (Codex P2) — da ville en global justering av typografi
+     latt nettopp de største overskriftene bli stående igjen. `-smal` er
+     trinnet under 560px, `ls`/`lh` hører til display-trinnet og ikke til
+     brødteksten, og `maks-*` er tekstmålet (linjelengden) for hvert trinn. */
+  --fs-display:clamp(2.35rem, 5vw, 3.8rem); --fs-display-smal:2.35rem;
+  --ls-display:-.035em; --lh-display:1.06;
+  --fs-ingress:1.2rem; --fs-tittel:1.8rem; --fs-logo:1.15rem;
+  --maks-display:17ch; --maks-tittel:20ch; --maks-ingress:48rem;
   /* Avstander og form */
   --sp-1:.25rem; --sp-2:.5rem; --sp-3:.75rem; --sp-4:1rem;
   --sp-6:1.5rem; --sp-8:2rem;
   --radius:8px; --radius-sm:4px;
+  --radius-lg:24px; --radius-pill:999px;
+  --touch-min:2.75rem;
+  /* Offentlig Disponit-identitet: kjølig kontrollflate, uten mørke
+     layoutbakgrunner og tydelig adskilt fra Aqelyns varme papirprofil. */
+  --site-paper:#EEF3F3; --site-surface:#FFFFFF; --site-ink:#132629;
+  --site-muted:#526568; --site-line:#AEBFC0; --site-signal:#006F68;
+  --site-signal-bg:#D8EEEB; --site-action:#B94718;
+  --site-action-hover:#8F3210;
   /* Fokus (WCAG 2.4.7) — brukes på ALT interaktivt */
   --focus:3px solid var(--info); --focus-offset:2px;
   /* UI-lag (M-1): skygge, lagdeling og breakpoint hører hjemme HER, aldri
@@ -33,6 +51,17 @@
   --z-innhold:0; --z-topplinje:10; --z-overlegg:30; --z-skuff:40;
   --bp-smal:720px;
   --innhold-maks:1100px;
+  --site-maks:1240px;
+  /* Den klebrige toppen på den offentlige flaten: navigasjonsraden og
+     søkeraden. Høyden bor HER fordi to uavhengige regler må dele nøyaktig
+     samme tall — radenes egen `min-height`, og scroll-offset for hopp-til-
+     innhold. Uten offset landet #hovedinnhold under den klebrige toppen, så
+     overskriften tastaturbrukeren nettopp hoppet til var skjult (Codex P2).
+     Summen står som `calc`, ikke som et tredje tall, slik at den ikke kan
+     drive fra radene den beskriver. */
+  --site-topp-rad-h:4.75rem;
+  --site-sok-rad-h:3.5rem;
+  --site-topp-h:calc(var(--site-topp-rad-h) + var(--site-sok-rad-h));
 }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }

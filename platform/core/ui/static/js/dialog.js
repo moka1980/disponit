@@ -22,7 +22,8 @@ function bakgrunnsnode() { return document.getElementById("app") || document.bod
 let _dlgTeller = 0;
 
 // Generisk modal. `innhold` er en node; `handlinger` er valgfrie knapper.
-export function aapneDialog({ tittel, innhold, klasse = "", handlinger = [] }) {
+export function aapneDialog({ tittel, innhold, klasse = "", handlinger = [],
+                             rolle = "dialog", beskrivelseId = null }) {
   const aapner = document.activeElement;
   const bakgrunn = bakgrunnsnode();
   const tittelId = `dlg-tittel-${++_dlgTeller}`;
@@ -31,8 +32,9 @@ export function aapneDialog({ tittel, innhold, klasse = "", handlinger = [] }) {
     "aria-label": t("ui.lukk") },
     el("span", { "aria-hidden": "true", text: "✕" }));
 
-  const dialog = el("div", { class: `dialog ${klasse}`.trim(), role: "dialog",
-    "aria-modal": "true", "aria-labelledby": tittelId },
+  const dialog = el("div", { class: `dialog ${klasse}`.trim(), role: rolle,
+    "aria-modal": "true", "aria-labelledby": tittelId,
+    ...(beskrivelseId ? { "aria-describedby": beskrivelseId } : {}) },
     el("div", { class: "dialog-topp" },
       el("h2", { id: tittelId, class: "dialog-tittel", text: tittel }),
       lukkeknapp),
@@ -80,19 +82,39 @@ export function Detaljpanel({ tittel, innhold }) {
 }
 
 // Bekreftelsesdialog: beskriver konsekvens; primær/avbryt; ESC + fokusretur.
-export function Bekreftelsesdialog({ tittel, tekst, primarTekst, paaPrimar,
-                                    farlig = false } = {}) {
+// `detaljer` er en valgfri node under setningen — for de bekreftelsene der
+// konsekvensen ikke lar seg si i én linje og må VISES (f.eks. en policy-diff).
+// `valider` er en VALGFRI port FØR lukkingen (Codex P2): returnerer den
+// usant, blir dialogen stående, og brukeren beholder feltet sitt. Uten
+// den lukket dialogen seg synkront før `paaPrimar` i det hele tatt kjørte,
+// så en callback som fant en manglende obligatorisk verdi meldte fra om
+// et felt som allerede var borte fra skjermen — og brukeren måtte finne
+// veien tilbake for å rette det. `required` på et felt utenfor en <form>
+// hindrer ikke lukkingen; det gjør denne porten.
+export function Bekreftelsesdialog({ tittel, tekst, detaljer, primarTekst,
+                                    paaPrimar, valider, farlig = false,
+                                    rolle = "dialog" } = {}) {
   const avbryt = el("button", { class: "knapp", type: "button",
     text: t("ui.avbryt") });
   const primar = el("button", {
     class: `knapp ${farlig ? "fare" : "primar"}`, type: "button",
     text: primarTekst || t("ui.logg_ut_bekreft_primar") });
+  // 043: en alertdialog SKAL peke på budskapet sitt (aria-describedby) —
+  // det er advarselen, ikke tittelen, skjermleseren skal åpne med.
+  const beskrivelseId = `dlg-beskrivelse-${Date.now()}-${Math.floor(
+    Math.random() * 1e6)}`;
   const ctrl = aapneDialog({
-    tittel, klasse: "bekreft",
-    innhold: el("p", { text: tekst }),
+    tittel, klasse: "bekreft", rolle,
+    beskrivelseId: rolle === "alertdialog" ? beskrivelseId : null,
+    innhold: el("div", {},
+      el("p", { id: beskrivelseId, text: tekst }), detaljer || null),
     handlinger: [avbryt, primar],
   });
   avbryt.addEventListener("click", ctrl.lukk);
-  primar.addEventListener("click", () => { ctrl.lukk(); if (paaPrimar) paaPrimar(); });
+  primar.addEventListener("click", () => {
+    if (valider && !valider()) return;      // dialogen blir stående
+    ctrl.lukk();
+    if (paaPrimar) paaPrimar();
+  });
   return ctrl;
 }

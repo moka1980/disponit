@@ -1,0 +1,79 @@
+# Varsler på e-post: KOPIEN av det som alt står i portalen.
+#
+# Derfor er dette en av de mest udramatiske jobbene i huset. Feiler den, ser
+# mottakeren varselet neste gang hun logger inn — innboksen er sannheten.
+# Exit-koden er 0 så lenge senderen selv virket; en avvist adresse er data,
+# ikke en driftsfeil, og telles på raden i stedet.
+#
+# Senderen ser på TVERS av tenanter, men aldri med BYPASSRLS på egen rolle:
+# den når `varsel` kun gjennom `varsel_klaim_epost()`,
+# `varsel_sett_epoststatus()` og `varsel_rekoe()` (migrasjon 027), som er
+# SECURITY DEFINER og returnerer nøyaktig de feltene en e-post trenger.
+#
+# Og credentialen under er senderens EGEN (eiers P1): den bærer DSN-en til
+# `disponit_varselsender`, ikke runtime-DSN-en. Rollen eier ingenting og har
+# ingen tabellrettigheter — de tre funksjonene er alt den kan gjøre. Delte
+# den DSN med API-et, ville EXECUTE måttet gis til `disponit`, og da hadde
+# hele forespørselsveien kunnet lese ut alle tenanters mottakeradresser og
+# tømme køen. En smal funksjon er ikke et vern hvis alle kan kalle den.
+#
+# Raden KLAIMES før SMTP og klaimet committes først: to kjøringer som
+# overlapper — timeren går oftere enn en treg SMTP-server svarer — skal ikke
+# kunne sende den samme e-posten hver sin gang.
+#
+# SMTP-oppsettet er credentials, ikke kode. Eier bruker WCAGvakts konto til
+# TEST; avsender og vert er derfor konfigurasjon, så byttet senere blir en
+# env-endring.
+
+[Unit]
+Description=Disponit varselsender (e-post)
+
+[Service]
+Type=oneshot
+User=disponit-helse
+Group=disponit-helse
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+# Credentialen bærer SENDERENS DSN (`disponit_varsler`), aldri API-ets
+# (Codex P1). Rollen har KUN EXECUTE på de tre senderfunksjonene: et
+# kompromittert web-API har ikke senderens kryss-tenant-vindu, og en
+# kompromittert sender har ikke API-ets DML.
+LoadCredential=DISPONIT_DATABASE_URL:/etc/disponit/varsel/DISPONIT_DATABASE_URL
+# SMTP-oppsettet er VALGFRITT — merk minus-tegnet. Uten det ville timeren
+# feilet hvert 5. minutt fram til noen la inn legitimasjonen, nøyaktig slik
+# `disponit-backup.timer` har feilet 27 ganger siden 9. august uten at noen
+# la merke til det. En jobb som roper ulv når den bare mangler oppsett, lærer
+# driften å ignorere den.
+#
+# Mangler filen, rapporterer senderen `smtp_ikke_konfigurert`, lar køen ligge
+# HELT urørt og avslutter med 0. Legges filen inn, begynner den å sende — uten
+# redeploy.
+EnvironmentFile=-/etc/disponit/varsel/smtp.env
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_varselsender
+# FRISTEN ER SENDERENS, IKKE SYSTEMDS (Codex P2).
+#
+# `TimeoutStartSec=5min` var før det eneste taket i TID, og senderens eget tak
+# var `GRENSE=50` — et tak i ANTALL. De to hang ikke sammen: 50 SMTP-kall à
+# 20 s sokkeltimeout kan bruke langt mer enn fem minutter, så en helt legitim
+# kjøring på en treg SMTP-server ble drept midt i bunken.
+#
+# Og det farlige var ikke avbruddet, men HVOR det landet. Traff SIGTERM
+# mellom et akseptert SMTP-kall og statusoppdateringen, sto raden
+# `under_sending` med et klaim ingen holder — og leasen løftet den siden
+# tilbake i køen, så den samme e-posten gikk ut en gang til. Nøyaktig den
+# dobbeltsendingen klaimet finnes for å utelukke, gjenskapt av tidsgrensen.
+#
+# Senderen stanser derfor seg selv (`varselsender.FRIST_S`, 4 min), og den
+# gjør det FØR et nytt klaim — det ene punktet i løkka der ingenting er i
+# luften. Resten av køen står `koet` og tas av neste timerkjøring om fem
+# minutter; køen er tilstanden, og en oneshot som stanser er ikke en jobb som
+# mislyktes.
+#
+# `TimeoutStartSec` er da et SIKKERHETSNETT som ikke skal utløses, og satt
+# deretter: fristen (4 min) + den ene sendingen som kan være påbegynt når
+# fristen slår inn (fire sokkeloperasjoner à 20 s) + margin. Tallene hører
+# sammen og skal endres sammen.
+TimeoutStartSec=6min
+
+[Install]
+WantedBy=multi-user.target
