@@ -624,6 +624,48 @@ def test_beslutningsliste_keyset_filter_og_cursorbinding(klient, migrator,
     assert _hent(klient, "/v1/beslutninger", tok, limit=100).status_code == 200
 
 
+def test_signaturkontrollen_lekker_aldri_annet_enn_cursorugyldig():
+    """Cursor P1: `hmac.compare_digest` på to `str` kaster TypeError så
+    snart én av dem bærer et ikke-ASCII-tegn, og sammenligningen sto
+    UTENFOR vakten som mapper til `CursorUgyldig`. Cursoren kommer rått
+    fra en query-parameter (`?cursor=AAAA.%C3%A6`), så feilen nådde `_les`
+    som et ufanget unntak — og `_les` fanger bare `Feilsvar`/`psycopg.Error`.
+    Utfallet var 500 der kontrakten lover `400 cursor_ugyldig`.
+
+    Testen er uten DB med vilje: dette er en ren modulinvariant, og den
+    skal måles selv når suiten kjøres uten Postgres.
+
+    MUTASJONEN SOM DREPER DENNE: flytt `compare_digest` ut av
+    `_sjekk_signatur` og tilbake til et bart `if` i `les`/`les_v2`."""
+    from api import cursor as cursormodul
+    naa = datetime.now(timezone.utc)
+    lesere = (
+        ("les", lambda raa: cursormodul.les(raa, TENANT, "pepper")),
+        ("les_v2", lambda raa: cursormodul.les_v2(
+            raa, "pepper", tenant=TENANT, endepunkt="beslutninger",
+            retning="desc", filtre={})),
+    )
+    # Ikke-ASCII i signaturdelen — både kortere og nøyaktig like lang som
+    # en ekte hex-MAC, så en ren lengdesjekk ikke ville dekket den.
+    for raa in ("AAAA.æ", "AAAA." + "æ" * 64):
+        for navn, les in lesere:
+            with pytest.raises(cursormodul.CursorUgyldig):
+                les(raa)
+
+    # Og vakten er ikke en avvisningsmaskin: ulik lengde er fortsatt bare
+    # «stemmer ikke», og en ekte cursor går fortsatt gjennom.
+    for navn, les in lesere:
+        with pytest.raises(cursormodul.CursorUgyldig):
+            les("AAAA.bbbb")
+    assert cursormodul.les(
+        cursormodul.lag(TENANT, naa, 7, "pepper"), TENANT, "pepper")[1] == 7
+    assert cursormodul.les_v2(
+        cursormodul.lag_v2("pepper", tenant=TENANT, endepunkt="beslutninger",
+                           retning="desc", filtre={}, ts=naa, rad_id=7),
+        "pepper", tenant=TENANT, endepunkt="beslutninger", retning="desc",
+        filtre={})[1] == 7
+
+
 @pg
 def test_cursor_fra_annet_endepunkt_annen_tenant_og_retning_avvises(
         klient, migrator, policy):
@@ -656,6 +698,13 @@ def test_cursor_fra_annet_endepunkt_annen_tenant_og_retning_avvises(
                                 naa=naa - timedelta(seconds=cursormodul.LEVETID_S + 60))
     assert _hent(klient, "/v1/beslutninger", tok,
                  cursor=gammel).status_code == 400
+
+    # … og en ikke-ASCII signatur er en KLIENTfeil over HTTP også
+    # (Cursor P1): kontrakten er 400 `cursor_ugyldig`, aldri en 500 fra
+    # et ufanget TypeError i signaturkontrollen.
+    r = _hent(klient, "/v1/beslutninger", tok, cursor="AAAA.æ")
+    assert r.status_code == 400 and r.json()["feil"] == "cursor_ugyldig", \
+        r.text
 
 
 @pg
