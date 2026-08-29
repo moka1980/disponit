@@ -503,6 +503,22 @@ def _mal_docx(data: bytes, *, budsjett: Budsjett, kontekst: str) -> None:
         except (zipfile.BadZipFile, RuntimeError, NotImplementedError,
                 UnicodeDecodeError) as feil:
             raise Buntfeil("feil_innholdstype", kontekst) from feil
+        # KATALOGEN AVVISES FØR DEN LESES (Codex P2). Den inkrementelle
+        # tellingen under er riktig, men den er for SEN alene: en katalog
+        # som overskrider grensen med én oppføring rakk å bli målt først
+        # når `_mal_medlem` hadde åpnet og pakket ut hver eneste
+        # foregående oppføring — altså opptil hele bytebudsjettet brukt
+        # på en katalog vi ALLEREDE visste var for stor. Antallet er
+        # kjent her: `alle` er materialisert, og den fjernede
+        # implementasjonen sammenlignet nettopp `budsjett.filer +
+        # len(alle)` før den leste noe. Terskelen er den samme som den
+        # inkrementelle — hver oppføring i `alle` betaler nøyaktig én
+        # gang, i mappearmen eller i `_mal_medlem` — så dette er en
+        # tidligere avvisning, ikke en strengere grense. Ute gjør den
+        # ytre gaten det samme med `len(alle) > MAKS_FILER` før løkkene.
+        if budsjett.filer + len(alle) > MAKS_FILER:
+            raise Buntfeil("for_mange_filer",
+                           f"{kontekst}: {budsjett.filer + len(alle)}")
         # Mappene teller mot budsjettet, som ute (runde 7): grensen
         # bevokter arbeidet katalogen påfører oss, og det arbeidet er
         # gjort før vi rekker å filtrere.

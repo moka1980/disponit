@@ -720,6 +720,43 @@ def test_155_docx_byte_betales_av_bladene_ikke_containeren(
     assert e.value.args[0].endswith("cv.docx/word/document.xml")
 
 
+def test_155_for_stor_docx_katalog_avvises_for_lesing(tmp_path, monkeypatch):
+    """Codex P2: den inkrementelle tellingen er riktig, men for sen alene.
+
+    En katalog som overskrider grensen med én oppføring ble ikke avvist
+    før `_mal_medlem` hadde åpnet og pakket ut hver eneste foregående
+    oppføring — altså opptil hele bytebudsjettet brukt på arbeid vi
+    allerede visste var over taket. Antallet er kjent når `infolist()`
+    er materialisert, og den fjernede implementasjonen sammenlignet
+    nettopp der.
+
+    Målingen er derfor ikke KODEN — den var riktig før også — men at
+    ingen indre oppføring er LEST når den faller.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `budsjett.filer + len(alle) >
+    MAKS_FILER`-porten før løkkene i `_mal_docx`; koden blir fortsatt
+    `for_mange_filer`, men først etter elleve utpakkede medlemmer."""
+    monkeypatch.setattr(parsing, "MAKS_FILER", 12)
+    docx = _docx([(f"word/d{n}.xml", b"<w:t>" + b"x" * 512 + b"</w:t>")
+                  for n in range(12)])
+    arkiv = _bunt(tmp_path, [("cv.docx", docx)])
+
+    ekte = parsing._mal_medlem
+    lest: list[str] = []
+
+    def spion(navn, aapne, **kw):
+        if kw.get("dybde"):
+            lest.append(navn)
+        return ekte(navn, aapne, **kw)
+
+    monkeypatch.setattr(parsing, "_mal_medlem", spion)
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(arkiv))
+    assert e.value.kode == "for_mange_filer"
+    assert lest == [], \
+        f"katalogen ble avvist, men først etter {len(lest)} utpakkede medlemmer"
+
+
 def test_155_docx_i_docx_felles_av_dybdevakten(tmp_path):
     """Cursor P2: dybdevakten var det ENESTE som lukket docx-klassen, og
     ingen test bandt den.
