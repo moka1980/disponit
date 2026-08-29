@@ -216,24 +216,35 @@ Modulen er KUNDE av plattformen, aldri omvendt (m56-formen):
   (En flerartefakt-kvittering er ny maskin i selve
   fullføringsprotokollen — K1, ikke en fiksrunde.)
 
-  UTSATT, K1 → [#168](https://github.com/moka1980/disponit/issues/168) —
-  DENNE RAPPORTEN ER KANDIDATPAYLOAD, OG DEN REAPES ALDRI (Codex P1).
-  Linja over og «Kandidatdata (§5)» ni linjer ned motsier hverandre:
-  funnene med kildereferanse, poengnedbrytningen og intervjuspørsmålene
-  er de samme personopplysningene som ligger i
-  `kandidat_evalueringsartefakt` og `kandidat_intervjusporsmal`, men den
-  ene kopien er under fristen og den andre er varig evidens.
-  `reap_kandidatdata` nuller nøyaktig de seks lagrene; den eneste veien
-  som nuller `artefakt.ciphertext` er `rydd_staged_artefakter`, og
-  predikatet der er `tilstand = 'staged'`. `promotert`/`bevart` er
-  terminale og RETAINED med vilje. Når fristen løper ut, er lagrene
-  tomme, prosessen merket reapet — og rapporten fortsatt dekrypterbar.
-  Begge utveiene er ny maskin: å holde payload ute av rapporten
-  definerer om hva modulen LEVERER (og hvor UI-en leser det), og å binde
-  artefaktet til fristen er en frist per artefakt pluss en reaper som
-  rører `bevart` i 016/019 — altså et navngitt unntak fra «promotert
-  evidens er varig». Eiers valg står i #168 (A: rapporten blir
-  beslutningssporet uten payload; B: artefaktet arver fristen; C: begge).
+  DENNE RAPPORTEN ER KANDIDATPAYLOAD, OG DEN MAKULERES VED REAP
+  ([#222](https://github.com/moka1980/disponit/issues/222), migrasjon
+  066). Grunnen står uendret: funnene med kildereferanse,
+  poengnedbrytningen og intervjuspørsmålene er de samme
+  personopplysningene som ligger i `kandidat_evalueringsartefakt` og
+  `kandidat_intervjusporsmal`, og den ene kopien kan ikke overleve §5
+  bare fordi den ble promotert.
+
+  SLIK DET FAKTISK VIRKER: `reap_kandidatdata` kaller
+  `makuler_artefakter_for_prosess` i SAMME iterasjon som den nuller de
+  seks lagrene. Døren nuller `ciphertext` og `nonce` og setter
+  `makulert_ts` for `tilstand IN ('promotert','bevart','karantene')` på
+  prosessens oppdrag — `rydd_staged_artefakter` er altså ikke lenger den
+  eneste veien som nuller `artefakt.ciphertext`. `promotert`/`bevart` er
+  fortsatt terminale, og RADEN består: tilstand, hash, tidspunkter og
+  binding står urørt. Det er payloaden som forsvinner, ikke evidensen om
+  at rapporten fantes. `rekrutteringsprosess_vakt` gjør rekkefølgen
+  umulig å miste — reapmerket avvises så lenge rapporten bærer payload —
+  og leseveien svarer 404 / `rapport_klar: false` på en makulert rapport,
+  samme svar som på en reapet prosess (#220). Baser som alt var reapet da
+  066 kjørte, makuleres én gang av migrasjonen selv.
+
+  Av #168s tre utveier er det B som er bygget (artefaktet arver fristen),
+  og unntaket fra «promotert evidens er varig» er dermed navngitt og
+  avgrenset: bare M-57-oppdrag med retensjonsanker.
+  [#168](https://github.com/moka1980/disponit/issues/168) eier fortsatt
+  A — om rapporten skal FØDES uten payload, altså hva modulen leverer og
+  hvor flaten leser det. Det er ny maskin i selve rapportformen, ikke en
+  retensjonsregel.
 * **Blinding** (klarsignalet §6): standard PÅ, målt på faktisk
   modellinput; avskruing er en auditert handling i flaten, ikke et
   bestillingsfelt.
@@ -358,7 +369,6 @@ Modulen er KUNDE av plattformen, aldri omvendt (m56-formen):
   endepunktets kontrakt og modulens klientvei. Ny maskin, egen PR (K1),
   under [#173](https://github.com/moka1980/disponit/issues/173).
 * **Kandidatdata** (§5): alt payload bor i de seks 057-lagrene og reapes
-  ved fristen; modulen kan ikke forlenge den. Unntaket er den promoterte
-  rapporten over, som i dag bærer den samme payloaden uten å arve
-  fristen — utsatt, K1 →
-  [#168](https://github.com/moka1980/disponit/issues/168).
+  ved fristen; modulen kan ikke forlenge den. Den promoterte rapporten
+  over bærer den samme payloaden og arver fristen: samme reap-iterasjon
+  makulerer den (#222/066), og raden består uten payload.

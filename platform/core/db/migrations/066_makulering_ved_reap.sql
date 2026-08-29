@@ -319,3 +319,269 @@ BEGIN
 END $$;
 
 RESET ROLE;
+
+-- ------------------------------------------------------------
+-- 6. DEN BEBODDE BASEN MAKULERES ÉN GANG (Cursor P1 på #252).
+--
+-- Alt over gjelder FREMTIDIGE reap: en prosess plukkes bare mens
+-- `slettet_ts IS NULL`. #222 finnes fordi promoterte rapporter
+-- overlevde §5-fristen — og de som alt er reapet, av reaperen slik
+-- den sto FØR denne migrasjonen, bærer merket allerede. De plukkes
+-- derfor aldri igjen: uten dette steget beholder de ciphertext, og
+-- migrasjonen lukker hullet bare for det som ennå ikke har skjedd.
+--
+-- Formen er dørens, ikke et speilet UPDATE: samme
+-- `krev_tenantkontekst`, samme predikat, samme statemaskin.
+-- Idempotent per konstruksjon
+-- (`makulert_ts IS NULL` + levende payload), så en gjenkjøring — eller
+-- en rad reaperen rakk først — er null rader, ikke en feil.
+--
+-- ROLLEN ER PÅKREVD, ikke pynt: `rekrutteringsprosess` har FORCE ROW
+-- LEVEL SECURITY, og migrator har ingen tenantkontekst å arve. Uten
+-- `SET LOCAL ROLE` ville løkken sett NULL rader og backfillen vært en
+-- stille no-op — nøyaktig den blinde formen porten finnes for.
+-- Claimeren har sin egen eksplisitte policy (`m57_reaper`, 057) og
+-- EXECUTE på døren.
+--
+-- ORDNINGEN ER OGSÅ EN PÅSTAND: masse-skrivingen står ETTER `ALTER
+-- TABLE`-setningene i §1. 047-stoppet var utsatte triggerhendelser i kø
+-- foran en ALTER-klasse-setning; her er DDL-en unnagjort før den første
+-- raden skrives. Målt av SP-10 mot bebodd base, ikke antatt.
+SET LOCAL ROLE disponit_m37_claimer;
+DO $$
+DECLARE r RECORD; v_kontekst TEXT; v_naa TIMESTAMPTZ; v_antall INT := 0;
+BEGIN
+    v_kontekst := current_setting('disponit.tenant', true);
+    v_naa := pg_catalog.now();
+    -- Løkken spør ALLE reapede prosesser, uten å forhåndsfiltrere på
+    -- levende artefaktpayload: et EXISTS mot `artefakt` her ville lest
+    -- under tenant-policyen med FEIL kontekst (den settes først per rad
+    -- under), og stille hoppet over nettopp radene steget finnes for.
+    -- Døren avgjør i stedet per oppdrag, med konteksten satt.
+    FOR r IN
+        SELECT p.tenant AS t, p.oppdrag_id AS oid
+          FROM public.rekrutteringsprosess p
+         WHERE p.slettet_ts IS NOT NULL
+         ORDER BY p.tenant, p.oppdrag_id
+    LOOP
+        PERFORM set_config('disponit.tenant', r.t, true);
+        v_antall := v_antall + public.makuler_artefakter_for_prosess(
+            r.t, r.oid, v_naa);
+    END LOOP;
+    PERFORM set_config('disponit.tenant', coalesce(v_kontekst, ''), true);
+    RAISE NOTICE '066: engangs-makulering av alt reapet før denne'
+        ' migrasjonen — % artefakt(er) tømt', v_antall;
+END $$;
+RESET ROLE;
+
+-- ------------------------------------------------------------
+-- 7. VAKTEN MÅLER OGSÅ RAPPORTEN (Cursor P1 på #252, 057-kroppen
+-- diff-endret). `slettet_ts`-armen krevde at de seks kandidatlagrene
+-- var tømt før merket kunne settes — nettopp fordi et merke satt uten
+-- tømming utelukker prosessen fra reaperen for alltid. `artefakt` var
+-- ikke med i den målingen, og etter #222 er den promoterte rapporten
+-- like mye kandidatpayload som lagrene. Reaperen over kaller døren FØR
+-- den merker, så den lovlige veien er uendret; det som nå er umulig, er
+-- en fremtidig vei som merker uten å ha makulert.
+--
+-- `CREATE OR REPLACE` beholder eier og grants; triggeren peker på
+-- funksjonsnavnet og trenger ingen ny binding.
+CREATE OR REPLACE FUNCTION rekrutteringsprosess_vakt()
+RETURNS trigger LANGUAGE plpgsql
+SET search_path = pg_catalog AS $$
+BEGIN
+    -- FØDSELEN måles her, ikke bare i funksjonen (Cursor P2). Vakten var
+    -- BEFORE UPDATE OR DELETE, og runtime ble derfor fratatt tabell-INSERT
+    -- i forrige runde — men CLAIMEREN må ha INSERT: den er definer for
+    -- `opprett_rekrutteringsprosess`. Direkte DML som claimer gikk dermed
+    -- utenom hele fødselsporten (oppdragstype, eiermodul, levende status,
+    -- åpen fødsel). En vakt som bare gjelder de rettighetsløse er ingen
+    -- vakt — samme lærdom som resten av denne funksjonen bygger på.
+    --
+    -- Porten er den SAMME som funksjonens, med vilje duplisert: funksjonen
+    -- eier den låste lesningen og det lesbare utfallet
+    -- (`invalid_parameter_value`), vakten er backstoppen som gjelder
+    -- ENHVER rolle, også eieren, og svarer i vaktens egen kode.
+    IF TG_OP = 'INSERT' THEN
+        IF NEW.lukket_ts IS NOT NULL OR NEW.slettet_ts IS NOT NULL THEN
+            RAISE EXCEPTION 'rekrutteringsprosess: en prosess fødes ÅPEN —'
+                ' lukking og reap-merke er egne, målte overganger'
+                USING ERRCODE = 'insufficient_privilege';
+        END IF;
+        -- `opprettet` er den ANDRE enden av fristen (Cursor P2): reaperens
+        -- maks-levetid-arm regner fra `coalesce(lukket_ts, opprettet)`, og
+        -- kolonnen er immutabel etter fødselen. En fødsel med `opprettet`
+        -- frem i tid ville derfor skjøvet utløpet for en forlatt prosess
+        -- stille — nøyaktig den forlengelsen port 20 finnes for å nekte,
+        -- bare gjennom den andre kolonnen. Bakover er lovlig: det KORTER
+        -- levetiden, og det er retningen §5 tillater.
+        IF NEW.opprettet > pg_catalog.now() THEN
+            RAISE EXCEPTION 'rekrutteringsprosess: opprettet kan ikke stå'
+                ' frem i tid — det ville forlenget maks levetid'
+                USING ERRCODE = 'insufficient_privilege';
+        END IF;
+        -- LÅST lesning, som i funksjonen (Codex P2). Backstoppen leste
+        -- ULÅST, og en ulåst sjekk er en påstand om fortiden: under READ
+        -- COMMITTED kunne en samtidig overgang til `feilet`/`kansellert`
+        -- committe mellom sjekken og INSERT-en, og prosessen ble
+        -- født på et alt terminalt oppdrag. FK-en redder ikke: den tar
+        -- `FOR KEY SHARE`, som ikke er i konflikt med et UPDATE av
+        -- statuskolonnen. `FOR SHARE` er det, og PostgreSQL re-evaluerer
+        -- predikatet etter låsen — en rad som ble terminal under
+        -- ventingen faller ut av treffet i stedet for å bli lest fra et
+        -- gammelt snapshot. Vakten skal være minst like sterk som
+        -- funksjonen den er backstopp for; her var den svakere.
+        -- PORTEN ER POSITIV, ikke en voksende denyliste (Codex P1).
+        -- Den sto som `status NOT IN ('feilet','kansellert')`, og da var
+        -- `utfort` lovlig: kom det FØRSTE kallet etter at kjøringen som
+        -- skulle lukket prosessen var ferdig, fødtes en åpen prosess på
+        -- et avsluttet oppdrag, og de seks lagrene tok imot persondata
+        -- etterpå — med fristen løpende fra reaperens maks levetid, ikke
+        -- fra en lukking som aldri kommer. `opprettet` hadde samme hull.
+        --
+        -- Å legge `utfort` til lista ville vært den fjerde runden på
+        -- samme form (§9 K2): en liste over tilstandene noen kom på.
+        -- Fødselen har ÉN lovlig tilstand, og kommentaren over sier den
+        -- alt høyt — «dette ankeret fødes MENS kjøringen står på». Den
+        -- skrives derfor ut som et krav i stedet for som et fravær:
+        -- `plukket`, altså et AKTIVT CLAIMET oppdrag, samme form som
+        -- 017/035 bruker for kapabilitetene. Da er det ingen femte
+        -- tilstand igjen å oppdage.
+        PERFORM 1 FROM public.oppdrag o
+            WHERE o.tenant = NEW.tenant AND o.id = NEW.oppdrag_id
+              AND o.oppdragstype = 'rekruttering.evaluering'
+              AND o.eiermodul = 'm57_ats'
+              AND o.status = 'plukket'
+            FOR SHARE;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'rekrutteringsprosess: oppdrag % hos % er ikke'
+                ' et AKTIVT CLAIMET rekruttering.evaluering-oppdrag eid av'
+                ' m57_ats — fødselen går gjennom'
+                ' opprett_rekrutteringsprosess', NEW.oppdrag_id, NEW.tenant
+                USING ERRCODE = 'insufficient_privilege';
+        END IF;
+        RETURN NEW;
+    END IF;
+    IF TG_OP <> 'UPDATE' THEN
+        RAISE EXCEPTION 'rekrutteringsprosess: % avvist — raden består,'
+            ' bare payloaden i lagrene reapes', TG_OP
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    IF NEW.tenant IS DISTINCT FROM OLD.tenant
+       OR NEW.prosess_id IS DISTINCT FROM OLD.prosess_id
+       OR NEW.oppdrag_id IS DISTINCT FROM OLD.oppdrag_id
+       OR NEW.opprettet IS DISTINCT FROM OLD.opprettet THEN
+        RAISE EXCEPTION 'rekrutteringsprosess: identitetskolonnene er'
+            ' immutable' USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    -- Port 20, selve kjernen: INGEN overgang endrer fristen. Ikke
+    -- modulen, ikke runtime, ikke eieren — «modulen kan ikke forlenge
+    -- frist; ingen hold i v1» (§5).
+    IF NEW.slettefrist_dogn IS DISTINCT FROM OLD.slettefrist_dogn THEN
+        RAISE EXCEPTION 'rekrutteringsprosess: slettefristen er satt ved'
+            ' fødselen og kan ikke endres (klarsignalet §5)'
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    IF NEW.lukket_ts IS DISTINCT FROM OLD.lukket_ts THEN
+        IF OLD.lukket_ts IS NOT NULL THEN
+            RAISE EXCEPTION 'rekrutteringsprosess: lukket_ts er alt satt'
+                USING ERRCODE = 'insufficient_privilege';
+        END IF;
+        -- Fristen løper fra lukkingen. En lukking frem i tid ville
+        -- skjøvet utløpet — altså forlenget fristen. Bakover korter den
+        -- bare, og den retningen er lovlig (og testbar).
+        IF NEW.lukket_ts > pg_catalog.now() THEN
+            RAISE EXCEPTION 'rekrutteringsprosess: lukket_ts kan ikke stå'
+                ' frem i tid — det ville forlenget slettefristen'
+                USING ERRCODE = 'insufficient_privilege';
+        END IF;
+    END IF;
+    IF NEW.slettet_ts IS DISTINCT FROM OLD.slettet_ts THEN
+        IF OLD.slettet_ts IS NOT NULL THEN
+            RAISE EXCEPTION 'rekrutteringsprosess: slettet_ts er alt satt'
+                USING ERRCODE = 'insufficient_privilege';
+        END IF;
+        -- REAP-MERKET ER EN KONKLUSJON, IKKE EN PÅSTAND (Cursor P1).
+        -- Reaperen velger bare prosesser med `slettet_ts IS NULL`, så et
+        -- merke satt UTEN at lagrene er tømt utelukker prosessen fra
+        -- reaping for alltid — payloaden blir stående, og evidensen sier
+        -- at den er slettet. Det er den verst tenkelige formen: §5s løfte
+        -- brutt og målingen selv gjort blind.
+        --
+        -- Merket måles derfor mot lagrene, ikke mot den som setter det:
+        -- ingen levende payload igjen på prosessen. Reaperen tømmer alle
+        -- seks FØR den merker ankeret, i samme transaksjon, så den lovlige
+        -- veien er uendret. En rad uten payload har `slettet_ts` satt
+        -- (CHECK-en binder de to begge veier), så predikatet er det samme
+        -- spørsmålet lagervakten stiller per rad.
+        IF EXISTS (SELECT 1 FROM public.kandidat_originaldokument k
+                    WHERE k.tenant = NEW.tenant
+                      AND k.prosess_id = NEW.prosess_id
+                      AND k.slettet_ts IS NULL)
+           OR EXISTS (SELECT 1 FROM public.kandidat_parsettekst k
+                       WHERE k.tenant = NEW.tenant
+                         AND k.prosess_id = NEW.prosess_id
+                         AND k.slettet_ts IS NULL)
+           OR EXISTS (SELECT 1 FROM public.kandidat_evalueringsartefakt k
+                       WHERE k.tenant = NEW.tenant
+                         AND k.prosess_id = NEW.prosess_id
+                         AND k.slettet_ts IS NULL)
+           OR EXISTS (SELECT 1 FROM public.kandidat_intervjusporsmal k
+                       WHERE k.tenant = NEW.tenant
+                         AND k.prosess_id = NEW.prosess_id
+                         AND k.slettet_ts IS NULL)
+           OR EXISTS (SELECT 1 FROM public.kandidat_utsendingsdata k
+                       WHERE k.tenant = NEW.tenant
+                         AND k.prosess_id = NEW.prosess_id
+                         AND k.slettet_ts IS NULL)
+           OR EXISTS (SELECT 1 FROM public.kandidat_avmaskering k
+                       WHERE k.tenant = NEW.tenant
+                         AND k.prosess_id = NEW.prosess_id
+                         AND k.slettet_ts IS NULL) THEN
+            RAISE EXCEPTION 'rekrutteringsprosess: % hos % kan ikke merkes'
+                ' reapet mens et av de seks lagrene fortsatt bærer payload'
+                ' — merket ville utelukket prosessen fra reaperen for'
+                ' alltid (klarsignalet §5)', NEW.prosess_id, NEW.tenant
+                USING ERRCODE = 'insufficient_privilege';
+        END IF;
+        -- … OG RAPPORTEN ER DET SYVENDE LAGERET (#222, Cursor P1 på
+        -- #252). Vakten over måler de seks kandidatlagrene, men den
+        -- promoterte evalueringsrapporten bærer de samme personfeltene
+        -- — funn, intervjuspørsmål og hele den blindede kildeteksten
+        -- per kandidat. Fjernes `makuler_artefakter_for_prosess`-kallet
+        -- fra `reap_kandidatdata`, settes merket fortsatt, prosessen er
+        -- utelukket fra reaperen for alltid, og payloaden består: samme
+        -- hull som armen over finnes for, bare i den ene tabellen den
+        -- ikke så. Alle port 18-testene er grønne under den mutasjonen.
+        --
+        -- Predikatet er DØRENS, ordrett: de tre payloadbærende retained-
+        -- tilstandene, umerket, med levende ciphertext/nonce. Da er
+        -- «døren har tømt alt» og «vakten slipper merket gjennom»
+        -- nøyaktig samme spørsmål, og ingen tredje form kan oppstå
+        -- mellom dem.
+        --
+        -- SYNLIGHETEN ER MÅLT, IKKE ANTATT: `artefakt` har FORCE ROW
+        -- LEVEL SECURITY med bare `tenant_isolasjon`, og vakten er ikke
+        -- SECURITY DEFINER. Enhver vei som skal skrive `slettet_ts` må
+        -- alt se raden i `rekrutteringsprosess` — også den er FORCE RLS
+        -- — så konteksten ER radens tenant når vakten kjører; reaperen
+        -- setter den per rad selv (`set_config` i løkken), claimeren har
+        -- SELECT på `artefakt` fra 044. Uten kontekst ser ingen av de to
+        -- tabellene noe, og merket rekker aldri hit.
+        IF EXISTS (SELECT 1 FROM public.artefakt a
+                    WHERE a.tenant = NEW.tenant
+                      AND a.oppdrag_id = NEW.oppdrag_id
+                      AND a.tilstand IN ('promotert','bevart','karantene')
+                      AND a.makulert_ts IS NULL
+                      AND (a.ciphertext IS NOT NULL
+                           OR a.nonce IS NOT NULL)) THEN
+            RAISE EXCEPTION 'rekrutteringsprosess: % hos % kan ikke merkes'
+                ' reapet mens oppdragets promoterte rapport fortsatt bærer'
+                ' payload — makuleringen går gjennom'
+                ' makuler_artefakter_for_prosess, i samme transaksjon'
+                ' (klarsignalet §5)', NEW.prosess_id, NEW.tenant
+                USING ERRCODE = 'insufficient_privilege';
+        END IF;
+    END IF;
+    RETURN NEW;
+END $$;

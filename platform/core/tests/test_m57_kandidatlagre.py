@@ -3152,3 +3152,239 @@ from .test_api import dekker as _dekker173  # noqa: E402
 test_173_skriveveien_er_claimbundet_og_idempotent = _dekker173(
     "kandidatdata_avvist", "kandidatdata_konflikt")(
     test_173_skriveveien_er_claimbundet_og_idempotent)
+
+
+
+
+def _utlopt_beslutning(m, tenant, *, oppdragstype, eiermodul, status,
+                       alder_min):
+    """Beslutningsoppdrag født med fristene alt passert, i EN gitt tenant.
+
+    Fristene er frosset ved fødselen (056-kolonnelåsen), så avviket må
+    oppgis i INSERT-en — samme form som
+    `test_222_fristfeiling_lukker_ankeret` over. `alder_min` styrer
+    REKKEFØLGEN i sveipet: loopen er `ORDER BY o.evidensfrist`.
+    """
+    from db import kryptering
+    _sett_kontekst(m, tenant)
+    logg = m.execute(
+        "INSERT INTO revisjonslogg (tenant, aktor, kilde, input_hash,"
+        " policy_id, beslutning, begrunnelse, idempotency_key)"
+        " VALUES (%s,'test','api_token','ih','p@1.0.0/x.y','TILLAT',"
+        "'[]',%s) RETURNING id",
+        (tenant, secrets.token_hex(8))).fetchone()[0]
+    key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(m, tenant)
+    ct, nonce = kryptering.krypter(dek, {"m57": True}, tenant, key_id)
+    oid = m.execute(
+        "INSERT INTO oppdrag (opprinnelse, tenant,"
+        " beslutning_loggpost_id, oppdragstype, handling, eiermodul,"
+        " payload_kryptert, key_id, nonce, utforelsesfrist,"
+        " evidensfrist, koblingsstatus)"
+        " VALUES ('beslutning',%s,%s,%s,%s,%s,%s,%s,%s,"
+        f" now()-interval '{alder_min + 1} minutes',"
+        f" now()-interval '{alder_min} minutes','KOBLET') RETURNING id",
+        (tenant, logg, oppdragstype, oppdragstype, eiermodul, ct, key_id,
+         nonce)).fetchone()[0]
+    if status != "opprettet":
+        m.execute("UPDATE oppdrag SET status=%s WHERE tenant=%s AND id=%s",
+                  (status, tenant, oid))
+    m.commit()
+    return int(oid)
+
+
+@pg
+def test_222_ankerlukkingen_ser_bare_sitt_eget_oppdrag(migrator):
+    """Cursor P1 på #252 (runde 2) — MÅLING AV EN PÅSTAND OM PL/pgSQL.
+
+    Funnet var at `SELECT … INTO` skal la målvariabelen stå UENDRET når
+    spørringen ikke gir rader, slik at et sveip som først lukker tenant
+    A-s anker treffer neste, ankerløse oppdrag med A-s `v_pid` i hånda
+    og kaller `lukk_rekrutteringsprosess(B, A-s pid, …)` →
+    `invalid_parameter_value` → hele batchen ruller. Samme påstand for
+    `v_kandidat`: stale sak-id → `FOR UPDATE … NOT FOUND` → stille
+    `CONTINUE`, altså et utløpt oppdrag som aldri feiles.
+
+    PostgreSQL dokumenterer det motsatte («target will be set to the
+    first row returned by the query, or to nulls if the query returned
+    no rows»), og 058/059 skriver den semantikken ut i klartekst i sine
+    egne kommentarer. Men dokumentasjon er ikke en måling, og formen
+    påstanden handler om — TO utløpte oppdrag i ETT sveip, i HVER SIN
+    tenant, der bare det første har anker og sak — fantes ikke i suiten.
+    Nå gjør den det, og basen avgjør spørsmålet.
+
+    Begge armene er bebodd med vilje: A har både et ÅPENT anker og en
+    åpen `evidensfrist`-sak, B har ingen av delene og ligger etter A i
+    `ORDER BY o.evidensfrist`. Holder påstanden, er testen rød på
+    nøyaktig de to måtene funnet beskriver — ellers grønn.
+    """
+    from .test_api import ANNEN_TENANT
+    rt = _rt()
+    rp = None
+    try:
+        # A: claimet M-57-oppdrag med anker, ELDST i sveipet.
+        oid_a = _utlopt_beslutning(
+            migrator, TENANT, oppdragstype="rekruttering.evaluering",
+            eiermodul="m57_ats", status="plukket", alder_min=10)
+        _sett_kontekst(rt, TENANT)
+        pid_a = rt.execute("SELECT opprett_rekrutteringsprosess(%s,%s,%s)",
+                           (TENANT, oid_a, 90)).fetchone()[0]
+        # …og en ÅPEN evidensfrist-sak, så `v_kandidat` faktisk får en
+        # verdi å være stale med. Låsen må være ledig når sveipet går,
+        # derav commit — en åpen transaksjon her ville fått reaperen til
+        # å hoppe over A av en helt annen grunn enn den testen måler.
+        rt.execute("SELECT sikre_sak_for_oppdrag(%s,%s,'evidensfrist',"
+                   "'test','r-forhaand')", (TENANT, oid_a))
+        rt.commit()
+
+        # B: ANNEN tenant, WCAG — har per konstruksjon verken
+        # rekrutteringsprosess eller evidensfrist-sak, og kommer ETTER A.
+        oid_b = _utlopt_beslutning(
+            migrator, ANNEN_TENANT,
+            oppdragstype="kontroll.wcag.nettsted",
+            eiermodul="m_wcag_audit", status="opprettet", alder_min=9)
+
+        rp, _timerrolle = _reaperkobling()
+        # Selve målingen: ETT sveip over begge. Stale `v_pid` ville felt
+        # dette kallet med `invalid_parameter_value`.
+        rader = rp.execute("SELECT tenant, oppdrag_id"
+                           " FROM reap_evidensfrister(200)").fetchall()
+        rp.commit()
+        assert (TENANT, oid_a) in rader, f"A ble ikke reapet: {rader!r}"
+        assert (ANNEN_TENANT, oid_b) in rader, \
+            ("B falt ut av sveipet — en stale `v_kandidat` gir nettopp"
+             f" dette stille `CONTINUE`-et: {rader!r}")
+
+        _sett_kontekst(migrator, TENANT)
+        status_a, lukket_a = migrator.execute(
+            "SELECT o.status, p.lukket_ts IS NOT NULL FROM oppdrag o"
+            " JOIN rekrutteringsprosess p ON p.tenant = o.tenant"
+            " AND p.oppdrag_id = o.id WHERE o.tenant=%s AND o.id=%s",
+            (TENANT, oid_a)).fetchone()
+        migrator.rollback()
+        _sett_kontekst(migrator, ANNEN_TENANT)
+        status_b = migrator.execute(
+            "SELECT status FROM oppdrag WHERE tenant=%s AND id=%s",
+            (ANNEN_TENANT, oid_b)).fetchone()[0]
+        # …og B fikk ikke A-s anker dyttet over på seg på veien.
+        ankre_b = migrator.execute(
+            "SELECT count(*) FROM rekrutteringsprosess WHERE tenant=%s",
+            (ANNEN_TENANT,)).fetchone()[0]
+        migrator.rollback()
+        assert (status_a, lukket_a) == ("feilet", True), \
+            f"A: {(status_a, lukket_a, pid_a)}"
+        assert status_b == "feilet", \
+            f"B ble stående utenfor sin egen frist-feiling: {status_b}"
+        assert ankre_b == 0, \
+            f"ankerlukkingen skrev inn i feil tenant: {ankre_b}"
+    finally:
+        rt.close()
+        if rp is not None:
+            rp.close()
+
+
+@pg
+def test_reapmerket_krever_ogsaa_at_rapporten_er_makulert(migrator):
+    """Cursor P1 på #252: vakten målte de SEKS lagrene, ikke `artefakt`.
+
+    `slettet_ts`-armen finnes fordi et merke satt uten at payloaden er
+    tømt utelukker prosessen fra reaperen for alltid — den plukker bare
+    `slettet_ts IS NULL`. Etter #222 er den promoterte rapporten samme
+    slags kandidatpayload som lagrene (funn, intervjuspørsmål, hele den
+    blindede kildeteksten per kandidat), men den var ikke med i
+    målingen: med tomme lagre og en levende rapport slapp merket
+    gjennom, og rapporten ble stående for alltid.
+
+    Reaperen gjør det riktige av seg selv (den makulerer FØR den
+    merker), så dette er porten som gjør den rekkefølgen umulig å miste
+    — også for en fremtidig vei som bare merker.
+
+    MUTASJONEN SOM DREPER DENNE: fjern artefakt-EXISTS i vaktens
+    `slettet_ts`-gren (066). Alle port 18-testene er grønne under den:
+    de måler bare de seks lagrene."""
+    rt = _rt()
+    try:
+        oid, pid = _prosess(migrator, rt, frist=30)
+        # De SEKS lagrene er tomme — den gamle vakten hadde dermed
+        # ingenting å innvende, og det er nettopp hullet.
+        rt.execute("SELECT lukk_rekrutteringsprosess(%s,%s,"
+                   " now() - interval '31 days')", (TENANT, pid))
+        rt.commit()
+        aid = _promotert_rapport(migrator, oid)
+        assert _artefaktrad(migrator, aid)[1] is False, \
+            "positiv kontroll: rapporten skal bære payload før merket"
+
+        # Merket, satt av den rollen som HAR rettigheten, uten at
+        # rapporten er makulert.
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            migrator.execute(
+                "UPDATE rekrutteringsprosess SET slettet_ts=now()"
+                " WHERE tenant=%s AND prosess_id=%s", (TENANT, pid))
+        migrator.rollback()
+        # … og rapporten står fortsatt der, altså fortsatt synlig for
+        # reaperen — som er hele poenget med å nekte merket.
+        assert _artefaktrad(migrator, aid)[3] is False
+
+        # Etter LOVLIG makulering gjennom døren tillates merket, i samme
+        # rekkefølge reaperen alt bruker.
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+        assert migrator.execute(
+            "SELECT makuler_artefakter_for_prosess(%s,%s,now())",
+            (TENANT, oid)).fetchone()[0] == 1
+        migrator.execute(
+            "UPDATE rekrutteringsprosess SET slettet_ts=now()"
+            " WHERE tenant=%s AND prosess_id=%s", (TENANT, pid))
+        migrator.commit()
+        assert _artefaktrad(migrator, aid) == \
+            ("promotert", True, True, True, True)
+        _sett_kontekst(migrator, TENANT)
+        assert migrator.execute(
+            "SELECT slettet_ts IS NOT NULL FROM rekrutteringsprosess"
+            " WHERE tenant=%s AND prosess_id=%s",
+            (TENANT, pid)).fetchone()[0] is True
+        migrator.rollback()
+    finally:
+        rt.close()
+
+
+def test_sp10_daekker_066():
+    """Cursor P2 på #252: 066 er en BACKFILL, og en backfill uten SP-10
+    er umålt der den faktisk kjører.
+
+    Engangs-makuleringen møter én form ved oppgradering som ingen
+    tom-base-`migrer` kan vise: en prosess som ALT er reapet, med den
+    promoterte rapportens payload i live. Uten seedet måler CI bare at
+    setningene parser — og en fjernet løkke ville vært grønn hele veien
+    til prod. Porten speiler `test_sp10_daekker_049`/`_056`/`_059`:
+    seed + måling registrert i SEEDS, og CI-pekeren på plass, ellers
+    kjører den aldri i pipelinen.
+
+    CI-PEKEREN MANGLER ENNÅ, OG DET STÅR HER I KLARTEKST: linja
+    `python deploy/staging/sp10-provekjoring.py 66` hører hjemme i
+    SP-10-steget i `.github/workflows/ci.yml`, rett under `59`. Denne
+    sløyfa kan ikke skrive den — GitHub avviser workflow-endringer fra
+    app-tokenet uten `workflows`-rettighet — så den ene linja er eiers
+    håndgrep. Porten under holder seedet og målingen på plass i
+    mellomtiden; assert-en på pekeren legges til i samme commit som
+    linja, av den som kan skrive den (`test_sp10_daekker_059` viser
+    formen)."""
+    from pathlib import Path
+    rot = Path(__file__).resolve().parents[3]
+    sp10 = (rot / "deploy" / "staging" / "sp10-provekjoring.py").read_text(
+        encoding="utf-8")
+    assert "66: (_seed_066, _mal_066)" in sp10, \
+        "066 har ingen registrert seed+måling i SEEDS"
+    # Seedet må FAKTISK bebo klassen 066 finnes for: en REAPET prosess
+    # (merket satt før 066) med en promotert rapport som fortsatt bærer
+    # payload. Et seed som bare fødte en levende prosess ville gjort
+    # målingen vacuous.
+    seed = sp10[sp10.index("def _seed_066"):sp10.index("def _mal_066")]
+    assert "slettet_ts = now()" in seed, \
+        "seedet setter aldri reap-merket — den bebodde formen mangler"
+    assert "'promotert'" in seed and "ciphertext" in seed, \
+        "seedet legger ingen promotert rapport med payload på oppdraget"
+    mal = sp10[sp10.index("def _mal_066"):sp10.index("SEEDS = {")]
+    assert "makulert_ts" in mal and "ciphertext" in mal, \
+        "målingen ser hverken merket eller den tømte payloaden"
