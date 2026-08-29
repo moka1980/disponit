@@ -628,6 +628,50 @@ def test_057_navngir_aldri_runtime_rollen():
             for t in treff]))
 
 
+def test_067_makuleringsdorens_acl_staar_innenfor_eierblokka():
+    """Cursor P2 på #252, samme form som porten over: en ACL som settes
+    av FEIL rolle er ingen ACL, og PostgreSQL sier det ikke høyt.
+
+    Codex' P1 på denne migrasjonen var nettopp det: REVOKE/GRANT sto
+    etter `RESET ROLE`, altså som migrator — og migrator er
+    `WITH INHERIT FALSE`-medlem av `disponit_domene_eier` i prod. En
+    REVOKE mot en funksjon rollen ikke eier svares med en WARNING, ikke
+    en feil: migrasjonen går grønn mens default-ACL-en (`EXECUTE` for
+    PUBLIC) står urørt. Resultatet er en SECURITY DEFINER-funksjon eid av
+    BYPASSRLS-rollen, kjørbar for ENHVER rolle — en kaller som setter
+    tenant-GUC-en kunne slettet retained payload direkte — og GRANT-en
+    til claimeren var virkningsløs av samme grunn, så døren var i tillegg
+    stengt for den ene rollen som skal gjennom den.
+
+    Fiksen er én linjeflytting, og en linjeflytting er nøyaktig det en
+    senere redigering kan gjøre om igjen i stillhet. Porten måler derfor
+    ikke at setningene FINNES, men hvor de står: innenfor eierblokka som
+    åpner med `SET LOCAL ROLE disponit_domene_eier` og lukkes av dens
+    egen `RESET ROLE`.
+
+    MUTASJONEN SOM DREPER DENNE: flytt REVOKE/GRANT ned under
+    `RESET ROLE;` — migrasjonen er fortsatt grønn i CI og i deploy."""
+    import re
+    from pathlib import Path
+    rot = Path(__file__).resolve().parents[3]
+    sql = (rot / "platform" / "core" / "db" / "migrations"
+           / "067_makulering_ved_reap.sql").read_text(encoding="utf-8")
+    doer = sql.index(
+        "CREATE OR REPLACE FUNCTION makuler_artefakter_for_prosess")
+    # Blokka ankres i BEGGE ender rundt selve døren: eierbyttet foran
+    # den, og den FØRSTE `RESET ROLE` etter den. Et løsere snitt ville
+    # slukt naboseksjonenes eierblokker og gjort porten stum.
+    blokk = sql[sql.rindex("SET LOCAL ROLE disponit_domene_eier;", 0, doer):
+                sql.index("RESET ROLE;", doer)]
+    for setning in ("REVOKE ALL ON FUNCTION", "GRANT EXECUTE ON FUNCTION"):
+        assert re.search(setning + r"\s+makuler_artefakter_for_prosess",
+                         blokk), (
+            f"{setning} for makuleringsdøren står ikke innenfor"
+            " `SET LOCAL ROLE disponit_domene_eier` … `RESET ROLE` —"
+            " som migrator svarer PostgreSQL med en WARNING, og"
+            " SECURITY DEFINER-døren beholder EXECUTE for PUBLIC")
+
+
 @pg
 def test_fodselsporten_gjelder_ogsa_claimeren(migrator):
     """Cursor P2: rettighetsgrensen kunne bare halve jobben.
