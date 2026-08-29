@@ -526,6 +526,35 @@ def _anker_lever(conn, tenant, oppdrag_id) -> bool:
         (tenant, oppdrag_id)).fetchone()[0]
 
 
+def _artefakt_lever(conn, tenant, artefakt_id) -> bool:
+    """Er artefaktet fortsatt UMAKULERT med levende payload NÅ?
+
+    Søsteren til `_anker_lever`, og den lukker det vinduet ankeret ikke
+    ser (Codex P2 på #252). `makuler_artefakter_for_prosess` (#222) kan
+    committe UTEN at prosessen merkes reapet — det er en form #252
+    eksplisitt støtter og tester, siden døren kalles per oppdrag og
+    reapmerket settes av et eget steg. Ankeret lever da fortsatt og
+    `_anker_lever` sier true, mens raden vi alt har lest er tømt.
+
+    Uten denne leser hovedspørringen ciphertexten rett før makuleringen
+    committer, dekrypterer den, passerer ankersjekken — og leverer 200
+    med kandidatpayload som er slettet i basen. Ankeret måler PROSESSENS
+    frist; dette måler ARTEFAKTETS eget merke, og det er to forskjellige
+    fakta.
+
+    Samme doktrine som søsteren for øvrig: leses rett før 200, etter
+    dekrypteringen, i samme transaksjon — READ COMMITTED tar ferskt
+    snapshot per setning. Vindusinnsnevring, ikke lås; en FOR SHARE
+    herfra ville krevd skriverett på evidenstabellen for en READ-rute.
+    Ingen klokkeslett her: merket er et faktum, ikke en frist.
+    """
+    return conn.execute(
+        "SELECT EXISTS (SELECT 1 FROM artefakt a"
+        "  WHERE a.tenant=%s AND a.artefakt_id=%s"
+        "    AND a.makulert_ts IS NULL AND a.ciphertext IS NOT NULL)",
+        (tenant, artefakt_id)).fetchone()[0]
+
+
 def rekrutteringsrapport_detalj(tjeneste, request: Request) -> Response:
     """GET /v1/rekruttering/rapport/{oppdrag_id} — den promoterte
     evalueringsrapporten. M-57s EGEN leseflate (kontraktens
@@ -556,6 +585,18 @@ def rekrutteringsrapport_detalj(tjeneste, request: Request) -> Response:
             "    ON o.tenant = a.tenant AND o.id = a.oppdrag_id"
             " WHERE a.tenant=%s AND a.oppdrag_id=%s"
             "   AND a.tilstand='promotert'"
+            # MAKULERT ER IKKE LESBART (Cursor P2 på #252). Makuleringen
+            # (#222) nuller payloaden UTEN tilstandsskifte — raden består
+            # som evidensen om at rapporten fantes, og `tilstand` sier
+            # fortsatt `promotert`. Uten dette leddet finner spørringen
+            # den, `dekrypter` får `ct = None`, og kunden får
+            # `intern_feil` (500) der #220 lovet et identisk 404.
+            # Ankeret redder ikke: døren kan kalles uten reap, og da
+            # lever prosessen fortsatt innenfor fristen.
+            # `ciphertext IS NOT NULL` står ved siden av merket med
+            # vilje: merket er årsaken vi kjenner, tom payload er
+            # tilstanden leseveien faktisk ikke tåler.
+            "   AND a.makulert_ts IS NULL AND a.ciphertext IS NOT NULL"
             "   AND (o.oppdragstype, a.artefakttype) IN"
             "       (SELECT * FROM unnest(%s::text[], %s::text[]))"
             # SLETTEGRENSEN GJELDER OGSÅ RAPPORTEN (Codex P1 ×2, felt
@@ -593,6 +634,15 @@ def rekrutteringsrapport_detalj(tjeneste, request: Request) -> Response:
                                    art="drift", artefakt=str(art_id))
             return _feilsvar("intern_feil", rid)
         if not _anker_lever(conn, auth.tenant, oid):
+            return _feilsvar("ikke_funnet", rid)
+        # … OG ARTEFAKTET SELV MÅ FORTSATT VÆRE UMAKULERT (Codex P2 på
+        # #252). Ankersjekken over måler PROSESSENS frist; makuleringen
+        # er et eget faktum på artefaktraden, og døren kan committe uten
+        # at prosessen merkes reapet. Da består ankeret, og bare dette
+        # leddet ser at payloaden vi nettopp dekrypterte er slettet.
+        # Samme svar som resten av 404-doktrinen — en makulert rapport
+        # er identisk «finnes ikke», aldri et halvt svar.
+        if not _artefakt_lever(conn, auth.tenant, art_id):
             return _feilsvar("ikke_funnet", rid)
         # LESNINGEN SERVERER IKKE DET FLATEN KASTER (Codex P2 — samme
         # doktrine som `_kandidater`s nøkkelsubtraksjon): `kildetekst` er
@@ -674,6 +724,12 @@ def rekrutteringsevalueringer(tjeneste, request: Request) -> Response:
             " EXISTS (SELECT 1 FROM artefakt a"
             "          WHERE a.tenant = o.tenant AND a.oppdrag_id = o.id"
             "            AND a.tilstand='promotert'"
+            # … og en MAKULERT rapport er ikke klar (samme ledd som
+            # detaljruten — Cursor P2 på #252). Uten det ville listen
+            # sagt `rapport_klar: true` om noe detaljruten svarer 404
+            # på: divergensen #220 stengte, gjenåpnet av makuleringen.
+            "            AND a.makulert_ts IS NULL"
+            "            AND a.ciphertext IS NOT NULL"
             "            AND (o.oppdragstype, a.artefakttype) IN"
             "                (SELECT * FROM unnest(%s::text[], %s::text[])))"
             # … og listen reklamerer bare med et LEVENDE anker (samme

@@ -114,6 +114,40 @@ def _promoter_kopi(migrator, fra_oid, til_oid, artefakttype):
     migrator.commit()
 
 
+def _promotert_rapportartefakt(m, oid) -> str:
+    """Et promotert rapportartefakt på `oid`, i claim-kontraktens ekte
+    form (kontrakt_hash, release, epoch) med dekrypterbar payload — og
+    samme dømmekraft som `_promoter_kopi`: leseveien dømmer på koblingen
+    prosess→oppdrag og på artefakttypen, ikke på innholdet."""
+    from db import kryptering
+    _sett_kontekst(m, TENANT)
+    key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(m, TENANT)
+    rapport = {"rapporttype": "rekruttering.evaluering.rapport"}
+    ct, nonce = kryptering.krypter(dek, rapport, TENANT, key_id)
+    kh = m.execute(
+        "SELECT kontrakt_hash FROM modulkontrakt"
+        " WHERE modul_id='m57_ats' AND kontraktversjon=1").fetchone()[0]
+    rel = m.execute(
+        "SELECT release_id FROM moduldeployment"
+        " WHERE modul_id='m57_ats' AND livslop='claiming'"
+        " LIMIT 1").fetchone()[0]
+    epoch = m.execute(
+        "SELECT module_epoch FROM modulhode"
+        " WHERE modul_id='m57_ats'").fetchone()[0]
+    aid = m.execute(
+        "INSERT INTO artefakt (tenant, oppdrag_id, artefakttype,"
+        " modul_id, release_id, kontraktversjon, kontrakt_hash,"
+        " module_epoch, tilstand, storrelse_bytes, klartekst_sha256,"
+        " ciphertext, nonce, dek_ref, kapabilitet_jti, promotert_ts)"
+        " VALUES (%s,%s,'rekruttering.evaluering.rapport','m57_ats',"
+        "%s,1,%s,%s,'promotert',10,'h',%s,%s,%s,%s, now())"
+        " RETURNING artefakt_id",
+        (TENANT, oid, rel, kh, epoch, ct, nonce, key_id,
+         "jti-" + secrets.token_hex(8))).fetchone()[0]
+    m.commit()
+    return aid
+
+
 def _ankere(m, oid) -> tuple:
     """(alle, levende) retensjonsankere for oppdraget — leseveiens egen
     målestokk (`slettet_ts IS NULL` er nøyaktig EXISTS-leddet i
@@ -609,8 +643,7 @@ def test_reapet_prosess_stenger_rapporten(migrator, miljo):
     from starlette.testclient import TestClient
     from api.app import lag_app
     from api import sesjon as sesjonmodul
-    from db import kryptering
-    from .test_m57_kandidatlagre import _prosess, _reaperkobling
+    from .test_m57_kandidatlagre import _reaperkobling
     from .test_m57_utsending import _rt as _rekrutt_rt
 
     from .test_m57_kandidatlagre import _claimet
@@ -621,31 +654,7 @@ def test_reapet_prosess_stenger_rapporten(migrator, miljo):
         # — mutasjonen tilbake til NOT EXISTS(reapet) rødner her), FØR
         # prosessen fødes og 200-armen tar over.
         oid, _ = _claimet(migrator)
-        _sett_kontekst(migrator, TENANT)
-        key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(migrator,
-                                                              TENANT)
-        rapport = {"rapporttype": "rekruttering.evaluering.rapport"}
-        ct, nonce = kryptering.krypter(dek, rapport, TENANT, key_id)
-        kh = migrator.execute(
-            "SELECT kontrakt_hash FROM modulkontrakt"
-            " WHERE modul_id='m57_ats' AND kontraktversjon=1").fetchone()[0]
-        rel = migrator.execute(
-            "SELECT release_id FROM moduldeployment"
-            " WHERE modul_id='m57_ats' AND livslop='claiming'"
-            " LIMIT 1").fetchone()[0]
-        epoch = migrator.execute(
-            "SELECT module_epoch FROM modulhode"
-            " WHERE modul_id='m57_ats'").fetchone()[0]
-        migrator.execute(
-            "INSERT INTO artefakt (tenant, oppdrag_id, artefakttype,"
-            " modul_id, release_id, kontraktversjon, kontrakt_hash,"
-            " module_epoch, tilstand, storrelse_bytes, klartekst_sha256,"
-            " ciphertext, nonce, dek_ref, kapabilitet_jti, promotert_ts)"
-            " VALUES (%s,%s,'rekruttering.evaluering.rapport','m57_ats',"
-            "%s,1,%s,%s,'promotert',10,'h',%s,%s,%s,%s, now())",
-            (TENANT, oid, rel, kh, epoch, ct, nonce, key_id,
-             "jti-" + secrets.token_hex(8)))
-        migrator.commit()
+        _promotert_rapportartefakt(migrator, oid)
 
         a = lag_app(DSN)
         with TestClient(a) as c:
@@ -724,6 +733,79 @@ def test_reapet_prosess_stenger_rapporten(migrator, miljo):
             assert rad2["slettet"] is True
             assert rad["slettet"] is False, \
                 "en levende evaluering skal ikke merkes slettet"
+    finally:
+        rt.close()
+
+
+@pg
+def test_makulert_rapport_gir_404_ikke_500(migrator, miljo):
+    """Cursor P2 på #252: makuleringen (#222) nuller payloaden UTEN
+    tilstandsskifte — raden består som evidensen om at rapporten fantes,
+    og `tilstand` sier fortsatt `promotert`.
+
+    Leseveien dømte bare på tilstanden og ankeret. Med et LEVENDE anker
+    innenfor fristen — døren kan kalles uten reap, og gjør det i
+    backfillen i 066 — fant detaljruten artefaktet, sendte `ct = None`
+    inn i `dekrypter` og svarte `intern_feil` (500) der #220 lovet et
+    identisk 404. Listen sa samtidig `rapport_klar: true` om noe
+    detaljruten ikke kan servere: nøyaktig divergensen #220 stengte.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `makulert_ts IS NULL AND
+    ciphertext IS NOT NULL` fra detaljruten (500 i stedet for 404) eller
+    fra listens EXISTS (`rapport_klar: true` på en tom rapport)."""
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    from api import sesjon as sesjonmodul
+    from .test_m57_kandidatlagre import _claimet
+    from .test_m57_utsending import _rt as _rekrutt_rt
+
+    rt = _rekrutt_rt()
+    try:
+        oid, _ = _claimet(migrator)
+        _promotert_rapportartefakt(migrator, oid)
+        # LEVENDE anker, godt innenfor fristen: ingen reaping her, det er
+        # nettopp poenget — makuleringen alene skal stenge lesingen.
+        _sett_kontekst(rt, TENANT)
+        rt.execute("SELECT opprett_rekrutteringsprosess(%s,%s,%s)",
+                   (TENANT, oid, 30))
+        rt.commit()
+
+        a = lag_app(DSN)
+        with TestClient(a) as c:
+            cookie, _csrf = _adminsesjon()
+            ck = {sesjonmodul.C_SESJON: cookie}
+            # Positiv kontroll: rapporten ER lesbar før makuleringen — en
+            # 404-test uten den går grønn på søppel.
+            assert c.get(f"/v1/rekruttering/rapport/{oid}",
+                         cookies=ck).status_code == 200
+            rad = next(e for e in c.get("/v1/rekruttering/evalueringer",
+                                        cookies=ck).json()["evalueringer"]
+                       if e["oppdrag_id"] == oid)
+            assert rad["rapport_klar"] is True
+
+            # Makuleringen, gjennom DØREN — samme kall reaperen og
+            # backfillen bruker, ingen speilet UPDATE.
+            _sett_kontekst(migrator, TENANT)
+            migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+            antall = migrator.execute(
+                "SELECT makuler_artefakter_for_prosess(%s,%s,now())",
+                (TENANT, oid)).fetchone()[0]
+            migrator.commit()
+            assert antall == 1, "positiv kontroll: døren skal treffe raden"
+
+            svar = c.get(f"/v1/rekruttering/rapport/{oid}", cookies=ck)
+            assert svar.status_code == 404, \
+                f"makulert rapport skal gi 404, ikke {svar.status_code}"
+            assert svar.json()["feil"] == "ikke_funnet", svar.text
+            rad2 = next(e for e in c.get("/v1/rekruttering/evalueringer",
+                                         cookies=ck).json()["evalueringer"]
+                        if e["oppdrag_id"] == oid)
+            assert rad2["rapport_klar"] is False, \
+                "listen skal ikke reklamere for en makulert rapport"
+            # … og ankeret lever fortsatt: dette er makuleringen som
+            # stenger lesingen, ikke reap-merket eller fristen.
+            assert rad2["slettet"] is False
+            assert _ankere(migrator, oid) == (1, 1)
     finally:
         rt.close()
 
