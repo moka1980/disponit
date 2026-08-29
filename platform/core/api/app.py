@@ -2399,6 +2399,44 @@ _KANDIDAT_MIME = {
     ".html": "text/html", ".htm": "text/html"}
 
 
+def _har_nullbyte(rot) -> bool:
+    """Bærer noen streng i strukturen en nullbyte — nøkler medregnet?
+
+    MÅLT PÅ VERDIENE, IKKE PÅ JSON-TEKSTEN (Codex P2). Porten sto som
+    `"\\x00" in raa`, altså på den kanoniske JSON-strengen — og der
+    finnes nullbyten ALDRI: `json.dumps` skriver den som de seks tegnene
+    `\\u0000`, uansett `ensure_ascii`. Predikatet var dermed dødt, og en
+    nullbyte i en nestet verdi (manifestkontrakten tillater f.eks. en
+    ikke-matchende alternativverdi for et personfelt, som når
+    `avmaskering` uten å bli sett) nådde `jsonb`, som avviste den. Rå
+    `psycopg.Error` → handlerens catch-all → `db_utilgjengelig`, altså
+    en falsk infrastrukturalarm som modulen retryer mot en frisk base
+    før den feller evalueringen. Nøyaktig utfallet den opprinnelige
+    fiksen fantes for å hindre.
+
+    Å lete etter escapen `\\u0000` i JSON-teksten i stedet ville vært
+    feil andre vei: en tekst som LOVLIG inneholder de seks tegnene
+    `\\u0000` blir dumpet som `\\\\u0000`, som inneholder søkestrengen —
+    en gyldig kandidat avvist på en nullbyte den ikke har.
+
+    Iterativ og ikke rekursiv med vilje: dybden er kallerens, og en
+    `RecursionError` her ville vært en 500 der porten skal svare
+    `request_feilformet`.
+    """
+    stakk = [rot]
+    while stakk:
+        verdi = stakk.pop()
+        if isinstance(verdi, str):
+            if "\x00" in verdi:
+                return True
+        elif isinstance(verdi, dict):
+            stakk.extend(verdi.keys())
+            stakk.extend(verdi.values())
+        elif isinstance(verdi, list):
+            stakk.extend(verdi)
+    return False
+
+
 def _kandidatdata(tjeneste: Tjeneste, request: Request, form: str) -> Response:
     """Skriveveien inn i kandidatlagrene (#173, eiers valg b + i).
 
@@ -2753,13 +2791,19 @@ def _kandidatdata(tjeneste: Tjeneste, request: Request, form: str) -> Response:
             # mer enn `TEXT` kan. `kildetekst` er den samme uttrekksteksten
             # dokumentveien bærer, og avmaskeringens verdier er utsnitt
             # av den, så nullbyten når hit langs nøyaktig samme vei.
-            # Målt på de kanoniske strengene og ikke ved å gå gjennom
-            # vilkårlig JSON: de er alt bygget, og de ER det som
-            # INSERTes.
+            #
+            # PÅ VERDIENE, IKKE PÅ JSON-TEKSTEN (Codex P2, runde 2).
+            # Denne porten målte `"\x00" in raa_*`, og der finnes den
+            # aldri: `json.dumps` skriver nullbyten som de seks tegnene
+            # `\u0000`. Predikatet var dødt fra første linje. Se
+            # `_har_nullbyte` for hvorfor escapen ikke er noe bedre å
+            # lete etter. STØRRELSEN måles fortsatt på de kanoniske
+            # strengene — de ER det som INSERTes.
             if sum(len(r.encode("utf-8"))
                    for r in (raa_a, raa_m, raa_s)) \
                     > _KANDIDAT_ARTEFAKT_MAKS \
-                    or any("\x00" in r for r in (raa_a, raa_m, raa_s)):
+                    or any(_har_nullbyte(v)
+                           for v in (artefakt, avmaskering, sporsmal or [])):
                 conn.rollback()
                 tjeneste.logg.hendelse("request_feilformet", rid, tenant)
                 return _feilsvar("request_feilformet", rid)
