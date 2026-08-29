@@ -146,14 +146,10 @@ export function visRekruttering(hoved, ctx) {
     // lenge `paagaaende` står — og da er kontrollene kjeden låste de samme
     // som skal låses opp.
     //
-    // `frysSkjema` er bestillingsseksjonens egen `frys`, lagt der
-    // profillagringen kan nå den (eierdom B, #212 runde 6): kroppen —
-    // profil, antall, frist — eies av seksjonen, så en lås som bare går
-    // gjennom `laas` fryser utløserne og lar feltene stå åpne.
     bestilling: { reserverIdem: null, bestillIdem: null,
                   inndataRef: null, filnavn: null,
                   paagaaende: false, generasjon: 0,
-                  oppdaterProfilvalg: null, frysSkjema: null },
+                  oppdaterProfilvalg: null },
     // Evalueringslisten hører til ØKTEN av samme grunn som bunten over
     // (Cursor P1): den er tenant-global, ikke prosessbundet, men `tegn`
     // bygger seksjonen på nytt ved hvert prosessbytte og seedet lå i
@@ -267,6 +263,22 @@ function tegn(hoved, ctx, data, okt, valgtId) {
   // ERSTATTER sin egen kontroll i stedet for å legge igjen en frakoblet
   // node ingen låser opp.
   const utlosere = { velger: null, send: null, lagre: null };
+  // #214 (A-maskinen — K2-gapet fra #212 lukket): låsen kjenner også
+  // KROPPSFELTENE. Gapet var to frysemekanismer med ulik rekkevidde —
+  // `laas.frys` tok utløserne, en lokal closure i bestillingsskjemaet
+  // tok feltene — og hvilken som kjørte avhang av hvem som tok låsen:
+  // bestillingsarmen frøs alt, profilarmen bare utløserne, og seks
+  // review-pass fant speilet av forrige runde. Nå fryser ENHVER som tar
+  // låsen alt som er meldt — én mekanisme, symmetrisk, ingen speil.
+  // Navngitte plasser her også: en om-tegnet seksjon ERSTATTER feltet
+  // sitt i stedet for å etterlate en frakoblet node.
+  const felter = { antall: null, frist: null, profil: null };
+  //: Snapshot per kontroll ved frysing (bare feltene som ber om det):
+  //: verdien kroppen ble bygd med, som change-vakten ruller tilbake
+  //: til. Eies av LÅSEN, ikke av en seksjons closure — det var
+  //: nøyaktig eierskapet som gjorde at profilarmens frys rullet
+  //: tilbake til null og TØMTE valget (Cursor P2-1, runde 6).
+  const frosne = new Map();
   const frysEn = (kontroll, paa) => {
     if (!kontroll) return;
     kontroll.disabled = paa;
@@ -277,9 +289,22 @@ function tegn(hoved, ctx, data, okt, valgtId) {
     if (paa) rot.setAttribute("aria-busy", "true");
     else rot.removeAttribute("aria-busy");
   };
+  const frysFelt = (felt, paa) => {
+    if (!felt) return;
+    // `readOnly` for tekst/tall (feltet beholder fokus og lesbarhet for
+    // skjermleseren), `disabled` for select — en select har ingen
+    // readOnly, samme valg som skjemaet alltid har gjort.
+    if (felt.modus === "readOnly") felt.kontroll.readOnly = paa;
+    else felt.kontroll.disabled = paa;
+    if (felt.snapshot) {
+      if (paa) frosne.set(felt.kontroll, felt.kontroll.value);
+      else frosne.delete(felt.kontroll);
+    }
+  };
   const laas = {
     frys: (paa) => {
       for (const k of Object.values(utlosere)) frysEn(k, paa);
+      for (const f of Object.values(felter)) frysFelt(f, paa);
     },
     // Kontrollene fødes til ulik tid — profilskjemaet åpnes på et klikk —
     // så en som meldes mens flaten er frosset, fryses med det samme.
@@ -289,6 +314,14 @@ function tegn(hoved, ctx, data, okt, valgtId) {
       utlosere[navn] = kontroll;
       if (okt.bestilling.paagaaende) frysEn(kontroll, true);
     },
+    meldFelt: (navn, kontroll, modus, valg) => {
+      felter[navn] = { kontroll, modus, snapshot: !!(valg && valg.snapshot) };
+      if (okt.bestilling.paagaaende) frysFelt(felter[navn], true);
+    },
+    //: Verdien kontrollen hadde da låsen ble tatt — `undefined` når
+    //: låsen ikke holdes. Change-vakten leser den her, aldri fra en
+    //: seksjons egen kopi.
+    frossetVerdi: (kontroll) => frosne.get(kontroll),
   };
   // DEN FØRSTE PROFILEN LÅSER OPP BESTILLINGEN (Cursor P1-1). Uten
   // profiler tegner `bestillSeksjon` en «opprett en profil først»-tekst
@@ -1598,7 +1631,14 @@ function bestillSeksjon(hoved, ctx, data, okt, laas) {
   // også her, og valget rulles tilbake til den profilen kroppen ble bygget
   // på, så `stillingsprofil_ref` og det brukeren ser er samme profil.
   profilVelger.addEventListener("change", () => {
-    if (tilstand.paagaaende) { profilVelger.value = frossetProfil; return; }
+    if (tilstand.paagaaende) {
+      // Låsens snapshot, aldri en lokal kopi (#214): under en
+      // profillagring er dette verdien slik den sto da DEN låsen ble
+      // tatt — ikke null.
+      const fry = laas.frossetVerdi(profilVelger);
+      if (fry !== undefined) profilVelger.value = fry;
+      return;
+    }
     nyIntensjon();
   });
   antallInp.addEventListener("input", nyIntensjon);
@@ -1631,16 +1671,13 @@ function bestillSeksjon(hoved, ctx, data, okt, laas) {
   // Knappene og prosessvelgeren eies av flatens `laas` (A-dommen, #212):
   // det er den samme frysen, bare utvidet til `tegn`-utløserne, og den
   // setter `aria-busy` på DETTE skjemaet fordi `send` hører til det.
-  let frossetProfil = null;
-  const frys = (paa) => {
-    antallInp.readOnly = paa;
-    fristInp.readOnly = paa;
-    profilVelger.disabled = paa;
-    // Valget slik det sto da kjeden tok låsen: det er DENNE profilen
-    // `kropp` bygges med, og den `change`-vakten over ruller tilbake til.
-    frossetProfil = paa ? profilVelger.value : null;
-    laas.frys(paa);
-  };
+  // #214: feltene MELDES til låsen i stedet for å fryses av en lokal
+  // closure — da fryser også profilarmens lås dem, og snapshotet av
+  // profilvalget eies av låsen (aldri null under en fremmed frys).
+  laas.meldFelt("antall", antallInp, "readOnly");
+  laas.meldFelt("frist", fristInp, "readOnly");
+  laas.meldFelt("profil", profilVelger, "disabled", { snapshot: true });
+  const frys = (paa) => laas.frys(paa);
 
   const skjema = el("form", {},
     buntNotis,
@@ -1976,10 +2013,9 @@ function bestillSeksjon(hoved, ctx, data, okt, laas) {
   // mens flaten er frosset.
   // ... og det er DENNE velgeren en ny profilversjon skal nå (P2-2).
   tilstand.oppdaterProfilvalg = tegnProfilvalg;
-  // ... og det er DENNE frysen den ANDRE mutasjonen i kjeden skal ta
-  // (Cursor P2-1, eierdom B): `laas` eier utløserne, seksjonen eier
-  // kroppen. Låsen er hel bare når profillagringen når begge.
-  tilstand.frysSkjema = frys;
+  // Broen `frysSkjema` (eierdom B, #212 runde 6) er BORTE (#214, A):
+  // feltene er meldt til låsen over, så profillagringens `laas.frys`
+  // når dem uten en peker inn i denne seksjonens closure.
   sett(rot, el("h2", { id: "bestill-tittel",
     text: t("ui.rekruttering.bestill.tittel") }),
     utfall, skjema);
@@ -1994,23 +2030,17 @@ function profilSeksjon(hoved, ctx, data, okt, laas, paaProfilendring) {
   // scopet er en blindvei som først dør server-side. Samme port som
   // kanBestille i bestillingsdelen.
   const kanSkrive = harScope(ctx, "bestilling:opprett");
-  // ÉN LÅS FOR BEGGE MUTASJONENE I KJEDEN (Cursor P2-1, eierdom B i
-  // runde 6). A-dommen lover én lås for bestilling OG profillagring, men
-  // `laas.frys` tar bare `tegn`-utløserne: bestillingens KROPP — profil,
-  // antall, frist — eies av seksjonens egen `frys`. Profilarmen frøs
-  // derfor utløserne og lot feltene stå åpne, samtidig som `laas.frys`
-  // satte `aria-busy` på bestillingsskjemaet gjennom `send`: skjemaet
-  // PÅSTO opptatt og tok input. Verst traff det profilvelgeren, som ruller
-  // et bytte tilbake til `frossetProfil` — en verdi bare seksjonens `frys`
-  // setter, så under en profillagring rullet den tilbake til `null` og
-  // TØMTE valget i stedet for å bevare det. Seksjonen eksponerer nå sin
-  // egen `frys` på økten, og armen her tar hele låsen gjennom den.
-  // Uten bestillingsseksjon — ingen profiler ennå, altså den aller første
-  // lagringen — er `laas` alt som finnes å låse.
-  const frysKjeden = (paa) => {
-    if (okt.bestilling.frysSkjema) okt.bestilling.frysSkjema(paa);
-    else laas.frys(paa);
-  };
+  // ÉN LÅS FOR BEGGE MUTASJONENE I KJEDEN (#214, A-maskinen). Gapet
+  // K2-passet i #212 målte — to frysemekanismer med ulik rekkevidde,
+  // og rekkevidden avhang av kalleren — er lukket i selve låsen:
+  // feltene er MELDT dit (laas.meldFelt), så `laas.frys` fryser både
+  // utløserne og kroppen uansett hvilken arm som tar den, og
+  // snapshotet av profilvalget eies av låsen (aldri null under en
+  // profillagring).
+  // #214 (A): låsen kjenner feltene selv — broen inn i
+  // bestillingsseksjonens closure er borte, og den aller første
+  // lagringen (ingen bestillingsseksjon ennå) er samme kall.
+  const frysKjeden = (paa) => laas.frys(paa);
   const rot = el("section", { "aria-labelledby": "profil-tittel" });
   const utfall = el("div", { role: "alert", class: "utfall" });
   const liste = el("div");
