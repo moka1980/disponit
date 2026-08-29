@@ -50,21 +50,29 @@ CREATE TABLE revisjonshendelse (
     -- ubrukelig revisjonshendelse er verre enn ingen: den ser ut som et
     -- svar på spørsmålet «hvem bestemte dette».
     --
-    -- BLANKTEGNSKLASSEN MÅ NAVNGIS (Codex P2 ×2). Enargs `btrim` fjerner
-    -- BARE mellomrom — ikke tabulator, ikke linjeskift. En aktør på én
-    -- tabulator og en begrunnelse på ti linjeskift passerte derfor begge
-    -- grensene under og ga en rad som er tom for et menneske, men gyldig
-    -- for porten som leser den. Toargsformen navngir hele ASCII-klassen
-    -- (`\v` skrives `\x0B`: en ukjent escape tas LITERALT i PostgreSQL,
-    -- så `E'\v'` ville trimmet bokstaven v av navn).
+    -- VI SLUTTER Å REGNE OPP BLANKTEGN (Codex P2 ×3). Tre runder på samme
+    -- akse: enargs `btrim` tok bare mellomrom, toargsformen tok hele
+    -- ASCII-klassen, og så kom U+00A0 — hardt mellomrom — og passerte
+    -- begge. Hver runde utvidet listen, og listen kan alltid utvides én
+    -- gang til. Det er §9 K2s mønster, og svaret er ikke en fjerde liste.
+    --
+    -- Regelen snus: i stedet for å fjerne hvert blanktegn vi klarer å
+    -- navngi, trimmer vi med `\s` — PostgreSQLs regexklasse, som i en
+    -- UTF-8-base dekker Unicodes blanktegn og ikke bare ASCII. Da er det
+    -- ingen liste å glemme noe fra.
+    --
+    -- Grensen måles på den TRIMMEDE lengden, ikke på råteksten: ellers
+    -- ville ni mellomrom og én bokstav vært en ti tegns begrunnelse.
     aktor TEXT NOT NULL
-        CHECK (length(btrim(aktor, E' \t\n\r\f\x0B')) BETWEEN 1 AND 200),
+        CHECK (length(regexp_replace(aktor, '^\s+|\s+$', '', 'g'))
+               BETWEEN 1 AND 200),
     -- BEGRUNNELSEN HAR EN NEDRE GRENSE. «x» er ikke en begrunnelse, og
     -- funnet som skapte denne tabellen brukte nettopp «x». Ti tegn er
     -- ikke mye, men det skiller en setning fra et tastetrykk — og etter
-    -- linjen over er det ti tegn, ikke ti tastetrykk på enter.
+    -- linjen over er det ti TEGN, ikke ti tastetrykk på enter eller ti
+    -- harde mellomrom.
     begrunnelse TEXT NOT NULL
-        CHECK (length(btrim(begrunnelse, E' \t\n\r\f\x0B'))
+        CHECK (length(regexp_replace(begrunnelse, '^\s+|\s+$', '', 'g'))
                BETWEEN 10 AND 2000),
     ts TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (tenant, hendelse_id)

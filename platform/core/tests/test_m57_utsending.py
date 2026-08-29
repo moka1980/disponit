@@ -2851,10 +2851,21 @@ def test_begrunnelsen_kan_ikke_vaere_et_tastetrykk(migrator):
     casen over kunne ikke felle det: den passerer uansett hvilken
     blanktegnsklasse CHECK-en navngir.
     """
+    # OG UNICODE-BLANKTEGN (Codex P2, runde 3). U+00A0 — hardt mellomrom
+    # — er ikke i ASCII-klassen, så det passerte begge de to foregående
+    # utgavene av CHECK-en. Tre runder på samme akse er §9 K2s mønster:
+    # listen kan alltid utvides én gang til. CHECK-en trimmer nå med `\s`,
+    # som i en UTF-8-base dekker Unicodes blanktegn — det finnes ingen
+    # liste å glemme noe fra. Casene her er de tre klassene som felte hver
+    # sin utgave, så en fremtidig tilbakerulling til en liste blir rød.
     for aktor, begrunnelse in (("drift", "x"),
                                ("  ", "en ekte begrunnelse"),
                                ("\t", "en ekte begrunnelse"),
-                               ("drift", "\n" * 10)):
+                               ("drift", "\n" * 10),
+                               ("\u00a0", "en ekte begrunnelse"),
+                               ("drift", "\u00a0" * 10),
+                               ("\u2003", "en ekte begrunnelse"),
+                               ("drift", " " * 9 + "x")):
         _sett_kontekst(migrator, TENANT)
         with pytest.raises(psycopg.errors.CheckViolation):
             migrator.execute(
