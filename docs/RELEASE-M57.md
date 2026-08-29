@@ -5,9 +5,9 @@ er utenfor enhver avtale. Kommandoene på staging-siden rører
 `/opt/disponit` og `/etc/disponit` og kjøres derfor KUN av eier eller
 etter uttrykkelig beskjed.
 
-## 0. Forutsetninger (status i kveld)
+## 0. Forutsetninger (status 30/8-2026)
 
-- Alle M-57-kjerne-PR-ene er på main t.o.m. #266 inkl. #267 (Slett/Avbryt +
+- Alle M-57-kjerne-PR-ene er på main t.o.m. #267 (Slett/Avbryt +
   migrasjon 069).
 - `manifest.yaml` har `status: under_utvikling` — flippen til aktiv er
   KATALOGENS avlesning av en aksepthendelse (049–053), aldri en påstand.
@@ -19,14 +19,22 @@ etter uttrykkelig beskjed.
 ## 1. Utrulling av kode + migrasjoner (eier, på staging)
 
 ```sh
-cd /opt/disponit && git pull            # etter at #267 er merget
+cd /opt/disponit && git fetch origin
+git checkout <release-sha>              # DEN PINNEDE revisjonen — aldri en grentupp:
+                                        # hashene i §2 er regnet mot ett tre, og et
+                                        # senere main-tips kan ha endret manifest
+                                        # eller rapportskjema uten at noen ser det
 sudo deploy/staging/opp.sh              # vedlikeholdsvindu: stopp → migrér (001–069) → aktiver → start
 ```
+
+Stemmer ikke `<release-sha>` med treet §2s hasher ble regnet mot,
+regn dem ut på nytt DER (skriptet gjør det selv for de to beregnede;
+tabellens fire oppgitte må release-materialet bekrefte på nytt).
 
 `opp.sh` kjører `migrer.py`, som også deler ut runtime-EXECUTE på
 `bestill_tidligsletting(TEXT, UUID)` (lagt inn i #267).
 Forward-only: rollback av kode etter at 069 er kjørt er forbudt
-(boot-sjekken krever eksakt migrasjonsmatch — verifisert i kveld: API-et
+(boot-sjekken krever eksakt migrasjonsmatch — verifisert 30/8: API-et
 nekter boot på 68 ≠ 69).
 
 ## 2. Registrering av modulkjeden (eier, på staging)
