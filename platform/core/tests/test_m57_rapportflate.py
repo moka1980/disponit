@@ -862,11 +862,20 @@ def test_223_interleavet_reap_i_dekrypteringsvinduet_feller_200(
                 traad.join(30)
             # Lever tråden fortsatt, står `c.get()` fast et ANNET sted enn
             # sømmen (f.eks. en deadlock i den samtidigheten riggen
-            # diagnostiserer) — `join` bare returnerte. Hev derfor HER,
-            # inne i `with`-en: anyio-portalen kanselleres kun når kroppen
-            # forlates med exception, så dette river den utestående
-            # forespørselen ned i stedet for å la `TestClient`-
-            # nedstengingen blokkere på den. Feilen forblir avgrenset.
+            # diagnostiserer) — `join` bare returnerte. Da navngir denne
+            # asserten feilen i stedet for å la den være taus.
+            #
+            # DELVIS GRENSE, og det sies her (Codex P2, K1-utsatt til
+            # #257): asserten river IKKE ned en forespørsel som står
+            # fast. Ruten er en synkron `def` (`app.py:853`), så
+            # Starlette kjører den via `run_in_threadpool` →
+            # `anyio.to_thread.run_sync`, som ikke forlater
+            # arbeidertråden ved kansellering. `TestClient`-utgangen
+            # kansellerer ASGI-oppgaven, men venter på arbeideren; og
+            # `daemon=True` over gjelder bare kallertråden, ikke den
+            # arbeideren. En ekte grense må ligge UTENFOR det som kan
+            # blokkere — probet i en separat terminerbar prosess, som er
+            # egen maskin og derfor egen PR (#257).
             assert not traad.is_alive(), (
                 "forespørselstråden lever etter `slipp` + 30 s join — "
                 "kallet står fast utenfor dekrypteringssømmen")
