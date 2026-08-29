@@ -4710,6 +4710,43 @@ test("Rapport: to id-er med samme åtte tegn får ULIKE kortnavn", async () => {
     `en av de hele id-ene forsvant: ${JSON.stringify(titler)}`);
 });
 
+test("Kortnavn: et beskrivende manifestnavn kortes ALDRI, uansett lengde",
+  async () => {
+  // Codex P2 (runde 3): kortingen het «maskingenererte id-er kortes, navn
+  // kunden selv har gitt står urørt», men den målte `length > 20`. Kanonen i
+  // `m57_ats/parsing.py` tillater kundevalgte ASCII-id-er på inntil 64 tegn,
+  // så et beskrivende navn på 26 tegn ble `senior-b…` — i BEGGE tabeller og
+  // i kontrollenes tilgjengelige navn. Leseren måtte åpne detaljpanelet for
+  // å se hvem raden gjaldt, som er nøyaktig det kortnavnet fjernet.
+  //
+  // Porten måler ROTÅRSAKEN og ikke tallet: den lange, beskrivende id-en må
+  // stå HEL, mens den ugjennomsiktige UUID-en i SAMME tabell fortsatt kortes.
+  // Målte den bare det første, ville «fjern kortingen helt» gått grønn.
+  //
+  // MUTASJONENE SOM DREPER DENNE:
+  //   · `erUgjennomsiktig` → `id.length > 20` igjen  → navnet kortes  → rød
+  //   · `erUgjennomsiktig` → `false`                 → UUID-en står hel → rød
+  const navn = "senior-backend-engineer-01";           // 26 tegn, lesbart
+  const uuid = "58f17252-8a2b-4092-a420-adf5d5d430d1"; // ugjennomsiktig
+  const data = prosess();
+  data.prosesser[0].kandidater = [navn, uuid].map((id) => ({
+    kandidat_id: id, oppfylt: { drift: true }, status: "anbefalt",
+    funn: [], intervjusporsmal: [] }));
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": data };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelectorAll("tbody tr").length === 2));
+  const viste = [...hoved.querySelectorAll("tbody tr")]
+    .map((tr) => tr.querySelector("td, th").textContent.trim());
+  assert.ok(viste.includes(navn),
+    `det beskrivende navnet ble kortet bort: ${JSON.stringify(viste)}`);
+  // ... OG den ugjennomsiktige id-en kortes fortsatt, ellers måler porten
+  // bare at kortingen er skrudd av.
+  assert.ok(viste.some((v) => v !== navn && v.endsWith("…") && uuid.startsWith(v.slice(0, -1))),
+    `UUID-en ble ikke kortet — kortingen er slått av: ${JSON.stringify(viste)}`);
+});
+
 test("Kortnavn: det tilgjengelige navnet bærer RADENS referanse, ikke rå UUID",
   async () => {
   // Pass-funn (runde 3). `kortnavnFor` kortet den SYNLIGE teksten, mens de

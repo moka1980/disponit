@@ -112,6 +112,39 @@ function kortHash(hash) {
   return `${(hash || "").slice(0, 12)}…`;
 }
 
+// LENGDE ER IKKE OPPRINNELSE (Codex P2, runde 3). Kortingen het hele tiden
+// «maskingenererte id-er kortes, navn kunden selv har gitt står urørt», men
+// den MÅLTE `length > 20` — og kontrakten
+// (`m57_ats/parsing.py`, `KANDIDAT_ID_KANON`) tillater kundevalgte
+// ASCII-id-er på inntil 64 tegn. `senior-backend-engineer-01` er 26 tegn og
+// ble `senior-b…` i begge tabeller og i kontrollenes tilgjengelige navn:
+// leseren måtte åpne detaljpanelet for å se hvem raden gjaldt, som er
+// nøyaktig det kortnavnet skulle fjerne.
+//
+// DET FINNES INGEN «GENERERT» KLASSE Å KJENNE IGJEN. Codex foreslo å
+// detektere generert-formen, men `kandidat_id` kommer ALLTID fra kundens
+// manifest (`parsing.py` leser den, ingenting i modulen lager den) — det er
+// én klasse id-er, ikke to, og da finnes det ingen markør å slå opp. Det som
+// faktisk plager leseren er heller ikke opprinnelsen, men UGJENNOMSIKTIGHET:
+// veggen av heksadesimal der et navn skulle stått. Porten måler derfor DET,
+// og bare det.
+//
+// ASYMMETRIEN BESTEMMER RETNINGEN. Å vise for mye koster bredde — og den
+// kostnaden er alt betalt av ombrekkingen i `.rekrut-detalj` (samme runde).
+// Å vise for lite ØDELEGGER identiteten raden bæres av. Predikatet er derfor
+// stengt: er vi ikke sikre på at id-en er ugjennomsiktig, står den hel.
+// Dette er ingen grammatikk som tolkes (K4) — det er en total tegnklassetest
+// over en streng vi selv skal TEGNE, og den kan ikke feile til en gal
+// avgjørelse, bare til en bred kolonne.
+const UGJENNOMSIKTIG = /^[0-9a-fA-F]+(?:-[0-9a-fA-F]+)*$/;
+
+function erUgjennomsiktig(id) {
+  // Lang OG uten et eneste tegn utenfor heksadesimalen: en UUID (med eller
+  // uten bindestreker) eller en digest. `kandidat-09` (#161) og
+  // `senior-backend-engineer-01` faller ut på `k`, `n`, `s`, `r` …
+  return id.length > 20 && UGJENNOMSIKTIG.test(id);
+}
+
 function kortnavnFor(idene) {
   // KORTNAVNET REGNES AV DATAENE, ikke av et tall (Codex P2). Vi finner
   // den korteste lengden der ALLE id-ene i settet fortsatt er
@@ -130,15 +163,24 @@ function kortnavnFor(idene) {
   // ene stilltiende latt den andre stå igjen med en vegg av heksadesimal.
   // Kalleren eier settet — entydigheten gjelder alltid akkurat de id-ene
   // som står i tabellen kortnavnet skal leses i.
-  const maksLengde = Math.max(0, ...idene.map((i) => i.length));
+  // ENTYDIGHETEN REGNES OVER DE SOM FAKTISK KORTES. Bare de ugjennomsiktige
+  // id-ene vises som prefiks, så det er bare de som kan kollidere med
+  // hverandre; en hel id kan ikke kollidere med et prefiks, fordi prefikset
+  // bærer «…» og kanonen ikke tillater det tegnet. Regnet vi `skille` over
+  // HELE settet, ville to like beskrivende navn — som aldri kortes — låst
+  // `skille` til full lengde og dermed slått av kortingen for UUID-ene som
+  // trengte den.
+  const ugjennomsiktige = idene.filter(erUgjennomsiktig);
+  const maksLengde = Math.max(0, ...ugjennomsiktige.map((i) => i.length));
   let skille = maksLengde;
   for (let n = 8; n < maksLengde; n += 1) {
-    if (new Set(idene.map((i) => i.slice(0, n))).size === idene.length) {
+    if (new Set(ugjennomsiktige.map((i) => i.slice(0, n))).size
+        === ugjennomsiktige.length) {
       skille = n;
       break;
     }
   }
-  return (id) => (id.length > 20 && skille < id.length
+  return (id) => (erUgjennomsiktig(id) && skille < id.length
     ? `${id.slice(0, skille)}…`
     : id);
 }
@@ -691,9 +733,11 @@ function tegn(hoved, ctx, data, okt, valgtId) {
           // DENNE prosessen, og faller tilbake til hele id-en når intet
           // prefiks skiller. HELE id-en står uansett i `title`.
           //
-          // Er id-en alt lesbar — manifestets `kandidat-09`-form (#161) —
-          // står den urørt: kortingen gjelder maskingenererte id-er, ikke
-          // navn kunden selv har gitt.
+          // Er id-en alt lesbar, står den urørt — og «lesbar» måles nå på
+          // TEGNENE, ikke på lengden (Codex P2, runde 3). Kontrakten
+          // tillater kundevalgte navn på inntil 64 tegn, så `length > 20`
+          // alene gjorde `senior-backend-engineer-01` til `senior-b…`.
+          // `erUgjennomsiktig` korter bare den rene heksadesimalen.
           //
           // `title` ER IKKE KOPI-VEIEN (pass-funn). Kollisjonsporten
           // innrømmer alt at `title` hverken er kopierbar eller
