@@ -234,11 +234,49 @@ aldri et vindu der dokumentet lover en port maskinen mangler
    `@codex review`. Selve mergen PINNER baseline-SHA-en atomisk
    (`--match-head-commit`): å måle før og handle etterpå er et vindu,
    pinnen lukker det. Baseline-kilden følger kanalen: en formell review
-   bærer `commit_id`; verdikt-kommentarer (den målte kanalen)
-   DEKLARERER sin egen SHA («Reviewed commit») og DEN er baselinen —
-   aldri en live `headRefOid`, som en push i vinduet før lesningen
-   kunne ha flyttet (TOCTOU før capture). Verdikt uten deklarasjon
-   parkeres.
+   bærer `commit_id`; verdikt-kommentarer DEKLARERER sin egen SHA
+   («Reviewed commit») og DEN er baselinen — aldri en live
+   `headRefOid`, som en push i vinduet før lesningen kunne ha flyttet
+   (TOCTOU før capture). Verdikt uten deklarasjon parkeres.
+
+   **BEGGE KANALENE ER I BRUK, og valget følger utfallet** (#211, målt
+   på #210): et verdikt UTEN funn kommer som issue_comment («Didn't
+   find any major issues»), mens et verdikt MED funn kommer som
+   `pull_request_review` med funnene som INLINE-kommentarer og ofte
+   tom kropp. Det sto tidligere at kommentarkanalen var «den målte»,
+   og porten i `claude.yml` var bygget på det: review-grenen slapp kun
+   eier. Følgen var den verst tenkelige — jo viktigere verdiktet var,
+   desto sikrere var det at sløyfa overså det. Begge kanaler porteres
+   nå, hver med kvotefilteret på sin egen kropp, og et review-utløst
+   verdikt leses ALDRI ut fra kroppen alene: funnene ligger i
+   `pulls/<nr>/comments`.
+
+   Det endepunktet gir ALLE inline-kommentarer på PR-en, ikke bare
+   verdiktets. Den utløsende reviewens egne
+   (`pull_request_review_id`) er verdiktet sløyfa svarer på; de eldre
+   er kontekst. Et lukket funn gjøres ikke om igjen — det er K1-brudd
+   og gir falske K2-utslag — men et eldre funn som fortsatt står
+   ULUKKET merges aldri forbi. At en runde en gang overså et funn er
+   nettopp grunnen til at denne regelen finnes.
+
+   Lukketheten må kunne AVGJØRES, ikke antas: REST-endepunktet bærer
+   ikke trådoppløsning, så den leses via GraphQL
+   (`reviewThreads { isResolved }`) eller en eksplisitt markering i
+   tråden. **Ved tvil: ULUKKET.** Et lukket funn behandlet som åpent
+   koster en unødig runde; et åpent behandlet som lukket merges forbi —
+   og defaulten følger den dyreste feilen.
+
+   **Bot-utløst review er ALDRI en merge-vei.** Kanalen bærer per
+   måling alltid funn, så «null funn lest» der er ikke en godkjenning
+   — det er en lesning som feilet. Utfallet er fiks eller parkering.
+   Et rent verdikt kommer som issue_comment, og eierens `approved` er
+   den eneste review-veien til merge.
+
+   Og merge-porten måler ALLE uløste tråder på PR-en, ikke bare det
+   utløsende verdiktets: scopingen over gjelder hvilke funn som er
+   DETTE verdiktet, aldri hvilke som må være lukket før merge. En
+   eldre, ULUKKET tråd stopper mergen uansett hvilken kanal som vekket
+   sløyfa.
 
 2. **Mandater bor i KOMMENTARER, og omtalen er `@claude`.** En ordre i en
    issue-KROPP trigger ingen kjøring (samme utløser-klasse som §10s
