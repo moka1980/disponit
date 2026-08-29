@@ -2911,10 +2911,23 @@ def test_avskruing_krever_hendelse_fra_basen_ikke_mock(migrator):
 
         # DEN AUDITERTE VEIEN, hele veien: raden finnes i basen, oppslaget
         # finner den, og modulen gir råteksten.
-        tekst, avmaskering = blinding.evalueringsinput(
+        #
+        # TRE VERDIER UT, IKKE TO. `evalueringsinput` bærer nå sporet
+        # tilbake (Codex P1, runde 3), og dette kallestedet ble ikke med
+        # da arity-en endret seg — testen er `@pg`-gated, så den er rød
+        # bare der Postgres finnes, altså i CI og ikke lokalt. Sporet
+        # måles derfor mot RADEN, ikke mot en forventet dict: det er
+        # nettopp denne testens ærend at modulen møter basen.
+        tekst, avmaskering, spor = blinding.evalueringsinput(
             "Kari Nordmann", {"navn": ["Kari"]}, blinding_av=True,
             avskruing_hendelse_id=hid, hendelseoppslag=_oppslag)
         assert tekst == "Kari Nordmann" and avmaskering == {}
+        assert spor["hendelse_id"] == str(hid), (
+            "sporet peker ikke på raden som autoriserte utleveringen:"
+            f" {spor}")
+        assert spor["aktor"] == "eier@kunde" and spor["ts"] is not None, (
+            f"sporet bærer ikke radens egne verdier: {spor}")
+        assert spor["handling"] == blinding.AVSKRUINGSHANDLING, spor
 
         # ... og en velformet UUID uten rad er ikke en hendelse. Her er det
         # BASEN som svarer nei, ikke en lambda som er skrevet til å gjøre det.
