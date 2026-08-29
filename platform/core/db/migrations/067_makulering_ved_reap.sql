@@ -130,6 +130,41 @@ CREATE TRIGGER artefakt_laas BEFORE UPDATE ON artefakt
     FOR EACH ROW EXECUTE FUNCTION artefakt_statemaskin();
 
 -- ------------------------------------------------------------
+-- 2b. RESULTATLÅSEN GJELDER PROMOTERINGEN, IKKE MAKULERINGEN (Codex P1,
+-- 044-triggeren diff-endret; funksjonskroppen er urørt).
+--
+-- `artefakt_resultatlas` (044) tar `pg_advisory_xact_lock` på
+-- `oppdragsresultat:<oppdrag_id>` for HVER rad som lander med
+-- `tilstand = 'promotert'`. Makuleringen beholder tilstanden med vilje
+-- — raden ER fortsatt evidensen om at rapporten fantes — så hver eneste
+-- makulerte rapport traff den WHEN-en og tok sin egen advisory-lås.
+--
+-- På en bebodd base er det ikke en teoretisk kostnad: §6 kjører som ÉN
+-- transaksjon, `pg_advisory_xact_lock` holder til commit, og låsene er
+-- distinkte per oppdrag. En installasjon med mange tidligere reapede
+-- promoterte rapporter fyller da delt låstabell og feller HELE
+-- oppgraderingen med `out of shared memory` — en migrasjon som ikke kan
+-- kjøres er verre enn hullet den lukker. Reaperens vanlige batch tar
+-- samme lås per rapport av samme grunn.
+--
+-- Låsen finnes for å serialisere selve OVERGANGEN til `promotert` mot
+-- lesere av oppdragsresultatet (044s `pause_gjentatt_uten_resultat` tar
+-- nøkkelen fra den andre siden). En makulering er ingen promotering:
+-- faktumet «det finnes et resultat» er alt etablert og endres ikke, og
+-- raden er terminal — statemaskinen over fryser alt annet enn nettopp
+-- denne ene nullingen. Det er derfor ingen samtidighet igjen å
+-- serialisere.
+--
+-- WHEN-en får derfor ett ledd til. Promoteringen (`staged -> promotert`)
+-- har alltid `makulert_ts IS NULL` og låser som før; makuleringen setter
+-- merket i SAMME update som nuller payloaden, og faller utenfor.
+DROP TRIGGER IF EXISTS artefakt_resultatlas ON artefakt;
+CREATE TRIGGER artefakt_resultatlas BEFORE INSERT OR UPDATE ON artefakt
+    FOR EACH ROW WHEN (NEW.tilstand = 'promotert'
+                       AND NEW.makulert_ts IS NULL)
+    EXECUTE FUNCTION artefakt_resultatlas();
+
+-- ------------------------------------------------------------
 -- 3. Makuleringsdøren. Eid av artefakt-autoriteten (domene_eier, som
 -- eier resten av 016-familien og alt har UPDATE + BYPASSRLS på
 -- artefakt); reaperen får EXECUTE på DØREN, aldri UPDATE på
