@@ -223,6 +223,43 @@ def test_nginx_artefaktrute_slipper_gjennom_appens_kroppsgrense():
         assert "proxy_pass http://unix:/run/disponit/api.sock;" in krop
 
 
+def test_nginx_kandidatrutene_slipper_gjennom_appens_kroppsgrenser():
+    """#173 (Cursor P1-1): tredje gang samme klasse er målt — appen ga
+    kandidatrutene egne, større kroppsgrenser, ingressen sto igjen på
+    256 KiB.
+
+    En reell CV er base64 langt over 256 KiB, så nginx hadde svart 413 før
+    appens rutegrense ble konsultert. Og et 413 HER er ikke en avvist
+    forespørsel: sinkene i `kjor_en` reiser ikke-2xx som
+    `kandidatlagring_feilet`, og `kjor_bunt` feller hele evalueringen —
+    grensen felte den eneste kjøringen rutene finnes for. `TestClient`
+    treffer aldri nginx, så ingen apptest ser dette.
+
+    Porten itererer `RUTEKROPPSGRENSER`, ikke en liste her: en ny rute med
+    eget apptak, men uten egen nginx-location, feller testen.
+
+    MUTASJONEN SOM DREPER DENNE: fjern én av de to `location =`-blokkene i
+    malen, eller sett `client_max_body_size` der under appkonstanten."""
+    from api.app import RUTEKROPPSGRENSER
+    https = _https()
+    assert RUTEKROPPSGRENSER, "ingen ruter med eget kroppstak å binde"
+    for rute, apptak in RUTEKROPPSGRENSER.items():
+        blokk = re.search(r"location = %s \{(.*?)\n    \}" % re.escape(rute),
+                          https, re.S)
+        assert blokk, f"ingen egen nginx-location for {rute}"
+        krop = blokk.group(1)
+        m = re.search(r"client_max_body_size\s+(\d+)([kKmM]?);", krop)
+        assert m, f"{rute} mangler egen client_max_body_size"
+        grense = int(m.group(1)) * _ENHET[m.group(2).lower()]
+        assert grense >= apptak, (
+            f"nginx slipper {grense} B på {rute}, appen tillater {apptak} B"
+            " — proxyen avviser med 413 først, og sinken leser det som"
+            " kandidatlagring_feilet")
+        # Ruten mister ikke rate-grense eller socket-tillitsgrensen.
+        assert "zone=disponit_general" in krop
+        assert "proxy_pass http://unix:/run/disponit/api.sock;" in krop
+
+
 def test_nginx_inndataruten_slipper_bunten_gjennom_og_redigerer_jtien():
     """#162, to Codex-funn i samme location.
 

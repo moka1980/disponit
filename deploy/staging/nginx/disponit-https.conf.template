@@ -170,6 +170,46 @@ server {
         proxy_pass http://unix:/run/disponit/api.sock;
     }
 
+    # #173 (Cursor P1-1): kandidatlagrenes skrivevei — samme klasse som de
+    # to over, og den tredje gangen den er målt.
+    #
+    # Appen løftet kroppsgrensen for begge disse rutene (`RUTEKROPPSGRENSER`)
+    # fordi de bærer én kandidats hele dokument og hele kildetekst, men
+    # ingressen sto igjen på den server-vide `client_max_body_size 256k`.
+    # En reell CV er base64 langt over 256 KiB, så nginx hadde svart 413
+    # før appens rutegrense ble konsultert — og et 413 på denne veien er
+    # ikke en avvist forespørsel: `lagre_dokument`/`lagre_kandidat` reiser
+    # ikke-2xx som `kandidatlagring_feilet`, og `kjor_bunt` feller HELE
+    # evalueringen. Grensen ville altså ikke felt misbruk; den felte den
+    # eneste kjøringen rutene finnes for. `TestClient` treffer aldri nginx,
+    # så ingen apptest kunne se det.
+    #
+    # `proxy_request_buffering` står bevisst PÅ her, ulikt inndataruten
+    # over: den ruten strømmer gjennom appen (`STROEM_RUTE_PREFIKS`), mens
+    # disse to bufres av `KroppsgrenseMiddleware` uansett — å skru av
+    # bufringen ville flyttet minnet fra proxyen til API-prosessen, ikke
+    # fjernet det. At takene er store nok til at DEN flaten er verdt et
+    # eget vedtak, er notert til eier i tråden (strømmet representasjon =
+    # ny maskin, K1 → utsatt under #173).
+    #
+    # Verdiene er BUNDET til appkonstantene av
+    # `test_nginx_kandidatrutene_slipper_gjennom_appens_kroppsgrenser`, som
+    # itererer `RUTEKROPPSGRENSER` — en ny rute med eget apptak uten egen
+    # location her feller testen.
+    location = /v1/rekruttering/kandidatdokument {
+        client_max_body_size 185m;      # >= MAKS_KANDIDATDOK_KROPP (~184,3 MiB)
+        limit_req zone=disponit_general burst=100 nodelay;
+        limit_req_status 429;
+        proxy_pass http://unix:/run/disponit/api.sock;
+    }
+
+    location = /v1/rekruttering/kandidatartefakt {
+        client_max_body_size 301m;      # = MAKS_KANDIDATARTEFAKT_KROPP (301 MiB)
+        limit_req zone=disponit_general burst=100 nodelay;
+        limit_req_status 429;
+        proxy_pass http://unix:/run/disponit/api.sock;
+    }
+
     # PR-011: M-1 kundeflate. UI-svar trenger en ÅPNERE CSP enn API-ets
     # `default-src 'none'` (klarsignal V4) — den ville ellers blokkert egne
     # ressurser. Appen setter UI-CSP-en selv (målbar i CI, gate 5); her
