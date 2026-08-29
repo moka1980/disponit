@@ -2097,26 +2097,55 @@ def test_173_skriveveien_er_claimbundet_og_idempotent(migrator, miljo):
             assert FIXTUR in tekst
             assert felter == {"[NAVN-1]": f"Kari {FIXTUR}"}, felter
 
-            # (5) INTERVJUSPØRSMÅL ER SYMMETRISK MED DE ANDRE LAGRENE
-            # (Cursor P2-2). Armen sto som `if sporsmal:`, og da var
-            # «ingen spørsmål» ikke en lagret sannhet, men et hopp over
-            # lageret — begge retninger brøt idempotensløftet stille.
+            # (5) INTERVJUSPØRSMÅL: ABSENS LAGRES IKKE, MEN MÅLES
+            # (Codex P2, runde 2 på samme arm). Cursor P2-2 gjorde
+            # «ingen spørsmål» til en LAGRET sannhet — `[]` skrevet
+            # ubetinget — fordi et stille hopp over lageret ikke måler
+            # noen divergens. Men lageret er append-only med
+            # `(tenant, prosess_id, kandidat_id)` som primærnøkkel og
+            # ingen UPDATE av payload, og hver evaluering produserer med
+            # vilje null spørsmål (#225): plassen innkallings-/
+            # shortlist-steget skal skrive i ble dermed permanent
+            # okkupert av tomhet for HVER kandidat.
+            #
+            # Begge kravene måles her: ingen rad når det ikke er noe å
+            # lagre, og fortsatt konflikt når en lagret liste motsies.
             # Står ETTER radtellingen over, som er en port på nøyaktig
             # én rad per lager for k1.
             #
-            # (5a) r3 skrev `intervjusporsmal: null`, altså den kanoniske
-            # «ingen spørsmål» (`[]`). En liste etterpå er en ANNEN
-            # sannhet under samme nøkkel.
+            # (5a) r3 skrev `intervjusporsmal: null`. Da står det INGEN
+            # rad — absens er ikke materialisert.
+            _sett_kontekst(migrator, TENANT)
+            antall = migrator.execute(
+                "SELECT count(*) FROM kandidat_intervjusporsmal"
+                " WHERE tenant=%s AND prosess_id=%s"
+                "   AND kandidat_id=%s::uuid",
+                (TENANT, pid, kid_uuid)).fetchone()[0]
+            migrator.rollback()
+            assert antall == 0, antall
+
+            # (5b) …og nettopp derfor kan en liste skrives etterpå: det
+            # er en FØRSTE sannhet under nøkkelen, ikke en motsigelse.
+            # Dette er flyten funnet handler om — uten (5a) svarte
+            # døren 409 her, og lageret var stengt for det steget det
+            # er utpekt som kilde for.
             r7 = c.post("/v1/rekruttering/kandidatartefakt",
                         json={**art, "intervjusporsmal": ["Hvorfor?"]},
                         headers=hode)
-            assert r7.status_code == 409, r7.text
-            assert r7.json()["feil"] == "kandidatdata_konflikt"
+            assert r7.status_code == 200, r7.text
+            _sett_kontekst(migrator, TENANT)
+            sp = migrator.execute(
+                "SELECT sporsmal FROM kandidat_intervjusporsmal"
+                " WHERE tenant=%s AND prosess_id=%s"
+                "   AND kandidat_id=%s::uuid",
+                (TENANT, pid, kid_uuid)).fetchone()
+            migrator.rollback()
+            assert sp is not None and sp[0] == ["Hvorfor?"], sp
 
-            # (5b) Motsatt vei, på egen kandidat: liste først, `null`
-            # etterpå. Det var den STILLE retningen — armen ble hoppet
-            # over, og den gamle lista ble stående uten at noen målte
-            # avviket.
+            # (5c) Den STILLE retningen er fortsatt stengt, på egen
+            # kandidat: liste først, `null` etterpå. Armen skriver ikke,
+            # men den MÅLER — og en lagret liste som motsies er den
+            # samme `kandidatdata_konflikt` som de to lagrene over.
             art2 = {**art, "kandidat_id": "k2",
                     "intervjusporsmal": ["Hvorfor?"]}
             r8 = c.post("/v1/rekruttering/kandidatartefakt",
@@ -2127,16 +2156,6 @@ def test_173_skriveveien_er_claimbundet_og_idempotent(migrator, miljo):
                         headers=hode)
             assert r9.status_code == 409, r9.text
             assert r9.json()["feil"] == "kandidatdata_konflikt"
-            # k1 har en rad med `[]` — «ingen spørsmål» er LAGRET, ikke
-            # utelatt. Uten det er (5a) uoppnåelig.
-            _sett_kontekst(migrator, TENANT)
-            sp = migrator.execute(
-                "SELECT sporsmal FROM kandidat_intervjusporsmal"
-                " WHERE tenant=%s AND prosess_id=%s"
-                "   AND kandidat_id=%s::uuid",
-                (TENANT, pid, kid_uuid)).fetchone()
-            migrator.rollback()
-            assert sp is not None and sp[0] == [], sp
 
             # (4b) Reapet anker: samme avvisning — døren skriver aldri
             # inn i en prosess forbi kundens frist.
@@ -2543,7 +2562,10 @@ def test_173_budsjettet_dekker_alle_tre_payloadene(migrator, miljo,
                 "         WHERE tenant=%s AND prosess_id=%s)",
                 (TENANT, pid) * 3).fetchone()
             migrator.rollback()
-            assert rader == (1, 1, 1), rader
+            # `k-ok` sendte ingen `intervjusporsmal`, og absens
+            # materialiseres ikke (Codex P2): null rader i det lageret er
+            # riktig utfall, ikke en manglende skriving.
+            assert rader == (1, 1, 0), rader
     finally:
         rt.close()
 

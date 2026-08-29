@@ -2870,28 +2870,61 @@ def _kandidatdata(tjeneste: Tjeneste, request: Request, form: str) -> Response:
             #
             # To sannheter under samme `(tenant, prosess_id,
             # kandidat_id)` er nøyaktig det `kandidatdata_konflikt`
-            # finnes for. Feltet får derfor ÉN kanonisk form: fravær og
-            # tom liste er samme påstand, `[]`, og den skrives — 057s
-            # CHECK krever `sporsmal IS NOT NULL`, ikke ikke-tom. Da
-            # måles armen som de to over, med samme idempotens. (`raa_s`
+            # finnes for, og et STILLE hopp over lageret måler ingen
+            # divergens.
+            #
+            # MEN FRAVÆR SKAL IKKE MATERIALISERES (Codex P2). Forrige
+            # runde løste «hoppet» ved å skrive `[]` ubetinget, og det
+            # gjør absens til den ENDELIGE payloaden: 057-lageret er
+            # append-only, triggeren tillater ingen UPDATE av payload, og
+            # `(tenant, prosess_id, kandidat_id)` er primærnøkkelen. Hver
+            # evaluering produserer med vilje null spørsmål (#225, eiers
+            # retning 27/8: de hører til innkallingen av de beste, ikke
+            # evalueringen av alle), så raden ble skrevet for HVER
+            # kandidat — og la permanent beslag på nøkkelen det senere
+            # innkallings-/shortlist-steget skal skrive under. Lageret
+            # som er utpekt som kilden for genererte spørsmål var dermed
+            # fylt med tomhet før den flyten fikk eksistere.
+            #
+            # Begge kravene holder samtidig ved å skille PÅSTAND fra
+            # LAGRING: en liste skrives og måles som de to lagrene over,
+            # mens ingen liste ikke skriver noe — men fortsatt MÅLER at
+            # ingen står der fra før. Divergensen forrige runde pekte på
+            # («liste først, deretter null») blir da fortsatt en
+            # `kandidatdata_konflikt`, ikke et stille hopp. (`raa_s`
             # kanoniseres sammen med de to andre over, av samme grunn:
             # budsjettet er kandidatens og måles før noe INSERTes.)
-            satt = conn.execute(
-                "INSERT INTO kandidat_intervjusporsmal (tenant,"
-                " prosess_id, kandidat_id, sporsmal, innhold_sha256)"
-                " VALUES (%s,%s,%s,%s::jsonb,%s)"
-                " ON CONFLICT DO NOTHING",
-                (tenant, prosess_id, kid_uuid, raa_s,
-                 hashlib.sha256(raa_s.encode("utf-8")).hexdigest()
-                 )).rowcount
-            if not satt:
-                likt = conn.execute(
-                    "SELECT sporsmal = %s::jsonb"
-                    " FROM kandidat_intervjusporsmal"
+            #
+            # RESTRISIKO, SAGT HØYT: skriver innkallingssteget spørsmål
+            # og en SEN retry av denne evalueringen kommer etterpå, ser
+            # målingen en rad og svarer `kandidatdata_konflikt`. Vinduet
+            # er leasens, og alternativet — å la raden stå tom for alltid
+            # — stenger flyten for hver eneste kandidat.
+            if sporsmal:
+                satt = conn.execute(
+                    "INSERT INTO kandidat_intervjusporsmal (tenant,"
+                    " prosess_id, kandidat_id, sporsmal, innhold_sha256)"
+                    " VALUES (%s,%s,%s,%s::jsonb,%s)"
+                    " ON CONFLICT DO NOTHING",
+                    (tenant, prosess_id, kid_uuid, raa_s,
+                     hashlib.sha256(raa_s.encode("utf-8")).hexdigest()
+                     )).rowcount
+                if not satt:
+                    likt = conn.execute(
+                        "SELECT sporsmal = %s::jsonb"
+                        " FROM kandidat_intervjusporsmal"
+                        " WHERE tenant=%s AND prosess_id=%s"
+                        "   AND kandidat_id=%s",
+                        (raa_s, tenant, prosess_id, kid_uuid)).fetchone()
+                    if likt is None or not likt[0]:
+                        return _konflikt("intervjusporsmal")
+            else:
+                staar = conn.execute(
+                    "SELECT 1 FROM kandidat_intervjusporsmal"
                     " WHERE tenant=%s AND prosess_id=%s"
                     "   AND kandidat_id=%s",
-                    (raa_s, tenant, prosess_id, kid_uuid)).fetchone()
-                if likt is None or not likt[0]:
+                    (tenant, prosess_id, kid_uuid)).fetchone()
+                if staar is not None:
                     return _konflikt("intervjusporsmal")
         conn.commit()
         return kanonisk_json(svar, 200, {"x-request-id": rid})
