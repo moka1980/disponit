@@ -1140,6 +1140,7 @@
   "ui.rekruttering.kol_kategori": "Assessment",
   "ui.rekruttering.kandidat": "Candidate",
   "ui.rekruttering.detaljer": "Details",
+  "ui.rekruttering.detaljer_for": "Details — candidate {kandidat}",
   "ui.rekruttering.status.anbefalt": "Recommended",
   "ui.rekruttering.status.vurderes": "Should be reviewed",
   "ui.rekruttering.status.innstilt_avslag": "Proposed rejection",

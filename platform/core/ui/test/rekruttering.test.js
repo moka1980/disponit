@@ -4752,6 +4752,49 @@ test("Vis funn: det tilgjengelige navnet er en LOCALE-mal, ikke en setning i kod
   }
 });
 
+test("Detaljer: prosesstabellens tilgjengelige navn er en LOCALE-mal, ikke en setning i koden",
+  async () => {
+  // Cursor P2 · RUTINER §5 — SØSTERKONTROLLEN til porten over. Rapportens
+  // «Vis funn» fikk `vis_funn_for`, mens prosesstabellens «Detaljer» ble
+  // stående med `${t("…detaljer")}: ${kortnavn(...)}`: kolonet og
+  // ordstillingen sto i koden, utenfor locale, på nøyaktig samme defekt
+  // to runder alt har felt ett lesested lenger opp.
+  //
+  // PORTEN KJØRER PÅ ENGELSK av samme grunn som søsteren: på `nb` er
+  // «riktig» og «hardkodet» den samme strengen, og porten ville vært
+  // grønn på begge.
+  //
+  // MUTASJONEN SOM DREPER DENNE: bygg navnet i koden igjen
+  // (`${t("ui.rekruttering.detaljer")}: ${kortnavn(kandidat.kandidat_id)}`).
+  settI18nForTest(EN, "en");
+  try {
+    KALL = [];
+    SVAR = { "/v1/rekruttering/prosesser": prosess() };
+    const hoved = nyHoved();
+    visRekruttering(hoved, ctx());
+    assert.ok(await vent(() => hoved.querySelector("tbody .handling-celle button")),
+      "prosesstabellen kom aldri");
+    // Malen deles på plassholderen — porten substituerer ikke selv, og
+    // måler derfor flatens fylling og ikke sin egen.
+    const [for_, etter] = t("ui.rekruttering.detaljer_for").split("{kandidat}");
+    assert.ok(etter !== undefined, "malen har ikke lenger {kandidat}");
+    assert.ok(for_.trim(), "malen er tom — da måler resten ingenting");
+    const rader = [...hoved.querySelectorAll("tbody tr")];
+    assert.equal(rader.length, 2, "begge kandidatradene skal stå");
+    for (const rad of rader) {
+      const synlig = rad.querySelector(".rekrut-kandidat").textContent.trim();
+      const knapp = rad.querySelector(".handling-celle button");
+      assert.equal(knapp.getAttribute("aria-label"), `${for_}${synlig}${etter}`,
+        "det tilgjengelige navnet følger ikke malen i locale");
+      // Den synlige teksten er fortsatt bare handlingen.
+      assert.equal(knapp.textContent, t("ui.rekruttering.detaljer"),
+        "kandidaten kom inn i den SYNLIGE knappeteksten");
+    }
+  } finally {
+    settI18nForTest(NB, "nb");
+  }
+});
+
 // Samme fikstur, andre id-er: portene under måler FORKORTINGEN, ikke
 // rapportens form. Poengene faller med rekkefølgen, så rangeringen er
 // den kalleren ba om.

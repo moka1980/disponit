@@ -1140,6 +1140,7 @@
   "ui.rekruttering.kol_kategori": "Vurdering",
   "ui.rekruttering.kandidat": "Kandidat",
   "ui.rekruttering.detaljer": "Detaljer",
+  "ui.rekruttering.detaljer_for": "Detaljer — kandidat {kandidat}",
   "ui.rekruttering.status.anbefalt": "Anbefalt",
   "ui.rekruttering.status.vurderes": "Bør vurderes",
   "ui.rekruttering.status.innstilt_avslag": "Innstilt til avslag",

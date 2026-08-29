@@ -825,10 +825,17 @@ function tegn(hoved, ctx, data, okt, valgtId) {
         // heksadesimal lest opp. Navnet bærer nå samme kortform som
         // cellen — regnet over SAMME sett, så entydigheten som gjelder i
         // tabellen gjelder ordrett også for øret.
+        //
+        // SETNINGEN EIES AV LOCALE, IKKE AV KODEN (pass-funn, §5). Navnet
+        // ble limt som `${t(detaljer)}: ${kortnavn}` — skilletegnet og
+        // ordstillingen sto i koden, så et språk som setter kandidaten
+        // først, eller skiller med noe annet enn kolon, kunne ikke.
+        // Rapportens søsterkontroll fikk `vis_funn_for` i denne PR-en;
+        // dette er samme form på samme defekt, ett lesested lenger ned.
         handling: {
           tekst: t("ui.rekruttering.detaljer"),
-          tilgjengeligNavn:
-            `${t("ui.rekruttering.detaljer")}: ${kortnavn(kandidat.kandidat_id)}`,
+          tilgjengeligNavn: flett(t("ui.rekruttering.detaljer_for"),
+            { kandidat: kortnavn(kandidat.kandidat_id) }),
           paaKlikk: () => visDetalj(kandidat, poeng),
         },
       })),
