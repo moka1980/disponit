@@ -67,6 +67,22 @@ html[data-visning="app"] body {
   box-shadow: var(--skygge);
 }
 
+/* DEN UTVIDEDE RADEN HOLDER SEG I VIEWPORTEN (Codex P2). Detaljpanelet flyttet
+   INN i tabellcellen denne runden, og der teller innholdet med i tabellens
+   intrinsikke bredde. En kandidat-id kan per kontrakt være 64 tegn uten et
+   eneste brytepunkt (`KANDIDAT_ID_KANON`: ingen blanktegn), så id-linjen løftet
+   cellens minstebredde og skjøv hele tabellen ut i `.tablewrap`-ens
+   sidescroll — på mobillayouten denne runden er til for. Før lå detaljene
+   UTENFOR tabellen og kunne ikke gjøre det.
+
+   `anywhere`, ikke `break-word`: bare `anywhere` teller med når nettleseren
+   regner min-content-bredden, og det er nettopp DEN som bestemmer hvor bred
+   tabellen minst må bli. `break-word` ville brutt linjen visuelt og latt
+   tabellen være like bred — altså latt funnet stå. Sitatene i `<q>` får samme
+   vern på kjøpet; de er fri tekst og bryter uansett, men en URL i et sitat er
+   samme ubrutte streng. */
+.rekrut-detalj { overflow-wrap: anywhere; }
+
 /* Ett synlig fokus på ALT interaktivt (WCAG 2.4.7 / 2.4.11). */
 :focus-visible {
   outline: var(--focus);

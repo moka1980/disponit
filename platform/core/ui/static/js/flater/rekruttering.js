@@ -1188,7 +1188,12 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
         // interaktive elementer var hver rad tilbake til sin vegg av
         // heksadesimal, nøyaktig det denne runden fjernet for øyet.
         // Samme `kortnavn` som `th`-en, samme sett, samme entydighet.
-        const boks = el("details", {},
+        // ... OG DEN HOLDER SEG I VIEWPORTEN (Codex P2). Panelet står nå i
+        // en tabellcelle, så innholdet teller med i tabellens intrinsikke
+        // bredde: en 64-tegns id uten brytepunkt løftet cellens minstebredde
+        // og ga sidescroll på mobil. `.rekrut-detalj` bryter den — se
+        // `base.css` for hvorfor det må være `anywhere` og ikke `break-word`.
+        const boks = el("details", { class: "rekrut-detalj" },
           el("summary", {
             "aria-label": `${t("ui.rekruttering.evalueringer.vis_funn")} — `
               + `${t("ui.rekruttering.kandidat")} ${kortnavn(rad.kandidat_id)}`,

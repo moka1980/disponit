@@ -4710,6 +4710,48 @@ test("Rapport: to id-er med samme åtte tegn får ULIKE kortnavn", async () => {
     `en av de hele id-ene forsvant: ${JSON.stringify(titler)}`);
 });
 
+test("Rapport: den utvidede raden bryter den lange id-en i stedet for tabellen",
+  async () => {
+  // Codex P2 (review 5057226805, aldri lukket): detaljpanelet flyttet INN i
+  // tabellcellen denne runden, og der teller innholdet med i tabellens
+  // intrinsikke bredde. En kandidat-id kan per `KANDIDAT_ID_KANON` være 64
+  // tegn uten et eneste blanktegn å bryte på, så id-linjen i panelet løftet
+  // cellens minstebredde og skjøv tabellen ut i `.tablewrap`-ens sidescroll —
+  // på mobillayouten flyttingen var til for. Før lå detaljene UTENFOR
+  // tabellen og kunne ikke gjøre det.
+  //
+  // jsdom legger ikke ut noe, så porten måler de to leddene som FAKTISK
+  // bærer bruddet: at panelet i cellen har klassen, og at klassen bryter på
+  // en måte som teller med i min-content-bredden.
+  //
+  // MUTASJONENE SOM DREPER DENNE:
+  //   · `class: "rekrut-detalj"` fjernet fra `detaljboks`      → rød
+  //   · regelen fjernet fra `base.css`                         → rød
+  //   · `anywhere` → `break-word` (bryter synlig, men lar       → rød
+  //     tabellen være like bred — altså funnet i behold)
+  const lang = "a".repeat(64); // gyldig id, ingen brytepunkt
+  KALL = [];
+  SVAR = rapportSvarMed(lang);
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => {
+    const tb = rapporttabellen(hoved);
+    return tb && tb.querySelectorAll("tbody th[scope=row]").length === 1;
+  }));
+  const iCellen = [...rapporttabellen(hoved).querySelectorAll("td details")];
+  assert.equal(iCellen.length, 1, "fant ikke detaljpanelet i tabellcellen");
+  assert.ok(iCellen[0].classList.contains("rekrut-detalj"),
+    "panelet i cellen har ingen ombrekking — den lange id-en løfter "
+    + "tabellens minstebredde og gir sidescroll på mobil");
+  const css = readFileSync(join(ROT,
+    "platform/core/ui/static/css/base.css"), "utf-8");
+  const regel = css.match(/\.rekrut-detalj\s*\{([^}]*)\}/);
+  assert.ok(regel, "ingen `.rekrut-detalj`-regel i base.css");
+  assert.match(regel[1], /overflow-wrap:\s*anywhere/,
+    "`.rekrut-detalj` bryter ikke med `anywhere` — bare `anywhere` teller "
+    + `med i min-content-bredden: ${regel[1].trim()}`);
+});
+
 test("Kortnavn: et beskrivende manifestnavn kortes ALDRI, uansett lengde",
   async () => {
   // Codex P2 (runde 3): kortingen het «maskingenererte id-er kortes, navn
