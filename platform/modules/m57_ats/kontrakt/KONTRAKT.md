@@ -303,6 +303,35 @@ Modulen er KUNDE av plattformen, aldri omvendt (m56-formen):
   falskt `utfort`.
 
   `dom-klasse: lease-horisont-foer-foerste-fornyelse · felt i #218 · https://github.com/moka1980/disponit/pull/218#issuecomment-5432174987`
+* **Skriveveiens budsjetter** (#173, Codex P1/P2): dørene
+  `/v1/rekruttering/kandidatdokument` og `.../kandidatartefakt` måler
+  DEKODEDE byte, og transporttakene er de samme tallene skrevet i
+  wire-form med verste-falls JSON-ekspansjon (6× — gyldig JSON kan skrive
+  én kildebyte som `\uXXXX`). Uten den faktoren avviste middlewaren
+  gyldige kandidater med `body_for_stor` FØR dørens dokumenterte måling
+  kjørte, og `lever` reiser den 4xx-en som `kandidatlagring_feilet` for
+  HELE evalueringen.
+
+  * Dokument: §4s enkeltfil, 25 MiB — både originalbytene og
+    parseteksten, hver for seg.
+  * Evalueringsartefakt: 50 MiB kanonisk JSON, altså §4-tallet én gang
+    for `kildetekst` og én gang for funnenes sitater, som per
+    konstruksjon er utsnitt AV den samme teksten. Dette er en
+    PER-KANDIDAT-grense, og §4 har ingen fra før: arkivgrensene teller
+    filer og totalvolum, ikke tekst per kandidat. Tallet er derfor valgt
+    som §4s egen klasse, ikke avledet av den — en kandidat med mer enn
+    50 MiB uttrekt tekst felles kodet (`kandidatlagring_feilet`), aldri
+    stille avkortet.
+
+  PRISEN, SAGT HØYT: skriveveien er JSON-med-store-strenger, så taket
+  over betyr at `Kroppsgrense` kan bufre ~301 MiB per forespørsel før
+  `json.loads`. Codex ga to utveier, og dette er den første («size the
+  transport allowance for worst-case JSON expansion»). Den ANDRE — en
+  strømmet eller binær representasjon av dokument- og tekstfeltene, samme
+  form som `/v1/inndata/opplast/` som teller og videresender chunks uten
+  å bufre — fjerner flaten i stedet for å dimensjonere den, men endrer
+  endepunktets kontrakt og modulens klientvei. Ny maskin, egen PR (K1),
+  under [#173](https://github.com/moka1980/disponit/issues/173).
 * **Kandidatdata** (§5): alt payload bor i de seks 057-lagrene og reapes
   ved fristen; modulen kan ikke forlenge den. Unntaket er den promoterte
   rapporten over, som i dag bærer den samme payloaden uten å arve

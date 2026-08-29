@@ -56,13 +56,60 @@ MAKS_KROPP = 256 * 1024          # v2 Del 3.4
 # egentlige porten og sjekkes i handleren FØR lagring.
 MAKS_ARTEFAKT_KROPP = 6 * 1024 * 1024 + 64 * 1024
 STORE_KROPP_RUTER = frozenset({"/v1/artefakt"})
+#: §4-tallet, pinnet her som i arkivgaten: 25 MiB per dokument. Står i
+#: KROPPSGRENSE-blokken og ikke ved handleren fordi transporttakene under
+#: REGNES ut av det — to skrivemåter av samme tall er nettopp driften
+#: PR-014b-linjen over finnes for å unngå.
+_KANDIDAT_DOK_MAKS = 25 * 1024 * 1024
+#: Kandidatartefaktets eget budsjett, målt på den KANONISKE JSON-formen i
+#: døren — dokumentveiens `_KANDIDAT_DOK_MAKS`, én gang for `kildetekst`
+#: og én gang for funnenes sitater, som per konstruksjon er utsnitt AV
+#: den samme teksten.
+_KANDIDAT_ARTEFAKT_MAKS = 2 * _KANDIDAT_DOK_MAKS
+#: Verste-falls JSON-ekspansjon per KILDEBYTE, samme faktor som
+#: PR-014b-linjen over: gyldig JSON kan skrive ett tegn som `\uXXXX`, og
+#: en kontrolltegn-byte blir da 6 byte på wire. Kandidatrutene bærer
+#: store tekstfelt, så faktoren er ikke teoretisk her — den er forskjellen
+#: på et tak som holder og et som avviser gyldige kandidater.
+JSON_ESKAPEFAKTOR = 6
+#: Claim-trippel, kandidat_id og dokumentnavn. Navnet er ARKIVETS eget
+#: (se `_kandidatdata`) og ZIP-formatets navnefelt er 16-bits, altså
+#: maks 64 KiB; 1 MiB dekker konvolutten med god margin.
+_KANDIDAT_KONVOLUTT = 1024 * 1024
 #: #173: dokumentveien inn i kandidatlagrene bærer ETT dokument som
 #: base64 (§4-taket 25 MiB → ~33,4 MiB koding) pluss parsetteksten av
-#: samme dokument (aldri større enn kilden) og claim-konvolutten.
-#: Taket er transportens; dørens egen `_KANDIDAT_DOK_MAKS` måler de
-#: DEKODEDE bytene mot §4-tallet etterpå.
-MAKS_KANDIDATDOK_KROPP = 60 * 1024 * 1024
+#: samme dokument og claim-konvolutten.
+#:
+#: TEKSTEN ER IKKE «ALDRI STØRRE ENN KILDEN» PÅ WIRE (Codex P2). Den
+#: linjen målte parseteksten i DEKODEDE byte, men det som passerer
+#: middlewaren er JSON-konvolutten: `\n` blir to byte, et kontrolltegn
+#: seks. Et gyldig 25 MiB-uttrekk kunne derfor bli avvist med
+#: `body_for_stor` FØR handlerens dokumenterte dekodede sjekk kjørte —
+#: og `lagre_dokument` reiser den 4xx-en som `kandidatlagring_feilet`
+#: for HELE evalueringen. Taket budsjetterer nå verste fall.
+MAKS_KANDIDATDOK_KROPP = (
+    # base64: 4 byte per 3 kildebyte, avrundet opp til blokk
+    (_KANDIDAT_DOK_MAKS + 2) // 3 * 4
+    + JSON_ESKAPEFAKTOR * _KANDIDAT_DOK_MAKS
+    + _KANDIDAT_KONVOLUTT)
 KANDIDATDOK_RUTE = "/v1/rekruttering/kandidatdokument"
+#: #173 (Codex P1): kandidatveien inn i evalueringsartefaktet FALT NED PÅ
+#: `MAKS_KROPP` (256 KiB). Kroppen bærer kandidatens hele `kildetekst`
+#: pluss funnenes sitater, så enhver kandidat med mer enn en snau side
+#: tekst fikk `body_for_stor`; `lagre_kandidat` reiser den som
+#: `kandidatlagring_feilet` og feller hele evalueringen. Taket er dørens
+#: `_KANDIDAT_ARTEFAKT_MAKS` skrevet i wire-form.
+MAKS_KANDIDATARTEFAKT_KROPP = (
+    JSON_ESKAPEFAKTOR * _KANDIDAT_ARTEFAKT_MAKS + _KANDIDAT_KONVOLUTT)
+KANDIDATARTEFAKT_RUTE = "/v1/rekruttering/kandidatartefakt"
+#: Rutene med eget kroppstak. Oppslag, ikke en voksende kjede av
+#: betingede uttrykk: en rute som mangler her får `MAKS_KROPP`, og det
+#: er nettopp fallet dette funnet handlet om — da skal det være ÉN
+#: leselig linje å se den i.
+RUTEKROPPSGRENSER = {
+    KANDIDATDOK_RUTE: MAKS_KANDIDATDOK_KROPP,
+    KANDIDATARTEFAKT_RUTE: MAKS_KANDIDATARTEFAKT_KROPP,
+}
 #: #162: inndata-opplastingen STRØMMES gjennom middlewaren — den teller og
 #: videresender chunks, og bufrer aldri. Endepunktet samler derimot opp til
 #: dette taket i minnet: v1 krypterer bunten i én operasjon (bevisst
@@ -400,9 +447,7 @@ class KroppsgrenseMiddleware:
             return await self._stroem(scope, receive, send, rid, headere)
         # PR-014b §7: opplastingsruten tåler en større kropp (1 MiB-artefakt).
         maks = (MAKS_ARTEFAKT_KROPP if scope.get("path") in STORE_KROPP_RUTER
-                else MAKS_KANDIDATDOK_KROPP
-                if scope.get("path") == KANDIDATDOK_RUTE
-                else self.maks)
+                else RUTEKROPPSGRENSER.get(scope.get("path"), self.maks))
         oppgitt = headere.get("content-length")
         chunked = "chunked" in headere.get("transfer-encoding", "").lower()
         if oppgitt is None and not chunked:
@@ -2274,8 +2319,6 @@ _KANDIDAT_NS = uuid.uuid5(uuid.NAMESPACE_URL, "disponit:m57:kandidatlager")
 #: valg A). Speilet av modulens `parsing.KANDIDAT_ID_KANON`; kilden er
 #: kontrakten, og api/ importerer aldri modulkode.
 _KANDIDAT_ID_KANON = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
-#: §4-tallet, pinnet her som i arkivgaten: 25 MiB per dokument.
-_KANDIDAT_DOK_MAKS = 25 * 1024 * 1024
 #: De tre lovede innholdstypene — endelse -> MIME. Alt annet er alt
 #: felt av arkivgaten; her er det en feilformet forespørsel.
 _KANDIDAT_MIME = {
@@ -2474,6 +2517,17 @@ def _kandidatdata(tjeneste: Tjeneste, request: Request, form: str) -> Response:
             # tvers av retries — samme dict, samme streng.
             raa_a = json.dumps(artefakt, ensure_ascii=False,
                                sort_keys=True, separators=(",", ":"))
+            # DØREN MÅLER, IKKE TRANSPORTEN (samme form som dokumentveien
+            # over): kroppstaket er wire-formen med verste-falls
+            # JSON-ekspansjon, mens budsjettet artefaktet faktisk skal
+            # holde seg innenfor er den KANONISKE størrelsen. Uten denne
+            # linjen var 256 KiB-fallet det eneste som bandt en JSONB-rad
+            # i det hele tatt, og å heve taket ville fjernet grensen i
+            # stedet for å flytte den.
+            if len(raa_a.encode("utf-8")) > _KANDIDAT_ARTEFAKT_MAKS:
+                conn.rollback()
+                tjeneste.logg.hendelse("request_feilformet", rid, tenant)
+                return _feilsvar("request_feilformet", rid)
             satt = conn.execute(
                 "INSERT INTO kandidat_evalueringsartefakt (tenant,"
                 " prosess_id, kandidat_id, artefakt, innhold_sha256)"
