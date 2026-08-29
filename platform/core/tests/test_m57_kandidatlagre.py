@@ -1980,6 +1980,54 @@ def test_222_reaping_makulerer_den_promoterte_rapporten(migrator):
 
 
 @pg
+def test_222_reaping_forkaster_staged_rapport(migrator):
+    """Cursor P2 på #252: dørens STAGED-arm (Codex P1) er implementert og
+    begrunnet i migrasjonen, men ingen test måler den.
+
+    Laster modulen opp kandidatrapporten uten å fullføre en gyldig
+    kvittering, blir artefaktet stående `staged` med NØYAKTIG den
+    payloaden de tre retained-tilstandene makuleres for — funn,
+    intervjuspørsmål og den blindede kildeteksten. `rydd_staged_artefakter`
+    er ikke svaret: den er en egen asynkron timer med sine egne terskler,
+    og fristen er kundens, ikke ryddejobbens.
+
+    Formen er den EKSISTERENDE døren, ikke en ny: `staged -> forkastet` er
+    statemaskinens andre navngitte nulling, og merket settes derfor IKKE
+    — en forkastet rad bærer per definisjon ingenting, mens `makulert_ts`
+    hører til et artefakt som beholder tilstanden sin.
+
+    MUTASJONEN SOM DREPER DENNE: fjern staged-armen fra
+    `makuler_artefakter_for_prosess` — alle port 18-testene og
+    `test_222_reaping_makulerer_den_promoterte_rapporten` er grønne, for
+    ingen av dem har et staged artefakt på prosessens oppdrag."""
+    rt = _rt()
+    rp = None
+    try:
+        oid, pid = _prosess(migrator, rt, frist=30)
+        _fyll_lagrene(rt, pid)
+        sid = _promotert_rapport(migrator, oid, tilstand="staged")
+        rt.execute("SELECT lukk_rekrutteringsprosess(%s,%s,"
+                   " now() - interval '31 days')", (TENANT, pid))
+        rt.commit()
+        rad = _artefaktrad(migrator, sid)
+        assert rad == ("staged", False, False, False, True), \
+            f"positiv kontroll: den stagede payloaden skal stå før: {rad}"
+        rp, _timerrolle = _reaperkobling()
+        reapet = rp.execute("SELECT * FROM reap_kandidatdata(50)").fetchall()
+        rp.commit()
+        assert (TENANT, pid) in [(r[0], r[1]) for r in reapet]
+        rad = _artefaktrad(migrator, sid)
+        assert rad == ("forkastet", True, True, False, True), \
+            ("sveipet skal ta den stagede rapportens payload gjennom"
+             " forkastelsen — uten merke, med hashen i behold: "
+             f"{rad}")
+    finally:
+        rt.close()
+        if rp is not None:
+            rp.close()
+
+
+@pg
 def test_222_makuleringen_er_en_navngitt_form(migrator):
     """Statemaskinporten: nulling av payload UTEN merket er fortsatt
     korrupsjon, merket UTEN nulling er fortsatt en løgn, og merket
