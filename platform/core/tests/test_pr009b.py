@@ -260,6 +260,65 @@ def test_nginx_kandidatrutene_slipper_gjennom_appens_kroppsgrenser():
         assert "proxy_pass http://unix:/run/disponit/api.sock;" in krop
 
 
+def test_173_kandidatrutenes_kroppstak_daekker_arkivets_maksdokument():
+    """#173 (Cursor P2-5): de to takene var dokumenterte Codex-fikser
+    uten port. En mutasjon tilbake til `MAKS_KROPP` slapp gjennom CI, og
+    følgen er ikke en avvist forespørsel: 4xx på skriveveien leses av
+    `lever` som terminalt, `kjor_bunt` feller hele evalueringen med
+    `kandidatlagring_feilet`.
+
+    Ankeret er §4s eget tall (25 MiB per dokument), ikke appens
+    sammensatte uttrykk — porten er en NEDRE grense på wire-budsjettet,
+    ikke en kopi av formelen.
+
+    MUTASJONEN SOM DREPER DENNE: la en av rutene falle ut av
+    `RUTEKROPPSGRENSER` (og dermed ned på `MAKS_KROPP`)."""
+    from api.app import (KANDIDATARTEFAKT_RUTE, KANDIDATDOK_RUTE,
+                         MAKS_KROPP, RUTEKROPPSGRENSER)
+    for rute in (KANDIDATDOK_RUTE, KANDIDATARTEFAKT_RUTE):
+        assert rute in RUTEKROPPSGRENSER, \
+            f"{rute} faller ned på MAKS_KROPP — 413 på hver reell CV"
+        assert RUTEKROPPSGRENSER[rute] > MAKS_KROPP, rute
+    # §4s maksdokument, base64-kodet: den delen av dokumentkroppen som
+    # ikke kan komprimeres bort. Taket må minst dekke den.
+    dok_maks = 25 * 1024 * 1024
+    assert RUTEKROPPSGRENSER[KANDIDATDOK_RUTE] >= (dok_maks + 2) // 3 * 4, (
+        "dokumentruten rommer ikke §4s 25 MiB som base64")
+    # Artefaktkroppen bærer kildeteksten selv, ikke en koding av den —
+    # men på wire kan hvert tegn stå som `\\uXXXX`. Taket må dekke minst
+    # den ene teksten i verste fall.
+    assert RUTEKROPPSGRENSER[KANDIDATARTEFAKT_RUTE] >= 6 * dok_maks, (
+        "artefaktruten rommer ikke §4-teksten i verste JSON-form")
+
+
+def test_173_kandidatskrivingen_har_egen_ratebotte():
+    """#173 (Cursor P2-5): bøtta var en dokumentert Codex-fiks uten port.
+
+    En bunt kan lovlig bære 20 000 filer og 5 000 kandidater — 25 000
+    skrivinger — mens standardbudsjettet er 12 000 per rullende minutt.
+    Delte skrivingen den bøtta, felte plattformens egen grense den ENESTE
+    kjøringen ruten finnes for.
+
+    Porten måler begge halvdelene, for taket alene er ikke fiksen:
+    nøkkelen må være EGEN, ellers sulter skrivesløyfa modulens
+    claim/forny/kvittering eller sultes av dem.
+
+    MUTASJONEN SOM DREPER DENNE: bytt tilbake til
+    `slipp_gjennom(auth.token_id)` i `_kandidatdata`, eller senk taket
+    under buntens dokumenterte maksima."""
+    import inspect
+
+    from api.app import KANDIDATDATA_RATE_PER_MIN, _kandidatdata
+    assert KANDIDATDATA_RATE_PER_MIN >= 20_000 + 5_000, (
+        f"{KANDIDATDATA_RATE_PER_MIN}/min dekker ikke buntens 25 000"
+        " skrivinger — grensen feller kjøringen, ikke misbruk")
+    kilde = inspect.getsource(_kandidatdata)
+    assert 'slipp_gjennom("kandidatdata:"' in kilde, \
+        "skrivingen deler nøkkel med modultokenets standardbøtte igjen"
+    assert "tak=KANDIDATDATA_RATE_PER_MIN" in kilde, \
+        "skrivingen bruker ikke sitt eget tak"
+
+
 def test_nginx_inndataruten_slipper_bunten_gjennom_og_redigerer_jtien():
     """#162, to Codex-funn i samme location.
 
