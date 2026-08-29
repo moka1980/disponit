@@ -138,6 +138,30 @@ def _felter(kandidatfelter_for, medlem, fremdrift):
     return felter
 
 
+def _spoletekst(medlemmer, fremdrift):
+    """Kandidatens tekst lest tilbake fra spolen — SAMME utfallsklasse
+    som lagringen, aldri modellens (Codex P2).
+
+    Spolen er en midlertidig filflate, og en `OSError` derfra er DRIFT:
+    disken er full, nettlageret forsvant, fd-en ble stengt under oss.
+    Begge passene leste den utenfor strømløkkens `except OSError`, så
+    lesefeilen falt helt ned til catch-allen og kom ut som `modellfeil`
+    — i et miljø der modellen ikke har sviktet i det hele tatt, og der
+    arbeiderens retry og driftsdiagnostikken dermed leser feil kø og
+    feil alarm. Nøyaktig misattribusjonen `infrastrukturfeil` ble
+    innført for, én kodevei lenger ut.
+
+    Uten errno-splitten fra strømløkken, med vilje: DEN finnes for
+    dekompressorens errno-løse «Invalid data stream», og det er ikke en
+    form som kan komme ut av `Path.read_text` på vår egen spolefil.
+    """
+    try:
+        return "\n\n".join(bit[2].read_text(encoding="utf-8")
+                           for bit in medlemmer)
+    except OSError as feil:
+        raise Kjoringsfeil("infrastrukturfeil", fremdrift) from feil
+
+
 def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
               antall_soknader, kandidatfelter_for=None,
               blinding_av=False, auditrad=None,
@@ -477,8 +501,7 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
             # annen person. Rånavnet er medlemmets egen, entydige nøkkel
             # (buntgaten avviser duplikater av den), så det avgjør likheten.
             medlemmer = sorted(biter[kandidat_id], key=lambda bit: bit[:2])
-            tekst = "\n\n".join(bit[2].read_text(encoding="utf-8")
-                                 for bit in medlemmer)
+            tekst = _spoletekst(medlemmer, fremdrift)
             kandidatfelter: dict = {}
             for *_, nye in medlemmer:
                 _flett_felter(kandidatfelter, nye)
@@ -503,8 +526,7 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
         # ganger. Evalueringen går i samme deterministiske orden.
         for kandidat_id in sorted(biter):
             medlemmer = sorted(biter[kandidat_id], key=lambda bit: bit[:2])
-            tekst = "\n\n".join(bit[2].read_text(encoding="utf-8")
-                                 for bit in medlemmer)
+            tekst = _spoletekst(medlemmer, fremdrift)
             kandidatfelter = {}
             for *_, nye in medlemmer:
                 _flett_felter(kandidatfelter, nye)
