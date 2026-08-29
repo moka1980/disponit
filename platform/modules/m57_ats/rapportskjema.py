@@ -34,6 +34,27 @@ FUNN_MAKS = 100
 #: Håndheves ved GRENSEN (`modell.Ollamamodell.vurder` dropper et for
 #: langt sitat, som den dropper et som ikke står ordrett i teksten), så
 #: en ordrik modell feller ikke en gyldig evaluering på skjemaporten.
+#:
+#: OG DEN STÅR IKKE I `SKJEMA` (Codex P1, #173). Første form la
+#: `"maxLength": SITAT_MAKS` på `sitat`-noden. Det endret `SKJEMA` som
+#: DOKUMENT, altså `registrer(...)`-hashen, mens artefakttypen
+#: `rekruttering.evaluering.rapport` og `versjon` sto stille — og
+#: `registrer_artefakttype` (036) sammenligner HELE den immutable
+#: tuppelen `(eiermodul, kontraktversjon, kontrakt_hash, skjema_hash)`.
+#: I ethvert miljø der typen alt er registrert ville
+#: `registrer-m57-ats.py` da dødd på `unique_violation` og rullet HELE
+#: release-registreringen tilbake. En ny identitet er heller ikke
+#: utveien uten videre: navneformen er prefikslukket, så
+#: `…rapport.v2` avvises som overlapp med `…rapport`, og et nytt navn
+#: må følges av lese-API-ets par (`lesing.py`) — egen maskin, eget
+#: issue.
+#:
+#: Grensen er derfor der den ALLTID ble håndhevet, ved modellgrensen, og
+#: `SKJEMA` er byte-identisk med den registrerte v1-formen. Døren regner
+#: fortsatt med `FUNN_MAKS * SITAT_MAKS` (`app._KANDIDAT_ARTEFAKT_MAKS`)
+#: — det tallet er utledet av det som faktisk håndheves, ikke av et
+#: skjemanøkkelord ingen rapport passerer uten å ha vært gjennom
+#: `vurder` først.
 SITAT_MAKS = 4096
 
 _FUNN = {
@@ -47,8 +68,8 @@ _FUNN = {
             "properties": {
                 "start": {"type": "integer", "minimum": 0},
                 "slutt": {"type": "integer", "minimum": 1},
-                "sitat": {"type": "string", "minLength": 1,
-                          "maxLength": SITAT_MAKS},
+                # `maxLength` hører IKKE hjemme her — se SITAT_MAKS.
+                "sitat": {"type": "string", "minLength": 1},
             },
         },
     },

@@ -337,7 +337,11 @@ Modulen er KUNDE av plattformen, aldri omvendt (m56-formen):
     `rapportskjema.SITAT_MAKS` = 4096 tegn per sitat og `FUNN_MAKS` =
     100 funn, altså ≤ 1,6 MiB samlet sitatvolum i verste fall (4 byte
     per tegn i UTF-8). Et for langt sitat DROPPES som et sitat som ikke
-    står ordrett i teksten, og telles i `droppede_funn`. Dette er en
+    står ordrett i teksten, og telles i `droppede_funn`. Grensen står
+    IKKE i `rapportskjema.SKJEMA`: det dokumentet er innholdsadressert
+    og bundet immutabelt til `rekruttering.evaluering.rapport` v1 i
+    `artefakttype_register`, så et nytt skjemanøkkelord ville felt
+    release-registreringen på `unique_violation` (Codex P1). Dette er en
     PER-KANDIDAT-grense, og §4 har ingen fra før: arkivgrensene teller
     filer og totalvolum, ikke tekst per kandidat. Tallet er derfor valgt
     som §4s egen klasse, ikke avledet av den — en kandidat med mer enn
