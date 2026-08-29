@@ -520,7 +520,7 @@ def prosesser_endepunkt(tjeneste, request):
             if valgt is not None and pid == valgt[0]:
                 kandidater, vekter, kilde = _kandidater(conn, tenant, pid)
                 post |= {
-                    "blinding_av": False,  # avskruing finnes ikke før #159
+                    "blinding_av": False,  # avskruingen krever en revisjonshendelse (#159)
                     "vekter": vekter,
                     "vekter_kilde": kilde,
                     "kandidater": kandidater,

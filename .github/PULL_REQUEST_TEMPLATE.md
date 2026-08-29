@@ -8,12 +8,11 @@
 2. Er alle handlinger reversible eller eksplisitt irreversible med harde vilkår?
 3. Mangler unntakshåndtering for noen feilvei?
 
-## Cursor pre-Codex (steg 4) — før Codex
-- [ ] `@cursor review` kjørt (eller PR markert ready_for_review / label `pre-codex`)
-- [ ] Cursor-PASS, eller alle P1/P2 fra Cursor lukket + verifiseringspass
-- [ ] Ingen `@codex review` før Cursor-PASS
+## CodeRabbit-feilfanger (steg 4)
+- [ ] `coderabbit review --agent --include-untracked --base main` kjørt før push — kritisk/alvorlig fikset, bagateller listet under
+- [ ] Ny kjøring etter vesentlige endringer i PR-en
 
-## Codex merge-porter (steg 5)
+## Merge-porter (steg 5 — Claude Code merger ved grønn CI)
 - [ ] CI grønn — inkludert negative policytester (ingen fjernet/svekket)
 - [ ] Ingen kodevei uten ved_brudd-håndtering
 - [ ] Akseptansemapping mot gjeldende prototype (`docs/spesifikasjon/`) komplett i beskrivelsen

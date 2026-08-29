@@ -1761,6 +1761,65 @@ def test_migrer_baerer_utsendingskjedens_rettigheter():
         assert f"REVOKE ALL ON FUNCTION {fn} FROM {{rolle}};" in tekst, fn
 
 
+def test_migrer_baerer_revisjonshendelsens_rettigheter():
+    """Cursor P2 (runde 4 på #247): søskentesten over dekket 056, ikke 066.
+
+    Samme klasse som Codex P1 på #140, og som runde 3s eget funn i denne
+    PR-en: `migrer.py` er AUTORITATIV — den revoker alt og re-granter kun
+    det som står i blokkene, så 066s egen grant overlever ikke ett
+    `migrer.py`-kjør. Migrasjonens grant er dessuten betinget av at
+    runtime-rollen HETER `disponit`; på en installasjon med et annet
+    rollenavn er kjørerens blokk den ENESTE rettighetskilden.
+
+    Uten denne pinnen kunne linjene forsvinne stille fra
+    `M37_RETTIGHETER_API`, og utfallet ville vært `permission denied` på
+    både skriving og lesing av revisjonshendelsen ETTER migrering —
+    altså at avskruingsdøra er stengt for de som skal gjennom den, mens
+    hele testflaten fortsatt er grønn.
+
+    HVILKEN BLOKK, IKKE BARE «et sted i fila» (Cursor P2, runde 5).
+    Første utgave søkte i hele `migrer.py`, og da var de to grantene
+    utskiftbare for porten: `les_revisjonshendelse` kunne stå i
+    API-blokken alene og fortsatt bestå — men den blokken kjøres ikke for
+    `disponit_arbeider`, og det er ARBEIDEREN som gjør oppslaget
+    (`kjor_bunt` i `disponit-m57.service`). Blokkene måles derfor hver
+    for seg: lesing i den DELTE (runtime + arbeider), skriving i
+    API-blokken (runtime alene), og skriving IKKE i den delte.
+
+    Målt på teksten med vilje: mutasjonene som dreper denne (flytt en
+    linje mellom blokkene, eller slett den) skal felles uten at
+    DB-testene trenger å kjøre.
+    """
+    tekst = (ROT / "deploy" / "staging" / "migrer.py").read_text(
+        encoding="utf-8")
+
+    def _blokk(navn):
+        """Kroppen til én `NAVN = \"\"\"…\"\"\"`-blokk.
+
+        Lest fra teksten og ikke importert: `migrer.py` skriver `sys.path`
+        ved import, og en tekstpin skal ikke ha bivirkninger.
+        """
+        start = tekst.index(f'{navn} = """') + len(f'{navn} = """')
+        return tekst[start:tekst.index('"""', start)]
+
+    def _grant(fn):
+        return f"GRANT EXECUTE ON FUNCTION {fn} TO {{rolle}};"
+
+    delt, api = _blokk("M37_RETTIGHETER"), _blokk("M37_RETTIGHETER_API")
+    les = "les_revisjonshendelse(TEXT, UUID)"
+    skriv = "skriv_revisjonshendelse(TEXT, TEXT, TEXT, TEXT, TEXT)"
+    assert _grant(les) in delt, (
+        "leseveien står ikke i den DELTE blokken — da får"
+        " `disponit_arbeider` den ikke, og avskruingsoppslaget dør med"
+        " `permission denied` etter migrering")
+    assert _grant(skriv) in api, (
+        "skriveveien står ikke i API-blokken — runtime kan ikke føre"
+        " hendelsen etter migrering")
+    assert _grant(skriv) not in delt, (
+        "skriveveien lekket til den delte blokken — en"
+        " bakgrunnsarbeider skal ikke kunne skrive revisjonshendelser")
+
+
 @pg
 def test_frigivelsesoppdrag_faar_sak_med_revisjonslinje(migrator):
     """Codex P1 på #140 (runde 5): `sikre_sak_for_oppdrag` utleder
@@ -2609,3 +2668,523 @@ def test_serielaasen_serialiserer_signering_mot_ny_versjon(migrator):
             f" {resultat.get('feil', 'ingen feil meldt')}")
     finally:
         a.close(); b.close()
+
+
+# ============================================================
+# #159 — revisjonshendelsen (migrasjon 066)
+#
+# Porten i modulen var SELVATTESTERT: kalleren leverte selv beviset på at
+# avskruingen var auditert. Testene her måler den andre halvdelen —
+# at hendelsen faktisk er en rad, at raden er udødelig, og at den er
+# TENANT-BUNDET. Uten den siste er «auditert» bare «noen, et sted».
+# ============================================================
+
+@pg
+def test_revisjonshendelsen_skrives_og_slaas_opp(migrator):
+    """Den lovlige veien: skriv, les tilbake, gjenkjenn handlingen."""
+    bid = _signatar(migrator)
+    rt = _rt()
+    try:
+        _sett_kontekst(rt, TENANT)
+        hid = rt.execute(
+            "SELECT skriv_revisjonshendelse(%s, 'm57.blinding_avskrudd',"
+            " %s, %s, %s)",
+            (TENANT, "eier@kunde", "intern rekruttering, avtalt med HR",
+             bid)
+        ).fetchone()[0]
+        assert hid, "skriveren ga ingen hendelses-ID"
+        rad = rt.execute("SELECT handling, aktor FROM"
+                         " les_revisjonshendelse(%s, %s)",
+                         (TENANT, hid)).fetchone()
+        assert rad is not None, "hendelsen kunne ikke slås opp igjen"
+        assert rad[0] == "m57.blinding_avskrudd"
+        assert rad[1] == "eier@kunde"
+    finally:
+        rt.rollback()
+        rt.close()
+
+
+@pg
+def test_en_fabrikkert_hendelses_id_finnes_ikke(migrator):
+    """#159s første negative: en velformet UUID er ikke en rad.
+
+    Det var nettopp dette den gamle formporten ikke kunne måle — en
+    strengere kontroll av feltene ville flyttet påstanden ett hakk, ikke
+    fjernet den.
+    """
+    rt = _rt()
+    try:
+        _sett_kontekst(rt, TENANT)
+        assert rt.execute(
+            "SELECT handling FROM les_revisjonshendelse(%s, %s)",
+            (TENANT, "00000000-0000-4000-8000-000000000000")
+        ).fetchone() is None, (
+            "en fabrikkert hendelses-ID ga et oppslag — da er «auditert»"
+            " fortsatt en påstand")
+    finally:
+        rt.rollback()
+        rt.close()
+
+
+@pg
+def test_skriv_revisjonshendelse_krever_aktivt_medlemskap(migrator):
+    """AKTØREN ER BUNDET, ikke bare tenanten (Cursor P1, runde 5 på #247).
+
+    Tenantporten svarer på «hvilken kunde», ikke på «hvem». Uten denne
+    bindingen kunne runtime — som HAR `EXECUTE` på skriveveien — plantet
+    `m57.blinding_avskrudd` med en oppdiktet aktør, og modulens oppslag
+    ville godkjent raden som base-evidens. Da hadde #159 flyttet
+    selvattesten ett lag ned i stedet for å fjerne den.
+
+    TRE STIER, fordi «ikke medlem» har tre former og bare den ene er
+    målt av en tilfeldig streng: ukjent bruker, INAKTIVT medlemskap, og
+    et AKTIVT medlemskap i en ANNEN tenant. Den siste er den farligste —
+    en ekte, levende bruker som bare ikke hører til her.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `laas_godkjenner`-leddet fra
+    `skriv_revisjonshendelse`.
+    """
+    ukjent = _signatar(migrator, medlem=False)
+    inaktiv = _signatar(migrator, aktiv=False)
+    nabo = _signatar(migrator, tenant=ANNEN_TENANT)
+    ekte = _signatar(migrator)
+    rt = _rt()
+    try:
+        for bid in (ukjent, inaktiv, nabo, "finnes-ikke-i-det-hele-tatt"):
+            _sett_kontekst(rt, TENANT)
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                rt.execute(
+                    "SELECT skriv_revisjonshendelse(%s,"
+                    " 'm57.blinding_avskrudd', %s, %s, %s)",
+                    (TENANT, "eier@kunde", "påstått avtalt med HR", bid))
+            rt.rollback()
+
+        # KONTROLLEN: et ekte, aktivt medlem kommer gjennom — uten den
+        # ville en funksjon som avviser ALT bestått alle fire casene.
+        _sett_kontekst(rt, TENANT)
+        hid = rt.execute(
+            "SELECT skriv_revisjonshendelse(%s, 'm57.blinding_avskrudd',"
+            " %s, %s, %s)",
+            (TENANT, "eier@kunde", "intern rekruttering, avtalt med HR",
+             ekte)).fetchone()[0]
+        assert hid, "det aktive medlemmet slapp ikke gjennom"
+        # ... og PRINSIPALEN står i raden, ikke bare i argumentlisten: en
+        # append-only rad som ikke navngir hvem som skrev den kan ikke
+        # reautoriseres senere (019-formen). Raden må COMMITES for at
+        # migrator skal se den — runtime har ingen tabell-SELECT å lese
+        # den med selv (`test_revisjonshendelse_ingen_direkte_dml_for_
+        # disponit`), og `migrator`-fixturen rydder tenanten før neste
+        # test.
+        rt.commit()
+        # FORCE RLS gjelder også eieren: uten tenantkonteksten ser
+        # migrator null rader og assert-en ville falt på `None`.
+        _sett_kontekst(migrator, TENANT)
+        assert migrator.execute(
+            "SELECT bruker_id FROM revisjonshendelse WHERE tenant = %s"
+            " AND hendelse_id = %s", (TENANT, hid)).fetchone()[0] == ekte
+    finally:
+        rt.rollback()
+        rt.close()
+
+
+@pg
+def test_en_hendelse_i_EN_ANNEN_tenant_finnes_ikke_her(migrator):
+    """#159s andre negative, og den viktigste.
+
+    Uten tenantbindingen ville en hvilken som helst kundes
+    revisjonshendelse autorisert avskruing hos en annen — «auditert» ville
+    betydd «noen, et sted, har skrevet noe». RLS-policyen og
+    `krev_tenantkontekst` skal begge stå i veien.
+    """
+    nabo = _signatar(migrator, tenant=ANNEN_TENANT)
+    rt = _rt()
+    try:
+        _sett_kontekst(rt, ANNEN_TENANT)
+        fremmed = rt.execute(
+            "SELECT skriv_revisjonshendelse(%s, 'm57.blinding_avskrudd',"
+            " %s, %s, %s)",
+            (ANNEN_TENANT, "nabo@annen", "naboens egen sak", nabo)
+        ).fetchone()[0]
+        # ... og NÅ leser vi den som oss selv.
+        _sett_kontekst(rt, TENANT)
+        assert rt.execute(
+            "SELECT handling FROM les_revisjonshendelse(%s, %s)",
+            (TENANT, fremmed)).fetchone() is None, (
+            "naboens revisjonshendelse var synlig her — da autoriserer"
+            " naboens lapp vår avskruing")
+        # Å be om DEN andre tenanten direkte skal avvises, ikke betjenes:
+        # `krev_tenantkontekst` binder tenanten til konteksten.
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.execute("SELECT handling FROM les_revisjonshendelse(%s, %s)",
+                       (ANNEN_TENANT, fremmed))
+    finally:
+        rt.rollback()
+        rt.close()
+
+
+@pg
+def test_skriv_revisjonshendelse_avviser_nabo_tenant(migrator):
+    """Samme port på SKRIVEVEIEN (Cursor P2, runde 1 på #247).
+
+    Leseveien over var målt mot feil `p_tenant`, skriveveien ikke —
+    `krev_tenantkontekst` er felles (038-formen), men «felles kode» er
+    ikke et bevis: den ene veien kunne mistet PERFORM-linja uten at en
+    eneste test ble rød. Å SKRIVE naboens revisjonshendelse er dessuten
+    det farligste av de to: da kan man plante lappen som autoriserer
+    avskruing hos naboen.
+    """
+    bid = _signatar(migrator)
+    rt = _rt()
+    try:
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.execute(
+                "SELECT skriv_revisjonshendelse(%s,"
+                " 'm57.blinding_avskrudd', %s, %s, %s)",
+                (ANNEN_TENANT, "oss@her", "vi skriver i naboens bok", bid))
+    finally:
+        rt.rollback()
+        rt.close()
+
+
+@pg
+def test_revisjonshendelsen_er_udodelig(migrator):
+    """Append-only, begge veier: rad OG statement.
+
+    En revisjonshendelse som kan endres eller slettes er ikke et
+    revisjonsspor. TRUNCATE fyrer ALDRI radtriggere, så statement-vakten
+    er ikke en gjentakelse — den er den andre halvdelen (samme par som
+    011/014/036/053/056).
+
+    RADEN SÅS PÅ NYTT FØR HVER MUTASJON (Cursor P1, runde 1 på #247).
+    Første utgave sådde ÉN gang utenfor løkka, og `rollback()` etter
+    UPDATE-caset angret også seedingen: DELETE traff da null rader,
+    `BEFORE DELETE` fyrte aldri, og testen målte ingenting den påsto å
+    måle. Derfor tellingen under — en mutasjon som flytter seedingen ut
+    igjen skal gjøre testen rød PÅ RADEN, ikke på et uteblitt unntak.
+
+    FEILKLASSEN ER `CheckViolation`, ikke `RaiseException`: `avvis_endring`
+    (035) hever med `ERRCODE = 'check_violation'`, og hele huset måler den
+    slik (`test_listeversjonen_er_append_only`,
+    `test_kjedetabellene_taaler_ikke_truncate`). Den gamle forventningen
+    var usynlig så lenge testen døde tidligere.
+    """
+    bid = _signatar(migrator)
+
+    def _sa_en_hendelse():
+        _sett_kontekst(migrator, TENANT)
+        return migrator.execute(
+            "INSERT INTO revisjonshendelse (tenant, handling, aktor,"
+            " begrunnelse, bruker_id) VALUES (%s,"
+            " 'm57.blinding_avskrudd', 'drift',"
+            " 'manuell kontroll av kandidat', %s) RETURNING hendelse_id",
+            (TENANT, bid)).fetchone()[0]
+
+    for lag_mutasjon in (
+        lambda hid: ("UPDATE revisjonshendelse SET aktor = 'noen andre'"
+                     " WHERE hendelse_id = %s", (hid,)),
+        lambda hid: ("DELETE FROM revisjonshendelse WHERE hendelse_id = %s",
+                     (hid,)),
+        lambda _hid: ("TRUNCATE revisjonshendelse", ()),
+    ):
+        hid = _sa_en_hendelse()
+        assert migrator.execute(
+            "SELECT count(*) FROM revisjonshendelse"
+            " WHERE hendelse_id = %s", (hid,)).fetchone()[0] == 1, (
+            "raden manglet FØR mutasjonen — da måler caset ingenting:"
+            " en DELETE mot null rader fyrer ikke radtriggeren")
+        sql, args = lag_mutasjon(hid)
+        with pytest.raises(psycopg.errors.CheckViolation):
+            migrator.execute(sql, args)
+        migrator.rollback()
+
+
+@pg
+def test_revisjonshendelse_ingen_direkte_dml_for_disponit(migrator):
+    """REVOKE-beltet er en PORT, ikke dokumentasjon (Cursor P2, runde 1).
+
+    Migrasjonen tar ALL tabellrett fra runtime og gir bare `EXECUTE` på de
+    to funksjonene — men ingen test målte det, og en umålt REVOKE er en
+    kommentar. Poenget er at det ikke FINNES en direkte vei til en UPDATE
+    triggeren må stoppe: rettigheten er selen, `avvis_endring` er beltet,
+    og denne testen måler selen.
+    """
+    # Rettighetskontrollen skjer på TABELLEN, før noen rad slås opp — derfor
+    # trenger ingen av avvisningene en seedet rad, og ingen av dem kan
+    # forveksles med «traff null rader».
+    uuid_uten_rad = "00000000-0000-4000-8000-000000000000"
+    bid = _signatar(migrator)
+    rt = _rt()
+    try:
+        for sql, args in (
+            ("INSERT INTO revisjonshendelse (tenant, handling, aktor,"
+             " begrunnelse) VALUES (%s, 'm57.blinding_avskrudd', 'drift',"
+             " 'direkte innskriving utenom funksjonen')", (TENANT,)),
+            ("UPDATE revisjonshendelse SET aktor = 'noen andre'"
+             " WHERE hendelse_id = %s", (uuid_uten_rad,)),
+            ("DELETE FROM revisjonshendelse WHERE hendelse_id = %s",
+             (uuid_uten_rad,)),
+        ):
+            _sett_kontekst(rt, TENANT)
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                rt.execute(sql, args)
+            # Et avvist DML-forsøk aborterer transaksjonen; uten
+            # tilbakerullingen ville de neste casene feilet på
+            # InFailedSqlTransaction og målt ingenting.
+            rt.rollback()
+        # ... og den LOVLIGE veien skal fortsatt virke. Uten dette leddet
+        # ville en fullstendig ødelagt tilkobling bestått testen.
+        _sett_kontekst(rt, TENANT)
+        assert rt.execute(
+            "SELECT skriv_revisjonshendelse(%s, 'm57.blinding_avskrudd',"
+            " %s, %s, %s)",
+            (TENANT, "drift", "lovlig vei, gjennom funksjonen", bid)
+        ).fetchone()[0], "funksjonsveien ga ingen hendelses-ID"
+    finally:
+        rt.rollback()
+        rt.close()
+
+
+@pg
+def test_arbeideren_leser_men_skriver_ikke_revisjonshendelsen(migrator):
+    """Rolleskillet MÅLES i basen, ikke bare pinnes i kjøreteksten
+    (Cursor P2, runde 5 på #247).
+
+    Alle #159-testene over kobler som runtime (`_rt()`), men oppslaget
+    som gjør «auditert» til en egenskap ved basen skjer i `kjor_bunt` —
+    i `disponit_arbeider`. Grantet dit var derfor umålt: det kunne
+    forsvinne uten at én test ble rød, og funnet ville dukket opp som
+    `permission denied` i drift.
+
+    TO VERDENER, INGEN SKIPP (samme form som
+    `test_arbeiderrollen_har_ikke_bevislos_revalidering`): finnes den
+    dedikerte rollen, måles les-ja/skriv-nei rett på den. Finnes den
+    ikke — CI og `opp.sh`-fallbacken, der m57-unitten KJØRER som runtime
+    — måles fallbackens egen invariant: runtime har begge, altså er
+    avskruingsveien ikke stengt av flyttingen. En hoppet test er ikke en
+    bestått test, så ingen av grenene skipper.
+
+    MUTASJONEN SOM DREPER DENNE: flytt `les_revisjonshendelse` tilbake
+    til `M37_RETTIGHETER_API` (arbeideren mister den), eller la
+    `skriv_revisjonshendelse` følge med til den delte blokken
+    (arbeideren kan da føre hendelser selv).
+    """
+    from .test_pr015_operativt_lag import _execute_mottakere
+
+    les = "les_revisjonshendelse(text,uuid)"
+    skriv = "skriv_revisjonshendelse(text,text,text,text,text)"
+    finnes = migrator.execute(
+        "SELECT 1 FROM pg_roles WHERE rolname='disponit_arbeider'").fetchone()
+    migrator.rollback()
+    if not finnes:
+        assert "disponit" in _execute_mottakere(migrator, les), (
+            "runtime mistet leseveien — fallbacken KJØRER m57-unitten som"
+            " runtime, så avskruingsoppslaget er da dødt")
+        assert "disponit" in _execute_mottakere(migrator, skriv), \
+            "runtime mistet skriveveien — hendelsen kan ikke føres"
+        return
+    q = lambda sql: migrator.execute(sql).fetchone()[0]     # noqa: E731
+    assert q("SELECT has_function_privilege('disponit_arbeider',"
+             f"'{les}','EXECUTE')") is True, (
+        "arbeideren kan ikke lese revisjonshendelsen — oppslaget i"
+        " `kjor_bunt` dør med permission denied etter migrering")
+    assert q("SELECT has_function_privilege('disponit_arbeider',"
+             f"'{skriv}','EXECUTE')") is False, (
+        "arbeideren kan SKRIVE revisjonshendelser — hendelsen skal føres"
+        " av innloggede mennesker, ikke av en bakgrunnsprosess")
+    migrator.rollback()
+
+
+@pg
+def test_handlingen_er_et_lukket_sett(migrator):
+    """En ny slags revisjonshendelse er en kontraktsendring.
+
+    Uten CHECK-en kunne en kaller skrevet «m57.blinding_avskrudd_liksom»
+    og fått en rad som SER ut som beviset porten leter etter.
+    """
+    bid = _signatar(migrator)
+    _sett_kontekst(migrator, TENANT)
+    with pytest.raises(psycopg.errors.CheckViolation):
+        migrator.execute(
+            "INSERT INTO revisjonshendelse (tenant, handling, aktor,"
+            " begrunnelse, bruker_id) VALUES (%s,"
+            " 'm57.blinding_avskrudd_liksom', 'drift',"
+            " 'ser riktig ut, er det ikke', %s)", (TENANT, bid))
+    migrator.rollback()
+
+
+@pg
+def test_begrunnelsen_kan_ikke_vaere_et_tastetrykk(migrator):
+    """Funnet som skapte tabellen brukte «x» som begrunnelse.
+
+    En ubrukelig revisjonshendelse er verre enn ingen: den ser ut som et
+    svar på spørsmålet «hvem bestemte dette».
+
+    KONTEKSTEN SETTES INNE I LØKKA (samme klasse som append-only-testens
+    seeding): `set_config(..., true)` er TRANSAKSJONSLOKAL, så `rollback()`
+    etter første case tar tenanten med seg. Andre runde traff da RLS —
+    `new row violates row-level security policy` — og målte ikke
+    CHECK-en den er skrevet for.
+
+    DE TO SISTE CASENE ER BLANKTEGN SOM IKKE ER MELLOMROM (Codex P2 ×2,
+    runde 2). Enargs `btrim` fjerner bare mellomrom, så ti linjeskift var
+    en lovlig «begrunnelse» og én tabulator en lovlig «aktor» — raden var
+    tom for et menneske og gyldig for porten som leser den. Mellomrom-
+    casen over kunne ikke felle det: den passerer uansett hvilken
+    blanktegnsklasse CHECK-en navngir.
+    """
+    # OG UNICODE-BLANKTEGN (Codex P2, runde 3). U+00A0 — hardt mellomrom
+    # — er ikke i ASCII-klassen, så det passerte begge de to foregående
+    # utgavene av CHECK-en. Tre runder på samme akse er §9 K2s mønster:
+    # listen kan alltid utvides én gang til. CHECK-en trimmer nå med `\s`,
+    # som i en UTF-8-base dekker Unicodes blanktegn — det finnes ingen
+    # liste å glemme noe fra. Casene her er de tre klassene som felte hver
+    # sin utgave, så en fremtidig tilbakerulling til en liste blir rød.
+    # PRINSIPALEN ER IKKE DET SOM MÅLES HER (Cursor P1, runde 5): raden
+    # bærer nå `bruker_id` NOT NULL, så uten en ekte medlemsrad ville
+    # casene falt på `NotNullViolation` og aldri nådd CHECK-ene testen er
+    # skrevet for. Én seedet prinsipal, samme for alle casene.
+    bid = _signatar(migrator)
+    for aktor, begrunnelse in (("drift", "x"),
+                               ("  ", "en ekte begrunnelse"),
+                               ("\t", "en ekte begrunnelse"),
+                               ("drift", "\n" * 10),
+                               ("\u00a0", "en ekte begrunnelse"),
+                               ("drift", "\u00a0" * 10),
+                               ("\u2003", "en ekte begrunnelse"),
+                               ("drift", " " * 9 + "x")):
+        _sett_kontekst(migrator, TENANT)
+        with pytest.raises(psycopg.errors.CheckViolation):
+            migrator.execute(
+                "INSERT INTO revisjonshendelse (tenant, handling, aktor,"
+                " begrunnelse, bruker_id) VALUES (%s,"
+                " 'm57.blinding_avskrudd', %s, %s, %s)",
+                (TENANT, aktor, begrunnelse, bid))
+        migrator.rollback()
+
+
+@pg
+def test_skriv_revisjonshendelse_avviser_ugyldig_innhold(migrator):
+    """CHECK-ene måles på PRODUKSJONSVEIEN, ikke bare på tabellen.
+
+    Cursor P2, runde 3 på #247. De to testene over slår inn på tabellen
+    med migrator-`INSERT`, og runtime har ingen tabell-DML i det hele
+    tatt (`test_revisjonshendelse_ingen_direkte_dml_for_disponit`) — så
+    ingen av dem gikk gjennom den ENESTE veien produksjonen har inn hit.
+    En regresjon som lot `skriv_revisjonshendelse` slippe ugyldige verdier
+    forbi, eller som ga API-laget feil feilklasse, ville ikke gjort noen
+    av dem røde. Samme klasse som lese- mot skrivevei-tenantporten runde 1
+    fant, bare på innholdet i stedet for på tenanten.
+
+    FEILKLASSEN ER EN DEL AV PÅSTANDEN. `CheckViolation`, ikke
+    `InsufficientPrivilege`: kom den siste, hadde ikke innholdsporten
+    målt noe — da stoppet kallet på rettigheter FØR det nådde INSERT-en,
+    og testen ville vært grønn på feil grunn.
+
+    MUTASJONEN SOM DREPER DENNE: fjern en CHECK fra tabellen, eller la
+    funksjonen normalisere argumentene før INSERT.
+
+    PRINSIPALEN ER EKTE I ALLE CASENE (Cursor P1, runde 5). Medlemskaps-
+    porten står FØR INSERT-en, så en oppdiktet `bruker_id` ville gitt
+    `InsufficientPrivilege` og tatt fra testen nøyaktig det avsnittet over
+    krever av den. Innholdsporten måles derfor med en aktør som HAR lov å
+    skrive — det eneste som er ugyldig, er innholdet.
+    """
+    bid = _signatar(migrator)
+    rt = _rt()
+    try:
+        for handling, aktor, begrunnelse in (
+            ("m57.blinding_avskrudd_liksom", "drift", "ser riktig ut"),
+            ("m57.blinding_avskrudd", " ", "en ekte begrunnelse"),
+            ("m57.blinding_avskrudd", "drift", "x"),
+        ):
+            _sett_kontekst(rt, TENANT)
+            with pytest.raises(psycopg.errors.CheckViolation):
+                rt.execute(
+                    "SELECT skriv_revisjonshendelse(%s, %s, %s, %s, %s)",
+                    (TENANT, handling, aktor, begrunnelse, bid))
+            rt.rollback()
+
+        # KONTROLLEN: den lovlige raden går gjennom samme vei. Uten den
+        # kunne alle tre casene bestått på en funksjon som var ødelagt.
+        _sett_kontekst(rt, TENANT)
+        assert rt.execute(
+            "SELECT skriv_revisjonshendelse(%s, 'm57.blinding_avskrudd',"
+            " %s, %s, %s)",
+            (TENANT, "eier@kunde", "intern rekruttering, avtalt med HR",
+             bid)
+        ).fetchone()[0] is not None, "skriveveien er død, ikke streng"
+    finally:
+        rt.rollback()
+        rt.close()
+
+
+@pg
+def test_avskruing_krever_hendelse_fra_basen_ikke_mock(migrator):
+    """Modulporten møter BASEN, ikke en dict (Cursor P2, runde 1 på #247).
+
+    De to halvdelene var målt hver for seg: modultestene ga
+    `hendelseoppslag` som en mock-dict, DB-testene kalte `skriv/
+    les_revisjonshendelse` direkte. Ingen test gikk gjennom BEGGE — så
+    PR-ens kjerne («auditert er en egenskap ved basen, ikke ved kallet»)
+    kunne regressert i produksjonsadapteren uten at noe ble rødt. Det er
+    nøyaktig klassen Codex fant på #153: en selvattestert dict.
+
+    Adapteren her er den produksjonsveien skal bruke — `les_revisjonshendelse`
+    i KALLERENS tenantkontekst, mappet til dicten modulen leser.
+
+    MUTASJONEN SOM DREPER DENNE: la adapteren returnere en fabrikkert dict
+    i stedet for radens innhold.
+    """
+    from modules.m57_ats import blinding
+    bid = _signatar(migrator)
+    rt = _rt()
+    try:
+        _sett_kontekst(rt, TENANT)
+        hid = rt.execute(
+            "SELECT skriv_revisjonshendelse(%s, 'm57.blinding_avskrudd',"
+            " %s, %s, %s)",
+            (TENANT, "eier@kunde", "intern rekruttering, avtalt med HR",
+             bid)
+        ).fetchone()[0]
+
+        def _oppslag(hendelse_id):
+            rad = rt.execute("SELECT handling, aktor, ts FROM"
+                             " les_revisjonshendelse(%s, %s)",
+                             (TENANT, hendelse_id)).fetchone()
+            return None if rad is None else {
+                "handling": rad[0], "aktor": rad[1], "ts": rad[2]}
+
+        # DEN AUDITERTE VEIEN, hele veien: raden finnes i basen, oppslaget
+        # finner den, og modulen gir råteksten.
+        #
+        # TRE VERDIER UT, IKKE TO. `evalueringsinput` bærer nå sporet
+        # tilbake (Codex P1, runde 3), og dette kallestedet ble ikke med
+        # da arity-en endret seg — testen er `@pg`-gated, så den er rød
+        # bare der Postgres finnes, altså i CI og ikke lokalt. Sporet
+        # måles derfor mot RADEN, ikke mot en forventet dict: det er
+        # nettopp denne testens ærend at modulen møter basen.
+        tekst, avmaskering, spor = blinding.evalueringsinput(
+            "Kari Nordmann", {"navn": ["Kari"]}, blinding_av=True,
+            avskruing_hendelse_id=hid, hendelseoppslag=_oppslag)
+        assert tekst == "Kari Nordmann" and avmaskering == {}
+        assert spor["hendelse_id"] == str(hid), (
+            "sporet peker ikke på raden som autoriserte utleveringen:"
+            f" {spor}")
+        assert spor["aktor"] == "eier@kunde" and spor["ts"] is not None, (
+            f"sporet bærer ikke radens egne verdier: {spor}")
+        assert spor["handling"] == blinding.AVSKRUINGSHANDLING, spor
+
+        # ... og en velformet UUID uten rad er ikke en hendelse. Her er det
+        # BASEN som svarer nei, ikke en lambda som er skrevet til å gjøre det.
+        with pytest.raises(blinding.Blindingsfeil) as e:
+            blinding.evalueringsinput(
+                "Kari Nordmann", {"navn": ["Kari"]}, blinding_av=True,
+                avskruing_hendelse_id="00000000-0000-4000-8000-000000000000",
+                hendelseoppslag=_oppslag)
+        assert e.value.kode == "avskrudd_uten_auditrad", (
+            "en fabrikkert ID slapp gjennom den ekte oppslagsveien:"
+            f" {e.value.kode}")
+    finally:
+        rt.rollback()
+        rt.close()

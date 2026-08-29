@@ -303,6 +303,18 @@ GRANT EXECUTE ON FUNCTION knytt_verifikasjonsoppdrag(TEXT, BIGINT, TEXT, INT, BI
 GRANT EXECUTE ON FUNCTION utsted_kvitteringskapabilitet(BIGINT, TEXT, INT, TEXT, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION innlos_kvitteringskapabilitet(TEXT, TEXT, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION bruk_kvitteringskapabilitet(TEXT, TEXT) TO {rolle};
+-- 066 (#159): LESEVEIEN hører til DEN DELTE blokken, ikke til API-blokken
+-- (Cursor P2, runde 5 på #247). Oppslaget som gjør «auditert» til en
+-- egenskap ved basen skjer i `kjor_bunt` — og den kjører i arbeideren
+-- (`disponit-m57.service`), som får DENNE blokken og ikke API-ens. Sto
+-- `les_revisjonshendelse` bare i `M37_RETTIGHETER_API`, var utfallet etter
+-- migrering enten `permission denied` på avskruingsveien, eller — verre —
+-- en usikker dict båret fra API til arbeider, altså tilbake til
+-- selvattesten hele #159 finnes for å fjerne.
+-- SKRIVEVEIEN følger IKKE med hit: hendelsen skrives av innloggede
+-- mennesker gjennom API-et, aldri av en bakgrunnsarbeider. Samme
+-- selektivitet som 043 gjorde for oppløsningsveien, bare motsatt vei.
+GRANT EXECUTE ON FUNCTION les_revisjonshendelse(TEXT, UUID) TO {rolle};
 -- `arkiver_policyversjon` gis IKKE til runtime. Arkivering er en
 -- administrativ operasjon, ikke noe forespørselsveien skal kunne utløse.
 """
@@ -366,6 +378,13 @@ GRANT EXECUTE ON FUNCTION signer_utsendingsliste(TEXT, UUID, TEXT, TEXT) TO {rol
 -- migrasjonen).
 GRANT EXECUTE ON FUNCTION opprett_rekrutteringsprosess(TEXT, BIGINT, INT) TO {rolle};
 GRANT EXECUTE ON FUNCTION lukk_rekrutteringsprosess(TEXT, UUID, TIMESTAMPTZ) TO {rolle};
+-- 066 (#159): revisjonshendelsens SKRIVEVEI — runtime alene. Det er API-et
+-- innloggede mennesker skriver hendelsen gjennom; en bakgrunnsarbeider har
+-- ingenting med å føre den. Leseveien står i den DELTE blokken over, fordi
+-- oppslaget skjer i arbeideren (se kommentaren der).
+-- Migrasjonens egen grant er betinget av at rollen HETER `disponit`; denne
+-- er den autoritative for den konfigurerte rollen.
+GRANT EXECUTE ON FUNCTION skriv_revisjonshendelse(TEXT, TEXT, TEXT, TEXT, TEXT) TO {rolle};
 """
 
 # Token-administrasjonen er en EGEN rolle som eier ingenting (korreksjon 2).

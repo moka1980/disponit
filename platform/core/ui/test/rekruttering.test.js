@@ -17,6 +17,10 @@ settI18nForTest(NB, "nb");
 
 const ROT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
 
+// EN-settet, for portene som må se forskjell på «riktig» og «hardkodet
+// norsk» — på `nb` er de to den samme strengen.
+const EN = JSON.parse(readFileSync(join(ROT, "locales", "en.json"), "utf-8"));
+
 let KALL;
 let SVAR;
 globalThis.fetch = async (url, opts = {}) => {
@@ -1394,7 +1398,7 @@ test("Evalueringer: liste med status, og rapporten rendres blindet", async () =>
   assert.match(tekst,
     new RegExp(t("ui.rekruttering.evalueringer.flere").slice(0, 25)));
   // Kun den ferdige raden har en Vis-knapp.
-  const knapper = [...seksjon.querySelectorAll("button")]
+  const knapper = [...seksjon.querySelectorAll("tbody button")]
     .filter((b) => b.textContent === t("ui.rekruttering.evalueringer.vis"));
   assert.equal(knapper.length, 1);
   knapper[0].click();
@@ -1474,11 +1478,11 @@ test("Evalueringer: feilet rapporthenting melder i alert, ikke stille", async ()
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelectorAll(
-    "section[aria-labelledby=evaluering-tittel] button").length === 2));
+    "section[aria-labelledby=evaluering-tittel] tbody button").length === 2));
   const seksjon = hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
-  const knappFor = (id) => [...seksjon.querySelectorAll("button")]
-    .find((b) => b.closest("tr").textContent.includes(String(id)));
+  const knappFor = (id) => [...seksjon.querySelectorAll("tbody button")]
+    .find((b) => b.closest("tr") && b.closest("tr").textContent.includes(String(id)));
   knappFor(96).click();
   assert.ok(await vent(() => seksjon.textContent.includes("Driftskonsulent")),
     "rapporten rendret aldri");
@@ -1512,10 +1516,10 @@ test("Evalueringer: 200 med urendrbar rapport lander i alert, ikke tom seksjon",
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelector(
-    "section[aria-labelledby=evaluering-tittel] button")));
+    "section[aria-labelledby=evaluering-tittel] tbody button")));
   const seksjon = hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
-  seksjon.querySelector("button").click();
+  seksjon.querySelector("tbody button").click();
   assert.ok(await vent(() => seksjon.querySelector("[role=alert]").textContent
     === t("ui.rekruttering.evalueringer.rapportfeil")),
     "urendrbar rapport ga ingen feilmelding — seksjonen ble stille tom");
@@ -1524,6 +1528,301 @@ test("Evalueringer: 200 med urendrbar rapport lander i alert, ikke tom seksjon",
     "rapporttabellen ble stående halvbygget ved siden av feilmeldingen");
   assert.doesNotMatch(seksjon.textContent,
     new RegExp(t("ui.rekruttering.evalueringer.blindet").slice(0, 20)));
+});
+
+test("Evalueringer: «Last flere» følger serverens cursor og appender (#221)", async () => {
+  KALL = [];
+  // Side 1 bærer `neste_cursor`; klikket henter side 2 MED cursoren og
+  // APPENDER — brukeren mister ikke radene hen ser på. Side 2 uten
+  // cursor: knappen forsvinner, ingen «flere»-melding står igjen.
+  // Objektform: URL-nøkkelen (med spørrestreng) vinner over sti-nøkkelen
+  // — riggens egen vei for kall der cursoren velger svaret.
+  SVAR = {
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": {
+      evalueringer: [{ oppdrag_id: 200, status: "utfort",
+        opprettet: "2026-08-27T02:00:00+00:00", rapport_klar: false }],
+      flere: true, neste_cursor: "c-side2.mac" },
+    "/v1/rekruttering/evalueringer?cursor=c-side2.mac": {
+      evalueringer: [{ oppdrag_id: 100, status: "utfort",
+        opprettet: "2026-08-27T01:00:00+00:00", rapport_klar: false }],
+      flere: false, neste_cursor: null },
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel] table")));
+  const seksjon = hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  const flereKnapp = () => [...seksjon.querySelectorAll("button")]
+    .find((b) => b.textContent
+      === t("ui.rekruttering.evalueringer.last_flere"));
+  assert.ok(flereKnapp(), "cursoren ga ingen «Last flere»-knapp");
+  // Cursoren erstatter den passive meldingen — aldri begge.
+  assert.doesNotMatch(seksjon.textContent,
+    new RegExp(t("ui.rekruttering.evalueringer.flere").slice(0, 25)));
+  flereKnapp().click();
+  assert.ok(await vent(() => seksjon.textContent.includes("100")),
+    "side 2 ble aldri appendet");
+  assert.ok(seksjon.textContent.includes("200"),
+    "appenderingen mistet raden brukeren alt så på");
+  assert.ok(KALL.some((k) =>
+    k.url === "/v1/rekruttering/evalueringer?cursor=c-side2.mac"),
+  "klikket fulgte ikke serverens cursor");
+  assert.ok(await vent(() => !flereKnapp()),
+    "knappen ble stående uten fortsettelse å følge");
+});
+
+test("Evalueringer: fokus OVERLEVER om-tegningen av listen, og redrawet "
+  + "annonseres", async () => {
+  KALL = [];
+  // Codex P2: `tegnListe` bytter hele seksjonen med `sett(rot, …)`, så
+  // knappen brukeren nettopp aktiverte er en ANNEN node etterpå — fokus
+  // falt til `document.body` ved hver oppfriskning og hver lastede side,
+  // uten noe som sa hvor de nye radene havnet.
+  const rad = (id) => ({ oppdrag_id: id, status: "opprettet",
+    opprettet: "2026-08-27T02:00:00+00:00", rapport_klar: false });
+  SVAR = {
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": {
+      evalueringer: [rad(200)], flere: true, neste_cursor: "c-side2.mac" },
+    "/v1/rekruttering/evalueringer?cursor=c-side2.mac": {
+      evalueringer: [rad(100)], flere: false, neste_cursor: null },
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel] table")));
+  const seksjon = hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  const knapp = (nokkel) => [...seksjon.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.evalueringer." + nokkel));
+  const live = () => document.querySelector(
+    '[role=status][aria-live=polite]').textContent;
+  const meldt = (antall) => t("ui.rekruttering.evalueringer.listemeldt")
+    .replace("{antall}", String(antall));
+
+  // «Oppdater»: erstatningsknappen får fokus, ikke `document.body`.
+  const gammel = knapp("oppdater");
+  gammel.focus();
+  gammel.click();
+  assert.ok(await vent(() => knapp("oppdater") !== gammel),
+    "listen ble aldri tegnet på nytt");
+  assert.ok(await vent(() => document.activeElement === knapp("oppdater")),
+    "fokus falt ut av seksjonen etter oppfriskningen");
+  assert.equal(live(), meldt(1),
+    "redrawet ble aldri annonsert i den høflige live-regionen");
+
+  // «Last flere»: siste side finnes ikke, så knappen forsvinner —
+  // fokus lander på «Oppdater» i stedet for i ingenting.
+  knapp("last_flere").focus();
+  knapp("last_flere").click();
+  assert.ok(await vent(() => seksjon.textContent.includes("100")),
+    "side 2 ble aldri appendet");
+  assert.ok(!knapp("last_flere"),
+    "positiv kontroll: siste side skal fjerne «Last flere»");
+  assert.equal(document.activeElement, knapp("oppdater"),
+    "fokus falt ut av seksjonen da «Last flere» forsvant");
+  assert.equal(live(), meldt(2), "den appendede siden ble aldri annonsert");
+  // MUTASJONEN SOM DREPER DENNE: fjern `etterListeklikk(…)` fra de to
+  // klikkhåndtererne — fokus faller da til `document.body`.
+});
+
+test("Evalueringer: en feilet listehandling MELDER fra — ikke stille "
+  + "utdatert liste", async () => {
+  KALL = [];
+  // Codex P2: en feilet «Last flere»/«Oppdater» re-aktiverte bare
+  // knappen. Brukeren kunne ikke skille 403/5xx/nettbrudd fra
+  // «oppdatert, ingenting nytt», og handlet videre på gamle statuser.
+  const rad = (id) => ({ oppdrag_id: id, status: "opprettet",
+    opprettet: "2026-08-27T02:00:00+00:00", rapport_klar: false });
+  SVAR = {
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": {
+      evalueringer: [rad(200)], flere: true, neste_cursor: "c-side2.mac" },
+    "/v1/rekruttering/evalueringer?cursor=c-side2.mac": 503,
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel] table")));
+  const seksjon = hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  const knapp = (nokkel) => [...seksjon.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.evalueringer." + nokkel));
+  const alert = () => seksjon.querySelector("[role=alert]").textContent;
+  assert.equal(alert(), "", "positiv kontroll: utfallsområdet står tomt");
+  knapp("last_flere").click();
+  assert.ok(await vent(() => alert().includes(
+    t("ui.rekruttering.evalueringer.handlingfeil"))),
+  "en feilet «Last flere» sa ingenting");
+  assert.ok(!knapp("last_flere").disabled,
+    "knappen ble stående deaktivert etter feilen");
+  assert.ok(seksjon.textContent.includes("200"),
+    "listen brukeren så på forsvant på feilveien");
+
+  // ... og «Oppdater» på samme vei.
+  SVAR["/v1/rekruttering/evalueringer"] = 503;
+  knapp("oppdater").click();
+  assert.ok(await vent(() => alert().includes(
+    t("ui.rekruttering.evalueringer.handlingfeil"))),
+  "en feilet «Oppdater» sa ingenting");
+
+  // ... og en vellykket handling RYDDER meldingen: en gammel feil skal
+  // aldri bli stående over en fersk liste.
+  SVAR["/v1/rekruttering/evalueringer"] = {
+    evalueringer: [rad(201), rad(200)], flere: false, neste_cursor: null };
+  knapp("oppdater").click();
+  assert.ok(await vent(() => alert() === ""),
+    "feilmeldingen ble stående over en vellykket oppfriskning");
+  assert.ok(seksjon.textContent.includes("201"), "listen ble ikke oppfrisket");
+  // MUTASJONEN SOM DREPER DENNE: fjern `meldListefeil(true)` fra katchene
+  // — da er alle tre ventingene tomme og testen ryker på den første.
+});
+
+test("Evalueringer: «Oppdater» og «Last flere» blander aldri to "
+  + "cursorkjeder — siste klikk vinner", async () => {
+  KALL = [];
+  // Codex P2: begge knappene står klikkbare, og pagineringen LESTE bare
+  // generasjonen mens oppfriskningen tok den. Da delte de to hentingene
+  // generasjon, og et cursorsvar fra den GAMLE kjeden kunne appendes på
+  // en nyhentet første side — to kjeder blandet i én liste.
+  //
+  // Riggen: oppfriskningen HENGER, pagineringen svarer straks. Slippes
+  // oppfriskningen etterpå, skal den forkastes (klikket på «Last flere»
+  // var den siste intensjonen), og listen skal være den GAMLE kjeden
+  // hel: 200 + 100, aldri 201 fra den ferske første siden.
+  let slippTreg;
+  const treg = new Promise((res) => { slippTreg = res; });
+  const rad = (id, tid) => ({ oppdrag_id: id, status: "opprettet",
+    opprettet: tid, rapport_klar: false });
+  SVAR = {
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": {
+      evalueringer: [rad(200, "2026-08-27T02:00:00+00:00")],
+      flere: true, neste_cursor: "c-side2.mac" },
+    "/v1/rekruttering/evalueringer?cursor=c-side2.mac": {
+      evalueringer: [rad(100, "2026-08-27T01:00:00+00:00")],
+      flere: false, neste_cursor: null },
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel] table")));
+  const seksjon = hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  const knapp = (nokkel) => [...seksjon.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.evalueringer." + nokkel));
+  // Fra nå henger første side — altså oppfriskningen.
+  SVAR["/v1/rekruttering/evalueringer"] = treg;
+  knapp("oppdater").click();
+  knapp("last_flere").click();
+  assert.ok(await vent(() => seksjon.textContent.includes("100")),
+    "side 2 ble aldri appendet");
+  slippTreg({ evalueringer: [rad(201, "2026-08-27T03:00:00+00:00"),
+    rad(200, "2026-08-27T02:00:00+00:00")], flere: false,
+  neste_cursor: null });
+  await new Promise((r) => setTimeout(r, 30));
+  const rader = [...seksjon.querySelectorAll("tbody tr th")]
+    .map((c) => c.textContent);
+  assert.deepEqual(rader, ["200", "100"],
+    "oppfriskningen og pagineringen skrev over hverandre: " + rader.join(","));
+  // MUTASJONEN SOM DREPER DENNE: bytt `const min = ++eval2.nr` tilbake til
+  // `const min = eval2.nr` i «Last flere» — da slipper det trege
+  // oppfriskningssvaret gjennom og listen blir ["201", "200"], altså den
+  // appendede siden stille borte.
+});
+
+test("Evalueringer: en taperunde låser ikke «Last flere» når «Oppdater» "
+  + "tok generasjonen og FEILET", async () => {
+  KALL = [];
+  // Cursor P2: generasjonsvakten forkastet det tapte svaret med et bart
+  // `return` — uten å slå knappen på igjen. Vant en VELLYKKET
+  // «Oppdater», gjorde det ingenting: om-tegningen river noden uansett.
+  // Men «Oppdater» bumper generasjonen FØR den vet om den lykkes, og på
+  // feilveien tegner den ikke. Da ble «Last flere» stående deaktivert
+  // over en liste som fortsatt meldte `flere: true` — kontrollen var
+  // død til noe annet tvang en full om-tegning.
+  let slippSide2;
+  const treg = new Promise((res) => { slippSide2 = res; });
+  const rad = (id, tid) => ({ oppdrag_id: id, status: "opprettet",
+    opprettet: tid, rapport_klar: false });
+  SVAR = {
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": {
+      evalueringer: [rad(200, "2026-08-27T02:00:00+00:00")],
+      flere: true, neste_cursor: "c-side2.mac" },
+    "/v1/rekruttering/evalueringer?cursor=c-side2.mac": treg,
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel] table")));
+  const seksjon = hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  const knapp = (nokkel) => [...seksjon.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.evalueringer." + nokkel));
+
+  // 1) «Last flere» tar generasjonen og henger.
+  knapp("last_flere").click();
+  assert.ok(knapp("last_flere").disabled,
+    "positiv kontroll: knappen skal være deaktivert mens siden er i lufta");
+  // 2) «Oppdater» bumper generasjonen og FEILER — ingen om-tegning, så
+  //    «Last flere»-noden lever fortsatt.
+  SVAR["/v1/rekruttering/evalueringer"] = 503;
+  knapp("oppdater").click();
+  assert.ok(await vent(() => seksjon.querySelector("[role=alert]").textContent
+    .includes(t("ui.rekruttering.evalueringer.handlingfeil"))),
+  "riggen feilet: «Oppdater» meldte aldri fra");
+  // 3) Den tapte siden lander. Den skal ikke skrive noe — og ikke låse.
+  slippSide2({ evalueringer: [rad(100, "2026-08-27T01:00:00+00:00")],
+    flere: false, neste_cursor: null });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.ok(!seksjon.textContent.includes("100"),
+    "det tapte svaret ble skrevet inn i listen likevel");
+  assert.ok(knapp("last_flere") && !knapp("last_flere").disabled,
+    "«Last flere» ble stående deaktivert etter en tapt runde");
+  // MUTASJONEN SOM DREPER DENNE: fjern `k.disabled = false` fra
+  // `if (min !== eval2.nr)`-grenen i «Last flere».
+});
+
+test("Evalueringer: «Oppdater» henter listen på nytt uten side-reload"
+  + " (#221)", async () => {
+  KALL = [];
+  let status = "plukket";
+  SVAR = (sti) => {
+    if (sti === "/v1/rekruttering/evalueringer") {
+      return { evalueringer: [{ oppdrag_id: 300, status,
+        opprettet: "2026-08-27T03:00:00+00:00",
+        rapport_klar: status === "utfort" }], flere: false };
+    }
+    return ({ "/v1/rekruttering/prosesser": prosess(),
+      "/v1/rekruttering/stillingsprofiler": profiler() })[sti] ?? 500;
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel] table")));
+  const seksjon = hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  assert.match(seksjon.textContent,
+    new RegExp(t("ui.rekruttering.evalueringer.venter")),
+    "positiv kontroll: oppdraget står som underveis");
+  // Evalueringen blir ferdig hos serveren; ingen omlasting av ruta.
+  status = "utfort";
+  const oppdater = [...seksjon.querySelectorAll("button")]
+    .find((b) => b.textContent
+      === t("ui.rekruttering.evalueringer.oppdater"));
+  assert.ok(oppdater, "flaten mangler oppdateringsknappen");
+  oppdater.click();
+  assert.ok(await vent(() => seksjon.textContent.includes(
+    t("ui.rekruttering.evalueringer.klar"))),
+  "statusen forble «under arbeid» til en side-reload");
 });
 
 test("Evalueringer: det siste klikket vinner — et tregt eldre svar forkastes", async () => {
@@ -1556,10 +1855,10 @@ test("Evalueringer: det siste klikket vinner — et tregt eldre svar forkastes",
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelectorAll(
-    "section[aria-labelledby=evaluering-tittel] button").length === 2));
+    "section[aria-labelledby=evaluering-tittel] tbody button").length === 2));
   const seksjon = hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
-  const [knapp96, knapp97] = seksjon.querySelectorAll("button");
+  const [knapp96, knapp97] = seksjon.querySelectorAll("tbody button");
   knapp96.click();
   knapp97.click();
   assert.ok(await vent(() => seksjon.textContent.includes("Sikkerhetsleder")),
@@ -1734,7 +2033,7 @@ test("Evalueringer: produktet først og null klikk — ferskeste klare "
   const hentingerFoer = KALL.filter(
     (k) => k.sti === "/v1/rekruttering/rapport/96").length;
   hoved.querySelector(
-    "section[aria-labelledby=evaluering-tittel] button").click();
+    "section[aria-labelledby=evaluering-tittel] tbody button").click();
   await new Promise((r) => setTimeout(r, 20));
   assert.equal(KALL.filter(
     (k) => k.sti === "/v1/rekruttering/rapport/96").length, hentingerFoer,
@@ -1798,6 +2097,47 @@ test("Evalueringer: auto-visningen tar den FERSKESTE klare rapporten, "
   }
   // MUTASJONEN SOM DREPER DENNE: bytt reduksjonen tilbake til
   // `seedListe.find((e2) => e2.rapport_klar)` — stigende seed viser 96.
+});
+
+test("Evalueringer: auto-visningen bruker API-ETS nøkkel (opprettet, id) — "
+  + "høyeste id er ikke ferskest", async () => {
+  // Codex P2: endepunktet sorterer på `(opprettet, id)`, flaten valgte på
+  // `id` alene. Ordenene DIVERGERER for samtidige bestillinger, fordi
+  // PostgreSQLs `now()` er transaksjonens starttid mens id-en tildeles
+  // ved selve inserten: en forsinket ELDRE transaksjon kan få den høyeste
+  // id-en. Her er 98 eldst i tid, men høyest i id — tabellen er korrekt
+  // tidssortert, og auto-stien skal åpne 97, ikke 98.
+  const rapport = (navn) => ({ rapport: {
+    rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+    profil: { profil_id: "p-1", versjon: 2, navn },
+    antall_soknader: 1,
+    rangering: [{ kandidat_id: "kandidat-01", poeng: 5,
+      nedbrytning: { drift: 5 } }],
+    kandidater: { "kandidat-01": { funn: [] } },
+    fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+  } });
+  const rad = (oid, tid) => ({ oppdrag_id: oid, status: "utfort",
+    opprettet: tid, rapport_klar: true });
+  const seed = [rad(97, "2026-08-27T02:00:00+00:00"),
+    rad(98, "2026-08-27T01:00:00+00:00")];
+  KALL = [];
+  SVAR = {
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: seed },
+    "/v1/rekruttering/rapport/97": rapport("Ferskest i tid"),
+    "/v1/rekruttering/rapport/98": rapport("Hoyest id, eldst i tid"),
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("h3[tabindex='-1']")),
+    "rapporten rendret ikke av seg selv");
+  assert.ok(hoved.textContent.includes("Ferskest i tid"),
+    "auto-visningen fulgte ikke serverens (opprettet, id)-nøkkel");
+  assert.ok(!KALL.some((k) => k.sti === "/v1/rekruttering/rapport/98"),
+    "flaten hentet raden som bare hadde høyest id");
+  // MUTASJONEN SOM DREPER DENNE: sammenlign på `oppdrag_id` alene igjen —
+  // da vinner 98, og «Hoyest id, eldst i tid» rendres.
 });
 
 test("Evalueringer: hopplenke med ÉN prosess — ankeret står før "
@@ -1961,10 +2301,10 @@ test("Evalueringer: klikk under pågående auto-lasting deler løftet — "
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelector(
-    "section[aria-labelledby=evaluering-tittel] button")));
+    "section[aria-labelledby=evaluering-tittel] tbody button")));
   const seksjon = hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
-  seksjon.querySelector("button").click();
+  seksjon.querySelector("tbody button").click();
   slipp({ oppdrag_id: 96, rapport: {
     rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
     profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
@@ -2010,7 +2350,7 @@ test("Evalueringer: auto-feil er stille — alert hører til klikket", async () 
       t("ui.rekruttering.evalueringer.rapportfeil"))),
     "auto-feilen malte en usolicited alert");
   // ... og KLIKKET får feilmeldingen som før (positiv kontroll).
-  seksjon.querySelector("button").click();
+  seksjon.querySelector("tbody button").click();
   assert.ok(await vent(() => [...seksjon.querySelectorAll('[role="alert"]')]
     .some((a) => a.textContent
       === t("ui.rekruttering.evalueringer.rapportfeil"))),
@@ -2209,7 +2549,7 @@ test("Evalueringer: en hengende KLIKK-henting overlever byttet — "
   const seksjon = () => hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
   [...seksjon().querySelectorAll("button")]
-    .find((b) => b.closest("tr").textContent.includes("96")).click();
+    .find((b) => b.closest("tr") && b.closest("tr").textContent.includes("96")).click();
   const aFoer = KALL.filter(
     (k) => k.sti === "/v1/rekruttering/rapport/97").length;
   const velger = hoved.querySelector("#rekrut-prosessvelger");
@@ -2306,11 +2646,11 @@ test("Evalueringer: A→B→A gjenbruker As løfte — aldri to nedlastinger "
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelectorAll(
-    "section[aria-labelledby=evaluering-tittel] button").length === 2));
+    "section[aria-labelledby=evaluering-tittel] tbody button").length === 2));
   const seksjon = () => hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
   const knappFor = (id) => [...seksjon().querySelectorAll("button")]
-    .find((b) => b.closest("tr").textContent.includes(String(id)));
+    .find((b) => b.closest("tr") && b.closest("tr").textContent.includes(String(id)));
   // Auto tok alt 97 (A). Brukeren: B (96), så A (97) igjen — mens
   // BEGGE henger.
   knappFor(96).click();
@@ -2385,12 +2725,12 @@ test("Evalueringer: et sent auto-svar kan aldri restarte auto-stien — "
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelectorAll(
-    "section[aria-labelledby=evaluering-tittel] button").length === 2));
+    "section[aria-labelledby=evaluering-tittel] tbody button").length === 2));
   const seksjon = () => hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
   // Brukeren velger B (96) mens auto-A (97) henger.
   [...seksjon().querySelectorAll("button")]
-    .find((b) => b.closest("tr").textContent.includes("96")).click();
+    .find((b) => b.closest("tr") && b.closest("tr").textContent.includes("96")).click();
   assert.ok(await vent(() => seksjon().textContent.includes("kandidat-01")),
     "B rendret aldri");
   // A fullfører SENT — og skal hverken tegne eller røre tilstanden.
@@ -2483,9 +2823,9 @@ test("Evalueringer: en rapport som lander etter et prosessbytte tegner "
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelector(
-    "section[aria-labelledby=evaluering-tittel] button")));
+    "section[aria-labelledby=evaluering-tittel] tbody button")));
   hoved.querySelector(
-    "section[aria-labelledby=evaluering-tittel] button").click();
+    "section[aria-labelledby=evaluering-tittel] tbody button").click();
   const velger = hoved.querySelector("#rekrut-prosessvelger");
   velger.value = "p-2";
   velger.dispatchEvent(new window.Event("change", { bubbles: true }));
@@ -2597,7 +2937,7 @@ test("Profiler: uten bestilling:opprett finnes ingen skriveknapper (P2-1)", asyn
   const seksjon = hoved.querySelector("section[aria-labelledby=profil-tittel]");
   assert.ok(seksjon, "profilseksjonen mangler — lesing skal stå åpen");
   assert.match(seksjon.textContent, /Driftskonsulent/);
-  const tekster = [...seksjon.querySelectorAll("button")].map((b) => b.textContent);
+  const tekster = [...seksjon.querySelectorAll("tbody button")].map((b) => b.textContent);
   assert.ok(!tekster.includes(t("ui.rekruttering.profiler.ny")),
     "Ny-knappen finnes uten skrive-scope");
   assert.ok(!tekster.includes(t("ui.rekruttering.profiler.rediger")),
@@ -2849,10 +3189,10 @@ test("Bestilling: 409 «bunten er ubrukelig» er ikke feltene (eierdom (c))",
       "/v1/inndata/reserver": { reservasjon_jti: "j-1",
                                 inndata_ref: "inndata:u-1" },
       "/v1/inndata/opplast/j-1": {} };
-    // 058-formen: ETT svar for alle årsakene — ukjent, utløpt, ikke
-    // ferdig lastet, alt bundet, ELLER holdt av en samtidig bestilling
-    // (`INNDATA_OPPTATT`, kollapset til denne koden i `KLIENTKODE`).
-    // Ingen av dem står i et felt brukeren kan rette.
+    // 058-formen: ETT svar for alle de TERMINALE årsakene — ukjent,
+    // utløpt, ikke ferdig lastet, alt bundet. Ingen av dem står i et
+    // felt brukeren kan rette. Den forbigående naboen har siden #215
+    // sin egen kode og sin egen test under.
     let bestillingssvar = { __status: 409,
       __kropp: { feil: "inndata_ubrukelig" } };
     SVAR = (sti) => sti === "/v1/bestilling" ? bestillingssvar : basis[sti];
@@ -2876,21 +3216,189 @@ test("Bestilling: 409 «bunten er ubrukelig» er ikke feltene (eierdom (c))",
     "buntens 409 ble meldt som en feil i skjemafeltene");
     assert.notEqual(seksjon.querySelector("[role=alert]").textContent,
       t("ui.rekruttering.bestill.feil"));
-    // NØKKELØKONOMIEN ER URØRT (eierdom (c): sannhets-fiks, ikke ny form).
-    // Ledningen bærer ikke skillet forbigående/terminal — `KLIENTKODE`
-    // kollapser det, og husets port sier `not er_forbigaende(
-    // "inndata_ubrukelig")`. Nøkkelen roterer derfor som før; å beholde
-    // den her krever den distinkte utadkoden, som er eierdom (b)s eget
-    // issue. Denne assertionen er grensevakten: gjør en senere runde
-    // teksten om til en nøkkelfiks uten kontraktsendringen, dør den.
+    // DEN TERMINALE KODEN ROTERER NØKKELEN — mot en død bunt er «prøv
+    // igjen, samme operasjon» en løgn. Skillet bæres av utadkoden
+    // (#215): den forbigående naboen under BEHOLDER nøkkelen.
     bestillingssvar = { beslutning: "tillat", oppdrag_id: 11 };
     send();
     await vent(() => bestillinger().length === 2, 20);
     const [b1, b2] = bestillinger();
     assert.notEqual(b2.hoder["Idempotency-Key"], b1.hoder["Idempotency-Key"],
-      "den terminale koden beholdt nøkkelen — det er kontraktsendringen "
-      + "i (b), ikke tekstfiksen i (c)");
+      "den terminale koden beholdt nøkkelen — det er den forbigående "
+      + "naboens (inndata_opptatt) økonomi, ikke denne kodens");
   });
+
+test("Bestilling: 409 «bunten er opptatt» beholder nøkkelen (#215)",
+  async () => {
+    KALL = [];
+    const basis = { "/v1/rekruttering/prosesser": prosess(),
+      "/v1/rekruttering/stillingsprofiler": profiler(),
+      "/v1/inndata/reserver": { reservasjon_jti: "j-1",
+                                inndata_ref: "inndata:u-1" },
+      "/v1/inndata/opplast/j-1": {} };
+    // #215: en annen bestilling holder bunten AKKURAT NÅ. Ingen dom,
+    // ingen kvote — retry med SAMME nøkkel er samme operasjon, og
+    // teksten sier «prøv igjen om et øyeblikk» i stedet for å sende
+    // brukeren til filvelgeren.
+    let bestillingssvar = { __status: 409,
+      __kropp: { feil: "inndata_opptatt" } };
+    SVAR = (sti) => sti === "/v1/bestilling" ? bestillingssvar : basis[sti];
+    const hoved = nyHoved();
+    visRekruttering(hoved, ctx());
+    assert.ok(await vent(() => hoved.querySelector("table")),
+      "flaten kom aldri");
+    const seksjon =
+      hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+    const skjema = seksjon.querySelector("form");
+    Object.defineProperty(skjema.querySelector("input[type=file]"), "files",
+      { configurable: true, value: [{ name: "bunt.zip",
+          arrayBuffer: async () => new ArrayBuffer(16) }] });
+    const send = () => skjema.dispatchEvent(new window.Event("submit",
+      { bubbles: true, cancelable: true }));
+    const bestillinger = () => KALL.filter((k) => k.sti === "/v1/bestilling");
+    send();
+    await vent(() => bestillinger().length === 1, 20);
+    assert.ok(await vent(() => seksjon.querySelector("[role=alert]")
+      .textContent === t("ui.rekruttering.bestill.bunt_opptatt"), 20),
+    "buntlåsens 409 fikk ikke sin egen forbigående tekst");
+    assert.notEqual(seksjon.querySelector("[role=alert]").textContent,
+      t("ui.rekruttering.bestill.bunt_ubrukelig"),
+      "den forbigående koden falt i den terminale armen");
+    // NØKKELØKONOMIEN ER LØFTET KODEN GIR: retry er SAMME operasjon.
+    // MUTASJONEN SOM DREPER DENNE: fjern `buntOpptatt` fra
+    // nøkkel-vilkåret i submit-handleren.
+    bestillingssvar = { beslutning: "tillat", oppdrag_id: 11 };
+    send();
+    await vent(() => bestillinger().length === 2, 20);
+    const [b1, b2] = bestillinger();
+    assert.equal(b2.hoder["Idempotency-Key"], b1.hoder["Idempotency-Key"],
+      "den forbigående koden roterte nøkkelen — retryen ble en NY "
+      + "operasjon i stedet for den samme");
+  });
+
+test("Bestilling: en FORLATT bunt får ikke «samme operasjon» av 409-en "
+  + "(Codex P2)", async () => {
+  // Grensevakten til testen over: der ER retryen den samme operasjonen,
+  // fordi nøkkelen står. Bytter brukeren fil mens POST-en flyr, nuller
+  // `change` derimot `inndataRef` og forkaster `bestillIdem` samtidig som
+  // den bumper `generasjon` — og da beholder 409-armen bare en nøkkel som
+  // er borte. `buntOpptatt` ble likevel valgt FØR `forlatt`, så teksten
+  // lovte at et nytt forsøk gjentar SAMME operasjon mens neste Send bar
+  // en fersk nøkkel på en NY bunt. Samme løgnklasse som
+  // `sendt_forlatt_bunt`, `stoppet_forlatt` og `forlatt_usikkert`.
+  //
+  // MUTASJONEN SOM DREPER DENNE: la `buntOpptatt`-armen velge
+  // `bunt_opptatt` uten `forlatt`-vurderingen.
+  KALL = [];
+  let slippBestilling;
+  let bestillingssvar = new Promise((r) => { slippBestilling = r; });
+  let reservasjon = { reservasjon_jti: "j-1", inndata_ref: "inndata:u-1" };
+  SVAR = (sti) => {
+    if (sti === "/v1/rekruttering/prosesser") return prosess();
+    if (sti === "/v1/rekruttering/stillingsprofiler") return profiler();
+    if (sti === "/v1/inndata/reserver") return reservasjon;
+    if (sti.startsWith("/v1/inndata/opplast/")) return {};
+    if (sti === "/v1/bestilling") return bestillingssvar;
+    return undefined;
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("table")), "flaten kom aldri");
+  const seksjon =
+    hoved.querySelector("section[aria-labelledby=bestill-tittel]");
+  const skjema = seksjon.querySelector("form");
+  const send = skjema.querySelector("button[type=submit]");
+  const filInp = skjema.querySelector("input[type=file]");
+  const velgFil = (navn) => {
+    Object.defineProperty(filInp, "files", { configurable: true,
+      value: [{ name: navn, arrayBuffer: async () => new ArrayBuffer(16) }] });
+    filInp.dispatchEvent(new window.Event("change", { bubbles: true }));
+  };
+  const bestillinger = () => KALL.filter((k) => k.sti === "/v1/bestilling");
+  const bestill = () => skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  velgFil("bunt.zip");
+  bestill();
+  assert.ok(await vent(() => bestillinger().length === 1, 40),
+    "bestillingen kom aldri");
+  // Brukeren bytter bunt mens bestillingen står UBESVART — og FØRST DA
+  // svarer serveren at buntlåsen er holdt.
+  reservasjon = { reservasjon_jti: "j-2", inndata_ref: "inndata:u-2" };
+  velgFil("bunt2.zip");
+  slippBestilling({ __status: 409, __kropp: { feil: "inndata_opptatt" } });
+  assert.ok(await vent(() => !send.disabled, 40), "kjeden ble aldri ferdig");
+  const melding = seksjon.querySelector("[role=alert]").textContent;
+  assert.notEqual(melding, t("ui.rekruttering.bestill.bunt_opptatt"),
+    "en forlatt bunt lovte fortsatt at retry er SAMME operasjon");
+  // `t()` faller tilbake til nøkkelen selv når den mangler, og da ville
+  // linjen under målt seg selv: begge sider hadde vært samme streng.
+  assert.notEqual(melding, "ui.rekruttering.bestill.bunt_opptatt_forlatt",
+    "locale mangler nøkkelen — brukeren fikk en rå identifikator");
+  assert.equal(melding, t("ui.rekruttering.bestill.bunt_opptatt_forlatt"));
+  // ... og setningen er sann: neste Send ER en ny operasjon, på den nye
+  // bunten og med en fersk nøkkel.
+  bestillingssvar = { beslutning: "tillat", oppdrag_id: 12 };
+  bestill();
+  assert.ok(await vent(() => bestillinger().length === 2, 40),
+    "den nye bestillingen kom aldri");
+  const [b1, b2] = bestillinger();
+  assert.equal(b1.kropp.inndata_ref, "inndata:u-1");
+  assert.equal(b2.kropp.inndata_ref, "inndata:u-2",
+    "den nye bestillingen gikk på den forlatte bunten");
+  assert.notEqual(b2.hoder["Idempotency-Key"], b1.hoder["Idempotency-Key"],
+    "en ny kropp bar den forlatte intensjonens nøkkel");
+});
+
+test("Bestilling: den terminale teksten beskriver ikke den forbigående "
+  + "naboen (#215)", () => {
+  // Cursor P2: kodene ble delt i #215, men `bunt_ubrukelig` bar fortsatt
+  // kollaps-teksten «enten holder en annen bestilling den akkurat nå,
+  // eller …». Da lyver den terminale armen om årsaksklassen og blander
+  // «vent, samme nøkkel» med «velg ny fil» — nøyaktig skillet koden
+  // alene nå skal bære. Den forbigående teksten eier den klausulen.
+  //
+  // MUTASJONEN SOM DREPER DENNE: legg den forbigående klausulen tilbake
+  // i `bunt_ubrukelig` i nb.json eller en.json.
+  const en = JSON.parse(readFileSync(join(ROT, "locales", "en.json"), "utf-8"));
+  const ubrukelig = "ui.rekruttering.bestill.bunt_ubrukelig";
+  const opptatt = "ui.rekruttering.bestill.bunt_opptatt";
+  assert.ok(!/holder .* akkurat nå/.test(t(ubrukelig)),
+    "nb: den terminale teksten beskriver fortsatt den forbigående naboen");
+  assert.ok(!/holding .* right now/.test(en[ubrukelig]),
+    "en: den terminale teksten beskriver fortsatt den forbigående naboen");
+  // …og klausulen står der den hører hjemme.
+  assert.ok(/holder .* akkurat nå/.test(t(opptatt)), "nb: bunt_opptatt");
+  assert.ok(/holding .* right now/.test(en[opptatt]), "en: bunt_opptatt");
+});
+
+test("Bestilling: den forbigående teksten lover ikke ubrukt kvote "
+  + "(Codex P2)", () => {
+  // `inndata_opptatt` bæres av TO grener i `utfor_bestilling`: den
+  // vanlige (buntlåsen tas FØR beslutningen — ingen dom, ingen kvote) og
+  // gjenopprettingen, der et alt committet `TILLAT` re-tar låsen
+  // (`bestilling.py:617-626`) og svarer den samme koden. På den andre er
+  // dommen felt og kvoten trukket, så «Ingenting er avgjort, og ingen
+  // kvote er brukt» var to usanne setninger. Teksten skal si bare det
+  // BEGGE grenene garanterer — holdt bunt, trygg retry med samme nøkkel.
+  //
+  // MUTASJONEN SOM DREPER DENNE: legg kvote-/dom-løftet tilbake i
+  // `bunt_opptatt` i nb.json eller en.json.
+  const en = JSON.parse(readFileSync(join(ROT, "locales", "en.json"), "utf-8"));
+  const opptatt = "ui.rekruttering.bestill.bunt_opptatt";
+  const forlatt = "ui.rekruttering.bestill.bunt_opptatt_forlatt";
+  for (const nokkel of [opptatt, forlatt]) {
+    assert.ok(!/ingen kvote/i.test(t(nokkel)), `nb: ${nokkel} lover kvote`);
+    assert.ok(!/no quota/i.test(en[nokkel]), `en: ${nokkel} lover kvote`);
+    assert.ok(!/ingenting er avgjort/i.test(t(nokkel)),
+      `nb: ${nokkel} lover at ingenting er avgjort`);
+    assert.ok(!/nothing has been decided/i.test(en[nokkel]),
+      `en: ${nokkel} lover at ingenting er avgjort`);
+  }
+  // …og det koden FAKTISK garanterer står fortsatt der (testen over
+  // eier holdt-bunt-klausulen; denne eier nøkkelløftet).
+  assert.ok(/SAMME operasjonen/.test(t(opptatt)), "nb: retry-løftet falt ut");
+  assert.ok(/SAME operation/.test(en[opptatt]), "en: retry-løftet falt ut");
+});
 
 test("Bestilling: endret kropp etter usikkert svar gir NY nøkkel (P1-2)", async () => {
   KALL = [];
@@ -4442,6 +4950,866 @@ test("Profiler: endret innhold etter tapt svar gir NY nøkkel (P2-5)", async () 
   assert.notEqual(andre.hoder["Idempotency-Key"],
     forste.hoder["Idempotency-Key"],
     "endret innhold bar fortsatt den gamle intensjonens nøkkel");
+});
+
+
+// Rapportfikstur for produktportene under (28/8): to kandidater er nok
+// til å måle både radplasseringen og at ingen mur står igjen.
+function enkelRapportSvar() {
+  return {
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
+    "/v1/rekruttering/rapport/96": { oppdrag_id: 96, rapport: {
+      rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+      profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
+      antall_soknader: 2,
+      rangering: [
+        { kandidat_id: "kandidat-01", poeng: 5, nedbrytning: { drift: 3 } },
+        { kandidat_id: "kandidat-02", poeng: 3, nedbrytning: { drift: 3 } },
+      ],
+      kandidater: {
+        "kandidat-01": { funn: [], intervjusporsmal: [], kildetekst: "a" },
+        "kandidat-02": { funn: [], intervjusporsmal: [], kildetekst: "b" },
+      },
+      fremdrift: { filer_lest: 2, filer_totalt: 2, byte_lest: 100 },
+    } } };
+}
+test("Rapport: navnet står ÉN gang — for øyet OG for øret", async () => {
+  // Produktrunden 28/8 fjernet det SYNLIGE duplikatet ved å gjøre
+  // captionen `sr-only`. Men `sr-only` skjuler bare for øyet: caption og
+  // `h3` sto igjen med identisk tekst i tilgjengelighetstreet, så
+  // skjermleseren leste «Rangering — Driftskonsulent (versjon 2)» først
+  // som overskrift og så en gang til som tabellnavn (Cursor P2).
+  //
+  // Neste forsøk lot tabellen LÅNE overskriften via `aria-labelledby`.
+  // Det flyttet hvor navnet kom fra, men ikke HVA som ble annonsert:
+  // tabellen har fortsatt sin egen annonsering, og strengen var den
+  // samme (Codex P2). Duplikatet lå i TEKSTEN, ikke i noden.
+  //
+  // Porten måler derfor rotårsaken og ikke formen: tabellens
+  // tilgjengelige navn — uansett om det kommer fra caption,
+  // `aria-label` eller `aria-labelledby` — skal finnes, og det skal
+  // IKKE være overskriftens tekst.
+  //
+  // MUTASJONEN SOM DREPER DENNE: gi tabellen overskriftens tekst igjen,
+  // på hvilken som helst av de tre måtene — eller fjern navnet helt.
+  KALL = [];
+  SVAR = { ...enkelRapportSvar() };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.textContent.includes("kandidat-01")));
+  // RAPPORTENS tabell, ikke prosessens: DataTabell-en over har sin egen
+  // caption, og `querySelector` ville tatt den første i DOM-en.
+  const rapporttabell = [...hoved.querySelectorAll("table")]
+    .find((tb) => tb.textContent.includes("kandidat-01"));
+  assert.ok(rapporttabell, "rangeringstabellen mangler");
+  const synlige = [...hoved.querySelectorAll("h3")]
+    .filter((h) => h.textContent.includes("Driftskonsulent"));
+  assert.equal(synlige.length, 1,
+    `overskriften står ${synlige.length} ganger`);
+  const overskrift = synlige[0];
+  // Tabellens tilgjengelige navn, slik en skjermleser regner det ut:
+  // `aria-label`, ellers `aria-labelledby` → den utpekte noden, ellers
+  // `caption`. Alle tre veiene måles av samme port.
+  const pekt = rapporttabell.getAttribute("aria-labelledby");
+  const cap = rapporttabell.querySelector("caption");
+  const navn = (rapporttabell.getAttribute("aria-label")
+    || (pekt && (hoved.querySelector(`#${pekt}`) || {}).textContent)
+    || (cap && cap.textContent) || "").trim();
+  assert.ok(navn, "rangeringstabellen har ikke noe tilgjengelig navn");
+  // ROTÅRSAKEN: navnet skal ikke være overskriftens tekst — hverken
+  // kopiert inn eller lånt via `aria-labelledby`. Overskriften
+  // annonseres allerede av seg selv rett før tabellen.
+  assert.notEqual(navn, overskrift.textContent.trim(),
+    "tabellnavnet gjentar overskriften for øret");
+  // ...og det er ikke bare ordrett likhet som er duplikatet: bærer
+  // navnet profilen fra overskriften, er det den samme opplysningen om
+  // igjen.
+  assert.ok(!navn.includes("Driftskonsulent"),
+    `tabellnavnet gjentar profilen fra overskriften: «${navn}»`);
+  // Navnet står ikke i den SYNLIGE flaten: PR-ens produktvalg er én
+  // overskrift for øyet. En caption uten `sr-only` ville bygget den
+  // andre linjen opp igjen.
+  if (cap) {
+    assert.ok(cap.classList.contains("sr-only"),
+      "tabellnavnet ble synlig og gir øyet to linjer igjen");
+  }
+  // ...og fokusmålet etter lasting er fortsatt overskriften.
+  assert.equal(overskrift.getAttribute("tabindex"), "-1",
+    "overskriften er ikke lenger fokusmål etter lasting");
+});
+
+test("Maler: en verdi som bærer en plassholder stjeler ikke neste nøkkel",
+  async () => {
+  // Cursor P2. Malene ble fylt med en KJEDE av `.replace`: først
+  // `{navn}`, så `{versjon}`. Kjeden leser resultatet av forrige ledd om
+  // igjen, så et profilnavn som selv inneholder `{versjon}` fikk
+  // versjonen limt inn i SEG — og malens egen `{versjon}` sto igjen rå.
+  // På rapportens `h3` er det fokusmålet etter lasting, altså det første
+  // en skjermleser sier når rapporten er klar.
+  //
+  // Navnet er brukerens: `#profil-navn` er et fritt tekstfelt, så
+  // «Drift{versjon}X» er en profil noen kan lagre i dag.
+  //
+  // PORTEN SUBSTITUERER IKKE SELV. Den deler malen på plassholderne og
+  // limer segmentene rundt verdiene — ellers hadde den målt sin egen
+  // implementasjon i stedet for flatens.
+  //
+  // MUTASJONEN SOM DREPER DENNE: bytt `flett(...)` tilbake til
+  // `.replace("{navn}", …).replace("{versjon}", …)` på ett av de tre
+  // stedene (rapportoverskrift, profilvalg, lagret-kvittering).
+  const navn = "Drift{versjon}X";
+  const ventet = (nokkel, versjon) => {
+    const [a, b, c] = t(nokkel).split(/\{navn\}|\{versjon\}/);
+    assert.ok(c !== undefined,
+      `malen ${nokkel} har ikke lenger begge plassholderne`);
+    return `${a}${navn}${b}${versjon}${c}`;
+  };
+  const enProfil = { ...profiler().profiler[0], navn };
+  const basis = enkelRapportSvar();
+  basis["/v1/rekruttering/stillingsprofiler"] = { profiler: [enProfil] };
+  basis["/v1/rekruttering/rapport/96"] = {
+    oppdrag_id: 96,
+    rapport: { ...basis["/v1/rekruttering/rapport/96"].rapport,
+      profil: { profil_id: "prof-1", versjon: 2, navn } } };
+  KALL = [];
+  SVAR = basis;
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.textContent.includes("kandidat-01")),
+    "rapporten kom aldri");
+
+  // (1) Rapportens overskrift — fokusmålet etter lasting.
+  const [forNavn] = t("ui.rekruttering.evalueringer.rangering").split("{navn}");
+  const overskrift = [...hoved.querySelectorAll("h3")]
+    .find((h) => h.textContent.startsWith(forNavn));
+  assert.ok(overskrift, "rangeringsoverskriften mangler");
+  assert.equal(overskrift.textContent,
+    ventet("ui.rekruttering.evalueringer.rangering", 2),
+    "overskriftens versjon ble spist av profilnavnet");
+
+  // (2) Bestillingens profilvalg — samme mal, samme kjede.
+  const valg = hoved.querySelector("select#bestill-profil option");
+  assert.ok(valg, "profilvelgeren mangler");
+  assert.equal(valg.textContent,
+    ventet("ui.rekruttering.bestill.profilvalg", 2),
+    "nedtrekkets versjon ble spist av profilnavnet");
+
+  // (3) Kvitteringen etter lagring — den tredje kallstedet.
+  const pSeksjon = hoved.querySelector(
+    "section[aria-labelledby=profil-tittel]");
+  [...pSeksjon.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.profiler.rediger"))
+    .click();
+  const skjema = pSeksjon.querySelector("form");
+  skjema.querySelector("#profil-navn").value = navn;
+  KALL = [];
+  SVAR = (sti, opts) => ((opts.method || "GET") === "POST"
+    ? { profil_id: "prof-1", versjon: 3 } : basis[sti]);
+  skjema.dispatchEvent(new window.Event("submit",
+    { bubbles: true, cancelable: true }));
+  const lagre = skjema.querySelector("button[type=submit]");
+  assert.ok(await vent(() => !lagre.disabled, 40), "runden ble aldri ferdig");
+  assert.equal(pSeksjon.querySelector("[role=alert]").textContent,
+    ventet("ui.rekruttering.profiler.lagret", 3),
+    "kvitteringens versjon ble spist av profilnavnet");
+});
+
+test("Rapport: detaljene ligger i kandidatens RAD, ikke som en mur under", async () => {
+  // De sto som en flat liste av `<details>` under tabellen — én per
+  // kandidat, opp mot 5000 — uten kobling til linjen de gjaldt. Leseren
+  // måtte telle seg fram.
+  //
+  // MUTASJONEN SOM DREPER DENNE: legg detaljene tilbake som søsken av
+  // tabellen.
+  KALL = [];
+  SVAR = { ...enkelRapportSvar() };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.textContent.includes("kandidat-01")));
+  const tabell = [...hoved.querySelectorAll("table")]
+    .find((tb) => tb.textContent.includes("kandidat-01"));
+  assert.ok(tabell, "rangeringstabellen mangler");
+  const iRad = tabell.querySelectorAll("tbody tr details");
+  assert.equal(iRad.length, 2, "detaljene ligger ikke i radene");
+  // ...og ingen står igjen utenfor tabellen.
+  const utenfor = [...hoved.querySelectorAll("details")]
+    .filter((d) => !tabell.contains(d));
+  assert.equal(utenfor.length, 0,
+    `${utenfor.length} detaljbokser står fortsatt som en mur under tabellen`);
+});
+
+test("Prosess: to id-er med samme åtte tegn får ULIKE kortnavn", async () => {
+  // Codex P2: et UUID-prefiks på åtte heksadesimaler er 32 bit, og det er
+  // ingen garanti innenfor de 5000 kandidatene skjemaet tillater. To rader
+  // kunne vist samme referanse — på flaten der leseren skal skille dem fra
+  // hverandre før en irreversibel utsendelse — mens `title` hverken er
+  // kopierbar eller tilgjengelig for berøring og tastatur.
+  //
+  // Lengden regnes nå av DATAENE: korteste prefiks som er entydig i denne
+  // prosessen.
+  //
+  // MUTASJONEN SOM DREPER DENNE: `id.slice(0, 8)` igjen.
+  const a = "58f17252-8a2b-4092-a420-adf5d5d430d1";
+  const b = "58f17252-8a2b-4092-a420-adf5d5d430d2";  // skiller på SISTE tegn
+  const data = prosess();
+  data.prosesser[0].kandidater = [a, b].map((id) => ({
+    kandidat_id: id, oppfylt: { drift: true }, status: "anbefalt",
+    funn: [], intervjusporsmal: [] }));
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": data };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelectorAll("tbody tr").length === 2));
+  const viste = [...hoved.querySelectorAll("tbody tr")]
+    .map((tr) => tr.querySelector("td, th").textContent.trim());
+  assert.equal(new Set(viste).size, 2,
+    `to kandidater vises med SAMME referanse: ${JSON.stringify(viste)}`);
+  // Og begge hele id-ene er fortsatt å få tak i.
+  const titler = [...hoved.querySelectorAll("[title]")]
+    .map((n) => n.getAttribute("title"));
+  assert.ok(titler.includes(a) && titler.includes(b),
+    "en av de hele id-ene forsvant");
+});
+
+test("Rapport: hvert «Vis funn» navngir sin egen kandidat for øret",
+  async () => {
+  // Codex P2: en skjermleser som lister interaktive elementer leser
+  // kontrollens tilgjengelige navn ALENE — radoverskriften ved siden av
+  // er ikke med. Fem tusen kontroller som alle heter «Vis funn» er
+  // nøyaktig den telle-seg-fram-en denne runden fjernet for øyet.
+  //
+  // Den SYNLIGE teksten skal forbli kort: gjentok vi kandidaten der,
+  // ville vi vært tilbake i «Detaljer for kandidat-NN» på hver linje.
+  //
+  // MUTASJONEN SOM DREPER DENNE: fjern `aria-label` fra summary-en.
+  KALL = [];
+  SVAR = { ...enkelRapportSvar() };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.textContent.includes("kandidat-01")));
+  const tabell = [...hoved.querySelectorAll("table")]
+    .find((tb) => tb.textContent.includes("kandidat-01"));
+  const sammendrag = [...tabell.querySelectorAll("tbody tr summary")];
+  assert.equal(sammendrag.length, 2, "detaljene mangler i radene");
+  const navn = sammendrag.map((sm) => sm.getAttribute("aria-label"));
+  assert.ok(navn.every(Boolean),
+    "et sammendrag mangler tilgjengelig navn — det leses som «Vis funn»");
+  assert.equal(new Set(navn).size, 2,
+    `to kontroller har samme navn: ${JSON.stringify(navn)}`);
+  assert.ok(navn.some((n) => n.includes("kandidat-01"))
+    && navn.some((n) => n.includes("kandidat-02")),
+    `navnene bærer ikke kandidatene: ${JSON.stringify(navn)}`);
+  // Den synlige teksten er fortsatt kort.
+  assert.ok(sammendrag.every(
+    (sm) => sm.textContent === t("ui.rekruttering.evalueringer.vis_funn")),
+    "kandidaten kom inn i den SYNLIGE teksten — muren er tilbake i raden");
+});
+
+test("Vis funn: det tilgjengelige navnet er en LOCALE-mal, ikke en setning i koden",
+  async () => {
+  // Cursor P2 · RUTINER §5. Navnet ble limt sammen i koden: `vis_funn`
+  // pluss et hardkodet `" — "` pluss `kandidat` pluss kortnavnet.
+  // Skilletegnet og ordstillingen sto dermed UTENFOR locale, og et språk
+  // som vil sette kandidaten først — eller skille med noe annet enn en
+  // tankestrek — kunne ikke uttrykke det uansett hvor godt oversatt hver
+  // enkelt brikke var.
+  //
+  // PORTEN KJØRER PÅ ENGELSK, for det er der en hardkodet norsk form
+  // faktisk kan sees: på `nb` er «riktig» og «hardkodet» den samme
+  // strengen, og porten ville vært grønn på begge.
+  //
+  // MUTASJONEN SOM DREPER DENNE: bygg navnet i koden igjen
+  // (`${t("…vis_funn")} — ${t("…kandidat")} ${kortnavn(...)}`).
+  settI18nForTest(EN, "en");
+  try {
+    KALL = [];
+    SVAR = { ...enkelRapportSvar() };
+    const hoved = nyHoved();
+    visRekruttering(hoved, ctx());
+    assert.ok(await vent(() => hoved.textContent.includes("kandidat-01")),
+      "rapporten kom aldri");
+    const tabell = [...hoved.querySelectorAll("table")]
+      .find((tb) => tb.textContent.includes("kandidat-01"));
+    const rader = [...tabell.querySelectorAll("tbody tr")];
+    assert.equal(rader.length, 2, "rangeringen kom aldri");
+    // Malen deles på plassholderen — porten substituerer ikke selv, og
+    // måler derfor flatens fylling og ikke sin egen.
+    const [for_, etter] = t("ui.rekruttering.evalueringer.vis_funn_for")
+      .split("{kandidat}");
+    assert.ok(etter !== undefined, "malen har ikke lenger {kandidat}");
+    assert.ok(for_.trim(), "malen er tom — da måler resten ingenting");
+    for (const rad of rader) {
+      const synlig = rad.querySelector("th[scope=row]").textContent.trim();
+      const sm = rad.querySelector("details > summary");
+      assert.equal(sm.getAttribute("aria-label"), `${for_}${synlig}${etter}`,
+        "det tilgjengelige navnet følger ikke malen i locale");
+      // Den synlige teksten er fortsatt bare handlingen.
+      assert.equal(sm.textContent, t("ui.rekruttering.evalueringer.vis_funn"),
+        "kandidaten kom inn i den SYNLIGE teksten");
+    }
+  } finally {
+    settI18nForTest(NB, "nb");
+  }
+});
+
+test("Detaljer: prosesstabellens tilgjengelige navn er en LOCALE-mal, ikke en setning i koden",
+  async () => {
+  // Cursor P2 · RUTINER §5 — SØSTERKONTROLLEN til porten over. Rapportens
+  // «Vis funn» fikk `vis_funn_for`, mens prosesstabellens «Detaljer» ble
+  // stående med `${t("…detaljer")}: ${kortnavn(...)}`: kolonet og
+  // ordstillingen sto i koden, utenfor locale, på nøyaktig samme defekt
+  // to runder alt har felt ett lesested lenger opp.
+  //
+  // PORTEN KJØRER PÅ ENGELSK av samme grunn som søsteren: på `nb` er
+  // «riktig» og «hardkodet» den samme strengen, og porten ville vært
+  // grønn på begge.
+  //
+  // MUTASJONEN SOM DREPER DENNE: bygg navnet i koden igjen
+  // (`${t("ui.rekruttering.detaljer")}: ${kortnavn(kandidat.kandidat_id)}`).
+  settI18nForTest(EN, "en");
+  try {
+    KALL = [];
+    SVAR = { "/v1/rekruttering/prosesser": prosess() };
+    const hoved = nyHoved();
+    visRekruttering(hoved, ctx());
+    assert.ok(await vent(() => hoved.querySelector("tbody .handling-celle button")),
+      "prosesstabellen kom aldri");
+    // Malen deles på plassholderen — porten substituerer ikke selv, og
+    // måler derfor flatens fylling og ikke sin egen.
+    const [for_, etter] = t("ui.rekruttering.detaljer_for").split("{kandidat}");
+    assert.ok(etter !== undefined, "malen har ikke lenger {kandidat}");
+    assert.ok(for_.trim(), "malen er tom — da måler resten ingenting");
+    const rader = [...hoved.querySelectorAll("tbody tr")];
+    assert.equal(rader.length, 2, "begge kandidatradene skal stå");
+    for (const rad of rader) {
+      const synlig = rad.querySelector(".rekrut-kandidat").textContent.trim();
+      const knapp = rad.querySelector(".handling-celle button");
+      assert.equal(knapp.getAttribute("aria-label"), `${for_}${synlig}${etter}`,
+        "det tilgjengelige navnet følger ikke malen i locale");
+      // Den synlige teksten er fortsatt bare handlingen.
+      assert.equal(knapp.textContent, t("ui.rekruttering.detaljer"),
+        "kandidaten kom inn i den SYNLIGE knappeteksten");
+    }
+  } finally {
+    settI18nForTest(NB, "nb");
+  }
+});
+
+// Samme fikstur, andre id-er: portene under måler FORKORTINGEN, ikke
+// rapportens form. Poengene faller med rekkefølgen, så rangeringen er
+// den kalleren ba om.
+function rapportSvarMed(...ider) {
+  const svar = enkelRapportSvar();
+  const rapport = svar["/v1/rekruttering/rapport/96"].rapport;
+  rapport.rangering = ider.map((id, i) => (
+    { kandidat_id: id, poeng: 5 - i, nedbrytning: { drift: 3 } }));
+  rapport.kandidater = Object.fromEntries(ider.map((id) => (
+    [id, { funn: [], intervjusporsmal: [], kildetekst: "a" }])));
+  return svar;
+}
+
+// RANGERINGSTABELLEN, IKKE PROSESSENS: flaten har flere `<table>`, og
+// `querySelector` ville tatt den første i DOM-en. Kjennetegnet er
+// tabellens EGET tilgjengelige navn — den `sr-only`-captionen den fikk
+// da den sluttet å låne overskriftens (Codex P2: `aria-labelledby` mot
+// `h3` flyttet hvor navnet kom fra, ikke hva som ble annonsert for øret).
+//
+// NAVNET LESES UT AV LOCALE, IKKE SKREVET INN HER (Cursor P2). En norsk
+// literal gjorde hjelperen — og dermed hver port som bygger på den —
+// blind på engelsk, der captionen heter «Candidates ranked by score».
+// `find` returnerte da `undefined`, og portene falt på «tabellen
+// mangler» i stedet for på det de er til for å måle.
+function rapporttabellen(hoved) {
+  return [...hoved.querySelectorAll("table")].find((tb) => {
+    const cap = tb.querySelector("caption");
+    return cap && cap.textContent.trim()
+      === t("ui.rekruttering.evalueringer.tabellnavn");
+  });
+}
+
+test("Rapport: hjelperen finner rangeringstabellen på ENGELSK òg", async () => {
+  // Cursor P2. `rapporttabellen()` matchet captionen mot en norsk
+  // literal mens produksjonen skriver `t("…tabellnavn")`. En port som
+  // bare kan kjøre på sitt eget språk måler språket, ikke koden — og
+  // portene som bygger på hjelperen (kortnavn, tilgjengelig navn,
+  // detaljkropp) ville alle falt på «tabellen mangler» det øyeblikket
+  // noen kjørte dem på engelsk.
+  //
+  // MUTASJONEN SOM DREPER DENNE: skriv «Kandidater rangert etter poeng»
+  // tilbake som literal i `rapporttabellen()`.
+  settI18nForTest(EN, "en");
+  try {
+    KALL = [];
+    SVAR = { ...enkelRapportSvar() };
+    const hoved = nyHoved();
+    visRekruttering(hoved, ctx());
+    assert.ok(await vent(() => hoved.textContent.includes("kandidat-01")),
+      "rapporten kom aldri");
+    // Fiksturen krysser faktisk språkskillet — ellers måler resten intet.
+    assert.notEqual(t("ui.rekruttering.evalueringer.tabellnavn"),
+      "Kandidater rangert etter poeng",
+      "EN-settet ga norsk tabellnavn — porten måler da ingenting");
+    const tabell = rapporttabellen(hoved);
+    assert.ok(tabell, "hjelperen fant ikke rangeringstabellen på engelsk");
+    // …og det er RANGERINGEN den fant, ikke prosessens tabell.
+    assert.equal(tabell.querySelectorAll("tbody tr").length, 2,
+      "hjelperen traff en annen tabell enn rangeringen");
+  } finally {
+    settI18nForTest(NB, "nb");
+  }
+});
+
+test("Rapport: en lang kandidat-id kortes, men mistes ikke", async () => {
+  // Cursor P2: kortnavnet gjaldt bare prosesstabellen. Rapporten står
+  // ØVERST — den er produktdelen leseren møter først — og viste rå
+  // `kandidat_id` i radoverskriften. Med seedens UUID-er ble det en vegg
+  // av heksadesimal i rapporten og en ryddet kolonne under.
+  //
+  // MUTASJONEN SOM DREPER DENNE: skriv `rad.kandidat_id` rått i `th`-en
+  // igjen (eller fjern `title`).
+  const uuid = "58f17252-8a2b-4092-a420-adf5d5d430d1";
+  KALL = [];
+  SVAR = rapportSvarMed(uuid);
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.textContent.includes("58f17252")));
+  const tabell = rapporttabellen(hoved);
+  assert.ok(tabell, "rangeringstabellen mangler");
+  assert.ok(!tabell.textContent.includes(uuid),
+    "hele UUID-en står i rapporttabellen — kolonnen er en vegg på mobil");
+  const th = tabell.querySelector("tbody th[scope=row]");
+  assert.ok(th, "radoverskriften mangler");
+  assert.ok(th.textContent.includes("58f17252"),
+    "kandidaten er ikke gjenkjennelig i det hele tatt");
+  assert.equal(th.getAttribute("title"), uuid,
+    "hele id-en er borte fra rapporten — den skal kunne kopieres");
+});
+
+test("Rapport: to id-er med samme åtte tegn får ULIKE kortnavn", async () => {
+  // Speiler prosessportens måling på rapportveien: åtte heksadesimaler
+  // er 32 bit og ingen garanti innenfor de 5000 kandidatene skjemaet
+  // tillater. Skiller intet prefiks dem, står id-ene urørt — flaten
+  // lyver heller ikke om at to referanser er like.
+  //
+  // MUTASJONEN SOM DREPER DENNE: `id.slice(0, 8)` i rapportens `th`.
+  const a = "58f17252-8a2b-4092-a420-adf5d5d430d1";
+  const b = "58f17252-8a2b-4092-a420-adf5d5d430d2";  // skiller på SISTE tegn
+  KALL = [];
+  SVAR = rapportSvarMed(a, b);
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => {
+    const tb = rapporttabellen(hoved);
+    return tb && tb.querySelectorAll("tbody th[scope=row]").length === 2;
+  }));
+  const tabell = rapporttabellen(hoved);
+  const viste = [...tabell.querySelectorAll("tbody th[scope=row]")]
+    .map((th) => th.textContent.trim());
+  assert.equal(new Set(viste).size, 2,
+    `to kandidater vises med SAMME referanse: ${JSON.stringify(viste)}`);
+  // Og begge hele id-ene er fortsatt å få tak i.
+  const titler = [...tabell.querySelectorAll("tbody th[scope=row]")]
+    .map((th) => th.getAttribute("title"));
+  assert.ok(titler.includes(a) && titler.includes(b),
+    `en av de hele id-ene forsvant: ${JSON.stringify(titler)}`);
+});
+
+test("Rapport: den utvidede raden bryter den lange id-en i stedet for tabellen",
+  async () => {
+  // Codex P2 (review 5057226805, aldri lukket): detaljpanelet flyttet INN i
+  // tabellcellen denne runden, og der teller innholdet med i tabellens
+  // intrinsikke bredde. En kandidat-id kan per `KANDIDAT_ID_KANON` være 64
+  // tegn uten et eneste blanktegn å bryte på, så id-linjen i panelet løftet
+  // cellens minstebredde og skjøv tabellen ut i `.tablewrap`-ens sidescroll —
+  // på mobillayouten flyttingen var til for. Før lå detaljene UTENFOR
+  // tabellen og kunne ikke gjøre det.
+  //
+  // jsdom legger ikke ut noe, så porten måler de to leddene som FAKTISK
+  // bærer bruddet: at panelet i cellen har klassen, og at klassen bryter på
+  // en måte som teller med i min-content-bredden.
+  //
+  // MUTASJONENE SOM DREPER DENNE:
+  //   · `class: "rekrut-detalj"` fjernet fra `detaljboks`      → rød
+  //   · regelen fjernet fra `base.css`                         → rød
+  //   · `anywhere` → `break-word` (bryter synlig, men lar       → rød
+  //     tabellen være like bred — altså funnet i behold)
+  const lang = "a".repeat(64); // gyldig id, ingen brytepunkt
+  KALL = [];
+  SVAR = rapportSvarMed(lang);
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => {
+    const tb = rapporttabellen(hoved);
+    return tb && tb.querySelectorAll("tbody th[scope=row]").length === 1;
+  }));
+  const iCellen = [...rapporttabellen(hoved).querySelectorAll("td details")];
+  assert.equal(iCellen.length, 1, "fant ikke detaljpanelet i tabellcellen");
+  assert.ok(iCellen[0].classList.contains("rekrut-detalj"),
+    "panelet i cellen har ingen ombrekking — den lange id-en løfter "
+    + "tabellens minstebredde og gir sidescroll på mobil");
+  const css = readFileSync(join(ROT,
+    "platform/core/ui/static/css/base.css"), "utf-8");
+  const regel = css.match(/\.rekrut-detalj\s*\{([^}]*)\}/);
+  assert.ok(regel, "ingen `.rekrut-detalj`-regel i base.css");
+  assert.match(regel[1], /overflow-wrap:\s*anywhere/,
+    "`.rekrut-detalj` bryter ikke med `anywhere` — bare `anywhere` teller "
+    + `med i min-content-bredden: ${regel[1].trim()}`);
+});
+
+test("Kandidatcellen bryter den lange id-en i stedet for tabellen — BEGGE tabeller",
+  async () => {
+  // Cursor P2 (runde 6). Ombrekkingen over dekket bare `<details>`. Den
+  // SYNLIGE kandidatreferansen — `th` i rapporten, cellen i prosesstabellen —
+  // sto uten vern, og det gikk bra bare så lenge alt langt ble kortet til et
+  // prefiks. Kortingen gjelder nå bare de ugjennomsiktige id-ene (samme
+  // runde), så et beskrivende manifestnavn på 64 tegn står HELT i cellen —
+  // uten et eneste blanktegn å bryte på, per `KANDIDAT_ID_KANON` — og løfter
+  // kolonnens min-content akkurat som id-linjen i panelet gjorde. Wrap-porten
+  // over måler bare `details` og kunne ikke se det.
+  //
+  // jsdom legger ikke ut noe, så porten måler de to leddene som FAKTISK bærer
+  // bruddet, som wrap-porten over: at cellen har klassen i begge tabeller, og
+  // at klassen bryter på en måte som teller med i min-content-bredden.
+  //
+  // MUTASJONENE SOM DREPER DENNE:
+  //   · klassen fjernet fra rapportens `th`                     → rød
+  //   · klassen fjernet fra prosesstabellens celle              → rød
+  //   · regelen fjernet fra `base.css`                          → rød
+  //   · `anywhere` → `break-word` (bryter synlig, men lar        → rød
+  //     tabellen være like bred — altså funnet i behold)
+  const lang = "zulu-senior-backend-engineer-med-langt-beskrivende-navn-01xy";
+  assert.ok(lang.length > 20 && !/\s/.test(lang),
+    "fiksturen må være lang og uten brytepunkt, ellers måler porten intet");
+
+  // (1) Rapportens radoverskrift.
+  KALL = [];
+  SVAR = rapportSvarMed(lang);
+  let hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => {
+    const tb = rapporttabellen(hoved);
+    return tb && tb.querySelectorAll("tbody th[scope=row]").length === 1;
+  }));
+  const th = rapporttabellen(hoved).querySelector("tbody th[scope=row]");
+  assert.equal(th.textContent.trim(), lang,
+    "fiksturen ble kortet — da bærer ikke cellen bredden porten måler");
+  assert.ok(th.classList.contains("rekrut-kandidat"),
+    "rapportens radoverskrift har ingen ombrekking — den lange id-en løfter "
+    + "tabellens minstebredde og gir sidescroll på mobil");
+
+  // (2) Prosesstabellens celle — samme referanse, andre tabell.
+  const data = prosess();
+  data.prosesser[0].kandidater = [{ kandidat_id: lang, oppfylt: { drift: true },
+    status: "anbefalt", funn: [], intervjusporsmal: [] }];
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": data };
+  hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelectorAll("tbody tr").length === 1));
+  assert.ok(hoved.querySelector("tbody tr .rekrut-kandidat"),
+    "prosesstabellens kandidatcelle har ingen ombrekking");
+
+  // (3) Og klassen bryter på måten som faktisk teller.
+  const css = readFileSync(join(ROT,
+    "platform/core/ui/static/css/base.css"), "utf-8");
+  const regel = css.match(/\.rekrut-kandidat\s*\{([^}]*)\}/);
+  assert.ok(regel, "ingen `.rekrut-kandidat`-regel i base.css");
+  assert.match(regel[1], /overflow-wrap:\s*anywhere/,
+    "`.rekrut-kandidat` bryter ikke med `anywhere` — bare `anywhere` teller "
+    + `med i min-content-bredden: ${regel[1].trim()}`);
+});
+
+test("Kortnavn: et beskrivende manifestnavn kortes ALDRI, uansett lengde",
+  async () => {
+  // Codex P2 (runde 3): kortingen het «maskingenererte id-er kortes, navn
+  // kunden selv har gitt står urørt», men den målte `length > 20`. Kanonen i
+  // `m57_ats/parsing.py` tillater kundevalgte ASCII-id-er på inntil 64 tegn,
+  // så et beskrivende navn på 26 tegn ble `senior-b…` — i BEGGE tabeller og
+  // i kontrollenes tilgjengelige navn. Leseren måtte åpne detaljpanelet for
+  // å se hvem raden gjaldt, som er nøyaktig det kortnavnet fjernet.
+  //
+  // Porten måler ROTÅRSAKEN og ikke tallet: den lange, beskrivende id-en må
+  // stå HEL, mens den ugjennomsiktige UUID-en i SAMME tabell fortsatt kortes.
+  // Målte den bare det første, ville «fjern kortingen helt» gått grønn.
+  //
+  // MUTASJONENE SOM DREPER DENNE:
+  //   · `erUgjennomsiktig` → `id.length > 20` igjen  → navnet kortes  → rød
+  //   · `erUgjennomsiktig` → `false`                 → UUID-en står hel → rød
+  const navn = "senior-backend-engineer-01";           // 26 tegn, lesbart
+  const uuid = "58f17252-8a2b-4092-a420-adf5d5d430d1"; // ugjennomsiktig
+  const data = prosess();
+  data.prosesser[0].kandidater = [navn, uuid].map((id) => ({
+    kandidat_id: id, oppfylt: { drift: true }, status: "anbefalt",
+    funn: [], intervjusporsmal: [] }));
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": data };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelectorAll("tbody tr").length === 2));
+  const viste = [...hoved.querySelectorAll("tbody tr")]
+    .map((tr) => tr.querySelector("td, th").textContent.trim());
+  assert.ok(viste.includes(navn),
+    `det beskrivende navnet ble kortet bort: ${JSON.stringify(viste)}`);
+  // ... OG den ugjennomsiktige id-en kortes fortsatt, ellers måler porten
+  // bare at kortingen er skrudd av.
+  assert.ok(viste.some((v) => v !== navn && v.endsWith("…") && uuid.startsWith(v.slice(0, -1))),
+    `UUID-en ble ikke kortet — kortingen er slått av: ${JSON.stringify(viste)}`);
+});
+
+test("Kortnavn: en ren sifferstreng er ikke heksveggen — den står hel",
+  async () => {
+  // Cursor P2 (runde 6). Runde 3 byttet lengdemålet mot en tegnklassetest,
+  // men `[0-9a-fA-F]` INNEHOLDER sifrene: en id uten en eneste bokstav falt
+  // like fullt igjennom som «ugjennomsiktig». `KANDIDAT_ID_KANON`
+  // (`[A-Za-z0-9][A-Za-z0-9._-]{0,63}`) tillater nettopp den formen, og et
+  // kundenummer som `202408150012345678901` er et menneske leser — ikke en
+  // digest. Predikatet er stengt («er vi ikke sikre, står id-en hel»), og
+  // dette var det ene stedet asymmetrien pekte feil vei.
+  //
+  // Porten måler begge lesestedene, fordi kortnavnet har ÉN algoritme og to
+  // tabeller: prosesstabellen og rangeringstabellen i rapporten. Og den
+  // måler de to positive tegnene hver for seg, ellers ville «skru av
+  // kortingen helt» gått grønn.
+  //
+  // MUTASJONENE SOM DREPER DENNE:
+  //   · `HEKSBOKSTAV || UUID_FORM`-leddet fjernet → sifferid kortes  → rød
+  //   · `erUgjennomsiktig` → `false`              → UUID-en står hel → rød
+  //   · `UUID_FORM`-grenen fjernet         → siffer-UUID-en står hel → rød
+  const siffer = "202408150012345678901";              // 21 tegn, lesbart
+  const uuid = "58f17252-8a2b-4092-a420-adf5d5d430d1"; // ugjennomsiktig
+  const sifferUuid = "20240815-0012-3456-7890-123456789012"; // gruppeformen
+
+  // (1) Prosesstabellen.
+  const data = prosess();
+  data.prosesser[0].kandidater = [siffer, uuid, sifferUuid].map((id) => ({
+    kandidat_id: id, oppfylt: { drift: true }, status: "anbefalt",
+    funn: [], intervjusporsmal: [] }));
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": data };
+  let hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelectorAll("tbody tr").length === 3));
+  const iProsess = [...hoved.querySelectorAll("tbody tr")]
+    .map((tr) => tr.querySelector("td, th").textContent.trim());
+  assert.ok(iProsess.includes(siffer),
+    `sifferid-en ble kortet i prosesstabellen: ${JSON.stringify(iProsess)}`);
+  // ... OG heksveggen kortes fortsatt — begge grenene, hver for seg.
+  assert.ok(iProsess.some((v) => v.endsWith("…") && uuid.startsWith(v.slice(0, -1))),
+    `UUID-en ble ikke kortet — kortingen er slått av: ${JSON.stringify(iProsess)}`);
+  assert.ok(iProsess.some((v) => v.endsWith("…") && sifferUuid.startsWith(v.slice(0, -1))),
+    "UUID-ens gruppeform er maskingenerert uansett hvilke siffer den fikk, "
+    + `og skal fortsatt kortes: ${JSON.stringify(iProsess)}`);
+
+  // (2) Rangeringstabellen i rapporten — samme algoritme, andre lesested.
+  KALL = [];
+  SVAR = rapportSvarMed(siffer, uuid);
+  hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => {
+    const tb = rapporttabellen(hoved);
+    return tb && tb.querySelectorAll("tbody th[scope=row]").length === 2;
+  }));
+  const iRapport = [...rapporttabellen(hoved)
+    .querySelectorAll("tbody th[scope=row]")].map((th) => th.textContent.trim());
+  assert.ok(iRapport.includes(siffer),
+    `sifferid-en ble kortet i rapporttabellen: ${JSON.stringify(iRapport)}`);
+  assert.ok(iRapport.some((v) => v.endsWith("…") && uuid.startsWith(v.slice(0, -1))),
+    `UUID-en ble ikke kortet i rapporten: ${JSON.stringify(iRapport)}`);
+});
+
+test("Kortnavn: det tilgjengelige navnet bærer RADENS referanse, ikke rå UUID",
+  async () => {
+  // Pass-funn (runde 3). `kortnavnFor` kortet den SYNLIGE teksten, mens de
+  // to tilgjengelige navnene aldri ble med: `tilgjengeligNavn` på
+  // prosessens radhandling og `aria-label` på rapportens `<summary>` limte
+  // fortsatt rå `kandidat_id`. Kontrollen navnga altså kandidaten med en
+  // streng som ikke sto noe sted på skjermen, og for den som lister
+  // interaktive elementer var hver rad tilbake til sin vegg av heksadesimal.
+  //
+  // PORT 29 MÅLTE DETTE ALT — OG KUNNE LIKEVEL IKKE SE DET. Den krever at
+  // navnet inneholder cellens tekst, men fiksturen er `K-1`/`K-2`: begge
+  // er under kortingsterskelen på 20 tegn, så synlig tekst og full id ER
+  // samme streng og `includes` var sann uansett hva koden gjorde. En port
+  // hvis fikstur ikke krysser terskelen den måler, måler ingenting.
+  //
+  // Derfor id-er som FAKTISK kortes, og assert (1) under er selve vernet
+  // mot at porten blir blind igjen: skulle noen bytte fiksturen tilbake
+  // til korte id-er, dør porten på sin egen forutsetning i stedet for å
+  // stilne.
+  //
+  // MUTASJONEN SOM DREPER DENNE: skriv `kandidat.kandidat_id` (prosess)
+  // eller `rad.kandidat_id` (rapport) rått i det tilgjengelige navnet
+  // igjen — begge var koden før dette passet.
+  const a = "58f17252-8a2b-4092-a420-adf5d5d430d1";
+  const b = "99a17252-8a2b-4092-a420-adf5d5d430d2";  // skiller på FØRSTE tegn
+
+  // --- Prosesstabellen -----------------------------------------------
+  const data = prosess();
+  data.prosesser[0].kandidater = [a, b].map((id) => ({
+    kandidat_id: id, oppfylt: { drift: true }, status: "anbefalt",
+    funn: [], intervjusporsmal: [] }));
+  data.prosesser[0].kandidat_antall = 2;
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": data };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(
+    () => hoved.querySelectorAll("tbody .handling-celle button").length === 2),
+    "prosesstabellen kom aldri");
+
+  const pNavn = [];
+  for (const rad of hoved.querySelectorAll("tbody tr")) {
+    const synlig = rad.querySelector("td").textContent.trim();
+    const navn = rad.querySelector(".handling-celle button")
+      .getAttribute("aria-label");
+    pNavn.push(navn);
+    // (1) Fiksturen krysser faktisk terskelen — ellers måler resten intet.
+    assert.ok(synlig.endsWith("…") && synlig.length < a.length,
+      `fiksturen kortes ikke (${synlig}) — porten måler da ingenting`);
+    // (2) Øret hører ikke id-en øyet slapp å se.
+    assert.ok(!navn.includes(a) && !navn.includes(b),
+      `radhandlingen leser hele UUID-en: ${navn}`);
+    // (3) …og det den hører, står faktisk på skjermen, på DENNE raden.
+    assert.ok(navn.includes(synlig),
+      `navnet bærer ikke referansen raden viser (${synlig}): ${navn}`);
+  }
+  // (4) To rader, to navn: kortformen skiller dem fortsatt fra hverandre.
+  assert.equal(new Set(pNavn).size, 2,
+    `to radhandlinger deler tilgjengelig navn: ${pNavn.join(" / ")}`);
+  // (5) Hele id-en er ikke tapt: raden åpner panelet som bærer den, og den
+  //     veien går tastatur og skjermleser — `title` gjør ingen av delene.
+  hoved.querySelector("tbody .handling-celle button").click();
+  assert.ok(await vent(() => document.querySelector(".dialog.skuff")),
+    "detaljpanelet åpnet ikke");
+  const panel = document.querySelector(".dialog.skuff");
+  assert.ok(panel.textContent.includes(a) || panel.textContent.includes(b),
+    "hele id-en finnes ingen steder utenom `title`");
+
+  // --- Rapportens rangeringstabell ------------------------------------
+  KALL = [];
+  SVAR = rapportSvarMed(a, b);
+  const hoved2 = nyHoved();
+  visRekruttering(hoved2, ctx());
+  assert.ok(await vent(() => {
+    const tb = rapporttabellen(hoved2);
+    return tb && tb.querySelectorAll("tbody tr details").length === 2;
+  }), "rangeringstabellen kom aldri");
+
+  const rTabell = rapporttabellen(hoved2);
+  const rNavn = [];
+  for (const rad of rTabell.querySelectorAll("tbody tr")) {
+    const synlig = rad.querySelector("th[scope=row]").textContent.trim();
+    const navn = rad.querySelector("details > summary")
+      .getAttribute("aria-label");
+    rNavn.push(navn);
+    assert.ok(synlig.endsWith("…") && synlig.length < a.length,
+      `fiksturen kortes ikke (${synlig}) — porten måler da ingenting`);
+    assert.ok(!navn.includes(a) && !navn.includes(b),
+      `«Vis funn» leser hele UUID-en: ${navn}`);
+    assert.ok(navn.includes(synlig),
+      `navnet bærer ikke referansen raden viser (${synlig}): ${navn}`);
+  }
+  assert.equal(new Set(rNavn).size, 2,
+    `to «Vis funn» deler tilgjengelig navn: ${rNavn.join(" / ")}`);
+  // Og rapporten har sin egen vei til hele id-en: `<details>` er radens
+  // panel, så id-en står i kroppen — ikke bare i `th`-ens `title`.
+  const boks = rTabell.querySelector("tbody tr details");
+  boks.open = true;
+  boks.dispatchEvent(new (rTabell.ownerDocument.defaultView.Event)("toggle"));
+  assert.ok(boks.textContent.includes(a),
+    "hele id-en finnes ingen steder i rapporten utenom `title`");
+});
+
+test("Kortnavn: re-rangeringen KUNNGJØR radens referanse, ikke rå UUID",
+  async () => {
+  // Pass-funn (runde 5), samme defektklasse som radhandlingen og «Vis
+  // funn» over: vekthandlerens `aria-live`-kunngjøring var det siste
+  // stedet som limte rå `kandidat_id`. Den som flytter en skyver uten
+  // mus fikk trettiseks tegn heksadesimal lest opp, mens cellen øverst i
+  // tabellen — det ENESTE stedet kunngjøringen kan bekreftes — sa
+  // `99a17252…`. Referansen hun hørte, sto ikke på skjermen.
+  //
+  // PORT 30 MÅLTE DETTE ALT — OG KUNNE LIKEVEL IKKE SE DET, av nøyaktig
+  // samme grunn som port 29: fiksturen `K-1`/`K-2` ligger under
+  // kortingsterskelen, så `includes("K-1")` er sann uansett hva koden
+  // gjør. Derfor id-er som FAKTISK kortes, og assert (1) er vernet mot at
+  // porten blir blind igjen.
+  //
+  // MUTASJONEN SOM DREPER DENNE: skriv `rader[0].kandidat.kandidat_id`
+  // rått i `{forst}` igjen — det var koden før dette passet.
+  const a = "58f17252-8a2b-4092-a420-adf5d5d430d1";
+  const b = "99a17252-8a2b-4092-a420-adf5d5d430d2";  // skiller på FØRSTE tegn
+  const data = prosess();
+  // Vektene skiller de to: `a` bæres av drift (3), `b` av sky (2), så `a`
+  // står øverst før skyveren røres — og skal MISTE plassen når sky settes
+  // høyest. Kunngjøringen må da navngi `b`, ikke den den nettopp forlot.
+  data.prosesser[0].kandidater = [
+    { kandidat_id: a, oppfylt: { drift: true, sky: false },
+      status: "anbefalt", funn: [], intervjusporsmal: [] },
+    { kandidat_id: b, oppfylt: { drift: false, sky: true },
+      status: "vurderes", funn: [], intervjusporsmal: [] },
+  ];
+  data.prosesser[0].kandidat_antall = 2;
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": data };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelectorAll("tbody tr").length === 2),
+    "prosesstabellen kom aldri");
+  const forst = () => hoved.querySelector("tbody tr")
+    .querySelector("td, th").textContent.trim();
+  assert.ok(forst().startsWith("58f17252"),
+    `utgangsrekkefølgen er ikke den porten bygger på: ${forst()}`);
+
+  // Tastaturbrukerens vei: sett verdien og fyr `input` — ingen mus.
+  const range = hoved.querySelector('input[type="range"]#vekt-sky');
+  range.value = "10";
+  range.dispatchEvent(new window.Event("input", { bubbles: true }));
+
+  const synlig = forst();
+  const kunngjoring = hoved.querySelector('[aria-live="polite"]').textContent;
+  // (1) Fiksturen krysser faktisk terskelen — ellers måler resten intet.
+  assert.ok(synlig.endsWith("…") && synlig.length < a.length,
+    `fiksturen kortes ikke (${synlig}) — porten måler da ingenting`);
+  // (2) Tabellen re-rangerte faktisk, så kunngjøringen har noe å melde.
+  assert.ok(synlig.startsWith("99a17252"),
+    `vektendringen re-rangerte ikke — øverst står fortsatt ${synlig}`);
+  // (3) Øret hører ikke id-en øyet slapp å se.
+  assert.ok(!kunngjoring.includes(a) && !kunngjoring.includes(b),
+    `kunngjøringen leser hele UUID-en: ${kunngjoring}`);
+  // (4) …og det den hører, står faktisk på skjermen — øverst, der den
+  //     lover at kandidaten er.
+  assert.ok(kunngjoring.includes(synlig),
+    `kunngjøringen bærer ikke referansen raden viser (${synlig}): ${kunngjoring}`);
+});
+
+test("Prosess: en lang kandidat-id kortes, men mistes ikke", async () => {
+  // Seeden gir UUID-er, og en full UUID bryter over tre linjer på mobil —
+  // kolonnen ble en vegg av heksadesimal. Hele id-en står i `title`.
+  //
+  // MUTASJONEN SOM DREPER DENNE: skriv `kandidat_id` rått i cellen igjen.
+  const uuid = "58f17252-8a2b-4092-a420-adf5d5d430d1";
+  const data = prosess();
+  data.prosesser[0].kandidater = [{
+    kandidat_id: uuid, oppfylt: { drift: true }, status: "anbefalt",
+    funn: [], intervjusporsmal: [] }];
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": data };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("tbody tr")));
+  const celle = hoved.querySelector("tbody th, tbody td");
+  assert.ok(!hoved.textContent.includes(uuid),
+    "hele UUID-en står i tabellen — kolonnen er en vegg på mobil");
+  assert.ok(hoved.textContent.includes("58f17252"),
+    "kandidaten er ikke gjenkjennelig i det hele tatt");
+  const medTittel = [...hoved.querySelectorAll("[title]")]
+    .some((n) => n.getAttribute("title") === uuid);
+  assert.ok(medTittel, "hele id-en er borte — den skal kunne kopieres");
 });
 
 test("Prosessbytte: en feilet henting ruller valget tilbake og SIER fra",

@@ -75,6 +75,12 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'frigi_utsendelse(text,uuid,text)', 'disponit_m37_claimer'),
     ('FUNCTION', 'opprett_frigivelsesoppdrag(text,uuid,text,text,text,bytea,text,bytea,timestamp with time zone,timestamp with time zone)', 'disponit_m37_claimer'),
     ('FUNCTION', 'sikre_sak_for_oppdrag(text,bigint,text,text,text)', 'disponit_m37_claimer'),
+    -- 066 (#159): revisjonshendelsens skrive- og lesevei. Samme eier og
+    -- samme grunn som 057-doerene over — de gaar gjennom
+    -- krev_tenantkontekst-porten og maa derfor lages i porteierens
+    -- SET ROLE-vindu. Tabellen selv eies av migrator og staar ikke her.
+    ('FUNCTION', 'skriv_revisjonshendelse(text,text,text,text,text)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'les_revisjonshendelse(text,uuid)',                  'disponit_m37_claimer'),
     -- 043 (Gate 14b): oppløsningsveien — kansellering med fencing.
     ('FUNCTION', 'bruk_kvitteringskapabilitet(text,text,text)',        'disponit_m37_claimer'),
     ('FUNCTION', 'avvis_med_opplosning(text,bigint,bigint[],text,text)', 'disponit_m37_claimer'),
@@ -326,6 +332,12 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'rydd_staged_artefakter()',                          'disponit_domene_eier'),
     ('FUNCTION', 'karantenesett_artefakt(uuid,text,bigint)',         'disponit_domene_eier'),
     ('FUNCTION', 'bevar_artefakt(uuid,text,bigint,text)',                 'disponit_domene_eier'),
+    -- 066/#222: makuleringsdøren. Samme eier som resten av 016-familien,
+    -- av samme grunn — den skriver på `artefakt`, og reaperen får EXECUTE
+    -- på DØREN i stedet for UPDATE på evidenstabellen. `timestamptz`
+    -- skrives ut slik `regprocedure` gjengir den, ellers matcher raden
+    -- ingen funksjon.
+    ('FUNCTION', 'makuler_artefakter_for_prosess(text,bigint,timestamp with time zone)', 'disponit_domene_eier'),
     -- 043 §8: samme validering og samme lås som `bevar_artefakt`, uten
     -- skrivingen — den sene kvitteringsveien må kunne avvise et fremmed
     -- artefakt også når `direkte`-reversibiliteten sier at artefaktet skal

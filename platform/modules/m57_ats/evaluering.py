@@ -11,7 +11,14 @@ kjøringen.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+
+# PREDIKATET BOR I CORE, IKKE HER (Cursor P2-1 / Codex P1, runde 5).
+# `krev_biasmaaling` under og `manifestskjema._bias_utledet` skal lese
+# tidspunktet med SAMME predikat — men core kan ikke importere fra
+# moduler (RUTINER §7), så den ene lesningen måtte flyttes hit-fra, ikke
+# hentes hit-til. Navnet står fortsatt i denne modulens flate, for
+# kontrakten «m57s `ts` er RFC 3339» er modulens; lesningen er felles.
+from tid import rfc3339_lesbar  # noqa: F401  (re-eksport: modulens kontrakt)
 
 from . import blinding
 
@@ -355,11 +362,15 @@ def krev_biasmaaling(image_digest: str,
         raise Evalueringsfeil("bias_maling_ugyldig_digest", image_digest)
     if not _er_sha256(maaling.artefakt_sha256):
         raise Evalueringsfeil("bias_maling_uten_artefakt", image_digest)
-    try:
-        datetime.fromisoformat(str(maaling.ts).replace("Z", "+00:00"))
-    except (TypeError, ValueError) as feil:
-        raise Evalueringsfeil("bias_maling_uten_tidspunkt",
-                              image_digest) from feil
+    # KJØRETIDEN LESER LIKE STRENGT SOM GRENSEN (Codex P2, runde 5).
+    # `fromisoformat` alene er ISO 8601, ikke RFC 3339: den godtok
+    # dato-alene, tidssonefri, kompakt form og vilkårlig separator — mens
+    # `_bias_utledet` i `manifestskjema` avviser dem. Speilingen gikk
+    # altså BEGGE veier feil: først var grensen strengest, nå var
+    # kjøretiden det. En arbeider som slipper inn en måling artefaktporten
+    # senere feller, produserer en kjøring som ikke kan aksepteres.
+    if not rfc3339_lesbar(maaling.ts):
+        raise Evalueringsfeil("bias_maling_uten_tidspunkt", image_digest)
     return maaling
 
 
@@ -368,7 +379,8 @@ def evaluer_kandidat(modell, soknadstekst: "str | list[str]",
                      vekter: dict[str, int], *,
                      biasmaalinger: dict[str, Biasmaaling],
                      blinding_av: bool = False,
-                     auditrad: dict | None = None) -> dict:
+                     avskruing_hendelse_id=None,
+                     hendelseoppslag=None) -> dict:
     """Én kandidat gjennom hele kontrakten: biasmåling for modellens
     digest (port 17), blindet input (port 16), skjemavaliderte funn
     (port 15). Modellen får ALDRI se råteksten når blinding står på —
@@ -382,12 +394,16 @@ def evaluer_kandidat(modell, soknadstekst: "str | list[str]",
     # ÉN VEI, IKKE TO (#174). `soknadstekst` tar imot én tekst ELLER
     # kandidatens dokumenter. Én streng ER enkeltdokument-tilfellet, så
     # normaliseringen her gir samme kode for begge — ikke en gren til som
-    # kan drifte fra den andre.
+    # kan drifte fra den andre. Avskruingssporet (#247) følger med ut av
+    # dokumentvarianten som av enkelttekstens.
     dokumenter = ([soknadstekst] if isinstance(soknadstekst, str)
                   else list(soknadstekst))
-    blindede, avmaskering = blinding.evalueringsinput_dokumenter(
-        dokumenter, kandidatfelter,
-        blinding_av=blinding_av, auditrad=auditrad)
+    blindede, avmaskering, avskruingsspor = \
+        blinding.evalueringsinput_dokumenter(
+            dokumenter, kandidatfelter,
+            blinding_av=blinding_av,
+            avskruing_hendelse_id=avskruing_hendelse_id,
+            hendelseoppslag=hendelseoppslag)
     tekst = blinding.SKJOT.join(blindede)
     # Grensene regnes av den SAMME skjøten sammensetningen brukte
     # (`blinding.SKJOT`). Drifter de to, peker grensene feil sted — og da
@@ -409,8 +425,21 @@ def evaluer_kandidat(modell, soknadstekst: "str | list[str]",
     # Tom med vilje (#225): rapportskjemaet beholder feltet, så den
     # promoterte formen er uendret — men evalueringen bruker aldri
     # modelltid på spørsmål. De genereres ved innkalling (shortlist).
-    return {"funn": funn_kanonisk,
-            "oppfylt": dict(svar["oppfylt"]),
-            "intervjusporsmal": [],
-            "avmaskering": avmaskering,
-            "kildetekst": tekst}
+    # AVSKRUINGEN ETTERLATER ET SPOR I ARTEFAKTEN (Codex P1, runde 3 på
+    # #247). Uten det bar en avskrudd evaluering bare råteksten og et tomt
+    # avmaskeringskart — ingenting knyttet NETTOPP DEN utleveringen til
+    # revisjonsraden. Én hendelses-ID kunne autorisert et ubegrenset
+    # antall senere bunter, og ingen kunne lest seg fra et artefakt
+    # tilbake til hvem som bestemte det.
+    #
+    # Feltet finnes bare når blindingen FAKTISK var av: en `null` på hver
+    # blindet evaluering ville vært støy, og et felt som alltid er der
+    # sier ingenting om det unntaket det er ment å dokumentere.
+    artefakt = {"funn": funn_kanonisk,
+                "oppfylt": dict(svar["oppfylt"]),
+                "intervjusporsmal": [],
+                "avmaskering": avmaskering,
+                "kildetekst": tekst}
+    if avskruingsspor is not None:
+        artefakt["avskruing"] = avskruingsspor
+    return artefakt
