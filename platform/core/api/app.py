@@ -2385,10 +2385,23 @@ _KANDIDAT_NS = uuid.uuid5(uuid.NAMESPACE_URL, "disponit:m57:kandidatlager")
 #: valg A). Speilet av modulens `parsing.KANDIDAT_ID_KANON`; kilden er
 #: kontrakten, og api/ importerer aldri modulkode.
 _KANDIDAT_ID_KANON = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
-#: Arkivmedlemmets navn, målt i byte som ZIP-formatet selv gjør det:
-#: `file name length` er 16-bits, så dette er det lengste navnet et
-#: medlem overhodet kan bære. Grensen er ARKIVKONTRAKTENS, ikke dørens
-#: egen — se `_kandidatdata`.
+#: Arkivmedlemmets navn: ZIPs `file name length` er 16-bits, så 65 535
+#: byte er det lengste navnet et medlem overhodet kan bære. Grensen er
+#: ARKIVKONTRAKTENS, ikke dørens egen — se `_kandidatdata`.
+#:
+#: MÅLT I TEGN, IKKE I UTF-8-BYTE (Codex P2). Døren fikk aldri arkivets
+#: navnefelt; den får `dokumentnavn` som en DEKODET streng, og
+#: `zipfile` dekoder med arkivets egen koding (CP437 når UTF-8-flagget
+#: mangler). Å re-kode den til UTF-8 og måle DE bytene måler en koding
+#: arkivet aldri brukte: et lovlig legacy-navn med 40 000 CP437-`é` er
+#: 40 000 byte i arkivet og 80 000 i UTF-8, så `parsing.inspiser_bunt`
+#: godtok bunten mens denne porten svarte `request_feilformet` — og
+#: `lagre_dokument` reiser den som `kandidatlagring_feilet` for hele
+#: evalueringen. Tegn er derimot den ene målingen som ALDRI kan avvise
+#: et navn arkivet kan bære: enhver koding bruker minst én byte per
+#: tegn, så et navn på ≤ 65 535 byte i arkivet er ≤ 65 535 tegn dekodet.
+#: Fortsatt en grense — `dokumentnavn` går inn i uuid5, i en
+#: TEXT-kolonne og i loggens detalj — men nå formatets egen.
 _KANDIDAT_NAVN_MAKS = 65_535
 #: De tre lovede innholdstypene — endelse -> MIME. Alt annet er alt
 #: felt av arkivgaten; her er det en feilformet forespørsel.
@@ -2644,10 +2657,14 @@ def _kandidatdata(tjeneste: Tjeneste, request: Request, form: str) -> Response:
             #
             # Grensen er derfor formatets egen: ZIPs `file name length`
             # er 16-bits, så 65 535 byte er det lengste navnet et medlem
-            # overhodet KAN bære. Målt i byte, som feltet selv. Den er
-            # fortsatt en grense — døren stoler aldri på kalleren, og
-            # `dokumentnavn` går inn i uuid5, i en TEXT-kolonne og i
-            # loggens detalj — men nå en som ikke kan felle noe gyldig.
+            # overhodet KAN bære.
+            #
+            # MÅLT I TEGN (Codex P2, runde 2). Linjen sto som
+            # `len(navn.encode("utf-8"))`, altså i en koding arkivet
+            # aldri brukte: døren får det DEKODEDE navnet, og et lovlig
+            # CP437-navn dobler seg i UTF-8. Se `_KANDIDAT_NAVN_MAKS`
+            # for hvorfor tegn er den målingen som ikke kan felle noe
+            # arkivet godtar.
             #
             # NUL ER EN FEILFORMET FORESPØRSEL, IKKE EN DØD BASE (Codex
             # P2). PostgreSQL kan ikke lagre en nullbyte i en `TEXT`-verdi
@@ -2663,7 +2680,7 @@ def _kandidatdata(tjeneste: Tjeneste, request: Request, form: str) -> Response:
             # har. Målt på `tekst` OG `navn`, for begge går i
             # TEXT-kolonner (og `navn` også i uuid5 og i loggens detalj).
             if not isinstance(navn, str) or not navn \
-                    or len(navn.encode("utf-8")) > _KANDIDAT_NAVN_MAKS \
+                    or len(navn) > _KANDIDAT_NAVN_MAKS \
                     or endelse not in _KANDIDAT_MIME \
                     or not isinstance(b64, str) \
                     or not isinstance(tekst, str) \
