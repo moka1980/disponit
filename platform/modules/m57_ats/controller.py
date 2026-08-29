@@ -591,6 +591,35 @@ def kjor_en(klient, token: str, modell, uttrekker, biasmaalinger,
                 jsonschema.Draft202012Validator(
                     rapportskjema.SKJEMA).validate(rapport)
             except kjoring.Kjoringsfeil as e:
+                # LEASE-TAP MIDT I STRØMMEN HETER `lease_tapt` (Cursor
+                # P2-1). Før #173 fullførte en kjøring som mistet leasen
+                # midtveis arbeidet sitt og ble stoppet på
+                # LEVERINGSPORTEN under — den som navngir at det var
+                # AUTORITETEN som falt bort, ikke arbeidet. Strømmingen
+                # gjorde skriveveien til den faktiske aborten: døren
+                # feller neste kandidatskriv med 409
+                # `kandidatdata_avvist`, sinken reiser, og `kjor_bunt`
+                # pakker enhver sinkfeil som `kandidatlagring_feilet`.
+                # Denne grenen returnerte da FØR porten under rakk å
+                # lese `puls.tapt` — som alt sto satt. Drift leste en
+                # lagringsfeil (feil kø, feil alarm), og kvitteringen sa
+                # `kjoring_avbrutt` om et oppdrag plattformen hadde gitt
+                # til noen andre.
+                #
+                # Porten spør pulsen vi ALLEREDE har, og gjenbruker
+                # leveringsportens egne to linjer: ingen ny
+                # returkontrakt i `kjor_bunt`, som ville vært nøyaktig
+                # den nye maskinen K1 forbyr i en fiksrunde (og som
+                # KONTRAKT §«Kjøringens varighet» holder utsatt til egen
+                # PR). `kandidatlagring_feilet` er den ENE koden som kan
+                # bæres av et lease-tap; enhver annen kode er en ekte
+                # kjøringsfeil og beholder sitt eget ord.
+                if e.kode == "kandidatlagring_feilet" and puls.tapt:
+                    rk = kvitter({**kvittering_basis,
+                                  "resultat": "feilet",
+                                  "feilkode": "lease_tapt"})
+                    return _feilutfall(rk, "lease_tapt",
+                                       lease_tapt=puls.tapt)
                 rk = kvitter({**kvittering_basis, "resultat": "feilet",
                               "feilkode": "kjoring_avbrutt"})
                 return _feilutfall(rk, f"kjoring_avbrutt:{e.kode}")

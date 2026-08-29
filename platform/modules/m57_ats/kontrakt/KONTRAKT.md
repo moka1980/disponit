@@ -245,15 +245,26 @@ Modulen er KUNDE av plattformen, aldri omvendt (m56-formen):
   den tidligste av `utforelsesfrist`, `opplasting.utloper` og
   `kvittering_utloper`, minus `AVSLUTNINGSMARGIN_S`) og avviser et
   claim som er dødfødt. Er claimet levedyktig, løper `kjor_bunt` uten
-  internt tak: `frist_s` sendes ikke inn i kandidatløkka, og
-  `puls.tapt` leses først når `with _Heartbeat`-blokken slipper. En
-  evaluering som ble startet i tide, men løper forbi vinduet — eller
-  mister leasen midtveis — fullfører derfor arbeidet, og stoppes først
-  på LEVERINGSPORTENE: `lease_tapt` før opplasting, og kvitteringens
-  eget statusskifte, som etter fristen svarer 202
-  `lagret_uten_statusendring` → `ukvittert`. Utfallet er aldri et
-  falskt `utfort`; prisen er persondata og modellkall brukt utenfor
-  det annonserte vinduet.
+  internt tak: `frist_s` sendes ikke inn i kandidatløkka. En
+  evaluering som ble startet i tide, men løper forbi vinduet,
+  fullfører derfor arbeidet, og stoppes først på LEVERINGSPORTENE:
+  `lease_tapt` før opplasting, og kvitteringens eget statusskifte, som
+  etter fristen svarer 202 `lagret_uten_statusendring` → `ukvittert`.
+  Utfallet er aldri et falskt `utfort`; prisen er persondata og
+  modellkall brukt utenfor det annonserte vinduet.
+
+  ET LEASE-TAP fullfører derimot IKKE lenger arbeidet (#173 PR-1).
+  Strømmingen gjorde den claim-bundne skriveveien til den faktiske
+  aborten: mister vi leasen midtveis, feller døren neste
+  kandidatskriv med 409 `kandidatdata_avvist`, sinken reiser, og
+  `kjor_bunt` stopper med `kandidatlagring_feilet` FØR
+  `with _Heartbeat`-blokken slipper. Kjøringen avsluttes derfor der,
+  ikke på leveringsporten — men den MELDES fortsatt som det den er:
+  faller `kjor_bunt` med `kandidatlagring_feilet` mens `puls.tapt` er
+  satt, er kvitteringens feilkode `lease_tapt` (ikke
+  `kjoring_avbrutt`), og utfallets grunn er `lease_tapt`. Uten lease-tap
+  beholder en lagringsfeil sitt eget ord,
+  `kjoring_avbrutt:kandidatlagring_feilet`.
 
   KJENT BEGRENSNING (eierdom, K2-kjennelse på #218, valg 1): både det
   løpende fristtaket og et lease-avbrudd midt i evalueringen vil ha
